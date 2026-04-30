@@ -8,14 +8,20 @@ import (
 	"xhan-helper/internal/view"
 )
 
-func registerDevice(devRepo *service.DeviceRepo) gin.HandlerFunc {
+func registerDevice(devRepo *service.DeviceRepo, registrationSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			DeviceName string `json:"device_name"`
 			Platform   string `json:"platform"`
+			Secret     string `json:"secret"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			view.JSONError(c, 400, "invalid request")
+			return
+		}
+
+		if registrationSecret != "" && req.Secret != registrationSecret {
+			view.JSONError(c, 403, "invalid secret")
 			return
 		}
 

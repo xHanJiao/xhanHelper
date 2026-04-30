@@ -1,5 +1,6 @@
 server:
   mode: debug
+  registration_secret: dev-secret
 
 db:
   driver: sqlite

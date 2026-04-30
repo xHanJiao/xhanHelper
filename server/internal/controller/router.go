@@ -24,7 +24,7 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 	}))
 
 	// 无需认证
-	r.POST("/api/devices/register", registerDevice(devRepo))
+	r.POST("/api/devices/register", registerDevice(devRepo, cfg.Server.RegistrationSecret))
 
 	// 需要认证
 	auth := r.Group("/api")

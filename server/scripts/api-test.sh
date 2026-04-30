@@ -30,7 +30,7 @@ echo ""
 echo "【1/12】注册设备"
 RESP=$(curl -s -X POST "$BASE_URL/api/devices/register" \
     -H "Content-Type: application/json" \
-    -d '{"device_name":"api-test","platform":"macos"}')
+    -d '{"device_name":"api-test","platform":"macos","secret":"dev-secret"}')
 TOKEN=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_token',''))" 2>/dev/null)
 DEVICE_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_id',''))" 2>/dev/null)
 

@@ -11,7 +11,7 @@ PLATFORM="${2:-macos}"
 echo ">>> 注册设备: name=$DEVICE_NAME, platform=$PLATFORM"
 RESP=$(curl -s -X POST "$BASE_URL/api/devices/register" \
   -H "Content-Type: application/json" \
-  -d "{\"device_name\":\"$DEVICE_NAME\",\"platform\":\"$PLATFORM\"}")
+  -d "{\"device_name\":\"$DEVICE_NAME\",\"platform\":\"$PLATFORM\",\"secret\":\"dev-secret\"}")
 
 echo "$RESP" | python3 -m json.tool 2>/dev/null || echo "$RESP"
 

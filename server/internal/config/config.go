@@ -16,8 +16,9 @@ type Config struct {
 
 // ServerConfig — HTTP 服务配置
 type ServerConfig struct {
-	Port int    `yaml:"port"`
-	Mode string `yaml:"mode"` // debug | release
+	Port               int    `yaml:"port"`
+	Mode               string `yaml:"mode"`                // debug | release
+	RegistrationSecret string `yaml:"registration_secret"` // 设备注册密钥
 }
 
 // DBConfig — 数据库配置
@@ -99,6 +100,9 @@ func merge(dst, src *Config) {
 	}
 	if src.Server.Mode != "" {
 		dst.Server.Mode = src.Server.Mode
+	}
+	if src.Server.RegistrationSecret != "" {
+		dst.Server.RegistrationSecret = src.Server.RegistrationSecret
 	}
 	if src.DB.Driver != "" {
 		dst.DB.Driver = src.DB.Driver

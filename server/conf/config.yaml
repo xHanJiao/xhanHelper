@@ -1,0 +1,18 @@
+server:
+  port: 8080
+  mode: debug          # debug | release
+
+db:
+  driver: mysql         # mysql | sqlite
+  host: 127.0.0.1
+  port: 3306
+  database: xhan_helper
+  user: root
+  password: ${DB_PASSWORD}
+  charset: utf8mb4
+
+llm:
+  provider: doubao
+  api_key: ${LLM_API_KEY}
+  model: doubao-seed-1-8-251228
+  base_url: https://ark.cn-beijing.volces.com/api/v3

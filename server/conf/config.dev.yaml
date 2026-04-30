@@ -1,0 +1,6 @@
+server:
+  mode: debug
+
+db:
+  driver: sqlite
+  database: data/xhan_helper.db

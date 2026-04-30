@@ -1,0 +1,26 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build
+xhan-helper
+/tmp/
+
+# SQLite
+*.db
+
+# Go
+/server/vendor/
+
+# Swift/Xcode
+/client/build/
+/client/*.xcuserdata/
+/client/*.xcworkspace/xcuserdata/
+DerivedData/
+*.xcuserstate

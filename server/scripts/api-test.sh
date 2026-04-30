@@ -1,5 +1,5 @@
 #!/bin/bash
-# API 自动化测试 — P1: 注册 + 聊天 + 会话 + 记账全流程
+# API 自动化测试 — 注册 + 聊天 + 会话 + 记账 + CSV导入
 # 用法: make test
 set -e
 
@@ -189,6 +189,36 @@ for b in json.load(sys.stdin):
 print('found' if found else 'not_found')
 " 2>/dev/null)
 assert "账单已不在列表中" "not_found" "$DELETED"
+
+# ═══════════════════════════════════════════
+# P3: CSV 导入测试
+# ═══════════════════════════════════════════
+
+# ── 13. CSV 导入 ──
+echo ""
+echo "【13/15】CSV 导入"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+IMPORT_RESULT=$(curl -s -X POST "$BASE_URL/api/bills/import" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: text/plain" \
+    --data-binary @"$SCRIPT_DIR/test-bills.csv")
+assert "导入成功 imported > 0" '"imported":4' "$IMPORT_RESULT"
+assert "无跳过 skipped = 0"   '"skipped":0'   "$IMPORT_RESULT"
+
+# ── 14. 导入后确认总数 ──
+echo ""
+echo "【14/15】REST API — 导入后账单总数"
+BILLS=$(curl -s "$BASE_URL/api/bills" \
+    -H "Authorization: Bearer $TOKEN")
+COUNT=$(echo "$BILLS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null)
+assert "账单总数 = 4" "4" "$COUNT"
+
+# ── 15. 验证导入数据内容 ──
+echo ""
+echo "【15/15】REST API — 验证导入数据"
+assert "包含眼镜账单" "眼镜" "$BILLS"
+assert "包含瑞幸咖啡"  "瑞幸咖啡" "$BILLS"
+assert "金额 949 存在" "949" "$BILLS"
 
 # ── 结果汇总 ──
 echo ""

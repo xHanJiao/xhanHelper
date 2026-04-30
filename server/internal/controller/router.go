@@ -35,6 +35,7 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 		auth.GET("/conversations/:id/messages", getMessages(convRepo, msgRepo))
 		// P1: 账单 API
 		auth.GET("/bills", billHandler.ListBills)
+		auth.POST("/bills/import", billHandler.ImportBills)
 	}
 
 	return r

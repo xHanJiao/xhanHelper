@@ -3,16 +3,16 @@ package controller
 import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"xhan-helper/internal/agent"
 	"xhan-helper/internal/config"
-	"xhan-helper/internal/llm"
 	"xhan-helper/internal/middleware"
 	"xhan-helper/internal/service"
 )
 
 // NewRouter 注册所有路由
-func NewRouter(cfg *config.Config, llmClient llm.LLMClient,
+func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 	devRepo *service.DeviceRepo, convRepo *service.ConversationRepo,
-	msgRepo *service.MessageRepo) *gin.Engine {
+	msgRepo *service.MessageRepo, billHandler *BillHandler) *gin.Engine {
 
 	r := gin.Default()
 
@@ -30,9 +30,11 @@ func NewRouter(cfg *config.Config, llmClient llm.LLMClient,
 	auth := r.Group("/api")
 	auth.Use(middleware.Auth(devRepo))
 	{
-		auth.POST("/chat", chat(llmClient, convRepo, msgRepo))
+		auth.POST("/chat", chat(orch, convRepo, msgRepo))
 		auth.GET("/conversations", listConversations(convRepo))
 		auth.GET("/conversations/:id/messages", getMessages(convRepo, msgRepo))
+		// P1: 账单 API
+		auth.GET("/bills", billHandler.ListBills)
 	}
 
 	return r

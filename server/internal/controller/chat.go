@@ -6,13 +6,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"xhan-helper/internal/agent"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
 
-func chat(llmClient llm.LLMClient, convRepo *service.ConversationRepo,
+func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 	msgRepo *service.MessageRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
@@ -52,7 +53,7 @@ func chat(llmClient llm.LLMClient, convRepo *service.ConversationRepo,
 			return
 		}
 
-		// 加载历史
+		// 加载历史（包含刚保存的用户消息）
 		history, _ := msgRepo.ListByConversation(c.Request.Context(), conv.ID, 20)
 
 		// SSE headers
@@ -67,7 +68,8 @@ func chat(llmClient llm.LLMClient, convRepo *service.ConversationRepo,
 			return
 		}
 
-		events, err := llmClient.Chat(c.Request.Context(), &llm.ChatRequest{
+		events, err := orch.Run(c.Request.Context(), &agent.RunRequest{
+			DeviceID: device.ID,
 			Messages: buildLLMMessages(history),
 		})
 		if err != nil {
@@ -87,13 +89,19 @@ func chat(llmClient llm.LLMClient, convRepo *service.ConversationRepo,
 				fullContent.WriteString(evt.Content)
 				view.WriteSSE(w, flusher, "message",
 					`{"delta":"`+view.EscapeJSON(evt.Content)+`"}`)
+			case "tool_call":
+				view.WriteSSE(w, flusher, "tool_call", evt.Content)
+			case "tool_result":
+				view.WriteSSE(w, flusher, "tool_result", evt.Content)
 			case "done":
-				msgRepo.Create(c.Request.Context(), &model.Message{
-					ID:             uuid.New().String(),
-					ConversationID: conv.ID,
-					Role:           "assistant",
-					Content:        fullContent.String(),
-				})
+				if fullContent.Len() > 0 {
+					msgRepo.Create(c.Request.Context(), &model.Message{
+						ID:             uuid.New().String(),
+						ConversationID: conv.ID,
+						Role:           "assistant",
+						Content:        fullContent.String(),
+					})
+				}
 				view.WriteSSE(w, flusher, "done",
 					`{"conversation_id":"`+conv.ID+`"}`)
 			case "error":

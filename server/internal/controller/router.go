@@ -33,6 +33,8 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 		auth.POST("/chat", chat(orch, convRepo, msgRepo))
 		auth.GET("/conversations", listConversations(convRepo))
 		auth.GET("/conversations/:id/messages", getMessages(convRepo, msgRepo))
+		auth.PATCH("/conversations/:id", renameConversation(convRepo))
+		auth.DELETE("/conversations/:id", deleteConversation(convRepo))
 		// P1: 账单 API
 		auth.GET("/bills", billHandler.ListBills)
 		auth.GET("/bills/export", billHandler.ExportBills)

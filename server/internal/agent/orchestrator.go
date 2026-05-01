@@ -130,6 +130,22 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	return events, nil
 }
 
+// GenerateTitle 根据用户消息生成会话标题（异步调用，失败返回空字符串）
+func (o *Orchestrator) GenerateTitle(ctx context.Context, userMessage string) string {
+	resp, err := o.llmClient.ChatSync(ctx, &llm.ChatRequest{
+		SystemPrompt: "你是一个标题生成器，根据用户的消息内容生成一个10字以内的简短标题，只输出标题本身，不要加任何标点或引号。",
+		Messages:     []llm.Message{{Role: "user", Content: userMessage}},
+	})
+	if err != nil {
+		return ""
+	}
+	title := strings.TrimSpace(resp)
+	if len([]rune(title)) > 20 {
+		title = string([]rune(title)[:20])
+	}
+	return title
+}
+
 // parseLLMResponse 尝试从 LLM 回复中解析 JSON
 // 返回 nil 表示纯文本回复（不含 JSON）
 func parseLLMResponse(text string) *LLMResponse {

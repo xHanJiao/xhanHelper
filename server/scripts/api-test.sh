@@ -64,6 +64,7 @@ assert "包含 text_delta"          "delta"   "$SSE_OUT"
 assert "包含 done 事件"          "done"     "$SSE_OUT"
 assert "返回 conversation_id"    '[0-9a-f\-]{36}' "$CONV_ID"
 assert "返回 message_id"         '[0-9a-f\-]{36}' "$MSG_ID"
+assert "返回 title"             '"title":"'   "$SSE_OUT"
 
 # ── 4. 会话列表 ──
 echo ""
@@ -217,10 +218,59 @@ assert "账单总数 = 4" "4" "$COUNT"
 
 # ── 15. 验证导入数据内容 ──
 echo ""
-echo "【15/15】REST API — 验证导入数据"
+echo "【16/16】REST API — 验证导入数据"
 assert "包含眼镜账单" "眼镜" "$BILLS"
 assert "包含瑞幸咖啡"  "瑞幸咖啡" "$BILLS"
 assert "金额 949 存在" "949" "$BILLS"
+
+# ═══════════════════════════════════════════
+# 导出测试
+# ═══════════════════════════════════════════
+
+# ── 16. CSV 导出 ──
+echo ""
+echo "【16/16】CSV 导出"
+EXPORT=$(curl -s "$BASE_URL/api/bills/export?start_date=2026-01-01" \
+    -H "Authorization: Bearer $TOKEN")
+assert "导出包含标题行" "项目,实际消费" "$EXPORT"
+assert "导出包含眼镜"   "眼镜"   "$EXPORT"
+assert "导出包含瑞幸咖啡" "瑞幸咖啡" "$EXPORT"
+
+# ═══════════════════════════════════════════
+# 会话管理
+# ═══════════════════════════════════════════
+
+# ── 17. 重命名会话 ──
+echo ""
+echo "【17/19】重命名会话"
+RENAME_RESP=$(curl -s -X PATCH "$BASE_URL/api/conversations/$CONV_ID" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"title":"测试会话"}')
+assert "重命名返回 id"    "$CONV_ID"   "$RENAME_RESP"
+assert "重命名返回标题"    "测试会话"   "$RENAME_RESP"
+
+# ── 18. 删除会话 ──
+echo ""
+echo "【18/19】删除会话"
+DEL_RESP=$(curl -s -X DELETE "$BASE_URL/api/conversations/$CONV_ID" \
+    -H "Authorization: Bearer $TOKEN")
+assert "删除返回 deleted"  "deleted"    "$DEL_RESP"
+
+# ── 19. 确认已删除会话不在列表 ──
+echo ""
+echo "【19/19】确认已删除"
+CONV_LIST=$(curl -s "$BASE_URL/api/conversations" \
+    -H "Authorization: Bearer $TOKEN")
+# 如果列表为空，说明唯一会话已删除成功
+if [ "$CONV_LIST" = "[]" ] || [ "$CONV_LIST" = "null" ]; then
+    echo -e "\033[32m  ✅ 已删除不在列表\033[0m"
+    PASS=$((PASS + 1))
+else
+    echo -e "\033[31m  ❌ 已删除不在列表\033[0m"
+    echo -e "\033[31m     列表应为空，实际: $(echo $CONV_LIST | head -c 100)\033[0m"
+    FAIL=$((FAIL + 1))
+fi
 
 # ── 结果汇总 ──
 echo ""

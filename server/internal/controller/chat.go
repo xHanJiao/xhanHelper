@@ -110,8 +110,19 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 				} else {
 					doneJSON = `{"conversation_id":"` + conv.ID + `"}`
 				}
-				view.WriteSSE(w, flusher, "done", doneJSON)
-			case "error":
+					if conv.Title == "新对话" && req.Message != "" {
+						if t := orch.GenerateTitle(c.Request.Context(), req.Message); t != "" {
+							convRepo.Rename(c.Request.Context(), conv.ID, t)
+							conv.Title = t
+							if msgID != "" {
+								doneJSON = `{"conversation_id":"` + conv.ID + `","message_id":"` + msgID + `","title":"` + t + `"}`
+							} else {
+								doneJSON = `{"conversation_id":"` + conv.ID + `","title":"` + t + `"}`
+							}
+						}
+					}
+					view.WriteSSE(w, flusher, "done", doneJSON)
+				case "error":
 				view.WriteSSE(w, flusher, "error", evt.Error)
 			}
 		}

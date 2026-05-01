@@ -46,3 +46,57 @@ func getMessages(convRepo *service.ConversationRepo,
 		view.JSONOK(c, msgs)
 	}
 }
+
+func renameConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		convID := c.Param("id")
+		dev, _ := c.Get("device")
+		device := dev.(*model.Device)
+
+		conv, err := convRepo.FindByID(c.Request.Context(), convID)
+		if err != nil || conv == nil {
+			view.JSONError(c, 404, "conversation not found")
+			return
+		}
+		if conv.DeviceID != device.ID {
+			view.JSONError(c, 403, "access denied")
+			return
+		}
+
+		var req struct{ Title string `json:"title"` }
+		if err := c.ShouldBindJSON(&req); err != nil || req.Title == "" {
+			view.JSONError(c, 400, "invalid title")
+			return
+		}
+
+		if err := convRepo.Rename(c.Request.Context(), convID, req.Title); err != nil {
+			view.JSONError(c, 500, "rename failed")
+			return
+		}
+		view.JSONOK(c, gin.H{"id": convID, "title": req.Title})
+	}
+}
+
+func deleteConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		convID := c.Param("id")
+		dev, _ := c.Get("device")
+		device := dev.(*model.Device)
+
+		conv, err := convRepo.FindByID(c.Request.Context(), convID)
+		if err != nil || conv == nil {
+			view.JSONError(c, 404, "conversation not found")
+			return
+		}
+		if conv.DeviceID != device.ID {
+			view.JSONError(c, 403, "access denied")
+			return
+		}
+
+		if err := convRepo.SoftDelete(c.Request.Context(), convID); err != nil {
+			view.JSONError(c, 500, "delete failed")
+			return
+		}
+		view.JSONOK(c, gin.H{"status": "deleted"})
+	}
+}

@@ -13,6 +13,6 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text)
     tool_calls_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     tool_call_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(default=func.now())
 
     conversation = relationship("Conversation", back_populates="messages")

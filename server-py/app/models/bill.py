@@ -28,7 +28,7 @@ class Bill(Base):
     owner: Mapped[str] = mapped_column(String(50), nullable=False)
     remark: Mapped[str] = mapped_column(String(200), default="")
     status: Mapped[int] = mapped_column(Integer, default=1)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
 
     device = relationship("Device", back_populates="bills")

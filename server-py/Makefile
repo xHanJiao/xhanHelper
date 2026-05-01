@@ -1,4 +1,8 @@
-.PHONY: dev test check-env clean help
+.PHONY: dev test check-env clean help deploy deploy-only logs
+
+SERVER_USER=work
+SERVER_HOST=YOUR_SERVER_HOST
+SERVER_PATH=/srv/xhan-helper-py
 
 # 开发服务
 dev: check-env
@@ -46,7 +50,32 @@ clean:
 	rm -f data/xhan_helper.db
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
+# 部署到阿里云
+deploy:
+	@echo "========================================"
+	@echo "       部署 Python 版到阿里云"
+	@echo "========================================"
+	@echo "1/2 上传代码..."
+	rsync -avz --exclude 'venv/' --exclude '__pycache__/' --exclude '*.db' --exclude '.git/' \
+		./ $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
+	@echo "2/2 重启服务..."
+	ssh $(SERVER_USER)@$(SERVER_HOST) "cd $(SERVER_PATH) && bash scripts/control.sh"
+	@echo ""
+	@echo "✅ 部署完成！"
+
+deploy-only:
+	rsync -avz --exclude 'venv/' --exclude '__pycache__/' --exclude '*.db' --exclude '.git/' \
+		./ $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
+	ssh $(SERVER_USER)@$(SERVER_HOST) "cd $(SERVER_PATH) && bash scripts/control.sh"
+	@echo "✅ 部署完成！"
+
+logs:
+	ssh $(SERVER_USER)@$(SERVER_HOST) "tail -f $(SERVER_PATH)/logs/xhan-helper-\$$(date +%Y-%m-%d).log"
+
 help:
-	@echo "  make dev     - 启动开发服务器"
-	@echo "  make test    - API 自动化测试"
-	@echo "  make clean   - 清理数据库和缓存"
+	@echo "  make dev         - 启动开发服务器"
+	@echo "  make test        - API 自动化测试"
+	@echo "  make deploy      - 部署到阿里云"
+	@echo "  make deploy-only - 仅上传+重启"
+	@echo "  make logs        - 远程日志"
+	@echo "  make clean       - 清理数据库和缓存"

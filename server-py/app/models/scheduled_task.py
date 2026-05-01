@@ -14,4 +14,4 @@ class ScheduledTask(Base):
     params_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     cron_expr: Mapped[str] = mapped_column(String(50), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(default=func.now())

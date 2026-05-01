@@ -12,8 +12,8 @@ class Device(Base):
     token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, default=lambda: str(_uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(100))
     platform: Mapped[str] = mapped_column(String(20), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    last_seen_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(default=func.now())
+    last_seen_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
 
     conversations = relationship("Conversation", back_populates="device")
     bills = relationship("Bill", back_populates="device")

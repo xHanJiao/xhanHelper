@@ -1,0 +1,8 @@
+server:
+  mode: release
+  port: 8089
+
+db:
+  driver: mysql
+  host: 127.0.0.1
+  database: xhan_helper

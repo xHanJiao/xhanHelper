@@ -11,7 +11,7 @@ class UserMemory(Base):
     device_id: Mapped[str] = mapped_column(String(36), ForeignKey("devices.id"), nullable=False)
     memory_key: Mapped[str] = mapped_column(String(200), nullable=False)
     memory_value: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
 
     __table_args__ = (UniqueConstraint("device_id", "memory_key"),)

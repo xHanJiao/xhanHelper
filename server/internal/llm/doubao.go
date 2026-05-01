@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -39,9 +40,9 @@ func NewDoubao(cfg config.LLMConfig) *DoubaoClient {
 	}
 }
 
-// Chat 流式对话 — 底层调非流式 /responses API，拿到完整回复后模拟流式输出
+// Chat 流式对话 — 底层调非流式 /chat/completions API，拿到完整回复后模拟流式输出
 func (c *DoubaoClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamEvent, error) {
-	fullText, err := c.callResponses(ctx, req)
+	fullText, err := c.callChatAPI(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +50,6 @@ func (c *DoubaoClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *Stre
 	events := make(chan *StreamEvent, 32)
 	go func() {
 		defer close(events)
-		// 按字符逐一发送，模拟流式输出
 		for _, r := range fullText {
 			select {
 			case <-ctx.Done():
@@ -65,102 +65,104 @@ func (c *DoubaoClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *Stre
 
 // ChatSync 非流式对话 — 直接返回完整回复
 func (c *DoubaoClient) ChatSync(ctx context.Context, req *ChatRequest) (string, error) {
-	return c.callResponses(ctx, req)
+	return c.callChatAPI(ctx, req)
 }
 
-// callResponses 调用豆包 /responses API（非流式）
-func (c *DoubaoClient) callResponses(ctx context.Context, req *ChatRequest) (string, error) {
+// callChatAPI 调用豆包 /chat/completions API (OpenAI 兼容)
+func (c *DoubaoClient) callChatAPI(ctx context.Context, req *ChatRequest) (string, error) {
 	body := c.buildBody(req)
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/responses", body)
+	url := c.baseURL + "/chat/completions"
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, body)
 	if err != nil {
 		return "", err
 	}
 	c.setHeaders(httpReq)
 
+	log.Printf("[llm] request: model=%s, msgs=%d, url=%s", c.model, len(req.Messages)+1, url)
+
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		log.Printf("[llm] http error: %v", err)
 		return "", fmt.Errorf("llm request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("[llm] read body error: %v", err)
 		return "", err
 	}
 
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("llm status %d: %s", resp.StatusCode, string(respBody))
+		log.Printf("[llm] status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
+		return "", fmt.Errorf("llm status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
 	}
 
-	return c.parseResponse(respBody)
+	content, err := c.parseResponse(respBody)
+	if err != nil {
+		log.Printf("[llm] parse error: %v, body=%s", err, string(respBody[:min(200, len(respBody))]))
+		return "", err
+	}
+	log.Printf("[llm] response: len=%d", len(content))
+	return content, nil
 }
 
 // buildBody 构造请求体
 func (c *DoubaoClient) buildBody(req *ChatRequest) io.Reader {
-	input := make([]map[string]string, 0)
+	messages := make([]map[string]string, 0)
 
 	sp := req.SystemPrompt
 	if sp == "" {
 		sp = defaultSystemPrompt
 	}
-	input = append(input, map[string]string{"role": "system", "content": sp})
+	messages = append(messages, map[string]string{"role": "system", "content": sp})
 
 	for _, m := range req.Messages {
-		input = append(input, map[string]string{"role": m.Role, "content": m.Content})
+		messages = append(messages, map[string]string{"role": m.Role, "content": m.Content})
 	}
 
 	payload := map[string]interface{}{
-		"model":             c.model,
-		"input":             input,
-		"store":             true,
-		"max_output_tokens": 2048,
+		"model":    c.model,
+		"messages": messages,
 	}
 
 	b, _ := json.Marshal(payload)
 	return bytes.NewReader(b)
 }
 
-// parseResponse 解析豆包 /responses 返回
+// parseResponse 解析 /chat/completions 返回
 func (c *DoubaoClient) parseResponse(body []byte) (string, error) {
 	var result struct {
-		Status string `json:"status"`
-		Output []struct {
-			Type    string `json:"type"`
-			Role    string `json:"role"`
-			Content []struct {
-				Text string `json:"text"`
-				Type string `json:"type"`
-			} `json:"content"`
-		} `json:"output"`
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
 		Error *struct {
 			Message string `json:"message"`
-			Type    string `json:"type"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return "", fmt.Errorf("parse response: %w", err)
 	}
 	if result.Error != nil {
-		return "", fmt.Errorf("llm error: %s - %s", result.Error.Type, result.Error.Message)
+		return "", fmt.Errorf("llm error: %s", result.Error.Message)
 	}
-	if result.Status != "completed" {
-		return "", fmt.Errorf("llm not completed, status: %s", result.Status)
+	if len(result.Choices) == 0 {
+		return "", fmt.Errorf("no choices in response")
 	}
-
-	for _, output := range result.Output {
-		if output.Type == "message" && output.Role == "assistant" {
-			for _, cnt := range output.Content {
-				if cnt.Type == "output_text" && cnt.Text != "" {
-					return cnt.Text, nil
-				}
-			}
-		}
-	}
-	return "", fmt.Errorf("no content in response")
+	return result.Choices[0].Message.Content, nil
 }
 
 func (c *DoubaoClient) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

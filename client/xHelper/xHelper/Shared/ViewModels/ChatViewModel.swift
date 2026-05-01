@@ -51,6 +51,7 @@ class ChatViewModel: ObservableObject {
     }
 
     private func setupSSE(baseURL: String, token: String, text: String) {
+        sseClient.disconnect()  // 先断开上一轮连接
         sseClient.onEvent = { [weak self] event in
             Task { @MainActor in
                 self?.handleEvent(event)
@@ -81,24 +82,41 @@ class ChatViewModel: ObservableObject {
             }
 
         case .toolCall:
-            let tc = parseToolCall(event.data)
-            currentToolCall = tc
+            currentToolCall = parseToolCall(event.data)
 
         case .toolResult:
-            currentToolCall = nil
-            // tool_result JSON 包含 success/error，可以用于 UI 提示
-            // P2 简单处理：收到 result 就清除 tool_call 状态
+            // 保持 currentToolCall 可见，直到 done 再清除
+            break
 
         case .done:
             isStreaming = false
+            currentToolCall = nil
             if let cid = parseConversationIdFromDone(event.data) {
                 conversationId = cid
+            }
+            if let msgID = parseMessageIdFromDone(event.data) {
+                replaceStreamingMessageID(with: msgID)
             }
 
         case .error:
             errorMessage = event.data
             isStreaming = false
         }
+    }
+
+    private func replaceStreamingMessageID(with msgID: String) {
+        guard let index = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
+        var msg = messages[index]
+        messages.remove(at: index)
+        msg = Message(
+            id: msgID,
+            conversationId: msg.conversationId,
+            role: msg.role,
+            content: msg.content,
+            toolCallsJSON: nil,
+            createdAt: msg.createdAt
+        )
+        messages.insert(msg, at: index)
     }
 
     private func updateLastAssistantMessage(_ content: String) {
@@ -134,5 +152,12 @@ class ChatViewModel: ObservableObject {
               let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
         else { return nil }
         return obj["conversation_id"]
+    }
+
+    private func parseMessageIdFromDone(_ data: String) -> String? {
+        guard let jsonData = data.data(using: .utf8),
+              let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
+        else { return nil }
+        return obj["message_id"]
     }
 }

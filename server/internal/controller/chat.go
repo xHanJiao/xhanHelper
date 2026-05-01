@@ -94,16 +94,23 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			case "tool_result":
 				view.WriteSSE(w, flusher, "tool_result", evt.Content)
 			case "done":
+				var msgID string
 				if fullContent.Len() > 0 {
+					msgID = uuid.New().String()
 					msgRepo.Create(c.Request.Context(), &model.Message{
-						ID:             uuid.New().String(),
+						ID:             msgID,
 						ConversationID: conv.ID,
 						Role:           "assistant",
 						Content:        fullContent.String(),
 					})
 				}
-				view.WriteSSE(w, flusher, "done",
-					`{"conversation_id":"`+conv.ID+`"}`)
+				var doneJSON string
+				if msgID != "" {
+					doneJSON = `{"conversation_id":"` + conv.ID + `","message_id":"` + msgID + `"}`
+				} else {
+					doneJSON = `{"conversation_id":"` + conv.ID + `"}`
+				}
+				view.WriteSSE(w, flusher, "done", doneJSON)
 			case "error":
 				view.WriteSSE(w, flusher, "error", evt.Error)
 			}

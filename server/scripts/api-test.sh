@@ -58,10 +58,12 @@ SSE_OUT=$(curl -N -s -X POST "$BASE_URL/api/chat" \
     -H "Content-Type: application/json" \
     -d '{"message":"你好，我叫小明，请记住我的名字"}' 2>&1)
 CONV_ID=$(echo "$SSE_OUT" | sed -n 's/.*"conversation_id":"\([^"]*\)".*/\1/p')
+MSG_ID=$(echo "$SSE_OUT" | sed -n 's/.*"message_id":"\([^"]*\)".*/\1/p')
 
-assert "包含 text_delta"   "delta"   "$SSE_OUT"
-assert "包含 done 事件"   "done"     "$SSE_OUT"
-assert "返回 conversation_id" '[0-9a-f\-]{36}' "$CONV_ID"
+assert "包含 text_delta"          "delta"   "$SSE_OUT"
+assert "包含 done 事件"          "done"     "$SSE_OUT"
+assert "返回 conversation_id"    '[0-9a-f\-]{36}' "$CONV_ID"
+assert "返回 message_id"         '[0-9a-f\-]{36}' "$MSG_ID"
 
 # ── 4. 会话列表 ──
 echo ""

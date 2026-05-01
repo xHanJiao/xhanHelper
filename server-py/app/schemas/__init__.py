@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field
+from datetime import datetime
+from pydantic import BaseModel, field_serializer
 
 
 class DeviceRegisterRequest(BaseModel):
@@ -21,10 +22,14 @@ class ConversationOut(BaseModel):
     id: str
     device_id: str
     title: str
-    created_at: str | None = None
-    updated_at: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("created_at", "updated_at")
+    def _serialize_dt(self, dt: datetime | None) -> str | None:
+        return dt.isoformat() if dt else None
 
 
 class MessageOut(BaseModel):
@@ -34,9 +39,13 @@ class MessageOut(BaseModel):
     content: str
     tool_calls_json: str | None = None
     tool_call_id: str | None = None
-    created_at: str | None = None
+    created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("created_at")
+    def _serialize_created(self, dt: datetime | None) -> str | None:
+        return dt.isoformat() if dt else None
 
 
 class BillOut(BaseModel):
@@ -51,9 +60,13 @@ class BillOut(BaseModel):
     owner: str
     remark: str
     status: int
-    created_at: str | None = None
+    created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("created_at")
+    def _serialize_created(self, dt: datetime | None) -> str | None:
+        return dt.isoformat() if dt else None
 
 
 class BillImportResult(BaseModel):

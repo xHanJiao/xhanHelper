@@ -55,8 +55,8 @@ SSE_OUT=$(curl -N -s -X POST "$BASE_URL/api/chat" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"message":"你好，我叫小明，请记住我的名字"}' 2>&1)
-CONV_ID=$(echo "$SSE_OUT" | sed -n 's/.*"conversation_id":"\([^"]*\)".*/\1/p')
-MSG_ID=$(echo "$SSE_OUT" | sed -n 's/.*"message_id":"\([^"]*\)".*/\1/p')
+CONV_ID=$(echo "$SSE_OUT" | sed -n 's/.*"conversation_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+MSG_ID=$(echo "$SSE_OUT" | sed -n 's/.*"message_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 
 assert "包含 text_delta"          "delta"   "$SSE_OUT"
 assert "包含 done 事件"          "done"     "$SSE_OUT"
@@ -100,7 +100,7 @@ SSE_OUT=$(curl -N -s -X POST "$BASE_URL/api/chat" \
     -H "Content-Type: application/json" \
     -d '{"message":"午饭花了35块钱，餐饮-堂食，帮我记账","conversation_id":"'$CONV_ID'"}' 2>&1)
 assert "包含 tool_call 事件"     "event: tool_call"   "$SSE_OUT"
-assert "function 为 create_bill" '"function":"create_bill"' "$SSE_OUT"
+assert "function 为 create_bill" '"function"[[:space:]]*:[[:space:]]*"create_bill"' "$SSE_OUT"
 assert "包含 tool_result 事件"   "event: tool_result" "$SSE_OUT"
 assert "tool_result success"     '"success":true'     "$SSE_OUT"
 
@@ -135,7 +135,7 @@ SSE_OUT=$(curl -N -s -X POST "$BASE_URL/api/chat" \
     -H "Content-Type: application/json" \
     -d '{"message":"帮我查一下最近的账单","conversation_id":"'$CONV_ID'"}' 2>&1)
 assert "包含 tool_call 事件"    "event: tool_call"    "$SSE_OUT"
-assert "function 为 query_bills" '"function":"query_bills"' "$SSE_OUT"
+assert "function 为 query_bills" '"function"[[:space:]]*:[[:space:]]*"query_bills"' "$SSE_OUT"
 assert "tool_result success"    '"success":true'      "$SSE_OUT"
 
 # ── 9. update_bill — 通过对话修改账单 ──
@@ -146,7 +146,7 @@ SSE_OUT=$(curl -N -s -X POST "$BASE_URL/api/chat" \
     -H "Content-Type: application/json" \
     -d '{"message":"帮我把 '$BILL_ID' 这笔账单改成40块钱","conversation_id":"'$CONV_ID'"}' 2>&1)
 assert "包含 tool_call 事件"     "event: tool_call"    "$SSE_OUT"
-assert "function 为 update_bill" '"function":"update_bill"' "$SSE_OUT"
+assert "function 为 update_bill" '"function"[[:space:]]*:[[:space:]]*"update_bill"' "$SSE_OUT"
 assert "tool_result success"     '"success":true'      "$SSE_OUT"
 
 # ── 10. REST API 确认修改 ──
@@ -171,7 +171,7 @@ SSE_OUT=$(curl -N -s -X POST "$BASE_URL/api/chat" \
     -H "Content-Type: application/json" \
     -d '{"message":"帮我把 '$BILL_ID' 这笔账单删掉","conversation_id":"'$CONV_ID'"}' 2>&1)
 assert "包含 tool_call 事件"     "event: tool_call"    "$SSE_OUT"
-assert "function 为 delete_bill" '"function":"delete_bill"' "$SSE_OUT"
+assert "function 为 delete_bill" '"function"[[:space:]]*:[[:space:]]*"delete_bill"' "$SSE_OUT"
 assert "tool_result success"     '"success":true'      "$SSE_OUT"
 
 # ── 12. REST API 确认删除 ──

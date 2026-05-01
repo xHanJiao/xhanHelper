@@ -10,11 +10,17 @@ class DeviceManager: ObservableObject {
     private let tokenKey = "xhan_device_token"
     private let deviceIdKey = "xhan_device_id"
 
-    // 与服务器 REGISTRATION_SECRET 一致
-    static let registrationSecret = "dev-secret"
+    // 开发/生产环境自动切换
+    #if DEBUG
+    static let registrationSecret = "REDACTED_DEVICE_REGISTRATION_SECRET"
+    static let defaultBaseURL = "https://helper.xhanx.cn"
+    #else
+    static let registrationSecret = "REDACTED_DEVICE_REGISTRATION_SECRET"
+    static let defaultBaseURL = "https://helper.xhanx.cn"
+    #endif
 
     var baseURL: String {
-        UserDefaults.standard.string(forKey: "xhan_server_url") ?? "http://localhost:8080"
+        UserDefaults.standard.string(forKey: "xhan_server_url") ?? Self.defaultBaseURL
     }
 
     init() {

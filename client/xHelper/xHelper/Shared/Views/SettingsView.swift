@@ -7,7 +7,7 @@ import AppKit
 
 struct SettingsView: View {
     @ObservedObject var deviceManager: DeviceManager
-    @AppStorage("xhan_server_url") private var serverURL = "http://localhost:8080"
+    @AppStorage("xhan_server_url") private var serverURL = DeviceManager.defaultBaseURL
 
     var body: some View {
         Form {

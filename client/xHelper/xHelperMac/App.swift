@@ -24,7 +24,6 @@ struct RegisterMacView: View {
     @AppStorage("has_registered") private var hasRegistered = false
     @State private var errorMessage: String?
     @State private var isRegistering = false
-    @State private var didAutoRegister = false
 
     var body: some View {
         VStack(spacing: 24) {
@@ -44,14 +43,9 @@ struct RegisterMacView: View {
                 if let err = errorMessage { Text(err).font(.caption).foregroundColor(.red) }
                 Button("重新注册") { Task { await performRegister() } }.buttonStyle(.borderedProminent)
             } else {
-                Text("首次启动，自动注册中...").foregroundColor(.secondary)
-                ProgressView()
-            }
-        }
-        .task {
-            if !hasRegistered && !didAutoRegister {
-                didAutoRegister = true
-                await performRegister()
+                Text("欢迎使用 xhanHelper").foregroundColor(.secondary)
+                if let err = errorMessage { Text(err).font(.caption).foregroundColor(.red) }
+                Button("开始使用") { Task { await performRegister() } }.buttonStyle(.borderedProminent)
             }
         }
     }

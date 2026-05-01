@@ -102,14 +102,14 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 				resJSON, _ := json.Marshal(result)
 				events <- &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)}
 
-				// 追加 tool result 到历史
+				// 追加 tool result 到历史（豆包不支持 role=tool，用 user 代替）
 				msgs = append(msgs, llm.Message{
-					Role:    "tool",
-					Content: string(resJSON),
+					Role:    "user",
+					Content: "[工具执行结果] " + string(resJSON),
 				})
 			}
 
-			// 如果 tool_calls 为空，说明是纯聊天 JSON → 输出 reply → done
+			// 如果 tool_calls 为空，说明是最终回复 → 输出 reply → done
 			if len(parsed.ToolCalls) == 0 {
 				for _, r := range parsed.Reply {
 					events <- &llm.StreamEvent{Type: "text_delta", Content: string(r)}
@@ -118,13 +118,8 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 				return
 			}
 
-			// tool_calls 非空，且 reply 中有文本 → 先输出 reply 再继续循环
-			if parsed.Reply != "" {
-				for _, r := range parsed.Reply {
-					events <- &llm.StreamEvent{Type: "text_delta", Content: string(r)}
-				}
-			}
-			// 继续下一轮迭代（LLM 会看到 tool results 后给出最终回复）
+			// tool_calls 非空 → 不输出文本，等下一轮 LLM 拿到 tool results 后的最终回复
+			// 继续下一轮迭代
 		}
 
 		// 超出最大迭代

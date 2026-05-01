@@ -87,7 +87,13 @@ deploy: build-linux
 	scp conf/config.yaml conf/config.prod.yaml $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/conf/
 	scp scripts/control-xhan-helper.sh $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
 	@echo "3/3 替换二进制并重启..."
-	ssh $(SERVER_USER)@$(SERVER_HOST) "cd $(SERVER_PATH) && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh"
+	@ssh $(SERVER_USER)@$(SERVER_HOST) "cd $(SERVER_PATH) && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || (\
+		echo ""; \
+		echo "❌ 启动失败，日志如下："; \
+		echo "========================================"; \
+		ssh $(SERVER_USER)@$(SERVER_HOST) "tail -50 $(SERVER_PATH)/logs/xhan-helper-\$$(date +%Y-%m-%d).log"; \
+		echo "========================================"; \
+		exit 1)
 	@echo ""
 	@echo "✅ 部署完成！"
 
@@ -103,7 +109,13 @@ deploy-only:
 	scp conf/config.yaml conf/config.prod.yaml $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/conf/
 	scp scripts/control-xhan-helper.sh $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
 	@echo "3/3 替换二进制并重启..."
-	ssh $(SERVER_USER)@$(SERVER_HOST) "cd $(SERVER_PATH) && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh"
+	@ssh $(SERVER_USER)@$(SERVER_HOST) "cd $(SERVER_PATH) && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || (\
+		echo ""; \
+		echo "❌ 启动失败，日志如下："; \
+		echo "========================================"; \
+		ssh $(SERVER_USER)@$(SERVER_HOST) "tail -50 $(SERVER_PATH)/logs/xhan-helper-\$$(date +%Y-%m-%d).log"; \
+		echo "========================================"; \
+		exit 1)
 	@echo ""
 	@echo "✅ 部署完成！"
 

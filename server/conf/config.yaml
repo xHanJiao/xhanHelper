@@ -8,8 +8,8 @@ db:
   host: 127.0.0.1
   port: 3306
   database: xhan_helper
-  user: root
-  password: ${DB_PASSWORD}
+  user: xhan_helper_user
+  password: ${XHAN_HELPER_DB_PASSWORD}
   charset: utf8mb4
 
 llm:

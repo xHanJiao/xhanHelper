@@ -1,8 +1,9 @@
 #!/bin/bash
 
-# 加载用户环境变量（ssh 远程执行时不会自动 source）
-source ~/.bashrc 2>/dev/null || true
-source ~/.bash_profile 2>/dev/null || true
+# 加载用户环境变量（ssh 远程执行时不会自动 source，覆盖 bash 和 zsh）
+for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do
+    source "$f" 2>/dev/null || true
+done
 
 APP_NAME="xhan-helper"
 APP_PATH="/srv/xhan-helper"

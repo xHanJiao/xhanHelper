@@ -90,7 +90,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 			},
 		},
 		{
-			Name:        "delete_bill",
+			Name:        "cancel_bill",
 			Description: "删除一笔账单（软删除），id 必填",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -134,7 +134,7 @@ func (t *BookkeepingTool) Execute(ec *ExecuteContext, funcName string, args json
 		return t.createBill(ec, args)
 	case "update_bill":
 		return t.updateBill(ec, args)
-	case "delete_bill":
+	case "cancel_bill":
 		return t.deleteBill(ec, args)
 	case "query_bills":
 		return t.queryBills(ec, args)

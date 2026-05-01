@@ -32,3 +32,7 @@ func (c *ClaudeClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *Stre
 func (c *ClaudeClient) ChatSync(ctx context.Context, req *ChatRequest) (string, error) {
 	return "", fmt.Errorf("claude client not implemented yet")
 }
+
+func (c *ClaudeClient) BuildSystemPrompt(base string, tools []ToolDefinition) string {
+	return base
+}

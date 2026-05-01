@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"xhan-helper/internal/llm"
 )
 
 // Registry — 工具注册表
@@ -25,6 +27,27 @@ func (r *Registry) Register(t Tool) {
 // Get 按名称获取工具
 func (r *Registry) Get(name string) Tool {
 	return r.tools[name]
+}
+
+// GetLLMTools 导出所有工具定义（供 LLM native function calling）
+func (r *Registry) GetLLMTools() []llm.ToolDefinition {
+	defs := make([]llm.ToolDefinition, 0, len(r.tools))
+	for _, t := range r.tools {
+		funcs := make([]llm.FuncDef, len(t.Functions()))
+		for i, f := range t.Functions() {
+			funcs[i] = llm.FuncDef{
+				Name:        f.Name,
+				Description: f.Description,
+				Parameters:  f.Parameters,
+			}
+		}
+		defs = append(defs, llm.ToolDefinition{
+			Name:        t.Name(),
+			Description: t.Description(),
+			Functions:   funcs,
+		})
+	}
+	return defs
 }
 
 // GeneratePrompt 生成工具定义文本，追加到 system prompt 中

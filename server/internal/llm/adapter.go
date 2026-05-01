@@ -4,11 +4,10 @@ import "context"
 
 // LLMClient — 所有 LLM 厂商必须实现的接口
 type LLMClient interface {
-	// Chat 流式对话，返回事件 channel。适合前端 SSE 推送
 	Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamEvent, error)
-
-	// ChatSync 非流式对话，等待完整回复。适合后台任务
 	ChatSync(ctx context.Context, req *ChatRequest) (string, error)
+	// BuildSystemPrompt 根据厂商特性，为 base prompt 追加工具指令
+	BuildSystemPrompt(base string, tools []ToolDefinition) string
 }
 
 // ChatRequest — LLM 对话请求
@@ -24,11 +23,19 @@ type Message struct {
 	Content string
 }
 
+// FuncDef — 单个函数定义
+type FuncDef struct {
+	Name        string
+	Description string
+	Parameters  map[string]interface{} // JSON Schema
+}
+
 // ToolDefinition — 工具定义（供 function calling）
 type ToolDefinition struct {
 	Name        string
 	Description string
 	Parameters  map[string]interface{} // JSON Schema
+	Functions   []FuncDef              // 该工具下的所有函数
 }
 
 // StreamEvent — 流式响应事件

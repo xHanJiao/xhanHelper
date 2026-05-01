@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"xhan-helper/internal/config"
@@ -99,7 +100,7 @@ func (c *DoubaoClient) callChatAPI(ctx context.Context, req *ChatRequest) (strin
 		return "", fmt.Errorf("llm status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
 	}
 
-	content, err := c.parseResponse(respBody)
+	content, err := parseChatResponse(respBody)
 	if err != nil {
 		log.Printf("[llm] parse error: %v, body=%s", err, string(respBody[:min(200, len(respBody))]))
 		return "", err
@@ -131,28 +132,47 @@ func (c *DoubaoClient) buildBody(req *ChatRequest) io.Reader {
 	return bytes.NewReader(b)
 }
 
-// parseResponse 解析 /chat/completions 返回
-func (c *DoubaoClient) parseResponse(body []byte) (string, error) {
-	var result struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
+// BuildSystemPrompt 豆包不支持原生 function calling，需要 prompt engineering
+func (c *DoubaoClient) BuildSystemPrompt(base string, tools []ToolDefinition) string {
+	if len(tools) == 0 {
+		return base
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("parse response: %w", err)
+	var b strings.Builder
+	b.WriteString(base)
+	b.WriteString("\n\n===== 工具使用 =====\n")
+	for _, t := range tools {
+		for _, fn := range t.Functions {
+			b.WriteString(fmt.Sprintf("%s: %s\n", fn.Name, fn.Description))
+			if props, ok := fn.Parameters["properties"].(map[string]interface{}); ok {
+				required := make(map[string]bool)
+				if reqs, ok := fn.Parameters["required"].([]interface{}); ok {
+					for _, r := range reqs {
+						required[r.(string)] = true
+					}
+				}
+				for key, val := range props {
+					prop := val.(map[string]interface{})
+					typ, _ := prop["type"].(string)
+					desc, _ := prop["description"].(string)
+					req := ""
+					if required[key] {
+						req = " (必填)"
+					}
+					b.WriteString(fmt.Sprintf("  - %s (%s%s): %s\n", key, typ, req, desc))
+					if enumVals, ok := prop["enum"].([]interface{}); ok {
+						vals := make([]string, len(enumVals))
+						for i, v := range enumVals { vals[i] = fmt.Sprint(v) }
+						b.WriteString(fmt.Sprintf("    可选值: %s\n", strings.Join(vals, "/")))
+					}
+				}
+			}
+			b.WriteString("\n")
+		}
 	}
-	if result.Error != nil {
-		return "", fmt.Errorf("llm error: %s", result.Error.Message)
-	}
-	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("no choices in response")
-	}
-	return result.Choices[0].Message.Content, nil
+	b.WriteString("===== 输出格式 =====\n")
+	b.WriteString("需要调用工具时输出 JSON: {\"reply\":\"给用户的回复\",\"tool_calls\":[{\"tool\":\"<工具名>\",\"function\":\"<函数名>\",\"args\":{...}}]}\n")
+	b.WriteString("不确定分类时反问用户，不要瞎猜。\n")
+	return b.String()
 }
 
 func (c *DoubaoClient) setHeaders(req *http.Request) {

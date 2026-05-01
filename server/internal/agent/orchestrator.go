@@ -43,7 +43,7 @@ func New(llmClient llm.LLMClient, registry *tool.Registry) *Orchestrator {
 
 // Run 启动 ReAct 循环，返回事件 channel
 func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.StreamEvent, error) {
-	sysPrompt := baseSystemPrompt + o.registry.GeneratePrompt()
+	sysPrompt := o.llmClient.BuildSystemPrompt(baseSystemPrompt, o.registry.GetLLMTools())
 
 	msgs := make([]llm.Message, len(req.Messages))
 	copy(msgs, req.Messages)
@@ -64,6 +64,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 			resp, err := o.llmClient.ChatSync(ctx, &llm.ChatRequest{
 				SystemPrompt: sysPrompt,
 				Messages:     msgs,
+			Tools:        o.registry.GetLLMTools(),
 			})
 			if err != nil {
 				events <- &llm.StreamEvent{Type: "error", Error: err.Error()}

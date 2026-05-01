@@ -11,6 +11,8 @@ func NewClient(cfg config.LLMConfig) (LLMClient, error) {
 	switch cfg.Provider {
 	case "doubao":
 		return NewDoubao(cfg), nil
+	case "deepseek":
+		return NewDeepSeek(cfg), nil
 	case "claude":
 		return NewClaude(cfg), nil
 	default:

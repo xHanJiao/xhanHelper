@@ -1,4 +1,23 @@
-.PHONY: dev check-env build clean test
+.PHONY: dev check-env build clean test build-linux deploy deploy-only help logs
+
+# 服务器配置
+SERVER_USER=work
+SERVER_HOST=YOUR_SERVER_HOST
+SERVER_PATH=/srv/xhan-helper
+BINARY=xhan-helper
+OUTPUT_DIR=dist
+
+# 默认：显示帮助
+help:
+	@echo "可用的 make 命令："
+	@echo "  make dev            - 本地开发模式启动（dev环境，使用SQLite）"
+	@echo "  make build          - 本地编译（当前系统）"
+	@echo "  make build-linux    - 交叉编译 Linux amd64 版本（用于阿里云服务器）"
+	@echo "  make deploy         - 编译并部署到阿里云服务器（上传二进制+conf）"
+	@echo "  make deploy-only    - 仅上传已编译的二进制和conf（不重新编译）"
+	@echo "  make test           - API 自动化测试 (34项)"
+	@echo "  make logs           - 实时查看远程服务器日志 (tail -f)"
+	@echo "  make clean          - 清理编译产物"
 
 # 启动开发服务器
 dev: check-env
@@ -49,7 +68,51 @@ test: check-env
 build:
 	go build -o xhan-helper ./cmd/xhan-helper/
 
+# 交叉编译 Linux amd64
+build-linux:
+	@echo "=== 交叉编译 Linux amd64 ==="
+	@mkdir -p $(OUTPUT_DIR)
+	GOOS=linux GOARCH=amd64 go build -o $(OUTPUT_DIR)/$(BINARY) ./cmd/xhan-helper/
+	@echo "编译完成: $(OUTPUT_DIR)/$(BINARY)"
+
+# 部署到阿里云：编译 + 上传 + 重启（一键）
+deploy: build-linux
+	@echo ""
+	@echo "========================================"
+	@echo "       部署到阿里云服务器"
+	@echo "========================================"
+	@echo "1/3 上传二进制..."
+	scp $(OUTPUT_DIR)/$(BINARY) $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/$(BINARY).tmp
+	@echo "2/3 上传配置文件 + 控制脚本..."
+	scp conf/config.yaml conf/config.prod.yaml $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/conf/
+	scp scripts/control-xhan-helper.sh $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
+	@echo "3/3 替换二进制并重启..."
+	ssh $(SERVER_USER)@$(SERVER_HOST) "cd $(SERVER_PATH) && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh"
+	@echo ""
+	@echo "✅ 部署完成！"
+
+# 仅上传 + 重启（不重新编译）
+deploy-only:
+	@echo "========================================"
+	@echo "       上传到阿里云服务器 (仅上传)"
+	@echo "========================================"
+	@test -f $(OUTPUT_DIR)/$(BINARY) || (echo "❌ 未找到编译产物，请先执行 make build-linux"; exit 1)
+	@echo "1/3 上传二进制..."
+	scp $(OUTPUT_DIR)/$(BINARY) $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/$(BINARY).tmp
+	@echo "2/3 上传配置文件 + 控制脚本..."
+	scp conf/config.yaml conf/config.prod.yaml $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/conf/
+	scp scripts/control-xhan-helper.sh $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
+	@echo "3/3 替换二进制并重启..."
+	ssh $(SERVER_USER)@$(SERVER_HOST) "cd $(SERVER_PATH) && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh"
+	@echo ""
+	@echo "✅ 部署完成！"
+
+# 实时查看远程日志
+logs:
+	ssh $(SERVER_USER)@$(SERVER_HOST) "tail -f $(SERVER_PATH)/logs/xhan-helper-\$$(date +%Y-%m-%d).log"
+
 # 清理
 clean:
 	rm -f xhan-helper
+	rm -rf $(OUTPUT_DIR)
 	rm -f data/xhan_helper.db

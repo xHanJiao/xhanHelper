@@ -5,6 +5,9 @@ struct ConversationListView: View {
     let onSelect: (String) -> Void
     let onNewChat: () -> Void
 
+    @State private var renameTarget: Conversation?
+    @State private var renameText = ""
+
     var body: some View {
         List {
             Section {
@@ -30,6 +33,22 @@ struct ConversationListView: View {
                                     .foregroundColor(.secondary)
                             }
                         }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                Task { await viewModel.delete(id: conv.id) }
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                        }
+                        .swipeActions(edge: .leading) {
+                            Button {
+                                renameTarget = conv
+                                renameText = conv.title
+                            } label: {
+                                Label("重命名", systemImage: "pencil")
+                            }
+                            .tint(.orange)
+                        }
                     }
                 }
             } header: {
@@ -38,6 +57,21 @@ struct ConversationListView: View {
         }
         .task { await viewModel.load() }
         .refreshable { await viewModel.load() }
+        .alert("重命名", isPresented: .init(
+            get: { renameTarget != nil },
+            set: { if !$0 { renameTarget = nil } }
+        )) {
+            TextField("标题", text: $renameText)
+            Button("确定") {
+                if let c = renameTarget {
+                    Task { await viewModel.rename(id: c.id, title: renameText) }
+                }
+                renameTarget = nil
+            }
+            Button("取消", role: .cancel) { renameTarget = nil }
+        } message: {
+            Text("输入新标题")
+        }
     }
 
     private func formatDate(_ iso: String) -> String {

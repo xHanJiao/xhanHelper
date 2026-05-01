@@ -106,12 +106,18 @@ class ChatViewModel: ObservableObject {
 
         case .done:
             isStreaming = false
-            currentToolCall = nil
             if let cid = parseConversationIdFromDone(event.data) {
                 conversationId = cid
             }
             if let msgID = parseMessageIdFromDone(event.data) {
                 replaceStreamingMessageID(with: msgID)
+            }
+            // 延迟 3 秒后清除工具卡片
+            let tc = currentToolCall
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                if currentToolCall?.function == tc?.function {
+                    currentToolCall = nil
+                }
             }
 
         case .error:

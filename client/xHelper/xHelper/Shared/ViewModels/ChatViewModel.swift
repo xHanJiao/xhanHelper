@@ -85,8 +85,24 @@ class ChatViewModel: ObservableObject {
             currentToolCall = parseToolCall(event.data)
 
         case .toolResult:
-            // 保持 currentToolCall 可见，直到 done 再清除
-            break
+            // 插入永久工具记录到消息列表
+            if let tc = currentToolCall {
+                let summary = buildToolSummary(toolCall: tc, resultJSON: event.data)
+                let toolMsg = Message(
+                    id: UUID().uuidString,
+                    conversationId: conversationId ?? "",
+                    role: "tool",
+                    content: summary,
+                    toolCallsJSON: nil,
+                    createdAt: ISO8601DateFormatter().string(from: Date())
+                )
+                // 插入到 streaming assistant 消息之前
+                if let idx = messages.lastIndex(where: { $0.id == "__streaming__" }) {
+                    messages.insert(toolMsg, at: idx)
+                } else {
+                    messages.append(toolMsg)
+                }
+            }
 
         case .done:
             isStreaming = false
@@ -152,6 +168,20 @@ class ChatViewModel: ObservableObject {
               let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
         else { return nil }
         return obj["conversation_id"]
+    }
+
+    private func buildToolSummary(toolCall: ToolCallData, resultJSON: String) -> String {
+        var parts: [String] = []
+        parts.append(toolCall.displayName)
+        for (key, val) in toolCall.argsSummary {
+            parts.append("\(key): \(val)")
+        }
+        // 解析 tool_result 状态
+        if let d = resultJSON.data(using: .utf8),
+           let r = try? JSONDecoder().decode(ToolResultData.self, from: d) {
+            parts.append(r.success ? "✅ 成功" : "❌ \(r.error ?? "失败")")
+        }
+        return parts.joined(separator: " | ")
     }
 
     private func parseMessageIdFromDone(_ data: String) -> String? {

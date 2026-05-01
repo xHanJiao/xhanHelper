@@ -24,6 +24,24 @@ func (t *BookkeepingTool) Name() string        { return "bookkeeping" }
 func (t *BookkeepingTool) Description() string { return "记账工具，可以新增、修改、删除、查询账单" }
 
 func (t *BookkeepingTool) Functions() []FuncSchema {
+	// 共享的字段定义（有枚举约束）
+	category1Field := func() map[string]interface{} {
+		enums := make([]interface{}, len(model.Category1List))
+		for i, v := range model.Category1List { enums[i] = v }
+		return map[string]interface{}{"type": "string", "enum": enums, "description": "一级分类，必须从列表中选"}
+	}
+	category2Field := func() map[string]interface{} {
+		enums := make([]interface{}, len(model.Category2List))
+		for i, v := range model.Category2List { enums[i] = v }
+		return map[string]interface{}{"type": "string", "enum": enums, "description": "二级分类，必须从列表中选"}
+	}
+	consumeTypeField := func() map[string]interface{} {
+		return map[string]interface{}{"type": "string", "enum": []interface{}{"长期","一次性","周期"}, "description": "消费类型"}
+	}
+	payTypeField := func() map[string]interface{} {
+		return map[string]interface{}{"type": "string", "enum": []interface{}{"现金","公积金"}, "description": "支付方式，默认现金"}
+	}
+
 	return []FuncSchema{
 		{
 			Name:        "create_bill",
@@ -33,11 +51,11 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 				"properties": map[string]interface{}{
 					"item":         map[string]interface{}{"type": "string", "description": "项目名称"},
 					"amount":       map[string]interface{}{"type": "number", "description": "金额"},
-					"category1":    map[string]interface{}{"type": "string", "description": "一级分类"},
-					"category2":    map[string]interface{}{"type": "string", "description": "二级分类"},
-					"consume_type": map[string]interface{}{"type": "string", "description": "消费类型: 长期/一次性/周期"},
+					"category1":    category1Field(),
+					"category2":    category2Field(),
+					"consume_type": consumeTypeField(),
 					"date":         map[string]interface{}{"type": "string", "description": "日期 YYYY-MM-DD，默认今天"},
-					"pay_type":     map[string]interface{}{"type": "string", "description": "支付方式: 现金/公积金，默认现金"},
+					"pay_type":     payTypeField(),
 					"owner":        map[string]interface{}{"type": "string", "description": "归属人"},
 					"remark":       map[string]interface{}{"type": "string", "description": "备注"},
 				},
@@ -53,11 +71,11 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 					"id":           map[string]interface{}{"type": "string", "description": "账单ID (必填)"},
 					"item":         map[string]interface{}{"type": "string", "description": "项目名称"},
 					"amount":       map[string]interface{}{"type": "number", "description": "金额"},
-					"category1":    map[string]interface{}{"type": "string", "description": "一级分类"},
-					"category2":    map[string]interface{}{"type": "string", "description": "二级分类"},
-					"consume_type": map[string]interface{}{"type": "string", "description": "消费类型"},
+					"category1":    category1Field(),
+					"category2":    category2Field(),
+					"consume_type": consumeTypeField(),
 					"date":         map[string]interface{}{"type": "string", "description": "日期"},
-					"pay_type":     map[string]interface{}{"type": "string", "description": "支付方式"},
+					"pay_type":     payTypeField(),
 					"owner":        map[string]interface{}{"type": "string", "description": "归属人"},
 					"remark":       map[string]interface{}{"type": "string", "description": "备注"},
 				},

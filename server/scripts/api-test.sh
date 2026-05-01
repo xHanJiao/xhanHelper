@@ -100,7 +100,7 @@ echo "【6/12】create_bill — 对话创建账单"
 SSE_OUT=$(curl -N -s -X POST "$BASE_URL/api/chat" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"message":"帮我记一笔账，午饭花了35块钱","conversation_id":"'$CONV_ID'"}' 2>&1)
+    -d '{"message":"午饭花了35块钱，餐饮-堂食，帮我记账","conversation_id":"'$CONV_ID'"}' 2>&1)
 assert "包含 tool_call 事件"     "event: tool_call"   "$SSE_OUT"
 assert "function 为 create_bill" '"function":"create_bill"' "$SSE_OUT"
 assert "包含 tool_result 事件"   "event: tool_result" "$SSE_OUT"

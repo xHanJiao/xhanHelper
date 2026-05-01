@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Registry — 工具注册表
@@ -55,7 +56,17 @@ func (r *Registry) GeneratePrompt() string {
 						req = " (必填)"
 					}
 					buf.WriteString(fmt.Sprintf("    - %s (%s%s): %s\n", key, typ, req, desc))
+					// 显示枚举值列表
+					if enumVals, ok := prop["enum"].([]interface{}); ok && len(enumVals) > 0 {
+						vals := make([]string, len(enumVals))
+						for i, v := range enumVals {
+							vals[i] = fmt.Sprint(v)
+						}
+						buf.WriteString(fmt.Sprintf("      可选值: %s\n", strings.Join(vals, "/")))
+					}
 				}
+				// 显示 required 汇总（已在上面的循环标识，这里省略）
+				// buf.WriteString(fmt.Sprintf("    必填字段: %s\n", ...))
 			}
 			buf.WriteString("\n")
 		}
@@ -75,7 +86,13 @@ func (r *Registry) GeneratePrompt() string {
 	buf.WriteString("}\n\n")
 	buf.WriteString("如果不需要使用工具（纯聊天），直接回复纯文本即可。\n")
 	buf.WriteString("一条回复中 tool_calls 可以包含多个工具调用，按顺序执行。\n")
-	buf.WriteString("工具执行结果会追加到对话中，你可以据此继续回复用户。\n")
+	buf.WriteString("工具执行结果会追加到对话中，你可以据此继续回复用户。\n\n")
+
+	buf.WriteString("===== 重要规则 =====\n\n")
+	buf.WriteString("1. 带枚举值的字段必须严格从可选值中选择，不得自创分类！\n")
+	buf.WriteString("2. 如果用户描述模糊无法确定分类，必须用纯文本回复询问用户，不要猜测！\n")
+	buf.WriteString("   示例回复: \"这个消费是餐饮还是购物呢？\"\n")
+	buf.WriteString("3. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
 
 	return buf.String()
 }

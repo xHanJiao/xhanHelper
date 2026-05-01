@@ -14,7 +14,9 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(viewModel.messages) { msg in
-                            if msg.role == "user" {
+                            if msg.role == "tool" {
+                                ChatBubble(text: msg.content, isUser: false, isTool: true)
+                            } else if msg.role == "user" {
                                 ChatBubble(text: msg.content, isUser: true)
                             } else {
                                 ChatBubble(text: msg.content, isUser: false)

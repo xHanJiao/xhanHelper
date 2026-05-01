@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
@@ -20,26 +21,32 @@ func NewBookkeepingTool(billRepo *service.BillRepo) *BookkeepingTool {
 	return &BookkeepingTool{billRepo: billRepo}
 }
 
-func (t *BookkeepingTool) Name() string        { return "bookkeeping" }
-func (t *BookkeepingTool) Description() string { return "记账工具，可以新增、修改、删除、查询账单" }
+func (t *BookkeepingTool) Name() string { return "bookkeeping" }
+func (t *BookkeepingTool) Description() string {
+	return "记账工具，可以新增、修改、删除、查询账单"
+}
 
 func (t *BookkeepingTool) Functions() []FuncSchema {
 	// 共享的字段定义（有枚举约束）
 	category1Field := func() map[string]interface{} {
 		enums := make([]interface{}, len(model.Category1List))
-		for i, v := range model.Category1List { enums[i] = v }
-		return map[string]interface{}{"type": "string", "enum": enums, "description": "一级分类，必须从列表中选"}
+		for i, v := range model.Category1List {
+			enums[i] = v
+		}
+		return map[string]interface{}{"type": "string", "enum": enums, "description": "一级分类，尽量从列表中选，如果实在选不出来，可以询问用户后自定义输入"}
 	}
 	category2Field := func() map[string]interface{} {
 		enums := make([]interface{}, len(model.Category2List))
-		for i, v := range model.Category2List { enums[i] = v }
-		return map[string]interface{}{"type": "string", "enum": enums, "description": "二级分类，必须从列表中选"}
+		for i, v := range model.Category2List {
+			enums[i] = v
+		}
+		return map[string]interface{}{"type": "string", "enum": enums, "description": "二级分类，尽量从列表中选，如果实在选不出来，可以询问用户后自定义输入"}
 	}
 	consumeTypeField := func() map[string]interface{} {
-		return map[string]interface{}{"type": "string", "enum": []interface{}{"长期","一次性","周期"}, "description": "消费类型"}
+		return map[string]interface{}{"type": "string", "enum": []interface{}{"长期", "一次性", "周期"}, "description": "消费类型，可以根据账单的持续性选择，长期表示会持续很久的（比如房租），一次性表示只发生过一次的（比如买个东西），周期表示会定期发生的（比如每个月交水电费）"}
 	}
 	payTypeField := func() map[string]interface{} {
-		return map[string]interface{}{"type": "string", "enum": []interface{}{"现金","公积金"}, "description": "支付方式，默认现金"}
+		return map[string]interface{}{"type": "string", "enum": []interface{}{"现金", "公积金"}, "description": "支付方式，默认现金"}
 	}
 
 	return []FuncSchema{
@@ -97,7 +104,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 			Name:        "query_bills",
 			Description: "查询当前所有正常状态账单",
 			Parameters: map[string]interface{}{
-				"type": "object",
+				"type":       "object",
 				"properties": map[string]interface{}{},
 			},
 		},

@@ -3,6 +3,7 @@ package controller
 import (
 	"bufio"
 	"fmt"
+	"time"
 	"io"
 	"strconv"
 	"strings"
@@ -131,6 +132,41 @@ func (h *BillHandler) ImportBills(c *gin.Context) {
 		"total":    imported + skipped,
 		"errors":   errs,
 	})
+}
+
+// ExportBills GET /api/bills/export
+func (h *BillHandler) ExportBills(c *gin.Context) {
+	dev := c.MustGet("device").(*model.Device)
+
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+	category := c.Query("category")
+
+	// 默认最近7天
+	if startDate == "" && endDate == "" {
+		endDate = time.Now().Format("2006-01-02")
+		startDate = time.Now().AddDate(0, 0, -7).Format("2006-01-02")
+	}
+
+	bills, err := h.billRepo.ListFiltered(c.Request.Context(), dev.ID, startDate, endDate, category)
+	if err != nil {
+		view.JSONError(c, 500, "query bills failed")
+		return
+	}
+
+	var sb strings.Builder
+	// CSV 标题（与 import 格式一致）
+	sb.WriteString("项目,实际消费,一级分类,二级分类,消费类别,日期,消费类型,人员,备注\n")
+	for _, b := range bills {
+		sb.WriteString(fmt.Sprintf("%s,%.2f,%s,%s,%s,%s,%s,%s,%s\n",
+			b.Item, b.Amount, b.Category1, b.Category2,
+			b.ConsumeType, b.Date, b.PayType, b.Owner, b.Remark))
+	}
+
+	filename := fmt.Sprintf("xhan-helper-bills-%s.csv", time.Now().Format("2006-01-02"))
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", "attachment; filename="+filename)
+	c.String(200, sb.String())
 }
 
 func contains(list []string, s string) bool {

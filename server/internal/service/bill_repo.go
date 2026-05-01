@@ -53,3 +53,23 @@ func (r *BillRepo) ListByDevice(ctx context.Context, deviceID string) ([]model.B
 		Find(&list).Error
 	return list, err
 }
+
+// ListFiltered 按条件筛选账单
+func (r *BillRepo) ListFiltered(ctx context.Context, deviceID, startDate, endDate, category string) ([]model.Bill, error) {
+	q := r.db.WithContext(ctx).
+		Where("device_id = ? AND status = ?", deviceID, model.BillStatusNormal)
+
+	if startDate != "" {
+		q = q.Where("date >= ?", startDate)
+	}
+	if endDate != "" {
+		q = q.Where("date <= ?", endDate)
+	}
+	if category != "" {
+		q = q.Where("category1 = ?", category)
+	}
+
+	var list []model.Bill
+	err := q.Order("date DESC, created_at DESC").Find(&list).Error
+	return list, err
+}

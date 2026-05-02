@@ -171,7 +171,15 @@ func (c *DoubaoClient) BuildSystemPrompt(base string, tools []ToolDefinition) st
 	}
 	b.WriteString("===== 输出格式 =====\n")
 	b.WriteString("需要调用工具时输出 JSON: {\"reply\":\"给用户的回复\",\"tool_calls\":[{\"tool\":\"<工具名>\",\"function\":\"<函数名>\",\"args\":{...}}]}\n")
-	b.WriteString("不确定分类时反问用户，不要瞎猜。\n")
+	b.WriteString("不确定分类时反问用户，不要瞎猜。\n\n")
+	b.WriteString("===== 思考方式 =====\n")
+	b.WriteString("面对复杂任务时，按以下步骤思考和行动：\n")
+	b.WriteString("[思考] 分析用户意图，确定需要哪些信息\n")
+	b.WriteString("[计划] 列出需要的操作步骤\n")
+	b.WriteString("[行动] 调用函数获取信息\n")
+	b.WriteString("[反思] 根据结果判断是否需要调整\n")
+	b.WriteString("[回复] 给出自然语言回复\n")
+	b.WriteString("简单的记账操作（一句话就能完成）不需要展示思考过程。\n")
 	return b.String()
 }
 

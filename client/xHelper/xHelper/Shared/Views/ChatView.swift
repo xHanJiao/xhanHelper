@@ -23,6 +23,21 @@ struct ChatView: View {
                             }
                         }
 
+                        if let thought = viewModel.thoughtMessage {
+                            HStack {
+                                Image(systemName: "lightbulb")
+                                    .font(.caption)
+                                    .foregroundColor(.yellow)
+                                Text(thought)
+                                    .font(.caption)
+                                    .italic()
+                                    .foregroundColor(.gray)
+                                Spacer()
+                            }
+                            .padding(.horizontal)
+                            .transition(.opacity)
+                        }
+
                         if let status = viewModel.statusMessage {
                             HStack {
                                 Image(systemName: "brain.head.profile")

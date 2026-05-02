@@ -94,6 +94,15 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 				return
 			}
 
+			// 提取 JSON 前的思考文本作为 thought 事件
+			cleaned := strings.TrimSpace(resp)
+			if idx := strings.Index(cleaned, "{"); idx > 0 {
+				thoughtText := strings.TrimSpace(cleaned[:idx])
+				if thoughtText != "" {
+					events <- &llm.StreamEvent{Type: "thought", Content: thoughtText}
+				}
+			}
+
 			// 尝试解析 JSON
 			parsed := parseLLMResponse(resp)
 

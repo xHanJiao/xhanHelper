@@ -29,7 +29,8 @@ func (c *DeepSeekClient) BuildSystemPrompt(base string, tools []ToolDefinition) 
 	}
 	var b strings.Builder
 	b.WriteString(base)
-	b.WriteString("\n\n你可以使用以下函数。当用户请求涉及记账操作（记录、查询、修改、删除账单）时，必须调用对应函数，不要用纯文本模拟执行结果。不确定分类时反问用户。\n")
+	b.WriteString("\n\n你可以使用以下函数。当用户请求涉及记账操作（记录、查询、修改、删除账单）时，必须调用对应函数，不要用纯文本模拟执行结果。不确定分类时反问用户。\n\n")
+	b.WriteString("面对复杂任务，在调用函数的同时，务必在 content 中用一两句话说明你的思路（如\"先查这个月账单，再对比预算\"）。简单的记账操作不需要。\n")
 	for _, t := range tools {
 		for _, fn := range t.Functions {
 			b.WriteString(fmt.Sprintf("- %s: %s\n", fn.Name, fn.Description))

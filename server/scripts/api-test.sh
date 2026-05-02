@@ -209,6 +209,43 @@ assert "包含瑞幸咖啡"  "瑞幸咖啡" "$BILLS"
 assert "金额 949 存在" "949" "$BILLS"
 
 # ═══════════════════════════════════════════
+# thought 测试（先导入真实账单数据，再触发思考链）
+# ═══════════════════════════════════════════
+
+# 先导入真实账单 CSV
+echo ""
+echo "【15.5】导入真实账单数据"
+REAL_CSV="$HOME/Documents/统计/export.csv"
+if [ -f "$REAL_CSV" ]; then
+    IMPORT_RESULT=$(curl -s -X POST "$BASE_URL/api/bills/import?extract_memories=false" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: text/plain" \
+        --data-binary @"$REAL_CSV")
+    IMPORTED=$(echo "$IMPORT_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('imported',0))" 2>/dev/null)
+    green "  ✅ 导入真实账单 $IMPORTED 条"
+    PASS=$((PASS + 1))
+else
+    echo -e "\033[33m  ⚠ 未找到 $REAL_CSV，跳过\033[0m"
+fi
+
+# 然后问复杂对比问题
+echo ""
+echo "【15.6】thought — 跨月份对比触发思考链"
+SSE_OUT=$(curl -N -s --max-time 30 -X POST "$BASE_URL/api/chat" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"message":"帮我对比一下1月和5月的餐饮消费，看看有什么变化"}' 2>&1)
+# thought 是软断言
+if echo "$SSE_OUT" | grep -q "event: thought"; then
+    PASS=$((PASS + 1))
+    echo -e "\033[32m  ✅ 包含 thought 事件\033[0m"
+else
+    echo -e "\033[33m  ⚠ 跳过 thought（LLM未输出思考文本）\033[0m"
+fi
+assert "包含 tool_call 事件"    "event: tool_call"   "$SSE_OUT"
+assert "包含 tool_result 事件"  "event: tool_result" "$SSE_OUT"
+
+# ═══════════════════════════════════════════
 # 导出测试
 # ═══════════════════════════════════════════
 

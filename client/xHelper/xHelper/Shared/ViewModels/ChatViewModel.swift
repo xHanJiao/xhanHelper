@@ -7,6 +7,7 @@ class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isStreaming = false
     @Published var currentToolCall: ToolCallData?
+    @Published var thoughtMessage: String?
     @Published var statusMessage: String?
     @Published var errorMessage: String?
     @Published var conversationId: String?
@@ -43,6 +44,7 @@ class ChatViewModel: ObservableObject {
         isStreaming = true
         streamingContent = ""
         currentToolCall = nil
+        thoughtMessage = nil
         statusMessage = nil
         errorMessage = nil
 
@@ -77,6 +79,9 @@ class ChatViewModel: ObservableObject {
 
     private func handleEvent(_ event: StreamEvent) {
         switch event.type {
+        case .thought:
+            thoughtMessage = event.data
+
         case .message:
             if let delta = parseMessageDelta(event.data) {
                 streamingContent += delta
@@ -111,6 +116,7 @@ class ChatViewModel: ObservableObject {
 
         case .done:
             isStreaming = false
+            thoughtMessage = nil
             statusMessage = nil
             if let cid = parseConversationIdFromDone(event.data) {
                 conversationId = cid

@@ -2,7 +2,9 @@ package controller
 
 import (
 	"bufio"
+	"context"
 	"fmt"
+	"log"
 	"time"
 	"io"
 	"strconv"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"xhan-helper/internal/agent"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
@@ -17,12 +20,13 @@ import (
 
 // BillHandler — 账单 REST API
 type BillHandler struct {
-	billRepo *service.BillRepo
+	billRepo  *service.BillRepo
+	extractor *agent.MemoryExtractor
 }
 
 // NewBillHandler 创建 BillHandler
-func NewBillHandler(billRepo *service.BillRepo) *BillHandler {
-	return &BillHandler{billRepo: billRepo}
+func NewBillHandler(billRepo *service.BillRepo, extractor *agent.MemoryExtractor) *BillHandler {
+	return &BillHandler{billRepo: billRepo, extractor: extractor}
 }
 
 // ListBills GET /api/bills
@@ -126,12 +130,40 @@ func (h *BillHandler) ImportBills(c *gin.Context) {
 		imported++
 	}
 
+	// 如果请求了提取记忆，异步分析全部账单
+	if c.Query("extract_memories") == "true" && h.extractor != nil {
+		bills, err := h.billRepo.ListByDevice(c.Request.Context(), dev.ID)
+		if err == nil && len(bills) > 0 {
+			go func() {
+				log.Printf("[memory] CSV import: extracting memories from %d bills...", len(bills))
+				h.extractBillMemories(dev.ID, bills)
+			}()
+		}
+	}
+
 	view.JSONOK(c, gin.H{
 		"imported": imported,
 		"skipped":  skipped,
 		"total":    imported + skipped,
 		"errors":   errs,
 	})
+}
+
+// extractBillMemories 从账单数据中批量提取聚合记忆
+func (h *BillHandler) extractBillMemories(deviceID string, bills []model.Bill) {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("以下是用户的%d条账单记录:\n", len(bills)))
+	for _, b := range bills[:min(len(bills), 500)] {
+		sb.WriteString(fmt.Sprintf("%s | %.2f元 | %s/%s | %s | %s | %s\n",
+			b.Date, b.Amount, b.Category1, b.Category2, b.ConsumeType, b.PayType, b.Item))
+	}
+
+	prompt := fmt.Sprintf(`%s
+请从以上账单中提取用户的消费习惯、偏好和规律。
+关注: 常去的地点、消费水平、分类偏好、周期性的规律、变化趋势。
+用 "key: value" 格式，每条一句。没有值得提取的就回复"无"。`, sb.String())
+
+	h.extractor.ExtractFromPrompt(context.Background(), deviceID, prompt, "csv_import")
 }
 
 // ExportBills GET /api/bills/export
@@ -155,18 +187,26 @@ func (h *BillHandler) ExportBills(c *gin.Context) {
 	}
 
 	var sb strings.Builder
-	// CSV 标题（与 import 格式一致）
 	sb.WriteString("项目,实际消费,一级分类,二级分类,消费类别,日期,消费类型,人员,备注\n")
-	for _, b := range bills {
+	// 按日期正序排列（旧→新）
+	for i := len(bills) - 1; i >= 0; i-- {
+		b := bills[i]
 		sb.WriteString(fmt.Sprintf("%s,%.2f,%s,%s,%s,%s,%s,%s,%s\n",
 			b.Item, b.Amount, b.Category1, b.Category2,
-			b.ConsumeType, b.Date, b.PayType, b.Owner, b.Remark))
+			b.ConsumeType, strings.ReplaceAll(b.Date, "-", "/"), b.PayType, b.Owner, b.Remark))
 	}
 
 	filename := fmt.Sprintf("xhan-helper-bills-%s.csv", time.Now().Format("2006-01-02"))
 	c.Header("Content-Type", "text/csv; charset=utf-8")
 	c.Header("Content-Disposition", "attachment; filename="+filename)
 	c.String(200, sb.String())
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func contains(list []string, s string) bool {

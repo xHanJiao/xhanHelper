@@ -127,6 +127,62 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 	return nil
 }
 
+// ExtractFromPrompt 从任意文本中提取记忆（CSV 导入等场景）
+func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, deviceID, prompt, source string) {
+	resp, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
+		SystemPrompt: "你是记忆提取助手。只提取明确的事实、偏好、规律。不确定的不提取。",
+		Messages:     []llm.Message{{Role: "user", Content: prompt}},
+	})
+	if err != nil {
+		log.Printf("[memory] extract from prompt error: %v", err)
+		return
+	}
+
+	resp = strings.TrimSpace(resp)
+	if resp == "无" || resp == "" {
+		return
+	}
+
+	lines := strings.Split(resp, "\n")
+	extracted := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || line == "无" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		if key == "" || value == "" {
+			continue
+		}
+
+		existing, _ := e.store.FindSimilar(ctx, deviceID, key)
+		if existing != nil && existing.MemoryValue == value {
+			continue
+		}
+
+		memory := &model.UserMemory{
+			ID:             uuid.New().String(),
+			DeviceID:       deviceID,
+			MemoryKey:      key,
+			MemoryValue:    value,
+			Source:         source,
+			ConfirmCount:   1,
+			LastConfirmedAt: time.Now(),
+		}
+		if err := e.store.Store(ctx, memory); err != nil {
+			log.Printf("[memory] store error: %v", err)
+			continue
+		}
+		extracted++
+	}
+	log.Printf("[memory] extracted %d memories from prompt (source=%s)", extracted, source)
+}
+
 func (e *MemoryExtractor) updateProgress(ctx context.Context, conv *model.Conversation, lastMsgID string) {
 	now := time.Now()
 	conv.LastExtractedMsgID = &lastMsgID

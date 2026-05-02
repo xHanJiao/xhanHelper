@@ -24,13 +24,15 @@ type DeepSeekClient struct {
 
 // BuildSystemPrompt DeepSeek 支持原生 function calling，简要提示即可
 func (c *DeepSeekClient) BuildSystemPrompt(base string, tools []ToolDefinition) string {
-	if len(tools) == 0 {
-		return base
-	}
 	var b strings.Builder
 	b.WriteString(base)
-	b.WriteString("\n\n你可以使用以下函数。当用户请求涉及记账操作（记录、查询、修改、删除账单）时，必须调用对应函数，不要用纯文本模拟执行结果。不确定分类时反问用户。\n\n")
-	b.WriteString("面对复杂任务，在调用函数的同时，务必在 content 中用一两句话说明你的思路（如\"先查这个月账单，再对比预算\"）。简单的记账操作不需要。\n")
+	b.WriteString(fmt.Sprintf("\n当前时间: %s\n", time.Now().Format("2006-01-02 15:04:05 Monday")))
+	if len(tools) == 0 {
+		return b.String()
+	}
+	b.WriteString("\n你可以使用以下函数。当用户请求涉及记账操作（记录、查询、修改、删除账单）时，必须调用对应函数，不要用纯文本模拟执行结果。不确定分类时反问用户。\n\n")
+	b.WriteString("面对复杂任务（需要多个步骤、多种工具配合完成的任务），在调用函数的同时，务必在 content 中用一两句话说明你的思路。\n")
+	b.WriteString("对于需要多步规划的任务（如跨时间对比、统计分析等），优先使用 plan.execute 工具来规划执行。简单的记账操作直接调用对应工具即可。\n")
 	for _, t := range tools {
 		for _, fn := range t.Functions {
 			b.WriteString(fmt.Sprintf("- %s: %s\n", fn.Name, fn.Description))
@@ -83,7 +85,15 @@ func (c *DeepSeekClient) callAPI(ctx context.Context, req *ChatRequest) (string,
 	}
 	c.setHeaders(httpReq)
 
-	log.Printf("[deepseek] request: model=%s, msgs=%d, tools=%d, last_msg=%.100s", c.model, len(req.Messages)+1, len(req.Tools), req.Messages[len(req.Messages)-1].Content)
+	toolNames := make([]string, 0)
+	for _, t := range req.Tools {
+		for _, f := range t.Functions {
+			toolNames = append(toolNames, t.Name+"."+f.Name)
+		}
+	}
+	log.Printf("[deepseek] request: model=%s, msgs=%d, tools=[%s], last_msg=%s",
+		c.model, len(req.Messages)+1, strings.Join(toolNames, ","),
+		req.Messages[len(req.Messages)-1].Content)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -108,7 +118,7 @@ func (c *DeepSeekClient) callAPI(ctx context.Context, req *ChatRequest) (string,
 		return "", err
 	}
 	tcCount := strings.Count(result, "tool_calls")
-	log.Printf("[deepseek] response: len=%d, tool_calls=%d, preview=%s", len(result), tcCount, result[:min(200, len(result))])
+	log.Printf("[deepseek] response: len=%d, tool_calls=%d, text=%s", len(result), tcCount, result)
 	return result, nil
 }
 

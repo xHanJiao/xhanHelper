@@ -8,3 +8,4 @@ xhan-helper
 .idea/
 .vscode/
 *.swp
+logs/

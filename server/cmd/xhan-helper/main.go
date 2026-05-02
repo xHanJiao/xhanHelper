@@ -21,6 +21,8 @@ import (
 )
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal("load config:", err)

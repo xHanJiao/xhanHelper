@@ -102,10 +102,36 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "query_bills",
-			Description: "查询当前所有正常状态账单",
+			Description: "查询账单列表，可按时间范围和分类筛选",
 			Parameters: map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{},
+				"type": "object",
+				"properties": map[string]interface{}{
+					"start_date": map[string]interface{}{"type": "string", "description": "开始日期 YYYY-MM-DD，可选"},
+					"end_date":   map[string]interface{}{"type": "string", "description": "结束日期 YYYY-MM-DD，可选"},
+					"category":   map[string]interface{}{"type": "string", "description": "按一级分类筛选，可选"},
+				},
+			},
+		},
+		{
+			Name:        "get_monthly_stats",
+			Description: "按月汇总账单金额和数量，用于月度分析和对比",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"year":      map[string]interface{}{"type": "integer", "description": "年份，如2026。不传默认当前年"},
+					"category":  map[string]interface{}{"type": "string", "description": "按一级分类筛选，可选"},
+				},
+			},
+		},
+		{
+			Name:        "get_category_stats",
+			Description: "按分类汇总账单金额，用于消费结构分析",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"start_date": map[string]interface{}{"type": "string", "description": "开始日期，可选"},
+					"end_date":   map[string]interface{}{"type": "string", "description": "结束日期，可选"},
+				},
 			},
 		},
 	}
@@ -138,6 +164,10 @@ func (t *BookkeepingTool) Execute(ec *ExecuteContext, funcName string, args json
 		return t.deleteBill(ec, args)
 	case "query_bills":
 		return t.queryBills(ec, args)
+	case "get_monthly_stats":
+		return t.getMonthlyStats(ec, args)
+	case "get_category_stats":
+		return t.getCategoryStats(ec, args)
 	default:
 		return &Result{Success: false, Error: fmt.Sprintf("bookkeeping: unknown function %s", funcName)}
 	}
@@ -248,11 +278,115 @@ func (t *BookkeepingTool) deleteBill(ec *ExecuteContext, args json.RawMessage) *
 	return &Result{Success: true, Data: data}
 }
 
+type queryBillsArgs struct {
+	StartDate string `json:"start_date,omitempty"`
+	EndDate   string `json:"end_date,omitempty"`
+	Category  string `json:"category,omitempty"`
+}
+
 func (t *BookkeepingTool) queryBills(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a queryBillsArgs
+	json.Unmarshal(args, &a)
+
 	bills, err := t.billRepo.ListByDevice(ec.Ctx, ec.DeviceID)
 	if err != nil {
 		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
 	}
-	data, _ := json.Marshal(bills)
+
+	filtered := make([]model.Bill, 0)
+	for _, b := range bills {
+		if a.StartDate != "" && b.Date < a.StartDate {
+			continue
+		}
+		if a.EndDate != "" && b.Date > a.EndDate {
+			continue
+		}
+		if a.Category != "" && b.Category1 != a.Category {
+			continue
+		}
+		filtered = append(filtered, b)
+	}
+
+	data, _ := json.Marshal(filtered)
+	return &Result{Success: true, Data: data}
+}
+
+type statsArgs struct {
+	Year     int    `json:"year,omitempty"`
+	Category string `json:"category,omitempty"`
+}
+
+func (t *BookkeepingTool) getMonthlyStats(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a statsArgs
+	json.Unmarshal(args, &a)
+	if a.Year == 0 {
+		a.Year = time.Now().Year()
+	}
+
+	bills, err := t.billRepo.ListByDevice(ec.Ctx, ec.DeviceID)
+	if err != nil {
+		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
+	}
+
+	// 按月汇总: map["2026-01"] = {amount: xxx, count: n}
+	type monthly struct {
+		Amount float64 `json:"amount"`
+		Count  int     `json:"count"`
+	}
+	result := make(map[string]monthly)
+	for _, b := range bills {
+		if len(b.Date) < 7 || b.Date[:4] != fmt.Sprint(a.Year) {
+			continue
+		}
+		if a.Category != "" && b.Category1 != a.Category {
+			continue
+		}
+		month := b.Date[:7]
+		m := result[month]
+		m.Amount += b.Amount
+		m.Count++
+		result[month] = m
+	}
+
+	data, _ := json.Marshal(result)
+	return &Result{Success: true, Data: data}
+}
+
+type dateRangeArgs struct {
+	StartDate string `json:"start_date,omitempty"`
+	EndDate   string `json:"end_date,omitempty"`
+}
+
+func (t *BookkeepingTool) getCategoryStats(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a dateRangeArgs
+	json.Unmarshal(args, &a)
+
+	bills, err := t.billRepo.ListByDevice(ec.Ctx, ec.DeviceID)
+	if err != nil {
+		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
+	}
+
+	type catStat struct {
+		Amount float64 `json:"amount"`
+		Count  int     `json:"count"`
+	}
+	result := make(map[string]catStat)
+	var total float64
+	for _, b := range bills {
+		if a.StartDate != "" && b.Date < a.StartDate {
+			continue
+		}
+		if a.EndDate != "" && b.Date > a.EndDate {
+			continue
+		}
+		c := result[b.Category1]
+		c.Amount += b.Amount
+		c.Count++
+		result[b.Category1] = c
+		total += b.Amount
+	}
+	result["_total"] = catStat{Amount: total, Count: len(bills)}
+
+	data, _ := json.Marshal(result)
 	return &Result{Success: true, Data: data}
 }

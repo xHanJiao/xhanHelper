@@ -22,7 +22,8 @@ help:
 # 启动开发服务器
 dev: check-env
 	@echo "=== 启动 xhanHelper 开发服务器 (SQLite) ==="
-	go run ./cmd/xhan-helper/
+	@mkdir -p logs
+	@go run ./cmd/xhan-helper/ 2>&1 | tee logs/dev-$$(date +%Y-%m-%d).log
 
 # 检查必要的环境变量
 check-env:

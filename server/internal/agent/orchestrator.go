@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"sync"
 	"strings"
 
 	"xhan-helper/internal/llm"
@@ -79,7 +81,10 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 		for iter := 0; iter < maxIterations; iter++ {
 			select {
 			case <-ctx.Done():
-				return
+			log.Printf("[orch] context cancelled")
+			events <- &llm.StreamEvent{Type: "error", Error: "request cancelled"}
+			events <- &llm.StreamEvent{Type: "done"}
+			return
 			default:
 			}
 
@@ -115,33 +120,45 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 				return
 			}
 
-			// 有 tool_calls → 执行
-			// 将 LLM 的原始 JSON 追加到历史
+			// 有 tool_calls → 执行（2+ 时自动并发）
 			msgs = append(msgs, llm.Message{Role: "assistant", Content: resp})
 
-			for _, tc := range parsed.ToolCalls {
-				// 发送 tool_call 事件
+			if len(parsed.ToolCalls) >= 2 {
+				log.Printf("[orch] concurrent exec %d tools", len(parsed.ToolCalls))
+			}
+
+			type toolResult struct {
+				tc     tool.ToolCall
+				result *tool.Result
+			}
+
+			var wg sync.WaitGroup
+			results := make([]toolResult, len(parsed.ToolCalls))
+
+			for i, tc := range parsed.ToolCalls {
 				tcJSON, _ := json.Marshal(tc)
 				events <- &llm.StreamEvent{Type: "tool_call", Content: string(tcJSON)}
 
-				// 执行工具
-				ec := &tool.ExecuteContext{
-					Ctx:      ctx,
-					DeviceID: req.DeviceID,
-				}
-				result := o.registry.ExecuteByName(ec, tc.Tool, tc.Function, tc.Args)
+				wg.Add(1)
+				go func(idx int, call tool.ToolCall) {
+					defer wg.Done()
+					ec := &tool.ExecuteContext{Ctx: ctx, DeviceID: req.DeviceID}
+					results[idx] = toolResult{
+						tc:     call,
+						result: o.registry.ExecuteByName(ec, call.Tool, call.Function, call.Args),
+					}
+				}(i, tc)
+			}
+			wg.Wait()
 
-				// 发送 tool_result 事件
-				resJSON, _ := json.Marshal(result)
+			for _, r := range results {
+				resJSON, _ := json.Marshal(r.result)
 				events <- &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)}
-
-				// 追加 tool result 到历史（豆包不支持 role=tool，用 user 代替）
 				msgs = append(msgs, llm.Message{
 					Role:    "user",
 					Content: "[工具执行结果] " + string(resJSON),
 				})
 			}
-
 			// 如果 tool_calls 为空，说明是最终回复 → 输出 reply → done
 			if len(parsed.ToolCalls) == 0 {
 				for _, r := range parsed.Reply {

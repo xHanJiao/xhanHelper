@@ -231,7 +231,7 @@ fi
 # 然后问复杂对比问题
 echo ""
 echo "【15.6】thought — 跨月份对比触发思考链"
-SSE_OUT=$(curl -N -s --max-time 30 -X POST "$BASE_URL/api/chat" \
+SSE_OUT=$(curl -N -s --max-time 60 -X POST "$BASE_URL/api/chat" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"message":"帮我对比一下1月和5月的餐饮消费，看看有什么变化"}' 2>&1)

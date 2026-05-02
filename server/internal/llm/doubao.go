@@ -96,13 +96,13 @@ func (c *DoubaoClient) callChatAPI(ctx context.Context, req *ChatRequest) (strin
 	}
 
 	if resp.StatusCode != 200 {
-		log.Printf("[llm] status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
-		return "", fmt.Errorf("llm status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
+		log.Printf("[llm] status %d: %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("llm status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	content, err := parseChatResponse(respBody)
 	if err != nil {
-		log.Printf("[llm] parse error: %v, body=%s", err, string(respBody[:min(200, len(respBody))]))
+		log.Printf("[llm] parse error: %v, body=%s", err, string(respBody))
 		return "", err
 	}
 	log.Printf("[llm] response: len=%d", len(content))
@@ -134,11 +134,12 @@ func (c *DoubaoClient) buildBody(req *ChatRequest) io.Reader {
 
 // BuildSystemPrompt 豆包不支持原生 function calling，需要 prompt engineering
 func (c *DoubaoClient) BuildSystemPrompt(base string, tools []ToolDefinition) string {
-	if len(tools) == 0 {
-		return base
-	}
 	var b strings.Builder
 	b.WriteString(base)
+	b.WriteString(fmt.Sprintf("\n当前时间: %s\n", time.Now().Format("2006-01-02 15:04:05 Monday")))
+	if len(tools) == 0 {
+		return b.String()
+	}
 	b.WriteString("\n\n===== 工具使用 =====\n")
 	for _, t := range tools {
 		for _, fn := range t.Functions {

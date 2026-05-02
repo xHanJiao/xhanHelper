@@ -212,9 +212,12 @@ class ChatViewModel: ObservableObject {
         return obj["conversation_id"]
     }
 
-    private func parsePlanNodes(_ json: String) -> [PlanNodeInfo] {
-        guard let d = json.data(using: .utf8),
-              let raw = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return [] }
+private func parsePlanNodes(_ json: String) -> [PlanNodeInfo] {
+        guard let d = json.data(using: .utf8) else { return [] }
+        guard let raw = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else {
+            print("⚠️ parsePlanNodes FAILED, first 200 chars:", json.prefix(200))
+            return []
+        }
         var result: [PlanNodeInfo] = []
         if let nodes = raw["nodes"] as? [[String: String]] {
             result = nodes.map { PlanNodeInfo(id: $0["id"] ?? "", label: $0["label"] ?? "", status: $0["status"] ?? "", duration: nil) }

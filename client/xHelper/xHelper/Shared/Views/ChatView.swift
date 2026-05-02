@@ -14,7 +14,6 @@ struct ChatView: View {
                     .id("plan")
             }
 
-            Text("DEBUG planNodes=\(viewModel.planNodes.count)").font(.caption).foregroundColor(.red)
             // 消息列表
             ScrollViewReader { proxy in
                 ScrollView {

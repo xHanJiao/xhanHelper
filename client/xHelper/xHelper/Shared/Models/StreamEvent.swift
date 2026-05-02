@@ -22,10 +22,13 @@ struct ToolCallData: Codable {
 
     var displayName: String {
         switch function {
-        case "create_bill": return "记账"
-        case "update_bill": return "修改账单"
-        case "delete_bill": return "删除账单"
-        case "query_bills": return "查询账单"
+        case "create_bill":       return "记账"
+        case "update_bill":       return "修改账单"
+        case "cancel_bill":       return "作废账单"
+        case "query_bills":       return "查询账单"
+        case "get_current_time":  return "获取时间"
+        case "evaluate":          return "计算"
+        case "generate":          return "生成UUID"
         default: return function
         }
     }

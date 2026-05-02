@@ -1,8 +1,12 @@
 import Foundation
 
 enum StreamEventType: String {
-    case thought     // 思考过程
-    case status      // 状态提示
+    case plan             // 执行计划
+    case planNodeStart    // 节点开始
+    case planNodeDone     // 节点完成
+    case planDone         // 计划完成
+    case thought          // 思考过程
+    case status           // 状态提示
     case message     // text_delta
     case toolCall    // tool_call
     case toolResult  // tool_result
@@ -55,6 +59,12 @@ struct ToolCallData: Codable {
         }
         return result
     }
+}
+
+struct PlanNodeJSON: Codable {
+    let id: String
+    let label: String
+    let status: String
 }
 
 struct ToolResultData: Codable {

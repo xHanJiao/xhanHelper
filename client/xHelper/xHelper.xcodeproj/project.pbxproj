@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		BB79374A2FA5B8190062C582 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = BB7937492FA5B8190062C582 /* MarkdownUI */; };
+		BB79377D2FA5ECE90062C582 /* ForceSimulation in Frameworks */ = {isa = PBXBuildFile; productRef = BB79377C2FA5ECE90062C582 /* ForceSimulation */; };
+		BB79377F2FA5ECE90062C582 /* Grape in Frameworks */ = {isa = PBXBuildFile; productRef = BB79377E2FA5ECE90062C582 /* Grape */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -33,7 +35,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BB79377F2FA5ECE90062C582 /* Grape in Frameworks */,
 				BB79374A2FA5B8190062C582 /* MarkdownUI in Frameworks */,
+				BB79377D2FA5ECE90062C582 /* ForceSimulation in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -52,6 +56,7 @@
 			children = (
 				BB0A7E632FA4138E007BD7D6 /* xHelper */,
 				BB0A7E992FA41490007BD7D6 /* xHelperMac */,
+				BB79377B2FA5ECE90062C582 /* Frameworks */,
 				BB0A7E622FA4138E007BD7D6 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -63,6 +68,13 @@
 				BB0A7E982FA41490007BD7D6 /* xHelperMac.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		BB79377B2FA5ECE90062C582 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -86,6 +98,8 @@
 			name = xHelper;
 			packageProductDependencies = (
 				BB7937492FA5B8190062C582 /* MarkdownUI */,
+				BB79377C2FA5ECE90062C582 /* ForceSimulation */,
+				BB79377E2FA5ECE90062C582 /* Grape */,
 			);
 			productName = xHelper;
 			productReference = BB0A7E612FA4138E007BD7D6 /* xHelper.app */;
@@ -143,6 +157,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				BB7937482FA5B8190062C582 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
+				BB7937782FA5EA940062C582 /* XCRemoteSwiftPackageReference "Grape" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BB0A7E622FA4138E007BD7D6 /* Products */;
@@ -485,6 +500,14 @@
 				minimumVersion = 2.4.1;
 			};
 		};
+		BB7937782FA5EA940062C582 /* XCRemoteSwiftPackageReference "Grape" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/SwiftGraphs/Grape";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -492,6 +515,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = BB7937482FA5B8190062C582 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
 			productName = MarkdownUI;
+		};
+		BB79377C2FA5ECE90062C582 /* ForceSimulation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BB7937782FA5EA940062C582 /* XCRemoteSwiftPackageReference "Grape" */;
+			productName = ForceSimulation;
+		};
+		BB79377E2FA5ECE90062C582 /* Grape */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BB7937782FA5EA940062C582 /* XCRemoteSwiftPackageReference "Grape" */;
+			productName = Grape;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -7,6 +7,8 @@ class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isStreaming = false
     @Published var currentToolCall: ToolCallData?
+    @Published var planNodes: [PlanNodeInfo] = []
+    @Published var planEdges: [(Int, Int)] = []
     @Published var thoughtMessage: String?
     @Published var statusMessage: String?
     @Published var errorMessage: String?
@@ -79,6 +81,21 @@ class ChatViewModel: ObservableObject {
 
     private func handleEvent(_ event: StreamEvent) {
         switch event.type {
+        case .plan:
+            planNodes = parsePlanNodes(event.data)
+
+        case .planNodeStart:
+            updatePlanNode(id: parsePlanNodeID(event.data), status: "running")
+
+        case .planNodeDone:
+            updatePlanNode(id: parsePlanNodeID(event.data), status: "done")
+
+        case .planDone:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [self] in
+                planNodes = []
+                planEdges = []
+            }
+
         case .thought:
             thoughtMessage = event.data
 
@@ -193,6 +210,26 @@ class ChatViewModel: ObservableObject {
               let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
         else { return nil }
         return obj["conversation_id"]
+    }
+
+    private func parsePlanNodes(_ json: String) -> [PlanNodeInfo] {
+        guard let d = json.data(using: .utf8),
+              let obj = try? JSONDecoder().decode([String: [PlanNodeJSON]].self, from: d),
+              let nodes = obj["nodes"] else { return [] }
+        return nodes.map { PlanNodeInfo(id: $0.id, label: $0.label, status: $0.status, duration: nil) }
+    }
+
+    private func parsePlanNodeID(_ json: String) -> String {
+        guard let d = json.data(using: .utf8),
+              let obj = try? JSONDecoder().decode([String: String].self, from: d) else { return "" }
+        return obj["node_id"] ?? ""
+    }
+
+    private func updatePlanNode(id: String, status: String) {
+        guard let idx = planNodes.firstIndex(where: { $0.id == id }) else { return }
+        var node = planNodes[idx]
+        node = PlanNodeInfo(id: node.id, label: node.label, status: status, duration: node.duration)
+        planNodes[idx] = node
     }
 
     private func buildToolSummary(toolCall: ToolCallData, resultJSON: String) -> String {

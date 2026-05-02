@@ -80,8 +80,12 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private func dispatch(event: String, data: String) {
         let type: StreamEventType
         switch event {
-        case "thought":     type = .thought
-        case "status":      type = .status
+        case "plan":             type = .plan
+        case "plan_node_start":  type = .planNodeStart
+        case "plan_node_done":   type = .planNodeDone
+        case "plan_done":        type = .planDone
+        case "thought":          type = .thought
+        case "status":           type = .status
         case "message":     type = .message
         case "tool_call":   type = .toolCall
         case "tool_result": type = .toolResult

@@ -1,8 +1,0 @@
-server:
-  mode: debug
-
-db:
-  driver: sqlite
-  database: data/xhan_helper.db
-
-registration_secret: dev-secret

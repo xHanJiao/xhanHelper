@@ -89,6 +89,8 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 				fullContent.WriteString(evt.Content)
 				view.WriteSSE(w, flusher, "message",
 					`{"delta":"`+view.EscapeJSON(evt.Content)+`"}`)
+			case "status":
+				view.WriteSSE(w, flusher, "status", evt.Content)
 			case "tool_call":
 				view.WriteSSE(w, flusher, "tool_call", evt.Content)
 			case "tool_result":

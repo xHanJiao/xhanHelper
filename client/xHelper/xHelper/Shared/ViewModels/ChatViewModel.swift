@@ -7,6 +7,7 @@ class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isStreaming = false
     @Published var currentToolCall: ToolCallData?
+    @Published var statusMessage: String?
     @Published var errorMessage: String?
     @Published var conversationId: String?
 
@@ -42,6 +43,7 @@ class ChatViewModel: ObservableObject {
         isStreaming = true
         streamingContent = ""
         currentToolCall = nil
+        statusMessage = nil
         errorMessage = nil
 
         // 空 assistant 消息占位
@@ -81,6 +83,9 @@ class ChatViewModel: ObservableObject {
                 updateLastAssistantMessage(streamingContent)
             }
 
+        case .status:
+            statusMessage = parseStatus(event.data)
+
         case .toolCall:
             currentToolCall = parseToolCall(event.data)
 
@@ -106,6 +111,7 @@ class ChatViewModel: ObservableObject {
 
         case .done:
             isStreaming = false
+            statusMessage = nil
             if let cid = parseConversationIdFromDone(event.data) {
                 conversationId = cid
             }
@@ -114,7 +120,7 @@ class ChatViewModel: ObservableObject {
             }
             // 延迟 3 秒后清除工具卡片
             let tc = currentToolCall
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [self] in
                 if currentToolCall?.function == tc?.function {
                     currentToolCall = nil
                 }
@@ -162,6 +168,13 @@ class ChatViewModel: ObservableObject {
               let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
         else { return nil }
         return obj["delta"]
+    }
+
+    private func parseStatus(_ data: String) -> String? {
+        guard let jsonData = data.data(using: .utf8),
+              let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
+        else { return nil }
+        return obj["message"]
     }
 
     private func parseToolCall(_ data: String) -> ToolCallData? {

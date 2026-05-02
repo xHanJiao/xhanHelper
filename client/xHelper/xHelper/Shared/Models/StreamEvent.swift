@@ -1,6 +1,7 @@
 import Foundation
 
 enum StreamEventType: String {
+    case status      // 状态提示
     case message     // text_delta
     case toolCall    // tool_call
     case toolResult  // tool_result

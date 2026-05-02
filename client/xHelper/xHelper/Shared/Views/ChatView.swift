@@ -23,6 +23,20 @@ struct ChatView: View {
                             }
                         }
 
+                        if let status = viewModel.statusMessage {
+                            HStack {
+                                Image(systemName: "brain.head.profile")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text(status)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                            }
+                            .padding(.horizontal)
+                            .transition(.opacity)
+                        }
+
                         if let tc = viewModel.currentToolCall {
                             ToolCallCard(toolCall: tc)
                                 .id("tool_call")

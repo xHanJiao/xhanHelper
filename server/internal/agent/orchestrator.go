@@ -47,16 +47,19 @@ func New(llmClient llm.LLMClient, registry *tool.Registry, memoryStore MemorySto
 func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.StreamEvent, error) {
 	sysPrompt := o.llmClient.BuildSystemPrompt(baseSystemPrompt, o.registry.GetLLMTools())
 
-	// 检索相关记忆
+	// 检索相关记忆（在构建 system prompt 时同步完成）
+	var memoryNote string
 	if o.memoryStore != nil && len(req.Messages) > 0 {
 		lastMsg := req.Messages[len(req.Messages)-1].Content
-		if memories, err := o.memoryStore.GetRelevant(ctx, req.DeviceID, lastMsg); err == nil && len(memories) > 0 {
+		memories, err := o.memoryStore.GetRelevant(ctx, req.DeviceID, lastMsg)
+		if err == nil && len(memories) > 0 {
 			var sb strings.Builder
 			sb.WriteString("\n\n===== 关于用户的信息 =====\n")
 			for _, m := range memories {
 				sb.WriteString(fmt.Sprintf("- %s\n", m.MemoryValue))
 			}
 			sysPrompt += sb.String()
+			memoryNote = fmt.Sprintf(`{"message":"已关联%d条记忆","count":%d}`, len(memories), len(memories))
 		}
 	}
 
@@ -67,6 +70,11 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 
 	go func() {
 		defer close(events)
+
+		// 先发记忆状态
+		if memoryNote != "" {
+			events <- &llm.StreamEvent{Type: "status", Content: memoryNote}
+		}
 
 		for iter := 0; iter < maxIterations; iter++ {
 			select {

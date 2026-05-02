@@ -12,8 +12,8 @@ class DeviceManager: ObservableObject {
 
     // 开发/生产环境自动切换
     #if DEBUG
-    static let registrationSecret = "REDACTED_DEVICE_REGISTRATION_SECRET"
-    static let defaultBaseURL = "https://helper.xhanx.cn"
+    static let registrationSecret = "dev-secret"
+    static let defaultBaseURL = "http://localhost:8080"
     #else
     static let registrationSecret = "REDACTED_DEVICE_REGISTRATION_SECRET"
     static let defaultBaseURL = "https://helper.xhanx.cn"

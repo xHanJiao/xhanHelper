@@ -14,16 +14,17 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
 
-    func connect(baseURL: String, token: String, message: String, conversationId: String?) {
+    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool) {
         let url = URL(string: "\(baseURL)/api/chat")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
-        var body: [String: String] = ["message": message]
+        var body: [String: Any] = ["message": message]
         if let cid = conversationId { body["conversation_id"] = cid }
-        req.httpBody = try? JSONEncoder().encode(body)
+        if deepMode { body["deep_mode"] = true }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         task = session.dataTask(with: req)
         task?.resume()
@@ -85,6 +86,8 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         case "plan_node_done":   type = .planNodeDone
         case "plan_done":        type = .planDone
         case "thought":          type = .thought
+        case "thought_delta":    type = .thoughtDelta
+        case "thought_done":     type = .thoughtDone
         case "status":           type = .status
         case "message":     type = .message
         case "tool_call":   type = .toolCall
@@ -96,3 +99,4 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         onEvent?(StreamEvent(type: type, data: data))
     }
 }
+

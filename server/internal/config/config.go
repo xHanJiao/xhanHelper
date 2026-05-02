@@ -43,10 +43,11 @@ func (d DBConfig) DSN() string {
 
 // LLMConfig — LLM 厂商配置
 type LLMConfig struct {
-	Provider string `yaml:"provider"` // doubao | claude
-	APIKey   string `yaml:"api_key"`
-	Model    string `yaml:"model"`
-	BaseURL  string `yaml:"base_url"`
+	Provider    string `yaml:"provider"` // doubao | deepseek
+	APIKey      string `yaml:"api_key"`
+	Model       string `yaml:"model"`        // 弱模型（日常使用）
+	StrongModel string `yaml:"strong_model"` // 强模型（深度思考模式，可选，默认同 Model）
+	BaseURL     string `yaml:"base_url"`
 }
 
 // Load 加载配置：base YAML + env YAML 合并 → 环境变量替换
@@ -136,6 +137,9 @@ func merge(dst, src *Config) {
 	}
 	if src.LLM.BaseURL != "" {
 		dst.LLM.BaseURL = src.LLM.BaseURL
+	}
+	if src.LLM.StrongModel != "" {
+		dst.LLM.StrongModel = src.LLM.StrongModel
 	}
 }
 

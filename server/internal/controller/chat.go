@@ -19,6 +19,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 		var req struct {
 			ConversationID *string `json:"conversation_id"`
 			Message        string  `json:"message"`
+			DeepMode       bool    `json:"deep_mode"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.Message == "" {
 			view.JSONError(c, 400, "invalid request")
@@ -71,6 +72,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 		events, err := orch.Run(c.Request.Context(), &agent.RunRequest{
 			DeviceID: device.ID,
 			Messages: buildLLMMessages(history),
+			DeepMode: req.DeepMode,
 		})
 		if err != nil {
 			view.WriteSSE(w, flusher, "error", err.Error())
@@ -91,8 +93,8 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 					`{"delta":"`+view.EscapeJSON(evt.Content)+`"}`)
 			case "plan", "plan_node_start", "plan_node_done", "plan_done":
 				view.WriteSSE(w, flusher, evt.Type, evt.Content)
-			case "thought":
-				view.WriteSSE(w, flusher, "thought", evt.Content)
+			case "thought", "thought_delta", "thought_done":
+				view.WriteSSE(w, flusher, evt.Type, evt.Content)
 			case "status":
 				view.WriteSSE(w, flusher, "status", evt.Content)
 			case "tool_call":

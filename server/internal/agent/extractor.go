@@ -60,7 +60,7 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 	}
 	prompt += "\n\n" + sb.String()
 
-	resp, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
+	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
 		SystemPrompt: "你是记忆提取助手。只提取用户明确表达的事实、偏好、习惯。不确定的不提取。",
 		Messages:     []llm.Message{{Role: "user", Content: prompt}},
 	})
@@ -68,15 +68,15 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 		return fmt.Errorf("extract memory: %w", err)
 	}
 
-	resp = strings.TrimSpace(resp)
-	if resp == "无" || resp == "" {
+	text := strings.TrimSpace(msg.Content)
+	if text == "无" || text == "" {
 		// 没有新记忆，仍然更新提取进度
 		e.updateProgress(ctx, conv, msgs[lastIdx].ID)
 		return nil
 	}
 
 	// 解析 key: value 格式的记忆
-	lines := strings.Split(resp, "\n")
+	lines := strings.Split(text, "\n")
 	extracted := 0
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -129,7 +129,7 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 
 // ExtractFromPrompt 从任意文本中提取记忆（CSV 导入等场景）
 func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, deviceID, prompt, source string) {
-	resp, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
+	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
 		SystemPrompt: "你是记忆提取助手。只提取明确的事实、偏好、规律。不确定的不提取。",
 		Messages:     []llm.Message{{Role: "user", Content: prompt}},
 	})
@@ -138,12 +138,12 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, deviceID, promp
 		return
 	}
 
-	resp = strings.TrimSpace(resp)
-	if resp == "无" || resp == "" {
+	text := strings.TrimSpace(msg.Content)
+	if text == "无" || text == "" {
 		return
 	}
 
-	lines := strings.Split(resp, "\n")
+	lines := strings.Split(text, "\n")
 	extracted := 0
 	for _, line := range lines {
 		line = strings.TrimSpace(line)

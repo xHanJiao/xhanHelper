@@ -9,5 +9,6 @@ db:
 llm:
   provider: deepseek
   model: deepseek-v4-flash
+  strong_model: deepseek-v4-pro
   api_key: ${LLM_API_KEY}
   base_url: https://api.deepseek.com

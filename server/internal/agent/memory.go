@@ -45,7 +45,7 @@ func (s *LLMMemoryStore) GetRelevant(ctx context.Context, deviceID, currentMessa
 	}
 	sb.WriteString("\n当前用户消息: " + currentMessage)
 
-	resp, err := s.llmClient.ChatSync(ctx, &llm.ChatRequest{
+	msg, err := s.llmClient.ChatSync(ctx, &llm.ChatRequest{
 		SystemPrompt: "你是记忆检索助手。只从给定列表中选择相关条目，返回编号。不要编造。",
 		Messages:     []llm.Message{{Role: "user", Content: sb.String()}},
 	})
@@ -55,7 +55,7 @@ func (s *LLMMemoryStore) GetRelevant(ctx context.Context, deviceID, currentMessa
 
 	// 解析 LLM 返回的编号
 	var result []model.UserMemory
-	resp = strings.TrimSpace(resp)
+	resp := strings.TrimSpace(msg.Content)
 	if resp == "无" || resp == "" {
 		return result, nil
 	}

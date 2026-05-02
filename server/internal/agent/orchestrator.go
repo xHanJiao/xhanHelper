@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"sync"
 	"strings"
+	"sync"
 
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/tool"
@@ -25,31 +25,43 @@ const maxIterations = 8
 type RunRequest struct {
 	DeviceID string
 	Messages []llm.Message
+	DeepMode bool // 客户端 toggle 是否开启深度思考模式
 }
 
-// LLMResponse — LLM 返回的结构化 JSON
+// LLMResponse — LLM 返回的结构化 JSON（Flash 文本解析用）
 type LLMResponse struct {
-	Reply     string        `json:"reply"`
+	Reply     string          `json:"reply"`
 	ToolCalls []tool.ToolCall `json:"tool_calls"`
 }
 
 // Orchestrator — ReAct 循环编排器
 type Orchestrator struct {
-	llmClient   llm.LLMClient
+	flashClient llm.LLMClient
+	proClient   llm.LLMClient
 	registry    *tool.Registry
 	memoryStore MemoryStore
 }
 
 // New 创建 Orchestrator
-func New(llmClient llm.LLMClient, registry *tool.Registry, memoryStore MemoryStore) *Orchestrator {
-	return &Orchestrator{llmClient: llmClient, registry: registry, memoryStore: memoryStore}
+// flashClient: 弱模型（日常使用），proClient: 强模型（深度思考模式，可为 nil）
+func New(flashClient llm.LLMClient, registry *tool.Registry, memoryStore MemoryStore, proClient llm.LLMClient) *Orchestrator {
+	return &Orchestrator{
+		flashClient: flashClient,
+		proClient:   proClient,
+		registry:    registry,
+		memoryStore: memoryStore,
+	}
 }
 
 // Run 启动 ReAct 循环，返回事件 channel
 func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.StreamEvent, error) {
-	sysPrompt := o.llmClient.BuildSystemPrompt(baseSystemPrompt, o.registry.GetLLMTools())
+	client := o.flashClient
+	if req.DeepMode && o.proClient != nil {
+		client = o.proClient
+	}
 
-	// 检索相关记忆（在构建 system prompt 时同步完成）
+	sysPrompt := client.BuildSystemPrompt(baseSystemPrompt, o.registry.GetLLMTools())
+
 	var memoryNote string
 	if o.memoryStore != nil && len(req.Messages) > 0 {
 		lastMsg := req.Messages[len(req.Messages)-1].Content
@@ -73,7 +85,6 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	go func() {
 		defer close(events)
 
-		// 先发记忆状态
 		if memoryNote != "" {
 			events <- &llm.StreamEvent{Type: "status", Content: memoryNote}
 		}
@@ -83,136 +94,168 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 		for iter := 0; iter < maxIterations; iter++ {
 			select {
 			case <-ctx.Done():
-			log.Printf("[orch] context cancelled")
-			events <- &llm.StreamEvent{Type: "error", Error: "request cancelled"}
-			events <- &llm.StreamEvent{Type: "done"}
-			return
+				log.Printf("[orch] context cancelled")
+				events <- &llm.StreamEvent{Type: "error", Error: "request cancelled"}
+				events <- &llm.StreamEvent{Type: "done"}
+				return
 			default:
 			}
 
-			// 调用 LLM
-			resp, err := o.llmClient.ChatSync(ctx, &llm.ChatRequest{
+			msg, err := client.ChatSync(ctx, &llm.ChatRequest{
 				SystemPrompt: sysPrompt,
 				Messages:     msgs,
-			Tools:        o.registry.GetLLMTools(),
+				Tools:        o.registry.GetLLMTools(),
 			})
 			if err != nil {
 				events <- &llm.StreamEvent{Type: "error", Error: err.Error()}
 				return
 			}
 
-			// 提取 JSON 前的思考文本作为 thought 事件
-			cleaned := strings.TrimSpace(resp)
-			if idx := strings.Index(cleaned, "{"); idx > 0 {
-				thoughtText := strings.TrimSpace(cleaned[:idx])
-				if thoughtText != "" {
-					events <- &llm.StreamEvent{Type: "thought", Content: thoughtText}
-				}
+			// Pro 的思维链作为 thought_delta 推送
+			if msg.ReasoningContent != "" {
+				events <- &llm.StreamEvent{Type: "thought_delta", Content: msg.ReasoningContent}
+				events <- &llm.StreamEvent{Type: "thought_done", Content: ""}
 			}
 
-			// 尝试解析 JSON
-			parsed := parseLLMResponse(resp)
+			// 原生 tool_calls（Pro 思考模式原生函数调用）
+			if len(msg.ToolCalls) > 0 {
+				msgs = append(msgs, msg)
+
+				toolCalls := convertToolCalls(msg.ToolCalls)
+				allToolCalls = append(allToolCalls, toolCalls...)
+
+				results := executeConcurrently(ctx, events, req.DeviceID, o.registry, toolCalls)
+
+				for i := range toolCalls {
+					resJSON, _ := json.Marshal(results[i].result)
+					events <- &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)}
+					msgs = append(msgs, llm.Message{
+						Role:       "tool",
+						ToolCallID: msg.ToolCalls[i].ID,
+						Content:    string(resJSON),
+					})
+				}
+				continue
+			}
+
+			// Flash 文本中的 JSON 解析（非思考模式，tool_calls 嵌入在回复文本中）
+			parsed := parseLLMResponse(msg.Content)
 
 			if parsed == nil {
-				// 纯文本回复 → 流式输出 → done
-				for _, r := range resp {
+				// 纯文本回复
+				for _, r := range msg.Content {
 					events <- &llm.StreamEvent{Type: "text_delta", Content: string(r)}
 				}
-			if len(allToolCalls) >= 2 {
-				planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
-				events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
-			}
+				if len(allToolCalls) >= 2 {
+					planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
+					events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
+				}
 				events <- &llm.StreamEvent{Type: "done"}
 				return
 			}
 
-			// 有 tool_calls → 执行（2+ 时自动并发）
-			msgs = append(msgs, llm.Message{Role: "assistant", Content: resp})
-		allToolCalls = append(allToolCalls, parsed.ToolCalls...)
+			// 有嵌入 tool_calls
+			msgs = append(msgs, llm.Message{Role: "assistant", Content: msg.Content})
+			allToolCalls = append(allToolCalls, parsed.ToolCalls...)
 
-			if len(parsed.ToolCalls) >= 2 {
-				log.Printf("[orch] concurrent exec %d tools", len(parsed.ToolCalls))
-			}
+			results := executeConcurrently(ctx, events, req.DeviceID, o.registry, parsed.ToolCalls)
 
-			type toolResult struct {
-				tc     tool.ToolCall
-				result *tool.Result
-			}
-
-			var wg sync.WaitGroup
-			results := make([]toolResult, len(parsed.ToolCalls))
-
-			for i, tc := range parsed.ToolCalls {
-				tcJSON, _ := json.Marshal(tc)
-				events <- &llm.StreamEvent{Type: "tool_call", Content: string(tcJSON)}
-
-				wg.Add(1)
-				go func(idx int, call tool.ToolCall) {
-					defer wg.Done()
-					ec := &tool.ExecuteContext{Ctx: ctx, DeviceID: req.DeviceID}
-					results[idx] = toolResult{
-						tc:     call,
-						result: o.registry.ExecuteByName(ec, call.Tool, call.Function, call.Args),
-					}
-				}(i, tc)
-			}
-			wg.Wait()
-
-			for _, r := range results {
-				resJSON, _ := json.Marshal(r.result)
+			for i := range parsed.ToolCalls {
+				resJSON, _ := json.Marshal(results[i].result)
 				events <- &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)}
 				msgs = append(msgs, llm.Message{
 					Role:    "user",
 					Content: "[工具执行结果] " + string(resJSON),
 				})
 			}
-			// 如果 tool_calls 为空，说明是最终回复 → 输出 reply → done
-			if len(parsed.ToolCalls) == 0 {
-				for _, r := range parsed.Reply {
-					events <- &llm.StreamEvent{Type: "text_delta", Content: string(r)}
-				}
-			if len(allToolCalls) >= 2 {
-				planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
-				events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
-			}
-				events <- &llm.StreamEvent{Type: "done"}
-				return
-			}
 
-			// tool_calls 非空 → 不输出文本，等下一轮 LLM 拿到 tool results 后的最终回复
-			// 继续下一轮迭代
+			// tool_calls 非空 → 不输出文本，继续下一轮
 		}
 
-		// 超出最大迭代
 		events <- &llm.StreamEvent{Type: "error", Error: "max iterations reached"}
-			if len(allToolCalls) >= 2 {
-				planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
-				events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
-			}
+		if len(allToolCalls) >= 2 {
+			planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
+			events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
+		}
 		events <- &llm.StreamEvent{Type: "done"}
 	}()
 
 	return events, nil
 }
 
-// GenerateTitle 根据用户消息生成会话标题（异步调用，失败返回空字符串）
+type toolExecResult struct {
+	tc     tool.ToolCall
+	result *tool.Result
+}
+
+// executeConcurrently 并发执行工具调用
+func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, deviceID string, registry *tool.Registry, toolCalls []tool.ToolCall) []toolExecResult {
+
+	if len(toolCalls) >= 2 {
+		log.Printf("[orch] concurrent exec %d tools", len(toolCalls))
+	}
+
+	var wg sync.WaitGroup
+	results := make([]toolExecResult, len(toolCalls))
+
+	for i, tc := range toolCalls {
+		tcJSON, _ := json.Marshal(tc)
+		events <- &llm.StreamEvent{Type: "tool_call", Content: string(tcJSON)}
+
+		wg.Add(1)
+		go func(idx int, call tool.ToolCall) {
+			defer wg.Done()
+			ec := &tool.ExecuteContext{Ctx: ctx, DeviceID: deviceID}
+			results[idx] = toolExecResult{
+				tc:     call,
+				result: registry.ExecuteByName(ec, call.Tool, call.Function, call.Args),
+			}
+		}(i, tc)
+	}
+	wg.Wait()
+	return results
+}
+
+// convertToolCalls 将原生 ToolCall 转为 orchestrator 使用的 tool.ToolCall
+func convertToolCalls(tcs []llm.ToolCall) []tool.ToolCall {
+	result := make([]tool.ToolCall, len(tcs))
+	for i, tc := range tcs {
+		toolName := tc.Function.Name
+		funcName := tc.Function.Name
+		if idx := strings.LastIndex(tc.Function.Name, "__"); idx > 0 {
+			toolName = tc.Function.Name[:idx]
+			funcName = tc.Function.Name[idx+2:]
+		}
+		var args json.RawMessage
+		if tc.Function.Arguments != "" {
+			args = json.RawMessage(tc.Function.Arguments)
+		}
+		result[i] = tool.ToolCall{
+			Tool:     toolName,
+			Function: funcName,
+			Args:     args,
+		}
+	}
+	return result
+}
+
+// GenerateTitle 根据用户消息生成会话标题
 func (o *Orchestrator) GenerateTitle(ctx context.Context, userMessage string) string {
-	resp, err := o.llmClient.ChatSync(ctx, &llm.ChatRequest{
+	msg, err := o.flashClient.ChatSync(ctx, &llm.ChatRequest{
 		SystemPrompt: "你是一个标题生成器，根据用户的消息内容生成一个10字以内的简短标题，只输出标题本身，不要加任何标点或引号。",
 		Messages:     []llm.Message{{Role: "user", Content: userMessage}},
 	})
 	if err != nil {
 		return ""
 	}
-	title := strings.TrimSpace(resp)
+	title := strings.TrimSpace(msg.Content)
 	if len([]rune(title)) > 20 {
 		title = string([]rune(title)[:20])
 	}
 	return title
 }
 
-// parseLLMResponse 尝试从 LLM 回复中解析 JSON
-// 返回 nil 表示纯文本回复（不含 JSON）
+// parseLLMResponse 尝试从 LLM 回复中解析 JSON（Flash 文本嵌入格式）
 func parseLLMResponse(text string) *LLMResponse {
 	cleaned := strings.TrimSpace(text)
 	cleaned = strings.TrimPrefix(cleaned, "```json")
@@ -220,22 +263,18 @@ func parseLLMResponse(text string) *LLMResponse {
 	cleaned = strings.TrimSuffix(cleaned, "```")
 	cleaned = strings.TrimSpace(cleaned)
 
-	// 尝试找到 JSON 对象
 	start := strings.Index(cleaned, "{")
 	if start < 0 {
-		return nil // 纯文本
+		return nil
 	}
 
-	// 从第一个 { 开始解析
 	jsonStr := cleaned[start:]
 
 	var resp LLMResponse
 	if err := json.Unmarshal([]byte(jsonStr), &resp); err != nil {
-		// JSON 格式错误 → 降级为纯文本
 		return nil
 	}
 
-	// 确保 tool_calls 不为 nil
 	if resp.ToolCalls == nil {
 		resp.ToolCalls = []tool.ToolCall{}
 	}
@@ -243,8 +282,6 @@ func parseLLMResponse(text string) *LLMResponse {
 	return &resp
 }
 
-
-// buildPlanEvent 构建计划事件（客户端图可视化用）
 func buildPlanEvent(toolCalls []tool.ToolCall) map[string]interface{} {
 	nodes := make([]map[string]interface{}, 0)
 	edges := make([]map[string]interface{}, 0)

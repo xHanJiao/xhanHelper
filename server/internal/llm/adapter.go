@@ -5,8 +5,7 @@ import "context"
 // LLMClient — 所有 LLM 厂商必须实现的接口
 type LLMClient interface {
 	Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamEvent, error)
-	ChatSync(ctx context.Context, req *ChatRequest) (string, error)
-	// BuildSystemPrompt 根据厂商特性，为 base prompt 追加工具指令
+	ChatSync(ctx context.Context, req *ChatRequest) (Message, error)
 	BuildSystemPrompt(base string, tools []ToolDefinition) string
 }
 
@@ -15,12 +14,29 @@ type ChatRequest struct {
 	SystemPrompt string           // 系统提示词
 	Messages     []Message        // 对话历史
 	Tools        []ToolDefinition // 工具定义
+	Thinking     bool             // 是否启用思考模式
+	Effort       string           // reasoning_effort: high / max
 }
 
 // Message — 一条对话消息
 type Message struct {
-	Role    string // system | user | assistant | tool
-	Content string
+	Role             string     // system | user | assistant | tool
+	Content          string     // 消息正文
+	ReasoningContent string     // 思维链内容（DeepSeek 思考模式）
+	ToolCalls        []ToolCall // 原生 tool_calls
+	ToolCallID       string     // tool 消息的调用 ID
+}
+
+// ToolCall — 原生 function calling 的工具调用
+type ToolCall struct {
+	ID       string
+	Function ToolCallFunction
+}
+
+// ToolCallFunction — 工具调用中的函数引用
+type ToolCallFunction struct {
+	Name      string
+	Arguments string // JSON string
 }
 
 // FuncDef — 单个函数定义
@@ -40,7 +56,7 @@ type ToolDefinition struct {
 
 // StreamEvent — 流式响应事件
 type StreamEvent struct {
-	Type    string // text_delta | done | error
-	Content string // 增量文本（Type=text_delta 时）
+	Type    string // text_delta | thought_delta | tool_call | tool_result | plan | done | error
+	Content string // 增量文本
 	Error   string // 错误信息（Type=error 时）
 }

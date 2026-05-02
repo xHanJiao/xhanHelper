@@ -48,6 +48,10 @@ func main() {
 	if err != nil {
 		log.Fatal("create llm client:", err)
 	}
+	strongClient, _ := llm.NewStrongClient(cfg.LLM)
+	if strongClient != nil {
+		log.Printf("[llm] strong model available: %s", cfg.LLM.StrongModel)
+	}
 
 	// Repos
 	devRepo := service.NewDeviceRepo(db)
@@ -67,7 +71,7 @@ func main() {
 	memStore := agent.NewLLMMemoryStore(llmClient, memRepo)
 
 	// Orchestrator
-	orch := agent.New(llmClient, reg, memStore)
+	orch := agent.New(llmClient, reg, memStore, strongClient)
 
 	// Memory Scheduler (后台异步)
 	memExtractor := agent.NewMemoryExtractor(llmClient, memStore, msgRepo, convRepo)

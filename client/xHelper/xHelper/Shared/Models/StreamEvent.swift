@@ -6,6 +6,8 @@ enum StreamEventType: String {
     case planNodeDone     // 节点完成
     case planDone         // 计划完成
     case thought          // 思考过程
+    case thoughtDelta     // 思考内容增量（Pro 流式思维链）
+    case thoughtDone      // 思考完成
     case status           // 状态提示
     case message     // text_delta
     case toolCall    // tool_call

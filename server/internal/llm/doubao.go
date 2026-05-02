@@ -65,8 +65,9 @@ func (c *DoubaoClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *Stre
 }
 
 // ChatSync 非流式对话 — 直接返回完整回复
-func (c *DoubaoClient) ChatSync(ctx context.Context, req *ChatRequest) (string, error) {
-	return c.callChatAPI(ctx, req)
+func (c *DoubaoClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, error) {
+	content, err := c.callChatAPI(ctx, req)
+	return Message{Role: "assistant", Content: content}, err
 }
 
 // callChatAPI 调用豆包 /chat/completions API (OpenAI 兼容)

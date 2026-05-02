@@ -29,8 +29,8 @@ func (c *ClaudeClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *Stre
 }
 
 // ChatSync 非流式对话（占位）
-func (c *ClaudeClient) ChatSync(ctx context.Context, req *ChatRequest) (string, error) {
-	return "", fmt.Errorf("claude client not implemented yet")
+func (c *ClaudeClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, error) {
+	return Message{}, fmt.Errorf("claude client not implemented yet")
 }
 
 func (c *ClaudeClient) BuildSystemPrompt(base string, tools []ToolDefinition) string {

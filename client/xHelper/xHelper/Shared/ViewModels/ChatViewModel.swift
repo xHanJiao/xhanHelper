@@ -13,6 +13,7 @@ class ChatViewModel: ObservableObject {
     @Published var statusMessage: String?
     @Published var errorMessage: String?
     @Published var conversationId: String?
+    @Published var deepMode = false
 
     private let apiClient: APIClient
     private let sseClient = SSEClient()
@@ -69,7 +70,7 @@ class ChatViewModel: ObservableObject {
                 self?.isStreaming = false
             }
         }
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode)
     }
 
     func stopStreaming() {
@@ -96,8 +97,12 @@ class ChatViewModel: ObservableObject {
                 planEdges = []
             }
 
-        case .thought:
-            thoughtMessage = event.data
+        case .thought, .thoughtDelta:
+            if thoughtMessage == nil { thoughtMessage = "" }
+            thoughtMessage! += event.data
+
+        case .thoughtDone:
+            // 思考完成，保留内容展示
 
         case .message:
             if let delta = parseMessageDelta(event.data) {

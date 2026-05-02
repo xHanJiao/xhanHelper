@@ -103,6 +103,15 @@ struct ChatView: View {
                 }
             )
         }
+        .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: { viewModel.deepMode.toggle() }) {
+                        Image(systemName: viewModel.deepMode ? "brain.head.profile.fill" : "brain.head.profile")
+                            .foregroundColor(viewModel.deepMode ? .orange : .secondary)
+                    }
+                    .help(viewModel.deepMode ? "深度思考模式 (Pro)" : "标准模式 (Flash)")
+                }
+            }
         .navigationTitle(viewModel.conversationId ?? "新对话")
         .navigationBarTitleDisplayMode(.inline)
     }

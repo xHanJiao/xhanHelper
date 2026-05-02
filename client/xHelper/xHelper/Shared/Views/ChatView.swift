@@ -9,6 +9,12 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if !viewModel.planNodes.isEmpty {
+                PlanGraphView(nodes: viewModel.planNodes, edges: viewModel.planEdges)
+                    .id("plan")
+            }
+
+            Text("DEBUG planNodes=\(viewModel.planNodes.count)").font(.caption).foregroundColor(.red)
             // 消息列表
             ScrollViewReader { proxy in
                 ScrollView {

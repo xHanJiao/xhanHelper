@@ -13,7 +13,7 @@ class DeviceManager: ObservableObject {
     // 开发/生产环境自动切换
     #if DEBUG
     static let registrationSecret = "dev-secret"
-    static let defaultBaseURL = "https://helper.xhanx.cn"
+    static let defaultBaseURL = "http://localhost:8080"
     #else
     static let registrationSecret = "REDACTED_DEVICE_REGISTRATION_SECRET"
     static let defaultBaseURL = "https://helper.xhanx.cn"
@@ -21,6 +21,18 @@ class DeviceManager: ObservableObject {
 
     var baseURL: String {
         UserDefaults.standard.string(forKey: "xhan_server_url") ?? Self.defaultBaseURL
+    }
+
+    // Debug: 手动设置 token（模拟器访问 curl 导入的数据）
+    var debugToken: String? {
+        get { UserDefaults.standard.string(forKey: "xhan_debug_token") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "xhan_debug_token")
+            if let t = newValue, !t.isEmpty {
+                token = t
+                isRegistered = true
+            }
+        }
     }
 
     init() {

@@ -1,20 +1,34 @@
 import SwiftUI
-import Grape
 
 struct PlanGraphView: View {
     let nodes: [PlanNodeInfo]
     let edges: [(Int, Int)]
 
-    @State private var graphStates = ForceDirectedGraphState()
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            headerView
-
-            if nodes.isEmpty {
-                loadingView
-            } else {
-                graphView
+            HStack {
+                Image(systemName: "square.grid.2x2")
+                    .font(.caption).foregroundColor(.orange)
+                Text("执行计划").font(.caption).fontWeight(.medium)
+                Spacer()
+            }
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(Array(nodes.enumerated()), id: \.offset) { i, node in
+                        HStack(spacing: 2) {
+                            if i > 0 { Text("→").font(.caption2).foregroundColor(.secondary) }
+                            VStack(spacing: 2) {
+                                Circle()
+                                    .fill(color(node.status))
+                                    .frame(width: 14, height: 14)
+                                Text(node.label)
+                                    .font(.system(size: 8))
+                                    .lineLimit(1)
+                                    .frame(width: 60)
+                            }
+                        }
+                    }
+                }
             }
         }
         .padding(12)
@@ -22,42 +36,7 @@ struct PlanGraphView: View {
         .padding(.horizontal)
     }
 
-    var headerView: some View {
-        HStack {
-            Image(systemName: "square.grid.2x2")
-                .font(.caption).foregroundColor(.orange)
-            Text("执行计划").font(.caption).fontWeight(.medium)
-            Spacer()
-        }
-    }
-
-    var loadingView: some View {
-        HStack {
-            ProgressView().scaleEffect(0.5)
-            Text("准备中...").font(.caption).foregroundColor(.secondary)
-        }
-    }
-
-    var graphView: some View {
-        ForceDirectedGraph(states: graphStates) {
-            Series(nodes.indices) { i in
-                NodeMark(id: i)
-                    .foregroundStyle(self.nodeColor(nodes[i].status))
-                    .symbolSize(radius: 14)
-            }
-            Series(edges.indices) { i in
-                LinkMark(from: edges[i].0, to: edges[i].1)
-                    .stroke(.gray.opacity(0.3))
-            }
-        } force: {
-            .link()
-            .center()
-            .manyBody()
-        }
-        .frame(height: 140)
-    }
-
-    func nodeColor(_ s: String) -> Color {
+    func color(_ s: String) -> Color {
         switch s {
         case "done":    return .green
         case "running": return .blue

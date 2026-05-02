@@ -19,7 +19,7 @@ const baseSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职
 2. 诚实：不知道就说不知道，不要编造
 3. 主动：如果用户意图不明确，追问关键信息`
 
-const maxIterations = 5
+const maxIterations = 8
 
 // RunRequest — Orchestrator 输入
 type RunRequest struct {
@@ -78,6 +78,8 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 			events <- &llm.StreamEvent{Type: "status", Content: memoryNote}
 		}
 
+		var allToolCalls []tool.ToolCall
+
 		for iter := 0; iter < maxIterations; iter++ {
 			select {
 			case <-ctx.Done():
@@ -116,12 +118,17 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 				for _, r := range resp {
 					events <- &llm.StreamEvent{Type: "text_delta", Content: string(r)}
 				}
+			if len(allToolCalls) >= 2 {
+				planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
+				events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
+			}
 				events <- &llm.StreamEvent{Type: "done"}
 				return
 			}
 
 			// 有 tool_calls → 执行（2+ 时自动并发）
 			msgs = append(msgs, llm.Message{Role: "assistant", Content: resp})
+		allToolCalls = append(allToolCalls, parsed.ToolCalls...)
 
 			if len(parsed.ToolCalls) >= 2 {
 				log.Printf("[orch] concurrent exec %d tools", len(parsed.ToolCalls))
@@ -164,6 +171,10 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 				for _, r := range parsed.Reply {
 					events <- &llm.StreamEvent{Type: "text_delta", Content: string(r)}
 				}
+			if len(allToolCalls) >= 2 {
+				planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
+				events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
+			}
 				events <- &llm.StreamEvent{Type: "done"}
 				return
 			}
@@ -174,6 +185,10 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 
 		// 超出最大迭代
 		events <- &llm.StreamEvent{Type: "error", Error: "max iterations reached"}
+			if len(allToolCalls) >= 2 {
+				planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
+				events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
+			}
 		events <- &llm.StreamEvent{Type: "done"}
 	}()
 
@@ -228,3 +243,24 @@ func parseLLMResponse(text string) *LLMResponse {
 	return &resp
 }
 
+
+// buildPlanEvent 构建计划事件（客户端图可视化用）
+func buildPlanEvent(toolCalls []tool.ToolCall) map[string]interface{} {
+	nodes := make([]map[string]interface{}, 0)
+	edges := make([]map[string]interface{}, 0)
+	for _, tc := range toolCalls {
+		nid := fmt.Sprintf("n%d", len(nodes))
+		nodes = append(nodes, map[string]interface{}{
+			"id":     nid,
+			"label":  tc.Function,
+			"status": "done",
+		})
+		if len(nodes) > 1 {
+			edges = append(edges, map[string]interface{}{
+				"from": fmt.Sprintf("n%d", len(nodes)-2),
+				"to":   nid,
+			})
+		}
+	}
+	return map[string]interface{}{"nodes": nodes, "edges": edges}
+}

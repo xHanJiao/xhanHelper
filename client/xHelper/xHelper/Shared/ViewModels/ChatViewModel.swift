@@ -214,9 +214,21 @@ class ChatViewModel: ObservableObject {
 
     private func parsePlanNodes(_ json: String) -> [PlanNodeInfo] {
         guard let d = json.data(using: .utf8),
-              let obj = try? JSONDecoder().decode([String: [PlanNodeJSON]].self, from: d),
-              let nodes = obj["nodes"] else { return [] }
-        return nodes.map { PlanNodeInfo(id: $0.id, label: $0.label, status: $0.status, duration: nil) }
+              let raw = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return [] }
+        var result: [PlanNodeInfo] = []
+        if let nodes = raw["nodes"] as? [[String: String]] {
+            result = nodes.map { PlanNodeInfo(id: $0["id"] ?? "", label: $0["label"] ?? "", status: $0["status"] ?? "", duration: nil) }
+        }
+        if let edges = raw["edges"] as? [[String: String]] {
+            var e: [(Int, Int)] = []
+            for edge in edges {
+                let f = Int(edge["from"]?.replacingOccurrences(of: "n", with: "") ?? "") ?? -1
+                let t = Int(edge["to"]?.replacingOccurrences(of: "n", with: "") ?? "") ?? -1
+                if f >= 0 && t >= 0 { e.append((f, t)) }
+            }
+            planEdges = e
+        }
+        return result
     }
 
     private func parsePlanNodeID(_ json: String) -> String {

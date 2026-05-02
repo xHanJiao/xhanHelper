@@ -67,6 +67,11 @@ struct PlanNodeJSON: Codable {
     let status: String
 }
 
+struct PlanEdgeJSON: Codable {
+    let from: String
+    let to: String
+}
+
 struct ToolResultData: Codable {
     let success: Bool
     let error: String?

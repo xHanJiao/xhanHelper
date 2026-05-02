@@ -53,7 +53,7 @@ test: check-env
 	@echo "=== 编译 ==="
 	@go build -o /tmp/xhan-test-server ./cmd/xhan-helper/ || exit 1
 	@echo "=== 清理旧数据库 ==="
-	@rm -f data/xhan_helper.db
+# 	@rm -f data/xhan_helper.db
 	@echo "=== 启动测试服务器 ==="
 	@/tmp/xhan-test-server &
 	@sleep 2
@@ -62,7 +62,7 @@ test: check-env
 	@echo ""
 	@echo "=== 停止测试服务器 ==="
 	@kill $$(lsof -ti:8080) 2>/dev/null || true
-	@rm -f /tmp/xhan-test-server
+# 	@rm -f /tmp/xhan-test-server
 	@exit $$EXIT
 
 # 编译生产二进制
@@ -126,6 +126,6 @@ logs:
 
 # 清理
 clean:
-	rm -f xhan-helper
-	rm -rf $(OUTPUT_DIR)
-	rm -f data/xhan_helper.db
+# 	rm -f xhan-helper
+# 	rm -rf $(OUTPUT_DIR)
+# 	rm -f data/xhan_helper.db

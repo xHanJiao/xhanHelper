@@ -8,6 +8,7 @@ import AppKit
 struct SettingsView: View {
     @ObservedObject var deviceManager: DeviceManager
     @AppStorage("xhan_server_url") private var serverURL = DeviceManager.defaultBaseURL
+    @AppStorage("xhan_debug_token") private var debugToken = ""
 
     var body: some View {
         Form {
@@ -40,6 +41,18 @@ struct SettingsView: View {
             } header: {
                 Text("服务器")
             }
+
+            #if DEBUG
+            Section {
+                TextField("手动填入 Token", text: $debugToken)
+                    .font(.caption).monospaced()
+                    .onChange(of: debugToken) {
+                        deviceManager.debugToken = debugToken
+                    }
+            } header: {
+                Text("Debug Token（填入已导入数据的 token）")
+            }
+            #endif
 
             Section {
                 Button("重新注册设备", role: .destructive) {

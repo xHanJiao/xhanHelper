@@ -12,13 +12,13 @@ db:
   password: ${XHAN_HELPER_DB_PASSWORD}
   charset: utf8mb4
 
-# llm:
-#   provider: doubao
-#   api_key: ${LLM_API_KEY}
-#   model: doubao-seed-1-8-251228
-#   base_url: https://ark.cn-beijing.volces.com/api/v3
-
 llm:
+  # provider: doubao
+  # api_key: ${LLM_API_KEY}
+  # model: doubao-seed-1-8-251228
+  # base_url: https://ark.cn-beijing.volces.com/api/v3
+
+# llm:
   api_key: ${LLM_API_KEY}
   provider: deepseek
   model: deepseek-v4-flash

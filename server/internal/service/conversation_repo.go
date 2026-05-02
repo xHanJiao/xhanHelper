@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 	"xhan-helper/internal/model"
@@ -16,6 +17,28 @@ type ConversationRepo struct {
 // NewConversationRepo 创建 ConversationRepo
 func NewConversationRepo(db *gorm.DB) *ConversationRepo {
 	return &ConversationRepo{db: db}
+}
+
+// DB 暴露底层 gorm.DB
+func (r *ConversationRepo) DB() *gorm.DB {
+	return r.db
+}
+
+// ListQuiet 查找静默会话：有未提取的消息且超时无活动
+func (r *ConversationRepo) ListQuiet(ctx context.Context, cutoff time.Time, limit int) ([]model.Conversation, error) {
+	var list []model.Conversation
+	err := r.db.WithContext(ctx).
+		Where("updated_at < ? AND is_deleted = ?", cutoff, false).
+		Where(`last_extracted_msg_id IS NULL
+			OR last_extracted_msg_id != (
+				SELECT id FROM messages
+				WHERE conversation_id = conversations.id
+				ORDER BY created_at DESC LIMIT 1
+			)`).
+		Order("updated_at ASC").
+		Limit(limit).
+		Find(&list).Error
+	return list, err
 }
 
 // Create 创建新会话
@@ -47,6 +70,11 @@ func (r *ConversationRepo) ListByDevice(ctx context.Context, deviceID string, li
 func (r *ConversationRepo) Rename(ctx context.Context, id, title string) error {
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).
 		Where("id = ?", id).Update("title", title).Error
+}
+
+// Update 更新会话字段
+func (r *ConversationRepo) Update(ctx context.Context, c *model.Conversation) error {
+	return r.db.WithContext(ctx).Save(c).Error
 }
 
 // SoftDelete 软删除会话

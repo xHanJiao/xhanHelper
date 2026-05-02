@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"xhan-helper/internal/llm"
@@ -32,18 +33,32 @@ type LLMResponse struct {
 
 // Orchestrator — ReAct 循环编排器
 type Orchestrator struct {
-	llmClient llm.LLMClient
-	registry  *tool.Registry
+	llmClient   llm.LLMClient
+	registry    *tool.Registry
+	memoryStore MemoryStore
 }
 
 // New 创建 Orchestrator
-func New(llmClient llm.LLMClient, registry *tool.Registry) *Orchestrator {
-	return &Orchestrator{llmClient: llmClient, registry: registry}
+func New(llmClient llm.LLMClient, registry *tool.Registry, memoryStore MemoryStore) *Orchestrator {
+	return &Orchestrator{llmClient: llmClient, registry: registry, memoryStore: memoryStore}
 }
 
 // Run 启动 ReAct 循环，返回事件 channel
 func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.StreamEvent, error) {
 	sysPrompt := o.llmClient.BuildSystemPrompt(baseSystemPrompt, o.registry.GetLLMTools())
+
+	// 检索相关记忆
+	if o.memoryStore != nil && len(req.Messages) > 0 {
+		lastMsg := req.Messages[len(req.Messages)-1].Content
+		if memories, err := o.memoryStore.GetRelevant(ctx, req.DeviceID, lastMsg); err == nil && len(memories) > 0 {
+			var sb strings.Builder
+			sb.WriteString("\n\n===== 关于用户的信息 =====\n")
+			for _, m := range memories {
+				sb.WriteString(fmt.Sprintf("- %s\n", m.MemoryValue))
+			}
+			sysPrompt += sb.String()
+		}
+	}
 
 	msgs := make([]llm.Message, len(req.Messages))
 	copy(msgs, req.Messages)

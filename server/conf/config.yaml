@@ -1,7 +1,9 @@
 server:
   port: 8080
   mode: debug          # debug | release
-  registration_secret: ${REGISTRATION_SECRET}
+  registration_enabled: false
+  allowed_users:
+    - ${ALLOWED_USER}
 
 db:
   driver: mysql         # mysql | sqlite

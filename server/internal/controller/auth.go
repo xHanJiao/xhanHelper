@@ -6,8 +6,12 @@ import (
 	"xhan-helper/internal/view"
 )
 
-func registerUser(userRepo *service.UserRepo) gin.HandlerFunc {
+func registerUser(userRepo *service.UserRepo, enabled bool, allowed []string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if !enabled {
+			view.JSONError(c, 403, "registration is disabled")
+			return
+		}
 		var req struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
@@ -15,6 +19,19 @@ func registerUser(userRepo *service.UserRepo) gin.HandlerFunc {
 		if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" || req.Password == "" {
 			view.JSONError(c, 400, "username and password required")
 			return
+		}
+		if len(allowed) > 0 {
+			ok := false
+			for _, u := range allowed {
+				if req.Username == u {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				view.JSONError(c, 403, "username not in allowlist")
+				return
+			}
 		}
 		user, token, err := userRepo.Create(c.Request.Context(), req.Username, req.Password)
 		if err != nil {

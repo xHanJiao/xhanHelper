@@ -1,6 +1,8 @@
 server:
   mode: debug
-  registration_secret: dev-secret
+  registration_enabled: true
+  # allowed_users:
+  #   - your-username
 
 db:
   driver: sqlite

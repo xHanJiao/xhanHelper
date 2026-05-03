@@ -110,6 +110,8 @@ type FlashClient struct {
 	model string
 }
 
+func (c *FlashClient) ModelName() string { return c.model }
+
 // NewFlashClient 创建 FlashClient
 func NewFlashClient(cfg config.LLMConfig) *FlashClient {
 	return &FlashClient{
@@ -129,14 +131,13 @@ func (c *FlashClient) BuildSystemPrompt(base string, tools []ToolDefinition) str
 	if len(tools) == 0 {
 		return b.String()
 	}
-	b.WriteString("\n你可以使用以下函数。当用户请求涉及记账操作（记录、查询、修改、删除账单）时，必须调用对应函数，不要用纯文本模拟执行结果。不确定分类时反问用户。\n\n")
-	b.WriteString("面对复杂任务（需要多个步骤、多种工具配合完成的任务），在调用函数的同时，务必在 content 中用一两句话说明你的思路。\n")
-	b.WriteString("对于需要多步规划的任务（如跨时间对比、统计分析等），优先使用 plan.execute 工具来规划执行。简单的记账操作直接调用对应工具即可。\n")
+	b.WriteString("\n\n你可以使用以下函数（仅在必要时调用）：\n")
 	for _, t := range tools {
 		for _, fn := range t.Functions {
 			b.WriteString(fmt.Sprintf("- %s: %s\n", fn.Name, fn.Description))
 		}
 	}
+	b.WriteString("\n当用户请求涉及记账、时间、计算等操作时，使用对应函数。不确定时直接反问用户。\n")
 	return b.String()
 }
 
@@ -171,9 +172,13 @@ func (c *FlashClient) callAPI(ctx context.Context, req *ChatRequest, _ bool) (Me
 	}
 	c.setHeaders(httpReq)
 
+	lastMsg := ""
+	if len(req.Messages) > 0 {
+		lm := req.Messages[len(req.Messages)-1]
+		lastMsg = lm.Content[:min(150, len(lm.Content))]
+	}
 	log.Printf("[flash:%s] request: msgs=%d, tools=%d, last_msg=%s",
-		c.model, len(req.Messages)+1, len(req.Tools),
-		req.Messages[len(req.Messages)-1].Content[:min(150, len(req.Messages[len(req.Messages)-1].Content))])
+		c.model, len(req.Messages)+1, len(req.Tools), lastMsg)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -197,6 +202,8 @@ type ProClient struct {
 	model string
 }
 
+func (c *ProClient) ModelName() string { return c.model }
+
 // NewProClient 创建 ProClient
 func NewProClient(cfg config.LLMConfig, model string) *ProClient {
 	return &ProClient{
@@ -217,7 +224,7 @@ func (c *ProClient) BuildSystemPrompt(base string, tools []ToolDefinition) strin
 	if len(tools) == 0 {
 		return b.String()
 	}
-	b.WriteString("\n你可以使用以下函数。当用户请求涉及记账操作时，调用对应函数。不确定分类时反问用户。\n\n")
+	b.WriteString("\n\n你可以使用以下函数（仅在必要时调用）：\n")
 	for _, t := range tools {
 		for _, fn := range t.Functions {
 			b.WriteString(fmt.Sprintf("- %s: %s\n", fn.Name, fn.Description))

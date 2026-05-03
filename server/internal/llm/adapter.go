@@ -7,6 +7,7 @@ type LLMClient interface {
 	Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamEvent, error)
 	ChatSync(ctx context.Context, req *ChatRequest) (Message, error)
 	BuildSystemPrompt(base string, tools []ToolDefinition) string
+	ModelName() string
 }
 
 // ChatRequest — LLM 对话请求

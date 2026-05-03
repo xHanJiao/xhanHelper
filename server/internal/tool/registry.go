@@ -127,6 +127,20 @@ type ToolCall struct {
 	Args     json.RawMessage `json:"args"`
 }
 
+// String 返回 "tool.function" 格式的名称
+func (tc ToolCall) String() string {
+	return tc.Tool + "." + tc.Function
+}
+
+// ToolCallNames 批量格式化
+func ToolCallNames(tcs []ToolCall) string {
+	names := make([]string, len(tcs))
+	for i, tc := range tcs {
+		names[i] = tc.String()
+	}
+	return strings.Join(names, ", ")
+}
+
 // ExecuteByName 按名称查找工具并执行指定函数
 func (r *Registry) ExecuteByName(ec *ExecuteContext, toolName, funcName string, args json.RawMessage) *Result {
 	t := r.tools[toolName]

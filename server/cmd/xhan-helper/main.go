@@ -71,7 +71,7 @@ func main() {
 	memStore := agent.NewLLMMemoryStore(llmClient, memRepo)
 
 	// Orchestrator
-	orch := agent.New(llmClient, reg, memStore, strongClient)
+	orch := agent.New(llmClient, reg, memStore, strongClient, msgRepo, convRepo)
 
 	// Memory Scheduler (后台异步)
 	memExtractor := agent.NewMemoryExtractor(llmClient, memStore, msgRepo, convRepo)

@@ -234,7 +234,7 @@ echo "【15.6】thought — 跨月份对比触发思考链"
 SSE_OUT=$(curl -N -s --max-time 60 -X POST "$BASE_URL/api/chat" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"message":"帮我对比一下1月和5月的餐饮消费，看看有什么变化"}' 2>&1)
+    -d '{"message":"帮我对比一下1月和5月的餐饮消费，看看有什么变化","conversation_id":"'$CONV_ID'"}' 2>&1)
 # thought 是软断言
 if echo "$SSE_OUT" | grep -q "event: thought"; then
     PASS=$((PASS + 1))
@@ -259,12 +259,39 @@ assert "导出包含眼镜"   "眼镜"   "$EXPORT"
 assert "导出包含瑞幸咖啡" "瑞幸咖啡" "$EXPORT"
 
 # ═══════════════════════════════════════════
+# P6: Deep Mode 测试
+# ═══════════════════════════════════════════
+
+# ── 17. deep_mode 记账 ──
+echo ""
+echo "【17/22】deep_mode — 深度思考记账"
+SSE_OUT=$(curl -N -s --max-time 60 -X POST "$BASE_URL/api/chat" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"message":"帮我记一笔，晚饭吃了45块钱，餐饮-堂食","deep_mode":true,"conversation_id":"'$CONV_ID'"}' 2>&1)
+assert "包含 thought_delta 事件" "event: thought_delta" "$SSE_OUT"
+assert "包含 tool_call"          "event: tool_call"     "$SSE_OUT"
+assert "包含 tool_result"        "event: tool_result"   "$SSE_OUT"
+assert "tool_result success"     '"success":true'       "$SSE_OUT"
+assert "包含 done 事件"          "event: done"          "$SSE_OUT"
+
+# ── 18. deep_mode 纯聊天 ──
+echo ""
+echo "【18/22】deep_mode — 深度思考闲聊"
+SSE_OUT=$(curl -N -s --max-time 30 -X POST "$BASE_URL/api/chat" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"message":"你觉得乐观和悲观哪种态度更有助于做决策","deep_mode":true,"conversation_id":"'$CONV_ID'"}' 2>&1)
+assert "包含 thought_delta"      "event: thought_delta" "$SSE_OUT"
+assert "包含 done 事件"          "event: done"          "$SSE_OUT"
+
+# ═══════════════════════════════════════════
 # 会话管理
 # ═══════════════════════════════════════════
 
-# ── 17. 重命名会话 ──
+# ── 19. 重命名会话 ──
 echo ""
-echo "【17/19】重命名会话"
+echo "【19/22】重命名会话"
 RENAME_RESP=$(curl -s -X PATCH "$BASE_URL/api/conversations/$CONV_ID" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -274,14 +301,14 @@ assert "重命名返回标题"    "测试会话"   "$RENAME_RESP"
 
 # ── 18. 删除会话 ──
 echo ""
-echo "【18/19】删除会话"
+echo "【20/21】删除会话"
 DEL_RESP=$(curl -s -X DELETE "$BASE_URL/api/conversations/$CONV_ID" \
     -H "Authorization: Bearer $TOKEN")
 assert "删除返回 deleted"  "deleted"    "$DEL_RESP"
 
 # ── 19. 确认已删除会话不在列表 ──
 echo ""
-echo "【19/19】确认已删除"
+echo "【21/21】确认已删除"
 CONV_LIST=$(curl -s "$BASE_URL/api/conversations" \
     -H "Authorization: Bearer $TOKEN")
 # 如果列表为空，说明唯一会话已删除成功

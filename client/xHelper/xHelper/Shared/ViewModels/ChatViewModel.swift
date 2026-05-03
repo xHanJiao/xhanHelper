@@ -102,7 +102,7 @@ class ChatViewModel: ObservableObject {
             thoughtMessage! += event.data
 
         case .thoughtDone:
-            // 思考完成，保留内容展示
+            break
 
         case .message:
             if let delta = parseMessageDelta(event.data) {

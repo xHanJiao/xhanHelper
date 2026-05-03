@@ -1,8 +1,9 @@
 package controller
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -29,7 +30,6 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 		dev, _ := c.Get("device")
 		device := dev.(*model.Device)
 
-		// 获取或创建会话
 		var conv *model.Conversation
 		if req.ConversationID != nil {
 			conv, _ = convRepo.FindByID(c.Request.Context(), *req.ConversationID)
@@ -42,22 +42,8 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			}
 		}
 
-		// 保存用户消息
-		userMsg := &model.Message{
-			ID:             uuid.New().String(),
-			ConversationID: conv.ID,
-			Role:           "user",
-			Content:        req.Message,
-		}
-		if err := msgRepo.Create(c.Request.Context(), userMsg); err != nil {
-			view.JSONError(c, 500, "save message failed")
-			return
-		}
-
-		// 加载历史（包含刚保存的用户消息）
 		history, _ := msgRepo.ListByConversation(c.Request.Context(), conv.ID, 20)
 
-		// SSE headers
 		w := c.Writer
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -70,16 +56,17 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 		}
 
 		events, err := orch.Run(c.Request.Context(), &agent.RunRequest{
-			DeviceID: device.ID,
-			Messages: buildLLMMessages(history),
-			DeepMode: req.DeepMode,
+			DeviceID:           device.ID,
+			ConversationID:     conv.ID,
+			Messages:           buildLLMMessages(history),
+			DeepMode:           req.DeepMode,
+			UserMessageContent: req.Message,
 		})
 		if err != nil {
 			view.WriteSSE(w, flusher, "error", err.Error())
 			return
 		}
 
-		var fullContent strings.Builder
 		for evt := range events {
 			select {
 			case <-c.Request.Context().Done():
@@ -88,7 +75,6 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			}
 			switch evt.Type {
 			case "text_delta":
-				fullContent.WriteString(evt.Content)
 				view.WriteSSE(w, flusher, "message",
 					`{"delta":"`+view.EscapeJSON(evt.Content)+`"}`)
 			case "plan", "plan_node_start", "plan_node_done", "plan_done":
@@ -102,45 +88,53 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			case "tool_result":
 				view.WriteSSE(w, flusher, "tool_result", evt.Content)
 			case "done":
-				var msgID string
-				if fullContent.Len() > 0 {
-					msgID = uuid.New().String()
-					msgRepo.Create(c.Request.Context(), &model.Message{
-						ID:             msgID,
-						ConversationID: conv.ID,
-						Role:           "assistant",
-						Content:        fullContent.String(),
-					})
-				}
-				var doneJSON string
-				if msgID != "" {
-					doneJSON = `{"conversation_id":"` + conv.ID + `","message_id":"` + msgID + `"}`
-				} else {
-					doneJSON = `{"conversation_id":"` + conv.ID + `"}`
-				}
-					if conv.Title == "新对话" && req.Message != "" {
-						if t := orch.GenerateTitle(c.Request.Context(), req.Message); t != "" {
-							convRepo.Rename(c.Request.Context(), conv.ID, t)
-							conv.Title = t
-							if msgID != "" {
-								doneJSON = `{"conversation_id":"` + conv.ID + `","message_id":"` + msgID + `","title":"` + t + `"}`
-							} else {
-								doneJSON = `{"conversation_id":"` + conv.ID + `","title":"` + t + `"}`
-							}
-						}
-					}
-					view.WriteSSE(w, flusher, "done", doneJSON)
-				case "error":
+				doneJSON := mergeTitle(c.Request.Context(), orch, convRepo, conv, req.Message, evt.Content)
+				view.WriteSSE(w, flusher, "done", doneJSON)
+			case "error":
 				view.WriteSSE(w, flusher, "error", evt.Error)
 			}
 		}
 	}
 }
 
+// mergeTitle 如果会话是新对话，生成标题并合并到 done JSON 中
+func mergeTitle(ctx context.Context, orch *agent.Orchestrator, convRepo *service.ConversationRepo, conv *model.Conversation, userMsg, doneContent string) string {
+	if conv.Title != "新对话" || userMsg == "" {
+		return doneContent
+	}
+	t := orch.GenerateTitle(ctx, userMsg)
+	if t == "" {
+		return doneContent
+	}
+	convRepo.Rename(ctx, conv.ID, t)
+	conv.Title = t
+
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(doneContent), &m); err != nil {
+		return doneContent
+	}
+	m["title"] = t
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
 func buildLLMMessages(history []model.Message) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
-		msgs = append(msgs, llm.Message{Role: m.Role, Content: m.Content})
+		msg := llm.Message{Role: m.Role, Content: m.Content}
+		if m.ReasoningContent != nil {
+			msg.ReasoningContent = *m.ReasoningContent
+		}
+		if m.ToolCallID != nil {
+			msg.ToolCallID = *m.ToolCallID
+		}
+		if m.ToolCallsJSON != nil {
+			var tcs []llm.ToolCall
+			if err := json.Unmarshal([]byte(*m.ToolCallsJSON), &tcs); err == nil {
+				msg.ToolCalls = tcs
+			}
+		}
+		msgs = append(msgs, msg)
 	}
 	return msgs
 }

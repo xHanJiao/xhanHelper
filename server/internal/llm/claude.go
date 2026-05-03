@@ -14,6 +14,8 @@ type ClaudeClient struct {
 	baseURL string
 }
 
+func (c *ClaudeClient) ModelName() string { return c.model }
+
 // NewClaude 创建 Claude 客户端
 func NewClaude(cfg config.LLMConfig) *ClaudeClient {
 	return &ClaudeClient{

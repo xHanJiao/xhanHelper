@@ -29,6 +29,8 @@ type DoubaoClient struct {
 	httpClient *http.Client
 }
 
+func (c *DoubaoClient) ModelName() string { return c.model }
+
 // NewDoubao 创建豆包客户端
 func NewDoubao(cfg config.LLMConfig) *DoubaoClient {
 	return &DoubaoClient{

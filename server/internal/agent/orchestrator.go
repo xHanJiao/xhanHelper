@@ -8,7 +8,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/uuid"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
+	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
 
@@ -23,9 +26,11 @@ const maxIterations = 8
 
 // RunRequest — Orchestrator 输入
 type RunRequest struct {
-	DeviceID string
-	Messages []llm.Message
-	DeepMode bool // 客户端 toggle 是否开启深度思考模式
+	DeviceID           string
+	ConversationID     string
+	Messages           []llm.Message
+	DeepMode           bool   // 客户端 toggle 是否开启深度思考模式
+	UserMessageContent string // 用户原始消息
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（Flash 文本解析用）
@@ -40,16 +45,19 @@ type Orchestrator struct {
 	proClient   llm.LLMClient
 	registry    *tool.Registry
 	memoryStore MemoryStore
+	msgRepo     *service.MessageRepo
+	convRepo    *service.ConversationRepo
 }
 
 // New 创建 Orchestrator
-// flashClient: 弱模型（日常使用），proClient: 强模型（深度思考模式，可为 nil）
-func New(flashClient llm.LLMClient, registry *tool.Registry, memoryStore MemoryStore, proClient llm.LLMClient) *Orchestrator {
+func New(flashClient llm.LLMClient, registry *tool.Registry, memoryStore MemoryStore, proClient llm.LLMClient, msgRepo *service.MessageRepo, convRepo *service.ConversationRepo) *Orchestrator {
 	return &Orchestrator{
 		flashClient: flashClient,
 		proClient:   proClient,
 		registry:    registry,
 		memoryStore: memoryStore,
+		msgRepo:     msgRepo,
+		convRepo:    convRepo,
 	}
 }
 
@@ -59,6 +67,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	if req.DeepMode && o.proClient != nil {
 		client = o.proClient
 	}
+	log.Printf("[orch] run start: model=%s, msgs=%d, tools=%d", client.ModelName(), len(req.Messages), len(o.registry.GetLLMTools()))
 
 	sysPrompt := client.BuildSystemPrompt(baseSystemPrompt, o.registry.GetLLMTools())
 
@@ -89,7 +98,20 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 			events <- &llm.StreamEvent{Type: "status", Content: memoryNote}
 		}
 
+		// 用户消息加入上下文并保存
+		userMsgID := uuid.New().String()
+		msgs = append(msgs, llm.Message{Role: "user", Content: req.UserMessageContent})
+		if o.msgRepo != nil && req.ConversationID != "" {
+			o.msgRepo.Create(ctx, &model.Message{
+				ID:             userMsgID,
+				ConversationID: req.ConversationID,
+				Role:           "user",
+				Content:        req.UserMessageContent,
+			})
+		}
+
 		var allToolCalls []tool.ToolCall
+		var lastAssistantMsgID string
 
 		for iter := 0; iter < maxIterations; iter++ {
 			select {
@@ -107,9 +129,13 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 				Tools:        o.registry.GetLLMTools(),
 			})
 			if err != nil {
+				log.Printf("[orch] round %d LLM error: %v", iter+1, err)
 				events <- &llm.StreamEvent{Type: "error", Error: err.Error()}
 				return
 			}
+
+			log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
+				iter+1, len(msg.Content), len(msg.ReasoningContent), len(msg.ToolCalls))
 
 			// Pro 的思维链作为 thought_delta 推送
 			if msg.ReasoningContent != "" {
@@ -117,9 +143,13 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 				events <- &llm.StreamEvent{Type: "thought_done", Content: ""}
 			}
 
-			// 原生 tool_calls（Pro 思考模式原生函数调用）
+			// 原生 tool_calls
 			if len(msg.ToolCalls) > 0 {
+				log.Printf("[orch] round %d native tool_calls=%d", iter+1, len(msg.ToolCalls))
 				msgs = append(msgs, msg)
+				if req.DeepMode {
+					o.saveAssistantMsg(ctx, req.ConversationID, msg)
+				}
 
 				toolCalls := convertToolCalls(msg.ToolCalls)
 				allToolCalls = append(allToolCalls, toolCalls...)
@@ -134,6 +164,9 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 						ToolCallID: msg.ToolCalls[i].ID,
 						Content:    string(resJSON),
 					})
+					if req.DeepMode {
+						o.saveToolMsg(ctx, req.ConversationID, msg.ToolCalls[i].ID, string(resJSON))
+					}
 				}
 				continue
 			}
@@ -142,19 +175,21 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 			parsed := parseLLMResponse(msg.Content)
 
 			if parsed == nil {
-				// 纯文本回复
+				log.Printf("[orch] round %d pure text reply, len=%d", iter+1, len(msg.Content))
 				for _, r := range msg.Content {
 					events <- &llm.StreamEvent{Type: "text_delta", Content: string(r)}
 				}
+				lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, msg)
 				if len(allToolCalls) >= 2 {
 					planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
 					events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
 				}
-				events <- &llm.StreamEvent{Type: "done"}
+				o.emitDone(events, req.ConversationID, lastAssistantMsgID, "")
 				return
 			}
 
 			// 有嵌入 tool_calls
+			log.Printf("[orch] round %d embedded tool_calls=%d: %s", iter+1, len(parsed.ToolCalls), tool.ToolCallNames(parsed.ToolCalls))
 			msgs = append(msgs, llm.Message{Role: "assistant", Content: msg.Content})
 			allToolCalls = append(allToolCalls, parsed.ToolCalls...)
 
@@ -168,8 +203,6 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 					Content: "[工具执行结果] " + string(resJSON),
 				})
 			}
-
-			// tool_calls 非空 → 不输出文本，继续下一轮
 		}
 
 		events <- &llm.StreamEvent{Type: "error", Error: "max iterations reached"}
@@ -177,7 +210,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 			planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
 			events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
 		}
-		events <- &llm.StreamEvent{Type: "done"}
+		o.emitDone(events, req.ConversationID, "", "max iterations reached")
 	}()
 
 	return events, nil
@@ -188,7 +221,6 @@ type toolExecResult struct {
 	result *tool.Result
 }
 
-// executeConcurrently 并发执行工具调用
 func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, deviceID string, registry *tool.Registry, toolCalls []tool.ToolCall) []toolExecResult {
 
 	if len(toolCalls) >= 2 {
@@ -206,17 +238,15 @@ func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, de
 		go func(idx int, call tool.ToolCall) {
 			defer wg.Done()
 			ec := &tool.ExecuteContext{Ctx: ctx, DeviceID: deviceID}
-			results[idx] = toolExecResult{
-				tc:     call,
-				result: registry.ExecuteByName(ec, call.Tool, call.Function, call.Args),
-			}
+			r := registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
+			log.Printf("[orch] tool exec: %s.%s success=%v", call.Tool, call.Function, r.Success)
+			results[idx] = toolExecResult{tc: call, result: r}
 		}(i, tc)
 	}
 	wg.Wait()
 	return results
 }
 
-// convertToolCalls 将原生 ToolCall 转为 orchestrator 使用的 tool.ToolCall
 func convertToolCalls(tcs []llm.ToolCall) []tool.ToolCall {
 	result := make([]tool.ToolCall, len(tcs))
 	for i, tc := range tcs {
@@ -239,7 +269,64 @@ func convertToolCalls(tcs []llm.ToolCall) []tool.ToolCall {
 	return result
 }
 
-// GenerateTitle 根据用户消息生成会话标题
+// ——— DB 保存 ———
+
+func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID string, msg llm.Message) string {
+	if o.msgRepo == nil || convID == "" {
+		return ""
+	}
+	mid := uuid.New().String()
+	modelMsg := &model.Message{
+		ID:             mid,
+		ConversationID: convID,
+		Role:           "assistant",
+		Content:        msg.Content,
+	}
+	if msg.ReasoningContent != "" {
+		rc := msg.ReasoningContent
+		modelMsg.ReasoningContent = &rc
+	}
+	if len(msg.ToolCalls) > 0 {
+		b, _ := json.Marshal(msg.ToolCalls)
+		s := string(b)
+		modelMsg.ToolCallsJSON = &s
+	}
+	o.msgRepo.Create(ctx, modelMsg)
+	return mid
+}
+
+func (o *Orchestrator) saveToolMsg(ctx context.Context, convID string, toolCallID string, content string) {
+	if o.msgRepo == nil || convID == "" {
+		return
+	}
+	log.Printf("[orch] save tool msg: conv=%s, tool_call_id=%s, content=%s", convID[:min(8, len(convID))], toolCallID, content[:min(100, len(content))])
+	tcid := toolCallID
+	o.msgRepo.Create(ctx, &model.Message{
+		ID:             uuid.New().String(),
+		ConversationID: convID,
+		Role:           "tool",
+		Content:        content,
+		ToolCallID:     &tcid,
+	})
+}
+
+func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, errStr string) {
+	parts := make([]string, 0)
+	if convID != "" {
+		parts = append(parts, fmt.Sprintf(`"conversation_id":"%s"`, convID))
+	}
+	if msgID != "" {
+		parts = append(parts, fmt.Sprintf(`"message_id":"%s"`, msgID))
+	}
+	if errStr != "" {
+		parts = append(parts, fmt.Sprintf(`"error":"%s"`, errStr))
+	}
+	doneJSON := "{" + strings.Join(parts, ",") + "}"
+	events <- &llm.StreamEvent{Type: "done", Content: doneJSON}
+}
+
+// ——— 工具函数 ———
+
 func (o *Orchestrator) GenerateTitle(ctx context.Context, userMessage string) string {
 	msg, err := o.flashClient.ChatSync(ctx, &llm.ChatRequest{
 		SystemPrompt: "你是一个标题生成器，根据用户的消息内容生成一个10字以内的简短标题，只输出标题本身，不要加任何标点或引号。",
@@ -255,7 +342,6 @@ func (o *Orchestrator) GenerateTitle(ctx context.Context, userMessage string) st
 	return title
 }
 
-// parseLLMResponse 尝试从 LLM 回复中解析 JSON（Flash 文本嵌入格式）
 func parseLLMResponse(text string) *LLMResponse {
 	cleaned := strings.TrimSpace(text)
 	cleaned = strings.TrimPrefix(cleaned, "```json")

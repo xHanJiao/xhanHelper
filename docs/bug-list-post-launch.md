@@ -108,6 +108,11 @@ if let last = viewModel.messages.last, last.id != "__streaming__" {
 
 **修复方向**: 移除 `GetRelevant` 的 LLM 挑选逻辑，改为调用 `vectorStore.Search` + `memRepo.GetByIDs`
 
+**实际修复**:
+- `MemoryStore` 接口 / `LLMMemoryStore` 结构体 / `GetRelevant` 方法全部标记 `Deprecated`
+- `Warmup` 重写：启动时遍历 `memRepo.ListAll()` → 已有持久化 embedding 的直接解码加载 → 没有的重新嵌入 → 全部写入向量库
+- `UserMemoryRepo` 新增 `ListAll` 方法
+
 ---
 
 ## 6. 向量检索可能召回当前会话内容 (P0 - 重量级)
@@ -132,6 +137,7 @@ if let last = viewModel.messages.last, last.id != "__streaming__" {
 - `retrieveMemories` 中 `saveMsgEmbedding` 挪到 `Search` 之后执行，避免当前消息被自己搜到
 - `searchHistoryMessages` 加 `currentConvID` 参数做防御性二次过滤
 - `VectorStorer` 接口同步更新
+- 所有 `Upsert` 调用携带 `user_id` 元数据，`Search` 过滤加用户隔离（`user_id` 不匹配的条目直接排除）
 
 ---
 

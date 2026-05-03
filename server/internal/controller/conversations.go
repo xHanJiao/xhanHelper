@@ -54,7 +54,9 @@ func renameConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 			view.JSONError(c, 403, "access denied")
 			return
 		}
-		var req struct{ Title string `json:"title"` }
+		var req struct {
+			Title string `json:"title"`
+		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.Title == "" {
 			view.JSONError(c, 400, "invalid title")
 			return

@@ -21,14 +21,14 @@ type FuncSchema struct {
 
 // ExecuteContext — 工具执行的上下文（由 Orchestrator 注入）
 type ExecuteContext struct {
-	Ctx      context.Context
+	Ctx    context.Context
 	UserID string
 }
 
 // Tool — 所有工具必须实现的接口
 type Tool interface {
-	Name()        string
+	Name() string
 	Description() string
-	Functions()   []FuncSchema
+	Functions() []FuncSchema
 	Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result
 }

@@ -70,7 +70,7 @@ func (r *UserMemoryRepo) UpdateConfirm(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Model(&model.UserMemory{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{
-			"confirm_count":    gorm.Expr("confirm_count + 1"),
+			"confirm_count":     gorm.Expr("confirm_count + 1"),
 			"last_confirmed_at": gorm.Expr("CURRENT_TIMESTAMP"),
 		}).Error
 }

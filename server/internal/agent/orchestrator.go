@@ -368,9 +368,18 @@ func (o *Orchestrator) retrieveMemories(ctx context.Context, req *RunRequest) st
 		log.Printf("[vector] embed user msg error: %v", err)
 		return ""
 	}
+	results := o.vectorStore.Search(vec, 8, func(e vectorEntry) bool {
+		if e.Metadata["user_id"] != "" && e.Metadata["user_id"] != req.UserID {
+			return false
+		}
+		if e.Metadata["type"] != "msg" {
+			return true
+		}
+		return e.Metadata["conv_id"] != req.ConversationID
+	})
+	// 搜索完成后再写入当前消息 embedding，避免被自己检索到
 	go o.saveMsgEmbedding(ctx, req, vec)
 
-	results := o.vectorStore.Search(vec, 8)
 	if len(results) == 0 {
 		return ""
 	}
@@ -383,7 +392,7 @@ func (o *Orchestrator) retrieveMemories(ctx context.Context, req *RunRequest) st
 	}
 
 	// Route 1: 历史消息 + 上下文
-	if msgText := o.searchHistoryMessages(ctx, results); msgText != "" {
+	if msgText := o.searchHistoryMessages(ctx, req.ConversationID, results); msgText != "" {
 		parts = append(parts, msgText)
 	}
 
@@ -423,7 +432,7 @@ func (o *Orchestrator) searchMemories(ctx context.Context, results []struct {
 	return "===== 相关记忆 =====\n" + sb.String()
 }
 
-func (o *Orchestrator) searchHistoryMessages(ctx context.Context, results []struct {
+func (o *Orchestrator) searchHistoryMessages(ctx context.Context, currentConvID string, results []struct {
 	ID    string
 	Score float64
 }) string {
@@ -434,6 +443,9 @@ func (o *Orchestrator) searchHistoryMessages(ctx context.Context, results []stru
 		msgID := strings.TrimPrefix(r.ID, "msg:")
 		msg, err := o.msgRepo.GetByID(ctx, msgID)
 		if err != nil || msg == nil {
+			continue
+		}
+		if msg.ConversationID == currentConvID {
 			continue
 		}
 		log.Printf("[vector] msg hit: conv=%s, score=%.4f, text=%s",
@@ -518,7 +530,11 @@ func (o *Orchestrator) saveMsgEmbedding(ctx context.Context, req *RunRequest, ve
 	if lastMsg.Role != "user" {
 		return
 	}
-	o.vectorStore.Upsert("msg:"+lastMsg.ID, vec)
+	o.vectorStore.Upsert("msg:"+lastMsg.ID, vec, map[string]string{
+		"type":    "msg",
+		"conv_id": req.ConversationID,
+		"user_id": req.UserID,
+	})
 	s := llm.EmbeddingToString(vec)
 	o.msgRepo.UpdateLastUserEmbedding(ctx, req.ConversationID, &s)
 }
@@ -541,7 +557,7 @@ func (o *Orchestrator) Warmup(ctx context.Context) {
 	for _, m := range memories {
 		if m.Embedding != nil {
 			if vec, err := llm.StringToEmbedding(*m.Embedding); err == nil && len(vec) > 0 {
-				o.vectorStore.Upsert("mem:"+m.ID, vec)
+				o.vectorStore.Upsert("mem:"+m.ID, vec, map[string]string{"type": "mem", "user_id": m.UserID})
 				loaded++
 				continue
 			}
@@ -553,7 +569,7 @@ func (o *Orchestrator) Warmup(ctx context.Context) {
 			log.Printf("[vector] warmup: embed memory %s error: %v", m.ID[:8], err)
 			continue
 		}
-		o.vectorStore.Upsert("mem:"+m.ID, vec)
+		o.vectorStore.Upsert("mem:"+m.ID, vec, map[string]string{"type": "mem", "user_id": m.UserID})
 		embStr := llm.EmbeddingToString(vec)
 		o.memRepo.UpdateEmbedding(ctx, m.ID, &embStr)
 		embedded++

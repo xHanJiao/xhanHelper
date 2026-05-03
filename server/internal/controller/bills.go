@@ -4,11 +4,11 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
-	"time"
 	"io"
+	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -110,7 +110,7 @@ func (h *BillHandler) ImportBills(c *gin.Context) {
 
 		bill := &model.Bill{
 			ID:          uuid.New().String(),
-			UserID:    userID,
+			UserID:      userID,
 			Item:        item,
 			Amount:      amount,
 			Category1:   category1,

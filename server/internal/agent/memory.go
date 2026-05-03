@@ -94,7 +94,7 @@ func (s *LLMMemoryStore) Store(ctx context.Context, m *model.UserMemory) error {
 			if err != nil {
 				return
 			}
-			s.vectorStore.Upsert("mem:"+m.ID, vec)
+			s.vectorStore.Upsert("mem:"+m.ID, vec, map[string]string{"type": "mem", "user_id": m.UserID})
 			embStr := llm.EmbeddingToString(vec)
 			s.memRepo.UpdateEmbedding(context.Background(), m.ID, &embStr)
 		}()

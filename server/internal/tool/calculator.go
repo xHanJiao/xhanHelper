@@ -12,7 +12,7 @@ import (
 type CalculatorTool struct{}
 
 func NewCalculatorTool() *CalculatorTool { return &CalculatorTool{} }
-func (t *CalculatorTool) Name() string  { return "calculator" }
+func (t *CalculatorTool) Name() string   { return "calculator" }
 func (t *CalculatorTool) Description() string {
 	return "安全的数学表达式计算器，支持加减乘除和括号"
 }
@@ -179,4 +179,3 @@ func (p *parser) parseNumber() (float64, error) {
 func isDigitOrDot(c byte) bool {
 	return (c >= '0' && c <= '9') || c == '.'
 }
-

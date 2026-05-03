@@ -8,10 +8,14 @@ import (
 
 // vectorEntry — 向量存储条目
 type vectorEntry struct {
-	ID    string    // 外部 ID (memoryID / messageID / noteID)
-	Vec   []float64
-	Score float64 // 检索时使用
+	ID       string // 外部 ID (memoryID / messageID / noteID)
+	Vec      []float64
+	Score    float64           // 检索时使用
+	Metadata map[string]string // 业务元数据 (type, conv_id 等)
 }
+
+// FilterFunc — 向量检索时的过滤函数，返回 true 表示该条目纳入候选
+type FilterFunc func(entry vectorEntry) bool
 
 // VectorStore — 内存向量存储 + 余弦检索
 type VectorStore struct {
@@ -24,21 +28,28 @@ func NewVectorStore() *VectorStore {
 	return &VectorStore{}
 }
 
-// Upsert 插入或更新向量
-func (vs *VectorStore) Upsert(id string, vec []float64) {
+// Upsert 插入或更新向量，metadata 可选（传 nil 则初始化为空 map）
+func (vs *VectorStore) Upsert(id string, vec []float64, metadata map[string]string) {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 	for i, e := range vs.vectors {
 		if e.ID == id {
 			vs.vectors[i].Vec = vec
+			if metadata != nil {
+				vs.vectors[i].Metadata = metadata
+			}
 			return
 		}
 	}
-	vs.vectors = append(vs.vectors, vectorEntry{ID: id, Vec: vec})
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	vs.vectors = append(vs.vectors, vectorEntry{ID: id, Vec: vec, Metadata: metadata})
 }
 
-// Search 余弦相似度检索，返回 topK 的 ID 和 score
-func (vs *VectorStore) Search(query []float64, topK int) []struct {
+// Search 余弦相似度检索，从通过 filter 的条目中返回 topK
+// filter 为 nil 时不做过滤
+func (vs *VectorStore) Search(query []float64, topK int, filter FilterFunc) []struct {
 	ID    string
 	Score float64
 } {
@@ -49,25 +60,36 @@ func (vs *VectorStore) Search(query []float64, topK int) []struct {
 		return nil
 	}
 
-	// 计算余弦相似度
-	results := make([]vectorEntry, len(vs.vectors))
+	// 计算余弦相似度，同时过滤
+	type candidate struct {
+		idx   int
+		score float64
+	}
+	var eligible []candidate
 	for i, e := range vs.vectors {
-		results[i] = vectorEntry{ID: e.ID, Score: cosineSimilarity(query, e.Vec)}
+		if filter != nil && !filter(e) {
+			continue
+		}
+		eligible = append(eligible, candidate{idx: i, score: cosineSimilarity(query, e.Vec)})
+	}
+
+	if len(eligible) == 0 {
+		return nil
 	}
 
 	// 部分排序取 topK
 	topN := topK
-	if topN > len(results) {
-		topN = len(results)
+	if topN > len(eligible) {
+		topN = len(eligible)
 	}
 	for i := 0; i < topN; i++ {
 		best := i
-		for j := i + 1; j < len(results); j++ {
-			if results[j].Score > results[best].Score {
+		for j := i + 1; j < len(eligible); j++ {
+			if eligible[j].score > eligible[best].score {
 				best = j
 			}
 		}
-		results[i], results[best] = results[best], results[i]
+		eligible[i], eligible[best] = eligible[best], eligible[i]
 	}
 
 	out := make([]struct {
@@ -75,11 +97,11 @@ func (vs *VectorStore) Search(query []float64, topK int) []struct {
 		Score float64
 	}, topN)
 	for i := 0; i < topN; i++ {
-		out[i].ID = results[i].ID
-		out[i].Score = results[i].Score
+		out[i].ID = vs.vectors[eligible[i].idx].ID
+		out[i].Score = eligible[i].score
 	}
 
-	log.Printf("[vector] search: topK=%d/%d, best=%.4f", topK, len(vs.vectors), out[0].Score)
+	log.Printf("[vector] search: topK=%d/%d/%d, best=%.4f", topK, len(eligible), len(vs.vectors), out[0].Score)
 	return out
 }
 

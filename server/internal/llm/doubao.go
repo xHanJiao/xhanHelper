@@ -165,7 +165,9 @@ func (c *DoubaoClient) BuildSystemPrompt(base string, tools []ToolDefinition) st
 					b.WriteString(fmt.Sprintf("  - %s (%s%s): %s\n", key, typ, req, desc))
 					if enumVals, ok := prop["enum"].([]interface{}); ok {
 						vals := make([]string, len(enumVals))
-						for i, v := range enumVals { vals[i] = fmt.Sprint(v) }
+						for i, v := range enumVals {
+							vals[i] = fmt.Sprint(v)
+						}
 						b.WriteString(fmt.Sprintf("    可选值: %s\n", strings.Join(vals, "/")))
 					}
 				}

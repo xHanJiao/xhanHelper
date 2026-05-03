@@ -45,7 +45,7 @@ func (d DBConfig) DSN() string {
 
 // LLMConfig — LLM 厂商配置
 type LLMConfig struct {
-	Provider      string `yaml:"provider"`       // doubao | deepseek
+	Provider      string `yaml:"provider"` // doubao | deepseek
 	APIKey        string `yaml:"api_key"`
 	Model         string `yaml:"model"`          // 弱模型（日常使用）
 	StrongModel   string `yaml:"strong_model"`   // 强模型（深度思考模式，可选，默认同 Model）

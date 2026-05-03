@@ -118,8 +118,8 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"year":      map[string]interface{}{"type": "integer", "description": "年份，如2026。不传默认当前年"},
-					"category":  map[string]interface{}{"type": "string", "description": "按一级分类筛选，可选"},
+					"year":     map[string]interface{}{"type": "integer", "description": "年份，如2026。不传默认当前年"},
+					"category": map[string]interface{}{"type": "string", "description": "按一级分类筛选，可选"},
 				},
 			},
 		},
@@ -190,7 +190,7 @@ func (t *BookkeepingTool) createBill(ec *ExecuteContext, args json.RawMessage) *
 
 	bill := &model.Bill{
 		ID:          uuid.New().String(),
-		UserID:    ec.UserID,
+		UserID:      ec.UserID,
 		Item:        a.Item,
 		Amount:      a.Amount,
 		Category1:   a.Category1,

@@ -10,8 +10,8 @@ import (
 // DatetimeTool — 获取当前日期时间
 type DatetimeTool struct{}
 
-func NewDatetimeTool() *DatetimeTool { return &DatetimeTool{} }
-func (t *DatetimeTool) Name() string { return "datetime" }
+func NewDatetimeTool() *DatetimeTool        { return &DatetimeTool{} }
+func (t *DatetimeTool) Name() string        { return "datetime" }
 func (t *DatetimeTool) Description() string { return "获取当前日期时间信息" }
 
 func (t *DatetimeTool) Functions() []FuncSchema {
@@ -39,8 +39,8 @@ func (t *DatetimeTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 // UUIDTool — 生成 UUID
 type UUIDTool struct{}
 
-func NewUUIDTool() *UUIDTool { return &UUIDTool{} }
-func (t *UUIDTool) Name() string { return "uuid" }
+func NewUUIDTool() *UUIDTool            { return &UUIDTool{} }
+func (t *UUIDTool) Name() string        { return "uuid" }
 func (t *UUIDTool) Description() string { return "生成唯一标识符" }
 
 func (t *UUIDTool) Functions() []FuncSchema {

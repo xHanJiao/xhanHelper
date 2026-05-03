@@ -107,12 +107,12 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 		}
 
 		memory := &model.UserMemory{
-			ID:          uuid.New().String(),
-			UserID:    conv.UserID,
-			MemoryKey:   key,
-			MemoryValue: value,
-			Source:      "conversation",
-			ConfirmCount: 1,
+			ID:              uuid.New().String(),
+			UserID:          conv.UserID,
+			MemoryKey:       key,
+			MemoryValue:     value,
+			Source:          "conversation",
+			ConfirmCount:    1,
 			LastConfirmedAt: time.Now(),
 		}
 		if err := e.store.Store(ctx, memory); err != nil {
@@ -166,12 +166,12 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, prompt,
 		}
 
 		memory := &model.UserMemory{
-			ID:             uuid.New().String(),
-			UserID:       userID,
-			MemoryKey:      key,
-			MemoryValue:    value,
-			Source:         source,
-			ConfirmCount:   1,
+			ID:              uuid.New().String(),
+			UserID:          userID,
+			MemoryKey:       key,
+			MemoryValue:     value,
+			Source:          source,
+			ConfirmCount:    1,
 			LastConfirmedAt: time.Now(),
 		}
 		if err := e.store.Store(ctx, memory); err != nil {

@@ -22,15 +22,17 @@ type NoteTool struct {
 
 // VectorStorer — 向量存储接口（避免循环依赖）
 type VectorStorer interface {
-	Upsert(id string, vec []float64)
+	Upsert(id string, vec []float64, metadata map[string]string)
 }
 
 func NewNoteTool(noteRepo *service.NoteRepo, vs VectorStorer, emb *llm.Embedder) *NoteTool {
 	return &NoteTool{noteRepo: noteRepo, vectorStore: vs, embedder: emb}
 }
 
-func (t *NoteTool) Name() string        { return "note" }
-func (t *NoteTool) Description() string { return "自由笔记工具，记录值得长期追踪的信息——事实、数据、观点、事件、个人状态等" }
+func (t *NoteTool) Name() string { return "note" }
+func (t *NoteTool) Description() string {
+	return "自由笔记工具，记录值得长期追踪的信息——事实、数据、观点、事件、个人状态等"
+}
 
 func (t *NoteTool) Functions() []FuncSchema {
 	return []FuncSchema{
@@ -99,11 +101,11 @@ func (t *NoteTool) recordNote(ec *ExecuteContext, args json.RawMessage) *Result 
 	}
 
 	note := &model.Note{
-		ID:       uuid.New().String(),
-		UserID: ec.UserID,
-		Topic:    params.Topic,
-		Content:  params.Content,
-		Tags:     params.Tags,
+		ID:      uuid.New().String(),
+		UserID:  ec.UserID,
+		Topic:   params.Topic,
+		Content: params.Content,
+		Tags:    params.Tags,
 	}
 	if len(params.Variables) > 0 {
 		b, _ := json.Marshal(params.Variables)
@@ -131,7 +133,7 @@ func (t *NoteTool) embedNote(note *model.Note) {
 		log.Printf("[note] embed error: %v", err)
 		return
 	}
-	t.vectorStore.Upsert("note:"+note.ID, vec)
+	t.vectorStore.Upsert("note:"+note.ID, vec, map[string]string{"type": "note", "user_id": note.UserID})
 	embStr := llm.EmbeddingToString(vec)
 	t.noteRepo.UpdateEmbedding(context.Background(), note.ID, &embStr)
 }

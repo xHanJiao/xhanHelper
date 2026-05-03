@@ -125,6 +125,14 @@ if let last = viewModel.messages.last, last.id != "__streaming__" {
 - 同时确保 `saveMsgEmbedding` 在检索完成**之后**再写入（调整时序）
 - 或在搜索结果中过滤掉当前会话的消息
 
+**实际修复** (`vector_store.go` + `orchestrator.go`):
+- `vectorEntry` 新增 `Metadata map[string]string` 字段，存储业务元数据
+- `Upsert` 签名加 `metadata` 参数：消息存 `{"type":"msg","conv_id":"xxx"}`，记忆存 `{"type":"mem"}`，笔记存 `{"type":"note"}`
+- `Search` 签名加 `FilterFunc` 参数，过滤下推到搜索层：排除 `type=msg 且 conv_id=当前会话` 的条目
+- `retrieveMemories` 中 `saveMsgEmbedding` 挪到 `Search` 之后执行，避免当前消息被自己搜到
+- `searchHistoryMessages` 加 `currentConvID` 参数做防御性二次过滤
+- `VectorStorer` 接口同步更新
+
 ---
 
 ## 修复顺序
@@ -136,4 +144,4 @@ if let last = viewModel.messages.last, last.id != "__streaming__" {
 | 3 | 计划弹窗延迟消失 | P2 | ✅ 已修复 |
 | 4 | 后台运行网络断连 | P1 | ✅ 已修复 |
 | 5 | 绕过向量直接查 DB | P1 | ✅ 已修复 |
-| 6 | 向量检索召回当前会话 | P0 | 待修复 |
+| 6 | 向量检索召回当前会话 | P0 | ✅ 已修复 |

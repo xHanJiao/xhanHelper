@@ -55,7 +55,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 		}
 
 		events, err := orch.Run(c.Request.Context(), &agent.RunRequest{
-			UserID:              userID,
+			UserID:             userID,
 			ConversationID:     conv.ID,
 			Messages:           buildLLMMessages(history),
 			DeepMode:           req.DeepMode,

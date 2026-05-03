@@ -1,6 +1,9 @@
 import Combine
 import Foundation
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 // MARK: - Plan Node
 
@@ -31,6 +34,9 @@ class ChatViewModel: ObservableObject {
     private let apiClient: APIClient
     private let sseClient = SSEClient()
     private var streamingContent = ""
+    #if os(iOS)
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    #endif
 
     init(apiClient: APIClient) {
         self.apiClient = apiClient
@@ -71,6 +77,9 @@ class ChatViewModel: ObservableObject {
         messages.append(.streamingAssistant(conversationId: conversationId ?? ""))
 
         setupSSE(baseURL: baseURL, token: token, text: text)
+        #if os(iOS)
+        beginBackgroundTask()
+        #endif
     }
 
     private func setupSSE(baseURL: String, token: String, text: String) {
@@ -82,8 +91,15 @@ class ChatViewModel: ObservableObject {
         }
         sseClient.onError = { [weak self] error in
             Task { @MainActor in
+                let nsError = error as NSError
+                // 后台断连或用户取消，静默结束不弹错误
+                if nsError.domain == NSURLErrorDomain,
+                   nsError.code == NSURLErrorNetworkConnectionLost || nsError.code == NSURLErrorCancelled {
+                    self?.finishStreaming()
+                    return
+                }
                 self?.errorMessage = error.localizedDescription
-                self?.isStreaming = false
+                self?.finishStreaming()
             }
         }
         sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode)
@@ -91,7 +107,7 @@ class ChatViewModel: ObservableObject {
 
     func stopStreaming() {
         sseClient.disconnect()
-        isStreaming = false
+        finishStreaming()
     }
 
     // MARK: SSE Event Handling
@@ -153,7 +169,7 @@ class ChatViewModel: ObservableObject {
             }
 
         case .done:
-            isStreaming = false
+            finishStreaming()
             thoughtMessage = nil
             statusMessage = nil
             if let cid = parseConversationIdFromDone(event.data) {
@@ -181,12 +197,39 @@ class ChatViewModel: ObservableObject {
 
         case .error:
             errorMessage = event.data
-            isStreaming = false
+            finishStreaming()
 
         default:
             break
         }
     }
+
+    // MARK: Streaming Lifecycle
+
+    private func finishStreaming() {
+        isStreaming = false
+        #if os(iOS)
+        endBackgroundTask()
+        #endif
+    }
+
+    #if os(iOS)
+    private func beginBackgroundTask() {
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask { [weak self] in
+            self?.sseClient.disconnect()
+            self?.endBackgroundTask()
+            Task { @MainActor in
+                self?.isStreaming = false
+            }
+        }
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTaskID != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        backgroundTaskID = .invalid
+    }
+    #endif
 
     // MARK: Plan Parsing
 

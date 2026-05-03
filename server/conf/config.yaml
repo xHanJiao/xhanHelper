@@ -24,4 +24,10 @@ llm:
   api_key: ${LLM_API_KEY}
   provider: deepseek
   model: deepseek-v4-flash
+  strong_model: deepseek-v4-pro
   base_url: https://api.deepseek.com
+
+embedding:
+  api_key: ${EMBEDDING_API_KEY}
+  base_url: https://ark.cn-beijing.volces.com
+  model: doubao-embedding

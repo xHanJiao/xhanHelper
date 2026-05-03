@@ -33,6 +33,16 @@ class APIClient {
         return try await get("/api/bills")
     }
 
+    func uploadBillsCSV(_ csvText: String) async throws -> ImportResult {
+        let path = "/api/bills/import?extract_memories=true"
+        var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("text/plain", forHTTPHeaderField: "Content-Type")
+        req.httpBody = csvText.data(using: .utf8)
+        return try await doRequest(req)
+    }
+
     // MARK: Internal
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
@@ -84,4 +94,11 @@ struct Bill: Identifiable, Codable {
     let category2: String
     let date: String
     let status: Int
+}
+
+struct ImportResult: Codable {
+    let imported: Int
+    let skipped: Int
+    let total: Int
+    let errors: [String]?
 }

@@ -530,9 +530,37 @@ func (o *Orchestrator) Warmup(ctx context.Context) {
 		return
 	}
 	log.Printf("[vector] warmup: loading existing memories...")
-	o.vectorStore.Size()
-	log.Printf("[vector] warmup: loaded 0 memories (from existing embeddings)")
-	log.Printf("[vector] store size: %d", o.vectorStore.Size())
+
+	memories, err := o.memRepo.ListAll(ctx)
+	if err != nil {
+		log.Printf("[vector] warmup: list memories error: %v", err)
+		return
+	}
+
+	loaded, embedded := 0, 0
+	for _, m := range memories {
+		if m.Embedding != nil {
+			if vec, err := llm.StringToEmbedding(*m.Embedding); err == nil && len(vec) > 0 {
+				o.vectorStore.Upsert("mem:"+m.ID, vec)
+				loaded++
+				continue
+			}
+		}
+		// 没有持久化向量的，重新嵌入
+		text := m.MemoryKey + ": " + m.MemoryValue
+		vec, err := o.embedder.Embed(ctx, text)
+		if err != nil {
+			log.Printf("[vector] warmup: embed memory %s error: %v", m.ID[:8], err)
+			continue
+		}
+		o.vectorStore.Upsert("mem:"+m.ID, vec)
+		embStr := llm.EmbeddingToString(vec)
+		o.memRepo.UpdateEmbedding(ctx, m.ID, &embStr)
+		embedded++
+	}
+
+	log.Printf("[vector] warmup: %d from persisted embeddings, %d new, total=%d in store",
+		loaded, embedded, o.vectorStore.Size())
 }
 
 // —— DB 保存 ——

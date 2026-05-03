@@ -10,14 +10,17 @@ import (
 	"xhan-helper/internal/service"
 )
 
-// MemoryStore — 记忆存储接口（今天用 LLM 实现，未来可换向量实现）
+// MemoryStore — 记忆存储接口
+// Deprecated: 向量检索已由 Orchestrator.retrieveMemories 接管，此接口仅保留 Store 和 FindSimilar 用于记忆提取写入路径。
 type MemoryStore interface {
+	// Deprecated: 直接用 LLM 从全量记忆中挑选，绕过向量检索。已由 Orchestrator.retrieveMemories 替代。
 	GetRelevant(ctx context.Context, userID, currentMessage string) ([]model.UserMemory, error)
 	Store(ctx context.Context, m *model.UserMemory) error
 	FindSimilar(ctx context.Context, userID, key string) (*model.UserMemory, error)
 }
 
 // LLMMemoryStore — 用 LLM 做检索和去重的实现
+// Deprecated: 检索部分已由向量系统取代，仅保留 Store/FindSimilar 用于记忆提取的写入路径。
 type LLMMemoryStore struct {
 	llmClient   llm.LLMClient
 	memRepo     *service.UserMemoryRepo
@@ -31,6 +34,7 @@ func NewLLMMemoryStore(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo,
 }
 
 // GetRelevant 用 LLM 从所有记忆中选出与当前消息相关的
+// Deprecated: 绕过向量检索，直接查全表 + LLM 挑选。请用 Orchestrator.retrieveMemories。
 func (s *LLMMemoryStore) GetRelevant(ctx context.Context, userID, currentMessage string) ([]model.UserMemory, error) {
 	all, err := s.memRepo.ListByUser(ctx, userID)
 	if err != nil || len(all) == 0 {

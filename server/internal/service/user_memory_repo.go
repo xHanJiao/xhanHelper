@@ -58,6 +58,13 @@ func (r *UserMemoryRepo) GetByIDs(ctx context.Context, ids []string) ([]model.Us
 	return list, err
 }
 
+// ListAll 获取所有记忆（用于 warmup 加载向量库）
+func (r *UserMemoryRepo) ListAll(ctx context.Context) ([]model.UserMemory, error) {
+	var list []model.UserMemory
+	err := r.db.WithContext(ctx).Find(&list).Error
+	return list, err
+}
+
 // UpdateConfirm 更新确认计数
 func (r *UserMemoryRepo) UpdateConfirm(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Model(&model.UserMemory{}).

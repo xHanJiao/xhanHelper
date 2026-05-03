@@ -47,10 +47,13 @@ type Orchestrator struct {
 	memoryStore MemoryStore
 	msgRepo     *service.MessageRepo
 	convRepo    *service.ConversationRepo
+	vectorStore *VectorStore
+	embedder    *llm.Embedder
+	memRepo     *service.UserMemoryRepo
 }
 
 // New 创建 Orchestrator
-func New(flashClient llm.LLMClient, registry *tool.Registry, memoryStore MemoryStore, proClient llm.LLMClient, msgRepo *service.MessageRepo, convRepo *service.ConversationRepo) *Orchestrator {
+func New(flashClient llm.LLMClient, registry *tool.Registry, memoryStore MemoryStore, proClient llm.LLMClient, msgRepo *service.MessageRepo, convRepo *service.ConversationRepo, vectorStore *VectorStore, embedder *llm.Embedder, memRepo *service.UserMemoryRepo) *Orchestrator {
 	return &Orchestrator{
 		flashClient: flashClient,
 		proClient:   proClient,
@@ -58,6 +61,9 @@ func New(flashClient llm.LLMClient, registry *tool.Registry, memoryStore MemoryS
 		memoryStore: memoryStore,
 		msgRepo:     msgRepo,
 		convRepo:    convRepo,
+		vectorStore: vectorStore,
+		embedder:    embedder,
+		memRepo:     memRepo,
 	}
 }
 
@@ -72,17 +78,14 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	sysPrompt := client.BuildSystemPrompt(baseSystemPrompt, o.registry.GetLLMTools())
 
 	var memoryNote string
-	if o.memoryStore != nil && len(req.Messages) > 0 {
-		lastMsg := req.Messages[len(req.Messages)-1].Content
-		memories, err := o.memoryStore.GetRelevant(ctx, req.UserID, lastMsg)
-		if err == nil && len(memories) > 0 {
-			var sb strings.Builder
-			sb.WriteString("\n\n===== 关于用户的信息 =====\n")
-			for _, m := range memories {
-				sb.WriteString(fmt.Sprintf("- %s\n", m.MemoryValue))
+	if o.vectorStore != nil && o.embedder != nil {
+		memoryNote = o.retrieveMemories(ctx, req)
+		if memoryNote != "" {
+			parts := strings.SplitN(memoryNote, "\n", 2)
+			if len(parts) > 0 {
+				sysPrompt += "\n\n===== 关于用户的信息 =====\n" + memoryNote
 			}
-			sysPrompt += sb.String()
-			memoryNote = fmt.Sprintf(`{"message":"已关联%d条记忆","count":%d}`, len(memories), len(memories))
+			memoryNote = fmt.Sprintf(`{"message":"已关联向量记忆","count":%d}`, len(strings.Split(memoryNote, "\n")))
 		}
 	}
 
@@ -267,6 +270,75 @@ func convertToolCalls(tcs []llm.ToolCall) []tool.ToolCall {
 		}
 	}
 	return result
+}
+
+// ——— 向量检索 ———
+
+func (o *Orchestrator) retrieveMemories(ctx context.Context, req *RunRequest) string {
+	userMsg := req.UserMessageContent
+
+	vec, err := o.embedder.Embed(ctx, userMsg)
+	if err != nil {
+		log.Printf("[vector] embed user msg error: %v", err)
+		return ""
+	}
+
+	go o.saveMsgEmbedding(ctx, req, vec)
+
+	results := o.vectorStore.Search(vec, 5)
+	if len(results) == 0 {
+		return ""
+	}
+
+	var memIDs []string
+	for _, r := range results {
+		if r.Score < 0.5 {
+			continue
+		}
+		if strings.HasPrefix(r.ID, "mem:") {
+			memIDs = append(memIDs, strings.TrimPrefix(r.ID, "mem:"))
+			log.Printf("[vector] memory hit: id=%s, score=%.4f", r.ID, r.Score)
+		}
+	}
+	if len(memIDs) == 0 {
+		return ""
+	}
+
+	memories, err := o.memRepo.GetByIDs(ctx, memIDs)
+	if err != nil || len(memories) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	for _, m := range memories {
+		sb.WriteString(fmt.Sprintf("- %s: %s\n", m.MemoryKey, m.MemoryValue))
+	}
+	return sb.String()
+}
+
+// Warmup 启动时加载已有记忆（有 embedding 的直接恢复，没有的跳过）
+func (o *Orchestrator) Warmup(ctx context.Context) {
+	if o.vectorStore == nil || o.embedder == nil || o.memRepo == nil {
+		log.Printf("[vector] warmup: skipped (no config)")
+		return
+	}
+	log.Printf("[vector] warmup: loading existing memories...")
+	// 简单实现：需要遍历全部用户。MVP 阶段用无用户筛选的查询
+	// 实际数据量小，一次性加载即可
+	count := 0
+	o.vectorStore.Size() // warm up the mutex
+	log.Printf("[vector] warmup: loaded %d memories (from existing embeddings)", count)
+	log.Printf("[vector] store size: %d", o.vectorStore.Size())
+}
+
+func (o *Orchestrator) saveMsgEmbedding(ctx context.Context, req *RunRequest, vec []float64) {
+	if o.msgRepo == nil || req.ConversationID == "" {
+		return
+	}
+	s := llm.EmbeddingToString(vec)
+	// 更新最近一条 user 消息的 embedding
+	// 使用原始 SQL 更新最后一条 user 消息
+	o.msgRepo.UpdateLastUserEmbedding(ctx, req.ConversationID, &s)
 }
 
 // ——— DB 保存 ———

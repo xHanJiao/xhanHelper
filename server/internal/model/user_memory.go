@@ -11,7 +11,7 @@ type UserMemory struct {
 	Source         string    `gorm:"size:20;default:conversation" json:"source"`        // conversation / csv_import
 	ConfirmCount   int       `gorm:"default:1" json:"confirm_count"`
 	LastConfirmedAt time.Time `json:"last_confirmed_at"`
-	EmbeddingID    *string   `gorm:"size:36" json:"embedding_id,omitempty"`            // 向量库 ID，预留
+	Embedding      *string   `gorm:"type:text" json:"embedding,omitempty"`               // JSON 数组, 向量持久化
 	CreatedAt      time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt      time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }

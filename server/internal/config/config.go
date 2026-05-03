@@ -43,11 +43,13 @@ func (d DBConfig) DSN() string {
 
 // LLMConfig — LLM 厂商配置
 type LLMConfig struct {
-	Provider    string `yaml:"provider"` // doubao | deepseek
-	APIKey      string `yaml:"api_key"`
-	Model       string `yaml:"model"`        // 弱模型（日常使用）
-	StrongModel string `yaml:"strong_model"` // 强模型（深度思考模式，可选，默认同 Model）
-	BaseURL     string `yaml:"base_url"`
+	Provider         string `yaml:"provider"` // doubao | deepseek
+	APIKey           string `yaml:"api_key"`
+	Model            string `yaml:"model"`             // 弱模型（日常使用）
+	StrongModel      string `yaml:"strong_model"`      // 强模型（深度思考模式，可选，默认同 Model）
+	BaseURL          string `yaml:"base_url"`          // LLM API 地址
+	EmbeddingBaseURL string `yaml:"embedding_base_url"` // embedding API 地址（默认 ark.cn-beijing.volces.com）
+	EmbeddingAPIKey  string `yaml:"embedding_api_key"`  // embedding API key（默认同 api_key）
 }
 
 // Load 加载配置：base YAML + env YAML 合并 → 环境变量替换
@@ -141,12 +143,19 @@ func merge(dst, src *Config) {
 	if src.LLM.StrongModel != "" {
 		dst.LLM.StrongModel = src.LLM.StrongModel
 	}
+	if src.LLM.EmbeddingBaseURL != "" {
+		dst.LLM.EmbeddingBaseURL = src.LLM.EmbeddingBaseURL
+	}
+	if src.LLM.EmbeddingAPIKey != "" {
+		dst.LLM.EmbeddingAPIKey = src.LLM.EmbeddingAPIKey
+	}
 }
 
 // resolveEnvVars 对字符串字段再做一次 ${VAR} 展开（处理 env YAML 覆盖引入的新占位符）
 func resolveEnvVars(cfg *Config) {
 	cfg.DB.Password = os.ExpandEnv(cfg.DB.Password)
 	cfg.LLM.APIKey = os.ExpandEnv(cfg.LLM.APIKey)
+	cfg.LLM.EmbeddingAPIKey = os.ExpandEnv(cfg.LLM.EmbeddingAPIKey)
 }
 
 func validate(cfg *Config) error {

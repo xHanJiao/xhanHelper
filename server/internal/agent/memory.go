@@ -19,13 +19,15 @@ type MemoryStore interface {
 
 // LLMMemoryStore — 用 LLM 做检索和去重的实现
 type LLMMemoryStore struct {
-	llmClient llm.LLMClient
-	memRepo   *service.UserMemoryRepo
+	llmClient   llm.LLMClient
+	memRepo     *service.UserMemoryRepo
+	vectorStore *VectorStore
+	embedder    *llm.Embedder
 }
 
 // NewLLMMemoryStore 创建 LLM 记忆存储
-func NewLLMMemoryStore(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo) *LLMMemoryStore {
-	return &LLMMemoryStore{llmClient: llmClient, memRepo: memRepo}
+func NewLLMMemoryStore(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo, vectorStore *VectorStore, embedder *llm.Embedder) *LLMMemoryStore {
+	return &LLMMemoryStore{llmClient: llmClient, memRepo: memRepo, vectorStore: vectorStore, embedder: embedder}
 }
 
 // GetRelevant 用 LLM 从所有记忆中选出与当前消息相关的
@@ -75,9 +77,25 @@ func (s *LLMMemoryStore) GetRelevant(ctx context.Context, userID, currentMessage
 	return result, nil
 }
 
-// Store 写入记忆
+// Store 写入记忆并自动向量化
 func (s *LLMMemoryStore) Store(ctx context.Context, m *model.UserMemory) error {
-	return s.memRepo.Create(ctx, m)
+	if err := s.memRepo.Create(ctx, m); err != nil {
+		return err
+	}
+	// 异步 embedding
+	if s.vectorStore != nil && s.embedder != nil && m.MemoryValue != "" {
+		go func() {
+			text := m.MemoryKey + ": " + m.MemoryValue
+			vec, err := s.embedder.Embed(context.Background(), text)
+			if err != nil {
+				return
+			}
+			s.vectorStore.Upsert("mem:"+m.ID, vec)
+			embStr := llm.EmbeddingToString(vec)
+			s.memRepo.UpdateEmbedding(context.Background(), m.ID, &embStr)
+		}()
+	}
+	return nil
 }
 
 // FindSimilar 查找相似记忆（同一 device 下相同 key）

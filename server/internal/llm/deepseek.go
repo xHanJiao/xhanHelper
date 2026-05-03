@@ -302,6 +302,11 @@ func parseDeepSeekResponse(body []byte) (Message, string, []ToolCall, error) {
 				} `json:"tool_calls"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
 		Error *struct {
 			Message string `json:"message"`
 		} `json:"error"`
@@ -333,6 +338,10 @@ func parseDeepSeekResponse(body []byte) (Message, string, []ToolCall, error) {
 		}
 	}
 
+	if result.Usage != nil {
+		log.Printf("[deepseek] usage: prompt=%d, completion=%d, total=%d",
+			result.Usage.PromptTokens, result.Usage.CompletionTokens, result.Usage.TotalTokens)
+	}
 	if len(toolCalls) > 0 {
 		toolCallsJSON, _ := json.Marshal(toolCalls)
 		tcCount := len(toolCalls)

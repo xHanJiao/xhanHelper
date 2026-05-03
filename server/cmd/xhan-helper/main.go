@@ -71,11 +71,20 @@ func main() {
 	reg.Register(tool.NewCalculatorTool())
 	reg.Register(tool.NewNoteTool(noteRepo))
 
+	// Vector Store
+	embAPIKey := cfg.LLM.EmbeddingAPIKey
+	if embAPIKey == "" {
+		embAPIKey = cfg.LLM.APIKey
+	}
+	embedder := llm.NewEmbedder(embAPIKey, cfg.LLM.EmbeddingBaseURL)
+	vectorStore := agent.NewVectorStore()
+
 	// Memory Store
-	memStore := agent.NewLLMMemoryStore(llmClient, memRepo)
+	memStore := agent.NewLLMMemoryStore(llmClient, memRepo, vectorStore, embedder)
 
 	// Orchestrator
-	orch := agent.New(llmClient, reg, memStore, strongClient, msgRepo, convRepo)
+	orch := agent.New(llmClient, reg, memStore, strongClient, msgRepo, convRepo, vectorStore, embedder, memRepo)
+	go orch.Warmup(context.Background())
 
 	// Memory Scheduler (后台异步)
 	memExtractor := agent.NewMemoryExtractor(llmClient, memStore, msgRepo, convRepo)

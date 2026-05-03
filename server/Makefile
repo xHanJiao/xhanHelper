@@ -38,6 +38,10 @@ check-env:
 		echo "   export DB_PASSWORD=\"your-mysql-password\""; \
 		ok=false; \
 	fi; \
+	if [ -z "$$EMBEDDING_API_KEY" ]; then \
+		echo "💡 EMBEDDING_API_KEY 未设置，向量检索功能不可用"; \
+		echo "   export EMBEDDING_API_KEY=\"your-ark-api-key\""; \
+	fi; \
 	if ! $$ok; then \
 		echo ""; \
 		echo "dev 环境只需 LLM_API_KEY，prod 环境还需 DB_PASSWORD"; \

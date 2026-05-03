@@ -45,6 +45,19 @@ func (r *UserMemoryRepo) ListByUser(ctx context.Context, userID string) ([]model
 	return list, err
 }
 
+// UpdateEmbedding 更新记忆的向量字段
+func (r *UserMemoryRepo) UpdateEmbedding(ctx context.Context, id string, embedding *string) error {
+	return r.db.WithContext(ctx).Model(&model.UserMemory{}).Where("id = ?", id).
+		Update("embedding", embedding).Error
+}
+
+// GetByIDs 按 ID 列表查询
+func (r *UserMemoryRepo) GetByIDs(ctx context.Context, ids []string) ([]model.UserMemory, error) {
+	var list []model.UserMemory
+	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&list).Error
+	return list, err
+}
+
 // UpdateConfirm 更新确认计数
 func (r *UserMemoryRepo) UpdateConfirm(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Model(&model.UserMemory{}).

@@ -12,3 +12,5 @@ llm:
   strong_model: deepseek-v4-pro
   api_key: ${LLM_API_KEY}
   base_url: https://api.deepseek.com
+  embedding_base_url: https://ark.cn-beijing.volces.com
+  embedding_api_key: ${EMBEDDING_API_KEY}

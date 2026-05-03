@@ -56,9 +56,9 @@ struct ConversationListContentView: View {
                 let listVM = ConversationListViewModel(apiClient: apiClient)
                 ConversationListView(
                     viewModel: listVM,
-                    onSelect: { cid in
+                    onSelect: { cid, title in
                         let vm = ChatViewModel(apiClient: apiClient)
-                        Task { await vm.loadConversation(id: cid) }
+                        Task { await vm.loadConversation(id: cid, title: title) }
                         chatVM = vm
                         selectedConversationId = cid
                     },

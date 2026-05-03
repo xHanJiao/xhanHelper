@@ -75,6 +75,11 @@ struct ChatView: View {
                         withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
                 }
+                .onChange(of: viewModel.messages.last?.content) {
+                    if let last = viewModel.messages.last {
+                        withAnimation { proxy.scrollTo(last.id, anchor: .top) }
+                    }
+                }
                 .onChange(of: viewModel.currentToolCall?.function) {
                     withAnimation { proxy.scrollTo("tool_call", anchor: .bottom) }
                 }
@@ -108,7 +113,7 @@ struct ChatView: View {
                     .help(viewModel.deepMode ? "深度思考模式 (Pro)" : "标准模式 (Flash)")
                 }
             }
-        .navigationTitle(viewModel.conversationId ?? "新对话")
+        .navigationTitle(viewModel.conversationTitle ?? "新对话")
         .navigationBarTitleDisplayMode(.inline)
 
             // 动态图弹窗

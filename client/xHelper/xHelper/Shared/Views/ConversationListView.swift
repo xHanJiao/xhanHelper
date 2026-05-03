@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ConversationListView: View {
     @StateObject var viewModel: ConversationListViewModel
-    let onSelect: (String) -> Void
+    let onSelect: (String, String) -> Void
     let onNewChat: () -> Void
 
     @State private var renameTarget: Conversation?
@@ -23,7 +23,7 @@ struct ConversationListView: View {
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(viewModel.conversations) { conv in
-                        Button(action: { onSelect(conv.id) }) {
+                        Button(action: { onSelect(conv.id, conv.title) }) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(conv.title)
                                     .font(.body)

@@ -21,6 +21,7 @@ class ChatViewModel: ObservableObject {
     @Published var statusMessage: String?
     @Published var errorMessage: String?
     @Published var conversationId: String?
+    @Published var conversationTitle: String?
     @Published var deepMode = false
 
     @Published var planNodes: [PlanNode] = []
@@ -37,8 +38,9 @@ class ChatViewModel: ObservableObject {
 
     // MARK: Load
 
-    func loadConversation(id: String) async {
+    func loadConversation(id: String, title: String) async {
         conversationId = id
+        conversationTitle = title
         do {
             messages = try await apiClient.getMessages(conversationId: id)
         } catch {
@@ -157,6 +159,9 @@ class ChatViewModel: ObservableObject {
             if let cid = parseConversationIdFromDone(event.data) {
                 conversationId = cid
             }
+            if let t = parseTitleFromDone(event.data) {
+                conversationTitle = t
+            }
             if let msgID = parseMessageIdFromDone(event.data) {
                 replaceStreamingMessageID(with: msgID)
             }
@@ -244,6 +249,13 @@ class ChatViewModel: ObservableObject {
     private func parseToolCall(_ data: String) -> ToolCallData? {
         guard let jsonData = data.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(ToolCallData.self, from: jsonData)
+    }
+
+    private func parseTitleFromDone(_ data: String) -> String? {
+        guard let jsonData = data.data(using: .utf8),
+              let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
+        else { return nil }
+        return obj["title"]
     }
 
     private func parseConversationIdFromDone(_ data: String) -> String? {

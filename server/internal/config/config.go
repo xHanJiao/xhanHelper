@@ -9,9 +9,10 @@ import (
 
 // Config — 顶层配置
 type Config struct {
-	Server ServerConfig `yaml:"server"`
-	DB     DBConfig     `yaml:"db"`
-	LLM    LLMConfig    `yaml:"llm"`
+	Server    ServerConfig    `yaml:"server"`
+	DB        DBConfig        `yaml:"db"`
+	LLM       LLMConfig       `yaml:"llm"`
+	Embedding EmbeddingConfig `yaml:"embedding"`
 }
 
 // ServerConfig — HTTP 服务配置
@@ -43,13 +44,18 @@ func (d DBConfig) DSN() string {
 
 // LLMConfig — LLM 厂商配置
 type LLMConfig struct {
-	Provider         string `yaml:"provider"` // doubao | deepseek
-	APIKey           string `yaml:"api_key"`
-	Model            string `yaml:"model"`             // 弱模型（日常使用）
-	StrongModel      string `yaml:"strong_model"`      // 强模型（深度思考模式，可选，默认同 Model）
-	BaseURL          string `yaml:"base_url"`          // LLM API 地址
-	EmbeddingBaseURL string `yaml:"embedding_base_url"` // embedding API 地址（默认 ark.cn-beijing.volces.com）
-	EmbeddingAPIKey  string `yaml:"embedding_api_key"`  // embedding API key（默认同 api_key）
+	Provider    string `yaml:"provider"`     // doubao | deepseek
+	APIKey      string `yaml:"api_key"`
+	Model       string `yaml:"model"`        // 弱模型（日常使用）
+	StrongModel string `yaml:"strong_model"` // 强模型（深度思考模式，可选，默认同 Model）
+	BaseURL     string `yaml:"base_url"`     // LLM API 地址
+}
+
+// EmbeddingConfig — 向量化配置
+type EmbeddingConfig struct {
+	APIKey  string `yaml:"api_key"`
+	BaseURL string `yaml:"base_url"` // 默认 https://ark.cn-beijing.volces.com
+	Model   string `yaml:"model"`    // 默认 doubao-embedding
 }
 
 // Load 加载配置：base YAML + env YAML 合并 → 环境变量替换
@@ -143,11 +149,14 @@ func merge(dst, src *Config) {
 	if src.LLM.StrongModel != "" {
 		dst.LLM.StrongModel = src.LLM.StrongModel
 	}
-	if src.LLM.EmbeddingBaseURL != "" {
-		dst.LLM.EmbeddingBaseURL = src.LLM.EmbeddingBaseURL
+	if src.Embedding.APIKey != "" {
+		dst.Embedding.APIKey = src.Embedding.APIKey
 	}
-	if src.LLM.EmbeddingAPIKey != "" {
-		dst.LLM.EmbeddingAPIKey = src.LLM.EmbeddingAPIKey
+	if src.Embedding.BaseURL != "" {
+		dst.Embedding.BaseURL = src.Embedding.BaseURL
+	}
+	if src.Embedding.Model != "" {
+		dst.Embedding.Model = src.Embedding.Model
 	}
 }
 
@@ -155,7 +164,7 @@ func merge(dst, src *Config) {
 func resolveEnvVars(cfg *Config) {
 	cfg.DB.Password = os.ExpandEnv(cfg.DB.Password)
 	cfg.LLM.APIKey = os.ExpandEnv(cfg.LLM.APIKey)
-	cfg.LLM.EmbeddingAPIKey = os.ExpandEnv(cfg.LLM.EmbeddingAPIKey)
+	cfg.Embedding.APIKey = os.ExpandEnv(cfg.Embedding.APIKey)
 }
 
 func validate(cfg *Config) error {

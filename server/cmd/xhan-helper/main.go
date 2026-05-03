@@ -72,11 +72,7 @@ func main() {
 	reg.Register(tool.NewNoteTool(noteRepo))
 
 	// Vector Store
-	embAPIKey := cfg.LLM.EmbeddingAPIKey
-	if embAPIKey == "" {
-		embAPIKey = cfg.LLM.APIKey
-	}
-	embedder := llm.NewEmbedder(embAPIKey, cfg.LLM.EmbeddingBaseURL)
+	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
 	vectorStore := agent.NewVectorStore()
 
 	// Memory Store

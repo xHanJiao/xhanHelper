@@ -19,15 +19,17 @@ type Embedder struct {
 }
 
 // NewEmbedder 创建豆包 embedding 客户端
-// baseURL 为空时默认使用豆包 ARK 地址
-func NewEmbedder(apiKey, baseURL string) *Embedder {
+func NewEmbedder(apiKey, baseURL, model string) *Embedder {
 	if baseURL == "" {
 		baseURL = "https://ark.cn-beijing.volces.com"
+	}
+	if model == "" {
+		model = "doubao-embedding"
 	}
 	return &Embedder{
 		apiKey:     apiKey,
 		baseURL:    baseURL,
-		model:      "doubao-embedding",
+		model:      model,
 		httpClient: &http.Client{},
 	}
 }
@@ -51,6 +53,10 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float64, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+e.apiKey)
+	log.Printf("[embed] request: url=%s model=%s key=%s... text=%s",
+		e.baseURL+"/api/v3/embeddings/multimodal", e.model,
+		e.apiKey[:min(8, len(e.apiKey))],
+		text[:min(80, len(text))])
 
 	resp, err := e.httpClient.Do(req)
 	if err != nil {

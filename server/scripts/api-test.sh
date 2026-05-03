@@ -187,8 +187,20 @@ IMPORT_RESULT=$(curl -s -X POST "$BASE_URL/api/bills/import" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: text/plain" \
     --data-binary @"$SCRIPT_DIR/test-bills.csv")
-assert "导入成功 imported > 0" '"imported":4' "$IMPORT_RESULT"
-assert "无跳过 skipped = 0"   '"skipped":0'   "$IMPORT_RESULT"
+assert "导入成功 imported > 0" '"imported":13' "$IMPORT_RESULT"
+assert "无跳过 skipped = 0"    '"skipped":0'    "$IMPORT_RESULT"
+
+# ── 13b. CSV 导入 + 记忆提取 ──
+echo ""
+echo "【13b/15】CSV 导入 + 记忆提取"
+IMPORT_RESULT=$(curl -s -X POST "$BASE_URL/api/bills/import?extract_memories=true" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: text/plain" \
+    --data-binary @"$SCRIPT_DIR/test-bills.csv")
+assert "导入成功 imported > 0" '"imported":13' "$IMPORT_RESULT"
+# 记忆提取是异步的，稍等一下
+sleep 2
+echo "  (记忆提取已触发)"
 
 # ── 14. 导入后确认总数 ──
 echo ""
@@ -197,8 +209,8 @@ BILLS=$(curl -s "$BASE_URL/api/bills" \
     -H "Authorization: Bearer $TOKEN")
 COUNT=$(echo "$BILLS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null)
 # cancel_bill 跳过时总数=5，执行时=4
-EXPECTED_COUNT=5
-if [ "$SKIP_CANCEL" != "1" ]; then EXPECTED_COUNT=4; fi
+EXPECTED_COUNT=27
+if [ "$SKIP_CANCEL" != "1" ]; then EXPECTED_COUNT=26; fi
 assert "账单总数 = $EXPECTED_COUNT" "$EXPECTED_COUNT" "$COUNT"
 
 # ── 15. 验证导入数据内容 ──
@@ -209,26 +221,10 @@ assert "包含瑞幸咖啡"  "瑞幸咖啡" "$BILLS"
 assert "金额 949 存在" "949" "$BILLS"
 
 # ═══════════════════════════════════════════
-# thought 测试（先导入真实账单数据，再触发思考链）
+# thought 测试
 # ═══════════════════════════════════════════
 
-# 先导入真实账单 CSV
-echo ""
-echo "【15.5】导入真实账单数据"
-REAL_CSV="$HOME/Documents/统计/export.csv"
-if [ -f "$REAL_CSV" ]; then
-    IMPORT_RESULT=$(curl -s -X POST "$BASE_URL/api/bills/import?extract_memories=false" \
-        -H "Authorization: Bearer $TOKEN" \
-        -H "Content-Type: text/plain" \
-        --data-binary @"$REAL_CSV")
-    IMPORTED=$(echo "$IMPORT_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('imported',0))" 2>/dev/null)
-    green "  ✅ 导入真实账单 $IMPORTED 条"
-    PASS=$((PASS + 1))
-else
-    echo -e "\033[33m  ⚠ 未找到 $REAL_CSV，跳过\033[0m"
-fi
-
-# 然后问复杂对比问题
+# 用已导入的测试数据触发思考链
 echo ""
 echo "【15.6】thought — 跨月份对比触发思考链"
 SSE_OUT=$(curl -N -s --max-time 60 -X POST "$BASE_URL/api/chat" \

@@ -190,7 +190,7 @@ func (t *BookkeepingTool) createBill(ec *ExecuteContext, args json.RawMessage) *
 
 	bill := &model.Bill{
 		ID:          uuid.New().String(),
-		DeviceID:    ec.DeviceID,
+		UserID:    ec.UserID,
 		Item:        a.Item,
 		Amount:      a.Amount,
 		Category1:   a.Category1,
@@ -288,7 +288,7 @@ func (t *BookkeepingTool) queryBills(ec *ExecuteContext, args json.RawMessage) *
 	var a queryBillsArgs
 	json.Unmarshal(args, &a)
 
-	bills, err := t.billRepo.ListByDevice(ec.Ctx, ec.DeviceID)
+	bills, err := t.billRepo.ListByUser(ec.Ctx, ec.UserID)
 	if err != nil {
 		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
 	}
@@ -323,7 +323,7 @@ func (t *BookkeepingTool) getMonthlyStats(ec *ExecuteContext, args json.RawMessa
 		a.Year = time.Now().Year()
 	}
 
-	bills, err := t.billRepo.ListByDevice(ec.Ctx, ec.DeviceID)
+	bills, err := t.billRepo.ListByUser(ec.Ctx, ec.UserID)
 	if err != nil {
 		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
 	}
@@ -361,7 +361,7 @@ func (t *BookkeepingTool) getCategoryStats(ec *ExecuteContext, args json.RawMess
 	var a dateRangeArgs
 	json.Unmarshal(args, &a)
 
-	bills, err := t.billRepo.ListByDevice(ec.Ctx, ec.DeviceID)
+	bills, err := t.billRepo.ListByUser(ec.Ctx, ec.UserID)
 	if err != nil {
 		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
 	}

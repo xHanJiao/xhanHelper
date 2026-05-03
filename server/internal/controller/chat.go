@@ -27,15 +27,14 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			return
 		}
 
-		dev, _ := c.Get("device")
-		device := dev.(*model.Device)
+		userID := c.GetString("user_id")
 
 		var conv *model.Conversation
 		if req.ConversationID != nil {
 			conv, _ = convRepo.FindByID(c.Request.Context(), *req.ConversationID)
 		}
 		if conv == nil {
-			conv = &model.Conversation{ID: uuid.New().String(), DeviceID: device.ID}
+			conv = &model.Conversation{ID: uuid.New().String(), UserID: userID}
 			if err := convRepo.Create(c.Request.Context(), conv); err != nil {
 				view.JSONError(c, 500, "create conversation failed")
 				return
@@ -56,7 +55,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 		}
 
 		events, err := orch.Run(c.Request.Context(), &agent.RunRequest{
-			DeviceID:           device.ID,
+			UserID:              userID,
 			ConversationID:     conv.ID,
 			Messages:           buildLLMMessages(history),
 			DeepMode:           req.DeepMode,

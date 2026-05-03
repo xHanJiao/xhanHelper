@@ -8,20 +8,21 @@ import (
 	"xhan-helper/internal/view"
 )
 
-// Auth 设备 Token 认证中间件
-func Auth(devRepo *service.DeviceRepo) gin.HandlerFunc {
+// Auth Bearer Token 认证中间件
+func Auth(userRepo *service.UserRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 		if token == "" {
 			view.JSONError(c, 401, "missing token")
 			return
 		}
-		device, err := devRepo.FindByToken(c.Request.Context(), token)
-		if err != nil || device == nil {
+		user, err := userRepo.FindByToken(c.Request.Context(), token)
+		if err != nil || user == nil {
 			view.JSONError(c, 401, "invalid token")
 			return
 		}
-		c.Set("device", device)
+		c.Set("user_id", user.ID)
+		c.Set("bearer_token", token)
 		c.Next()
 	}
 }

@@ -44,20 +44,20 @@ func (r *BillRepo) FindByID(ctx context.Context, id string) (*model.Bill, error)
 	return &b, err
 }
 
-// ListByDevice 获取设备所有正常状态账单
-func (r *BillRepo) ListByDevice(ctx context.Context, deviceID string) ([]model.Bill, error) {
+// ListByUser 获取设备所有正常状态账单
+func (r *BillRepo) ListByUser(ctx context.Context, userID string) ([]model.Bill, error) {
 	var list []model.Bill
 	err := r.db.WithContext(ctx).
-		Where("device_id = ? AND status = ?", deviceID, model.BillStatusNormal).
+		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal).
 		Order("date DESC, created_at DESC").
 		Find(&list).Error
 	return list, err
 }
 
 // ListFiltered 按条件筛选账单
-func (r *BillRepo) ListFiltered(ctx context.Context, deviceID, startDate, endDate, category string) ([]model.Bill, error) {
+func (r *BillRepo) ListFiltered(ctx context.Context, userID, startDate, endDate, category string) ([]model.Bill, error) {
 	q := r.db.WithContext(ctx).
-		Where("device_id = ? AND status = ?", deviceID, model.BillStatusNormal)
+		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal)
 
 	if startDate != "" {
 		q = q.Where("date >= ?", startDate)

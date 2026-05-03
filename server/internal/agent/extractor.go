@@ -95,7 +95,7 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 		}
 
 		// 去重：检查是否已有相似记忆
-		existing, _ := e.store.FindSimilar(ctx, conv.DeviceID, key)
+		existing, _ := e.store.FindSimilar(ctx, conv.UserID, key)
 		if existing != nil {
 			// 已存在，更新确认计数
 			if existing.MemoryValue == value {
@@ -108,7 +108,7 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 
 		memory := &model.UserMemory{
 			ID:          uuid.New().String(),
-			DeviceID:    conv.DeviceID,
+			UserID:    conv.UserID,
 			MemoryKey:   key,
 			MemoryValue: value,
 			Source:      "conversation",
@@ -128,7 +128,7 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 }
 
 // ExtractFromPrompt 从任意文本中提取记忆（CSV 导入等场景）
-func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, deviceID, prompt, source string) {
+func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, prompt, source string) {
 	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
 		SystemPrompt: "你是记忆提取助手。只提取明确的事实、偏好、规律。不确定的不提取。",
 		Messages:     []llm.Message{{Role: "user", Content: prompt}},
@@ -160,14 +160,14 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, deviceID, promp
 			continue
 		}
 
-		existing, _ := e.store.FindSimilar(ctx, deviceID, key)
+		existing, _ := e.store.FindSimilar(ctx, userID, key)
 		if existing != nil && existing.MemoryValue == value {
 			continue
 		}
 
 		memory := &model.UserMemory{
 			ID:             uuid.New().String(),
-			DeviceID:       deviceID,
+			UserID:       userID,
 			MemoryKey:      key,
 			MemoryValue:    value,
 			Source:         source,

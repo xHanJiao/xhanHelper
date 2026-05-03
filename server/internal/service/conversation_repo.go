@@ -56,11 +56,11 @@ func (r *ConversationRepo) FindByID(ctx context.Context, id string) (*model.Conv
 	return &c, err
 }
 
-// ListByDevice 获取设备未删除的会话列表（按更新时间倒序）
-func (r *ConversationRepo) ListByDevice(ctx context.Context, deviceID string, limit int) ([]model.Conversation, error) {
+// ListByUser 获取设备未删除的会话列表（按更新时间倒序）
+func (r *ConversationRepo) ListByUser(ctx context.Context, userID string, limit int) ([]model.Conversation, error) {
 	var list []model.Conversation
 	err := r.db.WithContext(ctx).
-		Where("device_id = ? AND is_deleted = ?", deviceID, false).
+		Where("user_id = ? AND is_deleted = ?", userID, false).
 		Order("updated_at DESC").Limit(limit).
 		Find(&list).Error
 	return list, err

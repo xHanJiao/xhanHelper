@@ -31,9 +31,9 @@ func NewBillHandler(billRepo *service.BillRepo, extractor *agent.MemoryExtractor
 
 // ListBills GET /api/bills
 func (h *BillHandler) ListBills(c *gin.Context) {
-	dev := c.MustGet("device").(*model.Device)
+	userID := c.GetString("user_id")
 
-	bills, err := h.billRepo.ListByDevice(c.Request.Context(), dev.ID)
+	bills, err := h.billRepo.ListByUser(c.Request.Context(), userID)
 	if err != nil {
 		view.JSONError(c, 500, "query bills failed")
 		return
@@ -43,7 +43,7 @@ func (h *BillHandler) ListBills(c *gin.Context) {
 
 // ImportBills POST /api/bills/import
 func (h *BillHandler) ImportBills(c *gin.Context) {
-	dev := c.MustGet("device").(*model.Device)
+	userID := c.GetString("user_id")
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -110,7 +110,7 @@ func (h *BillHandler) ImportBills(c *gin.Context) {
 
 		bill := &model.Bill{
 			ID:          uuid.New().String(),
-			DeviceID:    dev.ID,
+			UserID:    userID,
 			Item:        item,
 			Amount:      amount,
 			Category1:   category1,
@@ -132,11 +132,11 @@ func (h *BillHandler) ImportBills(c *gin.Context) {
 
 	// 如果请求了提取记忆，异步分析全部账单
 	if c.Query("extract_memories") == "true" && h.extractor != nil {
-		bills, err := h.billRepo.ListByDevice(c.Request.Context(), dev.ID)
+		bills, err := h.billRepo.ListByUser(c.Request.Context(), userID)
 		if err == nil && len(bills) > 0 {
 			go func() {
 				log.Printf("[memory] CSV import: extracting memories from %d bills...", len(bills))
-				h.extractBillMemories(dev.ID, bills)
+				h.extractBillMemories(userID, bills)
 			}()
 		}
 	}
@@ -150,7 +150,7 @@ func (h *BillHandler) ImportBills(c *gin.Context) {
 }
 
 // extractBillMemories 从账单数据中批量提取聚合记忆
-func (h *BillHandler) extractBillMemories(deviceID string, bills []model.Bill) {
+func (h *BillHandler) extractBillMemories(userID string, bills []model.Bill) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("以下是用户的%d条账单记录:\n", len(bills)))
 	for _, b := range bills[:min(len(bills), 500)] {
@@ -163,12 +163,12 @@ func (h *BillHandler) extractBillMemories(deviceID string, bills []model.Bill) {
 关注: 常去的地点、消费水平、分类偏好、周期性的规律、变化趋势。
 用 "key: value" 格式，每条一句。没有值得提取的就回复"无"。`, sb.String())
 
-	h.extractor.ExtractFromPrompt(context.Background(), deviceID, prompt, "csv_import")
+	h.extractor.ExtractFromPrompt(context.Background(), userID, prompt, "csv_import")
 }
 
 // ExportBills GET /api/bills/export
 func (h *BillHandler) ExportBills(c *gin.Context) {
-	dev := c.MustGet("device").(*model.Device)
+	userID := c.GetString("user_id")
 
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
@@ -180,7 +180,7 @@ func (h *BillHandler) ExportBills(c *gin.Context) {
 		startDate = time.Now().AddDate(0, 0, -7).Format("2006-01-02")
 	}
 
-	bills, err := h.billRepo.ListFiltered(c.Request.Context(), dev.ID, startDate, endDate, category)
+	bills, err := h.billRepo.ListFiltered(c.Request.Context(), userID, startDate, endDate, category)
 	if err != nil {
 		view.JSONError(c, 500, "query bills failed")
 		return

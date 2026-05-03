@@ -35,12 +35,14 @@ func main() {
 	defer sqlDB.Close()
 
 	db.AutoMigrate(
-		&model.Device{},
+		&model.User{},
+		&model.UserToken{},
 		&model.Conversation{},
 		&model.Message{},
 		&model.Bill{},
 		&model.UserMemory{},
 		&model.ScheduledTask{},
+		&model.Note{},
 	)
 
 	// LLM 客户端
@@ -54,11 +56,12 @@ func main() {
 	}
 
 	// Repos
-	devRepo := service.NewDeviceRepo(db)
+	userRepo := service.NewUserRepo(db)
 	convRepo := service.NewConversationRepo(db)
 	msgRepo := service.NewMessageRepo(db)
 	billRepo := service.NewBillRepo(db)
 	memRepo := service.NewUserMemoryRepo(db)
+	noteRepo := service.NewNoteRepo(db)
 
 	// Tool Registry + Tools
 	reg := tool.NewRegistry()
@@ -66,6 +69,7 @@ func main() {
 	reg.Register(tool.NewDatetimeTool())
 	reg.Register(tool.NewUUIDTool())
 	reg.Register(tool.NewCalculatorTool())
+	reg.Register(tool.NewNoteTool(noteRepo))
 
 	// Memory Store
 	memStore := agent.NewLLMMemoryStore(llmClient, memRepo)
@@ -80,9 +84,10 @@ func main() {
 
 	// Handlers
 	billHandler := controller.NewBillHandler(billRepo, memExtractor)
+	noteHandler := controller.NewNoteHandler(noteRepo)
 
 	// Router
-	router := controller.NewRouter(cfg, orch, devRepo, convRepo, msgRepo, billHandler)
+	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, billHandler, noteHandler)
 
 	addr := ":" + strconv.Itoa(cfg.Server.Port)
 	srv := &http.Server{

@@ -34,7 +34,7 @@ func NewPlanExecutor(registry *tool.Registry, llmClient llm.LLMClient) *PlanExec
 }
 
 // Execute 并发执行 Plan，返回事件 channel
-func (e *PlanExecutor) Execute(ctx context.Context, plan *Plan, deviceID string) <-chan PlanEvent {
+func (e *PlanExecutor) Execute(ctx context.Context, plan *Plan, userID string) <-chan PlanEvent {
 	events := make(chan PlanEvent, 64)
 
 	go func() {
@@ -76,7 +76,7 @@ func (e *PlanExecutor) Execute(ctx context.Context, plan *Plan, deviceID string)
 				wg.Add(1)
 				go func(n PlanNode) {
 					defer wg.Done()
-					e.executeNode(ctx, n, deviceID, events)
+					e.executeNode(ctx, n, userID, events)
 				}(node)
 			}
 			wg.Wait()
@@ -116,7 +116,7 @@ func (e *PlanExecutor) findReadyNodes(plan *Plan, done map[string]bool) []PlanNo
 }
 
 // executeNode 执行单个节点
-func (e *PlanExecutor) executeNode(ctx context.Context, node PlanNode, deviceID string, events chan<- PlanEvent) {
+func (e *PlanExecutor) executeNode(ctx context.Context, node PlanNode, userID string, events chan<- PlanEvent) {
 	now := time.Now()
 	node.Status = "running"
 	node.StartedAt = &now
@@ -126,7 +126,7 @@ func (e *PlanExecutor) executeNode(ctx context.Context, node PlanNode, deviceID 
 
 	switch node.Type {
 	case "tool_call":
-		result := e.registry.ExecuteByName(&tool.ExecuteContext{Ctx: ctx, DeviceID: deviceID},
+		result := e.registry.ExecuteByName(&tool.ExecuteContext{Ctx: ctx, UserID: userID},
 			node.Tool, node.Function, json.RawMessage(mustMarshal(node.Args)))
 
 		done := time.Now()

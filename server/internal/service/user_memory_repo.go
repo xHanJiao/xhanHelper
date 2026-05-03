@@ -24,10 +24,10 @@ func (r *UserMemoryRepo) Create(ctx context.Context, m *model.UserMemory) error 
 }
 
 // FindByKey 按 key 查找已有记忆
-func (r *UserMemoryRepo) FindByKey(ctx context.Context, deviceID, key string) (*model.UserMemory, error) {
+func (r *UserMemoryRepo) FindByKey(ctx context.Context, userID, key string) (*model.UserMemory, error) {
 	var m model.UserMemory
 	err := r.db.WithContext(ctx).
-		Where("device_id = ? AND memory_key = ?", deviceID, key).
+		Where("user_id = ? AND memory_key = ?", userID, key).
 		First(&m).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -35,11 +35,11 @@ func (r *UserMemoryRepo) FindByKey(ctx context.Context, deviceID, key string) (*
 	return &m, err
 }
 
-// ListByDevice 获取设备所有记忆
-func (r *UserMemoryRepo) ListByDevice(ctx context.Context, deviceID string) ([]model.UserMemory, error) {
+// ListByUser 获取设备所有记忆
+func (r *UserMemoryRepo) ListByUser(ctx context.Context, userID string) ([]model.UserMemory, error) {
 	var list []model.UserMemory
 	err := r.db.WithContext(ctx).
-		Where("device_id = ?", deviceID).
+		Where("user_id = ?", userID).
 		Order("created_at DESC").
 		Find(&list).Error
 	return list, err

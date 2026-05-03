@@ -26,7 +26,7 @@ const maxIterations = 8
 
 // RunRequest — Orchestrator 输入
 type RunRequest struct {
-	DeviceID           string
+	UserID             string
 	ConversationID     string
 	Messages           []llm.Message
 	DeepMode           bool   // 客户端 toggle 是否开启深度思考模式
@@ -74,7 +74,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	var memoryNote string
 	if o.memoryStore != nil && len(req.Messages) > 0 {
 		lastMsg := req.Messages[len(req.Messages)-1].Content
-		memories, err := o.memoryStore.GetRelevant(ctx, req.DeviceID, lastMsg)
+		memories, err := o.memoryStore.GetRelevant(ctx, req.UserID, lastMsg)
 		if err == nil && len(memories) > 0 {
 			var sb strings.Builder
 			sb.WriteString("\n\n===== 关于用户的信息 =====\n")
@@ -154,7 +154,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 				toolCalls := convertToolCalls(msg.ToolCalls)
 				allToolCalls = append(allToolCalls, toolCalls...)
 
-				results := executeConcurrently(ctx, events, req.DeviceID, o.registry, toolCalls)
+				results := executeConcurrently(ctx, events, req.UserID, o.registry, toolCalls)
 
 				for i := range toolCalls {
 					resJSON, _ := json.Marshal(results[i].result)
@@ -193,7 +193,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 			msgs = append(msgs, llm.Message{Role: "assistant", Content: msg.Content})
 			allToolCalls = append(allToolCalls, parsed.ToolCalls...)
 
-			results := executeConcurrently(ctx, events, req.DeviceID, o.registry, parsed.ToolCalls)
+			results := executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
 
 			for i := range parsed.ToolCalls {
 				resJSON, _ := json.Marshal(results[i].result)
@@ -221,7 +221,7 @@ type toolExecResult struct {
 	result *tool.Result
 }
 
-func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, deviceID string, registry *tool.Registry, toolCalls []tool.ToolCall) []toolExecResult {
+func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID string, registry *tool.Registry, toolCalls []tool.ToolCall) []toolExecResult {
 
 	if len(toolCalls) >= 2 {
 		log.Printf("[orch] concurrent exec %d tools", len(toolCalls))
@@ -237,7 +237,7 @@ func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, de
 		wg.Add(1)
 		go func(idx int, call tool.ToolCall) {
 			defer wg.Done()
-			ec := &tool.ExecuteContext{Ctx: ctx, DeviceID: deviceID}
+			ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID}
 			r := registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
 			log.Printf("[orch] tool exec: %s.%s success=%v", call.Tool, call.Function, r.Success)
 			results[idx] = toolExecResult{tc: call, result: r}

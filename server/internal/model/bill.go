@@ -23,7 +23,7 @@ const (
 // Bill — 账单（对齐 bill-assistant-server）
 type Bill struct {
 	ID          string    `gorm:"primaryKey;size:36" json:"id"`
-	DeviceID    string    `gorm:"size:36;not null;index" json:"device_id"`
+	UserID    string    `gorm:"size:36;not null;index" json:"user_id"`
 	Item        string    `gorm:"size:100;not null" json:"item"`
 	Amount      float64   `gorm:"type:decimal(10,2);not null" json:"amount"`
 	Category1   string    `gorm:"size:50;not null" json:"category1"`

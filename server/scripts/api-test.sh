@@ -25,26 +25,43 @@ assert() {
     fi
 }
 
-# ── 1. 注册设备 ──
+# ── 1. 注册用户 ──
 echo ""
-echo "【1/12】注册设备"
-RESP=$(curl -s -X POST "$BASE_URL/api/devices/register" \
+echo "【1/14】注册用户"
+RESP=$(curl -s -X POST "$BASE_URL/api/auth/register" \
     -H "Content-Type: application/json" \
-    -d '{"device_name":"api-test","platform":"macos","secret":"dev-secret"}')
-TOKEN=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_token',''))" 2>/dev/null)
-DEVICE_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_id',''))" 2>/dev/null)
+    -d '{"username":"apitest","password":"test123"}')
+TOKEN=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+USER_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('user_id',''))" 2>/dev/null)
 
-assert "返回 device_token" '[0-9a-f\-]{36}' "$TOKEN"
-assert "返回 device_id"   '[0-9a-f\-]{36}' "$DEVICE_ID"
+assert "返回 token"    '[0-9a-f\-]{36}' "$TOKEN"
+assert "返回 user_id"  '[0-9a-f\-]{36}' "$USER_ID"
 
 if [ -z "$TOKEN" ]; then
     red "无法获取 token，终止测试"
     exit 1
 fi
 
-# ── 2. 无 token 请求应被拒绝 ──
+# ── 2. 重复注册被拒绝 ──
 echo ""
-echo "【2/12】认证拦截"
+echo "【2/14】重复注册拦截"
+RESP=$(curl -s -X POST "$BASE_URL/api/auth/register" \
+    -H "Content-Type: application/json" \
+    -d '{"username":"apitest","password":"test123"}')
+assert "重复注册返回错误" '"error"' "$RESP"
+
+# ── 3. 登录 ──
+echo ""
+echo "【3/14】登录"
+RESP=$(curl -s -X POST "$BASE_URL/api/auth/login" \
+    -H "Content-Type: application/json" \
+    -d '{"username":"apitest","password":"test123"}')
+LOGIN_TOKEN=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+assert "登录返回 token" '[0-9a-f\-]{36}' "$LOGIN_TOKEN"
+
+# ── 4. 无 token 请求应被拒绝 ──
+echo ""
+echo "【4/14】认证拦截"
 RESP=$(curl -s -X POST "$BASE_URL/api/chat" \
     -H "Content-Type: application/json" \
     -d '{"message":"test"}' 2>&1)
@@ -52,7 +69,7 @@ assert "无 token 返回 401" '"error".*"missing token"' "$RESP"
 
 # ── 3. 流式聊天（新会话） ──
 echo ""
-echo "【3/12】流式对话"
+echo "【5/14】流式对话"
 SSE_OUT=$(curl -N -s -X POST "$BASE_URL/api/chat" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -68,14 +85,14 @@ assert "返回 title"             '"title":"'   "$SSE_OUT"
 
 # ── 4. 会话列表 ──
 echo ""
-echo "【4/12】会话列表"
+echo "【6/14】会话列表"
 CONV_LIST=$(curl -s "$BASE_URL/api/conversations" \
     -H "Authorization: Bearer $TOKEN")
 assert "列表包含新会话" "$CONV_ID" "$CONV_LIST"
 
 # ── 5. 消息历史 ──
 echo ""
-echo "【5/12】消息历史"
+echo "【7/14】消息历史"
 MSGS=$(curl -s "$BASE_URL/api/conversations/$CONV_ID/messages" \
     -H "Authorization: Bearer $TOKEN")
 USER_MSG=$(echo "$MSGS" | python3 -c "
@@ -97,7 +114,7 @@ assert "assistant 消息已保存"   "."       "$ASST_MSG"
 
 # ── 6. create_bill — 通过对话创建账单 ──
 echo ""
-echo "【6/12】create_bill — 对话创建账单"
+echo "【8/14】create_bill — 对话创建账单"
 SSE_OUT=$(curl -N -s -X POST "$BASE_URL/api/chat" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -109,7 +126,7 @@ assert "tool_result success"     '"success":true'     "$SSE_OUT"
 
 # ── 7. REST API 确认 create + 提取 bill id ──
 echo ""
-echo "【7/12】REST API — 确认账单入库"
+echo "【9/14】REST API — 确认账单入库"
 BILLS=$(curl -s "$BASE_URL/api/bills" \
     -H "Authorization: Bearer $TOKEN")
 assert "返回包含 item"   '"item"'   "$BILLS"
@@ -132,7 +149,7 @@ assert "能提取到 bill id" '[0-9a-f\-]{36}' "$BILL_ID"
 
 # ── 8. query_bills — 通过对话查询账单 ──
 echo ""
-echo "【8/12】query_bills — 对话查询账单"
+echo "【10/14】query_bills — 对话查询账单"
 SSE_OUT=$(curl -N -s -X POST "$BASE_URL/api/chat" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -143,7 +160,7 @@ assert "tool_result success"    '"success":true'      "$SSE_OUT"
 
 # ── 9. update_bill — 通过对话修改账单 ──
 echo ""
-echo "【9/12】update_bill — 对话修改账单"
+echo "【11/14】update_bill — 对话修改账单"
 SSE_OUT=$(curl -N -s -X POST "$BASE_URL/api/chat" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -154,7 +171,7 @@ assert "tool_result success"     '"success":true'      "$SSE_OUT"
 
 # ── 10. REST API 确认修改 ──
 echo ""
-echo "【10/12】REST API — 确认金额已修改"
+echo "【12/14】REST API — 确认金额已修改"
 BILLS=$(curl -s "$BASE_URL/api/bills" \
     -H "Authorization: Bearer $TOKEN")
 UPDATED_AMOUNT=$(echo "$BILLS" | python3 -c "
@@ -168,11 +185,11 @@ assert "金额已改为 40" "40" "$UPDATED_AMOUNT"
 
 # ── 11-12. cancel_bill — DeepSeek 对删除类操作有限制，跳过 ──
 echo ""
-echo "【11/12】cancel_bill — 跳过 (模型限制)"
+echo "【13/14】cancel_bill — 跳过 (模型限制)"
 SKIP_CANCEL=1
 PASS=$((PASS + 4))
 echo ""
-echo "【12/12】REST API — 跳过 (模型限制)"
+echo "【14/14】REST API — 跳过 (模型限制)"
 PASS=$((PASS + 1))
 
 # ═══════════════════════════════════════════
@@ -181,7 +198,7 @@ PASS=$((PASS + 1))
 
 # ── 13. CSV 导入 ──
 echo ""
-echo "【13/15】CSV 导入"
+echo "【15/26】CSV 导入"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 IMPORT_RESULT=$(curl -s -X POST "$BASE_URL/api/bills/import" \
     -H "Authorization: Bearer $TOKEN" \
@@ -192,7 +209,7 @@ assert "无跳过 skipped = 0"    '"skipped":0'    "$IMPORT_RESULT"
 
 # ── 13b. CSV 导入 + 记忆提取 ──
 echo ""
-echo "【13b/15】CSV 导入 + 记忆提取"
+echo "【16/26】CSV 导入 + 记忆提取"
 IMPORT_RESULT=$(curl -s -X POST "$BASE_URL/api/bills/import?extract_memories=true" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: text/plain" \
@@ -204,7 +221,7 @@ echo "  (记忆提取已触发)"
 
 # ── 14. 导入后确认总数 ──
 echo ""
-echo "【14/15】REST API — 导入后账单总数"
+echo "【17/26】REST API — 导入后账单总数"
 BILLS=$(curl -s "$BASE_URL/api/bills" \
     -H "Authorization: Bearer $TOKEN")
 COUNT=$(echo "$BILLS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null)
@@ -215,7 +232,7 @@ assert "账单总数 = $EXPECTED_COUNT" "$EXPECTED_COUNT" "$COUNT"
 
 # ── 15. 验证导入数据内容 ──
 echo ""
-echo "【16/16】REST API — 验证导入数据"
+echo "【18/26】REST API — 验证导入数据"
 assert "包含眼镜账单" "眼镜" "$BILLS"
 assert "包含瑞幸咖啡"  "瑞幸咖啡" "$BILLS"
 assert "金额 949 存在" "949" "$BILLS"
@@ -226,7 +243,7 @@ assert "金额 949 存在" "949" "$BILLS"
 
 # 用已导入的测试数据触发思考链
 echo ""
-echo "【15.6】thought — 跨月份对比触发思考链"
+echo "【19/26】thought — 跨月份对比触发思考链"
 SSE_OUT=$(curl -N -s --max-time 60 -X POST "$BASE_URL/api/chat" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -247,7 +264,7 @@ assert "包含 tool_result 事件"  "event: tool_result" "$SSE_OUT"
 
 # ── 16. CSV 导出 ──
 echo ""
-echo "【16/16】CSV 导出"
+echo "【18/26】CSV 导出"
 EXPORT=$(curl -s "$BASE_URL/api/bills/export?start_date=2026-01-01" \
     -H "Authorization: Bearer $TOKEN")
 assert "导出包含标题行" "项目,实际消费" "$EXPORT"
@@ -260,7 +277,7 @@ assert "导出包含瑞幸咖啡" "瑞幸咖啡" "$EXPORT"
 
 # ── 17. deep_mode 记账 ──
 echo ""
-echo "【17/22】deep_mode — 深度思考记账"
+echo "【21/26】deep_mode — 深度思考记账"
 SSE_OUT=$(curl -N -s --max-time 60 -X POST "$BASE_URL/api/chat" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -273,7 +290,7 @@ assert "包含 done 事件"          "event: done"          "$SSE_OUT"
 
 # ── 18. deep_mode 纯聊天 ──
 echo ""
-echo "【18/22】deep_mode — 深度思考闲聊"
+echo "【22/26】deep_mode — 深度思考闲聊"
 SSE_OUT=$(curl -N -s --max-time 30 -X POST "$BASE_URL/api/chat" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -282,12 +299,56 @@ assert "包含 thought_delta"      "event: thought_delta" "$SSE_OUT"
 assert "包含 done 事件"          "event: done"          "$SSE_OUT"
 
 # ═══════════════════════════════════════════
+# P6: record_note 测试
+# ═══════════════════════════════════════════
+
+# ── 19. record_note — 对话创建笔记 ──
+echo ""
+echo "【23/26】record_note — 对话创建笔记"
+SSE_OUT=$(curl -N -s --max-time 30 -X POST "$BASE_URL/api/chat" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"message":"帮我记一条，昨晚12点半睡的，喝了咖啡，睡眠质量3分","conversation_id":"'$CONV_ID'"}' 2>&1)
+assert "包含 tool_call 事件"      "event: tool_call"       "$SSE_OUT"
+assert "function 为 record_note"  '"function":"record_note"' "$SSE_OUT"
+assert "包含 tool_result 事件"    "event: tool_result"     "$SSE_OUT"
+assert "tool_result success"      '"success":true'         "$SSE_OUT"
+
+# ── 20. REST API — 确认笔记入库 ──
+echo ""
+echo "【24/26】REST API — 确认笔记入库"
+NOTES=$(curl -s "$BASE_URL/api/notes?topic=睡眠" \
+    -H "Authorization: Bearer $TOKEN")
+assert "包含 topic 字段"     '"topic"'     "$NOTES"
+assert "包含 content 字段"   '"content"'   "$NOTES"
+assert "包含 variables 字段" '"variables"' "$NOTES"
+
+# ── 21. query_notes — 对话查询笔记 ──
+echo ""
+echo "【25/26】query_notes — 对话查询笔记"
+SSE_OUT=$(curl -N -s --max-time 30 -X POST "$BASE_URL/api/chat" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"message":"帮我查一下睡眠相关的笔记","conversation_id":"'$CONV_ID'"}' 2>&1)
+assert "包含 tool_call 事件"       "event: tool_call"        "$SSE_OUT"
+assert "function 为 query_notes"   '"function":"query_notes"' "$SSE_OUT"
+assert "tool_result success"       '"success":true'           "$SSE_OUT"
+
+# ── 22. REST API — 删除笔记 ──
+echo ""
+echo "【26/26】REST API — 删除笔记"
+NOTE_ID=$(echo "$NOTES" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])" 2>/dev/null)
+DEL_RESP=$(curl -s -X DELETE "$BASE_URL/api/notes/$NOTE_ID" \
+    -H "Authorization: Bearer $TOKEN")
+assert "删除成功" '"deleted":true' "$DEL_RESP"
+
+# ═══════════════════════════════════════════
 # 会话管理
 # ═══════════════════════════════════════════
 
 # ── 19. 重命名会话 ──
 echo ""
-echo "【19/22】重命名会话"
+echo "【27/28】重命名会话"
 RENAME_RESP=$(curl -s -X PATCH "$BASE_URL/api/conversations/$CONV_ID" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -297,14 +358,14 @@ assert "重命名返回标题"    "测试会话"   "$RENAME_RESP"
 
 # ── 18. 删除会话 ──
 echo ""
-echo "【20/21】删除会话"
+echo "【28/28】删除会话"
 DEL_RESP=$(curl -s -X DELETE "$BASE_URL/api/conversations/$CONV_ID" \
     -H "Authorization: Bearer $TOKEN")
 assert "删除返回 deleted"  "deleted"    "$DEL_RESP"
 
 # ── 19. 确认已删除会话不在列表 ──
 echo ""
-echo "【21/21】确认已删除"
+echo "【29/29】确认已删除"
 CONV_LIST=$(curl -s "$BASE_URL/api/conversations" \
     -H "Authorization: Bearer $TOKEN")
 # 如果列表为空，说明唯一会话已删除成功

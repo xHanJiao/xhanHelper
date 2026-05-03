@@ -12,9 +12,9 @@ import (
 
 // MemoryStore — 记忆存储接口（今天用 LLM 实现，未来可换向量实现）
 type MemoryStore interface {
-	GetRelevant(ctx context.Context, deviceID, currentMessage string) ([]model.UserMemory, error)
+	GetRelevant(ctx context.Context, userID, currentMessage string) ([]model.UserMemory, error)
 	Store(ctx context.Context, m *model.UserMemory) error
-	FindSimilar(ctx context.Context, deviceID, key string) (*model.UserMemory, error)
+	FindSimilar(ctx context.Context, userID, key string) (*model.UserMemory, error)
 }
 
 // LLMMemoryStore — 用 LLM 做检索和去重的实现
@@ -29,8 +29,8 @@ func NewLLMMemoryStore(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo)
 }
 
 // GetRelevant 用 LLM 从所有记忆中选出与当前消息相关的
-func (s *LLMMemoryStore) GetRelevant(ctx context.Context, deviceID, currentMessage string) ([]model.UserMemory, error) {
-	all, err := s.memRepo.ListByDevice(ctx, deviceID)
+func (s *LLMMemoryStore) GetRelevant(ctx context.Context, userID, currentMessage string) ([]model.UserMemory, error) {
+	all, err := s.memRepo.ListByUser(ctx, userID)
 	if err != nil || len(all) == 0 {
 		return nil, err
 	}
@@ -81,6 +81,6 @@ func (s *LLMMemoryStore) Store(ctx context.Context, m *model.UserMemory) error {
 }
 
 // FindSimilar 查找相似记忆（同一 device 下相同 key）
-func (s *LLMMemoryStore) FindSimilar(ctx context.Context, deviceID, key string) (*model.UserMemory, error) {
-	return s.memRepo.FindByKey(ctx, deviceID, key)
+func (s *LLMMemoryStore) FindSimilar(ctx context.Context, userID, key string) (*model.UserMemory, error) {
+	return s.memRepo.FindByKey(ctx, userID, key)
 }

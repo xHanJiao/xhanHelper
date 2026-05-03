@@ -53,11 +53,6 @@ struct ChatView: View {
                             .transition(.opacity)
                         }
 
-                        if let tc = viewModel.currentToolCall {
-                            ToolCallCard(toolCall: tc)
-                                .id("tool_call")
-                        }
-
                         if viewModel.isStreaming {
                             HStack {
                                 ProgressView().scaleEffect(0.6)
@@ -79,9 +74,6 @@ struct ChatView: View {
                     if let last = viewModel.messages.last {
                         withAnimation { proxy.scrollTo(last.id, anchor: .top) }
                     }
-                }
-                .onChange(of: viewModel.currentToolCall?.function) {
-                    withAnimation { proxy.scrollTo("tool_call", anchor: .bottom) }
                 }
             }
 

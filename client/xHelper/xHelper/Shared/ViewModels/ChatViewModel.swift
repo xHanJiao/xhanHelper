@@ -171,9 +171,11 @@ class ChatViewModel: ObservableObject {
                     currentToolCall = nil
                 }
             }
-            // 延迟关闭弹窗
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [self] in
+            // 任务完成，立即渐隐弹窗
+            withAnimation(.easeOut(duration: 0.3)) {
                 isPlanModalVisible = false
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in
                 planNodes = []
             }
 

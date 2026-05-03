@@ -18,11 +18,13 @@ struct SettingsView: View {
                         Spacer()
                         Text(deviceManager.username ?? "-").font(.caption)
                     }
+                    #if DEBUG
                     HStack {
                         Text("用户 ID")
                         Spacer()
                         Text(deviceManager.userId ?? "-").font(.caption).monospaced().lineLimit(1)
                     }
+                    #endif
                 } else {
                     Text("未登录")
                         .foregroundColor(.secondary)
@@ -31,6 +33,7 @@ struct SettingsView: View {
                 Text("账号信息")
             }
 
+            #if DEBUG
             Section {
                 TextField("服务地址", text: $serverURL)
                     .autocorrectionDisabled()
@@ -40,6 +43,7 @@ struct SettingsView: View {
             } header: {
                 Text("服务器")
             }
+            #endif
 
             Section {
                 Button("退出登录", role: .destructive) {

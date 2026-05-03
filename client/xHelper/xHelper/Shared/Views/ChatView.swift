@@ -8,12 +8,8 @@ struct ChatView: View {
     let token: String
 
     var body: some View {
-        VStack(spacing: 0) {
-            if !viewModel.planNodes.isEmpty {
-                PlanGraphView(nodes: viewModel.planNodes, edges: viewModel.planEdges)
-                    .id("plan")
-            }
-
+        ZStack {
+            VStack(spacing: 0) {
             // 消息列表
             ScrollViewReader { proxy in
                 ScrollView {
@@ -114,5 +110,30 @@ struct ChatView: View {
             }
         .navigationTitle(viewModel.conversationId ?? "新对话")
         .navigationBarTitleDisplayMode(.inline)
+
+            // 动态图弹窗
+            PlanModalView(viewModel: viewModel)
+
+            // 最小化浮动按钮
+            if viewModel.isPlanMinimized, !viewModel.planNodes.isEmpty {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button {
+                            withAnimation { viewModel.isPlanMinimized = false }
+                        } label: {
+                            Image(systemName: "square.grid.2x2")
+                                .font(.title3)
+                                .padding(12)
+                                .background(Color(.systemBackground))
+                                .cornerRadius(12)
+                                .shadow(radius: 4)
+                        }
+                        .padding()
+                    }
+                }
+            }
+        }
     }
 }

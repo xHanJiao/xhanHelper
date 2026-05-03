@@ -2,18 +2,30 @@ import Combine
 import Foundation
 import SwiftUI
 
+// MARK: - Plan Node
+
+struct PlanNode: Identifiable {
+    let id: String
+    var label: String
+    var status: String // running | done | failed
+}
+
+// MARK: - ChatViewModel
+
 @MainActor
 class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isStreaming = false
     @Published var currentToolCall: ToolCallData?
-    @Published var planNodes: [PlanNodeInfo] = []
-    @Published var planEdges: [(Int, Int)] = []
     @Published var thoughtMessage: String?
     @Published var statusMessage: String?
     @Published var errorMessage: String?
     @Published var conversationId: String?
     @Published var deepMode = false
+
+    @Published var planNodes: [PlanNode] = []
+    @Published var isPlanModalVisible = false
+    @Published var isPlanMinimized = false
 
     private let apiClient: APIClient
     private let sseClient = SSEClient()
@@ -50,15 +62,17 @@ class ChatViewModel: ObservableObject {
         thoughtMessage = nil
         statusMessage = nil
         errorMessage = nil
+        planNodes = []
+        isPlanModalVisible = false
+        isPlanMinimized = false
 
-        // 空 assistant 消息占位
         messages.append(.streamingAssistant(conversationId: conversationId ?? ""))
 
         setupSSE(baseURL: baseURL, token: token, text: text)
     }
 
     private func setupSSE(baseURL: String, token: String, text: String) {
-        sseClient.disconnect()  // 先断开上一轮连接
+        sseClient.disconnect()
         sseClient.onEvent = { [weak self] event in
             Task { @MainActor in
                 self?.handleEvent(event)
@@ -82,19 +96,21 @@ class ChatViewModel: ObservableObject {
 
     private func handleEvent(_ event: StreamEvent) {
         switch event.type {
-        case .plan:
-            planNodes = parsePlanNodes(event.data)
-
         case .planNodeStart:
-            updatePlanNode(id: parsePlanNodeID(event.data), status: "running")
+            if let node = parsePlanNode(event.data) {
+                if !isPlanModalVisible { isPlanModalVisible = true }
+                if let idx = planNodes.firstIndex(where: { $0.id == node.id }) {
+                    planNodes[idx] = node
+                } else {
+                    planNodes.append(node)
+                }
+            }
 
         case .planNodeDone:
-            updatePlanNode(id: parsePlanNodeID(event.data), status: "done")
-
-        case .planDone:
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [self] in
-                planNodes = []
-                planEdges = []
+            if let node = parsePlanNode(event.data) {
+                if let idx = planNodes.firstIndex(where: { $0.id == node.id }) {
+                    planNodes[idx] = node
+                }
             }
 
         case .thought, .thoughtDelta:
@@ -117,7 +133,6 @@ class ChatViewModel: ObservableObject {
             currentToolCall = parseToolCall(event.data)
 
         case .toolResult:
-            // 插入永久工具记录到消息列表
             if let tc = currentToolCall {
                 let summary = buildToolSummary(toolCall: tc, resultJSON: event.data)
                 let toolMsg = Message(
@@ -128,7 +143,6 @@ class ChatViewModel: ObservableObject {
                     toolCallsJSON: nil,
                     createdAt: ISO8601DateFormatter().string(from: Date())
                 )
-                // 插入到 streaming assistant 消息之前
                 if let idx = messages.lastIndex(where: { $0.id == "__streaming__" }) {
                     messages.insert(toolMsg, at: idx)
                 } else {
@@ -146,19 +160,43 @@ class ChatViewModel: ObservableObject {
             if let msgID = parseMessageIdFromDone(event.data) {
                 replaceStreamingMessageID(with: msgID)
             }
-            // 延迟 3 秒后清除工具卡片
             let tc = currentToolCall
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [self] in
                 if currentToolCall?.function == tc?.function {
                     currentToolCall = nil
                 }
+            }
+            // 延迟关闭弹窗
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [self] in
+                isPlanModalVisible = false
+                planNodes = []
             }
 
         case .error:
             errorMessage = event.data
             isStreaming = false
+
+        default:
+            break
         }
     }
+
+    // MARK: Plan Parsing
+
+    private func parsePlanNode(_ data: String) -> PlanNode? {
+        guard let d = data.data(using: .utf8),
+              let obj = try? JSONDecoder().decode(PlanNodeJSON.self, from: d)
+        else { return nil }
+        return PlanNode(id: obj.id, label: obj.label, status: obj.status)
+    }
+
+    private struct PlanNodeJSON: Codable {
+        let id: String
+        let label: String
+        let status: String
+    }
+
+    // MARK: Helpers
 
     private func replaceStreamingMessageID(with msgID: String) {
         guard let index = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
@@ -189,8 +227,6 @@ class ChatViewModel: ObservableObject {
         messages.append(last)
     }
 
-    // MARK: Parsers
-
     private func parseMessageDelta(_ data: String) -> String? {
         guard let jsonData = data.data(using: .utf8),
               let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
@@ -217,39 +253,11 @@ class ChatViewModel: ObservableObject {
         return obj["conversation_id"]
     }
 
-private func parsePlanNodes(_ json: String) -> [PlanNodeInfo] {
-        guard let d = json.data(using: .utf8) else { return [] }
-        guard let raw = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else {
-            print("⚠️ parsePlanNodes FAILED, first 200 chars:", json.prefix(200))
-            return []
-        }
-        var result: [PlanNodeInfo] = []
-        if let nodes = raw["nodes"] as? [[String: String]] {
-            result = nodes.map { PlanNodeInfo(id: $0["id"] ?? "", label: $0["label"] ?? "", status: $0["status"] ?? "", duration: nil) }
-        }
-        if let edges = raw["edges"] as? [[String: String]] {
-            var e: [(Int, Int)] = []
-            for edge in edges {
-                let f = Int(edge["from"]?.replacingOccurrences(of: "n", with: "") ?? "") ?? -1
-                let t = Int(edge["to"]?.replacingOccurrences(of: "n", with: "") ?? "") ?? -1
-                if f >= 0 && t >= 0 { e.append((f, t)) }
-            }
-            planEdges = e
-        }
-        return result
-    }
-
-    private func parsePlanNodeID(_ json: String) -> String {
-        guard let d = json.data(using: .utf8),
-              let obj = try? JSONDecoder().decode([String: String].self, from: d) else { return "" }
-        return obj["node_id"] ?? ""
-    }
-
-    private func updatePlanNode(id: String, status: String) {
-        guard let idx = planNodes.firstIndex(where: { $0.id == id }) else { return }
-        var node = planNodes[idx]
-        node = PlanNodeInfo(id: node.id, label: node.label, status: status, duration: node.duration)
-        planNodes[idx] = node
+    private func parseMessageIdFromDone(_ data: String) -> String? {
+        guard let jsonData = data.data(using: .utf8),
+              let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
+        else { return nil }
+        return obj["message_id"]
     }
 
     private func buildToolSummary(toolCall: ToolCallData, resultJSON: String) -> String {
@@ -258,18 +266,10 @@ private func parsePlanNodes(_ json: String) -> [PlanNodeInfo] {
         for (key, val) in toolCall.argsSummary {
             parts.append("\(key): \(val)")
         }
-        // 解析 tool_result 状态
         if let d = resultJSON.data(using: .utf8),
            let r = try? JSONDecoder().decode(ToolResultData.self, from: d) {
             parts.append(r.success ? "✅ 成功" : "❌ \(r.error ?? "失败")")
         }
         return parts.joined(separator: " | ")
-    }
-
-    private func parseMessageIdFromDone(_ data: String) -> String? {
-        guard let jsonData = data.data(using: .utf8),
-              let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
-        else { return nil }
-        return obj["message_id"]
     }
 }

@@ -218,6 +218,13 @@ func (o *Orchestrator) handleNativeToolCalls(
 	toolCalls := convertToolCalls(msg.ToolCalls)
 	*allToolCalls = append(*allToolCalls, toolCalls...)
 
+	// plan 事件：节点开始
+	for _, tc := range toolCalls {
+		n := planNode{ID: toolCallNodeID(tc), Label: tc.Function, Status: "running"}
+		b, _ := json.Marshal(n)
+		events <- &llm.StreamEvent{Type: "plan_node_start", Content: string(b)}
+	}
+
 	results := executeConcurrently(ctx, events, req.UserID, o.registry, toolCalls)
 
 	for i := range toolCalls {
@@ -228,10 +235,30 @@ func (o *Orchestrator) handleNativeToolCalls(
 			ToolCallID: msg.ToolCalls[i].ID,
 			Content:    string(resJSON),
 		})
+
+		// plan 事件：节点完成
+		status := "done"
+		if !results[i].result.Success {
+			status = "failed"
+		}
+		n := planNode{ID: toolCallNodeID(toolCalls[i]), Label: toolCalls[i].Function, Status: status}
+		b, _ := json.Marshal(n)
+		events <- &llm.StreamEvent{Type: "plan_node_done", Content: string(b)}
+
 		if req.DeepMode {
 			o.saveToolMsg(ctx, req.ConversationID, msg.ToolCalls[i].ID, string(resJSON))
 		}
 	}
+}
+
+type planNode struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Status string `json:"status"` // running | done | failed
+}
+
+func toolCallNodeID(tc tool.ToolCall) string {
+	return tc.Tool + "." + tc.Function
 }
 
 // —— Flash 文本响应处理 ——

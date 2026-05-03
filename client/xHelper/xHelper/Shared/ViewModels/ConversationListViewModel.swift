@@ -32,7 +32,7 @@ class ConversationListViewModel: ObservableObject {
             if let idx = conversations.firstIndex(where: { $0.id == id }) {
                 conversations[idx] = Conversation(
                     id: conversations[idx].id,
-                    deviceId: conversations[idx].deviceId,
+                    userId: conversations[idx].userId,
                     title: title,
                     createdAt: conversations[idx].createdAt,
                     updatedAt: conversations[idx].updatedAt

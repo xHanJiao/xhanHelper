@@ -7,23 +7,25 @@ struct xhanHelperMacApp: App {
 
     var body: some Scene {
         WindowGroup {
-            if deviceManager.isRegistered {
+            if deviceManager.isLoggedIn {
                 ContentView(deviceManager: deviceManager)
                     .frame(minWidth: 600, minHeight: 500)
             } else {
-                RegisterMacView(deviceManager: deviceManager)
-                    .frame(width: 400, height: 300)
+                LoginMacView(deviceManager: deviceManager)
+                    .frame(width: 400, height: 380)
             }
         }
         .windowResizability(.contentMinSize)
     }
 }
 
-struct RegisterMacView: View {
+struct LoginMacView: View {
     @ObservedObject var deviceManager: DeviceManager
-    @AppStorage("has_registered") private var hasRegistered = false
+    @State private var username = ""
+    @State private var password = ""
+    @State private var isRegisterMode = false
     @State private var errorMessage: String?
-    @State private var isRegistering = false
+    @State private var isLoading = false
 
     var body: some View {
         VStack(spacing: 24) {
@@ -35,30 +37,49 @@ struct RegisterMacView: View {
                 .font(.largeTitle)
                 .fontWeight(.bold)
 
-            if isRegistering {
+            VStack(spacing: 12) {
+                TextField("用户名", text: $username)
+                    .textFieldStyle(.roundedBorder)
+
+                SecureField("密码", text: $password)
+                    .textFieldStyle(.roundedBorder)
+            }
+            .padding(.horizontal, 40)
+
+            if let err = errorMessage {
+                Text(err).font(.caption).foregroundColor(.red)
+            }
+
+            if isLoading {
                 ProgressView()
-                Text("正在注册...").foregroundColor(.secondary)
-            } else if hasRegistered {
-                Text("设备凭证已过期").foregroundColor(.secondary)
-                if let err = errorMessage { Text(err).font(.caption).foregroundColor(.red) }
-                Button("重新注册") { Task { await performRegister() } }.buttonStyle(.borderedProminent)
             } else {
-                Text("欢迎使用 xhanHelper").foregroundColor(.secondary)
-                if let err = errorMessage { Text(err).font(.caption).foregroundColor(.red) }
-                Button("开始使用") { Task { await performRegister() } }.buttonStyle(.borderedProminent)
+                Button(isRegisterMode ? "注册" : "登录") {
+                    Task { await performAuth() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(username.isEmpty || password.isEmpty)
+
+                Button(isRegisterMode ? "已有账号？登录" : "没有账号？注册") {
+                    isRegisterMode.toggle()
+                    errorMessage = nil
+                }
+                .font(.caption)
             }
         }
     }
 
-    private func performRegister() async {
-        isRegistering = true
+    private func performAuth() async {
+        isLoading = true
         errorMessage = nil
         do {
-            try await deviceManager.register(name: Host.current().localizedName ?? "Mac", platform: "macos")
-            hasRegistered = true
+            if isRegisterMode {
+                try await deviceManager.register(username: username, password: password)
+            } else {
+                try await deviceManager.login(username: username, password: password)
+            }
         } catch {
-            errorMessage = "注册失败: \(error.localizedDescription)"
+            errorMessage = error.localizedDescription
         }
-        isRegistering = false
+        isLoading = false
     }
 }

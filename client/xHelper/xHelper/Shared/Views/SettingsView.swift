@@ -8,28 +8,27 @@ import AppKit
 struct SettingsView: View {
     @ObservedObject var deviceManager: DeviceManager
     @AppStorage("xhan_server_url") private var serverURL = DeviceManager.defaultBaseURL
-    @AppStorage("xhan_debug_token") private var debugToken = ""
 
     var body: some View {
         Form {
             Section {
-                if deviceManager.isRegistered {
+                if deviceManager.isLoggedIn {
                     HStack {
-                        Text("设备 ID")
+                        Text("用户名")
                         Spacer()
-                        Text(deviceManager.deviceId ?? "-").font(.caption).monospaced()
+                        Text(deviceManager.username ?? "-").font(.caption)
                     }
                     HStack {
-                        Text("Token")
+                        Text("用户 ID")
                         Spacer()
-                        Text(deviceManager.token ?? "-").font(.caption).monospaced().lineLimit(1)
+                        Text(deviceManager.userId ?? "-").font(.caption).monospaced().lineLimit(1)
                     }
                 } else {
-                    Text("未注册")
+                    Text("未登录")
                         .foregroundColor(.secondary)
                 }
             } header: {
-                Text("设备信息")
+                Text("账号信息")
             }
 
             Section {
@@ -42,42 +41,12 @@ struct SettingsView: View {
                 Text("服务器")
             }
 
-            #if DEBUG
             Section {
-                TextField("手动填入 Token", text: $debugToken)
-                    .font(.caption).monospaced()
-                    .onChange(of: debugToken) {
-                        deviceManager.debugToken = debugToken
-                    }
-            } header: {
-                Text("Debug Token（填入已导入数据的 token）")
-            }
-            #endif
-
-            Section {
-                Button("重新注册设备", role: .destructive) {
-                    Task {
-                        try? await deviceManager.register(name: platformDeviceName, platform: platformName)
-                    }
+                Button("退出登录", role: .destructive) {
+                    Task { await deviceManager.logout() }
                 }
             }
         }
         .navigationTitle("设置")
-    }
-
-    private var platformName: String {
-        #if os(iOS)
-        return "ios"
-        #else
-        return "macos"
-        #endif
-    }
-
-    private var platformDeviceName: String {
-        #if os(iOS)
-        return UIDevice.current.name
-        #else
-        return Host.current().localizedName ?? "Mac"
-        #endif
     }
 }

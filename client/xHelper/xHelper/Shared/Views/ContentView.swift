@@ -33,7 +33,7 @@ struct ConversationListContentView: View {
     }
 
     var body: some View {
-        Group {
+        ZStack {
             if selectedConversationId != nil, let vm = chatVM {
                 ChatView(viewModel: vm, baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
                     .toolbar {
@@ -69,7 +69,7 @@ struct ConversationListContentView: View {
                 .navigationTitle("xhanHelper")
                 .onChange(of: listVM.isUnauthorized) {
                     if listVM.isUnauthorized {
-                        deviceManager.clearToken() // 退回注册页，手动重注册
+                        Task { await deviceManager.logout() }
                     }
                 }
             }

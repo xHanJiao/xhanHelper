@@ -6,16 +6,46 @@ struct InputBar: View {
     let onSend: () -> Void
     let onStop: () -> Void
 
+    @State private var isExpanded = false
+    @State private var showExpandButton = true
+    @FocusState private var isFocused: Bool
+
     var body: some View {
-        HStack(spacing: 10) {
-            TextField("输入消息...", text: $text)
+        HStack(alignment: .bottom, spacing: 8) {
+            TextField("输入消息...", text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
-                .padding(.horizontal, 12)
+                .focused($isFocused)
+                .lineLimit(isExpanded ? 20 : 1)
+                .padding(.leading, 12)
+                .padding(.trailing, 28)
                 .padding(.vertical, 8)
+                .frame(minHeight: isExpanded ? 240 : 0, alignment: .top)
                 .background(Color.gray.opacity(0.1))
-                .cornerRadius(20)
+                .cornerRadius(16)
                 .disabled(isStreaming)
-                .onSubmit { if !isStreaming { onSend() } }
+                .overlay(alignment: isExpanded ? .topTrailing : .trailing) {
+                    if !isStreaming, showExpandButton {
+                        Button {
+                            showExpandButton = false
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isExpanded.toggle()
+                                if isExpanded { isFocused = true }
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                showExpandButton = true
+                            }
+                        } label: {
+                            Image(systemName: isExpanded
+                                ? "arrow.down.right.and.arrow.up.left"
+                                : "arrow.up.left.and.arrow.down.right")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, isExpanded ? 10 : 0)
+                        .padding(.trailing, 6)
+                    }
+                }
 
             if isStreaming {
                 Button(action: onStop) {

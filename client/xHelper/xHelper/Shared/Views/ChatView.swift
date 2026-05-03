@@ -71,7 +71,7 @@ struct ChatView: View {
                     .padding(.vertical)
                 }
                 .onChange(of: viewModel.messages.count) {
-                    if let last = viewModel.messages.last {
+                    if let last = viewModel.messages.last, last.id != "__streaming__" {
                         withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
                 }

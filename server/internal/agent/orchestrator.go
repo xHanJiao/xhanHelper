@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -22,15 +23,15 @@ const baseSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职
 2. 诚实：不知道就说不知道，不要编造
 3. 主动：如果用户意图不明确，追问关键信息`
 
-const maxIterations = 8
+const defaultMaxIterations = 8
 
 // RunRequest — Orchestrator 输入
 type RunRequest struct {
 	UserID             string
 	ConversationID     string
 	Messages           []llm.Message
-	DeepMode           bool   // 客户端 toggle 是否开启深度思考模式
-	UserMessageContent string // 用户原始消息
+	DeepMode           bool
+	UserMessageContent string
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（Flash 文本解析用）
@@ -41,190 +42,250 @@ type LLMResponse struct {
 
 // Orchestrator — ReAct 循环编排器
 type Orchestrator struct {
-	flashClient llm.LLMClient
-	proClient   llm.LLMClient
-	registry    *tool.Registry
-	memoryStore MemoryStore
-	msgRepo     *service.MessageRepo
-	convRepo    *service.ConversationRepo
-	vectorStore *VectorStore
-	embedder    *llm.Embedder
-	memRepo     *service.UserMemoryRepo
+	flashClient   llm.LLMClient
+	proClient     llm.LLMClient
+	registry      *tool.Registry
+	memoryStore   MemoryStore
+	msgRepo       *service.MessageRepo
+	convRepo      *service.ConversationRepo
+	vectorStore   *VectorStore
+	embedder      *llm.Embedder
+	memRepo       *service.UserMemoryRepo
+	noteRepo      *service.NoteRepo
+	maxIterations int
 }
 
 // New 创建 Orchestrator
-func New(flashClient llm.LLMClient, registry *tool.Registry, memoryStore MemoryStore, proClient llm.LLMClient, msgRepo *service.MessageRepo, convRepo *service.ConversationRepo, vectorStore *VectorStore, embedder *llm.Embedder, memRepo *service.UserMemoryRepo) *Orchestrator {
+func New(flashClient llm.LLMClient, registry *tool.Registry, memoryStore MemoryStore,
+	proClient llm.LLMClient, msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
+	vectorStore *VectorStore, embedder *llm.Embedder, memRepo *service.UserMemoryRepo,
+	noteRepo *service.NoteRepo, maxIterations int) *Orchestrator {
+	if maxIterations <= 0 {
+		maxIterations = defaultMaxIterations
+	}
 	return &Orchestrator{
-		flashClient: flashClient,
-		proClient:   proClient,
-		registry:    registry,
-		memoryStore: memoryStore,
-		msgRepo:     msgRepo,
-		convRepo:    convRepo,
-		vectorStore: vectorStore,
-		embedder:    embedder,
-		memRepo:     memRepo,
+		flashClient:   flashClient,
+		proClient:     proClient,
+		registry:      registry,
+		memoryStore:   memoryStore,
+		msgRepo:       msgRepo,
+		convRepo:      convRepo,
+		vectorStore:   vectorStore,
+		embedder:      embedder,
+		memRepo:       memRepo,
+		noteRepo:      noteRepo,
+		maxIterations: maxIterations,
 	}
 }
 
-// Run 启动 ReAct 循环，返回事件 channel
+// —— Run ——
+
 func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.StreamEvent, error) {
-	client := o.flashClient
-	if req.DeepMode && o.proClient != nil {
-		client = o.proClient
-	}
-	log.Printf("[orch] run start: model=%s, msgs=%d, tools=%d", client.ModelName(), len(req.Messages), len(o.registry.GetLLMTools()))
+	client := o.pickClient(req)
+	log.Printf("[orch] run start: model=%s, msgs=%d, tools=%d",
+		client.ModelName(), len(req.Messages), len(o.registry.GetLLMTools()))
 
-	sysPrompt := client.BuildSystemPrompt(baseSystemPrompt, o.registry.GetLLMTools())
-
-	var memoryNote string
-	if o.vectorStore != nil && o.embedder != nil {
-		memoryNote = o.retrieveMemories(ctx, req)
-		if memoryNote != "" {
-			parts := strings.SplitN(memoryNote, "\n", 2)
-			if len(parts) > 0 {
-				sysPrompt += "\n\n===== 关于用户的信息 =====\n" + memoryNote
-			}
-			memoryNote = fmt.Sprintf(`{"message":"已关联向量记忆","count":%d}`, len(strings.Split(memoryNote, "\n")))
-		}
-	}
+	sysPrompt, memoryNote := o.buildSysPrompt(ctx, client, req)
 
 	msgs := make([]llm.Message, len(req.Messages))
 	copy(msgs, req.Messages)
 
 	events := make(chan *llm.StreamEvent, 64)
-
-	go func() {
-		defer close(events)
-
-		if memoryNote != "" {
-			events <- &llm.StreamEvent{Type: "status", Content: memoryNote}
-		}
-
-		// 用户消息加入上下文并保存
-		userMsgID := uuid.New().String()
-		msgs = append(msgs, llm.Message{Role: "user", Content: req.UserMessageContent})
-		if o.msgRepo != nil && req.ConversationID != "" {
-			o.msgRepo.Create(ctx, &model.Message{
-				ID:             userMsgID,
-				ConversationID: req.ConversationID,
-				Role:           "user",
-				Content:        req.UserMessageContent,
-			})
-		}
-
-		var allToolCalls []tool.ToolCall
-		var lastAssistantMsgID string
-
-		for iter := 0; iter < maxIterations; iter++ {
-			select {
-			case <-ctx.Done():
-				log.Printf("[orch] context cancelled")
-				events <- &llm.StreamEvent{Type: "error", Error: "request cancelled"}
-				events <- &llm.StreamEvent{Type: "done"}
-				return
-			default:
-			}
-
-			msg, err := client.ChatSync(ctx, &llm.ChatRequest{
-				SystemPrompt: sysPrompt,
-				Messages:     msgs,
-				Tools:        o.registry.GetLLMTools(),
-			})
-			if err != nil {
-				log.Printf("[orch] round %d LLM error: %v", iter+1, err)
-				events <- &llm.StreamEvent{Type: "error", Error: err.Error()}
-				return
-			}
-
-			log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
-				iter+1, len(msg.Content), len(msg.ReasoningContent), len(msg.ToolCalls))
-
-			// Pro 的思维链作为 thought_delta 推送
-			if msg.ReasoningContent != "" {
-				events <- &llm.StreamEvent{Type: "thought_delta", Content: msg.ReasoningContent}
-				events <- &llm.StreamEvent{Type: "thought_done", Content: ""}
-			}
-
-			// 原生 tool_calls
-			if len(msg.ToolCalls) > 0 {
-				log.Printf("[orch] round %d native tool_calls=%d", iter+1, len(msg.ToolCalls))
-				msgs = append(msgs, msg)
-				if req.DeepMode {
-					o.saveAssistantMsg(ctx, req.ConversationID, msg)
-				}
-
-				toolCalls := convertToolCalls(msg.ToolCalls)
-				allToolCalls = append(allToolCalls, toolCalls...)
-
-				results := executeConcurrently(ctx, events, req.UserID, o.registry, toolCalls)
-
-				for i := range toolCalls {
-					resJSON, _ := json.Marshal(results[i].result)
-					events <- &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)}
-					msgs = append(msgs, llm.Message{
-						Role:       "tool",
-						ToolCallID: msg.ToolCalls[i].ID,
-						Content:    string(resJSON),
-					})
-					if req.DeepMode {
-						o.saveToolMsg(ctx, req.ConversationID, msg.ToolCalls[i].ID, string(resJSON))
-					}
-				}
-				continue
-			}
-
-			// Flash 文本中的 JSON 解析（非思考模式，tool_calls 嵌入在回复文本中）
-			parsed := parseLLMResponse(msg.Content)
-
-			if parsed == nil {
-				log.Printf("[orch] round %d pure text reply, len=%d", iter+1, len(msg.Content))
-				for _, r := range msg.Content {
-					events <- &llm.StreamEvent{Type: "text_delta", Content: string(r)}
-				}
-				lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, msg)
-				if len(allToolCalls) >= 2 {
-					planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
-					events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
-				}
-				o.emitDone(events, req.ConversationID, lastAssistantMsgID, "")
-				return
-			}
-
-			// 有嵌入 tool_calls
-			log.Printf("[orch] round %d embedded tool_calls=%d: %s", iter+1, len(parsed.ToolCalls), tool.ToolCallNames(parsed.ToolCalls))
-			msgs = append(msgs, llm.Message{Role: "assistant", Content: msg.Content})
-			allToolCalls = append(allToolCalls, parsed.ToolCalls...)
-
-			results := executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
-
-			for i := range parsed.ToolCalls {
-				resJSON, _ := json.Marshal(results[i].result)
-				events <- &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)}
-				msgs = append(msgs, llm.Message{
-					Role:    "user",
-					Content: "[工具执行结果] " + string(resJSON),
-				})
-			}
-		}
-
-		events <- &llm.StreamEvent{Type: "error", Error: "max iterations reached"}
-		if len(allToolCalls) >= 2 {
-			planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
-			events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
-		}
-		o.emitDone(events, req.ConversationID, "", "max iterations reached")
-	}()
-
+	go o.runReActLoop(ctx, events, client, sysPrompt, memoryNote, msgs, req)
 	return events, nil
 }
+
+func (o *Orchestrator) pickClient(req *RunRequest) llm.LLMClient {
+	if req.DeepMode && o.proClient != nil {
+		return o.proClient
+	}
+	return o.flashClient
+}
+
+func (o *Orchestrator) buildSysPrompt(ctx context.Context, client llm.LLMClient, req *RunRequest) (string, string) {
+	prompt := client.BuildSystemPrompt(baseSystemPrompt, o.registry.GetLLMTools())
+
+	if o.vectorStore == nil || o.embedder == nil {
+		return prompt, ""
+	}
+	memText := o.retrieveMemories(ctx, req)
+	if memText == "" {
+		return prompt, ""
+	}
+	prompt += "\n\n===== 关于用户的信息 =====\n" + memText
+	return prompt, fmt.Sprintf(`{"message":"已关联向量记忆","count":%d}`, strings.Count(memText, "\n"))
+}
+
+// —— ReAct 主循环 ——
+
+func (o *Orchestrator) runReActLoop(
+	ctx context.Context,
+	events chan<- *llm.StreamEvent,
+	client llm.LLMClient,
+	sysPrompt, memoryNote string,
+	msgs []llm.Message,
+	req *RunRequest,
+) {
+	defer close(events)
+
+	if memoryNote != "" {
+		events <- &llm.StreamEvent{Type: "status", Content: memoryNote}
+	}
+
+	userMsgID := uuid.New().String()
+	msgs = append(msgs, llm.Message{Role: "user", Content: req.UserMessageContent})
+	if o.msgRepo != nil && req.ConversationID != "" {
+		o.msgRepo.Create(ctx, &model.Message{
+			ID:             userMsgID,
+			ConversationID: req.ConversationID,
+			Role:           "user",
+			Content:        req.UserMessageContent,
+		})
+	}
+
+	var allToolCalls []tool.ToolCall
+	var lastAssistantMsgID string
+
+	for iter := 0; iter < o.maxIterations; iter++ {
+		if ctx.Err() != nil {
+			log.Printf("[orch] context cancelled")
+			events <- &llm.StreamEvent{Type: "error", Error: "request cancelled"}
+			events <- &llm.StreamEvent{Type: "done"}
+			return
+		}
+
+		msg, err := client.ChatSync(ctx, &llm.ChatRequest{
+			SystemPrompt: sysPrompt,
+			Messages:     msgs,
+			Tools:        o.registry.GetLLMTools(),
+		})
+		if err != nil {
+			log.Printf("[orch] round %d LLM error: %v", iter+1, err)
+			events <- &llm.StreamEvent{Type: "error", Error: err.Error()}
+			return
+		}
+
+		log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
+			iter+1, len(msg.Content), len(msg.ReasoningContent), len(msg.ToolCalls))
+
+		if msg.ReasoningContent != "" {
+			events <- &llm.StreamEvent{Type: "thought_delta", Content: msg.ReasoningContent}
+			events <- &llm.StreamEvent{Type: "thought_done", Content: ""}
+		}
+
+		// 原生 tool_calls（Pro 或 Flash 原生函数调用）
+		if len(msg.ToolCalls) > 0 {
+			o.handleNativeToolCalls(ctx, events, &msgs, msg, req, &allToolCalls)
+			continue
+		}
+
+		// Flash 文本 JSON 解析
+		done, msgID := o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID)
+		if done {
+			if len(allToolCalls) >= 2 {
+				planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
+				events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
+			}
+			o.emitDone(events, req.ConversationID, msgID, "")
+			return
+		}
+	}
+
+	events <- &llm.StreamEvent{Type: "error", Error: "max iterations reached"}
+	if len(allToolCalls) >= 2 {
+		planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
+		events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
+	}
+	o.emitDone(events, req.ConversationID, "", "max iterations reached")
+}
+
+// —— 工具调用处理 ——
+
+func (o *Orchestrator) handleNativeToolCalls(
+	ctx context.Context,
+	events chan<- *llm.StreamEvent,
+	msgs *[]llm.Message,
+	msg llm.Message,
+	req *RunRequest,
+	allToolCalls *[]tool.ToolCall,
+) {
+	log.Printf("[orch] round native tool_calls=%d", len(msg.ToolCalls))
+	*msgs = append(*msgs, msg)
+	if req.DeepMode {
+		o.saveAssistantMsg(ctx, req.ConversationID, msg)
+	}
+
+	toolCalls := convertToolCalls(msg.ToolCalls)
+	*allToolCalls = append(*allToolCalls, toolCalls...)
+
+	results := executeConcurrently(ctx, events, req.UserID, o.registry, toolCalls)
+
+	for i := range toolCalls {
+		resJSON, _ := json.Marshal(results[i].result)
+		events <- &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)}
+		*msgs = append(*msgs, llm.Message{
+			Role:       "tool",
+			ToolCallID: msg.ToolCalls[i].ID,
+			Content:    string(resJSON),
+		})
+		if req.DeepMode {
+			o.saveToolMsg(ctx, req.ConversationID, msg.ToolCalls[i].ID, string(resJSON))
+		}
+	}
+}
+
+// —— Flash 文本响应处理 ——
+
+// handleFlashResponse 解析 Flash 文本中的 JSON，返回 (done bool, msgID string)
+func (o *Orchestrator) handleFlashResponse(
+	ctx context.Context,
+	events chan<- *llm.StreamEvent,
+	msgs *[]llm.Message,
+	msg llm.Message,
+	req *RunRequest,
+	allToolCalls *[]tool.ToolCall,
+	lastMsgID *string,
+) (bool, string) {
+	parsed := parseLLMResponse(msg.Content)
+
+	if parsed == nil {
+		// 纯文本回复 → 流式输出 → done
+		log.Printf("[orch] round pure text reply, len=%d", len(msg.Content))
+		for _, r := range msg.Content {
+			events <- &llm.StreamEvent{Type: "text_delta", Content: string(r)}
+		}
+		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, msg)
+		return true, *lastMsgID
+	}
+
+	// 嵌入 tool_calls → 执行 → 继续下一轮
+	log.Printf("[orch] round embedded tool_calls=%d: %s",
+		len(parsed.ToolCalls), tool.ToolCallNames(parsed.ToolCalls))
+	*msgs = append(*msgs, llm.Message{Role: "assistant", Content: msg.Content})
+	*allToolCalls = append(*allToolCalls, parsed.ToolCalls...)
+
+	results := executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
+
+	for i := range parsed.ToolCalls {
+		resJSON, _ := json.Marshal(results[i].result)
+		events <- &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)}
+		*msgs = append(*msgs, llm.Message{
+			Role:    "user",
+			Content: "[工具执行结果] " + string(resJSON),
+		})
+	}
+	return false, ""
+}
+
+// —— 并发执行 ——
 
 type toolExecResult struct {
 	tc     tool.ToolCall
 	result *tool.Result
 }
 
-func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID string, registry *tool.Registry, toolCalls []tool.ToolCall) []toolExecResult {
+func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID string,
+	registry *tool.Registry, toolCalls []tool.ToolCall) []toolExecResult {
 
 	if len(toolCalls) >= 2 {
 		log.Printf("[orch] concurrent exec %d tools", len(toolCalls))
@@ -272,76 +333,182 @@ func convertToolCalls(tcs []llm.ToolCall) []tool.ToolCall {
 	return result
 }
 
-// ——— 向量检索 ———
+// —— 向量检索 ——
 
 func (o *Orchestrator) retrieveMemories(ctx context.Context, req *RunRequest) string {
-	userMsg := req.UserMessageContent
-
-	vec, err := o.embedder.Embed(ctx, userMsg)
+	vec, err := o.embedder.Embed(ctx, req.UserMessageContent)
 	if err != nil {
 		log.Printf("[vector] embed user msg error: %v", err)
 		return ""
 	}
-
 	go o.saveMsgEmbedding(ctx, req, vec)
 
-	results := o.vectorStore.Search(vec, 5)
+	results := o.vectorStore.Search(vec, 8)
 	if len(results) == 0 {
 		return ""
 	}
 
+	var parts []string
+
+	// Route 2: 记忆摘要
+	if memText := o.searchMemories(ctx, results); memText != "" {
+		parts = append(parts, memText)
+	}
+
+	// Route 1: 历史消息 + 上下文
+	if msgText := o.searchHistoryMessages(ctx, results); msgText != "" {
+		parts = append(parts, msgText)
+	}
+
+	// Route 3: note 原文（仅 deep_mode）
+	if req.DeepMode {
+		if noteText := o.searchNotes(ctx, results); noteText != "" {
+			parts = append(parts, noteText)
+		}
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+func (o *Orchestrator) searchMemories(ctx context.Context, results []struct {
+	ID    string
+	Score float64
+}) string {
 	var memIDs []string
 	for _, r := range results {
-		if r.Score < 0.5 {
+		if r.Score < 0.5 || !strings.HasPrefix(r.ID, "mem:") {
 			continue
 		}
-		if strings.HasPrefix(r.ID, "mem:") {
-			memIDs = append(memIDs, strings.TrimPrefix(r.ID, "mem:"))
-			log.Printf("[vector] memory hit: id=%s, score=%.4f", r.ID, r.Score)
-		}
+		memIDs = append(memIDs, strings.TrimPrefix(r.ID, "mem:"))
+		log.Printf("[vector] memory hit: id=%s, score=%.4f", r.ID, r.Score)
 	}
 	if len(memIDs) == 0 {
 		return ""
 	}
-
 	memories, err := o.memRepo.GetByIDs(ctx, memIDs)
 	if err != nil || len(memories) == 0 {
 		return ""
 	}
-
 	var sb strings.Builder
 	for _, m := range memories {
 		sb.WriteString(fmt.Sprintf("- %s: %s\n", m.MemoryKey, m.MemoryValue))
 	}
+	return "===== 相关记忆 =====\n" + sb.String()
+}
+
+func (o *Orchestrator) searchHistoryMessages(ctx context.Context, results []struct {
+	ID    string
+	Score float64
+}) string {
+	for _, r := range results {
+		if r.Score < 0.5 || !strings.HasPrefix(r.ID, "msg:") {
+			continue
+		}
+		msgID := strings.TrimPrefix(r.ID, "msg:")
+		msg, err := o.msgRepo.GetByID(ctx, msgID)
+		if err != nil || msg == nil {
+			continue
+		}
+		log.Printf("[vector] msg hit: conv=%s, score=%.4f, text=%s",
+			msg.ConversationID[:min(8, len(msg.ConversationID))], r.Score,
+			msg.Content[:min(80, len(msg.Content))])
+
+		// 取同一会话的上下文
+		history, _ := o.msgRepo.ListByConversation(ctx, msg.ConversationID, 20)
+		return "===== 历史相关对话 =====\n" + formatHistoryContext(history, msgID)
+	}
+	return ""
+}
+
+func (o *Orchestrator) searchNotes(ctx context.Context, results []struct {
+	ID    string
+	Score float64
+}) string {
+	var noteIDs []string
+	for _, r := range results {
+		if r.Score < 0.5 || !strings.HasPrefix(r.ID, "note:") {
+			continue
+		}
+		noteIDs = append(noteIDs, strings.TrimPrefix(r.ID, "note:"))
+		log.Printf("[vector] note hit: id=%s, score=%.4f", r.ID, r.Score)
+	}
+	if len(noteIDs) == 0 || o.noteRepo == nil {
+		return ""
+	}
+	notes, err := o.noteRepo.GetByIDs(ctx, noteIDs)
+	if err != nil || len(notes) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("===== 相关笔记 =====\n")
+	for _, n := range notes {
+		sb.WriteString(fmt.Sprintf("- [%s] %s\n", n.Topic, n.Content[:min(200, len(n.Content))]))
+	}
 	return sb.String()
 }
 
-// Warmup 启动时加载已有记忆（有 embedding 的直接恢复，没有的跳过）
-func (o *Orchestrator) Warmup(ctx context.Context) {
-	if o.vectorStore == nil || o.embedder == nil || o.memRepo == nil {
-		log.Printf("[vector] warmup: skipped (no config)")
-		return
+func formatHistoryContext(history []model.Message, focusID string) string {
+	var sb strings.Builder
+	found := -1
+	for i, m := range history {
+		if m.ID == focusID {
+			found = i
+			break
+		}
 	}
-	log.Printf("[vector] warmup: loading existing memories...")
-	// 简单实现：需要遍历全部用户。MVP 阶段用无用户筛选的查询
-	// 实际数据量小，一次性加载即可
-	count := 0
-	o.vectorStore.Size() // warm up the mutex
-	log.Printf("[vector] warmup: loaded %d memories (from existing embeddings)", count)
-	log.Printf("[vector] store size: %d", o.vectorStore.Size())
+	if found < 0 {
+		return ""
+	}
+	start := found - 3
+	if start < 0 {
+		start = 0
+	}
+	end := found + 4
+	if end > len(history) {
+		end = len(history)
+	}
+	for i := start; i < end; i++ {
+		m := history[i]
+		marker := " "
+		if m.ID == focusID {
+			marker = "→"
+		}
+		sb.WriteString(fmt.Sprintf("%s [%s]: %s\n", marker, m.Role, m.Content[:min(200, len(m.Content))]))
+	}
+	return sb.String()
 }
 
 func (o *Orchestrator) saveMsgEmbedding(ctx context.Context, req *RunRequest, vec []float64) {
 	if o.msgRepo == nil || req.ConversationID == "" {
 		return
 	}
+	// 取刚保存的用户消息 ID
+	history, err := o.msgRepo.ListByConversation(ctx, req.ConversationID, 1)
+	if err != nil || len(history) == 0 {
+		return
+	}
+	lastMsg := history[len(history)-1]
+	if lastMsg.Role != "user" {
+		return
+	}
+	o.vectorStore.Upsert("msg:"+lastMsg.ID, vec)
 	s := llm.EmbeddingToString(vec)
-	// 更新最近一条 user 消息的 embedding
-	// 使用原始 SQL 更新最后一条 user 消息
 	o.msgRepo.UpdateLastUserEmbedding(ctx, req.ConversationID, &s)
 }
 
-// ——— DB 保存 ———
+// Warmup 启动时加载已有记忆到向量库
+func (o *Orchestrator) Warmup(ctx context.Context) {
+	if o.vectorStore == nil || o.embedder == nil || o.memRepo == nil {
+		log.Printf("[vector] warmup: skipped (no config)")
+		return
+	}
+	log.Printf("[vector] warmup: loading existing memories...")
+	o.vectorStore.Size()
+	log.Printf("[vector] warmup: loaded 0 memories (from existing embeddings)")
+	log.Printf("[vector] store size: %d", o.vectorStore.Size())
+}
+
+// —— DB 保存 ——
 
 func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID string, msg llm.Message) string {
 	if o.msgRepo == nil || convID == "" {
@@ -371,7 +538,6 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID string, toolCallI
 	if o.msgRepo == nil || convID == "" {
 		return
 	}
-	log.Printf("[orch] save tool msg: conv=%s, tool_call_id=%s, content=%s", convID[:min(8, len(convID))], toolCallID, content[:min(100, len(content))])
 	tcid := toolCallID
 	o.msgRepo.Create(ctx, &model.Message{
 		ID:             uuid.New().String(),
@@ -393,11 +559,10 @@ func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, e
 	if errStr != "" {
 		parts = append(parts, fmt.Sprintf(`"error":"%s"`, errStr))
 	}
-	doneJSON := "{" + strings.Join(parts, ",") + "}"
-	events <- &llm.StreamEvent{Type: "done", Content: doneJSON}
+	events <- &llm.StreamEvent{Type: "done", Content: "{" + strings.Join(parts, ",") + "}"}
 }
 
-// ——— 工具函数 ———
+// —— 工具函数 ——
 
 func (o *Orchestrator) GenerateTitle(ctx context.Context, userMessage string) string {
 	msg, err := o.flashClient.ChatSync(ctx, &llm.ChatRequest{

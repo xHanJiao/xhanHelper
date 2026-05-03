@@ -1,22 +1,32 @@
 package tool
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
 
 // NoteTool — 变量追踪笔记工具
 type NoteTool struct {
-	noteRepo *service.NoteRepo
+	noteRepo    *service.NoteRepo
+	vectorStore VectorStorer
+	embedder    *llm.Embedder
 }
 
-func NewNoteTool(noteRepo *service.NoteRepo) *NoteTool {
-	return &NoteTool{noteRepo: noteRepo}
+// VectorStorer — 向量存储接口（避免循环依赖）
+type VectorStorer interface {
+	Upsert(id string, vec []float64)
+}
+
+func NewNoteTool(noteRepo *service.NoteRepo, vs VectorStorer, emb *llm.Embedder) *NoteTool {
+	return &NoteTool{noteRepo: noteRepo, vectorStore: vs, embedder: emb}
 }
 
 func (t *NoteTool) Name() string        { return "note" }
@@ -104,8 +114,26 @@ func (t *NoteTool) recordNote(ec *ExecuteContext, args json.RawMessage) *Result 
 	if err := t.noteRepo.Create(ec.Ctx, note); err != nil {
 		return &Result{Success: false, Error: fmt.Sprintf("create note: %v", err)}
 	}
+
+	// 异步 embedding
+	if t.vectorStore != nil && t.embedder != nil {
+		go t.embedNote(note)
+	}
+
 	data, _ := json.Marshal(note)
 	return &Result{Success: true, Data: data}
+}
+
+func (t *NoteTool) embedNote(note *model.Note) {
+	text := note.Content
+	vec, err := t.embedder.Embed(context.Background(), text)
+	if err != nil {
+		log.Printf("[note] embed error: %v", err)
+		return
+	}
+	t.vectorStore.Upsert("note:"+note.ID, vec)
+	embStr := llm.EmbeddingToString(vec)
+	t.noteRepo.UpdateEmbedding(context.Background(), note.ID, &embStr)
 }
 
 func (t *NoteTool) queryNotes(ec *ExecuteContext, args json.RawMessage) *Result {

@@ -22,6 +22,19 @@ func (r *NoteRepo) Create(ctx context.Context, n *model.Note) error {
 	return r.db.WithContext(ctx).Create(n).Error
 }
 
+// GetByIDs 按 ID 列表查询
+func (r *NoteRepo) GetByIDs(ctx context.Context, ids []string) ([]model.Note, error) {
+	var list []model.Note
+	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&list).Error
+	return list, err
+}
+
+// UpdateEmbedding 更新笔记的向量字段
+func (r *NoteRepo) UpdateEmbedding(ctx context.Context, id string, embedding *string) error {
+	return r.db.WithContext(ctx).Model(&model.Note{}).Where("id = ?", id).
+		Update("embedding", embedding).Error
+}
+
 // Delete 删除笔记
 func (r *NoteRepo) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Delete(&model.Note{}, "id = ?", id).Error

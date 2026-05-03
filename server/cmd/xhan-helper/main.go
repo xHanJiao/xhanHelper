@@ -69,17 +69,18 @@ func main() {
 	reg.Register(tool.NewDatetimeTool())
 	reg.Register(tool.NewUUIDTool())
 	reg.Register(tool.NewCalculatorTool())
-	reg.Register(tool.NewNoteTool(noteRepo))
 
 	// Vector Store
 	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
 	vectorStore := agent.NewVectorStore()
 
+	reg.Register(tool.NewNoteTool(noteRepo, vectorStore, embedder))
+
 	// Memory Store
 	memStore := agent.NewLLMMemoryStore(llmClient, memRepo, vectorStore, embedder)
 
 	// Orchestrator
-	orch := agent.New(llmClient, reg, memStore, strongClient, msgRepo, convRepo, vectorStore, embedder, memRepo)
+	orch := agent.New(llmClient, reg, memStore, strongClient, msgRepo, convRepo, vectorStore, embedder, memRepo, noteRepo, cfg.LLM.MaxIterations)
 	go orch.Warmup(context.Background())
 
 	// Memory Scheduler (后台异步)

@@ -30,6 +30,16 @@ func (r *MessageRepo) UpdateLastUserEmbedding(ctx context.Context, convID string
 		Update("embedding", embedding).Error
 }
 
+// GetByID 按 ID 查单条消息
+func (r *MessageRepo) GetByID(ctx context.Context, id string) (*model.Message, error) {
+	var m model.Message
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&m).Error
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
 // ListByConversation 获取会话的消息列表（按时间正序）
 func (r *MessageRepo) ListByConversation(ctx context.Context, convID string, limit int) ([]model.Message, error) {
 	var list []model.Message

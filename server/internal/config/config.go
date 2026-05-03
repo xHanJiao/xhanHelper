@@ -44,11 +44,12 @@ func (d DBConfig) DSN() string {
 
 // LLMConfig — LLM 厂商配置
 type LLMConfig struct {
-	Provider    string `yaml:"provider"`     // doubao | deepseek
-	APIKey      string `yaml:"api_key"`
-	Model       string `yaml:"model"`        // 弱模型（日常使用）
-	StrongModel string `yaml:"strong_model"` // 强模型（深度思考模式，可选，默认同 Model）
-	BaseURL     string `yaml:"base_url"`     // LLM API 地址
+	Provider      string `yaml:"provider"`       // doubao | deepseek
+	APIKey        string `yaml:"api_key"`
+	Model         string `yaml:"model"`          // 弱模型（日常使用）
+	StrongModel   string `yaml:"strong_model"`   // 强模型（深度思考模式，可选，默认同 Model）
+	BaseURL       string `yaml:"base_url"`       // LLM API 地址
+	MaxIterations int    `yaml:"max_iterations"` // ReAct 最大迭代次数（默认 8）
 }
 
 // EmbeddingConfig — 向量化配置
@@ -145,6 +146,9 @@ func merge(dst, src *Config) {
 	}
 	if src.LLM.BaseURL != "" {
 		dst.LLM.BaseURL = src.LLM.BaseURL
+	}
+	if src.LLM.MaxIterations != 0 {
+		dst.LLM.MaxIterations = src.LLM.MaxIterations
 	}
 	if src.LLM.StrongModel != "" {
 		dst.LLM.StrongModel = src.LLM.StrongModel

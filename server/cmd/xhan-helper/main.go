@@ -76,18 +76,19 @@ func main() {
 
 	reg.Register(tool.NewNoteTool(noteRepo, vectorStore, embedder))
 
-	// Memory Store
+	// 后台任务共享 context，关闭时统一取消
+	bgCtx, bgCancel := context.WithCancel(context.Background())
 
 	// Orchestrator
 	retriever := agent.NewRetriever(vectorStore, embedder, memRepo, msgRepo, noteRepo)
-	go retriever.Warmup(context.Background())
+	go retriever.Warmup(bgCtx)
 
 	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, cfg.LLM.MaxIterations)
 
 	// Memory Scheduler (后台异步)
 	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo)
 	memScheduler := agent.NewMemoryScheduler(memExtractor, convRepo)
-	go memScheduler.Start(context.Background())
+	go memScheduler.Start(bgCtx)
 
 	// Handlers
 	billHandler := controller.NewBillHandler(billRepo, memExtractor)
@@ -114,6 +115,9 @@ func main() {
 	<-quit
 	log.Println("shutting down...")
 
+	// 先取消后台 goroutine
+	bgCancel()
+	// 再关闭 HTTP server
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)

@@ -18,18 +18,26 @@ func listConversations(convRepo *service.ConversationRepo) gin.HandlerFunc {
 	}
 }
 
+// requireConversationOwner 校验会话归属，非 owner 返回 403，未找到返回 404
+func requireConversationOwner(c *gin.Context, convRepo *service.ConversationRepo, convID string) bool {
+	conv, err := convRepo.FindByID(c.Request.Context(), convID)
+	if err != nil || conv == nil {
+		view.JSONError(c, 404, "conversation not found")
+		return false
+	}
+	userID := c.GetString("user_id")
+	if conv.UserID != userID {
+		view.JSONError(c, 403, "access denied")
+		return false
+	}
+	return true
+}
+
 func getMessages(convRepo *service.ConversationRepo,
 	msgRepo *service.MessageRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
-		conv, err := convRepo.FindByID(c.Request.Context(), convID)
-		if err != nil || conv == nil {
-			view.JSONError(c, 404, "conversation not found")
-			return
-		}
-		userID := c.GetString("user_id")
-		if conv.UserID != userID {
-			view.JSONError(c, 403, "access denied")
+		if !requireConversationOwner(c, convRepo, convID) {
 			return
 		}
 		msgs, err := msgRepo.ListByConversation(c.Request.Context(), convID, 100)
@@ -44,14 +52,7 @@ func getMessages(convRepo *service.ConversationRepo,
 func renameConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
-		userID := c.GetString("user_id")
-		conv, err := convRepo.FindByID(c.Request.Context(), convID)
-		if err != nil || conv == nil {
-			view.JSONError(c, 404, "conversation not found")
-			return
-		}
-		if conv.UserID != userID {
-			view.JSONError(c, 403, "access denied")
+		if !requireConversationOwner(c, convRepo, convID) {
 			return
 		}
 		var req struct {
@@ -72,14 +73,7 @@ func renameConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 func deleteConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
-		userID := c.GetString("user_id")
-		conv, err := convRepo.FindByID(c.Request.Context(), convID)
-		if err != nil || conv == nil {
-			view.JSONError(c, 404, "conversation not found")
-			return
-		}
-		if conv.UserID != userID {
-			view.JSONError(c, 403, "access denied")
+		if !requireConversationOwner(c, convRepo, convID) {
 			return
 		}
 		if err := convRepo.SoftDelete(c.Request.Context(), convID); err != nil {

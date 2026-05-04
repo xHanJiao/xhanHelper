@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 
 	"gorm.io/gorm"
 	"xhan-helper/internal/model"
@@ -30,10 +31,13 @@ func (r *MessageRepo) UpdateLastUserEmbedding(ctx context.Context, convID string
 		Update("embedding", embedding).Error
 }
 
-// GetByID 按 ID 查单条消息
+// GetByID 按 ID 查单条消息，未找到返回 (nil, nil)
 func (r *MessageRepo) GetByID(ctx context.Context, id string) (*model.Message, error) {
 	var m model.Message
 	err := r.db.WithContext(ctx).Where("id = ?", id).First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

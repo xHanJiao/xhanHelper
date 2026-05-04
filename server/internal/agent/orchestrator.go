@@ -45,7 +45,6 @@ type Orchestrator struct {
 	flashClient   llm.LLMClient
 	proClient     llm.LLMClient
 	registry      *tool.Registry
-	memoryStore   MemoryStore
 	msgRepo       *service.MessageRepo
 	convRepo      *service.ConversationRepo
 	vectorStore   *VectorStore
@@ -56,7 +55,7 @@ type Orchestrator struct {
 }
 
 // New 创建 Orchestrator
-func New(flashClient llm.LLMClient, registry *tool.Registry, memoryStore MemoryStore,
+func New(flashClient llm.LLMClient, registry *tool.Registry,
 	proClient llm.LLMClient, msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
 	vectorStore *VectorStore, embedder *llm.Embedder, memRepo *service.UserMemoryRepo,
 	noteRepo *service.NoteRepo, maxIterations int) *Orchestrator {
@@ -67,7 +66,6 @@ func New(flashClient llm.LLMClient, registry *tool.Registry, memoryStore MemoryS
 		flashClient:   flashClient,
 		proClient:     proClient,
 		registry:      registry,
-		memoryStore:   memoryStore,
 		msgRepo:       msgRepo,
 		convRepo:      convRepo,
 		vectorStore:   vectorStore,

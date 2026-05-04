@@ -49,3 +49,17 @@ func (r *MessageRepo) ListByConversation(ctx context.Context, convID string, lim
 		Find(&list).Error
 	return list, err
 }
+
+// ListByConversationSince 获取指定消息之后的消息（按时间正序，不含 sinceID 自身）
+func (r *MessageRepo) ListByConversationSince(ctx context.Context, convID, sinceID string, limit int) ([]model.Message, error) {
+	var since model.Message
+	if err := r.db.WithContext(ctx).Where("id = ?", sinceID).First(&since).Error; err != nil {
+		return r.ListByConversation(ctx, convID, limit)
+	}
+	var list []model.Message
+	err := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND created_at > ?", convID, since.CreatedAt).
+		Order("created_at ASC").Limit(limit).
+		Find(&list).Error
+	return list, err
+}

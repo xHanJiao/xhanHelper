@@ -58,6 +58,18 @@ func (r *UserMemoryRepo) GetByIDs(ctx context.Context, ids []string) ([]model.Us
 	return list, err
 }
 
+// FindByPromptHash 按 prompt 哈希查找已有记忆（输入去重）
+func (r *UserMemoryRepo) FindByPromptHash(ctx context.Context, userID, hash string) (*model.UserMemory, error) {
+	var m model.UserMemory
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND prompt_hash = ?", userID, hash).
+		First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &m, err
+}
+
 // ListAll 获取所有记忆（用于 warmup 加载向量库）
 func (r *UserMemoryRepo) ListAll(ctx context.Context) ([]model.UserMemory, error) {
 	var list []model.UserMemory

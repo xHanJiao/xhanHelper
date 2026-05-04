@@ -223,6 +223,9 @@ func (t *BookkeepingTool) updateBill(ec *ExecuteContext, args json.RawMessage) *
 	if err != nil || existing == nil {
 		return &Result{Success: false, Error: "bill not found: " + a.ID}
 	}
+	if existing.UserID != ec.UserID {
+		return &Result{Success: false, Error: "access denied"}
+	}
 
 	// 只更新传入的非零值字段
 	if a.Item != "" {
@@ -268,6 +271,14 @@ func (t *BookkeepingTool) deleteBill(ec *ExecuteContext, args json.RawMessage) *
 	}
 	if a.ID == "" {
 		return &Result{Success: false, Error: "id is required for delete"}
+	}
+
+	existing, err := t.billRepo.FindByID(ec.Ctx, a.ID)
+	if err != nil || existing == nil {
+		return &Result{Success: false, Error: "bill not found: " + a.ID}
+	}
+	if existing.UserID != ec.UserID {
+		return &Result{Success: false, Error: "access denied"}
 	}
 
 	if err := t.billRepo.SoftDelete(ec.Ctx, a.ID); err != nil {

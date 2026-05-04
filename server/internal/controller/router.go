@@ -20,7 +20,7 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Authorization", "Content-Type"},
-		AllowCredentials: true,
+		AllowCredentials: false,
 	}))
 
 	// 无需认证 — 账号注册/登录

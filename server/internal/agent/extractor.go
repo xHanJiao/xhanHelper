@@ -99,6 +99,7 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 			LastConfirmedAt: time.Now(),
 			ExtractPrompt:   &prompt,
 			PromptHash:      promptHash,
+			ContentHash:     hashPrompt(line),
 		}
 		e.storeMemory(memory)
 		extracted++
@@ -153,6 +154,7 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, prompt,
 			LastConfirmedAt: time.Now(),
 			ExtractPrompt:   &prompt,
 			PromptHash:      promptHash,
+			ContentHash:     hashPrompt(line),
 		}
 		e.storeMemory(memory)
 		extracted++

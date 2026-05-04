@@ -5,8 +5,9 @@ import "time"
 // UserMemory — 长期记忆 K-V
 type UserMemory struct {
 	ID              string    `gorm:"primaryKey;size:36" json:"id"`
-	UserID          string    `gorm:"size:36;not null;index" json:"user_id"`
+	UserID          string    `gorm:"uniqueIndex:idx_user_content;size:36;not null" json:"user_id"`
 	MemoryKey       string    `gorm:"size:200;not null" json:"memory_key"`
+	ContentHash     string    `gorm:"uniqueIndex:idx_user_content;size:64;not null" json:"content_hash"` // MD5(MemoryValue)
 	MemoryValue     string    `gorm:"type:text;not null" json:"memory_value"`
 	ExtractPrompt   *string   `gorm:"type:text" json:"extract_prompt,omitempty"`  // 提取该记忆时发给 LLM 的 prompt
 	PromptHash      string    `gorm:"size:64;index" json:"prompt_hash"`           // prompt 的 MD5 哈希，用于输入去重

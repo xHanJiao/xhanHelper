@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -31,7 +32,11 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 
 		var conv *model.Conversation
 		if req.ConversationID != nil {
-			conv, _ = convRepo.FindByID(c.Request.Context(), *req.ConversationID)
+			var err error
+			conv, err = convRepo.FindByID(c.Request.Context(), *req.ConversationID)
+			if err != nil {
+				log.Printf("[chat] FindByID error: %v", err)
+			}
 		}
 		if conv == nil {
 			conv = &model.Conversation{ID: uuid.New().String(), UserID: userID}
@@ -41,7 +46,10 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			}
 		}
 
-		history, _ := msgRepo.ListByConversation(c.Request.Context(), conv.ID, 20)
+		history, err := msgRepo.ListByConversation(c.Request.Context(), conv.ID, 20)
+		if err != nil {
+			log.Printf("[chat] ListByConversation error: %v", err)
+		}
 
 		w := c.Writer
 		w.Header().Set("Content-Type", "text/event-stream")

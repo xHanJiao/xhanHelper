@@ -188,27 +188,27 @@ if src.Server.RegistrationEnabled {  // false 是零值，永远不会覆盖 tru
 
 ---
 
-### 18. `controller/chat.go` — 错误被静默吞掉
+### 18. `controller/chat.go` — 错误被静默吞掉 ✅ 已修复
 
 **行号**: 34, 44
 
 **问题**: `convRepo.FindByID` 和 `msgRepo.ListByConversation` 的错误直接忽略（`_`），数据库故障会静默创建新会话或返空历史。
 
-**修复方向**: 至少 log 错误，合理时向上传递。
+**修复**: 两处改为显式接收 `err`，`log.Printf` 记录错误。
 
 ---
 
-### 19. `tool/bookkeeping.go` — `json.Unmarshal` 错误被忽略
+### 19. `tool/bookkeeping.go` — `json.Unmarshal` 错误被忽略 ✅ 已修复
 
 **行号**: 289, 321, 362
 
-**问题**: 三个函数收到格式错误的 JSON args 时，`json.Unmarshal` 错误直接 `_` 忽略，静默使用零值继续执行。
+**问题**: 三个函数（queryBills/getMonthlyStats/getCategoryStats）收到格式错误的 JSON args 时，`json.Unmarshal` 错误直接 `_` 忽略，静默使用零值继续执行。
 
-**修复方向**: 返回 `&Result{Success: false, Error: "parse args: " + err.Error()}`。
+**修复**: `json.Unmarshal` → `if err := json.Unmarshal(...); err != nil { log.Printf(...) }`。这些函数的参数全为可选，所以只记日志不中断执行。
 
 ---
 
-### 20. `tool/registry.go` — `GeneratePrompt` 中无守卫的类型断言可能 panic
+### 20. `tool/registry.go` — `GeneratePrompt` 中无守卫的类型断言可能 panic ✅ 已修复
 
 **行号**: 70, 74
 
@@ -219,7 +219,7 @@ prop := val.(map[string]interface{})   // prop 不是 map → panic
 ```
 若工具返回格式异常的参数 schema，在生成 tool prompt 时会使整个服务器 crash。
 
-**修复方向**: 加 ok 守卫。
+**修复**: 加 ok 守卫，`r.(string)` → `if s, ok := r.(string); ok { ... }`，`val.(map[string]interface{})` → `prop, ok := val.(map[string]interface{}); if !ok { continue }`。
 
 ---
 
@@ -283,6 +283,6 @@ prop := val.(map[string]interface{})   // prop 不是 map → panic
 |--------|------|--------|--------|
 | P0 Critical | 3 | 3 | 0 |
 | P1 High | 7 | 7 | 0 |
-| P2 Medium | 10 | 0 | 10 |
+| P2 Medium | 10 | 7 | 3 |
 | P3 Low | 7 | 0 | 7 |
-| **合计** | **27** | **10** | **17** |
+| **合计** | **27** | **17** | **10** |

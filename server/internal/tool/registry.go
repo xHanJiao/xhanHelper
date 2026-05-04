@@ -67,11 +67,16 @@ func (r *Registry) GeneratePrompt() string {
 				required := make(map[string]bool)
 				if reqs, ok := fn.Parameters["required"].([]interface{}); ok {
 					for _, r := range reqs {
-						required[r.(string)] = true
+						if s, ok := r.(string); ok {
+							required[s] = true
+						}
 					}
 				}
 				for key, val := range props {
-					prop := val.(map[string]interface{})
+					prop, ok := val.(map[string]interface{})
+					if !ok {
+						continue
+					}
 					typ, _ := prop["type"].(string)
 					desc, _ := prop["description"].(string)
 					req := ""

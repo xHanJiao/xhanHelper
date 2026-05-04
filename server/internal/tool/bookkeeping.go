@@ -3,6 +3,7 @@ package tool
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -297,7 +298,9 @@ type queryBillsArgs struct {
 
 func (t *BookkeepingTool) queryBills(ec *ExecuteContext, args json.RawMessage) *Result {
 	var a queryBillsArgs
-	json.Unmarshal(args, &a)
+	if err := json.Unmarshal(args, &a); err != nil {
+		log.Printf("[bookkeeping] parse args error: %v", err)
+	}
 
 	bills, err := t.billRepo.ListByUser(ec.Ctx, ec.UserID)
 	if err != nil {
@@ -329,7 +332,9 @@ type statsArgs struct {
 
 func (t *BookkeepingTool) getMonthlyStats(ec *ExecuteContext, args json.RawMessage) *Result {
 	var a statsArgs
-	json.Unmarshal(args, &a)
+	if err := json.Unmarshal(args, &a); err != nil {
+		log.Printf("[bookkeeping] parse args error: %v", err)
+	}
 	if a.Year == 0 {
 		a.Year = time.Now().Year()
 	}
@@ -370,7 +375,9 @@ type dateRangeArgs struct {
 
 func (t *BookkeepingTool) getCategoryStats(ec *ExecuteContext, args json.RawMessage) *Result {
 	var a dateRangeArgs
-	json.Unmarshal(args, &a)
+	if err := json.Unmarshal(args, &a); err != nil {
+		log.Printf("[bookkeeping] parse args error: %v", err)
+	}
 
 	bills, err := t.billRepo.ListByUser(ec.Ctx, ec.UserID)
 	if err != nil {

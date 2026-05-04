@@ -29,10 +29,16 @@ func (r *UserRepo) Create(ctx context.Context, username, password string) (*mode
 		Username:     username,
 		PasswordHash: string(hash),
 	}
-	if err := r.db.WithContext(ctx).Create(user).Error; err != nil {
-		return nil, "", err
-	}
-	token, err := r.issueToken(ctx, user.ID)
+
+	var token string
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+		var issueErr error
+		token, issueErr = issueTokenTx(tx, user.ID)
+		return issueErr
+	})
 	if err != nil {
 		return nil, "", err
 	}
@@ -47,7 +53,13 @@ func (r *UserRepo) Login(ctx context.Context, username, password string) (*model
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return nil, "", err
 	}
-	token, err := r.issueToken(ctx, user.ID)
+
+	var token string
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var issueErr error
+		token, issueErr = issueTokenTx(tx, user.ID)
+		return issueErr
+	})
 	if err != nil {
 		return nil, "", err
 	}
@@ -70,11 +82,11 @@ func (r *UserRepo) FindByToken(ctx context.Context, token string) (*model.User, 
 	return &u, nil
 }
 
-func (r *UserRepo) issueToken(ctx context.Context, userID string) (string, error) {
+func issueTokenTx(db *gorm.DB, userID string) (string, error) {
 	ut := &model.UserToken{
 		ID:     uuid.New().String(),
 		UserID: userID,
 		Token:  uuid.New().String(),
 	}
-	return ut.Token, r.db.WithContext(ctx).Create(ut).Error
+	return ut.Token, db.Create(ut).Error
 }

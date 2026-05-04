@@ -103,13 +103,13 @@
 
 ---
 
-### 10. `service/user_repo.go` — 用户注册/登录非事务性
+### 10. `service/user_repo.go` — 用户注册/登录非事务性 ✅ 已修复
 
 **行号**: 22-39, 42-56
 
 **问题**: `Create` 先插 User 再插 Token，`Login` 也是两步。无事务包裹。若 Token 插入失败，User 记录悬空（Create）或登录无反馈（Login）。
 
-**修复方向**: 用 `db.Transaction` 包裹两步操作。
+**修复**: `Create` 和 `Login` 用 `r.db.Transaction` 包裹。`issueToken` 改为 `issueTokenTx(db *gorm.DB, userID)` 接受 tx 或普通 db。SQLite 经 GORM 完全支持事务。
 
 ---
 
@@ -282,7 +282,7 @@ prop := val.(map[string]interface{})   // prop 不是 map → panic
 | 优先级 | 总数 | 已修复 | 待修复 |
 |--------|------|--------|--------|
 | P0 Critical | 3 | 3 | 0 |
-| P1 High | 7 | 6 | 1 |
+| P1 High | 7 | 7 | 0 |
 | P2 Medium | 10 | 0 | 10 |
 | P3 Low | 7 | 0 | 7 |
-| **合计** | **27** | **9** | **18** |
+| **合计** | **27** | **10** | **17** |

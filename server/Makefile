@@ -86,12 +86,14 @@ deploy: build-linux
 	@echo "========================================"
 	@echo "       部署到阿里云服务器"
 	@echo "========================================"
-	@echo "1/3 上传二进制..."
+	@echo "1/4 上传二进制..."
 	scp $(OUTPUT_DIR)/$(BINARY) $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/$(BINARY).tmp
-	@echo "2/3 上传配置文件 + 控制脚本..."
+	@echo "2/4 上传配置文件 + 控制脚本..."
 	scp conf/config.yaml conf/config.prod.yaml $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/conf/
 	scp scripts/control-xhan-helper.sh $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
-	@echo "3/3 替换二进制并重启..."
+		@echo "3/4 上传 SQL 迁移文件..."
+		scp -r migrations/ $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
+		@echo "4/4 替换二进制并重启..."
 	@ssh $(SERVER_USER)@$(SERVER_HOST) "cd $(SERVER_PATH) && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || (\
 		echo ""; \
 		echo "❌ 启动失败，日志如下："; \
@@ -108,12 +110,14 @@ deploy-only:
 	@echo "       上传到阿里云服务器 (仅上传)"
 	@echo "========================================"
 	@test -f $(OUTPUT_DIR)/$(BINARY) || (echo "❌ 未找到编译产物，请先执行 make build-linux"; exit 1)
-	@echo "1/3 上传二进制..."
+	@echo "1/4 上传二进制..."
 	scp $(OUTPUT_DIR)/$(BINARY) $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/$(BINARY).tmp
-	@echo "2/3 上传配置文件 + 控制脚本..."
+	@echo "2/4 上传配置文件 + 控制脚本..."
 	scp conf/config.yaml conf/config.prod.yaml $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/conf/
 	scp scripts/control-xhan-helper.sh $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
-	@echo "3/3 替换二进制并重启..."
+		@echo "3/4 上传 SQL 迁移文件..."
+		scp -r migrations/ $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
+		@echo "4/4 替换二进制并重启..."
 	@ssh $(SERVER_USER)@$(SERVER_HOST) "cd $(SERVER_PATH) && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || (\
 		echo ""; \
 		echo "❌ 启动失败，日志如下："; \

@@ -79,8 +79,10 @@ func main() {
 	// Memory Store
 
 	// Orchestrator
-	orch := agent.New(llmClient, reg, strongClient, msgRepo, convRepo, vectorStore, embedder, memRepo, noteRepo, cfg.LLM.MaxIterations)
-	go orch.Warmup(context.Background())
+	retriever := agent.NewRetriever(vectorStore, embedder, memRepo, msgRepo, noteRepo)
+	go retriever.Warmup(context.Background())
+
+	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, cfg.LLM.MaxIterations)
 
 	// Memory Scheduler (后台异步)
 	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo)

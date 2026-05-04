@@ -45,20 +45,16 @@ type Orchestrator struct {
 	flashClient   llm.LLMClient
 	proClient     llm.LLMClient
 	registry      *tool.Registry
+	retriever     *Retriever
 	msgRepo       *service.MessageRepo
-	convRepo      *service.ConversationRepo
-	vectorStore   *VectorStore
-	embedder      *llm.Embedder
-	memRepo       *service.UserMemoryRepo
-	noteRepo      *service.NoteRepo
 	maxIterations int
 }
 
 // New 创建 Orchestrator
 func New(flashClient llm.LLMClient, registry *tool.Registry,
-	proClient llm.LLMClient, msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
-	vectorStore *VectorStore, embedder *llm.Embedder, memRepo *service.UserMemoryRepo,
-	noteRepo *service.NoteRepo, maxIterations int) *Orchestrator {
+	proClient llm.LLMClient, retriever *Retriever,
+	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
+	maxIterations int) *Orchestrator {
 	if maxIterations <= 0 {
 		maxIterations = defaultMaxIterations
 	}
@@ -67,11 +63,7 @@ func New(flashClient llm.LLMClient, registry *tool.Registry,
 		proClient:     proClient,
 		registry:      registry,
 		msgRepo:       msgRepo,
-		convRepo:      convRepo,
-		vectorStore:   vectorStore,
-		embedder:      embedder,
-		memRepo:       memRepo,
-		noteRepo:      noteRepo,
+		retriever:     retriever,
 		maxIterations: maxIterations,
 	}
 }
@@ -103,10 +95,10 @@ func (o *Orchestrator) pickClient(req *RunRequest) llm.LLMClient {
 func (o *Orchestrator) buildSysPrompt(ctx context.Context, client llm.LLMClient, req *RunRequest) (string, string) {
 	prompt := client.BuildSystemPrompt(baseSystemPrompt, o.registry.GetLLMTools())
 
-	if o.vectorStore == nil || o.embedder == nil {
+	if o.retriever == nil {
 		return prompt, ""
 	}
-	memText := o.retrieveMemories(ctx, req)
+	memText := o.retriever.Retrieve(ctx, req.UserMessageContent, req.UserID, req.ConversationID, req.DeepMode)
 	if memText == "" {
 		return prompt, ""
 	}
@@ -356,225 +348,6 @@ func convertToolCalls(tcs []llm.ToolCall) []tool.ToolCall {
 		}
 	}
 	return result
-}
-
-// —— 向量检索 ——
-
-func (o *Orchestrator) retrieveMemories(ctx context.Context, req *RunRequest) string {
-	vec, err := o.embedder.Embed(ctx, req.UserMessageContent)
-	if err != nil {
-		log.Printf("[vector] embed user msg error: %v", err)
-		return ""
-	}
-	results := o.vectorStore.Search(vec, 8, func(e vectorEntry) bool {
-		if e.Metadata["user_id"] != "" && e.Metadata["user_id"] != req.UserID {
-			return false
-		}
-		if e.Metadata["type"] != "msg" {
-			return true
-		}
-		return e.Metadata["conv_id"] != req.ConversationID
-	})
-	// 搜索完成后再写入当前消息 embedding，避免被自己检索到
-	go o.saveMsgEmbedding(ctx, req, vec)
-
-	if len(results) == 0 {
-		return ""
-	}
-
-	var parts []string
-
-	// Route 2: 记忆摘要
-	if memText := o.searchMemories(ctx, results); memText != "" {
-		parts = append(parts, memText)
-	}
-
-	// Route 1: 历史消息 + 上下文
-	if msgText := o.searchHistoryMessages(ctx, req.ConversationID, results); msgText != "" {
-		parts = append(parts, msgText)
-	}
-
-	// Route 3: note 原文（仅 deep_mode）
-	if req.DeepMode {
-		if noteText := o.searchNotes(ctx, results); noteText != "" {
-			parts = append(parts, noteText)
-		}
-	}
-
-	return strings.Join(parts, "\n")
-}
-
-func (o *Orchestrator) searchMemories(ctx context.Context, results []struct {
-	ID    string
-	Score float64
-}) string {
-	var memIDs []string
-	for _, r := range results {
-		if r.Score < 0.5 || !strings.HasPrefix(r.ID, "mem:") {
-			continue
-		}
-		memIDs = append(memIDs, strings.TrimPrefix(r.ID, "mem:"))
-		log.Printf("[vector] memory hit: id=%s, score=%.4f", r.ID, r.Score)
-	}
-	if len(memIDs) == 0 {
-		return ""
-	}
-	memories, err := o.memRepo.GetByIDs(ctx, memIDs)
-	if err != nil || len(memories) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	for _, m := range memories {
-		sb.WriteString(fmt.Sprintf("- %s: %s\n", m.MemoryKey, m.MemoryValue))
-	}
-	return "===== 相关记忆 =====\n" + sb.String()
-}
-
-func (o *Orchestrator) searchHistoryMessages(ctx context.Context, currentConvID string, results []struct {
-	ID    string
-	Score float64
-}) string {
-	for _, r := range results {
-		if r.Score < 0.5 || !strings.HasPrefix(r.ID, "msg:") {
-			continue
-		}
-		msgID := strings.TrimPrefix(r.ID, "msg:")
-		msg, err := o.msgRepo.GetByID(ctx, msgID)
-		if err != nil || msg == nil {
-			continue
-		}
-		if msg.ConversationID == currentConvID {
-			continue
-		}
-		log.Printf("[vector] msg hit: conv=%s, score=%.4f, text=%s",
-			msg.ConversationID[:min(8, len(msg.ConversationID))], r.Score,
-			msg.Content[:min(80, len(msg.Content))])
-
-		// 取同一会话的上下文
-		history, _ := o.msgRepo.ListByConversation(ctx, msg.ConversationID, 20)
-		return "===== 历史相关对话 =====\n" + formatHistoryContext(history, msgID)
-	}
-	return ""
-}
-
-func (o *Orchestrator) searchNotes(ctx context.Context, results []struct {
-	ID    string
-	Score float64
-}) string {
-	var noteIDs []string
-	for _, r := range results {
-		if r.Score < 0.5 || !strings.HasPrefix(r.ID, "note:") {
-			continue
-		}
-		noteIDs = append(noteIDs, strings.TrimPrefix(r.ID, "note:"))
-		log.Printf("[vector] note hit: id=%s, score=%.4f", r.ID, r.Score)
-	}
-	if len(noteIDs) == 0 || o.noteRepo == nil {
-		return ""
-	}
-	notes, err := o.noteRepo.GetByIDs(ctx, noteIDs)
-	if err != nil || len(notes) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString("===== 相关笔记 =====\n")
-	for _, n := range notes {
-		sb.WriteString(fmt.Sprintf("- [%s] %s\n", n.Topic, n.Content[:min(200, len(n.Content))]))
-	}
-	return sb.String()
-}
-
-func formatHistoryContext(history []model.Message, focusID string) string {
-	var sb strings.Builder
-	found := -1
-	for i, m := range history {
-		if m.ID == focusID {
-			found = i
-			break
-		}
-	}
-	if found < 0 {
-		return ""
-	}
-	start := found - 3
-	if start < 0 {
-		start = 0
-	}
-	end := found + 4
-	if end > len(history) {
-		end = len(history)
-	}
-	for i := start; i < end; i++ {
-		m := history[i]
-		marker := " "
-		if m.ID == focusID {
-			marker = "→"
-		}
-		sb.WriteString(fmt.Sprintf("%s [%s]: %s\n", marker, m.Role, m.Content[:min(200, len(m.Content))]))
-	}
-	return sb.String()
-}
-
-func (o *Orchestrator) saveMsgEmbedding(ctx context.Context, req *RunRequest, vec []float64) {
-	if o.msgRepo == nil || req.ConversationID == "" {
-		return
-	}
-	// 取刚保存的用户消息 ID
-	history, err := o.msgRepo.ListByConversation(ctx, req.ConversationID, 1)
-	if err != nil || len(history) == 0 {
-		return
-	}
-	lastMsg := history[len(history)-1]
-	if lastMsg.Role != "user" {
-		return
-	}
-	o.vectorStore.Upsert("msg:"+lastMsg.ID, vec, map[string]string{
-		"type":    "msg",
-		"conv_id": req.ConversationID,
-		"user_id": req.UserID,
-	})
-	s := llm.EmbeddingToString(vec)
-	o.msgRepo.UpdateLastUserEmbedding(ctx, req.ConversationID, &s)
-}
-
-// Warmup 启动时加载已有记忆到向量库
-func (o *Orchestrator) Warmup(ctx context.Context) {
-	if o.vectorStore == nil || o.embedder == nil || o.memRepo == nil {
-		log.Printf("[vector] warmup: skipped (no config)")
-		return
-	}
-	log.Printf("[vector] warmup: loading existing memories...")
-
-	memories, err := o.memRepo.ListAll(ctx)
-	if err != nil {
-		log.Printf("[vector] warmup: list memories error: %v", err)
-		return
-	}
-
-	loaded, embedded := 0, 0
-	for _, m := range memories {
-		if m.Embedding != nil {
-			if vec, err := llm.StringToEmbedding(*m.Embedding); err == nil && len(vec) > 0 {
-				o.vectorStore.Upsert("mem:"+m.ID, vec, map[string]string{"type": "mem", "user_id": m.UserID})
-				loaded++
-				continue
-			}
-		}
-		// 没有持久化向量的，重新嵌入
-		text := m.MemoryKey + ": " + m.MemoryValue
-		vec, err := o.embedder.Embed(ctx, text)
-		if err != nil {
-			log.Printf("[vector] warmup: embed memory %s error: %v", m.ID[:8], err)
-			continue
-		}
-		o.vectorStore.Upsert("mem:"+m.ID, vec, map[string]string{"type": "mem", "user_id": m.UserID})
-		embStr := llm.EmbeddingToString(vec)
-		o.memRepo.UpdateEmbedding(ctx, m.ID, &embStr)
-		embedded++
-	}
-
-	log.Printf("[vector] warmup: %d from persisted embeddings, %d new, total=%d in store",
-		loaded, embedded, o.vectorStore.Size())
 }
 
 // —— DB 保存 ——

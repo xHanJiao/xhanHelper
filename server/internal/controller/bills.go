@@ -29,11 +29,13 @@ func NewBillHandler(billRepo *service.BillRepo, extractor *agent.MemoryExtractor
 	return &BillHandler{billRepo: billRepo, extractor: extractor}
 }
 
-// ListBills GET /api/bills
+// ListBills GET /api/bills?limit=50&offset=0
 func (h *BillHandler) ListBills(c *gin.Context) {
 	userID := c.GetString("user_id")
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	bills, err := h.billRepo.ListByUser(c.Request.Context(), userID)
+	bills, err := h.billRepo.ListByUser(c.Request.Context(), userID, limit, offset)
 	if err != nil {
 		view.JSONError(c, 500, "query bills failed")
 		return
@@ -54,6 +56,7 @@ func (h *BillHandler) ImportBills(c *gin.Context) {
 	imported := 0
 	skipped := 0
 	var errs []string
+	var importedBills []model.Bill
 
 	scanner := bufio.NewScanner(strings.NewReader(string(body)))
 	lineNum := 0
@@ -128,17 +131,15 @@ func (h *BillHandler) ImportBills(c *gin.Context) {
 			continue
 		}
 		imported++
+		importedBills = append(importedBills, *bill)
 	}
 
-	// 如果请求了提取记忆，异步分析全部账单
-	if c.Query("extract_memories") == "true" && h.extractor != nil {
-		bills, err := h.billRepo.ListByUser(c.Request.Context(), userID)
-		if err == nil && len(bills) > 0 {
-			go func() {
-				log.Printf("[memory] CSV import: extracting memories from %d bills...", len(bills))
-				h.extractBillMemories(userID, bills)
-			}()
-		}
+	// 异步分析导入的账单
+	if c.Query("extract_memories") == "true" && h.extractor != nil && len(importedBills) > 0 {
+		go func() {
+			log.Printf("[memory] CSV import: extracting memories from %d bills...", len(importedBills))
+			h.extractBillMemories(userID, importedBills)
+		}()
 	}
 
 	view.JSONOK(c, gin.H{
@@ -147,23 +148,6 @@ func (h *BillHandler) ImportBills(c *gin.Context) {
 		"total":    imported + skipped,
 		"errors":   errs,
 	})
-}
-
-// extractBillMemories 从账单数据中批量提取聚合记忆
-func (h *BillHandler) extractBillMemories(userID string, bills []model.Bill) {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("以下是用户的%d条账单记录:\n", len(bills)))
-	for _, b := range bills[:min(len(bills), 500)] {
-		sb.WriteString(fmt.Sprintf("%s | %.2f元 | %s/%s | %s | %s | %s\n",
-			b.Date, b.Amount, b.Category1, b.Category2, b.ConsumeType, b.PayType, b.Item))
-	}
-
-	prompt := fmt.Sprintf(`%s
-请从以上账单中提取用户的消费习惯、偏好和规律。
-关注: 常去的地点、消费水平、分类偏好、周期性的规律、变化趋势。
-用 "key: value" 格式，每条一句。没有值得提取的就回复"无"。`, sb.String())
-
-	h.extractor.ExtractFromPrompt(context.Background(), userID, prompt, "csv_import")
 }
 
 // ExportBills GET /api/bills/export
@@ -216,4 +200,22 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// extractBillMemories 从导入的账单中提取聚合记忆
+func (h *BillHandler) extractBillMemories(userID string, bills []model.Bill) {
+	ctx := context.Background()
+	var sb strings.Builder
+	limit := len(bills)
+	if limit > 500 {
+		limit = 500
+	}
+	for _, b := range bills[:limit] {
+		sb.WriteString(fmt.Sprintf("%s | %.2f元 | %s/%s | %s | %s | %s\n",
+			b.Date, b.Amount, b.Category1, b.Category2, b.ConsumeType, b.PayType, b.Item))
+	}
+
+	prompt := fmt.Sprintf("以下是用户的%d条账单记录:\n%s\n请从以上账单中提取用户的消费习惯、偏好和规律。关注: 常去的地点、消费水平、分类偏好、周期性的规律、变化趋势。没有值得提取的就回复\"无\"。", limit, sb.String())
+
+	h.extractor.ExtractFromPrompt(ctx, userID, prompt, "csv_import")
 }

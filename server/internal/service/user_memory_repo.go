@@ -70,10 +70,13 @@ func (r *UserMemoryRepo) FindByPromptHash(ctx context.Context, userID, hash stri
 	return &m, err
 }
 
-// ListAll 获取所有记忆（用于 warmup 加载向量库）
-func (r *UserMemoryRepo) ListAll(ctx context.Context) ([]model.UserMemory, error) {
+// ListAllPaginated 分页获取所有记忆（用于 warmup 加载向量库），limit<=0 时默认 100
+func (r *UserMemoryRepo) ListAllPaginated(ctx context.Context, limit, offset int) ([]model.UserMemory, error) {
+	if limit <= 0 {
+		limit = 100
+	}
 	var list []model.UserMemory
-	err := r.db.WithContext(ctx).Find(&list).Error
+	err := r.db.WithContext(ctx).Limit(limit).Offset(offset).Find(&list).Error
 	return list, err
 }
 

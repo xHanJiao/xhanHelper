@@ -302,26 +302,12 @@ func (t *BookkeepingTool) queryBills(ec *ExecuteContext, args json.RawMessage) *
 		log.Printf("[bookkeeping] parse args error: %v", err)
 	}
 
-	bills, err := t.billRepo.ListByUser(ec.Ctx, ec.UserID)
+	bills, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID, a.StartDate, a.EndDate, a.Category)
 	if err != nil {
 		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
 	}
 
-	filtered := make([]model.Bill, 0)
-	for _, b := range bills {
-		if a.StartDate != "" && b.Date < a.StartDate {
-			continue
-		}
-		if a.EndDate != "" && b.Date > a.EndDate {
-			continue
-		}
-		if a.Category != "" && b.Category1 != a.Category {
-			continue
-		}
-		filtered = append(filtered, b)
-	}
-
-	data, _ := json.Marshal(filtered)
+	data, _ := json.Marshal(bills)
 	return &Result{Success: true, Data: data}
 }
 
@@ -339,7 +325,10 @@ func (t *BookkeepingTool) getMonthlyStats(ec *ExecuteContext, args json.RawMessa
 		a.Year = time.Now().Year()
 	}
 
-	bills, err := t.billRepo.ListByUser(ec.Ctx, ec.UserID)
+	bills, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID,
+		fmt.Sprintf("%d-01-01", a.Year),
+		fmt.Sprintf("%d-12-31", a.Year),
+		a.Category)
 	if err != nil {
 		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
 	}
@@ -351,12 +340,6 @@ func (t *BookkeepingTool) getMonthlyStats(ec *ExecuteContext, args json.RawMessa
 	}
 	result := make(map[string]monthly)
 	for _, b := range bills {
-		if len(b.Date) < 7 || b.Date[:4] != fmt.Sprint(a.Year) {
-			continue
-		}
-		if a.Category != "" && b.Category1 != a.Category {
-			continue
-		}
 		month := b.Date[:7]
 		m := result[month]
 		m.Amount += b.Amount
@@ -379,7 +362,7 @@ func (t *BookkeepingTool) getCategoryStats(ec *ExecuteContext, args json.RawMess
 		log.Printf("[bookkeeping] parse args error: %v", err)
 	}
 
-	bills, err := t.billRepo.ListByUser(ec.Ctx, ec.UserID)
+	bills, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID, a.StartDate, a.EndDate, "")
 	if err != nil {
 		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
 	}
@@ -390,22 +373,14 @@ func (t *BookkeepingTool) getCategoryStats(ec *ExecuteContext, args json.RawMess
 	}
 	result := make(map[string]catStat)
 	var total float64
-	var filteredCount int
 	for _, b := range bills {
-		if a.StartDate != "" && b.Date < a.StartDate {
-			continue
-		}
-		if a.EndDate != "" && b.Date > a.EndDate {
-			continue
-		}
 		c := result[b.Category1]
 		c.Amount += b.Amount
 		c.Count++
 		result[b.Category1] = c
 		total += b.Amount
-		filteredCount++
 	}
-	result["_total"] = catStat{Amount: total, Count: filteredCount}
+	result["_total"] = catStat{Amount: total, Count: len(bills)}
 
 	data, _ := json.Marshal(result)
 	return &Result{Success: true, Data: data}

@@ -44,12 +44,25 @@ func (r *BillRepo) FindByID(ctx context.Context, id string) (*model.Bill, error)
 	return &b, err
 }
 
-// ListByUser 获取设备所有正常状态账单
-func (r *BillRepo) ListByUser(ctx context.Context, userID string) ([]model.Bill, error) {
+// CountByUser 统计用户正常账单总数
+func (r *BillRepo) CountByUser(ctx context.Context, userID string) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Bill{}).
+		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal).
+		Count(&count).Error
+	return count, err
+}
+
+// ListByUser 分页获取用户正常状态账单，limit<=0 时默认 50
+func (r *BillRepo) ListByUser(ctx context.Context, userID string, limit, offset int) ([]model.Bill, error) {
+	if limit <= 0 {
+		limit = 50
+	}
 	var list []model.Bill
 	err := r.db.WithContext(ctx).
 		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal).
 		Order("date DESC, created_at DESC").
+		Limit(limit).Offset(offset).
 		Find(&list).Error
 	return list, err
 }
@@ -70,6 +83,6 @@ func (r *BillRepo) ListFiltered(ctx context.Context, userID, startDate, endDate,
 	}
 
 	var list []model.Bill
-	err := q.Order("date DESC, created_at DESC").Find(&list).Error
+	err := q.Order("date DESC, created_at DESC").Limit(1000).Find(&list).Error
 	return list, err
 }

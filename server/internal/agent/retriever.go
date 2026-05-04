@@ -80,7 +80,7 @@ func (r *Retriever) Retrieve(ctx context.Context, userMessage, userID, convID st
 	return strings.Join(parts, "\n")
 }
 
-// Warmup 启动时加载已有记忆到向量库
+// Warmup 启动时分页加载已有记忆到向量库
 func (r *Retriever) Warmup(ctx context.Context) {
 	if r.vectorStore == nil || r.embedder == nil || r.memRepo == nil {
 		log.Printf("[vector] warmup: skipped (no config)")
@@ -88,31 +88,39 @@ func (r *Retriever) Warmup(ctx context.Context) {
 	}
 	log.Printf("[vector] warmup: loading existing memories...")
 
-	memories, err := r.memRepo.ListAll(ctx)
-	if err != nil {
-		log.Printf("[vector] warmup: list memories error: %v", err)
-		return
-	}
-
+	const pageSize = 100
 	loaded, embedded := 0, 0
-	for _, m := range memories {
-		if m.Embedding != nil {
-			if vec, err := llm.StringToEmbedding(*m.Embedding); err == nil && len(vec) > 0 {
-				r.vectorStore.Upsert("mem:"+m.ID, vec, map[string]string{"type": "mem", "user_id": m.UserID})
-				loaded++
+	for offset := 0; ; offset += pageSize {
+		memories, err := r.memRepo.ListAllPaginated(ctx, pageSize, offset)
+		if err != nil {
+			log.Printf("[vector] warmup: list memories error: %v", err)
+			return
+		}
+		if len(memories) == 0 {
+			break
+		}
+		for _, m := range memories {
+			if m.Embedding != nil {
+				if vec, err := llm.StringToEmbedding(*m.Embedding); err == nil && len(vec) > 0 {
+					r.vectorStore.Upsert("mem:"+m.ID, vec, map[string]string{"type": "mem", "user_id": m.UserID})
+					loaded++
+					continue
+				}
+			}
+			text := m.MemoryKey + ": " + m.MemoryValue
+			vec, err := r.embedder.Embed(ctx, text)
+			if err != nil {
+				log.Printf("[vector] warmup: embed memory %s error: %v", m.ID[:8], err)
 				continue
 			}
+			r.vectorStore.Upsert("mem:"+m.ID, vec, map[string]string{"type": "mem", "user_id": m.UserID})
+			embStr := llm.EmbeddingToString(vec)
+			r.memRepo.UpdateEmbedding(ctx, m.ID, &embStr)
+			embedded++
 		}
-		text := m.MemoryKey + ": " + m.MemoryValue
-		vec, err := r.embedder.Embed(ctx, text)
-		if err != nil {
-			log.Printf("[vector] warmup: embed memory %s error: %v", m.ID[:8], err)
-			continue
+		if len(memories) < pageSize {
+			break
 		}
-		r.vectorStore.Upsert("mem:"+m.ID, vec, map[string]string{"type": "mem", "user_id": m.UserID})
-		embStr := llm.EmbeddingToString(vec)
-		r.memRepo.UpdateEmbedding(ctx, m.ID, &embStr)
-		embedded++
 	}
 
 	log.Printf("[vector] warmup: %d from persisted embeddings, %d new, total=%d in store",

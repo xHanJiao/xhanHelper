@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
@@ -16,11 +18,13 @@ func NewNoteHandler(noteRepo *service.NoteRepo) *NoteHandler {
 	return &NoteHandler{noteRepo: noteRepo}
 }
 
-// ListNotes GET /api/notes
+// ListNotes GET /api/notes?limit=50&offset=0
 func (h *NoteHandler) ListNotes(c *gin.Context) {
 	userID := c.GetString("user_id")
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	notes, err := h.noteRepo.List(c.Request.Context(), userID,
-		c.Query("topic"), c.Query("keyword"))
+		c.Query("topic"), c.Query("keyword"), limit, offset)
 	if err != nil {
 		view.JSONError(c, 500, "query notes failed")
 		return

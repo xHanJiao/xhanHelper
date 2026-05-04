@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"gorm.io/gorm"
+
 	"xhan-helper/internal/model"
 )
 
@@ -40,8 +41,11 @@ func (r *NoteRepo) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Delete(&model.Note{}, "id = ?", id).Error
 }
 
-// List 按条件查询
-func (r *NoteRepo) List(ctx context.Context, userID, topic, keyword string) ([]model.Note, error) {
+// List 按条件分页查询，limit<=0 时默认 50
+func (r *NoteRepo) List(ctx context.Context, userID, topic, keyword string, limit, offset int) ([]model.Note, error) {
+	if limit <= 0 {
+		limit = 50
+	}
 	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
 	if topic != "" {
 		q = q.Where("topic = ?", topic)
@@ -51,11 +55,6 @@ func (r *NoteRepo) List(ctx context.Context, userID, topic, keyword string) ([]m
 		q = q.Where("content LIKE ? OR tags LIKE ?", like, like)
 	}
 	var list []model.Note
-	err := q.Order("created_at DESC").Find(&list).Error
+	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
 	return list, err
-}
-
-// ListByUser 获取设备所有笔记
-func (r *NoteRepo) ListByUser(ctx context.Context, userID string) ([]model.Note, error) {
-	return r.List(ctx, userID, "", "")
 }

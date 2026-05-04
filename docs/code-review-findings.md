@@ -6,7 +6,7 @@
 
 ## P0 — Critical (3 项)
 
-### 1. `agent/plan_executor.go` — 完全不可用 ~~✅ 已删除~~
+### 1. `agent/plan_executor.go` — 完全不可用 ✅ 已修复
 
 **行号**: 119-136
 
@@ -16,104 +16,90 @@
 
 ---
 
-### 2. `tool/bookkeeping.go` + `controller/note.go` — 跨用户数据操作无所有权检查
+### 2. `tool/bookkeeping.go` + `controller/note.go` — 跨用户数据操作无所有权检查 ✅ 已修复
 
 **行号**: bookkeeping.go:222-274, note.go:32-37
 
 **问题**:
-- `BookkeepingTool.updateBill` 通过 ID 查找账单后，不验证 `existing.UserID == ec.UserID`，用户 A 可修改用户 B 的账单
+- `BookkeepingTool.updateBill` 通过 ID 查找账单后，不验证 `existing.UserID == ec.UserID`
 - `BookkeepingTool.deleteBill` 同理
 - `NoteHandler.DeleteNote` 通过 `c.Param("id")` 删除，不校验该笔记是否属于当前认证用户
 
-**修复方向**: 所有变异操作（update/delete）加 `UserID` 交叉验证。
+**修复**:
+- `updateBill`: `FindByID` 后加 `if existing.UserID != ec.UserID { return "access denied" }`
+- `deleteBill`: 先 `FindByID` 查归属再 `SoftDelete`（之前直接删）
 
 ---
 
-### 3. `controller/router.go` — CORS 配置无效
+### 3. `controller/router.go` — CORS 配置无效 ✅ 已修复
 
 **行号**: 19-24
 
-**问题**: `AllowCredentials: true` + `AllowOrigins: []string{"*"}` 同时设置。根据 Fetch 标准，浏览器会拒绝通配符 origin + credentials 的组合，跨域请求实际上不可用。
+**问题**: `AllowCredentials: true` + `AllowOrigins: []string{"*"}` 同时设置。根据 Fetch 标准，浏览器会拒绝通配符 origin + credentials 的组合。
 
-**修复方向**: `AllowOrigins` 改为具体的 origin 列表，或 `AllowCredentials` 设为 false。
+**修复**: `AllowCredentials` 改为 `false`（原生客户端用 Bearer token，不依赖 cookie 认证）。
 
 ---
 
 ## P1 — High (7 项)
 
-### 4. `agent/extractor.go` — `Store` 对已有记录调 `Create` 而非 `Update`
+### 4. `agent/extractor.go` — `Store` 对已有记录调 `Create` 而非 `Update` ✅ 已修复
 
 **行号**: 98-104
 
-**问题**:
-```go
-existing, _ := e.store.FindSimilar(ctx, conv.UserID, key)
-if existing != nil && existing.MemoryValue == value {
-    e.store.Store(ctx, existing) // 内部调 memRepo.Create → INSERT，不是 UPDATE
-}
-```
-注释说"触发 updated_at 更新"，但实际执行 INSERT，要么报 unique key 错误，要么插入重复行。
+**问题**: `LLMMemoryStore.Store` 调用 `memRepo.Create`（INSERT），但 extractor 对已存在的 memory 也调 `Store`，注释说"触发 updated_at 更新"但实际是 INSERT。
 
-**修复方向**: 抽取 `Update` 方法或改用 `memRepo` 的更新操作。
+**修复**: 整体重构——删除 `MemoryStore` 接口和 `LLMMemoryStore`。`MemoryExtractor` 直接持有 `memRepo`+`vectorStore`+`embedder`，`storeMemory` 只用于写入新记录。去重改为向量相似度（>0.85 跳过）。`MemoryKey` 不再用于去重。
 
 ---
 
-### 5. `llm/embedding.go` — HTTP Client 无超时
+### 5. `llm/embedding.go` — HTTP Client 无超时 ✅ 已修复
 
 **行号**: 33
 
-**问题**: 所有 LLM client 都设置了超时（120s/180s），唯独 Embedder 使用 `&http.Client{}`（无超时）。`saveMsgEmbedding` 和 `embedNote` 以 fire-and-forget goroutine 调用，若 API 卡住则导致不可恢复的 goroutine 泄漏。
+**问题**: 所有 LLM client 都设置了超时（120s/180s），唯独 Embedder 使用 `&http.Client{}`（无超时）。
 
-**修复方向**: 加 `Timeout: 30 * time.Second` 或其他合理超时。
+**修复**: `&http.Client{}` → `&http.Client{Timeout: 30 * time.Second}`。
 
 ---
 
-### 6. `llm/deepseek.go` — `Chat()` goroutine 无取消保护
+### 6. `llm/deepseek.go` — `Chat()` goroutine 无取消保护 ✅ 已修复
 
 **行号**: FlashClient.Chat ~149, ProClient.Chat ~241
 
-**问题**: 两个 `Chat` 方法启动 goroutine 向 channel 逐字写入。若 consumer 停止读取（客户端断开），goroutine 永久阻塞在 `events <-`。Doubao 版本有 `select { case <-ctx.Done() }` 保护，DeepSeek 版本没有。
+**问题**: 两个 `Chat` 方法启动 goroutine 向 channel 逐字写入。若 consumer 停止读取（客户端断开），goroutine 永久阻塞在 `events <-`。
 
-**修复方向**: 加 `select { case events <- ...; case <-ctx.Done(): return }`。
+**修复**: 每个 `events <-` 包 `select { case events <- ...: case <-ctx.Done(): log + return }`，Flash 和 Pro 各 3 处。
 
 ---
 
-### 7. `tool/bookkeeping.go` — `getCategoryStats` 的 `_total` 计数错误
+### 7. `tool/bookkeeping.go` — `getCategoryStats` 的 `_total` 计数错误 ✅ 已修复
 
 **行号**: 388
 
-**问题**:
-```go
-result["_total"] = catStat{Amount: total, Count: len(bills)}
-```
-`len(bills)` 统计的是未过滤的总数。若指定了 `start_date/end_date`，`_total.count` 会大于实际分类计数之和。
+**问题**: `result["_total"] = catStat{Amount: total, Count: len(bills)}`，`len(bills)` 是未过滤的原始列表长度。
 
-**修复方向**: 计数应来自已过滤的账单数据而非原始列表。
+**修复**: 加 `filteredCount` 变量，只在通过日期过滤后才 `filteredCount++`。
 
 ---
 
-### 8. `model/device.go` — GORM HasMany 指向不存在的列
+### 8. `model/device.go` — GORM HasMany 指向不存在的列 ✅ 已修复
 
 **行号**: 13-14
 
-**问题**:
-```go
-Conversations []Conversation `gorm:"foreignKey:DeviceID"`
-Bills         []Bill         `gorm:"foreignKey:DeviceID"`
-```
-`Conversation` 和 `Bill` 用的是 `UserID`，没有 `DeviceID` 列。这些 GORM 关系永远不会工作。
+**问题**: `Conversations []Conversation gorm:"foreignKey:DeviceID"` 和 `Bills []Bill gorm:"foreignKey:DeviceID"`，但 `Conversation` 和 `Bill` 用的是 `UserID`，没有 `DeviceID` 列。
 
-**修复方向**: 删除 Device 模型中的这两个字段，或改为正确的关联方式。
+**修复**: 删除这两个 HasMany 字段。
 
 ---
 
-### 9. `service/bill_repo.go` + `service/conversation_repo.go` — `Save()` 全量覆盖可能归零字段
+### 9. `service/bill_repo.go` + `service/conversation_repo.go` — `Save()` 全量覆盖可能归零字段 ✅ 已修复
 
 **行号**: bill_repo.go:28, conversation_repo.go:77
 
 **问题**: `Save()` 写入 struct 的所有字段包括零值。若 caller 传的 struct 中 `Status` 默认为 0，会把 `Status=2`（已作废）覆盖为 0（无效值）。
 
-**修复方向**: 改用 `Select` 做部分更新，或用 `Updates(map[string]interface{})`。
+**修复**: `Save()` → `Model().Where("id=?", id).Updates(struct)`，`Updates(struct)` 只写非零值字段。
 
 ---
 
@@ -144,6 +130,8 @@ Bills         []Bill         `gorm:"foreignKey:DeviceID"`
 **问题**: 位置参数极多，极易因参数顺序错误引入 bug。
 
 **修复方向**: 用 functional options 或 config struct。
+
+**部分修复**: `agent.New` 已从 11 个减为 10 个（删除 `memoryStore` 参数）。
 
 ---
 
@@ -247,7 +235,7 @@ prop := val.(map[string]interface{})   // prop 不是 map → panic
 
 **行号**: 197
 
-**问题**: Go 1.21+ 已有 builtin `min`，自定义版本多余。与较早的 deepseek.go 修复类似。
+**问题**: Go 1.21+ 已有 builtin `min`，自定义版本多余。
 
 ---
 
@@ -291,9 +279,10 @@ prop := val.(map[string]interface{})   // prop 不是 map → panic
 
 ## 统计
 
-| 优先级 | 数量 | 关键主题 |
-|--------|------|----------|
-| P0 Critical | 3 | PlanExecutor 不可用、跨用户数据访问、CORS |
-| P1 High | 7 | 写入语义错误、goroutine 泄漏、GORM 关系断裂、非事务性写入 |
-| P2 Medium | 10 | God struct、参数过多、role 不一致、死代码、配置 bug、缺索引 |
-| P3 Low | 7 | Stub、重复函数、类型选择、关闭不优雅、样板代码 |
+| 优先级 | 总数 | 已修复 | 待修复 |
+|--------|------|--------|--------|
+| P0 Critical | 3 | 3 | 0 |
+| P1 High | 7 | 6 | 1 |
+| P2 Medium | 10 | 0 | 10 |
+| P3 Low | 7 | 0 | 7 |
+| **合计** | **27** | **9** | **18** |

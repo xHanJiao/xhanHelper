@@ -72,9 +72,9 @@ func (r *ConversationRepo) Rename(ctx context.Context, id, title string) error {
 		Where("id = ?", id).Update("title", title).Error
 }
 
-// Update 更新会话字段
+// Update 更新会话字段（仅写非零值字段，避免 Save 归零 IsDeleted 等）
 func (r *ConversationRepo) Update(ctx context.Context, c *model.Conversation) error {
-	return r.db.WithContext(ctx).Save(c).Error
+	return r.db.WithContext(ctx).Model(&model.Conversation{}).Where("id = ?", c.ID).Updates(c).Error
 }
 
 // SoftDelete 软删除会话

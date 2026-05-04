@@ -23,9 +23,9 @@ func (r *BillRepo) Create(ctx context.Context, bill *model.Bill) error {
 	return r.db.WithContext(ctx).Create(bill).Error
 }
 
-// Update 全量更新账单
+// Update 更新账单（仅写非零值字段，避免 Save 归零 Status 等）
 func (r *BillRepo) Update(ctx context.Context, bill *model.Bill) error {
-	return r.db.WithContext(ctx).Save(bill).Error
+	return r.db.WithContext(ctx).Model(&model.Bill{}).Where("id = ?", bill.ID).Updates(bill).Error
 }
 
 // SoftDelete 软删除（status = 2）

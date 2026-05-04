@@ -167,17 +167,16 @@ func (c *FlashClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *Strea
 }
 
 func (c *FlashClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, error) {
-	msg, _, _, err := c.callAPI(ctx, req, false)
-	return msg, err
+	return c.callAPI(ctx, req, false)
 }
 
-func (c *FlashClient) callAPI(ctx context.Context, req *ChatRequest, _ bool) (Message, string, []ToolCall, error) {
+func (c *FlashClient) callAPI(ctx context.Context, req *ChatRequest, _ bool) (Message, error) {
 	url := c.baseURL + "/chat/completions"
 	body := buildRequest(req, c.model, false)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, body)
 	if err != nil {
-		return Message{}, "", nil, err
+		return Message{}, err
 	}
 	c.setHeaders(httpReq)
 
@@ -191,13 +190,13 @@ func (c *FlashClient) callAPI(ctx context.Context, req *ChatRequest, _ bool) (Me
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return Message{}, "", nil, fmt.Errorf("flash request: %w", err)
+		return Message{}, fmt.Errorf("flash request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return Message{}, "", nil, fmt.Errorf("flash status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
+		return Message{}, fmt.Errorf("flash status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
 	}
 
 	return parseDeepSeekResponse(respBody)
@@ -276,17 +275,16 @@ func (c *ProClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamE
 }
 
 func (c *ProClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, error) {
-	msg, _, _, err := c.callAPI(ctx, req, true)
-	return msg, err
+	return c.callAPI(ctx, req, true)
 }
 
-func (c *ProClient) callAPI(ctx context.Context, req *ChatRequest, thinking bool) (Message, string, []ToolCall, error) {
+func (c *ProClient) callAPI(ctx context.Context, req *ChatRequest, thinking bool) (Message, error) {
 	url := c.baseURL + "/chat/completions"
 	body := buildRequest(req, c.model, true)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, body)
 	if err != nil {
-		return Message{}, "", nil, err
+		return Message{}, err
 	}
 	c.setHeaders(httpReq)
 
@@ -295,13 +293,13 @@ func (c *ProClient) callAPI(ctx context.Context, req *ChatRequest, thinking bool
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return Message{}, "", nil, fmt.Errorf("pro request: %w", err)
+		return Message{}, fmt.Errorf("pro request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return Message{}, "", nil, fmt.Errorf("pro status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
+		return Message{}, fmt.Errorf("pro status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
 	}
 
 	return parseDeepSeekResponse(respBody)
@@ -309,8 +307,8 @@ func (c *ProClient) callAPI(ctx context.Context, req *ChatRequest, thinking bool
 
 // ——— shared parsing ———
 
-// parseDeepSeekResponse 解析 API 响应，返回 content, reasoning_content, tool_calls
-func parseDeepSeekResponse(body []byte) (Message, string, []ToolCall, error) {
+// parseDeepSeekResponse 解析 API 响应，返回 Message（含 ReasoningContent + ToolCalls）
+func parseDeepSeekResponse(body []byte) (Message, error) {
 	var result struct {
 		Choices []struct {
 			Message struct {
@@ -335,13 +333,13 @@ func parseDeepSeekResponse(body []byte) (Message, string, []ToolCall, error) {
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return Message{}, "", nil, fmt.Errorf("parse response: %w", err)
+		return Message{}, fmt.Errorf("parse response: %w", err)
 	}
 	if result.Error != nil {
-		return Message{}, "", nil, fmt.Errorf("api error: %s", result.Error.Message)
+		return Message{}, fmt.Errorf("api error: %s", result.Error.Message)
 	}
 	if len(result.Choices) == 0 {
-		return Message{}, "", nil, fmt.Errorf("no choices")
+		return Message{}, fmt.Errorf("no choices")
 	}
 
 	msg := result.Choices[0].Message
@@ -380,7 +378,7 @@ func parseDeepSeekResponse(body []byte) (Message, string, []ToolCall, error) {
 		Content:          msg.Content,
 		ReasoningContent: reasoning,
 		ToolCalls:        toolCalls,
-	}, reasoning, toolCalls, nil
+	}, nil
 }
 
 // parseChatResponse 解析纯文本返回 (OpenAI 格式，doubao 共用)

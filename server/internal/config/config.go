@@ -19,7 +19,7 @@ type Config struct {
 type ServerConfig struct {
 	Port                int      `yaml:"port"`
 	Mode                string   `yaml:"mode"`                 // debug | release
-	RegistrationEnabled bool     `yaml:"registration_enabled"` // 是否允许新用户注册
+	RegistrationEnabled *bool    `yaml:"registration_enabled"` // 是否允许新用户注册
 	AllowedUsers        []string `yaml:"allowed_users"`        // 允许注册的用户名列表（空=全部允许）
 }
 
@@ -112,7 +112,7 @@ func merge(dst, src *Config) {
 	if src.Server.Mode != "" {
 		dst.Server.Mode = src.Server.Mode
 	}
-	if src.Server.RegistrationEnabled {
+	if src.Server.RegistrationEnabled != nil {
 		dst.Server.RegistrationEnabled = src.Server.RegistrationEnabled
 	}
 	if len(src.Server.AllowedUsers) > 0 {

@@ -6,9 +6,9 @@ import (
 	"xhan-helper/internal/view"
 )
 
-func registerUser(userRepo *service.UserRepo, enabled bool, allowed []string) gin.HandlerFunc {
+func registerUser(userRepo *service.UserRepo, enabled *bool, allowed []string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !enabled {
+		if enabled == nil || !*enabled {
 			view.JSONError(c, 403, "registration is disabled")
 			return
 		}

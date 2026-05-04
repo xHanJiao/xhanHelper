@@ -163,7 +163,7 @@
 
 ---
 
-### 16. `config/config.go` — `RegistrationEnabled` bool 合并 bug
+### 16. `config/config.go` — `RegistrationEnabled` bool 合并 bug ✅ 已修复
 
 **行号**: 115
 
@@ -173,7 +173,7 @@ if src.Server.RegistrationEnabled {  // false 是零值，永远不会覆盖 tru
 ```
 环境特定配置**无法**把 `RegistrationEnabled` 从 true 改成 false。
 
-**修复方向**: 改用 `*bool` 指针类型，或显式区分"未设置"和"设置为 false"。
+**修复**: `RegistrationEnabled` 改为 `*bool`，merge 用 `!= nil` 判断，`registerUser` 接受 `*bool`（nil 视为 false）。
 
 ---
 

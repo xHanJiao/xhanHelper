@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 )
 
 // Embedder — embedding API 调用器
@@ -30,7 +31,7 @@ func NewEmbedder(apiKey, baseURL, model string) *Embedder {
 		apiKey:     apiKey,
 		baseURL:    baseURL,
 		model:      model,
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 

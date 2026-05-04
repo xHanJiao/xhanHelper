@@ -383,6 +383,7 @@ func (t *BookkeepingTool) getCategoryStats(ec *ExecuteContext, args json.RawMess
 	}
 	result := make(map[string]catStat)
 	var total float64
+	var filteredCount int
 	for _, b := range bills {
 		if a.StartDate != "" && b.Date < a.StartDate {
 			continue
@@ -395,8 +396,9 @@ func (t *BookkeepingTool) getCategoryStats(ec *ExecuteContext, args json.RawMess
 		c.Count++
 		result[b.Category1] = c
 		total += b.Amount
+		filteredCount++
 	}
-	result["_total"] = catStat{Amount: total, Count: len(bills)}
+	result["_total"] = catStat{Amount: total, Count: filteredCount}
 
 	data, _ := json.Marshal(result)
 	return &Result{Success: true, Data: data}

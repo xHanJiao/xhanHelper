@@ -150,9 +150,18 @@ func (c *FlashClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *Strea
 	go func() {
 		defer close(events)
 		for _, r := range msg.Content {
-			events <- &StreamEvent{Type: "text_delta", Content: string(r)}
+			select {
+			case events <- &StreamEvent{Type: "text_delta", Content: string(r)}:
+			case <-ctx.Done():
+				log.Printf("[flash:%s] Chat: ctx cancelled during streaming", c.model)
+				return
+			}
 		}
-		events <- &StreamEvent{Type: "done"}
+		select {
+		case events <- &StreamEvent{Type: "done"}:
+		case <-ctx.Done():
+			log.Printf("[flash:%s] Chat: ctx cancelled before done event", c.model)
+		}
 	}()
 	return events, nil
 }
@@ -242,12 +251,26 @@ func (c *ProClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamE
 	go func() {
 		defer close(events)
 		if msg.ReasoningContent != "" {
-			events <- &StreamEvent{Type: "thought_delta", Content: msg.ReasoningContent}
+			select {
+			case events <- &StreamEvent{Type: "thought_delta", Content: msg.ReasoningContent}:
+			case <-ctx.Done():
+				log.Printf("[pro:%s] Chat: ctx cancelled during streaming", c.model)
+				return
+			}
 		}
 		for _, r := range msg.Content {
-			events <- &StreamEvent{Type: "text_delta", Content: string(r)}
+			select {
+			case events <- &StreamEvent{Type: "text_delta", Content: string(r)}:
+			case <-ctx.Done():
+				log.Printf("[pro:%s] Chat: ctx cancelled during streaming", c.model)
+				return
+			}
 		}
-		events <- &StreamEvent{Type: "done"}
+		select {
+		case events <- &StreamEvent{Type: "done"}:
+		case <-ctx.Done():
+			log.Printf("[pro:%s] Chat: ctx cancelled before done event", c.model)
+		}
 	}()
 	return events, nil
 }

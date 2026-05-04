@@ -78,7 +78,7 @@ func (r *Retriever) Retrieve(ctx context.Context, userMessage, userID, convID st
 		memIDs = append(memIDs, ids...)
 	}
 	if r.enableHistorySearch {
-		if msgText := r.searchHistoryMessages(ctx, threshold, convID, results); msgText != "" {
+		if msgText := r.searchHistoryMessages(ctx, threshold, userID, convID, results); msgText != "" {
 			parts = append(parts, msgText)
 		}
 	}
@@ -166,7 +166,7 @@ func (r *Retriever) searchMemories(ctx context.Context, threshold float64, resul
 	return "===== 相关记忆 =====\n" + sb.String(), memIDs
 }
 
-func (r *Retriever) searchHistoryMessages(ctx context.Context, threshold float64, currentConvID string, results []struct {
+func (r *Retriever) searchHistoryMessages(ctx context.Context, threshold float64, currentUserID, currentConvID string, results []struct {
 	ID    string
 	Score float64
 }) string {
@@ -179,7 +179,7 @@ func (r *Retriever) searchHistoryMessages(ctx context.Context, threshold float64
 		if err != nil || msg == nil {
 			continue
 		}
-		if msg.ConversationID == currentConvID {
+		if msg.ConversationID == currentConvID || msg.UserID != currentUserID {
 			continue
 		}
 		log.Printf("[vector] msg hit: conv=%s, score=%.4f",

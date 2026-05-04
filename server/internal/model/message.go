@@ -6,6 +6,7 @@ import "time"
 type Message struct {
 	ID               string    `gorm:"primaryKey;size:36" json:"id"`
 	ConversationID   string    `gorm:"index:idx_conv_created,priority:1;size:36;not null" json:"conversation_id"`
+	UserID           string    `gorm:"size:36;not null;index" json:"user_id"`
 	Role             string    `gorm:"size:20;not null" json:"role"` // user | assistant | tool
 	Content          string    `gorm:"type:text" json:"content"`
 	ReasoningContent *string   `gorm:"type:text;column:reasoning_content" json:"reasoning_content,omitempty"`

@@ -143,6 +143,7 @@ func (o *Orchestrator) runReActLoop(
 		o.msgRepo.Create(ctx, &model.Message{
 			ID:             userMsgID,
 			ConversationID: req.ConversationID,
+			UserID:         req.UserID,
 			Role:           "user",
 			Content:        req.UserMessageContent,
 			MemoryIDs:      mIDs,
@@ -218,7 +219,7 @@ func (o *Orchestrator) handleNativeToolCalls(
 	log.Printf("[orch] round native tool_calls=%d", len(msg.ToolCalls))
 	*msgs = append(*msgs, msg)
 	if req.DeepMode {
-		o.saveAssistantMsg(ctx, req.ConversationID, msg)
+		o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg)
 	}
 
 	toolCalls := convertToolCalls(msg.ToolCalls)
@@ -252,7 +253,7 @@ func (o *Orchestrator) handleNativeToolCalls(
 		events <- &llm.StreamEvent{Type: "plan_node_done", Content: string(b)}
 
 		if req.DeepMode {
-			o.saveToolMsg(ctx, req.ConversationID, msg.ToolCalls[i].ID, string(resJSON))
+			o.saveToolMsg(ctx, req.ConversationID, req.UserID, msg.ToolCalls[i].ID, string(resJSON))
 		}
 	}
 }
@@ -287,7 +288,7 @@ func (o *Orchestrator) handleFlashResponse(
 		for _, r := range msg.Content {
 			events <- &llm.StreamEvent{Type: "text_delta", Content: string(r)}
 		}
-		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, msg)
+		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg)
 		return true, *lastMsgID
 	}
 
@@ -368,13 +369,14 @@ func convertToolCalls(tcs []llm.ToolCall) []tool.ToolCall {
 
 // —— DB 保存 ——
 
-func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID string, msg llm.Message) string {
+func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message) string {
 	if o.msgRepo == nil || convID == "" {
 		return ""
 	}
 	mid := uuid.New().String()
 	modelMsg := &model.Message{
 		ID:             mid,
+		UserID:         userID,
 		ConversationID: convID,
 		Role:           "assistant",
 		Content:        msg.Content,
@@ -398,12 +400,13 @@ func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID string, msg 
 	return mid
 }
 
-func (o *Orchestrator) saveToolMsg(ctx context.Context, convID string, toolCallID string, content string) {
+func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCallID string, content string) {
 	if o.msgRepo == nil || convID == "" {
 		return
 	}
 	tcid := toolCallID
 	o.msgRepo.Create(ctx, &model.Message{
+		UserID:         userID,
 		ID:             uuid.New().String(),
 		ConversationID: convID,
 		Role:           "tool",

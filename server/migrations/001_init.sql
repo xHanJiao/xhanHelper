@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE TABLE IF NOT EXISTS messages (
     id                VARCHAR(36) NOT NULL PRIMARY KEY,
     conversation_id   VARCHAR(36) NOT NULL,
+    user_id          VARCHAR(36) NOT NULL,
     role              VARCHAR(20) NOT NULL,
     content           TEXT        NULL,
     reasoning_content TEXT        NULL,

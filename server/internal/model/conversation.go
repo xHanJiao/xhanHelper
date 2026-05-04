@@ -10,6 +10,7 @@ type Conversation struct {
 	IsDeleted          bool       `gorm:"default:false" json:"-"`
 	LastExtractedMsgID *string    `gorm:"size:36" json:"last_extracted_msg_id,omitempty"`
 	LastExtractedAt    *time.Time `json:"last_extracted_at,omitempty"`
+	AgentID            *string    `gorm:"size:36" json:"agent_id,omitempty"`
 	CreatedAt          time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt          time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 	Messages           []Message  `gorm:"foreignKey:ConversationID" json:"-"`

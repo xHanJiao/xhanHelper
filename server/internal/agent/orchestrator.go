@@ -32,6 +32,8 @@ type RunRequest struct {
 	Messages           []llm.Message
 	DeepMode           bool
 	UserMessageContent string
+	AgentSystemPrompt  string // 为空则用默认
+	AgentID            string // 关联的智能体 ID
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（Flash 文本解析用）
@@ -93,7 +95,11 @@ func (o *Orchestrator) pickClient(req *RunRequest) llm.LLMClient {
 }
 
 func (o *Orchestrator) buildSysPrompt(ctx context.Context, client llm.LLMClient, req *RunRequest) (string, string) {
-	prompt := client.BuildSystemPrompt(baseSystemPrompt, o.registry.GetLLMTools())
+	sysPrompt := req.AgentSystemPrompt
+	if sysPrompt == "" {
+		sysPrompt = baseSystemPrompt
+	}
+	prompt := client.BuildSystemPrompt(sysPrompt, o.registry.GetLLMTools())
 
 	if o.retriever == nil {
 		return prompt, ""

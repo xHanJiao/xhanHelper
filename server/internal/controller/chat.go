@@ -16,12 +16,13 @@ import (
 )
 
 func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
-	msgRepo *service.MessageRepo) gin.HandlerFunc {
+	msgRepo *service.MessageRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			ConversationID *string `json:"conversation_id"`
 			Message        string  `json:"message"`
 			DeepMode       bool    `json:"deep_mode"`
+			AgentID        *string `json:"agent_id"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.Message == "" {
 			view.JSONError(c, 400, "invalid request")
@@ -30,6 +31,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 
 		userID := c.GetString("user_id")
 
+		// 创建或加载会话
 		var conv *model.Conversation
 		if req.ConversationID != nil {
 			var err error
@@ -40,9 +42,25 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 		}
 		if conv == nil {
 			conv = &model.Conversation{ID: uuid.New().String(), UserID: userID}
+			if req.AgentID != nil && *req.AgentID != "" {
+				conv.AgentID = req.AgentID
+			}
 			if err := convRepo.Create(c.Request.Context(), conv); err != nil {
 				view.JSONError(c, 500, "create conversation failed")
 				return
+			}
+		}
+
+		// 加载智能体 system prompt（新会话和续聊都支持）
+		var agentSystemPrompt string
+		var agentID string
+		if conv.AgentID != nil && *conv.AgentID != "" && agentRepo != nil {
+			a, err := agentRepo.FindByID(c.Request.Context(), *conv.AgentID, userID)
+			if err != nil {
+				log.Printf("[chat] FindByID agent error: %v", err)
+			} else if a != nil {
+				agentSystemPrompt = a.SystemPrompt
+				agentID = a.ID
 			}
 		}
 
@@ -68,6 +86,8 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			Messages:           buildLLMMessages(history),
 			DeepMode:           req.DeepMode,
 			UserMessageContent: req.Message,
+			AgentSystemPrompt:  agentSystemPrompt,
+			AgentID:            agentID,
 		})
 		if err != nil {
 			view.WriteSSE(w, flusher, "error", err.Error())
@@ -104,7 +124,6 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 	}
 }
 
-// mergeTitle 如果会话是新对话，生成标题并合并到 done JSON 中
 func mergeTitle(ctx context.Context, orch *agent.Orchestrator, convRepo *service.ConversationRepo, conv *model.Conversation, userMsg, doneContent string) string {
 	if conv.Title != "新对话" || userMsg == "" {
 		return doneContent

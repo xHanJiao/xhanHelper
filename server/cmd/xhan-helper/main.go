@@ -52,6 +52,7 @@ func main() {
 			&model.UserMemory{},
 			&model.ScheduledTask{},
 			&model.Note{},
+			&model.Agent{},
 		)
 	}
 
@@ -72,6 +73,7 @@ func main() {
 	billRepo := service.NewBillRepo(db)
 	memRepo := service.NewUserMemoryRepo(db)
 	noteRepo := service.NewNoteRepo(db)
+	agentRepo := service.NewAgentRepo(db)
 
 	// Tool Registry + Tools
 	reg := tool.NewRegistry()
@@ -104,9 +106,10 @@ func main() {
 	billHandler := controller.NewBillHandler(billRepo, memExtractor)
 	noteHandler := controller.NewNoteHandler(noteRepo)
 	memHandler := controller.NewMemoryHandler(memRepo)
+	agentHandler := controller.NewAgentHandler(agentRepo, llmClient)
 
 	// Router
-	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, billHandler, noteHandler, memHandler)
+	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, agentRepo, billHandler, noteHandler, memHandler, agentHandler)
 
 	addr := ":" + strconv.Itoa(cfg.Server.Port)
 	srv := &http.Server{

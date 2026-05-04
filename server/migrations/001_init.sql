@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     user_id               VARCHAR(36)  NOT NULL,
     title                 VARCHAR(200) NOT NULL DEFAULT '新对话',
     is_deleted            TINYINT(1)   NOT NULL DEFAULT 0,
+    agent_id              VARCHAR(36)  NULL,
     last_extracted_msg_id VARCHAR(36)  NULL,
     last_extracted_at     DATETIME     NULL,
     created_at            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -105,3 +106,15 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     enabled     TINYINT(1)  NOT NULL DEFAULT 1,
     created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS agents (
+    id            VARCHAR(36)  NOT NULL PRIMARY KEY,
+    user_id       VARCHAR(36)  NOT NULL,
+    name          VARCHAR(50)  NOT NULL,
+    system_prompt TEXT         NOT NULL,
+    model         VARCHAR(50)  NOT NULL DEFAULT '',
+    created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_user_id (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

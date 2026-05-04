@@ -12,8 +12,9 @@ import (
 // NewRouter 注册所有路由
 func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 	userRepo *service.UserRepo, convRepo *service.ConversationRepo,
-	msgRepo *service.MessageRepo, billHandler *BillHandler, noteHandler *NoteHandler,
-	memHandler *MemoryHandler) *gin.Engine {
+	msgRepo *service.MessageRepo, agentRepo *service.AgentRepo,
+	billHandler *BillHandler, noteHandler *NoteHandler,
+	memHandler *MemoryHandler, agentHandler *AgentHandler) *gin.Engine {
 
 	r := gin.Default()
 
@@ -33,7 +34,7 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 	auth.Use(middleware.Auth(userRepo))
 	{
 		auth.POST("/auth/logout", logoutUser(userRepo))
-		auth.POST("/chat", chat(orch, convRepo, msgRepo))
+		auth.POST("/chat", chat(orch, convRepo, msgRepo, agentRepo))
 		auth.GET("/conversations", listConversations(convRepo))
 		auth.GET("/conversations/:id/messages", getMessages(convRepo, msgRepo))
 		auth.PATCH("/conversations/:id", renameConversation(convRepo))
@@ -46,6 +47,11 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 		auth.GET("/memories", memHandler.ListMemories)
 		auth.DELETE("/memories/:id", memHandler.DeleteMemory)
 		auth.POST("/memories/batch", memHandler.BatchGetMemories)
+		auth.POST("/agents", agentHandler.CreateAgent)
+		auth.GET("/agents", agentHandler.ListAgents)
+		auth.GET("/agents/:id", agentHandler.GetAgent)
+		auth.PATCH("/agents/:id", agentHandler.UpdateAgent)
+		auth.DELETE("/agents/:id", agentHandler.DeleteAgent)
 	}
 
 	return r

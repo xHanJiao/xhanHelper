@@ -15,22 +15,24 @@ import (
 //   - 将用户消息嵌入向量 → 搜索向量库 → 分拣记忆/历史/笔记 → 格式化上下文文本
 //   - 启动时 warmup：把 DB 中已有记忆加载到向量库
 type Retriever struct {
-	vectorStore *VectorStore
-	embedder    *llm.Embedder
-	memRepo     *service.UserMemoryRepo
-	msgRepo     *service.MessageRepo
-	noteRepo    *service.NoteRepo
+	vectorStore         *VectorStore
+	embedder            *llm.Embedder
+	memRepo             *service.UserMemoryRepo
+	msgRepo             *service.MessageRepo
+	noteRepo            *service.NoteRepo
+	enableHistorySearch bool
 }
 
 // NewRetriever 创建检索器
 func NewRetriever(vs *VectorStore, emb *llm.Embedder, memRepo *service.UserMemoryRepo,
-	msgRepo *service.MessageRepo, noteRepo *service.NoteRepo) *Retriever {
+	msgRepo *service.MessageRepo, noteRepo *service.NoteRepo, enableHistorySearch bool) *Retriever {
 	return &Retriever{
-		vectorStore: vs,
-		embedder:    emb,
-		memRepo:     memRepo,
-		msgRepo:     msgRepo,
-		noteRepo:    noteRepo,
+		vectorStore:         vs,
+		embedder:            emb,
+		memRepo:             memRepo,
+		msgRepo:             msgRepo,
+		noteRepo:            noteRepo,
+		enableHistorySearch: enableHistorySearch,
 	}
 }
 
@@ -68,8 +70,10 @@ func (r *Retriever) Retrieve(ctx context.Context, userMessage, userID, convID st
 	if memText := r.searchMemories(ctx, results); memText != "" {
 		parts = append(parts, memText)
 	}
-	if msgText := r.searchHistoryMessages(ctx, convID, results); msgText != "" {
-		parts = append(parts, msgText)
+	if r.enableHistorySearch {
+		if msgText := r.searchHistoryMessages(ctx, convID, results); msgText != "" {
+			parts = append(parts, msgText)
+		}
 	}
 	if deepMode {
 		if noteText := r.searchNotes(ctx, results); noteText != "" {

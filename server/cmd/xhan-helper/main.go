@@ -90,7 +90,7 @@ func main() {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
 	// Orchestrator
-	retriever := agent.NewRetriever(vectorStore, embedder, memRepo, msgRepo, noteRepo)
+	retriever := agent.NewRetriever(vectorStore, embedder, memRepo, msgRepo, noteRepo, cfg.Embedding.EnableHistorySearch)
 	go retriever.Warmup(bgCtx)
 
 	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, cfg.LLM.MaxIterations)
@@ -103,9 +103,10 @@ func main() {
 	// Handlers
 	billHandler := controller.NewBillHandler(billRepo, memExtractor)
 	noteHandler := controller.NewNoteHandler(noteRepo)
+	memHandler := controller.NewMemoryHandler(memRepo)
 
 	// Router
-	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, billHandler, noteHandler)
+	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, billHandler, noteHandler, memHandler)
 
 	addr := ":" + strconv.Itoa(cfg.Server.Port)
 	srv := &http.Server{

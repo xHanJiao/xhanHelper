@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"gorm.io/gorm"
+
 	"xhan-helper/internal/model"
 )
 
@@ -35,14 +36,37 @@ func (r *UserMemoryRepo) FindByKey(ctx context.Context, userID, key string) (*mo
 	return &m, err
 }
 
-// ListByUser 获取设备所有记忆
-func (r *UserMemoryRepo) ListByUser(ctx context.Context, userID string) ([]model.UserMemory, error) {
+// ListByUser 分页获取用户记忆，支持关键词搜索，limit<=0 时默认 50
+func (r *UserMemoryRepo) ListByUser(ctx context.Context, userID, keyword, source string, limit, offset int) ([]model.UserMemory, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		q = q.Where("memory_value LIKE ? OR memory_key LIKE ?", like, like)
+	}
+	if source != "" {
+		q = q.Where("source = ?", source)
+	}
 	var list []model.UserMemory
-	err := r.db.WithContext(ctx).
-		Where("user_id = ?", userID).
-		Order("created_at DESC").
-		Find(&list).Error
+	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
 	return list, err
+}
+
+// FindByID 按 ID 查单条记忆
+func (r *UserMemoryRepo) FindByID(ctx context.Context, userID, id string) (*model.UserMemory, error) {
+	var m model.UserMemory
+	err := r.db.WithContext(ctx).Where("id = ? AND user_id = ?", id, userID).First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &m, err
+}
+
+// Delete 删除记忆
+func (r *UserMemoryRepo) Delete(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Delete(&model.UserMemory{}, "id = ?", id).Error
 }
 
 // UpdateEmbedding 更新记忆的向量字段
@@ -55,6 +79,13 @@ func (r *UserMemoryRepo) UpdateEmbedding(ctx context.Context, id string, embeddi
 func (r *UserMemoryRepo) GetByIDs(ctx context.Context, ids []string) ([]model.UserMemory, error) {
 	var list []model.UserMemory
 	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&list).Error
+	return list, err
+}
+
+// GetByIDsAndUser 按 ID 列表 + 用户 ID 查询
+func (r *UserMemoryRepo) GetByIDsAndUser(ctx context.Context, ids []string, userID string) ([]model.UserMemory, error) {
+	var list []model.UserMemory
+	err := r.db.WithContext(ctx).Where("id IN ? AND user_id = ?", ids, userID).Find(&list).Error
 	return list, err
 }
 

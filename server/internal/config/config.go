@@ -55,9 +55,10 @@ type LLMConfig struct {
 
 // EmbeddingConfig — 向量化配置
 type EmbeddingConfig struct {
-	APIKey  string `yaml:"api_key"`
-	BaseURL string `yaml:"base_url"` // 默认 https://ark.cn-beijing.volces.com
-	Model   string `yaml:"model"`    // 默认 doubao-embedding
+	APIKey              string `yaml:"api_key"`
+	BaseURL             string `yaml:"base_url"`              // 默认 https://ark.cn-beijing.volces.com
+	Model               string `yaml:"model"`                 // 默认 doubao-embedding
+	EnableHistorySearch bool   `yaml:"enable_history_search"` // 是否检索历史对话
 }
 
 // Load 加载配置：base YAML + env YAML 合并 → 环境变量替换

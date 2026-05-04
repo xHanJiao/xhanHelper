@@ -12,7 +12,8 @@ import (
 // NewRouter 注册所有路由
 func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 	userRepo *service.UserRepo, convRepo *service.ConversationRepo,
-	msgRepo *service.MessageRepo, billHandler *BillHandler, noteHandler *NoteHandler) *gin.Engine {
+	msgRepo *service.MessageRepo, billHandler *BillHandler, noteHandler *NoteHandler,
+	memHandler *MemoryHandler) *gin.Engine {
 
 	r := gin.Default()
 
@@ -42,6 +43,9 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 		auth.POST("/bills/import", billHandler.ImportBills)
 		auth.GET("/notes", noteHandler.ListNotes)
 		auth.DELETE("/notes/:id", noteHandler.DeleteNote)
+		auth.GET("/memories", memHandler.ListMemories)
+		auth.DELETE("/memories/:id", memHandler.DeleteMemory)
+		auth.POST("/memories/batch", memHandler.BatchGetMemories)
 	}
 
 	return r

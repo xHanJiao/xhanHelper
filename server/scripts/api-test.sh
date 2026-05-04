@@ -343,12 +343,44 @@ DEL_RESP=$(curl -s -X DELETE "$BASE_URL/api/notes/$NOTE_ID" \
 assert "删除成功" '"deleted":true' "$DEL_RESP"
 
 # ═══════════════════════════════════════════
+# ═══════════════════════════════════════════
+# 用户记忆 API
+# ═══════════════════════════════════════════
+
+# ── 记忆列表 ──
+echo ""
+echo "【27/30】记忆列表"
+MEM_LIST=$(curl -s "$BASE_URL/api/memories?limit=5" -H "Authorization: Bearer $TOKEN")
+assert "返回记忆数组" "memory_value" "$MEM_LIST"
+
+# ── 批量获取记忆 ──
+echo ""
+echo "【28/30】批量获取记忆"
+MEM_BATCH=$(curl -s -X POST "$BASE_URL/api/memories/batch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"ids\":[\"not-exist\"]}")
+assert "批量返回数组" "\[" "$MEM_BATCH"
+
+# ── 删除记忆 ──
+echo ""
+echo "【29/30】删除记忆"
+# 从列表中取第一条记忆的 ID
+MEM_ID=$(echo "$MEM_LIST" | python3 -c "import sys,json; arr=json.load(sys.stdin); print(arr[0][\"id\"] if arr else \"\")" 2>/dev/null)
+if [ -n "$MEM_ID" ]; then
+    DEL_MEM_RESP=$(curl -s -X DELETE "$BASE_URL/api/memories/$MEM_ID" -H "Authorization: Bearer $TOKEN")
+    assert "删除记忆成功" "true" "$DEL_MEM_RESP"
+else
+    echo "  ⚠ 跳过（无记忆可删）"
+fi
+
+
 # 会话管理
 # ═══════════════════════════════════════════
 
 # ── 19. 重命名会话 ──
 echo ""
-echo "【27/28】重命名会话"
+echo "【30/31】重命名会话"
 RENAME_RESP=$(curl -s -X PATCH "$BASE_URL/api/conversations/$CONV_ID" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \

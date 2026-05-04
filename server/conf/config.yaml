@@ -28,6 +28,7 @@ llm:
   base_url: https://api.deepseek.com
 
 embedding:
+  enable_history_search: false
   api_key: ${EMBEDDING_API_KEY}
   base_url: https://ark.cn-beijing.volces.com
   model: doubao-embedding-vision-251215

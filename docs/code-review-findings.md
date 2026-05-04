@@ -255,25 +255,31 @@ prop := val.(map[string]interface{})   // prop 不是 map → panic
 
 ---
 
-### 25. `cmd/xhan-helper/main.go` — 关闭时后台 goroutine 被遗弃
+### 25. `cmd/xhan-helper/main.go` — 关闭时后台 goroutine 被遗弃 ✅ 已修复
 
 **行号**: 84, 89
 
 **问题**: `Warmup` 和 `MemoryScheduler` 启动的 goroutine 没有 context 取消，`srv.Shutdown` 只停 HTTP server，这两者会被系统强制终止。
 
+**修复**: 创建 `bgCtx, bgCancel := context.WithCancel(...)` 关联后台 goroutine，shutdown 时先 `bgCancel()` 再 `srv.Shutdown()`。
+
 ---
 
-### 26. `controller/conversations.go` — 所有权检查样板代码重复 3 次
+### 26. `controller/conversations.go` — 所有权检查样板代码重复 3 次 ✅ 已修复
 
 **问题**: `getMessages`、`renameConversation`、`deleteConversation` 各有相同的 6 行授权逻辑，应提取为辅助函数。
 
+**修复**: 提取 `requireConversationOwner(c, convRepo, convID) bool`，内部处理 404/403 响应。
+
 ---
 
-### 27. `service/message_repo.go` — `GetByID` 不遵循 `(nil, nil)` 约定
+### 27. `service/message_repo.go` — `GetByID` 不遵循 `(nil, nil)` 约定 ✅ 已修复
 
 **行号**: 34-40
 
 **问题**: 同项目中其他 repo 的 `FindBy*` 对 record-not-found 返回 `(nil, nil)`，但 `MessageRepo.GetByID` 直接透传 `gorm.ErrRecordNotFound`，调用方需额外处理。
+
+**修复**: 加 `errors.Is(err, gorm.ErrRecordNotFound)` 判断，未找到返回 `(nil, nil)`。
 
 ---
 
@@ -284,5 +290,5 @@ prop := val.(map[string]interface{})   // prop 不是 map → panic
 | P0 Critical | 3 | 3 | 0 |
 | P1 High | 7 | 7 | 0 |
 | P2 Medium | 10 | 7 | 3 |
-| P3 Low | 7 | 0 | 7 |
-| **合计** | **27** | **17** | **10** |
+| P3 Low | 7 | 3 | 4 |
+| **合计** | **27** | **20** | **7** |

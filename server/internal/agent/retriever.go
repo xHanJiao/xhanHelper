@@ -38,7 +38,13 @@ func NewRetriever(vs *VectorStore, emb *llm.Embedder, memRepo *service.UserMemor
 
 // Retrieve 检索与用户消息相关的上下文（记忆 + 历史对话 + 笔记）
 // 返回上下文文本和用到的记忆 ID 列表
-func (r *Retriever) Retrieve(ctx context.Context, userMessage, userID, convID string, deepMode bool) (string, []string) {
+func (r *Retriever) Retrieve(ctx context.Context, userMessage, userID, convID string, deepMode bool, threshold float64, limit int) (string, []string) {
+	if threshold <= 0 {
+		threshold = 0.5
+	}
+	if limit <= 0 {
+		limit = 8
+	}
 	if r.vectorStore == nil || r.embedder == nil {
 		return "", nil
 	}
@@ -49,7 +55,7 @@ func (r *Retriever) Retrieve(ctx context.Context, userMessage, userID, convID st
 		return "", nil
 	}
 
-	results := r.vectorStore.Search(vec, 8, func(e vectorEntry) bool {
+	results := r.vectorStore.Search(vec, limit, func(e vectorEntry) bool {
 		if e.Metadata["user_id"] != "" && e.Metadata["user_id"] != userID {
 			return false
 		}
@@ -67,17 +73,17 @@ func (r *Retriever) Retrieve(ctx context.Context, userMessage, userID, convID st
 	var parts []string
 	var memIDs []string
 
-	if memText, ids := r.searchMemories(ctx, results); memText != "" {
+	if memText, ids := r.searchMemories(ctx, threshold, results); memText != "" {
 		parts = append(parts, memText)
 		memIDs = append(memIDs, ids...)
 	}
 	if r.enableHistorySearch {
-		if msgText := r.searchHistoryMessages(ctx, convID, results); msgText != "" {
+		if msgText := r.searchHistoryMessages(ctx, threshold, convID, results); msgText != "" {
 			parts = append(parts, msgText)
 		}
 	}
 	if deepMode {
-		if noteText := r.searchNotes(ctx, results); noteText != "" {
+		if noteText := r.searchNotes(ctx, threshold, results); noteText != "" {
 			parts = append(parts, noteText)
 		}
 	}
@@ -134,13 +140,13 @@ func (r *Retriever) Warmup(ctx context.Context) {
 
 // —— 内部检索路由 ——
 
-func (r *Retriever) searchMemories(ctx context.Context, results []struct {
+func (r *Retriever) searchMemories(ctx context.Context, threshold float64, results []struct {
 	ID    string
 	Score float64
 }) (string, []string) {
 	var memIDs []string
 	for _, res := range results {
-		if res.Score < 0.5 || !strings.HasPrefix(res.ID, "mem:") {
+		if res.Score < threshold || !strings.HasPrefix(res.ID, "mem:") {
 			continue
 		}
 		memIDs = append(memIDs, strings.TrimPrefix(res.ID, "mem:"))
@@ -160,12 +166,12 @@ func (r *Retriever) searchMemories(ctx context.Context, results []struct {
 	return "===== 相关记忆 =====\n" + sb.String(), memIDs
 }
 
-func (r *Retriever) searchHistoryMessages(ctx context.Context, currentConvID string, results []struct {
+func (r *Retriever) searchHistoryMessages(ctx context.Context, threshold float64, currentConvID string, results []struct {
 	ID    string
 	Score float64
 }) string {
 	for _, res := range results {
-		if res.Score < 0.5 || !strings.HasPrefix(res.ID, "msg:") {
+		if res.Score < threshold || !strings.HasPrefix(res.ID, "msg:") {
 			continue
 		}
 		msgID := strings.TrimPrefix(res.ID, "msg:")
@@ -185,13 +191,13 @@ func (r *Retriever) searchHistoryMessages(ctx context.Context, currentConvID str
 	return ""
 }
 
-func (r *Retriever) searchNotes(ctx context.Context, results []struct {
+func (r *Retriever) searchNotes(ctx context.Context, threshold float64, results []struct {
 	ID    string
 	Score float64
 }) string {
 	var noteIDs []string
 	for _, res := range results {
-		if res.Score < 0.5 || !strings.HasPrefix(res.ID, "note:") {
+		if res.Score < threshold || !strings.HasPrefix(res.ID, "note:") {
 			continue
 		}
 		noteIDs = append(noteIDs, strings.TrimPrefix(res.ID, "note:"))

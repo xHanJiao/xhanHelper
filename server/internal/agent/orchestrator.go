@@ -32,8 +32,10 @@ type RunRequest struct {
 	Messages           []llm.Message
 	DeepMode           bool
 	UserMessageContent string
-	AgentSystemPrompt  string // 为空则用默认
-	AgentID            string // 关联的智能体 ID
+	AgentSystemPrompt  string  // 为空则用默认
+	AgentID            string  // 关联的智能体 ID
+	MemoryThreshold    float64 // 记忆检索相关度阈值，默认 0.5
+	MemoryLimit        int     // 记忆检索最大条数，默认 8
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（Flash 文本解析用）
@@ -104,7 +106,7 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, client llm.LLMClient,
 	if o.retriever == nil {
 		return prompt, "", nil
 	}
-	memText, memIDs := o.retriever.Retrieve(ctx, req.UserMessageContent, req.UserID, req.ConversationID, req.DeepMode)
+	memText, memIDs := o.retriever.Retrieve(ctx, req.UserMessageContent, req.UserID, req.ConversationID, req.DeepMode, req.MemoryThreshold, req.MemoryLimit)
 	if memText == "" {
 		return prompt, "", nil
 	}
@@ -385,6 +387,12 @@ func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID string, msg 
 		b, _ := json.Marshal(msg.ToolCalls)
 		s := string(b)
 		modelMsg.ToolCallsJSON = &s
+	}
+	if msg.RequestJSON != nil {
+		modelMsg.RequestJSON = msg.RequestJSON
+	}
+	if msg.ResponseJSON != nil {
+		modelMsg.ResponseJSON = msg.ResponseJSON
 	}
 	o.msgRepo.Create(ctx, modelMsg)
 	return mid

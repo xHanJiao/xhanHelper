@@ -57,11 +57,41 @@ struct ChatView: View {
         }
         .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { viewModel.deepMode.toggle() }) {
-                        Image(systemName: viewModel.deepMode ? "brain.head.profile.fill" : "brain.head.profile")
-                            .foregroundColor(viewModel.deepMode ? .orange : .secondary)
+                    HStack(spacing: 16) {
+                        Button { viewModel.showMemorySettings = true } label: {
+                            Image(systemName: "slider.horizontal.3")
+                                .foregroundColor(.secondary)
+                        }
+                        Button(action: { viewModel.deepMode.toggle() }) {
+                            Image(systemName: viewModel.deepMode ? "brain.head.profile.fill" : "brain.head.profile")
+                                .foregroundColor(viewModel.deepMode ? .orange : .secondary)
+                        }
                     }
-                    .help(viewModel.deepMode ? "深度思考模式 (Pro)" : "标准模式 (Flash)")
+                }
+            }
+            .sheet(isPresented: $viewModel.showMemorySettings) {
+                NavigationStack {
+                    Form {
+                        Section("记忆检索设置") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("相关度阈值: \(String(format: "%.2f", viewModel.memoryThreshold))")
+                                    .font(.subheadline)
+                                Slider(value: $viewModel.memoryThreshold, in: 0.1...0.95, step: 0.05)
+                            }
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("最大条数: \(viewModel.memoryLimit)")
+                                    .font(.subheadline)
+                                Slider(value: Binding(get: { Double(viewModel.memoryLimit) }, set: { viewModel.memoryLimit = Int($0) }), in: 1...20, step: 1)
+                            }
+                        }
+                    }
+                    .navigationTitle("记忆设置")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("完成") { viewModel.showMemorySettings = false }
+                        }
+                    }
                 }
             }
         .navigationTitle(viewModel.conversationTitle ?? "新对话")

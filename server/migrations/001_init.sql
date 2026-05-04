@@ -43,7 +43,11 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_call_id      VARCHAR(36) NULL,
     embedding         TEXT        NULL,
     memory_ids       JSON        NULL,
+    request_json     JSON        NULL,
+    response_json    JSON        NULL,
     memory_ids       JSON        NULL,
+    request_json     JSON        NULL,
+    response_json    JSON        NULL,
     created_at        DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     KEY idx_conv_created (conversation_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

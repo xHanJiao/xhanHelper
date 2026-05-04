@@ -19,10 +19,12 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 	msgRepo *service.MessageRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
-			ConversationID *string `json:"conversation_id"`
-			Message        string  `json:"message"`
-			DeepMode       bool    `json:"deep_mode"`
-			AgentID        *string `json:"agent_id"`
+			ConversationID  *string `json:"conversation_id"`
+			Message         string  `json:"message"`
+			DeepMode        bool    `json:"deep_mode"`
+			AgentID         *string `json:"agent_id"`
+			MemoryThreshold float64 `json:"memory_threshold"`
+			MemoryLimit     int     `json:"memory_limit"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.Message == "" {
 			view.JSONError(c, 400, "invalid request")
@@ -88,6 +90,8 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			UserMessageContent: req.Message,
 			AgentSystemPrompt:  agentSystemPrompt,
 			AgentID:            agentID,
+			MemoryThreshold:    req.MemoryThreshold,
+			MemoryLimit:        req.MemoryLimit,
 		})
 		if err != nil {
 			view.WriteSSE(w, flusher, "error", err.Error())

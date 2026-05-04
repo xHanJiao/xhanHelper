@@ -172,9 +172,9 @@ func (c *FlashClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, 
 
 func (c *FlashClient) callAPI(ctx context.Context, req *ChatRequest, _ bool) (Message, error) {
 	url := c.baseURL + "/chat/completions"
-	body := buildRequest(req, c.model, false)
+	reqBytes, _ := io.ReadAll(buildRequest(req, c.model, false))
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, body)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBytes))
 	if err != nil {
 		return Message{}, err
 	}
@@ -199,7 +199,15 @@ func (c *FlashClient) callAPI(ctx context.Context, req *ChatRequest, _ bool) (Me
 		return Message{}, fmt.Errorf("flash status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
 	}
 
-	return parseDeepSeekResponse(respBody)
+	msg, err := parseDeepSeekResponse(respBody)
+	if err != nil {
+		return msg, err
+	}
+	reqJSON := string(reqBytes)
+	respJSON := string(respBody)
+	msg.RequestJSON = &reqJSON
+	msg.ResponseJSON = &respJSON
+	return msg, nil
 }
 
 // ——— ProClient (思考模式) ———
@@ -280,9 +288,9 @@ func (c *ProClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, er
 
 func (c *ProClient) callAPI(ctx context.Context, req *ChatRequest, thinking bool) (Message, error) {
 	url := c.baseURL + "/chat/completions"
-	body := buildRequest(req, c.model, true)
+	reqBytes, _ := io.ReadAll(buildRequest(req, c.model, true))
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, body)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBytes))
 	if err != nil {
 		return Message{}, err
 	}
@@ -302,7 +310,15 @@ func (c *ProClient) callAPI(ctx context.Context, req *ChatRequest, thinking bool
 		return Message{}, fmt.Errorf("pro status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
 	}
 
-	return parseDeepSeekResponse(respBody)
+	msg, err := parseDeepSeekResponse(respBody)
+	if err != nil {
+		return msg, err
+	}
+	reqJSON := string(reqBytes)
+	respJSON := string(respBody)
+	msg.RequestJSON = &reqJSON
+	msg.ResponseJSON = &respJSON
+	return msg, nil
 }
 
 // ——— shared parsing ———

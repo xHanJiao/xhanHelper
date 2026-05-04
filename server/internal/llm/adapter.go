@@ -26,6 +26,8 @@ type Message struct {
 	ReasoningContent string     // 思维链内容（DeepSeek 思考模式）
 	ToolCalls        []ToolCall // 原生 tool_calls
 	ToolCallID       string     // tool 消息的调用 ID
+	RequestJSON      *string    // 发给 LLM 的请求 JSON（调试用）
+	ResponseJSON     *string    // LLM 返回的响应 JSON（调试用）
 }
 
 // ToolCall — 原生 function calling 的工具调用

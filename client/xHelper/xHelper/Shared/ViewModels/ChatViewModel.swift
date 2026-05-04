@@ -28,6 +28,9 @@ class ChatViewModel: ObservableObject {
     @Published var deepMode = false
     @Published var lastMemoryIDs: [String]?
     @Published var showMemoryPopup = false
+    @Published var showMemorySettings = false
+    @AppStorage("memoryThreshold") var memoryThreshold: Double = 0.5
+    @AppStorage("memoryLimit") var memoryLimit: Int = 8
 
     @Published var planNodes: [PlanNode] = []
     @Published var isPlanModalVisible = false
@@ -75,6 +78,7 @@ class ChatViewModel: ObservableObject {
         planNodes = []
         isPlanModalVisible = false
         isPlanMinimized = false
+        lastMemoryIDs = nil
 
         messages.append(.streamingAssistant(conversationId: conversationId ?? ""))
 
@@ -103,7 +107,7 @@ class ChatViewModel: ObservableObject {
                 self?.finishStreaming()
             }
         }
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit)
     }
 
     func stopStreaming() {

@@ -28,6 +28,14 @@ func main() {
 		log.Fatal("load config:", err)
 	}
 
+	log.Printf("[config] env=%s server.port=%d server.mode=%s",
+		os.Getenv("APP_ENV"), cfg.Server.Port, cfg.Server.Mode)
+	log.Printf("[config] db.driver=%s db.dsn=%s", cfg.DB.Driver, cfg.DB.DSN())
+	log.Printf("[config] llm.provider=%s llm.model=%s llm.strong_model=%s llm.key=%s...",
+		cfg.LLM.Provider, cfg.LLM.Model, cfg.LLM.StrongModel, cfg.LLM.APIKey[:min(8, len(cfg.LLM.APIKey))])
+	log.Printf("[config] embedding.model=%s embedding.key=%s... embedding.base_url=%s",
+		cfg.Embedding.Model, cfg.Embedding.APIKey[:min(8, len(cfg.Embedding.APIKey))], cfg.Embedding.BaseURL)
+
 	gin.SetMode(cfg.Server.Mode)
 
 	db := service.NewDB(cfg.DB)

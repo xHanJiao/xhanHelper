@@ -35,7 +35,7 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 	{
 		auth.POST("/auth/logout", logoutUser(userRepo))
 		auth.POST("/chat", chat(orch, convRepo, msgRepo, agentRepo))
-		auth.GET("/conversations", listConversations(convRepo))
+		auth.GET("/conversations", listConversations(convRepo, agentRepo))
 		auth.GET("/conversations/:id/messages", getMessages(convRepo, msgRepo))
 		auth.PATCH("/conversations/:id", renameConversation(convRepo))
 		auth.DELETE("/conversations/:id", deleteConversation(convRepo))

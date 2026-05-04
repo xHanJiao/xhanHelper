@@ -11,7 +11,7 @@ struct InputBar: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        HStack(alignment: .center, spacing: 8) {
             TextField("输入消息...", text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .focused($isFocused)

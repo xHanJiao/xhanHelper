@@ -33,6 +33,13 @@ func (r *AgentRepo) FindByID(ctx context.Context, id, userID string) (*model.Age
 	return &a, err
 }
 
+// FindByIDs 按 ID 列表批量查询
+func (r *AgentRepo) FindByIDs(ctx context.Context, ids []string) ([]model.Agent, error) {
+	var list []model.Agent
+	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&list).Error
+	return list, err
+}
+
 // ListByUser 分页获取用户智能体
 func (r *AgentRepo) ListByUser(ctx context.Context, userID string, limit, offset int) ([]model.Agent, error) {
 	if limit <= 0 {

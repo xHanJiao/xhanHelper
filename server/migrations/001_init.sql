@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     user_id               VARCHAR(36)  NOT NULL,
     title                 VARCHAR(200) NOT NULL DEFAULT '新对话',
     is_deleted            TINYINT(1)   NOT NULL DEFAULT 0,
-    agent_id              VARCHAR(36)  NULL,
+    agent_id              VARCHAR(36)  NOT NULL DEFAULT '',
     last_extracted_msg_id VARCHAR(36)  NULL,
     last_extracted_at     DATETIME     NULL,
     created_at            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_calls_json   JSON        NULL,
     tool_call_id      VARCHAR(36) NULL,
     embedding         TEXT        NULL,
+    memory_ids       JSON        NULL,
+    memory_ids       JSON        NULL,
     created_at        DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     KEY idx_conv_created (conversation_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

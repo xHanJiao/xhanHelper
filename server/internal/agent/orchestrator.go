@@ -77,13 +77,13 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	log.Printf("[orch] run start: model=%s, msgs=%d, tools=%d",
 		client.ModelName(), len(req.Messages), len(o.registry.GetLLMTools()))
 
-	sysPrompt, memoryNote := o.buildSysPrompt(ctx, client, req)
+	sysPrompt, memoryNote, memIDs := o.buildSysPrompt(ctx, client, req)
 
 	msgs := make([]llm.Message, len(req.Messages))
 	copy(msgs, req.Messages)
 
 	events := make(chan *llm.StreamEvent, 64)
-	go o.runReActLoop(ctx, events, client, sysPrompt, memoryNote, msgs, req)
+	go o.runReActLoop(ctx, events, client, sysPrompt, memoryNote, memIDs, msgs, req)
 	return events, nil
 }
 
@@ -94,7 +94,7 @@ func (o *Orchestrator) pickClient(req *RunRequest) llm.LLMClient {
 	return o.flashClient
 }
 
-func (o *Orchestrator) buildSysPrompt(ctx context.Context, client llm.LLMClient, req *RunRequest) (string, string) {
+func (o *Orchestrator) buildSysPrompt(ctx context.Context, client llm.LLMClient, req *RunRequest) (string, string, []string) {
 	sysPrompt := req.AgentSystemPrompt
 	if sysPrompt == "" {
 		sysPrompt = baseSystemPrompt
@@ -102,14 +102,14 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, client llm.LLMClient,
 	prompt := client.BuildSystemPrompt(sysPrompt, o.registry.GetLLMTools())
 
 	if o.retriever == nil {
-		return prompt, ""
+		return prompt, "", nil
 	}
-	memText := o.retriever.Retrieve(ctx, req.UserMessageContent, req.UserID, req.ConversationID, req.DeepMode)
+	memText, memIDs := o.retriever.Retrieve(ctx, req.UserMessageContent, req.UserID, req.ConversationID, req.DeepMode)
 	if memText == "" {
-		return prompt, ""
+		return prompt, "", nil
 	}
 	prompt += "\n\n===== 关于用户的信息 =====\n" + memText
-	return prompt, fmt.Sprintf(`{"message":"已关联向量记忆","count":%d}`, strings.Count(memText, "\n"))
+	return prompt, fmt.Sprintf(`{"message":"已关联向量记忆","count":%d}`, strings.Count(memText, "\n")), memIDs
 }
 
 // —— ReAct 主循环 ——
@@ -119,6 +119,7 @@ func (o *Orchestrator) runReActLoop(
 	events chan<- *llm.StreamEvent,
 	client llm.LLMClient,
 	sysPrompt, memoryNote string,
+	memIDs []string,
 	msgs []llm.Message,
 	req *RunRequest,
 ) {
@@ -131,11 +132,18 @@ func (o *Orchestrator) runReActLoop(
 	userMsgID := uuid.New().String()
 	msgs = append(msgs, llm.Message{Role: "user", Content: req.UserMessageContent})
 	if o.msgRepo != nil && req.ConversationID != "" {
+		var mIDs *string
+		if len(memIDs) > 0 {
+			b, _ := json.Marshal(memIDs)
+			s := string(b)
+			mIDs = &s
+		}
 		o.msgRepo.Create(ctx, &model.Message{
 			ID:             userMsgID,
 			ConversationID: req.ConversationID,
 			Role:           "user",
 			Content:        req.UserMessageContent,
+			MemoryIDs:      mIDs,
 		})
 	}
 
@@ -182,7 +190,7 @@ func (o *Orchestrator) runReActLoop(
 				planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
 				events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
 			}
-			o.emitDone(events, req.ConversationID, msgID, "")
+			o.emitDone(events, req.ConversationID, msgID, "", memIDs)
 			return
 		}
 	}
@@ -192,7 +200,7 @@ func (o *Orchestrator) runReActLoop(
 		planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
 		events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
 	}
-	o.emitDone(events, req.ConversationID, "", "max iterations reached")
+	o.emitDone(events, req.ConversationID, "", "max iterations reached", memIDs)
 }
 
 // —— 工具调用处理 ——
@@ -396,13 +404,17 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID string, toolCallI
 	})
 }
 
-func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, errStr string) {
+func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, errStr string, memIDs []string) {
 	parts := make([]string, 0)
 	if convID != "" {
 		parts = append(parts, fmt.Sprintf(`"conversation_id":"%s"`, convID))
 	}
 	if msgID != "" {
 		parts = append(parts, fmt.Sprintf(`"message_id":"%s"`, msgID))
+	}
+	if len(memIDs) > 0 {
+		b, _ := json.Marshal(memIDs)
+		parts = append(parts, fmt.Sprintf(`"memory_ids":%s`, string(b)))
 	}
 	if errStr != "" {
 		parts = append(parts, fmt.Sprintf(`"error":"%s"`, errStr))

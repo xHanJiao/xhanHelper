@@ -30,12 +30,15 @@ class ConversationListViewModel: ObservableObject {
         do {
             try await apiClient.renameConversation(id: id, title: title)
             if let idx = conversations.firstIndex(where: { $0.id == id }) {
+                let old = conversations[idx]
                 conversations[idx] = Conversation(
-                    id: conversations[idx].id,
-                    userId: conversations[idx].userId,
+                    id: old.id,
+                    userId: old.userId,
                     title: title,
-                    createdAt: conversations[idx].createdAt,
-                    updatedAt: conversations[idx].updatedAt
+                    agentId: old.agentId,
+                    agentName: old.agentName,
+                    createdAt: old.createdAt,
+                    updatedAt: old.updatedAt
                 )
             }
         } catch {

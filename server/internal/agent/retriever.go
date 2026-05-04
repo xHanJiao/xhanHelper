@@ -37,16 +37,16 @@ func NewRetriever(vs *VectorStore, emb *llm.Embedder, memRepo *service.UserMemor
 }
 
 // Retrieve 检索与用户消息相关的上下文（记忆 + 历史对话 + 笔记）
-// 返回拼好的文本，直接注入 system prompt。为空表示无匹配。
-func (r *Retriever) Retrieve(ctx context.Context, userMessage, userID, convID string, deepMode bool) string {
+// 返回上下文文本和用到的记忆 ID 列表
+func (r *Retriever) Retrieve(ctx context.Context, userMessage, userID, convID string, deepMode bool) (string, []string) {
 	if r.vectorStore == nil || r.embedder == nil {
-		return ""
+		return "", nil
 	}
 
 	vec, err := r.embedder.Embed(ctx, userMessage)
 	if err != nil {
 		log.Printf("[vector] embed user msg error: %v", err)
-		return ""
+		return "", nil
 	}
 
 	results := r.vectorStore.Search(vec, 8, func(e vectorEntry) bool {
@@ -58,17 +58,18 @@ func (r *Retriever) Retrieve(ctx context.Context, userMessage, userID, convID st
 		}
 		return e.Metadata["conv_id"] != convID
 	})
-	// 搜索完成后再写入当前消息 embedding，避免被自己检索到
 	go r.saveMsgEmbedding(ctx, userID, convID, vec)
 
 	if len(results) == 0 {
-		return ""
+		return "", nil
 	}
 
 	var parts []string
+	var memIDs []string
 
-	if memText := r.searchMemories(ctx, results); memText != "" {
+	if memText, ids := r.searchMemories(ctx, results); memText != "" {
 		parts = append(parts, memText)
+		memIDs = append(memIDs, ids...)
 	}
 	if r.enableHistorySearch {
 		if msgText := r.searchHistoryMessages(ctx, convID, results); msgText != "" {
@@ -81,7 +82,7 @@ func (r *Retriever) Retrieve(ctx context.Context, userMessage, userID, convID st
 		}
 	}
 
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "\n"), memIDs
 }
 
 // Warmup 启动时分页加载已有记忆到向量库
@@ -136,7 +137,7 @@ func (r *Retriever) Warmup(ctx context.Context) {
 func (r *Retriever) searchMemories(ctx context.Context, results []struct {
 	ID    string
 	Score float64
-}) string {
+}) (string, []string) {
 	var memIDs []string
 	for _, res := range results {
 		if res.Score < 0.5 || !strings.HasPrefix(res.ID, "mem:") {
@@ -146,17 +147,17 @@ func (r *Retriever) searchMemories(ctx context.Context, results []struct {
 		log.Printf("[vector] memory hit: id=%s, score=%.4f", res.ID, res.Score)
 	}
 	if len(memIDs) == 0 {
-		return ""
+		return "", nil
 	}
 	memories, err := r.memRepo.GetByIDs(ctx, memIDs)
 	if err != nil || len(memories) == 0 {
-		return ""
+		return "", nil
 	}
 	var sb strings.Builder
 	for _, m := range memories {
 		sb.WriteString(fmt.Sprintf("- %s: %s\n", m.MemoryKey, m.MemoryValue))
 	}
-	return "===== 相关记忆 =====\n" + sb.String()
+	return "===== 相关记忆 =====\n" + sb.String(), memIDs
 }
 
 func (r *Retriever) searchHistoryMessages(ctx context.Context, currentConvID string, results []struct {

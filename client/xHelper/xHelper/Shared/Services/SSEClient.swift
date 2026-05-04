@@ -14,7 +14,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
 
-    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool) {
+    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil) {
         let url = URL(string: "\(baseURL)/api/chat")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -24,6 +24,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         var body: [String: Any] = ["message": message]
         if let cid = conversationId { body["conversation_id"] = cid }
         if deepMode { body["deep_mode"] = true }
+        if let aid = agentId { body["agent_id"] = aid }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         task = session.dataTask(with: req)

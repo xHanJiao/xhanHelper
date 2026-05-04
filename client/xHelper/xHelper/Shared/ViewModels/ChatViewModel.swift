@@ -26,6 +26,8 @@ class ChatViewModel: ObservableObject {
     @Published var conversationId: String?
     @Published var conversationTitle: String?
     @Published var deepMode = false
+    @Published var lastMemoryIDs: [String]?
+    @Published var showMemoryPopup = false
 
     @Published var planNodes: [PlanNode] = []
     @Published var isPlanModalVisible = false
@@ -60,7 +62,7 @@ class ChatViewModel: ObservableObject {
 
     // MARK: Send
 
-    func sendMessage(_ text: String, baseURL: String, token: String) {
+    func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil) {
         let userMsg = Message.localUser(text: text, conversationId: conversationId ?? "")
         messages.append(userMsg)
 
@@ -76,13 +78,13 @@ class ChatViewModel: ObservableObject {
 
         messages.append(.streamingAssistant(conversationId: conversationId ?? ""))
 
-        setupSSE(baseURL: baseURL, token: token, text: text)
+        setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId)
         #if os(iOS)
         beginBackgroundTask()
         #endif
     }
 
-    private func setupSSE(baseURL: String, token: String, text: String) {
+    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil) {
         sseClient.disconnect()
         sseClient.onEvent = { [weak self] event in
             Task { @MainActor in
@@ -92,7 +94,6 @@ class ChatViewModel: ObservableObject {
         sseClient.onError = { [weak self] error in
             Task { @MainActor in
                 let nsError = error as NSError
-                // 后台断连或用户取消，静默结束不弹错误
                 if nsError.domain == NSURLErrorDomain,
                    nsError.code == NSURLErrorNetworkConnectionLost || nsError.code == NSURLErrorCancelled {
                     self?.finishStreaming()
@@ -102,7 +103,7 @@ class ChatViewModel: ObservableObject {
                 self?.finishStreaming()
             }
         }
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId)
     }
 
     func stopStreaming() {
@@ -180,6 +181,9 @@ class ChatViewModel: ObservableObject {
             }
             if let msgID = parseMessageIdFromDone(event.data) {
                 replaceStreamingMessageID(with: msgID)
+            }
+            if let mids = parseMemoryIDsFromDone(event.data), !mids.isEmpty {
+                lastMemoryIDs = mids
             }
             let tc = currentToolCall
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [self] in
@@ -315,6 +319,14 @@ class ChatViewModel: ObservableObject {
               let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
         else { return nil }
         return obj["message_id"]
+    }
+
+    private func parseMemoryIDsFromDone(_ data: String) -> [String]? {
+        guard let jsonData = data.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let ids = obj["memory_ids"] as? [String]
+        else { return nil }
+        return ids
     }
 
     private func buildToolSummary(toolCall: ToolCallData, resultJSON: String) -> String {

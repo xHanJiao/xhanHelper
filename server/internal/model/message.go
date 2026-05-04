@@ -11,6 +11,7 @@ type Message struct {
 	ReasoningContent *string   `gorm:"type:text;column:reasoning_content" json:"reasoning_content,omitempty"`
 	ToolCallsJSON    *string   `gorm:"type:json;column:tool_calls_json" json:"tool_calls_json,omitempty"`
 	ToolCallID       *string   `gorm:"size:36;column:tool_call_id" json:"tool_call_id,omitempty"`
-	Embedding        *string   `gorm:"type:text" json:"embedding,omitempty"` // JSON 数组, 用户消息向量持久化
+	Embedding        *string   `gorm:"type:text" json:"embedding,omitempty"`                    // JSON 数组, 用户消息向量持久化
+	MemoryIDs        *string   `gorm:"type:json;column:memory_ids" json:"memory_ids,omitempty"` // 关联的记忆 ID 列表
 	CreatedAt        time.Time `gorm:"index:idx_conv_created,priority:2;autoCreateTime" json:"created_at"`
 }

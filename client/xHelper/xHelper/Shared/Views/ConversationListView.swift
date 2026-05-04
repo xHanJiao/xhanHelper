@@ -28,6 +28,11 @@ struct ConversationListView: View {
                                 Text(conv.title)
                                     .font(.body)
                                     .lineLimit(1)
+                                if let agentName = conv.agentName {
+                                    Text("🤖 \(agentName)")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
                                 Text(formatDate(conv.updatedAt))
                                     .font(.caption)
                                     .foregroundColor(.secondary)

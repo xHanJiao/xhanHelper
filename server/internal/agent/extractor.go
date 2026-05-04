@@ -58,12 +58,12 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, m.Content))
 	}
 
-	prompt := "从以下对话中提取关于用户的事实、偏好、习惯。每条一句话。如果没有值得提取的信息就回复\"无\"。不要编造。"
+	prompt := "从以下对话中提取关于用户的事实、偏好、习惯。每条一行纯文本，不要使用 markdown 标题（如 **xxx**）或列表符号（如 - xxx）。如果没有值得提取的信息就回复\"无\"。不要编造。"
 	prompt += "\n\n" + sb.String()
 	promptHash := hashPrompt(prompt)
 
 	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: "你是记忆提取助手。只提取用户明确表达的事实、偏好、习惯。不确定的不提取。",
+		SystemPrompt: "你是记忆提取助手。只提取用户明确表达的事实、偏好、习惯。不确定的不提取。每条一行纯文本输出，不使用 markdown 格式。每一行都必须是提取到的记忆信息，标题、分类等信息不需要返回",
 		Messages:     []llm.Message{{Role: "user", Content: prompt}},
 	})
 	if err != nil {
@@ -119,7 +119,7 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, prompt,
 	}
 
 	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: "你是记忆提取助手。只提取明确的事实、偏好、规律。不确定的不提取。",
+		SystemPrompt: "你是记忆提取助手。只提取明确的事实、偏好、规律。不确定的不提取。每条一行纯文本输出，不使用 markdown 格式。",
 		Messages:     []llm.Message{{Role: "user", Content: prompt}},
 	})
 	if err != nil {

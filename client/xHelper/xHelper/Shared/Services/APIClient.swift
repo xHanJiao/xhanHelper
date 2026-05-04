@@ -43,7 +43,45 @@ class APIClient {
         return try await doRequest(req)
     }
 
-    // MARK: Internal
+    // MARK: Memories (P3)
+
+	func listMemories(limit: Int = 50, offset: Int = 0, keyword: String = "", source: String = "") async throws -> [UserMemory] {
+		var path = "/api/memories?limit=\(limit)&offset=\(offset)"
+		if !keyword.isEmpty { path += "&keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)" }
+		if !source.isEmpty { path += "&source=\(source)" }
+		return try await get(path)
+	}
+
+	func deleteMemory(id: String) async throws {
+		try await delete("/api/memories/\(id)")
+	}
+
+	func batchGetMemories(ids: [String]) async throws -> [UserMemory] {
+		return try await post("/api/memories/batch", body: ["ids": ids])
+	}
+
+	// MARK: Agents (P3)
+
+	func listAgents(limit: Int = 50) async throws -> [Agent] {
+		return try await get("/api/agents?limit=\(limit)")
+	}
+
+	func createAgent(name: String, systemPrompt: String) async throws -> Agent {
+		return try await post("/api/agents", body: ["name": name, "system_prompt": systemPrompt])
+	}
+
+	func updateAgent(id: String, name: String? = nil, systemPrompt: String? = nil) async throws -> Agent {
+		var body: [String: String] = [:]
+		if let n = name { body["name"] = n }
+		if let s = systemPrompt { body["system_prompt"] = s }
+		return try await patch("/api/agents/\(id)", body: body)
+	}
+
+	func deleteAgent(id: String) async throws {
+		try await delete("/api/agents/\(id)")
+	}
+
+	// MARK: Internal
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
         var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
@@ -58,6 +96,24 @@ class APIClient {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(body)
         _ = try await doRequest(req) as [String: String]
+    }
+
+    private func post<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {
+        var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await doRequest(req)
+    }
+
+    private func patch<T: Decodable>(_ path: String, body: [String: String]) async throws -> T {
+        var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        req.httpMethod = "PATCH"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONEncoder().encode(body)
+        return try await doRequest(req)
     }
 
     private func delete(_ path: String) async throws {
@@ -101,4 +157,44 @@ struct ImportResult: Codable {
     let skipped: Int
     let total: Int
     let errors: [String]?
+}
+
+// MARK: Memory model
+
+struct UserMemory: Identifiable, Codable {
+    let id: String
+    let userId: String
+    let memoryKey: String
+    let memoryValue: String
+    let source: String
+    let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case memoryKey = "memory_key"
+        case memoryValue = "memory_value"
+        case source
+        case createdAt = "created_at"
+    }
+}
+
+// MARK: Agent model
+
+struct Agent: Identifiable, Codable {
+    let id: String
+    let userId: String
+    let name: String
+    let systemPrompt: String
+    let model: String
+    let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case name
+        case systemPrompt = "system_prompt"
+        case model
+        case createdAt = "created_at"
+    }
 }

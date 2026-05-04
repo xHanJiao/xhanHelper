@@ -3,6 +3,7 @@ import SwiftUI
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var inputText = ""
+    let agentId: String?
 
     let baseURL: String
     let token: String
@@ -11,75 +12,33 @@ struct ChatView: View {
         ZStack {
             VStack(spacing: 0) {
             // 消息列表
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(viewModel.messages) { msg in
-                            if msg.role == "tool" {
-                                ChatBubble(text: msg.content, isUser: false, isTool: true)
-                            } else if msg.role == "user" {
-                                ChatBubble(text: msg.content, isUser: true)
-                            } else {
-                                ChatBubble(text: msg.content, isUser: false)
-                            }
-                        }
-
-                        if let thought = viewModel.thoughtMessage {
-                            HStack {
-                                Image(systemName: "lightbulb")
-                                    .font(.caption)
-                                    .foregroundColor(.yellow)
-                                Text(thought)
-                                    .font(.caption)
-                                    .italic()
-                                    .foregroundColor(.gray)
-                                Spacer()
-                            }
-                            .padding(.horizontal)
-                            .transition(.opacity)
-                        }
-
-                        if let status = viewModel.statusMessage {
-                            HStack {
-                                Image(systemName: "brain.head.profile")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Text(status)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                            }
-                            .padding(.horizontal)
-                            .transition(.opacity)
-                        }
-
-                        if viewModel.isStreaming {
-                            HStack {
-                                ProgressView().scaleEffect(0.6)
-                                Text("思考中...").font(.caption).foregroundColor(.secondary)
-                                Spacer()
-                            }
-                            .padding(.horizontal)
-                            .id("typing")
-                        }
-                    }
-                    .padding(.vertical)
-                }
-                .onChange(of: viewModel.messages.count) {
-                    if let last = viewModel.messages.last, last.id != "__streaming__" {
-                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                    }
-                }
-                .onChange(of: viewModel.messages.last?.content) {
-                    if let last = viewModel.messages.last {
-                        withAnimation { proxy.scrollTo(last.id, anchor: .top) }
-                    }
-                }
-            }
+            MessageListView(viewModel: viewModel)
 
             // 错误提示
             if let err = viewModel.errorMessage {
                 Text(err).font(.caption).foregroundColor(.red).padding(.horizontal)
+            }
+
+            // 记忆引用按钮
+            if let mids = viewModel.lastMemoryIDs, !mids.isEmpty {
+                Button {
+                    viewModel.showMemoryPopup = true
+                } label: {
+                    HStack {
+                        Image(systemName: "brain")
+                        Text("基于 \(mids.count) 条回忆")
+                            .font(.caption)
+                    }
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(12)
+                }
+                .padding(.horizontal)
+                .sheet(isPresented: $viewModel.showMemoryPopup) {
+                    MemoryPopupView(memoryIDs: mids, apiClient: APIClient(baseURL: baseURL, token: token))
+                }
             }
 
             // 输入栏
@@ -88,7 +47,7 @@ struct ChatView: View {
                 isStreaming: viewModel.isStreaming,
                 onSend: {
                     guard !inputText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                    viewModel.sendMessage(inputText, baseURL: baseURL, token: token)
+                    viewModel.sendMessage(inputText, baseURL: baseURL, token: token, agentId: agentId)
                     inputText = ""
                 },
                 onStop: {

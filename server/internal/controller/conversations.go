@@ -6,7 +6,7 @@ import (
 	"xhan-helper/internal/view"
 )
 
-func listConversations(convRepo *service.ConversationRepo) gin.HandlerFunc {
+func listConversations(convRepo *service.ConversationRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := c.GetString("user_id")
 		list, err := convRepo.ListByUser(c.Request.Context(), userID, 50)
@@ -14,7 +14,41 @@ func listConversations(convRepo *service.ConversationRepo) gin.HandlerFunc {
 			view.JSONError(c, 500, "query conversations failed")
 			return
 		}
-		view.JSONOK(c, list)
+
+		// 收集 agent_id，批量查名称
+		agentNames := make(map[string]string)
+		if agentRepo != nil {
+			var ids []string
+			for _, conv := range list {
+				if conv.AgentID != nil && *conv.AgentID != "" {
+					ids = append(ids, *conv.AgentID)
+				}
+			}
+			if len(ids) > 0 {
+				agents, _ := agentRepo.FindByIDs(c.Request.Context(), ids)
+				for _, a := range agents {
+					agentNames[a.ID] = a.Name
+				}
+			}
+		}
+
+		// 构建带 agent_name 的响应
+		result := make([]map[string]interface{}, len(list))
+		for i, conv := range list {
+			m := map[string]interface{}{
+				"id":         conv.ID,
+				"user_id":    conv.UserID,
+				"title":      conv.Title,
+				"agent_id":   conv.AgentID,
+				"created_at": conv.CreatedAt,
+				"updated_at": conv.UpdatedAt,
+			}
+			if conv.AgentID != nil && *conv.AgentID != "" {
+				m["agent_name"] = agentNames[*conv.AgentID]
+			}
+			result[i] = m
+		}
+		view.JSONOK(c, result)
 	}
 }
 

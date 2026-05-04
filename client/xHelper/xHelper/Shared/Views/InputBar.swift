@@ -15,6 +15,7 @@ struct InputBar: View {
             TextField("输入消息...", text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .focused($isFocused)
+                .submitLabel(.send)
                 .lineLimit(isExpanded ? 20 : 1)
                 .padding(.leading, 12)
                 .padding(.trailing, 28)
@@ -23,6 +24,12 @@ struct InputBar: View {
                 .background(Color.gray.opacity(0.1))
                 .cornerRadius(16)
                 .disabled(isStreaming)
+                .onChange(of: text) { _, newValue in
+                    if newValue.contains("\n"), !isStreaming, !isExpanded {
+                        text = newValue.replacingOccurrences(of: "\n", with: "")
+                        onSend()
+                    }
+                }
                 .overlay(alignment: isExpanded ? .topTrailing : .trailing) {
                     if !isStreaming, showExpandButton {
                         Button {

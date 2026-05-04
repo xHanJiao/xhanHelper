@@ -42,16 +42,18 @@ func main() {
 	sqlDB, _ := db.DB()
 	defer sqlDB.Close()
 
-	db.AutoMigrate(
-		&model.User{},
-		&model.UserToken{},
-		&model.Conversation{},
-		&model.Message{},
-		&model.Bill{},
-		&model.UserMemory{},
-		&model.ScheduledTask{},
-		&model.Note{},
-	)
+	if cfg.Server.Mode == "debug" {
+		db.AutoMigrate(
+			&model.User{},
+			&model.UserToken{},
+			&model.Conversation{},
+			&model.Message{},
+			&model.Bill{},
+			&model.UserMemory{},
+			&model.ScheduledTask{},
+			&model.Note{},
+		)
+	}
 
 	// LLM 客户端
 	llmClient, err := llm.NewClient(cfg.LLM)

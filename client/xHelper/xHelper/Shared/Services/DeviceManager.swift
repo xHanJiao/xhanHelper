@@ -55,7 +55,8 @@ class DeviceManager: ObservableObject {
 
         let (respData, resp) = try await URLSession.shared.data(for: req)
         guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
-            let msg = String(data: respData, encoding: .utf8) ?? "unknown"
+            let raw = String(data: respData, encoding: .utf8) ?? "unknown"
+            let msg = parseAuthError(raw)
             throw NSError(domain: "Auth", code: 401, userInfo: [NSLocalizedDescriptionKey: msg])
         }
         try saveAuthResponse(respData, username: username)
@@ -71,7 +72,8 @@ class DeviceManager: ObservableObject {
 
         let (respData, resp) = try await URLSession.shared.data(for: req)
         guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
-            let msg = String(data: respData, encoding: .utf8) ?? "unknown"
+            let raw = String(data: respData, encoding: .utf8) ?? "unknown"
+            let msg = parseAuthError(raw)
             throw NSError(domain: "Auth", code: 409, userInfo: [NSLocalizedDescriptionKey: msg])
         }
         try saveAuthResponse(respData, username: username)
@@ -87,6 +89,14 @@ class DeviceManager: ObservableObject {
         UserDefaults.standard.set(result.userId, forKey: userIdKey)
         UserDefaults.standard.set(username, forKey: usernameKey)
     }
+}
+
+private func parseAuthError(_ raw: String) -> String {
+    guard let data = raw.data(using: .utf8),
+          let obj = try? JSONDecoder().decode([String: String].self, from: data),
+          let err = obj["error"]
+    else { return raw }
+    return err
 }
 
 struct AuthResponse: Codable {

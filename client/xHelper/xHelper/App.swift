@@ -4,14 +4,44 @@ import UIKit
 @main
 struct xhanHelperApp: App {
     @StateObject private var deviceManager = DeviceManager()
+    @State private var isChecking = true
 
     var body: some Scene {
         WindowGroup {
-            if deviceManager.isLoggedIn {
+            if isChecking {
+                SplashView()
+                    .task {
+                        if deviceManager.isLoggedIn {
+                            let api = APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+                            do {
+                                _ = try await api.listConversations()
+                            } catch {
+                                await deviceManager.logout()
+                            }
+                        }
+                        try? await Task.sleep(nanoseconds: 600_000_000)
+                        isChecking = false
+                    }
+            } else if deviceManager.isLoggedIn {
                 ContentView(deviceManager: deviceManager)
             } else {
                 LoginView(deviceManager: deviceManager)
             }
+        }
+    }
+}
+
+struct SplashView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "bubble.left.and.bubble.right.fill")
+                .font(.system(size: 60))
+                .foregroundColor(.blue)
+            Text("xhanHelper")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+            ProgressView()
+                .padding(.top, 8)
         }
     }
 }

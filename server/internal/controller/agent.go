@@ -43,8 +43,8 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		view.JSONError(c, 400, "name required, max 50 chars")
 		return
 	}
-	if req.SystemPrompt == "" || len([]rune(req.SystemPrompt)) > 2000 {
-		view.JSONError(c, 400, "system_prompt required, max 2000 chars")
+	if req.SystemPrompt == "" || len([]rune(req.SystemPrompt)) > 3000 {
+		view.JSONError(c, 400, "system_prompt required, max 3000 chars")
 		return
 	}
 
@@ -125,8 +125,8 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 		existing.Name = *req.Name
 	}
 	if req.SystemPrompt != nil {
-		if *req.SystemPrompt == "" || len([]rune(*req.SystemPrompt)) > 2000 {
-			view.JSONError(c, 400, "system_prompt max 2000 chars")
+		if *req.SystemPrompt == "" || len([]rune(*req.SystemPrompt)) > 3000 {
+			view.JSONError(c, 400, "system_prompt max 3000 chars")
 			return
 		}
 		if nsfw, _ := h.checkNSFW(c.Request.Context(), *req.SystemPrompt); nsfw {

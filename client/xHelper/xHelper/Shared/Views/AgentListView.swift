@@ -120,9 +120,9 @@ private func agentForm(title: String, name: Binding<String>, prompt: Binding<Str
             Section("智能体设定") {
                 TextEditor(text: prompt)
                     .frame(minHeight: 150)
-                Text("\(prompt.wrappedValue.count)/2000")
+                Text("\(prompt.wrappedValue.count)/3000")
                     .font(.caption)
-                    .foregroundColor(prompt.wrappedValue.count > 2000 ? .red : .secondary)
+                    .foregroundColor(prompt.wrappedValue.count > 3000 ? .red : .secondary)
             }
         }
         .navigationTitle(title)
@@ -137,7 +137,7 @@ private func agentForm(title: String, name: Binding<String>, prompt: Binding<Str
                 }
                 .disabled(name.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty
                     || prompt.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty
-                    || prompt.wrappedValue.count > 2000)
+                    || prompt.wrappedValue.count > 3000)
             }
         }
     }

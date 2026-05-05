@@ -131,13 +131,13 @@ func (c *FlashClient) BuildSystemPrompt(base string, tools []ToolDefinition) str
 	if len(tools) == 0 {
 		return b.String()
 	}
-	b.WriteString("\n\n你可以使用以下函数（仅在必要时调用）：\n")
+	b.WriteString("\n\n你可以使用以下函数：\n")
 	for _, t := range tools {
 		for _, fn := range t.Functions {
 			b.WriteString(fmt.Sprintf("- %s: %s\n", fn.Name, fn.Description))
 		}
 	}
-	b.WriteString("\n当用户请求涉及记账、时间、计算等操作时，使用对应函数。不确定时直接反问用户。\n")
+	b.WriteString("\n当用户请求涉及可以使用函数的操作时，可以使用对应函数。不确定时直接反问用户。\n")
 	return b.String()
 }
 

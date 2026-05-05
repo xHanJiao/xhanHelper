@@ -90,6 +90,7 @@ func main() {
 	vectorStore := agent.NewVectorStore()
 
 	reg.Register(tool.NewNoteTool(noteRepo, vectorStore, embedder))
+	reg.Register(tool.NewAgentTool(agentRepo))
 
 	// 从 DB 加载动态工具
 	reg.SetDynamicLoader(toolRepo, cfg.Server.SidecarURL, toolRepo, toolRepo)

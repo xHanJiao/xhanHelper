@@ -109,7 +109,7 @@ func main() {
 	agentHandler := controller.NewAgentHandler(agentRepo, llmClient)
 
 	// Router
-	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, agentRepo, billHandler, noteHandler, memHandler, agentHandler)
+	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, agentRepo, billHandler, noteHandler, memHandler, agentHandler, memExtractor)
 
 	addr := ":" + strconv.Itoa(cfg.Server.Port)
 	srv := &http.Server{

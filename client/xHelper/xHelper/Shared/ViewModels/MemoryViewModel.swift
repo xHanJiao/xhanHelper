@@ -7,6 +7,8 @@ class MemoryViewModel: ObservableObject {
     @Published var memories: [UserMemory] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var isEditMode = false
+    @Published var selectedIDs: Set<String> = []
 
     private let apiClient: APIClient
     private var currentOffset = 0
@@ -52,6 +54,28 @@ class MemoryViewModel: ObservableObject {
         } catch {
             withAnimation { memories.append(removed) }
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func toggleSelection(_ id: String) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
+
+    func batchDelete() async {
+        let ids = Array(selectedIDs)
+        guard !ids.isEmpty else { return }
+        withAnimation { memories.removeAll { selectedIDs.contains($0.id) } }
+        isEditMode = false
+        selectedIDs = []
+        do {
+            try await apiClient.batchDeleteMemories(ids: ids)
+        } catch {
+            errorMessage = error.localizedDescription
+            await load()
         }
     }
 }

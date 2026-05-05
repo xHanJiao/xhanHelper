@@ -46,6 +46,14 @@ class ConversationListViewModel: ObservableObject {
         }
     }
 
+    func extractMemories(id: String) async {
+        do {
+            try await apiClient.extractMemoriesFromConversation(id: id)
+        } catch {
+            // 静默失败
+        }
+    }
+
     func delete(id: String) async {
         do {
             try await apiClient.deleteConversation(id: id)

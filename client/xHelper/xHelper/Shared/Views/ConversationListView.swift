@@ -47,6 +47,12 @@ struct ConversationListView: View {
                         }
                         .swipeActions(edge: .leading) {
                             Button {
+                                Task { await viewModel.extractMemories(id: conv.id) }
+                            } label: {
+                                Label("提取记忆", systemImage: "brain.head.profile")
+                            }
+                            .tint(.purple)
+                            Button {
                                 renameTarget = conv
                                 renameText = conv.title
                             } label: {

@@ -69,6 +69,11 @@ func (r *UserMemoryRepo) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Delete(&model.UserMemory{}, "id = ?", id).Error
 }
 
+// BatchDelete 批量删除记忆（按 ID + 用户过滤）
+func (r *UserMemoryRepo) BatchDelete(ctx context.Context, ids []string, userID string) error {
+	return r.db.WithContext(ctx).Where("id IN ? AND user_id = ?", ids, userID).Delete(&model.UserMemory{}).Error
+}
+
 // UpdateEmbedding 更新记忆的向量字段
 func (r *UserMemoryRepo) UpdateEmbedding(ctx context.Context, id string, embedding *string) error {
 	return r.db.WithContext(ctx).Model(&model.UserMemory{}).Where("id = ?", id).

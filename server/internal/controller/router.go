@@ -14,7 +14,7 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 	userRepo *service.UserRepo, convRepo *service.ConversationRepo,
 	msgRepo *service.MessageRepo, agentRepo *service.AgentRepo,
 	billHandler *BillHandler, noteHandler *NoteHandler,
-	memHandler *MemoryHandler, agentHandler *AgentHandler) *gin.Engine {
+	memHandler *MemoryHandler, agentHandler *AgentHandler, memExtr *agent.MemoryExtractor) *gin.Engine {
 
 	r := gin.Default()
 
@@ -39,6 +39,7 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 		auth.GET("/conversations/:id/messages", getMessages(convRepo, msgRepo))
 		auth.PATCH("/conversations/:id", renameConversation(convRepo))
 		auth.DELETE("/conversations/:id", deleteConversation(convRepo))
+		auth.POST("/conversations/:id/extract-memories", extractMemories(convRepo, memExtr))
 		auth.GET("/bills", billHandler.ListBills)
 		auth.GET("/bills/export", billHandler.ExportBills)
 		auth.POST("/bills/import", billHandler.ImportBills)
@@ -47,6 +48,7 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 		auth.GET("/memories", memHandler.ListMemories)
 		auth.DELETE("/memories/:id", memHandler.DeleteMemory)
 		auth.POST("/memories/batch", memHandler.BatchGetMemories)
+		auth.POST("/memories/batch-delete", memHandler.BatchDeleteMemories)
 		auth.POST("/agents", agentHandler.CreateAgent)
 		auth.GET("/agents", agentHandler.ListAgents)
 		auth.GET("/agents/:id", agentHandler.GetAgent)

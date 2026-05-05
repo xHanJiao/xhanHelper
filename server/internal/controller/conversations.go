@@ -1,7 +1,11 @@
 package controller
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
+
+	"xhan-helper/internal/agent"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
@@ -115,5 +119,21 @@ func deleteConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 			return
 		}
 		view.JSONOK(c, gin.H{"status": "deleted"})
+	}
+}
+
+func extractMemories(convRepo *service.ConversationRepo, extractor *agent.MemoryExtractor) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		convID := c.Param("id")
+		if !requireConversationOwner(c, convRepo, convID) {
+			return
+		}
+		conv, _ := convRepo.FindByID(c.Request.Context(), convID)
+		if conv == nil {
+			view.JSONError(c, 404, "conversation not found")
+			return
+		}
+		go extractor.ExtractFromConversation(context.Background(), conv)
+		view.JSONOK(c, gin.H{"status": "extracting"})
 	}
 }

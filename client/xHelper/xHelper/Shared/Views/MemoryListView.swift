@@ -13,24 +13,37 @@ struct MemoryListView: View {
                     .foregroundColor(.secondary)
             } else {
                 ForEach(viewModel.memories) { mem in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(mem.memoryValue)
-                            .font(.body)
-                            .lineLimit(2)
-                            .foregroundColor(.secondary)
-                        HStack {
-                            Text(mem.source)
-                                .font(.caption2)
+                    HStack {
+                        if viewModel.isEditMode {
+                            Image(systemName: viewModel.selectedIDs.contains(mem.id) ? "checkmark.circle.fill" : "circle")
+                                .foregroundColor(viewModel.selectedIDs.contains(mem.id) ? .blue : .secondary)
+                                .font(.title3)
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(mem.memoryValue)
+                                .font(.body)
+                                .lineLimit(2)
                                 .foregroundColor(.secondary)
-                            Spacer()
-                            Text(formatMemoryDate(mem.createdAt))
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
+                            HStack {
+                                Text(mem.source)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text(formatMemoryDate(mem.createdAt))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                     .padding(.vertical, 4)
                     .contentShape(Rectangle())
-                    .onTapGesture { selectedMemory = mem }
+                    .onTapGesture {
+                        if viewModel.isEditMode {
+                            viewModel.toggleSelection(mem.id)
+                        } else {
+                            selectedMemory = mem
+                        }
+                    }
                     .onAppear {
                         if mem.id == viewModel.memories.last?.id {
                             Task { await viewModel.loadMore() }
@@ -54,6 +67,26 @@ struct MemoryListView: View {
         .refreshable { await viewModel.load() }
         .task { await viewModel.load() }
         .navigationTitle("记忆")
+        .toolbar {
+            if viewModel.isEditMode {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        viewModel.isEditMode = false
+                        viewModel.selectedIDs = []
+                    }
+                }
+                ToolbarItem(placement: .destructiveAction) {
+                    Button("删除(\(viewModel.selectedIDs.count))") {
+                        Task { await viewModel.batchDelete() }
+                    }
+                    .disabled(viewModel.selectedIDs.isEmpty)
+                }
+            } else {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("选择") { viewModel.isEditMode = true }
+                }
+            }
+        }
         .alert("操作失败", isPresented: .init(get: { viewModel.errorMessage != nil }, set: { if !$0 { viewModel.errorMessage = nil } })) {
             Button("确定") {}
         } message: {

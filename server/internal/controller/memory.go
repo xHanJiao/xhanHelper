@@ -56,6 +56,25 @@ func (h *MemoryHandler) DeleteMemory(c *gin.Context) {
 	view.JSONOK(c, gin.H{"deleted": true})
 }
 
+// BatchDeleteMemories POST /api/memories/batch-delete
+func (h *MemoryHandler) BatchDeleteMemories(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 {
+		view.JSONError(c, 400, "ids required")
+		return
+	}
+
+	if err := h.memRepo.BatchDelete(c.Request.Context(), req.IDs, userID); err != nil {
+		view.JSONError(c, 500, "batch delete failed")
+		return
+	}
+	view.JSONOK(c, gin.H{"deleted": len(req.IDs)})
+}
+
 // BatchGetMemories POST /api/memories/batch
 func (h *MemoryHandler) BatchGetMemories(c *gin.Context) {
 	userID := c.GetString("user_id")

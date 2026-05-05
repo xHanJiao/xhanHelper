@@ -20,30 +20,61 @@
 ## 整体架构
 
 ```
-┌─────────────────────────────────────────────────┐
-│                    Go 服务                        │
-│                                                   │
-│  orchestrator → tool.Registry(DB) → 查 schema     │
-│              → tool_data(DB)    → 查缓存(input_hash)│
-│              → os/exec stdio   → 调用 sidecar     │
-│              → tool_data(DB)   → 写结果           │
-│                                                   │
-│  ┌─────────────┐     ┌──────────────┐             │
-│  │  prod.py    │     │ validate.py  │             │
-│  │  (长连接)   │     │  (按需启动)  │             │
-│  │  MCP/stdio  │     │  MCP/stdio   │             │
-│  └─────────────┘     └──────────────┘             │
-│       │                    │                      │
-│  tools/prod/         tools/validate/              │
-│  (审阅过的脚本)      (待验证脚本，每次只跑一个)    │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                    Go 服务                            │
+│                                                       │
+│  orchestrator → tool.Registry(DB) → 查 schema         │
+│              → tool_data(DB)      → 查缓存(input_hash)│
+│              → http.Post(:9090)   → 调用 sidecar      │
+│              → tool_data(DB)      → 写结果            │
+│                                                       │
+│  ┌─────────────────┐   ┌────────────────┐             │
+│  │  prod.py        │   │ validate.py    │             │
+│  │  (常驻)         │   │  (按需启动)    │             │
+│  │  MCP HTTP :9090 │   │  MCP HTTP :9091│             │
+│  └─────────────────┘   └────────────────┘             │
+│       │                      │                        │
+│  tools/prod/           tools/validate/                │
+│  (审阅过的脚本)        (待验证脚本，每次只跑一个)      │
+└─────────────────────────────────────────────────────┘
 ```
 
-### 为什么用 Python + MCP 协议
+### 通信方式：MCP Streamable HTTP
 
-- **Python**：解释型语言，可以热加载（`importlib.reload`），Go 不需要重启
-- **MCP 协议**：基于 stdio 的 JSON-RPC，Go 通过 `os/exec` 启动子进程，管道通信。无需网络端口、无需 Docker
-- **安全**：子进程跑在独立工作目录，无法访问 `.env`、数据库文件、其他用户数据。超时 30s + 内存限制 256MB
+最终选择 **HTTP** 而非 stdio，原因：
+- orchestrator 已支持 `executeConcurrently` 并发执行工具
+- stdio 是单工通道，多 goroutine 需排队，成为瓶颈
+- HTTP 天然支持并发，每个 goroutine 独立发请求
+
+Python sidecar 使用 [MCP Streamable HTTP](https://spec.modelcontextprotocol.io/specification/2025-03-26/basic/transports/#streamable-http) 传输模式：
+
+```
+Python sidecar: 监听 127.0.0.1:9090
+  POST /mcp  {"jsonrpc":"2.0","method":"tools/call","params":{...}}
+  ← 完全符合 MCP 协议
+  ← HTTP 天然支持并发
+  ← 未来开源 MCP server 可直接接入，零转换
+```
+
+Go 侧 `http.Post("http://127.0.0.1:9090/mcp", ...)`，端口只绑 127.0.0.1，外网无法访问。
+
+### 部署方式：systemd 管理，两服务并列
+
+Go 不需要管理 Python 进程。两个服务由 systemd 并列管理：
+
+```
+systemd:
+  xhan-helper.service      (Go, :8088)
+  xhan-sidecar-prod.service (Python, :9090, 常驻)
+  xhan-sidecar-val.service  (Python, :9091, 按需启停)
+```
+
+Go 只管通过 HTTP 调用 sidecar，不关心进程死活（systemd 负责重启）。
+
+### 为什么用 Python
+
+- **解释型语言**：可以热加载（`importlib.reload`），无需重启
+- **独立进程**：systemd 隔离工作目录，无法访问 `.env`、数据库文件
 
 ### 为什么不用 Docker
 
@@ -62,16 +93,30 @@ CREATE TABLE tool_registry (
     description TEXT NOT NULL,                      -- 工具描述
     schema_json JSON NOT NULL,                      -- 函数定义数组 [{"name":"get_weather","description":"...","parameters":{...}}]
     script_path VARCHAR(500) NOT NULL DEFAULT '',   -- Python 脚本路径 (如 "tools/prod/weather.py")
-    enabled     TINYINT(1) NOT NULL DEFAULT 1,     -- 是否启用
+    status      VARCHAR(20) NOT NULL DEFAULT 'draft', -- draft / active / disabled / retired
     user_id     VARCHAR(36) NOT NULL,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY idx_name (name),
-    KEY idx_user (user_id)
+    KEY idx_user (user_id),
+    KEY idx_status (status)
 );
 ```
 
-Go 侧定期（30s TTL 缓存）或按需从 DB 读取 `enabled=1` 的工具，构造 `[]ToolDefinition` 传给 LLM。
+### 状态流转
+
+```
+draft → active → disabled → active  (可反复启用/禁用)
+  │                 │
+  └──→ retired ←────┘
+```
+
+- **draft**：新创建，待审阅，不可被 LLM 调用
+- **active**：审阅通过，LLM 可见可调用
+- **disabled**：临时关闭（如发现 bug），LLM 不可见
+- **retired**：永久废弃，不可恢复
+
+Go 侧定期（30s TTL 缓存）从 DB 读取 `status='active'` 的工具。
 
 ### tool_data — 调用记录（每次调用一条，支持缓存）
 
@@ -177,6 +222,229 @@ LLM 自主:
   1. LLM 提议新工具 → 调用外部 CLI（claude-code / opencode）生成代码
   2. 自动放入 tools/validate/ → 自动试运行
   3. 结果报告给用户 → 用户一键审阅通过 → 自动迁移到 prod
+```
+
+---
+
+## Go 实现计划（Phase 4 第一步）
+
+### 新增文件
+
+| 文件 | 说明 |
+|------|------|
+| `model/tool_registry.go` | `ToolRegistry` + `ToolData` 结构体 |
+| `service/tool_repo.go` | tool_registry 的 CRUD + tool_data 的缓存查找/写入 |
+| `controller/tools.go` | 管理 API：注册/列表/删除工具 |
+| `tools/prod/sidecar.py` | 生产 sidecar — MCP HTTP server，热加载工具脚本 |
+
+### 改动既有文件
+
+| 文件 | 改动 |
+|------|------|
+| `migrations/001_init.sql` | 加 `tool_registry` + `tool_data` 表 |
+| `tool/registry.go` | `GetLLMTools()` 合并 DB 动态工具 |
+| `tool/tool.go` | 加 `DynamicTool` 实现 `Tool` 接口，Execute 调 HTTP sidecar |
+| `orchestrator.go` | 工具执行前查 `tool_data` 的 `input_hash` 缓存 |
+| `router.go` | 注册 tools API |
+
+### 工具调用完整流程
+
+```
+1. LLM 返回 tool_call
+2. orchestrator 解析 → executeConcurrently (goroutine pool)
+3. 每个 goroutine:
+   a. MD5(args) → 查 tool_data.input_hash
+      → 命中 + cached=1 → 直接返回 output_json
+   b. 未命中:
+      → 组装 MCP JSON-RPC 请求
+      → http.Post("http://127.0.0.1:9090/mcp", jsonBody)
+      → 30s 超时
+      → 写 tool_data (input + output + hash + cached flag)
+   c. 结果返回 LLM
+```
+
+### 管理 API
+
+```
+POST   /api/tools              — 注册新工具 (INSERT tool_registry, status=draft)
+GET    /api/tools?status=active — 工具列表，支持按状态筛选
+GET    /api/tools/:id           — 工具详情
+PATCH  /api/tools/:id           — 更新注册信息（名称/schema/script_path/status）
+DELETE /api/tools/:id           — 删除注册
+POST   /api/tools/:id/reload    — 通知 sidecar 热重载
+```
+
+---
+
+---
+
+## Python 侧设计
+
+### 目录结构
+
+```
+tools/
+├── prod/                      # 生产环境
+│   ├── sidecar.py             # MCP HTTP server 主进程
+│   ├── tools/                 # 工具脚本目录
+│   │   ├── __init__.py
+│   │   ├── base.py            # Tool 基类 + 装饰器
+│   │   └── calculator.py      # 示例：计算器
+│   ├── requirements.txt
+│   └── venv/
+├── validate/                  # 验证环境（结构同 prod）
+│   ├── sidecar.py
+│   └── tools/
+└── systemd/
+    ├── xhan-sidecar-prod.service
+    └── xhan-sidecar-val.service
+```
+
+### sidecar.py — MCP HTTP Server
+
+核心职责：监听 `POST /mcp`，解析 JSON-RPC 请求，路由到对应工具执行。
+
+```python
+# tools/prod/sidecar.py
+from flask import Flask, request, jsonify
+from tools.loader import ToolLoader
+
+app = Flask(__name__)
+loader = ToolLoader("tools/prod/tools")  # 加载所有工具
+loader.watch()                            # 启动文件监控，自动热重载
+
+@app.post("/mcp")
+def handle_mcp():
+    body = request.get_json()
+    # body: {"jsonrpc":"2.0","id":"1","method":"tools/call","params":{...}}
+    if body.get("method") == "tools/list":
+        return jsonify(loader.list_tools())
+    if body.get("method") == "tools/call":
+        result = loader.execute(body["params"])
+        return jsonify({"jsonrpc":"2.0","id":body["id"],"result":result})
+    # 其他 MCP 方法: initialize, ping 等
+
+@app.post("/reload")
+def reload():
+    loader.reload()
+    return jsonify({"ok": True})
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=9090)
+```
+
+### Tool 基类 — tools/base.py
+
+每个工具文件定义一个类，继承 `BaseTool`：
+
+```python
+# tools/prod/tools/base.py
+import json
+from typing import Any
+
+class ToolResult:
+    def __init__(self, success: bool, data: Any = None, error: str = None):
+        self.success = success
+        self.data = data
+        self.error = error
+
+class BaseTool:
+    name: str = ""            # 工具名
+    description: str = ""     # 工具描述
+
+    def functions(self) -> list[dict]:
+        """返回函数 schema 列表"""
+        raise NotImplementedError
+
+    def execute(self, func_name: str, args: dict) -> ToolResult:
+        """执行指定函数"""
+        raise NotImplementedError
+```
+
+### 示例工具 — tools/calculator.py
+
+```python
+# tools/prod/tools/calculator.py
+from .base import BaseTool, ToolResult
+
+class CalculatorTool(BaseTool):
+    name = "calculator"
+    description = "数学计算工具"
+
+    def functions(self):
+        return [{
+            "name": "evaluate",
+            "description": "计算数学表达式",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expression": {"type": "string", "description": "数学表达式"}
+                },
+                "required": ["expression"]
+            }
+        }]
+
+    def execute(self, func_name, args):
+        if func_name == "evaluate":
+            try:
+                result = eval(args["expression"], {"__builtins__": {}}, {})
+                return ToolResult(success=True, data={"result": result})
+            except Exception as e:
+                return ToolResult(success=False, error=str(e))
+        return ToolResult(success=False, error=f"unknown function: {func_name}")
+```
+
+### ToolLoader — 动态加载 + 热重载
+
+```python
+# tools/prod/tools/loader.py
+import importlib, os, time, threading
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+
+class ToolLoader:
+    def __init__(self, tools_dir):
+        self.dir = tools_dir
+        self.tools = {}
+        self._load_all()
+
+    def _load_all(self):
+        for f in os.listdir(self.dir):
+            if f.endswith(".py") and not f.startswith("_"):
+                mod = importlib.import_module(f"tools.{f[:-3]}")
+                for attr in dir(mod):
+                    obj = getattr(mod, attr)
+                    if isinstance(obj, type) and issubclass(obj, BaseTool) and obj != BaseTool:
+                        inst = obj()
+                        self.tools[inst.name] = inst
+
+    def reload(self):
+        self.tools = {}
+        self._load_all()
+
+    def list_tools(self):
+        return [{"name": t.name, "functions": t.functions()} for t in self.tools.values()]
+
+    def execute(self, params):
+        tool = self.tools.get(params["tool"])
+        if not tool:
+            return {"success": False, "error": f"unknown tool: {params['tool']}"}
+        r = tool.execute(params["function"], params.get("args", {}))
+        return {"success": r.success, "data": r.data, "error": r.error}
+
+    def watch(self):
+        # watchdog 监控文件变更，自动调用 reload()
+        ...
+```
+
+### 新增工具的流程
+
+```
+1. 写一个 <tool_name>.py，继承 BaseTool，实现 functions() + execute()
+2. 放入 tools/prod/tools/
+3. POST /reload 或等待文件监控自动重载
+4. 在 tool_registry 表中 INSERT 一条记录（status='draft'）
+5. 审阅通过 → status='active' → LLM 可调用
 ```
 
 ---

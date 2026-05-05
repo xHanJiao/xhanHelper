@@ -77,6 +77,8 @@ struct AgentListView: View {
                             .font(.title2.weight(.semibold))
                         Markdown(agent.systemPrompt)
                             .markdownTheme(.gitHub)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .markdownCodeSyntaxHighlighter(.plainText)
                     }
                     .padding()
                 }

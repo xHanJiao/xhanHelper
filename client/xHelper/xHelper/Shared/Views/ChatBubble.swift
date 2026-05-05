@@ -15,12 +15,15 @@ struct ChatBubble: View {
             } else if isUser {
                 Text(text)
                     .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14).padding(.vertical, 10)
                     .background(Color.blue).foregroundColor(.white).cornerRadius(18)
                     .contextMenu { copyButton }
             } else {
                 Markdown(text)
                     .markdownTheme(.gitHub)
+                    .markdownCodeSyntaxHighlighter(.plainText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14).padding(.vertical, 10)
                     .background(Color.gray.opacity(0.15))
                     .cornerRadius(18)
@@ -53,7 +56,7 @@ struct ChatBubble: View {
         HStack(spacing: 6) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.caption).foregroundColor(.green)
-            Text(text).font(.caption).foregroundColor(.secondary)
+            Text(text).font(.caption).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
             Spacer()
         }
         .padding(.horizontal, 12).padding(.vertical, 8)

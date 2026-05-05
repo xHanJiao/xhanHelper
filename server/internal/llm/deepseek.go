@@ -226,7 +226,7 @@ func NewProClient(cfg config.LLMConfig, model string) *ProClient {
 		baseClient: &baseClient{
 			apiKey:     cfg.APIKey,
 			baseURL:    cfg.BaseURL,
-			httpClient: &http.Client{Timeout: 180 * time.Second},
+			httpClient: &http.Client{Timeout: 600 * time.Second},
 		},
 		model: model,
 	}

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AgentListView: View {
     @StateObject var viewModel: AgentViewModel
+    @State private var selectedAgent: Agent?
 
     @State private var editName = ""
     @State private var editPrompt = ""
@@ -36,6 +37,8 @@ struct AgentListView: View {
                         .buttonStyle(.plain)
                     }
                     .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                    .onTapGesture { selectedAgent = agent }
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) {
                             Task { await viewModel.delete(id: agent.id) }
@@ -68,6 +71,21 @@ struct AgentListView: View {
         .onChange(of: viewModel.showCreateSheet) { _, new in if !new { createName = ""; createPrompt = "" } }
         .onChange(of: viewModel.editingAgent?.id) { _, _ in
             if viewModel.editingAgent == nil { editName = ""; editPrompt = "" }
+        }
+        .sheet(item: $selectedAgent) { agent in
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(agent.name)
+                            .font(.title2.weight(.semibold))
+                        Text(agent.systemPrompt)
+                            .font(.body)
+                    }
+                    .padding()
+                }
+                .navigationTitle("智能体详情")
+                .navigationBarTitleDisplayMode(.inline)
+            }
         }
         .sheet(isPresented: $viewModel.showCreateSheet) {
             agentForm(title: "创建智能体", name: $createName, prompt: $createPrompt,

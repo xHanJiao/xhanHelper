@@ -210,6 +210,22 @@ assert "导入成功 imported > 0" '"imported":13' "$IMPORT_RESULT"
 sleep 2
 echo "  (记忆提取已触发)"
 
+# ── 提取记忆 API 测试 ──
+echo ""
+echo "【16b】提取记忆 — 从会话提取"
+EXTRACT_RESP=$(curl -s -X POST "$BASE_URL/api/conversations/$CONV_ID/extract-memories" \
+    -H "Authorization: Bearer $TOKEN")
+assert "提取请求已接受" "extracting" "$EXTRACT_RESP"
+echo "  (提取中，等待 LLM 处理...)"
+sleep 5
+
+echo ""
+echo "【16c】提取记忆 — 验证结果"
+MEMORIES=$(curl -s "$BASE_URL/api/memories?limit=10&source=conversation" \
+    -H "Authorization: Bearer $TOKEN")
+assert "存在记忆记录" "memory_value" "$MEMORIES"
+# 检查 raw_json 字段
+
 # ── 14. 导入后确认总数 ──
 echo ""
 echo "【17/26】REST API — 导入后账单总数"

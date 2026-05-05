@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -40,6 +41,15 @@ func NewMemoryExtractor(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo
 	}
 }
 
+type extractResult struct {
+	Summary string   `json:"summary"`
+	Facts   []string `json:"facts,omitempty"`
+}
+
+const extractSystemPrompt = "你是记忆提取助手。从对话中归纳出关于用户的有价值的洞察。合并同类信息，提炼规律和偏好，不要逐条罗列原始数据。如果信息不足以归纳就回复\"无\"。请只输出 JSON 格式。"
+
+const extractPromptPrefix = "从以下对话中归纳关于用户的事实、偏好、习惯。合并同类信息，提炼出有价值的洞察（如消费水平、周期规律、分类偏好），不要逐条复述原始消息。如果没有值得提取的信息就回复\"无\"。\n请严格按以下 JSON 格式输出，不要包含其他内容：\n{\"summary\":\"一句话概括\",\"facts\":[\"支持细节1\",\"支持细节2\"]}"
+
 // ExtractFromConversation 从指定会话中增量提取记忆
 func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *model.Conversation) error {
 	var msgs []model.Message
@@ -58,12 +68,11 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, m.Content))
 	}
 
-	prompt := "从以下对话中提取关于用户的事实、偏好、习惯。每条一行纯文本，不要使用 markdown 标题（如 **xxx**）或列表符号（如 - xxx）。如果没有值得提取的信息就回复\"无\"。不要编造。"
-	prompt += "\n\n" + sb.String()
+	prompt := extractPromptPrefix + "\n\n" + sb.String()
 	promptHash := hashPrompt(prompt)
 
 	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: "你是记忆提取助手。只提取用户明确表达的事实、偏好、习惯。不确定的不提取。每条一行纯文本输出，不使用 markdown 格式。每一行都必须是提取到的记忆信息，标题、分类等信息不需要返回",
+		SystemPrompt: extractSystemPrompt,
 		Messages:     []llm.Message{{Role: "user", Content: prompt}},
 	})
 	if err != nil {
@@ -71,55 +80,51 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 	}
 
 	lastMsg := msgs[len(msgs)-1]
-	text := strings.TrimSpace(msg.Content)
-	if text == "无" || text == "" {
+	result := parseExtractResult(msg.Content)
+	if result == nil || result.Summary == "" {
 		e.updateProgress(ctx, conv, lastMsg.ID)
 		return nil
 	}
 
-	extracted := 0
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || line == "无" {
-			continue
-		}
-		line = strings.TrimLeft(line, "0123456789. -•·")
-
-		if e.isDuplicate(ctx, conv.UserID, line) {
-			continue
-		}
-
-		memory := &model.UserMemory{
-			ID:              uuid.New().String(),
-			UserID:          conv.UserID,
-			MemoryKey:       truncate(line, 50),
-			MemoryValue:     line,
-			Source:          "conversation",
-			ConfirmCount:    1,
-			LastConfirmedAt: time.Now(),
-			ExtractPrompt:   &prompt,
-			PromptHash:      promptHash,
-			ContentHash:     hashPrompt(line),
-		}
-		e.storeMemory(memory)
-		extracted++
+	if e.isDuplicate(ctx, conv.UserID, result.Summary) {
+		e.updateProgress(ctx, conv, lastMsg.ID)
+		return nil
 	}
 
-	log.Printf("[memory] extracted %d memories from conv %s", extracted, conv.ID[:8])
+	rawJSON, _ := json.Marshal(result)
+	rawStr := string(rawJSON)
+	memory := &model.UserMemory{
+		ID:              uuid.New().String(),
+		UserID:          conv.UserID,
+		MemoryKey:       truncate(result.Summary, 50),
+		MemoryValue:     result.Summary,
+		RawJSON:         &rawStr,
+		Source:          "conversation",
+		ConfirmCount:    1,
+		LastConfirmedAt: time.Now(),
+		ExtractPrompt:   &prompt,
+		PromptHash:      promptHash,
+		ContentHash:     hashPrompt(result.Summary),
+	}
+	e.storeMemory(memory)
+
+	log.Printf("[memory] extracted memory from conv %s: %s", conv.ID[:8], truncate(result.Summary, 80))
 	e.updateProgress(ctx, conv, lastMsg.ID)
 	return nil
 }
 
 // ExtractFromPrompt 从任意文本中提取记忆（CSV 导入等场景）
-func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, prompt, source string) {
-	promptHash := hashPrompt(prompt)
+func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, promptText, source string) {
+	promptHash := hashPrompt(promptText)
 	if existing, _ := e.memRepo.FindByPromptHash(ctx, userID, promptHash); existing != nil {
 		log.Printf("[memory] prompt hash matched, skip extraction (source=%s)", source)
 		return
 	}
 
+	prompt := extractPromptPrefix + "\n\n" + promptText
+
 	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: "你是记忆提取助手。只提取明确的事实、偏好、规律。不确定的不提取。每条一行纯文本输出，不使用 markdown 格式。",
+		SystemPrompt: extractSystemPrompt,
 		Messages:     []llm.Message{{Role: "user", Content: prompt}},
 	})
 	if err != nil {
@@ -127,42 +132,54 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, prompt,
 		return
 	}
 
-	text := strings.TrimSpace(msg.Content)
-	if text == "无" || text == "" {
+	result := parseExtractResult(msg.Content)
+	if result == nil || result.Summary == "" {
+		return
+	}
+	if e.isDuplicate(ctx, userID, result.Summary) {
 		return
 	}
 
-	extracted := 0
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || line == "无" {
-			continue
-		}
-		line = strings.TrimLeft(line, "0123456789. -•·")
-
-		if e.isDuplicate(ctx, userID, line) {
-			continue
-		}
-
-		memory := &model.UserMemory{
-			ID:              uuid.New().String(),
-			UserID:          userID,
-			MemoryKey:       truncate(line, 50),
-			MemoryValue:     line,
-			Source:          source,
-			ConfirmCount:    1,
-			LastConfirmedAt: time.Now(),
-			ExtractPrompt:   &prompt,
-			PromptHash:      promptHash,
-			ContentHash:     hashPrompt(line),
-		}
-		e.storeMemory(memory)
-		extracted++
+	rawJSON, _ := json.Marshal(result)
+	rawStr := string(rawJSON)
+	memory := &model.UserMemory{
+		ID:              uuid.New().String(),
+		UserID:          userID,
+		MemoryKey:       truncate(result.Summary, 50),
+		MemoryValue:     result.Summary,
+		RawJSON:         &rawStr,
+		Source:          source,
+		ConfirmCount:    1,
+		LastConfirmedAt: time.Now(),
+		ExtractPrompt:   &prompt,
+		PromptHash:      promptHash,
+		ContentHash:     hashPrompt(result.Summary),
 	}
-	log.Printf("[memory] extracted %d memories from prompt (source=%s)", extracted, source)
+	e.storeMemory(memory)
+
+	log.Printf("[memory] extracted memory from prompt (source=%s): %s", source, truncate(result.Summary, 80))
 }
 
-// isDuplicate 用向量相似度判断记忆是否重复
+// parseExtractResult 从 LLM 回复中解析 JSON
+func parseExtractResult(text string) *extractResult {
+	cleaned := strings.TrimSpace(text)
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+
+	start := strings.Index(cleaned, "{")
+	if start < 0 {
+		return nil
+	}
+
+	var result extractResult
+	if err := json.Unmarshal([]byte(cleaned[start:]), &result); err != nil {
+		return nil
+	}
+	return &result
+}
+
 func (e *MemoryExtractor) isDuplicate(ctx context.Context, userID, text string) bool {
 	if e.vectorStore == nil || e.embedder == nil {
 		return false
@@ -182,7 +199,6 @@ func (e *MemoryExtractor) isDuplicate(ctx context.Context, userID, text string) 
 	return false
 }
 
-// storeMemory 写入 DB 并异步嵌入向量
 func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
 	if err := e.memRepo.Create(context.Background(), memory); err != nil {
 		log.Printf("[memory] create error: %v", err)

@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS user_memories (
     source            VARCHAR(20)  NOT NULL DEFAULT 'conversation',
     confirm_count     INT          NOT NULL DEFAULT 1,
     last_confirmed_at DATETIME     NULL,
+    raw_json         TEXT         NULL,
     embedding         TEXT         NULL,
     created_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

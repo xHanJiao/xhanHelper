@@ -32,7 +32,10 @@ struct ContentView: View {
                 AgentListView(viewModel: agentVM)
                     .onAppear {
                         agentVM.onChatWithAgent = { agentID in
-                            pendingAgentID = agentID
+                            pendingAgentID = nil
+                            DispatchQueue.main.async {
+                                pendingAgentID = agentID
+                            }
                             selectedTab = "chat"
                         }
                     }

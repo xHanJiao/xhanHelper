@@ -143,7 +143,7 @@ class APIClient {
         var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
         req.httpMethod = "DELETE"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        _ = try await doRequest(req) as [String: String]
+        _ = try await doRequest(req) as [String: Bool]
     }
 
     @discardableResult

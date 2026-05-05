@@ -3,6 +3,7 @@ import SwiftUI
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var inputText = ""
+    @State private var isInputExpanded = false
     let agentId: String?
 
     let baseURL: String
@@ -49,10 +50,12 @@ struct ChatView: View {
                     guard !inputText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
                     viewModel.sendMessage(inputText, baseURL: baseURL, token: token, agentId: agentId)
                     inputText = ""
+                    isInputExpanded = false
                 },
                 onStop: {
                     viewModel.stopStreaming()
-                }
+                },
+                isExpanded: $isInputExpanded
             )
         }
         .toolbar {

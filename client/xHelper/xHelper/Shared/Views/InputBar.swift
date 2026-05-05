@@ -6,7 +6,7 @@ struct InputBar: View {
     let onSend: () -> Void
     let onStop: () -> Void
 
-    @State private var isExpanded = false
+    @Binding var isExpanded: Bool
     @State private var showExpandButton = true
     @FocusState private var isFocused: Bool
 
@@ -35,7 +35,7 @@ struct InputBar: View {
                         Button {
                             showExpandButton = false
                             withAnimation(.easeInOut(duration: 0.2)) {
-                                isExpanded.toggle()
+                                isExpanded = !isExpanded
                                 if isExpanded { isFocused = true }
                             }
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {

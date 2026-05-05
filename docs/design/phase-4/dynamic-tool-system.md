@@ -437,6 +437,24 @@ class ToolLoader:
         ...
 ```
 
+### 职责边界
+
+```
+Python 侧（全部隔离逻辑）
+  ├── 接收工具脚本上传
+  ├── validate sidecar 试运行
+  ├── 审阅通过 → 移动脚本 validate→prod
+  ├── 通知 prod sidecar reload
+  └── 更新 DB tool_registry.status = 'active'
+
+Go 侧（不感知隔离）
+  ├── GET /api/tools → 管理 DB 记录
+  ├── GetLLMTools() → 拉取 status=active 的工具给 LLM
+  └── DynamicTool.Execute → HTTP 调 prod sidecar 执行
+```
+
+Go 不关心脚本在哪个目录、怎么迁移。未来这个迁移逻辑可以拆成独立微服务。
+
 ### 新增工具的流程
 
 ```

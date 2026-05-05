@@ -100,7 +100,7 @@ func main() {
 	// Memory Scheduler (后台异步)
 	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo)
 	memScheduler := agent.NewMemoryScheduler(memExtractor, convRepo)
-	go memScheduler.Start(bgCtx)
+	go memScheduler.Start(bgCtx, cfg.Server.MemoryAutoExtract)
 
 	// Handlers
 	billHandler := controller.NewBillHandler(billRepo, memExtractor)

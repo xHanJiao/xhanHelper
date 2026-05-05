@@ -21,3 +21,4 @@ embedding:
   api_key: ${EMBEDDING_API_KEY}
   base_url: https://ark.cn-beijing.volces.com
   model: doubao-embedding-vision-251215
+  memory_auto_extract: true

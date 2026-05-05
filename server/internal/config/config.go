@@ -21,6 +21,7 @@ type ServerConfig struct {
 	Mode                string   `yaml:"mode"`                 // debug | release
 	RegistrationEnabled *bool    `yaml:"registration_enabled"` // 是否允许新用户注册
 	AllowedUsers        []string `yaml:"allowed_users"`        // 允许注册的用户名列表（空=全部允许）
+	MemoryAutoExtract   bool     `yaml:"memory_auto_extract"`  // 是否自动提取记忆
 }
 
 // DBConfig — 数据库配置

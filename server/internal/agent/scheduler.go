@@ -26,8 +26,12 @@ func NewMemoryScheduler(extractor *MemoryExtractor, convRepo *service.Conversati
 	}
 }
 
-// Start 启动定时任务（阻塞，用 goroutine 调用）
-func (s *MemoryScheduler) Start(ctx context.Context) {
+// Start 启动定时任务（阻塞，用 goroutine 调用）。enabled=false 时不启动。
+func (s *MemoryScheduler) Start(ctx context.Context, enabled bool) {
+	if !enabled {
+		log.Printf("[memory] scheduler: auto extract disabled")
+		return
+	}
 	log.Printf("[memory] scheduler started, interval=%v, quiet=%v", s.interval, s.quietDur)
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()

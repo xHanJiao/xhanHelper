@@ -2,6 +2,7 @@ server:
   port: 8080
   mode: debug          # debug | release
   registration_enabled: false
+  memory_auto_extract: false
   allowed_users:
     - ${ALLOWED_USER}
 

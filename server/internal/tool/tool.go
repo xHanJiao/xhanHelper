@@ -17,6 +17,7 @@ type FuncSchema struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
 	Parameters  map[string]interface{} `json:"parameters"`
+	Cacheable   bool                   `json:"cacheable,omitempty"`
 }
 
 // ExecuteContext — 工具执行的上下文（由 Orchestrator 注入）

@@ -409,6 +409,12 @@ AGENT_DEL=$(curl -s -X DELETE "$BASE_URL/api/agents/$AGENT_ID" -H "Authorization
 assert "删除智能体成功" "true" "$AGENT_DEL"
 
 
+# ═══════════════════════════════════════════
+# 动态工具 API 测试
+# ═══════════════════════════════════════════
+
+source "$SCRIPT_DIR/api-test-tools.sh"
+
 # 会话管理
 # ═══════════════════════════════════════════
 

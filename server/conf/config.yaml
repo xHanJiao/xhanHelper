@@ -3,6 +3,7 @@ server:
   mode: debug          # debug | release
   registration_enabled: false
   memory_auto_extract: false
+  sidecar_url: http://127.0.0.1:9090
   allowed_users:
     - ${ALLOWED_USER}
 

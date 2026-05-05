@@ -53,6 +53,8 @@ func main() {
 			&model.ScheduledTask{},
 			&model.Note{},
 			&model.Agent{},
+			&model.ToolRegistry{},
+			&model.ToolData{},
 		)
 	}
 
@@ -74,6 +76,7 @@ func main() {
 	memRepo := service.NewUserMemoryRepo(db)
 	noteRepo := service.NewNoteRepo(db)
 	agentRepo := service.NewAgentRepo(db)
+	toolRepo := service.NewToolRepo(db)
 
 	// Tool Registry + Tools
 	reg := tool.NewRegistry()
@@ -87,6 +90,9 @@ func main() {
 	vectorStore := agent.NewVectorStore()
 
 	reg.Register(tool.NewNoteTool(noteRepo, vectorStore, embedder))
+
+	// 从 DB 加载动态工具
+	reg.SetDynamicLoader(toolRepo, cfg.Server.SidecarURL, toolRepo, toolRepo)
 
 	// 后台任务共享 context，关闭时统一取消
 	bgCtx, bgCancel := context.WithCancel(context.Background())
@@ -107,9 +113,10 @@ func main() {
 	noteHandler := controller.NewNoteHandler(noteRepo)
 	memHandler := controller.NewMemoryHandler(memRepo)
 	agentHandler := controller.NewAgentHandler(agentRepo, llmClient)
+	toolHandler := controller.NewToolHandler(toolRepo)
 
 	// Router
-	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, agentRepo, billHandler, noteHandler, memHandler, agentHandler, memExtractor)
+	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, agentRepo, billHandler, noteHandler, memHandler, agentHandler, toolHandler, memExtractor)
 
 	addr := ":" + strconv.Itoa(cfg.Server.Port)
 	srv := &http.Server{

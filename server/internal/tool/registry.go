@@ -2,21 +2,93 @@ package tool
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
+	"sync"
+	"time"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
 )
 
 // Registry — 工具注册表
 type Registry struct {
-	tools map[string]Tool
+	tools         map[string]Tool
+	dynamicLoader DynamicToolLoader
+	sidecarURL    string
+	cacheReader   CacheReader
+	cacheWriter   CacheWriter
+	lastLoadTime  time.Time
 }
 
 // NewRegistry 创建空的注册表
 func NewRegistry() *Registry {
 	return &Registry{tools: make(map[string]Tool)}
+}
+
+// SetDynamicLoader 设置动态工具加载器（由 main.go 调用）
+func (r *Registry) SetDynamicLoader(loader DynamicToolLoader, sidecarURL string, cacheReader CacheReader, cacheWriter CacheWriter) {
+	r.dynamicLoader = loader
+	r.sidecarURL = sidecarURL
+	r.cacheReader = cacheReader
+	r.cacheWriter = cacheWriter
+}
+
+// DynamicToolLoader — 动态工具加载器接口（由 service.ToolRepo 实现）
+type DynamicToolLoader interface {
+	ListActiveTools(ctx context.Context) ([]model.ToolRegistry, error)
+}
+
+var reloadMu sync.Mutex
+
+// maybeReloadDynamic 30s TTL，过期自动从 DB 刷新动态工具
+func (r *Registry) maybeReloadDynamic() {
+	if r.dynamicLoader == nil {
+		return
+	}
+	if time.Since(r.lastLoadTime) < 30*time.Second {
+		return
+	}
+	reloadMu.Lock()
+	defer reloadMu.Unlock()
+	// 双重检查
+	if time.Since(r.lastLoadTime) < 30*time.Second {
+		return
+	}
+	r.loadFromDB()
+}
+
+func (r *Registry) loadFromDB() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	records, err := r.dynamicLoader.ListActiveTools(ctx)
+	if err != nil {
+		log.Printf("[tool] reload dynamic tools error: %v", err)
+		return // 失败时保留原有工具
+	}
+	// 替换旧的动态工具，保留硬编码工具
+	for name := range r.tools {
+		if _, ok := r.tools[name].(*DynamicTool); ok {
+			delete(r.tools, name)
+		}
+	}
+	for _, rec := range records {
+		dt := NewDynamicTool(ToolRegistryRecord{
+			Name:        rec.Name,
+			Description: rec.Description,
+			SchemaJSON:  rec.SchemaJSON,
+		}, r.sidecarURL)
+		if r.cacheReader != nil {
+			dt.SetCache(r.cacheReader, r.cacheWriter)
+		}
+		r.Register(dt)
+		log.Printf("[tool] dynamic tool loaded: %s", rec.Name)
+	}
+	r.lastLoadTime = time.Now()
 }
 
 // Register 注册一个工具

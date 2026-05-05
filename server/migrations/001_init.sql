@@ -123,3 +123,32 @@ CREATE TABLE IF NOT EXISTS agents (
     KEY idx_user_id (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+
+CREATE TABLE IF NOT EXISTS tool_registry (
+    id          VARCHAR(36) NOT NULL PRIMARY KEY,
+    name        VARCHAR(100) NOT NULL,
+    description TEXT NOT NULL,
+    schema_json JSON NOT NULL,
+    script_path VARCHAR(500) NOT NULL DEFAULT '',
+    status      VARCHAR(20) NOT NULL DEFAULT 'draft',
+    user_id     VARCHAR(36) NOT NULL,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_name (name),
+    KEY idx_user (user_id),
+    KEY idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS tool_data (
+    id          VARCHAR(36) NOT NULL PRIMARY KEY,
+    tool_name   VARCHAR(100) NOT NULL,
+    func_name   VARCHAR(100) NOT NULL,
+    input_json  JSON NOT NULL,
+    input_hash  VARCHAR(64) NOT NULL,
+    output_json JSON NOT NULL,
+    user_id     VARCHAR(36) NOT NULL,
+    cached      TINYINT(1) NOT NULL DEFAULT 0,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_hash (tool_name, func_name, input_hash),
+    KEY idx_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

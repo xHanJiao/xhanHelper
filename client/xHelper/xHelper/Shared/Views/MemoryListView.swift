@@ -54,6 +54,11 @@ struct MemoryListView: View {
         .refreshable { await viewModel.load() }
         .task { await viewModel.load() }
         .navigationTitle("记忆")
+        .alert("操作失败", isPresented: .init(get: { viewModel.errorMessage != nil }, set: { if !$0 { viewModel.errorMessage = nil } })) {
+            Button("确定") {}
+        } message: {
+            Text(viewModel.errorMessage ?? "")
+        }
         .sheet(item: $selectedMemory) { mem in
             NavigationStack {
                 ScrollView {

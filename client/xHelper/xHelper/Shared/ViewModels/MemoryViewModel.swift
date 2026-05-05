@@ -45,10 +45,12 @@ class MemoryViewModel: ObservableObject {
     }
 
     func delete(id: String) async {
+        guard let removed = memories.first(where: { $0.id == id }) else { return }
+        withAnimation { memories.removeAll { $0.id == id } }
         do {
             try await apiClient.deleteMemory(id: id)
-            memories.removeAll { $0.id == id }
         } catch {
+            withAnimation { memories.append(removed) }
             errorMessage = error.localizedDescription
         }
     }

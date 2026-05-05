@@ -57,8 +57,8 @@ struct MessageListView: View {
                 .padding(.vertical)
             }
             .dismissKeyboardOnTap()
-            .onChange(of: viewModel.messages.count) {
-                if let last = viewModel.messages.last, last.id != "__streaming__" {
+            .onChange(of: viewModel.messages.count) { oldCount, newCount in
+                if newCount > oldCount, let last = viewModel.messages.last, last.id != "__streaming__" {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
             }

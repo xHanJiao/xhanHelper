@@ -15,7 +15,7 @@ struct InputBar: View {
             TextField("输入消息...", text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .focused($isFocused)
-                .submitLabel(.send)
+                .submitLabel(isExpanded ? .return : .send)
                 .lineLimit(isExpanded ? 20 : 1)
                 .padding(.leading, 12)
                 .padding(.trailing, 28)
@@ -34,9 +34,15 @@ struct InputBar: View {
                     if !isStreaming, showExpandButton {
                         Button {
                             showExpandButton = false
+                            let wasFocused = isFocused
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 isExpanded = !isExpanded
-                                if isExpanded { isFocused = true }
+                            }
+                            if wasFocused {
+                                isFocused = false
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                    isFocused = true
+                                }
                             }
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                                 showExpandButton = true

@@ -43,7 +43,16 @@ class APIClient {
         return try await doRequest(req)
     }
 
-    // MARK: Notes
+    func exportBillsCSV(startDate: String, endDate: String, category: String = "") async throws -> String {
+		var path = "/api/bills/export?start_date=\(startDate)&end_date=\(endDate)"
+		if !category.isEmpty { path += "&category=\(category)" }
+		var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+		req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+		let (data, _) = try await URLSession.shared.data(for: req)
+		return String(data: data, encoding: .utf8) ?? ""
+	}
+
+	// MARK: Notes
 
 	func listNotes(limit: Int = 50, offset: Int = 0) async throws -> [Note] {
 		return try await get("/api/notes?limit=\(limit)&offset=\(offset)")

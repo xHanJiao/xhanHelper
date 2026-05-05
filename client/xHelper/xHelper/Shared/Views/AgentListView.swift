@@ -84,6 +84,16 @@ struct AgentListView: View {
                 }
                 .navigationTitle("智能体详情")
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem {
+                        Button("编辑") {
+                            selectedAgent = nil
+                            viewModel.editingAgent = agent
+                            editName = agent.name
+                            editPrompt = agent.systemPrompt
+                        }
+                    }
+                }
             }
         }
         .sheet(isPresented: $viewModel.showCreateSheet) {

@@ -1,3 +1,4 @@
+import MarkdownUI
 import SwiftUI
 
 struct AgentListView: View {
@@ -21,10 +22,6 @@ struct AgentListView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(agent.name)
                                 .font(.subheadline.weight(.medium))
-                            Text(agent.systemPrompt)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
                         }
                         Spacer()
                         Button {
@@ -78,8 +75,8 @@ struct AgentListView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(agent.name)
                             .font(.title2.weight(.semibold))
-                        Text(agent.systemPrompt)
-                            .font(.body)
+                        Markdown(agent.systemPrompt)
+                            .markdownTheme(.gitHub)
                     }
                     .padding()
                 }

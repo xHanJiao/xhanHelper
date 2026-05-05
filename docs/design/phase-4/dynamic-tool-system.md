@@ -288,17 +288,25 @@ tools/
 │   ├── sidecar.py             # MCP HTTP server 主进程
 │   ├── tools/                 # 工具脚本目录
 │   │   ├── __init__.py
-│   │   ├── base.py            # Tool 基类 + 装饰器
+│   │   ├── base.py            # Tool 基类
 │   │   └── calculator.py      # 示例：计算器
 │   ├── requirements.txt
-│   └── venv/
-├── validate/                  # 验证环境（结构同 prod）
+│   └── venv/                  # 独立虚环境
+├── validate/                  # 验证环境（独立 venv）
 │   ├── sidecar.py
-│   └── tools/
+│   ├── tools/
+│   ├── requirements.txt
+│   └── venv/
 └── systemd/
     ├── xhan-sidecar-prod.service
     └── xhan-sidecar-val.service
 ```
+
+**虚环境策略**：
+- prod 和 validate 各有独立 venv，验证环境装坏包不影响生产
+- 所有工具共用一个 venv（个人助手 10-20 个工具，依赖冲突概率极低）
+- 不做每工具独立 venv（过度设计）
+- 新依赖需要重启 sidecar（`importlib.reload` 只热加载脚本，不加载新 site-packages）
 
 ### sidecar.py — MCP HTTP Server
 

@@ -4,6 +4,7 @@ struct NoteListView: View {
     let apiClient: APIClient
     @State private var notes: [Note] = []
     @State private var isLoading = true
+    @State private var selectedNote: Note?
 
     var body: some View {
         Group {
@@ -29,10 +30,27 @@ struct NoteListView: View {
                             .foregroundColor(.secondary)
                     }
                     .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                    .onTapGesture { selectedNote = note }
                 }
             }
         }
         .navigationTitle("笔记记录")
+        .sheet(item: $selectedNote) { note in
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(note.topic)
+                            .font(.title2.weight(.semibold))
+                        Text(note.content)
+                            .font(.body)
+                    }
+                    .padding()
+                }
+                .navigationTitle("笔记详情")
+                .navigationBarTitleDisplayMode(.inline)
+            }
+        }
         .task { await load() }
     }
 

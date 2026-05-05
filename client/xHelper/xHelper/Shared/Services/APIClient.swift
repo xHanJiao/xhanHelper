@@ -43,7 +43,13 @@ class APIClient {
         return try await doRequest(req)
     }
 
-    // MARK: Memories (P3)
+    // MARK: Notes
+
+	func listNotes(limit: Int = 50, offset: Int = 0) async throws -> [Note] {
+		return try await get("/api/notes?limit=\(limit)&offset=\(offset)")
+	}
+
+	// MARK: Memories (P3)
 
 	func listMemories(limit: Int = 50, offset: Int = 0, keyword: String = "", source: String = "") async throws -> [UserMemory] {
 		var path = "/api/memories?limit=\(limit)&offset=\(offset)"
@@ -188,6 +194,26 @@ struct UserMemory: Identifiable, Codable {
 }
 
 // MARK: Agent model
+
+struct Note: Identifiable, Codable {
+    let id: String
+    let userId: String
+    let topic: String
+    let content: String
+    let tags: String?
+    let variables: String?
+    let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case topic
+        case content
+        case tags
+        case variables
+        case createdAt = "created_at"
+    }
+}
 
 struct Agent: Identifiable, Codable {
     let id: String

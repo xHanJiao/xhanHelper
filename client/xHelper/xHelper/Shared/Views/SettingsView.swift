@@ -75,6 +75,17 @@ struct SettingsView: View {
             }
 
             Section {
+                NavigationLink(destination: BillListView(apiClient: apiClient)) {
+                    Label("账单记录", systemImage: "list.bullet.rectangle")
+                }
+                NavigationLink(destination: NoteListView(apiClient: apiClient)) {
+                    Label("笔记记录", systemImage: "note.text")
+                }
+            } header: {
+                Text("浏览")
+            }
+
+            Section {
                 Button("退出登录", role: .destructive) {
                     Task { await deviceManager.logout() }
                 }

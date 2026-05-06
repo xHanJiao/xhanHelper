@@ -152,3 +152,13 @@ CREATE TABLE IF NOT EXISTS tool_data (
     KEY idx_hash (tool_name, func_name, input_hash),
     KEY idx_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS user_prompts (
+    id            VARCHAR(36) NOT NULL PRIMARY KEY,
+    user_id       VARCHAR(36) NOT NULL,
+    prompt_type   VARCHAR(20) NOT NULL,
+    system_prompt TEXT NOT NULL,
+    status        VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_user_type (user_id, prompt_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

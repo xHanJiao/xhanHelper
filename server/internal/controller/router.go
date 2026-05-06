@@ -15,7 +15,7 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 	userRepo *service.UserRepo, convRepo *service.ConversationRepo,
 	msgRepo *service.MessageRepo, agentRepo *service.AgentRepo,
 	billHandler *BillHandler, noteHandler *NoteHandler,
-	memHandler *MemoryHandler, agentHandler *AgentHandler, toolHandler *ToolHandler, memExtr *agent.MemoryExtractor) *gin.Engine {
+	memHandler *MemoryHandler, agentHandler *AgentHandler, toolHandler *ToolHandler, promptHandler *PromptHandler, memExtr *agent.MemoryExtractor) *gin.Engine {
 
 	r := gin.Default()
 
@@ -59,6 +59,10 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 		auth.POST("/tools", toolHandler.CreateTool)
 		auth.PATCH("/tools/:id", toolHandler.UpdateTool)
 		auth.DELETE("/tools/:id", toolHandler.DeleteTool)
+		auth.GET("/prompts", promptHandler.ListPrompts)
+		auth.POST("/prompts", promptHandler.CreatePrompt)
+		auth.POST("/prompts/:id/rollback", promptHandler.RollbackPrompt)
+		auth.DELETE("/prompts/:id", promptHandler.DeletePrompt)
 	}
 
 	return r

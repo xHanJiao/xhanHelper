@@ -424,6 +424,9 @@ source "$SCRIPT_DIR/api-test-tools.sh"
 # 会话管理
 # ═══════════════════════════════════════════
 
+# ── 提示词管理 ──
+source "$(dirname "$0")/api-test-prompts.sh"
+
 # ── 19. 重命名会话 ──
 echo ""
 echo "【33/34】重命名会话"

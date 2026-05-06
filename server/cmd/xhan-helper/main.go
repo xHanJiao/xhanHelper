@@ -55,6 +55,7 @@ func main() {
 			&model.Agent{},
 			&model.ToolRegistry{},
 			&model.ToolData{},
+			&model.UserPrompt{},
 		)
 	}
 
@@ -76,6 +77,7 @@ func main() {
 	memRepo := service.NewUserMemoryRepo(db)
 	noteRepo := service.NewNoteRepo(db)
 	agentRepo := service.NewAgentRepo(db)
+	promptRepo := service.NewUserPromptRepo(db)
 	toolRepo := service.NewToolRepo(db)
 
 	// Tool Registry + Tools
@@ -108,6 +110,7 @@ func main() {
 	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo)
 	memScheduler := agent.NewMemoryScheduler(memExtractor, convRepo)
 	go memScheduler.Start(bgCtx, cfg.Server.MemoryAutoExtract)
+	orch.SetPromptResolver(promptRepo)
 
 	// Handlers
 	billHandler := controller.NewBillHandler(billRepo, memExtractor)
@@ -115,9 +118,10 @@ func main() {
 	memHandler := controller.NewMemoryHandler(memRepo)
 	agentHandler := controller.NewAgentHandler(agentRepo, llmClient)
 	toolHandler := controller.NewToolHandler(toolRepo)
+	promptHandler := controller.NewPromptHandler(promptRepo)
 
 	// Router
-	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, agentRepo, billHandler, noteHandler, memHandler, agentHandler, toolHandler, memExtractor)
+	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, agentRepo, billHandler, noteHandler, memHandler, agentHandler, toolHandler, promptHandler, memExtractor)
 
 	addr := ":" + strconv.Itoa(cfg.Server.Port)
 	srv := &http.Server{

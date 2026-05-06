@@ -44,14 +44,20 @@ type LLMResponse struct {
 	ToolCalls []tool.ToolCall `json:"tool_calls"`
 }
 
+// PromptResolver — 查找用户自定义 system prompt
+type PromptResolver interface {
+	ResolveActive(ctx context.Context, userID, promptType string) string
+}
+
 // Orchestrator — ReAct 循环编排器
 type Orchestrator struct {
-	flashClient   llm.LLMClient
-	proClient     llm.LLMClient
-	registry      *tool.Registry
-	retriever     *Retriever
-	msgRepo       *service.MessageRepo
-	maxIterations int
+	flashClient    llm.LLMClient
+	proClient      llm.LLMClient
+	registry       *tool.Registry
+	retriever      *Retriever
+	msgRepo        *service.MessageRepo
+	promptResolver PromptResolver
+	maxIterations  int
 }
 
 // New 创建 Orchestrator
@@ -72,9 +78,15 @@ func New(flashClient llm.LLMClient, registry *tool.Registry,
 	}
 }
 
+// SetPromptResolver 注入用户自定义 prompt 查找器
+func (o *Orchestrator) SetPromptResolver(r PromptResolver) {
+	o.promptResolver = r
+}
+
 // —— Run ——
 
 func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.StreamEvent, error) {
+
 	client := o.pickClient(req)
 	log.Printf("[orch] run start: model=%s, msgs=%d, tools=%d",
 		client.ModelName(), len(req.Messages), len(o.registry.GetLLMTools()))
@@ -100,6 +112,15 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, client llm.LLMClient,
 	sysPrompt := req.AgentSystemPrompt
 	if sysPrompt == "" {
 		sysPrompt = baseSystemPrompt
+		if o.promptResolver != nil {
+			clientType := "flash"
+			if o.proClient != nil && req.DeepMode {
+				clientType = "pro"
+			}
+			if custom := o.promptResolver.ResolveActive(ctx, req.UserID, clientType); custom != "" {
+				sysPrompt = custom
+			}
+		}
 	}
 	prompt := client.BuildSystemPrompt(sysPrompt, o.registry.GetLLMTools())
 

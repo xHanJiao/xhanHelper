@@ -82,60 +82,72 @@ build-linux:
 
 # 部署到阿里云：编译 + 上传 + 重启（一键）
 deploy: build-linux
-		@if [ -z "$$DEPLOY_USER" ] || [ -z "$$DEPLOY_HOST" ]; then \
-			echo "❌ 请先设置环境变量: export DEPLOY_USER=xxx DEPLOY_HOST=xxx"; \
-			echo "   参考 .env.example"; \
-			exit 1; \
-		fi
-	@echo ""
-	@echo "========================================"
-	@echo "       部署到阿里云服务器"
-	@echo "========================================"
-	@echo "1/4 上传二进制..."
-	scp $(OUTPUT_DIR)/$(BINARY) $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/$(BINARY).tmp
-	@echo "2/4 上传配置文件 + 控制脚本..."
-	scp conf/config.yaml conf/config.prod.yaml $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/conf/
-	scp scripts/control-xhan-helper.sh $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
-		@echo "3/4 上传 SQL 迁移文件..."
-		scp -r migrations/ $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
-		@echo "4/4 替换二进制并重启..."
-	@ssh $(SERVER_USER)@$(SERVER_HOST) "cd $(SERVER_PATH) && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || (\
+	@if [ -f .env ]; then . ./.env; fi; \
+	if [ -z "$$DEPLOY_USER" ] || [ -z "$$DEPLOY_HOST" ]; then \
+		echo "❌ 请先设置 .env 文件: DEPLOY_USER=xxx DEPLOY_HOST=xxx"; \
+		echo "   参考 .env.example"; \
+		exit 1; \
+	fi; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); B=$(OUTPUT_DIR)/$(BINARY); \
+	echo ""; \
+	echo "========================================"; \
+	echo "       部署到阿里云服务器"; \
+	echo "========================================"; \
+	echo "1/4 上传二进制..."; \
+	scp $$B $$U@$$H:$$P/$(BINARY).tmp; \
+	echo "2/4 上传配置文件 + 控制脚本..."; \
+	scp conf/config.yaml conf/config.prod.yaml $$U@$$H:$$P/conf/; \
+	scp scripts/control-xhan-helper.sh $$U@$$H:$$P/; \
+	echo "3/4 上传 SQL 迁移文件..."; \
+	scp -r migrations/ $$U@$$H:$$P/; \
+	echo "4/4 替换二进制并重启..."; \
+	ssh $$U@$$H "cd $$P && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || ( \
 		echo ""; \
 		echo "❌ 启动失败，日志如下："; \
 		echo "========================================"; \
-		ssh $(SERVER_USER)@$(SERVER_HOST) "tail -50 $(SERVER_PATH)/logs/xhan-helper-\$$(date +%Y-%m-%d).log"; \
+		ssh $$U@$$H "tail -50 $$P/logs/xhan-helper-\$$(date +%Y-%m-%d).log"; \
 		echo "========================================"; \
-		exit 1)
-	@echo ""
-	@echo "✅ 部署完成！"
+		exit 1); \
+	echo ""; \
+	echo "✅ 部署完成！"
+
 
 # 仅上传 + 重启（不重新编译）
 deploy-only:
-	@echo "========================================"
-	@echo "       上传到阿里云服务器 (仅上传)"
-	@echo "========================================"
-	@test -f $(OUTPUT_DIR)/$(BINARY) || (echo "❌ 未找到编译产物，请先执行 make build-linux"; exit 1)
-	@echo "1/4 上传二进制..."
-	scp $(OUTPUT_DIR)/$(BINARY) $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/$(BINARY).tmp
-	@echo "2/4 上传配置文件 + 控制脚本..."
-	scp conf/config.yaml conf/config.prod.yaml $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/conf/
-	scp scripts/control-xhan-helper.sh $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
-		@echo "3/4 上传 SQL 迁移文件..."
-		scp -r migrations/ $(SERVER_USER)@$(SERVER_HOST):$(SERVER_PATH)/
-		@echo "4/4 替换二进制并重启..."
-	@ssh $(SERVER_USER)@$(SERVER_HOST) "cd $(SERVER_PATH) && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || (\
+	@if [ -f .env ]; then . ./.env; fi; \
+	if [ -z "$$DEPLOY_USER" ] || [ -z "$$DEPLOY_HOST" ]; then \
+		echo "❌ 请先设置 .env 文件: DEPLOY_USER=xxx DEPLOY_HOST=xxx"; \
+		echo "   参考 .env.example"; \
+		exit 1; \
+	fi; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); B=$(OUTPUT_DIR)/$(BINARY); \
+	test -f $$B || (echo "❌ 未找到编译产物，请先执行 make build-linux"; exit 1); \
+	echo "========================================"; \
+	echo "       上传到阿里云服务器 (仅上传)"; \
+	echo "========================================"; \
+	echo "1/4 上传二进制..."; \
+	scp $$B $$U@$$H:$$P/$(BINARY).tmp; \
+	echo "2/4 上传配置文件 + 控制脚本..."; \
+	scp conf/config.yaml conf/config.prod.yaml $$U@$$H:$$P/conf/; \
+	scp scripts/control-xhan-helper.sh $$U@$$H:$$P/; \
+	echo "3/4 上传 SQL 迁移文件..."; \
+	scp -r migrations/ $$U@$$H:$$P/; \
+	echo "4/4 替换二进制并重启..."; \
+	ssh $$U@$$H "cd $$P && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || ( \
 		echo ""; \
 		echo "❌ 启动失败，日志如下："; \
 		echo "========================================"; \
-		ssh $(SERVER_USER)@$(SERVER_HOST) "tail -50 $(SERVER_PATH)/logs/xhan-helper-\$$(date +%Y-%m-%d).log"; \
+		ssh $$U@$$H "tail -50 $$P/logs/xhan-helper-\$$(date +%Y-%m-%d).log"; \
 		echo "========================================"; \
-		exit 1)
-	@echo ""
-	@echo "✅ 部署完成！"
+		exit 1); \
+	echo ""; \
+	echo "✅ 部署完成！"
 
 # 实时查看远程日志
 logs:
-	ssh $(SERVER_USER)@$(SERVER_HOST) "tail -f $(SERVER_PATH)/logs/xhan-helper-\$$(date +%Y-%m-%d).log"
+	@if [ -f .env ]; then . ./.env; fi; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; \
+	ssh $$U@$$H "tail -f $(SERVER_PATH)/logs/xhan-helper-\$$(date +%Y-%m-%d).log"
 
 # 清理
 clean:

@@ -235,12 +235,10 @@ func NewProClient(cfg config.LLMConfig, model string) *ProClient {
 func (c *ProClient) BuildSystemPrompt(base string, tools []ToolDefinition) string {
 	var b strings.Builder
 	b.WriteString(base)
-	b.WriteString(fmt.Sprintf("\n当前时间: %s\n", time.Now().Format("2006-01-02 15:04:05 Monday")))
-	b.WriteString("\n你是一个冷静、中立、客观的思维伙伴。基于事实和逻辑说话，不迎合、不谄媚，必要时敢于指出用户观点中的问题。\n")
 	if len(tools) == 0 {
 		return b.String()
 	}
-	b.WriteString("\n\n你可以使用以下函数（仅在必要时调用）：\n")
+	b.WriteString("\n\n你可以使用以下工具（仅在必要时调用）：\n")
 	for _, t := range tools {
 		for _, fn := range t.Functions {
 			b.WriteString(fmt.Sprintf("- %s: %s\n", fn.Name, fn.Description))

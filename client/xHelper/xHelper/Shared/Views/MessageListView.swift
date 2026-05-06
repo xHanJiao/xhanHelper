@@ -9,11 +9,11 @@ struct MessageListView: View {
                 LazyVStack(spacing: 12) {
                     ForEach(viewModel.messages) { msg in
                         if msg.role == "tool" {
-                            ChatBubble(text: msg.content, isUser: false, isTool: true)
+                            ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id)
                         } else if msg.role == "user" {
-                            ChatBubble(text: msg.content, isUser: true)
+                            ChatBubble(text: msg.content, isUser: true, messageId: msg.id)
                         } else {
-                            ChatBubble(text: msg.content, isUser: false)
+                            ChatBubble(text: msg.content, isUser: false, messageId: msg.id)
                         }
                     }
 
@@ -42,16 +42,6 @@ struct MessageListView: View {
                             Spacer()
                         }
                         .padding(.horizontal)
-                    }
-
-                    if viewModel.isStreaming {
-                        HStack {
-                            ProgressView().scaleEffect(0.6)
-                            Text("思考中...").font(.caption).foregroundColor(.secondary)
-                            Spacer()
-                        }
-                        .padding(.horizontal)
-                        .id("typing")
                     }
                 }
                 .padding(.vertical)

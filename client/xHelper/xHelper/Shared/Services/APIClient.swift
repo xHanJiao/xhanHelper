@@ -104,6 +104,27 @@ class APIClient {
 		try await delete("/api/agents/\(id)")
 	}
 
+	// MARK: Prompts
+
+	func listPrompts(type: String = "", status: String = "") async throws -> [UserPrompt] {
+		var path = "/api/prompts?"
+		if !type.isEmpty { path += "type=\(type)&" }
+		if !status.isEmpty { path += "status=\(status)" }
+		return try await get(path)
+	}
+
+	func createPrompt(promptType: String, systemPrompt: String) async throws -> UserPrompt {
+		return try await post("/api/prompts", body: ["prompt_type": promptType, "system_prompt": systemPrompt])
+	}
+
+	func rollbackPrompt(id: String) async throws {
+		let _: [String: Bool] = try await post("/api/prompts/\(id)/rollback", body: [:])
+	}
+
+	func deletePrompt(id: String) async throws {
+		try await delete("/api/prompts/\(id)")
+	}
+
 	// MARK: Internal
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
@@ -238,6 +259,26 @@ struct Agent: Identifiable, Codable {
         case name
         case systemPrompt = "system_prompt"
         case model
+        case createdAt = "created_at"
+    }
+}
+
+// MARK: UserPrompt model
+
+struct UserPrompt: Identifiable, Codable {
+    let id: String
+    let userId: String
+    let promptType: String
+    let systemPrompt: String
+    let status: String
+    let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case promptType = "prompt_type"
+        case systemPrompt = "system_prompt"
+        case status
         case createdAt = "created_at"
     }
 }

@@ -75,6 +75,9 @@ struct SettingsView: View {
             }
 
             Section {
+                NavigationLink(destination: PromptListView(viewModel: PromptViewModel(apiClient: apiClient))) {
+                    Label("系统提示词", systemImage: "terminal")
+                }
                 NavigationLink(destination: BillListView(apiClient: apiClient)) {
                     Label("账单记录", systemImage: "list.bullet.rectangle")
                 }

@@ -73,31 +73,30 @@ struct PromptListView: View {
 
             ForEach(prompts) { p in
                 let isActive = p.status == "active"
-                Button {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(p.systemPrompt)
+                            .lineLimit(2)
+                            .font(.callout)
+                            .foregroundColor(isActive ? .primary : .secondary)
+                        Text(p.createdAt.prefix(10))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    if isActive {
+                        Text("使用中")
+                            .font(.caption)
+                            .foregroundColor(color)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(color.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+                }
+                .onTapGesture {
                     if !isActive {
                         Task { await viewModel.rollback(p) }
-                    }
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(p.systemPrompt)
-                                .lineLimit(2)
-                                .font(.callout)
-                                .foregroundColor(isActive ? .primary : .secondary)
-                            Text(p.createdAt.prefix(10))
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        if isActive {
-                            Text("使用中")
-                                .font(.caption)
-                                .foregroundColor(color)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(color.opacity(0.12))
-                                .clipShape(Capsule())
-                        }
                     }
                 }
             }

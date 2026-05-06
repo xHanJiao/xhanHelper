@@ -19,6 +19,16 @@ class APIClient {
         return try await get("/api/conversations/\(conversationId)/messages")
     }
 
+    func getMessagesCursor(conversationId: String, cursor: String = "", direction: String = "before", limit: Int = 10) async throws -> CursorMessages {
+        var path = "/api/conversations/\(conversationId)/messages-v2?limit=\(limit)&direction=\(direction)"
+        if !cursor.isEmpty { path += "&cursor=\(cursor)" }
+        return try await get(path)
+    }
+
+    func deleteMessage(conversationId: String, messageId: String) async throws {
+        try await delete("/api/conversations/\(conversationId)/messages/\(messageId)")
+    }
+
     func renameConversation(id: String, title: String) async throws {
         try await patch("/api/conversations/\(id)", body: ["title": title])
     }
@@ -264,6 +274,22 @@ struct Agent: Identifiable, Codable {
 }
 
 // MARK: UserPrompt model
+
+struct CursorMessages: Codable {
+    let messages: [Message]
+    let hasMoreBefore: Bool
+    let hasMoreAfter: Bool
+    let oldestCursor: String
+    let newestCursor: String
+
+    enum CodingKeys: String, CodingKey {
+        case messages
+        case hasMoreBefore = "has_more_before"
+        case hasMoreAfter = "has_more_after"
+        case oldestCursor = "oldest_cursor"
+        case newestCursor = "newest_cursor"
+    }
+}
 
 struct UserPrompt: Identifiable, Codable {
     let id: String

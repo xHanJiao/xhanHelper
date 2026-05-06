@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -84,6 +85,41 @@ func getMessages(convRepo *service.ConversationRepo,
 			return
 		}
 		view.JSONOK(c, msgs)
+	}
+}
+
+func getMessagesCursor(msgRepo *service.MessageRepo, convRepo *service.ConversationRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		convID := c.Param("id")
+		if !requireConversationOwner(c, convRepo, convID) {
+			return
+		}
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+		cursor := c.Query("cursor")
+		direction := c.DefaultQuery("direction", "before")
+
+		result, err := msgRepo.ListByConversationCursor(c.Request.Context(), convID, cursor, direction, limit)
+		if err != nil {
+			view.JSONError(c, 500, "query messages failed")
+			return
+		}
+		view.JSONOK(c, result)
+	}
+}
+
+func deleteMessage(msgRepo *service.MessageRepo, convRepo *service.ConversationRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		convID := c.Param("id")
+		msgID := c.Param("msgId")
+		if !requireConversationOwner(c, convRepo, convID) {
+			return
+		}
+		userID := c.GetString("user_id")
+		if err := msgRepo.SoftDelete(c.Request.Context(), msgID, userID); err != nil {
+			view.JSONError(c, 500, "delete message failed")
+			return
+		}
+		view.JSONOK(c, gin.H{"deleted": true})
 	}
 }
 

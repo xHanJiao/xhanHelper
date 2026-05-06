@@ -7,13 +7,31 @@ struct MessageListView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
+                    if viewModel.hasMoreBefore {
+                        Button {
+                            Task { await viewModel.loadMore(direction: "before") }
+                        } label: {
+                            HStack {
+                                if viewModel.isLoadingMore {
+                                    ProgressView().scaleEffect(0.7)
+                                } else {
+                                    Image(systemName: "arrow.up")
+                                }
+                                Text("加载更早的消息")
+                                    .font(.caption)
+                            }
+                            .foregroundColor(.blue)
+                        }
+                        .disabled(viewModel.isLoadingMore)
+                    }
+
                     ForEach(viewModel.messages) { msg in
                         if msg.role == "tool" {
-                            ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id)
+                            ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
                         } else if msg.role == "user" {
-                            ChatBubble(text: msg.content, isUser: true, messageId: msg.id)
+                            ChatBubble(text: msg.content, isUser: true, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
                         } else {
-                            ChatBubble(text: msg.content, isUser: false, messageId: msg.id)
+                            ChatBubble(text: msg.content, isUser: false, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
                         }
                     }
 

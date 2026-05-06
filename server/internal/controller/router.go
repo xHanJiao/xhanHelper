@@ -38,6 +38,8 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 		auth.POST("/chat", chat(orch, convRepo, msgRepo, agentRepo))
 		auth.GET("/conversations", listConversations(convRepo, agentRepo))
 		auth.GET("/conversations/:id/messages", getMessages(convRepo, msgRepo))
+		auth.GET("/conversations/:id/messages-v2", getMessagesCursor(msgRepo, convRepo))
+		auth.DELETE("/conversations/:id/messages/:msgId", deleteMessage(msgRepo, convRepo))
 		auth.PATCH("/conversations/:id", renameConversation(convRepo))
 		auth.DELETE("/conversations/:id", deleteConversation(convRepo))
 		auth.POST("/conversations/:id/extract-memories", extractMemories(convRepo, memExtr))

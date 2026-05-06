@@ -36,6 +36,13 @@ class ChatViewModel: ObservableObject {
     @Published var isPlanModalVisible = false
     @Published var isPlanMinimized = false
 
+    // 游标分页
+    @Published var oldestCursor = ""
+    @Published var newestCursor = ""
+    @Published var hasMoreBefore = false
+    @Published var hasMoreAfter = false
+    @Published var isLoadingMore = false
+
     private let apiClient: APIClient
     private let sseClient = SSEClient()
     private var streamingContent = ""
@@ -53,10 +60,40 @@ class ChatViewModel: ObservableObject {
         conversationId = id
         conversationTitle = title
         do {
-            messages = try await apiClient.getMessages(conversationId: id)
+            let result = try await apiClient.getMessagesCursor(conversationId: id)
+            messages = result.messages
+            oldestCursor = result.oldestCursor
+            newestCursor = result.newestCursor
+            hasMoreBefore = result.hasMoreBefore
+            hasMoreAfter = result.hasMoreAfter
         } catch {
             errorMessage = "加载消息失败: \(error.localizedDescription)"
         }
+    }
+
+    func loadMore(direction: String = "before") async {
+        guard !isLoadingMore else { return }
+        isLoadingMore = true
+        let cursor = direction == "before" ? oldestCursor : newestCursor
+        do {
+            let result = try await apiClient.getMessagesCursor(
+                conversationId: conversationId ?? "",
+                cursor: cursor,
+                direction: direction
+            )
+            if direction == "before" {
+                messages = result.messages + messages
+                oldestCursor = result.oldestCursor
+                hasMoreBefore = result.hasMoreBefore
+            } else {
+                messages = messages + result.messages
+                newestCursor = result.newestCursor
+                hasMoreAfter = result.hasMoreAfter
+            }
+        } catch {
+            errorMessage = "加载更多失败: \(error.localizedDescription)"
+        }
+        isLoadingMore = false
     }
 
     func loadMessages(_ msgs: [Message]) {
@@ -113,6 +150,16 @@ class ChatViewModel: ObservableObject {
     func stopStreaming() {
         sseClient.disconnect()
         finishStreaming()
+    }
+
+    func deleteMessage(_ msg: Message) async {
+        guard let convId = conversationId, msg.id != "__streaming__" else { return }
+        do {
+            try await apiClient.deleteMessage(conversationId: convId, messageId: msg.id)
+            messages.removeAll { $0.id == msg.id }
+        } catch {
+            errorMessage = "删除消息失败: \(error.localizedDescription)"
+        }
     }
 
     // MARK: SSE Event Handling

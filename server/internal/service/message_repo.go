@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
+
 	"xhan-helper/internal/model"
 )
 
@@ -31,10 +33,18 @@ func (r *MessageRepo) UpdateLastUserEmbedding(ctx context.Context, convID string
 		Update("embedding", embedding).Error
 }
 
+// SoftDelete 软删除消息（标记 status=2）
+func (r *MessageRepo) SoftDelete(ctx context.Context, id, userID string) error {
+	return r.db.WithContext(ctx).
+		Model(&model.Message{}).
+		Where("id = ? AND user_id = ? AND status = ?", id, userID, 1).
+		Update("status", 2).Error
+}
+
 // GetByID 按 ID 查单条消息，未找到返回 (nil, nil)
 func (r *MessageRepo) GetByID(ctx context.Context, id string) (*model.Message, error) {
 	var m model.Message
-	err := r.db.WithContext(ctx).Where("id = ?", id).First(&m).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND status = ?", id, 1).First(&m).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -48,7 +58,7 @@ func (r *MessageRepo) GetByID(ctx context.Context, id string) (*model.Message, e
 func (r *MessageRepo) ListByConversation(ctx context.Context, convID string, limit int) ([]model.Message, error) {
 	var list []model.Message
 	err := r.db.WithContext(ctx).
-		Where("conversation_id = ?", convID).
+		Where("conversation_id = ? AND status = ?", convID, 1).
 		Order("created_at ASC").Limit(limit).
 		Find(&list).Error
 	return list, err
@@ -66,4 +76,96 @@ func (r *MessageRepo) ListByConversationSince(ctx context.Context, convID, since
 		Order("created_at ASC").Limit(limit).
 		Find(&list).Error
 	return list, err
+}
+
+// CursorResult — 游标分页结果
+type CursorResult struct {
+	Messages      []model.Message `json:"messages"`
+	HasMoreBefore bool            `json:"has_more_before"`
+	HasMoreAfter  bool            `json:"has_more_after"`
+	OldestCursor  string          `json:"oldest_cursor"`
+	NewestCursor  string          `json:"newest_cursor"`
+}
+
+// ListByConversationCursor 基于游标的分页查询
+// cursor: 锚点消息 ID（空则从最新开始）
+// direction: "before" 加载更旧消息，"after" 加载更新消息
+func (r *MessageRepo) ListByConversationCursor(ctx context.Context, convID, cursor, direction string, limit int) (*CursorResult, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+
+	var anchorTime *time.Time
+	if cursor != "" {
+		var m model.Message
+		err := r.db.WithContext(ctx).Where("id = ?", cursor).First(&m).Error
+		if err == nil {
+			anchorTime = &m.CreatedAt
+		}
+	}
+
+	var messages []model.Message
+	var err error
+
+	if direction == "after" && anchorTime != nil {
+		messages, err = r.loadAfter(ctx, convID, *anchorTime, limit)
+	} else {
+		messages, err = r.loadBefore(ctx, convID, anchorTime, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	result := &CursorResult{Messages: messages}
+	if len(messages) > 0 {
+		result.OldestCursor = messages[0].ID
+		result.NewestCursor = messages[len(messages)-1].ID
+		result.HasMoreBefore = r.existsBefore(ctx, convID, messages[0].CreatedAt)
+		result.HasMoreAfter = r.existsAfter(ctx, convID, messages[len(messages)-1].CreatedAt)
+	}
+	return result, nil
+}
+
+func (r *MessageRepo) loadBefore(ctx context.Context, convID string, anchor *time.Time, limit int) ([]model.Message, error) {
+	q := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND status = ?", convID, 1)
+	if anchor != nil {
+		q = q.Where("created_at < ?", *anchor)
+	}
+	// 取最近的 N 条较旧消息，先倒序再正过来
+	var temp []model.Message
+	err := q.Order("created_at DESC").Limit(limit).Find(&temp).Error
+	if err != nil {
+		return nil, err
+	}
+	// 反转为正序
+	for i, j := 0, len(temp)-1; i < j; i, j = i+1, j-1 {
+		temp[i], temp[j] = temp[j], temp[i]
+	}
+	return temp, nil
+}
+
+func (r *MessageRepo) loadAfter(ctx context.Context, convID string, anchor time.Time, limit int) ([]model.Message, error) {
+	var list []model.Message
+	err := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND created_at > ?", convID, anchor).
+		Order("created_at ASC").Limit(limit).
+		Find(&list).Error
+	return list, err
+}
+
+func (r *MessageRepo) existsBefore(ctx context.Context, convID string, t time.Time) bool {
+	var count int64
+	r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("conversation_id = ? AND created_at < ?", convID, t).
+		Count(&count)
+	return count > 0
+}
+
+func (r *MessageRepo) existsAfter(ctx context.Context, convID string, t time.Time) bool {
+	var count int64
+	r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("conversation_id = ? AND created_at > ?", convID, t).
+		Count(&count)
+	return count > 0
 }

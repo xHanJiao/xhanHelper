@@ -25,3 +25,6 @@ xhan-helper
 DerivedData/
 *.xcuserstate
 .env
+
+# Xcode scheme files
+*.xcscheme

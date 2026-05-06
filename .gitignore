@@ -24,3 +24,4 @@ xhan-helper
 /client/*.xcworkspace/xcuserdata/
 DerivedData/
 *.xcuserstate
+.env

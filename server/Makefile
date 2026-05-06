@@ -1,8 +1,8 @@
 .PHONY: dev check-env build clean test build-linux deploy deploy-only help logs
 
 # 服务器配置
-SERVER_USER=work
-SERVER_HOST=YOUR_SERVER_HOST
+SERVER_USER=${DEPLOY_USER}
+SERVER_HOST=${DEPLOY_HOST}
 SERVER_PATH=/srv/xhan-helper
 BINARY=xhan-helper
 OUTPUT_DIR=dist
@@ -82,6 +82,11 @@ build-linux:
 
 # 部署到阿里云：编译 + 上传 + 重启（一键）
 deploy: build-linux
+		@if [ -z "$$DEPLOY_USER" ] || [ -z "$$DEPLOY_HOST" ]; then \
+			echo "❌ 请先设置环境变量: export DEPLOY_USER=xxx DEPLOY_HOST=xxx"; \
+			echo "   参考 .env.example"; \
+			exit 1; \
+		fi
 	@echo ""
 	@echo "========================================"
 	@echo "       部署到阿里云服务器"

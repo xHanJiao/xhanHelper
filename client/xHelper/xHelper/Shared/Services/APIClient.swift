@@ -117,10 +117,11 @@ class APIClient {
 	// MARK: Prompts
 
 	func listPrompts(type: String = "", status: String = "") async throws -> [UserPrompt] {
-		var path = "/api/prompts?"
-		if !type.isEmpty { path += "type=\(type)&" }
-		if !status.isEmpty { path += "status=\(status)" }
-		return try await get(path)
+		var parts: [String] = []
+		if !type.isEmpty { parts.append("type=\(type)") }
+		if !status.isEmpty { parts.append("status=\(status)") }
+		let qs = parts.isEmpty ? "" : "?\(parts.joined(separator: "&"))"
+		return try await get("/api/prompts\(qs)")
 	}
 
 	func createPrompt(promptType: String, systemPrompt: String) async throws -> UserPrompt {

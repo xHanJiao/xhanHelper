@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MessageListView: View {
     @ObservedObject var viewModel: ChatViewModel
+    @State private var pendingScroll: DispatchWorkItem?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -68,18 +69,27 @@ struct MessageListView: View {
             .onChange(of: viewModel.messages.count) { oldCount, newCount in
                 if newCount > oldCount {
                     if let anchor = viewModel.anchorMessageID {
-                        withAnimation { proxy.scrollTo(anchor, anchor: .top) }
+                        scheduleScroll(proxy: proxy, id: anchor, anchor: .top)
                         viewModel.anchorMessageID = nil
                     } else if let last = viewModel.messages.last, last.id != "__streaming__" {
-                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                        scheduleScroll(proxy: proxy, id: last.id, anchor: .bottom)
                     }
                 }
             }
             .onChange(of: viewModel.messages.last?.content) {
                 if let last = viewModel.messages.last {
-                    withAnimation { proxy.scrollTo(last.id, anchor: .top) }
+                    scheduleScroll(proxy: proxy, id: last.id, anchor: .top)
                 }
             }
         }
+    }
+
+    private func scheduleScroll(proxy: ScrollViewProxy, id: String, anchor: UnitPoint, delay: TimeInterval = 0.05) {
+        pendingScroll?.cancel()
+        let work = DispatchWorkItem {
+            withAnimation { proxy.scrollTo(id, anchor: anchor) }
+        }
+        pendingScroll = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 }

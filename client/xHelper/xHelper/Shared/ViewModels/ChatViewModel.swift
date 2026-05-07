@@ -42,6 +42,7 @@ class ChatViewModel: ObservableObject {
     @Published var hasMoreBefore = false
     @Published var hasMoreAfter = false
     @Published var isLoadingMore = false
+    var anchorMessageID: String?
 
     private let apiClient: APIClient
     private let sseClient = SSEClient()
@@ -82,6 +83,9 @@ class ChatViewModel: ObservableObject {
                 direction: direction
             )
             if direction == "before" {
+                if let firstNew = result.messages.first?.id {
+                    anchorMessageID = firstNew
+                }
                 messages = result.messages + messages
                 oldestCursor = result.oldestCursor
                 hasMoreBefore = result.hasMoreBefore

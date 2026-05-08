@@ -116,7 +116,7 @@ func main() {
 	billHandler := controller.NewBillHandler(billRepo, memExtractor)
 	noteHandler := controller.NewNoteHandler(noteRepo)
 	memHandler := controller.NewMemoryHandler(memRepo)
-	agentHandler := controller.NewAgentHandler(agentRepo, llmClient)
+	agentHandler := controller.NewAgentHandler(agentRepo)
 	toolHandler := controller.NewToolHandler(toolRepo)
 	promptHandler := controller.NewPromptHandler(promptRepo)
 

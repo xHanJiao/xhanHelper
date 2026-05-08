@@ -1,15 +1,11 @@
 package controller
 
 import (
-	"context"
 	"strconv"
-	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
@@ -18,12 +14,11 @@ import (
 // AgentHandler — 智能体 REST API
 type AgentHandler struct {
 	agentRepo *service.AgentRepo
-	llmClient llm.LLMClient
 }
 
 // NewAgentHandler 创建 AgentHandler
-func NewAgentHandler(agentRepo *service.AgentRepo, llmClient llm.LLMClient) *AgentHandler {
-	return &AgentHandler{agentRepo: agentRepo, llmClient: llmClient}
+func NewAgentHandler(agentRepo *service.AgentRepo) *AgentHandler {
+	return &AgentHandler{agentRepo: agentRepo}
 }
 
 // CreateAgent POST /api/agents
@@ -45,11 +40,6 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 	}
 	if req.SystemPrompt == "" || len([]rune(req.SystemPrompt)) > 3000 {
 		view.JSONError(c, 400, "system_prompt required, max 3000 chars")
-		return
-	}
-
-	if nsfw, _ := h.checkNSFW(c.Request.Context(), req.SystemPrompt); nsfw {
-		view.JSONError(c, 400, "content policy violation")
 		return
 	}
 
@@ -129,10 +119,6 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 			view.JSONError(c, 400, "system_prompt max 3000 chars")
 			return
 		}
-		if nsfw, _ := h.checkNSFW(c.Request.Context(), *req.SystemPrompt); nsfw {
-			view.JSONError(c, 400, "content policy violation")
-			return
-		}
 		existing.SystemPrompt = *req.SystemPrompt
 	}
 	if req.Model != nil {
@@ -154,22 +140,4 @@ func (h *AgentHandler) DeleteAgent(c *gin.Context) {
 		return
 	}
 	view.JSONOK(c, gin.H{"deleted": true})
-}
-
-// checkNSFW 用 LLM 检测内容是否违规
-func (h *AgentHandler) checkNSFW(ctx context.Context, text string) (bool, error) {
-	if h.llmClient == nil {
-		return false, nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	msg, err := h.llmClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: "你是一个内容审核助手。判断文本是否包含色情、暴力、违法内容。只回复'是'或'否'，不要回复其他内容。",
-		Messages:     []llm.Message{{Role: "user", Content: text}},
-	})
-	if err != nil {
-		return false, err
-	}
-	return strings.Contains(msg.Content, "是"), nil
 }

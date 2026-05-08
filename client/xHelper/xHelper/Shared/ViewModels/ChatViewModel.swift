@@ -58,6 +58,8 @@ class ChatViewModel: ObservableObject {
     // MARK: Load
 
     func loadConversation(id: String, title: String) async {
+        sseClient.disconnect()
+        isStreaming = false
         conversationId = id
         conversationTitle = title
         do {

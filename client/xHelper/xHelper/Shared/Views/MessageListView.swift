@@ -72,12 +72,13 @@ struct MessageListView: View {
                         scheduleScroll(proxy: proxy, id: anchor, anchor: .top)
                         viewModel.anchorMessageID = nil
                     } else if let last = viewModel.messages.last, last.id != "__streaming__" {
-                        scheduleScroll(proxy: proxy, id: last.id, anchor: .bottom)
+                        let delay = oldCount == 0 ? 0.2 : 0.05
+                        scheduleScroll(proxy: proxy, id: last.id, anchor: .bottom, delay: delay)
                     }
                 }
             }
             .onChange(of: viewModel.messages.last?.content) {
-                if let last = viewModel.messages.last {
+                if viewModel.isStreaming, let last = viewModel.messages.last {
                     scheduleScroll(proxy: proxy, id: last.id, anchor: .top)
                 }
             }

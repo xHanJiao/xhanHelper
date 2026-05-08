@@ -207,7 +207,7 @@ func (o *Orchestrator) runReActLoop(
 				o.sendEvent(events, se)
 			case "done":
 				if hasReasoning {
-					events <- &llm.StreamEvent{Type: "thought_done", Content: ""}
+					o.sendEvent(events, &llm.StreamEvent{Type: "thought_done", Content: ""})
 				}
 				msg := llm.Message{
 					Role:             "assistant",
@@ -228,23 +228,23 @@ func (o *Orchestrator) runReActLoop(
 					if done {
 						if len(allToolCalls) >= 2 {
 							planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
-							events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
+							o.sendEvent(events, &llm.StreamEvent{Type: "plan", Content: string(planJSON)})
 						}
 						o.emitDone(events, req.ConversationID, msgID, "", memIDs)
 						return
 					}
 				}
 			case "error":
-				events <- se
+				o.sendEvent(events, se)
 				return
 			}
 		}
 	}
 
-	events <- &llm.StreamEvent{Type: "error", Error: "max iterations reached"}
+	o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: "max iterations reached"})
 	if len(allToolCalls) >= 2 {
 		planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
-		events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
+		o.sendEvent(events, &llm.StreamEvent{Type: "plan", Content: string(planJSON)})
 	}
 	o.emitDone(events, req.ConversationID, "", "max iterations reached", memIDs)
 }

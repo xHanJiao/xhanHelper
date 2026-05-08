@@ -68,7 +68,6 @@ func buildMessages(req *ChatRequest) []map[string]interface{} {
 	return messages
 }
 
-// buildRequest 构造 API 请求体
 // streamChunk — SSE 流式响应的单个 chunk
 type streamChunk struct {
 	Choices []struct {
@@ -292,6 +291,7 @@ func collectStream(events <-chan *StreamEvent) Message {
 	}
 }
 
+// buildRequest 构造非流式 API 请求体（保留供 doubao 等共用 parseChatResponse 的场景）
 func buildRequest(req *ChatRequest, model string, thinking bool) io.Reader {
 	messages := buildMessages(req)
 
@@ -377,46 +377,6 @@ func (c *FlashClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, 
 	return collectStream(events), nil
 }
 
-func (c *FlashClient) callAPI(ctx context.Context, req *ChatRequest, _ bool) (Message, error) {
-	url := c.baseURL + "/chat/completions"
-	reqBytes, _ := io.ReadAll(buildRequest(req, c.model, false))
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBytes))
-	if err != nil {
-		return Message{}, err
-	}
-	c.setHeaders(httpReq)
-
-	lastMsg := ""
-	if len(req.Messages) > 0 {
-		lm := req.Messages[len(req.Messages)-1]
-		lastMsg = lm.Content[:min(150, len(lm.Content))]
-	}
-	log.Printf("[flash:%s] request: msgs=%d, tools=%d, last_msg=%s",
-		c.model, len(req.Messages)+1, len(req.Tools), lastMsg)
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return Message{}, fmt.Errorf("flash request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return Message{}, fmt.Errorf("flash status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
-	}
-
-	msg, err := parseDeepSeekResponse(respBody)
-	if err != nil {
-		return msg, err
-	}
-	reqJSON := string(reqBytes)
-	respJSON := string(respBody)
-	msg.RequestJSON = &reqJSON
-	msg.ResponseJSON = &respJSON
-	return msg, nil
-}
-
 // ——— ProClient (思考模式) ———
 
 // ProClient — DeepSeek 强模型客户端（思考模式，支持思维链 + 工具调用）
@@ -464,117 +424,6 @@ func (c *ProClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, er
 		return Message{}, err
 	}
 	return collectStream(events), nil
-}
-
-func (c *ProClient) callAPI(ctx context.Context, req *ChatRequest, thinking bool) (Message, error) {
-	url := c.baseURL + "/chat/completions"
-	reqBytes, _ := io.ReadAll(buildRequest(req, c.model, true))
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBytes))
-	if err != nil {
-		return Message{}, err
-	}
-	c.setHeaders(httpReq)
-
-	log.Printf("[pro:%s] request: msgs=%d, tools=%d, thinking=true",
-		c.model, len(req.Messages)+1, len(req.Tools))
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return Message{}, fmt.Errorf("pro request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return Message{}, fmt.Errorf("pro status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
-	}
-
-	msg, err := parseDeepSeekResponse(respBody)
-	if err != nil {
-		return msg, err
-	}
-	reqJSON := string(reqBytes)
-	respJSON := string(respBody)
-	msg.RequestJSON = &reqJSON
-	msg.ResponseJSON = &respJSON
-	return msg, nil
-}
-
-// ——— shared parsing ———
-
-// parseDeepSeekResponse 解析 API 响应，返回 Message（含 ReasoningContent + ToolCalls）
-func parseDeepSeekResponse(body []byte) (Message, error) {
-	var result struct {
-		Choices []struct {
-			Message struct {
-				Content          string `json:"content"`
-				ReasoningContent string `json:"reasoning_content"`
-				ToolCalls        []struct {
-					ID       string `json:"id"`
-					Function struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return Message{}, fmt.Errorf("parse response: %w", err)
-	}
-	if result.Error != nil {
-		return Message{}, fmt.Errorf("api error: %s", result.Error.Message)
-	}
-	if len(result.Choices) == 0 {
-		return Message{}, fmt.Errorf("no choices")
-	}
-
-	msg := result.Choices[0].Message
-	reasoning := msg.ReasoningContent
-
-	var toolCalls []ToolCall
-	if len(msg.ToolCalls) > 0 {
-		toolCalls = make([]ToolCall, len(msg.ToolCalls))
-		for i, tc := range msg.ToolCalls {
-			toolCalls[i] = ToolCall{
-				ID: tc.ID,
-				Function: ToolCallFunction{
-					Name:      tc.Function.Name,
-					Arguments: tc.Function.Arguments,
-				},
-			}
-		}
-	}
-
-	if result.Usage != nil {
-		log.Printf("[deepseek] usage: prompt=%d, completion=%d, total=%d",
-			result.Usage.PromptTokens, result.Usage.CompletionTokens, result.Usage.TotalTokens)
-	}
-	if len(toolCalls) > 0 {
-		toolCallsJSON, _ := json.Marshal(toolCalls)
-		tcCount := len(toolCalls)
-		log.Printf("[deepseek] response: content=%d, reasoning=%d, tool_calls=%d -> %s",
-			len(msg.Content), len(reasoning), tcCount, string(toolCallsJSON)[:min(200, len(toolCallsJSON))])
-	} else {
-		log.Printf("[deepseek] response: content=%d, reasoning=%d, tool_calls=0, text=%s",
-			len(msg.Content), len(reasoning), msg.Content[:min(200, len(msg.Content))])
-	}
-
-	return Message{
-		Role:             "assistant",
-		Content:          msg.Content,
-		ReasoningContent: reasoning,
-		ToolCalls:        toolCalls,
-	}, nil
 }
 
 // parseChatResponse 解析纯文本返回 (OpenAI 格式，doubao 共用)

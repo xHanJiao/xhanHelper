@@ -36,6 +36,16 @@ func (r *NoteRepo) UpdateEmbedding(ctx context.Context, id string, embedding *st
 		Update("embedding", embedding).Error
 }
 
+// ListAllPaginated 分页获取所有笔记（用于 warmup），limit<=0 时默认 100
+func (r *NoteRepo) ListAllPaginated(ctx context.Context, limit, offset int) ([]model.Note, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var list []model.Note
+	err := r.db.WithContext(ctx).Limit(limit).Offset(offset).Find(&list).Error
+	return list, err
+}
+
 // Delete 删除笔记
 func (r *NoteRepo) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Delete(&model.Note{}, "id = ?", id).Error

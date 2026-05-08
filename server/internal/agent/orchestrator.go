@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -56,6 +57,8 @@ type Orchestrator struct {
 	registry       *tool.Registry
 	retriever      *Retriever
 	msgRepo        *service.MessageRepo
+	embedder       *llm.Embedder
+	vectorStore    *VectorStore
 	promptResolver PromptResolver
 	maxIterations  int
 }
@@ -63,7 +66,8 @@ type Orchestrator struct {
 // New 创建 Orchestrator
 func New(flashClient llm.LLMClient, registry *tool.Registry,
 	proClient llm.LLMClient, retriever *Retriever,
-	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
+	msgRepo *service.MessageRepo,
+	embedder *llm.Embedder, vectorStore *VectorStore,
 	maxIterations int) *Orchestrator {
 	if maxIterations <= 0 {
 		maxIterations = defaultMaxIterations
@@ -74,6 +78,8 @@ func New(flashClient llm.LLMClient, registry *tool.Registry,
 		registry:      registry,
 		msgRepo:       msgRepo,
 		retriever:     retriever,
+		embedder:      embedder,
+		vectorStore:   vectorStore,
 		maxIterations: maxIterations,
 	}
 }
@@ -91,13 +97,13 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	log.Printf("[orch] run start: model=%s, msgs=%d, tools=%d",
 		client.ModelName(), len(req.Messages), len(o.registry.GetLLMTools()))
 
-	sysPrompt, memoryNote, memIDs := o.buildSysPrompt(ctx, client, req)
+	sysPrompt, memoryNote, memIDs, noteIDs, queryVec := o.buildSysPrompt(ctx, client, req)
 
 	msgs := make([]llm.Message, len(req.Messages))
 	copy(msgs, req.Messages)
 
 	events := make(chan *llm.StreamEvent, 64)
-	go o.runReActLoop(ctx, events, client, sysPrompt, memoryNote, memIDs, msgs, req)
+	go o.runReActLoop(ctx, events, client, sysPrompt, memoryNote, memIDs, noteIDs, queryVec, msgs, req)
 	return events, nil
 }
 
@@ -108,7 +114,7 @@ func (o *Orchestrator) pickClient(req *RunRequest) llm.LLMClient {
 	return o.flashClient
 }
 
-func (o *Orchestrator) buildSysPrompt(ctx context.Context, client llm.LLMClient, req *RunRequest) (string, string, []string) {
+func (o *Orchestrator) buildSysPrompt(ctx context.Context, client llm.LLMClient, req *RunRequest) (string, string, []string, []string, []float64) {
 	sysPrompt := req.AgentSystemPrompt
 	if sysPrompt == "" {
 		sysPrompt = baseSystemPrompt
@@ -124,15 +130,21 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, client llm.LLMClient,
 	}
 	prompt := client.BuildSystemPrompt(sysPrompt, o.registry.GetLLMTools())
 
-	if o.retriever == nil {
-		return prompt, "", nil
+	if o.retriever == nil || o.embedder == nil {
+		return prompt, "", nil, nil, nil
 	}
-	memText, memIDs := o.retriever.Retrieve(ctx, req.UserMessageContent, req.UserID, req.ConversationID, req.DeepMode, req.MemoryThreshold, req.MemoryLimit)
+	vec, err := o.embedder.Embed(ctx, req.UserMessageContent)
+	if err != nil {
+		log.Printf("[vector] embed user msg error: %v", err)
+		return prompt, "", nil, nil, nil
+	}
+	packets, memIDs, noteIDs := o.retriever.Retrieve(ctx, vec, req.UserID, req.ConversationID, req.DeepMode, req.MemoryThreshold, req.MemoryLimit)
+	memText := o.retriever.FormatContext(packets)
 	if memText == "" {
-		return prompt, "", nil
+		return prompt, "", nil, noteIDs, vec
 	}
 	prompt += "\n\n===== 关于用户的信息 =====\n" + memText
-	return prompt, fmt.Sprintf(`{"message":"已关联向量记忆","count":%d}`, strings.Count(memText, "\n")), memIDs
+	return prompt, fmt.Sprintf(`{"message":"已关联向量记忆","count":%d}`, len(packets)), memIDs, noteIDs, vec
 }
 
 // —— ReAct 主循环 ——
@@ -142,7 +154,8 @@ func (o *Orchestrator) runReActLoop(
 	events chan<- *llm.StreamEvent,
 	client llm.LLMClient,
 	sysPrompt, memoryNote string,
-	memIDs []string,
+	memIDs, noteIDs []string,
+	queryVec []float64,
 	msgs []llm.Message,
 	req *RunRequest,
 ) {
@@ -154,21 +167,28 @@ func (o *Orchestrator) runReActLoop(
 
 	userMsgID := uuid.New().String()
 	msgs = append(msgs, llm.Message{Role: "user", Content: req.UserMessageContent})
-	if o.msgRepo != nil && req.ConversationID != "" {
-		var mIDs *string
-		if len(memIDs) > 0 {
-			b, _ := json.Marshal(memIDs)
-			s := string(b)
-			mIDs = &s
-		}
-		o.msgRepo.Create(ctx, &model.Message{
-			ID:             userMsgID,
-			ConversationID: req.ConversationID,
-			UserID:         req.UserID,
-			Role:           "user",
-			Content:        req.UserMessageContent,
-			MemoryIDs:      mIDs,
-		})
+	if req.ConversationID == "" {
+		log.Printf("[orch] ConversationID is empty")
+		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: "conversation_id is required"})
+		return
+	}
+	var mIDs *string
+	if len(memIDs) > 0 {
+		b, _ := json.Marshal(memIDs)
+		s := string(b)
+		mIDs = &s
+	}
+	o.msgRepo.Create(ctx, &model.Message{
+		ID:             userMsgID,
+		ConversationID: req.ConversationID,
+		UserID:         req.UserID,
+		Role:           "user",
+		Content:        req.UserMessageContent,
+		MemoryIDs:      mIDs,
+	})
+
+	if o.vectorStore != nil && len(queryVec) > 0 {
+		go o.saveUserMsgEmbedding(userMsgID, queryVec, req.UserID, req.ConversationID)
 	}
 
 	var allToolCalls []tool.ToolCall
@@ -230,7 +250,7 @@ func (o *Orchestrator) runReActLoop(
 							planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
 							o.sendEvent(events, &llm.StreamEvent{Type: "plan", Content: string(planJSON)})
 						}
-						o.emitDone(events, req.ConversationID, msgID, "", memIDs)
+						o.emitDone(events, req.ConversationID, msgID, "", memIDs, noteIDs)
 						return
 					}
 				}
@@ -246,7 +266,7 @@ func (o *Orchestrator) runReActLoop(
 		planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
 		o.sendEvent(events, &llm.StreamEvent{Type: "plan", Content: string(planJSON)})
 	}
-	o.emitDone(events, req.ConversationID, "", "max iterations reached", memIDs)
+	o.emitDone(events, req.ConversationID, "", "max iterations reached", memIDs, noteIDs)
 }
 
 // sendEvent — 非阻塞发送事件，避免客户端断连后 goroutine 卡住
@@ -463,7 +483,19 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCall
 	})
 }
 
-func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, errStr string, memIDs []string) {
+func (o *Orchestrator) saveUserMsgEmbedding(userMsgID string, vec []float64, userID, convID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	o.vectorStore.Upsert("msg:"+userMsgID, vec, map[string]string{
+		"type":    "msg",
+		"conv_id": convID,
+		"user_id": userID,
+	})
+	embStr := llm.EmbeddingToString(vec)
+	o.msgRepo.UpdateLastUserEmbedding(ctx, convID, &embStr)
+}
+
+func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, errStr string, memIDs, noteIDs []string) {
 	parts := make([]string, 0)
 	if convID != "" {
 		parts = append(parts, fmt.Sprintf(`"conversation_id":"%s"`, convID))
@@ -474,6 +506,10 @@ func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, e
 	if len(memIDs) > 0 {
 		b, _ := json.Marshal(memIDs)
 		parts = append(parts, fmt.Sprintf(`"memory_ids":%s`, string(b)))
+	}
+	if len(noteIDs) > 0 {
+		b, _ := json.Marshal(noteIDs)
+		parts = append(parts, fmt.Sprintf(`"note_ids":%s`, string(b)))
 	}
 	if errStr != "" {
 		parts = append(parts, fmt.Sprintf(`"error":"%s"`, errStr))

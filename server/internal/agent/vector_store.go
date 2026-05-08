@@ -73,7 +73,7 @@ func (vs *VectorStore) Search(query []float64, topK int, filter FilterFunc) []st
 		eligible = append(eligible, candidate{idx: i, score: cosineSimilarity(query, e.Vec)})
 	}
 
-	if len(eligible) == 0 {
+	if len(eligible) == 0 || topK <= 0 {
 		return nil
 	}
 

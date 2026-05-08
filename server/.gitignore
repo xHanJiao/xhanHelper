@@ -2,7 +2,7 @@
 data/*.db
 
 # Binary
-xhan-helper
+/xhan-helper
 
 # IDE
 .idea/

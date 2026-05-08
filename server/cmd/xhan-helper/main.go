@@ -100,11 +100,18 @@ func main() {
 	// 后台任务共享 context，关闭时统一取消
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
-	// Orchestrator
-	retriever := agent.NewRetriever(vectorStore, embedder, memRepo, msgRepo, noteRepo, cfg.Embedding.EnableHistorySearch)
-	go retriever.Warmup(bgCtx)
+	// Context Sources
+	memSource := agent.NewMemorySource(vectorStore, memRepo)
+	noteSource := agent.NewNoteSource(vectorStore, noteRepo)
 
-	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, cfg.LLM.MaxIterations)
+	// Warmup 必须完成后再启动服务
+	memSource.Warmup(bgCtx, embedder)
+	noteSource.Warmup(bgCtx, embedder)
+
+	// Orchestrator
+	retriever := agent.NewRetriever(memSource, noteSource)
+
+	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, embedder, vectorStore, cfg.LLM.MaxIterations)
 
 	// Memory Scheduler (后台异步)
 	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo)

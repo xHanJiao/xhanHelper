@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -68,6 +69,229 @@ func buildMessages(req *ChatRequest) []map[string]interface{} {
 }
 
 // buildRequest 构造 API 请求体
+// streamChunk — SSE 流式响应的单个 chunk
+type streamChunk struct {
+	Choices []struct {
+		Index int `json:"index"`
+		Delta struct {
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content"`
+			ToolCalls        []struct {
+				Index    int    `json:"index"`
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
+		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
+}
+
+// callStreamAPI — 真正的流式 API 调用，读取 SSE chunk 实时推送
+func (c *baseClient) callStreamAPI(ctx context.Context, req *ChatRequest, model string, thinking bool) (<-chan *StreamEvent, error) {
+	url := c.baseURL + "/chat/completions"
+	reqBody := buildStreamBody(req, model, thinking)
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, reqBody)
+	if err != nil {
+		return nil, err
+	}
+	c.setHeaders(httpReq)
+	httpReq.Header.Set("Accept", "text/event-stream")
+
+	lastMsg := ""
+	if len(req.Messages) > 0 {
+		lm := req.Messages[len(req.Messages)-1]
+		lastMsg = lm.Content[:min(150, len(lm.Content))]
+	}
+	logPrefix := "flash"
+	if thinking {
+		logPrefix = "pro"
+	}
+	log.Printf("[%s:%s] stream request: msgs=%d, tools=%d, last_msg=%s",
+		logPrefix, model, len(req.Messages)+1, len(req.Tools), lastMsg)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("stream request: %w", err)
+	}
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("stream status %d: %s", resp.StatusCode, string(body[:min(300, len(body))]))
+	}
+
+	events := make(chan *StreamEvent, 64)
+	go c.readSSEStream(ctx, resp.Body, events, logPrefix, model)
+	return events, nil
+}
+
+func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, events chan<- *StreamEvent, logPrefix, model string) {
+	defer close(events)
+	defer body.Close()
+
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+
+	var (
+		content   strings.Builder
+		reasoning strings.Builder
+		tcMap     = make(map[int]*ToolCall)
+		usage     *Usage
+	)
+
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk streamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+
+		if chunk.Usage != nil {
+			usage = &Usage{
+				PromptTokens:     chunk.Usage.PromptTokens,
+				CompletionTokens: chunk.Usage.CompletionTokens,
+				TotalTokens:      chunk.Usage.TotalTokens,
+			}
+		}
+
+		for _, choice := range chunk.Choices {
+			d := choice.Delta
+
+			if d.Content != "" {
+				content.WriteString(d.Content)
+				events <- &StreamEvent{Type: "text_delta", Content: d.Content}
+			}
+			if d.ReasoningContent != "" {
+				reasoning.WriteString(d.ReasoningContent)
+				events <- &StreamEvent{Type: "thought_delta", Content: d.ReasoningContent}
+			}
+			for _, tc := range d.ToolCalls {
+				cur, ok := tcMap[tc.Index]
+				if !ok {
+					cur = &ToolCall{ID: tc.ID}
+					tcMap[tc.Index] = cur
+				}
+				if tc.Function.Name != "" {
+					cur.Function.Name = tc.Function.Name
+				}
+				cur.Function.Arguments += tc.Function.Arguments
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Printf("[%s:%s] stream scanner error: %v", logPrefix, model, err)
+	}
+
+	toolCalls := make([]ToolCall, 0, len(tcMap))
+	for i := 0; i < len(tcMap); i++ {
+		if tc, ok := tcMap[i]; ok {
+			toolCalls = append(toolCalls, *tc)
+		}
+	}
+
+	if len(toolCalls) > 0 {
+		tcJSON, _ := json.Marshal(toolCalls)
+		log.Printf("[%s:%s] stream finished: content=%d, reasoning=%d, tool_calls=%d -> %s",
+			logPrefix, model, content.Len(), reasoning.Len(), len(toolCalls),
+			string(tcJSON)[:min(200, len(tcJSON))])
+	} else {
+		text := content.String()
+		log.Printf("[%s:%s] stream finished: content=%d, reasoning=%d, tool_calls=0, text=%s",
+			logPrefix, model, content.Len(), reasoning.Len(), text[:min(200, len(text))])
+	}
+	if usage != nil {
+		log.Printf("[%s:%s] usage: prompt=%d, completion=%d, total=%d",
+			logPrefix, model, usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens)
+	}
+
+	events <- &StreamEvent{
+		Type:      "done",
+		ToolCalls: toolCalls,
+		Usage:     usage,
+	}
+}
+
+func buildStreamBody(req *ChatRequest, model string, thinking bool) io.Reader {
+	messages := buildMessages(req)
+
+	payload := map[string]interface{}{
+		"model":    model,
+		"messages": messages,
+		"stream":   true,
+	}
+
+	if thinking {
+		payload["reasoning_effort"] = "high"
+		payload["thinking"] = map[string]string{"type": "enabled"}
+	}
+
+	if len(req.Tools) > 0 {
+		tools := make([]map[string]interface{}, 0)
+		for _, t := range req.Tools {
+			for _, fn := range t.Functions {
+				tools = append(tools, map[string]interface{}{
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":        t.Name + "__" + fn.Name,
+						"description": fn.Description,
+						"parameters":  fn.Parameters,
+					},
+				})
+			}
+		}
+		payload["tools"] = tools
+	}
+
+	b, _ := json.Marshal(payload)
+	return bytes.NewReader(b)
+}
+
+// collectStream — 消费流式 channel，汇总成完整 Message（供 ChatSync 使用）
+func collectStream(events <-chan *StreamEvent) Message {
+	var content, reasoning strings.Builder
+	var toolCalls []ToolCall
+	for evt := range events {
+		switch evt.Type {
+		case "text_delta":
+			content.WriteString(evt.Content)
+		case "thought_delta":
+			reasoning.WriteString(evt.Content)
+		case "done":
+			toolCalls = evt.ToolCalls
+		}
+	}
+	return Message{
+		Role:             "assistant",
+		Content:          content.String(),
+		ReasoningContent: reasoning.String(),
+		ToolCalls:        toolCalls,
+	}
+}
+
 func buildRequest(req *ChatRequest, model string, thinking bool) io.Reader {
 	messages := buildMessages(req)
 
@@ -142,32 +366,15 @@ func (c *FlashClient) BuildSystemPrompt(base string, tools []ToolDefinition) str
 }
 
 func (c *FlashClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamEvent, error) {
-	msg, err := c.ChatSync(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	events := make(chan *StreamEvent, 32)
-	go func() {
-		defer close(events)
-		for _, r := range msg.Content {
-			select {
-			case events <- &StreamEvent{Type: "text_delta", Content: string(r)}:
-			case <-ctx.Done():
-				log.Printf("[flash:%s] Chat: ctx cancelled during streaming", c.model)
-				return
-			}
-		}
-		select {
-		case events <- &StreamEvent{Type: "done"}:
-		case <-ctx.Done():
-			log.Printf("[flash:%s] Chat: ctx cancelled before done event", c.model)
-		}
-	}()
-	return events, nil
+	return c.callStreamAPI(ctx, req, c.model, false)
 }
 
 func (c *FlashClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, error) {
-	return c.callAPI(ctx, req, false)
+	events, err := c.Chat(ctx, req)
+	if err != nil {
+		return Message{}, err
+	}
+	return collectStream(events), nil
 }
 
 func (c *FlashClient) callAPI(ctx context.Context, req *ChatRequest, _ bool) (Message, error) {
@@ -248,40 +455,15 @@ func (c *ProClient) BuildSystemPrompt(base string, tools []ToolDefinition) strin
 }
 
 func (c *ProClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamEvent, error) {
-	msg, err := c.ChatSync(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	events := make(chan *StreamEvent, 64)
-	go func() {
-		defer close(events)
-		if msg.ReasoningContent != "" {
-			select {
-			case events <- &StreamEvent{Type: "thought_delta", Content: msg.ReasoningContent}:
-			case <-ctx.Done():
-				log.Printf("[pro:%s] Chat: ctx cancelled during streaming", c.model)
-				return
-			}
-		}
-		for _, r := range msg.Content {
-			select {
-			case events <- &StreamEvent{Type: "text_delta", Content: string(r)}:
-			case <-ctx.Done():
-				log.Printf("[pro:%s] Chat: ctx cancelled during streaming", c.model)
-				return
-			}
-		}
-		select {
-		case events <- &StreamEvent{Type: "done"}:
-		case <-ctx.Done():
-			log.Printf("[pro:%s] Chat: ctx cancelled before done event", c.model)
-		}
-	}()
-	return events, nil
+	return c.callStreamAPI(ctx, req, c.model, true)
 }
 
 func (c *ProClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, error) {
-	return c.callAPI(ctx, req, true)
+	events, err := c.Chat(ctx, req)
+	if err != nil {
+		return Message{}, err
+	}
+	return collectStream(events), nil
 }
 
 func (c *ProClient) callAPI(ctx context.Context, req *ChatRequest, thinking bool) (Message, error) {

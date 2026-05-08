@@ -82,7 +82,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			return
 		}
 
-		events, err := orch.Run(c.Request.Context(), &agent.RunRequest{
+		events, err := orch.Run(context.Background(), &agent.RunRequest{
 			UserID:             userID,
 			ConversationID:     conv.ID,
 			Messages:           buildLLMMessages(history),

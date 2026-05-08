@@ -182,7 +182,8 @@ func (o *Orchestrator) runReActLoop(
 			return
 		}
 
-		msg, err := client.ChatSync(ctx, &llm.ChatRequest{
+		// — 流式调用 LLM，实时转发 text/thought 到客户端 —
+		streamEvents, err := client.Chat(ctx, &llm.ChatRequest{
 			SystemPrompt: sysPrompt,
 			Messages:     msgs,
 			Tools:        o.registry.GetLLMTools(),
@@ -193,29 +194,50 @@ func (o *Orchestrator) runReActLoop(
 			return
 		}
 
-		log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
-			iter+1, len(msg.Content), len(msg.ReasoningContent), len(msg.ToolCalls))
+		var streamContent, streamReasoning strings.Builder
+		hasReasoning := false
+		for se := range streamEvents {
+			switch se.Type {
+			case "text_delta":
+				streamContent.WriteString(se.Content)
+				o.sendEvent(events, se)
+			case "thought_delta":
+				streamReasoning.WriteString(se.Content)
+				hasReasoning = true
+				o.sendEvent(events, se)
+			case "done":
+				if hasReasoning {
+					events <- &llm.StreamEvent{Type: "thought_done", Content: ""}
+				}
+				msg := llm.Message{
+					Role:             "assistant",
+					Content:          streamContent.String(),
+					ReasoningContent: streamReasoning.String(),
+					ToolCalls:        se.ToolCalls,
+				}
 
-		if msg.ReasoningContent != "" {
-			events <- &llm.StreamEvent{Type: "thought_delta", Content: msg.ReasoningContent}
-			events <- &llm.StreamEvent{Type: "thought_done", Content: ""}
-		}
+				log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
+					iter+1, len(msg.Content), len(msg.ReasoningContent), len(msg.ToolCalls))
 
-		// 原生 tool_calls（Pro 或 Flash 原生函数调用）
-		if len(msg.ToolCalls) > 0 {
-			o.handleNativeToolCalls(ctx, events, &msgs, msg, req, &allToolCalls)
-			continue
-		}
-
-		// Flash 文本 JSON 解析
-		done, msgID := o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID)
-		if done {
-			if len(allToolCalls) >= 2 {
-				planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
-				events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
+				// 原生 tool_calls
+				if len(msg.ToolCalls) > 0 {
+					o.handleNativeToolCalls(ctx, events, &msgs, msg, req, &allToolCalls)
+				} else {
+					// Flash 文本 JSON 解析
+					done, msgID := o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID)
+					if done {
+						if len(allToolCalls) >= 2 {
+							planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
+							events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
+						}
+						o.emitDone(events, req.ConversationID, msgID, "", memIDs)
+						return
+					}
+				}
+			case "error":
+				events <- se
+				return
 			}
-			o.emitDone(events, req.ConversationID, msgID, "", memIDs)
-			return
 		}
 	}
 
@@ -225,6 +247,14 @@ func (o *Orchestrator) runReActLoop(
 		events <- &llm.StreamEvent{Type: "plan", Content: string(planJSON)}
 	}
 	o.emitDone(events, req.ConversationID, "", "max iterations reached", memIDs)
+}
+
+// sendEvent — 非阻塞发送事件，避免客户端断连后 goroutine 卡住
+func (o *Orchestrator) sendEvent(events chan<- *llm.StreamEvent, evt *llm.StreamEvent) {
+	select {
+	case events <- evt:
+	default:
+	}
 }
 
 // —— 工具调用处理 ——
@@ -304,11 +334,8 @@ func (o *Orchestrator) handleFlashResponse(
 	parsed := parseLLMResponse(msg.Content)
 
 	if parsed == nil {
-		// 纯文本回复 → 流式输出 → done
+		// 纯文本回复 — 文本已在流式阶段实时推送，这里只落库
 		log.Printf("[orch] round pure text reply, len=%d", len(msg.Content))
-		for _, r := range msg.Content {
-			events <- &llm.StreamEvent{Type: "text_delta", Content: string(r)}
-		}
 		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg)
 		return true, *lastMsgID
 	}

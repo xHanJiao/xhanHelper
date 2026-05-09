@@ -225,7 +225,65 @@ function setNodeRef(id, el) {
   stroke-dasharray: 6 3;
 }
 .edge-pending {
-  stroke: #d9d9d9;
+  stroke: var(--color-border);
+}
+.edge-running {
+  stroke: var(--color-primary);
+  stroke-dasharray: 8 4;
+  animation: dash-move 0.6s linear infinite;
+}
+.edge-done {
+  stroke: var(--color-success);
+}
+.edge-failed {
+  stroke: var(--color-danger);
+}
+
+.plan-node {
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md) 14px;
+  text-align: center;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.node-pending {
+  border-color: var(--color-border);
+}
+.node-running {
+  border-color: var(--color-primary);
+  animation: node-pulse 1.5s ease-in-out infinite;
+}
+.node-done {
+  border-color: var(--color-success);
+}
+.node-failed {
+  border-color: var(--color-danger);
+}
+
+.status-badge.pending {
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+}
+.status-badge.running {
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.status-badge.done {
+  color: var(--color-success);
+  background: var(--color-success-soft);
+}
+.status-badge.failed {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+
+@keyframes dash-move {
+  to { stroke-dashoffset: -24; }
+}
+@keyframes node-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(91, 106, 191, 0.3); }
+  50% { box-shadow: 0 0 0 8px rgba(91, 106, 191, 0.1); }
 }
 .edge-running {
   stroke: #2080f0;

@@ -1,15 +1,26 @@
 :root {
+  /* 语义色系 */
   --color-primary: #5b6abf;
   --color-primary-hover: #4a58a8;
-  --color-danger: #e5534b;
-  --color-success: #2da44e;
-  --color-warning: #d29922;
-  --color-info: #4a9eff;
+  --color-primary-soft: #eef0fa;
 
+  --color-success: #2da44e;
+  --color-success-hover: #238636;
+  --color-success-soft: #dafbe1;
+
+  --color-danger: #e5534b;
+  --color-danger-hover: #cf3a32;
+  --color-danger-soft: #ffe5e3;
+
+  --color-warning: #d29922;
+  --color-warning-hover: #ba8517;
+  --color-warning-soft: #fff0d4;
+
+  /* 灰度 */
   --color-bg: #f5f3f0;
   --color-bg-page: #eeedeb;
-  --color-surface: #ffffff;
-  --color-surface-hover: #f8f7f5;
+  --color-surface: #f6f5f3;
+  --color-surface-hover: #eeeeec;
 
   --color-text: #1f2328;
   --color-text-secondary: #656d76;
@@ -41,6 +52,22 @@
 }
 
 [data-theme="dark"] {
+  --color-primary: #7c8bdb;
+  --color-primary-hover: #8f9ce5;
+  --color-primary-soft: #2a2d40;
+
+  --color-success: #46954a;
+  --color-success-hover: #52a855;
+  --color-success-soft: #1a2e1d;
+
+  --color-danger: #e06c5e;
+  --color-danger-hover: #e88378;
+  --color-danger-soft: #331c1a;
+
+  --color-warning: #d9a84e;
+  --color-warning-hover: #e0b863;
+  --color-warning-soft: #2e2518;
+
   --color-bg: #1e1c21;
   --color-bg-page: #161418;
   --color-surface: #262429;

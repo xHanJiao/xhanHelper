@@ -1,4 +1,5 @@
 <script setup>
+import { computed } from 'vue'
 import { NConfigProvider, NMessageProvider } from 'naive-ui'
 import { useThemeStore } from '@/stores/theme'
 import { useMobile } from '@/composables/useMobile'
@@ -6,10 +7,19 @@ import ConversationList from '@/components/ConversationList.vue'
 
 const theme = useThemeStore()
 const { isMobile, drawerOpen, closeDrawer } = useMobile()
+
+const themeOverrides = computed(() => ({
+  common: {
+    primaryColor: '#5b6abf',
+    primaryColorHover: '#4a58a8',
+    primaryColorPressed: '#3f4d96',
+    primaryColorSuppl: '#5b6abf'
+  }
+}))
 </script>
 
 <template>
-  <NConfigProvider :theme="theme.naiveTheme">
+  <NConfigProvider :theme="theme.naiveTheme" :theme-overrides="themeOverrides">
     <NMessageProvider>
       <div style="display: flex; height: 100vh; width: 100vw; overflow: hidden;">
         <!-- 桌面端侧栏 -->

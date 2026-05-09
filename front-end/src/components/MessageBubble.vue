@@ -70,12 +70,12 @@ const contentHtml = computed(() => md.render(props.message.content || ''))
   margin: 0;
 }
 .user-bubble {
-  background: #18a058;
+  background: var(--color-success);
   color: #fff;
 }
 [data-theme="dark"] .user-bubble {
-  background: #2d8a4e;
-  color: #e0e0e0;
+  background: var(--color-success);
+  color: #fff;
 }
 .status-badge {
   margin-top: var(--space-sm);

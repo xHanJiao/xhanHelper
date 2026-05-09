@@ -19,8 +19,10 @@ import {
   NSpin,
   useMessage
 } from 'naive-ui'
+import { useMobile } from '@/composables/useMobile'
 
 const message = useMessage()
+const { isMobile, toggleDrawer } = useMobile()
 const router = useRouter()
 const chat = useChatStore()
 
@@ -105,7 +107,10 @@ onMounted(fetchAgents)
 <template>
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
     <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
-      <span style="font-size: 16px; font-weight: 500;">智能体管理</span>
+      <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
+  <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
+  智能体管理
+</span>
       <NButton type="primary" size="small" @click="openCreate">创建智能体</NButton>
     </div>
     <div style="flex: 1; overflow-y: auto; padding: 24px;">

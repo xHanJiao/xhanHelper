@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
+import { useMobile } from '@/composables/useMobile'
 import {
   NCard,
   NButton,
@@ -16,6 +17,7 @@ import {
 } from 'naive-ui'
 
 const message = useMessage()
+const { isMobile, toggleDrawer } = useMobile()
 
 const tools = ref([])
 const loading = ref(false)
@@ -102,7 +104,10 @@ onMounted(fetchTools)
 <template>
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
     <div style="padding: var(--space-lg) 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
-      <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text);">动态工具管理</span>
+      <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
+  <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
+  动态工具管理
+</span>
       <NButton type="primary" size="small" @click="openCreate">创建工具</NButton>
     </div>
     <div style="flex: 1; overflow-y: auto; padding: 24px;">

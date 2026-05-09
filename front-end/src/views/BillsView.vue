@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
+import { useMobile } from '@/composables/useMobile'
 import {
   NDataTable,
   NButton,
@@ -14,6 +15,7 @@ import {
 
 const auth = useAuthStore()
 const message = useMessage()
+const { isMobile, toggleDrawer } = useMobile()
 
 const bills = ref([])
 const loading = ref(false)
@@ -133,7 +135,10 @@ onMounted(fetchBills)
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
     <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface);">
       <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
-        <span style="font-size: 16px; font-weight: 500;">账单管理</span>
+        <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
+  <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
+  账单管理
+</span>
         <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
           <NDatePicker
             v-model:value="filterDateRange"

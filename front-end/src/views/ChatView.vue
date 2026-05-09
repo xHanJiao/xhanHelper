@@ -13,6 +13,7 @@ import {
 } from 'naive-ui'
 import MessageBubble from '@/components/MessageBubble.vue'
 import PlanGraph from '@/components/PlanGraph.vue'
+import { useMobile } from '@/composables/useMobile'
 
 const route = useRoute()
 const router = useRouter()
@@ -20,6 +21,7 @@ const chat = useChatStore()
 const convs = useConversationsStore()
 const { sendMessage, cancel } = useChatSSE()
 const nMessage = useMessage()
+const { isMobile, toggleDrawer } = useMobile()
 
 const inputValue = ref('')
 const messagesEndRef = ref(null)
@@ -174,7 +176,10 @@ function handleStop() {
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
     <!-- 顶部工具栏 -->
     <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; background: var(--color-surface); flex-shrink: 0;">
-        <div style="font-size: 16px; font-weight: 500;">{{ currentTitle }}</div>
+        <div style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
+          <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
+          {{ currentTitle }}
+        </div>
         <div style="display: flex; align-items: center; gap: 16px;">
           <div style="display: flex; align-items: center; gap: 8px;">
             <span style="font-size: 14px; color: var(--color-text-secondary);">深度思考</span>

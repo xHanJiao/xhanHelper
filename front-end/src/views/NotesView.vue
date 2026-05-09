@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
+import { useMobile } from '@/composables/useMobile'
 import {
   NCard,
   NButton,
@@ -15,6 +16,7 @@ import {
 } from 'naive-ui'
 
 const message = useMessage()
+const { isMobile, toggleDrawer } = useMobile()
 
 const notes = ref([])
 const loading = ref(false)
@@ -71,7 +73,10 @@ onMounted(fetchNotes)
 <template>
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
     <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
-      <span style="font-size: 16px; font-weight: 500;">笔记管理</span>
+      <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
+  <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
+  笔记管理
+</span>
       <div style="display: flex; align-items: center; gap: 12px;">
         <NInput
           v-model:value="keyword"

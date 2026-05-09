@@ -240,8 +240,8 @@ function setNodeRef(id, el) {
 }
 
 .plan-node {
-  background: #fff;
-  border: 2px solid #e8e8e8;
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
   border-radius: 12px;
   padding: 10px 14px;
   text-align: center;
@@ -263,7 +263,7 @@ function setNodeRef(id, el) {
 .node-label {
   font-size: 13px;
   font-weight: 500;
-  color: #333;
+  color: var(--color-text);
   margin-bottom: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -275,8 +275,8 @@ function setNodeRef(id, el) {
   border-radius: 10px;
 }
 .status-badge.pending {
-  color: #999;
-  background: #f5f5f5;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
 }
 .status-badge.running {
   color: #2080f0;

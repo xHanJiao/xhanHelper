@@ -103,8 +103,8 @@ onMounted(fetchAgents)
 </script>
 
 <template>
-  <div style="height: 100vh; display: flex; flex-direction: column; background: #f7f8fa;">
-    <div style="padding: 16px 24px; border-bottom: 1px solid #e8e8e8; background: #fff; display: flex; align-items: center; justify-content: space-between;">
+  <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
+    <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
       <span style="font-size: 16px; font-weight: 500;">智能体管理</span>
       <NButton type="primary" size="small" @click="openCreate">创建智能体</NButton>
     </div>
@@ -124,9 +124,9 @@ onMounted(fetchAgents)
                   </NPopconfirm>
                 </NSpace>
               </template>
-              <div style="font-size: 13px; color: #666; line-height: 1.6; max-height: 120px; overflow: hidden; white-space: pre-wrap;">{{ agent.system_prompt }}</div>
+              <div style="font-size: 13px; color: var(--color-text-secondary); line-height: 1.6; max-height: 120px; overflow: hidden; white-space: pre-wrap;">{{ agent.system_prompt }}</div>
               <div style="margin-top: 10px; display: flex; align-items: center; justify-content: space-between;">
-                <span style="font-size: 12px; color: #999;">模型：{{ agent.model }} · {{ new Date(agent.created_at).toLocaleDateString() }}</span>
+                <span style="font-size: 12px; color: var(--color-text-muted);">模型：{{ agent.model }} · {{ new Date(agent.created_at).toLocaleDateString() }}</span>
                 <NButton size="tiny" type="primary" quaternary @click.stop="handleStartChat(agent)">开始对话</NButton>
               </div>
             </NCard>

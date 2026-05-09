@@ -27,7 +27,7 @@ function handleUpdate(key) {
 </script>
 
 <template>
-  <div style="width: 64px; min-width: 64px; border-right: 1px solid #e8e8e8; background: #fff; display: flex; flex-direction: column;">
+  <div style="width: 64px; min-width: 64px; border-right: 1px solid var(--color-border); background: var(--color-surface); display: flex; flex-direction: column;">
     <NMenu
       :value="activeKey"
       :options="menuOptions"

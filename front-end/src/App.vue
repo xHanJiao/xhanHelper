@@ -1,10 +1,13 @@
 <script setup>
-import { NConfigProvider, NMessageProvider } from 'naive-ui'
+import { NConfigProvider, NMessageProvider, darkTheme } from 'naive-ui'
+import { useThemeStore } from '@/stores/theme'
 import ConversationList from '@/components/ConversationList.vue'
+
+const theme = useThemeStore()
 </script>
 
 <template>
-  <NConfigProvider>
+  <NConfigProvider :theme="theme.naiveTheme">
     <NMessageProvider>
       <div style="display: flex; height: 100vh; width: 100vw; overflow: hidden;">
         <ConversationList />

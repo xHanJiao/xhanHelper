@@ -130,8 +130,8 @@ onMounted(fetchBills)
 </script>
 
 <template>
-  <div style="height: 100vh; display: flex; flex-direction: column; background: #f7f8fa;">
-    <div style="padding: 16px 24px; border-bottom: 1px solid #e8e8e8; background: #fff;">
+  <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
+    <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface);">
       <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
         <span style="font-size: 16px; font-weight: 500;">账单管理</span>
         <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">

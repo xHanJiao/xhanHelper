@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useConversationsStore } from '@/stores/conversations'
 import { api } from '@/api/client'
+import { useThemeStore } from '@/stores/theme'
 import { NButton, NPopconfirm, NModal, NInput, useMessage } from 'naive-ui'
 
 const isDev = import.meta.env.DEV
@@ -10,6 +11,7 @@ const isDev = import.meta.env.DEV
 const router = useRouter()
 const route = useRoute()
 const convs = useConversationsStore()
+const theme = useThemeStore()
 const message = useMessage()
 
 const renameModalVisible = ref(false)
@@ -90,13 +92,16 @@ async function handleExtractMemories(conv) {
 </script>
 
 <template>
-  <div style="width: 280px; background: #fff; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; height: 100%;">
+  <div style="width: 280px; background: var(--color-surface); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; height: 100%;">
     <!-- 顶部：用户信息和新对话按钮 -->
     <div style="padding: 20px 16px;">
       <!-- 用户头像 -->
       <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
         <div style="width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; font-size: 18px;">我</div>
         <div style="font-size: 18px; font-weight: 600;">xhanHelper</div>
+        <button @click="theme.toggle()" style="margin-left: auto; padding: 6px; border: none; background: none; cursor: pointer; border-radius: 6px; font-size: 18px;" :title="theme.isDark ? '切到亮色' : '切到暗色'">
+          {{ theme.isDark ? '☀️' : '🌙' }}
+        </button>
       </div>
 
       <!-- 新对话按钮 -->
@@ -120,11 +125,11 @@ async function handleExtractMemories(conv) {
           marginBottom: '4px',
           cursor: 'pointer',
           fontSize: '15px',
-          color: isNavActive(item.path) ? '#667eea' : '#333',
+          color: isNavActive(item.path) ? '#667eea' : 'var(--color-text)',
           background: isNavActive(item.path) ? '#f0f0ff' : 'transparent',
           fontWeight: isNavActive(item.path) ? '600' : '400'
         }"
-        @mouseover="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = '#fafafa' }"
+        @mouseover="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'var(--color-surface-hover)' }"
         @mouseout="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'transparent' }"
       >
         {{ item.label }}
@@ -132,7 +137,7 @@ async function handleExtractMemories(conv) {
     </div>
 
     <!-- 历史对话标题 -->
-    <div style="padding: 0 20px 10px; color: #999; font-size: 14px; font-weight: 600;">历史对话</div>
+    <div style="padding: 0 20px 10px; color: var(--color-text-muted); font-size: 14px; font-weight: 600;">历史对话</div>
 
     <!-- 对话列表 -->
     <div style="flex: 1; overflow-y: auto; padding: 0 12px;">
@@ -150,28 +155,28 @@ async function handleExtractMemories(conv) {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          background: activeId === conv.id ? '#f5f5f5' : 'transparent',
+          background: activeId === conv.id ? 'var(--color-bg)' : 'transparent',
           fontWeight: activeId === conv.id ? '600' : '400'
         }"
-        @mouseover="e => e.currentTarget.style.background = activeId === conv.id ? '#f5f5f5' : '#fafafa'"
-        @mouseout="e => e.currentTarget.style.background = activeId === conv.id ? '#f5f5f5' : 'transparent'"
+        @mouseover="e => e.currentTarget.style.background = activeId === conv.id ? 'var(--color-bg)' : 'var(--color-surface-hover)'"
+        @mouseout="e => e.currentTarget.style.background = activeId === conv.id ? 'var(--color-bg)' : 'transparent'"
       >
         <div style="display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
-          <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; color: #333;">{{ conv.title }}</div>
+          <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; color: var(--color-text);">{{ conv.title }}</div>
         </div>
 
         <!-- 操作按钮 - hover 显示 -->
         <div v-if="hoveredId === conv.id" style="display: flex; gap: 4px; flex-shrink: 0;">
-          <button @click.stop="handleRename(conv)" style="padding: 6px; border: none; background: none; cursor: pointer; border-radius: 6px; display: flex; align-items: center; justify-content: center;" @mouseover="e => e.currentTarget.style.background = '#eee'" @mouseout="e => e.currentTarget.style.background = 'none'">
+          <button @click.stop="handleRename(conv)" style="padding: 6px; border: none; background: none; cursor: pointer; border-radius: 6px; display: flex; align-items: center; justify-content: center;" @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'" @mouseout="e => e.currentTarget.style.background = 'none'">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
             </svg>
           </button>
-          <button v-if="isDev" @click.stop="handleExtractMemories(conv)" :disabled="extractingId === conv.id" style="padding: 6px; border: none; background: none; cursor: pointer; border-radius: 6px; display: flex; align-items: center; justify-content: center;" @mouseover="e => e.currentTarget.style.background = '#eee'" @mouseout="e => e.currentTarget.style.background = 'none'">
+          <button v-if="isDev" @click.stop="handleExtractMemories(conv)" :disabled="extractingId === conv.id" style="padding: 6px; border: none; background: none; cursor: pointer; border-radius: 6px; display: flex; align-items: center; justify-content: center;" @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'" @mouseout="e => e.currentTarget.style.background = 'none'">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="extractingId === conv.id ? '#999' : '#666'" stroke-width="2">
               <path d="M12 2a5 5 0 0 0-5 5v1a6 6 0 0 0-2 4.5V14h14v-1.5a6 6 0 0 0-2-4.5V7a5 5 0 0 0-5-5z"/>
               <path d="M10 19v1a2 2 0 0 0 4 0v-1"/>
@@ -179,7 +184,7 @@ async function handleExtractMemories(conv) {
           </button>
           <NPopconfirm @positive-click="handleDelete(conv)">
             <template #trigger>
-              <button @click.stop style="padding: 6px; border: none; background: none; cursor: pointer; border-radius: 6px; display: flex; align-items: center; justify-content: center;" @mouseover="e => e.currentTarget.style.background = '#eee'" @mouseout="e => e.currentTarget.style.background = 'none'">
+              <button @click.stop style="padding: 6px; border: none; background: none; cursor: pointer; border-radius: 6px; display: flex; align-items: center; justify-content: center;" @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'" @mouseout="e => e.currentTarget.style.background = 'none'">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e53e3e" stroke-width="2">
                   <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                   <line x1="10" y1="11" x2="10" y2="17"/>

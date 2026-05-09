@@ -50,7 +50,7 @@ function toggleMode() {
 </script>
 
 <template>
-  <NLayout style="height: 100%; display: flex; align-items: center; justify-content: center; background: #f5f5f5;">
+  <NLayout style="height: 100%; display: flex; align-items: center; justify-content: center; background: var(--color-bg);">
     <NLayoutContent style="width: 400px;">
       <NCard title="xhanHelper" style="text-align: center;">
         <NForm>

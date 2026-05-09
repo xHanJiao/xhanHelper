@@ -42,8 +42,8 @@ watch(() => props.reasoning, (val) => {
 .thinking-content {
   white-space: pre-wrap;
   font-size: 14px;
-  color: #666;
-  background: #f5f5f5;
+  color: var(--color-text-secondary);
+  background: var(--color-bg);
   padding: 10px;
   border-radius: 8px;
 }

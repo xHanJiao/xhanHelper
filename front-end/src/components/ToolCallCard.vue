@@ -58,7 +58,7 @@ import { computed } from 'vue'
 }
 .summary {
   font-size: 14px;
-  color: #666;
+  color: var(--color-text-secondary);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -68,10 +68,10 @@ import { computed } from 'vue'
 .count-failed { color: #d03050; font-size: 12px; }
 
 .tool-call-item {
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--color-border);
   border-radius: 12px;
   padding: 10px 14px;
-  background: #fafafa;
+  background: var(--color-surface-hover);
   margin-bottom: 8px;
 }
 .tool-call-header {
@@ -86,10 +86,10 @@ import { computed } from 'vue'
 .tool-call-result {
   margin-top: 8px;
   font-size: 13px;
-  color: #666;
+  color: var(--color-text-secondary);
   max-height: 120px;
   overflow: auto;
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 8px;
   padding: 8px;
 }

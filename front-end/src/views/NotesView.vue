@@ -69,8 +69,8 @@ onMounted(fetchNotes)
 </script>
 
 <template>
-  <div style="height: 100vh; display: flex; flex-direction: column; background: #f7f8fa;">
-    <div style="padding: 16px 24px; border-bottom: 1px solid #e8e8e8; background: #fff; display: flex; align-items: center; justify-content: space-between;">
+  <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
+    <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
       <span style="font-size: 16px; font-weight: 500;">笔记管理</span>
       <div style="display: flex; align-items: center; gap: 12px;">
         <NInput
@@ -91,13 +91,13 @@ onMounted(fetchNotes)
             <template #header-extra>
               <NButton size="tiny" quaternary type="error" @click="handleDelete(note)">删除</NButton>
             </template>
-            <div style="font-size: 14px; color: #666; line-height: 1.7; white-space: pre-wrap; max-height: 160px; overflow: hidden;">
+            <div style="font-size: 14px; color: var(--color-text-secondary); line-height: 1.7; white-space: pre-wrap; max-height: 160px; overflow: hidden;">
               {{ truncate(note.content, 300) }}
             </div>
             <div v-if="note.tags" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px;">
               <NTag v-for="tag in parseTags(note.tags)" :key="tag" size="small">{{ tag }}</NTag>
             </div>
-            <div style="margin-top: 8px; font-size: 12px; color: #999;">
+            <div style="margin-top: 8px; font-size: 12px; color: var(--color-text-muted);">
               {{ new Date(note.created_at).toLocaleString() }}
             </div>
           </NCard>

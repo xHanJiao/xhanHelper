@@ -32,7 +32,7 @@ const contentHtml = computed(() => md.render(props.message.content || ''))
   <div style="display: flex; margin-bottom: 16px;">
     <!-- 用户消息 -->
     <div v-if="isUser" style="width: 100%; display: flex; justify-content: flex-end;">
-      <div class="user-bubble" style="max-width: 70%; background: #18a058; color: #fff; border-radius: 12px; padding: 4px 10px; font-size: 15px; line-height: 1.4;">
+      <div class="user-bubble" style="max-width: 70%; border-radius: 12px; padding: 4px 10px; font-size: 15px; line-height: 1.4;">
         <div v-html="contentHtml" style="margin: 0;"></div>
       </div>
       <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; margin-left: 10px; flex-shrink: 0;">我</div>
@@ -41,14 +41,14 @@ const contentHtml = computed(() => md.render(props.message.content || ''))
     <!-- AI 消息 -->
     <div v-else style="width: 100%; display: flex;">
       <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; margin-right: 10px; flex-shrink: 0;">AI</div>
-      <div style="flex: 1; min-width: 0;">
+      <div style="flex: 1; min-width: 0; background: var(--color-surface); border-radius: var(--radius-lg); padding: var(--space-md);">
         <ThinkingBlock
           :reasoning="message.reasoning"
           :done="message.reasoningDone"
           :is-history="isHistory"
         />
 
-        <div v-if="contentHtml" style="font-size: 15px; line-height: 1.7; color: #333;">
+        <div v-if="contentHtml" style="font-size: 15px; line-height: 1.7; color: var(--color-text);">
           <div v-html="contentHtml" style="margin: 0;"></div>
         </div>
 
@@ -68,6 +68,14 @@ const contentHtml = computed(() => md.render(props.message.content || ''))
 <style scoped>
 .user-bubble p {
   margin: 0;
+}
+.user-bubble {
+  background: #18a058;
+  color: #fff;
+}
+[data-theme="dark"] .user-bubble {
+  background: #2d8a4e;
+  color: #e0e0e0;
 }
 .status-badge {
   margin-top: 8px;

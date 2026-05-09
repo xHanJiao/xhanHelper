@@ -244,7 +244,7 @@ func buildStreamBody(req *ChatRequest, model string, thinking bool) io.Reader {
 	}
 
 	if thinking {
-		payload["reasoning_effort"] = "high"
+		payload["reasoning_effort"] = "max"
 		payload["thinking"] = map[string]string{"type": "enabled"}
 	}
 

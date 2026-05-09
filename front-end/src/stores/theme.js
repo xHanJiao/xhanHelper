@@ -1,8 +1,18 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import { darkTheme } from 'naive-ui'
 
 const KEY = 'xhanhelper_theme'
+
+function isNightTime() {
+  const h = new Date().getHours()
+  return h >= 18 || h < 8
+}
+
+function apply(isDark, naiveTheme) {
+  naiveTheme.value = isDark ? darkTheme : null
+  document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light')
+}
 
 export const useThemeStore = defineStore('theme', () => {
   const isDark = ref(false)
@@ -10,16 +20,17 @@ export const useThemeStore = defineStore('theme', () => {
 
   function load() {
     try {
-      isDark.value = localStorage.getItem(KEY) === 'dark'
-      naiveTheme.value = isDark.value ? darkTheme : null
-      document.documentElement.setAttribute('data-theme', isDark.value ? 'dark' : 'light')
-    } catch {}
+      const saved = localStorage.getItem(KEY)
+      isDark.value = saved !== null ? saved === 'dark' : isNightTime()
+    } catch {
+      isDark.value = isNightTime()
+    }
+    apply(isDark.value, naiveTheme)
   }
 
   function toggle() {
     isDark.value = !isDark.value
-    naiveTheme.value = isDark.value ? darkTheme : null
-    document.documentElement.setAttribute('data-theme', isDark.value ? 'dark' : 'light')
+    apply(isDark.value, naiveTheme)
     try { localStorage.setItem(KEY, isDark.value ? 'dark' : 'light') } catch {}
   }
 

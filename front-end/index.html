@@ -7,8 +7,13 @@
     <title>xhanHelper</title>
     <script>
       (function() {
-        var t = localStorage.getItem('xhanhelper_theme')
-        document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light')
+        var t = localStorage.getItem('xhanhelper_theme');
+        if (t != null) {
+          document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
+        } else {
+          var h = new Date().getHours();
+          document.documentElement.setAttribute('data-theme', (h >= 18 || h < 8) ? 'dark' : 'light');
+        }
       })()
     </script>
   </head>

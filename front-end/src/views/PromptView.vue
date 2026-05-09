@@ -1,13 +1,143 @@
 <script setup>
+import { ref, computed, onMounted } from 'vue'
+import { api } from '@/api/client'
+import {
+  NCard,
+  NButton,
+  NModal,
+  NForm,
+  NFormItem,
+  NSelect,
+  NInput,
+  NTag,
+  NGi,
+  NGrid,
+  NEmpty,
+  useMessage
+} from 'naive-ui'
+
+const message = useMessage()
+
+const prompts = ref([])
+const loading = ref(false)
+const modalVisible = ref(false)
+const formValue = ref({ prompt_type: 'flash', system_prompt: '' })
+const submitting = ref(false)
+
+const typeOptions = [
+  { label: 'Flash（日常对话）', value: 'flash' },
+  { label: 'Pro（深度思考）', value: 'pro' }
+]
+
+const typeLabel = { flash: 'Flash', pro: 'Pro' }
+
+async function fetchPrompts() {
+  loading.value = true
+  try {
+    const res = await api.get('/api/prompts')
+    prompts.value = Array.isArray(res) ? res : (res.data || res.prompts || [])
+  } catch (e) {
+    message.error('加载 Prompt 列表失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+function openCreate() {
+  formValue.value = { prompt_type: 'flash', system_prompt: '' }
+  modalVisible.value = true
+}
+
+async function handleSubmit() {
+  submitting.value = true
+  try {
+    await api.post('/api/prompts', formValue.value)
+    message.success('创建成功（已自动设为 active）')
+    modalVisible.value = false
+    fetchPrompts()
+  } catch (e) {
+    message.error('创建失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function handleRollback(prompt) {
+  try {
+    await api.post(`/api/prompts/${prompt.id}/rollback`, {})
+    message.success('已回滚到此版本')
+    fetchPrompts()
+  } catch (e) {
+    message.error('回滚失败')
+  }
+}
+
+async function handleDelete(prompt) {
+  if (!window.confirm('确认删除此 Prompt？')) return
+  try {
+    await api.delete(`/api/prompts/${prompt.id}`)
+    message.success('删除成功')
+    fetchPrompts()
+  } catch (e) {
+    message.error('删除失败')
+  }
+}
+
+onMounted(fetchPrompts)
 </script>
 
 <template>
-  <div style="height: 100vh; display: flex; flex-direction: column; background: #f7f8fa;">
-    <div style="padding: 16px 24px; border-bottom: 1px solid #e8e8e8; background: #fff; font-size: 16px; font-weight: 500;">
-      System Prompt 管理
+  <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
+    <div style="padding: var(--space-lg) 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
+      <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text);">System Prompt 管理</span>
+      <NButton type="primary" size="small" @click="openCreate">创建 Prompt</NButton>
     </div>
-    <div style="flex: 1; display: flex; align-items: center; justify-content: center; color: #999;">
-      System Prompt 列表 — Phase 4 实现
+    <div style="flex: 1; overflow-y: auto; padding: 24px;">
+      <NGrid v-if="prompts.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
+        <NGi v-for="p in prompts" :key="p.id">
+          <NCard size="small" hoverable :style="p.status === 'active' ? 'border-color: var(--color-primary);' : ''">
+            <template #header>
+              <div style="display: flex; align-items: center; gap: var(--space-sm);">
+                <NTag :type="p.prompt_type === 'pro' ? 'warning' : 'info'" size="small">{{ typeLabel[p.prompt_type] }}</NTag>
+                <NTag v-if="p.status === 'active'" type="success" size="small">生效中</NTag>
+              </div>
+            </template>
+            <template #header-extra>
+              <div style="display: flex; align-items: center; gap: var(--space-xs);">
+                <NButton v-if="p.status !== 'active'" size="tiny" quaternary @click="handleRollback(p)">回滚到此</NButton>
+                <NButton size="tiny" quaternary type="error" @click="handleDelete(p)">删除</NButton>
+              </div>
+            </template>
+            <div style="font-size: var(--font-size-base); color: var(--color-text-secondary); line-height: 1.7; white-space: pre-wrap; max-height: 160px; overflow: hidden;">
+              {{ p.system_prompt }}
+            </div>
+            <div style="margin-top: var(--space-sm); font-size: var(--font-size-sm); color: var(--color-text-muted);">
+              {{ new Date(p.created_at).toLocaleString() }}
+            </div>
+          </NCard>
+        </NGi>
+      </NGrid>
+      <NEmpty v-else-if="!loading" description="还没有 System Prompt" />
     </div>
+
+    <NModal v-model:show="modalVisible" title="创建 System Prompt" preset="card" style="width: 560px;">
+      <NForm label-placement="top">
+        <NFormItem label="类型" required>
+          <NSelect v-model:value="formValue.prompt_type" :options="typeOptions" />
+        </NFormItem>
+        <NFormItem label="System Prompt" required>
+          <NInput
+            v-model:value="formValue.system_prompt"
+            type="textarea"
+            placeholder="输入 System Prompt..."
+            :autosize="{ minRows: 4, maxRows: 10 }"
+          />
+        </NFormItem>
+      </NForm>
+      <div style="margin-top: var(--space-lg); text-align: right;">
+        <NButton style="margin-right: var(--space-sm);" @click="modalVisible = false">取消</NButton>
+        <NButton type="primary" :loading="submitting" @click="handleSubmit">创建</NButton>
+      </div>
+    </NModal>
   </div>
 </template>

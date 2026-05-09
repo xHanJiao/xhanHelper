@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/stores/auth'
+import { unwrap } from '@/api/response'
 
 const BASE = import.meta.env.VITE_API_BASE || ''
 
@@ -29,23 +30,23 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  get: (path) => request(path).then(r => r.json()),
+  get: (path) => request(path).then(r => r.json()).then(unwrap),
   post: (path, body) => request(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }).then(r => r.json()),
+  }).then(r => r.json()).then(unwrap),
   postRaw: (path, body, contentType = 'text/plain') => request(path, {
     method: 'POST',
     headers: { 'Content-Type': contentType },
     body
-  }).then(r => r.json()),
+  }).then(r => r.json()).then(unwrap),
   patch: (path, body) => request(path, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }).then(r => r.json()),
-  delete: (path) => request(path, { method: 'DELETE' }).then(r => r.json()),
+  }).then(r => r.json()).then(unwrap),
+  delete: (path) => request(path, { method: 'DELETE' }).then(r => r.json()).then(unwrap),
   stream: (path, body, signal) => request(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

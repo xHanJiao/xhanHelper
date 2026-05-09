@@ -23,7 +23,8 @@ const activeId = computed(() => route.params.id)
 const navItems = [
   { label: '智能体', path: '/agents' },
   { label: '记忆', path: '/memories' },
-  { label: '笔记', path: '/notes' }
+  { label: '笔记', path: '/notes' },
+  { label: '提示词', path: '/prompts' }
 ]
 
 function isNavActive(path) {

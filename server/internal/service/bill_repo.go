@@ -68,7 +68,10 @@ func (r *BillRepo) ListByUser(ctx context.Context, userID string, limit, offset 
 }
 
 // ListFiltered 按条件筛选账单
-func (r *BillRepo) ListFiltered(ctx context.Context, userID, startDate, endDate, category string) ([]model.Bill, error) {
+func (r *BillRepo) ListFiltered(ctx context.Context, userID, startDate, endDate, category string, limit, offset int) ([]model.Bill, error) {
+	if limit <= 0 {
+		limit = 50
+	}
 	q := r.db.WithContext(ctx).
 		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal)
 
@@ -83,6 +86,6 @@ func (r *BillRepo) ListFiltered(ctx context.Context, userID, startDate, endDate,
 	}
 
 	var list []model.Bill
-	err := q.Order("date DESC, created_at DESC").Limit(1000).Find(&list).Error
+	err := q.Order("date DESC, created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
 	return list, err
 }

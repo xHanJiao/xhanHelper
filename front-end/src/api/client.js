@@ -3,9 +3,10 @@ import { useAuthStore } from '@/stores/auth'
 const BASE = import.meta.env.VITE_API_BASE || ''
 
 class AuthError extends Error {
-  constructor(message) {
+  constructor(message, status = 401) {
     super(message)
     this.name = 'AuthError'
+    this.status = status
   }
 }
 
@@ -21,7 +22,7 @@ async function request(path, options = {}) {
 
   if (res.status === 401) {
     auth.logout()
-    throw new AuthError('未登录或 token 已过期')
+    throw new AuthError('未登录或 token 已过期', res.status)
   }
 
   return res

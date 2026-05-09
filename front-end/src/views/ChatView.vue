@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
@@ -9,7 +9,6 @@ import {
   NInput,
   NButton,
   NSwitch,
-  NSelect,
   useMessage
 } from 'naive-ui'
 import MessageBubble from '@/components/MessageBubble.vue'
@@ -26,8 +25,6 @@ const inputValue = ref('')
 const messagesEndRef = ref(null)
 const streamingBubbleRef = ref(null)
 const isLoadingHistory = ref(false)
-const agentOptions = ref([])
-const agentsLoading = ref(false)
 
 const currentTitle = computed(() => {
   const conv = convs.list.find(c => c.id === chat.conversationId)
@@ -37,6 +34,43 @@ const currentTitle = computed(() => {
 const planVisible = computed(() => {
   return Object.keys(chat.planNodes).length >= 2
 })
+
+function scrollToBottom() {
+  nextTick(() => {
+    if (chat.isStreaming && streamingBubbleRef.value) {
+      streamingBubbleRef.value.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    } else {
+      messagesEndRef.value?.scrollIntoView({ behavior: 'smooth' })
+    }
+  })
+}
+
+async function loadHistory(convId, direction = 'before', cursor = null) {
+  if (!convId) return
+  isLoadingHistory.value = true
+  try {
+    let url = `/api/conversations/${convId}/messages-v2?limit=20`
+    if (cursor) {
+      url += `&cursor=${cursor}&direction=${direction}`
+    }
+    const res = await api.get(url)
+    if (res) {
+      const msgs = (res.messages || []).map(normalizeMessage)
+      if (direction === 'before' && cursor) {
+        chat.prependMessages(msgs)
+      } else {
+        chat.setMessages(msgs)
+      }
+      chat.oldestCursor = res.oldestCursor
+      chat.hasMoreBefore = res.hasMoreBefore
+    }
+  } catch (e) {
+    console.error('Failed to load history', e)
+    nMessage.error('加载历史消息失败')
+  } finally {
+    isLoadingHistory.value = false
+  }
+}
 
 function normalizeMessage(msg) {
   const normalized = { ...msg }
@@ -90,58 +124,6 @@ function normalizeMessage(msg) {
   return normalized
 }
 
-function scrollToBottom() {
-  nextTick(() => {
-    if (chat.isStreaming && streamingBubbleRef.value) {
-      streamingBubbleRef.value.scrollIntoView({ block: 'start', behavior: 'smooth' })
-    } else {
-      messagesEndRef.value?.scrollIntoView({ behavior: 'smooth' })
-    }
-  })
-}
-
-async function loadHistory(convId, direction = 'before', cursor = null) {
-  if (!convId) return
-  isLoadingHistory.value = true
-  try {
-    let url = `/api/conversations/${convId}/messages-v2?limit=20`
-    if (cursor) {
-      url += `&cursor=${cursor}&direction=${direction}`
-    }
-    const res = await api.get(url)
-    if (res) {
-      const msgs = (res.messages || []).map(normalizeMessage)
-      if (direction === 'before' && cursor) {
-        chat.prependMessages(msgs)
-      } else {
-        chat.setMessages(msgs)
-      }
-      chat.oldestCursor = res.oldestCursor
-      chat.hasMoreBefore = res.hasMoreBefore
-    }
-  } catch (e) {
-    console.error('Failed to load history', e)
-    nMessage.error('加载历史消息失败')
-  } finally {
-    isLoadingHistory.value = false
-  }
-}
-
-async function loadAgents() {
-  agentsLoading.value = true
-  try {
-    const res = await api.get('/api/agents')
-    agentOptions.value = (res.agents || res || []).map(a => ({
-      label: a.name,
-      value: a.id
-    }))
-  } catch (e) {
-    console.error('Failed to load agents', e)
-  } finally {
-    agentsLoading.value = false
-  }
-}
-
 watch(() => route.params.id, async (newId, oldId) => {
   if (oldId && chat.isStreaming) {
     cancel()
@@ -154,7 +136,9 @@ watch(() => route.params.id, async (newId, oldId) => {
     chat.needsRefetch = false
   } else if (!newId) {
     if (chat.isStreaming) cancel()
+    const savedAgentId = chat.agentId
     chat.reset()
+    chat.agentId = savedAgentId
   }
 }, { immediate: true })
 
@@ -184,10 +168,6 @@ async function handleSend() {
 function handleStop() {
   cancel()
 }
-
-onMounted(() => {
-  loadAgents()
-})
 </script>
 
 <template>
@@ -200,15 +180,6 @@ onMounted(() => {
             <span style="font-size: 14px; color: #666;">深度思考</span>
             <NSwitch v-model:value="chat.deepMode" size="small" />
           </div>
-          <NSelect
-            v-model:value="chat.agentId"
-            :options="agentOptions"
-            placeholder="选择智能体"
-            style="width: 180px;"
-            clearable
-            size="small"
-            :loading="agentsLoading"
-          />
         </div>
       </div>
 

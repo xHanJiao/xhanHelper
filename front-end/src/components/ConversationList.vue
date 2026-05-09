@@ -2,7 +2,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useConversationsStore } from '@/stores/conversations'
+import { api } from '@/api/client'
 import { NButton, NPopconfirm, NModal, NInput, useMessage } from 'naive-ui'
+
+const isDev = import.meta.env.DEV
 
 const router = useRouter()
 const route = useRoute()
@@ -13,8 +16,19 @@ const renameModalVisible = ref(false)
 const renamingId = ref(null)
 const renamingTitle = ref('')
 const hoveredId = ref(null)
+const extractingId = ref(null)
 
 const activeId = computed(() => route.params.id)
+
+const navItems = [
+  { label: '智能体', path: '/agents' },
+  { label: '记忆', path: '/memories' },
+  { label: '笔记', path: '/notes' }
+]
+
+function isNavActive(path) {
+  return route.path === path
+}
 
 onMounted(() => {
   convs.fetchList()
@@ -56,6 +70,22 @@ async function handleDelete(conv) {
 function handleSelect(conv) {
   router.push(`/chat/${conv.id}`)
 }
+
+async function handleExtractMemories(conv) {
+  extractingId.value = conv.id
+  try {
+    const res = await api.post(`/api/conversations/${conv.id}/extract-memories`, {})
+    if (res.status === 'extracting') {
+      message.success('已触发记忆提取，后台执行中')
+    } else {
+      message.success('记忆提取完成')
+    }
+  } catch (e) {
+    message.error('记忆提取失败')
+  } finally {
+    extractingId.value = null
+  }
+}
 </script>
 
 <template>
@@ -75,6 +105,29 @@ function handleSelect(conv) {
         </svg>
         新对话
       </button>
+    </div>
+
+    <!-- 导航区 -->
+    <div style="padding: 0 12px 12px;">
+      <div
+        v-for="item in navItems"
+        :key="item.path"
+        @click="router.push(item.path)"
+        :style="{
+          padding: '10px 12px',
+          borderRadius: '12px',
+          marginBottom: '4px',
+          cursor: 'pointer',
+          fontSize: '15px',
+          color: isNavActive(item.path) ? '#667eea' : '#333',
+          background: isNavActive(item.path) ? '#f0f0ff' : 'transparent',
+          fontWeight: isNavActive(item.path) ? '600' : '400'
+        }"
+        @mouseover="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = '#fafafa' }"
+        @mouseout="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'transparent' }"
+      >
+        {{ item.label }}
+      </div>
     </div>
 
     <!-- 历史对话标题 -->
@@ -115,6 +168,12 @@ function handleSelect(conv) {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
+          <button v-if="isDev" @click.stop="handleExtractMemories(conv)" :disabled="extractingId === conv.id" style="padding: 6px; border: none; background: none; cursor: pointer; border-radius: 6px; display: flex; align-items: center; justify-content: center;" @mouseover="e => e.currentTarget.style.background = '#eee'" @mouseout="e => e.currentTarget.style.background = 'none'">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="extractingId === conv.id ? '#999' : '#666'" stroke-width="2">
+              <path d="M12 2a5 5 0 0 0-5 5v1a6 6 0 0 0-2 4.5V14h14v-1.5a6 6 0 0 0-2-4.5V7a5 5 0 0 0-5-5z"/>
+              <path d="M10 19v1a2 2 0 0 0 4 0v-1"/>
             </svg>
           </button>
           <NPopconfirm @positive-click="handleDelete(conv)">

@@ -15,7 +15,7 @@ type UserMemory struct {
 	RawJSON         *string   `gorm:"type:json;column:raw_json" json:"raw_json,omitempty"` // LLM 原始输出 JSON
 	ConfirmCount    int       `gorm:"default:1" json:"confirm_count"`
 	LastConfirmedAt time.Time `json:"last_confirmed_at"`
-	Embedding       *string   `gorm:"type:text" json:"embedding,omitempty"` // JSON 数组, 向量持久化
+	Embedding       *string   `gorm:"type:text" json:"-"` // JSON 数组, 向量持久化
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt       time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }

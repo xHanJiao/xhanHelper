@@ -34,8 +34,11 @@ func (h *BillHandler) ListBills(c *gin.Context) {
 	userID := c.GetString("user_id")
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+	category := c.Query("category")
 
-	bills, err := h.billRepo.ListByUser(c.Request.Context(), userID, limit, offset)
+	bills, err := h.billRepo.ListFiltered(c.Request.Context(), userID, startDate, endDate, category, limit, offset)
 	if err != nil {
 		view.JSONError(c, 500, "query bills failed")
 		return
@@ -164,7 +167,7 @@ func (h *BillHandler) ExportBills(c *gin.Context) {
 		startDate = time.Now().AddDate(0, 0, -7).Format("2006-01-02")
 	}
 
-	bills, err := h.billRepo.ListFiltered(c.Request.Context(), userID, startDate, endDate, category)
+	bills, err := h.billRepo.ListFiltered(c.Request.Context(), userID, startDate, endDate, category, 10000, 0)
 	if err != nil {
 		view.JSONError(c, 500, "query bills failed")
 		return

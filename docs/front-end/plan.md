@@ -69,6 +69,19 @@
 | NotesView | 笔记列表、搜索、删除 |
 | BillsView | 账单列表、日期/分类筛选、CSV 导入导出 |
 
+### Phase 3 设计决策
+
+> 2026-05-09 讨论确认
+
+| # | 项 | 决策 |
+|---|-----|------|
+| 1 | 账单筛选 | 后端 `GET /api/bills` 加 `start_date`/`end_date`/`category` 查询参数（`ListFiltered` 已支持，补 `limit`/`offset`） |
+| 2 | 智能体模型字段 | `n-select` 下拉预设：deepseek-chat / deepseek-reasoner / doubao |
+| 3 | 记忆来源展示 | 转换为中文：conversation → 对话提取，csv_import → CSV导入 |
+| 4 | CSV导入结果反馈 | `n-message` toast 显示 "导入完成：成功 N 条，跳过 M 条" |
+| 5 | 笔记展示方式 | `n-card` 卡片列表（非 n-data-table） |
+| 6 | 后端改动 | `BillRepo.ListFiltered` 签名增加 `limit, offset int`；导出调用传 `10000, 0` |
+
 ### Phase 4 — 高级定制
 
 目标：开发者/高级用户功能，锦上添花。
@@ -78,6 +91,7 @@
 | PromptView | 自定义 System Prompt，版本管理 + 回滚 |
 | ToolView | 动态工具注册管理 |
 | 深色模式 | `n-config-provider` 切换，持久化到 localStorage |
+| 设计系统 | 引入 CSS 变量（`--color-primary`、`--radius-card` 等），统一 token 化管理，改一行生效全局 |
 | 移动端适配 | 响应式布局（三栏 → 单栏 + 抽屉导航） |
 
 ### 依赖关系

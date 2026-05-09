@@ -302,7 +302,7 @@ func (t *BookkeepingTool) queryBills(ec *ExecuteContext, args json.RawMessage) *
 		log.Printf("[bookkeeping] parse args error: %v", err)
 	}
 
-	bills, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID, a.StartDate, a.EndDate, a.Category)
+	bills, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID, a.StartDate, a.EndDate, a.Category, 10000, 0)
 	if err != nil {
 		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
 	}
@@ -328,7 +328,7 @@ func (t *BookkeepingTool) getMonthlyStats(ec *ExecuteContext, args json.RawMessa
 	bills, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID,
 		fmt.Sprintf("%d-01-01", a.Year),
 		fmt.Sprintf("%d-12-31", a.Year),
-		a.Category)
+		a.Category, 10000, 0)
 	if err != nil {
 		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
 	}
@@ -362,7 +362,7 @@ func (t *BookkeepingTool) getCategoryStats(ec *ExecuteContext, args json.RawMess
 		log.Printf("[bookkeeping] parse args error: %v", err)
 	}
 
-	bills, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID, a.StartDate, a.EndDate, "")
+	bills, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID, a.StartDate, a.EndDate, "", 10000, 0)
 	if err != nil {
 		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
 	}

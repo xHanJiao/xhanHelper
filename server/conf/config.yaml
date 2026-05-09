@@ -2,7 +2,7 @@ server:
   port: 8080
   mode: debug          # debug | release
   registration_enabled: false
-  memory_auto_extract: false
+  memory_auto_extract: true
   sidecar_url: http://127.0.0.1:9090
   allowed_users:
     - ${ALLOWED_USER}

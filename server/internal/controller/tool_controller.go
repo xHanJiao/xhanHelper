@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -24,12 +25,14 @@ func NewToolHandler(toolRepo *service.ToolRepo) *ToolHandler {
 // ListTools GET /api/tools?status=
 func (h *ToolHandler) ListTools(c *gin.Context) {
 	userID := c.GetString("user_id")
-	tools, err := h.toolRepo.ListTools(c.Request.Context(), userID, c.Query("status"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	tools, total, err := h.toolRepo.ListTools(c.Request.Context(), userID, c.Query("status"), limit, offset)
 	if err != nil {
 		view.JSONError(c, 500, "query tools failed")
 		return
 	}
-	view.JSONOK(c, tools)
+	view.JSONOK(c, gin.H{"tools": tools, "total": total})
 }
 
 // CreateTool POST /api/tools

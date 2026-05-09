@@ -80,7 +80,8 @@ class DeviceManager: ObservableObject {
     }
 
     private func saveAuthResponse(_ data: Data, username: String) throws {
-        let result = try JSONDecoder().decode(AuthResponse.self, from: data)
+        let wrapper = try JSONDecoder().decode(APIResponse<AuthResponse>.self, from: data)
+        let result = wrapper.data
         self.token = result.token
         self.userId = result.userId
         self.username = username
@@ -107,4 +108,8 @@ struct AuthResponse: Codable {
         case token
         case userId = "user_id"
     }
+}
+
+private struct APIResponse<T: Decodable>: Decodable {
+    let data: T
 }

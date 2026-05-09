@@ -57,13 +57,18 @@ func (r *ConversationRepo) FindByID(ctx context.Context, id string) (*model.Conv
 }
 
 // ListByUser 获取设备未删除的会话列表（按更新时间倒序）
-func (r *ConversationRepo) ListByUser(ctx context.Context, userID string, limit int) ([]model.Conversation, error) {
+func (r *ConversationRepo) ListByUser(ctx context.Context, userID string, limit, offset int) ([]model.Conversation, int64, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	q := r.db.WithContext(ctx).Where("user_id = ? AND is_deleted = ?", userID, false)
+	var total int64
+	if err := q.Model(&model.Conversation{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
 	var list []model.Conversation
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND is_deleted = ?", userID, false).
-		Order("updated_at DESC").Limit(limit).
-		Find(&list).Error
-	return list, err
+	err := q.Order("updated_at DESC").Limit(limit).Offset(offset).Find(&list).Error
+	return list, total, err
 }
 
 // Rename 重命名会话

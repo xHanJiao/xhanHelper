@@ -37,7 +37,7 @@ func (r *UserMemoryRepo) FindByKey(ctx context.Context, userID, key string) (*mo
 }
 
 // ListByUser 分页获取用户记忆，支持关键词搜索，limit<=0 时默认 50
-func (r *UserMemoryRepo) ListByUser(ctx context.Context, userID, keyword, source string, limit, offset int) ([]model.UserMemory, error) {
+func (r *UserMemoryRepo) ListByUser(ctx context.Context, userID, keyword, source string, limit, offset int) ([]model.UserMemory, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -49,9 +49,15 @@ func (r *UserMemoryRepo) ListByUser(ctx context.Context, userID, keyword, source
 	if source != "" {
 		q = q.Where("source = ?", source)
 	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
 	var list []model.UserMemory
 	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
-	return list, err
+	return list, total, err
 }
 
 // FindByID 按 ID 查单条记忆

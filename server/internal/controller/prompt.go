@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
@@ -22,12 +24,14 @@ func NewPromptHandler(promptRepo *service.UserPromptRepo) *PromptHandler {
 // ListPrompts GET /api/prompts?type=&status=
 func (h *PromptHandler) ListPrompts(c *gin.Context) {
 	userID := c.GetString("user_id")
-	list, err := h.promptRepo.ListByUser(c.Request.Context(), userID, c.Query("type"), c.Query("status"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	list, total, err := h.promptRepo.ListByUser(c.Request.Context(), userID, c.Query("type"), c.Query("status"), limit, offset)
 	if err != nil {
 		view.JSONError(c, 500, "query prompts failed")
 		return
 	}
-	view.JSONOK(c, list)
+	view.JSONOK(c, gin.H{"prompts": list, "total": total})
 }
 
 // CreatePrompt POST /api/prompts
@@ -70,7 +74,7 @@ func (h *PromptHandler) RollbackPrompt(c *gin.Context) {
 	userID := c.GetString("user_id")
 	id := c.Param("id")
 
-	existing, err := h.promptRepo.ListByUser(c.Request.Context(), userID, "", "")
+	existing, _, err := h.promptRepo.ListByUser(c.Request.Context(), userID, "", "", 1000, 0)
 	if err != nil {
 		view.JSONError(c, 500, "query failed")
 		return

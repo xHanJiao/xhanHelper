@@ -63,12 +63,12 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	agents, err := h.agentRepo.ListByUser(c.Request.Context(), userID, limit, offset)
+	agents, total, err := h.agentRepo.ListByUser(c.Request.Context(), userID, limit, offset)
 	if err != nil {
 		view.JSONError(c, 500, "query agents failed")
 		return
 	}
-	view.JSONOK(c, agents)
+	view.JSONOK(c, gin.H{"agents": agents, "total": total})
 }
 
 // GetAgent GET /api/agents/:id

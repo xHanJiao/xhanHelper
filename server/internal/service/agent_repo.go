@@ -41,17 +41,20 @@ func (r *AgentRepo) FindByIDs(ctx context.Context, ids []string) ([]model.Agent,
 }
 
 // ListByUser 分页获取用户智能体
-func (r *AgentRepo) ListByUser(ctx context.Context, userID string, limit, offset int) ([]model.Agent, error) {
+func (r *AgentRepo) ListByUser(ctx context.Context, userID string, limit, offset int) ([]model.Agent, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
+	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
 	var list []model.Agent
-	err := r.db.WithContext(ctx).
-		Where("user_id = ?", userID).
-		Order("created_at DESC").
-		Limit(limit).Offset(offset).
-		Find(&list).Error
-	return list, err
+	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
+	return list, total, err
 }
 
 // Update 更新智能体（仅非零值字段）

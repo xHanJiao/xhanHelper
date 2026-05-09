@@ -139,7 +139,8 @@ assert "返回包含 amount" '"amount"' "$BILLS"
 
 BILL_ID=$(echo "$BILLS" | unwrap | python3 -c "
 import sys,json
-bills = json.load(sys.stdin)
+d = json.load(sys.stdin)
+bills = d.get('bills', d)
 for b in bills:
     if b.get('item','') == '午饭' and b.get('amount') == 35:
         print(b['id'])
@@ -148,7 +149,7 @@ for b in bills:
 
 if [ -z "$BILL_ID" ]; then
     # 如果 LLM 没用"午饭"作为 item，用第一条账单的 id
-    BILL_ID=$(echo "$BILLS" | unwrap | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])" 2>/dev/null)
+    BILL_ID=$(echo "$BILLS" | unwrap | python3 -c "import sys,json; d=json.load(sys.stdin); arr=d.get('bills',d); print(arr[0]['id'])" 2>/dev/null)
 fi
 assert "能提取到 bill id" '[0-9a-f\-]{36}' "$BILL_ID"
 
@@ -173,7 +174,8 @@ BILLS=$(curl -s "$BASE_URL/api/bills" \
     -H "Authorization: Bearer $TOKEN")
 UPDATED_AMOUNT=$(echo "$BILLS" | unwrap | python3 -c "
 import sys,json
-for b in json.load(sys.stdin):
+d = json.load(sys.stdin)
+for b in d.get('bills', d):
     if b['id'] == '$BILL_ID':
         print(b['amount'])
         break
@@ -236,7 +238,7 @@ echo ""
 echo "【17/26】REST API — 导入后账单总数"
 BILLS=$(curl -s "$BASE_URL/api/bills" \
     -H "Authorization: Bearer $TOKEN")
-COUNT=$(echo "$BILLS" | unwrap | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null)
+COUNT=$(echo "$BILLS" | unwrap | python3 -c "import sys,json; d=json.load(sys.stdin); arr=d.get('bills',d); print(len(arr))" 2>/dev/null)
 # cancel_bill 跳过时总数=5，执行时=4
 EXPECTED_COUNT=27
 if [ "$SKIP_CANCEL" != "1" ]; then EXPECTED_COUNT=26; fi
@@ -349,7 +351,7 @@ assert "tool_result success"       '"success":true'           "$SSE_OUT"
 # ── 22. REST API — 删除笔记 ──
 echo ""
 echo "【26/26】REST API — 删除笔记"
-NOTE_ID=$(echo "$NOTES" | unwrap | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])" 2>/dev/null)
+NOTE_ID=$(echo "$NOTES" | unwrap | python3 -c "import sys,json; d=json.load(sys.stdin); arr=d.get('notes',d); print(arr[0]['id'])" 2>/dev/null)
 DEL_RESP=$(curl -s -X DELETE "$BASE_URL/api/notes/$NOTE_ID" \
     -H "Authorization: Bearer $TOKEN")
 assert "删除成功" '"deleted":true' "$DEL_RESP"
@@ -378,7 +380,7 @@ assert "批量返回数组" "\[" "$MEM_BATCH"
 echo ""
 echo "【29/30】删除记忆"
 # 从列表中取第一条记忆的 ID
-MEM_ID=$(echo "$MEM_LIST" | unwrap | python3 -c "import sys,json; arr=json.load(sys.stdin); print(arr[0][\"id\"] if arr else \"\")" 2>/dev/null)
+MEM_ID=$(echo "$MEM_LIST" | unwrap | python3 -c "import sys,json; d=json.load(sys.stdin); arr=d.get('memories',d); print(arr[0][\"id\"] if arr else \"\")" 2>/dev/null)
 if [ -n "$MEM_ID" ]; then
     DEL_MEM_RESP=$(curl -s -X DELETE "$BASE_URL/api/memories/$MEM_ID" -H "Authorization: Bearer $TOKEN")
     assert "删除记忆成功" "true" "$DEL_MEM_RESP"

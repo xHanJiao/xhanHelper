@@ -14,7 +14,9 @@ import (
 func listConversations(convRepo *service.ConversationRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := c.GetString("user_id")
-		list, err := convRepo.ListByUser(c.Request.Context(), userID, 50)
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+		list, _, err := convRepo.ListByUser(c.Request.Context(), userID, limit, offset)
 		if err != nil {
 			view.JSONError(c, 500, "query conversations failed")
 			return

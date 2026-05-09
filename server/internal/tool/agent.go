@@ -95,7 +95,7 @@ func (t *AgentTool) createAgent(ec *ExecuteContext, args json.RawMessage) *Resul
 }
 
 func (t *AgentTool) listAgents(ec *ExecuteContext, _ json.RawMessage) *Result {
-	agents, err := t.agentRepo.ListByUser(context.Background(), ec.UserID, 100, 0)
+	agents, _, err := t.agentRepo.ListByUser(context.Background(), ec.UserID, 100, 0)
 	if err != nil {
 		return &Result{Success: false, Error: "list agents: " + err.Error()}
 	}

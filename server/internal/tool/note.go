@@ -147,7 +147,7 @@ func (t *NoteTool) queryNotes(ec *ExecuteContext, args json.RawMessage) *Result 
 		return &Result{Success: false, Error: fmt.Sprintf("parse args: %v", err)}
 	}
 
-	notes, err := t.noteRepo.List(ec.Ctx, ec.UserID, params.Topic, params.Keyword, 50, 0)
+	notes, _, err := t.noteRepo.List(ec.Ctx, ec.UserID, params.Topic, params.Keyword, 50, 0)
 	if err != nil {
 		return &Result{Success: false, Error: fmt.Sprintf("query notes: %v", err)}
 	}

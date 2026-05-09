@@ -31,14 +31,21 @@ func (r *ToolRepo) ListActiveTools(ctx context.Context) ([]model.ToolRegistry, e
 }
 
 // ListTools 获取用户的工具（可按状态筛选）
-func (r *ToolRepo) ListTools(ctx context.Context, userID, status string) ([]model.ToolRegistry, error) {
+func (r *ToolRepo) ListTools(ctx context.Context, userID, status string, limit, offset int) ([]model.ToolRegistry, int64, error) {
+	if limit <= 0 {
+		limit = 50
+	}
 	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
 	if status != "" {
 		q = q.Where("status = ?", status)
 	}
+	var total int64
+	if err := q.Model(&model.ToolRegistry{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
 	var list []model.ToolRegistry
-	err := q.Order("created_at DESC").Find(&list).Error
-	return list, err
+	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
+	return list, total, err
 }
 
 // FindToolByID 按 ID+用户 查找

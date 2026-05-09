@@ -195,8 +195,13 @@ class APIClient {
             throw NSError(domain: "APIClient", code: statusCode,
                 userInfo: [NSLocalizedDescriptionKey: msg])
         }
-        return try JSONDecoder().decode(T.self, from: data)
+        let wrapper = try JSONDecoder().decode(APIResponse<T>.self, from: data)
+        return wrapper.data
     }
+}
+
+private struct APIResponse<T: Decodable>: Decodable {
+    let data: T
 }
 
 // MARK: Bill model (P3)

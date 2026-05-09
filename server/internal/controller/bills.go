@@ -38,12 +38,12 @@ func (h *BillHandler) ListBills(c *gin.Context) {
 	endDate := c.Query("end_date")
 	category := c.Query("category")
 
-	bills, err := h.billRepo.ListFiltered(c.Request.Context(), userID, startDate, endDate, category, limit, offset)
+	bills, total, err := h.billRepo.ListFiltered(c.Request.Context(), userID, startDate, endDate, category, limit, offset)
 	if err != nil {
 		view.JSONError(c, 500, "query bills failed")
 		return
 	}
-	view.JSONOK(c, bills)
+	view.JSONOK(c, gin.H{"bills": bills, "total": total})
 }
 
 // ImportBills POST /api/bills/import
@@ -167,7 +167,7 @@ func (h *BillHandler) ExportBills(c *gin.Context) {
 		startDate = time.Now().AddDate(0, 0, -7).Format("2006-01-02")
 	}
 
-	bills, err := h.billRepo.ListFiltered(c.Request.Context(), userID, startDate, endDate, category, 10000, 0)
+	bills, _, err := h.billRepo.ListFiltered(c.Request.Context(), userID, startDate, endDate, category, 10000, 0)
 	if err != nil {
 		view.JSONError(c, 500, "query bills failed")
 		return

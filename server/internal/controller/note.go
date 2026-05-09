@@ -23,13 +23,13 @@ func (h *NoteHandler) ListNotes(c *gin.Context) {
 	userID := c.GetString("user_id")
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	notes, err := h.noteRepo.List(c.Request.Context(), userID,
+	notes, total, err := h.noteRepo.List(c.Request.Context(), userID,
 		c.Query("topic"), c.Query("keyword"), limit, offset)
 	if err != nil {
 		view.JSONError(c, 500, "query notes failed")
 		return
 	}
-	view.JSONOK(c, notes)
+	view.JSONOK(c, gin.H{"notes": notes, "total": total})
 }
 
 // BatchGetNotes POST /api/notes/batch

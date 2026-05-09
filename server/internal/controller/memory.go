@@ -25,13 +25,13 @@ func (h *MemoryHandler) ListMemories(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	memories, err := h.memRepo.ListByUser(c.Request.Context(), userID,
+	memories, total, err := h.memRepo.ListByUser(c.Request.Context(), userID,
 		c.Query("keyword"), c.Query("source"), limit, offset)
 	if err != nil {
 		view.JSONError(c, 500, "query memories failed")
 		return
 	}
-	view.JSONOK(c, memories)
+	view.JSONOK(c, gin.H{"memories": memories, "total": total})
 }
 
 // DeleteMemory DELETE /api/memories/:id

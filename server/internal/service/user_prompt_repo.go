@@ -42,7 +42,10 @@ func (r *UserPromptRepo) FindActive(ctx context.Context, userID, promptType stri
 }
 
 // ListByUser 列表，支持按 type/status 筛选
-func (r *UserPromptRepo) ListByUser(ctx context.Context, userID, promptType, status string) ([]model.UserPrompt, error) {
+func (r *UserPromptRepo) ListByUser(ctx context.Context, userID, promptType, status string, limit, offset int) ([]model.UserPrompt, int64, error) {
+	if limit <= 0 {
+		limit = 50
+	}
 	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
 	if promptType != "" {
 		q = q.Where("prompt_type = ?", promptType)
@@ -50,9 +53,13 @@ func (r *UserPromptRepo) ListByUser(ctx context.Context, userID, promptType, sta
 	if status != "" {
 		q = q.Where("status = ?", status)
 	}
+	var total int64
+	if err := q.Model(&model.UserPrompt{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
 	var list []model.UserPrompt
-	err := q.Order("created_at DESC").Find(&list).Error
-	return list, err
+	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
+	return list, total, err
 }
 
 // Rollback 将指定 prompt 设为 active，其他同类型 inactive

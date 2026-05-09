@@ -27,7 +27,9 @@ class ChatViewModel: ObservableObject {
     @Published var conversationTitle: String?
     @Published var deepMode = false
     @Published var lastMemoryIDs: [String]?
+    @Published var lastNoteIDs: [String]?
     @Published var showMemoryPopup = false
+    @Published var showNotePopup = false
     @Published var showMemorySettings = false
     @AppStorage("memoryThreshold") var memoryThreshold: Double = 0.5
     @AppStorage("memoryLimit") var memoryLimit: Int = 8
@@ -122,6 +124,7 @@ class ChatViewModel: ObservableObject {
         isPlanModalVisible = false
         isPlanMinimized = false
         lastMemoryIDs = nil
+        lastNoteIDs = nil
 
         messages.append(.streamingAssistant(conversationId: conversationId ?? ""))
 
@@ -241,6 +244,9 @@ class ChatViewModel: ObservableObject {
             }
             if let mids = parseMemoryIDsFromDone(event.data), !mids.isEmpty {
                 lastMemoryIDs = mids
+            }
+            if let nids = parseNoteIDsFromDone(event.data), !nids.isEmpty {
+                lastNoteIDs = nids
             }
             let tc = currentToolCall
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [self] in
@@ -382,6 +388,14 @@ class ChatViewModel: ObservableObject {
         guard let jsonData = data.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
               let ids = obj["memory_ids"] as? [String]
+        else { return nil }
+        return ids
+    }
+
+    private func parseNoteIDsFromDone(_ data: String) -> [String]? {
+        guard let jsonData = data.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let ids = obj["note_ids"] as? [String]
         else { return nil }
         return ids
     }

@@ -109,7 +109,7 @@ func (c *baseClient) callStreamAPI(ctx context.Context, req *ChatRequest, model 
 	lastMsg := ""
 	if len(req.Messages) > 0 {
 		lm := req.Messages[len(req.Messages)-1]
-		lastMsg = lm.Content[:min(150, len(lm.Content))]
+		lastMsg = lm.Content[:min(500, len(lm.Content))]
 	}
 	logPrefix := "flash"
 	if thinking {
@@ -125,7 +125,7 @@ func (c *baseClient) callStreamAPI(ctx context.Context, req *ChatRequest, model 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("stream status %d: %s", resp.StatusCode, string(body[:min(300, len(body))]))
+		return nil, fmt.Errorf("stream status %d: %s", resp.StatusCode, string(body[:min(1000, len(body))]))
 	}
 
 	events := make(chan *StreamEvent, 64)
@@ -216,11 +216,11 @@ func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, even
 		tcJSON, _ := json.Marshal(toolCalls)
 		log.Printf("[%s:%s] stream finished: content=%d, reasoning=%d, tool_calls=%d -> %s",
 			logPrefix, model, content.Len(), reasoning.Len(), len(toolCalls),
-			string(tcJSON)[:min(200, len(tcJSON))])
+			string(tcJSON)[:min(500, len(tcJSON))])
 	} else {
 		text := content.String()
 		log.Printf("[%s:%s] stream finished: content=%d, reasoning=%d, tool_calls=0, text=%s",
-			logPrefix, model, content.Len(), reasoning.Len(), text[:min(200, len(text))])
+			logPrefix, model, content.Len(), reasoning.Len(), text[:min(500, len(text))])
 	}
 	if usage != nil {
 		log.Printf("[%s:%s] usage: prompt=%d, completion=%d, total=%d",

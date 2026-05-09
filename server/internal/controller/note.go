@@ -32,6 +32,25 @@ func (h *NoteHandler) ListNotes(c *gin.Context) {
 	view.JSONOK(c, notes)
 }
 
+// BatchGetNotes POST /api/notes/batch
+func (h *NoteHandler) BatchGetNotes(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || len(body.IDs) == 0 {
+		view.JSONError(c, 400, "ids required")
+		return
+	}
+	notes, err := h.noteRepo.GetByIDsAndUser(c.Request.Context(), body.IDs, userID)
+	if err != nil {
+		view.JSONError(c, 500, "query notes failed")
+		return
+	}
+	view.JSONOK(c, notes)
+}
+
 // DeleteNote DELETE /api/notes/:id
 func (h *NoteHandler) DeleteNote(c *gin.Context) {
 	if err := h.noteRepo.Delete(c.Request.Context(), c.Param("id")); err != nil {

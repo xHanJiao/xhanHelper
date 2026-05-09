@@ -30,6 +30,13 @@ func (r *NoteRepo) GetByIDs(ctx context.Context, ids []string) ([]model.Note, er
 	return list, err
 }
 
+// GetByIDsAndUser 按 ID 列表 + 用户 ID 查询
+func (r *NoteRepo) GetByIDsAndUser(ctx context.Context, ids []string, userID string) ([]model.Note, error) {
+	var list []model.Note
+	err := r.db.WithContext(ctx).Where("id IN ? AND user_id = ?", ids, userID).Find(&list).Error
+	return list, err
+}
+
 // UpdateEmbedding 更新笔记的向量字段
 func (r *NoteRepo) UpdateEmbedding(ctx context.Context, id string, embedding *string) error {
 	return r.db.WithContext(ctx).Model(&model.Note{}).Where("id = ?", id).

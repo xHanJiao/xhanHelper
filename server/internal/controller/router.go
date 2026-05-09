@@ -15,9 +15,13 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 	userRepo *service.UserRepo, convRepo *service.ConversationRepo,
 	msgRepo *service.MessageRepo, agentRepo *service.AgentRepo,
 	billHandler *BillHandler, noteHandler *NoteHandler,
-	memHandler *MemoryHandler, agentHandler *AgentHandler, toolHandler *ToolHandler, promptHandler *PromptHandler, memExtr *agent.MemoryExtractor) *gin.Engine {
+	memHandler *MemoryHandler, agentHandler *AgentHandler, toolHandler *ToolHandler, promptHandler *PromptHandler, memExtr *agent.MemoryExtractor, extraMiddleware ...gin.HandlerFunc) *gin.Engine {
 
 	r := gin.Default()
+
+	for _, m := range extraMiddleware {
+		r.Use(m)
+	}
 
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
@@ -47,6 +51,7 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 		auth.GET("/bills/export", billHandler.ExportBills)
 		auth.POST("/bills/import", billHandler.ImportBills)
 		auth.GET("/notes", noteHandler.ListNotes)
+		auth.POST("/notes/batch", noteHandler.BatchGetNotes)
 		auth.DELETE("/notes/:id", noteHandler.DeleteNote)
 		auth.GET("/memories", memHandler.ListMemories)
 		auth.DELETE("/memories/:id", memHandler.DeleteMemory)

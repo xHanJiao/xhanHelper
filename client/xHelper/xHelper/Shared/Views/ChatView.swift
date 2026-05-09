@@ -20,26 +20,51 @@ struct ChatView: View {
                 Text(err).font(.caption).foregroundColor(.red).padding(.horizontal)
             }
 
-            // 记忆引用按钮
-            if let mids = viewModel.lastMemoryIDs, !mids.isEmpty {
-                Button {
-                    viewModel.showMemoryPopup = true
-                } label: {
-                    HStack {
-                        Image(systemName: "brain")
-                        Text("基于 \(mids.count) 条回忆")
-                            .font(.caption)
+            // 记忆 & 笔记引用按钮
+            let hasMemory = viewModel.lastMemoryIDs?.isEmpty == false
+            let hasNote = viewModel.lastNoteIDs?.isEmpty == false
+            if hasMemory || hasNote {
+                HStack(spacing: 8) {
+                    if hasMemory {
+                        Button {
+                            viewModel.showMemoryPopup = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "brain")
+                                Text("\(viewModel.lastMemoryIDs!.count) 条回忆")
+                                    .font(.caption)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .foregroundColor(.secondary)
+                            .padding(.vertical, 6)
+                            .background(Color.gray.opacity(0.1))
+                            .cornerRadius(12)
+                        }
+                        .sheet(isPresented: $viewModel.showMemoryPopup) {
+                            MemoryPopupView(memoryIDs: viewModel.lastMemoryIDs!, apiClient: APIClient(baseURL: baseURL, token: token))
+                        }
                     }
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(12)
+                    if hasNote {
+                        Button {
+                            viewModel.showNotePopup = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "note.text")
+                                Text("\(viewModel.lastNoteIDs!.count) 条笔记")
+                                    .font(.caption)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .foregroundColor(.secondary)
+                            .padding(.vertical, 6)
+                            .background(Color.gray.opacity(0.1))
+                            .cornerRadius(12)
+                        }
+                        .sheet(isPresented: $viewModel.showNotePopup) {
+                            NotePopupView(noteIDs: viewModel.lastNoteIDs!, apiClient: APIClient(baseURL: baseURL, token: token))
+                        }
+                    }
                 }
                 .padding(.horizontal)
-                .sheet(isPresented: $viewModel.showMemoryPopup) {
-                    MemoryPopupView(memoryIDs: mids, apiClient: APIClient(baseURL: baseURL, token: token))
-                }
             }
 
             // 输入栏

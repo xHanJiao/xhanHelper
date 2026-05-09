@@ -68,6 +68,10 @@ class APIClient {
 		return try await get("/api/notes?limit=\(limit)&offset=\(offset)")
 	}
 
+	func batchGetNotes(ids: [String]) async throws -> [Note] {
+		return try await post("/api/notes/batch", body: ["ids": ids])
+	}
+
 	// MARK: Memories (P3)
 
 	func listMemories(limit: Int = 50, offset: Int = 0, keyword: String = "", source: String = "") async throws -> [UserMemory] {

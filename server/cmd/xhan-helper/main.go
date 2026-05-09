@@ -15,6 +15,7 @@ import (
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/controller"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/middleware"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
@@ -82,17 +83,17 @@ func main() {
 
 	// Tool Registry + Tools
 	reg := tool.NewRegistry()
-	reg.Register(tool.NewBookkeepingTool(billRepo))
-	reg.Register(tool.NewDatetimeTool())
-	reg.Register(tool.NewUUIDTool())
-	reg.Register(tool.NewCalculatorTool())
+	reg.Register(tool.NewLoggingWrapper(tool.NewBookkeepingTool(billRepo), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewDatetimeTool(), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewUUIDTool(), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewCalculatorTool(), log.Default()))
 
 	// Vector Store
 	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
 	vectorStore := agent.NewVectorStore()
 
-	reg.Register(tool.NewNoteTool(noteRepo, vectorStore, embedder))
-	reg.Register(tool.NewAgentTool(agentRepo))
+	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(noteRepo, vectorStore, embedder), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewAgentTool(agentRepo), log.Default()))
 
 	// 从 DB 加载动态工具
 	reg.SetDynamicLoader(toolRepo, cfg.Server.SidecarURL, toolRepo, toolRepo)
@@ -128,7 +129,7 @@ func main() {
 	promptHandler := controller.NewPromptHandler(promptRepo)
 
 	// Router
-	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, agentRepo, billHandler, noteHandler, memHandler, agentHandler, toolHandler, promptHandler, memExtractor)
+	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, agentRepo, billHandler, noteHandler, memHandler, agentHandler, toolHandler, promptHandler, memExtractor, middleware.RequestLogger(log.Default()))
 
 	addr := ":" + strconv.Itoa(cfg.Server.Port)
 	srv := &http.Server{

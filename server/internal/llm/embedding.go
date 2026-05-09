@@ -67,7 +67,7 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float64, error) {
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("embedding status %d: %s", resp.StatusCode, string(respBody[:min(300, len(respBody))]))
+		return nil, fmt.Errorf("embedding status %d: %s", resp.StatusCode, string(respBody[:min(1000, len(respBody))]))
 	}
 
 	var result struct {

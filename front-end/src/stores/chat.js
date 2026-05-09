@@ -12,6 +12,7 @@ export const useChatStore = defineStore('chat', () => {
   const isStreaming = ref(false)
   const error = ref(null)
   const statusMessage = ref(null)
+  const needsRefetch = ref(false)
 
   // 消息分页游标
   const oldestCursor = ref(null)
@@ -56,6 +57,7 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = false
     error.value = null
     statusMessage.value = null
+    needsRefetch.value = false
   }
 
   return {
@@ -71,6 +73,7 @@ export const useChatStore = defineStore('chat', () => {
     statusMessage,
     oldestCursor,
     hasMoreBefore,
+    needsRefetch,
     setConversation,
     addMessage,
     setMessages,

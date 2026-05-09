@@ -36,12 +36,27 @@
 |------|------|
 | ThinkingBlock 组件 | `thought_delta` 逐字追加到可折叠区域，`thought_done` 自动折叠 |
 | 工具调用卡片 | `tool_call` → 显示 loading 卡片（工具名 + 函数名），`tool_result` → 更新为成功/失败 |
-| Plan DAG 可视化 | `plan_node_start/done` 实时更新节点状态，`plan` 事件渲染完整 DAG 图 |
+| Plan DAG 可视化 | `plan_node_start/done` 实时更新节点状态，`plan` 事件渲染完整 DAG 图（详见 [plan-dag.md](plan-dag.md)） |
 | `status` 事件 | inline badge 显示"已关联 N 条记忆"等状态通知 |
 | 深度思考开关 | 顶部 `n-switch` 切换 `deep_mode` |
 | 智能体选择器 | `n-select` 加载 `/api/agents` 列表，选中后发消息带 `agent_id` |
 | 错误恢复 | 网络断开提示重试、SSE 超时处理、发送中防重复提交 |
 | `useChatSSE.js` 补全 | 加入 Phase 2 全部 7 种事件处理 |
+
+### Phase 2 设计决策
+
+> 2026-05-09 讨论确认
+
+| # | 项 | 决策 |
+|---|-----|------|
+| 1 | ThinkingBlock 折叠行为 | 流式时自动展开，`thought_done` 后自动折叠；历史消息默认折叠 |
+| 2 | status 事件展示 | inline badge，插入 AI 消息气泡内，流式过程中实时追加 |
+| 3 | 智能体选择器默认值 | 不选（`agent_id` 为空），使用后端默认 System Prompt |
+| 4 | 流式中离开页面 | abort SSE + 保留已收部分内容 + 回来时调 `messages-v2` 重拉最新消息覆盖本地 |
+| 5 | 历史消息展示 | 思考默认折叠、工具调用折叠为一行摘要（如"已调用 3 个工具"） |
+| 6 | MessageBubble 拆分 | 拆成 `ThinkingBlock.vue` + `ToolCallCard.vue` 子组件 |
+| 7 | Plan DAG | 手写拓扑分层布局，详见 [plan-dag.md](plan-dag.md) |
+| 8 | 重拉机制 | 和 iOS 客户端一致：调 `GET /api/conversations/{id}/messages-v2` 全量替换，不新增后端端点 |
 
 ### Phase 3 — 实体管理页面
 
@@ -586,6 +601,8 @@ export function useChatSSE() {
 > 注意：`status` 事件的 data 格式是 JSON `{"message":"...","count":N}`，不是纯字符串。`error` 事件的 data 是纯字符串。
 
 ### Plan 可视化
+
+> 详细方案见 [plan-dag.md](plan-dag.md)
 
 当 Agent 一次调用多个工具（≥2）时，后端推送 `plan_node_start/done` + 最终 `plan` 事件。前端维护 `chat.planNodes`，在 ChatView 底部渲染：
 

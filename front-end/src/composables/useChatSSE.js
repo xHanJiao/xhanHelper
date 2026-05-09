@@ -163,6 +163,9 @@ export function useChatSSE() {
   }
 
   function cancel() {
+    if (chat.isStreaming) {
+      chat.needsRefetch = true
+    }
     abortController?.abort()
   }
 

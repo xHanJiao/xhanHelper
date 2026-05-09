@@ -18,6 +18,36 @@ const routes = [
     component: () => import('@/views/ChatView.vue')
   },
   {
+    path: '/memories',
+    name: 'Memories',
+    component: () => import('@/views/MemoryView.vue')
+  },
+  {
+    path: '/notes',
+    name: 'Notes',
+    component: () => import('@/views/NotesView.vue')
+  },
+  {
+    path: '/bills',
+    name: 'Bills',
+    component: () => import('@/views/BillsView.vue')
+  },
+  {
+    path: '/agents',
+    name: 'Agents',
+    component: () => import('@/views/AgentView.vue')
+  },
+  {
+    path: '/prompts',
+    name: 'Prompts',
+    component: () => import('@/views/PromptView.vue')
+  },
+  {
+    path: '/tools',
+    name: 'Tools',
+    component: () => import('@/views/ToolView.vue')
+  },
+  {
     path: '/',
     redirect: '/chat'
   }

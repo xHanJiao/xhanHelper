@@ -1,4 +1,4 @@
-.PHONY: dev check-env build clean test build-linux deploy deploy-only help logs
+.PHONY: dev check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs
 
 # 服务器配置
 SERVER_USER=${DEPLOY_USER}
@@ -6,6 +6,7 @@ SERVER_HOST=${DEPLOY_HOST}
 SERVER_PATH=/srv/xhan-helper
 BINARY=xhan-helper
 OUTPUT_DIR=dist
+FRONTEND_DIR=../front-end
 
 # 默认：显示帮助
 help:
@@ -13,7 +14,10 @@ help:
 	@echo "  make dev            - 本地开发模式启动（dev环境，使用SQLite）"
 	@echo "  make build          - 本地编译（当前系统）"
 	@echo "  make build-linux    - 交叉编译 Linux amd64 版本（用于阿里云服务器）"
-	@echo "  make deploy         - 编译并部署到阿里云服务器（上传二进制+conf）"
+	@echo "  make build-frontend - 构建前端静态文件"
+	@echo "  make deploy         - 一键部署：编译前后端 + 上传 + 重启"
+	@echo "  make deploy-backend - 仅部署后端（编译 + 上传 + 重启）"
+	@echo "  make deploy-frontend- 仅部署前端（构建 + 上传）"
 	@echo "  make deploy-only    - 仅上传已编译的二进制和conf（不重新编译）"
 	@echo "  make test           - API 自动化测试 (34项)"
 	@echo "  make logs           - 实时查看远程服务器日志 (tail -f)"
@@ -80,8 +84,47 @@ build-linux:
 	GOOS=linux GOARCH=amd64 go build -o $(OUTPUT_DIR)/$(BINARY) ./cmd/xhan-helper/
 	@echo "编译完成: $(OUTPUT_DIR)/$(BINARY)"
 
-# 部署到阿里云：编译 + 上传 + 重启（一键）
-deploy: build-linux
+# 构建前端
+build-frontend:
+	@echo "=== 构建前端 ==="
+	@cd $(FRONTEND_DIR) && npm run build
+	@echo "构建完成: $(FRONTEND_DIR)/dist/"
+
+# 一键部署：前端 + 后端
+deploy: build-frontend build-linux
+	@if [ -f .env ]; then . ./.env; fi; \
+	if [ -z "$$DEPLOY_USER" ] || [ -z "$$DEPLOY_HOST" ]; then \
+		echo "❌ 请先设置 .env 文件: DEPLOY_USER=xxx DEPLOY_HOST=xxx"; \
+		echo "   参考 .env.example"; \
+		exit 1; \
+	fi; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); B=$(OUTPUT_DIR)/$(BINARY); F=$(FRONTEND_DIR)/dist/; \
+	echo ""; \
+	echo "========================================"; \
+	echo "       部署到阿里云服务器 (全量)"; \
+	echo "========================================"; \
+	echo "1/5 上传前端..."; \
+	scp -r $$F $$U@$$H:$$P/front-end/; \
+	echo "2/5 上传二进制..."; \
+	scp $$B $$U@$$H:$$P/$(BINARY).tmp; \
+	echo "3/5 上传配置文件 + 控制脚本..."; \
+	scp conf/config.yaml conf/config.prod.yaml $$U@$$H:$$P/conf/; \
+	scp scripts/control-xhan-helper.sh $$U@$$H:$$P/; \
+	echo "4/5 上传 SQL 迁移文件..."; \
+	scp -r migrations/ $$U@$$H:$$P/; \
+	echo "5/5 替换二进制并重启..."; \
+	ssh $$U@$$H "cd $$P && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || ( \
+		echo ""; \
+		echo "❌ 启动失败，日志如下："; \
+		echo "========================================"; \
+		ssh $$U@$$H "tail -50 $$P/logs/xhan-helper-\$$(date +%Y-%m-%d).log"; \
+		echo "========================================"; \
+		exit 1); \
+	echo ""; \
+	echo "✅ 部署完成！"
+
+# 仅部署后端
+deploy-backend: build-linux
 	@if [ -f .env ]; then . ./.env; fi; \
 	if [ -z "$$DEPLOY_USER" ] || [ -z "$$DEPLOY_HOST" ]; then \
 		echo "❌ 请先设置 .env 文件: DEPLOY_USER=xxx DEPLOY_HOST=xxx"; \
@@ -91,7 +134,7 @@ deploy: build-linux
 	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); B=$(OUTPUT_DIR)/$(BINARY); \
 	echo ""; \
 	echo "========================================"; \
-	echo "       部署到阿里云服务器"; \
+	echo "       部署后端到阿里云服务器"; \
 	echo "========================================"; \
 	echo "1/4 上传二进制..."; \
 	scp $$B $$U@$$H:$$P/$(BINARY).tmp; \
@@ -110,6 +153,21 @@ deploy: build-linux
 		exit 1); \
 	echo ""; \
 	echo "✅ 部署完成！"
+
+# 仅部署前端
+deploy-frontend: build-frontend
+	@if [ -f .env ]; then . ./.env; fi; \
+	if [ -z "$$DEPLOY_USER" ] || [ -z "$$DEPLOY_HOST" ]; then \
+		echo "❌ 请先设置 .env 文件: DEPLOY_USER=xxx DEPLOY_HOST=xxx"; \
+		exit 1; \
+	fi; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; \
+	echo "========================================"; \
+	echo "       部署前端到阿里云服务器"; \
+	echo "========================================"; \
+	scp -r $(FRONTEND_DIR)/dist/ $$U@$$H:$(SERVER_PATH)/front-end/ ; \
+	echo ""; \
+	echo "✅ 前端部署完成！"
 
 
 # 仅上传 + 重启（不重新编译）
@@ -153,4 +211,5 @@ logs:
 clean:
 	rm -f xhan-helper
 	rm -rf $(OUTPUT_DIR)
+	rm -rf $(FRONTEND_DIR)/dist
 	rm -f data/xhan_helper.db

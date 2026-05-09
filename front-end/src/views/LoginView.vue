@@ -8,9 +8,6 @@ import {
   NFormItem,
   NInput,
   NButton,
-  NLayout,
-  NLayoutContent,
-  NMessageProvider,
   useMessage
 } from 'naive-ui'
 
@@ -50,28 +47,26 @@ function toggleMode() {
 </script>
 
 <template>
-  <NLayout style="height: 100%; display: flex; align-items: center; justify-content: center; background: var(--color-bg);">
-    <NLayoutContent style="width: 400px;">
-      <NCard title="xhanHelper" style="text-align: center;">
-        <NForm>
-          <NFormItem label="用户名">
-            <NInput v-model:value="username" placeholder="请输入用户名" :disabled="loading" />
-          </NFormItem>
-          <NFormItem label="密码">
-            <NInput v-model:value="password" type="password" placeholder="请输入密码" :disabled="loading" @keyup.enter="handleSubmit" />
-          </NFormItem>
-          <NFormItem>
-            <NButton type="primary" block :loading="loading" @click="handleSubmit">
-              {{ isLoginMode ? '登录' : '注册' }}
-            </NButton>
-          </NFormItem>
-          <NFormItem style="margin-top: var(--space-md); text-align: center;">
-            <a href="javascript:;" @click="toggleMode" style="color: #18a058; text-decoration: none;">
-              {{ isLoginMode ? '没有账号？去注册' : '已有账号？去登录' }}
-            </a>
-          </NFormItem>
-        </NForm>
-      </NCard>
-    </NLayoutContent>
-  </NLayout>
+  <div style="height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--color-bg-page);">
+    <NCard title="xhanHelper" style="width: 400px; text-align: center;">
+      <NForm>
+        <NFormItem label="用户名">
+          <NInput v-model:value="username" placeholder="请输入用户名" :disabled="loading" />
+        </NFormItem>
+        <NFormItem label="密码">
+          <NInput v-model:value="password" type="password" placeholder="请输入密码" :disabled="loading" @keyup.enter="handleSubmit" />
+        </NFormItem>
+        <NFormItem>
+          <NButton type="primary" block :loading="loading" @click="handleSubmit">
+            {{ isLoginMode ? '登录' : '注册' }}
+          </NButton>
+        </NFormItem>
+        <NFormItem style="text-align: center;">
+          <a href="javascript:;" @click="toggleMode" style="color: var(--color-primary); text-decoration: none;">
+            {{ isLoginMode ? '没有账号？去注册' : '已有账号？去登录' }}
+          </a>
+        </NFormItem>
+      </NForm>
+    </NCard>
+  </div>
 </template>

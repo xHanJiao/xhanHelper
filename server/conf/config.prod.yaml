@@ -1,6 +1,7 @@
 server:
   port: 8088
   mode: release
+  memory_auto_extract: true
 
 db:
   host: 127.0.0.1

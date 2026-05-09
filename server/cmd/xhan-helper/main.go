@@ -112,7 +112,7 @@ func main() {
 	// Orchestrator
 	retriever := agent.NewRetriever(memSource, noteSource)
 
-	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, embedder, vectorStore, cfg.LLM.MaxIterations)
+	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, embedder, vectorStore, cfg.LLM.MaxIterations)
 
 	// Memory Scheduler (后台异步)
 	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo)

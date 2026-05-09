@@ -77,6 +77,11 @@ func (r *ConversationRepo) Update(ctx context.Context, c *model.Conversation) er
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).Where("id = ?", c.ID).Updates(c).Error
 }
 
+// Touch 更新会话的 updated_at 到当前时间
+func (r *ConversationRepo) Touch(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Model(&model.Conversation{}).Where("id = ?", id).Update("updated_at", time.Now()).Error
+}
+
 // SoftDelete 软删除会话
 func (r *ConversationRepo) SoftDelete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).

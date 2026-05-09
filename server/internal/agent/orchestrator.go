@@ -57,6 +57,7 @@ type Orchestrator struct {
 	registry       *tool.Registry
 	retriever      *Retriever
 	msgRepo        *service.MessageRepo
+	convRepo       *service.ConversationRepo
 	embedder       *llm.Embedder
 	vectorStore    *VectorStore
 	promptResolver PromptResolver
@@ -66,7 +67,7 @@ type Orchestrator struct {
 // New 创建 Orchestrator
 func New(flashClient llm.LLMClient, registry *tool.Registry,
 	proClient llm.LLMClient, retriever *Retriever,
-	msgRepo *service.MessageRepo,
+	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
 	embedder *llm.Embedder, vectorStore *VectorStore,
 	maxIterations int) *Orchestrator {
 	if maxIterations <= 0 {
@@ -77,6 +78,7 @@ func New(flashClient llm.LLMClient, registry *tool.Registry,
 		proClient:     proClient,
 		registry:      registry,
 		msgRepo:       msgRepo,
+		convRepo:      convRepo,
 		retriever:     retriever,
 		embedder:      embedder,
 		vectorStore:   vectorStore,
@@ -187,6 +189,7 @@ func (o *Orchestrator) runReActLoop(
 		Content:        req.UserMessageContent,
 		MemoryIDs:      mIDs,
 	})
+	o.convRepo.Touch(ctx, req.ConversationID)
 
 	if o.vectorStore != nil && len(queryVec) > 0 {
 		go o.saveUserMsgEmbedding(userMsgID, queryVec, req.UserID, req.ConversationID)
@@ -466,6 +469,7 @@ func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID stri
 		modelMsg.ResponseJSON = msg.ResponseJSON
 	}
 	o.msgRepo.Create(ctx, modelMsg)
+	o.convRepo.Touch(ctx, convID)
 	return mid
 }
 
@@ -482,6 +486,7 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCall
 		Content:        content,
 		ToolCallID:     &tcid,
 	})
+	o.convRepo.Touch(ctx, convID)
 }
 
 func (o *Orchestrator) saveUserMsgEmbedding(userMsgID string, vec []float64, userID, convID string) {

@@ -106,14 +106,14 @@ onMounted(fetchAgents)
 
 <template>
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
-    <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
+    <div style="padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
       <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
   <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
   智能体管理
 </span>
       <NButton type="primary" size="small" @click="openCreate">创建智能体</NButton>
     </div>
-    <div style="flex: 1; overflow-y: auto; padding: 24px;">
+    <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
       <NSpin :show="loading">
         <NGrid v-if="agents.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
           <NGi v-for="agent in agents" :key="agent.id">
@@ -130,7 +130,7 @@ onMounted(fetchAgents)
                 </NSpace>
               </template>
               <div style="font-size: 13px; color: var(--color-text-secondary); line-height: 1.6; max-height: 120px; overflow: hidden; white-space: pre-wrap;">{{ agent.system_prompt }}</div>
-              <div style="margin-top: 10px; display: flex; align-items: center; justify-content: space-between;">
+              <div style="margin-top: var(--space-md); display: flex; align-items: center; justify-content: space-between;">
                 <span style="font-size: 12px; color: var(--color-text-muted);">模型：{{ agent.model }} · {{ new Date(agent.created_at).toLocaleDateString() }}</span>
                 <NButton size="tiny" type="primary" quaternary @click.stop="handleStartChat(agent)">开始对话</NButton>
               </div>
@@ -159,7 +159,7 @@ onMounted(fetchAgents)
           <NSelect v-model:value="formValue.model" :options="modelOptions" />
         </NFormItem>
       </NForm>
-      <div style="margin-top: 16px; text-align: right;">
+      <div style="margin-top: var(--space-md); text-align: right;">
         <NButton style="margin-right: 8px;" @click="modalVisible = false">取消</NButton>
         <NButton type="primary" :loading="submitting" @click="handleSubmit">确定</NButton>
       </div>

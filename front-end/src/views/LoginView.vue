@@ -65,7 +65,7 @@ function toggleMode() {
               {{ isLoginMode ? '登录' : '注册' }}
             </NButton>
           </NFormItem>
-          <NFormItem style="margin-top: 16px; text-align: center;">
+          <NFormItem style="margin-top: var(--space-md); text-align: center;">
             <a href="javascript:;" @click="toggleMode" style="color: #18a058; text-decoration: none;">
               {{ isLoginMode ? '没有账号？去注册' : '已有账号？去登录' }}
             </a>

@@ -37,15 +37,15 @@ watch(() => props.reasoning, (val) => {
 
 <style scoped>
 .thinking-block {
-  margin-bottom: 10px;
+  margin-bottom: var(--space-md);
 }
 .thinking-content {
   white-space: pre-wrap;
   font-size: 14px;
   color: var(--color-text-secondary);
   background: var(--color-bg);
-  padding: 10px;
-  border-radius: 8px;
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
 }
 .thinking-content.is-done {
   opacity: 0.7;

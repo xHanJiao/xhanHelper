@@ -54,14 +54,14 @@ import { computed } from 'vue'
 
 <style scoped>
 .tool-call-section {
-  margin-top: 12px;
+  margin-top: var(--space-md);
 }
 .summary {
   font-size: 14px;
   color: var(--color-text-secondary);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 .count-running { color: #2080f0; font-size: 12px; }
 .count-done { color: #18a058; font-size: 12px; }
@@ -69,29 +69,29 @@ import { computed } from 'vue'
 
 .tool-call-item {
   border: 1px solid var(--color-border);
-  border-radius: 12px;
-  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  padding: var(--space-md) 14px;
   background: var(--color-surface-hover);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-sm);
 }
 .tool-call-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 .tool-name {
   font-weight: 600;
   font-size: 14px;
 }
 .tool-call-result {
-  margin-top: 8px;
+  margin-top: var(--space-sm);
   font-size: 13px;
   color: var(--color-text-secondary);
   max-height: 120px;
   overflow: auto;
   background: var(--color-surface);
-  border-radius: 8px;
-  padding: 8px;
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
 }
 .tool-call-result pre {
   margin: 0;

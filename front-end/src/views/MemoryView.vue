@@ -61,12 +61,12 @@ onMounted(fetchMemories)
 
 <template>
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
-    <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
+    <div style="padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
       <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
   <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
   记忆管理
 </span>
-      <div style="display: flex; align-items: center; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: var(--space-md);">
         <NInput
           v-model:value="keyword"
           placeholder="搜索记忆..."
@@ -78,7 +78,7 @@ onMounted(fetchMemories)
         <NButton size="small" @click="handleSearch">搜索</NButton>
       </div>
     </div>
-    <div style="flex: 1; overflow-y: auto; padding: 24px;">
+    <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
       <NGrid v-if="memories.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
         <NGi v-for="mem in memories" :key="mem.id">
           <NCard size="small" hoverable>
@@ -88,7 +88,7 @@ onMounted(fetchMemories)
             <div style="font-size: 14px; color: var(--color-text); line-height: 1.7; white-space: pre-wrap; max-height: 160px; overflow: hidden;">
               {{ mem.memory_value || mem.memory_key || '无内容' }}
             </div>
-            <div style="margin-top: 10px; display: flex; align-items: center; justify-content: space-between;">
+            <div style="margin-top: var(--space-md); display: flex; align-items: center; justify-content: space-between;">
               <NTag size="small">{{ sourceMap[mem.source] || mem.source }}</NTag>
               <span style="font-size: 12px; color: var(--color-text-muted);">{{ new Date(mem.created_at).toLocaleString() }}</span>
             </div>
@@ -96,7 +96,7 @@ onMounted(fetchMemories)
         </NGi>
       </NGrid>
       <NEmpty v-else-if="!loading" description="还没有记忆" />
-      <div v-if="memories.length === pageSize" style="margin-top: 24px; display: flex; justify-content: center;">
+      <div v-if="memories.length === pageSize" style="margin-top: var(--space-lg); display: flex; justify-content: center;">
         <NPagination
           v-model:page="page"
           :page-count="99"

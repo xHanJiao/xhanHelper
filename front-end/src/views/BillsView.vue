@@ -133,13 +133,13 @@ onMounted(fetchBills)
 
 <template>
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
-    <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface);">
-      <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+    <div style="padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--color-border); background: var(--color-surface);">
+      <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-md);">
         <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
   <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
   账单管理
 </span>
-        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: var(--space-md); flex-wrap: wrap;">
           <NDatePicker
             v-model:value="filterDateRange"
             type="daterange"
@@ -161,7 +161,7 @@ onMounted(fetchBills)
         </div>
       </div>
     </div>
-    <div style="flex: 1; overflow-y: auto; padding: 24px;">
+    <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
       <NDataTable
         :columns="columns"
         :data="bills"
@@ -170,7 +170,7 @@ onMounted(fetchBills)
         size="small"
         flex-height
       />
-      <div v-if="total > pageSize" style="margin-top: 16px; display: flex; justify-content: center;">
+      <div v-if="total > pageSize" style="margin-top: var(--space-md); display: flex; justify-content: center;">
         <NPagination
           v-model:page="page"
           :page-count="Math.ceil(total / pageSize)"

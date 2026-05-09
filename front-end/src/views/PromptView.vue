@@ -90,14 +90,14 @@ onMounted(fetchPrompts)
 
 <template>
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
-    <div style="padding: var(--space-lg) 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
+    <div style="padding: var(--space-lg) var(--space-lg); border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
       <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
   <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
   System Prompt 管理
 </span>
       <NButton type="primary" size="small" @click="openCreate">创建 Prompt</NButton>
     </div>
-    <div style="flex: 1; overflow-y: auto; padding: 24px;">
+    <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
       <NGrid v-if="prompts.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
         <NGi v-for="p in prompts" :key="p.id">
           <NCard size="small" hoverable :style="p.status === 'active' ? 'border-color: var(--color-primary);' : ''">

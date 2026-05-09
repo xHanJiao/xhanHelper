@@ -1,52 +1,76 @@
 :root {
-  --color-primary: #667eea;
-  --color-primary-hover: #5a6fd6;
-  --color-danger: #e53e3e;
-  --color-success: #18a058;
-  --color-warning: #f0a020;
-  --color-info: #2080f0;
+  --color-primary: #5b6abf;
+  --color-primary-hover: #4a58a8;
+  --color-danger: #e5534b;
+  --color-success: #2da44e;
+  --color-warning: #d29922;
+  --color-info: #4a9eff;
 
-  --color-bg: #f7f8fa;
-  --color-bg-page: #f7f8fa;
+  --color-bg: #f5f3f0;
+  --color-bg-page: #eeedeb;
   --color-surface: #ffffff;
-  --color-surface-hover: #fafafa;
+  --color-surface-hover: #f8f7f5;
 
-  --color-text: #333333;
-  --color-text-secondary: #666666;
-  --color-text-muted: #999999;
+  --color-text: #1f2328;
+  --color-text-secondary: #656d76;
+  --color-text-muted: #8b949e;
 
-  --color-border: #e8e8e8;
+  --color-border: #d0d7de;
 
   --radius-sm: 6px;
   --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
 
   --space-xs: 4px;
   --space-sm: 8px;
-  --space-md: 14px;
-  --space-lg: 20px;
-  --space-xl: 28px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
 
   --font-size-sm: 12px;
   --font-size-base: 14px;
   --font-size-lg: 16px;
 
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 3px 8px rgba(0,0,0,0.06);
+
+  --transition-fast: 0.15s ease;
 
   --sidebar-width: 280px;
 }
 
 [data-theme="dark"] {
-  --color-bg: #1a1a2e;
-  --color-bg-page: #16162a;
-  --color-surface: #222244;
-  --color-surface-hover: #2a2a4a;
-  --color-text: #e0e0e0;
-  --color-text-secondary: #a0a0b0;
-  --color-text-muted: #707080;
-  --color-border: #333355;
+  --color-bg: #1e1c21;
+  --color-bg-page: #161418;
+  --color-surface: #262429;
+  --color-surface-hover: #2e2c30;
+  --color-text: #d4d2cf;
+  --color-text-secondary: #9b9893;
+  --color-text-muted: #6b6864;
+  --color-border: #3d3a3f;
+}
+
+/* 全局过渡 */
+.n-card,
+.n-button,
+.n-input,
+.n-select,
+.n-tag,
+.n-switch,
+.n-data-table,
+input,
+textarea,
+button {
+  transition: background-color var(--transition-fast),
+              color var(--transition-fast),
+              border-color var(--transition-fast),
+              box-shadow var(--transition-fast),
+              opacity var(--transition-fast);
+}
+
+.n-card {
+  border-radius: var(--radius-lg) !important;
 }
 
 * {
@@ -67,7 +91,6 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Markdown 样式 */
 .message-content p {
   margin: 0 0 10px 0;
 }
@@ -77,16 +100,16 @@ body {
 }
 
 .message-content code {
-  background: #f5f5f5;
+  background: var(--color-bg);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.9em;
 }
 
 .message-content pre {
-  background: #f5f5f5;
+  background: var(--color-bg);
   padding: 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow-x: auto;
 }
 

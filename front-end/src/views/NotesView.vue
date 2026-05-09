@@ -72,12 +72,12 @@ onMounted(fetchNotes)
 
 <template>
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
-    <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
+    <div style="padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
       <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
   <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
   笔记管理
 </span>
-      <div style="display: flex; align-items: center; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: var(--space-md);">
         <NInput
           v-model:value="keyword"
           placeholder="搜索笔记..."
@@ -89,7 +89,7 @@ onMounted(fetchNotes)
         <NButton size="small" @click="handleSearch">搜索</NButton>
       </div>
     </div>
-    <div style="flex: 1; overflow-y: auto; padding: 24px;">
+    <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
       <NGrid v-if="notes.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
         <NGi v-for="note in notes" :key="note.id">
           <NCard :title="note.topic || '无标题'" size="small" hoverable>
@@ -99,17 +99,17 @@ onMounted(fetchNotes)
             <div style="font-size: 14px; color: var(--color-text-secondary); line-height: 1.7; white-space: pre-wrap; max-height: 160px; overflow: hidden;">
               {{ truncate(note.content, 300) }}
             </div>
-            <div v-if="note.tags" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px;">
+            <div v-if="note.tags" style="margin-top: var(--space-sm); display: flex; flex-wrap: wrap; gap: var(--space-xs);">
               <NTag v-for="tag in parseTags(note.tags)" :key="tag" size="small">{{ tag }}</NTag>
             </div>
-            <div style="margin-top: 8px; font-size: 12px; color: var(--color-text-muted);">
+            <div style="margin-top: var(--space-sm); font-size: 12px; color: var(--color-text-muted);">
               {{ new Date(note.created_at).toLocaleString() }}
             </div>
           </NCard>
         </NGi>
       </NGrid>
       <NEmpty v-else-if="!loading" description="还没有笔记" />
-      <div v-if="total > pageSize" style="margin-top: 24px; display: flex; justify-content: center;">
+      <div v-if="total > pageSize" style="margin-top: var(--space-lg); display: flex; justify-content: center;">
         <NPagination
           v-model:page="page"
           :page-count="Math.ceil(total / pageSize)"

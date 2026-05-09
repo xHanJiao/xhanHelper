@@ -206,7 +206,7 @@ function setNodeRef(id, el) {
 
 <style scoped>
 .plan-graph-wrapper {
-  margin: 12px 0;
+  margin: var(--space-md) 0;
 }
 .plan-graph-container {
   position: relative;
@@ -242,8 +242,8 @@ function setNodeRef(id, el) {
 .plan-node {
   background: var(--color-surface);
   border: 2px solid var(--color-border);
-  border-radius: 12px;
-  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  padding: var(--space-md) 14px;
   text-align: center;
   transition: border-color 0.3s, box-shadow 0.3s;
 }
@@ -264,15 +264,15 @@ function setNodeRef(id, el) {
   font-size: 13px;
   font-weight: 500;
   color: var(--color-text);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .status-badge {
   font-size: 12px;
-  padding: 1px 8px;
-  border-radius: 10px;
+  padding: 1px var(--space-sm);
+  border-radius: var(--radius-md);
 }
 .status-badge.pending {
   color: var(--color-text-muted);

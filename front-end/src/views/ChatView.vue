@@ -175,13 +175,13 @@ function handleStop() {
 <template>
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
     <!-- 顶部工具栏 -->
-    <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; background: var(--color-surface); flex-shrink: 0;">
+    <div style="padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; background: var(--color-surface); flex-shrink: 0;">
         <div style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
           <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
           {{ currentTitle }}
         </div>
-        <div style="display: flex; align-items: center; gap: 16px;">
-          <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: var(--space-md);">
+          <div style="display: flex; align-items: center; gap: var(--space-sm);">
             <span style="font-size: 14px; color: var(--color-text-secondary);">深度思考</span>
             <NSwitch v-model:value="chat.deepMode" size="small" />
           </div>
@@ -189,13 +189,13 @@ function handleStop() {
       </div>
 
       <!-- 消息区域 -->
-      <div style="flex: 1; overflow-y: auto; padding: 24px; display: flex; justify-content: center;">
+      <div style="flex: 1; overflow-y: auto; padding: var(--space-lg); display: flex; justify-content: center;">
         <div style="width: 100%; max-width: 900px;">
           <div v-if="chat.messages.length === 0 && !chat.streamingMessage" style="padding: 100px 0; text-align: center; color: var(--color-text-muted);">
             开始聊天吧
           </div>
 
-          <div v-if="chat.hasMoreBefore" style="text-align: center; margin-bottom: 24px;">
+          <div v-if="chat.hasMoreBefore" style="text-align: center; margin-bottom: var(--space-lg);">
             <NButton size="small" quaternary :loading="isLoadingHistory" @click="loadHistory(chat.conversationId, 'before', chat.oldestCursor)">
               加载更多历史
             </NButton>
@@ -222,7 +222,7 @@ function handleStop() {
             :visible="planVisible"
           />
 
-          <div v-if="chat.error && !chat.streamingMessage" style="text-align: center; margin: 16px 0;">
+          <div v-if="chat.error && !chat.streamingMessage" style="text-align: center; margin: var(--space-md) 0;">
             <NButton size="small" type="error" quaternary>
               {{ chat.error }}
             </NButton>
@@ -233,9 +233,9 @@ function handleStop() {
       </div>
 
       <!-- 输入区域 -->
-      <div style="padding: 16px 24px; background: var(--color-surface); border-top: 1px solid var(--color-border); flex-shrink: 0;">
+      <div style="padding: var(--space-md) var(--space-lg); background: var(--color-surface); border-top: 1px solid var(--color-border); flex-shrink: 0;">
         <div style="max-width: 900px; margin: 0 auto;">
-          <div style="border: 1px solid var(--color-border); border-radius: 24px; padding: 12px 16px; background: var(--color-surface);">
+          <div style="border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: var(--space-md) var(--space-md); background: var(--color-surface);">
             <NInput
               v-model:value="inputValue"
               type="textarea"

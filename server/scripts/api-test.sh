@@ -25,14 +25,19 @@ assert() {
     fi
 }
 
+# 从统一响应中提取 data 字段
+unwrap() {
+    python3 -c "import sys,json; d=json.load(sys.stdin); x=d.get('data',d); print(x if isinstance(x,str) else json.dumps(x, ensure_ascii=False))"
+}
+
 # ── 1. 注册用户 ──
 echo ""
 echo "【1/14】注册用户"
 RESP=$(curl -s -X POST "$BASE_URL/api/auth/register" \
     -H "Content-Type: application/json" \
     -d '{"username":"apitest","password":"test123"}')
-TOKEN=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
-USER_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('user_id',''))" 2>/dev/null)
+TOKEN=$(echo "$RESP" | unwrap | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+USER_ID=$(echo "$RESP" | unwrap | python3 -c "import sys,json; print(json.load(sys.stdin).get('user_id',''))" 2>/dev/null)
 
 assert "返回 token"    '[0-9a-f\-]{36}' "$TOKEN"
 assert "返回 user_id"  '[0-9a-f\-]{36}' "$USER_ID"
@@ -56,7 +61,7 @@ echo "【3/14】登录"
 RESP=$(curl -s -X POST "$BASE_URL/api/auth/login" \
     -H "Content-Type: application/json" \
     -d '{"username":"apitest","password":"test123"}')
-LOGIN_TOKEN=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+LOGIN_TOKEN=$(echo "$RESP" | unwrap | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
 assert "登录返回 token" '[0-9a-f\-]{36}' "$LOGIN_TOKEN"
 
 # ── 4. 无 token 请求应被拒绝 ──
@@ -95,12 +100,12 @@ echo ""
 echo "【7/14】消息历史"
 MSGS=$(curl -s "$BASE_URL/api/conversations/$CONV_ID/messages" \
     -H "Authorization: Bearer $TOKEN")
-USER_MSG=$(echo "$MSGS" | python3 -c "
+USER_MSG=$(echo "$MSGS" | unwrap | python3 -c "
 import sys,json
 for m in json.load(sys.stdin):
     if m['role']=='user': print(m['content'])
 " 2>/dev/null)
-ASST_MSG=$(echo "$MSGS" | python3 -c "
+ASST_MSG=$(echo "$MSGS" | unwrap | python3 -c "
 import sys,json
 for m in json.load(sys.stdin):
     if m['role']=='assistant': print(m['content'])
@@ -132,7 +137,7 @@ BILLS=$(curl -s "$BASE_URL/api/bills" \
 assert "返回包含 item"   '"item"'   "$BILLS"
 assert "返回包含 amount" '"amount"' "$BILLS"
 
-BILL_ID=$(echo "$BILLS" | python3 -c "
+BILL_ID=$(echo "$BILLS" | unwrap | python3 -c "
 import sys,json
 bills = json.load(sys.stdin)
 for b in bills:
@@ -143,7 +148,7 @@ for b in bills:
 
 if [ -z "$BILL_ID" ]; then
     # 如果 LLM 没用"午饭"作为 item，用第一条账单的 id
-    BILL_ID=$(echo "$BILLS" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])" 2>/dev/null)
+    BILL_ID=$(echo "$BILLS" | unwrap | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])" 2>/dev/null)
 fi
 assert "能提取到 bill id" '[0-9a-f\-]{36}' "$BILL_ID"
 
@@ -166,7 +171,7 @@ echo ""
 echo "【12/14】REST API — 确认金额已修改"
 BILLS=$(curl -s "$BASE_URL/api/bills" \
     -H "Authorization: Bearer $TOKEN")
-UPDATED_AMOUNT=$(echo "$BILLS" | python3 -c "
+UPDATED_AMOUNT=$(echo "$BILLS" | unwrap | python3 -c "
 import sys,json
 for b in json.load(sys.stdin):
     if b['id'] == '$BILL_ID':
@@ -231,7 +236,7 @@ echo ""
 echo "【17/26】REST API — 导入后账单总数"
 BILLS=$(curl -s "$BASE_URL/api/bills" \
     -H "Authorization: Bearer $TOKEN")
-COUNT=$(echo "$BILLS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null)
+COUNT=$(echo "$BILLS" | unwrap | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null)
 # cancel_bill 跳过时总数=5，执行时=4
 EXPECTED_COUNT=27
 if [ "$SKIP_CANCEL" != "1" ]; then EXPECTED_COUNT=26; fi
@@ -344,7 +349,7 @@ assert "tool_result success"       '"success":true'           "$SSE_OUT"
 # ── 22. REST API — 删除笔记 ──
 echo ""
 echo "【26/26】REST API — 删除笔记"
-NOTE_ID=$(echo "$NOTES" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])" 2>/dev/null)
+NOTE_ID=$(echo "$NOTES" | unwrap | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])" 2>/dev/null)
 DEL_RESP=$(curl -s -X DELETE "$BASE_URL/api/notes/$NOTE_ID" \
     -H "Authorization: Bearer $TOKEN")
 assert "删除成功" '"deleted":true' "$DEL_RESP"
@@ -373,7 +378,7 @@ assert "批量返回数组" "\[" "$MEM_BATCH"
 echo ""
 echo "【29/30】删除记忆"
 # 从列表中取第一条记忆的 ID
-MEM_ID=$(echo "$MEM_LIST" | python3 -c "import sys,json; arr=json.load(sys.stdin); print(arr[0][\"id\"] if arr else \"\")" 2>/dev/null)
+MEM_ID=$(echo "$MEM_LIST" | unwrap | python3 -c "import sys,json; arr=json.load(sys.stdin); print(arr[0][\"id\"] if arr else \"\")" 2>/dev/null)
 if [ -n "$MEM_ID" ]; then
     DEL_MEM_RESP=$(curl -s -X DELETE "$BASE_URL/api/memories/$MEM_ID" -H "Authorization: Bearer $TOKEN")
     assert "删除记忆成功" "true" "$DEL_MEM_RESP"
@@ -393,7 +398,7 @@ AGENT_RESP=$(curl -s -X POST "$BASE_URL/api/agents" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"name\":\"测试助手\",\"system_prompt\":\"你是一个友好的助手\"}")
-AGENT_ID=$(echo "$AGENT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get(\"id\",\"\"))" 2>/dev/null)
+AGENT_ID=$(echo "$AGENT_RESP" | unwrap | python3 -c "import sys,json; print(json.load(sys.stdin).get(\"id\",\"\"))" 2>/dev/null)
 assert "创建智能体成功" "[0-9a-f\-]{36}" "$AGENT_ID"
 
 # ── 列出智能体 ──
@@ -449,13 +454,13 @@ echo ""
 echo "【29/29】确认已删除"
 CONV_LIST=$(curl -s "$BASE_URL/api/conversations" \
     -H "Authorization: Bearer $TOKEN")
-# 如果列表为空，说明唯一会话已删除成功
-if [ "$CONV_LIST" = "[]" ] || [ "$CONV_LIST" = "null" ]; then
+UNWRAPPED=$(echo "$CONV_LIST" | unwrap)
+if ! echo "$UNWRAPPED" | grep -q "$CONV_ID"; then
     echo -e "\033[32m  ✅ 已删除不在列表\033[0m"
     PASS=$((PASS + 1))
 else
     echo -e "\033[31m  ❌ 已删除不在列表\033[0m"
-    echo -e "\033[31m     列表应为空，实际: $(echo $CONV_LIST | head -c 100)\033[0m"
+    echo -e "\033[31m     列表应为空，实际: $(echo $UNWRAPPED | head -c 100)\033[0m"
     FAIL=$((FAIL + 1))
 fi
 

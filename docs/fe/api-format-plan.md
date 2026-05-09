@@ -61,3 +61,13 @@
 - 后端 `JSONOK` 包裹后，`api/response.js` 的 `unwrap()` 自动提取 `res.data`
 - total 返回后，各列表页的 `n-pagination` 可以使用实际 total 计算页数
 - cursor 接口不受影响
+
+## 3. 受影响的其他模块
+
+### iOS 客户端
+- **影响**: 所有 `JSONDecoder().decode(T.self, from: data)` 失效（期望裸数组/对象，收到包裹结构体）
+- **修复**: 新增 `struct APIResponse<T: Decodable>: Decodable` 包装模型，所有 API 调用改返回 `APIResponse<T>`，ViewModel 取 `.data`
+
+### 测试脚本 (api-test.sh)
+- **影响**: 所有 `json.load(sys.stdin)` 断言失效（期望顶层字段，实际嵌套在 data 下）
+- **修复**: 每个 python 解析前加 `json.load(sys.stdin).get('data', json.load(sys.stdin))` 兼容新旧格式，或批量替换

@@ -240,10 +240,7 @@ function handleStop() {
               @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); handleSend() }}"
               :bordered="false"
             />
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
-              <div style="display: flex; gap: 12px; color: #999;">
-                <span style="cursor: pointer;">+</span>
-              </div>
+            <div style="display: flex; justify-content: flex-end; align-items: center; margin-top: 8px;">
               <NButton
                 v-if="!chat.isStreaming"
                 type="primary"

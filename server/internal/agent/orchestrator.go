@@ -128,6 +128,7 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, client llm.LLMClient,
 			}
 		}
 	}
+	sysPrompt += "\n当前时间: " + time.Now().Format("2006-01-02 15:04:05 Monday")
 	prompt := client.BuildSystemPrompt(sysPrompt, o.registry.GetLLMTools())
 
 	if o.retriever == nil || o.embedder == nil {

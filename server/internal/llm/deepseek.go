@@ -351,7 +351,6 @@ func NewFlashClient(cfg config.LLMConfig) *FlashClient {
 func (c *FlashClient) BuildSystemPrompt(base string, tools []ToolDefinition) string {
 	var b strings.Builder
 	b.WriteString(base)
-	b.WriteString(fmt.Sprintf("\n当前时间: %s\n", time.Now().Format("2006-01-02 15:04:05 Monday")))
 	if len(tools) == 0 {
 		return b.String()
 	}

@@ -20,10 +20,17 @@ const renamingId = ref(null)
 const renamingTitle = ref('')
 const hoveredId = ref(null)
 const extractingId = ref(null)
+const confirmingId = ref(null)
 
 const auth = useAuthStore()
 
 const activeId = computed(() => route.params.id)
+
+function handleMouseLeave(conv) {
+  if (confirmingId.value !== conv.id) {
+    hoveredId.value = null
+  }
+}
 
 const hasMore = computed(() => convs.list.length < convs.total)
 
@@ -157,7 +164,7 @@ async function handleExtractMemories(conv) {
         :key="conv.id"
         @click="handleSelect(conv)"
         @mouseenter="hoveredId = conv.id"
-        @mouseleave="hoveredId = null"
+        @mouseleave="handleMouseLeave(conv)"
         :style="{
           padding: 'var(--space-md) var(--space-md)',
           borderRadius: 'var(--radius-md)',
@@ -193,7 +200,7 @@ async function handleExtractMemories(conv) {
               <path d="M10 19v1a2 2 0 0 0 4 0v-1"/>
             </svg>
           </button>
-          <NPopconfirm @positive-click="handleDelete(conv)">
+          <NPopconfirm @positive-click="handleDelete(conv)" @update:show="(v) => confirmingId = v ? conv.id : null">
             <template #trigger>
               <button @click.stop style="padding: var(--space-xs); border: none; background: none; cursor: pointer; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center;" @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'" @mouseout="e => e.currentTarget.style.background = 'none'">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger)" stroke-width="2">

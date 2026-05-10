@@ -2,6 +2,7 @@ server:
   port: 8080
   mode: debug          # debug | release
   registration_enabled: false
+  token_ttl_hours: 720 # token 过期时间（小时），默认 720h = 30 天
   memory_auto_extract: true
   sidecar_url: http://127.0.0.1:9090
   allowed_users:

@@ -23,6 +23,7 @@ type ServerConfig struct {
 	AllowedUsers        []string `yaml:"allowed_users"`        // 允许注册的用户名列表（空=全部允许）
 	MemoryAutoExtract   bool     `yaml:"memory_auto_extract"`  // 是否自动提取记忆
 	SidecarURL          string   `yaml:"sidecar_url"`          // Python sidecar MCP HTTP 地址
+	TokenTTLHours       int      `yaml:"token_ttl_hours"`      // token 过期时间（小时），默认 720
 }
 
 // DBConfig — 数据库配置
@@ -120,6 +121,9 @@ func merge(dst, src *Config) {
 	}
 	if len(src.Server.AllowedUsers) > 0 {
 		dst.Server.AllowedUsers = src.Server.AllowedUsers
+	}
+	if src.Server.TokenTTLHours != 0 {
+		dst.Server.TokenTTLHours = src.Server.TokenTTLHours
 	}
 	if src.DB.Driver != "" {
 		dst.DB.Driver = src.DB.Driver

@@ -15,5 +15,6 @@ type UserToken struct {
 	ID        string    `gorm:"primaryKey;size:36"`
 	UserID    string    `gorm:"size:36;not null;index"`
 	Token     string    `gorm:"size:36;uniqueIndex;not null"`
+	ExpiresAt time.Time `gorm:"not null"`
 	CreatedAt time.Time `gorm:"autoCreateTime"`
 }

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -17,7 +18,11 @@ func Auth(userRepo *service.UserRepo) gin.HandlerFunc {
 			return
 		}
 		user, err := userRepo.FindByToken(c.Request.Context(), token)
-		if err != nil || user == nil {
+		if err != nil {
+			if errors.Is(err, service.ErrTokenExpired) {
+				view.JSONError(c, 401, "token expired")
+				return
+			}
 			view.JSONError(c, 401, "invalid token")
 			return
 		}

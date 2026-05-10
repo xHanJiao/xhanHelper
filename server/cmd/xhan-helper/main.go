@@ -71,7 +71,7 @@ func main() {
 	}
 
 	// Repos
-	userRepo := service.NewUserRepo(db)
+	userRepo := service.NewUserRepo(db, cfg.Server.TokenTTLHours)
 	convRepo := service.NewConversationRepo(db)
 	msgRepo := service.NewMessageRepo(db)
 	billRepo := service.NewBillRepo(db)

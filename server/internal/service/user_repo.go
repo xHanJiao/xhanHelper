@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -10,13 +12,16 @@ import (
 	"xhan-helper/internal/model"
 )
 
+var ErrTokenExpired = errors.New("token expired")
+
 // UserRepo — 用户数据访问
 type UserRepo struct {
-	db *gorm.DB
+	db            *gorm.DB
+	tokenTTLHours int
 }
 
-func NewUserRepo(db *gorm.DB) *UserRepo {
-	return &UserRepo{db: db}
+func NewUserRepo(db *gorm.DB, tokenTTLHours int) *UserRepo {
+	return &UserRepo{db: db, tokenTTLHours: tokenTTLHours}
 }
 
 func (r *UserRepo) Create(ctx context.Context, username, password string) (*model.User, string, error) {
@@ -36,7 +41,7 @@ func (r *UserRepo) Create(ctx context.Context, username, password string) (*mode
 			return err
 		}
 		var issueErr error
-		token, issueErr = issueTokenTx(tx, user.ID)
+		token, issueErr = issueTokenTx(tx, user.ID, r.tokenTTLHours)
 		return issueErr
 	})
 	if err != nil {
@@ -56,8 +61,11 @@ func (r *UserRepo) Login(ctx context.Context, username, password string) (*model
 
 	var token string
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("user_id = ?", user.ID).Delete(&model.UserToken{}).Error; err != nil {
+			return err
+		}
 		var issueErr error
-		token, issueErr = issueTokenTx(tx, user.ID)
+		token, issueErr = issueTokenTx(tx, user.ID, r.tokenTTLHours)
 		return issueErr
 	})
 	if err != nil {
@@ -75,6 +83,9 @@ func (r *UserRepo) FindByToken(ctx context.Context, token string) (*model.User, 
 	if err := r.db.WithContext(ctx).Where("token = ?", token).First(&ut).Error; err != nil {
 		return nil, err
 	}
+	if time.Now().After(ut.ExpiresAt) {
+		return nil, ErrTokenExpired
+	}
 	var u model.User
 	if err := r.db.WithContext(ctx).Where("id = ?", ut.UserID).First(&u).Error; err != nil {
 		return nil, err
@@ -82,11 +93,15 @@ func (r *UserRepo) FindByToken(ctx context.Context, token string) (*model.User, 
 	return &u, nil
 }
 
-func issueTokenTx(db *gorm.DB, userID string) (string, error) {
+func issueTokenTx(db *gorm.DB, userID string, ttlHours int) (string, error) {
+	if ttlHours <= 0 {
+		ttlHours = 720
+	}
 	ut := &model.UserToken{
-		ID:     uuid.New().String(),
-		UserID: userID,
-		Token:  uuid.New().String(),
+		ID:        uuid.New().String(),
+		UserID:    userID,
+		Token:     uuid.New().String(),
+		ExpiresAt: time.Now().Add(time.Duration(ttlHours) * time.Hour),
 	}
 	return ut.Token, db.Create(ut).Error
 }

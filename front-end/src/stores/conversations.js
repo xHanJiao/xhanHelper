@@ -5,13 +5,21 @@ import { api } from '@/api/client'
 export const useConversationsStore = defineStore('conversations', () => {
   const list = ref([])
   const loading = ref(false)
+  const total = ref(0)
+  const pageSize = 50
 
   // 加载会话列表
-  async function fetchList() {
+  async function fetchList(offset = 0) {
     loading.value = true
     try {
-      const res = await api.get('/api/conversations')
-      list.value = res || []
+      const res = await api.get(`/api/conversations?limit=${pageSize}&offset=${offset}`)
+      const conversations = res.conversations || res || []
+      if (offset === 0) {
+        list.value = conversations
+      } else {
+        list.value = [...list.value, ...conversations]
+      }
+      total.value = res.total || 0
     } catch (e) {
       console.error('Failed to fetch conversations', e)
     } finally {
@@ -59,6 +67,7 @@ export const useConversationsStore = defineStore('conversations', () => {
   return {
     list,
     loading,
+    total,
     fetchList,
     prepend,
     updateTitle,

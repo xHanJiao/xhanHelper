@@ -25,6 +25,12 @@ const auth = useAuthStore()
 
 const activeId = computed(() => route.params.id)
 
+const hasMore = computed(() => convs.list.length < convs.total)
+
+function handleLoadMore() {
+  convs.fetchList(convs.list.length)
+}
+
 const navItems = [
   { label: '智能体', path: '/agents' },
   { label: '记忆', path: '/memories' },
@@ -201,6 +207,12 @@ async function handleExtractMemories(conv) {
           </NPopconfirm>
         </div>
       </div>
+    </div>
+
+    <div v-if="hasMore" style="padding: var(--space-xs) var(--space-md) var(--space-md); text-align: center;">
+      <NButton text size="small" :loading="convs.loading" @click="handleLoadMore" style="color: var(--color-text-muted);">
+        加载更多
+      </NButton>
     </div>
   </div>
 

@@ -16,7 +16,7 @@ func listConversations(convRepo *service.ConversationRepo, agentRepo *service.Ag
 		userID := c.GetString("user_id")
 		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-		list, _, err := convRepo.ListByUser(c.Request.Context(), userID, limit, offset)
+		list, total, err := convRepo.ListByUser(c.Request.Context(), userID, limit, offset)
 		if err != nil {
 			view.JSONError(c, 500, "query conversations failed")
 			return
@@ -55,7 +55,7 @@ func listConversations(convRepo *service.ConversationRepo, agentRepo *service.Ag
 			}
 			result[i] = m
 		}
-		view.JSONOK(c, result)
+		view.JSONOK(c, gin.H{"conversations": result, "total": total})
 	}
 }
 

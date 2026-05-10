@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { NCollapse, NCollapseItem } from 'naive-ui'
 
 const props = defineProps({
@@ -11,18 +11,6 @@ const props = defineProps({
 const expandedNames = ref([])
 
 const showToggle = computed(() => props.reasoning?.length > 0)
-
-watch(() => props.done, (val) => {
-  if (val) {
-    expandedNames.value = []
-  }
-}, { immediate: false })
-
-watch(() => props.reasoning, (val) => {
-  if (!props.done && val?.length > 0) {
-    expandedNames.value = ['reasoning']
-  }
-}, { immediate: true })
 </script>
 
 <template>

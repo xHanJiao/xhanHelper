@@ -61,7 +61,13 @@ const router = createRouter({
 router.beforeEach((to, from, next) => {
   const auth = useAuthStore()
   if (to.path !== '/login' && !auth.token) {
-    next('/login')
+    // 尝试从 localStorage 恢复一次，防止 storage 事件误清或浏览器挂起丢状态
+    auth.restore()
+    if (!auth.token) {
+      next('/login')
+    } else {
+      next()
+    }
   } else if (to.path === '/login' && auth.token) {
     next('/chat')
   } else {

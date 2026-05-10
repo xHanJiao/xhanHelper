@@ -22,7 +22,9 @@ async function request(path, options = {}) {
   const res = await fetch(BASE + path, { ...options, headers })
 
   if (res.status === 401) {
-    auth.logout()
+    if (auth.token) {
+      auth.logout()
+    }
     throw new AuthError('未登录或 token 已过期', res.status)
   }
 

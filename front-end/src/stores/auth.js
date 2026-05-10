@@ -101,16 +101,28 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  let isLoggingOut = false
+
   // 登出
   async function logout() {
+    if (isLoggingOut) return
+    isLoggingOut = true
     try {
-      await api.post('/api/auth/logout', {})
+      if (token.value) {
+        await api.post('/api/auth/logout', {})
+      }
     } catch (e) {
       // 忽略登出 API 错误
     }
     token.value = null
     user.value = null
     clearStorage()
+    isLoggingOut = false
+  }
+
+  // 从 localStorage 重新恢复（供路由守卫等需要时调用）
+  function restore() {
+    loadFromStorage()
   }
 
   // 初始化
@@ -123,6 +135,7 @@ export const useAuthStore = defineStore('auth', () => {
     loading,
     login,
     register,
-    logout
+    logout,
+    restore
   }
 })

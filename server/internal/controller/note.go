@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"log"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -26,6 +27,7 @@ func (h *NoteHandler) ListNotes(c *gin.Context) {
 	notes, total, err := h.noteRepo.List(c.Request.Context(), userID,
 		c.Query("topic"), c.Query("keyword"), limit, offset)
 	if err != nil {
+		log.Printf("[note] List error: %v", err)
 		view.JSONError(c, 500, "query notes failed")
 		return
 	}
@@ -45,6 +47,7 @@ func (h *NoteHandler) BatchGetNotes(c *gin.Context) {
 	}
 	notes, err := h.noteRepo.GetByIDsAndUser(c.Request.Context(), body.IDs, userID)
 	if err != nil {
+		log.Printf("[note] BatchGet error: %v", err)
 		view.JSONError(c, 500, "query notes failed")
 		return
 	}

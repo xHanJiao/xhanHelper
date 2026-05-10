@@ -51,7 +51,7 @@ func (r *UserMemoryRepo) ListByUser(ctx context.Context, userID, keyword, source
 	}
 
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := q.Model(&model.UserMemory{}).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 

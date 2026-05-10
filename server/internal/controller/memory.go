@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"log"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,7 @@ func (h *MemoryHandler) ListMemories(c *gin.Context) {
 	memories, total, err := h.memRepo.ListByUser(c.Request.Context(), userID,
 		c.Query("keyword"), c.Query("source"), limit, offset)
 	if err != nil {
+		log.Printf("[memory] List error: %v", err)
 		view.JSONError(c, 500, "query memories failed")
 		return
 	}
@@ -89,6 +91,7 @@ func (h *MemoryHandler) BatchGetMemories(c *gin.Context) {
 
 	memories, err := h.memRepo.GetByIDsAndUser(c.Request.Context(), req.IDs, userID)
 	if err != nil {
+		log.Printf("[memory] BatchGet error: %v", err)
 		view.JSONError(c, 500, "query memories failed")
 		return
 	}

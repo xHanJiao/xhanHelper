@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"log"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -65,6 +66,7 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 
 	agents, total, err := h.agentRepo.ListByUser(c.Request.Context(), userID, limit, offset)
 	if err != nil {
+		log.Printf("[agent] List error: %v", err)
 		view.JSONError(c, 500, "query agents failed")
 		return
 	}

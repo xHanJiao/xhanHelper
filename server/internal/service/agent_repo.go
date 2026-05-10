@@ -48,7 +48,7 @@ func (r *AgentRepo) ListByUser(ctx context.Context, userID string, limit, offset
 	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
 
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := q.Model(&model.Agent{}).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 

@@ -73,7 +73,7 @@ func (r *NoteRepo) List(ctx context.Context, userID, topic, keyword string, limi
 	}
 
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := q.Model(&model.Note{}).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 

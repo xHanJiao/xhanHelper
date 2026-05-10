@@ -10,6 +10,9 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src')
     }
   },
+  optimizeDeps: {
+    include: ['vue', 'vue-router', 'pinia', 'naive-ui', 'markdown-it']
+  },
   server: {
     proxy: {
       '/api': {

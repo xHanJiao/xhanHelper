@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useConversationsStore } from '@/stores/conversations'
+import { useAuthStore } from '@/stores/auth'
 import { api } from '@/api/client'
 import { useThemeStore } from '@/stores/theme'
 import { NButton, NPopconfirm, NModal, NInput, useMessage } from 'naive-ui'
@@ -20,6 +21,8 @@ const renamingTitle = ref('')
 const hoveredId = ref(null)
 const extractingId = ref(null)
 
+const auth = useAuthStore()
+
 const activeId = computed(() => route.params.id)
 
 const navItems = [
@@ -33,9 +36,11 @@ function isNavActive(path) {
   return route.path === path
 }
 
-onMounted(() => {
-  convs.fetchList()
-})
+watch(() => auth.token, (token) => {
+  if (token) {
+    convs.fetchList()
+  }
+}, { immediate: true })
 
 function handleNewConversation() {
   router.push('/chat')

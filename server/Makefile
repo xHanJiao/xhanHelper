@@ -1,4 +1,4 @@
-.PHONY: dev check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs
+.PHONY: dev dev-full check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs
 
 # 服务器配置
 SERVER_USER=${DEPLOY_USER}
@@ -12,6 +12,7 @@ FRONTEND_DIR=../front-end
 help:
 	@echo "可用的 make 命令："
 	@echo "  make dev            - 本地开发模式启动（dev环境，使用SQLite）"
+	@echo "  make dev-full       - 同时启动前后端开发服务器"
 	@echo "  make build          - 本地编译（当前系统）"
 	@echo "  make build-linux    - 交叉编译 Linux amd64 版本（用于阿里云服务器）"
 	@echo "  make build-frontend - 构建前端静态文件"
@@ -28,6 +29,17 @@ dev: check-env
 	@echo "=== 启动 xhanHelper 开发服务器 (SQLite) ==="
 	@mkdir -p logs
 	@go run ./cmd/xhan-helper/ 2>&1 | tee logs/dev-$$(date +%Y-%m-%d).log
+
+# 同时启动前后端开发服务器
+dev-full: check-env
+	@echo "=== 启动前后端开发环境 ==="
+	@mkdir -p logs
+	go run ./cmd/xhan-helper/ >> logs/dev-$$(date +%Y-%m-%d).log 2>&1 &
+	@sleep 2
+	@echo "  后端: http://localhost:8080"
+	@echo "  前端: http://localhost:5173"
+	cd $(FRONTEND_DIR) && npm run dev; \
+	lsof -ti:8080 | xargs kill 2>/dev/null; true
 
 # 检查必要的环境变量
 check-env:

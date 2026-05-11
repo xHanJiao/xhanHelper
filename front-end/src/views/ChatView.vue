@@ -234,35 +234,33 @@ function handleStop() {
 
       <!-- 输入区域 -->
       <div style="padding: var(--space-md) var(--space-lg); background: var(--color-surface); border-top: 1px solid var(--color-border); flex-shrink: 0;">
-        <div style="max-width: 900px; margin: 0 auto;">
-          <div style="border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: var(--space-md) var(--space-md); background: var(--color-surface);">
-            <NInput
-              v-model:value="inputValue"
-              type="textarea"
-              placeholder="发消息..."
-              :disabled="chat.isStreaming"
-              :autosize="{ minRows: 1, maxRows: 6 }"
-              @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); handleSend() }}"
-              :bordered="false"
-              style="background: transparent;"
-            />
-            <div style="display: flex; justify-content: flex-end; align-items: center; margin-top: 8px;">
-              <NButton
-                v-if="!chat.isStreaming"
-                type="primary"
-                size="small"
-                :disabled="!inputValue.trim()"
-                @click="handleSend"
-                style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
-              >↑</NButton>
-              <NButton
-                v-else
-                type="error"
-                size="small"
-                @click="handleStop"
-                style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
-              >■</NButton>
-            </div>
+        <div style="border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: var(--space-md) var(--space-md); background: var(--color-surface);">
+          <NInput
+            v-model:value="inputValue"
+            type="textarea"
+            placeholder="发消息..."
+            :disabled="chat.isStreaming"
+            :autosize="{ minRows: 1, maxRows: 6 }"
+            @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); handleSend() }}"
+            :bordered="false"
+            style="background: transparent;"
+          />
+          <div style="display: flex; justify-content: flex-end; align-items: center; margin-top: 8px;">
+            <NButton
+              v-if="!chat.isStreaming"
+              type="primary"
+              size="small"
+              :disabled="!inputValue.trim()"
+              @click="handleSend"
+              style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
+            >↑</NButton>
+            <NButton
+              v-else
+              type="error"
+              size="small"
+              @click="handleStop"
+              style="border-radius: 50%; width: 40px; height: 40px; padding: 0;"
+            >■</NButton>
           </div>
         </div>
       </div>

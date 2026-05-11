@@ -116,24 +116,16 @@ async function handleExtractMemories(conv) {
 
 <template>
   <div style="width: 280px; background: var(--color-surface); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; height: 100%;">
-    <!-- 顶部：用户信息和新对话按钮 -->
+    <!-- 顶部：新对话按钮 -->
     <div style="padding: var(--space-lg) var(--space-md);">
-      <!-- 用户头像 -->
-      <div style="display: flex; align-items: center; gap: var(--space-md); margin-bottom: var(--space-md);">
-        <div style="width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; font-size: 18px;">我</div>
-        <div style="font-size: 18px; font-weight: 600;">xhanHelper</div>
-        <button @click="theme.toggle()" style="margin-left: auto; padding: var(--space-xs); border: none; background: none; cursor: pointer; border-radius: var(--radius-sm); font-size: 18px;" :title="theme.isDark ? '切到亮色' : '切到暗色'">
-          {{ theme.isDark ? '☀️' : '🌙' }}
+      <div style="display: flex; flex-direction: column; gap: var(--space-xs); margin-bottom: var(--space-md);">
+        <button @click="handleNewConversation" style="padding: var(--space-md) var(--space-md); border: none; border-radius: var(--radius-md); background: transparent; color: var(--color-text); font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; transition: background var(--transition-fast);" @mouseover="e => { e.currentTarget.style.background = 'var(--color-surface-hover)'; }" @mouseout="e => { e.currentTarget.style.background = 'transparent'; }">
+          新对话
+        </button>
+        <button @click="theme.toggle()" style="padding: var(--space-md) var(--space-md); border: none; border-radius: var(--radius-md); background: transparent; color: var(--color-text); font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; transition: background var(--transition-fast);" @mouseover="e => { e.currentTarget.style.background = 'var(--color-surface-hover)'; }" @mouseout="e => { e.currentTarget.style.background = 'transparent'; }">
+          {{ theme.isDark ? '亮色模式' : '暗色模式' }}
         </button>
       </div>
-
-      <!-- 新对话按钮 -->
-      <button @click="handleNewConversation" style="width: 100%; padding: var(--space-md) var(--space-md); border: none; border-radius: var(--radius-lg); background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: var(--space-md);">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 5v14M5 12h14"/>
-        </svg>
-        新对话
-      </button>
     </div>
 
     <!-- 导航区 -->
@@ -147,10 +139,11 @@ async function handleExtractMemories(conv) {
           borderRadius: 'var(--radius-md)',
           marginBottom: 'var(--space-xs)',
           cursor: 'pointer',
-          fontSize: '15px',
-          color: isNavActive(item.path) ? '#667eea' : 'var(--color-text)',
-          background: isNavActive(item.path) ? '#f0f0ff' : 'transparent',
-          fontWeight: isNavActive(item.path) ? '600' : '400'
+          fontSize: '14px',
+          color: isNavActive(item.path) ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+          background: isNavActive(item.path) ? 'var(--color-primary-soft)' : 'transparent',
+          fontWeight: isNavActive(item.path) ? '500' : '400',
+          transition: 'background var(--transition-fast), color var(--transition-fast)'
         }"
         @mouseover="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'var(--color-surface-hover)' }"
         @mouseout="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'transparent' }"
@@ -184,11 +177,8 @@ async function handleExtractMemories(conv) {
         @mouseover="e => e.currentTarget.style.background = activeId === conv.id ? 'var(--color-bg)' : 'var(--color-surface-hover)'"
         @mouseout="e => e.currentTarget.style.background = activeId === conv.id ? 'var(--color-bg)' : 'transparent'"
       >
-        <div style="display: flex; align-items: center; gap: var(--space-md); min-width: 0; flex: 1;">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-          </svg>
-          <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; color: var(--color-text);">{{ conv.title }}</div>
+        <div style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; color: var(--color-text);">
+          {{ conv.title }}
         </div>
 
         <!-- 操作按钮 - hover 显示 -->

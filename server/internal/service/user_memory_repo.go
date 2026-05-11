@@ -106,14 +106,26 @@ func (r *UserMemoryRepo) FindByPromptHash(ctx context.Context, userID, hash stri
 	return &m, err
 }
 
-// ListAllPaginated 分页获取所有记忆（用于 warmup 加载向量库），limit<=0 时默认 100
-func (r *UserMemoryRepo) ListAllPaginated(ctx context.Context, limit, offset int) ([]model.UserMemory, error) {
+// ListAllUsersMemoriesPaginated 分页获取所有用户的记忆（仅用于 warmup 加载向量库），limit<=0 时默认 100
+func (r *UserMemoryRepo) ListAllUsersMemoriesPaginated(ctx context.Context, limit, offset int) ([]model.UserMemory, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	var list []model.UserMemory
 	err := r.db.WithContext(ctx).Limit(limit).Offset(offset).Find(&list).Error
 	return list, err
+}
+
+// FindByContentHash 按 content_hash 查找记忆
+func (r *UserMemoryRepo) FindByContentHash(ctx context.Context, userID, contentHash string) (*model.UserMemory, error) {
+	var m model.UserMemory
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND content_hash = ?", userID, contentHash).
+		First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &m, err
 }
 
 // UpdateConfirm 更新确认计数

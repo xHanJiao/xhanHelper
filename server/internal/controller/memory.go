@@ -5,18 +5,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"xhan-helper/internal/agent"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
 
 // MemoryHandler — 用户记忆 REST API
 type MemoryHandler struct {
-	memRepo *service.UserMemoryRepo
+	memRepo     *service.UserMemoryRepo
+	vectorStore *agent.VectorStore
 }
 
 // NewMemoryHandler 创建 MemoryHandler
-func NewMemoryHandler(memRepo *service.UserMemoryRepo) *MemoryHandler {
-	return &MemoryHandler{memRepo: memRepo}
+func NewMemoryHandler(memRepo *service.UserMemoryRepo, vectorStore *agent.VectorStore) *MemoryHandler {
+	return &MemoryHandler{memRepo: memRepo, vectorStore: vectorStore}
 }
 
 // ListMemories GET /api/memories?limit=50&offset=0&keyword=
@@ -53,6 +55,12 @@ func (h *MemoryHandler) DeleteMemory(c *gin.Context) {
 		view.JSONError(c, 500, "delete memory failed")
 		return
 	}
+
+	// 同步从向量库中删除
+	if h.vectorStore != nil {
+		h.vectorStore.Delete("mem:" + id)
+	}
+
 	view.JSONOK(c, gin.H{"deleted": true})
 }
 
@@ -72,6 +80,14 @@ func (h *MemoryHandler) BatchDeleteMemories(c *gin.Context) {
 		view.JSONError(c, 500, "batch delete failed")
 		return
 	}
+
+	// 同步从向量库中删除
+	if h.vectorStore != nil {
+		for _, id := range req.IDs {
+			h.vectorStore.Delete("mem:" + id)
+		}
+	}
+
 	view.JSONOK(c, gin.H{"deleted": len(req.IDs)})
 }
 

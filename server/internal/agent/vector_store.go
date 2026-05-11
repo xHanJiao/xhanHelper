@@ -14,6 +14,12 @@ type vectorEntry struct {
 	Metadata map[string]string // 业务元数据 (type, conv_id 等)
 }
 
+// candidate — 检索候选条目
+type candidate struct {
+	id    string
+	score float64
+}
+
 // FilterFunc — 向量检索时的过滤函数，返回 true 表示该条目纳入候选
 type FilterFunc func(entry vectorEntry) bool
 
@@ -61,48 +67,100 @@ func (vs *VectorStore) Search(query []float64, topK int, filter FilterFunc) []st
 	}
 
 	// 计算余弦相似度，同时过滤
-	type candidate struct {
-		idx   int
-		score float64
-	}
 	var eligible []candidate
-	for i, e := range vs.vectors {
+	for _, e := range vs.vectors {
 		if filter != nil && !filter(e) {
 			continue
 		}
-		eligible = append(eligible, candidate{idx: i, score: cosineSimilarity(query, e.Vec)})
+		eligible = append(eligible, candidate{id: e.ID, score: cosineSimilarity(query, e.Vec)})
 	}
 
 	if len(eligible) == 0 || topK <= 0 {
 		return nil
 	}
 
-	// 部分排序取 topK
 	topN := topK
 	if topN > len(eligible) {
 		topN = len(eligible)
 	}
-	for i := 0; i < topN; i++ {
-		best := i
-		for j := i + 1; j < len(eligible); j++ {
-			if eligible[j].score > eligible[best].score {
-				best = j
-			}
-		}
-		eligible[i], eligible[best] = eligible[best], eligible[i]
+
+	// 使用堆排序取 topK，时间复杂度 O(n log k)
+	result := heapTopK(eligible, topN)
+
+	log.Printf("[vector] search: topK=%d/%d/%d, best=%.4f", topK, len(eligible), len(vs.vectors), result[0].Score)
+	return result
+}
+
+// heapTopK 使用最小堆获取 topK 个最大元素
+func heapTopK(candidates []candidate, k int) []struct {
+	ID    string
+	Score float64
+} {
+	if k <= 0 || len(candidates) == 0 {
+		return nil
 	}
 
+	// 最小堆，堆顶是当前 topK 中最小的元素
+	heap := make([]candidate, 0, k)
+
+	for _, c := range candidates {
+		if len(heap) < k {
+			heap = append(heap, c)
+			heapUp(heap, len(heap)-1)
+		} else if c.score > heap[0].score {
+			heap[0] = c
+			heapDown(heap, 0, k)
+		}
+	}
+
+	// 从堆中取出结果并按分数降序排序
 	out := make([]struct {
 		ID    string
 		Score float64
-	}, topN)
-	for i := 0; i < topN; i++ {
-		out[i].ID = vs.vectors[eligible[i].idx].ID
-		out[i].Score = eligible[i].score
+	}, len(heap))
+	for i := len(heap) - 1; i >= 0; i-- {
+		out[i].ID = heap[0].id
+		out[i].Score = heap[0].score
+		last := len(heap) - 1
+		heap[0] = heap[last]
+		heap = heap[:last]
+		if len(heap) > 0 {
+			heapDown(heap, 0, len(heap))
+		}
 	}
-
-	log.Printf("[vector] search: topK=%d/%d/%d, best=%.4f", topK, len(eligible), len(vs.vectors), out[0].Score)
 	return out
+}
+
+// heapUp 向上调整堆
+func heapUp(heap []candidate, i int) {
+	for i > 0 {
+		parent := (i - 1) / 2
+		if heap[i].score >= heap[parent].score {
+			break
+		}
+		heap[i], heap[parent] = heap[parent], heap[i]
+		i = parent
+	}
+}
+
+// heapDown 向下调整堆
+func heapDown(heap []candidate, i, n int) {
+	for {
+		left := 2*i + 1
+		right := 2*i + 2
+		smallest := i
+		if left < n && heap[left].score < heap[smallest].score {
+			smallest = left
+		}
+		if right < n && heap[right].score < heap[smallest].score {
+			smallest = right
+		}
+		if smallest == i {
+			break
+		}
+		heap[i], heap[smallest] = heap[smallest], heap[i]
+		i = smallest
+	}
 }
 
 // Size 返回向量数量
@@ -110,6 +168,18 @@ func (vs *VectorStore) Size() int {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
 	return len(vs.vectors)
+}
+
+// Delete 从向量库中移除指定 id 的条目
+func (vs *VectorStore) Delete(id string) {
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	for i, e := range vs.vectors {
+		if e.ID == id {
+			vs.vectors = append(vs.vectors[:i], vs.vectors[i+1:]...)
+			return
+		}
+	}
 }
 
 // cosineSimilarity 余弦相似度

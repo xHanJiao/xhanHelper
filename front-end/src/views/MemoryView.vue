@@ -3,7 +3,6 @@ import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
 import {
-  NCard,
   NButton,
   NInput,
   NPagination,
@@ -13,6 +12,7 @@ import {
   NTag,
   useMessage
 } from 'naive-ui'
+import ListItemCard from '@/components/ListItemCard.vue'
 
 const message = useMessage()
 const { isMobile, toggleDrawer } = useMobile()
@@ -43,7 +43,6 @@ async function fetchMemories() {
 }
 
 async function handleDelete(mem) {
-  if (!window.confirm('确认删除此记忆？')) return
   try {
     await api.delete(`/api/memories/${mem.id}`)
     message.success('删除成功')
@@ -56,6 +55,16 @@ async function handleDelete(mem) {
 function handleSearch() {
   page.value = 1
   fetchMemories()
+}
+
+function getCardTags(mem) {
+  return [sourceMap[mem.source] || mem.source]
+}
+
+function getCardActions(mem) {
+  return [
+    { key: 'delete', label: '删除', type: 'error', confirm: '确认删除此记忆？', onClick: () => handleDelete(mem) }
+  ]
 }
 
 onMounted(fetchMemories)
@@ -83,18 +92,14 @@ onMounted(fetchMemories)
     <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
       <NGrid v-if="memories.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
         <NGi v-for="mem in memories" :key="mem.id">
-          <NCard size="small" hoverable>
-            <template #header-extra>
-              <NButton size="tiny" quaternary type="error" @click="handleDelete(mem)">删除</NButton>
-            </template>
-            <div style="font-size: 14px; color: var(--color-text); line-height: 1.7; white-space: pre-wrap; max-height: 160px; overflow: hidden;">
-              {{ mem.memory_value || mem.memory_key || '无内容' }}
-            </div>
-            <div style="margin-top: var(--space-md); display: flex; align-items: center; justify-content: space-between;">
-              <NTag size="small">{{ sourceMap[mem.source] || mem.source }}</NTag>
-              <span style="font-size: 12px; color: var(--color-text-muted);">{{ new Date(mem.created_at).toLocaleString() }}</span>
-            </div>
-          </NCard>
+          <ListItemCard
+            :title="mem.memory_key || '记忆'"
+            :content="mem.memory_value"
+            :tags="getCardTags(mem)"
+            :metadata="new Date(mem.created_at).toLocaleString()"
+            :actions="getCardActions(mem)"
+            max-content-height="160px"
+          />
         </NGi>
       </NGrid>
       <NEmpty v-else-if="!loading" description="还没有记忆" />

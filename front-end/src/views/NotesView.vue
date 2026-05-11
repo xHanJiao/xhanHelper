@@ -3,17 +3,15 @@ import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
 import {
-  NCard,
   NButton,
   NInput,
   NPagination,
   NGrid,
   NGi,
   NEmpty,
-  NTag,
-  NSpace,
   useMessage
 } from 'naive-ui'
+import ListItemCard from '@/components/ListItemCard.vue'
 
 const message = useMessage()
 const { isMobile, toggleDrawer } = useMobile()
@@ -42,7 +40,6 @@ async function fetchNotes() {
 }
 
 async function handleDelete(note) {
-  if (!window.confirm(`确认删除笔记「${note.topic}」？`)) return
   try {
     await api.delete(`/api/notes/${note.id}`)
     message.success('删除成功')
@@ -57,14 +54,15 @@ function handleSearch() {
   fetchNotes()
 }
 
-function truncate(text, max) {
-  if (!text) return ''
-  return text.length > max ? text.substring(0, max) + '...' : text
-}
-
 function parseTags(tags) {
   if (!tags) return []
   return tags.split(',').map(t => t.trim()).filter(Boolean)
+}
+
+function getCardActions(note) {
+  return [
+    { key: 'delete', label: '删除', type: 'error', confirm: `确认删除笔记「${note.topic || '无标题'}」？`, onClick: () => handleDelete(note) }
+  ]
 }
 
 onMounted(fetchNotes)
@@ -92,20 +90,14 @@ onMounted(fetchNotes)
     <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
       <NGrid v-if="notes.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
         <NGi v-for="note in notes" :key="note.id">
-          <NCard :title="note.topic || '无标题'" size="small" hoverable>
-            <template #header-extra>
-              <NButton size="tiny" quaternary type="error" @click="handleDelete(note)">删除</NButton>
-            </template>
-            <div style="font-size: 14px; color: var(--color-text-secondary); line-height: 1.7; white-space: pre-wrap; max-height: 160px; overflow: hidden;">
-              {{ truncate(note.content, 300) }}
-            </div>
-            <div v-if="note.tags" style="margin-top: var(--space-sm); display: flex; flex-wrap: wrap; gap: var(--space-xs);">
-              <NTag v-for="tag in parseTags(note.tags)" :key="tag" size="small">{{ tag }}</NTag>
-            </div>
-            <div style="margin-top: var(--space-sm); font-size: 12px; color: var(--color-text-muted);">
-              {{ new Date(note.created_at).toLocaleString() }}
-            </div>
-          </NCard>
+          <ListItemCard
+            :title="note.topic || '无标题'"
+            :content="note.content"
+            :tags="parseTags(note.tags)"
+            :metadata="new Date(note.created_at).toLocaleString()"
+            :actions="getCardActions(note)"
+            max-content-height="160px"
+          />
         </NGi>
       </NGrid>
       <NEmpty v-else-if="!loading" description="还没有笔记" />

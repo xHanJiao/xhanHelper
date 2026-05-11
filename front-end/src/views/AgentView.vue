@@ -4,15 +4,12 @@ import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
 import { useChatStore } from '@/stores/chat'
 import {
-  NCard,
   NButton,
   NModal,
   NForm,
   NFormItem,
   NInput,
   NSelect,
-  NSpace,
-  NPopconfirm,
   NGi,
   NGrid,
   NEmpty,
@@ -20,6 +17,7 @@ import {
   useMessage
 } from 'naive-ui'
 import { useMobile } from '@/composables/useMobile'
+import ListItemCard from '@/components/ListItemCard.vue'
 
 const message = useMessage()
 const { isMobile, toggleDrawer } = useMobile()
@@ -101,6 +99,19 @@ async function handleStartChat(agent) {
   router.push('/chat')
 }
 
+function getCardActions(agent) {
+  return [
+    { key: 'edit', label: '编辑', onClick: () => openEdit(agent) },
+    { key: 'delete', label: '删除', type: 'error', confirm: '确认删除此智能体？', onClick: () => handleDelete(agent) }
+  ]
+}
+
+function getCardPrimaryActions(agent) {
+  return [
+    { key: 'chat', label: '开始对话', type: 'primary', onClick: () => handleStartChat(agent) }
+  ]
+}
+
 onMounted(fetchAgents)
 </script>
 
@@ -117,24 +128,14 @@ onMounted(fetchAgents)
       <NSpin :show="loading">
         <NGrid v-if="agents.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
           <NGi v-for="agent in agents" :key="agent.id">
-            <NCard :title="agent.name" size="small" hoverable>
-              <template #header-extra>
-                <NSpace>
-                  <NButton size="tiny" quaternary @click="openEdit(agent)">编辑</NButton>
-                  <NPopconfirm @positive-click="handleDelete(agent)">
-                    <template #trigger>
-                      <NButton size="tiny" quaternary type="error">删除</NButton>
-                    </template>
-                    确认删除此智能体？
-                  </NPopconfirm>
-                </NSpace>
-              </template>
-              <div style="font-size: 13px; color: var(--color-text-secondary); line-height: 1.6; max-height: 120px; overflow: hidden; white-space: pre-wrap;">{{ agent.system_prompt }}</div>
-              <div style="margin-top: var(--space-md); display: flex; align-items: center; justify-content: space-between;">
-                <span style="font-size: 12px; color: var(--color-text-muted);">模型：{{ agent.model }} · {{ new Date(agent.created_at).toLocaleDateString() }}</span>
-                <NButton size="tiny" type="primary" quaternary @click.stop="handleStartChat(agent)">开始对话</NButton>
-              </div>
-            </NCard>
+            <ListItemCard
+              :title="agent.name"
+              :content="agent.system_prompt"
+              :metadata="`模型：${agent.model} · ${new Date(agent.created_at).toLocaleDateString()}`"
+              :actions="getCardActions(agent)"
+              :primary-actions="getCardPrimaryActions(agent)"
+              max-content-height="120px"
+            />
           </NGi>
         </NGrid>
         <NEmpty v-else description="还没有智能体" />

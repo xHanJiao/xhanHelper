@@ -9,3 +9,6 @@ data/*.db
 .vscode/
 *.swp
 logs/
+
+
+.claude/worktrees

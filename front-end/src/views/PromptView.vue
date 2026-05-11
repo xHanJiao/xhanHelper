@@ -1,21 +1,20 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
 import {
-  NCard,
   NButton,
   NModal,
   NForm,
   NFormItem,
   NSelect,
   NInput,
-  NTag,
   NGi,
   NGrid,
   NEmpty,
   useMessage
 } from 'naive-ui'
+import ListItemCard from '@/components/ListItemCard.vue'
 
 const message = useMessage()
 const { isMobile, toggleDrawer } = useMobile()
@@ -75,7 +74,6 @@ async function handleRollback(prompt) {
 }
 
 async function handleDelete(prompt) {
-  if (!window.confirm('确认删除此 Prompt？')) return
   try {
     await api.delete(`/api/prompts/${prompt.id}`)
     message.success('删除成功')
@@ -83,6 +81,23 @@ async function handleDelete(prompt) {
   } catch (e) {
     message.error('删除失败')
   }
+}
+
+function getCardTags(p) {
+  const tags = [typeLabel[p.prompt_type]]
+  if (p.status === 'active') {
+    tags.push('生效中')
+  }
+  return tags
+}
+
+function getCardActions(p) {
+  const actions = []
+  if (p.status !== 'active') {
+    actions.push({ key: 'rollback', label: '回滚到此', onClick: () => handleRollback(p) })
+  }
+  actions.push({ key: 'delete', label: '删除', type: 'error', confirm: '确认删除此 Prompt？', onClick: () => handleDelete(p) })
+  return actions
 }
 
 onMounted(fetchPrompts)
@@ -100,26 +115,14 @@ onMounted(fetchPrompts)
     <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
       <NGrid v-if="prompts.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
         <NGi v-for="p in prompts" :key="p.id">
-          <NCard size="small" hoverable :style="p.status === 'active' ? 'border-color: var(--color-primary);' : ''">
-            <template #header>
-              <div style="display: flex; align-items: center; gap: var(--space-sm);">
-                <NTag :type="p.prompt_type === 'pro' ? 'warning' : 'info'" size="small">{{ typeLabel[p.prompt_type] }}</NTag>
-                <NTag v-if="p.status === 'active'" type="success" size="small">生效中</NTag>
-              </div>
-            </template>
-            <template #header-extra>
-              <div style="display: flex; align-items: center; gap: var(--space-xs);">
-                <NButton v-if="p.status !== 'active'" size="tiny" quaternary @click="handleRollback(p)">回滚到此</NButton>
-                <NButton size="tiny" quaternary type="error" @click="handleDelete(p)">删除</NButton>
-              </div>
-            </template>
-            <div style="font-size: var(--font-size-base); color: var(--color-text-secondary); line-height: 1.7; white-space: pre-wrap; max-height: 160px; overflow: hidden;">
-              {{ p.system_prompt }}
-            </div>
-            <div style="margin-top: var(--space-sm); font-size: var(--font-size-sm); color: var(--color-text-muted);">
-              {{ new Date(p.created_at).toLocaleString() }}
-            </div>
-          </NCard>
+          <ListItemCard
+            :title="`Prompt #${p.id}`"
+            :content="p.system_prompt"
+            :tags="getCardTags(p)"
+            :metadata="new Date(p.created_at).toLocaleString()"
+            :actions="getCardActions(p)"
+            max-content-height="160px"
+          />
         </NGi>
       </NGrid>
       <NEmpty v-else-if="!loading" description="还没有 System Prompt" />

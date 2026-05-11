@@ -59,11 +59,13 @@ type ToolDefinition struct {
 
 // StreamEvent — 流式响应事件
 type StreamEvent struct {
-	Type      string     // text_delta | thought_delta | tool_call | tool_result | plan | done | error
-	Content   string     // 增量文本
-	Error     string     // 错误信息（Type=error 时）
-	ToolCalls []ToolCall `json:"-"` // 内部：流式汇总的 tool calls（仅 done 事件携带）
-	Usage     *Usage     `json:"-"` // 内部：token 用量
+	Type         string     // text_delta | thought_delta | tool_call | tool_result | plan | done | error
+	Content      string     // 增量文本
+	Error        string     // 错误信息（Type=error 时）
+	ToolCalls    []ToolCall `json:"-"` // 内部：流式汇总的 tool calls（仅 done 事件携带）
+	Usage        *Usage     `json:"-"` // 内部：token 用量
+	RequestJSON  *string    `json:"-"` // 内部：LLM 请求 JSON（仅 done 事件携带）
+	ResponseJSON *string    `json:"-"` // 内部：LLM 响应 JSON（仅 done 事件携带）
 }
 
 // Usage — token 用量信息

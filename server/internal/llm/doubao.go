@@ -45,7 +45,7 @@ func NewDoubao(cfg config.LLMConfig) *DoubaoClient {
 
 // Chat 流式对话 — 底层调非流式 /chat/completions API，拿到完整回复后模拟流式输出
 func (c *DoubaoClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamEvent, error) {
-	fullText, err := c.callChatAPI(ctx, req)
+	msg, err := c.callChatAPI(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +53,7 @@ func (c *DoubaoClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *Stre
 	events := make(chan *StreamEvent, 32)
 	go func() {
 		defer close(events)
-		for _, r := range fullText {
+		for _, r := range msg.Content {
 			select {
 			case <-ctx.Done():
 				return
@@ -61,25 +61,28 @@ func (c *DoubaoClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *Stre
 			}
 			events <- &StreamEvent{Type: "text_delta", Content: string(r)}
 		}
-		events <- &StreamEvent{Type: "done"}
+		events <- &StreamEvent{
+			Type:         "done",
+			RequestJSON:  msg.RequestJSON,
+			ResponseJSON: msg.ResponseJSON,
+		}
 	}()
 	return events, nil
 }
 
 // ChatSync 非流式对话 — 直接返回完整回复
 func (c *DoubaoClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, error) {
-	content, err := c.callChatAPI(ctx, req)
-	return Message{Role: "assistant", Content: content}, err
+	return c.callChatAPI(ctx, req)
 }
 
 // callChatAPI 调用豆包 /chat/completions API (OpenAI 兼容)
-func (c *DoubaoClient) callChatAPI(ctx context.Context, req *ChatRequest) (string, error) {
-	body := c.buildBody(req)
+func (c *DoubaoClient) callChatAPI(ctx context.Context, req *ChatRequest) (Message, error) {
+	reqBytes, body := c.buildBody(req)
 
 	url := c.baseURL + "/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, body)
 	if err != nil {
-		return "", err
+		return Message{}, err
 	}
 	c.setHeaders(httpReq)
 
@@ -88,32 +91,40 @@ func (c *DoubaoClient) callChatAPI(ctx context.Context, req *ChatRequest) (strin
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		log.Printf("[llm] http error: %v", err)
-		return "", fmt.Errorf("llm request: %w", err)
+		return Message{}, fmt.Errorf("llm request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Printf("[llm] read body error: %v", err)
-		return "", err
+		return Message{}, err
 	}
 
 	if resp.StatusCode != 200 {
-		log.Printf("[llm] status %d: %s", resp.StatusCode, string(respBody))
-		return "", fmt.Errorf("llm status %d: %s", resp.StatusCode, string(respBody))
+		log.Printf("[llm] status %d: %s", resp.StatusCode, string(respBytes))
+		return Message{}, fmt.Errorf("llm status %d: %s", resp.StatusCode, string(respBytes))
 	}
 
-	content, err := parseChatResponse(respBody)
+	content, err := parseChatResponse(respBytes)
 	if err != nil {
-		log.Printf("[llm] parse error: %v, body=%s", err, string(respBody))
-		return "", err
+		log.Printf("[llm] parse error: %v, body=%s", err, string(respBytes))
+		return Message{}, err
 	}
 	log.Printf("[llm] response: len=%d", len(content))
-	return content, nil
+
+	reqJSONStr := string(reqBytes)
+	respJSONStr := string(respBytes)
+	return Message{
+		Role:         "assistant",
+		Content:      content,
+		RequestJSON:  &reqJSONStr,
+		ResponseJSON: &respJSONStr,
+	}, nil
 }
 
 // buildBody 构造请求体
-func (c *DoubaoClient) buildBody(req *ChatRequest) io.Reader {
+func (c *DoubaoClient) buildBody(req *ChatRequest) ([]byte, io.Reader) {
 	messages := make([]map[string]string, 0)
 
 	sp := req.SystemPrompt
@@ -132,7 +143,7 @@ func (c *DoubaoClient) buildBody(req *ChatRequest) io.Reader {
 	}
 
 	b, _ := json.Marshal(payload)
-	return bytes.NewReader(b)
+	return b, bytes.NewReader(b)
 }
 
 // BuildSystemPrompt 豆包不支持原生 function calling，需要 prompt engineering
@@ -172,11 +183,10 @@ func (c *DoubaoClient) BuildSystemPrompt(base string, tools []ToolDefinition) st
 					}
 				}
 			}
-			b.WriteString("\n")
 		}
 	}
 	b.WriteString("===== 输出格式 =====\n")
-	b.WriteString("需要调用工具时输出 JSON: {\"reply\":\"给用户的回复\",\"tool_calls\":[{\"tool\":\"<工具名>\",\"function\":\"<函数名>\",\"args\":{...}}]}\n")
+	b.WriteString("需要调用工具时输出 JSON: {\"reply\":\"给用户的回复\",\"tool_calls\":[{\"tool\":\"<工具名>\",\"function\":\"<函数名>\",\"args\":{...}]}\n")
 	b.WriteString("不确定分类时反问用户，不要瞎猜。\n\n")
 	b.WriteString("===== 思考方式 =====\n")
 	b.WriteString("面对复杂任务时，按以下步骤思考和行动：\n")
@@ -192,11 +202,4 @@ func (c *DoubaoClient) BuildSystemPrompt(base string, tools []ToolDefinition) st
 func (c *DoubaoClient) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

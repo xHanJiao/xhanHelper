@@ -97,7 +97,7 @@ type streamChunk struct {
 // callStreamAPI — 真正的流式 API 调用，读取 SSE chunk 实时推送
 func (c *baseClient) callStreamAPI(ctx context.Context, req *ChatRequest, model string, thinking bool) (<-chan *StreamEvent, error) {
 	url := c.baseURL + "/chat/completions"
-	reqBody := buildStreamBody(req, model, thinking)
+	reqBytes, reqBody := buildStreamBody(req, model, thinking)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, reqBody)
 	if err != nil {
@@ -129,22 +129,27 @@ func (c *baseClient) callStreamAPI(ctx context.Context, req *ChatRequest, model 
 	}
 
 	events := make(chan *StreamEvent, 64)
-	go c.readSSEStream(ctx, resp.Body, events, logPrefix, model)
+	go c.readSSEStream(ctx, resp.Body, events, logPrefix, model, string(reqBytes))
 	return events, nil
 }
 
-func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, events chan<- *StreamEvent, logPrefix, model string) {
+func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, events chan<- *StreamEvent, logPrefix, model string, reqJSONStr string) {
 	defer close(events)
 	defer body.Close()
 
-	scanner := bufio.NewScanner(body)
+	// 先读取并缓存整个响应体，同时 tee 到 scanner
+	var respBuf bytes.Buffer
+	tee := io.TeeReader(body, &respBuf)
+
+	scanner := bufio.NewScanner(tee)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 
 	var (
-		content   strings.Builder
-		reasoning strings.Builder
-		tcMap     = make(map[int]*ToolCall)
-		usage     *Usage
+		content    strings.Builder
+		reasoning  strings.Builder
+		tcMap      = make(map[int]*ToolCall)
+		usage      *Usage
+		respChunks []string
 	)
 
 	for scanner.Scan() {
@@ -155,6 +160,7 @@ func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, even
 		}
 
 		line := scanner.Text()
+		respChunks = append(respChunks, line)
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -227,14 +233,19 @@ func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, even
 			logPrefix, model, usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens)
 	}
 
+	// 构建完整响应 JSON（用数组包含所有 chunks）
+	respJSONStr := strings.Join(respChunks, "\n")
+
 	events <- &StreamEvent{
-		Type:      "done",
-		ToolCalls: toolCalls,
-		Usage:     usage,
+		Type:         "done",
+		ToolCalls:    toolCalls,
+		Usage:        usage,
+		RequestJSON:  &reqJSONStr,
+		ResponseJSON: &respJSONStr,
 	}
 }
 
-func buildStreamBody(req *ChatRequest, model string, thinking bool) io.Reader {
+func buildStreamBody(req *ChatRequest, model string, thinking bool) ([]byte, io.Reader) {
 	messages := buildMessages(req)
 
 	payload := map[string]interface{}{
@@ -266,13 +277,14 @@ func buildStreamBody(req *ChatRequest, model string, thinking bool) io.Reader {
 	}
 
 	b, _ := json.Marshal(payload)
-	return bytes.NewReader(b)
+	return b, bytes.NewReader(b)
 }
 
 // collectStream — 消费流式 channel，汇总成完整 Message（供 ChatSync 使用）
 func collectStream(events <-chan *StreamEvent) Message {
 	var content, reasoning strings.Builder
 	var toolCalls []ToolCall
+	var reqJSON, respJSON *string
 	for evt := range events {
 		switch evt.Type {
 		case "text_delta":
@@ -281,6 +293,8 @@ func collectStream(events <-chan *StreamEvent) Message {
 			reasoning.WriteString(evt.Content)
 		case "done":
 			toolCalls = evt.ToolCalls
+			reqJSON = evt.RequestJSON
+			respJSON = evt.ResponseJSON
 		}
 	}
 	return Message{
@@ -288,6 +302,8 @@ func collectStream(events <-chan *StreamEvent) Message {
 		Content:          content.String(),
 		ReasoningContent: reasoning.String(),
 		ToolCalls:        toolCalls,
+		RequestJSON:      reqJSON,
+		ResponseJSON:     respJSON,
 	}
 }
 

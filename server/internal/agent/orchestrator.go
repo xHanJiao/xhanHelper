@@ -238,6 +238,8 @@ func (o *Orchestrator) runReActLoop(
 					Content:          streamContent.String(),
 					ReasoningContent: streamReasoning.String(),
 					ToolCalls:        se.ToolCalls,
+					RequestJSON:      se.RequestJSON,
+					ResponseJSON:     se.ResponseJSON,
 				}
 
 				log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",

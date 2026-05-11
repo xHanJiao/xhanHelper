@@ -1,54 +1,48 @@
 <script setup>
-import { ref } from 'vue'
-import { NCollapse, NCollapseItem, NSpin, NTag } from 'naive-ui'
+import { ref, computed } from 'vue'
+import { NTag } from 'naive-ui'
 
 const props = defineProps({
   toolCalls: { type: Array, default: () => [] },
   isHistory: { type: Boolean, default: false }
 })
 
-const expandedNames = ref(props.isHistory ? [] : ['toolcalls'])
+const showJson = ref({})
 
-const allDone = computed(() => props.toolCalls.every(tc => tc.status !== 'running'))
+function toggleJson(idx) {
+  showJson.value[idx] = !showJson.value[idx]
+}
 
 const runningCount = computed(() => props.toolCalls.filter(tc => tc.status === 'running').length)
 const doneCount = computed(() => props.toolCalls.filter(tc => tc.status === 'done').length)
 const failedCount = computed(() => props.toolCalls.filter(tc => tc.status === 'failed').length)
 </script>
 
-<script>
-import { computed } from 'vue'
-</script>
-
 <template>
   <div v-if="toolCalls.length > 0" class="tool-call-section">
-    <NCollapse v-model:expanded-names="expandedNames">
-      <NCollapseItem name="toolcalls">
-        <template #header>
-          <span class="summary">
-            已调用 {{ toolCalls.length }} 个工具
-            <span v-if="runningCount" class="count-running">{{ runningCount }} 执行中</span>
-            <span v-if="doneCount" class="count-done">{{ doneCount }} 成功</span>
-            <span v-if="failedCount" class="count-failed">{{ failedCount }} 失败</span>
-          </span>
-        </template>
-        <div v-for="(tc, idx) in toolCalls" :key="idx" class="tool-call-item">
-          <div class="tool-call-header">
-            <NSpin v-if="tc.status === 'running'" size="small" />
-            <span class="tool-name">{{ tc.tool }}.{{ tc.function }}</span>
-            <NTag
-              :type="tc.status === 'done' ? 'success' : tc.status === 'failed' ? 'error' : 'info'"
-              size="small"
-            >
-              {{ tc.status === 'running' ? '执行中...' : tc.status === 'done' ? '成功' : '失败' }}
-            </NTag>
-          </div>
-          <div v-if="tc.result" class="tool-call-result">
-            <pre>{{ JSON.stringify(tc.result, null, 2) }}</pre>
-          </div>
+    <div class="tool-summary" @click="toggleJson(-1)">
+      <span class="summary-text">
+        调用 {{ doneCount + failedCount }}/{{ toolCalls.length }} 个工具
+        <span v-if="failedCount" class="count-failed">{{ failedCount }} 失败</span>
+      </span>
+      <span class="summary-arrow">{{ showJson[-1] ? '▾' : '▸' }}</span>
+    </div>
+    <div v-if="showJson[-1]" class="tool-detail-list">
+      <div v-for="(tc, idx) in toolCalls" :key="idx" class="tool-item">
+        <div class="tool-item-header" @click="toggleJson(idx)">
+          <NTag
+            :type="tc.status === 'done' ? 'success' : tc.status === 'failed' ? 'error' : 'info'"
+            size="tiny"
+          >
+            {{ tc.status === 'running' ? '执行中' : tc.status === 'done' ? '✓' : '✗' }}
+          </NTag>
+          <span class="tool-func">{{ tc.tool }}.{{ tc.function }}</span>
         </div>
-      </NCollapseItem>
-    </NCollapse>
+        <div v-if="tc.result && showJson[idx]" class="tool-json">
+          <pre>{{ JSON.stringify(tc.result, null, 2) }}</pre>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -56,46 +50,62 @@ import { computed } from 'vue'
 .tool-call-section {
   margin-top: var(--space-md);
 }
-.summary {
-  font-size: 14px;
-  color: var(--color-text-secondary);
+.tool-summary {
   display: flex;
   align-items: center;
-  gap: var(--space-sm);
+  justify-content: space-between;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  padding: var(--space-xs) 0;
+  user-select: none;
 }
-.count-running { color: #2080f0; font-size: 12px; }
-.count-done { color: #18a058; font-size: 12px; }
-.count-failed { color: #d03050; font-size: 12px; }
+.tool-summary:hover {
+  color: var(--color-text-secondary);
+}
+.summary-text {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+.summary-arrow {
+  font-size: 14px;
+}
+.count-failed {
+  color: #d03050;
+}
 
-.tool-call-item {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: var(--space-md) 14px;
-  background: var(--color-surface-hover);
-  margin-bottom: var(--space-sm);
+.tool-detail-list {
+  padding-left: 4px;
 }
-.tool-call-header {
+.tool-item {
+  margin-bottom: 2px;
+}
+.tool-item-header {
   display: flex;
   align-items: center;
-  gap: var(--space-sm);
-}
-.tool-name {
-  font-weight: 600;
-  font-size: 14px;
-}
-.tool-call-result {
-  margin-top: var(--space-sm);
+  gap: var(--space-xs);
+  cursor: pointer;
+  padding: 2px 0;
   font-size: 13px;
-  color: var(--color-text-secondary);
-  max-height: 120px;
-  overflow: auto;
-  background: var(--color-surface);
-  border-radius: var(--radius-md);
-  padding: var(--space-sm);
 }
-.tool-call-result pre {
+.tool-func {
+  color: var(--color-text-secondary);
+  font-family: monospace;
+}
+.tool-json {
+  margin-left: 28px;
+  margin-bottom: var(--space-xs);
+}
+.tool-json pre {
   margin: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
   white-space: pre-wrap;
-  font-family: inherit;
+  background: var(--color-bg);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  max-height: 100px;
+  overflow: auto;
 }
 </style>

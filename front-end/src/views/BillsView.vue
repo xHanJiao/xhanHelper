@@ -4,6 +4,7 @@ import { api } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useMobile } from '@/composables/useMobile'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
+import { useDevice } from '@/composables/useDevice'
 import {
   NDataTable,
   NButton,
@@ -18,6 +19,7 @@ import PageTopBar from '@/components/PageTopBar.vue'
 const auth = useAuthStore()
 const message = useMessage()
 const { isMobile } = useMobile()
+const { isIOS } = useDevice()
 
 const bills = ref([])
 const loading = ref(false)
@@ -132,6 +134,21 @@ function handleImport({ file }) {
   reader.readAsText(file.file)
 }
 
+function handleContainerClick(e) {
+  if (!isIOS) return
+
+  const container = contentContainerRef.value
+  if (!container) return
+
+  const rect = container.getBoundingClientRect()
+  const clickY = e.clientY - rect.top
+  const topThird = rect.height / 3
+
+  if (clickY <= topThird) {
+    showBar()
+  }
+}
+
 onMounted(fetchBills)
 </script>
 
@@ -163,6 +180,7 @@ onMounted(fetchBills)
     <div
       ref="contentContainerRef"
       @touchstart="isMobile ? showBar() : null"
+      @click="handleContainerClick"
       style="flex: 1; overflow-y: auto; padding: var(--space-lg);"
     >
       <NDataTable

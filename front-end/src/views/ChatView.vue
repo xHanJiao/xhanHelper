@@ -5,6 +5,7 @@ import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import { useChatSSE } from '@/composables/useChatSSE'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
+import { useDevice } from '@/composables/useDevice'
 import { api } from '@/api/client'
 import {
   NInput,
@@ -23,6 +24,7 @@ const convs = useConversationsStore()
 const { sendMessage, cancel } = useChatSSE()
 const nMessage = useMessage()
 const { isMobile } = useMobile()
+const { isIOS } = useDevice()
 
 const inputValue = ref('')
 const messagesEndRef = ref(null)
@@ -223,6 +225,21 @@ function handleScroll(e) {
     loadHistory(chat.conversationId, 'before', chat.oldestCursor)
   }
 }
+
+function handleContainerClick(e) {
+  if (!isIOS) return
+
+  const container = messagesContainerRef.value
+  if (!container) return
+
+  const rect = container.getBoundingClientRect()
+  const clickY = e.clientY - rect.top
+  const topThird = rect.height / 3
+
+  if (clickY <= topThird) {
+    showBar()
+  }
+}
 </script>
 
 <template>
@@ -233,6 +250,7 @@ function handleScroll(e) {
       ref="messagesContainerRef"
       @scroll="handleScroll"
       @touchstart="isMobile ? showBar() : null"
+      @click="handleContainerClick"
       style="flex: 1; overflow-y: auto; padding: var(--space-lg); display: flex; justify-content: center;"
     >
       <div style="width: 100%; max-width: 900px;">

@@ -1,18 +1,19 @@
 import { ref, onMounted, onUnmounted } from 'vue'
+import { useDevice } from './useDevice'
 
 export function useScrollTopBar(scrollContainerRef) {
-  const isBarVisible = ref(true)
+  const { isIOS } = useDevice()
+
+  const isBarVisible = ref(!isIOS)
   const lastScrollTop = ref(0)
   const lastScrollDirection = ref('')
   const consecutiveSameDirection = ref(0)
   let ticking = false
 
   function handleScroll() {
-    if (!scrollContainerRef.value) return
+    if (!scrollContainerRef.value || isIOS) return
 
     const scrollTop = scrollContainerRef.value.scrollTop
-    const scrollHeight = scrollContainerRef.value.scrollHeight
-    const clientHeight = scrollContainerRef.value.clientHeight
 
     if (!ticking) {
       window.requestAnimationFrame(() => {
@@ -54,20 +55,27 @@ export function useScrollTopBar(scrollContainerRef) {
     consecutiveSameDirection.value = 0
   }
 
+  function hideBar() {
+    if (isIOS) {
+      isBarVisible.value = false
+    }
+  }
+
   onMounted(() => {
-    if (scrollContainerRef.value) {
+    if (!isIOS && scrollContainerRef.value) {
       scrollContainerRef.value.addEventListener('scroll', handleScroll, { passive: true })
     }
   })
 
   onUnmounted(() => {
-    if (scrollContainerRef.value) {
+    if (!isIOS && scrollContainerRef.value) {
       scrollContainerRef.value.removeEventListener('scroll', handleScroll)
     }
   })
 
   return {
     isBarVisible,
-    showBar
+    showBar,
+    hideBar
   }
 }

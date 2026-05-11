@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
+import { useDevice } from '@/composables/useDevice'
 import {
   NButton,
   NInput,
@@ -17,6 +18,7 @@ import PageTopBar from '@/components/PageTopBar.vue'
 
 const message = useMessage()
 const { isMobile } = useMobile()
+const { isIOS } = useDevice()
 
 const notes = ref([])
 const loading = ref(false)
@@ -69,6 +71,21 @@ function getCardActions(note) {
   ]
 }
 
+function handleContainerClick(e) {
+  if (!isIOS) return
+
+  const container = contentContainerRef.value
+  if (!container) return
+
+  const rect = container.getBoundingClientRect()
+  const clickY = e.clientY - rect.top
+  const topThird = rect.height / 3
+
+  if (clickY <= topThird) {
+    showBar()
+  }
+}
+
 onMounted(fetchNotes)
 </script>
 
@@ -93,6 +110,7 @@ onMounted(fetchNotes)
     <div
       ref="contentContainerRef"
       @touchstart="isMobile ? showBar() : null"
+      @click="handleContainerClick"
       style="flex: 1; overflow-y: auto; padding: var(--space-lg);"
     >
       <NGrid v-if="notes.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">

@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
+import { useDevice } from '@/composables/useDevice'
 import {
   NCard,
   NButton,
@@ -20,6 +21,7 @@ import PageTopBar from '@/components/PageTopBar.vue'
 
 const message = useMessage()
 const { isMobile } = useMobile()
+const { isIOS } = useDevice()
 
 const tools = ref([])
 const loading = ref(false)
@@ -102,6 +104,21 @@ function schemaPreview(schema) {
   }
 }
 
+function handleContainerClick(e) {
+  if (!isIOS) return
+
+  const container = contentContainerRef.value
+  if (!container) return
+
+  const rect = container.getBoundingClientRect()
+  const clickY = e.clientY - rect.top
+  const topThird = rect.height / 3
+
+  if (clickY <= topThird) {
+    showBar()
+  }
+}
+
 onMounted(fetchTools)
 </script>
 
@@ -115,6 +132,7 @@ onMounted(fetchTools)
     <div
       ref="contentContainerRef"
       @touchstart="isMobile ? showBar() : null"
+      @click="handleContainerClick"
       style="flex: 1; overflow-y: auto; padding: var(--space-lg);"
     >
       <NGrid v-if="tools.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">

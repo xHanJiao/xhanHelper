@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
 import { useChatStore } from '@/stores/chat'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
+import { useDevice } from '@/composables/useDevice'
 import {
   NButton,
   NModal,
@@ -23,6 +24,7 @@ import PageTopBar from '@/components/PageTopBar.vue'
 
 const message = useMessage()
 const { isMobile } = useMobile()
+const { isIOS } = useDevice()
 const router = useRouter()
 const chat = useChatStore()
 
@@ -116,6 +118,21 @@ function getCardPrimaryActions(agent) {
   ]
 }
 
+function handleContainerClick(e) {
+  if (!isIOS) return
+
+  const container = contentContainerRef.value
+  if (!container) return
+
+  const rect = container.getBoundingClientRect()
+  const clickY = e.clientY - rect.top
+  const topThird = rect.height / 3
+
+  if (clickY <= topThird) {
+    showBar()
+  }
+}
+
 onMounted(fetchAgents)
 </script>
 
@@ -129,6 +146,7 @@ onMounted(fetchAgents)
     <div
       ref="contentContainerRef"
       @touchstart="isMobile ? showBar() : null"
+      @click="handleContainerClick"
       style="flex: 1; overflow-y: auto; padding: var(--space-lg);"
     >
       <NSpin :show="loading">

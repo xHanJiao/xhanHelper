@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
+import { useScrollTopBar } from '@/composables/useScrollTopBar'
 import {
   NButton,
   NInput,
@@ -13,9 +14,10 @@ import {
   useMessage
 } from 'naive-ui'
 import ListItemCard from '@/components/ListItemCard.vue'
+import PageTopBar from '@/components/PageTopBar.vue'
 
 const message = useMessage()
-const { isMobile, toggleDrawer } = useMobile()
+const { isMobile } = useMobile()
 
 const memories = ref([])
 const loading = ref(false)
@@ -23,6 +25,8 @@ const page = ref(1)
 const pageSize = 12
 const total = ref(0)
 const keyword = ref('')
+const contentContainerRef = ref(null)
+const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
 
 const sourceMap = { conversation: '对话提取', csv_import: 'CSV导入' }
 
@@ -72,24 +76,27 @@ onMounted(fetchMemories)
 
 <template>
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
-    <div style="padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
-      <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
-  <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
-  记忆管理
-</span>
-      <div style="display: flex; align-items: center; gap: var(--space-md);">
-        <NInput
-          v-model:value="keyword"
-          placeholder="搜索记忆..."
-          clearable
-          style="width: 240px;"
-          @keyup.enter="handleSearch"
-          @clear="handleSearch"
-        />
-        <NButton size="small" @click="handleSearch">搜索</NButton>
-      </div>
-    </div>
-    <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
+    <PageTopBar title="记忆管理" :visible="!isMobile || isBarVisible">
+      <template #right>
+        <div style="display: flex; align-items: center; gap: var(--space-md);">
+          <NInput
+            v-model:value="keyword"
+            placeholder="搜索..."
+            clearable
+            :style="{ width: isMobile ? '140px' : '240px' }"
+            size="small"
+            @keyup.enter="handleSearch"
+            @clear="handleSearch"
+          />
+          <NButton v-if="!isMobile" size="small" @click="handleSearch">搜索</NButton>
+        </div>
+      </template>
+    </PageTopBar>
+    <div
+      ref="contentContainerRef"
+      @touchstart="isMobile ? showBar() : null"
+      style="flex: 1; overflow-y: auto; padding: var(--space-lg);"
+    >
       <NGrid v-if="memories.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
         <NGi v-for="mem in memories" :key="mem.id">
           <ListItemCard

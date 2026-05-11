@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useMobile } from '@/composables/useMobile'
+import { useScrollTopBar } from '@/composables/useScrollTopBar'
 import {
   NDataTable,
   NButton,
@@ -12,16 +13,19 @@ import {
   NUpload,
   useMessage
 } from 'naive-ui'
+import PageTopBar from '@/components/PageTopBar.vue'
 
 const auth = useAuthStore()
 const message = useMessage()
-const { isMobile, toggleDrawer } = useMobile()
+const { isMobile } = useMobile()
 
 const bills = ref([])
 const loading = ref(false)
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
+const contentContainerRef = ref(null)
+const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
 
 const filterDateRange = ref(null)
 const filterCategory = ref(null)
@@ -133,14 +137,11 @@ onMounted(fetchBills)
 
 <template>
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
-    <div style="padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--color-border); background: var(--color-surface);">
-      <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-md);">
-        <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
-  <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
-  账单管理
-</span>
-        <div style="display: flex; align-items: center; gap: var(--space-md); flex-wrap: wrap;">
+    <PageTopBar title="账单管理" :visible="!isMobile || isBarVisible">
+      <template #right>
+        <div style="display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap;">
           <NDatePicker
+            v-if="!isMobile"
             v-model:value="filterDateRange"
             type="daterange"
             clearable
@@ -150,18 +151,20 @@ onMounted(fetchBills)
           <NSelect
             v-model:value="filterCategory"
             :options="categoryOptions"
-            style="width: 120px;"
+            :style="{ width: isMobile ? '100px' : '120px' }"
+            size="small"
             placeholder="分类"
           />
           <NButton size="small" @click="handleFilter">筛选</NButton>
-          <NUpload :show-file-list="false" accept=".csv" @change="handleImport">
-            <NButton size="small">导入CSV</NButton>
-          </NUpload>
-          <NButton size="small" @click="handleExport">导出CSV</NButton>
+          <NButton v-if="!isMobile" size="small" @click="handleExport">导出</NButton>
         </div>
-      </div>
-    </div>
-    <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
+      </template>
+    </PageTopBar>
+    <div
+      ref="contentContainerRef"
+      @touchstart="isMobile ? showBar() : null"
+      style="flex: 1; overflow-y: auto; padding: var(--space-lg);"
+    >
       <NDataTable
         :columns="columns"
         :data="bills"

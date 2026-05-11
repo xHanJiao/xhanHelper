@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
+import { useScrollTopBar } from '@/composables/useScrollTopBar'
 import {
   NButton,
   NModal,
@@ -15,15 +16,18 @@ import {
   useMessage
 } from 'naive-ui'
 import ListItemCard from '@/components/ListItemCard.vue'
+import PageTopBar from '@/components/PageTopBar.vue'
 
 const message = useMessage()
-const { isMobile, toggleDrawer } = useMobile()
+const { isMobile } = useMobile()
 
 const prompts = ref([])
 const loading = ref(false)
 const modalVisible = ref(false)
 const formValue = ref({ prompt_type: 'flash', system_prompt: '' })
 const submitting = ref(false)
+const contentContainerRef = ref(null)
+const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
 
 const typeOptions = [
   { label: 'Flash（日常对话）', value: 'flash' },
@@ -105,14 +109,16 @@ onMounted(fetchPrompts)
 
 <template>
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
-    <div style="padding: var(--space-lg) var(--space-lg); border-bottom: 1px solid var(--color-border); background: var(--color-surface); display: flex; align-items: center; justify-content: space-between;">
-      <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
-  <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
-  System Prompt 管理
-</span>
-      <NButton type="primary" size="small" @click="openCreate">创建 Prompt</NButton>
-    </div>
-    <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
+    <PageTopBar title="System Prompt 管理" :visible="!isMobile || isBarVisible">
+      <template #right>
+        <NButton type="primary" size="small" @click="openCreate">创建 Prompt</NButton>
+      </template>
+    </PageTopBar>
+    <div
+      ref="contentContainerRef"
+      @touchstart="isMobile ? showBar() : null"
+      style="flex: 1; overflow-y: auto; padding: var(--space-lg);"
+    >
       <NGrid v-if="prompts.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
         <NGi v-for="p in prompts" :key="p.id">
           <ListItemCard

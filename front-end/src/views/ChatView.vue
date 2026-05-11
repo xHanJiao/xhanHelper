@@ -4,15 +4,16 @@ import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import { useChatSSE } from '@/composables/useChatSSE'
+import { useScrollTopBar } from '@/composables/useScrollTopBar'
 import { api } from '@/api/client'
 import {
   NInput,
   NButton,
-  NSwitch,
   useMessage
 } from 'naive-ui'
 import MessageBubble from '@/components/MessageBubble.vue'
 import PlanGraph from '@/components/PlanGraph.vue'
+import PageTopBar from '@/components/PageTopBar.vue'
 import { useMobile } from '@/composables/useMobile'
 
 const route = useRoute()
@@ -21,7 +22,7 @@ const chat = useChatStore()
 const convs = useConversationsStore()
 const { sendMessage, cancel } = useChatSSE()
 const nMessage = useMessage()
-const { isMobile, toggleDrawer } = useMobile()
+const { isMobile } = useMobile()
 
 const inputValue = ref('')
 const messagesEndRef = ref(null)
@@ -30,6 +31,8 @@ const isLoadingHistory = ref(false)
 const isFirstLoad = ref(true)
 const messagesContainerRef = ref(null)
 const isInitialScrollDone = ref(false)
+
+const { isBarVisible, showBar } = useScrollTopBar(messagesContainerRef)
 
 const currentTitle = computed(() => {
   const conv = convs.list.find(c => c.id === chat.conversationId)
@@ -194,7 +197,7 @@ async function handleSend() {
 
   await sendMessage(content, {
     conversationId: chat.conversationId,
-    deepMode: chat.deepMode,
+    deepMode: false,
     agentId: chat.agentId
   })
 }
@@ -217,63 +220,57 @@ function handleScroll(e) {
 <template>
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
     <!-- 顶部工具栏 -->
-    <div style="padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; background: var(--color-surface); flex-shrink: 0;">
-        <div style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
-          <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
-          {{ currentTitle }}
+    <PageTopBar :title="currentTitle" :visible="!isMobile || isBarVisible" />
+
+    <!-- 消息区域 -->
+    <div
+      ref="messagesContainerRef"
+      @scroll="handleScroll"
+      @touchstart="isMobile ? showBar() : null"
+      style="flex: 1; overflow-y: auto; padding: var(--space-lg); display: flex; justify-content: center;"
+    >
+      <div style="width: 100%; max-width: 900px;">
+        <!-- 顶部加载指示器 -->
+        <div v-if="isLoadingHistory" style="text-align: center; padding: 20px 0;">
+          <div style="width: 24px; height: 24px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block;"></div>
         </div>
-        <div style="display: flex; align-items: center; gap: var(--space-md);">
-          <div style="display: flex; align-items: center; gap: var(--space-sm);">
-            <span style="font-size: 14px; color: var(--color-text-secondary);">深度思考</span>
-            <NSwitch v-model:value="chat.deepMode" size="small" />
-          </div>
+
+        <div v-if="chat.messages.length === 0 && !chat.streamingMessage" style="padding: 100px 0; text-align: center; color: var(--color-text-muted);">
+          开始聊天吧
         </div>
-      </div>
 
-      <!-- 消息区域 -->
-      <div ref="messagesContainerRef" @scroll="handleScroll" style="flex: 1; overflow-y: auto; padding: var(--space-lg); display: flex; justify-content: center;">
-        <div style="width: 100%; max-width: 900px;">
-          <!-- 顶部加载指示器 -->
-          <div v-if="isLoadingHistory" style="text-align: center; padding: 20px 0;">
-            <div style="width: 24px; height: 24px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block;"></div>
-          </div>
-
-          <div v-if="chat.messages.length === 0 && !chat.streamingMessage" style="padding: 100px 0; text-align: center; color: var(--color-text-muted);">
-            开始聊天吧
-          </div>
-
+        <MessageBubble
+          v-for="msg in chat.messages"
+          :key="msg.id"
+          :message="msg"
+          :is-history="true"
+        />
+        <div ref="streamingBubbleRef" v-if="chat.streamingMessage">
           <MessageBubble
-            v-for="msg in chat.messages"
-            :key="msg.id"
-            :message="msg"
-            :is-history="true"
+            :message="chat.streamingMessage"
+            :is-history="false"
+            :status-message="chat.statusMessage"
           />
-          <div ref="streamingBubbleRef" v-if="chat.streamingMessage">
-            <MessageBubble
-              :message="chat.streamingMessage"
-              :is-history="false"
-              :status-message="chat.statusMessage"
-            />
-          </div>
-
-          <PlanGraph
-            v-if="chat.streamingMessage || chat.messages.length > 0"
-            :nodes="chat.planNodes"
-            :edges="chat.planEdges"
-            :visible="planVisible"
-          />
-
-          <div v-if="chat.error && !chat.streamingMessage" style="text-align: center; margin: var(--space-md) 0;">
-            <NButton size="small" type="error" quaternary>
-              {{ chat.error }}
-            </NButton>
-          </div>
-
-          <div ref="messagesEndRef" style="height: 15px;" />
         </div>
-      </div>
 
-      <!-- 输入区域 -->
+        <PlanGraph
+          v-if="chat.streamingMessage || chat.messages.length > 0"
+          :nodes="chat.planNodes"
+          :edges="chat.planEdges"
+          :visible="planVisible"
+        />
+
+        <div v-if="chat.error && !chat.streamingMessage" style="text-align: center; margin: var(--space-md) 0;">
+          <NButton size="small" type="error" quaternary>
+            {{ chat.error }}
+          </NButton>
+        </div>
+
+        <div ref="messagesEndRef" style="height: 15px;" />
+      </div>
+    </div>
+
+    <!-- 输入区域 -->
       <div style="padding: var(--space-md) var(--space-lg); background: var(--color-surface); border-top: 1px solid var(--color-border); flex-shrink: 0;">
         <div style="border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: var(--space-md) var(--space-md); background: var(--color-surface);">
           <NInput

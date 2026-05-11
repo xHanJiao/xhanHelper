@@ -33,3 +33,5 @@ DerivedData/
 nginx.conf
 
 .claude
+
+front-end/node_modules/

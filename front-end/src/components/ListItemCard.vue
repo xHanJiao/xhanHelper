@@ -89,7 +89,7 @@ function handleDropdownSelect(key) {
 </script>
 
 <template>
-  <NCard size="small" :hoverable="hoverable" class="list-item-card">
+  <NCard :hoverable="hoverable" class="list-item-card" size="small">
     <template #header>
       <div class="card-header">
         <span class="card-title">{{ title }}</span>
@@ -138,12 +138,15 @@ function handleDropdownSelect(key) {
       </div>
     </template>
 
-    <div v-if="content" class="card-content" :style="{ maxHeight: maxContentHeight }">
-      {{ content }}
+    <div v-if="content" class="card-content-wrapper" :style="{ maxHeight: maxContentHeight }">
+      <div class="card-content">
+        {{ content }}
+      </div>
+      <div v-if="content.length > 100" class="content-fade"></div>
     </div>
 
     <div v-if="tags && tags.length > 0" class="card-tags">
-      <NTag v-for="tag in tags" :key="tag" size="small" style="margin-right: 4px; margin-bottom: 4px;">
+      <NTag v-for="tag in tags" :key="tag" size="small" class="card-tag">
         {{ tag }}
       </NTag>
     </div>
@@ -202,6 +205,14 @@ function handleDropdownSelect(key) {
 <style scoped>
 .list-item-card {
   height: 100%;
+  background: var(--color-surface);
+  transition: transform var(--transition-normal),
+              box-shadow var(--transition-normal),
+              border-color var(--transition-normal);
+}
+
+.list-item-card:hover {
+  transform: translateY(-2px);
 }
 
 .card-header {
@@ -212,36 +223,64 @@ function handleDropdownSelect(key) {
 }
 
 .card-title {
-  font-weight: 500;
+  font-weight: 600;
   font-size: var(--font-size-md);
   color: var(--color-text);
+  letter-spacing: -0.01em;
 }
 
 .desktop-actions {
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transition: opacity var(--transition-fast);
 }
 
 .list-item-card:hover .desktop-actions {
   opacity: 1;
 }
 
-.card-content {
-  font-size: 14px;
-  color: var(--color-text-secondary);
-  line-height: 1.6;
-  white-space: pre-wrap;
+.card-content-wrapper {
+  position: relative;
   overflow: hidden;
 }
 
+.card-content {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.content-fade {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: linear-gradient(to bottom, transparent, var(--color-surface));
+  pointer-events: none;
+}
+
 .card-tags {
-  margin-top: var(--space-sm);
+  margin-top: 12px;
   display: flex;
   flex-wrap: wrap;
+  gap: 6px;
+}
+
+.card-tag {
+  border: none !important;
+  background: var(--color-bg) !important;
+  color: var(--color-text-secondary) !important;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  padding: 4px 10px;
+  height: auto;
+  border-radius: 999px;
 }
 
 .card-footer {
-  margin-top: var(--space-md);
+  margin-top: 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -250,5 +289,6 @@ function handleDropdownSelect(key) {
 .card-metadata {
   font-size: 12px;
   color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 </style>

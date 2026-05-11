@@ -25,14 +25,6 @@ func (r *MessageRepo) Create(ctx context.Context, m *model.Message) error {
 	return r.db.WithContext(ctx).Create(m).Error
 }
 
-// UpdateLastUserEmbedding 更新会话中最后一条 user 消息的 embedding
-func (r *MessageRepo) UpdateLastUserEmbedding(ctx context.Context, convID string, embedding *string) error {
-	return r.db.WithContext(ctx).Model(&model.Message{}).
-		Where("conversation_id = ? AND role = ?", convID, "user").
-		Order("created_at DESC").Limit(1).
-		Update("embedding", embedding).Error
-}
-
 // SoftDelete 软删除消息（标记 status=2）
 func (r *MessageRepo) SoftDelete(ctx context.Context, id, userID string) error {
 	return r.db.WithContext(ctx).

@@ -57,6 +57,7 @@ func main() {
 			&model.ToolRegistry{},
 			&model.ToolData{},
 			&model.UserPrompt{},
+			&model.Embedding{},
 		)
 	}
 
@@ -80,6 +81,7 @@ func main() {
 	agentRepo := service.NewAgentRepo(db)
 	promptRepo := service.NewUserPromptRepo(db)
 	toolRepo := service.NewToolRepo(db)
+	embeddingRepo := service.NewEmbeddingRepo(db)
 
 	// Tool Registry + Tools
 	reg := tool.NewRegistry()
@@ -92,7 +94,7 @@ func main() {
 	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
 	vectorStore := agent.NewVectorStore()
 
-	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(noteRepo, vectorStore, embedder), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(noteRepo, vectorStore, embedder, embeddingRepo), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewAgentTool(agentRepo), log.Default()))
 
 	// 从 DB 加载动态工具
@@ -102,8 +104,8 @@ func main() {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
 	// Context Sources
-	memSource := agent.NewMemorySource(vectorStore, memRepo)
-	noteSource := agent.NewNoteSource(vectorStore, noteRepo)
+	memSource := agent.NewMemorySource(vectorStore, memRepo, embeddingRepo)
+	noteSource := agent.NewNoteSource(vectorStore, noteRepo, embeddingRepo)
 
 	// Warmup 必须完成后再启动服务
 	memSource.Warmup(bgCtx, embedder)
@@ -111,11 +113,10 @@ func main() {
 
 	// Orchestrator
 	retriever := agent.NewRetriever(memSource, noteSource)
+	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, embedder, vectorStore, embeddingRepo, cfg.LLM.MaxIterations)
 
-	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, embedder, vectorStore, cfg.LLM.MaxIterations)
-
-	// Memory Scheduler (后台异步)
-	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo, cfg.Server.MemoryDupeThreshold)
+	// Memory Extractor (后台异步)
+	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo, embeddingRepo, cfg.Server.MemoryDupeThreshold)
 	memScheduler := agent.NewMemoryScheduler(memExtractor, convRepo)
 	go memScheduler.Start(bgCtx, cfg.Server.MemoryAutoExtract)
 	orch.SetPromptResolver(promptRepo)

@@ -90,6 +90,11 @@ func EmbeddingToString(vec []float64) string {
 	return string(b)
 }
 
+// ModelName 返回 embedding 模型名称
+func (e *Embedder) ModelName() string {
+	return e.model
+}
+
 // StringToEmbedding JSON 字符串反序列化为向量
 func StringToEmbedding(s string) ([]float64, error) {
 	var vec []float64

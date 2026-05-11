@@ -20,7 +20,7 @@ import (
 const baseSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职责是帮助用户高效完成任务。
 
 核心原则：
-1. 简洁回复：用最少的字把事说清楚
+1. 简洁回复：用最少的词把事说清楚
 2. 诚实：不知道就说不知道，不要编造
 3. 主动：如果用户意图不明确，追问关键信息`
 
@@ -60,6 +60,7 @@ type Orchestrator struct {
 	convRepo       *service.ConversationRepo
 	embedder       *llm.Embedder
 	vectorStore    *VectorStore
+	embeddingRepo  *service.EmbeddingRepo
 	promptResolver PromptResolver
 	maxIterations  int
 }
@@ -69,6 +70,7 @@ func New(flashClient llm.LLMClient, registry *tool.Registry,
 	proClient llm.LLMClient, retriever *Retriever,
 	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
 	embedder *llm.Embedder, vectorStore *VectorStore,
+	embeddingRepo *service.EmbeddingRepo,
 	maxIterations int) *Orchestrator {
 	if maxIterations <= 0 {
 		maxIterations = defaultMaxIterations
@@ -77,11 +79,12 @@ func New(flashClient llm.LLMClient, registry *tool.Registry,
 		flashClient:   flashClient,
 		proClient:     proClient,
 		registry:      registry,
+		retriever:     retriever,
 		msgRepo:       msgRepo,
 		convRepo:      convRepo,
-		retriever:     retriever,
 		embedder:      embedder,
 		vectorStore:   vectorStore,
+		embeddingRepo: embeddingRepo,
 		maxIterations: maxIterations,
 	}
 }
@@ -191,7 +194,7 @@ func (o *Orchestrator) runReActLoop(
 	})
 	o.convRepo.Touch(ctx, req.ConversationID)
 
-	if o.vectorStore != nil && len(queryVec) > 0 {
+	if o.vectorStore != nil && len(queryVec) > 0 && o.embeddingRepo != nil {
 		go o.saveUserMsgEmbedding(userMsgID, queryVec, req.UserID, req.ConversationID)
 	}
 
@@ -426,7 +429,7 @@ func convertToolCalls(tcs []llm.ToolCall) []tool.ToolCall {
 		funcName := tc.Function.Name
 		if idx := strings.LastIndex(tc.Function.Name, "__"); idx > 0 {
 			toolName = tc.Function.Name[:idx]
-			funcName = tc.Function.Name[idx+2:]
+			funcName = tc.Function.Name[idx+1:]
 		}
 		var args json.RawMessage
 		if tc.Function.Arguments != "" {
@@ -500,7 +503,17 @@ func (o *Orchestrator) saveUserMsgEmbedding(userMsgID string, vec []float64, use
 		"user_id": userID,
 	})
 	embStr := llm.EmbeddingToString(vec)
-	o.msgRepo.UpdateLastUserEmbedding(ctx, convID, &embStr)
+	err := o.embeddingRepo.Upsert(ctx, &model.Embedding{
+		ID:         userMsgID,
+		EntityType: model.EntityTypeMessage,
+		EntityID:   userMsgID,
+		UserID:     userID,
+		Model:      o.embedder.ModelName(),
+		Embedding:  &embStr,
+	})
+	if err != nil {
+		log.Printf("[orch] save message embedding error: %v", err)
+	}
 }
 
 func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, errStr string, memIDs, noteIDs []string) {
@@ -529,7 +542,7 @@ func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, e
 
 func (o *Orchestrator) GenerateTitle(ctx context.Context, userMessage string) string {
 	msg, err := o.flashClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: "你是一个标题生成器，根据用户的消息内容生成一个10字以内的简短标题，只输出标题本身，不要加任何标点或引号。",
+		SystemPrompt: "你是一个标题生成器，根据用户的消息内容生成一个 10 字以内的简短标题，只输出标题本身，不要加任何标点或引号。",
 		Messages:     []llm.Message{{Role: "user", Content: userMessage}},
 	})
 	if err != nil {
@@ -537,7 +550,7 @@ func (o *Orchestrator) GenerateTitle(ctx context.Context, userMessage string) st
 	}
 	title := strings.TrimSpace(msg.Content)
 	if len([]rune(title)) > 20 {
-		title = string([]rune(title)[:20])
+		title = string([]rune(title))[:20]
 	}
 	return title
 }

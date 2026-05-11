@@ -15,9 +15,10 @@ import (
 
 // NoteTool — 变量追踪笔记工具
 type NoteTool struct {
-	noteRepo    *service.NoteRepo
-	vectorStore VectorStorer
-	embedder    *llm.Embedder
+	noteRepo      *service.NoteRepo
+	vectorStore   VectorStorer
+	embedder      *llm.Embedder
+	embeddingRepo *service.EmbeddingRepo
 }
 
 // VectorStorer — 向量存储接口（避免循环依赖）
@@ -25,8 +26,8 @@ type VectorStorer interface {
 	Upsert(id string, vec []float64, metadata map[string]string)
 }
 
-func NewNoteTool(noteRepo *service.NoteRepo, vs VectorStorer, emb *llm.Embedder) *NoteTool {
-	return &NoteTool{noteRepo: noteRepo, vectorStore: vs, embedder: emb}
+func NewNoteTool(noteRepo *service.NoteRepo, vs VectorStorer, emb *llm.Embedder, embeddingRepo *service.EmbeddingRepo) *NoteTool {
+	return &NoteTool{noteRepo: noteRepo, vectorStore: vs, embedder: emb, embeddingRepo: embeddingRepo}
 }
 
 func (t *NoteTool) Name() string { return "note" }
@@ -118,7 +119,7 @@ func (t *NoteTool) recordNote(ec *ExecuteContext, args json.RawMessage) *Result 
 	}
 
 	// 异步 embedding
-	if t.vectorStore != nil && t.embedder != nil {
+	if t.vectorStore != nil && t.embedder != nil && t.embeddingRepo != nil {
 		go t.embedNote(note)
 	}
 
@@ -135,7 +136,17 @@ func (t *NoteTool) embedNote(note *model.Note) {
 	}
 	t.vectorStore.Upsert("note:"+note.ID, vec, map[string]string{"type": "note", "user_id": note.UserID})
 	embStr := llm.EmbeddingToString(vec)
-	t.noteRepo.UpdateEmbedding(context.Background(), note.ID, &embStr)
+	err = t.embeddingRepo.Upsert(context.Background(), &model.Embedding{
+		ID:         note.ID,
+		EntityType: model.EntityTypeNote,
+		EntityID:   note.ID,
+		UserID:     note.UserID,
+		Model:      t.embedder.ModelName(),
+		Embedding:  &embStr,
+	})
+	if err != nil {
+		log.Printf("[note] save embedding error: %v", err)
+	}
 }
 
 func (t *NoteTool) queryNotes(ec *ExecuteContext, args json.RawMessage) *Result {

@@ -80,12 +80,6 @@ func (r *UserMemoryRepo) BatchDelete(ctx context.Context, ids []string, userID s
 	return r.db.WithContext(ctx).Where("id IN ? AND user_id = ?", ids, userID).Delete(&model.UserMemory{}).Error
 }
 
-// UpdateEmbedding 更新记忆的向量字段
-func (r *UserMemoryRepo) UpdateEmbedding(ctx context.Context, id string, embedding *string) error {
-	return r.db.WithContext(ctx).Model(&model.UserMemory{}).Where("id = ?", id).
-		Update("embedding", embedding).Error
-}
-
 // GetByIDs 按 ID 列表查询
 func (r *UserMemoryRepo) GetByIDs(ctx context.Context, ids []string) ([]model.UserMemory, error) {
 	var list []model.UserMemory

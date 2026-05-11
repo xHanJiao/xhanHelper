@@ -10,6 +10,5 @@ type Note struct {
 	Content   string    `gorm:"type:text;not null" json:"content"`
 	Variables *string   `gorm:"type:json" json:"variables,omitempty"`
 	Tags      string    `gorm:"size:500" json:"tags"`
-	Embedding *string   `gorm:"type:text" json:"-"` // JSON 数组, 向量持久化
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 }

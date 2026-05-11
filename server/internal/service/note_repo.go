@@ -37,12 +37,6 @@ func (r *NoteRepo) GetByIDsAndUser(ctx context.Context, ids []string, userID str
 	return list, err
 }
 
-// UpdateEmbedding 更新笔记的向量字段
-func (r *NoteRepo) UpdateEmbedding(ctx context.Context, id string, embedding *string) error {
-	return r.db.WithContext(ctx).Model(&model.Note{}).Where("id = ?", id).
-		Update("embedding", embedding).Error
-}
-
 // ListAllPaginated 分页获取所有笔记（用于 warmup），limit<=0 时默认 100
 func (r *NoteRepo) ListAllPaginated(ctx context.Context, limit, offset int) ([]model.Note, error) {
 	if limit <= 0 {

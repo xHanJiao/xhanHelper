@@ -25,6 +25,7 @@ type MemoryExtractor struct {
 	embedder      *llm.Embedder
 	msgRepo       *service.MessageRepo
 	convRepo      *service.ConversationRepo
+	embeddingRepo *service.EmbeddingRepo
 	dupeThreshold float64
 }
 
@@ -32,6 +33,7 @@ type MemoryExtractor struct {
 func NewMemoryExtractor(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo,
 	vectorStore *VectorStore, embedder *llm.Embedder,
 	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
+	embeddingRepo *service.EmbeddingRepo,
 	dupeThreshold float64) *MemoryExtractor {
 	if dupeThreshold <= 0 {
 		dupeThreshold = 0.85 // 默认值
@@ -43,6 +45,7 @@ func NewMemoryExtractor(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo
 		embedder:      embedder,
 		msgRepo:       msgRepo,
 		convRepo:      convRepo,
+		embeddingRepo: embeddingRepo,
 		dupeThreshold: dupeThreshold,
 	}
 }
@@ -217,11 +220,12 @@ func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
 		log.Printf("[memory] create error: %v", err)
 		return
 	}
-	if e.vectorStore != nil && e.embedder != nil && memory.MemoryValue != "" {
+	if e.vectorStore != nil && e.embedder != nil && e.embeddingRepo != nil && memory.MemoryValue != "" {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			vec, err := e.embedder.Embed(ctx, memory.MemoryValue)
+			text := memory.MemoryKey + ": " + memory.MemoryValue
+			vec, err := e.embedder.Embed(ctx, text)
 			if err != nil {
 				return
 			}
@@ -230,7 +234,17 @@ func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
 				"user_id": memory.UserID,
 			})
 			embStr := llm.EmbeddingToString(vec)
-			e.memRepo.UpdateEmbedding(context.Background(), memory.ID, &embStr)
+			err = e.embeddingRepo.Upsert(ctx, &model.Embedding{
+				ID:         memory.ID,
+				EntityType: model.EntityTypeMemory,
+				EntityID:   memory.ID,
+				UserID:     memory.UserID,
+				Model:      e.embedder.ModelName(),
+				Embedding:  &embStr,
+			})
+			if err != nil {
+				log.Printf("[memory] save embedding error: %v", err)
+			}
 		}()
 	}
 }

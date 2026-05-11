@@ -12,10 +12,9 @@ type Message struct {
 	ReasoningContent *string   `gorm:"type:text;column:reasoning_content" json:"reasoning_content,omitempty"`
 	ToolCallsJSON    *string   `gorm:"type:json;column:tool_calls_json" json:"tool_calls_json,omitempty"`
 	ToolCallID       *string   `gorm:"size:36;column:tool_call_id" json:"tool_call_id,omitempty"`
-	Embedding        *string   `gorm:"type:text" json:"-"`                                            // JSON 数组, 用户消息向量持久化
-	MemoryIDs        *string   `gorm:"type:json;column:memory_ids" json:"memory_ids,omitempty"`       // 关联的记忆 ID 列表
-	RequestJSON      *string   `gorm:"type:json;column:request_json" json:"request_json,omitempty"`   // LLM 请求 JSON
-	ResponseJSON     *string   `gorm:"type:json;column:response_json" json:"response_json,omitempty"` // LLM 响应 JSON
-	Status           int       `gorm:"default:1" json:"status"`                                       // 1=正常 2=已删除
+	MemoryIDs        *string   `gorm:"type:json;column:memory_ids" json:"memory_ids,omitempty"`
+	RequestJSON      *string   `gorm:"type:json;column:request_json" json:"request_json,omitempty"`
+	ResponseJSON     *string   `gorm:"type:json;column:response_json" json:"response_json,omitempty"`
+	Status           int       `gorm:"default:1" json:"status"` // 1=正常 2=已删除
 	CreatedAt        time.Time `gorm:"index:idx_conv_created,priority:2;autoCreateTime" json:"created_at"`
 }

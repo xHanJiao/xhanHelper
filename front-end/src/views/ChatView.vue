@@ -59,7 +59,20 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
     if (res) {
       const msgs = (res.messages || []).map(normalizeMessage)
       if (direction === 'before' && cursor) {
+        // 在prepend之前保存当前滚动位置和第一个消息元素
+        const scrollContainer = document.querySelector('[style*="overflow-y: auto"]')
+        const firstMsgEl = scrollContainer?.querySelector('.message-wrapper')
+        const oldScrollTop = scrollContainer?.scrollTop || 0
+        const oldFirstOffsetTop = firstMsgEl?.offsetTop || 0
+
         chat.prependMessages(msgs)
+
+        // 在下一帧调整滚动位置，保持视觉上的位置不变
+        await nextTick()
+        if (scrollContainer && firstMsgEl) {
+          const newFirstOffsetTop = firstMsgEl.offsetTop
+          scrollContainer.scrollTop = oldScrollTop + (newFirstOffsetTop - oldFirstOffsetTop)
+        }
       } else {
         chat.setMessages(msgs)
       }
@@ -150,7 +163,7 @@ onBeforeUnmount(() => {
 
 watch(() => chat.streamingMessage?.content, () => scrollToBottom())
 watch(() => chat.streamingMessage?.reasoning, () => scrollToBottom())
-watch(() => chat.messages.length, () => scrollToBottom())
+// 注意：移除了对 messages.length 的监听，避免加载历史消息后自动滚到底部
 
 async function handleSend() {
   const content = inputValue.value.trim()

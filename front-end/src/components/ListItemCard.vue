@@ -50,6 +50,7 @@ const { isMobile } = useMobile()
 
 const confirmModalVisible = ref(false)
 const pendingConfirmAction = ref(null)
+const expanded = ref(false)
 
 function handleActionClick(action) {
   if (action.confirm) {
@@ -138,11 +139,20 @@ function handleDropdownSelect(key) {
       </div>
     </template>
 
-    <div v-if="content" class="card-content-wrapper" :style="{ maxHeight: maxContentHeight }">
+    <div
+      v-if="content"
+      class="card-content-wrapper"
+      :class="{ 'clickable': content.length > 100 }"
+      :style="{ maxHeight: expanded ? 'none' : maxContentHeight }"
+      @click="content.length > 100 && (expanded = !expanded)"
+    >
       <div class="card-content">
         {{ content }}
       </div>
-      <div v-if="content.length > 100" class="content-fade"></div>
+      <div v-if="content.length > 100 && !expanded" class="content-fade"></div>
+      <div v-if="content.length > 100" class="expand-hint">
+        {{ expanded ? '↑' : '↓' }}
+      </div>
     </div>
 
     <div v-if="tags && tags.length > 0" class="card-tags">
@@ -243,6 +253,10 @@ function handleDropdownSelect(key) {
   overflow: hidden;
 }
 
+.card-content-wrapper.clickable {
+  cursor: pointer;
+}
+
 .card-content {
   font-size: 14px;
   color: var(--color-text-secondary);
@@ -258,6 +272,14 @@ function handleDropdownSelect(key) {
   height: 40px;
   background: linear-gradient(to bottom, transparent, var(--color-surface));
   pointer-events: none;
+}
+
+.expand-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--color-primary);
+  text-align: center;
+  font-weight: 500;
 }
 
 .card-tags {

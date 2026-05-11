@@ -69,8 +69,8 @@ async function fetchBills() {
     if (filterCategory.value) url += `&category=${encodeURIComponent(filterCategory.value)}`
 
     const res = await api.get(url)
-    bills.value = Array.isArray(res) ? res : (res.bills || [])
-    total.value = res.total || bills.value.length
+    bills.value = res.bills || []
+    total.value = res.total || 0
   } catch (e) {
     message.error('加载账单列表失败')
   } finally {

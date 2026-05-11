@@ -13,7 +13,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     loading.value = true
     try {
       const res = await api.get(`/api/conversations?limit=${pageSize}&offset=${offset}`)
-      const conversations = res.conversations || res || []
+      const conversations = res.conversations || []
       if (offset === 0) {
         list.value = conversations
       } else {

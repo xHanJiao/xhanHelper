@@ -21,6 +21,7 @@ const memories = ref([])
 const loading = ref(false)
 const page = ref(1)
 const pageSize = 12
+const total = ref(0)
 const keyword = ref('')
 
 const sourceMap = { conversation: '对话提取', csv_import: 'CSV导入' }
@@ -32,7 +33,8 @@ async function fetchMemories() {
     let url = `/api/memories?limit=${pageSize}&offset=${offset}`
     if (keyword.value) url += `&keyword=${encodeURIComponent(keyword.value)}`
     const res = await api.get(url)
-    memories.value = Array.isArray(res) ? res : (res.data || res.memories || [])
+    memories.value = res.memories || []
+    total.value = res.total || 0
   } catch (e) {
     message.error('加载记忆列表失败')
   } finally {
@@ -96,10 +98,10 @@ onMounted(fetchMemories)
         </NGi>
       </NGrid>
       <NEmpty v-else-if="!loading" description="还没有记忆" />
-      <div v-if="memories.length === pageSize" style="margin-top: var(--space-lg); display: flex; justify-content: center;">
+      <div v-if="total > pageSize" style="margin-top: var(--space-lg); display: flex; justify-content: center;">
         <NPagination
           v-model:page="page"
-          :page-count="99"
+          :page-count="Math.ceil(total / pageSize)"
           @update:page="fetchMemories"
         />
       </div>

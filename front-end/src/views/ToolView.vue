@@ -33,7 +33,7 @@ async function fetchTools() {
   loading.value = true
   try {
     const res = await api.get('/api/tools')
-    tools.value = Array.isArray(res) ? res : (res.data || res.tools || [])
+    tools.value = res.tools || []
   } catch (e) {
     message.error('加载工具列表失败')
   } finally {

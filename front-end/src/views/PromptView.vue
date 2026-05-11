@@ -37,7 +37,7 @@ async function fetchPrompts() {
   loading.value = true
   try {
     const res = await api.get('/api/prompts')
-    prompts.value = Array.isArray(res) ? res : (res.data || res.prompts || [])
+    prompts.value = res.prompts || []
   } catch (e) {
     message.error('加载 Prompt 列表失败')
   } finally {

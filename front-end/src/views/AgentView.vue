@@ -43,7 +43,7 @@ async function fetchAgents() {
   loading.value = true
   try {
     const res = await api.get('/api/agents')
-    agents.value = Array.isArray(res) ? res : (res.agents || [])
+    agents.value = res.agents || []
   } catch (e) {
     message.error('加载智能体列表失败')
   } finally {

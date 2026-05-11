@@ -32,8 +32,8 @@ async function fetchNotes() {
     let url = `/api/notes?limit=${pageSize}&offset=${offset}`
     if (keyword.value) url += `&keyword=${encodeURIComponent(keyword.value)}`
     const res = await api.get(url)
-    notes.value = Array.isArray(res) ? res : (res.notes || [])
-    total.value = res.total || notes.value.length
+    notes.value = res.notes || []
+    total.value = res.total || 0
   } catch (e) {
     message.error('加载笔记列表失败')
   } finally {

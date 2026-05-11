@@ -27,6 +27,9 @@ const inputValue = ref('')
 const messagesEndRef = ref(null)
 const streamingBubbleRef = ref(null)
 const isLoadingHistory = ref(false)
+const isFirstLoad = ref(true)
+const messagesContainerRef = ref(null)
+const isInitialScrollDone = ref(false)
 
 const currentTitle = computed(() => {
   const conv = convs.list.find(c => c.id === chat.conversationId)
@@ -59,25 +62,23 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
     if (res) {
       const msgs = (res.messages || []).map(normalizeMessage)
       if (direction === 'before' && cursor) {
-        // 在prepend之前保存当前滚动位置和第一个消息元素
-        const scrollContainer = document.querySelector('[style*="overflow-y: auto"]')
-        const firstMsgEl = scrollContainer?.querySelector('.message-wrapper')
-        const oldScrollTop = scrollContainer?.scrollTop || 0
-        const oldFirstOffsetTop = firstMsgEl?.offsetTop || 0
+        // 在prepend之前保存当前滚动高度和scrollTop
+        const scrollContainer = messagesContainerRef.value
+        const oldScrollHeight = scrollContainer.scrollHeight
+        const oldScrollTop = scrollContainer.scrollTop
 
         chat.prependMessages(msgs)
 
-        // 在下一帧调整滚动位置，保持视觉上的位置不变
+        // 在下一帧调整滚动位置，确保用户看到的内容不跳动
         await nextTick()
-        if (scrollContainer && firstMsgEl) {
-          const newFirstOffsetTop = firstMsgEl.offsetTop
-          scrollContainer.scrollTop = oldScrollTop + (newFirstOffsetTop - oldFirstOffsetTop)
-        }
+        const newScrollHeight = scrollContainer.scrollHeight
+        // 保持原来的相对位置：新scrollTop = 旧scrollTop + (新高度 - 旧高度)
+        scrollContainer.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight)
       } else {
         chat.setMessages(msgs)
       }
-      chat.oldestCursor = res.oldestCursor
-      chat.hasMoreBefore = res.hasMoreBefore
+      chat.oldestCursor = res.oldest_cursor
+      chat.hasMoreBefore = res.has_more_before
     }
   } catch (e) {
     console.error('Failed to load history', e)
@@ -144,11 +145,29 @@ watch(() => route.params.id, async (newId, oldId) => {
     cancel()
   }
   if (newId && newId !== chat.conversationId) {
+    isFirstLoad.value = true
+    isInitialScrollDone.value = false
     chat.setConversation(newId)
     await loadHistory(newId)
+    // 初始加载后滚动到最新消息 - 不要用smooth滚动
+    await nextTick()
+    if (messagesContainerRef.value) {
+      messagesContainerRef.value.scrollTop = messagesContainerRef.value.scrollHeight
+    }
+    isFirstLoad.value = false
+    // 延迟一下才允许触发自动加载
+    setTimeout(() => { isInitialScrollDone.value = true }, 200)
   } else if (newId && chat.needsRefetch) {
+    isFirstLoad.value = true
+    isInitialScrollDone.value = false
     await loadHistory(newId)
+    await nextTick()
+    if (messagesContainerRef.value) {
+      messagesContainerRef.value.scrollTop = messagesContainerRef.value.scrollHeight
+    }
     chat.needsRefetch = false
+    isFirstLoad.value = false
+    setTimeout(() => { isInitialScrollDone.value = true }, 200)
   } else if (!newId) {
     if (chat.isStreaming) cancel()
     const savedAgentId = chat.agentId
@@ -183,6 +202,16 @@ async function handleSend() {
 function handleStop() {
   cancel()
 }
+
+function handleScroll(e) {
+  const container = e.target
+  // 只有在初始滚动完成后才允许自动加载
+  // 快到顶端就开始加载，用容器高度的15%判断，适配移动端和PC端
+  const threshold = container.clientHeight * 0.15
+  if (isInitialScrollDone.value && container.scrollTop <= threshold && chat.hasMoreBefore && !isLoadingHistory.value) {
+    loadHistory(chat.conversationId, 'before', chat.oldestCursor)
+  }
+}
 </script>
 
 <template>
@@ -202,16 +231,15 @@ function handleStop() {
       </div>
 
       <!-- 消息区域 -->
-      <div style="flex: 1; overflow-y: auto; padding: var(--space-lg); display: flex; justify-content: center;">
+      <div ref="messagesContainerRef" @scroll="handleScroll" style="flex: 1; overflow-y: auto; padding: var(--space-lg); display: flex; justify-content: center;">
         <div style="width: 100%; max-width: 900px;">
-          <div v-if="chat.messages.length === 0 && !chat.streamingMessage" style="padding: 100px 0; text-align: center; color: var(--color-text-muted);">
-            开始聊天吧
+          <!-- 顶部加载指示器 -->
+          <div v-if="isLoadingHistory" style="text-align: center; padding: 20px 0;">
+            <div style="width: 24px; height: 24px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block;"></div>
           </div>
 
-          <div v-if="chat.hasMoreBefore" style="text-align: center; margin-bottom: var(--space-lg);">
-            <NButton size="small" quaternary :loading="isLoadingHistory" @click="loadHistory(chat.conversationId, 'before', chat.oldestCursor)">
-              加载更多历史
-            </NButton>
+          <div v-if="chat.messages.length === 0 && !chat.streamingMessage" style="padding: 100px 0; text-align: center; color: var(--color-text-muted);">
+            开始聊天吧
           </div>
 
           <MessageBubble
@@ -279,3 +307,10 @@ function handleStop() {
       </div>
   </div>
 </template>
+
+<style scoped>
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+</style>

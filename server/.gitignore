@@ -1,9 +1,6 @@
 # SQLite
 data/*.db
 
-# Binary
-/xhan-helper
-
 # IDE
 .idea/
 .vscode/

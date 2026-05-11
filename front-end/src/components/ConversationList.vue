@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useConversationsStore } from '@/stores/conversations'
+import { useChatStore } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
 import { api } from '@/api/client'
 import { useThemeStore } from '@/stores/theme'
@@ -12,6 +13,7 @@ const isDev = import.meta.env.DEV
 const router = useRouter()
 const route = useRoute()
 const convs = useConversationsStore()
+const chat = useChatStore()
 const theme = useThemeStore()
 const message = useMessage()
 
@@ -56,6 +58,9 @@ watch(() => auth.token, (token) => {
 }, { immediate: true })
 
 function handleNewConversation() {
+  if (route.path === '/chat' && !route.params.id) {
+    chat.reset()
+  }
   router.push('/chat')
 }
 

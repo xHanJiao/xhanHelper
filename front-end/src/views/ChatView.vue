@@ -244,6 +244,7 @@ function handleStop() {
               :autosize="{ minRows: 1, maxRows: 6 }"
               @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); handleSend() }}"
               :bordered="false"
+              style="background: transparent;"
             />
             <div style="display: flex; justify-content: flex-end; align-items: center; margin-top: 8px;">
               <NButton

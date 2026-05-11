@@ -18,12 +18,13 @@ type Config struct {
 // ServerConfig — HTTP 服务配置
 type ServerConfig struct {
 	Port                int      `yaml:"port"`
-	Mode                string   `yaml:"mode"`                 // debug | release
-	RegistrationEnabled *bool    `yaml:"registration_enabled"` // 是否允许新用户注册
-	AllowedUsers        []string `yaml:"allowed_users"`        // 允许注册的用户名列表（空=全部允许）
-	MemoryAutoExtract   bool     `yaml:"memory_auto_extract"`  // 是否自动提取记忆
-	SidecarURL          string   `yaml:"sidecar_url"`          // Python sidecar MCP HTTP 地址
-	TokenTTLHours       int      `yaml:"token_ttl_hours"`      // token 过期时间（小时），默认 720
+	Mode                string   `yaml:"mode"`                  // debug | release
+	RegistrationEnabled *bool    `yaml:"registration_enabled"`  // 是否允许新用户注册
+	AllowedUsers        []string `yaml:"allowed_users"`         // 允许注册的用户名列表（空=全部允许）
+	MemoryAutoExtract   bool     `yaml:"memory_auto_extract"`   // 是否自动提取记忆
+	MemoryDupeThreshold float64  `yaml:"memory_dupe_threshold"` // 记忆去重相似度阈值，默认 0.85
+	SidecarURL          string   `yaml:"sidecar_url"`           // Python sidecar MCP HTTP 地址
+	TokenTTLHours       int      `yaml:"token_ttl_hours"`       // token 过期时间（小时），默认 720
 }
 
 // DBConfig — 数据库配置
@@ -121,6 +122,13 @@ func merge(dst, src *Config) {
 	}
 	if len(src.Server.AllowedUsers) > 0 {
 		dst.Server.AllowedUsers = src.Server.AllowedUsers
+	}
+	// MemoryAutoExtract 是 bool 类型，零值(false)是有效取值，不做合并
+	if src.Server.MemoryDupeThreshold > 0 {
+		dst.Server.MemoryDupeThreshold = src.Server.MemoryDupeThreshold
+	}
+	if src.Server.SidecarURL != "" {
+		dst.Server.SidecarURL = src.Server.SidecarURL
 	}
 	if src.Server.TokenTTLHours != 0 {
 		dst.Server.TokenTTLHours = src.Server.TokenTTLHours

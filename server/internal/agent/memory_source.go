@@ -76,7 +76,7 @@ func (s *MemorySource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 	const pageSize = 100
 	loaded, embedded := 0, 0
 	for offset := 0; ; offset += pageSize {
-		memories, err := s.memRepo.ListAllPaginated(ctx, pageSize, offset)
+		memories, err := s.memRepo.ListAllUsersMemoriesPaginated(ctx, pageSize, offset)
 		if err != nil {
 			log.Printf("[vector] memory warmup: list error: %v", err)
 			return

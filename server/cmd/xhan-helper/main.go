@@ -115,7 +115,7 @@ func main() {
 	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, embedder, vectorStore, cfg.LLM.MaxIterations)
 
 	// Memory Scheduler (后台异步)
-	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo)
+	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo, cfg.Server.MemoryDupeThreshold)
 	memScheduler := agent.NewMemoryScheduler(memExtractor, convRepo)
 	go memScheduler.Start(bgCtx, cfg.Server.MemoryAutoExtract)
 	orch.SetPromptResolver(promptRepo)
@@ -123,7 +123,7 @@ func main() {
 	// Handlers
 	billHandler := controller.NewBillHandler(billRepo, memExtractor)
 	noteHandler := controller.NewNoteHandler(noteRepo)
-	memHandler := controller.NewMemoryHandler(memRepo)
+	memHandler := controller.NewMemoryHandler(memRepo, vectorStore)
 	agentHandler := controller.NewAgentHandler(agentRepo)
 	toolHandler := controller.NewToolHandler(toolRepo)
 	promptHandler := controller.NewPromptHandler(promptRepo)

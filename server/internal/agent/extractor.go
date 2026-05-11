@@ -19,25 +19,31 @@ import (
 
 // MemoryExtractor — 从会话中提取记忆，向量去重
 type MemoryExtractor struct {
-	llmClient   llm.LLMClient
-	memRepo     *service.UserMemoryRepo
-	vectorStore *VectorStore
-	embedder    *llm.Embedder
-	msgRepo     *service.MessageRepo
-	convRepo    *service.ConversationRepo
+	llmClient     llm.LLMClient
+	memRepo       *service.UserMemoryRepo
+	vectorStore   *VectorStore
+	embedder      *llm.Embedder
+	msgRepo       *service.MessageRepo
+	convRepo      *service.ConversationRepo
+	dupeThreshold float64
 }
 
 // NewMemoryExtractor 创建提取器
 func NewMemoryExtractor(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo,
 	vectorStore *VectorStore, embedder *llm.Embedder,
-	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo) *MemoryExtractor {
+	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
+	dupeThreshold float64) *MemoryExtractor {
+	if dupeThreshold <= 0 {
+		dupeThreshold = 0.85 // 默认值
+	}
 	return &MemoryExtractor{
-		llmClient:   llmClient,
-		memRepo:     memRepo,
-		vectorStore: vectorStore,
-		embedder:    embedder,
-		msgRepo:     msgRepo,
-		convRepo:    convRepo,
+		llmClient:     llmClient,
+		memRepo:       memRepo,
+		vectorStore:   vectorStore,
+		embedder:      embedder,
+		msgRepo:       msgRepo,
+		convRepo:      convRepo,
+		dupeThreshold: dupeThreshold,
 	}
 }
 
@@ -181,6 +187,13 @@ func parseExtractResult(text string) *extractResult {
 }
 
 func (e *MemoryExtractor) isDuplicate(ctx context.Context, userID, text string) bool {
+	// 1. 先尝试用 content_hash 做精确去重
+	contentHash := hashPrompt(text)
+	if existing, _ := e.memRepo.FindByContentHash(ctx, userID, contentHash); existing != nil {
+		return true
+	}
+
+	// 2. 再用向量相似度做模糊去重
 	if e.vectorStore == nil || e.embedder == nil {
 		return false
 	}
@@ -192,7 +205,7 @@ func (e *MemoryExtractor) isDuplicate(ctx context.Context, userID, text string) 
 		return entry.Metadata["type"] == "mem" && entry.Metadata["user_id"] == userID
 	})
 	for _, r := range results {
-		if r.Score > 0.85 {
+		if r.Score > e.dupeThreshold {
 			return true
 		}
 	}

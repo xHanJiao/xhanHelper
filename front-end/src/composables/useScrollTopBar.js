@@ -3,22 +3,43 @@ import { ref, onMounted, onUnmounted } from 'vue'
 export function useScrollTopBar(scrollContainerRef) {
   const isBarVisible = ref(true)
   const lastScrollTop = ref(0)
+  const lastScrollDirection = ref('')
+  const consecutiveSameDirection = ref(0)
   let ticking = false
 
   function handleScroll() {
     if (!scrollContainerRef.value) return
 
     const scrollTop = scrollContainerRef.value.scrollTop
+    const scrollHeight = scrollContainerRef.value.scrollHeight
+    const clientHeight = scrollContainerRef.value.clientHeight
 
     if (!ticking) {
       window.requestAnimationFrame(() => {
-        // 向上滚动时显示，向下滚动时隐藏
-        // 增加一个小阈值避免轻微抖动
-        if (scrollTop < lastScrollTop.value - 5) {
-          isBarVisible.value = true
-        } else if (scrollTop > lastScrollTop.value + 5 && scrollTop > 20) {
-          // 只有滚动超过20px才开始隐藏
-          isBarVisible.value = false
+        const scrollDiff = scrollTop - lastScrollTop.value
+
+        let direction = ''
+        if (scrollDiff > 10) {
+          direction = 'down'
+        } else if (scrollDiff < -10) {
+          direction = 'up'
+        }
+
+        if (direction) {
+          if (direction === lastScrollDirection.value) {
+            consecutiveSameDirection.value++
+          } else {
+            consecutiveSameDirection.value = 1
+            lastScrollDirection.value = direction
+          }
+
+          if (consecutiveSameDirection.value >= 2) {
+            if (direction === 'up') {
+              isBarVisible.value = true
+            } else if (direction === 'down' && scrollTop > 50) {
+              isBarVisible.value = false
+            }
+          }
         }
 
         lastScrollTop.value = scrollTop
@@ -30,6 +51,7 @@ export function useScrollTopBar(scrollContainerRef) {
 
   function showBar() {
     isBarVisible.value = true
+    consecutiveSameDirection.value = 0
   }
 
   onMounted(() => {

@@ -34,6 +34,22 @@ const isInitialScrollDone = ref(false)
 
 const { isBarVisible, showBar } = useScrollTopBar(messagesContainerRef)
 
+const inputVisible = ref(!isMobile)
+const inputExpanded = ref(false)
+
+function toggleInput() {
+  inputVisible.value = !inputVisible.value
+  if (inputVisible.value) {
+    nextTick(() => {
+      document.querySelector('.chat-input')?.focus()
+    })
+  }
+}
+
+function toggleExpand() {
+  inputExpanded.value = !inputExpanded.value
+}
+
 const currentTitle = computed(() => {
   const conv = convs.list.find(c => c.id === chat.conversationId)
   return conv?.title || '新对话'
@@ -65,23 +81,20 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
     if (res) {
       const msgs = (res.messages || []).map(normalizeMessage)
       if (direction === 'before' && cursor) {
-        // 在prepend之前保存当前滚动高度和scrollTop
         const scrollContainer = messagesContainerRef.value
         const oldScrollHeight = scrollContainer.scrollHeight
         const oldScrollTop = scrollContainer.scrollTop
 
         chat.prependMessages(msgs)
 
-        // 在下一帧调整滚动位置，确保用户看到的内容不跳动
         await nextTick()
         const newScrollHeight = scrollContainer.scrollHeight
-        // 保持原来的相对位置：新scrollTop = 旧scrollTop + (新高度 - 旧高度)
         scrollContainer.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight)
       } else {
         chat.setMessages(msgs)
       }
-      chat.oldestCursor = res.oldest_cursor
-      chat.hasMoreBefore = res.has_more_before
+      chat.oldestCursor = res.oldestCursor
+      chat.hasMoreBefore = res.hasMoreBefore
     }
   } catch (e) {
     console.error('Failed to load history', e)
@@ -152,13 +165,11 @@ watch(() => route.params.id, async (newId, oldId) => {
     isInitialScrollDone.value = false
     chat.setConversation(newId)
     await loadHistory(newId)
-    // 初始加载后滚动到最新消息 - 不要用smooth滚动
     await nextTick()
     if (messagesContainerRef.value) {
       messagesContainerRef.value.scrollTop = messagesContainerRef.value.scrollHeight
     }
     isFirstLoad.value = false
-    // 延迟一下才允许触发自动加载
     setTimeout(() => { isInitialScrollDone.value = true }, 200)
   } else if (newId && chat.needsRefetch) {
     isFirstLoad.value = true
@@ -185,7 +196,6 @@ onBeforeUnmount(() => {
 
 watch(() => chat.streamingMessage?.content, () => scrollToBottom())
 watch(() => chat.streamingMessage?.reasoning, () => scrollToBottom())
-// 注意：移除了对 messages.length 的监听，避免加载历史消息后自动滚到底部
 
 async function handleSend() {
   const content = inputValue.value.trim()
@@ -208,8 +218,6 @@ function handleStop() {
 
 function handleScroll(e) {
   const container = e.target
-  // 只有在初始滚动完成后才允许自动加载
-  // 快到顶端就开始加载，用容器高度的15%判断，适配移动端和PC端
   const threshold = container.clientHeight * 0.15
   if (isInitialScrollDone.value && container.scrollTop <= threshold && chat.hasMoreBefore && !isLoadingHistory.value) {
     loadHistory(chat.conversationId, 'before', chat.oldestCursor)
@@ -219,10 +227,8 @@ function handleScroll(e) {
 
 <template>
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
-    <!-- 顶部工具栏 -->
     <PageTopBar :title="currentTitle" :visible="!isMobile || isBarVisible" />
 
-    <!-- 消息区域 -->
     <div
       ref="messagesContainerRef"
       @scroll="handleScroll"
@@ -230,7 +236,6 @@ function handleScroll(e) {
       style="flex: 1; overflow-y: auto; padding: var(--space-lg); display: flex; justify-content: center;"
     >
       <div style="width: 100%; max-width: 900px;">
-        <!-- 顶部加载指示器 -->
         <div v-if="isLoadingHistory" style="text-align: center; padding: 20px 0;">
           <div style="width: 24px; height: 24px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block;"></div>
         </div>
@@ -266,24 +271,96 @@ function handleScroll(e) {
           </NButton>
         </div>
 
-        <div ref="messagesEndRef" style="height: 15px;" />
+        <div
+          ref="messagesEndRef"
+          :style="{
+            height: isMobile && inputVisible ? (inputExpanded ? '75vh' : '140px') : '15px',
+            transition: 'height 0.2s ease-out'
+          }"
+        />
       </div>
     </div>
 
-    <!-- 输入区域 -->
-      <div style="padding: var(--space-md) var(--space-lg); background: var(--color-surface); border-top: 1px solid var(--color-border); flex-shrink: 0;">
-        <div style="border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: var(--space-md) var(--space-md); background: var(--color-surface);">
-          <NInput
-            v-model:value="inputValue"
-            type="textarea"
-            placeholder="发消息..."
-            :disabled="chat.isStreaming"
-            :autosize="{ minRows: 1, maxRows: 6 }"
-            @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); handleSend() }}"
-            :bordered="false"
-            style="background: transparent;"
-          />
-          <div style="display: flex; justify-content: flex-end; align-items: center; margin-top: 8px;">
+    <div
+      v-if="isMobile"
+      :style="{
+        position: 'fixed',
+        bottom: inputVisible ? (inputExpanded ? '75vh' : '120px') : '0',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 100,
+        transition: 'bottom 0.2s ease-out'
+      }"
+    >
+      <div
+        v-if="!inputVisible"
+        @click="toggleInput"
+        :style="{
+          width: '60px',
+          height: '30px',
+          background: 'rgba(91, 106, 191, 0.85)',
+          borderRadius: '30px 30px 0 0',
+          display: 'flex',
+          alignItems: 'flex-end',
+          justifyContent: 'center',
+          paddingBottom: '0px',
+          lineHeight: '24px',
+          cursor: 'pointer',
+          boxShadow: '0 -2px 10px rgba(0,0,0,0.1)',
+          color: 'white',
+          fontSize: '20px',
+          fontWeight: 'bold'
+        }"
+      >
+        ↑
+      </div>
+    </div>
+
+    <div
+      :style="[
+        !isMobile ? {
+          padding: 'var(--space-md) var(--space-lg)',
+          background: 'var(--color-surface)',
+          borderTop: '1px solid var(--color-border)',
+          flexShrink: 0
+        } : {
+          position: 'fixed',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          padding: 'var(--space-md) var(--space-lg)',
+          background: 'var(--color-surface)',
+          borderTop: '1px solid var(--color-border)',
+          zIndex: 99,
+          transform: inputVisible ? 'translateY(0)' : 'translateY(100%)',
+          height: inputExpanded ? '75vh' : 'auto',
+          transition: 'transform 0.2s ease-out, height 0.2s ease-out',
+          overflow: 'hidden'
+        }
+      ]"
+    >
+      <div style="border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: var(--space-md) var(--space-md); background: var(--color-surface); height: 100%; display: flex; flex-direction: column;">
+        <NInput
+          v-model:value="inputValue"
+          type="textarea"
+          placeholder="发消息..."
+          :disabled="chat.isStreaming"
+          :autosize="isMobile && inputExpanded ? false : { minRows: 1, maxRows: 6 }"
+          class="chat-input"
+          @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); handleSend() }}"
+          :bordered="false"
+          style="background: transparent; flex: 1;"
+        />
+        <div :style="{ display: 'flex', justifyContent: isMobile ? 'space-between' : 'flex-end', alignItems: 'center', marginTop: '8px' }">
+          <div v-if="isMobile && inputVisible">
+            <NButton quaternary size="small" @click="toggleExpand">
+              {{ inputExpanded ? '⤡' : '⤢' }}
+            </NButton>
+            <NButton v-if="inputVisible" quaternary size="small" @click="toggleInput" style="margin-left: 8px;">
+              收起
+            </NButton>
+          </div>
+          <div style="display: flex; justify-content: flex-end; align-items: center;">
             <NButton
               v-if="!chat.isStreaming"
               type="primary"
@@ -302,6 +379,7 @@ function handleScroll(e) {
           </div>
         </div>
       </div>
+    </div>
   </div>
 </template>
 

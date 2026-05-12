@@ -55,7 +55,7 @@ type extractResult struct {
 	Facts   []string `json:"facts,omitempty"`
 }
 
-const extractSystemPrompt = "你是记忆提取助手。从对话中归纳出关于用户的有价值的洞察。合并同类信息，提炼规律和偏好，不要逐条罗列原始数据。如果信息不足以归纳就回复\"无\"。请只输出 JSON 格式。"
+const extractSystemPrompt = "你是记忆提取助手。从对话中归纳出关于用户的有价值的洞察。合并同类信息，提炼规律和偏好，不要逐条罗列原始数据。如果信息不足以归纳就回复\"无\"。请只输出 JSON 格式。重要：将\"今天\"、\"昨天\"、\"上周\"等相对时间转换为绝对日期（如 2026-05-12）。"
 
 const extractPromptPrefix = "从以下对话中归纳关于用户的事实、偏好、习惯。合并同类信息，提炼出有价值的洞察（如消费水平、周期规律、分类偏好），不要逐条复述原始消息。如果没有值得提取的信息就回复\"无\"。\n请严格按以下 JSON 格式输出，不要包含其他内容：\n{\"summary\":\"一句话概括\",\"facts\":[\"支持细节1\",\"支持细节2\"]}"
 
@@ -77,7 +77,8 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, m.Content))
 	}
 
-	prompt := extractPromptPrefix + "\n\n" + sb.String()
+	now := time.Now().Format("2006-01-02 15:04:05 Monday")
+	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, sb.String())
 	promptHash := hashPrompt(prompt)
 
 	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
@@ -130,7 +131,8 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, promptT
 		return
 	}
 
-	prompt := extractPromptPrefix + "\n\n" + promptText
+	now := time.Now().Format("2006-01-02 15:04:05 Monday")
+	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, promptText)
 
 	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
 		SystemPrompt: extractSystemPrompt,

@@ -82,10 +82,17 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			return
 		}
 
+		var messages []llm.Message
+		if req.DeepMode {
+			messages = agent.BuildMessagesForPro(history)
+		} else {
+			messages = agent.BuildMessagesForFlash(history)
+		}
+
 		events, err := orch.Run(context.Background(), &agent.RunRequest{
 			UserID:             userID,
 			ConversationID:     conv.ID,
-			Messages:           buildLLMMessages(history),
+			Messages:           messages,
 			DeepMode:           req.DeepMode,
 			UserMessageContent: req.Message,
 			AgentSystemPrompt:  agentSystemPrompt,

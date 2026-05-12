@@ -9,7 +9,7 @@ Thumbs.db
 *.swo
 
 # Build
-xhan-helper
+/dist/
 /tmp/
 
 # SQLite
@@ -35,3 +35,7 @@ nginx.conf
 .claude
 
 front-end/node_modules/
+
+*.code-workspace
+
+*.db_bak

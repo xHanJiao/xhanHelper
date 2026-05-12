@@ -1,0 +1,158 @@
+package tool
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+)
+
+// ==================== 策略接口 ====================
+
+// ToolRetrieveStrategy 工具检索策略接口
+type ToolRetrieveStrategy interface {
+	// Name 策略名称
+	Name() string
+	// Search 搜索相关工具
+	Search(ctx context.Context, query string, limit int) ([]ToolInfo, error)
+}
+
+// ToolInfo 工具信息（用于返回给 LLM）
+type ToolInfo struct {
+	ID          string                 `json:"id"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Category    string                 `json:"category"`
+	Functions   []ToolFunctionInfo     `json:"functions"`
+	Score       float64                `json:"score,omitempty"`
+}
+
+// ToolFunctionInfo 工具函数信息
+type ToolFunctionInfo struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
+}
+
+// ==================== 具体策略实现 ====================
+
+// SimpleKeywordStrategy 简单关键词匹配策略（默认）
+type SimpleKeywordStrategy struct {
+	// 可以注入依赖的 repo
+}
+
+// NewSimpleKeywordStrategy 创建简单关键词策略
+func NewSimpleKeywordStrategy() *SimpleKeywordStrategy {
+	return &SimpleKeywordStrategy{}
+}
+
+func (s *SimpleKeywordStrategy) Name() string {
+	return "keyword"
+}
+
+func (s *SimpleKeywordStrategy) Search(ctx context.Context, query string, limit int) ([]ToolInfo, error) {
+	log.Printf("[ToolRetriever] keyword search: query=%q", query)
+	// TODO: 实现关键词匹配逻辑
+	return []ToolInfo{}, nil
+}
+
+// ==================== 策略持有者 ====================
+
+// ToolRetriever 工具检索工具（支持策略切换）
+type ToolRetriever struct {
+	strategy ToolRetrieveStrategy
+}
+
+// NewToolRetriever 创建 ToolRetriever（使用默认策略）
+func NewToolRetriever() *ToolRetriever {
+	return &ToolRetriever{
+		strategy: NewSimpleKeywordStrategy(),
+	}
+}
+
+// NewToolRetrieverWithStrategy 使用指定策略创建
+func NewToolRetrieverWithStrategy(strategy ToolRetrieveStrategy) *ToolRetriever {
+	return &ToolRetriever{
+		strategy: strategy,
+	}
+}
+
+// SetStrategy 切换策略
+func (t *ToolRetriever) SetStrategy(strategy ToolRetrieveStrategy) {
+	log.Printf("[ToolRetriever] switch strategy: %s -> %s", t.strategy.Name(), strategy.Name())
+	t.strategy = strategy
+}
+
+// Strategy 获取当前策略
+func (t *ToolRetriever) Strategy() ToolRetrieveStrategy {
+	return t.strategy
+}
+
+// ==================== Tool 接口实现 ====================
+
+func (t *ToolRetriever) Name() string {
+	return "tool_retriever"
+}
+
+func (t *ToolRetriever) Description() string {
+	return fmt.Sprintf("根据用户需求检索相关工具 (当前策略: %s)", t.strategy.Name())
+}
+
+func (t *ToolRetriever) Functions() []FuncSchema {
+	return []FuncSchema{
+		{
+			Name:        "search",
+			Description: "搜索相关工具",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "描述需要工具做什么",
+					},
+					"limit": map[string]interface{}{
+						"type":        "integer",
+						"description": "最多返回多少个工具，默认 5",
+						"default":     5,
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
+	}
+}
+
+func (t *ToolRetriever) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
+	if funcName != "search" {
+		return &Result{Success: false, Error: "unknown function: " + funcName}
+	}
+
+	var req struct {
+		Query string `json:"query"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil {
+		return &Result{Success: false, Error: "invalid args: " + err.Error()}
+	}
+
+	if req.Limit <= 0 {
+		req.Limit = 5
+	}
+
+	log.Printf("[ToolRetriever] search: strategy=%s query=%q limit=%d",
+		t.strategy.Name(), req.Query, req.Limit)
+
+	tools, err := t.strategy.Search(ec.Ctx, req.Query, req.Limit)
+	if err != nil {
+		log.Printf("[ToolRetriever] search error: %v", err)
+		return &Result{Success: false, Error: err.Error()}
+	}
+
+	resJSON, _ := json.Marshal(map[string]interface{}{
+		"tools":    tools,
+		"strategy": t.strategy.Name(),
+		"query":    req.Query,
+	})
+
+	return &Result{Success: true, Data: resJSON}
+}

@@ -13,6 +13,12 @@ type Config struct {
 	DB        DBConfig        `yaml:"db"`
 	LLM       LLMConfig       `yaml:"llm"`
 	Embedding EmbeddingConfig `yaml:"embedding"`
+	Snowflake SnowflakeConfig `yaml:"snowflake"`
+}
+
+// SnowflakeConfig — Snowflake ID 配置
+type SnowflakeConfig struct {
+	NodeID int64 `yaml:"node_id"`
 }
 
 // ServerConfig — HTTP 服务配置
@@ -181,6 +187,9 @@ func merge(dst, src *Config) {
 	if src.Embedding.Model != "" {
 		dst.Embedding.Model = src.Embedding.Model
 	}
+	if src.Snowflake.NodeID != 0 {
+		dst.Snowflake.NodeID = src.Snowflake.NodeID
+	}
 }
 
 // resolveEnvVars 对字符串字段再做一次 ${VAR} 展开（处理 env YAML 覆盖引入的新占位符）
@@ -202,6 +211,10 @@ func validate(cfg *Config) error {
 	}
 	if cfg.LLM.APIKey == "" {
 		return fmt.Errorf("llm.api_key is required (set LLM_API_KEY env var)")
+	}
+	// Snowflake 默认值
+	if cfg.Snowflake.NodeID == 0 {
+		cfg.Snowflake.NodeID = 1
 	}
 	return nil
 }

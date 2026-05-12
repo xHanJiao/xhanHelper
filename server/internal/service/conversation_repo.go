@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -91,4 +92,80 @@ func (r *ConversationRepo) Touch(ctx context.Context, id string) error {
 func (r *ConversationRepo) SoftDelete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).
 		Where("id = ?", id).Update("is_deleted", true).Error
+}
+
+// GetExtra — 读取会话的 extra 数据
+func (r *ConversationRepo) GetExtra(ctx context.Context, convID string) (*model.ConversationExtra, error) {
+	var c model.Conversation
+	if err := r.db.WithContext(ctx).Where("id = ?", convID).Select("extra").First(&c).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var extra model.ConversationExtra
+	if c.Extra == "" || c.Extra == "{}" {
+		return &extra, nil
+	}
+
+	if err := json.Unmarshal([]byte(c.Extra), &extra); err != nil {
+		return nil, err
+	}
+
+	return &extra, nil
+}
+
+// SaveExtra — 保存会话的 extra 数据
+func (r *ConversationRepo) SaveExtra(ctx context.Context, convID string, extra *model.ConversationExtra) error {
+	var extraJSON string
+	if extra != nil {
+		b, err := json.Marshal(extra)
+		if err != nil {
+			return err
+		}
+		extraJSON = string(b)
+	} else {
+		extraJSON = "{}"
+	}
+
+	return r.db.WithContext(ctx).Model(&model.Conversation{}).
+		Where("id = ?", convID).Update("extra", extraJSON).Error
+}
+
+// AddUsedTool — 记录使用过的工具
+func (r *ConversationRepo) AddUsedTool(ctx context.Context, convID, toolID string) error {
+	extra, err := r.GetExtra(ctx, convID)
+	if err != nil {
+		return err
+	}
+	if extra == nil {
+		extra = &model.ConversationExtra{}
+	}
+
+	// 去重
+	exists := false
+	for _, id := range extra.UsedToolIDs {
+		if id == toolID {
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		extra.UsedToolIDs = append(extra.UsedToolIDs, toolID)
+		return r.SaveExtra(ctx, convID, extra)
+	}
+	return nil
+}
+
+// GetUsedToolIDs — 获取使用过的工具 id 列表
+func (r *ConversationRepo) GetUsedToolIDs(ctx context.Context, convID string) ([]string, error) {
+	extra, err := r.GetExtra(ctx, convID)
+	if err != nil {
+		return nil, err
+	}
+	if extra == nil {
+		return []string{}, nil
+	}
+	return extra.UsedToolIDs, nil
 }

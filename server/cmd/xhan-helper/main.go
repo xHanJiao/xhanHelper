@@ -14,6 +14,7 @@ import (
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/controller"
+	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/middleware"
 	"xhan-helper/internal/model"
@@ -27,6 +28,11 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal("load config:", err)
+	}
+
+	// 初始化 ID 生成器
+	if err := idgen.Init(cfg.Snowflake.NodeID); err != nil {
+		log.Fatal("init idgen:", err)
 	}
 
 	log.Printf("[config] env=%s server.port=%d server.mode=%s",

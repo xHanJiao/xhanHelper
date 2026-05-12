@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -134,7 +135,15 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, client llm.LLMClient,
 		}
 	}
 	sysPrompt += "\n当前时间: " + time.Now().Format("2006-01-02 15:04:05 Monday")
-	prompt := client.BuildSystemPrompt(sysPrompt, o.registry.GetLLMTools())
+
+	var prompt string
+	if req.DeepMode && o.proClient != nil {
+		// ProClient: 使用原生 function calling，传递工具定义
+		prompt = client.BuildSystemPrompt(sysPrompt, o.registry.GetLLMTools())
+	} else {
+		// FlashClient: 使用 Registry.GeneratePrompt() 生成详细 prompt（含输出格式说明）
+		prompt = sysPrompt + o.registry.GeneratePrompt()
+	}
 
 	if o.retriever == nil || o.embedder == nil {
 		return prompt, "", nil, nil, nil
@@ -210,10 +219,14 @@ func (o *Orchestrator) runReActLoop(
 		}
 
 		// — 流式调用 LLM，实时转发 text/thought 到客户端 —
+		var tools []llm.ToolDefinition
+		if req.DeepMode && o.proClient != nil {
+			tools = o.registry.GetLLMTools()
+		}
 		streamEvents, err := client.Chat(ctx, &llm.ChatRequest{
 			SystemPrompt: sysPrompt,
 			Messages:     msgs,
-			Tools:        o.registry.GetLLMTools(),
+			Tools:        tools,
 		})
 		if err != nil {
 			log.Printf("[orch] round %d LLM error: %v", iter+1, err)
@@ -223,11 +236,15 @@ func (o *Orchestrator) runReActLoop(
 
 		var streamContent, streamReasoning strings.Builder
 		hasReasoning := false
+		isFlashClient := !(req.DeepMode && o.proClient != nil)
 		for se := range streamEvents {
 			switch se.Type {
 			case "text_delta":
 				streamContent.WriteString(se.Content)
-				o.sendEvent(events, se)
+				// FlashClient 模式下不直接转发 text_delta，等解析出 reply 再发
+				if !isFlashClient {
+					o.sendEvent(events, se)
+				}
 			case "thought_delta":
 				streamReasoning.WriteString(se.Content)
 				hasReasoning = true
@@ -372,6 +389,16 @@ func (o *Orchestrator) handleFlashResponse(
 	// 嵌入 tool_calls → 执行 → 继续下一轮
 	log.Printf("[orch] round embedded tool_calls=%d: %s",
 		len(parsed.ToolCalls), tool.ToolCallNames(parsed.ToolCalls))
+
+	// 把 reply 字段内容推送给前端
+	if parsed.Reply != "" {
+		o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: parsed.Reply})
+	}
+
+	// 保存 assistant 消息（带 ToolCallsJSON）
+	assistantMsgID := o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg)
+
+	// 添加到内存消息
 	*msgs = append(*msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	*allToolCalls = append(*allToolCalls, parsed.ToolCalls...)
 
@@ -380,12 +407,24 @@ func (o *Orchestrator) handleFlashResponse(
 	for i := range parsed.ToolCalls {
 		resJSON, _ := json.Marshal(results[i].result)
 		events <- &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)}
+
+		// 生成 tool_call_id
+		toolCallID := idgen.Next()
+
+		// 保存 tool 消息（标准格式）
+		o.saveToolMsgWithID(ctx, req.ConversationID, req.UserID, toolCallID, string(resJSON))
+
+		// 添加到内存消息（Flash 格式：包装成 user 消息）
 		*msgs = append(*msgs, llm.Message{
 			Role:    "user",
 			Content: "[工具执行结果] " + string(resJSON),
 		})
+
+		log.Printf("[orch] saved tool message: tool_call_id=%s", toolCallID)
 	}
-	return false, ""
+
+	// 返回 false 表示继续下一轮
+	return false, assistantMsgID
 }
 
 // —— 并发执行 ——
@@ -483,15 +522,74 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCall
 		return
 	}
 	tcid := toolCallID
+	msgID := uuid.New().String()
 	o.msgRepo.Create(ctx, &model.Message{
 		UserID:         userID,
-		ID:             uuid.New().String(),
+		ID:             msgID,
 		ConversationID: convID,
 		Role:           "tool",
 		Content:        content,
 		ToolCallID:     &tcid,
 	})
 	o.convRepo.Touch(ctx, convID)
+	log.Printf("[orch] saved tool message: id=%s tool_call_id=%s", msgID, toolCallID)
+}
+
+// 保留 saveToolMsgWithID 供后续统一迁移用
+func (o *Orchestrator) saveToolMsgWithID(ctx context.Context, convID, userID, toolCallID string, content string) {
+	o.saveToolMsg(ctx, convID, userID, toolCallID, content)
+}
+
+// BuildMessagesForFlash 将数据库标准消息转换为 FlashClient 格式
+func BuildMessagesForFlash(history []model.Message) []llm.Message {
+	msgs := make([]llm.Message, 0, len(history))
+	for _, m := range history {
+		if m.Role == "tool" {
+			// FlashClient 不支持 role="tool"，包装成 user 消息
+			msgs = append(msgs, llm.Message{
+				Role:    "user",
+				Content: "[工具执行结果] " + m.Content,
+			})
+		} else {
+			msg := llm.Message{Role: m.Role, Content: m.Content}
+			if m.ReasoningContent != nil {
+				msg.ReasoningContent = *m.ReasoningContent
+			}
+			if m.ToolCallID != nil {
+				msg.ToolCallID = *m.ToolCallID
+			}
+			if m.ToolCallsJSON != nil {
+				var tcs []llm.ToolCall
+				if err := json.Unmarshal([]byte(*m.ToolCallsJSON), &tcs); err == nil {
+					msg.ToolCalls = tcs
+				}
+			}
+			msgs = append(msgs, msg)
+		}
+	}
+	return msgs
+}
+
+// BuildMessagesForPro 将数据库标准消息转换为 ProClient 格式（原样）
+func BuildMessagesForPro(history []model.Message) []llm.Message {
+	msgs := make([]llm.Message, 0, len(history))
+	for _, m := range history {
+		msg := llm.Message{Role: m.Role, Content: m.Content}
+		if m.ReasoningContent != nil {
+			msg.ReasoningContent = *m.ReasoningContent
+		}
+		if m.ToolCallID != nil {
+			msg.ToolCallID = *m.ToolCallID
+		}
+		if m.ToolCallsJSON != nil {
+			var tcs []llm.ToolCall
+			if err := json.Unmarshal([]byte(*m.ToolCallsJSON), &tcs); err == nil {
+				msg.ToolCalls = tcs
+			}
+		}
+		msgs = append(msgs, msg)
+	}
+	return msgs
 }
 
 func (o *Orchestrator) saveUserMsgEmbedding(userMsgID string, vec []float64, userID, convID string) {
@@ -576,6 +674,11 @@ func parseLLMResponse(text string) *LLMResponse {
 
 	if resp.ToolCalls == nil {
 		resp.ToolCalls = []tool.ToolCall{}
+	}
+
+	// 修剪函数名前的下划线
+	for i, tc := range resp.ToolCalls {
+		resp.ToolCalls[i].Function = strings.TrimPrefix(tc.Function, "_")
 	}
 
 	return &resp

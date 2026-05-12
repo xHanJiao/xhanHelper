@@ -205,6 +205,10 @@ async function handleSend() {
 
   chat.addMessage({ id: Date.now().toString(), role: 'user', content })
   inputValue.value = ''
+  // 把当前会话移到列表最前面
+  if (chat.conversationId && currentTitle.value) {
+    convs.prepend({ id: chat.conversationId, title: currentTitle.value })
+  }
   scrollToBottom()
 
   await sendMessage(content, {

@@ -56,6 +56,23 @@ func (r *MessageRepo) ListByConversation(ctx context.Context, convID string, lim
 	return list, err
 }
 
+// ListByConversationRecent 获取会话最近 N 条消息，按时间正序返回
+func (r *MessageRepo) ListByConversationRecent(ctx context.Context, convID string, limit int) ([]model.Message, error) {
+	var list []model.Message
+	err := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND status = ?", convID, 1).
+		Order("created_at DESC").Limit(limit).
+		Find(&list).Error
+	if err != nil {
+		return nil, err
+	}
+	// 反转回时间正序
+	for i, j := 0, len(list)-1; i < j; i, j = i+1, j-1 {
+		list[i], list[j] = list[j], list[i]
+	}
+	return list, nil
+}
+
 // ListByConversationSince 获取指定消息之后的消息（按时间正序，不含 sinceID 自身）
 func (r *MessageRepo) ListByConversationSince(ctx context.Context, convID, sinceID string, limit int) ([]model.Message, error) {
 	var since model.Message

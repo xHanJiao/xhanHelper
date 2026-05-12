@@ -66,7 +66,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			}
 		}
 
-		history, err := msgRepo.ListByConversation(c.Request.Context(), conv.ID, 20)
+		history, err := msgRepo.ListByConversationRecent(c.Request.Context(), conv.ID, 100)
 		if err != nil {
 			log.Printf("[chat] ListByConversation error: %v", err)
 		}

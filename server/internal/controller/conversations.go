@@ -2,9 +2,7 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -136,48 +134,17 @@ func cleanMessages(msgs []model.Message) []model.Message {
 
 // extractFlashReply 从 Flash LLM 的 JSON 输出中提取 reply 字段 + JSON 前的纯文本
 func extractFlashReply(content string) string {
-	cleaned := strings.TrimSpace(content)
-	cleaned = strings.TrimPrefix(cleaned, "```json")
-	cleaned = strings.TrimPrefix(cleaned, "```")
-	cleaned = strings.TrimSpace(cleaned)
-
-	idx := strings.Index(cleaned, "{")
-	if idx < 0 {
-		return ""
-	}
-	prefix := strings.TrimSpace(cleaned[:idx])
-
 	var parsed struct {
 		Reply string `json:"reply"`
 	}
-	end := findClosingBrace(cleaned, idx)
-	if err := json.Unmarshal([]byte(cleaned[idx:end+1]), &parsed); err != nil {
-		return ""
+	prefix, err := agent.ParseFlashJSON(content, &parsed)
+	if err != nil || parsed.Reply == "" {
+		return prefix
 	}
-	if prefix != "" && parsed.Reply != "" {
+	if prefix != "" {
 		return prefix + "\n\n" + parsed.Reply
 	}
-	if parsed.Reply != "" {
-		return parsed.Reply
-	}
-	return prefix
-}
-
-// findClosingBrace 从 start 位置找到匹配的 }
-func findClosingBrace(s string, start int) int {
-	depth := 0
-	for i := start; i < len(s); i++ {
-		switch s[i] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-	return len(s) - 1
+	return parsed.Reply
 }
 
 func deleteMessage(msgRepo *service.MessageRepo, convRepo *service.ConversationRepo) gin.HandlerFunc {

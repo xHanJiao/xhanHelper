@@ -537,7 +537,10 @@ func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID stri
 	if msg.ResponseJSON != nil {
 		modelMsg.ResponseJSON = msg.ResponseJSON
 	}
-	o.msgRepo.Create(ctx, modelMsg)
+	if err := o.msgRepo.Create(ctx, modelMsg); err != nil {
+		log.Printf("[orch] save assistant msg error: %v", err)
+		return ""
+	}
 	o.convRepo.Touch(ctx, convID)
 	return mid
 }
@@ -548,7 +551,7 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCall
 	}
 	tcid := toolCallID
 	msgID := uuid.New().String()
-	o.msgRepo.Create(ctx, &model.Message{
+	if err := o.msgRepo.Create(ctx, &model.Message{
 		UserID:         userID,
 		ID:             msgID,
 		ConversationID: convID,
@@ -556,7 +559,10 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCall
 		Content:        content,
 		ToolCallID:     &tcid,
 		IsInternal:     true,
-	})
+	}); err != nil {
+		log.Printf("[orch] save tool msg error: %v", err)
+		return
+	}
 	o.convRepo.Touch(ctx, convID)
 	log.Printf("[orch] saved tool message: id=%s tool_call_id=%s", msgID, toolCallID)
 }
@@ -680,33 +686,17 @@ func (o *Orchestrator) GenerateTitle(ctx context.Context, userMessage string) st
 }
 
 func parseLLMResponse(text string) *LLMResponse {
-	cleaned := strings.TrimSpace(text)
-	cleaned = strings.TrimPrefix(cleaned, "```json")
-	cleaned = strings.TrimPrefix(cleaned, "```")
-	cleaned = strings.TrimSuffix(cleaned, "```")
-	cleaned = strings.TrimSpace(cleaned)
-
-	start := strings.Index(cleaned, "{")
-	if start < 0 {
-		return nil
-	}
-
-	jsonStr := cleaned[start:]
-
 	var resp LLMResponse
-	if err := json.Unmarshal([]byte(jsonStr), &resp); err != nil {
+	_, err := ParseFlashJSON(text, &resp)
+	if err != nil || resp.ToolCalls == nil && resp.Reply == "" {
 		return nil
 	}
-
 	if resp.ToolCalls == nil {
 		resp.ToolCalls = []tool.ToolCall{}
 	}
-
-	// 修剪函数名前的下划线
 	for i, tc := range resp.ToolCalls {
 		resp.ToolCalls[i].Function = strings.TrimPrefix(tc.Function, "_")
 	}
-
 	return &resp
 }
 

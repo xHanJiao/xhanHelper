@@ -173,19 +173,9 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, promptT
 
 // parseExtractResult 从 LLM 回复中解析 JSON
 func parseExtractResult(text string) *extractResult {
-	cleaned := strings.TrimSpace(text)
-	cleaned = strings.TrimPrefix(cleaned, "```json")
-	cleaned = strings.TrimPrefix(cleaned, "```")
-	cleaned = strings.TrimSuffix(cleaned, "```")
-	cleaned = strings.TrimSpace(cleaned)
-
-	start := strings.Index(cleaned, "{")
-	if start < 0 {
-		return nil
-	}
-
 	var result extractResult
-	if err := json.Unmarshal([]byte(cleaned[start:]), &result); err != nil {
+	_, err := ParseFlashJSON(text, &result)
+	if err != nil {
 		return nil
 	}
 	return &result

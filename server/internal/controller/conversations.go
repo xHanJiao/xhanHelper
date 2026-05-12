@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"log"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -33,7 +34,10 @@ func listConversations(convRepo *service.ConversationRepo, agentRepo *service.Ag
 				}
 			}
 			if len(ids) > 0 {
-				agents, _ := agentRepo.FindByIDs(c.Request.Context(), ids)
+				agents, err := agentRepo.FindByIDs(c.Request.Context(), ids)
+				if err != nil {
+					log.Printf("[conv] FindByIDs error: %v", err)
+				}
 				for _, a := range agents {
 					agentNames[a.ID] = a.Name
 				}
@@ -204,7 +208,10 @@ func extractMemories(convRepo *service.ConversationRepo, extractor *agent.Memory
 		if !requireConversationOwner(c, convRepo, convID) {
 			return
 		}
-		conv, _ := convRepo.FindByID(c.Request.Context(), convID)
+		conv, err := convRepo.FindByID(c.Request.Context(), convID)
+		if err != nil {
+			log.Printf("[conv] FindByID error: %v", err)
+		}
 		if conv == nil {
 			view.JSONError(c, 404, "conversation not found")
 			return

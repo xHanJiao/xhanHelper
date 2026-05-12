@@ -65,7 +65,10 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float64, error) {
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read embedding response: %w", err)
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("embedding status %d: %s", resp.StatusCode, string(respBody[:min(1000, len(respBody))]))
 	}

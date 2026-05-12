@@ -189,15 +189,21 @@ func (o *Orchestrator) runReActLoop(
 		s := string(b)
 		mIDs = &s
 	}
-	o.msgRepo.Create(ctx, &model.Message{
+	if err := o.msgRepo.Create(ctx, &model.Message{
 		ID:             userMsgID,
 		ConversationID: req.ConversationID,
 		UserID:         req.UserID,
 		Role:           "user",
 		Content:        req.UserMessageContent,
 		MemoryIDs:      mIDs,
-	})
-	o.convRepo.Touch(ctx, req.ConversationID)
+	}); err != nil {
+		log.Printf("[orch] save user msg error: %v", err)
+		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: "failed to save message"})
+		return
+	}
+	if err := o.convRepo.Touch(ctx, req.ConversationID); err != nil {
+		log.Printf("[orch] touch conv error: %v", err)
+	}
 
 	if o.vectorStore != nil && len(queryVec) > 0 && o.embeddingRepo != nil {
 		go o.saveUserMsgEmbedding(userMsgID, queryVec, req.UserID, req.ConversationID)
@@ -541,7 +547,9 @@ func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID stri
 		log.Printf("[orch] save assistant msg error: %v", err)
 		return ""
 	}
-	o.convRepo.Touch(ctx, convID)
+	if err := o.convRepo.Touch(ctx, convID); err != nil {
+		log.Printf("[orch] touch conv error: %v", err)
+	}
 	return mid
 }
 
@@ -563,7 +571,9 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCall
 		log.Printf("[orch] save tool msg error: %v", err)
 		return
 	}
-	o.convRepo.Touch(ctx, convID)
+	if err := o.convRepo.Touch(ctx, convID); err != nil {
+		log.Printf("[orch] touch conv error: %v", err)
+	}
 	log.Printf("[orch] saved tool message: id=%s tool_call_id=%s", msgID, toolCallID)
 }
 

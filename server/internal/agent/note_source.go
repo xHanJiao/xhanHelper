@@ -113,7 +113,10 @@ func (s *NoteSource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 		}
 		for _, n := range notes {
 			// 检查是否已有向量
-			existingEmb, _ := s.embeddingRepo.GetByEntity(ctx, model.EntityTypeNote, n.ID)
+			existingEmb, err := s.embeddingRepo.GetByEntity(ctx, model.EntityTypeNote, n.ID)
+			if err != nil {
+				log.Printf("[vector] note warmup: GetByEntity error for %s: %v", n.ID, err)
+			}
 			if existingEmb != nil && existingEmb.Embedding != nil {
 				continue // 已有，跳过
 			}

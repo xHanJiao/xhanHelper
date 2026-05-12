@@ -54,7 +54,11 @@ func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, userID, c
 		log.Printf("[vector] msg hit: conv=%s, score=%.4f",
 			msg.ConversationID[:min(8, len(msg.ConversationID))], res.Score)
 
-		history, _ := s.msgRepo.ListByConversation(ctx, msg.ConversationID, 20)
+		history, err := s.msgRepo.ListByConversation(ctx, msg.ConversationID, 20)
+		if err != nil {
+			log.Printf("[history] ListByConversation error: %v", err)
+			continue
+		}
 		text := formatHistoryContext(history, msgID)
 		if text == "" {
 			continue

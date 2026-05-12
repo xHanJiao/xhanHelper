@@ -123,8 +123,11 @@ func (c *baseClient) callStreamAPI(ctx context.Context, req *ChatRequest, model 
 		return nil, fmt.Errorf("stream request: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("stream status %d (failed to read body: %v)", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("stream status %d: %s", resp.StatusCode, string(body[:min(1000, len(body))]))
 	}
 

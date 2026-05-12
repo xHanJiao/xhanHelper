@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"log"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -84,7 +85,10 @@ func (h *ToolHandler) UpdateTool(c *gin.Context) {
 		view.JSONError(c, 500, "update tool failed")
 		return
 	}
-	updated, _ := h.toolRepo.FindToolByID(c.Request.Context(), id, userID)
+	updated, err := h.toolRepo.FindToolByID(c.Request.Context(), id, userID)
+	if err != nil {
+		log.Printf("[tool] FindToolByID after update error: %v", err)
+	}
 	view.JSONOK(c, updated)
 }
 

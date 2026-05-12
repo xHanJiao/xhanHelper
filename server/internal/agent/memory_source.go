@@ -113,7 +113,10 @@ func (s *MemorySource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 		}
 		for _, m := range memories {
 			// 检查是否已有向量
-			existingEmb, _ := s.embeddingRepo.GetByEntity(ctx, model.EntityTypeMemory, m.ID)
+			existingEmb, err := s.embeddingRepo.GetByEntity(ctx, model.EntityTypeMemory, m.ID)
+			if err != nil {
+				log.Printf("[vector] mem warmup: GetByEntity error for %s: %v", m.ID, err)
+			}
 			if existingEmb != nil && existingEmb.Embedding != nil {
 				continue // 已有，跳过
 			}

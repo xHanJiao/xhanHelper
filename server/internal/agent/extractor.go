@@ -126,7 +126,11 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 // ExtractFromPrompt 从任意文本中提取记忆（CSV 导入等场景）
 func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, promptText, source string) {
 	promptHash := hashPrompt(promptText)
-	if existing, _ := e.memRepo.FindByPromptHash(ctx, userID, promptHash); existing != nil {
+	existing, err := e.memRepo.FindByPromptHash(ctx, userID, promptHash)
+	if err != nil {
+		log.Printf("[memory] FindByPromptHash error: %v", err)
+	}
+	if existing != nil {
 		log.Printf("[memory] prompt hash matched, skip extraction (source=%s)", source)
 		return
 	}
@@ -184,7 +188,11 @@ func parseExtractResult(text string) *extractResult {
 func (e *MemoryExtractor) isDuplicate(ctx context.Context, userID, text string) bool {
 	// 1. 先尝试用 content_hash 做精确去重
 	contentHash := hashPrompt(text)
-	if existing, _ := e.memRepo.FindByContentHash(ctx, userID, contentHash); existing != nil {
+	existing, err := e.memRepo.FindByContentHash(ctx, userID, contentHash)
+	if err != nil {
+		log.Printf("[memory] FindByContentHash error: %v", err)
+	}
+	if existing != nil {
 		return true
 	}
 
@@ -244,7 +252,9 @@ func (e *MemoryExtractor) updateProgress(ctx context.Context, conv *model.Conver
 	now := time.Now()
 	conv.LastExtractedMsgID = &lastMsgID
 	conv.LastExtractedAt = &now
-	e.convRepo.Update(ctx, conv)
+	if err := e.convRepo.Update(ctx, conv); err != nil {
+		log.Printf("[memory] update progress error: %v", err)
+	}
 }
 
 func hashPrompt(text string) string {

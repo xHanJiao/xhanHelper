@@ -17,6 +17,7 @@ Thumbs.db
 
 # Go
 /server/vendor/
+/server/dist/
 
 # Swift/Xcode
 /client/build/

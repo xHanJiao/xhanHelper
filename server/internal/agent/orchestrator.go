@@ -64,7 +64,6 @@ type Orchestrator struct {
 	embeddingRepo  *service.EmbeddingRepo
 	promptResolver PromptResolver
 	maxIterations  int
-	debugMode      bool
 }
 
 // New 创建 Orchestrator
@@ -94,11 +93,6 @@ func New(flashClient llm.LLMClient, registry *tool.Registry,
 // SetPromptResolver 注入用户自定义 prompt 查找器
 func (o *Orchestrator) SetPromptResolver(r PromptResolver) {
 	o.promptResolver = r
-}
-
-// SetDebugMode 控制是否保存 LLM 原始请求/响应 JSON（仅 dev 环境启用）
-func (o *Orchestrator) SetDebugMode(v bool) {
-	o.debugMode = v
 }
 
 // —— Run ——
@@ -537,13 +531,11 @@ func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID stri
 		s := string(b)
 		modelMsg.ToolCallsJSON = &s
 	}
-	if o.debugMode {
-		if msg.RequestJSON != nil {
-			modelMsg.RequestJSON = msg.RequestJSON
-		}
-		if msg.ResponseJSON != nil {
-			modelMsg.ResponseJSON = msg.ResponseJSON
-		}
+	if msg.RequestJSON != nil {
+		modelMsg.RequestJSON = msg.RequestJSON
+	}
+	if msg.ResponseJSON != nil {
+		modelMsg.ResponseJSON = msg.ResponseJSON
 	}
 	o.msgRepo.Create(ctx, modelMsg)
 	o.convRepo.Touch(ctx, convID)

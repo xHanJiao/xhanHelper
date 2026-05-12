@@ -134,7 +134,6 @@ func main() {
 	memScheduler := agent.NewMemoryScheduler(memExtractor, convRepo)
 	go memScheduler.Start(bgCtx, cfg.Server.MemoryAutoExtract)
 	orch.SetPromptResolver(promptRepo)
-	orch.SetDebugMode(cfg.Server.Mode == "debug")
 
 	// Handlers
 	billHandler := controller.NewBillHandler(billRepo, memExtractor)

@@ -93,12 +93,20 @@ func main() {
 	reg := tool.NewRegistry()
 	reg.Register(tool.NewLoggingWrapper(tool.NewBookkeepingTool(billRepo), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewDatetimeTool(), log.Default()))
-	reg.Register(tool.NewLoggingWrapper(tool.NewUUIDTool(), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewCalculatorTool(), log.Default()))
 
 	// Vector Store
 	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
 	vectorStore := agent.NewVectorStore()
+
+	// Seed 内置工具到 tool_registries 表（幂等）
+	if err := tool.SeedBuiltinTools(context.Background(), toolRepo, embedder, embeddingRepo); err != nil {
+		log.Printf("[seed] SeedBuiltinTools error: %v", err)
+	}
+
+	// tool_retriever: 用关键词策略检索工具
+	toolRetriever := tool.NewToolRetriever(tool.NewSimpleKeywordStrategy(toolRepo))
+	reg.Register(tool.NewLoggingWrapper(toolRetriever, log.Default()))
 
 	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(noteRepo, vectorStore, embedder, embeddingRepo), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewAgentTool(agentRepo), log.Default()))
@@ -126,6 +134,7 @@ func main() {
 	memScheduler := agent.NewMemoryScheduler(memExtractor, convRepo)
 	go memScheduler.Start(bgCtx, cfg.Server.MemoryAutoExtract)
 	orch.SetPromptResolver(promptRepo)
+	orch.SetDebugMode(cfg.Server.Mode == "debug")
 
 	// Handlers
 	billHandler := controller.NewBillHandler(billRepo, memExtractor)

@@ -2,11 +2,14 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
@@ -86,6 +89,7 @@ func getMessages(convRepo *service.ConversationRepo,
 			view.JSONError(c, 500, "query messages failed")
 			return
 		}
+		cleanFlashMessages(msgs)
 		view.JSONOK(c, msgs)
 	}
 }
@@ -105,8 +109,39 @@ func getMessagesCursor(msgRepo *service.MessageRepo, convRepo *service.Conversat
 			view.JSONError(c, 500, "query messages failed")
 			return
 		}
+		cleanFlashMessages(result.Messages)
 		view.JSONOK(c, result)
 	}
+}
+
+// cleanFlashMessages 对 Flash assistant 消息，从 raw JSON 中提取 reply 纯文本
+func cleanFlashMessages(msgs []model.Message) {
+	for i := range msgs {
+		if msgs[i].Role != "assistant" {
+			continue
+		}
+		if reply := extractFlashReply(msgs[i].Content); reply != "" {
+			msgs[i].Content = reply
+		}
+	}
+}
+
+// extractFlashReply 从 Flash LLM 的 JSON 输出中提取 reply 字段
+func extractFlashReply(content string) string {
+	cleaned := strings.TrimSpace(content)
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+	if !strings.HasPrefix(cleaned, "{") {
+		return ""
+	}
+	var parsed struct {
+		Reply string `json:"reply"`
+	}
+	if err := json.Unmarshal([]byte(cleaned), &parsed); err != nil {
+		return ""
+	}
+	return parsed.Reply
 }
 
 func deleteMessage(msgRepo *service.MessageRepo, convRepo *service.ConversationRepo) gin.HandlerFunc {

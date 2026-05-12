@@ -3,17 +3,83 @@ package tool
 import (
 	"context"
 	"log"
+	"sort"
+	"strings"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
 )
 
-// ==================== 向量检索策略（示例） ====================
+// ==================== 关键词检索策略 ====================
+
+// SimpleKeywordStrategy 简单关键词匹配策略（默认）
+type SimpleKeywordStrategy struct {
+	repo ToolRepo
+}
+
+// NewSimpleKeywordStrategy 创建简单关键词策略
+func NewSimpleKeywordStrategy(repo ToolRepo) *SimpleKeywordStrategy {
+	return &SimpleKeywordStrategy{repo: repo}
+}
+
+func (s *SimpleKeywordStrategy) Name() string {
+	return "keyword"
+}
+
+func (s *SimpleKeywordStrategy) SearchHint() string {
+	return "用工具名搜索，如 'bookkeeping'、'calculator'"
+}
+
+func (s *SimpleKeywordStrategy) Search(ctx context.Context, query string, limit int) ([]ToolInfo, error) {
+	log.Printf("[ToolRetriever] keyword search: query=%q", query)
+
+	tools, err := s.repo.ListActiveTools(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	queryLower := strings.ToLower(query)
+	results := make([]ToolInfo, 0)
+
+	for _, t := range tools {
+		nameLower := strings.ToLower(t.Name)
+		descLower := strings.ToLower(t.Description)
+
+		if strings.Contains(nameLower, queryLower) {
+			results = append(results, toolToInfo(t, 1.0))
+		} else if strings.Contains(descLower, queryLower) {
+			results = append(results, toolToInfo(t, 0.5))
+		}
+	}
+
+	// 按分数降序
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	return results, nil
+}
+
+func toolToInfo(t model.ToolRegistry, score float64) ToolInfo {
+	return ToolInfo{
+		ID:          t.ID,
+		Name:        t.Name,
+		Description: t.Description,
+		Category:    t.Category,
+		Score:       score,
+	}
+}
+
+// ==================== 向量检索策略 ====================
 
 // VectorRetrievalStrategy 向量检索策略
 type VectorRetrievalStrategy struct {
-	embedder     *llm.Embedder
-	vectorStore  VectorStore
-	toolRepo     ToolRepo
+	embedder    *llm.Embedder
+	vectorStore VectorStore
+	toolRepo    ToolRepo
 }
 
 // VectorStore 向量存储接口（适配层）
@@ -45,6 +111,10 @@ func (s *VectorRetrievalStrategy) Name() string {
 	return "vector"
 }
 
+func (s *VectorRetrievalStrategy) SearchHint() string {
+	return "用自然语言描述需求，如 '我需要记账'、'帮我管理笔记'"
+}
+
 func (s *VectorRetrievalStrategy) Search(ctx context.Context, query string, limit int) ([]ToolInfo, error) {
 	log.Printf("[ToolRetriever] vector search: query=%q", query)
 
@@ -64,22 +134,21 @@ func (s *VectorRetrievalStrategy) Search(ctx context.Context, query string, limi
 	// 3. 从 repo 加载工具详情
 	results := make([]ToolInfo, 0, len(matches))
 	for _, match := range matches {
-		toolID := match.ID
-		// TODO: 从 repo 加载工具
-		_ = toolID
+		// TODO: 从 repo 按 ID 加载工具详情，此处暂时只返回向量匹配信息
+		_ = match
 	}
 
 	return results, nil
 }
 
-// ==================== 混合策略（示例） ====================
+// ==================== 混合策略 ====================
 
 // HybridRetrievalStrategy 混合检索策略（关键词 + 向量）
 type HybridRetrievalStrategy struct {
 	keywordStrategy *SimpleKeywordStrategy
 	vectorStrategy  *VectorRetrievalStrategy
-	vectorWeight    float64 // 向量结果权重
-	keywordWeight   float64 // 关键词结果权重
+	vectorWeight    float64
+	keywordWeight   float64
 }
 
 // NewHybridRetrievalStrategy 创建混合检索策略
@@ -107,6 +176,10 @@ func (s *HybridRetrievalStrategy) Name() string {
 	return "hybrid"
 }
 
+func (s *HybridRetrievalStrategy) SearchHint() string {
+	return "用工具名或自然语言描述均可，如 'bookkeeping'、'我想记账'"
+}
+
 func (s *HybridRetrievalStrategy) Search(ctx context.Context, query string, limit int) ([]ToolInfo, error) {
 	log.Printf("[ToolRetriever] hybrid search: query=%q (vector=%.2f, keyword=%.2f)",
 		query, s.vectorWeight, s.keywordWeight)
@@ -129,7 +202,6 @@ func (s *HybridRetrievalStrategy) Search(ctx context.Context, query string, limi
 		vectorCh <- result{tools, err}
 	}()
 
-	// 收集结果
 	keywordRes := <-keywordCh
 	vectorRes := <-vectorCh
 
@@ -140,13 +212,11 @@ func (s *HybridRetrievalStrategy) Search(ctx context.Context, query string, limi
 		log.Printf("[ToolRetriever] vector search error: %v", vectorRes.err)
 	}
 
-	// 合并结果（去重 + 加权排序）
 	merged := s.mergeResults(keywordRes.tools, vectorRes.tools, limit)
 	return merged, nil
 }
 
 func (s *HybridRetrievalStrategy) mergeResults(keywordTools, vectorTools []ToolInfo, limit int) []ToolInfo {
-	// 简单的去重合并
 	seen := make(map[string]bool)
 	merged := make([]ToolInfo, 0, limit)
 

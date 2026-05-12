@@ -15,6 +15,8 @@ type ToolRetrieveStrategy interface {
 	Name() string
 	// Search 搜索相关工具
 	Search(ctx context.Context, query string, limit int) ([]ToolInfo, error)
+	// SearchHint 告诉 LLM 如何高效搜索（会出现在 tool_retriever 的描述中）
+	SearchHint() string
 }
 
 // ToolInfo 工具信息（用于返回给 LLM）
@@ -34,28 +36,6 @@ type ToolFunctionInfo struct {
 	Parameters  map[string]interface{} `json:"parameters"`
 }
 
-// ==================== 具体策略实现 ====================
-
-// SimpleKeywordStrategy 简单关键词匹配策略（默认）
-type SimpleKeywordStrategy struct {
-	// 可以注入依赖的 repo
-}
-
-// NewSimpleKeywordStrategy 创建简单关键词策略
-func NewSimpleKeywordStrategy() *SimpleKeywordStrategy {
-	return &SimpleKeywordStrategy{}
-}
-
-func (s *SimpleKeywordStrategy) Name() string {
-	return "keyword"
-}
-
-func (s *SimpleKeywordStrategy) Search(ctx context.Context, query string, limit int) ([]ToolInfo, error) {
-	log.Printf("[ToolRetriever] keyword search: query=%q", query)
-	// TODO: 实现关键词匹配逻辑
-	return []ToolInfo{}, nil
-}
-
 // ==================== 策略持有者 ====================
 
 // ToolRetriever 工具检索工具（支持策略切换）
@@ -63,15 +43,8 @@ type ToolRetriever struct {
 	strategy ToolRetrieveStrategy
 }
 
-// NewToolRetriever 创建 ToolRetriever（使用默认策略）
-func NewToolRetriever() *ToolRetriever {
-	return &ToolRetriever{
-		strategy: NewSimpleKeywordStrategy(),
-	}
-}
-
-// NewToolRetrieverWithStrategy 使用指定策略创建
-func NewToolRetrieverWithStrategy(strategy ToolRetrieveStrategy) *ToolRetriever {
+// NewToolRetriever 创建 ToolRetriever
+func NewToolRetriever(strategy ToolRetrieveStrategy) *ToolRetriever {
 	return &ToolRetriever{
 		strategy: strategy,
 	}
@@ -95,7 +68,7 @@ func (t *ToolRetriever) Name() string {
 }
 
 func (t *ToolRetriever) Description() string {
-	return fmt.Sprintf("根据用户需求检索相关工具 (当前策略: %s)", t.strategy.Name())
+	return fmt.Sprintf("检索可用工具。%s", t.strategy.SearchHint())
 }
 
 func (t *ToolRetriever) Functions() []FuncSchema {
@@ -108,7 +81,7 @@ func (t *ToolRetriever) Functions() []FuncSchema {
 				"properties": map[string]interface{}{
 					"query": map[string]interface{}{
 						"type":        "string",
-						"description": "描述需要工具做什么",
+						"description": "工具名或相关关键词，如 'bookkeeping'、'记账'",
 					},
 					"limit": map[string]interface{}{
 						"type":        "integer",

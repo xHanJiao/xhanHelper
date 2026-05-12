@@ -3,8 +3,6 @@ package tool
 import (
 	"encoding/json"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // DatetimeTool — 获取当前日期时间
@@ -36,24 +34,3 @@ func (t *DatetimeTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 	return &Result{Success: true, Data: data}
 }
 
-// UUIDTool — 生成 UUID
-type UUIDTool struct{}
-
-func NewUUIDTool() *UUIDTool            { return &UUIDTool{} }
-func (t *UUIDTool) Name() string        { return "uuid" }
-func (t *UUIDTool) Description() string { return "生成唯一标识符" }
-
-func (t *UUIDTool) Functions() []FuncSchema {
-	return []FuncSchema{
-		{
-			Name:        "generate",
-			Description: "生成一个 UUID",
-			Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
-		},
-	}
-}
-
-func (t *UUIDTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
-	data, _ := json.Marshal(map[string]string{"uuid": uuid.New().String()})
-	return &Result{Success: true, Data: data}
-}

@@ -84,7 +84,7 @@ async function fetchBills() {
   }
 }
 
-function handleFilter() {
+function handleFilterChange() {
   page.value = 1
   fetchBills()
 }
@@ -162,8 +162,10 @@ onMounted(fetchBills)
             v-model:value="filterDateRange"
             type="daterange"
             clearable
+            size="small"
             style="width: 240px;"
             placeholder="选择日期范围"
+            @update:value="handleFilterChange"
           />
           <NSelect
             v-model:value="filterCategory"
@@ -171,8 +173,9 @@ onMounted(fetchBills)
             :style="{ width: isMobile ? '100px' : '120px' }"
             size="small"
             placeholder="分类"
+            clearable
+            @update:value="handleFilterChange"
           />
-          <NButton size="small" @click="handleFilter">筛选</NButton>
           <NButton v-if="!isMobile" size="small" @click="handleExport">导出</NButton>
         </div>
       </template>
@@ -181,7 +184,7 @@ onMounted(fetchBills)
       ref="contentContainerRef"
       @touchstart="isMobile ? showBar() : null"
       @click="handleContainerClick"
-      style="flex: 1; overflow-y: auto; padding: var(--space-lg);"
+      style="flex: 1; overflow: auto; padding: var(--space-lg);"
     >
       <NDataTable
         :columns="columns"
@@ -189,7 +192,7 @@ onMounted(fetchBills)
         :loading="loading"
         :row-key="rowKey"
         size="small"
-        flex-height
+        :scroll-x="800"
       />
       <div v-if="total > pageSize" style="margin-top: var(--space-md); display: flex; justify-content: center;">
         <NPagination

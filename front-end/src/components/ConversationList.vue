@@ -5,7 +5,6 @@ import { useConversationsStore } from '@/stores/conversations'
 import { useChatStore } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
 import { api } from '@/api/client'
-import { useThemeStore } from '@/stores/theme'
 import { NButton, NPopconfirm, NModal, NInput, useMessage } from 'naive-ui'
 
 const isDev = import.meta.env.DEV
@@ -14,7 +13,6 @@ const router = useRouter()
 const route = useRoute()
 const convs = useConversationsStore()
 const chat = useChatStore()
-const theme = useThemeStore()
 const message = useMessage()
 
 const renameModalVisible = ref(false)
@@ -40,7 +38,11 @@ function handleLoadMore() {
   convs.fetchList(convs.list.length)
 }
 
+const navExpanded = ref(true)
+const historyExpanded = ref(true)
+
 const navItems = [
+  { label: '账单', path: '/bills' },
   { label: '智能体', path: '/agents' },
   { label: '记忆', path: '/memories' },
   { label: '笔记', path: '/notes' },
@@ -116,47 +118,83 @@ async function handleExtractMemories(conv) {
 
 <template>
   <div style="width: 280px; background: var(--color-surface); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; height: 100%;">
-    <!-- 顶部：新对话按钮 -->
-    <div style="padding: var(--space-lg) var(--space-md);">
-      <div style="display: flex; flex-direction: column; gap: var(--space-xs); margin-bottom: var(--space-md);">
-        <button @click="handleNewConversation" style="padding: var(--space-md) var(--space-md); border: none; border-radius: var(--radius-md); background: transparent; color: var(--color-text); font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; transition: background var(--transition-fast);" @mouseover="e => { e.currentTarget.style.background = 'var(--color-surface-hover)'; }" @mouseout="e => { e.currentTarget.style.background = 'transparent'; }">
-          新对话
-        </button>
-        <button @click="theme.toggle()" style="padding: var(--space-md) var(--space-md); border: none; border-radius: var(--radius-md); background: transparent; color: var(--color-text); font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; transition: background var(--transition-fast);" @mouseover="e => { e.currentTarget.style.background = 'var(--color-surface-hover)'; }" @mouseout="e => { e.currentTarget.style.background = 'transparent'; }">
-          {{ theme.isDark ? '亮色模式' : '暗色模式' }}
-        </button>
-      </div>
-    </div>
-
     <!-- 导航区 -->
-    <div style="padding: 0 var(--space-md) var(--space-md);">
+    <div style="padding: var(--space-md) var(--space-md) var(--space-sm);">
       <div
-        v-for="item in navItems"
-        :key="item.path"
-        @click="router.push(item.path)"
+        @click="navExpanded = !navExpanded"
         :style="{
-          padding: 'var(--space-md) var(--space-md)',
+          padding: 'var(--space-sm) var(--space-md)',
           borderRadius: 'var(--radius-md)',
-          marginBottom: 'var(--space-xs)',
+          marginBottom: navExpanded ? 'var(--space-xs)' : '0',
           cursor: 'pointer',
-          fontSize: '14px',
-          color: isNavActive(item.path) ? 'var(--color-primary)' : 'var(--color-text-secondary)',
-          background: isNavActive(item.path) ? 'var(--color-primary-soft)' : 'transparent',
-          fontWeight: isNavActive(item.path) ? '500' : '400',
-          transition: 'background var(--transition-fast), color var(--transition-fast)'
+          fontSize: '13px',
+          color: 'var(--color-text-muted)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--space-xs)',
+          transition: 'background var(--transition-fast)'
         }"
-        @mouseover="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'var(--color-surface-hover)' }"
-        @mouseout="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'transparent' }"
+        @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'"
+        @mouseout="e => e.currentTarget.style.background = 'transparent'"
       >
-        {{ item.label }}
+        <span style="transition: transform 0.2s;" :style="{ transform: navExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }">▾</span>
+        <span>功能</span>
+      </div>
+      <template v-if="navExpanded">
+        <div
+          @click="handleNewConversation"
+          style="padding: var(--space-sm) var(--space-md); border-radius: var(--radius-md); margin-bottom: var(--space-xs); cursor: pointer; font-size: 14px; color: var(--color-text-secondary); font-weight: 400; display: flex; align-items: center;"
+          @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'"
+          @mouseout="e => e.currentTarget.style.background = 'transparent'"
+        >新对话</div>
+        <div
+          v-for="item in navItems"
+          :key="item.path"
+          @click="router.push(item.path)"
+          :style="{
+            padding: 'var(--space-sm) var(--space-md)',
+            borderRadius: 'var(--radius-md)',
+            marginBottom: 'var(--space-xs)',
+            cursor: 'pointer',
+            fontSize: '14px',
+            color: isNavActive(item.path) ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+            background: isNavActive(item.path) ? 'var(--color-primary-soft)' : 'transparent',
+            fontWeight: isNavActive(item.path) ? '500' : '400',
+            transition: 'background var(--transition-fast), color var(--transition-fast)'
+          }"
+          @mouseover="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'var(--color-surface-hover)' }"
+          @mouseout="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'transparent' }"
+        >
+          {{ item.label }}
+        </div>
+      </template>
+    </div>
+
+    <!-- 历史对话 -->
+    <div style="padding: var(--space-sm) var(--space-md) var(--space-sm);">
+      <div
+        @click="historyExpanded = !historyExpanded"
+        :style="{
+          padding: 'var(--space-sm) var(--space-md)',
+          borderRadius: 'var(--radius-md)',
+          marginBottom: historyExpanded ? 'var(--space-xs)' : '0',
+          cursor: 'pointer',
+          fontSize: '13px',
+          color: 'var(--color-text-muted)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--space-xs)',
+          transition: 'background var(--transition-fast)'
+        }"
+        @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'"
+        @mouseout="e => e.currentTarget.style.background = 'transparent'"
+      >
+        <span style="transition: transform 0.2s;" :style="{ transform: historyExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }">▾</span>
+        <span>历史对话</span>
       </div>
     </div>
 
-    <!-- 历史对话标题 -->
-    <div style="padding: 0 var(--space-lg) var(--space-md); color: var(--color-text-muted); font-size: 14px; font-weight: 600;">历史对话</div>
-
-    <!-- 对话列表 -->
-    <div style="flex: 1; overflow-y: auto; padding: 0 var(--space-md);">
+    <div v-if="historyExpanded" style="flex: 1; overflow-y: auto; padding: 0 var(--space-md);">
       <div
         v-for="conv in convs.list"
         :key="conv.id"
@@ -164,7 +202,7 @@ async function handleExtractMemories(conv) {
         @mouseenter="hoveredId = conv.id"
         @mouseleave="handleMouseLeave(conv)"
         :style="{
-          padding: 'var(--space-md) var(--space-md)',
+          padding: 'var(--space-sm) var(--space-md)',
           borderRadius: 'var(--radius-md)',
           marginBottom: 'var(--space-xs)',
           cursor: 'pointer',
@@ -172,16 +210,16 @@ async function handleExtractMemories(conv) {
           alignItems: 'center',
           justifyContent: 'space-between',
           background: activeId === conv.id ? 'var(--color-bg)' : 'transparent',
-          fontWeight: activeId === conv.id ? '600' : '400'
+          fontWeight: activeId === conv.id ? '600' : '400',
+          fontSize: '14px',
+          color: activeId === conv.id ? 'var(--color-primary)' : 'var(--color-text-secondary)'
         }"
         @mouseover="e => e.currentTarget.style.background = activeId === conv.id ? 'var(--color-bg)' : 'var(--color-surface-hover)'"
         @mouseout="e => e.currentTarget.style.background = activeId === conv.id ? 'var(--color-bg)' : 'transparent'"
       >
-        <div style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; color: var(--color-text);">
+        <div style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
           {{ conv.title }}
         </div>
-
-        <!-- 操作按钮 - hover 显示 -->
         <div v-if="hoveredId === conv.id" style="display: flex; gap: var(--space-xs); flex-shrink: 0;">
           <button @click.stop="handleRename(conv)" style="padding: var(--space-xs); border: none; background: none; cursor: pointer; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center;" @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'" @mouseout="e => e.currentTarget.style.background = 'none'">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2">
@@ -209,12 +247,9 @@ async function handleExtractMemories(conv) {
           </NPopconfirm>
         </div>
       </div>
-    </div>
-
-    <div v-if="hasMore" style="padding: var(--space-xs) var(--space-md) var(--space-md); text-align: center;">
-      <NButton text size="small" :loading="convs.loading" @click="handleLoadMore" style="color: var(--color-text-muted);">
-        加载更多
-      </NButton>
+      <div v-if="hasMore" style="padding: var(--space-xs) 0; text-align: center;">
+        <NButton text size="small" :loading="convs.loading" @click="handleLoadMore" style="color: var(--color-text-muted);">加载更多</NButton>
+      </div>
     </div>
   </div>
 

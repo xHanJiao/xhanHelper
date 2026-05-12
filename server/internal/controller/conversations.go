@@ -89,7 +89,7 @@ func getMessages(convRepo *service.ConversationRepo,
 			view.JSONError(c, 500, "query messages failed")
 			return
 		}
-		cleanFlashMessages(msgs)
+		msgs = cleanMessages(msgs)
 		view.JSONOK(c, msgs)
 	}
 }
@@ -109,39 +109,75 @@ func getMessagesCursor(msgRepo *service.MessageRepo, convRepo *service.Conversat
 			view.JSONError(c, 500, "query messages failed")
 			return
 		}
-		cleanFlashMessages(result.Messages)
+		result.Messages = cleanMessages(result.Messages)
 		view.JSONOK(c, result)
 	}
 }
 
-// cleanFlashMessages 对 Flash assistant 消息，从 raw JSON 中提取 reply 纯文本
-func cleanFlashMessages(msgs []model.Message) {
-	for i := range msgs {
-		if msgs[i].Role != "assistant" {
+// cleanMessages 过滤内部消息、清理调试字段、提取 Flash reply
+func cleanMessages(msgs []model.Message) []model.Message {
+	out := make([]model.Message, 0, len(msgs))
+	for _, m := range msgs {
+		if m.IsInternal {
 			continue
 		}
-		if reply := extractFlashReply(msgs[i].Content); reply != "" {
-			msgs[i].Content = reply
+		m.RequestJSON = nil
+		m.ResponseJSON = nil
+		if m.Role == "assistant" {
+			if reply := extractFlashReply(m.Content); reply != "" {
+				m.Content = reply
+				m.ToolCallsJSON = nil
+			}
 		}
+		out = append(out, m)
 	}
+	return out
 }
 
-// extractFlashReply 从 Flash LLM 的 JSON 输出中提取 reply 字段
+// extractFlashReply 从 Flash LLM 的 JSON 输出中提取 reply 字段 + JSON 前的纯文本
 func extractFlashReply(content string) string {
 	cleaned := strings.TrimSpace(content)
 	cleaned = strings.TrimPrefix(cleaned, "```json")
 	cleaned = strings.TrimPrefix(cleaned, "```")
 	cleaned = strings.TrimSpace(cleaned)
-	if !strings.HasPrefix(cleaned, "{") {
+
+	idx := strings.Index(cleaned, "{")
+	if idx < 0 {
 		return ""
 	}
+	prefix := strings.TrimSpace(cleaned[:idx])
+
 	var parsed struct {
 		Reply string `json:"reply"`
 	}
-	if err := json.Unmarshal([]byte(cleaned), &parsed); err != nil {
+	end := findClosingBrace(cleaned, idx)
+	if err := json.Unmarshal([]byte(cleaned[idx:end+1]), &parsed); err != nil {
 		return ""
 	}
-	return parsed.Reply
+	if prefix != "" && parsed.Reply != "" {
+		return prefix + "\n\n" + parsed.Reply
+	}
+	if parsed.Reply != "" {
+		return parsed.Reply
+	}
+	return prefix
+}
+
+// findClosingBrace 从 start 位置找到匹配的 }
+func findClosingBrace(s string, start int) int {
+	depth := 0
+	for i := start; i < len(s); i++ {
+		switch s[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return len(s) - 1
 }
 
 func deleteMessage(msgRepo *service.MessageRepo, convRepo *service.ConversationRepo) gin.HandlerFunc {

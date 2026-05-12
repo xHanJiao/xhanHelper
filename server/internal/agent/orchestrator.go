@@ -555,6 +555,7 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCall
 		Role:           "tool",
 		Content:        content,
 		ToolCallID:     &tcid,
+		IsInternal:     true,
 	})
 	o.convRepo.Touch(ctx, convID)
 	log.Printf("[orch] saved tool message: id=%s tool_call_id=%s", msgID, toolCallID)

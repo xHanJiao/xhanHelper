@@ -71,6 +71,7 @@ func SeedBuiltinTools(ctx context.Context, toolRepo ToolRepo, embedder *llm.Embe
 			ID:          toolID,
 			Name:        seed.Name,
 			Description: seed.Description,
+			SchemaJSON:  "[]",
 			Category:    seed.Category,
 			Status:      "active",
 			UserID:      systemUserID,

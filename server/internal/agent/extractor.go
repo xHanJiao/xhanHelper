@@ -224,8 +224,7 @@ func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			text := memory.MemoryKey + ": " + memory.MemoryValue
-			vec, err := e.embedder.Embed(ctx, text)
+			vec, err := e.embedder.Embed(ctx, memory.MemoryValue)
 			if err != nil {
 				return
 			}

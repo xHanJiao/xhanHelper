@@ -56,7 +56,7 @@ func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, userID, co
 
 	packets := make([]ContextPacket, 0, len(memories))
 	for i, m := range memories {
-		text := fmt.Sprintf("- %s: %s\n", m.MemoryKey, m.MemoryValue)
+		text := fmt.Sprintf("- %s\n", m.MemoryValue)
 		if i == 0 {
 			text = "===== 相关记忆 =====\n" + text
 		}
@@ -118,8 +118,7 @@ func (s *MemorySource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 				continue // 已有，跳过
 			}
 			// 需要生成新向量
-			text := m.MemoryKey + ": " + m.MemoryValue
-			vec, err := embedder.Embed(ctx, text)
+			vec, err := embedder.Embed(ctx, m.MemoryValue)
 			if err != nil {
 				log.Printf("[vector] memory warmup: embed %s error: %v", m.ID[:8], err)
 				continue

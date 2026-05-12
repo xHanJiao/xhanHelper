@@ -429,7 +429,7 @@ func convertToolCalls(tcs []llm.ToolCall) []tool.ToolCall {
 		funcName := tc.Function.Name
 		if idx := strings.LastIndex(tc.Function.Name, "__"); idx > 0 {
 			toolName = tc.Function.Name[:idx]
-			funcName = tc.Function.Name[idx+1:]
+			funcName = tc.Function.Name[idx+2:]
 		}
 		var args json.RawMessage
 		if tc.Function.Arguments != "" {
@@ -550,7 +550,7 @@ func (o *Orchestrator) GenerateTitle(ctx context.Context, userMessage string) st
 	}
 	title := strings.TrimSpace(msg.Content)
 	if len([]rune(title)) > 20 {
-		title = string([]rune(title))[:20]
+		title = string([]rune(title)[:20])
 	}
 	return title
 }

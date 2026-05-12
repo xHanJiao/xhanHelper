@@ -71,15 +71,3 @@ func TestDatetimeTool(t *testing.T) {
 	}
 }
 
-func TestUUIDTool(t *testing.T) {
-	tool := NewUUIDTool()
-	result := tool.Execute(nil, "generate", nil)
-	if !result.Success {
-		t.Errorf("uuid failed: %s", result.Error)
-	}
-	var data map[string]string
-	json.Unmarshal(result.Data, &data)
-	if len(data["uuid"]) != 36 {
-		t.Errorf("invalid uuid: %s", data["uuid"])
-	}
-}

@@ -34,6 +34,7 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 	// 无需认证 — 账号注册/登录
 	r.POST("/api/auth/register", registerUser(userRepo, cfg.Server.RegistrationEnabled, cfg.Server.AllowedUsers, cfg.Server.AdminUsers))
 	r.POST("/api/auth/login", loginUser(userRepo, cfg.Server.AdminUsers))
+	r.GET("/api/files/:filename", downloadMarkdown("data/markdown"))
 
 	// 需要认证
 	auth := r.Group("/api")

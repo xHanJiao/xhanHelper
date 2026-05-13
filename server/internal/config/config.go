@@ -14,6 +14,23 @@ type Config struct {
 	LLM       LLMConfig       `yaml:"llm"`
 	Embedding EmbeddingConfig `yaml:"embedding"`
 	Snowflake SnowflakeConfig `yaml:"snowflake"`
+	MCP       MCPConfig       `yaml:"mcp"`
+}
+
+// MCPServerCfg — 单个 MCP server 配置
+type MCPServerCfg struct {
+	Name            string            `yaml:"name"`
+	Command         string            `yaml:"command"`
+	Args            []string          `yaml:"args"`
+	Env             map[string]string `yaml:"env"`
+	IdleTimeoutSecs int               `yaml:"idle_timeout_secs"`
+	Description     string            `yaml:"description"`
+}
+
+// MCPConfig — MCP 配置
+type MCPConfig struct {
+	MaxConcurrent int            `yaml:"max_concurrent"`
+	Servers       []MCPServerCfg `yaml:"servers"`
 }
 
 // SnowflakeConfig — Snowflake ID 配置

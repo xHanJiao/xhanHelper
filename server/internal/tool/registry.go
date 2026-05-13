@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/mcp"
 	"xhan-helper/internal/model"
 )
 
@@ -22,11 +23,16 @@ type Registry struct {
 	cacheReader   CacheReader
 	cacheWriter   CacheWriter
 	lastLoadTime  time.Time
+	mcpCaller     MCPToolCaller       // MCP Manager，供 RegisterMCPServer 使用
+	mcpServers    map[string][]string // server name → 注册的 tool names，供注销用
 }
 
 // NewRegistry 创建空的注册表
 func NewRegistry() *Registry {
-	return &Registry{tools: make(map[string]Tool)}
+	return &Registry{
+		tools:      make(map[string]Tool),
+		mcpServers: make(map[string][]string),
+	}
 }
 
 // SetDynamicLoader 设置动态工具加载器（由 main.go 调用）
@@ -35,6 +41,74 @@ func (r *Registry) SetDynamicLoader(loader DynamicToolLoader, sidecarURL string,
 	r.sidecarURL = sidecarURL
 	r.cacheReader = cacheReader
 	r.cacheWriter = cacheWriter
+}
+
+// SetMCPCaller 注入 MCP Manager（由 main.go 调用）
+func (r *Registry) SetMCPCaller(caller MCPToolCaller) {
+	r.mcpCaller = caller
+}
+
+// RegisterMCPServer 将 server 的所有工具注册为 MCPToolAdapter
+func (r *Registry) RegisterMCPServer(serverName string, tools []mcp.ToolDef) {
+	if r.mcpCaller == nil {
+		return
+	}
+	names := make([]string, 0, len(tools))
+	for _, def := range tools {
+		adapter := NewMCPToolAdapter(serverName, def, r.mcpCaller)
+		r.Register(adapter)
+		names = append(names, def.Name)
+		log.Printf("[tool] MCP tool registered: %s (server=%s)", def.Name, serverName)
+	}
+	r.mcpServers[serverName] = names
+}
+
+// UnregisterMCPServer 移除 server 的所有工具
+func (r *Registry) UnregisterMCPServer(serverName string) {
+	names := r.mcpServers[serverName]
+	for _, n := range names {
+		delete(r.tools, n)
+	}
+	delete(r.mcpServers, serverName)
+	log.Printf("[tool] MCP server unregistered: %s (%d tools)", serverName, len(names))
+}
+
+// GetMCPSnapshots 返回 MCP 工具快照（供 tool_retriever 使用）
+func (r *Registry) GetMCPSnapshots() map[string][]mcp.ToolDef {
+	if r.mcpCaller == nil {
+		return nil
+	}
+	return r.mcpCaller.GetAllSnapshots()
+}
+
+// SearchTools 在内存中的工具（含 MCP 占位工具）里关键词搜索
+func (r *Registry) SearchTools(query string) []ToolInfo {
+	var results []ToolInfo
+	q := strings.ToLower(query)
+	for name, t := range r.tools {
+		if name == "tool_retriever" {
+			continue
+		}
+		desc := strings.ToLower(t.Description())
+		if strings.Contains(name, q) || strings.Contains(desc, q) {
+			funcs := t.Functions()
+			funcInfos := make([]ToolFunctionInfo, len(funcs))
+			for i, f := range funcs {
+				funcInfos[i] = ToolFunctionInfo{
+					Name:        f.Name,
+					Description: f.Description,
+					Parameters:  f.Parameters,
+				}
+			}
+			results = append(results, ToolInfo{
+				ID:          name,
+				Name:        name,
+				Description: t.Description(),
+				Functions:   funcInfos,
+			})
+		}
+	}
+	return results
 }
 
 // DynamicToolLoader — 动态工具加载器接口（由 service.ToolRepo 实现）

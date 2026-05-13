@@ -245,11 +245,18 @@ func (o *Orchestrator) runReActLoop(
 		var streamContent, streamReasoning strings.Builder
 		hasReasoning := false
 		isFlashClient := !isProMode
+		var lastVisibleLen int
 		for se := range streamEvents {
 			switch se.Type {
 			case "text_delta":
 				streamContent.WriteString(se.Content)
-				if !isFlashClient {
+				if isFlashClient {
+					visible := extractAllVisibleText(streamContent.String())
+					if len(visible) > lastVisibleLen {
+						o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: visible[lastVisibleLen:]})
+						lastVisibleLen = len(visible)
+					}
+				} else {
 					o.sendEvent(events, se)
 				}
 			case "thought_delta":
@@ -411,17 +418,12 @@ func (o *Orchestrator) handleFlashResponse(
 
 	if parsed == nil {
 		log.Printf("[orch] round pure text reply, len=%d", len(msg.Content))
-		o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: msg.Content})
 		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg)
 		return true, *lastMsgID, nil
 	}
 
 	log.Printf("[orch] round embedded tool_calls=%d: %s",
 		len(parsed.ToolCalls), tool.ToolCallNames(parsed.ToolCalls))
-
-	if parsed.Reply != "" {
-		o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: parsed.Reply})
-	}
 
 	// Flash 模式不填 ToolCallsJSON（会破坏 Pro 模式的消息序列）
 	msg.ToolCalls = nil

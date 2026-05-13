@@ -36,8 +36,11 @@ const isInitialScrollDone = ref(false)
 
 const { isBarVisible, showBar } = useScrollTopBar(messagesContainerRef)
 
-const inputVisible = ref(!isMobile)
+const inputVisible = ref(true)
 const inputExpanded = ref(false)
+
+if (isMobile.value) inputVisible.value = false
+watch(isMobile, (val) => { if (val) inputVisible.value = false })
 
 function toggleInput() {
   inputVisible.value = !inputVisible.value
@@ -344,7 +347,9 @@ function handleContainerClick(e) {
         <div
           ref="messagesEndRef"
           :style="{
-            height: isMobile && inputVisible ? (inputExpanded ? '75vh' : '140px') : '15px',
+            height: isMobile
+              ? (inputVisible ? (inputExpanded ? '75vh' : '140px') : '15px')
+              : (inputExpanded ? '35vh' : '15px'),
             transition: 'height 0.2s ease-out'
           }"
         />
@@ -386,21 +391,53 @@ function handleContainerClick(e) {
       </div>
     </div>
 
+    <!-- 桌面端：输入栏隐藏时的召唤按钮（右下四分之一圆） -->
+    <div
+      v-if="!isMobile && !inputVisible"
+      @click="toggleInput"
+      :style="{
+        position: 'fixed',
+        bottom: '0',
+        right: '0',
+        zIndex: 100,
+        width: '56px',
+        height: '56px',
+        borderTopLeftRadius: '56px',
+        background: 'rgba(91, 106, 191, 0.85)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        boxShadow: '-2px -2px 10px rgba(0,0,0,0.1)',
+        color: 'white',
+        fontSize: '24px',
+        userSelect: 'none'
+      }"
+    >
+      <span style="transform: rotate(-45deg); margin-right: -12px; margin-bottom: -12px;">↑</span>
+    </div>
+
     <div
       :style="[
         !isMobile ? {
-          padding: 'var(--space-md) var(--space-lg)',
-          background: 'var(--color-surface)',
-          borderTop: '1px solid var(--color-border)',
-          flexShrink: 0
+          padding: inputVisible ? 'var(--space-md) var(--space-lg)' : '0 var(--space-lg)',
+          background: 'var(--color-bg-page)',
+          borderTop: 'none',
+          flexShrink: 0,
+          height: inputVisible ? (inputExpanded ? '50vh' : 'auto') : '0',
+          overflow: 'hidden',
+          opacity: inputVisible ? 1 : 0,
+          transform: inputVisible ? 'scaleY(1)' : 'scaleY(0.8)',
+          transformOrigin: 'bottom right',
+          transition: 'height 0.25s ease-out, padding 0.25s ease-out, opacity 0.2s ease-out, transform 0.25s ease-out'
         } : {
           position: 'fixed',
           left: 0,
           right: 0,
           bottom: 0,
           padding: 'var(--space-md) var(--space-lg)',
-          background: 'var(--color-surface)',
-          borderTop: '1px solid var(--color-border)',
+          background: 'var(--color-bg-page)',
+          borderTop: 'none',
           zIndex: 99,
           transform: inputVisible ? 'translateY(0)' : 'translateY(100%)',
           height: inputExpanded ? '75vh' : 'auto',
@@ -409,24 +446,27 @@ function handleContainerClick(e) {
         }
       ]"
     >
-      <div style="border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: var(--space-md) var(--space-md); background: var(--color-surface); height: 100%; display: flex; flex-direction: column;">
+      <div :style="{ border: `1px solid var(--color-bg-page)`, borderRadius: 'var(--radius-xl)', padding: 'var(--space-md) var(--space-md)', background: 'var(--color-surface)', height: '100%', display: 'flex', flexDirection: 'column', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }">
         <NInput
           v-model:value="inputValue"
           type="textarea"
           placeholder="发消息..."
           :disabled="chat.isStreaming"
-          :autosize="isMobile && inputExpanded ? false : { minRows: 1, maxRows: 6 }"
+          :autosize="inputExpanded ? false : { minRows: 1, maxRows: 6 }"
           class="chat-input"
           @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); handleSend() }}"
           :bordered="false"
           style="background: transparent; flex: 1;"
         />
-        <div :style="{ display: 'flex', justifyContent: isMobile ? 'space-between' : 'flex-end', alignItems: 'center', marginTop: '8px' }">
-          <div v-if="isMobile && inputVisible">
+        <div :style="{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }">
+          <div>
             <NButton quaternary size="small" @click="toggleExpand">
-              {{ inputExpanded ? '⤡' : '⤢' }}
+              {{ inputExpanded ? '⤡ 收起输入框' : '⤢ 展开输入框' }}
             </NButton>
-            <NButton v-if="inputVisible" quaternary size="small" @click="toggleInput" style="margin-left: 8px;">
+            <NButton v-if="!isMobile" quaternary size="small" @click="toggleInput" style="margin-left: 8px;">
+              {{ inputVisible ? '隐藏输入栏' : '显示输入栏' }}
+            </NButton>
+            <NButton v-if="isMobile && inputVisible" quaternary size="small" @click="toggleInput" style="margin-left: 8px;">
               收起
             </NButton>
           </div>

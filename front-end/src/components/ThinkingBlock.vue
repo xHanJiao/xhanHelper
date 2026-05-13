@@ -1,25 +1,39 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { NCollapse, NCollapseItem } from 'naive-ui'
+import { computed, ref, watch, nextTick } from 'vue'
 
 const props = defineProps({
   reasoning: { type: String, default: '' },
   done: { type: Boolean, default: false },
-  isHistory: { type: Boolean, default: false }
+  isHistory: { type: Boolean, default: false },
+  maxLines: { type: Number, default: 3 }
 })
 
-const expandedNames = ref([])
+const contentRef = ref(null)
 
-const showToggle = computed(() => props.reasoning?.length > 0)
+const showBlock = computed(() => props.reasoning?.length > 0)
+
+const maxHeight = computed(() => {
+  // 14px font-size * 1.5 line-height * maxLines + padding
+  return `${14 * 1.5 * props.maxLines + 20}px`
+})
+
+watch(() => props.reasoning, async () => {
+  await nextTick()
+  if (contentRef.value) {
+    contentRef.value.scrollTop = contentRef.value.scrollHeight
+  }
+})
 </script>
 
 <template>
-  <div v-if="showToggle" class="thinking-block">
-    <NCollapse v-model:expanded-names="expandedNames">
-      <NCollapseItem title="思考过程" name="reasoning">
-        <div class="thinking-content" :class="{ 'is-done': done }">{{ reasoning }}</div>
-      </NCollapseItem>
-    </NCollapse>
+  <div v-if="showBlock" class="thinking-block">
+    <div class="thinking-header">思考过程</div>
+    <div
+      ref="contentRef"
+      class="thinking-content"
+      :class="{ 'is-done': done }"
+      :style="{ maxHeight }"
+    >{{ reasoning }}</div>
   </div>
 </template>
 
@@ -27,13 +41,21 @@ const showToggle = computed(() => props.reasoning?.length > 0)
 .thinking-block {
   margin-bottom: var(--space-md);
 }
+.thinking-header {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+  padding-left: 2px;
+}
 .thinking-content {
   white-space: pre-wrap;
   font-size: 14px;
+  line-height: 1.5;
   color: var(--color-text-secondary);
   background: var(--color-bg);
-  padding: var(--space-md);
+  padding: 10px var(--space-md);
   border-radius: var(--radius-md);
+  overflow-y: auto;
 }
 .thinking-content.is-done {
   opacity: 0.7;

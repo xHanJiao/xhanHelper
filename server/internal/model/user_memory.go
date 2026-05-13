@@ -4,8 +4,8 @@ import "time"
 
 // UserMemory — 长期记忆 K-V
 type UserMemory struct {
-	ID              string    `gorm:"primaryKey;size:36" json:"id"`
-	UserID          string    `gorm:"uniqueIndex:idx_user_content;size:36;not null" json:"user_id"`
+	ID     string `gorm:"primaryKey;size:36" json:"id"`
+	UserID string `gorm:"uniqueIndex:idx_user_content;size:36;not null" json:"user_id"`
 	// DEPRECATED: MemoryKey 已废弃，后续版本会移除，建议使用 ContentHash 进行去重
 	MemoryKey       string    `gorm:"size:200;not null" json:"memory_key"`
 	ContentHash     string    `gorm:"uniqueIndex:idx_user_content;size:64;not null" json:"content_hash"` // MD5(MemoryValue)

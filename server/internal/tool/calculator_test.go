@@ -70,4 +70,3 @@ func TestDatetimeTool(t *testing.T) {
 		t.Errorf("missing date/time in result: %v", data)
 	}
 }
-

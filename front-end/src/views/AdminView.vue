@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { api } from '@/api/client'
-import { NCard, NTag, NSpin } from 'naive-ui'
+import { NCard, NTag, NSpin, NSelect } from 'naive-ui'
 import { Chart, registerables } from 'chart.js'
 
 Chart.register(...registerables)
@@ -9,6 +9,24 @@ Chart.register(...registerables)
 const health = ref(null)
 const error = ref(null)
 let timer = null
+
+const refreshOptions = [
+  { label: '关闭', value: 0 },
+  { label: '5 秒', value: 5000 },
+  { label: '10 秒', value: 10000 },
+  { label: '30 秒', value: 30000 },
+  { label: '60 秒', value: 60000 }
+]
+const refreshInterval = ref(10000)
+
+function restartTimer() {
+  clearInterval(timer)
+  if (refreshInterval.value > 0) {
+    timer = setInterval(fetchHealth, refreshInterval.value)
+  }
+}
+
+watch(refreshInterval, restartTimer)
 
 async function fetchHealth() {
   try {
@@ -19,7 +37,7 @@ async function fetchHealth() {
   }
 }
 
-onMounted(() => { fetchHealth(); timer = setInterval(fetchHealth, 10000) })
+onMounted(() => { fetchHealth(); restartTimer() })
 onUnmounted(() => { clearInterval(timer); destroyCharts() })
 
 // ── charts ──
@@ -116,7 +134,10 @@ function latSummary(s) {
 
 <template>
   <div style="padding: var(--space-lg); overflow-y: auto; height: 100%; background: var(--color-bg-page);">
-    <h2 style="margin-bottom: var(--space-md);">系统监控</h2>
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-md);">
+      <h2 style="margin: 0;">系统监控</h2>
+      <NSelect v-model:value="refreshInterval" :options="refreshOptions" size="small" style="width: 100px;" />
+    </div>
     <NSpin v-if="!health && !error" />
     <div v-if="error" style="color: var(--color-danger); padding: var(--space-md);">{{ error }}</div>
 

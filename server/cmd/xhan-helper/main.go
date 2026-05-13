@@ -51,7 +51,7 @@ func main() {
 	sqlDB, _ := db.DB()
 	defer sqlDB.Close()
 
-	db.AutoMigrate(
+	if err := db.AutoMigrate(
 		&model.User{},
 		&model.UserToken{},
 		&model.Conversation{},
@@ -66,7 +66,9 @@ func main() {
 		&model.UserPrompt{},
 		&model.Embedding{},
 		&model.MCPServerRecord{},
-	)
+	); err != nil {
+		log.Printf("[db] AutoMigrate error: %v", err)
+	}
 
 	// LLM 客户端
 	llmClient, err := llm.NewClient(cfg.LLM)

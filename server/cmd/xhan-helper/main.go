@@ -51,24 +51,22 @@ func main() {
 	sqlDB, _ := db.DB()
 	defer sqlDB.Close()
 
-	if cfg.Server.Mode == "debug" {
-		db.AutoMigrate(
-			&model.User{},
-			&model.UserToken{},
-			&model.Conversation{},
-			&model.Message{},
-			&model.Bill{},
-			&model.UserMemory{},
-			&model.ScheduledTask{},
-			&model.Note{},
-			&model.Agent{},
-			&model.ToolRegistry{},
-			&model.ToolData{},
-			&model.UserPrompt{},
-			&model.Embedding{},
-			&model.MCPServerRecord{},
-		)
-	}
+	db.AutoMigrate(
+		&model.User{},
+		&model.UserToken{},
+		&model.Conversation{},
+		&model.Message{},
+		&model.Bill{},
+		&model.UserMemory{},
+		&model.ScheduledTask{},
+		&model.Note{},
+		&model.Agent{},
+		&model.ToolRegistry{},
+		&model.ToolData{},
+		&model.UserPrompt{},
+		&model.Embedding{},
+		&model.MCPServerRecord{},
+	)
 
 	// LLM 客户端
 	llmClient, err := llm.NewClient(cfg.LLM)

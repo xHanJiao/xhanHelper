@@ -18,6 +18,7 @@ import {
 } from 'naive-ui'
 import ListItemCard from '@/components/ListItemCard.vue'
 import PageTopBar from '@/components/PageTopBar.vue'
+import TopBarBtn from '@/components/TopBarBtn.vue'
 
 const message = useMessage()
 const { isMobile } = useMobile()
@@ -128,7 +129,7 @@ onMounted(fetchPrompts)
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
     <PageTopBar title="System Prompt 管理" :visible="!isMobile || isBarVisible">
       <template #right>
-        <NButton type="primary" size="small" @click="openCreate">创建 Prompt</NButton>
+        <TopBarBtn label="创建 Prompt" @click="openCreate" />
       </template>
     </PageTopBar>
     <div

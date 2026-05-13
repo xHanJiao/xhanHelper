@@ -15,8 +15,11 @@ import {
 import MessageBubble from '@/components/MessageBubble.vue'
 import PlanGraph from '@/components/PlanGraph.vue'
 import PageTopBar from '@/components/PageTopBar.vue'
+import TopBarBtn from '@/components/TopBarBtn.vue'
 import { useMobile } from '@/composables/useMobile'
+import { useThemeStore } from '@/stores/theme'
 
+const theme = useThemeStore()
 const route = useRoute()
 const router = useRouter()
 const chat = useChatStore()
@@ -299,7 +302,11 @@ function handleContainerClick(e) {
 
 <template>
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
-    <PageTopBar :title="currentTitle" :agent-id="currentAgentId" :agent-name="currentAgentName" :visible="!isMobile || isBarVisible" />
+    <PageTopBar :title="currentTitle" :agent-id="currentAgentId" :agent-name="currentAgentName" :visible="!isMobile || isBarVisible" >
+      <template #right>
+        <TopBarBtn :label="theme.isDark ? '浅色' : '深色'" @click="theme.toggle()" />
+      </template>
+    </PageTopBar>
 
     <div
       ref="messagesContainerRef"

@@ -15,6 +15,7 @@ import {
   useMessage
 } from 'naive-ui'
 import PageTopBar from '@/components/PageTopBar.vue'
+import TopBarBtn from '@/components/TopBarBtn.vue'
 
 const auth = useAuthStore()
 const message = useMessage()
@@ -176,7 +177,7 @@ onMounted(fetchBills)
             clearable
             @update:value="handleFilterChange"
           />
-          <NButton v-if="!isMobile" size="small" @click="handleExport">导出</NButton>
+          <TopBarBtn v-if="!isMobile" label="导出" @click="handleExport" />
         </div>
       </template>
     </PageTopBar>

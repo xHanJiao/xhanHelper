@@ -16,6 +16,7 @@ import {
 } from 'naive-ui'
 import ListItemCard from '@/components/ListItemCard.vue'
 import PageTopBar from '@/components/PageTopBar.vue'
+import TopBarBtn from '@/components/TopBarBtn.vue'
 
 const message = useMessage()
 const { isMobile } = useMobile()
@@ -105,7 +106,7 @@ onMounted(fetchMemories)
             @keyup.enter="handleSearch"
             @clear="handleSearch"
           />
-          <NButton v-if="!isMobile" size="small" @click="handleSearch">搜索</NButton>
+          <TopBarBtn v-if="!isMobile" label="搜索" @click="handleSearch" />
         </div>
       </template>
     </PageTopBar>

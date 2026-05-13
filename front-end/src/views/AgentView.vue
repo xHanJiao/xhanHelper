@@ -21,6 +21,7 @@ import {
 import { useMobile } from '@/composables/useMobile'
 import ListItemCard from '@/components/ListItemCard.vue'
 import PageTopBar from '@/components/PageTopBar.vue'
+import TopBarBtn from '@/components/TopBarBtn.vue'
 
 const message = useMessage()
 const { isMobile } = useMobile()
@@ -114,7 +115,7 @@ function getCardActions(agent) {
 
 function getCardPrimaryActions(agent) {
   return [
-    { key: 'chat', label: '开始对话', type: 'primary', onClick: () => handleStartChat(agent) }
+    { key: 'chat', label: '开始对话', type: 'tertiary', onClick: () => handleStartChat(agent) }
   ]
 }
 
@@ -140,7 +141,7 @@ onMounted(fetchAgents)
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
     <PageTopBar title="智能体管理" :visible="!isMobile || isBarVisible">
       <template #right>
-        <NButton type="primary" size="small" @click="openCreate">创建智能体</NButton>
+        <TopBarBtn label="创建智能体" @click="openCreate" />
       </template>
     </PageTopBar>
     <div

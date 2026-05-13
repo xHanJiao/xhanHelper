@@ -1,25 +1,13 @@
 <script setup>
 import { computed } from 'vue'
-import { NTooltip } from 'naive-ui'
 import { useMobile } from '@/composables/useMobile'
+import TopBarBtn from '@/components/TopBarBtn.vue'
 
 const props = defineProps({
-  title: {
-    type: String,
-    default: ''
-  },
-  visible: {
-    type: Boolean,
-    default: true
-  },
-  agentName: {
-    type: String,
-    default: ''
-  },
-  agentId: {
-    type: String,
-    default: ''
-  }
+  title: { type: String, default: '' },
+  visible: { type: Boolean, default: true },
+  agentName: { type: String, default: '' },
+  agentId: { type: String, default: '' }
 })
 
 const tooltipText = computed(() => {
@@ -46,14 +34,13 @@ const { isMobile, toggleDrawer } = useMobile()
       transition: 'height 0.2s ease-out, padding 0.2s ease-out, border-width 0.2s ease-out'
     }"
   >
-    <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
-      <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
+    <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-xs);">
+      <TopBarBtn v-if="isMobile" icon="☰" @click="toggleDrawer" />
       {{ title }}
-      <NTooltip v-if="agentId" trigger="click">
-        <template #trigger><span style="cursor: pointer; font-size: 16px;">🤖</span></template>
-        {{ tooltipText }}
-      </NTooltip>
+      <TopBarBtn v-if="agentId" icon="🤖" :tooltip="tooltipText" />
     </span>
-    <slot name="right"></slot>
+    <span style="display: flex; align-items: center; gap: var(--space-xs);">
+      <slot name="right"></slot>
+    </span>
   </div>
 </template>

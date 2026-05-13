@@ -59,8 +59,18 @@ func (t *MCPProxyTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 	if err != nil {
 		return &Result{Success: false, Error: "mcp_pending_retry: " + err.Error()}
 	}
-	// server 就绪，下轮 LLM 重试时会用真正的 MCPToolAdapter
-	return &Result{Success: false, Error: "mcp_pending_retry: " + t.serverName + " 服务已就绪，请重试"}
+	// 返回真实工具名称列表（匹配 extractToolNamesFromResult 格式: {"tools":[{"name":"xxx"}]}）
+	tools := t.caller.GetToolsSnapshot(t.serverName)
+	toolInfos := make([]map[string]string, len(tools))
+	for i, td := range tools {
+		toolInfos[i] = map[string]string{"name": td.Name}
+	}
+	info, _ := json.Marshal(map[string]interface{}{
+		"tools":  toolInfos,
+		"status": "ready",
+		"server": t.serverName,
+	})
+	return &Result{Success: false, Error: "mcp_pending_retry: " + t.serverName + " 服务已就绪，请重试", Data: info}
 }
 
 // NewMCPToolAdapter 创建适配器

@@ -63,14 +63,16 @@ func (r *Registry) RegisterMCPServer(serverName string, tools []mcp.ToolDef) {
 	r.mcpServers[serverName] = names
 }
 
-// UnregisterMCPServer 移除 server 的所有工具
+// UnregisterMCPServer 移除 server 的所有工具（含占位工具）
 func (r *Registry) UnregisterMCPServer(serverName string) {
 	names := r.mcpServers[serverName]
 	for _, n := range names {
 		delete(r.tools, n)
 	}
+	// 同时删除与 server 同名的占位工具（MCPProxyTool）
+	delete(r.tools, serverName)
 	delete(r.mcpServers, serverName)
-	log.Printf("[tool] MCP server unregistered: %s (%d tools)", serverName, len(names))
+	log.Printf("[tool] MCP server unregistered: %s (%d tools + proxy)", serverName, len(names))
 }
 
 // GetMCPSnapshots 返回 MCP 工具快照（供 tool_retriever 使用）

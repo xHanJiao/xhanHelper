@@ -144,6 +144,19 @@ export function useChatSSE() {
         chat.addMessage(finalMsg)
         chat.streamingMessage = null
 
+        // 将关联记忆 ID 挂到用户消息上，并批量获取记忆详情
+        if (d.memory_ids && d.memory_ids.length > 0) {
+          const userMsg = chat.messages.findLast(m => m.role === 'user')
+          if (userMsg) {
+            userMsg.memoryIds = d.memory_ids
+            api.post('/api/memories/batch', { ids: d.memory_ids }).then(memories => {
+              userMsg.associatedMemories = Array.isArray(memories) ? memories : []
+            }).catch(err => {
+              console.error('Failed to fetch associated memories', err)
+            })
+          }
+        }
+
         if (!chat.conversationId && d.conversation_id) {
           chat.conversationId = d.conversation_id
           convs.prepend({ id: d.conversation_id, title: d.title || '新对话' })

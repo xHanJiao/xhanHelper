@@ -97,6 +97,8 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
       }
       chat.oldestCursor = res.oldestCursor
       chat.hasMoreBefore = res.hasMoreBefore
+      // 批量获取关联记忆详情
+      fetchAssociatedMemories()
     }
   } catch (e) {
     console.error('Failed to load history', e)
@@ -106,8 +108,44 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
   }
 }
 
+async function fetchAssociatedMemories() {
+  const allMemIds = new Set()
+  for (const msg of chat.messages) {
+    if (msg.memoryIds?.length) {
+      for (const id of msg.memoryIds) allMemIds.add(id)
+    }
+  }
+  if (allMemIds.size === 0) return
+  try {
+    const memories = await api.post('/api/memories/batch', { ids: [...allMemIds] })
+    const memMap = {}
+    if (Array.isArray(memories)) {
+      for (const mem of memories) {
+        memMap[mem.id] = mem
+      }
+    }
+    for (const msg of chat.messages) {
+      if (msg.memoryIds?.length) {
+        msg.associatedMemories = msg.memoryIds.map(id => memMap[id]).filter(Boolean)
+      }
+    }
+  } catch (e) {
+    console.error('Failed to fetch associated memories', e)
+  }
+}
+
 function normalizeMessage(msg) {
   const normalized = { ...msg }
+  // 解析 memory_ids JSON 字符串
+  if (msg.memory_ids) {
+    try {
+      normalized.memoryIds = typeof msg.memory_ids === 'string'
+        ? JSON.parse(msg.memory_ids)
+        : msg.memory_ids
+    } catch {
+      normalized.memoryIds = []
+    }
+  }
   if (msg.reasoning_content && !msg.reasoning) {
     normalized.reasoning = msg.reasoning_content
     normalized.reasoningDone = true

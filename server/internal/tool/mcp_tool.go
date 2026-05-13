@@ -9,93 +9,58 @@ import (
 	"xhan-helper/internal/mcp"
 )
 
-// MCPToolCaller — MCP Manager 的最小接口，方便测试
+// MCPToolCaller — MCP Manager 暴露给 Proxy 的最小接口
 type MCPToolCaller interface {
-	CallTool(ctx context.Context, serverName, toolName string, args map[string]interface{}) (json.RawMessage, error)
 	EnsureRunning(ctx context.Context, name string) (*mcp.MCPServer, error)
+	CallTool(ctx context.Context, serverName, toolName string, args map[string]interface{}) (json.RawMessage, error)
 	GetToolsSnapshot(name string) []mcp.ToolDef
-	GetAllSnapshots() map[string][]mcp.ToolDef
-	GetConfiguredServers() []mcp.ServerConfig
 }
 
-// MCPToolAdapter — 将 MCP server 的一个工具适配为 Tool 接口
-type MCPToolAdapter struct {
-	serverName  string
-	toolName    string
-	description string
-	functions   []FuncSchema
-	caller      MCPToolCaller
-}
-
-// MCPProxyTool — MCP server 占位工具（未启动时注册，触发懒启动）
+// MCPProxyTool — MCP server 的永久代理工具
+//   - 未启动时：暴露 invoke()，触发懒启动后转发到真实工具
+//   - 已启动时：动态暴露真实工具函数，LLM 可直接按真实 schema 调用
 type MCPProxyTool struct {
 	serverName  string
 	description string
 	caller      MCPToolCaller
 }
 
-// NewMCPProxyTool 创建占位工具，server 未启动前用于 tool_retriever 发现
 func NewMCPProxyTool(cfg mcp.ServerConfig, caller MCPToolCaller) *MCPProxyTool {
 	return &MCPProxyTool{
 		serverName:  cfg.Name,
-		description: fmt.Sprintf("[MCP:%s] %s（待启动）", cfg.Name, cfg.Description),
+		description: fmt.Sprintf("[MCP:%s] %s", cfg.Name, cfg.Description),
 		caller:      caller,
 	}
 }
 
 func (t *MCPProxyTool) Name() string        { return t.serverName }
 func (t *MCPProxyTool) Description() string { return t.description }
+
+// Functions 动态化：如果 server 已就绪，暴露真实工具函数；否则只暴露 invoke
 func (t *MCPProxyTool) Functions() []FuncSchema {
-	return []FuncSchema{{
+	funcs := []FuncSchema{{
 		Name:        "invoke",
 		Description: "调用 " + t.serverName + " 服务（首次使用会自动启动）",
-		Parameters:  map[string]interface{}{"type": "object", "properties": map[string]interface{}{"query": map[string]interface{}{"type": "string", "description": "查询内容"}}},
+		Parameters: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"query": map[string]interface{}{"type": "string", "description": "查询内容"},
+			},
+		},
 	}}
+
+	tools := t.caller.GetToolsSnapshot(t.serverName)
+	for _, td := range tools {
+		funcs = append(funcs, FuncSchema{
+			Name:        td.Name,
+			Description: td.Description,
+			Parameters:  td.InputSchema,
+		})
+	}
+	return funcs
 }
 
 func (t *MCPProxyTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
-	log.Printf("[mcp-proxy] %s: triggering lazy start", t.serverName)
-	_, err := t.caller.EnsureRunning(ec.Ctx, t.serverName)
-	if err != nil {
-		return &Result{Success: false, Error: "mcp_pending_retry: " + err.Error()}
-	}
-	// 返回真实工具名称列表（匹配 extractToolNamesFromResult 格式: {"tools":[{"name":"xxx"}]}）
-	tools := t.caller.GetToolsSnapshot(t.serverName)
-	toolInfos := make([]map[string]string, len(tools))
-	for i, td := range tools {
-		toolInfos[i] = map[string]string{"name": td.Name}
-	}
-	info, _ := json.Marshal(map[string]interface{}{
-		"tools":  toolInfos,
-		"status": "ready",
-		"server": t.serverName,
-	})
-	return &Result{Success: false, Error: "mcp_pending_retry: " + t.serverName + " 服务已就绪，请重试", Data: info}
-}
-
-// NewMCPToolAdapter 创建适配器
-func NewMCPToolAdapter(serverName string, def mcp.ToolDef, caller MCPToolCaller) *MCPToolAdapter {
-	funcs := []FuncSchema{
-		{
-			Name:        def.Name,
-			Description: def.Description,
-			Parameters:  def.InputSchema,
-		},
-	}
-	return &MCPToolAdapter{
-		serverName:  serverName,
-		toolName:    def.Name,
-		description: fmt.Sprintf("[MCP:%s] %s", serverName, def.Description),
-		functions:   funcs,
-		caller:      caller,
-	}
-}
-
-func (t *MCPToolAdapter) Name() string            { return t.toolName }
-func (t *MCPToolAdapter) Description() string     { return t.description }
-func (t *MCPToolAdapter) Functions() []FuncSchema { return t.functions }
-
-func (t *MCPToolAdapter) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	var argMap map[string]interface{}
 	if len(args) > 0 {
 		if err := json.Unmarshal(args, &argMap); err != nil {
@@ -103,38 +68,73 @@ func (t *MCPToolAdapter) Execute(ec *ExecuteContext, funcName string, args json.
 		}
 	}
 
-	result, err := t.caller.CallTool(ec.Ctx, t.serverName, t.toolName, argMap)
+	// 懒启动
+	_, err := t.caller.EnsureRunning(ec.Ctx, t.serverName)
 	if err != nil {
-		log.Printf("[mcp-tool] %s.%s call error: %v", t.serverName, t.toolName, err)
 		return &Result{Success: false, Error: "mcp_pending_retry: " + err.Error()}
 	}
 
-	// 解析 MCP 返回的 content 数组格式
-	var mcpResult struct {
+	tools := t.caller.GetToolsSnapshot(t.serverName)
+	if len(tools) == 0 {
+		return &Result{Success: false, Error: "server ready but no tools available"}
+	}
+
+	// 如果是 invoke，转发到第一个真实工具；否则直接调指定函数
+	realName := funcName
+	if funcName == "invoke" {
+		realName = tools[0].Name
+	}
+
+	log.Printf("[mcp-proxy] %s: %s(%v) → %s", t.serverName, funcName, argMap, realName)
+	result, err := t.caller.CallTool(ec.Ctx, t.serverName, realName, argMap)
+	if err != nil {
+		log.Printf("[mcp-proxy] %s call error: %v", t.serverName, err)
+		return &Result{Success: false, Error: err.Error()}
+	}
+
+	return parseMCPResult(result)
+}
+
+// parseMCPResult 解析 MCP tools/call 返回的 content 数组格式
+func parseMCPResult(result json.RawMessage) *Result {
+	var r struct {
 		Content []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
 		IsError bool `json:"isError"`
 	}
-	if err := json.Unmarshal(result, &mcpResult); err != nil {
-		// 返回原始结果
+	if err := json.Unmarshal(result, &r); err != nil {
+		raw := string(result)
+		if len(raw) > 300 {
+			raw = raw[:300]
+		}
+		log.Printf("[mcp] parse result: not content format, returning raw (err=%v, raw=%s)", err, raw)
 		return &Result{Success: true, Data: result}
 	}
 
-	if mcpResult.IsError {
+	if r.IsError {
 		msg := "unknown error"
-		if len(mcpResult.Content) > 0 {
-			msg = mcpResult.Content[0].Text
+		if len(r.Content) > 0 {
+			msg = r.Content[0].Text
 		}
 		return &Result{Success: false, Error: msg}
 	}
 
-	// 提取文本内容
-	if len(mcpResult.Content) == 1 && mcpResult.Content[0].Type == "text" {
-		return &Result{Success: true, Data: json.RawMessage(fmt.Sprintf(`"%s"`, mcpResult.Content[0].Text))}
+	if len(r.Content) == 0 {
+		raw := string(result)
+		if len(raw) > 300 {
+			raw = raw[:300]
+		}
+		log.Printf("[mcp] parse result: empty content array, returning raw (raw=%s)", raw)
+		return &Result{Success: true, Data: result}
 	}
 
-	data, _ := json.Marshal(mcpResult.Content)
+	if len(r.Content) == 1 && r.Content[0].Type == "text" {
+		data, _ := json.Marshal(r.Content[0].Text)
+		return &Result{Success: true, Data: data}
+	}
+
+	data, _ := json.Marshal(r.Content)
 	return &Result{Success: true, Data: data}
 }

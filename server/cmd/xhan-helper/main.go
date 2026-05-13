@@ -136,19 +136,13 @@ func main() {
 	}
 	mcpManager := mcp.NewManager(mcpCfg)
 	defer mcpManager.Shutdown()
-	reg.SetMCPCaller(mcpManager)
 
-	// 为每个 MCP server 注册占位工具（LLM 发现并触发懒启动）
+	// 为每个 MCP server 注册 Proxy 工具（发现 + 懒启动 + 转发）
 	for _, s := range mcpCfg.Servers {
 		proxy := tool.NewMCPProxyTool(s, mcpManager)
 		reg.Register(tool.NewLoggingWrapper(proxy, log.Default()))
 		log.Printf("[mcp] proxy tool registered: %s", s.Name)
 	}
-
-	mcpManager.SetOnReady(func(name string, tools []mcp.ToolDef) {
-		reg.UnregisterMCPServer(name)
-		reg.RegisterMCPServer(name, tools)
-	})
 
 	// 后台任务共享 context，关闭时统一取消
 	bgCtx, bgCancel := context.WithCancel(context.Background())

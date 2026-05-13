@@ -9,11 +9,8 @@ import (
 	"time"
 )
 
-// StatusCallback — MCP server 状态变更回调（Orchestrator 注册，转 SSE 事件）
+// StatusCallback — MCP server 状态变更回调
 type StatusCallback func(serverName, eventType, msg string)
-
-// OnReadyFunc — server 就绪回调（Registry 注册工具用）
-type OnReadyFunc func(serverName string, tools []ToolDef)
 
 // Manager — MCP server 生命周期管理器
 type Manager struct {
@@ -21,7 +18,6 @@ type Manager struct {
 	servers  map[string]*MCPServer
 	mu       sync.Mutex
 	callback StatusCallback
-	onReady  OnReadyFunc
 
 	stopCh chan struct{}
 }
@@ -39,11 +35,6 @@ func NewManager(cfg Config) *Manager {
 // SetStatusCallback 注册状态变更回调
 func (m *Manager) SetStatusCallback(cb StatusCallback) {
 	m.callback = cb
-}
-
-// SetOnReady 注册 server 就绪回调（Registry 调用以注册工具）
-func (m *Manager) SetOnReady(fn OnReadyFunc) {
-	m.onReady = fn
 }
 
 func (m *Manager) emitStatus(name, eventType, msg string) {
@@ -102,9 +93,6 @@ func (m *Manager) EnsureRunning(ctx context.Context, name string) (*MCPServer, e
 	m.mu.Unlock()
 
 	m.emitStatus(name, "ready", fmt.Sprintf("%s 服务已就绪", name))
-	if m.onReady != nil {
-		m.onReady(name, s.ToolsCache)
-	}
 	return s, nil
 }
 

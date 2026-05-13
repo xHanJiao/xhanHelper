@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"xhan-helper/internal/llm"
-	"xhan-helper/internal/mcp"
 	"xhan-helper/internal/model"
 )
 
@@ -23,16 +22,11 @@ type Registry struct {
 	cacheReader   CacheReader
 	cacheWriter   CacheWriter
 	lastLoadTime  time.Time
-	mcpCaller     MCPToolCaller       // MCP Manager，供 RegisterMCPServer 使用
-	mcpServers    map[string][]string // server name → 注册的 tool names，供注销用
 }
 
 // NewRegistry 创建空的注册表
 func NewRegistry() *Registry {
-	return &Registry{
-		tools:      make(map[string]Tool),
-		mcpServers: make(map[string][]string),
-	}
+	return &Registry{tools: make(map[string]Tool)}
 }
 
 // SetDynamicLoader 设置动态工具加载器（由 main.go 调用）
@@ -41,46 +35,6 @@ func (r *Registry) SetDynamicLoader(loader DynamicToolLoader, sidecarURL string,
 	r.sidecarURL = sidecarURL
 	r.cacheReader = cacheReader
 	r.cacheWriter = cacheWriter
-}
-
-// SetMCPCaller 注入 MCP Manager（由 main.go 调用）
-func (r *Registry) SetMCPCaller(caller MCPToolCaller) {
-	r.mcpCaller = caller
-}
-
-// RegisterMCPServer 将 server 的所有工具注册为 MCPToolAdapter
-func (r *Registry) RegisterMCPServer(serverName string, tools []mcp.ToolDef) {
-	if r.mcpCaller == nil {
-		return
-	}
-	names := make([]string, 0, len(tools))
-	for _, def := range tools {
-		adapter := NewMCPToolAdapter(serverName, def, r.mcpCaller)
-		r.Register(adapter)
-		names = append(names, def.Name)
-		log.Printf("[tool] MCP tool registered: %s (server=%s)", def.Name, serverName)
-	}
-	r.mcpServers[serverName] = names
-}
-
-// UnregisterMCPServer 移除 server 的所有工具（含占位工具）
-func (r *Registry) UnregisterMCPServer(serverName string) {
-	names := r.mcpServers[serverName]
-	for _, n := range names {
-		delete(r.tools, n)
-	}
-	// 同时删除与 server 同名的占位工具（MCPProxyTool）
-	delete(r.tools, serverName)
-	delete(r.mcpServers, serverName)
-	log.Printf("[tool] MCP server unregistered: %s (%d tools + proxy)", serverName, len(names))
-}
-
-// GetMCPSnapshots 返回 MCP 工具快照（供 tool_retriever 使用）
-func (r *Registry) GetMCPSnapshots() map[string][]mcp.ToolDef {
-	if r.mcpCaller == nil {
-		return nil
-	}
-	return r.mcpCaller.GetAllSnapshots()
 }
 
 // SearchTools 在内存中的工具（含 MCP 占位工具）里关键词搜索

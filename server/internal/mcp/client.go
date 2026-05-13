@@ -93,6 +93,7 @@ type MCPServer struct {
 
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
+	stopOnce  sync.Once
 }
 
 // NewMCPServer 创建未启动的 server
@@ -182,27 +183,26 @@ func (s *MCPServer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop 优雅停止子进程
+// Stop 优雅停止子进程（幂等，可重复调用）
 func (s *MCPServer) Stop() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.state.Load() == int32(stateStopped) {
-		return
-	}
-	s.state.Store(int32(stateStopped))
+	s.stopOnce.Do(func() {
+		s.mu.Lock()
+		s.state.Store(int32(stateStopped))
+		s.mu.Unlock()
 
-	if s.cmd != nil && s.cmd.Process != nil {
-		s.cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan error, 1)
-		go func() { done <- s.cmd.Wait() }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			s.cmd.Process.Kill()
-			<-done
+		if s.cmd != nil && s.cmd.Process != nil {
+			s.cmd.Process.Signal(syscall.SIGTERM)
+			done := make(chan error, 1)
+			go func() { done <- s.cmd.Wait() }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				s.cmd.Process.Kill()
+				<-done
+			}
 		}
-	}
-	close(s.stoppedCh)
+		close(s.stoppedCh)
+	})
 }
 
 // call 发起 JSON-RPC 调用，等待响应
@@ -278,7 +278,7 @@ func (s *MCPServer) writeJSON(v interface{}) error {
 }
 
 func (s *MCPServer) readLoop() {
-	defer close(s.stoppedCh)
+	defer func() { s.state.Store(int32(stateStopped)) }()
 	scanner := bufio.NewScanner(s.stdout)
 	for scanner.Scan() {
 		line := scanner.Bytes()

@@ -1,38 +1,26 @@
 <script setup>
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps({
   reasoning: { type: String, default: '' },
   done: { type: Boolean, default: false },
-  isHistory: { type: Boolean, default: false },
-  maxLines: { type: Number, default: 3 }
+  isHistory: { type: Boolean, default: false }
 })
-
-const contentRef = ref(null)
 
 const showBlock = computed(() => props.reasoning?.length > 0)
-
-const maxHeight = computed(() => {
-  // 14px font-size * 1.5 line-height * maxLines + padding
-  return `${14 * 1.5 * props.maxLines + 20}px`
-})
-
-watch(() => props.reasoning, async () => {
-  await nextTick()
-  if (contentRef.value) {
-    contentRef.value.scrollTop = contentRef.value.scrollHeight
-  }
-})
+const expanded = ref(false)
 </script>
 
 <template>
   <div v-if="showBlock" class="thinking-block">
-    <div class="thinking-header">思考过程</div>
+    <div class="thinking-header" :class="{ 'is-active': !done }" @click="expanded = !expanded">
+      <span class="thinking-label">思考过程</span>
+      <span class="thinking-arrow">{{ expanded ? '▲' : '▼' }}</span>
+    </div>
     <div
-      ref="contentRef"
+      v-if="expanded"
       class="thinking-content"
       :class="{ 'is-done': done }"
-      :style="{ maxHeight }"
     >{{ reasoning }}</div>
   </div>
 </template>
@@ -46,6 +34,24 @@ watch(() => props.reasoning, async () => {
   color: var(--color-text-muted);
   margin-bottom: 4px;
   padding-left: 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.thinking-arrow {
+  font-size: 10px;
+}
+.thinking-label {
+  transition: color 0.4s;
+}
+.thinking-header.is-active .thinking-label {
+  animation: thinking-pulse 1.2s ease-in-out infinite;
+}
+@keyframes thinking-pulse {
+  0%, 100% { color: var(--color-text-muted); }
+  50% { color: var(--color-primary); }
 }
 .thinking-content {
   white-space: pre-wrap;
@@ -55,7 +61,6 @@ watch(() => props.reasoning, async () => {
   background: var(--color-bg);
   padding: 10px var(--space-md);
   border-radius: var(--radius-md);
-  overflow-y: auto;
 }
 .thinking-content.is-done {
   opacity: 0.7;

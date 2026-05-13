@@ -135,6 +135,12 @@ export function useChatSSE() {
         chat.statusMessage = s.message
         break
       }
+      case 'agent_matched': {
+        const am = JSON.parse(rawData)
+        chat.agentId = am.agent_id
+        chat.agentName = am.agent_name
+        break
+      }
       case 'done': {
         const d = JSON.parse(rawData)
         const finalMsg = {
@@ -159,7 +165,7 @@ export function useChatSSE() {
 
         if (!chat.conversationId && d.conversation_id) {
           chat.conversationId = d.conversation_id
-          convs.prepend({ id: d.conversation_id, title: d.title || '新对话' })
+          convs.prepend({ id: d.conversation_id, title: d.title || '新对话', agent_id: chat.agentId, agent_name: chat.agentName })
         }
         if (d.title) {
           convs.updateTitle(d.conversation_id, d.title)

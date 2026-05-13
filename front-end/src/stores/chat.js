@@ -4,6 +4,7 @@ import { ref } from 'vue'
 export const useChatStore = defineStore('chat', () => {
   const conversationId = ref(null)
   const agentId = ref(null)
+  const agentName = ref(null)
   const deepMode = ref(false)
   const messages = ref([])
   const streamingMessage = ref(null)
@@ -49,6 +50,7 @@ export const useChatStore = defineStore('chat', () => {
   function reset() {
     conversationId.value = null
     agentId.value = null
+    agentName.value = null
     deepMode.value = false
     messages.value = []
     streamingMessage.value = null
@@ -63,6 +65,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     conversationId,
     agentId,
+    agentName,
     deepMode,
     messages,
     streamingMessage,

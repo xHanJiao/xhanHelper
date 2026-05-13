@@ -57,6 +57,16 @@ const currentTitle = computed(() => {
   return conv?.title || '新对话'
 })
 
+const currentAgentName = computed(() => {
+  const conv = convs.list.find(c => c.id === chat.conversationId)
+  return conv?.agent_name || chat.agentName || ''
+})
+
+const currentAgentId = computed(() => {
+  const conv = convs.list.find(c => c.id === chat.conversationId)
+  return conv?.agent_id || chat.agentId || null
+})
+
 const planVisible = computed(() => {
   return Object.keys(chat.planNodes).length >= 2
 })
@@ -286,7 +296,7 @@ function handleContainerClick(e) {
 
 <template>
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
-    <PageTopBar :title="currentTitle" :visible="!isMobile || isBarVisible" />
+    <PageTopBar :title="currentTitle" :agent-id="currentAgentId" :agent-name="currentAgentName" :visible="!isMobile || isBarVisible" />
 
     <div
       ref="messagesContainerRef"

@@ -1,4 +1,6 @@
 <script setup>
+import { computed } from 'vue'
+import { NTooltip } from 'naive-ui'
 import { useMobile } from '@/composables/useMobile'
 
 const props = defineProps({
@@ -9,7 +11,21 @@ const props = defineProps({
   visible: {
     type: Boolean,
     default: true
+  },
+  agentName: {
+    type: String,
+    default: ''
+  },
+  agentId: {
+    type: String,
+    default: ''
   }
+})
+
+const tooltipText = computed(() => {
+  if (props.agentName) return '智能体: ' + props.agentName
+  if (props.agentId) return '智能体: ' + props.agentId
+  return ''
 })
 
 const { isMobile, toggleDrawer } = useMobile()
@@ -33,6 +49,10 @@ const { isMobile, toggleDrawer } = useMobile()
     <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-sm);">
       <span v-if="isMobile" @click="toggleDrawer()" style="cursor: pointer; font-size: 20px;">☰</span>
       {{ title }}
+      <NTooltip v-if="agentId" trigger="click">
+        <template #trigger><span style="cursor: pointer; font-size: 16px;">🤖</span></template>
+        {{ tooltipText }}
+      </NTooltip>
     </span>
     <slot name="right"></slot>
   </div>

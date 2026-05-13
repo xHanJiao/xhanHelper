@@ -99,6 +99,7 @@ func main() {
 	reg.Register(tool.NewLoggingWrapper(tool.NewBookkeepingTool(billRepo), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewDatetimeTool(), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewCalculatorTool(), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewMarkdownTool("data/markdown"), log.Default()))
 
 	// Vector Store
 	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
@@ -166,6 +167,21 @@ func main() {
 	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo, embeddingRepo, cfg.Server.MemoryDupeThreshold)
 	memScheduler := agent.NewMemoryScheduler(memExtractor, convRepo)
 	go memScheduler.Start(bgCtx, cfg.Server.MemoryAutoExtract)
+
+	// Markdown 文件定期清理（每小时清理超过 1h 的文件）
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				tool.CleanOldMarkdownFiles("data/markdown", 1*time.Hour)
+			case <-bgCtx.Done():
+				return
+			}
+		}
+	}()
+
 	orch.SetPromptResolver(promptRepo)
 
 	// Monitor snapshots

@@ -75,6 +75,7 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		Model:        req.Model,
 	}
 	if err := h.agentRepo.Create(c.Request.Context(), agent); err != nil {
+		log.Printf("[agent] Create error: %v", err)
 		view.JSONError(c, 500, "create agent failed")
 		return
 	}
@@ -101,6 +102,7 @@ func (h *AgentHandler) GetAgent(c *gin.Context) {
 	userID := c.GetString("user_id")
 	a, err := h.agentRepo.FindByID(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
+		log.Printf("[agent] Get error: %v", err)
 		view.JSONError(c, 500, "query agent failed")
 		return
 	}
@@ -117,7 +119,12 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 	id := c.Param("id")
 
 	existing, err := h.agentRepo.FindByID(c.Request.Context(), id, userID)
-	if err != nil || existing == nil {
+	if err != nil {
+		log.Printf("[agent] Update FindByID error: %v", err)
+		view.JSONError(c, 500, "query agent failed")
+		return
+	}
+	if existing == nil {
 		view.JSONError(c, 404, "agent not found")
 		return
 	}
@@ -152,6 +159,7 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 	}
 
 	if err := h.agentRepo.Update(c.Request.Context(), existing); err != nil {
+		log.Printf("[agent] Update error: %v", err)
 		view.JSONError(c, 500, "update agent failed")
 		return
 	}
@@ -162,6 +170,7 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 func (h *AgentHandler) DeleteAgent(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if err := h.agentRepo.Delete(c.Request.Context(), c.Param("id"), userID); err != nil {
+		log.Printf("[agent] Delete error: %v", err)
 		view.JSONError(c, 500, "delete agent failed")
 		return
 	}

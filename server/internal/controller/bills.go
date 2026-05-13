@@ -40,6 +40,7 @@ func (h *BillHandler) ListBills(c *gin.Context) {
 
 	bills, total, err := h.billRepo.ListFiltered(c.Request.Context(), userID, startDate, endDate, category, limit, offset)
 	if err != nil {
+		log.Printf("[bills] List error: %v", err)
 		view.JSONError(c, 500, "query bills failed")
 		return
 	}
@@ -169,6 +170,7 @@ func (h *BillHandler) ExportBills(c *gin.Context) {
 
 	bills, _, err := h.billRepo.ListFiltered(c.Request.Context(), userID, startDate, endDate, category, 10000, 0)
 	if err != nil {
+		log.Printf("[bills] Export error: %v", err)
 		view.JSONError(c, 500, "query bills failed")
 		return
 	}

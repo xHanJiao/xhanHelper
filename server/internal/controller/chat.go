@@ -50,6 +50,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 				conv.AgentID = req.AgentID
 			}
 			if err := convRepo.Create(c.Request.Context(), conv); err != nil {
+				log.Printf("[chat] CreateConversation error: %v", err)
 				view.JSONError(c, 500, "create conversation failed")
 				return
 			}
@@ -117,6 +118,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 
 		flusher, ok := w.(http.Flusher)
 		if !ok {
+			log.Printf("[chat] streaming not supported: ResponseWriter does not implement http.Flusher")
 			view.JSONError(c, 500, "streaming not supported")
 			return
 		}

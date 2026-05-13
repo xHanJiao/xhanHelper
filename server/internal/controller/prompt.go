@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"log"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,7 @@ func (h *PromptHandler) ListPrompts(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	list, total, err := h.promptRepo.ListByUser(c.Request.Context(), userID, c.Query("type"), c.Query("status"), limit, offset)
 	if err != nil {
+		log.Printf("[prompt] List error: %v", err)
 		view.JSONError(c, 500, "query prompts failed")
 		return
 	}
@@ -63,6 +65,7 @@ func (h *PromptHandler) CreatePrompt(c *gin.Context) {
 		Status:       "active",
 	}
 	if err := h.promptRepo.Create(c.Request.Context(), p); err != nil {
+		log.Printf("[prompt] Create error: %v", err)
 		view.JSONError(c, 500, "create prompt failed")
 		return
 	}
@@ -76,6 +79,7 @@ func (h *PromptHandler) RollbackPrompt(c *gin.Context) {
 
 	existing, _, err := h.promptRepo.ListByUser(c.Request.Context(), userID, "", "", 1000, 0)
 	if err != nil {
+		log.Printf("[prompt] Rollback List error: %v", err)
 		view.JSONError(c, 500, "query failed")
 		return
 	}
@@ -92,6 +96,7 @@ func (h *PromptHandler) RollbackPrompt(c *gin.Context) {
 	}
 
 	if err := h.promptRepo.Rollback(c.Request.Context(), id, userID, target.PromptType); err != nil {
+		log.Printf("[prompt] Rollback error: %v", err)
 		view.JSONError(c, 500, "rollback failed")
 		return
 	}
@@ -102,6 +107,7 @@ func (h *PromptHandler) RollbackPrompt(c *gin.Context) {
 func (h *PromptHandler) DeletePrompt(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if err := h.promptRepo.Delete(c.Request.Context(), c.Param("id"), userID); err != nil {
+		log.Printf("[prompt] Delete error: %v", err)
 		view.JSONError(c, 500, "delete failed")
 		return
 	}

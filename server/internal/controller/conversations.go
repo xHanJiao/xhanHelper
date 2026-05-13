@@ -20,6 +20,7 @@ func listConversations(convRepo *service.ConversationRepo, agentRepo *service.Ag
 		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 		list, total, err := convRepo.ListByUser(c.Request.Context(), userID, limit, offset)
 		if err != nil {
+			log.Printf("[conv] List error: %v", err)
 			view.JSONError(c, 500, "query conversations failed")
 			return
 		}
@@ -88,6 +89,7 @@ func getMessages(convRepo *service.ConversationRepo,
 		}
 		msgs, err := msgRepo.ListByConversation(c.Request.Context(), convID, 100)
 		if err != nil {
+			log.Printf("[conv] GetMessages error: %v", err)
 			view.JSONError(c, 500, "query messages failed")
 			return
 		}
@@ -108,6 +110,7 @@ func getMessagesCursor(msgRepo *service.MessageRepo, convRepo *service.Conversat
 
 		result, err := msgRepo.ListByConversationCursor(c.Request.Context(), convID, cursor, direction, limit)
 		if err != nil {
+			log.Printf("[conv] GetMessagesCursor error: %v", err)
 			view.JSONError(c, 500, "query messages failed")
 			return
 		}
@@ -160,6 +163,7 @@ func deleteMessage(msgRepo *service.MessageRepo, convRepo *service.ConversationR
 		}
 		userID := c.GetString("user_id")
 		if err := msgRepo.SoftDelete(c.Request.Context(), msgID, userID); err != nil {
+			log.Printf("[conv] DeleteMessage error: %v", err)
 			view.JSONError(c, 500, "delete message failed")
 			return
 		}
@@ -181,6 +185,7 @@ func renameConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 			return
 		}
 		if err := convRepo.Rename(c.Request.Context(), convID, req.Title); err != nil {
+			log.Printf("[conv] Rename error: %v", err)
 			view.JSONError(c, 500, "rename failed")
 			return
 		}
@@ -195,6 +200,7 @@ func deleteConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 			return
 		}
 		if err := convRepo.SoftDelete(c.Request.Context(), convID); err != nil {
+			log.Printf("[conv] Delete error: %v", err)
 			view.JSONError(c, 500, "delete failed")
 			return
 		}

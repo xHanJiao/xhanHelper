@@ -30,6 +30,7 @@ func (h *ToolHandler) ListTools(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	tools, total, err := h.toolRepo.ListTools(c.Request.Context(), userID, c.Query("status"), limit, offset)
 	if err != nil {
+		log.Printf("[tool] List error: %v", err)
 		view.JSONError(c, 500, "query tools failed")
 		return
 	}
@@ -56,6 +57,7 @@ func (h *ToolHandler) CreateTool(c *gin.Context) {
 	req.UserID = userID
 	req.Status = "draft"
 	if err := h.toolRepo.CreateTool(c.Request.Context(), &req); err != nil {
+		log.Printf("[tool] Create error: %v", err)
 		view.JSONError(c, 500, "create tool failed")
 		return
 	}
@@ -68,7 +70,12 @@ func (h *ToolHandler) UpdateTool(c *gin.Context) {
 	id := c.Param("id")
 
 	existing, err := h.toolRepo.FindToolByID(c.Request.Context(), id, userID)
-	if err != nil || existing == nil {
+	if err != nil {
+		log.Printf("[tool] Update FindByID error: %v", err)
+		view.JSONError(c, 500, "query tool failed")
+		return
+	}
+	if existing == nil {
 		view.JSONError(c, 404, "tool not found")
 		return
 	}
@@ -82,6 +89,7 @@ func (h *ToolHandler) UpdateTool(c *gin.Context) {
 	req.ID = id
 	req.UserID = userID
 	if err := h.toolRepo.UpdateTool(c.Request.Context(), &req); err != nil {
+		log.Printf("[tool] Update error: %v", err)
 		view.JSONError(c, 500, "update tool failed")
 		return
 	}
@@ -96,6 +104,7 @@ func (h *ToolHandler) UpdateTool(c *gin.Context) {
 func (h *ToolHandler) DeleteTool(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if err := h.toolRepo.DeleteTool(c.Request.Context(), c.Param("id"), userID); err != nil {
+		log.Printf("[tool] Delete error: %v", err)
 		view.JSONError(c, 500, "delete tool failed")
 		return
 	}

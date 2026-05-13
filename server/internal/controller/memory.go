@@ -45,6 +45,7 @@ func (h *MemoryHandler) DeleteMemory(c *gin.Context) {
 
 	m, err := h.memRepo.FindByID(c.Request.Context(), userID, id)
 	if err != nil {
+		log.Printf("[memory] Get error: %v", err)
 		view.JSONError(c, 500, "query memory failed")
 		return
 	}
@@ -54,6 +55,7 @@ func (h *MemoryHandler) DeleteMemory(c *gin.Context) {
 	}
 
 	if err := h.memRepo.Delete(c.Request.Context(), id); err != nil {
+		log.Printf("[memory] Delete error: %v", err)
 		view.JSONError(c, 500, "delete memory failed")
 		return
 	}
@@ -79,6 +81,7 @@ func (h *MemoryHandler) BatchDeleteMemories(c *gin.Context) {
 	}
 
 	if err := h.memRepo.BatchDelete(c.Request.Context(), req.IDs, userID); err != nil {
+		log.Printf("[memory] BatchDelete error: %v", err)
 		view.JSONError(c, 500, "batch delete failed")
 		return
 	}

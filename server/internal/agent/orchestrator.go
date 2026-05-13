@@ -38,6 +38,7 @@ type RunRequest struct {
 	AgentID            string  // 关联的智能体 ID
 	MemoryThreshold    float64 // 记忆检索相关度阈值，默认 0.5
 	MemoryLimit        int     // 记忆检索最大条数，默认 8
+	SkipMemory         bool    // 跳过记忆检索（短输入等场景）
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（Flash 文本解析用）
@@ -95,6 +96,11 @@ func (o *Orchestrator) SetPromptResolver(r PromptResolver) {
 	o.promptResolver = r
 }
 
+// FlashClient 返回 Flash 模型客户端（供预处理管线使用）
+func (o *Orchestrator) FlashClient() llm.LLMClient {
+	return o.flashClient
+}
+
 // —— Run ——
 
 func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.StreamEvent, error) {
@@ -141,6 +147,10 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, req *RunRequest) (str
 	sysPrompt += o.registry.ToolOverview()
 
 	if o.retriever == nil || o.embedder == nil {
+		return sysPrompt, "", nil, nil, nil
+	}
+	if req.SkipMemory {
+		log.Printf("[orch] skip memory retrieval (SkipMemory=true)")
 		return sysPrompt, "", nil, nil, nil
 	}
 	vec, err := o.embedder.Embed(ctx, req.UserMessageContent)
@@ -460,6 +470,7 @@ func (o *Orchestrator) handleFlashResponse(
 
 	return false, *lastMsgID, newNames
 }
+
 // —— 并发执行 ——
 
 type toolExecResult struct {

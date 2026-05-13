@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -66,6 +67,43 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			}
 		}
 
+		// —— 预处理管线 ——
+		userSpecifiedAgent := req.AgentID != nil && *req.AgentID != ""
+		pc := &agent.PreContext{
+			RawMsg:             req.Message,
+			UserID:             userID,
+			UserSpecifiedAgent: userSpecifiedAgent,
+		}
+		pipelineCtx := agent.WithPreContext(c.Request.Context(), pc)
+
+		pipeline, err := agent.NewPipeline(
+			agent.NewShortInputCheckStep(),
+			agent.NewNormalizeDatesStep(),
+			agent.NewAutoRouteStep(orch.FlashClient(), agentRepo, conv.AgentID, conv.ID, msgRepo),
+		)
+		if err != nil {
+			log.Printf("[chat] pipeline init error: %v", err)
+		}
+		if _, pipeErr := pipeline.Run(pipelineCtx); pipeErr != nil {
+			log.Printf("[chat] pipeline run error: %v", pipeErr)
+		}
+
+		// 读取管线结果
+		normalizedMsg := pc.NormalizedMsg
+		if normalizedMsg == "" {
+			normalizedMsg = req.Message
+		}
+		if pc.AgentID != "" && !userSpecifiedAgent {
+			agentID = pc.AgentID
+			agentSystemPrompt = pc.AgentSystemPrompt
+			if conv.AgentID == nil || *conv.AgentID == "" {
+				conv.AgentID = &pc.AgentID
+				if err := convRepo.SetAgentID(c.Request.Context(), conv.ID, pc.AgentID); err != nil {
+					log.Printf("[chat] SetAgentID error: %v", err)
+				}
+			}
+		}
+
 		history, err := msgRepo.ListByConversationRecent(c.Request.Context(), conv.ID, 100)
 		if err != nil {
 			log.Printf("[chat] ListByConversation error: %v", err)
@@ -94,15 +132,23 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			ConversationID:     conv.ID,
 			Messages:           messages,
 			DeepMode:           req.DeepMode,
-			UserMessageContent: req.Message,
+			UserMessageContent: normalizedMsg,
 			AgentSystemPrompt:  agentSystemPrompt,
 			AgentID:            agentID,
 			MemoryThreshold:    req.MemoryThreshold,
 			MemoryLimit:        req.MemoryLimit,
+			SkipMemory:         pc.SkipMemory,
 		})
 		if err != nil {
 			view.WriteSSE(w, flusher, "error", err.Error())
 			return
+		}
+
+		// 发送 agent_matched 事件（如果管线匹配到了智能体）
+		if pc.AgentName != "" && pc.Confidence > 0 {
+			matchedJSON := fmt.Sprintf(`{"agent_id":"%s","agent_name":"%s","confidence":%.2f}`,
+				pc.AgentID, pc.AgentName, pc.Confidence)
+			view.WriteSSE(w, flusher, "agent_matched", matchedJSON)
 		}
 
 		for evt := range events {

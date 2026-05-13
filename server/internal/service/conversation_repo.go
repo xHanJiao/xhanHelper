@@ -83,6 +83,12 @@ func (r *ConversationRepo) Update(ctx context.Context, c *model.Conversation) er
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).Where("id = ?", c.ID).Updates(c).Error
 }
 
+// SetAgentID 绑定智能体到会话（只更新 agent_id 字段）
+func (r *ConversationRepo) SetAgentID(ctx context.Context, convID, agentID string) error {
+	return r.db.WithContext(ctx).Model(&model.Conversation{}).
+		Where("id = ?", convID).Update("agent_id", agentID).Error
+}
+
 // Touch 更新会话的 updated_at 到当前时间
 func (r *ConversationRepo) Touch(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).Where("id = ?", id).Update("updated_at", time.Now()).Error

@@ -25,6 +25,15 @@ func (r *MessageRepo) Create(ctx context.Context, m *model.Message) error {
 	return r.db.WithContext(ctx).Create(m).Error
 }
 
+// CountByRole 统计会话下指定角色的消息数
+func (r *MessageRepo) CountByRole(ctx context.Context, convID, role string) (int, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("conversation_id = ? AND role = ? AND status = ?", convID, role, 1).
+		Count(&count).Error
+	return int(count), err
+}
+
 // SoftDelete 软删除消息（标记 status=2）
 func (r *MessageRepo) SoftDelete(ctx context.Context, id, userID string) error {
 	return r.db.WithContext(ctx).

@@ -19,6 +19,7 @@ import (
 	"xhan-helper/internal/mcp"
 	"xhan-helper/internal/middleware"
 	"xhan-helper/internal/model"
+	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
@@ -74,9 +75,11 @@ func main() {
 	if err != nil {
 		log.Fatal("create llm client:", err)
 	}
+	llmClient = monitor.WrapLLMClient(llmClient, "orchestrator")
 	strongClient, _ := llm.NewStrongClient(cfg.LLM)
 	if strongClient != nil {
 		log.Printf("[llm] strong model available: %s", cfg.LLM.StrongModel)
+		strongClient = monitor.WrapLLMClient(strongClient, "orchestrator")
 	}
 
 	// Repos
@@ -164,6 +167,13 @@ func main() {
 	memScheduler := agent.NewMemoryScheduler(memExtractor, convRepo)
 	go memScheduler.Start(bgCtx, cfg.Server.MemoryAutoExtract)
 	orch.SetPromptResolver(promptRepo)
+
+	// Monitor snapshots
+	monitor.Register("vector_store", func() any { return vectorStore.Stats() })
+	monitor.Register("mcp", func() any { return mcpManager.Stats() })
+	monitor.Register("active_conversations", func() any {
+		return convRepo.CountActive(context.Background(), time.Hour)
+	})
 
 	// MCP idle reaper
 	mcpManager.StartIdleReaper(bgCtx)

@@ -121,6 +121,21 @@ func (m *Manager) GetConfiguredServers() []ServerConfig {
 	return m.config.Servers
 }
 
+// Stats 返回 MCP 各 server 的状态
+func (m *Manager) Stats() map[string]interface{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := map[string]interface{}{}
+	for name, s := range m.servers {
+		result[name] = map[string]interface{}{
+			"state":     serverState(s.state.Load()).String(),
+			"tools":     len(s.ToolsCache),
+			"in_flight": s.inFlight.Load(),
+		}
+	}
+	return result
+}
+
 // GetAllSnapshots 返回所有已就绪 server 的工具快照（用于 tool_retriever 检索）
 func (m *Manager) GetAllSnapshots() map[string][]ToolDef {
 	m.mu.Lock()

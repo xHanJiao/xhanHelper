@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"time"
+
+	"xhan-helper/internal/monitor"
 )
 
 // LoggingWrapper — 工具日志装饰器，记录 Execute 的完整输入输出
@@ -24,6 +26,7 @@ func (w *LoggingWrapper) Execute(ec *ExecuteContext, funcName string, args json.
 	start := time.Now()
 	w.logger.Printf("[%s.%s] INPUT: %s", w.Name(), funcName, string(args))
 	result := w.inner.Execute(ec, funcName, args)
+	monitor.IncToolCall(w.Name(), funcName, !result.Success)
 	elapsed := float64(time.Since(start).Microseconds()) / 1000
 	dataStr := string(result.Data)
 	w.logger.Printf("[%s.%s] OUTPUT (%.2fms) success=%v data=%s error=%q",

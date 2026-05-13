@@ -48,6 +48,7 @@ type ServerConfig struct {
 	MemoryDupeThreshold float64  `yaml:"memory_dupe_threshold"` // 记忆去重相似度阈值，默认 0.85
 	SidecarURL          string   `yaml:"sidecar_url"`           // Python sidecar MCP HTTP 地址
 	TokenTTLHours       int      `yaml:"token_ttl_hours"`       // token 过期时间（小时），默认 720
+	AdminUsers          []string `yaml:"admin_users"`           // 管理员用户 ID 列表
 }
 
 // DBConfig — 数据库配置
@@ -155,6 +156,9 @@ func merge(dst, src *Config) {
 	}
 	if src.Server.TokenTTLHours != 0 {
 		dst.Server.TokenTTLHours = src.Server.TokenTTLHours
+	}
+	if len(src.Server.AdminUsers) > 0 {
+		dst.Server.AdminUsers = src.Server.AdminUsers
 	}
 	if src.DB.Driver != "" {
 		dst.DB.Driver = src.DB.Driver

@@ -198,3 +198,26 @@ func cosineSimilarity(a, b []float64) float64 {
 	}
 	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
+
+// Stats 返回向量存储统计
+func (vs *VectorStore) Stats() map[string]interface{} {
+	vs.mu.RLock()
+	defer vs.mu.RUnlock()
+
+	byType := map[string]int{}
+	totalBytes := 0
+	for _, e := range vs.vectors {
+		t := e.Metadata["type"]
+		if t == "" {
+			t = "unknown"
+		}
+		byType[t]++
+		totalBytes += len(e.Vec) * 8 // float64 = 8 bytes
+	}
+
+	return map[string]interface{}{
+		"total_entries":   len(vs.vectors),
+		"by_type":         byType,
+		"estimated_bytes": totalBytes,
+	}
+}

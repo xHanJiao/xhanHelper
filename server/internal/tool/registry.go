@@ -37,6 +37,36 @@ func (r *Registry) SetDynamicLoader(loader DynamicToolLoader, sidecarURL string,
 	r.cacheWriter = cacheWriter
 }
 
+// SearchTools 在内存中的工具（含 MCP 占位工具）里关键词搜索
+func (r *Registry) SearchTools(query string) []ToolInfo {
+	var results []ToolInfo
+	q := strings.ToLower(query)
+	for name, t := range r.tools {
+		if name == "tool_retriever" {
+			continue
+		}
+		desc := strings.ToLower(t.Description())
+		if strings.Contains(name, q) || strings.Contains(desc, q) {
+			funcs := t.Functions()
+			funcInfos := make([]ToolFunctionInfo, len(funcs))
+			for i, f := range funcs {
+				funcInfos[i] = ToolFunctionInfo{
+					Name:        f.Name,
+					Description: f.Description,
+					Parameters:  f.Parameters,
+				}
+			}
+			results = append(results, ToolInfo{
+				ID:          name,
+				Name:        name,
+				Description: t.Description(),
+				Functions:   funcInfos,
+			})
+		}
+	}
+	return results
+}
+
 // DynamicToolLoader — 动态工具加载器接口（由 service.ToolRepo 实现）
 type DynamicToolLoader interface {
 	ListActiveTools(ctx context.Context) ([]model.ToolRegistry, error)

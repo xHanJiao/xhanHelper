@@ -393,8 +393,8 @@ func (o *Orchestrator) handleNativeToolCalls(
 		if results[i].result.Success {
 			newNames = append(newNames, toolCalls[i].Tool)
 		}
-		// 如果是 tool_retriever，从返回结果中提取发现的工具名
-		if toolCalls[i].Tool == "tool_retriever" && results[i].result.Success && results[i].result.Data != nil {
+		// 如果结果中包含工具列表，提取发现的工具名
+		if results[i].result.Data != nil {
 			names := extractToolNamesFromResult(results[i].result.Data)
 			newNames = append(newNames, names...)
 		}
@@ -462,7 +462,7 @@ func (o *Orchestrator) handleFlashResponse(
 		if results[i].result.Success {
 			newNames = append(newNames, parsed.ToolCalls[i].Tool)
 		}
-		if parsed.ToolCalls[i].Tool == "tool_retriever" && results[i].result.Success && results[i].result.Data != nil {
+		if results[i].result.Data != nil {
 			names := extractToolNamesFromResult(results[i].result.Data)
 			newNames = append(newNames, names...)
 		}

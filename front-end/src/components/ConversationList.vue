@@ -37,6 +37,7 @@ function handleLoadMore() {
 }
 
 const navExpanded = ref(true)
+const adminExpanded = ref(true)
 const historyExpanded = ref(true)
 
 const navItems = [
@@ -46,6 +47,12 @@ const navItems = [
   { label: '笔记', path: '/notes' },
   { label: '提示词', path: '/prompts' }
 ]
+
+const adminItems = [
+  { label: '系统监控', path: '/admin' }
+]
+
+const isAdmin = computed(() => auth.user?.isAdmin === true)
 
 function isNavActive(path) {
   return route.path === path
@@ -147,6 +154,52 @@ async function handleExtractMemories(conv) {
         >新对话</div>
         <div
           v-for="item in navItems"
+          :key="item.path"
+          @click="router.push(item.path)"
+          :style="{
+            padding: 'var(--space-sm) var(--space-md)',
+            borderRadius: 'var(--radius-md)',
+            marginBottom: 'var(--space-xs)',
+            cursor: 'pointer',
+            fontSize: '14px',
+            color: isNavActive(item.path) ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+            background: isNavActive(item.path) ? 'var(--color-primary-soft)' : 'transparent',
+            fontWeight: isNavActive(item.path) ? '500' : '400',
+            transition: 'background var(--transition-fast), color var(--transition-fast)'
+          }"
+          @mouseover="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'var(--color-surface-hover)' }"
+          @mouseout="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'transparent' }"
+        >
+          {{ item.label }}
+        </div>
+      </template>
+    </div>
+
+    <!-- 管理区（仅管理员可见） -->
+    <div v-if="isAdmin" style="padding: var(--space-sm) var(--space-md) var(--space-sm);">
+      <div
+        @click="adminExpanded = !adminExpanded"
+        :style="{
+          padding: 'var(--space-sm) var(--space-md)',
+          borderRadius: 'var(--radius-md)',
+          marginBottom: adminExpanded ? 'var(--space-xs)' : '0',
+          cursor: 'pointer',
+          fontSize: '13px',
+          color: 'var(--color-text-muted)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--space-xs)',
+          transition: 'background var(--transition-fast)'
+        }"
+        @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'"
+        @mouseout="e => e.currentTarget.style.background = 'transparent'"
+      >
+        <span style="transition: transform 0.2s;" :style="{ transform: adminExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }">▾</span>
+        <span>管理</span>
+      </div>
+      <template v-if="adminExpanded">
+        <div
+          v-for="item in adminItems"
           :key="item.path"
           @click="router.push(item.path)"
           :style="{

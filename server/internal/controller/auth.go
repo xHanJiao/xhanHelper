@@ -6,7 +6,7 @@ import (
 	"xhan-helper/internal/view"
 )
 
-func registerUser(userRepo *service.UserRepo, enabled *bool, allowed []string) gin.HandlerFunc {
+func registerUser(userRepo *service.UserRepo, enabled *bool, allowed []string, adminUsers []string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if enabled == nil || !*enabled {
 			view.JSONError(c, 403, "registration is disabled")
@@ -38,11 +38,11 @@ func registerUser(userRepo *service.UserRepo, enabled *bool, allowed []string) g
 			view.JSONError(c, 409, "registration failed (username may already exist)")
 			return
 		}
-		view.JSONOK(c, gin.H{"user_id": user.ID, "token": token})
+		view.JSONOK(c, gin.H{"user_id": user.ID, "token": token, "is_admin": isAdmin(user.ID, adminUsers)})
 	}
 }
 
-func loginUser(userRepo *service.UserRepo) gin.HandlerFunc {
+func loginUser(userRepo *service.UserRepo, adminUsers []string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			Username string `json:"username"`
@@ -57,8 +57,17 @@ func loginUser(userRepo *service.UserRepo) gin.HandlerFunc {
 			view.JSONError(c, 401, "invalid credentials")
 			return
 		}
-		view.JSONOK(c, gin.H{"user_id": user.ID, "token": token})
+		view.JSONOK(c, gin.H{"user_id": user.ID, "token": token, "is_admin": isAdmin(user.ID, adminUsers)})
 	}
+}
+
+func isAdmin(userID string, adminUsers []string) bool {
+	for _, id := range adminUsers {
+		if id == userID {
+			return true
+		}
+	}
+	return false
 }
 
 func logoutUser(userRepo *service.UserRepo) gin.HandlerFunc {

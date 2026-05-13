@@ -16,8 +16,10 @@ import (
 	"xhan-helper/internal/controller"
 	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/mcp"
 	"xhan-helper/internal/middleware"
 	"xhan-helper/internal/model"
+	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
@@ -64,6 +66,7 @@ func main() {
 			&model.ToolData{},
 			&model.UserPrompt{},
 			&model.Embedding{},
+			&model.MCPServerRecord{},
 		)
 	}
 
@@ -72,9 +75,11 @@ func main() {
 	if err != nil {
 		log.Fatal("create llm client:", err)
 	}
+	llmClient = monitor.WrapLLMClient(llmClient, "orchestrator")
 	strongClient, _ := llm.NewStrongClient(cfg.LLM)
 	if strongClient != nil {
 		log.Printf("[llm] strong model available: %s", cfg.LLM.StrongModel)
+		strongClient = monitor.WrapLLMClient(strongClient, "orchestrator")
 	}
 
 	// Repos
@@ -104,8 +109,9 @@ func main() {
 		log.Printf("[seed] SeedBuiltinTools error: %v", err)
 	}
 
-	// tool_retriever: 用关键词策略检索工具
+	// tool_retriever: 用关键词策略检索工具 + Registry 内存搜索（MCP 占位工具等）
 	toolRetriever := tool.NewToolRetriever(tool.NewSimpleKeywordStrategy(toolRepo))
+	toolRetriever.SetRegistrySearcher(reg)
 	reg.Register(tool.NewLoggingWrapper(toolRetriever, log.Default()))
 
 	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(noteRepo, vectorStore, embedder, embeddingRepo), log.Default()))
@@ -113,6 +119,33 @@ func main() {
 
 	// 从 DB 加载动态工具
 	reg.SetDynamicLoader(toolRepo, cfg.Server.SidecarURL, toolRepo, toolRepo)
+
+	// MCP Manager
+	mcpCfg := mcp.Config{
+		MaxConcurrent: cfg.MCP.MaxConcurrent,
+	}
+	for _, s := range cfg.MCP.Servers {
+		if s.Name == "" || s.Command == "" {
+			continue
+		}
+		mcpCfg.Servers = append(mcpCfg.Servers, mcp.ServerConfig{
+			Name:            s.Name,
+			Command:         s.Command,
+			Args:            s.Args,
+			Env:             s.Env,
+			IdleTimeoutSecs: s.IdleTimeoutSecs,
+			Description:     s.Description,
+		})
+	}
+	mcpManager := mcp.NewManager(mcpCfg)
+	defer mcpManager.Shutdown()
+
+	// 为每个 MCP server 注册 Proxy 工具（发现 + 懒启动 + 转发）
+	for _, s := range mcpCfg.Servers {
+		proxy := tool.NewMCPProxyTool(s, mcpManager)
+		reg.Register(tool.NewLoggingWrapper(proxy, log.Default()))
+		log.Printf("[mcp] proxy tool registered: %s", s.Name)
+	}
 
 	// 后台任务共享 context，关闭时统一取消
 	bgCtx, bgCancel := context.WithCancel(context.Background())
@@ -134,6 +167,16 @@ func main() {
 	memScheduler := agent.NewMemoryScheduler(memExtractor, convRepo)
 	go memScheduler.Start(bgCtx, cfg.Server.MemoryAutoExtract)
 	orch.SetPromptResolver(promptRepo)
+
+	// Monitor snapshots
+	monitor.Register("vector_store", func() any { return vectorStore.Stats() })
+	monitor.Register("mcp", func() any { return mcpManager.Stats() })
+	monitor.Register("active_conversations", func() any {
+		return convRepo.CountActive(context.Background(), time.Hour)
+	})
+
+	// MCP idle reaper
+	mcpManager.StartIdleReaper(bgCtx)
 
 	// Handlers
 	billHandler := controller.NewBillHandler(billRepo, memExtractor)

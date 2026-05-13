@@ -89,6 +89,16 @@ func (r *ConversationRepo) SetAgentID(ctx context.Context, convID, agentID strin
 		Where("id = ?", convID).Update("agent_id", agentID).Error
 }
 
+// CountActive 统计指定时间段内有活动的会话数
+func (r *ConversationRepo) CountActive(ctx context.Context, since time.Duration) int {
+	var count int64
+	cutoff := time.Now().Add(-since)
+	r.db.WithContext(ctx).Model(&model.Conversation{}).
+		Where("updated_at >= ? AND is_deleted = ?", cutoff, false).
+		Count(&count)
+	return int(count)
+}
+
 // Touch 更新会话的 updated_at 到当前时间
 func (r *ConversationRepo) Touch(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).Where("id = ?", id).Update("updated_at", time.Now()).Error

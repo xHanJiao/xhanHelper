@@ -33,4 +33,3 @@ func (t *DatetimeTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 	})
 	return &Result{Success: true, Data: data}
 }
-

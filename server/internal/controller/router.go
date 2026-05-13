@@ -7,6 +7,7 @@ import (
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/middleware"
+	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
 )
 
@@ -31,8 +32,8 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 	}))
 
 	// 无需认证 — 账号注册/登录
-	r.POST("/api/auth/register", registerUser(userRepo, cfg.Server.RegistrationEnabled, cfg.Server.AllowedUsers))
-	r.POST("/api/auth/login", loginUser(userRepo))
+	r.POST("/api/auth/register", registerUser(userRepo, cfg.Server.RegistrationEnabled, cfg.Server.AllowedUsers, cfg.Server.AdminUsers))
+	r.POST("/api/auth/login", loginUser(userRepo, cfg.Server.AdminUsers))
 
 	// 需要认证
 	auth := r.Group("/api")
@@ -71,6 +72,10 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 		auth.POST("/prompts/:id/rollback", promptHandler.RollbackPrompt)
 		auth.DELETE("/prompts/:id", promptHandler.DeletePrompt)
 	}
+
+	// 管理员路由
+	admin := r.Group("/api/admin", middleware.Auth(userRepo), monitor.AdminOnly(cfg.Server.AdminUsers))
+	admin.GET("/health", monitor.HealthHandlerGlobal())
 
 	return r
 }

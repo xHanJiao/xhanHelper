@@ -48,6 +48,11 @@ const routes = [
     component: () => import('@/views/ToolView.vue')
   },
   {
+    path: '/admin',
+    name: 'Admin',
+    component: () => import('@/views/AdminView.vue')
+  },
+  {
     path: '/',
     redirect: '/chat'
   }

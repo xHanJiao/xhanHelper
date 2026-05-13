@@ -6,6 +6,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"xhan-helper/internal/monitor"
 )
 
 // PreContext — 管线中流转的所有预处理状态
@@ -89,6 +91,7 @@ func (p *Pipeline) Run(ctx context.Context) (context.Context, error) {
 		}
 
 		log.Printf("[pipeline] Step %q DONE (%dms)", s.Name(), elapsed)
+		monitor.RecordPipelineStep(s.Name(), elapsed)
 		stepNames = append(stepNames, s.Name())
 	}
 

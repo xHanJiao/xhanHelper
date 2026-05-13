@@ -65,7 +65,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const res = await api.post('/api/auth/login', { username, password })
       token.value = res.token
-      user.value = { id: res.user_id, username }
+      user.value = { id: res.user_id, username, isAdmin: !!res.is_admin }
       saveToStorage()
       return { success: true }
     } catch (err) {
@@ -85,7 +85,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const res = await api.post('/api/auth/register', { username, password })
       token.value = res.token
-      user.value = { id: res.user_id, username }
+      user.value = { id: res.user_id, username, isAdmin: !!res.is_admin }
       saveToStorage()
       return { success: true }
     } catch (err) {

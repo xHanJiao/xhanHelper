@@ -21,12 +21,12 @@ type ToolRetrieveStrategy interface {
 
 // ToolInfo 工具信息（用于返回给 LLM）
 type ToolInfo struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Category    string                 `json:"category"`
-	Functions   []ToolFunctionInfo     `json:"functions"`
-	Score       float64                `json:"score,omitempty"`
+	ID          string             `json:"id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Category    string             `json:"category"`
+	Functions   []ToolFunctionInfo `json:"functions"`
+	Score       float64            `json:"score,omitempty"`
 }
 
 // ToolFunctionInfo 工具函数信息
@@ -38,9 +38,15 @@ type ToolFunctionInfo struct {
 
 // ==================== 策略持有者 ====================
 
-// ToolRetriever 工具检索工具（支持策略切换）
+// RegistrySearcher — 在 Registry 内存工具中搜索的接口
+type RegistrySearcher interface {
+	SearchTools(query string) []ToolInfo
+}
+
+// ToolRetriever 工具检索工具（支持策略切换 + Registry 内存搜索）
 type ToolRetriever struct {
-	strategy ToolRetrieveStrategy
+	strategy    ToolRetrieveStrategy
+	regSearcher RegistrySearcher // nil 时跳过内存搜索
 }
 
 // NewToolRetriever 创建 ToolRetriever
@@ -48,6 +54,11 @@ func NewToolRetriever(strategy ToolRetrieveStrategy) *ToolRetriever {
 	return &ToolRetriever{
 		strategy: strategy,
 	}
+}
+
+// SetRegistrySearcher 注入 Registry 内存搜索能力
+func (t *ToolRetriever) SetRegistrySearcher(rs RegistrySearcher) {
+	t.regSearcher = rs
 }
 
 // SetStrategy 切换策略
@@ -119,6 +130,15 @@ func (t *ToolRetriever) Execute(ec *ExecuteContext, funcName string, args json.R
 	if err != nil {
 		log.Printf("[ToolRetriever] search error: %v", err)
 		return &Result{Success: false, Error: err.Error()}
+	}
+
+	// 也搜索 Registry 内存中的工具（MCP 占位工具等）
+	if t.regSearcher != nil {
+		memTools := t.regSearcher.SearchTools(req.Query)
+		tools = append(tools, memTools...)
+		if len(tools) > req.Limit {
+			tools = tools[:req.Limit]
+		}
 	}
 
 	resJSON, _ := json.Marshal(map[string]interface{}{

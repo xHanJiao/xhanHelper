@@ -2,6 +2,8 @@ server:
   port: 8088
   mode: release
   memory_auto_extract: false
+  admin_users:
+    - ${XHAN_HELPER_ADMIN}
 
 db:
   host: 127.0.0.1

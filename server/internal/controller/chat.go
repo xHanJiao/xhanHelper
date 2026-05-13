@@ -12,6 +12,7 @@ import (
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
+	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
@@ -119,6 +120,8 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			view.JSONError(c, 500, "streaming not supported")
 			return
 		}
+		monitor.IncSSE()
+		defer monitor.DecSSE()
 
 		var messages []llm.Message
 		if req.DeepMode {

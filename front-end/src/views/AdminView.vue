@@ -12,169 +12,205 @@ let timer = null
 
 async function fetchHealth() {
   try {
-    const data = await api.get('/api/admin/health')
-    health.value = data
+    health.value = await api.get('/api/admin/health')
     error.value = null
   } catch (e) {
     error.value = e.message || '获取失败'
   }
 }
 
-onMounted(() => {
-  fetchHealth()
-  timer = setInterval(fetchHealth, 10000)
-})
+onMounted(() => { fetchHealth(); timer = setInterval(fetchHealth, 10000) })
+onUnmounted(() => { clearInterval(timer); destroyCharts() })
 
-onUnmounted(() => {
-  clearInterval(timer)
-  destroyCharts()
-})
+// ── charts ──
 
-// ── 图表 ──
+let chartInstances = []
 
-let llmChart = null
-let toolChart = null
-let pipelineChart = null
-
-function renderLLMChart(el, data) {
-  if (llmChart) llmChart.destroy()
-  const callers = Object.keys(data)
-  const datasets = [
-    { label: '成功', data: callers.map(k => data[k].calls - data[k].errors), backgroundColor: '#5b6abf' },
-    { label: '失败', data: callers.map(k => data[k].errors), backgroundColor: '#e74c3c' }
-  ]
-  llmChart = new Chart(el, {
-    type: 'bar',
-    data: { labels: callers, datasets },
-    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
+function makeLineChart(id, datasets) {
+  const canvas = document.getElementById(id)
+  if (!canvas) return
+  const colors = ['#5b6abf', '#e74c3c', '#27ae60', '#f39c12', '#8e44ad']
+  Chart.getChart(id)?.destroy()
+  const ds = datasets.map((d, i) => ({
+    label: d.label, data: d.data, borderColor: colors[i % colors.length],
+    backgroundColor: colors[i % colors.length] + '22', fill: false, pointRadius: 0, tension: 0.3
+  }))
+  const ch = new Chart(canvas, {
+    type: 'line',
+    data: { labels: datasets[0]?.data?.map((_, i) => i + 1) || [], datasets: ds },
+    options: { responsive: true, plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } }, scales: { x: { display: false }, y: { beginAtZero: true, title: { display: true, text: 'ms' } } } }
   })
+  chartInstances.push(ch)
 }
 
-function renderToolChart(el, data) {
-  if (toolChart) toolChart.destroy()
-  const items = []
-  for (const [tool, funcs] of Object.entries(data)) {
-    for (const [fn, c] of Object.entries(funcs)) {
-      items.push({ label: `${tool}.${fn}`, calls: c.calls + c.errors, errors: c.errors })
+function makeBarChart(id, labels, datasets, horizontal) {
+  const canvas = document.getElementById(id)
+  if (!canvas) return
+  Chart.getChart(id)?.destroy()
+  const ch = new Chart(canvas, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: { responsive: true, indexAxis: horizontal ? 'y' : 'x', plugins: { legend: { display: labels.length > 1, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } }, scales: horizontal ? { x: { beginAtZero: true } } : { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
+  })
+  chartInstances.push(ch)
+}
+
+function renderAllCharts() {
+  destroyCharts()
+  const h = health.value; if (!h) return
+
+  // ── LLM latency: one line per caller ──
+  const llmLats = h.latency?.llm
+  if (llmLats) {
+    const datasets = []
+    for (const [caller, s] of Object.entries(llmLats)) {
+      if (s.recent?.length) datasets.push({ label: caller, data: s.recent })
+    }
+    if (datasets.length) makeLineChart('llm-lat-chart', datasets)
+  }
+
+  // ── Tool latency: one line per tool.fn (top 5) ──
+  const toolLats = h.latency?.tool
+  if (toolLats) {
+    const items = []
+    for (const [tool, funcs] of Object.entries(toolLats)) {
+      for (const [fn, s] of Object.entries(funcs)) {
+        if (s.recent?.length) items.push({ label: tool + '.' + fn, data: s.recent, count: s.count })
+      }
+    }
+    items.sort((a, b) => b.count - a.count)
+    if (items.length) makeLineChart('tool-lat-chart', items.slice(0, 5))
+  }
+
+  // ── Pipeline: horizontal bar ──
+  const pipeLats = h.latency?.pipeline
+  if (pipeLats) {
+    const steps = Object.entries(pipeLats).filter(([, s]) => s.count > 0)
+    if (steps.length) {
+      steps.sort((a, b) => b[1].avg_ms - a[1].avg_ms)
+      makeBarChart('pipeline-chart', steps.map(s => s[0]), [{ label: 'avg ms', data: steps.map(s => s[1].avg_ms), backgroundColor: '#5b6abf' }], true)
     }
   }
-  items.sort((a, b) => b.calls - a.calls)
-  toolChart = new Chart(el, {
-    type: 'bar',
-    data: {
-      labels: items.map(i => i.label),
-      datasets: [
-        { label: '成功', data: items.map(i => i.calls - i.errors), backgroundColor: '#5b6abf' },
-        { label: '失败', data: items.map(i => i.errors), backgroundColor: '#e74c3c' }
-      ]
-    },
-    options: { responsive: true, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { stacked: true, beginAtZero: true }, y: { stacked: true } } }
-  })
-}
 
-function renderPipelineChart(el, data) {
-  if (pipelineChart) pipelineChart.destroy()
-  const steps = Object.entries(data)
-  steps.sort((a, b) => b[1].avg_ms - a[1].avg_ms)
-  pipelineChart = new Chart(el, {
-    type: 'bar',
-    data: {
-      labels: steps.map(s => s[0]),
-      datasets: [{ label: 'avg ms', data: steps.map(s => s[1].avg_ms), backgroundColor: '#5b6abf' }]
-    },
-    options: { responsive: true, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
-  })
+  // ── Embedding latency ──
+  const embLat = h.latency?.embedding
+  if (embLat?.recent?.length) makeLineChart('embedding-chart', [{ label: 'embedding', data: embLat.recent }])
+
 }
 
 function destroyCharts() {
-  if (llmChart) { llmChart.destroy(); llmChart = null }
-  if (toolChart) { toolChart.destroy(); toolChart = null }
-  if (pipelineChart) { pipelineChart.destroy(); pipelineChart = null }
+  chartInstances.forEach(c => c.destroy?.())
+  chartInstances = []
 }
 
-watch(health, (val) => {
-  if (!val) return
-  setTimeout(() => {
-    const llmEl = document.getElementById('llm-chart')
-    const toolEl = document.getElementById('tool-chart')
-    const pipelineEl = document.getElementById('pipeline-chart')
-    if (llmEl && val.counters?.llm_calls) renderLLMChart(llmEl, val.counters.llm_calls)
-    if (toolEl && val.counters?.tool_calls) renderToolChart(toolEl, val.counters.tool_calls)
-    if (pipelineEl && val.pipeline) renderPipelineChart(pipelineEl, val.pipeline)
-  }, 200)
-}, { deep: true })
+watch(health, () => { if (health.value) setTimeout(renderAllCharts, 100) }, { deep: true })
 
 // ── helpers ──
-function fmtMB(v) { if (v == null || v === -1) return 'N/A'; return v.toFixed(1) + ' MB' }
+function fmtMB(v) { if (v == null || v === -1) return 'N/A'; return (v * 1).toFixed(1) + ' MB' }
 function uptime(s) { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h > 0 ? `${h}h ${m}m` : `${m}m` }
+function latSummary(s) {
+  if (!s || !s.count) return '暂无数据'
+  return `avg: ${s.avg_ms}ms | P50: ${s.p50_ms}ms | P99: ${s.p99_ms}ms | 样本: ${s.count}`
+}
 </script>
 
 <template>
-  <div style="padding: var(--space-lg); overflow-y: auto; height: 100%;">
+  <div style="padding: var(--space-lg); overflow-y: auto; height: 100%; background: var(--color-bg-page);">
     <h2 style="margin-bottom: var(--space-md);">系统监控</h2>
     <NSpin v-if="!health && !error" />
     <div v-if="error" style="color: var(--color-danger); padding: var(--space-md);">{{ error }}</div>
 
     <template v-if="health">
       <!-- 卡片行 -->
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-md); margin-bottom: var(--space-lg);">
-        <NCard size="small" title="运行时间">
-          <div style="font-size: 24px; font-weight: 600;">{{ uptime(health.uptime_seconds) }}</div>
-        </NCard>
-        <NCard size="small" title="goroutines">
-          <div style="font-size: 24px; font-weight: 600;">{{ health.goroutines }}</div>
-        </NCard>
-        <NCard size="small" title="内存">
-          <div style="font-size: 14px;">堆: {{ fmtMB(health.memory?.heap_alloc_mb) }}</div>
-          <div style="font-size: 12px; color: var(--color-text-muted);">RSS: {{ fmtMB(health.memory?.os_rss_mb) }}</div>
-        </NCard>
-        <NCard size="small" title="SSE 连接">
-          <div style="font-size: 24px; font-weight: 600;">{{ health.counters?.sse_connections ?? 0 }}</div>
-        </NCard>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-md); margin-bottom: var(--space-lg);">
+        <NCard size="small" title="运行时间"><div style="font-size: 22px; font-weight: 600;">{{ uptime(health.uptime_seconds) }}</div></NCard>
+        <NCard size="small" title="goroutines"><div style="font-size: 22px; font-weight: 600;">{{ health.goroutines }}</div></NCard>
+        <NCard size="small" title="内存"><div>堆: {{ fmtMB(health.memory?.heap_alloc_mb) }}</div><div style="font-size: 12px; color: var(--color-text-muted);">RSS: {{ fmtMB(health.memory?.os_rss_mb) }}</div></NCard>
+        <NCard size="small" title="SSE 连接"><div style="font-size: 22px; font-weight: 600;">{{ health.counters?.sse_connections ?? 0 }}</div></NCard>
+        <NCard size="small" title="活跃会话"><div style="font-size: 22px; font-weight: 600;">{{ health.snapshots?.active_conversations ?? 0 }}</div><div style="font-size: 12px; color: var(--color-text-muted);">最近 1h</div></NCard>
       </div>
 
-      <!-- 图表 -->
+      <!-- LLM 调用次数 + 向量存储（同行） -->
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); margin-bottom: var(--space-lg);">
-        <NCard size="small" title="LLM 调用">
-          <canvas id="llm-chart" />
+        <NCard v-if="health.counters?.llm_calls" size="small" title="LLM 调用次数 + Token 消耗">
+          <div style="display: grid; gap: var(--space-sm);">
+            <div v-for="(s, caller) in health.counters.llm_calls" :key="caller" style="background: var(--color-bg); border-radius: var(--radius-md); padding: var(--space-sm) var(--space-md);">
+              <div style="font-weight: 600; font-size: 14px; margin-bottom: 4px;">{{ caller }}</div>
+              <div style="font-size: 24px; font-weight: 700; color: var(--color-primary);">{{ s.calls }} <span style="font-size: 12px; font-weight: 400; color: var(--color-text-muted);">次</span></div>
+              <div style="font-size: 12px; color: var(--color-text-muted); margin-top: 2px;">
+                失败 <span :style="{ color: s.errors > 0 ? 'var(--color-danger)' : 'var(--color-text-muted)' }">{{ s.errors }}</span> · 成功率 {{ (s.success_rate * 100).toFixed(1) }}%
+              </div>
+              <div v-if="health.counters?.llm_tokens?.[caller]" style="font-size: 12px; color: var(--color-text-muted); margin-top: 4px;">
+                token — prompt: {{ health.counters.llm_tokens[caller].prompt_tokens.toLocaleString() }} · completion: {{ health.counters.llm_tokens[caller].completion_tokens.toLocaleString() }}
+              </div>
+            </div>
+          </div>
         </NCard>
-        <NCard size="small" title="管线耗时 (avg ms)">
-          <canvas id="pipeline-chart" />
+
+        <NCard v-if="health.snapshots?.vector_store" size="small" title="向量存储">
+          <div><span style="font-weight: 600; font-size: 22px;">{{ health.snapshots.vector_store.total_entries }}</span><span style="font-size: 12px; color: var(--color-text-muted);"> 条目</span></div>
+          <div v-for="(c, t) in health.snapshots.vector_store.by_type" :key="t" style="font-size: 12px; color: var(--color-text-muted); margin-top: 2px;">{{ t }}: {{ c }}</div>
+          <div style="font-size: 11px; color: var(--color-text-muted); margin-top: 2px;">内存: {{ (health.snapshots.vector_store.estimated_bytes / 1024).toFixed(0) }} KB</div>
         </NCard>
       </div>
 
-      <NCard size="small" title="工具调用" style="margin-bottom: var(--space-lg);">
-        <canvas id="tool-chart" />
-      </NCard>
+      <!-- 四级耗时：田字格 -->
+      <div class="latency-grid">
+        <NCard v-if="health.latency?.llm" size="small" title="LLM 调用耗时">
+          <div v-for="(s, caller) in health.latency.llm" :key="caller" style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">{{ caller }} — {{ latSummary(s) }}</div>
+          <canvas id="llm-lat-chart" />
+        </NCard>
 
-      <!-- MCP 状态 -->
+        <NCard v-if="health.latency?.pipeline" size="small" title="管线耗时 (avg ms)">
+          <div v-for="(s, step) in health.latency.pipeline" :key="step" style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 2px;">{{ step }} — avg: {{ s.avg_ms }}ms | P99: {{ s.p99_ms }}ms | {{ s.count }} 次</div>
+          <canvas id="pipeline-chart" style="margin-top: var(--space-sm);" />
+        </NCard>
+
+        <NCard v-if="health.latency?.embedding?.count" size="small" title="Embedding 耗时">
+          <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">{{ latSummary(health.latency.embedding) }}</div>
+          <canvas id="embedding-chart" />
+        </NCard>
+
+        <NCard v-if="health.latency?.tool" size="small" title="工具调用耗时">
+          <div v-for="(funcs, tool) in health.latency.tool" :key="tool" style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 2px;">
+            <span v-for="(s, fn) in funcs" :key="fn">{{ tool }}.{{ fn }} — {{ latSummary(s) }}<br v-if="Object.keys(funcs).length > 1" /></span>
+          </div>
+          <canvas id="tool-lat-chart" style="margin-top: var(--space-sm);" />
+        </NCard>
+      </div>
+
+      <!-- MCP -->
       <NCard size="small" title="MCP 服务" style="margin-bottom: var(--space-lg);">
-        <div v-if="health.snapshots?.mcp">
+        <div v-if="Object.keys(health.snapshots?.mcp || {}).length">
           <div v-for="(info, name) in health.snapshots.mcp" :key="name" style="display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) 0;">
             <span style="font-weight: 500;">{{ name }}</span>
-            <NTag :type="info.state === 'ready' ? 'success' : info.state === 'error' ? 'error' : 'warning'" size="small">{{ info.state }}</NTag>
+            <NTag :type="info.state === 'ready' ? 'success' : 'warning'" size="small">{{ info.state }}</NTag>
             <span style="font-size: 12px; color: var(--color-text-muted);">工具: {{ info.tools }} | 执行中: {{ info.in_flight }}</span>
           </div>
         </div>
-        <div v-else style="color: var(--color-text-muted);">无 MCP 服务</div>
-      </NCard>
-
-      <!-- 向量存储 -->
-      <NCard size="small" title="向量存储" style="margin-bottom: var(--space-lg);">
-        <div v-if="health.snapshots?.vector_store">
-          <div>条目: {{ health.snapshots.vector_store.total_entries }}</div>
-          <div v-for="(count, type) in health.snapshots.vector_store.by_type" :key="type" style="font-size: 13px; color: var(--color-text-muted);">
-            {{ type }}: {{ count }}
-          </div>
-          <div style="font-size: 12px; color: var(--color-text-muted);">估算内存: {{ (health.snapshots.vector_store.estimated_bytes / 1024).toFixed(0) }} KB</div>
-        </div>
-      </NCard>
-
-      <!-- 活跃会话 -->
-      <NCard size="small" title="活跃会话">
-        <div style="font-size: 24px; font-weight: 600;">{{ health.snapshots?.active_conversations ?? 0 }}</div>
-        <div style="font-size: 12px; color: var(--color-text-muted);">最近 1 小时内</div>
+        <div v-else style="color: var(--color-text-muted);">无</div>
       </NCard>
     </template>
   </div>
 </template>
+
+<style scoped>
+.latency-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+.latency-grid .n-card {
+  margin-bottom: 0;
+}
+@media (max-width: 768px) {
+  .latency-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.latency-grid canvas {
+  max-height: 200px;
+}
+</style>
+

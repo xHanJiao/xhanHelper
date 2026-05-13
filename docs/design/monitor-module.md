@@ -1,23 +1,23 @@
 # 可观测性 / Monitor 模块设计
 
-> 2026-05-14
+> 2026-05-14 | 更新 2026-05-15（P99 + 时序图）
 
 ## 概述
 
-为管理员提供 `/api/admin/health` 端点 + Web 管理页面，集中暴露服务运行状态、LLM/工具调用统计、向量存储规模、内存占用等信息。
+为管理员提供 `/api/admin/health` 端点 + Web 管理页面，集中暴露服务运行状态、LLM/工具调用统计、调用耗时、向量存储规模、内存占用等信息。
 
 核心原则：
-- 调用方侵入 ≤ 1 行（计数器）或零侵入（Snapshot 在 main.go 注册、LLM 装饰器包一层）
+- 调用方侵入 ≤ 2 行
 - 所有逻辑收在 `internal/monitor/`，不散落各处
 - 不持久化，重启归零（个人助手场景够用）
 - 单端点 `/api/admin/health` 全量返回
-- Snapshot 函数签名为 `func() any`，需要 IO 的自己 `context.Background()`
+- Snapshot 函数签名为 `func() any`
 
 ## 目录结构
 
 ```
 internal/monitor/
-├── monitor.go       ← 主体：Counter + Gauge + Snapshot 注册表
+├── monitor.go       ← 主体：Counter + LatencyTimer + Gauge + Snapshot 注册表
 ├── handler.go       ← HTTP handler: GET /api/admin/health
 ├── middleware.go    ← 管理员鉴权
 └── llm_wrapper.go   ← LLMClient 装饰器
@@ -25,195 +25,146 @@ internal/monitor/
 
 ## 指标清单
 
-### 计数器（Counter / Gauge）
+### 计数器（Counter）
 
-| 指标 | 类型 | Labels | 上报点 |
-|------|------|--------|--------|
-| `llm_calls` | Counter | caller, success | MonitoredLLMClient（装饰器） |
-| `tool_calls` | Counter | tool, function, success | LoggingWrapper |
-| `sse_connections` | Gauge | — | chat handler |
-| `pipeline_step_ms` | Counter(avg) | step_name | pipeline.Run |
+| 指标 | Labels | 上报点 |
+|------|--------|--------|
+| `llm_calls` | caller, success | MonitoredLLMClient |
+| `tool_calls` | tool, function, success | LoggingWrapper |
 
-### 快照（Snapshot — 查询时实时计算，`func() any`）
+### 耗时（LatencyTimer — 样本 + P99/P50/avg）
+
+| 指标 | Labels | 上报点 |
+|------|--------|--------|
+| `llm_latency` | caller | orchestrator done 事件 |
+| `pipeline_latency` | step | pipeline.Run |
+| `tool_latency` | tool, function | LoggingWrapper |
+| `embedding_latency` | — | embedder.Embed |
+
+### 快照（Gauge / 实时计算）
 
 | 指标 | 来源 |
 |------|------|
+| `llm_tokens` | orchestrator done 事件（prompt + completion） |
+| `sse_connections` | chat handler |
 | uptime_seconds | main.go 记录 startTime |
 | goroutines | `runtime.NumGoroutine()` |
 | heap_alloc_mb | `runtime.ReadMemStats()` |
-| os_rss_mb | OS 级 RSS（macOS 取不到时填 -1） |
+| os_rss_mb | OS 级 RSS（Linux 读 `/proc/self/status`，macOS 返回 -1） |
 | vector_entries | vectorStore.Stats() |
-| active_conversations | convRepo.CountActive(context.Background(), 1h) |
+| active_conversations | convRepo.CountActive(ctx, 1h) |
 | mcp_servers | mcpManager.Stats() |
-
-### 不做（TODO 后续）
-
-| 指标 | 原因 |
-|------|------|
-| llm_tokens | 需要双倍 channel 复杂度包装流式事件，收益不高 |
 
 ## 核心设计
 
-### 侵入极简 — 调用方视角
-
-**LLM 调用**（零侵入，装饰器包一层）：
+### LatencyTimer — 样本存储
 
 ```go
-// main.go — 包一层，调用方无感知
-monitoredLLM := monitor.WrapLLMClient(llmClient, "orchestrator")
-extractorLLM  := monitor.WrapLLMClient(llmClient, "extractor")
-autoRouteLLM  := monitor.WrapLLMClient(llmClient, "autoRoute")
+type LatencySample struct {
+    Timestamp time.Time
+    Ms        int64
+}
+
+type LatencyTimer struct {
+    samples  []LatencySample  // 环形缓冲
+    maxAge   time.Duration    // 默认 7 天
+    mu       sync.RWMutex
+}
+
+func (t *LatencyTimer) Record(ms int64)
+func (t *LatencyTimer) Stats() (avg, p50, p99 float64, count int, recent []int64)
 ```
 
-成功判定：`Chat()/ChatSync()` 返回 err == nil 即成功（不追踪流式中断）。
+- 驱逐：`Record` 时自动丢弃超过 `maxAge` 的样本
+- 内存监控：`VectorStore.Stats()` 同样的方式，样本占的字节数也暴露
 
-**工具调用**（1 行，在已有 LoggingWrapper 里）：
+### 侵入点
+
+**LLM 耗时 + token**（orchestrator done 事件，1 行）：
 
 ```go
-monitor.IncToolCall(w.inner.Name(), funcName, result.Success)
+monitor.RecordLLMCall(caller, elapsedMs, usage.PromptTokens, usage.CompletionTokens)
 ```
 
-**SSE 连接**（2 行，在 chat handler）：
+**工具耗时**（LoggingWrapper，复用已有 elapsed）：
 
 ```go
-monitor.IncSSE()
-defer monitor.DecSSE()
+monitor.IncToolCall(w.Name(), funcName, !result.Success, elapsed)
 ```
 
-**管线耗时**（1 行，在 pipeline.go Run 方法）：
+**Embedding 耗时**（embedder.Embed 内 2 行）：
 
 ```go
-monitor.RecordPipelineStep(s.Name(), elapsed)
+start := time.Now()
+// ... embedding call ...
+monitor.RecordEmbedding(time.Since(start).Milliseconds())
 ```
 
-### 组件自治 — Snapshot 注册
+### API 响应格式（节选）
 
-```go
-type SnapshotFunc func() any
-
-monitor.Register("vector_store", func() any { return vectorStore.Stats() })
-monitor.Register("mcp", func() any { return mcpManager.Stats() })
-monitor.Register("active_conversations", func() any { return convRepo.CountActive(context.Background(), time.Hour) })
-```
-
-Snapshot 内部自己创建 ctx，不从 Register 捕获。
-
-### API 响应格式
-
-```
-GET /api/admin/health
-Authorization: Bearer <admin-token>
-
+```json
 {
-  "uptime_seconds": 3721,
-  "goroutines": 42,
-  "memory": {
-    "heap_alloc_mb": 12.5,
-    "os_rss_mb": 96.4
+  "llm_latency": {
+    "orchestrator": {
+      "avg_ms": 3120, "p50_ms": 2800, "p99_ms": 8500,
+      "count": 128,
+      "recent": [3100, 2900, 3500, ...]
+    }
   },
-  "counters": {
-    "llm_calls": {
-      "orchestrator":  {"calls": 120, "errors": 3, "success_rate": 0.975},
-      "extractor":     {"calls": 8,   "errors": 0, "success_rate": 1.0},
-      "autoRoute":     {"calls": 45,  "errors": 0, "success_rate": 1.0}
-    },
-    "tool_calls": {
-      "bookkeeping": {
-        "create": {"calls": 20, "success": 18},
-        "query":  {"calls": 15, "success": 15}
-      },
-      "hotnews": {
-        "invoke": {"calls": 5, "success": 3}
-      }
-    },
-    "sse_connections": 1
+  "llm_tokens": {
+    "orchestrator": {"prompt": 54000, "completion": 12500}
   },
-  "pipeline": {
-    "shortInputCheck": {"avg_ms": 0,   "count": 156},
-    "normalizeDates":  {"avg_ms": 0,   "count": 156},
-    "autoRoute":       {"avg_ms": 1520,"count": 156}
+  "pipeline_latency": {
+    "autoRoute": {"avg_ms": 1520, "p50_ms": 1400, "p99_ms": 3000, "count": 156, "recent": [...]}
   },
-  "snapshots": {
-    "vector_store": {
-      "total_entries": 25,
-      "by_type": {"mem": 10, "note": 5, "msg": 10},
-      "estimated_mb": 0.04
-    },
-    "mcp": {
-      "hotnews": {"state": "running", "tools": 1, "version": "mcp-server/hotnewslist"}
-    },
-    "active_conversations": 3
+  "tool_latency": {
+    "hotnews": {
+      "invoke": {"avg_ms": 2100, "p50_ms": 2000, "p99_ms": 5000, "count": 5, "recent": [...]}
+    }
   }
 }
 ```
 
+## 前端管理页面
+
+### 布局（更新）
+
+```
+┌──────────────────────────────────────────────┐
+│  运行时间 / goroutines / 内存 / SSE  （卡片行）│
+├──────────────────────────────────────────────┤
+│  LLM 调用耗时 (时序折线图, 最近 100 点)        │
+│  avg / P50 / P99 汇总                        │
+├──────────────────────────────────────────────┤
+│  管线耗时 (横向条形图)                         │
+├──────────────────────────────────────────────┤
+│  工具调用耗时 TOP (时序折线图)                  │
+├──────────────────────────────────────────────┤
+│  LLM 调用次数 (柱状图)                         │
+├──────────────────────────────────────────────┤
+│  MCP 状态 / 向量存储 / 活跃会话                 │
+└──────────────────────────────────────────────┘
+```
+
+### 图表类型
+
+| 数据 | 图表 |
+|------|------|
+| LLM/工具耗时 | 折线图（`recent` 数组，X=时间 Y=ms） |
+| 管线耗时 avg | 横向条形图 |
+| LLM 调用次数 | 堆叠柱状图（成功/失败） |
+
 ## 配置
 
 ```yaml
-# config.yaml
 server:
-  admin_users:               # 管理员用户 ID 列表
-    - "admin-user-uuid-here"
+  admin_users: ["uuid-here"]      # 管理员用户 ID
+
+monitor:
+  sample_max_age_hours: 168       # 样本保留时长，默认 7 天 = 168 小时
 ```
-
-## 中间件
-
-```go
-// middleware/admin.go
-func AdminOnly(adminUsers []string) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        userID := c.GetString("user_id")
-        for _, id := range adminUsers {
-            if id == userID {
-                c.Next()
-                return
-            }
-        }
-        c.AbortWithStatusJSON(401, ...)
-    }
-}
-```
-
-路由注册（在 NewRouter 内部）：
-
-```go
-admin := r.Group("/api/admin", monitor.AdminOnly(cfg.Server.AdminUsers))
-admin.GET("/health", monitor.HealthHandler(mon))
-```
-
-## 前端管理页面
-
-单页 `/admin`，使用 Chart.js，风格参考 Prometheus 控制台。
-
-### 布局
-
-```
-┌────────────────────────────────────────────┐
-│  服务运行中 · 运行 1h 23m                    │
-├──────────────┬──────────────┬───────────────┤
-│  🔥 LLM 调用  │  🧠 内存占用  │  ⚡ goroutines │
-│   120 次      │   96.4 MB    │    42         │
-│   97.5% 成功  │   堆 12.5 MB  │               │
-├──────────────┴──────────────┴───────────────┤
-│  📊 LLM 调用分布 (按 caller)      [柱状图]    │
-│  📊 工具调用 TOP (按 tool)        [柱状图]    │
-│  📈 管线耗时 (avg ms)             [横向条形图] │
-├─────────────────────────────────────────────┤
-│  📋 工具详情 (名称/schema/状态，可折叠)       │
-│  📋 MCP 服务状态                             │
-└─────────────────────────────────────────────┘
-```
-
-### 技术选型
-
-Chart.js（~60KB gzipped），柱状图 + 横向条形图 + 卡片即可，不需复杂交互。
-
-### 数据流
-
-前端定时 fetch `/api/admin/health`，更新图表。Naive UI 卡片组件 + Chart.js canvas。
 
 ## 不确定的项
 
-- **OS RSS 跨平台**：macOS 没有 `/proc/self/status`，dev 环境取不到时填 `-1`。
-- **持久化**：现阶段不做。将来需要时 Monitor 接口不变，内部加刷盘逻辑即可。
-- **llm_tokens**：TODO，需要包装流式 channel，后续再做。
+- **OS RSS 跨平台**：macOS 没有 `/proc/self/status`，返回值填 `-1`。
+- **持久化**：现阶段不做。Counter + LatencyTimer 全内存，重启归零。

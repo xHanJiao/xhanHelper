@@ -14,6 +14,7 @@ import (
 	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
+	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
@@ -153,7 +154,9 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, req *RunRequest) (str
 		log.Printf("[orch] skip memory retrieval (SkipMemory=true)")
 		return sysPrompt, "", nil, nil, nil
 	}
+	embStart := time.Now()
 	vec, err := o.embedder.Embed(ctx, req.UserMessageContent)
+	monitor.RecordEmbedding(time.Since(embStart).Milliseconds())
 	if err != nil {
 		log.Printf("[vector] embed user msg error: %v", err)
 		return sysPrompt, "", nil, nil, nil
@@ -241,6 +244,7 @@ func (o *Orchestrator) runReActLoop(
 			iterSysPrompt = sysPrompt + o.registry.GeneratePromptFor(activeNames)
 		}
 
+		llmStart := time.Now()
 		streamEvents, err := client.Chat(ctx, &llm.ChatRequest{
 			SystemPrompt: iterSysPrompt,
 			Messages:     msgs,
@@ -274,6 +278,19 @@ func (o *Orchestrator) runReActLoop(
 				hasReasoning = true
 				o.sendEvent(events, se)
 			case "done":
+				// 记录 LLM 耗时 + token 消耗
+				caller := "orchestrator"
+				if isProMode {
+					caller = "orchestrator-pro"
+				}
+				elapsedMs := time.Since(llmStart).Milliseconds()
+				pt, ct := 0, 0
+				if se.Usage != nil {
+					pt = se.Usage.PromptTokens
+					ct = se.Usage.CompletionTokens
+				}
+				monitor.RecordLLMCall(caller, elapsedMs, pt, ct)
+
 				if hasReasoning {
 					o.sendEvent(events, &llm.StreamEvent{Type: "thought_done", Content: ""})
 				}

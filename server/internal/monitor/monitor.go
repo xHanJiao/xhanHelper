@@ -3,6 +3,7 @@ package monitor
 import (
 	"encoding/json"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -10,7 +11,6 @@ import (
 
 // ===== Counter =====
 
-// Counter — 带 success rate 的计数器
 type Counter struct {
 	Calls  int64 `json:"calls"`
 	Errors int64 `json:"errors"`
@@ -31,66 +31,159 @@ func (c *Counter) SuccessRate() float64 {
 	return float64(calls-atomic.LoadInt64(&c.Errors)) / float64(calls)
 }
 
-// ===== Timer =====
-
-// Timer — 平均耗时统计
-type Timer struct {
-	Count int64 `json:"count"`
-	SumMs int64 `json:"sum_ms"`
+// TokenTracker — 累计 token 统计
+type TokenTracker struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
 }
 
-func (t *Timer) Record(ms int64) {
-	atomic.AddInt64(&t.Count, 1)
-	atomic.AddInt64(&t.SumMs, ms)
+func (t *TokenTracker) Add(prompt, completion int) {
+	atomic.AddInt64(&t.PromptTokens, int64(prompt))
+	atomic.AddInt64(&t.CompletionTokens, int64(completion))
 }
 
-func (t *Timer) AvgMs() float64 {
-	count := atomic.LoadInt64(&t.Count)
-	if count == 0 {
-		return 0
+// ===== LatencyTimer =====
+
+type LatencySample struct {
+	Timestamp time.Time `json:"timestamp"`
+	Ms        int64     `json:"ms"`
+}
+
+// LatencyTimer — 样本存储 + P99/P50/avg
+type LatencyTimer struct {
+	samples []LatencySample
+	maxAge  time.Duration
+	mu      sync.RWMutex
+}
+
+func NewLatencyTimer(maxAge time.Duration) *LatencyTimer {
+	return &LatencyTimer{maxAge: maxAge}
+}
+
+func (t *LatencyTimer) Record(ms int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := time.Now()
+	t.samples = append(t.samples, LatencySample{Timestamp: now, Ms: ms})
+	t.evictLocked(now)
+}
+
+func (t *LatencyTimer) evictLocked(now time.Time) {
+	cutoff := now.Add(-t.maxAge)
+	i := 0
+	for i < len(t.samples) && t.samples[i].Timestamp.Before(cutoff) {
+		i++
 	}
-	return float64(atomic.LoadInt64(&t.SumMs)) / float64(count)
+	if i > 0 {
+		t.samples = append([]LatencySample(nil), t.samples[i:]...)
+	}
 }
 
-// ===== Snapshot =====
+func (t *LatencyTimer) Stats() map[string]interface{} {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 
-// SnapshotFunc — 组件自报统计
+	count := len(t.samples)
+	if count == 0 {
+		return map[string]interface{}{
+			"avg_ms": 0, "p50_ms": 0, "p99_ms": 0,
+			"count": 0, "recent": []int64{},
+		}
+	}
+
+	var sum int64
+	vals := make([]int64, count)
+	for i, s := range t.samples {
+		sum += s.Ms
+		vals[i] = s.Ms
+	}
+	sort.Slice(vals, func(i, j int) bool { return vals[i] < vals[j] })
+
+	avg := float64(sum) / float64(count)
+	p50 := vals[count*50/100]
+	p99 := vals[count*99/100]
+
+	// recent: 最近 100 个样本的毫秒值
+	n := 100
+	if count < n {
+		n = count
+	}
+	recent := make([]int64, n)
+	for i := 0; i < n; i++ {
+		recent[i] = t.samples[count-n+i].Ms
+	}
+
+	totalBytes := count * 24 // time.Time(24 bytes) + int64(8) ≈ 32, 保守取 24+8
+
+	return map[string]interface{}{
+		"avg_ms":       round(avg),
+		"p50_ms":       p50,
+		"p99_ms":       p99,
+		"count":        count,
+		"recent":       recent,
+		"memory_bytes": totalBytes,
+	}
+}
+
+// ===== SnapshotFunc =====
+
 type SnapshotFunc func() any
 
 // ===== Monitor =====
 
-// Monitor — 集中持有所有指标
-type Monitor struct {
-	startedAt time.Time
+const defaultSampleMaxAge = 7 * 24 * time.Hour
 
-	// llm_calls: caller → Counter
+type Monitor struct {
+	startedAt    time.Time
+	sampleMaxAge time.Duration
+
+	// counters
 	llmCalls   map[string]*Counter
 	llmCallsMu sync.RWMutex
 
-	// tool_calls: tool → function → Counter
 	toolCalls   map[string]map[string]*Counter
 	toolCallsMu sync.RWMutex
 
-	// gague
-	sseConns atomic.Int64
+	// latency
+	llmLats   map[string]*LatencyTimer
+	llmLatsMu sync.RWMutex
 
-	// pipeline timers: step → Timer
-	pipelineTimers   map[string]*Timer
-	pipelineTimersMu sync.RWMutex
+	toolLats   map[string]map[string]*LatencyTimer
+	toolLatsMu sync.RWMutex
+
+	pipelineLats   map[string]*LatencyTimer
+	pipelineLatsMu sync.RWMutex
+
+	embeddingLat   *LatencyTimer
+	embeddingLatMu sync.RWMutex // needed for lazily init
+
+	// tokens
+	llmTokens   map[string]*TokenTracker
+	llmTokensMu sync.RWMutex
+
+	// gauge
+	sseConns atomic.Int64
 
 	// snapshots
 	snapshots   map[string]SnapshotFunc
 	snapshotsMu sync.RWMutex
 }
 
-// New 创建 Monitor
 func New() *Monitor {
+	return NewWithAge(defaultSampleMaxAge)
+}
+
+func NewWithAge(maxAge time.Duration) *Monitor {
 	return &Monitor{
-		startedAt:      time.Now(),
-		llmCalls:       make(map[string]*Counter),
-		toolCalls:      make(map[string]map[string]*Counter),
-		pipelineTimers: make(map[string]*Timer),
-		snapshots:      make(map[string]SnapshotFunc),
+		startedAt:    time.Now(),
+		sampleMaxAge: maxAge,
+		llmCalls:     make(map[string]*Counter),
+		toolCalls:    make(map[string]map[string]*Counter),
+		llmLats:      make(map[string]*LatencyTimer),
+		toolLats:     make(map[string]map[string]*LatencyTimer),
+		pipelineLats: make(map[string]*LatencyTimer),
+		llmTokens:    make(map[string]*TokenTracker),
+		snapshots:    make(map[string]SnapshotFunc),
 	}
 }
 
@@ -154,26 +247,111 @@ func (m *Monitor) IncToolCall(tool, function string, err bool) {
 func (m *Monitor) IncSSE() { m.sseConns.Add(1) }
 func (m *Monitor) DecSSE() { m.sseConns.Add(-1) }
 
-// ===== Pipeline Timer =====
+// ===== Pipeline Latency =====
 
 func (m *Monitor) RecordPipelineStep(stepName string, elapsedMs int64) {
-	m.pipelineTimersMu.RLock()
-	t, ok := m.pipelineTimers[stepName]
-	m.pipelineTimersMu.RUnlock()
+	m.pipelineLatsMu.RLock()
+	t, ok := m.pipelineLats[stepName]
+	m.pipelineLatsMu.RUnlock()
 	if ok {
 		t.Record(elapsedMs)
 		return
 	}
-	m.pipelineTimersMu.Lock()
-	if t, ok = m.pipelineTimers[stepName]; ok {
-		m.pipelineTimersMu.Unlock()
+	m.pipelineLatsMu.Lock()
+	if t, ok = m.pipelineLats[stepName]; ok {
+		m.pipelineLatsMu.Unlock()
 		t.Record(elapsedMs)
 		return
 	}
-	t = &Timer{}
+	t = NewLatencyTimer(m.sampleMaxAge)
 	t.Record(elapsedMs)
-	m.pipelineTimers[stepName] = t
-	m.pipelineTimersMu.Unlock()
+	m.pipelineLats[stepName] = t
+	m.pipelineLatsMu.Unlock()
+}
+
+// ===== LLM Latency + Tokens =====
+
+func (m *Monitor) RecordLLMCall(caller string, elapsedMs int64, promptTokens, completionTokens int) {
+	m.llmLatsMu.RLock()
+	t, ok := m.llmLats[caller]
+	m.llmLatsMu.RUnlock()
+	if ok {
+		t.Record(elapsedMs)
+	} else {
+		m.llmLatsMu.Lock()
+		if t, ok = m.llmLats[caller]; ok {
+			m.llmLatsMu.Unlock()
+			t.Record(elapsedMs)
+		} else {
+			t = NewLatencyTimer(m.sampleMaxAge)
+			t.Record(elapsedMs)
+			m.llmLats[caller] = t
+			m.llmLatsMu.Unlock()
+		}
+	}
+
+	m.llmTokensMu.RLock()
+	tk, ok := m.llmTokens[caller]
+	m.llmTokensMu.RUnlock()
+	if ok {
+		tk.Add(promptTokens, completionTokens)
+		return
+	}
+	m.llmTokensMu.Lock()
+	if tk, ok = m.llmTokens[caller]; ok {
+		m.llmTokensMu.Unlock()
+		tk.Add(promptTokens, completionTokens)
+		return
+	}
+	tk = &TokenTracker{}
+	tk.Add(promptTokens, completionTokens)
+	m.llmTokens[caller] = tk
+	m.llmTokensMu.Unlock()
+}
+
+// ===== Tool Latency =====
+
+func (m *Monitor) IncToolCallWithLatency(tool, function string, err bool, elapsedMs int64) {
+	m.IncToolCall(tool, function, err)
+	m.toolLatsMu.RLock()
+	fm, ok := m.toolLats[tool]
+	m.toolLatsMu.RUnlock()
+	if !ok {
+		m.toolLatsMu.Lock()
+		if fm, ok = m.toolLats[tool]; !ok {
+			fm = make(map[string]*LatencyTimer)
+			m.toolLats[tool] = fm
+		}
+		m.toolLatsMu.Unlock()
+	}
+	m.toolLatsMu.RLock()
+	t, ok := fm[function]
+	m.toolLatsMu.RUnlock()
+	if ok {
+		t.Record(elapsedMs)
+		return
+	}
+	m.toolLatsMu.Lock()
+	if t, ok = fm[function]; ok {
+		m.toolLatsMu.Unlock()
+		t.Record(elapsedMs)
+		return
+	}
+	t = NewLatencyTimer(m.sampleMaxAge)
+	t.Record(elapsedMs)
+	fm[function] = t
+	m.toolLatsMu.Unlock()
+}
+
+// ===== Embedding Latency =====
+
+func (m *Monitor) RecordEmbedding(elapsedMs int64) {
+	m.embeddingLatMu.Lock()
+	if m.embeddingLat == nil {
+		m.embeddingLat = NewLatencyTimer(m.sampleMaxAge)
+	}
+	m.embeddingLatMu.Unlock()
+	m.embeddingLat.Record(elapsedMs)
 }
 
 // ===== Snapshot =====
@@ -184,11 +362,8 @@ func (m *Monitor) Register(name string, fn SnapshotFunc) {
 	m.snapshotsMu.Unlock()
 }
 
-// ===== Snapshot =====
-
-// Snapshot 生成健康检查的完整 JSON
 func (m *Monitor) Snapshot() map[string]interface{} {
-	result := map[string]interface{}{
+	return map[string]interface{}{
 		"uptime_seconds": int(time.Since(m.startedAt).Seconds()),
 		"goroutines":     runtime.NumGoroutine(),
 		"memory": map[string]interface{}{
@@ -196,10 +371,9 @@ func (m *Monitor) Snapshot() map[string]interface{} {
 			"os_rss_mb":     getRSSMB(),
 		},
 		"counters":  m.countersSnapshot(),
-		"pipeline":  m.pipelineSnapshot(),
+		"latency":   m.latencySnapshot(),
 		"snapshots": m.registeredSnapshots(),
 	}
-	return result
 }
 
 func (m *Monitor) countersSnapshot() map[string]interface{} {
@@ -233,20 +407,58 @@ func (m *Monitor) countersSnapshot() map[string]interface{} {
 	c["tool_calls"] = tools
 	c["sse_connections"] = m.sseConns.Load()
 
+	m.llmTokensMu.RLock()
+	tokens := map[string]interface{}{}
+	for caller, tk := range m.llmTokens {
+		tokens[caller] = map[string]interface{}{
+			"prompt_tokens":     atomic.LoadInt64(&tk.PromptTokens),
+			"completion_tokens": atomic.LoadInt64(&tk.CompletionTokens),
+		}
+	}
+	m.llmTokensMu.RUnlock()
+	c["llm_tokens"] = tokens
+
 	return c
 }
 
-func (m *Monitor) pipelineSnapshot() map[string]interface{} {
-	m.pipelineTimersMu.RLock()
-	defer m.pipelineTimersMu.RUnlock()
-	p := map[string]interface{}{}
-	for step, t := range m.pipelineTimers {
-		p[step] = map[string]interface{}{
-			"avg_ms": round(t.AvgMs()),
-			"count":  atomic.LoadInt64(&t.Count),
-		}
+func (m *Monitor) latencySnapshot() map[string]interface{} {
+	l := map[string]interface{}{}
+
+	m.llmLatsMu.RLock()
+	llm := map[string]interface{}{}
+	for caller, t := range m.llmLats {
+		llm[caller] = t.Stats()
 	}
-	return p
+	m.llmLatsMu.RUnlock()
+	l["llm"] = llm
+
+	m.pipelineLatsMu.RLock()
+	pipe := map[string]interface{}{}
+	for step, t := range m.pipelineLats {
+		pipe[step] = t.Stats()
+	}
+	m.pipelineLatsMu.RUnlock()
+	l["pipeline"] = pipe
+
+	m.toolLatsMu.RLock()
+	tools := map[string]interface{}{}
+	for tool, fm := range m.toolLats {
+		funcs := map[string]interface{}{}
+		for fn, t := range fm {
+			funcs[fn] = t.Stats()
+		}
+		tools[tool] = funcs
+	}
+	m.toolLatsMu.RUnlock()
+	l["tool"] = tools
+
+	m.embeddingLatMu.RLock()
+	if m.embeddingLat != nil {
+		l["embedding"] = m.embeddingLat.Stats()
+	}
+	m.embeddingLatMu.RUnlock()
+
+	return l
 }
 
 func (m *Monitor) registeredSnapshots() map[string]interface{} {
@@ -258,8 +470,6 @@ func (m *Monitor) registeredSnapshots() map[string]interface{} {
 	}
 	return s
 }
-
-// ===== JSON =====
 
 func (m *Monitor) SnapshotJSON() ([]byte, error) {
 	return json.Marshal(m.Snapshot())
@@ -285,21 +495,17 @@ func roundMB(bytes uint64) float64 {
 
 var global = New()
 
-// IncLLMCall — 全局快捷方法
-func IncLLMCall(caller string, err bool) { global.IncLLMCall(caller, err) }
-
-// IncToolCall — 全局快捷方法
-func IncToolCall(tool, function string, err bool) { global.IncToolCall(tool, function, err) }
-
-// IncSSE / DecSSE — 全局快捷方法
-func IncSSE() { global.IncSSE() }
-func DecSSE() { global.DecSSE() }
-
-// RecordPipelineStep — 全局快捷方法
+func IncLLMCall(caller string, err bool)              { global.IncLLMCall(caller, err) }
+func IncToolCall(tool, function string, err bool)     { global.IncToolCall(tool, function, err) }
+func IncSSE()                                         { global.IncSSE() }
+func DecSSE()                                         { global.DecSSE() }
 func RecordPipelineStep(step string, elapsedMs int64) { global.RecordPipelineStep(step, elapsedMs) }
-
-// Register — 全局快捷方法
+func RecordLLMCall(caller string, elapsedMs int64, pt, ct int) {
+	global.RecordLLMCall(caller, elapsedMs, pt, ct)
+}
+func IncToolCallWithLatency(tool, fn string, err bool, ms int64) {
+	global.IncToolCallWithLatency(tool, fn, err, ms)
+}
+func RecordEmbedding(ms int64)              { global.RecordEmbedding(ms) }
 func Register(name string, fn SnapshotFunc) { global.Register(name, fn) }
-
-// Global 返回全局 Monitor 实例
-func Global() *Monitor { return global }
+func Global() *Monitor                      { return global }

@@ -91,7 +91,7 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 
 	lastMsg := msgs[len(msgs)-1]
 	result := parseExtractResult(msg.Content)
-	if result == nil || result.Summary == "" {
+	if result == nil || isEmptySummary(result.Summary) {
 		e.updateProgress(ctx, conv, lastMsg.ID)
 		return nil
 	}
@@ -148,7 +148,7 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, promptT
 	}
 
 	result := parseExtractResult(msg.Content)
-	if result == nil || result.Summary == "" {
+	if result == nil || isEmptySummary(result.Summary) {
 		return
 	}
 	if e.isDuplicate(ctx, userID, result.Summary) {
@@ -260,6 +260,11 @@ func (e *MemoryExtractor) updateProgress(ctx context.Context, conv *model.Conver
 func hashPrompt(text string) string {
 	h := md5.Sum([]byte(text))
 	return hex.EncodeToString(h[:])
+}
+
+func isEmptySummary(s string) bool {
+	s = strings.TrimSpace(s)
+	return s == "" || s == "无"
 }
 
 func truncate(s string, n int) string {

@@ -80,7 +80,12 @@ const planVisible = computed(() => {
 function scrollToBottom() {
   nextTick(() => {
     if (chat.isStreaming && streamingBubbleRef.value) {
-      streamingBubbleRef.value.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      const container = messagesContainerRef.value
+      if (!container) return
+      // 用户离开底部超过 80px 时不强制滚动，避免打断阅读历史
+      const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+      if (distFromBottom > 80) return
+      container.scrollTop = container.scrollHeight
     } else {
       messagesEndRef.value?.scrollIntoView({ behavior: 'smooth' })
     }

@@ -61,23 +61,38 @@ function toggleExpand() {
   inputExpanded.value = !inputExpanded.value
 }
 
-// LLM 参数设置（无 Agent 模式，存 localStorage）
-const LLM_SETTINGS_KEY = 'xhanhelper_llm_settings'
+// LLM 参数（从后端 API 获取，不存 localStorage）
 const showLlmSettings = ref(false)
+const llmSettings = ref({ temperature: null, max_tokens: null, thinking: true, deepMode: false })
 
-function loadLlmSettings() {
+async function fetchLlmConfig() {
   try {
-    const raw = localStorage.getItem(LLM_SETTINGS_KEY)
-    if (raw) return JSON.parse(raw)
-  } catch {}
-  return { temperature: null, max_tokens: null, thinking: true, deepMode: false }
+    const qs = chat.agentId ? `?agent_id=${encodeURIComponent(chat.agentId)}` : ''
+    const res = await api.get('/api/llm-config' + qs)
+    if (res && typeof res === 'object') {
+      llmSettings.value = {
+        temperature: res.temperature ?? null,
+        max_tokens: res.max_tokens ?? null,
+        thinking: res.thinking ?? true,
+        deepMode: llmSettings.value.deepMode
+      }
+    }
+  } catch (e) {
+    console.error('Failed to fetch LLM config', e)
+  }
 }
 
-function saveLlmSettings(settings) {
-  localStorage.setItem(LLM_SETTINGS_KEY, JSON.stringify(settings))
-}
-
-const llmSettings = ref(loadLlmSettings())
+// agent_matched 后更新参数
+watch(() => chat.llmParams, (params) => {
+  if (params) {
+    llmSettings.value = {
+      temperature: params.temperature ?? llmSettings.value.temperature,
+      max_tokens: params.max_tokens ?? llmSettings.value.max_tokens,
+      thinking: params.thinking ?? llmSettings.value.thinking,
+      deepMode: llmSettings.value.deepMode
+    }
+  }
+})
 
 const currentTitle = computed(() => {
   const conv = convs.list.find(c => c.id === chat.conversationId)
@@ -529,7 +544,7 @@ function handleContainerClick(e) {
                   </div>
                   <NSwitch
                     :value="llmSettings.deepMode"
-                    @update:value="(v) => { llmSettings.deepMode = v; saveLlmSettings(llmSettings) }"
+                    @update:value="(v) => { llmSettings.deepMode = v }"
                     :disabled="!!currentAgentId"
                     size="small"
                   />
@@ -540,7 +555,7 @@ function handleContainerClick(e) {
                   <span style="font-size: 13px; color: var(--color-text);">思考模式</span>
                   <NSwitch
                     :value="llmSettings.deepMode ? true : llmSettings.thinking"
-                    @update:value="(v) => { llmSettings.thinking = v; saveLlmSettings(llmSettings) }"
+                    @update:value="(v) => { llmSettings.thinking = v }"
                     :disabled="!!currentAgentId || llmSettings.deepMode"
                     size="small"
                   />
@@ -549,7 +564,7 @@ function handleContainerClick(e) {
                   <div style="font-size: 13px; margin-bottom: 4px; color: var(--color-text);">Temperature</div>
                   <NInputNumber
                     :value="llmSettings.temperature"
-                    @update:value="(v) => { llmSettings.temperature = v; saveLlmSettings(llmSettings) }"
+                    @update:value="(v) => { llmSettings.temperature = v }"
                     :min="0" :max="2" :step="0.1"
                     placeholder="默认 1.0"
                     size="small"
@@ -562,7 +577,7 @@ function handleContainerClick(e) {
                   <div style="font-size: 13px; margin-bottom: 4px; color: var(--color-text);">Max Tokens</div>
                   <NInputNumber
                     :value="llmSettings.max_tokens"
-                    @update:value="(v) => { llmSettings.max_tokens = v; saveLlmSettings(llmSettings) }"
+                    @update:value="(v) => { llmSettings.max_tokens = v }"
                     :min="1" :step="100"
                     placeholder="默认 4096"
                     size="small"

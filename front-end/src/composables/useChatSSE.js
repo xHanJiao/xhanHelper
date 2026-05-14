@@ -149,6 +149,7 @@ export function useChatSSE() {
         const am = JSON.parse(rawData)
         chat.agentId = am.agent_id
         chat.agentName = am.agent_name
+        chat.llmParams = am.params || null
         break
       }
       case 'done': {

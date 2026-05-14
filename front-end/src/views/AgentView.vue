@@ -11,6 +11,7 @@ import {
   NForm,
   NFormItem,
   NInput,
+  NSwitch,
   NSelect,
   NGi,
   NGrid,
@@ -33,7 +34,7 @@ const agents = ref([])
 const loading = ref(false)
 const modalVisible = ref(false)
 const editing = ref(null)
-const formValue = ref({ name: '', system_prompt: '', model: 'deepseek-chat', temperature: null, max_tokens: null })
+const formValue = ref({ name: '', system_prompt: '', model: 'deepseek-chat', temperature: null, max_tokens: null, thinking: true })
 const submitting = ref(false)
 const contentContainerRef = ref(null)
 const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
@@ -58,18 +59,19 @@ async function fetchAgents() {
 
 function openCreate() {
   editing.value = null
-  formValue.value = { name: '', system_prompt: '', model: 'deepseek-chat', temperature: null, max_tokens: null }
+  formValue.value = { name: '', system_prompt: '', model: 'deepseek-chat', temperature: null, max_tokens: null, thinking: true }
   modalVisible.value = true
 }
 
 function openEdit(agent) {
   editing.value = agent
-  let temperature = null, maxTokens = null
+  let temperature = null, maxTokens = null, thinking = true
   if (agent.params_json) {
     try {
       const p = JSON.parse(agent.params_json)
       temperature = p.temperature ?? null
       maxTokens = p.max_tokens ?? null
+      thinking = p.thinking ?? true
     } catch {}
   }
   formValue.value = {
@@ -77,7 +79,8 @@ function openEdit(agent) {
     system_prompt: agent.system_prompt,
     model: agent.model,
     temperature,
-    max_tokens: maxTokens
+    max_tokens: maxTokens,
+    thinking
   }
   modalVisible.value = true
 }
@@ -90,6 +93,9 @@ function buildAgentPayload(fv) {
   }
   if (fv.max_tokens !== null && fv.max_tokens !== undefined && fv.max_tokens !== '') {
     params.max_tokens = Number(fv.max_tokens)
+  }
+  if (fv.thinking !== null && fv.thinking !== undefined) {
+    params.thinking = fv.thinking
   }
   if (Object.keys(params).length > 0) {
     p.params_json = JSON.stringify(params)
@@ -209,6 +215,9 @@ onMounted(fetchAgents)
         </NFormItem>
         <NFormItem label="模型">
           <NSelect v-model:value="formValue.model" :options="modelOptions" />
+        </NFormItem>
+        <NFormItem label="思考模式">
+          <NSwitch v-model:value="formValue.thinking" />
         </NFormItem>
         <NFormItem label="Temperature (0~2)">
           <NInput v-model:value="formValue.temperature" placeholder="默认 1.0" />

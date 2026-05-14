@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/monitor"
@@ -64,6 +65,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 		var agentID string
 		var agentTemperature *float64
 		var agentMaxTokens *int
+		var agentThinking *bool
 		if conv.AgentID != nil && *conv.AgentID != "" && agentRepo != nil {
 			a, err := agentRepo.FindByID(c.Request.Context(), *conv.AgentID, userID)
 			if err != nil {
@@ -75,12 +77,14 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 					var params struct {
 						Temperature *float64 `json:"temperature"`
 						MaxTokens   *int     `json:"max_tokens"`
+						Thinking    *bool    `json:"thinking"`
 					}
 					if err := json.Unmarshal([]byte(a.ParamsJSON), &params); err != nil {
 						log.Printf("[chat] parse agent params_json error: %v", err)
 					} else {
 						agentTemperature = params.Temperature
 						agentMaxTokens = params.MaxTokens
+						agentThinking = params.Thinking
 					}
 				}
 			}
@@ -170,7 +174,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			SkipMemory:         pc.SkipMemory,
 			Temperature:        agentTemperature,
 			MaxTokens:          agentMaxTokens,
-			Thinking:           req.Thinking,
+			Thinking:           agentThinking,
 		})
 		if err != nil {
 			view.WriteSSE(w, flusher, "error", err.Error())
@@ -179,8 +183,14 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 
 		// 发送 agent_matched 事件（如果管线匹配到了智能体）
 		if pc.AgentName != "" && pc.Confidence > 0 {
-			matchedJSON := fmt.Sprintf(`{"agent_id":"%s","agent_name":"%s","confidence":%.2f}`,
-				pc.AgentID, pc.AgentName, pc.Confidence)
+			paramsStr := "null"
+			if a, err := agentRepo.FindByID(c.Request.Context(), pc.AgentID, userID); err != nil {
+				log.Printf("[chat] agent_matched fetch agent params error: %v", err)
+			} else if a != nil && a.ParamsJSON != "" {
+				paramsStr = a.ParamsJSON
+			}
+			matchedJSON := fmt.Sprintf(`{"agent_id":"%s","agent_name":"%s","confidence":%.2f,"params":%s}`,
+				pc.AgentID, pc.AgentName, pc.Confidence, paramsStr)
 			view.WriteSSE(w, flusher, "agent_matched", matchedJSON)
 		}
 
@@ -253,4 +263,53 @@ func buildLLMMessages(history []model.Message) []llm.Message {
 		msgs = append(msgs, msg)
 	}
 	return msgs
+}
+
+// llmConfig GET /api/llm-config?agent_id=xxx
+// 返回当前生效的 LLM 参数。传 agent_id 时返回 Agent 参数，否则返回配置默认值。
+func llmConfig(cfg *config.Config, agentRepo *service.AgentRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetString("user_id")
+
+		resp := map[string]interface{}{
+			"temperature": 1.0,
+			"max_tokens":  4096,
+			"thinking":    true,
+		}
+		if cfg.LLM.DefaultTemperature != nil {
+			resp["temperature"] = *cfg.LLM.DefaultTemperature
+		}
+		if cfg.LLM.DefaultMaxTokens != nil {
+			resp["max_tokens"] = *cfg.LLM.DefaultMaxTokens
+		}
+
+		agentID := c.Query("agent_id")
+		if agentID != "" && agentRepo != nil {
+			a, err := agentRepo.FindByID(c.Request.Context(), agentID, userID)
+			if err != nil {
+				log.Printf("[llm-config] find agent error: %v", err)
+			} else if a != nil && a.ParamsJSON != "" {
+				var params struct {
+					Temperature *float64 `json:"temperature"`
+					MaxTokens   *int     `json:"max_tokens"`
+					Thinking    *bool    `json:"thinking"`
+				}
+				if err := json.Unmarshal([]byte(a.ParamsJSON), &params); err != nil {
+					log.Printf("[llm-config] parse agent params error: %v", err)
+				} else {
+					if params.Temperature != nil {
+						resp["temperature"] = *params.Temperature
+					}
+					if params.MaxTokens != nil {
+						resp["max_tokens"] = *params.MaxTokens
+					}
+					if params.Thinking != nil {
+						resp["thinking"] = *params.Thinking
+					}
+				}
+			}
+		}
+
+		view.JSONOK(c, resp)
+	}
 }

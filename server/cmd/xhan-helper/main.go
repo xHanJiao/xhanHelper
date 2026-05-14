@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -189,6 +190,16 @@ func main() {
 	monitor.Register("mcp", func() any { return mcpManager.Stats() })
 	monitor.Register("active_conversations", func() any {
 		return convRepo.CountActive(context.Background(), time.Hour)
+	})
+	monitor.Register("markdown_files", func() any {
+		entries, _ := os.ReadDir("data/markdown")
+		count := 0
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				count++
+			}
+		}
+		return map[string]interface{}{"count": count}
 	})
 
 	// MCP idle reaper

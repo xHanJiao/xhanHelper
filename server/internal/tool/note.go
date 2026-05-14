@@ -73,6 +73,30 @@ keyword: 在正文和标签中模糊搜索，可选`,
 				},
 			},
 		},
+		{
+			Name: "update_note",
+			Description: `更新已有的笔记，修改主题/正文/标签/变量。仅传需要修改的字段。
+
+			id: 笔记 ID，必填
+			topic: 新主题，可选
+			content: 新正文，可选
+			tags: 新标签，可选
+			variables: 新结构变量，可选`,
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id":      map[string]interface{}{"type": "string", "description": "笔记 ID，必填"},
+					"topic":   map[string]interface{}{"type": "string", "description": "新主题，可选"},
+					"content": map[string]interface{}{"type": "string", "description": "新正文，可选"},
+					"tags":    map[string]interface{}{"type": "string", "description": "新标签，可选"},
+					"variables": map[string]interface{}{
+						"type":        "object",
+						"description": "新结构变量，可选",
+					},
+				},
+				"required": []string{"id"},
+			},
+		},
 	}
 }
 
@@ -82,6 +106,8 @@ func (t *NoteTool) Execute(ec *ExecuteContext, funcName string, args json.RawMes
 		return t.recordNote(ec, args)
 	case "query_notes":
 		return t.queryNotes(ec, args)
+	case "update_note":
+		return t.updateNote(ec, args)
 	default:
 		return &Result{Success: false, Error: fmt.Sprintf("unknown function: %s", funcName)}
 	}
@@ -125,6 +151,40 @@ func (t *NoteTool) recordNote(ec *ExecuteContext, args json.RawMessage) *Result 
 
 	data, _ := json.Marshal(note)
 	return &Result{Success: true, Data: data}
+}
+
+func (t *NoteTool) updateNote(ec *ExecuteContext, args json.RawMessage) *Result {
+	var params struct {
+		ID        string                 `json:"id"`
+		Topic     string                 `json:"topic"`
+		Content   string                 `json:"content"`
+		Tags      string                 `json:"tags"`
+		Variables map[string]interface{} `json:"variables"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("parse args: %v", err)}
+	}
+	if params.ID == "" {
+		return &Result{Success: false, Error: "id is required"}
+	}
+
+	var varsStr *string
+	if len(params.Variables) > 0 {
+		b, _ := json.Marshal(params.Variables)
+		s := string(b)
+		varsStr = &s
+	}
+
+	if err := t.noteRepo.Update(ec.Ctx, params.ID, ec.UserID, params.Topic, params.Content, params.Tags, varsStr); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("update note: %v", err)}
+	}
+
+	// 更新了 content 则重新 embedding
+	if params.Content != "" && t.vectorStore != nil && t.embedder != nil && t.embeddingRepo != nil {
+		go t.embedNote(&model.Note{ID: params.ID, Content: params.Content, UserID: ec.UserID})
+	}
+
+	return &Result{Success: true}
 }
 
 func (t *NoteTool) embedNote(note *model.Note) {

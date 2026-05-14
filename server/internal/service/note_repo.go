@@ -52,6 +52,27 @@ func (r *NoteRepo) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Delete(&model.Note{}, "id = ?", id).Error
 }
 
+// Update 更新笔记，仅更新非空字段
+func (r *NoteRepo) Update(ctx context.Context, id, userID, topic, content, tags string, variables *string) error {
+	updates := map[string]interface{}{}
+	if topic != "" {
+		updates["topic"] = topic
+	}
+	if content != "" {
+		updates["content"] = content
+	}
+	if tags != "" {
+		updates["tags"] = tags
+	}
+	if variables != nil {
+		updates["variables"] = variables
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&model.Note{}).Where("id = ? AND user_id = ?", id, userID).Updates(updates).Error
+}
+
 // List 按条件分页查询，limit<=0 时默认 50
 func (r *NoteRepo) List(ctx context.Context, userID, topic, keyword string, limit, offset int) ([]model.Note, int64, error) {
 	if limit <= 0 {

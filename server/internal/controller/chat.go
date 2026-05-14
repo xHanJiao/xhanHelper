@@ -97,6 +97,9 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		if agentMaxTokens == nil {
 			agentMaxTokens = req.MaxTokens
 		}
+		if agentThinking == nil {
+			agentThinking = req.Thinking
+		}
 
 		// —— 预处理管线 ——
 		userSpecifiedAgent := req.AgentID != nil && *req.AgentID != ""

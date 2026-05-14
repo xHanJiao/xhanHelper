@@ -197,7 +197,7 @@ func (s *AutoRouteStep) ShouldRun(ctx context.Context) bool {
 		return false
 	}
 	for _, t := range s.triggers {
-		if count == t {
+		if count+1 == t {
 			return true
 		}
 	}

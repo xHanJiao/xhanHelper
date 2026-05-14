@@ -70,7 +70,7 @@ function loadLlmSettings() {
     const raw = localStorage.getItem(LLM_SETTINGS_KEY)
     if (raw) return JSON.parse(raw)
   } catch {}
-  return { temperature: null, max_tokens: null, thinking: null }
+  return { temperature: null, max_tokens: null, thinking: null, deepMode: false }
 }
 
 function saveLlmSettings(settings) {
@@ -293,7 +293,7 @@ async function handleSend() {
 
   const opts = {
     conversationId: chat.conversationId,
-    deepMode: false,
+    deepMode: !chat.agentId ? llmSettings.value.deepMode : false,
     agentId: chat.agentId
   }
   // 无 Agent 模式时，带上用户设定的 LLM 参数
@@ -515,16 +515,31 @@ function handleContainerClick(e) {
                   ⚙
                 </NButton>
               </template>
-              <div style="width: 220px; padding: 4px 0;">
+              <div style="width: 240px; padding: 4px 0;">
                 <div v-if="currentAgentId" style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 8px;">
                   参数由智能体控制，不可修改
                 </div>
-                <div style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+                <!-- 模型选择 -->
+                <div style="margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
+                  <div>
+                    <span style="font-size: 13px; color: var(--color-text);">深度思考 (Pro)</span>
+                    <div style="font-size: 11px; color: var(--color-text-muted);">v4-pro，推理更强但较慢</div>
+                  </div>
+                  <NSwitch
+                    :value="llmSettings.deepMode"
+                    @update:value="(v) => { llmSettings.deepMode = v; saveLlmSettings(llmSettings) }"
+                    :disabled="!!currentAgentId"
+                    size="small"
+                  />
+                </div>
+                <div style="border-top: 1px solid var(--color-border); margin: 8px 0;"></div>
+                <!-- 思考模式 -->
+                <div style="margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
                   <span style="font-size: 13px; color: var(--color-text);">思考模式</span>
                   <NSwitch
-                    :value="llmSettings.thinking"
+                    :value="llmSettings.deepMode ? true : llmSettings.thinking"
                     @update:value="(v) => { llmSettings.thinking = v; saveLlmSettings(llmSettings) }"
-                    :disabled="!!currentAgentId"
+                    :disabled="!!currentAgentId || llmSettings.deepMode"
                     size="small"
                   />
                 </div>

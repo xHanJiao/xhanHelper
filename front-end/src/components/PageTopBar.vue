@@ -16,7 +16,12 @@ const tooltipText = computed(() => {
   return ''
 })
 
-const { isMobile, toggleDrawer } = useMobile()
+const { isMobile, toggleDrawer, toggleSidebar, sidebarCollapsed } = useMobile()
+
+const sidebarIcon = computed(() => {
+  if (isMobile.value) return '☰'
+  return sidebarCollapsed.value ? '☰' : '«'
+})
 </script>
 
 <template>
@@ -35,7 +40,7 @@ const { isMobile, toggleDrawer } = useMobile()
     }"
   >
     <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-xs);">
-      <TopBarBtn v-if="isMobile" icon="☰" @click="toggleDrawer" />
+      <TopBarBtn :icon="sidebarIcon" @click="isMobile ? toggleDrawer() : toggleSidebar()" />
       {{ title }}
       <TopBarBtn v-if="agentId" icon="🤖" :tooltip="tooltipText" />
     </span>

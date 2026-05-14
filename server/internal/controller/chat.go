@@ -83,14 +83,15 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 						agentMaxTokens = params.MaxTokens
 					}
 				}
-				// Agent 未提供时，用前端传入的参数（无 Agent 模式）
-				if agentTemperature == nil {
-					agentTemperature = req.Temperature
-				}
-				if agentMaxTokens == nil {
-					agentMaxTokens = req.MaxTokens
-				}
 			}
+		}
+
+		// 无 Agent 时，用前端传入的参数
+		if agentTemperature == nil {
+			agentTemperature = req.Temperature
+		}
+		if agentMaxTokens == nil {
+			agentMaxTokens = req.MaxTokens
 		}
 
 		// —— 预处理管线 ——

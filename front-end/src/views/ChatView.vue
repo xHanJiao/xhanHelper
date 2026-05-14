@@ -512,6 +512,9 @@ function handleContainerClick(e) {
                 </NButton>
               </template>
               <div style="width: 220px; padding: 4px 0;">
+                <div v-if="currentAgentId" style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 8px;">
+                  参数由智能体控制，不可修改
+                </div>
                 <div style="margin-bottom: 12px;">
                   <div style="font-size: 13px; margin-bottom: 4px; color: var(--color-text);">Temperature</div>
                   <NInputNumber
@@ -521,6 +524,7 @@ function handleContainerClick(e) {
                     placeholder="默认 1.0"
                     size="small"
                     clearable
+                    :disabled="!!currentAgentId"
                     style="width: 100%"
                   />
                 </div>
@@ -533,6 +537,7 @@ function handleContainerClick(e) {
                     placeholder="默认 4096"
                     size="small"
                     clearable
+                    :disabled="!!currentAgentId"
                     style="width: 100%"
                   />
                 </div>

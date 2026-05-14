@@ -151,11 +151,13 @@ func (e *MemoryExtractor) ExtractFromConversationWithCallback(ctx context.Contex
 	} else {
 		msgs, err = e.msgRepo.ListByConversation(ctx, conv.ID, 200)
 	}
-	if err != nil || len(msgs) == 0 {
-		if err != nil {
-			cb(ExtractEvent{Type: "error", Message: err.Error()})
-		}
+	if err != nil {
+		cb(ExtractEvent{Type: "error", Message: err.Error()})
 		return err
+	}
+	if len(msgs) == 0 {
+		cb(ExtractEvent{Type: "done", Created: 0})
+		return nil
 	}
 
 	cb(ExtractEvent{Type: "status", Phase: "fetching", Message: fmt.Sprintf("加载了 %d 条新消息", len(msgs))})

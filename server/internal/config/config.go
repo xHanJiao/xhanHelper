@@ -48,6 +48,7 @@ type ServerConfig struct {
 	MemoryDupeThreshold float64  `yaml:"memory_dupe_threshold"` // 记忆去重相似度阈值，默认 0.85
 	SidecarURL          string   `yaml:"sidecar_url"`           // Python sidecar MCP HTTP 地址
 	TokenTTLHours       int      `yaml:"token_ttl_hours"`       // token 过期时间（小时），默认 720
+	MaxTokensPerUser    int      `yaml:"max_tokens_per_user"`   // 同一用户最大 token 数，默认 4
 	AdminUsers          []string `yaml:"admin_users"`           // 管理员用户 ID 列表
 }
 

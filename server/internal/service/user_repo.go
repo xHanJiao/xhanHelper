@@ -16,12 +16,16 @@ var ErrTokenExpired = errors.New("token expired")
 
 // UserRepo — 用户数据访问
 type UserRepo struct {
-	db            *gorm.DB
-	tokenTTLHours int
+	db               *gorm.DB
+	tokenTTLHours    int
+	maxTokensPerUser int
 }
 
-func NewUserRepo(db *gorm.DB, tokenTTLHours int) *UserRepo {
-	return &UserRepo{db: db, tokenTTLHours: tokenTTLHours}
+func NewUserRepo(db *gorm.DB, tokenTTLHours, maxTokensPerUser int) *UserRepo {
+	if maxTokensPerUser <= 0 {
+		maxTokensPerUser = 4
+	}
+	return &UserRepo{db: db, tokenTTLHours: tokenTTLHours, maxTokensPerUser: maxTokensPerUser}
 }
 
 func (r *UserRepo) Create(ctx context.Context, username, password string) (*model.User, string, error) {
@@ -61,8 +65,18 @@ func (r *UserRepo) Login(ctx context.Context, username, password string) (*model
 
 	var token string
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("user_id = ?", user.ID).Delete(&model.UserToken{}).Error; err != nil {
+		var count int64
+		if err := tx.Model(&model.UserToken{}).Where("user_id = ?", user.ID).Count(&count).Error; err != nil {
 			return err
+		}
+		if count >= int64(r.maxTokensPerUser) {
+			deleteCount := int(count) - r.maxTokensPerUser + 1
+			if err := tx.Where("user_id = ?", user.ID).
+				Order("created_at ASC").
+				Limit(deleteCount).
+				Delete(&model.UserToken{}).Error; err != nil {
+				return err
+			}
 		}
 		var issueErr error
 		token, issueErr = issueTokenTx(tx, user.ID, r.tokenTTLHours)

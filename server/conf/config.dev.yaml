@@ -1,6 +1,7 @@
 server:
   mode: debug
   registration_enabled: true
+  max_tokens_per_user: 4
   admin_users:
     - 22222222-2222-4222-8222-222222222222
   # allowed_users:

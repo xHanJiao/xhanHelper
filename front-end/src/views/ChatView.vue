@@ -522,7 +522,7 @@ function handleContainerClick(e) {
                 <!-- 模型选择 -->
                 <div style="margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
                   <div>
-                    <span style="font-size: 13px; color: var(--color-text);">深度思考 (Pro)</span>
+                    <span style="font-size: 13px; color: var(--color-text);">Pro 模型</span>
                     <div style="font-size: 11px; color: var(--color-text-muted);">v4-pro，推理更强但较慢</div>
                   </div>
                   <NSwitch

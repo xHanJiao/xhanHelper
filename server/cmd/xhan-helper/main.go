@@ -76,11 +76,11 @@ func main() {
 	if err != nil {
 		log.Fatal("create llm client:", err)
 	}
-	llmClient = monitor.WrapLLMClient(llmClient, "orchestrator")
+	llmClient = monitor.WrapLLMClient(llmClient, "orchestrator/flash")
 	strongClient, _ := llm.NewStrongClient(cfg.LLM)
 	if strongClient != nil {
 		log.Printf("[llm] strong model available: %s", cfg.LLM.StrongModel)
-		strongClient = monitor.WrapLLMClient(strongClient, "orchestrator")
+		strongClient = monitor.WrapLLMClient(strongClient, "orchestrator/pro")
 	}
 
 	// Repos

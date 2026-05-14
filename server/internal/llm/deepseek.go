@@ -111,12 +111,22 @@ func (c *baseClient) callStreamAPI(ctx context.Context, req *ChatRequest, model 
 		lm := req.Messages[len(req.Messages)-1]
 		lastMsg = lm.Content[:min(500, len(lm.Content))]
 	}
-	logPrefix := "flash"
-	if req.Thinking != nil && *req.Thinking {
-		logPrefix = "pro"
+	var params []string
+	if req.Temperature != nil {
+		params = append(params, fmt.Sprintf("temp=%.1f", *req.Temperature))
 	}
-	log.Printf("[%s:%s] stream request: msgs=%d, tools=%d, last_msg=%s",
-		logPrefix, model, len(req.Messages)+1, len(req.Tools), lastMsg)
+	if req.MaxTokens != nil {
+		params = append(params, fmt.Sprintf("max_tok=%d", *req.MaxTokens))
+	}
+	if req.Thinking != nil {
+		params = append(params, fmt.Sprintf("thinking=%v", *req.Thinking))
+	}
+	paramsStr := ""
+	if len(params) > 0 {
+		paramsStr = " " + strings.Join(params, " ")
+	}
+	log.Printf("[%s] stream request: msgs=%d tools=%d%s last_msg=%s",
+		model, len(req.Messages)+1, len(req.Tools), paramsStr, lastMsg)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -132,11 +142,11 @@ func (c *baseClient) callStreamAPI(ctx context.Context, req *ChatRequest, model 
 	}
 
 	events := make(chan *StreamEvent, 512)
-	go c.readSSEStream(ctx, resp.Body, events, logPrefix, model, string(reqBytes))
+	go c.readSSEStream(ctx, resp.Body, events, model, string(reqBytes))
 	return events, nil
 }
 
-func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, events chan<- *StreamEvent, logPrefix, model string, reqJSONStr string) {
+func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, events chan<- *StreamEvent, model, reqJSONStr string) {
 	defer close(events)
 	defer body.Close()
 
@@ -211,7 +221,7 @@ func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, even
 	}
 
 	if err := scanner.Err(); err != nil {
-		log.Printf("[%s:%s] stream scanner error: %v", logPrefix, model, err)
+		log.Printf("[%s] stream scanner error: %v", model, err)
 	}
 
 	toolCalls := make([]ToolCall, 0, len(tcMap))
@@ -223,17 +233,17 @@ func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, even
 
 	if len(toolCalls) > 0 {
 		tcJSON, _ := json.Marshal(toolCalls)
-		log.Printf("[%s:%s] stream finished: content=%d, reasoning=%d, tool_calls=%d -> %s",
-			logPrefix, model, content.Len(), reasoning.Len(), len(toolCalls),
+		log.Printf("[%s] stream finished: content=%d, reasoning=%d, tool_calls=%d -> %s",
+			model, content.Len(), reasoning.Len(), len(toolCalls),
 			string(tcJSON)[:min(500, len(tcJSON))])
 	} else {
 		text := content.String()
-		log.Printf("[%s:%s] stream finished: content=%d, reasoning=%d, tool_calls=0, text=%s",
-			logPrefix, model, content.Len(), reasoning.Len(), text[:min(500, len(text))])
+		log.Printf("[%s] stream finished: content=%d, reasoning=%d, tool_calls=0, text=%s",
+			model, content.Len(), reasoning.Len(), text[:min(500, len(text))])
 	}
 	if usage != nil {
-		log.Printf("[%s:%s] usage: prompt=%d, completion=%d, total=%d",
-			logPrefix, model, usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens)
+		log.Printf("[%s] usage: prompt=%d, completion=%d, total=%d",
+			model, usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens)
 	}
 
 	// 构建完整响应 JSON（用数组包含所有 chunks）

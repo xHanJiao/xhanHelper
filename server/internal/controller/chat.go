@@ -56,9 +56,11 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			}
 		}
 
-		// 加载智能体 system prompt（新会话和续聊都支持）
+		// 加载智能体 system prompt 和 LLM 参数（新会话和续聊都支持）
 		var agentSystemPrompt string
 		var agentID string
+		var agentTemperature *float64
+		var agentMaxTokens *int
 		if conv.AgentID != nil && *conv.AgentID != "" && agentRepo != nil {
 			a, err := agentRepo.FindByID(c.Request.Context(), *conv.AgentID, userID)
 			if err != nil {
@@ -66,6 +68,18 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			} else if a != nil {
 				agentSystemPrompt = a.SystemPrompt
 				agentID = a.ID
+				if a.ParamsJSON != "" {
+					var params struct {
+						Temperature *float64 `json:"temperature"`
+						MaxTokens   *int     `json:"max_tokens"`
+					}
+					if err := json.Unmarshal([]byte(a.ParamsJSON), &params); err != nil {
+						log.Printf("[chat] parse agent params_json error: %v", err)
+					} else {
+						agentTemperature = params.Temperature
+						agentMaxTokens = params.MaxTokens
+					}
+				}
 			}
 		}
 
@@ -143,6 +157,8 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			MemoryThreshold:    req.MemoryThreshold,
 			MemoryLimit:        req.MemoryLimit,
 			SkipMemory:         pc.SkipMemory,
+			Temperature:        agentTemperature,
+			MaxTokens:          agentMaxTokens,
 		})
 		if err != nil {
 			view.WriteSSE(w, flusher, "error", err.Error())

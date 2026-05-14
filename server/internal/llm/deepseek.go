@@ -262,6 +262,16 @@ func buildStreamBody(req *ChatRequest, model string, thinking bool) ([]byte, io.
 		payload["thinking"] = map[string]string{"type": "enabled"}
 	}
 
+	if req.Temperature != nil {
+		payload["temperature"] = *req.Temperature
+	}
+	if req.MaxTokens != nil {
+		payload["max_tokens"] = *req.MaxTokens
+	}
+	if req.UserID != "" {
+		payload["user_id"] = req.UserID
+	}
+
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]interface{}, 0)
 		for _, t := range req.Tools {

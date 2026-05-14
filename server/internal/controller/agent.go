@@ -52,6 +52,7 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		Name         string `json:"name"`
 		SystemPrompt string `json:"system_prompt"`
 		Model        string `json:"model"`
+		ParamsJSON   string `json:"params_json"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		view.JSONError(c, 400, "invalid request")
@@ -73,6 +74,7 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		SystemPrompt: req.SystemPrompt,
 		Summary:      h.generateSummary(c.Request.Context(), req.SystemPrompt),
 		Model:        req.Model,
+		ParamsJSON:   req.ParamsJSON,
 	}
 	if err := h.agentRepo.Create(c.Request.Context(), agent); err != nil {
 		log.Printf("[agent] Create error: %v", err)
@@ -133,6 +135,7 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 		Name         *string `json:"name"`
 		SystemPrompt *string `json:"system_prompt"`
 		Model        *string `json:"model"`
+		ParamsJSON   *string `json:"params_json"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		view.JSONError(c, 400, "invalid request")
@@ -156,6 +159,9 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 	}
 	if req.Model != nil {
 		existing.Model = *req.Model
+	}
+	if req.ParamsJSON != nil {
+		existing.ParamsJSON = *req.ParamsJSON
 	}
 
 	if err := h.agentRepo.Update(c.Request.Context(), existing); err != nil {

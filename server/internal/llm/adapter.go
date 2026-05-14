@@ -17,6 +17,9 @@ type ChatRequest struct {
 	Tools        []ToolDefinition // 工具定义
 	Thinking     bool             // 是否启用思考模式
 	Effort       string           // reasoning_effort: high / max
+	Temperature  *float64         // 采样温度 0~2，nil 用 LLM 默认
+	MaxTokens    *int             // 最大输出 token，nil 用 LLM 默认
+	UserID       string           // 传给 LLM 的 user_id 字段（不做公开选项）
 }
 
 // Message — 一条对话消息

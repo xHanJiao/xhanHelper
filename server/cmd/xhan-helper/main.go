@@ -162,7 +162,7 @@ func main() {
 
 	// Orchestrator
 	retriever := agent.NewRetriever(memSource, noteSource)
-	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, embedder, vectorStore, embeddingRepo, cfg.LLM.MaxIterations)
+	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, embedder, vectorStore, embeddingRepo, cfg.LLM.MaxIterations, cfg.LLM.DefaultTemperature, cfg.LLM.DefaultMaxTokens)
 
 	// Memory Extractor (后台异步)
 	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo, embeddingRepo, cfg.Server.MemoryDupeThreshold)

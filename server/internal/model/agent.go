@@ -10,6 +10,7 @@ type Agent struct {
 	SystemPrompt string    `gorm:"type:text;not null" json:"system_prompt"`
 	Summary      string    `gorm:"type:varchar(100)" json:"summary"` // LLM 自动生成的 50 字内摘要
 	Model        string    `gorm:"size:50" json:"model"`
+	ParamsJSON   string    `gorm:"type:text" json:"params_json"` // LLM 参数 JSON，如 {"temperature":0.8,"max_tokens":2000}
 	CreatedAt    time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt    time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }

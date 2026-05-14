@@ -74,12 +74,14 @@ func (d DBConfig) DSN() string {
 
 // LLMConfig — LLM 厂商配置
 type LLMConfig struct {
-	Provider      string `yaml:"provider"` // doubao | deepseek
-	APIKey        string `yaml:"api_key"`
-	Model         string `yaml:"model"`          // 弱模型（日常使用）
-	StrongModel   string `yaml:"strong_model"`   // 强模型（深度思考模式，可选，默认同 Model）
-	BaseURL       string `yaml:"base_url"`       // LLM API 地址
-	MaxIterations int    `yaml:"max_iterations"` // ReAct 最大迭代次数（默认 8）
+	Provider           string   `yaml:"provider"` // doubao | deepseek
+	APIKey             string   `yaml:"api_key"`
+	Model              string   `yaml:"model"`               // 弱模型（日常使用）
+	StrongModel        string   `yaml:"strong_model"`        // 强模型（深度思考模式，可选，默认同 Model）
+	BaseURL            string   `yaml:"base_url"`            // LLM API 地址
+	MaxIterations      int      `yaml:"max_iterations"`      // ReAct 最大迭代次数（默认 8）
+	DefaultTemperature *float64 `yaml:"default_temperature"` // 默认采样温度，nil 则用 LLM 自身默认
+	DefaultMaxTokens   *int     `yaml:"default_max_tokens"`  // 默认最大输出 token，nil 则用 LLM 自身默认
 }
 
 // EmbeddingConfig — 向量化配置
@@ -202,6 +204,12 @@ func merge(dst, src *Config) {
 	}
 	if src.LLM.StrongModel != "" {
 		dst.LLM.StrongModel = src.LLM.StrongModel
+	}
+	if src.LLM.DefaultTemperature != nil {
+		dst.LLM.DefaultTemperature = src.LLM.DefaultTemperature
+	}
+	if src.LLM.DefaultMaxTokens != nil {
+		dst.LLM.DefaultMaxTokens = src.LLM.DefaultMaxTokens
 	}
 	if src.Embedding.APIKey != "" {
 		dst.Embedding.APIKey = src.Embedding.APIKey

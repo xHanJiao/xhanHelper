@@ -18,6 +18,8 @@ llm:
   api_key: ${LLM_API_KEY}
   base_url: https://api.deepseek.com
   max_iterations: 8
+  default_temperature: 1.0
+  default_max_tokens: 4096
 
 embedding:
   enable_history_search: false

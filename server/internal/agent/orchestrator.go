@@ -35,11 +35,13 @@ type RunRequest struct {
 	Messages           []llm.Message
 	DeepMode           bool
 	UserMessageContent string
-	AgentSystemPrompt  string  // 为空则用默认
-	AgentID            string  // 关联的智能体 ID
-	MemoryThreshold    float64 // 记忆检索相关度阈值，默认 0.5
-	MemoryLimit        int     // 记忆检索最大条数，默认 8
-	SkipMemory         bool    // 跳过记忆检索（短输入等场景）
+	AgentSystemPrompt  string   // 为空则用默认
+	AgentID            string   // 关联的智能体 ID
+	MemoryThreshold    float64  // 记忆检索相关度阈值，默认 0.5
+	MemoryLimit        int      // 记忆检索最大条数，默认 8
+	SkipMemory         bool     // 跳过记忆检索（短输入等场景）
+	Temperature        *float64 // LLM 采样温度，nil 用配置默认
+	MaxTokens          *int     // LLM 最大输出 token，nil 用配置默认
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（Flash 文本解析用）
@@ -55,17 +57,19 @@ type PromptResolver interface {
 
 // Orchestrator — ReAct 循环编排器
 type Orchestrator struct {
-	flashClient    llm.LLMClient
-	proClient      llm.LLMClient
-	registry       *tool.Registry
-	retriever      *Retriever
-	msgRepo        *service.MessageRepo
-	convRepo       *service.ConversationRepo
-	embedder       *llm.Embedder
-	vectorStore    *VectorStore
-	embeddingRepo  *service.EmbeddingRepo
-	promptResolver PromptResolver
-	maxIterations  int
+	flashClient        llm.LLMClient
+	proClient          llm.LLMClient
+	registry           *tool.Registry
+	retriever          *Retriever
+	msgRepo            *service.MessageRepo
+	convRepo           *service.ConversationRepo
+	embedder           *llm.Embedder
+	vectorStore        *VectorStore
+	embeddingRepo      *service.EmbeddingRepo
+	promptResolver     PromptResolver
+	maxIterations      int
+	defaultTemperature *float64
+	defaultMaxTokens   *int
 }
 
 // New 创建 Orchestrator
@@ -74,21 +78,24 @@ func New(flashClient llm.LLMClient, registry *tool.Registry,
 	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
 	embedder *llm.Embedder, vectorStore *VectorStore,
 	embeddingRepo *service.EmbeddingRepo,
-	maxIterations int) *Orchestrator {
+	maxIterations int,
+	defaultTemperature *float64, defaultMaxTokens *int) *Orchestrator {
 	if maxIterations <= 0 {
 		maxIterations = defaultMaxIterations
 	}
 	return &Orchestrator{
-		flashClient:   flashClient,
-		proClient:     proClient,
-		registry:      registry,
-		retriever:     retriever,
-		msgRepo:       msgRepo,
-		convRepo:      convRepo,
-		embedder:      embedder,
-		vectorStore:   vectorStore,
-		embeddingRepo: embeddingRepo,
-		maxIterations: maxIterations,
+		flashClient:        flashClient,
+		proClient:          proClient,
+		registry:           registry,
+		retriever:          retriever,
+		msgRepo:            msgRepo,
+		convRepo:           convRepo,
+		embedder:           embedder,
+		vectorStore:        vectorStore,
+		embeddingRepo:      embeddingRepo,
+		maxIterations:      maxIterations,
+		defaultTemperature: defaultTemperature,
+		defaultMaxTokens:   defaultMaxTokens,
 	}
 }
 
@@ -245,10 +252,21 @@ func (o *Orchestrator) runReActLoop(
 		}
 
 		llmStart := time.Now()
+		temperature := req.Temperature
+		if temperature == nil {
+			temperature = o.defaultTemperature
+		}
+		maxTokens := req.MaxTokens
+		if maxTokens == nil {
+			maxTokens = o.defaultMaxTokens
+		}
 		streamEvents, err := client.Chat(ctx, &llm.ChatRequest{
 			SystemPrompt: iterSysPrompt,
 			Messages:     msgs,
 			Tools:        tools,
+			Temperature:  temperature,
+			MaxTokens:    maxTokens,
+			UserID:       req.UserID,
 		})
 		if err != nil {
 			log.Printf("[orch] round %d LLM error: %v", iter+1, err)

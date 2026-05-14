@@ -105,19 +105,7 @@ function handleSelect(conv) {
 }
 
 async function handleExtractMemories(conv) {
-  extractingId.value = conv.id
-  try {
-    const res = await api.post(`/api/conversations/${conv.id}/extract-memories`, {})
-    if (res.status === 'extracting') {
-      message.success('已触发记忆提取，后台执行中')
-    } else {
-      message.success('记忆提取完成')
-    }
-  } catch (e) {
-    message.error('记忆提取失败')
-  } finally {
-    extractingId.value = null
-  }
+  router.push(`/memories?conv_id=${conv.id}&extracting=true`)
 }
 </script>
 

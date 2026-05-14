@@ -50,6 +50,7 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 		auth.PATCH("/conversations/:id", renameConversation(convRepo))
 		auth.DELETE("/conversations/:id", deleteConversation(convRepo))
 		auth.POST("/conversations/:id/extract-memories", extractMemories(convRepo, memExtr))
+		auth.POST("/conversations/:id/extract-memories/stream", extractMemoriesStream(convRepo, memExtr))
 		auth.GET("/bills", billHandler.ListBills)
 		auth.GET("/bills/export", billHandler.ExportBills)
 		auth.POST("/bills/import", billHandler.ImportBills)

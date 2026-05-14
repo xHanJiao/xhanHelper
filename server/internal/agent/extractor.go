@@ -17,6 +17,21 @@ import (
 	"xhan-helper/internal/service"
 )
 
+// ExtractEvent — 流式提取事件
+type ExtractEvent struct {
+	Type       string            // "status" | "memory" | "duplicate" | "done" | "error"
+	Phase      string            // Type=status 时: "fetching" | "extracting"
+	Message    string            // Type=status/error 时的消息
+	Memory     *model.UserMemory // Type=memory 时
+	DupValue   string            // Type=duplicate 时: 被跳过的内容
+	DupReason  string            // Type=duplicate 时: 跳过原因
+	Created    int               // Type=done 时: 创建条数
+	Duplicates int               // Type=done 时: 跳过条数
+}
+
+// ExtractCallback — 流式提取回调，每产生一条记忆或事件时调用
+type ExtractCallback func(event ExtractEvent)
+
 // MemoryExtractor — 从会话中提取记忆，向量去重
 type MemoryExtractor struct {
 	llmClient     llm.LLMClient
@@ -119,6 +134,90 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 	e.storeMemory(memory)
 
 	log.Printf("[memory] extracted memory from conv %s: %s", conv.ID[:8], truncate(result.Summary, 80))
+	e.updateProgress(ctx, conv, lastMsg.ID)
+	return nil
+}
+
+// ExtractFromConversationWithCallback 流式版本——通过回调逐条推送提取结果
+func (e *MemoryExtractor) ExtractFromConversationWithCallback(ctx context.Context, conv *model.Conversation, cb ExtractCallback) error {
+	if cb == nil {
+		return e.ExtractFromConversation(ctx, conv)
+	}
+
+	var msgs []model.Message
+	var err error
+	if conv.LastExtractedMsgID != nil && *conv.LastExtractedMsgID != "" {
+		msgs, err = e.msgRepo.ListByConversationSince(ctx, conv.ID, *conv.LastExtractedMsgID, 200)
+	} else {
+		msgs, err = e.msgRepo.ListByConversation(ctx, conv.ID, 200)
+	}
+	if err != nil || len(msgs) == 0 {
+		if err != nil {
+			cb(ExtractEvent{Type: "error", Message: err.Error()})
+		}
+		return err
+	}
+
+	cb(ExtractEvent{Type: "status", Phase: "fetching", Message: fmt.Sprintf("加载了 %d 条新消息", len(msgs))})
+
+	var sb strings.Builder
+	for _, m := range msgs {
+		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, m.Content))
+	}
+
+	now := time.Now().Format("2006-01-02 15:04:05 Monday")
+	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, sb.String())
+	promptHash := hashPrompt(prompt)
+
+	cb(ExtractEvent{Type: "status", Phase: "extracting", Message: "正在调用 LLM 提取记忆..."})
+
+	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
+		SystemPrompt: extractSystemPrompt,
+		Messages:     []llm.Message{{Role: "user", Content: prompt}},
+	})
+	if err != nil {
+		cb(ExtractEvent{Type: "error", Message: fmt.Sprintf("LLM 调用失败: %v", err)})
+		return fmt.Errorf("extract memory: %w", err)
+	}
+
+	lastMsg := msgs[len(msgs)-1]
+	result := parseExtractResult(msg.Content)
+	if result == nil || isEmptySummary(result.Summary) {
+		cb(ExtractEvent{Type: "done", Created: 0})
+		e.updateProgress(ctx, conv, lastMsg.ID)
+		return nil
+	}
+
+	created := 0
+	dupes := 0
+
+	// 先处理 summary
+	if !e.isDuplicate(ctx, conv.UserID, result.Summary) {
+		rawJSON, _ := json.Marshal(result)
+		rawStr := string(rawJSON)
+		memory := &model.UserMemory{
+			ID:              uuid.New().String(),
+			UserID:          conv.UserID,
+			MemoryKey:       truncate(result.Summary, 50),
+			MemoryValue:     result.Summary,
+			RawJSON:         &rawStr,
+			Source:          "conversation",
+			ConfirmCount:    1,
+			LastConfirmedAt: time.Now(),
+			ExtractPrompt:   &prompt,
+			PromptHash:      promptHash,
+			ContentHash:     hashPrompt(result.Summary),
+		}
+		e.storeMemory(memory)
+		cb(ExtractEvent{Type: "memory", Memory: memory})
+		created++
+		log.Printf("[memory] extracted memory from conv %s: %s", conv.ID[:8], truncate(result.Summary, 80))
+	} else {
+		cb(ExtractEvent{Type: "duplicate", DupValue: result.Summary, DupReason: "已存在相似记忆"})
+		dupes++
+	}
+
+	cb(ExtractEvent{Type: "done", Created: created, Duplicates: dupes})
 	e.updateProgress(ctx, conv, lastMsg.ID)
 	return nil
 }

@@ -18,7 +18,7 @@ import (
 	"xhan-helper/internal/view"
 )
 
-func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
+func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.ConversationRepo,
 	msgRepo *service.MessageRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
@@ -110,7 +110,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 		pipeline, err := agent.NewPipeline(
 			agent.NewShortInputCheckStep(),
 			agent.NewNormalizeDatesStep(),
-			agent.NewAutoRouteStep(orch.FlashClient(), agentRepo, conv.AgentID, conv.ID, msgRepo),
+			agent.NewAutoRouteStep(orch.FlashClient(), agentRepo, conv.AgentID, conv.ID, msgRepo, cfg.Server.AgentRouteTriggers, convRepo),
 		)
 		if err != nil {
 			log.Printf("[chat] pipeline init error: %v", err)

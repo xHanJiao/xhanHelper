@@ -41,7 +41,7 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 	auth.Use(middleware.Auth(userRepo))
 	{
 		auth.POST("/auth/logout", logoutUser(userRepo))
-		auth.POST("/chat", chat(orch, convRepo, msgRepo, agentRepo))
+		auth.POST("/chat", chat(orch, cfg, convRepo, msgRepo, agentRepo))
 		auth.GET("/llm-config", llmConfig(cfg, agentRepo))
 		auth.GET("/conversations", listConversations(convRepo, agentRepo))
 		auth.GET("/conversations/:id/messages", getMessages(convRepo, msgRepo))

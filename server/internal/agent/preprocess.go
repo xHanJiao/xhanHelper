@@ -146,22 +146,31 @@ type MessageCounter interface {
 	CountByRole(ctx context.Context, convID, role string) (int, error)
 }
 
-// AutoRouteStep 用 LLM 自动匹配最合适的智能体
+// AgentBinder — 绑定 agent 到会话（竞态保护）
+type AgentBinder interface {
+	SetAgentID(ctx context.Context, convID, agentID string) error
+}
+
+// AutoRouteStep 异步 LLM 路由匹配最合适的智能体
 type AutoRouteStep struct {
 	flashClient    llm.LLMClient
 	agentRepo      AgentLister
-	currentAgentID *string        // 当前会话已绑定的 agent_id（nil 或空=未绑定）
-	convID         string         // 会话 ID，用于统计消息数
-	msgCounter     MessageCounter // 消息计数器，nil 时跳过统计检查
+	currentAgentID *string
+	convID         string
+	msgCounter     MessageCounter
+	triggers       []int       // 触发路由的消息计数点，如 [1,3,6]
+	agentBinder    AgentBinder // 竞态安全写入 DB
 }
 
-func NewAutoRouteStep(flashClient llm.LLMClient, agentRepo AgentLister, currentAgentID *string, convID string, msgCounter MessageCounter) *AutoRouteStep {
+func NewAutoRouteStep(flashClient llm.LLMClient, agentRepo AgentLister, currentAgentID *string, convID string, msgCounter MessageCounter, triggers []int, agentBinder AgentBinder) *AutoRouteStep {
 	return &AutoRouteStep{
 		flashClient:    flashClient,
 		agentRepo:      agentRepo,
 		currentAgentID: currentAgentID,
 		convID:         convID,
 		msgCounter:     msgCounter,
+		triggers:       triggers,
+		agentBinder:    agentBinder,
 	}
 }
 
@@ -171,114 +180,125 @@ func (s *AutoRouteStep) Produces() []string {
 	return []string{"agent_id", "agent_system_prompt", "agent_name", "confidence"}
 }
 
-const maxRoundsBeforeSkip = 10
-
 func (s *AutoRouteStep) ShouldRun(ctx context.Context) bool {
 	pc := GetPreContext(ctx)
 	if pc.UserSpecifiedAgent {
-		log.Printf("[pipeline] autoRoute: SKIP (user specified agent_id explicitly)")
 		return false
 	}
 	if s.currentAgentID != nil && *s.currentAgentID != "" {
-		log.Printf("[pipeline] autoRoute: SKIP (conversation already has agent bound)")
 		return false
 	}
-	if s.convID != "" && s.msgCounter != nil {
-		count, err := s.msgCounter.CountByRole(ctx, s.convID, "user")
-		if err != nil {
-			log.Printf("[pipeline] autoRoute: count user messages error: %v", err)
-		} else if count > maxRoundsBeforeSkip {
-			log.Printf("[pipeline] autoRoute: SKIP (conversation has %d user messages, >%d)", count, maxRoundsBeforeSkip)
-			return false
+	if len(s.triggers) == 0 || s.convID == "" || s.msgCounter == nil {
+		return false
+	}
+	count, err := s.msgCounter.CountByRole(ctx, s.convID, "user")
+	if err != nil {
+		log.Printf("[pipeline] autoRoute: count user messages error: %v", err)
+		return false
+	}
+	for _, t := range s.triggers {
+		if count == t {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
+// Run 异步路由——启动 goroutine，不阻塞管线
 func (s *AutoRouteStep) Run(ctx context.Context) (context.Context, error) {
 	pc := GetPreContext(ctx)
 
-	if s.agentRepo == nil || s.flashClient == nil {
-		log.Printf("[pipeline] autoRoute: SKIP (agentRepo or flashClient is nil)")
+	if s.agentRepo == nil || s.flashClient == nil || s.agentBinder == nil {
 		return ctx, nil
 	}
 
-	agents, _, err := s.agentRepo.ListByUser(ctx, pc.UserID, 50, 0)
-	if err != nil {
-		log.Printf("[pipeline] autoRoute: ListByUser error: %v", err)
-		return ctx, nil
-	}
-	if len(agents) == 0 {
-		log.Printf("[pipeline] autoRoute: no agents for user, skip")
-		return ctx, nil
-	}
+	log.Printf("[pipeline] autoRoute: launching async route (userID=%s, convID=%s)", pc.UserID, s.convID)
 
-	// 构建路由 prompt
-	var agentLines strings.Builder
-	for _, a := range agents {
-		summary := a.Summary
-		if summary == "" {
-			summary = truncateSummary(a.SystemPrompt, 60)
+	// 拷贝必要值，goroutine 内不依赖管线 context
+	userID := pc.UserID
+	rawMsg := pc.RawMsg
+	convID := s.convID
+
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		agents, _, err := s.agentRepo.ListByUser(bgCtx, userID, 50, 0)
+		if err != nil {
+			log.Printf("[pipeline] autoRoute(async): ListByUser error: %v", err)
+			return
 		}
-		agentLines.WriteString(fmt.Sprintf("- %s: %s\n", a.ID, a.Name))
-		if summary != "" {
-			agentLines.WriteString(fmt.Sprintf("  描述: %s\n", summary))
+		if len(agents) == 0 {
+			return
 		}
-	}
 
-	routePrompt := fmt.Sprintf(
-		`用户消息: "%s"
+		var agentLines strings.Builder
+		for _, a := range agents {
+			summary := a.Summary
+			if summary == "" {
+				summary = truncateSummary(a.SystemPrompt, 60)
+			}
+			agentLines.WriteString(fmt.Sprintf("- %s: %s\n", a.ID, a.Name))
+			if summary != "" {
+				agentLines.WriteString(fmt.Sprintf("  描述: %s\n", summary))
+			}
+		}
+
+		routePrompt := fmt.Sprintf(
+			`用户消息: "%s"
 
 可用智能体:
 %s
 判断最匹配的智能体，如果不匹配任何智能体返回 none。
 只输出 JSON: {"agent_id":"<id>","confidence":0.95} 或 {"agent_id":"none","confidence":0}`,
-		pc.RawMsg, agentLines.String(),
-	)
+			rawMsg, agentLines.String(),
+		)
 
-	resp, err := s.flashClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: "你是智能体路由器。根据用户消息判断最匹配的智能体。只输出 JSON，不要有其他内容。",
-		Messages:     []llm.Message{{Role: "user", Content: routePrompt}},
-	})
-	if err != nil {
-		log.Printf("[pipeline] autoRoute: LLM error: %v", err)
-		return ctx, nil
-	}
-
-	var result struct {
-		AgentID    string  `json:"agent_id"`
-		Confidence float64 `json:"confidence"`
-	}
-	if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
-		extracted := extractJSON(resp.Content)
-		if extracted == "" {
-			log.Printf("[pipeline] autoRoute: parse error, no JSON found in response (len=%d): %s", len(resp.Content), truncateSummary(resp.Content, 200))
-			return ctx, nil
+		llmStart := time.Now()
+		resp, err := s.flashClient.ChatSync(bgCtx, &llm.ChatRequest{
+			SystemPrompt: "你是智能体路由器。根据用户消息判断最匹配的智能体。只输出 JSON，不要有其他内容。",
+			Messages:     []llm.Message{{Role: "user", Content: routePrompt}},
+		})
+		if err != nil {
+			log.Printf("[pipeline] autoRoute(async): LLM error: %v", err)
+			return
 		}
-		if err := json.Unmarshal([]byte(extracted), &result); err != nil {
-			log.Printf("[pipeline] autoRoute: parse error after extraction: %v (raw=%s, extracted=%s)", err, truncateSummary(resp.Content, 100), truncateSummary(extracted, 100))
-			return ctx, nil
+		log.Printf("[pipeline] autoRoute(async): LLM done in %v", time.Since(llmStart))
+
+		var result struct {
+			AgentID    string  `json:"agent_id"`
+			Confidence float64 `json:"confidence"`
 		}
-	}
-
-	if result.AgentID == "" || result.AgentID == "none" || result.Confidence < 0.8 {
-		log.Printf("[pipeline] autoRoute: no match (agent_id=%s, confidence=%.2f)", result.AgentID, result.Confidence)
-		return ctx, nil
-	}
-
-	// 查找匹配的 agent
-	for _, a := range agents {
-		if a.ID == result.AgentID {
-			log.Printf("[pipeline] autoRoute: matched agent %q (confidence=%.2f)", a.Name, result.Confidence)
-			pc.AgentID = a.ID
-			pc.AgentSystemPrompt = a.SystemPrompt
-			pc.AgentName = a.Name
-			pc.Confidence = result.Confidence
-			return ctx, nil
+		if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
+			extracted := extractJSON(resp.Content)
+			if extracted == "" {
+				log.Printf("[pipeline] autoRoute(async): no JSON in response")
+				return
+			}
+			if err := json.Unmarshal([]byte(extracted), &result); err != nil {
+				log.Printf("[pipeline] autoRoute(async): parse error: %v", err)
+				return
+			}
 		}
-	}
 
-	log.Printf("[pipeline] autoRoute: agent_id %q not found in user's agents", result.AgentID)
+		if result.AgentID == "" || result.AgentID == "none" || result.Confidence < 0.8 {
+			log.Printf("[pipeline] autoRoute(async): no match (agent_id=%s, confidence=%.2f)", result.AgentID, result.Confidence)
+			return
+		}
+
+		for _, a := range agents {
+			if a.ID == result.AgentID {
+				if err := s.agentBinder.SetAgentID(bgCtx, convID, a.ID); err != nil {
+					log.Printf("[pipeline] autoRoute(async): SetAgentID error: %v", err)
+					return
+				}
+				log.Printf("[pipeline] autoRoute(async): bound agent %q to conv %s (confidence=%.2f)", a.Name, convID, result.Confidence)
+				return
+			}
+		}
+		log.Printf("[pipeline] autoRoute(async): agent_id %q not found in user's agents", result.AgentID)
+	}()
+
 	return ctx, nil
 }
 

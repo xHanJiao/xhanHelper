@@ -83,10 +83,11 @@ func (r *ConversationRepo) Update(ctx context.Context, c *model.Conversation) er
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).Where("id = ?", c.ID).Updates(c).Error
 }
 
-// SetAgentID 绑定智能体到会话（只更新 agent_id 字段）
+// SetAgentID 绑定智能体到会话（竞态保护：仅当目标会话尚未绑定 agent 时才写入）
 func (r *ConversationRepo) SetAgentID(ctx context.Context, convID, agentID string) error {
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).
-		Where("id = ?", convID).Update("agent_id", agentID).Error
+		Where("id = ? AND (agent_id IS NULL OR agent_id = '')", convID).
+		Update("agent_id", agentID).Error
 }
 
 // CountActive 统计指定时间段内有活动的会话数

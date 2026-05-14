@@ -291,7 +291,8 @@ async function handleSend() {
   }
   scrollToBottom()
 
-  const hasAgent = !!currentAgentId.value
+  const conv = convs.list.find(c => c.id === chat.conversationId)
+  const hasAgent = !!(conv?.agent_id)
   const opts = {
     conversationId: chat.conversationId,
     deepMode: !hasAgent ? llmSettings.value.deepMode : false,

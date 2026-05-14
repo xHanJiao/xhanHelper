@@ -34,12 +34,18 @@ dev: check-env
 dev-full: check-env
 	@echo "=== 启动前后端开发环境 ==="
 	@mkdir -p logs
-	go run ./cmd/xhan-helper/ >> logs/dev-$$(date +%Y-%m-%d).log 2>&1 &
-	@sleep 2
-	@echo "  后端: http://localhost:8080"
-	@echo "  前端: http://localhost:5173"
-	cd $(FRONTEND_DIR) && npm run dev; \
-	lsof -ti:8080 | xargs kill 2>/dev/null; true
+	@LOG="logs/dev-$$(date +%Y-%m-%d).log"; \
+	echo "  日志文件: $$LOG"; \
+	go run ./cmd/xhan-helper/ >> "$$LOG" 2>&1 & \
+	BPID=$$!; \
+	(cd $(FRONTEND_DIR) && npm run dev) & \
+	FPID=$$!; \
+	sleep 2; \
+	echo "  后端: http://localhost:8080"; \
+	echo "  前端: http://localhost:5173"; \
+	echo "  Ctrl+C 停止所有服务"; \
+	trap "kill $$BPID $$FPID 2>/dev/null; true" INT TERM; \
+	tail -f "$$LOG"
 
 # 检查必要的环境变量
 check-env:

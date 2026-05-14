@@ -2,10 +2,12 @@
 import { computed } from 'vue'
 import { NConfigProvider, NMessageProvider } from 'naive-ui'
 import { useThemeStore } from '@/stores/theme'
+import { useAuthStore } from '@/stores/auth'
 import { useMobile } from '@/composables/useMobile'
 import ConversationList from '@/components/ConversationList.vue'
 
 const theme = useThemeStore()
+const auth = useAuthStore()
 const { isMobile, drawerOpen, closeDrawer, sidebarCollapsed } = useMobile()
 
 const themeOverrides = computed(() => ({
@@ -23,12 +25,12 @@ const themeOverrides = computed(() => ({
     <NMessageProvider>
       <div style="display: flex; height: 100vh; width: 100vw; overflow: hidden;">
         <!-- 桌面端侧栏 -->
-        <div v-if="!isMobile" :style="{ width: sidebarCollapsed ? '0' : '280px', overflow: 'hidden', transition: 'width 0.25s ease', flexShrink: 0 }">
+        <div v-if="auth.token && !isMobile" :style="{ width: sidebarCollapsed ? '0' : '280px', overflow: 'hidden', transition: 'width 0.25s ease', flexShrink: 0 }">
           <ConversationList />
         </div>
 
         <!-- 移动端抽屉覆盖 -->
-        <template v-if="isMobile">
+        <template v-if="auth.token && isMobile">
           <div
             v-if="drawerOpen"
             style="position: fixed; inset: 0; z-index: 900; background: rgba(0,0,0,0.4);"

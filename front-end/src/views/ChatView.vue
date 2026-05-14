@@ -429,6 +429,10 @@ function handleContainerClick(e) {
       :style="[
         !isMobile ? {
           padding: inputVisible ? 'var(--space-md) var(--space-lg)' : '0 var(--space-lg)',
+          maxWidth: 'min(88%, 56rem)',
+          marginLeft: 'auto',
+          marginRight: 'auto',
+          width: '100%',
           background: 'var(--color-bg-page)',
           borderTop: 'none',
           flexShrink: 0,

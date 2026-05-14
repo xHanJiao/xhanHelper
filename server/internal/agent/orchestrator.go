@@ -42,6 +42,7 @@ type RunRequest struct {
 	SkipMemory         bool     // 跳过记忆检索（短输入等场景）
 	Temperature        *float64 // LLM 采样温度，nil 用配置默认
 	MaxTokens          *int     // LLM 最大输出 token，nil 用配置默认
+	Thinking           *bool    // 思考模式：nil=不传，true=开启，false=关闭
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（Flash 文本解析用）
@@ -260,6 +261,11 @@ func (o *Orchestrator) runReActLoop(
 		if maxTokens == nil {
 			maxTokens = o.defaultMaxTokens
 		}
+		thinking := req.Thinking
+		if thinking == nil && isProMode {
+			t := true
+			thinking = &t
+		}
 		streamEvents, err := client.Chat(ctx, &llm.ChatRequest{
 			SystemPrompt: iterSysPrompt,
 			Messages:     msgs,
@@ -267,6 +273,7 @@ func (o *Orchestrator) runReActLoop(
 			Temperature:  temperature,
 			MaxTokens:    maxTokens,
 			UserID:       req.UserID,
+			Thinking:     thinking,
 		})
 		if err != nil {
 			log.Printf("[orch] round %d LLM error: %v", iter+1, err)

@@ -29,6 +29,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			MemoryLimit     int      `json:"memory_limit"`
 			Temperature     *float64 `json:"temperature"`
 			MaxTokens       *int     `json:"max_tokens"`
+			Thinking        *bool    `json:"thinking"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.Message == "" {
 			view.JSONError(c, 400, "invalid request")
@@ -168,6 +169,7 @@ func chat(orch *agent.Orchestrator, convRepo *service.ConversationRepo,
 			SkipMemory:         pc.SkipMemory,
 			Temperature:        agentTemperature,
 			MaxTokens:          agentMaxTokens,
+			Thinking:           req.Thinking,
 		})
 		if err != nil {
 			view.WriteSSE(w, flusher, "error", err.Error())

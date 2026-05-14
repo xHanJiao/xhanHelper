@@ -15,7 +15,7 @@ type ChatRequest struct {
 	SystemPrompt string           // 系统提示词
 	Messages     []Message        // 对话历史
 	Tools        []ToolDefinition // 工具定义
-	Thinking     bool             // 是否启用思考模式
+	Thinking     *bool            // 思考模式：nil=不传(默认)，true=开启，false=关闭
 	Effort       string           // reasoning_effort: high / max
 	Temperature  *float64         // 采样温度 0~2，nil 用 LLM 默认
 	MaxTokens    *int             // 最大输出 token，nil 用 LLM 默认

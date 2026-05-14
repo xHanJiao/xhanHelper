@@ -9,7 +9,7 @@ export function useChatSSE() {
   const auth = useAuthStore()
   let abortController = null
 
-  async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens } = {}) {
+  async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens, thinking } = {}) {
     if (chat.isStreaming) return
 
     abortController = new AbortController()
@@ -40,6 +40,9 @@ export function useChatSSE() {
       }
       if (maxTokens !== undefined && maxTokens !== null) {
         body.max_tokens = maxTokens
+      }
+      if (thinking !== undefined && thinking !== null) {
+        body.thinking = thinking
       }
       const res = await api.stream('/api/chat', body, abortController.signal)
 

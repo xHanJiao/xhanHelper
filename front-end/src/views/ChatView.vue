@@ -12,6 +12,7 @@ import {
   NButton,
   NPopover,
   NInputNumber,
+  NSwitch,
   useMessage
 } from 'naive-ui'
 import MessageBubble from '@/components/MessageBubble.vue'
@@ -69,7 +70,7 @@ function loadLlmSettings() {
     const raw = localStorage.getItem(LLM_SETTINGS_KEY)
     if (raw) return JSON.parse(raw)
   } catch {}
-  return { temperature: null, max_tokens: null }
+  return { temperature: null, max_tokens: null, thinking: null }
 }
 
 function saveLlmSettings(settings) {
@@ -302,6 +303,9 @@ async function handleSend() {
   if (!chat.agentId && llmSettings.value.max_tokens !== null) {
     opts.maxTokens = llmSettings.value.max_tokens
   }
+  if (llmSettings.value.thinking !== null) {
+    opts.thinking = llmSettings.value.thinking
+  }
   await sendMessage(content, opts)
 }
 
@@ -514,6 +518,15 @@ function handleContainerClick(e) {
               <div style="width: 220px; padding: 4px 0;">
                 <div v-if="currentAgentId" style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 8px;">
                   参数由智能体控制，不可修改
+                </div>
+                <div style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+                  <span style="font-size: 13px; color: var(--color-text);">思考模式</span>
+                  <NSwitch
+                    :value="llmSettings.thinking"
+                    @update:value="(v) => { llmSettings.thinking = v; saveLlmSettings(llmSettings) }"
+                    :disabled="!!currentAgentId"
+                    size="small"
+                  />
                 </div>
                 <div style="margin-bottom: 12px;">
                   <div style="font-size: 13px; margin-bottom: 4px; color: var(--color-text);">Temperature</div>

@@ -95,9 +95,9 @@ type streamChunk struct {
 }
 
 // callStreamAPI — 真正的流式 API 调用，读取 SSE chunk 实时推送
-func (c *baseClient) callStreamAPI(ctx context.Context, req *ChatRequest, model string, thinking bool) (<-chan *StreamEvent, error) {
+func (c *baseClient) callStreamAPI(ctx context.Context, req *ChatRequest, model string) (<-chan *StreamEvent, error) {
 	url := c.baseURL + "/chat/completions"
-	reqBytes, reqBody := buildStreamBody(req, model, thinking)
+	reqBytes, reqBody := buildStreamBody(req, model)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, reqBody)
 	if err != nil {
@@ -112,7 +112,7 @@ func (c *baseClient) callStreamAPI(ctx context.Context, req *ChatRequest, model 
 		lastMsg = lm.Content[:min(500, len(lm.Content))]
 	}
 	logPrefix := "flash"
-	if thinking {
+	if req.Thinking != nil && *req.Thinking {
 		logPrefix = "pro"
 	}
 	log.Printf("[%s:%s] stream request: msgs=%d, tools=%d, last_msg=%s",
@@ -248,7 +248,7 @@ func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, even
 	})
 }
 
-func buildStreamBody(req *ChatRequest, model string, thinking bool) ([]byte, io.Reader) {
+func buildStreamBody(req *ChatRequest, model string) ([]byte, io.Reader) {
 	messages := buildMessages(req)
 
 	payload := map[string]interface{}{
@@ -257,9 +257,15 @@ func buildStreamBody(req *ChatRequest, model string, thinking bool) ([]byte, io.
 		"stream":   true,
 	}
 
-	if thinking {
-		payload["reasoning_effort"] = "max"
-		payload["thinking"] = map[string]string{"type": "enabled"}
+	if req.Thinking != nil {
+		if *req.Thinking {
+			payload["thinking"] = map[string]string{"type": "enabled"}
+			if req.Effort != "" {
+				payload["reasoning_effort"] = req.Effort
+			}
+		} else {
+			payload["thinking"] = map[string]string{"type": "disabled"}
+		}
 	}
 
 	if req.Temperature != nil {
@@ -394,7 +400,7 @@ func (c *FlashClient) BuildSystemPrompt(base string, tools []ToolDefinition) str
 }
 
 func (c *FlashClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamEvent, error) {
-	return c.callStreamAPI(ctx, req, c.model, false)
+	return c.callStreamAPI(ctx, req, c.model)
 }
 
 func (c *FlashClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, error) {
@@ -444,7 +450,11 @@ func (c *ProClient) BuildSystemPrompt(base string, tools []ToolDefinition) strin
 }
 
 func (c *ProClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamEvent, error) {
-	return c.callStreamAPI(ctx, req, c.model, true)
+	if req.Thinking == nil {
+		t := true
+		req.Thinking = &t
+	}
+	return c.callStreamAPI(ctx, req, c.model)
 }
 
 func (c *ProClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, error) {

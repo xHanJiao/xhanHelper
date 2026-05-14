@@ -40,3 +40,5 @@ front-end/node_modules/
 *.code-workspace
 
 *.db_bak
+
+server/data/markdown

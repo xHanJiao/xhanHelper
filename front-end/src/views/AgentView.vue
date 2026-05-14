@@ -33,7 +33,7 @@ const agents = ref([])
 const loading = ref(false)
 const modalVisible = ref(false)
 const editing = ref(null)
-const formValue = ref({ name: '', system_prompt: '', model: 'deepseek-chat' })
+const formValue = ref({ name: '', system_prompt: '', model: 'deepseek-chat', temperature: null, max_tokens: null })
 const submitting = ref(false)
 const contentContainerRef = ref(null)
 const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
@@ -58,28 +58,54 @@ async function fetchAgents() {
 
 function openCreate() {
   editing.value = null
-  formValue.value = { name: '', system_prompt: '', model: 'deepseek-chat' }
+  formValue.value = { name: '', system_prompt: '', model: 'deepseek-chat', temperature: null, max_tokens: null }
   modalVisible.value = true
 }
 
 function openEdit(agent) {
   editing.value = agent
+  let temperature = null, maxTokens = null
+  if (agent.params_json) {
+    try {
+      const p = JSON.parse(agent.params_json)
+      temperature = p.temperature ?? null
+      maxTokens = p.max_tokens ?? null
+    } catch {}
+  }
   formValue.value = {
     name: agent.name,
     system_prompt: agent.system_prompt,
-    model: agent.model
+    model: agent.model,
+    temperature,
+    max_tokens: maxTokens
   }
   modalVisible.value = true
+}
+
+function buildAgentPayload(fv) {
+  const p = { name: fv.name, system_prompt: fv.system_prompt, model: fv.model }
+  const params = {}
+  if (fv.temperature !== null && fv.temperature !== undefined && fv.temperature !== '') {
+    params.temperature = Number(fv.temperature)
+  }
+  if (fv.max_tokens !== null && fv.max_tokens !== undefined && fv.max_tokens !== '') {
+    params.max_tokens = Number(fv.max_tokens)
+  }
+  if (Object.keys(params).length > 0) {
+    p.params_json = JSON.stringify(params)
+  }
+  return p
 }
 
 async function handleSubmit() {
   submitting.value = true
   try {
+    const payload = buildAgentPayload(formValue.value)
     if (editing.value) {
-      await api.patch(`/api/agents/${editing.value.id}`, formValue.value)
+      await api.patch(`/api/agents/${editing.value.id}`, payload)
       message.success('更新成功')
     } else {
-      await api.post('/api/agents', formValue.value)
+      await api.post('/api/agents', payload)
       message.success('创建成功')
     }
     modalVisible.value = false
@@ -183,6 +209,12 @@ onMounted(fetchAgents)
         </NFormItem>
         <NFormItem label="模型">
           <NSelect v-model:value="formValue.model" :options="modelOptions" />
+        </NFormItem>
+        <NFormItem label="Temperature (0~2)">
+          <NInput v-model:value="formValue.temperature" placeholder="默认 1.0" />
+        </NFormItem>
+        <NFormItem label="Max Tokens">
+          <NInput v-model:value="formValue.max_tokens" placeholder="默认 4096" />
         </NFormItem>
       </NForm>
       <div style="margin-top: var(--space-md); text-align: right;">

@@ -10,6 +10,8 @@ import { api } from '@/api/client'
 import {
   NInput,
   NButton,
+  NPopover,
+  NInputNumber,
   useMessage
 } from 'naive-ui'
 import MessageBubble from '@/components/MessageBubble.vue'
@@ -57,6 +59,24 @@ function toggleInput() {
 function toggleExpand() {
   inputExpanded.value = !inputExpanded.value
 }
+
+// LLM 参数设置（无 Agent 模式，存 localStorage）
+const LLM_SETTINGS_KEY = 'xhanhelper_llm_settings'
+const showLlmSettings = ref(false)
+
+function loadLlmSettings() {
+  try {
+    const raw = localStorage.getItem(LLM_SETTINGS_KEY)
+    if (raw) return JSON.parse(raw)
+  } catch {}
+  return { temperature: null, max_tokens: null }
+}
+
+function saveLlmSettings(settings) {
+  localStorage.setItem(LLM_SETTINGS_KEY, JSON.stringify(settings))
+}
+
+const llmSettings = ref(loadLlmSettings())
 
 const currentTitle = computed(() => {
   const conv = convs.list.find(c => c.id === chat.conversationId)
@@ -270,11 +290,19 @@ async function handleSend() {
   }
   scrollToBottom()
 
-  await sendMessage(content, {
+  const opts = {
     conversationId: chat.conversationId,
     deepMode: false,
     agentId: chat.agentId
-  })
+  }
+  // 无 Agent 模式时，带上用户设定的 LLM 参数
+  if (!chat.agentId && llmSettings.value.temperature !== null) {
+    opts.temperature = llmSettings.value.temperature
+  }
+  if (!chat.agentId && llmSettings.value.max_tokens !== null) {
+    opts.maxTokens = llmSettings.value.max_tokens
+  }
+  await sendMessage(content, opts)
 }
 
 function handleStop() {
@@ -477,6 +505,39 @@ function handleContainerClick(e) {
         />
         <div :style="{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }">
           <div>
+            <NPopover trigger="click" :show="showLlmSettings" @update:show="(v) => showLlmSettings = v">
+              <template #trigger>
+                <NButton quaternary size="small" style="color: var(--color-text-muted)" @click="showLlmSettings = !showLlmSettings" title="LLM 参数">
+                  ⚙
+                </NButton>
+              </template>
+              <div style="width: 220px; padding: 4px 0;">
+                <div style="margin-bottom: 12px;">
+                  <div style="font-size: 13px; margin-bottom: 4px; color: var(--color-text);">Temperature</div>
+                  <NInputNumber
+                    :value="llmSettings.temperature"
+                    @update:value="(v) => { llmSettings.temperature = v; saveLlmSettings(llmSettings) }"
+                    :min="0" :max="2" :step="0.1"
+                    placeholder="默认 1.0"
+                    size="small"
+                    clearable
+                    style="width: 100%"
+                  />
+                </div>
+                <div>
+                  <div style="font-size: 13px; margin-bottom: 4px; color: var(--color-text);">Max Tokens</div>
+                  <NInputNumber
+                    :value="llmSettings.max_tokens"
+                    @update:value="(v) => { llmSettings.max_tokens = v; saveLlmSettings(llmSettings) }"
+                    :min="1" :step="100"
+                    placeholder="默认 4096"
+                    size="small"
+                    clearable
+                    style="width: 100%"
+                  />
+                </div>
+              </div>
+            </NPopover>
             <NButton quaternary size="small" @click="toggleExpand" style="color: var(--color-text-muted)">
               {{ inputExpanded ? '⤡ 收起输入框' : '⤢ 展开输入框' }}
             </NButton>

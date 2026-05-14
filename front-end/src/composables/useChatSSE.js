@@ -9,7 +9,7 @@ export function useChatSSE() {
   const auth = useAuthStore()
   let abortController = null
 
-  async function sendMessage(message, { conversationId, deepMode, agentId } = {}) {
+  async function sendMessage(message, { conversationId, deepMode, agentId, temperature, maxTokens } = {}) {
     if (chat.isStreaming) return
 
     abortController = new AbortController()
@@ -27,14 +27,21 @@ export function useChatSSE() {
     chat.planEdges = []
 
     try {
-      const res = await api.stream('/api/chat', {
+      const body = {
         message,
         conversation_id: conversationId || undefined,
         deep_mode: deepMode || false,
         agent_id: agentId || undefined,
         memory_threshold: 0.5,
         memory_limit: 8
-      }, abortController.signal)
+      }
+      if (temperature !== undefined && temperature !== null) {
+        body.temperature = temperature
+      }
+      if (maxTokens !== undefined && maxTokens !== null) {
+        body.max_tokens = maxTokens
+      }
+      const res = await api.stream('/api/chat', body, abortController.signal)
 
       if (!res.ok) {
         if (res.status === 401) {

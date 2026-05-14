@@ -334,7 +334,6 @@ function handleContainerClick(e) {
           <MessageBubble
             :message="chat.streamingMessage"
             :is-history="false"
-            :status-message="chat.statusMessage"
           />
         </div>
 

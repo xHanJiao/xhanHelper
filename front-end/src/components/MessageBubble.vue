@@ -8,7 +8,6 @@ import ToolCallCard from '@/components/ToolCallCard.vue'
 const props = defineProps({
   message: { type: Object, required: true },
   isHistory: { type: Boolean, default: true },
-  statusMessage: { type: String, default: '' }
 })
 
 const md = new MarkdownIt()
@@ -67,9 +66,7 @@ const associatedMemories = computed(() => {
         <div v-if="contentHtml" style="font-size: 15px; line-height: 1.7; color: var(--color-text);">
           <div v-html="contentHtml" style="margin: 0;"></div>
         </div>
-        <div v-if="statusMessage && !isHistory" class="status-badge">
-          <NTag type="info" size="small">{{ statusMessage }}</NTag>
-        </div>
+
         <ToolCallCard :tool-calls="message.toolCalls || []" :is-history="isHistory" />
         <div v-if="timeText" class="msg-time assistant-time">{{ timeText }}</div>
       </div>

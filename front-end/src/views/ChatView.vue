@@ -329,7 +329,11 @@ async function handleSend() {
   if (chat.conversationId && currentTitle.value) {
     convs.prepend({ id: chat.conversationId, title: currentTitle.value })
   }
-  scrollToBottom()
+  // 立即滚到底部（不管用户在浏览什么位置）
+  nextTick(() => {
+    const el = messagesContainerRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
 
   const conv = convs.list.find(c => c.id === chat.conversationId)
   const hasAgent = !!(conv?.agent_id)

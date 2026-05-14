@@ -219,8 +219,9 @@ func (r *Registry) GeneratePrompt() string {
 	buf.WriteString("工具执行结果会追加到对话中，你可以据此继续回复用户。\n\n")
 
 	buf.WriteString("===== 重要规则 =====\n\n")
-	buf.WriteString("1. 带枚举值的字段必须严格从可选值中选择，不得自创分类！\n")
-	buf.WriteString("2. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
+	buf.WriteString("1. 只能调用上面【工具使用】部分列出的函数。未列出的工具必须先通过 tool_retriever.search 查询后获得定义才能使用。\n")
+	buf.WriteString("2. 带枚举值的字段必须严格从可选值中选择，不得自创分类！\n")
+	buf.WriteString("3. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
 
 	return buf.String()
 }
@@ -238,8 +239,13 @@ func (r *Registry) ToolOverview() string {
 	if result == "" {
 		return ""
 	}
-	return "\n\n===== 可用工具概览 =====\n" + result +
-		"\n重要：以上工具在未获取详细函数定义时不能直接使用！你必须先调用 tool_retriever.search(工具名) 加载其详细函数定义。\n"
+	return "\n\n===== 可用工具概览 =====\n" +
+		"【强制规则】以上只是工具概览，不包含函数签名和参数定义。\n" +
+		"如果用户的问题需要用到某个工具，你必须先用 tool_retriever.search 查询该工具的详细定义，然后才能调用它。\n" +
+		"直接调用未查询过的工具会失败——例如调用 bookkeeping__create 前，必须先 search(\"bookkeeping\") 拿到 create 的参数 schema。\n" +
+		"不确定工具名时也可以用 tool_retriever.search 搜索关键词。\n\n" +
+		result +
+		"\n再次强调：必须先 tool_retriever.search(工具名) 再调用工具，禁止跳过查询步骤！\n"
 }
 
 // GetLLMToolsFiltered 只导出指定名称的工具定义（供 Phase 5/6 按需加载）
@@ -335,8 +341,9 @@ func (r *Registry) GeneratePromptFor(names []string) string {
 	buf.WriteString("工具执行结果会追加到对话中，你可以据此继续回复用户。\n\n")
 
 	buf.WriteString("===== 重要规则 =====\n\n")
-	buf.WriteString("1. 带枚举值的字段必须严格从可选值中选择，不得自创分类！\n")
-	buf.WriteString("2. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
+	buf.WriteString("1. 只能调用上面【工具使用】部分列出的函数。未列出的工具必须先通过 tool_retriever.search 查询后获得定义才能使用。\n")
+	buf.WriteString("2. 带枚举值的字段必须严格从可选值中选择，不得自创分类！\n")
+	buf.WriteString("3. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
 
 	return buf.String()
 }

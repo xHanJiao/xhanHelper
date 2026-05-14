@@ -118,7 +118,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	usedNames := loadUsedToolNames(ctx, o.convRepo, req.ConversationID)
 	activeNames := ensureToolRetriever(usedNames)
 
-	events := make(chan *llm.StreamEvent, 64)
+	events := make(chan *llm.StreamEvent, 512)
 	go o.runReActLoop(ctx, events, client, sysPrompt, memoryNote, memIDs, noteIDs, queryVec, msgs, req, activeNames)
 	return events, nil
 }
@@ -186,7 +186,7 @@ func (o *Orchestrator) runReActLoop(
 	defer close(events)
 
 	if memoryNote != "" {
-		events <- &llm.StreamEvent{Type: "status", Content: memoryNote}
+		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: memoryNote})
 	}
 
 	userMsgID := uuid.New().String()
@@ -229,8 +229,8 @@ func (o *Orchestrator) runReActLoop(
 	for iter := 0; iter < o.maxIterations; iter++ {
 		if ctx.Err() != nil {
 			log.Printf("[orch] context cancelled")
-			events <- &llm.StreamEvent{Type: "error", Error: "request cancelled"}
-			events <- &llm.StreamEvent{Type: "done"}
+			o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: "request cancelled"})
+			o.sendEvent(events, &llm.StreamEvent{Type: "done"})
 			return
 		}
 
@@ -252,7 +252,7 @@ func (o *Orchestrator) runReActLoop(
 		})
 		if err != nil {
 			log.Printf("[orch] round %d LLM error: %v", iter+1, err)
-			events <- &llm.StreamEvent{Type: "error", Error: err.Error()}
+			o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: err.Error()})
 			return
 		}
 
@@ -377,7 +377,7 @@ func (o *Orchestrator) handleNativeToolCalls(
 	for _, tc := range toolCalls {
 		n := planNode{ID: toolCallNodeID(tc), Label: tc.Function, Status: "running"}
 		b, _ := json.Marshal(n)
-		events <- &llm.StreamEvent{Type: "plan_node_start", Content: string(b)}
+		o.sendEvent(events, &llm.StreamEvent{Type: "plan_node_start", Content: string(b)})
 	}
 
 	results := executeConcurrently(ctx, events, req.UserID, o.registry, toolCalls)
@@ -386,7 +386,7 @@ func (o *Orchestrator) handleNativeToolCalls(
 	newNames := make([]string, 0)
 	for i := range toolCalls {
 		resJSON, _ := json.Marshal(results[i].result)
-		events <- &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)}
+		o.sendEvent(events, &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)})
 		*msgs = append(*msgs, llm.Message{
 			Role:       "tool",
 			ToolCallID: msg.ToolCalls[i].ID,
@@ -400,7 +400,7 @@ func (o *Orchestrator) handleNativeToolCalls(
 		}
 		n := planNode{ID: toolCallNodeID(toolCalls[i]), Label: toolCalls[i].Function, Status: status}
 		b, _ := json.Marshal(n)
-		events <- &llm.StreamEvent{Type: "plan_node_done", Content: string(b)}
+		o.sendEvent(events, &llm.StreamEvent{Type: "plan_node_done", Content: string(b)})
 
 		if req.DeepMode {
 			o.saveToolMsg(ctx, req.ConversationID, req.UserID, msg.ToolCalls[i].ID, string(resJSON))
@@ -465,7 +465,7 @@ func (o *Orchestrator) handleFlashResponse(
 	newNames := make([]string, 0)
 	for i := range parsed.ToolCalls {
 		resJSON, _ := json.Marshal(results[i].result)
-		events <- &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)}
+		o.sendEvent(events, &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)})
 
 		toolCallID := idgen.Next()
 		o.saveToolMsgWithID(ctx, req.ConversationID, req.UserID, toolCallID, string(resJSON))
@@ -507,7 +507,10 @@ func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, us
 
 	for i, tc := range toolCalls {
 		tcJSON, _ := json.Marshal(tc)
-		events <- &llm.StreamEvent{Type: "tool_call", Content: string(tcJSON)}
+		select {
+		case events <- &llm.StreamEvent{Type: "tool_call", Content: string(tcJSON)}:
+		default:
+		}
 
 		wg.Add(1)
 		go func(idx int, call tool.ToolCall) {
@@ -705,7 +708,7 @@ func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, e
 	if errStr != "" {
 		parts = append(parts, fmt.Sprintf(`"error":"%s"`, errStr))
 	}
-	events <- &llm.StreamEvent{Type: "done", Content: "{" + strings.Join(parts, ",") + "}"}
+	o.sendEvent(events, &llm.StreamEvent{Type: "done", Content: "{" + strings.Join(parts, ",") + "}"})
 }
 
 // —— 工具函数 ——

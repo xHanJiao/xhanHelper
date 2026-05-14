@@ -50,7 +50,7 @@ func (c *DoubaoClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *Stre
 		return nil, err
 	}
 
-	events := make(chan *StreamEvent, 32)
+	events := make(chan *StreamEvent, 256)
 	go func() {
 		defer close(events)
 		for _, r := range msg.Content {
@@ -59,13 +59,13 @@ func (c *DoubaoClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *Stre
 				return
 			default:
 			}
-			events <- &StreamEvent{Type: "text_delta", Content: string(r)}
+			sendStreamEvent(events, &StreamEvent{Type: "text_delta", Content: string(r)})
 		}
-		events <- &StreamEvent{
+		sendStreamEvent(events, &StreamEvent{
 			Type:         "done",
 			RequestJSON:  msg.RequestJSON,
 			ResponseJSON: msg.ResponseJSON,
-		}
+		})
 	}()
 	return events, nil
 }

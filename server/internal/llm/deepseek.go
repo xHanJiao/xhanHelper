@@ -131,7 +131,7 @@ func (c *baseClient) callStreamAPI(ctx context.Context, req *ChatRequest, model 
 		return nil, fmt.Errorf("stream status %d: %s", resp.StatusCode, string(body[:min(1000, len(body))]))
 	}
 
-	events := make(chan *StreamEvent, 64)
+	events := make(chan *StreamEvent, 512)
 	go c.readSSEStream(ctx, resp.Body, events, logPrefix, model, string(reqBytes))
 	return events, nil
 }
@@ -190,11 +190,11 @@ func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, even
 
 			if d.Content != "" {
 				content.WriteString(d.Content)
-				events <- &StreamEvent{Type: "text_delta", Content: d.Content}
+				sendStreamEvent(events, &StreamEvent{Type: "text_delta", Content: d.Content})
 			}
 			if d.ReasoningContent != "" {
 				reasoning.WriteString(d.ReasoningContent)
-				events <- &StreamEvent{Type: "thought_delta", Content: d.ReasoningContent}
+				sendStreamEvent(events, &StreamEvent{Type: "thought_delta", Content: d.ReasoningContent})
 			}
 			for _, tc := range d.ToolCalls {
 				cur, ok := tcMap[tc.Index]
@@ -239,13 +239,13 @@ func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, even
 	// 构建完整响应 JSON（用数组包含所有 chunks）
 	respJSONStr := strings.Join(respChunks, "\n")
 
-	events <- &StreamEvent{
+	sendStreamEvent(events, &StreamEvent{
 		Type:         "done",
 		ToolCalls:    toolCalls,
 		Usage:        usage,
 		RequestJSON:  &reqJSONStr,
 		ResponseJSON: &respJSONStr,
-	}
+	})
 }
 
 func buildStreamBody(req *ChatRequest, model string, thinking bool) ([]byte, io.Reader) {
@@ -442,6 +442,14 @@ func (c *ProClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, er
 		return Message{}, err
 	}
 	return collectStream(events), nil
+}
+
+// sendStreamEvent 非阻塞发送流事件，避免客户端断连后 goroutine 卡住
+func sendStreamEvent(events chan<- *StreamEvent, evt *StreamEvent) {
+	select {
+	case events <- evt:
+	default:
+	}
 }
 
 // parseChatResponse 解析纯文本返回 (OpenAI 格式，doubao 共用)

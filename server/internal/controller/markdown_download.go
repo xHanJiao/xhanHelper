@@ -14,6 +14,7 @@ func downloadMarkdown(dir string) gin.HandlerFunc {
 			c.AbortWithStatus(404)
 			return
 		}
+		c.Header("Content-Disposition", "attachment; filename=\""+name+"\"")
 		c.File(filepath.Join(dir, name))
 	}
 }

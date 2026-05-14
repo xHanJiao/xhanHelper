@@ -70,7 +70,7 @@ function loadLlmSettings() {
     const raw = localStorage.getItem(LLM_SETTINGS_KEY)
     if (raw) return JSON.parse(raw)
   } catch {}
-  return { temperature: null, max_tokens: null, thinking: null, deepMode: false }
+  return { temperature: null, max_tokens: null, thinking: true, deepMode: false }
 }
 
 function saveLlmSettings(settings) {

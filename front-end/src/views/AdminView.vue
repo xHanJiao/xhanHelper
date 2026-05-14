@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { api } from '@/api/client'
 import { NCard, NTag, NSpin, NSelect } from 'naive-ui'
 import { Chart, registerables } from 'chart.js'
+import PageTopBar from '@/components/PageTopBar.vue'
 
 Chart.register(...registerables)
 
@@ -133,22 +134,25 @@ function latSummary(s) {
 </script>
 
 <template>
-  <div style="padding: var(--space-lg); overflow-y: auto; height: 100%; background: var(--color-bg-page);">
-    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-md);">
-      <h2 style="margin: 0;">系统监控</h2>
-      <NSelect v-model:value="refreshInterval" :options="refreshOptions" size="small" style="width: 100px;" />
-    </div>
+  <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
+    <PageTopBar title="系统监控" :visible="true">
+      <template #right>
+        <NSelect v-model:value="refreshInterval" :options="refreshOptions" size="small" style="width: 100px;" />
+      </template>
+    </PageTopBar>
+    <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
     <NSpin v-if="!health && !error" />
     <div v-if="error" style="color: var(--color-danger); padding: var(--space-md);">{{ error }}</div>
 
     <template v-if="health">
       <!-- 卡片行 -->
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-md); margin-bottom: var(--space-lg);">
+      <div class="stats-grid">
         <NCard size="small" title="运行时间"><div style="font-size: 22px; font-weight: 600;">{{ uptime(health.uptime_seconds) }}</div></NCard>
         <NCard size="small" title="goroutines"><div style="font-size: 22px; font-weight: 600;">{{ health.goroutines }}</div></NCard>
         <NCard size="small" title="内存"><div>堆: {{ fmtMB(health.memory?.heap_alloc_mb) }}</div><div style="font-size: 12px; color: var(--color-text-muted);">RSS: {{ fmtMB(health.memory?.os_rss_mb) }}</div></NCard>
         <NCard size="small" title="SSE 连接"><div style="font-size: 22px; font-weight: 600;">{{ health.counters?.sse_connections ?? 0 }}</div></NCard>
         <NCard size="small" title="活跃会话"><div style="font-size: 22px; font-weight: 600;">{{ health.snapshots?.active_conversations ?? 0 }}</div><div style="font-size: 12px; color: var(--color-text-muted);">最近 1h</div></NCard>
+        <NCard v-if="health.snapshots?.markdown_files" size="small" title="Markdown"><div style="font-size: 22px; font-weight: 600;">{{ health.snapshots.markdown_files.count }}</div><div style="font-size: 12px; color: var(--color-text-muted);">个文件</div></NCard>
       </div>
 
       <!-- LLM 调用次数 + 向量存储（同行） -->
@@ -192,7 +196,7 @@ function latSummary(s) {
           <canvas id="embedding-chart" />
         </NCard>
 
-        <NCard v-if="health.latency?.tool" size="small" title="工具调用耗时">
+        <NCard v-if="health.latency?.tool" size="small" title="工具调用耗时" class="latency-full-row">
           <div v-for="(funcs, tool) in health.latency.tool" :key="tool" style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 2px;">
             <span v-for="(s, fn) in funcs" :key="fn">{{ tool }}.{{ fn }} — {{ latSummary(s) }}<br v-if="Object.keys(funcs).length > 1" /></span>
           </div>
@@ -212,6 +216,7 @@ function latSummary(s) {
         <div v-else style="color: var(--color-text-muted);">无</div>
       </NCard>
     </template>
+  </div>
   </div>
 </template>
 

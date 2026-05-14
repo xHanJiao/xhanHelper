@@ -468,13 +468,13 @@ function handleContainerClick(e) {
         />
         <div :style="{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }">
           <div>
-            <NButton quaternary size="small" @click="toggleExpand">
+            <NButton quaternary size="small" @click="toggleExpand" style="color: var(--color-text-muted)">
               {{ inputExpanded ? '⤡ 收起输入框' : '⤢ 展开输入框' }}
             </NButton>
-            <NButton v-if="!isMobile" quaternary size="small" @click="toggleInput" style="margin-left: 8px;">
+            <NButton v-if="!isMobile" quaternary size="small" @click="toggleInput" style="margin-left: 8px; color: var(--color-text-muted)">
               {{ inputVisible ? '隐藏输入栏' : '显示输入栏' }}
             </NButton>
-            <NButton v-if="isMobile && inputVisible" quaternary size="small" @click="toggleInput" style="margin-left: 8px;">
+            <NButton v-if="isMobile && inputVisible" quaternary size="small" @click="toggleInput" style="margin-left: 8px; color: var(--color-text-muted)">
               收起
             </NButton>
           </div>

@@ -13,7 +13,7 @@ import {
   useMessage
 } from 'naive-ui'
 import MessageBubble from '@/components/MessageBubble.vue'
-import PlanGraph from '@/components/PlanGraph.vue'
+
 import PageTopBar from '@/components/PageTopBar.vue'
 import TopBarBtn from '@/components/TopBarBtn.vue'
 import { useMobile } from '@/composables/useMobile'
@@ -338,13 +338,15 @@ function handleContainerClick(e) {
           />
         </div>
 
+        <!-- PlanGraph 暂时隐藏，工具使用简单时图无意义 -->
+        <!--
         <PlanGraph
           v-if="chat.streamingMessage || chat.messages.length > 0"
           :nodes="chat.planNodes"
           :edges="chat.planEdges"
           :visible="planVisible"
         />
-
+        -->
         <div v-if="chat.error && !chat.streamingMessage" style="text-align: center; margin: var(--space-md) 0;">
           <NButton size="small" type="error" quaternary>
             {{ chat.error }}

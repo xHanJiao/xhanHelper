@@ -18,7 +18,7 @@ const refreshOptions = [
   { label: '30 秒', value: 30000 },
   { label: '60 秒', value: 60000 }
 ]
-const refreshInterval = ref(10000)
+const refreshInterval = ref(60000)
 
 function restartTimer() {
   clearInterval(timer)

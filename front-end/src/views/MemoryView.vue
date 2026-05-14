@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
@@ -23,6 +23,7 @@ const message = useMessage()
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
 const route = useRoute()
+const router = useRouter()
 
 const memories = ref([])
 const loading = ref(false)
@@ -102,6 +103,7 @@ async function startExtract(convId) {
     if (!res.ok) {
       extracting.value = false
       extractStatus.value = '提取失败'
+      router.replace({ query: { conv_id: route.query.conv_id } })
       return
     }
 
@@ -133,6 +135,7 @@ async function startExtract(convId) {
   } catch (e) {
     extracting.value = false
     extractStatus.value = '提取失败: ' + e.message
+    router.replace({ query: { conv_id: route.query.conv_id } })
   }
 }
 
@@ -162,10 +165,12 @@ function handleExtractEvent(evt) {
       if (evt.Duplicates > 0) {
         extractProgress.value += `，跳过 ${evt.Duplicates} 条重复`
       }
+      router.replace({ query: { conv_id: route.query.conv_id } })
       break
     case 'error':
       extracting.value = false
       extractStatus.value = '提取失败: ' + (evt.Message || '')
+      router.replace({ query: { conv_id: route.query.conv_id } })
       break
   }
 }

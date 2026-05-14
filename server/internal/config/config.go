@@ -158,6 +158,9 @@ func merge(dst, src *Config) {
 	if src.Server.TokenTTLHours != 0 {
 		dst.Server.TokenTTLHours = src.Server.TokenTTLHours
 	}
+	if src.Server.MaxTokensPerUser != 0 {
+		dst.Server.MaxTokensPerUser = src.Server.MaxTokensPerUser
+	}
 	if len(src.Server.AdminUsers) > 0 {
 		dst.Server.AdminUsers = src.Server.AdminUsers
 	}

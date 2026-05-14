@@ -221,6 +221,18 @@ function latSummary(s) {
 </template>
 
 <style scoped>
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+@media (max-width: 768px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 .latency-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -229,6 +241,9 @@ function latSummary(s) {
 }
 .latency-grid .n-card {
   margin-bottom: 0;
+}
+.latency-full-row {
+  grid-column: 1 / -1;
 }
 @media (max-width: 768px) {
   .latency-grid {

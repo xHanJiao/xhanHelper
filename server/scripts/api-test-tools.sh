@@ -22,7 +22,7 @@ curl -s -X PATCH "$BASE_URL/api/tools/$TOOL_ID" \
     -d '{"status":"active"}' > /dev/null
 # 重新查一次确认状态
 TOOL_GET=$(curl -s "$BASE_URL/api/tools" -H "Authorization: Bearer $TOKEN")
-STATUS=$(echo "$TOOL_GET" | unwrap | python3 -c "import sys,json; tools=json.load(sys.stdin); print(next((t['status'] for t in tools if t['id']=='$TOOL_ID'),''))" 2>/dev/null)
+STATUS=$(echo "$TOOL_GET" | unwrap | python3 -c "import sys,json; tools=json.load(sys.stdin); print(next((t['status'] for t in tools if t['id']=='$TOOL_ID'),''))" 2>/dev/null) || STATUS=""
 assert "状态改为 active" "active" "$STATUS"
 
 echo ""

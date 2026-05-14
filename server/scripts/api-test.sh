@@ -434,6 +434,26 @@ source "$SCRIPT_DIR/api-test-tools.sh"
 # ── 提示词管理 ──
 source "$(dirname "$0")/api-test-prompts.sh"
 
+# ═══════════════════════════════════════════
+# 工具检索测试（tool_retriever）
+# ═══════════════════════════════════════════
+source "$SCRIPT_DIR/api-test-tool-retrieval.sh"
+
+# ═══════════════════════════════════════════
+# Agent 自动路由测试（autoRoute）
+# ═══════════════════════════════════════════
+source "$SCRIPT_DIR/api-test-agent-route.sh"
+
+# ═══════════════════════════════════════════
+# 模型切换测试（Pro↔Flash 同会话切换）
+# ═══════════════════════════════════════════
+source "$SCRIPT_DIR/api-test-model-switch.sh"
+
+# ═══════════════════════════════════════════
+# 记忆流式提取测试（extract-memories/stream）
+# ═══════════════════════════════════════════
+source "$SCRIPT_DIR/api-test-memory-stream.sh"
+
 # ── 19. 重命名会话 ──
 echo ""
 echo "【33/34】重命名会话"

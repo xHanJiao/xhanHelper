@@ -134,7 +134,13 @@ func (c *DoubaoClient) buildBody(req *ChatRequest) ([]byte, io.Reader) {
 	messages = append(messages, map[string]string{"role": "system", "content": sp})
 
 	for _, m := range req.Messages {
-		messages = append(messages, map[string]string{"role": m.Role, "content": m.Content})
+		role := m.Role
+		content := m.Content
+		if role == "tool" {
+			role = "user"
+			content = "[工具执行结果] " + content
+		}
+		messages = append(messages, map[string]string{"role": role, "content": content})
 	}
 
 	payload := map[string]interface{}{

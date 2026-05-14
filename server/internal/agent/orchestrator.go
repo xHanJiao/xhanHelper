@@ -243,14 +243,7 @@ func (o *Orchestrator) runReActLoop(
 		}
 
 		// — 根据当前 activeNames 构建本轮的工具列表和 system prompt —
-		var tools []llm.ToolDefinition
-		iterSysPrompt := sysPrompt
-		if isProMode {
-			tools = o.registry.GetLLMToolsFiltered(activeNames)
-			iterSysPrompt = client.BuildSystemPrompt(sysPrompt, tools)
-		} else {
-			iterSysPrompt = sysPrompt + o.registry.GeneratePromptFor(activeNames)
-		}
+		iterSysPrompt := sysPrompt + o.registry.GeneratePromptFor(activeNames)
 
 		llmStart := time.Now()
 		temperature := req.Temperature
@@ -269,7 +262,7 @@ func (o *Orchestrator) runReActLoop(
 		streamEvents, err := client.Chat(ctx, &llm.ChatRequest{
 			SystemPrompt: iterSysPrompt,
 			Messages:     msgs,
-			Tools:        tools,
+			Tools:        nil,
 			Temperature:  temperature,
 			MaxTokens:    maxTokens,
 			UserID:       req.UserID,
@@ -283,20 +276,15 @@ func (o *Orchestrator) runReActLoop(
 
 		var streamContent, streamReasoning strings.Builder
 		hasReasoning := false
-		isFlashClient := !isProMode
 		var lastVisibleLen int
 		for se := range streamEvents {
 			switch se.Type {
 			case "text_delta":
 				streamContent.WriteString(se.Content)
-				if isFlashClient {
-					visible := extractAllVisibleText(streamContent.String())
-					if len(visible) > lastVisibleLen {
-						o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: visible[lastVisibleLen:]})
-						lastVisibleLen = len(visible)
-					}
-				} else {
-					o.sendEvent(events, se)
+				visible := extractAllVisibleText(streamContent.String())
+				if len(visible) > lastVisibleLen {
+					o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: visible[lastVisibleLen:]})
+					lastVisibleLen = len(visible)
 				}
 			case "thought_delta":
 				streamReasoning.WriteString(se.Content)
@@ -331,20 +319,16 @@ func (o *Orchestrator) runReActLoop(
 				log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d, active_tools=%d",
 					iter+1, len(msg.Content), len(msg.ReasoningContent), len(msg.ToolCalls), len(activeNames))
 
+				var done bool
 				var newNames []string
-				if len(msg.ToolCalls) > 0 {
-					newNames = o.handleNativeToolCalls(ctx, events, &msgs, msg, req, &allToolCalls)
-				} else {
-					var done bool
-					done, lastAssistantMsgID, newNames = o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID)
-					if done {
-						if len(allToolCalls) >= 2 {
-							planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
-							o.sendEvent(events, &llm.StreamEvent{Type: "plan", Content: string(planJSON)})
-						}
-						o.emitDone(events, req.ConversationID, lastAssistantMsgID, "", memIDs, noteIDs)
-						return
+				done, lastAssistantMsgID, newNames = o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID)
+				if done {
+					if len(allToolCalls) >= 2 {
+						planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
+						o.sendEvent(events, &llm.StreamEvent{Type: "plan", Content: string(planJSON)})
 					}
+					o.emitDone(events, req.ConversationID, lastAssistantMsgID, "", memIDs, noteIDs)
+					return
 				}
 
 				// Phase 5: 把 tool_retriever 发现的新工具加入 activeNames，下次迭代生效
@@ -477,7 +461,7 @@ func (o *Orchestrator) handleFlashResponse(
 	log.Printf("[orch] round embedded tool_calls=%d: %s",
 		len(parsed.ToolCalls), tool.ToolCallNames(parsed.ToolCalls))
 
-	// Flash 模式不填 ToolCallsJSON（会破坏 Pro 模式的消息序列）
+	// 统一走 prompt engineering，不填 ToolCallsJSON（由 parseLLMResponse 从文本解析）
 	msg.ToolCalls = nil
 
 	*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg)

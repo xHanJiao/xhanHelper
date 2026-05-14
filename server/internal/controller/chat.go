@@ -158,11 +158,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		defer monitor.DecSSE()
 
 		var messages []llm.Message
-		if req.DeepMode {
-			messages = agent.BuildMessagesForPro(history)
-		} else {
-			messages = agent.BuildMessagesForFlash(history)
-		}
+		messages = agent.BuildMessagesForFlash(history)
 
 		events, err := orch.Run(context.Background(), &agent.RunRequest{
 			UserID:             userID,

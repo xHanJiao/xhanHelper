@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
@@ -31,6 +31,10 @@ const { sendMessage, cancel } = useChatSSE()
 const nMessage = useMessage()
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
+
+onMounted(() => {
+  fetchLlmConfig()
+})
 
 const inputValue = ref('')
 const messagesEndRef = ref(null)
@@ -67,7 +71,9 @@ const llmSettings = ref({ temperature: null, max_tokens: null, thinking: true, d
 
 async function fetchLlmConfig() {
   try {
-    const qs = chat.agentId ? `?agent_id=${encodeURIComponent(chat.agentId)}` : ''
+    const conv = convs.list.find(c => c.id === chat.conversationId)
+    const agentId = conv?.agent_id || chat.agentId
+    const qs = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : ''
     const res = await api.get('/api/llm-config' + qs)
     if (res && typeof res === 'object') {
       llmSettings.value = {
@@ -268,6 +274,15 @@ watch(() => route.params.id, async (newId, oldId) => {
     }
     isFirstLoad.value = false
     setTimeout(() => { isInitialScrollDone.value = true }, 200)
+    const currentConv = convs.list.find(c => c.id === newId)
+    if (currentConv?.agent_id) {
+      chat.agentId = currentConv.agent_id
+      chat.agentName = currentConv.agent_name || ''
+    } else {
+      chat.agentId = null
+      chat.agentName = null
+    }
+    fetchLlmConfig()
   } else if (newId && chat.needsRefetch) {
     isFirstLoad.value = true
     isInitialScrollDone.value = false
@@ -279,11 +294,21 @@ watch(() => route.params.id, async (newId, oldId) => {
     chat.needsRefetch = false
     isFirstLoad.value = false
     setTimeout(() => { isInitialScrollDone.value = true }, 200)
+    const currentConv2 = convs.list.find(c => c.id === newId)
+    if (currentConv2?.agent_id) {
+      chat.agentId = currentConv2.agent_id
+      chat.agentName = currentConv2.agent_name || ''
+    } else {
+      chat.agentId = null
+      chat.agentName = null
+    }
+    fetchLlmConfig()
   } else if (!newId) {
     if (chat.isStreaming) cancel()
     const savedAgentId = chat.agentId
     chat.reset()
     chat.agentId = savedAgentId
+    fetchLlmConfig()
   }
 }, { immediate: true })
 

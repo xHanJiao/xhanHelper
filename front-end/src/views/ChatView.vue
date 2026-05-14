@@ -291,16 +291,17 @@ async function handleSend() {
   }
   scrollToBottom()
 
+  const hasAgent = !!currentAgentId.value
   const opts = {
     conversationId: chat.conversationId,
-    deepMode: !chat.agentId ? llmSettings.value.deepMode : false,
+    deepMode: !hasAgent ? llmSettings.value.deepMode : false,
     agentId: chat.agentId
   }
   // 无 Agent 模式时，带上用户设定的 LLM 参数
-  if (!chat.agentId && llmSettings.value.temperature !== null) {
+  if (!hasAgent && llmSettings.value.temperature !== null) {
     opts.temperature = llmSettings.value.temperature
   }
-  if (!chat.agentId && llmSettings.value.max_tokens !== null) {
+  if (!hasAgent && llmSettings.value.max_tokens !== null) {
     opts.maxTokens = llmSettings.value.max_tokens
   }
   if (llmSettings.value.thinking !== null) {

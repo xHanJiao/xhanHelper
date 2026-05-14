@@ -114,24 +114,18 @@ async function startExtract(convId) {
       if (done) break
 
       buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop()
+      // 按 \n\n 分割完整 SSE 事件
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop()
 
-      for (const line of lines) {
-        if (!line.startsWith('event: ') && !line.startsWith('data: ')) continue
-
-        if (line.startsWith('event: ')) {
-          // store event type for next data line
-          continue
-        }
-
-        if (line.startsWith('data: ')) {
-          const raw = line.slice(6)
-          try {
-            const evt = JSON.parse(raw)
-            handleExtractEvent(evt)
-          } catch {
-            // skip malformed
+      for (const part of parts) {
+        const lines = part.split('\n')
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const evt = JSON.parse(line.slice(6))
+              handleExtractEvent(evt)
+            } catch { /* skip malformed */ }
           }
         }
       }
@@ -160,9 +154,11 @@ function handleExtractEvent(evt) {
     case 'done':
       extracting.value = false
       extractStatus.value = ''
-      extractProgress.value = evt.Created > 0
-        ? `提取完成，新增 ${evt.Created} 条记忆`
-        : ''
+      if (evt.Created > 0) {
+        extractProgress.value = `提取完成，新增 ${evt.Created} 条记忆`
+      } else {
+        extractProgress.value = '未提取到新记忆'
+      }
       if (evt.Duplicates > 0) {
         extractProgress.value += `，跳过 ${evt.Duplicates} 条重复`
       }
@@ -226,7 +222,7 @@ onMounted(() => {
           <div style="width: 16px; height: 16px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
           <span>{{ extractStatus }}</span>
         </div>
-        <div v-if="extractProgress && !extracting" style="color: var(--color-success); font-size: 14px;">
+        <div v-if="extractProgress && !extracting" :style="{ color: extractProgress.includes('未提取') ? 'var(--color-text-muted)' : 'var(--color-success)', fontSize: '14px' }">
           {{ extractProgress }}
         </div>
       </div>

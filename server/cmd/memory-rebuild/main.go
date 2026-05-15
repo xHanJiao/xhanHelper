@@ -1,0 +1,130 @@
+package main
+
+import (
+	"context"
+	"log"
+	"os"
+
+	"xhan-helper/internal/agent"
+	"xhan-helper/internal/config"
+	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
+	"xhan-helper/internal/monitor"
+	"xhan-helper/internal/service"
+)
+
+func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal("load config:", err)
+	}
+
+	db := service.NewDB(cfg.DB)
+	if err := db.AutoMigrate(&model.UserMemory{}, &model.EmbeddingChunk{}); err != nil {
+		log.Fatal("migrate:", err)
+	}
+
+	// LLM
+	llmClient, err := llm.NewClient(cfg.LLM)
+	if err != nil {
+		log.Fatal("llm client:", err)
+	}
+	llmClient = monitor.WrapLLMClient(llmClient, "memory-rebuild")
+
+	// Embedder
+	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
+
+	// Repos
+	memRepo := service.NewUserMemoryRepo(db)
+	msgRepo := service.NewMessageRepo(db)
+	convRepo := service.NewConversationRepo(db)
+	embeddingRepo := service.NewEmbeddingRepo(db)
+	noteRepo := service.NewNoteRepo(db)
+	chunkRepo := service.NewEmbeddingChunkRepo(db)
+
+	// Vector store (新建，不加载旧的)
+	vectorStore := agent.NewVectorStore()
+
+	builder := agent.NewChunkBuilder(embedder, chunkRepo, embeddingRepo, agent.NewVectorSearchAdapter(vectorStore))
+
+	extractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder,
+		msgRepo, convRepo, embeddingRepo, 0.85, builder)
+
+	ctx := context.Background()
+
+	// 前置清理：删除所有旧 chunk + embedding
+	log.Printf("cleaning old chunk data...")
+	if n, err := chunkRepo.DeleteAllByType(ctx, "note"); err == nil {
+		log.Printf("deleted %d note chunks", n)
+	}
+	if n, err := chunkRepo.DeleteAllByType(ctx, "memory"); err == nil {
+		log.Printf("deleted %d memory chunks", n)
+	}
+	// 删除旧 embedding（entity_type = "note" | "memory" | "chunk"）
+	for _, et := range []string{"note", "memory", "chunk"} {
+		// 逐页删除
+		for offset := 0; ; offset += 200 {
+			embeddings, err := embeddingRepo.ListByType(ctx, et, 200, offset)
+			if err != nil || len(embeddings) == 0 {
+				break
+			}
+			for _, emb := range embeddings {
+				if err := embeddingRepo.DeleteByEntity(ctx, et, emb.EntityID); err != nil {
+					log.Printf("delete embedding %s/%s error: %v", et, emb.EntityID, err)
+				}
+			}
+		}
+	}
+	log.Printf("cleanup done")
+
+	// 遍历所有用户
+	for _, u := range cfg.Server.AdminUsers {
+		log.Printf("=== user: %s ===", u)
+
+		// Step 1: 提取记忆
+		convs, _, err := convRepo.ListByUser(ctx, u, 200, 0)
+		if err != nil {
+			log.Printf("list convs error: %v", err)
+			continue
+		}
+		for i := range convs {
+			convs[i].LastExtractedMsgID = nil
+			if err := extractor.ExtractFromConversation(ctx, &convs[i]); err != nil {
+				log.Printf("[conv %s] extract error: %v", convs[i].ID[:8], err)
+			}
+		}
+
+		// Step 2: chunk 所有笔记
+		notes, _, err := noteRepo.List(ctx, u, "", "", 500, 0)
+		if err != nil {
+			log.Printf("list notes error: %v", err)
+		}
+		for _, n := range notes {
+			nChunks, err := builder.BuildChunks(ctx, u, "note", n.ID, n.Content)
+			if err != nil {
+				log.Printf("[note %s] chunk error: %v", n.ID[:8], err)
+			} else {
+				log.Printf("[note %s] chunked %d sentences", n.ID[:8], nChunks)
+			}
+		}
+
+		// Step 3: chunk 所有记忆
+		memories, _, err := memRepo.ListByUser(ctx, u, "", "", 500, 0)
+		if err != nil {
+			log.Printf("list memories error: %v", err)
+		}
+		for _, m := range memories {
+			nChunks, err := builder.BuildChunks(ctx, u, "memory", m.ID, m.MemoryValue)
+			if err != nil {
+				log.Printf("[mem %s] chunk error: %v", m.ID[:8], err)
+			} else {
+				log.Printf("[mem %s] chunked %d sentences", m.ID[:8], nChunks)
+			}
+		}
+	}
+
+	log.Printf("done. vector store size: %d", vectorStore.Size())
+	os.Exit(0)
+}

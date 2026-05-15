@@ -10,6 +10,9 @@ type UserMemory struct {
 	MemoryKey       string    `gorm:"size:200;not null" json:"memory_key"`
 	ContentHash     string    `gorm:"uniqueIndex:idx_user_content;size:64;not null" json:"content_hash"` // MD5(MemoryValue)
 	MemoryValue     string    `gorm:"type:text;not null" json:"memory_value"`
+	Topic           string    `gorm:"size:100" json:"topic"`                               // 主题词（与 notes 对齐）
+	Tags            string    `gorm:"size:500" json:"tags"`                                // 逗号分隔标签（与 notes 对齐）
+	Facts           *string   `gorm:"type:text" json:"facts,omitempty"`                    // 支持细节列表（JSON 数组字符串）
 	ExtractPrompt   *string   `gorm:"type:text" json:"extract_prompt,omitempty"`           // 提取该记忆时发给 LLM 的 prompt
 	PromptHash      string    `gorm:"size:64;index" json:"prompt_hash"`                    // prompt 的 MD5 哈希，用于输入去重
 	Source          string    `gorm:"size:20;default:conversation" json:"source"`          // conversation / csv_import

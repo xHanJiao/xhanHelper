@@ -22,8 +22,8 @@ const themeDiscovererPrompt = `你是 xhanHelper 的「主题侦察员」。你�
 
 ## 你能使用的检索工具
 
-1. search_notes(query, top_k) — 向量检索笔记
-2. search_memories(query, top_k) — 向量检索长期记忆
+1. search_notes_v2(query, top_k) — 向量检索笔记
+2. search_memories_v2(query, top_k) — 向量检索长期记忆
 
 ## 检索策略
 

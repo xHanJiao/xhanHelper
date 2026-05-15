@@ -42,6 +42,7 @@ type MemoryExtractor struct {
 	convRepo      *service.ConversationRepo
 	embeddingRepo *service.EmbeddingRepo
 	dupeThreshold float64
+	chunkBuilder  *ChunkBuilder
 }
 
 // NewMemoryExtractor 创建提取器
@@ -49,7 +50,7 @@ func NewMemoryExtractor(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo
 	vectorStore *VectorStore, embedder *llm.Embedder,
 	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
 	embeddingRepo *service.EmbeddingRepo,
-	dupeThreshold float64) *MemoryExtractor {
+	dupeThreshold float64, chunkBuilder *ChunkBuilder) *MemoryExtractor {
 	if dupeThreshold <= 0 {
 		dupeThreshold = 0.85 // 默认值
 	}
@@ -62,6 +63,7 @@ func NewMemoryExtractor(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo
 		convRepo:      convRepo,
 		embeddingRepo: embeddingRepo,
 		dupeThreshold: dupeThreshold,
+		chunkBuilder:  chunkBuilder,
 	}
 }
 
@@ -69,8 +71,8 @@ type extractResult struct {
 	Extracted bool     `json:"extracted"`
 	Summary   string   `json:"summary"`
 	Facts     []string `json:"facts,omitempty"`
-	Category  string   `json:"category,omitempty"`
 	Topic     string   `json:"topic,omitempty"`
+	Tags      string   `json:"tags,omitempty"` // 逗号分隔标签
 }
 
 const extractSystemPrompt = "你是记忆提取助手。从对话中提取有长期价值的信息，包括：用户事实（偏好/习惯/规律/关系/计划）、关注话题（反复讨论的领域如行业/股票/政策）、观点判断（看法/预测/分析）、外部信息（用户分享的文章/数据/新闻）。合并同类信息，不要逐条复述。不编造、不推测。信息不足时返回 {\"extracted\":false}。重要：将\"今天\"、\"昨天\"等相对时间转为绝对日期（如 2026-05-15）。"
@@ -78,8 +80,8 @@ const extractSystemPrompt = "你是记忆提取助手。从对话中提取有长
 const extractPromptPrefix = `从以下对话中提取有长期价值的信息，包括：用户的事实/偏好/习惯/计划、用户反复讨论的话题、用户表达的观点和判断、用户分享的外部信息。合并同类信息，每次最多提取3条最重要的。
 
 请严格按以下 JSON 格式输出，不要包含其他内容：
-{"extracted":true,"summary":"一句话概括核心信息","facts":["支持细节1"],"category":"用户事实|关注话题|观点判断|外部信息|计划待办","topic":"关键主题词如职业规划/房地产/睡眠管理"}
-没有值得提取的内容时返回 {"extracted":false}。`
+{"extracted":true,"summary":"一句话概括核心信息","facts":["支持细节1"],"topic":"关键主题词如职业规划/房地产/睡眠管理","tags":"关键词1,关键词2"}
+tags 是从内容中提取的逗号分隔关键词（如 褪黑素,早醒,生物钟）。没有值得提取的内容时返回 {"extracted":false}。`
 
 // ExtractFromConversation 从指定会话中增量提取记忆
 func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *model.Conversation) error {
@@ -132,6 +134,9 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 		MemoryValue:     formatMemoryValue(result),
 		RawJSON:         &rawStr,
 		Source:          "conversation",
+		Topic:           result.Topic,
+		Tags:            result.Tags,
+		Facts:           factsPtr(result.Facts),
 		ConfirmCount:    1,
 		LastConfirmedAt: time.Now(),
 		ExtractPrompt:   &prompt,
@@ -211,6 +216,8 @@ func (e *MemoryExtractor) ExtractFromConversationWithCallback(ctx context.Contex
 			MemoryValue:     formatMemoryValue(result),
 			RawJSON:         &rawStr,
 			Source:          "conversation",
+			Topic:           result.Topic,
+			Tags:            result.Tags,
 			ConfirmCount:    1,
 			LastConfirmedAt: time.Now(),
 			ExtractPrompt:   &prompt,
@@ -272,6 +279,9 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, promptT
 		MemoryValue:     formatMemoryValue(result),
 		RawJSON:         &rawStr,
 		Source:          source,
+		Topic:           result.Topic,
+		Tags:            result.Tags,
+		Facts:           factsPtr(result.Facts),
 		ConfirmCount:    1,
 		LastConfirmedAt: time.Now(),
 		ExtractPrompt:   &prompt,
@@ -328,29 +338,15 @@ func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
 		log.Printf("[memory] create error: %v", err)
 		return
 	}
-	if e.vectorStore != nil && e.embedder != nil && e.embeddingRepo != nil && memory.MemoryValue != "" {
+	if e.chunkBuilder != nil && memory.MemoryValue != "" {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			vec, err := e.embedder.Embed(ctx, memory.MemoryValue)
+			n, err := e.chunkBuilder.BuildChunks(ctx, memory.UserID, "memory", memory.ID, memory.MemoryValue)
 			if err != nil {
-				return
-			}
-			e.vectorStore.Upsert("mem:"+memory.ID, vec, map[string]string{
-				"type":    "mem",
-				"user_id": memory.UserID,
-			})
-			embStr := llm.EmbeddingToString(vec)
-			err = e.embeddingRepo.Upsert(ctx, &model.Embedding{
-				ID:         memory.ID,
-				EntityType: model.EntityTypeMemory,
-				EntityID:   memory.ID,
-				UserID:     memory.UserID,
-				Model:      e.embedder.ModelName(),
-				Embedding:  &embStr,
-			})
-			if err != nil {
-				log.Printf("[memory] save embedding error: %v", err)
+				log.Printf("[memory] chunk build error: %v", err)
+			} else {
+				log.Printf("[memory] chunked mem %s: %d sentences", memory.ID[:8], n)
 			}
 		}()
 	}
@@ -371,13 +367,19 @@ func hashPrompt(text string) string {
 }
 
 func formatMemoryValue(r *extractResult) string {
-	if r.Category != "" && r.Topic != "" {
-		return fmt.Sprintf("[%s] %s: %s", r.Category, r.Topic, r.Summary)
-	}
-	if r.Category != "" {
-		return fmt.Sprintf("[%s] %s", r.Category, r.Summary)
+	if r.Topic != "" {
+		return fmt.Sprintf("[%s] %s", r.Topic, r.Summary)
 	}
 	return r.Summary
+}
+
+func factsPtr(facts []string) *string {
+	if len(facts) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(facts)
+	s := string(b)
+	return &s
 }
 
 func isEmptyResult(r *extractResult) bool {

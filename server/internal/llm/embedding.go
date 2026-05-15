@@ -42,8 +42,9 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float64, error) {
 		Text string `json:"text"`
 	}
 	body := map[string]interface{}{
-		"model": e.model,
-		"input": []textInput{{Type: "text", Text: text}},
+		"model":      e.model,
+		"input":      []textInput{{Type: "text", Text: text}},
+		"dimensions": 1024,
 	}
 	b, _ := json.Marshal(body)
 

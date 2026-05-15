@@ -59,6 +59,20 @@ func (r *EmbeddingRepo) ListByType(ctx context.Context, entityType string, limit
 	return list, err
 }
 
+// BatchUpsert 批量 upsert 向量
+func (r *EmbeddingRepo) BatchUpsert(ctx context.Context, embeddings []model.Embedding) error {
+	if len(embeddings) == 0 {
+		return nil
+	}
+	// 逐个 upsert（GORM 不支持 ON DUPLICATE KEY UPDATE 的批量操作）
+	for i := range embeddings {
+		if err := r.Upsert(ctx, &embeddings[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // DeleteByEntity 删除实体的向量
 func (r *EmbeddingRepo) DeleteByEntity(ctx context.Context, entityType, entityID string) error {
 	return r.db.WithContext(ctx).

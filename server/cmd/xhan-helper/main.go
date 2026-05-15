@@ -72,6 +72,7 @@ func main() {
 		&model.ReflectionTrace{},
 		&model.ReflectionLLMCall{},
 		&model.ReflectionDecision{},
+		&model.EmbeddingChunk{},
 	); err != nil {
 		log.Printf("[db] AutoMigrate error: %v", err)
 	}
@@ -102,6 +103,7 @@ func main() {
 	mailboxRepo := service.NewMailboxRepo(db)
 	themeStateRepo := service.NewThemeStateRepo(db)
 	traceRepo := service.NewReflectionTraceRepo(db)
+	chunkRepo := service.NewEmbeddingChunkRepo(db)
 
 	// Tool Registry + Tools
 	reg := tool.NewRegistry()
@@ -124,7 +126,6 @@ func main() {
 	toolRetriever.SetRegistrySearcher(reg)
 	reg.Register(tool.NewLoggingWrapper(toolRetriever, log.Default()))
 
-	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(noteRepo, vectorStore, embedder, embeddingRepo), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewAgentTool(agentRepo), log.Default()))
 
 	// 从 DB 加载动态工具
@@ -159,14 +160,21 @@ func main() {
 
 	// ===== Phase 6: 检索工具（独立 Registry，不注册到主 reg） =====
 	vsAdapter := agent.NewVectorSearchAdapter(vectorStore)
-	searchNoteTool := tool.NewSearchNotesTool(vsAdapter, noteRepo, embedder)
-	searchMemTool := tool.NewSearchMemoriesTool(vsAdapter, memRepo, embedder)
+
+	// Chunk Builder (替换旧的整篇 embedding)
+	chunkBuilder := agent.NewChunkBuilder(embedder, chunkRepo, embeddingRepo, vsAdapter)
+
+	// NoteTool with chunk embedding
+	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(noteRepo, vectorStore, embedder, embeddingRepo, chunkBuilder), log.Default()))
+
+	searchNoteV2Tool := tool.NewSearchNotesV2Tool(vsAdapter, noteRepo, chunkRepo, embedder)
+	searchMemV2Tool := tool.NewSearchMemoriesV2Tool(vsAdapter, memRepo, chunkRepo, embedder)
 	billStatsTool := tool.NewGetBillStatsTool(billRepo)
 
 	retrievalTools := map[string]tool.Tool{
-		"search_notes":    searchNoteTool,
-		"search_memories": searchMemTool,
-		"get_bill_stats":  billStatsTool,
+		"search_notes_v2":    searchNoteV2Tool,
+		"search_memories_v2": searchMemV2Tool,
+		"get_bill_stats":     billStatsTool,
 	}
 
 	// ===== Phase 6: 反思工具（独立 Registry） =====
@@ -204,13 +212,14 @@ func main() {
 	noteSource.Warmup(bgCtx, embedder)
 	// Theme embedding warmup：从 embedding 表加载到向量库，确保去重重启后有效
 	warmupThemeEmbeddings(bgCtx, embeddingRepo, vectorStore)
+	warmupChunkEmbeddings(bgCtx, embeddingRepo, vectorStore)
 
 	// Orchestrator
 	retriever := agent.NewRetriever(memSource, noteSource)
 	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, embedder, vectorStore, embeddingRepo, cfg.LLM.MaxIterations, cfg.LLM.DefaultTemperature, cfg.LLM.DefaultMaxTokens)
 
 	// Memory Extractor (后台异步)
-	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo, embeddingRepo, cfg.Server.MemoryDupeThreshold)
+	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo, embeddingRepo, cfg.Server.MemoryDupeThreshold, chunkBuilder)
 	memScheduler := agent.NewMemoryScheduler(memExtractor, convRepo)
 	go memScheduler.Start(bgCtx, cfg.Server.MemoryAutoExtract)
 
@@ -331,4 +340,60 @@ func warmupThemeEmbeddings(ctx context.Context, embeddingRepo *service.Embedding
 		}
 	}
 	log.Printf("[warmup] theme embeddings: %d loaded into vector store", loaded)
+}
+
+// warmupChunkEmbeddings 从 embedding 表加载 chunk 向量到内存
+func warmupChunkEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore *agent.VectorStore) {
+	const pageSize = 200
+	loaded := 0
+	for offset := 0; ; offset += pageSize {
+		embeddings, err := embeddingRepo.ListByType(ctx, "chunk", pageSize, offset)
+		if err != nil {
+			log.Printf("[warmup] chunk embeddings ListByType error: %v", err)
+			break
+		}
+		if len(embeddings) == 0 {
+			break
+		}
+		for _, emb := range embeddings {
+			if emb.Embedding == nil {
+				continue
+			}
+			vec, err := llm.StringToEmbedding(*emb.Embedding)
+			if err != nil || len(vec) == 0 {
+				continue
+			}
+			// 从 EntityID 解析 parent_type 和 parent_id
+			// 格式: chunk:<parentType>:<parentID>/<index>
+			parentType, parentID := parseChunkEntityID(emb.EntityID)
+			vectorStore.Upsert(emb.EntityID, vec, map[string]string{
+				"type":        "chunk",
+				"parent_type": parentType,
+				"parent_id":   parentID,
+				"user_id":     emb.UserID,
+			})
+			loaded++
+		}
+		if len(embeddings) < pageSize {
+			break
+		}
+	}
+	log.Printf("[warmup] chunk embeddings: %d loaded into vector store", loaded)
+}
+
+// parseChunkEntityID 解析 chunk EntityID，返回 parentType 和 parentID
+// 格式: chunk:<parentType>:<parentID>/<index>
+func parseChunkEntityID(entityID string) (parentType, parentID string) {
+	rest := entityID
+	if idx := strings.Index(rest, ":"); idx > 0 {
+		rest = rest[idx+1:] // "note:abc123/0"
+	}
+	if idx := strings.Index(rest, ":"); idx > 0 {
+		parentType = rest[:idx] // "note"
+		rest = rest[idx+1:]     // "abc123/0"
+	}
+	if idx := strings.LastIndex(rest, "/"); idx > 0 {
+		parentID = rest[:idx]
+	}
+	return
 }

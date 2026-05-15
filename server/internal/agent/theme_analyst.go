@@ -20,8 +20,8 @@ const themeAnalystPrompt = `你是 xhanHelper 的「主题分析员」。你的�
 
 ## 你能使用的检索工具
 
-1. search_notes(query, top_k) — 向量检索笔记。每条带引用 ID（格式 note:xxx）。
-2. search_memories(query, top_k) — 向量检索长期记忆。每条带引用 ID（格式 mem:xxx）。
+1. search_notes_v2(query, top_k) — 向量检索笔记。每条带引用 ID（格式 note:xxx）。
+2. search_memories_v2(query, top_k) — 向量检索长期记忆。每条带引用 ID（格式 mem:xxx）。
 3. get_bill_stats() — 获取账单统计摘要。返回结构化数据。
 
 ## 检索策略建议
@@ -30,7 +30,7 @@ const themeAnalystPrompt = `你是 xhanHelper 的「主题分析员」。你的�
 - 第 1 轮：用主题名称 + 描述做首次检索，各源取 top 5-8 条
 - 评估：查看结果，判断信息是否足够形成发现。如果有意外线索，考虑第 2 轮
 - 第 2 轮（可选）：针对意外线索用新关键词检索。最多 2 轮检索，然后必须产出分析结果
-- 不必检索所有源：如果主题跟账单无关，不要调 get_bill_stats。如果记忆库里显然没有相关内容，跳过 search_memories
+- 不必检索所有源：如果主题跟账单无关，不要调 get_bill_stats。如果记忆库里显然没有相关内容，跳过 search_memories_v2
 
 ## 你需要产出什么
 

@@ -14,20 +14,26 @@ import (
 )
 
 // NoteTool — 变量追踪笔记工具
-type NoteTool struct {
-	noteRepo      *service.NoteRepo
-	vectorStore   VectorStorer
-	embedder      *llm.Embedder
-	embeddingRepo *service.EmbeddingRepo
-}
-
 // VectorStorer — 向量存储接口（避免循环依赖）
 type VectorStorer interface {
 	Upsert(id string, vec []float64, metadata map[string]string)
 }
 
-func NewNoteTool(noteRepo *service.NoteRepo, vs VectorStorer, emb *llm.Embedder, embeddingRepo *service.EmbeddingRepo) *NoteTool {
-	return &NoteTool{noteRepo: noteRepo, vectorStore: vs, embedder: emb, embeddingRepo: embeddingRepo}
+// ChunkEmbedder — chunk 构建接口（避免循环依赖 agent 包）
+type ChunkEmbedder interface {
+	BuildChunks(ctx context.Context, userID, parentType, parentID, text string) (int, error)
+}
+
+type NoteTool struct {
+	noteRepo      *service.NoteRepo
+	vectorStore   VectorStorer
+	embedder      *llm.Embedder
+	embeddingRepo *service.EmbeddingRepo
+	chunkBuilder  ChunkEmbedder
+}
+
+func NewNoteTool(noteRepo *service.NoteRepo, vs VectorStorer, emb *llm.Embedder, embeddingRepo *service.EmbeddingRepo, chunkBuilder ChunkEmbedder) *NoteTool {
+	return &NoteTool{noteRepo: noteRepo, vectorStore: vs, embedder: emb, embeddingRepo: embeddingRepo, chunkBuilder: chunkBuilder}
 }
 
 func (t *NoteTool) Name() string { return "note" }
@@ -188,24 +194,14 @@ func (t *NoteTool) updateNote(ec *ExecuteContext, args json.RawMessage) *Result 
 }
 
 func (t *NoteTool) embedNote(note *model.Note) {
-	text := note.Content
-	vec, err := t.embedder.Embed(context.Background(), text)
-	if err != nil {
-		log.Printf("[note] embed error: %v", err)
+	if t.chunkBuilder == nil {
 		return
 	}
-	t.vectorStore.Upsert("note:"+note.ID, vec, map[string]string{"type": "note", "user_id": note.UserID})
-	embStr := llm.EmbeddingToString(vec)
-	err = t.embeddingRepo.Upsert(context.Background(), &model.Embedding{
-		ID:         note.ID,
-		EntityType: model.EntityTypeNote,
-		EntityID:   note.ID,
-		UserID:     note.UserID,
-		Model:      t.embedder.ModelName(),
-		Embedding:  &embStr,
-	})
+	n, err := t.chunkBuilder.BuildChunks(context.Background(), note.UserID, "note", note.ID, note.Content)
 	if err != nil {
-		log.Printf("[note] save embedding error: %v", err)
+		log.Printf("[note] chunk build error: %v", err)
+	} else {
+		log.Printf("[note] chunked note %s: %d sentences", note.ID[:8], n)
 	}
 }
 

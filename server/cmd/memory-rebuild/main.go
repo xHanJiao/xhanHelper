@@ -54,8 +54,14 @@ func main() {
 
 	ctx := context.Background()
 
-	// 前置清理：删除所有旧 chunk + embedding
-	log.Printf("cleaning old chunk data...")
+	// 前置清理：删除所有旧数据
+	log.Printf("cleaning old data...")
+	// 删除旧记忆（旧 prompt 格式，与新字段不兼容）
+	if result := db.Where("1=1").Delete(&model.UserMemory{}); result.Error != nil {
+		log.Printf("delete old memories error: %v", result.Error)
+	} else {
+		log.Printf("deleted %d old memories", result.RowsAffected)
+	}
 	if n, err := chunkRepo.DeleteAllByType(ctx, "note"); err == nil {
 		log.Printf("deleted %d note chunks", n)
 	}

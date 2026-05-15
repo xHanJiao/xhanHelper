@@ -5,12 +5,17 @@ server:
   agent_route_triggers: [1, 3, 6]
   admin_users:
     - 22222222-2222-4222-8222-222222222222
+    - 33333333-3333-4333-8333-333333333333
   # allowed_users:
   #   - your-username
 
 db:
-  driver: sqlite
-  database: data/xhan_helper.db
+  driver: mysql
+  host: 127.0.0.1
+  port: 3306
+  user: xhan
+  password: ${XHAN_HELPER_DB_PASSWORD}
+  database: xhan_helper_test
 
 llm:
   provider: deepseek
@@ -28,3 +33,8 @@ embedding:
   base_url: https://ark.cn-beijing.volces.com
   model: doubao-embedding-vision-251215
   memory_auto_extract: true
+
+reflection:
+  launch_max_iterations: 8
+  analyst_max_iterations: 6
+  discover_max_iterations: 6

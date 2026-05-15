@@ -8,6 +8,7 @@ const (
 	EntityTypeNote    = "note"
 	EntityTypeMemory  = "memory"
 	EntityTypeTool    = "tool"
+	EntityTypeTheme   = "theme"
 )
 
 // Embedding — 向量存储

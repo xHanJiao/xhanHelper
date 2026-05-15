@@ -1,0 +1,124 @@
+<script setup>
+import { ref, onMounted } from 'vue'
+import { api } from '@/api/client'
+import { NCard, NTag, NButton, NSpin, NEmpty, useMessage } from 'naive-ui'
+import PageTopBar from '@/components/PageTopBar.vue'
+
+const message = useMessage()
+const items = ref([])
+const total = ref(0)
+const loading = ref(false)
+const unreadCount = ref(0)
+
+async function fetchItems() {
+  loading.value = true
+  try {
+    const res = await api.get('/api/mailbox?limit=50')
+    items.value = res.items || []
+    total.value = res.total || 0
+    await fetchUnreadCount()
+  } catch (e) {
+    message.error('获取信箱失败: ' + (e.message || '未知错误'))
+  } finally {
+    loading.value = false
+  }
+}
+
+async function fetchUnreadCount() {
+  try {
+    const res = await api.get('/api/mailbox/unread-count')
+    unreadCount.value = res.count || 0
+  } catch (_) {}
+}
+
+async function markRead(item) {
+  if (item.is_read) return
+  try {
+    await api.patch(`/api/mailbox/${item.id}/read`)
+    item.is_read = true
+    unreadCount.value = Math.max(0, unreadCount.value - 1)
+  } catch (_) {}
+}
+
+async function archiveItem(item) {
+  try {
+    await api.patch(`/api/mailbox/${item.id}/archive`)
+    items.value = items.value.filter(i => i.id !== item.id)
+    total.value--
+    if (!item.is_read) unreadCount.value = Math.max(0, unreadCount.value - 1)
+    message.success('已归档')
+  } catch (e) {
+    message.error('归档失败')
+  }
+}
+
+async function acceptCandidate(item) {
+  try {
+    const desc = item.content.split('\n\n')[0].replace(/^\*\*|\*\*$/g, '') || item.title
+    await api.post('/api/themes', { name: item.title, description: desc })
+    message.success('主题已创建')
+    await archiveItem(item)
+  } catch (e) {
+    message.error('创建主题失败: ' + (e.message || ''))
+  }
+}
+
+function typeLabel(type) {
+  const map = { daily_brief: '日报', theme_finding: '主题发现', candidate_theme: '候选主题' }
+  return map[type] || type
+}
+
+function typeColor(type) {
+  const map = { daily_brief: 'info', theme_finding: 'success', candidate_theme: 'warning' }
+  return map[type] || 'default'
+}
+
+function formatTime(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+onMounted(fetchItems)
+</script>
+
+<template>
+  <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
+    <PageTopBar title="信箱" :visible="true">
+      <template #right>
+        <span v-if="unreadCount > 0" style="font-size: 13px; color: var(--color-primary); font-weight: 500;">
+          {{ unreadCount }} 条未读
+        </span>
+        <NButton size="small" @click="fetchItems" :loading="loading">刷新</NButton>
+      </template>
+    </PageTopBar>
+    <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
+      <NSpin v-if="loading && items.length === 0" />
+      <NEmpty v-else-if="items.length === 0" description="信箱为空" style="margin-top: 80px;" />
+      <div v-else style="display: flex; flex-direction: column; gap: var(--space-md);">
+        <NCard
+          v-for="item in items" :key="item.id"
+          size="small"
+          :style="{ opacity: item.is_read ? 0.7 : 1, borderLeft: item.is_read ? '3px solid transparent' : '3px solid var(--color-primary)' }"
+          @click="markRead(item)"
+        >
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-md);">
+            <div style="flex: 1; min-width: 0;">
+              <div style="display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-xs);">
+                <span style="font-weight: 600; font-size: 15px;">{{ item.title }}</span>
+                <NTag :type="typeColor(item.type)" size="small">{{ typeLabel(item.type) }}</NTag>
+                <span v-if="!item.is_read" style="width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary);" />
+              </div>
+              <div style="font-size: 13px; color: var(--color-text-secondary); white-space: pre-wrap; line-height: 1.5;">{{ item.content }}</div>
+              <div style="font-size: 11px; color: var(--color-text-muted); margin-top: var(--space-sm);">
+                {{ item.source ? '来源: ' + item.source + ' · ' : '' }}{{ formatTime(item.created_at) }}
+              </div>
+            </div>
+            <NButton v-if="item.type === 'candidate_theme'" size="tiny" type="primary" @click.stop="acceptCandidate(item)" style="flex-shrink: 0;">采纳</NButton>
+            <NButton size="tiny" quaternary @click.stop="archiveItem(item)" style="flex-shrink: 0;">归档</NButton>
+          </div>
+        </NCard>
+      </div>
+    </div>
+  </div>
+</template>

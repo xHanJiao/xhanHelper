@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -136,4 +137,13 @@ func (r *UserMemoryRepo) UpdateConfirm(ctx context.Context, id string) error {
 			"confirm_count":     gorm.Expr("confirm_count + 1"),
 			"last_confirmed_at": gorm.Expr("CURRENT_TIMESTAMP"),
 		}).Error
+}
+
+// CountRecent 统计用户最近的记忆数
+func (r *UserMemoryRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Where("user_id = ? AND created_at >= ?", userID, since).
+		Count(&count).Error
+	return count, err
 }

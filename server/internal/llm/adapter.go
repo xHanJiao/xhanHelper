@@ -31,6 +31,7 @@ type Message struct {
 	ToolCallID       string     // tool 消息的调用 ID
 	RequestJSON      *string    // 发给 LLM 的请求 JSON（调试用）
 	ResponseJSON     *string    // LLM 返回的响应 JSON（调试用）
+	Usage            *Usage     // token 用量（ChatSync 返回时填充）
 }
 
 // ToolCall — 原生 function calling 的工具调用

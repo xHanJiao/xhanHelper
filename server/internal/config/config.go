@@ -9,12 +9,13 @@ import (
 
 // Config — 顶层配置
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	DB        DBConfig        `yaml:"db"`
-	LLM       LLMConfig       `yaml:"llm"`
-	Embedding EmbeddingConfig `yaml:"embedding"`
-	Snowflake SnowflakeConfig `yaml:"snowflake"`
-	MCP       MCPConfig       `yaml:"mcp"`
+	Server     ServerConfig     `yaml:"server"`
+	DB         DBConfig         `yaml:"db"`
+	LLM        LLMConfig        `yaml:"llm"`
+	Embedding  EmbeddingConfig  `yaml:"embedding"`
+	Reflection ReflectionConfig `yaml:"reflection"`
+	Snowflake  SnowflakeConfig  `yaml:"snowflake"`
+	MCP        MCPConfig        `yaml:"mcp"`
 }
 
 // MCPServerCfg — 单个 MCP server 配置
@@ -91,6 +92,13 @@ type EmbeddingConfig struct {
 	BaseURL             string `yaml:"base_url"`              // 默认 https://ark.cn-beijing.volces.com
 	Model               string `yaml:"model"`                 // 默认 doubao-embedding
 	EnableHistorySearch bool   `yaml:"enable_history_search"` // 是否检索历史对话
+}
+
+// ReflectionConfig — 反思系统配置
+type ReflectionConfig struct {
+	LaunchMaxIterations   int `yaml:"launch_max_iterations"`   // 启动 Agent 最大轮次，默认 8
+	AnalystMaxIterations  int `yaml:"analyst_max_iterations"`  // ThemeAnalyst 内部最大轮次，默认 3
+	DiscoverMaxIterations int `yaml:"discover_max_iterations"` // ThemeDiscoverer 内部最大轮次，默认 3
 }
 
 // Load 加载配置：base YAML + env YAML 合并 → 环境变量替换
@@ -252,6 +260,16 @@ func validate(cfg *Config) error {
 	// Snowflake 默认值
 	if cfg.Snowflake.NodeID == 0 {
 		cfg.Snowflake.NodeID = 1
+	}
+	// Reflection 默认值
+	if cfg.Reflection.LaunchMaxIterations == 0 {
+		cfg.Reflection.LaunchMaxIterations = 8
+	}
+	if cfg.Reflection.AnalystMaxIterations == 0 {
+		cfg.Reflection.AnalystMaxIterations = 3
+	}
+	if cfg.Reflection.DiscoverMaxIterations == 0 {
+		cfg.Reflection.DiscoverMaxIterations = 3
 	}
 	return nil
 }

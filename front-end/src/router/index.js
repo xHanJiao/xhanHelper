@@ -48,6 +48,16 @@ const routes = [
     component: () => import('@/views/ToolView.vue')
   },
   {
+    path: '/themes',
+    name: 'Themes',
+    component: () => import('@/views/ThemeView.vue')
+  },
+  {
+    path: '/mailbox',
+    name: 'Mailbox',
+    component: () => import('@/views/MailboxView.vue')
+  },
+  {
     path: '/admin',
     name: 'Admin',
     component: () => import('@/views/AdminView.vue')

@@ -131,6 +131,15 @@ func (r *Registry) Get(name string) Tool {
 	return r.tools[name]
 }
 
+// GetToolMap 返回所有工具的 map（用于创建 ReactLoop 等场景）
+func (r *Registry) GetToolMap() map[string]Tool {
+	out := make(map[string]Tool, len(r.tools))
+	for k, v := range r.tools {
+		out[k] = v
+	}
+	return out
+}
+
 // GetLLMTools 导出所有工具定义（供 LLM native function calling）
 func (r *Registry) GetLLMTools() []llm.ToolDefinition {
 	defs := make([]llm.ToolDefinition, 0, len(r.tools))

@@ -187,3 +187,12 @@ func (r *MessageRepo) existsAfter(ctx context.Context, convID string, t time.Tim
 		Count(&count)
 	return count > 0
 }
+
+// CountRecent 统计用户最近 role=user 的消息数
+func (r *MessageRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("user_id = ? AND created_at >= ? AND role = 'user'", userID, since).
+		Count(&count).Error
+	return count, err
+}

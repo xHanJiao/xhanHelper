@@ -66,13 +66,20 @@ func NewMemoryExtractor(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo
 }
 
 type extractResult struct {
-	Summary string   `json:"summary"`
-	Facts   []string `json:"facts,omitempty"`
+	Extracted bool     `json:"extracted"`
+	Summary   string   `json:"summary"`
+	Facts     []string `json:"facts,omitempty"`
+	Category  string   `json:"category,omitempty"`
+	Topic     string   `json:"topic,omitempty"`
 }
 
-const extractSystemPrompt = "你是记忆提取助手。从对话中归纳出关于用户的有价值的洞察。合并同类信息，提炼规律和偏好，不要逐条罗列原始数据。如果信息不足以归纳就回复\"无\"。请只输出 JSON 格式。重要：将\"今天\"、\"昨天\"、\"上周\"等相对时间转换为绝对日期（如 2026-05-12）。"
+const extractSystemPrompt = "你是记忆提取助手。从对话中提取有长期价值的信息，包括：用户事实（偏好/习惯/规律/关系/计划）、关注话题（反复讨论的领域如行业/股票/政策）、观点判断（看法/预测/分析）、外部信息（用户分享的文章/数据/新闻）。合并同类信息，不要逐条复述。不编造、不推测。信息不足时返回 {\"extracted\":false}。重要：将\"今天\"、\"昨天\"等相对时间转为绝对日期（如 2026-05-15）。"
 
-const extractPromptPrefix = "从以下对话中归纳关于用户的事实、偏好、习惯。合并同类信息，提炼出有价值的洞察（如消费水平、周期规律、分类偏好），不要逐条复述原始消息。如果没有值得提取的信息就回复\"无\"。\n请严格按以下 JSON 格式输出，不要包含其他内容：\n{\"summary\":\"一句话概括\",\"facts\":[\"支持细节1\",\"支持细节2\"]}"
+const extractPromptPrefix = `从以下对话中提取有长期价值的信息，包括：用户的事实/偏好/习惯/计划、用户反复讨论的话题、用户表达的观点和判断、用户分享的外部信息。合并同类信息，每次最多提取3条最重要的。
+
+请严格按以下 JSON 格式输出，不要包含其他内容：
+{"extracted":true,"summary":"一句话概括核心信息","facts":["支持细节1"],"category":"用户事实|关注话题|观点判断|外部信息|计划待办","topic":"关键主题词如职业规划/房地产/睡眠管理"}
+没有值得提取的内容时返回 {"extracted":false}。`
 
 // ExtractFromConversation 从指定会话中增量提取记忆
 func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *model.Conversation) error {
@@ -106,7 +113,7 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 
 	lastMsg := msgs[len(msgs)-1]
 	result := parseExtractResult(msg.Content)
-	if result == nil || isEmptySummary(result.Summary) {
+	if result == nil || isEmptyResult(result) {
 		e.updateProgress(ctx, conv, lastMsg.ID)
 		return nil
 	}
@@ -122,7 +129,7 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 		ID:              uuid.New().String(),
 		UserID:          conv.UserID,
 		MemoryKey:       truncate(result.Summary, 50),
-		MemoryValue:     result.Summary,
+		MemoryValue:     formatMemoryValue(result),
 		RawJSON:         &rawStr,
 		Source:          "conversation",
 		ConfirmCount:    1,
@@ -184,7 +191,7 @@ func (e *MemoryExtractor) ExtractFromConversationWithCallback(ctx context.Contex
 
 	lastMsg := msgs[len(msgs)-1]
 	result := parseExtractResult(msg.Content)
-	if result == nil || isEmptySummary(result.Summary) {
+	if result == nil || isEmptyResult(result) {
 		cb(ExtractEvent{Type: "done", Created: 0})
 		e.updateProgress(ctx, conv, lastMsg.ID)
 		return nil
@@ -201,7 +208,7 @@ func (e *MemoryExtractor) ExtractFromConversationWithCallback(ctx context.Contex
 			ID:              uuid.New().String(),
 			UserID:          conv.UserID,
 			MemoryKey:       truncate(result.Summary, 50),
-			MemoryValue:     result.Summary,
+			MemoryValue:     formatMemoryValue(result),
 			RawJSON:         &rawStr,
 			Source:          "conversation",
 			ConfirmCount:    1,
@@ -249,7 +256,7 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, promptT
 	}
 
 	result := parseExtractResult(msg.Content)
-	if result == nil || isEmptySummary(result.Summary) {
+	if result == nil || isEmptyResult(result) {
 		return
 	}
 	if e.isDuplicate(ctx, userID, result.Summary) {
@@ -262,7 +269,7 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, promptT
 		ID:              uuid.New().String(),
 		UserID:          userID,
 		MemoryKey:       truncate(result.Summary, 50),
-		MemoryValue:     result.Summary,
+		MemoryValue:     formatMemoryValue(result),
 		RawJSON:         &rawStr,
 		Source:          source,
 		ConfirmCount:    1,
@@ -363,8 +370,26 @@ func hashPrompt(text string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func isEmptySummary(s string) bool {
-	s = strings.TrimSpace(s)
+func formatMemoryValue(r *extractResult) string {
+	if r.Category != "" && r.Topic != "" {
+		return fmt.Sprintf("[%s] %s: %s", r.Category, r.Topic, r.Summary)
+	}
+	if r.Category != "" {
+		return fmt.Sprintf("[%s] %s", r.Category, r.Summary)
+	}
+	return r.Summary
+}
+
+func isEmptyResult(r *extractResult) bool {
+	if r == nil {
+		return true
+	}
+	// 新格式：explicit flag
+	if !r.Extracted {
+		return true
+	}
+	// 兜底：旧格式或兼容不标准输出
+	s := strings.TrimSpace(r.Summary)
 	return s == "" || s == "无"
 }
 

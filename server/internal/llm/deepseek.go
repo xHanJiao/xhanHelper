@@ -371,6 +371,132 @@ func buildRequest(req *ChatRequest, model string, thinking bool) io.Reader {
 	return bytes.NewReader(b)
 }
 
+// callSyncAPI 非流式 API 调用（stream: false），返回单个完整 Message
+func (c *baseClient) callSyncAPI(ctx context.Context, req *ChatRequest, model string) (Message, error) {
+	reqBytes, reqReader := buildSyncBody(req, model)
+	reqJSONStr := string(reqBytes)
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", reqReader)
+	if err != nil {
+		return Message{}, fmt.Errorf("sync request: %w", err)
+	}
+	c.setHeaders(httpReq)
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return Message{}, fmt.Errorf("sync request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Message{}, fmt.Errorf("sync read body: %w", err)
+	}
+	if resp.StatusCode != 200 {
+		return Message{}, fmt.Errorf("sync status %d: %s", resp.StatusCode, string(body[:min(1000, len(body))]))
+	}
+
+	respJSONStr := string(body)
+
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
+				ToolCalls        []struct {
+					ID       string `json:"id"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return Message{}, fmt.Errorf("sync parse: %w", err)
+	}
+
+	msg := Message{
+		Role:         "assistant",
+		RequestJSON:  &reqJSONStr,
+		ResponseJSON: &respJSONStr,
+		Usage: &Usage{
+			PromptTokens:     result.Usage.PromptTokens,
+			CompletionTokens: result.Usage.CompletionTokens,
+		},
+	}
+
+	if len(result.Choices) > 0 {
+		msg.Content = result.Choices[0].Message.Content
+		msg.ReasoningContent = result.Choices[0].Message.ReasoningContent
+		for _, tc := range result.Choices[0].Message.ToolCalls {
+			msg.ToolCalls = append(msg.ToolCalls, ToolCall{
+				ID: tc.ID,
+				Function: ToolCallFunction{
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+				},
+			})
+		}
+	}
+
+	return msg, nil
+}
+
+// buildSyncBody 构造非流式请求体（stream: false）
+func buildSyncBody(req *ChatRequest, model string) ([]byte, io.Reader) {
+	messages := buildMessages(req)
+	payload := map[string]interface{}{
+		"model":    model,
+		"messages": messages,
+		"stream":   false,
+	}
+	if req.Thinking != nil {
+		if *req.Thinking {
+			payload["thinking"] = map[string]string{"type": "enabled"}
+			if req.Effort != "" {
+				payload["reasoning_effort"] = req.Effort
+			}
+		} else {
+			payload["thinking"] = map[string]string{"type": "disabled"}
+		}
+	}
+	if req.Temperature != nil {
+		payload["temperature"] = *req.Temperature
+	}
+	if req.MaxTokens != nil {
+		payload["max_tokens"] = *req.MaxTokens
+	}
+	if req.UserID != "" {
+		payload["user_id"] = req.UserID
+	}
+	if len(req.Tools) > 0 {
+		tools := make([]map[string]interface{}, 0)
+		for _, t := range req.Tools {
+			for _, fn := range t.Functions {
+				tools = append(tools, map[string]interface{}{
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":        t.Name + "__" + fn.Name,
+						"description": fn.Description,
+						"parameters":  fn.Parameters,
+					},
+				})
+			}
+		}
+		payload["tools"] = tools
+	}
+	b, _ := json.Marshal(payload)
+	return b, bytes.NewReader(b)
+}
+
 // ——— FlashClient (非思考模式) ———
 
 // FlashClient — DeepSeek 弱模型客户端（非思考模式，快速便宜）
@@ -414,11 +540,7 @@ func (c *FlashClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *Strea
 }
 
 func (c *FlashClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, error) {
-	events, err := c.Chat(ctx, req)
-	if err != nil {
-		return Message{}, err
-	}
-	return collectStream(events), nil
+	return c.callSyncAPI(ctx, req, c.model)
 }
 
 // ——— ProClient (思考模式) ———
@@ -468,11 +590,7 @@ func (c *ProClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamE
 }
 
 func (c *ProClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, error) {
-	events, err := c.Chat(ctx, req)
-	if err != nil {
-		return Message{}, err
-	}
-	return collectStream(events), nil
+	return c.callSyncAPI(ctx, req, c.model)
 }
 
 // sendStreamEvent 非阻塞发送流事件，避免客户端断连后 goroutine 卡住

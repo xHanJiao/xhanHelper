@@ -71,6 +71,7 @@ type Orchestrator struct {
 	maxIterations      int
 	defaultTemperature *float64
 	defaultMaxTokens   *int
+	onChatEnd          func(userID string)
 }
 
 // New 创建 Orchestrator
@@ -103,6 +104,11 @@ func New(flashClient llm.LLMClient, registry *tool.Registry,
 // SetPromptResolver 注入用户自定义 prompt 查找器
 func (o *Orchestrator) SetPromptResolver(r PromptResolver) {
 	o.promptResolver = r
+}
+
+// SetOnChatEnd 设置对话结束回调（通知反思调度器）
+func (o *Orchestrator) SetOnChatEnd(fn func(userID string)) {
+	o.onChatEnd = fn
 }
 
 // FlashClient 返回 Flash 模型客户端（供预处理管线使用）
@@ -192,6 +198,11 @@ func (o *Orchestrator) runReActLoop(
 	activeNames []string,
 ) {
 	defer close(events)
+	defer func() {
+		if o.onChatEnd != nil {
+			o.onChatEnd(req.UserID)
+		}
+	}()
 
 	if memoryNote != "" {
 		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: memoryNote})

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -95,4 +96,13 @@ func (r *NoteRepo) List(ctx context.Context, userID, topic, keyword string, limi
 	var list []model.Note
 	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
 	return list, total, err
+}
+
+// CountRecent 统计用户最近的笔记数
+func (r *NoteRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Note{}).
+		Where("user_id = ? AND created_at >= ?", userID, since).
+		Count(&count).Error
+	return count, err
 }

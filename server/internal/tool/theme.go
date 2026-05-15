@@ -1,0 +1,209 @@
+package tool
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+
+	"github.com/google/uuid"
+
+	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
+	"xhan-helper/internal/service"
+)
+
+// ThemeEmbedStorer — 主题向量存储接口（避免循环依赖）
+type ThemeEmbedStorer interface {
+	Upsert(id string, vec []float64, metadata map[string]string)
+}
+
+// ThemeTool — 主题管理工具
+type ThemeTool struct {
+	themeRepo     *service.ThemeStateRepo
+	embedder      *llm.Embedder
+	vectorStore   ThemeEmbedStorer
+	embeddingRepo *service.EmbeddingRepo
+}
+
+func NewThemeTool(repo *service.ThemeStateRepo, embedder *llm.Embedder, vs ThemeEmbedStorer, embeddingRepo *service.EmbeddingRepo) *ThemeTool {
+	return &ThemeTool{themeRepo: repo, embedder: embedder, vectorStore: vs, embeddingRepo: embeddingRepo}
+}
+
+func (t *ThemeTool) Name() string { return "theme" }
+func (t *ThemeTool) Description() string {
+	return "管理追踪主题：创建、关闭、重新激活"
+}
+
+func (t *ThemeTool) Functions() []FuncSchema {
+	return []FuncSchema{
+		{
+			Name:        "create_theme",
+			Description: "创建一个新的追踪主题",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name":        map[string]interface{}{"type": "string", "description": "主题名，简洁（5字以内）"},
+					"description": map[string]interface{}{"type": "string", "description": "主题追踪什么（20字以内）"},
+				},
+				"required": []string{"name", "description"},
+			},
+		},
+		{
+			Name:        "close_theme",
+			Description: "关闭一个主题（不再追踪但不删除）",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{"type": "string", "description": "要关闭的主题名"},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "reactivate_theme",
+			Description: "重新激活一个已关闭的主题",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{"type": "string", "description": "要重新激活的主题名"},
+				},
+				"required": []string{"name"},
+			},
+		},
+	}
+}
+
+func (t *ThemeTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
+	switch funcName {
+	case "create_theme":
+		return t.createTheme(ec, args)
+	case "close_theme":
+		return t.closeTheme(ec, args)
+	case "reactivate_theme":
+		return t.reactivateTheme(ec, args)
+	default:
+		return &Result{Success: false, Error: fmt.Sprintf("unknown function: %s", funcName)}
+	}
+}
+
+func (t *ThemeTool) createTheme(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+	}
+	if a.Name == "" {
+		return &Result{Success: false, Error: "name 不能为空"}
+	}
+
+	// 检查同名主题
+	existing, err := t.themeRepo.GetByName(ec.Ctx, ec.UserID, a.Name)
+	if err != nil {
+		log.Printf("[theme] GetByName error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("查询失败: %v", err)}
+	}
+	if existing != nil {
+		if existing.Status == "closed" {
+			_ = t.themeRepo.Reactivate(ec.Ctx, existing.ID, ec.UserID)
+			return &Result{Success: true, Data: json.RawMessage(`{"status":"reactivated","name":"` + a.Name + `"}`)}
+		}
+		return &Result{Success: false, Error: fmt.Sprintf("主题 %s 已存在", a.Name)}
+	}
+
+	theme := &model.ThemeState{
+		ID:          uuid.New().String(),
+		UserID:      ec.UserID,
+		Name:        a.Name,
+		Description: a.Description,
+		Status:      "active",
+	}
+	if err := t.themeRepo.Create(ec.Ctx, theme); err != nil {
+		log.Printf("[theme] create error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("创建主题失败: %v", err)}
+	}
+
+	// 异步 embed 主题描述到向量库 + embedding 表（用于去重 + 重启 warmup）
+	if t.embedder != nil && t.vectorStore != nil {
+		go func() {
+			vec, err := t.embedder.Embed(ec.Ctx, a.Name+" "+a.Description)
+			if err != nil {
+				log.Printf("[theme] embed theme %q error: %v", a.Name, err)
+				return
+			}
+			t.vectorStore.Upsert("theme:"+theme.ID, vec, map[string]string{
+				"type":    "theme",
+				"user_id": ec.UserID,
+			})
+			if t.embeddingRepo != nil {
+				embStr := llm.EmbeddingToString(vec)
+				embID := "theme:" + theme.ID
+				if err := t.embeddingRepo.Upsert(ec.Ctx, &model.Embedding{
+					ID:         embID,
+					EntityType: model.EntityTypeTheme,
+					EntityID:   theme.ID,
+					UserID:     ec.UserID,
+					Model:      t.embedder.ModelName(),
+					Embedding:  &embStr,
+				}); err != nil {
+					log.Printf("[theme] save embedding %s error: %v", theme.ID[:8], err)
+				} else if err := t.themeRepo.UpdateEmbeddingID(ec.Ctx, theme.ID, embID); err != nil {
+					log.Printf("[theme] update embedding_id %s error: %v", theme.ID[:8], err)
+				}
+			}
+			log.Printf("[theme] embedded theme %q (%s)", a.Name, theme.ID[:8])
+		}()
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"id":     theme.ID,
+		"name":   theme.Name,
+		"status": "created",
+	})
+	return &Result{Success: true, Data: data}
+}
+
+func (t *ThemeTool) closeTheme(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+	}
+	existing, err := t.themeRepo.GetByName(ec.Ctx, ec.UserID, a.Name)
+	if err != nil {
+		log.Printf("[theme] close GetByName error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("查询主题失败: %v", err)}
+	}
+	if existing == nil {
+		return &Result{Success: false, Error: fmt.Sprintf("主题 %s 不存在", a.Name)}
+	}
+	if err := t.themeRepo.Close(ec.Ctx, existing.ID, ec.UserID); err != nil {
+		log.Printf("[theme] close error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("关闭主题失败: %v", err)}
+	}
+	return &Result{Success: true, Data: json.RawMessage(`{"status":"closed","name":"` + a.Name + `"}`)}
+}
+
+func (t *ThemeTool) reactivateTheme(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+	}
+	existing, err := t.themeRepo.GetByName(ec.Ctx, ec.UserID, a.Name)
+	if err != nil {
+		log.Printf("[theme] reactivate GetByName error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("查询主题失败: %v", err)}
+	}
+	if existing == nil {
+		return &Result{Success: false, Error: fmt.Sprintf("主题 %s 不存在", a.Name)}
+	}
+	if err := t.themeRepo.Reactivate(ec.Ctx, existing.ID, ec.UserID); err != nil {
+		log.Printf("[theme] reactivate error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("重新激活失败: %v", err)}
+	}
+	return &Result{Success: true, Data: json.RawMessage(`{"status":"reactivated","name":"` + a.Name + `"}`)}
+}

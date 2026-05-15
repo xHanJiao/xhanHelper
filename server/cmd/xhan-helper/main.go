@@ -67,6 +67,11 @@ func main() {
 		&model.UserPrompt{},
 		&model.Embedding{},
 		&model.MCPServerRecord{},
+		&model.MailboxItem{},
+		&model.ThemeState{},
+		&model.ReflectionTrace{},
+		&model.ReflectionLLMCall{},
+		&model.ReflectionDecision{},
 	); err != nil {
 		log.Printf("[db] AutoMigrate error: %v", err)
 	}
@@ -94,6 +99,9 @@ func main() {
 	promptRepo := service.NewUserPromptRepo(db)
 	toolRepo := service.NewToolRepo(db)
 	embeddingRepo := service.NewEmbeddingRepo(db)
+	mailboxRepo := service.NewMailboxRepo(db)
+	themeStateRepo := service.NewThemeStateRepo(db)
+	traceRepo := service.NewReflectionTraceRepo(db)
 
 	// Tool Registry + Tools
 	reg := tool.NewRegistry()
@@ -149,6 +157,41 @@ func main() {
 		log.Printf("[mcp] proxy tool registered: %s", s.Name)
 	}
 
+	// ===== Phase 6: 检索工具（独立 Registry，不注册到主 reg） =====
+	vsAdapter := agent.NewVectorSearchAdapter(vectorStore)
+	searchNoteTool := tool.NewSearchNotesTool(vsAdapter, noteRepo, embedder)
+	searchMemTool := tool.NewSearchMemoriesTool(vsAdapter, memRepo, embedder)
+	billStatsTool := tool.NewGetBillStatsTool(billRepo)
+
+	retrievalTools := map[string]tool.Tool{
+		"search_notes":    searchNoteTool,
+		"search_memories": searchMemTool,
+		"get_bill_stats":  billStatsTool,
+	}
+
+	// ===== Phase 6: 反思工具（独立 Registry） =====
+	themeStore := agent.NewThemeStore(themeStateRepo)
+	themeAnalyst := agent.NewThemeAnalyst(llmClient, retrievalTools, themeStore, cfg.Reflection.AnalystMaxIterations)
+	scorerTool := agent.NewScorer(llmClient)
+	themeDiscoverer := agent.NewThemeDiscoverer(llmClient, retrievalTools, themeStore, embedder, vsAdapter, cfg.Reflection.DiscoverMaxIterations)
+	mailboxTool := tool.NewMailboxTool(mailboxRepo)
+	themeMgmtTool := tool.NewThemeTool(themeStateRepo, embedder, vsAdapter, embeddingRepo)
+
+	reflectionReg := tool.NewRegistry()
+	reflectionReg.Register(themeAnalyst)
+	reflectionReg.Register(scorerTool)
+	reflectionReg.Register(agent.NewSecretary(llmClient))
+	reflectionReg.Register(themeDiscoverer)
+	reflectionReg.Register(mailboxTool)
+	reflectionReg.Register(themeMgmtTool)
+
+	// ===== Phase 6: ReflectionOrchestrator + CronRunner =====
+	reflectionOrch := agent.NewReflectionOrchestrator(
+		llmClient, reflectionReg, traceRepo, themeStore,
+		mailboxRepo, msgRepo, noteRepo, memRepo,
+		cfg.Reflection.LaunchMaxIterations,
+	)
+	cronRunner := agent.NewCronRunner(reflectionOrch)
 	// 后台任务共享 context，关闭时统一取消
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
@@ -159,6 +202,8 @@ func main() {
 	// Warmup 必须完成后再启动服务
 	memSource.Warmup(bgCtx, embedder)
 	noteSource.Warmup(bgCtx, embedder)
+	// Theme embedding warmup：从 embedding 表加载到向量库，确保去重重启后有效
+	warmupThemeEmbeddings(bgCtx, embeddingRepo, vectorStore)
 
 	// Orchestrator
 	retriever := agent.NewRetriever(memSource, noteSource)
@@ -184,6 +229,12 @@ func main() {
 	}()
 
 	orch.SetPromptResolver(promptRepo)
+
+	// 启动反思调度器 + 聊天结束通知
+	go cronRunner.Start(bgCtx)
+	orch.SetOnChatEnd(func(userID string) {
+		cronRunner.NotifyChatEnd(userID)
+	})
 
 	// Monitor snapshots
 	monitor.Register("vector_store", func() any { return vectorStore.Stats() })
@@ -212,9 +263,16 @@ func main() {
 	agentHandler := controller.NewAgentHandler(agentRepo, llmClient)
 	toolHandler := controller.NewToolHandler(toolRepo)
 	promptHandler := controller.NewPromptHandler(promptRepo)
+	mailboxHandler := controller.NewMailboxHandler(mailboxRepo)
+	themeHandler := controller.NewThemeHandler(themeStateRepo)
+	reflectionAdminHandler := controller.NewReflectionAdminHandler(traceRepo)
 
 	// Router
 	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, agentRepo, billHandler, noteHandler, memHandler, agentHandler, toolHandler, promptHandler, memExtractor, middleware.RequestLogger(log.Default()))
+
+	// 注册 Phase 6 反思系统路由
+	controller.RegisterReflectionRoutes(router, userRepo, mailboxHandler, themeHandler, reflectionAdminHandler, reflectionOrch,
+		middleware.Auth(userRepo), monitor.AdminOnly(cfg.Server.AdminUsers))
 
 	addr := ":" + strconv.Itoa(cfg.Server.Port)
 	srv := &http.Server{
@@ -241,4 +299,36 @@ func main() {
 	defer cancel()
 	srv.Shutdown(ctx)
 	log.Println("server stopped")
+}
+
+// warmupThemeEmbeddings 从 embedding 表加载主题向量到内存向量库
+func warmupThemeEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore *agent.VectorStore) {
+	const pageSize = 100
+	loaded := 0
+	for offset := 0; ; offset += pageSize {
+		embeddings, err := embeddingRepo.ListByType(ctx, model.EntityTypeTheme, pageSize, offset)
+		if err != nil {
+			log.Printf("[warmup] theme embeddings ListByType error: %v", err)
+			break
+		}
+		if len(embeddings) == 0 {
+			break
+		}
+		for _, emb := range embeddings {
+			if emb.Embedding != nil {
+				vec, err := llm.StringToEmbedding(*emb.Embedding)
+				if err == nil && len(vec) > 0 {
+					vectorStore.Upsert("theme:"+emb.EntityID, vec, map[string]string{
+						"type":    "theme",
+						"user_id": emb.UserID,
+					})
+					loaded++
+				}
+			}
+		}
+		if len(embeddings) < pageSize {
+			break
+		}
+	}
+	log.Printf("[warmup] theme embeddings: %d loaded into vector store", loaded)
 }

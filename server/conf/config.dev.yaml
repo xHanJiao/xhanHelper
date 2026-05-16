@@ -11,8 +11,12 @@ server:
   #   - your-username
 
 db:
-  driver: sqlite
-  database: data/xhan_helper.db
+  driver: mysql
+  host: 127.0.0.1
+  port: 3306
+  user: xhan
+  password: ${XHAN_HELPER_DB_PASSWORD}
+  database: xhan_helper_test
 
 llm:
   provider: deepseek

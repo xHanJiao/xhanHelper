@@ -22,7 +22,7 @@ func main() {
 	}
 
 	db := service.NewDB(cfg.DB)
-	if err := db.AutoMigrate(&model.UserMemory{}, &model.EmbeddingChunk{}); err != nil {
+	if err := db.AutoMigrate(&model.UserMemory{}, &model.EmbeddingChunk{}, &model.Embedding{}); err != nil {
 		log.Fatal("migrate:", err)
 	}
 

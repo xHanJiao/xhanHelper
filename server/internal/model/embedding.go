@@ -13,9 +13,9 @@ const (
 
 // Embedding — 向量存储
 type Embedding struct {
-	ID         string `gorm:"primaryKey;size:36" json:"id"`
+	ID         string `gorm:"primaryKey;size:100" json:"id"`
 	EntityType string `gorm:"uniqueIndex:idx_entity,priority:1;size:20;not null" json:"entity_type"`
-	EntityID   string `gorm:"uniqueIndex:idx_entity,priority:2;size:36;not null" json:"entity_id"`
+	EntityID   string `gorm:"uniqueIndex:idx_entity,priority:2;size:100;not null" json:"entity_id"`
 	UserID     string `gorm:"index:idx_user_type,priority:1;size:36;not null" json:"user_id"`
 	Model      string `gorm:"size:100;not null" json:"model"`
 	// TODO 增加把嵌入之前的内容也保存进来以便追查

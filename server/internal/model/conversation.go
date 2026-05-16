@@ -25,9 +25,10 @@ type ConversationExtra struct {
 
 // ConversationCtx — 会话上下文（从 mailbox 跳转带入）
 type ConversationCtx struct {
-	ThemeID       string `json:"theme_id"`
-	EntityType    string `json:"entity_type"`
-	EntityID      string `json:"entity_id"`
-	MailboxItemID string `json:"mailbox_item_id"`
-	Title         string `json:"title"`
+	ThemeID          string `json:"theme_id"`
+	EntityType       string `json:"entity_type"`
+	EntityID         string `json:"entity_id"`
+	MailboxItemID    string `json:"mailbox_item_id"`
+	Title            string `json:"title"`
+	ThemeStateCursor string `json:"theme_state_cursor,omitempty"` // 主题状态更新的 cursor（上次更新到的 messageID）
 }

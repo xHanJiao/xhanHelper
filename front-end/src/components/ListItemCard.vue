@@ -142,15 +142,15 @@ function handleDropdownSelect(key) {
     <div
       v-if="content"
       class="card-content-wrapper"
-      :class="{ 'clickable': content.length > 200 }"
+      :class="{ 'clickable': content.length > 120 }"
       :style="{ maxHeight: expanded ? 'none' : maxContentHeight }"
-      @click="content.length > 200 && (expanded = !expanded)"
+      @click="content.length > 120 && (expanded = !expanded)"
     >
       <div class="card-content">
         {{ content }}
       </div>
-      <div v-if="content.length > 200 && !expanded" class="content-fade"></div>
-      <div v-if="content.length > 200" class="expand-hint">
+      <div v-if="content.length > 120 && !expanded" class="content-fade"></div>
+      <div v-if="content.length > 120" class="expand-hint">
         {{ expanded ? '↑' : '↓' }}
       </div>
     </div>

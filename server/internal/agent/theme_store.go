@@ -22,6 +22,11 @@ func (s *ThemeStore) Create(ctx context.Context, t *model.ThemeState) error {
 	return s.repo.Create(ctx, t)
 }
 
+// Expire 清理过期的 candidate/draft 主题
+func (s *ThemeStore) Expire(ctx context.Context, userID string, days int) error {
+	return s.repo.ExpireCandidates(ctx, userID, days)
+}
+
 // GetByName 按名称查找主题
 func (s *ThemeStore) GetByName(ctx context.Context, userID, name string) (*ThemeStateInfo, error) {
 	t, err := s.repo.GetByName(ctx, userID, name)
@@ -35,6 +40,20 @@ func (s *ThemeStore) GetByName(ctx context.Context, userID, name string) (*Theme
 		Status:      t.Status,
 		StateText:   t.StateText,
 	}, nil
+}
+
+// ListByStatus 列出指定状态的主题
+func (s *ThemeStore) ListByStatus(ctx context.Context, userID, status string) ([]ThemeStateInfo, error) {
+	list, _, err := s.repo.List(ctx, userID, status, 200, 0)
+	if err != nil {
+		return nil, err
+	}
+	return toThemeStateInfo(list), nil
+}
+
+// UpdateStatus 更新主题状态
+func (s *ThemeStore) UpdateStatus(ctx context.Context, id, userID, status string) error {
+	return s.repo.UpdateStatus(ctx, id, userID, status)
 }
 
 // LoadMetadata 加载主题 metadata
@@ -94,11 +113,12 @@ func (s *ThemeStore) ListActive(ctx context.Context, userID string) ([]ThemeStat
 
 // ThemeStateInfo — 主题状态摘要（不含原始状态页全文）
 type ThemeStateInfo struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Status      string `json:"status"`
-	StateText   string `json:"state_text"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	Status      string  `json:"status"`
+	StateText   string  `json:"state_text"`
+	Metadata    *string `json:"metadata,omitempty"`
 }
 
 func toThemeStateInfo(list []model.ThemeState) []ThemeStateInfo {
@@ -110,6 +130,7 @@ func toThemeStateInfo(list []model.ThemeState) []ThemeStateInfo {
 			Description: t.Description,
 			Status:      t.Status,
 			StateText:   t.StateText,
+			Metadata:    t.Metadata,
 		}
 	}
 	return result

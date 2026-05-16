@@ -203,8 +203,9 @@ func main() {
 		mailboxRepo, msgRepo, noteRepo, memRepo,
 		cfg.Reflection.LaunchMaxIterations,
 	)
-	cronRunner := agent.NewCronRunner(reflectionOrch)
-	cronRunner.SetPostChatDelay(time.Duration(cfg.Reflection.PostChatDelayMinutes) * time.Minute)
+	stateUpdater := agent.NewStateUpdater(llmClient, msgRepo, convRepo, themeStore)
+	cronRunner := agent.NewCronRunner(reflectionOrch, stateUpdater)
+	cronRunner.SetPostChatDelay(time.Duration(cfg.Reflection.PostChatDelaySeconds) * time.Second)
 	// 后台任务共享 context，关闭时统一取消
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
@@ -247,8 +248,8 @@ func main() {
 
 	// 启动反思调度器 + 聊天结束通知
 	go cronRunner.Start(bgCtx)
-	orch.SetOnChatEnd(func(userID string) {
-		cronRunner.NotifyChatEnd(userID)
+	orch.SetOnChatEnd(func(userID, convID string) {
+		cronRunner.NotifyChatEnd(userID, convID)
 	})
 
 	// Monitor snapshots

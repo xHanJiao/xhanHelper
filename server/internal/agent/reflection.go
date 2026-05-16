@@ -90,10 +90,93 @@ func NewReflectionOrchestrator(
 	}
 }
 
+var runOnceExpireDays = 7
+
+// DiscoverDraftFromConversation 从单个会话的消息中发现草稿主题
+func (o *ReflectionOrchestrator) DiscoverDraftFromConversation(ctx context.Context, userID, convID string) error {
+	msgs, err := o.msgRepo.ListByConversation(ctx, convID, 50)
+	if err != nil || len(msgs) == 0 {
+		return err
+	}
+	var sb string
+	for _, m := range msgs {
+		if m.Role == "tool" {
+			continue
+		}
+		sb += fmt.Sprintf("[%s]: %s\n", m.Role, m.Content)
+	}
+	if sb == "" {
+		return nil
+	}
+
+	// 复用 ThemeDiscoverer 的 conversation 模式
+	t, ok := o.reflectionReg.GetToolMap()["theme_discoverer"]
+	if !ok {
+		return nil
+	}
+	args, _ := json.Marshal(map[string]interface{}{
+		"mode":     "conversation",
+		"messages": sb,
+	})
+	res := t.Execute(&tool.ExecuteContext{Ctx: ctx, UserID: userID}, "discover", args)
+	if !res.Success || res.Data == nil {
+		return nil
+	}
+
+	var output struct {
+		Candidates []map[string]interface{} `json:"candidates"`
+	}
+	if json.Unmarshal(res.Data, &output) != nil || len(output.Candidates) == 0 {
+		return nil
+	}
+
+	// 创建草稿（不投递信箱）
+	for _, c := range output.Candidates {
+		name, _ := c["name"].(string)
+		desc, _ := c["description"].(string)
+		if name == "" {
+			continue
+		}
+		existing, _ := o.themeStore.GetByName(ctx, userID, name)
+		if existing != nil && (existing.Status == "candidate" || existing.Status == "active" || existing.Status == "draft") {
+			continue
+		}
+		metaJSON, _ := json.Marshal(map[string]interface{}{"candidate_info": c})
+		metaStr := string(metaJSON)
+		theme := &model.ThemeState{
+			ID:          uuid.New().String(),
+			UserID:      userID,
+			Name:        name,
+			Description: desc,
+			Status:      "draft",
+			Metadata:    &metaStr,
+		}
+		if err := o.themeStore.Create(ctx, theme); err != nil {
+			log.Printf("[reflection] create draft error: %v", err)
+		} else {
+			log.Printf("[reflection] created draft: %s", name)
+		}
+	}
+	return nil
+}
+
+// RunSilent 静默模式：只发现草稿主题，不投递信箱
+func (o *ReflectionOrchestrator) RunSilent(ctx context.Context, userID, triggerType string) error {
+	return o.runOnce(ctx, userID, triggerType, true)
+}
+
 // RunOnce 执行一次完整的反思循环
 func (o *ReflectionOrchestrator) RunOnce(ctx context.Context, userID, triggerType string) error {
+	return o.runOnce(ctx, userID, triggerType, false)
+}
+
+// runOnce 执行一次反思循环，silent 模式跳过信箱投递
+func (o *ReflectionOrchestrator) runOnce(ctx context.Context, userID, triggerType string, silent bool) error {
 	traceID := uuid.New().String()
-	log.Printf("[reflection] trace=%s trigger=%s user=%s START", traceID[:8], triggerType, userID)
+	log.Printf("[reflection] trace=%s trigger=%s user=%s silent=%v START", traceID[:8], triggerType, userID, silent)
+
+	// 过期清理：7 天未操作的 candidate/draft → closed
+	o.themeStore.Expire(ctx, userID, runOnceExpireDays)
 
 	// 创建 trace
 	tr := &model.ReflectionTrace{
@@ -183,7 +266,7 @@ func (o *ReflectionOrchestrator) RunOnce(ctx context.Context, userID, triggerTyp
 	}
 
 	// 每次运行都跑主题发现
-	discoveryDelivered := o.runDiscoveryOnly(tracedCtx, traceID, userID, recentMsgCount, recentNoteCount, recentMemCount)
+	discoveryDelivered := o.runDiscoveryAndDrafts(tracedCtx, traceID, userID, recentMsgCount, recentNoteCount, recentMemCount, !silent)
 	deliveredCount += discoveryDelivered
 
 	endTraceSafe(o.traceRepo, ctx, traceID, traceStatus, totalFindings, deliveredCount, traceErrMsg)
@@ -214,8 +297,13 @@ func countFindings(result *ReactLoopResult) (totalFindings, deliveredCount int) 
 	return
 }
 
-// runDiscoveryOnly 仅运行主题发现，投递候选主题到信箱，返回投递数
+// runDiscoveryOnly 运行主题发现 + 投递草稿，返回投递数
 func (o *ReflectionOrchestrator) runDiscoveryOnly(ctx context.Context, traceID, userID string, msgCount, noteCount, memCount int) int {
+	return o.runDiscoveryAndDrafts(ctx, traceID, userID, msgCount, noteCount, memCount, false)
+}
+
+// runDiscoveryAndDrafts 运行发现 + 可选加载草稿一起投递
+func (o *ReflectionOrchestrator) runDiscoveryAndDrafts(ctx context.Context, traceID, userID string, msgCount, noteCount, memCount int, includeDrafts bool) int {
 	ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID}
 	t, ok := o.reflectionReg.GetToolMap()["theme_discoverer"]
 	if !ok {
@@ -239,6 +327,30 @@ func (o *ReflectionOrchestrator) runDiscoveryOnly(ctx context.Context, traceID, 
 	}
 	if json.Unmarshal(res.Data, &output) != nil || len(output.Candidates) == 0 {
 		return 0
+	}
+
+	// 1.5. 加载草稿主题（cron 全链路模式）
+	if includeDrafts {
+		drafts, err := o.themeStore.ListByStatus(ctx, userID, "draft")
+		if err != nil {
+			log.Printf("[reflection] list drafts error: %v", err)
+		}
+		for _, d := range drafts {
+			if d.Metadata != nil {
+				var meta map[string]interface{}
+				if json.Unmarshal([]byte(*d.Metadata), &meta) == nil {
+					if ci, ok := meta["candidate_info"].(map[string]interface{}); ok {
+						ci["name"] = d.Name
+						ci["description"] = d.Description
+						output.Candidates = append(output.Candidates, ci)
+						defer func(id string) {
+							o.themeStore.UpdateStatus(ctx, id, userID, "candidate")
+						}(d.ID)
+					}
+				}
+			}
+		}
+		log.Printf("[reflection] loaded %d drafts into candidate list", len(drafts))
 	}
 
 	// 2. 逐个写入 theme_states + Secretary 改写 + mailbox 投递

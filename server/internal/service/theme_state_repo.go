@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"gorm.io/gorm"
@@ -125,6 +126,17 @@ func (r *ThemeStateRepo) UpdateConversationID(ctx context.Context, id, userID, c
 	return r.db.WithContext(ctx).Model(&model.ThemeState{}).
 		Where("id = ? AND user_id = ?", id, userID).
 		Update("conversation_id", convID).Error
+}
+
+// ExpireCandidates 将超过 days 天的 candidate/draft 主题关闭
+func (r *ThemeStateRepo) ExpireCandidates(ctx context.Context, userID string, days int) error {
+	result := r.db.WithContext(ctx).Model(&model.ThemeState{}).
+		Where("user_id = ? AND status IN (?,?) AND created_at < DATE_SUB(NOW(), INTERVAL ? DAY)", userID, "candidate", "draft", days).
+		Update("status", "closed")
+	if result.RowsAffected > 0 {
+		log.Printf("[theme] expired %d themes for user %s", result.RowsAffected, userID[:8])
+	}
+	return result.Error
 }
 
 // Close 关闭主题

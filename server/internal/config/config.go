@@ -100,7 +100,7 @@ type ReflectionConfig struct {
 	AnalystMaxIterations  int     `yaml:"analyst_max_iterations"`  // ThemeAnalyst 内部最大轮次，默认 3
 	DiscoverMaxIterations int     `yaml:"discover_max_iterations"` // ThemeDiscoverer 内部最大轮次，默认 3
 	ClusterThreshold      float64 `yaml:"cluster_threshold"`       // topic 聚类余弦相似度阈值，默认 0.70
-	PostChatDelayMinutes  int     `yaml:"post_chat_delay_minutes"` // 对话后延迟触发分钟数，默认 30
+	PostChatDelaySeconds  int     `yaml:"post_chat_delay_seconds"` // 对话后延迟触发秒数，默认 1800（30分钟）
 }
 
 // Load 加载配置：base YAML + env YAML 合并 → 环境变量替换
@@ -237,6 +237,21 @@ func merge(dst, src *Config) {
 	if src.Snowflake.NodeID != 0 {
 		dst.Snowflake.NodeID = src.Snowflake.NodeID
 	}
+	if src.Reflection.LaunchMaxIterations != 0 {
+		dst.Reflection.LaunchMaxIterations = src.Reflection.LaunchMaxIterations
+	}
+	if src.Reflection.AnalystMaxIterations != 0 {
+		dst.Reflection.AnalystMaxIterations = src.Reflection.AnalystMaxIterations
+	}
+	if src.Reflection.DiscoverMaxIterations != 0 {
+		dst.Reflection.DiscoverMaxIterations = src.Reflection.DiscoverMaxIterations
+	}
+	if src.Reflection.ClusterThreshold != 0 {
+		dst.Reflection.ClusterThreshold = src.Reflection.ClusterThreshold
+	}
+	if src.Reflection.PostChatDelaySeconds != 0 {
+		dst.Reflection.PostChatDelaySeconds = src.Reflection.PostChatDelaySeconds
+	}
 }
 
 // resolveEnvVars 对字符串字段再做一次 ${VAR} 展开（处理 env YAML 覆盖引入的新占位符）
@@ -276,8 +291,8 @@ func validate(cfg *Config) error {
 	if cfg.Reflection.ClusterThreshold == 0 {
 		cfg.Reflection.ClusterThreshold = 0.70
 	}
-	if cfg.Reflection.PostChatDelayMinutes == 0 {
-		cfg.Reflection.PostChatDelayMinutes = 30
+	if cfg.Reflection.PostChatDelaySeconds == 0 {
+		cfg.Reflection.PostChatDelaySeconds = 1800
 	}
 	return nil
 }

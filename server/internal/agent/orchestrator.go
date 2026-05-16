@@ -72,7 +72,7 @@ type Orchestrator struct {
 	maxIterations      int
 	defaultTemperature *float64
 	defaultMaxTokens   *int
-	onChatEnd          func(userID string)
+	onChatEnd          func(userID, convID string)
 }
 
 // New 创建 Orchestrator
@@ -110,7 +110,7 @@ func (o *Orchestrator) SetPromptResolver(r PromptResolver) {
 }
 
 // SetOnChatEnd 设置对话结束回调（通知反思调度器）
-func (o *Orchestrator) SetOnChatEnd(fn func(userID string)) {
+func (o *Orchestrator) SetOnChatEnd(fn func(userID, convID string)) {
 	o.onChatEnd = fn
 }
 
@@ -222,7 +222,7 @@ func (o *Orchestrator) runReActLoop(
 	defer close(events)
 	defer func() {
 		if o.onChatEnd != nil {
-			o.onChatEnd(req.UserID)
+			o.onChatEnd(req.UserID, req.ConversationID)
 		}
 	}()
 

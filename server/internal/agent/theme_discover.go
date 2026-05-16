@@ -76,12 +76,13 @@ type ThemeDiscoverer struct {
 	themeStore     *ThemeStore
 	embedder       *llm.Embedder
 	vectorStore    VectorStorer
-	dedupThreshold float64 // 余弦相似度阈值，默认 0.85
+	dedupThreshold float64 // 余弦相似度阈值
 	maxIterations  int
+	modeHandlers   map[string]discoverFunc
 }
 
 func NewThemeDiscoverer(flashClient llm.LLMClient, retrievalTools map[string]tool.Tool, themeStore *ThemeStore, embedder *llm.Embedder, vectorStore VectorStorer, maxIterations int, dedupThreshold float64) *ThemeDiscoverer {
-	return &ThemeDiscoverer{
+	td := &ThemeDiscoverer{
 		flashClient:    flashClient,
 		retrievalTools: retrievalTools,
 		themeStore:     themeStore,
@@ -90,6 +91,11 @@ func NewThemeDiscoverer(flashClient llm.LLMClient, retrievalTools map[string]too
 		dedupThreshold: dedupThreshold,
 		maxIterations:  maxIterations,
 	}
+	td.modeHandlers = map[string]discoverFunc{
+		"conversation": td.discoverByConversation,
+		"stats":        td.discoverByStats,
+	}
+	return td
 }
 
 // VectorStorer — 向量存储接口（避免循环依赖，用于 theme embedding 和去重检索）
@@ -104,15 +110,20 @@ type VectorSearchHit struct {
 	Score float64
 }
 
+// discoverFunc — 主题发现策略函数
+type discoverFunc func(ctx context.Context, userID, themeList string, a discovererArgs) ([]map[string]interface{}, []map[string]interface{}, error)
+
 func (td *ThemeDiscoverer) Name() string { return "theme_discoverer" }
 func (td *ThemeDiscoverer) Description() string {
 	return "从用户最近活动中发现值得长期追踪的候选主题"
 }
 
 type discovererArgs struct {
-	RecentMsgCount  int `json:"recent_msg_count"`
-	RecentNoteCount int `json:"recent_note_count"`
-	RecentMemCount  int `json:"recent_mem_count"`
+	RecentMsgCount  int    `json:"recent_msg_count"`
+	RecentNoteCount int    `json:"recent_note_count"`
+	RecentMemCount  int    `json:"recent_mem_count"`
+	Mode            string `json:"mode"`     // "" = stats模式， "conversation" = 直接从消息发现
+	Messages        string `json:"messages"` // mode=conversation 时传入的消息文本
 }
 
 func (td *ThemeDiscoverer) Functions() []tool.FuncSchema {
@@ -125,6 +136,8 @@ func (td *ThemeDiscoverer) Functions() []tool.FuncSchema {
 				"recent_msg_count":  map[string]interface{}{"type": "integer", "description": "最近7天新增消息数"},
 				"recent_note_count": map[string]interface{}{"type": "integer", "description": "最近7天新增笔记数"},
 				"recent_mem_count":  map[string]interface{}{"type": "integer", "description": "最近7天新增记忆数"},
+				"mode":              map[string]interface{}{"type": "string", "description": "conversation 模式直接从传入的消息文本分析，不调检索工具"},
+				"messages":          map[string]interface{}{"type": "string", "description": "mode=conversation 时传入的消息文本"},
 			},
 		},
 	}}
@@ -136,60 +149,105 @@ func (td *ThemeDiscoverer) Execute(ec *tool.ExecuteContext, funcName string, arg
 		return &tool.Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
 	}
 
-	// 获取活跃 + 候选主题列表（去重用）
+	// 获取活跃 + 候选 + 草稿主题列表（去重用）
 	allThemes, err := td.themeStore.ListCandidates(ec.Ctx, ec.UserID)
 	if err != nil {
 		log.Printf("[theme_discoverer] ListCandidates error: %v", err)
 	}
 
-	// 拼装输入消息
+	// 拼装现有主题列表（两种模式共用）
+	themeList := formatThemeList(allThemes)
+
+	discoverMode := a.Mode
+	if discoverMode == "" {
+		discoverMode = "stats"
+	}
+
+	handler, ok := td.modeHandlers[discoverMode]
+	if !ok {
+		return &tool.Result{Success: false, Error: fmt.Sprintf("unknown mode: %s", discoverMode)}
+	}
+
+	candidates, rejected, err := handler(ec.Ctx, ec.UserID, themeList, a)
+	if err != nil {
+		log.Printf("[theme_discoverer] %s mode error: %v", discoverMode, err)
+		return &tool.Result{Success: false, Error: fmt.Sprintf("发现失败: %v", err)}
+	}
+
+	// 向量去重
+	if td.embedder != nil && td.vectorStore != nil && len(candidates) > 0 {
+		candidates, rejected = td.dedupBySimilarity(ec.Ctx, ec.UserID, candidates, rejected)
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"candidates": candidates,
+		"rejected":   rejected,
+	})
+
+	log.Printf("[theme_discoverer] found %d candidates (after dedup), %d rejected", len(candidates), len(rejected))
+	return &tool.Result{Success: true, Data: data}
+}
+
+// formatThemeList 将现有主题列表格式化为 LLM 输入
+func formatThemeList(themes []ThemeStateInfo) string {
 	var sb strings.Builder
-	sb.WriteString("## 现有主题（含候选，避免重复提名）\n")
-	if len(allThemes) == 0 {
+	sb.WriteString("\n\n## 现有主题（含候选+draft，避免重复提名）\n")
+	if len(themes) == 0 {
 		sb.WriteString("（无）\n")
 	} else {
-		for _, t := range allThemes {
-			statusTag := ""
-			if t.Status == "candidate" {
-				statusTag = " [候选]"
-			}
-			sb.WriteString(fmt.Sprintf("- %s：%s%s\n", t.Name, t.Description, statusTag))
+		for _, t := range themes {
+			sb.WriteString(fmt.Sprintf("- %s：%s\n", t.Name, t.Description))
 		}
 	}
+	return sb.String()
+}
+
+// discoverByConversation 对话模式：直接从传入消息文本分析
+func (td *ThemeDiscoverer) discoverByConversation(ctx context.Context, userID, themeList string, a discovererArgs) ([]map[string]interface{}, []map[string]interface{}, error) {
+	prompt := themeDiscovererPrompt + themeList + "\n请直接从以下对话消息中判断是否有值得提名的候选主题。不要调检索工具。\n"
+	resp, err := td.flashClient.ChatSync(ctx, &llm.ChatRequest{
+		SystemPrompt: prompt,
+		Messages:     []llm.Message{{Role: "user", Content: a.Messages}},
+		UserID:       userID,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	var output struct {
+		Candidates []map[string]interface{} `json:"candidates"`
+		Rejected   []map[string]interface{} `json:"rejected"`
+	}
+	// 解析失败返回空（对话可能确实没有可追踪的主题）
+	if _, parseErr := ParseFlashJSON(resp.Content, &output); parseErr != nil {
+		log.Printf("[theme_discoverer] conversation parse error: %v", parseErr)
+		return nil, nil, nil
+	}
+	return output.Candidates, output.Rejected, nil
+}
+
+// discoverByStats stats 模式：ReAct 循环调检索工具
+func (td *ThemeDiscoverer) discoverByStats(ctx context.Context, userID, themeList string, a discovererArgs) ([]map[string]interface{}, []map[string]interface{}, error) {
+	var sb strings.Builder
+	sb.WriteString(themeList)
 	sb.WriteString(fmt.Sprintf("\n## 最近 7 天活动概览\n"))
 	sb.WriteString(fmt.Sprintf("- 新增消息：%d 条（含 user role）\n", a.RecentMsgCount))
 	sb.WriteString(fmt.Sprintf("- 新增笔记：%d 条\n", a.RecentNoteCount))
 	sb.WriteString(fmt.Sprintf("- 新增记忆：%d 条\n", a.RecentMemCount))
 	sb.WriteString("\n请检索并判断是否有值得提名的候选主题。\n")
 
-	// 创建轻量 ReAct 循环（仅检索工具，限 2 轮）
-	loop := NewReactLoop(td.flashClient, td.retrievalTools, themeDiscovererPrompt, td.maxIterations, ec.UserID, "ThemeDiscoverer", CtxTraceRepo(ec.Ctx), CtxTraceID(ec.Ctx))
-
-	result, err := loop.Run(ec.Ctx, sb.String())
+	loop := NewReactLoop(td.flashClient, td.retrievalTools, themeDiscovererPrompt, td.maxIterations, userID, "ThemeDiscoverer", CtxTraceRepo(ctx), CtxTraceID(ctx))
+	result, err := loop.Run(ctx, sb.String())
 	if err != nil {
-		log.Printf("[theme_discoverer] ReactLoop error: %v", err)
-		return &tool.Result{Success: false, Error: fmt.Sprintf("发现失败: %v", err)}
+		return nil, nil, err
 	}
-
-	// 解析输出
 	var output struct {
 		Candidates []map[string]interface{} `json:"candidates"`
 		Rejected   []map[string]interface{} `json:"rejected"`
 	}
 	if _, parseErr := ParseFlashJSON(result.FinalResponse, &output); parseErr != nil {
-		log.Printf("[theme_discoverer] parse error: %v", parseErr)
-		return &tool.Result{Success: false, Error: fmt.Sprintf("解析发现结果失败: %v", parseErr)}
+		return nil, nil, fmt.Errorf("parse: %w", parseErr)
 	}
-
-	// 向量去重：embed 候选人，与已有主题做余弦相似度对比
-	if td.embedder != nil && td.vectorStore != nil && len(output.Candidates) > 0 {
-		output.Candidates, output.Rejected = td.dedupBySimilarity(ec.Ctx, ec.UserID, output.Candidates, output.Rejected)
-	}
-
-	data, _ := json.Marshal(output)
-
-	log.Printf("[theme_discoverer] found %d candidates (after dedup), %d rejected", len(output.Candidates), len(output.Rejected))
-	return &tool.Result{Success: true, Data: data}
+	return output.Candidates, output.Rejected, nil
 }
 
 // dedupBySimilarity 对候选主题做向量去重，过滤与已有主题太相似的候选

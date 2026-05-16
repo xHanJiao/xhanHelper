@@ -201,7 +201,7 @@ func (rl *ReactLoop) Run(ctx context.Context, userMessage string) (*ReactLoopRes
 						ID:      uuid.New().String(),
 						TraceID: rl.traceID,
 						Stage:   "theme_analysis",
-						Subject: tcLog.Function + ":" + string(tcLog.Args),
+						Subject: "theme_analyst:" + shortThemeName(string(tcLog.Args)),
 						Verdict: "skipped",
 						Reason:  taData.SkipReason + ": " + taData.SkipDetail,
 					})
@@ -305,6 +305,17 @@ func unrollJSONStrings(v interface{}) interface{} {
 	default:
 		return v
 	}
+}
+
+// shortThemeName 从 theme_analyst 的 args JSON 中提取主题名
+func shortThemeName(argsJSON string) string {
+	var a struct {
+		ThemeName string `json:"theme_name"`
+	}
+	if json.Unmarshal([]byte(argsJSON), &a) == nil && a.ThemeName != "" {
+		return a.ThemeName
+	}
+	return "unknown"
 }
 
 // extractUsage 从 ResponseJSON 中解析 token 用量

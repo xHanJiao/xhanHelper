@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"time"
+
+	"xhan-helper/internal/service"
 )
 
 // postChatEvent — 对话结束后的事件
@@ -15,7 +17,8 @@ type postChatEvent struct {
 // CronRunner — 反思循环调度器
 type CronRunner struct {
 	orch          *ReflectionOrchestrator
-	dailyHour     int                // 每天几点运行（0-23），默认 8
+	userRepo      *service.UserRepo
+	dailyTimes    []string           // 每日定时列表
 	postChatDelay time.Duration      // 对话后延迟触发，默认 30 分钟
 	runTimeout    time.Duration      // 单次反思超时，默认 5 分钟
 	eventCh       chan postChatEvent // 对话结束后通知
@@ -23,19 +26,20 @@ type CronRunner struct {
 }
 
 // NewCronRunner 创建调度器
-func NewCronRunner(orch *ReflectionOrchestrator, stateUpdater *StateUpdater) *CronRunner {
+func NewCronRunner(orch *ReflectionOrchestrator, stateUpdater *StateUpdater, userRepo *service.UserRepo) *CronRunner {
 	return &CronRunner{
 		orch:          orch,
 		stateUpdater:  stateUpdater,
-		dailyHour:     8,
+		userRepo:      userRepo,
+		dailyTimes:    []string{"08:00"},
 		postChatDelay: 30 * time.Minute,
-		runTimeout:    5 * time.Minute,
+		runTimeout:    30 * time.Minute,
 		eventCh:       make(chan postChatEvent, 32),
 	}
 }
 
-// SetDailyHour 设置每日运行小时（用于测试：改短验证）
-func (cr *CronRunner) SetDailyHour(h int) { cr.dailyHour = h }
+// SetDailySchedules 设置每日定时列表
+func (cr *CronRunner) SetDailySchedules(times []string) { cr.dailyTimes = times }
 
 // SetPostChatDelay 设置对话后延迟
 func (cr *CronRunner) SetPostChatDelay(d time.Duration) { cr.postChatDelay = d }
@@ -56,16 +60,9 @@ func (cr *CronRunner) NotifyChatEnd(userID, convID string) {
 
 // Start 启动调度循环（阻塞，用 goroutine 调用）
 func (cr *CronRunner) Start(ctx context.Context) {
-	log.Printf("[cron] started, daily=%d:00, post_chat_delay=%v", cr.dailyHour, cr.postChatDelay)
+	log.Printf("[cron] started, daily_times=%v, post_chat_delay=%v", cr.dailyTimes, cr.postChatDelay)
 
-	// 计算下一次 daily 触发时间
-	now := time.Now()
-	nextDaily := time.Date(now.Year(), now.Month(), now.Day(), cr.dailyHour, 0, 0, 0, now.Location())
-	if nextDaily.Before(now) {
-		nextDaily = nextDaily.Add(24 * time.Hour)
-	}
-
-	dailyTimer := time.NewTimer(nextDaily.Sub(now))
+	dailyTimer := time.NewTimer(nextDailyDelay(cr.dailyTimes))
 	defer dailyTimer.Stop()
 
 	// 后对话延迟的定时器（nil = 未激活）
@@ -81,8 +78,11 @@ func (cr *CronRunner) Start(ctx context.Context) {
 
 		case <-dailyTimer.C:
 			log.Printf("[cron] daily trigger")
-			cr.runReflection(ctx, "system", "cron")
-			dailyTimer.Reset(24 * time.Hour)
+			users, _ := cr.userRepo.ListAll(context.Background())
+			for _, u := range users {
+				cr.runReflection(ctx, u.ID, "cron")
+			}
+			dailyTimer.Reset(nextDailyDelay(cr.dailyTimes))
 
 		case evt := <-cr.eventCh:
 			log.Printf("[cron] eventCh received: user=%s conv=%s", evt.userID[:8], evt.convID[:8])
@@ -130,7 +130,29 @@ func (cr *CronRunner) dispatchPostChat(ctx context.Context, userID, convID strin
 	}
 }
 
+// nextDailyDelay 计算距离下一个触发时间还需要多久
+func nextDailyDelay(times []string) time.Duration {
+	now := time.Now()
+	minDelay := 24 * time.Hour
+	for _, t := range times {
+		parsed, err := time.Parse("15:04", t)
+		if err != nil {
+			continue
+		}
+		next := time.Date(now.Year(), now.Month(), now.Day(), parsed.Hour(), parsed.Minute(), 0, 0, now.Location())
+		if next.Before(now) {
+			next = next.Add(24 * time.Hour)
+		}
+		delay := next.Sub(now)
+		if delay < minDelay {
+			minDelay = delay
+		}
+	}
+	return minDelay
+}
+
 func (cr *CronRunner) runReflection(ctx context.Context, userID, triggerType string) {
+	log.Printf("[cron] runReflection: user=%s trigger=%s", userID, triggerType)
 	runCtx, cancel := context.WithTimeout(ctx, cr.runTimeout)
 	defer cancel()
 

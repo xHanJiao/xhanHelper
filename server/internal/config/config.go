@@ -96,11 +96,12 @@ type EmbeddingConfig struct {
 
 // ReflectionConfig — 反思系统配置
 type ReflectionConfig struct {
-	LaunchMaxIterations   int     `yaml:"launch_max_iterations"`   // 启动 Agent 最大轮次，默认 8
-	AnalystMaxIterations  int     `yaml:"analyst_max_iterations"`  // ThemeAnalyst 内部最大轮次，默认 3
-	DiscoverMaxIterations int     `yaml:"discover_max_iterations"` // ThemeDiscoverer 内部最大轮次，默认 3
-	ClusterThreshold      float64 `yaml:"cluster_threshold"`       // topic 聚类余弦相似度阈值，默认 0.70
-	PostChatDelaySeconds  int     `yaml:"post_chat_delay_seconds"` // 对话后延迟触发秒数，默认 1800（30分钟）
+	LaunchMaxIterations   int      `yaml:"launch_max_iterations"`   // 启动 Agent 最大轮次，默认 8
+	AnalystMaxIterations  int      `yaml:"analyst_max_iterations"`  // ThemeAnalyst 内部最大轮次，默认 3
+	DiscoverMaxIterations int      `yaml:"discover_max_iterations"` // ThemeDiscoverer 内部最大轮次，默认 3
+	ClusterThreshold      float64  `yaml:"cluster_threshold"`       // topic 聚类余弦相似度阈值，默认 0.70
+	PostChatDelaySeconds  int      `yaml:"post_chat_delay_seconds"` // 对话后延迟触发秒数，默认 1800（30分钟）
+	DailySchedules        []string `yaml:"daily_schedules"`         // 每日定时触发时间列表，如 ["08:00","14:00","20:00"]，默认 ["08:00"]
 }
 
 // Load 加载配置：base YAML + env YAML 合并 → 环境变量替换
@@ -161,7 +162,7 @@ func merge(dst, src *Config) {
 	if len(src.Server.AllowedUsers) > 0 {
 		dst.Server.AllowedUsers = src.Server.AllowedUsers
 	}
-	// MemoryAutoExtract 是 bool 类型，零值(false)是有效取值，不做合并
+	dst.Server.MemoryAutoExtract = src.Server.MemoryAutoExtract
 	if src.Server.MemoryDupeThreshold > 0 {
 		dst.Server.MemoryDupeThreshold = src.Server.MemoryDupeThreshold
 	}
@@ -252,6 +253,9 @@ func merge(dst, src *Config) {
 	if src.Reflection.PostChatDelaySeconds != 0 {
 		dst.Reflection.PostChatDelaySeconds = src.Reflection.PostChatDelaySeconds
 	}
+	if len(src.Reflection.DailySchedules) > 0 {
+		dst.Reflection.DailySchedules = src.Reflection.DailySchedules
+	}
 }
 
 // resolveEnvVars 对字符串字段再做一次 ${VAR} 展开（处理 env YAML 覆盖引入的新占位符）
@@ -293,6 +297,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Reflection.PostChatDelaySeconds == 0 {
 		cfg.Reflection.PostChatDelaySeconds = 1800
+	}
+	if len(cfg.Reflection.DailySchedules) == 0 {
+		cfg.Reflection.DailySchedules = []string{"09:00"}
 	}
 	return nil
 }

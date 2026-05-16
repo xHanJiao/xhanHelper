@@ -40,3 +40,4 @@ reflection:
   discover_max_iterations: 6
   cluster_threshold: 0.70
   post_chat_delay_seconds: 30
+  daily_schedules: ["22:30", "22:43"]

@@ -92,6 +92,13 @@ func (r *UserRepo) Logout(ctx context.Context, token string) error {
 	return r.db.WithContext(ctx).Where("token = ?", token).Delete(&model.UserToken{}).Error
 }
 
+// ListAll 列出所有用户
+func (r *UserRepo) ListAll(ctx context.Context) ([]model.User, error) {
+	var users []model.User
+	err := r.db.WithContext(ctx).Find(&users).Error
+	return users, err
+}
+
 func (r *UserRepo) FindByToken(ctx context.Context, token string) (*model.User, error) {
 	var ut model.UserToken
 	if err := r.db.WithContext(ctx).Where("token = ?", token).First(&ut).Error; err != nil {

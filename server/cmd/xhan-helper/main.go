@@ -204,8 +204,9 @@ func main() {
 		cfg.Reflection.LaunchMaxIterations,
 	)
 	stateUpdater := agent.NewStateUpdater(llmClient, msgRepo, convRepo, themeStore)
-	cronRunner := agent.NewCronRunner(reflectionOrch, stateUpdater)
+	cronRunner := agent.NewCronRunner(reflectionOrch, stateUpdater, userRepo)
 	cronRunner.SetPostChatDelay(time.Duration(cfg.Reflection.PostChatDelaySeconds) * time.Second)
+	cronRunner.SetDailySchedules(cfg.Reflection.DailySchedules)
 	// 后台任务共享 context，关闭时统一取消
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 

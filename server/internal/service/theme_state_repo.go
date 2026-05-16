@@ -65,6 +65,23 @@ func (r *ThemeStateRepo) UpdateState(ctx context.Context, id, userID, stateText 
 		}).Error
 }
 
+// ListByStatus 按状态列表查询
+func (r *ThemeStateRepo) ListByStatus(ctx context.Context, userID string, statuses []string) ([]model.ThemeState, error) {
+	var list []model.ThemeState
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND status IN ?", userID, statuses).
+		Order("created_at ASC").
+		Find(&list).Error
+	return list, err
+}
+
+// UpdateStatus 更新主题状态
+func (r *ThemeStateRepo) UpdateStatus(ctx context.Context, id, userID, status string) error {
+	return r.db.WithContext(ctx).Model(&model.ThemeState{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Update("status", status).Error
+}
+
 // UpdateEmbeddingID 更新主题的 embedding_id
 func (r *ThemeStateRepo) UpdateEmbeddingID(ctx context.Context, id, embeddingID string) error {
 	return r.db.WithContext(ctx).Model(&model.ThemeState{}).

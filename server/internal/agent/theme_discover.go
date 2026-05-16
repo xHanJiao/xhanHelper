@@ -134,20 +134,24 @@ func (td *ThemeDiscoverer) Execute(ec *tool.ExecuteContext, funcName string, arg
 		return &tool.Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
 	}
 
-	// 获取活跃主题列表
-	activeThemes, err := td.themeStore.ListActive(ec.Ctx, ec.UserID)
+	// 获取活跃 + 候选主题列表（去重用）
+	allThemes, err := td.themeStore.ListCandidates(ec.Ctx, ec.UserID)
 	if err != nil {
-		log.Printf("[theme_discoverer] ListActive error: %v", err)
+		log.Printf("[theme_discoverer] ListCandidates error: %v", err)
 	}
 
 	// 拼装输入消息
 	var sb strings.Builder
-	sb.WriteString("## 当前活跃主题（避免重复提名）\n")
-	if len(activeThemes) == 0 {
-		sb.WriteString("（无活跃主题）\n")
+	sb.WriteString("## 现有主题（含候选，避免重复提名）\n")
+	if len(allThemes) == 0 {
+		sb.WriteString("（无）\n")
 	} else {
-		for _, t := range activeThemes {
-			sb.WriteString(fmt.Sprintf("- %s：%s\n", t.Name, t.Description))
+		for _, t := range allThemes {
+			statusTag := ""
+			if t.Status == "candidate" {
+				statusTag = " [候选]"
+			}
+			sb.WriteString(fmt.Sprintf("- %s：%s%s\n", t.Name, t.Description, statusTag))
 		}
 	}
 	sb.WriteString(fmt.Sprintf("\n## 最近 7 天活动概览\n"))

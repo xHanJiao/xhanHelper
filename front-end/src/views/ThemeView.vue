@@ -1,7 +1,7 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { api } from '@/api/client'
-import { NModal, NForm, NFormItem, NInput, NButton, NSpin, NGrid, NGi, NEmpty, NSelect, NTag, useMessage } from 'naive-ui'
+import { NModal, NForm, NFormItem, NInput, NButton, NSpin, NGrid, NGi, NEmpty, NTag, useMessage } from 'naive-ui'
 import PageTopBar from '@/components/PageTopBar.vue'
 import ListItemCard from '@/components/ListItemCard.vue'
 
@@ -12,12 +12,6 @@ const modalVisible = ref(false)
 const editing = ref(null)
 const formValue = ref({ name: '', description: '' })
 const submitting = ref(false)
-
-const statusOptions = [
-  { label: '活跃', value: 'active' },
-  { label: '已归档', value: 'archived' },
-  { label: '已关闭', value: 'closed' }
-]
 
 async function fetchList() {
   loading.value = true
@@ -50,9 +44,7 @@ async function handleSubmit() {
   submitting.value = true
   try {
     if (editing.value) {
-      await api.patch(`/api/themes/${editing.value.id}`, {
-        description: formValue.value.description
-      })
+      await api.patch(`/api/themes/${editing.value.id}`, { description: formValue.value.description })
       message.success('已更新')
     } else {
       await api.post('/api/themes', formValue.value)
@@ -84,7 +76,7 @@ async function handleStatusChange(item, status) {
   try {
     await api.patch(`/api/themes/${item.id}`, { status })
     item.status = status
-    message.success(status === 'active' ? '已重新激活' : status === 'closed' ? '已关闭' : '已归档')
+    message.success(status === 'active' ? '已采纳' : status === 'closed' ? '已关闭' : '已归档')
   } catch (e) {
     message.error('操作失败: ' + (e.message || ''))
   }
@@ -96,7 +88,72 @@ function formatTime(ts) {
 }
 
 function statusColor(s) {
-  return s === 'active' ? 'success' : s === 'archived' ? 'warning' : 'default'
+  return s === 'active' ? 'success' : s === 'candidate' ? 'info' : s === 'archived' ? 'warning' : 'default'
+}
+function statusLabel(s) {
+  return s === 'active' ? '活跃' : s === 'candidate' ? '候选' : s === 'archived' ? '已归档' : '已关闭'
+}
+
+function parseMeta(item) {
+  if (!item.metadata) return null
+  try { return JSON.parse(item.metadata) } catch { return null }
+}
+
+function candidateContent(item) {
+  const m = parseMeta(item)
+  if (!m?.candidate_info) return item.description
+  return m.candidate_info.rationale || item.description
+}
+
+function candidateActions(item) {
+  return [
+    { key: 'adopt', label: '采纳', onClick: () => handleStatusChange(item, 'active') },
+    { key: 'close', label: '忽略', confirm: '确定忽略该候选？', onClick: () => handleStatusChange(item, 'closed') },
+  ]
+}
+
+function activeActions(item) {
+  return [
+    { key: 'edit', label: '编辑', onClick: () => openEdit(item) },
+    { key: 'close', label: '关闭', confirm: '确定关闭该主题？', onClick: () => handleStatusChange(item, 'closed') },
+    { key: 'archive', label: '归档', confirm: '确定归档该主题？', onClick: () => handleStatusChange(item, 'archived') },
+  ]
+}
+
+function closedActions(item) {
+  return [
+    { key: 'reactivate', label: '重新激活', onClick: () => handleStatusChange(item, 'active') },
+  ]
+}
+
+function buildTags(item) {
+  const tags = [{ text: statusLabel(item.status), type: statusColor(item.status) }]
+  const m = parseMeta(item)
+  if (m?.candidate_info?.signal_strength) {
+    tags.push({ text: m.candidate_info.signal_strength, type: m.candidate_info.signal_strength === 'high' ? 'error' : 'warning' })
+  }
+  return tags
+}
+
+function buildContent(item) {
+  if (item.status === 'candidate') return candidateContent(item)
+  let text = item.description
+  if (item.state_text) text += '\n\n' + item.state_text
+  return text
+}
+
+function buildActions(item) {
+  if (item.status === 'candidate') return candidateActions(item)
+  if (item.status === 'active') return activeActions(item)
+  if (item.status === 'closed') return closedActions(item)
+  return []
+}
+
+function buildMetadata(item) {
+  let parts = []
+  if (item.last_run_at) parts.push('上次分析 ' + formatTime(item.last_run_at))
+  parts.push('更新于 ' + formatTime(item.updated_at))
+  return parts.join(' · ')
 }
 
 onMounted(fetchList)
@@ -117,16 +174,11 @@ onMounted(fetchList)
         <NGi v-for="item in items" :key="item.id">
           <ListItemCard
             :title="item.name"
-            :content="item.description + (item.state_text ? '\n\n' + item.state_text.slice(0, 200) : '')"
-            :tags="[{ text: item.status === 'active' ? '活跃' : item.status === 'archived' ? '已归档' : '已关闭', type: statusColor(item.status) }]"
-            :metadata="'更新于 ' + formatTime(item.updated_at) + (item.last_run_at ? ' · 运行 ' + formatTime(item.last_run_at) : '')"
-            :max-content-height="'120px'"
-            :actions="[
-              { key: 'edit', label: '编辑', onClick: () => openEdit(item) },
-              ...(item.status === 'active' ? [{ key: 'close', label: '关闭', confirm: '确定关闭该主题？关闭后可重新激活。', onClick: () => handleStatusChange(item, 'closed') }] : []),
-              ...(item.status === 'closed' ? [{ key: 'reactivate', label: '重新激活', onClick: () => handleStatusChange(item, 'active') }] : []),
-              ...(item.status === 'active' ? [{ key: 'archive', label: '归档', confirm: '确定归档该主题？', onClick: () => handleStatusChange(item, 'archived') }] : []),
-            ]"
+            :content="buildContent(item)"
+            :tags="buildTags(item)"
+            :metadata="buildMetadata(item)"
+            :max-content-height="'150px'"
+            :actions="buildActions(item)"
           />
         </NGi>
       </NGrid>

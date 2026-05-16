@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
 
@@ -14,6 +15,35 @@ type ThemeStore struct {
 
 func NewThemeStore(repo *service.ThemeStateRepo) *ThemeStore {
 	return &ThemeStore{repo: repo}
+}
+
+// Create 创建主题
+func (s *ThemeStore) Create(ctx context.Context, t *model.ThemeState) error {
+	return s.repo.Create(ctx, t)
+}
+
+// GetByName 按名称查找主题
+func (s *ThemeStore) GetByName(ctx context.Context, userID, name string) (*ThemeStateInfo, error) {
+	t, err := s.repo.GetByName(ctx, userID, name)
+	if err != nil || t == nil {
+		return nil, err
+	}
+	return &ThemeStateInfo{
+		ID:          t.ID,
+		Name:        t.Name,
+		Description: t.Description,
+		Status:      t.Status,
+		StateText:   t.StateText,
+	}, nil
+}
+
+// LoadMetadata 加载主题 metadata
+func (s *ThemeStore) LoadMetadata(ctx context.Context, themeID, userID string) string {
+	t, err := s.repo.GetByID(ctx, themeID, userID)
+	if err != nil || t == nil || t.Metadata == nil {
+		return ""
+	}
+	return *t.Metadata
 }
 
 // SaveState 保存或更新主题状态页
@@ -35,6 +65,15 @@ func (s *ThemeStore) LoadState(ctx context.Context, themeID, userID string) stri
 }
 
 // ListActive 列出用户所有活跃主题
+// ListCandidates 列出候选和活跃主题（去重用）
+func (s *ThemeStore) ListCandidates(ctx context.Context, userID string) ([]ThemeStateInfo, error) {
+	list, err := s.repo.ListByStatus(ctx, userID, []string{"candidate", "active"})
+	if err != nil {
+		return nil, err
+	}
+	return toThemeStateInfo(list), nil
+}
+
 func (s *ThemeStore) ListActive(ctx context.Context, userID string) ([]ThemeStateInfo, error) {
 	list, err := s.repo.ListActive(ctx, userID)
 	if err != nil {
@@ -60,4 +99,18 @@ type ThemeStateInfo struct {
 	Description string `json:"description"`
 	Status      string `json:"status"`
 	StateText   string `json:"state_text"`
+}
+
+func toThemeStateInfo(list []model.ThemeState) []ThemeStateInfo {
+	result := make([]ThemeStateInfo, len(list))
+	for i, t := range list {
+		result[i] = ThemeStateInfo{
+			ID:          t.ID,
+			Name:        t.Name,
+			Description: t.Description,
+			Status:      t.Status,
+			StateText:   t.StateText,
+		}
+	}
+	return result
 }

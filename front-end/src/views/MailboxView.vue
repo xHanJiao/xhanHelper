@@ -40,29 +40,6 @@ async function markRead(item) {
   } catch (_) {}
 }
 
-async function archiveItem(item) {
-  try {
-    await api.patch(`/api/mailbox/${item.id}/archive`)
-    items.value = items.value.filter(i => i.id !== item.id)
-    total.value--
-    if (!item.is_read) unreadCount.value = Math.max(0, unreadCount.value - 1)
-    message.success('已归档')
-  } catch (e) {
-    message.error('归档失败')
-  }
-}
-
-async function acceptCandidate(item) {
-  try {
-    const desc = item.content.split('\n\n')[0].replace(/^\*\*|\*\*$/g, '') || item.title
-    await api.post('/api/themes', { name: item.title, description: desc })
-    message.success('主题已创建')
-    await archiveItem(item)
-  } catch (e) {
-    message.error('创建主题失败: ' + (e.message || ''))
-  }
-}
-
 function typeLabel(type) {
   const map = { daily_brief: '日报', theme_finding: '主题发现', candidate_theme: '候选主题' }
   return map[type] || type
@@ -114,8 +91,6 @@ onMounted(fetchItems)
                 {{ item.source ? '来源: ' + item.source + ' · ' : '' }}{{ formatTime(item.created_at) }}
               </div>
             </div>
-            <NButton v-if="item.type === 'candidate_theme'" size="tiny" type="primary" @click.stop="acceptCandidate(item)" style="flex-shrink: 0;">采纳</NButton>
-            <NButton size="tiny" quaternary @click.stop="archiveItem(item)" style="flex-shrink: 0;">归档</NButton>
           </div>
         </NCard>
       </div>

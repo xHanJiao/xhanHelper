@@ -71,16 +71,23 @@ func (h *ThemeHandler) UpdateTheme(c *gin.Context) {
 		return
 	}
 	switch req.Status {
-	case "closed":
-		if err := h.themeRepo.Close(c.Request.Context(), id, userID); err != nil {
-			log.Printf("[theme] Close error: %v", err)
-			view.JSONError(c, 500, "关闭主题失败")
-			return
-		}
 	case "active":
 		if err := h.themeRepo.Reactivate(c.Request.Context(), id, userID); err != nil {
 			log.Printf("[theme] Reactivate error: %v", err)
 			view.JSONError(c, 500, "重新激活失败")
+			return
+		}
+	case "candidate":
+		// candidate → active 的转正路径
+		if err := h.themeRepo.UpdateStatus(c.Request.Context(), id, userID, "active"); err != nil {
+			log.Printf("[theme] UpdateStatus error: %v", err)
+			view.JSONError(c, 500, "采纳失败")
+			return
+		}
+	case "closed":
+		if err := h.themeRepo.Close(c.Request.Context(), id, userID); err != nil {
+			log.Printf("[theme] Close error: %v", err)
+			view.JSONError(c, 500, "关闭主题失败")
 			return
 		}
 	case "archived":

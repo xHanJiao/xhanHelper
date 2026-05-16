@@ -142,22 +142,22 @@ function handleDropdownSelect(key) {
     <div
       v-if="content"
       class="card-content-wrapper"
-      :class="{ 'clickable': content.length > 100 }"
+      :class="{ 'clickable': content.length > 200 }"
       :style="{ maxHeight: expanded ? 'none' : maxContentHeight }"
-      @click="content.length > 100 && (expanded = !expanded)"
+      @click="content.length > 200 && (expanded = !expanded)"
     >
       <div class="card-content">
         {{ content }}
       </div>
-      <div v-if="content.length > 100 && !expanded" class="content-fade"></div>
-      <div v-if="content.length > 100" class="expand-hint">
+      <div v-if="content.length > 200 && !expanded" class="content-fade"></div>
+      <div v-if="content.length > 200" class="expand-hint">
         {{ expanded ? '↑' : '↓' }}
       </div>
     </div>
 
     <div v-if="tags && tags.length > 0" class="card-tags">
-      <NTag v-for="tag in tags" :key="tag" size="small" class="card-tag">
-        {{ tag }}
+      <NTag v-for="tag in tags" :key="tag.text || tag" size="small" :type="tag.type || 'default'" class="card-tag">
+        {{ tag.text || tag }}
       </NTag>
     </div>
 

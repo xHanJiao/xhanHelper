@@ -185,6 +185,10 @@ func (ta *ThemeAnalyst) Execute(ec *tool.ExecuteContext, funcName string, args j
 			inputMsg += "\n（无历史状态页，但模式为 hot_run，请按 cold_start 模式处理）\n"
 		}
 	} else {
+		// 注入候选提名理由（如有）
+		if metadata := ta.themeStore.LoadMetadata(ec.Ctx, a.ThemeID, ec.UserID); metadata != "" {
+			inputMsg += fmt.Sprintf("\n## 候选提名理由\n%s\n", metadata)
+		}
 		inputMsg += "\n（cold_start：这是首次分析，请先做第1轮检索了解数据情况）\n"
 	}
 

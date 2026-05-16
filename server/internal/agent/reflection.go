@@ -29,9 +29,8 @@ const launchAgentPrompt = `你是 xhanHelper 的「反思协调员」。你的�
 1. theme_analyst(theme_name, theme_description, theme_id, mode) — 分析指定主题。mode: cold_start / hot_run。返回该主题的发现列表。
 2. scorer(findings) — 对所有发现打分排序，返回 TopN。
 3. secretary(findings) — 将 TopN 发现转化为友好的人性化提醒文字，然后投递到信箱。**必须在 scorer 之后、mailbox 之前调用**。
-4. mailbox.deliver(items) — 投递消息。items 是数组，每项 {title, content, type, source}。title/content 是纯文本，不要嵌套。
-4. theme_discoverer(recent_msg_count, recent_note_count, recent_mem_count) — 发现候选主题。
-5. theme.create_theme / theme.close_theme — 管理主题。
+4. mailbox.deliver(items) — 投递消息。items 每项 {title, content, type, source, entity_type, entity_id}。theme_finding 必须带 entity_type:"theme" + entity_id:主题ID。
+（候选主题由系统自动发现，你不需要调用 theme_discoverer。）
 
 ## 你的工作流程
 
@@ -222,6 +221,8 @@ func (o *ReflectionOrchestrator) runDiscoveryOnly(ctx context.Context, traceID, 
 	if !ok {
 		return 0
 	}
+
+	// 1. ThemeDiscoverer 发现候选
 	args, _ := json.Marshal(map[string]interface{}{
 		"recent_msg_count":  msgCount,
 		"recent_note_count": noteCount,
@@ -240,44 +241,92 @@ func (o *ReflectionOrchestrator) runDiscoveryOnly(ctx context.Context, traceID, 
 		return 0
 	}
 
-	// 投递候选主题
-	mailboxT, ok2 := o.reflectionReg.GetToolMap()["mailbox"]
-	if !ok2 {
-		return 0
-	}
-	items := make([]map[string]interface{}, 0, len(output.Candidates))
+	// 2. 逐个写入 theme_states + Secretary 改写 + mailbox 投递
+	delivered := 0
+
 	for _, c := range output.Candidates {
-		content := fmt.Sprintf("**%s**\n\n%s", c["description"], c["rationale"])
-		if sig, _ := c["signal_strength"].(string); sig != "" {
-			content += fmt.Sprintf("\n\n信号强度：%s", sig)
+		if o.deliverCandidate(ctx, userID, c) {
+			delivered++
 		}
-		if refs, _ := c["source_refs"].([]interface{}); len(refs) > 0 {
-			content += "\n\n相关数据："
-			for _, r := range refs {
-				if s, _ := r.(string); s != "" {
-					content += fmt.Sprintf("\n- %s", s)
-				}
-			}
-		}
-		items = append(items, map[string]interface{}{
-			"title":   c["name"],
-			"content": content,
-			"type":    "candidate_theme",
-			"source":  "system",
-		})
 	}
-	itemArgs, err := json.Marshal(map[string]interface{}{"items": items})
-	if err != nil {
-		log.Printf("[reflection] discovery marshal items error: %v", err)
-		return 0
+
+	log.Printf("[reflection] discovery delivered %d/%d candidates", delivered, len(output.Candidates))
+	return delivered
+}
+
+// deliverCandidate 处理单个候选主题：写 theme_states → Secretary → mailbox
+func (o *ReflectionOrchestrator) deliverCandidate(ctx context.Context, userID string, c map[string]interface{}) bool {
+	name, _ := c["name"].(string)
+	desc, _ := c["description"].(string)
+	if name == "" {
+		return false
 	}
-	res2 := mailboxT.Execute(&tool.ExecuteContext{Ctx: ctx, UserID: userID}, "deliver", itemArgs)
-	if res2.Success {
-		log.Printf("[reflection] discovery delivered %d candidates to mailbox", len(output.Candidates))
-		return len(output.Candidates)
+
+	existing, _ := o.themeStore.GetByName(ctx, userID, name)
+	if existing != nil && (existing.Status == "candidate" || existing.Status == "active") {
+		log.Printf("[reflection] discovery skip duplicate: %s", name)
+		return false
 	}
-	log.Printf("[reflection] discovery mailbox error: %s", res2.Error)
-	return 0
+
+	metaJSON, _ := json.Marshal(map[string]interface{}{"candidate_info": c})
+	metaStr := string(metaJSON)
+	themeID := uuid.New().String()
+	theme := &model.ThemeState{
+		ID:          themeID,
+		UserID:      userID,
+		Name:        name,
+		Description: desc,
+		Status:      "candidate",
+		Metadata:    &metaStr,
+	}
+	if err := o.themeStore.Create(ctx, theme); err != nil {
+		log.Printf("[reflection] discovery create candidate error: %v", err)
+		return false
+	}
+
+	secT, _ := o.reflectionReg.GetToolMap()["secretary"]
+	secTitle, secContent := o.rewriteCandidate(ctx, userID, c, secT)
+	if secTitle == "" {
+		secTitle = name
+		secContent = desc
+	}
+
+	mailboxT, _ := o.reflectionReg.GetToolMap()["mailbox"]
+	if mailboxT == nil {
+		return false
+	}
+	itemArgs, _ := json.Marshal(map[string]interface{}{"items": []map[string]interface{}{{
+		"title":       secTitle,
+		"content":     secContent,
+		"type":        "candidate_theme",
+		"source":      "主题发现",
+		"entity_type": "theme",
+		"entity_id":   themeID,
+	}}})
+	res := mailboxT.Execute(&tool.ExecuteContext{Ctx: ctx, UserID: userID}, "deliver", itemArgs)
+	return res.Success
+}
+
+// rewriteCandidate 调 Secretary 将候选主题人话化
+func (o *ReflectionOrchestrator) rewriteCandidate(ctx context.Context, userID string, c map[string]interface{}, secT tool.Tool) (title, content string) {
+	if secT == nil {
+		return
+	}
+	cJSON, _ := json.Marshal([]interface{}{c})
+	secRes := secT.Execute(&tool.ExecuteContext{Ctx: ctx, UserID: userID}, "rewrite", cJSON)
+	if !secRes.Success || secRes.Data == nil {
+		return
+	}
+	var secOutput struct {
+		Messages []struct {
+			Title   string `json:"title"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal(secRes.Data, &secOutput) != nil || len(secOutput.Messages) == 0 {
+		return
+	}
+	return secOutput.Messages[0].Title, secOutput.Messages[0].Content
 }
 
 // countRecentActivity 统计最近 7 天用户活动数量

@@ -19,5 +19,15 @@ type Conversation struct {
 
 // ConversationExtra — Conversation.Extra 的结构化数据
 type ConversationExtra struct {
-	UsedToolIDs []string `json:"used_tool_ids"`
+	UsedToolIDs []string         `json:"used_tool_ids"`
+	Context     *ConversationCtx `json:"context,omitempty"` // 信箱跳转带上的主题上下文
+}
+
+// ConversationCtx — 会话上下文（从 mailbox 跳转带入）
+type ConversationCtx struct {
+	ThemeID       string `json:"theme_id"`
+	EntityType    string `json:"entity_type"`
+	EntityID      string `json:"entity_id"`
+	MailboxItemID string `json:"mailbox_item_id"`
+	Title         string `json:"title"`
 }

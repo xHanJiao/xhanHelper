@@ -40,3 +40,4 @@ reflection:
   analyst_max_iterations: 6
   discover_max_iterations: 6
   cluster_threshold: 0.70
+  post_chat_delay_minutes: 3

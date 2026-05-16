@@ -120,6 +120,13 @@ func (r *ThemeStateRepo) Reactivate(ctx context.Context, id, userID string) erro
 		Update("status", "active").Error
 }
 
+// UpdateConversationID 更新关联的对话 ID
+func (r *ThemeStateRepo) UpdateConversationID(ctx context.Context, id, userID, convID string) error {
+	return r.db.WithContext(ctx).Model(&model.ThemeState{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Update("conversation_id", convID).Error
+}
+
 // Close 关闭主题
 func (r *ThemeStateRepo) Close(ctx context.Context, id, userID string) error {
 	return r.db.WithContext(ctx).Model(&model.ThemeState{}).

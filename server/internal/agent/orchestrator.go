@@ -67,6 +67,7 @@ type Orchestrator struct {
 	embedder           *llm.Embedder
 	vectorStore        *VectorStore
 	embeddingRepo      *service.EmbeddingRepo
+	themeStateRepo     *service.ThemeStateRepo
 	promptResolver     PromptResolver
 	maxIterations      int
 	defaultTemperature *float64
@@ -80,6 +81,7 @@ func New(flashClient llm.LLMClient, registry *tool.Registry,
 	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
 	embedder *llm.Embedder, vectorStore *VectorStore,
 	embeddingRepo *service.EmbeddingRepo,
+	themeStateRepo *service.ThemeStateRepo,
 	maxIterations int,
 	defaultTemperature *float64, defaultMaxTokens *int) *Orchestrator {
 	if maxIterations <= 0 {
@@ -95,6 +97,7 @@ func New(flashClient llm.LLMClient, registry *tool.Registry,
 		embedder:           embedder,
 		vectorStore:        vectorStore,
 		embeddingRepo:      embeddingRepo,
+		themeStateRepo:     themeStateRepo,
 		maxIterations:      maxIterations,
 		defaultTemperature: defaultTemperature,
 		defaultMaxTokens:   defaultMaxTokens,
@@ -160,6 +163,25 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, req *RunRequest) (str
 	}
 	sysPrompt += "\n当前时间: " + time.Now().Format("2006-01-02 15:04:05 Monday")
 	sysPrompt += o.registry.ToolOverview()
+
+	// 注入会话上下文（信箱跳转带入的主题信息）
+	extra, err := o.convRepo.GetExtra(ctx, req.ConversationID)
+	if err != nil {
+		log.Printf("[orch] GetExtra error: %v", err)
+	} else if extra != nil && extra.Context != nil && extra.Context.ThemeID != "" {
+		theme, err := o.themeStateRepo.GetByID(ctx, extra.Context.ThemeID, req.UserID)
+		if err != nil {
+			log.Printf("[orch] GetByID for context theme error: %v", err)
+		} else if theme != nil {
+			sysPrompt += fmt.Sprintf("\n\n## 会话关联主题\n名称：%s\n描述：%s", theme.Name, theme.Description)
+			if theme.StateText != "" {
+				sysPrompt += fmt.Sprintf("\n当前状态：%s", theme.StateText)
+			}
+			if theme.Metadata != nil {
+				sysPrompt += fmt.Sprintf("\n候选信息：%s", *theme.Metadata)
+			}
+		}
+	}
 
 	if o.retriever == nil || o.embedder == nil {
 		return sysPrompt, "", nil, nil, nil

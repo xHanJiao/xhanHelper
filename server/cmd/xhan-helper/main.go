@@ -204,6 +204,7 @@ func main() {
 		cfg.Reflection.LaunchMaxIterations,
 	)
 	cronRunner := agent.NewCronRunner(reflectionOrch)
+	cronRunner.SetPostChatDelay(time.Duration(cfg.Reflection.PostChatDelayMinutes) * time.Minute)
 	// 后台任务共享 context，关闭时统一取消
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
@@ -221,7 +222,7 @@ func main() {
 
 	// Orchestrator
 	retriever := agent.NewRetriever(memSource, noteSource)
-	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, embedder, vectorStore, embeddingRepo, cfg.LLM.MaxIterations, cfg.LLM.DefaultTemperature, cfg.LLM.DefaultMaxTokens)
+	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, embedder, vectorStore, embeddingRepo, themeStateRepo, cfg.LLM.MaxIterations, cfg.LLM.DefaultTemperature, cfg.LLM.DefaultMaxTokens)
 
 	// Memory Extractor (后台异步)
 	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo, embeddingRepo, cfg.Server.MemoryDupeThreshold, chunkBuilder, conceptEmbedService)
@@ -277,7 +278,7 @@ func main() {
 	agentHandler := controller.NewAgentHandler(agentRepo, llmClient)
 	toolHandler := controller.NewToolHandler(toolRepo)
 	promptHandler := controller.NewPromptHandler(promptRepo)
-	mailboxHandler := controller.NewMailboxHandler(mailboxRepo)
+	mailboxHandler := controller.NewMailboxHandler(mailboxRepo, convRepo, themeStateRepo)
 	themeHandler := controller.NewThemeHandler(themeStateRepo)
 	reflectionAdminHandler := controller.NewReflectionAdminHandler(traceRepo)
 

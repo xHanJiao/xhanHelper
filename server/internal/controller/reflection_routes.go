@@ -30,6 +30,7 @@ func RegisterReflectionRoutes(
 		auth.GET("/mailbox/unread-count", mailboxHandler.UnreadCount)
 		auth.PATCH("/mailbox/:id/read", mailboxHandler.MarkRead)
 		auth.PATCH("/mailbox/:id/archive", mailboxHandler.Archive)
+		auth.POST("/mailbox/:id/chat", mailboxHandler.StartChat)
 		auth.POST("/mailbox/batch-read", mailboxHandler.BatchRead)
 
 		// 主题管理

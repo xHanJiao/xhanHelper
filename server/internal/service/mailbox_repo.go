@@ -22,6 +22,16 @@ func (r *MailboxRepo) Create(ctx context.Context, item *model.MailboxItem) error
 	return r.db.WithContext(ctx).Create(item).Error
 }
 
+// GetByIDAndUser 按 ID + 用户查询单条消息
+func (r *MailboxRepo) GetByIDAndUser(ctx context.Context, id, userID string) (*model.MailboxItem, error) {
+	var item model.MailboxItem
+	err := r.db.WithContext(ctx).Where("id = ? AND user_id = ?", id, userID).First(&item).Error
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
 // ListByUser 分页查询用户信箱消息，支持按 type / is_read 筛选
 func (r *MailboxRepo) ListByUser(ctx context.Context, userID, itemType string, isRead *bool, limit, offset int) ([]model.MailboxItem, int64, error) {
 	if limit <= 0 {

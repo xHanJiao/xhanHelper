@@ -1,9 +1,12 @@
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
 import { NCard, NTag, NButton, NSpin, NEmpty, useMessage } from 'naive-ui'
 import PageTopBar from '@/components/PageTopBar.vue'
 
+const router = useRouter()
+const navigating = ref(false)
 const message = useMessage()
 const items = ref([])
 const total = ref(0)
@@ -38,6 +41,22 @@ async function markRead(item) {
     item.is_read = true
     unreadCount.value = Math.max(0, unreadCount.value - 1)
   } catch (_) {}
+}
+
+async function navigateToChat(item) {
+  if (!item.entity_type || !item.entity_id || navigating.value) return
+  navigating.value = true
+  try {
+    const res = await api.post(`/api/mailbox/${item.id}/chat`)
+    if (res.conversation_id) {
+      markRead(item)
+      router.push(`/chat/${res.conversation_id}`)
+    }
+  } catch (e) {
+    message.error('跳转失败: ' + (e.message || ''))
+  } finally {
+    navigating.value = false
+  }
 }
 
 function typeLabel(type) {
@@ -77,7 +96,7 @@ onMounted(fetchItems)
           v-for="item in items" :key="item.id"
           size="small"
           :style="{ opacity: item.is_read ? 0.7 : 1, borderLeft: item.is_read ? '3px solid transparent' : '3px solid var(--color-primary)' }"
-          @click="markRead(item)"
+          @click="navigateToChat(item)"
         >
           <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-md);">
             <div style="flex: 1; min-width: 0;">

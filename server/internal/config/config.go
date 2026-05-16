@@ -100,6 +100,7 @@ type ReflectionConfig struct {
 	AnalystMaxIterations  int     `yaml:"analyst_max_iterations"`  // ThemeAnalyst 内部最大轮次，默认 3
 	DiscoverMaxIterations int     `yaml:"discover_max_iterations"` // ThemeDiscoverer 内部最大轮次，默认 3
 	ClusterThreshold      float64 `yaml:"cluster_threshold"`       // topic 聚类余弦相似度阈值，默认 0.70
+	PostChatDelayMinutes  int     `yaml:"post_chat_delay_minutes"` // 对话后延迟触发分钟数，默认 30
 }
 
 // Load 加载配置：base YAML + env YAML 合并 → 环境变量替换
@@ -274,6 +275,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Reflection.ClusterThreshold == 0 {
 		cfg.Reflection.ClusterThreshold = 0.70
+	}
+	if cfg.Reflection.PostChatDelayMinutes == 0 {
+		cfg.Reflection.PostChatDelayMinutes = 30
 	}
 	return nil
 }

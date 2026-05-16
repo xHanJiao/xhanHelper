@@ -16,4 +16,5 @@ type ThemeState struct {
 	CreatedAt        time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt        time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 	LastRunAt        *time.Time `json:"last_run_at,omitempty"`
+	ConversationID   *string    `gorm:"size:36" json:"conversation_id,omitempty"` // 关联的对话 ID
 }

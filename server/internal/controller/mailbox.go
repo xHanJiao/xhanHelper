@@ -1,11 +1,14 @@
 package controller
 
 import (
+	"encoding/json"
 	"log"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
@@ -13,10 +16,12 @@ import (
 // MailboxHandler — 信箱 API
 type MailboxHandler struct {
 	mailboxRepo *service.MailboxRepo
+	convRepo    *service.ConversationRepo
+	themeRepo   *service.ThemeStateRepo
 }
 
-func NewMailboxHandler(repo *service.MailboxRepo) *MailboxHandler {
-	return &MailboxHandler{mailboxRepo: repo}
+func NewMailboxHandler(mailboxRepo *service.MailboxRepo, convRepo *service.ConversationRepo, themeRepo *service.ThemeStateRepo) *MailboxHandler {
+	return &MailboxHandler{mailboxRepo: mailboxRepo, convRepo: convRepo, themeRepo: themeRepo}
 }
 
 // ListItems GET /api/mailbox
@@ -83,6 +88,89 @@ func (h *MailboxHandler) Archive(c *gin.Context) {
 		return
 	}
 	view.JSONOK(c, gin.H{"status": "ok"})
+}
+
+// StartChat POST /api/mailbox/:id/chat — 从信箱消息创建/跳转对话
+func (h *MailboxHandler) StartChat(c *gin.Context) {
+	userID := c.GetString("user_id")
+	itemID := c.Param("id")
+
+	// 读信箱消息
+	item, err := h.mailboxRepo.GetByIDAndUser(c.Request.Context(), itemID, userID)
+	if err != nil {
+		log.Printf("[mailbox] StartChat GetByID error: %v", err)
+		view.JSONError(c, 404, "消息不存在")
+		return
+	}
+	if item.EntityType != "theme" || item.EntityID == "" {
+		view.JSONError(c, 400, "该消息不支持跳转对话")
+		return
+	}
+
+	// 查主题是否已有关联对话
+	theme, err := h.themeRepo.GetByID(c.Request.Context(), item.EntityID, userID)
+	if err != nil {
+		log.Printf("[mailbox] StartChat GetByID error: %v", err)
+		view.JSONError(c, 500, "查询失败")
+		return
+	}
+	if theme == nil {
+		view.JSONError(c, 404, "主题不存在")
+		return
+	}
+
+	// 已有绑定且对话未删除 → 直接跳转
+	if theme.ConversationID != nil && *theme.ConversationID != "" {
+		conv, err := h.convRepo.FindByID(c.Request.Context(), *theme.ConversationID)
+		if err != nil {
+			log.Printf("[mailbox] StartChat FindByID error: %v", err)
+		}
+		if err == nil && conv != nil && !conv.IsDeleted {
+			if err := h.mailboxRepo.MarkRead(c.Request.Context(), itemID, userID); err != nil {
+				log.Printf("[mailbox] StartChat MarkRead error: %v", err)
+			}
+			view.JSONOK(c, gin.H{"conversation_id": conv.ID, "created": false})
+			return
+		}
+	}
+
+	// 创建新对话
+	extraJSON, err := json.Marshal(map[string]interface{}{
+		"context": map[string]interface{}{
+			"theme_id":        item.EntityID,
+			"entity_type":     item.EntityType,
+			"entity_id":       item.EntityID,
+			"mailbox_item_id": itemID,
+			"title":           item.Title,
+		},
+	})
+	if err != nil {
+		log.Printf("[mailbox] StartChat marshal extra error: %v", err)
+		view.JSONError(c, 500, "序列化失败")
+		return
+	}
+	convID := uuid.New().String()
+
+	conv := &model.Conversation{
+		ID:     convID,
+		UserID: userID,
+		Title:  item.Title,
+		Extra:  string(extraJSON),
+	}
+	if err := h.convRepo.Create(c.Request.Context(), conv); err != nil {
+		log.Printf("[mailbox] create conv error: %v", err)
+		view.JSONError(c, 500, "创建对话失败")
+		return
+	}
+
+	if err := h.themeRepo.UpdateConversationID(c.Request.Context(), item.EntityID, userID, convID); err != nil {
+		log.Printf("[mailbox] StartChat UpdateConversationID error: %v", err)
+	}
+	if err := h.mailboxRepo.MarkRead(c.Request.Context(), itemID, userID); err != nil {
+		log.Printf("[mailbox] StartChat MarkRead error: %v", err)
+	}
+
+	view.JSONOK(c, gin.H{"conversation_id": convID, "created": true})
 }
 
 // BatchRead POST /api/mailbox/batch-read

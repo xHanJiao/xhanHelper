@@ -397,10 +397,10 @@ func (o *ReflectionOrchestrator) deliverCandidate(ctx context.Context, userID st
 	}
 
 	secT, _ := o.reflectionReg.GetToolMap()["secretary"]
-	secTitle, secContent := o.rewriteCandidate(ctx, userID, c, secT)
+	secTitle, notification, greeting := o.rewriteCandidate(ctx, userID, c, secT)
 	if secTitle == "" {
 		secTitle = name
-		secContent = desc
+		notification = desc
 	}
 
 	mailboxT, _ := o.reflectionReg.GetToolMap()["mailbox"]
@@ -409,7 +409,8 @@ func (o *ReflectionOrchestrator) deliverCandidate(ctx context.Context, userID st
 	}
 	itemArgs, _ := json.Marshal(map[string]interface{}{"items": []map[string]interface{}{{
 		"title":       secTitle,
-		"content":     secContent,
+		"content":     notification,
+		"greeting":    greeting,
 		"type":        "candidate_theme",
 		"source":      "主题发现",
 		"entity_type": "theme",
@@ -419,8 +420,8 @@ func (o *ReflectionOrchestrator) deliverCandidate(ctx context.Context, userID st
 	return res.Success
 }
 
-// rewriteCandidate 调 Secretary 将候选主题人话化
-func (o *ReflectionOrchestrator) rewriteCandidate(ctx context.Context, userID string, c map[string]interface{}, secT tool.Tool) (title, content string) {
+// rewriteCandidate 调 Secretary 将候选主题人话化，返回 (title, notification, greeting)
+func (o *ReflectionOrchestrator) rewriteCandidate(ctx context.Context, userID string, c map[string]interface{}, secT tool.Tool) (title, notification, greeting string) {
 	if secT == nil {
 		return
 	}
@@ -438,14 +439,15 @@ func (o *ReflectionOrchestrator) rewriteCandidate(ctx context.Context, userID st
 	}
 	var secOutput struct {
 		Messages []struct {
-			Title   string `json:"title"`
-			Content string `json:"content"`
+			Title        string `json:"title"`
+			Notification string `json:"notification"`
+			Greeting     string `json:"greeting"`
 		} `json:"messages"`
 	}
 	if json.Unmarshal(secRes.Data, &secOutput) != nil || len(secOutput.Messages) == 0 {
 		return
 	}
-	return secOutput.Messages[0].Title, secOutput.Messages[0].Content
+	return secOutput.Messages[0].Title, secOutput.Messages[0].Notification, secOutput.Messages[0].Greeting
 }
 
 // countRecentActivity 统计最近 7 天用户活动数量

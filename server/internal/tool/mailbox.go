@@ -27,6 +27,7 @@ type mailboxDeliverArgs struct {
 	Items []struct {
 		Title      string `json:"title"`
 		Content    string `json:"content"`
+		Greeting   string `json:"greeting"`
 		Type       string `json:"type"`
 		Source     string `json:"source"`
 		EntityType string `json:"entity_type"`
@@ -79,6 +80,7 @@ func (t *MailboxTool) Execute(ec *ExecuteContext, funcName string, args json.Raw
 			Title:      item.Title,
 			Content:    item.Content,
 			Type:       item.Type,
+			Greeting:   item.Greeting,
 			Source:     item.Source,
 			EntityType: item.EntityType,
 			EntityID:   item.EntityID,

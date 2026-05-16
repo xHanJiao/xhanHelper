@@ -50,7 +50,10 @@ async function navigateToChat(item) {
     const res = await api.post(`/api/mailbox/${item.id}/chat`)
     if (res.conversation_id) {
       markRead(item)
-      router.push(`/chat/${res.conversation_id}`)
+      router.push({
+        path: `/chat/${res.conversation_id}`,
+        query: res.greeting ? { greeting: JSON.stringify(res.greeting) } : {}
+      })
     }
   } catch (e) {
     message.error('跳转失败: ' + (e.message || ''))

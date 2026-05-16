@@ -864,7 +864,11 @@ func saveUsedToolNames(ctx context.Context, convRepo *service.ConversationRepo, 
 	if convRepo == nil || convID == "" {
 		return
 	}
-	extra := &model.ConversationExtra{UsedToolIDs: names}
+	extra, _ := convRepo.GetExtra(ctx, convID)
+	if extra == nil {
+		extra = &model.ConversationExtra{}
+	}
+	extra.UsedToolIDs = names
 	if err := convRepo.SaveExtra(ctx, convID, extra); err != nil {
 		log.Printf("[orch] save used tool names error: %v", err)
 	}

@@ -18,10 +18,11 @@ type MailboxHandler struct {
 	mailboxRepo *service.MailboxRepo
 	convRepo    *service.ConversationRepo
 	themeRepo   *service.ThemeStateRepo
+	msgRepo     *service.MessageRepo
 }
 
-func NewMailboxHandler(mailboxRepo *service.MailboxRepo, convRepo *service.ConversationRepo, themeRepo *service.ThemeStateRepo) *MailboxHandler {
-	return &MailboxHandler{mailboxRepo: mailboxRepo, convRepo: convRepo, themeRepo: themeRepo}
+func NewMailboxHandler(mailboxRepo *service.MailboxRepo, convRepo *service.ConversationRepo, themeRepo *service.ThemeStateRepo, msgRepo *service.MessageRepo) *MailboxHandler {
+	return &MailboxHandler{mailboxRepo: mailboxRepo, convRepo: convRepo, themeRepo: themeRepo, msgRepo: msgRepo}
 }
 
 // ListItems GET /api/mailbox
@@ -163,6 +164,25 @@ func (h *MailboxHandler) StartChat(c *gin.Context) {
 		return
 	}
 
+	// 插入 greeting 消息（复用信箱已有的 Secretary 文案）
+	greetingMsgID := uuid.New().String()
+	greetingContent := item.Greeting
+	if greetingContent == "" {
+		greetingContent = item.Content
+	}
+	if greetingContent == "" {
+		greetingContent = item.Title
+	}
+	if err := h.msgRepo.Create(c.Request.Context(), &model.Message{
+		ID:             greetingMsgID,
+		ConversationID: convID,
+		UserID:         userID,
+		Role:           "assistant",
+		Content:        greetingContent,
+	}); err != nil {
+		log.Printf("[mailbox] create greeting msg error: %v", err)
+	}
+
 	if err := h.themeRepo.UpdateConversationID(c.Request.Context(), item.EntityID, userID, convID); err != nil {
 		log.Printf("[mailbox] StartChat UpdateConversationID error: %v", err)
 	}
@@ -170,7 +190,15 @@ func (h *MailboxHandler) StartChat(c *gin.Context) {
 		log.Printf("[mailbox] StartChat MarkRead error: %v", err)
 	}
 
-	view.JSONOK(c, gin.H{"conversation_id": convID, "created": true})
+	view.JSONOK(c, gin.H{
+		"conversation_id": convID,
+		"created":         true,
+		"greeting": map[string]interface{}{
+			"id":      greetingMsgID,
+			"role":    "assistant",
+			"content": greetingContent,
+		},
+	})
 }
 
 // BatchRead POST /api/mailbox/batch-read

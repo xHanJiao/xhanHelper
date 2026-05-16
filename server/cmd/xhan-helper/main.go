@@ -279,7 +279,7 @@ func main() {
 	agentHandler := controller.NewAgentHandler(agentRepo, llmClient)
 	toolHandler := controller.NewToolHandler(toolRepo)
 	promptHandler := controller.NewPromptHandler(promptRepo)
-	mailboxHandler := controller.NewMailboxHandler(mailboxRepo, convRepo, themeStateRepo)
+	mailboxHandler := controller.NewMailboxHandler(mailboxRepo, convRepo, themeStateRepo, msgRepo)
 	themeHandler := controller.NewThemeHandler(themeStateRepo)
 	reflectionAdminHandler := controller.NewReflectionAdminHandler(traceRepo)
 

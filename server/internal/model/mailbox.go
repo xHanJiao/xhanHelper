@@ -7,9 +7,10 @@ type MailboxItem struct {
 	ID         string    `gorm:"primaryKey;size:36" json:"id"`
 	UserID     string    `gorm:"size:36;not null;index" json:"user_id"`
 	Title      string    `gorm:"size:200;not null" json:"title"`
-	Content    string    `gorm:"type:text;not null" json:"content"`
-	Type       string    `gorm:"size:30;not null" json:"type"` // daily_brief | theme_finding | candidate_theme
-	Source     string    `gorm:"size:50" json:"source"`        // 来源主题名或 "system"
+	Content    string    `gorm:"type:text;not null" json:"content"`   // 站内信/推送文案（短）
+	Greeting   string    `gorm:"type:text" json:"greeting,omitempty"` // 对话开场白（长）
+	Type       string    `gorm:"size:30;not null" json:"type"`        // daily_brief | theme_finding | candidate_theme
+	Source     string    `gorm:"size:50" json:"source"`
 	EntityType string    `gorm:"size:20" json:"entity_type,omitempty"`
 	EntityID   string    `gorm:"size:36" json:"entity_id,omitempty"`
 	IsRead     bool      `gorm:"default:false" json:"is_read"`

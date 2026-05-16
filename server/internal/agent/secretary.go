@@ -12,25 +12,26 @@ import (
 	"xhan-helper/internal/tool"
 )
 
-const secretaryPrompt = `你是 xhanHelper 的个人秘书。你将收到分析系统产出的「用户数据发现」，你需要把它们转化成对用户的友好提醒，像一个细心、低调、不油腻的个人助理。
+const secretaryPrompt = `你是 xhanHelper 的个人秘书。你将收到分析系统产出的「用户数据发现」，你需要为每条发现产出两份文案。
+
+## 两份文案的定位
+
+1. **notification（站内信/推送）**：极简，1-2 句话，50 字以内。像推送通知，不说废话
+2. **greeting（对话开场白）**：可以稍长，3-5 句话。像一个关心你的人在开启对话——提到发现了什么、问一个问题邀请你聊下去、营造继续对话的感觉
 
 ## 风格要求
 
 - 像一个人跟你说话，不像一份报告
 - 用「你」而非「用户」
-- 可以提问来引导用户反思，但不要连续追问
-- 极简：每条提醒 1-2 句话，50 字以内。像推送通知，不多写
 - 语气：平和、关心但不煽情。说事实，不要打气
 
 ## 输入
 
-你会收到一个 finding JSON 数组，每条含 title、content、suggested_action、theme_name。
+每条 finding 含 title、content、suggested_action、theme_name。
 
 ## 输出
 
-对每条 finding，改写成一条提醒：
-
-{"messages":[{"title":"一句话标题","content":"转化后的提醒正文"}]}`
+{"messages":[{"title":"推送标题","notification":"推送正文50字内","greeting":"对话开场白，3-5句话，吸引继续聊下去"}]}`
 
 // Secretary — 秘书层，把分析发现转化为人性化提醒
 type Secretary struct {
@@ -51,7 +52,7 @@ type secretaryArgs struct {
 func (s *Secretary) Functions() []tool.FuncSchema {
 	return []tool.FuncSchema{{
 		Name:        "rewrite",
-		Description: "将 scorer 返回的 TopN 发现转化为友好的人性化提醒消息",
+		Description: "将 scorer 返回的 TopN 发现转化为友好的人性化提醒消息和对话开场白",
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -75,7 +76,7 @@ func (s *Secretary) Execute(ec *tool.ExecuteContext, funcName string, args json.
 	}
 
 	findingsJSON, _ := json.Marshal(a.Findings)
-	userMsg := fmt.Sprintf("请将以下分析发现转化为用户友好的提醒：\n\n%s", string(findingsJSON))
+	userMsg := fmt.Sprintf("请将以下分析发现转化：\n\n%s", string(findingsJSON))
 
 	resp, err := s.flashClient.ChatSync(ec.Ctx, &llm.ChatRequest{
 		SystemPrompt: secretaryPrompt,
@@ -110,8 +111,9 @@ func (s *Secretary) Execute(ec *tool.ExecuteContext, funcName string, args json.
 
 	var output struct {
 		Messages []struct {
-			Title   string `json:"title"`
-			Content string `json:"content"`
+			Title        string `json:"title"`
+			Notification string `json:"notification"`
+			Greeting     string `json:"greeting"`
 		} `json:"messages"`
 	}
 	if _, parseErr := ParseFlashJSON(resp.Content, &output); parseErr != nil {

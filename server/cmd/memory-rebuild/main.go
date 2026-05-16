@@ -72,7 +72,7 @@ func main() {
 		log.Printf("deleted %d memory chunks", n)
 	}
 	// 删除旧 embedding（entity_type = "note" | "memory" | "chunk"）
-	for _, et := range []string{"note", "memory", "chunk"} {
+	for _, et := range []string{"note", "memory", "chunk", "concept"} {
 		// 逐页删除
 		for offset := 0; ; offset += 200 {
 			embeddings, err := embeddingRepo.ListByType(ctx, et, 200, offset)
@@ -132,6 +132,25 @@ func main() {
 				log.Printf("[mem %s] chunked %d sentences", m.ID[:8], nChunks)
 			}
 		}
+
+		// Step 4: 回填 concept embeddings
+		for _, n := range notes {
+			if n.Topic != "" {
+				conceptEmbedService.EnsureTopicEmbedded(ctx, u, n.Topic, "note", n.ID)
+			}
+			if n.Tags != "" {
+				conceptEmbedService.EnsureTagsEmbedded(ctx, u, n.Tags, "note", n.ID)
+			}
+		}
+		for _, m := range memories {
+			if m.Topic != "" {
+				conceptEmbedService.EnsureTopicEmbedded(ctx, u, m.Topic, "memory", m.ID)
+			}
+			if m.Tags != "" {
+				conceptEmbedService.EnsureTagsEmbedded(ctx, u, m.Tags, "memory", m.ID)
+			}
+		}
+		log.Printf("[concept] backfilled concepts for user %s", u[:8])
 	}
 
 	log.Printf("done. vector store size: %d", vectorStore.Size())

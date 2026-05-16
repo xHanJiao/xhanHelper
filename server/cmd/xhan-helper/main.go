@@ -171,7 +171,7 @@ func main() {
 	// NoteTool with chunk embedding
 	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(noteRepo, vectorStore, embedder, embeddingRepo, chunkBuilder, conceptEmbedService), log.Default()))
 
-	topicStatsTool := tool.NewLoggingWrapper(tool.NewGetTopicStatsTool(conceptEmbedRepo, noteRepo, memRepo, embedder, vsAdapter), log.Default())
+	topicStatsTool := tool.NewLoggingWrapper(tool.NewGetTopicStatsTool(conceptEmbedRepo, noteRepo, memRepo, embedder, vsAdapter, conceptEmbedService, cfg.Reflection.ClusterThreshold), log.Default())
 	topicDetailTool := tool.NewLoggingWrapper(tool.NewGetTopicDetailTool(noteRepo, memRepo), log.Default())
 	billStatsTool := tool.NewLoggingWrapper(tool.NewGetBillStatsTool(billRepo), log.Default())
 
@@ -185,17 +185,17 @@ func main() {
 	themeStore := agent.NewThemeStore(themeStateRepo)
 	themeAnalyst := agent.NewThemeAnalyst(llmClient, retrievalTools, themeStore, cfg.Reflection.AnalystMaxIterations)
 	scorerTool := agent.NewScorer(llmClient)
-	themeDiscoverer := agent.NewThemeDiscoverer(llmClient, retrievalTools, themeStore, embedder, vsAdapter, cfg.Reflection.DiscoverMaxIterations)
+	themeDiscoverer := agent.NewThemeDiscoverer(llmClient, retrievalTools, themeStore, embedder, vsAdapter, cfg.Reflection.DiscoverMaxIterations, cfg.Reflection.ClusterThreshold)
 	mailboxTool := tool.NewMailboxTool(mailboxRepo)
 	themeMgmtTool := tool.NewThemeTool(themeStateRepo, embedder, vsAdapter, embeddingRepo)
 
 	reflectionReg := tool.NewRegistry()
-	reflectionReg.Register(themeAnalyst)
-	reflectionReg.Register(scorerTool)
-	reflectionReg.Register(agent.NewSecretary(llmClient))
-	reflectionReg.Register(themeDiscoverer)
-	reflectionReg.Register(mailboxTool)
-	reflectionReg.Register(themeMgmtTool)
+	reflectionReg.Register(tool.NewLoggingWrapper(themeAnalyst, log.Default()))
+	reflectionReg.Register(tool.NewLoggingWrapper(scorerTool, log.Default()))
+	reflectionReg.Register(tool.NewLoggingWrapper(agent.NewSecretary(llmClient), log.Default()))
+	reflectionReg.Register(tool.NewLoggingWrapper(themeDiscoverer, log.Default()))
+	reflectionReg.Register(tool.NewLoggingWrapper(mailboxTool, log.Default()))
+	reflectionReg.Register(tool.NewLoggingWrapper(themeMgmtTool, log.Default()))
 
 	// ===== Phase 6: ReflectionOrchestrator + CronRunner =====
 	reflectionOrch := agent.NewReflectionOrchestrator(

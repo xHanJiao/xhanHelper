@@ -39,3 +39,4 @@ reflection:
   launch_max_iterations: 8
   analyst_max_iterations: 6
   discover_max_iterations: 6
+  cluster_threshold: 0.70

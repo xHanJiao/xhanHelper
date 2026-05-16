@@ -14,6 +14,9 @@ help:
 	@echo "  make dev            - 本地开发模式启动（dev环境，使用SQLite）"
 	@echo "  make dev-full       - 同时启动前后端开发服务器"
 	@echo "  make build          - 本地编译（当前系统）"
+	@echo "  make build-topic-fix - 编译+上传 topic 修复工具（修复 memory 中含 / 或 , 的脏 topic）"
+	@echo "  make build-backfill - 编译+上传概念回填工具（只跑 topic/tags → concept embedding）"
+	@echo "  make build-rebuild  - 编译+上传记忆重建工具（全量重建）"
 	@echo "  make build-linux    - 交叉编译 Linux amd64 版本（用于阿里云服务器）"
 	@echo "  make build-frontend - 构建前端静态文件"
 	@echo "  make deploy         - 一键部署：编译前后端 + 上传 + 重启"
@@ -106,6 +109,36 @@ test: check-env
 # 编译生产二进制
 build:
 	go build -o xhan-helper ./cmd/xhan-helper/
+
+# 编译 topic 修复工具 (Linux amd64)
+build-topic-fix:
+	@if [ -f .env ]; then . ./.env; fi; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); \
+	mkdir -p $(OUTPUT_DIR); \
+	GOOS=linux GOARCH=amd64 go build -o $(OUTPUT_DIR)/topic-fix ./cmd/topic-fix/; \
+	scp $(OUTPUT_DIR)/topic-fix $$U@$$H:$$P/topic-fix.tmp; \
+	ssh $$U@$$H "cd $$P && mv topic-fix.tmp topic-fix && chmod +x topic-fix"; \
+	echo "✅ 上传完成，SSH 上去运行: APP_ENV=prod LLM_API_KEY=xxx ./topic-fix"
+
+# 编译概念回填工具 (Linux amd64)
+build-backfill:
+	@if [ -f .env ]; then . ./.env; fi; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); \
+	mkdir -p $(OUTPUT_DIR); \
+	GOOS=linux GOARCH=amd64 go build -o $(OUTPUT_DIR)/concept-backfill ./cmd/concept-backfill/; \
+	scp $(OUTPUT_DIR)/concept-backfill $$U@$$H:$$P/concept-backfill.tmp; \
+	ssh $$U@$$H "cd $$P && mv concept-backfill.tmp concept-backfill && chmod +x concept-backfill"; \
+	echo "✅ 上传完成，SSH 上去运行: APP_ENV=prod LLM_API_KEY=xxx EMBEDDING_API_KEY=xxx ./concept-backfill"
+
+# 编译记忆重建工具 (Linux amd64)
+build-rebuild:
+	@if [ -f .env ]; then . ./.env; fi; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); \
+	mkdir -p $(OUTPUT_DIR); \
+	GOOS=linux GOARCH=amd64 go build -o $(OUTPUT_DIR)/memory-rebuild ./cmd/memory-rebuild/; \
+	scp $(OUTPUT_DIR)/memory-rebuild $$U@$$H:$$P/memory-rebuild.tmp; \
+	ssh $$U@$$H "cd $$P && mv memory-rebuild.tmp memory-rebuild && chmod +x memory-rebuild"; \
+	echo "✅ 上传完成，SSH 上去运行: APP_ENV=prod LLM_API_KEY=xxx EMBEDDING_API_KEY=xxx ./memory-rebuild"
 
 # 交叉编译 Linux amd64
 build-linux:

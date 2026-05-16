@@ -82,7 +82,7 @@ const extractSystemPrompt = "你是记忆提取助手。从对话中提取有长
 const extractPromptPrefix = `从以下对话中提取有长期价值的信息，包括：用户的事实/偏好/习惯/计划、用户反复讨论的话题、用户表达的观点和判断、用户分享的外部信息。合并同类信息，每次最多提取3条最重要的。
 
 请严格按以下 JSON 格式输出，不要包含其他内容：
-{"extracted":true,"summary":"一句话概括核心信息","facts":["支持细节1"],"topic":"关键主题词如职业规划/房地产/睡眠管理","tags":"关键词1,关键词2"}
+{"extracted":true,"summary":"一句话概括核心信息","facts":["支持细节1"],"topic":"一个关键主题词（如睡眠管理、职业规划、家庭关系），禁止斜杠、逗号、多个主题","tags":"关键词1,关键词2"}
 tags 是从内容中提取的逗号分隔关键词（如 褪黑素,早醒,生物钟）。没有值得提取的内容时返回 {"extracted":false}。`
 
 // ExtractFromConversation 从指定会话中增量提取记忆
@@ -132,8 +132,8 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 	memory := &model.UserMemory{
 		ID:              uuid.New().String(),
 		UserID:          conv.UserID,
-		MemoryKey:       truncate(result.Summary, 50),
-		MemoryValue:     formatMemoryValue(result),
+		MemoryKey:       formatMemoryKey(result),
+		MemoryValue:     result.Summary,
 		RawJSON:         &rawStr,
 		Source:          "conversation",
 		Topic:           result.Topic,
@@ -215,7 +215,7 @@ func (e *MemoryExtractor) ExtractFromConversationWithCallback(ctx context.Contex
 			ID:              uuid.New().String(),
 			UserID:          conv.UserID,
 			MemoryKey:       truncate(result.Summary, 50),
-			MemoryValue:     formatMemoryValue(result),
+			MemoryValue:     result.Summary,
 			RawJSON:         &rawStr,
 			Source:          "conversation",
 			Topic:           result.Topic,
@@ -277,8 +277,8 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, promptT
 	memory := &model.UserMemory{
 		ID:              uuid.New().String(),
 		UserID:          userID,
-		MemoryKey:       truncate(result.Summary, 50),
-		MemoryValue:     formatMemoryValue(result),
+		MemoryKey:       formatMemoryKey(result),
+		MemoryValue:     result.Summary,
 		RawJSON:         &rawStr,
 		Source:          source,
 		Topic:           result.Topic,
@@ -373,11 +373,11 @@ func hashPrompt(text string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func formatMemoryValue(r *extractResult) string {
+func formatMemoryKey(r *extractResult) string {
 	if r.Topic != "" {
-		return fmt.Sprintf("[%s] %s", r.Topic, r.Summary)
+		return r.Topic
 	}
-	return r.Summary
+	return truncate(r.Summary, 50)
 }
 
 func factsPtr(facts []string) *string {

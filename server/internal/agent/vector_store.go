@@ -26,30 +26,30 @@ type FilterFunc func(entry vectorEntry) bool
 // VectorStore — 内存向量存储 + 余弦检索
 type VectorStore struct {
 	mu      sync.RWMutex
-	vectors []vectorEntry // O(n) 暴力搜索，n < 5000 时够用
+	vectors []vectorEntry  // 按索引维护
+	byID    map[string]int // ID → 索引
 }
 
 // NewVectorStore 创建向量存储
 func NewVectorStore() *VectorStore {
-	return &VectorStore{}
+	return &VectorStore{byID: make(map[string]int)}
 }
 
 // Upsert 插入或更新向量，metadata 可选（传 nil 则初始化为空 map）
 func (vs *VectorStore) Upsert(id string, vec []float64, metadata map[string]string) {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
-	for i, e := range vs.vectors {
-		if e.ID == id {
-			vs.vectors[i].Vec = vec
-			if metadata != nil {
-				vs.vectors[i].Metadata = metadata
-			}
-			return
+	if idx, ok := vs.byID[id]; ok {
+		vs.vectors[idx].Vec = vec
+		if metadata != nil {
+			vs.vectors[idx].Metadata = metadata
 		}
+		return
 	}
 	if metadata == nil {
 		metadata = map[string]string{}
 	}
+	vs.byID[id] = len(vs.vectors)
 	vs.vectors = append(vs.vectors, vectorEntry{ID: id, Vec: vec, Metadata: metadata})
 }
 
@@ -163,6 +163,20 @@ func heapDown(heap []candidate, i, n int) {
 	}
 }
 
+// GetVector 按 ID O(1) 获取向量
+func (vs *VectorStore) GetVector(id string) ([]float64, bool) {
+	vs.mu.RLock()
+	defer vs.mu.RUnlock()
+	idx, ok := vs.byID[id]
+	if !ok {
+		return nil, false
+	}
+	e := vs.vectors[idx]
+	vec := make([]float64, len(e.Vec))
+	copy(vec, e.Vec)
+	return vec, true
+}
+
 // Size 返回向量数量
 func (vs *VectorStore) Size() int {
 	vs.mu.RLock()
@@ -174,12 +188,17 @@ func (vs *VectorStore) Size() int {
 func (vs *VectorStore) Delete(id string) {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
-	for i, e := range vs.vectors {
-		if e.ID == id {
-			vs.vectors = append(vs.vectors[:i], vs.vectors[i+1:]...)
-			return
-		}
+	idx, ok := vs.byID[id]
+	if !ok {
+		return
 	}
+	last := len(vs.vectors) - 1
+	if idx < last {
+		vs.vectors[idx] = vs.vectors[last]
+		vs.byID[vs.vectors[idx].ID] = idx
+	}
+	vs.vectors = vs.vectors[:last]
+	delete(vs.byID, id)
 }
 
 // cosineSimilarity 余弦相似度

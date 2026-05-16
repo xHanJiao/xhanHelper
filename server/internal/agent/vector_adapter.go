@@ -30,6 +30,14 @@ func (a *VectorSearchAdapter) Size() int {
 
 // ===== agent.VectorStorer (for ThemeDiscoverer dedup) =====
 
+// GetVector 从向量库按 key 取缓存的向量
+func (a *VectorSearchAdapter) GetVector(key string) ([]float64, bool) {
+	if a.store == nil {
+		return nil, false
+	}
+	return a.store.GetVector(key)
+}
+
 func (a *VectorSearchAdapter) Upsert(id string, vec []float64, metadata map[string]string) {
 	a.store.Upsert(id, vec, metadata)
 }

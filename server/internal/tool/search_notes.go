@@ -13,6 +13,7 @@ import (
 // VectorSearcher — 向量检索接口（避免循环依赖 agent 包）
 type VectorSearcher interface {
 	Search(query []float64, topK int, filter func(id string, vec []float64, metadata map[string]string) bool) []VectorHit
+	GetVector(id string) ([]float64, bool)
 	Size() int
 }
 

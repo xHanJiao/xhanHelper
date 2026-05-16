@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/google/uuid"
+
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/tool"
 )
 
@@ -82,6 +85,27 @@ func (s *Secretary) Execute(ec *tool.ExecuteContext, funcName string, args json.
 	if err != nil {
 		log.Printf("[secretary] ChatSync error: %v", err)
 		return &tool.Result{Success: false, Error: fmt.Sprintf("秘书转化失败: %v", err)}
+	}
+
+	// 写 trace
+	if traceRepo := CtxTraceRepo(ec.Ctx); traceRepo != nil {
+		var reqJSON, respJSON string
+		if resp.RequestJSON != nil {
+			reqJSON = *resp.RequestJSON
+		}
+		if resp.ResponseJSON != nil {
+			respJSON = *resp.ResponseJSON
+		}
+		pt, ct := extractUsage(respJSON)
+		traceRepo.CreateLLMCall(ec.Ctx, &model.ReflectionLLMCall{
+			ID:               uuid.New().String(),
+			TraceID:          CtxTraceID(ec.Ctx),
+			Caller:           "Secretary",
+			RequestJSON:      &reqJSON,
+			ResponseJSON:     &respJSON,
+			PromptTokens:     pt,
+			CompletionTokens: ct,
+		})
 	}
 
 	var output struct {

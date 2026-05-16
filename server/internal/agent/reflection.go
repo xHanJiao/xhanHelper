@@ -312,7 +312,14 @@ func (o *ReflectionOrchestrator) rewriteCandidate(ctx context.Context, userID st
 	if secT == nil {
 		return
 	}
-	cJSON, _ := json.Marshal([]interface{}{c})
+	// 映射为 Secretary 认识的 finding 格式
+	finding := map[string]interface{}{
+		"title":            c["name"],
+		"content":          c["rationale"],
+		"suggested_action": "",
+		"theme_name":       c["name"],
+	}
+	cJSON, _ := json.Marshal(map[string]interface{}{"findings": []interface{}{finding}})
 	secRes := secT.Execute(&tool.ExecuteContext{Ctx: ctx, UserID: userID}, "rewrite", cJSON)
 	if !secRes.Success || secRes.Data == nil {
 		return

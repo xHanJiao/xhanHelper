@@ -5,24 +5,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"strings"
 
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/service"
+	"xhan-helper/internal/util"
 )
+
+// TopicEmbedder — topic 嵌入接口（避免循环依赖 agent 包）
+type TopicEmbedder interface {
+	EnsureTopicEmbedded(ctx context.Context, userID, topic, parentType, parentID string)
+}
 
 // GetTopicStatsTool — topic 统计工具（聚类 + 7 维度）
 type GetTopicStatsTool struct {
-	conceptRepo *service.ConceptEmbeddingRepo
-	noteRepo    *service.NoteRepo
-	memRepo     *service.UserMemoryRepo
-	embedder    *llm.Embedder
-	vectorStore VectorSearcher
+	conceptRepo      *service.ConceptEmbeddingRepo
+	noteRepo         *service.NoteRepo
+	memRepo          *service.UserMemoryRepo
+	embedder         *llm.Embedder
+	vectorStore      VectorSearcher
+	topicEmbedder    TopicEmbedder
+	clusterThreshold float64
 }
 
-func NewGetTopicStatsTool(conceptRepo *service.ConceptEmbeddingRepo, noteRepo *service.NoteRepo, memRepo *service.UserMemoryRepo, embedder *llm.Embedder, vs VectorSearcher) *GetTopicStatsTool {
-	return &GetTopicStatsTool{conceptRepo: conceptRepo, noteRepo: noteRepo, memRepo: memRepo, embedder: embedder, vectorStore: vs}
+func NewGetTopicStatsTool(conceptRepo *service.ConceptEmbeddingRepo, noteRepo *service.NoteRepo, memRepo *service.UserMemoryRepo, embedder *llm.Embedder, vs VectorSearcher, topicEmbedder TopicEmbedder, clusterThreshold float64) *GetTopicStatsTool {
+	return &GetTopicStatsTool{conceptRepo: conceptRepo, noteRepo: noteRepo, memRepo: memRepo, embedder: embedder, vectorStore: vs, topicEmbedder: topicEmbedder, clusterThreshold: clusterThreshold}
 }
 
 func (t *GetTopicStatsTool) Name() string { return "get_topic_stats" }
@@ -41,12 +48,6 @@ func (t *GetTopicStatsTool) Functions() []FuncSchema {
 	}}
 }
 
-type topicCluster struct {
-	MainTopic string
-	Members   []string
-	Tags      map[string]bool
-}
-
 func (t *GetTopicStatsTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	// 1. 读取所有 concept（topic + tag）
 	concepts, err := t.conceptRepo.ListAllByUser(ec.Ctx, ec.UserID)
@@ -55,33 +56,34 @@ func (t *GetTopicStatsTool) Execute(ec *ExecuteContext, funcName string, args js
 		return &Result{Success: false, Error: fmt.Sprintf("读取概念失败: %v", err)}
 	}
 
-	// 2. 构建 topic 向量 map + 聚类
+	// 2. 从向量库取缓存的 topic 向量
 	topicVecs := make(map[string][]float64)
 	for _, c := range concepts {
 		if c.Type != "topic" {
 			continue
 		}
-		hits := t.vectorStore.Search(nil, 1, func(id string, _ []float64, metadata map[string]string) bool {
-			return id == "concept:"+c.ID
-		})
-		if len(hits) == 0 {
+		vec, ok := t.vectorStore.GetVector("concept:" + c.ID)
+		if ok {
+			topicVecs[c.Value] = vec
 			continue
 		}
-		// 用 c.Value 做一次 embedding（实时获取向量）
-		vec, err := t.embedder.Embed(ec.Ctx, c.Value)
-		if err != nil {
-			log.Printf("[get_topic_stats] embed topic %s error: %v", c.Value, err)
-			continue
+		// 兜底：走统一嵌入入口（写 concept 表 + embeddings 表 + vectorStore）
+		if t.topicEmbedder != nil {
+			t.topicEmbedder.EnsureTopicEmbedded(ec.Ctx, ec.UserID, c.Value, "stats", "fallback")
 		}
-		topicVecs[c.Value] = vec
+		// 重新从 vectorStore 读取
+		vec, ok = t.vectorStore.GetVector("concept:" + c.ID)
+		if ok {
+			topicVecs[c.Value] = vec
+		}
 	}
 
 	// 3. 聚类合并
-	clusters := clusterTopics(topicVecs, 0.85)
+	clusterList := util.ClusterVectors(topicVecs, t.clusterThreshold)
 
 	// 4. 对每个 cluster 做统计
 	var result []map[string]interface{}
-	for _, cl := range clusters {
+	for _, cl := range clusterList {
 		stats := t.buildClusterStats(ec.Ctx, ec.UserID, cl)
 		if stats != nil {
 			result = append(result, stats)
@@ -110,53 +112,7 @@ func (t *GetTopicStatsTool) Execute(ec *ExecuteContext, funcName string, args js
 	return &Result{Success: true, Data: data}
 }
 
-// clusterTopics 合并相似 topic
-func clusterTopics(vecs map[string][]float64, threshold float64) []topicCluster {
-	topics := make([]string, 0, len(vecs))
-	for t := range vecs {
-		topics = append(topics, t)
-	}
-
-	parent := make([]int, len(topics))
-	for i := range parent {
-		parent[i] = i
-	}
-
-	var find func(int) int
-	find = func(x int) int {
-		if parent[x] != x {
-			parent[x] = find(parent[x])
-		}
-		return parent[x]
-	}
-
-	for i := 0; i < len(topics); i++ {
-		for j := i + 1; j < len(topics); j++ {
-			sim := cosineSimilarity(vecs[topics[i]], vecs[topics[j]])
-			if sim >= threshold {
-				pi, pj := find(i), find(j)
-				if pi != pj {
-					parent[pi] = pj
-				}
-			}
-		}
-	}
-
-	groups := make(map[int][]string)
-	for i, t := range topics {
-		root := find(i)
-		groups[root] = append(groups[root], t)
-	}
-
-	var result []topicCluster
-	for _, members := range groups {
-		mainTopic := members[0]
-		result = append(result, topicCluster{MainTopic: mainTopic, Members: members})
-	}
-	return result
-}
-
-func (t *GetTopicStatsTool) buildClusterStats(ctx context.Context, userID string, cl topicCluster) map[string]interface{} {
+func (t *GetTopicStatsTool) buildClusterStats(ctx context.Context, userID string, cl util.Cluster) map[string]interface{} {
 	stats := map[string]interface{}{
 		"topic":   cl.MainTopic,
 		"cluster": cl.Members,
@@ -230,22 +186,6 @@ func (t *GetTopicStatsTool) buildClusterStats(ctx context.Context, userID string
 	stats["conversation_count"] = 0 // 简化：后续通过 chunk 命中判断
 
 	return stats
-}
-
-func cosineSimilarity(a, b []float64) float64 {
-	if len(a) == 0 || len(b) == 0 || len(a) != len(b) {
-		return 0
-	}
-	var dot, normA, normB float64
-	for i := range a {
-		dot += a[i] * b[i]
-		normA += a[i] * a[i]
-		normB += b[i] * b[i]
-	}
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
 func contains(slice []string, s string) bool {

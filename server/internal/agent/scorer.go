@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/google/uuid"
+
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/tool"
 )
 
@@ -151,6 +154,27 @@ func (s *Scorer) Execute(ec *tool.ExecuteContext, funcName string, args json.Raw
 	if err != nil {
 		log.Printf("[scorer] ChatSync error: %v", err)
 		return &tool.Result{Success: false, Error: fmt.Sprintf("打分失败: %v", err)}
+	}
+
+	// 写 trace
+	if traceRepo := CtxTraceRepo(ec.Ctx); traceRepo != nil {
+		var reqJSON, respJSON string
+		if resp.RequestJSON != nil {
+			reqJSON = *resp.RequestJSON
+		}
+		if resp.ResponseJSON != nil {
+			respJSON = *resp.ResponseJSON
+		}
+		pt, ct := extractUsage(respJSON)
+		traceRepo.CreateLLMCall(ec.Ctx, &model.ReflectionLLMCall{
+			ID:               uuid.New().String(),
+			TraceID:          CtxTraceID(ec.Ctx),
+			Caller:           "Scorer",
+			RequestJSON:      &reqJSON,
+			ResponseJSON:     &respJSON,
+			PromptTokens:     pt,
+			CompletionTokens: ct,
+		})
 	}
 
 	// 解析输出

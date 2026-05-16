@@ -80,14 +80,14 @@ type ThemeDiscoverer struct {
 	maxIterations  int
 }
 
-func NewThemeDiscoverer(flashClient llm.LLMClient, retrievalTools map[string]tool.Tool, themeStore *ThemeStore, embedder *llm.Embedder, vectorStore VectorStorer, maxIterations int) *ThemeDiscoverer {
+func NewThemeDiscoverer(flashClient llm.LLMClient, retrievalTools map[string]tool.Tool, themeStore *ThemeStore, embedder *llm.Embedder, vectorStore VectorStorer, maxIterations int, dedupThreshold float64) *ThemeDiscoverer {
 	return &ThemeDiscoverer{
 		flashClient:    flashClient,
 		retrievalTools: retrievalTools,
 		themeStore:     themeStore,
 		embedder:       embedder,
 		vectorStore:    vectorStore,
-		dedupThreshold: 0.85,
+		dedupThreshold: dedupThreshold,
 		maxIterations:  maxIterations,
 	}
 }

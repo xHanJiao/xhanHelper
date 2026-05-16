@@ -43,6 +43,7 @@ type MemoryExtractor struct {
 	embeddingRepo *service.EmbeddingRepo
 	dupeThreshold float64
 	chunkBuilder  *ChunkBuilder
+	conceptEmbed  *ConceptEmbedService
 }
 
 // NewMemoryExtractor 创建提取器
@@ -50,7 +51,7 @@ func NewMemoryExtractor(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo
 	vectorStore *VectorStore, embedder *llm.Embedder,
 	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
 	embeddingRepo *service.EmbeddingRepo,
-	dupeThreshold float64, chunkBuilder *ChunkBuilder) *MemoryExtractor {
+	dupeThreshold float64, chunkBuilder *ChunkBuilder, conceptEmbed *ConceptEmbedService) *MemoryExtractor {
 	if dupeThreshold <= 0 {
 		dupeThreshold = 0.85 // 默认值
 	}
@@ -64,6 +65,7 @@ func NewMemoryExtractor(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo
 		embeddingRepo: embeddingRepo,
 		dupeThreshold: dupeThreshold,
 		chunkBuilder:  chunkBuilder,
+		conceptEmbed:  conceptEmbed,
 	}
 }
 
@@ -338,18 +340,23 @@ func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
 		log.Printf("[memory] create error: %v", err)
 		return
 	}
-	if e.chunkBuilder != nil && memory.MemoryValue != "" {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
+	// 异步嵌入：concept + chunk
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+		defer cancel()
+		e.conceptEmbed.EnsureTopicEmbedded(ctx, memory.UserID, memory.Topic, "memory", memory.ID)
+		if memory.Tags != "" {
+			e.conceptEmbed.EnsureTagsEmbedded(ctx, memory.UserID, memory.Tags, "memory", memory.ID)
+		}
+		if memory.MemoryValue != "" {
 			n, err := e.chunkBuilder.BuildChunks(ctx, memory.UserID, "memory", memory.ID, memory.MemoryValue)
 			if err != nil {
 				log.Printf("[memory] chunk build error: %v", err)
 			} else {
 				log.Printf("[memory] chunked mem %s: %d sentences", memory.ID[:8], n)
 			}
-		}()
-	}
+		}
+	}()
 }
 
 func (e *MemoryExtractor) updateProgress(ctx context.Context, conv *model.Conversation, lastMsgID string) {

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -54,14 +55,30 @@ func (r *ThemeStateRepo) ListActive(ctx context.Context, userID string) ([]model
 	return list, err
 }
 
-// UpdateState 更新状态页文本 + 最后运行时间
+// UpdateState 更新状态页文本 + 最后运行时间，旧内容 append 到 history
 func (r *ThemeStateRepo) UpdateState(ctx context.Context, id, userID, stateText string) error {
 	now := time.Now()
+	// 先读取旧值
+	var old model.ThemeState
+	if err := r.db.WithContext(ctx).Where("id = ? AND user_id = ?", id, userID).First(&old).Error; err != nil {
+		return err
+	}
+
+	history := old.HistoryStateText
+	entry := fmt.Sprintf("--- %s ---\n%s\n", now.Format("2006-01-02 15:04"), old.StateText)
+	if history != nil && *history != "" {
+		combined := *history + "\n" + entry
+		history = &combined
+	} else {
+		history = &entry
+	}
+
 	return r.db.WithContext(ctx).Model(&model.ThemeState{}).
 		Where("id = ? AND user_id = ?", id, userID).
 		Updates(map[string]interface{}{
-			"state_text":  stateText,
-			"last_run_at": now,
+			"state_text":         stateText,
+			"history_state_text": history,
+			"last_run_at":        now,
 		}).Error
 }
 

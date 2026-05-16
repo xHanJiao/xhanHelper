@@ -47,10 +47,13 @@ func main() {
 	// Vector store (新建，不加载旧的)
 	vectorStore := agent.NewVectorStore()
 
-	builder := agent.NewChunkBuilder(embedder, chunkRepo, embeddingRepo, agent.NewVectorSearchAdapter(vectorStore))
+	vsAdapter := agent.NewVectorSearchAdapter(vectorStore)
+	builder := agent.NewChunkBuilder(embedder, chunkRepo, embeddingRepo, vsAdapter)
+	conceptEmbedRepo := service.NewConceptEmbeddingRepo(db)
+	conceptEmbedService := agent.NewConceptEmbedService(conceptEmbedRepo, embeddingRepo, embedder, vsAdapter)
 
 	extractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder,
-		msgRepo, convRepo, embeddingRepo, 0.85, builder)
+		msgRepo, convRepo, embeddingRepo, 0.85, builder, conceptEmbedService)
 
 	ctx := context.Background()
 

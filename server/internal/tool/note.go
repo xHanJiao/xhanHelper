@@ -30,10 +30,17 @@ type NoteTool struct {
 	embedder      *llm.Embedder
 	embeddingRepo *service.EmbeddingRepo
 	chunkBuilder  ChunkEmbedder
+	conceptEmbed  ConceptEmbedDeder
 }
 
-func NewNoteTool(noteRepo *service.NoteRepo, vs VectorStorer, emb *llm.Embedder, embeddingRepo *service.EmbeddingRepo, chunkBuilder ChunkEmbedder) *NoteTool {
-	return &NoteTool{noteRepo: noteRepo, vectorStore: vs, embedder: emb, embeddingRepo: embeddingRepo, chunkBuilder: chunkBuilder}
+// ConceptEmbedDeder — 概念嵌入接口（避免循环依赖）
+type ConceptEmbedDeder interface {
+	EnsureTopicEmbedded(ctx context.Context, userID, topic, parentType, parentID string)
+	EnsureTagsEmbedded(ctx context.Context, userID, tags, parentType, parentID string)
+}
+
+func NewNoteTool(noteRepo *service.NoteRepo, vs VectorStorer, emb *llm.Embedder, embeddingRepo *service.EmbeddingRepo, chunkBuilder ChunkEmbedder, conceptEmbed ConceptEmbedDeder) *NoteTool {
+	return &NoteTool{noteRepo: noteRepo, vectorStore: vs, embedder: emb, embeddingRepo: embeddingRepo, chunkBuilder: chunkBuilder, conceptEmbed: conceptEmbed}
 }
 
 func (t *NoteTool) Name() string { return "note" }
@@ -150,10 +157,14 @@ func (t *NoteTool) recordNote(ec *ExecuteContext, args json.RawMessage) *Result 
 		return &Result{Success: false, Error: fmt.Sprintf("create note: %v", err)}
 	}
 
-	// 异步 embedding
-	if t.vectorStore != nil && t.embedder != nil && t.embeddingRepo != nil {
-		go t.embedNote(note)
-	}
+	// 异步嵌入：concept + chunk
+	go func() {
+		t.conceptEmbed.EnsureTopicEmbedded(context.Background(), ec.UserID, note.Topic, "note", note.ID)
+		if note.Tags != "" {
+			t.conceptEmbed.EnsureTagsEmbedded(context.Background(), ec.UserID, note.Tags, "note", note.ID)
+		}
+		t.embedNote(note)
+	}()
 
 	data, _ := json.Marshal(note)
 	return &Result{Success: true, Data: data}
@@ -185,18 +196,23 @@ func (t *NoteTool) updateNote(ec *ExecuteContext, args json.RawMessage) *Result 
 		return &Result{Success: false, Error: fmt.Sprintf("update note: %v", err)}
 	}
 
-	// 更新了 content 则重新 embedding
-	if params.Content != "" && t.vectorStore != nil && t.embedder != nil && t.embeddingRepo != nil {
-		go t.embedNote(&model.Note{ID: params.ID, Content: params.Content, UserID: ec.UserID})
+	// 更新了 content 则重新嵌入
+	if params.Content != "" {
+		go func() {
+			if params.Topic != "" {
+				t.conceptEmbed.EnsureTopicEmbedded(context.Background(), ec.UserID, params.Topic, "note", params.ID)
+			}
+			if params.Tags != "" {
+				t.conceptEmbed.EnsureTagsEmbedded(context.Background(), ec.UserID, params.Tags, "note", params.ID)
+			}
+			t.embedNote(&model.Note{ID: params.ID, Content: params.Content, UserID: ec.UserID})
+		}()
 	}
 
 	return &Result{Success: true}
 }
 
 func (t *NoteTool) embedNote(note *model.Note) {
-	if t.chunkBuilder == nil {
-		return
-	}
 	n, err := t.chunkBuilder.BuildChunks(context.Background(), note.UserID, "note", note.ID, note.Content)
 	if err != nil {
 		log.Printf("[note] chunk build error: %v", err)

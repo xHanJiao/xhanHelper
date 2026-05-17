@@ -44,12 +44,17 @@ async function markRead(item) {
 }
 
 async function navigateToChat(item) {
-  if (!item.entity_type || !item.entity_id || navigating.value) return
+  if (navigating.value) return
+  // 无跳转目标（如待办提醒），直接标已读
+  if (!item.entity_type || !item.entity_id) {
+    await markRead(item)
+    return
+  }
   navigating.value = true
   try {
     const res = await api.post(`/api/mailbox/${item.id}/chat`)
     if (res.conversation_id) {
-      markRead(item)
+      await markRead(item)
       router.push({
         path: `/chat/${res.conversation_id}`,
         query: res.greeting ? { greeting: JSON.stringify(res.greeting) } : {}

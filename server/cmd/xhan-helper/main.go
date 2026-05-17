@@ -75,6 +75,7 @@ func main() {
 		&model.EmbeddingChunk{},
 		&model.ConceptEmbedding{},
 		&model.PendingFinding{},
+		&model.Commitment{},
 	); err != nil {
 		log.Printf("[db] AutoMigrate error: %v", err)
 	}
@@ -108,6 +109,7 @@ func main() {
 	chunkRepo := service.NewEmbeddingChunkRepo(db)
 	conceptEmbedRepo := service.NewConceptEmbeddingRepo(db)
 	pendingFindingRepo := service.NewPendingFindingRepo(db)
+	commitmentRepo := service.NewCommitmentRepo(db)
 
 	// Tool Registry + Tools
 	reg := tool.NewRegistry()
@@ -202,6 +204,11 @@ func main() {
 	// Memory Extractor（合并到对话后处理流程）
 	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo, embeddingRepo, cfg.Server.MemoryDupeThreshold, chunkBuilder, conceptEmbedService)
 
+	commitmentTimer := agent.NewCommitmentTimer(commitmentRepo, mailboxRepo)
+
+	// 注册提醒工具到主 Registry（对话中 LLM 直接调用）
+	reg.Register(tool.NewLoggingWrapper(tool.NewReminderTool(commitmentRepo, commitmentTimer), log.Default()))
+
 	// ===== Phase 6: ReflectionOrchestrator + CronRunner =====
 	reflectionOrch := agent.NewReflectionOrchestrator(
 		llmClient, reflectionReg, traceRepo, themeStore,
@@ -211,7 +218,7 @@ func main() {
 	)
 	reflectionOrch.SetMaxDeliveryRetries(cfg.Reflection.MaxDeliveryRetries)
 	stateUpdater := agent.NewStateUpdater(llmClient, msgRepo, convRepo, themeStore, pendingFindingRepo)
-	cronRunner := agent.NewCronRunner(reflectionOrch, stateUpdater, userRepo, memExtractor, convRepo)
+	cronRunner := agent.NewCronRunner(reflectionOrch, stateUpdater, userRepo, memExtractor, commitmentTimer, convRepo)
 	cronRunner.SetPostChatDelay(time.Duration(cfg.Reflection.PostChatDelaySeconds) * time.Second)
 	cronRunner.SetDiscoverSchedules(cfg.Reflection.DailySchedules)
 	cronRunner.SetDeliverInterval(time.Duration(cfg.Reflection.DeliverIntervalMinutes) * time.Minute)

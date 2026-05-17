@@ -25,17 +25,19 @@ type CronRunner struct {
 	eventCh           chan postChatEvent // 对话结束后通知
 	stateUpdater      *StateUpdater
 	memExtractor      *MemoryExtractor
+	commitTimer       *CommitmentTimer
 	convRepo          *service.ConversationRepo
 	memoryAutoExtract bool
 }
 
 // NewCronRunner 创建调度器
-func NewCronRunner(orch *ReflectionOrchestrator, stateUpdater *StateUpdater, userRepo *service.UserRepo, memExtractor *MemoryExtractor, convRepo *service.ConversationRepo) *CronRunner {
+func NewCronRunner(orch *ReflectionOrchestrator, stateUpdater *StateUpdater, userRepo *service.UserRepo, memExtractor *MemoryExtractor, commitTimer *CommitmentTimer, convRepo *service.ConversationRepo) *CronRunner {
 	return &CronRunner{
 		orch:            orch,
 		stateUpdater:    stateUpdater,
 		userRepo:        userRepo,
 		memExtractor:    memExtractor,
+		commitTimer:     commitTimer,
 		convRepo:        convRepo,
 		discoverTimes:   []string{"09:00", "18:00"},
 		deliverInterval: 1 * time.Hour,
@@ -75,6 +77,10 @@ func (cr *CronRunner) NotifyChatEnd(userID, convID string) {
 func (cr *CronRunner) Start(ctx context.Context) {
 	log.Printf("[cron] started, discover_times=%v deliver_interval=%v post_chat_delay=%v",
 		cr.discoverTimes, cr.deliverInterval, cr.postChatDelay)
+
+	// 启动时加载所有 pending 承诺，注册 timer
+	cr.commitTimer.LoadPending(ctx)
+	go cr.commitTimer.StartFallbackScan(ctx)
 
 	deliverTimer := time.NewTimer(cr.deliverInterval)
 	defer deliverTimer.Stop()
@@ -148,9 +154,7 @@ func (cr *CronRunner) dispatchPostChat(ctx context.Context, userID, convID strin
 		}
 	}
 
-	// Step 2: 提取显式承诺（TODO: 后续实现）
-
-	// Step 3: 查会话是否绑定了主题
+	// Step 2: 查会话是否绑定了主题
 	extra, err := cr.stateUpdater.convRepo.GetExtra(runCtx, convID)
 	if err != nil || extra == nil || extra.Context == nil || extra.Context.ThemeID == "" {
 		// 未绑定主题 → 从当前会话消息中静默发现草稿

@@ -100,6 +100,12 @@ func (r *ConversationRepo) CountActive(ctx context.Context, since time.Duration)
 	return int(count)
 }
 
+// UpdateExtra 仅更新会话的 extra 字段，不动 updated_at
+func (r *ConversationRepo) UpdateExtra(ctx context.Context, convID, extra string) error {
+	return r.db.WithContext(ctx).Model(&model.Conversation{}).
+		Where("id = ?", convID).Update("extra", extra).Error
+}
+
 // Touch 更新会话的 updated_at 到当前时间
 func (r *ConversationRepo) Touch(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).Where("id = ?", id).Update("updated_at", time.Now()).Error

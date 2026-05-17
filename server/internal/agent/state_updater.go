@@ -148,9 +148,7 @@ func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, convI
 	lastMsg := msgs[len(msgs)-1]
 	extra.Context.ThemeStateCursor = lastMsg.ID
 	newExtra, _ := json.Marshal(extra)
-	if err := s.convRepo.Update(ctx, &model.Conversation{
-		ID: convID, Extra: string(newExtra),
-	}); err != nil {
+	if err := s.convRepo.UpdateExtra(ctx, convID, string(newExtra)); err != nil {
 		log.Printf("[state_updater] update cursor error: %v", err)
 	}
 

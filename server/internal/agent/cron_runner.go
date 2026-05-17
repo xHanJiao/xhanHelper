@@ -16,36 +16,49 @@ type postChatEvent struct {
 
 // CronRunner — 反思循环调度器
 type CronRunner struct {
-	orch          *ReflectionOrchestrator
-	userRepo      *service.UserRepo
-	dailyTimes    []string           // 每日定时列表
-	postChatDelay time.Duration      // 对话后延迟触发，默认 30 分钟
-	runTimeout    time.Duration      // 单次反思超时，默认 5 分钟
-	eventCh       chan postChatEvent // 对话结束后通知
-	stateUpdater  *StateUpdater
+	orch              *ReflectionOrchestrator
+	userRepo          *service.UserRepo
+	discoverTimes     []string           // 发现候选主题定时列表
+	deliverInterval   time.Duration      // 投递窗口间隔，默认 1 小时
+	postChatDelay     time.Duration      // 对话后延迟触发，默认 30 分钟
+	runTimeout        time.Duration      // 单次反思超时，默认 5 分钟
+	eventCh           chan postChatEvent // 对话结束后通知
+	stateUpdater      *StateUpdater
+	memExtractor      *MemoryExtractor
+	convRepo          *service.ConversationRepo
+	memoryAutoExtract bool
 }
 
 // NewCronRunner 创建调度器
-func NewCronRunner(orch *ReflectionOrchestrator, stateUpdater *StateUpdater, userRepo *service.UserRepo) *CronRunner {
+func NewCronRunner(orch *ReflectionOrchestrator, stateUpdater *StateUpdater, userRepo *service.UserRepo, memExtractor *MemoryExtractor, convRepo *service.ConversationRepo) *CronRunner {
 	return &CronRunner{
-		orch:          orch,
-		stateUpdater:  stateUpdater,
-		userRepo:      userRepo,
-		dailyTimes:    []string{"08:00"},
-		postChatDelay: 30 * time.Minute,
-		runTimeout:    30 * time.Minute,
-		eventCh:       make(chan postChatEvent, 32),
+		orch:            orch,
+		stateUpdater:    stateUpdater,
+		userRepo:        userRepo,
+		memExtractor:    memExtractor,
+		convRepo:        convRepo,
+		discoverTimes:   []string{"09:00", "18:00"},
+		deliverInterval: 1 * time.Hour,
+		postChatDelay:   30 * time.Minute,
+		runTimeout:      30 * time.Minute,
+		eventCh:         make(chan postChatEvent, 32),
 	}
 }
 
-// SetDailySchedules 设置每日定时列表
-func (cr *CronRunner) SetDailySchedules(times []string) { cr.dailyTimes = times }
+// SetDiscoverSchedules 设置发现定时列表
+func (cr *CronRunner) SetDiscoverSchedules(times []string) { cr.discoverTimes = times }
+
+// SetDeliverInterval 设置投递窗口间隔
+func (cr *CronRunner) SetDeliverInterval(d time.Duration) { cr.deliverInterval = d }
 
 // SetPostChatDelay 设置对话后延迟
 func (cr *CronRunner) SetPostChatDelay(d time.Duration) { cr.postChatDelay = d }
 
 // SetRunTimeout 设置单次反思超时
 func (cr *CronRunner) SetRunTimeout(d time.Duration) { cr.runTimeout = d }
+
+// SetMemoryAutoExtract 设置是否自动提取记忆
+func (cr *CronRunner) SetMemoryAutoExtract(v bool) { cr.memoryAutoExtract = v }
 
 // NotifyChatEnd 对话结束后通知调度器（由聊天 orchestrator 调用）
 func (cr *CronRunner) NotifyChatEnd(userID, convID string) {
@@ -60,10 +73,13 @@ func (cr *CronRunner) NotifyChatEnd(userID, convID string) {
 
 // Start 启动调度循环（阻塞，用 goroutine 调用）
 func (cr *CronRunner) Start(ctx context.Context) {
-	log.Printf("[cron] started, daily_times=%v, post_chat_delay=%v", cr.dailyTimes, cr.postChatDelay)
+	log.Printf("[cron] started, discover_times=%v deliver_interval=%v post_chat_delay=%v",
+		cr.discoverTimes, cr.deliverInterval, cr.postChatDelay)
 
-	dailyTimer := time.NewTimer(nextDailyDelay(cr.dailyTimes))
-	defer dailyTimer.Stop()
+	deliverTimer := time.NewTimer(cr.deliverInterval)
+	defer deliverTimer.Stop()
+	discoverTimer := time.NewTimer(nextDailyDelay(cr.discoverTimes))
+	defer discoverTimer.Stop()
 
 	// 后对话延迟的定时器（nil = 未激活）
 	var postChatTimer *time.Timer
@@ -76,13 +92,21 @@ func (cr *CronRunner) Start(ctx context.Context) {
 			log.Printf("[cron] stopped")
 			return
 
-		case <-dailyTimer.C:
-			log.Printf("[cron] daily trigger")
+		case <-deliverTimer.C:
+			log.Printf("[cron] deliver window trigger")
 			users, _ := cr.userRepo.ListAll(context.Background())
 			for _, u := range users {
-				cr.runReflection(ctx, u.ID, "cron")
+				cr.deliverOnce(ctx, u.ID)
 			}
-			dailyTimer.Reset(nextDailyDelay(cr.dailyTimes))
+			deliverTimer.Reset(cr.deliverInterval)
+
+		case <-discoverTimer.C:
+			log.Printf("[cron] discover trigger")
+			users, _ := cr.userRepo.ListAll(context.Background())
+			for _, u := range users {
+				cr.discoverOnce(ctx, u.ID)
+			}
+			discoverTimer.Reset(nextDailyDelay(cr.discoverTimes))
 
 		case evt := <-cr.eventCh:
 			log.Printf("[cron] eventCh received: user=%s conv=%s", evt.userID[:8], evt.convID[:8])
@@ -107,12 +131,26 @@ func (cr *CronRunner) Start(ctx context.Context) {
 	}
 }
 
-// dispatchPostChat 根据会话是否绑定主题分发：绑定→StateUpdater，未绑定→静默发现草稿
+// dispatchPostChat 对话后处理唯一入口（串行）
 func (cr *CronRunner) dispatchPostChat(ctx context.Context, userID, convID string) {
 	runCtx, cancel := context.WithTimeout(ctx, cr.runTimeout)
 	defer cancel()
 
-	// 查会话是否绑定了主题
+	// Step 1: 提取记忆（仅当前会话）
+	if cr.memoryAutoExtract {
+		conv, err := cr.convRepo.FindByID(runCtx, convID)
+		if err != nil {
+			log.Printf("[cron] post-chat: find conv error: %v", err)
+		} else if conv != nil {
+			if err := cr.memExtractor.ExtractFromConversation(runCtx, conv); err != nil {
+				log.Printf("[cron] post-chat: memory extract error: %v", err)
+			}
+		}
+	}
+
+	// Step 2: 提取显式承诺（TODO: 后续实现）
+
+	// Step 3: 查会话是否绑定了主题
 	extra, err := cr.stateUpdater.convRepo.GetExtra(runCtx, convID)
 	if err != nil || extra == nil || extra.Context == nil || extra.Context.ThemeID == "" {
 		// 未绑定主题 → 从当前会话消息中静默发现草稿
@@ -123,7 +161,7 @@ func (cr *CronRunner) dispatchPostChat(ctx context.Context, userID, convID strin
 		return
 	}
 
-	// 绑定主题 → 增量更新状态页
+	// 绑定主题 → 增量更新状态页 + 通用判定
 	log.Printf("[cron] post-chat: theme %s, running StateUpdater for user=%s conv=%s", extra.Context.ThemeID[:8], userID, convID)
 	if err := cr.stateUpdater.UpdateFromConversation(runCtx, userID, convID, extra.Context.ThemeID); err != nil {
 		log.Printf("[cron] StateUpdater error: %v", err)
@@ -151,12 +189,18 @@ func nextDailyDelay(times []string) time.Duration {
 	return minDelay
 }
 
-func (cr *CronRunner) runReflection(ctx context.Context, userID, triggerType string) {
-	log.Printf("[cron] runReflection: user=%s trigger=%s", userID, triggerType)
+func (cr *CronRunner) deliverOnce(ctx context.Context, userID string) {
 	runCtx, cancel := context.WithTimeout(ctx, cr.runTimeout)
 	defer cancel()
+	if _, err := cr.orch.DeliverPendingFindings(runCtx, userID); err != nil {
+		log.Printf("[cron] deliver error: %v", err)
+	}
+}
 
-	if err := cr.orch.RunOnce(runCtx, userID, triggerType); err != nil {
-		log.Printf("[cron] reflection error: %v", err)
+func (cr *CronRunner) discoverOnce(ctx context.Context, userID string) {
+	runCtx, cancel := context.WithTimeout(ctx, cr.runTimeout)
+	defer cancel()
+	if _, err := cr.orch.DiscoverAndDeliver(runCtx, userID); err != nil {
+		log.Printf("[cron] discover error: %v", err)
 	}
 }

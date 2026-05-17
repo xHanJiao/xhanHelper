@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -36,8 +37,22 @@ loop:
 		}
 	}
 
-	if err := json.Unmarshal([]byte(cleaned[start:end+1]), target); err != nil {
-		return "", err
+	if end == start {
+		end = len(cleaned) - 1 // 未找到匹配闭括号，从末尾恢复
 	}
-	return prefix, nil
+	jsonStr := cleaned[start : end+1]
+	if err := json.Unmarshal([]byte(jsonStr), target); err == nil {
+		return prefix, nil
+	}
+
+	// 截断恢复：从末尾逐步截断无效 UTF-8 或不完整 JSON，重试
+	for i := len(jsonStr) - 1; i > start; i-- {
+		if jsonStr[i] != '}' && jsonStr[i] != '"' && jsonStr[i] != ']' {
+			continue
+		}
+		if err := json.Unmarshal([]byte(jsonStr[:i+1]), target); err == nil {
+			return prefix, nil
+		}
+	}
+	return "", fmt.Errorf("parse: json truncated, raw excerpt: %s", cleaned[start:min(start+80, len(cleaned))])
 }

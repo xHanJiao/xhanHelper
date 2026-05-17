@@ -23,7 +23,7 @@ func NewThemeHandler(repo *service.ThemeStateRepo) *ThemeHandler {
 // ListThemes GET /api/themes
 func (h *ThemeHandler) ListThemes(c *gin.Context) {
 	userID := c.GetString("user_id")
-	list, total, err := h.themeRepo.List(c.Request.Context(), userID, "", 50, 0)
+	list, total, err := h.themeRepo.ListNotDraft(c.Request.Context(), userID, 50, 0)
 	if err != nil {
 		log.Printf("[theme] List error: %v", err)
 		view.JSONError(c, 500, "查询主题失败")

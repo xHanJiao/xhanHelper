@@ -70,6 +70,15 @@ func (s *ThemeStore) SaveState(ctx context.Context, themeID, userID, stateText s
 	return s.repo.UpdateState(ctx, themeID, userID, stateText)
 }
 
+// GetName 获取主题名称
+func (s *ThemeStore) GetName(ctx context.Context, themeID, userID string) string {
+	t, err := s.repo.GetByID(ctx, themeID, userID)
+	if err != nil || t == nil {
+		return ""
+	}
+	return t.Name
+}
+
 // LoadState 加载主题状态页文本
 func (s *ThemeStore) LoadState(ctx context.Context, themeID, userID string) string {
 	t, err := s.repo.GetByID(ctx, themeID, userID)

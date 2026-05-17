@@ -121,6 +121,13 @@ func (r *ThemeStateRepo) Reactivate(ctx context.Context, id, userID string) erro
 		Update("status", "active").Error
 }
 
+// UpdateMetadata 更新主题的 Metadata JSON 字段
+func (r *ThemeStateRepo) UpdateMetadata(ctx context.Context, id, userID, metadataJSON string) error {
+	return r.db.WithContext(ctx).Model(&model.ThemeState{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Update("metadata", metadataJSON).Error
+}
+
 // UpdateConversationID 更新关联的对话 ID
 func (r *ThemeStateRepo) UpdateConversationID(ctx context.Context, id, userID, convID string) error {
 	return r.db.WithContext(ctx).Model(&model.ThemeState{}).
@@ -160,6 +167,21 @@ func (r *ThemeStateRepo) BatchGetByIDs(ctx context.Context, ids []string, userID
 		result[list[i].ID] = &list[i]
 	}
 	return result, nil
+}
+
+// ListNotDraft 分页列出用户主题（排除 draft 内部状态）
+func (r *ThemeStateRepo) ListNotDraft(ctx context.Context, userID string, limit, offset int) ([]model.ThemeState, int64, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	q := r.db.WithContext(ctx).Where("user_id = ? AND status != ?", userID, "draft")
+	var total int64
+	if err := q.Model(&model.ThemeState{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var list []model.ThemeState
+	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
+	return list, total, err
 }
 
 // List 分页列出用户主题

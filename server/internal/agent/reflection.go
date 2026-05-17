@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,54 +15,19 @@ import (
 	"xhan-helper/internal/tool"
 )
 
-const launchAgentPrompt = `你是 xhanHelper 的「反思协调员」。你的职责是：定期审视用户各关注主题的最新动态，发现值得提醒用户的事，整理成简报投递到信箱。
-
-## 核心原则
-
-1. 你不需要和用户对话——你的输出会被投递到信箱，用户稍后查看。不要在回复中写问候语。
-2. 简报不是日报——只有真的有事时才推送。没事就安静跳过。
-3. 每次最多推送 3 条发现。宁可少，不要水。
-
-## 你能使用的工具
-
-1. theme_analyst(theme_name, theme_description, theme_id, mode) — 分析指定主题。mode: cold_start / hot_run。返回该主题的发现列表。
-2. scorer(findings) — 对所有发现打分排序，返回 TopN。
-3. secretary(findings) — 将 TopN 发现转化为友好的人性化提醒文字，然后投递到信箱。**必须在 scorer 之后、mailbox 之前调用**。
-4. mailbox.deliver(items) — 投递消息。items 每项 {title, content, type, source, entity_type, entity_id}。theme_finding 必须带 entity_type:"theme" + entity_id:主题ID。
-（候选主题由系统自动发现，你不需要调用 theme_discoverer。）
-
-## 你的工作流程
-
-### 第一步：选择主题
-查看活跃主题列表。全选所有活跃主题（除非某主题自上次分析后完全无新数据）。
-
-### 第二步：调用 theme_analyst
-对每个选中的主题，调用 theme_analyst。根据状态页决定 mode：
-- 状态页为空（首次分析）→ mode="cold_start"
-- 状态页有内容 → mode="hot_run"
-如果返回了 skip_reason（无发现），记录但不影响后续。
-
-### 第三步：收集发现并打分
-如果所有主题均无发现 → 不做任何事，结束本轮。
-如果至少有一条发现 → 为每条补全 finding_id 和 theme_name → 调用 scorer → scorer 返回 TopN（结构化 JSON）。
-
-### 第四步：转化风格并投递
-调用 secretary 将 scorer 返回的 TopN 转化成 messages，然后把每条 message 映射为 mailbox.deliver 的 item：{title: message.title, content: message.content, type: "theme_finding", source: 主题名}。
-（候选主题由系统自动发现，你不需要调用 theme_discoverer。）
-
-完成。`
-
 // ReflectionOrchestrator — 反思循环编排器（独立于 HTTP server）
 type ReflectionOrchestrator struct {
-	flashClient   llm.LLMClient
-	reflectionReg *tool.Registry
-	traceRepo     *service.ReflectionTraceRepo
-	themeStore    *ThemeStore
-	mailboxRepo   *service.MailboxRepo
-	msgRepo       *service.MessageRepo
-	noteRepo      *service.NoteRepo
-	memRepo       *service.UserMemoryRepo
-	maxIterations int // 启动 Agent 最大轮次
+	flashClient        llm.LLMClient
+	reflectionReg      *tool.Registry
+	traceRepo          *service.ReflectionTraceRepo
+	themeStore         *ThemeStore
+	mailboxRepo        *service.MailboxRepo
+	msgRepo            *service.MessageRepo
+	noteRepo           *service.NoteRepo
+	memRepo            *service.UserMemoryRepo
+	pendingFindingRepo *service.PendingFindingRepo
+	maxIterations      int
+	maxDeliveryRetries int
 }
 
 func NewReflectionOrchestrator(
@@ -75,20 +39,26 @@ func NewReflectionOrchestrator(
 	msgRepo *service.MessageRepo,
 	noteRepo *service.NoteRepo,
 	memRepo *service.UserMemoryRepo,
+	pendingFindingRepo *service.PendingFindingRepo,
 	maxIterations int,
 ) *ReflectionOrchestrator {
 	return &ReflectionOrchestrator{
-		flashClient:   flashClient,
-		reflectionReg: reflectionReg,
-		traceRepo:     traceRepo,
-		themeStore:    themeStore,
-		mailboxRepo:   mailboxRepo,
-		msgRepo:       msgRepo,
-		noteRepo:      noteRepo,
-		memRepo:       memRepo,
-		maxIterations: maxIterations,
+		flashClient:        flashClient,
+		reflectionReg:      reflectionReg,
+		traceRepo:          traceRepo,
+		themeStore:         themeStore,
+		mailboxRepo:        mailboxRepo,
+		msgRepo:            msgRepo,
+		noteRepo:           noteRepo,
+		memRepo:            memRepo,
+		pendingFindingRepo: pendingFindingRepo,
+		maxIterations:      maxIterations,
+		maxDeliveryRetries: 3,
 	}
 }
+
+// SetMaxDeliveryRetries 设置投递重试上限
+func (o *ReflectionOrchestrator) SetMaxDeliveryRetries(n int) { o.maxDeliveryRetries = n }
 
 var runOnceExpireDays = 7
 
@@ -170,131 +140,165 @@ func (o *ReflectionOrchestrator) RunOnce(ctx context.Context, userID, triggerTyp
 	return o.runOnce(ctx, userID, triggerType, false)
 }
 
-// runOnce 执行一次反思循环，silent 模式跳过信箱投递
-func (o *ReflectionOrchestrator) runOnce(ctx context.Context, userID, triggerType string, silent bool) error {
+// DeliverPendingFindings 扫暂存发现，经 Scorer → Secretary → 投递信箱
+func (o *ReflectionOrchestrator) DeliverPendingFindings(ctx context.Context, userID string) (int, error) {
 	traceID := uuid.New().String()
-	log.Printf("[reflection] trace=%s trigger=%s user=%s silent=%v START", traceID[:8], triggerType, userID, silent)
+	log.Printf("[reflection] trace=%s trigger=deliver_window user=%s START", traceID[:8], userID)
 
-	// 过期清理：7 天未操作的 candidate/draft → closed
-	o.themeStore.Expire(ctx, userID, runOnceExpireDays)
-
-	// 创建 trace
 	tr := &model.ReflectionTrace{
-		ID:          traceID,
-		UserID:      userID,
-		TriggerType: triggerType,
-		StartedAt:   time.Now(),
-		Status:      "running",
+		ID: traceID, UserID: userID, TriggerType: "deliver_window",
+		StartedAt: time.Now(), Status: "running",
 	}
-	if err := o.traceRepo.CreateTrace(ctx, tr); err != nil {
-		log.Printf("[reflection] create trace error: %v", err)
-	}
+	o.traceRepo.CreateTrace(ctx, tr)
 
-	// 查询活跃主题
-	activeThemes, err := o.themeStore.ListActive(ctx, userID)
+	// 从表拉 pending findings
+	rawFindings, err := o.pendingFindingRepo.ListPending(ctx, userID)
 	if err != nil {
-		log.Printf("[reflection] ListActive error: %v", err)
-		endTraceSafe(o.traceRepo, ctx, traceID, "error", 0, 0, strPtr(fmt.Sprintf("ListActive: %v", err)))
-		return fmt.Errorf("list themes: %w", err)
+		endTraceSafe(o.traceRepo, ctx, traceID, "error", 0, 0, strPtr(err.Error()))
+		return 0, err
 	}
 
-	// 统计最近活动
-	recentMsgCount, recentNoteCount, recentMemCount := o.countRecentActivity(ctx, userID)
-
-	// 构建 tools map + trace ctx（主题分析和发现共用）
-	activeTools := make(map[string]tool.Tool)
-	for name, t := range o.reflectionReg.GetToolMap() {
-		activeTools[name] = t
+	if len(rawFindings) == 0 {
+		endTraceSafe(o.traceRepo, ctx, traceID, "empty", 0, 0, nil)
+		log.Printf("[reflection] trace=%s DONE: no pending findings", traceID[:8])
+		return 0, nil
 	}
-	tracedCtx := WithTraceInfo(ctx, o.traceRepo, traceID)
 
-	// 没有活跃主题时，仍然尝试发现候选主题
-	if len(activeThemes) == 0 {
-		log.Printf("[reflection] trace=%s no active themes, running discovery only", traceID[:8])
-		delivered := o.runDiscoveryOnly(tracedCtx, traceID, userID, recentMsgCount, recentNoteCount, recentMemCount)
-		status := "empty"
-		if delivered > 0 {
-			status = "completed"
+	// 转换格式 + 收集 IDs
+	ids := make([]string, 0, len(rawFindings))
+	allFindings := make([]map[string]interface{}, 0, len(rawFindings))
+	themeSet := make(map[string]string)
+	for _, f := range rawFindings {
+		ids = append(ids, f.ID)
+		m := map[string]interface{}{
+			"finding_id": f.ID,
+			"theme_id":   f.ThemeID,
+			"theme_name": f.ThemeName,
+			"title":      f.Title,
+			"content":    f.Content,
+			"urgency":    f.Urgency,
 		}
-		endTraceSafe(o.traceRepo, ctx, traceID, status, 0, delivered, nil)
-		return nil
-	}
-
-	// 构建输入消息
-	var sb strings.Builder
-	sb.WriteString("## 活跃主题\n")
-	for _, t := range activeThemes {
-		statePreview := ""
-		if t.StateText != "" {
-			statePreview = fmt.Sprintf("\n  状态页: %s", t.StateText)
+		if f.SourceRefs != "" {
+			var refs []string
+			json.Unmarshal([]byte(f.SourceRefs), &refs)
+			m["source_refs"] = refs
 		}
-		sb.WriteString(fmt.Sprintf("- **%s** (id=%s): %s%s\n", t.Name, t.ID, t.Description, statePreview))
+		allFindings = append(allFindings, m)
+		themeSet[f.ThemeID] = f.ThemeName
 	}
-	sb.WriteString(fmt.Sprintf("\n## 最近 7 天活动\n"))
-	sb.WriteString(fmt.Sprintf("- 新增消息：%d 条\n", recentMsgCount))
-	sb.WriteString(fmt.Sprintf("- 新增笔记：%d 条\n", recentNoteCount))
-	sb.WriteString(fmt.Sprintf("- 新增记忆：%d 条\n", recentMemCount))
-	sb.WriteString("\n请开始分析。先对每个主题调用 theme_analyst。\n")
 
-	// 运行 ReAct 循环。ReactLoop 内部自动写入 LLM 调用和工具错误/skip 决策到 traceRepo
-	loop := NewReactLoop(o.flashClient, activeTools, launchAgentPrompt, o.maxIterations, userID, "LaunchAgent", o.traceRepo, traceID)
-	result, _ := loop.Run(tracedCtx, sb.String())
+	// Scorer → Secretary → Mailbox 管道
+	scorerT, _ := o.reflectionReg.GetToolMap()["scorer"]
+	secT, _ := o.reflectionReg.GetToolMap()["secretary"]
+	mailT, _ := o.reflectionReg.GetToolMap()["mailbox"]
+	ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID}
 
-	totalFindings, deliveredCount := countFindings(result)
-
-	// 汇总错误信息
-	var traceErrMsg *string
-	if result.Error != nil {
-		s := result.Error.Error()
-		traceErrMsg = &s
+	scorerPayload, _ := json.Marshal(map[string]interface{}{"findings": allFindings})
+	scorerRes := scorerT.Execute(ec, "score", scorerPayload)
+	if !scorerRes.Success || scorerRes.Data == nil {
+		o.incrementRetries(ctx, ids)
+		endTraceSafe(o.traceRepo, ctx, traceID, "error", len(allFindings), 0, strPtr("scorer failed"))
+		return 0, fmt.Errorf("scorer failed")
 	}
-	if result.TerminatedEarly {
-		msg := "提前终止：达到最大迭代轮数，未完成完整分析"
-		if traceErrMsg != nil {
-			combined := *traceErrMsg + "; " + msg
-			traceErrMsg = &combined
-		} else {
-			traceErrMsg = &msg
+
+	var scorerOutput struct {
+		Ranked []json.RawMessage `json:"ranked"`
+	}
+	json.Unmarshal(scorerRes.Data, &scorerOutput)
+	secPayload, _ := json.Marshal(map[string]interface{}{"findings": scorerOutput.Ranked})
+	secRes := secT.Execute(ec, "humanize", secPayload)
+	if !secRes.Success || secRes.Data == nil {
+		o.incrementRetries(ctx, ids)
+		endTraceSafe(o.traceRepo, ctx, traceID, "error", len(allFindings), 0, strPtr("secretary failed"))
+		return 0, fmt.Errorf("secretary failed")
+	}
+
+	var secOutput struct {
+		Messages []struct {
+			Title        string `json:"title"`
+			Notification string `json:"notification"`
+		} `json:"messages"`
+	}
+	json.Unmarshal(secRes.Data, &secOutput)
+	mailItems := make([]map[string]interface{}, 0, len(secOutput.Messages))
+	for _, msg := range secOutput.Messages {
+		item := map[string]interface{}{
+			"title":   msg.Title,
+			"content": msg.Notification,
+			"type":    "theme_finding",
+			"source":  "主题简报",
 		}
+		if len(themeSet) == 1 {
+			for tid, tname := range themeSet {
+				item["entity_type"] = "theme"
+				item["entity_id"] = tid
+				item["source"] = tname
+			}
+		}
+		mailItems = append(mailItems, item)
+	}
+	mailPayload, _ := json.Marshal(map[string]interface{}{"items": mailItems})
+	mailRes := mailT.Execute(ec, "deliver", mailPayload)
+
+	delivered := 0
+	if mailRes.Success {
+		delivered = len(mailItems)
+		o.pendingFindingRepo.MarkDelivered(ctx, ids)
+	} else {
+		o.incrementRetries(ctx, ids)
 	}
 
-	traceStatus := "completed"
-	if traceErrMsg != nil {
-		traceStatus = "error"
-	} else if totalFindings == 0 {
-		traceStatus = "empty"
-	}
-
-	// 每次运行都跑主题发现
-	discoveryDelivered := o.runDiscoveryAndDrafts(tracedCtx, traceID, userID, recentMsgCount, recentNoteCount, recentMemCount, !silent)
-	deliveredCount += discoveryDelivered
-
-	endTraceSafe(o.traceRepo, ctx, traceID, traceStatus, totalFindings, deliveredCount, traceErrMsg)
-
-	pt, ct := o.traceRepo.SumTokensByTrace(ctx, traceID)
-	log.Printf("[reflection] trace=%s DONE status=%s findings=%d delivered=%d iterations=%d term_early=%v tokens=%.1fk(p)+%.1fk(c)",
-		traceID[:8], traceStatus, totalFindings, deliveredCount, result.Iterations, result.TerminatedEarly,
-		float64(pt)/1000, float64(ct)/1000)
-
-	return nil
+	endTraceSafe(o.traceRepo, ctx, traceID, "completed", len(allFindings), delivered, nil)
+	log.Printf("[reflection] trace=%s DONE findings=%d delivered=%d", traceID[:8], len(allFindings), delivered)
+	return delivered, nil
 }
 
-// countFindings 统计发现数和投递数
-func countFindings(result *ReactLoopResult) (totalFindings, deliveredCount int) {
-	for _, tcLog := range result.ToolCallsLog {
-		if tcLog.Tool == "scorer" && tcLog.Result != nil && tcLog.Result.Success && tcLog.Result.Data != nil {
-			var scorerOutput struct {
-				Ranked []interface{} `json:"ranked"`
-			}
-			if json.Unmarshal(tcLog.Result.Data, &scorerOutput) == nil {
-				totalFindings += len(scorerOutput.Ranked)
-			}
-		}
-		if tcLog.Tool == "mailbox" && tcLog.Result != nil && tcLog.Result.Success {
-			deliveredCount++
-		}
+func (o *ReflectionOrchestrator) incrementRetries(ctx context.Context, ids []string) {
+	log.Printf("[reflection] delivery failed, incrementing retries for %d findings", len(ids))
+	// Increment retry count for all and mark those exceeding limit as failed
+	for _, id := range ids {
+		o.pendingFindingRepo.IncrementRetry(ctx, id)
 	}
-	return
+	if o.maxDeliveryRetries > 0 {
+		// TODO: query retry_count > max and mark failed — skip for now, simple is ok
+	}
+}
+
+// DiscoverAndDeliver 发现候选主题并投递（cron 低频调用）
+func (o *ReflectionOrchestrator) DiscoverAndDeliver(ctx context.Context, userID string) (int, error) {
+	traceID := uuid.New().String()
+	log.Printf("[reflection] trace=%s trigger=discover user=%s START", traceID[:8], userID)
+
+	tr := &model.ReflectionTrace{
+		ID: traceID, UserID: userID, TriggerType: "discover",
+		StartedAt: time.Now(), Status: "running",
+	}
+	o.traceRepo.CreateTrace(ctx, tr)
+
+	o.themeStore.Expire(ctx, userID, runOnceExpireDays)
+
+	msgCount, noteCount, memCount := o.countRecentActivity(ctx, userID)
+	tracedCtx := WithTraceInfo(ctx, o.traceRepo, traceID)
+	delivered := o.runDiscoveryAndDrafts(tracedCtx, traceID, userID, msgCount, noteCount, memCount, true)
+
+	status := "completed"
+	if delivered == 0 {
+		status = "empty"
+	}
+	endTraceSafe(o.traceRepo, ctx, traceID, status, 0, delivered, nil)
+	log.Printf("[reflection] trace=%s DONE delivered=%d", traceID[:8], delivered)
+	return delivered, nil
+}
+
+// runOnce 保留兼容：deliver + discover（供 cron 模式使用）
+func (o *ReflectionOrchestrator) runOnce(ctx context.Context, userID, triggerType string, silent bool) error {
+	if silent {
+		return nil // 静默模式已废弃
+	}
+	delivered, _ := o.DeliverPendingFindings(ctx, userID)
+	disc, _ := o.DiscoverAndDeliver(ctx, userID)
+	log.Printf("[reflection] runOnce combined: deliverables=%d discover=%d", delivered, disc)
+	return nil
 }
 
 // runDiscoveryOnly 运行主题发现 + 投递草稿，返回投递数
@@ -325,8 +329,8 @@ func (o *ReflectionOrchestrator) runDiscoveryAndDrafts(ctx context.Context, trac
 	var output struct {
 		Candidates []map[string]interface{} `json:"candidates"`
 	}
-	if json.Unmarshal(res.Data, &output) != nil || len(output.Candidates) == 0 {
-		return 0
+	if err := json.Unmarshal(res.Data, &output); err != nil {
+		log.Printf("[reflection] unmarshal discovery output error: %v", err)
 	}
 
 	// 1.5. 加载草稿主题（cron 全链路模式）
@@ -375,25 +379,41 @@ func (o *ReflectionOrchestrator) deliverCandidate(ctx context.Context, userID st
 	}
 
 	existing, _ := o.themeStore.GetByName(ctx, userID, name)
-	if existing != nil && (existing.Status == "candidate" || existing.Status == "active") {
-		log.Printf("[reflection] discovery skip duplicate: %s", name)
+	if existing != nil && existing.Status == "active" {
+		log.Printf("[reflection] discovery skip active: %s", name)
+		return false
+	}
+	if existing != nil && existing.Status == "candidate" {
+		log.Printf("[reflection] discovery skip duplicate candidate: %s", name)
 		return false
 	}
 
+	var themeID string
 	metaJSON, _ := json.Marshal(map[string]interface{}{"candidate_info": c})
 	metaStr := string(metaJSON)
-	themeID := uuid.New().String()
-	theme := &model.ThemeState{
-		ID:          themeID,
-		UserID:      userID,
-		Name:        name,
-		Description: desc,
-		Status:      "candidate",
-		Metadata:    &metaStr,
-	}
-	if err := o.themeStore.Create(ctx, theme); err != nil {
-		log.Printf("[reflection] discovery create candidate error: %v", err)
-		return false
+
+	if existing != nil && existing.Status == "draft" {
+		// 升级 draft 为 candidate，复用已有 ID
+		themeID = existing.ID
+		if err := o.themeStore.UpdateStatus(ctx, themeID, userID, "candidate"); err != nil {
+			log.Printf("[reflection] promote draft to candidate error: %v", err)
+			return false
+		}
+		log.Printf("[reflection] promoted draft %s → candidate", name)
+	} else {
+		themeID = uuid.New().String()
+		theme := &model.ThemeState{
+			ID:          themeID,
+			UserID:      userID,
+			Name:        name,
+			Description: desc,
+			Status:      "candidate",
+			Metadata:    &metaStr,
+		}
+		if err := o.themeStore.Create(ctx, theme); err != nil {
+			log.Printf("[reflection] discovery create candidate error: %v", err)
+			return false
+		}
 	}
 
 	secT, _ := o.reflectionReg.GetToolMap()["secretary"]

@@ -74,6 +74,7 @@ func main() {
 		&model.ReflectionDecision{},
 		&model.EmbeddingChunk{},
 		&model.ConceptEmbedding{},
+		&model.PendingFinding{},
 	); err != nil {
 		log.Printf("[db] AutoMigrate error: %v", err)
 	}
@@ -106,6 +107,7 @@ func main() {
 	traceRepo := service.NewReflectionTraceRepo(db)
 	chunkRepo := service.NewEmbeddingChunkRepo(db)
 	conceptEmbedRepo := service.NewConceptEmbeddingRepo(db)
+	pendingFindingRepo := service.NewPendingFindingRepo(db)
 
 	// Tool Registry + Tools
 	reg := tool.NewRegistry()
@@ -197,16 +199,23 @@ func main() {
 	reflectionReg.Register(tool.NewLoggingWrapper(mailboxTool, log.Default()))
 	reflectionReg.Register(tool.NewLoggingWrapper(themeMgmtTool, log.Default()))
 
+	// Memory Extractor（合并到对话后处理流程）
+	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo, embeddingRepo, cfg.Server.MemoryDupeThreshold, chunkBuilder, conceptEmbedService)
+
 	// ===== Phase 6: ReflectionOrchestrator + CronRunner =====
 	reflectionOrch := agent.NewReflectionOrchestrator(
 		llmClient, reflectionReg, traceRepo, themeStore,
 		mailboxRepo, msgRepo, noteRepo, memRepo,
+		pendingFindingRepo,
 		cfg.Reflection.LaunchMaxIterations,
 	)
-	stateUpdater := agent.NewStateUpdater(llmClient, msgRepo, convRepo, themeStore)
-	cronRunner := agent.NewCronRunner(reflectionOrch, stateUpdater, userRepo)
+	reflectionOrch.SetMaxDeliveryRetries(cfg.Reflection.MaxDeliveryRetries)
+	stateUpdater := agent.NewStateUpdater(llmClient, msgRepo, convRepo, themeStore, pendingFindingRepo)
+	cronRunner := agent.NewCronRunner(reflectionOrch, stateUpdater, userRepo, memExtractor, convRepo)
 	cronRunner.SetPostChatDelay(time.Duration(cfg.Reflection.PostChatDelaySeconds) * time.Second)
-	cronRunner.SetDailySchedules(cfg.Reflection.DailySchedules)
+	cronRunner.SetDiscoverSchedules(cfg.Reflection.DailySchedules)
+	cronRunner.SetDeliverInterval(time.Duration(cfg.Reflection.DeliverIntervalMinutes) * time.Minute)
+	cronRunner.SetMemoryAutoExtract(cfg.Server.MemoryAutoExtract)
 	// 后台任务共享 context，关闭时统一取消
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
@@ -225,11 +234,6 @@ func main() {
 	// Orchestrator
 	retriever := agent.NewRetriever(memSource, noteSource)
 	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, embedder, vectorStore, embeddingRepo, themeStateRepo, cfg.LLM.MaxIterations, cfg.LLM.DefaultTemperature, cfg.LLM.DefaultMaxTokens)
-
-	// Memory Extractor (后台异步)
-	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo, embeddingRepo, cfg.Server.MemoryDupeThreshold, chunkBuilder, conceptEmbedService)
-	memScheduler := agent.NewMemoryScheduler(memExtractor, convRepo)
-	go memScheduler.Start(bgCtx, cfg.Server.MemoryAutoExtract)
 
 	// Markdown 文件定期清理（每小时清理超过 1h 的文件）
 	go func() {

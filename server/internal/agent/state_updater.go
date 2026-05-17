@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/google/uuid"
+
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
 
-const stateUpdaterPrompt = `你是 xhanHelper 的主题状态维护员。你会收到一个主题的当前状态页，以及用户最新的一段对话，你需要根据新对话更新状态页。
+const stateUpdaterPrompt = `你是 xhanHelper 的主题状态维护员。你会收到一个主题的当前状态页，以及用户最新的一段对话，你需要根据新对话更新状态页，并判断是否有值得提醒用户的内容。
 
 ## 更新规则
 1. 保留上一轮状态页中仍然有效的关键信息（规律、里程碑、待跟进事项）
@@ -21,19 +23,32 @@ const stateUpdaterPrompt = `你是 xhanHelper 的主题状态维护员。你会�
 5. 控制篇幅：不超过 500 字
 6. 超过 3 个月且本次未再出现的信息，可移除或标记为「可能已过期」
 
+## 提醒判定
+
+更新完状态页后，对照新旧状态判断是否需要提醒用户。仅当以下任一条件满足且变化足够显著时，才产出 finding：
+
+1. 是否有显著偏离了之前记录的正常状态？
+2. 是否有状态上的结构性推进？
+3. 是否出现了需要关注的新外部信息？
+4. 是否之前散落的数据点现在能串成规律了？
+
+命中任一 → 输出 finding。全不命中 → finding 留空，输出 skip_reason。
+
 ## 输出
-{"updated_state": "更新后的状态页文本"}`
+{"updated_state": "更新后的状态页文本", "finding": {"title": "...", "content": "...", "urgency": "high|medium|low", "source_refs": ["..."]}, "skip_reason": "no_deviation|no_milestone|insufficient_signal|null"}
+finding 非空时 skip_reason 留 null，finding 为空时 skip_reason 必填。`
 
 // StateUpdater — 增量更新主题状态页
 type StateUpdater struct {
-	flashClient llm.LLMClient
-	msgRepo     *service.MessageRepo
-	convRepo    *service.ConversationRepo
-	themeStore  *ThemeStore
+	flashClient        llm.LLMClient
+	msgRepo            *service.MessageRepo
+	convRepo           *service.ConversationRepo
+	themeStore         *ThemeStore
+	pendingFindingRepo *service.PendingFindingRepo
 }
 
-func NewStateUpdater(flashClient llm.LLMClient, msgRepo *service.MessageRepo, convRepo *service.ConversationRepo, themeStore *ThemeStore) *StateUpdater {
-	return &StateUpdater{flashClient: flashClient, msgRepo: msgRepo, convRepo: convRepo, themeStore: themeStore}
+func NewStateUpdater(flashClient llm.LLMClient, msgRepo *service.MessageRepo, convRepo *service.ConversationRepo, themeStore *ThemeStore, pendingFindingRepo *service.PendingFindingRepo) *StateUpdater {
+	return &StateUpdater{flashClient: flashClient, msgRepo: msgRepo, convRepo: convRepo, themeStore: themeStore, pendingFindingRepo: pendingFindingRepo}
 }
 
 // UpdateFromConversation 从绑定主题的会话中增量更新状态页
@@ -85,7 +100,9 @@ func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, convI
 	}
 
 	var output struct {
-		UpdatedState string `json:"updated_state"`
+		UpdatedState string                 `json:"updated_state"`
+		Finding      map[string]interface{} `json:"finding"`
+		SkipReason   string                 `json:"skip_reason"`
 	}
 	if _, parseErr := ParseFlashJSON(resp.Content, &output); parseErr != nil {
 		return fmt.Errorf("parse: %w", parseErr)
@@ -97,6 +114,34 @@ func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, convI
 	// 更新状态页
 	if err := s.themeStore.SaveState(ctx, themeID, userID, output.UpdatedState); err != nil {
 		return fmt.Errorf("SaveState: %w", err)
+	}
+
+	// 暂存 finding（如有）
+	if output.Finding != nil && len(output.Finding) > 0 {
+		title, _ := output.Finding["title"].(string)
+		content, _ := output.Finding["content"].(string)
+		urgency, _ := output.Finding["urgency"].(string)
+		refsJSON, _ := json.Marshal(output.Finding["source_refs"])
+
+		themeName := s.themeStore.GetName(ctx, themeID, userID)
+
+		f := &model.PendingFinding{
+			ID:         uuid.New().String(),
+			UserID:     userID,
+			ThemeID:    themeID,
+			ThemeName:  themeName,
+			Title:      title,
+			Content:    content,
+			Urgency:    urgency,
+			SourceRefs: string(refsJSON),
+		}
+		if err := s.pendingFindingRepo.Create(ctx, f); err != nil {
+			log.Printf("[state_updater] create pending finding error: %v", err)
+		} else {
+			log.Printf("[state_updater] finding stored for theme %s", themeID[:8])
+		}
+	} else if output.SkipReason != "" {
+		log.Printf("[state_updater] theme %s: no finding, reason=%s", themeID[:8], output.SkipReason)
 	}
 
 	// 更新 cursor

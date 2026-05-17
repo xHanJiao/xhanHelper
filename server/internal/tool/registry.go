@@ -170,6 +170,108 @@ func (r *Registry) GetLLMTools() []llm.ToolDefinition {
 	return defs
 }
 
+// GeneratePromptWithOverview 混排模式：reminder + note + tool_retriever 完整定义，其他工具仅概览
+func (r *Registry) GeneratePromptWithOverview() string {
+	var buf bytes.Buffer
+	buf.WriteString("\n\n===== 工具使用 =====\n\n")
+	buf.WriteString("你可以使用以下工具来完成用户的请求。\n")
+	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
+
+	// 常驻工具（完整定义，可直接调用）
+	alwaysVisible := []string{"reminder", "note", "tool_retriever"}
+	for _, name := range alwaysVisible {
+		t := r.tools[name]
+		if t == nil {
+			continue
+		}
+		r.writeToolFullDef(&buf, t)
+	}
+
+	// 其他工具概览（需通过 tool_retriever.search 查询详细定义后才能调用）
+	var overview []string
+	for name, t := range r.tools {
+		if name == "reminder" || name == "note" || name == "tool_retriever" {
+			continue
+		}
+		if r.hiddenNames[name] {
+			continue
+		}
+		overview = append(overview, fmt.Sprintf("工具名: %s —— %s", name, t.Description()))
+	}
+	if len(overview) > 0 {
+		buf.WriteString("\n===== 其他可用工具概览 =====\n")
+		buf.WriteString("以下工具需要通过 tool_retriever.search 查询详细定义后才能调用，禁止跳过查询步骤直接调用！\n\n")
+		buf.WriteString(strings.Join(overview, "\n"))
+		buf.WriteString("\n")
+	}
+
+	r.writePromptFooter(&buf)
+	return buf.String()
+}
+
+func (r *Registry) writeToolFullDef(buf *bytes.Buffer, t Tool) {
+	buf.WriteString(fmt.Sprintf("## 工具: %s\n", t.Name()))
+	buf.WriteString(fmt.Sprintf("描述: %s\n\n", t.Description()))
+	buf.WriteString("函数:\n")
+	for _, fn := range t.Functions() {
+		buf.WriteString(fmt.Sprintf("  - %s: %s\n", fn.Name, fn.Description))
+		if props, ok := fn.Parameters["properties"].(map[string]interface{}); ok {
+			required := make(map[string]bool)
+			if reqs, ok := fn.Parameters["required"].([]interface{}); ok {
+				for _, r := range reqs {
+					if s, ok := r.(string); ok {
+						required[s] = true
+					}
+				}
+			}
+			for key, val := range props {
+				prop, ok := val.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				typ, _ := prop["type"].(string)
+				desc, _ := prop["description"].(string)
+				req := ""
+				if required[key] {
+					req = " (必填)"
+				}
+				buf.WriteString(fmt.Sprintf("    - %s (%s%s): %s\n", key, typ, req, desc))
+				if enumVals, ok := prop["enum"].([]interface{}); ok && len(enumVals) > 0 {
+					vals := make([]string, len(enumVals))
+					for i, v := range enumVals {
+						vals[i] = fmt.Sprint(v)
+					}
+					buf.WriteString(fmt.Sprintf("      可选值: %s\n", strings.Join(vals, "/")))
+				}
+			}
+		}
+		buf.WriteString("\n")
+	}
+}
+
+func (r *Registry) writePromptFooter(buf *bytes.Buffer) {
+	buf.WriteString("\n===== 输出格式 =====\n\n")
+	buf.WriteString("需要调用工具时，回复一个 JSON 对象：\n\n")
+	buf.WriteString("{\n")
+	buf.WriteString(`    "reply": "给用户的自然语言回复",` + "\n")
+	buf.WriteString(`    "tool_calls": [` + "\n")
+	buf.WriteString("        {\n")
+	buf.WriteString(`            "tool": "<工具名>",` + "\n")
+	buf.WriteString(`            "function": "<函数名>",` + "\n")
+	buf.WriteString(`            "args": { /* 参数 */ }` + "\n")
+	buf.WriteString("        }\n")
+	buf.WriteString("    ]\n")
+	buf.WriteString("}\n\n")
+	buf.WriteString("如果不需要使用工具（纯聊天），直接回复纯文本即可。\n")
+	buf.WriteString("一条回复中 tool_calls 可以包含多个工具调用，按顺序执行。\n")
+	buf.WriteString("工具执行结果会追加到对话中，你可以据此继续回复用户。\n\n")
+
+	buf.WriteString("===== 重要规则 =====\n\n")
+	buf.WriteString("1. 只能调用上面【工具使用】部分列出的函数。\n")
+	buf.WriteString("2. 带枚举值的字段必须严格从可选值中选择，不得自创分类！\n")
+	buf.WriteString("3. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
+}
+
 // GeneratePrompt 生成工具定义文本，追加到 system prompt 中
 func (r *Registry) GeneratePrompt() string {
 	var buf bytes.Buffer

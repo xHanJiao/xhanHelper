@@ -161,7 +161,7 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, req *RunRequest) (str
 		}
 	}
 	sysPrompt += "\n当前时间: " + time.Now().Format("2006-01-02 15:04:05 Monday")
-	sysPrompt += o.registry.GeneratePrompt()
+	sysPrompt += o.registry.GeneratePromptWithOverview()
 
 	// 注入会话上下文（信箱跳转带入的主题信息）
 	extra, err := o.convRepo.GetExtra(ctx, req.ConversationID)

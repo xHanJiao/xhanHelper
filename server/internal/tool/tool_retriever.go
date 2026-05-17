@@ -126,18 +126,29 @@ func (t *ToolRetriever) Execute(ec *ExecuteContext, funcName string, args json.R
 	log.Printf("[ToolRetriever] search: strategy=%s query=%q limit=%d",
 		t.strategy.Name(), req.Query, req.Limit)
 
-	tools, err := t.strategy.Search(ec.Ctx, req.Query, req.Limit)
+	// Registry 内存搜索结果优先（有完整函数定义）
+	// DB 策略结果补充（动态工具等），按 name 去重
+	seen := make(map[string]bool)
+	var tools []ToolInfo
+
+	if t.regSearcher != nil {
+		for _, ti := range t.regSearcher.SearchTools(req.Query) {
+			if !seen[ti.Name] {
+				seen[ti.Name] = true
+				tools = append(tools, ti)
+			}
+		}
+	}
+
+	strategyTools, err := t.strategy.Search(ec.Ctx, req.Query, req.Limit)
 	if err != nil {
 		log.Printf("[ToolRetriever] search error: %v", err)
 		return &Result{Success: false, Error: err.Error()}
 	}
-
-	// 也搜索 Registry 内存中的工具（MCP 占位工具等）
-	if t.regSearcher != nil {
-		memTools := t.regSearcher.SearchTools(req.Query)
-		tools = append(tools, memTools...)
-		if len(tools) > req.Limit {
-			tools = tools[:req.Limit]
+	for _, ti := range strategyTools {
+		if !seen[ti.Name] && len(tools) < req.Limit {
+			seen[ti.Name] = true
+			tools = append(tools, ti)
 		}
 	}
 

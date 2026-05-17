@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"sort"
 	"strings"
@@ -64,11 +65,31 @@ func (s *SimpleKeywordStrategy) Search(ctx context.Context, query string, limit 
 }
 
 func toolToInfo(t model.ToolRegistry, score float64) ToolInfo {
+	var funcs []ToolFunctionInfo
+	if t.SchemaJSON != "" && t.SchemaJSON != "[]" {
+		var raw []struct {
+			Name        string                 `json:"name"`
+			Description string                 `json:"description"`
+			Parameters  map[string]interface{} `json:"parameters"`
+		}
+		if err := json.Unmarshal([]byte(t.SchemaJSON), &raw); err != nil {
+			log.Printf("[ToolRetriever] parse schema_json for %s error: %v", t.Name, err)
+		} else {
+			for _, f := range raw {
+				funcs = append(funcs, ToolFunctionInfo{
+					Name:        f.Name,
+					Description: f.Description,
+					Parameters:  f.Parameters,
+				})
+			}
+		}
+	}
 	return ToolInfo{
 		ID:          t.ID,
 		Name:        t.Name,
 		Description: t.Description,
 		Category:    t.Category,
+		Functions:   funcs,
 		Score:       score,
 	}
 }

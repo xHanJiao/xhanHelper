@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount, onUnmounted, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
@@ -42,6 +42,8 @@ const streamingBubbleRef = ref(null)
 const isLoadingHistory = ref(false)
 const isFirstLoad = ref(true)
 const messagesContainerRef = ref(null)
+const mobileInputRef = ref(null)
+const mobileInputHeight = ref(140) // 移动端输入框实际高度，默认 140px 兜底
 const isInitialScrollDone = ref(false)
 
 const { isBarVisible, showBar } = useScrollTopBar(messagesContainerRef)
@@ -64,6 +66,22 @@ function toggleInput() {
 function toggleExpand() {
   inputExpanded.value = !inputExpanded.value
 }
+
+// 移动端：监听输入框实际高度，同步 spacer 避免白块
+let mobileInputObserver = null
+watch([mobileInputRef, inputVisible, inputExpanded], () => {
+  if (mobileInputObserver) { mobileInputObserver.disconnect(); mobileInputObserver = null }
+  const el = mobileInputRef.value
+  if (!el || !inputVisible.value) { mobileInputHeight.value = 140; return }
+  mobileInputObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const h = entry.contentRect.height
+      if (h > 0) mobileInputHeight.value = h + 16 // 16px 安全间距
+    }
+  })
+  mobileInputObserver.observe(el)
+})
+onUnmounted(() => { if (mobileInputObserver) mobileInputObserver.disconnect() })
 
 // LLM 参数（从后端 API 获取，不存 localStorage）
 const showLlmSettings = ref(false)
@@ -439,7 +457,7 @@ function handleContainerClick(e) {
           ref="messagesEndRef"
           :style="{
             height: isMobile
-              ? (inputVisible ? (inputExpanded ? '75vh' : '140px') : '15px')
+              ? (inputVisible ? (inputExpanded ? '75vh' : mobileInputHeight.value + 'px') : '15px')
               : (inputExpanded ? '35vh' : '15px'),
             transition: 'height 0.2s ease-out'
           }"
@@ -509,6 +527,7 @@ function handleContainerClick(e) {
     </div>
 
     <div
+      ref="mobileInputRef"
       :style="[
         !isMobile ? {
           padding: inputVisible ? 'var(--space-md) var(--space-lg)' : '0 var(--space-lg)',

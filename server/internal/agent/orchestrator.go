@@ -131,12 +131,8 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	msgs := make([]llm.Message, len(req.Messages))
 	copy(msgs, req.Messages)
 
-	// 加载历史用过的工具名
-	usedNames := loadUsedToolNames(ctx, o.convRepo, req.ConversationID)
-	activeNames := ensureToolRetriever(usedNames)
-
 	events := make(chan *llm.StreamEvent, 512)
-	go o.runReActLoop(ctx, events, client, sysPrompt, memoryNote, memIDs, noteIDs, queryVec, msgs, req, activeNames)
+	go o.runReActLoop(ctx, events, client, sysPrompt, memoryNote, memIDs, noteIDs, queryVec, msgs, req)
 	return events, nil
 }
 
@@ -162,7 +158,7 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, req *RunRequest) (str
 		}
 	}
 	sysPrompt += "\n当前时间: " + time.Now().Format("2006-01-02 15:04:05 Monday")
-	sysPrompt += o.registry.ToolOverview()
+	sysPrompt += o.registry.GeneratePrompt()
 
 	// 注入会话上下文（信箱跳转带入的主题信息）
 	extra, err := o.convRepo.GetExtra(ctx, req.ConversationID)
@@ -217,7 +213,6 @@ func (o *Orchestrator) runReActLoop(
 	queryVec []float64,
 	msgs []llm.Message,
 	req *RunRequest,
-	activeNames []string,
 ) {
 	defer close(events)
 	defer func() {
@@ -275,9 +270,6 @@ func (o *Orchestrator) runReActLoop(
 			return
 		}
 
-		// — 根据当前 activeNames 构建本轮的工具列表和 system prompt —
-		iterSysPrompt := sysPrompt + o.registry.GeneratePromptFor(activeNames)
-
 		llmStart := time.Now()
 		temperature := req.Temperature
 		if temperature == nil {
@@ -293,7 +285,7 @@ func (o *Orchestrator) runReActLoop(
 			thinking = &t
 		}
 		streamEvents, err := client.Chat(ctx, &llm.ChatRequest{
-			SystemPrompt: iterSysPrompt,
+			SystemPrompt: sysPrompt,
 			Messages:     msgs,
 			Tools:        nil,
 			Temperature:  temperature,
@@ -349,12 +341,11 @@ func (o *Orchestrator) runReActLoop(
 					ResponseJSON:     se.ResponseJSON,
 				}
 
-				log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d, active_tools=%d",
-					iter+1, len(msg.Content), len(msg.ReasoningContent), len(msg.ToolCalls), len(activeNames))
+				log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
+					iter+1, len(msg.Content), len(msg.ReasoningContent), len(msg.ToolCalls))
 
 				var done bool
-				var newNames []string
-				done, lastAssistantMsgID, newNames = o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID)
+				done, lastAssistantMsgID = o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID)
 				if done {
 					if len(allToolCalls) >= 2 {
 						planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
@@ -362,16 +353,6 @@ func (o *Orchestrator) runReActLoop(
 					}
 					o.emitDone(events, req.ConversationID, lastAssistantMsgID, "", memIDs, noteIDs)
 					return
-				}
-
-				// Phase 5: 把 tool_retriever 发现的新工具加入 activeNames，下次迭代生效
-				if len(newNames) > 0 {
-					before := len(activeNames)
-					activeNames = mergeNewNames(activeNames, newNames)
-					if len(activeNames) > before {
-						log.Printf("[orch] new tools loaded: %v (total=%d)", newNames, len(activeNames))
-						saveUsedToolNames(ctx, o.convRepo, req.ConversationID, activeNames)
-					}
 				}
 			case "error":
 				o.sendEvent(events, se)
@@ -396,84 +377,9 @@ func (o *Orchestrator) sendEvent(events chan<- *llm.StreamEvent, evt *llm.Stream
 	}
 }
 
-// —— 工具调用处理 ——
-
-func (o *Orchestrator) handleNativeToolCalls(
-	ctx context.Context,
-	events chan<- *llm.StreamEvent,
-	msgs *[]llm.Message,
-	msg llm.Message,
-	req *RunRequest,
-	allToolCalls *[]tool.ToolCall,
-) []string {
-	log.Printf("[orch] round native tool_calls=%d", len(msg.ToolCalls))
-	*msgs = append(*msgs, msg)
-	if req.DeepMode {
-		o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg)
-	}
-
-	toolCalls := convertToolCalls(msg.ToolCalls)
-	*allToolCalls = append(*allToolCalls, toolCalls...)
-
-	// plan 事件：节点开始
-	for _, tc := range toolCalls {
-		n := planNode{ID: toolCallNodeID(tc), Label: tc.Function, Status: "running"}
-		b, _ := json.Marshal(n)
-		o.sendEvent(events, &llm.StreamEvent{Type: "plan_node_start", Content: string(b)})
-	}
-
-	results := executeConcurrently(ctx, events, req.UserID, o.registry, toolCalls)
-
-	// 收集本轮的 tool names + tool_retriever 返回的新工具
-	newNames := make([]string, 0)
-	for i := range toolCalls {
-		resJSON, _ := json.Marshal(results[i].result)
-		o.sendEvent(events, &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)})
-		*msgs = append(*msgs, llm.Message{
-			Role:       "tool",
-			ToolCallID: msg.ToolCalls[i].ID,
-			Content:    string(resJSON),
-		})
-
-		// plan 事件：节点完成
-		status := "done"
-		if !results[i].result.Success {
-			status = "failed"
-		}
-		n := planNode{ID: toolCallNodeID(toolCalls[i]), Label: toolCalls[i].Function, Status: status}
-		b, _ := json.Marshal(n)
-		o.sendEvent(events, &llm.StreamEvent{Type: "plan_node_done", Content: string(b)})
-
-		if req.DeepMode {
-			o.saveToolMsg(ctx, req.ConversationID, req.UserID, msg.ToolCalls[i].ID, string(resJSON))
-		}
-
-		// 记录使用的工具名
-		if results[i].result.Success {
-			newNames = append(newNames, toolCalls[i].Tool)
-		}
-		// 如果结果中包含工具列表，提取发现的工具名
-		if results[i].result.Data != nil {
-			names := extractToolNamesFromResult(results[i].result.Data)
-			newNames = append(newNames, names...)
-		}
-	}
-	return newNames
-}
-
-type planNode struct {
-	ID     string `json:"id"`
-	Label  string `json:"label"`
-	Status string `json:"status"` // running | done | failed
-}
-
-func toolCallNodeID(tc tool.ToolCall) string {
-	return tc.Tool + "." + tc.Function
-}
-
 // —— Flash 文本响应处理 ——
 
-// handleFlashResponse 解析 Flash 文本中的 JSON，返回 (done bool, msgID string, newNames []string)
+// handleFlashResponse 解析 Flash 文本中的 JSON，返回 (done bool, msgID string)
 func (o *Orchestrator) handleFlashResponse(
 	ctx context.Context,
 	events chan<- *llm.StreamEvent,
@@ -482,13 +388,13 @@ func (o *Orchestrator) handleFlashResponse(
 	req *RunRequest,
 	allToolCalls *[]tool.ToolCall,
 	lastMsgID *string,
-) (bool, string, []string) {
+) (bool, string) {
 	parsed := parseLLMResponse(msg.Content)
 
 	if parsed == nil {
 		log.Printf("[orch] round pure text reply, len=%d", len(msg.Content))
 		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg)
-		return true, *lastMsgID, nil
+		return true, *lastMsgID
 	}
 
 	log.Printf("[orch] round embedded tool_calls=%d: %s",
@@ -504,7 +410,6 @@ func (o *Orchestrator) handleFlashResponse(
 
 	results := executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
 
-	newNames := make([]string, 0)
 	for i := range parsed.ToolCalls {
 		resJSON, _ := json.Marshal(results[i].result)
 		o.sendEvent(events, &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)})
@@ -516,18 +421,9 @@ func (o *Orchestrator) handleFlashResponse(
 			Role:    "user",
 			Content: "[工具执行结果] " + string(resJSON),
 		})
-
-		// 记录使用的工具名 + tool_retriever 返回的新工具
-		if results[i].result.Success {
-			newNames = append(newNames, parsed.ToolCalls[i].Tool)
-		}
-		if results[i].result.Data != nil {
-			names := extractToolNamesFromResult(results[i].result.Data)
-			newNames = append(newNames, names...)
-		}
 	}
 
-	return false, *lastMsgID, newNames
+	return false, *lastMsgID
 }
 
 // —— 并发执行 ——
@@ -565,28 +461,6 @@ func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, us
 	}
 	wg.Wait()
 	return results
-}
-
-func convertToolCalls(tcs []llm.ToolCall) []tool.ToolCall {
-	result := make([]tool.ToolCall, len(tcs))
-	for i, tc := range tcs {
-		toolName := tc.Function.Name
-		funcName := tc.Function.Name
-		if idx := strings.LastIndex(tc.Function.Name, "__"); idx > 0 {
-			toolName = tc.Function.Name[:idx]
-			funcName = tc.Function.Name[idx+2:]
-		}
-		var args json.RawMessage
-		if tc.Function.Arguments != "" {
-			args = json.RawMessage(tc.Function.Arguments)
-		}
-		result[i] = tool.ToolCall{
-			Tool:     toolName,
-			Function: funcName,
-			Args:     args,
-		}
-	}
-	return result
 }
 
 // —— DB 保存 ——
@@ -803,73 +677,4 @@ func buildPlanEvent(toolCalls []tool.ToolCall) map[string]interface{} {
 		}
 	}
 	return map[string]interface{}{"nodes": nodes, "edges": edges}
-}
-
-// —— Phase 5/6 工具名管理辅助函数 ——
-
-func loadUsedToolNames(ctx context.Context, convRepo *service.ConversationRepo, convID string) []string {
-	if convRepo == nil || convID == "" {
-		return nil
-	}
-	ids, err := convRepo.GetUsedToolIDs(ctx, convID)
-	if err != nil {
-		log.Printf("[orch] load used tool names error: %v", err)
-		return nil
-	}
-	return ids
-}
-
-func ensureToolRetriever(names []string) []string {
-	for _, n := range names {
-		if n == "tool_retriever" {
-			return names
-		}
-	}
-	return append([]string{"tool_retriever"}, names...)
-}
-
-func mergeNewNames(existing, new []string) []string {
-	set := make(map[string]bool, len(existing))
-	for _, n := range existing {
-		set[n] = true
-	}
-	for _, n := range new {
-		if !set[n] && n != "" {
-			existing = append(existing, n)
-			set[n] = true
-		}
-	}
-	return existing
-}
-
-func extractToolNamesFromResult(data json.RawMessage) []string {
-	var result struct {
-		Tools []struct {
-			Name string `json:"name"`
-		} `json:"tools"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil
-	}
-	names := make([]string, 0, len(result.Tools))
-	for _, t := range result.Tools {
-		if t.Name != "" {
-			names = append(names, t.Name)
-		}
-	}
-	return names
-}
-
-func saveUsedToolNames(ctx context.Context, convRepo *service.ConversationRepo, convID string, names []string) {
-	if convRepo == nil || convID == "" {
-		return
-	}
-	extra, _ := convRepo.GetExtra(ctx, convID)
-	if extra == nil {
-		extra = &model.ConversationExtra{}
-	}
-	extra.UsedToolIDs = names
-	if err := convRepo.SaveExtra(ctx, convID, extra); err != nil {
-		log.Printf("[orch] save used tool names error: %v", err)
-	}
 }

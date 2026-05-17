@@ -17,6 +17,7 @@ import (
 // Registry — 工具注册表
 type Registry struct {
 	tools         map[string]Tool
+	hiddenNames   map[string]bool
 	dynamicLoader DynamicToolLoader
 	sidecarURL    string
 	cacheReader   CacheReader
@@ -26,7 +27,15 @@ type Registry struct {
 
 // NewRegistry 创建空的注册表
 func NewRegistry() *Registry {
-	return &Registry{tools: make(map[string]Tool)}
+	return &Registry{
+		tools:       make(map[string]Tool),
+		hiddenNames: make(map[string]bool),
+	}
+}
+
+// HideTool 将工具从 prompt 中隐藏（不会告诉 LLM，但 ExecuteByName 仍可用）
+func (r *Registry) HideTool(name string) {
+	r.hiddenNames[name] = true
 }
 
 // SetDynamicLoader 设置动态工具加载器（由 main.go 调用）
@@ -169,6 +178,9 @@ func (r *Registry) GeneratePrompt() string {
 	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
 
 	for _, t := range r.tools {
+		if r.hiddenNames[t.Name()] {
+			continue
+		}
 		buf.WriteString(fmt.Sprintf("## 工具: %s\n", t.Name()))
 		buf.WriteString(fmt.Sprintf("描述: %s\n\n", t.Description()))
 		buf.WriteString("函数:\n")
@@ -228,7 +240,7 @@ func (r *Registry) GeneratePrompt() string {
 	buf.WriteString("工具执行结果会追加到对话中，你可以据此继续回复用户。\n\n")
 
 	buf.WriteString("===== 重要规则 =====\n\n")
-	buf.WriteString("1. 只能调用上面【工具使用】部分列出的函数。未列出的工具必须先通过 tool_retriever.search 查询后获得定义才能使用。\n")
+	buf.WriteString("1. 只能调用上面【工具使用】部分列出的函数。\n")
 	buf.WriteString("2. 带枚举值的字段必须严格从可选值中选择，不得自创分类！\n")
 	buf.WriteString("3. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
 
@@ -290,6 +302,9 @@ func (r *Registry) GeneratePromptFor(names []string) string {
 	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
 
 	for _, name := range names {
+		if r.hiddenNames[name] {
+			continue
+		}
 		t := r.tools[name]
 		if t == nil {
 			continue
@@ -350,7 +365,7 @@ func (r *Registry) GeneratePromptFor(names []string) string {
 	buf.WriteString("工具执行结果会追加到对话中，你可以据此继续回复用户。\n\n")
 
 	buf.WriteString("===== 重要规则 =====\n\n")
-	buf.WriteString("1. 只能调用上面【工具使用】部分列出的函数。未列出的工具必须先通过 tool_retriever.search 查询后获得定义才能使用。\n")
+	buf.WriteString("1. 只能调用上面【工具使用】部分列出的函数。\n")
 	buf.WriteString("2. 带枚举值的字段必须严格从可选值中选择，不得自创分类！\n")
 	buf.WriteString("3. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
 

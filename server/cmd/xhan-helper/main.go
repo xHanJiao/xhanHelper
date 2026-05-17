@@ -131,6 +131,7 @@ func main() {
 	toolRetriever := tool.NewToolRetriever(tool.NewSimpleKeywordStrategy(toolRepo))
 	toolRetriever.SetRegistrySearcher(reg)
 	reg.Register(tool.NewLoggingWrapper(toolRetriever, log.Default()))
+	reg.HideTool("tool_retriever")
 
 	reg.Register(tool.NewLoggingWrapper(tool.NewAgentTool(agentRepo), log.Default()))
 
@@ -161,7 +162,8 @@ func main() {
 	for _, s := range mcpCfg.Servers {
 		proxy := tool.NewMCPProxyTool(s, mcpManager)
 		reg.Register(tool.NewLoggingWrapper(proxy, log.Default()))
-		log.Printf("[mcp] proxy tool registered: %s", s.Name)
+		reg.HideTool(s.Name)
+		log.Printf("[mcp] proxy tool registered (hidden): %s", s.Name)
 	}
 
 	// ===== Phase 6: 检索工具（独立 Registry，不注册到主 reg） =====

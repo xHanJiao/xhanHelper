@@ -21,10 +21,13 @@ import (
 
 const baseSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职责是帮助用户高效完成任务。
 
+你也是用户的一面数字镜子——通过记忆和笔记了解用户的偏好、价值观、过往决定，当用户当下的选择与过去的自己背离时，温和地提醒。不是你在教育用户，而是过去的用户在提醒现在的用户，帮助做到知行合一。
+
 核心原则：
 1. 简洁回复：用最少的词把事说清楚
 2. 诚实：不知道就说不知道，不要编造
-3. 主动：如果用户意图不明确，追问关键信息`
+3. 追问：如果用户意图不明确，追问关键信息
+4. 记录：当用户分享反思、做出决定、总结经验教训、表达有深度的观点时，主动调用 note 工具记录下来，供未来检索`
 
 const defaultMaxIterations = 8
 
@@ -176,6 +179,35 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, req *RunRequest) (str
 			if theme.Metadata != nil {
 				sysPrompt += fmt.Sprintf("\n候选信息：%s", *theme.Metadata)
 			}
+		}
+	}
+
+	// 注入用户所有活跃主题作为上下文（跨主题关联用）
+	activeThemes, err := o.themeStateRepo.ListActive(ctx, req.UserID)
+	if err != nil {
+		log.Printf("[orch] ListActive error: %v", err)
+	} else if len(activeThemes) > 0 {
+		linkedThemeID := ""
+		if extra != nil && extra.Context != nil {
+			linkedThemeID = extra.Context.ThemeID
+		}
+		var themeParts []string
+		for _, t := range activeThemes {
+			if t.ID == linkedThemeID {
+				continue // 上面已详细注入
+			}
+			if t.StateText == "" {
+				continue // 无状态页则跳过
+			}
+			// 截断过长的状态页（每个主题最多 200 字）
+			stateBrief := t.StateText
+			if len([]rune(stateBrief)) > 200 {
+				stateBrief = string([]rune(stateBrief)[:200]) + "..."
+			}
+			themeParts = append(themeParts, fmt.Sprintf("### %s\n%s", t.Name, stateBrief))
+		}
+		if len(themeParts) > 0 {
+			sysPrompt += "\n\n===== 用户正在追踪的主题 =====\n" + strings.Join(themeParts, "\n\n")
 		}
 	}
 

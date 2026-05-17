@@ -555,8 +555,8 @@ function handleContainerClick(e) {
           zIndex: 99,
           transform: inputVisible ? 'translateY(0)' : 'translateY(100%)',
           height: inputExpanded ? '75vh' : 'auto',
-          transition: 'transform 0.2s ease-out, height 0.2s ease-out',
-          overflow: 'hidden'
+          minHeight: inputExpanded ? '75vh' : 'auto',
+          transition: 'transform 0.2s ease-out, height 0.2s ease-out'
         }
       ]"
     >

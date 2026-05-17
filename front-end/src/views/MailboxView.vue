@@ -72,6 +72,11 @@ function typeColor(type) {
   return map[type] || 'default'
 }
 
+function tagColor(tag) {
+  const map = { '候选主题': 'warning', '已采纳': 'success', '已归档': 'default', '已关闭': 'error' }
+  return map[tag] || 'default'
+}
+
 function formatTime(ts) {
   if (!ts) return ''
   const d = new Date(ts)
@@ -105,7 +110,7 @@ onMounted(fetchItems)
             <div style="flex: 1; min-width: 0;">
               <div style="display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-xs);">
                 <span style="font-weight: 600; font-size: 15px;">{{ item.title }}</span>
-                <NTag :type="typeColor(item.type)" size="small">{{ typeLabel(item.type) }}</NTag>
+                <NTag v-for="(tag, i) in (item.tags && item.tags.length > 0 ? item.tags : [typeLabel(item.type)])" :key="i" :type="item.tags && item.tags.length > 0 ? tagColor(tag) : typeColor(item.type)" size="small">{{ tag }}</NTag>
                 <span v-if="!item.is_read" style="width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary);" />
               </div>
               <div style="font-size: 13px; color: var(--color-text-secondary); white-space: pre-wrap; line-height: 1.5;">{{ item.content }}</div>

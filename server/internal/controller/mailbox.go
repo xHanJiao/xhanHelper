@@ -15,14 +15,15 @@ import (
 
 // MailboxHandler — 信箱 API
 type MailboxHandler struct {
-	mailboxRepo *service.MailboxRepo
-	convRepo    *service.ConversationRepo
-	themeRepo   *service.ThemeStateRepo
-	msgRepo     *service.MessageRepo
+	mailboxService *service.MailboxService
+	mailboxRepo    *service.MailboxRepo
+	convRepo       *service.ConversationRepo
+	themeRepo      *service.ThemeStateRepo
+	msgRepo        *service.MessageRepo
 }
 
-func NewMailboxHandler(mailboxRepo *service.MailboxRepo, convRepo *service.ConversationRepo, themeRepo *service.ThemeStateRepo, msgRepo *service.MessageRepo) *MailboxHandler {
-	return &MailboxHandler{mailboxRepo: mailboxRepo, convRepo: convRepo, themeRepo: themeRepo, msgRepo: msgRepo}
+func NewMailboxHandler(mailboxService *service.MailboxService, mailboxRepo *service.MailboxRepo, convRepo *service.ConversationRepo, themeRepo *service.ThemeStateRepo, msgRepo *service.MessageRepo) *MailboxHandler {
+	return &MailboxHandler{mailboxService: mailboxService, mailboxRepo: mailboxRepo, convRepo: convRepo, themeRepo: themeRepo, msgRepo: msgRepo}
 }
 
 // ListItems GET /api/mailbox
@@ -42,9 +43,9 @@ func (h *MailboxHandler) ListItems(c *gin.Context) {
 		isRead = &f
 	}
 
-	list, total, err := h.mailboxRepo.ListByUser(c.Request.Context(), userID, itemType, isRead, limit, offset)
+	list, total, err := h.mailboxService.ListPacked(c.Request.Context(), userID, itemType, isRead, limit, offset)
 	if err != nil {
-		log.Printf("[mailbox] ListByUser error: %v", err)
+		log.Printf("[mailbox] ListPacked error: %v", err)
 		view.JSONError(c, 500, "查询信箱失败")
 		return
 	}

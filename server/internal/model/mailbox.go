@@ -17,3 +17,20 @@ type MailboxItem struct {
 	IsArchived bool      `gorm:"default:false" json:"is_archived"`
 	CreatedAt  time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
+
+// PackedMailboxItem — 打包后的信箱消息（含实时计算的 tags，不持久化）
+type PackedMailboxItem struct {
+	ID         string   `json:"id"`
+	UserID     string   `json:"user_id"`
+	Title      string   `json:"title"`
+	Content    string   `json:"content"`
+	Greeting   string   `json:"greeting,omitempty"`
+	Type       string   `json:"type"`
+	Source     string   `json:"source,omitempty"`
+	EntityType string   `json:"entity_type,omitempty"`
+	EntityID   string   `json:"entity_id,omitempty"`
+	IsRead     bool     `json:"is_read"`
+	IsArchived bool     `json:"is_archived"`
+	Tags       []string `json:"tags"`
+	CreatedAt  string   `json:"created_at"`
+}

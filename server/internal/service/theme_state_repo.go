@@ -146,6 +146,22 @@ func (r *ThemeStateRepo) Close(ctx context.Context, id, userID string) error {
 		Update("status", "closed").Error
 }
 
+// BatchGetByIDs 批量按 ID + userID 查询主题，用 IN 查询
+func (r *ThemeStateRepo) BatchGetByIDs(ctx context.Context, ids []string, userID string) (map[string]*model.ThemeState, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var list []model.ThemeState
+	if err := r.db.WithContext(ctx).Where("id IN ? AND user_id = ?", ids, userID).Find(&list).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[string]*model.ThemeState, len(list))
+	for i := range list {
+		result[list[i].ID] = &list[i]
+	}
+	return result, nil
+}
+
 // List 分页列出用户主题
 func (r *ThemeStateRepo) List(ctx context.Context, userID, status string, limit, offset int) ([]model.ThemeState, int64, error) {
 	if limit <= 0 {

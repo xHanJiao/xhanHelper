@@ -33,6 +33,25 @@ const hasMemories = computed(() => {
 const associatedMemories = computed(() => {
   return hasMemories.value ? props.message.associatedMemories : []
 })
+
+const downloadableFiles = computed(() => {
+  const files = []
+  for (const tc of props.message.toolCalls || []) {
+    if (tc.status !== 'done' || !tc.result?.success) continue
+    let data = tc.result.data
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data) } catch { continue }
+    }
+    if (data?.url) {
+      files.push({
+        url: data.url,
+        filename: data.filename || new URL(data.url).pathname.split('/').pop() || '下载',
+        message: data.message || ''
+      })
+    }
+  }
+  return files
+})
 </script>
 
 <template>
@@ -65,6 +84,19 @@ const associatedMemories = computed(() => {
         <ThinkingBlock :reasoning="message.reasoning" :done="message.reasoningDone" :is-history="isHistory" />
         <div v-if="contentHtml" style="font-size: 15px; line-height: 1.7; color: var(--color-text);">
           <div v-html="contentHtml" style="margin: 0;"></div>
+        </div>
+
+        <div v-if="downloadableFiles.length > 0" class="download-section">
+          <a
+            v-for="file in downloadableFiles"
+            :key="file.url"
+            :href="file.url"
+            :download="file.filename"
+            class="download-link"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            {{ file.filename }}
+          </a>
         </div>
 
         <ToolCallCard :tool-calls="message.toolCalls || []" :is-history="isHistory" />
@@ -131,5 +163,29 @@ const associatedMemories = computed(() => {
   font-size: 12px;
   color: var(--color-text-muted);
   line-height: 1.5;
+}
+
+.download-section {
+  margin-top: var(--space-md);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+.download-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background var(--transition-fast);
+}
+.download-link:hover {
+  background: var(--color-primary);
+  color: #fff;
 }
 </style>

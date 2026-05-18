@@ -138,7 +138,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			}
 		}
 
-		history, err := msgRepo.ListByConversationRecent(c.Request.Context(), conv.ID, 100)
+		history, err := msgRepo.ListByConversationRecent(c.Request.Context(), conv.ID, 200)
 		if err != nil {
 			log.Printf("[chat] ListByConversation error: %v", err)
 		}

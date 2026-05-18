@@ -568,7 +568,7 @@ function handleContainerClick(e) {
           :disabled="chat.isStreaming"
           :autosize="inputExpanded ? false : { minRows: 1, maxRows: 6 }"
           class="chat-input"
-          @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); handleSend() }}"
+          @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !inputExpanded) { e.preventDefault(); handleSend() }}"
           :bordered="false"
           style="background: transparent; flex: 1;"
         />

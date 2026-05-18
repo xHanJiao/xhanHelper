@@ -60,21 +60,24 @@ function handleLoadMore() {
 }
 
 const navExpanded = ref(true)
+const userInfoExpanded = ref(true)
 const adminExpanded = ref(true)
 const historyExpanded = ref(true)
 
 const navItems = [
-  { label: '信箱', path: '/mailbox' },
-  { label: '主题', path: '/themes' },
   { label: '账单', path: '/bills' },
   { label: '智能体', path: '/agents' },
+  { label: '信箱', path: '/mailbox' }
+]
+
+const userInfoItems = [
   { label: '记忆', path: '/memories' },
   { label: '笔记', path: '/notes' },
-  { label: '提示词', path: '/prompts' }
+  { label: '主题', path: '/themes' }
 ]
 
 const adminItems = [
-  { label: '系统监控', path: '/admin' }
+  { label: '监控看板', path: '/admin' }
 ]
 
 const isAdmin = computed(() => auth.user?.isAdmin === true)
@@ -205,6 +208,52 @@ async function handleExtractMemories(conv) {
       </template>
     </div>
 
+    <!-- 用户信息管理 -->
+    <div style="padding: var(--space-sm) var(--space-md) var(--space-sm);">
+      <div
+        @click="userInfoExpanded = !userInfoExpanded"
+        :style="{
+          padding: 'var(--space-sm) var(--space-md)',
+          borderRadius: 'var(--radius-md)',
+          marginBottom: userInfoExpanded ? 'var(--space-xs)' : '0',
+          cursor: 'pointer',
+          fontSize: '13px',
+          color: 'var(--color-text-muted)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--space-xs)',
+          transition: 'background var(--transition-fast)'
+        }"
+        @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'"
+        @mouseout="e => e.currentTarget.style.background = 'transparent'"
+      >
+        <span style="transition: transform 0.2s;" :style="{ transform: userInfoExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }">▾</span>
+        <span>用户信息管理</span>
+      </div>
+      <template v-if="userInfoExpanded">
+        <div
+          v-for="item in userInfoItems"
+          :key="item.path"
+          @click="router.push(item.path)"
+          :style="{
+            padding: 'var(--space-sm) var(--space-md)',
+            borderRadius: 'var(--radius-md)',
+            marginBottom: 'var(--space-xs)',
+            cursor: 'pointer',
+            fontSize: '14px',
+            color: isNavActive(item.path) ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+            background: isNavActive(item.path) ? 'var(--color-primary-soft)' : 'transparent',
+            fontWeight: isNavActive(item.path) ? '500' : '400',
+            transition: 'background var(--transition-fast), color var(--transition-fast)'
+          }"
+          @mouseover="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'var(--color-surface-hover)' }"
+          @mouseout="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'transparent' }"
+        >
+          {{ item.label }}
+        </div>
+      </template>
+    </div>
+
     <!-- 管理区（仅管理员可见） -->
     <div v-if="isAdmin" style="padding: var(--space-sm) var(--space-md) var(--space-sm);">
       <div
@@ -225,7 +274,7 @@ async function handleExtractMemories(conv) {
         @mouseout="e => e.currentTarget.style.background = 'transparent'"
       >
         <span style="transition: transform 0.2s;" :style="{ transform: adminExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }">▾</span>
-        <span>管理</span>
+        <span>系统监控</span>
       </div>
       <template v-if="adminExpanded">
         <div

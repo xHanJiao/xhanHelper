@@ -10,6 +10,7 @@ Chart.register(...registerables)
 const activeTab = ref('overview')
 const health = ref(null)
 const error = ref(null)
+const hooks = ref(null)
 let timer = null
 
 // ── 反思 Tab ──
@@ -68,7 +69,7 @@ const refreshInterval = ref(60000)
 function restartTimer() {
   clearInterval(timer)
   if (refreshInterval.value > 0) {
-    timer = setInterval(fetchHealth, refreshInterval.value)
+    timer = setInterval(() => { fetchHealth(); fetchHooks() }, refreshInterval.value)
   }
 }
 
@@ -83,7 +84,11 @@ async function fetchHealth() {
   }
 }
 
-onMounted(() => { fetchHealth(); restartTimer(); fetchTraces() })
+async function fetchHooks() {
+  try { hooks.value = await api.get('/api/admin/hooks') } catch (_) {}
+}
+
+onMounted(() => { fetchHealth(); fetchHooks(); restartTimer(); fetchTraces() })
 onUnmounted(() => { clearInterval(timer); destroyCharts() })
 
 function formatJSON(raw) {
@@ -258,12 +263,23 @@ function latSummary(s) {
           <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">{{ latSummary(health.latency.embedding) }}</div>
           <canvas id="embedding-chart" />
         </NCard>
+      </div>
 
-        <NCard v-if="health.latency?.tool" size="small" title="工具调用耗时" class="latency-full-row">
+      <div v-if="health.latency?.tool || hooks" style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); margin-bottom: var(--space-lg);">
+        <NCard v-if="health.latency?.tool" size="small" title="工具调用耗时">
           <div v-for="(funcs, tool) in health.latency.tool" :key="tool" style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 2px;">
             <span v-for="(s, fn) in funcs" :key="fn">{{ tool }}.{{ fn }} — {{ latSummary(s) }}<br v-if="Object.keys(funcs).length > 1" /></span>
           </div>
           <canvas id="tool-lat-chart" style="margin-top: var(--space-sm);" />
+        </NCard>
+        <NCard v-if="hooks" size="small" title="钩子状态">
+          <div style="display: grid; gap: 4px; font-size: 13px;">
+            <div>待处理延迟任务: <strong :style="{ color: hooks.pending_delayed_tasks > 0 ? 'var(--color-warning)' : 'var(--color-text-muted)' }">{{ hooks.pending_delayed_tasks }}</strong></div>
+            <div v-if="hooks.next_delayed_task_at">最近到期: <strong>{{ hooks.next_delayed_task_at }}</strong></div>
+            <div>提醒定时器: <strong>{{ hooks.commitment_timers }}</strong></div>
+            <div>投递窗口剩余: <strong>{{ hooks.deliver_remaining }}</strong></div>
+            <div>主题发现剩余: <strong>{{ hooks.discover_remaining }}</strong></div>
+          </div>
         </NCard>
       </div>
 
@@ -368,9 +384,6 @@ function latSummary(s) {
 }
 .latency-grid .n-card {
   margin-bottom: 0;
-}
-.latency-full-row {
-  grid-column: 1 / -1;
 }
 @media (max-width: 768px) {
   .latency-grid {

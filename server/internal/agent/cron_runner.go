@@ -3,47 +3,62 @@ package agent
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
 
-// postChatEvent — 对话结束后的事件
-type postChatEvent struct {
-	userID string
-	convID string
+// HookStatus — 系统钩子状态快照
+type HookStatus struct {
+	PendingDelayedTasks int64  `json:"pending_delayed_tasks"`
+	NextDelayedTaskAt   string `json:"next_delayed_task_at"`
+	DeliverRemaining    string `json:"deliver_remaining"`
+	DiscoverRemaining   string `json:"discover_remaining"`
+	CommitmentTimers    int    `json:"commitment_timers"`
 }
 
 // CronRunner — 反思循环调度器
 type CronRunner struct {
 	orch              *ReflectionOrchestrator
 	userRepo          *service.UserRepo
-	discoverTimes     []string           // 发现候选主题定时列表
-	deliverInterval   time.Duration      // 投递窗口间隔，默认 1 小时
-	postChatDelay     time.Duration      // 对话后延迟触发，默认 30 分钟
-	runTimeout        time.Duration      // 单次反思超时，默认 5 分钟
-	eventCh           chan postChatEvent // 对话结束后通知
+	discoverTimes     []string      // 发现候选主题定时列表
+	deliverInterval   time.Duration // 投递窗口间隔，默认 1 小时
+	postChatDelay     time.Duration // 对话后延迟触发，默认 30 分钟
+	runTimeout        time.Duration // 单次反思超时，默认 30 分钟
+	taskPollInterval  time.Duration // 延迟任务轮询间隔，默认 3 分钟
+	delayedTaskRepo   *service.DelayedTaskRepo
 	stateUpdater      *StateUpdater
 	memExtractor      *MemoryExtractor
 	commitTimer       *CommitmentTimer
 	convRepo          *service.ConversationRepo
 	memoryAutoExtract bool
+
+	// 钩子状态追踪
+	mu              sync.Mutex
+	deliverNext     time.Time
+	discoverNext    time.Time
+	taskPollRunning bool
 }
 
 // NewCronRunner 创建调度器
-func NewCronRunner(orch *ReflectionOrchestrator, stateUpdater *StateUpdater, userRepo *service.UserRepo, memExtractor *MemoryExtractor, commitTimer *CommitmentTimer, convRepo *service.ConversationRepo) *CronRunner {
+func NewCronRunner(orch *ReflectionOrchestrator, stateUpdater *StateUpdater, userRepo *service.UserRepo, memExtractor *MemoryExtractor, commitTimer *CommitmentTimer, convRepo *service.ConversationRepo, delayedTaskRepo *service.DelayedTaskRepo) *CronRunner {
 	return &CronRunner{
-		orch:            orch,
-		stateUpdater:    stateUpdater,
-		userRepo:        userRepo,
-		memExtractor:    memExtractor,
-		commitTimer:     commitTimer,
-		convRepo:        convRepo,
-		discoverTimes:   []string{"09:00", "18:00"},
-		deliverInterval: 1 * time.Hour,
-		postChatDelay:   30 * time.Minute,
-		runTimeout:      30 * time.Minute,
-		eventCh:         make(chan postChatEvent, 32),
+		orch:             orch,
+		stateUpdater:     stateUpdater,
+		userRepo:         userRepo,
+		memExtractor:     memExtractor,
+		commitTimer:      commitTimer,
+		convRepo:         convRepo,
+		delayedTaskRepo:  delayedTaskRepo,
+		discoverTimes:    []string{"09:00", "18:00"},
+		deliverInterval:  1 * time.Hour,
+		postChatDelay:    30 * time.Minute,
+		runTimeout:       30 * time.Minute,
+		taskPollInterval: 3 * time.Minute,
 	}
 }
 
@@ -62,14 +77,63 @@ func (cr *CronRunner) SetRunTimeout(d time.Duration) { cr.runTimeout = d }
 // SetMemoryAutoExtract 设置是否自动提取记忆
 func (cr *CronRunner) SetMemoryAutoExtract(v bool) { cr.memoryAutoExtract = v }
 
-// NotifyChatEnd 对话结束后通知调度器（由聊天 orchestrator 调用）
+func (cr *CronRunner) setDeliverNext(t time.Time) {
+	cr.mu.Lock()
+	cr.deliverNext = t
+	cr.mu.Unlock()
+}
+
+func (cr *CronRunner) setDiscoverNext(t time.Time) {
+	cr.mu.Lock()
+	cr.discoverNext = t
+	cr.mu.Unlock()
+}
+
+// GetHookStatus 返回当前钩子状态快照
+func (cr *CronRunner) GetHookStatus() HookStatus {
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+
+	now := time.Now()
+	s := HookStatus{
+		CommitmentTimers: cr.commitTimer.ActiveTimerCount(),
+	}
+	if cr.delayedTaskRepo != nil {
+		if n, err := cr.delayedTaskRepo.CountPending(context.Background()); err == nil {
+			s.PendingDelayedTasks = n
+		}
+		if earliest, err := cr.delayedTaskRepo.EarliestPending(context.Background()); err == nil && !earliest.IsZero() {
+			s.NextDelayedTaskAt = earliest.In(time.FixedZone("UTC+8", 8*3600)).Format("15:04:05")
+		}
+	}
+	s.DeliverRemaining = cr.deliverNext.Sub(now).Round(time.Second).String()
+	s.DiscoverRemaining = cr.discoverNext.Sub(now).Round(time.Second).String()
+
+	return s
+}
+
+// NotifyChatEnd 对话结束后写入延迟任务表，由轮询处理（由聊天 orchestrator 调用）
 func (cr *CronRunner) NotifyChatEnd(userID, convID string) {
 	log.Printf("[cron] NotifyChatEnd: user=%s conv=%s", userID[:8], convID[:8])
-	select {
-	case cr.eventCh <- postChatEvent{userID, convID}:
-		log.Printf("[cron] eventCh sent ok")
-	default:
-		log.Printf("[cron] event channel full, dropping notification for %s", userID)
+	if cr.delayedTaskRepo == nil {
+		log.Printf("[cron] delayedTaskRepo is nil, skipping")
+		return
+	}
+	job := &model.DelayedTask{
+		ID:        uuid.New().String(),
+		UserID:    userID,
+		TaskType:  "post_chat",
+		Status:    "pending",
+		ProcessAt: time.Now().Add(cr.postChatDelay),
+	}
+	if err := job.SetMeta(model.DelayedTaskMeta{ConvID: convID}); err != nil {
+		log.Printf("[cron] SetMeta error: %v", err)
+		return
+	}
+	if err := cr.delayedTaskRepo.Create(context.Background(), job); err != nil {
+		log.Printf("[cron] create delayed task error: %v", err)
+	} else {
+		log.Printf("[cron] delayed task created: id=%s process_at=%s", job.ID[:8], job.ProcessAt.Format("15:04:05"))
 	}
 }
 
@@ -83,14 +147,14 @@ func (cr *CronRunner) Start(ctx context.Context) {
 	go cr.commitTimer.StartFallbackScan(ctx)
 
 	deliverTimer := time.NewTimer(cr.deliverInterval)
+	cr.setDeliverNext(time.Now().Add(cr.deliverInterval))
 	defer deliverTimer.Stop()
 	discoverTimer := time.NewTimer(nextDailyDelay(cr.discoverTimes))
+	cr.setDiscoverNext(time.Now().Add(nextDailyDelay(cr.discoverTimes)))
 	defer discoverTimer.Stop()
 
-	// 后对话延迟的定时器（nil = 未激活）
-	var postChatTimer *time.Timer
-	var pendingUserID string
-	var pendingConvID string
+	taskPollTicker := time.NewTicker(cr.taskPollInterval)
+	defer taskPollTicker.Stop()
 
 	for {
 		select {
@@ -105,6 +169,7 @@ func (cr *CronRunner) Start(ctx context.Context) {
 				cr.deliverOnce(ctx, u.ID)
 			}
 			deliverTimer.Reset(cr.deliverInterval)
+			cr.setDeliverNext(time.Now().Add(cr.deliverInterval))
 
 		case <-discoverTimer.C:
 			log.Printf("[cron] discover trigger")
@@ -113,26 +178,47 @@ func (cr *CronRunner) Start(ctx context.Context) {
 				cr.discoverOnce(ctx, u.ID)
 			}
 			discoverTimer.Reset(nextDailyDelay(cr.discoverTimes))
+			cr.setDiscoverNext(time.Now().Add(nextDailyDelay(cr.discoverTimes)))
 
-		case evt := <-cr.eventCh:
-			log.Printf("[cron] eventCh received: user=%s conv=%s", evt.userID[:8], evt.convID[:8])
-			if postChatTimer != nil {
-				postChatTimer.Stop()
+		case <-taskPollTicker.C:
+			cr.mu.Lock()
+			if cr.taskPollRunning {
+				cr.mu.Unlock()
+				continue
 			}
-			pendingUserID = evt.userID
-			pendingConvID = evt.convID
-			postChatTimer = time.NewTimer(cr.postChatDelay)
-			log.Printf("[cron] timer set: delay=%v", cr.postChatDelay)
+			cr.taskPollRunning = true
+			cr.mu.Unlock()
+			go func() {
+				cr.processPostChatTasks(ctx)
+				cr.mu.Lock()
+				cr.taskPollRunning = false
+				cr.mu.Unlock()
+			}()
+		}
+	}
+}
 
-		case <-func() <-chan time.Time {
-			if postChatTimer == nil {
-				return nil
-			}
-			return postChatTimer.C
-		}():
-			log.Printf("[cron] post-chat trigger for user=%s conv=%s", pendingUserID, pendingConvID)
-			cr.dispatchPostChat(ctx, pendingUserID, pendingConvID)
-			postChatTimer = nil
+// processPostChatTasks 扫延迟任务表中到期的 post_chat 任务并执行
+func (cr *CronRunner) processPostChatTasks(ctx context.Context) {
+	if cr.delayedTaskRepo == nil {
+		return
+	}
+	tasks, err := cr.delayedTaskRepo.ListDue(ctx, "post_chat", 20)
+	if err != nil {
+		log.Printf("[cron] ListDue error: %v", err)
+		return
+	}
+	for _, t := range tasks {
+		meta, err := t.ParseMeta()
+		if err != nil || meta.ConvID == "" {
+			log.Printf("[cron] bad task meta for %s, marking done", t.ID[:8])
+			cr.delayedTaskRepo.MarkDone(ctx, t.ID)
+			continue
+		}
+		log.Printf("[cron] post-chat task: user=%s conv=%s", t.UserID[:8], meta.ConvID[:8])
+		cr.dispatchPostChat(ctx, t.UserID, meta.ConvID)
+		if err := cr.delayedTaskRepo.MarkDone(ctx, t.ID); err != nil {
+			log.Printf("[cron] MarkDone error: %v", err)
 		}
 	}
 }

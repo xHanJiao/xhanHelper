@@ -8,6 +8,7 @@ import (
 
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/service"
+	"xhan-helper/internal/view"
 )
 
 // RegisterReflectionRoutes 注册 Phase 6 反思系统相关路由（在 NewRouter 之后调用）
@@ -18,6 +19,7 @@ func RegisterReflectionRoutes(
 	themeHandler *ThemeHandler,
 	reflectionAdminHandler *ReflectionAdminHandler,
 	reflectionOrch *agent.ReflectionOrchestrator,
+	cronRunner *agent.CronRunner,
 	authMiddleware gin.HandlerFunc,
 	adminMiddleware gin.HandlerFunc,
 ) {
@@ -59,5 +61,8 @@ func RegisterReflectionRoutes(
 		admin.GET("/reflection/traces/:id", reflectionAdminHandler.GetTrace)
 		admin.GET("/reflection/decisions", reflectionAdminHandler.ListDecisions)
 		admin.GET("/reflection/llm-calls/:id", reflectionAdminHandler.GetLLMCall)
+		admin.GET("/hooks", func(c *gin.Context) {
+			view.JSONOK(c, cronRunner.GetHookStatus())
+		})
 	}
 }

@@ -76,6 +76,7 @@ func main() {
 		&model.ConceptEmbedding{},
 		&model.PendingFinding{},
 		&model.Commitment{},
+		&model.DelayedTask{},
 	); err != nil {
 		log.Printf("[db] AutoMigrate error: %v", err)
 	}
@@ -110,6 +111,7 @@ func main() {
 	conceptEmbedRepo := service.NewConceptEmbeddingRepo(db)
 	pendingFindingRepo := service.NewPendingFindingRepo(db)
 	commitmentRepo := service.NewCommitmentRepo(db)
+	delayedTaskRepo := service.NewDelayedTaskRepo(db)
 
 	// Tool Registry + Tools
 	reg := tool.NewRegistry()
@@ -220,7 +222,7 @@ func main() {
 	)
 	reflectionOrch.SetMaxDeliveryRetries(cfg.Reflection.MaxDeliveryRetries)
 	stateUpdater := agent.NewStateUpdater(llmClient, msgRepo, convRepo, themeStore, pendingFindingRepo)
-	cronRunner := agent.NewCronRunner(reflectionOrch, stateUpdater, userRepo, memExtractor, commitmentTimer, convRepo)
+	cronRunner := agent.NewCronRunner(reflectionOrch, stateUpdater, userRepo, memExtractor, commitmentTimer, convRepo, delayedTaskRepo)
 	cronRunner.SetPostChatDelay(time.Duration(cfg.Reflection.PostChatDelaySeconds) * time.Second)
 	cronRunner.SetDiscoverSchedules(cfg.Reflection.DailySchedules)
 	cronRunner.SetDeliverInterval(time.Duration(cfg.Reflection.DeliverIntervalMinutes) * time.Minute)
@@ -302,7 +304,7 @@ func main() {
 	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, agentRepo, billHandler, noteHandler, memHandler, agentHandler, toolHandler, promptHandler, memExtractor, middleware.RequestLogger(log.Default()))
 
 	// 注册 Phase 6 反思系统路由
-	controller.RegisterReflectionRoutes(router, userRepo, mailboxHandler, themeHandler, reflectionAdminHandler, reflectionOrch,
+	controller.RegisterReflectionRoutes(router, userRepo, mailboxHandler, themeHandler, reflectionAdminHandler, reflectionOrch, cronRunner,
 		middleware.Auth(userRepo), monitor.AdminOnly(cfg.Server.AdminUsers))
 
 	addr := ":" + strconv.Itoa(cfg.Server.Port)

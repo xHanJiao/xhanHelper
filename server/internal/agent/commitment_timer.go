@@ -31,6 +31,13 @@ func NewCommitmentTimer(commitRepo *service.CommitmentRepo, mailboxRepo *service
 	}
 }
 
+// ActiveTimerCount 返回当前活跃的 timer 数量
+func (t *CommitmentTimer) ActiveTimerCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.timers)
+}
+
 // Schedule 注册一次性或循环承诺的 timer
 func (t *CommitmentTimer) Schedule(c *model.Commitment) {
 	if c.NextDeadline == nil {

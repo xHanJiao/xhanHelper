@@ -119,6 +119,26 @@ func (cr *CronRunner) NotifyChatEnd(userID, convID string) {
 		log.Printf("[cron] delayedTaskRepo is nil, skipping")
 		return
 	}
+
+	// 查重：如果已有同 user+conv 的 pending 任务，重置 process_at 而不是新建
+	pending, err := cr.delayedTaskRepo.FindPendingByUserAndType(context.Background(), userID, "post_chat")
+	if err != nil {
+		log.Printf("[cron] FindPendingByUserAndType error: %v, fallback to insert", err)
+	} else {
+		for _, t := range pending {
+			meta, err := t.ParseMeta()
+			if err == nil && meta.ConvID == convID {
+				newTime := time.Now().Add(cr.postChatDelay)
+				if err := cr.delayedTaskRepo.UpdateProcessAt(context.Background(), t.ID, newTime); err != nil {
+					log.Printf("[cron] UpdateProcessAt error: %v", err)
+				} else {
+					log.Printf("[cron] delayed task debounced: id=%s new_process_at=%s", t.ID[:8], newTime.Format("15:04:05"))
+				}
+				return
+			}
+		}
+	}
+
 	job := &model.DelayedTask{
 		ID:        uuid.New().String(),
 		UserID:    userID,
@@ -208,6 +228,7 @@ func (cr *CronRunner) processPostChatTasks(ctx context.Context) {
 		log.Printf("[cron] ListDue error: %v", err)
 		return
 	}
+	seen := map[string]bool{}
 	for _, t := range tasks {
 		meta, err := t.ParseMeta()
 		if err != nil || meta.ConvID == "" {
@@ -215,6 +236,13 @@ func (cr *CronRunner) processPostChatTasks(ctx context.Context) {
 			cr.delayedTaskRepo.MarkDone(ctx, t.ID)
 			continue
 		}
+		key := t.UserID + "|" + meta.ConvID
+		if seen[key] {
+			log.Printf("[cron] post-chat duplicate skipped: user=%s conv=%s task=%s", t.UserID[:8], meta.ConvID[:8], t.ID[:8])
+			cr.delayedTaskRepo.MarkDone(ctx, t.ID)
+			continue
+		}
+		seen[key] = true
 		log.Printf("[cron] post-chat task: user=%s conv=%s", t.UserID[:8], meta.ConvID[:8])
 		cr.dispatchPostChat(ctx, t.UserID, meta.ConvID)
 		if err := cr.delayedTaskRepo.MarkDone(ctx, t.ID); err != nil {
@@ -240,18 +268,16 @@ func (cr *CronRunner) dispatchPostChat(ctx context.Context, userID, convID strin
 		}
 	}
 
-	// Step 2: 查会话是否绑定了主题
+	// Step 2: 查会话是否绑定了主题，已绑定则增量更新状态页
 	extra, err := cr.stateUpdater.convRepo.GetExtra(runCtx, convID)
-	if err != nil || extra == nil || extra.Context == nil || extra.Context.ThemeID == "" {
-		// 未绑定主题 → 从当前会话消息中静默发现草稿
-		log.Printf("[cron] post-chat: no theme binding, discovering draft from conv=%s", convID[:8])
-		if err := cr.orch.DiscoverDraftFromConversation(runCtx, userID, convID); err != nil {
-			log.Printf("[cron] discover draft error: %v", err)
-		}
+	if err != nil {
+		log.Printf("[cron] post-chat: GetExtra error: %v", err)
+		return
+	}
+	if extra == nil || extra.Context == nil || extra.Context.ThemeID == "" {
 		return
 	}
 
-	// 绑定主题 → 增量更新状态页 + 通用判定
 	log.Printf("[cron] post-chat: theme %s, running StateUpdater for user=%s conv=%s", extra.Context.ThemeID[:8], userID, convID)
 	if err := cr.stateUpdater.UpdateFromConversation(runCtx, userID, convID, extra.Context.ThemeID); err != nil {
 		log.Printf("[cron] StateUpdater error: %v", err)

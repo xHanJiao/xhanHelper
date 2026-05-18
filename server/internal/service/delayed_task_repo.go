@@ -62,6 +62,21 @@ func (r *DelayedTaskRepo) EarliestPending(ctx context.Context) (time.Time, error
 	return t.ProcessAt, nil
 }
 
+// FindPendingByUserAndType 查某用户某类型的全部 pending 任务
+func (r *DelayedTaskRepo) FindPendingByUserAndType(ctx context.Context, userID, taskType string) ([]model.DelayedTask, error) {
+	var list []model.DelayedTask
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND task_type = ? AND status = ?", userID, taskType, "pending").
+		Find(&list).Error
+	return list, err
+}
+
+// UpdateProcessAt 更新任务的处理时间
+func (r *DelayedTaskRepo) UpdateProcessAt(ctx context.Context, id string, t time.Time) error {
+	return r.db.WithContext(ctx).Model(&model.DelayedTask{}).Where("id = ?", id).
+		Update("process_at", t).Error
+}
+
 // CountPending 统计全局 pending 任务数
 func (r *DelayedTaskRepo) CountPending(ctx context.Context) (int64, error) {
 	var count int64

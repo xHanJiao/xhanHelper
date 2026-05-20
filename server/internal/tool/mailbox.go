@@ -38,7 +38,7 @@ type mailboxDeliverArgs struct {
 func (t *MailboxTool) Functions() []FuncSchema {
 	return []FuncSchema{{
 		Name:        "deliver",
-		Description: "向用户信箱投递一条或多条消息。type: daily_brief（日报）/ theme_finding（主题发现）/ candidate_theme（候选主题）。source 为来源主题名或 system",
+		Description: "向用户信箱投递一条或多条消息。type: daily_brief（日报）/ theme_finding（主题发现）。source 为来源主题名或 system",
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -49,7 +49,7 @@ func (t *MailboxTool) Functions() []FuncSchema {
 						"properties": map[string]interface{}{
 							"title":       map[string]interface{}{"type": "string", "description": "消息标题"},
 							"content":     map[string]interface{}{"type": "string", "description": "消息正文"},
-							"type":        map[string]interface{}{"type": "string", "description": "消息类型", "enum": []string{"daily_brief", "theme_finding", "candidate_theme"}},
+							"type":        map[string]interface{}{"type": "string", "description": "消息类型", "enum": []string{"daily_brief", "theme_finding"}},
 							"source":      map[string]interface{}{"type": "string", "description": "来源主题名"},
 							"entity_type": map[string]interface{}{"type": "string", "description": "关联实体类型，theme_finding 必填 'theme'"},
 							"entity_id":   map[string]interface{}{"type": "string", "description": "关联实体 ID"},

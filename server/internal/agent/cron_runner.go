@@ -268,7 +268,12 @@ func (cr *CronRunner) dispatchPostChat(ctx context.Context, userID, convID strin
 		}
 	}
 
-	// Step 2: 查会话是否绑定了主题，已绑定则增量更新状态页
+	// Step 2: 从会话中静默发现草稿主题
+	if err := cr.orch.DiscoverDraftFromConversation(runCtx, userID, convID); err != nil {
+		log.Printf("[cron] post-chat: discover draft error: %v", err)
+	}
+
+	// Step 3: 查会话是否绑定了主题，已绑定则增量更新状态页
 	extra, err := cr.stateUpdater.convRepo.GetExtra(runCtx, convID)
 	if err != nil {
 		log.Printf("[cron] post-chat: GetExtra error: %v", err)
@@ -316,7 +321,15 @@ func (cr *CronRunner) deliverOnce(ctx context.Context, userID string) {
 func (cr *CronRunner) discoverOnce(ctx context.Context, userID string) {
 	runCtx, cancel := context.WithTimeout(ctx, cr.runTimeout)
 	defer cancel()
-	if _, err := cr.orch.DiscoverAndDeliver(runCtx, userID); err != nil {
-		log.Printf("[cron] discover error: %v", err)
+	now := time.Now()
+	hour := now.Hour()
+	if hour < 12 {
+		if _, err := cr.orch.MorningReview(runCtx, userID); err != nil {
+			log.Printf("[cron] morning review error: %v", err)
+		}
+	} else {
+		if _, err := cr.orch.EveningReview(runCtx, userID); err != nil {
+			log.Printf("[cron] evening review error: %v", err)
+		}
 	}
 }

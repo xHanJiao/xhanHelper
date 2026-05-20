@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/controller"
@@ -193,9 +194,10 @@ func main() {
 	themeStore := agent.NewThemeStore(themeStateRepo)
 	themeAnalyst := agent.NewThemeAnalyst(llmClient, retrievalTools, themeStore, cfg.Reflection.AnalystMaxIterations)
 	scorerTool := agent.NewScorer(llmClient)
-	themeDiscoverer := agent.NewThemeDiscoverer(llmClient, retrievalTools, themeStore, embedder, vsAdapter, cfg.Reflection.DiscoverMaxIterations, cfg.Reflection.ClusterThreshold)
+	themeEmbedder := agent.NewThemeEmbedder(conceptEmbedRepo, embeddingRepo, embedder, vsAdapter)
+	themeDiscoverer := agent.NewThemeDiscoverer(llmClient, retrievalTools, themeStore, embedder, vsAdapter, themeEmbedder, cfg.Reflection.DiscoverMaxIterations, cfg.Reflection.ClusterThreshold)
 	mailboxTool := tool.NewMailboxTool(mailboxRepo)
-	themeMgmtTool := tool.NewThemeTool(themeStateRepo, embedder, vsAdapter, embeddingRepo)
+	themeMgmtTool := tool.NewThemeTool(themeStateRepo, themeEmbedder)
 
 	reflectionReg := tool.NewRegistry()
 	reflectionReg.Register(tool.NewLoggingWrapper(themeAnalyst, log.Default()))
@@ -227,6 +229,9 @@ func main() {
 	cronRunner.SetDiscoverSchedules(cfg.Reflection.DailySchedules)
 	cronRunner.SetDeliverInterval(time.Duration(cfg.Reflection.DeliverIntervalMinutes) * time.Minute)
 	cronRunner.SetMemoryAutoExtract(cfg.Server.MemoryAutoExtract)
+	themeDiscoverer.SetUpgradeThresholds(cfg.Reflection.DraftNominateCountThreshold, cfg.Reflection.DraftSpanDaysThreshold)
+	reflectionOrch.SetDraftExpireDays(cfg.Reflection.DraftExpireDays)
+	reflectionOrch.SetActiveDurationDays(cfg.Reflection.ActiveDurationDays)
 	// 后台任务共享 context，关闭时统一取消
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
@@ -269,21 +274,17 @@ func main() {
 	})
 
 	// Monitor snapshots
-	monitor.Register("vector_store", func() any { return vectorStore.Stats() })
-	monitor.Register("mcp", func() any { return mcpManager.Stats() })
-	monitor.Register("active_conversations", func() any {
-		return convRepo.CountActive(context.Background(), time.Hour)
-	})
-	monitor.Register("markdown_files", func() any {
-		entries, _ := os.ReadDir("data/markdown")
-		count := 0
-		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-				count++
-			}
-		}
-		return map[string]interface{}{"count": count}
-	})
+	snapshots := &SnapshotProvider{
+		vectorStore:    vectorStore,
+		mcpManager:     mcpManager,
+		convRepo:       convRepo,
+		themeStateRepo: themeStateRepo,
+	}
+	monitor.Register("vector_store", snapshots.VectorStore)
+	monitor.Register("mcp", snapshots.MCP)
+	monitor.Register("active_conversations", snapshots.ActiveConversations)
+	monitor.Register("markdown_files", snapshots.MarkdownFiles)
+	monitor.Register("themes", snapshots.Themes)
 
 	// MCP idle reaper
 	mcpManager.StartIdleReaper(bgCtx)

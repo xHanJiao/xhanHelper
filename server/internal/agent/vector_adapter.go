@@ -49,7 +49,7 @@ func (a *VectorSearchAdapter) VecSearch(query []float64, topK int, filter func(i
 	})
 	hits := make([]VectorSearchHit, len(results))
 	for i, r := range results {
-		hits[i] = VectorSearchHit{ID: r.ID, Score: r.Score}
+		hits[i] = VectorSearchHit{ID: r.ID, Score: r.Score, Metadata: r.Metadata}
 	}
 	return hits
 }

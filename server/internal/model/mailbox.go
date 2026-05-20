@@ -9,7 +9,7 @@ type MailboxItem struct {
 	Title      string    `gorm:"size:200;not null" json:"title"`
 	Content    string    `gorm:"type:text;not null" json:"content"`   // 站内信/推送文案（短）
 	Greeting   string    `gorm:"type:text" json:"greeting,omitempty"` // 对话开场白（长）
-	Type       string    `gorm:"size:30;not null" json:"type"`        // daily_brief | theme_finding | candidate_theme
+	Type       string    `gorm:"size:30;not null" json:"type"`        // daily_brief | theme_finding
 	Source     string    `gorm:"size:50" json:"source"`
 	EntityType string    `gorm:"size:20" json:"entity_type,omitempty"`
 	EntityID   string    `gorm:"size:36" json:"entity_id,omitempty"`

@@ -28,6 +28,9 @@ type ReflectionOrchestrator struct {
 	pendingFindingRepo *service.PendingFindingRepo
 	maxIterations      int
 	maxDeliveryRetries int
+
+	draftExpireDays    int
+	activeDurationDays map[string]int
 }
 
 func NewReflectionOrchestrator(
@@ -54,15 +57,28 @@ func NewReflectionOrchestrator(
 		pendingFindingRepo: pendingFindingRepo,
 		maxIterations:      maxIterations,
 		maxDeliveryRetries: 3,
+		draftExpireDays:    7,
 	}
 }
 
 // SetMaxDeliveryRetries 设置投递重试上限
 func (o *ReflectionOrchestrator) SetMaxDeliveryRetries(n int) { o.maxDeliveryRetries = n }
 
-var runOnceExpireDays = 7
+// SetDraftExpireDays 设置 draft 过期天数
+func (o *ReflectionOrchestrator) SetDraftExpireDays(days int) {
+	if days > 0 {
+		o.draftExpireDays = days
+	}
+}
 
-// DiscoverDraftFromConversation 从单个会话的消息中发现草稿主题
+// SetActiveDurationDays 设置 active 各 duration 的衰减天数
+func (o *ReflectionOrchestrator) SetActiveDurationDays(days map[string]int) {
+	if len(days) > 0 {
+		o.activeDurationDays = days
+	}
+}
+
+// DiscoverDraftFromConversation 从单个会话的消息中发现草稿主题（调 ThemeDiscoverer，draft 创建/向量写/升级检查全部收敛在内）
 func (o *ReflectionOrchestrator) DiscoverDraftFromConversation(ctx context.Context, userID, convID string) error {
 	msgs, err := o.msgRepo.ListByConversation(ctx, convID, 50)
 	if err != nil || len(msgs) == 0 {
@@ -79,7 +95,6 @@ func (o *ReflectionOrchestrator) DiscoverDraftFromConversation(ctx context.Conte
 		return nil
 	}
 
-	// 复用 ThemeDiscoverer 的 conversation 模式
 	t, ok := o.reflectionReg.GetToolMap()["theme_discoverer"]
 	if !ok {
 		return nil
@@ -93,40 +108,12 @@ func (o *ReflectionOrchestrator) DiscoverDraftFromConversation(ctx context.Conte
 		return nil
 	}
 
-	var output struct {
-		Candidates []map[string]interface{} `json:"candidates"`
-	}
-	if json.Unmarshal(res.Data, &output) != nil || len(output.Candidates) == 0 {
+	var output DiscoverResult
+	if json.Unmarshal(res.Data, &output) != nil {
 		return nil
 	}
-
-	// 创建草稿（不投递信箱）
-	for _, c := range output.Candidates {
-		name, _ := c["name"].(string)
-		desc, _ := c["description"].(string)
-		if name == "" {
-			continue
-		}
-		existing, _ := o.themeStore.GetByName(ctx, userID, name)
-		if existing != nil && (existing.Status == "candidate" || existing.Status == "active" || existing.Status == "draft") {
-			continue
-		}
-		metaJSON, _ := json.Marshal(map[string]interface{}{"candidate_info": c})
-		metaStr := string(metaJSON)
-		theme := &model.ThemeState{
-			ID:          uuid.New().String(),
-			UserID:      userID,
-			Name:        name,
-			Description: desc,
-			Status:      "draft",
-			Metadata:    &metaStr,
-		}
-		if err := o.themeStore.Create(ctx, theme); err != nil {
-			log.Printf("[reflection] create draft error: %v", err)
-		} else {
-			log.Printf("[reflection] created draft: %s", name)
-		}
-	}
+	log.Printf("[reflection] draft discovery done: created=%d upgraded=%d rejected=%d",
+		len(output.Created), len(output.Upgraded), len(output.Rejected))
 	return nil
 }
 
@@ -255,219 +242,133 @@ func (o *ReflectionOrchestrator) DeliverPendingFindings(ctx context.Context, use
 
 func (o *ReflectionOrchestrator) incrementRetries(ctx context.Context, ids []string) {
 	log.Printf("[reflection] delivery failed, incrementing retries for %d findings", len(ids))
-	// Increment retry count for all and mark those exceeding limit as failed
 	for _, id := range ids {
 		o.pendingFindingRepo.IncrementRetry(ctx, id)
 	}
-	if o.maxDeliveryRetries > 0 {
-		// TODO: query retry_count > max and mark failed — skip for now, simple is ok
-	}
 }
 
-// DiscoverAndDeliver 发现候选主题并投递（cron 低频调用）
-func (o *ReflectionOrchestrator) DiscoverAndDeliver(ctx context.Context, userID string) (int, error) {
+// MorningReview 早安回顾：expire draft + active 衰减 + 对活跃主题产出 finding
+func (o *ReflectionOrchestrator) MorningReview(ctx context.Context, userID string) (int, error) {
 	traceID := uuid.New().String()
-	log.Printf("[reflection] trace=%s trigger=discover user=%s START", traceID[:8], userID)
+	log.Printf("[reflection] trace=%s trigger=morning_review user=%s START", traceID[:8], userID)
 
 	tr := &model.ReflectionTrace{
-		ID: traceID, UserID: userID, TriggerType: "discover",
+		ID: traceID, UserID: userID, TriggerType: "morning_review",
 		StartedAt: time.Now(), Status: "running",
 	}
 	o.traceRepo.CreateTrace(ctx, tr)
 
-	o.themeStore.Expire(ctx, userID, runOnceExpireDays)
+	o.themeStore.Expire(ctx, userID, o.draftExpireDays)
+	o.expireActiveThemes(ctx, userID)
+	findingCount := o.reviewActiveThemes(ctx, userID, traceID, "morning")
 
-	msgCount, noteCount, memCount := o.countRecentActivity(ctx, userID)
-	tracedCtx := WithTraceInfo(ctx, o.traceRepo, traceID)
-	delivered := o.runDiscoveryAndDrafts(tracedCtx, traceID, userID, msgCount, noteCount, memCount, true)
-
-	status := "completed"
-	if delivered == 0 {
-		status = "empty"
-	}
-	endTraceSafe(o.traceRepo, ctx, traceID, status, 0, delivered, nil)
-	log.Printf("[reflection] trace=%s DONE delivered=%d", traceID[:8], delivered)
-	return delivered, nil
+	endTraceSafe(o.traceRepo, ctx, traceID, "completed", 0, findingCount, nil)
+	log.Printf("[reflection] trace=%s DONE morning_review findings=%d", traceID[:8], findingCount)
+	return findingCount, nil
 }
 
-// runOnce 保留兼容：deliver + discover（供 cron 模式使用）
-func (o *ReflectionOrchestrator) runOnce(ctx context.Context, userID, triggerType string, silent bool) error {
+// EveningReview 晚安回顾：expire draft + active 衰减 + 对活跃主题产出 finding
+func (o *ReflectionOrchestrator) EveningReview(ctx context.Context, userID string) (int, error) {
+	traceID := uuid.New().String()
+	log.Printf("[reflection] trace=%s trigger=evening_review user=%s START", traceID[:8], userID)
+
+	tr := &model.ReflectionTrace{
+		ID: traceID, UserID: userID, TriggerType: "evening_review",
+		StartedAt: time.Now(), Status: "running",
+	}
+	o.traceRepo.CreateTrace(ctx, tr)
+
+	o.themeStore.Expire(ctx, userID, o.draftExpireDays)
+	o.expireActiveThemes(ctx, userID)
+	findingCount := o.reviewActiveThemes(ctx, userID, traceID, "evening")
+
+	endTraceSafe(o.traceRepo, ctx, traceID, "completed", 0, findingCount, nil)
+	log.Printf("[reflection] trace=%s DONE evening_review findings=%d", traceID[:8], findingCount)
+	return findingCount, nil
+}
+
+// durationDays 返回 duration 对应的衰减天数（从配置读取）
+func (o *ReflectionOrchestrator) durationDays(duration string) int {
+	if d, ok := o.activeDurationDays[duration]; ok {
+		return d
+	}
+	return 30
+}
+
+// expireActiveThemes 检查 active 主题是否已过衰减周期，是则 close
+func (o *ReflectionOrchestrator) expireActiveThemes(ctx context.Context, userID string) {
+	actives, err := o.themeStore.ListActives(ctx, userID)
+	if err != nil {
+		log.Printf("[theme] expire: list actives error: %v", err)
+		return
+	}
+
+	now := time.Now()
+	var toClose []string
+	for _, a := range actives {
+		days := o.durationDays(a.Duration)
+		cutoff := now.AddDate(0, 0, -days)
+		if a.UpdatedAt.Before(cutoff) {
+			log.Printf("[theme] active decay: name=%s id=%s duration=%s days=%d",
+				a.Name, a.ID[:8], a.Duration, days)
+			toClose = append(toClose, a.ID)
+		}
+	}
+
+	for _, id := range toClose {
+		if err := o.themeStore.UpdateStatus(ctx, id, userID, "closed"); err != nil {
+			log.Printf("[theme] expire close error: %v", err)
+		}
+	}
+	if len(toClose) > 0 {
+		log.Printf("[theme] expired %d active themes for user %s", len(toClose), userID[:8])
+	}
+}
+
+// reviewActiveThemes 对活跃主题运行分析，产出 finding 写入 pending_finding
+func (o *ReflectionOrchestrator) reviewActiveThemes(ctx context.Context, userID, _, period string) int {
+	actives, err := o.themeStore.ListActives(ctx, userID)
+	if err != nil {
+		log.Printf("[reflection] review: list actives error: %v", err)
+		return 0
+	}
+	if len(actives) == 0 {
+		log.Printf("[reflection] review: no active themes")
+		return 0
+	}
+
+	analystT, ok := o.reflectionReg.GetToolMap()["theme_analyst"]
+	if !ok {
+		log.Printf("[reflection] review: theme_analyst tool not found")
+		return 0
+	}
+
+	findingCount := 0
+	for _, active := range actives {
+		args, _ := json.Marshal(map[string]interface{}{
+			"theme_id":   active.ID,
+			"theme_name": active.Name,
+			"mode":       "hot_run",
+			"period":     period,
+		})
+		ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID}
+		res := analystT.Execute(ec, "analyze", args)
+		if res.Success {
+			findingCount++
+		}
+	}
+	log.Printf("[theme] %s review: %d actives, %d findings generated", period, len(actives), findingCount)
+	return findingCount
+}
+
+// runOnce 保留兼容
+func (o *ReflectionOrchestrator) runOnce(ctx context.Context, userID, _ string, silent bool) error {
 	if silent {
-		return nil // 静默模式已废弃
+		return nil
 	}
 	delivered, _ := o.DeliverPendingFindings(ctx, userID)
-	disc, _ := o.DiscoverAndDeliver(ctx, userID)
-	log.Printf("[reflection] runOnce combined: deliverables=%d discover=%d", delivered, disc)
+	log.Printf("[reflection] runOnce: delivered=%d", delivered)
 	return nil
-}
-
-// runDiscoveryOnly 运行主题发现 + 投递草稿，返回投递数
-func (o *ReflectionOrchestrator) runDiscoveryOnly(ctx context.Context, traceID, userID string, msgCount, noteCount, memCount int) int {
-	return o.runDiscoveryAndDrafts(ctx, traceID, userID, msgCount, noteCount, memCount, false)
-}
-
-// runDiscoveryAndDrafts 运行发现 + 可选加载草稿一起投递
-func (o *ReflectionOrchestrator) runDiscoveryAndDrafts(ctx context.Context, traceID, userID string, msgCount, noteCount, memCount int, includeDrafts bool) int {
-	ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID}
-	t, ok := o.reflectionReg.GetToolMap()["theme_discoverer"]
-	if !ok {
-		return 0
-	}
-
-	// 1. ThemeDiscoverer 发现候选
-	args, _ := json.Marshal(map[string]interface{}{
-		"recent_msg_count":  msgCount,
-		"recent_note_count": noteCount,
-		"recent_mem_count":  memCount,
-	})
-	res := t.Execute(ec, "discover", args)
-	if !res.Success || res.Data == nil {
-		log.Printf("[reflection] discovery failed: %v", res.Error)
-		return 0
-	}
-
-	var output struct {
-		Candidates []map[string]interface{} `json:"candidates"`
-	}
-	if err := json.Unmarshal(res.Data, &output); err != nil {
-		log.Printf("[reflection] unmarshal discovery output error: %v", err)
-	}
-
-	// 1.5. 加载草稿主题（cron 全链路模式）
-	if includeDrafts {
-		drafts, err := o.themeStore.ListByStatus(ctx, userID, "draft")
-		if err != nil {
-			log.Printf("[reflection] list drafts error: %v", err)
-		}
-		for _, d := range drafts {
-			if d.Metadata != nil {
-				var meta map[string]interface{}
-				if json.Unmarshal([]byte(*d.Metadata), &meta) == nil {
-					if ci, ok := meta["candidate_info"].(map[string]interface{}); ok {
-						ci["name"] = d.Name
-						ci["description"] = d.Description
-						output.Candidates = append(output.Candidates, ci)
-						defer func(id string) {
-							o.themeStore.UpdateStatus(ctx, id, userID, "candidate")
-						}(d.ID)
-					}
-				}
-			}
-		}
-		log.Printf("[reflection] loaded %d drafts into candidate list", len(drafts))
-	}
-
-	// 2. 逐个写入 theme_states + Secretary 改写 + mailbox 投递
-	delivered := 0
-
-	for _, c := range output.Candidates {
-		if o.deliverCandidate(ctx, userID, c) {
-			delivered++
-		}
-	}
-
-	log.Printf("[reflection] discovery delivered %d/%d candidates", delivered, len(output.Candidates))
-	return delivered
-}
-
-// deliverCandidate 处理单个候选主题：写 theme_states → Secretary → mailbox
-func (o *ReflectionOrchestrator) deliverCandidate(ctx context.Context, userID string, c map[string]interface{}) bool {
-	name, _ := c["name"].(string)
-	desc, _ := c["description"].(string)
-	if name == "" {
-		return false
-	}
-
-	existing, _ := o.themeStore.GetByName(ctx, userID, name)
-	if existing != nil && existing.Status == "active" {
-		log.Printf("[reflection] discovery skip active: %s", name)
-		return false
-	}
-	if existing != nil && existing.Status == "candidate" {
-		log.Printf("[reflection] discovery skip duplicate candidate: %s", name)
-		return false
-	}
-
-	var themeID string
-	metaJSON, _ := json.Marshal(map[string]interface{}{"candidate_info": c})
-	metaStr := string(metaJSON)
-
-	if existing != nil && existing.Status == "draft" {
-		// 升级 draft 为 candidate，复用已有 ID
-		themeID = existing.ID
-		if err := o.themeStore.UpdateStatus(ctx, themeID, userID, "candidate"); err != nil {
-			log.Printf("[reflection] promote draft to candidate error: %v", err)
-			return false
-		}
-		log.Printf("[reflection] promoted draft %s → candidate", name)
-	} else {
-		themeID = uuid.New().String()
-		theme := &model.ThemeState{
-			ID:          themeID,
-			UserID:      userID,
-			Name:        name,
-			Description: desc,
-			Status:      "candidate",
-			Metadata:    &metaStr,
-		}
-		if err := o.themeStore.Create(ctx, theme); err != nil {
-			log.Printf("[reflection] discovery create candidate error: %v", err)
-			return false
-		}
-	}
-
-	secT, _ := o.reflectionReg.GetToolMap()["secretary"]
-	secTitle, notification, greeting := o.rewriteCandidate(ctx, userID, c, secT)
-	if secTitle == "" {
-		secTitle = name
-		notification = desc
-	}
-
-	mailboxT, _ := o.reflectionReg.GetToolMap()["mailbox"]
-	if mailboxT == nil {
-		return false
-	}
-	itemArgs, _ := json.Marshal(map[string]interface{}{"items": []map[string]interface{}{{
-		"title":       secTitle,
-		"content":     notification,
-		"greeting":    greeting,
-		"type":        "candidate_theme",
-		"source":      "主题发现",
-		"entity_type": "theme",
-		"entity_id":   themeID,
-	}}})
-	res := mailboxT.Execute(&tool.ExecuteContext{Ctx: ctx, UserID: userID}, "deliver", itemArgs)
-	return res.Success
-}
-
-// rewriteCandidate 调 Secretary 将候选主题人话化，返回 (title, notification, greeting)
-func (o *ReflectionOrchestrator) rewriteCandidate(ctx context.Context, userID string, c map[string]interface{}, secT tool.Tool) (title, notification, greeting string) {
-	if secT == nil {
-		return
-	}
-	// 映射为 Secretary 认识的 finding 格式
-	finding := map[string]interface{}{
-		"title":            c["name"],
-		"content":          c["rationale"],
-		"suggested_action": "",
-		"theme_name":       c["name"],
-	}
-	cJSON, _ := json.Marshal(map[string]interface{}{"findings": []interface{}{finding}})
-	secRes := secT.Execute(&tool.ExecuteContext{Ctx: ctx, UserID: userID}, "rewrite", cJSON)
-	if !secRes.Success || secRes.Data == nil {
-		return
-	}
-	var secOutput struct {
-		Messages []struct {
-			Title        string `json:"title"`
-			Notification string `json:"notification"`
-			Greeting     string `json:"greeting"`
-		} `json:"messages"`
-	}
-	if json.Unmarshal(secRes.Data, &secOutput) != nil || len(secOutput.Messages) == 0 {
-		return
-	}
-	return secOutput.Messages[0].Title, secOutput.Messages[0].Notification, secOutput.Messages[0].Greeting
 }
 
 // countRecentActivity 统计最近 7 天用户活动数量

@@ -97,7 +97,10 @@ func (r *ThemeStateRepo) ListByStatus(ctx context.Context, userID string, status
 func (r *ThemeStateRepo) UpdateStatus(ctx context.Context, id, userID, status string) error {
 	return r.db.WithContext(ctx).Model(&model.ThemeState{}).
 		Where("id = ? AND user_id = ?", id, userID).
-		Update("status", status).Error
+		Updates(map[string]interface{}{
+			"status":     status,
+			"updated_at": time.Now(),
+		}).Error
 }
 
 // UpdateEmbeddingID 更新主题的 embedding_id
@@ -107,18 +110,19 @@ func (r *ThemeStateRepo) UpdateEmbeddingID(ctx context.Context, id, embeddingID 
 		Update("embedding_id", embeddingID).Error
 }
 
-// Archive 归档主题
+// Archive 关闭主题（等同于 close）
 func (r *ThemeStateRepo) Archive(ctx context.Context, id, userID string) error {
-	return r.db.WithContext(ctx).Model(&model.ThemeState{}).
-		Where("id = ? AND user_id = ?", id, userID).
-		Update("status", "archived").Error
+	return r.Close(ctx, id, userID)
 }
 
-// Reactivate 重新激活归档的主题
-func (r *ThemeStateRepo) Reactivate(ctx context.Context, id, userID string) error {
+// ReactivateDraft 重新激活 closed → draft
+func (r *ThemeStateRepo) ReactivateDraft(ctx context.Context, id, userID string) error {
 	return r.db.WithContext(ctx).Model(&model.ThemeState{}).
 		Where("id = ? AND user_id = ?", id, userID).
-		Update("status", "active").Error
+		Updates(map[string]interface{}{
+			"status":     "draft",
+			"updated_at": time.Now(),
+		}).Error
 }
 
 // UpdateMetadata 更新主题的 Metadata JSON 字段
@@ -135,13 +139,13 @@ func (r *ThemeStateRepo) UpdateConversationID(ctx context.Context, id, userID, c
 		Update("conversation_id", convID).Error
 }
 
-// ExpireCandidates 将超过 days 天的 candidate/draft 主题关闭
-func (r *ThemeStateRepo) ExpireCandidates(ctx context.Context, userID string, days int) error {
+// ExpireDrafts 将超过 days 天的 draft 主题关闭
+func (r *ThemeStateRepo) ExpireDrafts(ctx context.Context, userID string, days int) error {
 	result := r.db.WithContext(ctx).Model(&model.ThemeState{}).
-		Where("user_id = ? AND status IN (?,?) AND created_at < DATE_SUB(NOW(), INTERVAL ? DAY)", userID, "candidate", "draft", days).
+		Where("user_id = ? AND status = ? AND created_at < DATE_SUB(NOW(), INTERVAL ? DAY)", userID, "draft", days).
 		Update("status", "closed")
 	if result.RowsAffected > 0 {
-		log.Printf("[theme] expired %d themes for user %s", result.RowsAffected, userID[:8])
+		log.Printf("[theme] expired %d drafts for user %s", result.RowsAffected, userID[:8])
 	}
 	return result.Error
 }
@@ -167,6 +171,97 @@ func (r *ThemeStateRepo) BatchGetByIDs(ctx context.Context, ids []string, userID
 		result[list[i].ID] = &list[i]
 	}
 	return result, nil
+}
+
+// ThemeStats 主题统计信息
+type ThemeStats struct {
+	DraftCount        int   `json:"draft_count"`
+	ActiveCount       int   `json:"active_count"`
+	ClosedCount       int   `json:"closed_count"`
+	TodayDraftCreated int64 `json:"today_draft_created"`
+	TodayUpgraded     int64 `json:"today_upgraded"`
+}
+
+// Stats 返回用户主题统计
+func (r *ThemeStateRepo) Stats(ctx context.Context, userID string) (ThemeStats, error) {
+	var s ThemeStats
+	today := time.Now().Truncate(24 * time.Hour)
+
+	// 按状态计数
+	type row struct {
+		Status string
+		Count  int64
+	}
+	var rows []row
+	if err := r.db.WithContext(ctx).Model(&model.ThemeState{}).
+		Select("status, COUNT(*) as count").
+		Where("user_id = ?", userID).
+		Group("status").Find(&rows).Error; err != nil {
+		return s, err
+	}
+	for _, r := range rows {
+		switch r.Status {
+		case "draft":
+			s.DraftCount = int(r.Count)
+		case "active":
+			s.ActiveCount = int(r.Count)
+		case "closed":
+			s.ClosedCount = int(r.Count)
+		}
+	}
+
+	// 今日新建 draft
+	if err := r.db.WithContext(ctx).Model(&model.ThemeState{}).
+		Where("user_id = ? AND status = ? AND created_at >= ?", userID, "draft", today).
+		Count(&s.TodayDraftCreated).Error; err != nil {
+		return s, err
+	}
+	// 今日升级到 active
+	if err := r.db.WithContext(ctx).Model(&model.ThemeState{}).
+		Where("user_id = ? AND status = ? AND updated_at >= ?", userID, "active", today).
+		Count(&s.TodayUpgraded).Error; err != nil {
+		return s, err
+	}
+	return s, nil
+}
+
+// GlobalStats 返回全局主题统计（不区分用户）
+func (r *ThemeStateRepo) GlobalStats(ctx context.Context) (ThemeStats, error) {
+	var s ThemeStats
+	today := time.Now().Truncate(24 * time.Hour)
+
+	type row struct {
+		Status string
+		Count  int64
+	}
+	var rows []row
+	if err := r.db.WithContext(ctx).Model(&model.ThemeState{}).
+		Select("status, COUNT(*) as count").
+		Group("status").Find(&rows).Error; err != nil {
+		return s, err
+	}
+	for _, r := range rows {
+		switch r.Status {
+		case "draft":
+			s.DraftCount = int(r.Count)
+		case "active":
+			s.ActiveCount = int(r.Count)
+		case "closed":
+			s.ClosedCount = int(r.Count)
+		}
+	}
+
+	if err := r.db.WithContext(ctx).Model(&model.ThemeState{}).
+		Where("status = ? AND created_at >= ?", "draft", today).
+		Count(&s.TodayDraftCreated).Error; err != nil {
+		return s, err
+	}
+	if err := r.db.WithContext(ctx).Model(&model.ThemeState{}).
+		Where("status = ? AND updated_at >= ?", "active", today).
+		Count(&s.TodayUpgraded).Error; err != nil {
+		return s, err
+	}
+	return s, nil
 }
 
 // ListNotDraft 分页列出用户主题（排除 draft 内部状态）

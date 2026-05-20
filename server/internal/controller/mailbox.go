@@ -165,13 +165,6 @@ func (h *MailboxHandler) StartChat(c *gin.Context) {
 		return
 	}
 
-	// candidate/draft → active（点击即确认）
-	if theme.Status == "candidate" || theme.Status == "draft" {
-		if err := h.themeRepo.UpdateStatus(c.Request.Context(), item.EntityID, userID, "active"); err != nil {
-			log.Printf("[mailbox] StartChat UpdateStatus error: %v", err)
-		}
-	}
-
 	// 插入 greeting 消息（复用信箱已有的 Secretary 文案）
 	greetingMsgID := uuid.New().String()
 	greetingContent := item.Greeting

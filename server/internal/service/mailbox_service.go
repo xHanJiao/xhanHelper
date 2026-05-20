@@ -56,7 +56,7 @@ func (s *MailboxService) ListPacked(ctx context.Context, userID, itemType string
 }
 
 // packItem 打包单条信箱消息，计算 tags
-func packItem(item model.MailboxItem, themeMap map[string]*model.ThemeState) model.PackedMailboxItem {
+func packItem(item model.MailboxItem, _ map[string]*model.ThemeState) model.PackedMailboxItem {
 	p := model.PackedMailboxItem{
 		ID:         item.ID,
 		UserID:     item.UserID,
@@ -71,34 +71,5 @@ func packItem(item model.MailboxItem, themeMap map[string]*model.ThemeState) mod
 		IsArchived: item.IsArchived,
 		CreatedAt:  item.CreatedAt.Format(time.RFC3339),
 	}
-
-	// candidate_theme 类型：根据主题状态计算 tags
-	if item.Type == "candidate_theme" {
-		p.Tags = buildCandidateTags(item.EntityID, themeMap)
-	}
-
 	return p
-}
-
-// buildCandidateTags 根据主题状态构建候选主题的 tags
-func buildCandidateTags(entityID string, themeMap map[string]*model.ThemeState) []string {
-	if entityID == "" {
-		return []string{"候选主题"}
-	}
-
-	theme, ok := themeMap[entityID]
-	if !ok || theme == nil {
-		return []string{"候选主题"}
-	}
-
-	switch theme.Status {
-	case "active":
-		return []string{"候选主题", "已采纳"}
-	case "archived":
-		return []string{"候选主题", "已归档"}
-	case "closed":
-		return []string{"候选主题", "已关闭"}
-	default: // candidate, draft
-		return []string{"候选主题"}
-	}
 }

@@ -1,32 +1,30 @@
 package tool
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 
 	"github.com/google/uuid"
 
-	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
 
-// ThemeEmbedStorer — 主题向量存储接口（避免循环依赖）
-type ThemeEmbedStorer interface {
-	Upsert(id string, vec []float64, metadata map[string]string)
+// ThemeVectorWriter — 主题向量写入接口（ThemeEmbedder 实现）
+type ThemeVectorWriter interface {
+	EnsureEmbedded(ctx context.Context, userID, themeID, name, description string)
 }
 
 // ThemeTool — 主题管理工具
 type ThemeTool struct {
-	themeRepo     *service.ThemeStateRepo
-	embedder      *llm.Embedder
-	vectorStore   ThemeEmbedStorer
-	embeddingRepo *service.EmbeddingRepo
+	themeRepo   *service.ThemeStateRepo
+	embedWriter ThemeVectorWriter
 }
 
-func NewThemeTool(repo *service.ThemeStateRepo, embedder *llm.Embedder, vs ThemeEmbedStorer, embeddingRepo *service.EmbeddingRepo) *ThemeTool {
-	return &ThemeTool{themeRepo: repo, embedder: embedder, vectorStore: vs, embeddingRepo: embeddingRepo}
+func NewThemeTool(repo *service.ThemeStateRepo, embedWriter ThemeVectorWriter) *ThemeTool {
+	return &ThemeTool{themeRepo: repo, embedWriter: embedWriter}
 }
 
 func (t *ThemeTool) Name() string { return "theme" }
@@ -106,7 +104,7 @@ func (t *ThemeTool) createTheme(ec *ExecuteContext, args json.RawMessage) *Resul
 	}
 	if existing != nil {
 		if existing.Status == "closed" {
-			_ = t.themeRepo.Reactivate(ec.Ctx, existing.ID, ec.UserID)
+			_ = t.themeRepo.ReactivateDraft(ec.Ctx, existing.ID, ec.UserID)
 			return &Result{Success: true, Data: json.RawMessage(`{"status":"reactivated","name":"` + a.Name + `"}`)}
 		}
 		return &Result{Success: false, Error: fmt.Sprintf("主题 %s 已存在", a.Name)}
@@ -124,36 +122,9 @@ func (t *ThemeTool) createTheme(ec *ExecuteContext, args json.RawMessage) *Resul
 		return &Result{Success: false, Error: fmt.Sprintf("创建主题失败: %v", err)}
 	}
 
-	// 异步 embed 主题描述到向量库 + embedding 表（用于去重 + 重启 warmup）
-	if t.embedder != nil && t.vectorStore != nil {
-		go func() {
-			vec, err := t.embedder.Embed(ec.Ctx, a.Name+" "+a.Description)
-			if err != nil {
-				log.Printf("[theme] embed theme %q error: %v", a.Name, err)
-				return
-			}
-			t.vectorStore.Upsert("theme:"+theme.ID, vec, map[string]string{
-				"type":    "theme",
-				"user_id": ec.UserID,
-			})
-			if t.embeddingRepo != nil {
-				embStr := llm.EmbeddingToString(vec)
-				embID := "theme:" + theme.ID
-				if err := t.embeddingRepo.Upsert(ec.Ctx, &model.Embedding{
-					ID:         embID,
-					EntityType: model.EntityTypeTheme,
-					EntityID:   theme.ID,
-					UserID:     ec.UserID,
-					Model:      t.embedder.ModelName(),
-					Embedding:  &embStr,
-				}); err != nil {
-					log.Printf("[theme] save embedding %s error: %v", theme.ID[:8], err)
-				} else if err := t.themeRepo.UpdateEmbeddingID(ec.Ctx, theme.ID, embID); err != nil {
-					log.Printf("[theme] update embedding_id %s error: %v", theme.ID[:8], err)
-				}
-			}
-			log.Printf("[theme] embedded theme %q (%s)", a.Name, theme.ID[:8])
-		}()
+	// 异步写向量（ThemeEmbedder 先查 concept 表，有则跳过）
+	if t.embedWriter != nil {
+		go t.embedWriter.EnsureEmbedded(context.Background(), ec.UserID, theme.ID, a.Name, a.Description)
 	}
 
 	data, _ := json.Marshal(map[string]interface{}{
@@ -201,7 +172,7 @@ func (t *ThemeTool) reactivateTheme(ec *ExecuteContext, args json.RawMessage) *R
 	if existing == nil {
 		return &Result{Success: false, Error: fmt.Sprintf("主题 %s 不存在", a.Name)}
 	}
-	if err := t.themeRepo.Reactivate(ec.Ctx, existing.ID, ec.UserID); err != nil {
+	if err := t.themeRepo.ReactivateDraft(ec.Ctx, existing.ID, ec.UserID); err != nil {
 		log.Printf("[theme] reactivate error: %v", err)
 		return &Result{Success: false, Error: fmt.Sprintf("重新激活失败: %v", err)}
 	}

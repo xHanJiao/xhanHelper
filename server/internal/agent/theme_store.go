@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"log"
+	"time"
 
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -22,9 +23,9 @@ func (s *ThemeStore) Create(ctx context.Context, t *model.ThemeState) error {
 	return s.repo.Create(ctx, t)
 }
 
-// Expire 清理过期的 candidate/draft 主题
+// Expire 清理过期的 draft 主题
 func (s *ThemeStore) Expire(ctx context.Context, userID string, days int) error {
-	return s.repo.ExpireCandidates(ctx, userID, days)
+	return s.repo.ExpireDrafts(ctx, userID, days)
 }
 
 // GetByName 按名称查找主题
@@ -54,6 +55,11 @@ func (s *ThemeStore) ListByStatus(ctx context.Context, userID, status string) ([
 // UpdateStatus 更新主题状态
 func (s *ThemeStore) UpdateStatus(ctx context.Context, id, userID, status string) error {
 	return s.repo.UpdateStatus(ctx, id, userID, status)
+}
+
+// GetByID 按 ID 查主题
+func (s *ThemeStore) GetByID(ctx context.Context, id, userID string) (*model.ThemeState, error) {
+	return s.repo.GetByID(ctx, id, userID)
 }
 
 // LoadMetadata 加载主题 metadata
@@ -92,14 +98,41 @@ func (s *ThemeStore) LoadState(ctx context.Context, themeID, userID string) stri
 	return t.StateText
 }
 
-// ListActive 列出用户所有活跃主题
-// ListCandidates 列出候选和活跃主题（去重用）
-func (s *ThemeStore) ListCandidates(ctx context.Context, userID string) ([]ThemeStateInfo, error) {
-	list, err := s.repo.ListByStatus(ctx, userID, []string{"candidate", "active"})
+// ListDrafts 列出用户所有 draft 主题
+func (s *ThemeStore) ListDrafts(ctx context.Context, userID string) ([]ThemeStateInfo, error) {
+	list, err := s.repo.ListByStatus(ctx, userID, []string{"draft"})
 	if err != nil {
 		return nil, err
 	}
 	return toThemeStateInfo(list), nil
+}
+
+// ListActives 列出用户所有 active 主题
+func (s *ThemeStore) ListActives(ctx context.Context, userID string) ([]ThemeStateInfo, error) {
+	list, err := s.repo.ListByStatus(ctx, userID, []string{"active"})
+	if err != nil {
+		return nil, err
+	}
+	return toThemeStateInfo(list), nil
+}
+
+// ListClosed 列出用户所有 closed 主题
+func (s *ThemeStore) ListClosed(ctx context.Context, userID string) ([]ThemeStateInfo, error) {
+	list, err := s.repo.ListByStatus(ctx, userID, []string{"closed"})
+	if err != nil {
+		return nil, err
+	}
+	return toThemeStateInfo(list), nil
+}
+
+// ReactivateDraft 重新激活 closed → draft
+func (s *ThemeStore) ReactivateDraft(ctx context.Context, id, userID string) error {
+	return s.repo.ReactivateDraft(ctx, id, userID)
+}
+
+// Stats 返回主题统计
+func (s *ThemeStore) Stats(ctx context.Context, userID string) (service.ThemeStats, error) {
+	return s.repo.Stats(ctx, userID)
 }
 
 func (s *ThemeStore) ListActive(ctx context.Context, userID string) ([]ThemeStateInfo, error) {
@@ -114,6 +147,7 @@ func (s *ThemeStore) ListActive(ctx context.Context, userID string) ([]ThemeStat
 			Name:        t.Name,
 			Description: t.Description,
 			Status:      t.Status,
+			Duration:    t.Duration,
 			StateText:   t.StateText,
 		}
 	}
@@ -122,12 +156,15 @@ func (s *ThemeStore) ListActive(ctx context.Context, userID string) ([]ThemeStat
 
 // ThemeStateInfo — 主题状态摘要（不含原始状态页全文）
 type ThemeStateInfo struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Status      string  `json:"status"`
-	StateText   string  `json:"state_text"`
-	Metadata    *string `json:"metadata,omitempty"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Status      string    `json:"status"`
+	Duration    string    `json:"duration,omitempty"`
+	StateText   string    `json:"state_text"`
+	Metadata    *string   `json:"metadata,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 func toThemeStateInfo(list []model.ThemeState) []ThemeStateInfo {
@@ -138,8 +175,11 @@ func toThemeStateInfo(list []model.ThemeState) []ThemeStateInfo {
 			Name:        t.Name,
 			Description: t.Description,
 			Status:      t.Status,
+			Duration:    t.Duration,
 			StateText:   t.StateText,
 			Metadata:    t.Metadata,
+			CreatedAt:   t.CreatedAt,
+			UpdatedAt:   t.UpdatedAt,
 		}
 	}
 	return result

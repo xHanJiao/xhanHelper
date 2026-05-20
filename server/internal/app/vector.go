@@ -23,6 +23,9 @@ type VectorStore interface {
 	// GetVector 按 ID 获取已缓存的向量
 	GetVector(id string) ([]float64, bool)
 
+	// Delete 按 ID 删除向量
+	Delete(id string)
+
 	// Size 返回当前向量条目数
 	Size() int
 }

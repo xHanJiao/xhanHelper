@@ -333,7 +333,7 @@ func main() {
 	// Handlers
 	billHandler := controller.NewBillHandler(billRepo, memExtractor)
 	noteHandler := controller.NewNoteHandler(noteRepo)
-	memHandler := controller.NewMemoryHandler(memRepo, vectorStore)
+	memHandler := controller.NewMemoryHandler(memRepo, vsAdapter)
 	agentHandler := controller.NewAgentHandler(agentRepo, llmClient)
 	toolHandler := controller.NewToolHandler(toolRepo)
 	promptHandler := controller.NewPromptHandler(promptRepo)
@@ -343,11 +343,35 @@ func main() {
 	reflectionAdminHandler := controller.NewReflectionAdminHandler(traceRepo)
 
 	// Router
-	router := controller.NewRouter(cfg, orch, userRepo, convRepo, msgRepo, agentRepo, billHandler, noteHandler, memHandler, agentHandler, toolHandler, promptHandler, memExtractor, middleware.RequestLogger(log.Default()))
+	router := controller.NewRouter(&controller.RouterConfig{
+		Cfg:             cfg,
+		Orch:            orch,
+		UserRepo:        userRepo,
+		ConvRepo:        convRepo,
+		MsgRepo:         msgRepo,
+		AgentRepo:       agentRepo,
+		BillHandler:     billHandler,
+		NoteHandler:     noteHandler,
+		MemHandler:      memHandler,
+		AgentHandler:    agentHandler,
+		ToolHandler:     toolHandler,
+		PromptHandler:   promptHandler,
+		MemExtr:         memExtractor,
+		ExtraMiddleware: []gin.HandlerFunc{middleware.RequestLogger(log.Default())},
+	})
 
 	// 注册 Phase 6 反思系统路由
-	controller.RegisterReflectionRoutes(router, userRepo, mailboxHandler, themeHandler, reflectionAdminHandler, reflectionOrch, cronRunner,
-		middleware.Auth(userRepo), monitor.AdminOnly(cfg.Server.AdminUsers))
+	controller.RegisterReflectionRoutes(&controller.ReflectionRoutesConfig{
+		R:                      router,
+		UserRepo:               userRepo,
+		MailboxHandler:         mailboxHandler,
+		ThemeHandler:           themeHandler,
+		ReflectionAdminHandler: reflectionAdminHandler,
+		ReflectionOrch:         reflectionOrch,
+		CronRunner:             cronRunner,
+		AuthMiddleware:         middleware.Auth(userRepo),
+		AdminMiddleware:        monitor.AdminOnly(cfg.Server.AdminUsers),
+	})
 
 	addr := ":" + strconv.Itoa(cfg.Server.Port)
 	srv := &http.Server{

@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"xhan-helper/internal/agent"
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
@@ -14,11 +14,11 @@ import (
 // MemoryHandler — 用户记忆 REST API
 type MemoryHandler struct {
 	memRepo     *service.UserMemoryRepo
-	vectorStore *agent.VectorStore
+	vectorStore app.VectorStore
 }
 
 // NewMemoryHandler 创建 MemoryHandler
-func NewMemoryHandler(memRepo *service.UserMemoryRepo, vectorStore *agent.VectorStore) *MemoryHandler {
+func NewMemoryHandler(memRepo *service.UserMemoryRepo, vectorStore app.VectorStore) *MemoryHandler {
 	return &MemoryHandler{memRepo: memRepo, vectorStore: vectorStore}
 }
 

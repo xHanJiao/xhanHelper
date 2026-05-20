@@ -33,6 +33,12 @@ func (a *VectorSearchAdapter) GetVector(id string) ([]float64, bool) {
 	return a.store.GetVector(id)
 }
 
+func (a *VectorSearchAdapter) Delete(id string) {
+	if a.store != nil {
+		a.store.Delete(id)
+	}
+}
+
 func (a *VectorSearchAdapter) Size() int {
 	if a.store == nil {
 		return 0

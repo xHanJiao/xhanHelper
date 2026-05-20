@@ -11,16 +11,30 @@ import (
 	"xhan-helper/internal/service"
 )
 
+// RouterConfig — 路由注册所需的所有依赖
+type RouterConfig struct {
+	Cfg             *config.Config
+	Orch            *agent.Orchestrator
+	UserRepo        *service.UserRepo
+	ConvRepo        *service.ConversationRepo
+	MsgRepo         *service.MessageRepo
+	AgentRepo       *service.AgentRepo
+	BillHandler     *BillHandler
+	NoteHandler     *NoteHandler
+	MemHandler      *MemoryHandler
+	AgentHandler    *AgentHandler
+	ToolHandler     *ToolHandler
+	PromptHandler   *PromptHandler
+	MemExtr         *agent.MemoryExtractor
+	ExtraMiddleware []gin.HandlerFunc
+}
+
 // NewRouter 注册所有路由
-func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
-	userRepo *service.UserRepo, convRepo *service.ConversationRepo,
-	msgRepo *service.MessageRepo, agentRepo *service.AgentRepo,
-	billHandler *BillHandler, noteHandler *NoteHandler,
-	memHandler *MemoryHandler, agentHandler *AgentHandler, toolHandler *ToolHandler, promptHandler *PromptHandler, memExtr *agent.MemoryExtractor, extraMiddleware ...gin.HandlerFunc) *gin.Engine {
+func NewRouter(rc *RouterConfig) *gin.Engine {
 
 	r := gin.Default()
 
-	for _, m := range extraMiddleware {
+	for _, m := range rc.ExtraMiddleware {
 		r.Use(m)
 	}
 
@@ -32,52 +46,52 @@ func NewRouter(cfg *config.Config, orch *agent.Orchestrator,
 	}))
 
 	// 无需认证 — 账号注册/登录
-	r.POST("/api/auth/register", registerUser(userRepo, cfg.Server.RegistrationEnabled, cfg.Server.AllowedUsers, cfg.Server.AdminUsers))
-	r.POST("/api/auth/login", loginUser(userRepo, cfg.Server.AdminUsers))
+	r.POST("/api/auth/register", registerUser(rc.UserRepo, rc.Cfg.Server.RegistrationEnabled, rc.Cfg.Server.AllowedUsers, rc.Cfg.Server.AdminUsers))
+	r.POST("/api/auth/login", loginUser(rc.UserRepo, rc.Cfg.Server.AdminUsers))
 	r.GET("/api/files/:filename", downloadMarkdown("data/markdown"))
 
 	// 需要认证
 	auth := r.Group("/api")
-	auth.Use(middleware.Auth(userRepo))
+	auth.Use(middleware.Auth(rc.UserRepo))
 	{
-		auth.POST("/auth/logout", logoutUser(userRepo))
-		auth.POST("/chat", chat(orch, cfg, convRepo, msgRepo, agentRepo))
-		auth.GET("/llm-config", llmConfig(cfg, agentRepo))
-		auth.GET("/conversations", listConversations(convRepo, agentRepo))
-		auth.GET("/conversations/:id/messages", getMessages(convRepo, msgRepo))
-		auth.GET("/conversations/:id/messages-v2", getMessagesCursor(msgRepo, convRepo))
-		auth.DELETE("/conversations/:id/messages/:msgId", deleteMessage(msgRepo, convRepo))
-		auth.PATCH("/conversations/:id", renameConversation(convRepo))
-		auth.DELETE("/conversations/:id", deleteConversation(convRepo))
-		auth.POST("/conversations/:id/extract-memories", extractMemories(convRepo, memExtr))
-		auth.POST("/conversations/:id/extract-memories/stream", extractMemoriesStream(convRepo, memExtr))
-		auth.GET("/bills", billHandler.ListBills)
-		auth.GET("/bills/export", billHandler.ExportBills)
-		auth.POST("/bills/import", billHandler.ImportBills)
-		auth.GET("/notes", noteHandler.ListNotes)
-		auth.POST("/notes/batch", noteHandler.BatchGetNotes)
-		auth.DELETE("/notes/:id", noteHandler.DeleteNote)
-		auth.GET("/memories", memHandler.ListMemories)
-		auth.DELETE("/memories/:id", memHandler.DeleteMemory)
-		auth.POST("/memories/batch", memHandler.BatchGetMemories)
-		auth.POST("/memories/batch-delete", memHandler.BatchDeleteMemories)
-		auth.POST("/agents", agentHandler.CreateAgent)
-		auth.GET("/agents", agentHandler.ListAgents)
-		auth.GET("/agents/:id", agentHandler.GetAgent)
-		auth.PATCH("/agents/:id", agentHandler.UpdateAgent)
-		auth.DELETE("/agents/:id", agentHandler.DeleteAgent)
-		auth.GET("/tools", toolHandler.ListTools)
-		auth.POST("/tools", toolHandler.CreateTool)
-		auth.PATCH("/tools/:id", toolHandler.UpdateTool)
-		auth.DELETE("/tools/:id", toolHandler.DeleteTool)
-		auth.GET("/prompts", promptHandler.ListPrompts)
-		auth.POST("/prompts", promptHandler.CreatePrompt)
-		auth.POST("/prompts/:id/rollback", promptHandler.RollbackPrompt)
-		auth.DELETE("/prompts/:id", promptHandler.DeletePrompt)
+		auth.POST("/auth/logout", logoutUser(rc.UserRepo))
+		auth.POST("/chat", chat(rc.Orch, rc.Cfg, rc.ConvRepo, rc.MsgRepo, rc.AgentRepo))
+		auth.GET("/llm-config", llmConfig(rc.Cfg, rc.AgentRepo))
+		auth.GET("/conversations", listConversations(rc.ConvRepo, rc.AgentRepo))
+		auth.GET("/conversations/:id/messages", getMessages(rc.ConvRepo, rc.MsgRepo))
+		auth.GET("/conversations/:id/messages-v2", getMessagesCursor(rc.MsgRepo, rc.ConvRepo))
+		auth.DELETE("/conversations/:id/messages/:msgId", deleteMessage(rc.MsgRepo, rc.ConvRepo))
+		auth.PATCH("/conversations/:id", renameConversation(rc.ConvRepo))
+		auth.DELETE("/conversations/:id", deleteConversation(rc.ConvRepo))
+		auth.POST("/conversations/:id/extract-memories", extractMemories(rc.ConvRepo, rc.MemExtr))
+		auth.POST("/conversations/:id/extract-memories/stream", extractMemoriesStream(rc.ConvRepo, rc.MemExtr))
+		auth.GET("/bills", rc.BillHandler.ListBills)
+		auth.GET("/bills/export", rc.BillHandler.ExportBills)
+		auth.POST("/bills/import", rc.BillHandler.ImportBills)
+		auth.GET("/notes", rc.NoteHandler.ListNotes)
+		auth.POST("/notes/batch", rc.NoteHandler.BatchGetNotes)
+		auth.DELETE("/notes/:id", rc.NoteHandler.DeleteNote)
+		auth.GET("/memories", rc.MemHandler.ListMemories)
+		auth.DELETE("/memories/:id", rc.MemHandler.DeleteMemory)
+		auth.POST("/memories/batch", rc.MemHandler.BatchGetMemories)
+		auth.POST("/memories/batch-delete", rc.MemHandler.BatchDeleteMemories)
+		auth.POST("/agents", rc.AgentHandler.CreateAgent)
+		auth.GET("/agents", rc.AgentHandler.ListAgents)
+		auth.GET("/agents/:id", rc.AgentHandler.GetAgent)
+		auth.PATCH("/agents/:id", rc.AgentHandler.UpdateAgent)
+		auth.DELETE("/agents/:id", rc.AgentHandler.DeleteAgent)
+		auth.GET("/tools", rc.ToolHandler.ListTools)
+		auth.POST("/tools", rc.ToolHandler.CreateTool)
+		auth.PATCH("/tools/:id", rc.ToolHandler.UpdateTool)
+		auth.DELETE("/tools/:id", rc.ToolHandler.DeleteTool)
+		auth.GET("/prompts", rc.PromptHandler.ListPrompts)
+		auth.POST("/prompts", rc.PromptHandler.CreatePrompt)
+		auth.POST("/prompts/:id/rollback", rc.PromptHandler.RollbackPrompt)
+		auth.DELETE("/prompts/:id", rc.PromptHandler.DeletePrompt)
 	}
 
 	// 管理员路由
-	admin := r.Group("/api/admin", middleware.Auth(userRepo), monitor.AdminOnly(cfg.Server.AdminUsers))
+	admin := r.Group("/api/admin", middleware.Auth(rc.UserRepo), monitor.AdminOnly(rc.Cfg.Server.AdminUsers))
 	admin.GET("/health", monitor.HealthHandlerGlobal())
 
 	return r

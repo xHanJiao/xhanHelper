@@ -56,7 +56,7 @@ func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, userID, conv
 
 	packets := make([]ContextPacket, 0, len(notes))
 	for i, n := range notes {
-		text := fmt.Sprintf("- [%s] %s\n", n.Topic, n.Content[:min(200, len(n.Content))])
+		text := fmt.Sprintf("- [%s] %s\n", n.Topic, n.Content)
 		if i == 0 {
 			text = "===== 相关笔记 =====\n" + text
 		}

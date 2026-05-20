@@ -102,7 +102,7 @@ func formatHistoryContext(history []model.Message, focusID string) string {
 		if m.ID == focusID {
 			marker = "→"
 		}
-		sb.WriteString(fmt.Sprintf("%s [%s]: %s\n", marker, m.Role, m.Content[:min(200, len(m.Content))]))
+		sb.WriteString(fmt.Sprintf("%s [%s]: %s\n", marker, m.Role, m.Content))
 	}
 	return sb.String()
 }

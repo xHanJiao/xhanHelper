@@ -139,6 +139,19 @@ func (r *UserMemoryRepo) UpdateConfirm(ctx context.Context, id string) error {
 		}).Error
 }
 
+// BatchUpdateConfirm 批量更新确认计数
+func (r *UserMemoryRepo) BatchUpdateConfirm(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Where("id IN ?", ids).
+		Updates(map[string]interface{}{
+			"confirm_count":     gorm.Expr("confirm_count + 1"),
+			"last_confirmed_at": gorm.Expr("CURRENT_TIMESTAMP"),
+		}).Error
+}
+
 // CountRecent 统计用户最近的记忆数
 func (r *UserMemoryRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
 	var count int64

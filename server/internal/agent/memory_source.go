@@ -54,9 +54,26 @@ func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, userID, co
 		return nil, nil
 	}
 
+	// 异步批量更新确认计数（不用请求 ctx，避免请求结束后 ctx 取消导致更新丢失）
+	go func() {
+		if err := s.memRepo.BatchUpdateConfirm(context.Background(), memIDs); err != nil {
+			log.Printf("[vector] batch update confirm error: %v", err)
+		}
+	}()
+
 	packets := make([]ContextPacket, 0, len(memories))
 	for i, m := range memories {
-		text := fmt.Sprintf("- %s\n", m.MemoryValue)
+		var text string
+		topicPart := ""
+		if m.Topic != "" {
+			topicPart = fmt.Sprintf("[%s] ", m.Topic)
+		}
+		text = fmt.Sprintf("- [%s] %s%s (已唤起%d次，最近唤起 %s)\n",
+			m.CreatedAt.Format("2006-01-02"),
+			topicPart,
+			m.MemoryValue,
+			m.ConfirmCount,
+			m.LastConfirmedAt.Format("01-02"))
 		if i == 0 {
 			text = "===== 相关记忆 =====\n" + text
 		}

@@ -44,38 +44,52 @@ type CronRunner struct {
 	taskPollRunning bool
 }
 
-// NewCronRunner 创建调度器
-func NewCronRunner(orch *ReflectionOrchestrator, stateUpdater *StateUpdater, userRepo *service.UserRepo, memExtractor *MemoryExtractor, commitTimer *CommitmentTimer, convRepo *service.ConversationRepo, delayedTaskRepo *service.DelayedTaskRepo) *CronRunner {
-	return &CronRunner{
-		orch:             orch,
-		stateUpdater:     stateUpdater,
-		userRepo:         userRepo,
-		memExtractor:     memExtractor,
-		commitTimer:      commitTimer,
-		convRepo:         convRepo,
-		delayedTaskRepo:  delayedTaskRepo,
-		discoverTimes:    []string{"09:00", "18:00"},
-		deliverInterval:  1 * time.Hour,
-		postChatDelay:    30 * time.Minute,
-		runTimeout:       30 * time.Minute,
-		taskPollInterval: 3 * time.Minute,
-	}
+// CronRunnerConfig — 调度器依赖配置
+type CronRunnerConfig struct {
+	Orch              *ReflectionOrchestrator
+	StateUpdater      *StateUpdater
+	UserRepo          *service.UserRepo
+	MemExtractor      *MemoryExtractor
+	CommitTimer       *CommitmentTimer
+	ConvRepo          *service.ConversationRepo
+	DelayedTaskRepo   *service.DelayedTaskRepo
+	DiscoverSchedules []string
+	DeliverInterval   time.Duration
+	PostChatDelay     time.Duration
+	RunTimeout        time.Duration
+	MemoryAutoExtract bool
 }
 
-// SetDiscoverSchedules 设置发现定时列表
-func (cr *CronRunner) SetDiscoverSchedules(times []string) { cr.discoverTimes = times }
-
-// SetDeliverInterval 设置投递窗口间隔
-func (cr *CronRunner) SetDeliverInterval(d time.Duration) { cr.deliverInterval = d }
-
-// SetPostChatDelay 设置对话后延迟
-func (cr *CronRunner) SetPostChatDelay(d time.Duration) { cr.postChatDelay = d }
-
-// SetRunTimeout 设置单次反思超时
-func (cr *CronRunner) SetRunTimeout(d time.Duration) { cr.runTimeout = d }
-
-// SetMemoryAutoExtract 设置是否自动提取记忆
-func (cr *CronRunner) SetMemoryAutoExtract(v bool) { cr.memoryAutoExtract = v }
+// NewCronRunner 创建调度器
+func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
+	if len(cfg.DiscoverSchedules) == 0 {
+		cfg.DiscoverSchedules = []string{"09:00", "18:00"}
+	}
+	if cfg.DeliverInterval <= 0 {
+		cfg.DeliverInterval = 1 * time.Hour
+	}
+	if cfg.PostChatDelay <= 0 {
+		cfg.PostChatDelay = 30 * time.Minute
+	}
+	if cfg.RunTimeout <= 0 {
+		cfg.RunTimeout = 30 * time.Minute
+	}
+	return &CronRunner{
+		orch:              cfg.Orch,
+		stateUpdater:      cfg.StateUpdater,
+		userRepo:          cfg.UserRepo,
+		memExtractor:      cfg.MemExtractor,
+		commitTimer:       cfg.CommitTimer,
+		convRepo:          cfg.ConvRepo,
+		delayedTaskRepo:   cfg.DelayedTaskRepo,
+		discoverTimes:     cfg.DiscoverSchedules,
+		deliverInterval:   cfg.DeliverInterval,
+		postChatDelay:     cfg.PostChatDelay,
+		runTimeout:        cfg.RunTimeout,
+		memoryAutoExtract: cfg.MemoryAutoExtract,
+		taskPollInterval:  3 * time.Minute,
+	}
+}
 
 func (cr *CronRunner) setDeliverNext(t time.Time) {
 	cr.mu.Lock()

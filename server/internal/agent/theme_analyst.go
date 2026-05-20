@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
 
@@ -96,14 +97,16 @@ type ThemeAnalyst struct {
 	flashClient    llm.LLMClient
 	retrievalTools map[string]tool.Tool
 	themeStore     *ThemeStore
+	traceRepo      *service.ReflectionTraceRepo
 	maxIterations  int
 }
 
-func NewThemeAnalyst(flashClient llm.LLMClient, retrievalTools map[string]tool.Tool, themeStore *ThemeStore, maxIterations int) *ThemeAnalyst {
+func NewThemeAnalyst(flashClient llm.LLMClient, retrievalTools map[string]tool.Tool, themeStore *ThemeStore, traceRepo *service.ReflectionTraceRepo, maxIterations int) *ThemeAnalyst {
 	return &ThemeAnalyst{
 		flashClient:    flashClient,
 		retrievalTools: retrievalTools,
 		themeStore:     themeStore,
+		traceRepo:      traceRepo,
 		maxIterations:  maxIterations,
 	}
 }
@@ -190,7 +193,7 @@ func (ta *ThemeAnalyst) Execute(ec *tool.ExecuteContext, funcName string, args j
 	}
 
 	// 创建轻量 ReAct 循环（仅检索工具，限 2 轮）
-	loop := NewReactLoop(ta.flashClient, ta.retrievalTools, themeAnalystPrompt, ta.maxIterations, ec.UserID, "ThemeAnalyst", CtxTraceRepo(ec.Ctx), CtxTraceID(ec.Ctx))
+	loop := NewReactLoop(ta.flashClient, ta.retrievalTools, themeAnalystPrompt, ta.maxIterations, ec.UserID, "ThemeAnalyst", ta.traceRepo, CtxTraceID(ec.Ctx))
 
 	result, err := loop.Run(ec.Ctx, inputMsg)
 	if err != nil {

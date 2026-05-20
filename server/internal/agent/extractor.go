@@ -47,26 +47,36 @@ type MemoryExtractor struct {
 	conceptEmbed  *ConceptEmbedService
 }
 
+// MemoryExtractorConfig — 记忆提取器依赖配置
+type MemoryExtractorConfig struct {
+	LLMClient     llm.LLMClient
+	MemRepo       *service.UserMemoryRepo
+	VectorStore   app.VectorStore
+	Embedder      *llm.Embedder
+	MsgRepo       *service.MessageRepo
+	ConvRepo      *service.ConversationRepo
+	EmbeddingRepo *service.EmbeddingRepo
+	DupeThreshold float64
+	ChunkBuilder  *ChunkBuilder
+	ConceptEmbed  *ConceptEmbedService
+}
+
 // NewMemoryExtractor 创建提取器
-func NewMemoryExtractor(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo,
-	vectorStore app.VectorStore, embedder *llm.Embedder,
-	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
-	embeddingRepo *service.EmbeddingRepo,
-	dupeThreshold float64, chunkBuilder *ChunkBuilder, conceptEmbed *ConceptEmbedService) *MemoryExtractor {
-	if dupeThreshold <= 0 {
-		dupeThreshold = 0.85 // 默认值
+func NewMemoryExtractor(cfg *MemoryExtractorConfig) *MemoryExtractor {
+	if cfg.DupeThreshold <= 0 {
+		cfg.DupeThreshold = 0.85
 	}
 	return &MemoryExtractor{
-		llmClient:     llmClient,
-		memRepo:       memRepo,
-		vectorStore:   vectorStore,
-		embedder:      embedder,
-		msgRepo:       msgRepo,
-		convRepo:      convRepo,
-		embeddingRepo: embeddingRepo,
-		dupeThreshold: dupeThreshold,
-		chunkBuilder:  chunkBuilder,
-		conceptEmbed:  conceptEmbed,
+		llmClient:     cfg.LLMClient,
+		memRepo:       cfg.MemRepo,
+		vectorStore:   cfg.VectorStore,
+		embedder:      cfg.Embedder,
+		msgRepo:       cfg.MsgRepo,
+		convRepo:      cfg.ConvRepo,
+		embeddingRepo: cfg.EmbeddingRepo,
+		dupeThreshold: cfg.DupeThreshold,
+		chunkBuilder:  cfg.ChunkBuilder,
+		conceptEmbed:  cfg.ConceptEmbed,
 	}
 }
 

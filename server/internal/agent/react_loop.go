@@ -36,28 +36,15 @@ type ToolCallLog struct {
 
 type traceCtxKey struct{}
 
-// WithTraceInfo 将 traceRepo + traceID 注入 ctx（子 Agent 通过 CtxTraceInfo 读取）
-func WithTraceInfo(ctx context.Context, repo *service.ReflectionTraceRepo, traceID string) context.Context {
-	return context.WithValue(ctx, traceCtxKey{}, &traceInfo{repo: repo, id: traceID})
-}
-
-type traceInfo struct {
-	repo *service.ReflectionTraceRepo
-	id   string
-}
-
-// CtxTraceRepo 从 ctx 取出 traceRepo，nil 表示未设置
-func CtxTraceRepo(ctx context.Context) *service.ReflectionTraceRepo {
-	if info, ok := ctx.Value(traceCtxKey{}).(*traceInfo); ok {
-		return info.repo
-	}
-	return nil
+// WithTraceID 将 traceID 注入 ctx（子 Agent 通过 CtxTraceID 读取）
+func WithTraceID(ctx context.Context, traceID string) context.Context {
+	return context.WithValue(ctx, traceCtxKey{}, traceID)
 }
 
 // CtxTraceID 从 ctx 取出 traceID
 func CtxTraceID(ctx context.Context) string {
-	if info, ok := ctx.Value(traceCtxKey{}).(*traceInfo); ok {
-		return info.id
+	if id, ok := ctx.Value(traceCtxKey{}).(string); ok {
+		return id
 	}
 	return ""
 }

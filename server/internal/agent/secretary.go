@@ -9,6 +9,7 @@ import (
 
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
+	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
 
@@ -36,10 +37,11 @@ const secretaryPrompt = `你是 xhanHelper 的个人秘书。你将收到分析�
 // Secretary — 秘书层，把分析发现转化为人性化提醒
 type Secretary struct {
 	flashClient llm.LLMClient
+	traceRepo   *service.ReflectionTraceRepo
 }
 
-func NewSecretary(flashClient llm.LLMClient) *Secretary {
-	return &Secretary{flashClient: flashClient}
+func NewSecretary(flashClient llm.LLMClient, traceRepo *service.ReflectionTraceRepo) *Secretary {
+	return &Secretary{flashClient: flashClient, traceRepo: traceRepo}
 }
 
 func (s *Secretary) Name() string        { return "secretary" }
@@ -89,7 +91,7 @@ func (s *Secretary) Execute(ec *tool.ExecuteContext, funcName string, args json.
 	}
 
 	// 写 trace
-	if traceRepo := CtxTraceRepo(ec.Ctx); traceRepo != nil {
+	if s.traceRepo != nil {
 		var reqJSON, respJSON string
 		if resp.RequestJSON != nil {
 			reqJSON = *resp.RequestJSON
@@ -98,7 +100,7 @@ func (s *Secretary) Execute(ec *tool.ExecuteContext, funcName string, args json.
 			respJSON = *resp.ResponseJSON
 		}
 		pt, ct := extractUsage(respJSON)
-		traceRepo.CreateLLMCall(ec.Ctx, &model.ReflectionLLMCall{
+		s.traceRepo.CreateLLMCall(ec.Ctx, &model.ReflectionLLMCall{
 			ID:               uuid.New().String(),
 			TraceID:          CtxTraceID(ec.Ctx),
 			Caller:           "Secretary",

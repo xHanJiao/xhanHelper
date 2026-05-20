@@ -9,6 +9,7 @@ import (
 
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
+	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
 
@@ -68,10 +69,11 @@ const scorerPrompt = `你是 xhanHelper 的「内容编辑」。你的职责是�
 // Scorer — 打分排序子 Agent（实现 tool.Tool 接口，不使用 ReAct 循环）
 type Scorer struct {
 	flashClient llm.LLMClient
+	traceRepo   *service.ReflectionTraceRepo
 }
 
-func NewScorer(flashClient llm.LLMClient) *Scorer {
-	return &Scorer{flashClient: flashClient}
+func NewScorer(flashClient llm.LLMClient, traceRepo *service.ReflectionTraceRepo) *Scorer {
+	return &Scorer{flashClient: flashClient, traceRepo: traceRepo}
 }
 
 func (s *Scorer) Name() string { return "scorer" }
@@ -157,7 +159,7 @@ func (s *Scorer) Execute(ec *tool.ExecuteContext, funcName string, args json.Raw
 	}
 
 	// 写 trace
-	if traceRepo := CtxTraceRepo(ec.Ctx); traceRepo != nil {
+	if s.traceRepo != nil {
 		var reqJSON, respJSON string
 		if resp.RequestJSON != nil {
 			reqJSON = *resp.RequestJSON
@@ -166,7 +168,7 @@ func (s *Scorer) Execute(ec *tool.ExecuteContext, funcName string, args json.Raw
 			respJSON = *resp.ResponseJSON
 		}
 		pt, ct := extractUsage(respJSON)
-		traceRepo.CreateLLMCall(ec.Ctx, &model.ReflectionLLMCall{
+		s.traceRepo.CreateLLMCall(ec.Ctx, &model.ReflectionLLMCall{
 			ID:               uuid.New().String(),
 			TraceID:          CtxTraceID(ec.Ctx),
 			Caller:           "Scorer",

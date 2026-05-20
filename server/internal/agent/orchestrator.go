@@ -78,43 +78,47 @@ type Orchestrator struct {
 	onChatEnd          func(userID, convID string)
 }
 
+// OrchestratorConfig — Orchestrator 依赖配置
+type OrchestratorConfig struct {
+	FlashClient    llm.LLMClient
+	Registry       *tool.Registry
+	ProClient      llm.LLMClient
+	Retriever      *Retriever
+	MsgRepo        *service.MessageRepo
+	ConvRepo       *service.ConversationRepo
+	Embedder       *llm.Embedder
+	VectorStore    *VectorStore
+	EmbeddingRepo  *service.EmbeddingRepo
+	ThemeStateRepo *service.ThemeStateRepo
+	MaxIterations  int
+	Temperature    *float64
+	MaxTokens      *int
+	PromptResolver PromptResolver
+	OnChatEnd      func(userID, convID string)
+}
+
 // New 创建 Orchestrator
-func New(flashClient llm.LLMClient, registry *tool.Registry,
-	proClient llm.LLMClient, retriever *Retriever,
-	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
-	embedder *llm.Embedder, vectorStore *VectorStore,
-	embeddingRepo *service.EmbeddingRepo,
-	themeStateRepo *service.ThemeStateRepo,
-	maxIterations int,
-	defaultTemperature *float64, defaultMaxTokens *int) *Orchestrator {
-	if maxIterations <= 0 {
-		maxIterations = defaultMaxIterations
+func New(cfg *OrchestratorConfig) *Orchestrator {
+	if cfg.MaxIterations <= 0 {
+		cfg.MaxIterations = defaultMaxIterations
 	}
 	return &Orchestrator{
-		flashClient:        flashClient,
-		proClient:          proClient,
-		registry:           registry,
-		retriever:          retriever,
-		msgRepo:            msgRepo,
-		convRepo:           convRepo,
-		embedder:           embedder,
-		vectorStore:        vectorStore,
-		embeddingRepo:      embeddingRepo,
-		themeStateRepo:     themeStateRepo,
-		maxIterations:      maxIterations,
-		defaultTemperature: defaultTemperature,
-		defaultMaxTokens:   defaultMaxTokens,
+		flashClient:        cfg.FlashClient,
+		proClient:          cfg.ProClient,
+		registry:           cfg.Registry,
+		retriever:          cfg.Retriever,
+		msgRepo:            cfg.MsgRepo,
+		convRepo:           cfg.ConvRepo,
+		embedder:           cfg.Embedder,
+		vectorStore:        cfg.VectorStore,
+		embeddingRepo:      cfg.EmbeddingRepo,
+		themeStateRepo:     cfg.ThemeStateRepo,
+		promptResolver:     cfg.PromptResolver,
+		maxIterations:      cfg.MaxIterations,
+		defaultTemperature: cfg.Temperature,
+		defaultMaxTokens:   cfg.MaxTokens,
+		onChatEnd:          cfg.OnChatEnd,
 	}
-}
-
-// SetPromptResolver 注入用户自定义 prompt 查找器
-func (o *Orchestrator) SetPromptResolver(r PromptResolver) {
-	o.promptResolver = r
-}
-
-// SetOnChatEnd 设置对话结束回调（通知反思调度器）
-func (o *Orchestrator) SetOnChatEnd(fn func(userID, convID string)) {
-	o.onChatEnd = fn
 }
 
 // FlashClient 返回 Flash 模型客户端（供预处理管线使用）

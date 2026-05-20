@@ -197,23 +197,34 @@ func main() {
 
 	// ===== Phase 6: 反思工具（独立 Registry） =====
 	themeStore := agent.NewThemeStore(themeStateRepo)
-	themeAnalyst := agent.NewThemeAnalyst(llmClient, retrievalTools, themeStore, cfg.Reflection.AnalystMaxIterations)
-	scorerTool := agent.NewScorer(llmClient)
+	themeAnalyst := agent.NewThemeAnalyst(llmClient, retrievalTools, themeStore, traceRepo, cfg.Reflection.AnalystMaxIterations)
+	scorerTool := agent.NewScorer(llmClient, traceRepo)
 	themeEmbedder := agent.NewThemeEmbedder(infra, conceptEmbedRepo, embeddingRepo)
-	themeDiscoverer := agent.NewThemeDiscoverer(llmClients, infra, retrievalTools, themeStore, themeEmbedder, cfg.Reflection.DiscoverMaxIterations, cfg.Reflection.ClusterThreshold)
+	themeDiscoverer := agent.NewThemeDiscoverer(llmClients, infra, retrievalTools, themeStore, themeEmbedder, traceRepo, cfg.Reflection.DiscoverMaxIterations, cfg.Reflection.ClusterThreshold)
 	mailboxTool := tool.NewMailboxTool(mailboxRepo)
 	themeMgmtTool := tool.NewThemeTool(themeStateRepo, themeEmbedder)
 
 	reflectionReg := tool.NewRegistry()
 	reflectionReg.Register(tool.NewLoggingWrapper(themeAnalyst, log.Default()))
 	reflectionReg.Register(tool.NewLoggingWrapper(scorerTool, log.Default()))
-	reflectionReg.Register(tool.NewLoggingWrapper(agent.NewSecretary(llmClient), log.Default()))
+	reflectionReg.Register(tool.NewLoggingWrapper(agent.NewSecretary(llmClient, traceRepo), log.Default()))
 	reflectionReg.Register(tool.NewLoggingWrapper(themeDiscoverer, log.Default()))
 	reflectionReg.Register(tool.NewLoggingWrapper(mailboxTool, log.Default()))
 	reflectionReg.Register(tool.NewLoggingWrapper(themeMgmtTool, log.Default()))
 
 	// Memory Extractor（合并到对话后处理流程）
-	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, infra.VectorStore, embedder, msgRepo, convRepo, embeddingRepo, cfg.Server.MemoryDupeThreshold, chunkBuilder, conceptEmbedService)
+	memExtractor := agent.NewMemoryExtractor(&agent.MemoryExtractorConfig{
+		LLMClient:     llmClient,
+		MemRepo:       memRepo,
+		VectorStore:   infra.VectorStore,
+		Embedder:      embedder,
+		MsgRepo:       msgRepo,
+		ConvRepo:      convRepo,
+		EmbeddingRepo: embeddingRepo,
+		DupeThreshold: cfg.Server.MemoryDupeThreshold,
+		ChunkBuilder:  chunkBuilder,
+		ConceptEmbed:  conceptEmbedService,
+	})
 
 	commitmentTimer := agent.NewCommitmentTimer(commitmentRepo, mailboxRepo)
 
@@ -221,22 +232,36 @@ func main() {
 	reg.Register(tool.NewLoggingWrapper(tool.NewReminderTool(commitmentRepo, commitmentTimer), log.Default()))
 
 	// ===== Phase 6: ReflectionOrchestrator + CronRunner =====
-	reflectionOrch := agent.NewReflectionOrchestrator(
-		llmClient, reflectionReg, traceRepo, themeStore,
-		mailboxRepo, msgRepo, noteRepo, memRepo,
-		pendingFindingRepo,
-		cfg.Reflection.LaunchMaxIterations,
-	)
-	reflectionOrch.SetMaxDeliveryRetries(cfg.Reflection.MaxDeliveryRetries)
+	reflectionOrch := agent.NewReflectionOrchestrator(&agent.ReflectionOrchestratorConfig{
+		FlashClient:        llmClient,
+		ReflectionReg:      reflectionReg,
+		TraceRepo:          traceRepo,
+		ThemeStore:         themeStore,
+		MailboxRepo:        mailboxRepo,
+		MsgRepo:            msgRepo,
+		NoteRepo:           noteRepo,
+		MemRepo:            memRepo,
+		PendingFindingRepo: pendingFindingRepo,
+		MaxIterations:      cfg.Reflection.LaunchMaxIterations,
+		MaxDeliveryRetries: cfg.Reflection.MaxDeliveryRetries,
+		DraftExpireDays:    cfg.Reflection.DraftExpireDays,
+		ActiveDurationDays: cfg.Reflection.ActiveDurationDays,
+	})
 	stateUpdater := agent.NewStateUpdater(llmClient, msgRepo, convRepo, themeStore, pendingFindingRepo)
-	cronRunner := agent.NewCronRunner(reflectionOrch, stateUpdater, userRepo, memExtractor, commitmentTimer, convRepo, delayedTaskRepo)
-	cronRunner.SetPostChatDelay(time.Duration(cfg.Reflection.PostChatDelaySeconds) * time.Second)
-	cronRunner.SetDiscoverSchedules(cfg.Reflection.DailySchedules)
-	cronRunner.SetDeliverInterval(time.Duration(cfg.Reflection.DeliverIntervalMinutes) * time.Minute)
-	cronRunner.SetMemoryAutoExtract(cfg.Server.MemoryAutoExtract)
+	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{
+		Orch:              reflectionOrch,
+		StateUpdater:      stateUpdater,
+		UserRepo:          userRepo,
+		MemExtractor:      memExtractor,
+		CommitTimer:       commitmentTimer,
+		ConvRepo:          convRepo,
+		DelayedTaskRepo:   delayedTaskRepo,
+		DiscoverSchedules: cfg.Reflection.DailySchedules,
+		DeliverInterval:   time.Duration(cfg.Reflection.DeliverIntervalMinutes) * time.Minute,
+		PostChatDelay:     time.Duration(cfg.Reflection.PostChatDelaySeconds) * time.Second,
+		MemoryAutoExtract: cfg.Server.MemoryAutoExtract,
+	})
 	themeDiscoverer.SetUpgradeThresholds(cfg.Reflection.DraftNominateCountThreshold, cfg.Reflection.DraftSpanDaysThreshold)
-	reflectionOrch.SetDraftExpireDays(cfg.Reflection.DraftExpireDays)
-	reflectionOrch.SetActiveDurationDays(cfg.Reflection.ActiveDurationDays)
 	// 后台任务共享 context，关闭时统一取消
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
@@ -254,7 +279,23 @@ func main() {
 
 	// Orchestrator
 	retriever := agent.NewRetriever(memSource, noteSource)
-	orch := agent.New(llmClient, reg, strongClient, retriever, msgRepo, convRepo, embedder, vectorStore, embeddingRepo, themeStateRepo, cfg.LLM.MaxIterations, cfg.LLM.DefaultTemperature, cfg.LLM.DefaultMaxTokens)
+	orch := agent.New(&agent.OrchestratorConfig{
+		FlashClient:    llmClient,
+		Registry:       reg,
+		ProClient:      strongClient,
+		Retriever:      retriever,
+		MsgRepo:        msgRepo,
+		ConvRepo:       convRepo,
+		Embedder:       embedder,
+		VectorStore:    vectorStore,
+		EmbeddingRepo:  embeddingRepo,
+		ThemeStateRepo: themeStateRepo,
+		MaxIterations:  cfg.LLM.MaxIterations,
+		Temperature:    cfg.LLM.DefaultTemperature,
+		MaxTokens:      cfg.LLM.DefaultMaxTokens,
+		PromptResolver: promptRepo,
+		OnChatEnd:      func(userID, convID string) { cronRunner.NotifyChatEnd(userID, convID) },
+	})
 
 	// Markdown 文件定期清理（每小时清理超过 1h 的文件）
 	go func() {
@@ -270,13 +311,8 @@ func main() {
 		}
 	}()
 
-	orch.SetPromptResolver(promptRepo)
-
-	// 启动反思调度器 + 聊天结束通知
+	// 启动反思调度器
 	go cronRunner.Start(bgCtx)
-	orch.SetOnChatEnd(func(userID, convID string) {
-		cronRunner.NotifyChatEnd(userID, convID)
-	})
 
 	// Monitor snapshots
 	snapshots := &SnapshotProvider{

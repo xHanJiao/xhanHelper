@@ -13,6 +13,7 @@ import (
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
+	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
 
@@ -86,6 +87,7 @@ type ThemeDiscoverer struct {
 	embedder       *llm.Embedder
 	vectorStore    app.VectorStore
 	themeEmbedder  *ThemeEmbedder
+	traceRepo      *service.ReflectionTraceRepo
 	dedupThreshold float64
 	maxIterations  int
 	modeHandlers   map[string]discoverFunc
@@ -94,7 +96,7 @@ type ThemeDiscoverer struct {
 	spanDaysThreshold      int
 }
 
-func NewThemeDiscoverer(llmClients *app.LLMClients, infra *app.Infra, retrievalTools map[string]tool.Tool, themeStore *ThemeStore, themeEmbedder *ThemeEmbedder, maxIterations int, dedupThreshold float64) *ThemeDiscoverer {
+func NewThemeDiscoverer(llmClients *app.LLMClients, infra *app.Infra, retrievalTools map[string]tool.Tool, themeStore *ThemeStore, themeEmbedder *ThemeEmbedder, traceRepo *service.ReflectionTraceRepo, maxIterations int, dedupThreshold float64) *ThemeDiscoverer {
 	td := &ThemeDiscoverer{
 		flashClient:            llmClients.Flash,
 		retrievalTools:         retrievalTools,
@@ -102,6 +104,7 @@ func NewThemeDiscoverer(llmClients *app.LLMClients, infra *app.Infra, retrievalT
 		embedder:               infra.Embedder,
 		vectorStore:            infra.VectorStore,
 		themeEmbedder:          themeEmbedder,
+		traceRepo:              traceRepo,
 		dedupThreshold:         dedupThreshold,
 		maxIterations:          maxIterations,
 		nominateCountThreshold: 3,
@@ -329,7 +332,7 @@ func (td *ThemeDiscoverer) discoverByStats(ctx context.Context, userID, themeLis
 	sb.WriteString(fmt.Sprintf("- 新增记忆：%d 条\n", a.RecentMemCount))
 	sb.WriteString("\n请检索并判断是否有值得提名的候选主题。\n")
 
-	loop := NewReactLoop(td.flashClient, td.retrievalTools, themeDiscovererPrompt, td.maxIterations, userID, "ThemeDiscoverer", CtxTraceRepo(ctx), CtxTraceID(ctx))
+	loop := NewReactLoop(td.flashClient, td.retrievalTools, themeDiscovererPrompt, td.maxIterations, userID, "ThemeDiscoverer", td.traceRepo, CtxTraceID(ctx))
 	result, err := loop.Run(ctx, sb.String())
 	if err != nil {
 		return nil, nil, err

@@ -33,48 +33,47 @@ type ReflectionOrchestrator struct {
 	activeDurationDays map[string]int
 }
 
-func NewReflectionOrchestrator(
-	flashClient llm.LLMClient,
-	reflectionReg *tool.Registry,
-	traceRepo *service.ReflectionTraceRepo,
-	themeStore *ThemeStore,
-	mailboxRepo *service.MailboxRepo,
-	msgRepo *service.MessageRepo,
-	noteRepo *service.NoteRepo,
-	memRepo *service.UserMemoryRepo,
-	pendingFindingRepo *service.PendingFindingRepo,
-	maxIterations int,
-) *ReflectionOrchestrator {
+// ReflectionOrchestratorConfig — 反思编排器依赖配置
+type ReflectionOrchestratorConfig struct {
+	FlashClient        llm.LLMClient
+	ReflectionReg      *tool.Registry
+	TraceRepo          *service.ReflectionTraceRepo
+	ThemeStore         *ThemeStore
+	MailboxRepo        *service.MailboxRepo
+	MsgRepo            *service.MessageRepo
+	NoteRepo           *service.NoteRepo
+	MemRepo            *service.UserMemoryRepo
+	PendingFindingRepo *service.PendingFindingRepo
+	MaxIterations      int
+	MaxDeliveryRetries int
+	DraftExpireDays    int
+	ActiveDurationDays map[string]int
+}
+
+func NewReflectionOrchestrator(cfg *ReflectionOrchestratorConfig) *ReflectionOrchestrator {
+	if cfg.MaxDeliveryRetries <= 0 {
+		cfg.MaxDeliveryRetries = 3
+	}
+	if cfg.DraftExpireDays <= 0 {
+		cfg.DraftExpireDays = 7
+	}
+	if len(cfg.ActiveDurationDays) == 0 {
+		cfg.ActiveDurationDays = map[string]int{"long": 90, "medium": 30, "short": 14, "ephemeral": 7}
+	}
 	return &ReflectionOrchestrator{
-		flashClient:        flashClient,
-		reflectionReg:      reflectionReg,
-		traceRepo:          traceRepo,
-		themeStore:         themeStore,
-		mailboxRepo:        mailboxRepo,
-		msgRepo:            msgRepo,
-		noteRepo:           noteRepo,
-		memRepo:            memRepo,
-		pendingFindingRepo: pendingFindingRepo,
-		maxIterations:      maxIterations,
-		maxDeliveryRetries: 3,
-		draftExpireDays:    7,
-	}
-}
-
-// SetMaxDeliveryRetries 设置投递重试上限
-func (o *ReflectionOrchestrator) SetMaxDeliveryRetries(n int) { o.maxDeliveryRetries = n }
-
-// SetDraftExpireDays 设置 draft 过期天数
-func (o *ReflectionOrchestrator) SetDraftExpireDays(days int) {
-	if days > 0 {
-		o.draftExpireDays = days
-	}
-}
-
-// SetActiveDurationDays 设置 active 各 duration 的衰减天数
-func (o *ReflectionOrchestrator) SetActiveDurationDays(days map[string]int) {
-	if len(days) > 0 {
-		o.activeDurationDays = days
+		flashClient:        cfg.FlashClient,
+		reflectionReg:      cfg.ReflectionReg,
+		traceRepo:          cfg.TraceRepo,
+		themeStore:         cfg.ThemeStore,
+		mailboxRepo:        cfg.MailboxRepo,
+		msgRepo:            cfg.MsgRepo,
+		noteRepo:           cfg.NoteRepo,
+		memRepo:            cfg.MemRepo,
+		pendingFindingRepo: cfg.PendingFindingRepo,
+		maxIterations:      cfg.MaxIterations,
+		maxDeliveryRetries: cfg.MaxDeliveryRetries,
+		draftExpireDays:    cfg.DraftExpireDays,
+		activeDurationDays: cfg.ActiveDurationDays,
 	}
 }
 
@@ -351,7 +350,7 @@ func (o *ReflectionOrchestrator) reviewActiveThemes(ctx context.Context, userID,
 			"mode":       "hot_run",
 			"period":     period,
 		})
-		ec := &tool.ExecuteContext{Ctx: WithTraceInfo(ctx, o.traceRepo, traceID), UserID: userID}
+		ec := &tool.ExecuteContext{Ctx: WithTraceID(ctx, traceID), UserID: userID}
 		res := analystT.Execute(ec, "analyze", args)
 		if res.Success {
 			findingCount++

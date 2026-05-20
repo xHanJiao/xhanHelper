@@ -326,7 +326,7 @@ func (o *ReflectionOrchestrator) expireActiveThemes(ctx context.Context, userID 
 }
 
 // reviewActiveThemes 对活跃主题运行分析，产出 finding 写入 pending_finding
-func (o *ReflectionOrchestrator) reviewActiveThemes(ctx context.Context, userID, _, period string) int {
+func (o *ReflectionOrchestrator) reviewActiveThemes(ctx context.Context, userID, traceID, period string) int {
 	actives, err := o.themeStore.ListActives(ctx, userID)
 	if err != nil {
 		log.Printf("[reflection] review: list actives error: %v", err)
@@ -351,7 +351,7 @@ func (o *ReflectionOrchestrator) reviewActiveThemes(ctx context.Context, userID,
 			"mode":       "hot_run",
 			"period":     period,
 		})
-		ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID}
+		ec := &tool.ExecuteContext{Ctx: WithTraceInfo(ctx, o.traceRepo, traceID), UserID: userID}
 		res := analystT.Execute(ec, "analyze", args)
 		if res.Success {
 			findingCount++

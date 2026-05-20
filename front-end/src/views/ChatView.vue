@@ -566,7 +566,7 @@ function handleContainerClick(e) {
           type="textarea"
           placeholder="发消息..."
           :disabled="chat.isStreaming"
-          :autosize="inputExpanded ? false : { minRows: 1, maxRows: 6 }"
+          :autosize="(isMobile || inputExpanded) ? false : { minRows: 1, maxRows: 6 }"
           class="chat-input"
           @keydown="(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !inputExpanded) { e.preventDefault(); handleSend() }}"
           :bordered="false"

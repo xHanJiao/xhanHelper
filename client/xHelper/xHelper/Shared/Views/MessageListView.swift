@@ -2,95 +2,73 @@ import SwiftUI
 
 struct MessageListView: View {
     @ObservedObject var viewModel: ChatViewModel
-    @State private var pendingScroll: DispatchWorkItem?
+    @State private var scrollTarget: String?
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    if viewModel.hasMoreBefore {
-                        Button {
-                            Task { await viewModel.loadMore(direction: "before") }
-                        } label: {
-                            HStack {
-                                if viewModel.isLoadingMore {
-                                    ProgressView().scaleEffect(0.7)
-                                } else {
-                                    Image(systemName: "arrow.up")
-                                }
-                                Text("加载更早的消息")
-                                    .font(.caption)
+        ScrollView {
+            LazyVStack(spacing: 12) {
+                if viewModel.hasMoreBefore {
+                    Button {
+                        Task { await viewModel.loadMore(direction: "before") }
+                    } label: {
+                        HStack {
+                            if viewModel.isLoadingMore {
+                                ProgressView().scaleEffect(0.7)
+                            } else {
+                                Image(systemName: "arrow.up")
                             }
-                            .foregroundColor(.blue)
+                            Text("加载更早的消息")
+                                .font(.caption)
                         }
-                        .disabled(viewModel.isLoadingMore)
+                        .foregroundColor(.blue)
                     }
+                    .disabled(viewModel.isLoadingMore)
+                }
 
-                    ForEach(viewModel.messages) { msg in
-                        if msg.role == "tool" {
-                            ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
-                        } else if msg.role == "user" {
-                            ChatBubble(text: msg.content, isUser: true, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
-                        } else {
-                            ChatBubble(text: msg.content, isUser: false, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
-                        }
+                ForEach(viewModel.messages) { msg in
+                    if msg.id == "__streaming__", let thought = viewModel.thoughtMessage {
+                        ThinkingBubble(text: thought, isStreaming: !viewModel.thoughtDone)
+                            .padding(.horizontal)
                     }
-
-                    if let thought = viewModel.thoughtMessage {
-                        HStack {
-                            Image(systemName: "lightbulb")
-                                .font(.caption)
-                                .foregroundColor(.yellow)
-                            Text(thought)
-                                .font(.caption)
-                                .italic()
-                                .foregroundColor(.gray)
-                            Spacer()
-                        }
-                        .padding(.horizontal)
-                    }
-
-                    if let status = viewModel.statusMessage {
-                        HStack {
-                            Image(systemName: "brain.head.profile")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text(status)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                        }
-                        .padding(.horizontal)
+                    if msg.role == "tool" {
+                        ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
+                    } else if msg.role == "user" {
+                        ChatBubble(text: msg.content, isUser: true, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
+                    } else {
+                        ChatBubble(text: msg.content, isUser: false, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
                     }
                 }
-                .padding(.vertical)
-            }
-            .dismissKeyboardOnTap()
-            .onChange(of: viewModel.messages.count) { oldCount, newCount in
-                if newCount > oldCount {
-                    if let anchor = viewModel.anchorMessageID {
-                        scheduleScroll(proxy: proxy, id: anchor, anchor: .top)
-                        viewModel.anchorMessageID = nil
-                    } else if let last = viewModel.messages.last, last.id != "__streaming__" {
-                        let delay = oldCount == 0 ? 0.2 : 0.05
-                        scheduleScroll(proxy: proxy, id: last.id, anchor: .bottom, delay: delay)
+
+                if let status = viewModel.statusMessage {
+                    HStack {
+                        Image(systemName: "brain.head.profile")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(status)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
                     }
+                    .padding(.horizontal)
                 }
             }
-            .onChange(of: viewModel.messages.last?.content) {
-                if viewModel.isStreaming, let last = viewModel.messages.last {
-                    scheduleScroll(proxy: proxy, id: last.id, anchor: .top)
+            .padding(.vertical)
+        }
+        .scrollPosition(id: $scrollTarget, anchor: .bottom)
+        .dismissKeyboardOnTap()
+        .onChange(of: viewModel.messages.count) { oldCount, newCount in
+            guard newCount > oldCount else { return }
+            if let anchor = viewModel.anchorMessageID {
+                scrollTarget = anchor
+                viewModel.anchorMessageID = nil
+                return
+            }
+            // 非 streaming 消息增加时滚到底（发消息、历史加载、工具结果）
+            if !viewModel.isStreaming || viewModel.messages.last?.role == "user" {
+                if let last = viewModel.messages.last, last.id != "__streaming__" {
+                    scrollTarget = last.id
                 }
             }
         }
-    }
-
-    private func scheduleScroll(proxy: ScrollViewProxy, id: String, anchor: UnitPoint, delay: TimeInterval = 0.05) {
-        pendingScroll?.cancel()
-        let work = DispatchWorkItem {
-            withAnimation { proxy.scrollTo(id, anchor: anchor) }
-        }
-        pendingScroll = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 }

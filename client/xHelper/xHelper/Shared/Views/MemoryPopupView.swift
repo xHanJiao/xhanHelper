@@ -18,7 +18,7 @@ struct MemoryPopupView: View {
                 } else {
                     List(memories) { mem in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(mem.memoryKey)
+                            Text(mem.topic ?? "记忆")
                                 .font(.subheadline.weight(.semibold))
                             Text(mem.memoryValue)
                                 .font(.body)

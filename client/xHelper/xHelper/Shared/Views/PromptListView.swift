@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 private let defaultSystemPrompt = """
 你是 xhanHelper，一个个人 AI 助手。你的职责是帮助用户高效完成任务。
@@ -24,6 +27,18 @@ struct PromptListView: View {
                         .font(.callout)
                         .foregroundColor(.secondary)
                         .padding(.vertical, 4)
+                        .contextMenu {
+                            Button {
+                                #if os(iOS)
+                                UIPasteboard.general.string = defaultSystemPrompt
+                                #else
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(defaultSystemPrompt, forType: .string)
+                                #endif
+                            } label: {
+                                Label("拷贝", systemImage: "doc.on.doc")
+                            }
+                        }
                 } label: {
                     Label("内置默认提示词", systemImage: "doc.text")
                 }

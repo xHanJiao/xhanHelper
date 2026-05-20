@@ -17,7 +17,8 @@ class ConversationListViewModel: ObservableObject {
         isLoading = true
         defer { isLoading = false }
         do {
-            conversations = try await apiClient.listConversations()
+            let resp = try await apiClient.listConversations()
+            conversations = resp.conversations
         } catch {
             let nsErr = error as NSError
             if nsErr.code == 401 {
@@ -41,14 +42,6 @@ class ConversationListViewModel: ObservableObject {
                     updatedAt: old.updatedAt
                 )
             }
-        } catch {
-            // 静默失败
-        }
-    }
-
-    func extractMemories(id: String) async {
-        do {
-            try await apiClient.extractMemoriesFromConversation(id: id)
         } catch {
             // 静默失败
         }

@@ -21,16 +21,38 @@ class ChatViewModel: ObservableObject {
     @Published var isStreaming = false
     @Published var currentToolCall: ToolCallData?
     @Published var thoughtMessage: String?
+    @Published var thoughtDone = false
     @Published var statusMessage: String?
     @Published var errorMessage: String?
     @Published var conversationId: String?
     @Published var conversationTitle: String?
     @Published var deepMode = false
+    @Published var thinkingMode = true
+    @Published var temperature: Double? = nil
+    @Published var maxTokens: Int? = nil
+
+    @AppStorage("llm_temperature") static var cachedTemperature: Double = 1.0
+    @AppStorage("llm_maxTokens") static var cachedMaxTokens: Int = 4096
+    @AppStorage("llm_thinking") static var cachedThinking: Bool = true
+
+    func applyLLMDefaults() {
+        thinkingMode = Self.cachedThinking
+        temperature = Self.cachedTemperature
+        maxTokens = Self.cachedMaxTokens
+    }
+
+    func refreshAndCacheLLMConfig() async {
+        guard let config = try? await apiClient.getLLMConfig() else { return }
+        if let t = config.temperature { Self.cachedTemperature = t }
+        if let m = config.maxTokens { Self.cachedMaxTokens = m }
+        if let th = config.thinking { Self.cachedThinking = th }
+        applyLLMDefaults()
+    }
     @Published var lastMemoryIDs: [String]?
     @Published var lastNoteIDs: [String]?
     @Published var showMemoryPopup = false
     @Published var showNotePopup = false
-    @Published var showMemorySettings = false
+    @Published var showChatSettings = false
     @AppStorage("memoryThreshold") var memoryThreshold: Double = 0.5
     @AppStorage("memoryLimit") var memoryLimit: Int = 8
 
@@ -55,6 +77,7 @@ class ChatViewModel: ObservableObject {
 
     init(apiClient: APIClient) {
         self.apiClient = apiClient
+        applyLLMDefaults()
     }
 
     // MARK: Load
@@ -118,6 +141,7 @@ class ChatViewModel: ObservableObject {
         streamingContent = ""
         currentToolCall = nil
         thoughtMessage = nil
+        thoughtDone = false
         statusMessage = nil
         errorMessage = nil
         planNodes = []
@@ -153,7 +177,7 @@ class ChatViewModel: ObservableObject {
                 self?.finishStreaming()
             }
         }
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit)
     }
 
     func stopStreaming() {
@@ -197,7 +221,7 @@ class ChatViewModel: ObservableObject {
             thoughtMessage! += event.data
 
         case .thoughtDone:
-            break
+            thoughtDone = true
 
         case .message:
             if let delta = parseMessageDelta(event.data) {
@@ -275,6 +299,7 @@ class ChatViewModel: ObservableObject {
 
     private func finishStreaming() {
         isStreaming = false
+        if thoughtMessage != nil { thoughtDone = true }
         #if os(iOS)
         endBackgroundTask()
         #endif

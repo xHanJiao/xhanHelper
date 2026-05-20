@@ -4,6 +4,7 @@ struct ContentView: View {
     @ObservedObject var deviceManager: DeviceManager
     @State private var pendingAgentID: String?
     @State private var selectedTab = "chat"
+    @State private var isInChat = false
 
     private var apiClient: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
@@ -12,46 +13,28 @@ struct ContentView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
-                ConversationListContentView(deviceManager: deviceManager, pendingAgentID: $pendingAgentID)
+                ConversationListContentView(deviceManager: deviceManager, pendingAgentID: $pendingAgentID, isInChat: $isInChat)
             }
             .tabItem {
                 Label("聊天", systemImage: "bubble.left.and.bubble.right")
             }
             .tag("chat")
+            .toolbar(isInChat ? .hidden : .visible, for: .tabBar)
 
             NavigationStack {
-                MemoryListView(viewModel: MemoryViewModel(apiClient: apiClient))
-            }
-            .tabItem {
-                Label("记忆", systemImage: "brain")
-            }
-            .tag("memory")
-
-            NavigationStack {
-                let agentVM = AgentViewModel(apiClient: apiClient)
-                AgentListView(viewModel: agentVM)
-                    .onAppear {
-                        agentVM.onChatWithAgent = { agentID in
-                            pendingAgentID = nil
-                            DispatchQueue.main.async {
-                                pendingAgentID = agentID
-                            }
-                            selectedTab = "chat"
-                        }
-                    }
-            }
-            .tabItem {
-                Label("智能体", systemImage: "person.badge.shield.checkmark")
-            }
-            .tag("agent")
-
-            NavigationStack {
-                SettingsView(deviceManager: deviceManager)
+                SettingsView(deviceManager: deviceManager, onChatWithAgent: { agentID in
+                    pendingAgentID = agentID
+                    selectedTab = "chat"
+                })
             }
             .tabItem {
                 Label("设置", systemImage: "gear")
             }
             .tag("settings")
+        }
+        .task {
+            let vm = ChatViewModel(apiClient: apiClient)
+            await vm.refreshAndCacheLLMConfig()
         }
     }
 }
@@ -59,6 +42,7 @@ struct ContentView: View {
 struct ConversationListContentView: View {
     @ObservedObject var deviceManager: DeviceManager
     @Binding var pendingAgentID: String?
+    @Binding var isInChat: Bool
     @State private var selectedConversationId: String?
     @State private var showNewChat = false
     @State private var chatVM: ChatViewModel?
@@ -71,6 +55,8 @@ struct ConversationListContentView: View {
         ZStack {
             if selectedConversationId != nil, let vm = chatVM {
                 ChatView(viewModel: vm, agentId: nil, baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+                    .onAppear { isInChat = true }
+                    .onDisappear { isInChat = false }
                     .toolbar {
                         ToolbarItem(placement: .navigationBarLeading) {
                             Button("返回") { selectedConversationId = nil }
@@ -89,10 +75,12 @@ struct ConversationListContentView: View {
                         }
                     }
                     .onAppear {
+                        isInChat = true
                         if aid != nil {
                             vm.conversationId = nil
                         }
                     }
+                    .onDisappear { isInChat = false }
             } else {
                 let listVM = ConversationListViewModel(apiClient: apiClient)
                 ConversationListView(

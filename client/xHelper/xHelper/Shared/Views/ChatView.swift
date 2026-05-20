@@ -4,6 +4,7 @@ struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var inputText = ""
     @State private var isInputExpanded = false
+    @FocusState private var isInputFocused: Bool
     let agentId: String?
 
     let baseURL: String
@@ -71,8 +72,10 @@ struct ChatView: View {
             InputBar(
                 text: $inputText,
                 isStreaming: viewModel.isStreaming,
+                isFocused: $isInputFocused,
                 onSend: {
                     guard !inputText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+                    isInputFocused = false
                     viewModel.sendMessage(inputText, baseURL: baseURL, token: token, agentId: agentId)
                     inputText = ""
                     isInputExpanded = false
@@ -85,39 +88,41 @@ struct ChatView: View {
         }
         .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack(spacing: 16) {
-                        Button { viewModel.showMemorySettings = true } label: {
-                            Image(systemName: "slider.horizontal.3")
-                                .foregroundColor(.secondary)
-                        }
-                        Button(action: { viewModel.deepMode.toggle() }) {
-                            Image(systemName: viewModel.deepMode ? "brain.head.profile.fill" : "brain.head.profile")
-                                .foregroundColor(viewModel.deepMode ? .orange : .secondary)
-                        }
+                    Button { viewModel.showChatSettings = true } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .foregroundColor(.secondary)
                     }
                 }
             }
-            .sheet(isPresented: $viewModel.showMemorySettings) {
+            .sheet(isPresented: $viewModel.showChatSettings) {
                 NavigationStack {
                     Form {
-                        Section("记忆检索设置") {
+                        Section("模型") {
+                            Toggle("Deep Mode (Pro)", isOn: $viewModel.deepMode)
+                            Toggle("Thinking", isOn: $viewModel.thinkingMode)
+                        }
+                        Section("参数") {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("相关度阈值: \(String(format: "%.2f", viewModel.memoryThreshold))")
+                                Text("Temperature: \(viewModel.temperature.map { String(format: "%.1f", $0) } ?? "默认")")
                                     .font(.subheadline)
-                                Slider(value: $viewModel.memoryThreshold, in: 0.1...0.95, step: 0.05)
+                                Slider(value: Binding(get: { viewModel.temperature ?? 1.0 }, set: { viewModel.temperature = $0 }), in: 0...2, step: 0.1)
+                                Button("恢复默认") { viewModel.temperature = nil }
+                                    .font(.caption)
                             }
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("最大条数: \(viewModel.memoryLimit)")
+                                Text("Max Tokens: \(viewModel.maxTokens.map { String($0) } ?? "默认")")
                                     .font(.subheadline)
-                                Slider(value: Binding(get: { Double(viewModel.memoryLimit) }, set: { viewModel.memoryLimit = Int($0) }), in: 1...20, step: 1)
+                                Slider(value: Binding(get: { Double(viewModel.maxTokens ?? 4096) }, set: { viewModel.maxTokens = Int($0) }), in: 100...32000, step: 100)
+                                Button("恢复默认") { viewModel.maxTokens = nil }
+                                    .font(.caption)
                             }
                         }
                     }
-                    .navigationTitle("记忆设置")
+                    .navigationTitle("对话参数")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
-                            Button("完成") { viewModel.showMemorySettings = false }
+                            Button("完成") { viewModel.showChatSettings = false }
                         }
                     }
                 }

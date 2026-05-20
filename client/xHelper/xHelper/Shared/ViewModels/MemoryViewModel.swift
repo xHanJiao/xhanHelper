@@ -24,8 +24,9 @@ class MemoryViewModel: ObservableObject {
         currentOffset = 0
         hasMore = true
         do {
-            memories = try await apiClient.listMemories(keyword: searchKeyword)
-            hasMore = memories.count >= 50
+            let resp = try await apiClient.listMemories(keyword: searchKeyword)
+            memories = resp.memories
+            hasMore = resp.total >= 50
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -37,9 +38,9 @@ class MemoryViewModel: ObservableObject {
         isLoading = true
         currentOffset += 50
         do {
-            let more = try await apiClient.listMemories(offset: currentOffset, keyword: searchKeyword)
-            memories.append(contentsOf: more)
-            hasMore = more.count >= 50
+            let resp = try await apiClient.listMemories(offset: currentOffset, keyword: searchKeyword)
+            memories.append(contentsOf: resp.memories)
+            hasMore = resp.total >= 50
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -3,12 +3,12 @@ import SwiftUI
 struct InputBar: View {
     @Binding var text: String
     let isStreaming: Bool
+    @FocusState.Binding var isFocused: Bool
     let onSend: () -> Void
     let onStop: () -> Void
 
     @Binding var isExpanded: Bool
     @State private var showExpandButton = true
-    @FocusState private var isFocused: Bool
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
@@ -16,11 +16,10 @@ struct InputBar: View {
                 .textFieldStyle(.plain)
                 .focused($isFocused)
                 .submitLabel(isExpanded ? .return : .send)
-                .lineLimit(isExpanded ? 20 : 1)
+                .lineLimit(isExpanded ? 1...20 : 1...5)
                 .padding(.leading, 12)
                 .padding(.trailing, 28)
                 .padding(.vertical, 8)
-                .frame(minHeight: isExpanded ? 240 : 0, alignment: .top)
                 .background(Color.gray.opacity(0.1))
                 .cornerRadius(16)
                 .disabled(isStreaming)

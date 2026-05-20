@@ -72,7 +72,8 @@ struct BillListView: View {
 
     private func load() async {
         do {
-            bills = try await apiClient.getBills()
+            let resp = try await apiClient.getBills()
+            bills = resp.bills
         } catch {}
         isLoading = false
     }

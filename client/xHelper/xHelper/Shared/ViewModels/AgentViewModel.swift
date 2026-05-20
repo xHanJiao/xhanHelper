@@ -21,16 +21,17 @@ class AgentViewModel: ObservableObject {
     func load() async {
         isLoading = true
         do {
-            agents = try await apiClient.listAgents()
+            let resp = try await apiClient.listAgents()
+            agents = resp.agents
         } catch {
             errorMessage = error.localizedDescription
         }
         isLoading = false
     }
 
-    func create(name: String, systemPrompt: String) async {
+    func create(name: String, systemPrompt: String, model: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil) async {
         do {
-            let agent = try await apiClient.createAgent(name: name, systemPrompt: systemPrompt)
+            let agent = try await apiClient.createAgent(name: name, systemPrompt: systemPrompt, model: model, thinking: thinking, temperature: temperature, maxTokens: maxTokens)
             agents.insert(agent, at: 0)
             showCreateSheet = false
         } catch {
@@ -38,9 +39,9 @@ class AgentViewModel: ObservableObject {
         }
     }
 
-    func update(agent: Agent, name: String, systemPrompt: String) async {
+    func update(agent: Agent, name: String, systemPrompt: String, model: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil) async {
         do {
-            let updated = try await apiClient.updateAgent(id: agent.id, name: name, systemPrompt: systemPrompt)
+            let updated = try await apiClient.updateAgent(id: agent.id, name: name, systemPrompt: systemPrompt, model: model, thinking: thinking, temperature: temperature, maxTokens: maxTokens)
             if let idx = agents.firstIndex(where: { $0.id == agent.id }) {
                 agents[idx] = updated
             }

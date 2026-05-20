@@ -3,9 +3,12 @@ import Foundation
 struct Message: Identifiable, Codable {
     let id: String
     let conversationId: String
-    let role: String         // user | assistant
+    let role: String         // user | assistant | tool
     let content: String
     let toolCallsJSON: String?
+    let reasoningContent: String? = nil
+    let memoryIds: [String]? = nil
+    let toolCallId: String? = nil
     let createdAt: String
 
     enum CodingKeys: String, CodingKey {
@@ -14,6 +17,9 @@ struct Message: Identifiable, Codable {
         case role
         case content
         case toolCallsJSON = "tool_calls_json"
+        case reasoningContent = "reasoning_content"
+        case memoryIds = "memory_ids"
+        case toolCallId = "tool_call_id"
         case createdAt = "created_at"
     }
 

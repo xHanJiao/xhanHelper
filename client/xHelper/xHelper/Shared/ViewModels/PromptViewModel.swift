@@ -18,9 +18,9 @@ class PromptViewModel: ObservableObject {
     func load() async {
         isLoading = true
         do {
-            let all = try await apiClient.listPrompts()
-            flashPrompts = all.filter { $0.promptType == "flash" }
-            proPrompts = all.filter { $0.promptType == "pro" }
+            let resp = try await apiClient.listPrompts()
+            flashPrompts = resp.prompts.filter { $0.promptType == "flash" }
+            proPrompts = resp.prompts.filter { $0.promptType == "pro" }
         } catch {
             self.error = error.localizedDescription
         }

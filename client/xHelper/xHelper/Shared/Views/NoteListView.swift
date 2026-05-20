@@ -56,7 +56,8 @@ struct NoteListView: View {
 
     private func load() async {
         do {
-            notes = try await apiClient.listNotes()
+            let resp = try await apiClient.listNotes()
+            notes = resp.notes
         } catch {}
         isLoading = false
     }

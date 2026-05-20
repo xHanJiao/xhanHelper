@@ -11,7 +11,7 @@ class APIClient {
 
     // MARK: Conversations
 
-    func listConversations() async throws -> [Conversation] {
+    func listConversations() async throws -> ConversationListResponse {
         return try await get("/api/conversations")
     }
 
@@ -37,9 +37,17 @@ class APIClient {
         try await delete("/api/conversations/\(id)")
     }
 
+    // MARK: LLM Config
+
+    func getLLMConfig(agentId: String? = nil) async throws -> LlmConfig {
+        var path = "/api/llm-config"
+        if let aid = agentId { path += "?agent_id=\(aid)" }
+        return try await get(path)
+    }
+
     // MARK: Bills (P3 使用)
 
-    func getBills() async throws -> [Bill] {
+    func getBills() async throws -> BillListResponse {
         return try await get("/api/bills")
     }
 
@@ -64,7 +72,7 @@ class APIClient {
 
 	// MARK: Notes
 
-	func listNotes(limit: Int = 50, offset: Int = 0) async throws -> [Note] {
+	func listNotes(limit: Int = 50, offset: Int = 0) async throws -> NoteListResponse {
 		return try await get("/api/notes?limit=\(limit)&offset=\(offset)")
 	}
 
@@ -74,7 +82,7 @@ class APIClient {
 
 	// MARK: Memories (P3)
 
-	func listMemories(limit: Int = 50, offset: Int = 0, keyword: String = "", source: String = "") async throws -> [UserMemory] {
+	func listMemories(limit: Int = 50, offset: Int = 0, keyword: String = "", source: String = "") async throws -> MemoryListResponse {
 		var path = "/api/memories?limit=\(limit)&offset=\(offset)"
 		if !keyword.isEmpty { path += "&keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)" }
 		if !source.isEmpty { path += "&source=\(source)" }
@@ -99,18 +107,37 @@ class APIClient {
 
 	// MARK: Agents (P3)
 
-	func listAgents(limit: Int = 50) async throws -> [Agent] {
+	func listAgents(limit: Int = 50) async throws -> AgentListResponse {
 		return try await get("/api/agents?limit=\(limit)")
 	}
 
-	func createAgent(name: String, systemPrompt: String) async throws -> Agent {
-		return try await post("/api/agents", body: ["name": name, "system_prompt": systemPrompt])
+	func createAgent(name: String, systemPrompt: String, model: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil) async throws -> Agent {
+		var cb: [String: Any] = ["name": name, "system_prompt": systemPrompt]
+        if let m = model { cb["model"] = m }
+        var p: [String: Any] = [:]
+        if let t = thinking { p["thinking"] = t }
+        if let temp = temperature { p["temperature"] = temp }
+        if let mt = maxTokens { p["max_tokens"] = mt }
+        if !p.isEmpty, let jsonData = try? JSONSerialization.data(withJSONObject: p),
+           let jsonStr = String(data: jsonData, encoding: .utf8) {
+            cb["params_json"] = jsonStr
+        }
+        return try await post("/api/agents", body: cb)
 	}
 
-	func updateAgent(id: String, name: String? = nil, systemPrompt: String? = nil) async throws -> Agent {
-		var body: [String: String] = [:]
+	func updateAgent(id: String, name: String? = nil, systemPrompt: String? = nil, model: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil) async throws -> Agent {
+		var body: [String: Any] = [:]
 		if let n = name { body["name"] = n }
 		if let s = systemPrompt { body["system_prompt"] = s }
+		if let m = model { body["model"] = m }
+		var p: [String: Any] = [:]
+		if let t = thinking { p["thinking"] = t }
+		if let temp = temperature { p["temperature"] = temp }
+		if let mt = maxTokens { p["max_tokens"] = mt }
+		if !p.isEmpty, let jsonData = try? JSONSerialization.data(withJSONObject: p),
+           let jsonStr = String(data: jsonData, encoding: .utf8) {
+            body["params_json"] = jsonStr
+        }
 		return try await patch("/api/agents/\(id)", body: body)
 	}
 
@@ -120,7 +147,7 @@ class APIClient {
 
 	// MARK: Prompts
 
-	func listPrompts(type: String = "", status: String = "") async throws -> [UserPrompt] {
+	func listPrompts(type: String = "", status: String = "") async throws -> PromptListResponse {
 		var parts: [String] = []
 		if !type.isEmpty { parts.append("type=\(type)") }
 		if !status.isEmpty { parts.append("status=\(status)") }
@@ -148,12 +175,12 @@ class APIClient {
         return try await doRequest(req)
     }
 
-    private func patch(_ path: String, body: [String: String]) async throws {
+    private func patch(_ path: String, body: [String: Any]) async throws {
         var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
         req.httpMethod = "PATCH"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(body)
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
         _ = try await doRequest(req) as [String: String]
     }
 
@@ -166,12 +193,12 @@ class APIClient {
         return try await doRequest(req)
     }
 
-    private func patch<T: Decodable>(_ path: String, body: [String: String]) async throws -> T {
+    private func patch<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {
         var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
         req.httpMethod = "PATCH"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(body)
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
         return try await doRequest(req)
     }
 
@@ -196,12 +223,67 @@ class APIClient {
                 userInfo: [NSLocalizedDescriptionKey: msg])
         }
         let wrapper = try JSONDecoder().decode(APIResponse<T>.self, from: data)
-        return wrapper.data
+        if wrapper.status == "error" || wrapper.errorCode != 0 {
+            let msg = wrapper.errMsg.isEmpty ? "unknown error (code: \(wrapper.errorCode))" : wrapper.errMsg
+            throw NSError(domain: "APIClient", code: wrapper.errorCode,
+                userInfo: [NSLocalizedDescriptionKey: msg])
+        }
+        guard let value = wrapper.data else {
+            throw NSError(domain: "APIClient", code: 500,
+                userInfo: [NSLocalizedDescriptionKey: "empty response data"])
+        }
+        return value
     }
 }
 
 private struct APIResponse<T: Decodable>: Decodable {
-    let data: T
+    let status: String
+    let errorCode: Int
+    let errMsg: String
+    let data: T?
+}
+
+// MARK: List Response models
+
+struct ConversationListResponse: Codable {
+    let conversations: [Conversation]
+    let total: Int
+}
+
+struct BillListResponse: Codable {
+    let bills: [Bill]
+    let total: Int
+}
+
+struct NoteListResponse: Codable {
+    let notes: [Note]
+    let total: Int
+}
+
+struct MemoryListResponse: Codable {
+    let memories: [UserMemory]
+    let total: Int
+}
+
+struct AgentListResponse: Codable {
+    let agents: [Agent]
+    let total: Int
+}
+
+struct PromptListResponse: Codable {
+    let prompts: [UserPrompt]
+    let total: Int
+}
+
+struct LlmConfig: Codable {
+    let temperature: Double?
+    let maxTokens: Int?
+    let thinking: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case temperature, thinking
+        case maxTokens = "max_tokens"
+    }
 }
 
 // MARK: Bill model (P3)
@@ -212,8 +294,19 @@ struct Bill: Identifiable, Codable {
     let amount: Double
     let category1: String
     let category2: String
+    let consumeType: String?
+    let payType: String?
+    let owner: String?
+    let remark: String?
     let date: String
     let status: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id, item, amount, category1, category2
+        case consumeType = "consume_type"
+        case payType = "pay_type"
+        case owner, remark, date, status
+    }
 }
 
 struct ImportResult: Codable {
@@ -228,17 +321,20 @@ struct ImportResult: Codable {
 struct UserMemory: Identifiable, Codable {
     let id: String
     let userId: String
-    let memoryKey: String
     let memoryValue: String
+    let topic: String?
+    let tags: String?
+    let facts: String?
     let source: String
+    let confirmCount: Int?
     let createdAt: String
 
     enum CodingKeys: String, CodingKey {
         case id
         case userId = "user_id"
-        case memoryKey = "memory_key"
         case memoryValue = "memory_value"
-        case source
+        case topic, tags, facts, source
+        case confirmCount = "confirm_count"
         case createdAt = "created_at"
     }
 }
@@ -270,7 +366,9 @@ struct Agent: Identifiable, Codable {
     let userId: String
     let name: String
     let systemPrompt: String
+    let summary: String?
     let model: String
+    let paramsJson: String?
     let createdAt: String
 
     enum CodingKeys: String, CodingKey {
@@ -278,7 +376,8 @@ struct Agent: Identifiable, Codable {
         case userId = "user_id"
         case name
         case systemPrompt = "system_prompt"
-        case model
+        case summary, model
+        case paramsJson = "params_json"
         case createdAt = "created_at"
     }
 }

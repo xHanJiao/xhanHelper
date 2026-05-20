@@ -81,7 +81,13 @@ class DeviceManager: ObservableObject {
 
     private func saveAuthResponse(_ data: Data, username: String) throws {
         let wrapper = try JSONDecoder().decode(APIResponse<AuthResponse>.self, from: data)
-        let result = wrapper.data
+        if wrapper.status == "error" || wrapper.errorCode != 0 {
+            let msg = wrapper.errMsg.isEmpty ? "unknown error" : wrapper.errMsg
+            throw NSError(domain: "Auth", code: wrapper.errorCode, userInfo: [NSLocalizedDescriptionKey: msg])
+        }
+        guard let result = wrapper.data else {
+            throw NSError(domain: "Auth", code: 500, userInfo: [NSLocalizedDescriptionKey: "empty response"])
+        }
         self.token = result.token
         self.userId = result.userId
         self.username = username
@@ -111,5 +117,8 @@ struct AuthResponse: Codable {
 }
 
 private struct APIResponse<T: Decodable>: Decodable {
-    let data: T
+    let status: String
+    let errorCode: Int
+    let errMsg: String
+    let data: T?
 }

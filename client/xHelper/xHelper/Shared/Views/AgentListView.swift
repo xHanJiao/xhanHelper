@@ -16,10 +16,18 @@ struct AgentListView: View {
     // → 编辑取消时需要丢弃修改，@State 作为中间缓冲，保存时才提交
     @State private var editName = ""
     @State private var editPrompt = ""
+    @State private var editModel = "deepseek-chat"
+    @State private var editThinking = true
+    @State private var editTemperature = ChatViewModel.cachedTemperature
+    @State private var editMaxTokens = ChatViewModel.cachedMaxTokens
 
     // createName/createPrompt: 创建表单的输入缓冲
     @State private var createName = ""
     @State private var createPrompt = ""
+    @State private var createModel = "deepseek-chat"
+    @State private var createThinking = true
+    @State private var createTemperature = ChatViewModel.cachedTemperature
+    @State private var createMaxTokens = ChatViewModel.cachedMaxTokens
 
     // body: 声明式 UI，每次 @Published 变化时会重新计算
     var body: some View {
@@ -79,6 +87,10 @@ struct AgentListView: View {
                             viewModel.editingAgent = agent
                             editName = agent.name
                             editPrompt = agent.systemPrompt
+                            editModel = agent.model.isEmpty ? "deepseek-chat" : agent.model
+                            editThinking = true
+                            editTemperature = ChatViewModel.cachedTemperature
+                            editMaxTokens = ChatViewModel.cachedMaxTokens
                         } label: {
                             Label("编辑", systemImage: "pencil")
                         }
@@ -106,11 +118,23 @@ struct AgentListView: View {
         // onChange: 监听 showCreateSheet 变化
         // { _, new in ... } → 第一个参数是旧值（用 _ 忽略），new 是新值
         // 当创建表单关闭时 (!new) → 清空输入缓冲
-        .onChange(of: viewModel.showCreateSheet) { _, new in if !new { createName = ""; createPrompt = "" } }
+        .onChange(of: viewModel.showCreateSheet) { _, new in
+            if !new {
+                createName = ""; createPrompt = ""; createModel = "deepseek-chat"
+                createThinking = true
+                createTemperature = ChatViewModel.cachedTemperature
+                createMaxTokens = ChatViewModel.cachedMaxTokens
+            }
+        }
         // onChange: 监听 editingAgent 的 id 变化
         // 当编辑表单关闭时 (editingAgent==nil) → 清空编辑缓冲
         .onChange(of: viewModel.editingAgent?.id) { _, _ in
-            if viewModel.editingAgent == nil { editName = ""; editPrompt = "" }
+            if viewModel.editingAgent == nil {
+                editName = ""; editPrompt = ""; editModel = "deepseek-chat"
+                editThinking = true
+                editTemperature = ChatViewModel.cachedTemperature
+                editMaxTokens = ChatViewModel.cachedMaxTokens
+            }
         }
         // sheet(item:): 根据可选值自动弹出/关闭 sheet
         // $selectedAgent 非 nil 时弹出，dismiss 时系统自动置 nil
@@ -143,6 +167,10 @@ struct AgentListView: View {
                             viewModel.editingAgent = agent
                             editName = agent.name
                             editPrompt = agent.systemPrompt
+                            editModel = agent.model.isEmpty ? "deepseek-chat" : agent.model
+                            editThinking = true
+                            editTemperature = ChatViewModel.cachedTemperature
+                            editMaxTokens = ChatViewModel.cachedMaxTokens
                         }
                     }
                 }
@@ -151,17 +179,17 @@ struct AgentListView: View {
         // sheet(isPresented:): 基于 Bool 值的 sheet 控制
         .sheet(isPresented: $viewModel.showCreateSheet) {
             // 复用 agentForm，传入创建专用的 Binding 和回调
-            agentForm(title: "创建智能体", name: $createName, prompt: $createPrompt,
+            agentForm(title: "创建智能体", name: $createName, prompt: $createPrompt, model: $createModel, thinking: $createThinking, temperature: $createTemperature, maxTokens: $createMaxTokens,
                 onDismiss: { viewModel.showCreateSheet = false },
-                onSubmit: { await viewModel.create(name: createName, systemPrompt: createPrompt) }
+                onSubmit: { await viewModel.create(name: createName, systemPrompt: createPrompt, model: createModel == "deepseek-chat" ? nil : createModel, thinking: createThinking, temperature: createTemperature, maxTokens: createMaxTokens) }
             )
         }
         // sheet(item:): 编辑表单 — editingAgent 非 nil 时弹出
         .sheet(item: $viewModel.editingAgent) { agent in
             // 复用同一个 agentForm，传入编辑专用的 Binding 和回调
-            agentForm(title: "编辑智能体", name: $editName, prompt: $editPrompt,
+            agentForm(title: "编辑智能体", name: $editName, prompt: $editPrompt, model: $editModel, thinking: $editThinking, temperature: $editTemperature, maxTokens: $editMaxTokens,
                 onDismiss: { viewModel.editingAgent = nil },
-                onSubmit: { await viewModel.update(agent: agent, name: editName, systemPrompt: editPrompt) }
+                onSubmit: { await viewModel.update(agent: agent, name: editName, systemPrompt: editPrompt, model: editModel == "deepseek-chat" ? nil : editModel, thinking: editThinking, temperature: editTemperature, maxTokens: editMaxTokens) }
             )
         }
     }
@@ -174,29 +202,40 @@ struct AgentListView: View {
 //   - name/prompt: Binding → 父视图的状态引用，双向绑定
 //   - onDismiss: 取消回调（关闭 sheet）
 //   - onSubmit: 保存回调（async 异步）
-private func agentForm(title: String, name: Binding<String>, prompt: Binding<String>, onDismiss: @escaping () -> Void, onSubmit: @escaping () async -> Void) -> some View {
+private func agentForm(title: String, name: Binding<String>, prompt: Binding<String>, model: Binding<String>, thinking: Binding<Bool>, temperature: Binding<Double>, maxTokens: Binding<Int>, onDismiss: @escaping () -> Void, onSubmit: @escaping () async -> Void) -> some View {
     NavigationStack {
         // Form: 系统样式的分组表单（iOS 上为 grouped UITableView）
         Form {
             // Section: 表单分组，带 header/footer 文字
             Section("名称") {
-                // TextField: 单行文本输入
-                // text: 绑定到 name（Binding<String>），输入实时同步
                 TextField("智能体名称", text: name)
             }
+            Section("模型") {
+                Picker("模型", selection: model) {
+                    Text("DeepSeek Chat").tag("deepseek-chat")
+                    Text("DeepSeek Reasoner").tag("deepseek-reasoner")
+                    Text("豆包").tag("doubao")
+                }
+                Toggle("Thinking", isOn: thinking)
+            }
+            Section("参数") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Temperature: \(String(format: "%.1f", temperature.wrappedValue))")
+                        .font(.subheadline)
+                    Slider(value: temperature, in: 0...2, step: 0.1)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Max Tokens: \(maxTokens.wrappedValue)")
+                        .font(.subheadline)
+                    Slider(value: Binding(get: { Double(maxTokens.wrappedValue) }, set: { maxTokens.wrappedValue = Int($0) }), in: 100...32000, step: 100)
+                }
+            }
             Section("智能体设定") {
-                // TextEditor: 多行文本编辑器（类似 UITextView）
                 TextEditor(text: prompt)
-                    .frame(minHeight: 250) // 最小高度，内容少时也有足够编辑区
-                    // scrollContentBackground(.hidden): iOS 16+ 修复
-                    // TextEditor 默认有自己的滚动层，会吃掉滚动手势
-                    // 导致 Form 无法滚动到底部。hidden 之后由 Form 统一处理滚动
+                    .frame(minHeight: 180)
                     .scrollContentBackground(.hidden)
-                // 字符计数器
-                // prompt.wrappedValue: 通过 Binding 读取实际 String 值
                 Text("\(prompt.wrappedValue.count)/3000")
-                    .font(.caption) // 最小字号（脚注）
-                    // 三元表达式：超过 3000 字变红，否则灰色
+                    .font(.caption)
                     .foregroundColor(prompt.wrappedValue.count > 3000 ? .red : .secondary)
             }
         }

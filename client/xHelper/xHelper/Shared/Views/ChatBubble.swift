@@ -1,6 +1,65 @@
 import SwiftUI
 import MarkdownUI
 
+struct ThinkingBubble: View {
+    let text: String
+    let isStreaming: Bool
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.forward")
+                        .font(.caption2)
+                    if isStreaming {
+                        PulsingText("思考中...")
+                    } else {
+                        Text("思考内容")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                Text(text)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 16)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color.gray.opacity(0.08))
+        .cornerRadius(12)
+    }
+}
+
+private struct PulsingText: View {
+    let text: String
+    @State private var opacity: Double = 1.0
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .opacity(opacity)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                    opacity = 0.3
+                }
+            }
+    }
+}
+
 struct ChatBubble: View {
     let text: String
     let isUser: Bool

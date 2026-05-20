@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -15,20 +16,15 @@ type ThemeEmbedder struct {
 	conceptRepo   *service.ConceptEmbeddingRepo
 	embeddingRepo *service.EmbeddingRepo
 	embedder      *llm.Embedder
-	vectorStore   VectorStorer
+	vectorStore   app.VectorStore
 }
 
-func NewThemeEmbedder(
-	conceptRepo *service.ConceptEmbeddingRepo,
-	embeddingRepo *service.EmbeddingRepo,
-	embedder *llm.Embedder,
-	vs VectorStorer,
-) *ThemeEmbedder {
+func NewThemeEmbedder(infra *app.Infra, conceptRepo *service.ConceptEmbeddingRepo, embeddingRepo *service.EmbeddingRepo) *ThemeEmbedder {
 	return &ThemeEmbedder{
 		conceptRepo:   conceptRepo,
 		embeddingRepo: embeddingRepo,
-		embedder:      embedder,
-		vectorStore:   vs,
+		embedder:      infra.Embedder,
+		vectorStore:   infra.VectorStore,
 	}
 }
 

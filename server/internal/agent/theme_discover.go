@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/tool"
@@ -83,7 +84,7 @@ type ThemeDiscoverer struct {
 	retrievalTools map[string]tool.Tool
 	themeStore     *ThemeStore
 	embedder       *llm.Embedder
-	vectorStore    VectorStorer
+	vectorStore    app.VectorStore
 	themeEmbedder  *ThemeEmbedder
 	dedupThreshold float64
 	maxIterations  int
@@ -93,13 +94,13 @@ type ThemeDiscoverer struct {
 	spanDaysThreshold      int
 }
 
-func NewThemeDiscoverer(flashClient llm.LLMClient, retrievalTools map[string]tool.Tool, themeStore *ThemeStore, embedder *llm.Embedder, vectorStore VectorStorer, themeEmbedder *ThemeEmbedder, maxIterations int, dedupThreshold float64) *ThemeDiscoverer {
+func NewThemeDiscoverer(llmClients *app.LLMClients, infra *app.Infra, retrievalTools map[string]tool.Tool, themeStore *ThemeStore, themeEmbedder *ThemeEmbedder, maxIterations int, dedupThreshold float64) *ThemeDiscoverer {
 	td := &ThemeDiscoverer{
-		flashClient:            flashClient,
+		flashClient:            llmClients.Flash,
 		retrievalTools:         retrievalTools,
 		themeStore:             themeStore,
-		embedder:               embedder,
-		vectorStore:            vectorStore,
+		embedder:               infra.Embedder,
+		vectorStore:            infra.VectorStore,
 		themeEmbedder:          themeEmbedder,
 		dedupThreshold:         dedupThreshold,
 		maxIterations:          maxIterations,
@@ -120,17 +121,6 @@ func (td *ThemeDiscoverer) SetUpgradeThresholds(nominateCount, spanDays int) {
 	if spanDays > 0 {
 		td.spanDaysThreshold = spanDays
 	}
-}
-
-type VectorStorer interface {
-	Upsert(id string, vec []float64, metadata map[string]string)
-	VecSearch(query []float64, topK int, filter func(id string, vec []float64, metadata map[string]string) bool) []VectorSearchHit
-}
-
-type VectorSearchHit struct {
-	ID       string
-	Score    float64
-	Metadata map[string]string
 }
 
 type discoverFunc func(ctx context.Context, userID, themeList string, a discovererArgs) ([]map[string]interface{}, []map[string]interface{}, error)
@@ -388,8 +378,8 @@ func (td *ThemeDiscoverer) dedupBySimilarity(ctx context.Context, userID string,
 			continue
 		}
 
-		// 2. VecSearch 搜语义相似的已有主题向量（topK=20，覆盖同用户所有主题）
-		hits := td.vectorStore.VecSearch(vec, 20, func(id string, _ []float64, metadata map[string]string) bool {
+		// 2. Search 搜语义相似的已有主题向量（topK=20，覆盖同用户所有主题）
+		hits := td.vectorStore.Search(vec, 20, func(id string, _ []float64, metadata map[string]string) bool {
 			return metadata["type"] == "theme" && metadata["user_id"] == userID
 		})
 

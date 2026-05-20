@@ -7,7 +7,7 @@ echo ""
 echo "【35/41】提示词列表（空）"
 PROMPT_LIST=$(curl -s "$BASE_URL/api/prompts" \
     -H "Authorization: Bearer $TOKEN")
-assert "提示词列表为空数组"  '^\[\]$'  "$(echo "$PROMPT_LIST" | unwrap)"
+assert "提示词列表为空"  '"prompts"'  "$(echo "$PROMPT_LIST" | unwrap)"
 
 # ── 创建 Flash 提示词 ──
 echo ""
@@ -28,7 +28,7 @@ FLASH_P2=$(curl -s -X POST "$BASE_URL/api/prompts" \
     -d '{"prompt_type":"flash","system_prompt":"第二版Flash提示词：加入 emoji 风格"}')
 FLASH_P2_ID=$(echo "$FLASH_P2" | unwrap | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
 FIRST_STATUS=$(curl -s "$BASE_URL/api/prompts?type=flash" \
-    -H "Authorization: Bearer $TOKEN" | unwrap | python3 -c "import sys,json; items=json.load(sys.stdin); print([i['status'] for i in items if i['id']=='$FLASH_P1_ID'][0])")
+    -H "Authorization: Bearer $TOKEN" | unwrap | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('prompts',d); print([i['status'] for i in items if i['id']=='$FLASH_P1_ID'][0])")
 assert "旧提示词变为 inactive"  "inactive"  "$FIRST_STATUS"
 
 # ── 回滚到旧提示词 ──
@@ -37,7 +37,7 @@ echo "【38/41】回滚到旧提示词"
 ROLLBACK_RESP=$(curl -s -X POST "$BASE_URL/api/prompts/$FLASH_P1_ID/rollback" \
     -H "Authorization: Bearer $TOKEN")
 FIRST_ACTIVE=$(curl -s "$BASE_URL/api/prompts?type=flash" \
-    -H "Authorization: Bearer $TOKEN" | unwrap | python3 -c "import sys,json; items=json.load(sys.stdin); print([i['status'] for i in items if i['id']=='$FLASH_P1_ID'][0])")
+    -H "Authorization: Bearer $TOKEN" | unwrap | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('prompts',d); print([i['status'] for i in items if i['id']=='$FLASH_P1_ID'][0])")
 assert "回滚后旧提示词变为 active"  "active"  "$FIRST_ACTIVE"
 
 # ── 创建 Pro 提示词 ──

@@ -8,22 +8,18 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
 
-// ThemeVectorWriter — 主题向量写入接口（ThemeEmbedder 实现）
-type ThemeVectorWriter interface {
-	EnsureEmbedded(ctx context.Context, userID, themeID, name, description string)
-}
-
 // ThemeTool — 主题管理工具
 type ThemeTool struct {
 	themeRepo   *service.ThemeStateRepo
-	embedWriter ThemeVectorWriter
+	embedWriter app.ThemeVectorWriter
 }
 
-func NewThemeTool(repo *service.ThemeStateRepo, embedWriter ThemeVectorWriter) *ThemeTool {
+func NewThemeTool(repo *service.ThemeStateRepo, embedWriter app.ThemeVectorWriter) *ThemeTool {
 	return &ThemeTool{themeRepo: repo, embedWriter: embedWriter}
 }
 

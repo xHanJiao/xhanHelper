@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 )
@@ -99,26 +100,14 @@ func toolToInfo(t model.ToolRegistry, score float64) ToolInfo {
 // VectorRetrievalStrategy 向量检索策略
 type VectorRetrievalStrategy struct {
 	embedder    *llm.Embedder
-	vectorStore VectorStore
+	vectorStore app.VectorStore
 	toolRepo    ToolRepo
-}
-
-// VectorStore 向量存储接口（适配层）
-type VectorStore interface {
-	Search(vec []float64, topK int, filter func(meta map[string]string) bool) []VectorMatch
-}
-
-// VectorMatch 向量匹配结果
-type VectorMatch struct {
-	ID       string
-	Score    float64
-	Metadata map[string]string
 }
 
 // NewVectorRetrievalStrategy 创建向量检索策略
 func NewVectorRetrievalStrategy(
 	embedder *llm.Embedder,
-	vectorStore VectorStore,
+	vectorStore app.VectorStore,
 	toolRepo ToolRepo,
 ) *VectorRetrievalStrategy {
 	return &VectorRetrievalStrategy{
@@ -146,7 +135,7 @@ func (s *VectorRetrievalStrategy) Search(ctx context.Context, query string, limi
 	}
 
 	// 2. 向量检索
-	matches := s.vectorStore.Search(vec, limit, func(meta map[string]string) bool {
+	matches := s.vectorStore.Search(vec, limit, func(_ string, _ []float64, meta map[string]string) bool {
 		return meta["type"] == "tool"
 	})
 

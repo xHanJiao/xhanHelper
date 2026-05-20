@@ -73,7 +73,7 @@ check-env:
 		exit 1; \
 	fi; \
 	if [ -z "$$APP_ENV" ]; then \
-		echo "💡 APP_ENV 未设置，默认使用 dev (SQLite)"; \
+		echo "💡 APP_ENV 未设置，默认使用 dev (MySQL)"; \
 	fi; \
 	echo "✅ 环境变量检查通过"
 
@@ -87,8 +87,8 @@ test: check-env
 		mv data/xhan_helper.db data/xhan_helper.db.backup; \
 		echo "   ✓ 已备份: data/xhan_helper.db.backup"; \
 	fi
-	@echo "=== 启动测试服务器 ==="
-	@/tmp/xhan-test-server &
+	@echo "=== 启动测试服务器 (APP_ENV=test, SQLite) ==="
+	@APP_ENV=test /tmp/xhan-test-server &
 	@sleep 2
 	@echo "=== 运行 API 测试 ==="
 	@bash scripts/api-test.sh; EXIT=$$?

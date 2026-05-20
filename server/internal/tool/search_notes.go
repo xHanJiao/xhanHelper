@@ -6,31 +6,19 @@ import (
 	"log"
 	"strings"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/service"
 )
 
-// VectorSearcher — 向量检索接口（避免循环依赖 agent 包）
-type VectorSearcher interface {
-	Search(query []float64, topK int, filter func(id string, vec []float64, metadata map[string]string) bool) []VectorHit
-	GetVector(id string) ([]float64, bool)
-	Size() int
-}
-
-// VectorHit — 向量检索命中
-type VectorHit struct {
-	ID    string
-	Score float64
-}
-
 // SearchNotesTool — 向量检索笔记
 type SearchNotesTool struct {
-	vectorStore VectorSearcher
+	vectorStore app.VectorStore
 	noteRepo    *service.NoteRepo
 	embedder    *llm.Embedder
 }
 
-func NewSearchNotesTool(vs VectorSearcher, noteRepo *service.NoteRepo, embedder *llm.Embedder) *SearchNotesTool {
+func NewSearchNotesTool(vs app.VectorStore, noteRepo *service.NoteRepo, embedder *llm.Embedder) *SearchNotesTool {
 	return &SearchNotesTool{vectorStore: vs, noteRepo: noteRepo, embedder: embedder}
 }
 

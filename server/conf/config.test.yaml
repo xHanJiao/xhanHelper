@@ -1,0 +1,36 @@
+server:
+  mode: debug
+  registration_enabled: true
+  max_tokens_per_user: 4
+  admin_users:
+    - 11111111-1111-4111-8111-111111111111
+    - 22222222-2222-4222-8222-222222222222
+    - 33333333-3333-4333-8333-333333333333
+
+db:
+  driver: sqlite
+  database: data/xhan_helper.db
+
+llm:
+  provider: deepseek
+  model: deepseek-v4-flash
+  strong_model: deepseek-v4-pro
+  api_key: ${LLM_API_KEY}
+  base_url: https://api.deepseek.com
+  max_iterations: 8
+  default_temperature: 1.0
+  default_max_tokens: 30000
+
+embedding:
+  enable_history_search: false
+  api_key: ${EMBEDDING_API_KEY}
+  base_url: https://ark.cn-beijing.volces.com
+  model: doubao-embedding-vision-251215
+
+reflection:
+  launch_max_iterations: 8
+  analyst_max_iterations: 6
+  discover_max_iterations: 6
+  cluster_threshold: 0.70
+  post_chat_delay_seconds: 30
+  daily_schedules: ["22:30", "22:43"]

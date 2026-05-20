@@ -6,19 +6,20 @@ import (
 	"log"
 	"strings"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/service"
 )
 
 // SearchNotesV2Tool — chunk 级向量检索笔记
 type SearchNotesV2Tool struct {
-	vectorStore VectorSearcher
+	vectorStore app.VectorStore
 	noteRepo    *service.NoteRepo
 	chunkRepo   *service.EmbeddingChunkRepo
 	embedder    *llm.Embedder
 }
 
-func NewSearchNotesV2Tool(vs VectorSearcher, noteRepo *service.NoteRepo, chunkRepo *service.EmbeddingChunkRepo, embedder *llm.Embedder) *SearchNotesV2Tool {
+func NewSearchNotesV2Tool(vs app.VectorStore, noteRepo *service.NoteRepo, chunkRepo *service.EmbeddingChunkRepo, embedder *llm.Embedder) *SearchNotesV2Tool {
 	return &SearchNotesV2Tool{vectorStore: vs, noteRepo: noteRepo, chunkRepo: chunkRepo, embedder: embedder}
 }
 

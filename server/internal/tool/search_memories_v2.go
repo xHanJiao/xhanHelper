@@ -6,19 +6,20 @@ import (
 	"log"
 	"strings"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/service"
 )
 
 // SearchMemoriesV2Tool — chunk 级向量检索记忆
 type SearchMemoriesV2Tool struct {
-	vectorStore VectorSearcher
+	vectorStore app.VectorStore
 	memRepo     *service.UserMemoryRepo
 	chunkRepo   *service.EmbeddingChunkRepo
 	embedder    *llm.Embedder
 }
 
-func NewSearchMemoriesV2Tool(vs VectorSearcher, memRepo *service.UserMemoryRepo, chunkRepo *service.EmbeddingChunkRepo, embedder *llm.Embedder) *SearchMemoriesV2Tool {
+func NewSearchMemoriesV2Tool(vs app.VectorStore, memRepo *service.UserMemoryRepo, chunkRepo *service.EmbeddingChunkRepo, embedder *llm.Embedder) *SearchMemoriesV2Tool {
 	return &SearchMemoriesV2Tool{vectorStore: vs, memRepo: memRepo, chunkRepo: chunkRepo, embedder: embedder}
 }
 

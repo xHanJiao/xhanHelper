@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/controller"
 	"xhan-helper/internal/idgen"
@@ -124,6 +125,11 @@ func main() {
 	// Vector Store
 	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
 	vectorStore := agent.NewVectorStore()
+	vsAdapter := agent.NewVectorSearchAdapter(vectorStore)
+
+	// Infrastructure + AI Clients
+	infra := &app.Infra{DB: db, Embedder: embedder, VectorStore: vsAdapter}
+	llmClients := &app.LLMClients{Flash: llmClient, Strong: strongClient}
 
 	// Seed 内置工具到 tool_registries 表（幂等）
 	if err := tool.SeedBuiltinTools(context.Background(), toolRepo, embedder, embeddingRepo); err != nil {
@@ -170,17 +176,16 @@ func main() {
 	}
 
 	// ===== Phase 6: 检索工具（独立 Registry，不注册到主 reg） =====
-	vsAdapter := agent.NewVectorSearchAdapter(vectorStore)
 
-	conceptEmbedService := agent.NewConceptEmbedService(conceptEmbedRepo, embeddingRepo, embedder, vsAdapter)
+	conceptEmbedService := agent.NewConceptEmbedService(infra, conceptEmbedRepo, embeddingRepo)
 
 	// Chunk Builder (替换旧的整篇 embedding)
-	chunkBuilder := agent.NewChunkBuilder(embedder, chunkRepo, embeddingRepo, vsAdapter)
+	chunkBuilder := agent.NewChunkBuilder(infra, chunkRepo, embeddingRepo)
 
 	// NoteTool with chunk embedding
-	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(noteRepo, vectorStore, embedder, embeddingRepo, chunkBuilder, conceptEmbedService), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(noteRepo, infra.VectorStore, embedder, embeddingRepo, chunkBuilder, conceptEmbedService), log.Default()))
 
-	topicStatsTool := tool.NewLoggingWrapper(tool.NewGetTopicStatsTool(conceptEmbedRepo, noteRepo, memRepo, embedder, vsAdapter, conceptEmbedService, cfg.Reflection.ClusterThreshold), log.Default())
+	topicStatsTool := tool.NewLoggingWrapper(tool.NewGetTopicStatsTool(conceptEmbedRepo, noteRepo, memRepo, embedder, infra.VectorStore, conceptEmbedService, cfg.Reflection.ClusterThreshold), log.Default())
 	topicDetailTool := tool.NewLoggingWrapper(tool.NewGetTopicDetailTool(noteRepo, memRepo), log.Default())
 	billStatsTool := tool.NewLoggingWrapper(tool.NewGetBillStatsTool(billRepo), log.Default())
 
@@ -194,8 +199,8 @@ func main() {
 	themeStore := agent.NewThemeStore(themeStateRepo)
 	themeAnalyst := agent.NewThemeAnalyst(llmClient, retrievalTools, themeStore, cfg.Reflection.AnalystMaxIterations)
 	scorerTool := agent.NewScorer(llmClient)
-	themeEmbedder := agent.NewThemeEmbedder(conceptEmbedRepo, embeddingRepo, embedder, vsAdapter)
-	themeDiscoverer := agent.NewThemeDiscoverer(llmClient, retrievalTools, themeStore, embedder, vsAdapter, themeEmbedder, cfg.Reflection.DiscoverMaxIterations, cfg.Reflection.ClusterThreshold)
+	themeEmbedder := agent.NewThemeEmbedder(infra, conceptEmbedRepo, embeddingRepo)
+	themeDiscoverer := agent.NewThemeDiscoverer(llmClients, infra, retrievalTools, themeStore, themeEmbedder, cfg.Reflection.DiscoverMaxIterations, cfg.Reflection.ClusterThreshold)
 	mailboxTool := tool.NewMailboxTool(mailboxRepo)
 	themeMgmtTool := tool.NewThemeTool(themeStateRepo, themeEmbedder)
 
@@ -208,7 +213,7 @@ func main() {
 	reflectionReg.Register(tool.NewLoggingWrapper(themeMgmtTool, log.Default()))
 
 	// Memory Extractor（合并到对话后处理流程）
-	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, vectorStore, embedder, msgRepo, convRepo, embeddingRepo, cfg.Server.MemoryDupeThreshold, chunkBuilder, conceptEmbedService)
+	memExtractor := agent.NewMemoryExtractor(llmClient, memRepo, infra.VectorStore, embedder, msgRepo, convRepo, embeddingRepo, cfg.Server.MemoryDupeThreshold, chunkBuilder, conceptEmbedService)
 
 	commitmentTimer := agent.NewCommitmentTimer(commitmentRepo, mailboxRepo)
 

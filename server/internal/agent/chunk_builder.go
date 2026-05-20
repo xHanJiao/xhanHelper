@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -19,15 +20,15 @@ type ChunkBuilder struct {
 	embedder      *llm.Embedder
 	chunkRepo     *service.EmbeddingChunkRepo
 	embeddingRepo *service.EmbeddingRepo
-	vectorStore   VectorStorer
+	vectorStore   app.VectorStore
 }
 
-func NewChunkBuilder(embedder *llm.Embedder, chunkRepo *service.EmbeddingChunkRepo, embeddingRepo *service.EmbeddingRepo, vs VectorStorer) *ChunkBuilder {
+func NewChunkBuilder(infra *app.Infra, chunkRepo *service.EmbeddingChunkRepo, embeddingRepo *service.EmbeddingRepo) *ChunkBuilder {
 	return &ChunkBuilder{
-		embedder:      embedder,
+		embedder:      infra.Embedder,
 		chunkRepo:     chunkRepo,
 		embeddingRepo: embeddingRepo,
-		vectorStore:   vs,
+		vectorStore:   infra.VectorStore,
 	}
 }
 

@@ -7,12 +7,13 @@ import (
 	"log"
 	"strings"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 )
 
 // searchChunks 向量搜 chunk，去重返回 parentID 列表
-func searchChunks(ctx context.Context, vs VectorSearcher, embedder *llm.Embedder, userID, query, parentType string, topK int) []string {
+func searchChunks(ctx context.Context, vs app.VectorStore, embedder *llm.Embedder, userID, query, parentType string, topK int) []string {
 	vec, err := embedder.Embed(ctx, query)
 	if err != nil {
 		log.Printf("[search_chunk] embed error: %v", err)
@@ -29,7 +30,7 @@ func searchChunks(ctx context.Context, vs VectorSearcher, embedder *llm.Embedder
 }
 
 // dedupParents 从向量命中中提取 parentID 并去重，返回 topK 个
-func dedupParents(hits []VectorHit, topK int) []string {
+func dedupParents(hits []app.VectorMatch, topK int) []string {
 	seen := make(map[string]bool)
 	ordered := make([]string, 0)
 	for _, h := range hits {

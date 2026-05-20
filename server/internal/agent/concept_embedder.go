@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -16,15 +17,15 @@ type ConceptEmbedService struct {
 	conceptRepo   *service.ConceptEmbeddingRepo
 	embeddingRepo *service.EmbeddingRepo
 	embedder      *llm.Embedder
-	vectorStore   VectorStorer
+	vectorStore   app.VectorStore
 }
 
-func NewConceptEmbedService(conceptRepo *service.ConceptEmbeddingRepo, embeddingRepo *service.EmbeddingRepo, embedder *llm.Embedder, vs VectorStorer) *ConceptEmbedService {
+func NewConceptEmbedService(infra *app.Infra, conceptRepo *service.ConceptEmbeddingRepo, embeddingRepo *service.EmbeddingRepo) *ConceptEmbedService {
 	return &ConceptEmbedService{
 		conceptRepo:   conceptRepo,
 		embeddingRepo: embeddingRepo,
-		embedder:      embedder,
-		vectorStore:   vs,
+		embedder:      infra.Embedder,
+		vectorStore:   infra.VectorStore,
 	}
 }
 

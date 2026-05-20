@@ -6,18 +6,19 @@ import (
 	"log"
 	"strings"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/service"
 )
 
 // SearchMemoriesTool — 向量检索长期记忆
 type SearchMemoriesTool struct {
-	vectorStore VectorSearcher
+	vectorStore app.VectorStore
 	memRepo     *service.UserMemoryRepo
 	embedder    *llm.Embedder
 }
 
-func NewSearchMemoriesTool(vs VectorSearcher, memRepo *service.UserMemoryRepo, embedder *llm.Embedder) *SearchMemoriesTool {
+func NewSearchMemoriesTool(vs app.VectorStore, memRepo *service.UserMemoryRepo, embedder *llm.Embedder) *SearchMemoriesTool {
 	return &SearchMemoriesTool{vectorStore: vs, memRepo: memRepo, embedder: embedder}
 }
 

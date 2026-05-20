@@ -8,38 +8,23 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
 
 // NoteTool — 变量追踪笔记工具
-// VectorStorer — 向量存储接口（避免循环依赖）
-type VectorStorer interface {
-	Upsert(id string, vec []float64, metadata map[string]string)
-}
-
-// ChunkEmbedder — chunk 构建接口（避免循环依赖 agent 包）
-type ChunkEmbedder interface {
-	BuildChunks(ctx context.Context, userID, parentType, parentID, text string) (int, error)
-}
-
 type NoteTool struct {
 	noteRepo      *service.NoteRepo
-	vectorStore   VectorStorer
+	vectorStore   app.VectorStore
 	embedder      *llm.Embedder
 	embeddingRepo *service.EmbeddingRepo
-	chunkBuilder  ChunkEmbedder
-	conceptEmbed  ConceptEmbedDeder
+	chunkBuilder  app.ChunkEmbedder
+	conceptEmbed  app.ConceptEmbedder
 }
 
-// ConceptEmbedDeder — 概念嵌入接口（避免循环依赖）
-type ConceptEmbedDeder interface {
-	EnsureTopicEmbedded(ctx context.Context, userID, topic, parentType, parentID string)
-	EnsureTagsEmbedded(ctx context.Context, userID, tags, parentType, parentID string)
-}
-
-func NewNoteTool(noteRepo *service.NoteRepo, vs VectorStorer, emb *llm.Embedder, embeddingRepo *service.EmbeddingRepo, chunkBuilder ChunkEmbedder, conceptEmbed ConceptEmbedDeder) *NoteTool {
+func NewNoteTool(noteRepo *service.NoteRepo, vs app.VectorStore, emb *llm.Embedder, embeddingRepo *service.EmbeddingRepo, chunkBuilder app.ChunkEmbedder, conceptEmbed app.ConceptEmbedder) *NoteTool {
 	return &NoteTool{noteRepo: noteRepo, vectorStore: vs, embedder: emb, embeddingRepo: embeddingRepo, chunkBuilder: chunkBuilder, conceptEmbed: conceptEmbed}
 }
 

@@ -8,22 +8,18 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
 
-// CommitmentTimer — 承诺定时接口（避免循环依赖 agent 包）
-type CommitmentTimer interface {
-	Schedule(c *model.Commitment)
-}
-
 // ReminderTool — 提醒工具，LLM 在对话中直接调用
 type ReminderTool struct {
 	commitRepo *service.CommitmentRepo
-	timer      CommitmentTimer
+	timer      app.CommitmentTimer
 }
 
-func NewReminderTool(commitRepo *service.CommitmentRepo, timer CommitmentTimer) *ReminderTool {
+func NewReminderTool(commitRepo *service.CommitmentRepo, timer app.CommitmentTimer) *ReminderTool {
 	return &ReminderTool{commitRepo: commitRepo, timer: timer}
 }
 

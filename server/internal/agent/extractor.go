@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -36,7 +37,7 @@ type ExtractCallback func(event ExtractEvent)
 type MemoryExtractor struct {
 	llmClient     llm.LLMClient
 	memRepo       *service.UserMemoryRepo
-	vectorStore   *VectorStore
+	vectorStore   app.VectorStore
 	embedder      *llm.Embedder
 	msgRepo       *service.MessageRepo
 	convRepo      *service.ConversationRepo
@@ -48,7 +49,7 @@ type MemoryExtractor struct {
 
 // NewMemoryExtractor 创建提取器
 func NewMemoryExtractor(llmClient llm.LLMClient, memRepo *service.UserMemoryRepo,
-	vectorStore *VectorStore, embedder *llm.Embedder,
+	vectorStore app.VectorStore, embedder *llm.Embedder,
 	msgRepo *service.MessageRepo, convRepo *service.ConversationRepo,
 	embeddingRepo *service.EmbeddingRepo,
 	dupeThreshold float64, chunkBuilder *ChunkBuilder, conceptEmbed *ConceptEmbedService) *MemoryExtractor {
@@ -324,8 +325,8 @@ func (e *MemoryExtractor) isDuplicate(ctx context.Context, userID, text string) 
 	if err != nil {
 		return false
 	}
-	results := e.vectorStore.Search(vec, 3, func(entry vectorEntry) bool {
-		return entry.Metadata["type"] == "mem" && entry.Metadata["user_id"] == userID
+	results := e.vectorStore.Search(vec, 3, func(_ string, _ []float64, metadata map[string]string) bool {
+		return metadata["type"] == "mem" && metadata["user_id"] == userID
 	})
 	for _, r := range results {
 		if r.Score > e.dupeThreshold {

@@ -7,15 +7,11 @@ import (
 	"log"
 	"strings"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/util"
 )
-
-// TopicEmbedder — topic 嵌入接口（避免循环依赖 agent 包）
-type TopicEmbedder interface {
-	EnsureTopicEmbedded(ctx context.Context, userID, topic, parentType, parentID string)
-}
 
 // GetTopicStatsTool — topic 统计工具（聚类 + 7 维度）
 type GetTopicStatsTool struct {
@@ -23,12 +19,12 @@ type GetTopicStatsTool struct {
 	noteRepo         *service.NoteRepo
 	memRepo          *service.UserMemoryRepo
 	embedder         *llm.Embedder
-	vectorStore      VectorSearcher
-	topicEmbedder    TopicEmbedder
+	vectorStore      app.VectorStore
+	topicEmbedder    app.ConceptEmbedder
 	clusterThreshold float64
 }
 
-func NewGetTopicStatsTool(conceptRepo *service.ConceptEmbeddingRepo, noteRepo *service.NoteRepo, memRepo *service.UserMemoryRepo, embedder *llm.Embedder, vs VectorSearcher, topicEmbedder TopicEmbedder, clusterThreshold float64) *GetTopicStatsTool {
+func NewGetTopicStatsTool(conceptRepo *service.ConceptEmbeddingRepo, noteRepo *service.NoteRepo, memRepo *service.UserMemoryRepo, embedder *llm.Embedder, vs app.VectorStore, topicEmbedder app.ConceptEmbedder, clusterThreshold float64) *GetTopicStatsTool {
 	return &GetTopicStatsTool{conceptRepo: conceptRepo, noteRepo: noteRepo, memRepo: memRepo, embedder: embedder, vectorStore: vs, topicEmbedder: topicEmbedder, clusterThreshold: clusterThreshold}
 }
 

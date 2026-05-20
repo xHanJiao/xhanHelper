@@ -199,12 +199,7 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, req *RunRequest) (str
 			if t.StateText == "" {
 				continue // 无状态页则跳过
 			}
-			// 截断过长的状态页（每个主题最多 200 字）
-			stateBrief := t.StateText
-			if len([]rune(stateBrief)) > 200 {
-				stateBrief = string([]rune(stateBrief)[:200]) + "..."
-			}
-			themeParts = append(themeParts, fmt.Sprintf("### %s\n%s", t.Name, stateBrief))
+			themeParts = append(themeParts, fmt.Sprintf("### %s\n%s", t.Name, t.StateText))
 		}
 		if len(themeParts) > 0 {
 			sysPrompt += "\n\n===== 用户正在追踪的主题 =====\n" + strings.Join(themeParts, "\n\n")

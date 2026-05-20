@@ -17,7 +17,6 @@ const renameModalVisible = ref(false)
 const renamingId = ref(null)
 const renamingTitle = ref('')
 const hoveredId = ref(null)
-const extractingId = ref(null)
 const confirmingId = ref(null)
 
 const auth = useAuthStore()
@@ -130,10 +129,6 @@ async function handleDelete(conv) {
 
 function handleSelect(conv) {
   router.push(`/chat/${conv.id}`)
-}
-
-async function handleExtractMemories(conv) {
-  router.push(`/memories?conv_id=${conv.id}&extracting=true`)
 }
 </script>
 
@@ -356,12 +351,6 @@ async function handleExtractMemories(conv) {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-            </svg>
-          </button>
-          <button @click.stop="handleExtractMemories(conv)" :disabled="extractingId === conv.id" style="padding: var(--space-xs); border: none; background: none; cursor: pointer; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center;" @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'" @mouseout="e => e.currentTarget.style.background = 'none'">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="extractingId === conv.id ? '#999' : '#666'" stroke-width="2">
-              <path d="M12 2a5 5 0 0 0-5 5v1a6 6 0 0 0-2 4.5V14h14v-1.5a6 6 0 0 0-2-4.5V7a5 5 0 0 0-5-5z"/>
-              <path d="M10 19v1a2 2 0 0 0 4 0v-1"/>
             </svg>
           </button>
           <NPopconfirm @positive-click="handleDelete(conv)" @update:show="(v) => confirmingId = v ? conv.id : null">

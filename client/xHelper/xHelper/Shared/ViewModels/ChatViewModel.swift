@@ -19,7 +19,6 @@ struct PlanNode: Identifiable {
 class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isStreaming = false
-    @Published var streamTick = 0
     @Published var currentToolCall: ToolCallData?
     @Published var thoughtMessage: String?
     @Published var thoughtDone = false
@@ -139,7 +138,6 @@ class ChatViewModel: ObservableObject {
         messages.append(userMsg)
 
         isStreaming = true
-        streamTick = 0
         streamingContent = ""
         currentToolCall = nil
         thoughtMessage = nil
@@ -369,7 +367,6 @@ class ChatViewModel: ObservableObject {
             createdAt: last.createdAt
         )
         messages.append(last)
-        streamTick += 1
     }
 
     private func parseMessageDelta(_ data: String) -> String? {

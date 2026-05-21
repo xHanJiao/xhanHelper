@@ -3,6 +3,7 @@ import SwiftUI
 struct MessageListView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var scrollTarget: String?
+    @State private var scrollTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -51,23 +52,25 @@ struct MessageListView: View {
                     }
                     .padding(.horizontal)
                 }
+
+                Color.clear.frame(height: 1).id("bottom")
             }
             .padding(.vertical)
         }
         .scrollPosition(id: $scrollTarget, anchor: .bottom)
         .dismissKeyboardOnTap()
         .onChange(of: viewModel.messages.count) { oldCount, newCount in
-            guard newCount > oldCount else { return }
-            if let anchor = viewModel.anchorMessageID {
-                scrollTarget = anchor
-                viewModel.anchorMessageID = nil
-                return
-            }
-            // 非 streaming 消息增加时滚到底（发消息、历史加载、工具结果）
-            if !viewModel.isStreaming || viewModel.messages.last?.role == "user" {
-                if let last = viewModel.messages.last, last.id != "__streaming__" {
-                    scrollTarget = last.id
-                }
+            guard newCount > oldCount, let anchor = viewModel.anchorMessageID else { return }
+            scrollTarget = anchor
+            viewModel.anchorMessageID = nil
+        }
+        .onChange(of: viewModel.isStreaming) { oldValue, newValue in
+            guard newValue, !oldValue else { return }
+            scrollTask?.cancel()
+            scrollTask = Task {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard !Task.isCancelled else { return }
+                scrollTarget = "bottom"
             }
         }
     }

@@ -45,6 +45,7 @@ const messagesContainerRef = ref(null)
 const mobileInputRef = ref(null)
 const mobileInputHeight = ref(140) // 移动端输入框实际高度，默认 140px 兜底
 const isInitialScrollDone = ref(false)
+const isAwayFromBottom = ref(false)
 
 const { isBarVisible, showBar } = useScrollTopBar(messagesContainerRef)
 
@@ -388,6 +389,18 @@ function handleStop() {
 
 function handleScroll(e) {
   const container = e.target
+  const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+  isAwayFromBottom.value = distFromBottom > 200
+
+  // 上滑看历史时自动隐藏输入框，回到底部时恢复（滞后阈值防抖动）
+  if (isInitialScrollDone.value && !isMobile.value) {
+    if (distFromBottom > 200 && inputVisible.value) {
+      inputVisible.value = false
+    } else if (distFromBottom < 30 && !inputVisible.value) {
+      inputVisible.value = true
+    }
+  }
+
   const threshold = container.clientHeight * 0.15
   if (isInitialScrollDone.value && container.scrollTop <= threshold && chat.hasMoreBefore && !isLoadingHistory.value) {
     loadHistory(chat.conversationId, 'before', chat.oldestCursor)
@@ -509,30 +522,31 @@ function handleContainerClick(e) {
       </div>
     </div>
 
-    <!-- 桌面端：输入栏隐藏时的召唤按钮（右下四分之一圆） -->
+    <!-- 查看历史消息时，滚动到底部按钮 -->
     <div
-      v-if="!isMobile && !inputVisible"
-      @click="toggleInput"
+      v-if="!isMobile && !inputVisible && isAwayFromBottom"
+      @click="() => { inputVisible = true; const el = messagesContainerRef; if (el) el.scrollTop = el.scrollHeight }"
       :style="{
         position: 'fixed',
-        bottom: '0',
-        right: '0',
-        zIndex: 100,
-        width: '56px',
-        height: '56px',
-        borderTopLeftRadius: '56px',
-        background: 'rgba(91, 106, 191, 0.85)',
+        bottom: '24px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 101,
+        width: '40px',
+        height: '40px',
+        borderRadius: '50%',
+        background: 'rgba(91, 106, 191, 0.8)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         cursor: 'pointer',
-        boxShadow: '-2px -2px 10px rgba(0,0,0,0.1)',
+        boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
         color: 'white',
-        fontSize: '24px',
+        fontSize: '20px',
         userSelect: 'none'
       }"
     >
-      <span style="transform: rotate(-45deg); margin-right: -12px; margin-bottom: -12px;">↑</span>
+      ↓
     </div>
 
     <div
@@ -647,9 +661,6 @@ function handleContainerClick(e) {
             </NPopover>
             <NButton quaternary size="small" @click="toggleExpand" style="color: var(--color-text-muted)">
               {{ inputExpanded ? '⤡ 收起输入框' : '⤢ 展开输入框' }}
-            </NButton>
-            <NButton v-if="!isMobile" quaternary size="small" @click="toggleInput" style="margin-left: 8px; color: var(--color-text-muted)">
-              {{ inputVisible ? '隐藏输入栏' : '显示输入栏' }}
             </NButton>
             <NButton v-if="isMobile && inputVisible" quaternary size="small" @click="toggleInput" style="margin-left: 8px; color: var(--color-text-muted)">
               收起

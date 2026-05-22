@@ -58,9 +58,8 @@ function handleLoadMore() {
   convs.fetchList(convs.list.length)
 }
 
-const navExpanded = ref(true)
-const userInfoExpanded = ref(true)
-const adminExpanded = ref(true)
+const navExpanded = ref(false)
+const adminExpanded = ref(false)
 const historyExpanded = ref(true)
 
 const navItems = [
@@ -70,14 +69,11 @@ const navItems = [
   { label: '文档', path: '/documents' }
 ]
 
-const userInfoItems = [
+const adminItems = [
   { label: '记忆', path: '/memories' },
   { label: '笔记', path: '/notes' },
-  { label: '主题', path: '/themes' }
-]
-
-const adminItems = [
-  { label: '监控看板', path: '/admin' }
+  { label: '主题', path: '/themes' },
+  { label: '监控看板', path: '/admin', adminOnly: true }
 ]
 
 const isAdmin = computed(() => auth.user?.isAdmin === true)
@@ -202,54 +198,8 @@ function handleSelect(conv) {
       </template>
     </div>
 
-    <!-- 用户信息管理 -->
+    <!-- 管理 -->
     <div style="padding: var(--space-sm) var(--space-md) var(--space-sm);">
-      <div
-        @click="userInfoExpanded = !userInfoExpanded"
-        :style="{
-          padding: 'var(--space-sm) var(--space-md)',
-          borderRadius: 'var(--radius-md)',
-          marginBottom: userInfoExpanded ? 'var(--space-xs)' : '0',
-          cursor: 'pointer',
-          fontSize: '13px',
-          color: 'var(--color-text-muted)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--space-xs)',
-          transition: 'background var(--transition-fast)'
-        }"
-        @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'"
-        @mouseout="e => e.currentTarget.style.background = 'transparent'"
-      >
-        <span style="transition: transform 0.2s;" :style="{ transform: userInfoExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }">▾</span>
-        <span>用户信息管理</span>
-      </div>
-      <template v-if="userInfoExpanded">
-        <div
-          v-for="item in userInfoItems"
-          :key="item.path"
-          @click="router.push(item.path)"
-          :style="{
-            padding: 'var(--space-sm) var(--space-md)',
-            borderRadius: 'var(--radius-md)',
-            marginBottom: 'var(--space-xs)',
-            cursor: 'pointer',
-            fontSize: '14px',
-            color: isNavActive(item.path) ? 'var(--color-primary)' : 'var(--color-text-secondary)',
-            background: isNavActive(item.path) ? 'var(--color-primary-soft)' : 'transparent',
-            fontWeight: isNavActive(item.path) ? '500' : '400',
-            transition: 'background var(--transition-fast), color var(--transition-fast)'
-          }"
-          @mouseover="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'var(--color-surface-hover)' }"
-          @mouseout="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'transparent' }"
-        >
-          {{ item.label }}
-        </div>
-      </template>
-    </div>
-
-    <!-- 管理区（仅管理员可见） -->
-    <div v-if="isAdmin" style="padding: var(--space-sm) var(--space-md) var(--space-sm);">
       <div
         @click="adminExpanded = !adminExpanded"
         :style="{
@@ -268,12 +218,13 @@ function handleSelect(conv) {
         @mouseout="e => e.currentTarget.style.background = 'transparent'"
       >
         <span style="transition: transform 0.2s;" :style="{ transform: adminExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }">▾</span>
-        <span>系统监控</span>
+        <span>管理</span>
       </div>
       <template v-if="adminExpanded">
         <div
           v-for="item in adminItems"
           :key="item.path"
+          v-show="!item.adminOnly || isAdmin"
           @click="router.push(item.path)"
           :style="{
             padding: 'var(--space-sm) var(--space-md)',

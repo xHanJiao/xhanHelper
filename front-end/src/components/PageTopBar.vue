@@ -60,7 +60,7 @@ const agentLabel = computed(() => {
     }"
   >
     <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-xs);">
-      <TopBarBtn :icon="sidebarIcon" @click="isMobile ? toggleDrawer() : toggleSidebar()" />
+      <TopBarBtn :icon="sidebarIcon" variant="text" @click="isMobile ? toggleDrawer() : toggleSidebar()" />
       {{ title }}
     </span>
     <span style="display: flex; align-items: center; gap: var(--space-xs);">
@@ -71,7 +71,7 @@ const agentLabel = computed(() => {
         @update:show="handlePopoverShow"
       >
         <template #trigger>
-          <TopBarBtn icon="🤖" :label="agentLabel" variant="pill" />
+          <TopBarBtn icon="🤖" :label="agentLabel" />
         </template>
         <div class="agent-popover">
           <div class="agent-popover-header">已绑定智能体</div>

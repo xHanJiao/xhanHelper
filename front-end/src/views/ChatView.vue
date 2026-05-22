@@ -464,7 +464,7 @@ function handleContainerClick(e) {
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
     <PageTopBar :title="currentTitle" :agent-id="currentAgentId" :agent-name="currentAgentName" :visible="!isMobile || isBarVisible" :agents="agentsList" @select-agent="handleSelectAgent" @popover-open="fetchAgents" >
       <template #right>
-        <TopBarBtn :label="theme.isDark ? '浅色' : '深色'" variant="pill" @click="theme.toggle()" />
+        <TopBarBtn :label="theme.isDark ? '浅色' : '深色'" @click="theme.toggle()" />
       </template>
     </PageTopBar>
 

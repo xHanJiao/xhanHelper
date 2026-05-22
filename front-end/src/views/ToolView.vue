@@ -4,6 +4,7 @@ import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
 import { useDevice } from '@/composables/useDevice'
+import TopBarBtn from '@/components/TopBarBtn.vue'
 import {
   NCard,
   NButton,
@@ -126,7 +127,7 @@ onMounted(fetchTools)
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
     <PageTopBar title="动态工具管理" :visible="!isMobile || isBarVisible">
       <template #right>
-        <NButton type="primary" size="small" @click="openCreate">创建工具</NButton>
+        <TopBarBtn label="创建工具" @click="openCreate" />
       </template>
     </PageTopBar>
     <div

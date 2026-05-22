@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { api } from '@/api/client'
 import { NModal, NForm, NFormItem, NInput, NButton, NSpin, NGrid, NGi, NEmpty, NTag, useMessage } from 'naive-ui'
 import PageTopBar from '@/components/PageTopBar.vue'
+import TopBarBtn from '@/components/TopBarBtn.vue'
 import ListItemCard from '@/components/ListItemCard.vue'
 
 const message = useMessage()
@@ -163,8 +164,8 @@ onMounted(fetchList)
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
     <PageTopBar title="主题管理" :visible="true">
       <template #right>
-        <NButton size="small" @click="triggerReflection" :loading="triggering" style="margin-right: 8px;">触发反思</NButton>
-        <NButton size="small" type="primary" @click="openCreate">新建主题</NButton>
+        <TopBarBtn label="触发反思" @click="triggerReflection" />
+        <TopBarBtn label="新建主题" @click="openCreate" />
       </template>
     </PageTopBar>
     <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">

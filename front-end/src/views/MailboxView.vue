@@ -2,8 +2,9 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
-import { NCard, NTag, NButton, NSpin, NEmpty, useMessage } from 'naive-ui'
+import { NCard, NTag, NSpin, NEmpty, useMessage } from 'naive-ui'
 import PageTopBar from '@/components/PageTopBar.vue'
+import TopBarBtn from '@/components/TopBarBtn.vue'
 
 const router = useRouter()
 const navigating = ref(false)
@@ -98,7 +99,7 @@ onMounted(fetchItems)
         <span v-if="unreadCount > 0" style="font-size: 13px; color: var(--color-primary); font-weight: 500;">
           {{ unreadCount }} 条未读
         </span>
-        <NButton size="small" @click="fetchItems" :loading="loading">刷新</NButton>
+        <TopBarBtn label="刷新" @click="fetchItems" />
       </template>
     </PageTopBar>
     <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">

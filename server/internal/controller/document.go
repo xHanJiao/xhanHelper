@@ -8,6 +8,7 @@ import (
 
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
+	"xhan-helper/internal/view"
 )
 
 // DocumentHandler — 文档 API handler
@@ -36,7 +37,7 @@ func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 		list = []model.Document{}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	view.JSONOK(c, gin.H{
 		"documents": list,
 		"total":     total,
 	})
@@ -53,7 +54,7 @@ func (h *DocumentHandler) GetDocument(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, doc)
+	view.JSONOK(c, doc)
 }
 
 // DeleteDocument DELETE /api/documents/:id
@@ -66,5 +67,5 @@ func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"deleted": true})
+	view.JSONOK(c, gin.H{"deleted": true})
 }

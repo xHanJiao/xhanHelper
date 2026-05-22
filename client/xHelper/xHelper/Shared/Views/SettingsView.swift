@@ -64,6 +64,9 @@ struct SettingsView: View {
                 NavigationLink(destination: NoteListView(apiClient: apiClient)) {
                     Label("笔记记录", systemImage: "note.text")
                 }
+                NavigationLink(destination: DocumentListView(apiClient: apiClient)) {
+                    Label("文档", systemImage: "doc.text")
+                }
             } header: {
                 Text("浏览")
             }

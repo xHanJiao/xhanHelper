@@ -80,6 +80,23 @@ class APIClient {
 		return try await post("/api/notes/batch", body: ["ids": ids])
 	}
 
+	// MARK: Documents
+
+	func listDocuments(tag: String? = nil, keyword: String? = nil, limit: Int = 24, offset: Int = 0) async throws -> DocumentListResponse {
+		var path = "/api/documents?limit=\(limit)&offset=\(offset)"
+		if let t = tag, !t.isEmpty { path += "&tag=\(t.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? t)" }
+		if let k = keyword, !k.isEmpty { path += "&keyword=\(k.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? k)" }
+		return try await get(path)
+	}
+
+	func getDocument(id: String) async throws -> Document {
+		return try await get("/api/documents/\(id)")
+	}
+
+	func deleteDocument(id: String) async throws {
+		try await delete("/api/documents/\(id)")
+	}
+
 	// MARK: Memories (P3)
 
 	func listMemories(limit: Int = 50, offset: Int = 0, keyword: String = "", source: String = "") async throws -> MemoryListResponse {
@@ -359,6 +376,33 @@ struct Note: Identifiable, Codable {
         case variables
         case createdAt = "created_at"
     }
+}
+
+struct Document: Identifiable, Codable {
+    let id: String
+    let userId: String
+    let title: String
+    let content: String
+    let tags: String?
+    let conversationId: String?
+    let createdAt: String
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case title
+        case content
+        case tags
+        case conversationId = "conversation_id"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct DocumentListResponse: Codable {
+    let documents: [Document]
+    let total: Int
 }
 
 struct Agent: Identifiable, Codable {

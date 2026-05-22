@@ -19,7 +19,11 @@ class DeviceManager: ObservableObject {
     #endif
 
     var baseURL: String {
-        UserDefaults.standard.string(forKey: "xhan_server_url") ?? Self.defaultBaseURL
+        #if DEBUG
+        return UserDefaults.standard.string(forKey: "xhan_server_url") ?? Self.defaultBaseURL
+        #else
+        return Self.defaultBaseURL
+        #endif
     }
 
     init() {

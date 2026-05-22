@@ -4,7 +4,9 @@ struct NoteListView: View {
     let apiClient: APIClient
     @State private var notes: [Note] = []
     @State private var isLoading = true
+    @State private var total = 0
     @State private var selectedNote: Note?
+    private let pageSize = 50
 
     var body: some View {
         Group {
@@ -14,24 +16,36 @@ struct NoteListView: View {
                 Text("暂无笔记")
                     .foregroundColor(.secondary)
             } else {
-                List(notes) { note in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(note.topic)
-                                .font(.subheadline.weight(.medium))
-                            Spacer()
-                            Text(formatDate(note.createdAt))
-                                .font(.caption2)
+                List {
+                    ForEach(notes) { note in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(note.topic)
+                                    .font(.subheadline.weight(.medium))
+                                Spacer()
+                                Text(formatDate(note.createdAt))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Text(note.content)
+                                .font(.body)
+                                .lineLimit(3)
                                 .foregroundColor(.secondary)
                         }
-                        Text(note.content)
-                            .font(.body)
-                            .lineLimit(3)
-                            .foregroundColor(.secondary)
+                        .padding(.vertical, 2)
+                        .contentShape(Rectangle())
+                        .onTapGesture { selectedNote = note }
                     }
-                    .padding(.vertical, 2)
-                    .contentShape(Rectangle())
-                    .onTapGesture { selectedNote = note }
+
+                    if notes.count < total {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                                .padding()
+                                .task { await loadMore() }
+                            Spacer()
+                        }
+                    }
                 }
             }
         }
@@ -56,10 +70,20 @@ struct NoteListView: View {
 
     private func load() async {
         do {
-            let resp = try await apiClient.listNotes()
+            let resp = try await apiClient.listNotes(limit: pageSize, offset: 0)
             notes = resp.notes
+            total = resp.total
         } catch {}
         isLoading = false
+    }
+
+    private func loadMore() async {
+        let newOffset = notes.count
+        guard newOffset < total else { return }
+        do {
+            let resp = try await apiClient.listNotes(limit: pageSize, offset: newOffset)
+            notes.append(contentsOf: resp.notes)
+        } catch {}
     }
 
     private func formatDate(_ iso: String) -> String {

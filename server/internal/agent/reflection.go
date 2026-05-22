@@ -261,7 +261,7 @@ func (o *ReflectionOrchestrator) MorningReview(ctx context.Context, userID strin
 	o.expireActiveThemes(ctx, userID)
 	findingCount := o.reviewActiveThemes(ctx, userID, traceID, "morning")
 
-	endTraceSafe(o.traceRepo, ctx, traceID, "completed", 0, findingCount, nil)
+	endTraceSafe(o.traceRepo, ctx, traceID, "completed", findingCount, 0, nil)
 	log.Printf("[reflection] trace=%s DONE morning_review findings=%d", traceID[:8], findingCount)
 	return findingCount, nil
 }
@@ -281,7 +281,7 @@ func (o *ReflectionOrchestrator) EveningReview(ctx context.Context, userID strin
 	o.expireActiveThemes(ctx, userID)
 	findingCount := o.reviewActiveThemes(ctx, userID, traceID, "evening")
 
-	endTraceSafe(o.traceRepo, ctx, traceID, "completed", 0, findingCount, nil)
+	endTraceSafe(o.traceRepo, ctx, traceID, "completed", findingCount, 0, nil)
 	log.Printf("[reflection] trace=%s DONE evening_review findings=%d", traceID[:8], findingCount)
 	return findingCount, nil
 }
@@ -352,8 +352,13 @@ func (o *ReflectionOrchestrator) reviewActiveThemes(ctx context.Context, userID,
 		})
 		ec := &tool.ExecuteContext{Ctx: WithTraceID(ctx, traceID), UserID: userID}
 		res := analystT.Execute(ec, "analyze", args)
-		if res.Success {
-			findingCount++
+		if res.Success && res.Data != nil {
+			var output struct {
+				Findings []json.RawMessage `json:"findings"`
+			}
+			if json.Unmarshal(res.Data, &output) == nil {
+				findingCount += len(output.Findings)
+			}
 		}
 	}
 	log.Printf("[theme] %s review: %d actives, %d findings generated", period, len(actives), findingCount)

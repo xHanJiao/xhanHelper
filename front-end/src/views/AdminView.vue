@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { api } from '@/api/client'
-import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NEmpty } from 'naive-ui'
+import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NEmpty, NAlert } from 'naive-ui'
 import { Chart, registerables } from 'chart.js'
 import PageTopBar from '@/components/PageTopBar.vue'
 
@@ -98,6 +98,15 @@ function formatJSON(raw) {
     return JSON.stringify(JSON.parse(raw), null, 2)
   } catch {
     return raw
+  }
+}
+
+async function copyJSON(raw) {
+  if (!raw) return
+  try {
+    await navigator.clipboard.writeText(raw)
+  } catch {
+    // fallback silently
   }
 }
 
@@ -325,6 +334,9 @@ function latSummary(s) {
         </div>
         <NSpin v-if="!traceDetail" />
         <template v-else>
+          <NAlert v-if="traceDetail.trace?.status === 'empty'" type="info" style="margin-bottom: var(--space-md);">
+            此投递窗口内无待处理发现，未触发 LLM 调用与决策记录。
+          </NAlert>
           <NCard size="small" title="LLM 调用记录" style="margin-bottom: var(--space-md);">
             <div v-if="traceDetail.llm_calls?.length" style="display: flex; flex-direction: column; gap: var(--space-sm);">
               <NCard v-for="call in traceDetail.llm_calls" :key="call.id" size="small" :bordered="false" style="background: var(--color-bg);">
@@ -335,7 +347,12 @@ function latSummary(s) {
                 </div>
                 <details v-if="call.response_json" style="font-size: 11px; color: var(--color-text-muted);">
                   <summary>查看 LLM 输出</summary>
-                  <pre style="max-height: 200px; overflow: auto; white-space: pre-wrap; margin-top: var(--space-xs); background: var(--color-surface); padding: var(--space-sm); border-radius: var(--radius-sm);">{{ formatJSON(call.response_json) }}</pre>
+                  <div style="position: relative;">
+                    <button @click="copyJSON(call.response_json)" title="复制" style="position: absolute; top: 4px; right: 4px; padding: 2px 6px; border: none; background: var(--color-surface-hover); border-radius: var(--radius-sm); cursor: pointer; font-size: 12px; color: var(--color-text-muted); line-height: 1;">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    </button>
+                    <pre style="max-height: 200px; overflow: auto; white-space: pre-wrap; margin-top: var(--space-xs); background: var(--color-surface); padding: var(--space-sm); border-radius: var(--radius-sm);">{{ formatJSON(call.response_json) }}</pre>
+                  </div>
                 </details>
               </NCard>
             </div>
@@ -349,7 +366,12 @@ function latSummary(s) {
                 <div style="font-size: 12px; color: var(--color-text-muted); margin-top: 2px;">{{ d.reason }}</div>
                 <details v-if="d.detail_json" style="font-size: 11px; color: var(--color-text-muted); margin-top: var(--space-xs);">
                   <summary>查看详情 ({{ d.detail_json.length.toLocaleString() }} 字符)</summary>
-                  <pre style="max-height: 200px; overflow: auto; white-space: pre-wrap; margin-top: var(--space-xs); background: var(--color-surface); padding: var(--space-sm); border-radius: var(--radius-sm);">{{ formatJSON(d.detail_json) }}</pre>
+                  <div style="position: relative;">
+                    <button @click="copyJSON(d.detail_json)" title="复制" style="position: absolute; top: 4px; right: 4px; padding: 2px 6px; border: none; background: var(--color-surface-hover); border-radius: var(--radius-sm); cursor: pointer; font-size: 12px; color: var(--color-text-muted); line-height: 1;">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    </button>
+                    <pre style="max-height: 200px; overflow: auto; white-space: pre-wrap; margin-top: var(--space-xs); background: var(--color-surface); padding: var(--space-sm); border-radius: var(--radius-sm);">{{ formatJSON(d.detail_json) }}</pre>
+                  </div>
                 </details>
               </div>
             </div>

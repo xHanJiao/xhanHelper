@@ -13,14 +13,16 @@ class DeviceManager: ObservableObject {
     private let usernameKey = "xhan_username"
 
     #if DEBUG
-    static let defaultBaseURL = "http://10.1.2.192:8080"
+    static let defaultBaseURL = "http://hanxiaodeMacBook-Air.local:8080"
     #else
     static let defaultBaseURL = "https://helper.xhanx.cn"
     #endif
 
     var baseURL: String {
         #if DEBUG
-        return UserDefaults.standard.string(forKey: "xhan_server_url") ?? Self.defaultBaseURL
+        let url = UserDefaults.standard.string(forKey: "xhan_server_url") ?? Self.defaultBaseURL
+        print("[DeviceManager] baseURL = \(url)")
+        return url
         #else
         return Self.defaultBaseURL
         #endif

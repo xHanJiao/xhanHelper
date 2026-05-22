@@ -338,6 +338,12 @@ onBeforeUnmount(() => {
 
 watch(() => chat.streamingMessage?.content, () => scrollToBottom())
 watch(() => chat.streamingMessage?.reasoning, () => scrollToBottom())
+watch(inputExpanded, () => {
+  const container = messagesContainerRef.value
+  if (!container) return
+  const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+  if (distFromBottom <= 80) scrollToBottom()
+})
 
 async function handleSend() {
   const content = inputValue.value.trim()

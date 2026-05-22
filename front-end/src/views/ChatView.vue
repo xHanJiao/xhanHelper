@@ -320,6 +320,7 @@ watch(() => route.params.id, async (newId, oldId) => {
     cancel()
   }
   if (newId && newId !== chat.conversationId) {
+    inputVisible.value = true
     isFirstLoad.value = true
     isInitialScrollDone.value = false
     chat.setConversation(newId)
@@ -340,6 +341,7 @@ watch(() => route.params.id, async (newId, oldId) => {
     }
     fetchLlmConfig()
   } else if (newId && chat.needsRefetch) {
+    inputVisible.value = true
     isFirstLoad.value = true
     isInitialScrollDone.value = false
     await loadHistory(newId)
@@ -360,6 +362,8 @@ watch(() => route.params.id, async (newId, oldId) => {
     }
     fetchLlmConfig()
   } else if (!newId) {
+    inputVisible.value = true
+    isInitialScrollDone.value = false
     if (chat.isStreaming) cancel()
     const savedAgentId = chat.agentId
     const savedAgentName = chat.agentName
@@ -562,7 +566,7 @@ function handleContainerClick(e) {
     <!-- 查看历史消息时，滚动到底部按钮 -->
     <div
       v-if="!isMobile && !inputVisible && isAwayFromBottom"
-      @click="() => { inputVisible = true; const el = messagesContainerRef; if (el) el.scrollTop = el.scrollHeight }"
+      @click="() => { inputVisible = true; const el = messagesContainerRef.value; if (el) el.scrollTop = el.scrollHeight }"
       :style="{
         position: 'fixed',
         bottom: '24px',

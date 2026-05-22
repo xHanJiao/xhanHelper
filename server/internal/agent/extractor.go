@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"xhan-helper/internal/app"
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -114,7 +115,7 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, m.Content))
 	}
 
-	now := time.Now().Format("2006-01-02 15:04:05 Monday")
+	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
 	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, sb.String())
 	promptHash := hashPrompt(prompt)
 
@@ -192,7 +193,7 @@ func (e *MemoryExtractor) ExtractFromConversationWithCallback(ctx context.Contex
 		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, m.Content))
 	}
 
-	now := time.Now().Format("2006-01-02 15:04:05 Monday")
+	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
 	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, sb.String())
 	promptHash := hashPrompt(prompt)
 
@@ -263,7 +264,7 @@ func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, promptT
 		return
 	}
 
-	now := time.Now().Format("2006-01-02 15:04:05 Monday")
+	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
 	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, promptText)
 
 	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{

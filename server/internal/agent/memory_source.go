@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -69,11 +70,11 @@ func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, userID, co
 			topicPart = fmt.Sprintf("[%s] ", m.Topic)
 		}
 		text = fmt.Sprintf("- [%s] %s%s (已唤起%d次，最近唤起 %s)\n",
-			m.CreatedAt.Format("2006-01-02"),
+			m.CreatedAt.In(config.BJ).Format("2006-01-02"),
 			topicPart,
 			m.MemoryValue,
 			m.ConfirmCount,
-			m.LastConfirmedAt.Format("01-02"))
+			m.LastConfirmedAt.In(config.BJ).Format("01-02"))
 		if i == 0 {
 			text = "===== 相关记忆 =====\n" + text
 		}

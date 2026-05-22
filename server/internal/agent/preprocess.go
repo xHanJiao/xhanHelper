@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 )
@@ -84,7 +85,7 @@ func (s *NormalizeDatesStep) Run(ctx context.Context) (context.Context, error) {
 		"四": time.Thursday, "五": time.Friday, "六": time.Saturday, "日": time.Sunday, "天": time.Sunday,
 	}
 
-	today := s.now.Truncate(24 * time.Hour)
+	today := s.now.In(config.BJ).Truncate(24 * time.Hour)
 	dateFmt := "2006-01-02"
 
 	// 具体星期: 上周一、这周三、下周五

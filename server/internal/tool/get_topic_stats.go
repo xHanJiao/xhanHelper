@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"xhan-helper/internal/app"
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/util"
@@ -127,7 +128,7 @@ func (t *GetTopicStatsTool) buildClusterStats(ctx context.Context, userID string
 			continue
 		}
 		noteCount++
-		ts := n.CreatedAt.Format("2006-01-02")
+		ts := n.CreatedAt.In(config.BJ).Format("2006-01-02")
 		if firstTime == "" || ts < firstTime {
 			firstTime = ts
 		}
@@ -150,7 +151,7 @@ func (t *GetTopicStatsTool) buildClusterStats(ctx context.Context, userID string
 			continue
 		}
 		memCount++
-		ts := m.CreatedAt.Format("2006-01-02")
+		ts := m.CreatedAt.In(config.BJ).Format("2006-01-02")
 		if firstTime == "" || ts < firstTime {
 			firstTime = ts
 		}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
@@ -183,7 +184,7 @@ func (t *BookkeepingTool) createBill(ec *ExecuteContext, args json.RawMessage) *
 		return &Result{Success: false, Error: "item and amount are required"}
 	}
 	if a.Date == "" {
-		a.Date = time.Now().Format("2006-01-02")
+		a.Date = time.Now().In(config.BJ).Format("2006-01-02")
 	}
 	if a.PayType == "" {
 		a.PayType = "现金"

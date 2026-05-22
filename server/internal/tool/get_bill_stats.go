@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
@@ -37,7 +38,7 @@ func (t *GetBillStatsTool) Functions() []FuncSchema {
 }
 
 func (t *GetBillStatsTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
-	now := time.Now()
+	now := time.Now().In(config.BJ)
 	since := now.AddDate(0, -3, 0) // 近 90 天
 
 	bills, _, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID,

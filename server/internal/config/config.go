@@ -3,9 +3,21 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// BJ 北京时间（Asia/Shanghai），格式化时间前先 .In(BJ) 统一时区
+var BJ *time.Location
+
+func init() {
+	var err error
+	BJ, err = time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		panic(fmt.Sprintf("load timezone Asia/Shanghai: %v", err))
+	}
+}
 
 // Config — 顶层配置
 type Config struct {

@@ -156,7 +156,7 @@ func (c *DoubaoClient) buildBody(req *ChatRequest) ([]byte, io.Reader) {
 func (c *DoubaoClient) BuildSystemPrompt(base string, tools []ToolDefinition) string {
 	var b strings.Builder
 	b.WriteString(base)
-	b.WriteString(fmt.Sprintf("\n当前时间: %s\n", time.Now().Format("2006-01-02 15:04:05 Monday")))
+	b.WriteString(fmt.Sprintf("\n当前时间: %s\n", time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")))
 	if len(tools) == 0 {
 		return b.String()
 	}

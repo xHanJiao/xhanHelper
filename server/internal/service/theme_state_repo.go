@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 )
 
@@ -66,7 +67,7 @@ func (r *ThemeStateRepo) UpdateState(ctx context.Context, id, userID, stateText 
 	}
 
 	history := old.HistoryStateText
-	entry := fmt.Sprintf("--- %s ---\n%s\n", now.Format("2006-01-02 15:04"), old.StateText)
+	entry := fmt.Sprintf("--- %s ---\n%s\n", now.In(config.BJ).Format("2006-01-02 15:04"), old.StateText)
 	if history != nil && *history != "" {
 		combined := *history + "\n" + entry
 		history = &combined

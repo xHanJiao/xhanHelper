@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -167,7 +168,7 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, req *RunRequest) (str
 			}
 		}
 	}
-	sysPrompt += "\n当前时间: " + time.Now().Format("2006-01-02 15:04:05 Monday")
+	sysPrompt += "\n当前时间: " + time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
 	sysPrompt += o.registry.GeneratePromptWithOverview()
 
 	// 注入会话上下文（信箱跳转带入的主题信息）
@@ -569,14 +570,15 @@ func (o *Orchestrator) saveToolMsgWithID(ctx context.Context, convID, userID, to
 func BuildMessagesForFlash(history []model.Message) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
+		ts := m.CreatedAt.In(config.BJ).Format("[01-02 15:04] ")
 		if m.Role == "tool" {
 			// FlashClient 不支持 role="tool"，包装成 user 消息
 			msgs = append(msgs, llm.Message{
 				Role:    "user",
-				Content: "[工具执行结果] " + m.Content,
+				Content: ts + "[工具执行结果] " + m.Content,
 			})
 		} else {
-			msg := llm.Message{Role: m.Role, Content: m.Content}
+			msg := llm.Message{Role: m.Role, Content: ts + m.Content}
 			if m.ReasoningContent != nil {
 				msg.ReasoningContent = *m.ReasoningContent
 			}
@@ -599,7 +601,8 @@ func BuildMessagesForFlash(history []model.Message) []llm.Message {
 func BuildMessagesForPro(history []model.Message) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
-		msg := llm.Message{Role: m.Role, Content: m.Content}
+		ts := m.CreatedAt.In(config.BJ).Format("[01-02 15:04] ")
+		msg := llm.Message{Role: m.Role, Content: ts + m.Content}
 		if m.ReasoningContent != nil {
 			msg.ReasoningContent = *m.ReasoningContent
 		}

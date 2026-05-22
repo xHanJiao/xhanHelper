@@ -3,6 +3,8 @@ package tool
 import (
 	"encoding/json"
 	"time"
+
+	"xhan-helper/internal/config"
 )
 
 // DatetimeTool — 获取当前日期时间
@@ -23,7 +25,7 @@ func (t *DatetimeTool) Functions() []FuncSchema {
 }
 
 func (t *DatetimeTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
-	now := time.Now()
+	now := time.Now().In(config.BJ)
 	data, _ := json.Marshal(map[string]string{
 		"datetime": now.Format("2006-01-02 15:04:05"),
 		"date":     now.Format("2006-01-02"),

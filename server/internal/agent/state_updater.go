@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -81,7 +82,7 @@ func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, convI
 		if m.Role == "tool" {
 			continue
 		}
-		sb += fmt.Sprintf("[%s]: %s\n", m.CreatedAt.Format("2006-01-02 15:04"), m.Content)
+		sb += fmt.Sprintf("[%s]: %s\n", m.CreatedAt.In(config.BJ).Format("2006-01-02 15:04"), m.Content)
 	}
 	if sb == "" {
 		return nil

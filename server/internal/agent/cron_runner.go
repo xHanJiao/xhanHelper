@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
@@ -117,7 +118,7 @@ func (cr *CronRunner) GetHookStatus() HookStatus {
 			s.PendingDelayedTasks = n
 		}
 		if earliest, err := cr.delayedTaskRepo.EarliestPending(context.Background()); err == nil && !earliest.IsZero() {
-			s.NextDelayedTaskAt = earliest.In(time.FixedZone("UTC+8", 8*3600)).Format("15:04:05")
+			s.NextDelayedTaskAt = earliest.In(config.BJ).Format("15:04:05")
 		}
 	}
 	s.DeliverRemaining = cr.deliverNext.Sub(now).Round(time.Second).String()
@@ -146,7 +147,7 @@ func (cr *CronRunner) NotifyChatEnd(userID, convID string) {
 				if err := cr.delayedTaskRepo.UpdateProcessAt(context.Background(), t.ID, newTime); err != nil {
 					log.Printf("[cron] UpdateProcessAt error: %v", err)
 				} else {
-					log.Printf("[cron] delayed task debounced: id=%s new_process_at=%s", t.ID[:8], newTime.Format("15:04:05"))
+					log.Printf("[cron] delayed task debounced: id=%s new_process_at=%s", t.ID[:8], newTime.In(config.BJ).Format("15:04:05"))
 				}
 				return
 			}
@@ -167,7 +168,7 @@ func (cr *CronRunner) NotifyChatEnd(userID, convID string) {
 	if err := cr.delayedTaskRepo.Create(context.Background(), job); err != nil {
 		log.Printf("[cron] create delayed task error: %v", err)
 	} else {
-		log.Printf("[cron] delayed task created: id=%s process_at=%s", job.ID[:8], job.ProcessAt.Format("15:04:05"))
+		log.Printf("[cron] delayed task created: id=%s process_at=%s", job.ID[:8], job.ProcessAt.In(config.BJ).Format("15:04:05"))
 	}
 }
 

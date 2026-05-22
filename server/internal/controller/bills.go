@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
@@ -164,8 +165,8 @@ func (h *BillHandler) ExportBills(c *gin.Context) {
 
 	// 默认最近7天
 	if startDate == "" && endDate == "" {
-		endDate = time.Now().Format("2006-01-02")
-		startDate = time.Now().AddDate(0, 0, -7).Format("2006-01-02")
+		endDate = time.Now().In(config.BJ).Format("2006-01-02")
+		startDate = time.Now().In(config.BJ).AddDate(0, 0, -7).Format("2006-01-02")
 	}
 
 	bills, _, err := h.billRepo.ListFiltered(c.Request.Context(), userID, startDate, endDate, category, 10000, 0)
@@ -185,7 +186,7 @@ func (h *BillHandler) ExportBills(c *gin.Context) {
 			b.ConsumeType, strings.ReplaceAll(b.Date, "-", "/"), b.PayType, b.Owner, b.Remark))
 	}
 
-	filename := fmt.Sprintf("xhan-helper-bills-%s.csv", time.Now().Format("2006-01-02"))
+	filename := fmt.Sprintf("xhan-helper-bills-%s.csv", time.Now().In(config.BJ).Format("2006-01-02"))
 	c.Header("Content-Type", "text/csv; charset=utf-8")
 	c.Header("Content-Disposition", "attachment; filename="+filename)
 	c.String(200, sb.String())

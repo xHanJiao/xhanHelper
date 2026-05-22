@@ -304,8 +304,6 @@ function handleSelect(conv) {
       >
         <div style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
           {{ conv.title }}
-          <span v-if="conv.agent_id" :title="'智能体: ' + (conv.agent_name || conv.agent_id)" style="cursor: default;"> 🤖</span>
-          <span v-if="conv.theme_title" title="关联主题: {{ conv.theme_title }}" style="cursor: default;"> 📝</span>
         </div>
         <div v-if="hoveredId === conv.id" style="display: flex; gap: var(--space-xs); flex-shrink: 0;">
           <button @click.stop="handleRename(conv)" style="padding: var(--space-xs); border: none; background: none; cursor: pointer; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center;" @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'" @mouseout="e => e.currentTarget.style.background = 'none'">

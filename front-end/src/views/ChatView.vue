@@ -176,8 +176,8 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
       } else {
         chat.setMessages(msgs)
       }
-      chat.oldestCursor = res.oldestCursor
-      chat.hasMoreBefore = res.hasMoreBefore
+      chat.oldestCursor = res.oldest_cursor
+      chat.hasMoreBefore = res.has_more_before
       // 批量获取关联记忆详情
       fetchAssociatedMemories()
     }

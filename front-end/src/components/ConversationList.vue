@@ -93,9 +93,7 @@ watch(() => auth.token, (token) => {
 }, { immediate: true })
 
 function handleNewConversation() {
-  if (route.path === '/chat' && !route.params.id) {
-    chat.reset()
-  }
+  chat.reset()
   router.push('/chat')
 }
 

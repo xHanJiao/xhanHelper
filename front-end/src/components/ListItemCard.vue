@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useMobile } from '@/composables/useMobile'
+import MarkdownIt from 'markdown-it'
 import {
   NCard,
   NButton,
@@ -10,6 +11,12 @@ import {
   NTag,
   NModal
 } from 'naive-ui'
+
+const md = new MarkdownIt({
+  html: false,
+  breaks: true,
+  linkify: true
+})
 
 const props = defineProps({
   title: {
@@ -43,7 +50,18 @@ const props = defineProps({
   maxContentHeight: {
     type: String,
     default: '120px'
+  },
+  contentType: {
+    type: String,
+    default: 'text'
   }
+})
+
+const renderedContent = computed(() => {
+  if (props.contentType === 'markdown') {
+    return md.render(props.content || '')
+  }
+  return ''
 })
 
 const { isMobile } = useMobile()
@@ -146,9 +164,8 @@ function handleDropdownSelect(key) {
       :style="{ maxHeight: expanded ? 'none' : maxContentHeight }"
       @click="content.length > 120 && (expanded = !expanded)"
     >
-      <div class="card-content">
-        {{ content }}
-      </div>
+      <div v-if="contentType === 'markdown'" class="card-content markdown-body" v-html="renderedContent"></div>
+      <div v-else class="card-content">{{ content }}</div>
       <div v-if="content.length > 120 && !expanded" class="content-fade"></div>
       <div v-if="content.length > 120" class="expand-hint">
         {{ expanded ? '↑' : '↓' }}
@@ -312,5 +329,78 @@ function handleDropdownSelect(key) {
   font-size: 12px;
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* Markdown body styles */
+.markdown-body {
+  white-space: normal;
+  line-height: 1.8;
+}
+
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3) {
+  margin-top: 0.8em;
+  margin-bottom: 0.4em;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.markdown-body :deep(h1) { font-size: 1.4em; }
+.markdown-body :deep(h2) { font-size: 1.2em; }
+.markdown-body :deep(h3) { font-size: 1.05em; }
+
+.markdown-body :deep(p) {
+  margin: 0.4em 0;
+}
+
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  padding-left: 1.5em;
+  margin: 0.4em 0;
+}
+
+.markdown-body :deep(code) {
+  background: var(--color-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.markdown-body :deep(pre) {
+  background: var(--color-bg);
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.markdown-body :deep(pre code) {
+  background: none;
+  padding: 0;
+}
+
+.markdown-body :deep(blockquote) {
+  margin: 0.5em 0;
+  padding-left: 1em;
+  border-left: 3px solid var(--color-primary);
+  color: var(--color-text-muted);
+}
+
+.markdown-body :deep(table) {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  width: 100%;
+}
+
+.markdown-body :deep(th),
+.markdown-body :deep(td) {
+  border: 1px solid var(--color-border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.markdown-body :deep(th) {
+  background: var(--color-bg);
+  font-weight: 600;
 }
 </style>

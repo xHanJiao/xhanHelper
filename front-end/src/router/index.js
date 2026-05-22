@@ -58,6 +58,11 @@ const routes = [
     component: () => import('@/views/MailboxView.vue')
   },
   {
+    path: '/documents',
+    name: 'Documents',
+    component: () => import('@/views/DocumentsView.vue')
+  },
+  {
     path: '/admin',
     name: 'Admin',
     component: () => import('@/views/AdminView.vue')

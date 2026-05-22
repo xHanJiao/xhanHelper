@@ -79,6 +79,7 @@ func main() {
 		&model.PendingFinding{},
 		&model.Commitment{},
 		&model.DelayedTask{},
+		&model.Document{},
 	); err != nil {
 		log.Printf("[db] AutoMigrate error: %v", err)
 	}
@@ -114,13 +115,14 @@ func main() {
 	pendingFindingRepo := service.NewPendingFindingRepo(db)
 	commitmentRepo := service.NewCommitmentRepo(db)
 	delayedTaskRepo := service.NewDelayedTaskRepo(db)
+	docRepo := service.NewDocumentRepo(db)
 
 	// Tool Registry + Tools
 	reg := tool.NewRegistry()
 	reg.Register(tool.NewLoggingWrapper(tool.NewBookkeepingTool(billRepo), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewDatetimeTool(), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewCalculatorTool(), log.Default()))
-	reg.Register(tool.NewLoggingWrapper(tool.NewMarkdownTool("data/markdown"), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewDocumentTool(docRepo), log.Default()))
 
 	// Vector Store
 	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
@@ -297,20 +299,6 @@ func main() {
 		OnChatEnd:      func(userID, convID string) { cronRunner.NotifyChatEnd(userID, convID) },
 	})
 
-	// Markdown 文件定期清理（每小时清理超过 1h 的文件）
-	go func() {
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				tool.CleanOldMarkdownFiles("data/markdown", 1*time.Hour)
-			case <-bgCtx.Done():
-				return
-			}
-		}
-	}()
-
 	// 启动反思调度器
 	go cronRunner.Start(bgCtx)
 
@@ -324,7 +312,6 @@ func main() {
 	monitor.Register("vector_store", snapshots.VectorStore)
 	monitor.Register("mcp", snapshots.MCP)
 	monitor.Register("active_conversations", snapshots.ActiveConversations)
-	monitor.Register("markdown_files", snapshots.MarkdownFiles)
 	monitor.Register("themes", snapshots.Themes)
 
 	// MCP idle reaper
@@ -337,6 +324,7 @@ func main() {
 	agentHandler := controller.NewAgentHandler(agentRepo, llmClient)
 	toolHandler := controller.NewToolHandler(toolRepo)
 	promptHandler := controller.NewPromptHandler(promptRepo)
+	docHandler := controller.NewDocumentHandler(docRepo)
 	mailboxService := service.NewMailboxService(mailboxRepo, themeStateRepo)
 	mailboxHandler := controller.NewMailboxHandler(mailboxService, mailboxRepo, convRepo, themeStateRepo, msgRepo)
 	themeHandler := controller.NewThemeHandler(themeStateRepo)
@@ -356,6 +344,7 @@ func main() {
 		AgentHandler:    agentHandler,
 		ToolHandler:     toolHandler,
 		PromptHandler:   promptHandler,
+		DocumentHandler: docHandler,
 		MemExtr:         memExtractor,
 		ExtraMiddleware: []gin.HandlerFunc{middleware.RequestLogger(log.Default())},
 	})

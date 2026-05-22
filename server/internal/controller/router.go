@@ -25,6 +25,7 @@ type RouterConfig struct {
 	AgentHandler    *AgentHandler
 	ToolHandler     *ToolHandler
 	PromptHandler   *PromptHandler
+	DocumentHandler *DocumentHandler
 	MemExtr         *agent.MemoryExtractor
 	ExtraMiddleware []gin.HandlerFunc
 }
@@ -48,8 +49,6 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	// 无需认证 — 账号注册/登录
 	r.POST("/api/auth/register", registerUser(rc.UserRepo, rc.Cfg.Server.RegistrationEnabled, rc.Cfg.Server.AllowedUsers, rc.Cfg.Server.AdminUsers))
 	r.POST("/api/auth/login", loginUser(rc.UserRepo, rc.Cfg.Server.AdminUsers))
-	r.GET("/api/files/:filename", downloadMarkdown("data/markdown"))
-
 	// 需要认证
 	auth := r.Group("/api")
 	auth.Use(middleware.Auth(rc.UserRepo))
@@ -88,6 +87,9 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.POST("/prompts", rc.PromptHandler.CreatePrompt)
 		auth.POST("/prompts/:id/rollback", rc.PromptHandler.RollbackPrompt)
 		auth.DELETE("/prompts/:id", rc.PromptHandler.DeletePrompt)
+		auth.GET("/documents", rc.DocumentHandler.ListDocuments)
+		auth.GET("/documents/:id", rc.DocumentHandler.GetDocument)
+		auth.DELETE("/documents/:id", rc.DocumentHandler.DeleteDocument)
 	}
 
 	// 管理员路由

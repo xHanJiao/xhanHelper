@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
-	"strings"
 	"time"
 
 	"xhan-helper/internal/agent"
@@ -41,18 +39,6 @@ func (p *SnapshotProvider) ActiveConversations() any {
 		return 0
 	}
 	return p.convRepo.CountActive(context.Background(), time.Hour)
-}
-
-// MarkdownFiles 未清理的 markdown 文件数
-func (p *SnapshotProvider) MarkdownFiles() any {
-	entries, _ := os.ReadDir("data/markdown")
-	count := 0
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-			count++
-		}
-	}
-	return map[string]interface{}{"count": count}
 }
 
 // Themes 主题追踪统计

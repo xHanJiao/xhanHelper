@@ -135,6 +135,7 @@ async function handleDelete(agent) {
 
 async function handleStartChat(agent) {
   chat.agentId = agent.id
+  chat.agentName = agent.name
   router.push('/chat')
 }
 

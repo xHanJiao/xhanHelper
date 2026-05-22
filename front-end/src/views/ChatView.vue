@@ -324,8 +324,10 @@ watch(() => route.params.id, async (newId, oldId) => {
   } else if (!newId) {
     if (chat.isStreaming) cancel()
     const savedAgentId = chat.agentId
+    const savedAgentName = chat.agentName
     chat.reset()
     chat.agentId = savedAgentId
+    chat.agentName = savedAgentName
     fetchLlmConfig()
   }
 }, { immediate: true })

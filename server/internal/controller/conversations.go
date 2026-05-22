@@ -180,25 +180,83 @@ func deleteMessage(msgRepo *service.MessageRepo, convRepo *service.ConversationR
 	}
 }
 
-func renameConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
+func renameConversation(convRepo *service.ConversationRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
 		if !requireConversationOwner(c, convRepo, convID) {
 			return
 		}
 		var req struct {
-			Title string `json:"title"`
+			Title   string          `json:"title"`
+			AgentID json.RawMessage `json:"agent_id,omitempty"`
 		}
-		if err := c.ShouldBindJSON(&req); err != nil || req.Title == "" {
-			view.JSONError(c, 400, "invalid title")
+		if err := c.ShouldBindJSON(&req); err != nil {
+			view.JSONError(c, 400, "invalid request")
 			return
 		}
-		if err := convRepo.Rename(c.Request.Context(), convID, req.Title); err != nil {
-			log.Printf("[conv] Rename error: %v", err)
-			view.JSONError(c, 500, "rename failed")
+
+		userID := c.GetString("user_id")
+		resp := gin.H{"id": convID}
+		updated := false
+
+		// 处理 agent_id
+		if len(req.AgentID) > 0 {
+			agentIDStr := string(req.AgentID)
+			if agentIDStr == "null" {
+				if err := convRepo.UpdateAgentID(c.Request.Context(), convID, nil); err != nil {
+					log.Printf("[conv] UpdateAgentID (unbind) error: %v", err)
+					view.JSONError(c, 500, "update agent_id failed")
+					return
+				}
+				resp["agent_id"] = nil
+				resp["agent_name"] = ""
+				updated = true
+			} else {
+				var agentID string
+				if err := json.Unmarshal(req.AgentID, &agentID); err != nil || agentID == "" {
+					view.JSONError(c, 400, "invalid agent_id")
+					return
+				}
+				if agentRepo != nil {
+					agents, err := agentRepo.FindByIDs(c.Request.Context(), []string{agentID})
+					if err != nil || len(agents) == 0 {
+						log.Printf("[conv] agent not found: id=%s err=%v", agentID, err)
+						view.JSONError(c, 400, "agent not found")
+						return
+					}
+					if agents[0].UserID != userID {
+						view.JSONError(c, 403, "access denied")
+						return
+					}
+					resp["agent_name"] = agents[0].Name
+				}
+				if err := convRepo.UpdateAgentID(c.Request.Context(), convID, &agentID); err != nil {
+					log.Printf("[conv] UpdateAgentID error: %v", err)
+					view.JSONError(c, 500, "update agent_id failed")
+					return
+				}
+				resp["agent_id"] = agentID
+				updated = true
+			}
+		}
+
+		// 处理 title
+		if req.Title != "" {
+			if err := convRepo.Rename(c.Request.Context(), convID, req.Title); err != nil {
+				log.Printf("[conv] Rename error: %v", err)
+				view.JSONError(c, 500, "rename failed")
+				return
+			}
+			resp["title"] = req.Title
+			updated = true
+		}
+
+		if !updated {
+			view.JSONError(c, 400, "nothing to update")
 			return
 		}
-		view.JSONOK(c, gin.H{"id": convID, "title": req.Title})
+
+		view.JSONOK(c, resp)
 	}
 }
 

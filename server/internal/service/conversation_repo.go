@@ -90,6 +90,12 @@ func (r *ConversationRepo) SetAgentID(ctx context.Context, convID, agentID strin
 		Update("agent_id", agentID).Error
 }
 
+// UpdateAgentID 更新或清空会话的 agent_id（支持切换和解绑）
+func (r *ConversationRepo) UpdateAgentID(ctx context.Context, convID string, agentID *string) error {
+	return r.db.WithContext(ctx).Model(&model.Conversation{}).
+		Where("id = ?", convID).Update("agent_id", agentID).Error
+}
+
 // CountActive 统计指定时间段内有活动的会话数
 func (r *ConversationRepo) CountActive(ctx context.Context, since time.Duration) int {
 	var count int64

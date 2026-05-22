@@ -40,6 +40,15 @@ export const useConversationsStore = defineStore('conversations', () => {
     }
   }
 
+  // 更新会话绑定的智能体
+  function updateAgent(id, agentId, agentName) {
+    const conv = list.value.find(c => c.id === id)
+    if (conv) {
+      conv.agent_id = agentId || null
+      conv.agent_name = agentName || ''
+    }
+  }
+
   // 重命名会话
   async function rename(id, title) {
     try {
@@ -71,6 +80,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     fetchList,
     prepend,
     updateTitle,
+    updateAgent,
     rename,
     remove
   }

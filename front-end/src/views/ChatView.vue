@@ -34,6 +34,7 @@ const { isIOS } = useDevice()
 
 onMounted(() => {
   fetchLlmConfig()
+  fetchAgents()
 })
 
 const inputValue = ref('')
@@ -118,6 +119,42 @@ watch(() => chat.llmParams, (params) => {
     }
   }
 })
+
+// 智能体列表（用于切换/解绑）
+const agentsList = ref([])
+
+async function fetchAgents() {
+  try {
+    const res = await api.get('/api/agents')
+    agentsList.value = (res.agents || []).map(a => ({ id: a.id, name: a.name }))
+  } catch (e) {
+    console.error('Failed to fetch agents', e)
+  }
+}
+
+async function handleSelectAgent(agentId) {
+  const convId = chat.conversationId
+  if (!convId) return
+
+  try {
+    const body = { agent_id: agentId }
+    const res = await api.patch(`/api/conversations/${convId}`, body)
+    const newAgentId = res.agent_id || null
+    const newAgentName = res.agent_name || ''
+
+    // 更新 conversations store（列表和当前会话）
+    convs.updateAgent(convId, newAgentId, newAgentName)
+
+    // 更新 chat store
+    chat.agentId = newAgentId
+    chat.agentName = newAgentName
+
+    // 刷新 LLM 配置
+    fetchLlmConfig()
+  } catch (e) {
+    console.error('Failed to update agent binding', e)
+  }
+}
 
 const currentTitle = computed(() => {
   const conv = convs.list.find(c => c.id === chat.conversationId)
@@ -425,9 +462,9 @@ function handleContainerClick(e) {
 
 <template>
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
-    <PageTopBar :title="currentTitle" :agent-id="currentAgentId" :agent-name="currentAgentName" :visible="!isMobile || isBarVisible" >
+    <PageTopBar :title="currentTitle" :agent-id="currentAgentId" :agent-name="currentAgentName" :visible="!isMobile || isBarVisible" :agents="agentsList" @select-agent="handleSelectAgent" @popover-open="fetchAgents" >
       <template #right>
-        <TopBarBtn :label="theme.isDark ? '浅色' : '深色'" @click="theme.toggle()" />
+        <TopBarBtn :label="theme.isDark ? '浅色' : '深色'" variant="pill" @click="theme.toggle()" />
       </template>
     </PageTopBar>
 

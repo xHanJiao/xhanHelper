@@ -60,7 +60,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.GET("/conversations/:id/messages", getMessages(rc.ConvRepo, rc.MsgRepo))
 		auth.GET("/conversations/:id/messages-v2", getMessagesCursor(rc.MsgRepo, rc.ConvRepo))
 		auth.DELETE("/conversations/:id/messages/:msgId", deleteMessage(rc.MsgRepo, rc.ConvRepo))
-		auth.PATCH("/conversations/:id", renameConversation(rc.ConvRepo))
+		auth.PATCH("/conversations/:id", renameConversation(rc.ConvRepo, rc.AgentRepo))
 		auth.DELETE("/conversations/:id", deleteConversation(rc.ConvRepo))
 		auth.POST("/conversations/:id/extract-memories", extractMemories(rc.ConvRepo, rc.MemExtr))
 		auth.POST("/conversations/:id/extract-memories/stream", extractMemoriesStream(rc.ConvRepo, rc.MemExtr))

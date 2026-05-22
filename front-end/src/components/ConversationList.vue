@@ -66,7 +66,8 @@ const historyExpanded = ref(true)
 const navItems = [
   { label: '账单', path: '/bills' },
   { label: '智能体', path: '/agents' },
-  { label: '信箱', path: '/mailbox' }
+  { label: '信箱', path: '/mailbox' },
+  { label: '文档', path: '/documents' }
 ]
 
 const userInfoItems = [

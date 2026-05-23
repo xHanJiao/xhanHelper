@@ -24,7 +24,7 @@ func NewNoteSource(vs *VectorStore, noteRepo *service.NoteRepo, embeddingRepo *s
 
 func (s *NoteSource) Name() string { return "note" }
 
-func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, userID, convID string,
+func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
 	threshold float64, limit int) ([]ContextPacket, error) {
 	if s.vectorStore == nil || s.noteRepo == nil {
 		return nil, nil
@@ -37,16 +37,28 @@ func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, userID, conv
 		return nil, nil
 	}
 
-	var noteIDs []string
+	type hit struct {
+		id    string
+		score float64
+	}
+	var hits []hit
 	for _, res := range results {
 		if res.Score < threshold || !strings.HasPrefix(res.ID, "note:") {
 			continue
 		}
-		noteIDs = append(noteIDs, strings.TrimPrefix(res.ID, "note:"))
+		id := strings.TrimPrefix(res.ID, "note:")
+		hits = append(hits, hit{id: id, score: res.Score})
 		log.Printf("[vector] note hit: id=%s, score=%.4f", res.ID, res.Score)
 	}
-	if len(noteIDs) == 0 {
+	if len(hits) == 0 {
 		return nil, nil
+	}
+
+	noteIDs := make([]string, len(hits))
+	scoreMap := make(map[string]float64, len(hits))
+	for i, h := range hits {
+		noteIDs[i] = h.id
+		scoreMap[h.id] = h.score
 	}
 
 	notes, err := s.noteRepo.GetByIDs(ctx, noteIDs)
@@ -54,15 +66,27 @@ func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, userID, conv
 		return nil, nil
 	}
 
-	packets := make([]ContextPacket, 0, len(notes))
+	inputs := make([]scoreInput, len(notes))
+	noteByID := make(map[string]model.Note, len(notes))
 	for i, n := range notes {
+		inputs[i] = scoreInput{ID: n.ID, Content: n.Content, CreatedAt: n.CreatedAt, VectorScore: scoreMap[n.ID]}
+		noteByID[n.ID] = n
+	}
+	// decayRate=0：笔记不做时间衰减
+	scored := scoreItems(query, inputs, 0)
+
+	packets := make([]ContextPacket, 0, len(scored))
+	for i, sc := range scored {
+		n := noteByID[sc.ID]
 		text := fmt.Sprintf("- [%s] %s\n", n.Topic, n.Content)
 		if i == 0 {
 			text = "===== 相关笔记 =====\n" + text
 		}
 		packets = append(packets, ContextPacket{
-			ID:   n.ID,
-			Text: text,
+			ID:           sc.ID,
+			Text:         text,
+			Score:        sc.VectorScore,
+			KeywordScore: sc.KeywordScore,
 		})
 	}
 	return packets, nil

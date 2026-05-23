@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 
 	"xhan-helper/internal/config"
@@ -17,15 +18,19 @@ type MemorySource struct {
 	vectorStore   *VectorStore
 	memRepo       *service.UserMemoryRepo
 	embeddingRepo *service.EmbeddingRepo
+	decayRate     float64
 }
 
-func NewMemorySource(vs *VectorStore, memRepo *service.UserMemoryRepo, embeddingRepo *service.EmbeddingRepo) *MemorySource {
-	return &MemorySource{vectorStore: vs, memRepo: memRepo, embeddingRepo: embeddingRepo}
+func NewMemorySource(vs *VectorStore, memRepo *service.UserMemoryRepo, embeddingRepo *service.EmbeddingRepo, decayRate float64) *MemorySource {
+	if decayRate <= 0 {
+		decayRate = 0.02
+	}
+	return &MemorySource{vectorStore: vs, memRepo: memRepo, embeddingRepo: embeddingRepo, decayRate: decayRate}
 }
 
 func (s *MemorySource) Name() string { return "memory" }
 
-func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, userID, convID string,
+func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
 	threshold float64, limit int) ([]ContextPacket, error) {
 	if s.vectorStore == nil || s.memRepo == nil {
 		return nil, nil
@@ -38,16 +43,29 @@ func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, userID, co
 		return nil, nil
 	}
 
-	var memIDs []string
+	// 收集通过阈值的记忆 ID 和向量分
+	type hit struct {
+		id          string
+		vectorScore float64
+	}
+	var hits []hit
 	for _, res := range results {
 		if res.Score < threshold || !strings.HasPrefix(res.ID, "mem:") {
 			continue
 		}
-		memIDs = append(memIDs, strings.TrimPrefix(res.ID, "mem:"))
+		id := strings.TrimPrefix(res.ID, "mem:")
+		hits = append(hits, hit{id: id, vectorScore: res.Score})
 		log.Printf("[vector] memory hit: id=%s, score=%.4f", res.ID, res.Score)
 	}
-	if len(memIDs) == 0 {
+	if len(hits) == 0 {
 		return nil, nil
+	}
+
+	memIDs := make([]string, len(hits))
+	scoreMap := make(map[string]float64, len(hits))
+	for i, h := range hits {
+		memIDs[i] = h.id
+		scoreMap[h.id] = h.vectorScore
 	}
 
 	memories, err := s.memRepo.GetByIDs(ctx, memIDs)
@@ -62,8 +80,17 @@ func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, userID, co
 		}
 	}()
 
-	packets := make([]ContextPacket, 0, len(memories))
+	inputs := make([]scoreInput, len(memories))
+	memByID := make(map[string]model.UserMemory, len(memories))
 	for i, m := range memories {
+		inputs[i] = scoreInput{ID: m.ID, Content: m.MemoryValue, CreatedAt: m.CreatedAt, VectorScore: scoreMap[m.ID]}
+		memByID[m.ID] = m
+	}
+	scored := scoreItems(query, inputs, s.decayRate)
+
+	packets := make([]ContextPacket, 0, len(scored))
+	for idx, sc := range scored {
+		m := memByID[sc.ID]
 		var text string
 		topicPart := ""
 		if m.Topic != "" {
@@ -75,12 +102,16 @@ func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, userID, co
 			m.MemoryValue,
 			m.ConfirmCount,
 			m.LastConfirmedAt.In(config.BJ).Format("01-02"))
-		if i == 0 {
+		if idx == 0 {
 			text = "===== 相关记忆 =====\n" + text
 		}
 		packets = append(packets, ContextPacket{
-			ID:   m.ID,
-			Text: text,
+			ID:                     sc.ID,
+			Text:                   text,
+			Score:                  sc.VectorScore,
+			KeywordScore:           sc.KeywordScore,
+			CorrelationCoefficient: sc.FinalScore,
+			TokenCount:             int(math.Round(sc.Freshness * 100)),
 		})
 	}
 	return packets, nil

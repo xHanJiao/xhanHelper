@@ -26,6 +26,7 @@ type Config struct {
 	LLM        LLMConfig        `yaml:"llm"`
 	Embedding  EmbeddingConfig  `yaml:"embedding"`
 	Reflection ReflectionConfig `yaml:"reflection"`
+	Retrieval  RetrievalConfig  `yaml:"retrieval"`
 	Snowflake  SnowflakeConfig  `yaml:"snowflake"`
 	MCP        MCPConfig        `yaml:"mcp"`
 }
@@ -104,6 +105,11 @@ type EmbeddingConfig struct {
 	BaseURL             string `yaml:"base_url"`              // 默认 https://ark.cn-beijing.volces.com
 	Model               string `yaml:"model"`                 // 默认 doubao-embedding
 	EnableHistorySearch bool   `yaml:"enable_history_search"` // 是否检索历史对话
+}
+
+// RetrievalConfig — 记忆检索配置
+type RetrievalConfig struct {
+	DecayRate float64 `yaml:"decay_rate"` // 时间衰减系数，默认 0.02
 }
 
 // ReflectionConfig — 反思系统配置
@@ -256,6 +262,9 @@ func merge(dst, src *Config) {
 	if src.Snowflake.NodeID != 0 {
 		dst.Snowflake.NodeID = src.Snowflake.NodeID
 	}
+	if src.Retrieval.DecayRate != 0 {
+		dst.Retrieval.DecayRate = src.Retrieval.DecayRate
+	}
 	if src.Reflection.LaunchMaxIterations != 0 {
 		dst.Reflection.LaunchMaxIterations = src.Reflection.LaunchMaxIterations
 	}
@@ -319,6 +328,10 @@ func validate(cfg *Config) error {
 		cfg.Snowflake.NodeID = 1
 	}
 	// Reflection 默认值
+	// Retrieval 默认值
+	if cfg.Retrieval.DecayRate == 0 {
+		cfg.Retrieval.DecayRate = 0.02
+	}
 	if cfg.Reflection.LaunchMaxIterations == 0 {
 		cfg.Reflection.LaunchMaxIterations = 8
 	}

@@ -17,7 +17,7 @@ func NewRetriever(sources ...ContextSource) *Retriever {
 }
 
 // Retrieve 遍历所有数据源，汇总 ContextPacket，返回记忆 ID 列表
-func (r *Retriever) Retrieve(ctx context.Context, queryVec []float64, userID, convID string,
+func (r *Retriever) Retrieve(ctx context.Context, queryVec []float64, query, userID, convID string,
 	deepMode bool, threshold float64, limit int) ([]ContextPacket, []string, []string) {
 
 	if limit <= 0 {
@@ -34,7 +34,7 @@ func (r *Retriever) Retrieve(ctx context.Context, queryVec []float64, userID, co
 		if src.Name() == "note" && !deepMode {
 			continue
 		}
-		packets, err := src.Fetch(ctx, queryVec, userID, convID, threshold, limit)
+		packets, err := src.Fetch(ctx, queryVec, query, userID, convID, threshold, limit)
 		if err != nil {
 			log.Printf("[retriever] %s fetch error: %v", src.Name(), err)
 			continue

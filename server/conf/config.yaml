@@ -44,6 +44,9 @@ snowflake:
   node_id: 1
   datacenter_id: 1
 
+retrieval:
+  decay_rate: 0.02        # 时间衰减系数，越大旧记忆权重越低
+
 mcp:
   max_concurrent: 2
   servers:

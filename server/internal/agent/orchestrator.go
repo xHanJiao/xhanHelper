@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -31,7 +32,9 @@ const baseSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职
 
 你也是用户的一面数字镜子——通过记忆和笔记了解用户的偏好、价值观、过往决定，当用户当下的选择与过去的自己背离时，温和地提醒。不是你在教育用户，而是过去的用户在提醒现在的用户，帮助做到知行合一。
 
-` + corePrinciples
+` + corePrinciples + `
+
+注意：历史消息中的 [MM-DD HH:MM] 前缀是系统自动添加的时间戳，不是对话内容。你回复时不要模仿这个格式。`
 
 const defaultMaxIterations = 8
 
@@ -135,7 +138,7 @@ func (o *Orchestrator) FlashClient() llm.LLMClient {
 func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.StreamEvent, error) {
 
 	client := o.pickClient(req)
-	sysPrompt, memoryNote, memIDs, noteIDs, queryVec := o.buildSysPrompt(ctx, req)
+	sysPrompt, memoryNote, memIDs, noteIDs, queryVec, packets := o.buildSysPrompt(ctx, req)
 
 	log.Printf("[orch] run start: model=%s, msgs=%d", client.ModelName(), len(req.Messages))
 
@@ -143,7 +146,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	copy(msgs, req.Messages)
 
 	events := make(chan *llm.StreamEvent, 512)
-	go o.runReActLoop(ctx, events, client, sysPrompt, memoryNote, memIDs, noteIDs, queryVec, msgs, req)
+	go o.runReActLoop(ctx, events, client, sysPrompt, memoryNote, memIDs, noteIDs, queryVec, msgs, req, packets)
 	return events, nil
 }
 
@@ -154,7 +157,7 @@ func (o *Orchestrator) pickClient(req *RunRequest) llm.LLMClient {
 	return o.flashClient
 }
 
-func (o *Orchestrator) buildSysPrompt(ctx context.Context, req *RunRequest) (string, string, []string, []string, []float64) {
+func (o *Orchestrator) buildSysPrompt(ctx context.Context, req *RunRequest) (string, string, []string, []string, []float64, []ContextPacket) {
 	sysPrompt := req.AgentSystemPrompt
 	if sysPrompt == "" {
 		sysPrompt = baseSystemPrompt
@@ -215,26 +218,26 @@ func (o *Orchestrator) buildSysPrompt(ctx context.Context, req *RunRequest) (str
 	}
 
 	if o.retriever == nil || o.embedder == nil {
-		return sysPrompt, "", nil, nil, nil
+		return sysPrompt, "", nil, nil, nil, nil
 	}
 	if req.SkipMemory {
 		log.Printf("[orch] skip memory retrieval (SkipMemory=true)")
-		return sysPrompt, "", nil, nil, nil
+		return sysPrompt, "", nil, nil, nil, nil
 	}
 	embStart := time.Now()
 	vec, err := o.embedder.Embed(ctx, req.UserMessageContent)
 	monitor.RecordEmbedding(time.Since(embStart).Milliseconds())
 	if err != nil {
 		log.Printf("[vector] embed user msg error: %v", err)
-		return sysPrompt, "", nil, nil, nil
+		return sysPrompt, "", nil, nil, nil, nil
 	}
-	packets, memIDs, noteIDs := o.retriever.Retrieve(ctx, vec, req.UserID, req.ConversationID, req.DeepMode, req.MemoryThreshold, req.MemoryLimit)
+	packets, memIDs, noteIDs := o.retriever.Retrieve(ctx, vec, req.UserMessageContent, req.UserID, req.ConversationID, req.DeepMode, req.MemoryThreshold, req.MemoryLimit)
 	memText := o.retriever.FormatContext(packets)
 	if memText == "" {
-		return sysPrompt, "", nil, noteIDs, vec
+		return sysPrompt, "", nil, noteIDs, vec, packets
 	}
 	sysPrompt += "\n\n===== 关于用户的信息 =====\n" + memText
-	return sysPrompt, fmt.Sprintf(`{"message":"已关联向量记忆","count":%d}`, len(packets)), memIDs, noteIDs, vec
+	return sysPrompt, fmt.Sprintf(`{"message":"已关联向量记忆","count":%d}`, len(packets)), memIDs, noteIDs, vec, packets
 }
 
 // —— ReAct 主循环 ——
@@ -248,6 +251,7 @@ func (o *Orchestrator) runReActLoop(
 	queryVec []float64,
 	msgs []llm.Message,
 	req *RunRequest,
+	packets []ContextPacket,
 ) {
 	defer close(events)
 	defer func() {
@@ -267,19 +271,14 @@ func (o *Orchestrator) runReActLoop(
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: "conversation_id is required"})
 		return
 	}
-	var mIDs *string
-	if len(memIDs) > 0 {
-		b, _ := json.Marshal(memIDs)
-		s := string(b)
-		mIDs = &s
-	}
+	extraJSON := buildRetrievalScores(packets)
 	if err := o.msgRepo.Create(ctx, &model.Message{
 		ID:             userMsgID,
 		ConversationID: req.ConversationID,
 		UserID:         req.UserID,
 		Role:           "user",
 		Content:        req.UserMessageContent,
-		MemoryIDs:      mIDs,
+		Extra:          extraJSON,
 	}); err != nil {
 		log.Printf("[orch] save user msg error: %v", err)
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: "failed to save message"})
@@ -380,7 +379,7 @@ func (o *Orchestrator) runReActLoop(
 					iter+1, len(msg.Content), len(msg.ReasoningContent), len(msg.ToolCalls))
 
 				var done bool
-				done, lastAssistantMsgID = o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID)
+				done, lastAssistantMsgID = o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID, memIDs)
 				if done {
 					if len(allToolCalls) >= 2 {
 						planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
@@ -423,6 +422,7 @@ func (o *Orchestrator) handleFlashResponse(
 	req *RunRequest,
 	allToolCalls *[]tool.ToolCall,
 	lastMsgID *string,
+	memIDs []string,
 ) (bool, string) {
 	parsed := parseLLMResponse(msg.Content)
 
@@ -442,6 +442,13 @@ func (o *Orchestrator) handleFlashResponse(
 
 	*msgs = append(*msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	*allToolCalls = append(*allToolCalls, parsed.ToolCalls...)
+
+	// 为 memory_search 工具注入 exclude_ids（本轮已注入的记忆 ID）
+	for i := range parsed.ToolCalls {
+		if parsed.ToolCalls[i].Tool == "memory_search" && len(memIDs) > 0 {
+			parsed.ToolCalls[i].Args = injectExcludeIDs(parsed.ToolCalls[i].Args, memIDs)
+		}
+	}
 
 	results := executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
 
@@ -466,6 +473,24 @@ func (o *Orchestrator) handleFlashResponse(
 type toolExecResult struct {
 	tc     tool.ToolCall
 	result *tool.Result
+}
+
+// injectExcludeIDs 将 exclude_ids（已注入的记忆 ID）注入到 memory_search 工具的 args 中
+func injectExcludeIDs(args json.RawMessage, memIDs []string) json.RawMessage {
+	var m map[string]interface{}
+	if err := json.Unmarshal(args, &m); err != nil {
+		return args
+	}
+	ids := make([]interface{}, len(memIDs))
+	for i, id := range memIDs {
+		ids[i] = id
+	}
+	m["exclude_ids"] = ids
+	b, err := json.Marshal(m)
+	if err != nil {
+		return args
+	}
+	return b
 }
 
 func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID string,
@@ -714,4 +739,39 @@ func buildPlanEvent(toolCalls []tool.ToolCall) map[string]interface{} {
 		}
 	}
 	return map[string]interface{}{"nodes": nodes, "edges": edges}
+}
+
+// buildRetrievalScores 从检索结果构建打分明细 JSON
+func buildRetrievalScores(packets []ContextPacket) *string {
+	if len(packets) == 0 {
+		return nil
+	}
+	type retrievalScore struct {
+		ID             string  `json:"id"`
+		VectorScore    float64 `json:"vector_score"`
+		KeywordScore   float64 `json:"keyword_score"`
+		FreshnessScore float64 `json:"freshness_score"`
+		FinalScore     float64 `json:"final_score"`
+	}
+	var scores []retrievalScore
+	for _, p := range packets {
+		if p.ID == "" {
+			continue
+		}
+		scores = append(scores, retrievalScore{
+			ID:             p.ID,
+			VectorScore:    math.Round(p.Score*10000) / 10000,
+			KeywordScore:   p.KeywordScore,
+			FreshnessScore: float64(p.TokenCount) / 100,
+			FinalScore:     p.CorrelationCoefficient,
+		})
+	}
+	if len(scores) == 0 {
+		return nil
+	}
+	extra, _ := json.Marshal(map[string]interface{}{
+		"retrieval_scores": scores,
+	})
+	s := string(extra)
+	return &s
 }

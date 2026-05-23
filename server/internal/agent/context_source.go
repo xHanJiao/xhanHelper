@@ -12,12 +12,14 @@ type ContextPacket struct {
 	Text                   string
 	TokenCount             int
 	CorrelationCoefficient float64
+	Score                  float64 // 向量检索原始分数
+	KeywordScore           float64 // bigram 关键词匹配分数
 }
 
 // ContextSource — 上下文数据源接口
 type ContextSource interface {
 	Name() string
-	Fetch(ctx context.Context, queryVec []float64, userID, convID string,
+	Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
 		threshold float64, limit int) ([]ContextPacket, error)
 	Warmup(ctx context.Context, embedder *llm.Embedder)
 }

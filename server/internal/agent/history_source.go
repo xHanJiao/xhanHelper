@@ -24,7 +24,7 @@ func NewHistorySource(vs *VectorStore, msgRepo *service.MessageRepo, enabled boo
 
 func (s *HistorySource) Name() string { return "history" }
 
-func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, userID, convID string,
+func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
 	threshold float64, limit int) ([]ContextPacket, error) {
 	if !s.enabled || s.vectorStore == nil || s.msgRepo == nil {
 		return nil, nil

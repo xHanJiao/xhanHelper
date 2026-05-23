@@ -231,6 +231,7 @@ func main() {
 	commitmentTimer := agent.NewCommitmentTimer(commitmentRepo, mailboxRepo)
 
 	// 注册提醒工具到主 Registry（对话中 LLM 直接调用）
+	reg.Register(tool.NewLoggingWrapper(tool.NewMemorySearchTool(infra.VectorStore, memRepo, embedder, cfg.Retrieval.DecayRate), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewReminderTool(commitmentRepo, commitmentTimer), log.Default()))
 
 	// ===== Phase 6: ReflectionOrchestrator + CronRunner =====
@@ -268,7 +269,7 @@ func main() {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
 	// Context Sources
-	memSource := agent.NewMemorySource(vectorStore, memRepo, embeddingRepo)
+	memSource := agent.NewMemorySource(vectorStore, memRepo, embeddingRepo, cfg.Retrieval.DecayRate)
 	noteSource := agent.NewNoteSource(vectorStore, noteRepo, embeddingRepo)
 
 	// Warmup 必须完成后再启动服务

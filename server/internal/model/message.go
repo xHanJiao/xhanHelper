@@ -16,6 +16,7 @@ type Message struct {
 	RequestJSON      *string   `gorm:"type:mediumtext;column:request_json" json:"request_json,omitempty"`
 	ResponseJSON     *string   `gorm:"type:mediumtext;column:response_json" json:"response_json,omitempty"`
 	IsInternal       bool      `gorm:"default:false" json:"is_internal"` // 标记内部消息
-	Status           int       `gorm:"default:1" json:"status"`          // 1=正常 2=已删除
+	Extra            *string   `gorm:"type:mediumtext;column:extra" json:"extra,omitempty"`
+	Status           int       `gorm:"default:1" json:"status"` // 1=正常 2=已删除
 	CreatedAt        time.Time `gorm:"index:idx_conv_created,priority:2;autoCreateTime" json:"created_at"`
 }

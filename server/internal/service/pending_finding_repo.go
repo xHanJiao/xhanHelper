@@ -55,6 +55,24 @@ func (r *PendingFindingRepo) MarkDelivered(ctx context.Context, ids []string) er
 		Update("status", "delivered").Error
 }
 
+// ListAll 管理端：分页列出所有 pending_findings，可按 status 筛选
+func (r *PendingFindingRepo) ListAll(ctx context.Context, status string, limit, offset int) ([]model.PendingFinding, int64, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	q := r.db.WithContext(ctx).Model(&model.PendingFinding{})
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var list []model.PendingFinding
+	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
+	return list, total, err
+}
+
 // MarkFailed 标记投递失败的发现（超重试上限）
 func (r *PendingFindingRepo) MarkFailed(ctx context.Context, ids []string) error {
 	return r.db.WithContext(ctx).Model(&model.PendingFinding{}).

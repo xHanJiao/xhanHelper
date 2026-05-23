@@ -362,6 +362,7 @@ func main() {
 		ThemeHandler:           themeHandler,
 		ReflectionAdminHandler: reflectionAdminHandler,
 		MessageTraceHandler:    messageTraceHandler,
+		PendingFindingRepo:     pendingFindingRepo,
 		ReflectionOrch:         reflectionOrch,
 		CronRunner:             cronRunner,
 		AuthMiddleware:         middleware.Auth(userRepo),

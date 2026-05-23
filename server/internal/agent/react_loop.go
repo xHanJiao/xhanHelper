@@ -148,7 +148,16 @@ func (rl *ReactLoop) Run(ctx context.Context, userMessage string) (*ReactLoopRes
 		}
 
 		// 解析 LLM 响应中的 JSON
-		parsed := parseLLMResponse(resp.Content)
+		parsed, parseErr := parseLLMResponse(resp.Content)
+		if parseErr != nil {
+			// 非法 JSON → 注入重试消息，继续循环
+			log.Printf("[react_loop] iter %d parse error: %v, retrying", iter, parseErr)
+			msgs = append(msgs, llm.Message{
+				Role:    "user",
+				Content: "[系统] 你上一轮的回复不是有效的 JSON 格式。请严格按照 {\"reply\":\"文字回复\",\"tool_calls\":[{\"tool\":\"工具名\",\"function\":\"函数名\",\"args\":{...}}]} 格式重新生成。",
+			})
+			continue
+		}
 		if parsed == nil {
 			// 纯文本回复，无工具调用 → 结束
 			result.FinalResponse = resp.Content

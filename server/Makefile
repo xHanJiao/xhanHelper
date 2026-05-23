@@ -79,6 +79,8 @@ check-env:
 
 # API 自动化测试
 test: check-env
+	@echo "=== 单元测试 ==="
+	@go test ./... -timeout 30s || exit 1
 	@echo "=== 编译 ==="
 	@go build -o /tmp/xhan-test-server ./cmd/xhan-helper/ || exit 1
 	@echo "=== 备份数据库 ==="

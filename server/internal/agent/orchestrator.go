@@ -424,7 +424,18 @@ func (o *Orchestrator) handleFlashResponse(
 	lastMsgID *string,
 	memIDs []string,
 ) (bool, string) {
-	parsed := parseLLMResponse(msg.Content)
+	parsed, parseErr := parseLLMResponse(msg.Content)
+
+	if parseErr != nil {
+		log.Printf("[orch] round parse error: %v, saving raw and retrying", parseErr)
+		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg)
+		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "响应格式异常，正在重试…"})
+		*msgs = append(*msgs, llm.Message{
+			Role:    "user",
+			Content: "[系统] 你上一轮的回复不是有效的 JSON 格式。请严格按照 {\"reply\":\"文字回复\",\"tool_calls\":[{\"tool\":\"工具名\",\"function\":\"函数名\",\"args\":{...}}]} 格式重新生成。",
+		})
+		return false, ""
+	}
 
 	if parsed == nil {
 		log.Printf("[orch] round pure text reply, len=%d", len(msg.Content))
@@ -700,11 +711,14 @@ func (o *Orchestrator) GenerateTitle(ctx context.Context, userMessage string) st
 	return title
 }
 
-func parseLLMResponse(text string) *LLMResponse {
+func parseLLMResponse(text string) (*LLMResponse, error) {
 	var resp LLMResponse
 	_, err := ParseFlashJSON(text, &resp)
-	if err != nil || resp.ToolCalls == nil && resp.Reply == "" {
-		return nil
+	if err != nil {
+		return nil, err // 非法 JSON
+	}
+	if resp.ToolCalls == nil && resp.Reply == "" {
+		return nil, nil // 没找到 JSON，纯文本消息
 	}
 	if resp.ToolCalls == nil {
 		resp.ToolCalls = []tool.ToolCall{}
@@ -712,7 +726,7 @@ func parseLLMResponse(text string) *LLMResponse {
 	for i, tc := range resp.ToolCalls {
 		resp.ToolCalls[i].Function = strings.TrimPrefix(tc.Function, "_")
 	}
-	return &resp
+	return &resp, nil
 }
 
 func buildPlanEvent(toolCalls []tool.ToolCall) map[string]interface{} {

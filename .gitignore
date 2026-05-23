@@ -41,4 +41,4 @@ front-end/node_modules/
 
 *.db_bak
 
-server/data/markdown
+server/data/markdownserver/data/

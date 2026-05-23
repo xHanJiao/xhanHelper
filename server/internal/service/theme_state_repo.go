@@ -57,6 +57,16 @@ func (r *ThemeStateRepo) ListActive(ctx context.Context, userID string) ([]model
 	return list, err
 }
 
+// ListAllActive 查询所有用户的状态非 closed 的主题（用于 backfill 等全局扫描）
+func (r *ThemeStateRepo) ListAllActive(ctx context.Context) ([]model.ThemeState, error) {
+	var list []model.ThemeState
+	err := r.db.WithContext(ctx).
+		Where("status != ?", "closed").
+		Order("created_at ASC").
+		Find(&list).Error
+	return list, err
+}
+
 // UpdateState 更新状态页文本 + 最后运行时间，旧内容 append 到 history
 func (r *ThemeStateRepo) UpdateState(ctx context.Context, id, userID, stateText string) error {
 	now := time.Now()

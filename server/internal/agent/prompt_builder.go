@@ -425,28 +425,28 @@ func (p *themeProvider) Search(ctx context.Context, query string, opts SearchOpt
 	traceItems := p.buildThemeTrace(activeThemes, vectorResults, linkedThemeID)
 
 	items := make([]ScoredItem, 0, len(activeThemes))
-	for i, t := range activeThemes {
+	firstItem := true
+	for _, t := range activeThemes {
 		isLinked := t.ID == linkedThemeID
 		isVectorMatch := vectorMatched[t.ID]
-		isPrimary := isLinked || isVectorMatch
 
-		var matchReason string
-		switch {
-		case isLinked:
-			matchReason = "linked"
-		case isVectorMatch:
-			matchReason = "vector"
-		default:
-			matchReason = "other_active"
+		// 只注入命中的主题，未命中不注入（避免无关主题干扰）
+		if !isLinked && !isVectorMatch {
+			continue
 		}
 
-		item := p.renderTheme(t, isPrimary, matchReason)
-		// 把完整 trace_items 附在第一个 ScoredItem 上，Builder.extractTraceItems 会收集
-		if i == 0 {
+		matchReason := "vector"
+		if isLinked {
+			matchReason = "linked"
+		}
+
+		item := p.renderTheme(t, true, matchReason)
+		if firstItem {
 			item.Meta = map[string]any{
 				"theme_id":    t.ID,
 				"trace_items": traceItems,
 			}
+			firstItem = false
 		}
 		items = append(items, item)
 	}

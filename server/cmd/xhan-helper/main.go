@@ -280,6 +280,9 @@ func main() {
 	warmupChunkEmbeddings(bgCtx, embeddingRepo, vectorStore)
 	warmupConceptEmbeddings(bgCtx, embeddingRepo, vectorStore)
 
+	// 补全缺失向量的旧主题（ThemeEmbedder 上线前创建的主题）
+	backfillThemeVectors(bgCtx, themeStateRepo, conceptEmbedRepo, themeEmbedder)
+
 	// Orchestrator
 	retriever := agent.NewRetriever(memSource, noteSource)
 	orch := agent.New(&agent.OrchestratorConfig{
@@ -570,4 +573,33 @@ func parseChunkEntityID(entityID string) (parentType, parentID string) {
 		parentID = rest[:idx]
 	}
 	return
+}
+
+// backfillThemeVectors 补全缺失向量的旧主题（ThemeEmbedder 上线前创建的主题，无向量）
+func backfillThemeVectors(ctx context.Context, themeStateRepo *service.ThemeStateRepo, conceptEmbedRepo *service.ConceptEmbeddingRepo, themeEmbedder *agent.ThemeEmbedder) {
+	activeThemes, err := themeStateRepo.ListAllActive(ctx)
+	if err != nil {
+		log.Printf("[backfill] list active themes error: %v", err)
+		return
+	}
+	missing := 0
+	for _, t := range activeThemes {
+		exists, err := conceptEmbedRepo.Exists(ctx, "theme", t.Name+" "+t.Description, t.UserID)
+		if err != nil {
+			log.Printf("[backfill] Exists error for theme %q: %v", t.Name, err)
+			continue
+		}
+		if exists {
+			continue
+		}
+		log.Printf("[backfill] embedding missing theme %q (id=%s) for user %s", t.Name, t.ID[:8], t.UserID[:8])
+		themeEmbedder.EnsureEmbedded(ctx, t.UserID, t.ID, t.Name, t.Description)
+		missing++
+	}
+	if missing > 0 {
+		log.Printf("[backfill] %d themes backfilled, waiting for async embed...", missing)
+		time.Sleep(2 * time.Second)
+	} else {
+		log.Printf("[backfill] all %d active themes have vectors", len(activeThemes))
+	}
 }

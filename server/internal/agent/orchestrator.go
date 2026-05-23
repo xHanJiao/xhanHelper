@@ -564,7 +564,8 @@ func (o *Orchestrator) saveToolMsgWithID(ctx context.Context, convID, userID, to
 func BuildMessagesForFlash(history []model.Message) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
-		ts := "（发于" + m.CreatedAt.In(config.BJ).Format("01-02 15:04") + "）"
+		// ts := "（发于" + m.CreatedAt.In(config.BJ).Format("01-02 15:04") + "）"
+		ts := ""
 		if m.Role == "tool" {
 			// FlashClient 不支持 role="tool"，包装成 user 消息
 			msgs = append(msgs, llm.Message{
@@ -592,7 +593,8 @@ func BuildMessagesForFlash(history []model.Message) []llm.Message {
 func BuildMessagesForPro(history []model.Message) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
-		ts := "（发于" + m.CreatedAt.In(config.BJ).Format("01-02 15:04") + "）"
+		// ts := "（发于" + m.CreatedAt.In(config.BJ).Format("01-02 15:04") + "）"
+		ts := ""
 		msg := llm.Message{Role: m.Role, Content: m.Content + ts}
 		if m.ToolCallID != nil {
 			msg.ToolCallID = *m.ToolCallID

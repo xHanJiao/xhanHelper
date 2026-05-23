@@ -20,7 +20,7 @@ import (
 	"xhan-helper/internal/tool"
 )
 
-const corePrinciples = `核心原则：
+const corePrinciples = `## 核心原则
 1. 简洁回复：用最少的词把事说清楚
 2. 诚实：不知道就说不知道，不要编造
 3. 追问：如果用户意图不明确，追问关键信息
@@ -564,15 +564,15 @@ func (o *Orchestrator) saveToolMsgWithID(ctx context.Context, convID, userID, to
 func BuildMessagesForFlash(history []model.Message) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
-		ts := m.CreatedAt.In(config.BJ).Format("[01-02 15:04] ")
+		ts := "（发于" + m.CreatedAt.In(config.BJ).Format("01-02 15:04") + "）"
 		if m.Role == "tool" {
 			// FlashClient 不支持 role="tool"，包装成 user 消息
 			msgs = append(msgs, llm.Message{
 				Role:    "user",
-				Content: ts + "[工具执行结果] " + m.Content,
+				Content: "[工具执行结果] " + m.Content + ts,
 			})
 		} else {
-			msg := llm.Message{Role: m.Role, Content: ts + m.Content}
+			msg := llm.Message{Role: m.Role, Content: m.Content + ts}
 			if m.ToolCallID != nil {
 				msg.ToolCallID = *m.ToolCallID
 			}
@@ -592,8 +592,8 @@ func BuildMessagesForFlash(history []model.Message) []llm.Message {
 func BuildMessagesForPro(history []model.Message) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
-		ts := m.CreatedAt.In(config.BJ).Format("[01-02 15:04] ")
-		msg := llm.Message{Role: m.Role, Content: ts + m.Content}
+		ts := "（发于" + m.CreatedAt.In(config.BJ).Format("01-02 15:04") + "）"
+		msg := llm.Message{Role: m.Role, Content: m.Content + ts}
 		if m.ToolCallID != nil {
 			msg.ToolCallID = *m.ToolCallID
 		}

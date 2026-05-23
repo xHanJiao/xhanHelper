@@ -65,7 +65,7 @@ func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, query, us
 		}
 		return []ContextPacket{{
 			ID:                     msgID,
-			Text:                   "===== 历史相关对话 =====\n" + text,
+			Text:                   "### 历史相关对话\n" + text,
 			CorrelationCoefficient: res.Score,
 		}}, nil
 	}

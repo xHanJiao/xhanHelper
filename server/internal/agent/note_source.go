@@ -80,7 +80,7 @@ func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, query, userI
 		n := noteByID[sc.ID]
 		text := fmt.Sprintf("- [%s] %s\n", n.Topic, n.Content)
 		if i == 0 {
-			text = "===== 相关笔记 =====\n" + text
+			text = "### 相关笔记\n" + text
 		}
 		packets = append(packets, ContextPacket{
 			ID:           sc.ID,

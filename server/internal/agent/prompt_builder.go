@@ -251,10 +251,14 @@ func (b *SystemPromptBuilder) Build(ctx context.Context, opts BuildOptions) (*Bu
 	}
 
 	// —— Layer 2: 角色定义（可覆盖） ——
-	sb.WriteString("\n===== 角色定义 =====\n")
+	// 用 blockquote 包裹，避免 agent 内部 markdown 标题与外层结构冲突
+	sb.WriteString("\n## 角色定义\n\n")
 	rolePrompt := b.resolveRolePrompt(ctx, opts)
-	sb.WriteString(rolePrompt)
-	sb.WriteString("\n")
+	for _, line := range strings.Split(rolePrompt, "\n") {
+		sb.WriteString("> ")
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
 
 	// —— Layer 3: 动态上下文（按 score 排序） ——
 	searchOpts := SearchOptions{
@@ -388,7 +392,7 @@ type timeProvider struct{}
 
 func (p *timeProvider) Name() string { return "current_time" }
 func (p *timeProvider) Render(ctx context.Context) string {
-	return "当前时间: " + time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
+	return "## 当前时间\n" + time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
 }
 
 // ==================== Layer 3 — Theme Provider ====================
@@ -638,7 +642,7 @@ func (p *retrievalProvider) Search(ctx context.Context, query string, opts Searc
 
 	return []ScoredItem{
 		{
-			Content: "\n\n===== 关于用户的信息 =====\n" + memText,
+			Content: "\n\n## 关于用户的信息\n\n" + memText,
 			Score:   0.8, // 固定 score，排在主题（0.85~1.0）之后
 			Source:  "retrieval",
 			Meta: map[string]any{

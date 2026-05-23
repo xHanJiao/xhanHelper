@@ -142,7 +142,7 @@ func (t *MemorySearchTool) Execute(ec *ExecuteContext, funcName string, args jso
 	}
 
 	var sb strings.Builder
-	sb.WriteString("===== 记忆检索结果 =====\n")
+	sb.WriteString("### 记忆检索结果\n")
 	for _, sc := range list {
 		topicPart := ""
 		if sc.topic != "" {

@@ -103,7 +103,7 @@ func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, query, use
 			m.ConfirmCount,
 			m.LastConfirmedAt.In(config.BJ).Format("01-02"))
 		if idx == 0 {
-			text = "===== 相关记忆 =====\n" + text
+			text = "### 相关记忆\n" + text
 		}
 		packets = append(packets, ContextPacket{
 			ID:                     sc.ID,

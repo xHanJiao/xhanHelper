@@ -173,7 +173,7 @@ func (r *Registry) GetLLMTools() []llm.ToolDefinition {
 // GeneratePromptWithOverview 混排模式：reminder + note + tool_retriever 完整定义，其他工具仅概览
 func (r *Registry) GeneratePromptWithOverview() string {
 	var buf bytes.Buffer
-	buf.WriteString("\n\n===== 工具使用 =====\n\n")
+	buf.WriteString("\n\n## 工具使用\n\n")
 	buf.WriteString("你可以使用以下工具来完成用户的请求。\n")
 	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
 
@@ -199,7 +199,7 @@ func (r *Registry) GeneratePromptWithOverview() string {
 		overview = append(overview, fmt.Sprintf("工具名: %s —— %s", name, t.Description()))
 	}
 	if len(overview) > 0 {
-		buf.WriteString("\n===== 其他可用工具概览 =====\n")
+		buf.WriteString("\n## 其他可用工具\n")
 		buf.WriteString("以下工具需要通过 tool_retriever.search 查询详细定义后才能调用，禁止跳过查询步骤直接调用！\n\n")
 		buf.WriteString(strings.Join(overview, "\n"))
 		buf.WriteString("\n")
@@ -250,7 +250,7 @@ func (r *Registry) writeToolFullDef(buf *bytes.Buffer, t Tool) {
 }
 
 func (r *Registry) writePromptFooter(buf *bytes.Buffer) {
-	buf.WriteString("\n需要调用工具时，回复一个 JSON 对象：\n\n")
+	buf.WriteString("\n### 输出格式\n\n需要调用工具时，回复一个 JSON 对象：\n\n")
 	buf.WriteString("{\n")
 	buf.WriteString(`    "reply": "给用户的自然语言回复",` + "\n")
 	buf.WriteString(`    "tool_calls": [` + "\n")
@@ -268,7 +268,7 @@ func (r *Registry) writePromptFooter(buf *bytes.Buffer) {
 // GenerateImportantRules 生成重要规则文本（不含工具定义，可放在工具使用之前）
 func (r *Registry) GenerateImportantRules() string {
 	var buf bytes.Buffer
-	buf.WriteString("\n===== 重要规则 =====\n\n")
+	buf.WriteString("\n## 重要规则\n\n")
 	buf.WriteString("1. 无论是否需要调用工具，都必须严格以 JSON 对象回复。需要工具时输出 {\"reply\":\"...\",\"tool_calls\":[...]}，不需要工具时输出 {\"reply\":\"...\"}。JSON 字符串值内的英文双引号必须用反斜杠转义（\\\"）。不要输出任何非 JSON 文本。\n")
 	buf.WriteString("2. 只能调用【工具使用】部分列出的函数。\n")
 	buf.WriteString("3. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
@@ -279,7 +279,7 @@ func (r *Registry) GenerateImportantRules() string {
 // GeneratePrompt 生成工具定义文本，追加到 system prompt 中
 func (r *Registry) GeneratePrompt() string {
 	var buf bytes.Buffer
-	buf.WriteString("\n\n===== 工具使用 =====\n\n")
+	buf.WriteString("\n\n## 工具使用\n\n")
 	buf.WriteString("你可以使用以下工具来完成用户的请求。\n")
 	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
 
@@ -329,7 +329,7 @@ func (r *Registry) GeneratePrompt() string {
 		}
 	}
 
-	buf.WriteString("===== 输出格式 =====\n\n")
+	buf.WriteString("### 输出格式\n\n")
 	buf.WriteString("需要调用工具时，回复一个 JSON 对象：\n\n")
 	buf.WriteString("{\n")
 	buf.WriteString(`    "reply": "给用户的自然语言回复",` + "\n")
@@ -345,7 +345,7 @@ func (r *Registry) GeneratePrompt() string {
 	buf.WriteString("一条回复中 tool_calls 可以包含多个工具调用，按顺序执行。\n")
 	buf.WriteString("工具执行结果会追加到对话中，你可以据此继续回复用户。\n\n")
 
-	buf.WriteString("===== 重要规则 =====\n\n")
+	buf.WriteString("## 重要规则\n\n")
 	buf.WriteString("1. 只能调用上面【工具使用】部分列出的函数。\n")
 	buf.WriteString("2. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
 	buf.WriteString("3. 历史消息中的 [MM-DD HH:MM] 前缀是系统时间戳，不是对话内容，严禁模仿此格式输出时间戳。\n")
@@ -366,7 +366,7 @@ func (r *Registry) ToolOverview() string {
 	if result == "" {
 		return ""
 	}
-	return "\n\n===== 可用工具概览 =====\n" +
+	return "\n\n## 可用工具概览\n" +
 		"【强制规则】以上只是工具概览，不包含函数签名和参数定义。\n" +
 		"如果用户的问题需要用到某个工具，你必须先用 tool_retriever.search 查询该工具的详细定义，然后才能调用它。\n" +
 		"直接调用未查询过的工具会失败——例如调用 bookkeeping__create 前，必须先 search(\"bookkeeping\") 拿到 create 的参数 schema。\n" +
@@ -403,7 +403,7 @@ func (r *Registry) GetLLMToolsFiltered(names []string) []llm.ToolDefinition {
 // GeneratePromptFor 只为指定工具生成 prompt 文本
 func (r *Registry) GeneratePromptFor(names []string) string {
 	var buf bytes.Buffer
-	buf.WriteString("\n\n===== 工具使用 =====\n\n")
+	buf.WriteString("\n\n## 工具使用\n\n")
 	buf.WriteString("你可以使用以下工具来完成用户的请求。\n")
 	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
 
@@ -454,7 +454,7 @@ func (r *Registry) GeneratePromptFor(names []string) string {
 		}
 	}
 
-	buf.WriteString("===== 输出格式 =====\n\n")
+	buf.WriteString("### 输出格式\n\n")
 	buf.WriteString("需要调用工具时，回复一个 JSON 对象：\n\n")
 	buf.WriteString("{\n")
 	buf.WriteString(`    "reply": "给用户的自然语言回复",` + "\n")
@@ -470,7 +470,7 @@ func (r *Registry) GeneratePromptFor(names []string) string {
 	buf.WriteString("一条回复中 tool_calls 可以包含多个工具调用，按顺序执行。\n")
 	buf.WriteString("工具执行结果会追加到对话中，你可以据此继续回复用户。\n\n")
 
-	buf.WriteString("===== 重要规则 =====\n\n")
+	buf.WriteString("## 重要规则\n\n")
 	buf.WriteString("1. 只能调用上面【工具使用】部分列出的函数。\n")
 	buf.WriteString("2. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
 	buf.WriteString("3. 历史消息中的 [MM-DD HH:MM] 前缀是系统时间戳，不是对话内容，严禁模仿此格式输出时间戳。\n")

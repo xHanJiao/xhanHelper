@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick, onBeforeUnmount, onUnmounted, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
@@ -44,7 +44,6 @@ const isLoadingHistory = ref(false)
 const isFirstLoad = ref(true)
 const messagesContainerRef = ref(null)
 const mobileInputRef = ref(null)
-const mobileInputHeight = ref(140) // 移动端输入框实际高度，默认 140px 兜底
 const isInitialScrollDone = ref(false)
 const isAwayFromBottom = ref(false)
 
@@ -68,22 +67,6 @@ function toggleInput() {
 function toggleExpand() {
   inputExpanded.value = !inputExpanded.value
 }
-
-// 移动端：监听输入框实际高度，同步 spacer 避免白块
-let mobileInputObserver = null
-watch([mobileInputRef, inputVisible, inputExpanded], () => {
-  if (mobileInputObserver) { mobileInputObserver.disconnect(); mobileInputObserver = null }
-  const el = mobileInputRef.value
-  if (!el || !inputVisible.value) { mobileInputHeight.value = 140; return }
-  mobileInputObserver = new ResizeObserver((entries) => {
-    for (const entry of entries) {
-      const h = entry.contentRect.height
-      if (h > 0) mobileInputHeight.value = h + 16 // 16px 安全间距
-    }
-  })
-  mobileInputObserver.observe(el)
-})
-onUnmounted(() => { if (mobileInputObserver) mobileInputObserver.disconnect() })
 
 // LLM 参数（从后端 API 获取，不存 localStorage）
 const showLlmSettings = ref(false)
@@ -519,9 +502,7 @@ function handleContainerClick(e) {
         <div
           ref="messagesEndRef"
           :style="{
-            height: isMobile
-              ? (inputVisible ? (inputExpanded ? '75vh' : mobileInputHeight.value + 'px') : '15px')
-              : (inputExpanded ? '35vh' : '15px'),
+            height: inputExpanded ? (isMobile ? '75vh' : '35vh') : '15px',
             transition: 'height 0.2s ease-out'
           }"
         />
@@ -529,38 +510,27 @@ function handleContainerClick(e) {
     </div>
 
     <div
-      v-if="isMobile"
+      v-if="isMobile && !inputVisible"
+      @click="toggleInput"
       :style="{
-        position: 'fixed',
-        bottom: inputVisible ? (inputExpanded ? '75vh' : '120px') : '0',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        zIndex: 100,
-        transition: 'bottom 0.2s ease-out'
+        width: '60px',
+        height: '30px',
+        background: 'rgba(91, 106, 191, 0.85)',
+        borderRadius: '30px 30px 0 0',
+        display: 'flex',
+        alignItems: 'flex-end',
+        justifyContent: 'center',
+        marginLeft: 'auto',
+        marginRight: 'auto',
+        cursor: 'pointer',
+        boxShadow: '0 -2px 10px rgba(0,0,0,0.1)',
+        color: 'white',
+        fontSize: '20px',
+        fontWeight: 'bold',
+        flexShrink: 0
       }"
     >
-      <div
-        v-if="!inputVisible"
-        @click="toggleInput"
-        :style="{
-          width: '60px',
-          height: '30px',
-          background: 'rgba(91, 106, 191, 0.85)',
-          borderRadius: '30px 30px 0 0',
-          display: 'flex',
-          alignItems: 'flex-end',
-          justifyContent: 'center',
-          paddingBottom: '0px',
-          lineHeight: '24px',
-          cursor: 'pointer',
-          boxShadow: '0 -2px 10px rgba(0,0,0,0.1)',
-          color: 'white',
-          fontSize: '20px',
-          fontWeight: 'bold'
-        }"
-      >
-        ↑
-      </div>
+      ↑
     </div>
 
     <!-- 查看历史消息时，滚动到底部按钮 -->
@@ -609,18 +579,14 @@ function handleContainerClick(e) {
           transformOrigin: 'bottom right',
           transition: 'height 0.25s ease-out, padding 0.25s ease-out, opacity 0.2s ease-out, transform 0.25s ease-out'
         } : {
-          position: 'fixed',
-          left: 0,
-          right: 0,
-          bottom: 0,
-          padding: 'var(--space-md) var(--space-lg)',
+          padding: inputVisible ? 'var(--space-md) var(--space-lg)' : '0 var(--space-lg)',
           background: 'var(--color-bg-page)',
           borderTop: 'none',
-          zIndex: 99,
-          transform: inputVisible ? 'translateY(0)' : 'translateY(100%)',
-          height: inputExpanded ? '75vh' : 'auto',
-          minHeight: inputExpanded ? '75vh' : 'auto',
-          transition: 'transform 0.2s ease-out, height 0.2s ease-out'
+          flexShrink: 0,
+          height: inputVisible ? (inputExpanded ? '75vh' : 'auto') : '0',
+          overflow: 'hidden',
+          opacity: inputVisible ? 1 : 0,
+          transition: 'height 0.25s ease-out, padding 0.25s ease-out, opacity 0.2s ease-out'
         }
       ]"
     >

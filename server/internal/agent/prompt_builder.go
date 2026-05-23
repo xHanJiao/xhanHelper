@@ -429,12 +429,10 @@ func (p *themeProvider) Search(ctx context.Context, query string, opts SearchOpt
 	traceItems := p.buildThemeTrace(activeThemes, vectorResults, linkedThemeID)
 
 	items := make([]ScoredItem, 0, len(activeThemes))
-	firstItem := true
 	for _, t := range activeThemes {
 		isLinked := t.ID == linkedThemeID
 		isVectorMatch := vectorMatched[t.ID]
 
-		// 只注入命中的主题，未命中不注入（避免无关主题干扰）
 		if !isLinked && !isVectorMatch {
 			continue
 		}
@@ -444,15 +442,19 @@ func (p *themeProvider) Search(ctx context.Context, query string, opts SearchOpt
 			matchReason = "linked"
 		}
 
-		item := p.renderTheme(t, true, matchReason)
-		if firstItem {
-			item.Meta = map[string]any{
-				"theme_id":    t.ID,
+		items = append(items, p.renderTheme(t, true, matchReason))
+	}
+
+	// 即使没有命中，也返回一个带 trace 的 dummy item，确保 trace 不丢
+	if len(items) == 0 {
+		items = append(items, ScoredItem{
+			Content: "",
+			Score:   0,
+			Source:  "theme",
+			Meta: map[string]any{
 				"trace_items": traceItems,
-			}
-			firstItem = false
-		}
-		items = append(items, item)
+			},
+		})
 	}
 	return items, nil
 }
@@ -599,12 +601,20 @@ type retrievalProvider struct {
 func (p *retrievalProvider) Name() string { return "retrieval" }
 
 func (p *retrievalProvider) Search(ctx context.Context, query string, opts SearchOptions) ([]ScoredItem, error) {
-	// 跳过条件: 配置关闭 / 无 retriever / 无 embedding / 空查询
+	dummy := func(traceItems []TraceItem) []ScoredItem {
+		return []ScoredItem{{
+			Content: "",
+			Score:   0,
+			Source:  "retrieval",
+			Meta:    map[string]any{"trace_items": traceItems},
+		}}
+	}
+
 	if p.cfg.SkipMemory || p.retriever == nil {
-		return nil, nil
+		return dummy(nil), nil
 	}
 	if len(opts.Embedding) == 0 || query == "" {
-		return nil, nil
+		return dummy(nil), nil
 	}
 
 	threshold := p.cfg.MemoryThreshold
@@ -616,40 +626,35 @@ func (p *retrievalProvider) Search(ctx context.Context, query string, opts Searc
 		limit = 8
 	}
 
-	// 委托 retriever 进行向量检索 + 关键词匹配 + 时间衰减综合打分
 	packets, memIDs, noteIDs := p.retriever.Retrieve(
 		ctx, opts.Embedding, query,
 		opts.UserID, opts.ConversationID,
 		opts.DeepMode, threshold, limit,
 	)
 
-	// retriever 内部已按综合打分排序，FormatContext 直接拼接文本
-	memText := p.retriever.FormatContext(packets)
-	if memText == "" {
-		return nil, nil
-	}
-
-	// 从 packets 构建 per-item trace（保留旧 retrieval_scores 的细粒度）
 	traceItems := make([]TraceItem, 0, len(packets))
 	for _, pkt := range packets {
 		traceItems = append(traceItems, TraceItem{
 			ID:           pkt.ID,
 			Text:         truncateText(pkt.Text, 100),
-			Score:        pkt.Score,        // 向量相似度
-			KeywordScore: pkt.KeywordScore, // 关键词匹配 boost
+			Score:        pkt.Score,
+			KeywordScore: pkt.KeywordScore,
 		})
 	}
 
-	return []ScoredItem{
-		{
-			Content: "\n\n## 关于用户的信息\n\n" + memText,
-			Score:   0.8, // 固定 score，排在主题（0.85~1.0）之后
-			Source:  "retrieval",
-			Meta: map[string]any{
-				"memory_ids":  memIDs,
-				"note_ids":    noteIDs,
-				"trace_items": traceItems,
-			},
+	memText := p.retriever.FormatContext(packets)
+	if memText == "" {
+		return dummy(traceItems), nil
+	}
+
+	return []ScoredItem{{
+		Content: "\n\n## 关于用户的信息\n\n" + memText,
+		Score:   0.8,
+		Source:  "retrieval",
+		Meta: map[string]any{
+			"memory_ids":  memIDs,
+			"note_ids":    noteIDs,
+			"trace_items": traceItems,
 		},
-	}, nil
+	}}, nil
 }

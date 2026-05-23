@@ -36,13 +36,8 @@ func (t *NoteTool) Description() string {
 func (t *NoteTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
-			Name: "record_note",
-			Description: `保存一条值得追踪的笔记。当用户提供了值得长期追踪的信息时调用。日常闲聊和简单记账不需要记录。
-
-topic: 主题，从用户消息推断，用一个词概括（房地产/睡眠/俄乌战争/健康...）
-content: 笔记正文。忠实保留用户原话中的关键信息，不要过度总结。长文章全文原样保存。
-tags: 逗号分隔的标签，辅助分类检索
-variables: JSON对象，从消息中提取的结构化变量。二值用true/false，数值直接填。没有则留空`,
+			Name:        "record_note",
+			Description: "保存一条值得长期追踪的笔记。当用户分享事实、数据、观点、事件、个人状态时调用。日常闲聊不需要记录",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -58,11 +53,8 @@ variables: JSON对象，从消息中提取的结构化变量。二值用true/fal
 			},
 		},
 		{
-			Name: "query_notes",
-			Description: `查询已保存的笔记。用于检索历史记录后做回顾或分析。
-
-topic: 按主题筛选，可选
-keyword: 在正文和标签中模糊搜索，可选`,
+			Name:        "query_notes",
+			Description: "查询已保存的笔记，按主题或关键词检索历史记录",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -72,14 +64,8 @@ keyword: 在正文和标签中模糊搜索，可选`,
 			},
 		},
 		{
-			Name: "update_note",
-			Description: `更新已有的笔记，修改主题/正文/标签/变量。仅传需要修改的字段。
-
-			id: 笔记 ID，必填
-			topic: 新主题，可选
-			content: 新正文，可选
-			tags: 新标签，可选
-			variables: 新结构变量，可选`,
+			Name:        "update_note",
+			Description: "更新已有笔记的字段。仅传需要修改的字段",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

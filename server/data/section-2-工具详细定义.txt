@@ -1,0 +1,22 @@
+===== 工具使用 ===== 你可以使用以下工具来完成用户的请求。
+ 当需要执行操作时，在回复中输出 JSON 格式。
+ ## 工具: reminder 描述: 设置待办提醒，支持一次性或循环提醒 函数: - create_reminder: 创建一个待办提醒。
+用户说「提醒我XX」「帮我记一下XX」「别忘了XX」时调用。
+deadline 为 ISO8601 时间，无法确定则不传。
+循环提醒传 recurrence_rule：每天→{\"type\":\"daily\",\"time\":\"HH:MM\"}；每周→{\"type\":\"weekly\",\"time\":\"HH:MM\",\"days\":[\"monday\",\"wednesday\"]}；每月→{\"type\":\"monthly\",\"time\":\"HH:MM\",\"month_days\":[1,15]}；工作日→{\"type\":\"weekday\",\"time\":\"HH:MM\"} - content (string): 提醒内容 - deadline (string): ISO8601 截止时间，如 2026-05-17T18:00:00+08:00 - recurrence_rule (object): 循环规则 
+## 工具: note 描述: 自由笔记工具，记录值得长期追踪的信息——事实、数据、观点、事件、个人状态等 函数: - record_note: 保存一条值得追踪的笔记。
+当用户提供了值得长期追踪的信息时调用。
+日常闲聊和简单记账不需要记录。
+ topic: 主题，从用户消息推断，用一个词概括（房地产/睡眠/俄乌战争/健康...） content: 笔记正文。
+忠实保留用户原话中的关键信息，不要过度总结。
+长文章全文原样保存。
+ tags: 逗号分隔的标签，辅助分类检索 variables: JSON对象，从消息中提取的结构化变量。
+二值用true/false，数值直接填。
+没有则留空 - topic (string): 主题: 房地产/睡眠/俄乌战争/健康/宏观经济/...  - content (string): 笔记正文，忠实保留用户原文，不要总结或删减 - tags (string): 逗号分隔标签，可选 - variables (object): 结构化键值对。
+二值用true/false，数值直接填。
+无量化信息则留空 - query_notes: 查询已保存的笔记。
+用于检索历史记录后做回顾或分析。
+ topic: 按主题筛选，可选 keyword: 在正文和标签中模糊搜索，可选 - topic (string): 按主题筛选，可选 - keyword (string): 在正文和标签中搜索，可选 - update_note: 更新已有的笔记，修改主题/正文/标签/变量。
+仅传需要修改的字段。
+ \t\t\tid: 笔记 ID，必填 \t\t\ttopic: 新主题，可选 \t\t\tcontent: 新正文，可选 \t\t\ttags: 新标签，可选 \t\t\tvariables: 新结构变量，可选 - content (string): 新正文，可选 - tags (string): 新标签，可选 - variables (object): 新结构变量，可选 - id (string): 笔记 ID，必填 - topic (string): 新主题，可选 ## 工具: tool_retriever 描述: 检索可用工具。
+用工具名搜索，如 'bookkeeping'、'calculator' 函数: - search: 搜索相关工具 - query (string): 工具名或相关关键词，如 'bookkeeping'、'记账' - limit (integer): 最多返回多少个工具，默认 5 

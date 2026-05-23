@@ -31,13 +31,13 @@ func (t *ReminderTool) Description() string {
 func (t *ReminderTool) Functions() []FuncSchema {
 	return []FuncSchema{{
 		Name:        "create_reminder",
-		Description: "创建一个待办提醒。用户说「提醒我XX」「帮我记一下XX」「别忘了XX」时调用。deadline 为 ISO8601 时间，无法确定则不传。循环提醒传 recurrence_rule：每天→{\"type\":\"daily\",\"time\":\"HH:MM\"}；每周→{\"type\":\"weekly\",\"time\":\"HH:MM\",\"days\":[\"monday\",\"wednesday\"]}；每月→{\"type\":\"monthly\",\"time\":\"HH:MM\",\"month_days\":[1,15]}；工作日→{\"type\":\"weekday\",\"time\":\"HH:MM\"}",
+		Description: "创建一个待办提醒。用户说「提醒我XX」「帮我记一下XX」「别忘了XX」时调用",
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"content":         map[string]interface{}{"type": "string", "description": "提醒内容"},
 				"deadline":        map[string]interface{}{"type": "string", "description": "ISO8601 截止时间，如 2026-05-17T18:00:00+08:00"},
-				"recurrence_rule": map[string]interface{}{"type": "object", "description": "循环规则"},
+				"recurrence_rule": map[string]interface{}{"type": "object", "description": "循环规则: daily→{\"type\":\"daily\",\"time\":\"HH:MM\"} weekly→{\"type\":\"weekly\",\"time\":\"HH:MM\",\"days\":[\"monday\"]} monthly→{\"type\":\"monthly\",\"time\":\"HH:MM\",\"month_days\":[1]} weekday→{\"type\":\"weekday\",\"time\":\"HH:MM\"}"},
 			},
 			"required": []string{"content"},
 		},

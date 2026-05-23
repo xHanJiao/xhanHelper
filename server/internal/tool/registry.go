@@ -178,7 +178,7 @@ func (r *Registry) GeneratePromptWithOverview() string {
 	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
 
 	// 常驻工具（完整定义，可直接调用）
-	alwaysVisible := []string{"reminder", "note", "tool_retriever"}
+	alwaysVisible := []string{"note", "tool_retriever"}
 	for _, name := range alwaysVisible {
 		t := r.tools[name]
 		if t == nil {
@@ -190,7 +190,7 @@ func (r *Registry) GeneratePromptWithOverview() string {
 	// 其他工具概览（需通过 tool_retriever.search 查询详细定义后才能调用）
 	var overview []string
 	for name, t := range r.tools {
-		if name == "reminder" || name == "note" || name == "tool_retriever" {
+		if name == "note" || name == "tool_retriever" {
 			continue
 		}
 		if r.hiddenNames[name] {

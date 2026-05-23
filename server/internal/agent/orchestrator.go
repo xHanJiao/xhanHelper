@@ -604,9 +604,6 @@ func BuildMessagesForFlash(history []model.Message) []llm.Message {
 			})
 		} else {
 			msg := llm.Message{Role: m.Role, Content: ts + m.Content}
-			if m.ReasoningContent != nil {
-				msg.ReasoningContent = *m.ReasoningContent
-			}
 			if m.ToolCallID != nil {
 				msg.ToolCallID = *m.ToolCallID
 			}
@@ -628,9 +625,6 @@ func BuildMessagesForPro(history []model.Message) []llm.Message {
 	for _, m := range history {
 		ts := m.CreatedAt.In(config.BJ).Format("[01-02 15:04] ")
 		msg := llm.Message{Role: m.Role, Content: ts + m.Content}
-		if m.ReasoningContent != nil {
-			msg.ReasoningContent = *m.ReasoningContent
-		}
 		if m.ToolCallID != nil {
 			msg.ToolCallID = *m.ToolCallID
 		}

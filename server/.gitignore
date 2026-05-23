@@ -10,3 +10,6 @@ logs/
 
 .claude/worktrees
 data/
+
+# 本地测试数据（含敏感内容，不提交）
+internal/agent/testdata/

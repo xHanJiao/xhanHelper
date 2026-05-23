@@ -333,6 +333,7 @@ func main() {
 	mailboxHandler := controller.NewMailboxHandler(mailboxService, mailboxRepo, convRepo, themeStateRepo, msgRepo)
 	themeHandler := controller.NewThemeHandler(themeStateRepo)
 	reflectionAdminHandler := controller.NewReflectionAdminHandler(traceRepo)
+	messageTraceHandler := controller.NewMessageTraceHandler(msgRepo)
 
 	// Router
 	router := controller.NewRouter(&controller.RouterConfig{
@@ -360,6 +361,7 @@ func main() {
 		MailboxHandler:         mailboxHandler,
 		ThemeHandler:           themeHandler,
 		ReflectionAdminHandler: reflectionAdminHandler,
+		MessageTraceHandler:    messageTraceHandler,
 		ReflectionOrch:         reflectionOrch,
 		CronRunner:             cronRunner,
 		AuthMiddleware:         middleware.Auth(userRepo),

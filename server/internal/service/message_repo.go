@@ -196,3 +196,20 @@ func (r *MessageRepo) CountRecent(ctx context.Context, userID string, since time
 		Count(&count).Error
 	return count, err
 }
+
+// ListWithTrace 分页列出有 prompt trace 的 assistant 消息，按时间倒序
+func (r *MessageRepo) ListWithTrace(ctx context.Context, userID string, limit, offset int) ([]model.Message, int64, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	var total int64
+	q := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("user_id = ? AND role = 'assistant' AND extra IS NOT NULL AND extra != ''", userID)
+	q.Count(&total)
+
+	var list []model.Message
+	if err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error; err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
+}

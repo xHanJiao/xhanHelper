@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { api } from '@/api/client'
-import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NEmpty, NAlert } from 'naive-ui'
+import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NEmpty, NAlert, NButton } from 'naive-ui'
 import { Chart, registerables } from 'chart.js'
 import PageTopBar from '@/components/PageTopBar.vue'
 
@@ -51,6 +51,43 @@ function traceStatusLabel(s) {
   return map[s] || s
 }
 
+// ── 消息 Trace Tab ──
+const msgTraces = ref([])
+const msgTracesTotal = ref(0)
+const msgTracesLoading = ref(false)
+const msgTracesPage = ref(0)
+const expandedTrace = ref(null)
+
+async function fetchMsgTraces() {
+  msgTracesLoading.value = true
+  try {
+    const pageSize = 20
+    const offset = msgTracesPage.value * pageSize
+    const res = await api.get(`/api/admin/message-traces?limit=${pageSize}&offset=${offset}`)
+    msgTraces.value = res.items || []
+    msgTracesTotal.value = res.total || 0
+  } catch (_) {
+  } finally {
+    msgTracesLoading.value = false
+  }
+}
+
+function tracePageLabel() {
+  const pageSize = 20
+  const start = msgTracesPage.value * pageSize + 1
+  const end = Math.min((msgTracesPage.value + 1) * pageSize, msgTracesTotal.value)
+  return `${start}-${end} / ${msgTracesTotal.value}`
+}
+
+function toggleTrace(msg) {
+  expandedTrace.value = expandedTrace.value === msg.id ? null : msg.id
+}
+
+function parseTraceExtra(extra) {
+  if (!extra) return null
+  try { return JSON.parse(extra) } catch { return null }
+}
+
 function formatTime(ts) {
   if (!ts) return '-'
   const d = new Date(ts)
@@ -89,6 +126,7 @@ async function fetchHooks() {
 }
 
 onMounted(() => { fetchHealth(); fetchHooks(); restartTimer(); fetchTraces() })
+watch(activeTab, (tab) => { if (tab === 'msg-trace' && msgTraces.value.length === 0) fetchMsgTraces() })
 onUnmounted(() => { clearInterval(timer); destroyCharts() })
 
 function formatJSON(raw) {
@@ -213,6 +251,7 @@ function latSummary(s) {
     <NTabs v-model:value="activeTab" type="line" style="padding: 0 var(--space-lg); background: var(--color-surface); flex-shrink: 0;">
       <NTabPane name="overview" tab="概览" />
       <NTabPane name="reflection" tab="反思" />
+      <NTabPane name="msg-trace" tab="消息Trace" />
     </NTabs>
     <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
 
@@ -380,6 +419,63 @@ function latSummary(s) {
         </template>
       </div>
       <NButton size="small" style="margin-top: var(--space-md);" @click="fetchTraces()" :loading="tracesLoading">刷新列表</NButton>
+    </div>
+
+    <!-- ========== 消息 Trace Tab ========== -->
+    <div v-if="activeTab === 'msg-trace'" style="padding-top: var(--space-sm);">
+      <NSpin v-if="msgTracesLoading && msgTraces.length === 0" />
+      <NEmpty v-else-if="msgTraces.length === 0" description="暂无 trace 记录" style="margin-top: 80px;" />
+
+      <div v-else style="display: flex; flex-direction: column; gap: var(--space-sm);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-sm);">
+          <NButton size="small" @click="fetchMsgTraces()" :loading="msgTracesLoading">刷新列表</NButton>
+          <div style="display: flex; gap: var(--space-sm); align-items: center;">
+            <span style="font-size: 12px; color: var(--color-text-muted);">{{ tracePageLabel() }}</span>
+            <NButton size="tiny" :disabled="msgTracesPage === 0" @click="msgTracesPage--; fetchMsgTraces()">上一页</NButton>
+            <NButton size="tiny" :disabled="(msgTracesPage + 1) * 20 >= msgTracesTotal" @click="msgTracesPage++; fetchMsgTraces()">下一页</NButton>
+          </div>
+        </div>
+
+        <NCard v-for="msg in msgTraces" :key="msg.id" size="small" style="cursor: pointer;" @click="toggleTrace(msg)" :hoverable="true">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <span style="font-weight: 500;">{{ formatTime(msg.created_at) }}</span>
+              <span style="font-size: 12px; color: var(--color-text-muted); margin-left: var(--space-sm);">{{ msg.conversation_id?.substring(0, 8) }}...</span>
+            </div>
+            <NTag size="tiny" :type="expandedTrace === msg.id ? 'success' : 'default'">{{ expandedTrace === msg.id ? '展开' : '折叠' }}</NTag>
+          </div>
+
+          <div v-if="expandedTrace === msg.id" style="margin-top: var(--space-md);">
+            <div v-if="parseTraceExtra(msg.extra)?.providers">
+              <div v-for="(p, pi) in parseTraceExtra(msg.extra).providers" :key="pi"
+                   style="margin-bottom: var(--space-sm); padding: var(--space-sm); background: var(--color-bg); border-radius: var(--radius-md);">
+                <div style="display: flex; gap: var(--space-xs); align-items: center; margin-bottom: 4px;">
+                  <NTag size="tiny" :type="p.type === 'static' ? 'info' : 'warning'">{{ p.name }}</NTag>
+                  <span style="font-size: 11px; color: var(--color-text-muted);">{{ p.type }}</span>
+                </div>
+                <div v-if="p.input" style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">
+                  query: {{ p.input.query }}
+                </div>
+                <div v-if="p.items?.length">
+                  <div v-for="(item, ii) in p.items" :key="ii" style="font-size: 12px; padding: 2px 0; border-top: 1px solid var(--color-border);">
+                    <span>{{ item.text }}</span>
+                    <span style="margin-left: var(--space-sm); color: var(--color-primary);">score={{ item.score?.toFixed(4) }}</span>
+                    <span v-if="item.vector_score" style="margin-left: var(--space-xs); color: var(--color-text-muted);">vec={{ item.vector_score?.toFixed(4) }}</span>
+                    <span v-if="item.keyword_score" style="margin-left: var(--space-xs); color: var(--color-text-muted);">kw={{ item.keyword_score?.toFixed(4) }}</span>
+                  </div>
+                </div>
+                <div v-else style="font-size: 11px; color: var(--color-text-muted);">无匹配结果</div>
+              </div>
+            </div>
+            <div v-else style="font-size: 12px; color: var(--color-text-muted);">
+              <details>
+                <summary>原始 Extra ({{ msg.extra?.length || 0 }} 字符)</summary>
+                <pre style="max-height: 200px; overflow: auto; white-space: pre-wrap; margin-top: var(--space-xs); font-size: 11px;">{{ formatJSON(msg.extra) }}</pre>
+              </details>
+            </div>
+          </div>
+        </NCard>
+      </div>
     </div>
   </div>
   </div>

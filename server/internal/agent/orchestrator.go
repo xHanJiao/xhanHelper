@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,8 @@ const baseSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职
 ` + corePrinciples + `
 
 注意：历史消息中的 [MM-DD HH:MM] 前缀是系统自动添加的时间戳，不是对话内容。你回复时不要模仿这个格式。`
+
+var tsPrefixRe = regexp.MustCompile(`^\[\d{2}-\d{2} \d{2}:\d{2}\] `)
 
 const defaultMaxIterations = 8
 
@@ -336,11 +339,20 @@ func (o *Orchestrator) runReActLoop(
 		var streamContent, streamReasoning strings.Builder
 		hasReasoning := false
 		var lastVisibleLen int
+		var prefixStripped bool
 		for se := range streamEvents {
 			switch se.Type {
 			case "text_delta":
 				streamContent.WriteString(se.Content)
 				visible := extractAllVisibleText(streamContent.String())
+				if !prefixStripped {
+					stripped := tsPrefixRe.ReplaceAllString(visible, "")
+					if stripped != visible {
+						prefixStripped = true
+						visible = stripped
+						lastVisibleLen = 0
+					}
+				}
 				if len(visible) > lastVisibleLen {
 					o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: visible[lastVisibleLen:]})
 					lastVisibleLen = len(visible)
@@ -368,7 +380,7 @@ func (o *Orchestrator) runReActLoop(
 				}
 				msg := llm.Message{
 					Role:             "assistant",
-					Content:          streamContent.String(),
+					Content:          tsPrefixRe.ReplaceAllString(streamContent.String(), ""),
 					ReasoningContent: streamReasoning.String(),
 					ToolCalls:        se.ToolCalls,
 					RequestJSON:      se.RequestJSON,
@@ -535,7 +547,7 @@ func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID stri
 		UserID:         userID,
 		ConversationID: convID,
 		Role:           "assistant",
-		Content:        msg.Content,
+		Content:        tsPrefixRe.ReplaceAllString(msg.Content, ""),
 	}
 	if msg.ReasoningContent != "" {
 		rc := msg.ReasoningContent

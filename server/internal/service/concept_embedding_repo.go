@@ -40,6 +40,15 @@ func (r *ConceptEmbeddingRepo) ListByType(ctx context.Context, conceptType, user
 	return list, err
 }
 
+// ListByTypeAll 列出指定类型的所有概念（不限用户，用于 warmup）
+func (r *ConceptEmbeddingRepo) ListByTypeAll(ctx context.Context, conceptType string) ([]model.ConceptEmbedding, error) {
+	var list []model.ConceptEmbedding
+	err := r.db.WithContext(ctx).
+		Where("type = ?", conceptType).
+		Find(&list).Error
+	return list, err
+}
+
 // ListAllByUser 列出某用户所有类型的概念（topic + tag，用于聚类）
 func (r *ConceptEmbeddingRepo) ListAllByUser(ctx context.Context, userID string) ([]model.ConceptEmbedding, error) {
 	var list []model.ConceptEmbedding

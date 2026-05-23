@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"strings"
 	"sync"
 	"time"
@@ -32,9 +31,7 @@ const baseSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职
 
 你也是用户的一面数字镜子——通过记忆和笔记了解用户的偏好、价值观、过往决定，当用户当下的选择与过去的自己背离时，温和地提醒。不是你在教育用户，而是过去的用户在提醒现在的用户，帮助做到知行合一。
 
-` + corePrinciples + `
-
-注意：历史消息中的 [MM-DD HH:MM] 前缀是系统自动添加的时间戳，不是对话内容。你回复时不要模仿这个格式。`
+`
 
 const defaultMaxIterations = 8
 
@@ -72,6 +69,7 @@ type Orchestrator struct {
 	proClient          llm.LLMClient
 	registry           *tool.Registry
 	retriever          *Retriever
+	promptBuilder      *SystemPromptBuilder
 	msgRepo            *service.MessageRepo
 	convRepo           *service.ConversationRepo
 	embedder           *llm.Embedder
@@ -109,11 +107,23 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 	if cfg.MaxIterations <= 0 {
 		cfg.MaxIterations = defaultMaxIterations
 	}
+	pb := NewSystemPromptBuilder(
+		DefaultPromptConfig(),
+		baseSystemPrompt,
+		cfg.Registry,
+		cfg.Retriever,
+		cfg.ThemeStateRepo,
+		cfg.ConvRepo,
+		cfg.PromptResolver,
+		cfg.VectorStore,
+	)
+
 	return &Orchestrator{
 		flashClient:        cfg.FlashClient,
 		proClient:          cfg.ProClient,
 		registry:           cfg.Registry,
 		retriever:          cfg.Retriever,
+		promptBuilder:      pb,
 		msgRepo:            cfg.MsgRepo,
 		convRepo:           cfg.ConvRepo,
 		embedder:           cfg.Embedder,
@@ -138,15 +148,39 @@ func (o *Orchestrator) FlashClient() llm.LLMClient {
 func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.StreamEvent, error) {
 
 	client := o.pickClient(req)
-	sysPrompt, memoryNote, memIDs, noteIDs, queryVec, packets := o.buildSysPrompt(ctx, req)
 
 	log.Printf("[orch] run start: model=%s, msgs=%d", client.ModelName(), len(req.Messages))
+
+	// 预计算 embedding（Builder 检索 + 存用户消息都需要）
+	var queryVec []float64
+	if o.embedder != nil && !req.SkipMemory {
+		embStart := time.Now()
+		vec, err := o.embedder.Embed(ctx, req.UserMessageContent)
+		monitor.RecordEmbedding(time.Since(embStart).Milliseconds())
+		if err != nil {
+			log.Printf("[vector] embed user msg error: %v", err)
+		} else {
+			queryVec = vec
+		}
+	}
+
+	result, err := o.promptBuilder.Build(ctx, BuildOptions{
+		UserID:         req.UserID,
+		ConversationID: req.ConversationID,
+		UserMessage:    req.UserMessageContent,
+		Embedding:      queryVec,
+		AgentPrompt:    req.AgentSystemPrompt,
+		DeepMode:       req.DeepMode,
+	})
+	if err != nil {
+		log.Printf("[orch] prompt build error: %v", err)
+	}
 
 	msgs := make([]llm.Message, len(req.Messages))
 	copy(msgs, req.Messages)
 
 	events := make(chan *llm.StreamEvent, 512)
-	go o.runReActLoop(ctx, events, client, sysPrompt, memoryNote, memIDs, noteIDs, queryVec, msgs, req, packets)
+	go o.runReActLoop(ctx, events, client, result, queryVec, msgs, req)
 	return events, nil
 }
 
@@ -157,101 +191,16 @@ func (o *Orchestrator) pickClient(req *RunRequest) llm.LLMClient {
 	return o.flashClient
 }
 
-func (o *Orchestrator) buildSysPrompt(ctx context.Context, req *RunRequest) (string, string, []string, []string, []float64, []ContextPacket) {
-	sysPrompt := req.AgentSystemPrompt
-	if sysPrompt == "" {
-		sysPrompt = baseSystemPrompt
-		if o.promptResolver != nil {
-			clientType := "flash"
-			if o.proClient != nil && req.DeepMode {
-				clientType = "pro"
-			}
-			if custom := o.promptResolver.ResolveActive(ctx, req.UserID, clientType); custom != "" {
-				sysPrompt = custom
-			}
-		}
-	}
-	sysPrompt += "\n当前时间: " + time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
-	sysPrompt += o.registry.GeneratePromptWithOverview()
-
-	// 注入会话上下文（信箱跳转带入的主题信息）
-	extra, err := o.convRepo.GetExtra(ctx, req.ConversationID)
-	if err != nil {
-		log.Printf("[orch] GetExtra error: %v", err)
-	} else if extra != nil && extra.Context != nil && extra.Context.ThemeID != "" {
-		theme, err := o.themeStateRepo.GetByID(ctx, extra.Context.ThemeID, req.UserID)
-		if err != nil {
-			log.Printf("[orch] GetByID for context theme error: %v", err)
-		} else if theme != nil {
-			sysPrompt += fmt.Sprintf("\n\n## 会话关联主题\n名称：%s\n描述：%s", theme.Name, theme.Description)
-			if theme.StateText != "" {
-				sysPrompt += fmt.Sprintf("\n当前状态：%s", theme.StateText)
-			}
-			if theme.Metadata != nil {
-				sysPrompt += fmt.Sprintf("\n候选信息：%s", *theme.Metadata)
-			}
-		}
-	}
-
-	// 注入用户所有活跃主题作为上下文（跨主题关联用）
-	activeThemes, err := o.themeStateRepo.ListActive(ctx, req.UserID)
-	if err != nil {
-		log.Printf("[orch] ListActive error: %v", err)
-	} else if len(activeThemes) > 0 {
-		linkedThemeID := ""
-		if extra != nil && extra.Context != nil {
-			linkedThemeID = extra.Context.ThemeID
-		}
-		var themeParts []string
-		for _, t := range activeThemes {
-			if t.ID == linkedThemeID {
-				continue // 上面已详细注入
-			}
-			if t.StateText == "" {
-				continue // 无状态页则跳过
-			}
-			themeParts = append(themeParts, fmt.Sprintf("### %s\n%s", t.Name, t.StateText))
-		}
-		if len(themeParts) > 0 {
-			sysPrompt += "\n\n===== 用户正在追踪的主题 =====\n" + strings.Join(themeParts, "\n\n")
-		}
-	}
-
-	if o.retriever == nil || o.embedder == nil {
-		return sysPrompt, "", nil, nil, nil, nil
-	}
-	if req.SkipMemory {
-		log.Printf("[orch] skip memory retrieval (SkipMemory=true)")
-		return sysPrompt, "", nil, nil, nil, nil
-	}
-	embStart := time.Now()
-	vec, err := o.embedder.Embed(ctx, req.UserMessageContent)
-	monitor.RecordEmbedding(time.Since(embStart).Milliseconds())
-	if err != nil {
-		log.Printf("[vector] embed user msg error: %v", err)
-		return sysPrompt, "", nil, nil, nil, nil
-	}
-	packets, memIDs, noteIDs := o.retriever.Retrieve(ctx, vec, req.UserMessageContent, req.UserID, req.ConversationID, req.DeepMode, req.MemoryThreshold, req.MemoryLimit)
-	memText := o.retriever.FormatContext(packets)
-	if memText == "" {
-		return sysPrompt, "", nil, noteIDs, vec, packets
-	}
-	sysPrompt += "\n\n===== 关于用户的信息 =====\n" + memText
-	return sysPrompt, fmt.Sprintf(`{"message":"已关联向量记忆","count":%d}`, len(packets)), memIDs, noteIDs, vec, packets
-}
-
 // —— ReAct 主循环 ——
 
 func (o *Orchestrator) runReActLoop(
 	ctx context.Context,
 	events chan<- *llm.StreamEvent,
 	client llm.LLMClient,
-	sysPrompt, memoryNote string,
-	memIDs, noteIDs []string,
+	result *BuildResult,
 	queryVec []float64,
 	msgs []llm.Message,
 	req *RunRequest,
-	packets []ContextPacket,
 ) {
 	defer close(events)
 	defer func() {
@@ -260,10 +209,6 @@ func (o *Orchestrator) runReActLoop(
 		}
 	}()
 
-	if memoryNote != "" {
-		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: memoryNote})
-	}
-
 	userMsgID := uuid.New().String()
 	msgs = append(msgs, llm.Message{Role: "user", Content: req.UserMessageContent})
 	if req.ConversationID == "" {
@@ -271,7 +216,7 @@ func (o *Orchestrator) runReActLoop(
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: "conversation_id is required"})
 		return
 	}
-	extraJSON := buildRetrievalScores(packets)
+	extraJSON := (*string)(nil) // TODO: restore retrieval scores from builder
 	if err := o.msgRepo.Create(ctx, &model.Message{
 		ID:             userMsgID,
 		ConversationID: req.ConversationID,
@@ -319,7 +264,7 @@ func (o *Orchestrator) runReActLoop(
 			thinking = &t
 		}
 		streamEvents, err := client.Chat(ctx, &llm.ChatRequest{
-			SystemPrompt: sysPrompt,
+			SystemPrompt: result.Prompt,
 			Messages:     msgs,
 			Tools:        nil,
 			Temperature:  temperature,
@@ -379,13 +324,13 @@ func (o *Orchestrator) runReActLoop(
 					iter+1, len(msg.Content), len(msg.ReasoningContent), len(msg.ToolCalls))
 
 				var done bool
-				done, lastAssistantMsgID = o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID, memIDs)
+				done, lastAssistantMsgID = o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID, result.MemoryIDs, result.Trace)
 				if done {
 					if len(allToolCalls) >= 2 {
 						planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
 						o.sendEvent(events, &llm.StreamEvent{Type: "plan", Content: string(planJSON)})
 					}
-					o.emitDone(events, req.ConversationID, lastAssistantMsgID, "", memIDs, noteIDs)
+					o.emitDone(events, req.ConversationID, lastAssistantMsgID, "", result.MemoryIDs, result.NoteIDs)
 					return
 				}
 			case "error":
@@ -400,7 +345,7 @@ func (o *Orchestrator) runReActLoop(
 		planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
 		o.sendEvent(events, &llm.StreamEvent{Type: "plan", Content: string(planJSON)})
 	}
-	o.emitDone(events, req.ConversationID, "", "max iterations reached", memIDs, noteIDs)
+	o.emitDone(events, req.ConversationID, "", "max iterations reached", result.MemoryIDs, result.NoteIDs)
 }
 
 // sendEvent — 非阻塞发送事件，避免客户端断连后 goroutine 卡住
@@ -423,12 +368,13 @@ func (o *Orchestrator) handleFlashResponse(
 	allToolCalls *[]tool.ToolCall,
 	lastMsgID *string,
 	memIDs []string,
+	trace *PromptTrace,
 ) (bool, string) {
 	parsed, parseErr := parseLLMResponse(msg.Content)
 
 	if parseErr != nil {
 		log.Printf("[orch] round parse error: %v, saving raw and retrying", parseErr)
-		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg)
+		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, nil)
 		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "响应格式异常，正在重试…"})
 		*msgs = append(*msgs, llm.Message{
 			Role:    "user",
@@ -439,17 +385,24 @@ func (o *Orchestrator) handleFlashResponse(
 
 	if parsed == nil {
 		log.Printf("[orch] round pure text reply, len=%d", len(msg.Content))
-		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg)
+		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, trace)
 		return true, *lastMsgID
 	}
 
 	log.Printf("[orch] round embedded tool_calls=%d: %s",
 		len(parsed.ToolCalls), tool.ToolCallNames(parsed.ToolCalls))
 
+	// 无工具调用 → 纯文本回复，正常结束
+	if len(parsed.ToolCalls) == 0 {
+		log.Printf("[orch] round text-only JSON reply, len=%d", len(msg.Content))
+		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, trace)
+		return true, *lastMsgID
+	}
+
 	// 统一走 prompt engineering，不填 ToolCallsJSON（由 parseLLMResponse 从文本解析）
 	msg.ToolCalls = nil
 
-	*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg)
+	*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, trace)
 
 	*msgs = append(*msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	*allToolCalls = append(*allToolCalls, parsed.ToolCalls...)
@@ -536,7 +489,7 @@ func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, us
 
 // —— DB 保存 ——
 
-func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message) string {
+func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message, trace *PromptTrace) string {
 	if o.msgRepo == nil || convID == "" {
 		return ""
 	}
@@ -547,6 +500,11 @@ func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID stri
 		ConversationID: convID,
 		Role:           "assistant",
 		Content:        msg.Content,
+	}
+	if trace != nil {
+		b, _ := json.Marshal(trace)
+		s := string(b)
+		modelMsg.Extra = &s
 	}
 	if msg.ReasoningContent != "" {
 		rc := msg.ReasoningContent
@@ -747,39 +705,4 @@ func buildPlanEvent(toolCalls []tool.ToolCall) map[string]interface{} {
 		}
 	}
 	return map[string]interface{}{"nodes": nodes, "edges": edges}
-}
-
-// buildRetrievalScores 从检索结果构建打分明细 JSON
-func buildRetrievalScores(packets []ContextPacket) *string {
-	if len(packets) == 0 {
-		return nil
-	}
-	type retrievalScore struct {
-		ID             string  `json:"id"`
-		VectorScore    float64 `json:"vector_score"`
-		KeywordScore   float64 `json:"keyword_score"`
-		FreshnessScore float64 `json:"freshness_score"`
-		FinalScore     float64 `json:"final_score"`
-	}
-	var scores []retrievalScore
-	for _, p := range packets {
-		if p.ID == "" {
-			continue
-		}
-		scores = append(scores, retrievalScore{
-			ID:             p.ID,
-			VectorScore:    math.Round(p.Score*10000) / 10000,
-			KeywordScore:   p.KeywordScore,
-			FreshnessScore: float64(p.TokenCount) / 100,
-			FinalScore:     p.CorrelationCoefficient,
-		})
-	}
-	if len(scores) == 0 {
-		return nil
-	}
-	extra, _ := json.Marshal(map[string]interface{}{
-		"retrieval_scores": scores,
-	})
-	s := string(extra)
-	return &s
 }

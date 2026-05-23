@@ -276,7 +276,7 @@ func main() {
 	memSource.Warmup(bgCtx, embedder)
 	noteSource.Warmup(bgCtx, embedder)
 	// Theme embedding warmup：从 embedding 表加载到向量库，确保去重重启后有效
-	warmupThemeEmbeddings(bgCtx, embeddingRepo, vectorStore)
+	warmupThemeEmbeddings(bgCtx, embeddingRepo, vectorStore, conceptEmbedRepo, themeStateRepo)
 	warmupChunkEmbeddings(bgCtx, embeddingRepo, vectorStore)
 	warmupConceptEmbeddings(bgCtx, embeddingRepo, vectorStore)
 
@@ -391,9 +391,52 @@ func main() {
 }
 
 // warmupThemeEmbeddings 从 embedding 表加载主题向量到内存向量库
-func warmupThemeEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore *agent.VectorStore) {
+func warmupThemeEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore *agent.VectorStore, conceptEmbedRepo *service.ConceptEmbeddingRepo, themeStateRepo *service.ThemeStateRepo) {
 	const pageSize = 100
 	loaded := 0
+
+	// 预加载：concept_embedding ID→Value 映射
+	conceptIDToValue := make(map[string]string)
+	if conceptEmbedRepo != nil {
+		allConcepts, cerr := conceptEmbedRepo.ListByTypeAll(ctx, "theme")
+		if cerr != nil {
+			log.Printf("[warmup] concept list error: %v", cerr)
+		} else {
+			for _, c := range allConcepts {
+				conceptIDToValue[c.ID] = c.Value
+			}
+		}
+	}
+
+	// 第一遍：收集所有唯一 userID + 按 userID 加载活跃主题
+	userThemeMap := make(map[string]map[string]string) // userID → name → themeID
+	seenUsers := make(map[string]bool)
+	{
+		for offset := 0; ; offset += pageSize {
+			embeddings, err := embeddingRepo.ListByType(ctx, model.EntityTypeTheme, pageSize, offset)
+			if err != nil || len(embeddings) == 0 {
+				break
+			}
+			for _, emb := range embeddings {
+				if emb.UserID != "" && !seenUsers[emb.UserID] {
+					seenUsers[emb.UserID] = true
+					themes, terr := themeStateRepo.ListActive(ctx, emb.UserID)
+					if terr == nil {
+						nameMap := make(map[string]string)
+						for _, t := range themes {
+							nameMap[t.Name] = t.ID
+						}
+						userThemeMap[emb.UserID] = nameMap
+					}
+				}
+			}
+			if len(embeddings) < pageSize {
+				break
+			}
+		}
+	}
+
+	// 第二遍：加载向量到 VectorStore，补上 theme_id
 	for offset := 0; ; offset += pageSize {
 		embeddings, err := embeddingRepo.ListByType(ctx, model.EntityTypeTheme, pageSize, offset)
 		if err != nil {
@@ -407,10 +450,26 @@ func warmupThemeEmbeddings(ctx context.Context, embeddingRepo *service.Embedding
 			if emb.Embedding != nil {
 				vec, err := llm.StringToEmbedding(*emb.Embedding)
 				if err == nil && len(vec) > 0 {
-					vectorStore.Upsert("theme:"+emb.EntityID, vec, map[string]string{
+					meta := map[string]string{
 						"type":    "theme",
 						"user_id": emb.UserID,
-					})
+					}
+					// 通过 concept_embedding.value 反查 theme_state，补上 theme_id
+					if conceptValue, ok := conceptIDToValue[emb.EntityID]; ok {
+						meta["concept_value"] = conceptValue
+						nameMap := userThemeMap[emb.UserID]
+						if tid, ok := nameMap[conceptValue]; ok {
+							meta["theme_id"] = tid
+						} else {
+							for name, tid := range nameMap {
+								if strings.HasPrefix(conceptValue, name+" ") || conceptValue == name {
+									meta["theme_id"] = tid
+									break
+								}
+							}
+						}
+					}
+					vectorStore.Upsert("theme:"+emb.EntityID, vec, meta)
 					loaded++
 				}
 			}

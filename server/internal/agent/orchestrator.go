@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"xhan-helper/internal/config"
 	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"

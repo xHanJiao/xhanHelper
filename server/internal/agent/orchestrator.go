@@ -442,15 +442,12 @@ func (o *Orchestrator) handleFlashResponse(
 		}
 	}
 
-	results := executeConcurrently(ctx, events, userID, o.registry, parsed.ToolCalls)
+	toolCallResults := executeConcurrently(ctx, events, userID, o.registry, parsed.ToolCalls)
 
 	for i := range parsed.ToolCalls {
-		resJSON, _ := json.Marshal(results[i].result)
+		resJSON, _ := json.Marshal(toolCallResults[i].result)
 		o.sendEvent(events, &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)})
-
-		toolCallID := idgen.Next()
-		o.saveToolMsgWithID(ctx, convID, userID, toolCallID, string(resJSON))
-
+		o.saveToolMsg(ctx, convID, userID, idgen.Next(), string(resJSON))
 		*msgs = append(*msgs, llm.Message{
 			Role:    "user",
 			Content: "[工具执行结果] " + string(resJSON),
@@ -584,11 +581,6 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCall
 		log.Printf("[orch] touch conv error: %v", err)
 	}
 	log.Printf("[orch] saved tool message: id=%s tool_call_id=%s", msgID, toolCallID)
-}
-
-// 保留 saveToolMsgWithID 供后续统一迁移用
-func (o *Orchestrator) saveToolMsgWithID(ctx context.Context, convID, userID, toolCallID string, content string) {
-	o.saveToolMsg(ctx, convID, userID, toolCallID, content)
 }
 
 // BuildMessagesForFlash 将数据库标准消息转换为 FlashClient 格式

@@ -29,6 +29,7 @@ DerivedData/
 
 # Xcode scheme files
 *.xcscheme
+xcschememanagement.plist
 
 # Nginx 配置（部署用，用完删）
 nginx.conf

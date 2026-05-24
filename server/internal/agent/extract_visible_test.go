@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -194,6 +195,66 @@ func TestExtractCleanText_InvalidJSON(t *testing.T) {
 	result := extractCleanText("这不是 JSON {{{ broken")
 	if result != "" {
 		t.Errorf("expected empty string for invalid JSON (strict mode), got '%s'", result)
+	}
+}
+
+// ---- maybeInjectCreatedAt ----
+
+func TestMaybeInjectCreatedAt_ValidJSONWithReply(t *testing.T) {
+	result := maybeInjectCreatedAt(`{"reply":"hello","tool_calls":[]}`)
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &m); err != nil {
+		t.Fatalf("result should be valid JSON: %v", err)
+	}
+	if m["reply"] != "hello" {
+		t.Errorf("reply should be preserved, got %v", m["reply"])
+	}
+	if _, ok := m["created_at"]; !ok {
+		t.Error("created_at field should be injected")
+	}
+}
+
+func TestMaybeInjectCreatedAt_NoReplyKey(t *testing.T) {
+	// 不含 reply 字段的 JSON → 原样返回
+	result := maybeInjectCreatedAt(`{"tool_calls":[]}`)
+	if result != `{"tool_calls":[]}` {
+		t.Errorf("expected unchanged, got '%s'", result)
+	}
+}
+
+func TestMaybeInjectCreatedAt_InvalidJSON(t *testing.T) {
+	// 非法 JSON → 原样返回
+	result := maybeInjectCreatedAt(`{broken`)
+	if result != `{broken` {
+		t.Errorf("expected unchanged, got '%s'", result)
+	}
+}
+
+func TestMaybeInjectCreatedAt_PureText(t *testing.T) {
+	// 纯文本 → 原样返回
+	result := maybeInjectCreatedAt("今天天气不错")
+	if result != "今天天气不错" {
+		t.Errorf("expected unchanged, got '%s'", result)
+	}
+}
+
+func TestMaybeInjectCreatedAt_PreservesToolCalls(t *testing.T) {
+	raw := `{"reply":"ok","tool_calls":[{"tool":"note","function":"record","args":{"topic":"t"}}]}`
+	result := maybeInjectCreatedAt(raw)
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &m); err != nil {
+		t.Fatalf("result should be valid JSON: %v", err)
+	}
+	if m["reply"] != "ok" {
+		t.Errorf("reply lost: %v", m["reply"])
+	}
+	tc, ok := m["tool_calls"]
+	if !ok {
+		t.Error("tool_calls should be preserved")
+	}
+	_ = tc
+	if _, ok := m["created_at"]; !ok {
+		t.Error("created_at should be injected")
 	}
 }
 

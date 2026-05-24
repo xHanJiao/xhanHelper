@@ -510,7 +510,7 @@ func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID stri
 		UserID:         userID,
 		ConversationID: convID,
 		Role:           "assistant",
-		Content:        msg.Content,
+		Content:        maybeInjectCreatedAt(msg.Content),
 	}
 	if trace != nil {
 		b, _ := json.Marshal(trace)
@@ -704,8 +704,23 @@ func parseLLMResponse(text string) (*LLMResponse, error) {
 }
 
 // extractCleanText 从 LLM 原始输出中提取干净的用户可见文本。
-// 严格 JSON 模式：LLM 始终返回 JSON，从中提取 reply 字段。
-// parse 失败时返回空（由 handleFlashResponse 重试），无 JSON 时返回原始文本。
+// maybeInjectCreatedAt 如果 content 是合法 JSON（含 reply 字段），注入 created_at
+func maybeInjectCreatedAt(raw string) string {
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return raw
+	}
+	if _, ok := m["reply"]; !ok {
+		return raw
+	}
+	m["created_at"] = time.Now().Format(time.RFC3339)
+	b, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return string(b)
+}
+
 func extractCleanText(raw string) string {
 	parsed, err := parseLLMResponse(raw)
 	if err != nil {

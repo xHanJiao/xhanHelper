@@ -62,6 +62,16 @@ type PromptResolver interface {
 	ResolveActive(ctx context.Context, userID, promptType string) string
 }
 
+// msgCreator — Orchestrator 需要的消息写入能力（*service.MessageRepo 自动满足）
+type msgCreator interface {
+	Create(ctx context.Context, m *model.Message) error
+}
+
+// convToucher — Orchestrator 需要的会话更新时间能力（*service.ConversationRepo 自动满足）
+type convToucher interface {
+	Touch(ctx context.Context, id string) error
+}
+
 // Orchestrator — ReAct 循环编排器
 type Orchestrator struct {
 	flashClient        llm.LLMClient
@@ -69,8 +79,8 @@ type Orchestrator struct {
 	registry           *tool.Registry
 	retriever          *Retriever
 	promptBuilder      *SystemPromptBuilder
-	msgRepo            *service.MessageRepo
-	convRepo           *service.ConversationRepo
+	msgRepo            msgCreator
+	convRepo           convToucher
 	embedder           *llm.Embedder
 	vectorStore        *VectorStore
 	embeddingRepo      *service.EmbeddingRepo
@@ -279,22 +289,10 @@ func (o *Orchestrator) runReActLoop(
 
 		var streamContent, streamReasoning strings.Builder
 		hasReasoning := false
-		isJSON := false // 是否检测到 JSON 格式（需要工具调用时 LLM 返回 JSON）
 		for se := range streamEvents {
 			switch se.Type {
 			case "text_delta":
 				streamContent.WriteString(se.Content)
-				if !isJSON {
-					trimmed := strings.TrimLeft(streamContent.String(), " \t\n\r")
-					cleaned := strings.TrimPrefix(trimmed, "```json")
-					cleaned = strings.TrimPrefix(cleaned, "```")
-					cleaned = strings.TrimSpace(cleaned)
-					if strings.HasPrefix(cleaned, "{") {
-						isJSON = true
-					} else if len(cleaned) > 0 {
-						o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: se.Content})
-					}
-				}
 			case "thought_delta":
 				streamReasoning.WriteString(se.Content)
 				hasReasoning = true
@@ -317,12 +315,10 @@ func (o *Orchestrator) runReActLoop(
 					o.sendEvent(events, &llm.StreamEvent{Type: "thought_done", Content: ""})
 				}
 
-				// JSON 模式：用标准解析提取 reply，流式推给前端
-				if isJSON {
-					parsed, _ := parseLLMResponse(streamContent.String())
-					if parsed != nil && parsed.Reply != "" {
-						o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: parsed.Reply})
-					}
+				// 提取干净的回复文本推给前端（假流式：buffer 完成后再推送）
+				cleanText := extractCleanText(streamContent.String())
+				if cleanText != "" {
+					o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: cleanText})
 				}
 
 				msg := llm.Message{
@@ -398,9 +394,14 @@ func (o *Orchestrator) handleFlashResponse(
 	}
 
 	if parsed == nil {
-		log.Printf("[orch] round pure text reply, len=%d", len(msg.Content))
+		log.Printf("[orch] round: no JSON found in response (strict mode), retrying")
 		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, trace)
-		return true, *lastMsgID
+		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "响应格式异常，正在重试…"})
+		*msgs = append(*msgs, llm.Message{
+			Role:    "user",
+			Content: "[系统] 你必须严格按照 JSON 格式回复。每次回复都必须是一个完整的 JSON 对象：{\"reply\":\"给用户的回复\",\"tool_calls\":[...]}。不需要工具调用时 tool_calls 为空数组 []。不要在 JSON 前后添加任何文字。",
+		})
+		return false, ""
 	}
 
 	log.Printf("[orch] round embedded tool_calls=%d: %s",
@@ -687,9 +688,12 @@ func (o *Orchestrator) GenerateTitle(ctx context.Context, userMessage string) st
 
 func parseLLMResponse(text string) (*LLMResponse, error) {
 	var resp LLMResponse
-	_, err := ParseFlashJSON(text, &resp)
+	prefix, err := ParseFlashJSON(text, &resp)
 	if err != nil {
 		return nil, err // 非法 JSON
+	}
+	if prefix != "" {
+		return nil, fmt.Errorf("strict JSON: unexpected text before JSON: %q", prefix)
 	}
 	if resp.ToolCalls == nil && resp.Reply == "" {
 		return nil, nil // 没找到 JSON，纯文本消息
@@ -701,6 +705,17 @@ func parseLLMResponse(text string) (*LLMResponse, error) {
 		resp.ToolCalls[i].Function = strings.TrimPrefix(tc.Function, "_")
 	}
 	return &resp, nil
+}
+
+// extractCleanText 从 LLM 原始输出中提取干净的用户可见文本。
+// 严格 JSON 模式：LLM 始终返回 JSON，从中提取 reply 字段。
+// parse 失败或无 JSON 时返回空，由 handleFlashResponse 触发重试。
+func extractCleanText(raw string) string {
+	parsed, err := parseLLMResponse(raw)
+	if err != nil || parsed == nil {
+		return ""
+	}
+	return parsed.Reply
 }
 
 func buildPlanEvent(toolCalls []tool.ToolCall) map[string]interface{} {

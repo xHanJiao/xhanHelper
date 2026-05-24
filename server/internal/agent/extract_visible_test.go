@@ -157,59 +157,49 @@ func TestParseLLMResponse_OnlyToolCallsNoReply(t *testing.T) {
 	}
 }
 
-// ---- isJSONContent: orchestrator 流式内容类型检测 ----
+// ---- extractCleanText: 从 LLM 输出提取干净文本 ----
 
-func TestIsJSONContent_StartsWithBrace(t *testing.T) {
-	if !isJSONContent(`{"reply":"hello"}`) {
-		t.Error("expected true for JSON object")
+func TestExtractCleanText_JSONWithReply(t *testing.T) {
+	result := extractCleanText(`{"reply":"今天天气不错"}`)
+	if result != "今天天气不错" {
+		t.Errorf("expected '今天天气不错', got '%s'", result)
 	}
 }
 
-func TestIsJSONContent_StartsWithBraceAfterWhitespace(t *testing.T) {
-	if !isJSONContent("  \n\t{\"reply\":\"hello\"}") {
-		t.Error("expected true for JSON with leading whitespace")
+func TestExtractCleanText_JSONWithReplyAndToolCalls(t *testing.T) {
+	result := extractCleanText(`{"reply":"已记账","tool_calls":[{"tool":"bookkeeping","function":"create","args":{"amount":100}}]}`)
+	if result != "已记账" {
+		t.Errorf("expected '已记账', got '%s'", result)
 	}
 }
 
-func TestIsJSONContent_StartsWithMarkdownFence(t *testing.T) {
-	if !isJSONContent("```json\n{\"reply\":\"hello\"}") {
-		t.Error("expected true for markdown-fenced JSON")
+func TestExtractCleanText_JSONWithPrefixBeforeBrace(t *testing.T) {
+	// 严格 JSON：前导文本 + JSON → parseLLMResponse 返回 prefix error → 返回空
+	result := extractCleanText("好的，我来查看\n{\"reply\":\"正在查询...\",\"tool_calls\":[{\"tool\":\"agent\",\"function\":\"list_agents\",\"args\":{}}]}")
+	if result != "" {
+		t.Errorf("expected empty for prefix text (strict mode), got '%s'", result)
 	}
 }
 
-func TestIsJSONContent_PureText(t *testing.T) {
-	if isJSONContent("今天天气不错") {
-		t.Error("expected false for pure text")
+func TestExtractCleanText_PureText(t *testing.T) {
+	// 严格 JSON 模式：纯文本返回空，由 handleFlashResponse 触发重试
+	result := extractCleanText("今天天气不错，适合出去走走")
+	if result != "" {
+		t.Errorf("expected empty string for pure text (strict mode), got '%s'", result)
 	}
 }
 
-func TestIsJSONContent_EmptyString(t *testing.T) {
-	if isJSONContent("") {
-		t.Error("expected false for empty string")
+func TestExtractCleanText_InvalidJSON(t *testing.T) {
+	// 严格 JSON 模式：非法 JSON 返回空，由 handleFlashResponse 触发重试
+	result := extractCleanText("这不是 JSON {{{ broken")
+	if result != "" {
+		t.Errorf("expected empty string for invalid JSON (strict mode), got '%s'", result)
 	}
 }
 
-func TestIsJSONContent_WhitespaceOnly(t *testing.T) {
-	if isJSONContent("   \t\n  ") {
-		t.Error("expected false for whitespace-only")
+func TestExtractCleanText_EmptyInput(t *testing.T) {
+	result := extractCleanText("")
+	if result != "" {
+		t.Errorf("expected empty string, got '%s'", result)
 	}
-}
-
-func TestIsJSONContent_StartsWithTextThenBrace(t *testing.T) {
-	// 前导文本 + JSON 块 → 不检测为JSON（文本先出现）
-	if isJSONContent("好的，以下是结果：\n{\"data\": 1}") {
-		t.Error("expected false for text-then-JSON (text appeared first)")
-	}
-}
-
-// ---- isJSONContent helper: 模拟 orchestrator 中的检测逻辑 ----
-
-// isJSONContent 判断累积内容是否是 JSON 格式（需要工具调用场景）。
-// 这是 orchestrator 中 text_delta 处理逻辑的提取版本。
-func isJSONContent(content string) bool {
-	trimmed := strings.TrimLeft(content, " \t\n\r")
-	cleaned := strings.TrimPrefix(trimmed, "```json")
-	cleaned = strings.TrimPrefix(cleaned, "```")
-	cleaned = strings.TrimSpace(cleaned)
-	return len(cleaned) > 0 && cleaned[0] == '{'
 }

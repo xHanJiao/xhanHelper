@@ -192,7 +192,7 @@ func (c *DoubaoClient) BuildSystemPrompt(base string, tools []ToolDefinition) st
 		}
 	}
 	b.WriteString("===== 输出格式 =====\n")
-	b.WriteString("需要调用工具时输出 JSON: {\"reply\":\"给用户的回复\",\"tool_calls\":[{\"tool\":\"<工具名>\",\"function\":\"<函数名>\",\"args\":{...}]}\n")
+	b.WriteString("每次回复都必须输出 JSON 对象: {\"reply\":\"给用户的回复\",\"tool_calls\":[{\"tool\":\"<工具名>\",\"function\":\"<函数名>\",\"args\":{...}}]}。不需要工具时 tool_calls 为空数组 []。**严禁在 JSON 前后添加任何文字。**\n")
 	b.WriteString("不确定分类时反问用户，不要瞎猜。\n\n")
 	b.WriteString("===== 思考方式 =====\n")
 	b.WriteString("面对复杂任务时，按以下步骤思考和行动：\n")

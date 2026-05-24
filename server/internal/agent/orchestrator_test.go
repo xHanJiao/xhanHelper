@@ -249,11 +249,15 @@ func TestFinalizeRound_CleanTextExtraction(t *testing.T) {
 			textDeltas = append(textDeltas, evt.Content)
 		}
 	}
-	if len(textDeltas) != 1 {
-		t.Fatalf("expected 1 text_delta, got %d: %v", len(textDeltas), textDeltas)
+	// 5 个 rune，chunkSize=3 → 2 个 chunk: "你好，" "世界"
+	if len(textDeltas) != 2 {
+		t.Fatalf("expected 2 text_delta, got %d: %v", len(textDeltas), textDeltas)
 	}
-	if textDeltas[0] != "你好，世界" {
-		t.Errorf("expected '你好，世界', got '%s'", textDeltas[0])
+	if textDeltas[0] != "你好，" {
+		t.Errorf("expected chunk 0 '你好，', got '%s'", textDeltas[0])
+	}
+	if textDeltas[1] != "世界" {
+		t.Errorf("expected chunk 1 '世界', got '%s'", textDeltas[1])
 	}
 }
 
@@ -309,6 +313,99 @@ func TestFinalizeRound_ReturnsTrueOnTextOnly(t *testing.T) {
 	}
 	if !hasDone {
 		t.Error("expected done event")
+	}
+}
+
+// —— streamTextChunks ——
+
+func TestStreamTextChunks_ShortText(t *testing.T) {
+	o := &Orchestrator{}
+	events := make(chan *llm.StreamEvent, 16)
+
+	o.streamTextChunks(context.Background(), events, "好的")
+	close(events)
+
+	var texts []string
+	for evt := range events {
+		if evt.Type == "text_delta" {
+			texts = append(texts, evt.Content)
+		}
+	}
+	if len(texts) != 1 {
+		t.Fatalf("short text: expected 1 chunk, got %d", len(texts))
+	}
+	if texts[0] != "好的" {
+		t.Errorf("expected '好的', got '%s'", texts[0])
+	}
+}
+
+func TestStreamTextChunks_LongText(t *testing.T) {
+	o := &Orchestrator{}
+	events := make(chan *llm.StreamEvent, 64)
+
+	o.streamTextChunks(context.Background(), events, "你好世界今天天气不错")
+	close(events)
+
+	var texts []string
+	for evt := range events {
+		if evt.Type == "text_delta" {
+			texts = append(texts, evt.Content)
+		}
+	}
+	// 10个 rune，chunkSize=3 → expect 4 chunks: "你好世" "界今天" "天气不" "错"
+	if len(texts) != 4 {
+		t.Fatalf("long text: expected 4 chunks, got %d: %v", len(texts), texts)
+	}
+	if texts[0] != "你好世" {
+		t.Errorf("chunk 0: expected '你好世', got '%s'", texts[0])
+	}
+	if texts[1] != "界今天" {
+		t.Errorf("chunk 1: expected '界今天', got '%s'", texts[1])
+	}
+	if texts[2] != "天气不" {
+		t.Errorf("chunk 2: expected '天气不', got '%s'", texts[2])
+	}
+	if texts[3] != "错" {
+		t.Errorf("chunk 3: expected '错', got '%s'", texts[3])
+	}
+}
+
+func TestStreamTextChunks_CancelMidStream(t *testing.T) {
+	o := &Orchestrator{}
+	events := make(chan *llm.StreamEvent, 64)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	o.streamTextChunks(ctx, events, "你好世界今天天气不错")
+	close(events)
+
+	var texts []string
+	for evt := range events {
+		if evt.Type == "text_delta" {
+			texts = append(texts, evt.Content)
+		}
+	}
+	if len(texts) > 0 {
+		t.Errorf("cancelled: expected 0 chunks, got %d: %v", len(texts), texts)
+	}
+}
+
+func TestStreamTextChunks_EmptyText(t *testing.T) {
+	o := &Orchestrator{}
+	events := make(chan *llm.StreamEvent, 16)
+
+	o.streamTextChunks(context.Background(), events, "")
+	close(events)
+
+	var texts []string
+	for evt := range events {
+		if evt.Type == "text_delta" {
+			texts = append(texts, evt.Content)
+		}
+	}
+	if len(texts) != 0 {
+		t.Errorf("empty text: expected 0 chunks, got %d", len(texts))
 	}
 }
 

@@ -360,7 +360,7 @@ func (o *Orchestrator) finalizeRound(
 	if done {
 		cleanText := extractCleanText(streamContent)
 		if cleanText != "" {
-			o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: cleanText})
+			o.streamTextChunks(ctx, events, cleanText)
 		}
 		o.emitDone(events, convID, state.lastAssistantMsgID, "", memIDs, noteIDs)
 	}
@@ -660,6 +660,45 @@ func (o *Orchestrator) saveUserMsgEmbedding(userMsgID string, vec []float64, use
 	})
 	if err != nil {
 		log.Printf("[orch] save message embedding error: %v", err)
+	}
+}
+
+// streamTextChunks 将文本按 rune 分块、逐块延时发送，模拟流式打字效果。
+// ctx 取消时提前返回。短文本（<= chunkSize）一次性发送。
+func (o *Orchestrator) streamTextChunks(ctx context.Context, events chan<- *llm.StreamEvent, text string) {
+	if text == "" {
+		return
+	}
+	runes := []rune(text)
+	chunkSize := 3
+	delay := 30 * time.Millisecond
+
+	if len(runes) <= chunkSize {
+		o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: text})
+		return
+	}
+
+	for i := 0; i < len(runes); i += chunkSize {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		end := i + chunkSize
+		if end > len(runes) {
+			end = len(runes)
+		}
+		chunk := string(runes[i:end])
+		o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: chunk})
+
+		if i+chunkSize < len(runes) {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
+		}
 	}
 }
 

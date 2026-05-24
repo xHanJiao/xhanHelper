@@ -419,12 +419,12 @@ func TestRunReActLoop_JSONWithPrefixText_AcceptedGracefully(t *testing.T) {
 }
 
 func TestRunReActLoop_StreamingBuffersUntilDone(t *testing.T) {
-	// 验证：text_delta 只在 done 之后才推送到前端（假流式）
+	// 验证：原始 JSON 碎片不推到前端，streamTextChunks 按 chunk 模拟流式
 	msgRepo := &mockMsgRepo{}
 	convRepo := &mockConvRepo{}
 	o := newTestOrchestrator(msgRepo, convRepo)
 
-	// LLM 返回很多 JSON 碎片，但前端只应收到 extractCleanText 的结果
+	// LLM 返回很多 JSON 碎片，前端应收到的不是原始碎片而是按 chunk 拆分后的干净文本
 	jsonContent := `{"reply":"你好，世界！"}`
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
@@ -449,19 +449,23 @@ func TestRunReActLoop_StreamingBuffersUntilDone(t *testing.T) {
 		collected = append(collected, evt)
 	}
 
-	// 应该只有 1 个 text_delta 事件（extractCleanText 的结果），
-	// 而不是 20+ 个逐字符的原始 JSON 碎片
+	// 6 个 rune，chunkSize=3 → 2 个 chunk: "你好，" "世界！"
 	var deltas []string
 	for _, e := range collected {
 		if e.Type == "text_delta" {
 			deltas = append(deltas, e.Content)
 		}
 	}
-	if len(deltas) != 1 {
-		t.Errorf("expected exactly 1 text_delta event (clean text), got %d: %v", len(deltas), deltas)
+	if len(deltas) != 2 {
+		t.Errorf("expected 2 text_delta chunks, got %d: %v", len(deltas), deltas)
 	}
-	if len(deltas) == 1 && deltas[0] != "你好，世界！" {
-		t.Errorf("expected clean text '你好，世界！', got '%s'", deltas[0])
+	if len(deltas) >= 2 {
+		if deltas[0] != "你好，" {
+			t.Errorf("expected chunk 0 '你好，', got '%s'", deltas[0])
+		}
+		if deltas[1] != "世界！" {
+			t.Errorf("expected chunk 1 '世界！', got '%s'", deltas[1])
+		}
 	}
 }
 

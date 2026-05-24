@@ -20,11 +20,11 @@ func TestHandleFlashResponse_ParseErrorTriggersRetry(t *testing.T) {
 		Role:    "assistant",
 		Content: "这不是合法的 JSON {{{ broken",
 	}
-	req := &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}
+
 	var allToolCalls []tool.ToolCall
 	var lastMsgID string
 
-	done, newMsgID := o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastMsgID, nil, nil)
+	done, newMsgID := o.handleFlashResponse(ctx, events, &msgs, msg, "test-conv-1", "test-user-1", &allToolCalls, &lastMsgID, nil, nil)
 
 	if done {
 		t.Error("expected done=false for parse error (should retry)")
@@ -74,11 +74,11 @@ func TestHandleFlashResponse_InvalidJSON_UnescapedQuotes(t *testing.T) {
 		Role:    "assistant",
 		Content: `{"reply":"他说"太断子绝孙"是错的","tool_calls":[]}`,
 	}
-	req := &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}
+
 	var allToolCalls []tool.ToolCall
 	var lastMsgID string
 
-	done, _ := o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastMsgID, nil, nil)
+	done, _ := o.handleFlashResponse(ctx, events, &msgs, msg, "test-conv-1", "test-user-1", &allToolCalls, &lastMsgID, nil, nil)
 
 	if done {
 		t.Error("expected done=false for unescaped quotes (should retry)")
@@ -102,11 +102,11 @@ func TestHandleFlashResponse_ValidJSONTextOnly(t *testing.T) {
 		Role:    "assistant",
 		Content: `{"reply":"今天天气不错，适合出去走走"}`,
 	}
-	req := &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}
+
 	var allToolCalls []tool.ToolCall
 	var lastMsgID string
 
-	done, _ := o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastMsgID, nil, nil)
+	done, _ := o.handleFlashResponse(ctx, events, &msgs, msg, "test-conv-1", "test-user-1", &allToolCalls, &lastMsgID, nil, nil)
 
 	if !done {
 		t.Error("expected done=true for text-only JSON reply (no tool calls)")
@@ -124,11 +124,11 @@ func TestHandleFlashResponse_PureTextFallback(t *testing.T) {
 		Role:    "assistant",
 		Content: "今天天气不错",
 	}
-	req := &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}
+
 	var allToolCalls []tool.ToolCall
 	var lastMsgID string
 
-	done, _ := o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastMsgID, nil, nil)
+	done, _ := o.handleFlashResponse(ctx, events, &msgs, msg, "test-conv-1", "test-user-1", &allToolCalls, &lastMsgID, nil, nil)
 
 	// 纯文本容错接受，正常结束
 	if !done {
@@ -136,5 +136,190 @@ func TestHandleFlashResponse_PureTextFallback(t *testing.T) {
 	}
 	if len(msgs) != 0 {
 		t.Errorf("expected 0 retry messages, got %d", len(msgs))
+	}
+}
+
+// —— newAssistantMessage ——
+
+func TestNewAssistantMessage_Basic(t *testing.T) {
+	se := &llm.StreamEvent{
+		Type: "done",
+	}
+	msg := newAssistantMessage("hello", "", se)
+
+	if msg.Role != "assistant" {
+		t.Errorf("expected role='assistant', got '%s'", msg.Role)
+	}
+	if msg.Content != "hello" {
+		t.Errorf("expected content='hello', got '%s'", msg.Content)
+	}
+	if msg.ReasoningContent != "" {
+		t.Errorf("expected empty reasoning, got '%s'", msg.ReasoningContent)
+	}
+}
+
+func TestNewAssistantMessage_WithReasoning(t *testing.T) {
+	se := &llm.StreamEvent{Type: "done"}
+	msg := newAssistantMessage("reply", "thinking...", se)
+
+	if msg.Content != "reply" {
+		t.Errorf("expected content='reply', got '%s'", msg.Content)
+	}
+	if msg.ReasoningContent != "thinking..." {
+		t.Errorf("expected reasoning='thinking...', got '%s'", msg.ReasoningContent)
+	}
+}
+
+func TestNewAssistantMessage_WithToolCalls(t *testing.T) {
+	tc := []llm.ToolCall{{ID: "tc1", Function: llm.ToolCallFunction{Name: "search"}}}
+	reqJSON := `{"req":1}`
+	respJSON := `{"resp":2}`
+	se := &llm.StreamEvent{
+		Type:         "done",
+		ToolCalls:    tc,
+		RequestJSON:  &reqJSON,
+		ResponseJSON: &respJSON,
+	}
+	msg := newAssistantMessage("", "", se)
+
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(msg.ToolCalls))
+	}
+	if msg.ToolCalls[0].Function.Name != "search" {
+		t.Errorf("expected function name 'search', got '%s'", msg.ToolCalls[0].Function.Name)
+	}
+	if msg.RequestJSON == nil || *msg.RequestJSON != `{"req":1}` {
+		t.Errorf("expected RequestJSON, got %v", msg.RequestJSON)
+	}
+	if msg.ResponseJSON == nil || *msg.ResponseJSON != `{"resp":2}` {
+		t.Errorf("expected ResponseJSON, got %v", msg.ResponseJSON)
+	}
+}
+
+// —— finalizeRound ——
+
+func TestFinalizeRound_ThoughtDone(t *testing.T) {
+	o := &Orchestrator{msgRepo: nil}
+	events := make(chan *llm.StreamEvent, 16)
+	state := &reactState{}
+
+	se := &llm.StreamEvent{Type: "done"}
+	done := o.finalizeRound(context.Background(), events, se,
+		`{"reply":"ok"}`, "thinking...",
+		"cv", "u1", nil, nil, nil, state,
+	)
+
+	if !done {
+		t.Error("expected done=true for text-only JSON reply")
+	}
+	close(events)
+	var thoughtDoneFound bool
+	for evt := range events {
+		if evt.Type == "thought_done" {
+			thoughtDoneFound = true
+		}
+	}
+	if !thoughtDoneFound {
+		t.Error("expected thought_done event when reasoning is present")
+	}
+}
+
+func TestFinalizeRound_NoThoughtDoneWithoutReasoning(t *testing.T) {
+	o := &Orchestrator{msgRepo: nil}
+	events := make(chan *llm.StreamEvent, 16)
+	state := &reactState{}
+
+	se := &llm.StreamEvent{Type: "done"}
+	_ = o.finalizeRound(context.Background(), events, se,
+		`{"reply":"ok"}`, "", // 空 reasoning
+		"cv", "u1", nil, nil, nil, state,
+	)
+
+	close(events)
+	for evt := range events {
+		if evt.Type == "thought_done" {
+			t.Error("expected no thought_done when reasoning is empty")
+		}
+	}
+}
+
+func TestFinalizeRound_CleanTextExtraction(t *testing.T) {
+	o := &Orchestrator{msgRepo: nil}
+	events := make(chan *llm.StreamEvent, 16)
+	state := &reactState{}
+
+	se := &llm.StreamEvent{Type: "done"}
+	_ = o.finalizeRound(context.Background(), events, se,
+		`{"reply":"你好，世界"}`, "",
+		"cv", "u1", nil, nil, nil, state,
+	)
+
+	close(events)
+	var textDeltas []string
+	for evt := range events {
+		if evt.Type == "text_delta" {
+			textDeltas = append(textDeltas, evt.Content)
+		}
+	}
+	if len(textDeltas) != 1 {
+		t.Fatalf("expected 1 text_delta, got %d: %v", len(textDeltas), textDeltas)
+	}
+	if textDeltas[0] != "你好，世界" {
+		t.Errorf("expected '你好，世界', got '%s'", textDeltas[0])
+	}
+}
+
+func TestFinalizeRound_ReturnsFalseOnParseError(t *testing.T) {
+	o := &Orchestrator{msgRepo: nil}
+	events := make(chan *llm.StreamEvent, 16)
+	state := &reactState{}
+
+	se := &llm.StreamEvent{Type: "done"}
+	done := o.finalizeRound(context.Background(), events, se,
+		"这不是合法的 JSON {{{ broken", "",
+		"cv", "u1", nil, nil, nil, state,
+	)
+
+	if done {
+		t.Error("expected done=false on parse error (should retry)")
+	}
+	close(events)
+	var hasStatus bool
+	for evt := range events {
+		if evt.Type == "status" {
+			hasStatus = true
+		}
+	}
+	if !hasStatus {
+		t.Error("expected status event about retry on parse error")
+	}
+}
+
+func TestFinalizeRound_ReturnsTrueOnTextOnly(t *testing.T) {
+	o := &Orchestrator{msgRepo: nil}
+	events := make(chan *llm.StreamEvent, 16)
+	state := &reactState{}
+
+	se := &llm.StreamEvent{Type: "done"}
+	done := o.finalizeRound(context.Background(), events, se,
+		`{"reply":"ok"}`, "",
+		"cv", "u1", nil, nil, nil, state,
+	)
+
+	// 无 tool_calls → handleFlashResponse 返回 done=true
+	// 但因为 msgRepo=nil，msgID 为空，所以行为取决于 handleFlashResponse 内部逻辑
+	// saveAssistantMsg 对于纯文本会返回 ""，导致 *lastMsgID=""，emitDone 仍触发
+	if !done {
+		t.Error("expected done=true for text-only JSON reply")
+	}
+	close(events)
+	var hasDone bool
+	for evt := range events {
+		if evt.Type == "done" {
+			hasDone = true
+		}
+	}
+	if !hasDone {
+		t.Error("expected done event")
 	}
 }

@@ -45,6 +45,13 @@ type RunRequest struct {
 	Thinking           *bool    // 思考模式：nil=不传，true=开启，false=关闭
 }
 
+// reactState — runReActLoop 循环过程中的可变状态
+type reactState struct {
+	msgs               []llm.Message
+	allToolCalls       []tool.ToolCall
+	lastAssistantMsgID string
+}
+
 // LLMResponse — LLM 返回的结构化 JSON（Flash 文本解析用）
 type LLMResponse struct {
 	Reply     string          `json:"reply"`
@@ -223,8 +230,7 @@ func (o *Orchestrator) runReActLoop(
 	})
 	util.SafeGo(func() { o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID) })
 
-	var allToolCalls []tool.ToolCall
-	var lastAssistantMsgID string
+	state := &reactState{msgs: msgs}
 	isProMode := req.DeepMode && o.proClient != nil
 
 	for iter := 0; iter < o.maxIterations; iter++ {
@@ -265,59 +271,20 @@ func (o *Orchestrator) runReActLoop(
 		}
 
 		var streamContent, streamReasoning strings.Builder
-		hasReasoning := false
 		for se := range streamEvents {
 			switch se.Type {
 			case "text_delta":
 				streamContent.WriteString(se.Content)
 			case "thought_delta":
 				streamReasoning.WriteString(se.Content)
-				hasReasoning = true
 				o.sendEvent(events, se)
 			case "done":
-				// 记录 LLM 耗时 + token 消耗
-				caller := "orchestrator"
-				if isProMode {
-					caller = "orchestrator-pro"
-				}
 				elapsedMs := time.Since(llmStart).Milliseconds()
-				pt, ct := 0, 0
-				if se.Usage != nil {
-					pt = se.Usage.PromptTokens
-					ct = se.Usage.CompletionTokens
-				}
-				monitor.RecordLLMCall(caller, elapsedMs, pt, ct)
-
-				if hasReasoning {
-					o.sendEvent(events, &llm.StreamEvent{Type: "thought_done", Content: ""})
-				}
-
-				// 提取干净的回复文本推给前端（假流式：buffer 完成后再推送）
-				cleanText := extractCleanText(streamContent.String())
-				if cleanText != "" {
-					o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: cleanText})
-				}
-
-				msg := llm.Message{
-					Role:             "assistant",
-					Content:          streamContent.String(),
-					ReasoningContent: streamReasoning.String(),
-					ToolCalls:        se.ToolCalls,
-					RequestJSON:      se.RequestJSON,
-					ResponseJSON:     se.ResponseJSON,
-				}
-
+				recordLLMCall(isProMode, elapsedMs, se.Usage)
 				log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
-					iter+1, len(msg.Content), len(msg.ReasoningContent), len(msg.ToolCalls))
-
-				var done bool
-				done, lastAssistantMsgID = o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID, systemPromptResult.MemoryIDs, systemPromptResult.Trace)
-				if done {
-					if len(allToolCalls) >= 2 {
-						planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
-						o.sendEvent(events, &llm.StreamEvent{Type: "plan", Content: string(planJSON)})
-					}
-					o.emitDone(events, req.ConversationID, lastAssistantMsgID, "", systemPromptResult.MemoryIDs, systemPromptResult.NoteIDs)
+					iter+1, streamContent.Len(), streamReasoning.Len(), len(se.ToolCalls))
+				if o.finalizeRound(ctx, events, se, streamContent.String(), streamReasoning.String(),
+					req.ConversationID, req.UserID, systemPromptResult.MemoryIDs, systemPromptResult.NoteIDs, systemPromptResult.Trace, state) {
 					return
 				}
 			case "error":
@@ -328,10 +295,6 @@ func (o *Orchestrator) runReActLoop(
 	}
 
 	o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrMaxIterations)})
-	if len(allToolCalls) >= 2 {
-		planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
-		o.sendEvent(events, &llm.StreamEvent{Type: "plan", Content: string(planJSON)})
-	}
 	o.emitDone(events, req.ConversationID, "", "max iterations reached", systemPromptResult.MemoryIDs, systemPromptResult.NoteIDs)
 }
 
@@ -353,6 +316,64 @@ func (o *Orchestrator) sendEvent(events chan<- *llm.StreamEvent, evt *llm.Stream
 	}
 }
 
+// recordLLMCall 记录 LLM 调用指标。
+func recordLLMCall(isProMode bool, elapsedMs int64, usage *llm.Usage) {
+	caller := "orchestrator"
+	if isProMode {
+		caller = "orchestrator-pro"
+	}
+	pt, ct := 0, 0
+	if usage != nil {
+		pt = usage.PromptTokens
+		ct = usage.CompletionTokens
+	}
+	monitor.RecordLLMCall(caller, elapsedMs, pt, ct)
+}
+
+// finalizeRound 处理一轮 ReAct 的 done 事件，返回 true 表示本轮对话结束。
+func (o *Orchestrator) finalizeRound(
+	ctx context.Context,
+	events chan<- *llm.StreamEvent,
+	se *llm.StreamEvent,
+	streamContent, streamReasoning string,
+	convID, userID string,
+	memIDs, noteIDs []string,
+	trace *PromptTrace,
+	state *reactState,
+) bool {
+	if streamReasoning != "" {
+		o.sendEvent(events, &llm.StreamEvent{Type: "thought_done", Content: ""})
+	}
+
+	cleanText := extractCleanText(streamContent)
+	if cleanText != "" {
+		o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: cleanText})
+	}
+
+	msg := newAssistantMessage(streamContent, streamReasoning, se)
+
+	var done bool
+	done, state.lastAssistantMsgID = o.handleFlashResponse(
+		ctx, events, &state.msgs, msg,
+		convID, userID, &state.allToolCalls,
+		&state.lastAssistantMsgID, memIDs, trace)
+	if done {
+		o.emitDone(events, convID, state.lastAssistantMsgID, "", memIDs, noteIDs)
+	}
+	return done
+}
+
+func newAssistantMessage(streamContent string, streamReasoning string, se *llm.StreamEvent) llm.Message {
+	return llm.Message{
+		Role:             "assistant",
+		Content:          streamContent,
+		ReasoningContent: streamReasoning,
+		ToolCalls:        se.ToolCalls,
+		RequestJSON:      se.RequestJSON,
+		ResponseJSON:     se.ResponseJSON,
+	}
+}
+
 // —— Flash 文本响应处理 ——
 
 // handleFlashResponse 解析 Flash 文本中的 JSON，返回 (done bool, msgID string)
@@ -361,7 +382,7 @@ func (o *Orchestrator) handleFlashResponse(
 	events chan<- *llm.StreamEvent,
 	msgs *[]llm.Message,
 	msg llm.Message,
-	req *RunRequest,
+	convID, userID string,
 	allToolCalls *[]tool.ToolCall,
 	lastMsgID *string,
 	memIDs []string,
@@ -371,7 +392,7 @@ func (o *Orchestrator) handleFlashResponse(
 
 	if parseErr != nil {
 		log.Printf("[orch] round parse error: %v, saving raw and retrying", parseErr)
-		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, nil)
+		*lastMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, nil)
 		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "响应格式异常，正在重试…"})
 		*msgs = append(*msgs, llm.Message{
 			Role:    "user",
@@ -383,7 +404,7 @@ func (o *Orchestrator) handleFlashResponse(
 	if parsed == nil {
 		// 纯文本（无 JSON），system prompt 已要求 JSON 但容错接受
 		log.Printf("[orch] round pure text (no JSON), accepting gracefully")
-		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, trace)
+		*lastMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, trace)
 		return true, *lastMsgID
 	}
 
@@ -393,14 +414,14 @@ func (o *Orchestrator) handleFlashResponse(
 	// 无工具调用 → 纯文本回复，正常结束
 	if len(parsed.ToolCalls) == 0 {
 		log.Printf("[orch] round text-only JSON reply, len=%d", len(msg.Content))
-		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, trace)
+		*lastMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, trace)
 		return true, *lastMsgID
 	}
 
 	// 统一走 prompt engineering，不填 ToolCallsJSON（由 parseLLMResponse 从文本解析）
 	msg.ToolCalls = nil
 
-	*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, trace)
+	*lastMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, trace)
 
 	*msgs = append(*msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	*allToolCalls = append(*allToolCalls, parsed.ToolCalls...)
@@ -412,14 +433,14 @@ func (o *Orchestrator) handleFlashResponse(
 		}
 	}
 
-	results := executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
+	results := executeConcurrently(ctx, events, userID, o.registry, parsed.ToolCalls)
 
 	for i := range parsed.ToolCalls {
 		resJSON, _ := json.Marshal(results[i].result)
 		o.sendEvent(events, &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)})
 
 		toolCallID := idgen.Next()
-		o.saveToolMsgWithID(ctx, req.ConversationID, req.UserID, toolCallID, string(resJSON))
+		o.saveToolMsgWithID(ctx, convID, userID, toolCallID, string(resJSON))
 
 		*msgs = append(*msgs, llm.Message{
 			Role:    "user",

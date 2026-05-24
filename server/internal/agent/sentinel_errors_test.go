@@ -15,6 +15,7 @@ func TestUserErrorMessage_DirectSentinel(t *testing.T) {
 		{ErrLLMApi, "AI 服务暂时不可用，请重试"},
 		{ErrMaxIterations, "任务未完成，请简化后重试"},
 		{ErrInternal, "服务繁忙，请重试"},
+		{ErrContextCancelled, "请求已取消"},
 	}
 	for _, tt := range tests {
 		got := UserErrorMessage(tt.err)

@@ -17,6 +17,7 @@ import (
 	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
+	"xhan-helper/internal/util"
 )
 
 const BaseSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职责是帮助用户高效完成任务。
@@ -144,14 +145,14 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 		queryVec = o.tryEmbedContent(ctx, req.UserMessageContent)
 	}
 
-	systemPrompt, err := o.systemPromptBuilder.Build(ctx, mkPromptBuildOpt(req, queryVec))
+	systemPromptResult, err := o.systemPromptBuilder.Build(ctx, mkPromptBuildOpt(req, queryVec))
 	if err != nil {
 		log.Printf("[orch] prompt build error: %v", err)
 		return nil, err
 	}
 
 	events := make(chan *llm.StreamEvent, 512)
-	go o.runReActLoop(ctx, events, systemPrompt, queryVec, req)
+	go o.runReActLoop(ctx, events, systemPromptResult, queryVec, req)
 	return events, nil
 }
 
@@ -190,7 +191,7 @@ func (o *Orchestrator) pickClient(req *RunRequest) llm.LLMClient {
 func (o *Orchestrator) runReActLoop(
 	ctx context.Context,
 	events chan<- *llm.StreamEvent,
-	result *BuildResult,
+	systemPromptResult *BuildResult,
 	queryVec []float64,
 	req *RunRequest,
 ) {
@@ -201,7 +202,6 @@ func (o *Orchestrator) runReActLoop(
 		}
 	}()
 	client := o.pickClient(req)
-	userMsgID := uuid.New().String()
 
 	msgs := req.Messages
 	msgs = append(msgs, llm.Message{Role: "user", Content: req.UserMessageContent})
@@ -210,26 +210,18 @@ func (o *Orchestrator) runReActLoop(
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrInternal)})
 		return
 	}
-	extraJSON := (*string)(nil) // TODO: restore retrieval scores from builder
-	if err := o.msgRepo.Create(ctx, &model.Message{
-		ID:             userMsgID,
-		ConversationID: req.ConversationID,
-		UserID:         req.UserID,
-		Role:           "user",
-		Content:        req.UserMessageContent,
-		Extra:          extraJSON,
-	}); err != nil {
+	userMsg := mkUserMsg(req)
+	if err := o.msgRepo.Create(ctx, userMsg); err != nil {
 		log.Printf("[orch] save user msg error: %v", err)
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrInternal)})
 		return
 	}
-	if err := o.convRepo.Touch(ctx, req.ConversationID); err != nil {
-		log.Printf("[orch] touch conv error: %v", err)
-	}
-
-	if o.vectorStore != nil && len(queryVec) > 0 && o.embeddingRepo != nil {
-		go o.saveUserMsgEmbedding(userMsgID, queryVec, req.UserID, req.ConversationID)
-	}
+	util.SafeGo(func() {
+		if err := o.convRepo.Touch(ctx, req.ConversationID); err != nil {
+			log.Printf("[orch] touch conv error: %v", err)
+		}
+	})
+	util.SafeGo(func() { o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID) })
 
 	var allToolCalls []tool.ToolCall
 	var lastAssistantMsgID string
@@ -237,8 +229,8 @@ func (o *Orchestrator) runReActLoop(
 
 	for iter := 0; iter < o.maxIterations; iter++ {
 		if ctx.Err() != nil {
-			log.Printf("[orch] context cancelled")
-			o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: "request cancelled"})
+			log.Printf("[orch] context cancelled: %v", ctx.Err())
+			o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrContextCancelled)})
 			o.sendEvent(events, &llm.StreamEvent{Type: "done"})
 			return
 		}
@@ -258,7 +250,7 @@ func (o *Orchestrator) runReActLoop(
 			thinking = &t
 		}
 		streamEvents, err := client.Chat(ctx, &llm.ChatRequest{
-			SystemPrompt: result.Prompt,
+			SystemPrompt: systemPromptResult.Prompt,
 			Messages:     msgs,
 			Tools:        nil,
 			Temperature:  temperature,
@@ -319,13 +311,13 @@ func (o *Orchestrator) runReActLoop(
 					iter+1, len(msg.Content), len(msg.ReasoningContent), len(msg.ToolCalls))
 
 				var done bool
-				done, lastAssistantMsgID = o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID, result.MemoryIDs, result.Trace)
+				done, lastAssistantMsgID = o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastAssistantMsgID, systemPromptResult.MemoryIDs, systemPromptResult.Trace)
 				if done {
 					if len(allToolCalls) >= 2 {
 						planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
 						o.sendEvent(events, &llm.StreamEvent{Type: "plan", Content: string(planJSON)})
 					}
-					o.emitDone(events, req.ConversationID, lastAssistantMsgID, "", result.MemoryIDs, result.NoteIDs)
+					o.emitDone(events, req.ConversationID, lastAssistantMsgID, "", systemPromptResult.MemoryIDs, systemPromptResult.NoteIDs)
 					return
 				}
 			case "error":
@@ -340,7 +332,17 @@ func (o *Orchestrator) runReActLoop(
 		planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
 		o.sendEvent(events, &llm.StreamEvent{Type: "plan", Content: string(planJSON)})
 	}
-	o.emitDone(events, req.ConversationID, "", "max iterations reached", result.MemoryIDs, result.NoteIDs)
+	o.emitDone(events, req.ConversationID, "", "max iterations reached", systemPromptResult.MemoryIDs, systemPromptResult.NoteIDs)
+}
+
+func mkUserMsg(req *RunRequest) *model.Message {
+	return &model.Message{
+		ID:             uuid.New().String(),
+		ConversationID: req.ConversationID,
+		UserID:         req.UserID,
+		Role:           "user",
+		Content:        req.UserMessageContent,
+	}
 }
 
 // sendEvent — 非阻塞发送事件，避免客户端断连后 goroutine 卡住
@@ -613,6 +615,9 @@ func BuildMessagesForPro(history []model.Message) []llm.Message {
 }
 
 func (o *Orchestrator) saveUserMsgEmbedding(userMsgID string, vec []float64, userID, convID string) {
+	if len(vec) == 0 {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	o.vectorStore.Upsert("msg:"+userMsgID, vec, map[string]string{

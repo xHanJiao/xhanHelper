@@ -167,6 +167,10 @@ type Monitor struct {
 	// snapshots
 	snapshots   map[string]SnapshotFunc
 	snapshotsMu sync.RWMutex
+
+	// panic tracking
+	panicCounts   map[string]*Counter
+	panicCountsMu sync.RWMutex
 }
 
 func New() *Monitor {
@@ -184,6 +188,7 @@ func NewWithAge(maxAge time.Duration) *Monitor {
 		pipelineLats: make(map[string]*LatencyTimer),
 		llmTokens:    make(map[string]*TokenTracker),
 		snapshots:    make(map[string]SnapshotFunc),
+		panicCounts:  make(map[string]*Counter),
 	}
 }
 
@@ -356,6 +361,26 @@ func (m *Monitor) RecordEmbedding(elapsedMs int64) {
 
 // ===== Snapshot =====
 
+func (m *Monitor) RecordPanic(location string) {
+	m.panicCountsMu.RLock()
+	c, ok := m.panicCounts[location]
+	m.panicCountsMu.RUnlock()
+	if ok {
+		c.Inc(true)
+		return
+	}
+	m.panicCountsMu.Lock()
+	if c, ok = m.panicCounts[location]; ok {
+		m.panicCountsMu.Unlock()
+		c.Inc(true)
+		return
+	}
+	c = &Counter{}
+	c.Inc(true)
+	m.panicCounts[location] = c
+	m.panicCountsMu.Unlock()
+}
+
 func (m *Monitor) Register(name string, fn SnapshotFunc) {
 	m.snapshotsMu.Lock()
 	m.snapshots[name] = fn
@@ -417,6 +442,17 @@ func (m *Monitor) countersSnapshot() map[string]interface{} {
 	}
 	m.llmTokensMu.RUnlock()
 	c["llm_tokens"] = tokens
+
+	m.panicCountsMu.RLock()
+	panics := map[string]interface{}{}
+	for loc, cnt := range m.panicCounts {
+		panics[loc] = map[string]interface{}{
+			"calls":  atomic.LoadInt64(&cnt.Calls),
+			"errors": atomic.LoadInt64(&cnt.Errors),
+		}
+	}
+	m.panicCountsMu.RUnlock()
+	c["panic_counts"] = panics
 
 	return c
 }
@@ -508,4 +544,5 @@ func IncToolCallWithLatency(tool, fn string, err bool, ms int64) {
 }
 func RecordEmbedding(ms int64)              { global.RecordEmbedding(ms) }
 func Register(name string, fn SnapshotFunc) { global.Register(name, fn) }
+func RecordPanic(location string)           { global.RecordPanic(location) }
 func Global() *Monitor                      { return global }

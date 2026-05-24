@@ -25,6 +25,7 @@ import (
 	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
+	"xhan-helper/internal/util"
 )
 
 func main() {
@@ -47,6 +48,9 @@ func main() {
 		cfg.LLM.Provider, cfg.LLM.Model, cfg.LLM.StrongModel, cfg.LLM.APIKey[:min(8, len(cfg.LLM.APIKey))])
 	log.Printf("[config] embedding.model=%s embedding.key=%s... embedding.base_url=%s",
 		cfg.Embedding.Model, cfg.Embedding.APIKey[:min(8, len(cfg.Embedding.APIKey))], cfg.Embedding.BaseURL)
+
+	// 注入 panic 采集回调
+	util.PanicHandler = monitor.RecordPanic
 
 	gin.SetMode(cfg.Server.Mode)
 
@@ -128,6 +132,14 @@ func main() {
 	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
 	vectorStore := agent.NewVectorStore()
 	vsAdapter := agent.NewVectorSearchAdapter(vectorStore)
+
+	// 核心依赖非 nil 校验：启动时 fail-fast
+	if vectorStore == nil {
+		log.Fatal("vectorStore must not be nil")
+	}
+	if embeddingRepo == nil {
+		log.Fatal("embeddingRepo must not be nil")
+	}
 
 	// Infrastructure + AI Clients
 	infra := &app.Infra{DB: db, Embedder: embedder, VectorStore: vsAdapter}

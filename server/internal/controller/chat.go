@@ -176,7 +176,8 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			Thinking:           agentThinking,
 		})
 		if err != nil {
-			view.WriteSSE(w, flusher, "error", err.Error())
+			log.Printf("[chat] orch run error: %v", err)
+			view.WriteSSE(w, flusher, "error", agent.UserErrorMessage(err))
 			return
 		}
 

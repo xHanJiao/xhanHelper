@@ -227,7 +227,7 @@ func (o *Orchestrator) runReActLoop(
 	msgs = append(msgs, llm.Message{Role: "user", Content: req.UserMessageContent})
 	if req.ConversationID == "" {
 		log.Printf("[orch] ConversationID is empty")
-		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: "conversation_id is required"})
+		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrInternal)})
 		return
 	}
 	extraJSON := (*string)(nil) // TODO: restore retrieval scores from builder
@@ -240,7 +240,7 @@ func (o *Orchestrator) runReActLoop(
 		Extra:          extraJSON,
 	}); err != nil {
 		log.Printf("[orch] save user msg error: %v", err)
-		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: "failed to save message"})
+		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrInternal)})
 		return
 	}
 	if err := o.convRepo.Touch(ctx, req.ConversationID); err != nil {
@@ -288,7 +288,7 @@ func (o *Orchestrator) runReActLoop(
 		})
 		if err != nil {
 			log.Printf("[orch] round %d LLM error: %v", iter+1, err)
-			o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: err.Error()})
+			o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrLLMApi)})
 			return
 		}
 
@@ -355,7 +355,7 @@ func (o *Orchestrator) runReActLoop(
 		}
 	}
 
-	o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: "max iterations reached"})
+	o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrMaxIterations)})
 	if len(allToolCalls) >= 2 {
 		planJSON, _ := json.Marshal(buildPlanEvent(allToolCalls))
 		o.sendEvent(events, &llm.StreamEvent{Type: "plan", Content: string(planJSON)})

@@ -354,15 +354,14 @@ func (o *Orchestrator) finalizeRound(
 		o.sendEvent(events, &llm.StreamEvent{Type: "thought_done", Content: ""})
 	}
 
-	cleanText := extractCleanText(streamContent)
-	if cleanText != "" {
-		o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: cleanText})
-	}
-
 	msg := newAssistantMessage(streamContent, streamReasoning, se)
 
 	done := o.handleOneRoundResponse(ctx, events, msg, convID, userID, memIDs, trace, state)
 	if done {
+		cleanText := extractCleanText(streamContent)
+		if cleanText != "" {
+			o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: cleanText})
+		}
 		o.emitDone(events, convID, state.lastAssistantMsgID, "", memIDs, noteIDs)
 	}
 	return done

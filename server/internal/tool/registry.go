@@ -276,6 +276,7 @@ func (r *Registry) GenerateImportantRules() string {
 	buf.WriteString("2. 只能调用【工具使用】部分列出的函数。\n")
 	buf.WriteString("3. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
 	buf.WriteString("4. 历史消息中的 [MM-DD HH:MM] 前缀是系统时间戳，不是对话内容，严禁模仿此格式输出时间戳。\n")
+	buf.WriteString("5. 当本轮需要调用工具时（tool_calls 非空），reply 字段必须为空字符串 \"\"；只有不需要调用工具的最终回复才写 reply。例如：查账单时返回 {\"reply\":\"\",\"tool_calls\":[...]}，工具返回结果后再给出 {\"reply\":\"查到 12 笔...\",\"tool_calls\":[]}。\n")
 	return buf.String()
 }
 

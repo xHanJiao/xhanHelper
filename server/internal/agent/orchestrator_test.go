@@ -323,3 +323,221 @@ func TestFinalizeRound_ReturnsTrueOnTextOnly(t *testing.T) {
 		t.Error("expected done event")
 	}
 }
+
+// —— mkLlmChatReq ——
+
+func ptr[T any](v T) *T { return &v }
+
+func TestMkLlmChatReq_ParameterResolution(t *testing.T) {
+	defaultTemp := ptr(0.5)
+	defaultMax := ptr(2048)
+
+	tests := []struct {
+		name string
+		// Orchestrator fields
+		proClient   llm.LLMClient
+		defaultTemp *float64
+		defaultMax  *int
+		// req fields
+		deepMode bool
+		reqTemp  *float64
+		reqMax   *int
+		reqThink *bool
+		// expected
+		wantTemp  float64
+		wantMax   int
+		wantThink *bool
+	}{
+		{
+			name:        "all req fields set, no fallback",
+			proClient:   &mockLLMClient{},
+			defaultTemp: defaultTemp,
+			defaultMax:  defaultMax,
+			deepMode:    false,
+			reqTemp:     ptr(0.8),
+			reqMax:      ptr(4096),
+			reqThink:    ptr(true),
+			wantTemp:    0.8,
+			wantMax:     4096,
+			wantThink:   ptr(true),
+		},
+		{
+			name:        "temperature nil falls back to default",
+			proClient:   &mockLLMClient{},
+			defaultTemp: ptr(0.7),
+			defaultMax:  defaultMax,
+			reqTemp:     nil,
+			reqMax:      ptr(1024),
+			reqThink:    nil,
+			wantTemp:    0.7,
+			wantMax:     1024,
+			wantThink:   nil,
+		},
+		{
+			name:        "maxTokens nil falls back to default",
+			proClient:   &mockLLMClient{},
+			defaultTemp: defaultTemp,
+			defaultMax:  ptr(3072),
+			reqTemp:     ptr(1.0),
+			reqMax:      nil,
+			reqThink:    nil,
+			wantTemp:    1.0,
+			wantMax:     3072,
+			wantThink:   nil,
+		},
+		{
+			name:        "deepMode with proClient auto-enables thinking",
+			proClient:   &mockLLMClient{},
+			defaultTemp: defaultTemp,
+			defaultMax:  defaultMax,
+			deepMode:    true,
+			reqTemp:     nil,
+			reqMax:      nil,
+			reqThink:    nil,
+			wantTemp:    *defaultTemp,
+			wantMax:     *defaultMax,
+			wantThink:   ptr(true),
+		},
+		{
+			name:        "deepMode but no proClient, thinking stays nil",
+			proClient:   nil,
+			defaultTemp: defaultTemp,
+			defaultMax:  defaultMax,
+			deepMode:    true,
+			reqTemp:     nil,
+			reqMax:      nil,
+			reqThink:    nil,
+			wantTemp:    *defaultTemp,
+			wantMax:     *defaultMax,
+			wantThink:   nil,
+		},
+		{
+			name:        "thinking explicitly false overrides deepMode auto-enable",
+			proClient:   &mockLLMClient{},
+			defaultTemp: defaultTemp,
+			defaultMax:  defaultMax,
+			deepMode:    true,
+			reqTemp:     nil,
+			reqMax:      nil,
+			reqThink:    ptr(false),
+			wantTemp:    *defaultTemp,
+			wantMax:     *defaultMax,
+			wantThink:   ptr(false),
+		},
+		{
+			name:        "deepMode=false, proClient exists, thinking stays nil",
+			proClient:   &mockLLMClient{},
+			defaultTemp: defaultTemp,
+			defaultMax:  defaultMax,
+			deepMode:    false,
+			reqTemp:     nil,
+			reqMax:      nil,
+			reqThink:    nil,
+			wantTemp:    *defaultTemp,
+			wantMax:     *defaultMax,
+			wantThink:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o := &Orchestrator{
+				proClient:          tt.proClient,
+				defaultTemperature: tt.defaultTemp,
+				defaultMaxTokens:   tt.defaultMax,
+			}
+			req := &RunRequest{
+				UserID:      "u1",
+				DeepMode:    tt.deepMode,
+				Temperature: tt.reqTemp,
+				MaxTokens:   tt.reqMax,
+				Thinking:    tt.reqThink,
+			}
+			result := &BuildResult{Prompt: "sys-prompt"}
+			msgs := []llm.Message{{Role: "user", Content: "hi"}}
+
+			cr := o.mkLlmChatReq(req, result, msgs)
+
+			if cr.SystemPrompt != "sys-prompt" {
+				t.Errorf("SystemPrompt: want 'sys-prompt', got '%s'", cr.SystemPrompt)
+			}
+			if *cr.Temperature != tt.wantTemp {
+				t.Errorf("Temperature: want %v, got %v", tt.wantTemp, *cr.Temperature)
+			}
+			if *cr.MaxTokens != tt.wantMax {
+				t.Errorf("MaxTokens: want %d, got %d", tt.wantMax, *cr.MaxTokens)
+			}
+			if tt.wantThink == nil {
+				if cr.Thinking != nil {
+					t.Errorf("Thinking: want nil, got %v", *cr.Thinking)
+				}
+			} else {
+				if cr.Thinking == nil {
+					t.Error("Thinking: want non-nil, got nil")
+				} else if *cr.Thinking != *tt.wantThink {
+					t.Errorf("Thinking: want %v, got %v", *tt.wantThink, *cr.Thinking)
+				}
+			}
+		})
+	}
+}
+
+func TestMkLlmChatReq_PassThroughFields(t *testing.T) {
+	o := &Orchestrator{
+		defaultTemperature: ptr(0.5),
+		defaultMaxTokens:   ptr(2048),
+	}
+
+	result := &BuildResult{Prompt: "custom system prompt"}
+	msgs := []llm.Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "world"},
+	}
+	req := &RunRequest{
+		UserID:      "user-42",
+		Temperature: ptr(0.9),
+		MaxTokens:   ptr(4096),
+	}
+
+	cr := o.mkLlmChatReq(req, result, msgs)
+
+	if cr.SystemPrompt != "custom system prompt" {
+		t.Errorf("SystemPrompt: want 'custom system prompt', got '%s'", cr.SystemPrompt)
+	}
+	if len(cr.Messages) != 2 {
+		t.Fatalf("Messages: want 2, got %d", len(cr.Messages))
+	}
+	if cr.Messages[0].Content != "hello" {
+		t.Errorf("Messages[0].Content: want 'hello', got '%s'", cr.Messages[0].Content)
+	}
+	if cr.UserID != "user-42" {
+		t.Errorf("UserID: want 'user-42', got '%s'", cr.UserID)
+	}
+	if cr.Tools != nil {
+		t.Errorf("Tools: want nil, got %v", cr.Tools)
+	}
+}
+
+func TestMkLlmChatReq_DefaultsNilWhenNotSet(t *testing.T) {
+	// Orchestrator without defaults → Temperature/MaxTokens should stay nil
+	o := &Orchestrator{}
+	req := &RunRequest{
+		UserID:      "u1",
+		Temperature: nil,
+		MaxTokens:   nil,
+	}
+	result := &BuildResult{Prompt: "p"}
+	msgs := []llm.Message{}
+
+	cr := o.mkLlmChatReq(req, result, msgs)
+
+	if cr.Temperature != nil {
+		t.Errorf("Temperature: want nil, got %v", *cr.Temperature)
+	}
+	if cr.MaxTokens != nil {
+		t.Errorf("MaxTokens: want nil, got %d", *cr.MaxTokens)
+	}
+	if cr.Thinking != nil {
+		t.Errorf("Thinking: want nil, got %v", cr.Thinking)
+	}
+}

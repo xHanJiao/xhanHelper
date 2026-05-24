@@ -231,7 +231,6 @@ func (o *Orchestrator) runReActLoop(
 	util.SafeGo(func() { o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID) })
 
 	state := &reactState{msgs: msgs}
-	isProMode := req.DeepMode && o.proClient != nil
 
 	for iter := 0; iter < o.maxIterations; iter++ {
 		if ctx.Err() != nil {
@@ -242,28 +241,7 @@ func (o *Orchestrator) runReActLoop(
 		}
 
 		llmStart := time.Now()
-		temperature := req.Temperature
-		if temperature == nil {
-			temperature = o.defaultTemperature
-		}
-		maxTokens := req.MaxTokens
-		if maxTokens == nil {
-			maxTokens = o.defaultMaxTokens
-		}
-		thinking := req.Thinking
-		if thinking == nil && isProMode {
-			t := true
-			thinking = &t
-		}
-		streamEvents, err := client.Chat(ctx, &llm.ChatRequest{
-			SystemPrompt: systemPromptResult.Prompt,
-			Messages:     msgs,
-			Tools:        nil,
-			Temperature:  temperature,
-			MaxTokens:    maxTokens,
-			UserID:       req.UserID,
-			Thinking:     thinking,
-		})
+		streamEvents, err := client.Chat(ctx, o.mkLlmChatReq(req, systemPromptResult, msgs))
 		if err != nil {
 			log.Printf("[orch] round %d LLM error: %v", iter+1, err)
 			o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrLLMApi)})
@@ -280,7 +258,7 @@ func (o *Orchestrator) runReActLoop(
 				o.sendEvent(events, se)
 			case "done":
 				elapsedMs := time.Since(llmStart).Milliseconds()
-				recordLLMCall(isProMode, elapsedMs, se.Usage)
+				recordLLMCall(req.DeepMode && o.proClient != nil, elapsedMs, se.Usage)
 				log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
 					iter+1, streamContent.Len(), streamReasoning.Len(), len(se.ToolCalls))
 				if o.finalizeRound(ctx, events, se, streamContent.String(), streamReasoning.String(),
@@ -296,6 +274,32 @@ func (o *Orchestrator) runReActLoop(
 
 	o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrMaxIterations)})
 	o.emitDone(events, req.ConversationID, "", "max iterations reached", systemPromptResult.MemoryIDs, systemPromptResult.NoteIDs)
+}
+
+func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPromptResult *BuildResult, msgs []llm.Message) *llm.ChatRequest {
+	isProMode := req.DeepMode && o.proClient != nil
+	temperature := req.Temperature
+	if temperature == nil {
+		temperature = o.defaultTemperature
+	}
+	maxTokens := req.MaxTokens
+	if maxTokens == nil {
+		maxTokens = o.defaultMaxTokens
+	}
+	thinking := req.Thinking
+	if thinking == nil && isProMode {
+		t := true
+		thinking = &t
+	}
+	return &llm.ChatRequest{
+		SystemPrompt: systemPromptResult.Prompt,
+		Messages:     msgs,
+		Tools:        nil,
+		Temperature:  temperature,
+		MaxTokens:    maxTokens,
+		UserID:       req.UserID,
+		Thinking:     thinking,
+	}
 }
 
 func mkUserMsg(req *RunRequest) *model.Message {

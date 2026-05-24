@@ -218,19 +218,16 @@ func TestRunReActLoop_StrictJSON_ReplyWithEmptyToolCalls(t *testing.T) {
 	}
 }
 
-func TestRunReActLoop_StrictJSON_PureTextTriggersRetry(t *testing.T) {
-	// 纯文本 → 无 JSON → handleFlashResponse 触发重试
-	// 第一轮：纯文本 → 重试
-	// 第二轮：合法 JSON → 成功
+func TestRunReActLoop_PureText_AcceptedGracefully(t *testing.T) {
+	// 纯文本 → 无 JSON → 容错接受，直接推送全文
 	msgRepo := &mockMsgRepo{}
 	convRepo := &mockConvRepo{}
 	o := newTestOrchestrator(msgRepo, convRepo)
 
 	client := &mockLLMClient{
-		responses: []mockLLMResponse{
-			{events: append(makeTextDeltas("今天天气不错"), makeDone())},
-			{events: append(makeTextDeltas(`{"reply":"好的，今天天气确实很好"}`), makeDone())},
-		},
+		responses: []mockLLMResponse{{
+			events: append(makeTextDeltas("今天天气不错"), makeDone()),
+		}},
 	}
 
 	ctx := context.Background()
@@ -249,22 +246,19 @@ func TestRunReActLoop_StrictJSON_PureTextTriggersRetry(t *testing.T) {
 		collected = append(collected, evt)
 	}
 
-	// 第一轮应有 status 事件（重试）
+	// 不应有重试 status
 	status := findStatusEvent(collected)
-	if status == nil {
-		t.Fatal("expected status event about retry")
-	}
-	if !strings.Contains(status.Content, "重试") {
-		t.Errorf("status should mention 重试, got '%s'", status.Content)
+	if status != nil {
+		t.Errorf("expected no retry, got status: '%s'", status.Content)
 	}
 
-	// 第二轮：应提取到合法 JSON 的 reply
+	// 全文直接推送
 	text := collectTextDeltas(collected)
-	if text != "好的，今天天气确实很好" {
-		t.Errorf("expected text_delta='好的，今天天气确实很好', got '%s'", text)
+	if text != "今天天气不错" {
+		t.Errorf("expected full text '今天天气不错', got '%s'", text)
 	}
 	if !hasDoneEvent(collected) {
-		t.Error("expected done event after retry succeeded")
+		t.Error("expected done event")
 	}
 }
 

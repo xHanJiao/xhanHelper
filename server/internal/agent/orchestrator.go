@@ -394,14 +394,10 @@ func (o *Orchestrator) handleFlashResponse(
 	}
 
 	if parsed == nil {
-		log.Printf("[orch] round: no JSON found in response (strict mode), retrying")
+		// 纯文本（无 JSON），system prompt 已要求 JSON 但容错接受
+		log.Printf("[orch] round pure text (no JSON), accepting gracefully")
 		*lastMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, trace)
-		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "响应格式异常，正在重试…"})
-		*msgs = append(*msgs, llm.Message{
-			Role:    "user",
-			Content: "[系统] 你必须严格按照 JSON 格式回复。每次回复都必须是一个完整的 JSON 对象：{\"reply\":\"给用户的回复\",\"tool_calls\":[...]}。不需要工具调用时 tool_calls 为空数组 []。不要在 JSON 前后添加任何文字。",
-		})
-		return false, ""
+		return true, *lastMsgID
 	}
 
 	log.Printf("[orch] round embedded tool_calls=%d: %s",
@@ -709,11 +705,14 @@ func parseLLMResponse(text string) (*LLMResponse, error) {
 
 // extractCleanText 从 LLM 原始输出中提取干净的用户可见文本。
 // 严格 JSON 模式：LLM 始终返回 JSON，从中提取 reply 字段。
-// parse 失败或无 JSON 时返回空，由 handleFlashResponse 触发重试。
+// parse 失败时返回空（由 handleFlashResponse 重试），无 JSON 时返回原始文本。
 func extractCleanText(raw string) string {
 	parsed, err := parseLLMResponse(raw)
-	if err != nil || parsed == nil {
+	if err != nil {
 		return ""
+	}
+	if parsed == nil {
+		return raw // 纯文本，容错接受
 	}
 	return parsed.Reply
 }

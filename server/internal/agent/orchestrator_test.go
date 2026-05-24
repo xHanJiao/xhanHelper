@@ -130,14 +130,11 @@ func TestHandleFlashResponse_PureTextFallback(t *testing.T) {
 
 	done, _ := o.handleFlashResponse(ctx, events, &msgs, msg, req, &allToolCalls, &lastMsgID, nil, nil)
 
-	// 严格 JSON 模式：纯文本应触发重试
-	if done {
-		t.Error("expected done=false for pure text (strict mode: should retry)")
+	// 纯文本容错接受，正常结束
+	if !done {
+		t.Error("expected done=true for pure text (graceful accept)")
 	}
-	if len(msgs) != 1 {
-		t.Fatalf("expected 1 retry message, got %d", len(msgs))
-	}
-	if !strings.Contains(msgs[0].Content, "[系统]") {
-		t.Error("expected retry instruction")
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 retry messages, got %d", len(msgs))
 	}
 }

@@ -182,10 +182,10 @@ func TestExtractCleanText_JSONWithPrefixBeforeBrace(t *testing.T) {
 }
 
 func TestExtractCleanText_PureText(t *testing.T) {
-	// 严格 JSON 模式：纯文本返回空，由 handleFlashResponse 触发重试
+	// 纯文本容错接受，返回全文
 	result := extractCleanText("今天天气不错，适合出去走走")
-	if result != "" {
-		t.Errorf("expected empty string for pure text (strict mode), got '%s'", result)
+	if result != "今天天气不错，适合出去走走" {
+		t.Errorf("expected full text, got '%s'", result)
 	}
 }
 

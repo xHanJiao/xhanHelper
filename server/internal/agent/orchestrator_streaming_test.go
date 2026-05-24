@@ -353,33 +353,22 @@ func TestRunReActLoop_LLMError(t *testing.T) {
 	}
 }
 
-func TestRunReActLoop_EmptyConversationID(t *testing.T) {
-	// ConversationID 为空 → 立即返回 error
-	msgRepo := &mockMsgRepo{}
-	convRepo := &mockConvRepo{}
-	o := newTestOrchestrator(msgRepo, convRepo)
-
-	client := &mockLLMClient{} // 不会被调用
-
-	ctx := context.Background()
-	events := make(chan *llm.StreamEvent, 16)
-	result := &BuildResult{Prompt: "test prompt"}
+func TestRun_EmptyConversationID(t *testing.T) {
+	// ConversationID 为空 → Run 直接返回 error
+	o := &Orchestrator{}
 	req := &RunRequest{
 		ConversationID:     "", // 空！
 		UserID:             "user-1",
 		UserMessageContent: "hi",
 	}
 
-	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, req)
+	_, err := o.Run(context.Background(), req)
 
-	var collected []*llm.StreamEvent
-	for evt := range events {
-		collected = append(collected, evt)
+	if err == nil {
+		t.Fatal("expected error for empty conversation_id")
 	}
-
-	if len(collected) == 0 || collected[0].Type != "error" {
-		t.Fatal("expected error event for empty conversation_id")
+	if err.Error() != "conversation id is required" {
+		t.Errorf("expected 'conversation id is required', got '%s'", err.Error())
 	}
 }
 

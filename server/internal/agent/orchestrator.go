@@ -143,6 +143,9 @@ func (o *Orchestrator) FlashClient() llm.LLMClient {
 // —— Run ——
 
 func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.StreamEvent, error) {
+	if req.ConversationID == "" {
+		return nil, fmt.Errorf("conversation id is required")
+	}
 
 	log.Printf("[orch] run start: model=%s, msgs=%d", o.pickClient(req).ModelName(), len(req.Messages))
 
@@ -203,37 +206,25 @@ func (o *Orchestrator) runReActLoop(
 	req *RunRequest,
 ) {
 	defer close(events)
-	defer func() {
+	defer util.SafeGo(func() {
 		if o.onChatEnd != nil {
 			o.onChatEnd(req.UserID, req.ConversationID)
 		}
-	}()
-	client := o.pickClient(req)
+	})
 
-	msgs := req.Messages
-	msgs = append(msgs, llm.Message{Role: "user", Content: req.UserMessageContent})
-	if req.ConversationID == "" {
-		log.Printf("[orch] ConversationID is empty")
-		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrInternal)})
-		return
-	}
 	userMsg := mkUserMsg(req)
 	if err := o.msgRepo.Create(ctx, userMsg); err != nil {
 		log.Printf("[orch] save user msg error: %v", err)
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrInternal)})
 		return
 	}
-	util.SafeGo(func() {
-		if err := o.convRepo.Touch(ctx, req.ConversationID); err != nil {
-			log.Printf("[orch] touch conv error: %v", err)
-		}
-	})
+	util.SafeGo(func() { o.convRepo.Touch(ctx, req.ConversationID) })
 	util.SafeGo(func() { o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID) })
 
-	state := &reactState{msgs: msgs}
+	state := &reactState{msgs: append(req.Messages, llm.Message{Role: "user", Content: req.UserMessageContent})}
 
 	for iter := 0; iter < o.maxIterations; iter++ {
-		if o.runOneRound(ctx, events, client, req, systemPromptResult, state, iter) {
+		if o.runOneRound(ctx, events, o.pickClient(req), req, systemPromptResult, state, iter) {
 			return
 		}
 	}

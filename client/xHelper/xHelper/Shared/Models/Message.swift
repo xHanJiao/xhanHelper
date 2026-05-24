@@ -35,6 +35,15 @@ struct Message: Identifiable, Codable {
         )
     }
 
+    // 从 toolCallsJSON 解析工具调用列表（历史消息用）
+    var parsedToolCalls: [ToolCallHistoryItem]? {
+        guard let json = toolCallsJSON,
+              let data = json.data(using: .utf8),
+              let items = try? JSONDecoder().decode([ToolCallHistoryItem].self, from: data)
+        else { return nil }
+        return items.isEmpty ? nil : items
+    }
+
     // 本地构建 streaming assistant 消息
     static func streamingAssistant(conversationId: String) -> Message {
         Message(
@@ -45,5 +54,24 @@ struct Message: Identifiable, Codable {
             toolCallsJSON: nil,
             createdAt: ISO8601DateFormatter().string(from: Date())
         )
+    }
+}
+
+
+/// 历史消息中的工具调用条目（从 tool_calls_json 解析）
+struct ToolCallHistoryItem: Codable, Identifiable {
+    var id: String { "\(tool).\(function)" }
+    let tool: String
+    let function: String
+    let args: [String: AnyCodable]?
+
+    var icon: String {
+        switch function {
+        case "create_bill": return "plus.circle"
+        case "update_bill": return "pencil.circle"
+        case "delete_bill": return "trash.circle"
+        case "query_bills": return "magnifyingglass.circle"
+        default: return "wrench"
+        }
     }
 }

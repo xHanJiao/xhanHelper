@@ -175,10 +175,10 @@ func TestExtractCleanText_JSONWithReplyAndToolCalls(t *testing.T) {
 }
 
 func TestExtractCleanText_JSONWithPrefixBeforeBrace(t *testing.T) {
-	// 严格 JSON：前导文本 + JSON → parseLLMResponse 返回 prefix error → 返回空
+	// parseLLMResponse 报 prefix error → extractFlashReply 兜底，拼接 prefix + reply
 	result := extractCleanText("好的，我来查看\n{\"reply\":\"正在查询...\",\"tool_calls\":[{\"tool\":\"agent\",\"function\":\"list_agents\",\"args\":{}}]}")
-	if result != "" {
-		t.Errorf("expected empty for prefix text (strict mode), got '%s'", result)
+	if result != "好的，我来查看\n\n正在查询..." {
+		t.Errorf("expected '好的，我来查看\\n\\n正在查询...', got '%s'", result)
 	}
 }
 
@@ -191,10 +191,10 @@ func TestExtractCleanText_PureText(t *testing.T) {
 }
 
 func TestExtractCleanText_InvalidJSON(t *testing.T) {
-	// 严格 JSON 模式：非法 JSON 返回空，由 handleFlashResponse 触发重试
+	// 非法 JSON → extractFlashReply 兜底返回原文，用户能看到内容
 	result := extractCleanText("这不是 JSON {{{ broken")
-	if result != "" {
-		t.Errorf("expected empty string for invalid JSON (strict mode), got '%s'", result)
+	if result != "这不是 JSON {{{ broken" {
+		t.Errorf("expected raw text fallback, got '%s'", result)
 	}
 }
 
@@ -255,6 +255,58 @@ func TestMaybeInjectCreatedAt_PreservesToolCalls(t *testing.T) {
 	_ = tc
 	if _, ok := m["created_at"]; !ok {
 		t.Error("created_at should be injected")
+	}
+}
+
+// ---- extractToolCallsJSON ----
+
+func TestExtractToolCallsJSON_WithToolCalls(t *testing.T) {
+	raw := `{"reply":"好的","tool_calls":[{"tool":"note","function":"record_note","args":{"topic":"t","content":"c"}}]}`
+	result := extractToolCallsJSON(raw)
+	if result == nil {
+		t.Fatal("expected non-nil for content with tool_calls")
+	}
+	var tcs []map[string]interface{}
+	if err := json.Unmarshal([]byte(*result), &tcs); err != nil {
+		t.Fatalf("result should be valid JSON array: %v", err)
+	}
+	if len(tcs) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(tcs))
+	}
+	if tcs[0]["tool"] != "note" || tcs[0]["function"] != "record_note" {
+		t.Errorf("unexpected tool call: tool=%v function=%v", tcs[0]["tool"], tcs[0]["function"])
+	}
+}
+
+func TestExtractToolCallsJSON_NoToolCalls(t *testing.T) {
+	// JSON 不含 tool_calls → nil
+	result := extractToolCallsJSON(`{"reply":"hello"}`)
+	if result != nil {
+		t.Errorf("expected nil for JSON without tool_calls, got '%s'", *result)
+	}
+}
+
+func TestExtractToolCallsJSON_EmptyToolCalls(t *testing.T) {
+	// tool_calls 为空数组 → nil
+	result := extractToolCallsJSON(`{"reply":"ok","tool_calls":[]}`)
+	if result != nil {
+		t.Errorf("expected nil for empty tool_calls, got '%s'", *result)
+	}
+}
+
+func TestExtractToolCallsJSON_InvalidJSON(t *testing.T) {
+	// 非法 JSON → nil
+	result := extractToolCallsJSON(`{broken`)
+	if result != nil {
+		t.Errorf("expected nil for invalid JSON, got '%s'", *result)
+	}
+}
+
+func TestExtractToolCallsJSON_PureText(t *testing.T) {
+	// 纯文本 → nil
+	result := extractToolCallsJSON("今天天气不错")
+	if result != nil {
+		t.Errorf("expected nil for pure text, got '%s'", *result)
 	}
 }
 

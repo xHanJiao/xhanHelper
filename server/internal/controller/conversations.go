@@ -140,10 +140,68 @@ func cleanMessages(msgs []model.Message) []model.Message {
 		if m.Role == "assistant" {
 			if reply := extractFlashReply(m.Content); reply != "" {
 				m.Content = reply
-				m.ToolCallsJSON = nil
 			}
 		}
 		out = append(out, m)
+	}
+	return mergeConsecutiveAssistant(out)
+}
+
+// mergeConsecutiveAssistant 合并连续的 assistant 消息（ReAct 多轮产生的碎片）。
+// 取最后一条的 content，合并所有条的 tool_calls_json。
+func mergeConsecutiveAssistant(msgs []model.Message) []model.Message {
+	if len(msgs) <= 1 {
+		return msgs
+	}
+	out := make([]model.Message, 0, len(msgs))
+	i := 0
+	for i < len(msgs) {
+		m := msgs[i]
+		if m.Role != "assistant" {
+			out = append(out, m)
+			i++
+			continue
+		}
+		// 收集连续的 assistant 消息
+		group := []model.Message{m}
+		j := i + 1
+		for j < len(msgs) && msgs[j].Role == "assistant" {
+			group = append(group, msgs[j])
+			j++
+		}
+		i = j
+
+		if len(group) == 1 {
+			out = append(out, m)
+			continue
+		}
+
+		// 合并：取最后一条的 content/reasoning，合并所有条的 tool_calls
+		merged := group[len(group)-1]
+		var allTCs []json.RawMessage
+		for _, gm := range group {
+			if gm.ToolCallsJSON == nil || *gm.ToolCallsJSON == "" {
+				continue
+			}
+			var tcs []json.RawMessage
+			if err := json.Unmarshal([]byte(*gm.ToolCallsJSON), &tcs); err != nil {
+				continue
+			}
+			allTCs = append(allTCs, tcs...)
+		}
+		if len(allTCs) > 0 {
+			b, _ := json.Marshal(allTCs)
+			s := string(b)
+			merged.ToolCallsJSON = &s
+		}
+		// 合并 reasoning：取最后一条有值的
+		for k := len(group) - 1; k >= 0; k-- {
+			if group[k].ReasoningContent != nil && *group[k].ReasoningContent != "" {
+				merged.ReasoningContent = group[k].ReasoningContent
+				break
+			}
+		}
+		out = append(out, merged)
 	}
 	return out
 }

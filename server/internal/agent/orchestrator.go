@@ -521,7 +521,10 @@ func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID stri
 		rc := msg.ReasoningContent
 		modelMsg.ReasoningContent = &rc
 	}
-	if len(msg.ToolCalls) > 0 {
+	// Flash 路径：从 Content 中提取 tool_calls；原生路径：用 msg.ToolCalls
+	if tcJSON := extractToolCallsJSON(msg.Content); tcJSON != nil {
+		modelMsg.ToolCallsJSON = tcJSON
+	} else if len(msg.ToolCalls) > 0 {
 		b, _ := json.Marshal(msg.ToolCalls)
 		s := string(b)
 		modelMsg.ToolCallsJSON = &s
@@ -704,6 +707,24 @@ func parseLLMResponse(text string) (*LLMResponse, error) {
 }
 
 // extractCleanText 从 LLM 原始输出中提取干净的用户可见文本。
+// extractToolCallsJSON 从 Flash JSON Content 中提取 tool_calls 并序列化为 JSON。
+// 没有 tool_calls 或解析失败返回 nil。
+func extractToolCallsJSON(raw string) *string {
+	var parsed LLMResponse
+	if _, err := ParseFlashJSON(raw, &parsed); err != nil {
+		return nil
+	}
+	if len(parsed.ToolCalls) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(parsed.ToolCalls)
+	if err != nil {
+		return nil
+	}
+	s := string(b)
+	return &s
+}
+
 // maybeInjectCreatedAt 如果 content 是合法 JSON（含 reply 字段），注入 created_at
 func maybeInjectCreatedAt(raw string) string {
 	var m map[string]interface{}
@@ -724,12 +745,34 @@ func maybeInjectCreatedAt(raw string) string {
 func extractCleanText(raw string) string {
 	parsed, err := parseLLMResponse(raw)
 	if err != nil {
-		return ""
+		// parse 失败（非法 JSON / 前缀违规）→ 用 extractFlashReply 兜底，
+		// 保证流式时有内容展示（handleFlashResponse 仍会触发重试）
+		return extractFlashReply(raw)
 	}
 	if parsed == nil {
 		return raw // 纯文本，容错接受
 	}
 	return parsed.Reply
+}
+
+// extractFlashReply 从 Flash LLM 输出中提取可见文本：prefix + reply。
+// 与 controller/extractFlashReply 逻辑相同，避免循环依赖。
+func extractFlashReply(raw string) string {
+	var parsed struct {
+		Reply string `json:"reply"`
+	}
+	prefix, err := ParseFlashJSON(raw, &parsed)
+	if err != nil {
+		return raw
+	}
+	prefix = strings.TrimSpace(prefix)
+	if prefix != "" && parsed.Reply != "" {
+		return prefix + "\n\n" + parsed.Reply
+	}
+	if parsed.Reply != "" {
+		return parsed.Reply
+	}
+	return raw
 }
 
 func buildPlanEvent(toolCalls []tool.ToolCall) map[string]interface{} {

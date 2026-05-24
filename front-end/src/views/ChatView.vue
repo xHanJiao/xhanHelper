@@ -258,6 +258,18 @@ function normalizeMessage(msg) {
         ? JSON.parse(msg.tool_calls_json)
         : msg.tool_calls_json
       const tcs = (Array.isArray(rawTCs) ? rawTCs : []).map(tc => {
+        // 兼容后端新旧两种序列化格式
+        // 新格式（flat）: {tool:"note", function:"record_note", args:{...}}
+        if (typeof tc.tool === 'string' && typeof tc.function === 'string') {
+          return {
+            tool: tc.tool,
+            function: tc.function,
+            args: tc.args || {},
+            status: 'done',
+            result: null
+          }
+        }
+        // 旧格式（nested）: {function:{name:"note.record_note", arguments:"{...}"}}
         const fullName = tc.function?.name || ''
         let tool = fullName
         let func = fullName
@@ -296,6 +308,7 @@ function normalizeMessage(msg) {
     normalized.toolCalls = normalized.toolCalls || []
   }
   return normalized
+}
 }
 
 watch(() => route.params.id, async (newId, oldId) => {

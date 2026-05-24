@@ -35,7 +35,14 @@ struct MessageListView: View {
                     } else if msg.role == "user" {
                         ChatBubble(text: msg.content, isUser: true, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
                     } else {
-                        ChatBubble(text: msg.content, isUser: false, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
+                        VStack(alignment: .leading, spacing: 6) {
+                            ChatBubble(text: msg.content, isUser: false, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
+                            if let tcs = msg.parsedToolCalls {
+                                ForEach(tcs, id: \.id) { tc in
+                                    ToolCallHistoryPill(toolCall: tc)
+                                }
+                            }
+                        }
                     }
                 }
 

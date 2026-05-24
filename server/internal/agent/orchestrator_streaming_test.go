@@ -299,10 +299,10 @@ func TestRunReActLoop_StrictJSON_InvalidJSONTriggersRetry(t *testing.T) {
 		t.Errorf("status should mention 重试, got '%s'", status.Content)
 	}
 
-	// 第二轮成功
+	// 第一轮 extractFlashReply 兜底展示了原始文本，第二轮展示正确 JSON 的 reply
 	text := collectTextDeltas(collected)
-	if text != "fixed now" {
-		t.Errorf("expected text_delta='fixed now', got '%s'", text)
+	if text != `{"reply":"brokenfixed now` {
+		t.Errorf("expected both rounds text, got '%s'", text)
 	}
 	if !hasDoneEvent(collected) {
 		t.Error("expected done event after retry succeeded")
@@ -416,10 +416,10 @@ func TestRunReActLoop_JSONWithPrefixText_TriggersRetry(t *testing.T) {
 		t.Errorf("status should mention 重试, got '%s'", status.Content)
 	}
 
-	// 第二轮成功
+	// 第一轮 extractFlashReply 兜底展示了 prefix+reply，第二轮展示正确 JSON 的 reply
 	text := collectTextDeltas(collected)
-	if text != "正在查询，请稍等..." {
-		t.Errorf("expected text_delta='正在查询，请稍等...', got '%s'", text)
+	if text != "好的，我来查看\n\n正在查询...正在查询，请稍等..." {
+		t.Errorf("expected both rounds text, got '%s'", text)
 	}
 	if !hasDoneEvent(collected) {
 		t.Error("expected done event after retry succeeded")

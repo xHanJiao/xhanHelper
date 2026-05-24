@@ -362,10 +362,12 @@ func (o *Orchestrator) finalizeRound(
 	msg := newAssistantMessage(streamContent, streamReasoning, se)
 
 	var done bool
-	done, state.lastAssistantMsgID = o.handleFlashResponse(
-		ctx, events, &state.msgs, msg,
-		convID, userID, &state.allToolCalls,
-		&state.lastAssistantMsgID, memIDs, trace)
+	result := o.handleFlashResponse(
+		ctx, events, state.msgs, msg,
+		convID, userID, state.allToolCalls,
+		memIDs, trace)
+	done, state.lastAssistantMsgID, state.msgs, state.allToolCalls =
+		result.done, result.lastMsgID, result.msgs, result.allToolCalls
 	if done {
 		o.emitDone(events, convID, state.lastAssistantMsgID, "", memIDs, noteIDs)
 	}
@@ -385,36 +387,43 @@ func newAssistantMessage(streamContent string, streamReasoning string, se *llm.S
 
 // —— Flash 文本响应处理 ——
 
-// handleFlashResponse 解析 Flash 文本中的 JSON，返回 (done bool, msgID string)
+// flashResult 封装 handleFlashResponse 的返回值。
+type flashResult struct {
+	done         bool
+	lastMsgID    string
+	msgs         []llm.Message
+	allToolCalls []tool.ToolCall
+}
+
+// handleFlashResponse 解析 Flash 文本中的 JSON，返回结构化的 flashResult。
 func (o *Orchestrator) handleFlashResponse(
 	ctx context.Context,
 	events chan<- *llm.StreamEvent,
-	msgs *[]llm.Message,
+	msgs []llm.Message,
 	msg llm.Message,
 	convID, userID string,
-	allToolCalls *[]tool.ToolCall,
-	lastMsgID *string,
+	allToolCalls []tool.ToolCall,
 	memIDs []string,
 	trace *PromptTrace,
-) (bool, string) {
+) flashResult {
 	parsed, parseErr := parseLLMResponse(msg.Content)
 
 	if parseErr != nil {
 		log.Printf("[orch] round parse error: %v, saving raw and retrying", parseErr)
-		*lastMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, nil)
+		lastMsgID := o.saveAssistantMsg(ctx, convID, userID, msg, nil)
 		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "响应格式异常，正在重试…"})
-		*msgs = append(*msgs, llm.Message{
+		msgs = append(msgs, llm.Message{
 			Role:    "user",
 			Content: "[系统] 你上一轮的回复不是有效的 JSON 格式。请严格按照 {\"reply\":\"文字回复\",\"tool_calls\":[{\"tool\":\"工具名\",\"function\":\"函数名\",\"args\":{...}}]} 格式重新生成。",
 		})
-		return false, ""
+		return flashResult{false, lastMsgID, msgs, allToolCalls}
 	}
 
 	if parsed == nil {
 		// 纯文本（无 JSON），system prompt 已要求 JSON 但容错接受
 		log.Printf("[orch] round pure text (no JSON), accepting gracefully")
-		*lastMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, trace)
-		return true, *lastMsgID
+		lastMsgID := o.saveAssistantMsg(ctx, convID, userID, msg, trace)
+		return flashResult{true, lastMsgID, msgs, allToolCalls}
 	}
 
 	log.Printf("[orch] round embedded tool_calls=%d: %s",
@@ -423,38 +432,52 @@ func (o *Orchestrator) handleFlashResponse(
 	// 无工具调用 → 纯文本回复，正常结束
 	if len(parsed.ToolCalls) == 0 {
 		log.Printf("[orch] round text-only JSON reply, len=%d", len(msg.Content))
-		*lastMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, trace)
-		return true, *lastMsgID
+		lastMsgID := o.saveAssistantMsg(ctx, convID, userID, msg, trace)
+		return flashResult{true, lastMsgID, msgs, allToolCalls}
 	}
 
 	// 统一走 prompt engineering，不填 ToolCallsJSON（由 parseLLMResponse 从文本解析）
 	msg.ToolCalls = nil
 
-	*lastMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, trace)
+	lastMsgID := o.saveAssistantMsg(ctx, convID, userID, msg, trace)
 
-	*msgs = append(*msgs, llm.Message{Role: "assistant", Content: msg.Content})
-	*allToolCalls = append(*allToolCalls, parsed.ToolCalls...)
+	msgs = append(msgs, llm.Message{Role: "assistant", Content: msg.Content})
+	allToolCalls = append(allToolCalls, parsed.ToolCalls...)
 
 	// 为 memory_search 工具注入 exclude_ids（本轮已注入的记忆 ID）
+	o.injectExcludeMemIDsForMemSearch(parsed, memIDs)
+
+	toolCallResults := executeConcurrently(ctx, events, userID, o.registry, parsed.ToolCalls)
+
+	msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, convID, userID, msgs)
+
+	return flashResult{false, lastMsgID, msgs, allToolCalls}
+}
+
+func (*Orchestrator) injectExcludeMemIDsForMemSearch(parsed *LLMResponse, memIDs []string) {
 	for i := range parsed.ToolCalls {
 		if parsed.ToolCalls[i].Tool == "memory_search" && len(memIDs) > 0 {
 			parsed.ToolCalls[i].Args = injectExcludeIDs(parsed.ToolCalls[i].Args, memIDs)
 		}
 	}
+}
 
-	toolCallResults := executeConcurrently(ctx, events, userID, o.registry, parsed.ToolCalls)
-
+func (o *Orchestrator) collectToolResults(ctx context.Context, parsed *LLMResponse, toolCallResults []toolExecResult, events chan<- *llm.StreamEvent, convID string, userID string, msgs []llm.Message) []llm.Message {
 	for i := range parsed.ToolCalls {
-		resJSON, _ := json.Marshal(toolCallResults[i].result)
+		res := toolCallResults[i].result
+		resJSON, err := json.Marshal(res)
+		if err != nil {
+			log.Printf("[orch] tool result marshal error: %v", err)
+			resJSON = []byte(fmt.Sprintf(`{"success":false,"error":"marshal failed: %s"}`, res.Error))
+		}
 		o.sendEvent(events, &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)})
 		o.saveToolMsg(ctx, convID, userID, idgen.Next(), string(resJSON))
-		*msgs = append(*msgs, llm.Message{
+		msgs = append(msgs, llm.Message{
 			Role:    "user",
 			Content: "[工具执行结果] " + string(resJSON),
 		})
 	}
-
-	return false, *lastMsgID
+	return msgs
 }
 
 // —— 并发执行 ——
@@ -553,9 +576,6 @@ func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID stri
 		log.Printf("[orch] save assistant msg error: %v", err)
 		return ""
 	}
-	if err := o.convRepo.Touch(ctx, convID); err != nil {
-		log.Printf("[orch] touch conv error: %v", err)
-	}
 	return mid
 }
 
@@ -576,9 +596,6 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCall
 	}); err != nil {
 		log.Printf("[orch] save tool msg error: %v", err)
 		return
-	}
-	if err := o.convRepo.Touch(ctx, convID); err != nil {
-		log.Printf("[orch] touch conv error: %v", err)
 	}
 	log.Printf("[orch] saved tool message: id=%s tool_call_id=%s", msgID, toolCallID)
 }

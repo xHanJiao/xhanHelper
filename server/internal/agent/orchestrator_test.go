@@ -23,22 +23,21 @@ func TestHandleFlashResponse_ParseErrorTriggersRetry(t *testing.T) {
 	}
 
 	var allToolCalls []tool.ToolCall
-	var lastMsgID string
 
-	done, newMsgID := o.handleFlashResponse(ctx, events, &msgs, msg, "test-conv-1", "test-user-1", &allToolCalls, &lastMsgID, nil, nil)
+	result := o.handleFlashResponse(ctx, events, msgs, msg, "test-conv-1", "test-user-1", allToolCalls, nil, nil)
 
-	if done {
+	if result.done {
 		t.Error("expected done=false for parse error (should retry)")
 	}
-	if newMsgID != "" {
-		t.Errorf("expected empty msgID, got '%s'", newMsgID)
+	if result.lastMsgID != "" {
+		t.Errorf("expected empty msgID, got '%s'", result.lastMsgID)
 	}
 
 	// 应追加一条系统重试指令
-	if len(msgs) != 1 {
-		t.Fatalf("expected 1 retry message appended, got %d", len(msgs))
+	if len(result.msgs) != 1 {
+		t.Fatalf("expected 1 retry message appended, got %d", len(result.msgs))
 	}
-	retryMsg := msgs[0]
+	retryMsg := result.msgs[0]
 	if retryMsg.Role != "user" {
 		t.Errorf("expected retry role='user', got '%s'", retryMsg.Role)
 	}
@@ -77,17 +76,16 @@ func TestHandleFlashResponse_InvalidJSON_UnescapedQuotes(t *testing.T) {
 	}
 
 	var allToolCalls []tool.ToolCall
-	var lastMsgID string
 
-	done, _ := o.handleFlashResponse(ctx, events, &msgs, msg, "test-conv-1", "test-user-1", &allToolCalls, &lastMsgID, nil, nil)
+	result := o.handleFlashResponse(ctx, events, msgs, msg, "test-conv-1", "test-user-1", allToolCalls, nil, nil)
 
-	if done {
+	if result.done {
 		t.Error("expected done=false for unescaped quotes (should retry)")
 	}
-	if len(msgs) != 1 {
-		t.Fatalf("expected 1 retry message, got %d", len(msgs))
+	if len(result.msgs) != 1 {
+		t.Fatalf("expected 1 retry message, got %d", len(result.msgs))
 	}
-	if !strings.Contains(msgs[0].Content, "[系统]") {
+	if !strings.Contains(result.msgs[0].Content, "[系统]") {
 		t.Error("expected retry instruction with [系统]")
 	}
 }
@@ -105,11 +103,10 @@ func TestHandleFlashResponse_ValidJSONTextOnly(t *testing.T) {
 	}
 
 	var allToolCalls []tool.ToolCall
-	var lastMsgID string
 
-	done, _ := o.handleFlashResponse(ctx, events, &msgs, msg, "test-conv-1", "test-user-1", &allToolCalls, &lastMsgID, nil, nil)
+	result := o.handleFlashResponse(ctx, events, msgs, msg, "test-conv-1", "test-user-1", allToolCalls, nil, nil)
 
-	if !done {
+	if !result.done {
 		t.Error("expected done=true for text-only JSON reply (no tool calls)")
 	}
 }
@@ -127,16 +124,15 @@ func TestHandleFlashResponse_PureTextFallback(t *testing.T) {
 	}
 
 	var allToolCalls []tool.ToolCall
-	var lastMsgID string
 
-	done, _ := o.handleFlashResponse(ctx, events, &msgs, msg, "test-conv-1", "test-user-1", &allToolCalls, &lastMsgID, nil, nil)
+	result := o.handleFlashResponse(ctx, events, msgs, msg, "test-conv-1", "test-user-1", allToolCalls, nil, nil)
 
 	// 纯文本容错接受，正常结束
-	if !done {
+	if !result.done {
 		t.Error("expected done=true for pure text (graceful accept)")
 	}
-	if len(msgs) != 0 {
-		t.Errorf("expected 0 retry messages, got %d", len(msgs))
+	if len(result.msgs) != 0 {
+		t.Errorf("expected 0 retry messages, got %d", len(result.msgs))
 	}
 }
 

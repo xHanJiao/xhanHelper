@@ -163,7 +163,7 @@ deploy: build-frontend build-linux
 		echo "   参考 .env.example"; \
 		exit 1; \
 	fi; \
-	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); B=$(OUTPUT_DIR)/$(BINARY); F=$(FRONTEND_DIR)/dist/; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); B=$(OUTPUT_DIR)/$(BINARY); F=$(FRONTEND_DIR)/dist; \
 	echo ""; \
 	echo "========================================"; \
 	echo "       部署到阿里云服务器 (全量)"; \
@@ -230,7 +230,7 @@ deploy-frontend: build-frontend
 	echo "========================================"; \
 	echo "       部署前端到阿里云服务器"; \
 	echo "========================================"; \
-	scp -r $(FRONTEND_DIR)/dist/ $$U@$$H:$(SERVER_PATH)/front-end/ ; \
+	scp -r $(FRONTEND_DIR)/dist $$U@$$H:$(SERVER_PATH)/front-end/ ; \
 	echo ""; \
 	echo "✅ 前端部署完成！"
 

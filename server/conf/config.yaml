@@ -33,6 +33,7 @@ llm:
   base_url: https://api.deepseek.com
   default_temperature: 1.0
   default_max_tokens: 30000
+  max_iterations: 20
 
 embedding:
   enable_history_search: false

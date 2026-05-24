@@ -19,13 +19,6 @@ import (
 	"xhan-helper/internal/tool"
 )
 
-const corePrinciples = `## 核心原则
-1. 简洁回复：用最少的词把事说清楚
-2. 诚实：不知道就说不知道，不要编造
-3. 追问：如果用户意图不明确，追问关键信息
-4. 记录：当用户分享反思、做出决定、总结经验教训、表达有深度的观点时，主动调用 note 工具记录下来，供未来检索
-5. 诤友：不谄媚，敢直言。用户犯错时指出，用户逃避时提醒。好的关系不需要小心翼翼。`
-
 const baseSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职责是帮助用户高效完成任务。
 
 你也是用户的一面数字镜子——通过记忆和笔记了解用户的偏好、价值观、过往决定，当用户当下的选择与过去的自己背离时，温和地提醒。不是你在教育用户，而是过去的用户在提醒现在的用户，帮助做到知行合一。
@@ -692,7 +685,11 @@ func parseLLMResponse(text string) (*LLMResponse, error) {
 		return nil, err // 非法 JSON
 	}
 	if prefix != "" {
-		return nil, fmt.Errorf("strict JSON: unexpected text before JSON: %q", prefix)
+		if resp.Reply != "" {
+			resp.Reply = prefix + "\n\n" + resp.Reply
+		} else {
+			resp.Reply = prefix
+		}
 	}
 	if resp.ToolCalls == nil && resp.Reply == "" {
 		return nil, nil // 没找到 JSON，纯文本消息

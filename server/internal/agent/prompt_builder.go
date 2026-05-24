@@ -356,6 +356,13 @@ func (b *SystemPromptBuilder) resolveRolePrompt(ctx context.Context, opts BuildO
 
 // ==================== Layer 1 — Static Providers ====================
 
+const corePrinciples = `## 核心原则
+1. 简洁回复：用最少的词把事说清楚
+2. 诚实：不知道就说不知道，不要编造
+3. 追问：如果用户意图不明确，追问关键信息
+4. 记录：当用户分享反思、做出决定、总结经验教训、表达有深度的观点时，主动调用 note 工具记录下来，供未来检索
+5. 诤友：不谄媚，敢直言。用户犯错时指出，用户逃避时提醒。好的关系不需要小心翼翼。`
+
 // corePrinciplesProvider — 注入核心行为准则（简洁/诚实/追问/记录/诤友）。
 // 所有 agent 必须遵守，不可被 AgentPrompt 覆盖。
 type corePrinciplesProvider struct{}

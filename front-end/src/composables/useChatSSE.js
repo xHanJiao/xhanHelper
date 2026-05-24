@@ -87,7 +87,11 @@ export function useChatSSE() {
           currentEvent = line.slice(7).trim()
         } else if (line.startsWith('data: ')) {
           const raw = line.slice(6)
-          dispatchEvent(currentEvent, raw)
+          try {
+            dispatchEvent(currentEvent, raw)
+          } catch (e) {
+            console.error('SSE dispatch error', currentEvent, e)
+          }
         }
         // 忽略注释行（:开头）和空行
       }
@@ -141,8 +145,12 @@ export function useChatSSE() {
         break
       }
       case 'status': {
-        const s = JSON.parse(rawData)
-        chat.statusMessage = s.message
+        try {
+          const s = JSON.parse(rawData)
+          chat.statusMessage = s.message || s.status || rawData
+        } catch {
+          chat.statusMessage = rawData
+        }
         break
       }
       case 'agent_matched': {

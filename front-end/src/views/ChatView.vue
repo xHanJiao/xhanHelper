@@ -309,7 +309,6 @@ function normalizeMessage(msg) {
   }
   return normalized
 }
-}
 
 watch(() => route.params.id, async (newId, oldId) => {
   if (oldId && chat.isStreaming) {

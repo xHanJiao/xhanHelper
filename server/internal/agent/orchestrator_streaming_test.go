@@ -377,8 +377,8 @@ func TestRunReActLoop_EmptyConversationID(t *testing.T) {
 	}
 }
 
-func TestRunReActLoop_JSONWithPrefixText_TriggersRetry(t *testing.T) {
-	// 严格 JSON：前导文本 + JSON → parseLLMResponse 返回 prefix error → 触发重试
+func TestRunReActLoop_JSONWithPrefixText_AcceptedGracefully(t *testing.T) {
+	// 容错：前导文本 + JSON → prefix 拼入 reply，正常结束，不重试
 	msgRepo := &mockMsgRepo{}
 	convRepo := &mockConvRepo{}
 	o := newTestOrchestrator(msgRepo, convRepo)
@@ -387,7 +387,6 @@ func TestRunReActLoop_JSONWithPrefixText_TriggersRetry(t *testing.T) {
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{
 			{events: append(makeTextDeltas(content), makeDone())},
-			{events: append(makeTextDeltas(`{"reply":"正在查询，请稍等..."}`), makeDone())},
 		},
 	}
 
@@ -407,22 +406,19 @@ func TestRunReActLoop_JSONWithPrefixText_TriggersRetry(t *testing.T) {
 		collected = append(collected, evt)
 	}
 
-	// 第一轮应有 status 事件（重试）
+	// 不应有重试 status
 	status := findStatusEvent(collected)
-	if status == nil {
-		t.Fatal("expected status event about retry for prefix text")
-	}
-	if !strings.Contains(status.Content, "重试") {
-		t.Errorf("status should mention 重试, got '%s'", status.Content)
+	if status != nil {
+		t.Errorf("expected no retry, got status: '%s'", status.Content)
 	}
 
-	// 第一轮 extractFlashReply 兜底展示了 prefix+reply，第二轮展示正确 JSON 的 reply
+	// prefix 拼入 reply，正常结束
 	text := collectTextDeltas(collected)
-	if text != "好的，我来查看\n\n正在查询...正在查询，请稍等..." {
-		t.Errorf("expected both rounds text, got '%s'", text)
+	if text != "好的，我来查看\n\n正在查询..." {
+		t.Errorf("expected prefix merged into reply, got '%s'", text)
 	}
 	if !hasDoneEvent(collected) {
-		t.Error("expected done event after retry succeeded")
+		t.Error("expected done event")
 	}
 }
 

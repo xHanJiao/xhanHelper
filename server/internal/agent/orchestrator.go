@@ -233,47 +233,61 @@ func (o *Orchestrator) runReActLoop(
 	state := &reactState{msgs: msgs}
 
 	for iter := 0; iter < o.maxIterations; iter++ {
-		if ctx.Err() != nil {
-			log.Printf("[orch] context cancelled: %v", ctx.Err())
-			o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrContextCancelled)})
-			o.sendEvent(events, &llm.StreamEvent{Type: "done"})
+		if o.runOneRound(ctx, events, client, req, systemPromptResult, state, iter) {
 			return
-		}
-
-		llmStart := time.Now()
-		streamEvents, err := client.Chat(ctx, o.mkLlmChatReq(req, systemPromptResult, msgs))
-		if err != nil {
-			log.Printf("[orch] round %d LLM error: %v", iter+1, err)
-			o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrLLMApi)})
-			return
-		}
-
-		var streamContent, streamReasoning strings.Builder
-		for se := range streamEvents {
-			switch se.Type {
-			case "text_delta":
-				streamContent.WriteString(se.Content)
-			case "thought_delta":
-				streamReasoning.WriteString(se.Content)
-				o.sendEvent(events, se)
-			case "done":
-				elapsedMs := time.Since(llmStart).Milliseconds()
-				recordLLMCall(req.DeepMode && o.proClient != nil, elapsedMs, se.Usage)
-				log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
-					iter+1, streamContent.Len(), streamReasoning.Len(), len(se.ToolCalls))
-				if o.finalizeRound(ctx, events, se, streamContent.String(), streamReasoning.String(),
-					req.ConversationID, req.UserID, systemPromptResult.MemoryIDs, systemPromptResult.NoteIDs, systemPromptResult.Trace, state) {
-					return
-				}
-			case "error":
-				o.sendEvent(events, se)
-				return
-			}
 		}
 	}
 
 	o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrMaxIterations)})
 	o.emitDone(events, req.ConversationID, "", "max iterations reached", systemPromptResult.MemoryIDs, systemPromptResult.NoteIDs)
+}
+
+// runOneRound 执行一轮 ReAct：LLM 调用 → 流式收集 → done/error 处理，返回 true 表示对话结束。
+func (o *Orchestrator) runOneRound(
+	ctx context.Context,
+	events chan<- *llm.StreamEvent,
+	client llm.LLMClient,
+	req *RunRequest,
+	result *BuildResult,
+	state *reactState,
+	round int,
+) bool {
+	if ctx.Err() != nil {
+		log.Printf("[orch] context cancelled: %v", ctx.Err())
+		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrContextCancelled)})
+		o.sendEvent(events, &llm.StreamEvent{Type: "done"})
+		return true
+	}
+
+	llmStart := time.Now()
+	streamEvents, err := client.Chat(ctx, o.mkLlmChatReq(req, result, state.msgs))
+	if err != nil {
+		log.Printf("[orch] round %d LLM error: %v", round+1, err)
+		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrLLMApi)})
+		return true
+	}
+
+	var streamContent, streamReasoning strings.Builder
+	for se := range streamEvents {
+		switch se.Type {
+		case "text_delta":
+			streamContent.WriteString(se.Content)
+		case "thought_delta":
+			streamReasoning.WriteString(se.Content)
+			o.sendEvent(events, se)
+		case "done":
+			elapsedMs := time.Since(llmStart).Milliseconds()
+			recordLLMCall(req.DeepMode && o.proClient != nil, elapsedMs, se.Usage)
+			log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
+				round+1, streamContent.Len(), streamReasoning.Len(), len(se.ToolCalls))
+			return o.finalizeRound(ctx, events, se, streamContent.String(), streamReasoning.String(),
+				req.ConversationID, req.UserID, result.MemoryIDs, result.NoteIDs, result.Trace, state)
+		case "error":
+			o.sendEvent(events, se)
+			return true
+		}
+	}
+	return false
 }
 
 func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPromptResult *BuildResult, msgs []llm.Message) *llm.ChatRequest {

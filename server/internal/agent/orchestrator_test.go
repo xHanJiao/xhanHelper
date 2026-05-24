@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -540,4 +541,290 @@ func TestMkLlmChatReq_DefaultsNilWhenNotSet(t *testing.T) {
 	if cr.Thinking != nil {
 		t.Errorf("Thinking: want nil, got %v", cr.Thinking)
 	}
+}
+
+// —— runOneRound ——
+
+// recordingLLMClient 包装 mockLLMClient，记录最后一次 Chat 请求。
+type recordingLLMClient struct {
+	mockLLMClient
+	lastReq *llm.ChatRequest
+}
+
+func (m *recordingLLMClient) Chat(ctx context.Context, req *llm.ChatRequest) (<-chan *llm.StreamEvent, error) {
+	m.lastReq = req
+	return m.mockLLMClient.Chat(ctx, req)
+}
+
+func newTestOrch() *Orchestrator {
+	return &Orchestrator{
+		msgRepo:            nil,
+		defaultTemperature: ptr(0.5),
+		defaultMaxTokens:   ptr(2048),
+	}
+}
+
+func TestRunOneRound_ContextCancelled(t *testing.T) {
+	o := newTestOrch()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	events := make(chan *llm.StreamEvent, 16)
+	state := &reactState{msgs: []llm.Message{}}
+	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
+	result := &BuildResult{Prompt: "sys"}
+
+	done := o.runOneRound(ctx, events, &mockLLMClient{}, req, result, state, 0)
+
+	if !done {
+		t.Error("expected done=true when context cancelled")
+	}
+	close(events)
+	var errorCount, doneCount int
+	for evt := range events {
+		switch evt.Type {
+		case "error":
+			errorCount++
+			if evt.Error != UserErrorMessage(ErrContextCancelled) {
+				t.Errorf("expected ErrContextCancelled, got '%s'", evt.Error)
+			}
+		case "done":
+			doneCount++
+		}
+	}
+	if errorCount != 1 {
+		t.Errorf("expected 1 error event, got %d", errorCount)
+	}
+	if doneCount != 1 {
+		t.Errorf("expected 1 done event, got %d", doneCount)
+	}
+}
+
+func TestRunOneRound_LLMError(t *testing.T) {
+	o := newTestOrch()
+	ctx := context.Background()
+	events := make(chan *llm.StreamEvent, 16)
+	state := &reactState{msgs: []llm.Message{}}
+	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
+	result := &BuildResult{Prompt: "sys"}
+
+	client := &mockLLMClient{
+		responses: []mockLLMResponse{{err: fmt.Errorf("API timeout")}},
+	}
+
+	done := o.runOneRound(ctx, events, client, req, result, state, 0)
+
+	if !done {
+		t.Error("expected done=true on LLM error")
+	}
+	close(events)
+	var errorEvents []*llm.StreamEvent
+	for evt := range events {
+		if evt.Type == "error" {
+			errorEvents = append(errorEvents, evt)
+		}
+	}
+	if len(errorEvents) != 1 {
+		t.Fatalf("expected 1 error event, got %d", len(errorEvents))
+	}
+	if errorEvents[0].Error != UserErrorMessage(ErrLLMApi) {
+		t.Errorf("expected ErrLLMApi, got '%s'", errorEvents[0].Error)
+	}
+}
+
+func TestRunOneRound_StreamError(t *testing.T) {
+	o := newTestOrch()
+	ctx := context.Background()
+	events := make(chan *llm.StreamEvent, 16)
+	state := &reactState{msgs: []llm.Message{}}
+	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
+	result := &BuildResult{Prompt: "sys"}
+
+	client := &mockLLMClient{
+		responses: []mockLLMResponse{{
+			events: []*llm.StreamEvent{
+				{Type: "text_delta", Content: "partial..."},
+				{Type: "error", Error: "stream broken"},
+			},
+		}},
+	}
+
+	done := o.runOneRound(ctx, events, client, req, result, state, 0)
+
+	if !done {
+		t.Error("expected done=true on stream error")
+	}
+	close(events)
+	for evt := range events {
+		if evt.Type == "error" && evt.Error == "stream broken" {
+			return // found it
+		}
+	}
+	t.Error("expected forwarded error event 'stream broken'")
+}
+
+func TestRunOneRound_DoneTextOnly(t *testing.T) {
+	o := newTestOrch()
+	ctx := context.Background()
+	events := make(chan *llm.StreamEvent, 256)
+	state := &reactState{msgs: []llm.Message{}}
+	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
+	result := &BuildResult{Prompt: "sys"}
+
+	client := &mockLLMClient{
+		responses: []mockLLMResponse{{
+			events: append(makeTextDeltas(`{"reply":"hello world"}`), makeDone()),
+		}},
+	}
+
+	done := o.runOneRound(ctx, events, client, req, result, state, 0)
+
+	if !done {
+		t.Error("expected done=true for text-only reply")
+	}
+	close(events)
+	text := collectTextDeltasFromChan(events)
+	if text != "hello world" {
+		t.Errorf("expected clean text 'hello world', got '%s'", text)
+	}
+}
+
+func TestRunOneRound_DoneParseErrorRetry(t *testing.T) {
+	o := newTestOrch()
+	ctx := context.Background()
+	events := make(chan *llm.StreamEvent, 256)
+	state := &reactState{msgs: []llm.Message{}}
+	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
+	result := &BuildResult{Prompt: "sys"}
+
+	client := &mockLLMClient{
+		responses: []mockLLMResponse{{
+			events: append(makeTextDeltas("not valid json {{{"), makeDone()),
+		}},
+	}
+
+	done := o.runOneRound(ctx, events, client, req, result, state, 0)
+
+	if done {
+		t.Error("expected done=false on parse error (should retry)")
+	}
+	close(events)
+	// 应有 status 事件通知前端重试
+	var hasStatus bool
+	for evt := range events {
+		if evt.Type == "status" {
+			hasStatus = true
+		}
+	}
+	if !hasStatus {
+		t.Error("expected status event about retry")
+	}
+	// state.msgs 应被追加了重试消息
+	if len(state.msgs) != 1 {
+		t.Fatalf("expected 1 retry message in state.msgs, got %d", len(state.msgs))
+	}
+	if !strings.Contains(state.msgs[0].Content, "[系统]") {
+		t.Errorf("expected [系统] retry instruction, got '%s'", state.msgs[0].Content)
+	}
+}
+
+func TestRunOneRound_DoneWithReasoning(t *testing.T) {
+	o := newTestOrch()
+	ctx := context.Background()
+	events := make(chan *llm.StreamEvent, 256)
+	state := &reactState{msgs: []llm.Message{}}
+	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
+	result := &BuildResult{Prompt: "sys"}
+
+	client := &mockLLMClient{
+		responses: []mockLLMResponse{{
+			events: []*llm.StreamEvent{
+				{Type: "thought_delta", Content: "I need to think..."},
+				{Type: "text_delta", Content: `{"reply":"ok"}`},
+				makeDone(),
+			},
+		}},
+	}
+
+	done := o.runOneRound(ctx, events, client, req, result, state, 0)
+
+	if !done {
+		t.Error("expected done=true")
+	}
+	close(events)
+	var hasThoughtDone bool
+	for evt := range events {
+		if evt.Type == "thought_done" {
+			hasThoughtDone = true
+		}
+	}
+	if !hasThoughtDone {
+		t.Error("expected thought_done event when reasoning present")
+	}
+}
+
+func TestRunOneRound_EmptyStream(t *testing.T) {
+	o := newTestOrch()
+	ctx := context.Background()
+	events := make(chan *llm.StreamEvent, 256)
+	state := &reactState{msgs: []llm.Message{}}
+	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
+	result := &BuildResult{Prompt: "sys"}
+
+	client := &mockLLMClient{
+		responses: []mockLLMResponse{{
+			events: []*llm.StreamEvent{}, // 空流，无 done 无 error
+		}},
+	}
+
+	done := o.runOneRound(ctx, events, client, req, result, state, 0)
+
+	if done {
+		t.Error("expected done=false when stream closes without done/error")
+	}
+}
+
+func TestRunOneRound_UsesStateMsgs(t *testing.T) {
+	o := newTestOrch()
+	ctx := context.Background()
+	events := make(chan *llm.StreamEvent, 256)
+	state := &reactState{
+		msgs: []llm.Message{
+			{Role: "user", Content: "hi"},
+			{Role: "assistant", Content: "hello"},
+		},
+	}
+	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
+	result := &BuildResult{Prompt: "sys"}
+
+	recorder := &recordingLLMClient{
+		mockLLMClient: mockLLMClient{
+			responses: []mockLLMResponse{{
+				events: append(makeTextDeltas(`{"reply":"ok"}`), makeDone()),
+			}},
+		},
+	}
+
+	o.runOneRound(ctx, events, recorder, req, result, state, 0)
+
+	if recorder.lastReq == nil {
+		t.Fatal("expected Chat to be called")
+	}
+	if len(recorder.lastReq.Messages) != 2 {
+		t.Fatalf("expected 2 messages in Chat request, got %d", len(recorder.lastReq.Messages))
+	}
+	if recorder.lastReq.Messages[1].Content != "hello" {
+		t.Errorf("expected assistant msg 'hello', got '%s'", recorder.lastReq.Messages[1].Content)
+	}
+}
+
+// collectTextDeltasFromChan 从已关闭的 channel 中收集所有 text_delta。
+func collectTextDeltasFromChan(ch chan *llm.StreamEvent) string {
+	var b strings.Builder
+	for evt := range ch {
+		if evt.Type == "text_delta" {
+			b.WriteString(evt.Content)
+		}
+	}
+	return b.String()
 }

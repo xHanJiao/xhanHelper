@@ -285,22 +285,25 @@ func main() {
 
 	// Orchestrator
 	retriever := agent.NewRetriever(memSource, noteSource)
+	pb := agent.NewSystemPromptBuilder(
+		agent.DefaultPromptConfig(),
+		agent.BaseSystemPrompt,
+		reg, retriever, themeStateRepo, convRepo, promptRepo, vectorStore,
+	)
 	orch := agent.New(&agent.OrchestratorConfig{
-		FlashClient:    llmClient,
-		Registry:       reg,
-		ProClient:      strongClient,
-		Retriever:      retriever,
-		MsgRepo:        msgRepo,
-		ConvRepo:       convRepo,
-		Embedder:       embedder,
-		VectorStore:    vectorStore,
-		EmbeddingRepo:  embeddingRepo,
-		ThemeStateRepo: themeStateRepo,
-		MaxIterations:  cfg.LLM.MaxIterations,
-		Temperature:    cfg.LLM.DefaultTemperature,
-		MaxTokens:      cfg.LLM.DefaultMaxTokens,
-		PromptResolver: promptRepo,
-		OnChatEnd:      func(userID, convID string) { cronRunner.NotifyChatEnd(userID, convID) },
+		FlashClient:   llmClient,
+		Registry:      reg,
+		ProClient:     strongClient,
+		PromptBuilder: pb,
+		MsgRepo:       msgRepo,
+		ConvRepo:      convRepo,
+		Embedder:      embedder,
+		VectorStore:   vectorStore,
+		EmbeddingRepo: embeddingRepo,
+		MaxIterations: cfg.LLM.MaxIterations,
+		Temperature:   cfg.LLM.DefaultTemperature,
+		MaxTokens:     cfg.LLM.DefaultMaxTokens,
+		OnChatEnd:     func(userID, convID string) { cronRunner.NotifyChatEnd(userID, convID) },
 	})
 
 	// 启动反思调度器

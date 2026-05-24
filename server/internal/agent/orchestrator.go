@@ -19,7 +19,7 @@ import (
 	"xhan-helper/internal/tool"
 )
 
-const baseSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职责是帮助用户高效完成任务。
+const BaseSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职责是帮助用户高效完成任务。
 
 你也是用户的一面数字镜子——通过记忆和笔记了解用户的偏好、价值观、过往决定，当用户当下的选择与过去的自己背离时，温和地提醒。不是你在教育用户，而是过去的用户在提醒现在的用户，帮助做到知行合一。
 
@@ -72,41 +72,36 @@ type promptBuilder interface {
 
 // Orchestrator — ReAct 循环编排器
 type Orchestrator struct {
-	flashClient        llm.LLMClient
-	proClient          llm.LLMClient
-	registry           *tool.Registry
-	retriever          *Retriever
-	promptBuilder      promptBuilder
-	msgRepo            msgCreator
-	convRepo           convToucher
-	embedder           *llm.Embedder
-	vectorStore        *VectorStore
-	embeddingRepo      *service.EmbeddingRepo
-	themeStateRepo     *service.ThemeStateRepo
-	promptResolver     PromptResolver
-	maxIterations      int
-	defaultTemperature *float64
-	defaultMaxTokens   *int
-	onChatEnd          func(userID, convID string)
+	flashClient         llm.LLMClient
+	proClient           llm.LLMClient
+	registry            *tool.Registry
+	systemPromptBuilder promptBuilder
+	msgRepo             msgCreator
+	convRepo            convToucher
+	embedder            *llm.Embedder
+	vectorStore         *VectorStore
+	embeddingRepo       *service.EmbeddingRepo
+	maxIterations       int
+	defaultTemperature  *float64
+	defaultMaxTokens    *int
+	onChatEnd           func(userID, convID string)
 }
 
 // OrchestratorConfig — Orchestrator 依赖配置
 type OrchestratorConfig struct {
-	FlashClient    llm.LLMClient
-	Registry       *tool.Registry
-	ProClient      llm.LLMClient
-	Retriever      *Retriever
-	MsgRepo        *service.MessageRepo
-	ConvRepo       *service.ConversationRepo
-	Embedder       *llm.Embedder
-	VectorStore    *VectorStore
-	EmbeddingRepo  *service.EmbeddingRepo
-	ThemeStateRepo *service.ThemeStateRepo
-	MaxIterations  int
-	Temperature    *float64
-	MaxTokens      *int
-	PromptResolver PromptResolver
-	OnChatEnd      func(userID, convID string)
+	FlashClient   llm.LLMClient
+	Registry      *tool.Registry
+	ProClient     llm.LLMClient
+	PromptBuilder promptBuilder
+	MsgRepo       *service.MessageRepo
+	ConvRepo      *service.ConversationRepo
+	Embedder      *llm.Embedder
+	VectorStore   *VectorStore
+	EmbeddingRepo *service.EmbeddingRepo
+	MaxIterations int
+	Temperature   *float64
+	MaxTokens     *int
+	OnChatEnd     func(userID, convID string)
 }
 
 // New 创建 Orchestrator
@@ -114,34 +109,21 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 	if cfg.MaxIterations <= 0 {
 		cfg.MaxIterations = defaultMaxIterations
 	}
-	pb := NewSystemPromptBuilder(
-		DefaultPromptConfig(),
-		baseSystemPrompt,
-		cfg.Registry,
-		cfg.Retriever,
-		cfg.ThemeStateRepo,
-		cfg.ConvRepo,
-		cfg.PromptResolver,
-		cfg.VectorStore,
-	)
 
 	return &Orchestrator{
-		flashClient:        cfg.FlashClient,
-		proClient:          cfg.ProClient,
-		registry:           cfg.Registry,
-		retriever:          cfg.Retriever,
-		promptBuilder:      pb,
-		msgRepo:            cfg.MsgRepo,
-		convRepo:           cfg.ConvRepo,
-		embedder:           cfg.Embedder,
-		vectorStore:        cfg.VectorStore,
-		embeddingRepo:      cfg.EmbeddingRepo,
-		themeStateRepo:     cfg.ThemeStateRepo,
-		promptResolver:     cfg.PromptResolver,
-		maxIterations:      cfg.MaxIterations,
-		defaultTemperature: cfg.Temperature,
-		defaultMaxTokens:   cfg.MaxTokens,
-		onChatEnd:          cfg.OnChatEnd,
+		flashClient:         cfg.FlashClient,
+		proClient:           cfg.ProClient,
+		registry:            cfg.Registry,
+		systemPromptBuilder: cfg.PromptBuilder,
+		msgRepo:             cfg.MsgRepo,
+		convRepo:            cfg.ConvRepo,
+		embedder:            cfg.Embedder,
+		vectorStore:         cfg.VectorStore,
+		embeddingRepo:       cfg.EmbeddingRepo,
+		maxIterations:       cfg.MaxIterations,
+		defaultTemperature:  cfg.Temperature,
+		defaultMaxTokens:    cfg.MaxTokens,
+		onChatEnd:           cfg.OnChatEnd,
 	}
 }
 
@@ -162,17 +144,14 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 		queryVec = o.tryEmbedContent(ctx, req.UserMessageContent)
 	}
 
-	result, err := o.promptBuilder.Build(ctx, mkPromptBuildOpt(req, queryVec))
+	systemPrompt, err := o.systemPromptBuilder.Build(ctx, mkPromptBuildOpt(req, queryVec))
 	if err != nil {
 		log.Printf("[orch] prompt build error: %v", err)
 		return nil, err
 	}
 
-	msgs := make([]llm.Message, len(req.Messages))
-	copy(msgs, req.Messages)
-
 	events := make(chan *llm.StreamEvent, 512)
-	go o.runReActLoop(ctx, events, result, queryVec, msgs, req)
+	go o.runReActLoop(ctx, events, systemPrompt, queryVec, req)
 	return events, nil
 }
 
@@ -213,7 +192,6 @@ func (o *Orchestrator) runReActLoop(
 	events chan<- *llm.StreamEvent,
 	result *BuildResult,
 	queryVec []float64,
-	msgs []llm.Message,
 	req *RunRequest,
 ) {
 	defer close(events)
@@ -224,6 +202,8 @@ func (o *Orchestrator) runReActLoop(
 	}()
 	client := o.pickClient(req)
 	userMsgID := uuid.New().String()
+
+	msgs := req.Messages
 	msgs = append(msgs, llm.Message{Role: "user", Content: req.UserMessageContent})
 	if req.ConversationID == "" {
 		log.Printf("[orch] ConversationID is empty")
@@ -587,6 +567,7 @@ func BuildMessagesForFlash(history []model.Message) []llm.Message {
 		ts := ""
 		if m.Role == "tool" {
 			// FlashClient 不支持 role="tool"，包装成 user 消息
+
 			msgs = append(msgs, llm.Message{
 				Role:    "user",
 				Content: "[工具执行结果] " + m.Content + ts,
@@ -602,6 +583,7 @@ func BuildMessagesForFlash(history []model.Message) []llm.Message {
 					msg.ToolCalls = tcs
 				}
 			}
+
 			msgs = append(msgs, msg)
 		}
 	}
@@ -624,6 +606,7 @@ func BuildMessagesForPro(history []model.Message) []llm.Message {
 				msg.ToolCalls = tcs
 			}
 		}
+
 		msgs = append(msgs, msg)
 	}
 	return msgs

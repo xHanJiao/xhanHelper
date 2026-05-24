@@ -164,7 +164,7 @@ func TestRunReActLoop_StrictJSON_TextOnlyReply(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -204,7 +204,7 @@ func TestRunReActLoop_StrictJSON_ReplyWithEmptyToolCalls(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -242,7 +242,7 @@ func TestRunReActLoop_PureText_AcceptedGracefully(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -288,7 +288,7 @@ func TestRunReActLoop_StrictJSON_InvalidJSONTriggersRetry(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -335,7 +335,7 @@ func TestRunReActLoop_LLMError(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -371,7 +371,7 @@ func TestRunReActLoop_EmptyConversationID(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -406,7 +406,7 @@ func TestRunReActLoop_JSONWithPrefixText_AcceptedGracefully(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -453,7 +453,7 @@ func TestRunReActLoop_StreamingBuffersUntilDone(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -488,8 +488,8 @@ func (m *mockPromptBuilder) Build(ctx context.Context, opts BuildOptions) (*Buil
 
 func TestRun_PromptBuildError(t *testing.T) {
 	o := &Orchestrator{
-		flashClient:   &mockLLMClient{},
-		promptBuilder: &mockPromptBuilder{buildErr: fmt.Errorf("theme state query failed")},
+		flashClient:         &mockLLMClient{},
+		systemPromptBuilder: &mockPromptBuilder{buildErr: fmt.Errorf("theme state query failed")},
 	}
 
 	ctx := context.Background()

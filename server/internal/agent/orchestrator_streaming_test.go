@@ -163,7 +163,8 @@ func TestRunReActLoop_StrictJSON_TextOnlyReply(t *testing.T) {
 		UserMessageContent: "你好",
 	}
 
-	go o.runReActLoop(ctx, events, client, result, nil, nil, req)
+	o.flashClient = client
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -202,7 +203,8 @@ func TestRunReActLoop_StrictJSON_ReplyWithEmptyToolCalls(t *testing.T) {
 		UserMessageContent: "天气如何",
 	}
 
-	go o.runReActLoop(ctx, events, client, result, nil, nil, req)
+	o.flashClient = client
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -239,7 +241,8 @@ func TestRunReActLoop_PureText_AcceptedGracefully(t *testing.T) {
 		UserMessageContent: "天气如何",
 	}
 
-	go o.runReActLoop(ctx, events, client, result, nil, nil, req)
+	o.flashClient = client
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -284,7 +287,8 @@ func TestRunReActLoop_StrictJSON_InvalidJSONTriggersRetry(t *testing.T) {
 		UserMessageContent: "hi",
 	}
 
-	go o.runReActLoop(ctx, events, client, result, nil, nil, req)
+	o.flashClient = client
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -330,7 +334,8 @@ func TestRunReActLoop_LLMError(t *testing.T) {
 		UserMessageContent: "hi",
 	}
 
-	go o.runReActLoop(ctx, events, client, result, nil, nil, req)
+	o.flashClient = client
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -365,7 +370,8 @@ func TestRunReActLoop_EmptyConversationID(t *testing.T) {
 		UserMessageContent: "hi",
 	}
 
-	go o.runReActLoop(ctx, events, client, result, nil, nil, req)
+	o.flashClient = client
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -399,7 +405,8 @@ func TestRunReActLoop_JSONWithPrefixText_AcceptedGracefully(t *testing.T) {
 		UserMessageContent: "查看一下",
 	}
 
-	go o.runReActLoop(ctx, events, client, result, nil, nil, req)
+	o.flashClient = client
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -445,7 +452,8 @@ func TestRunReActLoop_StreamingBuffersUntilDone(t *testing.T) {
 		UserMessageContent: "hello",
 	}
 
-	go o.runReActLoop(ctx, events, client, result, nil, nil, req)
+	o.flashClient = client
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -465,5 +473,37 @@ func TestRunReActLoop_StreamingBuffersUntilDone(t *testing.T) {
 	}
 	if len(deltas) == 1 && deltas[0] != "你好，世界！" {
 		t.Errorf("expected clean text '你好，世界！', got '%s'", deltas[0])
+	}
+}
+
+// —— promptBuilder error ——
+
+type mockPromptBuilder struct {
+	buildErr error
+}
+
+func (m *mockPromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
+	return nil, m.buildErr
+}
+
+func TestRun_PromptBuildError(t *testing.T) {
+	o := &Orchestrator{
+		flashClient:   &mockLLMClient{},
+		promptBuilder: &mockPromptBuilder{buildErr: fmt.Errorf("theme state query failed")},
+	}
+
+	ctx := context.Background()
+	req := &RunRequest{
+		ConversationID:     "conv-1",
+		UserID:             "user-1",
+		UserMessageContent: "hi",
+	}
+
+	_, err := o.Run(ctx, req)
+	if err == nil {
+		t.Fatal("expected error from Run when prompt build fails")
+	}
+	if err.Error() != "theme state query failed" {
+		t.Errorf("expected 'theme state query failed', got '%s'", err.Error())
 	}
 }

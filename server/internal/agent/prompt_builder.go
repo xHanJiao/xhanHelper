@@ -49,7 +49,6 @@ type SearchOptions struct {
 	UserID         string
 	ConversationID string
 	Embedding      []float64 // 用户消息的 embedding（由 orchestrator 预计算）
-	DeepMode       bool
 }
 
 // SearchProvider — Layer 3 使用，需要检索 + 打分。
@@ -153,7 +152,6 @@ type BuildOptions struct {
 	UserMessage    string    // 用户原始输入（检索查询文本）
 	Embedding      []float64 // 用户消息 embedding（nil 则跳过检索）
 	AgentPrompt    string    // 自定义 agent 的 prompt（空则用默认 basePrompt）
-	DeepMode       bool
 }
 
 // BuildResult — Build() 的返回值。
@@ -265,7 +263,6 @@ func (b *SystemPromptBuilder) Build(ctx context.Context, opts BuildOptions) (*Bu
 		UserID:         opts.UserID,
 		ConversationID: opts.ConversationID,
 		Embedding:      opts.Embedding,
-		DeepMode:       opts.DeepMode,
 	}
 
 	// 收集所有 provider 的结果
@@ -636,7 +633,7 @@ func (p *retrievalProvider) Search(ctx context.Context, query string, opts Searc
 	packets, memIDs, noteIDs := p.retriever.Retrieve(
 		ctx, opts.Embedding, query,
 		opts.UserID, opts.ConversationID,
-		opts.DeepMode, threshold, limit,
+		threshold, limit,
 	)
 
 	traceItems := make([]TraceItem, 0, len(packets))

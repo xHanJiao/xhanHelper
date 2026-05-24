@@ -65,13 +65,18 @@ type convToucher interface {
 	Touch(ctx context.Context, id string) error
 }
 
+// promptBuilder — Orchestrator 需要的 prompt 构建能力（*SystemPromptBuilder 自动满足）
+type promptBuilder interface {
+	Build(ctx context.Context, opts BuildOptions) (*BuildResult, error)
+}
+
 // Orchestrator — ReAct 循环编排器
 type Orchestrator struct {
 	flashClient        llm.LLMClient
 	proClient          llm.LLMClient
 	registry           *tool.Registry
 	retriever          *Retriever
-	promptBuilder      *SystemPromptBuilder
+	promptBuilder      promptBuilder
 	msgRepo            msgCreator
 	convRepo           convToucher
 	embedder           *llm.Embedder
@@ -149,41 +154,49 @@ func (o *Orchestrator) FlashClient() llm.LLMClient {
 
 func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.StreamEvent, error) {
 
-	client := o.pickClient(req)
-
-	log.Printf("[orch] run start: model=%s, msgs=%d", client.ModelName(), len(req.Messages))
+	log.Printf("[orch] run start: model=%s, msgs=%d", o.pickClient(req).ModelName(), len(req.Messages))
 
 	// 预计算 embedding（Builder 检索 + 存用户消息都需要）
 	var queryVec []float64
 	if o.embedder != nil && !req.SkipMemory {
-		embStart := time.Now()
-		vec, err := o.embedder.Embed(ctx, req.UserMessageContent)
-		monitor.RecordEmbedding(time.Since(embStart).Milliseconds())
-		if err != nil {
-			log.Printf("[vector] embed user msg error: %v", err)
-		} else {
-			queryVec = vec
-		}
+		queryVec = o.tryEmbedContent(ctx, req.UserMessageContent)
 	}
 
-	result, err := o.promptBuilder.Build(ctx, BuildOptions{
-		UserID:         req.UserID,
-		ConversationID: req.ConversationID,
-		UserMessage:    req.UserMessageContent,
-		Embedding:      queryVec,
-		AgentPrompt:    req.AgentSystemPrompt,
-		DeepMode:       req.DeepMode,
-	})
+	result, err := o.promptBuilder.Build(ctx, mkPromptBuildOpt(req, queryVec))
 	if err != nil {
 		log.Printf("[orch] prompt build error: %v", err)
+		return nil, err
 	}
 
 	msgs := make([]llm.Message, len(req.Messages))
 	copy(msgs, req.Messages)
 
 	events := make(chan *llm.StreamEvent, 512)
-	go o.runReActLoop(ctx, events, client, result, queryVec, msgs, req)
+	go o.runReActLoop(ctx, events, result, queryVec, msgs, req)
 	return events, nil
+}
+
+func mkPromptBuildOpt(req *RunRequest, queryVec []float64) BuildOptions {
+	promptBuildOptions := BuildOptions{
+		UserID:         req.UserID,
+		ConversationID: req.ConversationID,
+		UserMessage:    req.UserMessageContent,
+		Embedding:      queryVec,
+		AgentPrompt:    req.AgentSystemPrompt,
+	}
+	return promptBuildOptions
+}
+
+func (o *Orchestrator) tryEmbedContent(ctx context.Context, userMsgContent string) []float64 {
+	embStart := time.Now()
+	vec, err := o.embedder.Embed(ctx, userMsgContent)
+	monitor.RecordEmbedding(time.Since(embStart).Milliseconds())
+	if err != nil {
+		log.Printf("[vector] embed user msg error: %v", err)
+	} else {
+		return vec
+	}
+	return nil
 }
 
 func (o *Orchestrator) pickClient(req *RunRequest) llm.LLMClient {
@@ -198,7 +211,6 @@ func (o *Orchestrator) pickClient(req *RunRequest) llm.LLMClient {
 func (o *Orchestrator) runReActLoop(
 	ctx context.Context,
 	events chan<- *llm.StreamEvent,
-	client llm.LLMClient,
 	result *BuildResult,
 	queryVec []float64,
 	msgs []llm.Message,
@@ -210,7 +222,7 @@ func (o *Orchestrator) runReActLoop(
 			o.onChatEnd(req.UserID, req.ConversationID)
 		}
 	}()
-
+	client := o.pickClient(req)
 	userMsgID := uuid.New().String()
 	msgs = append(msgs, llm.Message{Role: "user", Content: req.UserMessageContent})
 	if req.ConversationID == "" {

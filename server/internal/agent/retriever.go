@@ -17,8 +17,8 @@ func NewRetriever(sources ...ContextSource) *Retriever {
 }
 
 // Retrieve 遍历所有数据源，汇总 ContextPacket，返回记忆 ID 列表
-func (r *Retriever) Retrieve(ctx context.Context, queryVec []float64, query, userID, convID string,
-	deepMode bool, threshold float64, limit int) ([]ContextPacket, []string, []string) {
+func (r *Retriever) Retrieve(ctx context.Context, queryVec []float64,
+	query, userID, convID string, threshold float64, limit int) ([]ContextPacket, []string, []string) {
 
 	if limit <= 0 {
 		limit = 8
@@ -31,9 +31,6 @@ func (r *Retriever) Retrieve(ctx context.Context, queryVec []float64, query, use
 	var memIDs, noteIDs []string
 
 	for _, src := range r.sources {
-		if src.Name() == "note" && !deepMode {
-			continue
-		}
 		packets, err := src.Fetch(ctx, queryVec, query, userID, convID, threshold, limit)
 		if err != nil {
 			log.Printf("[retriever] %s fetch error: %v", src.Name(), err)

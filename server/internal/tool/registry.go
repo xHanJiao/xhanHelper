@@ -272,7 +272,7 @@ func (r *Registry) writePromptFooter(buf *bytes.Buffer) {
 func (r *Registry) GenerateImportantRules() string {
 	var buf bytes.Buffer
 	buf.WriteString("\n## 重要规则\n\n")
-	buf.WriteString("1. 每次回复都必须输出完整 JSON 对象：{\"reply\":\"...\",\"tool_calls\":[...]}。不需要工具时 tool_calls 为空数组 []。JSON 字符串值内的英文双引号必须用反斜杠转义（\\\"）。**严禁在 JSON 前后添加任何文字，回复必须以 { 开头。**\n")
+	buf.WriteString("1. 每次回复都必须输出完整 JSON 对象，即使是一句简单的好的也必须包裹在 JSON 中，例如 {\"reply\":\"好的\",\"tool_calls\":[]}。不需要工具时 tool_calls 为空数组 []。JSON 字符串值内的英文双引号必须用反斜杠转义（\\\"）。**严禁以纯文本回复。严禁在 JSON 前后添加任何文字。回复必须以 { 开头、以 } 结尾。**\n")
 	buf.WriteString("2. 只能调用【工具使用】部分列出的函数。\n")
 	buf.WriteString("3. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
 	buf.WriteString("4. 历史消息中的 [MM-DD HH:MM] 前缀是系统时间戳，不是对话内容，严禁模仿此格式输出时间戳。\n")

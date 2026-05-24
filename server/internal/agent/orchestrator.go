@@ -52,7 +52,7 @@ type reactState struct {
 	lastAssistantMsgID string
 }
 
-// LLMResponse — LLM 返回的结构化 JSON（Flash 文本解析用）
+// LLMResponse — LLM 返回的结构化 JSON（文本解析用）
 type LLMResponse struct {
 	Reply     string          `json:"reply"`
 	ToolCalls []tool.ToolCall `json:"tool_calls"`
@@ -361,13 +361,7 @@ func (o *Orchestrator) finalizeRound(
 
 	msg := newAssistantMessage(streamContent, streamReasoning, se)
 
-	var done bool
-	result := o.handleFlashResponse(
-		ctx, events, state.msgs, msg,
-		convID, userID, state.allToolCalls,
-		memIDs, trace)
-	done, state.lastAssistantMsgID, state.msgs, state.allToolCalls =
-		result.done, result.lastMsgID, result.msgs, result.allToolCalls
+	done := o.handleOneRoundResponse(ctx, events, msg, convID, userID, memIDs, trace, state)
 	if done {
 		o.emitDone(events, convID, state.lastAssistantMsgID, "", memIDs, noteIDs)
 	}
@@ -385,45 +379,37 @@ func newAssistantMessage(streamContent string, streamReasoning string, se *llm.S
 	}
 }
 
-// —— Flash 文本响应处理 ——
+// —— 单轮响应处理 ——
 
-// flashResult 封装 handleFlashResponse 的返回值。
-type flashResult struct {
-	done         bool
-	lastMsgID    string
-	msgs         []llm.Message
-	allToolCalls []tool.ToolCall
-}
-
-// handleFlashResponse 解析 Flash 文本中的 JSON，返回结构化的 flashResult。
-func (o *Orchestrator) handleFlashResponse(
+// handleOneRoundResponse 解析 LLM 响应文本中的 JSON，更新 state 中的消息和工具调用状态。
+// 返回 true 表示本轮对话结束。
+func (o *Orchestrator) handleOneRoundResponse(
 	ctx context.Context,
 	events chan<- *llm.StreamEvent,
-	msgs []llm.Message,
 	msg llm.Message,
 	convID, userID string,
-	allToolCalls []tool.ToolCall,
 	memIDs []string,
 	trace *PromptTrace,
-) flashResult {
+	state *reactState,
+) bool {
 	parsed, parseErr := parseLLMResponse(msg.Content)
 
 	if parseErr != nil {
 		log.Printf("[orch] round parse error: %v, saving raw and retrying", parseErr)
-		lastMsgID := o.saveAssistantMsg(ctx, convID, userID, msg, nil)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, nil)
 		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "响应格式异常，正在重试…"})
-		msgs = append(msgs, llm.Message{
+		state.msgs = append(state.msgs, llm.Message{
 			Role:    "user",
 			Content: "[系统] 你上一轮的回复不是有效的 JSON 格式。请严格按照 {\"reply\":\"文字回复\",\"tool_calls\":[{\"tool\":\"工具名\",\"function\":\"函数名\",\"args\":{...}}]} 格式重新生成。",
 		})
-		return flashResult{false, lastMsgID, msgs, allToolCalls}
+		return false
 	}
 
 	if parsed == nil {
 		// 纯文本（无 JSON），system prompt 已要求 JSON 但容错接受
 		log.Printf("[orch] round pure text (no JSON), accepting gracefully")
-		lastMsgID := o.saveAssistantMsg(ctx, convID, userID, msg, trace)
-		return flashResult{true, lastMsgID, msgs, allToolCalls}
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, trace)
+		return true
 	}
 
 	log.Printf("[orch] round embedded tool_calls=%d: %s",
@@ -432,26 +418,26 @@ func (o *Orchestrator) handleFlashResponse(
 	// 无工具调用 → 纯文本回复，正常结束
 	if len(parsed.ToolCalls) == 0 {
 		log.Printf("[orch] round text-only JSON reply, len=%d", len(msg.Content))
-		lastMsgID := o.saveAssistantMsg(ctx, convID, userID, msg, trace)
-		return flashResult{true, lastMsgID, msgs, allToolCalls}
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, trace)
+		return true
 	}
 
 	// 统一走 prompt engineering，不填 ToolCallsJSON（由 parseLLMResponse 从文本解析）
 	msg.ToolCalls = nil
 
-	lastMsgID := o.saveAssistantMsg(ctx, convID, userID, msg, trace)
+	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, trace)
 
-	msgs = append(msgs, llm.Message{Role: "assistant", Content: msg.Content})
-	allToolCalls = append(allToolCalls, parsed.ToolCalls...)
+	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
+	state.allToolCalls = append(state.allToolCalls, parsed.ToolCalls...)
 
 	// 为 memory_search 工具注入 exclude_ids（本轮已注入的记忆 ID）
 	o.injectExcludeMemIDsForMemSearch(parsed, memIDs)
 
 	toolCallResults := executeConcurrently(ctx, events, userID, o.registry, parsed.ToolCalls)
 
-	msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, convID, userID, msgs)
+	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, convID, userID, state.msgs)
 
-	return flashResult{false, lastMsgID, msgs, allToolCalls}
+	return false
 }
 
 func (*Orchestrator) injectExcludeMemIDsForMemSearch(parsed *LLMResponse, memIDs []string) {
@@ -782,7 +768,7 @@ func extractCleanText(raw string) string {
 	parsed, err := parseLLMResponse(raw)
 	if err != nil {
 		// parse 失败（非法 JSON / 前缀违规）→ 用 extractFlashReply 兜底，
-		// 保证流式时有内容展示（handleFlashResponse 仍会触发重试）
+		// 保证流式时有内容展示（handleOneRoundResponse 仍会触发重试）
 		return extractFlashReply(raw)
 	}
 	if parsed == nil {

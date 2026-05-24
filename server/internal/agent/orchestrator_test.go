@@ -7,37 +7,34 @@ import (
 	"testing"
 
 	"xhan-helper/internal/llm"
-	"xhan-helper/internal/tool"
 )
 
-func TestHandleFlashResponse_ParseErrorTriggersRetry(t *testing.T) {
+func TestHandleOneRoundResponse_ParseErrorTriggersRetry(t *testing.T) {
 	// 非法 JSON → 应触发重试，不标记 done
 	o := &Orchestrator{msgRepo: nil}
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 16)
-	var msgs []llm.Message
 	msg := llm.Message{
 		Role:    "assistant",
 		Content: "这不是合法的 JSON {{{ broken",
 	}
 
-	var allToolCalls []tool.ToolCall
+	state := &reactState{}
+	done := o.handleOneRoundResponse(ctx, events, msg, "test-conv-1", "test-user-1", nil, nil, state)
 
-	result := o.handleFlashResponse(ctx, events, msgs, msg, "test-conv-1", "test-user-1", allToolCalls, nil, nil)
-
-	if result.done {
+	if done {
 		t.Error("expected done=false for parse error (should retry)")
 	}
-	if result.lastMsgID != "" {
-		t.Errorf("expected empty msgID, got '%s'", result.lastMsgID)
+	if state.lastAssistantMsgID != "" {
+		t.Errorf("expected empty msgID, got '%s'", state.lastAssistantMsgID)
 	}
 
 	// 应追加一条系统重试指令
-	if len(result.msgs) != 1 {
-		t.Fatalf("expected 1 retry message appended, got %d", len(result.msgs))
+	if len(state.msgs) != 1 {
+		t.Fatalf("expected 1 retry message appended, got %d", len(state.msgs))
 	}
-	retryMsg := result.msgs[0]
+	retryMsg := state.msgs[0]
 	if retryMsg.Role != "user" {
 		t.Errorf("expected retry role='user', got '%s'", retryMsg.Role)
 	}
@@ -63,76 +60,70 @@ func TestHandleFlashResponse_ParseErrorTriggersRetry(t *testing.T) {
 	}
 }
 
-func TestHandleFlashResponse_InvalidJSON_UnescapedQuotes(t *testing.T) {
+func TestHandleOneRoundResponse_InvalidJSON_UnescapedQuotes(t *testing.T) {
 	// LLM 常见错误：JSON 字符串里放了未转义的双引号，应触发重试
 	o := &Orchestrator{msgRepo: nil}
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 16)
-	var msgs []llm.Message
 	msg := llm.Message{
 		Role:    "assistant",
 		Content: `{"reply":"他说"太断子绝孙"是错的","tool_calls":[]}`,
 	}
 
-	var allToolCalls []tool.ToolCall
+	state := &reactState{}
+	done := o.handleOneRoundResponse(ctx, events, msg, "test-conv-1", "test-user-1", nil, nil, state)
 
-	result := o.handleFlashResponse(ctx, events, msgs, msg, "test-conv-1", "test-user-1", allToolCalls, nil, nil)
-
-	if result.done {
+	if done {
 		t.Error("expected done=false for unescaped quotes (should retry)")
 	}
-	if len(result.msgs) != 1 {
-		t.Fatalf("expected 1 retry message, got %d", len(result.msgs))
+	if len(state.msgs) != 1 {
+		t.Fatalf("expected 1 retry message, got %d", len(state.msgs))
 	}
-	if !strings.Contains(result.msgs[0].Content, "[系统]") {
+	if !strings.Contains(state.msgs[0].Content, "[系统]") {
 		t.Error("expected retry instruction with [系统]")
 	}
 }
 
-func TestHandleFlashResponse_ValidJSONTextOnly(t *testing.T) {
+func TestHandleOneRoundResponse_ValidJSONTextOnly(t *testing.T) {
 	// 严格 JSON 模式：纯文本回复带空 tool_calls → 应标记 done
 	o := &Orchestrator{msgRepo: nil}
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 16)
-	var msgs []llm.Message
 	msg := llm.Message{
 		Role:    "assistant",
 		Content: `{"reply":"今天天气不错，适合出去走走"}`,
 	}
 
-	var allToolCalls []tool.ToolCall
+	state := &reactState{}
+	done := o.handleOneRoundResponse(ctx, events, msg, "test-conv-1", "test-user-1", nil, nil, state)
 
-	result := o.handleFlashResponse(ctx, events, msgs, msg, "test-conv-1", "test-user-1", allToolCalls, nil, nil)
-
-	if !result.done {
+	if !done {
 		t.Error("expected done=true for text-only JSON reply (no tool calls)")
 	}
 }
 
-func TestHandleFlashResponse_PureTextFallback(t *testing.T) {
+func TestHandleOneRoundResponse_PureTextFallback(t *testing.T) {
 	// 严格 JSON 模式：纯文本（无 JSON）→ parseLLMResponse 返回 nil → 触发重试
 	o := &Orchestrator{msgRepo: nil}
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 16)
-	var msgs []llm.Message
 	msg := llm.Message{
 		Role:    "assistant",
 		Content: "今天天气不错",
 	}
 
-	var allToolCalls []tool.ToolCall
-
-	result := o.handleFlashResponse(ctx, events, msgs, msg, "test-conv-1", "test-user-1", allToolCalls, nil, nil)
+	state := &reactState{}
+	done := o.handleOneRoundResponse(ctx, events, msg, "test-conv-1", "test-user-1", nil, nil, state)
 
 	// 纯文本容错接受，正常结束
-	if !result.done {
+	if !done {
 		t.Error("expected done=true for pure text (graceful accept)")
 	}
-	if len(result.msgs) != 0 {
-		t.Errorf("expected 0 retry messages, got %d", len(result.msgs))
+	if len(state.msgs) != 0 {
+		t.Errorf("expected 0 retry messages, got %d", len(state.msgs))
 	}
 }
 
@@ -303,8 +294,8 @@ func TestFinalizeRound_ReturnsTrueOnTextOnly(t *testing.T) {
 		"cv", "u1", nil, nil, nil, state,
 	)
 
-	// 无 tool_calls → handleFlashResponse 返回 done=true
-	// 但因为 msgRepo=nil，msgID 为空，所以行为取决于 handleFlashResponse 内部逻辑
+	// 无 tool_calls → handleOneRoundResponse 返回 done=true
+	// 但因为 msgRepo=nil，msgID 为空，所以行为取决于 handleOneRoundResponse 内部逻辑
 	// saveAssistantMsg 对于纯文本会返回 ""，导致 *lastMsgID=""，emitDone 仍触发
 	if !done {
 		t.Error("expected done=true for text-only JSON reply")

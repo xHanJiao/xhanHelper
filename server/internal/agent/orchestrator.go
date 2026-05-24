@@ -279,15 +279,21 @@ func (o *Orchestrator) runReActLoop(
 
 		var streamContent, streamReasoning strings.Builder
 		hasReasoning := false
-		var lastVisibleLen int
+		isJSON := false // 是否检测到 JSON 格式（需要工具调用时 LLM 返回 JSON）
 		for se := range streamEvents {
 			switch se.Type {
 			case "text_delta":
 				streamContent.WriteString(se.Content)
-				visible := extractAllVisibleText(streamContent.String())
-				if len(visible) > lastVisibleLen {
-					o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: visible[lastVisibleLen:]})
-					lastVisibleLen = len(visible)
+				if !isJSON {
+					trimmed := strings.TrimLeft(streamContent.String(), " \t\n\r")
+					cleaned := strings.TrimPrefix(trimmed, "```json")
+					cleaned = strings.TrimPrefix(cleaned, "```")
+					cleaned = strings.TrimSpace(cleaned)
+					if strings.HasPrefix(cleaned, "{") {
+						isJSON = true
+					} else if len(cleaned) > 0 {
+						o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: se.Content})
+					}
 				}
 			case "thought_delta":
 				streamReasoning.WriteString(se.Content)
@@ -310,6 +316,15 @@ func (o *Orchestrator) runReActLoop(
 				if hasReasoning {
 					o.sendEvent(events, &llm.StreamEvent{Type: "thought_done", Content: ""})
 				}
+
+				// JSON 模式：用标准解析提取 reply，流式推给前端
+				if isJSON {
+					parsed, _ := parseLLMResponse(streamContent.String())
+					if parsed != nil && parsed.Reply != "" {
+						o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: parsed.Reply})
+					}
+				}
+
 				msg := llm.Message{
 					Role:             "assistant",
 					Content:          streamContent.String(),

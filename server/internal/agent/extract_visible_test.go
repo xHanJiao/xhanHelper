@@ -5,294 +5,211 @@ import (
 	"testing"
 )
 
-// ---- extractAllVisibleText tests ----
+// ---- parseLLMResponse: 标准 JSON 解析替代字符串提取 ----
 
-func TestExtractAllVisibleText_PureText(t *testing.T) {
-	// LLM 保证返回 JSON，纯文本不会出现，返回空
-	result := extractAllVisibleText("今天天气不错")
-	if result != "" {
-		t.Errorf("expected '', got '%s'", result)
+func TestParseLLMResponse_ValidJSONNoSpace(t *testing.T) {
+	parsed, err := parseLLMResponse(`{"reply":"hello","tool_calls":[]}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed == nil {
+		t.Fatal("expected non-nil response")
+	}
+	if parsed.Reply != "hello" {
+		t.Errorf("expected reply='hello', got '%s'", parsed.Reply)
 	}
 }
 
-func TestExtractAllVisibleText_JSONWithReply(t *testing.T) {
-	result := extractAllVisibleText(`{"reply":"好的，已记账","tool_calls":[]}`)
-	if result != "好的，已记账" {
-		t.Errorf("expected '好的，已记账', got '%s'", result)
+func TestParseLLMResponse_ValidJSONWithSpace(t *testing.T) {
+	// LLM 输出带空格的 JSON（标准 JSON 允许冒号后空格）
+	parsed, err := parseLLMResponse(`{"reply": "hello", "tool_calls": []}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed == nil {
+		t.Fatal("expected non-nil response")
+	}
+	if parsed.Reply != "hello" {
+		t.Errorf("expected reply='hello', got '%s'", parsed.Reply)
 	}
 }
 
-func TestExtractAllVisibleText_JSONReplyWithEscape(t *testing.T) {
-	result := extractAllVisibleText(`{"reply":"你好！\"今天\"天气不错","tool_calls":[{"tool":"test","function":"run","args":{}}]}`)
-	if result != `你好！"今天"天气不错` {
-		t.Errorf("expected '你好！\"今天\"天气不错', got '%s'", result)
+func TestParseLLMResponse_PureText(t *testing.T) {
+	// 纯文本 → 返回 nil（无错误，表示不需要工具调用）
+	parsed, err := parseLLMResponse("今天天气不错")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed != nil {
+		t.Errorf("expected nil response for pure text, got reply='%s'", parsed.Reply)
 	}
 }
 
-func TestExtractAllVisibleText_JSONReplyNotYetComplete(t *testing.T) {
-	result := extractAllVisibleText(`{"reply":"好的，已`)
-	if result != "好的，已" {
-		t.Errorf("expected '好的，已', got '%s'", result)
+func TestParseLLMResponse_WithToolCalls(t *testing.T) {
+	input := `{"reply":"已记账","tool_calls":[{"tool":"bookkeeping","function":"create","args":{"amount":100}}]}`
+	parsed, err := parseLLMResponse(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed == nil {
+		t.Fatal("expected non-nil response")
+	}
+	if parsed.Reply != "已记账" {
+		t.Errorf("expected reply='已记账', got '%s'", parsed.Reply)
+	}
+	if len(parsed.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(parsed.ToolCalls))
+	}
+	if parsed.ToolCalls[0].Tool != "bookkeeping" {
+		t.Errorf("expected tool='bookkeeping', got '%s'", parsed.ToolCalls[0].Tool)
 	}
 }
 
-func TestExtractAllVisibleText_JSONBeforeReply(t *testing.T) {
-	result := extractAllVisibleText(`{"tool_calls":[`)
-	if result != "" {
-		t.Errorf("expected '', got '%s'", result)
+func TestParseLLMResponse_ReplyWithEscapedQuotes(t *testing.T) {
+	input := `{"reply":"He said \"hello\" to me"}`
+	parsed, err := parseLLMResponse(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed == nil {
+		t.Fatal("expected non-nil response")
+	}
+	if !strings.Contains(parsed.Reply, `"hello"`) {
+		t.Errorf("expected reply to contain escaped quotes, got '%s'", parsed.Reply)
 	}
 }
 
-func TestExtractAllVisibleText_ProgressiveStreaming(t *testing.T) {
-	chunks := []string{
-		`{"repl`,
-		`y":"`,
-		`你好，`,
-		`今天天气`,
-		`不错"}`,
+func TestParseLLMResponse_ReplyWithChinese(t *testing.T) {
+	input := `{"reply":"好的，已帮你记录这笔支出","tool_calls":[]}`
+	parsed, err := parseLLMResponse(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-
-	var fullText string
-	lastLen := 0
-	var allVisible []string
-
-	for _, chunk := range chunks {
-		fullText += chunk
-		visible := extractAllVisibleText(fullText)
-		if len(visible) > lastLen {
-			allVisible = append(allVisible, visible[lastLen:])
-			lastLen = len(visible)
-		}
+	if parsed == nil {
+		t.Fatal("expected non-nil response")
 	}
-
-	joined := ""
-	for _, v := range allVisible {
-		joined += v
-	}
-	if joined != "你好，今天天气不错" {
-		t.Errorf("expected '你好，今天天气不错', got '%s' (deltas: %v)", joined, allVisible)
+	if parsed.Reply != "好的，已帮你记录这笔支出" {
+		t.Errorf("unexpected reply: '%s'", parsed.Reply)
 	}
 }
 
-func TestExtractAllVisibleText_EmptyInput(t *testing.T) {
-	result := extractAllVisibleText("")
-	if result != "" {
-		t.Errorf("expected '', got '%s'", result)
+func TestParseLLMResponse_ReplyWithNewlines(t *testing.T) {
+	input := "{\"reply\":\"第一行\\n第二行\\n第三行\"}"
+	parsed, err := parseLLMResponse(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed == nil {
+		t.Fatal("expected non-nil response")
+	}
+	if !strings.Contains(parsed.Reply, "第二行") {
+		t.Errorf("expected reply to contain newline-separated text, got '%s'", parsed.Reply)
 	}
 }
 
-// ---- 修复验证：reply 内容含未转义 JSON 数组 ----
-
-func TestExtractAllVisibleText_UnescapedArrayInReply(t *testing.T) {
-	// 模拟 LLM 输出 reply 内容含 persons: ["alice"]，未正确转义引号
-	// 修复后 unescapeJSONString 不应对 ["alice" 的 " 截断
-	input := `{"reply":"在笔记里加 persons 字段：\n\npersons: ["alice", "bob"]"}`
-	result := extractAllVisibleText(input)
-	if !strings.Contains(result, "alice") {
-		t.Errorf("reply should contain 'alice' but was truncated, got: '%s'", result)
+func TestParseLLMResponse_EmptyInput(t *testing.T) {
+	parsed, err := parseLLMResponse("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "bob") {
-		t.Errorf("reply should contain 'bob' but was truncated, got: '%s'", result)
-	}
-	if !strings.Contains(result, "persons: [") {
-		t.Errorf("reply should contain 'persons: [' but was truncated, got: '%s'", result)
+	if parsed != nil {
+		t.Errorf("expected nil for empty input, got reply='%s'", parsed.Reply)
 	}
 }
 
-func TestExtractAllVisibleText_UnescapedNestedObjectInReply(t *testing.T) {
-	// reply 内容含未转义的 JSON 对象
-	input := `{"reply":"配置如下：\n\n{"key": "value", "enabled": true}"}`
-	result := extractAllVisibleText(input)
-	if !strings.Contains(result, `"key"`) {
-		t.Errorf("reply should contain nested object, got: '%s'", result)
+func TestParseLLMResponse_WhitespaceOnly(t *testing.T) {
+	parsed, err := parseLLMResponse("   \n\t  ")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "enabled") {
-		t.Errorf("reply should contain 'enabled', got: '%s'", result)
+	if parsed != nil {
+		t.Errorf("expected nil for whitespace-only, got reply='%s'", parsed.Reply)
 	}
 }
 
-func TestExtractAllVisibleText_UnescapedSingleQuoteInReply(t *testing.T) {
-	// reply 内容含单个未转义引号（如英文缩写）
-	input := `{"reply":"He said \"hello\" to me, and I replied \"hi\""}`
-	result := extractAllVisibleText(input)
-	if !strings.Contains(result, `hello`) {
-		t.Errorf("reply should contain 'hello', got: '%s'", result)
+func TestParseLLMResponse_MarkdownFenceWrapped(t *testing.T) {
+	// LLM 可能用 markdown fence 包裹 JSON
+	input := "```json\n{\"reply\":\"hello\"}\n```"
+	parsed, err := parseLLMResponse(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, `hi`) {
-		t.Errorf("reply should contain 'hi', got: '%s'", result)
+	if parsed == nil {
+		t.Fatal("expected non-nil response")
 	}
-}
-
-func TestExtractAllVisibleText_StreamingWithUnescapedArray(t *testing.T) {
-	// 渐进式流式到达，reply 内容含未转义数组
-	chunks := []string{
-		`{"reply":"好，第一步：定义人物库\n\n`,
-		`在笔记里加一个 persons 字段：\n\n`,
-		`persons: ["alice", "bob", "charlie"]`,
-		`"}`,
-	}
-
-	var fullText string
-	lastLen := 0
-	var allVisible []string
-
-	for _, chunk := range chunks {
-		fullText += chunk
-		visible := extractAllVisibleText(fullText)
-		if len(visible) > lastLen {
-			allVisible = append(allVisible, visible[lastLen:])
-			lastLen = len(visible)
-		}
-	}
-
-	joined := ""
-	for _, v := range allVisible {
-		joined += v
-	}
-	if !strings.Contains(joined, "alice") {
-		t.Errorf("streaming reply should contain 'alice', got: '%s'", joined)
-	}
-	if !strings.Contains(joined, "charlie") {
-		t.Errorf("streaming reply should contain 'charlie', got: '%s'", joined)
+	if parsed.Reply != "hello" {
+		t.Errorf("expected reply='hello', got '%s'", parsed.Reply)
 	}
 }
 
-func TestExtractAllVisibleText_ReplyFollowedByComma(t *testing.T) {
-	// reply 不是最后一个字段，闭合引号后跟 ,"tool_calls"
-	input := `{"reply":"简短回复","tool_calls":[{"tool":"test","function":"run","args":{}}]}`
-	result := extractAllVisibleText(input)
-	if result != "简短回复" {
-		t.Errorf("expected '简短回复', got '%s'", result)
+func TestParseLLMResponse_OnlyToolCallsNoReply(t *testing.T) {
+	// 极少数情况：LLM 可能只返回工具调用不返回 reply
+	input := `{"tool_calls":[{"tool":"note","function":"search","args":{"query":"test"}}]}`
+	parsed, err := parseLLMResponse(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed == nil {
+		t.Fatal("expected non-nil response for tool-only JSON")
+	}
+	if len(parsed.ToolCalls) != 1 {
+		t.Errorf("expected 1 tool call, got %d", len(parsed.ToolCalls))
 	}
 }
 
-func TestExtractAllVisibleText_ReplyWithColonBracket(t *testing.T) {
-	// 用户报告的精确场景：reply 内容以 : [ 结尾，后面应跟值
-	input := `{"reply":"加一个字段：\n\npersons: ["alice"]"}`
-	result := extractAllVisibleText(input)
-	if !strings.Contains(result, "alice") {
-		t.Errorf("reply should contain 'alice', got: '%s'", result)
+// ---- isJSONContent: orchestrator 流式内容类型检测 ----
+
+func TestIsJSONContent_StartsWithBrace(t *testing.T) {
+	if !isJSONContent(`{"reply":"hello"}`) {
+		t.Error("expected true for JSON object")
 	}
 }
 
-// ---- unescapeJSONString 详细测试 ----
-
-func TestUnescapeJSONString_Simple(t *testing.T) {
-	s, complete := unescapeJSONString(`hello"`)
-	if !complete {
-		t.Error("expected complete=true")
-	}
-	if s != "hello" {
-		t.Errorf("expected 'hello', got '%s'", s)
+func TestIsJSONContent_StartsWithBraceAfterWhitespace(t *testing.T) {
+	if !isJSONContent("  \n\t{\"reply\":\"hello\"}") {
+		t.Error("expected true for JSON with leading whitespace")
 	}
 }
 
-func TestUnescapeJSONString_WithEscapes(t *testing.T) {
-	s, complete := unescapeJSONString(`hello\nworld\t!\"end\\final"`)
-	if !complete {
-		t.Error("expected complete=true")
-	}
-	if s != "hello\nworld\t!\"end\\final" {
-		t.Errorf("unexpected result: '%s'", s)
+func TestIsJSONContent_StartsWithMarkdownFence(t *testing.T) {
+	if !isJSONContent("```json\n{\"reply\":\"hello\"}") {
+		t.Error("expected true for markdown-fenced JSON")
 	}
 }
 
-func TestUnescapeJSONString_Incomplete(t *testing.T) {
-	s, complete := unescapeJSONString(`hello world`)
-	if complete {
-		t.Error("expected complete=false (no closing quote)")
-	}
-	if s != "hello world" {
-		t.Errorf("expected 'hello world', got '%s'", s)
+func TestIsJSONContent_PureText(t *testing.T) {
+	if isJSONContent("今天天气不错") {
+		t.Error("expected false for pure text")
 	}
 }
 
-func TestUnescapeJSONString_CloseWithBrace(t *testing.T) {
-	// 闭合引号后紧跟 }（reply 为最后一个字段）
-	s, complete := unescapeJSONString(`hello"}`)
-	if !complete {
-		t.Error("expected complete=true")
-	}
-	if s != "hello" {
-		t.Errorf("expected 'hello', got '%s'", s)
+func TestIsJSONContent_EmptyString(t *testing.T) {
+	if isJSONContent("") {
+		t.Error("expected false for empty string")
 	}
 }
 
-func TestUnescapeJSONString_CloseWithComma(t *testing.T) {
-	// 闭合引号后紧跟 ,（reply 后有其他字段）
-	s, complete := unescapeJSONString(`hello","tool_calls`)
-	if !complete {
-		t.Error("expected complete=true")
-	}
-	if s != "hello" {
-		t.Errorf("expected 'hello', got '%s'", s)
+func TestIsJSONContent_WhitespaceOnly(t *testing.T) {
+	if isJSONContent("   \t\n  ") {
+		t.Error("expected false for whitespace-only")
 	}
 }
 
-func TestUnescapeJSONString_CloseWithWhitespaceBeforeComma(t *testing.T) {
-	// 闭合引号后有空白再跟 ,
-	s, complete := unescapeJSONString(`hello"   ,"tool_calls`)
-	if !complete {
-		t.Error("expected complete=true")
-	}
-	if s != "hello" {
-		t.Errorf("expected 'hello', got '%s'", s)
+func TestIsJSONContent_StartsWithTextThenBrace(t *testing.T) {
+	// 前导文本 + JSON 块 → 不检测为JSON（文本先出现）
+	if isJSONContent("好的，以下是结果：\n{\"data\": 1}") {
+		t.Error("expected false for text-then-JSON (text appeared first)")
 	}
 }
 
-func TestUnescapeJSONString_TolerateUnescapedQuote(t *testing.T) {
-	// 未转义引号后跟的不是 , 或 }，当作普通字符
-	s, complete := unescapeJSONString(`list: ["a", "b"]"}`)
-	if !complete {
-		t.Error("expected complete=true")
-	}
-	if s != `list: ["a", "b"]` {
-		t.Errorf("expected 'list: [\"a\", \"b\"]', got '%s'", s)
-	}
-}
+// ---- isJSONContent helper: 模拟 orchestrator 中的检测逻辑 ----
 
-func TestUnescapeJSONString_TolerateMultipleUnescapedQuotes(t *testing.T) {
-	// 多个未转义引号，只有最后一个是结构闭合
-	s, complete := unescapeJSONString(`["a", "b", "c"]"}`)
-	if !complete {
-		t.Error("expected complete=true")
-	}
-	if s != `["a", "b", "c"]` {
-		t.Errorf("expected '[\"a\", \"b\", \"c\"]', got '%s'", s)
-	}
-}
-
-func TestUnescapeJSONString_TolerateNestedBraceInContent(t *testing.T) {
-	// 内容含 {}，但闭合引号后的 } 才是结构结束
-	s, complete := unescapeJSONString(`func(){}"}`)
-	if !complete {
-		t.Error("expected complete=true")
-	}
-	if s != `func(){}` {
-		t.Errorf("expected 'func(){}', got '%s'", s)
-	}
-}
-
-func TestUnescapeJSONString_MixedEscapedAndUnescaped(t *testing.T) {
-	// 混用：部分正确转义、部分未转义
-	s, complete := unescapeJSONString(`He said \"hello\", then ["a", "b"]"}`)
-	if !complete {
-		t.Error("expected complete=true")
-	}
-	if !strings.Contains(s, `"a"`) {
-		t.Errorf("expected to contain '\"a\"', got '%s'", s)
-	}
-	if !strings.Contains(s, `hello`) {
-		t.Errorf("expected to contain 'hello', got '%s'", s)
-	}
-}
-
-func TestUnescapeJSONString_EmptyString(t *testing.T) {
-	s, complete := unescapeJSONString(`"`)
-	if !complete {
-		t.Error("expected complete=true")
-	}
-	if s != "" {
-		t.Errorf("expected '', got '%s'", s)
-	}
+// isJSONContent 判断累积内容是否是 JSON 格式（需要工具调用场景）。
+// 这是 orchestrator 中 text_delta 处理逻辑的提取版本。
+func isJSONContent(content string) bool {
+	trimmed := strings.TrimLeft(content, " \t\n\r")
+	cleaned := strings.TrimPrefix(trimmed, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+	return len(cleaned) > 0 && cleaned[0] == '{'
 }

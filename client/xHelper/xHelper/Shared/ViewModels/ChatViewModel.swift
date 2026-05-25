@@ -89,7 +89,7 @@ class ChatViewModel: ObservableObject {
         conversationTitle = title
         do {
             let result = try await apiClient.getMessagesCursor(conversationId: id)
-            messages = result.messages
+            messages = result.messages.flatMap { $0.expandToolCalls() }
             oldestCursor = result.oldestCursor
             newestCursor = result.newestCursor
             hasMoreBefore = result.hasMoreBefore
@@ -113,11 +113,11 @@ class ChatViewModel: ObservableObject {
                 if let firstNew = result.messages.first?.id {
                     anchorMessageID = firstNew
                 }
-                messages = result.messages + messages
+                messages = result.messages.flatMap { $0.expandToolCalls() } + messages
                 oldestCursor = result.oldestCursor
                 hasMoreBefore = result.hasMoreBefore
             } else {
-                messages = messages + result.messages
+                messages = messages + result.messages.flatMap { $0.expandToolCalls() }
                 newestCursor = result.newestCursor
                 hasMoreAfter = result.hasMoreAfter
             }

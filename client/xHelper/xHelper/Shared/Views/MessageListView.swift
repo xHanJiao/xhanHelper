@@ -3,26 +3,30 @@ import SwiftUI
 struct MessageListView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var scrollTarget: String?
+    @State private var initialLoadDone = false
 
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
                 if viewModel.hasMoreBefore {
-                    Button {
-                        Task { await viewModel.loadMore(direction: "before") }
-                    } label: {
-                        HStack {
-                            if viewModel.isLoadingMore {
-                                ProgressView().scaleEffect(0.7)
-                            } else {
-                                Image(systemName: "arrow.up")
-                            }
-                            Text("加载更早的消息")
-                                .font(.caption)
+                    HStack {
+                        if viewModel.isLoadingMore {
+                            ProgressView().scaleEffect(0.7)
+                        } else {
+                            Image(systemName: "arrow.up")
                         }
-                        .foregroundColor(.blue)
+                        Text(viewModel.isLoadingMore ? "正在加载..." : "加载更早的消息")
+                            .font(.caption)
                     }
-                    .disabled(viewModel.isLoadingMore)
+                    .foregroundColor(.blue)
+                    .onTapGesture {
+                        guard !viewModel.isLoadingMore else { return }
+                        Task { await viewModel.loadMore(direction: "before") }
+                    }
+                    .onScrollVisibilityChange(threshold: 0.1) { isVisible in
+                        guard initialLoadDone, isVisible, !viewModel.isLoadingMore else { return }
+                        Task { await viewModel.loadMore(direction: "before") }
+                    }
                 }
 
                 ForEach(viewModel.messages) { msg in
@@ -67,6 +71,18 @@ struct MessageListView: View {
         .defaultScrollAnchor(.bottom)
         .scrollPosition(id: $scrollTarget, anchor: .bottom)
         .dismissKeyboardOnTap()
+        .onAppear {
+            initialLoadDone = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                initialLoadDone = true
+            }
+        }
+        .onChange(of: viewModel.conversationId) { _, _ in
+            initialLoadDone = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                initialLoadDone = true
+            }
+        }
         .onChange(of: viewModel.messages.count) { oldCount, newCount in
             guard newCount > oldCount, let anchor = viewModel.anchorMessageID else { return }
             scrollTarget = anchor

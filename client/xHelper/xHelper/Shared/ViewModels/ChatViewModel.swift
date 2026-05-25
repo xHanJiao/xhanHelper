@@ -390,23 +390,23 @@ class ChatViewModel: ObservableObject {
 
     private func parseTitleFromDone(_ data: String) -> String? {
         guard let jsonData = data.data(using: .utf8),
-              let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
+              let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
         else { return nil }
-        return obj["title"]
+        return obj["title"] as? String
     }
 
     private func parseConversationIdFromDone(_ data: String) -> String? {
         guard let jsonData = data.data(using: .utf8),
-              let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
+              let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
         else { return nil }
-        return obj["conversation_id"]
+        return obj["conversation_id"] as? String
     }
 
     private func parseMessageIdFromDone(_ data: String) -> String? {
         guard let jsonData = data.data(using: .utf8),
-              let obj = try? JSONDecoder().decode([String: String].self, from: jsonData)
+              let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
         else { return nil }
-        return obj["message_id"]
+        return obj["message_id"] as? String
     }
 
     private func parseMemoryIDsFromDone(_ data: String) -> [String]? {

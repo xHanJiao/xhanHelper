@@ -85,7 +85,8 @@ func (s *NormalizeDatesStep) Run(ctx context.Context) (context.Context, error) {
 		"四": time.Thursday, "五": time.Friday, "六": time.Saturday, "日": time.Sunday, "天": time.Sunday,
 	}
 
-	today := s.now.In(config.BJ).Truncate(24 * time.Hour)
+	now := s.now.In(config.BJ)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, config.BJ)
 	dateFmt := "2006-01-02"
 
 	// 具体星期: 上周一、这周三、下周五

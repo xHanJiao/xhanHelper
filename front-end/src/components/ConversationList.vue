@@ -114,6 +114,9 @@ async function handleDelete(conv) {
   const res = await convs.remove(conv.id)
   if (res.success) {
     message.success('删除成功')
+    if (chat.conversationId === conv.id) {
+      chat.reset()
+    }
     if (activeId.value === conv.id) {
       router.push('/chat')
     }

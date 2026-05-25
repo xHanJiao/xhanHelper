@@ -200,7 +200,7 @@ func (r *Registry) GeneratePromptWithOverview() string {
 	}
 	if len(overview) > 0 {
 		buf.WriteString("\n## 其他可用工具\n")
-		buf.WriteString("以下工具需要通过 tool_retriever.search 查询详细定义后才能调用，禁止跳过查询步骤直接调用！\n\n")
+		buf.WriteString("【强制规则】以下只是工具概览，不包含函数签名和参数定义。直接调用会失败！必须先 tool_retriever.search(工具名) 获取完整定义后才能调用。禁止凭猜测填写参数！\n\n")
 		buf.WriteString(strings.Join(overview, "\n"))
 		buf.WriteString("\n")
 	}
@@ -273,7 +273,7 @@ func (r *Registry) GenerateImportantRules() string {
 	var buf bytes.Buffer
 	buf.WriteString("\n## 重要规则\n\n")
 	buf.WriteString("1. 每次回复都必须输出完整 JSON 对象，即使是一句简单的好的也必须包裹在 JSON 中，例如 {\"reply\":\"好的\",\"tool_calls\":[]}。不需要工具时 tool_calls 为空数组 []。JSON 字符串值内的英文双引号必须用反斜杠转义（\\\"）。**严禁以纯文本回复。严禁在 JSON 前后添加任何文字。回复必须以 { 开头、以 } 结尾。**\n")
-	buf.WriteString("2. 只能调用【工具使用】部分列出的函数。\n")
+	buf.WriteString("2. 【强制工具查询规则】除 tool_retriever 外，任何工具在调用前必须先通过 tool_retriever.search 查询其完整定义（函数签名和参数 schema）。禁止凭工具名称和概览描述猜测参数直接调用！例如：要用 bookkeeping 记账，必须先 search(\"bookkeeping\") 拿到 create_bill 的参数。不确定用什么工具时，用 tool_retriever.search 搜索关键词。\n")
 	buf.WriteString("3. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
 	buf.WriteString("4. 历史消息中的 [MM-DD HH:MM] 前缀是系统时间戳，不是对话内容，严禁模仿此格式输出时间戳。\n")
 	buf.WriteString("5. 当本轮需要调用工具时（tool_calls 非空），reply 字段必须为空字符串 \"\"；只有不需要调用工具的最终回复才写 reply。例如：查账单时返回 {\"reply\":\"\",\"tool_calls\":[...]}，工具返回结果后再给出 {\"reply\":\"查到 12 笔...\",\"tool_calls\":[]}。\n")
@@ -507,7 +507,20 @@ func ToolCallNames(tcs []ToolCall) string {
 func (r *Registry) ExecuteByName(ec *ExecuteContext, toolName, funcName string, args json.RawMessage) *Result {
 	t := r.tools[toolName]
 	if t == nil {
-		return &Result{Success: false, Error: fmt.Sprintf("unknown tool: %s", toolName)}
+		// 模糊纠错：用失败的工具名搜索相似工具，引导 LLM 查询正确工具
+		candidates := r.SearchTools(toolName)
+		if len(candidates) > 0 {
+			names := make([]string, len(candidates))
+			for i, c := range candidates {
+				names[i] = fmt.Sprintf("%s（%s）", c.Name, c.Description)
+			}
+			return &Result{Success: false, Error: fmt.Sprintf(
+				"未找到工具 '%s'。你是否想使用以下工具？%s。请先调用 tool_retriever.search 查询其详细定义，不要凭猜测直接调用。",
+				toolName, strings.Join(names, "；"))}
+		}
+		return &Result{Success: false, Error: fmt.Sprintf(
+			"未找到工具 '%s'。请先调用 tool_retriever.search 用关键词搜索可用工具，例如 tool_retriever.search(\"%s\")。禁止在未查询工具定义的情况下凭猜测调用。",
+			toolName, toolName)}
 	}
 	return t.Execute(ec, funcName, args)
 }

@@ -21,7 +21,6 @@ struct ThinkingBubble: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
-                    Spacer()
                 }
             }
             .buttonStyle(.plain)

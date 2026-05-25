@@ -28,6 +28,7 @@ struct MessageListView: View {
                 ForEach(viewModel.messages) { msg in
                     if msg.id == "__streaming__", let thought = viewModel.thoughtMessage {
                         ThinkingBubble(text: thought, isStreaming: !viewModel.thoughtDone)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal)
                     }
                     if msg.role == "tool" {

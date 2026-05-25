@@ -244,6 +244,7 @@ func main() {
 
 	// 注册提醒工具到主 Registry（对话中 LLM 直接调用）
 	reg.Register(tool.NewLoggingWrapper(tool.NewMemorySearchTool(infra.VectorStore, memRepo, embedder, cfg.Retrieval.DecayRate), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewMessageSearchTool(msgRepo, convRepo), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewReminderTool(commitmentRepo, commitmentTimer), log.Default()))
 
 	// ===== Phase 6: ReflectionOrchestrator + CronRunner =====

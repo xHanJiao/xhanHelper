@@ -188,6 +188,41 @@ func (r *MessageRepo) existsAfter(ctx context.Context, convID string, t time.Tim
 	return count > 0
 }
 
+// SearchUserMessages 按关键词搜索用户的 role=user 消息（跨会话），按时间倒序
+// convID 为空时跨会话搜索，keyword 使用 SQL LIKE 模糊匹配
+func (r *MessageRepo) SearchUserMessages(ctx context.Context, userID, keyword, convID string, limit, offset int) ([]model.Message, int64, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	q := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("user_id = ? AND role = 'user' AND content LIKE ? AND status = ?", userID, "%"+keyword+"%", 1)
+	if convID != "" {
+		q = q.Where("conversation_id = ?", convID)
+	}
+
+	var total int64
+	q.Count(&total)
+
+	var list []model.Message
+	if err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error; err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
+}
+
+// GetMessagesSince 获取从指定时间开始的消息（同会话，按时间正序），用于启发式获取一轮对话
+func (r *MessageRepo) GetMessagesSince(ctx context.Context, convID string, since time.Time, limit int) ([]model.Message, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var list []model.Message
+	err := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND created_at >= ? AND status = ?", convID, since, 1).
+		Order("created_at ASC").Limit(limit).
+		Find(&list).Error
+	return list, err
+}
+
 // CountRecent 统计用户最近 role=user 的消息数
 func (r *MessageRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
 	var count int64

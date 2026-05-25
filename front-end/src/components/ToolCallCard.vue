@@ -25,7 +25,7 @@ const failedCount = computed(() => props.toolCalls.filter(tc => tc.status === 'f
         调用 {{ doneCount + failedCount }}/{{ toolCalls.length }} 个工具
         <span v-if="failedCount" class="count-failed">{{ failedCount }} 失败</span>
       </span>
-      <span class="summary-arrow">{{ showJson[-1] ? '▾' : '▸' }}</span>
+      <span class="summary-arrow">{{ showJson[-1] ? '▲' : '▼' }}</span>
     </div>
     <div v-if="showJson[-1]" class="tool-detail-list">
       <div v-for="(tc, idx) in toolCalls" :key="idx" class="tool-item">
@@ -53,7 +53,7 @@ const failedCount = computed(() => props.toolCalls.filter(tc => tc.status === 'f
 .tool-summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 4px;
   cursor: pointer;
   font-size: 12px;
   color: var(--color-text-muted);
@@ -69,7 +69,7 @@ const failedCount = computed(() => props.toolCalls.filter(tc => tc.status === 'f
   gap: var(--space-xs);
 }
 .summary-arrow {
-  font-size: 14px;
+  font-size: 10px;
 }
 .count-failed {
   color: #d03050;

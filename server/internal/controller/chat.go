@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/agent/pipeline"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -103,22 +104,22 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 
 		// —— 预处理管线 ——
 		userSpecifiedAgent := req.AgentID != nil && *req.AgentID != ""
-		pc := &agent.PreContext{
+		pc := &pipeline.PreContext{
 			RawMsg:             req.Message,
 			UserID:             userID,
 			UserSpecifiedAgent: userSpecifiedAgent,
 		}
-		pipelineCtx := agent.WithPreContext(c.Request.Context(), pc)
+		pipelineCtx := pipeline.WithPreContext(c.Request.Context(), pc)
 
-		pipeline, err := agent.NewPipeline(
-			agent.NewShortInputCheckStep(),
-			agent.NewNormalizeDatesStep(),
-			agent.NewAutoRouteStep(orch.FlashClient(), agentRepo, conv.AgentID, conv.ID, msgRepo, cfg.Server.AgentRouteTriggers, convRepo),
+		pl, err := pipeline.NewPipeline(
+			pipeline.NewShortInputCheckStep(),
+			pipeline.NewNormalizeDatesStep(),
+			pipeline.NewAutoRouteStep(orch.FlashClient(), agentRepo, conv.AgentID, conv.ID, msgRepo, cfg.Server.AgentRouteTriggers, convRepo),
 		)
 		if err != nil {
 			log.Printf("[chat] pipeline init error: %v", err)
 		}
-		if _, pipeErr := pipeline.Run(pipelineCtx); pipeErr != nil {
+		if _, pipeErr := pl.Run(pipelineCtx); pipeErr != nil {
 			log.Printf("[chat] pipeline run error: %v", pipeErr)
 		}
 

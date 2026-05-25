@@ -1,142 +1,16 @@
-package agent
+package pipeline
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
-	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 )
-
-// 意图关键词 — 短消息包含这些词时不跳过记忆检索
-var intentKeywords = []string{"帮我", "查一下", "记一下", "算", "搜", "找"}
-
-// ===== ShortInputCheckStep =====
-
-// ShortInputCheckStep 判定短输入是否应跳过记忆检索
-type ShortInputCheckStep struct{}
-
-func NewShortInputCheckStep() *ShortInputCheckStep { return &ShortInputCheckStep{} }
-
-func (s *ShortInputCheckStep) Name() string                       { return "shortInputCheck" }
-func (s *ShortInputCheckStep) Requires() []string                 { return []string{"raw_msg"} }
-func (s *ShortInputCheckStep) Produces() []string                 { return []string{"skip_memory", "is_short"} }
-func (s *ShortInputCheckStep) ShouldRun(ctx context.Context) bool { return true }
-
-func (s *ShortInputCheckStep) Run(ctx context.Context) (context.Context, error) {
-	pc := GetPreContext(ctx)
-	msg := pc.RawMsg
-	charLen := utf8.RuneCountInString(msg)
-	byteLen := len(msg)
-
-	isShort := charLen <= 5 || (charLen <= 10 && byteLen <= 15)
-	isQuestion := strings.Contains(msg, "?") || strings.Contains(msg, "？")
-	hasIntent := false
-	for _, kw := range intentKeywords {
-		if strings.Contains(msg, kw) {
-			hasIntent = true
-			break
-		}
-	}
-
-	skipMemory := false
-	if isShort && !isQuestion && !hasIntent {
-		skipMemory = true
-		log.Printf("[pipeline] shortInputCheck: skip_memory=true (chars=%d, bytes=%d, question=%v, intent=%v)", charLen, byteLen, isQuestion, hasIntent)
-	} else {
-		log.Printf("[pipeline] shortInputCheck: skip_memory=false (chars=%d, bytes=%d, question=%v, intent=%v)", charLen, byteLen, isQuestion, hasIntent)
-	}
-
-	pc.SkipMemory = skipMemory
-	pc.IsShort = isShort
-	return ctx, nil
-}
-
-// ===== NormalizeDatesStep =====
-
-// NormalizeDatesStep 将中文相对日期替换为绝对日期
-type NormalizeDatesStep struct {
-	now time.Time
-}
-
-func NewNormalizeDatesStep() *NormalizeDatesStep {
-	return &NormalizeDatesStep{now: time.Now()}
-}
-
-func (s *NormalizeDatesStep) Name() string                       { return "normalizeDates" }
-func (s *NormalizeDatesStep) Requires() []string                 { return []string{"raw_msg"} }
-func (s *NormalizeDatesStep) Produces() []string                 { return []string{"normalized_msg"} }
-func (s *NormalizeDatesStep) ShouldRun(ctx context.Context) bool { return true }
-
-func (s *NormalizeDatesStep) Run(ctx context.Context) (context.Context, error) {
-	pc := GetPreContext(ctx)
-	normalized := pc.RawMsg
-
-	weekdayNames := map[string]time.Weekday{
-		"一": time.Monday, "二": time.Tuesday, "三": time.Wednesday,
-		"四": time.Thursday, "五": time.Friday, "六": time.Saturday, "日": time.Sunday, "天": time.Sunday,
-	}
-
-	now := s.now.In(config.BJ)
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, config.BJ)
-	dateFmt := "2006-01-02"
-
-	// 具体星期: 上周一、这周三、下周五
-	for prefix, weekOffset := range map[string]int{"上": -1, "这": 0, "下": 1} {
-		for name, wd := range weekdayNames {
-			pattern := prefix + "周" + name
-			daysUntil := int(wd) - int(today.Weekday())
-			if weekOffset != 0 {
-				daysUntil += weekOffset * 7
-			}
-			target := today.AddDate(0, 0, daysUntil)
-			normalized = strings.ReplaceAll(normalized, pattern, target.Format(dateFmt))
-		}
-	}
-
-	// 相对天: N天前, N天后
-	daysAgoRe := regexp.MustCompile(`(\d+)天前`)
-	normalized = daysAgoRe.ReplaceAllStringFunc(normalized, func(m string) string {
-		nStr := daysAgoRe.FindStringSubmatch(m)[1]
-		n, _ := strconv.Atoi(nStr)
-		return today.AddDate(0, 0, -n).Format(dateFmt)
-	})
-	daysLaterRe := regexp.MustCompile(`(\d+)天后`)
-	normalized = daysLaterRe.ReplaceAllStringFunc(normalized, func(m string) string {
-		nStr := daysLaterRe.FindStringSubmatch(m)[1]
-		n, _ := strconv.Atoi(nStr)
-		return today.AddDate(0, 0, n).Format(dateFmt)
-	})
-
-	// 固定替换
-	fixed := map[string]string{
-		"前天": today.AddDate(0, 0, -2).Format(dateFmt),
-		"后天": today.AddDate(0, 0, 2).Format(dateFmt),
-		"昨天": today.AddDate(0, 0, -1).Format(dateFmt),
-		"明天": today.AddDate(0, 0, 1).Format(dateFmt),
-		"今天": today.Format(dateFmt),
-	}
-	for word, repl := range fixed {
-		normalized = strings.ReplaceAll(normalized, word, repl)
-	}
-
-	if normalized != pc.RawMsg {
-		log.Printf("[pipeline] normalizeDates: replaced relative dates in message")
-	}
-
-	pc.NormalizedMsg = normalized
-	return ctx, nil
-}
-
-// ===== AutoRouteStep =====
 
 // AgentLister — 获取用户智能体列表的接口（方便测试）
 type AgentLister interface {
@@ -302,36 +176,4 @@ func (s *AutoRouteStep) Run(ctx context.Context) (context.Context, error) {
 	}()
 
 	return ctx, nil
-}
-
-// ===== 工具函数 =====
-
-// extractJSON 从混合文本中提取 JSON 对象
-func extractJSON(s string) string {
-	start := strings.IndexByte(s, '{')
-	if start == -1 {
-		return ""
-	}
-	depth := 0
-	for i := start; i < len(s); i++ {
-		switch s[i] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return s[start : i+1]
-			}
-		}
-	}
-	return ""
-}
-
-// truncateSummary 截断文本到指定长度
-func truncateSummary(text string, maxChars int) string {
-	runes := []rune(text)
-	if len(runes) <= maxChars {
-		return text
-	}
-	return string(runes[:maxChars]) + "..."
 }

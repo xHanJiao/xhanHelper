@@ -40,11 +40,11 @@ const associatedMemories = computed(() => {
 </script>
 
 <template>
-  <div class="msg-wrapper" style="display: flex; margin-bottom: var(--space-md);">
+  <div class="msg-wrapper" :style="{ display: 'flex', marginBottom: isTool ? '0' : 'var(--space-md)' }">
     <!-- 用户消息 -->
     <div v-if="isUser" style="width: 100%; display: flex; justify-content: flex-end;">
       <div style="display: flex; flex-direction: column; align-items: flex-end; max-width: 85%;">
-        <div class="user-bubble" style="border-radius: var(--radius-lg); padding: var(--space-sm) var(--space-lg); font-size: 15px; line-height: 1.6;">
+        <div class="user-bubble" style="border-radius: var(--radius-lg); padding: 10px 18px; font-size: 15px; line-height: 1.6;">
           <div v-html="contentHtml" style="margin: 0;"></div>
         </div>
         <div v-if="hasMemories" class="associated-memories">
@@ -69,7 +69,6 @@ const associatedMemories = computed(() => {
         <div class="tool-result-line">
           <span class="tool-check">✅</span>
           <span class="tool-summary-text">{{ message.content }}</span>
-          <span v-if="timeText" class="msg-time tool-time">{{ timeText }}</span>
         </div>
       </div>
     </div>
@@ -77,7 +76,7 @@ const associatedMemories = computed(() => {
     <!-- AI 消息 -->
     <div v-else style="width: 100%; display: flex;">
       <div style="flex: 1; min-width: 0; max-width: 85%; border-radius: var(--radius-lg); padding: var(--space-sm) var(--space-lg);">
-        <div v-if="contentHtml" style="font-size: 15px; line-height: 1.7; color: var(--color-text);">
+        <div v-if="contentHtml" class="assistant-content" style="font-size: 15px; line-height: 1.7; color: var(--color-text);">
           <div v-html="contentHtml" style="margin: 0;"></div>
         </div>
         <WaitingAnimation v-if="showCat" class="bubble-cat" />
@@ -90,7 +89,8 @@ const associatedMemories = computed(() => {
 
 <style scoped>
 .user-bubble { background: var(--color-primary); color: #fff; }
-.user-bubble p { margin: 0; }
+.user-bubble :deep(p) { margin: 0; }
+.assistant-content :deep(p) { margin: 0; }
 [data-theme="dark"] .user-bubble { background: var(--color-primary); color: #fff; }
 .status-badge { margin-top: var(--space-sm); }
 .msg-time {
@@ -160,7 +160,7 @@ const associatedMemories = computed(() => {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  padding: 2px 0;
+  padding: 0;
 }
 .tool-check {
   font-size: 11px;

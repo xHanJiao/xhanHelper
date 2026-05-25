@@ -27,6 +27,7 @@ const expanded = ref(false)
 
 <style scoped>
 .thinking-block {
+  margin-top: var(--space-sm);
   margin-bottom: var(--space-md);
 }
 .thinking-header {

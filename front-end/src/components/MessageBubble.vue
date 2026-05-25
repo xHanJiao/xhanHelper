@@ -4,6 +4,7 @@ import MarkdownIt from 'markdown-it'
 import { NTag } from 'naive-ui'
 import ThinkingBlock from '@/components/ThinkingBlock.vue'
 import ToolCallCard from '@/components/ToolCallCard.vue'
+import WaitingAnimation from '@/components/WaitingAnimation.vue'
 
 const props = defineProps({
   message: { type: Object, required: true },
@@ -23,6 +24,10 @@ const timeText = computed(() => {
 })
 
 const memExpanded = ref(false)
+
+const showCat = computed(() =>
+  !props.isHistory && !contentHtml.value
+)
 
 const hasMemories = computed(() => {
   return props.message.role === 'user'
@@ -85,6 +90,7 @@ const downloadableFiles = computed(() => {
         <div v-if="contentHtml" style="font-size: 15px; line-height: 1.7; color: var(--color-text);">
           <div v-html="contentHtml" style="margin: 0;"></div>
         </div>
+        <WaitingAnimation v-if="showCat" class="bubble-cat" />
 
         <div v-if="downloadableFiles.length > 0" class="download-section">
           <a
@@ -120,6 +126,17 @@ const downloadableFiles = computed(() => {
 }
 .msg-wrapper:hover .msg-time { opacity: 1; }
 .user-time { margin-right: 2px; }
+
+.bubble-cat {
+  width: 34px;
+  height: 24px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+.bubble-cat :deep(svg) {
+  transform: scale(0.4);
+  transform-origin: top left;
+}
 .assistant-time { margin-left: 2px; }
 
 .associated-memories {

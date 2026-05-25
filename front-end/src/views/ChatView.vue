@@ -266,7 +266,7 @@ function normalizeMessage(msg) {
             function: tc.function,
             args: tc.args || {},
             status: 'done',
-            result: null
+            result: tc.result || null
           }
         }
         // 旧格式（nested）: {function:{name:"note.record_note", arguments:"{...}"}}
@@ -297,7 +297,7 @@ function normalizeMessage(msg) {
           function: func,
           args,
           status: 'done',
-          result: null
+          result: tc.result || null
         }
       })
       normalized.toolCalls = tcs

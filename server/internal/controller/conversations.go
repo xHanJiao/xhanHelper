@@ -128,11 +128,19 @@ func getMessagesCursor(msgRepo *service.MessageRepo, convRepo *service.Conversat
 	}
 }
 
-// cleanMessages 过滤内部消息、清理调试字段、提取 Flash reply
+// cleanMessages 过滤内部消息、清理调试字段、提取 Flash reply。
+// 工具结果消息（IsInternal + Role="tool"）的内容会被注入到前一条 assistant 消息的
+// tool_calls_json 中，然后丢弃。
 func cleanMessages(msgs []model.Message) []model.Message {
 	out := make([]model.Message, 0, len(msgs))
 	for _, m := range msgs {
 		if m.IsInternal {
+			if m.Role == "tool" && len(out) > 0 {
+				last := &out[len(out)-1]
+				if last.Role == "assistant" && last.ToolCallsJSON != nil && *last.ToolCallsJSON != "" {
+					injectToolResult(last, m.Content)
+				}
+			}
 			continue
 		}
 		m.RequestJSON = nil
@@ -145,6 +153,29 @@ func cleanMessages(msgs []model.Message) []model.Message {
 		out = append(out, m)
 	}
 	return mergeConsecutiveAssistant(out)
+}
+
+// injectToolResult 将一条工具执行结果注入到 msg.ToolCallsJSON 数组中第一个尚未有
+// result 字段的 tool call 上。多条 tool 消息按出现顺序依次调用即可一一对应。
+func injectToolResult(msg *model.Message, resultJSON string) {
+	var tcs []map[string]interface{}
+	if err := json.Unmarshal([]byte(*msg.ToolCallsJSON), &tcs); err != nil {
+		return
+	}
+	for i := range tcs {
+		if _, ok := tcs[i]["result"]; !ok {
+			var result interface{}
+			if err := json.Unmarshal([]byte(resultJSON), &result); err != nil {
+				tcs[i]["result"] = resultJSON
+			} else {
+				tcs[i]["result"] = result
+			}
+			break
+		}
+	}
+	b, _ := json.Marshal(tcs)
+	s := string(b)
+	msg.ToolCallsJSON = &s
 }
 
 // mergeConsecutiveAssistant 合并连续的 assistant 消息（ReAct 多轮产生的碎片）。

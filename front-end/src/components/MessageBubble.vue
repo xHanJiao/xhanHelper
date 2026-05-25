@@ -86,12 +86,12 @@ const downloadableFiles = computed(() => {
     <!-- AI 消息 -->
     <div v-else style="width: 100%; display: flex;">
       <div style="flex: 1; min-width: 0; max-width: 85%; border-radius: var(--radius-lg); padding: var(--space-sm) var(--space-lg);">
+        <ToolCallCard :tool-calls="message.toolCalls || []" :is-history="isHistory" />
         <div v-if="contentHtml" style="font-size: 15px; line-height: 1.7; color: var(--color-text);">
           <div v-html="contentHtml" style="margin: 0;"></div>
         </div>
         <WaitingAnimation v-if="showCat" class="bubble-cat" />
         <ThinkingBlock :reasoning="message.reasoning" :done="message.reasoningDone" :is-history="isHistory" />
-        <ToolCallCard :tool-calls="message.toolCalls || []" :is-history="isHistory" />
 
         <div v-if="downloadableFiles.length > 0" class="download-section">
           <a

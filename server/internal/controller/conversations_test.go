@@ -187,3 +187,264 @@ func TestMergeConsecutiveAssistant_EmptyInput(t *testing.T) {
 		t.Errorf("expected empty, got %d", len(result))
 	}
 }
+
+// —— injectToolResult ——
+
+func TestInjectToolResult_Basic(t *testing.T) {
+	tcJSON := `[{"tool":"note","function":"search","args":{"q":"x"}}]`
+	msg := &model.Message{ToolCallsJSON: ptrStr(tcJSON)}
+	resultJSON := `{"success":true,"data":{"notes":["a","b"]}}`
+
+	injectToolResult(msg, resultJSON)
+
+	var tcs []map[string]interface{}
+	if err := json.Unmarshal([]byte(*msg.ToolCallsJSON), &tcs); err != nil {
+		t.Fatal(err)
+	}
+	if len(tcs) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(tcs))
+	}
+	if tcs[0]["result"] == nil {
+		t.Fatal("expected result to be injected")
+	}
+	result := tcs[0]["result"].(map[string]interface{})
+	if result["success"] != true {
+		t.Errorf("expected result.success=true, got %v", result["success"])
+	}
+}
+
+func TestInjectToolResult_MultipleSequential(t *testing.T) {
+	tcJSON := `[{"tool":"a","function":"f1","args":{}},{"tool":"b","function":"f2","args":{}},{"tool":"c","function":"f3","args":{}}]`
+	msg := &model.Message{ToolCallsJSON: ptrStr(tcJSON)}
+
+	injectToolResult(msg, `{"success":true,"data":"r1"}`)
+	injectToolResult(msg, `{"success":true,"data":"r2"}`)
+	injectToolResult(msg, `{"success":false,"error":"fail"}`)
+
+	var tcs []map[string]interface{}
+	if err := json.Unmarshal([]byte(*msg.ToolCallsJSON), &tcs); err != nil {
+		t.Fatal(err)
+	}
+	if len(tcs) != 3 {
+		t.Fatalf("expected 3 tool calls, got %d", len(tcs))
+	}
+	if tcs[0]["result"].(map[string]interface{})["data"] != "r1" {
+		t.Errorf("tc[0] result mismatch")
+	}
+	if tcs[1]["result"].(map[string]interface{})["data"] != "r2" {
+		t.Errorf("tc[1] result mismatch")
+	}
+	if tcs[2]["result"].(map[string]interface{})["success"] != false {
+		t.Errorf("tc[2] result mismatch")
+	}
+}
+
+func TestInjectToolResult_NoEmptySlot(t *testing.T) {
+	// 所有 tool call 都已有 result — 不应崩溃，也不应增删 tool call
+	tcJSON := `[{"tool":"a","function":"f1","args":{},"result":"done"}]`
+	msg := &model.Message{ToolCallsJSON: ptrStr(tcJSON)}
+
+	injectToolResult(msg, `{"extra":"should-be-ignored"}`)
+
+	var tcs []map[string]interface{}
+	if err := json.Unmarshal([]byte(*msg.ToolCallsJSON), &tcs); err != nil {
+		t.Fatal(err)
+	}
+	if len(tcs) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(tcs))
+	}
+	// 原有 result 不应被覆盖
+	if tcs[0]["result"] != "done" {
+		t.Errorf("expected original result 'done', got %v", tcs[0]["result"])
+	}
+	// 不应有额外字段被注入
+	if _, ok := tcs[0]["extra"]; ok {
+		t.Errorf("unexpected extra field injected")
+	}
+}
+
+func TestInjectToolResult_InvalidJSON(t *testing.T) {
+	msg := &model.Message{ToolCallsJSON: ptrStr(`not-json`)}
+	before := *msg.ToolCallsJSON
+	// 不应 panic
+	injectToolResult(msg, `{"x":1}`)
+	if *msg.ToolCallsJSON != before {
+		t.Errorf("expected no change on invalid tool_calls_json")
+	}
+}
+
+func TestInjectToolResult_PlainStringResult(t *testing.T) {
+	tcJSON := `[{"tool":"x","function":"y","args":{}}]`
+	msg := &model.Message{ToolCallsJSON: ptrStr(tcJSON)}
+
+	// resultJSON 不是合法 JSON 时退化为字符串
+	injectToolResult(msg, `plain text result`)
+
+	var tcs []map[string]interface{}
+	json.Unmarshal([]byte(*msg.ToolCallsJSON), &tcs)
+	if tcs[0]["result"] != "plain text result" {
+		t.Errorf("expected plain string result, got %v", tcs[0]["result"])
+	}
+}
+
+// —— cleanMessages with tool results ——
+
+func TestCleanMessages_InjectsSingleToolResult(t *testing.T) {
+	tcJSON := `[{"tool":"note","function":"search","args":{}}]`
+	resultJSON := `{"success":true,"data":[{"id":"1","content":"hi"}]}`
+
+	msgs := []model.Message{
+		{Role: "user", Content: "查笔记"},
+		{Role: "assistant", Content: `{"reply":"","tool_calls":[{"tool":"note","function":"search","args":{}}]}`, ToolCallsJSON: ptrStr(tcJSON)},
+		{Role: "tool", Content: resultJSON, IsInternal: true},
+		{Role: "assistant", Content: `{"reply":"找到了你的笔记","tool_calls":[]}`},
+	}
+
+	result := cleanMessages(msgs)
+
+	// 应合并为一个 assistant 消息
+	if len(result) != 2 {
+		t.Fatalf("expected 2 messages (user + merged assistant), got %d", len(result))
+	}
+	assistant := result[1]
+	if assistant.Role != "assistant" {
+		t.Fatalf("expected assistant role, got %s", assistant.Role)
+	}
+	if assistant.ToolCallsJSON == nil {
+		t.Fatal("expected ToolCallsJSON")
+	}
+	var tcs []map[string]interface{}
+	json.Unmarshal([]byte(*assistant.ToolCallsJSON), &tcs)
+	if len(tcs) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(tcs))
+	}
+	if tcs[0]["result"] == nil {
+		t.Fatal("expected result to be injected into tool call")
+	}
+	r := tcs[0]["result"].(map[string]interface{})
+	if r["success"] != true {
+		t.Errorf("expected result.success=true, got %v", r["success"])
+	}
+	// content 应来自最后一条 assistant
+	if assistant.Content != "找到了你的笔记" {
+		t.Errorf("expected content from last assistant, got '%s'", assistant.Content)
+	}
+}
+
+func TestCleanMessages_InjectsMultipleToolResults(t *testing.T) {
+	tcJSON := `[{"tool":"a","function":"f1","args":{}},{"tool":"b","function":"f2","args":{}}]`
+
+	msgs := []model.Message{
+		{Role: "user", Content: "做两件事"},
+		{Role: "assistant", Content: `{"reply":"","tool_calls":[...]}`, ToolCallsJSON: ptrStr(tcJSON)},
+		{Role: "tool", Content: `{"success":true,"data":"r1"}`, IsInternal: true},
+		{Role: "tool", Content: `{"success":true,"data":"r2"}`, IsInternal: true},
+		{Role: "assistant", Content: `{"reply":"两件事都完成了","tool_calls":[]}`},
+	}
+
+	result := cleanMessages(msgs)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result))
+	}
+
+	var tcs []map[string]interface{}
+	json.Unmarshal([]byte(*result[1].ToolCallsJSON), &tcs)
+	if len(tcs) != 2 {
+		t.Fatalf("expected 2 tool calls, got %d", len(tcs))
+	}
+	if tcs[0]["result"].(map[string]interface{})["data"] != "r1" {
+		t.Errorf("tc[0] result mismatch")
+	}
+	if tcs[1]["result"].(map[string]interface{})["data"] != "r2" {
+		t.Errorf("tc[1] result mismatch")
+	}
+}
+
+func TestCleanMessages_MultiRoundReActWithToolResults(t *testing.T) {
+	tc1 := `[{"tool":"datetime","function":"now","args":{}}]`
+	tc2 := `[{"tool":"note","function":"create","args":{"topic":"t"}}]`
+
+	msgs := []model.Message{
+		{Role: "user", Content: "现在几点？记个笔记"},
+		// round 1: 查时间
+		{Role: "assistant", Content: `{"reply":"","tool_calls":[{"tool":"datetime","function":"now","args":{}}]}`, ToolCallsJSON: ptrStr(tc1)},
+		{Role: "tool", Content: `{"success":true,"data":"2024-01-15 10:30"}`, IsInternal: true},
+		// round 2: 记笔记
+		{Role: "assistant", Content: `{"reply":"","tool_calls":[{"tool":"note","function":"create","args":{"topic":"t"}}]}`, ToolCallsJSON: ptrStr(tc2)},
+		{Role: "tool", Content: `{"success":true,"data":"note created"}`, IsInternal: true},
+		// round 3: 文本回复
+		{Role: "assistant", Content: `{"reply":"现在是10:30，笔记已记录","tool_calls":[]}`},
+	}
+
+	result := cleanMessages(msgs)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 messages (user + merged assistant), got %d", len(result))
+	}
+
+	merged := result[1]
+	if merged.Content != "现在是10:30，笔记已记录" {
+		t.Errorf("unexpected content: '%s'", merged.Content)
+	}
+
+	var tcs []map[string]interface{}
+	json.Unmarshal([]byte(*merged.ToolCallsJSON), &tcs)
+	if len(tcs) != 2 {
+		t.Fatalf("expected 2 tool calls merged, got %d", len(tcs))
+	}
+	// round 1 tool
+	if tcs[0]["tool"] != "datetime" {
+		t.Errorf("tc[0] tool mismatch: %v", tcs[0]["tool"])
+	}
+	if tcs[0]["result"].(map[string]interface{})["data"] != "2024-01-15 10:30" {
+		t.Errorf("tc[0] result mismatch")
+	}
+	// round 2 tool
+	if tcs[1]["tool"] != "note" {
+		t.Errorf("tc[1] tool mismatch: %v", tcs[1]["tool"])
+	}
+	if tcs[1]["result"].(map[string]interface{})["data"] != "note created" {
+		t.Errorf("tc[1] result mismatch")
+	}
+}
+
+func TestCleanMessages_NoToolMessages(t *testing.T) {
+	// 无工具调用的普通对话 — 应保持原有行为
+	msgs := []model.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: `{"reply":"hello","tool_calls":[]}`},
+	}
+	result := cleanMessages(msgs)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result))
+	}
+	if result[1].Content != "hello" {
+		t.Errorf("expected reply extraction, got '%s'", result[1].Content)
+	}
+}
+
+func TestCleanMessages_ToolMessageBeforeAnyAssistant(t *testing.T) {
+	// 异常顺序：tool 消息在 assistant 之前 — 不应 panic
+	msgs := []model.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "tool", Content: `{"orphan":true}`, IsInternal: true},
+		{Role: "assistant", Content: `{"reply":"hello","tool_calls":[]}`},
+	}
+	// 不应 panic
+	result := cleanMessages(msgs)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result))
+	}
+}
+
+func TestCleanMessages_KeepNonToolInternalMessagesFiltered(t *testing.T) {
+	// 非 tool 的 IsInternal 消息应仍然被过滤，不触发注入逻辑
+	msgs := []model.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: `{"reply":"hello","tool_calls":[]}`},
+		{Role: "system", Content: "internal note", IsInternal: true},
+	}
+	result := cleanMessages(msgs)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 messages (internal non-tool filtered), got %d", len(result))
+	}
+}

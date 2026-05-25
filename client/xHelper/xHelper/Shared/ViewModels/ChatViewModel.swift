@@ -110,12 +110,16 @@ class ChatViewModel: ObservableObject {
                 direction: direction
             )
             if direction == "before" {
-                if let firstNew = result.messages.first?.id {
+                let newMsgs = result.messages.flatMap { $0.expandToolCalls() }
+                if let firstNew = newMsgs.first?.id {
                     anchorMessageID = firstNew
                 }
-                messages = result.messages.flatMap { $0.expandToolCalls() } + messages
+                messages = newMsgs + messages
                 oldestCursor = result.oldestCursor
-                hasMoreBefore = result.hasMoreBefore
+                let stillHasMore = result.hasMoreBefore
+                DispatchQueue.main.async {
+                    self.hasMoreBefore = stillHasMore
+                }
             } else {
                 messages = messages + result.messages.flatMap { $0.expandToolCalls() }
                 newestCursor = result.newestCursor

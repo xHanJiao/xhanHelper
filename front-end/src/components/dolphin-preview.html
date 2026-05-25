@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>像素海豚预览</title>
+<style>
+  body {
+    margin: 0; padding: 60px;
+    background: #1a1a2e;
+    font-family: sans-serif;
+    display: flex; flex-direction: column; align-items: center; gap: 40px;
+  }
+  .preview-row { display: flex; gap: 48px; flex-wrap: wrap; justify-content: center; align-items: flex-end; }
+  .preview-item { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .preview-label { color: #aaa; font-size: 12px; }
+  .bubble {
+    background: #2a2a3e; border-radius: 12px 12px 12px 4px;
+    padding: 22px 26px; min-width: 80px; min-height: 80px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .bubble-text { color: #e0e0e0; font-size: 14px; }
+
+  .dolphin-svg { overflow: visible; }
+
+  /* 跳跃 + 俯仰 */
+  .dolphin {
+    animation: dolphin-jump 2.5s ease-in-out infinite;
+  }
+  @keyframes dolphin-jump {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    8%  { transform: translateY(0) rotate(0deg); }
+    22% { transform: translateY(-2px) rotate(-3deg); }
+    38% { transform: translateY(-6px) rotate(-6deg); }
+    55% { transform: translateY(-6px) rotate(-6deg); }
+    68% { transform: translateY(-2px) rotate(2deg); }
+    82% { transform: translateY(0) rotate(0deg); }
+  }
+
+  /* === 三种身体形态 === */
+  .body-b { animation: body-b-vis 2.5s linear infinite; }
+  @keyframes body-b-vis {
+    0%, 64%, 100% { visibility: visible; }
+    17% { visibility: hidden; }
+  }
+  .body-a { animation: body-a-vis 2.5s linear infinite; }
+  @keyframes body-a-vis {
+    0%, 33%, 100% { visibility: hidden; }
+    18% { visibility: visible; }
+  }
+  .body-am { animation: body-am-vis 2.5s linear infinite; }
+  @keyframes body-am-vis {
+    0%, 57%, 100% { visibility: hidden; }
+    36% { visibility: visible; }
+  }
+
+  /* 尾鳍 B — 水下小三角 */
+  .tail-b { animation: tail-b-vis 2.5s linear infinite; }
+  @keyframes tail-b-vis { 0%,65%,100%{visibility:visible} 16%{visibility:hidden} }
+
+  /* 尾鳍 A — 上翘蓄力 */
+  .tail-a { animation: tail-a-vis 2.5s linear infinite; }
+  @keyframes tail-a-vis { 0%,33%,100%{visibility:hidden} 17%{visibility:visible} }
+
+  /* 尾鳍 A镜像 — 向下推力 */
+  .tail-am { animation: tail-am-vis 2.5s linear infinite; }
+  @keyframes tail-am-vis { 0%,59%,100%{visibility:hidden} 35%{visibility:visible} }
+
+  /* 水花 */
+  .splash { animation: splash-show 2.5s ease-in-out infinite; }
+  @keyframes splash-show { 0%,100%{opacity:0} 72%,82%{opacity:0} 77%{opacity:1} }
+</style>
+</head>
+<body>
+
+<h2 style="color:#ccc; font-weight:400;">海豚 — 身体随动弯曲</h2>
+
+<div class="preview-row">
+  <div class="preview-item">
+    <div class="preview-label">实际大小</div>
+    <div class="bubble">
+
+<svg class="dolphin-svg" width="84" height="72" viewBox="0 5 14 9" xmlns="http://www.w3.org/2000/svg">
+
+  <rect x="0" y="8" width="14" height="1" fill="#5b9bd5"/>
+  <rect x="0" y="9" width="14" height="5" fill="#3a7dbf"/>
+
+  <g class="dolphin">
+
+    <!-- ===== 身体B: 水下流线型(平直) ===== -->
+    <g class="body-b">
+      <rect x="6" y="6" width="1" height="1" fill="#5b8cb8"/>
+      <rect x="7" y="5" width="1" height="1" fill="#5b8cb8"/>
+      <rect x="10" y="7" width="1" height="1" fill="#80c0d8"/>
+      <rect x="11" y="7" width="1" height="1" fill="#80c0d8"/>
+      <rect x="11" y="8" width="2" height="1" fill="#80c0d8"/>
+      <rect x="13" y="8" width="1" height="1" fill="#90d0e8"/>
+      <rect x="11" y="7" width="1" height="1" fill="#222"/>
+      <rect x="7" y="7"  width="3" height="1" fill="#80c0d8"/>
+      <rect x="7" y="8"  width="4" height="1" fill="#80c0d8"/>
+      <rect x="8" y="9"  width="3" height="1" fill="#d8eef5"/>
+      <rect x="9" y="10" width="2" height="1" fill="#d8eef5"/>
+      <rect x="3" y="8"  width="4" height="1" fill="#5b8cb8"/>
+      <rect x="4" y="9"  width="3" height="1" fill="#5b8cb8"/>
+    </g>
+
+    <!-- ===== 身体A: 蓄力上拱(抬头+尾柄翘) ===== -->
+    <g class="body-a">
+      <!-- 头抬1px -->
+      <rect x="10" y="6" width="2" height="1" fill="#80c0d8"/>
+      <rect x="10" y="7" width="3" height="1" fill="#80c0d8"/>
+      <rect x="13" y="7" width="1" height="1" fill="#90d0e8"/>
+      <rect x="10" y="6" width="1" height="1" fill="#222"/>
+      <!-- 背鳍 -->
+      <rect x="6" y="5" width="1" height="1" fill="#5b8cb8"/>
+      <rect x="7" y="4" width="1" height="1" fill="#5b8cb8"/>
+      <!-- 身体微拱 -->
+      <rect x="7" y="7"  width="3" height="1" fill="#80c0d8"/>
+      <rect x="7" y="8"  width="4" height="1" fill="#80c0d8"/>
+      <rect x="8" y="9"  width="3" height="1" fill="#d8eef5"/>
+      <rect x="9" y="10" width="2" height="1" fill="#d8eef5"/>
+      <!-- 尾柄上翘 -->
+      <rect x="3" y="7"  width="4" height="1" fill="#5b8cb8"/>
+      <rect x="4" y="8"  width="3" height="1" fill="#5b8cb8"/>
+    </g>
+
+    <!-- ===== 身体AM: 空中C型弧(头高+背凹+尾高) ===== -->
+    <g class="body-am">
+      <!-- 头更高 -->
+      <rect x="10" y="5" width="2" height="1" fill="#80c0d8"/>
+      <rect x="10" y="6" width="3" height="1" fill="#80c0d8"/>
+      <rect x="13" y="6" width="1" height="1" fill="#90d0e8"/>
+      <rect x="10" y="5" width="1" height="1" fill="#222"/>
+      <!-- 背鳍突出 -->
+      <rect x="6" y="4" width="1" height="1" fill="#5b8cb8"/>
+      <rect x="7" y="3" width="1" height="1" fill="#5b8cb8"/>
+      <!-- 背微凹: 中间低一格 -->
+      <rect x="6" y="8"  width="1" height="1" fill="#80c0d8"/>
+      <rect x="7" y="7"  width="3" height="1" fill="#80c0d8"/>
+      <rect x="7" y="8"  width="4" height="1" fill="#80c0d8"/>
+      <rect x="8" y="9"  width="3" height="1" fill="#d8eef5"/>
+      <rect x="9" y="10" width="2" height="1" fill="#d8eef5"/>
+      <!-- 尾柄更高 -->
+      <rect x="3" y="6"  width="4" height="1" fill="#5b8cb8"/>
+      <rect x="4" y="7"  width="3" height="1" fill="#5b8cb8"/>
+    </g>
+
+    <!-- 尾鳍 B — 水下小三角 -->
+    <g class="tail-b">
+      <rect x="2" y="8" width="1" height="1" fill="#5b8cb8"/>
+      <rect x="1" y="9" width="3" height="1" fill="#5b8cb8"/>
+    </g>
+
+    <!-- 尾鳍 A — 上翘蓄力 -->
+    <g class="tail-a">
+      <rect x="0" y="6" width="1" height="1" fill="#5b8cb8"/>
+      <rect x="0" y="7" width="2" height="1" fill="#5b8cb8"/>
+      <rect x="2" y="8" width="1" height="1" fill="#5b8cb8"/>
+      <rect x="2" y="9" width="1" height="1" fill="#5b8cb8"/>
+    </g>
+
+    <!-- 尾鳍 A镜像 — 向下推力 -->
+    <g class="tail-am">
+      <rect x="2" y="6" width="1" height="1" fill="#5b8cb8"/>
+      <rect x="2" y="7" width="1" height="1" fill="#5b8cb8"/>
+      <rect x="0" y="8" width="2" height="1" fill="#5b8cb8"/>
+      <rect x="0" y="9" width="1" height="1" fill="#5b8cb8"/>
+    </g>
+  </g>
+
+  <rect x="0" y="9" width="14" height="5" fill="#3a7dbf" opacity="0.85"/>
+
+  <g class="splash">
+    <rect x="10" y="8" width="1" height="1" fill="#a8ddf0"/>
+    <rect x="13" y="8" width="1" height="1" fill="#a8ddf0"/>
+    <rect x="11" y="7" width="1" height="1" fill="#a8ddf0"/>
+    <rect x="12" y="7" width="1" height="1" fill="#a8ddf0"/>
+  </g>
+</svg>
+
+    </div>
+  </div>
+
+  <div class="preview-item">
+    <div class="preview-label">收到文字后消失</div>
+    <div class="bubble"><div class="bubble-text">查到 12 笔账单…</div></div>
+  </div>
+</div>
+
+<p style="color:#666;font-size:12px;margin-top:32px;">
+  三体态切换：流线(平直)→上拱(头尾翘)→C弧(头高背凹尾高)
+</p>
+
+</body>
+</html>

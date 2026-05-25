@@ -1,9 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { NTag } from 'naive-ui'
 import ThinkingBlock from '@/components/ThinkingBlock.vue'
-import ToolCallCard from '@/components/ToolCallCard.vue'
 import WaitingAnimation from '@/components/WaitingAnimation.vue'
 
 const props = defineProps({
@@ -14,6 +12,7 @@ const props = defineProps({
 const md = new MarkdownIt()
 
 const isUser = computed(() => props.message.role === 'user')
+const isTool = computed(() => props.message.role === 'tool')
 const isAssistant = computed(() => props.message.role === 'assistant')
 
 const contentHtml = computed(() => md.render(props.message.content || ''))
@@ -37,25 +36,6 @@ const hasMemories = computed(() => {
 
 const associatedMemories = computed(() => {
   return hasMemories.value ? props.message.associatedMemories : []
-})
-
-const downloadableFiles = computed(() => {
-  const files = []
-  for (const tc of props.message.toolCalls || []) {
-    if (tc.status !== 'done' || !tc.result?.success) continue
-    let data = tc.result.data
-    if (typeof data === 'string') {
-      try { data = JSON.parse(data) } catch { continue }
-    }
-    if (data?.url) {
-      files.push({
-        url: data.url,
-        filename: data.filename || new URL(data.url).pathname.split('/').pop() || '下载',
-        message: data.message || ''
-      })
-    }
-  }
-  return files
 })
 </script>
 
@@ -83,29 +63,25 @@ const downloadableFiles = computed(() => {
       </div>
     </div>
 
+    <!-- 工具结果消息 -->
+    <div v-else-if="isTool" style="width: 100%; display: flex;">
+      <div style="flex: 1; min-width: 0; max-width: 85%; padding: 0 var(--space-lg);">
+        <div class="tool-result-line">
+          <span class="tool-check">✅</span>
+          <span class="tool-summary-text">{{ message.content }}</span>
+          <span v-if="timeText" class="msg-time tool-time">{{ timeText }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- AI 消息 -->
     <div v-else style="width: 100%; display: flex;">
       <div style="flex: 1; min-width: 0; max-width: 85%; border-radius: var(--radius-lg); padding: var(--space-sm) var(--space-lg);">
-        <ToolCallCard :tool-calls="message.toolCalls || []" :is-history="isHistory" />
         <div v-if="contentHtml" style="font-size: 15px; line-height: 1.7; color: var(--color-text);">
           <div v-html="contentHtml" style="margin: 0;"></div>
         </div>
         <WaitingAnimation v-if="showCat" class="bubble-cat" />
         <ThinkingBlock :reasoning="message.reasoning" :done="message.reasoningDone" :is-history="isHistory" />
-
-        <div v-if="downloadableFiles.length > 0" class="download-section">
-          <a
-            v-for="file in downloadableFiles"
-            :key="file.url"
-            :href="file.url"
-            :download="file.filename"
-            class="download-link"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            {{ file.filename }}
-          </a>
-        </div>
-
         <div v-if="timeText" class="msg-time assistant-time">{{ timeText }}</div>
       </div>
     </div>
@@ -180,27 +156,24 @@ const downloadableFiles = computed(() => {
   line-height: 1.5;
 }
 
-.download-section {
-  margin-top: var(--space-md);
+.tool-result-line {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-}
-.download-link {
-  display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
-  padding: 6px 14px;
-  border-radius: var(--radius-md);
-  background: var(--color-primary-soft);
-  color: var(--color-primary);
-  font-size: 13px;
-  font-weight: 500;
-  text-decoration: none;
-  transition: background var(--transition-fast);
+  padding: 2px 0;
 }
-.download-link:hover {
-  background: var(--color-primary);
-  color: #fff;
+.tool-check {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.tool-summary-text {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+.tool-time {
+  margin-left: auto;
+  padding-left: 12px;
+  flex-shrink: 0;
 }
 </style>

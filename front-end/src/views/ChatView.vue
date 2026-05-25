@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import { useChatSSE } from '@/composables/useChatSSE'
+import { buildToolSummary } from '@/composables/useChatSSE'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
 import { useDevice } from '@/composables/useDevice'
 import { api } from '@/api/client'
@@ -154,10 +155,6 @@ const currentAgentId = computed(() => {
   return conv?.agent_id || chat.agentId || null
 })
 
-const planVisible = computed(() => {
-  return Object.keys(chat.planNodes).length >= 2
-})
-
 function scrollToBottom() {
   nextTick(() => {
     if (chat.isStreaming && streamingBubbleRef.value) {
@@ -183,7 +180,7 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
     }
     const res = await api.get(url)
     if (res) {
-      const msgs = (res.messages || []).map(normalizeMessage)
+      const msgs = (res.messages || []).flatMap(normalizeMessage)
       if (direction === 'before' && cursor) {
         const scrollContainer = messagesContainerRef.value
         const oldScrollHeight = scrollContainer.scrollHeight
@@ -252,12 +249,14 @@ function normalizeMessage(msg) {
     normalized.reasoning = msg.reasoning_content
     normalized.reasoningDone = true
   }
+
+  let toolCalls = []
   if (msg.tool_calls_json) {
     try {
       const rawTCs = typeof msg.tool_calls_json === 'string'
         ? JSON.parse(msg.tool_calls_json)
         : msg.tool_calls_json
-      const tcs = (Array.isArray(rawTCs) ? rawTCs : []).map(tc => {
+      toolCalls = (Array.isArray(rawTCs) ? rawTCs : []).map(tc => {
         // 兼容后端新旧两种序列化格式
         // 新格式（flat）: {tool:"note", function:"record_note", args:{...}}
         if (typeof tc.tool === 'string' && typeof tc.function === 'string') {
@@ -300,14 +299,25 @@ function normalizeMessage(msg) {
           result: tc.result || null
         }
       })
-      normalized.toolCalls = tcs
     } catch {
-      normalized.toolCalls = []
+      toolCalls = []
     }
-  } else {
-    normalized.toolCalls = normalized.toolCalls || []
   }
-  return normalized
+
+  // 展开 tool_calls_json 为独立的 role="tool" 消息，与 iOS expandToolCalls 一致
+  if (toolCalls.length > 0) {
+    const toolMsgs = toolCalls.map(tc => ({
+      id: 'htool_' + Math.random().toString(36).slice(2, 10),
+      role: 'tool',
+      content: buildToolSummary(tc, tc.result),
+      created_at: normalized.created_at
+    }))
+    normalized.toolCalls = []
+    return [...toolMsgs, normalized]
+  }
+
+  normalized.toolCalls = []
+  return [normalized]
 }
 
 watch(() => route.params.id, async (newId, oldId) => {

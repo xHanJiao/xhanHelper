@@ -3,6 +3,54 @@ import { useConversationsStore } from '@/stores/conversations'
 import { useAuthStore } from '@/stores/auth'
 import { api } from '@/api/client'
 
+// 工具函数名 → 中文显示名（与 iOS 端一致）
+const DISPLAY_NAMES = {
+  create_bill: '记账',
+  update_bill: '修改账单',
+  cancel_bill: '作废账单',
+  delete_bill: '删除账单',
+  query_bills: '查询账单',
+  get_monthly_stats: '月度统计',
+  get_category_stats: '分类统计',
+  get_current_time: '获取时间',
+  evaluate: '计算',
+  generate: '生成UUID',
+  record_note: '记录笔记',
+  search: '搜索笔记',
+  update_note: '更新笔记',
+  delete_note: '删除笔记',
+  list_notes: '列出笔记',
+  create_agent: '创建智能体',
+  update_agent: '更新智能体',
+  delete_agent: '删除智能体',
+  list_agents: '列出智能体'
+}
+
+// 参数 key → 中文标签
+const ARG_LABELS = [
+  ['amount', '金额'],
+  ['item', '项目'],
+  ['category1', '分类'],
+  ['topic', '主题'],
+  ['name', '名称'],
+  ['query', '查询']
+]
+
+function buildToolSummary(tc, result) {
+  const parts = [DISPLAY_NAMES[tc.function] || tc.function]
+  for (const [key, label] of ARG_LABELS) {
+    const val = tc.args?.[key]
+    if (val !== undefined && val !== null && val !== '') {
+      const s = typeof val === 'object' ? JSON.stringify(val) : String(val)
+      parts.push(`${label}: ${s.length > 20 ? s.slice(0, 20) + '...' : s}`)
+    }
+  }
+  if (result) {
+    parts.push(result.success ? '✅ 成功' : `❌ ${result.error || '失败'}`)
+  }
+  return parts.join(' | ')
+}
+
 export function useChatSSE() {
   const chat = useChatStore()
   const convs = useConversationsStore()
@@ -123,6 +171,12 @@ export function useChatSSE() {
         if (last) {
           last.status = tr.success ? 'done' : 'failed'
           last.result = tr
+          chat.addMessage({
+            id: 'tool_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            role: 'tool',
+            content: buildToolSummary(last, tr),
+            created_at: new Date().toISOString()
+          })
         }
         break
       }
@@ -165,7 +219,8 @@ export function useChatSSE() {
         const d = JSON.parse(rawData)
         const finalMsg = {
           ...chat.streamingMessage,
-          id: d.message_id
+          id: d.message_id,
+          toolCalls: []
         }
         chat.addMessage(finalMsg)
         chat.streamingMessage = null
@@ -210,3 +265,5 @@ export function useChatSSE() {
 
   return { sendMessage, cancel }
 }
+
+export { buildToolSummary }

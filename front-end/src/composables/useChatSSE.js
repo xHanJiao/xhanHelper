@@ -21,7 +21,8 @@ export function useChatSSE() {
       content: '',
       reasoning: '',
       reasoningDone: false,
-      toolCalls: []
+      toolCalls: [],
+      created_at: new Date().toISOString()
     }
     chat.planNodes = {}
     chat.planEdges = []

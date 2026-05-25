@@ -386,7 +386,7 @@ async function handleSend() {
   const content = inputValue.value.trim()
   if (!content || chat.isStreaming) return
 
-  chat.addMessage({ id: Date.now().toString(), role: 'user', content })
+  chat.addMessage({ id: Date.now().toString(), role: 'user', content, created_at: new Date().toISOString() })
   inputValue.value = ''
   inputExpanded.value = false
   // 把当前会话移到列表最前面

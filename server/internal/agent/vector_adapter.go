@@ -1,6 +1,9 @@
 package agent
 
-import "xhan-helper/internal/app"
+import (
+	"xhan-helper/internal/agent/retrieval"
+	"xhan-helper/internal/app"
+)
 
 // VectorSearchAdapter 将 agent.VectorStore 适配为 app.VectorStore 接口。
 type VectorSearchAdapter struct {
@@ -16,7 +19,7 @@ func (a *VectorSearchAdapter) Upsert(id string, vec []float64, metadata map[stri
 }
 
 func (a *VectorSearchAdapter) Search(query []float64, topK int, filter app.VectorFilter) []app.VectorMatch {
-	results := a.store.Search(query, topK, func(e vectorEntry) bool {
+	results := a.store.Search(query, topK, func(e retrieval.Entry) bool {
 		return filter(e.ID, e.Vec, e.Metadata)
 	})
 	matches := make([]app.VectorMatch, len(results))

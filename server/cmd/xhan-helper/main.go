@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/controller"
@@ -282,8 +283,11 @@ func main() {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
 	// Context Sources
-	memSource := agent.NewMemorySource(vectorStore, memRepo, embeddingRepo, cfg.Retrieval.DecayRate)
-	noteSource := agent.NewNoteSource(vectorStore, noteRepo, embeddingRepo)
+	memRanker := &retrieval.Ranker{VectorWeight: 0.5, KeywordWeight: 0.3, FreshnessWeight: 0.2, DecayRate: cfg.Retrieval.DecayRate}
+	noteRanker := retrieval.DefaultRanker()
+
+	memSource := retrieval.NewMemorySource(vectorStore, memRepo, embeddingRepo, memRanker)
+	noteSource := retrieval.NewNoteSource(vectorStore, noteRepo, embeddingRepo, noteRanker)
 
 	// Warmup 必须完成后再启动服务
 	memSource.Warmup(bgCtx, embedder)
@@ -297,7 +301,7 @@ func main() {
 	backfillThemeVectors(bgCtx, themeStateRepo, conceptEmbedRepo, themeEmbedder)
 
 	// Orchestrator
-	retriever := agent.NewRetriever(memSource, noteSource)
+	retriever := retrieval.NewRetriever(memSource, noteSource)
 	pb := agent.NewSystemPromptBuilder(
 		agent.DefaultPromptConfig(),
 		agent.BaseSystemPrompt,

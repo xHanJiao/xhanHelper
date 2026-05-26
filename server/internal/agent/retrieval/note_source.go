@@ -1,4 +1,4 @@
-package agent
+package retrieval
 
 import (
 	"context"
@@ -13,13 +13,17 @@ import (
 
 // NoteSource — 笔记上下文数据源
 type NoteSource struct {
-	vectorStore   *VectorStore
+	vectorStore   VectorStore
 	noteRepo      *service.NoteRepo
 	embeddingRepo *service.EmbeddingRepo
+	ranker        *Ranker
 }
 
-func NewNoteSource(vs *VectorStore, noteRepo *service.NoteRepo, embeddingRepo *service.EmbeddingRepo) *NoteSource {
-	return &NoteSource{vectorStore: vs, noteRepo: noteRepo, embeddingRepo: embeddingRepo}
+func NewNoteSource(vs VectorStore, noteRepo *service.NoteRepo, embeddingRepo *service.EmbeddingRepo, ranker *Ranker) *NoteSource {
+	if ranker == nil {
+		ranker = DefaultRanker()
+	}
+	return &NoteSource{vectorStore: vs, noteRepo: noteRepo, embeddingRepo: embeddingRepo, ranker: ranker}
 }
 
 func (s *NoteSource) Name() string { return "note" }
@@ -30,7 +34,7 @@ func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, query, userI
 		return nil, nil
 	}
 
-	results := s.vectorStore.Search(queryVec, limit, func(e vectorEntry) bool {
+	results := s.vectorStore.Search(queryVec, limit, func(e Entry) bool {
 		return e.Metadata["type"] == "note"
 	})
 	if len(results) == 0 {
@@ -73,7 +77,7 @@ func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, query, userI
 		noteByID[n.ID] = n
 	}
 	// decayRate=0：笔记不做时间衰减
-	scored := scoreItems(query, inputs, 0)
+	scored := s.ranker.Score(query, inputs)
 
 	packets := make([]ContextPacket, 0, len(scored))
 	for i, sc := range scored {
@@ -102,7 +106,6 @@ func (s *NoteSource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 	const pageSize = 100
 	loaded, embedded := 0, 0
 
-	// 先从 embeddings 表加载已有的向量
 	for offset := 0; ; offset += pageSize {
 		embeddings, err := s.embeddingRepo.ListByType(ctx, model.EntityTypeNote, pageSize, offset)
 		if err != nil {
@@ -125,7 +128,6 @@ func (s *NoteSource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 		}
 	}
 
-	// 再检查是否有笔记没有向量，需要新生成
 	for offset := 0; ; offset += pageSize {
 		notes, err := s.noteRepo.ListAllPaginated(ctx, pageSize, offset)
 		if err != nil {
@@ -136,15 +138,13 @@ func (s *NoteSource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 			break
 		}
 		for _, n := range notes {
-			// 检查是否已有向量
 			existingEmb, err := s.embeddingRepo.GetByEntity(ctx, model.EntityTypeNote, n.ID)
 			if err != nil {
 				log.Printf("[vector] note warmup: GetByEntity error for %s: %v", n.ID, err)
 			}
 			if existingEmb != nil && existingEmb.Embedding != nil {
-				continue // 已有，跳过
+				continue
 			}
-			// 需要生成新向量
 			vec, err := embedder.Embed(ctx, n.Content)
 			if err != nil {
 				log.Printf("[vector] note warmup: embed %s error: %v", n.ID[:8], err)
@@ -153,7 +153,7 @@ func (s *NoteSource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 			s.vectorStore.Upsert("note:"+n.ID, vec, map[string]string{"type": "note", "user_id": n.UserID})
 			embStr := llm.EmbeddingToString(vec)
 			err = s.embeddingRepo.Upsert(ctx, &model.Embedding{
-				ID:         n.ID, // 使用笔记 ID 作为 embedding ID
+				ID:         n.ID,
 				EntityType: model.EntityTypeNote,
 				EntityID:   n.ID,
 				UserID:     n.UserID,

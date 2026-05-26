@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -187,7 +188,7 @@ func NewSystemPromptBuilder(
 	cfg PromptConfig,
 	basePrompt string,
 	registry *tool.Registry,
-	retriever *Retriever,
+	retriever *retrieval.Retriever,
 	themeStateRepo *service.ThemeStateRepo,
 	convRepo *service.ConversationRepo,
 	promptResolver PromptResolver,
@@ -484,7 +485,7 @@ func (p *themeProvider) matchByVector(_ context.Context, opts SearchOptions) (ma
 		threshold = 0.5
 	}
 
-	results := p.vectorStore.Search(opts.Embedding, 20, func(entry vectorEntry) bool {
+	results := p.vectorStore.Search(opts.Embedding, 20, func(entry retrieval.Entry) bool {
 		match := entry.Metadata["type"] == "theme" && entry.Metadata["user_id"] == opts.UserID
 		return match
 	})
@@ -598,7 +599,7 @@ func (p *themeProvider) renderTheme(t model.ThemeState, isPrimary bool, matchRea
 // 所以这里作为一个 provider 返回，score 固定 0.8。
 // 未来可以拆成独立的 MemoryProvider 和 NoteProvider，各自控制阈值和条数。
 type retrievalProvider struct {
-	retriever *Retriever
+	retriever *retrieval.Retriever
 	cfg       *PromptConfig
 }
 

@@ -1,4 +1,4 @@
-package agent
+package retrieval
 
 import (
 	"context"
@@ -13,12 +13,12 @@ import (
 
 // HistorySource — 跨会话历史消息上下文数据源
 type HistorySource struct {
-	vectorStore *VectorStore
+	vectorStore VectorStore
 	msgRepo     *service.MessageRepo
 	enabled     bool
 }
 
-func NewHistorySource(vs *VectorStore, msgRepo *service.MessageRepo, enabled bool) *HistorySource {
+func NewHistorySource(vs VectorStore, msgRepo *service.MessageRepo, enabled bool) *HistorySource {
 	return &HistorySource{vectorStore: vs, msgRepo: msgRepo, enabled: enabled}
 }
 
@@ -30,7 +30,7 @@ func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, query, us
 		return nil, nil
 	}
 
-	results := s.vectorStore.Search(queryVec, limit, func(e vectorEntry) bool {
+	results := s.vectorStore.Search(queryVec, limit, func(e Entry) bool {
 		return e.Metadata["type"] == "msg" &&
 			e.Metadata["user_id"] == userID &&
 			e.Metadata["conv_id"] != convID

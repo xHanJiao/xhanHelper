@@ -1,4 +1,4 @@
-package agent
+package retrieval
 
 import (
 	"math"
@@ -23,9 +23,21 @@ type scoreResult struct {
 	FinalScore   float64
 }
 
-// scoreItems 统一检索打分：向量 0.5 + 关键词 0.3 + 时间衰减 0.2
-// decayRate=0 时 freshness 恒为 1.0（笔记等无时效需求的场景）
-func scoreItems(query string, items []scoreInput, decayRate float64) []scoreResult {
+// Ranker — 检索结果排序器，支持自定义权重和时间衰减
+type Ranker struct {
+	VectorWeight    float64 // 向量相似度权重，默认 0.5
+	KeywordWeight   float64 // 关键词匹配权重，默认 0.3
+	FreshnessWeight float64 // 新鲜度权重，默认 0.2
+	DecayRate       float64 // 时间衰减系数，>0 时启用，默认 0
+}
+
+// DefaultRanker 返回默认权重的 Ranker（不含时间衰减）
+func DefaultRanker() *Ranker {
+	return &Ranker{VectorWeight: 0.5, KeywordWeight: 0.3, FreshnessWeight: 0.2, DecayRate: 0}
+}
+
+// Score 对候选项打分并降序排列
+func (r *Ranker) Score(query string, items []scoreInput) []scoreResult {
 	queryBigrams := bigramSet(query)
 	now := time.Now()
 
@@ -33,11 +45,11 @@ func scoreItems(query string, items []scoreInput, decayRate float64) []scoreResu
 	for i, item := range items {
 		ks := bigramOverlap(queryBigrams, item.Content)
 		freshness := 1.0
-		if decayRate > 0 {
+		if r.DecayRate > 0 {
 			daysAgo := now.Sub(item.CreatedAt).Hours() / 24
-			freshness = 1.0 / (1.0 + daysAgo*decayRate)
+			freshness = 1.0 / (1.0 + daysAgo*r.DecayRate)
 		}
-		finalScore := item.VectorScore*0.5 + ks*0.3 + freshness*0.2
+		finalScore := item.VectorScore*r.VectorWeight + ks*r.KeywordWeight + freshness*r.FreshnessWeight
 		results[i] = scoreResult{
 			ID:           item.ID,
 			VectorScore:  item.VectorScore,

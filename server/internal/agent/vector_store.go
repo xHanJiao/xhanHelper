@@ -4,6 +4,8 @@ import (
 	"log"
 	"math"
 	"sync"
+
+	"xhan-helper/internal/agent/retrieval"
 )
 
 // vectorEntry — 向量存储条目
@@ -20,9 +22,6 @@ type candidate struct {
 	score    float64
 	metadata map[string]string
 }
-
-// FilterFunc — 向量检索时的过滤函数
-type FilterFunc func(entry vectorEntry) bool
 
 // VectorStore — 内存向量存储 + 余弦检索
 type VectorStore struct {
@@ -52,15 +51,8 @@ func (vs *VectorStore) Upsert(id string, vec []float64, metadata map[string]stri
 	vs.vectors = append(vs.vectors, vectorEntry{ID: id, Vec: vec, Metadata: metadata})
 }
 
-// SearchResult — 检索结果
-type SearchResult struct {
-	ID       string
-	Score    float64
-	Metadata map[string]string
-}
-
 // Search 余弦相似度检索
-func (vs *VectorStore) Search(query []float64, topK int, filter FilterFunc) []SearchResult {
+func (vs *VectorStore) Search(query []float64, topK int, filter func(retrieval.Entry) bool) []retrieval.SearchResult {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
 
@@ -70,7 +62,7 @@ func (vs *VectorStore) Search(query []float64, topK int, filter FilterFunc) []Se
 
 	var eligible []candidate
 	for _, e := range vs.vectors {
-		if filter != nil && !filter(e) {
+		if filter != nil && !filter(retrieval.Entry{ID: e.ID, Vec: e.Vec, Metadata: e.Metadata}) {
 			continue
 		}
 		eligible = append(eligible, candidate{
@@ -94,7 +86,7 @@ func (vs *VectorStore) Search(query []float64, topK int, filter FilterFunc) []Se
 	return result
 }
 
-func heapTopK(candidates []candidate, k int) []SearchResult {
+func heapTopK(candidates []candidate, k int) []retrieval.SearchResult {
 	if k <= 0 || len(candidates) == 0 {
 		return nil
 	}
@@ -110,9 +102,9 @@ func heapTopK(candidates []candidate, k int) []SearchResult {
 		}
 	}
 
-	out := make([]SearchResult, len(heap))
+	out := make([]retrieval.SearchResult, len(heap))
 	for i := len(heap) - 1; i >= 0; i-- {
-		out[i] = SearchResult{
+		out[i] = retrieval.SearchResult{
 			ID:       heap[0].id,
 			Score:    heap[0].score,
 			Metadata: heap[0].metadata,

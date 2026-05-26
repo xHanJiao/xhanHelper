@@ -1,4 +1,4 @@
-package agent
+package retrieval
 
 // bigramSet 将文本切分为 bigram 集合，用于中文关键词匹配
 func bigramSet(text string) map[string]bool {

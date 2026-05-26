@@ -1,4 +1,4 @@
-package agent
+package retrieval
 
 import (
 	"context"
@@ -22,4 +22,25 @@ type ContextSource interface {
 	Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
 		threshold float64, limit int) ([]ContextPacket, error)
 	Warmup(ctx context.Context, embedder *llm.Embedder)
+}
+
+// Entry — 向量条目筛选视图
+type Entry struct {
+	ID       string
+	Vec      []float64
+	Metadata map[string]string
+}
+
+// SearchResult — 向量检索结果
+type SearchResult struct {
+	ID       string
+	Score    float64
+	Metadata map[string]string
+}
+
+// VectorStore — 向量存储接口（agent.VectorStore 满足此接口）
+type VectorStore interface {
+	Search(query []float64, topK int, filter func(Entry) bool) []SearchResult
+	Upsert(id string, vec []float64, metadata map[string]string)
+	Size() int
 }

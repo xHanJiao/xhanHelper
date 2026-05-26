@@ -244,7 +244,7 @@ func main() {
 	commitmentTimer := agent.NewCommitmentTimer(commitmentRepo, mailboxRepo)
 
 	// 注册提醒工具到主 Registry（对话中 LLM 直接调用）
-	reg.Register(tool.NewLoggingWrapper(tool.NewMemorySearchTool(infra.VectorStore, memRepo, embedder, cfg.Retrieval.DecayRate), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewMemorySearchTool(infra.VectorStore, memRepo, embedder, cfg.Retrieval.FreshnessDecay), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewMessageSearchTool(msgRepo, convRepo), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewReminderTool(commitmentRepo, commitmentTimer), log.Default()))
 
@@ -283,15 +283,33 @@ func main() {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
 	// Context Sources
-	memRanker := &retrieval.Ranker{VectorWeight: 0.5, KeywordWeight: 0.3, FreshnessWeight: 0.2, DecayRate: cfg.Retrieval.DecayRate}
-	noteRanker := retrieval.DefaultRanker()
+	memRanker := &retrieval.Ranker{
+		VectorWeight:    cfg.Retrieval.Memory.VectorWeight,
+		KeywordWeight:   cfg.Retrieval.Memory.KeywordWeight,
+		FreshnessWeight: cfg.Retrieval.Memory.FreshnessWeight,
+		FreshnessDecay:  cfg.Retrieval.Memory.FreshnessDecay,
+	}
+	noteRanker := &retrieval.Ranker{
+		VectorWeight:    cfg.Retrieval.Note.VectorWeight,
+		KeywordWeight:   cfg.Retrieval.Note.KeywordWeight,
+		FreshnessWeight: cfg.Retrieval.Note.FreshnessWeight,
+		FreshnessDecay:  cfg.Retrieval.Note.FreshnessDecay,
+	}
+	historyRanker := &retrieval.Ranker{
+		VectorWeight:    cfg.Retrieval.History.VectorWeight,
+		KeywordWeight:   cfg.Retrieval.History.KeywordWeight,
+		FreshnessWeight: cfg.Retrieval.History.FreshnessWeight,
+		FreshnessDecay:  cfg.Retrieval.History.FreshnessDecay,
+	}
 
 	memSource := retrieval.NewMemorySource(vectorStore, memRepo, embeddingRepo, memRanker)
 	noteSource := retrieval.NewNoteSource(vectorStore, noteRepo, embeddingRepo, noteRanker)
+	historySource := retrieval.NewHistorySource(vectorStore, msgRepo, embeddingRepo, historyRanker)
 
 	// Warmup 必须完成后再启动服务
 	memSource.Warmup(bgCtx, embedder)
 	noteSource.Warmup(bgCtx, embedder)
+	historySource.Warmup(bgCtx, embedder)
 	// Theme embedding warmup：从 embedding 表加载到向量库，确保去重重启后有效
 	warmupThemeEmbeddings(bgCtx, embeddingRepo, vectorStore, conceptEmbedRepo, themeStateRepo)
 	warmupChunkEmbeddings(bgCtx, embeddingRepo, vectorStore)

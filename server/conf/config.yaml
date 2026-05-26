@@ -46,7 +46,22 @@ snowflake:
   datacenter_id: 1
 
 retrieval:
-  decay_rate: 0.02        # 时间衰减系数，越大旧记忆权重越低
+  freshness_decay: 0.02           # 时间衰减系数，作为默认值
+  memory:
+    vector_weight: 0.5
+    keyword_weight: 0.3
+    freshness_weight: 0.2
+    freshness_decay: 0.01
+  note:
+    vector_weight: 0.5
+    keyword_weight: 0.3
+    freshness_weight: 0.0
+    freshness_decay: 0
+  history:
+    vector_weight: 0.6
+    keyword_weight: 0.3
+    freshness_weight: 0.1
+    freshness_decay: 0.005
 
 mcp:
   max_concurrent: 2

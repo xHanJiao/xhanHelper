@@ -9,6 +9,7 @@ import (
 // ContextPacket — 上下文片段，来自任意数据源
 type ContextPacket struct {
 	ID                     string
+	Type                   string // memory | note | history
 	Text                   string
 	TokenCount             int
 	CorrelationCoefficient float64

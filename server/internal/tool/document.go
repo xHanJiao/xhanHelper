@@ -7,6 +7,7 @@ import (
 
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
+	"xhan-helper/internal/util"
 )
 
 // DocumentTool — 文档管理工具。仅在用户明确要求时使用，不要主动创建。
@@ -185,7 +186,7 @@ func (t *DocumentTool) queryDocuments(ec *ExecuteContext, args json.RawMessage) 
 			"tags":       d.Tags,
 			"created_at": d.CreatedAt,
 			"updated_at": d.UpdatedAt,
-			"preview":    truncateContent(d.Content, 200),
+			"preview":    util.TruncateContent(d.Content, 200),
 		}
 		if d.ConversationID != nil {
 			item["conversation_id"] = *d.ConversationID
@@ -217,12 +218,4 @@ func (t *DocumentTool) deleteDocument(ec *ExecuteContext, args json.RawMessage) 
 
 	data, _ := json.Marshal(map[string]interface{}{"id": req.ID, "message": "文档已删除"})
 	return &Result{Success: true, Data: data}
-}
-
-func truncateContent(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	return string(runes[:maxLen]) + "..."
 }

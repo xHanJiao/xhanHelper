@@ -8,8 +8,8 @@ import (
 
 func TestDefaultRanker(t *testing.T) {
 	r := DefaultRanker()
-	if r.VectorWeight != 0.5 || r.KeywordWeight != 0.3 || r.FreshnessWeight != 0.2 || r.DecayRate != 0 {
-		t.Errorf("DefaultRanker: got {%.2f, %.2f, %.2f, %.2f}", r.VectorWeight, r.KeywordWeight, r.FreshnessWeight, r.DecayRate)
+	if r.VectorWeight != 0.5 || r.KeywordWeight != 0.3 || r.FreshnessWeight != 0.2 || r.FreshnessDecay != 0 {
+		t.Errorf("DefaultRanker: got {%.2f, %.2f, %.2f, %.2f}", r.VectorWeight, r.KeywordWeight, r.FreshnessWeight, r.FreshnessDecay)
 	}
 }
 
@@ -64,7 +64,7 @@ func TestRankerScore_SortedByFinalScore(t *testing.T) {
 }
 
 func TestRankerScore_VectorWeightOnly(t *testing.T) {
-	r := &Ranker{VectorWeight: 1.0, KeywordWeight: 0, FreshnessWeight: 0, DecayRate: 0}
+	r := &Ranker{VectorWeight: 1.0, KeywordWeight: 0, FreshnessWeight: 0, FreshnessDecay: 0}
 	items := []scoreInput{
 		{ID: "a", Content: "任意内容", CreatedAt: time.Now(), VectorScore: 0.75},
 	}
@@ -76,7 +76,7 @@ func TestRankerScore_VectorWeightOnly(t *testing.T) {
 }
 
 func TestRankerScore_KeywordWeightOnly(t *testing.T) {
-	r := &Ranker{VectorWeight: 0, KeywordWeight: 1.0, FreshnessWeight: 0, DecayRate: 0}
+	r := &Ranker{VectorWeight: 0, KeywordWeight: 1.0, FreshnessWeight: 0, FreshnessDecay: 0}
 	// query = "今天天气真好" → 5 bigrams
 	// target = "今天天气" → 3 bigrams: {"今天","天天","天气"}
 	// overlap = 3/5 = 0.6
@@ -94,12 +94,12 @@ func TestRankerScore_KeywordWeightOnly(t *testing.T) {
 }
 
 func TestRankerScore_FreshnessWeightOnly_NoDecay(t *testing.T) {
-	r := &Ranker{VectorWeight: 0, KeywordWeight: 0, FreshnessWeight: 1.0, DecayRate: 0}
+	r := &Ranker{VectorWeight: 0, KeywordWeight: 0, FreshnessWeight: 1.0, FreshnessDecay: 0}
 	items := []scoreInput{
 		{ID: "a", Content: "任意", CreatedAt: time.Now(), VectorScore: 0},
 	}
 	results := r.Score("查询", items)
-	// DecayRate=0 → freshness=1.0, FinalScore = 1.0 * 1.0 = 1.0
+	// FreshnessDecay=0 → freshness=1.0, FinalScore = 1.0 * 1.0 = 1.0
 	if math.Abs(results[0].FinalScore-1.0) > 0.0001 {
 		t.Errorf("expected 1.0, got %.4f", results[0].FinalScore)
 	}
@@ -109,7 +109,7 @@ func TestRankerScore_FreshnessWeightOnly_NoDecay(t *testing.T) {
 }
 
 func TestRankerScore_FreshnessWithDecay(t *testing.T) {
-	r := &Ranker{VectorWeight: 0, KeywordWeight: 0, FreshnessWeight: 1.0, DecayRate: 0.1}
+	r := &Ranker{VectorWeight: 0, KeywordWeight: 0, FreshnessWeight: 1.0, FreshnessDecay: 0.1}
 	now := time.Now()
 
 	// 10 天前的 item
@@ -132,7 +132,7 @@ func TestRankerScore_FreshnessWithDecay(t *testing.T) {
 }
 
 func TestRankerScore_FreshnessVeryOld(t *testing.T) {
-	r := &Ranker{VectorWeight: 0, KeywordWeight: 0, FreshnessWeight: 1.0, DecayRate: 0.02}
+	r := &Ranker{VectorWeight: 0, KeywordWeight: 0, FreshnessWeight: 1.0, FreshnessDecay: 0.02}
 	// 1000 天前 → freshness ≈ 1/(1+1000*0.02) = 1/21 ≈ 0.0476
 	oldItem := scoreInput{ID: "ancient", Content: "a", CreatedAt: time.Now().AddDate(-3, 0, 0), VectorScore: 0}
 	results := r.Score("x", []scoreInput{oldItem})
@@ -142,7 +142,7 @@ func TestRankerScore_FreshnessVeryOld(t *testing.T) {
 }
 
 func TestRankerScore_AllZeroWeights(t *testing.T) {
-	r := &Ranker{VectorWeight: 0, KeywordWeight: 0, FreshnessWeight: 0, DecayRate: 0}
+	r := &Ranker{VectorWeight: 0, KeywordWeight: 0, FreshnessWeight: 0, FreshnessDecay: 0}
 	items := []scoreInput{
 		{ID: "a", Content: "无关", CreatedAt: time.Now(), VectorScore: 0.9},
 		{ID: "b", Content: "无关", CreatedAt: time.Now(), VectorScore: 0.5},
@@ -156,7 +156,7 @@ func TestRankerScore_AllZeroWeights(t *testing.T) {
 }
 
 func TestRankerScore_CustomWeights(t *testing.T) {
-	r := &Ranker{VectorWeight: 0.8, KeywordWeight: 0.1, FreshnessWeight: 0.1, DecayRate: 0}
+	r := &Ranker{VectorWeight: 0.8, KeywordWeight: 0.1, FreshnessWeight: 0.1, FreshnessDecay: 0}
 	items := []scoreInput{
 		{ID: "a", Content: "无关内容", CreatedAt: time.Now(), VectorScore: 1.0},
 	}

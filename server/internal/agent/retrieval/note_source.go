@@ -88,6 +88,7 @@ func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, query, userI
 		}
 		packets = append(packets, ContextPacket{
 			ID:           sc.ID,
+			Type:         "note",
 			Text:         text,
 			Score:        sc.VectorScore,
 			KeywordScore: sc.KeywordScore,

@@ -55,6 +55,26 @@ func (r *MessageRepo) GetByID(ctx context.Context, id string) (*model.Message, e
 	return &m, nil
 }
 
+// GetByIDCols 按 ID 查单条消息，可指定查询列（跳过 RequestJSON 等大字段）。
+// 不传 cols 时默认只查常用字段：id, conversation_id, user_id, role, content, created_at
+func (r *MessageRepo) GetByIDCols(ctx context.Context, id string, cols ...string) (*model.Message, error) {
+	if len(cols) == 0 {
+		cols = []string{"id", "conversation_id", "user_id", "role", "content", "created_at"}
+	}
+	var m model.Message
+	err := r.db.WithContext(ctx).
+		Select(cols).
+		Where("id = ? AND status = ?", id, 1).
+		First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
 // ListByConversation 获取会话的消息列表（按时间正序）
 func (r *MessageRepo) ListByConversation(ctx context.Context, convID string, limit int) ([]model.Message, error) {
 	var list []model.Message

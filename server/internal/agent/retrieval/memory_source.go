@@ -107,6 +107,7 @@ func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, query, use
 		}
 		packets = append(packets, ContextPacket{
 			ID:                     sc.ID,
+			Type:                   "memory",
 			Text:                   text,
 			Score:                  sc.VectorScore,
 			KeywordScore:           sc.KeywordScore,

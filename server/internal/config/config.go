@@ -107,9 +107,20 @@ type EmbeddingConfig struct {
 	EnableHistorySearch bool   `yaml:"enable_history_search"` // 是否检索历史对话
 }
 
+// SourceWeights — 单个检索源的权重配置
+type SourceWeights struct {
+	VectorWeight    float64 `yaml:"vector_weight"`
+	KeywordWeight   float64 `yaml:"keyword_weight"`
+	FreshnessWeight float64 `yaml:"freshness_weight"`
+	FreshnessDecay  float64 `yaml:"freshness_decay"`
+}
+
 // RetrievalConfig — 记忆检索配置
 type RetrievalConfig struct {
-	DecayRate float64 `yaml:"decay_rate"` // 时间衰减系数，默认 0.02
+	FreshnessDecay float64       `yaml:"freshness_decay"` // 时间衰减系数，保留作为默认值
+	Memory         SourceWeights `yaml:"memory"`
+	Note           SourceWeights `yaml:"note"`
+	History        SourceWeights `yaml:"history"`
 }
 
 // ReflectionConfig — 反思系统配置
@@ -262,9 +273,12 @@ func merge(dst, src *Config) {
 	if src.Snowflake.NodeID != 0 {
 		dst.Snowflake.NodeID = src.Snowflake.NodeID
 	}
-	if src.Retrieval.DecayRate != 0 {
-		dst.Retrieval.DecayRate = src.Retrieval.DecayRate
+	if src.Retrieval.FreshnessDecay != 0 {
+		dst.Retrieval.FreshnessDecay = src.Retrieval.FreshnessDecay
 	}
+	mergeSourceWeights(&dst.Retrieval.Memory, &src.Retrieval.Memory)
+	mergeSourceWeights(&dst.Retrieval.Note, &src.Retrieval.Note)
+	mergeSourceWeights(&dst.Retrieval.History, &src.Retrieval.History)
 	if src.Reflection.LaunchMaxIterations != 0 {
 		dst.Reflection.LaunchMaxIterations = src.Reflection.LaunchMaxIterations
 	}
@@ -303,6 +317,38 @@ func merge(dst, src *Config) {
 	}
 }
 
+// mergeSourceWeights 按字段合并检索源权重，非零值覆盖
+func mergeSourceWeights(dst, src *SourceWeights) {
+	if src.VectorWeight != 0 {
+		dst.VectorWeight = src.VectorWeight
+	}
+	if src.KeywordWeight != 0 {
+		dst.KeywordWeight = src.KeywordWeight
+	}
+	if src.FreshnessWeight != 0 {
+		dst.FreshnessWeight = src.FreshnessWeight
+	}
+	if src.FreshnessDecay != 0 {
+		dst.FreshnessDecay = src.FreshnessDecay
+	}
+}
+
+// setSourceWeightsDefault 为源权重设置默认值（仅当当前值为零时）
+func setSourceWeightsDefault(w *SourceWeights, vecW, kwW, fwW, decay float64) {
+	if w.VectorWeight == 0 {
+		w.VectorWeight = vecW
+	}
+	if w.KeywordWeight == 0 {
+		w.KeywordWeight = kwW
+	}
+	if w.FreshnessWeight == 0 {
+		w.FreshnessWeight = fwW
+	}
+	if w.FreshnessDecay == 0 {
+		w.FreshnessDecay = decay
+	}
+}
+
 // resolveEnvVars 对字符串字段再做一次 ${VAR} 展开（处理 env YAML 覆盖引入的新占位符）
 func resolveEnvVars(cfg *Config) {
 	cfg.DB.Password = os.ExpandEnv(cfg.DB.Password)
@@ -329,9 +375,12 @@ func validate(cfg *Config) error {
 	}
 	// Reflection 默认值
 	// Retrieval 默认值
-	if cfg.Retrieval.DecayRate == 0 {
-		cfg.Retrieval.DecayRate = 0.02
+	if cfg.Retrieval.FreshnessDecay == 0 {
+		cfg.Retrieval.FreshnessDecay = 0.02
 	}
+	setSourceWeightsDefault(&cfg.Retrieval.Memory, 0.5, 0.3, 0.2, cfg.Retrieval.FreshnessDecay)
+	setSourceWeightsDefault(&cfg.Retrieval.Note, 0.5, 0.3, 0.0, 0)
+	setSourceWeightsDefault(&cfg.Retrieval.History, 0.6, 0.3, 0.1, 0.005)
 	if cfg.Reflection.LaunchMaxIterations == 0 {
 		cfg.Reflection.LaunchMaxIterations = 8
 	}

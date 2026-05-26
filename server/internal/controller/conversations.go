@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -148,11 +149,23 @@ func cleanMessages(msgs []model.Message) []model.Message {
 		if m.Role == "assistant" {
 			if reply := extractFlashReply(m.Content); reply != "" {
 				m.Content = reply
+			} else if isFlashJSON(m.Content) {
+				m.Content = ""
 			}
 		}
 		out = append(out, m)
 	}
-	return mergeConsecutiveAssistant(out)
+	merged := mergeConsecutiveAssistant(out)
+
+	// 过滤掉 content 为空的 assistant 消息（纯工具调用包装，无可见内容）
+	filtered := make([]model.Message, 0, len(merged))
+	for _, m := range merged {
+		if m.Role == "assistant" && m.Content == "" {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+	return filtered
 }
 
 // injectToolResult 将一条工具执行结果注入到 msg.ToolCallsJSON 数组中第一个尚未有
@@ -250,6 +263,18 @@ func extractFlashReply(content string) string {
 		return prefix + "\n\n" + parsed.Reply
 	}
 	return parsed.Reply
+}
+
+// isFlashJSON 判断 content 是否为合法的 Flash JSON（以 { 开头且含有 reply 字段）
+func isFlashJSON(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	if !strings.HasPrefix(trimmed, "{") {
+		return false
+	}
+	var parsed struct {
+		Reply string `json:"reply"`
+	}
+	return json.Unmarshal([]byte(trimmed), &parsed) == nil
 }
 
 func deleteMessage(msgRepo *service.MessageRepo, convRepo *service.ConversationRepo) gin.HandlerFunc {

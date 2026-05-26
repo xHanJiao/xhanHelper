@@ -55,6 +55,15 @@ const inputExpanded = ref(false)
 
 if (isMobile.value) inputVisible.value = false
 watch(isMobile, (val) => { if (val) inputVisible.value = false })
+watch(inputVisible, async (val) => {
+  if (val) {
+    await nextTick()
+    const textarea = document.querySelector('.chat-input textarea')
+    if (textarea) {
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+  }
+})
 
 function toggleInput() {
   inputVisible.value = !inputVisible.value

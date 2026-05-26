@@ -45,7 +45,7 @@ const associatedMemories = computed(() => {
     <div v-if="isUser" style="width: 100%; display: flex; justify-content: flex-end;">
       <div style="display: flex; flex-direction: column; align-items: flex-end; max-width: 85%;">
         <div class="user-bubble" style="border-radius: var(--radius-lg); padding: 10px 18px; font-size: 15px; line-height: 1.6;">
-          <div v-html="contentHtml" style="margin: 0;"></div>
+          <div class="message-content" v-html="contentHtml" style="margin: 0; overflow-wrap: break-word;"></div>
         </div>
         <div v-if="hasMemories" class="associated-memories">
           <div class="mem-toggle" @click="memExpanded = !memExpanded">
@@ -77,7 +77,7 @@ const associatedMemories = computed(() => {
     <div v-else style="width: 100%; display: flex;">
       <div style="flex: 1; min-width: 0; max-width: 85%; border-radius: var(--radius-lg); padding: var(--space-sm) var(--space-lg);">
         <div v-if="contentHtml" class="assistant-content" style="font-size: 15px; line-height: 1.7; color: var(--color-text);">
-          <div v-html="contentHtml" style="margin: 0;"></div>
+          <div class="message-content" v-html="contentHtml" style="margin: 0; overflow-wrap: break-word;"></div>
         </div>
         <WaitingAnimation v-if="showCat" class="bubble-cat" />
         <ThinkingBlock :reasoning="message.reasoning" :done="message.reasoningDone" :is-history="isHistory" />

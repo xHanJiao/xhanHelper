@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import MarkdownIt from 'markdown-it'
 import PageTopBar from '@/components/PageTopBar.vue'
@@ -60,11 +60,17 @@ const providers = computed(() => {
 
 const expandedContent = ref(new Set())
 
-function toggleContent(msgId) {
+function toggleContent(msgId, content) {
   if (expandedContent.value.has(msgId)) {
     expandedContent.value.delete(msgId)
+    activeMsgResultId.value = null
   } else {
     expandedContent.value.add(msgId)
+    // 如果内容含 data.results，默认进入预览模式
+    formatContent(content)
+    if (markdownResult.value) {
+      activeMsgResultId.value = msgId
+    }
   }
   expandedContent.value = new Set(expandedContent.value)
 }
@@ -125,6 +131,54 @@ const resultHtml = computed(() => {
   if (!markdownResult.value) return ''
   return md.render(markdownResult.value)
 })
+
+const lookupCache = ref({})
+const lookupLoading = ref(false)
+
+async function batchLookup(providers) {
+  // 收集所有 near-miss 项的 (type, id)
+  const items = []
+  for (const prov of providers) {
+    for (const item of (prov.items || [])) {
+      if (item.discard_reason && !lookupCache.value[`${prov.name}:${item.id}`]) {
+        items.push({ type: prov.name, id: item.id })
+      }
+    }
+  }
+  if (items.length === 0) return
+
+  lookupLoading.value = true
+  try {
+    const res = await api.post('/api/admin/resource-lookup/batch', items)
+    for (const r of (res.results || [])) {
+      lookupCache.value[`${r.type}:${r.id}`] = r.content || '(空)'
+    }
+  } finally {
+    lookupLoading.value = false
+  }
+}
+
+function lookedUpContent(provType, id) {
+  return lookupCache.value[`${provType}:${id}`]
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'resources' && providers.value.length > 0) {
+    batchLookup(providers.value)
+  }
+})
+
+const expandedTraceItem = ref(null)
+
+function toggleTraceItem(itemId) {
+  expandedTraceItem.value = expandedTraceItem.value === itemId ? null : itemId
+}
+
+function traceItemText(provName, item) {
+  const looked = lookedUpContent(provName, item.id)
+  if (looked) return looked
+  return item.text || '-'
+}
 
 const selectedItems = (items) => items.filter(i => !i.discard_reason)
 const discardedItems = (items) => items.filter(i => i.discard_reason)
@@ -228,12 +282,13 @@ onMounted(loadRound)
           </div>
           <div
             v-if="!isExpanded(msg.id)"
-            @click.stop="toggleContent(msg.id)"
+            @click.stop="toggleContent(msg.id, msg.content)"
             style="font-size: 13px; color: var(--color-text); line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;"
           >{{ msg.content || '(空)' }}</div>
           <div v-else style="position: relative;">
             <pre
-              @click.stop="toggleContent(msg.id)"
+              v-if="!markdownResult || activeMsgResultId !== msg.id"
+              @click.stop="toggleContent(msg.id, msg.content)"
               style="font-size: 12px; line-height: 1.5; background: var(--color-bg-page); padding: 8px 12px; border-radius: var(--radius-md); margin: 4px 0 0 0; overflow-x: auto; white-space: pre-wrap; word-break: break-all; cursor: pointer; max-height: 400px; overflow-y: auto;"
             >{{ formatContent(msg.content) }}</pre>
             <span
@@ -244,15 +299,15 @@ onMounted(loadRound)
             <span
               v-if="markdownResult"
               @click.stop="showResult(msg.id)"
-              style="position: absolute; top: 8px; right: 36px; font-size: 14px; cursor: pointer; opacity: 0.6; line-height: 1;"
-              :title="activeMsgResultId === msg.id ? '收起预览' : '预览 results'"
+              style="position: absolute; top: 8px; right: 36px; font-size: 14px; cursor: pointer; opacity: 0.6; line-height: 1; z-index: 1;"
+              :title="activeMsgResultId === msg.id ? '切换 JSON 视图' : '切换预览视图'"
             >{{ activeMsgResultId === msg.id ? '🔽' : '👁' }}</span>
             <div
               v-if="activeMsgResultId === msg.id && markdownResult"
-              @click.stop
+              @click.stop="toggleContent(msg.id, msg.content)"
               class="markdown-body"
               v-html="resultHtml"
-              style="font-size: 13px; line-height: 1.7; background: var(--color-surface); padding: 12px 16px; border-radius: var(--radius-md); margin-top: 8px; border: 1px solid var(--color-border); max-height: 400px; overflow-y: auto;"
+              style="cursor: pointer; font-size: 13px; line-height: 1.7; background: var(--color-surface); padding: 12px 16px; border-radius: var(--radius-md); margin-top: 4px; border: 1px solid var(--color-border); max-height: 400px; overflow-y: auto;"
             ></div>
           </div>
 
@@ -309,7 +364,17 @@ onMounted(loadRound)
                       <tr v-for="item in selectedItems(prov.items || [])" :key="item.id"
                         style="border-bottom: 1px solid var(--color-border);">
                         <td style="padding: 4px 8px; font-family: monospace; font-size: 11px;">{{ item.id?.slice(0, 8) }}</td>
-                        <td style="padding: 4px 8px;">{{ item.text || '-' }}</td>
+                        <td style="padding: 4px 8px; max-width: 300px; font-size: 11px;">
+                          <div
+                            v-if="expandedTraceItem !== item.id"
+                            @click="toggleTraceItem(item.id)"
+                            style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;"
+                          >{{ traceItemText(prov.name, item) }}</div>
+                          <div v-else @click="toggleTraceItem(item.id)" style="cursor: pointer;">
+                            <div v-if="prov.name === 'theme'" class="markdown-body" v-html="md.render(traceItemText(prov.name, item))" style="font-size: 12px; line-height: 1.5; max-height: 200px; overflow-y: auto;"></div>
+                            <pre v-else style="font-size: 11px; line-height: 1.4; white-space: pre-wrap; margin: 0;">{{ traceItemText(prov.name, item) }}</pre>
+                          </div>
+                        </td>
                         <td style="padding: 4px 8px;">{{ item.score?.toFixed(3) || '-' }}</td>
                         <td style="padding: 4px 8px;">{{ item.vector_score?.toFixed(3) || '-' }}</td>
                         <td style="padding: 4px 8px;">{{ item.keyword_score?.toFixed(3) || '-' }}</td>
@@ -318,7 +383,17 @@ onMounted(loadRound)
                       <tr v-for="item in discardedItems(prov.items || [])" :key="item.id"
                         style="border-bottom: 1px solid var(--color-border);">
                         <td style="padding: 4px 8px; font-family: monospace; font-size: 11px;">{{ item.id?.slice(0, 8) }}</td>
-                        <td style="padding: 4px 8px;">{{ item.text || '-' }}</td>
+                        <td style="padding: 4px 8px; max-width: 300px; font-size: 11px;">
+                          <div
+                            v-if="expandedTraceItem !== item.id"
+                            @click="toggleTraceItem(item.id)"
+                            style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;"
+                          >{{ traceItemText(prov.name, item) }}<span v-if="lookupLoading" style="color: var(--color-text-muted);"> ...</span></div>
+                          <div v-else @click="toggleTraceItem(item.id)" style="cursor: pointer;">
+                            <div v-if="prov.name === 'theme'" class="markdown-body" v-html="md.render(traceItemText(prov.name, item))" style="font-size: 12px; line-height: 1.5; max-height: 200px; overflow-y: auto;"></div>
+                            <pre v-else style="font-size: 11px; line-height: 1.4; white-space: pre-wrap; margin: 0;">{{ traceItemText(prov.name, item) }}</pre>
+                          </div>
+                        </td>
                         <td style="padding: 4px 8px;">-</td>
                         <td style="padding: 4px 8px;">{{ item.vector_score?.toFixed(3) || '-' }}</td>
                         <td style="padding: 4px 8px;">-</td>

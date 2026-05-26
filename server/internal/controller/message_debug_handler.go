@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"strconv"
 
@@ -13,11 +15,14 @@ import (
 
 // MessageDebugHandler — 消息调试查询（管理端）
 type MessageDebugHandler struct {
-	msgRepo *service.MessageRepo
+	msgRepo        *service.MessageRepo
+	memRepo        *service.UserMemoryRepo
+	noteRepo       *service.NoteRepo
+	themeStateRepo *service.ThemeStateRepo
 }
 
-func NewMessageDebugHandler(msgRepo *service.MessageRepo) *MessageDebugHandler {
-	return &MessageDebugHandler{msgRepo: msgRepo}
+func NewMessageDebugHandler(msgRepo *service.MessageRepo, memRepo *service.UserMemoryRepo, noteRepo *service.NoteRepo, themeStateRepo *service.ThemeStateRepo) *MessageDebugHandler {
+	return &MessageDebugHandler{msgRepo: msgRepo, memRepo: memRepo, noteRepo: noteRepo, themeStateRepo: themeStateRepo}
 }
 
 // GetMessageDebug 返回以指定用户消息为锚点的一轮完整消息（不含重量级字段）。
@@ -119,6 +124,82 @@ func cleanForDebug(msg *model.Message) model.Message {
 	c.ResponseJSON = nil
 	c.Extra = nil
 	return c
+}
+
+// LookupResource 根据 type + id 查询资源内容。
+func (h *MessageDebugHandler) LookupResource(c *gin.Context) {
+	userID := c.GetString("user_id")
+	typ := c.Query("type")
+	id := c.Query("id")
+
+	content, err := h.lookupContent(c.Request.Context(), userID, typ, id)
+	if err != nil {
+		view.JSONError(c, 404, err.Error())
+		return
+	}
+
+	view.JSONOK(c, gin.H{"type": typ, "id": id, "content": content})
+}
+
+// LookupResourcesBatch 批量查询资源内容。
+func (h *MessageDebugHandler) LookupResourcesBatch(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var reqItems []struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+	}
+	if err := c.ShouldBindJSON(&reqItems); err != nil {
+		view.JSONError(c, 400, "请求格式错误")
+		return
+	}
+
+	results := make([]gin.H, 0, len(reqItems))
+	for _, item := range reqItems {
+		content, err := h.lookupContent(c.Request.Context(), userID, item.Type, item.ID)
+		if err != nil {
+			content = "(未找到)"
+		}
+		results = append(results, gin.H{"type": item.Type, "id": item.ID, "content": content})
+	}
+	view.JSONOK(c, gin.H{"results": results})
+}
+
+func (h *MessageDebugHandler) lookupContent(ctx context.Context, userID, typ, id string) (string, error) {
+	switch typ {
+	case "memory":
+		mem, err := h.memRepo.FindByID(ctx, userID, id)
+		if err != nil || mem == nil {
+			return "", fmt.Errorf("记忆不存在")
+		}
+		return mem.MemoryValue, nil
+	case "note":
+		notes, err := h.noteRepo.GetByIDsAndUser(ctx, []string{id}, userID)
+		if err != nil || len(notes) == 0 {
+			return "", fmt.Errorf("笔记不存在")
+		}
+		return notes[0].Content, nil
+	case "history":
+		msg, err := h.msgRepo.GetByID(ctx, id)
+		if err != nil || msg == nil {
+			return "", fmt.Errorf("消息不存在")
+		}
+		return msg.Content, nil
+	case "theme":
+		ts, err := h.themeStateRepo.GetByID(ctx, id, userID)
+		if err != nil || ts == nil {
+			return "", fmt.Errorf("主题不存在")
+		}
+		content := ts.Name
+		if ts.Description != "" {
+			content += "\n" + ts.Description
+		}
+		if ts.StateText != "" {
+			content += "\n" + ts.StateText
+		}
+		return content, nil
+	default:
+		return "", fmt.Errorf("不支持的类型: %s", typ)
+	}
 }
 
 func cleanForDebugList(msgs []model.Message) []model.Message {

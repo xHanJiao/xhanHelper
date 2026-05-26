@@ -82,25 +82,25 @@ func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, query, us
 	var nearMiss []NearMissItem
 	for _, res := range results {
 		if !strings.HasPrefix(res.ID, "msg:") {
-			nearMiss = append(nearMiss, NearMissItem{ID: res.ID, VectorScore: res.Score, Reason: "wrong_prefix"})
+			nearMiss = append(nearMiss, NearMissItem{ID: res.ID, Text: res.ID, VectorScore: res.Score, Reason: "wrong_prefix"})
 			continue
 		}
 		msgID := strings.TrimPrefix(res.ID, "msg:")
 		if res.Score < threshold {
-			nearMiss = append(nearMiss, NearMissItem{ID: msgID, VectorScore: res.Score, Reason: "below_threshold"})
+			nearMiss = append(nearMiss, NearMissItem{ID: msgID, Text: msgID, VectorScore: res.Score, Reason: "below_threshold"})
 			continue
 		}
 		msg, err := s.msgRepo.GetByIDCols(ctx, msgID)
 		if err != nil || msg == nil {
-			nearMiss = append(nearMiss, NearMissItem{ID: msgID, VectorScore: res.Score, Reason: "db_not_found"})
+			nearMiss = append(nearMiss, NearMissItem{ID: msgID, Text: msgID, VectorScore: res.Score, Reason: "db_not_found"})
 			continue
 		}
 		if msg.ConversationID == convID {
-			nearMiss = append(nearMiss, NearMissItem{ID: msgID, VectorScore: res.Score, Reason: "same_conversation"})
+			nearMiss = append(nearMiss, NearMissItem{ID: msgID, Text: msgID, VectorScore: res.Score, Reason: "same_conversation"})
 			continue
 		}
 		if msg.UserID != userID {
-			nearMiss = append(nearMiss, NearMissItem{ID: msgID, VectorScore: res.Score, Reason: "not_owner"})
+			nearMiss = append(nearMiss, NearMissItem{ID: msgID, Text: msgID, VectorScore: res.Score, Reason: "not_owner"})
 			continue
 		}
 		hits = append(hits, historyHit{msg: msg, vecScore: res.Score})
@@ -134,12 +134,12 @@ func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, query, us
 		}
 		roundMsgs, err := s.msgRepo.GetMessagesSince(ctx, msg.ConversationID, msg.CreatedAt, 100)
 		if err != nil {
-			nearMiss = append(nearMiss, NearMissItem{ID: msg.ID, VectorScore: sr.VectorScore, Reason: "round_fetch_error"})
+			nearMiss = append(nearMiss, NearMissItem{ID: msg.ID, Text: msg.ID, VectorScore: sr.VectorScore, Reason: "round_fetch_error"})
 			continue
 		}
 		filtered := FilterMessageRound(roundMsgs, msg.ID)
 		if len(filtered) == 0 {
-			nearMiss = append(nearMiss, NearMissItem{ID: msg.ID, VectorScore: sr.VectorScore, Reason: "round_empty"})
+			nearMiss = append(nearMiss, NearMissItem{ID: msg.ID, Text: msg.ID, VectorScore: sr.VectorScore, Reason: "round_empty"})
 			continue
 		}
 

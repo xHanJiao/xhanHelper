@@ -306,6 +306,7 @@ func main() {
 	memSource := retrieval.NewMemorySource(vectorStore, memRepo, embeddingRepo, memRanker)
 	noteSource := retrieval.NewNoteSource(vectorStore, noteRepo, embeddingRepo, noteRanker)
 	historySource := retrieval.NewHistorySource(vectorStore, msgRepo, embeddingRepo, historyRanker)
+	themeSource := retrieval.NewThemeSource(themeStateRepo, vectorStore)
 
 	// Warmup 必须完成后再启动服务
 	memSource.Warmup(bgCtx, embedder)
@@ -327,7 +328,7 @@ func main() {
 		reg,
 		promptRepo,
 		promptbuilder.WithScoreModifier(
-			promptbuilder.NewThemeProvider(themeStateRepo, convRepo, vectorStore, &promptCfg),
+			promptbuilder.NewThemeProvider(themeSource, themeStateRepo, convRepo, &promptCfg),
 			promptbuilder.BoostFactor(1.3),
 		),
 		promptbuilder.NewMemoryProvider(memSource, &promptCfg),
@@ -381,7 +382,7 @@ func main() {
 	themeHandler := controller.NewThemeHandler(themeStateRepo)
 	reflectionAdminHandler := controller.NewReflectionAdminHandler(traceRepo)
 	messageTraceHandler := controller.NewMessageTraceHandler(msgRepo)
-	messageDebugHandler := controller.NewMessageDebugHandler(msgRepo)
+	messageDebugHandler := controller.NewMessageDebugHandler(msgRepo, memRepo, noteRepo, themeStateRepo)
 
 	// Router
 	router := controller.NewRouter(&controller.RouterConfig{

@@ -47,12 +47,12 @@ func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, query, use
 	var nearMiss []NearMissItem
 	for _, res := range results {
 		if !strings.HasPrefix(res.ID, "mem:") {
-			nearMiss = append(nearMiss, NearMissItem{ID: res.ID, VectorScore: res.Score, Reason: "wrong_prefix"})
+			nearMiss = append(nearMiss, NearMissItem{ID: res.ID, Text: res.ID, VectorScore: res.Score, Reason: "wrong_prefix"})
 			continue
 		}
 		id := strings.TrimPrefix(res.ID, "mem:")
 		if res.Score < threshold {
-			nearMiss = append(nearMiss, NearMissItem{ID: id, VectorScore: res.Score, Reason: "below_threshold"})
+			nearMiss = append(nearMiss, NearMissItem{ID: id, Text: id, VectorScore: res.Score, Reason: "below_threshold"})
 			continue
 		}
 		hits = append(hits, hit{id: id, vectorScore: res.Score})

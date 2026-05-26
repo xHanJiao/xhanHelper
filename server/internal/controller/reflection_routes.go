@@ -71,6 +71,8 @@ func RegisterReflectionRoutes(rc *ReflectionRoutesConfig) {
 		admin.GET("/message-traces", rc.MessageTraceHandler.ListMessageTraces)
 		admin.GET("/messages/:id/debug", rc.MessageDebugHandler.GetMessageDebug)
 		admin.GET("/messages/:id/debug-detail", rc.MessageDebugHandler.GetMessageDebugDetail)
+		admin.GET("/resource-lookup", rc.MessageDebugHandler.LookupResource)
+		admin.POST("/resource-lookup/batch", rc.MessageDebugHandler.LookupResourcesBatch)
 		admin.GET("/hooks", func(c *gin.Context) {
 			view.JSONOK(c, rc.CronRunner.GetHookStatus())
 		})

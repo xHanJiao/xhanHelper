@@ -181,6 +181,14 @@ function scrollToBottom() {
   })
 }
 
+function handleScrollToBottomBtn() {
+  inputVisible.value = true
+  nextTick(() => {
+    const el = messagesContainerRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
 async function loadHistory(convId, direction = 'before', cursor = null) {
   if (!convId) return
   isLoadingHistory.value = true
@@ -561,7 +569,7 @@ function handleContainerClick(e) {
     <!-- 查看历史消息时，滚动到底部按钮 -->
     <div
       v-if="!isMobile && !inputVisible && isAwayFromBottom"
-      @click="() => { inputVisible = true; const el = messagesContainerRef.value; if (el) el.scrollTop = el.scrollHeight }"
+      @click="handleScrollToBottomBtn"
       :style="{
         position: 'fixed',
         bottom: '24px',

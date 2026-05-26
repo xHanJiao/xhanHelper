@@ -1,9 +1,11 @@
-package agent
+package promptbuilder
 
 import (
 	"context"
 	"strings"
 	"testing"
+
+	"xhan-helper/internal/agent/retrieval"
 )
 
 // ==================== StaticProvider Tests ====================
@@ -90,55 +92,38 @@ func TestRoleResolutionPriority(t *testing.T) {
 // ==================== Layer 3 — Theme Provider ====================
 
 func TestBuildResultMetadata(t *testing.T) {
-	// 验证 BuildResult 正确收集 memory/note IDs
-	items := []ScoredItem{
-		{
-			Content: "theme content",
-			Score:   1.0,
-			Source:  "theme",
-		},
-		{
-			Content: "retrieval content",
-			Score:   0.8,
-			Source:  "retrieval",
-			Meta: map[string]any{
-				"memory_ids": []string{"mem-1", "mem-2"},
-				"note_ids":   []string{"note-1"},
-			},
-		},
+	items := []retrieval.ContextPacket{
+		{ID: "mem-1", Type: "memory", Text: "记忆1", FinalScore: 0.9},
+		{ID: "mem-2", Type: "memory", Text: "记忆2", FinalScore: 0.7},
+		{ID: "note-1", Type: "note", Text: "笔记1", FinalScore: 0.65},
+		{ID: "theme-1", Type: "theme", Text: "主题1", FinalScore: 1.0},
 	}
 
-	result := &BuildResult{}
+	result := &BuildResult{IDsByType: make(map[string][]string)}
 	for _, item := range items {
-		if metaMap, ok := item.Meta.(map[string]any); ok {
-			if memIDs, ok := metaMap["memory_ids"].([]string); ok {
-				result.MemoryIDs = append(result.MemoryIDs, memIDs...)
-			}
-			if noteIDs, ok := metaMap["note_ids"].([]string); ok {
-				result.NoteIDs = append(result.NoteIDs, noteIDs...)
-			}
-		}
+		result.Prompt += item.Text
+		result.IDsByType[item.Type] = append(result.IDsByType[item.Type], item.ID)
 	}
 
-	if len(result.MemoryIDs) != 2 {
-		t.Errorf("expected 2 memory IDs, got %d", len(result.MemoryIDs))
+	memIDs := result.IDsByType["memory"]
+	noteIDs := result.IDsByType["note"]
+	if len(memIDs) != 2 {
+		t.Errorf("expected 2 memory IDs, got %d", len(memIDs))
 	}
-	if len(result.NoteIDs) != 1 {
-		t.Errorf("expected 1 note ID, got %d", len(result.NoteIDs))
+	if len(noteIDs) != 1 {
+		t.Errorf("expected 1 note ID, got %d", len(noteIDs))
 	}
-	if result.MemoryIDs[0] != "mem-1" || result.MemoryIDs[1] != "mem-2" {
-		t.Errorf("wrong memory IDs: %v", result.MemoryIDs)
+	if memIDs[0] != "mem-1" || memIDs[1] != "mem-2" {
+		t.Errorf("wrong memory IDs: %v", memIDs)
 	}
-	if result.NoteIDs[0] != "note-1" {
-		t.Errorf("wrong note ID: %v", result.NoteIDs)
+	if noteIDs[0] != "note-1" {
+		t.Errorf("wrong note ID: %v", noteIDs)
 	}
 }
 
 // ==================== Integration Tests ====================
 
 func TestBuildLayer1Order(t *testing.T) {
-	// 验证 Layer 1 StaticProviders 按注册顺序渲染
-	var order []string
 	p1 := &testStaticProvider{name: "first", content: "A"}
 	p2 := &testStaticProvider{name: "second", content: "B"}
 	p3 := &testStaticProvider{name: "third", content: "C"}
@@ -153,9 +138,7 @@ func TestBuildLayer1Order(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = order
 
-	// A should appear before B, B before C
 	aIdx := strings.Index(result.Prompt, "A")
 	bIdx := strings.Index(result.Prompt, "B")
 	cIdx := strings.Index(result.Prompt, "C")
@@ -169,26 +152,22 @@ func TestBuildLayer1Order(t *testing.T) {
 }
 
 func TestBuildSortsByScore(t *testing.T) {
-	// 验证 SearchProvider 的结果按 score 降序排列
-	high := &testSearchProvider{
-		name:  "high",
-		items: []ScoredItem{{Content: "HIGH", Score: 1.0, Source: "high"}},
-	}
-	low := &testSearchProvider{
-		name:  "low",
-		items: []ScoredItem{{Content: "LOW", Score: 0.3, Source: "low"}},
-	}
-	mid := &testSearchProvider{
-		name:  "mid",
-		items: []ScoredItem{{Content: "MID", Score: 0.5, Source: "mid"}},
+	prov := &testSearchProvider{
+		name: "multi",
+		items: []retrieval.ContextPacket{
+			{Text: "LOW", FinalScore: 0.3, Type: "multi"},
+			{Text: "MID", FinalScore: 0.5, Type: "multi"},
+			{Text: "HIGH", FinalScore: 1.0, Type: "multi"},
+		},
 	}
 
 	b := &SystemPromptBuilder{
-		searchProviders: []SearchProvider{low, mid, high}, // register out of order
+		searchProviders: []SearchProvider{prov},
 	}
 
 	result, err := b.Build(context.Background(), BuildOptions{
 		UserMessage: "test",
+		Embedding:   []float64{0.1},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -201,17 +180,16 @@ func TestBuildSortsByScore(t *testing.T) {
 	if highIdx < 0 || midIdx < 0 || lowIdx < 0 {
 		t.Fatal("not all search results rendered")
 	}
-	if highIdx >= midIdx || midIdx >= lowIdx {
-		t.Errorf("not sorted by score: HIGH at %d, MID at %d, LOW at %d", highIdx, midIdx, lowIdx)
+	if !(highIdx < midIdx && midIdx < lowIdx) {
+		t.Errorf("items within group should be sorted by FinalScore: HIGH at %d, MID at %d, LOW at %d", highIdx, midIdx, lowIdx)
 	}
 }
 
 func TestBuildSearchProviderError(t *testing.T) {
-	// 验证 SearchProvider 出错不阻塞整体构建
 	errProvider := &errorSearchProvider{}
 	okProvider := &testSearchProvider{
 		name:  "ok",
-		items: []ScoredItem{{Content: "OK", Score: 0.5, Source: "ok"}},
+		items: []retrieval.ContextPacket{{Text: "OK", FinalScore: 0.5, Type: "ok"}},
 	}
 
 	b := &SystemPromptBuilder{
@@ -220,6 +198,7 @@ func TestBuildSearchProviderError(t *testing.T) {
 
 	result, err := b.Build(context.Background(), BuildOptions{
 		UserMessage: "test",
+		Embedding:   []float64{0.1},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -241,17 +220,91 @@ func (p *testStaticProvider) Render(ctx context.Context) string { return p.conte
 
 type testSearchProvider struct {
 	name  string
-	items []ScoredItem
+	items []retrieval.ContextPacket
 }
 
-func (p *testSearchProvider) Name() string { return p.name }
-func (p *testSearchProvider) Search(ctx context.Context, query string, opts SearchOptions) ([]ScoredItem, error) {
-	return p.items, nil
+func (p *testSearchProvider) Name() string          { return p.name }
+func (p *testSearchProvider) SectionHeader() string { return "" }
+func (p *testSearchProvider) Search(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
+	return &SearchResult{Items: p.items}, nil
 }
 
 type errorSearchProvider struct{}
 
-func (p *errorSearchProvider) Name() string { return "error" }
-func (p *errorSearchProvider) Search(ctx context.Context, query string, opts SearchOptions) ([]ScoredItem, error) {
+func (p *errorSearchProvider) Name() string          { return "error" }
+func (p *errorSearchProvider) SectionHeader() string { return "" }
+func (p *errorSearchProvider) Search(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
 	return nil, context.DeadlineExceeded
+}
+
+// ==================== Trace Helpers ====================
+
+func TestBuildTraceItems(t *testing.T) {
+	packets := []retrieval.ContextPacket{
+		{ID: "mem-1", Text: "记忆1内容", Score: 0.9, KeywordScore: 0.7},
+		{ID: "mem-2", Text: "记忆2内容", Score: 0.8, KeywordScore: 0.6},
+	}
+	nearMiss := []retrieval.NearMissItem{
+		{ID: "mem-3", VectorScore: 0.4, Reason: "below_threshold"},
+		{ID: "mem-4", VectorScore: 0.3, Reason: "wrong_prefix"},
+	}
+
+	items := buildTraceItems(packets, nearMiss)
+
+	if len(items) != 4 {
+		t.Fatalf("expected 4 trace items (2 selected + 2 near-miss), got %d", len(items))
+	}
+
+	if items[0].DiscardReason != "" {
+		t.Errorf("selected items should have empty DiscardReason, got %q", items[0].DiscardReason)
+	}
+	if items[1].KeywordScore != 0.6 {
+		t.Errorf("item 1 keyword score: expected 0.6, got %f", items[1].KeywordScore)
+	}
+
+	if items[2].DiscardReason != "below_threshold" {
+		t.Errorf("near-miss should have DiscardReason, got %q", items[2].DiscardReason)
+	}
+	if items[2].VectorScore != 0.4 {
+		t.Errorf("near-miss vector score: expected 0.4, got %f", items[2].VectorScore)
+	}
+	if items[3].DiscardReason != "wrong_prefix" {
+		t.Errorf("near-miss should have DiscardReason, got %q", items[3].DiscardReason)
+	}
+}
+
+func TestBuildTraceItemsEmpty(t *testing.T) {
+	items := buildTraceItems(nil, nil)
+	if len(items) != 0 {
+		t.Fatalf("expected 0 items, got %d", len(items))
+	}
+}
+
+func TestCollectIDsByType(t *testing.T) {
+	items := []retrieval.ContextPacket{
+		{ID: "m1", Type: "memory"},
+		{ID: "m2", Type: "memory"},
+		{ID: "n1", Type: "note"},
+		{ID: "m3", Type: "memory"},
+	}
+
+	var memIDs, noteIDs []string
+	for _, item := range items {
+		switch item.Type {
+		case "memory":
+			memIDs = append(memIDs, item.ID)
+		case "note":
+			noteIDs = append(noteIDs, item.ID)
+		}
+	}
+
+	if len(memIDs) != 3 {
+		t.Fatalf("expected 3 memory IDs, got %d", len(memIDs))
+	}
+	if memIDs[0] != "m1" || memIDs[1] != "m2" || memIDs[2] != "m3" {
+		t.Errorf("unexpected IDs: %v", memIDs)
+	}
+	if len(noteIDs) != 1 || noteIDs[0] != "n1" {
+		t.Errorf("expected [n1], got %v", noteIDs)
+	}
 }

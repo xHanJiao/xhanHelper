@@ -7,7 +7,7 @@ import (
 
 // ===== ShortInputCheckStep 测试 =====
 
-func TestShortInputCheck_SkipMemory(t *testing.T) {
+func TestShortInputCheck_SkipRetrieval(t *testing.T) {
 	step := NewShortInputCheckStep()
 	cases := []struct {
 		msg        string
@@ -34,8 +34,8 @@ func TestShortInputCheck_SkipMemory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if pc.SkipMemory != c.expectSkip {
-				t.Errorf("msg=%q: expected skip=%v, got skip=%v", c.msg, c.expectSkip, pc.SkipMemory)
+			if pc.SkipRetrieval != c.expectSkip {
+				t.Errorf("msg=%q: expected skip=%v, got skip=%v", c.msg, c.expectSkip, pc.SkipRetrieval)
 			}
 		})
 	}

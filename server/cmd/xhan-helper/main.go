@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
@@ -319,11 +320,19 @@ func main() {
 	backfillThemeVectors(bgCtx, themeStateRepo, conceptEmbedRepo, themeEmbedder)
 
 	// Orchestrator
-	retriever := retrieval.NewRetriever(memSource, noteSource)
-	pb := agent.NewSystemPromptBuilder(
-		agent.DefaultPromptConfig(),
+	promptCfg := promptbuilder.DefaultPromptConfig()
+	applyRetrievalConfig(&promptCfg, cfg.Retrieval)
+	pb := promptbuilder.NewSystemPromptBuilder(
 		agent.BaseSystemPrompt,
-		reg, retriever, themeStateRepo, convRepo, promptRepo, vectorStore,
+		reg,
+		promptRepo,
+		promptbuilder.WithScoreModifier(
+			promptbuilder.NewThemeProvider(themeStateRepo, convRepo, vectorStore, &promptCfg),
+			promptbuilder.BoostFactor(1.3),
+		),
+		promptbuilder.NewMemoryProvider(memSource, &promptCfg),
+		promptbuilder.NewNoteProvider(noteSource, &promptCfg),
+		promptbuilder.NewHistoryProvider(historySource, &promptCfg),
 	)
 	orch := agent.New(&agent.OrchestratorConfig{
 		FlashClient:   llmClient,
@@ -372,6 +381,7 @@ func main() {
 	themeHandler := controller.NewThemeHandler(themeStateRepo)
 	reflectionAdminHandler := controller.NewReflectionAdminHandler(traceRepo)
 	messageTraceHandler := controller.NewMessageTraceHandler(msgRepo)
+	messageDebugHandler := controller.NewMessageDebugHandler(msgRepo)
 
 	// Router
 	router := controller.NewRouter(&controller.RouterConfig{
@@ -400,6 +410,7 @@ func main() {
 		ThemeHandler:           themeHandler,
 		ReflectionAdminHandler: reflectionAdminHandler,
 		MessageTraceHandler:    messageTraceHandler,
+		MessageDebugHandler:    messageDebugHandler,
 		PendingFindingRepo:     pendingFindingRepo,
 		ReflectionOrch:         reflectionOrch,
 		CronRunner:             cronRunner,
@@ -435,6 +446,28 @@ func main() {
 }
 
 // warmupThemeEmbeddings 从 embedding 表加载主题向量到内存向量库
+// applyRetrievalConfig 将 yaml 配置中非零的 threshold/limit 覆盖到 PromptConfig
+func applyRetrievalConfig(pc *promptbuilder.PromptConfig, rc config.RetrievalConfig) {
+	if rc.Memory.Threshold > 0 {
+		pc.MemoryThreshold = rc.Memory.Threshold
+	}
+	if rc.Memory.Limit > 0 {
+		pc.MemoryLimit = rc.Memory.Limit
+	}
+	if rc.Note.Threshold > 0 {
+		pc.NoteThreshold = rc.Note.Threshold
+	}
+	if rc.Note.Limit > 0 {
+		pc.NoteLimit = rc.Note.Limit
+	}
+	if rc.History.Threshold > 0 {
+		pc.HistoryThreshold = rc.History.Threshold
+	}
+	if rc.History.Limit > 0 {
+		pc.HistoryLimit = rc.History.Limit
+	}
+}
+
 func warmupThemeEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore *agent.VectorStore, conceptEmbedRepo *service.ConceptEmbeddingRepo, themeStateRepo *service.ThemeStateRepo) {
 	const pageSize = 100
 	loaded := 0

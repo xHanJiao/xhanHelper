@@ -171,7 +171,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			AgentID:            agentID,
 			MemoryThreshold:    req.MemoryThreshold,
 			MemoryLimit:        req.MemoryLimit,
-			SkipMemory:         pc.SkipMemory,
+			SkipRetrieval:      pc.SkipRetrieval,
 			Temperature:        agentTemperature,
 			MaxTokens:          agentMaxTokens,
 			Thinking:           agentThinking,

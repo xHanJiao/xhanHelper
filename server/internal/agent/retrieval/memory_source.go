@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"strings"
 
 	"xhan-helper/internal/config"
@@ -31,34 +30,36 @@ func NewMemorySource(vs VectorStore, memRepo *service.UserMemoryRepo, embeddingR
 func (s *MemorySource) Name() string { return "memory" }
 
 func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
-	threshold float64, limit int) ([]ContextPacket, error) {
-	if s.vectorStore == nil || s.memRepo == nil {
-		return nil, nil
-	}
+	threshold float64, limit int) ([]ContextPacket, []NearMissItem, error) {
 
 	results := s.vectorStore.Search(queryVec, limit, func(e Entry) bool {
 		return e.Metadata["type"] == "mem" && e.Metadata["user_id"] == userID
 	})
 	if len(results) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	// 收集通过阈值的记忆 ID 和向量分
 	type hit struct {
 		id          string
 		vectorScore float64
 	}
 	var hits []hit
+	var nearMiss []NearMissItem
 	for _, res := range results {
-		if res.Score < threshold || !strings.HasPrefix(res.ID, "mem:") {
+		if !strings.HasPrefix(res.ID, "mem:") {
+			nearMiss = append(nearMiss, NearMissItem{ID: res.ID, VectorScore: res.Score, Reason: "wrong_prefix"})
 			continue
 		}
 		id := strings.TrimPrefix(res.ID, "mem:")
+		if res.Score < threshold {
+			nearMiss = append(nearMiss, NearMissItem{ID: id, VectorScore: res.Score, Reason: "below_threshold"})
+			continue
+		}
 		hits = append(hits, hit{id: id, vectorScore: res.Score})
 		log.Printf("[vector] memory hit: id=%s, score=%.4f", res.ID, res.Score)
 	}
 	if len(hits) == 0 {
-		return nil, nil
+		return nil, nearMiss, nil
 	}
 
 	memIDs := make([]string, len(hits))
@@ -69,8 +70,11 @@ func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, query, use
 	}
 
 	memories, err := s.memRepo.GetByIDs(ctx, memIDs)
-	if err != nil || len(memories) == 0 {
-		return nil, nil
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(memories) == 0 {
+		return nil, nil, fmt.Errorf("all hit memories ids not found, ids: %v", memIDs)
 	}
 
 	// 异步批量更新确认计数
@@ -89,7 +93,7 @@ func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, query, use
 	scored := s.ranker.Score(query, inputs)
 
 	packets := make([]ContextPacket, 0, len(scored))
-	for idx, sc := range scored {
+	for _, sc := range scored {
 		m := memByID[sc.ID]
 		var text string
 		topicPart := ""
@@ -102,26 +106,21 @@ func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, query, use
 			m.MemoryValue,
 			m.ConfirmCount,
 			m.LastConfirmedAt.In(config.BJ).Format("01-02"))
-		if idx == 0 {
-			text = "### 相关记忆\n" + text
-		}
 		packets = append(packets, ContextPacket{
-			ID:                     sc.ID,
-			Type:                   "memory",
-			Text:                   text,
-			Score:                  sc.VectorScore,
-			KeywordScore:           sc.KeywordScore,
-			CorrelationCoefficient: sc.FinalScore,
-			TokenCount:             int(math.Round(sc.Freshness * 100)),
+			ID:           sc.ID,
+			Type:         "memory",
+			Text:         text,
+			Score:        sc.VectorScore,
+			KeywordScore: sc.KeywordScore,
+			FinalScore:   sc.FinalScore,
 		})
 	}
-	return packets, nil
+	return packets, nearMiss, nil
 }
 
 func (s *MemorySource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 	if s.vectorStore == nil || embedder == nil || s.embeddingRepo == nil {
-		log.Printf("[vector] memory warmup: skipped (no config)")
-		return
+		panic("[vector] memory warmup: skipped (no config)")
 	}
 	log.Printf("[vector] memory warmup: loading existing memories...")
 

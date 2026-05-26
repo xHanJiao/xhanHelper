@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/llm"
 )
 
@@ -194,7 +195,7 @@ func TestFinalizeRound_ThoughtDone(t *testing.T) {
 	se := &llm.StreamEvent{Type: "done"}
 	done := o.finalizeRound(context.Background(), events, se,
 		`{"reply":"ok"}`, "thinking...",
-		"cv", "u1", nil, nil, nil, state,
+		"cv", "u1", nil, nil, state,
 	)
 
 	if !done {
@@ -220,7 +221,7 @@ func TestFinalizeRound_NoThoughtDoneWithoutReasoning(t *testing.T) {
 	se := &llm.StreamEvent{Type: "done"}
 	_ = o.finalizeRound(context.Background(), events, se,
 		`{"reply":"ok"}`, "", // 空 reasoning
-		"cv", "u1", nil, nil, nil, state,
+		"cv", "u1", nil, nil, state,
 	)
 
 	close(events)
@@ -239,7 +240,7 @@ func TestFinalizeRound_CleanTextExtraction(t *testing.T) {
 	se := &llm.StreamEvent{Type: "done"}
 	_ = o.finalizeRound(context.Background(), events, se,
 		`{"reply":"你好，世界"}`, "",
-		"cv", "u1", nil, nil, nil, state,
+		"cv", "u1", nil, nil, state,
 	)
 
 	close(events)
@@ -269,7 +270,7 @@ func TestFinalizeRound_ReturnsFalseOnParseError(t *testing.T) {
 	se := &llm.StreamEvent{Type: "done"}
 	done := o.finalizeRound(context.Background(), events, se,
 		"这不是合法的 JSON {{{ broken", "",
-		"cv", "u1", nil, nil, nil, state,
+		"cv", "u1", nil, nil, state,
 	)
 
 	if done {
@@ -295,7 +296,7 @@ func TestFinalizeRound_ReturnsTrueOnTextOnly(t *testing.T) {
 	se := &llm.StreamEvent{Type: "done"}
 	done := o.finalizeRound(context.Background(), events, se,
 		`{"reply":"ok"}`, "",
-		"cv", "u1", nil, nil, nil, state,
+		"cv", "u1", nil, nil, state,
 	)
 
 	// 无 tool_calls → handleOneRoundResponse 返回 done=true
@@ -538,7 +539,7 @@ func TestMkLlmChatReq_ParameterResolution(t *testing.T) {
 				MaxTokens:   tt.reqMax,
 				Thinking:    tt.reqThink,
 			}
-			result := &BuildResult{Prompt: "sys-prompt"}
+			result := &promptbuilder.BuildResult{Prompt: "sys-prompt"}
 			msgs := []llm.Message{{Role: "user", Content: "hi"}}
 
 			cr := o.mkLlmChatReq(req, result, msgs)
@@ -573,7 +574,7 @@ func TestMkLlmChatReq_PassThroughFields(t *testing.T) {
 		defaultMaxTokens:   ptr(2048),
 	}
 
-	result := &BuildResult{Prompt: "custom system prompt"}
+	result := &promptbuilder.BuildResult{Prompt: "custom system prompt"}
 	msgs := []llm.Message{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "world"},
@@ -611,7 +612,7 @@ func TestMkLlmChatReq_DefaultsNilWhenNotSet(t *testing.T) {
 		Temperature: nil,
 		MaxTokens:   nil,
 	}
-	result := &BuildResult{Prompt: "p"}
+	result := &promptbuilder.BuildResult{Prompt: "p"}
 	msgs := []llm.Message{}
 
 	cr := o.mkLlmChatReq(req, result, msgs)
@@ -656,7 +657,7 @@ func TestRunOneRound_ContextCancelled(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &BuildResult{Prompt: "sys"}
+	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	done := o.runOneRound(ctx, events, &mockLLMClient{}, req, result, state, 0)
 
@@ -690,7 +691,7 @@ func TestRunOneRound_LLMError(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &BuildResult{Prompt: "sys"}
+	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{err: fmt.Errorf("API timeout")}},
@@ -722,7 +723,7 @@ func TestRunOneRound_StreamError(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &BuildResult{Prompt: "sys"}
+	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
@@ -753,7 +754,7 @@ func TestRunOneRound_DoneTextOnly(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 256)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &BuildResult{Prompt: "sys"}
+	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
@@ -779,7 +780,7 @@ func TestRunOneRound_DoneParseErrorRetry(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 256)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &BuildResult{Prompt: "sys"}
+	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
@@ -818,7 +819,7 @@ func TestRunOneRound_DoneWithReasoning(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 256)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &BuildResult{Prompt: "sys"}
+	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
@@ -853,7 +854,7 @@ func TestRunOneRound_EmptyStream(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 256)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &BuildResult{Prompt: "sys"}
+	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
@@ -879,7 +880,7 @@ func TestRunOneRound_UsesStateMsgs(t *testing.T) {
 		},
 	}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &BuildResult{Prompt: "sys"}
+	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	recorder := &recordingLLMClient{
 		mockLLMClient: mockLLMClient{

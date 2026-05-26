@@ -67,12 +67,12 @@ func TestPipelineRun(t *testing.T) {
 	steps := []Step{
 		&execStep{name: "step1", fn: func(ctx context.Context) (context.Context, error) {
 			executed = append(executed, "step1")
-			GetPreContext(ctx).SkipMemory = true
+			GetPreContext(ctx).SkipRetrieval = true
 			return ctx, nil
 		}},
 		&execStep{name: "step2", fn: func(ctx context.Context) (context.Context, error) {
 			executed = append(executed, "step2")
-			if !GetPreContext(ctx).SkipMemory {
+			if !GetPreContext(ctx).SkipRetrieval {
 				t.Error("step2: expected skip_memory=true from step1")
 			}
 			return ctx, nil
@@ -91,7 +91,7 @@ func TestPipelineRun(t *testing.T) {
 	if len(executed) != 2 || executed[0] != "step1" || executed[1] != "step2" {
 		t.Errorf("wrong execution order: %v", executed)
 	}
-	if !pc.SkipMemory {
+	if !pc.SkipRetrieval {
 		t.Error("expected skip_memory to be true")
 	}
 }

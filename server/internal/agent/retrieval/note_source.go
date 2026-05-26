@@ -29,16 +29,13 @@ func NewNoteSource(vs VectorStore, noteRepo *service.NoteRepo, embeddingRepo *se
 func (s *NoteSource) Name() string { return "note" }
 
 func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
-	threshold float64, limit int) ([]ContextPacket, error) {
-	if s.vectorStore == nil || s.noteRepo == nil {
-		return nil, nil
-	}
+	threshold float64, limit int) ([]ContextPacket, []NearMissItem, error) {
 
 	results := s.vectorStore.Search(queryVec, limit, func(e Entry) bool {
-		return e.Metadata["type"] == "note"
+		return e.Metadata["type"] == "note" && e.Metadata["user_id"] == userID
 	})
 	if len(results) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	type hit struct {
@@ -46,16 +43,22 @@ func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, query, userI
 		score float64
 	}
 	var hits []hit
+	var nearMiss []NearMissItem
 	for _, res := range results {
-		if res.Score < threshold || !strings.HasPrefix(res.ID, "note:") {
+		if !strings.HasPrefix(res.ID, "note:") {
+			nearMiss = append(nearMiss, NearMissItem{ID: res.ID, VectorScore: res.Score, Reason: "wrong_prefix"})
 			continue
 		}
 		id := strings.TrimPrefix(res.ID, "note:")
+		if res.Score < threshold {
+			nearMiss = append(nearMiss, NearMissItem{ID: id, VectorScore: res.Score, Reason: "below_threshold"})
+			continue
+		}
 		hits = append(hits, hit{id: id, score: res.Score})
 		log.Printf("[vector] note hit: id=%s, score=%.4f", res.ID, res.Score)
 	}
 	if len(hits) == 0 {
-		return nil, nil
+		return nil, nearMiss, nil
 	}
 
 	noteIDs := make([]string, len(hits))
@@ -66,8 +69,11 @@ func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, query, userI
 	}
 
 	notes, err := s.noteRepo.GetByIDs(ctx, noteIDs)
-	if err != nil || len(notes) == 0 {
-		return nil, nil
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(notes) == 0 {
+		return nil, nil, fmt.Errorf("all hit note ids not found, ids: %v", noteIDs)
 	}
 
 	inputs := make([]scoreInput, len(notes))
@@ -80,27 +86,24 @@ func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, query, userI
 	scored := s.ranker.Score(query, inputs)
 
 	packets := make([]ContextPacket, 0, len(scored))
-	for i, sc := range scored {
+	for _, sc := range scored {
 		n := noteByID[sc.ID]
 		text := fmt.Sprintf("- [%s] %s\n", n.Topic, n.Content)
-		if i == 0 {
-			text = "### 相关笔记\n" + text
-		}
 		packets = append(packets, ContextPacket{
 			ID:           sc.ID,
 			Type:         "note",
 			Text:         text,
 			Score:        sc.VectorScore,
 			KeywordScore: sc.KeywordScore,
+			FinalScore:   sc.FinalScore,
 		})
 	}
-	return packets, nil
+	return packets, nearMiss, nil
 }
 
 func (s *NoteSource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 	if s.vectorStore == nil || embedder == nil || s.embeddingRepo == nil {
-		log.Printf("[vector] note warmup: skipped (no config)")
-		return
+		panic("[vector] note warmup: skipped (no config)")
 	}
 	log.Printf("[vector] note warmup: loading existing notes...")
 

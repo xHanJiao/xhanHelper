@@ -14,7 +14,7 @@ import (
 type PreContext struct {
 	RawMsg             string  // 原始用户消息
 	NormalizedMsg      string  // 日期标准化后的消息
-	SkipMemory         bool    // 是否跳过记忆检索
+	SkipRetrieval      bool    // 是否跳过记忆检索
 	IsShort            bool    // 是否短输入
 	UserID             string  // 用户 ID
 	AgentID            string  // 匹配的智能体 ID

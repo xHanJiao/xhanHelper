@@ -26,8 +26,7 @@ func (s *HistorySource) Name() string { return "history" }
 
 func (s *HistorySource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 	if s.vectorStore == nil || s.embeddingRepo == nil {
-		log.Printf("[vector] history warmup: skipped (no config)")
-		return
+		panic("[vector] history warmup: skipped (no config)")
 	}
 	log.Printf("[vector] history warmup: loading persisted message embeddings...")
 
@@ -70,36 +69,45 @@ type historyHit struct {
 }
 
 func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
-	threshold float64, limit int) ([]ContextPacket, error) {
-	if s.vectorStore == nil || s.msgRepo == nil {
-		return nil, nil
-	}
+	threshold float64, limit int) ([]ContextPacket, []NearMissItem, error) {
 
 	results := s.vectorStore.Search(queryVec, limit*2, func(e Entry) bool {
 		return e.Metadata["type"] == "msg" && e.Metadata["user_id"] == userID
 	})
 	if len(results) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	var hits []historyHit
+	var nearMiss []NearMissItem
 	for _, res := range results {
-		if res.Score < threshold || !strings.HasPrefix(res.ID, "msg:") {
+		if !strings.HasPrefix(res.ID, "msg:") {
+			nearMiss = append(nearMiss, NearMissItem{ID: res.ID, VectorScore: res.Score, Reason: "wrong_prefix"})
 			continue
 		}
 		msgID := strings.TrimPrefix(res.ID, "msg:")
-		msg, err := s.msgRepo.GetByIDCols(ctx, msgID)
-		if err != nil || msg == nil {
+		if res.Score < threshold {
+			nearMiss = append(nearMiss, NearMissItem{ID: msgID, VectorScore: res.Score, Reason: "below_threshold"})
 			continue
 		}
-		if msg.ConversationID == convID || msg.UserID != userID {
+		msg, err := s.msgRepo.GetByIDCols(ctx, msgID)
+		if err != nil || msg == nil {
+			nearMiss = append(nearMiss, NearMissItem{ID: msgID, VectorScore: res.Score, Reason: "db_not_found"})
+			continue
+		}
+		if msg.ConversationID == convID {
+			nearMiss = append(nearMiss, NearMissItem{ID: msgID, VectorScore: res.Score, Reason: "same_conversation"})
+			continue
+		}
+		if msg.UserID != userID {
+			nearMiss = append(nearMiss, NearMissItem{ID: msgID, VectorScore: res.Score, Reason: "not_owner"})
 			continue
 		}
 		hits = append(hits, historyHit{msg: msg, vecScore: res.Score})
 	}
 
 	if len(hits) == 0 {
-		return nil, nil
+		return nil, nearMiss, nil
 	}
 
 	inputs := make([]scoreInput, len(hits))
@@ -126,24 +134,24 @@ func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, query, us
 		}
 		roundMsgs, err := s.msgRepo.GetMessagesSince(ctx, msg.ConversationID, msg.CreatedAt, 100)
 		if err != nil {
-			log.Printf("[history] GetMessagesSince error: conv=%s, msg=%s, %v",
-				msg.ConversationID[:min(8, len(msg.ConversationID))], msg.ID[:8], err)
+			nearMiss = append(nearMiss, NearMissItem{ID: msg.ID, VectorScore: sr.VectorScore, Reason: "round_fetch_error"})
 			continue
 		}
 		filtered := FilterMessageRound(roundMsgs, msg.ID)
 		if len(filtered) == 0 {
+			nearMiss = append(nearMiss, NearMissItem{ID: msg.ID, VectorScore: sr.VectorScore, Reason: "round_empty"})
 			continue
 		}
 
 		packets = append(packets, ContextPacket{
-			ID:                     msg.ID,
-			Type:                   "history",
-			Text:                   "### 历史相关对话\n" + FormatMessageRound(filtered, msg.ConversationID),
-			CorrelationCoefficient: sr.VectorScore,
-			Score:                  sr.FinalScore,
-			KeywordScore:           sr.KeywordScore,
+			ID:           msg.ID,
+			Type:         "history",
+			Text:         FormatMessageRound(filtered, msg.ConversationID),
+			Score:        sr.VectorScore,
+			FinalScore:   sr.FinalScore,
+			KeywordScore: sr.KeywordScore,
 		})
 	}
 
-	return packets, nil
+	return packets, nearMiss, nil
 }

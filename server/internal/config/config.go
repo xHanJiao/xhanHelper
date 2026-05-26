@@ -113,6 +113,8 @@ type SourceWeights struct {
 	KeywordWeight   float64 `yaml:"keyword_weight"`
 	FreshnessWeight float64 `yaml:"freshness_weight"`
 	FreshnessDecay  float64 `yaml:"freshness_decay"`
+	Threshold       float64 `yaml:"threshold"`
+	Limit           int     `yaml:"limit"`
 }
 
 // RetrievalConfig — 记忆检索配置
@@ -331,10 +333,16 @@ func mergeSourceWeights(dst, src *SourceWeights) {
 	if src.FreshnessDecay != 0 {
 		dst.FreshnessDecay = src.FreshnessDecay
 	}
+	if src.Threshold != 0 {
+		dst.Threshold = src.Threshold
+	}
+	if src.Limit != 0 {
+		dst.Limit = src.Limit
+	}
 }
 
 // setSourceWeightsDefault 为源权重设置默认值（仅当当前值为零时）
-func setSourceWeightsDefault(w *SourceWeights, vecW, kwW, fwW, decay float64) {
+func setSourceWeightsDefault(w *SourceWeights, vecW, kwW, fwW, decay, threshold float64, limit int) {
 	if w.VectorWeight == 0 {
 		w.VectorWeight = vecW
 	}
@@ -346,6 +354,12 @@ func setSourceWeightsDefault(w *SourceWeights, vecW, kwW, fwW, decay float64) {
 	}
 	if w.FreshnessDecay == 0 {
 		w.FreshnessDecay = decay
+	}
+	if w.Threshold == 0 {
+		w.Threshold = threshold
+	}
+	if w.Limit == 0 {
+		w.Limit = limit
 	}
 }
 
@@ -378,9 +392,9 @@ func validate(cfg *Config) error {
 	if cfg.Retrieval.FreshnessDecay == 0 {
 		cfg.Retrieval.FreshnessDecay = 0.02
 	}
-	setSourceWeightsDefault(&cfg.Retrieval.Memory, 0.5, 0.3, 0.2, cfg.Retrieval.FreshnessDecay)
-	setSourceWeightsDefault(&cfg.Retrieval.Note, 0.5, 0.3, 0.0, 0)
-	setSourceWeightsDefault(&cfg.Retrieval.History, 0.6, 0.3, 0.1, 0.005)
+	setSourceWeightsDefault(&cfg.Retrieval.Memory, 0.5, 0.3, 0.2, cfg.Retrieval.FreshnessDecay, 0.5, 8)
+	setSourceWeightsDefault(&cfg.Retrieval.Note, 0.5, 0.3, 0.0, 0, 0.5, 5)
+	setSourceWeightsDefault(&cfg.Retrieval.History, 0.6, 0.3, 0.1, 0.005, 0.8, 5)
 	if cfg.Reflection.LaunchMaxIterations == 0 {
 		cfg.Reflection.LaunchMaxIterations = 8
 	}

@@ -1,0 +1,200 @@
+package promptbuilder
+
+import (
+	"context"
+	"log"
+	"sort"
+	"strings"
+	"sync"
+
+	"xhan-helper/internal/agent/retrieval"
+	"xhan-helper/internal/tool"
+)
+
+// ==================== Builder ====================
+
+// BuildOptions — Build() 的入参。
+// orchestrator 在 Run() 中预计算 embedding 后传入，Builder 不自行 embed。
+type BuildOptions struct {
+	UserID         string
+	ConversationID string
+	UserMessage    string    // 用户原始输入（检索查询文本）
+	Embedding      []float64 // 用户消息 embedding（nil 则跳过检索）
+	AgentPrompt    string    // 自定义 agent 的 prompt（空则用默认 basePrompt）
+}
+
+// BuildResult — Build() 的返回值。
+// Prompt 是完整的 system prompt，IDsByType 按 type 聚合注入资源的 ID（memory/note），
+// 用于前端 done 事件和 memory_search 去重。Trace 写入 assistant message Extra。
+type BuildResult struct {
+	Prompt    string              // 最终 system prompt（Layer 1 + 2 + 3 拼接完成）
+	IDsByType map[string][]string // type → ids，如 "memory" → [...], "note" → [...]
+	Trace     *PromptTrace        // provider 构建追溯（写入 assistant message Extra）
+}
+
+// SystemPromptBuilder — system prompt 构建器，orchestrator 的唯一入口。
+// 创建后 provider 列表固定，每次 Build() 按三层模型重新构建。
+type SystemPromptBuilder struct {
+	staticProviders []StaticProvider // Layer 1 公共规则（按注册顺序渲染）
+	basePrompt      string           // Layer 2 默认角色定义
+	searchProviders []SearchProvider // Layer 3 动态上下文（按 FinalScore 排序）
+	promptResolver  PromptResolver   // 用户自定义 Prompt（Layer 2 备选）
+}
+
+// NewSystemPromptBuilder 创建构建器。
+//
+// 依赖注入：
+//   - registry: 渲染工具定义（Layer 1）
+//   - promptResolver: 用户自定义 Prompt 解析（Layer 2）
+//   - searchProviders: Layer 3 动态上下文 provider（theme / memory / note / history）
+func NewSystemPromptBuilder(
+	basePrompt string,
+	registry *tool.Registry,
+	promptResolver PromptResolver,
+	searchProviders ...SearchProvider,
+) *SystemPromptBuilder {
+	return &SystemPromptBuilder{
+		basePrompt:     basePrompt,
+		promptResolver: promptResolver,
+		staticProviders: []StaticProvider{
+			&corePrinciplesProvider{},
+			&importantRulesProvider{registry: registry},
+			&toolDefinitionsProvider{registry: registry},
+			&timeProvider{},
+		},
+		searchProviders: searchProviders,
+	}
+}
+
+// Build 构建完整 system prompt。
+//
+// 流程:
+//  1. Layer 1: 顺序渲染所有 StaticProvider，记录 trace
+//  2. Layer 2: AgentPrompt > UserPrompt > basePrompt 优先级解析角色定义
+//  3. Layer 3: 各 SearchProvider 独立检索，返回 SearchResult{Items, TraceItems}
+//  4. 所有 Items 按 FinalScore 降序排列（各 provider 的真实 ranker 分，非写死）
+//  5. 按序拼接 Text，同时从 Type 字段提取 MemoryIDs / NoteIDs
+//
+// 任一 provider 出错不影响整体，该 provider 的结果被跳过（trace 仍记录为空）。
+func (b *SystemPromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
+	var sb strings.Builder
+	trace := &PromptTrace{}
+
+	// —— Layer 1: 公共规则（不可覆盖） ——
+	for _, sp := range b.staticProviders {
+		if s := sp.Render(ctx); s != "" {
+			sb.WriteString(s)
+			sb.WriteString("\n")
+		}
+		trace.addStatic(sp.Name())
+	}
+
+	// —— Layer 2: 角色定义（可覆盖） ——
+	// 用 blockquote 包裹，避免 agent 内部 markdown 标题与外层结构冲突
+	sb.WriteString("\n## 角色定义\n\n")
+	rolePrompt := b.resolveRolePrompt(ctx, opts)
+	for _, line := range strings.Split(rolePrompt, "\n") {
+		sb.WriteString("> ")
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+
+	// —— Layer 3: 动态上下文 ——
+	idsByType := b.buildDynamicContext(ctx, opts, &sb, trace)
+	result := &BuildResult{
+		Prompt:    sb.String(),
+		Trace:     trace,
+		IDsByType: idsByType,
+	}
+	return result, nil
+}
+
+// buildDynamicContext 检索所有 SearchProvider，排序、分组、渲染到 sb，返回 type→ids 映射。
+func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts BuildOptions, sb *strings.Builder, trace *PromptTrace) map[string][]string {
+	if len(opts.Embedding) == 0 {
+		return nil
+	}
+
+	searchOpts := SearchOptions{
+		Query:          opts.UserMessage,
+		UserID:         opts.UserID,
+		ConversationID: opts.ConversationID,
+		Embedding:      opts.Embedding,
+	}
+
+	// —— 1. 并发检索 ——
+	type slot struct {
+		items      []retrieval.ContextPacket
+		traceItems []TraceItem
+		err        error
+	}
+	slots := make([]slot, len(b.searchProviders))
+	var wg sync.WaitGroup
+	for i, sp := range b.searchProviders {
+		wg.Add(1)
+		go func(i int, sp SearchProvider) {
+			defer wg.Done()
+			sr, err := sp.Search(ctx, searchOpts)
+			if err != nil {
+				slots[i].err = err
+				return
+			}
+			slots[i].items = sr.Items
+			slots[i].traceItems = sr.TraceItems
+		}(i, sp)
+	}
+	wg.Wait()
+
+	// —— 2. 收集结果 + 记录 trace ——
+	var allItems []retrieval.ContextPacket
+	for i, sp := range b.searchProviders {
+		s := slots[i]
+		if s.err != nil {
+			log.Printf("[prompt] %s search error: %v", sp.Name(), s.err)
+			trace.addSearch(sp.Name(), &TraceInput{Query: opts.UserMessage}, nil, s.err)
+			continue
+		}
+		trace.addSearch(sp.Name(), &TraceInput{Query: opts.UserMessage}, s.traceItems, nil)
+		allItems = append(allItems, s.items...)
+	}
+
+	// —— 3. 按 FinalScore 降序排列 ——
+	sort.Slice(allItems, func(i, j int) bool {
+		return allItems[i].FinalScore > allItems[j].FinalScore
+	})
+
+	// —— 4. 按 provider 分组渲染 ——
+	sb.WriteString("\n## 上下文信息\n")
+	idsByType := make(map[string][]string)
+	for _, sp := range b.searchProviders {
+		header := sp.SectionHeader()
+		spName := sp.Name()
+		var group strings.Builder
+		for _, item := range allItems {
+			if item.Type == spName {
+				group.WriteString(item.Text)
+				idsByType[item.Type] = append(idsByType[item.Type], item.ID)
+			}
+		}
+		if group.Len() > 0 && header != "" {
+			sb.WriteString(header)
+		}
+		sb.WriteString(group.String())
+	}
+	return idsByType
+}
+
+// resolveRolePrompt — Layer 2 角色定义解析。
+// 优先级: AgentPrompt > UserPrompt > basePrompt
+// AgentPrompt 是会话级选择（用户主动切换 agent），UserPrompt 是用户全局默认。
+func (b *SystemPromptBuilder) resolveRolePrompt(ctx context.Context, opts BuildOptions) string {
+	if opts.AgentPrompt != "" {
+		return opts.AgentPrompt
+	}
+	if b.promptResolver != nil {
+		if custom := b.promptResolver.ResolveActive(ctx, opts.UserID, "flash"); custom != "" {
+			return custom
+		}
+	}
+	return b.basePrompt
+}

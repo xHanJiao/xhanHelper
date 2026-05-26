@@ -17,7 +17,7 @@ func NewShortInputCheckStep() *ShortInputCheckStep { return &ShortInputCheckStep
 
 func (s *ShortInputCheckStep) Name() string                       { return "shortInputCheck" }
 func (s *ShortInputCheckStep) Requires() []string                 { return []string{"raw_msg"} }
-func (s *ShortInputCheckStep) Produces() []string                 { return []string{"skip_memory", "is_short"} }
+func (s *ShortInputCheckStep) Produces() []string                 { return []string{"skip_retrieval", "is_short"} }
 func (s *ShortInputCheckStep) ShouldRun(ctx context.Context) bool { return true }
 
 func (s *ShortInputCheckStep) Run(ctx context.Context) (context.Context, error) {
@@ -36,15 +36,15 @@ func (s *ShortInputCheckStep) Run(ctx context.Context) (context.Context, error) 
 		}
 	}
 
-	skipMemory := false
+	skipRetrieval := false
 	if isShort && !isQuestion && !hasIntent {
-		skipMemory = true
-		log.Printf("[pipeline] shortInputCheck: skip_memory=true (chars=%d, bytes=%d, question=%v, intent=%v)", charLen, byteLen, isQuestion, hasIntent)
+		skipRetrieval = true
+		log.Printf("[pipeline] shortInputCheck: skip_retrieval=true (chars=%d, bytes=%d, question=%v, intent=%v)", charLen, byteLen, isQuestion, hasIntent)
 	} else {
-		log.Printf("[pipeline] shortInputCheck: skip_memory=false (chars=%d, bytes=%d, question=%v, intent=%v)", charLen, byteLen, isQuestion, hasIntent)
+		log.Printf("[pipeline] shortInputCheck: skip_retrieval=false (chars=%d, bytes=%d, question=%v, intent=%v)", charLen, byteLen, isQuestion, hasIntent)
 	}
 
-	pc.SkipMemory = skipMemory
+	pc.SkipRetrieval = skipRetrieval
 	pc.IsShort = isShort
 	return ctx, nil
 }

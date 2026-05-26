@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 )
@@ -156,7 +157,7 @@ func TestRunReActLoop_StrictJSON_TextOnlyReply(t *testing.T) {
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
 
-	result := &BuildResult{Prompt: "test prompt"}
+	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -196,7 +197,7 @@ func TestRunReActLoop_StrictJSON_ReplyWithEmptyToolCalls(t *testing.T) {
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
-	result := &BuildResult{Prompt: "test prompt"}
+	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -234,7 +235,7 @@ func TestRunReActLoop_PureText_AcceptedGracefully(t *testing.T) {
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
-	result := &BuildResult{Prompt: "test prompt"}
+	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -280,7 +281,7 @@ func TestRunReActLoop_StrictJSON_InvalidJSONTriggersRetry(t *testing.T) {
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
-	result := &BuildResult{Prompt: "test prompt"}
+	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -327,7 +328,7 @@ func TestRunReActLoop_LLMError(t *testing.T) {
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
-	result := &BuildResult{Prompt: "test prompt"}
+	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -387,7 +388,7 @@ func TestRunReActLoop_JSONWithPrefixText_AcceptedGracefully(t *testing.T) {
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
-	result := &BuildResult{Prompt: "test prompt"}
+	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -434,7 +435,7 @@ func TestRunReActLoop_StreamingBuffersUntilDone(t *testing.T) {
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
-	result := &BuildResult{Prompt: "test prompt"}
+	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -475,7 +476,7 @@ type mockPromptBuilder struct {
 	buildErr error
 }
 
-func (m *mockPromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
+func (m *mockPromptBuilder) Build(ctx context.Context, opts promptbuilder.BuildOptions) (*promptbuilder.BuildResult, error) {
 	return nil, m.buildErr
 }
 

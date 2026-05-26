@@ -20,6 +20,7 @@ type ReflectionRoutesConfig struct {
 	ThemeHandler           *ThemeHandler
 	ReflectionAdminHandler *ReflectionAdminHandler
 	MessageTraceHandler    *MessageTraceHandler
+	MessageDebugHandler    *MessageDebugHandler
 	PendingFindingRepo     *service.PendingFindingRepo
 	ReflectionOrch         *agent.ReflectionOrchestrator
 	CronRunner             *agent.CronRunner
@@ -68,6 +69,8 @@ func RegisterReflectionRoutes(rc *ReflectionRoutesConfig) {
 		admin.GET("/reflection/decisions", rc.ReflectionAdminHandler.ListDecisions)
 		admin.GET("/reflection/llm-calls/:id", rc.ReflectionAdminHandler.GetLLMCall)
 		admin.GET("/message-traces", rc.MessageTraceHandler.ListMessageTraces)
+		admin.GET("/messages/:id/debug", rc.MessageDebugHandler.GetMessageDebug)
+		admin.GET("/messages/:id/debug-detail", rc.MessageDebugHandler.GetMessageDebugDetail)
 		admin.GET("/hooks", func(c *gin.Context) {
 			view.JSONOK(c, rc.CronRunner.GetHookStatus())
 		})

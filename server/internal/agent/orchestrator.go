@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -39,7 +40,7 @@ type RunRequest struct {
 	AgentID            string   // 关联的智能体 ID
 	MemoryThreshold    float64  // 记忆检索相关度阈值，默认 0.5
 	MemoryLimit        int      // 记忆检索最大条数，默认 8
-	SkipMemory         bool     // 跳过记忆检索（短输入等场景）
+	SkipRetrieval      bool     // 跳过记忆检索（短输入等场景）
 	Temperature        *float64 // LLM 采样温度，nil 用配置默认
 	MaxTokens          *int     // LLM 最大输出 token，nil 用配置默认
 	Thinking           *bool    // 思考模式：nil=不传，true=开启，false=关闭
@@ -58,11 +59,6 @@ type LLMResponse struct {
 	ToolCalls []tool.ToolCall `json:"tool_calls"`
 }
 
-// PromptResolver — 查找用户自定义 system prompt
-type PromptResolver interface {
-	ResolveActive(ctx context.Context, userID, promptType string) string
-}
-
 // msgCreator — Orchestrator 需要的消息写入能力（*service.MessageRepo 自动满足）
 type msgCreator interface {
 	Create(ctx context.Context, m *model.Message) error
@@ -73,9 +69,9 @@ type convToucher interface {
 	Touch(ctx context.Context, id string) error
 }
 
-// promptBuilder — Orchestrator 需要的 prompt 构建能力（*SystemPromptBuilder 自动满足）
+// promptBuilder — Orchestrator 需要的 prompt 构建能力（*promptbuilder.SystemPromptBuilder 自动满足）
 type promptBuilder interface {
-	Build(ctx context.Context, opts BuildOptions) (*BuildResult, error)
+	Build(ctx context.Context, opts promptbuilder.BuildOptions) (*promptbuilder.BuildResult, error)
 }
 
 // Orchestrator — ReAct 循环编排器
@@ -151,7 +147,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 
 	// 预计算 embedding（Builder 检索 + 存用户消息都需要）
 	var queryVec []float64
-	if o.embedder != nil && !req.SkipMemory {
+	if o.embedder != nil && !req.SkipRetrieval {
 		queryVec = o.tryEmbedContent(ctx, req.UserMessageContent)
 	}
 
@@ -166,15 +162,15 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	return events, nil
 }
 
-func mkPromptBuildOpt(req *RunRequest, queryVec []float64) BuildOptions {
-	promptBuildOptions := BuildOptions{
+func mkPromptBuildOpt(req *RunRequest, queryVec []float64) promptbuilder.BuildOptions {
+	opts := promptbuilder.BuildOptions{
 		UserID:         req.UserID,
 		ConversationID: req.ConversationID,
 		UserMessage:    req.UserMessageContent,
 		Embedding:      queryVec,
 		AgentPrompt:    req.AgentSystemPrompt,
 	}
-	return promptBuildOptions
+	return opts
 }
 
 func (o *Orchestrator) tryEmbedContent(ctx context.Context, userMsgContent string) []float64 {
@@ -201,7 +197,7 @@ func (o *Orchestrator) pickClient(req *RunRequest) llm.LLMClient {
 func (o *Orchestrator) runReActLoop(
 	ctx context.Context,
 	events chan<- *llm.StreamEvent,
-	systemPromptResult *BuildResult,
+	systemPromptResult *promptbuilder.BuildResult,
 	queryVec []float64,
 	req *RunRequest,
 ) {
@@ -230,7 +226,7 @@ func (o *Orchestrator) runReActLoop(
 	}
 
 	o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrMaxIterations)})
-	o.emitDone(events, req.ConversationID, "", "max iterations reached", systemPromptResult.MemoryIDs, systemPromptResult.NoteIDs)
+	o.emitDone(events, req.ConversationID, "", "max iterations reached", systemPromptResult.IDsByType)
 }
 
 // runOneRound 执行一轮 ReAct：LLM 调用 → 流式收集 → done/error 处理，返回 true 表示对话结束。
@@ -239,7 +235,7 @@ func (o *Orchestrator) runOneRound(
 	events chan<- *llm.StreamEvent,
 	client llm.LLMClient,
 	req *RunRequest,
-	result *BuildResult,
+	result *promptbuilder.BuildResult,
 	state *reactState,
 	round int,
 ) bool {
@@ -272,7 +268,7 @@ func (o *Orchestrator) runOneRound(
 			log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
 				round+1, streamContent.Len(), streamReasoning.Len(), len(se.ToolCalls))
 			return o.finalizeRound(ctx, events, se, streamContent.String(), streamReasoning.String(),
-				req.ConversationID, req.UserID, result.MemoryIDs, result.NoteIDs, result.Trace, state)
+				req.ConversationID, req.UserID, result.IDsByType, result.Trace, state)
 		case "error":
 			o.sendEvent(events, se)
 			return true
@@ -281,7 +277,7 @@ func (o *Orchestrator) runOneRound(
 	return false
 }
 
-func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPromptResult *BuildResult, msgs []llm.Message) *llm.ChatRequest {
+func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPromptResult *promptbuilder.BuildResult, msgs []llm.Message) *llm.ChatRequest {
 	isProMode := req.DeepMode && o.proClient != nil
 	temperature := req.Temperature
 	if temperature == nil {
@@ -346,8 +342,8 @@ func (o *Orchestrator) finalizeRound(
 	se *llm.StreamEvent,
 	streamContent, streamReasoning string,
 	convID, userID string,
-	memIDs, noteIDs []string,
-	trace *PromptTrace,
+	resourceIDs map[string][]string,
+	trace *promptbuilder.PromptTrace,
 	state *reactState,
 ) bool {
 	if streamReasoning != "" {
@@ -356,13 +352,14 @@ func (o *Orchestrator) finalizeRound(
 
 	msg := newAssistantMessage(streamContent, streamReasoning, se)
 
+	memIDs := resourceIDs["memory"]
 	done := o.handleOneRoundResponse(ctx, events, msg, convID, userID, memIDs, trace, state)
 	if done {
 		cleanText := extractCleanText(streamContent)
 		if cleanText != "" {
 			o.streamTextChunks(ctx, events, cleanText)
 		}
-		o.emitDone(events, convID, state.lastAssistantMsgID, "", memIDs, noteIDs)
+		o.emitDone(events, convID, state.lastAssistantMsgID, "", resourceIDs)
 	}
 	return done
 }
@@ -388,7 +385,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 	msg llm.Message,
 	convID, userID string,
 	memIDs []string,
-	trace *PromptTrace,
+	trace *promptbuilder.PromptTrace,
 	state *reactState,
 ) bool {
 	parsed, parseErr := parseLLMResponse(msg.Content)
@@ -522,7 +519,7 @@ func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, us
 
 // —— DB 保存 ——
 
-func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message, trace *PromptTrace) string {
+func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message, trace *promptbuilder.PromptTrace) string {
 	if o.msgRepo == nil || convID == "" {
 		return ""
 	}
@@ -702,7 +699,7 @@ func (o *Orchestrator) streamTextChunks(ctx context.Context, events chan<- *llm.
 	}
 }
 
-func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, errStr string, memIDs, noteIDs []string) {
+func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, errStr string, resourceIDs map[string][]string) {
 	parts := make([]string, 0)
 	if convID != "" {
 		parts = append(parts, fmt.Sprintf(`"conversation_id":"%s"`, convID))
@@ -710,13 +707,11 @@ func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, e
 	if msgID != "" {
 		parts = append(parts, fmt.Sprintf(`"message_id":"%s"`, msgID))
 	}
-	if len(memIDs) > 0 {
-		b, _ := json.Marshal(memIDs)
-		parts = append(parts, fmt.Sprintf(`"memory_ids":%s`, string(b)))
-	}
-	if len(noteIDs) > 0 {
-		b, _ := json.Marshal(noteIDs)
-		parts = append(parts, fmt.Sprintf(`"note_ids":%s`, string(b)))
+	for _, typ := range []string{"memory", "note"} {
+		if ids := resourceIDs[typ]; len(ids) > 0 {
+			b, _ := json.Marshal(ids)
+			parts = append(parts, fmt.Sprintf(`"%s_ids":%s`, typ, string(b)))
+		}
 	}
 	if errStr != "" {
 		parts = append(parts, fmt.Sprintf(`"error":"%s"`, errStr))

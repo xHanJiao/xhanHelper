@@ -1,0 +1,247 @@
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
+import MarkdownIt from 'markdown-it'
+import PageTopBar from '@/components/PageTopBar.vue'
+import { api } from '@/api/client'
+
+const route = useRoute()
+const msgId = route.params.id
+
+const md = new MarkdownIt()
+
+const loading = ref(true)
+const error = ref('')
+const anchorMsg = ref(null)
+const roundMsgs = ref([])
+const expandedId = ref(null)
+const detailLoading = ref(false)
+const activeTab = ref('prompt')
+const detailData = ref({ request_json: null, extra: null })
+
+const tabs = [
+  { key: 'prompt', label: '系统提示词' },
+  { key: 'request_json', label: '请求JSON' },
+  { key: 'resources', label: '资源取舍明细' },
+]
+
+const roleLabel = (role) => ({ user: '用户', assistant: '助手', tool: '工具' }[role] || role)
+const roleType = (role) => ({ user: 'info', assistant: 'success', tool: 'default' }[role] || 'default')
+const shortContent = (content) => {
+  if (!content) return ''
+  const t = content.replace(/\n/g, ' ')
+  return t.length > 80 ? t.slice(0, 80) + '...' : t
+}
+
+const systemPrompt = computed(() => {
+  const rj = detailData.value.request_json
+  if (!rj) return ''
+  try {
+    const parsed = typeof rj === 'string' ? JSON.parse(rj) : rj
+    const systemMsg = parsed.messages?.find(m => m.role === 'system')
+    return systemMsg?.content || ''
+  } catch { return '' }
+})
+
+const promptHtml = computed(() => md.render(systemPrompt.value || '(无)'))
+
+const requestJsonText = computed(() => {
+  const rj = detailData.value.request_json
+  if (!rj) return '(无)'
+  try {
+    const parsed = typeof rj === 'string' ? JSON.parse(rj) : rj
+    return JSON.stringify(parsed, null, 2)
+  } catch { return String(rj) }
+})
+
+const providers = computed(() => {
+  const extra = detailData.value.extra
+  if (!extra) return []
+  try {
+    const parsed = typeof extra === 'string' ? JSON.parse(extra) : extra
+    return parsed.providers || []
+  } catch { return [] }
+})
+
+const selectedItems = (items) => items.filter(i => !i.discard_reason)
+const discardedItems = (items) => items.filter(i => i.discard_reason)
+
+const scorePct = (score) => (score * 100).toFixed(0) + '%'
+
+async function loadRound() {
+  try {
+    const res = await api.get(`/api/admin/messages/${msgId}/debug`)
+    anchorMsg.value = res.anchor_msg
+    roundMsgs.value = res.round_messages || []
+  } catch (e) {
+    error.value = '加载失败: ' + e.message
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadDetail(msgId) {
+  detailLoading.value = true
+  detailData.value = { request_json: null, extra: null }
+  activeTab.value = 'prompt'
+  try {
+    const [rj, extra] = await Promise.all([
+      api.get(`/api/admin/messages/${msgId}/debug-detail?field=request_json`),
+      api.get(`/api/admin/messages/${msgId}/debug-detail?field=extra`),
+    ])
+    detailData.value.request_json = rj.value
+    detailData.value.extra = extra.value
+  } catch (e) {
+    detailData.value.request_json = '加载失败: ' + e.message
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+function toggleDetail(msg) {
+  if (msg.role !== 'assistant') return
+  if (expandedId.value === msg.id) {
+    expandedId.value = null
+    return
+  }
+  expandedId.value = msg.id
+  loadDetail(msg.id)
+}
+
+function goBack() {
+  window.history.back()
+}
+
+onMounted(loadRound)
+</script>
+
+<template>
+  <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
+    <PageTopBar title="消息调试" :visible="true">
+      <template #right>
+        <span @click="goBack" style="cursor: pointer; font-size: 14px; color: var(--color-primary);">← 返回</span>
+      </template>
+    </PageTopBar>
+
+    <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
+      <div v-if="loading" style="text-align: center; padding: 60px 0; color: var(--color-text-muted);">加载中...</div>
+      <div v-else-if="error" style="text-align: center; padding: 60px 0; color: var(--color-error);">{{ error }}</div>
+
+      <template v-else>
+        <!-- 锚点消息 -->
+        <div v-if="anchorMsg" style="margin-bottom: var(--space-xl);">
+          <div style="font-size: 13px; color: var(--color-text-muted); margin-bottom: var(--space-sm);">锚点消息</div>
+          <div style="background: var(--color-primary); color: #fff; border-radius: var(--radius-lg); padding: 12px 18px; font-size: 15px; line-height: 1.6;">
+            {{ anchorMsg.content }}
+          </div>
+        </div>
+
+        <!-- 消息轮列表 -->
+        <div style="font-size: 13px; color: var(--color-text-muted); margin-bottom: var(--space-sm);">
+          消息轮（{{ roundMsgs.length }} 条）
+        </div>
+
+        <div v-for="msg in roundMsgs" :key="msg.id"
+          :style="{
+            padding: '10px 14px',
+            marginBottom: '8px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            cursor: msg.role === 'assistant' ? 'pointer' : 'default',
+            opacity: msg.role === 'tool' ? 0.7 : 1,
+          }"
+          @click="toggleDetail(msg)"
+        >
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+            <span :style="{
+              fontSize: '11px',
+              padding: '1px 6px',
+              borderRadius: '4px',
+              background: msg.role === 'user' ? 'var(--color-primary)' : msg.role === 'assistant' ? 'var(--color-success)' : 'var(--color-border)',
+              color: msg.role === 'tool' ? 'var(--color-text-muted)' : '#fff',
+            }">{{ roleLabel(msg.role) }}</span>
+            <span style="font-size: 11px; color: var(--color-text-muted);">{{ new Date(msg.created_at).toLocaleString() }}</span>
+            <span v-if="msg.role === 'assistant' && expandedId === msg.id" style="font-size: 11px; color: var(--color-primary);">▼ 已展开</span>
+          </div>
+          <div style="font-size: 13px; color: var(--color-text); line-height: 1.5;">{{ shortContent(msg.content) }}</div>
+
+          <!-- 展开的详情区 -->
+          <div v-if="msg.role === 'assistant' && expandedId === msg.id" style="margin-top: 12px;" @click.stop>
+            <div v-if="detailLoading" style="padding: 20px 0; text-align: center; color: var(--color-text-muted);">加载详情中...</div>
+            <template v-else>
+              <!-- Tab 切换 -->
+              <div style="display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--color-border);">
+                <span v-for="tab in tabs" :key="tab.key"
+                  @click="activeTab = tab.key"
+                  :style="{
+                    padding: '6px 12px',
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    color: activeTab === tab.key ? 'var(--color-primary)' : 'var(--color-text-muted)',
+                    borderBottom: activeTab === tab.key ? '2px solid var(--color-primary)' : '2px solid transparent',
+                  }"
+                >{{ tab.label }}</span>
+              </div>
+
+              <!-- 系统提示词 -->
+              <div v-if="activeTab === 'prompt'"
+                class="markdown-body"
+                v-html="promptHtml"
+                style="font-size: 14px; line-height: 1.7; max-height: 600px; overflow-y: auto;">
+              </div>
+
+              <!-- 请求JSON -->
+              <div v-if="activeTab === 'request_json'">
+                <pre style="font-size: 12px; line-height: 1.4; max-height: 600px; overflow: auto; background: var(--color-bg-page); padding: 12px; border-radius: var(--radius-md); margin: 0;">{{ requestJsonText }}</pre>
+              </div>
+
+              <!-- 资源取舍明细 -->
+              <div v-if="activeTab === 'resources'">
+                <div v-if="providers.length === 0" style="color: var(--color-text-muted); padding: 20px;">无数据</div>
+                <div v-for="(prov, pi) in providers" :key="pi" style="margin-bottom: 16px;">
+                  <div style="font-weight: 600; font-size: 14px; margin-bottom: 8px;">
+                    {{ prov.name }}
+                    <span style="font-size: 11px; color: var(--color-text-muted); font-weight: 400;">({{ prov.type }})</span>
+                  </div>
+                  <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                    <thead>
+                      <tr style="border-bottom: 1px solid var(--color-border); text-align: left;">
+                        <th style="padding: 4px 8px;">ID</th>
+                        <th style="padding: 4px 8px;">文本</th>
+                        <th style="padding: 4px 8px;">综合分</th>
+                        <th style="padding: 4px 8px;">向量分</th>
+                        <th style="padding: 4px 8px;">关键词</th>
+                        <th style="padding: 4px 8px;">状态</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="item in selectedItems(prov.items || [])" :key="item.id"
+                        style="border-bottom: 1px solid var(--color-border);">
+                        <td style="padding: 4px 8px; font-family: monospace; font-size: 11px;">{{ item.id?.slice(0, 8) }}</td>
+                        <td style="padding: 4px 8px;">{{ item.text || '-' }}</td>
+                        <td style="padding: 4px 8px;">{{ item.score?.toFixed(3) || '-' }}</td>
+                        <td style="padding: 4px 8px;">{{ item.vector_score?.toFixed(3) || '-' }}</td>
+                        <td style="padding: 4px 8px;">{{ item.keyword_score?.toFixed(3) || '-' }}</td>
+                        <td style="padding: 4px 8px;"><span style="color: var(--color-success);">✓ 已选中</span></td>
+                      </tr>
+                      <tr v-for="item in discardedItems(prov.items || [])" :key="item.id"
+                        style="border-bottom: 1px solid var(--color-border);">
+                        <td style="padding: 4px 8px; font-family: monospace; font-size: 11px;">{{ item.id?.slice(0, 8) }}</td>
+                        <td style="padding: 4px 8px;">{{ item.text || '-' }}</td>
+                        <td style="padding: 4px 8px;">-</td>
+                        <td style="padding: 4px 8px;">{{ item.vector_score?.toFixed(3) || '-' }}</td>
+                        <td style="padding: 4px 8px;">-</td>
+                        <td style="padding: 4px 8px; color: var(--color-warning);">✗ {{ item.discard_reason }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</template>

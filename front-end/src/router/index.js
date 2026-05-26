@@ -68,6 +68,11 @@ const routes = [
     component: () => import('@/views/AdminView.vue')
   },
   {
+    path: '/admin/message-debug/:id',
+    name: 'MessageDebug',
+    component: () => import('@/views/MessageDebugView.vue')
+  },
+  {
     path: '/',
     redirect: '/chat'
   }

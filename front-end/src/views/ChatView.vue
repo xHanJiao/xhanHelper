@@ -20,6 +20,7 @@ import MessageBubble from '@/components/MessageBubble.vue'
 
 import PageTopBar from '@/components/PageTopBar.vue'
 import TopBarBtn from '@/components/TopBarBtn.vue'
+import { useDebugMode } from '@/composables/useDebugMode'
 import { useMobile } from '@/composables/useMobile'
 import { useThemeStore } from '@/stores/theme'
 
@@ -32,6 +33,7 @@ const { sendMessage, cancel } = useChatSSE()
 const nMessage = useMessage()
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
+const { debugMode, toggle: toggleDebug } = useDebugMode()
 
 onMounted(() => {
   fetchLlmConfig()
@@ -482,6 +484,7 @@ function handleContainerClick(e) {
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
     <PageTopBar :title="currentTitle" :agent-id="currentAgentId" :agent-name="currentAgentName" :visible="!isMobile || isBarVisible" :agents="agentsList" @select-agent="handleSelectAgent" @popover-open="fetchAgents" >
       <template #right>
+        <TopBarBtn v-if="!isMobile" :label="debugMode ? '调试:开' : '调试'" @click="toggleDebug" />
         <TopBarBtn :label="theme.isDark ? '浅色' : '深色'" @click="theme.toggle()" />
       </template>
     </PageTopBar>

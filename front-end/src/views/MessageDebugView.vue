@@ -27,11 +27,6 @@ const tabs = [
 
 const roleLabel = (role) => ({ user: '用户', assistant: '助手', tool: '工具' }[role] || role)
 const roleType = (role) => ({ user: 'info', assistant: 'success', tool: 'default' }[role] || 'default')
-const shortContent = (content) => {
-  if (!content) return ''
-  const t = content.replace(/\n/g, ' ')
-  return t.length > 80 ? t.slice(0, 80) + '...' : t
-}
 
 const systemPrompt = computed(() => {
   const rj = detailData.value.request_json
@@ -63,10 +58,76 @@ const providers = computed(() => {
   } catch { return [] }
 })
 
+const expandedContent = ref(new Set())
+
+function toggleContent(msgId) {
+  if (expandedContent.value.has(msgId)) {
+    expandedContent.value.delete(msgId)
+  } else {
+    expandedContent.value.add(msgId)
+  }
+  expandedContent.value = new Set(expandedContent.value)
+}
+
+function isExpanded(msgId) {
+  return expandedContent.value.has(msgId)
+}
+
+const copiedId = ref(null)
+
+async function copyContent(msgId, content) {
+  await navigator.clipboard.writeText(formatContent(content))
+  copiedId.value = msgId
+  setTimeout(() => { copiedId.value = null }, 1500)
+}
+
+const markdownResult = ref('')
+
+function formatContent(content) {
+  if (!content) return ''
+  try {
+    const parsed = JSON.parse(content)
+    if (parsed?.data?.results && typeof parsed.data.results === 'string') {
+      markdownResult.value = parsed.data.results
+    } else {
+      markdownResult.value = ''
+    }
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    markdownResult.value = ''
+    return content
+  }
+}
+
+const activeMsgResultId = ref(null)
+
+function showResult(msgId) {
+  activeMsgResultId.value = activeMsgResultId.value === msgId ? null : msgId
+}
+
+function estimateTokens(content) {
+  if (!content) return 0
+  let tokens = 0
+  for (const ch of content) {
+    const code = ch.charCodeAt(0)
+    if (code >= 0x4e00 && code <= 0x9fff) {
+      tokens += 1.5  // CJK: ~1-2 tokens per char
+    } else if (code < 128) {
+      tokens += 0.3  // ASCII: ~4 chars per token
+    } else {
+      tokens += 1.0  // other unicode
+    }
+  }
+  return Math.round(tokens)
+}
+
+const resultHtml = computed(() => {
+  if (!markdownResult.value) return ''
+  return md.render(markdownResult.value)
+})
+
 const selectedItems = (items) => items.filter(i => !i.discard_reason)
 const discardedItems = (items) => items.filter(i => i.discard_reason)
-
-const scorePct = (score) => (score * 100).toFixed(0) + '%'
 
 async function loadRound() {
   try {
@@ -162,9 +223,38 @@ onMounted(loadRound)
               color: msg.role === 'tool' ? 'var(--color-text-muted)' : '#fff',
             }">{{ roleLabel(msg.role) }}</span>
             <span style="font-size: 11px; color: var(--color-text-muted);">{{ new Date(msg.created_at).toLocaleString() }}</span>
+            <span style="font-size: 11px; color: var(--color-text-muted);">~{{ estimateTokens(msg.content) }} tokens</span>
             <span v-if="msg.role === 'assistant' && expandedId === msg.id" style="font-size: 11px; color: var(--color-primary);">▼ 已展开</span>
           </div>
-          <div style="font-size: 13px; color: var(--color-text); line-height: 1.5;">{{ shortContent(msg.content) }}</div>
+          <div
+            v-if="!isExpanded(msg.id)"
+            @click.stop="toggleContent(msg.id)"
+            style="font-size: 13px; color: var(--color-text); line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;"
+          >{{ msg.content || '(空)' }}</div>
+          <div v-else style="position: relative;">
+            <pre
+              @click.stop="toggleContent(msg.id)"
+              style="font-size: 12px; line-height: 1.5; background: var(--color-bg-page); padding: 8px 12px; border-radius: var(--radius-md); margin: 4px 0 0 0; overflow-x: auto; white-space: pre-wrap; word-break: break-all; cursor: pointer; max-height: 400px; overflow-y: auto;"
+            >{{ formatContent(msg.content) }}</pre>
+            <span
+              @click.stop="copyContent(msg.id, msg.content)"
+              style="position: absolute; top: 8px; right: 8px; font-size: 14px; cursor: pointer; opacity: 0.6; line-height: 1;"
+              :title="copiedId === msg.id ? '已复制' : '复制'"
+            >{{ copiedId === msg.id ? '✓' : '📋' }}</span>
+            <span
+              v-if="markdownResult"
+              @click.stop="showResult(msg.id)"
+              style="position: absolute; top: 8px; right: 36px; font-size: 14px; cursor: pointer; opacity: 0.6; line-height: 1;"
+              :title="activeMsgResultId === msg.id ? '收起预览' : '预览 results'"
+            >{{ activeMsgResultId === msg.id ? '🔽' : '👁' }}</span>
+            <div
+              v-if="activeMsgResultId === msg.id && markdownResult"
+              @click.stop
+              class="markdown-body"
+              v-html="resultHtml"
+              style="font-size: 13px; line-height: 1.7; background: var(--color-surface); padding: 12px 16px; border-radius: var(--radius-md); margin-top: 8px; border: 1px solid var(--color-border); max-height: 400px; overflow-y: auto;"
+            ></div>
+          </div>
 
           <!-- 展开的详情区 -->
           <div v-if="msg.role === 'assistant' && expandedId === msg.id" style="margin-top: 12px;" @click.stop>

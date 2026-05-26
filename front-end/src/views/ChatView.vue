@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
 import { useChatSSE } from '@/composables/useChatSSE'
-import { buildToolSummary } from '@/composables/useChatSSE'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
 import { useDevice } from '@/composables/useDevice'
 import { api } from '@/api/client'
@@ -17,6 +16,7 @@ import {
   useMessage
 } from 'naive-ui'
 import MessageBubble from '@/components/MessageBubble.vue'
+import ToolCallToast from '@/components/ToolCallToast.vue'
 
 import PageTopBar from '@/components/PageTopBar.vue'
 import TopBarBtn from '@/components/TopBarBtn.vue'
@@ -315,19 +315,7 @@ function normalizeMessage(msg) {
     }
   }
 
-  // 展开 tool_calls_json 为独立的 role="tool" 消息，与 iOS expandToolCalls 一致
-  if (toolCalls.length > 0) {
-    const toolMsgs = toolCalls.map(tc => ({
-      id: 'htool_' + Math.random().toString(36).slice(2, 10),
-      role: 'tool',
-      content: buildToolSummary(tc, tc.result),
-      created_at: normalized.created_at
-    }))
-    normalized.toolCalls = []
-    return [...toolMsgs, normalized]
-  }
-
-  normalized.toolCalls = []
+  normalized.toolCalls = toolCalls
   return [normalized]
 }
 
@@ -496,7 +484,7 @@ function handleContainerClick(e) {
       @click="handleContainerClick"
       style="flex: 1; overflow-y: auto; padding: var(--space-lg); display: flex; justify-content: center;"
     >
-      <div style="width: 100%; max-width: 900px;">
+      <div style="width: 100%; max-width: 900px; position: relative;">
         <div v-if="isLoadingHistory" style="text-align: center; padding: 20px 0;">
           <div style="width: 24px; height: 24px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block;"></div>
         </div>
@@ -511,11 +499,14 @@ function handleContainerClick(e) {
           :message="msg"
           :is-history="true"
         />
-        <div ref="streamingBubbleRef" v-if="chat.streamingMessage">
-          <MessageBubble
-            :message="chat.streamingMessage"
-            :is-history="false"
-          />
+        <div style="position: relative;">
+          <div ref="streamingBubbleRef" v-if="chat.streamingMessage">
+            <MessageBubble
+              :message="chat.streamingMessage"
+              :is-history="false"
+            />
+          </div>
+          <ToolCallToast />
         </div>
 
         <!-- PlanGraph 暂时隐藏，工具使用简单时图无意义 -->

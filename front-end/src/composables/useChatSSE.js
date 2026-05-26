@@ -171,12 +171,6 @@ export function useChatSSE() {
         if (last) {
           last.status = tr.success ? 'done' : 'failed'
           last.result = tr
-          chat.addMessage({
-            id: 'tool_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-            role: 'tool',
-            content: buildToolSummary(last, tr),
-            created_at: new Date().toISOString()
-          })
         }
         break
       }

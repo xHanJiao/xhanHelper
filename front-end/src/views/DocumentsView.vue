@@ -58,6 +58,25 @@ async function fetchDocuments() {
   }
 }
 
+function sanitizeFilename(title) {
+  return (title || 'document')
+    .replace(/[/\\:*?"<>|]/g, '_')
+    .slice(0, 100)
+}
+
+function handleDownload(doc) {
+  const filename = sanitizeFilename(doc.title) + '.md'
+  const blob = new Blob([doc.content], { type: 'text/markdown' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 async function handleDelete(doc) {
   try {
     await api.delete(`/api/documents/${doc.id}`)
@@ -86,6 +105,7 @@ function parseTags(tags) {
 
 function getCardActions(doc) {
   return [
+    { key: 'download', label: '下载', onClick: () => handleDownload(doc) },
     { key: 'delete', label: '删除', type: 'error', confirm: `确认删除文档「${doc.title}」？`, onClick: () => handleDelete(doc) }
   ]
 }

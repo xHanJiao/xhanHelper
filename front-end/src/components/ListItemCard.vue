@@ -160,16 +160,13 @@ function handleDropdownSelect(key) {
     <div
       v-if="content"
       class="card-content-wrapper"
-      :class="{ 'clickable': content.length > 120 }"
+      :class="{ 'clickable': content.length > 120 && !expanded }"
       :style="{ maxHeight: expanded ? 'none' : maxContentHeight }"
-      @click="content.length > 120 && (expanded = !expanded)"
+      @click="content.length > 120 && !expanded && (expanded = true)"
     >
       <div v-if="contentType === 'markdown'" class="card-content markdown-body" v-html="renderedContent"></div>
       <div v-else class="card-content">{{ content }}</div>
       <div v-if="content.length > 120 && !expanded" class="content-fade"></div>
-      <div v-if="content.length > 120" class="expand-hint">
-        {{ expanded ? '↑' : '↓' }}
-      </div>
     </div>
 
     <div v-if="tags && tags.length > 0" class="card-tags">
@@ -182,7 +179,15 @@ function handleDropdownSelect(key) {
       <span v-if="metadata" class="card-metadata">
         {{ metadata }}
       </span>
-      <NSpace v-if="primaryActions.length > 0" size="small">
+      <NSpace v-if="primaryActions.length > 0 || (content.length > 120 && expanded)" size="small">
+        <NButton
+          v-if="content.length > 120 && expanded"
+          size="tiny"
+          quaternary
+          @click="expanded = false"
+        >
+          收起
+        </NButton>
         <template v-for="action in primaryActions" :key="action.key">
           <NPopconfirm
             v-if="action.confirm"
@@ -289,14 +294,6 @@ function handleDropdownSelect(key) {
   height: 40px;
   background: linear-gradient(to bottom, transparent, var(--color-surface));
   pointer-events: none;
-}
-
-.expand-hint {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--color-primary);
-  text-align: center;
-  font-weight: 500;
 }
 
 .card-tags {

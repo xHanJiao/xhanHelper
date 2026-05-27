@@ -12,7 +12,6 @@ import {
   NFormItem,
   NInput,
   NSwitch,
-  NSelect,
   NGi,
   NGrid,
   NEmpty,
@@ -34,16 +33,11 @@ const agents = ref([])
 const loading = ref(false)
 const modalVisible = ref(false)
 const editing = ref(null)
-const formValue = ref({ name: '', system_prompt: '', model: 'deepseek-chat', temperature: null, max_tokens: null, thinking: true })
+const formValue = ref({ name: '', system_prompt: '', deep_mode: false, temperature: null, max_tokens: null, thinking: true })
 const submitting = ref(false)
 const contentContainerRef = ref(null)
 const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
 
-const modelOptions = [
-  { label: 'DeepSeek Chat', value: 'deepseek-chat' },
-  { label: 'DeepSeek Reasoner', value: 'deepseek-reasoner' },
-  { label: '豆包', value: 'doubao' }
-]
 
 async function fetchAgents() {
   loading.value = true
@@ -59,25 +53,26 @@ async function fetchAgents() {
 
 function openCreate() {
   editing.value = null
-  formValue.value = { name: '', system_prompt: '', model: 'deepseek-chat', temperature: null, max_tokens: null, thinking: true }
+  formValue.value = { name: '', system_prompt: '', deep_mode: false, temperature: null, max_tokens: null, thinking: true }
   modalVisible.value = true
 }
 
 function openEdit(agent) {
   editing.value = agent
-  let temperature = null, maxTokens = null, thinking = true
+  let temperature = null, maxTokens = null, thinking = true, deepMode = false
   if (agent.params_json) {
     try {
       const p = JSON.parse(agent.params_json)
       temperature = p.temperature ?? null
       maxTokens = p.max_tokens ?? null
       thinking = p.thinking ?? true
+      deepMode = p.deep_mode ?? false
     } catch {}
   }
   formValue.value = {
     name: agent.name,
     system_prompt: agent.system_prompt,
-    model: agent.model,
+    deep_mode: deepMode,
     temperature,
     max_tokens: maxTokens,
     thinking
@@ -86,7 +81,7 @@ function openEdit(agent) {
 }
 
 function buildAgentPayload(fv) {
-  const p = { name: fv.name, system_prompt: fv.system_prompt, model: fv.model }
+  const p = { name: fv.name, system_prompt: fv.system_prompt }
   const params = {}
   if (fv.temperature !== null && fv.temperature !== undefined && fv.temperature !== '') {
     params.temperature = Number(fv.temperature)
@@ -96,6 +91,9 @@ function buildAgentPayload(fv) {
   }
   if (fv.thinking !== null && fv.thinking !== undefined) {
     params.thinking = fv.thinking
+  }
+  if (fv.deep_mode !== null && fv.deep_mode !== undefined) {
+    params.deep_mode = fv.deep_mode
   }
   if (Object.keys(params).length > 0) {
     p.params_json = JSON.stringify(params)
@@ -189,7 +187,7 @@ onMounted(fetchAgents)
             <ListItemCard
               :title="agent.name"
               :content="agent.system_prompt"
-              :metadata="`模型：${agent.model} · ${new Date(agent.created_at).toLocaleDateString()}`"
+              :metadata="`创建于 ${new Date(agent.created_at).toLocaleDateString()}`"
               :actions="getCardActions(agent)"
               :primary-actions="getCardPrimaryActions(agent)"
               max-content-height="120px"
@@ -214,8 +212,8 @@ onMounted(fetchAgents)
             maxlength="3000"
           />
         </NFormItem>
-        <NFormItem label="模型">
-          <NSelect v-model:value="formValue.model" :options="modelOptions" />
+        <NFormItem label="默认 Pro 模式">
+          <NSwitch v-model:value="formValue.deep_mode" />
         </NFormItem>
         <NFormItem label="思考模式">
           <NSwitch v-model:value="formValue.thinking" />

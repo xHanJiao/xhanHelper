@@ -93,14 +93,14 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			}
 		}
 
-		// 无 Agent 时，用前端传入的参数
-		if agentTemperature == nil {
+		// 用户参数优先，Agent 参数仅作为默认值
+		if req.Temperature != nil {
 			agentTemperature = req.Temperature
 		}
-		if agentMaxTokens == nil {
+		if req.MaxTokens != nil {
 			agentMaxTokens = req.MaxTokens
 		}
-		if agentThinking == nil {
+		if req.Thinking != nil {
 			agentThinking = req.Thinking
 		}
 
@@ -279,6 +279,7 @@ func llmConfig(cfg *config.Config, agentRepo *service.AgentRepo) gin.HandlerFunc
 			"temperature": 1.0,
 			"max_tokens":  4096,
 			"thinking":    true,
+			"deep_mode":   false,
 		}
 		if cfg.LLM.DefaultTemperature != nil {
 			resp["temperature"] = *cfg.LLM.DefaultTemperature
@@ -297,6 +298,7 @@ func llmConfig(cfg *config.Config, agentRepo *service.AgentRepo) gin.HandlerFunc
 					Temperature *float64 `json:"temperature"`
 					MaxTokens   *int     `json:"max_tokens"`
 					Thinking    *bool    `json:"thinking"`
+					DeepMode    *bool    `json:"deep_mode"`
 				}
 				if err := json.Unmarshal([]byte(a.ParamsJSON), &params); err != nil {
 					log.Printf("[llm-config] parse agent params error: %v", err)
@@ -310,10 +312,82 @@ func llmConfig(cfg *config.Config, agentRepo *service.AgentRepo) gin.HandlerFunc
 					if params.Thinking != nil {
 						resp["thinking"] = *params.Thinking
 					}
+					if params.DeepMode != nil {
+						resp["deep_mode"] = *params.DeepMode
+					}
 				}
 			}
 		}
 
 		view.JSONOK(c, resp)
 	}
+}
+
+// agentParams 解析 Agent.ParamsJSON 的结构体
+type agentParams struct {
+	Temperature *float64 `json:"temperature"`
+	MaxTokens   *int     `json:"max_tokens"`
+	Thinking    *bool    `json:"thinking"`
+	DeepMode    *bool    `json:"deep_mode"`
+}
+
+// parseAgentParams 解析 agent 的 ParamsJSON
+func parseAgentParams(paramsJSON string) (*float64, *int, *bool, *bool, error) {
+	if paramsJSON == "" {
+		return nil, nil, nil, nil, fmt.Errorf("empty params")
+	}
+	var p agentParams
+	if err := json.Unmarshal([]byte(paramsJSON), &p); err != nil {
+		return nil, nil, nil, nil, err
+	}
+	return p.Temperature, p.MaxTokens, p.Thinking, p.DeepMode, nil
+}
+
+// mergeAgentAndUserParams 用户参数优先，agent 参数仅作为默认值
+func mergeAgentAndUserParams(agentTemp *float64, agentMaxTokens *int, agentThinking *bool,
+	userTemp *float64, userMaxTokens *int, userThinking *bool) (*float64, *int, *bool) {
+	if userTemp != nil {
+		agentTemp = userTemp
+	}
+	if userMaxTokens != nil {
+		agentMaxTokens = userMaxTokens
+	}
+	if userThinking != nil {
+		agentThinking = userThinking
+	}
+	return agentTemp, agentMaxTokens, agentThinking
+}
+
+// buildLLMConfigResponse 构建 llm-config 响应。
+// agent 参数覆盖配置默认值（agent 优先级更高）。
+func buildLLMConfigResponse(agent *model.Agent, defaultTemp *float64, defaultMaxTokens *int) map[string]interface{} {
+	resp := map[string]interface{}{
+		"temperature": 1.0,
+		"max_tokens":  4096,
+		"thinking":    true,
+		"deep_mode":   false,
+	}
+	if defaultTemp != nil {
+		resp["temperature"] = *defaultTemp
+	}
+	if defaultMaxTokens != nil {
+		resp["max_tokens"] = *defaultMaxTokens
+	}
+	if agent != nil && agent.ParamsJSON != "" {
+		if temp, tokens, thinking, deepMode, err := parseAgentParams(agent.ParamsJSON); err == nil {
+			if temp != nil {
+				resp["temperature"] = *temp
+			}
+			if tokens != nil {
+				resp["max_tokens"] = *tokens
+			}
+			if thinking != nil {
+				resp["thinking"] = *thinking
+			}
+			if deepMode != nil {
+				resp["deep_mode"] = *deepMode
+			}
+		}
+	}
+	return resp
 }

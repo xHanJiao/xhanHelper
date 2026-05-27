@@ -95,7 +95,7 @@ async function fetchLlmConfig() {
         temperature: res.temperature ?? null,
         max_tokens: res.max_tokens ?? null,
         thinking: res.thinking ?? true,
-        deepMode: llmSettings.value.deepMode
+        deepMode: res.deep_mode ?? llmSettings.value.deepMode
       }
     }
   } catch (e) {
@@ -110,7 +110,7 @@ watch(() => chat.llmParams, (params) => {
       temperature: params.temperature ?? llmSettings.value.temperature,
       max_tokens: params.max_tokens ?? llmSettings.value.max_tokens,
       thinking: params.thinking ?? llmSettings.value.thinking,
-      deepMode: llmSettings.value.deepMode
+      deepMode: params.deep_mode ?? llmSettings.value.deepMode
     }
   }
 })
@@ -416,18 +416,15 @@ async function handleSend() {
     if (el) el.scrollTop = el.scrollHeight
   })
 
-  const conv = convs.list.find(c => c.id === chat.conversationId)
-  const hasAgent = !!(conv?.agent_id)
   const opts = {
     conversationId: chat.conversationId,
-    deepMode: !hasAgent ? llmSettings.value.deepMode : false,
+    deepMode: llmSettings.value.deepMode,
     agentId: chat.agentId
   }
-  // 无 Agent 模式时，带上用户设定的 LLM 参数
-  if (!hasAgent && llmSettings.value.temperature !== null) {
+  if (llmSettings.value.temperature !== null) {
     opts.temperature = llmSettings.value.temperature
   }
-  if (!hasAgent && llmSettings.value.max_tokens !== null) {
+  if (llmSettings.value.max_tokens !== null) {
     opts.maxTokens = llmSettings.value.max_tokens
   }
   if (llmSettings.value.thinking !== null) {
@@ -644,9 +641,6 @@ function handleContainerClick(e) {
                 </NButton>
               </template>
               <div style="width: 240px; padding: 4px 0;">
-                <div v-if="currentAgentId" style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 8px;">
-                  参数由智能体控制，不可修改
-                </div>
                 <!-- 模型选择 -->
                 <div style="margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
                   <div>
@@ -656,7 +650,6 @@ function handleContainerClick(e) {
                   <NSwitch
                     :value="llmSettings.deepMode"
                     @update:value="(v) => { llmSettings.deepMode = v }"
-                    :disabled="!!currentAgentId"
                     size="small"
                   />
                 </div>
@@ -667,7 +660,7 @@ function handleContainerClick(e) {
                   <NSwitch
                     :value="llmSettings.deepMode ? true : llmSettings.thinking"
                     @update:value="(v) => { llmSettings.thinking = v }"
-                    :disabled="!!currentAgentId || llmSettings.deepMode"
+                    :disabled="llmSettings.deepMode"
                     size="small"
                   />
                 </div>
@@ -680,7 +673,6 @@ function handleContainerClick(e) {
                     placeholder="默认 1.0"
                     size="small"
                     clearable
-                    :disabled="!!currentAgentId"
                     style="width: 100%"
                   />
                 </div>
@@ -693,7 +685,6 @@ function handleContainerClick(e) {
                     placeholder="默认 4096"
                     size="small"
                     clearable
-                    :disabled="!!currentAgentId"
                     style="width: 100%"
                   />
                 </div>

@@ -89,7 +89,7 @@ class ChatViewModel: ObservableObject {
         conversationTitle = title
         do {
             let result = try await apiClient.getMessagesCursor(conversationId: id)
-            messages = result.messages.flatMap { $0.expandToolCalls() }
+            messages = result.messages.flatMap { $0.withoutToolCalls() }
             oldestCursor = result.oldestCursor
             newestCursor = result.newestCursor
             hasMoreBefore = result.hasMoreBefore
@@ -110,7 +110,7 @@ class ChatViewModel: ObservableObject {
                 direction: direction
             )
             if direction == "before" {
-                let newMsgs = result.messages.flatMap { $0.expandToolCalls() }
+                let newMsgs = result.messages.flatMap { $0.withoutToolCalls() }
                 if let firstNew = newMsgs.first?.id {
                     anchorMessageID = firstNew
                 }
@@ -121,7 +121,7 @@ class ChatViewModel: ObservableObject {
                     self.hasMoreBefore = stillHasMore
                 }
             } else {
-                messages = messages + result.messages.flatMap { $0.expandToolCalls() }
+                messages = messages + result.messages.flatMap { $0.withoutToolCalls() }
                 newestCursor = result.newestCursor
                 hasMoreAfter = result.hasMoreAfter
             }

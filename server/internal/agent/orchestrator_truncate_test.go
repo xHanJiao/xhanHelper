@@ -237,7 +237,7 @@ func TestCollectToolResults_ShortResult_NotTruncated(t *testing.T) {
 	}
 }
 
-func TestCollectToolResults_LongResult_Truncated(t *testing.T) {
+func TestCollectToolResults_LongResult_NotTruncated(t *testing.T) {
 	o := &Orchestrator{maxToolResultChars: 2000}
 	parsed := &LLMResponse{
 		ToolCalls: []tool.ToolCall{
@@ -257,11 +257,11 @@ func TestCollectToolResults_LongResult_Truncated(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 msg, got %d", len(msgs))
 	}
-	if !strings.Contains(msgs[0].Content, "已截断") {
-		t.Error("expected truncation notice in long tool result")
+	if strings.Contains(msgs[0].Content, "已截断") {
+		t.Error("tool result in ReAct loop should NOT be truncated (current-turn results need full context)")
 	}
-	if len(msgs[0].Content) >= len(string(data)) {
-		t.Error("expected truncated content shorter than original")
+	if !strings.Contains(msgs[0].Content, longStr) {
+		t.Error("expected full content preserved in current-turn tool result")
 	}
 }
 
@@ -371,7 +371,7 @@ func TestCollectToolResults_EventsSent(t *testing.T) {
 	}
 }
 
-func TestCollectToolResults_TruncationOnlyInMsg_NotInEvent(t *testing.T) {
+func TestCollectToolResults_LongResult_EventHasFullContent(t *testing.T) {
 	o := &Orchestrator{maxToolResultChars: 500}
 	parsed := &LLMResponse{
 		ToolCalls: []tool.ToolCall{
@@ -386,8 +386,9 @@ func TestCollectToolResults_TruncationOnlyInMsg_NotInEvent(t *testing.T) {
 	}}
 	events := make(chan *llm.StreamEvent, 16)
 
+	var msgs []llm.Message
 	go func() {
-		o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil)
+		msgs = o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil)
 		close(events)
 	}()
 
@@ -401,7 +402,10 @@ func TestCollectToolResults_TruncationOnlyInMsg_NotInEvent(t *testing.T) {
 		t.Fatalf("expected 1 tool_result event, got %d", len(toolResults))
 	}
 	if !strings.Contains(toolResults[0].Content, longStr) {
-		t.Error("event should contain full (untruncated) content for frontend")
+		t.Error("event should contain full content for frontend")
+	}
+	if !strings.Contains(msgs[0].Content, longStr) {
+		t.Error("ReAct loop msg should also contain full content (no truncation in current turn)")
 	}
 }
 

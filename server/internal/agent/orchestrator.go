@@ -488,7 +488,7 @@ func (o *Orchestrator) collectToolResults(ctx context.Context, parsed *LLMRespon
 		o.saveToolMsg(ctx, convID, userID, idgen.Next(), string(resJSON))
 		msgs = append(msgs, llm.Message{
 			Role:    "user",
-			Content: truncateToolResult(string(resJSON), o.maxToolResultChars),
+			Content: string(resJSON),
 		})
 	}
 	return msgs

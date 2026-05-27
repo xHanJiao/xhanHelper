@@ -45,6 +45,8 @@ type RunRequest struct {
 	MaxIterations      int      // ReAct 最大轮次，0 用配置默认
 	Thinking           *bool    // 思考模式：nil=不传，true=开启，false=关闭
 
+	OverrideSystemPrompt *string
+
 	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
 	MemoryThreshold  float64
 	MemoryLimit      int
@@ -156,16 +158,21 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 
 	log.Printf("[orch] run start: model=%s, msgs=%d", o.pickClient(req).ModelName(), len(req.Messages))
 
-	// 预计算 embedding（Builder 检索 + 存用户消息都需要）
 	var queryVec []float64
-	if o.embedder != nil && !req.SkipRetrieval {
-		queryVec = o.tryEmbedContent(ctx, req.UserMessageContent)
-	}
+	var systemPromptResult *promptbuilder.BuildResult
+	if req.OverrideSystemPrompt != nil {
+		systemPromptResult = &promptbuilder.BuildResult{Prompt: *req.OverrideSystemPrompt}
+	} else {
+		if o.embedder != nil && !req.SkipRetrieval {
+			queryVec = o.tryEmbedContent(ctx, req.UserMessageContent)
+		}
 
-	systemPromptResult, err := o.systemPromptBuilder.Build(ctx, mkPromptBuildOpt(req, queryVec))
-	if err != nil {
-		log.Printf("[orch] prompt build error: %v", err)
-		return nil, err
+		var err error
+		systemPromptResult, err = o.systemPromptBuilder.Build(ctx, mkPromptBuildOpt(req, queryVec))
+		if err != nil {
+			log.Printf("[orch] prompt build error: %v", err)
+			return nil, err
+		}
 	}
 
 	events := make(chan *llm.StreamEvent, 512)

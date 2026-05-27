@@ -1,12 +1,11 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import PageTopBar from '@/components/PageTopBar.vue'
 import { api } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
-const router = useRouter()
 const auth = useAuthStore()
 const msgId = route.params.id
 
@@ -17,6 +16,11 @@ const historyMsgs = ref([])
 
 const running = ref(false)
 const results = ref({ a: null, b: null })
+
+const bPromptPreview = ref('')
+const bPromptLoading = ref(false)
+const bShowPrompt = ref(false)
+const bTrace = ref(null)
 
 const defaultConfigA = {
   skip_retrieval: false,
@@ -29,6 +33,7 @@ const defaultConfigA = {
   history_threshold: 0.8,
   history_limit: 5,
   deep_mode: false,
+  override_system_prompt: null,
 }
 const defaultConfigB = { ...defaultConfigA }
 
@@ -37,7 +42,9 @@ const configB = ref({ ...defaultConfigB })
 
 const roleLabel = (role) => ({ user: '用户', assistant: '助手', tool: '工具' }[role] || role)
 
-async function loadPreview() {
+function goBack() { window.history.back() }
+
+async function loadAnchor() {
   try {
     const res = await api.post('/api/admin/replay/preview', {
       anchor_message_id: msgId,
@@ -53,8 +60,46 @@ async function loadPreview() {
   }
 }
 
-function goBack() {
-  window.history.back()
+async function previewBPrompt() {
+  bPromptLoading.value = true
+  bPromptPreview.value = ''
+  bTrace.value = null
+  bShowPrompt.value = true
+  try {
+    const res = await api.post('/api/admin/replay/preview', {
+      anchor_message_id: msgId,
+      history_count: 10,
+      skip_retrieval: configB.value.skip_retrieval,
+      max_tool_result_chars: configB.value.max_tool_result_chars,
+      memory_threshold: configB.value.memory_threshold,
+      memory_limit: configB.value.memory_limit,
+      note_threshold: configB.value.note_threshold,
+      note_limit: configB.value.note_limit,
+      history_threshold: configB.value.history_threshold,
+      history_limit: configB.value.history_limit,
+    })
+    bPromptPreview.value = res.system_prompt || ''
+    bTrace.value = res.trace || null
+    if (!res.system_prompt) error.value = '该配置下系统提示词为空（可能跳过了检索）'
+  } catch (e) {
+    error.value = '预览失败: ' + e.message
+  } finally {
+    bPromptLoading.value = false
+  }
+}
+
+function editBPrompt() {
+  configB.value.override_system_prompt = bPromptPreview.value
+}
+
+function clearBPrompt() {
+  configB.value.override_system_prompt = ''
+}
+
+function resetBPrompt() {
+  configB.value.override_system_prompt = null
+  bShowPrompt.value = false
+  bPromptPreview.value = ''
 }
 
 async function runCompare() {
@@ -62,10 +107,14 @@ async function runCompare() {
   results.value = { a: null, b: null }
   error.value = ''
 
+  // A 永远不用 override
+  const cfgA = { ...configA.value }
+  cfgA.override_system_prompt = null
+
   const body = {
     anchor_message_id: msgId,
     history_count: 10,
-    config_a: { ...configA.value },
+    config_a: cfgA,
     config_b: { ...configB.value },
   }
 
@@ -110,27 +159,17 @@ async function parseReplaySSE(res) {
             error.value = data.error || raw
             return
           }
-          // start 事件已使用预览数据，无需额外处理
-        } catch (e) {
-          // 忽略解析错误
+        } catch {
+          // ignore
         }
       }
     }
   }
 }
 
-const hasDiff = (tcA, tcB) => {
+function hasDiff(tcA, tcB) {
   if (!tcA || !tcB) return true
   return tcA.tool !== tcB.tool || tcA.function !== tcB.function
-}
-
-function jsonPreview(s) {
-  if (!s) return ''
-  try {
-    return JSON.stringify(JSON.parse(s), null, 2)
-  } catch {
-    return s
-  }
 }
 
 function formatArgs(args) {
@@ -154,7 +193,10 @@ function formatResult(r) {
   }
 }
 
-onMounted(loadPreview)
+function selectedItems(items) { return (items || []).filter(i => !i.discard_reason) }
+function discardedItems(items) { return (items || []).filter(i => i.discard_reason) }
+
+onMounted(loadAnchor)
 </script>
 
 <template>
@@ -193,66 +235,126 @@ onMounted(loadPreview)
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); margin-bottom: var(--space-xl);">
           <!-- Config A -->
           <div style="background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-md);">
-            <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-primary);">配置 A</div>
+            <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-primary);">配置 A（对照组）</div>
             <div style="display: grid; gap: 6px; font-size: 12px;">
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">检索</span><select v-model="configA.skip_retrieval" class="replay-select"><option :value="false">开启</option><option :value="true">关闭</option></select></label>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">模型</span><select v-model="configA.deep_mode" class="replay-select"><option :value="false">Flash</option><option :value="true">Pro</option></select></label>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">截断长度</span><input type="number" v-model.number="configA.max_tool_result_chars" class="replay-input" /></label>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">最大轮次</span><input type="number" v-model.number="configA.max_iterations" class="replay-input" /></label>
-              <div style="margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--color-border); font-size: 11px; color: var(--color-text-muted);">记忆检索</div>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">阈值</span><input type="number" v-model.number="configA.memory_threshold" step="0.05" class="replay-input" /></label>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">条数</span><input type="number" v-model.number="configA.memory_limit" class="replay-input" /></label>
-              <div style="margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--color-border); font-size: 11px; color: var(--color-text-muted);">笔记检索</div>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">阈值</span><input type="number" v-model.number="configA.note_threshold" step="0.05" class="replay-input" /></label>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">条数</span><input type="number" v-model.number="configA.note_limit" class="replay-input" /></label>
-              <div style="margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--color-border); font-size: 11px; color: var(--color-text-muted);">历史检索</div>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">阈值</span><input type="number" v-model.number="configA.history_threshold" step="0.05" class="replay-input" /></label>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">条数</span><input type="number" v-model.number="configA.history_limit" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">检索</span><select v-model="configA.skip_retrieval" class="replay-select"><option :value="false">开启</option><option :value="true">关闭</option></select></label>
+              <label class="cfg-row"><span class="cfg-label">模型</span><select v-model="configA.deep_mode" class="replay-select"><option :value="false">Flash</option><option :value="true">Pro</option></select></label>
+              <label class="cfg-row"><span class="cfg-label">截断长度</span><input type="number" v-model.number="configA.max_tool_result_chars" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">最大轮次</span><input type="number" v-model.number="configA.max_iterations" class="replay-input" /></label>
+              <div class="cfg-section">记忆检索</div>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.memory_threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.memory_limit" class="replay-input" /></label>
+              <div class="cfg-section">笔记检索</div>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.note_threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.note_limit" class="replay-input" /></label>
+              <div class="cfg-section">历史检索</div>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.history_threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.history_limit" class="replay-input" /></label>
             </div>
           </div>
 
           <!-- Config B -->
           <div style="background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-md);">
-            <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-warning);">配置 B</div>
+            <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-warning);">配置 B（实验组）</div>
             <div style="display: grid; gap: 6px; font-size: 12px;">
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">检索</span><select v-model="configB.skip_retrieval" class="replay-select"><option :value="false">开启</option><option :value="true">关闭</option></select></label>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">模型</span><select v-model="configB.deep_mode" class="replay-select"><option :value="false">Flash</option><option :value="true">Pro</option></select></label>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">截断长度</span><input type="number" v-model.number="configB.max_tool_result_chars" class="replay-input" /></label>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">最大轮次</span><input type="number" v-model.number="configB.max_iterations" class="replay-input" /></label>
-              <div style="margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--color-border); font-size: 11px; color: var(--color-text-muted);">记忆检索</div>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">阈值</span><input type="number" v-model.number="configB.memory_threshold" step="0.05" class="replay-input" /></label>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">条数</span><input type="number" v-model.number="configB.memory_limit" class="replay-input" /></label>
-              <div style="margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--color-border); font-size: 11px; color: var(--color-text-muted);">笔记检索</div>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">阈值</span><input type="number" v-model.number="configB.note_threshold" step="0.05" class="replay-input" /></label>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">条数</span><input type="number" v-model.number="configB.note_limit" class="replay-input" /></label>
-              <div style="margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--color-border); font-size: 11px; color: var(--color-text-muted);">历史检索</div>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">阈值</span><input type="number" v-model.number="configB.history_threshold" step="0.05" class="replay-input" /></label>
-              <label style="display: flex; align-items: center; gap: 8px;"><span style="color: var(--color-text-muted); width: 72px;">条数</span><input type="number" v-model.number="configB.history_limit" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">检索</span><select v-model="configB.skip_retrieval" class="replay-select"><option :value="false">开启</option><option :value="true">关闭</option></select></label>
+              <label class="cfg-row"><span class="cfg-label">模型</span><select v-model="configB.deep_mode" class="replay-select"><option :value="false">Flash</option><option :value="true">Pro</option></select></label>
+              <label class="cfg-row"><span class="cfg-label">截断长度</span><input type="number" v-model.number="configB.max_tool_result_chars" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">最大轮次</span><input type="number" v-model.number="configB.max_iterations" class="replay-input" /></label>
+              <div class="cfg-section">记忆检索</div>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.memory_threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.memory_limit" class="replay-input" /></label>
+              <div class="cfg-section">笔记检索</div>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.note_threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.note_limit" class="replay-input" /></label>
+              <div class="cfg-section">历史检索</div>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.history_threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.history_limit" class="replay-input" /></label>
             </div>
           </div>
         </div>
 
-        <!-- 运行按钮 -->
-        <div style="text-align: center; margin-bottom: var(--space-xl);">
-          <button
-            @click="runCompare"
-            :disabled="running"
-            :style="{
-              padding: '10px 40px',
-              fontSize: '15px',
-              fontWeight: 600,
-              border: 'none',
-              borderRadius: 'var(--radius-md)',
-              cursor: running ? 'not-allowed' : 'pointer',
-              background: running ? 'var(--color-border)' : 'var(--color-primary)',
-              color: '#fff',
-              opacity: running ? 0.6 : 1,
-            }"
-          >
+        <!-- 运行按钮行 -->
+        <div style="text-align: center; margin-bottom: var(--space-lg);">
+          <button @click="runCompare" :disabled="running" class="run-btn" :style="{ opacity: running ? 0.6 : 1, cursor: running ? 'not-allowed' : 'pointer' }">
             {{ running ? '运行中...' : '运行对比' }}
           </button>
-          <div v-if="error" style="margin-top: 8px; color: var(--color-error); font-size: 13px;">{{ error }}</div>
+          <button
+            v-if="!bShowPrompt"
+            @click="previewBPrompt"
+            :disabled="bPromptLoading"
+            class="preview-btn"
+            :style="{ opacity: bPromptLoading ? 0.6 : 1 }"
+          >
+            {{ bPromptLoading ? '加载中...' : '预览 B 系统提示词' }}
+          </button>
         </div>
+
+        <!-- B 系统提示词预览/编辑区 -->
+        <div v-if="bShowPrompt" style="margin-bottom: var(--space-xl);">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: var(--space-sm);">
+            <span style="font-size: 13px; color: var(--color-warning); font-weight: 600;">配置 B 系统提示词</span>
+            <span style="font-size: 11px; color: var(--color-text-muted);">（{{ bPromptPreview.length }} 字符，基于 B 的检索参数构建）</span>
+            <button
+              v-if="configB.override_system_prompt == null"
+              @click="editBPrompt"
+              :disabled="!bPromptPreview"
+              style="font-size: 12px; padding: 2px 10px; border-radius: 4px; border: 1px solid var(--color-primary); background: var(--color-surface); color: var(--color-primary); cursor: pointer;"
+            >编辑</button>
+            <template v-else>
+              <button @click="clearBPrompt" style="font-size: 12px; padding: 2px 10px; border-radius: 4px; border: 1px solid var(--color-danger); background: var(--color-surface); color: var(--color-danger); cursor: pointer;">清空</button>
+              <button @click="resetBPrompt" style="font-size: 12px; padding: 2px 10px; border-radius: 4px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-muted); cursor: pointer;">恢复默认</button>
+            </template>
+          </div>
+
+          <pre v-if="configB.override_system_prompt == null" style="font-size: 12px; line-height: 1.5; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 12px; margin: 0; max-height: 400px; overflow-y: auto; white-space: pre-wrap; color: var(--color-text);">{{ bPromptPreview || '(空 — 可能跳过了检索)' }}</pre>
+
+          <div v-else>
+            <textarea v-model="configB.override_system_prompt" class="prompt-editor"></textarea>
+            <div style="font-size: 11px; color: var(--color-warning); margin-top: 4px;">B 将使用此自定义提示词运行，跳过自动检索。点击「恢复默认」后自动构建。</div>
+          </div>
+
+          <!-- 检索 Trace -->
+          <div v-if="bTrace?.providers?.length" style="margin-top: var(--space-md);">
+            <details style="font-size: 13px;">
+              <summary style="cursor: pointer; color: var(--color-text-muted); font-weight: 600;">检索 Trace（{{ bTrace.providers.length }} 个数据源）</summary>
+              <div v-for="(prov, pi) in bTrace.providers" :key="pi" style="margin-top: 8px; padding: 8px 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);">
+                <div style="font-weight: 600; font-size: 12px; margin-bottom: 4px;">{{ prov.name }} <span style="color: var(--color-text-muted); font-weight: 400;">({{ prov.type }})</span></div>
+                <div v-if="prov.error" style="color: var(--color-error); font-size: 11px;">错误: {{ prov.error }}</div>
+                <table v-if="prov.items?.length" style="width: 100%; font-size: 11px; border-collapse: collapse;">
+                  <thead>
+                    <tr style="border-bottom: 1px solid var(--color-border); text-align: left;">
+                      <th style="padding: 2px 6px;">ID</th>
+                      <th style="padding: 2px 6px;">文本</th>
+                      <th style="padding: 2px 6px;">综合</th>
+                      <th style="padding: 2px 6px;">向量</th>
+                      <th style="padding: 2px 6px;">状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="item in selectedItems(prov.items)" :key="item.id" style="border-bottom: 1px solid var(--color-border);">
+                      <td style="padding: 2px 6px; font-family: monospace;">{{ item.id?.slice(0, 8) }}</td>
+                      <td style="padding: 2px 6px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ item.text || '-' }}</td>
+                      <td style="padding: 2px 6px;">{{ item.score?.toFixed(3) || '-' }}</td>
+                      <td style="padding: 2px 6px;">{{ item.vector_score?.toFixed(3) || '-' }}</td>
+                      <td style="padding: 2px 6px; color: var(--color-success);">✓</td>
+                    </tr>
+                    <tr v-for="item in discardedItems(prov.items)" :key="item.id" style="border-bottom: 1px solid var(--color-border);">
+                      <td style="padding: 2px 6px; font-family: monospace;">{{ item.id?.slice(0, 8) }}</td>
+                      <td style="padding: 2px 6px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ item.text || '-' }}</td>
+                      <td style="padding: 2px 6px;">-</td>
+                      <td style="padding: 2px 6px;">{{ item.vector_score?.toFixed(3) || '-' }}</td>
+                      <td style="padding: 2px 6px; color: var(--color-warning);">{{ item.discard_reason }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div v-else style="font-size: 11px; color: var(--color-text-muted);">无检索结果</div>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <div v-if="error" style="text-align: center; margin-bottom: var(--space-md); color: var(--color-error); font-size: 13px;">{{ error }}</div>
 
         <!-- 对比结果 -->
         <div v-if="results.a || results.b" style="margin-bottom: var(--space-xl);">
@@ -261,66 +363,50 @@ onMounted(loadPreview)
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md);">
             <!-- Side A -->
             <div>
-              <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-primary);">配置 A</div>
-
-              <!-- Tool Calls -->
+              <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-primary);">配置 A（对照组）</div>
               <div v-if="results.a?.tool_calls?.length" style="margin-bottom: var(--space-md);">
                 <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">工具调用</div>
                 <div v-for="(tc, idx) in results.a.tool_calls" :key="idx"
                   :style="{
                     background: 'var(--color-surface)',
                     border: `1px solid ${results.b?.tool_calls?.[idx] && hasDiff(tc, results.b.tool_calls[idx]) ? 'var(--color-warning)' : 'var(--color-border)'}`,
-                    borderRadius: 'var(--radius-md)',
-                    padding: '10px 12px',
-                    marginBottom: '8px',
+                    borderRadius: 'var(--radius-md)', padding: '10px 12px', marginBottom: '8px',
                   }"
                 >
-                  <div style="font-weight: 600; font-size: 13px; margin-bottom: 4px;">
-                    {{ tc.tool }}.{{ tc.function }}
-                  </div>
+                  <div style="font-weight: 600; font-size: 13px; margin-bottom: 4px;">{{ tc.tool }}.{{ tc.function }}</div>
                   <div style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">参数:</div>
-                  <pre style="font-size: 11px; background: var(--color-bg-page); padding: 6px; border-radius: 4px; margin: 0 0 8px 0; overflow-x: auto; white-space: pre-wrap;">{{ formatArgs(tc.args) }}</pre>
+                  <pre class="tc-pre">{{ formatArgs(tc.args) }}</pre>
                   <div style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">结果:</div>
-                  <pre style="font-size: 11px; background: var(--color-bg-page); padding: 6px; border-radius: 4px; margin: 0; overflow-x: auto; white-space: pre-wrap; max-height: 200px; overflow-y: auto;">{{ formatResult(tc.result) }}</pre>
+                  <pre class="tc-pre" style="max-height: 200px; overflow-y: auto;">{{ formatResult(tc.result) }}</pre>
                 </div>
               </div>
               <div v-else style="font-size: 12px; color: var(--color-text-muted); margin-bottom: var(--space-md);">无工具调用</div>
-
-              <!-- Reply -->
               <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">回复</div>
-              <div style="background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 10px 12px; font-size: 13px; line-height: 1.6; white-space: pre-wrap;">{{ results.a?.reply || '(无文本回复)' }}</div>
+              <div class="reply-box">{{ results.a?.reply || '(无文本回复)' }}</div>
             </div>
 
             <!-- Side B -->
             <div>
-              <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-warning);">配置 B</div>
-
-              <!-- Tool Calls -->
+              <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-warning);">配置 B（实验组）</div>
               <div v-if="results.b?.tool_calls?.length" style="margin-bottom: var(--space-md);">
                 <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">工具调用</div>
                 <div v-for="(tc, idx) in results.b.tool_calls" :key="idx"
                   :style="{
                     background: 'var(--color-surface)',
                     border: `1px solid ${results.a?.tool_calls?.[idx] && hasDiff(results.a.tool_calls[idx], tc) ? 'var(--color-warning)' : 'var(--color-border)'}`,
-                    borderRadius: 'var(--radius-md)',
-                    padding: '10px 12px',
-                    marginBottom: '8px',
+                    borderRadius: 'var(--radius-md)', padding: '10px 12px', marginBottom: '8px',
                   }"
                 >
-                  <div style="font-weight: 600; font-size: 13px; margin-bottom: 4px;">
-                    {{ tc.tool }}.{{ tc.function }}
-                  </div>
+                  <div style="font-weight: 600; font-size: 13px; margin-bottom: 4px;">{{ tc.tool }}.{{ tc.function }}</div>
                   <div style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">参数:</div>
-                  <pre style="font-size: 11px; background: var(--color-bg-page); padding: 6px; border-radius: 4px; margin: 0 0 8px 0; overflow-x: auto; white-space: pre-wrap;">{{ formatArgs(tc.args) }}</pre>
+                  <pre class="tc-pre">{{ formatArgs(tc.args) }}</pre>
                   <div style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">结果:</div>
-                  <pre style="font-size: 11px; background: var(--color-bg-page); padding: 6px; border-radius: 4px; margin: 0; overflow-x: auto; white-space: pre-wrap; max-height: 200px; overflow-y: auto;">{{ formatResult(tc.result) }}</pre>
+                  <pre class="tc-pre" style="max-height: 200px; overflow-y: auto;">{{ formatResult(tc.result) }}</pre>
                 </div>
               </div>
               <div v-else style="font-size: 12px; color: var(--color-text-muted); margin-bottom: var(--space-md);">无工具调用</div>
-
-              <!-- Reply -->
               <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">回复</div>
-              <div style="background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 10px 12px; font-size: 13px; line-height: 1.6; white-space: pre-wrap;">{{ results.b?.reply || '(无文本回复)' }}</div>
+              <div class="reply-box">{{ results.b?.reply || '(无文本回复)' }}</div>
             </div>
           </div>
         </div>
@@ -330,6 +416,23 @@ onMounted(loadPreview)
 </template>
 
 <style scoped>
+.cfg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cfg-label {
+  color: var(--color-text-muted);
+  width: 72px;
+}
+.cfg-section {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
 .replay-input,
 .replay-select {
   flex: 1;
@@ -340,27 +443,76 @@ onMounted(loadPreview)
   color: var(--color-text);
   font-size: 12px;
 }
-
 .replay-input:focus,
 .replay-select:focus {
   outline: none;
   border-color: var(--color-primary);
 }
-
 .replay-select option {
   color: var(--color-text);
   background: var(--color-surface);
 }
 
-pre {
-  color: var(--color-text);
+.run-btn {
+  padding: 10px 40px;
+  font-size: 15px;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: #fff;
+  margin-right: 12px;
 }
+.preview-btn {
+  padding: 10px 24px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-warning);
+  cursor: pointer;
+}
+
+.prompt-editor {
+  width: 100%;
+  min-height: 400px;
+  font-size: 12px;
+  font-family: monospace;
+  line-height: 1.5;
+  background: var(--color-bg-page);
+  border: 2px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  color: var(--color-text);
+  resize: vertical;
+}
+
+.tc-pre {
+  font-size: 11px;
+  background: var(--color-bg-page);
+  padding: 6px;
+  border-radius: 4px;
+  margin: 0 0 8px 0;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+.reply-box {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+pre { color: var(--color-text); }
 
 [data-theme="dark"] .replay-input,
 [data-theme="dark"] .replay-select {
   color-scheme: dark;
 }
-
 [data-theme="dark"] .replay-select option {
   color: #f1f5f9;
   background: #1e293b;

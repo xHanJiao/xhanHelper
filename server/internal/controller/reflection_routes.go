@@ -22,6 +22,7 @@ type ReflectionRoutesConfig struct {
 	MessageTraceHandler    *MessageTraceHandler
 	MessageDebugHandler    *MessageDebugHandler
 	ReplayHandler          *ReplayHandler
+	EnableReplay           bool // 仅 dev 环境开放
 	PendingFindingRepo     *service.PendingFindingRepo
 	ReflectionOrch         *agent.ReflectionOrchestrator
 	CronRunner             *agent.CronRunner
@@ -74,8 +75,10 @@ func RegisterReflectionRoutes(rc *ReflectionRoutesConfig) {
 		admin.GET("/messages/:id/debug-detail", rc.MessageDebugHandler.GetMessageDebugDetail)
 		admin.GET("/resource-lookup", rc.MessageDebugHandler.LookupResource)
 		admin.POST("/resource-lookup/batch", rc.MessageDebugHandler.LookupResourcesBatch)
-		admin.POST("/replay/preview", rc.ReplayHandler.PreviewReplay)
-		admin.POST("/replay/compare", rc.ReplayHandler.CompareReplay)
+		if rc.EnableReplay {
+			admin.POST("/replay/preview", rc.ReplayHandler.PreviewReplay)
+			admin.POST("/replay/compare", rc.ReplayHandler.CompareReplay)
+		}
 		admin.GET("/hooks", func(c *gin.Context) {
 			view.JSONOK(c, rc.CronRunner.GetHookStatus())
 		})

@@ -32,6 +32,9 @@ type Config struct {
 	NoteLimit        int     `json:"note_limit"`
 	HistoryThreshold float64 `json:"history_threshold"`
 	HistoryLimit     int     `json:"history_limit"`
+
+	// 手动覆盖完整 system prompt（nil=自动构建，非 nil 直接使用，含空串）
+	OverrideSystemPrompt *string `json:"override_system_prompt,omitempty"`
 }
 
 // Runner 重放执行器，使用独立 SQLite 存储重放消息，复用主应用的 LLM/Tool/检索
@@ -84,6 +87,52 @@ type Result struct {
 	Reply          string             `json:"reply"`
 }
 
+// PreviewResult — 预览结果，包含完整 system prompt、消息列表和检索 trace
+type PreviewResult struct {
+	SystemPrompt string                     `json:"system_prompt"`
+	Messages     []llm.Message              `json:"messages"`
+	Trace        *promptbuilder.PromptTrace `json:"trace,omitempty"`
+}
+
+// Preview 构建 system prompt 并返回完整的请求预览
+func (r *Runner) Preview(ctx context.Context, anchorMsg *model.Message, history []model.Message, cfg *Config) (*PreviewResult, error) {
+	msgs := agent.BuildMessagesForFlash(history, cfg.MaxToolResultChars)
+	msgs = append(msgs, llm.Message{Role: "user", Content: anchorMsg.Content})
+
+	var vec []float64
+	if !cfg.SkipRetrieval && r.embedder != nil {
+		v, err := r.embedder.Embed(ctx, anchorMsg.Content)
+		if err != nil {
+			log.Printf("[replay] preview embed error: %v", err)
+		} else {
+			vec = v
+		}
+	}
+
+	result, err := r.promptBuilder.Build(ctx, promptbuilder.BuildOptions{
+		UserID:           anchorMsg.UserID,
+		ConversationID:   anchorMsg.ConversationID,
+		UserMessage:      anchorMsg.Content,
+		Embedding:        vec,
+		MemoryThreshold:  cfg.MemoryThreshold,
+		MemoryLimit:      cfg.MemoryLimit,
+		NoteThreshold:    cfg.NoteThreshold,
+		NoteLimit:        cfg.NoteLimit,
+		HistoryThreshold: cfg.HistoryThreshold,
+		HistoryLimit:     cfg.HistoryLimit,
+	})
+	if err != nil {
+		log.Printf("[replay] preview build error: %v", err)
+		return &PreviewResult{Messages: msgs}, nil
+	}
+
+	return &PreviewResult{
+		SystemPrompt: result.Prompt,
+		Messages:     msgs,
+		Trace:        result.Trace,
+	}, nil
+}
+
 // Run 执行一次重放，所有消息写入独立的 SQLite 内存库
 func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []model.Message, cfg *Config) (*Result, error) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -132,21 +181,22 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 	})
 
 	events, err := orch.Run(ctx, &agent.RunRequest{
-		UserID:             anchorMsg.UserID,
-		ConversationID:     convID,
-		Messages:           msgs,
-		UserMessageContent: anchorMsg.Content,
-		RawUserMessage:     anchorMsg.Content,
-		SkipRetrieval:      cfg.SkipRetrieval,
-		MaxIterations:      cfg.MaxIterations,
-		Temperature:        temperature,
-		MaxTokens:          r.maxTokens,
-		MemoryThreshold:    cfg.MemoryThreshold,
-		MemoryLimit:        cfg.MemoryLimit,
-		NoteThreshold:      cfg.NoteThreshold,
-		NoteLimit:          cfg.NoteLimit,
-		HistoryThreshold:   cfg.HistoryThreshold,
-		HistoryLimit:       cfg.HistoryLimit,
+		UserID:               anchorMsg.UserID,
+		ConversationID:       convID,
+		Messages:             msgs,
+		UserMessageContent:   anchorMsg.Content,
+		RawUserMessage:       anchorMsg.Content,
+		SkipRetrieval:        cfg.SkipRetrieval,
+		OverrideSystemPrompt: cfg.OverrideSystemPrompt,
+		MaxIterations:        cfg.MaxIterations,
+		Temperature:          temperature,
+		MaxTokens:            r.maxTokens,
+		MemoryThreshold:      cfg.MemoryThreshold,
+		MemoryLimit:          cfg.MemoryLimit,
+		NoteThreshold:        cfg.NoteThreshold,
+		NoteLimit:            cfg.NoteLimit,
+		HistoryThreshold:     cfg.HistoryThreshold,
+		HistoryLimit:         cfg.HistoryLimit,
 	})
 	if err != nil {
 		log.Printf("[replay] orch run error: %v", err)

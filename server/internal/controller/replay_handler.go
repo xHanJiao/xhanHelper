@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/agent/replay"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -36,6 +37,12 @@ type replayPreviewReq struct {
 	MaxToolResultChars int      `json:"max_tool_result_chars"`
 	DeepMode           bool     `json:"deep_mode"`
 	Temperature        *float64 `json:"temperature"`
+	MemoryThreshold    float64  `json:"memory_threshold"`
+	MemoryLimit        int      `json:"memory_limit"`
+	NoteThreshold      float64  `json:"note_threshold"`
+	NoteLimit          int      `json:"note_limit"`
+	HistoryThreshold   float64  `json:"history_threshold"`
+	HistoryLimit       int      `json:"history_limit"`
 }
 
 type replayCompareReq struct {
@@ -45,7 +52,7 @@ type replayCompareReq struct {
 	ConfigB         replay.Config `json:"config_b"`
 }
 
-// PreviewReplay 预览重放时发给 LLM 的完整请求
+// PreviewReplay 预览重放时发给 LLM 的完整请求（含 system prompt + 消息列表）
 // POST /api/admin/replay/preview
 func (h *ReplayHandler) PreviewReplay(c *gin.Context) {
 	var req replayPreviewReq
@@ -62,19 +69,40 @@ func (h *ReplayHandler) PreviewReplay(c *gin.Context) {
 
 	anchor, history := h.loadAnchorAndHistory(c, req.AnchorMessageID, req.HistoryCount)
 	if anchor == nil {
-		return // loadAnchorAndHistory 已写错误响应
+		return
 	}
 
-	// 构建消息列表（旧消息 + 锚点用户消息）
-	msgs := agent.BuildMessagesForFlash(history, req.MaxToolResultChars)
-	msgs = append(msgs, llm.Message{Role: "user", Content: anchor.Content})
+	preview, err := h.runner.Preview(c.Request.Context(), anchor, history, &replay.Config{
+		SkipRetrieval:      req.SkipRetrieval,
+		MaxToolResultChars: req.MaxToolResultChars,
+		MemoryThreshold:    req.MemoryThreshold,
+		MemoryLimit:        req.MemoryLimit,
+		NoteThreshold:      req.NoteThreshold,
+		NoteLimit:          req.NoteLimit,
+		HistoryThreshold:   req.HistoryThreshold,
+		HistoryLimit:       req.HistoryLimit,
+	})
+	if err != nil {
+		log.Printf("[replay] preview error: %v", err)
+	}
 
-	// 注意: system prompt 由 orchestrator Run 时动态构建（含检索），预览不重复计算 embedding
-	// 这里只返回消息历史，system prompt 在 compare 阶段由 orchestrator 填充
+	systemPrompt := ""
+	messages := agent.BuildMessagesForFlash(history, req.MaxToolResultChars)
+	messages = append(messages, llm.Message{Role: "user", Content: anchor.Content})
+	var trace *promptbuilder.PromptTrace
+
+	if preview != nil {
+		systemPrompt = preview.SystemPrompt
+		messages = preview.Messages
+		trace = preview.Trace
+	}
+
 	view.JSONOK(c, gin.H{
 		"anchor_message": cleanForDebug(anchor),
-		"messages":       msgs,
+		"system_prompt":  systemPrompt,
+		"messages":       messages,
 		"history_count":  len(history),
+		"trace":          trace,
 	})
 }
 

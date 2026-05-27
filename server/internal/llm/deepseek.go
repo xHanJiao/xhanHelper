@@ -39,6 +39,9 @@ func buildMessages(req *ChatRequest) []map[string]interface{} {
 	}
 
 	for _, m := range req.Messages {
+		if m.Content == "" && len(m.ToolCalls) == 0 && m.ToolCallID == "" {
+			continue
+		}
 		msg := map[string]interface{}{"role": m.Role}
 		if m.Content != "" {
 			msg["content"] = m.Content

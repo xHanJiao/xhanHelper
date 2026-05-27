@@ -182,7 +182,7 @@ func (rl *ReactLoop) Run(ctx context.Context, userMessage string) (*ReactLoopRes
 			}
 			msgs = append(msgs, llm.Message{
 				Role:    "user",
-				Content: "[工具执行结果] " + string(resJSON),
+				Content: string(resJSON),
 			})
 
 			// ThemeAnalyst 返回 skip_reason 时记录业务层决策

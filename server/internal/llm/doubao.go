@@ -134,11 +134,13 @@ func (c *DoubaoClient) buildBody(req *ChatRequest) ([]byte, io.Reader) {
 	messages = append(messages, map[string]string{"role": "system", "content": sp})
 
 	for _, m := range req.Messages {
+		if m.Content == "" && len(m.ToolCalls) == 0 && m.ToolCallID == "" {
+			continue
+		}
 		role := m.Role
 		content := m.Content
 		if role == "tool" {
 			role = "user"
-			content = "[工具执行结果] " + content
 		}
 		messages = append(messages, map[string]string{"role": role, "content": content})
 	}

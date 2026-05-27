@@ -462,7 +462,7 @@ func (o *Orchestrator) collectToolResults(ctx context.Context, parsed *LLMRespon
 		o.saveToolMsg(ctx, convID, userID, idgen.Next(), string(resJSON))
 		msgs = append(msgs, llm.Message{
 			Role:    "user",
-			Content: "[工具执行结果] " + string(resJSON),
+			Content: string(resJSON),
 		})
 	}
 	return msgs
@@ -593,16 +593,15 @@ func BuildMessagesForFlash(history []model.Message) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
 		// ts := "（发于" + m.CreatedAt.In(config.BJ).Format("01-02 15:04") + "）"
-		ts := ""
 		if m.Role == "tool" {
 			// FlashClient 不支持 role="tool"，包装成 user 消息
 
 			msgs = append(msgs, llm.Message{
 				Role:    "user",
-				Content: "[工具执行结果] " + m.Content + ts,
+				Content: m.Content,
 			})
 		} else {
-			msg := llm.Message{Role: m.Role, Content: m.Content + ts}
+			msg := llm.Message{Role: m.Role, Content: m.Content}
 			if m.ToolCallID != nil {
 				msg.ToolCallID = *m.ToolCallID
 			}

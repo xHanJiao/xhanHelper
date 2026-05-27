@@ -2,6 +2,7 @@ package tool
 
 import (
 	"encoding/json"
+	"log"
 
 	"github.com/google/uuid"
 
@@ -12,11 +13,12 @@ import (
 
 // DocumentTool — 文档管理工具。仅在用户明确要求时使用，不要主动创建。
 type DocumentTool struct {
-	docRepo *service.DocumentRepo
+	docRepo     *service.DocumentRepo
+	versionRepo *service.VersionRepo
 }
 
-func NewDocumentTool(docRepo *service.DocumentRepo) *DocumentTool {
-	return &DocumentTool{docRepo: docRepo}
+func NewDocumentTool(docRepo *service.DocumentRepo, versionRepo *service.VersionRepo) *DocumentTool {
+	return &DocumentTool{docRepo: docRepo, versionRepo: versionRepo}
 }
 
 func (t *DocumentTool) Name() string { return "document" }
@@ -41,8 +43,19 @@ func (t *DocumentTool) Functions() []FuncSchema {
 			},
 		},
 		{
+			Name:        "get_document",
+			Description: "获取文档完整内容（含版本列表）。修改文档前必须先调用此函数读取当前内容。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{"type": "string", "description": "文档 ID"},
+				},
+				"required": []string{"id"},
+			},
+		},
+		{
 			Name:        "update_document",
-			Description: "修改已有文档的标题、内容或标签。仅更新传入的非空字段。",
+			Description: "修改已有文档。修改前请先用 get_document 读取完整内容，在其基础上修改后传入。仅更新传入的非空字段。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -50,6 +63,29 @@ func (t *DocumentTool) Functions() []FuncSchema {
 					"title":   map[string]interface{}{"type": "string", "description": "新的文档标题（可选）"},
 					"content": map[string]interface{}{"type": "string", "description": "新的 Markdown 正文（可选）"},
 					"tags":    map[string]interface{}{"type": "string", "description": "新的标签（可选）"},
+				},
+				"required": []string{"id"},
+			},
+		},
+		{
+			Name:        "rollback_document",
+			Description: "将文档回滚到指定历史版本。版本号从 get_document_versions 获取。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id":      map[string]interface{}{"type": "string", "description": "文档 ID"},
+					"version": map[string]interface{}{"type": "integer", "description": "要回滚到的版本号"},
+				},
+				"required": []string{"id", "version"},
+			},
+		},
+		{
+			Name:        "get_document_versions",
+			Description: "获取文档的所有历史版本列表。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{"type": "string", "description": "文档 ID"},
 				},
 				"required": []string{"id"},
 			},
@@ -83,12 +119,18 @@ func (t *DocumentTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 	switch funcName {
 	case "create_document":
 		return t.createDocument(ec, args)
+	case "get_document":
+		return t.getDocument(ec, args)
 	case "update_document":
 		return t.updateDocument(ec, args)
+	case "rollback_document":
+		return t.rollbackDocument(ec, args)
 	case "query_documents":
 		return t.queryDocuments(ec, args)
 	case "delete_document":
 		return t.deleteDocument(ec, args)
+	case "get_document_versions":
+		return t.getDocumentVersions(ec, args)
 	default:
 		return &Result{Success: false, Error: "unknown function: " + funcName}
 	}
@@ -127,6 +169,90 @@ func (t *DocumentTool) createDocument(ec *ExecuteContext, args json.RawMessage) 
 	return &Result{Success: true, Data: data}
 }
 
+func (t *DocumentTool) getDocument(ec *ExecuteContext, args json.RawMessage) *Result {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil {
+		return &Result{Success: false, Error: "invalid args: " + err.Error()}
+	}
+	if req.ID == "" {
+		return &Result{Success: false, Error: "id required"}
+	}
+
+	doc, err := t.docRepo.GetByID(ec.Ctx, req.ID, ec.UserID)
+	if err != nil {
+		return &Result{Success: false, Error: "document not found: " + err.Error()}
+	}
+
+	result := map[string]interface{}{
+		"id":         doc.ID,
+		"title":      doc.Title,
+		"content":    doc.Content,
+		"tags":       doc.Tags,
+		"created_at": doc.CreatedAt,
+		"updated_at": doc.UpdatedAt,
+	}
+	if doc.ConversationID != nil {
+		result["conversation_id"] = *doc.ConversationID
+	}
+
+	// 附带版本历史列表
+	versions, err := t.versionRepo.GetVersions(ec.Ctx, "document", req.ID)
+	if err != nil {
+		log.Printf("[document] get versions for get_document: %v", err)
+	}
+	if len(versions) > 0 {
+		vlist := make([]map[string]interface{}, len(versions))
+		for i, v := range versions {
+			vlist[i] = map[string]interface{}{
+				"version":    v.Version,
+				"created_at": v.CreatedAt,
+			}
+		}
+		result["versions"] = vlist
+	}
+
+	data, _ := json.Marshal(result)
+	return &Result{Success: true, Data: data}
+}
+
+func (t *DocumentTool) getDocumentVersions(ec *ExecuteContext, args json.RawMessage) *Result {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil {
+		return &Result{Success: false, Error: "invalid args: " + err.Error()}
+	}
+	if req.ID == "" {
+		return &Result{Success: false, Error: "id required"}
+	}
+
+	// 先确认文档存在
+	if _, err := t.docRepo.GetByID(ec.Ctx, req.ID, ec.UserID); err != nil {
+		return &Result{Success: false, Error: "document not found: " + err.Error()}
+	}
+
+	versions, err := t.versionRepo.GetVersions(ec.Ctx, "document", req.ID)
+	if err != nil {
+		return &Result{Success: false, Error: "get versions: " + err.Error()}
+	}
+
+	vlist := make([]map[string]interface{}, 0, len(versions))
+	for _, v := range versions {
+		vlist = append(vlist, map[string]interface{}{
+			"version":    v.Version,
+			"snapshot":   v.Snapshot,
+			"created_at": v.CreatedAt,
+		})
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"versions": vlist,
+	})
+	return &Result{Success: true, Data: data}
+}
+
 func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) *Result {
 	var req struct {
 		ID      string `json:"id"`
@@ -139,6 +265,19 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 	}
 	if req.ID == "" {
 		return &Result{Success: false, Error: "id required"}
+	}
+
+	// 更新前先创建版本快照
+	current, err := t.docRepo.GetByID(ec.Ctx, req.ID, ec.UserID)
+	if err != nil {
+		return &Result{Success: false, Error: "document not found: " + err.Error()}
+	}
+	if err := t.versionRepo.CreateSnapshot(ec.Ctx, "document", req.ID, map[string]interface{}{
+		"title":   current.Title,
+		"content": current.Content,
+		"tags":    current.Tags,
+	}); err != nil {
+		log.Printf("[document] create snapshot before update %s: %v", req.ID, err)
 	}
 
 	updates := map[string]interface{}{}
@@ -162,6 +301,65 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 	data, _ := json.Marshal(map[string]interface{}{
 		"id":      req.ID,
 		"message": "文档已更新",
+	})
+	return &Result{Success: true, Data: data}
+}
+
+func (t *DocumentTool) rollbackDocument(ec *ExecuteContext, args json.RawMessage) *Result {
+	var req struct {
+		ID      string `json:"id"`
+		Version int    `json:"version"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil {
+		return &Result{Success: false, Error: "invalid args: " + err.Error()}
+	}
+	if req.ID == "" || req.Version <= 0 {
+		return &Result{Success: false, Error: "id and version required"}
+	}
+
+	// 确保文档存在
+	current, err := t.docRepo.GetByID(ec.Ctx, req.ID, ec.UserID)
+	if err != nil {
+		return &Result{Success: false, Error: "document not found: " + err.Error()}
+	}
+
+	// 先创建当前版本快照
+	if err := t.versionRepo.CreateSnapshot(ec.Ctx, "document", req.ID, map[string]interface{}{
+		"title":   current.Title,
+		"content": current.Content,
+		"tags":    current.Tags,
+	}); err != nil {
+		log.Printf("[document] create snapshot before rollback %s: %v", req.ID, err)
+	}
+
+	// 获取目标版本快照
+	snap, err := t.versionRepo.GetSnapshot(ec.Ctx, "document", req.ID, req.Version)
+	if err != nil {
+		return &Result{Success: false, Error: "version not found: " + err.Error()}
+	}
+
+	var snapData struct {
+		Title   string `json:"title"`
+		Content string `json:"content"`
+		Tags    string `json:"tags"`
+	}
+	if err := json.Unmarshal([]byte(snap.Snapshot), &snapData); err != nil {
+		return &Result{Success: false, Error: "parse snapshot: " + err.Error()}
+	}
+
+	updates := map[string]interface{}{
+		"title":   snapData.Title,
+		"content": snapData.Content,
+		"tags":    snapData.Tags,
+	}
+	if err := t.docRepo.Update(ec.Ctx, req.ID, ec.UserID, updates); err != nil {
+		return &Result{Success: false, Error: "rollback document: " + err.Error()}
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"id":      req.ID,
+		"version": req.Version,
+		"message": "文档已回滚",
 	})
 	return &Result{Success: true, Data: data}
 }

@@ -86,6 +86,7 @@ func main() {
 		&model.Commitment{},
 		&model.DelayedTask{},
 		&model.Document{},
+		&model.ContentVersion{},
 	); err != nil {
 		log.Printf("[db] AutoMigrate error: %v", err)
 	}
@@ -122,13 +123,14 @@ func main() {
 	commitmentRepo := service.NewCommitmentRepo(db)
 	delayedTaskRepo := service.NewDelayedTaskRepo(db)
 	docRepo := service.NewDocumentRepo(db)
+	versionRepo := service.NewVersionRepo(db)
 
 	// Tool Registry + Tools
 	reg := tool.NewRegistry()
 	reg.Register(tool.NewLoggingWrapper(tool.NewBookkeepingTool(billRepo), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewDatetimeTool(), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewCalculatorTool(), log.Default()))
-	reg.Register(tool.NewLoggingWrapper(tool.NewDocumentTool(docRepo), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewDocumentTool(docRepo, versionRepo), log.Default()))
 
 	// Vector Store
 	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
@@ -199,7 +201,7 @@ func main() {
 	chunkBuilder := agent.NewChunkBuilder(infra, chunkRepo, embeddingRepo)
 
 	// NoteTool with chunk embedding
-	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(noteRepo, infra.VectorStore, embedder, embeddingRepo, chunkBuilder, conceptEmbedService), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(noteRepo, versionRepo, infra.VectorStore, embedder, embeddingRepo, chunkBuilder, conceptEmbedService), log.Default()))
 
 	topicStatsTool := tool.NewLoggingWrapper(tool.NewGetTopicStatsTool(conceptEmbedRepo, noteRepo, memRepo, embedder, infra.VectorStore, conceptEmbedService, cfg.Reflection.ClusterThreshold), log.Default())
 	topicDetailTool := tool.NewLoggingWrapper(tool.NewGetTopicDetailTool(noteRepo, memRepo), log.Default())

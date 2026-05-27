@@ -17,6 +17,7 @@ import (
 // NoteTool — 变量追踪笔记工具
 type NoteTool struct {
 	noteRepo      *service.NoteRepo
+	versionRepo   *service.VersionRepo
 	vectorStore   app.VectorStore
 	embedder      *llm.Embedder
 	embeddingRepo *service.EmbeddingRepo
@@ -24,8 +25,8 @@ type NoteTool struct {
 	conceptEmbed  app.ConceptEmbedder
 }
 
-func NewNoteTool(noteRepo *service.NoteRepo, vs app.VectorStore, emb *llm.Embedder, embeddingRepo *service.EmbeddingRepo, chunkBuilder app.ChunkEmbedder, conceptEmbed app.ConceptEmbedder) *NoteTool {
-	return &NoteTool{noteRepo: noteRepo, vectorStore: vs, embedder: emb, embeddingRepo: embeddingRepo, chunkBuilder: chunkBuilder, conceptEmbed: conceptEmbed}
+func NewNoteTool(noteRepo *service.NoteRepo, versionRepo *service.VersionRepo, vs app.VectorStore, emb *llm.Embedder, embeddingRepo *service.EmbeddingRepo, chunkBuilder app.ChunkEmbedder, conceptEmbed app.ConceptEmbedder) *NoteTool {
+	return &NoteTool{noteRepo: noteRepo, versionRepo: versionRepo, vectorStore: vs, embedder: emb, embeddingRepo: embeddingRepo, chunkBuilder: chunkBuilder, conceptEmbed: conceptEmbed}
 }
 
 func (t *NoteTool) Name() string { return "note" }
@@ -53,6 +54,17 @@ func (t *NoteTool) Functions() []FuncSchema {
 			},
 		},
 		{
+			Name:        "get_note",
+			Description: "获取笔记完整内容（含版本列表）。修改笔记前必须先调用此函数读取当前内容。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{"type": "string", "description": "笔记 ID"},
+				},
+				"required": []string{"id"},
+			},
+		},
+		{
 			Name:        "query_notes",
 			Description: "查询已保存的笔记，按主题或关键词检索历史记录",
 			Parameters: map[string]interface{}{
@@ -65,7 +77,7 @@ func (t *NoteTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "update_note",
-			Description: "更新已有笔记的字段。仅传需要修改的字段",
+			Description: "更新已有笔记。修改前请先用 get_note 读取完整内容，在其基础上修改后传入。仅传需要修改的字段",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -81,6 +93,29 @@ func (t *NoteTool) Functions() []FuncSchema {
 				"required": []string{"id"},
 			},
 		},
+		{
+			Name:        "rollback_note",
+			Description: "将笔记回滚到指定历史版本。版本号从 get_note_versions 获取。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id":      map[string]interface{}{"type": "string", "description": "笔记 ID"},
+					"version": map[string]interface{}{"type": "integer", "description": "要回滚到的版本号"},
+				},
+				"required": []string{"id", "version"},
+			},
+		},
+		{
+			Name:        "get_note_versions",
+			Description: "获取笔记的所有历史版本列表。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{"type": "string", "description": "笔记 ID"},
+				},
+				"required": []string{"id"},
+			},
+		},
 	}
 }
 
@@ -88,10 +123,16 @@ func (t *NoteTool) Execute(ec *ExecuteContext, funcName string, args json.RawMes
 	switch funcName {
 	case "record_note":
 		return t.recordNote(ec, args)
+	case "get_note":
+		return t.getNote(ec, args)
 	case "query_notes":
 		return t.queryNotes(ec, args)
 	case "update_note":
 		return t.updateNote(ec, args)
+	case "rollback_note":
+		return t.rollbackNote(ec, args)
+	case "get_note_versions":
+		return t.getNoteVersions(ec, args)
 	default:
 		return &Result{Success: false, Error: fmt.Sprintf("unknown function: %s", funcName)}
 	}
@@ -129,15 +170,103 @@ func (t *NoteTool) recordNote(ec *ExecuteContext, args json.RawMessage) *Result 
 	}
 
 	// 异步嵌入：concept + chunk
-	go func() {
-		t.conceptEmbed.EnsureTopicEmbedded(context.Background(), ec.UserID, note.Topic, "note", note.ID)
-		if note.Tags != "" {
-			t.conceptEmbed.EnsureTagsEmbedded(context.Background(), ec.UserID, note.Tags, "note", note.ID)
-		}
-		t.embedNote(note)
-	}()
+	if t.chunkBuilder != nil {
+		go func() {
+			t.conceptEmbed.EnsureTopicEmbedded(context.Background(), ec.UserID, note.Topic, "note", note.ID)
+			if note.Tags != "" {
+				t.conceptEmbed.EnsureTagsEmbedded(context.Background(), ec.UserID, note.Tags, "note", note.ID)
+			}
+			t.embedNote(note)
+		}()
+	}
 
 	data, _ := json.Marshal(note)
+	return &Result{Success: true, Data: data}
+}
+
+func (t *NoteTool) getNote(ec *ExecuteContext, args json.RawMessage) *Result {
+	var params struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("parse args: %v", err)}
+	}
+	if params.ID == "" {
+		return &Result{Success: false, Error: "id is required"}
+	}
+
+	note, err := t.noteRepo.GetByID(ec.Ctx, params.ID, ec.UserID)
+	if err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("note not found: %v", err)}
+	}
+
+	result := map[string]interface{}{
+		"id":         note.ID,
+		"topic":      note.Topic,
+		"content":    note.Content,
+		"tags":       note.Tags,
+		"created_at": note.CreatedAt,
+		"updated_at": note.UpdatedAt,
+	}
+	if note.Variables != nil {
+		var vars map[string]interface{}
+		if json.Unmarshal([]byte(*note.Variables), &vars) == nil {
+			result["variables"] = vars
+		}
+	}
+
+	// 附带版本历史列表
+	versions, err := t.versionRepo.GetVersions(ec.Ctx, "note", params.ID)
+	if err != nil {
+		log.Printf("[note] get versions for get_note: %v", err)
+	}
+	if len(versions) > 0 {
+		vlist := make([]map[string]interface{}, len(versions))
+		for i, v := range versions {
+			vlist[i] = map[string]interface{}{
+				"version":    v.Version,
+				"created_at": v.CreatedAt,
+			}
+		}
+		result["versions"] = vlist
+	}
+
+	data, _ := json.Marshal(result)
+	return &Result{Success: true, Data: data}
+}
+
+func (t *NoteTool) getNoteVersions(ec *ExecuteContext, args json.RawMessage) *Result {
+	var params struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("parse args: %v", err)}
+	}
+	if params.ID == "" {
+		return &Result{Success: false, Error: "id is required"}
+	}
+
+	if _, err := t.noteRepo.GetByID(ec.Ctx, params.ID, ec.UserID); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("note not found: %v", err)}
+	}
+
+	versions, err := t.versionRepo.GetVersions(ec.Ctx, "note", params.ID)
+	if err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("get versions: %v", err)}
+	}
+
+	vlist := make([]map[string]interface{}, 0, len(versions))
+	for _, v := range versions {
+		vlist = append(vlist, map[string]interface{}{
+			"version":    v.Version,
+			"snapshot":   v.Snapshot,
+			"created_at": v.CreatedAt,
+		})
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"versions": vlist,
+	})
 	return &Result{Success: true, Data: data}
 }
 
@@ -156,6 +285,23 @@ func (t *NoteTool) updateNote(ec *ExecuteContext, args json.RawMessage) *Result 
 		return &Result{Success: false, Error: "id is required"}
 	}
 
+	// 更新前先创建版本快照
+	current, err := t.noteRepo.GetByID(ec.Ctx, params.ID, ec.UserID)
+	if err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("note not found: %v", err)}
+	}
+	snapData := map[string]interface{}{
+		"topic":   current.Topic,
+		"content": current.Content,
+		"tags":    current.Tags,
+	}
+	if current.Variables != nil {
+		snapData["variables"] = *current.Variables
+	}
+	if err := t.versionRepo.CreateSnapshot(ec.Ctx, "note", params.ID, snapData); err != nil {
+		log.Printf("[note] create snapshot before update %s: %v", params.ID, err)
+	}
+
 	var varsStr *string
 	if len(params.Variables) > 0 {
 		b, _ := json.Marshal(params.Variables)
@@ -168,7 +314,7 @@ func (t *NoteTool) updateNote(ec *ExecuteContext, args json.RawMessage) *Result 
 	}
 
 	// 更新了 content 则重新嵌入
-	if params.Content != "" {
+	if params.Content != "" && t.chunkBuilder != nil {
 		go func() {
 			if params.Topic != "" {
 				t.conceptEmbed.EnsureTopicEmbedded(context.Background(), ec.UserID, params.Topic, "note", params.ID)
@@ -181,6 +327,66 @@ func (t *NoteTool) updateNote(ec *ExecuteContext, args json.RawMessage) *Result 
 	}
 
 	return &Result{Success: true}
+}
+
+func (t *NoteTool) rollbackNote(ec *ExecuteContext, args json.RawMessage) *Result {
+	var params struct {
+		ID      string `json:"id"`
+		Version int    `json:"version"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("parse args: %v", err)}
+	}
+	if params.ID == "" || params.Version <= 0 {
+		return &Result{Success: false, Error: "id and version are required"}
+	}
+
+	current, err := t.noteRepo.GetByID(ec.Ctx, params.ID, ec.UserID)
+	if err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("note not found: %v", err)}
+	}
+
+	snapData := map[string]interface{}{
+		"topic":   current.Topic,
+		"content": current.Content,
+		"tags":    current.Tags,
+	}
+	if current.Variables != nil {
+		snapData["variables"] = *current.Variables
+	}
+	if err := t.versionRepo.CreateSnapshot(ec.Ctx, "note", params.ID, snapData); err != nil {
+		log.Printf("[note] create snapshot before rollback %s: %v", params.ID, err)
+	}
+
+	snap, err := t.versionRepo.GetSnapshot(ec.Ctx, "note", params.ID, params.Version)
+	if err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("version not found: %v", err)}
+	}
+
+	var snapData2 struct {
+		Topic     string `json:"topic"`
+		Content   string `json:"content"`
+		Tags      string `json:"tags"`
+		Variables string `json:"variables"`
+	}
+	if err := json.Unmarshal([]byte(snap.Snapshot), &snapData2); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("parse snapshot: %v", err)}
+	}
+
+	var varsPtr *string
+	if snapData2.Variables != "" {
+		varsPtr = &snapData2.Variables
+	}
+	if err := t.noteRepo.Update(ec.Ctx, params.ID, ec.UserID, snapData2.Topic, snapData2.Content, snapData2.Tags, varsPtr); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("rollback note: %v", err)}
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"id":      params.ID,
+		"version": params.Version,
+		"message": "笔记已回滚",
+	})
+	return &Result{Success: true, Data: data}
 }
 
 func (t *NoteTool) embedNote(note *model.Note) {

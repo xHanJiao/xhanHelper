@@ -24,6 +24,16 @@ func (r *NoteRepo) Create(ctx context.Context, n *model.Note) error {
 	return r.db.WithContext(ctx).Create(n).Error
 }
 
+// GetByID 按 ID + 用户 ID 查询单条笔记
+func (r *NoteRepo) GetByID(ctx context.Context, id, userID string) (*model.Note, error) {
+	var note model.Note
+	err := r.db.WithContext(ctx).Where("id = ? AND user_id = ?", id, userID).First(&note).Error
+	if err != nil {
+		return nil, err
+	}
+	return &note, nil
+}
+
 // GetByIDs 按 ID 列表查询
 func (r *NoteRepo) GetByIDs(ctx context.Context, ids []string) ([]model.Note, error) {
 	var list []model.Note

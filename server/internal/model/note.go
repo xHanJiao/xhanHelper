@@ -11,4 +11,5 @@ type Note struct {
 	Variables *string   `gorm:"type:json" json:"variables,omitempty"`
 	Tags      string    `gorm:"size:500" json:"tags"`
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }

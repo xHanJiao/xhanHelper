@@ -39,12 +39,19 @@ type RunRequest struct {
 	RawUserMessage     string   // 用户原始输入，展示用
 	AgentSystemPrompt  string   // 为空则用默认
 	AgentID            string   // 关联的智能体 ID
-	MemoryThreshold    float64  // 记忆检索相关度阈值，默认 0.5
-	MemoryLimit        int      // 记忆检索最大条数，默认 8
 	SkipRetrieval      bool     // 跳过记忆检索（短输入等场景）
 	Temperature        *float64 // LLM 采样温度，nil 用配置默认
 	MaxTokens          *int     // LLM 最大输出 token，nil 用配置默认
+	MaxIterations      int      // ReAct 最大轮次，0 用配置默认
 	Thinking           *bool    // 思考模式：nil=不传，true=开启，false=关闭
+
+	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
+	MemoryThreshold  float64
+	MemoryLimit      int
+	NoteThreshold    float64
+	NoteLimit        int
+	HistoryThreshold float64
+	HistoryLimit     int
 }
 
 // reactState — runReActLoop 循环过程中的可变状态
@@ -167,14 +174,19 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 }
 
 func mkPromptBuildOpt(req *RunRequest, queryVec []float64) promptbuilder.BuildOptions {
-	opts := promptbuilder.BuildOptions{
-		UserID:         req.UserID,
-		ConversationID: req.ConversationID,
-		UserMessage:    req.UserMessageContent,
-		Embedding:      queryVec,
-		AgentPrompt:    req.AgentSystemPrompt,
+	return promptbuilder.BuildOptions{
+		UserID:           req.UserID,
+		ConversationID:   req.ConversationID,
+		UserMessage:      req.UserMessageContent,
+		Embedding:        queryVec,
+		AgentPrompt:      req.AgentSystemPrompt,
+		MemoryThreshold:  req.MemoryThreshold,
+		MemoryLimit:      req.MemoryLimit,
+		NoteThreshold:    req.NoteThreshold,
+		NoteLimit:        req.NoteLimit,
+		HistoryThreshold: req.HistoryThreshold,
+		HistoryLimit:     req.HistoryLimit,
 	}
-	return opts
 }
 
 func (o *Orchestrator) tryEmbedContent(ctx context.Context, userMsgContent string) []float64 {
@@ -223,7 +235,11 @@ func (o *Orchestrator) runReActLoop(
 
 	state := &reactState{msgs: append(req.Messages, llm.Message{Role: "user", Content: req.UserMessageContent})}
 
-	for iter := 0; iter < o.maxIterations; iter++ {
+	maxIter := o.maxIterations
+	if req.MaxIterations > 0 {
+		maxIter = req.MaxIterations
+	}
+	for iter := 0; iter < maxIter; iter++ {
 		if o.runOneRound(ctx, events, o.pickClient(req), req, systemPromptResult, state, iter) {
 			return
 		}
@@ -663,7 +679,7 @@ func BuildMessagesForPro(history []model.Message, maxToolResultChars int) []llm.
 }
 
 func (o *Orchestrator) saveUserMsgEmbedding(userMsgID string, vec []float64, userID, convID string) {
-	if len(vec) == 0 {
+	if len(vec) == 0 || o.vectorStore == nil || o.embeddingRepo == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

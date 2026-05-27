@@ -49,6 +49,14 @@ type SearchOptions struct {
 	UserID         string
 	ConversationID string
 	Embedding      []float64 // 用户消息的 embedding（向量检索用）
+
+	// 可选检索覆盖（0 值表示使用 PromptConfig 默认值）
+	MemoryThreshold  float64
+	MemoryLimit      int
+	NoteThreshold    float64
+	NoteLimit        int
+	HistoryThreshold float64
+	HistoryLimit     int
 }
 
 // ==================== Prompt Trace ====================

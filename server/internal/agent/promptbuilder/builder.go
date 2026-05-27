@@ -21,6 +21,14 @@ type BuildOptions struct {
 	UserMessage    string    // 用户原始输入（检索查询文本）
 	Embedding      []float64 // 用户消息 embedding（nil 则跳过检索）
 	AgentPrompt    string    // 自定义 agent 的 prompt（空则用默认 basePrompt）
+
+	// 可选检索覆盖（0 值表示使用 PromptConfig 默认值）
+	MemoryThreshold  float64
+	MemoryLimit      int
+	NoteThreshold    float64
+	NoteLimit        int
+	HistoryThreshold float64
+	HistoryLimit     int
 }
 
 // BuildResult — Build() 的返回值。
@@ -116,10 +124,16 @@ func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts Buil
 	}
 
 	searchOpts := SearchOptions{
-		Query:          opts.UserMessage,
-		UserID:         opts.UserID,
-		ConversationID: opts.ConversationID,
-		Embedding:      opts.Embedding,
+		Query:            opts.UserMessage,
+		UserID:           opts.UserID,
+		ConversationID:   opts.ConversationID,
+		Embedding:        opts.Embedding,
+		MemoryThreshold:  opts.MemoryThreshold,
+		MemoryLimit:      opts.MemoryLimit,
+		NoteThreshold:    opts.NoteThreshold,
+		NoteLimit:        opts.NoteLimit,
+		HistoryThreshold: opts.HistoryThreshold,
+		HistoryLimit:     opts.HistoryLimit,
 	}
 
 	// —— 1. 并发检索 ——

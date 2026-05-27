@@ -24,26 +24,26 @@ type ChatRequest struct {
 
 // Message — 一条对话消息
 type Message struct {
-	Role             string     // system | user | assistant | tool
-	Content          string     // 消息正文
-	ReasoningContent string     // 思维链内容（DeepSeek 思考模式）
-	ToolCalls        []ToolCall // 原生 tool_calls
-	ToolCallID       string     // tool 消息的调用 ID
-	RequestJSON      *string    // 发给 LLM 的请求 JSON（调试用）
-	ResponseJSON     *string    // LLM 返回的响应 JSON（调试用）
-	Usage            *Usage     // token 用量（ChatSync 返回时填充）
+	Role             string     `json:"role"`
+	Content          string     `json:"content"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
+	RequestJSON      *string    `json:"request_json,omitempty"`
+	ResponseJSON     *string    `json:"response_json,omitempty"`
+	Usage            *Usage     `json:"usage,omitempty"`
 }
 
 // ToolCall — 原生 function calling 的工具调用
 type ToolCall struct {
-	ID       string
-	Function ToolCallFunction
+	ID       string           `json:"id"`
+	Function ToolCallFunction `json:"function"`
 }
 
 // ToolCallFunction — 工具调用中的函数引用
 type ToolCallFunction struct {
-	Name      string
-	Arguments string // JSON string
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 // FuncDef — 单个函数定义

@@ -2,9 +2,9 @@
 
 ## 项目概述
 
-以聊天为主要交互方式的个人 AI Agent，Go 单体后端 + Vue 3 Web 前端（开发中）。
+以聊天为主要交互方式的个人 AI Agent，Go 单体后端 + Vue 3 前端 + Swift 客户端。
 
-核心能力：用户通过自然语言对话，Agent 自主判断意图、调用工具（记账/笔记/计算/智能体等）完成任务。支持向量记忆检索、动态工具注册、自定义智能体和 System Prompt。
+核心能力：用户通过自然语言对话，Agent 自主判断意图、调用工具（记账/笔记/文档/计算/智能体等）完成任务。支持向量记忆检索、动态工具注册、自定义智能体、System Prompt 版本管理和反思系统。
 
 ## 技术栈
 
@@ -12,7 +12,8 @@
 |----|------|
 | 后端 | Go 1.22+, Gin, GORM, SQLite(dev)/MySQL(prod) |
 | AI | DeepSeek / 豆包 API，LLM 抽象层可切换，DeepSeek 支持原生 function calling + 思考模式 |
-| 前端 | Vue 3 + Naive UI + Vite（`web/`，计划阶段，见 `docs/front-end/plan.md`） |
+| 前端 | Vue 3 + Naive UI + Pinia + Vue Router + Chart.js + Vite（`front-end/`） |
+| 客户端 | Swift + SwiftUI（`client/`，macOS App） |
 | 通信 | SSE (流式对话) + HTTP REST |
 | 向量 | 豆包 Embedding API + 内存向量存储（余弦相似度检索） |
 
@@ -20,64 +21,94 @@
 
 ```
 xhanHelper/
-├── server/                        # Go 后端
-│   ├── cmd/xhan-helper/main.go    # 入口：初始化 DB/LLM/Tools/Orchestrator
-│   ├── conf/                      # config.yaml + config.dev/prod.yaml
+├── server/                             # Go 后端
+│   ├── cmd/xhan-helper/main.go         # 入口：初始化 DB/LLM/Tools/Agents/Router
+│   ├── conf/                           # config.yaml + config.dev/prod/test.yaml
 │   ├── internal/
-│   │   ├── config/                # YAML 加载 + 环境合并 + 验证
-│   │   ├── model/                 # GORM 模型 (11 个)
-│   │   ├── service/               # DB Repo 层 (10 个)
-│   │   ├── controller/            # Gin handlers (11 个)
-│   │   ├── middleware/            # 用户认证 + 请求日志
-│   │   ├── llm/                   # LLM 抽象层 (接口 + 工厂 + DeepSeek/豆包/Claude 实现 + Embedding)
-│   │   ├── agent/                 # ReAct 编排器 + 记忆系统 (检索/提取/向量存储/调度)
-│   │   └── tool/                  # 工具接口 + 注册表 + 7 个内置工具 + 动态工具
-│   ├── scripts/api-test.sh        # API 自动化测试
-│   └── Makefile                   # dev/test/build/clean
-├── web/                           # Vue 3 前端（计划阶段）
-├── docs/                          # 技术文档 (后端参考/代码审查/bug 记录/设计阶段)
-└── design/                        # 早期产品文档
+│   │   ├── config/                     # YAML 加载 + 环境合并 + 验证
+│   │   ├── model/                      # GORM 模型 (22 个)
+│   │   ├── service/                    # DB Repo 层 (24 个文件)
+│   │   ├── controller/                 # Gin handlers (20 个文件)
+│   │   ├── middleware/                 # 用户认证 + 请求日志
+│   │   ├── llm/                        # LLM 抽象层 (DeepSeek/豆包/Claude + Embedding)
+│   │   ├── agent/                      # 核心 Agent 系统
+│   │   │   ├── orchestrator.go         # ReAct 编排器
+│   │   │   ├── pipeline/               # 消息预处理管线（日期规范化/自动路由）
+│   │   │   ├── promptbuilder/          # System Prompt 三层构建器
+│   │   │   ├── retrieval/              # 向量检索（记忆/笔记/历史/主题）
+│   │   │   └── replay/                 # 对话重放对比工具
+│   │   ├── tool/                       # 工具接口 + 注册表 + 15+ 内置工具
+│   │   ├── view/                       # SSE/JSON 渲染
+│   │   ├── app/                        # 基础设施抽象（LLM/Tool/Repo 接口）
+│   │   ├── appinit/                    # 应用初始化编排
+│   │   ├── idgen/                      # Snowflake ID 生成
+│   │   ├── mcp/                        # MCP 协议支持
+│   │   ├── monitor/                    # 监控看板 + Admin 中间件
+│   │   └── util/                       # 工具函数
+│   ├── scripts/api-test.sh             # API 自动化测试
+│   ├── migrations/                     # SQL 迁移脚本
+│   └── Makefile                        # dev/test/build/clean
+├── front-end/                          # Vue 3 前端
+│   ├── src/
+│   │   ├── views/                      # 页面 (Chat/Admin/Agent/Bills/Notes/Memory/Mailbox/...)
+│   │   ├── components/                 # 组件 (MessageBubble/ToolCallToast/PlanGraph/...)
+│   │   ├── composables/                # 组合式 API (useChatSSE/useDebugMode/...)
+│   │   ├── stores/                     # Pinia (auth/chat/conversations/theme)
+│   │   └── api/                        # HTTP 客户端封装
+│   └── dist/                           # 构建产物
+├── client/                             # Swift macOS 客户端
+│   └── xHelper/
+│       ├── xHelper/                    # iOS App
+│       └── xHelperMac/                 # macOS App
+└── docs/                               # 技术文档
+    ├── design/                         # 设计文档 (phase-1 ~ phase-12)
+    ├── agents/                         # Agent 技能文档
+    ├── bugs/                           # Bug 记录
+    ├── code-review/                    # 代码审查
+    ├── front-end/                      # 前端设计
+    └── research/                       # 调研
 ```
 
 ## 架构
 
 ```
 HTTP Request
-  → middleware/logging.go + auth.go     请求日志, Bearer Token 认证, 注入 user_id
-  → controller/chat.go                  解析参数, 调用 Orchestrator
-  → agent/orchestrator.go               ReAct 循环 (最多 N 轮)
-     ├── retriever.Retrieve()           向量检索相关记忆/笔记/历史对话
-     ├── llmClient.Chat()               流式调用 LLM（支持 thinking 模式）
-     ├── 原生 tool_calls → convertToolCalls() → executeConcurrently()
-     │   └── registry.ExecuteByName()   并发执行工具
-     ├── Flash 文本解析 → parseLLMResponse() → 执行嵌入的工具调用
-     └── saveAssistantMsg/ToolMsg       消息持久化 + 向量化
-  → service/*_repo.go                   DB CRUD
-  → view/render.go                      SSE 流式输出
+  → middleware/logging.go + auth.go      请求日志, Bearer Token 认证, 注入 user_id
+  → controller/chat.go                   解析参数
+     → pipeline/                         预处理管线（短输入检测/日期规范化/自动路由）
+     → agent/orchestrator.go             ReAct 循环 (最多 N 轮)
+        ├── promptbuilder.Build()        三层 System Prompt 构建
+        │   ├── Layer 1: 公共规则 + 工具定义 + 当前时间
+        │   ├── Layer 2: 角色定义（Agent > 用户自定义 > 默认）
+        │   └── Layer 3: 检索上下文（主题/记忆/笔记/历史，按综合分排序）
+        ├── llmClient.Chat()             流式调用 LLM（支持 thinking 模式）
+        ├── parseLLMResponse()           解析 Flash 文本中的 JSON tool_calls
+        ├── executeConcurrently()        并发执行工具
+        │   └── registry.ExecuteByName()
+        └── saveAssistantMsg/ToolMsg     消息持久化
+  → service/*_repo.go                    DB CRUD
+  → view/render.go                       SSE 流式输出
 ```
 
 ## 数据模型
 
 ### User + UserToken — 用户认证
-用户注册/登录获取 Bearer token，替代早期的 device-centric 认证。
+用户注册/登录获取 Bearer token。
 
 ### Conversation — 会话
-关联 user_id，支持重命名/删除。
+关联 user_id/agent_id，支持重命名/软删除，Extra 字段存 used_tool_ids 和主题上下文。
 
 ### Message — 消息
-支持 role: user/assistant/tool，可存储 reasoning_content、tool_calls_json、LLM 请求/响应 JSON（调试用）、Embedding 向量。
+role: user/assistant/tool，可存储 reasoning_content、tool_calls_json、request_json/response_json（调试）、Extra（PromptTrace 追溯）、Embedding 向量。
 
 ### Bill — 账单
-带分类枚举（category1/2、consume_type、pay_type），支持 CSV 批量导入导出。
+分类枚举（category1/2、consume_type、pay_type），支持 CSV 批量导入导出。
 
 ### Agent — 自定义智能体
-用户可以创建多个智能体，每个有独立的 system_prompt 和模型配置。
+用户可创建多个智能体，每个有独立的 system_prompt 和模型配置（ParamsJSON）。
 
 ### ToolRegistry — 动态工具
-运行时可从 DB 加载工具定义（schema_json），通过 HTTP 转发到 Python sidecar 执行。
-
-### ToolData — 工具数据缓存
-工具执行结果缓存，支持过期时间。
+运行时从 DB 加载工具定义（schema_json），HTTP 转发到 Python sidecar 执行。
 
 ### Note — 笔记
 带向量嵌入，支持语义检索。
@@ -88,27 +119,36 @@ HTTP Request
 ### UserPrompt — 用户自定义 System Prompt
 版本化管理，支持回滚。
 
-### ScheduledTask — 定时任务
-模型已定义，功能未启用。
+### Document — 文档
+Markdown 文档，带版本快照，支持标签检索。
+
+### ThemeState — 主题状态
+追踪用户身上正在发生的事，支持状态流转和生命周期管理。
+
+### MailboxItem — 信箱
+反思系统产生的通知/建议/发现，支持已读/归档/发起对话。
+
+### 其他模型
+Embedding、EmbeddingChunk、ConceptEmbedding、ReflectionTrace、ReflectionLLMCall、ReflectionDecision、PendingFinding、Commitment、DelayedTask、ContentVersion、MCPServerRecord、ScheduledTask
 
 ## LLM 调用方式
 
 **LLMClient 接口** (`llm/adapter.go`)：`Chat`（流式）、`ChatSync`（同步）、`BuildSystemPrompt`、`ModelName`。
 
 **双模型架构**：
-- Flash 模型（日常对话，快速响应）
-- Pro 模型（DeepSeek 思考模式，深度推理，可选）
+- Flash 模型（deepseek-v4-flash，日常对话，快速响应）
+- Pro 模型（deepseek-v4-pro，思考模式，深度推理，可选）
 
 **两种工具调用路径**：
-1. **原生 function calling**（DeepSeek）：LLM 直接返回 tool_calls，通过 `ToolCallID` 关联结果
-2. **Prompt engineering**（豆包/Flash 文本解析）：System prompt 注入工具定义 → LLM 返回 JSON `{"reply":"...","tool_calls":[...]}` → `parseLLMResponse()` 解析
+1. **原生 function calling**（DeepSeek Pro）：LLM 直接返回 tool_calls，通过 `ToolCallID` 关联结果
+2. **Prompt engineering**（Flash 文本解析）：System prompt 注入工具 JSON 定义 → LLM 返回 JSON `{"reply":"...","tool_calls":[...]}` → `parseLLMResponse()` 解析
 
 **Provider 支持**：
-- `deepseek`：Flash + Pro（原生 function calling + 思考模式），主力
+- `deepseek`：Flash + Pro，主力
 - `doubao`：仅 Flash（prompt engineering 方式）
 - `claude`：Stub，未实现
 
-**流式事件类型**：`text_delta` | `thought_delta` | `thought_done` | `tool_call` | `tool_result` | `plan_node_start` | `plan_node_done` | `plan` | `status` | `done` | `error`
+**流式事件类型**：`text_delta` | `thought_delta` | `thought_done` | `tool_call` | `tool_result` | `plan_node_start` | `plan_node_done` | `plan` | `status` | `agent_matched` | `done` | `error`
 
 ## Tool 系统
 
@@ -125,16 +165,23 @@ type Tool interface {
 
 **内置工具**：
 
-| 工具 | 函数 | 说明 |
-|------|------|------|
+| 工具 | 主要函数 | 说明 |
+|------|----------|------|
 | bookkeeping | create/update/delete/query/stats/export/import | 记账 |
 | datetime | now/today/weekday/days_ago/format | 日期时间 |
-| uuid | generate/batch | UUID 生成 |
 | calculator | calculate | 表达式求值 |
-| note | create/search/update/delete/list | 笔记（带向量检索） |
+| note | record/search/update/delete/list | 笔记（带向量检索） |
 | agent | create/update/delete/list | 智能体管理 |
+| document | create/get/update/delete/query/rollback/versions | 文档管理（版本快照） |
+| memory_search | search | 语义搜索长期记忆 |
+| message_search | search | 语义搜索历史消息 |
+| tool_retriever | search | 工具发现（按意图匹配工具） |
+| mailbox | list/mark_read/archive | 信箱管理 |
+| get_topic_detail | get | 主题详情查询 |
+| get_topic_stats | stats | 主题统计（活跃/休眠/总计） |
+| get_bill_stats | stats | 账单统计（按分类/时间聚合） |
 
-**动态工具**：`Registry` 每 30s 从 DB 加载活跃的动态工具，通过 HTTP 转发到 Python sidecar 执行。添加新工具：DB 插入 `tool_registries` 记录即可，无需重启服务。
+**动态工具**：`Registry` 每 30s 从 DB 加载活跃的动态工具，MCP 协议转发执行。添加新工具：DB 插入 `tool_registries` 记录即可，无需重启。
 
 ## 记忆系统
 
@@ -142,33 +189,42 @@ type Tool interface {
 
 对话时 `Retriever` 检索相关记忆/笔记/历史对话注入 system prompt，提升回复质量。
 
+## 反思系统
+
+周期性分析（每日多次调度）→ `ReflectionOrchestrator` 调用 LLM 反思 → 产出发现/建议/提醒 → 投递到 `Mailbox` → 用户可归档或发起对话跟进。
+
 ## 配置 (`conf/config.yaml`)
 
 ```yaml
 server:
   port: 8088
   mode: debug
-  registration_enabled: true       # 是否允许新用户注册
-  allowed_users: []                # 允许注册的用户名（空=全部允许）
-  memory_auto_extract: false       # 是否自动提取记忆
-  sidecar_url: ""                  # Python sidecar MCP HTTP 地址
+  registration_enabled: true
+  allowed_users: []
+  memory_auto_extract: false
 llm:
-  provider: deepseek               # doubao | deepseek
+  provider: deepseek
   api_key: ${LLM_API_KEY}
-  model: deepseek-chat             # Flash 模型
-  strong_model: deepseek-reasoner  # Pro 模型（可选）
+  model: deepseek-v4-flash
+  strong_model: deepseek-v4-pro
   base_url: https://api.deepseek.com
-  max_iterations: 8                # ReAct 最大迭代次数
+  max_iterations: 8
+  max_tool_result_chars: 2000
 embedding:
   api_key: ${LLM_API_KEY}
   base_url: https://ark.cn-beijing.volces.com
-  model: doubao-embedding
-  enable_history_search: false
+  model: doubao-embedding-vision-251215
+reflection:
+  daily_schedules: [...]
+  launch_max_iterations: 5
+retrieval:
+  memory: { threshold: 0.5, limit: 8, vector_weight: 0.5, ... }
+  note: { threshold: 0.5, limit: 5, ... }
+  history: { threshold: 0.8, limit: 5, ... }
 ```
 
-- `APP_ENV=dev` 使用 SQLite，`APP_ENV=prod` 使用 MySQL
+- `APP_ENV=dev` 使用 SQLite，`APP_ENV=prod` 使用 MySQL，`APP_ENV=test` 用 SQLite 跑测试
 - 敏感信息用 `${VAR}` 占位符，环境变量注入
-- dev 环境只需 `LLM_API_KEY` 即可启动
 
 ## 常用命令
 
@@ -186,7 +242,7 @@ make clean        # 清理
 | 方法 | 路径 | 认证 | 说明 |
 |------|------|------|------|
 | POST | `/api/auth/register` | 无 | 用户注册 |
-| POST | `/api/auth/login` | 无 | 用户登录，获取 token |
+| POST | `/api/auth/login` | 无 | 用户登录 |
 | POST | `/api/auth/logout` | Bearer | 登出 |
 
 ### 对话
@@ -201,112 +257,40 @@ make clean        # 清理
 | DELETE | `/api/conversations/:id` | 删除会话 |
 | POST | `/api/conversations/:id/extract-memories` | 手动提取记忆 |
 
-### 账单
+### 账单 / 笔记 / 记忆 / 文档
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/bills` | 账单列表 |
-| GET | `/api/bills/export` | 导出 CSV |
-| POST | `/api/bills/import` | 导入 CSV |
+| GET/POST | `/api/bills/export` `/api/bills/import` | CSV 导出/导入 |
+| GET/POST/DELETE | `/api/notes` | 笔记 CRUD |
+| GET/DELETE/POST | `/api/memories` | 记忆管理 |
+| GET/POST/DELETE | `/api/documents` | 文档管理 |
 
-### 笔记
+### 智能体 / 工具 / Prompt
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/notes` | 笔记列表 |
-| POST | `/api/notes/batch` | 批量获取笔记 |
-| DELETE | `/api/notes/:id` | 删除笔记 |
+| CRUD | `/api/agents` | 智能体管理 |
+| GET/POST/PATCH/DELETE | `/api/tools` | 动态工具管理 |
+| GET/POST/DELETE | `/api/prompts` | System Prompt 版本管理 |
 
-### 记忆
+### 信箱 / 主题 / 反思
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/memories` | 记忆列表 |
-| POST | `/api/memories/batch` | 批量获取记忆 |
-| DELETE | `/api/memories/:id` | 删除记忆 |
-| POST | `/api/memories/batch-delete` | 批量删除记忆 |
+| GET/PATCH/POST | `/api/mailbox` | 信箱管理 |
+| GET/POST/PATCH | `/api/themes` | 主题管理 |
+| POST | `/api/reflection/trigger` | 手动触发反思 |
 
-### 智能体
+### 管理端 (Admin)
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/agents` | 创建智能体 |
-| GET | `/api/agents` | 智能体列表 |
-| GET | `/api/agents/:id` | 智能体详情 |
-| PATCH | `/api/agents/:id` | 更新智能体 |
-| DELETE | `/api/agents/:id` | 删除智能体 |
-
-### 动态工具
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/tools` | 工具列表 |
-| POST | `/api/tools` | 创建动态工具 |
-| PATCH | `/api/tools/:id` | 更新工具 |
-| DELETE | `/api/tools/:id` | 删除工具 |
-
-### System Prompt
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/prompts` | prompt 列表 |
-| POST | `/api/prompts` | 创建 prompt |
-| POST | `/api/prompts/:id/rollback` | 回滚到指定版本 |
-| DELETE | `/api/prompts/:id` | 删除 prompt |
-
-## API 错误码
-
-统一响应格式 `{"status":"ok","errorCode":0,"errMsg":"","data":{}}`（待实施）。
-
-| 码段 | 方向 | 说明 |
-|------|------|------|
-| **1xxx** | 用户 & 认证 | 未登录、token 过期、注册冲突等 |
-| **2xxx** | 数据 & 资源 | 资源不存在、参数校验、权限 |
-| **3xxx** | LLM & AI | 模型调用失败、返回异常、超时 |
-| **4xxx** | 系统 & 基础设施 | 数据库错误、配置错误、内部异常 |
-
-| 错误码 | 说明 |
-|--------|------|
-| 1001 | 未登录 / token 缺失 |
-| 1002 | token 无效或已过期 |
-| 1003 | 用户名已存在 |
-| 1004 | 注册功能已禁用 |
-| 2001 | 请求的资源不存在 |
-| 2002 | 请求参数缺失或格式错误 |
-| 2003 | 无权限访问该资源 |
-| 3001 | LLM API 调用失败 |
-| 3002 | LLM 返回数据异常 |
-| 3003 | LLM 请求超时 |
-| 4001 | 数据库操作失败 |
-| 4002 | 服务器内部错误 |
-
-## SSE 事件类型
-
-| event | 触发时机 |
-|-------|----------|
-| `text_delta` | LLM 回复文本，逐字推送 |
-| `thought_delta` | 思考模式思维链，逐字推送 |
-| `thought_done` | 思考完成 |
-| `tool_call` | Agent 检测到工具调用 |
-| `tool_result` | 工具执行完成 |
-| `plan_node_start` | 工具执行开始（plan 可视化） |
-| `plan_node_done` | 工具执行完成（plan 可视化） |
-| `plan` | 本轮所有工具调用汇总（DAG 图） |
-| `status` | 状态通知（记忆关联等） |
-| `done` | 本轮对话结束 |
-| `error` | 异常 |
-
-## Agent skills
-
-### Issue tracker
-
-Issues live as markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Standard five-label vocabulary: needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Multi-context layout — `CONTEXT-MAP.md` at root pointing to `server/CONTEXT.md`, `front-end/CONTEXT.md`, `client/CONTEXT.md`. See `docs/agents/domain.md`.
-
-- **修改代码前必须先说明方案，征得用户同意后才能动手**
-- **提交代码前必须征得用户同意，不得擅自提交**
-- 优先用 Edit 工具做小改动，避免重写整个文件
+| GET | `/api/admin/health` | 健康检查 |
+| GET | `/api/admin/messages/:id/debug` | 消息调试（一轮完整消息） |
+| GET | `/api/admin/messages/:id/debug-detail` | 消息重量级字段 |
+| GET/POST | `/api/admin/resource-lookup` | 资源查询（记忆/笔记/历史） |
+| POST | `/api/admin/replay/preview` | 重放预览（消息+system prompt） |
+| POST | `/api/admin/replay/compare` | 对话重放对比（SSE） |
+| GET | `/api/admin/message-traces` | Prompt Trace 列表 |
+| GET | `/api/admin/reflection/traces` | 反思追溯 |
 
 ## 开发约定
 
@@ -314,12 +298,15 @@ Multi-context layout — `CONTEXT-MAP.md` at root pointing to `server/CONTEXT.md
 - 编码完成后必须 `make test` 全绿
 - model/ 只放结构体，DB 操作放 service/
 - 工具实现放 tool/，不要耦合到 controller 或 agent
-- 从数据库列表拉取数据时，一定不允许拉取所有数据，必须做分页
-- 每一次修改代码之前，必须给用户讲清楚改什么，怎么改，用户同意之后才能修改
-- 遇到相似的功能，要抽取公共组件。
-- ## 后端错误处理规范
-  - **所有 error 必须打日志**，严禁 500 或其他错误状态下不记录原因
-  - **一个 error 只打一次日志**，禁止同一 error 在多层重复打印
-  - 不打断流程的 error（可降级继续）：就地 `log.Printf` 后继续执行
-  - 需向上抛出的 error：通过 `fmt.Errorf("context: %w", err)` 附加信息后返回，在调用链最顶层 `log.Printf` 一次
-  - 所有 `view.JSONError(c, 500, ...)` 前必须有 `log.Printf` 记录原始 error
+- 从数据库列表拉取数据时，必须做分页
+- 修改代码前必须先说明方案，征得用户同意
+- 提交代码前必须征得用户同意
+- 遇到相似功能，抽取公共组件
+
+## 后端错误处理规范
+
+- **所有 error 必须打日志**，严禁 500 或其他错误状态下不记录原因
+- **一个 error 只打一次日志**，禁止同一 error 在多层重复打印
+- 不打断流程的 error（可降级继续）：就地 `log.Printf` 后继续执行
+- 需向上抛出的 error：通过 `fmt.Errorf("context: %w", err)` 附加信息后返回，在调用链最顶层 `log.Printf` 一次
+- 所有 `view.JSONError(c, 500, ...)` 前必须有 `log.Printf` 记录原始 error

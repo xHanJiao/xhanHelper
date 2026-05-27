@@ -52,6 +52,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	reflectionAdminHandler := controller.NewReflectionAdminHandler(repos.Trace)
 	messageTraceHandler := controller.NewMessageTraceHandler(repos.Message)
 	messageDebugHandler := controller.NewMessageDebugHandler(repos.Message, repos.Mem, repos.Note, repos.ThemeState)
+	replayHandler := controller.NewReplayHandler(repos.Message, agents.ReplayRunner, infra.Embedder)
 
 	router := controller.NewRouter(&controller.RouterConfig{
 		Cfg:             cfg,
@@ -79,6 +80,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		ReflectionAdminHandler: reflectionAdminHandler,
 		MessageTraceHandler:    messageTraceHandler,
 		MessageDebugHandler:    messageDebugHandler,
+		ReplayHandler:          replayHandler,
 		PendingFindingRepo:     repos.PendingFinding,
 		ReflectionOrch:         agents.ReflectionOrch,
 		CronRunner:             agents.CronRunner,

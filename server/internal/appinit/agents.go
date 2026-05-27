@@ -6,6 +6,7 @@ import (
 
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/agent/promptbuilder"
+	"xhan-helper/internal/agent/replay"
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
@@ -113,10 +114,21 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 
 	go cronRunner.Start(bgCtx)
 
+	replayRunner := replay.NewRunner(&replay.RunnerConfig{
+		FlashClient:   llmClients.Flash,
+		ProClient:     llmClients.Strong,
+		Registry:      tools.Registry,
+		PromptBuilder: pb,
+		Embedder:      infra.Embedder,
+		MaxIterations: cfg.LLM.MaxIterations,
+		MaxTokens:     cfg.LLM.DefaultMaxTokens,
+	})
+
 	return &AgentBundle{
 		Orch:           orch,
 		CronRunner:     cronRunner,
 		ReflectionOrch: reflectionOrch,
+		ReplayRunner:   replayRunner,
 		BGCtx:          bgCtx,
 		BGCancel:       bgCancel,
 	}

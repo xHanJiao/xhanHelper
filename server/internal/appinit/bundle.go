@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/agent/replay"
 	"xhan-helper/internal/mcp"
 	"xhan-helper/internal/tool"
 )
@@ -22,6 +23,7 @@ type AgentBundle struct {
 	Orch           *agent.Orchestrator
 	CronRunner     *agent.CronRunner
 	ReflectionOrch *agent.ReflectionOrchestrator
+	ReplayRunner   *replay.Runner
 	BGCtx          context.Context
 	BGCancel       context.CancelFunc
 }

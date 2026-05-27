@@ -73,6 +73,11 @@ const routes = [
     component: () => import('@/views/MessageDebugView.vue')
   },
   {
+    path: '/admin/replay-compare/:id',
+    name: 'ReplayCompare',
+    component: () => import('@/views/ReplayCompareView.vue')
+  },
+  {
     path: '/',
     redirect: '/chat'
   }

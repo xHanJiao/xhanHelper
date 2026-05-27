@@ -156,10 +156,16 @@ func (p *memoryProvider) Search(ctx context.Context, opts SearchOptions) (*Searc
 	}
 
 	threshold := p.cfg.MemoryThreshold
+	if opts.MemoryThreshold > 0 {
+		threshold = opts.MemoryThreshold
+	}
 	if threshold <= 0 {
 		threshold = 0.5
 	}
 	limit := p.cfg.MemoryLimit
+	if opts.MemoryLimit > 0 {
+		limit = opts.MemoryLimit
+	}
 	if limit <= 0 {
 		limit = 8
 	}
@@ -191,10 +197,16 @@ func (p *noteProvider) Search(ctx context.Context, opts SearchOptions) (*SearchR
 	}
 
 	threshold := p.cfg.NoteThreshold
+	if opts.NoteThreshold > 0 {
+		threshold = opts.NoteThreshold
+	}
 	if threshold <= 0 {
 		threshold = 0.5
 	}
 	limit := p.cfg.NoteLimit
+	if opts.NoteLimit > 0 {
+		limit = opts.NoteLimit
+	}
 	if limit <= 0 {
 		limit = 5
 	}
@@ -226,10 +238,16 @@ func (p *historyProvider) Search(ctx context.Context, opts SearchOptions) (*Sear
 	}
 
 	threshold := p.cfg.HistoryThreshold
+	if opts.HistoryThreshold > 0 {
+		threshold = opts.HistoryThreshold
+	}
 	if threshold <= 0 {
 		threshold = 0.8
 	}
 	limit := p.cfg.HistoryLimit
+	if opts.HistoryLimit > 0 {
+		limit = opts.HistoryLimit
+	}
 	if limit <= 0 {
 		limit = 5
 	}

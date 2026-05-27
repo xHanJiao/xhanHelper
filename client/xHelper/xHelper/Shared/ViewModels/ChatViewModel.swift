@@ -19,7 +19,6 @@ struct PlanNode: Identifiable {
 class ChatViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isStreaming = false
-    @Published var currentToolCall: ToolCallData?
     @Published var thoughtMessage: String?
     @Published var thoughtDone = false
     @Published var statusMessage: String?
@@ -143,7 +142,6 @@ class ChatViewModel: ObservableObject {
 
         isStreaming = true
         streamingContent = ""
-        currentToolCall = nil
         thoughtMessage = nil
         thoughtDone = false
         statusMessage = nil
@@ -237,25 +235,10 @@ class ChatViewModel: ObservableObject {
             statusMessage = parseStatus(event.data)
 
         case .toolCall:
-            currentToolCall = parseToolCall(event.data)
+            break
 
         case .toolResult:
-            if let tc = currentToolCall {
-                let summary = buildToolSummary(toolCall: tc, resultJSON: event.data)
-                let toolMsg = Message(
-                    id: UUID().uuidString,
-                    conversationId: conversationId ?? "",
-                    role: "tool",
-                    content: summary,
-                    toolCallsJSON: nil,
-                    createdAt: ISO8601DateFormatter().string(from: Date())
-                )
-                if let idx = messages.lastIndex(where: { $0.id == "__streaming__" }) {
-                    messages.insert(toolMsg, at: idx)
-                } else {
-                    messages.append(toolMsg)
-                }
-            }
+            break
 
         case .done:
             finishStreaming()
@@ -275,12 +258,6 @@ class ChatViewModel: ObservableObject {
             }
             if let nids = parseNoteIDsFromDone(event.data), !nids.isEmpty {
                 lastNoteIDs = nids
-            }
-            let tc = currentToolCall
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [self] in
-                if currentToolCall?.function == tc?.function {
-                    currentToolCall = nil
-                }
             }
             // 任务完成，立即渐隐弹窗
             withAnimation(.easeOut(duration: 0.3)) {
@@ -387,11 +364,6 @@ class ChatViewModel: ObservableObject {
         return obj["message"]
     }
 
-    private func parseToolCall(_ data: String) -> ToolCallData? {
-        guard let jsonData = data.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(ToolCallData.self, from: jsonData)
-    }
-
     private func parseTitleFromDone(_ data: String) -> String? {
         guard let jsonData = data.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
@@ -427,18 +399,5 @@ class ChatViewModel: ObservableObject {
               let ids = obj["note_ids"] as? [String]
         else { return nil }
         return ids
-    }
-
-    private func buildToolSummary(toolCall: ToolCallData, resultJSON: String) -> String {
-        var parts: [String] = []
-        parts.append(toolCall.displayName)
-        for (key, val) in toolCall.argsSummary {
-            parts.append("\(key): \(val)")
-        }
-        if let d = resultJSON.data(using: .utf8),
-           let r = try? JSONDecoder().decode(ToolResultData.self, from: d) {
-            parts.append(r.success ? "✅ 成功" : "❌ \(r.error ?? "失败")")
-        }
-        return parts.joined(separator: " | ")
     }
 }

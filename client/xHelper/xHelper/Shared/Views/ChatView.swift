@@ -3,7 +3,6 @@ import SwiftUI
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var inputText = ""
-    @State private var isInputExpanded = false
     @FocusState private var isInputFocused: Bool
     let agentId: String?
 
@@ -78,13 +77,12 @@ struct ChatView: View {
                     isInputFocused = false
                     viewModel.sendMessage(inputText, baseURL: baseURL, token: token, agentId: agentId)
                     inputText = ""
-                    isInputExpanded = false
                 },
                 onStop: {
                     viewModel.stopStreaming()
-                },
-                isExpanded: $isInputExpanded
+                }
             )
+            .layoutPriority(1)
         }
         .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {

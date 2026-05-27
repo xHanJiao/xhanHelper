@@ -161,7 +161,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		defer monitor.DecSSE()
 
 		var messages []llm.Message
-		messages = agent.BuildMessagesForFlash(history)
+		messages = agent.BuildMessagesForFlash(history, cfg.LLM.MaxToolResultChars)
 
 		events, err := orch.Run(context.Background(), &agent.RunRequest{
 			UserID:             userID,

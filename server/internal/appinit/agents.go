@@ -95,19 +95,20 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		promptbuilder.NewHistoryProvider(historySource, &promptCfg),
 	)
 	orch := agent.New(&agent.OrchestratorConfig{
-		FlashClient:   llmClients.Flash,
-		Registry:      tools.Registry,
-		ProClient:     llmClients.Strong,
-		PromptBuilder: pb,
-		MsgRepo:       repos.Message,
-		ConvRepo:      repos.Conversation,
-		Embedder:      infra.Embedder,
-		VectorStore:   vs,
-		EmbeddingRepo: repos.Embedding,
-		MaxIterations: cfg.LLM.MaxIterations,
-		Temperature:   cfg.LLM.DefaultTemperature,
-		MaxTokens:     cfg.LLM.DefaultMaxTokens,
-		OnChatEnd:     func(userID, convID string) { cronRunner.NotifyChatEnd(userID, convID) },
+		FlashClient:        llmClients.Flash,
+		Registry:           tools.Registry,
+		ProClient:          llmClients.Strong,
+		PromptBuilder:      pb,
+		MsgRepo:            repos.Message,
+		ConvRepo:           repos.Conversation,
+		Embedder:           infra.Embedder,
+		VectorStore:        vs,
+		EmbeddingRepo:      repos.Embedding,
+		MaxIterations:      cfg.LLM.MaxIterations,
+		Temperature:        cfg.LLM.DefaultTemperature,
+		MaxTokens:          cfg.LLM.DefaultMaxTokens,
+		MaxToolResultChars: cfg.LLM.MaxToolResultChars,
+		OnChatEnd:          func(userID, convID string) { cronRunner.NotifyChatEnd(userID, convID) },
 	})
 
 	go cronRunner.Start(bgCtx)

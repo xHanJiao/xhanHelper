@@ -89,24 +89,26 @@ type Orchestrator struct {
 	maxIterations       int
 	defaultTemperature  *float64
 	defaultMaxTokens    *int
+	maxToolResultChars  int
 	onChatEnd           func(userID, convID string)
 }
 
 // OrchestratorConfig — Orchestrator 依赖配置
 type OrchestratorConfig struct {
-	FlashClient   llm.LLMClient
-	Registry      *tool.Registry
-	ProClient     llm.LLMClient
-	PromptBuilder promptBuilder
-	MsgRepo       *service.MessageRepo
-	ConvRepo      *service.ConversationRepo
-	Embedder      *llm.Embedder
-	VectorStore   *VectorStore
-	EmbeddingRepo *service.EmbeddingRepo
-	MaxIterations int
-	Temperature   *float64
-	MaxTokens     *int
-	OnChatEnd     func(userID, convID string)
+	FlashClient        llm.LLMClient
+	Registry           *tool.Registry
+	ProClient          llm.LLMClient
+	PromptBuilder      promptBuilder
+	MsgRepo            *service.MessageRepo
+	ConvRepo           *service.ConversationRepo
+	Embedder           *llm.Embedder
+	VectorStore        *VectorStore
+	EmbeddingRepo      *service.EmbeddingRepo
+	MaxIterations      int
+	Temperature        *float64
+	MaxTokens          *int
+	MaxToolResultChars int
+	OnChatEnd          func(userID, convID string)
 }
 
 // New 创建 Orchestrator
@@ -128,6 +130,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		maxIterations:       cfg.MaxIterations,
 		defaultTemperature:  cfg.Temperature,
 		defaultMaxTokens:    cfg.MaxTokens,
+		maxToolResultChars:  cfg.MaxToolResultChars,
 		onChatEnd:           cfg.OnChatEnd,
 	}
 }
@@ -462,7 +465,7 @@ func (o *Orchestrator) collectToolResults(ctx context.Context, parsed *LLMRespon
 		o.saveToolMsg(ctx, convID, userID, idgen.Next(), string(resJSON))
 		msgs = append(msgs, llm.Message{
 			Role:    "user",
-			Content: string(resJSON),
+			Content: truncateToolResult(string(resJSON), o.maxToolResultChars),
 		})
 	}
 	return msgs
@@ -588,8 +591,23 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCall
 	log.Printf("[orch] saved tool message: id=%s tool_call_id=%s", msgID, toolCallID)
 }
 
+// truncateToolResult 截断过长的工具结果，保留头尾，中间标注截断量
+func truncateToolResult(content string, maxLen int) string {
+	if maxLen <= 0 || len(content) <= maxLen {
+		return content
+	}
+	head := maxLen * 7 / 10
+	tail := maxLen * 2 / 10
+	if head+tail > maxLen {
+		head = maxLen * 7 / 10
+		tail = maxLen - head
+	}
+	truncated := len(content) - head - tail
+	return content[:head] + fmt.Sprintf("\n…[已截断 %d 字符]…\n", truncated) + content[len(content)-tail:]
+}
+
 // BuildMessagesForFlash 将数据库标准消息转换为 FlashClient 格式
-func BuildMessagesForFlash(history []model.Message) []llm.Message {
+func BuildMessagesForFlash(history []model.Message, maxToolResultChars int) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
 		// ts := "（发于" + m.CreatedAt.In(config.BJ).Format("01-02 15:04") + "）"
@@ -598,7 +616,7 @@ func BuildMessagesForFlash(history []model.Message) []llm.Message {
 
 			msgs = append(msgs, llm.Message{
 				Role:    "user",
-				Content: m.Content,
+				Content: truncateToolResult(m.Content, maxToolResultChars),
 			})
 		} else {
 			msg := llm.Message{Role: m.Role, Content: m.Content}
@@ -619,12 +637,16 @@ func BuildMessagesForFlash(history []model.Message) []llm.Message {
 }
 
 // BuildMessagesForPro 将数据库标准消息转换为 ProClient 格式（原样）
-func BuildMessagesForPro(history []model.Message) []llm.Message {
+func BuildMessagesForPro(history []model.Message, maxToolResultChars int) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
 		// ts := "（发于" + m.CreatedAt.In(config.BJ).Format("01-02 15:04") + "）"
 		ts := ""
-		msg := llm.Message{Role: m.Role, Content: m.Content + ts}
+		content := m.Content
+		if m.Role == "tool" {
+			content = truncateToolResult(m.Content, maxToolResultChars)
+		}
+		msg := llm.Message{Role: m.Role, Content: content + ts}
 		if m.ToolCallID != nil {
 			msg.ToolCallID = *m.ToolCallID
 		}

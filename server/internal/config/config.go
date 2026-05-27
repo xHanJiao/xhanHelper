@@ -91,12 +91,13 @@ func (d DBConfig) DSN() string {
 type LLMConfig struct {
 	Provider           string   `yaml:"provider"` // doubao | deepseek
 	APIKey             string   `yaml:"api_key"`
-	Model              string   `yaml:"model"`               // 弱模型（日常使用）
-	StrongModel        string   `yaml:"strong_model"`        // 强模型（深度思考模式，可选，默认同 Model）
-	BaseURL            string   `yaml:"base_url"`            // LLM API 地址
-	MaxIterations      int      `yaml:"max_iterations"`      // ReAct 最大迭代次数（默认 8）
-	DefaultTemperature *float64 `yaml:"default_temperature"` // 默认采样温度，nil 则用 LLM 自身默认
-	DefaultMaxTokens   *int     `yaml:"default_max_tokens"`  // 默认最大输出 token，nil 则用 LLM 自身默认
+	Model              string   `yaml:"model"`                 // 弱模型（日常使用）
+	StrongModel        string   `yaml:"strong_model"`          // 强模型（深度思考模式，可选，默认同 Model）
+	BaseURL            string   `yaml:"base_url"`              // LLM API 地址
+	MaxIterations      int      `yaml:"max_iterations"`        // ReAct 最大迭代次数（默认 8）
+	DefaultTemperature *float64 `yaml:"default_temperature"`   // 默认采样温度，nil 则用 LLM 自身默认
+	DefaultMaxTokens   *int     `yaml:"default_max_tokens"`    // 默认最大输出 token，nil 则用 LLM 自身默认
+	MaxToolResultChars int      `yaml:"max_tool_result_chars"` // 工具结果传入 LLM 的最大字符数，超出截断，默认 2000
 }
 
 // EmbeddingConfig — 向量化配置
@@ -262,6 +263,9 @@ func merge(dst, src *Config) {
 	}
 	if src.LLM.DefaultMaxTokens != nil {
 		dst.LLM.DefaultMaxTokens = src.LLM.DefaultMaxTokens
+	}
+	if src.LLM.MaxToolResultChars != 0 {
+		dst.LLM.MaxToolResultChars = src.LLM.MaxToolResultChars
 	}
 	if src.Embedding.APIKey != "" {
 		dst.Embedding.APIKey = src.Embedding.APIKey
@@ -432,6 +436,9 @@ func validate(cfg *Config) error {
 		cfg.Reflection.ActiveDurationDays = map[string]int{
 			"long": 90, "medium": 30, "short": 14, "ephemeral": 7,
 		}
+	}
+	if cfg.LLM.MaxToolResultChars == 0 {
+		cfg.LLM.MaxToolResultChars = 2000
 	}
 	return nil
 }

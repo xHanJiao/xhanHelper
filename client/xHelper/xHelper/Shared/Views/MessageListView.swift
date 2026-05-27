@@ -61,7 +61,7 @@ struct MessageListView: View {
             }
             .padding(.vertical)
         }
-        .defaultScrollAnchor(.bottom)
+        .defaultScrollAnchor(viewModel.hasMoreBefore ? .bottom : .top)
         .scrollPosition(id: $scrollTarget, anchor: .bottom)
         .dismissKeyboardOnTap()
         .onAppear {

@@ -19,7 +19,7 @@ class APIClient {
         return try await get("/api/conversations/\(conversationId)/messages")
     }
 
-    func getMessagesCursor(conversationId: String, cursor: String = "", direction: String = "before", limit: Int = 10) async throws -> CursorMessages {
+    func getMessagesCursor(conversationId: String, cursor: String = "", direction: String = "before", limit: Int = 30) async throws -> CursorMessages {
         var path = "/api/conversations/\(conversationId)/messages-v2?limit=\(limit)&direction=\(direction)"
         if !cursor.isEmpty { path += "&cursor=\(cursor)" }
         return try await get(path)

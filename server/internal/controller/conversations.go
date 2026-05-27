@@ -146,6 +146,9 @@ func cleanMessages(msgs []model.Message) []model.Message {
 		}
 		m.RequestJSON = nil
 		m.ResponseJSON = nil
+		if m.Role == "user" && m.OriginalContent != nil && *m.OriginalContent != "" {
+			m.Content = *m.OriginalContent
+		}
 		if m.Role == "assistant" {
 			if reply := extractFlashReply(m.Content); reply != "" {
 				m.Content = reply

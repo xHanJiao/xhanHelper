@@ -78,7 +78,7 @@ func (s *NormalizeDatesStep) Run(ctx context.Context) (context.Context, error) {
 	}
 
 	if normalized != pc.RawMsg {
-		log.Printf("[pipeline] normalizeDates: replaced relative dates in message")
+		log.Printf("[pipeline] normalizeDates: raw=%q → normalized=%q", pc.RawMsg, normalized)
 	}
 
 	pc.NormalizedMsg = normalized

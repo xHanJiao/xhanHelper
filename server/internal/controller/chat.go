@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/agent/pipeline"
 	"xhan-helper/internal/config"
@@ -67,6 +68,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		var agentTemperature *float64
 		var agentMaxTokens *int
 		var agentThinking *bool
+		var originMsg = req.Message
 		if conv.AgentID != nil && *conv.AgentID != "" && agentRepo != nil {
 			a, err := agentRepo.FindByID(c.Request.Context(), *conv.AgentID, userID)
 			if err != nil {
@@ -167,6 +169,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			Messages:           messages,
 			DeepMode:           req.DeepMode,
 			UserMessageContent: normalizedMsg,
+			RawUserMessage:     originMsg,
 			AgentSystemPrompt:  agentSystemPrompt,
 			AgentID:            agentID,
 			MemoryThreshold:    req.MemoryThreshold,

@@ -35,7 +35,8 @@ type RunRequest struct {
 	ConversationID     string
 	Messages           []llm.Message
 	DeepMode           bool
-	UserMessageContent string
+	UserMessageContent string   // 管线处理后的内容，供内部使用（嵌入、检索等）
+	RawUserMessage     string   // 用户原始输入，展示用
 	AgentSystemPrompt  string   // 为空则用默认
 	AgentID            string   // 关联的智能体 ID
 	MemoryThreshold    float64  // 记忆检索相关度阈值，默认 0.5
@@ -304,13 +305,18 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPromptResult *promptb
 }
 
 func mkUserMsg(req *RunRequest) *model.Message {
-	return &model.Message{
+	m := &model.Message{
 		ID:             uuid.New().String(),
 		ConversationID: req.ConversationID,
 		UserID:         req.UserID,
 		Role:           "user",
 		Content:        req.UserMessageContent,
 	}
+	if req.RawUserMessage != "" && req.RawUserMessage != req.UserMessageContent {
+		raw := req.RawUserMessage
+		m.OriginalContent = &raw
+	}
+	return m
 }
 
 // sendEvent — 非阻塞发送事件，避免客户端断连后 goroutine 卡住

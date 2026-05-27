@@ -196,7 +196,7 @@ func (r *Registry) GeneratePromptWithOverview() string {
 		if r.hiddenNames[name] {
 			continue
 		}
-		overview = append(overview, fmt.Sprintf("工具名: %s —— %s", name, t.Description()))
+		overview = append(overview, fmt.Sprintf("工具名: %s —— %s\n", name, t.Description()))
 	}
 	if len(overview) > 0 {
 		buf.WriteString("\n## 其他可用工具\n")

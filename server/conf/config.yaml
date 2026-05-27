@@ -68,12 +68,3 @@ retrieval:
     freshness_decay: 0.005
     threshold: 0.8
     limit: 5
-
-mcp:
-  max_concurrent: 2
-  servers:
-    - name: hotnews
-      command: npx
-      args: ["-y", "@wopal/mcp-server-hotnews"]
-      idle_timeout_secs: 300
-      description: "中国主要社交平台和新闻网站实时热点话题"

@@ -95,7 +95,7 @@ func (r *NoteRepo) List(ctx context.Context, userID, topic, keyword string, limi
 	}
 	if keyword != "" {
 		like := "%" + keyword + "%"
-		q = q.Where("content LIKE ? OR tags LIKE ?", like, like)
+		q = q.Where("content LIKE ? OR tags LIKE ? OR topic LIKE ?", like, like, like)
 	}
 
 	var total int64

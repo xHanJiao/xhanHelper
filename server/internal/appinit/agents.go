@@ -34,8 +34,10 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		FreshnessDecay:  cfg.Retrieval.History.FreshnessDecay,
 	}
 
-	memSource := retrieval.NewMemorySource(vs, repos.Mem, repos.Embedding, memRanker)
-	noteSource := retrieval.NewNoteSource(vs, repos.Note, repos.Embedding, noteRanker)
+	chunkBuilder := agent.NewChunkBuilder(infra, repos.Chunk, repos.Embedding)
+
+	memSource := retrieval.NewMemorySource(vs, repos.Mem, repos.Embedding, repos.Chunk, chunkBuilder, memRanker)
+	noteSource := retrieval.NewNoteSource(vs, repos.Note, repos.Embedding, repos.Chunk, chunkBuilder, noteRanker)
 	historySource := retrieval.NewHistorySource(vs, repos.Message, repos.Embedding, historyRanker)
 	themeSource := retrieval.NewThemeSource(repos.ThemeState, vs)
 

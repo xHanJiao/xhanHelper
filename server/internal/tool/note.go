@@ -31,18 +31,18 @@ func NewNoteTool(noteRepo *service.NoteRepo, versionRepo *service.VersionRepo, v
 
 func (t *NoteTool) Name() string { return "note" }
 func (t *NoteTool) Description() string {
-	return "自由笔记工具，记录值得长期追踪的信息——事实、数据、观点、事件、个人状态等"
+	return "自由笔记工具，记录值得长期追踪的信息——事实、数据、观点、事件、个人状态、人物关系等"
 }
 
 func (t *NoteTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
 			Name:        "record_note",
-			Description: "保存一条值得长期追踪的笔记。当用户分享事实、数据、观点、事件、个人状态时调用。日常闲聊不需要记录",
+			Description: "保存一条值得长期追踪的笔记。当用户分享事实、数据、观点、事件、个人状态、人物关系时调用。日常闲聊不需要记录",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"topic":   map[string]interface{}{"type": "string", "description": "主题: 房地产/睡眠/俄乌战争/健康/宏观经济/..."},
+					"topic":   map[string]interface{}{"type": "string", "description": "主题: 房地产/睡眠/人物关系/健康/..."},
 					"content": map[string]interface{}{"type": "string", "description": "笔记正文，忠实保留用户原文，不要总结或删减"},
 					"tags":    map[string]interface{}{"type": "string", "description": "逗号分隔标签，可选"},
 					"variables": map[string]interface{}{
@@ -71,7 +71,7 @@ func (t *NoteTool) Functions() []FuncSchema {
 				"type": "object",
 				"properties": map[string]interface{}{
 					"topic":   map[string]interface{}{"type": "string", "description": "按主题筛选，可选"},
-					"keyword": map[string]interface{}{"type": "string", "description": "在正文和标签中搜索，可选"},
+					"keyword": map[string]interface{}{"type": "string", "description": "在正文,主题和标签中搜索，可选"},
 				},
 			},
 		},
@@ -314,6 +314,7 @@ func (t *NoteTool) updateNote(ec *ExecuteContext, args json.RawMessage) *Result 
 	}
 
 	// 更新了 content 则重新嵌入
+	// FIXME 重新嵌入，如果不删除之前的内容，会有幽灵空搜吧
 	if params.Content != "" && t.chunkBuilder != nil {
 		go func() {
 			if params.Topic != "" {

@@ -1,11 +1,15 @@
 package llm
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // LLMClient — 所有 LLM 厂商必须实现的接口
 type LLMClient interface {
 	Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamEvent, error)
 	ChatSync(ctx context.Context, req *ChatRequest) (Message, error)
+	ChatWithRawJSON(ctx context.Context, requestBody json.RawMessage) (Message, error)
 	BuildSystemPrompt(base string, tools []ToolDefinition) string
 	ModelName() string
 }

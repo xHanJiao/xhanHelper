@@ -453,6 +453,52 @@ func (c *baseClient) callSyncAPI(ctx context.Context, req *ChatRequest, model st
 	return msg, nil
 }
 
+// chatWithRawJSON 直接发送原始 LLM 请求 JSON（用于重放对比）
+func (c *baseClient) chatWithRawJSON(ctx context.Context, requestBody json.RawMessage) (Message, error) {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(requestBody, &payload); err != nil {
+		return Message{}, fmt.Errorf("parse request_json: %w", err)
+	}
+	payload["stream"] = false
+
+	bodyBytes, _ := json.Marshal(payload)
+	bodyStr := string(bodyBytes)
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return Message{}, fmt.Errorf("raw request: %w", err)
+	}
+	c.setHeaders(httpReq)
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return Message{}, fmt.Errorf("raw request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Message{}, fmt.Errorf("raw read body: %w", err)
+	}
+	if resp.StatusCode != 200 {
+		return Message{}, fmt.Errorf("raw status %d: %s", resp.StatusCode, string(body[:min(1000, len(body))]))
+	}
+
+	respStr := string(body)
+	content, err := parseChatResponse(body)
+	if err != nil {
+		return Message{}, fmt.Errorf("raw parse: %w", err)
+	}
+
+	return Message{
+		Role:         "assistant",
+		Content:      content,
+		RequestJSON:  &bodyStr,
+		ResponseJSON: &respStr,
+	}, nil
+}
+
 // buildSyncBody 构造非流式请求体（stream: false）
 func buildSyncBody(req *ChatRequest, model string) ([]byte, io.Reader) {
 	messages := buildMessages(req)
@@ -546,6 +592,10 @@ func (c *FlashClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, 
 	return c.callSyncAPI(ctx, req, c.model)
 }
 
+func (c *FlashClient) ChatWithRawJSON(ctx context.Context, requestBody json.RawMessage) (Message, error) {
+	return c.chatWithRawJSON(ctx, requestBody)
+}
+
 // ——— ProClient (思考模式) ———
 
 // ProClient — DeepSeek 强模型客户端（思考模式，支持思维链 + 工具调用）
@@ -594,6 +644,10 @@ func (c *ProClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamE
 
 func (c *ProClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, error) {
 	return c.callSyncAPI(ctx, req, c.model)
+}
+
+func (c *ProClient) ChatWithRawJSON(ctx context.Context, requestBody json.RawMessage) (Message, error) {
+	return c.chatWithRawJSON(ctx, requestBody)
 }
 
 // sendStreamEvent 非阻塞发送流事件，避免客户端断连后 goroutine 卡住

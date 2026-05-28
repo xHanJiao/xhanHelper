@@ -46,10 +46,12 @@ type replayPreviewReq struct {
 }
 
 type replayCompareReq struct {
-	AnchorMessageID string        `json:"anchor_message_id" binding:"required"`
-	HistoryCount    int           `json:"history_count"`
-	ConfigA         replay.Config `json:"config_a"`
-	ConfigB         replay.Config `json:"config_b"`
+	AnchorMessageID string          `json:"anchor_message_id" binding:"required"`
+	HistoryCount    int             `json:"history_count"`
+	ConfigA         replay.Config   `json:"config_a"`
+	ConfigB         replay.Config   `json:"config_b"`
+	UseRequestJSON  bool            `json:"use_request_json"`
+	RequestJSON     json.RawMessage `json:"request_json,omitempty"`
 }
 
 // PreviewReplay 预览重放时发给 LLM 的完整请求（含 system prompt + 消息列表）
@@ -97,12 +99,16 @@ func (h *ReplayHandler) PreviewReplay(c *gin.Context) {
 		trace = preview.Trace
 	}
 
+	// 找锚点之后第一条有 request_json 的 assistant 消息
+	requestJSON := h.findRequestJSON(c, anchor)
+
 	view.JSONOK(c, gin.H{
 		"anchor_message": cleanForDebug(anchor),
 		"system_prompt":  systemPrompt,
 		"messages":       messages,
 		"history_count":  len(history),
 		"trace":          trace,
+		"request_json":   requestJSON,
 	})
 }
 
@@ -142,7 +148,13 @@ func (h *ReplayHandler) CompareReplay(c *gin.Context) {
 	view.WriteSSE(w, flusher, "start", string(startJSON))
 
 	// 串行执行 A 和 B（避免 LLM QPS 限制）
-	resultA, errA := h.runner.Run(c.Request.Context(), anchor, history, &req.ConfigA)
+	var resultA *replay.Result
+	var errA error
+	if req.UseRequestJSON && len(req.RequestJSON) > 0 {
+		resultA, errA = h.runner.RunFromRequestJSON(c.Request.Context(), anchor, history, req.RequestJSON)
+	} else {
+		resultA, errA = h.runner.Run(c.Request.Context(), anchor, history, &req.ConfigA)
+	}
 	if errA != nil {
 		log.Printf("[replay] config A run error: %v", errA)
 		view.WriteSSE(w, flusher, "error", `{"side":"a","error":"`+view.EscapeJSON(errA.Error())+`"}`)
@@ -166,6 +178,20 @@ func (h *ReplayHandler) CompareReplay(c *gin.Context) {
 		"result_b": resultB,
 	})
 	view.WriteSSE(w, flusher, "done", string(doneJSON))
+}
+
+// findRequestJSON 查找锚点消息之后第一条 assistant 消息的 request_json
+func (h *ReplayHandler) findRequestJSON(c *gin.Context, anchor *model.Message) json.RawMessage {
+	result, err := h.msgRepo.ListByConversationCursor(c.Request.Context(), anchor.ConversationID, anchor.ID, "after", 20)
+	if err != nil || result == nil {
+		return nil
+	}
+	for _, m := range result.Messages {
+		if m.Role == "assistant" && m.RequestJSON != nil && *m.RequestJSON != "" {
+			return json.RawMessage(*m.RequestJSON)
+		}
+	}
+	return nil
 }
 
 // loadAnchorAndHistory 加载锚点消息及其前置历史消息

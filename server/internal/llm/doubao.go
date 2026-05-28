@@ -75,6 +75,10 @@ func (c *DoubaoClient) ChatSync(ctx context.Context, req *ChatRequest) (Message,
 	return c.callChatAPI(ctx, req)
 }
 
+func (c *DoubaoClient) ChatWithRawJSON(ctx context.Context, requestBody json.RawMessage) (Message, error) {
+	return Message{}, fmt.Errorf("ChatWithRawJSON not implemented for doubao")
+}
+
 // callChatAPI 调用豆包 /chat/completions API (OpenAI 兼容)
 func (c *DoubaoClient) callChatAPI(ctx context.Context, req *ChatRequest) (Message, error) {
 	reqBytes, body := c.buildBody(req)

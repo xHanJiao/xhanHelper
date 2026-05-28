@@ -9,7 +9,7 @@ import (
 // ---- parseLLMResponse: 标准 JSON 解析替代字符串提取 ----
 
 func TestParseLLMResponse_ValidJSONNoSpace(t *testing.T) {
-	parsed, err := parseLLMResponse(`{"reply":"hello","tool_calls":[]}`)
+	parsed, err := ParseLLMResponse(`{"reply":"hello","tool_calls":[]}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestParseLLMResponse_ValidJSONNoSpace(t *testing.T) {
 
 func TestParseLLMResponse_ValidJSONWithSpace(t *testing.T) {
 	// LLM 输出带空格的 JSON（标准 JSON 允许冒号后空格）
-	parsed, err := parseLLMResponse(`{"reply": "hello", "tool_calls": []}`)
+	parsed, err := ParseLLMResponse(`{"reply": "hello", "tool_calls": []}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestParseLLMResponse_ValidJSONWithSpace(t *testing.T) {
 
 func TestParseLLMResponse_PureText(t *testing.T) {
 	// 纯文本 → 返回 nil（无错误，表示不需要工具调用）
-	parsed, err := parseLLMResponse("今天天气不错")
+	parsed, err := ParseLLMResponse("今天天气不错")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestParseLLMResponse_PureText(t *testing.T) {
 
 func TestParseLLMResponse_WithToolCalls(t *testing.T) {
 	input := `{"reply":"已记账","tool_calls":[{"tool":"bookkeeping","function":"create","args":{"amount":100}}]}`
-	parsed, err := parseLLMResponse(input)
+	parsed, err := ParseLLMResponse(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestParseLLMResponse_WithToolCalls(t *testing.T) {
 
 func TestParseLLMResponse_ReplyWithEscapedQuotes(t *testing.T) {
 	input := `{"reply":"He said \"hello\" to me"}`
-	parsed, err := parseLLMResponse(input)
+	parsed, err := ParseLLMResponse(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestParseLLMResponse_ReplyWithEscapedQuotes(t *testing.T) {
 
 func TestParseLLMResponse_ReplyWithChinese(t *testing.T) {
 	input := `{"reply":"好的，已帮你记录这笔支出","tool_calls":[]}`
-	parsed, err := parseLLMResponse(input)
+	parsed, err := ParseLLMResponse(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestParseLLMResponse_ReplyWithChinese(t *testing.T) {
 
 func TestParseLLMResponse_ReplyWithNewlines(t *testing.T) {
 	input := "{\"reply\":\"第一行\\n第二行\\n第三行\"}"
-	parsed, err := parseLLMResponse(input)
+	parsed, err := ParseLLMResponse(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestParseLLMResponse_ReplyWithNewlines(t *testing.T) {
 }
 
 func TestParseLLMResponse_EmptyInput(t *testing.T) {
-	parsed, err := parseLLMResponse("")
+	parsed, err := ParseLLMResponse("")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestParseLLMResponse_EmptyInput(t *testing.T) {
 }
 
 func TestParseLLMResponse_WhitespaceOnly(t *testing.T) {
-	parsed, err := parseLLMResponse("   \n\t  ")
+	parsed, err := ParseLLMResponse("   \n\t  ")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestParseLLMResponse_WhitespaceOnly(t *testing.T) {
 func TestParseLLMResponse_MarkdownFenceWrapped(t *testing.T) {
 	// LLM 可能用 markdown fence 包裹 JSON
 	input := "```json\n{\"reply\":\"hello\"}\n```"
-	parsed, err := parseLLMResponse(input)
+	parsed, err := ParseLLMResponse(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestParseLLMResponse_MarkdownFenceWrapped(t *testing.T) {
 func TestParseLLMResponse_OnlyToolCallsNoReply(t *testing.T) {
 	// 极少数情况：LLM 可能只返回工具调用不返回 reply
 	input := `{"tool_calls":[{"tool":"note","function":"search","args":{"query":"test"}}]}`
-	parsed, err := parseLLMResponse(input)
+	parsed, err := ParseLLMResponse(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

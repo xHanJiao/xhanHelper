@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"xhan-helper/internal/config"
@@ -19,6 +20,9 @@ func (m *mockLLMClient) Chat(ctx context.Context, req *llm.ChatRequest) (<-chan 
 	return ch, nil
 }
 func (m *mockLLMClient) ChatSync(ctx context.Context, req *llm.ChatRequest) (llm.Message, error) {
+	return llm.Message{}, nil
+}
+func (m *mockLLMClient) ChatWithRawJSON(ctx context.Context, requestBody json.RawMessage) (llm.Message, error) {
 	return llm.Message{}, nil
 }
 func (m *mockLLMClient) BuildSystemPrompt(base string, tools []llm.ToolDefinition) string {

@@ -148,7 +148,7 @@ func (rl *ReactLoop) Run(ctx context.Context, userMessage string) (*ReactLoopRes
 		}
 
 		// 解析 LLM 响应中的 JSON
-		parsed, parseErr := parseLLMResponse(resp.Content)
+		parsed, parseErr := ParseLLMResponse(resp.Content)
 		if parseErr != nil {
 			// 非法 JSON → 注入重试消息，继续循环
 			log.Printf("[react_loop] iter %d parse error: %v, retrying", iter, parseErr)

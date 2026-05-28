@@ -270,7 +270,9 @@ func (r *Registry) writeToolFullDef(buf *bytes.Buffer, t Tool) {
 
 func (r *Registry) writePromptFooter(buf *bytes.Buffer) {
 	buf.WriteString("\n### 输出格式（必须严格遵守）\n\n")
-	buf.WriteString("你的每次回复都必须是一个 JSON 对象，格式如下：\n\n")
+	buf.WriteString("你的每次回复都必须是一个完整的 JSON 对象，即使一句简单的「好的」也必须包裹在 JSON 中。\n")
+	buf.WriteString("**严禁以纯文本回复，严禁在 JSON 前后添加任何文字或 markdown 代码块，回复必须以 { 开头、以 } 结尾。**\n\n")
+	buf.WriteString("格式如下：\n\n")
 	buf.WriteString("{\n")
 	buf.WriteString(`    "reply":"给用户的自然语言回复",` + "\n")
 	buf.WriteString(`    "tool_calls": [` + "\n")
@@ -281,19 +283,18 @@ func (r *Registry) writePromptFooter(buf *bytes.Buffer) {
 	buf.WriteString("        }\n")
 	buf.WriteString("    ]\n")
 	buf.WriteString("}\n\n")
-	buf.WriteString("不需要调用工具时，tool_calls 为空数组 []。\n")
-	buf.WriteString("一条回复中 tool_calls 可以包含多个工具调用，按顺序执行。\n")
-	buf.WriteString("工具执行结果会追加到对话中，你可以据此继续回复用户。\n")
-	buf.WriteString("**严禁**在 JSON 前后添加任何文字、解释或 markdown 代码块。你的回复必须以 { 开头、以 } 结尾。\n")
+	buf.WriteString("规则：\n")
+	buf.WriteString("- 不需要调用工具时，tool_calls 为空数组 []。\n")
+	buf.WriteString("- 当本轮需要调用工具时（tool_calls 非空），reply 字段必须为空字符串 \"\"。只有不需要调用工具的最终回复才写 reply。例如：查账单时返回 {\"reply\":\"\",\"tool_calls\":[...]}，工具返回结果后再给出 {\"reply\":\"查到 12 笔...\",\"tool_calls\":[]}。\n")
+	buf.WriteString("- 一条回复中 tool_calls 可以包含多个工具调用，按顺序执行。工具执行结果会追加到对话中，你可以据此继续回复用户。\n")
+	buf.WriteString("- JSON 字符串值内的英文双引号必须用反斜杠转义（\\\"）。\n")
 }
 
 // GenerateImportantRules 生成输出规范文本（不含工具定义，放在角色定义之后、工具使用之前）
 func (r *Registry) GenerateImportantRules() string {
 	var buf bytes.Buffer
 	buf.WriteString("\n## 输出规范\n\n")
-	buf.WriteString("1. 每次回复都必须输出完整 JSON 对象，即使是一句简单的好的也必须包裹在 JSON 中，例如 {\"reply\":\"好的\",\"tool_calls\":[]}。不需要工具时 tool_calls 为空数组 []。JSON 字符串值内的英文双引号必须用反斜杠转义（\\\"）。**严禁以纯文本回复。严禁在 JSON 前后添加任何文字。回复必须以 { 开头、以 } 结尾。**\n")
-	buf.WriteString("2. 【强制工具查询规则】除 tool_retriever 外，任何工具在调用前必须先通过 tool_retriever.search 查询其完整定义（函数签名和参数 schema）。禁止凭工具名称和概览描述猜测参数直接调用！例如：要用 bookkeeping 记账，必须先 search(\"bookkeeping\") 拿到 create_bill 的参数。不确定用什么工具时，用 tool_retriever.search 搜索关键词。\n")
-	buf.WriteString("3. 当本轮需要调用工具时（tool_calls 非空），reply 字段必须为空字符串 \"\"；只有不需要调用工具的最终回复才写 reply。例如：查账单时返回 {\"reply\":\"\",\"tool_calls\":[...]}，工具返回结果后再给出 {\"reply\":\"查到 12 笔...\",\"tool_calls\":[]}。\n")
+	buf.WriteString("【强制工具查询规则】除 tool_retriever 外，任何工具在调用前必须先通过 tool_retriever.search 查询其完整定义（函数签名和参数 schema）。禁止凭工具名称和概览描述猜测参数直接调用！例如：要用 bookkeeping 记账，必须先 search(\"bookkeeping\") 拿到 create_bill 的参数。不确定用什么工具时，用 tool_retriever.search 搜索关键词。\n")
 	return buf.String()
 }
 

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -63,13 +64,15 @@ func (m *mockLLMClient) ChatSync(ctx context.Context, req *llm.ChatRequest) (llm
 	return llm.Message{}, nil
 }
 
+func (m *mockLLMClient) ChatWithRawJSON(ctx context.Context, requestBody json.RawMessage) (llm.Message, error) {
+	return llm.Message{}, fmt.Errorf("mock: ChatWithRawJSON not implemented")
+}
+
 func (m *mockLLMClient) BuildSystemPrompt(base string, tools []llm.ToolDefinition) string {
 	return base
 }
 
-func (m *mockLLMClient) ModelName() string {
-	return "mock"
-}
+func (m *mockLLMClient) ModelName() string { return "mock" }
 
 // —— helpers ——
 

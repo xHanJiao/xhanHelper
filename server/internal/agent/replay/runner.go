@@ -3,6 +3,7 @@ package replay
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 
 	"github.com/google/uuid"
@@ -203,9 +204,98 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		return nil, err
 	}
 
+	return r.collectEvents(convID, events), nil
+}
+
+// RunFromRequestJSON 用历史 request_json 的 system prompt 走完整 ReAct 循环
+func (r *Runner) RunFromRequestJSON(ctx context.Context, anchorMsg *model.Message, history []model.Message, requestBody json.RawMessage) (*Result, error) {
+	// 1. 解析 request_json，只提取 system prompt 和 temperature
+	var apiReq struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+		Temperature *float64 `json:"temperature"`
+	}
+	if err := json.Unmarshal(requestBody, &apiReq); err != nil {
+		return nil, fmt.Errorf("parse request_json: %w", err)
+	}
+
+	var systemPrompt string
+	for _, m := range apiReq.Messages {
+		if m.Role == "system" {
+			systemPrompt = m.Content
+			break
+		}
+	}
+	if systemPrompt == "" {
+		return nil, fmt.Errorf("no system message found in request_json")
+	}
+
+	// 2. 创建隔离的 SQLite 库 + orchestrator
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
+	if err := db.AutoMigrate(&model.Conversation{}, &model.Message{}); err != nil {
+		return nil, err
+	}
+
+	msgRepo := service.NewMessageRepo(db)
+	convRepo := service.NewConversationRepo(db)
+
+	convID := uuid.New().String()
+	if err := convRepo.Create(ctx, &model.Conversation{
+		ID:     convID,
+		UserID: anchorMsg.UserID,
+		Title:  "replay-raw-" + convID[:8],
+	}); err != nil {
+		return nil, err
+	}
+
+	maxToolResultChars := 2000
+	msgs := agent.BuildMessagesForFlash(history, maxToolResultChars)
+
+	overridePrompt := systemPrompt
+	orch := agent.New(&agent.OrchestratorConfig{
+		FlashClient:        r.flashClient,
+		ProClient:          r.proClient,
+		Registry:           r.registry,
+		PromptBuilder:      r.promptBuilder,
+		MsgRepo:            msgRepo,
+		ConvRepo:           convRepo,
+		Embedder:           r.embedder,
+		VectorStore:        nil,
+		EmbeddingRepo:      nil,
+		MaxIterations:      r.maxIterations,
+		Temperature:        apiReq.Temperature,
+		MaxTokens:          r.maxTokens,
+		MaxToolResultChars: maxToolResultChars,
+		OnChatEnd:          nil,
+	})
+
+	events, err := orch.Run(ctx, &agent.RunRequest{
+		UserID:               anchorMsg.UserID,
+		ConversationID:       convID,
+		Messages:             msgs,
+		UserMessageContent:   anchorMsg.Content,
+		RawUserMessage:       anchorMsg.Content,
+		SkipRetrieval:        true,
+		OverrideSystemPrompt: &overridePrompt,
+		MaxIterations:        r.maxIterations,
+	})
+	if err != nil {
+		log.Printf("[replay] raw orch run error: %v", err)
+		return nil, err
+	}
+
+	return r.collectEvents(convID, events), nil
+}
+
+// collectEvents 从事件通道收集工具调用和最终回复
+func (r *Runner) collectEvents(convID string, events <-chan *llm.StreamEvent) *Result {
 	result := &Result{ConversationID: convID}
 	var currentToolCall *CapturedToolCall
-
 	for evt := range events {
 		switch evt.Type {
 		case "tool_call":
@@ -228,13 +318,10 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 			currentToolCall = nil
 		case "text_delta":
 			result.Reply += evt.Content
-		case "done":
-			// 最终回复已在 text_delta 中累积
 		case "error":
 			log.Printf("[replay] error event: %s", evt.Error)
-			return result, nil
+			return result
 		}
 	}
-
-	return result, nil
+	return result
 }

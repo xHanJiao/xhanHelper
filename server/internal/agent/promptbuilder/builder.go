@@ -69,7 +69,6 @@ func NewSystemPromptBuilder(
 			&corePrinciplesProvider{},
 		},
 		postRoleStatic: []StaticProvider{
-			&importantRulesProvider{registry: registry},
 			&toolDefinitionsProvider{registry: registry},
 		},
 		searchProviders: searchProviders,

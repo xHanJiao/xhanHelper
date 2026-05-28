@@ -420,7 +420,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 	trace *promptbuilder.PromptTrace,
 	state *reactState,
 ) bool {
-	parsed, parseErr := parseLLMResponse(msg.Content)
+	parsed, parseErr := ParseLLMResponse(msg.Content)
 
 	if parseErr != nil {
 		log.Printf("[orch] round parse error: %v, saving raw and retrying", parseErr)
@@ -450,7 +450,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		return true
 	}
 
-	// 统一走 prompt engineering，不填 ToolCallsJSON（由 parseLLMResponse 从文本解析）
+	// 统一走 prompt engineering，不填 ToolCallsJSON（由 ParseLLMResponse 从文本解析）
 	msg.ToolCalls = nil
 
 	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, trace)
@@ -786,7 +786,7 @@ func (o *Orchestrator) GenerateTitle(ctx context.Context, userMessage string) st
 	return title
 }
 
-func parseLLMResponse(text string) (*LLMResponse, error) {
+func ParseLLMResponse(text string) (*LLMResponse, error) {
 	var resp LLMResponse
 	prefix, err := ParseFlashJSON(text, &resp)
 	if err != nil {
@@ -848,7 +848,7 @@ func maybeInjectCreatedAt(raw string) string {
 }
 
 func extractCleanText(raw string) string {
-	parsed, err := parseLLMResponse(raw)
+	parsed, err := ParseLLMResponse(raw)
 	if err != nil {
 		// parse 失败（非法 JSON / 前缀违规）→ 用 extractFlashReply 兜底，
 		// 保证流式时有内容展示（handleOneRoundResponse 仍会触发重试）

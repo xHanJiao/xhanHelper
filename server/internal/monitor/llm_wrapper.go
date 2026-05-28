@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"encoding/json"
 
 	"xhan-helper/internal/llm"
 )
@@ -36,6 +37,12 @@ func (m *MonitoredLLMClient) Chat(ctx context.Context, req *llm.ChatRequest) (<-
 
 func (m *MonitoredLLMClient) ChatSync(ctx context.Context, req *llm.ChatRequest) (llm.Message, error) {
 	msg, err := m.inner.ChatSync(ctx, req)
+	global.IncLLMCall(m.caller, err != nil)
+	return msg, err
+}
+
+func (m *MonitoredLLMClient) ChatWithRawJSON(ctx context.Context, requestBody json.RawMessage) (llm.Message, error) {
+	msg, err := m.inner.ChatWithRawJSON(ctx, requestBody)
 	global.IncLLMCall(m.caller, err != nil)
 	return msg, err
 }

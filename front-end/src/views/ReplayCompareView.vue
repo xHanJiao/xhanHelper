@@ -4,6 +4,9 @@ import { useRoute } from 'vue-router'
 import PageTopBar from '@/components/PageTopBar.vue'
 import { api } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
+import MarkdownIt from 'markdown-it'
+
+const md = new MarkdownIt()
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -16,6 +19,9 @@ const historyMsgs = ref([])
 
 const running = ref(false)
 const results = ref({ a: null, b: null })
+
+const requestJSON = ref(null)
+const useRequestJSON = ref(false)
 
 const bPromptPreview = ref('')
 const bPromptLoading = ref(false)
@@ -53,6 +59,8 @@ async function loadAnchor() {
     })
     anchorMsg.value = res.anchor_message
     historyMsgs.value = res.messages || []
+    requestJSON.value = res.request_json || null
+    if (!res.request_json) useRequestJSON.value = false
   } catch (e) {
     error.value = '加载失败: ' + e.message
   } finally {
@@ -116,6 +124,8 @@ async function runCompare() {
     history_count: 10,
     config_a: cfgA,
     config_b: { ...configB.value },
+    use_request_json: useRequestJSON.value && !!requestJSON.value,
+    request_json: useRequestJSON.value ? requestJSON.value : undefined,
   }
 
   try {
@@ -236,7 +246,17 @@ onMounted(loadAnchor)
           <!-- Config A -->
           <div style="background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-md);">
             <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-primary);">配置 A（对照组）</div>
-            <div style="display: grid; gap: 6px; font-size: 12px;">
+
+            <!-- 历史 request_json 开关 -->
+            <label v-if="requestJSON" style="display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 6px 8px; margin-bottom: var(--space-sm); background: var(--color-bg-page); border-radius: var(--radius-md); cursor: pointer;">
+              <input type="checkbox" v-model="useRequestJSON" style="accent-color: var(--color-primary);" />
+              <span>使用历史 request_json（直接重放原 LLM 请求）</span>
+            </label>
+            <div v-if="!requestJSON" style="font-size: 11px; color: var(--color-text-muted); margin-bottom: var(--space-sm); padding: 4px 8px; background: var(--color-bg-page); border-radius: var(--radius-md);">
+              此消息无可用的历史 request_json
+            </div>
+
+            <div v-if="!useRequestJSON" style="display: grid; gap: 6px; font-size: 12px;">
               <label class="cfg-row"><span class="cfg-label">检索</span><select v-model="configA.skip_retrieval" class="replay-select"><option :value="false">开启</option><option :value="true">关闭</option></select></label>
               <label class="cfg-row"><span class="cfg-label">模型</span><select v-model="configA.deep_mode" class="replay-select"><option :value="false">Flash</option><option :value="true">Pro</option></select></label>
               <label class="cfg-row"><span class="cfg-label">截断长度</span><input type="number" v-model.number="configA.max_tool_result_chars" class="replay-input" /></label>
@@ -250,6 +270,9 @@ onMounted(loadAnchor)
               <div class="cfg-section">历史检索</div>
               <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.history_threshold" step="0.05" class="replay-input" /></label>
               <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.history_limit" class="replay-input" /></label>
+            </div>
+            <div v-else style="font-size: 12px; color: var(--color-text-muted); padding: 8px; background: var(--color-bg-page); border-radius: var(--radius-md);">
+              A 组将直接发送历史 request_json 到 LLM，配置参数无效
             </div>
           </div>
 
@@ -307,7 +330,7 @@ onMounted(loadAnchor)
             </template>
           </div>
 
-          <pre v-if="configB.override_system_prompt == null" style="font-size: 12px; line-height: 1.5; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 12px; margin: 0; max-height: 400px; overflow-y: auto; white-space: pre-wrap; color: var(--color-text);">{{ bPromptPreview || '(空 — 可能跳过了检索)' }}</pre>
+          <div v-if="configB.override_system_prompt == null" class="md-preview" v-html="bPromptPreview ? md.render(bPromptPreview) : '<em>(空 — 可能跳过了检索)</em>'"></div>
 
           <div v-else>
             <textarea v-model="configB.override_system_prompt" class="prompt-editor"></textarea>
@@ -473,6 +496,27 @@ onMounted(loadAnchor)
   color: var(--color-warning);
   cursor: pointer;
 }
+
+.md-preview {
+  font-size: 13px;
+  line-height: 1.7;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin: 0;
+  max-height: 500px;
+  overflow-y: auto;
+  color: var(--color-text);
+}
+.md-preview :deep(h1),
+.md-preview :deep(h2),
+.md-preview :deep(h3) { margin-top: 1em; margin-bottom: 0.5em; }
+.md-preview :deep(h2) { font-size: 15px; border-bottom: 1px solid var(--color-border); padding-bottom: 4px; }
+.md-preview :deep(code) { font-size: 12px; background: var(--color-bg-page); padding: 1px 4px; border-radius: 3px; }
+.md-preview :deep(pre) { background: var(--color-bg-page); padding: 10px; border-radius: var(--radius-md); overflow-x: auto; }
+.md-preview :deep(ul), .md-preview :deep(ol) { padding-left: 1.5em; }
+.md-preview :deep(blockquote) { border-left: 3px solid var(--color-primary); margin-left: 0; padding-left: 12px; color: var(--color-text-muted); }
 
 .prompt-editor {
   width: 100%;

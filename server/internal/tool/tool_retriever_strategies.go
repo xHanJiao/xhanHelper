@@ -128,24 +128,32 @@ func (s *VectorRetrievalStrategy) SearchHint() string {
 func (s *VectorRetrievalStrategy) Search(ctx context.Context, query string, limit int) ([]ToolInfo, error) {
 	log.Printf("[ToolRetriever] vector search: query=%q", query)
 
-	// 1. 生成 query embedding
 	vec, err := s.embedder.Embed(ctx, query)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. 向量检索
 	matches := s.vectorStore.Search(vec, limit, func(_ string, _ []float64, meta map[string]string) bool {
 		return meta["type"] == "tool"
 	})
 
 	log.Printf("[ToolRetriever] vector search found %d matches", len(matches))
 
-	// 3. 从 repo 加载工具详情
+	allTools, err := s.toolRepo.ListActiveTools(ctx)
+	if err != nil {
+		return nil, err
+	}
+	toolByID := make(map[string]model.ToolRegistry, len(allTools))
+	for _, t := range allTools {
+		toolByID[t.ID] = t
+	}
+
 	results := make([]ToolInfo, 0, len(matches))
 	for _, match := range matches {
-		// TODO: 从 repo 按 ID 加载工具详情，此处暂时只返回向量匹配信息
-		_ = match
+		toolID := strings.TrimPrefix(match.ID, "tool:")
+		if t, ok := toolByID[toolID]; ok {
+			results = append(results, toolToInfo(t, match.Score))
+		}
 	}
 
 	return results, nil

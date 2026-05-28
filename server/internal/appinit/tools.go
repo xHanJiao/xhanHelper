@@ -25,8 +25,11 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		log.Printf("[seed] SeedBuiltinTools error: %v", err)
 	}
 
-	// tool_retriever
-	toolRetriever := tool.NewToolRetriever(tool.NewSimpleKeywordStrategy(repos.Tool))
+	// tool_retriever（hybrid: 向量检索 + 关键词检索）
+	keywordStrategy := tool.NewSimpleKeywordStrategy(repos.Tool)
+	vectorStrategy := tool.NewVectorRetrievalStrategy(infra.Embedder, infra.VectorStore, repos.Tool)
+	hybridStrategy := tool.NewHybridRetrievalStrategy(keywordStrategy, vectorStrategy, 0.7, 0.3)
+	toolRetriever := tool.NewToolRetriever(hybridStrategy)
 	toolRetriever.SetRegistrySearcher(reg)
 	reg.Register(tool.NewLoggingWrapper(toolRetriever, log.Default()))
 	reg.HideTool("tool_retriever")

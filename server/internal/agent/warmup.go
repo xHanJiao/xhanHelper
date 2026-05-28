@@ -16,6 +16,7 @@ func WarmupAll(ctx context.Context, vs app.VectorStore, embeddingRepo *service.E
 	warmupThemeEmbeddings(ctx, embeddingRepo, vs, conceptEmbedRepo, themeStateRepo)
 	warmupChunkEmbeddings(ctx, embeddingRepo, vs)
 	warmupConceptEmbeddings(ctx, embeddingRepo, vs)
+	warmupToolEmbeddings(ctx, embeddingRepo, vs)
 }
 
 func warmupThemeEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore app.VectorStore, conceptEmbedRepo *service.ConceptEmbeddingRepo, themeStateRepo *service.ThemeStateRepo) {
@@ -171,6 +172,39 @@ func warmupChunkEmbeddings(ctx context.Context, embeddingRepo *service.Embedding
 		}
 	}
 	log.Printf("[warmup] chunk embeddings: %d loaded into vector store", loaded)
+}
+
+func warmupToolEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore app.VectorStore) {
+	const pageSize = 100
+	loaded := 0
+	for offset := 0; ; offset += pageSize {
+		embeddings, err := embeddingRepo.ListByType(ctx, model.EntityTypeTool, pageSize, offset)
+		if err != nil {
+			log.Printf("[warmup] tool embeddings ListByType error: %v", err)
+			break
+		}
+		if len(embeddings) == 0 {
+			break
+		}
+		for _, emb := range embeddings {
+			if emb.Embedding == nil {
+				continue
+			}
+			vec, err := llm.StringToEmbedding(*emb.Embedding)
+			if err != nil || len(vec) == 0 {
+				continue
+			}
+			vectorStore.Upsert("tool:"+emb.EntityID, vec, map[string]string{
+				"type":    "tool",
+				"user_id": emb.UserID,
+			})
+			loaded++
+		}
+		if len(embeddings) < pageSize {
+			break
+		}
+	}
+	log.Printf("[warmup] tool embeddings: %d loaded into vector store", loaded)
 }
 
 // parseChunkEntityID 解析 chunk EntityID，返回 parentType 和 parentID

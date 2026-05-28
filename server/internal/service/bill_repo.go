@@ -3,10 +3,25 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"gorm.io/gorm"
 	"xhan-helper/internal/model"
 )
+
+// CatStatRow — 分类统计查询结果行
+type CatStatRow struct {
+	Category1 string
+	Amount    float64
+	Count     int64
+}
+
+// MonthlyStatRow — 月度统计查询结果行
+type MonthlyStatRow struct {
+	Month  string
+	Amount float64
+	Count  int64
+}
 
 // BillRepo — 账单数据访问
 type BillRepo struct {
@@ -68,13 +83,15 @@ func (r *BillRepo) ListByUser(ctx context.Context, userID string, limit, offset 
 }
 
 // ListFiltered 按条件筛选账单
-func (r *BillRepo) ListFiltered(ctx context.Context, userID, startDate, endDate, category string, limit, offset int) ([]model.Bill, int64, error) {
+func (r *BillRepo) ListFiltered(ctx context.Context, userID, startDate, endDate, category, category2, keyword string, limit, offset int) ([]model.Bill, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	q := r.db.WithContext(ctx).
-		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal)
-
+	base := func() *gorm.DB {
+		return r.db.WithContext(ctx).
+			Where("user_id = ? AND status = ?", userID, model.BillStatusNormal)
+	}
+	q := base()
 	if startDate != "" {
 		q = q.Where("date >= ?", startDate)
 	}
@@ -84,10 +101,15 @@ func (r *BillRepo) ListFiltered(ctx context.Context, userID, startDate, endDate,
 	if category != "" {
 		q = q.Where("category1 = ?", category)
 	}
+	if category2 != "" {
+		q = q.Where("category2 = ?", category2)
+	}
+	if keyword != "" {
+		q = q.Where("(item LIKE ? OR remark LIKE ?)", "%"+keyword+"%", "%"+keyword+"%")
+	}
 
 	var total int64
-	countQ := r.db.WithContext(ctx).
-		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal)
+	countQ := base()
 	if startDate != "" {
 		countQ = countQ.Where("date >= ?", startDate)
 	}
@@ -97,6 +119,12 @@ func (r *BillRepo) ListFiltered(ctx context.Context, userID, startDate, endDate,
 	if category != "" {
 		countQ = countQ.Where("category1 = ?", category)
 	}
+	if category2 != "" {
+		countQ = countQ.Where("category2 = ?", category2)
+	}
+	if keyword != "" {
+		countQ = countQ.Where("(item LIKE ? OR remark LIKE ?)", "%"+keyword+"%", "%"+keyword+"%")
+	}
 	if err := countQ.Model(&model.Bill{}).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -104,4 +132,74 @@ func (r *BillRepo) ListFiltered(ctx context.Context, userID, startDate, endDate,
 	var list []model.Bill
 	err := q.Order("date DESC, created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
 	return list, total, err
+}
+
+// CategoryStats 按一级分类汇总金额和数量（MySQL/SQLite GROUP BY）
+func (r *BillRepo) CategoryStats(ctx context.Context, userID, startDate, endDate string) ([]CatStatRow, error) {
+	q := r.db.WithContext(ctx).Model(&model.Bill{}).
+		Select("category1, SUM(amount) as amount, COUNT(*) as count").
+		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal)
+	if startDate != "" {
+		q = q.Where("date >= ?", startDate)
+	}
+	if endDate != "" {
+		q = q.Where("date <= ?", endDate)
+	}
+
+	var rows []CatStatRow
+	err := q.Group("category1").Order("amount DESC").Find(&rows).Error
+	return rows, err
+}
+
+// MonthlyStats 按月汇总金额和数量（MySQL/SQLite GROUP BY）
+func (r *BillRepo) MonthlyStats(ctx context.Context, userID, startDate, endDate, category, category2 string) ([]MonthlyStatRow, error) {
+	q := r.db.WithContext(ctx).Model(&model.Bill{}).
+		Select("SUBSTR(date, 1, 7) as month, SUM(amount) as amount, COUNT(*) as count").
+		Where("user_id = ? AND status = ? AND date >= ? AND date <= ?",
+			userID, model.BillStatusNormal, startDate, endDate)
+	if category != "" {
+		q = q.Where("category1 = ?", category)
+	}
+	if category2 != "" {
+		q = q.Where("category2 = ?", category2)
+	}
+
+	var rows []MonthlyStatRow
+	err := q.Group("SUBSTR(date, 1, 7)").Order("month").Find(&rows).Error
+	return rows, err
+}
+
+// GetBill 按 ID 查询单条账单
+func (r *BillRepo) GetBill(ctx context.Context, userID, id string) (*model.Bill, error) {
+	var b model.Bill
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND user_id = ? AND status = ?", id, userID, model.BillStatusNormal).
+		First(&b).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("bill not found: %s", id)
+	}
+	return &b, err
+}
+
+// CategoryOptions 从实际账单数据中提取一级分类 → 二级分类列表的映射
+func (r *BillRepo) CategoryOptions(ctx context.Context, userID string) (map[string][]string, error) {
+	type row struct {
+		Category1 string
+		Category2 string
+	}
+	var rows []row
+	err := r.db.WithContext(ctx).Model(&model.Bill{}).
+		Select("DISTINCT category1, category2").
+		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal).
+		Order("category1, category2").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string][]string)
+	for _, r := range rows {
+		result[r.Category1] = append(result[r.Category1], r.Category2)
+	}
+	return result, nil
 }

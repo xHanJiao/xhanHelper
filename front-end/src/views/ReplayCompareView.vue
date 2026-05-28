@@ -404,9 +404,12 @@ onMounted(loadAnchor)
                 </div>
               </div>
               <div v-else style="font-size: 12px; color: var(--color-text-muted); margin-bottom: var(--space-md);">无工具调用</div>
-              <details v-if="results.a?.reasoning" style="margin-bottom: var(--space-md);">
-                <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">思考过程</summary>
-                <div class="reasoning-box">{{ results.a.reasoning }}</div>
+              <details v-if="results.a?.reasoning?.length" style="margin-bottom: var(--space-md);">
+                <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">思考过程（{{ results.a.reasoning.length }} 轮）</summary>
+                <div v-for="(r, idx) in results.a.reasoning" :key="idx" class="reasoning-box" style="margin-bottom: 8px;">
+                  <div v-if="results.a.reasoning.length > 1" style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">第 {{ idx + 1 }} 轮</div>
+                  {{ r }}
+                </div>
               </details>
               <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">回复</div>
               <div class="reply-box">{{ results.a?.reply || '(无文本回复)' }}</div>
@@ -432,9 +435,12 @@ onMounted(loadAnchor)
                 </div>
               </div>
               <div v-else style="font-size: 12px; color: var(--color-text-muted); margin-bottom: var(--space-md);">无工具调用</div>
-              <details v-if="results.b?.reasoning" style="margin-bottom: var(--space-md);">
-                <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">思考过程</summary>
-                <div class="reasoning-box">{{ results.b.reasoning }}</div>
+              <details v-if="results.b?.reasoning?.length" style="margin-bottom: var(--space-md);">
+                <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">思考过程（{{ results.b.reasoning.length }} 轮）</summary>
+                <div v-for="(r, idx) in results.b.reasoning" :key="idx" class="reasoning-box" style="margin-bottom: 8px;">
+                  <div v-if="results.b.reasoning.length > 1" style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">第 {{ idx + 1 }} 轮</div>
+                  {{ r }}
+                </div>
               </details>
               <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">回复</div>
               <div class="reply-box">{{ results.b?.reply || '(无文本回复)' }}</div>

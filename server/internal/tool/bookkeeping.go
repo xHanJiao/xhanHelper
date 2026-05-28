@@ -25,7 +25,7 @@ func NewBookkeepingTool(billRepo *service.BillRepo) *BookkeepingTool {
 
 func (t *BookkeepingTool) Name() string { return "bookkeeping" }
 func (t *BookkeepingTool) Description() string {
-	return "记账工具，可以新增、修改、删除、查询账单"
+	return "记账工具，可以新增、修改、删除、查询账单，并且查看账单的统计数据"
 }
 
 func (t *BookkeepingTool) Functions() []FuncSchema {
@@ -63,7 +63,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 					"category1":    category1Field(),
 					"category2":    category2Field(),
 					"consume_type": consumeTypeField(),
-					"date":         map[string]interface{}{"type": "string", "description": "日期 YYYY-MM-DD，默认今天"},
+					"date":         map[string]interface{}{"type": "string", "description": "日期，格式必须为 YYYY-MM-DD（如 2026-05-28），默认今天"},
 					"pay_type":     payTypeField(),
 					"owner":        map[string]interface{}{"type": "string", "description": "归属人"},
 					"remark":       map[string]interface{}{"type": "string", "description": "备注"},
@@ -83,7 +83,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 					"category1":    category1Field(),
 					"category2":    category2Field(),
 					"consume_type": consumeTypeField(),
-					"date":         map[string]interface{}{"type": "string", "description": "日期"},
+					"date":         map[string]interface{}{"type": "string", "description": "日期，格式必须为 YYYY-MM-DD（如 2026-05-28）"},
 					"pay_type":     payTypeField(),
 					"owner":        map[string]interface{}{"type": "string", "description": "归属人"},
 					"remark":       map[string]interface{}{"type": "string", "description": "备注"},
@@ -104,36 +104,58 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "query_bills",
-			Description: "查询账单列表，可按时间范围和分类筛选",
+			Description: "查询账单列表，可按时间范围、分类和关键词筛选。最多返回 200 条",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"start_date": map[string]interface{}{"type": "string", "description": "开始日期 YYYY-MM-DD，可选"},
-					"end_date":   map[string]interface{}{"type": "string", "description": "结束日期 YYYY-MM-DD，可选"},
+					"start_date": map[string]interface{}{"type": "string", "description": "开始日期，格式 YYYY-MM-DD，例如 2026-01-01"},
+					"end_date":   map[string]interface{}{"type": "string", "description": "结束日期，格式 YYYY-MM-DD，例如 2026-12-31"},
 					"category":   map[string]interface{}{"type": "string", "description": "按一级分类筛选，可选"},
+					"category2":  map[string]interface{}{"type": "string", "description": "按二级分类筛选，可选"},
+					"keyword":    map[string]interface{}{"type": "string", "description": "按项目名称或备注模糊搜索，可选"},
 				},
 			},
 		},
 		{
-			Name:        "get_monthly_stats",
-			Description: "按月汇总账单金额和数量，用于月度分析和对比",
+			Name:        "get_bill_by_id",
+			Description: "根据 ID 查询单条账单详情",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"year":     map[string]interface{}{"type": "integer", "description": "年份，如2026。不传默认当前年"},
-					"category": map[string]interface{}{"type": "string", "description": "按一级分类筛选，可选"},
+					"id": map[string]interface{}{"type": "string", "description": "账单ID（必填）"},
+				},
+				"required": []interface{}{"id"},
+			},
+		},
+		{
+			Name:        "get_monthly_stats",
+			Description: "按月汇总账单金额和数量，用于月度分析和对比。可筛选一级/二级分类",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"year":      map[string]interface{}{"type": "integer", "description": "年份，如2026。不传默认当前年"},
+					"category":  map[string]interface{}{"type": "string", "description": "按一级分类筛选，可选"},
+					"category2": map[string]interface{}{"type": "string", "description": "按二级分类筛选，可选"},
 				},
 			},
 		},
 		{
 			Name:        "get_category_stats",
-			Description: "按分类汇总账单金额，用于消费结构分析",
+			Description: "按一级分类汇总账单金额，用于消费结构分析",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"start_date": map[string]interface{}{"type": "string", "description": "开始日期，可选"},
-					"end_date":   map[string]interface{}{"type": "string", "description": "结束日期，可选"},
+					"start_date": map[string]interface{}{"type": "string", "description": "开始日期，格式 YYYY-MM-DD，例如 2026-01-01"},
+					"end_date":   map[string]interface{}{"type": "string", "description": "结束日期，格式 YYYY-MM-DD，例如 2026-12-31"},
 				},
+			},
+		},
+		{
+			Name:        "get_category_options",
+			Description: "获取一级分类和对应二级分类的映射关系，用于了解可用的分类选项",
+			Parameters: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
 			},
 		},
 	}
@@ -166,10 +188,14 @@ func (t *BookkeepingTool) Execute(ec *ExecuteContext, funcName string, args json
 		return t.deleteBill(ec, args)
 	case "query_bills":
 		return t.queryBills(ec, args)
+	case "get_bill_by_id":
+		return t.getBillByID(ec, args)
 	case "get_monthly_stats":
 		return t.getMonthlyStats(ec, args)
 	case "get_category_stats":
 		return t.getCategoryStats(ec, args)
+	case "get_category_options":
+		return t.getCategoryOptions(ec, args)
 	default:
 		return &Result{Success: false, Error: fmt.Sprintf("bookkeeping: unknown function %s", funcName)}
 	}
@@ -185,6 +211,8 @@ func (t *BookkeepingTool) createBill(ec *ExecuteContext, args json.RawMessage) *
 	}
 	if a.Date == "" {
 		a.Date = time.Now().In(config.BJ).Format("2006-01-02")
+	} else if _, err := time.Parse("2006-01-02", a.Date); err != nil {
+		return &Result{Success: false, Error: "日期格式错误，请使用 YYYY-MM-DD 格式，例如 2026-05-28"}
 	}
 	if a.PayType == "" {
 		a.PayType = "现金"
@@ -246,6 +274,9 @@ func (t *BookkeepingTool) updateBill(ec *ExecuteContext, args json.RawMessage) *
 		existing.ConsumeType = a.ConsumeType
 	}
 	if a.Date != "" {
+		if _, err := time.Parse("2006-01-02", a.Date); err != nil {
+			return &Result{Success: false, Error: "日期格式错误，请使用 YYYY-MM-DD 格式，例如 2026-05-28"}
+		}
 		existing.Date = a.Date
 	}
 	if a.PayType != "" {
@@ -295,6 +326,39 @@ type queryBillsArgs struct {
 	StartDate string `json:"start_date,omitempty"`
 	EndDate   string `json:"end_date,omitempty"`
 	Category  string `json:"category,omitempty"`
+	Category2 string `json:"category2,omitempty"`
+	Keyword   string `json:"keyword,omitempty"`
+}
+
+type getBillArgs struct {
+	ID string `json:"id,omitempty"`
+}
+
+// billSummary — 返回给 LLM 的精简账单字段
+type billSummary struct {
+	Item      string  `json:"item"`
+	Amount    float64 `json:"amount"`
+	Category1 string  `json:"category1"`
+	Category2 string  `json:"category2"`
+	Date      string  `json:"date"`
+	PayType   string  `json:"pay_type"`
+	Remark    string  `json:"remark"`
+}
+
+func toBillSummaries(bills []model.Bill) []billSummary {
+	result := make([]billSummary, len(bills))
+	for i, b := range bills {
+		result[i] = billSummary{
+			Item:      b.Item,
+			Amount:    b.Amount,
+			Category1: b.Category1,
+			Category2: b.Category2,
+			Date:      b.Date,
+			PayType:   b.PayType,
+			Remark:    b.Remark,
+		}
+	}
+	return result
 }
 
 func (t *BookkeepingTool) queryBills(ec *ExecuteContext, args json.RawMessage) *Result {
@@ -303,18 +367,45 @@ func (t *BookkeepingTool) queryBills(ec *ExecuteContext, args json.RawMessage) *
 		log.Printf("[bookkeeping] parse args error: %v", err)
 	}
 
-	bills, _, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID, a.StartDate, a.EndDate, a.Category, 10000, 0)
+	bills, total, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID, a.StartDate, a.EndDate, a.Category, a.Category2, a.Keyword, 200, 0)
 	if err != nil {
 		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
 	}
 
-	data, _ := json.Marshal(bills)
+	summaries := toBillSummaries(bills)
+	result := map[string]interface{}{
+		"bills": summaries,
+		"total": total,
+	}
+	if total > 200 {
+		result["notice"] = fmt.Sprintf("共 %d 条记录，仅返回前 200 条，请缩小筛选范围", total)
+	}
+	data, _ := json.Marshal(result)
+	return &Result{Success: true, Data: data}
+}
+
+func (t *BookkeepingTool) getBillByID(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a getBillArgs
+	if err := json.Unmarshal(args, &a); err != nil {
+		return &Result{Success: false, Error: "invalid args: " + err.Error()}
+	}
+	if a.ID == "" {
+		return &Result{Success: false, Error: "id is required"}
+	}
+
+	bill, err := t.billRepo.GetBill(ec.Ctx, ec.UserID, a.ID)
+	if err != nil {
+		return &Result{Success: false, Error: err.Error()}
+	}
+
+	data, _ := json.Marshal(bill)
 	return &Result{Success: true, Data: data}
 }
 
 type statsArgs struct {
-	Year     int    `json:"year,omitempty"`
-	Category string `json:"category,omitempty"`
+	Year      int    `json:"year,omitempty"`
+	Category  string `json:"category,omitempty"`
+	Category2 string `json:"category2,omitempty"`
 }
 
 func (t *BookkeepingTool) getMonthlyStats(ec *ExecuteContext, args json.RawMessage) *Result {
@@ -326,29 +417,32 @@ func (t *BookkeepingTool) getMonthlyStats(ec *ExecuteContext, args json.RawMessa
 		a.Year = time.Now().Year()
 	}
 
-	bills, _, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID,
-		fmt.Sprintf("%d-01-01", a.Year),
-		fmt.Sprintf("%d-12-31", a.Year),
-		a.Category, 10000, 0)
+	startDate := fmt.Sprintf("%d-01-01", a.Year)
+	endDate := fmt.Sprintf("%d-12-31", a.Year)
+
+	rows, err := t.billRepo.MonthlyStats(ec.Ctx, ec.UserID, startDate, endDate, a.Category, a.Category2)
 	if err != nil {
-		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
+		return &Result{Success: false, Error: "monthly stats failed: " + err.Error()}
 	}
 
-	// 按月汇总: map["2026-01"] = {amount: xxx, count: n}
-	type monthly struct {
-		Amount float64 `json:"amount"`
-		Count  int     `json:"count"`
-	}
-	result := make(map[string]monthly)
-	for _, b := range bills {
-		month := b.Date[:7]
-		m := result[month]
-		m.Amount += b.Amount
-		m.Count++
-		result[month] = m
+	result := make(map[string]map[string]interface{})
+	for _, r := range rows {
+		result[r.Month] = map[string]interface{}{
+			"amount": r.Amount,
+			"count":  r.Count,
+		}
 	}
 
 	data, _ := json.Marshal(result)
+	return &Result{Success: true, Data: data}
+}
+
+func (t *BookkeepingTool) getCategoryOptions(ec *ExecuteContext, args json.RawMessage) *Result {
+	mapping, err := t.billRepo.CategoryOptions(ec.Ctx, ec.UserID)
+	if err != nil {
+		return &Result{Success: false, Error: "query category options failed: " + err.Error()}
+	}
+	data, _ := json.Marshal(mapping)
 	return &Result{Success: true, Data: data}
 }
 
@@ -363,25 +457,26 @@ func (t *BookkeepingTool) getCategoryStats(ec *ExecuteContext, args json.RawMess
 		log.Printf("[bookkeeping] parse args error: %v", err)
 	}
 
-	bills, _, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID, a.StartDate, a.EndDate, "", 10000, 0)
+	rows, err := t.billRepo.CategoryStats(ec.Ctx, ec.UserID, a.StartDate, a.EndDate)
 	if err != nil {
-		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
+		return &Result{Success: false, Error: "category stats failed: " + err.Error()}
 	}
 
-	type catStat struct {
-		Amount float64 `json:"amount"`
-		Count  int     `json:"count"`
+	result := make(map[string]map[string]interface{})
+	var totalAmount float64
+	var totalCount int64
+	for _, r := range rows {
+		result[r.Category1] = map[string]interface{}{
+			"amount": r.Amount,
+			"count":  r.Count,
+		}
+		totalAmount += r.Amount
+		totalCount += r.Count
 	}
-	result := make(map[string]catStat)
-	var total float64
-	for _, b := range bills {
-		c := result[b.Category1]
-		c.Amount += b.Amount
-		c.Count++
-		result[b.Category1] = c
-		total += b.Amount
+	result["_total"] = map[string]interface{}{
+		"amount": totalAmount,
+		"count":  totalCount,
 	}
-	result["_total"] = catStat{Amount: total, Count: len(bills)}
 
 	data, _ := json.Marshal(result)
 	return &Result{Success: true, Data: data}

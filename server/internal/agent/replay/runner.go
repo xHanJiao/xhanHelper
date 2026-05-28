@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/driver/sqlite"
@@ -86,7 +87,7 @@ type Result struct {
 	ConversationID string             `json:"conversation_id"`
 	ToolCalls      []CapturedToolCall `json:"tool_calls"`
 	Reply          string             `json:"reply"`
-	Reasoning      string             `json:"reasoning,omitempty"`
+	Reasoning      []string           `json:"reasoning"`
 }
 
 // PreviewResult — 预览结果，包含完整 system prompt、消息列表和检索 trace
@@ -296,35 +297,41 @@ func (r *Runner) RunFromRequestJSON(ctx context.Context, anchorMsg *model.Messag
 // collectEvents 从事件通道收集工具调用和最终回复
 func (r *Runner) collectEvents(convID string, events <-chan *llm.StreamEvent) *Result {
 	result := &Result{ConversationID: convID}
-	var currentToolCall *CapturedToolCall
+	var curReasoning strings.Builder
 	for evt := range events {
 		switch evt.Type {
 		case "tool_call":
 			var tc tool.ToolCall
 			if err := json.Unmarshal([]byte(evt.Content), &tc); err == nil {
-				currentToolCall = &CapturedToolCall{
+				result.ToolCalls = append(result.ToolCalls, CapturedToolCall{
 					Tool:     tc.Tool,
 					Function: tc.Function,
 					Args:     tc.Args,
-				}
-				result.ToolCalls = append(result.ToolCalls, *currentToolCall)
+				})
 			}
 		case "tool_result":
-			if currentToolCall != nil {
-				idx := len(result.ToolCalls) - 1
-				if idx >= 0 {
-					result.ToolCalls[idx].Result = json.RawMessage(evt.Content)
+			for i := range result.ToolCalls {
+				if len(result.ToolCalls[i].Result) == 0 {
+					result.ToolCalls[i].Result = json.RawMessage(evt.Content)
+					break
 				}
 			}
-			currentToolCall = nil
 		case "text_delta":
 			result.Reply += evt.Content
 		case "thought_delta":
-			result.Reasoning += evt.Content
+			curReasoning.WriteString(evt.Content)
+		case "thought_done":
+			// thought_done 标志一轮思考结束，压入切片，开始新的一轮
+			result.Reasoning = append(result.Reasoning, curReasoning.String())
+			curReasoning.Reset()
 		case "error":
 			log.Printf("[replay] error event: %s", evt.Error)
 			return result
 		}
+	}
+	// 兜底：如果最后一轮思考没有 thought_done 事件（异常情况），不丢失内容
+	if curReasoning.Len() > 0 {
+		result.Reasoning = append(result.Reasoning, curReasoning.String())
 	}
 	return result
 }

@@ -68,14 +68,10 @@ func (t *SearchNotesV2Tool) Execute(ec *ExecuteContext, funcName string, args js
 		log.Printf("[search_notes_v2] GetByIDs error: %v", err)
 	}
 
-	chunks, _ := t.chunkRepo.BatchGetByParentIDs(ec.Ctx, "note", parentIDs)
-	chunkByParent := groupChunksByParent(chunks)
-
 	var sb strings.Builder
 	count := 0
 	for _, n := range notes {
 		sb.WriteString(fmt.Sprintf("- [note:%s] %s: %s\n", n.ID, n.Topic, n.Content))
-		sb.WriteString(formatMatchedChunks(chunkByParent[n.ID]))
 		count++
 	}
 

@@ -68,14 +68,10 @@ func (t *SearchMemoriesV2Tool) Execute(ec *ExecuteContext, funcName string, args
 		log.Printf("[search_memories_v2] GetByIDs error: %v", err)
 	}
 
-	chunks, _ := t.chunkRepo.BatchGetByParentIDs(ec.Ctx, "memory", parentIDs)
-	chunkByParent := groupChunksByParent(chunks)
-
 	var sb strings.Builder
 	count := 0
 	for _, m := range memories {
 		sb.WriteString(fmt.Sprintf("- [mem:%s] %s\n", m.ID, m.MemoryValue))
-		sb.WriteString(formatMatchedChunks(chunkByParent[m.ID]))
 		count++
 	}
 

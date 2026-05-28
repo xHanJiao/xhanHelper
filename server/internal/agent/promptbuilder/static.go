@@ -2,15 +2,13 @@ package promptbuilder
 
 import (
 	"context"
-	"time"
 
-	"xhan-helper/internal/config"
 	"xhan-helper/internal/tool"
 )
 
 // ==================== Layer 1 — Static Providers ====================
 
-const corePrinciples = `## 核心原则
+const corePrinciples = `## 行为准则
 1. 简洁回复：用最少的词把事说清楚
 2. 诚实：不知道就说不知道，不要编造
 3. 追问：如果用户意图不明确，追问关键信息
@@ -46,12 +44,4 @@ type toolDefinitionsProvider struct {
 func (p *toolDefinitionsProvider) Name() string { return "tool_definitions" }
 func (p *toolDefinitionsProvider) Render(ctx context.Context) string {
 	return p.registry.GeneratePromptWithOverview()
-}
-
-// timeProvider — 注入当前北京时间，让 LLM 知道「现在是什么时候」。
-type timeProvider struct{}
-
-func (p *timeProvider) Name() string { return "current_time" }
-func (p *timeProvider) Render(ctx context.Context) string {
-	return "## 当前时间\n" + time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
 }

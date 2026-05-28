@@ -100,12 +100,13 @@ func (s *MemorySource) Fetch(ctx context.Context, queryVec []float64, query, use
 		if m.Topic != "" {
 			topicPart = fmt.Sprintf("[%s] ", m.Topic)
 		}
-		text = fmt.Sprintf("- [%s] %s%s (已唤起%d次，最近唤起 %s)\n",
+		text = fmt.Sprintf("- [%s] %s%s (已唤起%d次，最近唤起 %s, 相关度 %.2f)\n",
 			m.CreatedAt.In(config.BJ).Format("2006-01-02"),
 			topicPart,
 			m.MemoryValue,
 			m.ConfirmCount,
-			m.LastConfirmedAt.In(config.BJ).Format("01-02"))
+			m.LastConfirmedAt.In(config.BJ).Format("01-02"),
+			sc.FinalScore)
 		packets = append(packets, ContextPacket{
 			ID:           sc.ID,
 			Type:         "memory",

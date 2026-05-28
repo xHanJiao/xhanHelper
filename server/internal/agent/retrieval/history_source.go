@@ -2,6 +2,7 @@ package retrieval
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 
@@ -143,10 +144,12 @@ func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, query, us
 			continue
 		}
 
+		text := FormatMessageRound(filtered, msg.ConversationID)
+		text += fmt.Sprintf("  (相关度 %.2f)\n", sr.FinalScore)
 		packets = append(packets, ContextPacket{
 			ID:           msg.ID,
 			Type:         "history",
-			Text:         FormatMessageRound(filtered, msg.ConversationID),
+			Text:         text,
 			Score:        sr.VectorScore,
 			FinalScore:   sr.FinalScore,
 			KeywordScore: sr.KeywordScore,

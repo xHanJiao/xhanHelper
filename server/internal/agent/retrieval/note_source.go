@@ -88,7 +88,7 @@ func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, query, userI
 	packets := make([]ContextPacket, 0, len(scored))
 	for _, sc := range scored {
 		n := noteByID[sc.ID]
-		text := fmt.Sprintf("- [%s] %s\n", n.Topic, n.Content)
+		text := fmt.Sprintf("- [%s] %s (相关度 %.2f)\n", n.Topic, n.Content, sc.FinalScore)
 		packets = append(packets, ContextPacket{
 			ID:           sc.ID,
 			Type:         "note",

@@ -43,18 +43,19 @@ type BuildResult struct {
 // SystemPromptBuilder — system prompt 构建器，orchestrator 的唯一入口。
 // 创建后 provider 列表固定，每次 Build() 按三层模型重新构建。
 type SystemPromptBuilder struct {
-	staticProviders []StaticProvider // Layer 1 公共规则（按注册顺序渲染）
-	basePrompt      string           // Layer 2 默认角色定义
-	searchProviders []SearchProvider // Layer 3 动态上下文（按 FinalScore 排序）
-	promptResolver  PromptResolver   // 用户自定义 Prompt（Layer 2 备选）
+	preRoleStatic   []StaticProvider // 角色定义之前的静态规则（行为准则）
+	postRoleStatic  []StaticProvider // 角色定义之后的静态规则（输出规范 + 工具定义）
+	basePrompt      string           // 默认角色定义
+	searchProviders []SearchProvider // 动态上下文（分组渲染）
+	promptResolver  PromptResolver   // 用户自定义 Prompt（备选）
 }
 
 // NewSystemPromptBuilder 创建构建器。
 //
 // 依赖注入：
-//   - registry: 渲染工具定义（Layer 1）
-//   - promptResolver: 用户自定义 Prompt 解析（Layer 2）
-//   - searchProviders: Layer 3 动态上下文 provider（theme / memory / note / history）
+//   - registry: 渲染工具定义和输出规范
+//   - promptResolver: 用户自定义 Prompt 解析
+//   - searchProviders: 动态上下文 provider（theme / memory / note / history）
 func NewSystemPromptBuilder(
 	basePrompt string,
 	registry *tool.Registry,
@@ -64,11 +65,12 @@ func NewSystemPromptBuilder(
 	return &SystemPromptBuilder{
 		basePrompt:     basePrompt,
 		promptResolver: promptResolver,
-		staticProviders: []StaticProvider{
+		preRoleStatic: []StaticProvider{
 			&corePrinciplesProvider{},
+		},
+		postRoleStatic: []StaticProvider{
 			&importantRulesProvider{registry: registry},
 			&toolDefinitionsProvider{registry: registry},
-			&timeProvider{},
 		},
 		searchProviders: searchProviders,
 	}
@@ -88,8 +90,8 @@ func (b *SystemPromptBuilder) Build(ctx context.Context, opts BuildOptions) (*Bu
 	var sb strings.Builder
 	trace := &PromptTrace{}
 
-	// —— Layer 1: 公共规则（不可覆盖） ——
-	for _, sp := range b.staticProviders {
+	// —— 行为准则（角色定义之前） ——
+	for _, sp := range b.preRoleStatic {
 		if s := sp.Render(ctx); s != "" {
 			sb.WriteString(s)
 			sb.WriteString("\n")
@@ -97,7 +99,7 @@ func (b *SystemPromptBuilder) Build(ctx context.Context, opts BuildOptions) (*Bu
 		trace.addStatic(sp.Name())
 	}
 
-	// —— Layer 2: 角色定义（可覆盖） ——
+	// —— 角色定义 ——
 	// 用 blockquote 包裹，避免 agent 内部 markdown 标题与外层结构冲突
 	sb.WriteString("\n## 角色定义\n\n")
 	rolePrompt := b.resolveRolePrompt(ctx, opts)
@@ -107,7 +109,16 @@ func (b *SystemPromptBuilder) Build(ctx context.Context, opts BuildOptions) (*Bu
 		sb.WriteString("\n")
 	}
 
-	// —— Layer 3: 动态上下文 ——
+	// —— 输出规范 + 工具定义（角色定义之后） ——
+	for _, sp := range b.postRoleStatic {
+		if s := sp.Render(ctx); s != "" {
+			sb.WriteString(s)
+			sb.WriteString("\n")
+		}
+		trace.addStatic(sp.Name())
+	}
+
+	// —— 动态上下文 ——
 	idsByType := b.buildDynamicContext(ctx, opts, &sb, trace)
 	result := &BuildResult{
 		Prompt:    sb.String(),
@@ -159,8 +170,9 @@ func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts Buil
 	}
 	wg.Wait()
 
-	// —— 2. 收集结果 + 记录 trace ——
-	var allItems []retrieval.ContextPacket
+	// —— 2. 记录 trace + 按 provider 分组渲染（组内按 FinalScore 排序） ——
+	sb.WriteString("\n## 上下文信息\n")
+	idsByType := make(map[string][]string)
 	for i, sp := range b.searchProviders {
 		s := slots[i]
 		if s.err != nil {
@@ -169,26 +181,18 @@ func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts Buil
 			continue
 		}
 		trace.addSearch(sp.Name(), &TraceInput{Query: opts.UserMessage}, s.traceItems, nil)
-		allItems = append(allItems, s.items...)
-	}
 
-	// —— 3. 按 FinalScore 降序排列 ——
-	sort.Slice(allItems, func(i, j int) bool {
-		return allItems[i].FinalScore > allItems[j].FinalScore
-	})
+		// 组内按 FinalScore 排序
+		items := s.items
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].FinalScore > items[j].FinalScore
+		})
 
-	// —— 4. 按 provider 分组渲染 ——
-	sb.WriteString("\n## 上下文信息\n")
-	idsByType := make(map[string][]string)
-	for _, sp := range b.searchProviders {
 		header := sp.SectionHeader()
-		spName := sp.Name()
 		var group strings.Builder
-		for _, item := range allItems {
-			if item.Type == spName {
-				group.WriteString(item.Text)
-				idsByType[item.Type] = append(idsByType[item.Type], item.ID)
-			}
+		for _, item := range items {
+			group.WriteString(item.Text)
+			idsByType[item.Type] = append(idsByType[item.Type], item.ID)
 		}
 		if group.Len() > 0 && header != "" {
 			sb.WriteString(header)

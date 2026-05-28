@@ -170,27 +170,41 @@ func (r *Registry) GetLLMTools() []llm.ToolDefinition {
 	return defs
 }
 
-// GeneratePromptWithOverview 混排模式：reminder + note + tool_retriever 完整定义，其他工具仅概览
+// GeneratePromptWithOverview 混排模式：tool_retriever 完整 + note.record_note 内联，其他工具仅概览
 func (r *Registry) GeneratePromptWithOverview() string {
 	var buf bytes.Buffer
 	buf.WriteString("\n\n## 工具使用\n\n")
 	buf.WriteString("你可以使用以下工具来完成用户的请求。\n")
 	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
 
-	// 常驻工具（完整定义，可直接调用）
-	alwaysVisible := []string{"tool_retriever"}
-	for _, name := range alwaysVisible {
-		t := r.tools[name]
-		if t == nil {
-			continue
+	// tool_retriever 完整定义
+	if tr := r.tools["tool_retriever"]; tr != nil {
+		r.writeToolFullDef(&buf, tr)
+	}
+
+	// note 工具：仅内联 record_note 函数，其他函数仍需 search
+	if nt := r.tools["note"]; nt != nil {
+		buf.WriteString(fmt.Sprintf("## 工具: %s\n", nt.Name()))
+		buf.WriteString(fmt.Sprintf("描述: %s\n\n", nt.Description()))
+		buf.WriteString("直接可用函数（无需 search）:\n")
+		var otherFuncs []string
+		for _, fn := range nt.Functions() {
+			if fn.Name == "record_note" {
+				r.writeFunctionDef(&buf, fn)
+			} else {
+				otherFuncs = append(otherFuncs, fn.Name)
+			}
 		}
-		r.writeToolFullDef(&buf, t)
+		if len(otherFuncs) > 0 {
+			buf.WriteString(fmt.Sprintf("其他函数需先 tool_retriever.search(\"note\") 查询后调用: %s\n", strings.Join(otherFuncs, ", ")))
+		}
+		buf.WriteString("\n")
 	}
 
 	// 其他工具概览（需通过 tool_retriever.search 查询详细定义后才能调用）
 	var overview []string
 	for name, t := range r.tools {
-		if name == "tool_retriever" {
+		if name == "tool_retriever" || name == "note" {
 			continue
 		}
 		if r.hiddenNames[name] {
@@ -209,43 +223,48 @@ func (r *Registry) GeneratePromptWithOverview() string {
 	return buf.String()
 }
 
+// writeFunctionDef 写入单个函数的完整定义（含参数 schema）
+func (r *Registry) writeFunctionDef(buf *bytes.Buffer, fn FuncSchema) {
+	buf.WriteString(fmt.Sprintf("  - %s: %s\n", fn.Name, fn.Description))
+	if props, ok := fn.Parameters["properties"].(map[string]interface{}); ok {
+		required := make(map[string]bool)
+		if reqs, ok := fn.Parameters["required"].([]interface{}); ok {
+			for _, req := range reqs {
+				if s, ok := req.(string); ok {
+					required[s] = true
+				}
+			}
+		}
+		for key, val := range props {
+			prop, ok := val.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			typ, _ := prop["type"].(string)
+			desc, _ := prop["description"].(string)
+			req := ""
+			if required[key] {
+				req = " (必填)"
+			}
+			buf.WriteString(fmt.Sprintf("    - %s (%s%s): %s\n", key, typ, req, desc))
+			if enumVals, ok := prop["enum"].([]interface{}); ok && len(enumVals) > 0 {
+				vals := make([]string, len(enumVals))
+				for i, v := range enumVals {
+					vals[i] = fmt.Sprint(v)
+				}
+				buf.WriteString(fmt.Sprintf("      可选值: %s\n", strings.Join(vals, "/")))
+			}
+		}
+	}
+	buf.WriteString("\n")
+}
+
 func (r *Registry) writeToolFullDef(buf *bytes.Buffer, t Tool) {
 	buf.WriteString(fmt.Sprintf("## 工具: %s\n", t.Name()))
 	buf.WriteString(fmt.Sprintf("描述: %s\n\n", t.Description()))
 	buf.WriteString("函数:\n")
 	for _, fn := range t.Functions() {
-		buf.WriteString(fmt.Sprintf("  - %s: %s\n", fn.Name, fn.Description))
-		if props, ok := fn.Parameters["properties"].(map[string]interface{}); ok {
-			required := make(map[string]bool)
-			if reqs, ok := fn.Parameters["required"].([]interface{}); ok {
-				for _, r := range reqs {
-					if s, ok := r.(string); ok {
-						required[s] = true
-					}
-				}
-			}
-			for key, val := range props {
-				prop, ok := val.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				typ, _ := prop["type"].(string)
-				desc, _ := prop["description"].(string)
-				req := ""
-				if required[key] {
-					req = " (必填)"
-				}
-				buf.WriteString(fmt.Sprintf("    - %s (%s%s): %s\n", key, typ, req, desc))
-				if enumVals, ok := prop["enum"].([]interface{}); ok && len(enumVals) > 0 {
-					vals := make([]string, len(enumVals))
-					for i, v := range enumVals {
-						vals[i] = fmt.Sprint(v)
-					}
-					buf.WriteString(fmt.Sprintf("      可选值: %s\n", strings.Join(vals, "/")))
-				}
-			}
-		}
-		buf.WriteString("\n")
+		r.writeFunctionDef(buf, fn)
 	}
 }
 
@@ -268,15 +287,13 @@ func (r *Registry) writePromptFooter(buf *bytes.Buffer) {
 	buf.WriteString("**严禁**在 JSON 前后添加任何文字、解释或 markdown 代码块。你的回复必须以 { 开头、以 } 结尾。\n")
 }
 
-// GenerateImportantRules 生成重要规则文本（不含工具定义，可放在工具使用之前）
+// GenerateImportantRules 生成输出规范文本（不含工具定义，放在角色定义之后、工具使用之前）
 func (r *Registry) GenerateImportantRules() string {
 	var buf bytes.Buffer
-	buf.WriteString("\n## 重要规则\n\n")
+	buf.WriteString("\n## 输出规范\n\n")
 	buf.WriteString("1. 每次回复都必须输出完整 JSON 对象，即使是一句简单的好的也必须包裹在 JSON 中，例如 {\"reply\":\"好的\",\"tool_calls\":[]}。不需要工具时 tool_calls 为空数组 []。JSON 字符串值内的英文双引号必须用反斜杠转义（\\\"）。**严禁以纯文本回复。严禁在 JSON 前后添加任何文字。回复必须以 { 开头、以 } 结尾。**\n")
 	buf.WriteString("2. 【强制工具查询规则】除 tool_retriever 外，任何工具在调用前必须先通过 tool_retriever.search 查询其完整定义（函数签名和参数 schema）。禁止凭工具名称和概览描述猜测参数直接调用！例如：要用 bookkeeping 记账，必须先 search(\"bookkeeping\") 拿到 create_bill 的参数。不确定用什么工具时，用 tool_retriever.search 搜索关键词。\n")
-	buf.WriteString("3. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
-	buf.WriteString("4. 历史消息中的 [MM-DD HH:MM] 前缀是系统时间戳，不是对话内容，严禁模仿此格式输出时间戳。\n")
-	buf.WriteString("5. 当本轮需要调用工具时（tool_calls 非空），reply 字段必须为空字符串 \"\"；只有不需要调用工具的最终回复才写 reply。例如：查账单时返回 {\"reply\":\"\",\"tool_calls\":[...]}，工具返回结果后再给出 {\"reply\":\"查到 12 笔...\",\"tool_calls\":[]}。\n")
+	buf.WriteString("3. 当本轮需要调用工具时（tool_calls 非空），reply 字段必须为空字符串 \"\"；只有不需要调用工具的最终回复才写 reply。例如：查账单时返回 {\"reply\":\"\",\"tool_calls\":[...]}，工具返回结果后再给出 {\"reply\":\"查到 12 笔...\",\"tool_calls\":[]}。\n")
 	return buf.String()
 }
 
@@ -348,11 +365,6 @@ func (r *Registry) GeneratePrompt() string {
 	buf.WriteString("不需要调用工具时，tool_calls 为空数组 []。**严禁在 JSON 前后添加任何文字、解释或 markdown 代码块。回复必须以 { 开头、以 } 结尾。**\n")
 	buf.WriteString("一条回复中 tool_calls 可以包含多个工具调用，按顺序执行。\n")
 	buf.WriteString("工具执行结果会追加到对话中，你可以据此继续回复用户。\n\n")
-
-	buf.WriteString("## 重要规则\n\n")
-	buf.WriteString("1. 只能调用上面【工具使用】部分列出的函数。\n")
-	buf.WriteString("2. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
-	buf.WriteString("3. 历史消息中的 [MM-DD HH:MM] 前缀是系统时间戳，不是对话内容，严禁模仿此格式输出时间戳。\n")
 
 	return buf.String()
 }
@@ -473,11 +485,6 @@ func (r *Registry) GeneratePromptFor(names []string) string {
 	buf.WriteString("不需要调用工具时，tool_calls 为空数组 []。**严禁在 JSON 前后添加任何文字、解释或 markdown 代码块。回复必须以 { 开头、以 } 结尾。**\n")
 	buf.WriteString("一条回复中 tool_calls 可以包含多个工具调用，按顺序执行。\n")
 	buf.WriteString("工具执行结果会追加到对话中，你可以据此继续回复用户。\n\n")
-
-	buf.WriteString("## 重要规则\n\n")
-	buf.WriteString("1. 只能调用上面【工具使用】部分列出的函数。\n")
-	buf.WriteString("2. 只有用户明确或根据上下文99%确定时，才调用工具。\n")
-	buf.WriteString("3. 历史消息中的 [MM-DD HH:MM] 前缀是系统时间戳，不是对话内容，严禁模仿此格式输出时间戳。\n")
 
 	return buf.String()
 }

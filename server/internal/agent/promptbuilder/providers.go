@@ -116,9 +116,9 @@ func (p *themeProvider) loadThemeDetails(ctx context.Context, packets []retrieva
 func renderThemePacket(t model.ThemeState, themeScore float64) retrieval.ContextPacket {
 	var content string
 	if t.Description != "" {
-		content = fmt.Sprintf("\n\n【主题】%s\n描述：%s\n%s", t.Name, t.Description, t.StateText)
+		content = fmt.Sprintf("\n\n【主题】%s (相关度 %.2f)\n描述：%s\n%s", t.Name, themeScore, t.Description, t.StateText)
 	} else {
-		content = fmt.Sprintf("\n\n【主题】%s\n%s", t.Name, t.StateText)
+		content = fmt.Sprintf("\n\n【主题】%s (相关度 %.2f)\n%s", t.Name, themeScore, t.StateText)
 	}
 
 	if t.Metadata != nil && *t.Metadata != "" {

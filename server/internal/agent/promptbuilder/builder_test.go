@@ -21,14 +21,6 @@ func TestCorePrinciplesProvider(t *testing.T) {
 	}
 }
 
-func TestTimeProvider(t *testing.T) {
-	p := &timeProvider{}
-	out := p.Render(context.Background())
-	if !strings.Contains(out, "当前时间") {
-		t.Errorf("should contain '当前时间', got %q", out)
-	}
-}
-
 // ==================== Layer 2 — Role Resolution ====================
 
 type mockPromptResolver struct {
@@ -129,7 +121,8 @@ func TestBuildLayer1Order(t *testing.T) {
 	p3 := &testStaticProvider{name: "third", content: "C"}
 
 	b := &SystemPromptBuilder{
-		staticProviders: []StaticProvider{p1, p2, p3},
+		preRoleStatic:  []StaticProvider{p1},
+		postRoleStatic: []StaticProvider{p2, p3},
 	}
 
 	result, err := b.Build(context.Background(), BuildOptions{

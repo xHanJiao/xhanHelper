@@ -116,3 +116,12 @@ func (r *NoteRepo) CountRecent(ctx context.Context, userID string, since time.Ti
 		Count(&count).Error
 	return count, err
 }
+
+// DistinctTopics 获取用户所有不重复的笔记主题
+func (r *NoteRepo) DistinctTopics(ctx context.Context, userID string) ([]string, error) {
+	var topics []string
+	err := r.db.WithContext(ctx).Model(&model.Note{}).
+		Where("user_id = ?", userID).
+		Distinct("topic").Pluck("topic", &topics).Error
+	return topics, err
+}

@@ -118,7 +118,9 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 
 	// --- 搜索工具注册到主 Registry ---
 	reg.Register(tool.NewLoggingWrapper(
-		tool.NewMemorySearchTool(infra.VectorStore, repos.Mem, infra.Embedder, cfg.Retrieval.FreshnessDecay), log.Default()))
+		tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(
+		tool.NewSearchMemoriesV2Tool(infra.VectorStore, repos.Mem, repos.Chunk, infra.Embedder), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewMessageSearchTool(repos.Message, repos.Conversation), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(

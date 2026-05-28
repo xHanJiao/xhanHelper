@@ -76,6 +76,14 @@ func (t *NoteTool) Functions() []FuncSchema {
 			},
 		},
 		{
+			Name:        "get_note_topics",
+			Description: "获取当前用户所有已有的笔记主题列表。需要了解有哪些主题的笔记时调用",
+			Parameters: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
 			Name:        "update_note",
 			Description: "更新已有笔记。修改前请先用 get_note 读取完整内容，在其基础上修改后传入。仅传需要修改的字段",
 			Parameters: map[string]interface{}{
@@ -129,6 +137,8 @@ func (t *NoteTool) Execute(ec *ExecuteContext, funcName string, args json.RawMes
 		return t.queryNotes(ec, args)
 	case "update_note":
 		return t.updateNote(ec, args)
+	case "get_note_topics":
+		return t.getNoteTopics(ec, args)
 	case "rollback_note":
 		return t.rollbackNote(ec, args)
 	case "get_note_versions":
@@ -266,6 +276,21 @@ func (t *NoteTool) getNoteVersions(ec *ExecuteContext, args json.RawMessage) *Re
 
 	data, _ := json.Marshal(map[string]interface{}{
 		"versions": vlist,
+	})
+	return &Result{Success: true, Data: data}
+}
+
+func (t *NoteTool) getNoteTopics(ec *ExecuteContext, args json.RawMessage) *Result {
+	topics, err := t.noteRepo.DistinctTopics(ec.Ctx, ec.UserID)
+	if err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("get topics: %v", err)}
+	}
+	if topics == nil {
+		topics = []string{}
+	}
+	data, _ := json.Marshal(map[string]interface{}{
+		"topics": topics,
+		"count":  len(topics),
 	})
 	return &Result{Success: true, Data: data}
 }

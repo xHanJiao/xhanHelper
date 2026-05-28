@@ -470,7 +470,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 
 func (*Orchestrator) injectExcludeMemIDsForMemSearch(parsed *LLMResponse, memIDs []string) {
 	for i := range parsed.ToolCalls {
-		if parsed.ToolCalls[i].Tool == "memory_search" && len(memIDs) > 0 {
+		if (parsed.ToolCalls[i].Tool == "memory_search" || parsed.ToolCalls[i].Tool == "search_memories_v2") && len(memIDs) > 0 {
 			parsed.ToolCalls[i].Args = injectExcludeIDs(parsed.ToolCalls[i].Args, memIDs)
 		}
 	}

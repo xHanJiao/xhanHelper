@@ -86,6 +86,7 @@ type Result struct {
 	ConversationID string             `json:"conversation_id"`
 	ToolCalls      []CapturedToolCall `json:"tool_calls"`
 	Reply          string             `json:"reply"`
+	Reasoning      string             `json:"reasoning,omitempty"`
 }
 
 // PreviewResult — 预览结果，包含完整 system prompt、消息列表和检索 trace
@@ -318,6 +319,8 @@ func (r *Runner) collectEvents(convID string, events <-chan *llm.StreamEvent) *R
 			currentToolCall = nil
 		case "text_delta":
 			result.Reply += evt.Content
+		case "thought_delta":
+			result.Reasoning += evt.Content
 		case "error":
 			log.Printf("[replay] error event: %s", evt.Error)
 			return result

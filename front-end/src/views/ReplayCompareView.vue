@@ -404,6 +404,10 @@ onMounted(loadAnchor)
                 </div>
               </div>
               <div v-else style="font-size: 12px; color: var(--color-text-muted); margin-bottom: var(--space-md);">无工具调用</div>
+              <details v-if="results.a?.reasoning" style="margin-bottom: var(--space-md);">
+                <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">思考过程</summary>
+                <div class="reasoning-box">{{ results.a.reasoning }}</div>
+              </details>
               <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">回复</div>
               <div class="reply-box">{{ results.a?.reply || '(无文本回复)' }}</div>
             </div>
@@ -428,6 +432,10 @@ onMounted(loadAnchor)
                 </div>
               </div>
               <div v-else style="font-size: 12px; color: var(--color-text-muted); margin-bottom: var(--space-md);">无工具调用</div>
+              <details v-if="results.b?.reasoning" style="margin-bottom: var(--space-md);">
+                <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">思考过程</summary>
+                <div class="reasoning-box">{{ results.b.reasoning }}</div>
+              </details>
               <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">回复</div>
               <div class="reply-box">{{ results.b?.reply || '(无文本回复)' }}</div>
             </div>
@@ -549,6 +557,19 @@ onMounted(loadAnchor)
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
+}
+.reasoning-box {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-muted);
+  background: var(--color-bg-page);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow-y: auto;
 }
 
 pre { color: var(--color-text); }

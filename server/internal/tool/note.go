@@ -21,12 +21,15 @@ type NoteTool struct {
 	vectorStore   app.VectorStore
 	embedder      *llm.Embedder
 	embeddingRepo *service.EmbeddingRepo
+	chunkRepo     *service.EmbeddingChunkRepo
 	chunkBuilder  app.ChunkEmbedder
 	conceptEmbed  app.ConceptEmbedder
 }
 
-func NewNoteTool(noteRepo *service.NoteRepo, versionRepo *service.VersionRepo, vs app.VectorStore, emb *llm.Embedder, embeddingRepo *service.EmbeddingRepo, chunkBuilder app.ChunkEmbedder, conceptEmbed app.ConceptEmbedder) *NoteTool {
-	return &NoteTool{noteRepo: noteRepo, versionRepo: versionRepo, vectorStore: vs, embedder: emb, embeddingRepo: embeddingRepo, chunkBuilder: chunkBuilder, conceptEmbed: conceptEmbed}
+func NewNoteTool(noteRepo *service.NoteRepo, versionRepo *service.VersionRepo, vs app.VectorStore, emb *llm.Embedder,
+	embeddingRepo *service.EmbeddingRepo, chunkRepo *service.EmbeddingChunkRepo, chunkBuilder app.ChunkEmbedder, conceptEmbed app.ConceptEmbedder) *NoteTool {
+	return &NoteTool{noteRepo: noteRepo, versionRepo: versionRepo, vectorStore: vs, embedder: emb,
+		embeddingRepo: embeddingRepo, chunkRepo: chunkRepo, chunkBuilder: chunkBuilder, conceptEmbed: conceptEmbed}
 }
 
 func (t *NoteTool) Name() string { return "note" }
@@ -124,6 +127,17 @@ func (t *NoteTool) Functions() []FuncSchema {
 				"required": []string{"id"},
 			},
 		},
+		{
+			Name:        "delete_note",
+			Description: "作废一条笔记（软删除）。用户明确要求删除或内容已过时时调用。如用户未明确指定要删除的笔记 ID，必须先向用户确认",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{"type": "string", "description": "笔记 ID（必填）"},
+				},
+				"required": []string{"id"},
+			},
+		},
 	}
 }
 
@@ -141,6 +155,8 @@ func (t *NoteTool) Execute(ec *ExecuteContext, funcName string, args json.RawMes
 		return t.getNoteTopics(ec, args)
 	case "rollback_note":
 		return t.rollbackNote(ec, args)
+	case "delete_note":
+		return t.deleteNote(ec, args)
 	case "get_note_versions":
 		return t.getNoteVersions(ec, args)
 	default:
@@ -292,6 +308,43 @@ func (t *NoteTool) getNoteTopics(ec *ExecuteContext, args json.RawMessage) *Resu
 		"topics": topics,
 		"count":  len(topics),
 	})
+	return &Result{Success: true, Data: data}
+}
+
+func (t *NoteTool) deleteNote(ec *ExecuteContext, args json.RawMessage) *Result {
+	var params struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("parse args: %v", err)}
+	}
+	if params.ID == "" {
+		return &Result{Success: false, Error: "id is required"}
+	}
+
+	// 先验证笔记存在且属于当前用户
+	if _, err := t.noteRepo.GetByID(ec.Ctx, params.ID, ec.UserID); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("note not found: %v", err)}
+	}
+
+	if err := t.noteRepo.SoftDelete(ec.Ctx, params.ID, ec.UserID); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("delete note failed: %v", err)}
+	}
+
+	// 清理向量库 + DB chunk
+	if t.chunkRepo != nil {
+		chunks, _ := t.chunkRepo.ListByParent(ec.Ctx, "note", params.ID)
+		for _, c := range chunks {
+			if t.vectorStore != nil {
+				t.vectorStore.Delete(c.ID)
+			}
+		}
+		if err := t.chunkRepo.DeleteByParent(ec.Ctx, "note", params.ID); err != nil {
+			log.Printf("[note] delete chunks for %s error: %v", params.ID, err)
+		}
+	}
+
+	data, _ := json.Marshal(map[string]string{"deleted_id": params.ID})
 	return &Result{Success: true, Data: data}
 }
 

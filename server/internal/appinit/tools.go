@@ -68,7 +68,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	conceptEmbedService := agent.NewConceptEmbedService(infra, repos.ConceptEmbed, repos.Embedding)
 	chunkBuilder := agent.NewChunkBuilder(infra, repos.Chunk, repos.Embedding)
 
-	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(repos.Note, repos.Version, infra.VectorStore, infra.Embedder, repos.Embedding, chunkBuilder, conceptEmbedService), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(repos.Note, repos.Version, infra.VectorStore, infra.Embedder, repos.Embedding, repos.Chunk, chunkBuilder, conceptEmbedService), log.Default()))
 
 	topicStatsTool := tool.NewLoggingWrapper(tool.NewGetTopicStatsTool(repos.ConceptEmbed, repos.Note, repos.Mem, infra.Embedder, infra.VectorStore, conceptEmbedService, cfg.Reflection.ClusterThreshold), log.Default())
 	topicDetailTool := tool.NewLoggingWrapper(tool.NewGetTopicDetailTool(repos.Note, repos.Mem), log.Default())

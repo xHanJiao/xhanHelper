@@ -24,42 +24,48 @@ func (r *NoteRepo) Create(ctx context.Context, n *model.Note) error {
 	return r.db.WithContext(ctx).Create(n).Error
 }
 
-// GetByID 按 ID + 用户 ID 查询单条笔记
+// GetByID 按 ID + 用户 ID 查询单条笔记（仅正常状态）
 func (r *NoteRepo) GetByID(ctx context.Context, id, userID string) (*model.Note, error) {
 	var note model.Note
-	err := r.db.WithContext(ctx).Where("id = ? AND user_id = ?", id, userID).First(&note).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND user_id = ? AND status = ?", id, userID, model.NoteStatusNormal).First(&note).Error
 	if err != nil {
 		return nil, err
 	}
 	return &note, nil
 }
 
-// GetByIDs 按 ID 列表查询
+// GetByIDs 按 ID 列表查询（仅正常状态）
 func (r *NoteRepo) GetByIDs(ctx context.Context, ids []string) ([]model.Note, error) {
 	var list []model.Note
-	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&list).Error
+	err := r.db.WithContext(ctx).Where("id IN ? AND status = ?", ids, model.NoteStatusNormal).Find(&list).Error
 	return list, err
 }
 
-// GetByIDsAndUser 按 ID 列表 + 用户 ID 查询
+// GetByIDsAndUser 按 ID 列表 + 用户 ID 查询（仅正常状态）
 func (r *NoteRepo) GetByIDsAndUser(ctx context.Context, ids []string, userID string) ([]model.Note, error) {
 	var list []model.Note
-	err := r.db.WithContext(ctx).Where("id IN ? AND user_id = ?", ids, userID).Find(&list).Error
+	err := r.db.WithContext(ctx).Where("id IN ? AND user_id = ? AND status = ?", ids, userID, model.NoteStatusNormal).Find(&list).Error
 	return list, err
 }
 
-// ListAllPaginated 分页获取所有笔记（用于 warmup），limit<=0 时默认 100
+// ListAllPaginated 分页获取所有正常状态笔记（用于 warmup），limit<=0 时默认 100
 func (r *NoteRepo) ListAllPaginated(ctx context.Context, limit, offset int) ([]model.Note, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	var list []model.Note
-	err := r.db.WithContext(ctx).Limit(limit).Offset(offset).Find(&list).Error
+	err := r.db.WithContext(ctx).Where("status = ?", model.NoteStatusNormal).Limit(limit).Offset(offset).Find(&list).Error
 	return list, err
 }
 
-// Delete 删除笔记
-func (r *NoteRepo) Delete(ctx context.Context, id string) error {
+// SoftDelete 软删除笔记（设置 status=2）
+func (r *NoteRepo) SoftDelete(ctx context.Context, id, userID string) error {
+	return r.db.WithContext(ctx).Model(&model.Note{}).Where("id = ? AND user_id = ?", id, userID).
+		Update("status", model.NoteStatusCancelled).Error
+}
+
+// HardDelete 硬删除笔记
+func (r *NoteRepo) HardDelete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Delete(&model.Note{}, "id = ?", id).Error
 }
 
@@ -84,12 +90,12 @@ func (r *NoteRepo) Update(ctx context.Context, id, userID, topic, content, tags 
 	return r.db.WithContext(ctx).Model(&model.Note{}).Where("id = ? AND user_id = ?", id, userID).Updates(updates).Error
 }
 
-// List 按条件分页查询，limit<=0 时默认 50
+// List 按条件分页查询，limit<=0 时默认 50（仅正常状态）
 func (r *NoteRepo) List(ctx context.Context, userID, topic, keyword string, limit, offset int) ([]model.Note, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
+	q := r.db.WithContext(ctx).Where("user_id = ? AND status = ?", userID, model.NoteStatusNormal)
 	if topic != "" {
 		q = q.Where("topic = ?", topic)
 	}
@@ -108,20 +114,20 @@ func (r *NoteRepo) List(ctx context.Context, userID, topic, keyword string, limi
 	return list, total, err
 }
 
-// CountRecent 统计用户最近的笔记数
+// CountRecent 统计用户最近的正常状态笔记数
 func (r *NoteRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.Note{}).
-		Where("user_id = ? AND created_at >= ?", userID, since).
+		Where("user_id = ? AND status = ? AND created_at >= ?", userID, model.NoteStatusNormal, since).
 		Count(&count).Error
 	return count, err
 }
 
-// DistinctTopics 获取用户所有不重复的笔记主题
+// DistinctTopics 获取用户所有不重复的笔记主题（仅正常状态）
 func (r *NoteRepo) DistinctTopics(ctx context.Context, userID string) ([]string, error) {
 	var topics []string
 	err := r.db.WithContext(ctx).Model(&model.Note{}).
-		Where("user_id = ?", userID).
+		Where("user_id = ? AND status = ?", userID, model.NoteStatusNormal).
 		Distinct("topic").Pluck("topic", &topics).Error
 	return topics, err
 }

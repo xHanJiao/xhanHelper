@@ -56,8 +56,9 @@ func (h *NoteHandler) BatchGetNotes(c *gin.Context) {
 
 // DeleteNote DELETE /api/notes/:id
 func (h *NoteHandler) DeleteNote(c *gin.Context) {
-	if err := h.noteRepo.Delete(c.Request.Context(), c.Param("id")); err != nil {
-		log.Printf("[note] Delete error: %v", err)
+	userID := c.GetString("user_id")
+	if err := h.noteRepo.SoftDelete(c.Request.Context(), c.Param("id"), userID); err != nil {
+		log.Printf("[note] SoftDelete error: %v", err)
 		view.JSONError(c, 500, "delete note failed")
 		return
 	}

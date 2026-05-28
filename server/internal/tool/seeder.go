@@ -32,11 +32,16 @@ type builtinToolSeed struct {
 }
 
 var builtinToolSeeds = []builtinToolSeed{
-	{Name: "bookkeeping", Description: "记账工具，可以新增、修改、删除、查询账单，以及查看账单的统计信息", Category: "finance"},
+	{Name: "bookkeeping", Description: "记账工具，新增/修改/删除/查询账单，月度/分类统计，分类选项查询", Category: "finance"},
 	{Name: "datetime", Description: "获取当前日期时间信息", Category: "utility"},
 	{Name: "calculator", Description: "安全的数学表达式计算器，支持加减乘除和括号", Category: "utility"},
-	{Name: "note", Description: "自由笔记工具，记录值得长期追踪的信息——事实、数据、观点、事件、个人状态等", Category: "note"},
+	{Name: "note", Description: "自由笔记工具，记录/查询/更新/回滚笔记，获取主题列表", Category: "note"},
+	{Name: "document", Description: "文档管理工具，创建/查看/更新/删除文档，支持版本回滚和标签检索", Category: "document"},
 	{Name: "agent", Description: "管理智能体：创建、查看、删除自定义 AI 助手", Category: "agent"},
+	{Name: "search_notes_v2", Description: "向量检索笔记（chunk 级），返回匹配片段和全文", Category: "search"},
+	{Name: "search_memories_v2", Description: "向量检索长期记忆（chunk 级），返回匹配片段和全文", Category: "search"},
+	{Name: "message_search", Description: "搜索历史对话消息，支持语义检索", Category: "search"},
+	{Name: "reminder", Description: "设置提醒事项，支持一次性/每日/每周/每月/工作日重复", Category: "utility"},
 	{Name: "tool_retriever", Description: "根据用户需求检索相关工具，当不确定该用什么工具时调用", Category: "system"},
 }
 

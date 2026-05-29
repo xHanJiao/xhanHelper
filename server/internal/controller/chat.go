@@ -218,6 +218,8 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 				view.WriteSSE(w, flusher, "tool_call", evt.Content)
 			case "tool_result":
 				view.WriteSSE(w, flusher, "tool_result", evt.Content)
+			case "verify":
+				view.WriteSSE(w, flusher, "verify", evt.Content)
 			case "done":
 				doneJSON := mergeTitle(c.Request.Context(), orch, convRepo, conv, req.Message, evt.Content)
 				view.WriteSSE(w, flusher, "done", doneJSON)

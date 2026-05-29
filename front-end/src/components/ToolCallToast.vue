@@ -27,7 +27,76 @@ const verifyText = computed(() => {
   }
 })
 
-const showVerify = computed(() => verifyStatus.value && !current.value && phase.value === '')
+// verify 动画状态（独立于工具调用队列，与 verifyStatus 状态对应）
+const verifyPhase = ref('')   // '' | 'enter' | 'stay' | 'exit'
+const showVerify = ref(false) // 是否正在展示 verify 气泡
+let verifyTimer = null
+let lastVerifyKey = ''        // status+retry 组合，用于检测状态变化
+
+function clearVerifyTimer() {
+  if (verifyTimer) {
+    clearTimeout(verifyTimer)
+    verifyTimer = null
+  }
+}
+
+function startVerifyAnimation() {
+  clearVerifyTimer()
+  showVerify.value = true
+  verifyPhase.value = 'enter'
+
+  verifyTimer = setTimeout(() => {
+    verifyPhase.value = 'stay'
+    verifyTimer = setTimeout(() => {
+      verifyPhase.value = 'exit'
+      verifyTimer = setTimeout(() => {
+        showVerify.value = false
+        verifyPhase.value = ''
+      }, EXIT_MS)
+    }, STAY_MS)
+  }, ENTER_MS)
+}
+
+function stopVerifyAnimation() {
+  clearVerifyTimer()
+  if (showVerify.value && verifyPhase.value !== 'exit') {
+    verifyPhase.value = 'exit'
+    verifyTimer = setTimeout(() => {
+      showVerify.value = false
+      verifyPhase.value = ''
+    }, EXIT_MS)
+  }
+}
+
+watch(verifyStatus, (vs) => {
+  if (!vs) {
+    lastVerifyKey = ''
+    return
+  }
+  const key = vs.status + '|' + vs.retry
+  if (key === lastVerifyKey) return
+  lastVerifyKey = key
+
+  // 等工具气泡退场后再展示 verify，否则一起飘会很乱
+  if (phase.value !== '' || current.value) {
+    return
+  }
+
+  startVerifyAnimation()
+})
+
+watch(showVerify, (showing) => {
+  if (!showing && lastVerifyKey) {
+    // verify 动画播完，检查是否有积压的工具调用待处理
+    const tcs = chat.streamingMessage?.toolCalls
+    if (tcs && processedCount < tcs.length) {
+      for (let i = processedCount; i < tcs.length; i++) {
+        enqueue(tcs[i])
+      }
+      processedCount = tcs.length
+    }
+  }
+})
 
 const summary = computed(() => {
   if (!current.value) return ''
@@ -49,7 +118,13 @@ function enqueue(tc) {
 }
 
 function startNext() {
-  if (queue.value.length === 0) return
+  if (queue.value.length === 0) {
+    // 工具队列清空，检查是否有积压的 verify 待展示
+    if (lastVerifyKey && !showVerify.value && !current.value && phase.value === '') {
+      startVerifyAnimation()
+    }
+    return
+  }
   const tc = queue.value.shift()
   current.value = tc
   phase.value = 'enter'
@@ -80,6 +155,7 @@ function beginExit() {
 function flush() {
   queue.value = []
   clearTimer()
+  stopVerifyAnimation()
   if (phase.value && phase.value !== 'exit') {
     beginExit()
   }
@@ -89,8 +165,12 @@ function reset() {
   queue.value = []
   processedCount = 0
   clearTimer()
+  clearVerifyTimer()
   current.value = null
   phase.value = ''
+  showVerify.value = false
+  verifyPhase.value = ''
+  lastVerifyKey = ''
 }
 
 watch(() => chat.streamingMessage?.toolCalls?.length, (newLen) => {
@@ -113,12 +193,13 @@ watch(() => chat.isStreaming, (val) => {
 
 onBeforeUnmount(() => {
   clearTimer()
+  clearVerifyTimer()
 })
 </script>
 
 <template>
   <div v-if="current || showVerify" class="tool-toast-anchor">
-    <div v-if="showVerify" class="tool-toast-bubble phase-enter">
+    <div v-if="showVerify" class="tool-toast-bubble" :class="'phase-' + verifyPhase">
       <span class="tool-toast-icon verify-icon">&#128269;</span>
       <span class="tool-toast-text">{{ verifyText }}</span>
     </div>

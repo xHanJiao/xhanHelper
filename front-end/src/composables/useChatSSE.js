@@ -219,6 +219,12 @@ export function useChatSSE() {
         chat.addMessage(finalMsg)
         chat.streamingMessage = null
 
+        // 将前端临时 ID 替换为后端真实数据库 ID
+        if (d.user_message_id) {
+          const userMsg = chat.messages.findLast(m => m.role === 'user')
+          if (userMsg) userMsg.id = d.user_message_id
+        }
+
         // 将关联记忆 ID 挂到用户消息上，并批量获取记忆详情
         if (d.memory_ids && d.memory_ids.length > 0) {
           const userMsg = chat.messages.findLast(m => m.role === 'user')

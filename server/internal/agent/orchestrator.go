@@ -61,6 +61,7 @@ type reactState struct {
 	msgs               []llm.Message
 	allToolCalls       []tool.ToolCall
 	lastAssistantMsgID string
+	userMsgID          string
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（文本解析用）
@@ -240,7 +241,7 @@ func (o *Orchestrator) runReActLoop(
 	util.SafeGo(func() { o.convRepo.Touch(ctx, req.ConversationID) })
 	util.SafeGo(func() { o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID) })
 
-	state := &reactState{msgs: append(req.Messages, llm.Message{Role: "user", Content: req.UserMessageContent})}
+	state := &reactState{msgs: append(req.Messages, llm.Message{Role: "user", Content: req.UserMessageContent}), userMsgID: userMsg.ID}
 
 	maxIter := o.maxIterations
 	if req.MaxIterations > 0 {
@@ -253,7 +254,7 @@ func (o *Orchestrator) runReActLoop(
 	}
 
 	o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrMaxIterations)})
-	o.emitDone(events, req.ConversationID, "", "max iterations reached", systemPromptResult.IDsByType)
+	o.emitDone(events, req.ConversationID, "", userMsg.ID, "max iterations reached", systemPromptResult.IDsByType)
 }
 
 // runOneRound 执行一轮 ReAct：LLM 调用 → 流式收集 → done/error 处理，返回 true 表示对话结束。
@@ -391,7 +392,7 @@ func (o *Orchestrator) finalizeRound(
 		if cleanText != "" {
 			o.streamTextChunks(ctx, events, cleanText)
 		}
-		o.emitDone(events, convID, state.lastAssistantMsgID, "", resourceIDs)
+		o.emitDone(events, convID, state.lastAssistantMsgID, state.userMsgID, "", resourceIDs)
 	}
 	return done
 }
@@ -749,13 +750,16 @@ func (o *Orchestrator) streamTextChunks(ctx context.Context, events chan<- *llm.
 	}
 }
 
-func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, msgID, errStr string, resourceIDs map[string][]string) {
+func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, assistantMsgID, userMsgID, errStr string, resourceIDs map[string][]string) {
 	parts := make([]string, 0)
 	if convID != "" {
 		parts = append(parts, fmt.Sprintf(`"conversation_id":"%s"`, convID))
 	}
-	if msgID != "" {
-		parts = append(parts, fmt.Sprintf(`"message_id":"%s"`, msgID))
+	if assistantMsgID != "" {
+		parts = append(parts, fmt.Sprintf(`"message_id":"%s"`, assistantMsgID))
+	}
+	if userMsgID != "" {
+		parts = append(parts, fmt.Sprintf(`"user_message_id":"%s"`, userMsgID))
 	}
 	for _, typ := range []string{"memory", "note"} {
 		if ids := resourceIDs[typ]; len(ids) > 0 {

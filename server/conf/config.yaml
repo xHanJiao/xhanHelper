@@ -38,7 +38,7 @@ llm:
   verification:
     enabled: true
     model: flash               # flash | pro，检验用模型
-    max_retries: 1             # 最多重检验次数
+    max_retries: 2             # 最多重检验次数
 
 embedding:
   enable_history_search: false

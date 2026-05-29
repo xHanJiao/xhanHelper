@@ -661,12 +661,16 @@ func (o *Orchestrator) saveVerifyFeedback(ctx context.Context, convID, userID, f
 	if o.msgRepo == nil || convID == "" {
 		return
 	}
-	reqJSON, _ := json.Marshal(map[string]interface{}{
+	reqJSON, err := json.Marshal(map[string]interface{}{
 		"messages": []map[string]string{
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userPrompt},
 		},
 	})
+	if err != nil {
+		log.Printf("[verify] marshal request error: %v", err)
+		return
+	}
 	reqStr := string(reqJSON)
 	if err := o.msgRepo.Create(ctx, &model.Message{
 		ID:             uuid.New().String(),
@@ -847,6 +851,7 @@ func truncateToolResult(content string, maxLen int) string {
 func BuildMessagesForFlash(history []model.Message, maxToolResultChars int) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
+		// 过滤内部系统消息（检验请求/反馈），避免泄露到 LLM 对话
 		if m.Role == "system" {
 			continue
 		}
@@ -880,6 +885,7 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int) []ll
 func BuildMessagesForPro(history []model.Message, maxToolResultChars int) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
+		// 过滤内部系统消息（检验请求/反馈），避免泄露到 LLM 对话
 		if m.Role == "system" {
 			continue
 		}

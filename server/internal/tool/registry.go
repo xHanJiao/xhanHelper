@@ -173,7 +173,6 @@ func (r *Registry) GetLLMTools() []llm.ToolDefinition {
 // GeneratePromptWithOverview 混排模式：tool_retriever 完整 + note.record_note 内联，其他工具仅概览
 func (r *Registry) GeneratePromptWithOverview() string {
 	var buf bytes.Buffer
-	buf.WriteString("\n\n## 工具使用\n\n")
 	buf.WriteString("你可以使用以下工具来完成用户的请求。\n")
 	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
 
@@ -293,7 +292,6 @@ func (r *Registry) writePromptFooter(buf *bytes.Buffer) {
 // GenerateImportantRules 生成输出规范文本（不含工具定义，放在角色定义之后、工具使用之前）
 func (r *Registry) GenerateImportantRules() string {
 	var buf bytes.Buffer
-	buf.WriteString("\n## 输出规范\n\n")
 	buf.WriteString("【强制工具查询规则】除 tool_retriever 外，任何工具在调用前必须先通过 tool_retriever.search 查询其完整定义（函数签名和参数 schema）。禁止凭工具名称和概览描述猜测参数直接调用！例如：要用 bookkeeping 记账，必须先 search(\"bookkeeping\") 拿到 create_bill 的参数。不确定用什么工具时，用 tool_retriever.search 搜索关键词。\n")
 	return buf.String()
 }
@@ -301,7 +299,6 @@ func (r *Registry) GenerateImportantRules() string {
 // GeneratePrompt 生成工具定义文本，追加到 system prompt 中
 func (r *Registry) GeneratePrompt() string {
 	var buf bytes.Buffer
-	buf.WriteString("\n\n## 工具使用\n\n")
 	buf.WriteString("你可以使用以下工具来完成用户的请求。\n")
 	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
 
@@ -420,7 +417,6 @@ func (r *Registry) GetLLMToolsFiltered(names []string) []llm.ToolDefinition {
 // GeneratePromptFor 只为指定工具生成 prompt 文本
 func (r *Registry) GeneratePromptFor(names []string) string {
 	var buf bytes.Buffer
-	buf.WriteString("\n\n## 工具使用\n\n")
 	buf.WriteString("你可以使用以下工具来完成用户的请求。\n")
 	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
 

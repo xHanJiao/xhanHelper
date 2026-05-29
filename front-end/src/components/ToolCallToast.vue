@@ -15,6 +15,20 @@ const ENTER_MS = 300
 const STAY_MS = 1000
 const EXIT_MS = 300
 
+const verifyStatus = computed(() => chat.streamingMessage?.verifyStatus)
+
+const verifyText = computed(() => {
+  if (!verifyStatus.value) return ''
+  switch (verifyStatus.value.status) {
+    case 'checking': return `结果检查中...（第${verifyStatus.value.retry}次）`
+    case 'done': return '结果检查 ✓'
+    case 'retry': return `检查未通过，正在完善...（第${verifyStatus.value.retry}次）`
+    default: return ''
+  }
+})
+
+const showVerify = computed(() => verifyStatus.value && !current.value && phase.value === '')
+
 const summary = computed(() => {
   if (!current.value) return ''
   return buildToolSummary(current.value, null)
@@ -103,8 +117,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="current" class="tool-toast-anchor">
-    <div class="tool-toast-bubble" :class="'phase-' + phase">
+  <div v-if="current || showVerify" class="tool-toast-anchor">
+    <div v-if="showVerify" class="tool-toast-bubble phase-enter">
+      <span class="tool-toast-icon verify-icon">&#128269;</span>
+      <span class="tool-toast-text">{{ verifyText }}</span>
+    </div>
+    <div v-if="current" class="tool-toast-bubble" :class="'phase-' + phase">
       <span class="tool-toast-icon">&#9881;</span>
       <span class="tool-toast-text">{{ summary }}</span>
     </div>

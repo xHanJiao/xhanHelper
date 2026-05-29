@@ -70,6 +70,7 @@ export function useChatSSE() {
       reasoning: '',
       reasoningDone: false,
       toolCalls: [],
+      verifyStatus: null,  // { status: 'checking'|'done'|'retry', retry: 0, reason: '' }
       created_at: new Date().toISOString()
     }
     chat.planNodes = {}
@@ -191,6 +192,14 @@ export function useChatSSE() {
           chat.planNodes[n.id] = { label: n.label, status: n.status }
         }
         chat.planEdges = graph.edges || []
+        break
+      }
+      case 'verify': {
+        try {
+          chat.streamingMessage.verifyStatus = JSON.parse(rawData)
+        } catch {
+          chat.streamingMessage.verifyStatus = { status: 'checking', retry: 0, reason: '' }
+        }
         break
       }
       case 'status': {

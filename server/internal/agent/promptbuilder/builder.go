@@ -34,10 +34,17 @@ type BuildOptions struct {
 // BuildResult — Build() 的返回值。
 // Prompt 是完整的 system prompt，IDsByType 按 type 聚合注入资源的 ID（memory/note），
 // 用于前端 done 事件和 memory_search 去重。Trace 写入 assistant message Extra。
+// RetrievedItem — 检索命中的单条内容，供校验模块使用
+type RetrievedItem struct {
+	Type string // "memory" | "note" | "history" | "theme"
+	Text string // 注入 system prompt 的完整文本
+}
+
 type BuildResult struct {
-	Prompt    string              // 最终 system prompt（Layer 1 + 2 + 3 拼接完成）
-	IDsByType map[string][]string // type → ids，如 "memory" → [...], "note" → [...]
-	Trace     *PromptTrace        // provider 构建追溯（写入 assistant message Extra）
+	Prompt         string              // 最终 system prompt（Layer 1 + 2 + 3 拼接完成）
+	IDsByType      map[string][]string // type → ids，如 "memory" → [...], "note" → [...]
+	Trace          *PromptTrace        // provider 构建追溯（写入 assistant message Extra）
+	RetrievedItems []RetrievedItem     // 检索命中的内容，供校验模块判断幻觉
 }
 
 // SystemPromptBuilder — system prompt 构建器，orchestrator 的唯一入口。
@@ -67,6 +74,7 @@ func NewSystemPromptBuilder(
 		promptResolver: promptResolver,
 		preRoleStatic: []StaticProvider{
 			&corePrinciplesProvider{},
+			&currentTimeProvider{},
 		},
 		postRoleStatic: []StaticProvider{
 			&toolDefinitionsProvider{registry: registry},
@@ -92,6 +100,11 @@ func (b *SystemPromptBuilder) Build(ctx context.Context, opts BuildOptions) (*Bu
 	// —— 行为准则（角色定义之前） ——
 	for _, sp := range b.preRoleStatic {
 		if s := sp.Render(ctx); s != "" {
+			if title := sp.SectionTitle(); title != "" {
+				sb.WriteString("## ")
+				sb.WriteString(title)
+				sb.WriteString("\n\n")
+			}
 			sb.WriteString(s)
 			sb.WriteString("\n")
 		}
@@ -111,6 +124,11 @@ func (b *SystemPromptBuilder) Build(ctx context.Context, opts BuildOptions) (*Bu
 	// —— 输出规范 + 工具定义（角色定义之后） ——
 	for _, sp := range b.postRoleStatic {
 		if s := sp.Render(ctx); s != "" {
+			if title := sp.SectionTitle(); title != "" {
+				sb.WriteString("## ")
+				sb.WriteString(title)
+				sb.WriteString("\n\n")
+			}
 			sb.WriteString(s)
 			sb.WriteString("\n")
 		}
@@ -118,19 +136,20 @@ func (b *SystemPromptBuilder) Build(ctx context.Context, opts BuildOptions) (*Bu
 	}
 
 	// —— 动态上下文 ——
-	idsByType := b.buildDynamicContext(ctx, opts, &sb, trace)
+	idsByType, retrievedItems := b.buildDynamicContext(ctx, opts, &sb, trace)
 	result := &BuildResult{
-		Prompt:    sb.String(),
-		Trace:     trace,
-		IDsByType: idsByType,
+		Prompt:         sb.String(),
+		Trace:          trace,
+		IDsByType:      idsByType,
+		RetrievedItems: retrievedItems,
 	}
 	return result, nil
 }
 
-// buildDynamicContext 检索所有 SearchProvider，排序、分组、渲染到 sb，返回 type→ids 映射。
-func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts BuildOptions, sb *strings.Builder, trace *PromptTrace) map[string][]string {
+// buildDynamicContext 检索所有 SearchProvider，排序、分组、渲染到 sb，返回 type→ids 映射和检索命中内容。
+func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts BuildOptions, sb *strings.Builder, trace *PromptTrace) (map[string][]string, []RetrievedItem) {
 	if len(opts.Embedding) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	searchOpts := SearchOptions{
@@ -172,6 +191,7 @@ func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts Buil
 	// —— 2. 记录 trace + 按 provider 分组渲染（组内按 FinalScore 排序） ——
 	sb.WriteString("\n## 上下文信息\n")
 	idsByType := make(map[string][]string)
+	var retrievedItems []RetrievedItem
 	for i, sp := range b.searchProviders {
 		s := slots[i]
 		if s.err != nil {
@@ -192,13 +212,14 @@ func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts Buil
 		for _, item := range items {
 			group.WriteString(item.Text)
 			idsByType[item.Type] = append(idsByType[item.Type], item.ID)
+			retrievedItems = append(retrievedItems, RetrievedItem{Type: item.Type, Text: item.Text})
 		}
 		if group.Len() > 0 && header != "" {
 			sb.WriteString(header)
 		}
 		sb.WriteString(group.String())
 	}
-	return idsByType
+	return idsByType, retrievedItems
 }
 
 // resolveRolePrompt — Layer 2 角色定义解析。

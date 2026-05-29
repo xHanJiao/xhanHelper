@@ -57,16 +57,3 @@ func TestCalculatorEvaluate(t *testing.T) {
 		})
 	}
 }
-
-func TestDatetimeTool(t *testing.T) {
-	tool := NewDatetimeTool()
-	result := tool.Execute(nil, "get_current_time", nil)
-	if !result.Success {
-		t.Errorf("datetime failed: %s", result.Error)
-	}
-	var data map[string]string
-	json.Unmarshal(result.Data, &data)
-	if data["date"] == "" || data["time"] == "" {
-		t.Errorf("missing date/time in result: %v", data)
-	}
-}

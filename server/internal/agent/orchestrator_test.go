@@ -22,7 +22,7 @@ func TestHandleOneRoundResponse_ParseErrorTriggersRetry(t *testing.T) {
 	}
 
 	state := &reactState{}
-	done := o.handleOneRoundResponse(ctx, events, msg, "test-conv-1", "test-user-1", nil, nil, state)
+	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, &promptbuilder.BuildResult{}, state)
 
 	if done {
 		t.Error("expected done=false for parse error (should retry)")
@@ -73,7 +73,7 @@ func TestHandleOneRoundResponse_InvalidJSON_UnescapedQuotes(t *testing.T) {
 	}
 
 	state := &reactState{}
-	done := o.handleOneRoundResponse(ctx, events, msg, "test-conv-1", "test-user-1", nil, nil, state)
+	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, &promptbuilder.BuildResult{}, state)
 
 	if done {
 		t.Error("expected done=false for unescaped quotes (should retry)")
@@ -98,7 +98,7 @@ func TestHandleOneRoundResponse_ValidJSONTextOnly(t *testing.T) {
 	}
 
 	state := &reactState{}
-	done := o.handleOneRoundResponse(ctx, events, msg, "test-conv-1", "test-user-1", nil, nil, state)
+	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, &promptbuilder.BuildResult{}, state)
 
 	if !done {
 		t.Error("expected done=true for text-only JSON reply (no tool calls)")
@@ -117,7 +117,7 @@ func TestHandleOneRoundResponse_PureTextFallback(t *testing.T) {
 	}
 
 	state := &reactState{}
-	done := o.handleOneRoundResponse(ctx, events, msg, "test-conv-1", "test-user-1", nil, nil, state)
+	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, &promptbuilder.BuildResult{}, state)
 
 	// 纯文本容错接受，正常结束
 	if !done {
@@ -195,7 +195,7 @@ func TestFinalizeRound_ThoughtDone(t *testing.T) {
 	se := &llm.StreamEvent{Type: "done"}
 	done := o.finalizeRound(context.Background(), events, se,
 		`{"reply":"ok"}`, "thinking...",
-		"cv", "u1", nil, nil, state,
+		&RunRequest{ConversationID: "cv", UserID: "u1"}, &promptbuilder.BuildResult{}, state,
 	)
 
 	if !done {
@@ -221,7 +221,7 @@ func TestFinalizeRound_NoThoughtDoneWithoutReasoning(t *testing.T) {
 	se := &llm.StreamEvent{Type: "done"}
 	_ = o.finalizeRound(context.Background(), events, se,
 		`{"reply":"ok"}`, "", // 空 reasoning
-		"cv", "u1", nil, nil, state,
+		&RunRequest{ConversationID: "cv", UserID: "u1"}, &promptbuilder.BuildResult{}, state,
 	)
 
 	close(events)
@@ -240,7 +240,7 @@ func TestFinalizeRound_CleanTextExtraction(t *testing.T) {
 	se := &llm.StreamEvent{Type: "done"}
 	_ = o.finalizeRound(context.Background(), events, se,
 		`{"reply":"你好，世界"}`, "",
-		"cv", "u1", nil, nil, state,
+		&RunRequest{ConversationID: "cv", UserID: "u1"}, &promptbuilder.BuildResult{}, state,
 	)
 
 	close(events)
@@ -270,7 +270,7 @@ func TestFinalizeRound_ReturnsFalseOnParseError(t *testing.T) {
 	se := &llm.StreamEvent{Type: "done"}
 	done := o.finalizeRound(context.Background(), events, se,
 		"这不是合法的 JSON {{{ broken", "",
-		"cv", "u1", nil, nil, state,
+		&RunRequest{ConversationID: "cv", UserID: "u1"}, &promptbuilder.BuildResult{}, state,
 	)
 
 	if done {
@@ -296,7 +296,7 @@ func TestFinalizeRound_ReturnsTrueOnTextOnly(t *testing.T) {
 	se := &llm.StreamEvent{Type: "done"}
 	done := o.finalizeRound(context.Background(), events, se,
 		`{"reply":"ok"}`, "",
-		"cv", "u1", nil, nil, state,
+		&RunRequest{ConversationID: "cv", UserID: "u1"}, &promptbuilder.BuildResult{}, state,
 	)
 
 	// 无 tool_calls → handleOneRoundResponse 返回 done=true

@@ -20,6 +20,7 @@ type PromptResolver interface {
 // 实现示例：核心原则、工具定义、当前时间。
 type StaticProvider interface {
 	Name() string
+	SectionTitle() string // 章节标题，Builder 自动加 ## 前缀
 	Render(ctx context.Context) string
 }
 

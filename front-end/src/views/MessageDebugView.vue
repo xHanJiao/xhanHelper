@@ -26,8 +26,8 @@ const tabs = [
   { key: 'resources', label: '资源取舍明细' },
 ]
 
-const roleLabel = (role) => ({ user: '用户', assistant: '助手', tool: '工具' }[role] || role)
-const roleType = (role) => ({ user: 'info', assistant: 'success', tool: 'default' }[role] || 'default')
+const roleLabel = (role) => ({ user: '用户', assistant: '助手', tool: '工具', system: '检验' }[role] || role)
+const roleType = (role) => ({ user: 'info', assistant: 'success', tool: 'default', system: 'default' }[role] || 'default')
 
 const systemPrompt = computed(() => {
   const rj = detailData.value.request_json
@@ -94,8 +94,12 @@ function formatContent(content) {
   if (!content) return ''
   try {
     const parsed = JSON.parse(content)
+    // 工具返回中的 markdown 文本
     if (parsed?.data?.results && typeof parsed.data.results === 'string') {
       markdownResult.value = parsed.data.results
+    // 助手回复中的 markdown 文本
+    } else if (parsed?.reply && typeof parsed.reply === 'string') {
+      markdownResult.value = parsed.reply
     } else {
       markdownResult.value = ''
     }
@@ -215,7 +219,7 @@ async function loadDetail(msgId) {
 }
 
 function toggleDetail(msg) {
-  if (msg.role !== 'assistant') return
+  if (msg.role !== 'assistant' && msg.role !== 'system') return
   if (expandedId.value === msg.id) {
     expandedId.value = null
     return
@@ -265,7 +269,7 @@ onMounted(loadRound)
             borderRadius: 'var(--radius-md)',
             background: 'var(--color-surface)',
             border: '1px solid var(--color-border)',
-            cursor: msg.role === 'assistant' ? 'pointer' : 'default',
+            cursor: (msg.role === 'assistant' || msg.role === 'system') ? 'pointer' : 'default',
             opacity: msg.role === 'tool' ? 0.7 : 1,
           }"
           @click="toggleDetail(msg)"
@@ -275,12 +279,12 @@ onMounted(loadRound)
               fontSize: '11px',
               padding: '1px 6px',
               borderRadius: '4px',
-              background: msg.role === 'user' ? 'var(--color-primary)' : msg.role === 'assistant' ? 'var(--color-success)' : 'var(--color-border)',
-              color: msg.role === 'tool' ? 'var(--color-text-muted)' : '#fff',
+              background: msg.role === 'user' ? 'var(--color-primary)' : msg.role === 'assistant' ? 'var(--color-success)' : msg.role === 'system' ? 'var(--color-warning)' : 'var(--color-border)',
+              color: '#fff',
             }">{{ roleLabel(msg.role) }}</span>
             <span style="font-size: 11px; color: var(--color-text-muted);">{{ new Date(msg.created_at).toLocaleString() }}</span>
             <span style="font-size: 11px; color: var(--color-text-muted);">~{{ estimateTokens(msg.content) }} tokens</span>
-            <span v-if="msg.role === 'assistant' && expandedId === msg.id" style="font-size: 11px; color: var(--color-primary);">▼ 已展开</span>
+            <span v-if="(msg.role === 'assistant' || msg.role === 'system') && expandedId === msg.id" style="font-size: 11px; color: var(--color-primary);">▼ 已展开</span>
           </div>
           <div
             v-if="!isExpanded(msg.id)"
@@ -314,7 +318,7 @@ onMounted(loadRound)
           </div>
 
           <!-- 展开的详情区 -->
-          <div v-if="msg.role === 'assistant' && expandedId === msg.id" style="margin-top: 12px;" @click.stop>
+          <div v-if="(msg.role === 'assistant' || msg.role === 'system') && expandedId === msg.id" style="margin-top: 12px;" @click.stop>
             <div v-if="detailLoading" style="padding: 20px 0; text-align: center; color: var(--color-text-muted);">加载详情中...</div>
             <template v-else>
               <!-- Tab 切换 -->

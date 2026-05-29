@@ -8,6 +8,7 @@ server:
 db:
   host: 127.0.0.1
   database: xhan_helper
+  charset: utf8mb4
 
 
 reflection:

@@ -2,14 +2,16 @@ package promptbuilder
 
 import (
 	"context"
+	"fmt"
+	"time"
 
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/tool"
 )
 
 // ==================== Layer 1 — Static Providers ====================
 
-const corePrinciples = `## 行为准则
-1. 简洁回复：用最少的词把事说清楚
+const corePrinciples = `1. 简洁回复：用最少的词把事说清楚
 2. 诚实：不知道就说不知道，不要编造
 3. 追问：如果用户意图不明确，追问关键信息
 4. 记录：当用户提供有价值的信息，例如分享反思、做出决定、总结经验教训、表达有深度的观点时，主动调用 note 工具记录下来，供未来检索
@@ -19,7 +21,8 @@ const corePrinciples = `## 行为准则
 // 所有 agent 必须遵守，不可被 AgentPrompt 覆盖。
 type corePrinciplesProvider struct{}
 
-func (p *corePrinciplesProvider) Name() string { return "core_principles" }
+func (p *corePrinciplesProvider) Name() string         { return "core_principles" }
+func (p *corePrinciplesProvider) SectionTitle() string { return "行为准则" }
 func (p *corePrinciplesProvider) Render(ctx context.Context) string {
 	return corePrinciples
 }
@@ -32,7 +35,8 @@ type importantRulesProvider struct {
 	registry *tool.Registry
 }
 
-func (p *importantRulesProvider) Name() string { return "important_rules" }
+func (p *importantRulesProvider) Name() string         { return "important_rules" }
+func (p *importantRulesProvider) SectionTitle() string { return "输出规范" }
 func (p *importantRulesProvider) Render(ctx context.Context) string {
 	return p.registry.GenerateImportantRules()
 }
@@ -41,7 +45,18 @@ type toolDefinitionsProvider struct {
 	registry *tool.Registry
 }
 
-func (p *toolDefinitionsProvider) Name() string { return "tool_definitions" }
+func (p *toolDefinitionsProvider) Name() string         { return "tool_definitions" }
+func (p *toolDefinitionsProvider) SectionTitle() string { return "工具使用" }
 func (p *toolDefinitionsProvider) Render(ctx context.Context) string {
 	return p.registry.GeneratePromptWithOverview()
+}
+
+// currentTimeProvider — 注入当前日期时间，确保 LLM 知道现在的时间
+type currentTimeProvider struct{}
+
+func (p *currentTimeProvider) Name() string         { return "current_time" }
+func (p *currentTimeProvider) SectionTitle() string { return "当前时间" }
+func (p *currentTimeProvider) Render(ctx context.Context) string {
+	now := time.Now().In(config.BJ)
+	return fmt.Sprintf("当前时间是 %s（北京时间，UTC+8）。", now.Format("2006-01-02 15:04:05 Monday"))
 }

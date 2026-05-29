@@ -62,6 +62,7 @@ type reactState struct {
 	allToolCalls       []tool.ToolCall
 	lastAssistantMsgID string
 	userMsgID          string
+	verifyRetries      int // 本轮对话已重检验次数
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（文本解析用）
@@ -101,6 +102,9 @@ type Orchestrator struct {
 	defaultMaxTokens    *int
 	maxToolResultChars  int
 	onChatEnd           func(userID, convID string)
+	verifyEnabled       bool
+	verifyMaxRetries    int
+	verifyModel         string // "flash" | "pro"
 }
 
 // OrchestratorConfig — Orchestrator 依赖配置
@@ -119,12 +123,21 @@ type OrchestratorConfig struct {
 	MaxTokens          *int
 	MaxToolResultChars int
 	OnChatEnd          func(userID, convID string)
+	VerifyEnabled      bool
+	VerifyMaxRetries   int
+	VerifyModel        string // "flash" | "pro"，默认 flash
 }
 
 // New 创建 Orchestrator
 func New(cfg *OrchestratorConfig) *Orchestrator {
 	if cfg.MaxIterations <= 0 {
 		cfg.MaxIterations = defaultMaxIterations
+	}
+	if cfg.VerifyMaxRetries <= 0 {
+		cfg.VerifyMaxRetries = 1
+	}
+	if cfg.VerifyModel == "" {
+		cfg.VerifyModel = "flash"
 	}
 
 	return &Orchestrator{
@@ -142,6 +155,9 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		defaultMaxTokens:    cfg.MaxTokens,
 		maxToolResultChars:  cfg.MaxToolResultChars,
 		onChatEnd:           cfg.OnChatEnd,
+		verifyEnabled:       cfg.VerifyEnabled,
+		verifyMaxRetries:    cfg.VerifyMaxRetries,
+		verifyModel:         cfg.VerifyModel,
 	}
 }
 
@@ -295,8 +311,7 @@ func (o *Orchestrator) runOneRound(
 			recordLLMCall(req.DeepMode && o.proClient != nil, elapsedMs, se.Usage)
 			log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
 				round+1, streamContent.Len(), streamReasoning.Len(), len(se.ToolCalls))
-			return o.finalizeRound(ctx, events, se, streamContent.String(), streamReasoning.String(),
-				req.ConversationID, req.UserID, result.IDsByType, result.Trace, state)
+			return o.finalizeRound(ctx, events, se, streamContent.String(), streamReasoning.String(), req, result, state)
 		case "error":
 			o.sendEvent(events, se)
 			return true
@@ -374,9 +389,8 @@ func (o *Orchestrator) finalizeRound(
 	events chan<- *llm.StreamEvent,
 	se *llm.StreamEvent,
 	streamContent, streamReasoning string,
-	convID, userID string,
-	resourceIDs map[string][]string,
-	trace *promptbuilder.PromptTrace,
+	req *RunRequest,
+	result *promptbuilder.BuildResult,
 	state *reactState,
 ) bool {
 	if streamReasoning != "" {
@@ -385,14 +399,13 @@ func (o *Orchestrator) finalizeRound(
 
 	msg := newAssistantMessage(streamContent, streamReasoning, se)
 
-	memIDs := resourceIDs["memory"]
-	done := o.handleOneRoundResponse(ctx, events, msg, convID, userID, memIDs, trace, state)
+	done := o.handleOneRoundResponse(ctx, events, msg, req, result, state)
 	if done {
 		cleanText := extractCleanText(streamContent)
 		if cleanText != "" {
 			o.streamTextChunks(ctx, events, cleanText)
 		}
-		o.emitDone(events, convID, state.lastAssistantMsgID, state.userMsgID, "", resourceIDs)
+		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "", result.IDsByType)
 	}
 	return done
 }
@@ -416,16 +429,15 @@ func (o *Orchestrator) handleOneRoundResponse(
 	ctx context.Context,
 	events chan<- *llm.StreamEvent,
 	msg llm.Message,
-	convID, userID string,
-	memIDs []string,
-	trace *promptbuilder.PromptTrace,
+	req *RunRequest,
+	result *promptbuilder.BuildResult,
 	state *reactState,
 ) bool {
 	parsed, parseErr := ParseLLMResponse(msg.Content)
 
 	if parseErr != nil {
 		log.Printf("[orch] round parse error: %v, saving raw and retrying", parseErr)
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, nil)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, nil)
 		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "响应格式异常，正在重试…"})
 		state.msgs = append(state.msgs, llm.Message{
 			Role:    "user",
@@ -437,36 +449,275 @@ func (o *Orchestrator) handleOneRoundResponse(
 	if parsed == nil {
 		// 纯文本（无 JSON），system prompt 已要求 JSON 但容错接受
 		log.Printf("[orch] round pure text (no JSON), accepting gracefully")
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, trace)
+		if o.shouldVerify(req, state) {
+			return o.verifyAndMaybeRetry(ctx, events, msg, req, result, state)
+		}
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
 		return true
 	}
 
 	log.Printf("[orch] round embedded tool_calls=%d: %s",
 		len(parsed.ToolCalls), tool.ToolCallNames(parsed.ToolCalls))
 
-	// 无工具调用 → 纯文本回复，正常结束
+	// 无工具调用 → 纯文本回复
 	if len(parsed.ToolCalls) == 0 {
 		log.Printf("[orch] round text-only JSON reply, len=%d", len(msg.Content))
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, trace)
+		if o.shouldVerify(req, state) {
+			return o.verifyAndMaybeRetry(ctx, events, msg, req, result, state)
+		}
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
 		return true
 	}
 
 	// 统一走 prompt engineering，不填 ToolCallsJSON（由 ParseLLMResponse 从文本解析）
 	msg.ToolCalls = nil
 
-	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, convID, userID, msg, trace)
+	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
 
 	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	state.allToolCalls = append(state.allToolCalls, parsed.ToolCalls...)
 
 	// 为 memory_search 工具注入 exclude_ids（本轮已注入的记忆 ID）
-	o.injectExcludeMemIDsForMemSearch(parsed, memIDs)
+	o.injectExcludeMemIDsForMemSearch(parsed, result.IDsByType["memory"])
 
-	toolCallResults := executeConcurrently(ctx, events, userID, o.registry, parsed.ToolCalls)
+	toolCallResults := executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
 
-	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, convID, userID, state.msgs)
+	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 
 	return false
+}
+
+// verifyResult — Flash 检验返回的结构
+type verifyResult struct {
+	Complete       bool     `json:"complete"`
+	Hallucinations []string `json:"hallucinations"`
+	MissingAspects []string `json:"missing_aspects"`
+	Suggestion     string   `json:"suggestion"`
+}
+
+func (o *Orchestrator) shouldVerify(req *RunRequest, state *reactState) bool {
+	return o.verifyEnabled && len(state.allToolCalls) > 0 && !req.SkipRetrieval
+}
+
+func (o *Orchestrator) verifyAndMaybeRetry(
+	ctx context.Context,
+	events chan<- *llm.StreamEvent,
+	msg llm.Message,
+	req *RunRequest,
+	result *promptbuilder.BuildResult,
+	state *reactState,
+) bool {
+	if state.verifyRetries >= o.verifyMaxRetries {
+		log.Printf("[verify] max retries reached (%d/%d), accepting draft", state.verifyRetries, o.verifyMaxRetries)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		return true
+	}
+
+	state.verifyRetries++
+	log.Printf("[verify] round %d/%d", state.verifyRetries, o.verifyMaxRetries)
+
+	// 发 verify:checking 事件
+	o.sendVerifyEvent(events, "checking", state.verifyRetries, "")
+
+	// 选模型
+	client := o.flashClient
+	if o.verifyModel == "pro" && o.proClient != nil {
+		client = o.proClient
+	}
+
+	// 构建检验 prompt（含检索命中内容，避免误判检索来源数据为幻觉）
+	verifyPrompt := o.buildVerifyPrompt(msg, req, state, result.RetrievedItems)
+	verifySystemPrompt := `你是一个内容检验助手。请判断模型的回复是否完整、准确。
+
+严格按以下 JSON 格式回复，不要加任何额外文字：
+{"complete":true或false,"hallucinations":["模型捏造的事实，必须能在工具返回数据中找到依据，没有则为空数组"],"missing_aspects":["还缺少的信息维度，如未查笔记/未查记忆/未查账单等，没有则为空数组"],"suggestion":"针对缺失或幻觉的具体建议，complete为true且无幻觉时留空"}
+
+检验标准：
+- complete: 用户问题是否已被充分回答？信息源是否需要多角度交叉验证？
+- hallucinations: 回复中是否有工具返回数据中找不到的具体数据/事实？
+- 不要因为措辞风格标记为幻觉，只标记实质性的数据错误`
+
+	// 保存检验请求到 DB（调试页可见）
+	verifyMsg, err := client.ChatSync(ctx, &llm.ChatRequest{
+		SystemPrompt: verifySystemPrompt,
+		Messages:     []llm.Message{{Role: "user", Content: verifyPrompt}},
+	})
+	if err != nil {
+		log.Printf("[verify] LLM call error: %v", err)
+		o.sendVerifyEvent(events, "done", state.verifyRetries, "")
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		return true
+	}
+
+	var vr verifyResult
+	if err := json.Unmarshal([]byte(verifyMsg.Content), &vr); err != nil {
+		log.Printf("[verify] parse result error: %v, raw=%s", err, verifyMsg.Content)
+		o.sendVerifyEvent(events, "done", state.verifyRetries, "")
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		return true
+	}
+
+	log.Printf("[verify] complete=%v hallucinations=%d missing=%d", vr.Complete, len(vr.Hallucinations), len(vr.MissingAspects))
+
+	// 通过：无幻觉且完成
+	if vr.Complete && len(vr.Hallucinations) == 0 {
+		o.saveVerifyFeedback(ctx, req.ConversationID, req.UserID, "检验通过：无幻觉，回复完整", verifySystemPrompt, verifyPrompt)
+		log.Printf("[verify] round %d passed", state.verifyRetries)
+		o.sendVerifyEvent(events, "done", state.verifyRetries, "")
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		return true
+	}
+
+	// 不通过：存档草稿（IsInternal），注入反馈，继续
+	log.Printf("[verify] round %d failed: complete=%v hallucinations=%d missing=%d", state.verifyRetries, vr.Complete, len(vr.Hallucinations), len(vr.MissingAspects))
+	o.sendVerifyEvent(events, "retry", state.verifyRetries, vr.Suggestion)
+	o.saveAssistantMsgInternal(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+
+	feedback := o.buildVerifyFeedback(vr)
+	o.saveVerifyFeedback(ctx, req.ConversationID, req.UserID, feedback, verifySystemPrompt, verifyPrompt)
+	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
+	state.msgs = append(state.msgs, llm.Message{
+		Role:    "user",
+		Content: feedback,
+	})
+	return false
+}
+
+func (o *Orchestrator) buildVerifyPrompt(msg llm.Message, req *RunRequest, state *reactState, retrieved []promptbuilder.RetrievedItem) string {
+	var sb strings.Builder
+	sb.WriteString("【用户问题】\n")
+	sb.WriteString(req.RawUserMessage)
+
+	sb.WriteString("\n\n【模型准备回复的内容】\n")
+	sb.WriteString(msg.Content)
+
+	sb.WriteString("\n\n【工具调用历史】\n")
+	hasTools := false
+	for _, m := range state.msgs {
+		switch m.Role {
+		case "assistant":
+			if strings.Contains(m.Content, "tool_calls") {
+				hasTools = true
+				sb.WriteString("[工具调用] ")
+				sb.WriteString(m.Content)
+				sb.WriteString("\n")
+			}
+		case "user":
+			if strings.Contains(m.Content, `"success"`) {
+				sb.WriteString("[工具返回] ")
+				sb.WriteString(m.Content)
+				sb.WriteString("\n")
+			}
+		}
+	}
+	if !hasTools {
+		sb.WriteString("（本轮未调用工具）\n")
+	}
+
+	if len(retrieved) > 0 {
+		sb.WriteString("\n【检索命中内容（模型可引用，不算幻觉）】\n")
+		for _, it := range retrieved {
+			sb.WriteString(fmt.Sprintf("[%s] %s\n", it.Type, it.Text))
+		}
+	}
+
+	return sb.String()
+}
+
+func (o *Orchestrator) buildVerifyFeedback(vr verifyResult) string {
+	var parts []string
+	parts = append(parts, "[系统] 内部检验发现以下问题：")
+
+	for i, h := range vr.Hallucinations {
+		parts = append(parts, fmt.Sprintf("(%d) 幻觉：%s", i+1, h))
+	}
+	for i, m := range vr.MissingAspects {
+		parts = append(parts, fmt.Sprintf("(%d) 缺失：%s", i+1, m))
+	}
+	if vr.Suggestion != "" {
+		parts = append(parts, "建议："+vr.Suggestion)
+	}
+	parts = append(parts, "请根据以上反馈修正你的回复，确保所有事实都有依据，信息维度完整。")
+
+	return strings.Join(parts, "\n")
+}
+
+func (o *Orchestrator) sendVerifyEvent(events chan<- *llm.StreamEvent, status string, retry int, reason string) {
+	content, _ := json.Marshal(map[string]interface{}{
+		"status": status,
+		"retry":  retry,
+		"reason": reason,
+	})
+	o.sendEvent(events, &llm.StreamEvent{Type: "verify", Content: string(content)})
+}
+
+// saveAssistantMsgInternal 以 IsInternal=true 保存草稿，仅存档不展示
+func (o *Orchestrator) saveAssistantMsgInternal(ctx context.Context, convID, userID string, msg llm.Message, trace *promptbuilder.PromptTrace) string {
+	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, true)
+}
+
+// saveVerifyFeedback 将检验反馈存为内部系统消息（含检验请求 request_json），调试页可见
+func (o *Orchestrator) saveVerifyFeedback(ctx context.Context, convID, userID, feedback, systemPrompt, userPrompt string) {
+	if o.msgRepo == nil || convID == "" {
+		return
+	}
+	reqJSON, _ := json.Marshal(map[string]interface{}{
+		"messages": []map[string]string{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": userPrompt},
+		},
+	})
+	reqStr := string(reqJSON)
+	if err := o.msgRepo.Create(ctx, &model.Message{
+		ID:             uuid.New().String(),
+		UserID:         userID,
+		ConversationID: convID,
+		Role:           "system",
+		Content:        feedback,
+		RequestJSON:    &reqStr,
+		IsInternal:     true,
+	}); err != nil {
+		log.Printf("[verify] save feedback error: %v", err)
+	}
+}
+
+func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, userID string, msg llm.Message, trace *promptbuilder.PromptTrace, isInternal bool) string {
+	if o.msgRepo == nil || convID == "" {
+		return ""
+	}
+	mid := uuid.New().String()
+	modelMsg := &model.Message{
+		ID:             mid,
+		UserID:         userID,
+		ConversationID: convID,
+		Role:           "assistant",
+		Content:        maybeInjectCreatedAt(msg.Content),
+		IsInternal:     isInternal,
+	}
+	if trace != nil {
+		b, _ := json.Marshal(trace)
+		s := string(b)
+		modelMsg.Extra = &s
+	}
+	if msg.ReasoningContent != "" {
+		rc := msg.ReasoningContent
+		modelMsg.ReasoningContent = &rc
+	}
+	if tcJSON := extractToolCallsJSON(msg.Content); tcJSON != nil {
+		modelMsg.ToolCallsJSON = tcJSON
+	} else if len(msg.ToolCalls) > 0 {
+		b, _ := json.Marshal(msg.ToolCalls)
+		s := string(b)
+		modelMsg.ToolCallsJSON = &s
+	}
+	if msg.RequestJSON != nil {
+		modelMsg.RequestJSON = msg.RequestJSON
+	}
+	if err := o.msgRepo.Create(ctx, modelMsg); err != nil {
+		log.Printf("[orch] save assistant msg error: %v", err)
+		return ""
+	}
+	return mid
 }
 
 func (*Orchestrator) injectExcludeMemIDsForMemSearch(parsed *LLMResponse, memIDs []string) {
@@ -553,45 +804,7 @@ func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, us
 // —— DB 保存 ——
 
 func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message, trace *promptbuilder.PromptTrace) string {
-	if o.msgRepo == nil || convID == "" {
-		return ""
-	}
-	mid := uuid.New().String()
-	modelMsg := &model.Message{
-		ID:             mid,
-		UserID:         userID,
-		ConversationID: convID,
-		Role:           "assistant",
-		Content:        maybeInjectCreatedAt(msg.Content),
-	}
-	if trace != nil {
-		b, _ := json.Marshal(trace)
-		s := string(b)
-		modelMsg.Extra = &s
-	}
-	if msg.ReasoningContent != "" {
-		rc := msg.ReasoningContent
-		modelMsg.ReasoningContent = &rc
-	}
-	// Flash 路径：从 Content 中提取 tool_calls；原生路径：用 msg.ToolCalls
-	if tcJSON := extractToolCallsJSON(msg.Content); tcJSON != nil {
-		modelMsg.ToolCallsJSON = tcJSON
-	} else if len(msg.ToolCalls) > 0 {
-		b, _ := json.Marshal(msg.ToolCalls)
-		s := string(b)
-		modelMsg.ToolCallsJSON = &s
-	}
-	if msg.RequestJSON != nil {
-		modelMsg.RequestJSON = msg.RequestJSON
-	}
-	if msg.ResponseJSON != nil {
-		modelMsg.ResponseJSON = msg.ResponseJSON
-	}
-	if err := o.msgRepo.Create(ctx, modelMsg); err != nil {
-		log.Printf("[orch] save assistant msg error: %v", err)
-		return ""
-	}
-	return mid
+	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, false)
 }
 
 func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCallID string, content string) {
@@ -634,6 +847,9 @@ func truncateToolResult(content string, maxLen int) string {
 func BuildMessagesForFlash(history []model.Message, maxToolResultChars int) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
+		if m.Role == "system" {
+			continue
+		}
 		// ts := "（发于" + m.CreatedAt.In(config.BJ).Format("01-02 15:04") + "）"
 		if m.Role == "tool" {
 			// FlashClient 不支持 role="tool"，包装成 user 消息
@@ -664,6 +880,9 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int) []ll
 func BuildMessagesForPro(history []model.Message, maxToolResultChars int) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
+		if m.Role == "system" {
+			continue
+		}
 		// ts := "（发于" + m.CreatedAt.In(config.BJ).Format("01-02 15:04") + "）"
 		ts := ""
 		content := m.Content

@@ -35,6 +35,10 @@ llm:
   default_max_tokens: 30000
   max_iterations: 20
   max_tool_result_chars: 2000
+  verification:
+    enabled: true
+    model: flash               # flash | pro，检验用模型
+    max_retries: 1             # 最多重检验次数
 
 embedding:
   enable_history_search: false

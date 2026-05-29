@@ -204,11 +204,13 @@ func TestBuildSearchProviderError(t *testing.T) {
 // ==================== Test Helpers ====================
 
 type testStaticProvider struct {
-	name    string
-	content string
+	name         string
+	content      string
+	sectionTitle string
 }
 
 func (p *testStaticProvider) Name() string                      { return p.name }
+func (p *testStaticProvider) SectionTitle() string              { return p.sectionTitle }
 func (p *testStaticProvider) Render(ctx context.Context) string { return p.content }
 
 type testSearchProvider struct {

@@ -336,6 +336,7 @@ type getBillArgs struct {
 
 // billSummary — 返回给 LLM 的精简账单字段
 type billSummary struct {
+	ID        string  `json:"id"`
 	Item      string  `json:"item"`
 	Amount    float64 `json:"amount"`
 	Category1 string  `json:"category1"`
@@ -349,6 +350,7 @@ func toBillSummaries(bills []model.Bill) []billSummary {
 	result := make([]billSummary, len(bills))
 	for i, b := range bills {
 		result[i] = billSummary{
+			ID:        b.ID,
 			Item:      b.Item,
 			Amount:    b.Amount,
 			Category1: b.Category1,

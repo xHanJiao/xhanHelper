@@ -11,21 +11,34 @@ import (
 
 const MaxContentLen = 500
 
-// FilterMessageRound 从消息列表中截取以 matchedID 开头的一轮 Q&A
-// 规则：保留 user + assistant 消息，跳过 tool/internal，遇到下一个 user 消息时截断
+// FilterMessageRound 从消息列表中截取以 matchedID 开头的一轮 Q&A。
+// 保留触发的 user 消息 + 最后一个 assistant 回复（跳过中间 ReAct 轮次）。
 func FilterMessageRound(msgs []model.Message, matchedID string) []model.Message {
 	var result []model.Message
+
+	// 找到触发的 user 消息
 	for _, m := range msgs {
 		if m.Role == "tool" || m.IsInternal {
 			continue
 		}
-		if m.Role == "user" && m.ID != matchedID {
+		if m.ID == matchedID && m.Role == "user" && m.Content != "" {
+			result = append(result, m)
 			break
 		}
-		if (m.Role == "user" || m.Role == "assistant") && m.Content != "" {
-			result = append(result, m)
+	}
+
+	// 从后往前找最后一个 assistant 回复
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" && msgs[i].ID != matchedID {
+			// 遇到下一轮 user 消息，说明最后一个 assistant 已过去
+			continue
+		}
+		if msgs[i].Role == "assistant" && !msgs[i].IsInternal && msgs[i].Content != "" {
+			result = append(result, msgs[i])
+			break
 		}
 	}
+
 	return result
 }
 
@@ -45,9 +58,9 @@ func FormatMessageRound(msgs []model.Message, score float64) string {
 		content := util.TruncateContent(m.Content, MaxContentLen)
 		switch m.Role {
 		case "user":
-			sb.WriteString(fmt.Sprintf("**用户**：%s\n", content))
+			sb.WriteString(fmt.Sprintf("**用户**：%s\n\n", content))
 		case "assistant":
-			sb.WriteString(fmt.Sprintf("**助手**：%s\n", content))
+			sb.WriteString(fmt.Sprintf("**助手**：%s\n\n", content))
 		}
 	}
 	return sb.String()

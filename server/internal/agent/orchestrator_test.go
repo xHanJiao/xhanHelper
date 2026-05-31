@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
 )
 
 func TestHandleOneRoundResponse_ParseErrorTriggersRetry(t *testing.T) {
@@ -912,4 +914,78 @@ func collectTextDeltasFromChan(ch chan *llm.StreamEvent) string {
 		}
 	}
 	return b.String()
+}
+
+// —— FlattenRound ——
+
+func TestFlattenRound_Basic(t *testing.T) {
+	now := time.Now()
+	round := []model.Message{
+		{ID: "u1", Role: "user", Content: "帮我记账", CreatedAt: now},
+		{ID: "a1", Role: "assistant", Content: "好的，已记录", CreatedAt: now.Add(time.Second)},
+	}
+	got := FlattenRound(round)
+	if len(got) != 2 {
+		t.Fatalf("expected 2, got %d", len(got))
+	}
+	if got[0].ID != "u1" || got[1].ID != "a1" {
+		t.Errorf("expected [u1, a1], got [%s, %s]", got[0].ID, got[1].ID)
+	}
+}
+
+func TestFlattenRound_SkipsInternalAssistant(t *testing.T) {
+	now := time.Now()
+	round := []model.Message{
+		{ID: "u1", Role: "user", Content: "查账单", CreatedAt: now},
+		{ID: "a1", Role: "assistant", Content: "账单：22元", CreatedAt: now.Add(time.Second)},
+		{ID: "draft", Role: "assistant", Content: "账单：22元（草稿）", CreatedAt: now.Add(2 * time.Second), IsInternal: true},
+		{ID: "sys", Role: "system", Content: "检验不通过", CreatedAt: now.Add(3 * time.Second), IsInternal: true},
+		{ID: "a2", Role: "assistant", Content: "账单：福佳白啤22元，5月1日", CreatedAt: now.Add(4 * time.Second)},
+	}
+	got := FlattenRound(round)
+	if len(got) != 2 {
+		t.Fatalf("expected 2, got %d: %v", len(got), got)
+	}
+	if got[1].ID != "a2" {
+		t.Errorf("expected last non-internal assistant a2, got %s", got[1].ID)
+	}
+}
+
+func TestFlattenRound_ReActMultiRound(t *testing.T) {
+	now := time.Now()
+	round := []model.Message{
+		{ID: "u1", Role: "user", Content: "今天干了什么", CreatedAt: now},
+		{ID: "a1", Role: "assistant", Content: `{"reply":"","tool_calls":[{"tool":"note","function":"search"}]}`, CreatedAt: now.Add(time.Second)},
+		{ID: "t1", Role: "tool", Content: `[]`, CreatedAt: now.Add(2 * time.Second), IsInternal: true},
+		{ID: "a2", Role: "assistant", Content: `{"reply":"","tool_calls":[{"tool":"memory_search","function":"search"}]}`, CreatedAt: now.Add(3 * time.Second)},
+		{ID: "t2", Role: "tool", Content: `[]`, CreatedAt: now.Add(4 * time.Second), IsInternal: true},
+		{ID: "a3", Role: "assistant", Content: "今天你记了笔记、喝了啤酒，过得挺充实😄", CreatedAt: now.Add(5 * time.Second)},
+	}
+	got := FlattenRound(round)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 (user + last assistant), got %d", len(got))
+	}
+	if got[1].ID != "a3" {
+		t.Errorf("expected final reply a3, got %s", got[1].ID)
+	}
+	if got[1].Content != "今天你记了笔记、喝了啤酒，过得挺充实😄" {
+		t.Errorf("unexpected content: %s", got[1].Content)
+	}
+}
+
+func TestFlattenRound_OnlyAssistantIsInternal(t *testing.T) {
+	now := time.Now()
+	// 最后一个 assistant 是 internal draft（验证未通过但已达最大重试），
+	// 前面没有非 internal 的 assistant —— 不应选中 internal 的
+	round := []model.Message{
+		{ID: "u1", Role: "user", Content: "查一下", CreatedAt: now},
+		{ID: "draft", Role: "assistant", Content: "草稿回复", CreatedAt: now.Add(time.Second), IsInternal: true},
+	}
+	got := FlattenRound(round)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 (user only), got %d: %v", len(got), got)
+	}
+	if got[0].ID != "u1" {
+		t.Errorf("expected user u1, got %s", got[0].ID)
+	}
 }

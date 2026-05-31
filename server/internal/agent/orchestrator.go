@@ -853,7 +853,7 @@ func FlattenRound(round []model.Message) []model.Message {
 	var out []model.Message
 	var lastAssistant *model.Message
 	for i := len(round) - 1; i >= 0; i-- {
-		if round[i].Role == "assistant" {
+		if round[i].Role == "assistant" && !round[i].IsInternal {
 			lastAssistant = &round[i]
 			break
 		}

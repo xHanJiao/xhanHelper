@@ -935,6 +935,7 @@ func TestFlattenRound_Basic(t *testing.T) {
 
 func TestFlattenRound_SkipsInternalAssistant(t *testing.T) {
 	now := time.Now()
+	// a1 和 a2 都保留，draft(internal) 和 system 过滤
 	round := []model.Message{
 		{ID: "u1", Role: "user", Content: "查账单", CreatedAt: now},
 		{ID: "a1", Role: "assistant", Content: "账单：22元", CreatedAt: now.Add(time.Second)},
@@ -943,40 +944,45 @@ func TestFlattenRound_SkipsInternalAssistant(t *testing.T) {
 		{ID: "a2", Role: "assistant", Content: "账单：福佳白啤22元，5月1日", CreatedAt: now.Add(4 * time.Second)},
 	}
 	got := FlattenRound(round)
-	if len(got) != 2 {
-		t.Fatalf("expected 2, got %d: %v", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 (u1+a1+a2, draft+system filtered), got %d: %v", len(got), got)
 	}
-	if got[1].ID != "a2" {
-		t.Errorf("expected last non-internal assistant a2, got %s", got[1].ID)
+	if got[1].ID != "a1" || got[2].ID != "a2" {
+		t.Errorf("expected [a1, a2], got [%s, %s]", got[1].ID, got[2].ID)
 	}
 }
 
 func TestFlattenRound_ReActMultiRound(t *testing.T) {
 	now := time.Now()
+	// 保留完整 ReAct 链：user + 所有 assistant(tool_calls) + tool 结果
 	round := []model.Message{
 		{ID: "u1", Role: "user", Content: "今天干了什么", CreatedAt: now},
 		{ID: "a1", Role: "assistant", Content: `{"reply":"","tool_calls":[{"tool":"note","function":"search"}]}`, CreatedAt: now.Add(time.Second)},
-		{ID: "t1", Role: "tool", Content: `[]`, CreatedAt: now.Add(2 * time.Second), IsInternal: true},
+		{ID: "t1", Role: "tool", Content: `[{"id":"n1","content":"..."}]`, CreatedAt: now.Add(2 * time.Second), IsInternal: true},
 		{ID: "a2", Role: "assistant", Content: `{"reply":"","tool_calls":[{"tool":"memory_search","function":"search"}]}`, CreatedAt: now.Add(3 * time.Second)},
-		{ID: "t2", Role: "tool", Content: `[]`, CreatedAt: now.Add(4 * time.Second), IsInternal: true},
+		{ID: "t2", Role: "tool", Content: `[{"id":"m1","text":"..."}]`, CreatedAt: now.Add(4 * time.Second), IsInternal: true},
 		{ID: "a3", Role: "assistant", Content: "今天你记了笔记、喝了啤酒，过得挺充实😄", CreatedAt: now.Add(5 * time.Second)},
 	}
 	got := FlattenRound(round)
-	if len(got) != 2 {
-		t.Fatalf("expected 2 (user + last assistant), got %d", len(got))
+	// u1 + a1 + t1 + a2 + t2 + a3 = 6
+	if len(got) != 6 {
+		t.Fatalf("expected 6 (full ReAct chain), got %d", len(got))
 	}
-	if got[1].ID != "a3" {
-		t.Errorf("expected final reply a3, got %s", got[1].ID)
+	ids := make([]string, len(got))
+	for i, m := range got {
+		ids[i] = m.ID
 	}
-	if got[1].Content != "今天你记了笔记、喝了啤酒，过得挺充实😄" {
-		t.Errorf("unexpected content: %s", got[1].Content)
+	wantIDs := []string{"u1", "a1", "t1", "a2", "t2", "a3"}
+	for i, want := range wantIDs {
+		if ids[i] != want {
+			t.Errorf("pos %d: expected %s, got %s", i, want, ids[i])
+		}
 	}
 }
 
 func TestFlattenRound_OnlyAssistantIsInternal(t *testing.T) {
 	now := time.Now()
-	// 最后一个 assistant 是 internal draft（验证未通过但已达最大重试），
-	// 前面没有非 internal 的 assistant —— 不应选中 internal 的
+	// internal assistant draft 被过滤，只剩 user
 	round := []model.Message{
 		{ID: "u1", Role: "user", Content: "查一下", CreatedAt: now},
 		{ID: "draft", Role: "assistant", Content: "草稿回复", CreatedAt: now.Add(time.Second), IsInternal: true},

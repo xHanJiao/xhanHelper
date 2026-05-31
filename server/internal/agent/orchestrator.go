@@ -856,22 +856,20 @@ func truncateToolResult(content string, maxLen int) string {
 	return content[:head] + fmt.Sprintf("\n…[已截断 %d 字符]…\n", truncated) + content[len(content)-tail:]
 }
 
-// FlattenRound 裁剪一轮消息为 LLM 上下文格式：只保留 user + 最终 assistant 回复。
-// 用于默认会话加载最近 N 轮时裁剪 tool/internal 消息。
+// FlattenRound 裁剪一轮消息为 LLM 上下文格式。
+// 保留完整的 user → assistant(tool_calls) → tool(result) → assistant(final) 链路，
+// 过滤 system 消息和内部 assistant（verify 草稿），但保留 tool 消息（含 IsInternal 的）。
 func FlattenRound(round []model.Message) []model.Message {
 	var out []model.Message
-	var lastAssistant *model.Message
-	for i := len(round) - 1; i >= 0; i-- {
-		if round[i].Role == "assistant" && !round[i].IsInternal {
-			lastAssistant = &round[i]
-			break
+	for _, m := range round {
+		if m.Role == "system" {
+			continue
 		}
-	}
-	if len(round) > 0 && round[0].Role == "user" {
-		out = append(out, round[0])
-	}
-	if lastAssistant != nil {
-		out = append(out, *lastAssistant)
+		// 跳过 verify 的内部 assistant 草稿，但保留 tool 结果
+		if m.IsInternal && m.Role == "assistant" {
+			continue
+		}
+		out = append(out, m)
 	}
 	return out
 }

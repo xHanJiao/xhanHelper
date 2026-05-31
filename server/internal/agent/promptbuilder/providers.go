@@ -24,13 +24,13 @@ type themeProvider struct {
 
 func (p *themeProvider) Name() string          { return "theme" }
 func (p *themeProvider) SectionHeader() string { return "\n### 用户身上正在发生的事\n" }
-func (p *themeProvider) Search(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
-	threshold := p.cfg.ThemeVectorThreshold
-	if threshold <= 0 {
-		threshold = 0.5
+func (p *themeProvider) Search(ctx context.Context, opts retrieval.SearchOptions) (*SearchResult, error) {
+	if opts.MemoryThreshold <= 0 {
+		opts.MemoryThreshold = 0.5
 	}
+	opts.MemoryLimit = p.cfg.ThemeMaxCount
 
-	packets, nearMiss, err := p.source.Fetch(ctx, opts.Embedding, opts.Query, opts.UserID, opts.ConversationID, threshold, p.cfg.ThemeMaxCount)
+	packets, nearMiss, err := p.source.Fetch(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("theme fetch: %w", err)
 	}
@@ -147,7 +147,7 @@ type memoryProvider struct {
 func (p *memoryProvider) Name() string          { return "memory" }
 func (p *memoryProvider) SectionHeader() string { return "\n### 相关记忆\n" }
 
-func (p *memoryProvider) Search(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
+func (p *memoryProvider) Search(ctx context.Context, opts retrieval.SearchOptions) (*SearchResult, error) {
 	if p.source == nil {
 		return nil, nil
 	}
@@ -155,22 +155,20 @@ func (p *memoryProvider) Search(ctx context.Context, opts SearchOptions) (*Searc
 		return nil, nil
 	}
 
-	threshold := p.cfg.MemoryThreshold
-	if opts.MemoryThreshold > 0 {
-		threshold = opts.MemoryThreshold
+	if opts.MemoryThreshold <= 0 {
+		opts.MemoryThreshold = p.cfg.MemoryThreshold
 	}
-	if threshold <= 0 {
-		threshold = 0.5
+	if opts.MemoryThreshold <= 0 {
+		opts.MemoryThreshold = 0.5
 	}
-	limit := p.cfg.MemoryLimit
-	if opts.MemoryLimit > 0 {
-		limit = opts.MemoryLimit
+	if opts.MemoryLimit <= 0 {
+		opts.MemoryLimit = p.cfg.MemoryLimit
 	}
-	if limit <= 0 {
-		limit = 8
+	if opts.MemoryLimit <= 0 {
+		opts.MemoryLimit = 8
 	}
 
-	packets, nearMiss, err := p.source.Fetch(ctx, opts.Embedding, opts.Query, opts.UserID, opts.ConversationID, threshold, limit)
+	packets, nearMiss, err := p.source.Fetch(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("memory fetch: %w", err)
 	}
@@ -188,7 +186,7 @@ type noteProvider struct {
 func (p *noteProvider) Name() string          { return "note" }
 func (p *noteProvider) SectionHeader() string { return "\n### 相关笔记\n" }
 
-func (p *noteProvider) Search(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
+func (p *noteProvider) Search(ctx context.Context, opts retrieval.SearchOptions) (*SearchResult, error) {
 	if p.source == nil {
 		return nil, nil
 	}
@@ -196,22 +194,20 @@ func (p *noteProvider) Search(ctx context.Context, opts SearchOptions) (*SearchR
 		return nil, nil
 	}
 
-	threshold := p.cfg.NoteThreshold
-	if opts.NoteThreshold > 0 {
-		threshold = opts.NoteThreshold
+	if opts.NoteThreshold <= 0 {
+		opts.NoteThreshold = p.cfg.NoteThreshold
 	}
-	if threshold <= 0 {
-		threshold = 0.5
+	if opts.NoteThreshold <= 0 {
+		opts.NoteThreshold = 0.5
 	}
-	limit := p.cfg.NoteLimit
-	if opts.NoteLimit > 0 {
-		limit = opts.NoteLimit
+	if opts.NoteLimit <= 0 {
+		opts.NoteLimit = p.cfg.NoteLimit
 	}
-	if limit <= 0 {
-		limit = 5
+	if opts.NoteLimit <= 0 {
+		opts.NoteLimit = 5
 	}
 
-	packets, nearMiss, err := p.source.Fetch(ctx, opts.Embedding, opts.Query, opts.UserID, opts.ConversationID, threshold, limit)
+	packets, nearMiss, err := p.source.Fetch(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("note fetch: %w", err)
 	}
@@ -229,7 +225,7 @@ type historyProvider struct {
 func (p *historyProvider) Name() string          { return "history" }
 func (p *historyProvider) SectionHeader() string { return "\n### 历史相关对话\n" }
 
-func (p *historyProvider) Search(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
+func (p *historyProvider) Search(ctx context.Context, opts retrieval.SearchOptions) (*SearchResult, error) {
 	if p.source == nil {
 		return nil, nil
 	}
@@ -237,22 +233,20 @@ func (p *historyProvider) Search(ctx context.Context, opts SearchOptions) (*Sear
 		return nil, nil
 	}
 
-	threshold := p.cfg.HistoryThreshold
-	if opts.HistoryThreshold > 0 {
-		threshold = opts.HistoryThreshold
+	if opts.HistoryThreshold <= 0 {
+		opts.HistoryThreshold = p.cfg.HistoryThreshold
 	}
-	if threshold <= 0 {
-		threshold = 0.8
+	if opts.HistoryThreshold <= 0 {
+		opts.HistoryThreshold = 0.8
 	}
-	limit := p.cfg.HistoryLimit
-	if opts.HistoryLimit > 0 {
-		limit = opts.HistoryLimit
+	if opts.HistoryLimit <= 0 {
+		opts.HistoryLimit = p.cfg.HistoryLimit
 	}
-	if limit <= 0 {
-		limit = 5
+	if opts.HistoryLimit <= 0 {
+		opts.HistoryLimit = 5
 	}
 
-	packets, nearMiss, err := p.source.Fetch(ctx, opts.Embedding, opts.Query, opts.UserID, opts.ConversationID, threshold, limit)
+	packets, nearMiss, err := p.source.Fetch(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("history fetch: %w", err)
 	}

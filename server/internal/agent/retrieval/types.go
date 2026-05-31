@@ -25,11 +25,29 @@ type NearMissItem struct {
 	Reason      string  `json:"reason"` // "below_threshold" | "wrong_prefix" | "same_conversation" | "db_not_found"
 }
 
+// SearchOptions — 检索参数，供 ContextSource.Fetch 和 SearchProvider.Search 共用。
+type SearchOptions struct {
+	Query          string // 用户原始文本（ranker 关键词打分用）
+	UserID         string
+	ConversationID string
+	Embedding      []float64 // 用户消息的 embedding（向量检索用）
+
+	// 可选检索覆盖（0 值表示使用 Provider 默认值）
+	MemoryThreshold  float64
+	MemoryLimit      int
+	NoteThreshold    float64
+	NoteLimit        int
+	HistoryThreshold float64
+	HistoryLimit     int
+
+	// 排除已在当前消息列表中的消息 ID（避免系统提示词与历史消息重复）
+	ExcludeMsgIDs map[string]bool
+}
+
 // ContextSource — 上下文数据源接口
 type ContextSource interface {
 	Name() string
-	Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
-		threshold float64, limit int) (selected []ContextPacket, nearMiss []NearMissItem, err error)
+	Fetch(ctx context.Context, opts SearchOptions) (selected []ContextPacket, nearMiss []NearMissItem, err error)
 	Warmup(ctx context.Context, embedder *llm.Embedder)
 }
 

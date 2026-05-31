@@ -35,8 +35,12 @@ func NewNoteSource(vs VectorStore, noteRepo *service.NoteRepo, embeddingRepo *se
 
 func (s *NoteSource) Name() string { return "note" }
 
-func (s *NoteSource) Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
-	threshold float64, limit int) ([]ContextPacket, []NearMissItem, error) {
+func (s *NoteSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextPacket, []NearMissItem, error) {
+	queryVec := opts.Embedding
+	query := opts.Query
+	userID := opts.UserID
+	threshold := opts.NoteThreshold
+	limit := opts.NoteLimit
 
 	var nearMiss []NearMissItem
 

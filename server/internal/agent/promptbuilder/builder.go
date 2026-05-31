@@ -29,6 +29,9 @@ type BuildOptions struct {
 	NoteLimit        int
 	HistoryThreshold float64
 	HistoryLimit     int
+
+	// 排除已在当前消息列表中的消息 ID
+	ExcludeMsgIDs map[string]bool
 }
 
 // BuildResult — Build() 的返回值。
@@ -152,7 +155,7 @@ func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts Buil
 		return nil, nil
 	}
 
-	searchOpts := SearchOptions{
+	searchOpts := retrieval.SearchOptions{
 		Query:            opts.UserMessage,
 		UserID:           opts.UserID,
 		ConversationID:   opts.ConversationID,
@@ -163,6 +166,7 @@ func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts Buil
 		NoteLimit:        opts.NoteLimit,
 		HistoryThreshold: opts.HistoryThreshold,
 		HistoryLimit:     opts.HistoryLimit,
+		ExcludeMsgIDs:    opts.ExcludeMsgIDs,
 	}
 
 	// —— 1. 并发检索 ——

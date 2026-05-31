@@ -198,6 +198,14 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 }
 
 func mkPromptBuildOpt(req *RunRequest, queryVec []float64) promptbuilder.BuildOptions {
+	// 从已有消息中采集 DB ID，供检索时去重
+	excludeMsgIDs := make(map[string]bool)
+	for _, m := range req.Messages {
+		if m.ID != "" {
+			excludeMsgIDs[m.ID] = true
+		}
+	}
+
 	return promptbuilder.BuildOptions{
 		UserID:           req.UserID,
 		ConversationID:   req.ConversationID,
@@ -210,6 +218,7 @@ func mkPromptBuildOpt(req *RunRequest, queryVec []float64) promptbuilder.BuildOp
 		NoteLimit:        req.NoteLimit,
 		HistoryThreshold: req.HistoryThreshold,
 		HistoryLimit:     req.HistoryLimit,
+		ExcludeMsgIDs:    excludeMsgIDs,
 	}
 }
 
@@ -884,7 +893,7 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int) []ll
 				Content: truncateToolResult(m.Content, maxToolResultChars),
 			})
 		} else {
-			msg := llm.Message{Role: m.Role, Content: m.Content}
+			msg := llm.Message{ID: m.ID, Role: m.Role, Content: m.Content}
 			if m.ToolCallID != nil {
 				msg.ToolCallID = *m.ToolCallID
 			}
@@ -915,7 +924,7 @@ func BuildMessagesForPro(history []model.Message, maxToolResultChars int) []llm.
 		if m.Role == "tool" {
 			content = truncateToolResult(m.Content, maxToolResultChars)
 		}
-		msg := llm.Message{Role: m.Role, Content: content + ts}
+		msg := llm.Message{ID: m.ID, Role: m.Role, Content: content + ts}
 		if m.ToolCallID != nil {
 			msg.ToolCallID = *m.ToolCallID
 		}

@@ -71,7 +71,7 @@ type historyHit struct {
 
 // filterHits 从向量搜索结果中过滤出有效的历史消息命中，返回 hits 和 nearMiss。
 func (s *HistorySource) filterHits(ctx context.Context, queryVec []float64, userID, convID string,
-	threshold float64, limit int) ([]historyHit, []NearMissItem, error) {
+	threshold float64, limit int, excludeMsgIDs map[string]bool) ([]historyHit, []NearMissItem, error) {
 
 	results := s.vectorStore.Search(queryVec, limit*2, func(e Entry) bool {
 		return e.Metadata["type"] == "msg" && e.Metadata["user_id"] == userID
@@ -92,13 +92,13 @@ func (s *HistorySource) filterHits(ctx context.Context, queryVec []float64, user
 			nearMiss = append(nearMiss, NearMissItem{ID: msgID, Text: msgID, VectorScore: res.Score, Reason: "below_threshold"})
 			continue
 		}
+		if excludeMsgIDs != nil && excludeMsgIDs[msgID] {
+			nearMiss = append(nearMiss, NearMissItem{ID: msgID, Text: msgID, VectorScore: res.Score, Reason: "already_in_context"})
+			continue
+		}
 		msg, err := s.msgRepo.GetByIDCols(ctx, msgID)
 		if err != nil || msg == nil {
 			nearMiss = append(nearMiss, NearMissItem{ID: msgID, Text: msgID, VectorScore: res.Score, Reason: "db_not_found"})
-			continue
-		}
-		if msg.ConversationID == convID {
-			nearMiss = append(nearMiss, NearMissItem{ID: msgID, Text: msgID, VectorScore: res.Score, Reason: "same_conversation"})
 			continue
 		}
 		if msg.UserID != userID {
@@ -158,10 +158,16 @@ func (s *HistorySource) fetchRounds(ctx context.Context, scored []scoreResult) (
 	return m, nil
 }
 
-func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
-	threshold float64, limit int) ([]ContextPacket, []NearMissItem, error) {
+func (s *HistorySource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextPacket, []NearMissItem, error) {
+	queryVec := opts.Embedding
+	query := opts.Query
+	userID := opts.UserID
+	convID := opts.ConversationID
+	threshold := opts.HistoryThreshold
+	limit := opts.HistoryLimit
+	excludeMsgIDs := opts.ExcludeMsgIDs
 
-	hits, nearMiss, err := s.filterHits(ctx, queryVec, userID, convID, threshold, limit)
+	hits, nearMiss, err := s.filterHits(ctx, queryVec, userID, convID, threshold, limit, excludeMsgIDs)
 	if err != nil {
 		return nil, nil, err
 	}

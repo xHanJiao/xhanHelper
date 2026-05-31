@@ -40,24 +40,7 @@ type SearchResult struct {
 type SearchProvider interface {
 	Name() string
 	SectionHeader() string // 注入 prompt 时的 section 标题，空字符串=不分组输出
-	Search(ctx context.Context, opts SearchOptions) (*SearchResult, error)
-}
-
-// SearchOptions — SearchProvider.Search() 的检索参数。
-// 与 BuildOptions 分离，避免 SearchProvider 依赖 BuildOptions 的全部字段。
-type SearchOptions struct {
-	Query          string // 用户原始文本（ranker 关键词打分用）
-	UserID         string
-	ConversationID string
-	Embedding      []float64 // 用户消息的 embedding（向量检索用）
-
-	// 可选检索覆盖（0 值表示使用 PromptConfig 默认值）
-	MemoryThreshold  float64
-	MemoryLimit      int
-	NoteThreshold    float64
-	NoteLimit        int
-	HistoryThreshold float64
-	HistoryLimit     int
+	Search(ctx context.Context, opts retrieval.SearchOptions) (*SearchResult, error)
 }
 
 // ==================== Prompt Trace ====================

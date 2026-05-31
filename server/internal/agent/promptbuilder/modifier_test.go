@@ -47,7 +47,7 @@ type simpleProvider struct {
 
 func (p *simpleProvider) Name() string          { return p.name }
 func (p *simpleProvider) SectionHeader() string { return p.header }
-func (p *simpleProvider) Search(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
+func (p *simpleProvider) Search(ctx context.Context, opts retrieval.SearchOptions) (*SearchResult, error) {
 	return &SearchResult{Items: p.items}, nil
 }
 
@@ -69,7 +69,7 @@ func TestWithScoreModifier(t *testing.T) {
 		t.Errorf("SectionHeader should delegate to inner")
 	}
 
-	sr, err := wrapped.Search(context.Background(), SearchOptions{})
+	sr, err := wrapped.Search(context.Background(), retrieval.SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestBoostClampedAtZero(t *testing.T) {
 func TestWithScoreModifierNilResult(t *testing.T) {
 	inner := &simpleProvider{name: "empty"}
 	wrapped := WithScoreModifier(inner, BoostFactor(2.0))
-	sr, err := wrapped.Search(context.Background(), SearchOptions{})
+	sr, err := wrapped.Search(context.Background(), retrieval.SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestWithScoreModifierSyncsTraceItems(t *testing.T) {
 	}
 	wrapped := WithScoreModifier(inner, BoostFactor(2.0))
 
-	sr, err := wrapped.Search(context.Background(), SearchOptions{})
+	sr, err := wrapped.Search(context.Background(), retrieval.SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +160,6 @@ type traceProvider struct {
 
 func (p *traceProvider) Name() string          { return "trace-test" }
 func (p *traceProvider) SectionHeader() string { return "" }
-func (p *traceProvider) Search(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
+func (p *traceProvider) Search(ctx context.Context, opts retrieval.SearchOptions) (*SearchResult, error) {
 	return &SearchResult{Items: p.items, TraceItems: p.traceItems}, nil
 }

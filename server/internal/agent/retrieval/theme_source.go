@@ -21,8 +21,10 @@ func NewThemeSource(themeStateRepo *service.ThemeStateRepo, vs VectorStore) *The
 
 func (s *ThemeSource) Name() string { return "theme" }
 
-func (s *ThemeSource) Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
-	threshold float64, limit int) ([]ContextPacket, []NearMissItem, error) {
+func (s *ThemeSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextPacket, []NearMissItem, error) {
+	queryVec := opts.Embedding
+	userID := opts.UserID
+	threshold := opts.MemoryThreshold
 
 	activeThemes, err := s.themeStateRepo.ListActive(ctx, userID)
 	if err != nil {

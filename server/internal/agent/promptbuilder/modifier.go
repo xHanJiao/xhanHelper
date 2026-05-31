@@ -43,7 +43,7 @@ type scoreModifierProvider struct {
 
 func (p *scoreModifierProvider) Name() string          { return p.inner.Name() }
 func (p *scoreModifierProvider) SectionHeader() string { return p.inner.SectionHeader() }
-func (p *scoreModifierProvider) Search(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
+func (p *scoreModifierProvider) Search(ctx context.Context, opts retrieval.SearchOptions) (*SearchResult, error) {
 	sr, err := p.inner.Search(ctx, opts)
 	if err != nil || sr == nil {
 		return sr, err

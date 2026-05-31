@@ -220,7 +220,7 @@ type testSearchProvider struct {
 
 func (p *testSearchProvider) Name() string          { return p.name }
 func (p *testSearchProvider) SectionHeader() string { return "" }
-func (p *testSearchProvider) Search(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
+func (p *testSearchProvider) Search(ctx context.Context, opts retrieval.SearchOptions) (*SearchResult, error) {
 	return &SearchResult{Items: p.items}, nil
 }
 
@@ -228,7 +228,7 @@ type errorSearchProvider struct{}
 
 func (p *errorSearchProvider) Name() string          { return "error" }
 func (p *errorSearchProvider) SectionHeader() string { return "" }
-func (p *errorSearchProvider) Search(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
+func (p *errorSearchProvider) Search(ctx context.Context, opts retrieval.SearchOptions) (*SearchResult, error) {
 	return nil, context.DeadlineExceeded
 }
 

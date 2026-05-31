@@ -28,6 +28,7 @@ type ChatRequest struct {
 
 // Message — 一条对话消息
 type Message struct {
+	ID               string     `json:"-"` // DB 消息 ID，不进入 LLM 请求体
 	Role             string     `json:"role"`
 	Content          string     `json:"content"`
 	ReasoningContent string     `json:"reasoning_content,omitempty"`

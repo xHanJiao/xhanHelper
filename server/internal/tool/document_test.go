@@ -174,6 +174,187 @@ func TestDocumentCreateValidation(t *testing.T) {
 	}
 }
 
+func TestDocumentListAndQuery(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	// 创建 3 篇文档
+	for i, item := range []struct{ title, content, tags string }{
+		{"项目管理笔记", "记录了一些项目管理的方法论和实践经验", "项目管理,笔记"},
+		{"Go 后端设计", "后端架构设计文档，包括 API 规范", "技术,Go,后端"},
+		{"周报 2026-05", "本周完成了默认会话和历史检索两个大功能", "周报"},
+	} {
+		res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{
+			"title": item.title, "content": item.content, "tags": item.tags,
+		}))
+		if !res.Success {
+			t.Fatalf("create doc %d failed: %s", i, res.Error)
+		}
+	}
+
+	t.Run("list_documents", func(t *testing.T) {
+		res := tool.Execute(ec, "list_documents", mustMarshal(t, map[string]interface{}{}))
+		if !res.Success {
+			t.Fatalf("list_documents failed: %s", res.Error)
+		}
+		var resp struct {
+			Documents []struct {
+				ID      string `json:"id"`
+				Title   string `json:"title"`
+				Tags    string `json:"tags"`
+				Preview string `json:"preview"`
+				Total   int    `json:"-"`
+			} `json:"documents"`
+			Total int `json:"total"`
+		}
+		json.Unmarshal(res.Data, &resp)
+		if resp.Total != 3 {
+			t.Errorf("expected total 3, got %d", resp.Total)
+		}
+		if len(resp.Documents) != 3 {
+			t.Fatalf("expected 3 documents, got %d", len(resp.Documents))
+		}
+		// preview 应截断在 50 字以内
+		if len([]rune(resp.Documents[0].Preview)) > 50 {
+			t.Errorf("preview too long: %d chars", len([]rune(resp.Documents[0].Preview)))
+		}
+	})
+
+	t.Run("list_documents_pagination", func(t *testing.T) {
+		res := tool.Execute(ec, "list_documents", mustMarshal(t, map[string]interface{}{
+			"limit": 2, "offset": 0,
+		}))
+		var resp struct {
+			Documents []struct{} `json:"documents"`
+			Total     float64    `json:"total"`
+		}
+		json.Unmarshal(res.Data, &resp)
+		if len(resp.Documents) != 2 {
+			t.Errorf("expected 2 docs, got %d", len(resp.Documents))
+		}
+		if int(resp.Total) != 3 {
+			t.Errorf("total should still be 3, got %v", resp.Total)
+		}
+	})
+
+	t.Run("query_documents_by_tag", func(t *testing.T) {
+		res := tool.Execute(ec, "query_documents", mustMarshal(t, map[string]string{"tag": "项目管理"}))
+		var resp struct {
+			Documents []map[string]interface{} `json:"documents"`
+			Total     int                      `json:"total"`
+		}
+		json.Unmarshal(res.Data, &resp)
+		if resp.Total != 1 {
+			t.Errorf("expected 1 doc with tag '项目管理', got %d", resp.Total)
+		}
+	})
+
+	t.Run("query_documents_by_keyword", func(t *testing.T) {
+		res := tool.Execute(ec, "query_documents", mustMarshal(t, map[string]string{"keyword": "后端"}))
+		var resp struct {
+			Documents []map[string]interface{} `json:"documents"`
+			Total     int                      `json:"total"`
+		}
+		json.Unmarshal(res.Data, &resp)
+		if resp.Total != 1 {
+			t.Errorf("expected 1 doc with keyword '后端', got %d", resp.Total)
+		}
+	})
+
+	t.Run("query_no_match", func(t *testing.T) {
+		res := tool.Execute(ec, "query_documents", mustMarshal(t, map[string]string{"keyword": "不存在的内容xyz"}))
+		var resp struct {
+			Documents []interface{} `json:"documents"`
+			Total     int           `json:"total"`
+		}
+		json.Unmarshal(res.Data, &resp)
+		if resp.Total != 0 {
+			t.Errorf("expected 0 matches, got %d", resp.Total)
+		}
+	})
+}
+
+func TestDocumentListTags(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	// 初始无标签
+	res := tool.Execute(ec, "list_tags", mustMarshal(t, map[string]interface{}{}))
+	var resp struct {
+		Tags []string `json:"tags"`
+	}
+	json.Unmarshal(res.Data, &resp)
+	if len(resp.Tags) != 0 {
+		t.Errorf("expected 0 tags initially, got %d: %v", len(resp.Tags), resp.Tags)
+	}
+
+	// 创建带标签的文档
+	tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
+		"title": "doc1", "content": "c1", "tags": "Go, 后端, 技术",
+	}))
+	tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
+		"title": "doc2", "content": "c2", "tags": "项目管理, 技术",
+	}))
+
+	res = tool.Execute(ec, "list_tags", mustMarshal(t, map[string]interface{}{}))
+	json.Unmarshal(res.Data, &resp)
+	// 应去重：Go, 后端, 技术, 项目管理 = 4 个
+	if len(resp.Tags) != 4 {
+		t.Errorf("expected 4 unique tags, got %d: %v", len(resp.Tags), resp.Tags)
+	}
+	expected := map[string]bool{"Go": true, "后端": true, "技术": true, "项目管理": true}
+	for _, tag := range resp.Tags {
+		if !expected[tag] {
+			t.Errorf("unexpected tag: %s", tag)
+		}
+	}
+}
+
+func TestDocumentDelete(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	// create
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
+		"title": "to-delete", "content": "content",
+	}))
+	var created map[string]interface{}
+	json.Unmarshal(res.Data, &created)
+	docID := created["id"].(string)
+
+	// delete
+	res = tool.Execute(ec, "delete_document", mustMarshal(t, map[string]string{"id": docID}))
+	if !res.Success {
+		t.Fatalf("delete failed: %s", res.Error)
+	}
+
+	// 验证不存在
+	res = tool.Execute(ec, "get_document", mustMarshal(t, map[string]string{"id": docID}))
+	if res.Success {
+		t.Error("expected failure after delete")
+	}
+
+	// delete 不存在的也应正常
+	res = tool.Execute(ec, "delete_document", mustMarshal(t, map[string]string{"id": "nonexistent"}))
+	if !res.Success {
+		t.Errorf("expected success for deleting nonexistent doc, got: %s", res.Error)
+	}
+}
+
+func TestDocumentUnknownFunction(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	res := tool.Execute(ec, "nonexistent_func", mustMarshal(t, map[string]interface{}{}))
+	if res.Success {
+		t.Error("expected failure for unknown function")
+	}
+}
+
 func mustMarshal(t *testing.T, v interface{}) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(v)

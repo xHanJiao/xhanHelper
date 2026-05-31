@@ -102,6 +102,21 @@ func (t *DocumentTool) Functions() []FuncSchema {
 			},
 		},
 		{
+			Name:        "list_documents",
+			Description: "获取文档列表（按更新时间倒序）。返回 title、tags、preview（正文前50字），不含全文。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"limit":  map[string]interface{}{"type": "integer", "description": "每页条数，默认 20"},
+					"offset": map[string]interface{}{"type": "integer", "description": "偏移量，默认 0"},
+				},
+			},
+		},
+		{
+			Name:        "list_tags",
+			Description: "获取当前用户所有文档中使用过的标签列表。用于了解有哪些标签可供 query_documents 筛选。",
+		},
+		{
 			Name:        "delete_document",
 			Description: "删除一篇文档。",
 			Parameters: map[string]interface{}{
@@ -129,6 +144,10 @@ func (t *DocumentTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 		return t.queryDocuments(ec, args)
 	case "delete_document":
 		return t.deleteDocument(ec, args)
+	case "list_documents":
+		return t.listDocuments(ec, args)
+	case "list_tags":
+		return t.listTags(ec)
 	case "get_document_versions":
 		return t.getDocumentVersions(ec, args)
 	default:
@@ -415,5 +434,48 @@ func (t *DocumentTool) deleteDocument(ec *ExecuteContext, args json.RawMessage) 
 	}
 
 	data, _ := json.Marshal(map[string]interface{}{"id": req.ID, "message": "文档已删除"})
+	return &Result{Success: true, Data: data}
+}
+
+func (t *DocumentTool) listDocuments(ec *ExecuteContext, args json.RawMessage) *Result {
+	var req struct {
+		Limit  int `json:"limit"`
+		Offset int `json:"offset"`
+	}
+	json.Unmarshal(args, &req)
+	if req.Limit <= 0 {
+		req.Limit = 20
+	}
+
+	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, "", "", req.Limit, req.Offset)
+	if err != nil {
+		return &Result{Success: false, Error: "list documents: " + err.Error()}
+	}
+
+	result := make([]map[string]interface{}, 0, len(list))
+	for _, d := range list {
+		result = append(result, map[string]interface{}{
+			"id":         d.ID,
+			"title":      d.Title,
+			"tags":       d.Tags,
+			"preview":    util.TruncateContent(d.Content, 50),
+			"created_at": d.CreatedAt,
+			"updated_at": d.UpdatedAt,
+		})
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"documents": result,
+		"total":     total,
+	})
+	return &Result{Success: true, Data: data}
+}
+
+func (t *DocumentTool) listTags(ec *ExecuteContext) *Result {
+	tags, err := t.docRepo.ListTags(ec.Ctx, ec.UserID)
+	if err != nil {
+		return &Result{Success: false, Error: "list tags: " + err.Error()}
+	}
+	data, _ := json.Marshal(map[string]interface{}{"tags": tags})
 	return &Result{Success: true, Data: data}
 }

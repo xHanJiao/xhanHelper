@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -67,4 +68,29 @@ func (r *DocumentRepo) List(ctx context.Context, userID, tag, keyword string, li
 	var list []model.Document
 	err := q.Order("updated_at DESC").Limit(limit).Offset(offset).Find(&list).Error
 	return list, total, err
+}
+
+// ListTags 获取用户所有文档的去重标签列表
+func (r *DocumentRepo) ListTags(ctx context.Context, userID string) ([]string, error) {
+	var tags []string
+	err := r.db.WithContext(ctx).
+		Model(&model.Document{}).
+		Where("user_id = ? AND tags != ''", userID).
+		Pluck("tags", &tags).Error
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool)
+	var result []string
+	for _, t := range tags {
+		for _, part := range strings.Split(t, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" && !seen[part] {
+				seen[part] = true
+				result = append(result, part)
+			}
+		}
+	}
+	return result, nil
 }

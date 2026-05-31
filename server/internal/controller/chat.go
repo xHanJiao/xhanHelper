@@ -49,9 +49,15 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			if err != nil {
 				log.Printf("[chat] FindByID error: %v", err)
 			}
+		} else {
+			// 新入口：查找默认会话，不存在则创建
+			conv, _ = convRepo.FindDefaultByUser(c.Request.Context(), userID)
 		}
 		if conv == nil {
 			conv = &model.Conversation{ID: uuid.New().String(), UserID: userID}
+			if req.ConversationID == nil {
+				conv.IsDefault = true
+			}
 			if req.AgentID != nil && *req.AgentID != "" {
 				conv.AgentID = req.AgentID
 			}
@@ -61,6 +67,10 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 				return
 			}
 		}
+
+		// 使用 conversation 的 IsDefault 标记判断，而非请求参数
+		// 保证后续携带 conversation_id 的请求也能正确走 HistoryBuilder 路径
+		isDefaultConv := conv.IsDefault
 
 		// 加载智能体 system prompt 和 LLM 参数（新会话和续聊都支持）
 		var agentSystemPrompt string
@@ -113,16 +123,42 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		}
 		pipelineCtx := pipeline.WithPreContext(c.Request.Context(), pc)
 
-		pl, err := pipeline.NewPipeline(
-			pipeline.NewShortInputCheckStep(),
-			pipeline.NewNormalizeDatesStep(),
-			pipeline.NewAutoRouteStep(orch.FlashClient(), agentRepo, conv.AgentID, conv.ID, msgRepo, cfg.Server.AgentRouteTriggers, convRepo),
-		)
-		if err != nil {
-			log.Printf("[chat] pipeline init error: %v", err)
-		}
-		if _, pipeErr := pl.Run(pipelineCtx); pipeErr != nil {
-			log.Printf("[chat] pipeline run error: %v", pipeErr)
+		// 默认会话跳过自动路由（手动选择 agent 不受影响）
+		if isDefaultConv {
+			pl, err := pipeline.NewPipeline(
+				pipeline.NewShortInputCheckStep(),
+				pipeline.NewNormalizeDatesStep(),
+			)
+			if err != nil {
+				log.Printf("[chat] pipeline init error: %v", err)
+			}
+			if _, pipeErr := pl.Run(pipelineCtx); pipeErr != nil {
+				log.Printf("[chat] pipeline run error: %v", pipeErr)
+			}
+		} else {
+			pl, err := pipeline.NewPipeline(
+				pipeline.NewShortInputCheckStep(),
+				pipeline.NewNormalizeDatesStep(),
+				pipeline.NewAutoRouteStep(orch.FlashClient(), agentRepo, conv.AgentID, conv.ID, msgRepo, cfg.Server.AgentRouteTriggers, convRepo),
+			)
+			if err != nil {
+				log.Printf("[chat] pipeline init error: %v", err)
+			}
+			if _, pipeErr := pl.Run(pipelineCtx); pipeErr != nil {
+				log.Printf("[chat] pipeline run error: %v", pipeErr)
+			}
+
+			// 读取管线结果
+			if pc.AgentID != "" && !userSpecifiedAgent {
+				agentID = pc.AgentID
+				agentSystemPrompt = pc.AgentSystemPrompt
+				if conv.AgentID == nil || *conv.AgentID == "" {
+					conv.AgentID = &pc.AgentID
+					if err := convRepo.SetAgentID(c.Request.Context(), conv.ID, pc.AgentID); err != nil {
+						log.Printf("[chat] SetAgentID error: %v", err)
+					}
+				}
+			}
 		}
 
 		// 读取管线结果
@@ -130,20 +166,25 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		if normalizedMsg == "" {
 			normalizedMsg = req.Message
 		}
-		if pc.AgentID != "" && !userSpecifiedAgent {
-			agentID = pc.AgentID
-			agentSystemPrompt = pc.AgentSystemPrompt
-			if conv.AgentID == nil || *conv.AgentID == "" {
-				conv.AgentID = &pc.AgentID
-				if err := convRepo.SetAgentID(c.Request.Context(), conv.ID, pc.AgentID); err != nil {
-					log.Printf("[chat] SetAgentID error: %v", err)
-				}
-			}
-		}
 
-		history, err := msgRepo.ListByConversationRecent(c.Request.Context(), conv.ID, 200)
-		if err != nil {
-			log.Printf("[chat] ListByConversation error: %v", err)
+		// 加载历史消息
+		var history []model.Message
+		if isDefaultConv {
+			// 默认会话：取最近 20 轮，每轮只保留 user + 最终 assistant 回复
+			rounds, err := msgRepo.ListRecentRounds(c.Request.Context(), conv.ID, 20)
+			if err != nil {
+				log.Printf("[chat] ListRecentRounds error: %v", err)
+			}
+			for _, round := range rounds {
+				history = append(history, agent.FlattenRound(round)...)
+			}
+		} else {
+			// 老路径：全量 200 条
+			var err error
+			history, err = msgRepo.ListByConversationRecent(c.Request.Context(), conv.ID, 200)
+			if err != nil {
+				log.Printf("[chat] ListByConversation error: %v", err)
+			}
 		}
 
 		w := c.Writer

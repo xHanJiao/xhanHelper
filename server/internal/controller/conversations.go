@@ -9,12 +9,55 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
+
+// getDefaultConversation 获取或创建用户的默认会话
+func getDefaultConversation(convRepo *service.ConversationRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetString("user_id")
+
+		conv, err := convRepo.FindDefaultByUser(c.Request.Context(), userID)
+		if err != nil {
+			log.Printf("[conv] FindDefaultByUser error: %v", err)
+		}
+		if conv == nil {
+			conv = &model.Conversation{
+				ID:        uuid.New().String(),
+				UserID:    userID,
+				IsDefault: true,
+			}
+			if err := convRepo.Create(c.Request.Context(), conv); err != nil {
+				log.Printf("[conv] CreateDefault error: %v", err)
+				view.JSONError(c, 500, "create default conversation failed")
+				return
+			}
+		}
+
+		resp := map[string]interface{}{
+			"id":         conv.ID,
+			"title":      conv.Title,
+			"is_default": conv.IsDefault,
+			"agent_id":   conv.AgentID,
+			"created_at": conv.CreatedAt,
+			"updated_at": conv.UpdatedAt,
+		}
+		if conv.AgentID != nil && *conv.AgentID != "" && agentRepo != nil {
+			a, err := agentRepo.FindByID(c.Request.Context(), *conv.AgentID, userID)
+			if err != nil {
+				log.Printf("[conv] default conv agent lookup error: %v", err)
+			} else if a != nil {
+				resp["agent_name"] = a.Name
+			}
+		}
+		view.JSONOK(c, resp)
+	}
+}
 
 func listConversations(convRepo *service.ConversationRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {

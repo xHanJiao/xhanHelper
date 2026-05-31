@@ -69,8 +69,9 @@ type historyHit struct {
 	vecScore float64
 }
 
-func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
-	threshold float64, limit int) ([]ContextPacket, []NearMissItem, error) {
+// filterHits 从向量搜索结果中过滤出有效的历史消息命中，返回 hits 和 nearMiss。
+func (s *HistorySource) filterHits(ctx context.Context, queryVec []float64, userID, convID string,
+	threshold float64, limit int) ([]historyHit, []NearMissItem, error) {
 
 	results := s.vectorStore.Search(queryVec, limit*2, func(e Entry) bool {
 		return e.Metadata["type"] == "msg" && e.Metadata["user_id"] == userID
@@ -106,7 +107,64 @@ func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, query, us
 		}
 		hits = append(hits, historyHit{msg: msg, vecScore: res.Score})
 	}
+	return hits, nearMiss, nil
+}
 
+// buildPackets 将 scorer 结果 + 对应轮裁剪格式化为 ContextPacket（相关度降序）。
+// 同时返回无法匹配到轮或裁剪后为空的 nearMiss 条目。
+func buildPackets(scored []scoreResult, roundByUserMsgID map[string][]model.Message) ([]ContextPacket, []NearMissItem) {
+	var packets []ContextPacket
+	var nearMiss []NearMissItem
+	for _, sr := range scored {
+		round, ok := roundByUserMsgID[sr.ID]
+		if !ok {
+			nearMiss = append(nearMiss, NearMissItem{ID: sr.ID, Text: sr.ID, VectorScore: sr.VectorScore, Reason: "round_empty"})
+			continue
+		}
+		filtered := FilterMessageRound(round, sr.ID)
+		if len(filtered) == 0 {
+			nearMiss = append(nearMiss, NearMissItem{ID: sr.ID, Text: sr.ID, VectorScore: sr.VectorScore, Reason: "round_empty"})
+			continue
+		}
+		text := FormatMessageRound(filtered, sr.FinalScore)
+		packets = append(packets, ContextPacket{
+			ID:           sr.ID,
+			Type:         "history",
+			Text:         text,
+			Score:        sr.VectorScore,
+			FinalScore:   sr.FinalScore,
+			KeywordScore: sr.KeywordScore,
+		})
+	}
+	return packets, nearMiss
+}
+
+// fetchRounds 根据 scorer 结果批量获取完整轮，返回 ID → round 映射。
+func (s *HistorySource) fetchRounds(ctx context.Context, scored []scoreResult) (map[string][]model.Message, error) {
+	var ids []string
+	for _, sr := range scored {
+		ids = append(ids, sr.ID)
+	}
+	rounds, err := s.msgRepo.GetRoundsByUserMsgIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("history fetch rounds: %w", err)
+	}
+	m := make(map[string][]model.Message, len(rounds))
+	for _, r := range rounds {
+		if len(r) > 0 && r[0].Role == "user" {
+			m[r[0].ID] = r
+		}
+	}
+	return m, nil
+}
+
+func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, query, userID, convID string,
+	threshold float64, limit int) ([]ContextPacket, []NearMissItem, error) {
+
+	hits, nearMiss, err := s.filterHits(ctx, queryVec, userID, convID, threshold, limit)
+	if err != nil {
+		return nil, nil, err
+	}
 	if len(hits) == 0 {
 		return nil, nearMiss, nil
 	}
@@ -122,39 +180,12 @@ func (s *HistorySource) Fetch(ctx context.Context, queryVec []float64, query, us
 	}
 	scored := s.ranker.Score(query, inputs)
 
-	hitMap := make(map[string]*model.Message, len(hits))
-	for _, h := range hits {
-		hitMap[h.msg.ID] = h.msg
+	roundByUserMsgID, err := s.fetchRounds(ctx, scored)
+	if err != nil {
+		return nil, nearMiss, err
 	}
 
-	var packets []ContextPacket
-	for _, sr := range scored {
-		msg := hitMap[sr.ID]
-		if msg == nil {
-			continue
-		}
-		roundMsgs, err := s.msgRepo.GetMessagesSince(ctx, msg.ConversationID, msg.CreatedAt, 100)
-		if err != nil {
-			nearMiss = append(nearMiss, NearMissItem{ID: msg.ID, Text: msg.ID, VectorScore: sr.VectorScore, Reason: "round_fetch_error"})
-			continue
-		}
-		filtered := FilterMessageRound(roundMsgs, msg.ID)
-		if len(filtered) == 0 {
-			nearMiss = append(nearMiss, NearMissItem{ID: msg.ID, Text: msg.ID, VectorScore: sr.VectorScore, Reason: "round_empty"})
-			continue
-		}
-
-		text := FormatMessageRound(filtered, msg.ConversationID)
-		text += fmt.Sprintf("  (相关度 %.2f)\n", sr.FinalScore)
-		packets = append(packets, ContextPacket{
-			ID:           msg.ID,
-			Type:         "history",
-			Text:         text,
-			Score:        sr.VectorScore,
-			FinalScore:   sr.FinalScore,
-			KeywordScore: sr.KeywordScore,
-		})
-	}
-
+	packets, extraNearMiss := buildPackets(scored, roundByUserMsgID)
+	nearMiss = append(nearMiss, extraNearMiss...)
 	return packets, nearMiss, nil
 }

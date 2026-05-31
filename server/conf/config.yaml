@@ -35,6 +35,7 @@ llm:
   default_max_tokens: 30000
   max_iterations: 20
   max_tool_result_chars: 2000
+  extract_msg_limit: 50            # 记忆提取每次最多取的消息数
   verification:
     enabled: true
     model: flash               # flash | pro，检验用模型
@@ -71,5 +72,5 @@ retrieval:
     keyword_weight: 0.3
     freshness_weight: 0.1
     freshness_decay: 0.005
-    threshold: 0.8
+    threshold: 0.5
     limit: 5

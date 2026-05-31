@@ -2,6 +2,12 @@ package model
 
 import "time"
 
+// 消息状态常量
+const (
+	MsgStatusNormal  = 1 // 正常
+	MsgStatusDeleted = 2 // 已删除
+)
+
 // Message — 对话消息
 type Message struct {
 	ID               string    `gorm:"primaryKey;size:36" json:"id"`

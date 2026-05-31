@@ -88,11 +88,6 @@ watch(() => auth.token, (token) => {
   }
 }, { immediate: true })
 
-function handleNewConversation() {
-  chat.reset()
-  router.push('/chat')
-}
-
 function handleRename(conv) {
   renamingId.value = conv.id
   renamingTitle.value = conv.title
@@ -132,22 +127,6 @@ function handleSelect(conv) {
 
 <template>
   <div style="width: 280px; background: var(--color-surface); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; height: 100%;">
-    <!-- 新对话按钮 -->
-    <div style="padding: var(--space-md) var(--space-md) 0;">
-      <button
-        @click="handleNewConversation"
-        style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 0; border: 1px solid var(--color-border); border-radius: 24px; background: var(--color-primary-soft); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); color: var(--color-text-secondary); font-size: 14px; font-weight: 500; cursor: pointer; transition: all var(--transition-fast);"
-        @mouseover="e => { e.currentTarget.style.background = 'var(--color-primary)'; e.currentTarget.style.borderColor = 'var(--color-primary)'; e.currentTarget.style.color = '#fff'; }"
-        @mouseout="e => { e.currentTarget.style.background = 'var(--color-primary-soft)'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-          <line x1="12" y1="5" x2="12" y2="19"/>
-          <line x1="5" y1="12" x2="19" y2="12"/>
-        </svg>
-        新对话
-      </button>
-    </div>
-
     <!-- 导航区 -->
     <div style="padding: var(--space-md) var(--space-md) var(--space-sm);">
       <div

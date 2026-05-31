@@ -71,14 +71,14 @@ func TestFormatMessageRound(t *testing.T) {
 		{ID: "m2", ConversationID: "conv1", Role: "assistant", Content: "你的账单如下：共计342元", CreatedAt: now.Add(time.Second)},
 	}
 
-	result := FormatMessageRound(msgs, "测试会话")
+	result := FormatMessageRoundWithTitle(msgs, "测试会话")
 	if !strings.Contains(result, "测试会话") {
 		t.Errorf("expected result to contain conversation title, got: %s", result)
 	}
-	if !strings.Contains(result, "用户:") && !strings.Contains(result, "用户：") {
+	if !strings.Contains(result, "用户:") {
 		t.Errorf("expected result to contain user indicator, got: %s", result)
 	}
-	if !strings.Contains(result, "助手:") && !strings.Contains(result, "助手：") {
+	if !strings.Contains(result, "助手:") {
 		t.Errorf("expected result to contain assistant indicator, got: %s", result)
 	}
 	if !strings.Contains(result, "帮我查账单") {
@@ -86,5 +86,30 @@ func TestFormatMessageRound(t *testing.T) {
 	}
 	if !strings.Contains(result, "342元") {
 		t.Errorf("expected result to contain assistant message content, got: %s", result)
+	}
+}
+
+func TestFormatMessageRound_WithScore(t *testing.T) {
+	now := time.Now()
+	msgs := []model.Message{
+		{ID: "m1", Role: "user", Content: "帮我查账单", CreatedAt: now},
+		{ID: "m2", Role: "assistant", Content: "你的账单如下：共计342元", CreatedAt: now.Add(time.Second)},
+	}
+
+	result := FormatMessageRound(msgs, 0.87)
+	if !strings.Contains(result, "相关度 0.87") {
+		t.Errorf("expected score header, got: %s", result)
+	}
+	if !strings.Contains(result, "**用户**") {
+		t.Errorf("expected bold user role, got: %s", result)
+	}
+	if !strings.Contains(result, "**助手**") {
+		t.Errorf("expected bold assistant role, got: %s", result)
+	}
+	if !strings.Contains(result, "帮我查账单") {
+		t.Errorf("expected user content, got: %s", result)
+	}
+	if !strings.Contains(result, "342元") {
+		t.Errorf("expected assistant content, got: %s", result)
 	}
 }

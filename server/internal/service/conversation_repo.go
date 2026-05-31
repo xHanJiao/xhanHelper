@@ -57,6 +57,18 @@ func (r *ConversationRepo) FindByID(ctx context.Context, id string) (*model.Conv
 	return &c, err
 }
 
+// FindDefaultByUser 查找用户的默认会话，无则返回 nil
+func (r *ConversationRepo) FindDefaultByUser(ctx context.Context, userID string) (*model.Conversation, error) {
+	var c model.Conversation
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND is_default = ? AND is_deleted = ?", userID, true, false).
+		First(&c).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &c, err
+}
+
 // ListByUser 获取设备未删除的会话列表（按更新时间倒序）
 func (r *ConversationRepo) ListByUser(ctx context.Context, userID string, limit, offset int) ([]model.Conversation, int64, error) {
 	if limit <= 0 {

@@ -8,6 +8,7 @@ type Conversation struct {
 	UserID             string     `gorm:"size:36;not null;index" json:"user_id"`
 	Title              string     `gorm:"size:200;default:新对话" json:"title"`
 	IsDeleted          bool       `gorm:"default:false" json:"-"`
+	IsDefault          bool       `gorm:"default:false" json:"is_default"`
 	LastExtractedMsgID *string    `gorm:"size:36" json:"last_extracted_msg_id,omitempty"`
 	LastExtractedAt    *time.Time `json:"last_extracted_at,omitempty"`
 	AgentID            *string    `gorm:"size:36" json:"agent_id,omitempty"`

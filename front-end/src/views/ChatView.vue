@@ -377,11 +377,21 @@ watch(() => route.params.id, async (newId, oldId) => {
     inputVisible.value = true
     isInitialScrollDone.value = false
     if (chat.isStreaming) cancel()
-    const savedAgentId = chat.agentId
-    const savedAgentName = chat.agentName
+
+    // 通过 API 获取默认会话，避免拉全量列表
+    try {
+      const defaultConv = await api.get('/api/conversations/default')
+      if (defaultConv?.id) {
+        chat.reset()
+        router.replace(`/chat/${defaultConv.id}`)
+        return
+      }
+    } catch (e) {
+      console.error('Failed to get default conversation', e)
+    }
+
+    // 无默认会话（首次使用），显示空白状态
     chat.reset()
-    chat.agentId = savedAgentId
-    chat.agentName = savedAgentName
     fetchLlmConfig()
   }
 }, { immediate: true })

@@ -2,7 +2,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 
 const drawerOpen = ref(false)
 const isMobile = ref(false)
-const sidebarCollapsed = ref(false)
+const sidebarCollapsed = ref(true)
 
 function check() {
   isMobile.value = window.innerWidth <= 768

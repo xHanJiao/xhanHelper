@@ -104,7 +104,7 @@ func (t *MessageSearchTool) Execute(ec *ExecuteContext, funcName string, args js
 			titleCache[m.ConversationID] = title
 		}
 
-		sb.WriteString(retrieval.FormatMessageRound(filtered, title))
+		sb.WriteString(retrieval.FormatMessageRoundWithTitle(filtered, title))
 		sb.WriteString("\n")
 		shown++
 	}

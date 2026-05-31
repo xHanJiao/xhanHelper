@@ -102,9 +102,9 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 	var msgs []model.Message
 	var err error
 	if conv.LastExtractedMsgID != nil && *conv.LastExtractedMsgID != "" {
-		msgs, err = e.msgRepo.ListByConversationSince(ctx, conv.ID, *conv.LastExtractedMsgID, 200)
+		msgs, err = e.msgRepo.ListByConversationSince(ctx, conv.ID, *conv.LastExtractedMsgID, 50)
 	} else {
-		msgs, err = e.msgRepo.ListByConversation(ctx, conv.ID, 200)
+		msgs, err = e.msgRepo.ListByConversation(ctx, conv.ID, 50)
 	}
 	if err != nil || len(msgs) == 0 {
 		return err
@@ -173,9 +173,9 @@ func (e *MemoryExtractor) ExtractFromConversationWithCallback(ctx context.Contex
 	var msgs []model.Message
 	var err error
 	if conv.LastExtractedMsgID != nil && *conv.LastExtractedMsgID != "" {
-		msgs, err = e.msgRepo.ListByConversationSince(ctx, conv.ID, *conv.LastExtractedMsgID, 200)
+		msgs, err = e.msgRepo.ListByConversationSince(ctx, conv.ID, *conv.LastExtractedMsgID, 50)
 	} else {
-		msgs, err = e.msgRepo.ListByConversation(ctx, conv.ID, 200)
+		msgs, err = e.msgRepo.ListByConversation(ctx, conv.ID, 50)
 	}
 	if err != nil {
 		cb(ExtractEvent{Type: "error", Message: err.Error()})

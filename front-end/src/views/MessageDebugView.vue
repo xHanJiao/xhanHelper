@@ -50,13 +50,29 @@ const requestJsonText = computed(() => {
   } catch { return String(rj) }
 })
 
-const providers = computed(() => {
-  const extra = detailData.value.extra
-  if (!extra) return []
+// 兼容旧格式 { providers: [...] } 和新格式 { prompt_trace: { providers: [...] }, history_builder_msg_ids: [...] }
+function parseExtra(raw) {
+  if (!raw) return null
   try {
-    const parsed = typeof extra === 'string' ? JSON.parse(extra) : extra
-    return parsed.providers || []
-  } catch { return [] }
+    return typeof raw === 'string' ? JSON.parse(raw) : raw
+  } catch { return null }
+}
+
+const extraParsed = computed(() => parseExtra(detailData.value.extra))
+
+const providers = computed(() => {
+  const ex = extraParsed.value
+  if (!ex) return []
+  // 新格式: prompt_trace.providers
+  if (ex.prompt_trace) return ex.prompt_trace.providers || []
+  // 旧格式: providers 直接在顶层
+  return ex.providers || []
+})
+
+const historyBuilderMsgIds = computed(() => {
+  const ex = extraParsed.value
+  if (!ex || !ex.history_builder_msg_ids) return []
+  return ex.history_builder_msg_ids
 })
 
 const expandedContent = ref(new Set())
@@ -349,7 +365,35 @@ onMounted(loadRound)
 
               <!-- 资源取舍明细 -->
               <div v-if="activeTab === 'resources'">
-                <div v-if="providers.length === 0" style="color: var(--color-text-muted); padding: 20px;">无数据</div>
+                <!-- HistoryBuilder 选用的历史消息 -->
+                <div v-if="historyBuilderMsgIds.length > 0" style="margin-bottom: 16px;">
+                  <div style="font-weight: 600; font-size: 14px; margin-bottom: 8px;">
+                    HistoryBuilder <span style="font-size: 11px; color: var(--color-text-muted); font-weight: 400;">(上下文历史消息)</span>
+                  </div>
+                  <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                    <thead>
+                      <tr style="border-bottom: 1px solid var(--color-border); text-align: left;">
+                        <th style="padding: 4px 8px;">#</th>
+                        <th style="padding: 4px 8px;">消息 ID</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(id, idx) in historyBuilderMsgIds" :key="id" style="border-bottom: 1px solid var(--color-border);">
+                        <td style="padding: 4px 8px; font-size: 11px; color: var(--color-text-muted);">{{ idx + 1 }}</td>
+                        <td style="padding: 4px 8px; font-family: monospace; font-size: 11px;">
+                          <router-link
+                            v-if="roundMsgs.find(m => m.id === id)"
+                            :to="`/admin/message-debug/${id}`"
+                            style="color: var(--color-primary);"
+                          >{{ id }}</router-link>
+                          <span v-else style="color: var(--color-text-muted);">{{ id }}</span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div v-if="providers.length === 0 && historyBuilderMsgIds.length === 0" style="color: var(--color-text-muted); padding: 20px;">无数据</div>
                 <div v-for="(prov, pi) in providers" :key="pi" style="margin-bottom: 16px;">
                   <div style="font-weight: 600; font-size: 14px; margin-bottom: 8px;">
                     {{ prov.name }}

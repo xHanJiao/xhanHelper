@@ -173,17 +173,17 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 		return nil, fmt.Errorf("conversation id is required")
 	}
 
-	log.Printf("[orch] run start: model=%s, msgs=%d", o.pickClient(req).ModelName(), len(req.Messages))
-
 	var queryVec []float64
 	var systemPromptResult *promptbuilder.BuildResult
+	if o.embedder != nil && !req.SkipRetrieval {
+		queryVec = o.tryEmbedContent(ctx, req.UserMessageContent)
+	}
+
+	log.Printf("[orch] run start: model=%s, msgs=%d", o.pickClient(req).ModelName(), len(req.Messages))
+
 	if req.OverrideSystemPrompt != nil {
 		systemPromptResult = &promptbuilder.BuildResult{Prompt: *req.OverrideSystemPrompt}
 	} else {
-		if o.embedder != nil && !req.SkipRetrieval {
-			queryVec = o.tryEmbedContent(ctx, req.UserMessageContent)
-		}
-
 		var err error
 		systemPromptResult, err = o.systemPromptBuilder.Build(ctx, mkPromptBuildOpt(req, queryVec))
 		if err != nil {
@@ -845,6 +845,26 @@ func truncateToolResult(content string, maxLen int) string {
 	}
 	truncated := len(content) - head - tail
 	return content[:head] + fmt.Sprintf("\n…[已截断 %d 字符]…\n", truncated) + content[len(content)-tail:]
+}
+
+// FlattenRound 裁剪一轮消息为 LLM 上下文格式：只保留 user + 最终 assistant 回复。
+// 用于默认会话加载最近 N 轮时裁剪 tool/internal 消息。
+func FlattenRound(round []model.Message) []model.Message {
+	var out []model.Message
+	var lastAssistant *model.Message
+	for i := len(round) - 1; i >= 0; i-- {
+		if round[i].Role == "assistant" {
+			lastAssistant = &round[i]
+			break
+		}
+	}
+	if len(round) > 0 && round[0].Role == "user" {
+		out = append(out, round[0])
+	}
+	if lastAssistant != nil {
+		out = append(out, *lastAssistant)
+	}
+	return out
 }
 
 // BuildMessagesForFlash 将数据库标准消息转换为 FlashClient 格式

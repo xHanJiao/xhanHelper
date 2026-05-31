@@ -57,6 +57,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.POST("/chat", chat(rc.Orch, rc.Cfg, rc.ConvRepo, rc.MsgRepo, rc.AgentRepo))
 		auth.GET("/llm-config", llmConfig(rc.Cfg, rc.AgentRepo))
 		auth.GET("/conversations", listConversations(rc.ConvRepo, rc.AgentRepo))
+		auth.GET("/conversations/default", getDefaultConversation(rc.ConvRepo, rc.AgentRepo))
 		auth.GET("/conversations/:id/messages", getMessages(rc.ConvRepo, rc.MsgRepo))
 		auth.GET("/conversations/:id/messages-v2", getMessagesCursor(rc.MsgRepo, rc.ConvRepo))
 		auth.DELETE("/conversations/:id/messages/:msgId", deleteMessage(rc.MsgRepo, rc.ConvRepo))

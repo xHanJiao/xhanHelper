@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"xhan-helper/internal/model"
+	"xhan-helper/internal/util"
 )
 
 // MessageRepo — 消息数据访问
@@ -79,7 +80,7 @@ func (r *MessageRepo) GetByIDCols(ctx context.Context, id string, cols ...string
 func (r *MessageRepo) ListByConversation(ctx context.Context, convID string, limit int) ([]model.Message, error) {
 	var list []model.Message
 	err := r.db.WithContext(ctx).
-		Where("conversation_id = ? AND status = ?", convID, 1).
+		Where("conversation_id = ? AND status = ?", convID, model.MsgStatusNormal).
 		Order("created_at ASC").Limit(limit).
 		Find(&list).Error
 	return list, err
@@ -89,7 +90,7 @@ func (r *MessageRepo) ListByConversation(ctx context.Context, convID string, lim
 func (r *MessageRepo) ListByConversationRecent(ctx context.Context, convID string, limit int) ([]model.Message, error) {
 	var list []model.Message
 	err := r.db.WithContext(ctx).
-		Where("conversation_id = ? AND status = ?", convID, 1).
+		Where("conversation_id = ? AND status = ?", convID, model.MsgStatusNormal).
 		Order("created_at DESC").Limit(limit).
 		Find(&list).Error
 	if err != nil {
@@ -166,7 +167,7 @@ func (r *MessageRepo) ListByConversationCursor(ctx context.Context, convID, curs
 
 func (r *MessageRepo) loadBefore(ctx context.Context, convID string, anchor *time.Time, limit int) ([]model.Message, error) {
 	q := r.db.WithContext(ctx).
-		Where("conversation_id = ? AND status = ?", convID, 1)
+		Where("conversation_id = ? AND status = ?", convID, model.MsgStatusNormal)
 	if anchor != nil {
 		q = q.Where("created_at < ?", *anchor)
 	}
@@ -206,6 +207,75 @@ func (r *MessageRepo) existsAfter(ctx context.Context, convID string, t time.Tim
 		Where("conversation_id = ? AND created_at > ?", convID, t).
 		Count(&count)
 	return count > 0
+}
+
+// ListRecentRounds 取最近 N 轮，每轮是一个 user 消息及其后所有消息（直到下一个 user）
+func (r *MessageRepo) ListRecentRounds(ctx context.Context, convID string, n int) ([][]model.Message, error) {
+	// 1. 找到最近 N 条 user 消息
+	var userMsgs []model.Message
+	err := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND role = 'user' AND status = ?", convID, model.MsgStatusNormal).
+		Order("created_at DESC").Limit(n).
+		Find(&userMsgs).Error
+	if err != nil || len(userMsgs) == 0 {
+		return nil, err
+	}
+
+	// 还原时间正序
+	for i, j := 0, len(userMsgs)-1; i < j; i, j = i+1, j-1 {
+		userMsgs[i], userMsgs[j] = userMsgs[j], userMsgs[i]
+	}
+
+	return r.buildRoundsFromUserMsgs(ctx, userMsgs)
+}
+
+// GetRoundsByUserMsgIDs 根据一批 user 消息 ID 取出完整轮（不限制会话，支持跨会话检索）
+func (r *MessageRepo) GetRoundsByUserMsgIDs(ctx context.Context, userMsgIDs []string) ([][]model.Message, error) {
+	if len(userMsgIDs) == 0 {
+		return nil, nil
+	}
+	var userMsgs []model.Message
+	err := r.db.WithContext(ctx).
+		Where("id IN ? AND status = ?", userMsgIDs, model.MsgStatusNormal).
+		Order("created_at ASC").
+		Find(&userMsgs).Error
+	if err != nil {
+		return nil, err
+	}
+	return r.buildRoundsFromUserMsgs(ctx, userMsgs)
+}
+
+// buildRoundsFromUserMsgs 给定已排序的 user 消息列表，并发取出每轮的完整消息。
+// 每条 user 消息使用其自身的 ConversationID，支持跨会话的轮组装。
+//
+// 为什么用逐轮查询 + 并发，而不是一次全量拉取？
+// 上游 userMsgs 来自「最近 N 轮 + 向量检索 Top-M 轮」混合策略，命中点可能稀疏分布在消息历史中。
+// 一次 WHERE created_at >= earliestTime 会拖出最早到最晚之间的所有消息，读放大严重。
+// 逐轮查询每轮有 < nextUserMsg.CreatedAt 的紧上限 + Limit(20)，结果集小且可控；
+// 再通过 LoadConcurrent 以最大并发度 5 并行，总延迟接近单次查询，但没有读放大。
+func (r *MessageRepo) buildRoundsFromUserMsgs(ctx context.Context, userMsgs []model.Message) ([][]model.Message, error) {
+	if len(userMsgs) == 0 {
+		return nil, nil
+	}
+
+	tasks := make([]func(ctx context.Context) ([]model.Message, error), len(userMsgs))
+	for i, um := range userMsgs {
+		idx := i
+		userMsg := um
+		tasks[idx] = func(taskCtx context.Context) ([]model.Message, error) {
+			q := r.db.WithContext(taskCtx).
+				Where("conversation_id = ? AND created_at >= ? AND status = ?", userMsg.ConversationID, userMsg.CreatedAt, model.MsgStatusNormal)
+			// 仅当相邻的下一条 user 消息同属一个会话时才用它的时间作为上界
+			if idx+1 < len(userMsgs) && userMsgs[idx+1].ConversationID == userMsg.ConversationID {
+				q = q.Where("created_at < ?", userMsgs[idx+1].CreatedAt)
+			}
+			var msgs []model.Message
+			err := q.Order("created_at ASC").Limit(30).Find(&msgs).Error
+			return msgs, err
+		}
+	}
+
+	return util.LoadConcurrent(ctx, 5, tasks)
 }
 
 // SearchUserMessages 按关键词搜索用户的 role=user 消息（跨会话），按时间倒序

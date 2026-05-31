@@ -105,6 +105,7 @@ type LLMConfig struct {
 	DefaultMaxTokens   *int               `yaml:"default_max_tokens"`    // 默认最大输出 token，nil 则用 LLM 自身默认
 	MaxToolResultChars int                `yaml:"max_tool_result_chars"` // 工具结果传入 LLM 的最大字符数，超出截断，默认 2000
 	Verification       VerificationConfig `yaml:"verification"`          // 响应检验配置
+	ExtractMsgLimit    int                `yaml:"extract_msg_limit"`     // 记忆提取每次最多取的消息数，默认 50
 }
 
 // EmbeddingConfig — 向量化配置
@@ -274,6 +275,9 @@ func merge(dst, src *Config) {
 	if src.LLM.MaxToolResultChars != 0 {
 		dst.LLM.MaxToolResultChars = src.LLM.MaxToolResultChars
 	}
+	if src.LLM.ExtractMsgLimit != 0 {
+		dst.LLM.ExtractMsgLimit = src.LLM.ExtractMsgLimit
+	}
 	if src.Embedding.APIKey != "" {
 		dst.Embedding.APIKey = src.Embedding.APIKey
 	}
@@ -405,7 +409,7 @@ func validate(cfg *Config) error {
 	}
 	setSourceWeightsDefault(&cfg.Retrieval.Memory, 0.5, 0.3, 0.2, cfg.Retrieval.FreshnessDecay, 0.5, 8)
 	setSourceWeightsDefault(&cfg.Retrieval.Note, 0.5, 0.3, 0.0, 0, 0.5, 5)
-	setSourceWeightsDefault(&cfg.Retrieval.History, 0.6, 0.3, 0.1, 0.005, 0.8, 5)
+	setSourceWeightsDefault(&cfg.Retrieval.History, 0.6, 0.3, 0.1, 0.005, 0.5, 5)
 	if cfg.Reflection.LaunchMaxIterations == 0 {
 		cfg.Reflection.LaunchMaxIterations = 8
 	}
@@ -446,6 +450,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.LLM.MaxToolResultChars == 0 {
 		cfg.LLM.MaxToolResultChars = 2000
+	}
+	if cfg.LLM.ExtractMsgLimit == 0 {
+		cfg.LLM.ExtractMsgLimit = 50
 	}
 	return nil
 }

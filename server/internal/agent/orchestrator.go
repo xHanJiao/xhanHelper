@@ -637,7 +637,7 @@ func (o *Orchestrator) buildVerifyFeedback(vr verifyResult) string {
 	if vr.Suggestion != "" {
 		parts = append(parts, "建议："+vr.Suggestion)
 	}
-	parts = append(parts, "请根据以上反馈修正你的回复，确保所有事实都有依据，信息维度完整。")
+	parts = append(parts, "请修正你的回复并重新输出，确保所有事实都有依据，信息维度完整。注意：这是内部质量检查，不要对这段话道歉或解释（如'你说得对，我确实算错了'），直接生成修正后的最终回复，就像它是你对用户问题的第一次回答。")
 
 	return strings.Join(parts, "\n")
 }

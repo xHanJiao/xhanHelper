@@ -77,10 +77,10 @@ func NewSystemPromptBuilder(
 		promptResolver: promptResolver,
 		preRoleStatic: []StaticProvider{
 			&corePrinciplesProvider{},
-			&currentTimeProvider{},
 		},
 		postRoleStatic: []StaticProvider{
 			&toolDefinitionsProvider{registry: registry},
+			&currentTimeProvider{},
 		},
 		searchProviders: searchProviders,
 	}

@@ -22,9 +22,10 @@ type MessageCounter interface {
 	CountByRole(ctx context.Context, convID, role string) (int, error)
 }
 
-// AgentBinder — 绑定 agent 到会话（竞态保护）
+// AgentBinder — 绑定/换绑 agent 到会话
 type AgentBinder interface {
 	SetAgentID(ctx context.Context, convID, agentID string) error
+	UpdateAgentID(ctx context.Context, convID string, agentID *string) error
 }
 
 // AutoRouteStep 异步 LLM 路由匹配最合适的智能体
@@ -34,18 +35,18 @@ type AutoRouteStep struct {
 	currentAgentID *string
 	convID         string
 	msgCounter     MessageCounter
-	triggers       []int       // 触发路由的消息计数点，如 [1,3,6]
-	agentBinder    AgentBinder // 竞态安全写入 DB
+	interval       int // 每 N 条用户消息触发一次路由，0=禁用
+	agentBinder    AgentBinder
 }
 
-func NewAutoRouteStep(flashClient llm.LLMClient, agentRepo AgentLister, currentAgentID *string, convID string, msgCounter MessageCounter, triggers []int, agentBinder AgentBinder) *AutoRouteStep {
+func NewAutoRouteStep(flashClient llm.LLMClient, agentRepo AgentLister, currentAgentID *string, convID string, msgCounter MessageCounter, interval int, agentBinder AgentBinder) *AutoRouteStep {
 	return &AutoRouteStep{
 		flashClient:    flashClient,
 		agentRepo:      agentRepo,
 		currentAgentID: currentAgentID,
 		convID:         convID,
 		msgCounter:     msgCounter,
-		triggers:       triggers,
+		interval:       interval,
 		agentBinder:    agentBinder,
 	}
 }
@@ -61,10 +62,7 @@ func (s *AutoRouteStep) ShouldRun(ctx context.Context) bool {
 	if pc.UserSpecifiedAgent {
 		return false
 	}
-	if s.currentAgentID != nil && *s.currentAgentID != "" {
-		return false
-	}
-	if len(s.triggers) == 0 || s.convID == "" || s.msgCounter == nil {
+	if s.interval <= 0 || s.convID == "" || s.msgCounter == nil {
 		return false
 	}
 	count, err := s.msgCounter.CountByRole(ctx, s.convID, "user")
@@ -72,15 +70,11 @@ func (s *AutoRouteStep) ShouldRun(ctx context.Context) bool {
 		log.Printf("[pipeline] autoRoute: count user messages error: %v", err)
 		return false
 	}
-	for _, t := range s.triggers {
-		if count+1 == t {
-			return true
-		}
-	}
-	return false
+	// 第一条用户消息必触发，之后每 interval 条触发一次
+	return count%s.interval == 0
 }
 
-// Run 异步路由——启动 goroutine，不阻塞管线
+// Run 异步路由——启动 goroutine，不阻塞管线，结果持久化到 DB 供下次请求使用
 func (s *AutoRouteStep) Run(ctx context.Context) (context.Context, error) {
 	pc := GetPreContext(ctx)
 
@@ -164,8 +158,8 @@ func (s *AutoRouteStep) Run(ctx context.Context) (context.Context, error) {
 
 		for _, a := range agents {
 			if a.ID == result.AgentID {
-				if err := s.agentBinder.SetAgentID(bgCtx, convID, a.ID); err != nil {
-					log.Printf("[pipeline] autoRoute(async): SetAgentID error: %v", err)
+				if err := s.agentBinder.UpdateAgentID(bgCtx, convID, &a.ID); err != nil {
+					log.Printf("[pipeline] autoRoute(async): UpdateAgentID error: %v", err)
 					return
 				}
 				log.Printf("[pipeline] autoRoute(async): bound agent %q to conv %s (confidence=%.2f)", a.Name, convID, result.Confidence)

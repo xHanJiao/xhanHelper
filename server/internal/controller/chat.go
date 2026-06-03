@@ -123,7 +123,10 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		}
 		pipelineCtx := pipeline.WithPreContext(c.Request.Context(), pc)
 
-		// 默认会话跳过自动路由（手动选择 agent 不受影响）
+		routeInterval := cfg.Server.AgentRouteInterval
+		if routeInterval <= 0 {
+			routeInterval = 5 // 默认每 5 条触发
+		}
 		if isDefaultConv {
 			pl, err := pipeline.NewPipeline(
 				pipeline.NewShortInputCheckStep(),
@@ -139,25 +142,13 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			pl, err := pipeline.NewPipeline(
 				pipeline.NewShortInputCheckStep(),
 				pipeline.NewNormalizeDatesStep(),
-				pipeline.NewAutoRouteStep(orch.FlashClient(), agentRepo, conv.AgentID, conv.ID, msgRepo, cfg.Server.AgentRouteTriggers, convRepo),
+				pipeline.NewAutoRouteStep(orch.FlashClient(), agentRepo, conv.AgentID, conv.ID, msgRepo, routeInterval, convRepo),
 			)
 			if err != nil {
 				log.Printf("[chat] pipeline init error: %v", err)
 			}
 			if _, pipeErr := pl.Run(pipelineCtx); pipeErr != nil {
 				log.Printf("[chat] pipeline run error: %v", pipeErr)
-			}
-
-			// 读取管线结果
-			if pc.AgentID != "" && !userSpecifiedAgent {
-				agentID = pc.AgentID
-				agentSystemPrompt = pc.AgentSystemPrompt
-				if conv.AgentID == nil || *conv.AgentID == "" {
-					conv.AgentID = &pc.AgentID
-					if err := convRepo.SetAgentID(c.Request.Context(), conv.ID, pc.AgentID); err != nil {
-						log.Printf("[chat] SetAgentID error: %v", err)
-					}
-				}
 			}
 		}
 
@@ -224,19 +215,6 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			log.Printf("[chat] orch run error: %v", err)
 			view.WriteSSE(w, flusher, "error", agent.UserErrorMessage(err))
 			return
-		}
-
-		// 发送 agent_matched 事件（如果管线匹配到了智能体）
-		if pc.AgentName != "" && pc.Confidence > 0 {
-			paramsStr := "null"
-			if a, err := agentRepo.FindByID(c.Request.Context(), pc.AgentID, userID); err != nil {
-				log.Printf("[chat] agent_matched fetch agent params error: %v", err)
-			} else if a != nil && a.ParamsJSON != "" {
-				paramsStr = a.ParamsJSON
-			}
-			matchedJSON := fmt.Sprintf(`{"agent_id":"%s","agent_name":"%s","confidence":%.2f,"params":%s}`,
-				pc.AgentID, pc.AgentName, pc.Confidence, paramsStr)
-			view.WriteSSE(w, flusher, "agent_matched", matchedJSON)
 		}
 
 		for evt := range events {

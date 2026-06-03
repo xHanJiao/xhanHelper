@@ -62,7 +62,8 @@ type ServerConfig struct {
 	MemoryDupeThreshold float64  `yaml:"memory_dupe_threshold"` // 记忆去重相似度阈值，默认 0.85
 	SidecarURL          string   `yaml:"sidecar_url"`           // Python sidecar MCP HTTP 地址
 	TokenTTLHours       int      `yaml:"token_ttl_hours"`       // token 过期时间（小时），默认 720
-	AgentRouteTriggers  []int    `yaml:"agent_route_triggers"`  // 异步路由触发消息数，如 [1,3,6]，空=禁用
+	AgentRouteTriggers  []int    `yaml:"agent_route_triggers"`  // [已废弃] 异步路由触发消息数
+	AgentRouteInterval  int      `yaml:"agent_route_interval"`  // 自动路由间隔：每 N 条用户消息触发一次，0=禁用，默认 5
 	MaxTokensPerUser    int      `yaml:"max_tokens_per_user"`   // 同一用户最大 token 数，默认 4
 	AdminUsers          []string `yaml:"admin_users"`           // 管理员用户 ID 列表
 }
@@ -226,6 +227,9 @@ func merge(dst, src *Config) {
 	}
 	if len(src.Server.AgentRouteTriggers) > 0 {
 		dst.Server.AgentRouteTriggers = src.Server.AgentRouteTriggers
+	}
+	if src.Server.AgentRouteInterval != 0 {
+		dst.Server.AgentRouteInterval = src.Server.AgentRouteInterval
 	}
 	if src.DB.Driver != "" {
 		dst.DB.Driver = src.DB.Driver

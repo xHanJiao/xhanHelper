@@ -307,6 +307,7 @@ function latSummary(s) {
         <NCard size="small" title="内存"><div>堆: {{ fmtMB(health.memory?.heap_alloc_mb) }}</div><div style="font-size: 12px; color: var(--color-text-muted);">RSS: {{ fmtMB(health.memory?.os_rss_mb) }}</div></NCard>
         <NCard size="small" title="SSE 连接"><div style="font-size: 22px; font-weight: 600;">{{ health.counters?.sse_connections ?? 0 }}</div></NCard>
         <NCard size="small" title="活跃会话"><div style="font-size: 22px; font-weight: 600;">{{ health.snapshots?.active_conversations ?? 0 }}</div><div style="font-size: 12px; color: var(--color-text-muted);">最近 1h</div></NCard>
+        <NCard size="small" title="搜索用量"><div style="font-size: 22px; font-weight: 600;">{{ health.snapshots?.search_usage?.used ?? 0 }}<span style="font-size: 14px; font-weight: 400; color: var(--color-text-muted);"> / {{ health.snapshots?.search_usage?.limit ?? 0 }}</span></div><div style="font-size: 12px; color: var(--color-text-muted);">{{ health.snapshots?.search_usage?.date ?? '-' }}</div></NCard>
         <NCard v-if="health.snapshots?.markdown_files" size="small" title="Markdown"><div style="font-size: 22px; font-weight: 600;">{{ health.snapshots.markdown_files.count }}</div><div style="font-size: 12px; color: var(--color-text-muted);">个文件</div></NCard>
       </div>
 
@@ -370,17 +371,6 @@ function latSummary(s) {
         </NCard>
       </div>
 
-      <!-- MCP -->
-      <NCard size="small" title="MCP 服务" style="margin-bottom: var(--space-lg);">
-        <div v-if="Object.keys(health.snapshots?.mcp || {}).length">
-          <div v-for="(info, name) in health.snapshots.mcp" :key="name" style="display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) 0;">
-            <span style="font-weight: 500;">{{ name }}</span>
-            <NTag :type="info.state === 'ready' ? 'success' : 'warning'" size="small">{{ info.state }}</NTag>
-            <span style="font-size: 12px; color: var(--color-text-muted);">工具: {{ info.tools }} | 执行中: {{ info.in_flight }}</span>
-          </div>
-        </div>
-        <div v-else style="color: var(--color-text-muted);">无</div>
-      </NCard>
     </template>
     </div>
 

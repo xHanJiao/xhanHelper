@@ -37,6 +37,30 @@ func (q *dailyQuota) tryUse(limit int) (used int, ok bool) {
 	return q.count, true
 }
 
+func (q *dailyQuota) snapshot() map[string]interface{} {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	today := time.Now().In(config.BJ).Format("2006-01-02")
+	if q.date != today {
+		return map[string]interface{}{"used": 0, "limit": 0, "date": today}
+	}
+	return map[string]interface{}{"used": q.count, "limit": 0, "date": q.date}
+}
+
+// searchToolInstance 供监控快照读取
+var searchToolInstance *SearchTool
+
+// SearchUsageSnapshot 返回当前搜索配额使用情况
+func SearchUsageSnapshot() any {
+	if searchToolInstance == nil {
+		return map[string]interface{}{"used": 0, "limit": 0, "date": ""}
+	}
+	q := searchToolInstance.quota.snapshot()
+	q["limit"] = searchToolInstance.dailyLimit
+	return q
+}
+
 // SearchTool — 联网搜索工具（支持多 provider）
 type SearchTool struct {
 	provider   string
@@ -48,7 +72,7 @@ type SearchTool struct {
 }
 
 func NewSearchTool(cfg config.SearchConfig) *SearchTool {
-	return &SearchTool{
+	st := &SearchTool{
 		provider:   cfg.Provider,
 		apiKey:     cfg.APIKey,
 		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
@@ -56,6 +80,8 @@ func NewSearchTool(cfg config.SearchConfig) *SearchTool {
 		quota:      &dailyQuota{},
 		client:     &http.Client{Timeout: 10 * time.Second},
 	}
+	searchToolInstance = st
+	return st
 }
 
 func (t *SearchTool) Name() string { return "search" }

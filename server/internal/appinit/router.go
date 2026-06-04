@@ -21,6 +21,7 @@ import (
 	"xhan-helper/internal/middleware"
 	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
+	"xhan-helper/internal/tool"
 )
 
 // RegisterMonitorSnapshots 注册监控快照
@@ -35,6 +36,7 @@ func RegisterMonitorSnapshots(vs *agent.VectorStore, mcpManager *mcp.Manager, co
 	monitor.Register("mcp", snapshots.MCP)
 	monitor.Register("active_conversations", snapshots.ActiveConversations)
 	monitor.Register("themes", snapshots.Themes)
+	monitor.Register("search_usage", tool.SearchUsageSnapshot)
 }
 
 // InitRouter 创建路由、注册所有 handler

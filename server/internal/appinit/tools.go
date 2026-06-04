@@ -18,6 +18,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reg.Register(tool.NewLoggingWrapper(tool.NewBookkeepingTool(repos.Bill), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewCalculatorTool(), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewDocumentTool(repos.Document, repos.Version), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewSearchTool(cfg.Search), log.Default()))
 
 	// 种子内置工具到 tool_registries 表（幂等）
 	if err := tool.SeedBuiltinTools(context.Background(), repos.Tool, infra.Embedder, repos.Embedding); err != nil {

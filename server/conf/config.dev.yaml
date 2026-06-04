@@ -34,6 +34,10 @@ embedding:
   model: doubao-embedding-vision-251215
   memory_auto_extract: true
 
+search:
+  provider: anysearch
+  daily_limit: 1000
+
 reflection:
   launch_max_iterations: 8
   analyst_max_iterations: 6

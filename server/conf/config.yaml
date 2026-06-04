@@ -51,6 +51,12 @@ snowflake:
   node_id: 1
   datacenter_id: 1
 
+search:
+  provider: anysearch
+  api_key: ${SEARCH_API_KEY}
+  base_url: https://api.anysearch.com/v1
+  daily_limit: 1000
+
 retrieval:
   freshness_decay: 0.02           # 时间衰减系数，作为默认值
   memory:

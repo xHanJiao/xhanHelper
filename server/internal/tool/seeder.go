@@ -41,6 +41,7 @@ var builtinToolSeeds = []builtinToolSeed{
 	{Name: "search_memories_v2", Description: "向量检索长期记忆（chunk 级），返回匹配片段和全文", Category: "search"},
 	{Name: "message_search", Description: "搜索历史对话消息，支持语义检索", Category: "search"},
 	{Name: "reminder", Description: "设置提醒事项，支持一次性/每日/每周/每月/工作日重复", Category: "utility"},
+	{Name: "search", Description: "联网搜索工具，搜索实时信息——新闻、技术文档、百科、金融数据等", Category: "search"},
 	{Name: "tool_retriever", Description: "根据用户需求检索相关工具，当不确定该用什么工具时调用", Category: "system"},
 }
 

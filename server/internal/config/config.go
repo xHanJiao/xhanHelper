@@ -27,6 +27,7 @@ type Config struct {
 	Embedding  EmbeddingConfig  `yaml:"embedding"`
 	Reflection ReflectionConfig `yaml:"reflection"`
 	Retrieval  RetrievalConfig  `yaml:"retrieval"`
+	Search     SearchConfig     `yaml:"search"`
 	Snowflake  SnowflakeConfig  `yaml:"snowflake"`
 	MCP        MCPConfig        `yaml:"mcp"`
 }
@@ -133,6 +134,14 @@ type RetrievalConfig struct {
 	Memory         SourceWeights `yaml:"memory"`
 	Note           SourceWeights `yaml:"note"`
 	History        SourceWeights `yaml:"history"`
+}
+
+// SearchConfig — 搜索工具配置（通用，支持多 provider）
+type SearchConfig struct {
+	Provider   string `yaml:"provider"`
+	APIKey     string `yaml:"api_key"`
+	BaseURL    string `yaml:"base_url"`
+	DailyLimit int    `yaml:"daily_limit"`
 }
 
 // ReflectionConfig — 反思系统配置
@@ -336,6 +345,18 @@ func merge(dst, src *Config) {
 	if len(src.Reflection.ActiveDurationDays) > 0 {
 		dst.Reflection.ActiveDurationDays = src.Reflection.ActiveDurationDays
 	}
+	if src.Search.Provider != "" {
+		dst.Search.Provider = src.Search.Provider
+	}
+	if src.Search.APIKey != "" {
+		dst.Search.APIKey = src.Search.APIKey
+	}
+	if src.Search.BaseURL != "" {
+		dst.Search.BaseURL = src.Search.BaseURL
+	}
+	if src.Search.DailyLimit != 0 {
+		dst.Search.DailyLimit = src.Search.DailyLimit
+	}
 }
 
 // mergeSourceWeights 按字段合并检索源权重，非零值覆盖
@@ -387,6 +408,7 @@ func resolveEnvVars(cfg *Config) {
 	cfg.DB.Password = os.ExpandEnv(cfg.DB.Password)
 	cfg.LLM.APIKey = os.ExpandEnv(cfg.LLM.APIKey)
 	cfg.Embedding.APIKey = os.ExpandEnv(cfg.Embedding.APIKey)
+	cfg.Search.APIKey = os.ExpandEnv(cfg.Search.APIKey)
 }
 
 func validate(cfg *Config) error {
@@ -457,6 +479,15 @@ func validate(cfg *Config) error {
 	}
 	if cfg.LLM.ExtractMsgLimit == 0 {
 		cfg.LLM.ExtractMsgLimit = 50
+	}
+	if cfg.Search.Provider == "" {
+		cfg.Search.Provider = "anysearch"
+	}
+	if cfg.Search.BaseURL == "" {
+		cfg.Search.BaseURL = "https://api.anysearch.com/v1"
+	}
+	if cfg.Search.DailyLimit == 0 {
+		cfg.Search.DailyLimit = 100
 	}
 	return nil
 }

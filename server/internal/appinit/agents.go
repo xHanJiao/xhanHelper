@@ -10,6 +10,7 @@ import (
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
+	"xhan-helper/internal/tool"
 )
 
 // InitAgents 创建 Retrieval Sources、Orchestrator、ReflectionOrchestrator、CronRunner
@@ -50,6 +51,18 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	// 从 embedding 表加载向量到内存 store
 	agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState)
 
+	// --- Mission 子系统 ---
+	missionDiscoverer := agent.NewMissionDiscoverer(llmClients.Flash, agent.NewThemeStore(repos.ThemeState), repos.Mission)
+
+	// MissionRunner 的检索工具集
+	missionRetrievalTools := map[string]tool.Tool{
+		"search_notes":    tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder),
+		"search_memories": tool.NewSearchMemoriesV2Tool(infra.VectorStore, repos.Mem, repos.Chunk, infra.Embedder),
+		"search_messages": tool.NewMessageSearchTool(repos.Message, repos.Conversation),
+		"get_bill_stats":  tool.NewGetBillStatsTool(repos.Bill),
+	}
+	missionRunner := agent.NewMissionRunner(llmClients.Flash, repos.Mission, repos.Mailbox, missionRetrievalTools)
+
 	// --- ReflectionOrchestrator + CronRunner (先于 orch 创建) ---
 	reflectionOrch := agent.NewReflectionOrchestrator(&agent.ReflectionOrchestratorConfig{
 		FlashClient:        llmClients.Flash,
@@ -61,6 +74,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		NoteRepo:           repos.Note,
 		MemRepo:            repos.Mem,
 		PendingFindingRepo: repos.PendingFinding,
+		MissionDiscoverer:  missionDiscoverer,
 		MaxIterations:      cfg.Reflection.LaunchMaxIterations,
 		MaxDeliveryRetries: cfg.Reflection.MaxDeliveryRetries,
 		DraftExpireDays:    cfg.Reflection.DraftExpireDays,
@@ -76,8 +90,11 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		CommitTimer:       tools.CommitmentTimer,
 		ConvRepo:          repos.Conversation,
 		DelayedTaskRepo:   repos.DelayedTask,
+		MissionRunner:     missionRunner,
+		MissionRepo:       repos.Mission,
 		DiscoverSchedules: cfg.Reflection.DailySchedules,
 		DeliverInterval:   time.Duration(cfg.Reflection.DeliverIntervalMinutes) * time.Minute,
+		MissionInterval:   time.Duration(cfg.Reflection.MissionCheckIntervalMinutes) * time.Minute,
 		PostChatDelay:     time.Duration(cfg.Reflection.PostChatDelaySeconds) * time.Second,
 		MemoryAutoExtract: cfg.Server.MemoryAutoExtract,
 	})

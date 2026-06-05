@@ -158,6 +158,7 @@ type ReflectionConfig struct {
 	DraftSpanDaysThreshold      int            `yaml:"draft_span_days_threshold"`      // draft 升级需跨度天数，默认 3
 	DraftExpireDays             int            `yaml:"draft_expire_days"`              // draft 过期天数，默认 7
 	ActiveDurationDays          map[string]int `yaml:"active_duration_days"`           // active 各 duration 的衰减天数，默认 long:90 medium:30 short:14 ephemeral:7
+	MissionCheckIntervalMinutes int            `yaml:"mission_check_interval_minutes"` // Mission 检查间隔，默认 30 分钟
 }
 
 // Load 加载配置：base YAML + env YAML 合并 → 环境变量替换

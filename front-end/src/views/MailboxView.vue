@@ -69,12 +69,12 @@ async function navigateToChat(item) {
 }
 
 function typeLabel(type) {
-  const map = { daily_brief: '日报', theme_finding: '主题发现', candidate_theme: '候选主题' }
+  const map = { daily_brief: '日报', theme_finding: '主题发现', candidate_theme: '候选主题', mission_suggest: '任务建议', mission_check: '任务追踪', reminder: '待办提醒' }
   return map[type] || type
 }
 
 function typeColor(type) {
-  const map = { daily_brief: 'info', theme_finding: 'success', candidate_theme: 'warning' }
+  const map = { daily_brief: 'info', theme_finding: 'success', candidate_theme: 'warning', mission_suggest: 'info', mission_check: 'success', reminder: 'warning' }
   return map[type] || 'default'
 }
 

@@ -29,6 +29,7 @@ type Repos struct {
 	DelayedTask    *service.DelayedTaskRepo
 	Document       *service.DocumentRepo
 	Version        *service.VersionRepo
+	Mission        *service.MissionRepo
 }
 
 // InitRepos 创建所有 repo 实例
@@ -54,5 +55,6 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		DelayedTask:    service.NewDelayedTaskRepo(db),
 		Document:       service.NewDocumentRepo(db),
 		Version:        service.NewVersionRepo(db),
+		Mission:        service.NewMissionRepo(db),
 	}
 }

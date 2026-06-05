@@ -28,6 +28,7 @@ type ReflectionOrchestrator struct {
 	pendingFindingRepo *service.PendingFindingRepo
 	maxIterations      int
 	maxDeliveryRetries int
+	missionDiscoverer  *MissionDiscoverer
 
 	draftExpireDays    int
 	activeDurationDays map[string]int
@@ -44,6 +45,7 @@ type ReflectionOrchestratorConfig struct {
 	NoteRepo           *service.NoteRepo
 	MemRepo            *service.UserMemoryRepo
 	PendingFindingRepo *service.PendingFindingRepo
+	MissionDiscoverer  *MissionDiscoverer
 	MaxIterations      int
 	MaxDeliveryRetries int
 	DraftExpireDays    int
@@ -70,6 +72,7 @@ func NewReflectionOrchestrator(cfg *ReflectionOrchestratorConfig) *ReflectionOrc
 		noteRepo:           cfg.NoteRepo,
 		memRepo:            cfg.MemRepo,
 		pendingFindingRepo: cfg.PendingFindingRepo,
+		missionDiscoverer:  cfg.MissionDiscoverer,
 		maxIterations:      cfg.MaxIterations,
 		maxDeliveryRetries: cfg.MaxDeliveryRetries,
 		draftExpireDays:    cfg.DraftExpireDays,
@@ -261,6 +264,15 @@ func (o *ReflectionOrchestrator) MorningReview(ctx context.Context, userID strin
 	o.expireActiveThemes(ctx, userID)
 	findingCount := o.reviewActiveThemes(ctx, userID, traceID, "morning")
 
+	// Step 4: 从活跃主题中发现 Mission
+	if o.missionDiscoverer != nil {
+		if created, err := o.missionDiscoverer.Discover(ctx, userID); err != nil {
+			log.Printf("[reflection] mission discover error: %v", err)
+		} else {
+			log.Printf("[reflection] trace=%s mission_discover created=%d", traceID[:8], created)
+		}
+	}
+
 	endTraceSafe(o.traceRepo, ctx, traceID, "completed", findingCount, 0, nil)
 	log.Printf("[reflection] trace=%s DONE morning_review findings=%d", traceID[:8], findingCount)
 	return findingCount, nil
@@ -280,6 +292,15 @@ func (o *ReflectionOrchestrator) EveningReview(ctx context.Context, userID strin
 	o.themeStore.Expire(ctx, userID, o.draftExpireDays)
 	o.expireActiveThemes(ctx, userID)
 	findingCount := o.reviewActiveThemes(ctx, userID, traceID, "evening")
+
+	// Step 4: 从活跃主题中发现 Mission
+	if o.missionDiscoverer != nil {
+		if created, err := o.missionDiscoverer.Discover(ctx, userID); err != nil {
+			log.Printf("[reflection] mission discover error: %v", err)
+		} else {
+			log.Printf("[reflection] trace=%s mission_discover created=%d", traceID[:8], created)
+		}
+	}
 
 	endTraceSafe(o.traceRepo, ctx, traceID, "completed", findingCount, 0, nil)
 	log.Printf("[reflection] trace=%s DONE evening_review findings=%d", traceID[:8], findingCount)

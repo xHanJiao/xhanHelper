@@ -34,3 +34,4 @@ reflection:
   cluster_threshold: 0.70
   post_chat_delay_seconds: 30
   daily_schedules: ["22:30", "22:43"]
+  mission_check_interval_minutes: 30

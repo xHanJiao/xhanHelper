@@ -128,6 +128,8 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		tool.NewMessageSearchTool(repos.Message, repos.Conversation), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewReminderTool(repos.Commitment, commitmentTimer), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(
+		tool.NewMissionTool(repos.Mission), log.Default()))
 
 	return &ToolsBundle{
 		Registry:        reg,

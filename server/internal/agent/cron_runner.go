@@ -11,6 +11,7 @@ import (
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
+	"xhan-helper/internal/util"
 )
 
 // HookStatus — 系统钩子状态快照
@@ -19,6 +20,7 @@ type HookStatus struct {
 	NextDelayedTaskAt   string `json:"next_delayed_task_at"`
 	DeliverRemaining    string `json:"deliver_remaining"`
 	DiscoverRemaining   string `json:"discover_remaining"`
+	MissionRemaining    string `json:"mission_remaining"`
 	CommitmentTimers    int    `json:"commitment_timers"`
 }
 
@@ -28,6 +30,7 @@ type CronRunner struct {
 	userRepo          *service.UserRepo
 	discoverTimes     []string      // 发现候选主题定时列表
 	deliverInterval   time.Duration // 投递窗口间隔，默认 1 小时
+	missionInterval   time.Duration // Mission 检查间隔，默认 30 分钟
 	postChatDelay     time.Duration // 对话后延迟触发，默认 30 分钟
 	runTimeout        time.Duration // 单次反思超时，默认 30 分钟
 	taskPollInterval  time.Duration // 延迟任务轮询间隔，默认 3 分钟
@@ -37,11 +40,14 @@ type CronRunner struct {
 	commitTimer       *CommitmentTimer
 	convRepo          *service.ConversationRepo
 	memoryAutoExtract bool
+	missionRunner     *MissionRunner
+	missionRepo       *service.MissionRepo
 
 	// 钩子状态追踪
 	mu              sync.Mutex
 	deliverNext     time.Time
 	discoverNext    time.Time
+	missionNext     time.Time
 	taskPollRunning bool
 }
 
@@ -54,8 +60,11 @@ type CronRunnerConfig struct {
 	CommitTimer       *CommitmentTimer
 	ConvRepo          *service.ConversationRepo
 	DelayedTaskRepo   *service.DelayedTaskRepo
+	MissionRunner     *MissionRunner
+	MissionRepo       *service.MissionRepo
 	DiscoverSchedules []string
 	DeliverInterval   time.Duration
+	MissionInterval   time.Duration
 	PostChatDelay     time.Duration
 	RunTimeout        time.Duration
 	MemoryAutoExtract bool
@@ -75,6 +84,9 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 	if cfg.RunTimeout <= 0 {
 		cfg.RunTimeout = 30 * time.Minute
 	}
+	if cfg.MissionInterval <= 0 {
+		cfg.MissionInterval = 30 * time.Minute
+	}
 	return &CronRunner{
 		orch:              cfg.Orch,
 		stateUpdater:      cfg.StateUpdater,
@@ -83,8 +95,11 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		commitTimer:       cfg.CommitTimer,
 		convRepo:          cfg.ConvRepo,
 		delayedTaskRepo:   cfg.DelayedTaskRepo,
+		missionRunner:     cfg.MissionRunner,
+		missionRepo:       cfg.MissionRepo,
 		discoverTimes:     cfg.DiscoverSchedules,
 		deliverInterval:   cfg.DeliverInterval,
+		missionInterval:   cfg.MissionInterval,
 		postChatDelay:     cfg.PostChatDelay,
 		runTimeout:        cfg.RunTimeout,
 		memoryAutoExtract: cfg.MemoryAutoExtract,
@@ -123,6 +138,7 @@ func (cr *CronRunner) GetHookStatus() HookStatus {
 	}
 	s.DeliverRemaining = cr.deliverNext.Sub(now).Round(time.Second).String()
 	s.DiscoverRemaining = cr.discoverNext.Sub(now).Round(time.Second).String()
+	s.MissionRemaining = cr.missionNext.Sub(now).Round(time.Second).String()
 
 	return s
 }
@@ -174,8 +190,8 @@ func (cr *CronRunner) NotifyChatEnd(userID, convID string) {
 
 // Start 启动调度循环（阻塞，用 goroutine 调用）
 func (cr *CronRunner) Start(ctx context.Context) {
-	log.Printf("[cron] started, discover_times=%v deliver_interval=%v post_chat_delay=%v",
-		cr.discoverTimes, cr.deliverInterval, cr.postChatDelay)
+	log.Printf("[cron] started, discover_times=%v deliver_interval=%v mission_interval=%v post_chat_delay=%v",
+		cr.discoverTimes, cr.deliverInterval, cr.missionInterval, cr.postChatDelay)
 
 	// 启动时加载所有 pending 承诺，注册 timer
 	cr.commitTimer.LoadPending(ctx)
@@ -190,6 +206,12 @@ func (cr *CronRunner) Start(ctx context.Context) {
 
 	taskPollTicker := time.NewTicker(cr.taskPollInterval)
 	defer taskPollTicker.Stop()
+
+	missionTicker := time.NewTicker(cr.missionInterval)
+	defer missionTicker.Stop()
+	if cr.missionRunner != nil {
+		cr.missionNext = time.Now().Add(cr.missionInterval)
+	}
 
 	for {
 		select {
@@ -229,6 +251,11 @@ func (cr *CronRunner) Start(ctx context.Context) {
 				cr.taskPollRunning = false
 				cr.mu.Unlock()
 			}()
+
+		case <-missionTicker.C:
+			log.Printf("[cron] mission check trigger")
+			go cr.processMissions(ctx)
+			cr.missionNext = time.Now().Add(cr.missionInterval)
 		}
 	}
 }
@@ -346,5 +373,37 @@ func (cr *CronRunner) discoverOnce(ctx context.Context, userID string) {
 		if _, err := cr.orch.EveningReview(runCtx, userID); err != nil {
 			log.Printf("[cron] evening review error: %v", err)
 		}
+	}
+}
+
+// processMissions 扫到期的 active Mission 并执行检查
+func (cr *CronRunner) processMissions(parentCtx context.Context) {
+	if cr.missionRunner == nil || cr.missionRepo == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, cr.runTimeout)
+	defer cancel()
+
+	missions, err := cr.missionRepo.ListDueForCheck(ctx, 20)
+	if err != nil {
+		log.Printf("[cron] ListDueForCheck error: %v", err)
+		return
+	}
+	if len(missions) == 0 {
+		return
+	}
+	log.Printf("[cron] processing %d missions", len(missions))
+	tasks := make([]func(context.Context) (struct{}, error), len(missions))
+	for i := range missions {
+		m := &missions[i]
+		tasks[i] = func(ctx context.Context) (struct{}, error) {
+			if err := cr.missionRunner.Run(ctx, m); err != nil {
+				log.Printf("[cron] mission run error: %v", err)
+			}
+			return struct{}{}, nil
+		}
+	}
+	if _, err := util.LoadConcurrent(ctx, 3, tasks); err != nil {
+		log.Printf("[cron] LoadConcurrent error: %v", err)
 	}
 }

@@ -82,7 +82,7 @@ function toggleExpand() {
 
 // LLM 参数（从后端 API 获取，不存 localStorage）
 const showLlmSettings = ref(false)
-const llmSettings = ref({ temperature: null, max_tokens: null, thinking: true, deepMode: false })
+const llmSettings = ref({ temperature: null, max_tokens: null, thinking: true, deepMode: true })
 
 async function fetchLlmConfig() {
   try {

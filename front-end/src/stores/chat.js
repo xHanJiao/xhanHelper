@@ -6,7 +6,7 @@ export const useChatStore = defineStore('chat', () => {
   const agentId = ref(null)
   const agentName = ref(null)
   const llmParams = ref(null)
-  const deepMode = ref(false)
+  const deepMode = ref(true)
   const messages = ref([])
   const streamingMessage = ref(null)
   const planNodes = ref({})
@@ -53,7 +53,7 @@ export const useChatStore = defineStore('chat', () => {
     agentId.value = null
     agentName.value = null
     llmParams.value = null
-    deepMode.value = false
+    deepMode.value = true
     messages.value = []
     streamingMessage.value = null
     planNodes.value = {}

@@ -32,7 +32,12 @@ const missionDiscovererPrompt = `你在评估一个用户主题是否可以拆�
 从状态页中识别出值得追踪的子领域，每个子领域输出一个 Mission 候选。如果都不值得追踪，返回空数组。
 
 [
-  {"goal": "一句话描述任务目标，要具体可操作", "tools_hint": "建议检索工具（note,message_search,bill 等，逗号分隔）", "check_cron": "daily|weekly"},
+  {
+    "goal": "一句话描述任务目标，要具体可操作",
+    "context": "仅提取状态页中与该子领域相关的原文片段，不要包含其他子领域的信息。供后续后台检查时使用。",
+    "tools_hint": "建议检索工具（note,message_search,bill 等，逗号分隔）",
+    "check_cron": "daily|weekly"
+  },
   ...
 ]
 
@@ -40,6 +45,7 @@ const missionDiscovererPrompt = `你在评估一个用户主题是否可以拆�
 
 注意：
 - goal 要具体可操作，不只是「关注XX」，而是「追踪XX的进展/变化」。例如：「追踪求职投递进度和面试反馈」而非「关注求职」
+- context 必须只包含该子领域的相关信息，严禁把整个状态页复制进去。后续 Mission 检查时 LLM 只会看到这个 context
 - 如果一个子领域是纯状态记录（如「已确立某原则」），没有可追踪的变化指标，不要创建 Mission
 - check_cron: 高频变化用 daily，长期事项用 weekly
 - 宁可少也不要凑数。明显不值得追踪的不要硬创建
@@ -63,6 +69,7 @@ func NewMissionDiscoverer(proClient llm.LLMClient, themeStore *ThemeStore, missi
 // missionCandidate — LLM 输出的单个 Mission 候选
 type missionCandidate struct {
 	Goal      string `json:"goal"`
+	Context   string `json:"context"`
 	ToolsHint string `json:"tools_hint"`
 	CheckCron string `json:"check_cron"`
 }
@@ -90,7 +97,7 @@ func (d *MissionDiscoverer) Discover(ctx context.Context, userID string) (create
 				ID:        uuid.New().String(),
 				UserID:    userID,
 				Goal:      c.Goal,
-				Context:   fmt.Sprintf("主题: %s\n描述: %s\n状态: %s", theme.Name, theme.Description, theme.StateText),
+				Context:   c.Context,
 				ToolsHint: c.ToolsHint,
 				CheckCron: c.CheckCron,
 				Status:    "suggested",

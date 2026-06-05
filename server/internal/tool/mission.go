@@ -12,13 +12,20 @@ import (
 	"xhan-helper/internal/service"
 )
 
+// MissionEmbedder — 避免循环依赖的嵌入接口（agent.MissionEmbedder 实现）
+type MissionEmbedder interface {
+	UpsertEmbedding(missionID, userID, goal string) error
+	DeleteEmbedding(missionID string)
+}
+
 // MissionTool — 对话中 LLM 可调用的 Mission 管理工具
 type MissionTool struct {
 	missionRepo *service.MissionRepo
+	embedder    MissionEmbedder
 }
 
-func NewMissionTool(missionRepo *service.MissionRepo) *MissionTool {
-	return &MissionTool{missionRepo: missionRepo}
+func NewMissionTool(missionRepo *service.MissionRepo, embedder MissionEmbedder) *MissionTool {
+	return &MissionTool{missionRepo: missionRepo, embedder: embedder}
 }
 
 func (t *MissionTool) Name() string { return "mission" }
@@ -181,6 +188,8 @@ func (t *MissionTool) createMission(ec *ExecuteContext, args json.RawMessage) *R
 		return &Result{Success: false, Error: fmt.Sprintf("创建任务失败: %v", err)}
 	}
 
+	go t.embedder.UpsertEmbedding(m.ID, m.UserID, m.Goal)
+
 	log.Printf("[mission] created: %s goal=%s cron=%s", m.ID[:8], m.Goal[:min(50, len(m.Goal))], m.CheckCron)
 	data, _ := json.Marshal(map[string]interface{}{
 		"id":         m.ID,
@@ -327,6 +336,7 @@ func (t *MissionTool) rejectMission(ec *ExecuteContext, args json.RawMessage) *R
 		log.Printf("[mission] reject error: %v", err)
 		return &Result{Success: false, Error: fmt.Sprintf("拒绝任务失败: %v", err)}
 	}
+	go t.embedder.DeleteEmbedding(m.ID)
 	log.Printf("[mission] rejected: %s", m.ID[:8])
 	data, _ := json.Marshal(map[string]interface{}{"id": m.ID, "status": "rejected"})
 	return &Result{Success: true, Data: data}
@@ -383,6 +393,7 @@ func (t *MissionTool) completeMission(ec *ExecuteContext, args json.RawMessage) 
 		log.Printf("[mission] complete error: %v", err)
 		return &Result{Success: false, Error: fmt.Sprintf("完成任务失败: %v", err)}
 	}
+	go t.embedder.DeleteEmbedding(m.ID)
 	log.Printf("[mission] completed: %s", m.ID[:8])
 	data, _ := json.Marshal(map[string]interface{}{"id": m.ID, "status": "completed"})
 	return &Result{Success: true, Data: data}

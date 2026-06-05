@@ -74,6 +74,24 @@ func (r *MissionRepo) UpdateAfterCheck(ctx context.Context, id string, summary s
 		}).Error
 }
 
+func (r *MissionRepo) ListByIDs(ctx context.Context, ids []string, userID string) (map[string]*model.Mission, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var list []model.Mission
+	err := r.db.WithContext(ctx).
+		Where("id IN ? AND user_id = ? AND status = ?", ids, userID, "active").
+		Find(&list).Error
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]*model.Mission, len(list))
+	for i := range list {
+		m[list[i].ID] = &list[i]
+	}
+	return m, nil
+}
+
 func (r *MissionRepo) UpdateStatus(ctx context.Context, id, userID, status string) error {
 	return r.db.WithContext(ctx).Model(&model.Mission{}).
 		Where("id = ? AND user_id = ?", id, userID).

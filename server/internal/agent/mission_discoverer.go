@@ -79,13 +79,15 @@ type MissionDiscoverer struct {
 	proClient   llm.LLMClient
 	themeStore  *ThemeStore
 	missionRepo *service.MissionRepo
+	embedder    *MissionEmbedder
 }
 
-func NewMissionDiscoverer(proClient llm.LLMClient, themeStore *ThemeStore, missionRepo *service.MissionRepo) *MissionDiscoverer {
+func NewMissionDiscoverer(proClient llm.LLMClient, themeStore *ThemeStore, missionRepo *service.MissionRepo, embedder *MissionEmbedder) *MissionDiscoverer {
 	return &MissionDiscoverer{
 		proClient:   proClient,
 		themeStore:  themeStore,
 		missionRepo: missionRepo,
+		embedder:    embedder,
 	}
 }
 
@@ -158,6 +160,12 @@ func (d *MissionDiscoverer) Discover(ctx context.Context, userID string) (create
 			log.Printf("[mission_discoverer] create error: %v", err)
 			continue
 		}
+
+		go func(m *model.Mission) {
+			if err := d.embedder.Upsert(ctx, m); err != nil {
+				log.Printf("[mission_discoverer] embed error: %v", err)
+			}
+		}(m)
 
 		created++
 		log.Printf("[mission_discoverer] activated mission: %s goal=%s", m.ID[:8], m.Goal[:min(50, len(m.Goal))])

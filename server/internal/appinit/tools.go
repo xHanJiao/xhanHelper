@@ -126,10 +126,12 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		tool.NewSearchMemoriesV2Tool(infra.VectorStore, repos.Mem, repos.Chunk, infra.Embedder), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewMessageSearchTool(repos.Message, repos.Conversation), log.Default()))
+	missionEmbedder := agent.NewMissionEmbedder(infra, repos.Embedding)
+
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewReminderTool(repos.Commitment, commitmentTimer), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
-		tool.NewMissionTool(repos.Mission), log.Default()))
+		tool.NewMissionTool(repos.Mission, missionEmbedder), log.Default()))
 
 	return &ToolsBundle{
 		Registry:        reg,
@@ -137,5 +139,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		MCPManager:      mcpManager,
 		CommitmentTimer: commitmentTimer,
 		MemExtractor:    memExtractor,
+		MissionEmbedder: missionEmbedder,
 	}
 }

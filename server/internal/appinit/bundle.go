@@ -16,6 +16,7 @@ type ToolsBundle struct {
 	MCPManager      *mcp.Manager
 	CommitmentTimer *agent.CommitmentTimer
 	MemExtractor    *agent.MemoryExtractor
+	MissionEmbedder *agent.MissionEmbedder
 }
 
 // AgentBundle Agent 层初始化的产物

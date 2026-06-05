@@ -34,6 +34,19 @@ async function triggerCheck(item) {
   }
 }
 
+const discovering = ref(false)
+async function triggerDiscover() {
+  discovering.value = true
+  try {
+    await api.post('/api/missions/discover')
+    message.success('Mission 发现已触发，稍后刷新查看')
+  } catch (e) {
+    message.error('触发失败: ' + (e.message || ''))
+  } finally {
+    discovering.value = false
+  }
+}
+
 async function handleStatusChange(item, status) {
   try {
     await api.patch(`/api/missions/${item.id}`, { status })
@@ -119,6 +132,7 @@ onMounted(fetchList)
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
     <PageTopBar title="任务追踪" :visible="true">
       <template #right>
+        <TopBarBtn label="触发发现" @click="triggerDiscover" />
         <TopBarBtn label="刷新" @click="fetchList" />
       </template>
     </PageTopBar>

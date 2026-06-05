@@ -88,6 +88,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		EnableReplay:           cfg.Server.Mode == "debug",
 		PendingFindingRepo:     repos.PendingFinding,
 		ReflectionOrch:         agents.ReflectionOrch,
+		MissionDiscoverer:      agents.MissionDiscoverer,
 		CronRunner:             agents.CronRunner,
 		AuthMiddleware:         middleware.Auth(repos.User),
 		AdminMiddleware:        monitor.AdminOnly(cfg.Server.AdminUsers),

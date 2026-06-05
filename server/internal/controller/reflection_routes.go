@@ -26,6 +26,7 @@ type ReflectionRoutesConfig struct {
 	EnableReplay           bool // 仅 dev 环境开放
 	PendingFindingRepo     *service.PendingFindingRepo
 	ReflectionOrch         *agent.ReflectionOrchestrator
+	MissionDiscoverer      *agent.MissionDiscoverer
 	CronRunner             *agent.CronRunner
 	AuthMiddleware         gin.HandlerFunc
 	AdminMiddleware        gin.HandlerFunc
@@ -55,6 +56,17 @@ func RegisterReflectionRoutes(rc *ReflectionRoutesConfig) {
 		auth.GET("/missions/:id", rc.MissionHandler.GetMission)
 		auth.PATCH("/missions/:id", rc.MissionHandler.UpdateMission)
 		auth.POST("/missions/:id/check", rc.MissionHandler.TriggerCheck)
+
+		// 手动触发 Mission 发现
+		auth.POST("/missions/discover", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			go func() {
+				if created, err := rc.MissionDiscoverer.Discover(context.Background(), userID); err != nil {
+					_ = created
+				}
+			}()
+			c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "Mission 发现已触发，稍后查看任务列表"})
+		})
 
 		// 手动触发反思
 		auth.POST("/reflection/trigger", func(c *gin.Context) {

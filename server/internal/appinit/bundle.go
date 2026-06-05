@@ -20,11 +20,12 @@ type ToolsBundle struct {
 
 // AgentBundle Agent 层初始化的产物
 type AgentBundle struct {
-	Orch           *agent.Orchestrator
-	CronRunner     *agent.CronRunner
-	ReflectionOrch *agent.ReflectionOrchestrator
-	MissionRunner  *agent.MissionRunner
-	ReplayRunner   *replay.Runner
-	BGCtx          context.Context
-	BGCancel       context.CancelFunc
+	Orch              *agent.Orchestrator
+	CronRunner        *agent.CronRunner
+	ReflectionOrch    *agent.ReflectionOrchestrator
+	MissionRunner     *agent.MissionRunner
+	MissionDiscoverer *agent.MissionDiscoverer
+	ReplayRunner      *replay.Runner
+	BGCtx             context.Context
+	BGCancel          context.CancelFunc
 }

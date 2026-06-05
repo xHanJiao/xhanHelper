@@ -147,13 +147,14 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	})
 
 	return &AgentBundle{
-		Orch:           orch,
-		CronRunner:     cronRunner,
-		ReflectionOrch: reflectionOrch,
-		MissionRunner:  missionRunner,
-		ReplayRunner:   replayRunner,
-		BGCtx:          bgCtx,
-		BGCancel:       bgCancel,
+		Orch:              orch,
+		CronRunner:        cronRunner,
+		ReflectionOrch:    reflectionOrch,
+		MissionRunner:     missionRunner,
+		MissionDiscoverer: missionDiscoverer,
+		ReplayRunner:      replayRunner,
+		BGCtx:             bgCtx,
+		BGCancel:          bgCancel,
 	}
 }
 

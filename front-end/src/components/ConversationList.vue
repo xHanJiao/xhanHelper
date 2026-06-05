@@ -74,6 +74,7 @@ const adminExpanded = ref(false)
 const historyExpanded = ref(true)
 
 const navItems = [
+  { label: '任务', path: '/missions' },
   { label: '账单', path: '/bills' },
   { label: '智能体', path: '/agents' },
   { label: '信箱', path: '/mailbox' },
@@ -81,7 +82,6 @@ const navItems = [
 ]
 
 const adminItems = [
-  { label: '任务', path: '/missions' },
   { label: '记忆', path: '/memories' },
   { label: '笔记', path: '/notes' },
   { label: '主题', path: '/themes' },

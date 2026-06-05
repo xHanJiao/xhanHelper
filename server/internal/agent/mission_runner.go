@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -17,6 +18,8 @@ import (
 )
 
 const missionRunnerSystemPrompt = `你在执行一个后台追踪任务（Mission）。你不需要向用户打招呼，不需要说"你好"。
+
+当前时间: %s
 
 ## 任务定义
 
@@ -84,7 +87,8 @@ type missionFinding struct {
 func (r *MissionRunner) Run(ctx context.Context, m *model.Mission) error {
 	log.Printf("[mission_runner] running mission: %s goal=%s", m.ID[:8], m.Goal[:min(50, len(m.Goal))])
 
-	promptText := fmt.Sprintf(missionRunnerSystemPrompt, m.Goal, m.Context, m.LastSummary)
+	now := time.Now().In(config.BJ).Format("2006-01-02 15:04")
+	promptText := fmt.Sprintf(missionRunnerSystemPrompt, now, m.Goal, m.Context, m.LastSummary)
 
 	reactLoop := NewReactLoop(r.flashClient, r.retrievalTools, promptText, 3, m.UserID,
 		"mission_runner", nil, "")

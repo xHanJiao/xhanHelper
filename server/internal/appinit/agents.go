@@ -52,7 +52,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState)
 
 	// --- Mission 子系统 ---
-	missionDiscoverer := agent.NewMissionDiscoverer(llmClients.Flash, agent.NewThemeStore(repos.ThemeState), repos.Mission)
+	missionDiscoverer := agent.NewMissionDiscoverer(llmClients.Strong, agent.NewThemeStore(repos.ThemeState), repos.Mission)
 
 	// MissionRunner 的检索工具集
 	missionRetrievalTools := map[string]tool.Tool{

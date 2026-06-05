@@ -64,10 +64,10 @@ function formatTime(ts) {
 }
 
 function statusColor(s) {
-  return { active: 'success', suggested: 'info', paused: 'warning', completed: 'default', rejected: 'error' }[s] || 'default'
+  return { active: 'success', paused: 'warning', completed: 'default', rejected: 'error' }[s] || 'default'
 }
 function statusLabel(s) {
-  return { active: '运行中', suggested: '待确认', paused: '已暂停', completed: '已完成', rejected: '已拒绝' }[s] || s
+  return { active: '运行中', paused: '已暂停', completed: '已完成', rejected: '已拒绝' }[s] || s
 }
 
 function cronLabel(c) {
@@ -104,10 +104,6 @@ function buildMetadata(item) {
 function buildActions(item) {
   const actions = []
   switch (item.status) {
-    case 'suggested':
-      actions.push({ key: 'accept', label: '接受', onClick: () => handleStatusChange(item, 'active') })
-      actions.push({ key: 'reject', label: '拒绝', confirm: '确定拒绝该任务？', onClick: () => handleStatusChange(item, 'rejected') })
-      break
     case 'active':
       actions.push({ key: 'check', label: '立即检查', onClick: () => triggerCheck(item) })
       actions.push({ key: 'pause', label: '暂停', onClick: () => handleStatusChange(item, 'paused') })

@@ -63,7 +63,7 @@ func (t *MissionTool) Functions() []FuncSchema {
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"status": map[string]interface{}{"type": "string", "description": "筛选状态: active, suggested, paused, completed。不传默认返回 active + suggested"},
+					"status": map[string]interface{}{"type": "string", "description": "筛选状态: active, paused, completed。不传默认返回 active + paused"},
 				},
 			},
 		},
@@ -80,24 +80,6 @@ func (t *MissionTool) Functions() []FuncSchema {
 					"check_cron": commonMissionFields["check_cron"],
 				},
 				"required": []string{"id"},
-			},
-		},
-		{
-			Name:        "accept_mission",
-			Description: "接受一个系统自动建议的追踪任务，使其开始定期执行。",
-			Parameters: map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{"id": map[string]interface{}{"type": "string", "description": "任务 ID"}},
-				"required":   []string{"id"},
-			},
-		},
-		{
-			Name:        "reject_mission",
-			Description: "拒绝一个系统自动建议的追踪任务。",
-			Parameters: map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{"id": map[string]interface{}{"type": "string", "description": "任务 ID"}},
-				"required":   []string{"id"},
 			},
 		},
 		{
@@ -138,10 +120,6 @@ func (t *MissionTool) Execute(ec *ExecuteContext, funcName string, args json.Raw
 		return t.listMissions(ec, args)
 	case "update_mission":
 		return t.updateMission(ec, args)
-	case "accept_mission":
-		return t.acceptMission(ec, args)
-	case "reject_mission":
-		return t.rejectMission(ec, args)
 	case "pause_mission":
 		return t.pauseMission(ec, args)
 	case "resume_mission":
@@ -212,7 +190,7 @@ func (t *MissionTool) listMissions(ec *ExecuteContext, args json.RawMessage) *Re
 	if req.Status != "" {
 		statuses = []string{req.Status}
 	} else {
-		statuses = []string{"active", "suggested"}
+		statuses = []string{"active", "paused"}
 	}
 
 	list, err := t.missionRepo.ListByStatuses(ec.Ctx, ec.UserID, statuses)
@@ -307,41 +285,6 @@ func (t *MissionTool) updateMission(ec *ExecuteContext, args json.RawMessage) *R
 	return &Result{Success: true, Data: data}
 }
 
-func (t *MissionTool) acceptMission(ec *ExecuteContext, args json.RawMessage) *Result {
-	m, err := t.getAndValidate(ec, args, "accept")
-	if err != nil {
-		return &Result{Success: false, Error: err.Error()}
-	}
-	if m.Status != "suggested" {
-		return &Result{Success: false, Error: fmt.Sprintf("只能接受 suggested 状态的任务，当前状态: %s", m.Status)}
-	}
-	if err := t.missionRepo.UpdateStatus(ec.Ctx, m.ID, ec.UserID, "active"); err != nil {
-		log.Printf("[mission] accept error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("接受任务失败: %v", err)}
-	}
-	log.Printf("[mission] accepted: %s", m.ID[:8])
-	data, _ := json.Marshal(map[string]interface{}{"id": m.ID, "status": "active"})
-	return &Result{Success: true, Data: data}
-}
-
-func (t *MissionTool) rejectMission(ec *ExecuteContext, args json.RawMessage) *Result {
-	m, err := t.getAndValidate(ec, args, "reject")
-	if err != nil {
-		return &Result{Success: false, Error: err.Error()}
-	}
-	if m.Status != "suggested" {
-		return &Result{Success: false, Error: fmt.Sprintf("只能拒绝 suggested 状态的任务，当前状态: %s", m.Status)}
-	}
-	if err := t.missionRepo.UpdateStatus(ec.Ctx, m.ID, ec.UserID, "rejected"); err != nil {
-		log.Printf("[mission] reject error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("拒绝任务失败: %v", err)}
-	}
-	go t.embedder.DeleteEmbedding(m.ID)
-	log.Printf("[mission] rejected: %s", m.ID[:8])
-	data, _ := json.Marshal(map[string]interface{}{"id": m.ID, "status": "rejected"})
-	return &Result{Success: true, Data: data}
-}
-
 func (t *MissionTool) pauseMission(ec *ExecuteContext, args json.RawMessage) *Result {
 	m, err := t.getAndValidate(ec, args, "pause")
 	if err != nil {
@@ -386,7 +329,7 @@ func (t *MissionTool) completeMission(ec *ExecuteContext, args json.RawMessage) 
 	if err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
-	if m.Status != "active" && m.Status != "paused" && m.Status != "suggested" {
+	if m.Status != "active" && m.Status != "paused" {
 		return &Result{Success: false, Error: fmt.Sprintf("无法完成当前状态的任务: %s", m.Status)}
 	}
 	if err := t.missionRepo.UpdateStatus(ec.Ctx, m.ID, ec.UserID, "completed"); err != nil {

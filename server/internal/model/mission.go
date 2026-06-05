@@ -11,7 +11,7 @@ type Mission struct {
 	Context     string     `gorm:"type:text" json:"context"`
 	ToolsHint   string     `gorm:"size:300" json:"tools_hint"`
 	CheckCron   string     `gorm:"size:30;default:daily" json:"check_cron"` // daily | weekly | 2daily
-	Status      string     `gorm:"size:20;default:suggested" json:"status"` // suggested | active | paused | completed | rejected
+	Status      string     `gorm:"size:20;default:active" json:"status"`    // active | paused | completed | rejected
 	LastSummary string     `gorm:"type:text" json:"last_summary"`
 	LastCheckAt *time.Time `json:"last_check_at,omitempty"`
 	NextCheckAt *time.Time `json:"next_check_at,omitempty"`

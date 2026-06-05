@@ -32,7 +32,7 @@ func (h *MissionHandler) ListMissions(c *gin.Context) {
 	if status != "" {
 		statuses = []string{status}
 	} else {
-		statuses = []string{"active", "suggested", "paused"}
+		statuses = []string{"active", "paused"}
 	}
 
 	list, err := h.missionRepo.ListByStatuses(c.Request.Context(), userID, statuses)

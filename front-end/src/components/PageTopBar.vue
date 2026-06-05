@@ -39,8 +39,9 @@ const sidebarIcon = computed(() => {
 })
 
 const agentLabel = computed(() => {
-  const name = props.agentName || props.agentId
-  return name ? name + ' ▾' : ''
+  if (props.agentName) return props.agentName + ' ▾'
+  if (props.agentId) return props.agentId + ' ▾'
+  return ''
 })
 </script>
 
@@ -64,6 +65,7 @@ const agentLabel = computed(() => {
       {{ title }}
     </span>
     <span style="display: flex; align-items: center; gap: var(--space-xs);">
+      <!-- 已绑定 agent：切换/解绑 -->
       <NPopover
         v-if="agentId"
         trigger="click"
@@ -88,6 +90,28 @@ const agentLabel = computed(() => {
           <div class="agent-popover-divider"></div>
           <div class="agent-popover-item unbind" @click="handleUnbind">
             解绑智能体
+          </div>
+        </div>
+      </NPopover>
+      <!-- 未绑定 agent：绑定入口 -->
+      <NPopover
+        v-if="!agentId && agents.length > 0"
+        trigger="click"
+        :show="showAgentPopover"
+        @update:show="handlePopoverShow"
+      >
+        <template #trigger>
+          <TopBarBtn icon="🤖" label="智能体 ▾" />
+        </template>
+        <div class="agent-popover">
+          <div class="agent-popover-header">选择智能体</div>
+          <div
+            v-for="agent in agents"
+            :key="agent.id"
+            class="agent-popover-item"
+            @click="handleSelectAgent(agent.id)"
+          >
+            <span>{{ agent.name }}</span>
           </div>
         </div>
       </NPopover>

@@ -59,6 +59,63 @@ func getDefaultConversation(convRepo *service.ConversationRepo, agentRepo *servi
 	}
 }
 
+// createConversation 创建新的（非默认）会话，可选绑定 agent
+func createConversation(convRepo *service.ConversationRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetString("user_id")
+
+		var req struct {
+			AgentID string `json:"agent_id"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			// 允许空 body，不传 agent_id 也可以
+			req.AgentID = ""
+		}
+
+		conv := &model.Conversation{
+			ID:        uuid.New().String(),
+			UserID:    userID,
+			IsDefault: false,
+		}
+
+		if req.AgentID != "" {
+			if agentRepo != nil {
+				a, err := agentRepo.FindByID(c.Request.Context(), req.AgentID, userID)
+				if err != nil || a == nil {
+					log.Printf("[conv] createConversation agent not found: id=%s err=%v", req.AgentID, err)
+					view.JSONError(c, 400, "agent not found")
+					return
+				}
+			}
+			conv.AgentID = &req.AgentID
+		}
+
+		if err := convRepo.Create(c.Request.Context(), conv); err != nil {
+			log.Printf("[conv] CreateConversation error: %v", err)
+			view.JSONError(c, 500, "create conversation failed")
+			return
+		}
+
+		resp := map[string]interface{}{
+			"id":         conv.ID,
+			"title":      conv.Title,
+			"is_default": conv.IsDefault,
+			"agent_id":   conv.AgentID,
+			"created_at": conv.CreatedAt,
+			"updated_at": conv.UpdatedAt,
+		}
+		if conv.AgentID != nil && *conv.AgentID != "" && agentRepo != nil {
+			a, err := agentRepo.FindByID(c.Request.Context(), *conv.AgentID, userID)
+			if err != nil {
+				log.Printf("[conv] agent lookup error: %v", err)
+			} else if a != nil {
+				resp["agent_name"] = a.Name
+			}
+		}
+		view.JSONOK(c, resp)
+	}
+}
+
 func listConversations(convRepo *service.ConversationRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := c.GetString("user_id")

@@ -81,6 +81,7 @@ const navItems = [
 ]
 
 const adminItems = [
+  { label: '任务', path: '/missions' },
   { label: '记忆', path: '/memories' },
   { label: '笔记', path: '/notes' },
   { label: '主题', path: '/themes' },

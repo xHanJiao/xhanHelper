@@ -53,6 +53,11 @@ const routes = [
     component: () => import('@/views/ThemeView.vue')
   },
   {
+    path: '/missions',
+    name: 'Missions',
+    component: () => import('@/views/MissionsView.vue')
+  },
+  {
     path: '/mailbox',
     name: 'Mailbox',
     component: () => import('@/views/MailboxView.vue')

@@ -18,6 +18,7 @@ type ReflectionRoutesConfig struct {
 	UserRepo               *service.UserRepo
 	MailboxHandler         *MailboxHandler
 	ThemeHandler           *ThemeHandler
+	MissionHandler         *MissionHandler
 	ReflectionAdminHandler *ReflectionAdminHandler
 	MessageTraceHandler    *MessageTraceHandler
 	MessageDebugHandler    *MessageDebugHandler
@@ -48,6 +49,12 @@ func RegisterReflectionRoutes(rc *ReflectionRoutesConfig) {
 		auth.GET("/themes", rc.ThemeHandler.ListThemes)
 		auth.POST("/themes", rc.ThemeHandler.CreateTheme)
 		auth.PATCH("/themes/:id", rc.ThemeHandler.UpdateTheme)
+
+		// 任务管理（Mission）
+		auth.GET("/missions", rc.MissionHandler.ListMissions)
+		auth.GET("/missions/:id", rc.MissionHandler.GetMission)
+		auth.PATCH("/missions/:id", rc.MissionHandler.UpdateMission)
+		auth.POST("/missions/:id/check", rc.MissionHandler.TriggerCheck)
 
 		// 手动触发反思
 		auth.POST("/reflection/trigger", func(c *gin.Context) {

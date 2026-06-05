@@ -23,6 +23,7 @@ type AgentBundle struct {
 	Orch           *agent.Orchestrator
 	CronRunner     *agent.CronRunner
 	ReflectionOrch *agent.ReflectionOrchestrator
+	MissionRunner  *agent.MissionRunner
 	ReplayRunner   *replay.Runner
 	BGCtx          context.Context
 	BGCancel       context.CancelFunc

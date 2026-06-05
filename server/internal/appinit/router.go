@@ -51,6 +51,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	mailboxService := service.NewMailboxService(repos.Mailbox, repos.ThemeState)
 	mailboxHandler := controller.NewMailboxHandler(mailboxService, repos.Mailbox, repos.Conversation, repos.ThemeState, repos.Message)
 	themeHandler := controller.NewThemeHandler(repos.ThemeState)
+	missionHandler := controller.NewMissionHandler(repos.Mission, agents.MissionRunner)
 	reflectionAdminHandler := controller.NewReflectionAdminHandler(repos.Trace)
 	messageTraceHandler := controller.NewMessageTraceHandler(repos.Message)
 	messageDebugHandler := controller.NewMessageDebugHandler(repos.Message, repos.Mem, repos.Note, repos.ThemeState)
@@ -79,6 +80,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		UserRepo:               repos.User,
 		MailboxHandler:         mailboxHandler,
 		ThemeHandler:           themeHandler,
+		MissionHandler:         missionHandler,
 		ReflectionAdminHandler: reflectionAdminHandler,
 		MessageTraceHandler:    messageTraceHandler,
 		MessageDebugHandler:    messageDebugHandler,

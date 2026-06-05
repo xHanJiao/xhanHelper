@@ -150,6 +150,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		Orch:           orch,
 		CronRunner:     cronRunner,
 		ReflectionOrch: reflectionOrch,
+		MissionRunner:  missionRunner,
 		ReplayRunner:   replayRunner,
 		BGCtx:          bgCtx,
 		BGCancel:       bgCancel,

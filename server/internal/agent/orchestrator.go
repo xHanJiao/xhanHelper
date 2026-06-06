@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"xhan-helper/internal/agent/promptbuilder"
+	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -48,12 +49,10 @@ type RunRequest struct {
 	OverrideSystemPrompt *string
 
 	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
-	MemoryThreshold  float64
-	MemoryLimit      int
-	NoteThreshold    float64
-	NoteLimit        int
-	HistoryThreshold float64
-	HistoryLimit     int
+	Memory  retrieval.SourceConfig
+	Note    retrieval.SourceConfig
+	History retrieval.SourceConfig
+	Theme   retrieval.SourceConfig
 }
 
 // reactState — runReActLoop 循环过程中的可变状态
@@ -207,18 +206,16 @@ func mkPromptBuildOpt(req *RunRequest, queryVec []float64) promptbuilder.BuildOp
 	}
 
 	return promptbuilder.BuildOptions{
-		UserID:           req.UserID,
-		ConversationID:   req.ConversationID,
-		UserMessage:      req.UserMessageContent,
-		Embedding:        queryVec,
-		AgentPrompt:      req.AgentSystemPrompt,
-		MemoryThreshold:  req.MemoryThreshold,
-		MemoryLimit:      req.MemoryLimit,
-		NoteThreshold:    req.NoteThreshold,
-		NoteLimit:        req.NoteLimit,
-		HistoryThreshold: req.HistoryThreshold,
-		HistoryLimit:     req.HistoryLimit,
-		ExcludeMsgIDs:    excludeMsgIDs,
+		UserID:         req.UserID,
+		ConversationID: req.ConversationID,
+		UserMessage:    req.UserMessageContent,
+		Embedding:      queryVec,
+		AgentPrompt:    req.AgentSystemPrompt,
+		Memory:         req.Memory,
+		Note:           req.Note,
+		History:        req.History,
+		Theme:          req.Theme,
+		ExcludeMsgIDs:  excludeMsgIDs,
 	}
 }
 

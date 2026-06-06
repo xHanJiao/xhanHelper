@@ -160,21 +160,21 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 // applyRetrievalConfig 将 yaml 配置中非零的 threshold/limit 覆盖到 PromptConfig
 func applyRetrievalConfig(pc *promptbuilder.PromptConfig, rc config.RetrievalConfig) {
 	if rc.Memory.Threshold > 0 {
-		pc.MemoryThreshold = rc.Memory.Threshold
+		pc.Memory.Threshold = rc.Memory.Threshold
 	}
 	if rc.Memory.Limit > 0 {
-		pc.MemoryLimit = rc.Memory.Limit
+		pc.Memory.Limit = rc.Memory.Limit
 	}
 	if rc.Note.Threshold > 0 {
-		pc.NoteThreshold = rc.Note.Threshold
+		pc.Note.Threshold = rc.Note.Threshold
 	}
 	if rc.Note.Limit > 0 {
-		pc.NoteLimit = rc.Note.Limit
+		pc.Note.Limit = rc.Note.Limit
 	}
 	if rc.History.Threshold > 0 {
-		pc.HistoryThreshold = rc.History.Threshold
+		pc.History.Threshold = rc.History.Threshold
 	}
 	if rc.History.Limit > 0 {
-		pc.HistoryLimit = rc.History.Limit
+		pc.History.Limit = rc.History.Limit
 	}
 }

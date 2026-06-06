@@ -163,8 +163,8 @@ func (s *HistorySource) Fetch(ctx context.Context, opts SearchOptions) ([]Contex
 	query := opts.Query
 	userID := opts.UserID
 	convID := opts.ConversationID
-	threshold := opts.HistoryThreshold
-	limit := opts.HistoryLimit
+	threshold := opts.History.Threshold
+	limit := opts.History.Limit
 	excludeMsgIDs := opts.ExcludeMsgIDs
 
 	hits, nearMiss, err := s.filterHits(ctx, queryVec, userID, convID, threshold, limit, excludeMsgIDs)

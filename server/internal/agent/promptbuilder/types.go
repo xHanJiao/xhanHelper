@@ -88,7 +88,6 @@ func (t *PromptTrace) addStatic(name string) {
 	})
 }
 
-// addSearchTrace 将 SearchProvider 的检索记录追加到 trace
 func (t *PromptTrace) addSearch(name string, input *TraceInput, items []TraceItem, err error) {
 	pt := ProviderTrace{
 		Name:  name,
@@ -105,36 +104,18 @@ func (t *PromptTrace) addSearch(name string, input *TraceInput, items []TraceIte
 // ==================== Config ====================
 
 // PromptConfig — 集中管理所有阈值、数量、开关。
-// 所有魔法数字统一在此定义，调参只需改一个文件。
 type PromptConfig struct {
-	// —— 主题 ——
-	ThemeVectorThreshold float64 // 向量匹配 primary 主题的相似度阈值（默认 0.5）
-	ThemeMaxCount        int     // 最多注入主题数（默认 10）
-
-	// —— 记忆 ——
-	MemoryThreshold float64 // 记忆检索相似度阈值（默认 0.5）
-	MemoryLimit     int     // 记忆检索最大条数（默认 8）
-
-	// —— 笔记 ——
-	NoteThreshold float64 // 笔记检索相似度阈值（默认 0.5）
-	NoteLimit     int     // 笔记检索最大条数（默认 5）
-
-	// —— 历史消息 ——
-	HistoryThreshold float64 // 历史消息检索相似度阈值（默认 0.8）
-	HistoryLimit     int     // 历史消息检索最大条数（默认 1）
-
+	Memory  retrieval.SourceConfig // 记忆检索
+	Note    retrieval.SourceConfig // 笔记检索
+	History retrieval.SourceConfig // 历史消息检索
+	Theme   retrieval.SourceConfig // 主题检索
 }
 
-// DefaultPromptConfig 返回生产环境验证过的默认配置。
 func DefaultPromptConfig() PromptConfig {
 	return PromptConfig{
-		ThemeVectorThreshold: 0.5,
-		ThemeMaxCount:        10,
-		MemoryThreshold:      0.5,
-		MemoryLimit:          8,
-		NoteThreshold:        0.5,
-		NoteLimit:            5,
-		HistoryThreshold:     0.8,
-		HistoryLimit:         1,
+		Memory:  retrieval.SourceConfig{Threshold: 0.5, Limit: 8},
+		Note:    retrieval.SourceConfig{Threshold: 0.5, Limit: 5},
+		History: retrieval.SourceConfig{Threshold: 0.8, Limit: 1},
+		Theme:   retrieval.SourceConfig{Threshold: 0.5, Limit: 10},
 	}
 }

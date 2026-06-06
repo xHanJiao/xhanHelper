@@ -39,8 +39,8 @@ func (s *NoteSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextPa
 	queryVec := opts.Embedding
 	query := opts.Query
 	userID := opts.UserID
-	threshold := opts.NoteThreshold
-	limit := opts.NoteLimit
+	threshold := opts.Note.Threshold
+	limit := opts.Note.Limit
 
 	var nearMiss []NearMissItem
 

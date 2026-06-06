@@ -32,12 +32,10 @@ const defaultConfigA = {
   skip_retrieval: false,
   max_tool_result_chars: 2000,
   max_iterations: 8,
-  memory_threshold: 0.5,
-  memory_limit: 8,
-  note_threshold: 0.5,
-  note_limit: 5,
-  history_threshold: 0.8,
-  history_limit: 5,
+  memory: { threshold: 0.5, limit: 8 },
+  note: { threshold: 0.5, limit: 5 },
+  history: { threshold: 0.8, limit: 5 },
+  theme: { threshold: 0.5, limit: 10 },
   deep_mode: false,
   override_system_prompt: null,
 }
@@ -79,12 +77,10 @@ async function previewBPrompt() {
       history_count: 10,
       skip_retrieval: configB.value.skip_retrieval,
       max_tool_result_chars: configB.value.max_tool_result_chars,
-      memory_threshold: configB.value.memory_threshold,
-      memory_limit: configB.value.memory_limit,
-      note_threshold: configB.value.note_threshold,
-      note_limit: configB.value.note_limit,
-      history_threshold: configB.value.history_threshold,
-      history_limit: configB.value.history_limit,
+      memory: { threshold: configB.value.memory.threshold, limit: configB.value.memory.limit },
+      note: { threshold: configB.value.note.threshold, limit: configB.value.note.limit },
+      history: { threshold: configB.value.history.threshold, limit: configB.value.history.limit },
+      theme: { threshold: configB.value.theme.threshold, limit: configB.value.theme.limit },
     })
     bPromptPreview.value = res.system_prompt || ''
     bTrace.value = res.trace || null
@@ -262,14 +258,17 @@ onMounted(loadAnchor)
               <label class="cfg-row"><span class="cfg-label">截断长度</span><input type="number" v-model.number="configA.max_tool_result_chars" class="replay-input" /></label>
               <label class="cfg-row"><span class="cfg-label">最大轮次</span><input type="number" v-model.number="configA.max_iterations" class="replay-input" /></label>
               <div class="cfg-section">记忆检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.memory_threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.memory_limit" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.memory.threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.memory.limit" class="replay-input" /></label>
               <div class="cfg-section">笔记检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.note_threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.note_limit" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.note.threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.note.limit" class="replay-input" /></label>
               <div class="cfg-section">历史检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.history_threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.history_limit" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.history.threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.history.limit" class="replay-input" /></label>
+              <div class="cfg-section">主题检索</div>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.theme.threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.theme.limit" class="replay-input" /></label>
             </div>
             <div v-else style="font-size: 12px; color: var(--color-text-muted); padding: 8px; background: var(--color-bg-page); border-radius: var(--radius-md);">
               A 组将直接发送历史 request_json 到 LLM，配置参数无效
@@ -285,14 +284,17 @@ onMounted(loadAnchor)
               <label class="cfg-row"><span class="cfg-label">截断长度</span><input type="number" v-model.number="configB.max_tool_result_chars" class="replay-input" /></label>
               <label class="cfg-row"><span class="cfg-label">最大轮次</span><input type="number" v-model.number="configB.max_iterations" class="replay-input" /></label>
               <div class="cfg-section">记忆检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.memory_threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.memory_limit" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.memory.threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.memory.limit" class="replay-input" /></label>
               <div class="cfg-section">笔记检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.note_threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.note_limit" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.note.threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.note.limit" class="replay-input" /></label>
               <div class="cfg-section">历史检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.history_threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.history_limit" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.history.threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.history.limit" class="replay-input" /></label>
+              <div class="cfg-section">主题检索</div>
+              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.theme.threshold" step="0.05" class="replay-input" /></label>
+              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.theme.limit" class="replay-input" /></label>
             </div>
           </div>
         </div>

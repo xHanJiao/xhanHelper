@@ -23,12 +23,10 @@ type BuildOptions struct {
 	AgentPrompt    string    // 自定义 agent 的 prompt（空则用默认 basePrompt）
 
 	// 可选检索覆盖（0 值表示使用 PromptConfig 默认值）
-	MemoryThreshold  float64
-	MemoryLimit      int
-	NoteThreshold    float64
-	NoteLimit        int
-	HistoryThreshold float64
-	HistoryLimit     int
+	Memory  retrieval.SourceConfig
+	Note    retrieval.SourceConfig
+	History retrieval.SourceConfig
+	Theme   retrieval.SourceConfig
 
 	// 排除已在当前消息列表中的消息 ID
 	ExcludeMsgIDs map[string]bool
@@ -156,17 +154,15 @@ func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts Buil
 	}
 
 	searchOpts := retrieval.SearchOptions{
-		Query:            opts.UserMessage,
-		UserID:           opts.UserID,
-		ConversationID:   opts.ConversationID,
-		Embedding:        opts.Embedding,
-		MemoryThreshold:  opts.MemoryThreshold,
-		MemoryLimit:      opts.MemoryLimit,
-		NoteThreshold:    opts.NoteThreshold,
-		NoteLimit:        opts.NoteLimit,
-		HistoryThreshold: opts.HistoryThreshold,
-		HistoryLimit:     opts.HistoryLimit,
-		ExcludeMsgIDs:    opts.ExcludeMsgIDs,
+		Query:          opts.UserMessage,
+		UserID:         opts.UserID,
+		ConversationID: opts.ConversationID,
+		Embedding:      opts.Embedding,
+		Memory:         opts.Memory,
+		Note:           opts.Note,
+		History:        opts.History,
+		Theme:          opts.Theme,
+		ExcludeMsgIDs:  opts.ExcludeMsgIDs,
 	}
 
 	// —— 1. 并发检索 ——

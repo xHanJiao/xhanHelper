@@ -25,7 +25,7 @@ func (s *MissionSource) Name() string { return "mission" }
 func (s *MissionSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextPacket, []NearMissItem, error) {
 	queryVec := opts.Embedding
 	userID := opts.UserID
-	threshold := opts.MemoryThreshold
+	threshold := opts.Memory.Threshold
 
 	if s.vectorStore == nil || len(queryVec) == 0 || s.missionRepo == nil {
 		return nil, nil, nil

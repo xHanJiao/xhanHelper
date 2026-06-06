@@ -9,7 +9,7 @@ import (
 // ContextPacket — 上下文片段，来自任意数据源（也是 SearchProvider 的返回类型）。
 type ContextPacket struct {
 	ID           string  // 唯一标识
-	Type         string  // memory | note | history | theme
+	Type         string  // memory | note | history | theme | mission
 	Text         string  // 注入 prompt 的文本
 	Score        float64 // 向量检索原始分数
 	KeywordScore float64 // bigram 关键词匹配分数
@@ -25,6 +25,22 @@ type NearMissItem struct {
 	Reason      string  `json:"reason"` // "below_threshold" | "wrong_prefix" | "same_conversation" | "db_not_found"
 }
 
+// SourceConfig 单个检索源的阈值和数量限制。
+type SourceConfig struct {
+	Threshold float64 `json:"threshold"`
+	Limit     int     `json:"limit"`
+}
+
+// Resolve 用 cfg 填充当前值为 0 的字段。
+func (s *SourceConfig) Resolve(cfg SourceConfig) {
+	if s.Threshold <= 0 {
+		s.Threshold = cfg.Threshold
+	}
+	if s.Limit <= 0 {
+		s.Limit = cfg.Limit
+	}
+}
+
 // SearchOptions — 检索参数，供 ContextSource.Fetch 和 SearchProvider.Search 共用。
 type SearchOptions struct {
 	Query          string // 用户原始文本（ranker 关键词打分用）
@@ -32,13 +48,10 @@ type SearchOptions struct {
 	ConversationID string
 	Embedding      []float64 // 用户消息的 embedding（向量检索用）
 
-	// 可选检索覆盖（0 值表示使用 Provider 默认值）
-	MemoryThreshold  float64
-	MemoryLimit      int
-	NoteThreshold    float64
-	NoteLimit        int
-	HistoryThreshold float64
-	HistoryLimit     int
+	Memory  SourceConfig // 记忆检索
+	Note    SourceConfig // 笔记检索
+	History SourceConfig // 历史对话检索
+	Theme   SourceConfig // 主题检索
 
 	// 排除已在当前消息列表中的消息 ID（避免系统提示词与历史消息重复）
 	ExcludeMsgIDs map[string]bool

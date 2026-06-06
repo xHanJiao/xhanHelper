@@ -10,6 +10,7 @@ import (
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/agent/replay"
+	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -31,18 +32,17 @@ func NewReplayHandler(msgRepo *service.MessageRepo, runner *replay.Runner, embed
 // —— 请求/响应类型 ——
 
 type replayPreviewReq struct {
-	AnchorMessageID    string   `json:"anchor_message_id" binding:"required"`
-	HistoryCount       int      `json:"history_count"`
-	SkipRetrieval      bool     `json:"skip_retrieval"`
-	MaxToolResultChars int      `json:"max_tool_result_chars"`
-	DeepMode           bool     `json:"deep_mode"`
-	Temperature        *float64 `json:"temperature"`
-	MemoryThreshold    float64  `json:"memory_threshold"`
-	MemoryLimit        int      `json:"memory_limit"`
-	NoteThreshold      float64  `json:"note_threshold"`
-	NoteLimit          int      `json:"note_limit"`
-	HistoryThreshold   float64  `json:"history_threshold"`
-	HistoryLimit       int      `json:"history_limit"`
+	AnchorMessageID    string                 `json:"anchor_message_id" binding:"required"`
+	HistoryCount       int                    `json:"history_count"`
+	SkipRetrieval      bool                   `json:"skip_retrieval"`
+	MaxToolResultChars int                    `json:"max_tool_result_chars"`
+	DeepMode           bool                   `json:"deep_mode"`
+	Temperature        *float64               `json:"temperature"`
+	Memory             retrieval.SourceConfig `json:"memory"`
+
+	Note retrieval.SourceConfig `json:"note"`
+
+	History retrieval.SourceConfig `json:"history"`
 }
 
 type replayCompareReq struct {
@@ -77,12 +77,9 @@ func (h *ReplayHandler) PreviewReplay(c *gin.Context) {
 	preview, err := h.runner.Preview(c.Request.Context(), anchor, history, &replay.Config{
 		SkipRetrieval:      req.SkipRetrieval,
 		MaxToolResultChars: req.MaxToolResultChars,
-		MemoryThreshold:    req.MemoryThreshold,
-		MemoryLimit:        req.MemoryLimit,
-		NoteThreshold:      req.NoteThreshold,
-		NoteLimit:          req.NoteLimit,
-		HistoryThreshold:   req.HistoryThreshold,
-		HistoryLimit:       req.HistoryLimit,
+		Memory:             req.Memory,
+		Note:               req.Note,
+		History:            req.History,
 	})
 	if err != nil {
 		log.Printf("[replay] preview error: %v", err)

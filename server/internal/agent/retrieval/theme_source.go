@@ -24,7 +24,7 @@ func (s *ThemeSource) Name() string { return "theme" }
 func (s *ThemeSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextPacket, []NearMissItem, error) {
 	queryVec := opts.Embedding
 	userID := opts.UserID
-	threshold := opts.MemoryThreshold
+	threshold := opts.Memory.Threshold
 
 	activeThemes, err := s.themeStateRepo.ListActive(ctx, userID)
 	if err != nil {

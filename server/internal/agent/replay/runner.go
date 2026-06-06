@@ -13,6 +13,7 @@ import (
 
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/agent/promptbuilder"
+	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -27,13 +28,10 @@ type Config struct {
 	MaxIterations      int      `json:"max_iterations"`
 	Temperature        *float64 `json:"temperature,omitempty"`
 
-	// 检索参数覆盖（0 值表示使用默认）
-	MemoryThreshold  float64 `json:"memory_threshold"`
-	MemoryLimit      int     `json:"memory_limit"`
-	NoteThreshold    float64 `json:"note_threshold"`
-	NoteLimit        int     `json:"note_limit"`
-	HistoryThreshold float64 `json:"history_threshold"`
-	HistoryLimit     int     `json:"history_limit"`
+	Memory  retrieval.SourceConfig `json:"memory"`
+	Note    retrieval.SourceConfig `json:"note"`
+	History retrieval.SourceConfig `json:"history"`
+	Theme   retrieval.SourceConfig `json:"theme"`
 
 	// 手动覆盖完整 system prompt（nil=自动构建，非 nil 直接使用，含空串）
 	OverrideSystemPrompt *string `json:"override_system_prompt,omitempty"`
@@ -113,16 +111,14 @@ func (r *Runner) Preview(ctx context.Context, anchorMsg *model.Message, history 
 	}
 
 	result, err := r.promptBuilder.Build(ctx, promptbuilder.BuildOptions{
-		UserID:           anchorMsg.UserID,
-		ConversationID:   anchorMsg.ConversationID,
-		UserMessage:      anchorMsg.Content,
-		Embedding:        vec,
-		MemoryThreshold:  cfg.MemoryThreshold,
-		MemoryLimit:      cfg.MemoryLimit,
-		NoteThreshold:    cfg.NoteThreshold,
-		NoteLimit:        cfg.NoteLimit,
-		HistoryThreshold: cfg.HistoryThreshold,
-		HistoryLimit:     cfg.HistoryLimit,
+		UserID:         anchorMsg.UserID,
+		ConversationID: anchorMsg.ConversationID,
+		UserMessage:    anchorMsg.Content,
+		Embedding:      vec,
+		Memory:         cfg.Memory,
+		Note:           cfg.Note,
+		History:        cfg.History,
+		Theme:          cfg.Theme,
 	})
 	if err != nil {
 		log.Printf("[replay] preview build error: %v", err)
@@ -194,12 +190,10 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		MaxIterations:        cfg.MaxIterations,
 		Temperature:          temperature,
 		MaxTokens:            r.maxTokens,
-		MemoryThreshold:      cfg.MemoryThreshold,
-		MemoryLimit:          cfg.MemoryLimit,
-		NoteThreshold:        cfg.NoteThreshold,
-		NoteLimit:            cfg.NoteLimit,
-		HistoryThreshold:     cfg.HistoryThreshold,
-		HistoryLimit:         cfg.HistoryLimit,
+		Memory:               cfg.Memory,
+		Note:                 cfg.Note,
+		History:              cfg.History,
+		Theme:                cfg.Theme,
 	})
 	if err != nil {
 		log.Printf("[replay] orch run error: %v", err)

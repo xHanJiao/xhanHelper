@@ -40,8 +40,8 @@ func (s *MemorySource) Fetch(ctx context.Context, opts SearchOptions) ([]Context
 	queryVec := opts.Embedding
 	query := opts.Query
 	userID := opts.UserID
-	threshold := opts.MemoryThreshold
-	limit := opts.MemoryLimit
+	threshold := opts.Memory.Threshold
+	limit := opts.Memory.Limit
 
 	var nearMiss []NearMissItem
 

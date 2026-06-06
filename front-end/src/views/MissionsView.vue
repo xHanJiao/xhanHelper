@@ -135,7 +135,7 @@ onMounted(fetchList)
     <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
       <NSpin v-if="loading && items.length === 0" />
       <NEmpty v-else-if="items.length === 0" description="暂无任务。在对话中告诉助手「帮我盯着...」，或等待系统自动发现。" style="margin-top: 80px;" />
-      <div v-else style="display: flex; flex-direction: column; gap: var(--space-md); max-width: 800px;">
+      <div v-else style="display: flex; flex-direction: column; gap: var(--space-md); max-width: 800px; margin: 0 auto;">
         <ListItemCard
           v-for="item in items" :key="item.id"
           :title="item.goal"

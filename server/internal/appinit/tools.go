@@ -91,9 +91,8 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		agent.NewSecretary(llmClients.Flash, repos.Trace), log.Default()))
 
 	themeEmbedder := agent.NewThemeEmbedder(infra, repos.ConceptEmbed, repos.Embedding)
-	themeDiscoverer := agent.NewThemeDiscoverer(llmClients, infra, retrievalTools, themeStore, themeEmbedder, repos.Trace,
+	themeDiscoverer := agent.NewThemeDiscoverer(llmClients, infra, retrievalTools, themeStore, themeEmbedder, conceptEmbedService, repos.Trace,
 		cfg.Reflection.DiscoverMaxIterations, cfg.Reflection.ClusterThreshold)
-	themeDiscoverer.SetUpgradeThresholds(cfg.Reflection.DraftNominateCountThreshold, cfg.Reflection.DraftSpanDaysThreshold)
 	reflectionReg.Register(tool.NewLoggingWrapper(themeDiscoverer, log.Default()))
 
 	mailboxTool := tool.NewMailboxTool(repos.Mailbox)

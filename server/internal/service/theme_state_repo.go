@@ -37,6 +37,25 @@ func (r *ThemeStateRepo) GetByID(ctx context.Context, id, userID string) (*model
 	return &t, err
 }
 
+// GetByIDs 批量按 ID 查询（同用户）
+func (r *ThemeStateRepo) GetByIDs(ctx context.Context, ids []string, userID string) (map[string]*model.ThemeState, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var list []model.ThemeState
+	err := r.db.WithContext(ctx).
+		Where("id IN ? AND user_id = ?", ids, userID).
+		Find(&list).Error
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]*model.ThemeState, len(list))
+	for i := range list {
+		m[list[i].ID] = &list[i]
+	}
+	return m, nil
+}
+
 // GetByName 按名称 + 用户查询（名称唯一性由应用层保证）
 func (r *ThemeStateRepo) GetByName(ctx context.Context, userID, name string) (*model.ThemeState, error) {
 	var t model.ThemeState

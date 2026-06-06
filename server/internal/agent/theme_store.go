@@ -62,6 +62,11 @@ func (s *ThemeStore) GetByID(ctx context.Context, id, userID string) (*model.The
 	return s.repo.GetByID(ctx, id, userID)
 }
 
+// GetByIDs 批量按 ID 查询
+func (s *ThemeStore) GetByIDs(ctx context.Context, ids []string, userID string) (map[string]*model.ThemeState, error) {
+	return s.repo.GetByIDs(ctx, ids, userID)
+}
+
 // LoadMetadata 加载主题 metadata
 func (s *ThemeStore) LoadMetadata(ctx context.Context, themeID, userID string) string {
 	t, err := s.repo.GetByID(ctx, themeID, userID)

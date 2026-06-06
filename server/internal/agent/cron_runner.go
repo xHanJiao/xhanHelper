@@ -310,12 +310,8 @@ func (cr *CronRunner) dispatchPostChat(ctx context.Context, userID, convID strin
 		}
 	}
 
-	// Step 2: 从会话中静默发现草稿主题
-	if err := cr.orch.DiscoverDraftFromConversation(runCtx, userID, convID); err != nil {
-		log.Printf("[cron] post-chat: discover draft error: %v", err)
-	}
-
-	// Step 3: 查会话是否绑定了主题，已绑定则增量更新状态页
+	// Step 2: 查会话是否绑定了主题，已绑定则增量更新状态页
+	// （注：主题发现已移至每日定时任务，对话后处理不再做主题发现）
 	extra, err := cr.stateUpdater.convRepo.GetExtra(runCtx, convID)
 	if err != nil {
 		log.Printf("[cron] post-chat: GetExtra error: %v", err)

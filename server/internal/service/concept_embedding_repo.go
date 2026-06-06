@@ -26,6 +26,18 @@ func (r *ConceptEmbeddingRepo) Exists(ctx context.Context, conceptType, value, u
 	return count > 0, err
 }
 
+// GetByValue 按类型+值+用户获取概念嵌入记录
+func (r *ConceptEmbeddingRepo) GetByValue(ctx context.Context, conceptType, value, userID string) (*model.ConceptEmbedding, error) {
+	var c model.ConceptEmbedding
+	err := r.db.WithContext(ctx).
+		Where("type = ? AND value = ? AND user_id = ?", conceptType, value, userID).
+		First(&c).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return &c, err
+}
+
 // Create 创建新记录
 func (r *ConceptEmbeddingRepo) Create(ctx context.Context, c *model.ConceptEmbedding) error {
 	return r.db.WithContext(ctx).Create(c).Error

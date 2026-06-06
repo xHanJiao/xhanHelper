@@ -80,7 +80,9 @@ func NewReflectionOrchestrator(cfg *ReflectionOrchestratorConfig) *ReflectionOrc
 	}
 }
 
-// DiscoverDraftFromConversation 从单个会话的消息中发现草稿主题（调 ThemeDiscoverer，draft 创建/向量写/升级检查全部收敛在内）
+// DiscoverDraftFromConversation 从单个会话的消息中发现主题。
+// 注：此方法当前未使用。主题发现已收敛至每日定时任务（MorningReview/EveningReview），
+// 对话后处理只做记忆提取和主题更新。保留此方法以备后续需要。
 func (o *ReflectionOrchestrator) DiscoverDraftFromConversation(ctx context.Context, userID, convID string) error {
 	msgs, err := o.msgRepo.ListByConversation(ctx, convID, 50)
 	if err != nil || len(msgs) == 0 {
@@ -114,8 +116,8 @@ func (o *ReflectionOrchestrator) DiscoverDraftFromConversation(ctx context.Conte
 	if json.Unmarshal(res.Data, &output) != nil {
 		return nil
 	}
-	log.Printf("[reflection] draft discovery done: created=%d upgraded=%d rejected=%d",
-		len(output.Created), len(output.Upgraded), len(output.Rejected))
+	log.Printf("[reflection] draft discovery done: created=%d rejected=%d",
+		len(output.Created), len(output.Rejected))
 	return nil
 }
 

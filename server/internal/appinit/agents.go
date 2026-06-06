@@ -82,7 +82,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		ActiveDurationDays: cfg.Reflection.ActiveDurationDays,
 	})
 	stateUpdater := agent.NewStateUpdater(llmClients.Flash, repos.Message, repos.Conversation,
-		agent.NewThemeStore(repos.ThemeState), repos.PendingFinding)
+		agent.NewThemeStore(repos.ThemeState), repos.PendingFinding, infra.VectorStore, tools.ConceptEmbedService)
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{
 		Orch:              reflectionOrch,
 		StateUpdater:      stateUpdater,

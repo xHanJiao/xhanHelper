@@ -133,11 +133,12 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		tool.NewMissionTool(repos.Mission, missionEmbedder), log.Default()))
 
 	return &ToolsBundle{
-		Registry:        reg,
-		ReflectionReg:   reflectionReg,
-		MCPManager:      mcpManager,
-		CommitmentTimer: commitmentTimer,
-		MemExtractor:    memExtractor,
-		MissionEmbedder: missionEmbedder,
+		Registry:            reg,
+		ReflectionReg:       reflectionReg,
+		MCPManager:          mcpManager,
+		CommitmentTimer:     commitmentTimer,
+		MemExtractor:        memExtractor,
+		MissionEmbedder:     missionEmbedder,
+		ConceptEmbedService: conceptEmbedService,
 	}
 }

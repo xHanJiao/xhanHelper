@@ -298,32 +298,24 @@ func (cr *CronRunner) dispatchPostChat(ctx context.Context, userID, convID strin
 	runCtx, cancel := context.WithTimeout(ctx, cr.runTimeout)
 	defer cancel()
 
-	// Step 1: 提取记忆（仅当前会话）
+	// Step 1: 提取记忆（仅当前会话，同步嵌入）
+	var memory *model.UserMemory
 	if cr.memoryAutoExtract {
 		conv, err := cr.convRepo.FindByID(runCtx, convID)
 		if err != nil {
 			log.Printf("[cron] post-chat: find conv error: %v", err)
 		} else if conv != nil {
-			if err := cr.memExtractor.ExtractFromConversation(runCtx, conv); err != nil {
+			memory, err = cr.memExtractor.ExtractFromConversation(runCtx, conv)
+			if err != nil {
 				log.Printf("[cron] post-chat: memory extract error: %v", err)
 			}
 		}
 	}
 
-	// Step 2: 查会话是否绑定了主题，已绑定则增量更新状态页
+	// Step 2: 用提取的记忆匹配活跃主题并增量更新
 	// （注：主题发现已移至每日定时任务，对话后处理不再做主题发现）
-	extra, err := cr.stateUpdater.convRepo.GetExtra(runCtx, convID)
-	if err != nil {
-		log.Printf("[cron] post-chat: GetExtra error: %v", err)
-		return
-	}
-	if extra == nil || extra.Context == nil || extra.Context.ThemeID == "" {
-		return
-	}
-
-	log.Printf("[cron] post-chat: theme %s, running StateUpdater for user=%s conv=%s", extra.Context.ThemeID[:8], userID, convID)
-	if err := cr.stateUpdater.UpdateFromConversation(runCtx, userID, convID, extra.Context.ThemeID); err != nil {
-		log.Printf("[cron] StateUpdater error: %v", err)
+	if memory != nil {
+		cr.stateUpdater.UpdateThemesFromMemory(runCtx, userID, memory)
 	}
 }
 

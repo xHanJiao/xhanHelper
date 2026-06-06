@@ -11,12 +11,13 @@ import (
 
 // ToolsBundle 工具层初始化的产物
 type ToolsBundle struct {
-	Registry        *tool.Registry
-	ReflectionReg   *tool.Registry
-	MCPManager      *mcp.Manager
-	CommitmentTimer *agent.CommitmentTimer
-	MemExtractor    *agent.MemoryExtractor
-	MissionEmbedder *agent.MissionEmbedder
+	Registry            *tool.Registry
+	ReflectionReg       *tool.Registry
+	MCPManager          *mcp.Manager
+	CommitmentTimer     *agent.CommitmentTimer
+	MemExtractor        *agent.MemoryExtractor
+	MissionEmbedder     *agent.MissionEmbedder
+	ConceptEmbedService *agent.ConceptEmbedService
 }
 
 // AgentBundle Agent 层初始化的产物

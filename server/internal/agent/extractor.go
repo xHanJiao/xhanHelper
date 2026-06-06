@@ -97,8 +97,8 @@ const extractPromptPrefix = `从以下对话中提取有长期价值的信息，
 {"extracted":true,"summary":"一句话概括核心信息","facts":["支持细节1"],"topic":"一个关键主题词（如睡眠管理、职业规划、家庭关系），禁止斜杠、逗号、多个主题","tags":"关键词1,关键词2"}
 tags 是从内容中提取的逗号分隔关键词（如 褪黑素,早醒,生物钟）。没有值得提取的内容时返回 {"extracted":false}。`
 
-// ExtractFromConversation 从指定会话中增量提取记忆
-func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *model.Conversation) error {
+// ExtractFromConversation 从指定会话中增量提取记忆。返回提取到的记忆（可能为 nil）。
+func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *model.Conversation) (*model.UserMemory, error) {
 	var msgs []model.Message
 	var err error
 	if conv.LastExtractedMsgID != nil && *conv.LastExtractedMsgID != "" {
@@ -107,7 +107,7 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 		msgs, err = e.msgRepo.ListByConversation(ctx, conv.ID, 50)
 	}
 	if err != nil || len(msgs) == 0 {
-		return err
+		return nil, err
 	}
 
 	var sb strings.Builder
@@ -124,19 +124,19 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 		Messages:     []llm.Message{{Role: "user", Content: prompt}},
 	})
 	if err != nil {
-		return fmt.Errorf("extract memory: %w", err)
+		return nil, fmt.Errorf("extract memory: %w", err)
 	}
 
 	lastMsg := msgs[len(msgs)-1]
 	result := parseExtractResult(msg.Content)
 	if result == nil || isEmptyResult(result) {
 		e.updateProgress(ctx, conv, lastMsg.ID)
-		return nil
+		return nil, nil
 	}
 
 	if e.isDuplicate(ctx, conv.UserID, result.Summary) {
 		e.updateProgress(ctx, conv, lastMsg.ID)
-		return nil
+		return nil, nil
 	}
 
 	rawJSON, _ := json.Marshal(result)
@@ -161,13 +161,14 @@ func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *mod
 
 	log.Printf("[memory] extracted memory from conv %s: %s", conv.ID[:8], truncate(result.Summary, 80))
 	e.updateProgress(ctx, conv, lastMsg.ID)
-	return nil
+	return memory, nil
 }
 
 // ExtractFromConversationWithCallback 流式版本——通过回调逐条推送提取结果
 func (e *MemoryExtractor) ExtractFromConversationWithCallback(ctx context.Context, conv *model.Conversation, cb ExtractCallback) error {
 	if cb == nil {
-		return e.ExtractFromConversation(ctx, conv)
+		_, err := e.ExtractFromConversation(ctx, conv)
+		return err
 	}
 
 	var msgs []model.Message
@@ -352,23 +353,21 @@ func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
 		log.Printf("[memory] create error: %v", err)
 		return
 	}
-	// 异步嵌入：concept + chunk
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
-		defer cancel()
-		e.conceptEmbed.EnsureTopicEmbedded(ctx, memory.UserID, memory.Topic, "memory", memory.ID)
-		if memory.Tags != "" {
-			e.conceptEmbed.EnsureTagsEmbedded(ctx, memory.UserID, memory.Tags, "memory", memory.ID)
+	// 同步嵌入，确保 StateUpdater 在后续步骤中能搜到该记忆的向量
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+	e.conceptEmbed.EnsureTopicEmbedded(ctx, memory.UserID, memory.Topic, "memory", memory.ID)
+	if memory.Tags != "" {
+		e.conceptEmbed.EnsureTagsEmbedded(ctx, memory.UserID, memory.Tags, "memory", memory.ID)
+	}
+	if memory.MemoryValue != "" {
+		n, err := e.chunkBuilder.BuildChunks(ctx, memory.UserID, "memory", memory.ID, memory.MemoryValue)
+		if err != nil {
+			log.Printf("[memory] chunk build error: %v", err)
+		} else {
+			log.Printf("[memory] chunked mem %s: %d sentences", memory.ID[:8], n)
 		}
-		if memory.MemoryValue != "" {
-			n, err := e.chunkBuilder.BuildChunks(ctx, memory.UserID, "memory", memory.ID, memory.MemoryValue)
-			if err != nil {
-				log.Printf("[memory] chunk build error: %v", err)
-			} else {
-				log.Printf("[memory] chunked mem %s: %d sentences", memory.ID[:8], n)
-			}
-		}
-	}()
+	}
 }
 
 func (e *MemoryExtractor) updateProgress(ctx context.Context, conv *model.Conversation, lastMsgID string) {

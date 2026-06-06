@@ -154,9 +154,6 @@ type ReflectionConfig struct {
 	DailySchedules              []string       `yaml:"daily_schedules"`                // 早晚回顾定时触发时间列表，默认 ["09:00","20:00"]
 	DeliverIntervalMinutes      int            `yaml:"deliver_interval_minutes"`       // 投递窗口间隔分钟，默认 60
 	MaxDeliveryRetries          int            `yaml:"max_delivery_retries"`           // 投递重试上限，默认 3
-	DraftNominateCountThreshold int            `yaml:"draft_nominate_count_threshold"` // draft 升级需被 nominate 次数，默认 3
-	DraftSpanDaysThreshold      int            `yaml:"draft_span_days_threshold"`      // draft 升级需跨度天数，默认 3
-	DraftExpireDays             int            `yaml:"draft_expire_days"`              // draft 过期天数，默认 7
 	ActiveDurationDays          map[string]int `yaml:"active_duration_days"`           // active 各 duration 的衰减天数，默认 long:90 medium:30 short:14 ephemeral:7
 	MissionCheckIntervalMinutes int            `yaml:"mission_check_interval_minutes"` // Mission 检查间隔，默认 30 分钟
 }
@@ -334,15 +331,6 @@ func merge(dst, src *Config) {
 	if src.Reflection.MaxDeliveryRetries != 0 {
 		dst.Reflection.MaxDeliveryRetries = src.Reflection.MaxDeliveryRetries
 	}
-	if src.Reflection.DraftNominateCountThreshold != 0 {
-		dst.Reflection.DraftNominateCountThreshold = src.Reflection.DraftNominateCountThreshold
-	}
-	if src.Reflection.DraftSpanDaysThreshold != 0 {
-		dst.Reflection.DraftSpanDaysThreshold = src.Reflection.DraftSpanDaysThreshold
-	}
-	if src.Reflection.DraftExpireDays != 0 {
-		dst.Reflection.DraftExpireDays = src.Reflection.DraftExpireDays
-	}
 	if len(src.Reflection.ActiveDurationDays) > 0 {
 		dst.Reflection.ActiveDurationDays = src.Reflection.ActiveDurationDays
 	}
@@ -460,15 +448,6 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Reflection.MaxDeliveryRetries == 0 {
 		cfg.Reflection.MaxDeliveryRetries = 3
-	}
-	if cfg.Reflection.DraftNominateCountThreshold == 0 {
-		cfg.Reflection.DraftNominateCountThreshold = 3
-	}
-	if cfg.Reflection.DraftSpanDaysThreshold == 0 {
-		cfg.Reflection.DraftSpanDaysThreshold = 3
-	}
-	if cfg.Reflection.DraftExpireDays == 0 {
-		cfg.Reflection.DraftExpireDays = 7
 	}
 	if len(cfg.Reflection.ActiveDurationDays) == 0 {
 		cfg.Reflection.ActiveDurationDays = map[string]int{

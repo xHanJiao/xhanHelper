@@ -77,7 +77,6 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		PendingFindingRepo: repos.PendingFinding,
 		MaxIterations:      cfg.Reflection.LaunchMaxIterations,
 		MaxDeliveryRetries: cfg.Reflection.MaxDeliveryRetries,
-		DraftExpireDays:    cfg.Reflection.DraftExpireDays,
 		ActiveDurationDays: cfg.Reflection.ActiveDurationDays,
 	})
 	stateUpdater := agent.NewStateUpdater(llmClients.Flash, repos.Message, repos.Conversation,

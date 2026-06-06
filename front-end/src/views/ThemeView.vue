@@ -77,7 +77,7 @@ async function handleStatusChange(item, status) {
   try {
     await api.patch(`/api/themes/${item.id}`, { status })
     item.status = status
-    message.success(status === 'active' ? '已采纳' : status === 'closed' ? '已关闭' : '已归档')
+    message.success(status === 'active' ? '已激活' : status === 'closed' ? '已关闭' : '已归档')
   } catch (e) {
     message.error('操作失败: ' + (e.message || ''))
   }
@@ -89,28 +89,10 @@ function formatTime(ts) {
 }
 
 function statusColor(s) {
-  return s === 'active' ? 'success' : s === 'candidate' ? 'info' : s === 'archived' ? 'warning' : 'default'
+  return s === 'active' ? 'success' : s === 'archived' ? 'warning' : 'default'
 }
 function statusLabel(s) {
-  return s === 'active' ? '活跃' : s === 'candidate' ? '候选' : s === 'archived' ? '已归档' : '已关闭'
-}
-
-function parseMeta(item) {
-  if (!item.metadata) return null
-  try { return JSON.parse(item.metadata) } catch { return null }
-}
-
-function candidateContent(item) {
-  const m = parseMeta(item)
-  if (!m?.candidate_info) return item.description
-  return m.candidate_info.rationale || item.description
-}
-
-function candidateActions(item) {
-  return [
-    { key: 'adopt', label: '采纳', onClick: () => handleStatusChange(item, 'active') },
-    { key: 'close', label: '忽略', confirm: '确定忽略该候选？', onClick: () => handleStatusChange(item, 'closed') },
-  ]
+  return s === 'active' ? '活跃' : s === 'archived' ? '已归档' : '已关闭'
 }
 
 function activeActions(item) {
@@ -128,23 +110,16 @@ function closedActions(item) {
 }
 
 function buildTags(item) {
-  const tags = [{ text: statusLabel(item.status), type: statusColor(item.status) }]
-  const m = parseMeta(item)
-  if (m?.candidate_info?.signal_strength) {
-    tags.push({ text: m.candidate_info.signal_strength, type: m.candidate_info.signal_strength === 'high' ? 'error' : 'warning' })
-  }
-  return tags
+  return [{ text: statusLabel(item.status), type: statusColor(item.status) }]
 }
 
 function buildContent(item) {
-  if (item.status === 'candidate') return candidateContent(item)
   let text = item.description
   if (item.state_text) text += '\n\n' + item.state_text
   return text
 }
 
 function buildActions(item) {
-  if (item.status === 'candidate') return candidateActions(item)
   if (item.status === 'active') return activeActions(item)
   if (item.status === 'closed') return closedActions(item)
   return []

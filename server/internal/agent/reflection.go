@@ -29,7 +29,6 @@ type ReflectionOrchestrator struct {
 	maxIterations      int
 	maxDeliveryRetries int
 
-	draftExpireDays    int
 	activeDurationDays map[string]int
 }
 
@@ -46,16 +45,12 @@ type ReflectionOrchestratorConfig struct {
 	PendingFindingRepo *service.PendingFindingRepo
 	MaxIterations      int
 	MaxDeliveryRetries int
-	DraftExpireDays    int
 	ActiveDurationDays map[string]int
 }
 
 func NewReflectionOrchestrator(cfg *ReflectionOrchestratorConfig) *ReflectionOrchestrator {
 	if cfg.MaxDeliveryRetries <= 0 {
 		cfg.MaxDeliveryRetries = 3
-	}
-	if cfg.DraftExpireDays <= 0 {
-		cfg.DraftExpireDays = 7
 	}
 	if len(cfg.ActiveDurationDays) == 0 {
 		cfg.ActiveDurationDays = map[string]int{"long": 90, "medium": 30, "short": 14, "ephemeral": 7}
@@ -72,7 +67,6 @@ func NewReflectionOrchestrator(cfg *ReflectionOrchestratorConfig) *ReflectionOrc
 		pendingFindingRepo: cfg.PendingFindingRepo,
 		maxIterations:      cfg.MaxIterations,
 		maxDeliveryRetries: cfg.MaxDeliveryRetries,
-		draftExpireDays:    cfg.DraftExpireDays,
 		activeDurationDays: cfg.ActiveDurationDays,
 	}
 }
@@ -269,7 +263,6 @@ func (o *ReflectionOrchestrator) dailyReview(ctx context.Context, userID, trigge
 	}
 	o.traceRepo.CreateTrace(ctx, tr)
 
-	o.themeStore.Expire(ctx, userID, o.draftExpireDays)
 	o.expireActiveThemes(ctx, userID)
 	analyzed := o.reviewActiveThemes(ctx, userID, traceID)
 

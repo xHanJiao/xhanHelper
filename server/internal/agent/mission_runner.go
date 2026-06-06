@@ -49,7 +49,7 @@ const missionRunnerSystemPrompt = `你在执行一个后台追踪任务（Missio
 
 - 不编造数据，找不到就坦诚说没找到
 - 只输出 JSON，不要有多余文字
-- 最多调用 3 轮工具，然后必须输出结果
+- 最多调用 30 轮工具，然后必须输出结果
 - 如果数据太少无法判断，选择 skip 而不是编造发现`
 
 // MissionRunner — 后台定期检查 Mission 并产出报告的运行器
@@ -58,14 +58,16 @@ type MissionRunner struct {
 	missionRepo    *service.MissionRepo
 	mailboxRepo    *service.MailboxRepo
 	retrievalTools map[string]tool.Tool
+	traceRepo      *service.ReflectionTraceRepo
 }
 
-func NewMissionRunner(flashClient llm.LLMClient, missionRepo *service.MissionRepo, mailboxRepo *service.MailboxRepo, retrievalTools map[string]tool.Tool) *MissionRunner {
+func NewMissionRunner(flashClient llm.LLMClient, missionRepo *service.MissionRepo, mailboxRepo *service.MailboxRepo, retrievalTools map[string]tool.Tool, traceRepo *service.ReflectionTraceRepo) *MissionRunner {
 	return &MissionRunner{
 		flashClient:    flashClient,
 		missionRepo:    missionRepo,
 		mailboxRepo:    mailboxRepo,
 		retrievalTools: retrievalTools,
+		traceRepo:      traceRepo,
 	}
 }
 
@@ -90,10 +92,17 @@ func (r *MissionRunner) Run(ctx context.Context, m *model.Mission) error {
 	now := time.Now().In(config.BJ).Format("2006-01-02 15:04")
 	promptText := fmt.Sprintf(missionRunnerSystemPrompt, now, m.Goal, m.Context, m.LastSummary)
 
-	reactLoop := NewReactLoop(r.flashClient, r.retrievalTools, promptText, 3, m.UserID,
-		"mission_runner", nil, "")
+	traceID := uuid.New().String()
+	r.traceRepo.CreateTrace(ctx, &model.ReflectionTrace{
+		ID: traceID, UserID: m.UserID, TriggerType: "mission_check",
+		StartedAt: time.Now(), Status: "running",
+	})
+
+	reactLoop := NewReactLoop(r.flashClient, r.retrievalTools, promptText, 30, m.UserID,
+		"mission_runner", r.traceRepo, traceID)
 	reactResult, err := reactLoop.Run(ctx, "请执行本次检查。")
 	if err != nil {
+		endTraceSafe(r.traceRepo, ctx, traceID, "error", 0, 0, strPtr(fmt.Sprintf("react loop: %v", err)))
 		log.Printf("[mission_runner] react loop error: %v", err)
 		return fmt.Errorf("react loop: %w", err)
 	}
@@ -102,9 +111,12 @@ func (r *MissionRunner) Run(ctx context.Context, m *model.Mission) error {
 	result := r.parseResult(reactResult.FinalResponse)
 
 	// 根据结果投递或跳过
+	delivered := 0
 	if result.Action == "report" && result.Finding != nil {
 		if err := r.deliverReport(ctx, m, result.Finding); err != nil {
 			log.Printf("[mission_runner] deliver error: %v", err)
+		} else {
+			delivered = 1
 		}
 	}
 
@@ -118,6 +130,7 @@ func (r *MissionRunner) Run(ctx context.Context, m *model.Mission) error {
 		log.Printf("[mission_runner] update after check error: %v", err)
 	}
 
+	endTraceSafe(r.traceRepo, ctx, traceID, "completed", 0, delivered, nil)
 	log.Printf("[mission_runner] mission %s done: action=%s next=%s", m.ID[:8], result.Action, nextCheck.Format("01-02 15:04"))
 	return nil
 }
@@ -127,14 +140,15 @@ func (r *MissionRunner) parseResult(response string) *missionRunResult {
 	start := strings.Index(response, "{")
 	end := strings.LastIndex(response, "}")
 	if start == -1 || end == -1 || end <= start {
-		return &missionRunResult{Action: "skip", Reason: "parse_error", NewSummary: "未能解析输出"}
+		// LLM 没输出 JSON，用了 LLM 的纯文本作为状态摘要
+		return &missionRunResult{Action: "skip", Reason: "text_response", NewSummary: response}
 	}
 
 	jsonStr := response[start : end+1]
 	var result missionRunResult
 	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
 		log.Printf("[mission_runner] parse error: %v raw=%s", err, response)
-		return &missionRunResult{Action: "skip", Reason: "parse_error", Raw: response}
+		return &missionRunResult{Action: "skip", Reason: "parse_error", NewSummary: response}
 	}
 	result.Raw = response
 	return &result

@@ -62,7 +62,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		"search_messages": tool.NewMessageSearchTool(repos.Message, repos.Conversation),
 		"get_bill_stats":  tool.NewGetBillStatsTool(repos.Bill),
 	}
-	missionRunner := agent.NewMissionRunner(llmClients.Flash, repos.Mission, repos.Mailbox, missionRetrievalTools)
+	missionRunner := agent.NewMissionRunner(llmClients.Flash, repos.Mission, repos.Mailbox, missionRetrievalTools, repos.Trace)
 
 	// --- ReflectionOrchestrator + CronRunner (先于 orch 创建) ---
 	reflectionOrch := agent.NewReflectionOrchestrator(&agent.ReflectionOrchestratorConfig{

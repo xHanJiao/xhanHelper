@@ -158,8 +158,8 @@ func (rl *ReactLoop) Run(ctx context.Context, userMessage string) (*ReactLoopRes
 			})
 			continue
 		}
-		if parsed == nil {
-			// 纯文本回复，无工具调用 → 结束
+		if parsed == nil || len(parsed.ToolCalls) == 0 {
+			// 纯文本回复或无工具调用 → 结束
 			result.FinalResponse = resp.Content
 			msgs = append(msgs, llm.Message{Role: "assistant", Content: resp.Content})
 

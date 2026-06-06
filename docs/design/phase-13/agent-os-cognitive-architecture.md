@@ -71,10 +71,29 @@ discovered → active → (无新活动后衰减关闭)
 
 ### 关键设计变化（Phase 13）
 
-1. **去掉持续性门槛**：ThemeDiscoverer 从对话中发现的主题直接 active，不再需要多轮提名升级
-2. **放开创建**：不要求主题有长期追踪价值，任何用户表现出关注的话题都可以成为主题
-3. **自负清理**：短周期（ephemeral=7d）自动衰减，噪音自清
-4. **按需分析**：ThemeAnalyst 只分析近期有新活动的主题，不再对全部活跃主题跑分析
+**创建**：
+1. **去掉 draft 状态**：ThemeDiscoverer 发现即 active，不再需要多轮提名升级。`dedupBySimilarity` 简化为 3 分支——撞 active 则 reject，撞 closed 则 reactivate 为 active（保留旧 state_text），无匹配则新建 active
+2. **创建时写初始状态页**：ThemeDiscoverer 提名时 LLM 已产出 rationale，直接写为 state_text，不留白等 Analyst
+3. **放开创建条件**：prompt 从「需要长期追踪价值」改为「用户生活中有意义的方面」
+
+**更新**：
+4. **StateUpdater 改为记忆驱动**：新增 `UpdateFromMemory(themeID, memory)`，输入为 MemoryExtractor 产出的记忆（而非原始消息）。dispatchPostChat 中用记忆做多路召回（topic + tags + embedding）匹配活跃主题，命中则独立更新
+5. **删除旧的 `UpdateFromConversation`**：连带 `Conversation.ThemeStateCursor` 字段和 cursor 逻辑
+6. **MemoryExtractor 嵌入同步化**：`storeMemory` 中异步 goroutine 改为同步，确保向量在 StateUpdater 前就绪
+
+**分析**：
+7. **ThemeAnalyst 按需分析**：`reviewActiveThemes` 加 `UpdatedAt > LastRunAt` 判断，没新活动就 skip
+8. **ThemeAnalyst 不再产出 finding**：prompt 改为只输出 updated_state 和 summary，不产 deliverable finding。通知是 Mission/Signal 的事
+
+**关闭**：
+9. **Active 自动衰减保留**：`expireActiveThemes` 按 duration 关闭（long=90d, medium=30d, short=14d, ephemeral=7d）
+10. **删除 draft 过期逻辑**：`themeStore.Expire()` 和 MorningReview/EveningReview 中的 expire 调用删除
+
+**其它**：
+11. **配置清理**：删除 `draft_nominate_count_threshold` / `draft_span_days_threshold` / `draft_expire_days`
+12. **DB 迁移**：现有 draft → active
+13. **重放独立主题阈值**：全链路加 `ThemeThreshold` / `ThemeLimit`，和记忆/笔记/历史平权
+14. **前端清理**：ThemeView 删除 candidate/采纳/忽略 UI
 
 ---
 
@@ -224,9 +243,21 @@ Theme 和 Mission 是独立实体。Theme 通过 ThemeID 被 Mission 可选引�
 
 ## Phase 13 实施范围
 
-1. **Theme 改造**：去掉持续性门槛，draft 直接 active，ThemeAnalyst 按需分析
-2. **Mission 重新定位**：仅对话创建/对话管理，前端简化为查看
+1. **Theme 改造**：去掉 draft → active 升级门槛，StateUpdater 记忆驱动，ThemeAnalyst 按需分析且不产 finding
+2. **Mission 重新定位**：仅对话创建/对话管理，MissionRunner 聚焦轻量对比判断
 3. **Signal 概念定义**：暂不实现，文档先行
+4. **重放独立主题阈值**：支持实验和调参
+5. **代码清理**：删除 draft 相关逻辑、cursor 逻辑、candidate UI
+
+### 分批实施
+
+| 批次 | 范围 |
+|------|------|
+| 第一批 | dedupBySimilarity 简化 + ThemeDiscoverer prompt + 初始状态页 |
+| 第二批 | StateUpdater 记忆驱动 + MemoryExtractor 同步嵌入 |
+| 第三批 | ThemeAnalyst 按需分析 + 不产 finding |
+| 第四批 | 删除 dead code + 配置清理 + 前端清理 |
+| 第五批 | 重放主题阈值 + DB 迁移 |
 
 后续 Phase：
 - Phase 14: Signal 引擎实现

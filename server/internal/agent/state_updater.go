@@ -17,18 +17,18 @@ import (
 	"xhan-helper/internal/service"
 )
 
-const stateUpdaterPrompt = `你是 xhanHelper 的主题状态维护员。你会收到一个主题的当前状态页，以及一条新提取的记忆，你需要根据新记忆更新状态页。
+const statePageUpdateRules = `1. 保留上一轮状态页中仍然有效的关键信息（规律、里程碑、待跟进事项）
+2. 过期或已被新信息覆盖的事实用新发现替换
+3. 每条关键信息标注大致时间
+4. 控制篇幅：不超过 500 字
+5. 超过 3 个月且本次未再出现的信息，可移除或标记为「可能已过期」`
 
-## 更新规则
-1. 保留上一轮状态页中仍然有效的关键信息（规律、里程碑、待跟进事项）
-2. 从新记忆中提取新的事实、变化、决定，追加到状态页
-3. 过期或已被新信息覆盖的事实用新发现替换
-4. 每条关键信息标注大致时间
-5. 控制篇幅：不超过 500 字
-6. 超过 3 个月且本次未再出现的信息，可移除或标记为「可能已过期」
+var stateUpdaterPrompt = fmt.Sprintf(`你是 xhanHelper 的主题状态维护员。你会收到一个主题的当前状态页，以及一条新提取的记忆，你需要根据新记忆更新状态页。
+
+%s
 
 ## 输出
-{"updated_state": "更新后的状态页文本"}`
+{"updated_state": "更新后的状态页文本"}`, statePageUpdateRules)
 
 // StateUpdater — 增量更新主题状态页
 type StateUpdater struct {

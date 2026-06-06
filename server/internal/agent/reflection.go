@@ -28,7 +28,6 @@ type ReflectionOrchestrator struct {
 	pendingFindingRepo *service.PendingFindingRepo
 	maxIterations      int
 	maxDeliveryRetries int
-	missionDiscoverer  *MissionDiscoverer
 
 	draftExpireDays    int
 	activeDurationDays map[string]int
@@ -45,7 +44,6 @@ type ReflectionOrchestratorConfig struct {
 	NoteRepo           *service.NoteRepo
 	MemRepo            *service.UserMemoryRepo
 	PendingFindingRepo *service.PendingFindingRepo
-	MissionDiscoverer  *MissionDiscoverer
 	MaxIterations      int
 	MaxDeliveryRetries int
 	DraftExpireDays    int
@@ -72,7 +70,6 @@ func NewReflectionOrchestrator(cfg *ReflectionOrchestratorConfig) *ReflectionOrc
 		noteRepo:           cfg.NoteRepo,
 		memRepo:            cfg.MemRepo,
 		pendingFindingRepo: cfg.PendingFindingRepo,
-		missionDiscoverer:  cfg.MissionDiscoverer,
 		maxIterations:      cfg.MaxIterations,
 		maxDeliveryRetries: cfg.MaxDeliveryRetries,
 		draftExpireDays:    cfg.DraftExpireDays,
@@ -251,62 +248,34 @@ func (o *ReflectionOrchestrator) incrementRetries(ctx context.Context, ids []str
 	}
 }
 
-// MorningReview 早安回顾：expire draft + active 衰减 + 对活跃主题产出 finding
+// MorningReview 早安回顾
 func (o *ReflectionOrchestrator) MorningReview(ctx context.Context, userID string) (int, error) {
-	traceID := uuid.New().String()
-	log.Printf("[reflection] trace=%s trigger=morning_review user=%s START", traceID[:8], userID)
-
-	tr := &model.ReflectionTrace{
-		ID: traceID, UserID: userID, TriggerType: "morning_review",
-		StartedAt: time.Now(), Status: "running",
-	}
-	o.traceRepo.CreateTrace(ctx, tr)
-
-	o.themeStore.Expire(ctx, userID, o.draftExpireDays)
-	o.expireActiveThemes(ctx, userID)
-	findingCount := o.reviewActiveThemes(ctx, userID, traceID, "morning")
-
-	// Step 4: 从活跃主题中发现 Mission
-	if o.missionDiscoverer != nil {
-		if created, err := o.missionDiscoverer.Discover(ctx, userID); err != nil {
-			log.Printf("[reflection] mission discover error: %v", err)
-		} else {
-			log.Printf("[reflection] trace=%s mission_discover created=%d", traceID[:8], created)
-		}
-	}
-
-	endTraceSafe(o.traceRepo, ctx, traceID, "completed", findingCount, 0, nil)
-	log.Printf("[reflection] trace=%s DONE morning_review findings=%d", traceID[:8], findingCount)
-	return findingCount, nil
+	return o.dailyReview(ctx, userID, "morning_review")
 }
 
-// EveningReview 晚安回顾：expire draft + active 衰减 + 对活跃主题产出 finding
+// EveningReview 晚安回顾
 func (o *ReflectionOrchestrator) EveningReview(ctx context.Context, userID string) (int, error) {
+	return o.dailyReview(ctx, userID, "evening_review")
+}
+
+// dailyReview 早晚回顾：expire draft + active 衰减 + 对有新活动的主题运行分析
+func (o *ReflectionOrchestrator) dailyReview(ctx context.Context, userID, triggerType string) (int, error) {
 	traceID := uuid.New().String()
-	log.Printf("[reflection] trace=%s trigger=evening_review user=%s START", traceID[:8], userID)
+	log.Printf("[reflection] trace=%s trigger=%s user=%s START", traceID[:8], triggerType, userID)
 
 	tr := &model.ReflectionTrace{
-		ID: traceID, UserID: userID, TriggerType: "evening_review",
+		ID: traceID, UserID: userID, TriggerType: triggerType,
 		StartedAt: time.Now(), Status: "running",
 	}
 	o.traceRepo.CreateTrace(ctx, tr)
 
 	o.themeStore.Expire(ctx, userID, o.draftExpireDays)
 	o.expireActiveThemes(ctx, userID)
-	findingCount := o.reviewActiveThemes(ctx, userID, traceID, "evening")
+	analyzed := o.reviewActiveThemes(ctx, userID, traceID)
 
-	// Step 4: 从活跃主题中发现 Mission
-	if o.missionDiscoverer != nil {
-		if created, err := o.missionDiscoverer.Discover(ctx, userID); err != nil {
-			log.Printf("[reflection] mission discover error: %v", err)
-		} else {
-			log.Printf("[reflection] trace=%s mission_discover created=%d", traceID[:8], created)
-		}
-	}
-
-	endTraceSafe(o.traceRepo, ctx, traceID, "completed", findingCount, 0, nil)
-	log.Printf("[reflection] trace=%s DONE evening_review findings=%d", traceID[:8], findingCount)
-	return findingCount, nil
+	endTraceSafe(o.traceRepo, ctx, traceID, "completed", 0, 0, nil)
+	log.Printf("[reflection] trace=%s DONE %s analyzed=%d", traceID[:8], triggerType, analyzed)
+	return analyzed, nil
 }
 
 // durationDays 返回 duration 对应的衰减天数（从配置读取）
@@ -347,8 +316,9 @@ func (o *ReflectionOrchestrator) expireActiveThemes(ctx context.Context, userID 
 	}
 }
 
-// reviewActiveThemes 对活跃主题运行分析，产出 finding 写入 pending_finding
-func (o *ReflectionOrchestrator) reviewActiveThemes(ctx context.Context, userID, traceID, period string) int {
+// reviewActiveThemes 对有新活动的活跃主题运行分析，更新状态页。
+// 跳过 UpdatedAt 未超过 LastRunAt 的主题（无新数据，无需重复分析）。
+func (o *ReflectionOrchestrator) reviewActiveThemes(ctx context.Context, userID, traceID string) int {
 	actives, err := o.themeStore.ListActives(ctx, userID)
 	if err != nil {
 		log.Printf("[reflection] review: list actives error: %v", err)
@@ -365,27 +335,29 @@ func (o *ReflectionOrchestrator) reviewActiveThemes(ctx context.Context, userID,
 		return 0
 	}
 
-	findingCount := 0
+	analyzed := 0
+	skipped := 0
 	for _, active := range actives {
+		// 按需分析：LastRunAt 为 nil（新建主题）或 UpdatedAt > LastRunAt（有新活动）才跑
+		fullTheme, err := o.themeStore.GetByID(ctx, active.ID, userID)
+		if err != nil || fullTheme == nil {
+			continue
+		}
+		if fullTheme.LastRunAt != nil && !fullTheme.UpdatedAt.After(*fullTheme.LastRunAt) {
+			skipped++
+			continue
+		}
+
 		args, _ := json.Marshal(map[string]interface{}{
 			"theme_id":   active.ID,
 			"theme_name": active.Name,
-			"mode":       "hot_run",
-			"period":     period,
 		})
 		ec := &tool.ExecuteContext{Ctx: WithTraceID(ctx, traceID), UserID: userID}
-		res := analystT.Execute(ec, "analyze", args)
-		if res.Success && res.Data != nil {
-			var output struct {
-				Findings []json.RawMessage `json:"findings"`
-			}
-			if json.Unmarshal(res.Data, &output) == nil {
-				findingCount += len(output.Findings)
-			}
-		}
+		analystT.Execute(ec, "analyze", args)
+		analyzed++
 	}
-	log.Printf("[theme] %s review: %d actives, %d findings generated", period, len(actives), findingCount)
-	return findingCount
+	log.Printf("[theme] review: analyzed=%d skipped=%d (total active=%d)", analyzed, skipped, len(actives))
+	return analyzed
 }
 
 // runOnce 保留兼容

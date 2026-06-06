@@ -132,3 +132,4 @@ Theme 的新定位是纯认知层。finding 的投递走 Score r→Secretary→M
 | **3** | ThemeAnalyst 按需分析 + 不产 finding | `theme_analyst.go`, `reflection.go` |
 | **4** | 删除 dead code + 配置清理 + 前端清理 | `reflection.go`, `cron_runner.go`, `theme_discover.go`, `theme_store.go`, `model/conversation.go`, `config.go`, `config.*.yaml`, `ThemeView.vue` |
 | **5** | 重放主题阈值 + DB 迁移 | `retrieval/types.go`, `promptbuilder/*`, `orchestrator.go`, `replay/*`, `replay_handler.go`, `ReplayCompareView.vue` |
+| **6** | StateUpdater + ThemeAnalyst 开放 search_history | `state_updater.go`, `theme_analyst.go`, `appinit/tools.go` |

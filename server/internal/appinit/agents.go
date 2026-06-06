@@ -75,7 +75,6 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		NoteRepo:           repos.Note,
 		MemRepo:            repos.Mem,
 		PendingFindingRepo: repos.PendingFinding,
-		MissionDiscoverer:  missionDiscoverer,
 		MaxIterations:      cfg.Reflection.LaunchMaxIterations,
 		MaxDeliveryRetries: cfg.Reflection.MaxDeliveryRetries,
 		DraftExpireDays:    cfg.Reflection.DraftExpireDays,

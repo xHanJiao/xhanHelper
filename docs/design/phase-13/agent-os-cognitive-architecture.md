@@ -115,9 +115,30 @@ active ↔ paused → completed
 
 ### 设计要点
 
-- 不重复 Theme 的分析工作——Theme 的状态页是 Mission 的输入
-- Mission 的核心动作：**对比**（现在 vs 上次）、**判断时机**（该不该开口）、**推动**（提醒用户）
-- 对话中通过 MissionSource 向量检索相关 Mission，注入 System Prompt，让 LLM 知道当前有哪些追踪承诺
+- Theme 和 Mission 是**独立实体**，通过 ThemeID 做可选关联
+- Theme 对 Mission 是 **enhancer，不是 dependency**——有 Theme 时判断更精准，没 Theme 也能独立跑
+- MissionRunner 保留 ReAct 循环，但目标从「深度分析」变为「轻量检查」：查当前状态 → 对比判断 → 决定是否开口
+- Mission 不重复 Theme 的分析工作。分析归 Theme，Mission 只做对比和决策
+- 对话中通过 MissionSource 向量检索相关 Mission，注入 System Prompt
+
+### 运行示例
+
+**没有 Theme 的 Mission**：
+```
+用户说 "每天下午三点提醒我喝水"
+→ LLM 调 mission.create_mission(check_cron="daily")
+→ MissionChecker 触发：时间接近 15:00？上次不是今天？→ 投递 "该喝水了"
+→ 纯时间判断，不需要检索数据
+```
+
+**有 Theme 的 Mission**：
+```
+Theme "睡眠追踪" 状态页已有睡眠习惯分析
+用户说 "超过十一点半还没睡就戳我"
+→ LLM 调 mission.create_mission(check_cron="daily", theme_id=...)
+→ MissionChecker 23:30 触发：查看 Theme 状态页了解习惯 → 查最近消息时间戳 → 判断
+→ Theme 提供认知深度，让判断更精准
+```
 
 ---
 
@@ -185,19 +206,19 @@ Theme 让对话有深度，Mission 让 Agent 不忘记承诺，Signal 让 Agent 
 ```
 数据层:
   Message ─→ Memory ─→ Note ─→ Bill
-              │
-认知层:       ▼
-            Theme (状态页)
-              │
-承诺层:       ▼
-            Mission (追踪任务)
-              │
-判断层:       ▼
-            Signal (干预决策) ← 未来
+       │                            │
+       ▼                            ▼
+认知层:  Theme (状态页) ──可选引用──→ Mission (追踪任务)
+       │                                    │
+       │    ┌───────────────────────────────┘
+       ▼    ▼
+判断层:  Signal (干预决策) ← 未来
               │
 投递层:       ▼
             Mailbox
 ```
+
+Theme 和 Mission 是独立实体。Theme 通过 ThemeID 被 Mission 可选引用——有 Theme 提供认知深度，没 Theme 也能独立运行。
 
 ---
 

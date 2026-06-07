@@ -454,6 +454,26 @@ func (o *Orchestrator) handleOneRoundResponse(
 	result *promptbuilder.BuildResult,
 	state *reactState,
 ) bool {
+	// 原生 FC 路径：tool_calls 已由 API 在 done 事件中解析好
+	if o.useNativeFC && len(msg.ToolCalls) > 0 {
+		internalTCs := nativeToolCallsToInternal(msg.ToolCalls)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		state.msgs = append(state.msgs, msg)
+		state.allToolCalls = append(state.allToolCalls, internalTCs...)
+		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, o.registry, internalTCs)
+		state.msgs = o.collectToolResultsNative(ctx, internalTCs, msg.ToolCalls, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
+		return false
+	}
+
+	// 原生 FC 路径：无工具调用，纯文本回复（文本已在 runOneRound 中实时推送）
+	if o.useNativeFC && len(msg.ToolCalls) == 0 {
+		if o.shouldVerify(req, state) {
+			return o.verifyAndMaybeRetry(ctx, events, msg, req, result, state)
+		}
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		return true
+	}
+
 	parsed, parseErr := ParseLLMResponse(msg.Content)
 
 	if parseErr != nil {
@@ -771,6 +791,26 @@ func (o *Orchestrator) collectToolResults(ctx context.Context, parsed *LLMRespon
 	return msgs
 }
 
+// collectToolResultsNative 原生 FC 路径：工具结果以 role=tool 保存，关联真实 tool_call_id。
+func (o *Orchestrator) collectToolResultsNative(ctx context.Context, internalTCs []tool.ToolCall, nativeTCs []llm.ToolCall, toolCallResults []toolExecResult, events chan<- *llm.StreamEvent, convID string, userID string, msgs []llm.Message) []llm.Message {
+	for i := range internalTCs {
+		res := toolCallResults[i].result
+		resJSON, err := json.Marshal(res)
+		if err != nil {
+			log.Printf("[orch] tool result marshal error: %v", err)
+			resJSON = []byte(fmt.Sprintf(`{"success":false,"error":"marshal failed: %s"}`, res.Error))
+		}
+		o.sendEvent(events, &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)})
+		o.saveToolMsg(ctx, convID, userID, nativeTCs[i].ID, string(resJSON))
+		msgs = append(msgs, llm.Message{
+			Role:       "tool",
+			Content:    string(resJSON),
+			ToolCallID: nativeTCs[i].ID,
+		})
+	}
+	return msgs
+}
+
 // —— 并发执行 ——
 
 type toolExecResult struct {
@@ -1041,6 +1081,29 @@ func (o *Orchestrator) GenerateTitle(ctx context.Context, userMessage string) st
 	return title
 }
 
+// nativeToolCallsToInternal 将原生 function calling 的 ToolCall 转为内部 tool.ToolCall。
+// 按 "__" 拆分函数名，得到 tool 名和 func 名。
+func nativeToolCallsToInternal(tcs []llm.ToolCall) []tool.ToolCall {
+	out := make([]tool.ToolCall, len(tcs))
+	for i, tc := range tcs {
+		toolName, funcName := splitToolFuncName(tc.Function.Name)
+		out[i] = tool.ToolCall{
+			Tool:     toolName,
+			Function: funcName,
+			Args:     json.RawMessage(tc.Function.Arguments),
+		}
+	}
+	return out
+}
+
+// splitToolFuncName 按 "__" 拆分名称，返回 (toolName, funcName)。
+func splitToolFuncName(name string) (string, string) {
+	idx := strings.LastIndex(name, "__")
+	if idx < 0 {
+		return name, name
+	}
+	return name[:idx], name[idx+2:]
+}
 func ParseLLMResponse(text string) (*LLMResponse, error) {
 	var resp LLMResponse
 	prefix, err := ParseFlashJSON(text, &resp)

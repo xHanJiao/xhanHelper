@@ -181,11 +181,21 @@ watch(showVerify, (showing) => {
   }
 })
 
-// 正文开始推送 → retry/done 状态的气泡直接退场
-// checking 状态不受影响（后端还没返回检验结果）
+// 正文开始推送 → 所有气泡退场（工具、verify、status），内容才是主角
 watch(() => chat.streamingMessage?.content, (newVal) => {
-  if (newVal && showVerify.value && verifyStatus.value?.status !== 'checking') {
+  if (!newVal) return
+  // 关 verify
+  if (showVerify.value && verifyStatus.value?.status !== 'checking') {
     stopVerifyAnimation()
+  }
+  // 清工具队列 + 关当前工具气泡
+  if (current.value || queue.value.length > 0) {
+    queue.value = []
+    toolSeq++
+    if (current.value) {
+      current.value = null
+      phase.value = ''
+    }
   }
 })
 

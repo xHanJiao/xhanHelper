@@ -105,7 +105,7 @@ func TestBuildVerifyPrompt_MultiTool(t *testing.T) {
 		Content: `{"reply":"根据你的账单和笔记，最近一个月你喝了2次啤酒：5月1日福佳白啤22元，5月27日福佳白啤330ml×2瓶。饮酒频率较低，控制在合理范围内。"}`,
 	}
 
-	prompt := o.buildVerifyPrompt(msg, req, state, nil)
+	prompt := o.buildVerifyPrompt(msg, req, state)
 	t.Logf("Generated verify prompt:\n%s", prompt)
 
 	// 应包含用户问题
@@ -143,18 +143,24 @@ func TestBuildVerifyPrompt_WithRetrievedItems(t *testing.T) {
 		{Type: "memory", Text: "5月20日约了牙医下午3点"},
 		{Type: "note", Text: "牙医预约注意事项：带医保卡"},
 	}
-	prompt := o.buildVerifyPrompt(msg, req, state, retrieved)
+	// 检索上下文已移至 system prompt（buildRetrievalContext），user prompt 不应再包含
+	prompt := o.buildVerifyPrompt(msg, req, state)
 
-	if !strings.Contains(prompt, "【检索命中内容（模型可引用，不算幻觉）】") {
-		t.Error("有 retrieved items 时应包含检索命中内容区块")
+	if strings.Contains(prompt, "检索命中内容") {
+		t.Error("检索上下文已移至 system prompt，user prompt 不应再包含")
 	}
-	if !strings.Contains(prompt, "[memory]") {
+	// buildRetrievalContext 应正确格式化
+	ctx := buildRetrievalContext(retrieved)
+	if !strings.Contains(ctx, "已知事实") {
+		t.Error("buildRetrievalContext 应包含 '已知事实' 说明")
+	}
+	if !strings.Contains(ctx, "[memory]") {
 		t.Error("应包含 memory 类型的检索项")
 	}
-	if !strings.Contains(prompt, "[note]") {
+	if !strings.Contains(ctx, "[note]") {
 		t.Error("应包含 note 类型的检索项")
 	}
-	if !strings.Contains(prompt, "牙医预约注意事项") {
+	if !strings.Contains(ctx, "牙医预约注意事项") {
 		t.Error("应包含检索项的具体文本内容")
 	}
 }
@@ -170,7 +176,7 @@ func TestBuildVerifyPrompt_NoTools(t *testing.T) {
 	}
 	msg := llm.Message{Content: `{"reply":"你好！有什么可以帮你的？"}`}
 
-	prompt := o.buildVerifyPrompt(msg, req, state, nil)
+	prompt := o.buildVerifyPrompt(msg, req, state)
 
 	if !strings.Contains(prompt, "本轮未调用工具") {
 		t.Error("无工具调用时应标注")
@@ -386,7 +392,7 @@ func TestBuildVerifyPrompt_RealisticBeerScenario(t *testing.T) {
 		Content: `{"reply":"根据你的账单记录，最近一个月你喝了3次啤酒：\n\n1. 5月1日 福佳白啤330ml×2瓶，22元（便利店购买）\n2. 5月15日 精酿啤酒，80元（朋友聚会）\n3. 5月20日 燕京U8，12元\n\n3次共消费114元。另外5月8日还有一次青岛啤酒15元未包含在内。整体饮酒频率适中，建议继续保持。"}`,
 	}
 
-	prompt := o.buildVerifyPrompt(msg, req, state, nil)
+	prompt := o.buildVerifyPrompt(msg, req, state)
 
 	// 检验 prompt 应该包含所有必要信息供 Flash 判断
 	if !strings.Contains(prompt, "综合分析") {
@@ -437,7 +443,7 @@ func TestBuildVerifyPrompt_RealData_GoodReply(t *testing.T) {
 		Content: `{"reply":"搜到了！这次发现了 **4条** 与\"酒\"相关的账单。结合之前的笔记数据，重新梳理一份完整的五月饮酒日记：\n\n### 五月饮酒日记（最终版 · 账单+笔记双重核对）\n\n| 日期 | 饮酒记录 | 来源 |\n|:----:|:----------|:----:|\n| 5月15日 | 啤酒1瓶（账单备注\"1瓶啤酒，四五瓶饮料，2根雪糕\"） | **账单+笔记** ✅ |\n| 5月18日 | 悠航鲜啤（双人，配炸鸡汉堡） | **账单** 🆕 |\n| 5月19日 | 啤酒×2瓶 | **账单+笔记** ✅ |\n| 5月21日 | 京客隆买啤酒（还买了水饺和牛奶） | **账单** 🆕 |\n| 5月22日 | 约800ml啤酒 | 笔记 |\n| 5月27日 | 福佳白啤330ml×2瓶 | 笔记 |\n\n### 对比分析\n**笔记遗漏的，账单补上了（2条）：** 5月18日悠航鲜啤双人餐、5月21日京客隆买啤酒\n\n**仍有账单空缺的：** 5月22日和5月27日没有对应购买记录，可能是存货\n\n### 五月饮酒全量记录（6次）"}`,
 	}
 
-	prompt := o.buildVerifyPrompt(msg, req, state, nil)
+	prompt := o.buildVerifyPrompt(msg, req, state)
 	t.Logf("=== 真实数据 - 好回复 - 检验prompt ===\n%s", prompt)
 
 	// 关键断言
@@ -485,7 +491,7 @@ func TestBuildVerifyPrompt_RealData_BadReply_WithHallucination(t *testing.T) {
 		Content: `{"reply":"搜到了！五月份饮酒情况如下：\n\n- 5月15日：啤酒1瓶，44元\n- 5月18日：悠航鲜啤双人餐，235元\n- 5月19日：啤酒两瓶，12元\n- 5月21日：京客隆啤酒，41元\n- 5月25日：红酒一瓶，146元（朋友聚餐）\n- 5月28日：红酒一瓶，88元\n\n共计6次，总消费566元。其中红酒消费234元占比最高。"}`,
 	}
 
-	prompt := o.buildVerifyPrompt(msg, req, state, nil)
+	prompt := o.buildVerifyPrompt(msg, req, state)
 	t.Logf("=== 真实数据 - 幻觉回复 - 检验prompt ===\n%s", prompt)
 
 	// 幻觉数据"红酒"不在工具返回中

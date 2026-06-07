@@ -571,8 +571,9 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 		client = o.proClient
 	}
 
-	// 构建检验 prompt（含检索命中内容，避免误判检索来源数据为幻觉）
-	verifyPrompt := o.buildVerifyPrompt(msg, req, state, result.RetrievedItems)
+	// 构建检验 prompt——检索上下文注入 system prompt，避免误判为幻觉
+	retrievalCtx := buildRetrievalContext(result.RetrievedItems)
+	verifyPrompt := o.buildVerifyPrompt(msg, req, state)
 	verifySystemPrompt := `你是一个内容检验助手。请判断模型的回复是否完整、准确。
 
 严格按以下 JSON 格式回复，不要加任何额外文字：
@@ -580,8 +581,11 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 
 检验标准：
 - complete: 用户问题是否已被充分回答？信息源是否需要多角度交叉验证？
-- hallucinations: 回复中是否有工具返回数据中找不到的具体数据/事实？
+- hallucinations: 回复中的数据必须在【工具返回数据】或【检索上下文】中找到依据。检索上下文中的信息是合法的已知事实，模型引用它们不算幻觉。
 - 不要因为措辞风格标记为幻觉，只标记实质性的数据错误`
+	if retrievalCtx != "" {
+		verifySystemPrompt += "\n\n" + retrievalCtx
+	}
 
 	// 保存检验请求到 DB（调试页可见）
 	verifyMsg, err := client.ChatSync(ctx, &llm.ChatRequest{
@@ -629,7 +633,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 	return false
 }
 
-func (o *Orchestrator) buildVerifyPrompt(msg llm.Message, req *RunRequest, state *reactState, retrieved []promptbuilder.RetrievedItem) string {
+func (o *Orchestrator) buildVerifyPrompt(msg llm.Message, req *RunRequest, state *reactState) string {
 	var sb strings.Builder
 	sb.WriteString("【用户问题】\n")
 	sb.WriteString(req.RawUserMessage)
@@ -642,14 +646,29 @@ func (o *Orchestrator) buildVerifyPrompt(msg llm.Message, req *RunRequest, state
 	for _, m := range state.msgs {
 		switch m.Role {
 		case "assistant":
-			if strings.Contains(m.Content, "tool_calls") || len(m.ToolCalls) > 0 {
+			if len(m.ToolCalls) > 0 {
+				// 原生 FC：输出 tool_calls 的函数名 + 参数
+				hasTools = true
+				for _, tc := range m.ToolCalls {
+					sb.WriteString(fmt.Sprintf("[工具调用] %s(%s)\n", tc.Function.Name, tc.Function.Arguments))
+				}
+			} else if strings.Contains(m.Content, "tool_calls") {
+				// 旧格式：content 包含 JSON 工具调用
 				hasTools = true
 				sb.WriteString("[工具调用] ")
 				sb.WriteString(m.Content)
 				sb.WriteString("\n")
 			}
+		case "tool":
+			// 原生 FC：工具结果
+			hasTools = true
+			sb.WriteString("[工具返回] ")
+			sb.WriteString(m.Content)
+			sb.WriteString("\n")
 		case "user":
 			if strings.Contains(m.Content, `"success"`) {
+				// 旧格式：工具结果伪装成 user 消息
+				hasTools = true
 				sb.WriteString("[工具返回] ")
 				sb.WriteString(m.Content)
 				sb.WriteString("\n")
@@ -660,13 +679,20 @@ func (o *Orchestrator) buildVerifyPrompt(msg llm.Message, req *RunRequest, state
 		sb.WriteString("（本轮未调用工具）\n")
 	}
 
-	if len(retrieved) > 0 {
-		sb.WriteString("\n【检索命中内容（模型可引用，不算幻觉）】\n")
-		for _, it := range retrieved {
-			sb.WriteString(fmt.Sprintf("[%s] %s\n", it.Type, it.Text))
-		}
-	}
+	return sb.String()
+}
 
+// buildRetrievalContext 将检索命中内容格式化为 verify system prompt 的已知事实段。
+// 检索上下文注入 system prompt（而非 user prompt），确保检验 LLM 将其视为合法信息来源。
+func buildRetrievalContext(retrieved []promptbuilder.RetrievedItem) string {
+	if len(retrieved) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("【检索上下文——以下信息是已知事实，模型回复引用它们不算幻觉】\n")
+	for _, it := range retrieved {
+		sb.WriteString(fmt.Sprintf("[%s] %s\n", it.Type, it.Text))
+	}
 	return sb.String()
 }
 

@@ -52,9 +52,9 @@ snowflake:
   datacenter_id: 1
 
 search:
-  provider: anysearch
-  api_key: ${SEARCH_API_KEY}
-  base_url: https://api.anysearch.com/v1
+  provider: bocha
+  api_key: ${BOCHA_API_KEY}
+  base_url: https://api.bocha.cn/v1
   daily_limit: 1000
 
 retrieval:

@@ -35,7 +35,9 @@ embedding:
   memory_auto_extract: true
 
 search:
-  provider: anysearch
+  provider: bocha
+  api_key: ${BOCHA_API_KEY}
+  base_url: https://api.bocha.cn/v1
   daily_limit: 1000
 
 reflection:

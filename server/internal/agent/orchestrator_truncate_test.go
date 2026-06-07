@@ -94,7 +94,7 @@ func TestTruncateToolResult_SlightlyOverLimit(t *testing.T) {
 // ==================== BuildMessagesForFlash ====================
 
 func TestBuildMessagesForFlash_Empty(t *testing.T) {
-	msgs := BuildMessagesForFlash(nil, 2000)
+	msgs := BuildMessagesForFlash(nil, 2000, false)
 	if len(msgs) != 0 {
 		t.Errorf("expected 0 msgs, got %d", len(msgs))
 	}
@@ -105,7 +105,7 @@ func TestBuildMessagesForFlash_NonToolMessages(t *testing.T) {
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "hi there"},
 	}
-	msgs := BuildMessagesForFlash(history, 2000)
+	msgs := BuildMessagesForFlash(history, 2000, false)
 
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 msgs, got %d", len(msgs))
@@ -122,7 +122,7 @@ func TestBuildMessagesForFlash_ToolMsgUnderLimit(t *testing.T) {
 	history := []model.Message{
 		{Role: "tool", Content: `{"success":true,"data":"ok"}`, ToolCallID: strPtr("tc1")},
 	}
-	msgs := BuildMessagesForFlash(history, 2000)
+	msgs := BuildMessagesForFlash(history, 2000, false)
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 msg, got %d", len(msgs))
@@ -141,7 +141,7 @@ func TestBuildMessagesForFlash_ToolMsgOverLimit(t *testing.T) {
 	history := []model.Message{
 		{Role: "tool", Content: content},
 	}
-	msgs := BuildMessagesForFlash(history, 2000)
+	msgs := BuildMessagesForFlash(history, 2000, false)
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 msg, got %d", len(msgs))
@@ -163,7 +163,7 @@ func TestBuildMessagesForFlash_ToolMsgMaxLenZero(t *testing.T) {
 	history := []model.Message{
 		{Role: "tool", Content: content},
 	}
-	msgs := BuildMessagesForFlash(history, 0)
+	msgs := BuildMessagesForFlash(history, 0, false)
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 msg, got %d", len(msgs))
@@ -181,7 +181,7 @@ func TestBuildMessagesForFlash_MixedMessages(t *testing.T) {
 		{Role: "tool", Content: `{"success":true,"data":"` + longData + `"}`},
 		{Role: "assistant", Content: "done"},
 	}
-	msgs := BuildMessagesForFlash(history, 2000)
+	msgs := BuildMessagesForFlash(history, 2000, false)
 
 	if len(msgs) != 4 {
 		t.Fatalf("expected 4 msgs, got %d", len(msgs))
@@ -201,10 +201,137 @@ func TestBuildMessagesForFlash_AssistantWithToolCallID(t *testing.T) {
 	history := []model.Message{
 		{Role: "assistant", Content: "calling tool", ToolCallID: strPtr("tc-123")},
 	}
-	msgs := BuildMessagesForFlash(history, 2000)
+	msgs := BuildMessagesForFlash(history, 2000, false)
 
 	if msgs[0].ToolCallID != "tc-123" {
 		t.Errorf("expected ToolCallID='tc-123', got '%s'", msgs[0].ToolCallID)
+	}
+}
+
+// ==================== BuildMessagesForFlash with useNativeFC ====================
+
+func TestBuildMessagesForFlash_NativeFC_AllNewFormat(t *testing.T) {
+	// 全部新格式：role=tool + ToolCallID → 应保留 role=tool 和 ToolCallID
+	history := []model.Message{
+		{Role: "user", Content: "查天气"},
+		{Role: "assistant", Content: "帮你查一下", ToolCallsJSON: strPtr(`[{"id":"call_01","function":{"name":"get_weather","arguments":"{}"}}]`)},
+		{Role: "tool", Content: `{"temp":25}`, ToolCallID: strPtr("call_01")},
+		{Role: "assistant", Content: "今天25度"},
+	}
+	msgs := BuildMessagesForFlash(history, 2000, true)
+
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 msgs, got %d", len(msgs))
+	}
+	// assistant 应解析出原生 tool_calls
+	if len(msgs[1].ToolCalls) != 1 {
+		t.Errorf("expected 1 native tool_call, got %d", len(msgs[1].ToolCalls))
+	}
+	if msgs[1].ToolCalls[0].ID != "call_01" {
+		t.Errorf("expected tool_call ID 'call_01', got '%s'", msgs[1].ToolCalls[0].ID)
+	}
+	// tool 消息应保留 role=tool 和 ToolCallID
+	if msgs[2].Role != "tool" {
+		t.Errorf("expected role=tool, got %s", msgs[2].Role)
+	}
+	if msgs[2].ToolCallID != "call_01" {
+		t.Errorf("expected ToolCallID='call_01', got '%s'", msgs[2].ToolCallID)
+	}
+	// 最终 assistant 纯文本
+	if msgs[3].Content != "今天25度" {
+		t.Errorf("expected '今天25度', got '%s'", msgs[3].Content)
+	}
+}
+
+func TestBuildMessagesForFlash_NativeFC_AllOldFormat(t *testing.T) {
+	// 全部旧格式：tool 结果伪装成 user 消息，无 ToolCallID → 应保持原样
+	history := []model.Message{
+		{Role: "user", Content: "查账单"},
+		{Role: "assistant", Content: `{"reply":"","tool_calls":[{"tool":"bookkeeping","function":"query_bills","args":{}}]}`},
+		{Role: "user", Content: `{"success":true,"data":[{"amount":100}]}`},
+		{Role: "assistant", Content: `{"reply":"查到1笔","tool_calls":[]}`},
+	}
+	msgs := BuildMessagesForFlash(history, 2000, true)
+
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 msgs, got %d", len(msgs))
+	}
+	// 旧 assistant 消息的 ToolCallsJSON 可能为空（不在 JSON 的 tool_calls 里），但 BuildMessagesForFlash 会尝试解析
+	// 旧 tool 结果保持 role=user
+	if msgs[2].Role != "user" {
+		t.Errorf("expected old tool result kept as role=user, got %s", msgs[2].Role)
+	}
+	if msgs[2].ToolCallID != "" {
+		t.Errorf("expected no ToolCallID for old format, got '%s'", msgs[2].ToolCallID)
+	}
+}
+
+func TestBuildMessagesForFlash_NativeFC_MixedFormat(t *testing.T) {
+	// 混合：有新格式 tool(tool_call_id) + 旧格式 user(无 tool_call_id)
+	history := []model.Message{
+		{Role: "user", Content: "第一轮"},
+		// 旧格式工具调用
+		{Role: "assistant", Content: `{"reply":"","tool_calls":[{"tool":"note","function":"search","args":{}}]}`},
+		{Role: "user", Content: `{"success":true,"data":"old result"}`, ToolCallID: nil},
+		{Role: "assistant", Content: `{"reply":"旧格式回复","tool_calls":[]}`},
+		// 新格式工具调用
+		{Role: "user", Content: "第二轮"},
+		{Role: "assistant", Content: "查到了", ToolCallsJSON: strPtr(`[{"id":"call_02","function":{"name":"bookkeeping__query_bills","arguments":"{}"}}]`)},
+		{Role: "tool", Content: `{"success":true,"data":"new result"}`, ToolCallID: strPtr("call_02")},
+		{Role: "assistant", Content: "新格式回复"},
+	}
+	msgs := BuildMessagesForFlash(history, 2000, true)
+
+	if len(msgs) != 8 {
+		t.Fatalf("expected 8 msgs, got %d", len(msgs))
+	}
+	// 旧 tool 结果 → role=user（无 ToolCallID）
+	if msgs[2].Role != "user" {
+		t.Errorf("old result: expected role=user, got %s", msgs[2].Role)
+	}
+	// 新 tool 结果 → role=tool（有 ToolCallID）
+	if msgs[6].Role != "tool" {
+		t.Errorf("new result: expected role=tool, got %s", msgs[6].Role)
+	}
+	if msgs[6].ToolCallID != "call_02" {
+		t.Errorf("new result: expected ToolCallID='call_02', got '%s'", msgs[6].ToolCallID)
+	}
+	// 新 assistant 应解析出 tool_calls
+	if len(msgs[5].ToolCalls) != 1 {
+		t.Errorf("expected 1 native tool_call in msg[5], got %d", len(msgs[5].ToolCalls))
+	}
+}
+
+func TestBuildMessagesForFlash_NativeFC_ToolMsgNoToolCallID(t *testing.T) {
+	// role=tool 但 ToolCallID=nil → 即使 useNativeFC=true 也包装成 user
+	history := []model.Message{
+		{Role: "tool", Content: `{"data":"x"}`, ToolCallID: nil},
+	}
+	msgs := BuildMessagesForFlash(history, 2000, true)
+
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 msg, got %d", len(msgs))
+	}
+	if msgs[0].Role != "user" {
+		t.Errorf("expected tool msg without ToolCallID wrapped as user, got %s", msgs[0].Role)
+	}
+}
+
+func TestBuildMessagesForFlash_NativeFC_IdgenToolCallID(t *testing.T) {
+	// role=tool + ToolCallID 为 纯数字 Snowflake ID（旧 idgen 格式）→ 包装成 user
+	history := []model.Message{
+		{Role: "tool", Content: `{"data":"y"}`, ToolCallID: strPtr("1553947499105488896")},
+	}
+	msgs := BuildMessagesForFlash(history, 2000, true)
+
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 msg, got %d", len(msgs))
+	}
+	if msgs[0].Role != "user" {
+		t.Errorf("expected idgen tool msg wrapped as user, got %s", msgs[0].Role)
+	}
+	if msgs[0].ToolCallID != "" {
+		t.Errorf("expected no ToolCallID for idgen msg, got '%s'", msgs[0].ToolCallID)
 	}
 }
 
@@ -406,5 +533,112 @@ func TestCollectToolResults_LongResult_EventHasFullContent(t *testing.T) {
 	}
 	if !strings.Contains(msgs[0].Content, longStr) {
 		t.Error("ReAct loop msg should also contain full content (no truncation in current turn)")
+	}
+}
+
+// ==================== collectToolResultsNative ====================
+
+func TestCollectToolResultsNative_RoleIsTool(t *testing.T) {
+	o := &Orchestrator{maxToolResultChars: 2000}
+	internalTCs := []tool.ToolCall{
+		{Tool: "bookkeeping", Function: "create_bill", Args: json.RawMessage(`{"amount":100}`)},
+	}
+	nativeTCs := []llm.ToolCall{
+		{ID: "call_03", Function: llm.ToolCallFunction{Name: "bookkeeping__create_bill", Arguments: `{"amount":100}`}},
+	}
+	results := []toolExecResult{{
+		tc:     internalTCs[0],
+		result: &tool.Result{Success: true, Data: json.RawMessage(`{"id":1}`)},
+	}}
+	events := make(chan *llm.StreamEvent, 16)
+
+	msgs := o.collectToolResultsNative(context.Background(), internalTCs, nativeTCs, results, events, "c1", "u1", nil)
+
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 msg, got %d", len(msgs))
+	}
+	if msgs[0].Role != "tool" {
+		t.Errorf("expected role=tool, got %s", msgs[0].Role)
+	}
+	if msgs[0].ToolCallID != "call_03" {
+		t.Errorf("expected ToolCallID='call_03', got '%s'", msgs[0].ToolCallID)
+	}
+}
+
+func TestCollectToolResultsNative_EventsSent(t *testing.T) {
+	o := &Orchestrator{maxToolResultChars: 2000}
+	internalTCs := []tool.ToolCall{
+		{Tool: "t", Function: "f", Args: json.RawMessage(`{}`)},
+		{Tool: "t", Function: "g", Args: json.RawMessage(`{}`)},
+	}
+	nativeTCs := []llm.ToolCall{
+		{ID: "call_a", Function: llm.ToolCallFunction{Name: "t__f", Arguments: `{}`}},
+		{ID: "call_b", Function: llm.ToolCallFunction{Name: "t__g", Arguments: `{}`}},
+	}
+	results := []toolExecResult{
+		{tc: internalTCs[0], result: &tool.Result{Success: true, Data: json.RawMessage(`"a"`)}},
+		{tc: internalTCs[1], result: &tool.Result{Success: true, Data: json.RawMessage(`"b"`)}},
+	}
+	events := make(chan *llm.StreamEvent, 16)
+
+	go func() {
+		o.collectToolResultsNative(context.Background(), internalTCs, nativeTCs, results, events, "c1", "u1", nil)
+		close(events)
+	}()
+
+	var toolResults []*llm.StreamEvent
+	for evt := range events {
+		if evt.Type == "tool_result" {
+			toolResults = append(toolResults, evt)
+		}
+	}
+	if len(toolResults) != 2 {
+		t.Fatalf("expected 2 tool_result events, got %d", len(toolResults))
+	}
+}
+
+// ==================== nativeToolCallsToInternal ====================
+
+func TestNativeToolCallsToInternal_Single(t *testing.T) {
+	nativeTCs := []llm.ToolCall{
+		{ID: "call_1", Function: llm.ToolCallFunction{Name: "bookkeeping__create_bill", Arguments: `{"amount":100}`}},
+	}
+	result := nativeToolCallsToInternal(nativeTCs)
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	if result[0].Tool != "bookkeeping" {
+		t.Errorf("expected tool=bookkeeping, got %s", result[0].Tool)
+	}
+	if result[0].Function != "create_bill" {
+		t.Errorf("expected function=create_bill, got %s", result[0].Function)
+	}
+	if string(result[0].Args) != `{"amount":100}` {
+		t.Errorf("expected args='{\"amount\":100}', got %s", string(result[0].Args))
+	}
+}
+
+func TestNativeToolCallsToInternal_NoSeparator(t *testing.T) {
+	// 万一 LLM 返回的函数名不含 __，退化为 tool=func=name
+	nativeTCs := []llm.ToolCall{
+		{ID: "call_2", Function: llm.ToolCallFunction{Name: "simpleFunc", Arguments: `{}`}},
+	}
+	result := nativeToolCallsToInternal(nativeTCs)
+	if result[0].Tool != "simpleFunc" || result[0].Function != "simpleFunc" {
+		t.Errorf("expected tool=func=simpleFunc, got tool=%s func=%s", result[0].Tool, result[0].Function)
+	}
+}
+
+func TestNativeToolCallsToInternal_MultipleSeparators(t *testing.T) {
+	// 函数名含多个 __，用 LastIndex 取最后一个
+	nativeTCs := []llm.ToolCall{
+		{ID: "call_3", Function: llm.ToolCallFunction{Name: "a__b__c", Arguments: `{}`}},
+	}
+	result := nativeToolCallsToInternal(nativeTCs)
+	if result[0].Tool != "a__b" {
+		t.Errorf("expected tool=a__b, got %s", result[0].Tool)
+	}
+	if result[0].Function != "c" {
+		t.Errorf("expected function=c, got %s", result[0].Function)
 	}
 }

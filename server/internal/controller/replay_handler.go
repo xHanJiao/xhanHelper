@@ -86,7 +86,7 @@ func (h *ReplayHandler) PreviewReplay(c *gin.Context) {
 	}
 
 	systemPrompt := ""
-	messages := agent.BuildMessagesForFlash(history, req.MaxToolResultChars)
+	messages := agent.BuildMessagesForFlash(history, req.MaxToolResultChars, false) // replay 走旧格式
 	messages = append(messages, llm.Message{Role: "user", Content: anchor.Content})
 	var trace *promptbuilder.PromptTrace
 

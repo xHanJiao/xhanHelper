@@ -637,7 +637,7 @@ func (o *Orchestrator) buildVerifyPrompt(msg llm.Message, req *RunRequest, state
 	for _, m := range state.msgs {
 		switch m.Role {
 		case "assistant":
-			if strings.Contains(m.Content, "tool_calls") {
+			if strings.Contains(m.Content, "tool_calls") || len(m.ToolCalls) > 0 {
 				hasTools = true
 				sb.WriteString("[工具调用] ")
 				sb.WriteString(m.Content)
@@ -944,8 +944,20 @@ func FlattenRound(round []model.Message) []model.Message {
 	return out
 }
 
-// BuildMessagesForFlash 将数据库标准消息转换为 FlashClient 格式
-func BuildMessagesForFlash(history []model.Message, maxToolResultChars int) []llm.Message {
+// isNativeToolCallID 判断 tool_call_id 是否为 LLM 原生 FC 返回的真实 ID。
+// idgen 使用 Snowflake，ID 为纯数字字符串；LLM 返回的 tool_call ID 含字母。
+func isNativeToolCallID(id string) bool {
+	for _, c := range id {
+		if c < '0' || c > '9' {
+			return true
+		}
+	}
+	return false
+}
+
+// BuildMessagesForFlash 将数据库标准消息转换为 LLM 消息格式。
+// useNativeFC=true 时保留 role=tool 和 tool_call_id（供原生 function calling）。
+func BuildMessagesForFlash(history []model.Message, maxToolResultChars int, useNativeFC bool) []llm.Message {
 	msgs := make([]llm.Message, 0, len(history))
 	for _, m := range history {
 		// 过滤内部系统消息（检验请求/反馈），避免泄露到 LLM 对话
@@ -953,12 +965,20 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int) []ll
 			continue
 		}
 		if m.Role == "tool" {
-			// FlashClient 不支持 role="tool"，包装成 user 消息
-
-			msgs = append(msgs, llm.Message{
-				Role:    "user",
-				Content: truncateToolResult(m.Content, maxToolResultChars),
-			})
+			if useNativeFC && m.ToolCallID != nil && isNativeToolCallID(*m.ToolCallID) {
+				// 原生 FC：保留 role=tool，关联 tool_call_id
+				msgs = append(msgs, llm.Message{
+					Role:       "tool",
+					Content:    truncateToolResult(m.Content, maxToolResultChars),
+					ToolCallID: *m.ToolCallID,
+				})
+			} else {
+				// prompt engineering：包装成 user 消息
+				msgs = append(msgs, llm.Message{
+					Role:    "user",
+					Content: truncateToolResult(m.Content, maxToolResultChars),
+				})
+			}
 		} else {
 			msg := llm.Message{ID: m.ID, Role: m.Role, Content: m.Content}
 			if m.ToolCallID != nil {

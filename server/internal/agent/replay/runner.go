@@ -97,7 +97,7 @@ type PreviewResult struct {
 
 // Preview 构建 system prompt 并返回完整的请求预览
 func (r *Runner) Preview(ctx context.Context, anchorMsg *model.Message, history []model.Message, cfg *Config) (*PreviewResult, error) {
-	msgs := agent.BuildMessagesForFlash(history, cfg.MaxToolResultChars)
+	msgs := agent.BuildMessagesForFlash(history, cfg.MaxToolResultChars, false) // replay 走旧格式
 	msgs = append(msgs, llm.Message{Role: "user", Content: anchorMsg.Content})
 
 	var vec []float64
@@ -154,7 +154,7 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		return nil, err
 	}
 
-	msgs := agent.BuildMessagesForFlash(history, cfg.MaxToolResultChars)
+	msgs := agent.BuildMessagesForFlash(history, cfg.MaxToolResultChars, false) // replay 走旧格式
 
 	temperature := cfg.Temperature
 	maxToolResultChars := cfg.MaxToolResultChars
@@ -250,7 +250,7 @@ func (r *Runner) RunFromRequestJSON(ctx context.Context, anchorMsg *model.Messag
 	}
 
 	maxToolResultChars := 2000
-	msgs := agent.BuildMessagesForFlash(history, maxToolResultChars)
+	msgs := agent.BuildMessagesForFlash(history, maxToolResultChars, false) // replay 走旧格式
 
 	overridePrompt := systemPrompt
 	orch := agent.New(&agent.OrchestratorConfig{

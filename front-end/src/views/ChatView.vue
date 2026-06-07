@@ -327,22 +327,48 @@ function normalizeMessage(msg) {
   return [normalized]
 }
 
+// 监听路由中的会话 ID 变化，这是 ChatView 的核心入口逻辑。
+// 只要路由 /chat/:id 中的 id 发生变化，就会触发此 watcher。
+// 通过 { immediate: true } 确保页面首次加载时也会立即执行。
+//
+// 触发场景有三类：
+// 1. 用户点击侧边栏切换到另一个会话 → newId 改变，且不等于当前 chat.conversationId
+// 2. 外部事件要求重新加载当前会话（如信箱跳转）→ newId 不变，但 chat.needsRefetch 被设为 true
+// 3. 用户直接访问 /chat 无 id 或 id 被清空 → newId 为 undefined/null
 watch(() => route.params.id, async (newId, oldId) => {
+  // --- 离开旧会话时，取消正在进行的 SSE 流 ---
+  // 避免旧会话的流式响应继续污染新会话的消息列表
   if (oldId && chat.isStreaming) {
     cancel()
   }
+
+  // ====================================================================
+  // 分支 A：切换到另一个会话（newId 存在且不等于当前会话）
+  // 这是最常见的场景：用户点击侧边栏列表中的某个会话
+  // ====================================================================
   if (newId && newId !== chat.conversationId) {
+    // 重置 UI 状态：确保输入框可见、标记首次加载中
     inputVisible.value = true
     isFirstLoad.value = true
+    // 延迟 200ms 才允许「上滑加载更多历史」触发，防止初入页面时的滚动事件误触发分页
     isInitialScrollDone.value = false
+
+    // ① 切换 chat store 中的当前会话 ID，并拉取最近 20 条消息
     chat.setConversation(newId)
     await loadHistory(newId)
+
+    // ② 等 DOM 渲染完新消息后，把滚动条直接定位到底部（最新消息处）
     await nextTick()
     if (messagesContainerRef.value) {
       messagesContainerRef.value.scrollTop = messagesContainerRef.value.scrollHeight
     }
+
+    // ③ 解除首次加载标记，并在 200ms 后激活滚动监听（给滚动条一个稳定期）
     isFirstLoad.value = false
     setTimeout(() => { isInitialScrollDone.value = true }, 200)
+
+    // ④ 从 conversations store 中读取该会话绑定的智能体，同步到 chat store
+    // 这样后续发送消息时会携带正确的 agent_id
     const currentConv = convs.list.find(c => c.id === newId)
     if (currentConv?.agent_id) {
       chat.agentId = currentConv.agent_id
@@ -351,8 +377,18 @@ watch(() => route.params.id, async (newId, oldId) => {
       chat.agentId = null
       chat.agentName = null
     }
+
+    // ⑤ 根据当前智能体重新拉取 LLM 配置（temperature / max_tokens / thinking / deepMode）
     fetchLlmConfig()
+
+  // ====================================================================
+  // 分支 B：当前会话不变但需要重新拉取消息
+  // 例如：外部页面（信箱）触发跳转到某个已有会话时，newId 可能与 chat.conversationId 一致
+  // 此时 conversationId 没变，setConversation 不会重新拉取历史，
+  // 所以通过 needsRefetch 标志来强制重新加载消息列表
+  // ====================================================================
   } else if (newId && chat.needsRefetch) {
+    // 与分支 A 相同的 UI 重置 + 历史加载 + 滚动定位流程
     inputVisible.value = true
     isFirstLoad.value = true
     isInitialScrollDone.value = false
@@ -361,9 +397,13 @@ watch(() => route.params.id, async (newId, oldId) => {
     if (messagesContainerRef.value) {
       messagesContainerRef.value.scrollTop = messagesContainerRef.value.scrollHeight
     }
+
+    // 清除重载标志，避免下次路由不变时重复加载
     chat.needsRefetch = false
+
     isFirstLoad.value = false
     setTimeout(() => { isInitialScrollDone.value = true }, 200)
+
     const currentConv2 = convs.list.find(c => c.id === newId)
     if (currentConv2?.agent_id) {
       chat.agentId = currentConv2.agent_id
@@ -373,6 +413,11 @@ watch(() => route.params.id, async (newId, oldId) => {
       chat.agentName = null
     }
     fetchLlmConfig()
+
+  // ====================================================================
+  // 分支 C：路由里没有会话 ID（用户访问 /chat 或被重定向到无 id 状态）
+  // 先尝试通过 API 获取默认会话并跳转，若无则显示空白欢迎页
+  // ====================================================================
   } else if (!newId) {
     inputVisible.value = true
     isInitialScrollDone.value = false
@@ -382,9 +427,10 @@ watch(() => route.params.id, async (newId, oldId) => {
     try {
       const defaultConv = await api.get('/api/conversations/default')
       if (defaultConv?.id) {
+        // 找到默认会话 → 清空状态并重定向到 /chat/:id
         chat.reset()
         router.replace(`/chat/${defaultConv.id}`)
-        return
+        return // 提前返回，router.replace 会再次触发此 watcher 进入分支 A
       }
     } catch (e) {
       console.error('Failed to get default conversation', e)

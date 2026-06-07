@@ -153,6 +153,7 @@ export function useChatSSE() {
       case 'message': {
         const parsed = JSON.parse(rawData)
         chat.streamingMessage.content += parsed.delta
+        chat.statusMessage = null // 正文开始推送，清除「正在分析」提示
         break
       }
       case 'thought_delta':

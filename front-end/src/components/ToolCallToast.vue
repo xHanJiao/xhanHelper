@@ -49,6 +49,33 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 // ---- 结果检验气泡 ----
 
+// ---- 状态提示气泡（「正在分析结果...」） ----
+
+const statusPhase = ref('')
+const showStatus = ref(false)
+let statusSeq = 0
+
+// 后端发来 status 事件 → 显示气泡，正文到了（status 变 null）→ 退场
+watch(() => chat.statusMessage, async (msg) => {
+  if (!msg) {
+    if (showStatus.value) {
+      statusSeq++
+      statusPhase.value = 'exit'
+      await sleep(EXIT_MS)
+      showStatus.value = false
+      statusPhase.value = ''
+    }
+    return
+  }
+  const seq = ++statusSeq
+  showStatus.value = true
+  statusPhase.value = 'enter'
+  await sleep(ENTER_MS)
+  if (seq !== statusSeq) return
+  statusPhase.value = 'stay'
+})
+
+
 const verifyStatus = computed(() => chat.streamingMessage?.verifyStatus)
 
 // 根据后端 verify 事件的状态码生成展示文字
@@ -240,6 +267,9 @@ function reset() {
   verifyPhase.value = ''
   lastVerifyKey = ''
   verifyDismissed = false
+  showStatus.value = false
+  statusPhase.value = ''
+  statusSeq++
 }
 
 // ---- 外部数据源监听 ----
@@ -271,10 +301,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="current || showVerify" class="tool-toast-anchor">
+  <div v-if="current || showVerify || showStatus" class="tool-toast-anchor">
     <div v-if="showVerify" class="tool-toast-bubble" :class="'phase-' + verifyPhase">
       <span class="tool-toast-icon verify-icon">&#128269;</span>
       <span class="tool-toast-text">{{ verifyText }}</span>
+    </div>
+    <div v-if="showStatus" class="tool-toast-bubble" :class="'phase-' + statusPhase">
+      <span class="tool-toast-icon">&#9203;</span>
+      <span class="tool-toast-text">{{ chat.statusMessage }}</span>
     </div>
     <div v-if="current" class="tool-toast-bubble" :class="'phase-' + phase">
       <span class="tool-toast-icon">&#9881;</span>

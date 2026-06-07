@@ -528,6 +528,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
 
 	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
+	o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: `{"status":"analyzing","message":"正在分析结果..."}`})
 
 	return false
 }

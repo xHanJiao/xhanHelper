@@ -68,18 +68,21 @@ func NewSystemPromptBuilder(
 	basePrompt string,
 	registry *tool.Registry,
 	promptResolver PromptResolver,
+	useNativeFC bool,
 	searchProviders ...SearchProvider,
 ) *SystemPromptBuilder {
+	postRoleStatic := []StaticProvider{&currentTimeProvider{}}
+	if !useNativeFC {
+		// prompt engineering：需要 JSON 输出格式 + 工具定义文本
+		postRoleStatic = append([]StaticProvider{&toolDefinitionsProvider{registry: registry}}, postRoleStatic...)
+	}
 	return &SystemPromptBuilder{
 		basePrompt:     basePrompt,
 		promptResolver: promptResolver,
 		preRoleStatic: []StaticProvider{
 			&corePrinciplesProvider{},
 		},
-		postRoleStatic: []StaticProvider{
-			&toolDefinitionsProvider{registry: registry},
-			&currentTimeProvider{},
-		},
+		postRoleStatic:  postRoleStatic,
 		searchProviders: searchProviders,
 	}
 }

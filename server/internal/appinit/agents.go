@@ -104,7 +104,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	pb := promptbuilder.NewSystemPromptBuilder(
 		agent.BaseSystemPrompt,
 		tools.Registry,
-		repos.Prompt,
+		repos.Prompt, cfg.LLM.UseNativeFC,
 		promptbuilder.WithScoreModifier(
 			promptbuilder.NewThemeProvider(themeSource, repos.ThemeState, repos.Conversation, &promptCfg),
 			promptbuilder.BoostFactor(1.3),

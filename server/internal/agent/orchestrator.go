@@ -57,11 +57,12 @@ type RunRequest struct {
 
 // reactState — runReActLoop 循环过程中的可变状态
 type reactState struct {
-	msgs               []llm.Message
-	allToolCalls       []tool.ToolCall
-	lastAssistantMsgID string
-	userMsgID          string
-	verifyRetries      int // 本轮对话已重检验次数
+	msgs                 []llm.Message
+	allToolCalls         []tool.ToolCall
+	lastAssistantMsgID   string
+	userMsgID            string
+	verifyRetries        int  // 本轮对话已重检验次数
+	nativeFCTextDeferred bool // 原生 FC 下文本因 verify 暂缓推送
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（文本解析用）
@@ -302,6 +303,7 @@ func (o *Orchestrator) runOneRound(
 		return true
 	}
 
+	state.nativeFCTextDeferred = o.shouldVerify(req, state)
 	llmStart := time.Now()
 	streamEvents, err := client.Chat(ctx, o.mkLlmChatReq(req, result, state.msgs))
 	if err != nil {
@@ -315,7 +317,7 @@ func (o *Orchestrator) runOneRound(
 		switch se.Type {
 		case "text_delta":
 			streamContent.WriteString(se.Content)
-			if o.useNativeFC {
+			if o.useNativeFC && !state.nativeFCTextDeferred {
 				o.sendEvent(events, se)
 			}
 		case "thought_delta":
@@ -425,6 +427,8 @@ func (o *Orchestrator) finalizeRound(
 			if cleanText != "" {
 				o.streamTextChunks(ctx, events, cleanText)
 			}
+		} else if state.nativeFCTextDeferred && streamContent != "" {
+			o.streamTextChunks(ctx, events, streamContent)
 		}
 		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "", result.IDsByType)
 	}

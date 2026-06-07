@@ -136,6 +136,8 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewMissionTool(repos.Mission, missionEmbedder), log.Default()))
 
+	reg.ValidateNativeFC()
+
 	return &ToolsBundle{
 		Registry:            reg,
 		ReflectionReg:       reflectionReg,

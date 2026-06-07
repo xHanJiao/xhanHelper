@@ -132,6 +132,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		VerifyEnabled:      cfg.LLM.Verification.Enabled,
 		VerifyMaxRetries:   cfg.LLM.Verification.MaxRetries,
 		VerifyModel:        cfg.LLM.Verification.Model,
+		UseNativeFC:        cfg.LLM.UseNativeFC,
 	})
 
 	go cronRunner.Start(bgCtx)

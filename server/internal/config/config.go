@@ -109,6 +109,7 @@ type LLMConfig struct {
 	ToolMaxConcurrency int                `yaml:"tool_max_concurrency"`  // 工具并发执行上限，0=不限制，默认 0
 	Verification       VerificationConfig `yaml:"verification"`          // 响应检验配置
 	ExtractMsgLimit    int                `yaml:"extract_msg_limit"`     // 记忆提取每次最多取的消息数，默认 50
+	UseNativeFC        bool               `yaml:"use_native_fc"`         // 是否使用原生 function calling（默认 true）
 }
 
 // EmbeddingConfig — 向量化配置

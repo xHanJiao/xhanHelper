@@ -27,6 +27,7 @@ llm:
   default_temperature: 1.0
   default_max_tokens: 30000
   tool_max_concurrency: 2         # 工具并发执行上限
+  use_native_fc: true              # 使用原生 function calling
 
 embedding:
   enable_history_search: false

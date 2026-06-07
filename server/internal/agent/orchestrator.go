@@ -105,6 +105,7 @@ type Orchestrator struct {
 	verifyEnabled       bool
 	verifyMaxRetries    int
 	verifyModel         string // "flash" | "pro"
+	useNativeFC         bool
 }
 
 // OrchestratorConfig — Orchestrator 依赖配置
@@ -127,6 +128,7 @@ type OrchestratorConfig struct {
 	VerifyEnabled      bool
 	VerifyMaxRetries   int
 	VerifyModel        string // "flash" | "pro"，默认 flash
+	UseNativeFC        bool   // 是否使用原生 function calling
 }
 
 // New 创建 Orchestrator
@@ -160,6 +162,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		verifyEnabled:       cfg.VerifyEnabled,
 		verifyMaxRetries:    cfg.VerifyMaxRetries,
 		verifyModel:         cfg.VerifyModel,
+		useNativeFC:         cfg.UseNativeFC,
 	}
 }
 

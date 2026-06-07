@@ -100,6 +100,7 @@ type Orchestrator struct {
 	defaultTemperature  *float64
 	defaultMaxTokens    *int
 	maxToolResultChars  int
+	maxConcurrency      int
 	onChatEnd           func(userID, convID string)
 	verifyEnabled       bool
 	verifyMaxRetries    int
@@ -121,6 +122,7 @@ type OrchestratorConfig struct {
 	Temperature        *float64
 	MaxTokens          *int
 	MaxToolResultChars int
+	ToolMaxConcurrency int
 	OnChatEnd          func(userID, convID string)
 	VerifyEnabled      bool
 	VerifyMaxRetries   int
@@ -153,6 +155,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		defaultTemperature:  cfg.Temperature,
 		defaultMaxTokens:    cfg.MaxTokens,
 		maxToolResultChars:  cfg.MaxToolResultChars,
+		maxConcurrency:      cfg.ToolMaxConcurrency,
 		onChatEnd:           cfg.OnChatEnd,
 		verifyEnabled:       cfg.VerifyEnabled,
 		verifyMaxRetries:    cfg.VerifyMaxRetries,
@@ -486,7 +489,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 	// 为 memory_search 工具注入 exclude_ids（本轮已注入的记忆 ID）
 	o.injectExcludeMemIDsForMemSearch(parsed, result.IDsByType["memory"])
 
-	toolCallResults := executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
+	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
 
 	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 
@@ -781,13 +784,18 @@ func injectExcludeIDs(args json.RawMessage, memIDs []string) json.RawMessage {
 	return b
 }
 
-func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID string,
+func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID string,
 	registry *tool.Registry, toolCalls []tool.ToolCall) []toolExecResult {
 
+	limit := o.maxConcurrency
+	if limit <= 0 {
+		limit = len(toolCalls) // 不限制
+	}
 	if len(toolCalls) >= 2 {
-		log.Printf("[orch] concurrent exec %d tools", len(toolCalls))
+		log.Printf("[orch] concurrent exec %d tools (limit=%d)", len(toolCalls), limit)
 	}
 
+	sem := make(chan struct{}, limit)
 	var wg sync.WaitGroup
 	results := make([]toolExecResult, len(toolCalls))
 
@@ -801,8 +809,21 @@ func executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, us
 		wg.Add(1)
 		go func(idx int, call tool.ToolCall) {
 			defer wg.Done()
-			ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID}
-			r := registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			var r *tool.Result
+			func() {
+				defer func() {
+					if p := recover(); p != nil {
+						log.Printf("[orch] tool exec panic: %s.%s panic=%v", call.Tool, call.Function, p)
+						r = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
+					}
+				}()
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID}
+				r = registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
+			}()
+
 			log.Printf("[orch] tool exec: %s.%s success=%v", call.Tool, call.Function, r.Success)
 			results[idx] = toolExecResult{tc: call, result: r}
 		}(i, tc)

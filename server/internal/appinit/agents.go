@@ -127,6 +127,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		Temperature:        cfg.LLM.DefaultTemperature,
 		MaxTokens:          cfg.LLM.DefaultMaxTokens,
 		MaxToolResultChars: cfg.LLM.MaxToolResultChars,
+		ToolMaxConcurrency: cfg.LLM.ToolMaxConcurrency,
 		OnChatEnd:          func(userID, convID string) { cronRunner.NotifyChatEnd(userID, convID) },
 		VerifyEnabled:      cfg.LLM.Verification.Enabled,
 		VerifyMaxRetries:   cfg.LLM.Verification.MaxRetries,

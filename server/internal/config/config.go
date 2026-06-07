@@ -106,6 +106,7 @@ type LLMConfig struct {
 	DefaultTemperature *float64           `yaml:"default_temperature"`   // 默认采样温度，nil 则用 LLM 自身默认
 	DefaultMaxTokens   *int               `yaml:"default_max_tokens"`    // 默认最大输出 token，nil 则用 LLM 自身默认
 	MaxToolResultChars int                `yaml:"max_tool_result_chars"` // 工具结果传入 LLM 的最大字符数，超出截断，默认 2000
+	ToolMaxConcurrency int                `yaml:"tool_max_concurrency"`  // 工具并发执行上限，0=不限制，默认 0
 	Verification       VerificationConfig `yaml:"verification"`          // 响应检验配置
 	ExtractMsgLimit    int                `yaml:"extract_msg_limit"`     // 记忆提取每次最多取的消息数，默认 50
 }

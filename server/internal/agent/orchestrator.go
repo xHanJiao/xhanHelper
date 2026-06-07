@@ -900,7 +900,6 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int) []ll
 		if m.Role == "system" {
 			continue
 		}
-		// ts := "（发于" + m.CreatedAt.In(config.BJ).Format("01-02 15:04") + "）"
 		if m.Role == "tool" {
 			// FlashClient 不支持 role="tool"，包装成 user 消息
 
@@ -922,36 +921,6 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int) []ll
 
 			msgs = append(msgs, msg)
 		}
-	}
-	return msgs
-}
-
-// BuildMessagesForPro 将数据库标准消息转换为 ProClient 格式（原样）
-func BuildMessagesForPro(history []model.Message, maxToolResultChars int) []llm.Message {
-	msgs := make([]llm.Message, 0, len(history))
-	for _, m := range history {
-		// 过滤内部系统消息（检验请求/反馈），避免泄露到 LLM 对话
-		if m.Role == "system" {
-			continue
-		}
-		// ts := "（发于" + m.CreatedAt.In(config.BJ).Format("01-02 15:04") + "）"
-		ts := ""
-		content := m.Content
-		if m.Role == "tool" {
-			content = truncateToolResult(m.Content, maxToolResultChars)
-		}
-		msg := llm.Message{ID: m.ID, Role: m.Role, Content: content + ts}
-		if m.ToolCallID != nil {
-			msg.ToolCallID = *m.ToolCallID
-		}
-		if m.ToolCallsJSON != nil {
-			var tcs []llm.ToolCall
-			if err := json.Unmarshal([]byte(*m.ToolCallsJSON), &tcs); err == nil {
-				msg.ToolCalls = tcs
-			}
-		}
-
-		msgs = append(msgs, msg)
 	}
 	return msgs
 }
@@ -1085,7 +1054,6 @@ func ParseLLMResponse(text string) (*LLMResponse, error) {
 	return &resp, nil
 }
 
-// extractCleanText 从 LLM 原始输出中提取干净的用户可见文本。
 // extractToolCallsJSON 从 Flash JSON Content 中提取 tool_calls 并序列化为 JSON。
 // 没有 tool_calls 或解析失败返回 nil。
 func extractToolCallsJSON(raw string) *string {
@@ -1152,24 +1120,4 @@ func extractFlashReply(raw string) string {
 		return parsed.Reply
 	}
 	return raw
-}
-
-func buildPlanEvent(toolCalls []tool.ToolCall) map[string]interface{} {
-	nodes := make([]map[string]interface{}, 0)
-	edges := make([]map[string]interface{}, 0)
-	for _, tc := range toolCalls {
-		nid := fmt.Sprintf("n%d", len(nodes))
-		nodes = append(nodes, map[string]interface{}{
-			"id":     nid,
-			"label":  tc.Function,
-			"status": "done",
-		})
-		if len(nodes) > 1 {
-			edges = append(edges, map[string]interface{}{
-				"from": fmt.Sprintf("n%d", len(nodes)-2),
-				"to":   nid,
-			})
-		}
-	}
-	return map[string]interface{}{"nodes": nodes, "edges": edges}
 }

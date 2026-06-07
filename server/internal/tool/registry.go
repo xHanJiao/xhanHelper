@@ -33,6 +33,21 @@ func NewRegistry() *Registry {
 	}
 }
 
+// ValidateNativeFC 校验所有非隐藏工具的函数名不含 "__"（避免扁平化命名冲突）。
+// 在 Register 完成后调用，发现冲突直接 panic。
+func (r *Registry) ValidateNativeFC() {
+	for toolName, t := range r.tools {
+		if r.hiddenNames[toolName] {
+			continue
+		}
+		for _, fn := range t.Functions() {
+			if strings.Contains(fn.Name, "__") {
+				panic(fmt.Sprintf("[tool] function name contains reserved separator \"__\": %s.%s", toolName, fn.Name))
+			}
+		}
+	}
+}
+
 // HideTool 将工具从 prompt 中隐藏（不会告诉 LLM，但 ExecuteByName 仍可用）
 func (r *Registry) HideTool(name string) {
 	r.hiddenNames[name] = true
@@ -147,6 +162,31 @@ func (r *Registry) GetToolMap() map[string]Tool {
 		out[k] = v
 	}
 	return out
+}
+
+// GetNativeFCTools 导出所有非隐藏工具的函数定义（供 LLM 原生 function calling）。
+// 每个函数扁平化为独立的 tool definition，名称格式为 "toolName__funcName"。
+func (r *Registry) GetNativeFCTools() []llm.ToolDefinition {
+	defs := make([]llm.ToolDefinition, 0, len(r.tools))
+	for name, t := range r.tools {
+		if r.hiddenNames[name] {
+			continue
+		}
+		funcs := make([]llm.FuncDef, len(t.Functions()))
+		for i, f := range t.Functions() {
+			funcs[i] = llm.FuncDef{
+				Name:        f.Name,
+				Description: f.Description,
+				Parameters:  f.Parameters,
+			}
+		}
+		defs = append(defs, llm.ToolDefinition{
+			Name:        name,
+			Description: t.Description(),
+			Functions:   funcs,
+		})
+	}
+	return defs
 }
 
 // GetLLMTools 导出所有工具定义（供 LLM native function calling）

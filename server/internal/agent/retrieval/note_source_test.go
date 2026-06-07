@@ -134,7 +134,7 @@ func TestNoteSource_ChunkDedup_SameNote(t *testing.T) {
 		chunkResult("chunk:note:n1/1", "n1", 0.82),
 	}}
 
-	packets, nearMiss, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒消费", UserID: "u1", ConversationID: "c1", NoteThreshold: 0.5, NoteLimit: 5})
+	packets, nearMiss, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒消费", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestNoteSource_ChunkHits_DifferentNotes(t *testing.T) {
 		chunkResult("chunk:note:n2/0", "n2", 0.78),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", NoteThreshold: 0.5, NoteLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestNoteSource_ChunkBelowThreshold_DedupedNearMiss(t *testing.T) {
 		chunkResult("chunk:note:n1/1", "n1", 0.52),
 	}}
 
-	packets, nearMiss, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", NoteThreshold: 0.7, NoteLimit: 5})
+	packets, nearMiss, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.7, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestNoteSource_Fallback_FullNoteEmbedding(t *testing.T) {
 		fullNoteResult("n2", 0.65),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", NoteThreshold: 0.5, NoteLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestNoteSource_ChunkPlusFallback(t *testing.T) {
 		fullNoteResult("n2", 0.72),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "消费", UserID: "u1", ConversationID: "c1", NoteThreshold: 0.5, NoteLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "消费", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestNoteSource_NoDuplicate_ChunkAndFullHit(t *testing.T) {
 		fullNoteResult("n1", 0.60),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", NoteThreshold: 0.5, NoteLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestNoteSource_MatchedChunkSnippets(t *testing.T) {
 		chunkResult("chunk:note:n1/0", "n1", 0.85),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", NoteThreshold: 0.5, NoteLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestNoteSource_EmptyResults(t *testing.T) {
 
 	src.vectorStore = &mockVectorStore{results: nil}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "任意查询", UserID: "u1", ConversationID: "c1", NoteThreshold: 0.5, NoteLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "任意查询", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestNoteSource_FilterOtherUsers(t *testing.T) {
 		}},
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "查询", UserID: "u1", ConversationID: "c1", NoteThreshold: 0.5, NoteLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "查询", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}

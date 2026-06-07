@@ -100,7 +100,7 @@ func TestMemorySource_ChunkDedup_SameMemory(t *testing.T) {
 		memChunkResult("chunk:memory:m1/1", "m1", 0.82),
 	}}
 
-	packets, nearMiss, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", MemoryThreshold: 0.5, MemoryLimit: 5})
+	packets, nearMiss, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestMemorySource_ChunkHits_DifferentMemories(t *testing.T) {
 		memChunkResult("chunk:memory:m2/0", "m2", 0.78),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", MemoryThreshold: 0.5, MemoryLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestMemorySource_ChunkBelowThreshold_DedupedNearMiss(t *testing.T) {
 		memChunkResult("chunk:memory:m1/1", "m1", 0.52),
 	}}
 
-	packets, nearMiss, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", MemoryThreshold: 0.7, MemoryLimit: 5})
+	packets, nearMiss, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.7, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestMemorySource_Fallback_FullMemoryEmbedding(t *testing.T) {
 		fullMemResult("m2", 0.65),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", MemoryThreshold: 0.5, MemoryLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestMemorySource_ChunkPlusFallback(t *testing.T) {
 		fullMemResult("m2", 0.72),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", MemoryThreshold: 0.5, MemoryLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestMemorySource_NoDuplicate_ChunkAndFullHit(t *testing.T) {
 		fullMemResult("m1", 0.60),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", MemoryThreshold: 0.5, MemoryLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestMemorySource_MatchedChunkSnippets(t *testing.T) {
 		memChunkResult("chunk:memory:m1/0", "m1", 0.85),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", MemoryThreshold: 0.5, MemoryLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestMemorySource_EmptyResults(t *testing.T) {
 
 	src.vectorStore = &mockVectorStore{results: nil}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "任意查询", UserID: "u1", ConversationID: "c1", MemoryThreshold: 0.5, MemoryLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "任意查询", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestMemorySource_FilterOtherUsers(t *testing.T) {
 		}},
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "查询", UserID: "u1", ConversationID: "c1", MemoryThreshold: 0.5, MemoryLimit: 5})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "查询", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestMemorySource_LimitTruncation(t *testing.T) {
 		ID: "m3", UserID: "u1", MemoryKey: "m3", ContentHash: "h3", MemoryValue: "m3",
 	})
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "查询", UserID: "u1", ConversationID: "c1", MemoryThreshold: 0.5, MemoryLimit: 2})
+	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "查询", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 2}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}

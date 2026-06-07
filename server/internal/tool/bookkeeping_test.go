@@ -143,8 +143,8 @@ func TestQueryBillsKeyword(t *testing.T) {
 	if _, ok := b["consume_type"]; ok {
 		t.Error("consume_type should not be in query_bills response")
 	}
-	if _, ok := b["id"]; ok {
-		t.Error("id should not be in query_bills response")
+	if _, ok := b["id"]; !ok {
+		t.Error("id should be in query_bills response")
 	}
 }
 

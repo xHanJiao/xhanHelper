@@ -172,6 +172,7 @@ func buildTraceItems(packets []retrieval.ContextPacket, nearMiss []retrieval.Nea
 			Text:          truncateTraceText(p.Text, 100),
 			Score:         p.FinalScore,
 			VectorScore:   p.Score,
+			KeywordScore:  p.KeywordScore,
 			DiscardReason: "",
 		})
 	}

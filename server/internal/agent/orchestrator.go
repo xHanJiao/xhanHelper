@@ -315,6 +315,9 @@ func (o *Orchestrator) runOneRound(
 		switch se.Type {
 		case "text_delta":
 			streamContent.WriteString(se.Content)
+			if o.useNativeFC {
+				o.sendEvent(events, se)
+			}
 		case "thought_delta":
 			streamReasoning.WriteString(se.Content)
 			o.sendEvent(events, se)
@@ -347,10 +350,14 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPromptResult *promptb
 		t := true
 		thinking = &t
 	}
+	var tools []llm.ToolDefinition
+	if o.useNativeFC {
+		tools = o.registry.GetNativeFCTools()
+	}
 	return &llm.ChatRequest{
 		SystemPrompt: systemPromptResult.Prompt,
 		Messages:     msgs,
-		Tools:        nil,
+		Tools:        tools,
 		Temperature:  temperature,
 		MaxTokens:    maxTokens,
 		UserID:       req.UserID,
@@ -413,9 +420,11 @@ func (o *Orchestrator) finalizeRound(
 
 	done := o.handleOneRoundResponse(ctx, events, msg, req, result, state)
 	if done {
-		cleanText := extractCleanText(streamContent)
-		if cleanText != "" {
-			o.streamTextChunks(ctx, events, cleanText)
+		if !o.useNativeFC {
+			cleanText := extractCleanText(streamContent)
+			if cleanText != "" {
+				o.streamTextChunks(ctx, events, cleanText)
+			}
 		}
 		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "", result.IDsByType)
 	}

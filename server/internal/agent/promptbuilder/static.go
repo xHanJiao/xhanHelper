@@ -65,7 +65,7 @@ func (p *currentTimeProvider) Render(ctx context.Context) string {
 type nativeFCNoticeProvider struct{}
 
 func (p *nativeFCNoticeProvider) Name() string         { return "native_fc_notice" }
-func (p *nativeFCNoticeProvider) SectionTitle() string { return "" }
+func (p *nativeFCNoticeProvider) SectionTitle() string { return "输出格式与工具使用" }
 func (p *nativeFCNoticeProvider) Render(ctx context.Context) string {
 	return "你已经通过函数调用接口获得了所有可用工具的定义。回复时直接输出纯文本即可，**严禁在文本中输出 JSON 格式内容**。如需调用工具，必须使用函数调用接口。"
 }

@@ -176,7 +176,8 @@ function scrollToBottom() {
       if (distFromBottom > 80) return
       container.scrollTop = container.scrollHeight
     } else {
-      messagesEndRef.value?.scrollIntoView({ behavior: 'smooth' })
+      const container = messagesContainerRef.value
+      if (container) container.scrollTop = container.scrollHeight
     }
   })
 }

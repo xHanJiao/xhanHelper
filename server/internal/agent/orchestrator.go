@@ -471,6 +471,14 @@ func (o *Orchestrator) handleOneRoundResponse(
 
 	// 原生 FC 路径：无工具调用，纯文本回复（文本已在 runOneRound 中实时推送）
 	if o.useNativeFC && len(msg.ToolCalls) == 0 {
+		// 兜底：DeepSeek 偶发不走原生 FC，仍在 text 中输出 JSON
+		if parsed, parseErr := ParseLLMResponse(msg.Content); parseErr == nil && parsed != nil {
+			if len(parsed.ToolCalls) > 0 {
+				return o.executePromptEngTools(ctx, events, msg, req, result, state, parsed)
+			}
+			// 纯 JSON（有 reply 无 tool_calls）：提取纯文本
+			msg.Content = parsed.Reply
+		}
 		if o.shouldVerify(req, state) {
 			return o.verifyAndMaybeRetry(ctx, events, msg, req, result, state)
 		}
@@ -514,23 +522,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		return true
 	}
 
-	// 统一走 prompt engineering，不填 ToolCallsJSON（由 ParseLLMResponse 从文本解析）
-	msg.ToolCalls = nil
-
-	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
-
-	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
-	state.allToolCalls = append(state.allToolCalls, parsed.ToolCalls...)
-
-	// 为 memory_search 工具注入 exclude_ids（本轮已注入的记忆 ID）
-	o.injectExcludeMemIDsForMemSearch(parsed, result.IDsByType["memory"])
-
-	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
-
-	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
-	o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: `{"status":"analyzing","message":"正在分析结果..."}`})
-
-	return false
+	return o.executePromptEngTools(ctx, events, msg, req, result, state, parsed)
 }
 
 // verifyResult — Flash 检验返回的结构
@@ -694,6 +686,28 @@ func buildRetrievalContext(retrieved []promptbuilder.RetrievedItem) string {
 		sb.WriteString(fmt.Sprintf("[%s] %s\n", it.Type, it.Text))
 	}
 	return sb.String()
+}
+
+// executePromptEngTools 统一处理 prompt engineering 工具调用路径：
+// 保存 assistant 消息 → 注入排除 ID → 并发执行 → 收集结果。
+// 返回 false（继续 ReAct 循环）。
+func (o *Orchestrator) executePromptEngTools(
+	ctx context.Context,
+	events chan<- *llm.StreamEvent,
+	msg llm.Message,
+	req *RunRequest,
+	result *promptbuilder.BuildResult,
+	state *reactState,
+	parsed *LLMResponse,
+) bool {
+	msg.ToolCalls = nil
+	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
+	state.allToolCalls = append(state.allToolCalls, parsed.ToolCalls...)
+	o.injectExcludeMemIDsForMemSearch(parsed, result.IDsByType["memory"])
+	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
+	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
+	return false
 }
 
 func (o *Orchestrator) buildVerifyFeedback(vr verifyResult) string {

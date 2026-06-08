@@ -28,8 +28,14 @@ type Config struct {
 	Reflection ReflectionConfig `yaml:"reflection"`
 	Retrieval  RetrievalConfig  `yaml:"retrieval"`
 	Search     SearchConfig     `yaml:"search"`
+	Chat       ChatConfig       `yaml:"chat"`
 	Snowflake  SnowflakeConfig  `yaml:"snowflake"`
 	MCP        MCPConfig        `yaml:"mcp"`
+}
+
+// ChatConfig — 对话配置
+type ChatConfig struct {
+	HistoryRounds int `yaml:"history_rounds"` // 加载历史消息轮数，默认 10
 }
 
 // MCPServerCfg — 单个 MCP server 配置
@@ -348,6 +354,9 @@ func merge(dst, src *Config) {
 	if src.Search.DailyLimit != 0 {
 		dst.Search.DailyLimit = src.Search.DailyLimit
 	}
+	if src.Chat.HistoryRounds != 0 {
+		dst.Chat.HistoryRounds = src.Chat.HistoryRounds
+	}
 }
 
 // mergeSourceWeights 按字段合并检索源权重，非零值覆盖
@@ -470,6 +479,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Search.DailyLimit == 0 {
 		cfg.Search.DailyLimit = 100
+	}
+	if cfg.Chat.HistoryRounds == 0 {
+		cfg.Chat.HistoryRounds = 10
 	}
 	return nil
 }

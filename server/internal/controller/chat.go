@@ -159,24 +159,16 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			normalizedMsg = req.Message
 		}
 
-		// 加载历史消息
+		// 加载历史消息：按轮次分组，每轮保留 user + 最终 assistant 回复
 		var history []model.Message
-		if isDefaultConv {
-			// 默认会话：取最近 20 轮，每轮只保留 user + 最终 assistant 回复
-			rounds, err := msgRepo.ListRecentRounds(c.Request.Context(), conv.ID, 20)
-			if err != nil {
-				log.Printf("[chat] ListRecentRounds error: %v", err)
-			}
-			for _, round := range rounds {
-				history = append(history, agent.FlattenRound(round)...)
-			}
-		} else {
-			// 老路径：全量 200 条
-			var err error
-			history, err = msgRepo.ListByConversationRecent(c.Request.Context(), conv.ID, 200)
-			if err != nil {
-				log.Printf("[chat] ListByConversation error: %v", err)
-			}
+		rounds, err := msgRepo.ListRecentRounds(c.Request.Context(), conv.ID, cfg.Chat.HistoryRounds)
+		if err != nil {
+			log.Printf("[chat] ListRecentRounds error: %v", err)
+			view.JSONError(c, 500, "加载历史消息失败")
+			return
+		}
+		for _, round := range rounds {
+			history = append(history, agent.FlattenRound(round)...)
 		}
 
 		w := c.Writer

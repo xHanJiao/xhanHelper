@@ -53,6 +53,9 @@ snowflake:
   node_id: 1
   datacenter_id: 1
 
+chat:
+  history_rounds: 10
+
 search:
   provider: bocha
   api_key: ${BOCHA_API_KEY}

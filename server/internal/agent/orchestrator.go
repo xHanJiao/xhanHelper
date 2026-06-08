@@ -63,6 +63,7 @@ type reactState struct {
 	userMsgID            string
 	verifyRetries        int  // 本轮对话已重检验次数
 	nativeFCTextDeferred bool // 原生 FC 下文本因 verify 暂缓推送
+	jsonBuffered         bool // 原生 FC 下文本首字符为 { 暂缓推送，防 JSON 泄露
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（文本解析用）
@@ -317,7 +318,11 @@ func (o *Orchestrator) runOneRound(
 		switch se.Type {
 		case "text_delta":
 			streamContent.WriteString(se.Content)
-			if o.useNativeFC && !state.nativeFCTextDeferred {
+			// 首字符为 { 可能是 JSON，暂缓推送防止裸 JSON 泄露到前端
+			if o.useNativeFC && !state.jsonBuffered && len(streamContent.String()) <= 10 && strings.HasPrefix(strings.TrimSpace(streamContent.String()), "{") {
+				state.jsonBuffered = true
+			}
+			if o.useNativeFC && !state.nativeFCTextDeferred && !state.jsonBuffered {
 				o.sendEvent(events, se)
 			}
 		case "thought_delta":
@@ -427,7 +432,7 @@ func (o *Orchestrator) finalizeRound(
 			if cleanText != "" {
 				o.streamTextChunks(ctx, events, cleanText)
 			}
-		} else if state.nativeFCTextDeferred && streamContent != "" {
+		} else if (state.nativeFCTextDeferred || state.jsonBuffered) && streamContent != "" {
 			o.streamTextChunks(ctx, events, streamContent)
 		}
 		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "", result.IDsByType)
@@ -478,6 +483,10 @@ func (o *Orchestrator) handleOneRoundResponse(
 			}
 			// 纯 JSON（有 reply 无 tool_calls）：提取纯文本
 			msg.Content = parsed.Reply
+			if state.jsonBuffered {
+				o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: parsed.Reply})
+				state.jsonBuffered = false
+			}
 		}
 		if o.shouldVerify(req, state) {
 			return o.verifyAndMaybeRetry(ctx, events, msg, req, result, state)

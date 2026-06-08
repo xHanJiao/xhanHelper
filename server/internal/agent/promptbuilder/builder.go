@@ -72,7 +72,9 @@ func NewSystemPromptBuilder(
 	searchProviders ...SearchProvider,
 ) *SystemPromptBuilder {
 	postRoleStatic := []StaticProvider{&currentTimeProvider{}}
-	if !useNativeFC {
+	if useNativeFC {
+		postRoleStatic = append([]StaticProvider{&nativeFCNoticeProvider{}}, postRoleStatic...)
+	} else {
 		// prompt engineering：需要 JSON 输出格式 + 工具定义文本
 		postRoleStatic = append([]StaticProvider{&toolDefinitionsProvider{registry: registry}}, postRoleStatic...)
 	}

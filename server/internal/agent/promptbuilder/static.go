@@ -60,3 +60,12 @@ func (p *currentTimeProvider) Render(ctx context.Context) string {
 	now := time.Now().In(config.BJ)
 	return fmt.Sprintf("当前时间是 %s（北京时间，UTC+8）。", now.Format("2006-01-02 15:04:05 Monday"))
 }
+
+// nativeFCNoticeProvider — 原生 FC 模式下提示 LLM 使用函数调用接口而非 JSON 文本
+type nativeFCNoticeProvider struct{}
+
+func (p *nativeFCNoticeProvider) Name() string         { return "native_fc_notice" }
+func (p *nativeFCNoticeProvider) SectionTitle() string { return "" }
+func (p *nativeFCNoticeProvider) Render(ctx context.Context) string {
+	return "你已经通过函数调用接口获得了所有可用工具的定义。回复时直接输出纯文本即可，**严禁在文本中输出 JSON 格式内容**。如需调用工具，必须使用函数调用接口。"
+}

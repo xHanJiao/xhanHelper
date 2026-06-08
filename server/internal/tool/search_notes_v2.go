@@ -31,6 +31,7 @@ func (t *SearchNotesV2Tool) Description() string {
 func (t *SearchNotesV2Tool) Functions() []FuncSchema {
 	return []FuncSchema{{
 		Name:        "search_notes_v2",
+		Display:     "向量搜笔记",
 		Description: "用自然语言完整句子向量检索笔记。命中后返回去重的笔记全文+匹配的句子片段。query 必须是自然语言完整句子，禁止关键词列表",
 		Parameters: map[string]interface{}{
 			"type": "object",

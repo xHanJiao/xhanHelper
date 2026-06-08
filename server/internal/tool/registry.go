@@ -528,9 +528,39 @@ func (r *Registry) GeneratePromptFor(names []string) string {
 
 // ToolCall — 解析出的工具调用
 type ToolCall struct {
-	Tool     string          `json:"tool"`
-	Function string          `json:"function"`
-	Args     json.RawMessage `json:"args"`
+	Tool      string            `json:"tool"`
+	Function  string            `json:"function"`
+	Args      json.RawMessage   `json:"args"`
+	Display   string            `json:"display,omitempty"`    // 前端展示用中文名
+	ArgLabels map[string]string `json:"arg_labels,omitempty"` // 参数 key → 中文标签
+}
+
+// FillDisplay 从 Registry 查询工具的函数定义，填充 Display 和 ArgLabels。
+func (r *Registry) FillDisplay(tc *ToolCall) {
+	t := r.tools[tc.Tool]
+	if t == nil {
+		return
+	}
+	for _, fn := range t.Functions() {
+		if fn.Name == tc.Function {
+			if fn.Display != "" {
+				tc.Display = fn.Display
+			} else {
+				tc.Display = fn.Description // fallback: 函数描述（可能较长）
+			}
+			if props, ok := fn.Parameters["properties"].(map[string]interface{}); ok {
+				tc.ArgLabels = make(map[string]string, len(props))
+				for key, val := range props {
+					if prop, ok := val.(map[string]interface{}); ok {
+						if desc, ok := prop["description"].(string); ok {
+							tc.ArgLabels[key] = desc
+						}
+					}
+				}
+			}
+			return
+		}
+	}
 }
 
 // String 返回 "tool.function" 格式的名称

@@ -29,6 +29,7 @@ func (t *GetBillStatsTool) Description() string {
 func (t *GetBillStatsTool) Functions() []FuncSchema {
 	return []FuncSchema{{
 		Name:        "get_bill_stats",
+		Display:     "账单统计",
 		Description: "获取账单统计摘要。返回近 90 天的消费统计：按一级分类汇总、近 30 天明细条数、高频条目（以帮助发现规律）。非账单类主题调用时返回空统计",
 		Parameters: map[string]interface{}{
 			"type":       "object",

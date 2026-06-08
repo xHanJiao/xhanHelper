@@ -37,6 +37,7 @@ func (t *GetTopicStatsTool) Description() string {
 func (t *GetTopicStatsTool) Functions() []FuncSchema {
 	return []FuncSchema{{
 		Name:        "get_topic_stats",
+		Display:     "主题统计",
 		Description: "获取所有 topic 的聚类统计摘要：topic 分布、时间跨度、关联会话、tags、每周活跃度等",
 		Parameters: map[string]interface{}{
 			"type":       "object",

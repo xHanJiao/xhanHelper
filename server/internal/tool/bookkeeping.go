@@ -54,6 +54,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
 			Name:        "create_bill",
+			Display:     "记账",
 			Description: "新增一笔账单",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -73,6 +74,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "update_bill",
+			Display:     "修改账单",
 			Description: "修改已有账单，id 必填",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -93,6 +95,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "cancel_bill",
+			Display:     "删除账单",
 			Description: "删除一笔账单（软删除），id 必填",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -104,6 +107,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "query_bills",
+			Display:     "查询账单",
 			Description: "查询账单列表，可按时间范围、分类和关键词筛选。最多返回 200 条",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -118,6 +122,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "get_bill_by_id",
+			Display:     "账单详情",
 			Description: "根据 ID 查询单条账单详情",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -129,6 +134,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "get_monthly_stats",
+			Display:     "月度统计",
 			Description: "按月汇总账单金额和数量，用于月度分析和对比。可筛选一级/二级分类",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -141,6 +147,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "get_category_stats",
+			Display:     "分类统计",
 			Description: "按一级分类汇总账单金额，用于消费结构分析",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -152,6 +159,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "get_category_options",
+			Display:     "分类选项",
 			Description: "获取一级分类和对应二级分类的映射关系，用于了解可用的分类选项",
 			Parameters: map[string]interface{}{
 				"type":       "object",

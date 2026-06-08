@@ -31,6 +31,7 @@ func (t *ReminderTool) Description() string {
 func (t *ReminderTool) Functions() []FuncSchema {
 	return []FuncSchema{{
 		Name:        "create_reminder",
+		Display:     "创建提醒",
 		Description: "创建一个待办提醒。用户说「提醒我XX」「帮我记一下XX」「别忘了XX」时调用",
 		Parameters: map[string]interface{}{
 			"type": "object",

@@ -29,6 +29,7 @@ func (t *MessageSearchTool) Description() string {
 func (t *MessageSearchTool) Functions() []FuncSchema {
 	return []FuncSchema{{
 		Name:        "search",
+		Display:     "搜索消息",
 		Description: "在用户历史消息中按关键词搜索。从查询中提取核心关键词（如'羽毛球'、'SQL优化'、'深圳'）作为 query 参数，不要传完整句子。支持跨会话检索",
 		Parameters: map[string]interface{}{
 			"type": "object",

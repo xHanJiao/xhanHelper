@@ -40,6 +40,7 @@ func (t *MCPProxyTool) Description() string { return t.description }
 func (t *MCPProxyTool) Functions() []FuncSchema {
 	funcs := []FuncSchema{{
 		Name:        "invoke",
+		Display:     "调用外部服务",
 		Description: "调用 " + t.serverName + " 服务（首次使用会自动启动）",
 		Parameters: map[string]interface{}{
 			"type": "object",

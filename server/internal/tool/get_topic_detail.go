@@ -26,6 +26,7 @@ func (t *GetTopicDetailTool) Description() string {
 func (t *GetTopicDetailTool) Functions() []FuncSchema {
 	return []FuncSchema{{
 		Name:        "get_topic_detail",
+		Display:     "主题详情",
 		Description: "获取指定 topic（及其聚类相关 topic）下所有 notes 和 memories 的全文，按时间排序",
 		Parameters: map[string]interface{}{
 			"type": "object",

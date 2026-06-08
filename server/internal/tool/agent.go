@@ -30,6 +30,7 @@ func (t *AgentTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
 			Name:        "create_agent",
+			Display:     "创建智能体",
 			Description: "创建一个新的智能体（自定义 AI 助手）。当用户要求创建一个具有特定行为或角色的助手时调用。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -48,6 +49,7 @@ func (t *AgentTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "list_agents",
+			Display:     "智能体列表",
 			Description: "列出当前已有的智能体",
 			Parameters: map[string]interface{}{
 				"type":       "object",

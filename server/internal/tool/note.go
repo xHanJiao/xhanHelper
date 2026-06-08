@@ -41,6 +41,7 @@ func (t *NoteTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
 			Name:        "record_note",
+			Display:     "记录笔记",
 			Description: "保存一条值得长期追踪的笔记。当用户分享事实、数据、观点、事件、个人状态、人物关系时调用。日常闲聊不需要记录",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -58,6 +59,7 @@ func (t *NoteTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "get_note",
+			Display:     "获取笔记",
 			Description: "获取笔记完整内容（含版本列表）。修改笔记前必须先调用此函数读取当前内容。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -69,6 +71,7 @@ func (t *NoteTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "query_notes",
+			Display:     "查询笔记",
 			Description: "查询已保存的笔记，按主题或关键词检索历史记录",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -80,6 +83,7 @@ func (t *NoteTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "get_note_topics",
+			Display:     "笔记主题",
 			Description: "获取当前用户所有已有的笔记主题列表。需要了解有哪些主题的笔记时调用",
 			Parameters: map[string]interface{}{
 				"type":       "object",
@@ -88,6 +92,7 @@ func (t *NoteTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "update_note",
+			Display:     "修改笔记",
 			Description: "更新已有笔记。修改前请先用 get_note 读取完整内容，在其基础上修改后传入。仅传需要修改的字段",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -106,6 +111,7 @@ func (t *NoteTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "rollback_note",
+			Display:     "回滚笔记",
 			Description: "将笔记回滚到指定历史版本。版本号从 get_note_versions 获取。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -118,6 +124,7 @@ func (t *NoteTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "get_note_versions",
+			Display:     "版本列表",
 			Description: "获取笔记的所有历史版本列表。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -129,6 +136,7 @@ func (t *NoteTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "delete_note",
+			Display:     "删除笔记",
 			Description: "作废一条笔记（软删除）。用户明确要求删除或内容已过时时调用。如用户未明确指定要删除的笔记 ID，必须先向用户确认",
 			Parameters: map[string]interface{}{
 				"type": "object",

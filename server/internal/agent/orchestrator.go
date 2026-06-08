@@ -883,6 +883,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 	results := make([]toolExecResult, len(toolCalls))
 
 	for i, tc := range toolCalls {
+		registry.FillDisplay(&tc)
 		tcJSON, _ := json.Marshal(tc)
 		select {
 		case events <- &llm.StreamEvent{Type: "tool_call", Content: string(tcJSON)}:

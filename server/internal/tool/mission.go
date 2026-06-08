@@ -45,6 +45,7 @@ func (t *MissionTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
 			Name:        "create_mission",
+			Display:     "创建任务",
 			Description: "创建一个新的后台追踪任务。用户说「帮我盯着XX」「定期检查XX」「追踪XX的进展」时调用。创建后系统会自动定期检查并汇报。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -59,6 +60,7 @@ func (t *MissionTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "list_missions",
+			Display:     "任务列表",
 			Description: "列出用户当前的追踪任务。用户问「我有几个任务在追踪」「看看我的missions」时调用。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -69,6 +71,7 @@ func (t *MissionTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "update_mission",
+			Display:     "修改任务",
 			Description: "修改一个追踪任务的细节，如改目标、调频率、补充背景。用户说「把XX任务改成YY」「XX任务改成每周查一次」时调用。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -84,6 +87,7 @@ func (t *MissionTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "pause_mission",
+			Display:     "暂停任务",
 			Description: "暂停一个追踪任务。用户说「先别盯XX了」「暂停XX任务」时调用。",
 			Parameters: map[string]interface{}{
 				"type":       "object",
@@ -93,6 +97,7 @@ func (t *MissionTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "resume_mission",
+			Display:     "恢复任务",
 			Description: "恢复一个暂停的追踪任务。用户说「继续盯XX」「恢复XX任务」时调用。",
 			Parameters: map[string]interface{}{
 				"type":       "object",
@@ -102,6 +107,7 @@ func (t *MissionTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "complete_mission",
+			Display:     "完成任务",
 			Description: "标记一个追踪任务为已完成。用户说「XX学完了」「XX项目做完了，不用盯了」时调用。",
 			Parameters: map[string]interface{}{
 				"type":       "object",

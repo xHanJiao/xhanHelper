@@ -41,6 +41,7 @@ func (t *BochaSearchTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
 			Name:        "search",
+			Display:     "博查搜索",
 			Description: "联网搜索。返回网页标题、链接、摘要和来源站点",
 			Parameters: map[string]interface{}{
 				"type": "object",

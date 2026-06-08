@@ -94,6 +94,7 @@ func (t *SearchTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
 			Name:        "search",
+			Display:     "联网搜索",
 			Description: "联网搜索。支持按领域、内容类型、语言、区域过滤",
 			Parameters: map[string]interface{}{
 				"type": "object",

@@ -38,6 +38,7 @@ type mailboxDeliverArgs struct {
 func (t *MailboxTool) Functions() []FuncSchema {
 	return []FuncSchema{{
 		Name:        "deliver",
+		Display:     "投递消息",
 		Description: "向用户信箱投递一条或多条消息。type: daily_brief（日报）/ theme_finding（主题发现）。source 为来源主题名或 system",
 		Parameters: map[string]interface{}{
 			"type": "object",

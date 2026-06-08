@@ -32,6 +32,7 @@ func (t *ThemeTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
 			Name:        "create_theme",
+			Display:     "创建主题",
 			Description: "创建一个新的追踪主题",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -44,6 +45,7 @@ func (t *ThemeTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "close_theme",
+			Display:     "关闭主题",
 			Description: "关闭一个主题（不再追踪但不删除）",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -55,6 +57,7 @@ func (t *ThemeTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "reactivate_theme",
+			Display:     "激活主题",
 			Description: "重新激活一个已关闭的主题",
 			Parameters: map[string]interface{}{
 				"type": "object",

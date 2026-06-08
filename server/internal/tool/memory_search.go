@@ -38,6 +38,7 @@ func (t *MemorySearchTool) Description() string {
 func (t *MemorySearchTool) Functions() []FuncSchema {
 	return []FuncSchema{{
 		Name:        "search",
+		Display:     "搜索记忆",
 		Description: "在用户记忆中搜索相关信息。当需要了解用户的偏好、习惯、过往决定时调用。返回带相关度排序的记忆条目列表",
 		Parameters: map[string]interface{}{
 			"type": "object",

@@ -31,6 +31,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
 			Name:        "create_document",
+			Display:     "创建文档",
 			Description: "创建一篇新的 Markdown 文档。仅当用户明确说写一篇、生成文档、保存为文档、总结成文章等时调用。不要主动调用。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -44,6 +45,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "get_document",
+			Display:     "获取文档",
 			Description: "获取文档完整内容（含版本列表）。修改文档前必须先调用此函数读取当前内容。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -55,6 +57,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "update_document",
+			Display:     "修改文档",
 			Description: "修改已有文档。修改前请先用 get_document 读取完整内容，在其基础上修改后传入。仅更新传入的非空字段。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -69,6 +72,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "rollback_document",
+			Display:     "回滚文档",
 			Description: "将文档回滚到指定历史版本。版本号从 get_document_versions 获取。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -81,6 +85,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "get_document_versions",
+			Display:     "版本列表",
 			Description: "获取文档的所有历史版本列表。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -92,6 +97,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "query_documents",
+			Display:     "查询文档",
 			Description: "查询文档列表，可按标签或关键词筛选。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -103,6 +109,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "list_documents",
+			Display:     "文档列表",
 			Description: "获取文档列表（按更新时间倒序）。返回 title、tags、preview（正文前50字），不含全文。",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -114,10 +121,12 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "list_tags",
+			Display:     "标签列表",
 			Description: "获取当前用户所有文档中使用过的标签列表。用于了解有哪些标签可供 query_documents 筛选。",
 		},
 		{
 			Name:        "delete_document",
+			Display:     "删除文档",
 			Description: "删除一篇文档。",
 			Parameters: map[string]interface{}{
 				"type": "object",

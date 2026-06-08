@@ -86,6 +86,7 @@ func (t *ToolRetriever) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
 			Name:        "search",
+			Display:     "搜索工具",
 			Description: "搜索相关工具",
 			Parameters: map[string]interface{}{
 				"type": "object",

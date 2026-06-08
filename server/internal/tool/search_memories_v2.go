@@ -31,6 +31,7 @@ func (t *SearchMemoriesV2Tool) Description() string {
 func (t *SearchMemoriesV2Tool) Functions() []FuncSchema {
 	return []FuncSchema{{
 		Name:        "search_memories_v2",
+		Display:     "向量搜记忆",
 		Description: "用自然语言完整句子向量检索记忆。命中后返回去重的记忆全文+匹配的句子片段。query 必须是自然语言完整句子，禁止关键词列表",
 		Parameters: map[string]interface{}{
 			"type": "object",

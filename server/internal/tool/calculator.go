@@ -62,7 +62,8 @@ var calculatorFunctions = map[string]govaluate.ExpressionFunction{
 func (t *CalculatorTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
-			Name: "evaluate",
+			Name:    "evaluate",
+			Display: "计算",
 			Description: "计算数学表达式。支持四则运算、括号，以及数学函数：" +
 				"sqrt(开方)、" +
 				"pow(a,b)乘方、" +
@@ -86,6 +87,7 @@ func (t *CalculatorTool) Functions() []FuncSchema {
 		},
 		{
 			Name:        "evaluate_batch",
+			Display:     "批量计算",
 			Description: "批量计算多个数学表达式。同样支持四则运算和 sqrt/pow/sin/cos/abs/round/ceil/floor/log2/log10。传入 expressions 字符串数组",
 			Parameters: map[string]interface{}{
 				"type": "object",

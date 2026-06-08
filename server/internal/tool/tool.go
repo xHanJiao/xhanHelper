@@ -15,6 +15,7 @@ type Result struct {
 // FuncSchema — 一个工具函数的定义，包含 JSON Schema 参数
 type FuncSchema struct {
 	Name        string                 `json:"name"`
+	Display     string                 `json:"display,omitempty"` // 前端展示用简短中文名，空则用 Name
 	Description string                 `json:"description"`
 	Parameters  map[string]interface{} `json:"parameters"`
 	Cacheable   bool                   `json:"cacheable,omitempty"`

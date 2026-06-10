@@ -52,7 +52,7 @@ func (p *themeProvider) Search(ctx context.Context, opts retrieval.SearchOptions
 	}
 	for _, pkt := range packets {
 		if name, ok := themeMap[pkt.ID]; ok {
-			pkt.Text = fmt.Sprintf("关注：%s\n%s", name, pkt.Text)
+			pkt.Text = fmt.Sprintf("关注：%s", name)
 		}
 		enriched = append(enriched, pkt)
 	}

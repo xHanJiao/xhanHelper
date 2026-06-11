@@ -2,7 +2,6 @@ package retrieval
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -28,7 +27,6 @@ func (m *mockVectorStore) Search(query []float64, topK int, filter func(Entry) b
 			filtered = append(filtered, r)
 		}
 	}
-	// 模拟 topK 截断
 	if len(filtered) > topK {
 		filtered = filtered[:topK]
 	}
@@ -45,7 +43,14 @@ func (s *stubChunkBuilder) BuildChunks(ctx context.Context, userID, parentType, 
 	return 0, nil
 }
 
-func setupNoteSource(t *testing.T) (*NoteSource, func()) {
+type noteFixture struct {
+	src       *EntitySource[model.Note]
+	noteRepo  *service.NoteRepo
+	chunkRepo *service.EmbeddingChunkRepo
+	cleanup   func()
+}
+
+func setupNoteSource(t *testing.T) *noteFixture {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -57,16 +62,25 @@ func setupNoteSource(t *testing.T) (*NoteSource, func()) {
 	noteRepo := service.NewNoteRepo(db)
 	chunkRepo := service.NewEmbeddingChunkRepo(db)
 	embeddingRepo := service.NewEmbeddingRepo(db)
-	return &NoteSource{
-		noteRepo:      noteRepo,
-		chunkRepo:     chunkRepo,
-		embeddingRepo: embeddingRepo,
-		chunkBuilder:  &stubChunkBuilder{},
-		ranker:        DefaultRanker(),
-	}, func() {}
+	return &noteFixture{
+		src: &EntitySource[model.Note]{
+			name:          "note",
+			entityType:    model.EntityTypeNote,
+			fullType:      "note",
+			idPrefix:      "note:",
+			decayer:       NewTimeDecay(0),
+			repo:          noteRepo,
+			embeddingRepo: embeddingRepo,
+			chunkRepo:     chunkRepo,
+			chunkBuilder:  &stubChunkBuilder{},
+			configPicker:  func(o SearchOptions) SourceConfig { return o.Note },
+		},
+		noteRepo:  noteRepo,
+		chunkRepo: chunkRepo,
+		cleanup:   func() {},
+	}
 }
 
-// 构造一个 chunk SearchResult
 func chunkResult(chunkID, noteID string, score float64) SearchResult {
 	return SearchResult{
 		ID:    chunkID,
@@ -80,7 +94,6 @@ func chunkResult(chunkID, noteID string, score float64) SearchResult {
 	}
 }
 
-// 构造一个全量 note 嵌入 SearchResult
 func fullNoteResult(noteID string, score float64) SearchResult {
 	return SearchResult{
 		ID:    "note:" + noteID,
@@ -121,20 +134,18 @@ func seedChunks(t *testing.T, repo *service.EmbeddingChunkRepo) {
 
 // ---- 测试用例 ----
 
-// 用例1：chunk 命中，同一笔记多 chunk 被正确去重，只返回 1 个 note
 func TestNoteSource_ChunkDedup_SameNote(t *testing.T) {
-	src, cleanup := setupNoteSource(t)
-	defer cleanup()
-	seedNotes(t, src.noteRepo)
-	seedChunks(t, src.chunkRepo)
+	f := setupNoteSource(t)
+	defer f.cleanup()
+	seedNotes(t, f.noteRepo)
+	seedChunks(t, f.chunkRepo)
 
-	// n1 的两个 chunk 都高分命中，期望去重后只返回 n1 一条笔记
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		chunkResult("chunk:note:n1/0", "n1", 0.85),
 		chunkResult("chunk:note:n1/1", "n1", 0.82),
 	}}
 
-	packets, nearMiss, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒消费", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, nearMiss, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒消费", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -149,19 +160,18 @@ func TestNoteSource_ChunkDedup_SameNote(t *testing.T) {
 	}
 }
 
-// 用例2：多个不同笔记的 chunk 命中，返回多条笔记
 func TestNoteSource_ChunkHits_DifferentNotes(t *testing.T) {
-	src, cleanup := setupNoteSource(t)
-	defer cleanup()
-	seedNotes(t, src.noteRepo)
-	seedChunks(t, src.chunkRepo)
+	f := setupNoteSource(t)
+	defer f.cleanup()
+	seedNotes(t, f.noteRepo)
+	seedChunks(t, f.chunkRepo)
 
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		chunkResult("chunk:note:n1/0", "n1", 0.85),
 		chunkResult("chunk:note:n2/0", "n2", 0.78),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -170,27 +180,24 @@ func TestNoteSource_ChunkHits_DifferentNotes(t *testing.T) {
 	}
 }
 
-// 用例3：部分 chunk 低于阈值，去重后只产生一条 nearMiss
 func TestNoteSource_ChunkBelowThreshold_DedupedNearMiss(t *testing.T) {
-	src, cleanup := setupNoteSource(t)
-	defer cleanup()
-	seedNotes(t, src.noteRepo)
-	seedChunks(t, src.chunkRepo)
+	f := setupNoteSource(t)
+	defer f.cleanup()
+	seedNotes(t, f.noteRepo)
+	seedChunks(t, f.chunkRepo)
 
-	// n1 的 2 个 chunk 都低于阈值 0.7
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		chunkResult("chunk:note:n1/0", "n1", 0.55),
 		chunkResult("chunk:note:n1/1", "n1", 0.52),
 	}}
 
-	packets, nearMiss, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.7, Limit: 5}})
+	packets, nearMiss, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.7, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
 	if len(packets) != 0 {
 		t.Errorf("低于阈值不应有命中，实际 %d 条", len(packets))
 	}
-	// 去重后 n1 只产生 1 条 nearMiss，不是 2 条
 	if len(nearMiss) != 1 {
 		t.Errorf("同笔记的 2 个低分 chunk 去重后应只产生 1 条 nearMiss，实际 %d 条", len(nearMiss))
 	}
@@ -199,19 +206,17 @@ func TestNoteSource_ChunkBelowThreshold_DedupedNearMiss(t *testing.T) {
 	}
 }
 
-// 用例4：chunk 无命中，回退到全量 note 嵌入
 func TestNoteSource_Fallback_FullNoteEmbedding(t *testing.T) {
-	src, cleanup := setupNoteSource(t)
-	defer cleanup()
-	seedNotes(t, src.noteRepo)
+	f := setupNoteSource(t)
+	defer f.cleanup()
+	seedNotes(t, f.noteRepo)
 
-	// 没有 chunk 结果，只有全量 note 嵌入
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		fullNoteResult("n1", 0.75),
 		fullNoteResult("n2", 0.65),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -220,20 +225,18 @@ func TestNoteSource_Fallback_FullNoteEmbedding(t *testing.T) {
 	}
 }
 
-// 用例5：chunk 部分命中 + 全量嵌入补充不足的数量
 func TestNoteSource_ChunkPlusFallback(t *testing.T) {
-	src, cleanup := setupNoteSource(t)
-	defer cleanup()
-	seedNotes(t, src.noteRepo)
-	seedChunks(t, src.chunkRepo)
+	f := setupNoteSource(t)
+	defer f.cleanup()
+	seedNotes(t, f.noteRepo)
+	seedChunks(t, f.chunkRepo)
 
-	// n1 通过 chunk 命中，n2 通过全量嵌入补充
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		chunkResult("chunk:note:n1/0", "n1", 0.85),
 		fullNoteResult("n2", 0.72),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "消费", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "消费", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -242,20 +245,18 @@ func TestNoteSource_ChunkPlusFallback(t *testing.T) {
 	}
 }
 
-// 用例6：chunk 和全量嵌入命中同一个笔记，不重复返回
 func TestNoteSource_NoDuplicate_ChunkAndFullHit(t *testing.T) {
-	src, cleanup := setupNoteSource(t)
-	defer cleanup()
-	seedNotes(t, src.noteRepo)
-	seedChunks(t, src.chunkRepo)
+	f := setupNoteSource(t)
+	defer f.cleanup()
+	seedNotes(t, f.noteRepo)
+	seedChunks(t, f.chunkRepo)
 
-	// n1 同时被 chunk 和全量嵌入命中，只返回一次
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		chunkResult("chunk:note:n1/0", "n1", 0.85),
 		fullNoteResult("n1", 0.60),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -264,38 +265,13 @@ func TestNoteSource_NoDuplicate_ChunkAndFullHit(t *testing.T) {
 	}
 }
 
-// 用例7：返回结果附带匹配 chunk 片段
-func TestNoteSource_MatchedChunkSnippets(t *testing.T) {
-	src, cleanup := setupNoteSource(t)
-	defer cleanup()
-	seedNotes(t, src.noteRepo)
-	seedChunks(t, src.chunkRepo)
-
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
-		chunkResult("chunk:note:n1/0", "n1", 0.85),
-	}}
-
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
-	if err != nil {
-		t.Fatalf("Fetch: %v", err)
-	}
-	// 应包含 "匹配片段" 字样
-	if !strings.Contains(packets[0].Text, "匹配片段") {
-		t.Error("返回文本应包含匹配的 chunk 片段")
-	}
-	if !strings.Contains(packets[0].Text, "5月喝了3次啤酒") {
-		t.Error("返回文本应包含 chunk 内容")
-	}
-}
-
-// 用例8：向量库空结果
 func TestNoteSource_EmptyResults(t *testing.T) {
-	src, cleanup := setupNoteSource(t)
-	defer cleanup()
+	f := setupNoteSource(t)
+	defer f.cleanup()
 
-	src.vectorStore = &mockVectorStore{results: nil}
+	f.src.vs = &mockVectorStore{results: nil}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "任意查询", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "任意查询", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -304,22 +280,20 @@ func TestNoteSource_EmptyResults(t *testing.T) {
 	}
 }
 
-// 用例9：其他用户的 chunk 被过滤掉
 func TestNoteSource_FilterOtherUsers(t *testing.T) {
-	src, cleanup := setupNoteSource(t)
-	defer cleanup()
-	seedNotes(t, src.noteRepo)
-	seedChunks(t, src.chunkRepo)
+	f := setupNoteSource(t)
+	defer f.cleanup()
+	seedNotes(t, f.noteRepo)
+	seedChunks(t, f.chunkRepo)
 
-	// 包含 u2 的 chunk，不应被返回
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		chunkResult("chunk:note:n1/0", "n1", 0.85),
 		{ID: "chunk:note:n_other/0", Score: 0.90, Metadata: map[string]string{
 			"type": "chunk", "parent_type": "note", "parent_id": "n_other", "user_id": "u2",
 		}},
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "查询", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "查询", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}

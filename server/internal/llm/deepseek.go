@@ -91,9 +91,11 @@ type streamChunk struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+		PromptTokens          int `json:"prompt_tokens"`
+		CompletionTokens      int `json:"completion_tokens"`
+		TotalTokens           int `json:"total_tokens"`
+		PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`
+		PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"`
 	} `json:"usage"`
 }
 
@@ -192,9 +194,11 @@ func (c *baseClient) readSSEStream(ctx context.Context, body io.ReadCloser, even
 
 		if chunk.Usage != nil {
 			usage = &Usage{
-				PromptTokens:     chunk.Usage.PromptTokens,
-				CompletionTokens: chunk.Usage.CompletionTokens,
-				TotalTokens:      chunk.Usage.TotalTokens,
+				PromptTokens:          chunk.Usage.PromptTokens,
+				CompletionTokens:      chunk.Usage.CompletionTokens,
+				TotalTokens:           chunk.Usage.TotalTokens,
+				PromptCacheHitTokens:  chunk.Usage.PromptCacheHitTokens,
+				PromptCacheMissTokens: chunk.Usage.PromptCacheMissTokens,
 			}
 		}
 
@@ -417,8 +421,10 @@ func (c *baseClient) callSyncAPI(ctx context.Context, req *ChatRequest, model st
 			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
+			PromptTokens          int `json:"prompt_tokens"`
+			CompletionTokens      int `json:"completion_tokens"`
+			PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`
+			PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"`
 		} `json:"usage"`
 	}
 
@@ -431,8 +437,10 @@ func (c *baseClient) callSyncAPI(ctx context.Context, req *ChatRequest, model st
 		RequestJSON:  &reqJSONStr,
 		ResponseJSON: &respJSONStr,
 		Usage: &Usage{
-			PromptTokens:     result.Usage.PromptTokens,
-			CompletionTokens: result.Usage.CompletionTokens,
+			PromptTokens:          result.Usage.PromptTokens,
+			CompletionTokens:      result.Usage.CompletionTokens,
+			PromptCacheHitTokens:  result.Usage.PromptCacheHitTokens,
+			PromptCacheMissTokens: result.Usage.PromptCacheMissTokens,
 		},
 	}
 

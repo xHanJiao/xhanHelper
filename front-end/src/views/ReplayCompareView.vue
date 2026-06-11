@@ -363,8 +363,7 @@ onMounted(loadAnchor)
                     <tr style="border-bottom: 1px solid var(--color-border); text-align: left;">
                       <th style="padding: 2px 6px;">ID</th>
                       <th style="padding: 2px 6px;">文本</th>
-                      <th style="padding: 2px 6px;">综合</th>
-                      <th style="padding: 2px 6px;">向量</th>
+                      <th style="padding: 2px 6px;">向量分</th>
                       <th style="padding: 2px 6px;">状态</th>
                     </tr>
                   </thead>
@@ -373,14 +372,12 @@ onMounted(loadAnchor)
                       <td style="padding: 2px 6px; font-family: monospace;">{{ item.id?.slice(0, 8) }}</td>
                       <td style="padding: 2px 6px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ item.text || '-' }}</td>
                       <td style="padding: 2px 6px;">{{ item.score?.toFixed(3) || '-' }}</td>
-                      <td style="padding: 2px 6px;">{{ item.vector_score?.toFixed(3) || '-' }}</td>
                       <td style="padding: 2px 6px; color: var(--color-success);">✓</td>
                     </tr>
                     <tr v-for="item in discardedItems(prov.items)" :key="item.id" style="border-bottom: 1px solid var(--color-border);">
                       <td style="padding: 2px 6px; font-family: monospace;">{{ item.id?.slice(0, 8) }}</td>
                       <td style="padding: 2px 6px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ item.text || '-' }}</td>
-                      <td style="padding: 2px 6px;">-</td>
-                      <td style="padding: 2px 6px;">{{ item.vector_score?.toFixed(3) || '-' }}</td>
+                      <td style="padding: 2px 6px;">{{ item.score?.toFixed(3) || '-' }}</td>
                       <td style="padding: 2px 6px; color: var(--color-warning);">{{ item.discard_reason }}</td>
                     </tr>
                   </tbody>

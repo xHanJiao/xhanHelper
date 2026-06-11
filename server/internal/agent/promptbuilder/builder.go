@@ -95,7 +95,7 @@ func NewSystemPromptBuilder(
 //  1. Layer 1: 顺序渲染所有 StaticProvider，记录 trace
 //  2. Layer 2: AgentPrompt > UserPrompt > basePrompt 优先级解析角色定义
 //  3. Layer 3: 各 SearchProvider 独立检索，返回 SearchResult{Items, TraceItems}
-//  4. 所有 Items 按 FinalScore 降序排列（各 provider 的真实 ranker 分，非写死）
+//  4. 所有 Items 按 Score（向量分）降序排列
 //  5. 按序拼接 Text，同时从 Type 字段提取 MemoryIDs / NoteIDs
 //
 // 任一 provider 出错不影响整体，该 provider 的结果被跳过（trace 仍记录为空）。
@@ -193,7 +193,7 @@ func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts Buil
 	}
 	wg.Wait()
 
-	// —— 2. 记录 trace + 按 provider 分组渲染（组内按 FinalScore 排序） ——
+	// —— 2. 记录 trace + 按 provider 分组渲染（组内按 Score 排序） ——
 	sb.WriteString("\n## 上下文信息\n")
 	idsByType := make(map[string][]string)
 	var retrievedItems []RetrievedItem
@@ -206,10 +206,10 @@ func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts Buil
 		}
 		trace.addSearch(sp.Name(), &TraceInput{Query: opts.UserMessage}, s.traceItems, nil)
 
-		// 组内按 FinalScore 排序
+		// 组内按 Score 排序
 		items := s.items
 		sort.Slice(items, func(i, j int) bool {
-			return items[i].FinalScore > items[j].FinalScore
+			return items[i].Score > items[j].Score
 		})
 
 		header := sp.SectionHeader()

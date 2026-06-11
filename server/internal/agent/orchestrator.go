@@ -448,6 +448,7 @@ func newAssistantMessage(streamContent string, streamReasoning string, se *llm.S
 		ToolCalls:        se.ToolCalls,
 		RequestJSON:      se.RequestJSON,
 		ResponseJSON:     se.ResponseJSON,
+		Usage:            se.Usage,
 	}
 }
 
@@ -793,8 +794,12 @@ func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, us
 		Content:        maybeInjectCreatedAt(msg.Content),
 		IsInternal:     isInternal,
 	}
-	if trace != nil {
-		b, _ := json.Marshal(trace)
+	if trace != nil || msg.Usage != nil {
+		extra := &MsgExtra{Usage: msg.Usage}
+		if trace != nil {
+			extra.Providers = trace.Providers
+		}
+		b, _ := json.Marshal(extra)
 		s := string(b)
 		modelMsg.Extra = &s
 	}

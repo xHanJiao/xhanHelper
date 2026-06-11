@@ -14,13 +14,11 @@ func WithScoreModifier(sp SearchProvider, modifier ScoreModifier) SearchProvider
 	return &scoreModifierProvider{inner: sp, modifier: modifier}
 }
 
-// BoostFactor 返回一个 ScoreModifier，将 FinalScore/Score/VectorScore 乘以 factor，
+// BoostFactor 返回一个 ScoreModifier，将 Score 乘以 factor，
 // 结果 clamp 到 [0, 1]。factor>1 提权，0<factor<1 降权。
 func BoostFactor(factor float64) ScoreModifier {
 	return func(pkt retrieval.ContextPacket) retrieval.ContextPacket {
-		pkt.FinalScore = clamp01(pkt.FinalScore * factor)
 		pkt.Score = clamp01(pkt.Score * factor)
-		pkt.KeywordScore = clamp01(pkt.KeywordScore * factor)
 		return pkt
 	}
 }
@@ -53,7 +51,7 @@ func (p *scoreModifierProvider) Search(ctx context.Context, opts retrieval.Searc
 	modifiedScores := make(map[string]float64, len(sr.Items))
 	for i := range sr.Items {
 		sr.Items[i] = p.modifier(sr.Items[i])
-		modifiedScores[sr.Items[i].ID] = sr.Items[i].FinalScore
+		modifiedScores[sr.Items[i].ID] = sr.Items[i].Score
 	}
 
 	// 同步 TraceItems 中已选中条目的分数（DiscardReason 为空 = 已选中）

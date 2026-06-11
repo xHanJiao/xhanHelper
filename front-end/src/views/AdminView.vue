@@ -489,8 +489,6 @@ function latSummary(s) {
                   <div v-for="(item, ii) in p.items" :key="ii" style="font-size: 12px; padding: 2px 0; border-top: 1px solid var(--color-border);">
                     <span>{{ item.text }}</span>
                     <span style="margin-left: var(--space-sm); color: var(--color-primary);">score={{ item.score?.toFixed(4) }}</span>
-                    <span v-if="item.vector_score" style="margin-left: var(--space-xs); color: var(--color-text-muted);">vec={{ item.vector_score?.toFixed(4) }}</span>
-                    <span v-if="item.keyword_score" style="margin-left: var(--space-xs); color: var(--color-text-muted);">kw={{ item.keyword_score?.toFixed(4) }}</span>
                   </div>
                 </div>
                 <div v-else style="font-size: 11px; color: var(--color-text-muted);">无匹配结果</div>

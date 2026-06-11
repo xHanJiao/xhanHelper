@@ -16,30 +16,15 @@ import (
 // InitAgents 创建 Retrieval Sources、Orchestrator、ReflectionOrchestrator、CronRunner
 func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, tools *ToolsBundle, vs *agent.VectorStore) *AgentBundle {
 	// --- Retrieval Sources ---
-	memRanker := &retrieval.Ranker{
-		VectorWeight:    cfg.Retrieval.Memory.VectorWeight,
-		KeywordWeight:   cfg.Retrieval.Memory.KeywordWeight,
-		FreshnessWeight: cfg.Retrieval.Memory.FreshnessWeight,
-		FreshnessDecay:  cfg.Retrieval.Memory.FreshnessDecay,
-	}
-	noteRanker := &retrieval.Ranker{
-		VectorWeight:    cfg.Retrieval.Note.VectorWeight,
-		KeywordWeight:   cfg.Retrieval.Note.KeywordWeight,
-		FreshnessWeight: cfg.Retrieval.Note.FreshnessWeight,
-		FreshnessDecay:  cfg.Retrieval.Note.FreshnessDecay,
-	}
-	historyRanker := &retrieval.Ranker{
-		VectorWeight:    cfg.Retrieval.History.VectorWeight,
-		KeywordWeight:   cfg.Retrieval.History.KeywordWeight,
-		FreshnessWeight: cfg.Retrieval.History.FreshnessWeight,
-		FreshnessDecay:  cfg.Retrieval.History.FreshnessDecay,
-	}
+	memDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Memory.FreshnessDecay)
+	noteDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Note.FreshnessDecay)
+	historyDecayer := retrieval.NewTimeDecay(cfg.Retrieval.History.FreshnessDecay)
 
 	chunkBuilder := agent.NewChunkBuilder(infra, repos.Chunk, repos.Embedding)
 
-	memSource := retrieval.NewMemorySource(vs, repos.Mem, repos.Embedding, repos.Chunk, chunkBuilder, memRanker)
-	noteSource := retrieval.NewNoteSource(vs, repos.Note, repos.Embedding, repos.Chunk, chunkBuilder, noteRanker)
-	historySource := retrieval.NewHistorySource(vs, repos.Message, repos.Embedding, historyRanker)
+	memSource := retrieval.NewMemorySource(vs, repos.Mem, repos.Embedding, repos.Chunk, chunkBuilder, memDecayer)
+	noteSource := retrieval.NewNoteSource(vs, repos.Note, repos.Embedding, repos.Chunk, chunkBuilder, noteDecayer)
+	historySource := retrieval.NewHistorySource(vs, repos.Message, repos.Embedding, historyDecayer)
 	themeSource := retrieval.NewThemeSource(repos.ThemeState, vs)
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())

@@ -10,20 +10,12 @@ import (
 func TestBoostFactor(t *testing.T) {
 	mod := BoostFactor(1.5)
 	pkt := retrieval.ContextPacket{
-		Text:         "test",
-		FinalScore:   0.6,
-		Score:        0.5,
-		KeywordScore: 0.4,
+		Text:  "test",
+		Score: 0.5,
 	}
 	got := mod(pkt)
-	if got.FinalScore < 0.8999 || got.FinalScore > 0.9001 {
-		t.Errorf("FinalScore: expected ~0.9, got %f", got.FinalScore)
-	}
 	if got.Score < 0.7499 || got.Score > 0.7501 {
 		t.Errorf("Score: expected ~0.75, got %f", got.Score)
-	}
-	if got.KeywordScore < 0.5999 || got.KeywordScore > 0.6001 {
-		t.Errorf("KeywordScore: expected ~0.6, got %f", got.KeywordScore)
 	}
 	if got.Text != "test" {
 		t.Errorf("Text should be unchanged")
@@ -32,10 +24,10 @@ func TestBoostFactor(t *testing.T) {
 
 func TestBoostFactorEquivalent(t *testing.T) {
 	// BoostFactor(0.5) 降权效果正确
-	pkt := retrieval.ContextPacket{FinalScore: 0.8}
+	pkt := retrieval.ContextPacket{Score: 0.8}
 	got := BoostFactor(0.5)(pkt)
-	if got.FinalScore != 0.4 {
-		t.Errorf("FinalScore: expected 0.4, got %f", got.FinalScore)
+	if got.Score != 0.4 {
+		t.Errorf("Score: expected 0.4, got %f", got.Score)
 	}
 }
 
@@ -56,8 +48,8 @@ func TestWithScoreModifier(t *testing.T) {
 		name:   "test",
 		header: "### test",
 		items: []retrieval.ContextPacket{
-			{Text: "a", FinalScore: 0.5},
-			{Text: "b", FinalScore: 0.8},
+			{Text: "a", Score: 0.5},
+			{Text: "b", Score: 0.8},
 		},
 	}
 	wrapped := WithScoreModifier(inner, BoostFactor(2.0))
@@ -76,27 +68,27 @@ func TestWithScoreModifier(t *testing.T) {
 	if len(sr.Items) != 2 {
 		t.Fatalf("expected 2 items, got %d", len(sr.Items))
 	}
-	if sr.Items[0].FinalScore != 1.0 {
-		t.Errorf("item 0: expected 1.0, got %f", sr.Items[0].FinalScore)
+	if sr.Items[0].Score != 1.0 {
+		t.Errorf("item 0: expected 1.0, got %f", sr.Items[0].Score)
 	}
-	if sr.Items[1].FinalScore != 1.0 {
-		t.Errorf("item 1: expected 1.0 (clamped), got %f", sr.Items[1].FinalScore)
+	if sr.Items[1].Score != 1.0 {
+		t.Errorf("item 1: expected 1.0 (clamped), got %f", sr.Items[1].Score)
 	}
 }
 
 func TestBoostClampedAtOne(t *testing.T) {
 	// 0.9 * 2.0 = 1.8 → clamped to 1.0
-	got := BoostFactor(2.0)(retrieval.ContextPacket{FinalScore: 0.9, Score: 0.8})
-	if got.FinalScore != 1.0 {
-		t.Errorf("FinalScore should be clamped to 1.0, got %f", got.FinalScore)
+	got := BoostFactor(2.0)(retrieval.ContextPacket{Score: 0.9})
+	if got.Score != 1.0 {
+		t.Errorf("Score should be clamped to 1.0, got %f", got.Score)
 	}
 }
 
 func TestBoostClampedAtZero(t *testing.T) {
 	// -0.1 * 2.0 = -0.2 → clamped to 0
-	got := BoostFactor(2.0)(retrieval.ContextPacket{FinalScore: -0.1})
-	if got.FinalScore != 0 {
-		t.Errorf("FinalScore should be clamped to 0, got %f", got.FinalScore)
+	got := BoostFactor(2.0)(retrieval.ContextPacket{Score: -0.1})
+	if got.Score != 0 {
+		t.Errorf("Score should be clamped to 0, got %f", got.Score)
 	}
 }
 
@@ -115,8 +107,8 @@ func TestWithScoreModifierNilResult(t *testing.T) {
 func TestWithScoreModifierSyncsTraceItems(t *testing.T) {
 	inner := &traceProvider{
 		items: []retrieval.ContextPacket{
-			{ID: "a", FinalScore: 0.6, Type: "test"},
-			{ID: "b", FinalScore: 0.4, Type: "test"},
+			{ID: "a", Score: 0.6, Type: "test"},
+			{ID: "b", Score: 0.4, Type: "test"},
 		},
 		traceItems: []TraceItem{
 			{ID: "a", Score: 0.6}, // 已选中
@@ -132,11 +124,11 @@ func TestWithScoreModifierSyncsTraceItems(t *testing.T) {
 	}
 
 	// Items 已提权
-	if sr.Items[0].FinalScore != 1.0 {
-		t.Errorf("item a FinalScore: expected 1.0 (clamped), got %f", sr.Items[0].FinalScore)
+	if sr.Items[0].Score != 1.0 {
+		t.Errorf("item a Score: expected 1.0 (clamped), got %f", sr.Items[0].Score)
 	}
-	if sr.Items[1].FinalScore != 0.8 {
-		t.Errorf("item b FinalScore: expected 0.8, got %f", sr.Items[1].FinalScore)
+	if sr.Items[1].Score != 0.8 {
+		t.Errorf("item b Score: expected 0.8, got %f", sr.Items[1].Score)
 	}
 
 	// TraceItems 中已选中的应该同步提权

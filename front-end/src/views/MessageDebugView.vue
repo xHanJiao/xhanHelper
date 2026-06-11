@@ -69,6 +69,22 @@ const providers = computed(() => {
   return ex.providers || []
 })
 
+const msgUsage = computed(() => {
+  const ex = extraParsed.value
+  if (!ex?.usage) return null
+  return ex.usage
+})
+
+const cacheHitRate = computed(() => {
+  const u = msgUsage.value
+  if (!u || !u.prompt_tokens || u.prompt_tokens === 0) return null
+  if (u.prompt_cache_hit_tokens == null && u.prompt_cache_miss_tokens == null) return null
+  const hit = u.prompt_cache_hit_tokens || 0
+  const miss = u.prompt_cache_miss_tokens || 0
+  if (hit + miss === 0) return null
+  return ((hit / (hit + miss)) * 100).toFixed(1)
+})
+
 const historyBuilderMsgIds = computed(() => {
   const ex = extraParsed.value
   if (!ex || !ex.history_builder_msg_ids) return []
@@ -316,7 +332,6 @@ onMounted(loadRound)
               color: '#fff',
             }">{{ roleLabel(msg.role) }}</span>
             <span style="font-size: 11px; color: var(--color-text-muted);">{{ new Date(msg.created_at).toLocaleString() }}</span>
-            <span style="font-size: 11px; color: var(--color-text-muted);">~{{ estimateTokens(rawContent(msg)) }} tokens</span>
             <span v-if="(msg.role === 'assistant' || msg.role === 'system') && expandedId === msg.id" style="font-size: 11px; color: var(--color-primary);">▼ 已展开</span>
           </div>
           <div
@@ -354,6 +369,21 @@ onMounted(loadRound)
           <div v-if="(msg.role === 'assistant' || msg.role === 'system') && expandedId === msg.id" style="margin-top: 12px;" @click.stop>
             <div v-if="detailLoading" style="padding: 20px 0; text-align: center; color: var(--color-text-muted);">加载详情中...</div>
             <template v-else>
+              <!-- 用量信息 -->
+              <div v-if="msgUsage" style="margin-bottom: 12px; padding: 8px 12px; background: var(--color-bg-page); border-radius: var(--radius-md); font-size: 12px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center;">
+                <span><b>Token 用量</b></span>
+                <span style="color: var(--color-text-muted);">prompt={{ msgUsage.prompt_tokens?.toLocaleString() }}</span>
+                <span style="color: var(--color-text-muted);">completion={{ msgUsage.completion_tokens?.toLocaleString() }}</span>
+                <span style="color: var(--color-text-muted);">total={{ msgUsage.total_tokens?.toLocaleString() }}</span>
+                <template v-if="msgUsage.prompt_cache_hit_tokens != null || msgUsage.prompt_cache_miss_tokens != null">
+                  <span style="margin-left: 4px; padding-left: 12px; border-left: 1px solid var(--color-border);">
+                    <span style="color: var(--color-success);">缓存命中={{ (msgUsage.prompt_cache_hit_tokens || 0).toLocaleString() }}</span>
+                    <span style="color: var(--color-text-muted); margin-left: 8px;">未命中={{ (msgUsage.prompt_cache_miss_tokens || 0).toLocaleString() }}</span>
+                    <span v-if="cacheHitRate" style="font-weight: 600; color: var(--color-primary); margin-left: 8px;">命中率={{ cacheHitRate }}%</span>
+                  </span>
+                </template>
+              </div>
+
               <!-- Tab 切换 -->
               <div style="display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--color-border);">
                 <span v-for="tab in tabs" :key="tab.key"
@@ -421,9 +451,7 @@ onMounted(loadRound)
                       <tr style="border-bottom: 1px solid var(--color-border); text-align: left;">
                         <th style="padding: 4px 8px;">ID</th>
                         <th style="padding: 4px 8px;">文本</th>
-                        <th style="padding: 4px 8px;">综合分</th>
                         <th style="padding: 4px 8px;">向量分</th>
-                        <th style="padding: 4px 8px;">关键词</th>
                         <th style="padding: 4px 8px;">状态</th>
                       </tr>
                     </thead>
@@ -443,8 +471,6 @@ onMounted(loadRound)
                           </div>
                         </td>
                         <td style="padding: 4px 8px;">{{ item.score?.toFixed(3) || '-' }}</td>
-                        <td style="padding: 4px 8px;">{{ item.vector_score?.toFixed(3) || '-' }}</td>
-                        <td style="padding: 4px 8px;">{{ item.keyword_score?.toFixed(3) || '-' }}</td>
                         <td style="padding: 4px 8px;"><span style="color: var(--color-success);">✓ 已选中</span></td>
                       </tr>
                       <tr v-for="item in discardedItems(prov.items || [])" :key="item.id"
@@ -461,9 +487,7 @@ onMounted(loadRound)
                             <pre v-else style="font-size: 11px; line-height: 1.4; white-space: pre-wrap; margin: 0;">{{ traceItemText(prov.name, item) }}</pre>
                           </div>
                         </td>
-                        <td style="padding: 4px 8px;">-</td>
-                        <td style="padding: 4px 8px;">{{ item.vector_score?.toFixed(3) || '-' }}</td>
-                        <td style="padding: 4px 8px;">-</td>
+                        <td style="padding: 4px 8px;">{{ item.score?.toFixed(3) || '-' }}</td>
                         <td style="padding: 4px 8px; color: var(--color-warning);">✗ {{ item.discard_reason }}</td>
                       </tr>
                     </tbody>

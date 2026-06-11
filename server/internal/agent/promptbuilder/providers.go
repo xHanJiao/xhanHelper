@@ -170,9 +170,7 @@ func buildTraceItems(packets []retrieval.ContextPacket, nearMiss []retrieval.Nea
 		items = append(items, TraceItem{
 			ID:            p.ID,
 			Text:          truncateTraceText(p.Text, 100),
-			Score:         p.FinalScore,
-			VectorScore:   p.Score,
-			KeywordScore:  p.KeywordScore,
+			Score:         p.Score,
 			DiscardReason: "",
 		})
 	}
@@ -180,7 +178,7 @@ func buildTraceItems(packets []retrieval.ContextPacket, nearMiss []retrieval.Nea
 		items = append(items, TraceItem{
 			ID:            n.ID,
 			Text:          truncateTraceText(n.Text, 100),
-			VectorScore:   n.VectorScore,
+			Score:         n.VectorScore,
 			DiscardReason: n.Reason,
 		})
 	}

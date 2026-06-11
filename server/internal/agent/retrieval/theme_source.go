@@ -59,11 +59,10 @@ func (s *ThemeSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextP
 
 		if hasVec && vecScore >= threshold {
 			selected = append(selected, ContextPacket{
-				ID:         t.ID,
-				Type:       "theme",
-				Text:       t.Name,
-				Score:      vecScore,
-				FinalScore: vecScore,
+				ID:    t.ID,
+				Type:  "theme",
+				Text:  t.Name,
+				Score: vecScore,
 			})
 		} else {
 			reason := "other_active"

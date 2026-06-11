@@ -12,7 +12,14 @@ import (
 	"xhan-helper/internal/service"
 )
 
-func setupMemorySource(t *testing.T) (*MemorySource, func()) {
+type memoryFixture struct {
+	src       *EntitySource[model.UserMemory]
+	memRepo   *service.UserMemoryRepo
+	chunkRepo *service.EmbeddingChunkRepo
+	cleanup   func()
+}
+
+func setupMemorySource(t *testing.T) *memoryFixture {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -24,16 +31,25 @@ func setupMemorySource(t *testing.T) (*MemorySource, func()) {
 	memRepo := service.NewUserMemoryRepo(db)
 	chunkRepo := service.NewEmbeddingChunkRepo(db)
 	embeddingRepo := service.NewEmbeddingRepo(db)
-	return &MemorySource{
-		memRepo:       memRepo,
-		chunkRepo:     chunkRepo,
-		embeddingRepo: embeddingRepo,
-		chunkBuilder:  &stubChunkBuilder{},
-		ranker:        DefaultRanker(),
-	}, func() {}
+	return &memoryFixture{
+		src: &EntitySource[model.UserMemory]{
+			name:          "memory",
+			entityType:    model.EntityTypeMemory,
+			fullType:      "mem",
+			idPrefix:      "mem:",
+			decayer:       NewTimeDecay(0),
+			repo:          memRepo,
+			embeddingRepo: embeddingRepo,
+			chunkRepo:     chunkRepo,
+			chunkBuilder:  &stubChunkBuilder{},
+			configPicker:  func(o SearchOptions) SourceConfig { return o.Memory },
+		},
+		memRepo:   memRepo,
+		chunkRepo: chunkRepo,
+		cleanup:   func() {},
+	}
 }
 
-// 构造一个 memory chunk SearchResult
 func memChunkResult(chunkID, memID string, score float64) SearchResult {
 	return SearchResult{
 		ID:    chunkID,
@@ -47,7 +63,6 @@ func memChunkResult(chunkID, memID string, score float64) SearchResult {
 	}
 }
 
-// 构造一个全量 memory 嵌入 SearchResult
 func fullMemResult(memID string, score float64) SearchResult {
 	return SearchResult{
 		ID:    "mem:" + memID,
@@ -87,20 +102,18 @@ func seedMemChunks(t *testing.T, repo *service.EmbeddingChunkRepo) {
 
 // ---- 测试用例 ----
 
-// 用例1：同一记忆多 chunk 命中，去重后只返回 1 条记忆
 func TestMemorySource_ChunkDedup_SameMemory(t *testing.T) {
-	src, cleanup := setupMemorySource(t)
-	defer cleanup()
-	seedMemories(t, src.memRepo)
-	seedMemChunks(t, src.chunkRepo)
+	f := setupMemorySource(t)
+	defer f.cleanup()
+	seedMemories(t, f.memRepo)
+	seedMemChunks(t, f.chunkRepo)
 
-	// m1 的两个 chunk 都高分命中
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		memChunkResult("chunk:memory:m1/0", "m1", 0.85),
 		memChunkResult("chunk:memory:m1/1", "m1", 0.82),
 	}}
 
-	packets, nearMiss, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, nearMiss, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -118,19 +131,18 @@ func TestMemorySource_ChunkDedup_SameMemory(t *testing.T) {
 	}
 }
 
-// 用例2：多个不同记忆的 chunk 命中
 func TestMemorySource_ChunkHits_DifferentMemories(t *testing.T) {
-	src, cleanup := setupMemorySource(t)
-	defer cleanup()
-	seedMemories(t, src.memRepo)
-	seedMemChunks(t, src.chunkRepo)
+	f := setupMemorySource(t)
+	defer f.cleanup()
+	seedMemories(t, f.memRepo)
+	seedMemChunks(t, f.chunkRepo)
 
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		memChunkResult("chunk:memory:m1/0", "m1", 0.85),
 		memChunkResult("chunk:memory:m2/0", "m2", 0.78),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -139,27 +151,24 @@ func TestMemorySource_ChunkHits_DifferentMemories(t *testing.T) {
 	}
 }
 
-// 用例3：部分 chunk 低于阈值，去重后只产生一条 nearMiss
 func TestMemorySource_ChunkBelowThreshold_DedupedNearMiss(t *testing.T) {
-	src, cleanup := setupMemorySource(t)
-	defer cleanup()
-	seedMemories(t, src.memRepo)
-	seedMemChunks(t, src.chunkRepo)
+	f := setupMemorySource(t)
+	defer f.cleanup()
+	seedMemories(t, f.memRepo)
+	seedMemChunks(t, f.chunkRepo)
 
-	// m1 的两个 chunk 都低于阈值 0.7
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		memChunkResult("chunk:memory:m1/0", "m1", 0.55),
 		memChunkResult("chunk:memory:m1/1", "m1", 0.52),
 	}}
 
-	packets, nearMiss, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.7, Limit: 5}})
+	packets, nearMiss, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.7, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
 	if len(packets) != 0 {
 		t.Errorf("低于阈值不应有命中，实际 %d 条", len(packets))
 	}
-	// 去重后 m1 只产生 1 条 nearMiss
 	if len(nearMiss) != 1 {
 		t.Errorf("同记忆的 2 个低分 chunk 去重后应只产生 1 条 nearMiss，实际 %d 条", len(nearMiss))
 	}
@@ -168,19 +177,17 @@ func TestMemorySource_ChunkBelowThreshold_DedupedNearMiss(t *testing.T) {
 	}
 }
 
-// 用例4：chunk 无命中，回退到全量 memory 嵌入
 func TestMemorySource_Fallback_FullMemoryEmbedding(t *testing.T) {
-	src, cleanup := setupMemorySource(t)
-	defer cleanup()
-	seedMemories(t, src.memRepo)
+	f := setupMemorySource(t)
+	defer f.cleanup()
+	seedMemories(t, f.memRepo)
 
-	// 没有 chunk 结果，只有全量 memory 嵌入
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		fullMemResult("m1", 0.75),
 		fullMemResult("m2", 0.65),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -189,20 +196,18 @@ func TestMemorySource_Fallback_FullMemoryEmbedding(t *testing.T) {
 	}
 }
 
-// 用例5：chunk 部分命中 + 全量嵌入补充不足的数量
 func TestMemorySource_ChunkPlusFallback(t *testing.T) {
-	src, cleanup := setupMemorySource(t)
-	defer cleanup()
-	seedMemories(t, src.memRepo)
-	seedMemChunks(t, src.chunkRepo)
+	f := setupMemorySource(t)
+	defer f.cleanup()
+	seedMemories(t, f.memRepo)
+	seedMemChunks(t, f.chunkRepo)
 
-	// m1 通过 chunk 命中，m2 通过全量嵌入补充
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		memChunkResult("chunk:memory:m1/0", "m1", 0.85),
 		fullMemResult("m2", 0.72),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "运动", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -211,20 +216,18 @@ func TestMemorySource_ChunkPlusFallback(t *testing.T) {
 	}
 }
 
-// 用例6：chunk 和全量嵌入命中同一个记忆，不重复返回
 func TestMemorySource_NoDuplicate_ChunkAndFullHit(t *testing.T) {
-	src, cleanup := setupMemorySource(t)
-	defer cleanup()
-	seedMemories(t, src.memRepo)
-	seedMemChunks(t, src.chunkRepo)
+	f := setupMemorySource(t)
+	defer f.cleanup()
+	seedMemories(t, f.memRepo)
+	seedMemChunks(t, f.chunkRepo)
 
-	// m1 同时被 chunk 和全量嵌入命中，只返回一次
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		memChunkResult("chunk:memory:m1/0", "m1", 0.85),
 		fullMemResult("m1", 0.60),
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -233,37 +236,13 @@ func TestMemorySource_NoDuplicate_ChunkAndFullHit(t *testing.T) {
 	}
 }
 
-// 用例7：返回结果附带匹配 chunk 片段
-func TestMemorySource_MatchedChunkSnippets(t *testing.T) {
-	src, cleanup := setupMemorySource(t)
-	defer cleanup()
-	seedMemories(t, src.memRepo)
-	seedMemChunks(t, src.chunkRepo)
-
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
-		memChunkResult("chunk:memory:m1/0", "m1", 0.85),
-	}}
-
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
-	if err != nil {
-		t.Fatalf("Fetch: %v", err)
-	}
-	if !strings.Contains(packets[0].Text, "匹配片段") {
-		t.Error("返回文本应包含匹配的 chunk 片段")
-	}
-	if !strings.Contains(packets[0].Text, "精酿啤酒") {
-		t.Error("返回文本应包含 chunk 内容")
-	}
-}
-
-// 用例8：向量库空结果
 func TestMemorySource_EmptyResults(t *testing.T) {
-	src, cleanup := setupMemorySource(t)
-	defer cleanup()
+	f := setupMemorySource(t)
+	defer f.cleanup()
 
-	src.vectorStore = &mockVectorStore{results: nil}
+	f.src.vs = &mockVectorStore{results: nil}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "任意查询", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "任意查询", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -272,22 +251,20 @@ func TestMemorySource_EmptyResults(t *testing.T) {
 	}
 }
 
-// 用例9：其他用户的 chunk 被过滤掉
 func TestMemorySource_FilterOtherUsers(t *testing.T) {
-	src, cleanup := setupMemorySource(t)
-	defer cleanup()
-	seedMemories(t, src.memRepo)
-	seedMemChunks(t, src.chunkRepo)
+	f := setupMemorySource(t)
+	defer f.cleanup()
+	seedMemories(t, f.memRepo)
+	seedMemChunks(t, f.chunkRepo)
 
-	// 包含 u2 的 chunk，不应被返回
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		memChunkResult("chunk:memory:m1/0", "m1", 0.85),
 		{ID: "chunk:memory:m_other/0", Score: 0.90, Metadata: map[string]string{
 			"type": "chunk", "parent_type": "memory", "parent_id": "m_other", "user_id": "u2",
 		}},
 	}}
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "查询", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "查询", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -296,25 +273,22 @@ func TestMemorySource_FilterOtherUsers(t *testing.T) {
 	}
 }
 
-// 用例10：limit 限制生效，命中数超过 limit 时截断
 func TestMemorySource_LimitTruncation(t *testing.T) {
-	src, cleanup := setupMemorySource(t)
-	defer cleanup()
-	seedMemories(t, src.memRepo)
-	seedMemChunks(t, src.chunkRepo)
+	f := setupMemorySource(t)
+	defer f.cleanup()
+	seedMemories(t, f.memRepo)
+	seedMemChunks(t, f.chunkRepo)
 
-	// 3 个不同记忆的 chunk 命中，但 limit=2
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
+	f.src.vs = &mockVectorStore{results: []SearchResult{
 		memChunkResult("chunk:memory:m1/0", "m1", 0.90),
 		memChunkResult("chunk:memory:m2/0", "m2", 0.85),
 		memChunkResult("chunk:memory:m3/0", "m3", 0.80),
 	}}
-	// seed m3 too
-	src.memRepo.Create(context.Background(), &model.UserMemory{
+	f.memRepo.Create(context.Background(), &model.UserMemory{
 		ID: "m3", UserID: "u1", MemoryKey: "m3", ContentHash: "h3", MemoryValue: "m3",
 	})
 
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "查询", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 2}})
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "查询", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 2}})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}

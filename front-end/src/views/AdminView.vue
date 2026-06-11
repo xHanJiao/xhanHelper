@@ -307,7 +307,7 @@ function latSummary(s) {
         <NCard size="small" title="内存"><div>堆: {{ fmtMB(health.memory?.heap_alloc_mb) }}</div><div style="font-size: 12px; color: var(--color-text-muted);">RSS: {{ fmtMB(health.memory?.os_rss_mb) }}</div></NCard>
         <NCard size="small" title="SSE 连接"><div style="font-size: 22px; font-weight: 600;">{{ health.counters?.sse_connections ?? 0 }}</div></NCard>
         <NCard size="small" title="活跃会话"><div style="font-size: 22px; font-weight: 600;">{{ health.snapshots?.active_conversations ?? 0 }}</div><div style="font-size: 12px; color: var(--color-text-muted);">最近 1h</div></NCard>
-        <NCard size="small" title="搜索用量"><div style="font-size: 22px; font-weight: 600;">{{ health.snapshots?.search_usage?.used ?? 0 }}<span style="font-size: 14px; font-weight: 400; color: var(--color-text-muted);"> / {{ health.snapshots?.search_usage?.limit ?? 0 }}</span></div><div style="font-size: 12px; color: var(--color-text-muted);">{{ health.snapshots?.search_usage?.date ?? '-' }}</div></NCard>
+        <NCard size="small" title="搜索用量"><div style="font-size: 22px; font-weight: 600;">{{ health.snapshots?.search_usage?.used ?? 0 }}<span style="font-size: 14px; font-weight: 400; color: var(--color-text-muted);"> / {{ health.snapshots?.search_usage?.total_quota ?? 0 }}</span></div><div style="font-size: 12px; color: var(--color-text-muted);">到期 {{ health.snapshots?.search_usage?.expires_at ?? '-' }}</div></NCard>
         <NCard v-if="health.snapshots?.markdown_files" size="small" title="Markdown"><div style="font-size: 22px; font-weight: 600;">{{ health.snapshots.markdown_files.count }}</div><div style="font-size: 12px; color: var(--color-text-muted);">个文件</div></NCard>
       </div>
 

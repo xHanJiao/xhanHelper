@@ -3,6 +3,7 @@ package appinit
 import (
 	"context"
 	"log"
+	"time"
 
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/app"
@@ -22,6 +23,12 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		reg.Register(tool.NewLoggingWrapper(tool.NewBochaSearchTool(cfg.Search, repos.SearchUsage), log.Default()))
 	} else {
 		reg.Register(tool.NewLoggingWrapper(tool.NewSearchTool(cfg.Search, repos.SearchUsage), log.Default()))
+	}
+
+	// 初始化搜索用量 DB 记录，确保监控看板启动即显示正确数据
+	expiresAt, _ := time.Parse("2006-01-02", cfg.Search.QuotaExpiresAt)
+	if err := repos.SearchUsage.Ensure(context.Background(), cfg.Search.Provider, cfg.Search.TotalQuota, expiresAt, cfg.Search.UsedCount); err != nil {
+		log.Printf("[init] search usage ensure error: %v", err)
 	}
 
 	// 种子内置工具到 tool_registries 表（幂等）

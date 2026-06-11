@@ -116,7 +116,8 @@ const { isBarVisible, showBar } = useScrollTopBar(messagesContainerRef)
 
 const inputVisible = ref(true)
 const inputExpanded = ref(false)
-let inputVisibilityDebounce = null
+let hideCooldownTimer = null
+let showCooldownActive = false
 
 if (isMobile.value) inputVisible.value = false
 watch(isMobile, (val) => { if (val) inputVisible.value = false })
@@ -507,7 +508,7 @@ watch(() => route.params.id, async (newId, oldId) => {
 }, { immediate: true })
 
 onBeforeUnmount(() => {
-  clearTimeout(inputVisibilityDebounce)
+  clearTimeout(hideCooldownTimer)
   if (chat.isStreaming) cancel()
 })
 
@@ -563,14 +564,17 @@ function handleScroll(e) {
   const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
   isAwayFromBottom.value = distFromBottom > 200
 
-  // 上滑隐藏：立即触发，无需延迟
-  // 下滑显示：加 debounce 防止 iPad Safari 弹性滚动在底边振荡引起跳跃
+  // 显示/隐藏输入框（非移动端）
+  // 显示：即时触发，无需延迟（跟手体验）
+  // 隐藏：即时触发，但在「刚显示后的冷却期」内拦截，防止 iPad Safari 弹性滚动振荡导致闪烁
   if (isInitialScrollDone.value && !isMobile.value) {
-    if (distFromBottom > 200 && inputVisible.value) {
+    if (distFromBottom < 30 && !inputVisible.value) {
+      inputVisible.value = true
+      showCooldownActive = true
+      clearTimeout(hideCooldownTimer)
+      hideCooldownTimer = setTimeout(() => { showCooldownActive = false }, 300)
+    } else if (distFromBottom > 200 && inputVisible.value && !showCooldownActive) {
       inputVisible.value = false
-    } else if (distFromBottom < 30 && !inputVisible.value) {
-      clearTimeout(inputVisibilityDebounce)
-      inputVisibilityDebounce = setTimeout(() => { inputVisible.value = true }, 150)
     }
   }
 

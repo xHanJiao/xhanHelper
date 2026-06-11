@@ -85,6 +85,33 @@ func (r *SearchUsageRepo) atomicIncrement(ctx context.Context, su *model.SearchU
 	return su.UsedCount + 1, nil
 }
 
+// Ensure 确保 DB 中存在该 provider 的记录（不存在则用 config 值创建），不做递增
+func (r *SearchUsageRepo) Ensure(ctx context.Context, provider string, totalQuota int, expiresAt time.Time, initialUsed int) error {
+	var su model.SearchUsage
+	err := r.db.WithContext(ctx).Where("provider = ?", provider).First(&su).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		su = model.SearchUsage{
+			ID:         newUUID(),
+			Provider:   provider,
+			TotalQuota: totalQuota,
+			UsedCount:  initialUsed,
+			ExpiresAt:  expiresAt,
+		}
+		return r.db.WithContext(ctx).Create(&su).Error
+	}
+	if err != nil {
+		return err
+	}
+	if su.TotalQuota != totalQuota || !su.ExpiresAt.Equal(expiresAt) {
+		return r.db.WithContext(ctx).Model(&su).Updates(map[string]interface{}{
+			"total_quota": totalQuota,
+			"expires_at":  expiresAt,
+			"used_count":  0,
+		}).Error
+	}
+	return nil
+}
+
 // Snapshot 返回当前用量快照，供监控看板使用
 func (r *SearchUsageRepo) Snapshot(ctx context.Context, provider string) map[string]interface{} {
 	var su model.SearchUsage

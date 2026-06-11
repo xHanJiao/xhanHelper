@@ -31,6 +31,7 @@ type Repos struct {
 	DocumentShare  *service.DocumentShareRepo
 	Version        *service.VersionRepo
 	Mission        *service.MissionRepo
+	SearchUsage    *service.SearchUsageRepo
 }
 
 // InitRepos 创建所有 repo 实例
@@ -59,5 +60,6 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		DocumentShare:  service.NewDocumentShareRepo(db, docRepo),
 		Version:        service.NewVersionRepo(db),
 		Mission:        service.NewMissionRepo(db),
+		SearchUsage:    service.NewSearchUsageRepo(db),
 	}
 }

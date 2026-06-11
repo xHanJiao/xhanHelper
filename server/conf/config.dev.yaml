@@ -40,7 +40,11 @@ search:
   provider: bocha
   api_key: ${BOCHA_API_KEY}
   base_url: https://api.bocha.cn/v1
-  daily_limit: 1000
+  # 包配额：total_quota 为套餐总次数，quota_expires_at 为到期日
+  # used_count 仅首次创建 DB 记录时写入，后续由 DB 自动管理
+  total_quota: 1000
+  quota_expires_at: "2026-09-01" # TODO: 填写实际到期日
+  used_count: 109
 
 reflection:
   launch_max_iterations: 8

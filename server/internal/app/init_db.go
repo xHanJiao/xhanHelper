@@ -52,6 +52,7 @@ func InitDB(cfg *config.Config) *gorm.DB {
 		&model.DocumentShare{},
 		&model.ContentVersion{},
 		&model.Mission{},
+		&model.SearchUsage{},
 	); err != nil {
 		log.Printf("[db] AutoMigrate error: %v", err)
 	}

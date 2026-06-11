@@ -149,10 +149,12 @@ type RetrievalConfig struct {
 
 // SearchConfig — 搜索工具配置（通用，支持多 provider）
 type SearchConfig struct {
-	Provider   string `yaml:"provider"`
-	APIKey     string `yaml:"api_key"`
-	BaseURL    string `yaml:"base_url"`
-	DailyLimit int    `yaml:"daily_limit"`
+	Provider       string `yaml:"provider"`
+	APIKey         string `yaml:"api_key"`
+	BaseURL        string `yaml:"base_url"`
+	TotalQuota     int    `yaml:"total_quota"`      // 包配额总数，如 1000；0 表示不限制
+	QuotaExpiresAt string `yaml:"quota_expires_at"` // 配额到期日，如 "2026-09-01"
+	UsedCount      int    `yaml:"used_count"`       // 当前已用次数，仅首次写入 DB 记录时生效，后续由 DB 管理
 }
 
 // ReflectionConfig — 反思系统配置
@@ -354,8 +356,14 @@ func merge(dst, src *Config) {
 	if src.Search.BaseURL != "" {
 		dst.Search.BaseURL = src.Search.BaseURL
 	}
-	if src.Search.DailyLimit != 0 {
-		dst.Search.DailyLimit = src.Search.DailyLimit
+	if src.Search.TotalQuota != 0 {
+		dst.Search.TotalQuota = src.Search.TotalQuota
+	}
+	if src.Search.QuotaExpiresAt != "" {
+		dst.Search.QuotaExpiresAt = src.Search.QuotaExpiresAt
+	}
+	if src.Search.UsedCount != 0 {
+		dst.Search.UsedCount = src.Search.UsedCount
 	}
 	if src.Chat.HistoryRounds != 0 {
 		dst.Chat.HistoryRounds = src.Chat.HistoryRounds
@@ -462,8 +470,8 @@ func validate(cfg *Config) error {
 	if cfg.Search.BaseURL == "" {
 		cfg.Search.BaseURL = "https://api.anysearch.com/v1"
 	}
-	if cfg.Search.DailyLimit == 0 {
-		cfg.Search.DailyLimit = 100
+	if cfg.Search.TotalQuota == 0 {
+		cfg.Search.TotalQuota = 100
 	}
 	if cfg.Chat.HistoryRounds == 0 {
 		cfg.Chat.HistoryRounds = 10

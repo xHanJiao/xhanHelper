@@ -1,14 +1,20 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
   reasoning: { type: String, default: '' },
   done: { type: Boolean, default: false },
-  isHistory: { type: Boolean, default: false }
+  isHistory: { type: Boolean, default: false },
+  hasContent: { type: Boolean, default: false }
 })
 
 const showBlock = computed(() => props.reasoning?.length > 0)
 const expanded = ref(false)
+
+// 流式消息：正文开始输出时自动收起思考过程
+if (!props.isHistory) {
+  watch(() => props.hasContent, (val) => { if (val) expanded.value = false })
+}
 </script>
 
 <template>

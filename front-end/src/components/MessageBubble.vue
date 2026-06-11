@@ -91,7 +91,7 @@ const associatedMemories = computed(() => {
           <div class="message-content" v-html="contentHtml" style="margin: 0; overflow-wrap: break-word;"></div>
         </div>
         <WaitingAnimation v-if="showCat" class="bubble-cat" />
-        <ThinkingBlock :reasoning="message.reasoning" :done="message.reasoningDone" :is-history="isHistory" />
+        <ThinkingBlock :reasoning="message.reasoning" :done="message.reasoningDone" :is-history="isHistory" :has-content="!!(message.content)" />
         <div v-if="timeText" class="msg-time assistant-time">{{ timeText }}</div>
       </div>
     </div>

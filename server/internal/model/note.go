@@ -20,3 +20,9 @@ type Note struct {
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
+
+func (n Note) GetID() string           { return n.ID }
+func (n Note) GetUserID() string       { return n.UserID }
+func (n Note) GetContent() string      { return n.Content }
+func (n Note) GetCreatedAt() time.Time { return n.CreatedAt }
+func (n Note) GetTopic() string        { return n.Topic }

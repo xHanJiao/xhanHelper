@@ -22,3 +22,9 @@ type UserMemory struct {
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt       time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
+
+func (m UserMemory) GetID() string           { return m.ID }
+func (m UserMemory) GetUserID() string       { return m.UserID }
+func (m UserMemory) GetContent() string      { return m.MemoryValue }
+func (m UserMemory) GetCreatedAt() time.Time { return m.CreatedAt }
+func (m UserMemory) GetTopic() string        { return m.Topic }

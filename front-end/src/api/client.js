@@ -54,5 +54,6 @@ export const api = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal
-  })
+  }),
+  publicGet: (path) => fetch(BASE + path).then(r => r.json()).then(unwrap)
 }

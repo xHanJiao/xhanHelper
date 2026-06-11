@@ -56,6 +56,9 @@ snowflake:
 chat:
   history_rounds: 10
 
+share:
+  default_valid_days: 7
+
 search:
   provider: bocha
   api_key: ${BOCHA_API_KEY}

@@ -41,6 +41,16 @@ func (r *DocumentRepo) Update(ctx context.Context, id, userID string, updates ma
 	return r.db.WithContext(ctx).Model(&model.Document{}).Where("id = ? AND user_id = ?", id, userID).Updates(updates).Error
 }
 
+// GetByIDPublic 按 ID 查询文档（无用户限制，供公开分享使用）
+func (r *DocumentRepo) GetByIDPublic(ctx context.Context, id string) (*model.Document, error) {
+	var doc model.Document
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&doc).Error
+	if err != nil {
+		return nil, err
+	}
+	return &doc, nil
+}
+
 // Delete 删除文档
 func (r *DocumentRepo) Delete(ctx context.Context, id, userID string) error {
 	return r.db.WithContext(ctx).Delete(&model.Document{}, "id = ? AND user_id = ?", id, userID).Error

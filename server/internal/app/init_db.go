@@ -49,6 +49,7 @@ func InitDB(cfg *config.Config) *gorm.DB {
 		&model.Commitment{},
 		&model.DelayedTask{},
 		&model.Document{},
+		&model.DocumentShare{},
 		&model.ContentVersion{},
 		&model.Mission{},
 	); err != nil {

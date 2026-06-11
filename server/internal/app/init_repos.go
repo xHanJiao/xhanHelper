@@ -28,12 +28,14 @@ type Repos struct {
 	Commitment     *service.CommitmentRepo
 	DelayedTask    *service.DelayedTaskRepo
 	Document       *service.DocumentRepo
+	DocumentShare  *service.DocumentShareRepo
 	Version        *service.VersionRepo
 	Mission        *service.MissionRepo
 }
 
 // InitRepos 创建所有 repo 实例
 func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
+	docRepo := service.NewDocumentRepo(db)
 	return &Repos{
 		User:           service.NewUserRepo(db, cfg.Server.TokenTTLHours, cfg.Server.MaxTokensPerUser),
 		Conversation:   service.NewConversationRepo(db),
@@ -53,7 +55,8 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		PendingFinding: service.NewPendingFindingRepo(db),
 		Commitment:     service.NewCommitmentRepo(db),
 		DelayedTask:    service.NewDelayedTaskRepo(db),
-		Document:       service.NewDocumentRepo(db),
+		Document:       docRepo,
+		DocumentShare:  service.NewDocumentShareRepo(db, docRepo),
 		Version:        service.NewVersionRepo(db),
 		Mission:        service.NewMissionRepo(db),
 	}

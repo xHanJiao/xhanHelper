@@ -48,6 +48,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	toolHandler := controller.NewToolHandler(repos.Tool)
 	promptHandler := controller.NewPromptHandler(repos.Prompt)
 	docHandler := controller.NewDocumentHandler(repos.Document)
+	documentShareHandler := controller.NewDocumentShareHandler(repos.DocumentShare, cfg)
 	mailboxService := service.NewMailboxService(repos.Mailbox, repos.ThemeState)
 	mailboxHandler := controller.NewMailboxHandler(mailboxService, repos.Mailbox, repos.Conversation, repos.ThemeState, repos.Message)
 	themeHandler := controller.NewThemeHandler(repos.ThemeState)
@@ -58,21 +59,22 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	replayHandler := controller.NewReplayHandler(repos.Message, agents.ReplayRunner, infra.Embedder)
 
 	router := controller.NewRouter(&controller.RouterConfig{
-		Cfg:             cfg,
-		Orch:            agents.Orch,
-		UserRepo:        repos.User,
-		ConvRepo:        repos.Conversation,
-		MsgRepo:         repos.Message,
-		AgentRepo:       repos.Agent,
-		BillHandler:     billHandler,
-		NoteHandler:     noteHandler,
-		MemHandler:      memHandler,
-		AgentHandler:    agentHandler,
-		ToolHandler:     toolHandler,
-		PromptHandler:   promptHandler,
-		DocumentHandler: docHandler,
-		MemExtr:         tools.MemExtractor,
-		ExtraMiddleware: []gin.HandlerFunc{middleware.RequestLogger(log.Default())},
+		Cfg:                  cfg,
+		Orch:                 agents.Orch,
+		UserRepo:             repos.User,
+		ConvRepo:             repos.Conversation,
+		MsgRepo:              repos.Message,
+		AgentRepo:            repos.Agent,
+		BillHandler:          billHandler,
+		NoteHandler:          noteHandler,
+		MemHandler:           memHandler,
+		AgentHandler:         agentHandler,
+		ToolHandler:          toolHandler,
+		PromptHandler:        promptHandler,
+		DocumentHandler:      docHandler,
+		DocumentShareHandler: documentShareHandler,
+		MemExtr:              tools.MemExtractor,
+		ExtraMiddleware:      []gin.HandlerFunc{middleware.RequestLogger(log.Default())},
 	})
 
 	controller.RegisterReflectionRoutes(&controller.ReflectionRoutesConfig{

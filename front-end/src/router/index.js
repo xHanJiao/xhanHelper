@@ -83,6 +83,11 @@ const routes = [
     component: () => import('@/views/ReplayCompareView.vue')
   },
   {
+    path: '/s/:token',
+    name: 'SharedDocument',
+    component: () => import('@/views/SharedDocumentView.vue')
+  },
+  {
     path: '/',
     redirect: '/chat'
   }
@@ -95,7 +100,7 @@ const router = createRouter({
 
 router.beforeEach((to, from, next) => {
   const auth = useAuthStore()
-  if (to.path !== '/login' && !auth.token) {
+  if (to.path !== '/login' && !to.path.startsWith('/s/') && !auth.token) {
     // 尝试从 localStorage 恢复一次，防止 storage 事件误清或浏览器挂起丢状态
     auth.restore()
     if (!auth.token) {

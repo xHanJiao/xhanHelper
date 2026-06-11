@@ -12,6 +12,7 @@ import {
   NGi,
   NEmpty,
   NSelect,
+  NModal,
   useMessage
 } from 'naive-ui'
 import ListItemCard from '@/components/ListItemCard.vue'
@@ -32,6 +33,39 @@ const selectedTag = ref(null)
 const tagOptions = ref([])
 const contentContainerRef = ref(null)
 const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
+
+const showShareModal = ref(false)
+const shareUrl = ref('')
+const shareExpires = ref('')
+
+async function handleShare(doc) {
+  try {
+    let shareRes
+    try {
+      shareRes = await api.get(`/api/documents/${doc.id}/share`)
+    } catch (e) {
+      shareRes = null
+    }
+
+    if (!shareRes) {
+      shareRes = await api.post(`/api/documents/${doc.id}/share`, {})
+    }
+
+    shareUrl.value = window.location.origin + shareRes.url
+    shareExpires.value = new Date(shareRes.expires_at).toLocaleString()
+    showShareModal.value = true
+  } catch (e) {
+    message.error('创建分享链接失败')
+  }
+}
+
+function copyShareUrl() {
+  navigator.clipboard.writeText(shareUrl.value).then(() => {
+    message.success('已复制到剪贴板')
+  }).catch(() => {
+    message.error('复制失败')
+  })
+}
 
 async function fetchDocuments() {
   loading.value = true
@@ -105,6 +139,7 @@ function parseTags(tags) {
 
 function getCardActions(doc) {
   return [
+    { key: 'share', label: '分享', onClick: () => handleShare(doc) },
     { key: 'download', label: '下载', onClick: () => handleDownload(doc) },
     { key: 'delete', label: '删除', type: 'error', confirm: `确认删除文档「${doc.title}」？`, onClick: () => handleDelete(doc) }
   ]
@@ -180,5 +215,17 @@ onMounted(fetchDocuments)
         />
       </div>
     </div>
+    <NModal v-model:show="showShareModal" preset="card" title="分享文档" style="width: 480px;">
+      <div style="margin-bottom: var(--space-md);">
+        <label style="display: block; font-size: 0.875rem; color: var(--color-text-secondary); margin-bottom: var(--space-xs);">分享链接</label>
+        <div style="display: flex; gap: var(--space-xs);">
+          <NInput :value="shareUrl" readonly style="flex: 1;" />
+          <NButton @click="copyShareUrl" type="primary" size="small">复制</NButton>
+        </div>
+      </div>
+      <div style="color: var(--color-text-tertiary); font-size: 0.8rem;">
+        有效期至：{{ shareExpires }}
+      </div>
+    </NModal>
   </div>
 </template>

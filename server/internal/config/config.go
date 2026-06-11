@@ -29,6 +29,7 @@ type Config struct {
 	Retrieval  RetrievalConfig  `yaml:"retrieval"`
 	Search     SearchConfig     `yaml:"search"`
 	Chat       ChatConfig       `yaml:"chat"`
+	Share      ShareConfig      `yaml:"share"`
 	Snowflake  SnowflakeConfig  `yaml:"snowflake"`
 	MCP        MCPConfig        `yaml:"mcp"`
 }
@@ -36,6 +37,11 @@ type Config struct {
 // ChatConfig — 对话配置
 type ChatConfig struct {
 	HistoryRounds int `yaml:"history_rounds"` // 加载历史消息轮数，默认 10
+}
+
+// ShareConfig — 分享配置
+type ShareConfig struct {
+	DefaultValidDays int `yaml:"default_valid_days"` // 分享链接默认有效天数，默认 7
 }
 
 // MCPServerCfg — 单个 MCP server 配置
@@ -482,6 +488,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Chat.HistoryRounds == 0 {
 		cfg.Chat.HistoryRounds = 10
+	}
+	if cfg.Share.DefaultValidDays == 0 {
+		cfg.Share.DefaultValidDays = 7
 	}
 	return nil
 }

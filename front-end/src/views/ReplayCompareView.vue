@@ -173,6 +173,18 @@ async function parseReplaySSE(res) {
   }
 }
 
+function displayContent(msg) {
+  if (msg.content) return msg.content.slice(0, 100)
+  if (msg.role === 'assistant' && msg.tool_calls_json) {
+    try {
+      const parsed = typeof msg.tool_calls_json === 'string' ? JSON.parse(msg.tool_calls_json) : msg.tool_calls_json
+      const tcNames = Array.isArray(parsed) ? parsed.map(tc => tc.function?.name || tc.tool + '.' + tc.function).join(', ') : '[工具调用]'
+      return tcNames.slice(0, 100)
+    } catch { return String(msg.tool_calls_json).slice(0, 100) }
+  }
+  return ''
+}
+
 function hasDiff(tcA, tcB) {
   if (!tcA || !tcB) return true
   return tcA.tool !== tcB.tool || tcA.function !== tcB.function
@@ -233,7 +245,7 @@ onMounted(loadAnchor)
           </summary>
           <div v-for="(msg, i) in historyMsgs" :key="i"
             style="padding: 4px 12px; font-size: 12px; color: var(--color-text-muted); font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-            [{{ roleLabel(msg.role) }}] {{ msg.content?.slice(0, 100) }}
+            [{{ roleLabel(msg.role) }}] {{ displayContent(msg) }}
           </div>
         </details>
 

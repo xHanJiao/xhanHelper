@@ -13,21 +13,22 @@ import (
 
 // RouterConfig — 路由注册所需的所有依赖
 type RouterConfig struct {
-	Cfg             *config.Config
-	Orch            *agent.Orchestrator
-	UserRepo        *service.UserRepo
-	ConvRepo        *service.ConversationRepo
-	MsgRepo         *service.MessageRepo
-	AgentRepo       *service.AgentRepo
-	BillHandler     *BillHandler
-	NoteHandler     *NoteHandler
-	MemHandler      *MemoryHandler
-	AgentHandler    *AgentHandler
-	ToolHandler     *ToolHandler
-	PromptHandler   *PromptHandler
-	DocumentHandler *DocumentHandler
-	MemExtr         *agent.MemoryExtractor
-	ExtraMiddleware []gin.HandlerFunc
+	Cfg                  *config.Config
+	Orch                 *agent.Orchestrator
+	UserRepo             *service.UserRepo
+	ConvRepo             *service.ConversationRepo
+	MsgRepo              *service.MessageRepo
+	AgentRepo            *service.AgentRepo
+	BillHandler          *BillHandler
+	NoteHandler          *NoteHandler
+	MemHandler           *MemoryHandler
+	AgentHandler         *AgentHandler
+	ToolHandler          *ToolHandler
+	PromptHandler        *PromptHandler
+	DocumentHandler      *DocumentHandler
+	DocumentShareHandler *DocumentShareHandler
+	MemExtr              *agent.MemoryExtractor
+	ExtraMiddleware      []gin.HandlerFunc
 }
 
 // NewRouter 注册所有路由
@@ -49,6 +50,8 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	// 无需认证 — 账号注册/登录
 	r.POST("/api/auth/register", registerUser(rc.UserRepo, rc.Cfg.Server.RegistrationEnabled, rc.Cfg.Server.AllowedUsers, rc.Cfg.Server.AdminUsers))
 	r.POST("/api/auth/login", loginUser(rc.UserRepo, rc.Cfg.Server.AdminUsers))
+	// 公开分享
+	r.GET("/s/:token", rc.DocumentShareHandler.ViewSharedDocument)
 	// 需要认证
 	auth := r.Group("/api")
 	auth.Use(middleware.Auth(rc.UserRepo))
@@ -92,6 +95,8 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.GET("/documents", rc.DocumentHandler.ListDocuments)
 		auth.GET("/documents/:id", rc.DocumentHandler.GetDocument)
 		auth.DELETE("/documents/:id", rc.DocumentHandler.DeleteDocument)
+		auth.POST("/documents/:id/share", rc.DocumentShareHandler.CreateShare)
+		auth.GET("/documents/:id/share", rc.DocumentShareHandler.GetShare)
 	}
 
 	// 管理员路由

@@ -106,6 +106,23 @@ async function copyContent(msgId, content) {
 
 const markdownResult = ref('')
 
+function displayContent(msg) {
+  if (msg.content) return msg.content
+  if (msg.role === 'assistant' && msg.tool_calls_json) {
+    try {
+      const parsed = typeof msg.tool_calls_json === 'string' ? JSON.parse(msg.tool_calls_json) : msg.tool_calls_json
+      return JSON.stringify(parsed, null, 2)
+    } catch { return msg.tool_calls_json }
+  }
+  return '(空)'
+}
+
+function rawContent(msg) {
+  if (msg.content) return msg.content
+  if (msg.role === 'assistant' && msg.tool_calls_json) return msg.tool_calls_json
+  return ''
+}
+
 function formatContent(content) {
   if (!content) return ''
   try {
@@ -299,22 +316,22 @@ onMounted(loadRound)
               color: '#fff',
             }">{{ roleLabel(msg.role) }}</span>
             <span style="font-size: 11px; color: var(--color-text-muted);">{{ new Date(msg.created_at).toLocaleString() }}</span>
-            <span style="font-size: 11px; color: var(--color-text-muted);">~{{ estimateTokens(msg.content) }} tokens</span>
+            <span style="font-size: 11px; color: var(--color-text-muted);">~{{ estimateTokens(rawContent(msg)) }} tokens</span>
             <span v-if="(msg.role === 'assistant' || msg.role === 'system') && expandedId === msg.id" style="font-size: 11px; color: var(--color-primary);">▼ 已展开</span>
           </div>
           <div
             v-if="!isExpanded(msg.id)"
-            @click.stop="toggleContent(msg.id, msg.content)"
+            @click.stop="toggleContent(msg.id, rawContent(msg))"
             style="font-size: 13px; color: var(--color-text); line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;"
-          >{{ msg.content || '(空)' }}</div>
+          >{{ displayContent(msg) }}</div>
           <div v-else style="position: relative;">
             <pre
               v-if="!markdownResult || activeMsgResultId !== msg.id"
-              @click.stop="toggleContent(msg.id, msg.content)"
+              @click.stop="toggleContent(msg.id, rawContent(msg))"
               style="font-size: 12px; line-height: 1.5; background: var(--color-bg-page); padding: 8px 12px; border-radius: var(--radius-md); margin: 4px 0 0 0; overflow-x: auto; white-space: pre-wrap; word-break: break-all; cursor: pointer; max-height: 400px; overflow-y: auto;"
-            >{{ formatContent(msg.content) }}</pre>
+            >{{ formatContent(rawContent(msg)) }}</pre>
             <span
-              @click.stop="copyContent(msg.id, msg.content)"
+              @click.stop="copyContent(msg.id, rawContent(msg))"
               style="position: absolute; top: 8px; right: 8px; font-size: 14px; cursor: pointer; opacity: 0.6; line-height: 1;"
               :title="copiedId === msg.id ? '已复制' : '复制'"
             >{{ copiedId === msg.id ? '✓' : '📋' }}</span>
@@ -326,7 +343,7 @@ onMounted(loadRound)
             >{{ activeMsgResultId === msg.id ? '🔽' : '👁' }}</span>
             <div
               v-if="activeMsgResultId === msg.id && markdownResult"
-              @click.stop="toggleContent(msg.id, msg.content)"
+              @click.stop="toggleContent(msg.id, rawContent(msg))"
               class="markdown-body"
               v-html="resultHtml"
               style="cursor: pointer; font-size: 13px; line-height: 1.7; background: var(--color-surface); padding: 12px 16px; border-radius: var(--radius-md); margin-top: 4px; border: 1px solid var(--color-border); max-height: 400px; overflow-y: auto;"

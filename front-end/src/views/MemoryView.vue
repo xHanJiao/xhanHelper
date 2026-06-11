@@ -39,7 +39,6 @@ const extractStatus = ref('')
 const extractProgress = ref('')
 const extractCount = ref(0)
 
-const sourceMap = { conversation: '对话提取', csv_import: 'CSV导入' }
 
 async function fetchMemories() {
   loading.value = true
@@ -73,7 +72,8 @@ function handleSearch() {
 }
 
 function getCardTags(mem) {
-  return [sourceMap[mem.source] || mem.source]
+  if (!mem.tags) return []
+  return mem.tags.split(',').map(t => t.trim()).filter(Boolean).map(t => ({ text: t }))
 }
 
 function getCardActions(mem) {

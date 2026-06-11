@@ -183,7 +183,14 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	var queryVec []float64
 	var systemPromptResult *promptbuilder.BuildResult
 	if o.embedder != nil && !req.SkipRetrieval {
-		queryVec = o.tryEmbedContent(ctx, req.UserMessageContent)
+		// 使用原始消息（RawUserMessage）做 embedding 检索，而非归一化后的消息
+		// 原因：日期归一化会把 "今天" → "2026-06-11"，绝对日期在 embedding 空间里
+		// 会因年份/格式相似产生虚假匹配（如 "2026-06-11 买菜" 误匹配 "2026-05-29 睡觉"）
+		rawMsg := req.RawUserMessage
+		if rawMsg == "" {
+			rawMsg = req.UserMessageContent
+		}
+		queryVec = o.tryEmbedContent(ctx, rawMsg)
 	}
 
 	log.Printf("[orch] run start: model=%s, msgs=%d", o.pickClient(req).ModelName(), len(req.Messages))

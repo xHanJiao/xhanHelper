@@ -51,7 +51,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	r.POST("/api/auth/register", registerUser(rc.UserRepo, rc.Cfg.Server.RegistrationEnabled, rc.Cfg.Server.AllowedUsers, rc.Cfg.Server.AdminUsers))
 	r.POST("/api/auth/login", loginUser(rc.UserRepo, rc.Cfg.Server.AdminUsers))
 	// 公开分享
-	r.GET("/s/:token", rc.DocumentShareHandler.ViewSharedDocument)
+	r.GET("/api/share/:token", rc.DocumentShareHandler.ViewSharedDocument)
 	// 需要认证
 	auth := r.Group("/api")
 	auth.Use(middleware.Auth(rc.UserRepo))

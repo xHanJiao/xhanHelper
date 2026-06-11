@@ -1044,7 +1044,7 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int, useN
 			if m.ToolCallID != nil {
 				msg.ToolCallID = *m.ToolCallID
 			}
-			if m.ToolCallsJSON != nil {
+			if useNativeFC && m.ToolCallsJSON != nil {
 				var tcs []llm.ToolCall
 				if err := json.Unmarshal([]byte(*m.ToolCallsJSON), &tcs); err == nil {
 					msg.ToolCalls = tcs

@@ -21,6 +21,7 @@ const expanded = ref(false)
       v-if="expanded"
       class="thinking-content"
       :class="{ 'is-done': done }"
+      @click="expanded = false"
     >{{ reasoning }}</div>
   </div>
 </template>
@@ -34,7 +35,7 @@ const expanded = ref(false)
   font-size: 12px;
   color: var(--color-text-muted);
   margin-bottom: 4px;
-  padding-left: 2px;
+  padding: 4px 2px;
   display: flex;
   align-items: center;
   gap: 4px;

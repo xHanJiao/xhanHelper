@@ -21,7 +21,7 @@ function parseTags(tags) {
 
 onMounted(async () => {
   try {
-    const data = await api.publicGet('/s/' + token)
+    const data = await api.publicGet('/api/share/' + token)
     doc.value = data
   } catch (e) {
     error.value = e.message || '加载失败'

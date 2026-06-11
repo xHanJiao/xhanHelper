@@ -1,4 +1,66 @@
 <script setup>
+/**
+ * ============================================================================
+ * ChatView 异步生命周期总览
+ * ============================================================================
+ *
+ * 本页面有多个异步行为，分布在文件各处。以下按触发时机分类汇总：
+ *
+ * ── 一、页面首次挂载 ───────────────────────────────────────────────────────
+ *   onMounted (L38):
+ *     → fetchLlmConfig()          GET /api/llm-config          填充 LLM 参数面板
+ *     → fetchAgents()             GET /api/agents              填充智能体切换列表
+ *
+ * ── 二、路由变化（核心入口，immediate: true） ─────────────────────────────────
+ *   watch(route.params.id) (L339):
+ *     三个分支，都会先 cancel() 旧 SSE 流
+ *     【分支 A】切换到新会话 (newId !== convId)
+ *       → loadHistory(newId)          GET messages-v2        拉取最近 20 条消息
+ *       → fetchAssociatedMemories()   POST /memories/batch   批量获取关联记忆详情
+ *       → nextTick + scrollToBottom   滚动到底部
+ *       → setTimeout 200ms            激活上滑加载监听（防误触发）
+ *       → fetchLlmConfig()            根据智能体重拉 LLM 参数
+ *     【分支 B】同会话重载 (needsRefetch=true)
+ *       → 流程同分支 A，完成后 chat.needsRefetch = false
+ *     【分支 C】无会话 ID
+ *       → GET /api/conversations/default   尝试获取默认会话
+ *       → 有则 router.replace 跳转（重新触发分支 A）
+ *       → 无则 chat.reset() + fetchLlmConfig()（显示空白页）
+ *
+ * ── 三、用户发送消息 ─────────────────────────────────────────────────────────
+ *   handleSend() (L459):
+ *     → chat.addMessage(user msg)    本地添加用户消息到列表
+ *     → convs.prepend()              当前会话置顶
+ *     → nextTick + scrollToBottom    滚到底部
+ *     → sendMessage(content, opts)   SSE 流式对话（来自 useChatSSE composable）
+ *
+ * ── 四、用户上滑加载更多历史 ─────────────────────────────────────────────────
+ *   handleScroll() (L497):
+ *     → 距顶部 ≤ 15% 可视高度 + hasMoreBefore + 不在加载中
+ *     → loadHistory(convId, 'before', oldestCursor)   分页加载更早消息
+ *     → prependMessages + 恢复滚动位置
+ *
+ * ── 五、智能体切换 ───────────────────────────────────────────────────────────
+ *   handleSelectAgent() (L130):
+ *     → PATCH /api/conversations/:id         更新会话绑定的智能体
+ *     → convs.updateAgent()                  更新会话列表 store
+ *     → chat.agentId / chat.agentName         更新聊天 store
+ *     → fetchLlmConfig()                     刷新 LLM 配置
+ *
+ * ── 六、流式响应期间（被动触发） ──────────────────────────────────────────────
+ *   watch(chat.streamingMessage?.content)   (L450)  → scrollToBottom()
+ *   watch(chat.streamingMessage?.reasoning) (L451)  → scrollToBottom()
+ *   watch(chat.llmParams)                   (L107)  → 同步更新 llmSettings
+ *
+ * ── 七、输入框展开/收起 ──────────────────────────────────────────────────────
+ *   watch(inputVisible)  (L60)   → nextTick + 触发 textarea input 事件（自适应高度）
+ *   watch(inputExpanded) (L452)  → 条件滚动到底部
+ *
+ * ── 八、页面卸载 ─────────────────────────────────────────────────────────────
+ *   onBeforeUnmount (L446): cancel() 中断正在进行的 SSE 流
+ * ============================================================================
+ */
+
 import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
@@ -54,6 +116,7 @@ const { isBarVisible, showBar } = useScrollTopBar(messagesContainerRef)
 
 const inputVisible = ref(true)
 const inputExpanded = ref(false)
+let inputVisibilityDebounce = null
 
 if (isMobile.value) inputVisible.value = false
 watch(isMobile, (val) => { if (val) inputVisible.value = false })
@@ -444,6 +507,7 @@ watch(() => route.params.id, async (newId, oldId) => {
 }, { immediate: true })
 
 onBeforeUnmount(() => {
+  clearTimeout(inputVisibilityDebounce)
   if (chat.isStreaming) cancel()
 })
 
@@ -499,12 +563,14 @@ function handleScroll(e) {
   const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
   isAwayFromBottom.value = distFromBottom > 200
 
-  // 上滑看历史时自动隐藏输入框，回到底部时恢复（滞后阈值防抖动）
+  // 上滑隐藏：立即触发，无需延迟
+  // 下滑显示：加 debounce 防止 iPad Safari 弹性滚动在底边振荡引起跳跃
   if (isInitialScrollDone.value && !isMobile.value) {
     if (distFromBottom > 200 && inputVisible.value) {
       inputVisible.value = false
     } else if (distFromBottom < 30 && !inputVisible.value) {
-      inputVisible.value = true
+      clearTimeout(inputVisibilityDebounce)
+      inputVisibilityDebounce = setTimeout(() => { inputVisible.value = true }, 150)
     }
   }
 

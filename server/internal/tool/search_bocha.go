@@ -10,24 +10,30 @@ import (
 	"time"
 
 	"xhan-helper/internal/config"
+	"xhan-helper/internal/service"
 )
 
 // BochaSearchTool 博查联网搜索工具
 type BochaSearchTool struct {
-	apiKey     string
-	baseURL    string
-	dailyLimit int
-	quota      *dailyQuota
-	client     *http.Client
+	apiKey         string
+	baseURL        string
+	totalQuota     int
+	quotaExpiresAt time.Time
+	usedCount      int
+	usageRepo      *service.SearchUsageRepo
+	client         *http.Client
 }
 
-func NewBochaSearchTool(cfg config.SearchConfig) *BochaSearchTool {
+func NewBochaSearchTool(cfg config.SearchConfig, usageRepo *service.SearchUsageRepo) *BochaSearchTool {
+	expiresAt, _ := time.Parse("2006-01-02", cfg.QuotaExpiresAt)
 	return &BochaSearchTool{
-		apiKey:     cfg.APIKey,
-		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
-		dailyLimit: cfg.DailyLimit,
-		quota:      &dailyQuota{},
-		client:     &http.Client{Timeout: 10 * time.Second},
+		apiKey:         cfg.APIKey,
+		baseURL:        strings.TrimRight(cfg.BaseURL, "/"),
+		totalQuota:     cfg.TotalQuota,
+		quotaExpiresAt: expiresAt,
+		usedCount:      cfg.UsedCount,
+		usageRepo:      usageRepo,
+		client:         &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -67,12 +73,8 @@ func (t *BochaSearchTool) Functions() []FuncSchema {
 }
 
 func (t *BochaSearchTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
-	used, ok := t.quota.tryUse(t.dailyLimit)
-	if !ok {
-		return &Result{
-			Success: false,
-			Error:   fmt.Sprintf("今日搜索次数已用完（%d/%d），请明天再试", used, t.dailyLimit),
-		}
+	if _, err := t.usageRepo.TryUse(ec.Ctx, "bocha", t.totalQuota, t.quotaExpiresAt, t.usedCount); err != nil {
+		return &Result{Success: false, Error: err.Error()}
 	}
 
 	var req bochaSearchArgs

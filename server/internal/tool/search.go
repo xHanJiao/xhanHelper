@@ -7,81 +7,36 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"xhan-helper/internal/config"
+	"xhan-helper/internal/service"
 )
 
-// dailyQuota 内存中的每日配额计数，Mutex 保护并发安全
-type dailyQuota struct {
-	mu    sync.Mutex
-	date  string // "2006-01-02"
-	count int
-}
-
-func (q *dailyQuota) tryUse(limit int) (used int, ok bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	today := time.Now().In(config.BJ).Format("2006-01-02")
-	if q.date != today {
-		q.date = today
-		q.count = 0
-	}
-
-	if limit > 0 && q.count >= limit {
-		return q.count, false
-	}
-	q.count++
-	return q.count, true
-}
-
-func (q *dailyQuota) snapshot() map[string]interface{} {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	today := time.Now().In(config.BJ).Format("2006-01-02")
-	if q.date != today {
-		return map[string]interface{}{"used": 0, "limit": 0, "date": today}
-	}
-	return map[string]interface{}{"used": q.count, "limit": 0, "date": q.date}
-}
-
-// searchToolInstance 供监控快照读取
-var searchToolInstance *SearchTool
-
-// SearchUsageSnapshot 返回当前搜索配额使用情况
-func SearchUsageSnapshot() any {
-	if searchToolInstance == nil {
-		return map[string]interface{}{"used": 0, "limit": 0, "date": ""}
-	}
-	q := searchToolInstance.quota.snapshot()
-	q["limit"] = searchToolInstance.dailyLimit
-	return q
-}
-
-// SearchTool — 联网搜索工具（支持多 provider）
+// SearchTool — 联网搜索工具（anysearch provider，已弃用，保留兼容）
 type SearchTool struct {
-	provider   string
-	apiKey     string
-	baseURL    string
-	dailyLimit int
-	quota      *dailyQuota
-	client     *http.Client
+	provider       string
+	apiKey         string
+	baseURL        string
+	totalQuota     int
+	quotaExpiresAt time.Time
+	usedCount      int
+	usageRepo      *service.SearchUsageRepo
+	client         *http.Client
 }
 
-func NewSearchTool(cfg config.SearchConfig) *SearchTool {
-	st := &SearchTool{
-		provider:   cfg.Provider,
-		apiKey:     cfg.APIKey,
-		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
-		dailyLimit: cfg.DailyLimit,
-		quota:      &dailyQuota{},
-		client:     &http.Client{Timeout: 10 * time.Second},
+func NewSearchTool(cfg config.SearchConfig, usageRepo *service.SearchUsageRepo) *SearchTool {
+	expiresAt, _ := time.Parse("2006-01-02", cfg.QuotaExpiresAt)
+	return &SearchTool{
+		provider:       cfg.Provider,
+		apiKey:         cfg.APIKey,
+		baseURL:        strings.TrimRight(cfg.BaseURL, "/"),
+		totalQuota:     cfg.TotalQuota,
+		quotaExpiresAt: expiresAt,
+		usedCount:      cfg.UsedCount,
+		usageRepo:      usageRepo,
+		client:         &http.Client{Timeout: 10 * time.Second},
 	}
-	searchToolInstance = st
-	return st
 }
 
 func (t *SearchTool) Name() string { return "search" }
@@ -136,12 +91,8 @@ func (t *SearchTool) Functions() []FuncSchema {
 }
 
 func (t *SearchTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
-	used, ok := t.quota.tryUse(t.dailyLimit)
-	if !ok {
-		return &Result{
-			Success: false,
-			Error:   fmt.Sprintf("今日搜索次数已用完（%d/%d），请明天再试", used, t.dailyLimit),
-		}
+	if _, err := t.usageRepo.TryUse(ec.Ctx, t.provider, t.totalQuota, t.quotaExpiresAt, t.usedCount); err != nil {
+		return &Result{Success: false, Error: err.Error()}
 	}
 
 	var req searchArgs

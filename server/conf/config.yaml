@@ -76,6 +76,6 @@ retrieval:
     threshold: 0.5
     limit: 5
   history:
-    freshness_decay: 0.005
-    threshold: 0.5
-    limit: 5
+    freshness_decay: 0.008
+    threshold: 0.65
+    limit: 2

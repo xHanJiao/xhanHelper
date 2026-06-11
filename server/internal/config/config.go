@@ -132,14 +132,11 @@ type EmbeddingConfig struct {
 	EnableHistorySearch bool   `yaml:"enable_history_search"` // 是否检索历史对话
 }
 
-// SourceWeights — 单个检索源的权重配置
+// SourceWeights — 单个检索源的配置
 type SourceWeights struct {
-	VectorWeight    float64 `yaml:"vector_weight"`
-	KeywordWeight   float64 `yaml:"keyword_weight"`
-	FreshnessWeight float64 `yaml:"freshness_weight"`
-	FreshnessDecay  float64 `yaml:"freshness_decay"`
-	Threshold       float64 `yaml:"threshold"`
-	Limit           int     `yaml:"limit"`
+	FreshnessDecay float64 `yaml:"freshness_decay"`
+	Threshold      float64 `yaml:"threshold"`
+	Limit          int     `yaml:"limit"`
 }
 
 // RetrievalConfig — 记忆检索配置
@@ -365,17 +362,8 @@ func merge(dst, src *Config) {
 	}
 }
 
-// mergeSourceWeights 按字段合并检索源权重，非零值覆盖
+// mergeSourceWeights 按字段合并检索源配置，非零值覆盖
 func mergeSourceWeights(dst, src *SourceWeights) {
-	if src.VectorWeight != 0 {
-		dst.VectorWeight = src.VectorWeight
-	}
-	if src.KeywordWeight != 0 {
-		dst.KeywordWeight = src.KeywordWeight
-	}
-	if src.FreshnessWeight != 0 {
-		dst.FreshnessWeight = src.FreshnessWeight
-	}
 	if src.FreshnessDecay != 0 {
 		dst.FreshnessDecay = src.FreshnessDecay
 	}
@@ -387,17 +375,8 @@ func mergeSourceWeights(dst, src *SourceWeights) {
 	}
 }
 
-// setSourceWeightsDefault 为源权重设置默认值（仅当当前值为零时）
-func setSourceWeightsDefault(w *SourceWeights, vecW, kwW, fwW, decay, threshold float64, limit int) {
-	if w.VectorWeight == 0 {
-		w.VectorWeight = vecW
-	}
-	if w.KeywordWeight == 0 {
-		w.KeywordWeight = kwW
-	}
-	if w.FreshnessWeight == 0 {
-		w.FreshnessWeight = fwW
-	}
+// setSourceWeightsDefault 为源配置设置默认值（仅当当前值为零时）
+func setSourceWeightsDefault(w *SourceWeights, decay, threshold float64, limit int) {
 	if w.FreshnessDecay == 0 {
 		w.FreshnessDecay = decay
 	}
@@ -439,9 +418,9 @@ func validate(cfg *Config) error {
 	if cfg.Retrieval.FreshnessDecay == 0 {
 		cfg.Retrieval.FreshnessDecay = 0.02
 	}
-	setSourceWeightsDefault(&cfg.Retrieval.Memory, 0.5, 0.3, 0.2, cfg.Retrieval.FreshnessDecay, 0.5, 8)
-	setSourceWeightsDefault(&cfg.Retrieval.Note, 0.5, 0.3, 0.0, 0, 0.5, 5)
-	setSourceWeightsDefault(&cfg.Retrieval.History, 0.6, 0.3, 0.1, 0.005, 0.5, 5)
+	setSourceWeightsDefault(&cfg.Retrieval.Memory, cfg.Retrieval.FreshnessDecay, 0.5, 8)
+	setSourceWeightsDefault(&cfg.Retrieval.Note, 0, 0.5, 5)
+	setSourceWeightsDefault(&cfg.Retrieval.History, 0.005, 0.5, 5)
 	if cfg.Reflection.LaunchMaxIterations == 0 {
 		cfg.Reflection.LaunchMaxIterations = 8
 	}

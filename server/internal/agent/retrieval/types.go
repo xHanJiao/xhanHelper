@@ -8,13 +8,11 @@ import (
 
 // ContextPacket — 上下文片段，来自任意数据源（也是 SearchProvider 的返回类型）。
 type ContextPacket struct {
-	ID           string  // 唯一标识
-	Type         string  // memory | note | history | theme | mission
-	Text         string  // 注入 prompt 的文本
-	Score        float64 // 向量检索原始分数
-	KeywordScore float64 // bigram 关键词匹配分数
-	FinalScore   float64 // ranker 综合分数（向量*W + 关键词*W + 新鲜度*W），用于跨 provider 排序
-	Meta         any     `json:"-"` // provider 自定义元数据（memory_ids, note_ids, trace_items）
+	ID    string  // 唯一标识
+	Type  string  // memory | note | history | theme | mission
+	Text  string  // 注入 prompt 的文本
+	Score float64 // 向量检索原始分数
+	Meta  any     `json:"-"` // provider 自定义元数据（memory_ids, note_ids, trace_items）
 }
 
 // NearMissItem — 被阈值或规则过滤掉的候选项，用于 trace 调试

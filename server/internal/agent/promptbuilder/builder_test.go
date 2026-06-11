@@ -85,10 +85,10 @@ func TestRoleResolutionPriority(t *testing.T) {
 
 func TestBuildResultMetadata(t *testing.T) {
 	items := []retrieval.ContextPacket{
-		{ID: "mem-1", Type: "memory", Text: "记忆1", FinalScore: 0.9},
-		{ID: "mem-2", Type: "memory", Text: "记忆2", FinalScore: 0.7},
-		{ID: "note-1", Type: "note", Text: "笔记1", FinalScore: 0.65},
-		{ID: "theme-1", Type: "theme", Text: "主题1", FinalScore: 1.0},
+		{ID: "mem-1", Type: "memory", Text: "记忆1", Score: 0.9},
+		{ID: "mem-2", Type: "memory", Text: "记忆2", Score: 0.7},
+		{ID: "note-1", Type: "note", Text: "笔记1", Score: 0.65},
+		{ID: "theme-1", Type: "theme", Text: "主题1", Score: 1.0},
 	}
 
 	result := &BuildResult{IDsByType: make(map[string][]string)}
@@ -148,9 +148,9 @@ func TestBuildSortsByScore(t *testing.T) {
 	prov := &testSearchProvider{
 		name: "multi",
 		items: []retrieval.ContextPacket{
-			{Text: "LOW", FinalScore: 0.3, Type: "multi"},
-			{Text: "MID", FinalScore: 0.5, Type: "multi"},
-			{Text: "HIGH", FinalScore: 1.0, Type: "multi"},
+			{Text: "LOW", Score: 0.3, Type: "multi"},
+			{Text: "MID", Score: 0.5, Type: "multi"},
+			{Text: "HIGH", Score: 1.0, Type: "multi"},
 		},
 	}
 
@@ -174,7 +174,7 @@ func TestBuildSortsByScore(t *testing.T) {
 		t.Fatal("not all search results rendered")
 	}
 	if !(highIdx < midIdx && midIdx < lowIdx) {
-		t.Errorf("items within group should be sorted by FinalScore: HIGH at %d, MID at %d, LOW at %d", highIdx, midIdx, lowIdx)
+		t.Errorf("items within group should be sorted by Score: HIGH at %d, MID at %d, LOW at %d", highIdx, midIdx, lowIdx)
 	}
 }
 
@@ -182,7 +182,7 @@ func TestBuildSearchProviderError(t *testing.T) {
 	errProvider := &errorSearchProvider{}
 	okProvider := &testSearchProvider{
 		name:  "ok",
-		items: []retrieval.ContextPacket{{Text: "OK", FinalScore: 0.5, Type: "ok"}},
+		items: []retrieval.ContextPacket{{Text: "OK", Score: 0.5, Type: "ok"}},
 	}
 
 	b := &SystemPromptBuilder{
@@ -236,8 +236,8 @@ func (p *errorSearchProvider) Search(ctx context.Context, opts retrieval.SearchO
 
 func TestBuildTraceItems(t *testing.T) {
 	packets := []retrieval.ContextPacket{
-		{ID: "mem-1", Text: "记忆1内容", Score: 0.9, KeywordScore: 0.7},
-		{ID: "mem-2", Text: "记忆2内容", Score: 0.8, KeywordScore: 0.6},
+		{ID: "mem-1", Text: "记忆1内容", Score: 0.9},
+		{ID: "mem-2", Text: "记忆2内容", Score: 0.8},
 	}
 	nearMiss := []retrieval.NearMissItem{
 		{ID: "mem-3", VectorScore: 0.4, Reason: "below_threshold"},
@@ -253,15 +253,18 @@ func TestBuildTraceItems(t *testing.T) {
 	if items[0].DiscardReason != "" {
 		t.Errorf("selected items should have empty DiscardReason, got %q", items[0].DiscardReason)
 	}
-	if items[1].KeywordScore != 0.6 {
-		t.Errorf("item 1 keyword score: expected 0.6, got %f", items[1].KeywordScore)
+	if items[0].Score != 0.9 {
+		t.Errorf("item 0 score: expected 0.9, got %f", items[0].Score)
+	}
+	if items[1].Score != 0.8 {
+		t.Errorf("item 1 score: expected 0.8, got %f", items[1].Score)
 	}
 
 	if items[2].DiscardReason != "below_threshold" {
 		t.Errorf("near-miss should have DiscardReason, got %q", items[2].DiscardReason)
 	}
-	if items[2].VectorScore != 0.4 {
-		t.Errorf("near-miss vector score: expected 0.4, got %f", items[2].VectorScore)
+	if items[2].Score != 0.4 {
+		t.Errorf("near-miss score: expected 0.4, got %f", items[2].Score)
 	}
 	if items[3].DiscardReason != "wrong_prefix" {
 		t.Errorf("near-miss should have DiscardReason, got %q", items[3].DiscardReason)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	"xhan-helper/internal/llm"
@@ -16,11 +17,11 @@ type HistorySource struct {
 	vectorStore   VectorStore
 	msgRepo       *service.MessageRepo
 	embeddingRepo *service.EmbeddingRepo
-	ranker        *Ranker
+	decayer       *TimeDecay
 }
 
-func NewHistorySource(vs VectorStore, msgRepo *service.MessageRepo, embeddingRepo *service.EmbeddingRepo, ranker *Ranker) *HistorySource {
-	return &HistorySource{vectorStore: vs, msgRepo: msgRepo, embeddingRepo: embeddingRepo, ranker: ranker}
+func NewHistorySource(vs VectorStore, msgRepo *service.MessageRepo, embeddingRepo *service.EmbeddingRepo, decayer *TimeDecay) *HistorySource {
+	return &HistorySource{vectorStore: vs, msgRepo: msgRepo, embeddingRepo: embeddingRepo, decayer: decayer}
 }
 
 func (s *HistorySource) Name() string { return "history" }
@@ -65,15 +66,16 @@ func (s *HistorySource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 }
 
 type historyHit struct {
-	msg      *model.Message
-	vecScore float64
+	msg       *model.Message
+	vecScore  float64
+	freshness float64
 }
 
-// filterHits 从向量搜索结果中过滤出有效的历史消息命中，返回 hits 和 nearMiss。
-func (s *HistorySource) filterHits(ctx context.Context, queryVec []float64, userID, convID string,
-	threshold float64, limit int, excludeMsgIDs map[string]bool) ([]historyHit, []NearMissItem, error) {
+// filterHits 从向量搜索结果中过滤出有效的历史消息命中，不按阈值过滤，阈值延迟到 Fetch 中与新鲜度组合
+func (s *HistorySource) filterHits(ctx context.Context, queryVec []float64, userID string,
+	excludeMsgIDs map[string]bool) ([]historyHit, []NearMissItem, error) {
 
-	results := s.vectorStore.Search(queryVec, limit*2, func(e Entry) bool {
+	results := s.vectorStore.Search(queryVec, 20, func(e Entry) bool {
 		return e.Metadata["type"] == "msg" && e.Metadata["user_id"] == userID
 	})
 	if len(results) == 0 {
@@ -88,10 +90,6 @@ func (s *HistorySource) filterHits(ctx context.Context, queryVec []float64, user
 			continue
 		}
 		msgID := strings.TrimPrefix(res.ID, "msg:")
-		if res.Score < threshold {
-			nearMiss = append(nearMiss, NearMissItem{ID: msgID, Text: msgID, VectorScore: res.Score, Reason: "below_threshold"})
-			continue
-		}
 		if excludeMsgIDs != nil && excludeMsgIDs[msgID] {
 			nearMiss = append(nearMiss, NearMissItem{ID: msgID, Text: msgID, VectorScore: res.Score, Reason: "already_in_context"})
 			continue
@@ -105,45 +103,43 @@ func (s *HistorySource) filterHits(ctx context.Context, queryVec []float64, user
 			nearMiss = append(nearMiss, NearMissItem{ID: msgID, Text: msgID, VectorScore: res.Score, Reason: "not_owner"})
 			continue
 		}
-		hits = append(hits, historyHit{msg: msg, vecScore: res.Score})
+		freshness := s.decayer.Freshness(msg.CreatedAt)
+		hits = append(hits, historyHit{msg: msg, vecScore: res.Score, freshness: freshness})
 	}
 	return hits, nearMiss, nil
 }
 
-// buildPackets 将 scorer 结果 + 对应轮裁剪格式化为 ContextPacket（相关度降序）。
-// 同时返回无法匹配到轮或裁剪后为空的 nearMiss 条目。
-func buildPackets(scored []scoreResult, roundByUserMsgID map[string][]model.Message) ([]ContextPacket, []NearMissItem) {
+// buildPackets 将 historyHit 结果格式化为 ContextPacket（向量分降序）
+func buildPackets(hits []historyHit, roundByUserMsgID map[string][]model.Message) ([]ContextPacket, []NearMissItem) {
 	var packets []ContextPacket
 	var nearMiss []NearMissItem
-	for _, sr := range scored {
-		round, ok := roundByUserMsgID[sr.ID]
+	for _, h := range hits {
+		round, ok := roundByUserMsgID[h.msg.ID]
 		if !ok {
-			nearMiss = append(nearMiss, NearMissItem{ID: sr.ID, Text: sr.ID, VectorScore: sr.VectorScore, Reason: "round_empty"})
+			nearMiss = append(nearMiss, NearMissItem{ID: h.msg.ID, Text: h.msg.ID, VectorScore: h.vecScore, Reason: "round_empty"})
 			continue
 		}
-		filtered := FilterMessageRound(round, sr.ID)
+		filtered := FilterMessageRound(round, h.msg.ID)
 		if len(filtered) == 0 {
-			nearMiss = append(nearMiss, NearMissItem{ID: sr.ID, Text: sr.ID, VectorScore: sr.VectorScore, Reason: "round_empty"})
+			nearMiss = append(nearMiss, NearMissItem{ID: h.msg.ID, Text: h.msg.ID, VectorScore: h.vecScore, Reason: "round_empty"})
 			continue
 		}
-		text := FormatMessageRound(filtered, sr.FinalScore)
+		text := FormatMessageRound(filtered, h.vecScore)
 		packets = append(packets, ContextPacket{
-			ID:           sr.ID,
-			Type:         "history",
-			Text:         text,
-			Score:        sr.VectorScore,
-			FinalScore:   sr.FinalScore,
-			KeywordScore: sr.KeywordScore,
+			ID:    h.msg.ID,
+			Type:  "history",
+			Text:  text,
+			Score: h.vecScore,
 		})
 	}
 	return packets, nearMiss
 }
 
-// fetchRounds 根据 scorer 结果批量获取完整轮，返回 ID → round 映射。
-func (s *HistorySource) fetchRounds(ctx context.Context, scored []scoreResult) (map[string][]model.Message, error) {
+// fetchRounds 根据 hits 批量获取完整轮，返回 ID → round 映射
+func (s *HistorySource) fetchRounds(ctx context.Context, hits []historyHit) (map[string][]model.Message, error) {
 	var ids []string
-	for _, sr := range scored {
-		ids = append(ids, sr.ID)
+	for _, h := range hits {
+		ids = append(ids, h.msg.ID)
 	}
 	rounds, err := s.msgRepo.GetRoundsByUserMsgIDs(ctx, ids)
 	if err != nil {
@@ -160,14 +156,12 @@ func (s *HistorySource) fetchRounds(ctx context.Context, scored []scoreResult) (
 
 func (s *HistorySource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextPacket, []NearMissItem, error) {
 	queryVec := opts.Embedding
-	query := opts.Query
 	userID := opts.UserID
-	convID := opts.ConversationID
 	threshold := opts.History.Threshold
 	limit := opts.History.Limit
 	excludeMsgIDs := opts.ExcludeMsgIDs
 
-	hits, nearMiss, err := s.filterHits(ctx, queryVec, userID, convID, threshold, limit, excludeMsgIDs)
+	hits, nearMiss, err := s.filterHits(ctx, queryVec, userID, excludeMsgIDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -175,23 +169,49 @@ func (s *HistorySource) Fetch(ctx context.Context, opts SearchOptions) ([]Contex
 		return nil, nearMiss, nil
 	}
 
-	inputs := make([]scoreInput, len(hits))
-	for i, h := range hits {
-		inputs[i] = scoreInput{
-			ID:          h.msg.ID,
-			Content:     h.msg.Content,
-			CreatedAt:   h.msg.CreatedAt,
-			VectorScore: h.vecScore,
+	// 用 V×F >= threshold 过滤
+	var passed []historyHit
+	for _, h := range hits {
+		passScore := h.vecScore * h.freshness
+		if passScore >= threshold {
+			passed = append(passed, h)
+		} else {
+			nearMiss = append(nearMiss, NearMissItem{
+				ID:          h.msg.ID,
+				Text:        h.msg.ID,
+				VectorScore: h.vecScore,
+				Reason:      "below_threshold",
+			})
 		}
 	}
-	scored := s.ranker.Score(query, inputs)
+	if len(passed) == 0 {
+		return nil, nearMiss, nil
+	}
 
-	roundByUserMsgID, err := s.fetchRounds(ctx, scored)
+	// 按向量分降序
+	sort.Slice(passed, func(i, j int) bool {
+		return passed[i].vecScore > passed[j].vecScore
+	})
+
+	// 取 top limit
+	if len(passed) > limit {
+		for _, h := range passed[limit:] {
+			nearMiss = append(nearMiss, NearMissItem{
+				ID:          h.msg.ID,
+				Text:        h.msg.ID,
+				VectorScore: h.vecScore,
+				Reason:      "over_limit",
+			})
+		}
+		passed = passed[:limit]
+	}
+
+	roundByUserMsgID, err := s.fetchRounds(ctx, passed)
 	if err != nil {
 		return nil, nearMiss, err
 	}
 
-	packets, extraNearMiss := buildPackets(scored, roundByUserMsgID)
+	packets, extraNearMiss := buildPackets(passed, roundByUserMsgID)
 	nearMiss = append(nearMiss, extraNearMiss...)
 	return packets, nearMiss, nil
 }

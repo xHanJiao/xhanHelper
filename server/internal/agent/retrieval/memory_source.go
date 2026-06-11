@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	"xhan-helper/internal/app"
@@ -20,17 +21,17 @@ type MemorySource struct {
 	embeddingRepo *service.EmbeddingRepo
 	chunkRepo     *service.EmbeddingChunkRepo
 	chunkBuilder  app.ChunkEmbedder
-	ranker        *Ranker
+	decayer       *TimeDecay
 }
 
 func NewMemorySource(vs VectorStore, memRepo *service.UserMemoryRepo, embeddingRepo *service.EmbeddingRepo,
-	chunkRepo *service.EmbeddingChunkRepo, chunkBuilder app.ChunkEmbedder, ranker *Ranker) *MemorySource {
-	if ranker == nil {
-		ranker = DefaultRanker()
+	chunkRepo *service.EmbeddingChunkRepo, chunkBuilder app.ChunkEmbedder, decayer *TimeDecay) *MemorySource {
+	if decayer == nil {
+		decayer = NewTimeDecay(0)
 	}
 	return &MemorySource{
 		vectorStore: vs, memRepo: memRepo, embeddingRepo: embeddingRepo,
-		chunkRepo: chunkRepo, chunkBuilder: chunkBuilder, ranker: ranker,
+		chunkRepo: chunkRepo, chunkBuilder: chunkBuilder, decayer: decayer,
 	}
 }
 
@@ -38,15 +39,14 @@ func (s *MemorySource) Name() string { return "memory" }
 
 func (s *MemorySource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextPacket, []NearMissItem, error) {
 	queryVec := opts.Embedding
-	query := opts.Query
 	userID := opts.UserID
 	threshold := opts.Memory.Threshold
 	limit := opts.Memory.Limit
 
 	var nearMiss []NearMissItem
 
-	// 1. 主路径：chunk 级向量检索，先按 memID 去重取最高分
-	candidates := make(map[string]float64) // memID → best chunk score
+	// 1. Chunk 级向量检索，按 memID 去重取最高分
+	chunkCandidates := make(map[string]float64) // memID → best chunk score
 
 	chunkResults := s.vectorStore.Search(queryVec, limit*8, func(e Entry) bool {
 		return e.Metadata["type"] == "chunk" &&
@@ -59,74 +59,69 @@ func (s *MemorySource) Fetch(ctx context.Context, opts SearchOptions) ([]Context
 			nearMiss = append(nearMiss, NearMissItem{ID: res.ID, Text: res.ID, VectorScore: res.Score, Reason: "bad_chunk_id"})
 			continue
 		}
-		if old, ok := candidates[memID]; !ok || res.Score > old {
-			candidates[memID] = res.Score
+		if old, ok := chunkCandidates[memID]; !ok || res.Score > old {
+			chunkCandidates[memID] = res.Score
 		}
 	}
 
-	// 对去重后的候选按阈值分流
-	hitMap := make(map[string]float64)
-	for memID, score := range candidates {
-		if score >= threshold {
-			hitMap[memID] = score
-			log.Printf("[vector] memory chunk hit: memID=%s, score=%.4f", memID, score)
-		} else {
-			nearMiss = append(nearMiss, NearMissItem{ID: memID, Text: memID, VectorScore: score, Reason: "below_threshold"})
+	// 2. 全量 memory 嵌入搜索，排除已在 chunk 中命中的
+	fullCandidates := make(map[string]float64)
+	fullResults := s.vectorStore.Search(queryVec, limit*2, func(e Entry) bool {
+		return e.Metadata["type"] == "mem" && e.Metadata["user_id"] == userID
+	})
+	for _, res := range fullResults {
+		if !strings.HasPrefix(res.ID, "mem:") {
+			nearMiss = append(nearMiss, NearMissItem{ID: res.ID, Text: res.ID, VectorScore: res.Score, Reason: "wrong_prefix"})
+			continue
+		}
+		memID := strings.TrimPrefix(res.ID, "mem:")
+		if _, exists := chunkCandidates[memID]; exists {
+			continue
+		}
+		if _, exists := fullCandidates[memID]; !exists {
+			fullCandidates[memID] = res.Score
 		}
 	}
 
-	// 2. 回退路径：全量 memory 嵌入
-	if len(hitMap) < limit {
-		fullResults := s.vectorStore.Search(queryVec, limit*2, func(e Entry) bool {
-			return e.Metadata["type"] == "mem" && e.Metadata["user_id"] == userID
-		})
-		for _, res := range fullResults {
-			if !strings.HasPrefix(res.ID, "mem:") {
-				nearMiss = append(nearMiss, NearMissItem{ID: res.ID, Text: res.ID, VectorScore: res.Score, Reason: "wrong_prefix"})
-				continue
-			}
-			memID := strings.TrimPrefix(res.ID, "mem:")
-			if res.Score < threshold {
-				nearMiss = append(nearMiss, NearMissItem{ID: memID, Text: memID, VectorScore: res.Score, Reason: "below_threshold"})
-				continue
-			}
-			if _, exists := hitMap[memID]; !exists {
-				hitMap[memID] = res.Score
-				if len(hitMap) >= limit {
-					break
-				}
-			}
-		}
-	}
-
-	if len(hitMap) == 0 {
+	if len(chunkCandidates) == 0 && len(fullCandidates) == 0 {
 		return nil, nearMiss, nil
 	}
 
-	// 3. 转成有序切片
+	// 3. 分组排序、裁剪（各组取 top limit*2 进入新鲜度评定）
 	type hit struct {
 		id    string
 		score float64
 	}
-	hits := make([]hit, 0, len(hitMap))
-	for id, score := range hitMap {
-		hits = append(hits, hit{id: id, score: score})
+
+	chunkHits := make([]hit, 0, len(chunkCandidates))
+	for id, score := range chunkCandidates {
+		chunkHits = append(chunkHits, hit{id: id, score: score})
 	}
-	for i := 0; i < len(hits); i++ {
-		for j := i + 1; j < len(hits); j++ {
-			if hits[j].score > hits[i].score {
-				hits[i], hits[j] = hits[j], hits[i]
-			}
-		}
-	}
-	if len(hits) > limit {
-		hits = hits[:limit]
+	sort.Slice(chunkHits, func(i, j int) bool { return chunkHits[i].score > chunkHits[j].score })
+	if len(chunkHits) > limit*2 {
+		chunkHits = chunkHits[:limit*2]
 	}
 
-	memIDs := make([]string, len(hits))
-	scoreMap := make(map[string]float64, len(hits))
-	for i, h := range hits {
-		memIDs[i] = h.id
+	fullHits := make([]hit, 0, len(fullCandidates))
+	for id, score := range fullCandidates {
+		fullHits = append(fullHits, hit{id: id, score: score})
+	}
+	sort.Slice(fullHits, func(i, j int) bool { return fullHits[i].score > fullHits[j].score })
+	if len(fullHits) > limit*2 {
+		fullHits = fullHits[:limit*2]
+	}
+
+	// 4. 加载所有 memory
+	memIDs := make([]string, 0, len(chunkHits)+len(fullHits))
+	scoreMap := make(map[string]float64, len(chunkHits)+len(fullHits))
+	fromChunk := make(map[string]bool, len(chunkHits))
+	for _, h := range chunkHits {
+		memIDs = append(memIDs, h.id)
+		scoreMap[h.id] = h.score
+		fromChunk[h.id] = true
+	}
+	for _, h := range fullHits {
+		memIDs = append(memIDs, h.id)
 		scoreMap[h.id] = h.score
 	}
 
@@ -145,25 +140,52 @@ func (s *MemorySource) Fetch(ctx context.Context, opts SearchOptions) ([]Context
 		}
 	}()
 
-	// 4. 加载匹配的 chunk 片段
-	chunks, _ := s.chunkRepo.BatchGetByParentIDs(ctx, "memory", memIDs)
-	chunkByParent := make(map[string][]model.EmbeddingChunk)
-	for _, c := range chunks {
-		chunkByParent[c.ParentID] = append(chunkByParent[c.ParentID], c)
+	// 5. 新鲜度过滤：V×F >= threshold，分组记分
+	type scoredHit struct {
+		mem      model.UserMemory
+		vecScore float64
+	}
+	var chunkScored []scoredHit
+	var fullScored []scoredHit
+	for _, m := range memories {
+		vs := scoreMap[m.ID]
+		fresh := s.decayer.Freshness(m.CreatedAt)
+		if vs*fresh >= threshold {
+			sh := scoredHit{mem: m, vecScore: vs}
+			if fromChunk[m.ID] {
+				chunkScored = append(chunkScored, sh)
+			} else {
+				fullScored = append(fullScored, sh)
+			}
+		} else {
+			nearMiss = append(nearMiss, NearMissItem{
+				ID: m.ID, Text: m.MemoryValue, VectorScore: vs,
+				Reason: "below_threshold",
+			})
+		}
 	}
 
-	// 5. 评分与格式化
-	inputs := make([]scoreInput, len(memories))
-	memByID := make(map[string]model.UserMemory, len(memories))
-	for i, m := range memories {
-		inputs[i] = scoreInput{ID: m.ID, Content: m.MemoryValue, CreatedAt: m.CreatedAt, VectorScore: scoreMap[m.ID]}
-		memByID[m.ID] = m
+	// 组内按向量分降序
+	sort.Slice(chunkScored, func(i, j int) bool { return chunkScored[i].vecScore > chunkScored[j].vecScore })
+	sort.Slice(fullScored, func(i, j int) bool { return fullScored[i].vecScore > fullScored[j].vecScore })
+
+	// 合并：chunk 组在前
+	scored := append(chunkScored, fullScored...)
+	if len(scored) > limit {
+		for _, s := range scored[limit:] {
+			nearMiss = append(nearMiss, NearMissItem{
+				ID:          s.mem.ID,
+				Text:        s.mem.MemoryValue,
+				VectorScore: s.vecScore,
+				Reason:      "over_limit",
+			})
+		}
+		scored = scored[:limit]
 	}
-	scored := s.ranker.Score(query, inputs)
 
 	packets := make([]ContextPacket, 0, len(scored))
 	for _, sc := range scored {
-		m := memByID[sc.ID]
+		m := sc.mem
 		topicPart := ""
 		if m.Topic != "" {
 			topicPart = fmt.Sprintf("[%s] ", m.Topic)
@@ -174,17 +196,12 @@ func (s *MemorySource) Fetch(ctx context.Context, opts SearchOptions) ([]Context
 			m.MemoryValue,
 			m.ConfirmCount,
 			m.LastConfirmedAt.In(config.BJ).Format("01-02"),
-			sc.FinalScore)
-		if matchedChunks := chunkByParent[m.ID]; len(matchedChunks) > 0 {
-			text += formatChunkSnippets(matchedChunks)
-		}
+			sc.vecScore)
 		packets = append(packets, ContextPacket{
-			ID:           sc.ID,
-			Type:         "memory",
-			Text:         text,
-			Score:        sc.VectorScore,
-			KeywordScore: sc.KeywordScore,
-			FinalScore:   sc.FinalScore,
+			ID:    sc.mem.ID,
+			Type:  "memory",
+			Text:  text,
+			Score: sc.vecScore,
 		})
 	}
 	return packets, nearMiss, nil

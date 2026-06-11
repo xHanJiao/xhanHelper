@@ -68,23 +68,14 @@ search:
 retrieval:
   freshness_decay: 0.02           # 时间衰减系数，作为默认值
   memory:
-    vector_weight: 0.5
-    keyword_weight: 0.3
-    freshness_weight: 0.2
     freshness_decay: 0.01
     threshold: 0.5
     limit: 8
   note:
-    vector_weight: 0.5
-    keyword_weight: 0.3
-    freshness_weight: 0.0
     freshness_decay: 0
     threshold: 0.5
     limit: 5
   history:
-    vector_weight: 0.6
-    keyword_weight: 0.3
-    freshness_weight: 0.1
     freshness_decay: 0.005
     threshold: 0.5
     limit: 5

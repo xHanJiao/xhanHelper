@@ -26,17 +26,17 @@ type StaticProvider interface {
 
 // SearchResult — SearchProvider 的检索结果。
 type SearchResult struct {
-	Items      []retrieval.ContextPacket // 注入 prompt 的条目，按 FinalScore 参与跨 provider 排序
+	Items      []retrieval.ContextPacket // 注入 prompt 的条目，按向量分参与跨 provider 排序
 	TraceItems []TraceItem               // 全部候选项得分明细（含 near-miss），供调试面板展示
 }
 
 // SearchProvider — Layer 3 动态上下文 provider 接口。
 //
 // 每个 provider 独立完成「检索 → 打分 → 返回 SearchResult」：
-//   - Items: 每条命中为一个 ContextPacket，FinalScore 为 ranker 综合分
+//   - Items: 每条命中为一个 ContextPacket，Score 为向量分
 //   - TraceItems: 全部候选项（已选中 + near-miss），写入 message.extra 供调试
 //
-// Items 由 Builder 统一按 FinalScore 降序排列后注入 prompt。
+// Items 由 Builder 统一按 Score 降序排列后注入 prompt。
 type SearchProvider interface {
 	Name() string
 	SectionHeader() string // 注入 prompt 时的 section 标题，空字符串=不分组输出
@@ -68,15 +68,13 @@ type TraceInput struct {
 
 // TraceItem — 单条候选资源的得分明细，写入 message.extra 供调试面板展示。
 //
-// 已选中项：Score = FinalScore（ranker 综合分），DiscardReason 为空。
-// 未选中项（near-miss）：VectorScore 有值，DiscardReason 说明丢弃原因（below_threshold / same_conversation / ...）。
+// 已选中项：Score = 向量分，DiscardReason 为空。
+// 未选中项（near-miss）：Score 有值，DiscardReason 说明丢弃原因（below_threshold / same_conversation / ...）。
 type TraceItem struct {
 	ID             string  `json:"id"`
 	Text           string  `json:"text,omitempty"`            // 截断的文本摘要
-	Score          float64 `json:"score"`                     // 综合得分（已选中）/ 0（未选中）
-	VectorScore    float64 `json:"vector_score,omitempty"`    // 向量相似度
-	KeywordScore   float64 `json:"keyword_score,omitempty"`   // 关键词匹配分
-	FreshnessScore float64 `json:"freshness_score,omitempty"` // 新鲜度衰减
+	Score          float64 `json:"score"`                     // 向量相似度
+	FreshnessScore float64 `json:"freshness_score,omitempty"` // 新鲜度值
 	DiscardReason  string  `json:"discard_reason,omitempty"`  // 丢弃原因，空=已选中
 }
 

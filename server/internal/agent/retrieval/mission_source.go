@@ -93,11 +93,10 @@ func (s *MissionSource) Fetch(ctx context.Context, opts SearchOptions) ([]Contex
 
 		if h.score >= threshold {
 			selected = append(selected, ContextPacket{
-				ID:         m.ID,
-				Type:       "mission",
-				Text:       text,
-				Score:      h.score,
-				FinalScore: h.score,
+				ID:    m.ID,
+				Type:  "mission",
+				Text:  text,
+				Score: h.score,
 			})
 		} else {
 			nearMiss = append(nearMiss, NearMissItem{

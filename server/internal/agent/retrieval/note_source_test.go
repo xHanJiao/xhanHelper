@@ -2,7 +2,6 @@ package retrieval
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -62,7 +61,7 @@ func setupNoteSource(t *testing.T) (*NoteSource, func()) {
 		chunkRepo:     chunkRepo,
 		embeddingRepo: embeddingRepo,
 		chunkBuilder:  &stubChunkBuilder{},
-		ranker:        DefaultRanker(),
+		decayer:       NewTimeDecay(0),
 	}, func() {}
 }
 
@@ -265,29 +264,6 @@ func TestNoteSource_NoDuplicate_ChunkAndFullHit(t *testing.T) {
 }
 
 // 用例7：返回结果附带匹配 chunk 片段
-func TestNoteSource_MatchedChunkSnippets(t *testing.T) {
-	src, cleanup := setupNoteSource(t)
-	defer cleanup()
-	seedNotes(t, src.noteRepo)
-	seedChunks(t, src.chunkRepo)
-
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
-		chunkResult("chunk:note:n1/0", "n1", 0.85),
-	}}
-
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
-	if err != nil {
-		t.Fatalf("Fetch: %v", err)
-	}
-	// 应包含 "匹配片段" 字样
-	if !strings.Contains(packets[0].Text, "匹配片段") {
-		t.Error("返回文本应包含匹配的 chunk 片段")
-	}
-	if !strings.Contains(packets[0].Text, "5月喝了3次啤酒") {
-		t.Error("返回文本应包含 chunk 内容")
-	}
-}
-
 // 用例8：向量库空结果
 func TestNoteSource_EmptyResults(t *testing.T) {
 	src, cleanup := setupNoteSource(t)

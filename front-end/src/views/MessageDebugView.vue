@@ -451,9 +451,7 @@ onMounted(loadRound)
                       <tr style="border-bottom: 1px solid var(--color-border); text-align: left;">
                         <th style="padding: 4px 8px;">ID</th>
                         <th style="padding: 4px 8px;">文本</th>
-                        <th style="padding: 4px 8px;">综合分</th>
                         <th style="padding: 4px 8px;">向量分</th>
-                        <th style="padding: 4px 8px;">关键词</th>
                         <th style="padding: 4px 8px;">状态</th>
                       </tr>
                     </thead>
@@ -473,8 +471,6 @@ onMounted(loadRound)
                           </div>
                         </td>
                         <td style="padding: 4px 8px;">{{ item.score?.toFixed(3) || '-' }}</td>
-                        <td style="padding: 4px 8px;">{{ item.vector_score?.toFixed(3) || '-' }}</td>
-                        <td style="padding: 4px 8px;">{{ item.keyword_score?.toFixed(3) || '-' }}</td>
                         <td style="padding: 4px 8px;"><span style="color: var(--color-success);">✓ 已选中</span></td>
                       </tr>
                       <tr v-for="item in discardedItems(prov.items || [])" :key="item.id"
@@ -491,9 +487,7 @@ onMounted(loadRound)
                             <pre v-else style="font-size: 11px; line-height: 1.4; white-space: pre-wrap; margin: 0;">{{ traceItemText(prov.name, item) }}</pre>
                           </div>
                         </td>
-                        <td style="padding: 4px 8px;">-</td>
-                        <td style="padding: 4px 8px;">{{ item.vector_score?.toFixed(3) || '-' }}</td>
-                        <td style="padding: 4px 8px;">-</td>
+                        <td style="padding: 4px 8px;">{{ item.score?.toFixed(3) || '-' }}</td>
                         <td style="padding: 4px 8px; color: var(--color-warning);">✗ {{ item.discard_reason }}</td>
                       </tr>
                     </tbody>

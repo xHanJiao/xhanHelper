@@ -29,7 +29,7 @@ func setupMemorySource(t *testing.T) (*MemorySource, func()) {
 		chunkRepo:     chunkRepo,
 		embeddingRepo: embeddingRepo,
 		chunkBuilder:  &stubChunkBuilder{},
-		ranker:        DefaultRanker(),
+		decayer:       NewTimeDecay(0),
 	}, func() {}
 }
 
@@ -234,28 +234,6 @@ func TestMemorySource_NoDuplicate_ChunkAndFullHit(t *testing.T) {
 }
 
 // 用例7：返回结果附带匹配 chunk 片段
-func TestMemorySource_MatchedChunkSnippets(t *testing.T) {
-	src, cleanup := setupMemorySource(t)
-	defer cleanup()
-	seedMemories(t, src.memRepo)
-	seedMemChunks(t, src.chunkRepo)
-
-	src.vectorStore = &mockVectorStore{results: []SearchResult{
-		memChunkResult("chunk:memory:m1/0", "m1", 0.85),
-	}}
-
-	packets, _, err := src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "啤酒", UserID: "u1", ConversationID: "c1", Memory: SourceConfig{Threshold: 0.5, Limit: 5}})
-	if err != nil {
-		t.Fatalf("Fetch: %v", err)
-	}
-	if !strings.Contains(packets[0].Text, "匹配片段") {
-		t.Error("返回文本应包含匹配的 chunk 片段")
-	}
-	if !strings.Contains(packets[0].Text, "精酿啤酒") {
-		t.Error("返回文本应包含 chunk 内容")
-	}
-}
-
 // 用例8：向量库空结果
 func TestMemorySource_EmptyResults(t *testing.T) {
 	src, cleanup := setupMemorySource(t)

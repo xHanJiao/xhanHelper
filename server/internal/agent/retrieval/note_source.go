@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	"xhan-helper/internal/app"
@@ -19,17 +20,17 @@ type NoteSource struct {
 	embeddingRepo *service.EmbeddingRepo
 	chunkRepo     *service.EmbeddingChunkRepo
 	chunkBuilder  app.ChunkEmbedder
-	ranker        *Ranker
+	decayer       *TimeDecay
 }
 
 func NewNoteSource(vs VectorStore, noteRepo *service.NoteRepo, embeddingRepo *service.EmbeddingRepo,
-	chunkRepo *service.EmbeddingChunkRepo, chunkBuilder app.ChunkEmbedder, ranker *Ranker) *NoteSource {
-	if ranker == nil {
-		ranker = DefaultRanker()
+	chunkRepo *service.EmbeddingChunkRepo, chunkBuilder app.ChunkEmbedder, decayer *TimeDecay) *NoteSource {
+	if decayer == nil {
+		decayer = NewTimeDecay(0)
 	}
 	return &NoteSource{
 		vectorStore: vs, noteRepo: noteRepo, embeddingRepo: embeddingRepo,
-		chunkRepo: chunkRepo, chunkBuilder: chunkBuilder, ranker: ranker,
+		chunkRepo: chunkRepo, chunkBuilder: chunkBuilder, decayer: decayer,
 	}
 }
 
@@ -37,15 +38,14 @@ func (s *NoteSource) Name() string { return "note" }
 
 func (s *NoteSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextPacket, []NearMissItem, error) {
 	queryVec := opts.Embedding
-	query := opts.Query
 	userID := opts.UserID
 	threshold := opts.Note.Threshold
 	limit := opts.Note.Limit
 
 	var nearMiss []NearMissItem
 
-	// 1. 主路径：chunk 级向量检索，先按 noteID 去重取最高分
-	candidates := make(map[string]float64) // noteID → best chunk score
+	// 1. Chunk 级向量检索，按 noteID 去重取最高分
+	chunkCandidates := make(map[string]float64) // noteID → best chunk score
 
 	chunkResults := s.vectorStore.Search(queryVec, limit*8, func(e Entry) bool {
 		return e.Metadata["type"] == "chunk" &&
@@ -58,75 +58,69 @@ func (s *NoteSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextPa
 			nearMiss = append(nearMiss, NearMissItem{ID: res.ID, Text: res.ID, VectorScore: res.Score, Reason: "bad_chunk_id"})
 			continue
 		}
-		if old, ok := candidates[noteID]; !ok || res.Score > old {
-			candidates[noteID] = res.Score
+		if old, ok := chunkCandidates[noteID]; !ok || res.Score > old {
+			chunkCandidates[noteID] = res.Score
 		}
 	}
 
-	// 对去重后的候选按阈值分流
-	hitMap := make(map[string]float64)
-	for noteID, score := range candidates {
-		if score >= threshold {
-			hitMap[noteID] = score
-			log.Printf("[vector] note chunk hit: noteID=%s, score=%.4f", noteID, score)
-		} else {
-			nearMiss = append(nearMiss, NearMissItem{ID: noteID, Text: noteID, VectorScore: score, Reason: "below_threshold"})
+	// 2. 全量 note 嵌入搜索，排除已在 chunk 中命中的
+	fullCandidates := make(map[string]float64)
+	fullResults := s.vectorStore.Search(queryVec, limit*2, func(e Entry) bool {
+		return e.Metadata["type"] == "note" && e.Metadata["user_id"] == userID
+	})
+	for _, res := range fullResults {
+		if !strings.HasPrefix(res.ID, "note:") {
+			nearMiss = append(nearMiss, NearMissItem{ID: res.ID, Text: res.ID, VectorScore: res.Score, Reason: "wrong_prefix"})
+			continue
+		}
+		noteID := strings.TrimPrefix(res.ID, "note:")
+		if _, exists := chunkCandidates[noteID]; exists {
+			continue
+		}
+		if _, exists := fullCandidates[noteID]; !exists {
+			fullCandidates[noteID] = res.Score
 		}
 	}
 
-	// 2. 回退路径：全量 note 嵌入（chunk 未覆盖到的）
-	if len(hitMap) < limit {
-		fullResults := s.vectorStore.Search(queryVec, limit*2, func(e Entry) bool {
-			return e.Metadata["type"] == "note" && e.Metadata["user_id"] == userID
-		})
-		for _, res := range fullResults {
-			if !strings.HasPrefix(res.ID, "note:") {
-				nearMiss = append(nearMiss, NearMissItem{ID: res.ID, Text: res.ID, VectorScore: res.Score, Reason: "wrong_prefix"})
-				continue
-			}
-			noteID := strings.TrimPrefix(res.ID, "note:")
-			if res.Score < threshold {
-				nearMiss = append(nearMiss, NearMissItem{ID: noteID, Text: noteID, VectorScore: res.Score, Reason: "below_threshold"})
-				continue
-			}
-			if _, exists := hitMap[noteID]; !exists {
-				hitMap[noteID] = res.Score
-				if len(hitMap) >= limit {
-					break
-				}
-			}
-		}
-	}
-
-	if len(hitMap) == 0 {
+	if len(chunkCandidates) == 0 && len(fullCandidates) == 0 {
 		return nil, nearMiss, nil
 	}
 
-	// 3. 转成有序切片（按分数降序）
+	// 3. 分组排序、裁剪（各组取 top limit*2 进入新鲜度评定）
 	type hit struct {
 		id    string
 		score float64
 	}
-	hits := make([]hit, 0, len(hitMap))
-	for id, score := range hitMap {
-		hits = append(hits, hit{id: id, score: score})
+
+	chunkHits := make([]hit, 0, len(chunkCandidates))
+	for id, score := range chunkCandidates {
+		chunkHits = append(chunkHits, hit{id: id, score: score})
 	}
-	// 简单排序
-	for i := 0; i < len(hits); i++ {
-		for j := i + 1; j < len(hits); j++ {
-			if hits[j].score > hits[i].score {
-				hits[i], hits[j] = hits[j], hits[i]
-			}
-		}
-	}
-	if len(hits) > limit {
-		hits = hits[:limit]
+	sort.Slice(chunkHits, func(i, j int) bool { return chunkHits[i].score > chunkHits[j].score })
+	if len(chunkHits) > limit*2 {
+		chunkHits = chunkHits[:limit*2]
 	}
 
-	noteIDs := make([]string, len(hits))
-	scoreMap := make(map[string]float64, len(hits))
-	for i, h := range hits {
-		noteIDs[i] = h.id
+	fullHits := make([]hit, 0, len(fullCandidates))
+	for id, score := range fullCandidates {
+		fullHits = append(fullHits, hit{id: id, score: score})
+	}
+	sort.Slice(fullHits, func(i, j int) bool { return fullHits[i].score > fullHits[j].score })
+	if len(fullHits) > limit*2 {
+		fullHits = fullHits[:limit*2]
+	}
+
+	// 4. 加载所有 note
+	noteIDs := make([]string, 0, len(chunkHits)+len(fullHits))
+	scoreMap := make(map[string]float64, len(chunkHits)+len(fullHits))
+	fromChunk := make(map[string]bool, len(chunkHits))
+	for _, h := range chunkHits {
+		noteIDs = append(noteIDs, h.id)
+		scoreMap[h.id] = h.score
+		fromChunk[h.id] = true
+	}
+	for _, h := range fullHits {
+		noteIDs = append(noteIDs, h.id)
 		scoreMap[h.id] = h.score
 	}
 
@@ -138,36 +132,58 @@ func (s *NoteSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextPa
 		return nil, nil, fmt.Errorf("all hit note ids not found, ids: %v", noteIDs)
 	}
 
-	// 4. 加载匹配的 chunk 片段
-	chunks, _ := s.chunkRepo.BatchGetByParentIDs(ctx, "note", noteIDs)
-	chunkByParent := make(map[string][]model.EmbeddingChunk)
-	for _, c := range chunks {
-		chunkByParent[c.ParentID] = append(chunkByParent[c.ParentID], c)
+	// 5. 新鲜度过滤：V×F >= threshold，分组记分
+	type scoredHit struct {
+		note     model.Note
+		vecScore float64
+	}
+	var chunkScored []scoredHit
+	var fullScored []scoredHit
+	for _, n := range notes {
+		vs := scoreMap[n.ID]
+		fresh := s.decayer.Freshness(n.CreatedAt)
+		if vs*fresh >= threshold {
+			sh := scoredHit{note: n, vecScore: vs}
+			if fromChunk[n.ID] {
+				chunkScored = append(chunkScored, sh)
+			} else {
+				fullScored = append(fullScored, sh)
+			}
+		} else {
+			nearMiss = append(nearMiss, NearMissItem{
+				ID: n.ID, Text: n.Content, VectorScore: vs,
+				Reason: "below_threshold",
+			})
+		}
 	}
 
-	// 5. 评分与格式化
-	inputs := make([]scoreInput, len(notes))
-	noteByID := make(map[string]model.Note, len(notes))
-	for i, n := range notes {
-		inputs[i] = scoreInput{ID: n.ID, Content: n.Content, CreatedAt: n.CreatedAt, VectorScore: scoreMap[n.ID]}
-		noteByID[n.ID] = n
+	// 组内按向量分降序
+	sort.Slice(chunkScored, func(i, j int) bool { return chunkScored[i].vecScore > chunkScored[j].vecScore })
+	sort.Slice(fullScored, func(i, j int) bool { return fullScored[i].vecScore > fullScored[j].vecScore })
+
+	// 合并：chunk 组在前
+	scored := append(chunkScored, fullScored...)
+	if len(scored) > limit {
+		for _, s := range scored[limit:] {
+			nearMiss = append(nearMiss, NearMissItem{
+				ID:          s.note.ID,
+				Text:        s.note.Content,
+				VectorScore: s.vecScore,
+				Reason:      "over_limit",
+			})
+		}
+		scored = scored[:limit]
 	}
-	scored := s.ranker.Score(query, inputs)
 
 	packets := make([]ContextPacket, 0, len(scored))
 	for _, sc := range scored {
-		n := noteByID[sc.ID]
-		text := fmt.Sprintf("- [%s] %s (相关度 %.2f)\n", n.Topic, n.Content, sc.FinalScore)
-		if matchedChunks := chunkByParent[n.ID]; len(matchedChunks) > 0 {
-			text += formatChunkSnippets(matchedChunks)
-		}
+		n := sc.note
+		text := fmt.Sprintf("- [%s] %s (相关度 %.2f)\n", n.Topic, n.Content, sc.vecScore)
 		packets = append(packets, ContextPacket{
-			ID:           sc.ID,
-			Type:         "note",
-			Text:         text,
-			Score:        sc.VectorScore,
-			KeywordScore: sc.KeywordScore,
-			FinalScore:   sc.FinalScore,
+			ID:    sc.note.ID,
+			Type:  "note",
+			Text:  text,
+			Score: sc.vecScore,
 		})
 	}
 	return packets, nearMiss, nil
@@ -222,7 +238,6 @@ func (s *NoteSource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 			noteIDs[i] = n.ID
 		}
 
-		// 批量查已有 chunk
 		existingChunks, _ := s.chunkRepo.BatchGetByParentIDs(ctx, "note", noteIDs)
 		hasChunks := make(map[string]bool)
 		for _, c := range existingChunks {
@@ -230,7 +245,6 @@ func (s *NoteSource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 		}
 
 		for _, n := range notes {
-			// 补全量嵌入
 			existingEmb, err := s.embeddingRepo.GetByEntity(ctx, model.EntityTypeNote, n.ID)
 			if err != nil {
 				log.Printf("[vector] note warmup: GetByEntity error for %s: %v", n.ID, err)
@@ -250,7 +264,6 @@ func (s *NoteSource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 				embedded++
 			}
 
-			// 补 chunk
 			if !hasChunks[n.ID] && s.chunkBuilder != nil {
 				if cnt, err := s.chunkBuilder.BuildChunks(ctx, n.UserID, "note", n.ID, n.Content); err != nil {
 					log.Printf("[vector] note warmup: chunk build %s error: %v", n.ID[:8], err)
@@ -268,42 +281,18 @@ func (s *NoteSource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 		loaded, embedded, chunked, s.vectorStore.Size())
 }
 
-// parseChunkParentID 从 chunk ID 提取 parent note ID
-// chunk ID 格式: chunk:note:<noteID>/<index>
+// parseChunkParentID 从 chunk ID 提取 parent note/memory ID
+// chunk ID 格式: chunk:<parentType>:<parentID>/<index>
 func parseChunkParentID(chunkID string) string {
-	// 去掉 "chunk:" 前缀
 	rest := chunkID
 	if idx := strings.Index(chunkID, ":"); idx > 0 {
 		rest = chunkID[idx+1:]
 	}
-	// 去掉 parentType
 	if idx := strings.Index(rest, ":"); idx > 0 {
 		rest = rest[idx+1:]
 	}
-	// 去掉 /index 后缀
 	if idx := strings.LastIndex(rest, "/"); idx > 0 {
 		return rest[:idx]
 	}
 	return rest
-}
-
-// formatChunkSnippets 将匹配 chunk 片段格式化为上下文文本
-func formatChunkSnippets(chunks []model.EmbeddingChunk) string {
-	if len(chunks) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString("  匹配片段: ")
-	for i, c := range chunks {
-		if i > 0 {
-			sb.WriteString("; ")
-		}
-		text := c.Content
-		if len(text) > 120 {
-			text = text[:120]
-		}
-		sb.WriteString(text)
-	}
-	sb.WriteString("\n")
-	return sb.String()
 }

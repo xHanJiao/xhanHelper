@@ -186,8 +186,8 @@ func TestBuildMessagesForFlash_MixedMessages(t *testing.T) {
 	if len(msgs) != 4 {
 		t.Fatalf("expected 4 msgs, got %d", len(msgs))
 	}
-	if len(msgs[1].ToolCalls) != 1 {
-		t.Errorf("expected 1 tool call parsed, got %d", len(msgs[1].ToolCalls))
+	if len(msgs[1].ToolCalls) != 0 {
+		t.Errorf("expected 0 tool calls when useNativeFC=false, got %d", len(msgs[1].ToolCalls))
 	}
 	if !strings.Contains(msgs[2].Content, "已截断") {
 		t.Error("expected tool result truncated")

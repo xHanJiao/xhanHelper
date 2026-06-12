@@ -2,14 +2,17 @@ package retrieval
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/service"
 )
 
 // ThemeSource — 主题上下文数据源，负责向量检索活跃主题。
+// Phase 15: 三路搜索 — name+desc 向量 + 多历史消息向量 + fact chunk 向量。
 type ThemeSource struct {
 	themeStateRepo *service.ThemeStateRepo
 	vectorStore    VectorStore
@@ -22,7 +25,6 @@ func NewThemeSource(themeStateRepo *service.ThemeStateRepo, vs VectorStore) *The
 func (s *ThemeSource) Name() string { return "theme" }
 
 func (s *ThemeSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextPacket, []NearMissItem, error) {
-	queryVec := opts.Embedding
 	userID := opts.UserID
 	threshold := opts.Theme.Threshold
 
@@ -34,36 +36,44 @@ func (s *ThemeSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextP
 		return nil, nil, nil
 	}
 
-	// 向量搜索
-	vectorScores := make(map[string]float64)
-	if s.vectorStore != nil && len(queryVec) > 0 {
-		results := s.vectorStore.Search(queryVec, 20, func(e Entry) bool {
-			return e.Metadata["type"] == "theme" && e.Metadata["user_id"] == userID
-		})
-		for _, r := range results {
-			themeID := r.Metadata["theme_id"]
-			if themeID == "" {
-				continue
-			}
-			vectorScores[themeID] = r.Score
-		}
-		log.Printf("[theme] vector search: user_id=%s, matched=%d, threshold=%.2f",
-			userID, len(results), threshold)
+	// 并发搜索所有向量
+	var allVecs [][]float64
+	if len(opts.Embedding) > 0 {
+		allVecs = append(allVecs, opts.Embedding)
 	}
+	allVecs = append(allVecs, opts.HistoryEmbeddings...)
+	themeTopK := opts.Theme.Limit * 2
+	chunkTopK := opts.Theme.Limit * 3
+	if themeTopK == 0 {
+		themeTopK = 20
+	}
+	if chunkTopK == 0 {
+		chunkTopK = 30
+	}
+	searchRes := s.searchAll(allVecs, userID, themeTopK, chunkTopK)
+
+	log.Printf("[theme] vector search: user_id=%s, active=%d, matched=%d, threshold=%.2f",
+		userID, len(activeThemes), len(searchRes), threshold)
 
 	var selected []ContextPacket
 	var nearMiss []NearMissItem
 
 	for _, t := range activeThemes {
-		vecScore, hasVec := vectorScores[t.ID]
+		vecScore, hasVec := searchRes[t.ID]
 
 		if hasVec && vecScore >= threshold {
-			selected = append(selected, ContextPacket{
+			pkt := ContextPacket{
 				ID:    t.ID,
 				Type:  "theme",
 				Text:  t.Name,
 				Score: vecScore,
-			})
+				Meta: themeMeta{
+					Description: t.Description,
+					StateText:   t.StateText,
+					LatestFacts: extractLatestFacts(t.StateFacts, 3),
+				},
+			}
+			selected = append(selected, pkt)
 		} else {
 			reason := "other_active"
 			nmScore := 0.0
@@ -81,6 +91,113 @@ func (s *ThemeSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextP
 	}
 
 	return selected, nearMiss, nil
+}
+
+// searchAll 并发执行所有向量对 theme+chunk 的搜索，合并取每个主题最高分
+func (s *ThemeSource) searchAll(vectors [][]float64, userID string, themeTopK, chunkTopK int) map[string]float64 {
+	type searchJob struct {
+		vec      []float64
+		searcher func([]float64, string, int) map[string]float64
+		topK     int
+	}
+	var jobs []searchJob
+
+	for _, v := range vectors {
+		if len(v) > 0 {
+			jobs = append(jobs, searchJob{v, s.searchThemes, themeTopK})
+			jobs = append(jobs, searchJob{v, s.searchChunks, chunkTopK})
+		}
+	}
+
+	type result struct{ m map[string]float64 }
+	ch := make(chan result, len(jobs))
+	for _, j := range jobs {
+		go func(job searchJob) {
+			ch <- result{m: job.searcher(job.vec, userID, job.topK)}
+		}(j)
+	}
+
+	searchRes := make(map[string]float64)
+	for range jobs {
+		for id, score := range (<-ch).m {
+			if existing, ok := searchRes[id]; !ok || score > existing {
+				searchRes[id] = score
+			}
+		}
+	}
+	return searchRes
+}
+func (s *ThemeSource) searchThemes(queryVec []float64, userID string, topK int) map[string]float64 {
+	res := make(map[string]float64)
+	if len(queryVec) == 0 {
+		return res
+	}
+	results := s.vectorStore.Search(queryVec, topK, func(e Entry) bool {
+		return e.Metadata["type"] == "theme" && e.Metadata["user_id"] == userID
+	})
+	for _, r := range results {
+		themeID := r.Metadata["theme_id"]
+		if themeID == "" {
+			continue
+		}
+		if existing, ok := res[themeID]; !ok || r.Score > existing {
+			res[themeID] = r.Score
+		}
+	}
+	return res
+}
+
+// searchChunks 搜索 type=chunk && parent_type=theme 向量，返回 parent_id(=theme_id) → score
+func (s *ThemeSource) searchChunks(queryVec []float64, userID string, topK int) map[string]float64 {
+	res := make(map[string]float64)
+	if len(queryVec) == 0 {
+		return res
+	}
+	results := s.vectorStore.Search(queryVec, topK, func(e Entry) bool {
+		return e.Metadata["type"] == "chunk" &&
+			e.Metadata["parent_type"] == "theme" &&
+			e.Metadata["user_id"] == userID
+	})
+	for _, r := range results {
+		themeID := r.Metadata["parent_id"]
+		if themeID == "" {
+			continue
+		}
+		if existing, ok := res[themeID]; !ok || r.Score > existing {
+			res[themeID] = r.Score
+		}
+	}
+	return res
+}
+
+// themeMeta context packet 携带的元数据
+type themeMeta struct {
+	Description string   `json:"description"`
+	StateText   string   `json:"state_text"`
+	LatestFacts []string `json:"latest_facts"`
+}
+
+// extractLatestFacts 从 state_facts JSONL 中提取最新 N 条事实文本
+func extractLatestFacts(stateFacts string, n int) []string {
+	if stateFacts == "" {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSpace(stateFacts), "\n")
+	var facts []string
+	// 从尾部取最新 N 条
+	for i := len(lines) - 1; i >= 0 && len(facts) < n; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		var entry struct {
+			Fact string `json:"fact"`
+		}
+		if json.Unmarshal([]byte(line), &entry) == nil && entry.Fact != "" {
+			facts = append([]string{entry.Fact}, facts...) // 保持时间序
+		}
+	}
+	return facts
 }
 
 func (s *ThemeSource) Warmup(ctx context.Context, embedder *llm.Embedder) {

@@ -16,11 +16,12 @@ import (
 // BuildOptions — Build() 的入参。
 // orchestrator 在 Run() 中预计算 embedding 后传入，Builder 不自行 embed。
 type BuildOptions struct {
-	UserID         string
-	ConversationID string
-	UserMessage    string    // 用户原始输入（检索查询文本）
-	Embedding      []float64 // 用户消息 embedding（nil 则跳过检索）
-	AgentPrompt    string    // 自定义 agent 的 prompt（空则用默认 basePrompt）
+	UserID            string
+	ConversationID    string
+	UserMessage       string      // 用户原始输入（检索查询文本）
+	Embedding         []float64   // 当前用户消息 embedding（nil 则跳过检索）
+	AgentPrompt       string      // 自定义 agent 的 prompt（空则用默认 basePrompt）
+	HistoryEmbeddings [][]float64 // 最近 N 条用户消息 embedding，透传给 retrieval.SearchOptions → ThemeSource 做多历史主题搜索
 
 	// 可选检索覆盖（0 值表示使用 PromptConfig 默认值）
 	Memory  retrieval.SourceConfig
@@ -159,15 +160,16 @@ func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts Buil
 	}
 
 	searchOpts := retrieval.SearchOptions{
-		Query:          opts.UserMessage,
-		UserID:         opts.UserID,
-		ConversationID: opts.ConversationID,
-		Embedding:      opts.Embedding,
-		Memory:         opts.Memory,
-		Note:           opts.Note,
-		History:        opts.History,
-		Theme:          opts.Theme,
-		ExcludeMsgIDs:  opts.ExcludeMsgIDs,
+		Query:             opts.UserMessage,
+		UserID:            opts.UserID,
+		ConversationID:    opts.ConversationID,
+		Embedding:         opts.Embedding,
+		HistoryEmbeddings: opts.HistoryEmbeddings,
+		Memory:            opts.Memory,
+		Note:              opts.Note,
+		History:           opts.History,
+		Theme:             opts.Theme,
+		ExcludeMsgIDs:     opts.ExcludeMsgIDs,
 	}
 
 	// —— 1. 并发检索 ——

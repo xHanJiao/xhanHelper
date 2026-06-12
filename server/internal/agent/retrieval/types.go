@@ -41,10 +41,11 @@ func (s *SourceConfig) Resolve(cfg SourceConfig) {
 
 // SearchOptions — 检索参数，供 ContextSource.Fetch 和 SearchProvider.Search 共用。
 type SearchOptions struct {
-	Query          string // 用户原始文本（ranker 关键词打分用）
-	UserID         string
-	ConversationID string
-	Embedding      []float64 // 用户消息的 embedding（向量检索用）
+	Query             string // 用户原始文本（ranker 关键词打分用）
+	UserID            string
+	ConversationID    string
+	Embedding         []float64   // 当前用户消息的 embedding（向量检索用）
+	HistoryEmbeddings [][]float64 // 最近 N 条用户消息的 embedding，仅 ThemeSource 用于多历史消息搜索，解决单句模糊消息匹配不到主题的问题
 
 	Memory  SourceConfig // 记忆检索
 	Note    SourceConfig // 笔记检索

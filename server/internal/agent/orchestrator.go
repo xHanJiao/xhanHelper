@@ -182,6 +182,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 
 	var queryVec []float64
 	var systemPromptResult *promptbuilder.BuildResult
+	var historyEmbeddings [][]float64
 	if o.embedder != nil && !req.SkipRetrieval {
 		// 使用原始消息（RawUserMessage）做 embedding 检索，而非归一化后的消息
 		// 原因：日期归一化会把 "今天" → "2026-06-11"，绝对日期在 embedding 空间里
@@ -191,6 +192,9 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 			rawMsg = req.UserMessageContent
 		}
 		queryVec = o.tryEmbedContent(ctx, rawMsg)
+
+		// Phase 15: 从 VectorStore 按 ID 查最近 5 条历史用户消息 embedding
+		historyEmbeddings = o.embedHistoryUserMessages(req.Messages, 5)
 	}
 
 	log.Printf("[orch] run start: model=%s, msgs=%d", o.pickClient(req).ModelName(), len(req.Messages))
@@ -199,7 +203,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 		systemPromptResult = &promptbuilder.BuildResult{Prompt: *req.OverrideSystemPrompt}
 	} else {
 		var err error
-		systemPromptResult, err = o.systemPromptBuilder.Build(ctx, mkPromptBuildOpt(req, queryVec))
+		systemPromptResult, err = o.systemPromptBuilder.Build(ctx, mkPromptBuildOpt(req, queryVec, historyEmbeddings))
 		if err != nil {
 			log.Printf("[orch] prompt build error: %v", err)
 			return nil, err
@@ -211,7 +215,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	return events, nil
 }
 
-func mkPromptBuildOpt(req *RunRequest, queryVec []float64) promptbuilder.BuildOptions {
+func mkPromptBuildOpt(req *RunRequest, queryVec []float64, historyEmbeddings [][]float64) promptbuilder.BuildOptions {
 	// 从已有消息中采集 DB ID，供检索时去重
 	excludeMsgIDs := make(map[string]bool)
 	for _, m := range req.Messages {
@@ -221,16 +225,17 @@ func mkPromptBuildOpt(req *RunRequest, queryVec []float64) promptbuilder.BuildOp
 	}
 
 	return promptbuilder.BuildOptions{
-		UserID:         req.UserID,
-		ConversationID: req.ConversationID,
-		UserMessage:    req.UserMessageContent,
-		Embedding:      queryVec,
-		AgentPrompt:    req.AgentSystemPrompt,
-		Memory:         req.Memory,
-		Note:           req.Note,
-		History:        req.History,
-		Theme:          req.Theme,
-		ExcludeMsgIDs:  excludeMsgIDs,
+		UserID:            req.UserID,
+		ConversationID:    req.ConversationID,
+		UserMessage:       req.UserMessageContent,
+		Embedding:         queryVec,
+		HistoryEmbeddings: historyEmbeddings,
+		AgentPrompt:       req.AgentSystemPrompt,
+		Memory:            req.Memory,
+		Note:              req.Note,
+		History:           req.History,
+		Theme:             req.Theme,
+		ExcludeMsgIDs:     excludeMsgIDs,
 	}
 }
 
@@ -244,6 +249,23 @@ func (o *Orchestrator) tryEmbedContent(ctx context.Context, userMsgContent strin
 		return vec
 	}
 	return nil
+}
+
+// embedHistoryUserMessages 从 VectorStore 中按 ID 查最近 N 条用户消息的 embedding
+func (o *Orchestrator) embedHistoryUserMessages(messages []llm.Message, n int) [][]float64 {
+	if o.vectorStore == nil {
+		return nil
+	}
+	var result [][]float64
+	for i := len(messages) - 1; i >= 0 && len(result) < n; i-- {
+		if messages[i].Role == "user" && messages[i].ID != "" {
+			vec, ok := o.vectorStore.GetVector("msg:" + messages[i].ID)
+			if ok && len(vec) > 0 {
+				result = append(result, vec)
+			}
+		}
+	}
+	return result
 }
 
 func (o *Orchestrator) pickClient(req *RunRequest) llm.LLMClient {

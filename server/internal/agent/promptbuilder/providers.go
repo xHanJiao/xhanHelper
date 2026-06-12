@@ -2,8 +2,10 @@ package promptbuilder
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/service"
@@ -40,20 +42,50 @@ func (p *themeProvider) Search(ctx context.Context, opts retrieval.SearchOptions
 		return nil, fmt.Errorf("theme fetch: %w", err)
 	}
 
-	// 补齐主题的 context 信息（绑定会话等）
+	// 补齐主题的上下文信息（状态摘要 + 最新事实）
 	enriched := make([]retrieval.ContextPacket, 0, len(packets))
 	themes, err := p.themeStateRepo.ListActive(ctx, opts.UserID)
 	if err != nil {
 		log.Printf("[theme] ListActive error: %v", err)
 	}
 	themeMap := make(map[string]string)
+	themeDetail := make(map[string]*struct {
+		StateText  string
+		StateFacts string
+	})
 	for _, t := range themes {
 		themeMap[t.ID] = t.Name
+		themeDetail[t.ID] = &struct {
+			StateText  string
+			StateFacts string
+		}{StateText: t.StateText, StateFacts: t.StateFacts}
 	}
+
 	for _, pkt := range packets {
-		if name, ok := themeMap[pkt.ID]; ok {
-			pkt.Text = fmt.Sprintf("关注：%s", name)
+		name, ok := themeMap[pkt.ID]
+		if !ok {
+			enriched = append(enriched, pkt)
+			continue
 		}
+		pkt.Text = fmt.Sprintf("关注：%s", name)
+
+		// Phase 15: 注入当前摘要（state_text）—— 如未检索到无文本则跳过
+		detail := themeDetail[pkt.ID]
+		if detail != nil && detail.StateText != "" {
+			pkt.Text += fmt.Sprintf("\n当前状态：%s", detail.StateText)
+		}
+
+		// 注入最新 3 条 facts
+		if detail != nil && detail.StateFacts != "" {
+			facts := extractLatestFactsForPrompt(detail.StateFacts, 3)
+			if len(facts) > 0 {
+				pkt.Text += "\n最近更新：\n"
+				for _, f := range facts {
+					pkt.Text += fmt.Sprintf("  - %s\n", f)
+				}
+			}
+		}
+
 		enriched = append(enriched, pkt)
 	}
 
@@ -190,4 +222,27 @@ func truncateTraceText(s string, n int) string {
 		return s[:n] + "..."
 	}
 	return s
+}
+
+// extractLatestFactsForPrompt 从 state_facts JSONL 中提取最新 N 条事实的格式化文本
+func extractLatestFactsForPrompt(stateFacts string, n int) []string {
+	if stateFacts == "" {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSpace(stateFacts), "\n")
+	var facts []string
+	for i := len(lines) - 1; i >= 0 && len(facts) < n; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		var entry struct {
+			Ts   string `json:"ts"`
+			Fact string `json:"fact"`
+		}
+		if json.Unmarshal([]byte(line), &entry) == nil && entry.Fact != "" {
+			facts = append([]string{fmt.Sprintf("[%s] %s", entry.Ts, entry.Fact)}, facts...)
+		}
+	}
+	return facts
 }

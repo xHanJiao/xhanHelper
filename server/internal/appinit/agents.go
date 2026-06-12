@@ -36,6 +36,9 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	// 从 embedding 表加载向量到内存 store
 	agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState)
 
+	// Phase 15: history_state_text → state_facts JSONL 迁移
+	agent.MigrateThemeFacts(bgCtx, repos.ThemeState, chunkBuilder, llmClients.Flash)
+
 	// --- Mission 子系统 ---
 	missionEmbedder := tools.MissionEmbedder
 	missionDiscoverer := agent.NewMissionDiscoverer(llmClients.Strong, agent.NewThemeStore(repos.ThemeState), repos.Mission, missionEmbedder)
@@ -64,11 +67,8 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MaxDeliveryRetries: cfg.Reflection.MaxDeliveryRetries,
 		ActiveDurationDays: cfg.Reflection.ActiveDurationDays,
 	})
-	stateUpdater := agent.NewStateUpdater(llmClients.Flash, repos.Message, repos.Conversation,
-		agent.NewThemeStore(repos.ThemeState), repos.PendingFinding, infra.VectorStore, tools.ConceptEmbedService)
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{
 		Orch:              reflectionOrch,
-		StateUpdater:      stateUpdater,
 		UserRepo:          repos.User,
 		MemExtractor:      tools.MemExtractor,
 		CommitTimer:       tools.CommitmentTimer,

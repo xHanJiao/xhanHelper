@@ -35,7 +35,6 @@ type CronRunner struct {
 	runTimeout        time.Duration // 单次反思超时，默认 30 分钟
 	taskPollInterval  time.Duration // 延迟任务轮询间隔，默认 3 分钟
 	delayedTaskRepo   *service.DelayedTaskRepo
-	stateUpdater      *StateUpdater
 	memExtractor      *MemoryExtractor
 	commitTimer       *CommitmentTimer
 	convRepo          *service.ConversationRepo
@@ -54,7 +53,6 @@ type CronRunner struct {
 // CronRunnerConfig — 调度器依赖配置
 type CronRunnerConfig struct {
 	Orch              *ReflectionOrchestrator
-	StateUpdater      *StateUpdater
 	UserRepo          *service.UserRepo
 	MemExtractor      *MemoryExtractor
 	CommitTimer       *CommitmentTimer
@@ -89,7 +87,6 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 	}
 	return &CronRunner{
 		orch:              cfg.Orch,
-		stateUpdater:      cfg.StateUpdater,
 		userRepo:          cfg.UserRepo,
 		memExtractor:      cfg.MemExtractor,
 		commitTimer:       cfg.CommitTimer,
@@ -293,30 +290,24 @@ func (cr *CronRunner) processPostChatTasks(ctx context.Context) {
 	}
 }
 
-// dispatchPostChat 对话后处理唯一入口（串行）
+// dispatchPostChat 对话后处理：提取记忆（仅用于长期记忆归档）
 func (cr *CronRunner) dispatchPostChat(ctx context.Context, userID, convID string) {
 	runCtx, cancel := context.WithTimeout(ctx, cr.runTimeout)
 	defer cancel()
 
-	// Step 1: 提取记忆（仅当前会话，同步嵌入）
-	var memory *model.UserMemory
 	if cr.memoryAutoExtract {
 		conv, err := cr.convRepo.FindByID(runCtx, convID)
 		if err != nil {
 			log.Printf("[cron] post-chat: find conv error: %v", err)
 		} else if conv != nil {
-			memory, err = cr.memExtractor.ExtractFromConversation(runCtx, conv)
+			_, err = cr.memExtractor.ExtractFromConversation(runCtx, conv)
 			if err != nil {
 				log.Printf("[cron] post-chat: memory extract error: %v", err)
 			}
 		}
 	}
-
-	// Step 2: 用提取的记忆匹配活跃主题并增量更新
-	// （注：主题发现已移至每日定时任务，对话后处理不再做主题发现）
-	if memory != nil {
-		cr.stateUpdater.UpdateThemesFromMemory(runCtx, userID, memory)
-	}
+	// 注：Phase 15 主题状态更新改由 LLM 在对话中通过 append_theme_state tool call 完成，
+	// StateUpdater 已删除，不再在此处触发主题状态更新
 }
 
 // nextDailyDelay 计算距离下一个触发时间还需要多久

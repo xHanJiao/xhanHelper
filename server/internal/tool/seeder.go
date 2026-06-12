@@ -33,6 +33,7 @@ type builtinToolSeed struct {
 
 var builtinToolSeeds = []builtinToolSeed{
 	{Name: "bookkeeping", Description: "记账工具，新增/修改/删除/查询账单，月度/分类统计，分类选项查询", Category: "finance"},
+	{Name: "datetime", Description: "获取当前日期时间信息", Category: "utility"},
 	{Name: "calculator", Description: "安全的数学表达式计算器，支持加减乘除和括号", Category: "utility"},
 	{Name: "note", Description: "自由笔记工具，记录/查询/更新/回滚笔记，获取主题列表", Category: "note"},
 	{Name: "document", Description: "文档管理工具，创建/查看/更新/删除文档，支持版本回滚和标签检索", Category: "document"},

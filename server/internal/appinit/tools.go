@@ -17,6 +17,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	// --- 主 Registry + 内置工具 ---
 	reg := tool.NewRegistry()
 	reg.Register(tool.NewLoggingWrapper(tool.NewBookkeepingTool(repos.Bill), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewDatetimeTool(), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewCalculatorTool(), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewDocumentTool(repos.Document, repos.Version), log.Default()))
 	if cfg.Search.Provider == "bocha" {

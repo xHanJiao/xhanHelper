@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -91,10 +92,18 @@ func NewStateUpdater(flashClient llm.LLMClient, msgRepo *service.MessageRepo, co
 
 // UpdateThemesFromConversation 用对话文本匹配活跃主题并增量更新状态页。
 // 使用消息已有的向量（VectorStore 中 key=msg:{messageID}）做主题匹配，不额外嵌入。
+// 自动创建 post_chat trace 包裹本次处理。
 func (s *StateUpdater) UpdateThemesFromConversation(ctx context.Context, userID string, msgs []model.Message, convText string) {
 	if convText == "" && len(msgs) == 0 {
 		return
 	}
+
+	traceID := uuid.New().String()
+	tr := &model.ReflectionTrace{
+		ID: traceID, UserID: userID, TriggerType: "post_chat",
+		StartedAt: time.Now(), Status: "running",
+	}
+	s.traceRepo.CreateTrace(ctx, tr)
 
 	actives, err := s.themeStore.ListActives(ctx, userID)
 	if err != nil || len(actives) == 0 {
@@ -112,14 +121,15 @@ func (s *StateUpdater) UpdateThemesFromConversation(ctx context.Context, userID 
 		if !ok || score < defaultVecThreshold {
 			continue
 		}
-		s.UpdateFromConversation(ctx, userID, t.ID, t.Name, convText)
+		s.UpdateFromConversation(ctx, userID, t.ID, t.Name, convText, traceID)
 	}
 
 	log.Printf("[state_updater] conv matched %d/%d active themes", len(matched), len(actives))
+	endTraceSafe(s.traceRepo, ctx, traceID, "completed", 0, 0, nil)
 }
 
 // UpdateFromConversation 对单个主题基于对话文本更新状态页，ReAct + 验证 + 矫正
-func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, themeID, themeName, convText string) {
+func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, themeID, themeName, convText string, traceID string) {
 	stateText := s.themeStore.LoadState(ctx, themeID, userID)
 	name := s.themeStore.GetName(ctx, themeID, userID)
 	if name == "" {
@@ -129,7 +139,6 @@ func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, theme
 	inputMsg := fmt.Sprintf("## 主题：%s\n\n## 当前状态页\n%s\n\n## 最近对话\n%s", name, stateText, convText)
 
 	const maxIterations = 10
-	traceID := uuid.New().String()
 	loop := NewReactLoop(s.flashClient, s.retrievalTools, stateUpdaterReActPrompt, maxIterations, userID, "StateUpdater", s.traceRepo, traceID)
 
 	result, err := loop.Run(ctx, inputMsg)

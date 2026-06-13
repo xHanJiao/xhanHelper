@@ -323,7 +323,7 @@ func (cr *CronRunner) dispatchPostChat(ctx context.Context, userID, convID strin
 		cr.memExtractor.ExtractFromMessages(runCtx, conv, msgs, convText)
 	}
 
-	// StateUpdater: 基于对话文本匹配+更新主题
+	// StateUpdater: 基于对话文本匹配+更新主题（内部自动创建 trace）
 	cr.stateUpdater.UpdateThemesFromConversation(runCtx, userID, msgs, convText)
 }
 

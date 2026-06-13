@@ -96,7 +96,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	themeStore := agent.NewThemeStore(repos.ThemeState)
 	reflectionReg := tool.NewRegistry()
 	reflectionReg.Register(tool.NewLoggingWrapper(
-		agent.NewThemeAnalyst(llmClients.Strong, retrievalTools, themeStore, repos.Trace, cfg.Reflection.AnalystMaxIterations), log.Default()))
+		agent.NewThemeAnalyst(llmClients.Strong, retrievalTools, themeStore, repos.Trace, cfg.Reflection.AnalystMaxIterations, chunkBuilder), log.Default()))
 	reflectionReg.Register(tool.NewLoggingWrapper(
 		agent.NewScorer(llmClients.Flash, repos.Trace), log.Default()))
 	reflectionReg.Register(tool.NewLoggingWrapper(

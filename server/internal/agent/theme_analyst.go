@@ -63,15 +63,17 @@ type ThemeAnalyst struct {
 	themeStore     *ThemeStore
 	traceRepo      *service.ReflectionTraceRepo
 	maxIterations  int
+	chunkBuilder   *ChunkBuilder
 }
 
-func NewThemeAnalyst(flashClient llm.LLMClient, retrievalTools map[string]tool.Tool, themeStore *ThemeStore, traceRepo *service.ReflectionTraceRepo, maxIterations int) *ThemeAnalyst {
+func NewThemeAnalyst(flashClient llm.LLMClient, retrievalTools map[string]tool.Tool, themeStore *ThemeStore, traceRepo *service.ReflectionTraceRepo, maxIterations int, chunkBuilder *ChunkBuilder) *ThemeAnalyst {
 	return &ThemeAnalyst{
 		flashClient:    flashClient,
 		retrievalTools: retrievalTools,
 		themeStore:     themeStore,
 		traceRepo:      traceRepo,
 		maxIterations:  maxIterations,
+		chunkBuilder:   chunkBuilder,
 	}
 }
 
@@ -180,6 +182,8 @@ func (ta *ThemeAnalyst) Execute(ec *tool.ExecuteContext, funcName string, args j
 
 	if saveErr := ta.themeStore.SaveState(ec.Ctx, a.ThemeID, ec.UserID, stateText); saveErr != nil {
 		log.Printf("[theme_analyst] save state error for %s: %v", a.ThemeName, saveErr)
+	} else {
+		ChunkStateText(ec.Ctx, ta.chunkBuilder, ec.UserID, a.ThemeID, stateText)
 	}
 
 	data, _ := json.Marshal(map[string]interface{}{"updated_state": output.UpdatedState, "summary": output.Summary})

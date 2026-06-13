@@ -15,9 +15,15 @@ import (
 	"xhan-helper/internal/service"
 )
 
+// chunkEmbedder 嵌入接口，供 ChunkBuilder 使用（*llm.Embedder 满足）
+type chunkEmbedder interface {
+	Embed(ctx context.Context, text string) ([]float64, error)
+	ModelName() string
+}
+
 // ChunkBuilder — 将 note/memory 文本拆分为句子级 chunk 并嵌入
 type ChunkBuilder struct {
-	embedder      *llm.Embedder
+	embedder      chunkEmbedder
 	chunkRepo     *service.EmbeddingChunkRepo
 	embeddingRepo *service.EmbeddingRepo
 	vectorStore   app.VectorStore
@@ -106,4 +112,132 @@ func (b *ChunkBuilder) BuildChunks(ctx context.Context, userID, parentType, pare
 
 	log.Printf("[chunk] built %d chunks for %s/%s", len(chunks), parentType, parentID[:8])
 	return len(chunks), nil
+}
+
+// DiffAndBuildChunks 对比新旧文本，仅对变化的句子重新嵌入。
+// 保留文本完全相同的旧 chunk，只嵌入新增和修改的句子。
+func (b *ChunkBuilder) DiffAndBuildChunks(ctx context.Context, userID, parentType, parentID, newText string) (int, int, error) {
+	sentences := splitSentences(newText)
+	if len(sentences) == 0 {
+		return 0, 0, nil
+	}
+
+	// 读旧 chunk 建索引用
+	oldChunks, err := b.chunkRepo.ListByParent(ctx, parentType, parentID)
+	if err != nil {
+		log.Printf("[chunk] DiffAndBuildChunks list old error: %v", err)
+	}
+
+	oldByContent := make(map[string]*model.EmbeddingChunk)
+	for i := range oldChunks {
+		c := &oldChunks[i]
+		oldByContent[c.Content] = c
+	}
+
+	// 找出需要新增和保留的句子
+	type keepItem struct {
+		chunk model.EmbeddingChunk
+		embID string
+	}
+	var toKeep []keepItem
+	var toEmbed []struct {
+		idx  int
+		text string
+	}
+
+	keptContent := make(map[string]bool)
+	for _, s := range sentences {
+		if old, ok := oldByContent[s]; ok && !keptContent[s] {
+			toKeep = append(toKeep, keepItem{
+				chunk: *old,
+				embID: fmt.Sprintf("chunk:%s:%s/%d", parentType, parentID, old.ChunkIndex),
+			})
+			keptContent[s] = true
+		} else if !keptContent[s] {
+			toEmbed = append(toEmbed, struct {
+				idx  int
+				text string
+			}{idx: len(toEmbed), text: s})
+			keptContent[s] = true
+		}
+	}
+
+	// 删除旧 chunk 中不再需要的（DB + 向量库）
+	keepIDs := make(map[string]bool)
+	for _, k := range toKeep {
+		keepIDs[k.chunk.ID] = true
+	}
+	for _, old := range oldChunks {
+		if !keepIDs[old.ID] {
+			b.vectorStore.Delete(old.ID)
+		}
+	}
+
+	// 嵌入新句子
+	var newChunks []model.EmbeddingChunk
+	var newEmbeddings []model.Embedding
+	for _, e := range toEmbed {
+		vec, err := b.embedder.Embed(ctx, e.text)
+		if err != nil {
+			log.Printf("[chunk] embed %s/%s[%d] error: %v", parentType, parentID[:8], e.idx, err)
+			continue
+		}
+		chunkID := fmt.Sprintf("chunk:%s:%s/%d", parentType, parentID, e.idx)
+		newChunks = append(newChunks, model.EmbeddingChunk{
+			ID:         uuid.New().String(),
+			ParentType: parentType,
+			ParentID:   parentID,
+			ChunkIndex: e.idx,
+			UserID:     userID,
+			Content:    e.text,
+		})
+		embStr := llm.EmbeddingToString(vec)
+		newEmbeddings = append(newEmbeddings, model.Embedding{
+			ID:         chunkID,
+			EntityType: "chunk",
+			EntityID:   chunkID,
+			UserID:     userID,
+			Model:      b.embedder.ModelName(),
+			Embedding:  &embStr,
+		})
+		b.vectorStore.Upsert(chunkID, vec, map[string]string{
+			"type":        "chunk",
+			"parent_type": parentType,
+			"parent_id":   parentID,
+			"user_id":     userID,
+		})
+	}
+
+	// 删除 DB 中不再需要的旧 chunk
+	if len(oldChunks) > 0 {
+		var delIDs []string
+		for _, old := range oldChunks {
+			if !keepIDs[old.ID] {
+				delIDs = append(delIDs, old.ID)
+			}
+		}
+		if len(delIDs) > 0 {
+			if err := b.chunkRepo.DeleteByParent(ctx, parentType, parentID); err != nil {
+				log.Printf("[chunk] DiffAndBuildChunks delete old error: %v", err)
+			}
+		}
+	}
+
+	// 写入新 chunk
+	if len(newChunks) > 0 {
+		if err := b.chunkRepo.BatchCreate(ctx, newChunks); err != nil {
+			log.Printf("[chunk] DiffAndBuildChunks batch create error: %v", err)
+			return len(toKeep), 0, err
+		}
+	}
+	if len(newEmbeddings) > 0 {
+		if err := b.embeddingRepo.BatchUpsert(ctx, newEmbeddings); err != nil {
+			log.Printf("[chunk] DiffAndBuildChunks batch upsert error: %v", err)
+			return len(toKeep), 0, err
+		}
+	}
+
+	log.Printf("[chunk] DiffAndBuild: %s/%s kept=%d new=%d (total old=%d)",
+		parentType, parentID[:8], len(toKeep), len(newChunks), len(oldChunks))
+	return len(toKeep), len(newChunks), nil
 }

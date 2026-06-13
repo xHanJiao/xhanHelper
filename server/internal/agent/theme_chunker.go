@@ -5,12 +5,12 @@ import (
 	"log"
 )
 
-// BuildFactChunk 对单条 fact 增量建 chunk（不清除旧 chunk）
-func BuildFactChunk(ctx context.Context, chunkBuilder *ChunkBuilder, userID, parentType, parentID, factText string) {
-	n, err := chunkBuilder.BuildChunks(ctx, userID, parentType, parentID, factText)
+// ChunkStateText 增量嵌入主题 state_text：对比旧 chunk，只嵌入变化的句子
+func ChunkStateText(ctx context.Context, chunkBuilder *ChunkBuilder, userID, themeID, stateText string) {
+	kept, added, err := chunkBuilder.DiffAndBuildChunks(ctx, userID, "theme", themeID, stateText)
 	if err != nil {
-		log.Printf("[theme_chunker] BuildChunks error: theme=%s err=%v", parentID[:8], err)
-	} else if n > 0 {
-		log.Printf("[theme_chunker] built %d chunks for theme %s", n, parentID[:8])
+		log.Printf("[theme_chunker] DiffAndBuild error: theme=%s err=%v", themeID[:8], err)
+	} else {
+		log.Printf("[theme_chunker] chunked state_text for theme %s: kept=%d added=%d", themeID[:8], kept, added)
 	}
 }

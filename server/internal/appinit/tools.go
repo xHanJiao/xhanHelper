@@ -90,6 +90,9 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		"get_topic_stats":  topicStatsTool,
 		"get_topic_detail": topicDetailTool,
 		"get_bill_stats":   billStatsTool,
+		"search_notes":     tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder),
+		"search_memories":  tool.NewSearchMemoriesV2Tool(infra.VectorStore, repos.Mem, repos.Chunk, infra.Embedder),
+		"search_messages":  tool.NewMessageSearchTool(repos.Message, repos.Conversation),
 	}
 
 	// --- Phase 6: 反思系统工具 ---

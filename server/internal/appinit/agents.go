@@ -36,6 +36,9 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	// 从 embedding 表加载向量到内存 store
 	agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState)
 
+	// Phase 15: 修复空 state_text + 初始化 state_text chunk
+	agent.BootstrapThemeState(bgCtx, repos.ThemeState, chunkBuilder, llmClients.Flash)
+
 	// --- Mission 子系统 ---
 	missionEmbedder := tools.MissionEmbedder
 	missionDiscoverer := agent.NewMissionDiscoverer(llmClients.Strong, agent.NewThemeStore(repos.ThemeState), repos.Mission, missionEmbedder)

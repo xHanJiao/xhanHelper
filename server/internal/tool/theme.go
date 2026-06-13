@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/google/uuid"
 
@@ -14,28 +13,19 @@ import (
 	"xhan-helper/internal/service"
 )
 
-// OnThemeFactAppended 主题事实追加后的异步回调，用于触发摘要重生 + chunk 构建
-type OnThemeFactAppended func(ctx context.Context, userID, themeID, factText string)
-
 // ThemeTool — 主题管理工具
 type ThemeTool struct {
 	themeRepo   *service.ThemeStateRepo
 	embedWriter app.ThemeVectorWriter
-	onAppend    OnThemeFactAppended
 }
 
 func NewThemeTool(repo *service.ThemeStateRepo, embedWriter app.ThemeVectorWriter) *ThemeTool {
 	return &ThemeTool{themeRepo: repo, embedWriter: embedWriter}
 }
 
-// SetOnFactAppended 设置事实追加后的异步回调
-func (t *ThemeTool) SetOnFactAppended(fn OnThemeFactAppended) {
-	t.onAppend = fn
-}
-
 func (t *ThemeTool) Name() string { return "theme" }
 func (t *ThemeTool) Description() string {
-	return "管理追踪主题：创建、关闭、重新激活、获取状态、追加事实"
+	return "管理追踪主题：创建、关闭、重新激活"
 }
 
 func (t *ThemeTool) Functions() []FuncSchema {
@@ -77,40 +67,6 @@ func (t *ThemeTool) Functions() []FuncSchema {
 				"required": []string{"name"},
 			},
 		},
-		{
-			Name:        "get_theme_state",
-			Display:     "获取主题状态",
-			Description: "获取主题完整状态（摘要+全部事实列表）。建议在追加事实前调用，了解已有记录避免重复。若主题不存在，返回当前所有 active 主题列表",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"name": map[string]interface{}{"type": "string", "description": "主题名"},
-				},
-				"required": []string{"name"},
-			},
-		},
-		{
-			Name:        "append_theme_state",
-			Display:     "追加主题事实",
-			Description: "向主题追加一条新进展事实。每次只追加一条（1-2句话）。适用场景：进度更新、状态变化、新发现。日常闲聊不调用",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"name": map[string]interface{}{"type": "string", "description": "主题名"},
-					"fact": map[string]interface{}{"type": "string", "description": "单条事实，1-2句话，包含日期"},
-				},
-				"required": []string{"name", "fact"},
-			},
-		},
-		{
-			Name:        "list_active_themes",
-			Display:     "列出活跃主题",
-			Description: "列出所有活跃追踪主题。不确定有哪些主题时调用",
-			Parameters: map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{},
-			},
-		},
 	}
 }
 
@@ -122,12 +78,6 @@ func (t *ThemeTool) Execute(ec *ExecuteContext, funcName string, args json.RawMe
 		return t.closeTheme(ec, args)
 	case "reactivate_theme":
 		return t.reactivateTheme(ec, args)
-	case "get_theme_state":
-		return t.getThemeState(ec, args)
-	case "append_theme_state":
-		return t.appendThemeState(ec, args)
-	case "list_active_themes":
-		return t.listActiveThemes(ec)
 	default:
 		return &Result{Success: false, Error: fmt.Sprintf("unknown function: %s", funcName)}
 	}
@@ -226,119 +176,4 @@ func (t *ThemeTool) reactivateTheme(ec *ExecuteContext, args json.RawMessage) *R
 		return &Result{Success: false, Error: fmt.Sprintf("重新激活失败: %v", err)}
 	}
 	return &Result{Success: true, Data: json.RawMessage(`{"status":"reactivated","name":"` + a.Name + `"}`)}
-}
-
-func (t *ThemeTool) getThemeState(ec *ExecuteContext, args json.RawMessage) *Result {
-	var a struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
-	}
-	if a.Name == "" {
-		return &Result{Success: false, Error: "name 不能为空"}
-	}
-
-	theme, err := t.themeRepo.GetByName(ec.Ctx, ec.UserID, a.Name)
-	if err != nil {
-		log.Printf("[theme] getThemeState GetByName error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("查询失败: %v", err)}
-	}
-	if theme == nil {
-		actives, err := t.themeRepo.ListActive(ec.Ctx, ec.UserID)
-		if err == nil && len(actives) > 0 {
-			var names []string
-			for _, th := range actives {
-				names = append(names, th.Name)
-			}
-			return &Result{Success: false, Error: fmt.Sprintf("主题「%s」不存在。当前 active 主题：%s", a.Name, strings.Join(names, "、"))}
-		}
-		return &Result{Success: false, Error: fmt.Sprintf("主题 %s 不存在", a.Name)}
-	}
-
-	var facts []json.RawMessage
-	if theme.StateFacts != "" {
-		lines := strings.Split(strings.TrimSpace(theme.StateFacts), "\n")
-		for _, line := range lines {
-			if line = strings.TrimSpace(line); line != "" {
-				facts = append(facts, json.RawMessage(line))
-			}
-		}
-	}
-	if facts == nil {
-		facts = []json.RawMessage{}
-	}
-
-	data, _ := json.Marshal(map[string]interface{}{
-		"id":          theme.ID,
-		"name":        theme.Name,
-		"description": theme.Description,
-		"state_text":  theme.StateText,
-		"state_facts": facts,
-		"status":      theme.Status,
-		"updated_at":  theme.UpdatedAt,
-	})
-	return &Result{Success: true, Data: data}
-}
-
-func (t *ThemeTool) appendThemeState(ec *ExecuteContext, args json.RawMessage) *Result {
-	var a struct {
-		Name string `json:"name"`
-		Fact string `json:"fact"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
-	}
-	if a.Name == "" || a.Fact == "" {
-		return &Result{Success: false, Error: "name 和 fact 不能为空"}
-	}
-
-	theme, err := t.themeRepo.GetByName(ec.Ctx, ec.UserID, a.Name)
-	if err != nil {
-		log.Printf("[theme] appendThemeState GetByName error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("查询失败: %v", err)}
-	}
-	if theme == nil {
-		return &Result{Success: false, Error: fmt.Sprintf("主题 %s 不存在，请先创建或使用 list_active_themes 查看可用主题", a.Name)}
-	}
-
-	b, _ := json.Marshal(map[string]string{"ts": "", "fact": a.Fact})
-	if err := t.themeRepo.AppendFact(ec.Ctx, theme.ID, ec.UserID, string(b)); err != nil {
-		log.Printf("[theme] AppendFact error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("追加事实失败: %v", err)}
-	}
-
-	if t.onAppend != nil {
-		go t.onAppend(context.Background(), ec.UserID, theme.ID, a.Fact)
-	}
-
-	log.Printf("[theme] appended fact to theme %s (%s): %s", theme.ID[:8], a.Name, a.Fact)
-	return &Result{Success: true, Data: json.RawMessage(`{"status":"appended","name":"` + a.Name + `"}`)}
-}
-
-func (t *ThemeTool) listActiveThemes(ec *ExecuteContext) *Result {
-	actives, err := t.themeRepo.ListActive(ec.Ctx, ec.UserID)
-	if err != nil {
-		log.Printf("[theme] listActiveThemes error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("查询失败: %v", err)}
-	}
-
-	list := make([]map[string]interface{}, 0, len(actives))
-	for _, th := range actives {
-		if th.Status == "closed" {
-			continue
-		}
-		list = append(list, map[string]interface{}{
-			"name":        th.Name,
-			"description": th.Description,
-			"status":      th.Status,
-			"updated_at":  th.UpdatedAt,
-		})
-	}
-
-	data, _ := json.Marshal(map[string]interface{}{
-		"themes": list,
-		"count":  len(list),
-	})
-	return &Result{Success: true, Data: data}
 }

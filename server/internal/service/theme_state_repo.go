@@ -180,36 +180,6 @@ func (r *ThemeStateRepo) ExpireDrafts(ctx context.Context, userID string, days i
 	return result.Error
 }
 
-// AppendFact 向 state_facts 追加一条 JSONL 行，并刷新 updated_at
-func (r *ThemeStateRepo) AppendFact(ctx context.Context, id, userID, factLine string) error {
-	return r.db.WithContext(ctx).Model(&model.ThemeState{}).
-		Where("id = ? AND user_id = ?", id, userID).
-		Updates(map[string]interface{}{
-			"state_facts": gorm.Expr("CONCAT(COALESCE(state_facts, ''), ?)", factLine+"\n"),
-			"updated_at":  time.Now(),
-		}).Error
-}
-
-// GetFacts 读取 state_facts 原始内容
-func (r *ThemeStateRepo) GetFacts(ctx context.Context, id, userID string) (string, error) {
-	var t model.ThemeState
-	err := r.db.WithContext(ctx).Select("state_facts").Where("id = ? AND user_id = ?", id, userID).First(&t).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", nil
-	}
-	return t.StateFacts, err
-}
-
-// UpdateSummary 仅更新 state_text（不操作 history_state_text）
-func (r *ThemeStateRepo) UpdateSummary(ctx context.Context, id, userID, stateText string) error {
-	return r.db.WithContext(ctx).Model(&model.ThemeState{}).
-		Where("id = ? AND user_id = ?", id, userID).
-		Updates(map[string]interface{}{
-			"state_text": stateText,
-			"updated_at": time.Now(),
-		}).Error
-}
-
 // Close 关闭主题
 func (r *ThemeStateRepo) Close(ctx context.Context, id, userID string) error {
 	return r.db.WithContext(ctx).Model(&model.ThemeState{}).

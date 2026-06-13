@@ -10,13 +10,7 @@ import (
 	"xhan-helper/internal/tool"
 )
 
-const statePageUpdateRules = `1. 保留上一轮状态页中仍然有效的关键信息（规律、里程碑、待跟进事项）
-2. 过期或已被新信息覆盖的事实用新发现替换
-3. 每条关键信息标注大致时间
-4. 控制篇幅：不超过 500 字
-5. 超过 3 个月且本次未再出现的信息，可移除或标记为「可能已过期」`
-
-var themeAnalystPrompt = `你是 xhanHelper 的「主题分析员」。你的职责是：针对一个用户关注的主题，阅读数据，更新该主题的状态页。
+var themeAnalystPrompt = fmt.Sprintf(`你是 xhanHelper 的「主题分析员」。你的职责是：针对一个用户关注的主题，阅读数据，更新该主题的状态页。
 
 注意：你的职责是**理解并更新状态页**，不是通知用户。通知是后续系统的事情。
 
@@ -56,7 +50,7 @@ var themeAnalystPrompt = `你是 xhanHelper 的「主题分析员」。你的职
 
 ## 状态页更新规则
 
-` + statePageUpdateRules
+%s`, statePageUpdateRules)
 
 // ThemeAnalyst — 主题分析子 Agent（实现 tool.Tool 接口）
 type ThemeAnalyst struct {

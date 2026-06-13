@@ -113,15 +113,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	themeMgmtTool := tool.NewThemeTool(repos.ThemeState, themeEmbedder)
 	reflectionReg.Register(tool.NewLoggingWrapper(themeMgmtTool, log.Default()))
 
-	// 注册到主 Registry，使 LLM 可在对话中调用 get_theme_state / append_theme_state / list_active_themes
-	reg.Register(tool.NewLoggingWrapper(themeMgmtTool, log.Default()))
-
-	// Phase 15: 设置事实追加后的异步回调（重生摘要 + 建 chunk）
-	themeMgmtTool.SetOnFactAppended(func(ctx context.Context, userID, themeID, factText string) {
-		agent.BuildFactChunk(ctx, chunkBuilder, userID, "theme", themeID, factText)
-		agent.RegenerateThemeSummary(ctx, llmClients.Flash, repos.ThemeState, userID, themeID)
-	})
-
 	// --- 内存提取器 ---
 	memExtractor := agent.NewMemoryExtractor(&agent.MemoryExtractorConfig{
 		LLMClient:     llmClients.Flash,

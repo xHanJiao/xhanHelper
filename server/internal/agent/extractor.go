@@ -97,26 +97,34 @@ const extractPromptPrefix = `从以下对话中提取有长期价值的信息，
 {"extracted":true,"summary":"一句话概括核心信息","facts":["支持细节1"],"topic":"一个关键主题词（如睡眠管理、职业规划、家庭关系），禁止斜杠、逗号、多个主题","tags":"关键词1,关键词2"}
 tags 是从内容中提取的逗号分隔关键词（如 褪黑素,早醒,生物钟）。没有值得提取的内容时返回 {"extracted":false}。`
 
-// ExtractFromConversation 从指定会话中增量提取记忆。返回提取到的记忆（可能为 nil）。
-func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *model.Conversation) (*model.UserMemory, error) {
+// BuildConversationText 读取会话新增消息，构建 "[role]: content\n" 格式文本
+func BuildConversationText(ctx context.Context, msgRepo *service.MessageRepo, conv *model.Conversation, limit int) ([]model.Message, string, error) {
 	var msgs []model.Message
 	var err error
 	if conv.LastExtractedMsgID != nil && *conv.LastExtractedMsgID != "" {
-		msgs, err = e.msgRepo.ListByConversationSince(ctx, conv.ID, *conv.LastExtractedMsgID, 50)
+		msgs, err = msgRepo.ListByConversationSince(ctx, conv.ID, *conv.LastExtractedMsgID, limit)
 	} else {
-		msgs, err = e.msgRepo.ListByConversation(ctx, conv.ID, 50)
+		msgs, err = msgRepo.ListByConversation(ctx, conv.ID, limit)
 	}
 	if err != nil || len(msgs) == 0 {
-		return nil, err
+		return nil, "", err
 	}
-
 	var sb strings.Builder
 	for _, m := range msgs {
 		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, m.Content))
 	}
+	return msgs, sb.String(), nil
+}
+
+// ExtractFromConversation 从指定会话中增量提取记忆。返回提取到的记忆（可能为 nil）。
+func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *model.Conversation) (*model.UserMemory, error) {
+	msgs, convText, err := BuildConversationText(ctx, e.msgRepo, conv, 50)
+	if err != nil || len(msgs) == 0 {
+		return nil, err
+	}
 
 	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
-	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, sb.String())
+	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, convText)
 	promptHash := hashPrompt(prompt)
 
 	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
@@ -171,13 +179,7 @@ func (e *MemoryExtractor) ExtractFromConversationWithCallback(ctx context.Contex
 		return err
 	}
 
-	var msgs []model.Message
-	var err error
-	if conv.LastExtractedMsgID != nil && *conv.LastExtractedMsgID != "" {
-		msgs, err = e.msgRepo.ListByConversationSince(ctx, conv.ID, *conv.LastExtractedMsgID, 50)
-	} else {
-		msgs, err = e.msgRepo.ListByConversation(ctx, conv.ID, 50)
-	}
+	msgs, convText, err := BuildConversationText(ctx, e.msgRepo, conv, 50)
 	if err != nil {
 		cb(ExtractEvent{Type: "error", Message: err.Error()})
 		return err
@@ -189,13 +191,8 @@ func (e *MemoryExtractor) ExtractFromConversationWithCallback(ctx context.Contex
 
 	cb(ExtractEvent{Type: "status", Phase: "fetching", Message: fmt.Sprintf("加载了 %d 条新消息", len(msgs))})
 
-	var sb strings.Builder
-	for _, m := range msgs {
-		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, m.Content))
-	}
-
 	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
-	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, sb.String())
+	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, convText)
 	promptHash := hashPrompt(prompt)
 
 	cb(ExtractEvent{Type: "status", Phase: "extracting", Message: "正在调用 LLM 提取记忆..."})

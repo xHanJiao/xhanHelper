@@ -2,10 +2,8 @@ package retrieval
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/service"
@@ -70,7 +68,6 @@ func (s *ThemeSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextP
 				Meta: themeMeta{
 					Description: t.Description,
 					StateText:   t.StateText,
-					LatestFacts: extractLatestFacts(t.StateFacts, 3),
 				},
 			}
 			selected = append(selected, pkt)
@@ -172,32 +169,8 @@ func (s *ThemeSource) searchChunks(queryVec []float64, userID string, topK int) 
 
 // themeMeta context packet 携带的元数据
 type themeMeta struct {
-	Description string   `json:"description"`
-	StateText   string   `json:"state_text"`
-	LatestFacts []string `json:"latest_facts"`
-}
-
-// extractLatestFacts 从 state_facts JSONL 中提取最新 N 条事实文本
-func extractLatestFacts(stateFacts string, n int) []string {
-	if stateFacts == "" {
-		return nil
-	}
-	lines := strings.Split(strings.TrimSpace(stateFacts), "\n")
-	var facts []string
-	// 从尾部取最新 N 条
-	for i := len(lines) - 1; i >= 0 && len(facts) < n; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		var entry struct {
-			Fact string `json:"fact"`
-		}
-		if json.Unmarshal([]byte(line), &entry) == nil && entry.Fact != "" {
-			facts = append([]string{entry.Fact}, facts...) // 保持时间序
-		}
-	}
-	return facts
+	Description string `json:"description"`
+	StateText   string `json:"state_text"`
 }
 
 func (s *ThemeSource) Warmup(ctx context.Context, embedder *llm.Embedder) {

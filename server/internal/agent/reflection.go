@@ -252,8 +252,7 @@ func (o *ReflectionOrchestrator) EveningReview(ctx context.Context, userID strin
 	return o.dailyReview(ctx, userID, "evening_review")
 }
 
-// dailyReview 早晚回顾：expire active + 从 topic/note/memory 聚类发现新主题。
-// Phase 15: ThemeAnalyst 状态更新已移除，状态更新改由 LLM 在对话中通过 append_theme_state tool call 完成。
+// dailyReview 早晚回顾：expire draft + active 衰减 + 对有新活动的主题运行分析
 func (o *ReflectionOrchestrator) dailyReview(ctx context.Context, userID, triggerType string) (int, error) {
 	traceID := uuid.New().String()
 	log.Printf("[reflection] trace=%s trigger=%s user=%s START", traceID[:8], triggerType, userID)
@@ -265,40 +264,11 @@ func (o *ReflectionOrchestrator) dailyReview(ctx context.Context, userID, trigge
 	o.traceRepo.CreateTrace(ctx, tr)
 
 	o.expireActiveThemes(ctx, userID)
-	discovered := o.discoverNewThemes(ctx, userID, traceID)
+	analyzed := o.reviewActiveThemes(ctx, userID, traceID)
 
 	endTraceSafe(o.traceRepo, ctx, traceID, "completed", 0, 0, nil)
-	log.Printf("[reflection] trace=%s DONE %s discovered=%d", traceID[:8], triggerType, discovered)
-	return discovered, nil
-}
-
-// discoverNewThemes 运行 ThemeDiscoverer 从 topic/note/memory 聚类中发现新主题
-func (o *ReflectionOrchestrator) discoverNewThemes(ctx context.Context, userID, traceID string) int {
-	discovererT, ok := o.reflectionReg.GetToolMap()["theme_discoverer"]
-	if !ok {
-		log.Printf("[reflection] discover: theme_discoverer tool not found")
-		return 0
-	}
-
-	args, _ := json.Marshal(map[string]interface{}{
-		"mode": "stats",
-	})
-	ec := &tool.ExecuteContext{Ctx: WithTraceID(ctx, traceID), UserID: userID}
-	res := discovererT.Execute(ec, "discover", args)
-	if !res.Success || res.Data == nil {
-		if res.Error != "" {
-			log.Printf("[reflection] discover: theme_discoverer error: %s", res.Error)
-		}
-		return 0
-	}
-
-	var output DiscoverResult
-	if err := json.Unmarshal(res.Data, &output); err != nil {
-		log.Printf("[reflection] discover: unmarshal DiscoverResult error: %v", err)
-		return 0
-	}
-	log.Printf("[reflection] discover: created=%d rejected=%d", len(output.Created), len(output.Rejected))
-	return len(output.Created)
+	log.Printf("[reflection] trace=%s DONE %s analyzed=%d", traceID[:8], triggerType, analyzed)
+	return analyzed, nil
 }
 
 // durationDays 返回 duration 对应的衰减天数（从配置读取）
@@ -337,6 +307,50 @@ func (o *ReflectionOrchestrator) expireActiveThemes(ctx context.Context, userID 
 	if len(toClose) > 0 {
 		log.Printf("[theme] expired %d active themes for user %s", len(toClose), userID[:8])
 	}
+}
+
+// reviewActiveThemes 对有新活动的活跃主题运行分析，更新状态页。
+// 跳过 UpdatedAt 未超过 LastRunAt 的主题（无新数据，无需重复分析）。
+func (o *ReflectionOrchestrator) reviewActiveThemes(ctx context.Context, userID, traceID string) int {
+	actives, err := o.themeStore.ListActives(ctx, userID)
+	if err != nil {
+		log.Printf("[reflection] review: list actives error: %v", err)
+		return 0
+	}
+	if len(actives) == 0 {
+		log.Printf("[reflection] review: no active themes")
+		return 0
+	}
+
+	analystT, ok := o.reflectionReg.GetToolMap()["theme_analyst"]
+	if !ok {
+		log.Printf("[reflection] review: theme_analyst tool not found")
+		return 0
+	}
+
+	analyzed := 0
+	skipped := 0
+	for _, active := range actives {
+		// 按需分析：LastRunAt 为 nil（新建主题）或 UpdatedAt > LastRunAt（有新活动）才跑
+		fullTheme, err := o.themeStore.GetByID(ctx, active.ID, userID)
+		if err != nil || fullTheme == nil {
+			continue
+		}
+		if fullTheme.LastRunAt != nil && !fullTheme.UpdatedAt.After(*fullTheme.LastRunAt) {
+			skipped++
+			continue
+		}
+
+		args, _ := json.Marshal(map[string]interface{}{
+			"theme_id":   active.ID,
+			"theme_name": active.Name,
+		})
+		ec := &tool.ExecuteContext{Ctx: WithTraceID(ctx, traceID), UserID: userID}
+		analystT.Execute(ec, "analyze", args)
+		analyzed++
+	}
+	log.Printf("[theme] review: analyzed=%d skipped=%d (total active=%d)", analyzed, skipped, len(actives))
+	return analyzed
 }
 
 // runOnce 保留兼容

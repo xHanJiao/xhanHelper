@@ -10,9 +10,8 @@ type ThemeState struct {
 	Description      string     `gorm:"size:500" json:"description"`
 	Status           string     `gorm:"size:20;default:draft" json:"status"`           // draft | active | closed
 	Duration         string     `gorm:"size:20;default:''" json:"duration"`            // long | medium | short | ephemeral（LLM 标注的关注周期）
-	StateText        string     `gorm:"type:text" json:"state_text"`                   // LLM 阅读的叙事摘要（异步从 facts 生成，≤500字）
-	StateFacts       string     `gorm:"type:text" json:"state_facts"`                  // JSONL 原子事实，只追加不修改，用于向量搜索
-	HistoryStateText *string    `gorm:"type:text" json:"history_state_text,omitempty"` // 历史状态页（Phase 15 迁移后不再使用）
+	StateText        string     `gorm:"type:text" json:"state_text"`                   // LLM 维护的自由文本状态摘要
+	HistoryStateText *string    `gorm:"type:text" json:"history_state_text,omitempty"` // 历史状态页（每次更新时 append 旧内容）
 	Metadata         *string    `gorm:"type:json" json:"metadata,omitempty"`           // LLM 原始输出（candidate_info 等）
 	EmbeddingID      *string    `gorm:"size:36" json:"embedding_id,omitempty"`
 	CreatedAt        time.Time  `gorm:"autoCreateTime" json:"created_at"`

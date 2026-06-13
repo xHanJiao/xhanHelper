@@ -4,62 +4,6 @@ import (
 	"testing"
 )
 
-func TestExtractLatestFacts(t *testing.T) {
-	tests := []struct {
-		name       string
-		stateFacts string
-		n          int
-		wantLen    int
-		wantFirst  string
-		wantLast   string
-	}{
-		{
-			name:    "empty facts",
-			n:       3,
-			wantLen: 0,
-		},
-		{
-			name: "fewer facts than n",
-			stateFacts: `{"ts":"06-01","fact":"fact1"}
-{"ts":"06-02","fact":"fact2"}`,
-			n:       5,
-			wantLen: 2,
-		},
-		{
-			name: "more facts than n returns latest",
-			stateFacts: `{"ts":"06-01","fact":"oldest"}
-{"ts":"06-02","fact":"middle"}
-{"ts":"06-03","fact":"newest"}
-{"ts":"06-04","fact":"latest"}`,
-			n:        3,
-			wantLen:  3,
-			wantLast: "latest",
-		},
-		{
-			name: "blank lines skipped",
-			stateFacts: `{"ts":"06-01","fact":"a"}
-
-{"ts":"06-02","fact":"b"}`,
-			n:       3,
-			wantLen: 2,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractLatestFacts(tt.stateFacts, tt.n)
-			if len(got) != tt.wantLen {
-				t.Errorf("len = %d, want %d", len(got), tt.wantLen)
-			}
-			if tt.wantLen > 0 {
-				if tt.wantLast != "" && got[len(got)-1] != tt.wantLast {
-					t.Errorf("last = %q, want %q", got[len(got)-1], tt.wantLast)
-				}
-			}
-		})
-	}
-}
-
 func TestSearchThemes(t *testing.T) {
 	vs := &mockVectorStore{
 		results: []SearchResult{

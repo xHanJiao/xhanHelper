@@ -38,6 +38,7 @@ type CronRunner struct {
 	memExtractor      *MemoryExtractor
 	commitTimer       *CommitmentTimer
 	convRepo          *service.ConversationRepo
+	stateUpdater      *StateUpdater
 	memoryAutoExtract bool
 	missionRunner     *MissionRunner
 	missionRepo       *service.MissionRepo
@@ -53,6 +54,7 @@ type CronRunner struct {
 // CronRunnerConfig — 调度器依赖配置
 type CronRunnerConfig struct {
 	Orch              *ReflectionOrchestrator
+	StateUpdater      *StateUpdater
 	UserRepo          *service.UserRepo
 	MemExtractor      *MemoryExtractor
 	CommitTimer       *CommitmentTimer
@@ -87,6 +89,7 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 	}
 	return &CronRunner{
 		orch:              cfg.Orch,
+		stateUpdater:      cfg.StateUpdater,
 		userRepo:          cfg.UserRepo,
 		memExtractor:      cfg.MemExtractor,
 		commitTimer:       cfg.CommitTimer,
@@ -290,24 +293,27 @@ func (cr *CronRunner) processPostChatTasks(ctx context.Context) {
 	}
 }
 
-// dispatchPostChat 对话后处理：提取记忆（仅用于长期记忆归档）
+// dispatchPostChat 对话后处理：提取记忆 + 匹配活跃主题并增量更新状态页
 func (cr *CronRunner) dispatchPostChat(ctx context.Context, userID, convID string) {
 	runCtx, cancel := context.WithTimeout(ctx, cr.runTimeout)
 	defer cancel()
 
+	var memory *model.UserMemory
 	if cr.memoryAutoExtract {
 		conv, err := cr.convRepo.FindByID(runCtx, convID)
 		if err != nil {
 			log.Printf("[cron] post-chat: find conv error: %v", err)
 		} else if conv != nil {
-			_, err = cr.memExtractor.ExtractFromConversation(runCtx, conv)
+			memory, err = cr.memExtractor.ExtractFromConversation(runCtx, conv)
 			if err != nil {
 				log.Printf("[cron] post-chat: memory extract error: %v", err)
 			}
 		}
 	}
-	// 注：Phase 15 主题状态更新改由 LLM 在对话中通过 append_theme_state tool call 完成，
-	// StateUpdater 已删除，不再在此处触发主题状态更新
+
+	if memory != nil {
+		cr.stateUpdater.UpdateThemesFromMemory(runCtx, userID, memory)
+	}
 }
 
 // nextDailyDelay 计算距离下一个触发时间还需要多久

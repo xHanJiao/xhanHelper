@@ -38,6 +38,7 @@ type CronRunner struct {
 	memExtractor      *MemoryExtractor
 	commitTimer       *CommitmentTimer
 	convRepo          *service.ConversationRepo
+	msgRepo           *service.MessageRepo
 	stateUpdater      *StateUpdater
 	memoryAutoExtract bool
 	missionRunner     *MissionRunner
@@ -59,6 +60,7 @@ type CronRunnerConfig struct {
 	MemExtractor      *MemoryExtractor
 	CommitTimer       *CommitmentTimer
 	ConvRepo          *service.ConversationRepo
+	MsgRepo           *service.MessageRepo
 	DelayedTaskRepo   *service.DelayedTaskRepo
 	MissionRunner     *MissionRunner
 	MissionRepo       *service.MissionRepo
@@ -94,6 +96,7 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		memExtractor:      cfg.MemExtractor,
 		commitTimer:       cfg.CommitTimer,
 		convRepo:          cfg.ConvRepo,
+		msgRepo:           cfg.MsgRepo,
 		delayedTaskRepo:   cfg.DelayedTaskRepo,
 		missionRunner:     cfg.MissionRunner,
 		missionRepo:       cfg.MissionRepo,
@@ -293,27 +296,35 @@ func (cr *CronRunner) processPostChatTasks(ctx context.Context) {
 	}
 }
 
-// dispatchPostChat 对话后处理：提取记忆 + 匹配活跃主题并增量更新状态页
+// dispatchPostChat 对话后处理：统一构建消息文本，分别做记忆提取和主题更新
 func (cr *CronRunner) dispatchPostChat(ctx context.Context, userID, convID string) {
 	runCtx, cancel := context.WithTimeout(ctx, cr.runTimeout)
 	defer cancel()
 
-	var memory *model.UserMemory
-	if cr.memoryAutoExtract {
-		conv, err := cr.convRepo.FindByID(runCtx, convID)
+	var conv *model.Conversation
+	var err error
+	conv, err = cr.convRepo.FindByID(runCtx, convID)
+	if err != nil || conv == nil {
 		if err != nil {
 			log.Printf("[cron] post-chat: find conv error: %v", err)
-		} else if conv != nil {
-			memory, err = cr.memExtractor.ExtractFromConversation(runCtx, conv)
-			if err != nil {
-				log.Printf("[cron] post-chat: memory extract error: %v", err)
-			}
 		}
+		return
 	}
 
-	if memory != nil {
-		cr.stateUpdater.UpdateThemesFromMemory(runCtx, userID, memory)
+	// 统一构建消息文本（MemoryExtractor 和 StateUpdater 共用同一份输入）
+	msgs, convText, buildErr := BuildConversationText(runCtx, cr.msgRepo, conv, 400)
+	if buildErr != nil || convText == "" {
+		log.Printf("[cron] post-chat: build conv text error: %v", buildErr)
+		return
 	}
+
+	// Memory 提取（长期记忆归档）
+	if cr.memoryAutoExtract {
+		cr.memExtractor.ExtractFromMessages(runCtx, conv, msgs, convText)
+	}
+
+	// StateUpdater: 基于对话文本匹配+更新主题
+	cr.stateUpdater.UpdateThemesFromConversation(runCtx, userID, msgs, convText)
 }
 
 // nextDailyDelay 计算距离下一个触发时间还需要多久

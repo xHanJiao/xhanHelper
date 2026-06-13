@@ -1,11 +1,15 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 
+	"github.com/google/uuid"
+
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
@@ -127,6 +131,53 @@ func (ta *ThemeAnalyst) Execute(ec *tool.ExecuteContext, funcName string, args j
 	if stateText == "" {
 		stateText = output.Summary
 	}
+	if stateText == "" {
+		log.Printf("[theme_analyst] %s: empty state, skip", a.ThemeName)
+		return &tool.Result{Success: true, Data: json.RawMessage(`{"summary":"no update"}`)}
+	}
+
+	// 检验 proposed state（Phase 15）
+	oldState := ta.themeStore.LoadState(ec.Ctx, a.ThemeID, ec.UserID)
+	vr, err := VerifyStateUpdate(ec.Ctx, ta.flashClient, ec.UserID, oldState, result.FinalResponse, stateText)
+	if err != nil {
+		log.Printf("[theme_analyst] verify error: theme=%s err=%v", a.ThemeName, err)
+	}
+	if vr != nil && !vr.Complete {
+		// 记录检验失败 trace
+		recordVerifyDecision(ec.Ctx, ta.traceRepo, a.ThemeName, "rejected", vr)
+
+		log.Printf("[theme_analyst] %s: initial verify failed, running corrective ReAct", a.ThemeName)
+
+		// 矫正 ReAct: 带检验建议 + 检索工具再跑一轮
+		correctivePrompt := fmt.Sprintf(`你正在修正「%s」的状态页。原始分析存在以下问题：
+
+%s
+
+请使用检索工具核实并修正状态页。最多 2 轮检索后输出 confirmed_state JSON。`, a.ThemeName, vr.Suggestion)
+
+		correctLoop := NewReactLoop(ta.flashClient, ta.retrievalTools, themeAnalystPrompt, 2, ec.UserID, "ThemeAnalyst:C", ta.traceRepo, CtxTraceID(ec.Ctx))
+		correctResult, cErr := correctLoop.Run(ec.Ctx, fmt.Sprintf("## 当前状态页(草案)\n%s\n\n## 旧状态页\n%s\n\n%s", stateText, oldState, correctivePrompt))
+		if cErr == nil {
+			var corrected struct {
+				UpdatedState string `json:"updated_state"`
+			}
+			if _, parseErr := ParseFlashJSON(correctResult.FinalResponse, &corrected); parseErr == nil && corrected.UpdatedState != "" {
+				// 再检验一次
+				vr2, err2 := VerifyStateUpdate(ec.Ctx, ta.flashClient, ec.UserID, oldState, correctResult.FinalResponse, corrected.UpdatedState)
+				if err2 == nil && vr2 != nil && vr2.Complete {
+					recordVerifyDecision(ec.Ctx, ta.traceRepo, a.ThemeName, "corrected", vr2)
+					log.Printf("[theme_analyst] %s: corrective ReAct passed", a.ThemeName)
+					stateText = corrected.UpdatedState
+				} else {
+					recordVerifyDecision(ec.Ctx, ta.traceRepo, a.ThemeName, "rejected", vr2)
+					log.Printf("[theme_analyst] %s: corrective ReAct still failed", a.ThemeName)
+				}
+			}
+		}
+	} else {
+		recordVerifyDecision(ec.Ctx, ta.traceRepo, a.ThemeName, "verified", vr)
+	}
+
 	if saveErr := ta.themeStore.SaveState(ec.Ctx, a.ThemeID, ec.UserID, stateText); saveErr != nil {
 		log.Printf("[theme_analyst] save state error for %s: %v", a.ThemeName, saveErr)
 	}
@@ -134,4 +185,33 @@ func (ta *ThemeAnalyst) Execute(ec *tool.ExecuteContext, funcName string, args j
 	data, _ := json.Marshal(map[string]interface{}{"updated_state": output.UpdatedState, "summary": output.Summary})
 	log.Printf("[theme_analyst] %s: state_updated=%v summary=%s", a.ThemeName, output.UpdatedState != "", output.Summary)
 	return &tool.Result{Success: true, Data: data}
+}
+
+// recordVerifyDecision 记录检验结果到 reflection trace
+func recordVerifyDecision(ctx context.Context, traceRepo *service.ReflectionTraceRepo, themeName, verdict string, vr *VerifyResult) {
+	traceID := CtxTraceID(ctx)
+	if traceID == "" || traceRepo == nil {
+		return
+	}
+	reason := fmt.Sprintf("complete=%v", vr != nil && vr.Complete)
+	if vr != nil && !vr.Complete {
+		reason = fmt.Sprintf("hallucinations=%d missing=%d", len(vr.Hallucinations), len(vr.Missing))
+		if vr.Suggestion != "" {
+			reason += " suggestion=" + vr.Suggestion
+		}
+	}
+	detailJSON := ""
+	if vr != nil {
+		b, _ := json.Marshal(vr)
+		detailJSON = string(b)
+	}
+	createDecisionSafe(traceRepo, ctx, &model.ReflectionDecision{
+		ID:         uuid.New().String(),
+		TraceID:    traceID,
+		Stage:      "theme_verification",
+		Subject:    themeName,
+		Verdict:    verdict,
+		Reason:     reason,
+		DetailJSON: &detailJSON,
+	})
 }

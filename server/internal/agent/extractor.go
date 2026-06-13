@@ -118,10 +118,15 @@ func BuildConversationText(ctx context.Context, msgRepo *service.MessageRepo, co
 
 // ExtractFromConversation 从指定会话中增量提取记忆。返回提取到的记忆（可能为 nil）。
 func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *model.Conversation) (*model.UserMemory, error) {
-	msgs, convText, err := BuildConversationText(ctx, e.msgRepo, conv, 50)
+	msgs, convText, err := BuildConversationText(ctx, e.msgRepo, conv, 400)
 	if err != nil || len(msgs) == 0 {
 		return nil, err
 	}
+	return e.ExtractFromMessages(ctx, conv, msgs, convText)
+}
+
+// ExtractFromMessages 用已构建的消息文本提取记忆，统一 BuildConversationText 输入。
+func (e *MemoryExtractor) ExtractFromMessages(ctx context.Context, conv *model.Conversation, msgs []model.Message, convText string) (*model.UserMemory, error) {
 
 	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
 	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, convText)
@@ -179,7 +184,7 @@ func (e *MemoryExtractor) ExtractFromConversationWithCallback(ctx context.Contex
 		return err
 	}
 
-	msgs, convText, err := BuildConversationText(ctx, e.msgRepo, conv, 50)
+	msgs, convText, err := BuildConversationText(ctx, e.msgRepo, conv, 400)
 	if err != nil {
 		cb(ExtractEvent{Type: "error", Message: err.Error()})
 		return err

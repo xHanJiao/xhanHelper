@@ -39,9 +39,10 @@ type StateUpdater struct {
 	pendingFindingRepo *service.PendingFindingRepo
 	vectorStore        app.VectorStore
 	conceptEmbed       *ConceptEmbedService
+	chunkBuilder       *ChunkBuilder
 }
 
-func NewStateUpdater(flashClient llm.LLMClient, msgRepo *service.MessageRepo, convRepo *service.ConversationRepo, themeStore *ThemeStore, pendingFindingRepo *service.PendingFindingRepo, vectorStore app.VectorStore, conceptEmbed *ConceptEmbedService) *StateUpdater {
+func NewStateUpdater(flashClient llm.LLMClient, msgRepo *service.MessageRepo, convRepo *service.ConversationRepo, themeStore *ThemeStore, pendingFindingRepo *service.PendingFindingRepo, vectorStore app.VectorStore, conceptEmbed *ConceptEmbedService, chunkBuilder *ChunkBuilder) *StateUpdater {
 	return &StateUpdater{
 		flashClient:        flashClient,
 		msgRepo:            msgRepo,
@@ -50,6 +51,7 @@ func NewStateUpdater(flashClient llm.LLMClient, msgRepo *service.MessageRepo, co
 		pendingFindingRepo: pendingFindingRepo,
 		vectorStore:        vectorStore,
 		conceptEmbed:       conceptEmbed,
+		chunkBuilder:       chunkBuilder,
 	}
 }
 
@@ -215,7 +217,7 @@ func (s *StateUpdater) recallByVector(ctx context.Context, userID, text string, 
 
 // UpdateFromConversation 从绑定主题的会话中增量更新状态页。
 // 注：Phase 13 改为记忆驱动，此方法当前未使用。保留以备需要。
-func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, convID, themeID string) error {
+func (s *StateUpdater) updateFromConvLegacy(ctx context.Context, userID, convID, themeID string) error {
 	// 读 cursor
 	extra, err := s.convRepo.GetExtra(ctx, convID)
 	if err != nil {
@@ -316,4 +318,123 @@ func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, convI
 
 	log.Printf("[state_updater] updated theme %s, cursor=%s", themeID[:8], lastMsg.ID[:8])
 	return nil
+}
+
+// UpdateThemesFromConversation 用对话文本匹配活跃主题并增量更新状态页。
+// Phase 15: 替代 UpdateThemesFromMemory，输入从精炼 memory 改为原始对话。
+// 使用消息已有的向量（VectorStore 中 key=msg:{messageID}）做主题匹配，不额外嵌入。
+func (s *StateUpdater) UpdateThemesFromConversation(ctx context.Context, userID string, msgs []model.Message, convText string) {
+	if convText == "" && len(msgs) == 0 {
+		return
+	}
+
+	actives, err := s.themeStore.ListActives(ctx, userID)
+	if err != nil || len(actives) == 0 {
+		if err != nil {
+			log.Printf("[state_updater] list actives error: %v", err)
+		}
+		return
+	}
+
+	// 从已有消息向量中拼 query，不重新嵌入（省 embedding 费用）
+	matched := make(map[string]float64)
+	for _, m := range msgs {
+		if m.Role != "user" || m.ID == "" {
+			continue
+		}
+		vec, ok := s.vectorStore.GetVector("msg:" + m.ID)
+		if !ok || len(vec) == 0 {
+			continue
+		}
+		hits := s.vectorStore.Search(vec, 10, func(id string, _ []float64, meta map[string]string) bool {
+			return meta["type"] == "theme" && meta["user_id"] == userID
+		})
+		for _, h := range hits {
+			if tid := h.Metadata["theme_id"]; tid != "" {
+				if existing, ok2 := matched[tid]; !ok2 || h.Score > existing {
+					matched[tid] = h.Score
+				}
+			}
+		}
+	}
+
+	for _, t := range actives {
+		score, ok := matched[t.ID]
+		if !ok || score < defaultVecThreshold {
+			continue
+		}
+		s.UpdateFromConversation(ctx, userID, t.ID, t.Name, convText)
+	}
+
+	log.Printf("[state_updater] conv matched %d/%d active themes", len(matched), len(actives))
+}
+
+// UpdateFromConversation 对单个主题基于对话文本更新状态页，含验证机制。
+func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, themeID, themeName, convText string) {
+	stateText := s.themeStore.LoadState(ctx, themeID, userID)
+	name := s.themeStore.GetName(ctx, themeID, userID)
+	if name == "" {
+		name = themeName
+	}
+
+	inputMsg := fmt.Sprintf("## 主题\n%s\n\n## 当前状态页\n%s\n\n## 最近对话\n%s", name, stateText, convText)
+	prompt := fmt.Sprintf(`你是 xhanHelper 的主题状态维护员。基于对话更新「%s」的状态页。
+
+## 规则
+1. 保留旧状态中仍然有效的关键信息
+2. 从对话中提取新进展（决策、进度、发现）
+3. 过期信息用新数据替换
+4. 控制篇幅不超过 500 字
+
+## 输出（纯 JSON）
+{"updated_state": "更新后的状态页文本"}`, name)
+
+	// 验证最多重试 2 次
+	const maxRetries = 2
+	for retry := 0; retry <= maxRetries; retry++ {
+		resp, err := s.flashClient.ChatSync(ctx, &llm.ChatRequest{
+			SystemPrompt: prompt,
+			Messages:     []llm.Message{{Role: "user", Content: inputMsg}},
+			UserID:       userID,
+		})
+		if err != nil {
+			log.Printf("[state_updater] ChatSync error: theme=%s err=%v", themeID[:8], err)
+			return
+		}
+
+		var output struct {
+			UpdatedState string `json:"updated_state"`
+		}
+		if _, parseErr := ParseFlashJSON(resp.Content, &output); parseErr != nil || output.UpdatedState == "" {
+			log.Printf("[state_updater] parse error: theme=%s err=%v", themeID[:8], parseErr)
+			return
+		}
+
+		// 检验 proposed
+		vr, err := VerifyStateUpdate(ctx, s.flashClient, userID, stateText, convText, output.UpdatedState)
+		if err != nil {
+			log.Printf("[state_updater] verify error: theme=%s err=%v", themeID[:8], err)
+			return
+		}
+
+		if vr.Complete {
+			// 通过检验，写入 state_text + chunk
+			if err := s.themeStore.SaveState(ctx, themeID, userID, output.UpdatedState); err != nil {
+				log.Printf("[state_updater] SaveState error: theme=%s err=%v", themeID[:8], err)
+				return
+			}
+			if s.chunkBuilder != nil {
+				ChunkStateText(ctx, s.chunkBuilder, userID, themeID, output.UpdatedState)
+			}
+			log.Printf("[state_updater] updated theme %s (%s), retries=%d", themeID[:8], name, retry)
+			return
+		}
+
+		if retry < maxRetries && vr.Suggestion != "" {
+			inputMsg += fmt.Sprintf("\n\n## 上次更新未通过检验\n%s\n请根据以上建议重新生成。", vr.Suggestion)
+			log.Printf("[state_updater] retry %d/%d for theme %s: %s", retry+1, maxRetries, themeID[:8], vr.Suggestion)
+		}
+	}
+
+	log.Printf("[state_updater] theme %s: max retries reached, state not updated", themeID[:8])
 }

@@ -264,11 +264,14 @@ func (o *ReflectionOrchestrator) dailyReview(ctx context.Context, userID, trigge
 	o.traceRepo.CreateTrace(ctx, tr)
 
 	o.expireActiveThemes(ctx, userID)
-	analyzed := o.reviewActiveThemes(ctx, userID, traceID)
+
+	// Phase 15: 状态更新已收敛至 StateUpdater（post-chat 触发），
+	// dailyReview 只做 expire + discover，不再做全量分析
+	discovered := o.discoverNewThemes(ctx, userID, traceID)
 
 	endTraceSafe(o.traceRepo, ctx, traceID, "completed", 0, 0, nil)
-	log.Printf("[reflection] trace=%s DONE %s analyzed=%d", traceID[:8], triggerType, analyzed)
-	return analyzed, nil
+	log.Printf("[reflection] trace=%s DONE %s discovered=%d", traceID[:8], triggerType, discovered)
+	return discovered, nil
 }
 
 // durationDays 返回 duration 对应的衰减天数（从配置读取）
@@ -277,6 +280,35 @@ func (o *ReflectionOrchestrator) durationDays(duration string) int {
 		return d
 	}
 	return 30
+}
+
+// discoverNewThemes 运行 ThemeDiscoverer 从 topic/note/memory 聚类中发现新主题
+func (o *ReflectionOrchestrator) discoverNewThemes(ctx context.Context, userID, traceID string) int {
+	discovererT, ok := o.reflectionReg.GetToolMap()["theme_discoverer"]
+	if !ok {
+		log.Printf("[reflection] discover: theme_discoverer tool not found")
+		return 0
+	}
+
+	args, _ := json.Marshal(map[string]interface{}{
+		"mode": "stats",
+	})
+	ec := &tool.ExecuteContext{Ctx: WithTraceID(ctx, traceID), UserID: userID}
+	res := discovererT.Execute(ec, "discover", args)
+	if !res.Success || res.Data == nil {
+		if res.Error != "" {
+			log.Printf("[reflection] discover: theme_discoverer error: %s", res.Error)
+		}
+		return 0
+	}
+
+	var output DiscoverResult
+	if err := json.Unmarshal(res.Data, &output); err != nil {
+		log.Printf("[reflection] discover: unmarshal DiscoverResult error: %v", err)
+		return 0
+	}
+	log.Printf("[reflection] discover: created=%d rejected=%d", len(output.Created), len(output.Rejected))
+	return len(output.Created)
 }
 
 // expireActiveThemes 检查 active 主题是否已过衰减周期，是则 close

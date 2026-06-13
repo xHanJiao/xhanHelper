@@ -67,8 +67,17 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MaxDeliveryRetries: cfg.Reflection.MaxDeliveryRetries,
 		ActiveDurationDays: cfg.Reflection.ActiveDurationDays,
 	})
+	// StateUpdater 检索工具集（与 ThemeAnalyst 共用同一套）
+	retrievalTools := map[string]tool.Tool{
+		"get_topic_detail":   tool.NewGetTopicDetailTool(repos.Note, repos.Mem),
+		"get_bill_stats":     tool.NewGetBillStatsTool(repos.Bill),
+		"search_notes_v2":    tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder),
+		"search_memories_v2": tool.NewSearchMemoriesV2Tool(infra.VectorStore, repos.Mem, repos.Chunk, infra.Embedder),
+		"message_search":     tool.NewMessageSearchTool(repos.Message, repos.Conversation),
+	}
 	stateUpdater := agent.NewStateUpdater(llmClients.Flash, repos.Message, repos.Conversation,
-		agent.NewThemeStore(repos.ThemeState), repos.PendingFinding, infra.VectorStore, tools.ConceptEmbedService, chunkBuilder)
+		agent.NewThemeStore(repos.ThemeState), repos.PendingFinding, infra.VectorStore, tools.ConceptEmbedService, chunkBuilder,
+		retrievalTools, repos.Trace)
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{
 		Orch:              reflectionOrch,
 		StateUpdater:      stateUpdater,

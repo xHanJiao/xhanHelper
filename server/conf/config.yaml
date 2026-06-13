@@ -81,5 +81,5 @@ retrieval:
     limit: 5
   history:
     freshness_decay: 0.008
-    threshold: 0.65
+    threshold: 0.6
     limit: 2

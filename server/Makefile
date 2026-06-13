@@ -168,16 +168,18 @@ deploy: build-frontend build-linux
 	echo "========================================"; \
 	echo "       部署到阿里云服务器 (全量)"; \
 	echo "========================================"; \
-	echo "1/5 上传前端..."; \
+	echo "1/6 上传前端..."; \
 	scp -r $$F $$U@$$H:$$P/front-end/; \
-	echo "2/5 上传二进制..."; \
+	echo "2/6 备份数据库..."; \
+	ssh $$U@$$H "cd $$P && bash scripts/dump-db.sh" || (echo "❌ 数据库备份失败，部署中止"; exit 1); \
+	echo "3/6 上传二进制..."; \
 	scp $$B $$U@$$H:$$P/$(BINARY).tmp; \
-	echo "3/5 上传配置文件 + 控制脚本..."; \
+	echo "4/6 上传配置文件 + 控制脚本..."; \
 	scp conf/config.yaml conf/config.prod.yaml $$U@$$H:$$P/conf/; \
 	scp scripts/control-xhan-helper.sh $$U@$$H:$$P/; \
-	echo "4/5 上传 SQL 迁移文件..."; \
+	echo "5/6 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
-	echo "5/5 替换二进制并重启..."; \
+	echo "6/6 替换二进制并重启..."; \
 	ssh $$U@$$H "cd $$P && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || ( \
 		echo ""; \
 		echo "❌ 启动失败，日志如下："; \
@@ -201,14 +203,16 @@ deploy-backend: build-linux
 	echo "========================================"; \
 	echo "       部署后端到阿里云服务器"; \
 	echo "========================================"; \
-	echo "1/4 上传二进制..."; \
+	echo "1/5 上传二进制..."; \
 	scp $$B $$U@$$H:$$P/$(BINARY).tmp; \
-	echo "2/4 上传配置文件 + 控制脚本..."; \
+	echo "2/5 备份数据库..."; \
+	ssh $$U@$$H "cd $$P && bash scripts/dump-db.sh" || (echo "❌ 数据库备份失败，部署中止"; exit 1); \
+	echo "3/5 上传配置文件 + 控制脚本..."; \
 	scp conf/config.yaml conf/config.prod.yaml $$U@$$H:$$P/conf/; \
 	scp scripts/control-xhan-helper.sh $$U@$$H:$$P/; \
-	echo "3/4 上传 SQL 迁移文件..."; \
+	echo "4/5 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
-	echo "4/4 替换二进制并重启..."; \
+	echo "5/5 替换二进制并重启..."; \
 	ssh $$U@$$H "cd $$P && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || ( \
 		echo ""; \
 		echo "❌ 启动失败，日志如下："; \
@@ -248,14 +252,16 @@ deploy-only:
 	echo "========================================"; \
 	echo "       上传到阿里云服务器 (仅上传)"; \
 	echo "========================================"; \
-	echo "1/4 上传二进制..."; \
+	echo "1/5 上传二进制..."; \
 	scp $$B $$U@$$H:$$P/$(BINARY).tmp; \
-	echo "2/4 上传配置文件 + 控制脚本..."; \
+	echo "2/5 备份数据库..."; \
+	ssh $$U@$$H "cd $$P && bash scripts/dump-db.sh" || (echo "❌ 数据库备份失败，部署中止"; exit 1); \
+	echo "3/5 上传配置文件 + 控制脚本..."; \
 	scp conf/config.yaml conf/config.prod.yaml $$U@$$H:$$P/conf/; \
 	scp scripts/control-xhan-helper.sh $$U@$$H:$$P/; \
-	echo "3/4 上传 SQL 迁移文件..."; \
+	echo "4/5 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
-	echo "4/4 替换二进制并重启..."; \
+	echo "5/5 替换二进制并重启..."; \
 	ssh $$U@$$H "cd $$P && mv $(BINARY).tmp $(BINARY) && chmod +x $(BINARY) control-xhan-helper.sh && bash control-xhan-helper.sh" || ( \
 		echo ""; \
 		echo "❌ 启动失败，日志如下："; \

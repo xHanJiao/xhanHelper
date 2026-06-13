@@ -111,6 +111,7 @@ const messagesContainerRef = ref(null)
 const mobileInputRef = ref(null)
 const isInitialScrollDone = ref(false)
 const isAwayFromBottom = ref(false)
+const skipInputTransition = ref(false)
 
 const { isBarVisible, showBar } = useScrollTopBar(messagesContainerRef)
 
@@ -281,7 +282,7 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
       chat.oldestCursor = res.oldest_cursor
       chat.hasMoreBefore = res.has_more_before
       // 批量获取关联记忆详情
-      fetchAssociatedMemories()
+      await fetchAssociatedMemories()
     }
   } catch (e) {
     console.error('Failed to load history', e)
@@ -413,6 +414,8 @@ watch(() => route.params.id, async (newId, oldId) => {
   // ====================================================================
   if (newId && newId !== chat.conversationId) {
     // 重置 UI 状态：确保输入框可见、标记首次加载中
+    // 切换会话时跳过输入框 CSS 过渡，避免过渡期间 scrollHeight 变化导致定位不准
+    skipInputTransition.value = true
     inputVisible.value = true
     isFirstLoad.value = true
     // 延迟 200ms 才允许「上滑加载更多历史」触发，防止初入页面时的滚动事件误触发分页
@@ -427,6 +430,9 @@ watch(() => route.params.id, async (newId, oldId) => {
     if (messagesContainerRef.value) {
       messagesContainerRef.value.scrollTop = messagesContainerRef.value.scrollHeight
     }
+    // 恢复输入框 CSS 过渡
+    await nextTick()
+    skipInputTransition.value = false
 
     // ③ 解除首次加载标记，并在 200ms 后激活滚动监听（给滚动条一个稳定期）
     isFirstLoad.value = false
@@ -454,6 +460,7 @@ watch(() => route.params.id, async (newId, oldId) => {
   // ====================================================================
   } else if (newId && chat.needsRefetch) {
     // 与分支 A 相同的 UI 重置 + 历史加载 + 滚动定位流程
+    skipInputTransition.value = true
     inputVisible.value = true
     isFirstLoad.value = true
     isInitialScrollDone.value = false
@@ -462,6 +469,8 @@ watch(() => route.params.id, async (newId, oldId) => {
     if (messagesContainerRef.value) {
       messagesContainerRef.value.scrollTop = messagesContainerRef.value.scrollHeight
     }
+    await nextTick()
+    skipInputTransition.value = false
 
     // 清除重载标志，避免下次路由不变时重复加载
     chat.needsRefetch = false
@@ -734,7 +743,7 @@ function handleContainerClick(e) {
           opacity: inputVisible ? 1 : 0,
           transform: inputVisible ? 'scaleY(1)' : 'scaleY(0.8)',
           transformOrigin: 'bottom right',
-          transition: 'height 0.25s ease-out, padding 0.25s ease-out, opacity 0.2s ease-out, transform 0.25s ease-out'
+          transition: skipInputTransition.value ? 'none' : 'height 0.25s ease-out, padding 0.25s ease-out, opacity 0.2s ease-out, transform 0.25s ease-out'
         } : {
           padding: inputVisible ? 'var(--space-md) var(--space-lg)' : '0 var(--space-lg)',
           background: 'var(--color-bg-page)',
@@ -743,7 +752,7 @@ function handleContainerClick(e) {
           height: inputVisible ? (inputExpanded ? '75vh' : 'auto') : '0',
           overflow: 'hidden',
           opacity: inputVisible ? 1 : 0,
-          transition: 'height 0.25s ease-out, padding 0.25s ease-out, opacity 0.2s ease-out'
+          transition: skipInputTransition.value ? 'none' : 'height 0.25s ease-out, padding 0.25s ease-out, opacity 0.2s ease-out'
         }
       ]"
     >

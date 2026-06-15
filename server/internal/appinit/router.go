@@ -97,6 +97,14 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		AdminMiddleware:        monitor.AdminOnly(cfg.Server.AdminUsers),
 	})
 
+	evalAdminHandler := controller.NewEvalAdminHandler("data/eval")
+	controller.RegisterEvalRoutes(controller.EvalRoutesConfig{
+		R:               router,
+		AuthMiddleware:  middleware.Auth(repos.User),
+		AdminMiddleware: monitor.AdminOnly(cfg.Server.AdminUsers),
+		Handler:         evalAdminHandler,
+	})
+
 	return router
 }
 

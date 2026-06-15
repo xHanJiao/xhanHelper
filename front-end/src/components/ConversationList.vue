@@ -85,7 +85,8 @@ const adminItems = [
   { label: '记忆', path: '/memories' },
   { label: '笔记', path: '/notes' },
   { label: '主题', path: '/themes' },
-  { label: '监控看板', path: '/admin', adminOnly: true }
+  { label: '监控看板', path: '/admin', adminOnly: true },
+  { label: '检索评测', path: '/admin/eval', adminOnly: true }
 ]
 
 const isAdmin = computed(() => auth.user?.isAdmin === true)

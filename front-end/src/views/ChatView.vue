@@ -255,8 +255,10 @@ function scrollToBottom() {
 function handleScrollToBottomBtn() {
   inputVisible.value = true
   nextTick(() => {
-    const el = messagesContainerRef.value
-    if (el) el.scrollTop = el.scrollHeight
+    requestAnimationFrame(() => {
+      const el = messagesContainerRef.value
+      if (el) el.scrollTop = el.scrollHeight
+    })
   })
 }
 

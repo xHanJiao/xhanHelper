@@ -14,7 +14,6 @@ Thumbs.db
 
 # SQLite
 *.db
-!dataset/projects/**/*.db
 
 # Go
 /server/vendor/

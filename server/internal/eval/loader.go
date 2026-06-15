@@ -69,15 +69,20 @@ func LoadDataset(cfg *config.Config, strategy ExportStrategy, projectName, outPa
 		return err
 	}
 
-	if err := insertQueries(sqliteDB, queries); err != nil {
+	if err := insertRawQueries(sqliteDB, queries); err != nil {
 		return err
 	}
-	log.Printf("[eval] inserted %d queries", len(queries))
+	log.Printf("[eval] inserted %d raw queries", len(queries))
 
 	if err := insertCorpus(sqliteDB, corpus); err != nil {
 		return err
 	}
 	log.Printf("[eval] inserted %d corpus entries", len(corpus))
+
+	log.Printf("[eval] preloading embeddings from MySQL")
+	if err := preloadEmbeddings(srcDB, sqliteDB); err != nil {
+		return fmt.Errorf("preload embeddings: %w", err)
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_ = insertMetadata(sqliteDB, "version", "v0.1")

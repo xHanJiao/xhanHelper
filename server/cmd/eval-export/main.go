@@ -30,7 +30,7 @@ func main() {
 
 	outPath := *out
 	if outPath == "" {
-		projRoot := filepath.Join("..", "dataset", "projects", *project)
+		projRoot := filepath.Join("data", "eval", *project)
 		outPath = filepath.Join(projRoot, "eval.db")
 	}
 

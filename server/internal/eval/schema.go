@@ -16,17 +16,12 @@ CREATE TABLE IF NOT EXISTS eval_projects (
     locked_at   TEXT
 );
 
-CREATE TABLE IF NOT EXISTS eval_queries (
+CREATE TABLE IF NOT EXISTS raw_queries (
     id               TEXT PRIMARY KEY,
     content          TEXT NOT NULL,
     source_msg_id    TEXT NOT NULL,
     source_conv_id   TEXT,
-    created_at       TEXT,
-    selected_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    has_answer       INTEGER NOT NULL DEFAULT 0,
-    label_status     TEXT NOT NULL DEFAULT 'raw',
-    difficulty       TEXT DEFAULT 'medium',
-    notes            TEXT
+    created_at       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS eval_corpus (
@@ -37,6 +32,24 @@ CREATE TABLE IF NOT EXISTS eval_corpus (
     topic       TEXT,
     tags        TEXT,
     created_at  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS annotation_sessions (
+    id           TEXT PRIMARY KEY,
+    project_id   TEXT NOT NULL,
+    name         TEXT,
+    status       TEXT NOT NULL DEFAULT 'draft',
+    query_count  INTEGER NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS annotation_session_queries (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id    TEXT NOT NULL,
+    query_id      TEXT NOT NULL,
+    label_status  TEXT NOT NULL DEFAULT 'selected',
+    selected_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(session_id, query_id)
 );
 
 CREATE TABLE IF NOT EXISTS eval_ground_truth (
@@ -85,7 +98,7 @@ func insertProject(db *sql.DB, name string) error {
 	return nil
 }
 
-func insertQueries(db *sql.DB, queries []QueryExport) error {
+func insertRawQueries(db *sql.DB, queries []QueryExport) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -93,10 +106,10 @@ func insertQueries(db *sql.DB, queries []QueryExport) error {
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(
-		`INSERT INTO eval_queries (id, content, source_msg_id, source_conv_id, created_at)
+		`INSERT INTO raw_queries (id, content, source_msg_id, source_conv_id, created_at)
 		 VALUES (?, ?, ?, ?, ?)`)
 	if err != nil {
-		return fmt.Errorf("prepare insert queries: %w", err)
+		return fmt.Errorf("prepare insert raw_queries: %w", err)
 	}
 	defer stmt.Close()
 

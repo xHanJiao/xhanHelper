@@ -557,8 +557,10 @@ async function handleSend() {
   }
   // 立即滚到底部（不管用户在浏览什么位置）
   nextTick(() => {
-    const el = messagesContainerRef.value
-    if (el) el.scrollTop = el.scrollHeight
+    requestAnimationFrame(() => {
+      const el = messagesContainerRef.value
+      if (el) el.scrollTop = el.scrollHeight
+    })
   })
 
   const opts = {

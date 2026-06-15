@@ -21,28 +21,28 @@ const confirmingId = ref(null)
 
 const auth = useAuthStore()
 
-const unreadCount = ref(0)
-let unreadTimer = null
+// const unreadCount = ref(0)
+// let unreadTimer = null
 
-async function fetchUnreadCount() {
-  try {
-    const res = await api.get('/api/mailbox/unread-count')
-    unreadCount.value = res.count || 0
-  } catch (_) {}
-}
+// async function fetchUnreadCount() {
+//   try {
+//     const res = await api.get('/api/mailbox/unread-count')
+//     unreadCount.value = res.count || 0
+//   } catch (_) {}
+// }
 
-watch(() => route.path, () => {
-  fetchUnreadCount()
-})
+// watch(() => route.path, () => {
+//   fetchUnreadCount()
+// })
 
-onMounted(() => {
-  fetchUnreadCount()
-  unreadTimer = setInterval(fetchUnreadCount, 30000)
-})
+// onMounted(() => {
+//   fetchUnreadCount()
+//   unreadTimer = setInterval(fetchUnreadCount, 30000)
+// })
 
-onUnmounted(() => {
-  if (unreadTimer) clearInterval(unreadTimer)
-})
+// onUnmounted(() => {
+//   if (unreadTimer) clearInterval(unreadTimer)
+// })
 
 const activeId = computed(() => route.params.id)
 
@@ -197,7 +197,7 @@ function handleSelect(conv) {
           @mouseout="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'transparent' }"
         >
           {{ item.label }}
-          <span
+          <!-- <span
             v-if="item.path === '/mailbox' && unreadCount > 0"
             :style="{
               display: 'inline-flex',
@@ -213,7 +213,7 @@ function handleSelect(conv) {
               fontWeight: '600',
               marginLeft: 'auto',
             }"
-          >{{ unreadCount > 99 ? '99+' : unreadCount }}</span>
+          >{{ unreadCount > 99 ? '99+' : unreadCount }}</span> -->
         </div>
       </template>
     </div>

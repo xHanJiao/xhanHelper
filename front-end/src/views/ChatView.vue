@@ -281,8 +281,13 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
         chat.prependMessages(msgs)
 
         await nextTick()
-        const newScrollHeight = scrollContainer.scrollHeight
-        scrollContainer.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight)
+        await new Promise(resolve => {
+          requestAnimationFrame(() => {
+            const newScrollHeight = scrollContainer.scrollHeight
+            scrollContainer.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight)
+            resolve()
+          })
+        })
       } else {
         chat.setMessages(msgs)
       }

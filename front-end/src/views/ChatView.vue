@@ -119,6 +119,7 @@ const inputVisible = ref(true)
 const inputExpanded = ref(false)
 let hideCooldownTimer = null
 let showCooldownActive = false
+let scrollRafPending = false
 
 if (isMobile.value) inputVisible.value = false
 watch(isMobile, (val) => { if (val) inputVisible.value = false })
@@ -233,17 +234,21 @@ const currentAgentId = computed(() => {
 
 function scrollToBottom() {
   nextTick(() => {
-    if (chat.isStreaming && streamingBubbleRef.value) {
-      const container = messagesContainerRef.value
-      if (!container) return
-      // 用户离开底部超过 80px 时不强制滚动，避免打断阅读历史
-      const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-      if (distFromBottom > 80) return
-      container.scrollTop = container.scrollHeight
-    } else {
-      const container = messagesContainerRef.value
-      if (container) container.scrollTop = container.scrollHeight
-    }
+    if (scrollRafPending) return
+    scrollRafPending = true
+    requestAnimationFrame(() => {
+      scrollRafPending = false
+      if (chat.isStreaming && streamingBubbleRef.value) {
+        const container = messagesContainerRef.value
+        if (!container) return
+        const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+        if (distFromBottom > 80) return
+        container.scrollTop = container.scrollHeight
+      } else {
+        const container = messagesContainerRef.value
+        if (container) container.scrollTop = container.scrollHeight
+      }
+    })
   })
 }
 

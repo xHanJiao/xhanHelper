@@ -62,6 +62,8 @@ export const useChatStore = defineStore('chat', () => {
     error.value = null
     statusMessage.value = null
     needsRefetch.value = false
+    oldestCursor.value = null
+    hasMoreBefore.value = false
   }
 
   return {

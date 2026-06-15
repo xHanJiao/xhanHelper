@@ -427,9 +427,10 @@ watch(() => route.params.id, async (newId, oldId) => {
 
     // ② 等 DOM 渲染完新消息后，把滚动条直接定位到底部（最新消息处）
     await nextTick()
-    if (messagesContainerRef.value) {
-      messagesContainerRef.value.scrollTop = messagesContainerRef.value.scrollHeight
-    }
+    requestAnimationFrame(() => {
+      const el = messagesContainerRef.value
+      if (el) el.scrollTop = el.scrollHeight
+    })
     // 恢复输入框 CSS 过渡
     await nextTick()
     skipInputTransition.value = false
@@ -466,9 +467,10 @@ watch(() => route.params.id, async (newId, oldId) => {
     isInitialScrollDone.value = false
     await loadHistory(newId)
     await nextTick()
-    if (messagesContainerRef.value) {
-      messagesContainerRef.value.scrollTop = messagesContainerRef.value.scrollHeight
-    }
+    requestAnimationFrame(() => {
+      const el = messagesContainerRef.value
+      if (el) el.scrollTop = el.scrollHeight
+    })
     await nextTick()
     skipInputTransition.value = false
 
@@ -588,7 +590,18 @@ function handleScroll(e) {
   }
 
   const threshold = container.clientHeight * 0.15
-  if (isInitialScrollDone.value && container.scrollTop <= threshold && chat.hasMoreBefore && !isLoadingHistory.value) {
+  const nearTop = container.scrollTop <= threshold
+  if (nearTop) {
+    console.log('[scroll-debug]', JSON.stringify({
+      isInitialScrollDone: isInitialScrollDone.value,
+      scrollTop: container.scrollTop,
+      threshold,
+      hasMoreBefore: chat.hasMoreBefore,
+      isLoadingHistory: isLoadingHistory.value,
+      convId: chat.conversationId
+    }))
+  }
+  if (isInitialScrollDone.value && nearTop && chat.hasMoreBefore && !isLoadingHistory.value) {
     loadHistory(chat.conversationId, 'before', chat.oldestCursor)
   }
 }

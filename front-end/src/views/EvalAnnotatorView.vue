@@ -527,7 +527,13 @@ onMounted(() => loadProjects())
                 </div>
                 <div class="annotation-list" v-if="queryDetail?.annotations">
                   <div v-for="a in queryDetail.annotations" :key="a.corpus_id" class="annotation-row">
-                    <div class="ann-content" :title="a.corpus_content">{{ a.corpus_content?.slice(0, 80) }}</div>
+                    <span v-if="!expandedItems[queryDetail.query.id + ':' + a.corpus_id]"
+                      class="ann-content clickable" @click="toggleContent(queryDetail.query.id, a.corpus_id)">
+                      {{ a.corpus_content?.slice(0, 80) }}{{ a.corpus_content?.length > 80 ? '...' : '' }}
+                    </span>
+                    <span v-else class="ann-content expanded" @click="toggleContent(queryDetail.query.id, a.corpus_id)">
+                      {{ a.corpus_content }}
+                    </span>
                     <div class="ann-score">
                       <NRadioGroup :value="a._newRelevance ?? a.relevance"
                         @update:value="v => updateScore(a, v)" size="small">
@@ -819,6 +825,9 @@ onMounted(() => loadProjects())
 .annotation-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
 .annotation-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--color-border); border-radius: 6px; font-size: 13px; }
 .ann-content { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ann-content.clickable { cursor: pointer; }
+.ann-content.clickable:hover { background: var(--color-hover); border-radius: 3px; }
+.ann-content.expanded { white-space: normal; overflow: visible; word-break: break-all; cursor: pointer; }
 .ann-score { display: flex; align-items: center; flex-shrink: 0; }
 .detail-actions { display: flex; justify-content: flex-end; gap: 8px; align-items: center; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--color-border); }
 .save-msg { font-size: 12px; color: var(--color-primary); margin-right: auto; }

@@ -41,8 +41,8 @@ type FullReport struct {
 	Total   int            `json:"total"`
 }
 
-// Run 执行评测：先 Index，再遍历有 ground_truth 标注的 query 做检索和指标计算。
-func (e *Evaluator) Run(ctx context.Context) (*FullReport, error) {
+// Run 执行评测，可选 filter 限定评测哪些 query（nil=全部有 GT 的）。
+func (e *Evaluator) Run(ctx context.Context, filter []string) (*FullReport, error) {
 	log.Printf("[evaluator] indexing corpus with engine=%q", e.engine.Name())
 	if err := e.engine.Index(ctx, e.db); err != nil {
 		return nil, fmt.Errorf("index: %w", err)
@@ -96,7 +96,21 @@ func (e *Evaluator) Run(ctx context.Context) (*FullReport, error) {
 		queries = append(queries, qr)
 	}
 	qRows.Close()
-	_ = qRows.Err()
+
+	// 如果指定了 filter，只保留 filter 中的 query
+	if len(filter) > 0 {
+		filterSet := make(map[string]bool, len(filter))
+		for _, id := range filter {
+			filterSet[id] = true
+		}
+		var filtered []qRow
+		for _, q := range queries {
+			if filterSet[q.ID] {
+				filtered = append(filtered, q)
+			}
+		}
+		queries = filtered
+	}
 
 	var allQueries []RankedResult
 	var sumReciprocalRank, sumNDCG5, sumNDCG10, sumRecall5, sumRecall10, sumPrecision5, sumPrecision10 float64

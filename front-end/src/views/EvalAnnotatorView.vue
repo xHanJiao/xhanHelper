@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { api } from '@/api/client'
-import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NInput, NButton, NEmpty, NAlert, NRadioGroup, NRadioButton, NPagination, NPopover, NText, NModal } from 'naive-ui'
+import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NInput, NInputNumber, NButton, NEmpty, NAlert, NRadioGroup, NRadioButton, NPagination, NPopover, NText, NModal } from 'naive-ui'
 import PageTopBar from '@/components/PageTopBar.vue'
 
 const activeTab = ref('overview')
@@ -45,7 +45,14 @@ let pollCount = 0
 // 评测任务
 const runs = ref([])
 const showCreateRun = ref(false)
-const newRun = ref({ engine: 'vector', name: '' })
+const newRun = ref({ engine: 'vector', name: '', mode: 'all', randomCount: 1 })
+const placedQueries = ref([])
+const placedTotal = ref(0)
+const placedPage = ref(1)
+const placedKeyword = ref('')
+const selectedRunQueries = ref([])
+const showRunDetail = ref(false)
+const runDetail = ref(null)
 
 const relevanceLabels = { 0: '完全无关', 1: '话题相近', 2: '弱相关', 3: '相关', 4: '完美命中' }
 const relevanceColors = { 0: 'default', 1: 'info', 2: 'warning', 3: 'success', 4: 'error' }
@@ -238,24 +245,52 @@ async function loadRecords() {
   finally { loading.value = false }
 }
 
-async function loadRuns() {
+async function loadRuns(append) {
   if (!currentProject.value) return
   try {
-    const res = await api.get(`/api/admin/eval/projects/${currentProject.value}/runs`)
-    runs.value = res.runs || []
+    const page = append ? Math.ceil(runs.value.length / 20) + 1 : 1
+    const res = await api.get(`/api/admin/eval/projects/${currentProject.value}/runs?limit=20&offset=${(page - 1) * 20}`)
+    const list = (res.runs || []).map(r => {
+      let config = r.config, report = r.report
+      try { config = JSON.parse(r.config) } catch (_) { }
+      try { report = JSON.parse(r.report) } catch (_) { }
+      return { ...r, config, report }
+    })
+    if (append) {
+      runs.value = [...runs.value, ...list]
+    } else {
+      runs.value = list
+    }
   } catch (e) { console.error('[eval] loadRuns:', e) }
 }
 
 async function createRun() {
   if (!currentProject.value || !newRun.value.name) return
   try {
-    await api.post(`/api/admin/eval/projects/${currentProject.value}/runs`, {
+    const scope = newRun.value.mode === 'manual'
+      ? { mode: 'manual', count: selectedRunQueries.value.length }
+      : newRun.value.mode === 'random'
+      ? { mode: 'random', count: newRun.value.randomCount }
+      : { mode: 'all', count: placedTotal.value }
+    const res = await api.post(`/api/admin/eval/projects/${currentProject.value}/runs`, {
       name: newRun.value.name,
-      config: { engine: { type: newRun.value.engine, model: 'doubao-embedding-vision-251215' } }
+      config: { engine: { type: newRun.value.engine, model: 'doubao-embedding-vision-251215' }, scope }
     })
+    // 根据模式构建 execute 参数
+    const execBody = {}
+    if (newRun.value.mode === 'manual') {
+      execBody.query_ids = selectedRunQueries.value.map(q => q.id)
+    } else if (newRun.value.mode === 'random') {
+      execBody.random_count = newRun.value.randomCount
+    }
+    // all 模式不传参数
+    await api.post(`/api/admin/eval/projects/${currentProject.value}/runs/${res.id}/execute`, execBody)
     showCreateRun.value = false
-    newRun.value.name = ''
-    loadRuns()
+    selectedRunQueries.value = []
+    placedQueries.value = []
+    await loadRuns(false)
+    runPollTimer = null
+    pollRun(res.id)
   } catch (e) { console.error('[eval] createRun:', e) }
 }
 
@@ -285,9 +320,58 @@ async function deleteRun(runId) {
   if (!currentProject.value) return
   try {
     await api.delete(`/api/admin/eval/projects/${currentProject.value}/runs/${runId}`)
-    loadRuns()
+    loadRuns(false)
   } catch (e) { console.error('[eval] deleteRun:', e) }
 }
+
+async function viewRun(runId) {
+  showRunDetail.value = true
+  try {
+    runDetail.value = await api.get(`/api/admin/eval/projects/${currentProject.value}/runs/${runId}`)
+  } catch (e) { console.error('[eval] viewRun:', e); showRunDetail.value = false }
+}
+
+async function loadPlacedQueries(append) {
+  if (!currentProject.value) return
+  if (!append) placedPage.value = 1
+  try {
+    const params = `?limit=30&offset=${(placedPage.value - 1) * 30}`
+    const kw = placedKeyword.value ? `&keyword=${encodeURIComponent(placedKeyword.value)}` : ''
+    const res = await api.get(`/api/admin/eval/projects/${currentProject.value}/queries/placed${params}${kw}`)
+    if (append) {
+      placedQueries.value = [...placedQueries.value, ...(res.queries || [])]
+    } else {
+      placedQueries.value = res.queries || []
+    }
+    placedTotal.value = res.total || 0
+  } catch (e) { console.error('[eval] loadPlacedQueries:', e) }
+}
+
+function loadMorePlaced() {
+  placedPage.value++
+  loadPlacedQueries(true)
+}
+
+function addQuery(q) {
+  if (selectedRunQueries.value.find(x => x.id === q.id)) return
+  selectedRunQueries.value = [...selectedRunQueries.value, q]
+}
+
+function removeQuery(q) {
+  selectedRunQueries.value = selectedRunQueries.value.filter(x => x.id !== q.id)
+}
+
+function openCreateRun() {
+  newRun.value = { engine: 'vector', name: '', mode: 'all', randomCount: 1 }
+  selectedRunQueries.value = []
+  placedQueries.value = []
+  showCreateRun.value = true
+  loadPlacedQueries(false)
+}
+
+watch(() => newRun.value.mode, (m) => {
+  if (m === 'manual') loadPlacedQueries(false)
+})
 
 const projectOptions = computed(() => projects.value.map(p => ({ label: p.name || p.id, value: p.id })))
 
@@ -542,36 +626,135 @@ onMounted(() => loadProjects())
         <!-- Tab: 评测任务 -->
         <div v-if="activeTab === 'evaltasks'" class="tab-evaltasks">
           <div style="margin-bottom: 12px">
-            <NButton size="small" type="primary" @click="showCreateRun = true">新建评测任务</NButton>
+            <NButton size="small" type="primary" @click="openCreateRun">新建评测任务</NButton>
           </div>
           <div class="run-table">
-            <div class="run-row header"><span>名称</span><span>引擎</span><span>状态</span><span>MRR</span><span>NDCG@5</span><span>Recall@10</span><span>操作</span></div>
+            <div class="run-row header"><span>名称</span><span>引擎</span><span>范围</span><span>状态</span><span>MRR</span><span>NDCG@5</span><span>Recall@10</span><span>操作</span></div>
             <div v-for="r in runs" :key="r.id" class="run-row">
               <span>{{ r.name }}</span>
               <span>{{ r.config?.engine?.type || 'vector' }}</span>
+              <span>{{ r.config?.scope ? ({all:'全部',manual:'手动',random:'随机'}[r.config.scope.mode] || '?') + '(' + r.config.scope.count + ')' : '-' }}</span>
               <span><NTag size="tiny" :type="r.status === 'done' ? 'success' : r.status === 'error' ? 'error' : r.status === 'running' ? 'warning' : 'default'">{{ {pending:'待执行',running:'运行中',done:'完成',error:'失败'}[r.status] || r.status }}</NTag></span>
-              <span>{{ r.report?.metrics?.mrr?.toFixed(4) || '-' }}</span>
-              <span>{{ r.report?.metrics?.ndcg_at5?.toFixed(4) || '-' }}</span>
-              <span>{{ r.report?.metrics?.recall_at10?.toFixed(4) || '-' }}</span>
+              <span>{{ r.report?.mrr?.toFixed(4) || '-' }}</span>
+              <span>{{ r.report?.ndcg_at5?.toFixed(4) || '-' }}</span>
+              <span>{{ r.report?.recall_at10?.toFixed(4) || '-' }}</span>
               <span class="run-actions">
+                <NButton v-if="r.status === 'done'" size="tiny" @click="viewRun(r.id)">查看</NButton>
                 <NButton v-if="r.status === 'pending'" size="tiny" type="primary" @click="executeRun(r.id)">执行</NButton>
                 <NButton size="tiny" @click="deleteRun(r.id)">删除</NButton>
               </span>
             </div>
             <NEmpty v-if="runs.length === 0" description="暂无评测任务" size="small" />
+            <div v-if="runs.length > 0 && runs.length % 20 === 0" style="text-align: center; margin-top: 8px">
+              <NButton size="tiny" @click="loadRuns(true)">加载更多</NButton>
+            </div>
           </div>
         </div>
 
         <!-- 新建评测对话框 -->
         <NModal v-model:show="showCreateRun" title="新建评测任务">
-          <div style="padding: 16px">
-            <NSelect v-model:value="newRun.engine" size="small" :options="[{label:'向量检索',value:'vector'}]" style="margin-bottom: 12px; width: 200px" />
-            <NInput v-model:value="newRun.name" size="small" placeholder="任务名称" style="margin-bottom: 12px" />
+          <NCard size="small" style="width: 640px">
+            <div style="margin-bottom: 12px">
+              <div style="font-size: 13px; color: var(--color-text-muted); margin-bottom: 4px">引擎类型</div>
+              <NSelect v-model:value="newRun.engine" size="small" :options="[{label:'向量检索',value:'vector'}]" />
+            </div>
+            <div style="margin-bottom: 12px">
+              <div style="font-size: 13px; color: var(--color-text-muted); margin-bottom: 4px">任务名称</div>
+              <NInput v-model:value="newRun.name" size="small" placeholder="如 vector-baseline" />
+            </div>
+            <div style="margin-bottom: 12px">
+              <div style="font-size: 13px; color: var(--color-text-muted); margin-bottom: 4px">评测范围</div>
+              <NRadioGroup v-model:value="newRun.mode" size="small">
+                <NRadioButton value="all">全部已标注</NRadioButton>
+                <NRadioButton value="random">随机采样</NRadioButton>
+                <NRadioButton value="manual">手动指定</NRadioButton>
+              </NRadioGroup>
+            </div>
+            <div v-if="newRun.mode === 'random'" style="margin-bottom: 12px; display: flex; align-items: center; gap: 8px">
+              <span style="font-size: 13px; color: var(--color-text-muted)">数量</span>
+              <NInputNumber v-model:value="newRun.randomCount" size="small" :min="1" :max="placedTotal" style="width: 80px" />
+            </div>
+            <div v-if="newRun.mode === 'manual'" style="margin-bottom: 12px">
+              <div style="font-size: 13px; color: var(--color-text-muted); margin-bottom: 4px">已选 {{ selectedRunQueries.length }} 条</div>
+              <div class="picker-layout">
+                <div class="picker-pane">
+                  <div class="picker-pane-header">可选 query</div>
+                  <div class="picker-pane-list">
+                    <div v-for="q in placedQueries" :key="q.id" class="picker-item" @click="addQuery(q)"
+                      :class="{ disabled: selectedRunQueries.find(x => x.id === q.id) }">
+                      {{ q.content?.slice(0, 50) }}{{ q.content?.length > 50 ? '...' : '' }}
+                    </div>
+                    <NButton v-if="placedQueries.length < placedTotal" size="small" text @click="loadMorePlaced" style="width: 100%">加载更多...</NButton>
+                  </div>
+                </div>
+                <div class="picker-arrows">
+                  <div style="font-size: 18px">→</div>
+                  <div style="font-size: 18px; margin-top: 4px">←</div>
+                </div>
+                <div class="picker-pane">
+                  <div class="picker-pane-header">已选择 ({{ selectedRunQueries.length }})</div>
+                  <div class="picker-pane-list">
+                    <div v-for="q in selectedRunQueries" :key="q.id" class="picker-item" @click="removeQuery(q)">
+                      {{ q.content?.slice(0, 50) }}{{ q.content?.length > 50 ? '...' : '' }}
+                    </div>
+                    <NEmpty v-if="selectedRunQueries.length === 0" description="点击左侧添加" size="small" />
+                  </div>
+                </div>
+              </div>
+            </div>
             <div style="display: flex; gap: 8px; justify-content: flex-end">
               <NButton size="small" @click="showCreateRun = false">取消</NButton>
-              <NButton size="small" type="primary" @click="createRun">创建</NButton>
+              <NButton size="small" type="primary" @click="createRun">创建并执行</NButton>
             </div>
-          </div>
+          </NCard>
+        </NModal>
+
+        <!-- 查看评测结果弹窗 -->
+        <NModal v-model:show="showRunDetail" style="width: 85vw; max-width: 1100px">
+          <template #header>
+            <span>{{ runDetail?.name || '评测结果' }}</span>
+          </template>
+          <NCard size="small" style="max-height: 85vh; overflow-y: auto">
+            <template v-if="runDetail">
+            <div class="run-report-summary" style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap">
+              <NTag>MRR: {{ runDetail.report?.mrr?.toFixed(4) || '-' }}</NTag>
+              <NTag type="info">NDCG@5: {{ runDetail.report?.ndcg_at5?.toFixed(4) || '-' }}</NTag>
+              <NTag type="info">NDCG@10: {{ runDetail.report?.ndcg_at10?.toFixed(4) || '-' }}</NTag>
+              <NTag type="success">Recall@5: {{ runDetail.report?.recall_at5?.toFixed(4) || '-' }}</NTag>
+              <NTag type="success">Recall@10: {{ runDetail.report?.recall_at10?.toFixed(4) || '-' }}</NTag>
+              <NTag type="warning">Precision@5: {{ runDetail.report?.precision_at5?.toFixed(4) || '-' }}</NTag>
+            </div>
+            <div v-if="runDetail.queries">
+              <div v-for="q in runDetail.queries" :key="q.query_id" class="report-query">
+                <div class="rq-header" @click="q._open = !q._open">
+                  <span class="rq-toggle">{{ q._open ? '▾' : '▸' }}</span>
+                  <span v-if="!q._open" class="rq-text">{{ q.query?.slice(0, 60) }}{{ q.query?.length > 60 ? '...' : '' }}</span>
+                  <span v-else class="rq-text expanded">{{ q.query }}</span>
+                  <NTag size="tiny">MRR: {{ q.summary?.reciprocal_rank?.toFixed(2) }}</NTag>
+                  <NTag size="tiny" type="info">NDCG@5: {{ q.summary?.ndcg_at5?.toFixed(2) }}</NTag>
+                </div>
+                <div v-if="q._open" class="rq-results">
+                  <div class="rr-row header"><span>rank</span><span>corpus</span><span>score</span><span>GT</span></div>
+                  <div v-for="r in q.results" :key="r.corpus_id" class="rr-row">
+                    <span>{{ r.rank }}</span>
+                    <span v-if="!expandedItems[q.query_id + ':' + r.corpus_id]"
+                      class="content clickable" @click="toggleContent(q.query_id, r.corpus_id)">
+                      {{ r.corpus_content?.slice(0, 50) }}{{ r.corpus_content?.length > 50 ? '...' : '' }}
+                    </span>
+                    <span v-else class="content expanded" @click="toggleContent(q.query_id, r.corpus_id)">
+                      {{ r.corpus_content }}
+                    </span>
+                    <span>{{ r.score?.toFixed(4) }}</span>
+                    <span><NTag size="tiny" :type="r.gt >= 3 ? 'success' : r.gt >= 1 ? 'warning' : r.gt === 0 ? 'error' : 'default'">{{ r.gt >= 0 ? r.gt : '-' }}</NTag></span>
+                  </div>
+                  <div v-if="q.results.length < q.total" class="rq-more">
+                    共 {{ q.total }} 条，显示前 {{ q.results.length }} 条
+                  </div>
+                </div>
+              </div>
+            </div>
+            </template>
+          </NCard>
         </NModal>
 
       </NSpin>
@@ -672,4 +855,23 @@ onMounted(() => loadProjects())
 .run-row.header { color: var(--color-text-muted); font-weight: 500; background: var(--color-bg-alt); }
 .run-row span { flex: 1; min-width: 0; }
 .run-row .run-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+.picker-layout { display: flex; gap: 6px; height: 260px; }
+.picker-pane { flex: 1; border: 1px solid var(--color-border); border-radius: 6px; display: flex; flex-direction: column; overflow: hidden; }
+.picker-pane-header { font-size: 12px; color: var(--color-text-muted); padding: 6px 8px; border-bottom: 1px solid var(--color-border); background: var(--color-bg-alt); flex-shrink: 0; }
+.picker-pane-list { flex: 1; overflow-y: auto; padding: 4px; }
+.picker-item { font-size: 12px; padding: 4px 6px; cursor: pointer; border-radius: 3px; border-bottom: 1px solid var(--color-border); }
+.picker-item:last-child { border-bottom: none; }
+.picker-item:hover { background: var(--color-hover); }
+.picker-item.disabled { opacity: .4; cursor: not-allowed; }
+.picker-arrows { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--color-text-muted); flex-shrink: 0; width: 24px; }
+
+.report-query { border: 1px solid var(--color-border); border-radius: 6px; margin-bottom: 6px; overflow: hidden; }
+.rq-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; background: var(--color-bg-alt); user-select: none; }
+.rq-header:hover { background: var(--color-hover); }
+.rq-toggle { width: 14px; flex-shrink: 0; color: var(--color-text-muted); }
+.rq-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rq-text.expanded { white-space: normal; overflow: visible; }
+.rq-results { padding: 0 10px 8px; }
+.rq-more { font-size: 12px; color: var(--color-text-muted); text-align: center; padding: 4px; }
 </style>

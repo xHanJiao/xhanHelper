@@ -26,6 +26,13 @@ func OpenRepo(dbPath string) (*Repo, error) {
 		db.Close()
 		return nil, fmt.Errorf("ping eval db: %w", err)
 	}
+
+	// 自动升级 schema：新增的表幂等创建
+	if err := createSchema(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create schema: %w", err)
+	}
+
 	return &Repo{db: db}, nil
 }
 
@@ -185,6 +192,49 @@ func (r *Repo) ListQueries(keyword, status, sessionID string, limit, offset int)
 		        EXISTS(SELECT 1 FROM annotation_session_queries sq WHERE sq.query_id=q.id AND sq.label_status IN ('reviewed','finalized'))
 		 FROM raw_queries q
 		 LEFT JOIN (SELECT query_id, COUNT(*) AS c FROM eval_ground_truth GROUP BY query_id) gt_cnt ON gt_cnt.query_id=q.id
+		 %s
+		 ORDER BY q.created_at ASC
+		 LIMIT ? OFFSET ?`, where)
+
+	args = append(args, limit, offset)
+	rows, err := r.db.Query(sql, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var out []QueryInfo
+	for rows.Next() {
+		var qi QueryInfo
+		if err := rows.Scan(&qi.ID, &qi.Content, &qi.SourceConvID, &qi.CreatedAt, &qi.LabeledCount, &qi.Reviewed); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, qi)
+	}
+	return out, total, rows.Err()
+}
+
+// ListPlacedQueries 返回有 ground_truth 标注的 query 列表，供评测任务手动选择。
+func (r *Repo) ListPlacedQueries(keyword string, limit, offset int) ([]QueryInfo, int, error) {
+	var args []interface{}
+	where := "WHERE EXISTS(SELECT 1 FROM eval_ground_truth gt WHERE gt.query_id=q.id)"
+
+	if keyword != "" {
+		where += " AND q.content LIKE ?"
+		args = append(args, "%"+keyword+"%")
+	}
+
+	var total int
+	totalSQL := "SELECT COUNT(*) FROM raw_queries q " + where
+	if err := r.db.QueryRow(totalSQL, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	sql := fmt.Sprintf(
+		`SELECT q.id, q.content, COALESCE(q.source_conv_id,''), COALESCE(q.created_at,''),
+		        COALESCE(gt_cnt.c,0), 0
+		 FROM raw_queries q
+		 JOIN (SELECT query_id, COUNT(*) AS c FROM eval_ground_truth GROUP BY query_id) gt_cnt ON gt_cnt.query_id=q.id
 		 %s
 		 ORDER BY q.created_at ASC
 		 LIMIT ? OFFSET ?`, where)
@@ -629,4 +679,39 @@ func (r *Repo) GetQueryContent(queryID string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(content), nil
+}
+
+// BatchGetCorpusContent 批量获取 corpus 内容，返回 corpusID → content 映射。
+func (r *Repo) BatchGetCorpusContent(corpusIDs []string) map[string]string {
+	if len(corpusIDs) == 0 {
+		return nil
+	}
+	// 构建 IN 查询
+	placeholders := make([]byte, 0, len(corpusIDs)*2)
+	args := make([]interface{}, len(corpusIDs))
+	for i, id := range corpusIDs {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+		args[i] = id
+	}
+	rows, err := r.db.Query(
+		fmt.Sprintf("SELECT id, content FROM eval_corpus WHERE id IN (%s)", string(placeholders)),
+		args...,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	out := make(map[string]string, len(corpusIDs))
+	for rows.Next() {
+		var id, content string
+		if err := rows.Scan(&id, &content); err != nil {
+			continue
+		}
+		out[id] = content
+	}
+	return out
 }

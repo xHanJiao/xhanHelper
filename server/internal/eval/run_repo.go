@@ -37,12 +37,13 @@ func (r *Repo) CreateRun(projectID, name, config string) (*RunRecord, error) {
 	return r.GetRun(id)
 }
 
-// ListRuns 列出项目的所有评测任务
-func (r *Repo) ListRuns(projectID string) ([]RunRecord, error) {
+// ListRuns 列出项目的所有评测任务，按创建时间倒序，支持分页
+func (r *Repo) ListRuns(projectID string, limit, offset int) ([]RunRecord, error) {
 	rows, err := r.db.Query(
 		`SELECT id, project_id, name, config, status, COALESCE(report,''), COALESCE(error_msg,''),
 		        created_at, COALESCE(started_at,''), COALESCE(finished_at,'')
-		 FROM eval_runs WHERE project_id=? ORDER BY created_at DESC`, projectID)
+		 FROM eval_runs WHERE project_id=? ORDER BY created_at DESC
+		 LIMIT ? OFFSET ?`, projectID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
 	}

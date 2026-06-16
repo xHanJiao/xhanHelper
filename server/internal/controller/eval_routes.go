@@ -21,6 +21,7 @@ func RegisterEvalRoutes(rc EvalRoutesConfig) {
 			eval.GET("/projects", rc.Handler.ListProjects)
 			eval.GET("/projects/:project/stats", rc.Handler.GetStats)
 			eval.GET("/projects/:project/queries", rc.Handler.ListQueries)
+			eval.GET("/projects/:project/queries/placed", rc.Handler.ListPlacedQueries)
 			eval.GET("/projects/:project/queries/:id", rc.Handler.GetQueryDetail)
 			eval.PATCH("/projects/:project/queries/:id", rc.Handler.UpdateAnnotations)
 			eval.GET("/projects/:project/corpus", rc.Handler.ListCorpus)

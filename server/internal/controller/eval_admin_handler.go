@@ -111,6 +111,34 @@ func (h *EvalAdminHandler) ListQueries(c *gin.Context) {
 	view.JSONOK(c, gin.H{"queries": list, "total": total})
 }
 
+// ListPlacedQueries GET /api/admin/eval/projects/:project/queries/placed
+func (h *EvalAdminHandler) ListPlacedQueries(c *gin.Context) {
+	project := c.Param("project")
+	r, err := eval.OpenRepo(h.dbPath(project))
+	if err != nil {
+		log.Printf("[eval_admin] open project %s: %v", project, err)
+		view.JSONError(c, 500, "打开项目失败")
+		return
+	}
+	defer r.Close()
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	keyword := c.Query("keyword")
+
+	list, total, err := r.ListPlacedQueries(keyword, limit, offset)
+	if err != nil {
+		log.Printf("[eval_admin] ListPlacedQueries: %v", err)
+		view.JSONError(c, 500, "查询失败")
+		return
+	}
+
+	if list == nil {
+		list = []eval.QueryInfo{}
+	}
+	view.JSONOK(c, gin.H{"queries": list, "total": total})
+}
+
 // GetQueryDetail GET /api/admin/eval/projects/:project/queries/:id
 func (h *EvalAdminHandler) GetQueryDetail(c *gin.Context) {
 	project := c.Param("project")

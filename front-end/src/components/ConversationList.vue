@@ -58,16 +58,16 @@ function handleLoadMore() {
   convs.fetchList(convs.list.length)
 }
 
-async function handleNewConversation(agentId) {
-  try {
-    const res = await api.post('/api/conversations', agentId ? { agent_id: agentId } : {})
-    chat.reset()
-    convs.prepend({ id: res.id, title: res.title, agent_id: res.agent_id, agent_name: res.agent_name })
-    router.push(`/chat/${res.id}`)
-  } catch (e) {
-    message.error('创建对话失败')
-  }
-}
+// async function handleNewConversation(agentId) {
+//   try {
+//     const res = await api.post('/api/conversations', agentId ? { agent_id: agentId } : {})
+//     chat.reset()
+//     convs.prepend({ id: res.id, title: res.title, agent_id: res.agent_id, agent_name: res.agent_name })
+//     router.push(`/chat/${res.id}`)
+//   } catch (e) {
+//     message.error('创建对话失败')
+//   }
+// }
 
 const navExpanded = ref(false)
 const adminExpanded = ref(false)
@@ -85,7 +85,8 @@ const adminItems = [
   { label: '记忆', path: '/memories' },
   { label: '笔记', path: '/notes' },
   { label: '主题', path: '/themes' },
-  { label: '监控看板', path: '/admin', adminOnly: true }
+  { label: '监控看板', path: '/admin', adminOnly: true },
+  { label: '检索评测', path: '/admin/eval', adminOnly: true }
 ]
 
 const isAdmin = computed(() => auth.user?.isAdmin === true)
@@ -140,7 +141,7 @@ function handleSelect(conv) {
 <template>
   <div style="width: 280px; background: var(--color-surface); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; height: 100%;">
     <!-- 新对话按钮 -->
-    <div style="padding: var(--space-md) var(--space-md) 0;">
+    <!-- <div style="padding: var(--space-md) var(--space-md) 0;">
       <button
         @click="handleNewConversation"
         style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 0; border: 1px solid var(--color-border); border-radius: 24px; background: var(--color-primary-soft); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); color: var(--color-text-secondary); font-size: 14px; font-weight: 500; cursor: pointer; transition: all var(--transition-fast);"
@@ -153,7 +154,7 @@ function handleSelect(conv) {
         </svg>
         新对话
       </button>
-    </div>
+    </div> -->
 
     <!-- 导航区 -->
     <div style="padding: var(--space-md) var(--space-md) var(--space-sm);">

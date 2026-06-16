@@ -83,6 +83,11 @@ const routes = [
     component: () => import('@/views/ReplayCompareView.vue')
   },
   {
+    path: '/admin/eval',
+    name: 'EvalAnnotator',
+    component: () => import('@/views/EvalAnnotatorView.vue')
+  },
+  {
     path: '/s/:token',
     name: 'SharedDocument',
     component: () => import('@/views/SharedDocumentView.vue')

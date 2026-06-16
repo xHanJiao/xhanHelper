@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { api } from '@/api/client'
-import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NInput, NButton, NEmpty, NAlert, NRadioGroup, NRadioButton, NPagination, NPopover, NText } from 'naive-ui'
+import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NInput, NButton, NEmpty, NAlert, NRadioGroup, NRadioButton, NPagination, NPopover, NText, NModal } from 'naive-ui'
 import PageTopBar from '@/components/PageTopBar.vue'
 
 const activeTab = ref('overview')
@@ -41,6 +41,11 @@ const selectedQueryIds = ref(new Set())
 const labelLoading = ref(false)
 let pollTimer = null
 let pollCount = 0
+
+// 评测任务
+const runs = ref([])
+const showCreateRun = ref(false)
+const newRun = ref({ engine: 'vector', name: '' })
 
 const relevanceLabels = { 0: '完全无关', 1: '话题相近', 2: '弱相关', 3: '相关', 4: '完美命中' }
 const relevanceColors = { 0: 'default', 1: 'info', 2: 'warning', 3: 'success', 4: 'error' }
@@ -233,6 +238,57 @@ async function loadRecords() {
   finally { loading.value = false }
 }
 
+async function loadRuns() {
+  if (!currentProject.value) return
+  try {
+    const res = await api.get(`/api/admin/eval/projects/${currentProject.value}/runs`)
+    runs.value = res.runs || []
+  } catch (e) { console.error('[eval] loadRuns:', e) }
+}
+
+async function createRun() {
+  if (!currentProject.value || !newRun.value.name) return
+  try {
+    await api.post(`/api/admin/eval/projects/${currentProject.value}/runs`, {
+      name: newRun.value.name,
+      config: { engine: { type: newRun.value.engine, model: 'doubao-embedding-vision-251215' } }
+    })
+    showCreateRun.value = false
+    newRun.value.name = ''
+    loadRuns()
+  } catch (e) { console.error('[eval] createRun:', e) }
+}
+
+async function executeRun(runId) {
+  if (!currentProject.value) return
+  try {
+    await api.post(`/api/admin/eval/projects/${currentProject.value}/runs/${runId}/execute`)
+    pollRun(runId)
+  } catch (e) { console.error('[eval] executeRun:', e) }
+}
+
+let runPollTimer = null
+function pollRun(runId) {
+  if (runPollTimer) clearInterval(runPollTimer)
+  runPollTimer = setInterval(async () => {
+    try {
+      const res = await api.get(`/api/admin/eval/projects/${currentProject.value}/runs/${runId}`)
+      if (res.status === 'done' || res.status === 'error') {
+        clearInterval(runPollTimer); runPollTimer = null
+        loadRuns()
+      }
+    } catch (_) { }
+  }, 5000)
+}
+
+async function deleteRun(runId) {
+  if (!currentProject.value) return
+  try {
+    await api.delete(`/api/admin/eval/projects/${currentProject.value}/runs/${runId}`)
+    loadRuns()
+  } catch (e) { console.error('[eval] deleteRun:', e) }
+}
+
 const projectOptions = computed(() => projects.value.map(p => ({ label: p.name || p.id, value: p.id })))
 
 const sessionOptions = computed(() => {
@@ -268,6 +324,7 @@ watch(activeTab, (t) => {
   if (t === 'annotate') loadQueries()
   if (t === 'corpus') loadCorpus()
   if (t === 'records') loadRecords()
+  if (t === 'evaltasks') loadRuns()
 })
 watch([queriesPage, queryStatus], () => loadQueries())
 watch(currentSession, () => { queriesPage.value = 1; loadQueries() })
@@ -291,6 +348,7 @@ onMounted(() => loadProjects())
       <NTabPane name="annotate" tab="逐条审核" />
       <NTabPane name="corpus" tab="语料浏览" />
       <NTabPane name="records" tab="标注记录" />
+      <NTabPane name="evaltasks" tab="评测任务" />
     </NTabs>
 
     <div class="eval-content">
@@ -481,6 +539,41 @@ onMounted(() => loadProjects())
             :page-count="Math.ceil(recordsTotal / 20)" size="small" style="margin-top: 12px" />
         </div>
 
+        <!-- Tab: 评测任务 -->
+        <div v-if="activeTab === 'evaltasks'" class="tab-evaltasks">
+          <div style="margin-bottom: 12px">
+            <NButton size="small" type="primary" @click="showCreateRun = true">新建评测任务</NButton>
+          </div>
+          <div class="run-table">
+            <div class="run-row header"><span>名称</span><span>引擎</span><span>状态</span><span>MRR</span><span>NDCG@5</span><span>Recall@10</span><span>操作</span></div>
+            <div v-for="r in runs" :key="r.id" class="run-row">
+              <span>{{ r.name }}</span>
+              <span>{{ r.config?.engine?.type || 'vector' }}</span>
+              <span><NTag size="tiny" :type="r.status === 'done' ? 'success' : r.status === 'error' ? 'error' : r.status === 'running' ? 'warning' : 'default'">{{ {pending:'待执行',running:'运行中',done:'完成',error:'失败'}[r.status] || r.status }}</NTag></span>
+              <span>{{ r.report?.metrics?.mrr?.toFixed(4) || '-' }}</span>
+              <span>{{ r.report?.metrics?.ndcg_at5?.toFixed(4) || '-' }}</span>
+              <span>{{ r.report?.metrics?.recall_at10?.toFixed(4) || '-' }}</span>
+              <span class="run-actions">
+                <NButton v-if="r.status === 'pending'" size="tiny" type="primary" @click="executeRun(r.id)">执行</NButton>
+                <NButton size="tiny" @click="deleteRun(r.id)">删除</NButton>
+              </span>
+            </div>
+            <NEmpty v-if="runs.length === 0" description="暂无评测任务" size="small" />
+          </div>
+        </div>
+
+        <!-- 新建评测对话框 -->
+        <NModal v-model:show="showCreateRun" title="新建评测任务">
+          <div style="padding: 16px">
+            <NSelect v-model:value="newRun.engine" size="small" :options="[{label:'向量检索',value:'vector'}]" style="margin-bottom: 12px; width: 200px" />
+            <NInput v-model:value="newRun.name" size="small" placeholder="任务名称" style="margin-bottom: 12px" />
+            <div style="display: flex; gap: 8px; justify-content: flex-end">
+              <NButton size="small" @click="showCreateRun = false">取消</NButton>
+              <NButton size="small" type="primary" @click="createRun">创建</NButton>
+            </div>
+          </div>
+        </NModal>
+
       </NSpin>
     </div>
   </div>
@@ -573,4 +666,10 @@ onMounted(() => loadProjects())
 .content.clickable { cursor: pointer; }
 .content.clickable:hover { background: var(--color-hover); border-radius: 3px; }
 .content.expanded { cursor: pointer; white-space: normal; word-break: break-all; }
+
+.run-table { font-size: 13px; }
+.run-row { display: flex; gap: 12px; padding: 6px 8px; border-bottom: 1px solid var(--color-border); align-items: center; }
+.run-row.header { color: var(--color-text-muted); font-weight: 500; background: var(--color-bg-alt); }
+.run-row span { flex: 1; min-width: 0; }
+.run-row .run-actions { display: flex; gap: 4px; flex-shrink: 0; }
 </style>

@@ -82,6 +82,7 @@ func (r *Repo) GetProjectInfo() (*ProjectInfo, error) {
 type Stats struct {
 	TotalQueries     int           `json:"total_queries"`
 	LabeledQueries   int           `json:"labeled_queries"`
+	ReviewedQueries  int           `json:"reviewed_queries"`
 	UnlabeledQueries int           `json:"unlabeled_queries"`
 	RelevanceDist    map[int]int   `json:"relevance_distribution"`
 	Sessions         []SessionInfo `json:"sessions"`
@@ -101,6 +102,7 @@ func (r *Repo) GetStats() (*Stats, error) {
 	s := &Stats{}
 	_ = r.db.QueryRow(`SELECT COUNT(*) FROM raw_queries`).Scan(&s.TotalQueries)
 	_ = r.db.QueryRow(`SELECT COUNT(DISTINCT query_id) FROM eval_ground_truth`).Scan(&s.LabeledQueries)
+	_ = r.db.QueryRow(`SELECT COUNT(DISTINCT query_id) FROM annotation_session_queries WHERE label_status IN ('reviewed','finalized')`).Scan(&s.ReviewedQueries)
 	s.UnlabeledQueries = s.TotalQueries - s.LabeledQueries
 
 	rows, err := r.db.Query(`SELECT relevance, COUNT(*) FROM eval_ground_truth GROUP BY relevance`)
@@ -145,27 +147,44 @@ type QueryInfo struct {
 }
 
 // ListQueries returns a paginated, filterable list of raw_queries.
-func (r *Repo) ListQueries(keyword, status string, limit, offset int) ([]QueryInfo, int, error) {
+func (r *Repo) ListQueries(keyword, status, sessionID string, limit, offset int) ([]QueryInfo, int, error) {
 	var args []interface{}
 	where := "WHERE 1=1"
 
 	if keyword != "" {
-		where += " AND content LIKE ?"
+		where += " AND q.content LIKE ?"
 		args = append(args, "%"+keyword+"%")
 	}
 
+	// SQL-level status filter
+	switch status {
+	case "unselected":
+		where += ` AND NOT EXISTS(SELECT 1 FROM annotation_session_queries sq WHERE sq.query_id=q.id)`
+	case "selected":
+		where += ` AND EXISTS(SELECT 1 FROM annotation_session_queries sq WHERE sq.query_id=q.id AND sq.label_status='selected')`
+	case "prelabeled":
+		where += ` AND EXISTS(SELECT 1 FROM annotation_session_queries sq WHERE sq.query_id=q.id AND sq.label_status='prelabeled')`
+	case "reviewed":
+		where += ` AND EXISTS(SELECT 1 FROM annotation_session_queries sq WHERE sq.query_id=q.id AND sq.label_status IN ('reviewed','finalized'))`
+	}
+
+	if sessionID != "" {
+		where += ` AND q.id IN (SELECT query_id FROM annotation_session_queries WHERE session_id=?)`
+		args = append(args, sessionID)
+	}
+
 	var total int
-	totalSQL := "SELECT COUNT(*) FROM raw_queries " + where
+	totalSQL := "SELECT COUNT(*) FROM raw_queries q " + where
 	if err := r.db.QueryRow(totalSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	// Annotation aggregation with review status
 	sql := fmt.Sprintf(
 		`SELECT q.id, q.content, COALESCE(q.source_conv_id,''), COALESCE(q.created_at,''),
-		        COALESCE(cnt.c,0), EXISTS(SELECT 1 FROM eval_ground_truth gt WHERE gt.query_id=q.id LIMIT 1)
+		        COALESCE(gt_cnt.c,0),
+		        EXISTS(SELECT 1 FROM annotation_session_queries sq WHERE sq.query_id=q.id AND sq.label_status IN ('reviewed','finalized'))
 		 FROM raw_queries q
-		 LEFT JOIN (SELECT query_id, COUNT(*) AS c FROM eval_ground_truth GROUP BY query_id) cnt ON cnt.query_id=q.id
+		 LEFT JOIN (SELECT query_id, COUNT(*) AS c FROM eval_ground_truth GROUP BY query_id) gt_cnt ON gt_cnt.query_id=q.id
 		 %s
 		 ORDER BY q.created_at ASC
 		 LIMIT ? OFFSET ?`, where)
@@ -182,13 +201,6 @@ func (r *Repo) ListQueries(keyword, status string, limit, offset int) ([]QueryIn
 		var qi QueryInfo
 		if err := rows.Scan(&qi.ID, &qi.Content, &qi.SourceConvID, &qi.CreatedAt, &qi.LabeledCount, &qi.Reviewed); err != nil {
 			return nil, 0, err
-		}
-		// Apply status filter in Go (simpler than SQL with review logic)
-		if status == "reviewed" && !qi.Reviewed {
-			continue
-		}
-		if status == "unreviewed" && qi.Reviewed {
-			continue
 		}
 		out = append(out, qi)
 	}
@@ -213,7 +225,6 @@ type QueryDetail struct {
 	ReviewStatus string             `json:"review_status"`
 }
 
-// GetQueryDetail returns a single query with all its annotations.
 func (r *Repo) GetQueryDetail(queryID string) (*QueryDetail, error) {
 	d := &QueryDetail{}
 	if err := r.db.QueryRow(
@@ -222,7 +233,22 @@ func (r *Repo) GetQueryDetail(queryID string) (*QueryDetail, error) {
 	).Scan(&d.Query.ID, &d.Query.Content, &d.Query.SourceConvID, &d.Query.CreatedAt); err != nil {
 		return nil, fmt.Errorf("query raw_queries: %w", err)
 	}
-	d.Query.Reviewed = true // default if has any annotation
+
+	// Check if human-reviewed via annotation_session_queries
+	var revStatus string
+	_ = r.db.QueryRow(
+		`SELECT COALESCE(label_status,'') FROM annotation_session_queries WHERE query_id=? ORDER BY selected_at DESC LIMIT 1`,
+		queryID,
+	).Scan(&revStatus)
+	d.Query.Reviewed = revStatus == "reviewed" || revStatus == "finalized"
+
+	// Safety net: if label_status is still 'selected' but ground_truth has records,
+	// the labeling completed without updating the status. Treat as prelabeled.
+	var gtHasRecords bool
+	_ = r.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM eval_ground_truth WHERE query_id=?)`, queryID).Scan(&gtHasRecords)
+	if revStatus == "selected" && gtHasRecords {
+		revStatus = "prelabeled"
+	}
 
 	rows, err := r.db.Query(
 		`SELECT gt.query_id, q.content, gt.corpus_id, c.content, gt.relevance, gt.label_source, gt.labeled_at
@@ -244,11 +270,13 @@ func (r *Repo) GetQueryDetail(queryID string) (*QueryDetail, error) {
 	}
 	_ = rows.Err()
 
-	if len(d.Annotations) == 0 {
-		d.ReviewStatus = "unlabeled"
-	} else {
+	d.Query.LabeledCount = len(d.Annotations)
+	if d.Query.Reviewed {
+		d.ReviewStatus = "reviewed"
+	} else if len(d.Annotations) > 0 {
 		d.ReviewStatus = "prelabeled"
-		d.Query.LabeledCount = len(d.Annotations)
+	} else {
+		d.ReviewStatus = "unlabeled"
 	}
 
 	return d, nil
@@ -405,7 +433,177 @@ func (r *Repo) ListAnnotations(queryKeyword, labelSource string, relevance int, 
 	return out, total, rows.Err()
 }
 
-// DistinctTopics returns all unique topics from eval_corpus.
+// QueryWithAnnotations groups annotations under their parent query.
+type QueryWithAnnotations struct {
+	QueryID      string             `json:"query_id"`
+	QueryContent string             `json:"query_content"`
+	Annotations  []AnnotationRecord `json:"annotations"`
+}
+
+// ListQueryAnnotations returns paginated queries with their annotations grouped.
+// Pagination is per-query, not per-annotation-row.
+func (r *Repo) ListQueryAnnotations(queryKeyword, labelSource string, relevance int, limit, offset int) ([]QueryWithAnnotations, int, error) {
+	var args []interface{}
+	where := "WHERE 1=1"
+
+	if queryKeyword != "" {
+		where += " AND q.content LIKE ?"
+		args = append(args, "%"+queryKeyword+"%")
+	}
+	if labelSource != "" && labelSource != "all" {
+		where += " AND gt.label_source = ?"
+		args = append(args, labelSource)
+	}
+	if relevance >= 0 {
+		where += " AND gt.relevance = ?"
+		args = append(args, relevance)
+	}
+
+	// Count distinct queries matching filter
+	var total int
+	countSQL := fmt.Sprintf("SELECT COUNT(DISTINCT gt.query_id) FROM eval_ground_truth gt JOIN raw_queries q ON q.id=gt.query_id %s", where)
+	if err := r.db.QueryRow(countSQL, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	// Get paginated query IDs (ordered by latest annotation time)
+	qidSQL := fmt.Sprintf(
+		`SELECT DISTINCT gt.query_id
+		 FROM eval_ground_truth gt
+		 JOIN raw_queries q ON q.id=gt.query_id
+		 %s
+		 ORDER BY (SELECT MAX(labeled_at) FROM eval_ground_truth WHERE query_id=gt.query_id) DESC
+		 LIMIT ? OFFSET ?`, where)
+
+	args2 := append([]interface{}{}, args...)
+	args2 = append(args2, limit, offset)
+	rows, err := r.db.Query(qidSQL, args2...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var queryIDs []string
+	for rows.Next() {
+		var qid string
+		if err := rows.Scan(&qid); err != nil {
+			return nil, 0, err
+		}
+		queryIDs = append(queryIDs, qid)
+	}
+	_ = rows.Err()
+	if len(queryIDs) == 0 {
+		return nil, total, nil
+	}
+
+	// Bulk-load all annotations for these query IDs
+	annMap := make(map[string][]AnnotationRecord)
+	annRows, err := r.db.Query(
+		`SELECT gt.query_id, q.content, gt.corpus_id, c.content, gt.relevance, gt.label_source, gt.labeled_at
+		 FROM eval_ground_truth gt
+		 JOIN raw_queries q ON q.id=gt.query_id
+		 JOIN eval_corpus c ON c.id=gt.corpus_id
+		 WHERE gt.query_id IN (`+placeholders(len(queryIDs))+`)
+		 ORDER BY gt.query_id, gt.relevance DESC`,
+		strsToIface(queryIDs)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer annRows.Close()
+
+	for annRows.Next() {
+		var ar AnnotationRecord
+		if err := annRows.Scan(&ar.QueryID, &ar.QueryContent, &ar.CorpusID, &ar.CorpusContent, &ar.Relevance, &ar.LabelSource, &ar.LabeledAt); err != nil {
+			return nil, 0, err
+		}
+		annMap[ar.QueryID] = append(annMap[ar.QueryID], ar)
+	}
+	_ = annRows.Err()
+
+	// Build ordered output
+	out := make([]QueryWithAnnotations, 0, len(queryIDs))
+	for _, qid := range queryIDs {
+		anns, ok := annMap[qid]
+		if !ok {
+			anns = []AnnotationRecord{}
+		}
+		content := ""
+		if len(anns) > 0 {
+			content = anns[0].QueryContent
+		}
+		out = append(out, QueryWithAnnotations{
+			QueryID:      qid,
+			QueryContent: content,
+			Annotations:  anns,
+		})
+	}
+
+	return out, total, nil
+}
+
+func placeholders(n int) string {
+	if n == 0 {
+		return ""
+	}
+	p := make([]byte, 0, n*2-1)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			p = append(p, ',')
+		}
+		p = append(p, '?')
+	}
+	return string(p)
+}
+
+func strsToIface(ss []string) []interface{} {
+	out := make([]interface{}, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
+}
+
+// SessionDetail holds progress info for one annotation session.
+type SessionDetail struct {
+	ID         string   `json:"id"`
+	Status     string   `json:"status"`
+	TotalCount int      `json:"total_count"`
+	DoneCount  int      `json:"done_count"`
+	QueryIDs   []string `json:"query_ids"`
+	CreatedAt  string   `json:"created_at"`
+}
+
+// GetSessionDetail returns progress info for a session.
+func (r *Repo) GetSessionDetail(sessionID string) (*SessionDetail, error) {
+	d := &SessionDetail{}
+	if err := r.db.QueryRow(
+		`SELECT id, status, query_count, created_at FROM annotation_sessions WHERE id=?`, sessionID,
+	).Scan(&d.ID, &d.Status, &d.TotalCount, &d.CreatedAt); err != nil {
+		return nil, err
+	}
+
+	_ = r.db.QueryRow(
+		`SELECT COUNT(*) FROM annotation_session_queries WHERE session_id=? AND label_status IN ('prelabeled','reviewed','finalized')`,
+		sessionID,
+	).Scan(&d.DoneCount)
+
+	rows, err := r.db.Query(`SELECT query_id FROM annotation_session_queries WHERE session_id=? ORDER BY selected_at`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var qid string
+		if err := rows.Scan(&qid); err != nil {
+			return nil, err
+		}
+		d.QueryIDs = append(d.QueryIDs, qid)
+	}
+	_ = rows.Err()
+
+	return d, nil
+}
+
 func (r *Repo) DistinctTopics() ([]string, error) {
 	rows, err := r.db.Query(`SELECT DISTINCT topic FROM eval_corpus WHERE topic IS NOT NULL AND topic != '' ORDER BY topic`)
 	if err != nil {

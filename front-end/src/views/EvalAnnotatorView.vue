@@ -14,7 +14,8 @@ const queries = ref([])
 const queriesTotal = ref(0)
 const queriesPage = ref(1)
 const queryKeyword = ref('')
-const queryStatus = ref('unreviewed')
+const queryStatus = ref('all')
+const currentSession = ref('')
 const selectedQuery = ref(null)
 const queryDetail = ref(null)
 
@@ -35,6 +36,11 @@ const loading = ref(false)
 const detailLoading = ref(false)
 const saving = ref(false)
 const saveMsg = ref('')
+const saveErrorQid = ref(null)
+const selectedQueryIds = ref(new Set())
+const labelLoading = ref(false)
+let pollTimer = null
+let pollCount = 0
 
 const relevanceLabels = { 0: '完全无关', 1: '话题相近', 2: '弱相关', 3: '相关', 4: '完美命中' }
 const relevanceColors = { 0: 'default', 1: 'info', 2: 'warning', 3: 'success', 4: 'error' }
@@ -64,7 +70,8 @@ async function loadQueries() {
   try {
     const params = `?limit=50&offset=${(queriesPage.value - 1) * 50}&status=${queryStatus.value}`
     const kw = queryKeyword.value ? `&keyword=${encodeURIComponent(queryKeyword.value)}` : ''
-    const res = await api.get(`/api/admin/eval/projects/${currentProject.value}/queries${params}${kw}`)
+    const sid = currentSession.value ? `&session_id=${encodeURIComponent(currentSession.value)}` : ''
+    const res = await api.get(`/api/admin/eval/projects/${currentProject.value}/queries${params}${kw}${sid}`)
     queries.value = res.queries || []
     queriesTotal.value = res.total || 0
   } catch (e) { console.error('[eval] loadQueries:', e); queries.value = [] }
@@ -116,6 +123,87 @@ async function skipQuery() {
   queryDetail.value = null
 }
 
+async function saveQueryAnnotations(queryId) {
+  if (!currentProject.value) return
+  const group = records.value.find(g => g.query_id === queryId)
+  if (!group) return
+  const changed = group.annotations
+    .filter(a => a._dirty)
+    .map(a => ({ corpus_id: a.corpus_id, relevance: a._newRelevance ?? a.relevance }))
+  if (changed.length === 0) return
+  try {
+    await api.patch(`/api/admin/eval/projects/${currentProject.value}/queries/${queryId}`, {
+      annotations: changed,
+      review_status: 'reviewed',
+      notes: ''
+    })
+    saveErrorQid.value = null
+    const byID = new Map(changed.map(c => [c.corpus_id, c.relevance]))
+    for (const a of group.annotations) {
+      if (byID.has(a.corpus_id)) {
+        a.relevance = byID.get(a.corpus_id)
+        a.label_source = 'corrected'
+      }
+      delete a._dirty
+      delete a._newRelevance
+    }
+    group.annotations.sort((a, b) => b.relevance - a.relevance)
+  } catch (e) {
+    console.error('[eval] saveQueryAnnotations:', e)
+    saveErrorQid.value = queryId
+  }
+}
+
+async function labelSelected() {
+  const ids = [...selectedQueryIds.value]
+  if (ids.length === 0) return
+  labelLoading.value = true
+  try {
+    const now = new Date()
+    const name = `batch-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}-${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`
+    const res = await api.post(`/api/admin/eval/projects/${currentProject.value}/label`, {
+      query_ids: ids, candidate_limit: 20, session_name: name
+    })
+    selectedQueryIds.value = new Set()
+    if (res.session_id) startPolling(res.session_id)
+  } catch (e) {
+    console.error('[eval] labelSelected:', e)
+    labelLoading.value = false
+  }
+}
+
+function startPolling(sessionId) {
+  pollCount = 0
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = setInterval(async () => {
+    if (++pollCount > 30) { clearInterval(pollTimer); pollTimer = null; labelLoading.value = false; loadQueries(); loadStats(); return }
+    try {
+      const s = await api.get(`/api/admin/eval/projects/${currentProject.value}/sessions/${sessionId}`)
+      if (s.done_count >= s.total_count) {
+        clearInterval(pollTimer); pollTimer = null
+        labelLoading.value = false
+        loadQueries(); loadStats()
+      }
+    } catch (_) { }
+  }, 20000)
+}
+
+function toggleSelect(qid) {
+  const s = new Set(selectedQueryIds.value)
+  if (s.has(qid)) {
+    s.delete(qid)
+  } else {
+    if (s.size >= 10) return
+    s.add(qid)
+  }
+  selectedQueryIds.value = s
+}
+
+function gotoSession(sid) {
+  activeTab.value = 'annotate'
+  currentSession.value = sid
+}
+
 async function loadCorpus() {
   if (!currentProject.value) return
   loading.value = true
@@ -133,18 +221,46 @@ async function loadRecords() {
   if (!currentProject.value) return
   loading.value = true
   try {
-    let params = `?limit=50&offset=${(recordsPage.value - 1) * 50}`
-    if (recordsKeyword.value) params += `&query_keyword=${encodeURIComponent(recordsKeyword.value)}`
+    let params = `?limit=20&offset=${(recordsPage.value - 1) * 20}`
+    if (recordsKeyword.value) params += `&keyword=${encodeURIComponent(recordsKeyword.value)}`
     if (recordsRelevance.value >= 0) params += `&relevance=${recordsRelevance.value}`
     if (recordsSource.value !== 'all') params += `&label_source=${recordsSource.value}`
-    const res = await api.get(`/api/admin/eval/projects/${currentProject.value}/annotations${params}`)
-    records.value = res.annotations || []
+    const res = await api.get(`/api/admin/eval/projects/${currentProject.value}/query-annotations${params}`)
+    records.value = res.queries || []
     recordsTotal.value = res.total || 0
+    expandedQueries.value = {}
   } catch (e) { console.error('[eval] loadRecords:', e); records.value = [] }
   finally { loading.value = false }
 }
 
 const projectOptions = computed(() => projects.value.map(p => ({ label: p.name || p.id, value: p.id })))
+
+const sessionOptions = computed(() => {
+  const opts = [{ label: '全部批次', value: '' }]
+  if (stats.value?.sessions) {
+    for (const s of stats.value.sessions) {
+      opts.push({ label: s.name || s.id, value: s.id })
+    }
+  }
+  return opts
+})
+
+const expandedQueries = ref({})
+function toggleQuery(qid) {
+  expandedQueries.value[qid] = !expandedQueries.value[qid]
+}
+
+const expandedItems = ref({})
+function toggleContent(qid, cid) {
+  const key = qid + ':' + cid
+  expandedItems.value[key] = !expandedItems.value[key]
+}
+
+async function quickUpdate(r, v, queryId) {
+  if (saveErrorQid.value === queryId) saveErrorQid.value = null
+  updateScore(r, v)
+  await saveQueryAnnotations(queryId)
+}
 
 watch(currentProject, () => { loadStats(); loadQueries(); loadCorpus(); loadRecords() })
 watch(activeTab, (t) => {
@@ -154,6 +270,7 @@ watch(activeTab, (t) => {
   if (t === 'records') loadRecords()
 })
 watch([queriesPage, queryStatus], () => loadQueries())
+watch(currentSession, () => { queriesPage.value = 1; loadQueries() })
 watch([corpusPage, corpusType], () => loadCorpus())
 watch([recordsPage, recordsRelevance, recordsSource], () => loadRecords())
 
@@ -183,9 +300,10 @@ onMounted(() => loadProjects())
         <div v-if="activeTab === 'overview' && stats" class="tab-overview">
           <div class="stat-cards">
             <NCard size="small"><template #header>query 总数</template>{{ stats.total_queries }}</NCard>
-            <NCard size="small"><template #header>已标注</template>{{ stats.labeled_queries }}</NCard>
+            <NCard size="small"><template #header>LLM 标注</template>{{ stats.labeled_queries }}</NCard>
+            <NCard size="small"><template #header>人工审核</template>{{ stats.reviewed_queries }}</NCard>
             <NCard size="small"><template #header>未标注</template>{{ stats.unlabeled_queries }}</NCard>
-            <NCard size="small"><template #header>corpus 总数</template>{{ stats.relevance_distribution ? Object.values(stats.relevance_distribution).reduce((a, b) => a + b, 0) : 0 }}</NCard>
+            <NCard size="small"><template #header>标注条目</template>{{ stats.relevance_distribution ? Object.values(stats.relevance_distribution).reduce((a, b) => a + b, 0) : 0 }}</NCard>
           </div>
           <NCard title="相关性分布" size="small" style="margin-top: 12px">
             <div v-if="stats.relevance_distribution" class="dist-bars">
@@ -203,7 +321,7 @@ onMounted(() => loadProjects())
               <div class="session-row header">
                 <span>批次</span><span>数量</span><span>状态</span><span>时间</span>
               </div>
-              <div v-for="s in stats.sessions" :key="s.id" class="session-row">
+              <div v-for="s in stats.sessions" :key="s.id" class="session-row clickable" @click="gotoSession(s.id)">
                 <span>{{ s.name || s.id }}</span><span>{{ s.query_count }}</span>
                 <span><NTag size="tiny" :type="s.status === 'prelabeled' ? 'success' : 'default'">{{ s.status }}</NTag></span>
                 <span class="time">{{ s.created_at?.slice(0, 10) }}</span>
@@ -221,16 +339,30 @@ onMounted(() => loadProjects())
                 <NInput v-model:value="queryKeyword" size="small" placeholder="搜索 query..." clearable @update:value="loadQueries"
                   style="margin-bottom: 8px" />
                 <NSelect v-model:value="queryStatus" size="small" :options="[
-                  { label: '未审核', value: 'unreviewed' }, { label: '已审核', value: 'reviewed' }, { label: '全部', value: 'all' }
+                  { label: '全部', value: 'all' }, { label: '未选中', value: 'unselected' }, { label: '已选中', value: 'selected' },
+                  { label: '预标注', value: 'prelabeled' }, { label: '已审核', value: 'reviewed' }
                 ]" style="margin-bottom: 8px" />
+                <NSelect v-model:value="currentSession" :options="sessionOptions" size="small" placeholder="选择批次" style="margin-bottom: 8px" />
+                <div style="display: flex; gap: 6px; margin-bottom: 8px">
+                  <NButton size="tiny" type="primary" @click="labelSelected" :loading="labelLoading"
+                    :disabled="selectedQueryIds.size === 0">
+                    预标注 ({{ selectedQueryIds.size }}/10)
+                  </NButton>
+                </div>
               </div>
               <div class="query-items">
                 <div v-for="q in queries" :key="q.id" class="query-item"
-                  :class="{ active: selectedQuery?.id === q.id }" @click="selectQuery(q)">
-                  <div class="qi-content">{{ q.content?.slice(0, 60) }}{{ q.content?.length > 60 ? '...' : '' }}</div>
-                  <div class="qi-meta">
-                    <NTag size="tiny" :type="q.reviewed ? 'success' : 'default'">{{ q.reviewed ? '已审核' : '待审核' }}</NTag>
-                    <span class="qi-count">标注:{{ q.labeled_count }}</span>
+                  :class="{ active: selectedQuery?.id === q.id, selected: selectedQueryIds.has(q.id) }">
+                  <div class="qi-row">
+                    <input type="checkbox" :checked="selectedQueryIds.has(q.id)"
+                      @click.stop @change="toggleSelect(q.id)" class="qi-check" />
+                    <div class="qi-main" @click="selectQuery(q)">
+                      <div class="qi-content">{{ q.content?.slice(0, 60) }}{{ q.content?.length > 60 ? '...' : '' }}</div>
+                      <div class="qi-meta">
+                        <NTag size="tiny" :type="q.reviewed ? 'success' : 'default'">{{ q.reviewed ? '已审核' : '待审核' }}</NTag>
+                        <span class="qi-count">标注:{{ q.labeled_count }}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <NEmpty v-if="queries.length === 0" description="暂无 query" size="small" />
@@ -310,18 +442,43 @@ onMounted(() => loadProjects())
               { label: '全部来源', value: 'all' }, { label: 'LLM', value: 'llm' }, { label: '人工修正', value: 'corrected' }
             ]" style="width: 120px" />
           </div>
-          <div class="records-table">
-            <div class="rr-row header"><span>query</span><span>corpus</span><span>评分</span><span>来源</span></div>
-            <div v-for="r in records" :key="r.query_id + r.corpus_id" class="rr-row">
-              <span class="content" :title="r.query_content">{{ r.query_content?.slice(0, 40) }}</span>
-              <span class="content" :title="r.corpus_content">{{ r.corpus_content?.slice(0, 40) }}</span>
-              <span><NTag size="tiny" :type="relevanceColors[r.relevance]">{{ r.relevance }}</NTag></span>
-              <span><NTag size="tiny">{{ r.label_source === 'llm' ? 'LLM' : '人工' }}</NTag></span>
+          <div class="grouped-records">
+            <div v-for="g in records" :key="g.query_id" class="gr-group">
+              <div class="gr-query" @click="toggleQuery(g.query_id)">
+                <span class="gr-toggle">{{ expandedQueries[g.query_id] ? '▾' : '▸' }}</span>
+                <span class="gr-text">{{ g.query_content?.slice(0, 80) }}</span>
+                <NTag size="tiny">{{ g.annotations?.length || 0 }} 条</NTag>
+                <span v-if="saveErrorQid === g.query_id" class="save-err">修改失败</span>
+              </div>
+              <div v-if="expandedQueries[g.query_id]" class="gr-items">
+                <div class="rr-row header"><span>corpus</span><span>评分</span><span>来源</span><span>时间</span></div>
+                <div v-for="r in g.annotations" :key="r.corpus_id" class="rr-row">
+                  <span v-if="!expandedItems[g.query_id + ':' + r.corpus_id]"
+                    class="content clickable" @click="toggleContent(g.query_id, r.corpus_id)">
+                    {{ r.corpus_content?.slice(0, 60) }}{{ r.corpus_content?.length > 60 ? '...' : '' }}
+                  </span>
+                  <span v-else class="content expanded" @click="toggleContent(g.query_id, r.corpus_id)">
+                    {{ r.corpus_content }}
+                  </span>
+                  <span class="rr-score">
+                    <NRadioGroup :value="r._newRelevance ?? r.relevance"
+                      @update:value="v => quickUpdate(r, v, g.query_id)" size="tiny">
+                      <NRadioButton v-for="s in 5" :key="s" :value="s - 1" :label="String(s - 1)" />
+                    </NRadioGroup>
+                    <NTag size="tiny" :type="(r._dirty ? 'warning' : relevanceColors[r.relevance])"
+                      style="margin-left: 4px; min-width: 28px; text-align: center">
+                      {{ r._newRelevance ?? r.relevance }}
+                    </NTag>
+                  </span>
+                  <span><NTag size="tiny">{{ r.label_source === 'llm' ? 'LLM' : '人工' }}</NTag></span>
+                  <span class="time">{{ r.labeled_at?.slice(0, 16) }}</span>
+                </div>
+              </div>
             </div>
             <NEmpty v-if="records.length === 0" description="暂无数据" size="small" />
           </div>
-          <NPagination v-if="recordsTotal > 50" v-model:page="recordsPage"
-            :page-count="Math.ceil(recordsTotal / 50)" size="small" style="margin-top: 12px" />
+          <NPagination v-if="recordsTotal > 20" v-model:page="recordsPage"
+            :page-count="Math.ceil(recordsTotal / 20)" size="small" style="margin-top: 12px" />
         </div>
 
       </NSpin>
@@ -347,7 +504,7 @@ onMounted(() => loadProjects())
 }
 .stat-cards {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 12px;
 }
 .dist-bars { display: flex; flex-direction: column; gap: 6px; }
@@ -360,6 +517,8 @@ onMounted(() => loadProjects())
 .session-row { display: flex; gap: 16px; padding: 4px 0; }
 .session-row.header { color: var(--color-text-muted); border-bottom: 1px solid var(--color-border); }
 .session-row span { flex: 1; }
+.session-row.clickable { cursor: pointer; border-radius: 4px; padding: 2px 4px; }
+.session-row.clickable:hover { background: var(--color-hover); }
 .session-row .time { flex: 0.6; }
 
 .annotate-layout { display: flex; gap: 0; height: calc(100vh - 180px); }
@@ -369,6 +528,10 @@ onMounted(() => loadProjects())
 .query-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--color-border); }
 .query-item:hover { background: var(--color-hover); }
 .query-item.active { background: var(--color-primary-light, rgba(24,160,88,.08)); }
+.qi-row { display: flex; align-items: flex-start; gap: 6px; }
+.query-item.selected { background: var(--color-primary-light, rgba(24,160,88,.12)); }
+.qi-check { margin-top: 2px; flex-shrink: 0; cursor: pointer; }
+.qi-main { flex: 1; min-width: 0; cursor: pointer; }
 .qi-content { font-size: 13px; line-height: 1.4; margin-bottom: 4px; }
 .qi-meta { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--color-text-muted); }
 .qi-count { font-size: 11px; }
@@ -390,4 +553,24 @@ onMounted(() => loadProjects())
 .cr-row .topic { width: 80px; flex-shrink: 0; color: var(--color-text-muted); font-size: 12px; }
 .cr-row .content, .rr-row .content { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rr-row span { min-width: 0; }
+
+.grouped-records { display: flex; flex-direction: column; gap: 4px; }
+.gr-group { border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden; }
+.gr-query {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  cursor: pointer; font-size: 13px; background: var(--color-bg-alt);
+  user-select: none;
+}
+.gr-query:hover { background: var(--color-hover); }
+.gr-toggle { width: 14px; flex-shrink: 0; color: var(--color-text-muted); }
+.gr-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.save-err { font-size: 11px; color: var(--color-error, #d03050); flex-shrink: 0; }
+.gr-items { padding: 0 12px 8px; }
+.gr-items .rr-row { padding: 4px 8px; }
+.gr-items .rr-row .time { font-size: 11px; color: var(--color-text-muted); }
+.rr-score { display: flex; align-items: center; flex-shrink: 0; }
+
+.content.clickable { cursor: pointer; }
+.content.clickable:hover { background: var(--color-hover); border-radius: 3px; }
+.content.expanded { cursor: pointer; white-space: normal; word-break: break-all; }
 </style>

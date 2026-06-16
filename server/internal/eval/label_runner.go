@@ -3,7 +3,6 @@ package eval
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
@@ -208,17 +207,4 @@ func updateSessionStatus(db *sql.DB, sessionID, status string) error {
 	}
 	_, err := db.Exec(`UPDATE annotation_sessions SET status=? WHERE id=?`, status, sessionID)
 	return err
-}
-
-func saveEmbedding(db *sql.DB, sourceType, sourceID, model string, vec []float64) {
-	raw, _ := json.Marshal(vec)
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := db.Exec(
-		`INSERT OR IGNORE INTO eval_embedding_cache (source_type, source_id, model_name, embedding, dimension, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		sourceType, sourceID, model, string(raw), len(vec), now,
-	)
-	if err != nil {
-		log.Printf("[eval] save embedding %s/%s: %v", sourceType, sourceID, err)
-	}
 }

@@ -24,6 +24,9 @@ func RegisterEvalRoutes(rc EvalRoutesConfig) {
 			eval.PATCH("/projects/:project/queries/:id", rc.Handler.UpdateAnnotations)
 			eval.GET("/projects/:project/corpus", rc.Handler.ListCorpus)
 			eval.GET("/projects/:project/annotations", rc.Handler.ListAnnotations)
+			eval.GET("/projects/:project/query-annotations", rc.Handler.ListQueryAnnotations)
+			eval.POST("/projects/:project/label", rc.Handler.LabelBatch)
+			eval.GET("/projects/:project/sessions/:id", rc.Handler.GetSession)
 		}
 	}
 }

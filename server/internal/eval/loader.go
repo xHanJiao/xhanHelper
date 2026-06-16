@@ -15,9 +15,9 @@ import (
 	"xhan-helper/internal/config"
 )
 
-// LoadDataset exports queries and corpus from the source database using the given strategy,
+// LoadDataset exports queries and corpus from the source database using the given exporters,
 // and writes them into a SQLite eval.db at the specified output path.
-func LoadDataset(cfg *config.Config, strategy ExportStrategy, projectName, outPath string) error {
+func LoadDataset(cfg *config.Config, queryExporter QueryExporter, corpusExporter CorpusExporter, projectName, outPath string) error {
 	srcDB, err := sql.Open(cfg.DB.Driver, cfg.DB.DSN())
 	if err != nil {
 		return fmt.Errorf("open source db: %w", err)
@@ -28,16 +28,16 @@ func LoadDataset(cfg *config.Config, strategy ExportStrategy, projectName, outPa
 		return fmt.Errorf("ping source db: %w", err)
 	}
 
-	log.Printf("[eval] extracting queries with strategy=%q from %s@%s/%s",
-		strategy.Name(), cfg.DB.Driver, cfg.DB.Host, cfg.DB.Database)
+	log.Printf("[eval] extracting queries with query=%q corpus=%q from %s@%s/%s",
+		queryExporter.Name(), corpusExporter.Name(), cfg.DB.Driver, cfg.DB.Host, cfg.DB.Database)
 
-	queries, err := strategy.ExportQueries(context.Background(), srcDB)
+	queries, err := queryExporter.Export(context.Background(), srcDB)
 	if err != nil {
 		return fmt.Errorf("export queries: %w", err)
 	}
 	log.Printf("[eval] exported %d query candidates", len(queries))
 
-	corpus, err := strategy.ExportCorpus(context.Background(), srcDB)
+	corpus, err := corpusExporter.Export(context.Background(), srcDB)
 	if err != nil {
 		return fmt.Errorf("export corpus: %w", err)
 	}
@@ -87,7 +87,8 @@ func LoadDataset(cfg *config.Config, strategy ExportStrategy, projectName, outPa
 	now := time.Now().UTC().Format(time.RFC3339)
 	_ = insertMetadata(sqliteDB, "version", "v0.1")
 	_ = insertMetadata(sqliteDB, "exported_at", now)
-	_ = insertMetadata(sqliteDB, "strategy", strategy.Name())
+	_ = insertMetadata(sqliteDB, "query_exporter", queryExporter.Name())
+	_ = insertMetadata(sqliteDB, "corpus_exporter", corpusExporter.Name())
 	_ = insertMetadata(sqliteDB, "source_driver", cfg.DB.Driver)
 
 	log.Printf("[eval] dataset %q created at %s (%d queries, %d corpus)",

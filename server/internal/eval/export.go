@@ -27,22 +27,28 @@ type CorpusExport struct {
 	CreatedAt  time.Time
 }
 
-// ExportStrategy defines how to extract queries and corpus from a source database (typically MySQL).
-// Different implementations can support different export policies (time range, user filtering, etc).
-type ExportStrategy interface {
+// ── Interfaces ──
+
+// QueryExporter extracts queries from a source database.
+type QueryExporter interface {
 	Name() string
-	ExportQueries(ctx context.Context, db *sql.DB) ([]QueryExport, error)
-	ExportCorpus(ctx context.Context, db *sql.DB) ([]CorpusExport, error)
+	Export(ctx context.Context, db *sql.DB) ([]QueryExport, error)
 }
 
-// AllPastDataStrategy exports all historical data, filtering out queries that would
-// not trigger retrieval in the current pipeline (i.e., very short non-question messages
-// without intent keywords).
-type AllPastDataStrategy struct{}
+// CorpusExporter extracts corpus entries from a source database.
+type CorpusExporter interface {
+	Name() string
+	Export(ctx context.Context, db *sql.DB) ([]CorpusExport, error)
+}
 
-func (s *AllPastDataStrategy) Name() string { return "all-past-data" }
+// ── Query Exporters ──
 
-func (s *AllPastDataStrategy) ExportQueries(ctx context.Context, db *sql.DB) ([]QueryExport, error) {
+// RawQueryExporter exports user messages directly, filtering out very short messages.
+type RawQueryExporter struct{}
+
+func (e *RawQueryExporter) Name() string { return "raw" }
+
+func (e *RawQueryExporter) Export(ctx context.Context, db *sql.DB) ([]QueryExport, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT id, content, COALESCE(conversation_id,''), created_at
 		 FROM messages
@@ -59,7 +65,7 @@ func (s *AllPastDataStrategy) ExportQueries(ctx context.Context, db *sql.DB) ([]
 		if err := rows.Scan(&q.ID, &q.Content, &q.SourceConvID, &q.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
-		if s.shouldSkip(q.Content) {
+		if shouldSkipQuery(q.Content) {
 			continue
 		}
 		out = append(out, q)
@@ -67,18 +73,25 @@ func (s *AllPastDataStrategy) ExportQueries(ctx context.Context, db *sql.DB) ([]
 	return out, rows.Err()
 }
 
-// shouldSkip mirrors the pipeline's short-input check logic (step_short_input.go)
+// shouldSkipQuery mirrors the pipeline's short-input check logic (step_short_input.go)
 // but implemented independently to avoid package coupling.
-func (s *AllPastDataStrategy) shouldSkip(content string) bool {
+func shouldSkipQuery(content string) bool {
 	charLen := utf8.RuneCountInString(content)
 	byteLen := len(content)
 	return charLen <= 5 || (charLen <= 10 && byteLen <= 15)
 }
 
-func (s *AllPastDataStrategy) ExportCorpus(ctx context.Context, db *sql.DB) ([]CorpusExport, error) {
+// ── Corpus Exporters ──
+
+// FullContentCorpusExporter exports notes and memories as-is, without chunking.
+type FullContentCorpusExporter struct{}
+
+func (e *FullContentCorpusExporter) Name() string { return "full-content" }
+
+func (e *FullContentCorpusExporter) Export(ctx context.Context, db *sql.DB) ([]CorpusExport, error) {
 	var out []CorpusExport
 
-	notes, err := s.exportCorpusFromTable(ctx, db, "note",
+	notes, err := exportCorpusFromTable(ctx, db, "note",
 		`SELECT id, content, COALESCE(topic,''), COALESCE(tags,''), created_at
 		 FROM notes WHERE status=0`)
 	if err != nil {
@@ -86,7 +99,7 @@ func (s *AllPastDataStrategy) ExportCorpus(ctx context.Context, db *sql.DB) ([]C
 	}
 	out = append(out, notes...)
 
-	memories, err := s.exportCorpusFromTable(ctx, db, "memory",
+	memories, err := exportCorpusFromTable(ctx, db, "memory",
 		`SELECT id, memory_value AS content, COALESCE(topic,''), COALESCE(tags,''), created_at
 		 FROM user_memories`)
 	if err != nil {
@@ -97,7 +110,7 @@ func (s *AllPastDataStrategy) ExportCorpus(ctx context.Context, db *sql.DB) ([]C
 	return out, nil
 }
 
-func (s *AllPastDataStrategy) exportCorpusFromTable(ctx context.Context, db *sql.DB, sourceType, query string) ([]CorpusExport, error) {
+func exportCorpusFromTable(ctx context.Context, db *sql.DB, sourceType, query string) ([]CorpusExport, error) {
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query %s: %w", sourceType, err)

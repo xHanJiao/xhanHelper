@@ -420,9 +420,9 @@ async function quickUpdate(r, v, queryId) {
   await saveQueryAnnotations(queryId)
 }
 
-watch(currentProject, () => { loadStats(); loadQueries(); loadCorpus(); loadRecords() })
+watch(currentProject, () => { loadStats(); loadQueries(); loadCorpus(); loadRecords(); loadRuns(false) })
 watch(activeTab, (t) => {
-  if (t === 'overview') loadStats()
+  if (t === 'overview') { loadStats(); loadRuns(false) }
   if (t === 'annotate') loadQueries()
   if (t === 'corpus') loadCorpus()
   if (t === 'records') loadRecords()
@@ -463,18 +463,15 @@ onMounted(() => loadProjects())
             <NCard size="small"><template #header>LLM 标注</template>{{ stats.labeled_queries }}</NCard>
             <NCard size="small"><template #header>人工审核</template>{{ stats.reviewed_queries }}</NCard>
             <NCard size="small"><template #header>未标注</template>{{ stats.unlabeled_queries }}</NCard>
-            <NCard size="small"><template #header>标注条目</template>{{ stats.relevance_distribution ? Object.values(stats.relevance_distribution).reduce((a, b) => a + b, 0) : 0 }}</NCard>
           </div>
-          <NCard title="相关性分布" size="small" style="margin-top: 12px">
-            <div v-if="stats.relevance_distribution" class="dist-bars">
-              <div v-for="label in 5" :key="label" class="dist-row">
-                <span class="dist-label">{{ label - 1 }} {{ relevanceLabels[label - 1] }}</span>
-                <div class="dist-bar">
-                  <div class="dist-fill" :style="{ width: (stats.relevance_distribution[label - 1] || 0) / Math.max(...Object.values(stats.relevance_distribution), 1) * 100 + '%' }" />
-                </div>
-                <span class="dist-count">{{ stats.relevance_distribution[label - 1] || 0 }}</span>
-              </div>
+          <NCard title="评测任务统计" size="small" style="margin-top: 12px">
+            <div class="stat-cards" v-if="runs.length > 0">
+              <NCard size="small"><template #header>任务总数</template>{{ runs.length }}</NCard>
+              <NCard size="small"><template #header>已完成</template>{{ runs.filter(r => r.status === 'done').length }}</NCard>
+              <NCard size="small"><template #header>运行中</template>{{ runs.filter(r => r.status === 'running').length }}</NCard>
+              <NCard size="small"><template #header>失败</template>{{ runs.filter(r => r.status === 'error').length }}</NCard>
             </div>
+            <NEmpty v-else description="暂无评测任务" size="small" />
           </NCard>
           <NCard title="标注批次" size="small" style="margin-top: 12px">
             <div v-if="stats.sessions && stats.sessions.length" class="session-table">
@@ -587,7 +584,13 @@ onMounted(() => loadProjects())
             <div v-for="c in corpus" :key="c.id" class="cr-row">
               <span><NTag size="tiny" :type="c.source_type === 'note' ? 'info' : 'warning'">{{ c.source_type === 'note' ? '笔记' : '记忆' }}</NTag></span>
               <span class="topic">{{ c.topic || '-' }}</span>
-              <span class="content" :title="c.content">{{ c.content?.slice(0, 80) }}</span>
+              <span v-if="!expandedItems['corpus:' + c.id]"
+                class="content clickable" @click="toggleContent('corpus', c.id)">
+                {{ c.content?.slice(0, 80) }}{{ c.content?.length > 80 ? '...' : '' }}
+              </span>
+              <span v-else class="content expanded" @click="toggleContent('corpus', c.id)">
+                {{ c.content }}
+              </span>
               <span>{{ c.annotation_count }}</span>
             </div>
             <NEmpty v-if="corpus.length === 0" description="暂无数据" size="small" />
@@ -821,7 +824,7 @@ onMounted(() => loadProjects())
 }
 .stat-cards {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
 }
 .dist-bars { display: flex; flex-direction: column; gap: 6px; }

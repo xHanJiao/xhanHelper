@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { api } from '@/api/client'
-import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NInput, NInputNumber, NButton, NEmpty, NAlert, NRadioGroup, NRadioButton, NPagination, NPopover, NText, NModal } from 'naive-ui'
+import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NInput, NInputNumber, NButton, NEmpty, NAlert, NRadioGroup, NRadioButton, NPagination, NModal } from 'naive-ui'
 import PageTopBar from '@/components/PageTopBar.vue'
 
 const activeTab = ref('overview')
@@ -53,6 +53,24 @@ const placedKeyword = ref('')
 const selectedRunQueries = ref([])
 const showRunDetail = ref(false)
 const runDetail = ref(null)
+
+const metricHints = {
+  MRR: '平均倒数排名（Mean Reciprocal Rank）：第一个相关结果排在第几位。1=每次都排第1，0=从未找到。越高越好。',
+  NDCG5: '归一化折损累计增益@5：前5条结果的综合排序质量，考虑排名位置和5档相关度权重。越高越好。',
+  NDCG10: '同上，取前10条。',
+  Recall5: '召回率@5：前5条中找到了多少个真正相关的语料。1=全找到，0=全漏了。越高越好。',
+  Recall10: '同上，取前10条。',
+  Precision5: '精确率@5：前5条中有多少是真正有用的。1=全对，0=全错。越高越好。',
+  Precision10: '同上，取前10条。',
+}
+
+const showMetricHelp = ref(false)
+const helpPos = ref({ x: 0, y: 0 })
+
+function showHelp(e) {
+  helpPos.value = { x: e.clientX, y: e.clientY }
+  showMetricHelp.value = true
+}
 
 const relevanceLabels = { 0: '完全无关', 1: '话题相近', 2: '弱相关', 3: '相关', 4: '完美命中' }
 const relevanceColors = { 0: 'default', 1: 'info', 2: 'warning', 3: 'success', 4: 'error' }
@@ -635,7 +653,9 @@ onMounted(() => loadProjects())
             <NButton size="small" type="primary" @click="openCreateRun">新建评测任务</NButton>
           </div>
           <div class="run-table">
-            <div class="run-row header"><span>名称</span><span>引擎</span><span>范围</span><span>状态</span><span>MRR</span><span>NDCG@5</span><span>Recall@10</span><span>操作</span></div>
+            <div class="run-row header"><span>名称</span><span>引擎</span><span>范围</span><span>状态</span>
+              <span>MRR</span><span>NDCG@5</span><span>Recall@10</span>
+              <span>操作&nbsp;<span class="help-btn" @mouseenter="showHelp" @mouseleave="showMetricHelp = false">❓</span></span></div>
             <div v-for="r in runs" :key="r.id" class="run-row">
               <span>{{ r.name }}</span>
               <span>{{ r.config?.engine?.type || 'vector' }}</span>
@@ -722,13 +742,14 @@ onMounted(() => loadProjects())
           </template>
           <NCard size="small" style="max-height: 85vh; overflow-y: auto">
             <template v-if="runDetail">
-            <div class="run-report-summary" style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap">
+            <div class="run-report-summary" style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; align-items: center">
               <NTag>MRR: {{ runDetail.report?.mrr?.toFixed(4) || '-' }}</NTag>
               <NTag type="info">NDCG@5: {{ runDetail.report?.ndcg_at5?.toFixed(4) || '-' }}</NTag>
               <NTag type="info">NDCG@10: {{ runDetail.report?.ndcg_at10?.toFixed(4) || '-' }}</NTag>
               <NTag type="success">Recall@5: {{ runDetail.report?.recall_at5?.toFixed(4) || '-' }}</NTag>
               <NTag type="success">Recall@10: {{ runDetail.report?.recall_at10?.toFixed(4) || '-' }}</NTag>
               <NTag type="warning">Precision@5: {{ runDetail.report?.precision_at5?.toFixed(4) || '-' }}</NTag>
+              <span class="help-btn" @mouseenter="showHelp" @mouseleave="showMetricHelp = false">❓ 指标说明</span>
             </div>
             <div v-if="runDetail.queries">
               <div v-for="q in runDetail.queries" :key="q.query_id" class="report-query">
@@ -762,6 +783,18 @@ onMounted(() => loadProjects())
             </template>
           </NCard>
         </NModal>
+
+        <div v-show="showMetricHelp" class="help-tooltip" :style="{ left: helpPos.x + 'px', top: (helpPos.y + 8) + 'px' }" @mouseleave="showMetricHelp = false">
+          <div class="help-content">
+            <div style="margin-bottom:6px"><strong>MRR</strong><br>{{ metricHints.MRR }}</div>
+            <div style="margin-bottom:6px"><strong>NDCG@5</strong><br>{{ metricHints.NDCG5 }}</div>
+            <div style="margin-bottom:6px"><strong>NDCG@10</strong><br>{{ metricHints.NDCG10 }}</div>
+            <div style="margin-bottom:6px"><strong>Recall@5</strong><br>{{ metricHints.Recall5 }}</div>
+            <div style="margin-bottom:6px"><strong>Recall@10</strong><br>{{ metricHints.Recall10 }}</div>
+            <div style="margin-bottom:6px"><strong>Precision@5</strong><br>{{ metricHints.Precision5 }}</div>
+            <div><strong>Precision@10</strong><br>{{ metricHints.Precision10 }}</div>
+          </div>
+        </div>
 
       </NSpin>
     </div>
@@ -886,4 +919,20 @@ onMounted(() => loadProjects())
 .rq-text.expanded { white-space: normal; overflow: visible; }
 .rq-results { padding: 0 10px 8px; }
 .rq-more { font-size: 12px; color: var(--color-text-muted); text-align: center; padding: 4px; }
+
+.help-btn { cursor: pointer; font-size: 13px; color: var(--color-text-muted); user-select: none; }
+.help-btn:hover { color: var(--color-primary); }
+.help-content { font-size: 12px; line-height: 1.5; }
+.help-content strong { display: inline-block; min-width: 80px; }
+
+.help-tooltip {
+  position: fixed;
+  z-index: 99999;
+  max-width: 360px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.2);
+}
 </style>

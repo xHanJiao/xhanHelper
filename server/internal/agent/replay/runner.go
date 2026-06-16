@@ -90,9 +90,10 @@ type Result struct {
 
 // PreviewResult — 预览结果，包含完整 system prompt、消息列表和检索 trace
 type PreviewResult struct {
-	SystemPrompt string                     `json:"system_prompt"`
-	Messages     []llm.Message              `json:"messages"`
-	Trace        *promptbuilder.PromptTrace `json:"trace,omitempty"`
+	SystemPrompt      string                     `json:"system_prompt"`
+	UserMessagePrefix string                     `json:"user_message_prefix"`
+	Messages          []llm.Message              `json:"messages"`
+	Trace             *promptbuilder.PromptTrace `json:"trace,omitempty"`
 }
 
 // Preview 构建 system prompt 并返回完整的请求预览
@@ -126,9 +127,10 @@ func (r *Runner) Preview(ctx context.Context, anchorMsg *model.Message, history 
 	}
 
 	return &PreviewResult{
-		SystemPrompt: result.Prompt,
-		Messages:     msgs,
-		Trace:        result.Trace,
+		SystemPrompt:      result.Prompt,
+		UserMessagePrefix: result.UserMessagePrefix,
+		Messages:          msgs,
+		Trace:             result.Trace,
 	}, nil
 }
 

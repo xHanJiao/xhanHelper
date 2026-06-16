@@ -63,11 +63,11 @@ func (p *themeProvider) Search(ctx context.Context, opts retrieval.SearchOptions
 			enriched = append(enriched, pkt)
 			continue
 		}
-		pkt.Text = fmt.Sprintf("关注：%s", name)
+		pkt.Text = fmt.Sprintf("- 关注：**%s**", name)
 
 		detail := themeDetail[pkt.ID]
 		if detail != nil && detail.StateText != "" {
-			pkt.Text += fmt.Sprintf("\n当前状态：%s", detail.StateText)
+			pkt.Text += fmt.Sprintf("\n  当前状态：%s", detail.StateText)
 		}
 
 		enriched = append(enriched, pkt)

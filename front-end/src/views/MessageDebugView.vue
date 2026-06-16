@@ -21,6 +21,7 @@ const activeTab = ref('prompt')
 const detailData = ref({ request_json: null, extra: null })
 
 const tabs = [
+  { key: 'user_msg', label: '用户消息体' },
   { key: 'prompt', label: '系统提示词' },
   { key: 'request_json', label: '请求JSON' },
   { key: 'resources', label: '资源取舍明细' },
@@ -59,6 +60,26 @@ function parseExtra(raw) {
 }
 
 const extraParsed = computed(() => parseExtra(detailData.value.extra))
+
+const userMessagePrefix = computed(() => extraParsed.value?.user_message_prefix || '')
+
+const userMsgBody = computed(() => {
+  if (!anchorMsg.value || !userMessagePrefix.value) return ''
+  return userMessagePrefix.value + '\n<user_query>' + anchorMsg.value.content + '</user_query>'
+})
+
+const userMsgBodyHtml = computed(() => {
+  const text = userMsgBody.value
+  if (!text) return '<span style="color:var(--color-text-muted)">(本轮无检索上下文，或用户消息前缀未记录)</span>'
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>')
+  html = html.replace(/&lt;(\/?)(memories|notes|topics|history|user_query)&gt;/g,
+    '<span style="color:var(--color-primary);font-weight:600">&lt;$1$2&gt;</span>')
+  return html
+})
 
 const providers = computed(() => {
   const ex = extraParsed.value
@@ -396,6 +417,17 @@ onMounted(loadRound)
                     borderBottom: activeTab === tab.key ? '2px solid var(--color-primary)' : '2px solid transparent',
                   }"
                 >{{ tab.label }}</span>
+              </div>
+
+              <!-- 用户消息体 -->
+              <div v-if="activeTab === 'user_msg'">
+                <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 8px;">
+                  发给 LLM 的完整 user message（含检索上下文 XML 前缀）
+                </div>
+                <div
+                  v-html="userMsgBodyHtml"
+                  style="font-size: 13px; line-height: 1.7; max-height: 600px; overflow-y: auto; background: var(--color-bg-page); padding: 14px 16px; border-radius: var(--radius-md); font-family: 'SF Mono', 'Menlo', 'Monaco', monospace; white-space: pre-wrap; word-break: break-all;">
+                </div>
               </div>
 
               <!-- 系统提示词 -->

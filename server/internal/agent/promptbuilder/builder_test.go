@@ -166,9 +166,9 @@ func TestBuildSortsByScore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	highIdx := strings.Index(result.Prompt, "HIGH")
-	midIdx := strings.Index(result.Prompt, "MID")
-	lowIdx := strings.Index(result.Prompt, "LOW")
+	highIdx := strings.Index(result.UserMessagePrefix, "HIGH")
+	midIdx := strings.Index(result.UserMessagePrefix, "MID")
+	lowIdx := strings.Index(result.UserMessagePrefix, "LOW")
 
 	if highIdx < 0 || midIdx < 0 || lowIdx < 0 {
 		t.Fatal("not all search results rendered")
@@ -196,7 +196,7 @@ func TestBuildSearchProviderError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Prompt, "OK") {
+	if !strings.Contains(result.UserMessagePrefix, "OK") {
 		t.Error("OK provider should still render despite error provider")
 	}
 }

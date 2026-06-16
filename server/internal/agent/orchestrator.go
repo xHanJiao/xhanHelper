@@ -61,9 +61,10 @@ type reactState struct {
 	allToolCalls         []tool.ToolCall
 	lastAssistantMsgID   string
 	userMsgID            string
-	verifyRetries        int  // 本轮对话已重检验次数
-	nativeFCTextDeferred bool // 原生 FC 下文本因 verify 暂缓推送
-	jsonBuffered         bool // 原生 FC 下文本首字符为 { 暂缓推送，防 JSON 泄露
+	verifyRetries        int    // 本轮对话已重检验次数
+	nativeFCTextDeferred bool   // 原生 FC 下文本因 verify 暂缓推送
+	jsonBuffered         bool   // 原生 FC 下文本首字符为 { 暂缓推送，防 JSON 泄露
+	userMsgPrefix        string // 当前轮检索 XML 前缀，首次 saveAssistantMsg 时消费后清空
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（文本解析用）
@@ -300,7 +301,11 @@ func (o *Orchestrator) runReActLoop(
 	util.SafeGo(func() { o.convRepo.Touch(ctx, req.ConversationID) })
 	util.SafeGo(func() { o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID) })
 
-	state := &reactState{msgs: append(req.Messages, llm.Message{Role: "user", Content: req.UserMessageContent}), userMsgID: userMsg.ID}
+	userContent := req.UserMessageContent
+	if systemPromptResult.UserMessagePrefix != "" {
+		userContent = systemPromptResult.UserMessagePrefix + "\n<user_query>" + req.UserMessageContent + "</user_query>"
+	}
+	state := &reactState{msgs: append(req.Messages, llm.Message{Role: "user", Content: userContent}), userMsgID: userMsg.ID, userMsgPrefix: systemPromptResult.UserMessagePrefix}
 
 	maxIter := o.maxIterations
 	if req.MaxIterations > 0 {
@@ -496,7 +501,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 	// 原生 FC 路径：tool_calls 已由 API 在 done 事件中解析好
 	if o.useNativeFC && len(msg.ToolCalls) > 0 {
 		internalTCs := nativeToolCallsToInternal(msg.ToolCalls)
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
 		state.msgs = append(state.msgs, msg)
 		state.allToolCalls = append(state.allToolCalls, internalTCs...)
 		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, o.registry, internalTCs)
@@ -521,7 +526,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		if o.shouldVerify(req, state) {
 			return o.verifyAndMaybeRetry(ctx, events, msg, req, result, state)
 		}
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
 		return true
 	}
 
@@ -529,7 +534,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 
 	if parseErr != nil {
 		log.Printf("[orch] round parse error: %v, saving raw and retrying", parseErr)
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, nil)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, nil, "")
 		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "响应格式异常，正在重试…"})
 		state.msgs = append(state.msgs, llm.Message{
 			Role:    "user",
@@ -544,7 +549,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		if o.shouldVerify(req, state) {
 			return o.verifyAndMaybeRetry(ctx, events, msg, req, result, state)
 		}
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
 		return true
 	}
 
@@ -557,7 +562,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		if o.shouldVerify(req, state) {
 			return o.verifyAndMaybeRetry(ctx, events, msg, req, result, state)
 		}
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
 		return true
 	}
 
@@ -586,7 +591,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 ) bool {
 	if state.verifyRetries >= o.verifyMaxRetries {
 		log.Printf("[verify] max retries reached (%d/%d), accepting draft", state.verifyRetries, o.verifyMaxRetries)
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
 		return true
 	}
 
@@ -626,7 +631,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 	if err != nil {
 		log.Printf("[verify] LLM call error: %v", err)
 		o.sendVerifyEvent(events, "done", state.verifyRetries, "")
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
 		return true
 	}
 
@@ -634,7 +639,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 	if err := json.Unmarshal([]byte(verifyMsg.Content), &vr); err != nil {
 		log.Printf("[verify] parse result error: %v, raw=%s", err, verifyMsg.Content)
 		o.sendVerifyEvent(events, "done", state.verifyRetries, "")
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
 		return true
 	}
 
@@ -645,7 +650,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 		o.saveVerifyFeedback(ctx, req.ConversationID, req.UserID, "检验通过：无幻觉，回复完整", verifySystemPrompt, verifyPrompt)
 		log.Printf("[verify] round %d passed", state.verifyRetries)
 		o.sendVerifyEvent(events, "done", state.verifyRetries, "")
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
 		return true
 	}
 
@@ -740,7 +745,7 @@ func (o *Orchestrator) executePromptEngTools(
 	parsed *LLMResponse,
 ) bool {
 	msg.ToolCalls = nil
-	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
 	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	state.allToolCalls = append(state.allToolCalls, parsed.ToolCalls...)
 	o.injectExcludeMemIDsForMemSearch(parsed, result.IDsByType["memory"])
@@ -778,7 +783,7 @@ func (o *Orchestrator) sendVerifyEvent(events chan<- *llm.StreamEvent, status st
 
 // saveAssistantMsgInternal 以 IsInternal=true 保存草稿，仅存档不展示
 func (o *Orchestrator) saveAssistantMsgInternal(ctx context.Context, convID, userID string, msg llm.Message, trace *promptbuilder.PromptTrace) string {
-	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, true)
+	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, true, "")
 }
 
 // saveVerifyFeedback 将检验反馈存为内部系统消息（含检验请求 request_json），调试页可见
@@ -810,7 +815,7 @@ func (o *Orchestrator) saveVerifyFeedback(ctx context.Context, convID, userID, f
 	}
 }
 
-func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, userID string, msg llm.Message, trace *promptbuilder.PromptTrace, isInternal bool) string {
+func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, userID string, msg llm.Message, trace *promptbuilder.PromptTrace, isInternal bool, userMsgPrefix string) string {
 	if o.msgRepo == nil || convID == "" {
 		return ""
 	}
@@ -823,8 +828,11 @@ func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, us
 		Content:        maybeInjectCreatedAt(msg.Content),
 		IsInternal:     isInternal,
 	}
-	if trace != nil || msg.Usage != nil {
+	if trace != nil || msg.Usage != nil || userMsgPrefix != "" {
 		extra := &MsgExtra{Usage: msg.Usage}
+		if userMsgPrefix != "" {
+			extra.UserMessagePrefix = userMsgPrefix
+		}
 		if trace != nil {
 			extra.Providers = trace.Providers
 		}
@@ -975,8 +983,14 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 
 // —— DB 保存 ——
 
-func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message, trace *promptbuilder.PromptTrace) string {
-	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, false)
+func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message, trace *promptbuilder.PromptTrace, userMsgPrefix string) string {
+	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, false, userMsgPrefix)
+}
+
+func popUserMsgPrefix(state *reactState) string {
+	pref := state.userMsgPrefix
+	state.userMsgPrefix = ""
+	return pref
 }
 
 func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCallID string, content string) {

@@ -77,6 +77,20 @@ CREATE TABLE IF NOT EXISTS eval_metadata (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS eval_runs (
+    id           TEXT PRIMARY KEY,
+    project_id   TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    config       TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    report       TEXT,
+    detail       TEXT,
+    error_msg    TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at   TEXT,
+    finished_at  TEXT
+);
 `
 
 func createSchema(db *sql.DB) error {

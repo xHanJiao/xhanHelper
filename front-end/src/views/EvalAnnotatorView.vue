@@ -773,6 +773,7 @@ onMounted(() => loadProjects())
   display: flex;
   flex-direction: column;
   height: 100vh;
+  background: var(--color-bg-page);
 }
 .eval-tabs {
   padding: 0 var(--space-lg);
@@ -783,6 +784,7 @@ onMounted(() => loadProjects())
   flex: 1;
   overflow-y: auto;
   padding: var(--space-lg);
+  color: var(--color-text);
 }
 .stat-cards {
   display: grid;
@@ -795,6 +797,7 @@ onMounted(() => loadProjects())
 .dist-bar { flex: 1; height: 16px; background: var(--color-border); border-radius: 3px; overflow: hidden; }
 .dist-fill { height: 100%; background: var(--color-primary); border-radius: 3px; transition: width .3s; }
 .dist-count { width: 40px; text-align: right; }
+.stat-cards :deep(.n-card__content) { color: var(--color-text); }
 .session-table { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .session-row { display: flex; gap: 16px; padding: 4px 0; }
 .session-row.header { color: var(--color-text-muted); border-bottom: 1px solid var(--color-border); }

@@ -34,19 +34,28 @@ type BuildOptions struct {
 }
 
 // BuildResult — Build() 的返回值。
-// Prompt 是完整的 system prompt，IDsByType 按 type 聚合注入资源的 ID（memory/note），
+//
+// Prompt 是固定的 system prompt（行为准则 + 角色定义 + 工具定义，不含检索内容），
+// 每次请求完全一致 → 100% Prompt Caching 命中。
+//
+// UserMessagePrefix 是检索内容的 XML 标签文本，由 orchestrator 拼接到当前轮
+// user message 前面（<memories>...</memories> 等 XML 标签包裹），
+// 让 system 段完全固定，提升缓存命中率。
+//
+// IDsByType 按 type 聚合注入资源的 ID（memory/note），
 // 用于前端 done 事件和 memory_search 去重。Trace 写入 assistant message Extra。
 // RetrievedItem — 检索命中的单条内容，供校验模块使用
 type RetrievedItem struct {
 	Type string // "memory" | "note" | "history" | "theme"
-	Text string // 注入 system prompt 的完整文本
+	Text string // 注入上下文中的完整文本
 }
 
 type BuildResult struct {
-	Prompt         string              // 最终 system prompt（Layer 1 + 2 + 3 拼接完成）
-	IDsByType      map[string][]string // type → ids，如 "memory" → [...], "note" → [...]
-	Trace          *PromptTrace        // provider 构建追溯（写入 assistant message Extra）
-	RetrievedItems []RetrievedItem     // 检索命中的内容，供校验模块判断幻觉
+	Prompt            string              // 固定 system prompt（行为准则 + 角色定义 + 工具定义，不含检索内容）
+	UserMessagePrefix string              // 检索内容 XML 标签文本，拼接到 user message 前面
+	IDsByType         map[string][]string // type → ids，如 "memory" → [...], "note" → [...]
+	Trace             *PromptTrace        // provider 构建追溯（写入 assistant message Extra）
+	RetrievedItems    []RetrievedItem     // 检索命中的内容，供校验模块判断幻觉
 }
 
 // SystemPromptBuilder — system prompt 构建器，orchestrator 的唯一入口。
@@ -142,21 +151,24 @@ func (b *SystemPromptBuilder) Build(ctx context.Context, opts BuildOptions) (*Bu
 		trace.addStatic(sp.Name())
 	}
 
-	// —— 动态上下文 ——
-	idsByType, retrievedItems := b.buildDynamicContext(ctx, opts, &sb, trace)
+	// —— 动态上下文（不再拼入 system prompt，改为生成 user message 前缀） ——
+	idsByType, retrievedItems, userMsgPrefix := b.buildDynamicContext(ctx, opts, trace)
 	result := &BuildResult{
-		Prompt:         sb.String(),
-		Trace:          trace,
-		IDsByType:      idsByType,
-		RetrievedItems: retrievedItems,
+		Prompt:            sb.String(),
+		UserMessagePrefix: userMsgPrefix,
+		Trace:             trace,
+		IDsByType:         idsByType,
+		RetrievedItems:    retrievedItems,
 	}
 	return result, nil
 }
 
-// buildDynamicContext 检索所有 SearchProvider，排序、分组、渲染到 sb，返回 type→ids 映射和检索命中内容。
-func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts BuildOptions, sb *strings.Builder, trace *PromptTrace) (map[string][]string, []RetrievedItem) {
+// buildDynamicContext 检索所有 SearchProvider，排序、按 XML 标签分组，返回 user message 前缀文本。
+// 返回的 userMsgPrefix 是由 <memories>...</memories> 等 XML 标签包裹的检索内容，
+// 由 orchestrator 拼接到当前轮 user message 前面，使 system prompt 保持完全固定。
+func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts BuildOptions, trace *PromptTrace) (map[string][]string, []RetrievedItem, string) {
 	if len(opts.Embedding) == 0 {
-		return nil, nil
+		return nil, nil, ""
 	}
 
 	searchOpts := retrieval.SearchOptions{
@@ -195,8 +207,8 @@ func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts Buil
 	}
 	wg.Wait()
 
-	// —— 2. 记录 trace + 按 provider 分组渲染（组内按 Score 排序） ——
-	sb.WriteString("\n## 上下文信息\n")
+	// —— 2. 记录 trace + 按 provider 分组渲染为 XML 标签（组内按 Score 排序） ——
+	var userPrefix strings.Builder
 	idsByType := make(map[string][]string)
 	var retrievedItems []RetrievedItem
 	for i, sp := range b.searchProviders {
@@ -214,19 +226,46 @@ func (b *SystemPromptBuilder) buildDynamicContext(ctx context.Context, opts Buil
 			return items[i].Score > items[j].Score
 		})
 
-		header := sp.SectionHeader()
-		var group strings.Builder
+		if len(items) == 0 {
+			continue
+		}
+
+		tag := providerXMLTag(sp.Name())
+		if tag != "" {
+			userPrefix.WriteString("<")
+			userPrefix.WriteString(tag)
+			userPrefix.WriteString(">\n")
+		}
 		for _, item := range items {
-			group.WriteString(item.Text)
+			userPrefix.WriteString(item.Text)
+			userPrefix.WriteString("\n")
 			idsByType[item.Type] = append(idsByType[item.Type], item.ID)
 			retrievedItems = append(retrievedItems, RetrievedItem{Type: item.Type, Text: item.Text})
 		}
-		if group.Len() > 0 && header != "" {
-			sb.WriteString(header)
+		if tag != "" {
+			userPrefix.WriteString("</")
+			userPrefix.WriteString(tag)
+			userPrefix.WriteString(">\n")
 		}
-		sb.WriteString(group.String())
 	}
-	return idsByType, retrievedItems
+	return idsByType, retrievedItems, userPrefix.String()
+}
+
+// providerXMLTag 将 SearchProvider 名称映射到 XML 标签名。
+// 使用 XML 标签包裹检索内容，避免与检索内容中的 Markdown 语法冲突。
+func providerXMLTag(providerName string) string {
+	switch providerName {
+	case "theme":
+		return "topics"
+	case "memory":
+		return "memories"
+	case "note":
+		return "notes"
+	case "history":
+		return "history"
+	default:
+		return ""
+	}
 }
 
 // resolveRolePrompt — Layer 2 角色定义解析。

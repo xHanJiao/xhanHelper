@@ -325,7 +325,7 @@ func TestSaveAssistantMsg_Normal(t *testing.T) {
 	defer cleanup()
 
 	msg := llm.Message{Content: `{"reply":"正常回复"}`}
-	mid := orch.saveAssistantMsg(context.Background(), "c1", "u1", msg, nil)
+	mid := orch.saveAssistantMsg(context.Background(), "c1", "u1", msg, nil, "")
 	if mid == "" {
 		t.Fatal("应返回 message ID")
 	}
@@ -365,7 +365,7 @@ func TestVerifyAndMaybeRetry_MaxRetries(t *testing.T) {
 // 用例：msgRepo 为 nil 时 saveAssistantMsg 安全返回空
 func TestSaveAssistantMsg_NilRepo(t *testing.T) {
 	orch := &Orchestrator{} // msgRepo 为 nil
-	mid := orch.saveAssistantMsgWithFlags(context.Background(), "c1", "u1", llm.Message{Content: "test"}, nil, false)
+	mid := orch.saveAssistantMsgWithFlags(context.Background(), "c1", "u1", llm.Message{Content: "test"}, nil, false, "")
 	if mid != "" {
 		t.Error("msgRepo=nil 时应返回空 ID")
 	}

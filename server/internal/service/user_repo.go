@@ -17,15 +17,15 @@ var ErrTokenExpired = errors.New("token expired")
 // UserRepo — 用户数据访问
 type UserRepo struct {
 	db               *gorm.DB
-	tokenTTLHours    int
+	tokenTTLMinutes  int
 	maxTokensPerUser int
 }
 
-func NewUserRepo(db *gorm.DB, tokenTTLHours, maxTokensPerUser int) *UserRepo {
+func NewUserRepo(db *gorm.DB, tokenTTLMinutes, maxTokensPerUser int) *UserRepo {
 	if maxTokensPerUser <= 0 {
 		maxTokensPerUser = 4
 	}
-	return &UserRepo{db: db, tokenTTLHours: tokenTTLHours, maxTokensPerUser: maxTokensPerUser}
+	return &UserRepo{db: db, tokenTTLMinutes: tokenTTLMinutes, maxTokensPerUser: maxTokensPerUser}
 }
 
 func (r *UserRepo) Create(ctx context.Context, username, password string) (*model.User, string, error) {
@@ -45,7 +45,7 @@ func (r *UserRepo) Create(ctx context.Context, username, password string) (*mode
 			return err
 		}
 		var issueErr error
-		token, issueErr = issueTokenTx(tx, user.ID, r.tokenTTLHours)
+		token, issueErr = issueTokenTx(tx, user.ID, r.tokenTTLMinutes)
 		return issueErr
 	})
 	if err != nil {
@@ -79,7 +79,7 @@ func (r *UserRepo) Login(ctx context.Context, username, password string) (*model
 			}
 		}
 		var issueErr error
-		token, issueErr = issueTokenTx(tx, user.ID, r.tokenTTLHours)
+		token, issueErr = issueTokenTx(tx, user.ID, r.tokenTTLMinutes)
 		return issueErr
 	})
 	if err != nil {
@@ -129,15 +129,32 @@ func (r *UserRepo) FindByToken(ctx context.Context, token string) (*model.User, 
 	return &u, nil
 }
 
-func issueTokenTx(db *gorm.DB, userID string, ttlHours int) (string, error) {
-	if ttlHours <= 0 {
-		ttlHours = 720
+func issueTokenTx(db *gorm.DB, userID string, ttlMinutes int) (string, error) {
+	if ttlMinutes <= 0 {
+		ttlMinutes = 5
 	}
 	ut := &model.UserToken{
 		ID:        uuid.New().String(),
 		UserID:    userID,
 		Token:     uuid.New().String(),
-		ExpiresAt: time.Now().Add(time.Duration(ttlHours) * time.Hour),
+		ExpiresAt: time.Now().Add(time.Duration(ttlMinutes) * time.Minute),
 	}
 	return ut.Token, db.Create(ut).Error
+}
+
+// RefreshToken 延长 token 过期时间，用于心跳续期。
+// 仅当 token 存在且未过期时才续期；已过期的 token 返回 ErrTokenExpired。
+func (r *UserRepo) RefreshToken(ctx context.Context, token string) error {
+	var ut model.UserToken
+	if err := r.db.WithContext(ctx).Where("token = ?", token).First(&ut).Error; err != nil {
+		return err
+	}
+	if time.Now().After(ut.ExpiresAt) {
+		return ErrTokenExpired
+	}
+	ttl := r.tokenTTLMinutes
+	if ttl <= 0 {
+		ttl = 5
+	}
+	return r.db.WithContext(ctx).Model(&ut).Update("expires_at", time.Now().Add(time.Duration(ttl)*time.Minute)).Error
 }

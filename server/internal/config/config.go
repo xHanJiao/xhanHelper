@@ -74,7 +74,7 @@ type ServerConfig struct {
 	MemoryAutoExtract   bool     `yaml:"memory_auto_extract"`   // 是否自动提取记忆
 	MemoryDupeThreshold float64  `yaml:"memory_dupe_threshold"` // 记忆去重相似度阈值，默认 0.85
 	SidecarURL          string   `yaml:"sidecar_url"`           // Python sidecar MCP HTTP 地址
-	TokenTTLHours       int      `yaml:"token_ttl_hours"`       // token 过期时间（小时），默认 720
+	TokenTTLMinutes     int      `yaml:"token_ttl_minutes"`     // token 过期时间（分钟），默认 5
 	AgentRouteTriggers  []int    `yaml:"agent_route_triggers"`  // [已废弃] 异步路由触发消息数
 	AgentRouteInterval  int      `yaml:"agent_route_interval"`  // 自动路由间隔：每 N 条用户消息触发一次，0=禁用，默认 5
 	MaxTokensPerUser    int      `yaml:"max_tokens_per_user"`   // 同一用户最大 token 数，默认 4
@@ -236,8 +236,8 @@ func merge(dst, src *Config) {
 	if src.Server.SidecarURL != "" {
 		dst.Server.SidecarURL = src.Server.SidecarURL
 	}
-	if src.Server.TokenTTLHours != 0 {
-		dst.Server.TokenTTLHours = src.Server.TokenTTLHours
+	if src.Server.TokenTTLMinutes != 0 {
+		dst.Server.TokenTTLMinutes = src.Server.TokenTTLMinutes
 	}
 	if src.Server.MaxTokensPerUser != 0 {
 		dst.Server.MaxTokensPerUser = src.Server.MaxTokensPerUser

@@ -89,6 +89,17 @@ func isAdmin(userID string, adminUsers []string) bool {
 	return false
 }
 
+func refreshToken(userRepo *service.UserRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := c.GetString("bearer_token")
+		if err := userRepo.RefreshToken(c.Request.Context(), token); err != nil {
+			view.JSONError(c, 401, "token expired or invalid")
+			return
+		}
+		view.JSONOK(c, gin.H{"ok": true})
+	}
+}
+
 func logoutUser(userRepo *service.UserRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.GetString("bearer_token")

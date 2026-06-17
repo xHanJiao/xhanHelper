@@ -1,15 +1,19 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import { api } from '@/api/client'
 
 const STORAGE_KEY = 'xhanhelper_auth'
+
+// 心跳间隔：token TTL 为 5 分钟，每 2 分钟续期一次，留 3 分钟缓冲
+const HEARTBEAT_INTERVAL = 2 * 60 * 1000
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(null)
   const user = ref(null)
   const loading = ref(false)
 
-  // 从 localStorage 恢复
+  // ---- localStorage ----
+
   function loadFromStorage() {
     try {
       const stored = localStorage.getItem(STORAGE_KEY)
@@ -23,7 +27,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // 保存到 localStorage
   function saveToStorage() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -35,7 +38,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // 清空 localStorage
   function clearStorage() {
     try {
       localStorage.removeItem(STORAGE_KEY)
@@ -44,22 +46,51 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // 监听 storage 事件（多标签页同步）
   function setupStorageListener() {
     window.addEventListener('storage', (e) => {
       if (e.key === STORAGE_KEY) {
         if (!e.newValue) {
-          // 其他标签页登出了
           token.value = null
           user.value = null
+          stopHeartbeat()
         } else {
           loadFromStorage()
+          startHeartbeat()
         }
       }
     })
   }
 
-  // 登录
+  // ---- 心跳续期 ----
+
+  let heartbeatTimer = null
+
+  async function doHeartbeat() {
+    if (!token.value) return
+    try {
+      await api.post('/api/auth/refresh', {})
+    } catch {
+      // 续期失败（token 过期或无效），登出
+      await logout()
+    }
+  }
+
+  function startHeartbeat() {
+    stopHeartbeat()
+    if (!token.value) return
+    doHeartbeat() // 立即续期一次
+    heartbeatTimer = setInterval(doHeartbeat, HEARTBEAT_INTERVAL)
+  }
+
+  function stopHeartbeat() {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer)
+      heartbeatTimer = null
+    }
+  }
+
+  // ---- API ----
+
   async function login(username, password) {
     loading.value = true
     try {
@@ -67,6 +98,7 @@ export const useAuthStore = defineStore('auth', () => {
       token.value = res.token
       user.value = { id: res.user_id, username, isAdmin: !!res.is_admin }
       saveToStorage()
+      startHeartbeat()
       return { success: true }
     } catch (err) {
       let message = '登录失败'
@@ -79,7 +111,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // 注册
   async function register(username, password) {
     loading.value = true
     try {
@@ -87,6 +118,7 @@ export const useAuthStore = defineStore('auth', () => {
       token.value = res.token
       user.value = { id: res.user_id, username, isAdmin: !!res.is_admin }
       saveToStorage()
+      startHeartbeat()
       return { success: true }
     } catch (err) {
       let message = '注册失败'
@@ -103,15 +135,15 @@ export const useAuthStore = defineStore('auth', () => {
 
   let isLoggingOut = false
 
-  // 登出
   async function logout() {
     if (isLoggingOut) return
     isLoggingOut = true
+    stopHeartbeat()
     try {
       if (token.value) {
         await api.post('/api/auth/logout', {})
       }
-    } catch (e) {
+    } catch {
       // 忽略登出 API 错误
     }
     token.value = null
@@ -120,14 +152,24 @@ export const useAuthStore = defineStore('auth', () => {
     isLoggingOut = false
   }
 
-  // 从 localStorage 重新恢复（供路由守卫等需要时调用）
   function restore() {
     loadFromStorage()
+    if (token.value) {
+      startHeartbeat()
+    }
+  }
+
+  // ---- 页面卸载时停止心跳 ----
+  if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', stopHeartbeat)
   }
 
   // 初始化
   loadFromStorage()
   setupStorageListener()
+  if (token.value) {
+    startHeartbeat()
+  }
 
   return {
     token,

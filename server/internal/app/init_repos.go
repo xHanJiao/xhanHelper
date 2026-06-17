@@ -38,7 +38,7 @@ type Repos struct {
 func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 	docRepo := service.NewDocumentRepo(db)
 	return &Repos{
-		User:           service.NewUserRepo(db, cfg.Server.TokenTTLHours, cfg.Server.MaxTokensPerUser),
+		User:           service.NewUserRepo(db, cfg.Server.TokenTTLMinutes, cfg.Server.MaxTokensPerUser),
 		Conversation:   service.NewConversationRepo(db),
 		Message:        service.NewMessageRepo(db),
 		Bill:           service.NewBillRepo(db),

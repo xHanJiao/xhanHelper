@@ -56,6 +56,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	auth := r.Group("/api")
 	auth.Use(middleware.Auth(rc.UserRepo))
 	{
+		auth.POST("/auth/refresh", refreshToken(rc.UserRepo))
 		auth.POST("/auth/logout", logoutUser(rc.UserRepo))
 		auth.POST("/chat", chat(rc.Orch, rc.Cfg, rc.ConvRepo, rc.MsgRepo, rc.AgentRepo))
 		auth.GET("/llm-config", llmConfig(rc.Cfg, rc.AgentRepo))

@@ -69,9 +69,11 @@ export const useAuthStore = defineStore('auth', () => {
     if (!token.value) return
     try {
       await api.post('/api/auth/refresh', {})
-    } catch {
-      // 续期失败（token 过期或无效），登出
-      await logout()
+    } catch (err) {
+      // 仅 token 真正过期（401）时登出；网络抖动忽略，下次心跳重试
+      if (err.status === 401) {
+        await logout()
+      }
     }
   }
 

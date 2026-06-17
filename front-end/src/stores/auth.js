@@ -4,8 +4,8 @@ import { api } from '@/api/client'
 
 const STORAGE_KEY = 'xhanhelper_auth'
 
-// 心跳间隔：token TTL 为 5 分钟，每 2 分钟续期一次，留 3 分钟缓冲
-const HEARTBEAT_INTERVAL = 2 * 60 * 1000
+// 心跳间隔：每 30 秒续期一次
+const HEARTBEAT_INTERVAL = 30 * 1000
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(null)

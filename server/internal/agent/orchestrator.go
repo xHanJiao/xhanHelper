@@ -1097,7 +1097,43 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int, useN
 			msgs = append(msgs, msg)
 		}
 	}
+	if useNativeFC {
+		sanitizeOrphanToolCalls(msgs)
+	}
 	return msgs
+}
+
+// sanitizeOrphanToolCalls 清理孤儿 tool_calls：
+// DB 中若某条 assistant 消息声明了 tool_calls，但对应的 tool 结果消息被手动删除，
+// 则 DeepSeek API 会返回 400 "insufficient tool messages following tool_calls message"。
+// 此函数扫描消息列表，将没有匹配 tool 结果的 tool_call 剔除，并记录日志。
+func sanitizeOrphanToolCalls(msgs []llm.Message) {
+	for i := 0; i < len(msgs); i++ {
+		if msgs[i].Role != "assistant" || len(msgs[i].ToolCalls) == 0 {
+			continue
+		}
+		// 收集该 assistant 后面连续 role=tool 消息的 tool_call_id
+		seen := make(map[string]bool)
+		for j := i + 1; j < len(msgs); j++ {
+			if msgs[j].Role == "tool" {
+				seen[msgs[j].ToolCallID] = true
+			} else {
+				break
+			}
+		}
+		// 剔除孤儿 tool_call
+		var kept []llm.ToolCall
+		for _, tc := range msgs[i].ToolCalls {
+			if seen[tc.ID] {
+				kept = append(kept, tc)
+			} else {
+				log.Printf("[orch] sanitize: dropping orphan tool_call id=%s func=%s — no matching tool result in history", tc.ID, tc.Function.Name)
+			}
+		}
+		if len(kept) != len(msgs[i].ToolCalls) {
+			msgs[i].ToolCalls = kept
+		}
+	}
 }
 
 func (o *Orchestrator) saveUserMsgEmbedding(userMsgID string, vec []float64, userID, convID string) {

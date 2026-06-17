@@ -337,6 +337,75 @@ func TestBuildMessagesForFlash_NativeFC_IdgenToolCallID(t *testing.T) {
 
 // ==================== collectToolResults ====================
 
+// ==================== sanitizeOrphanToolCalls ====================
+
+func TestSanitizeOrphanToolCalls_AllPresent(t *testing.T) {
+	// 所有 tool_call 都有匹配的 tool 结果 → 不应改动
+	msgs := []llm.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "call_01", Function: llm.ToolCallFunction{Name: "search", Arguments: "{}"}},
+			{ID: "call_02", Function: llm.ToolCallFunction{Name: "query", Arguments: "{}"}},
+		}},
+		{Role: "tool", ToolCallID: "call_01", Content: "result1"},
+		{Role: "tool", ToolCallID: "call_02", Content: "result2"},
+		{Role: "assistant", Content: "done"},
+	}
+	sanitizeOrphanToolCalls(msgs)
+	if len(msgs[1].ToolCalls) != 2 {
+		t.Errorf("expected 2 tool_calls preserved, got %d", len(msgs[1].ToolCalls))
+	}
+}
+
+func TestSanitizeOrphanToolCalls_OrphanStripped(t *testing.T) {
+	// 1 条 tool 结果被删除 → 孤儿 tool_call 应被剔除
+	msgs := []llm.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "call_01", Function: llm.ToolCallFunction{Name: "search", Arguments: "{}"}},
+			{ID: "call_02", Function: llm.ToolCallFunction{Name: "query", Arguments: "{}"}},
+		}},
+		{Role: "tool", ToolCallID: "call_01", Content: "result1"},
+		// call_02 的 tool 结果被手动删除了
+		{Role: "assistant", Content: "done"},
+	}
+	sanitizeOrphanToolCalls(msgs)
+	if len(msgs[1].ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool_call after sanitize, got %d", len(msgs[1].ToolCalls))
+	}
+	if msgs[1].ToolCalls[0].ID != "call_01" {
+		t.Errorf("expected call_01 kept, got %s", msgs[1].ToolCalls[0].ID)
+	}
+}
+
+func TestSanitizeOrphanToolCalls_AllOrphan(t *testing.T) {
+	// 全部 tool 结果被删除 → tool_calls 应清空
+	msgs := []llm.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "call_01", Function: llm.ToolCallFunction{Name: "search", Arguments: "{}"}},
+		}},
+		// 没有 tool 结果
+		{Role: "user", Content: "next message"},
+	}
+	sanitizeOrphanToolCalls(msgs)
+	if len(msgs[1].ToolCalls) != 0 {
+		t.Errorf("expected 0 tool_calls after sanitize, got %d", len(msgs[1].ToolCalls))
+	}
+}
+
+func TestSanitizeOrphanToolCalls_NoToolCalls(t *testing.T) {
+	// 纯文本 assistant → 不应该被改动
+	msgs := []llm.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "hello"},
+	}
+	sanitizeOrphanToolCalls(msgs)
+	if len(msgs[1].ToolCalls) != 0 {
+		t.Errorf("expected no tool_calls, got %d", len(msgs[1].ToolCalls))
+	}
+}
+
 func TestCollectToolResults_ShortResult_NotTruncated(t *testing.T) {
 	o := &Orchestrator{maxToolResultChars: 2000}
 	parsed := &LLMResponse{

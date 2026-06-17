@@ -6,13 +6,19 @@ import (
 	"xhan-helper/internal/llm"
 )
 
+// PacketMeta 标记接口——只允许包内定义的 struct 放入 ContextPacket.Meta。
+// 每个 source 类型定义自己的 Meta struct 并实现此接口。
+type PacketMeta interface {
+	isPacketMeta()
+}
+
 // ContextPacket — 上下文片段，来自任意数据源（也是 SearchProvider 的返回类型）。
 type ContextPacket struct {
-	ID    string  // 唯一标识
-	Type  string  // memory | note | history | theme | mission
-	Text  string  // 注入 prompt 的文本
-	Score float64 // 向量检索原始分数
-	Meta  any     `json:"-"` // provider 自定义元数据（memory_ids, note_ids, trace_items）
+	ID    string     // 唯一标识
+	Type  string     // memory | note | history | theme | mission
+	Text  string     // 格式化文本（mission 仍依赖此字段；memory/note/history/theme 的 XML 生成已切到 Meta，Text 保留用于 trace 兼容）
+	Score float64    // 向量检索原始分数
+	Meta  PacketMeta `json:"-"` // source 自定义元数据（entityMeta / historyMeta / themeMeta）
 }
 
 // NearMissItem — 被阈值或规则过滤掉的候选项，用于 trace 调试

@@ -83,7 +83,7 @@ type convToucher interface {
 	Touch(ctx context.Context, id string) error
 }
 
-// promptBuilder — Orchestrator 需要的 prompt 构建能力（*promptbuilder.SystemPromptBuilder 自动满足）
+// promptBuilder — Orchestrator 需要的 prompt 构建能力（*promptbuilder.PromptBuilder 自动满足）
 type promptBuilder interface {
 	Build(ctx context.Context, opts promptbuilder.BuildOptions) (*promptbuilder.BuildResult, error)
 }

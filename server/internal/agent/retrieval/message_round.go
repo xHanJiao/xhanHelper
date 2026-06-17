@@ -43,7 +43,7 @@ func FilterMessageRound(msgs []model.Message, matchedID string) []model.Message 
 }
 
 // FormatMessageRound 将一轮对话格式化为系统提示词文本，包含相关度分数和日期。
-// 用于 SystemPromptBuilder 的 history provider 注入。
+// 用于 PromptBuilder 的 history provider 注入。
 //
 //	### [相关度 0.87] 05月28日 15:32
 //	**用户**：帮我记账...

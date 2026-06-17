@@ -35,7 +35,7 @@ func TestRoleResolutionPriority(t *testing.T) {
 	basePrompt := "base-role-prompt"
 
 	t.Run("agent prompt takes priority", func(t *testing.T) {
-		b := &SystemPromptBuilder{
+		b := &PromptBuilder{
 			basePrompt:     basePrompt,
 			promptResolver: &mockPromptResolver{active: "user-custom-prompt"},
 		}
@@ -48,7 +48,7 @@ func TestRoleResolutionPriority(t *testing.T) {
 	})
 
 	t.Run("user prompt over base when no agent prompt", func(t *testing.T) {
-		b := &SystemPromptBuilder{
+		b := &PromptBuilder{
 			basePrompt:     basePrompt,
 			promptResolver: &mockPromptResolver{active: "user-custom-prompt"},
 		}
@@ -59,7 +59,7 @@ func TestRoleResolutionPriority(t *testing.T) {
 	})
 
 	t.Run("base prompt when no agent or user prompt", func(t *testing.T) {
-		b := &SystemPromptBuilder{
+		b := &PromptBuilder{
 			basePrompt:     basePrompt,
 			promptResolver: &mockPromptResolver{active: ""},
 		}
@@ -70,7 +70,7 @@ func TestRoleResolutionPriority(t *testing.T) {
 	})
 
 	t.Run("nil prompt resolver falls back to base", func(t *testing.T) {
-		b := &SystemPromptBuilder{
+		b := &PromptBuilder{
 			basePrompt:     basePrompt,
 			promptResolver: nil,
 		}
@@ -120,7 +120,7 @@ func TestBuildLayer1Order(t *testing.T) {
 	p2 := &testStaticProvider{name: "second", content: "B"}
 	p3 := &testStaticProvider{name: "third", content: "C"}
 
-	b := &SystemPromptBuilder{
+	b := &PromptBuilder{
 		preRoleStatic:  []StaticProvider{p1},
 		postRoleStatic: []StaticProvider{p2, p3},
 	}
@@ -146,15 +146,15 @@ func TestBuildLayer1Order(t *testing.T) {
 
 func TestBuildSortsByScore(t *testing.T) {
 	prov := &testSearchProvider{
-		name: "multi",
+		name: "memory",
 		items: []retrieval.ContextPacket{
-			{Text: "LOW", Score: 0.3, Type: "multi"},
-			{Text: "MID", Score: 0.5, Type: "multi"},
-			{Text: "HIGH", Score: 1.0, Type: "multi"},
+			{Text: "LOW", Score: 0.3, Type: "memory", Meta: retrieval.EntityMeta{Content: "LOW"}},
+			{Text: "MID", Score: 0.5, Type: "memory", Meta: retrieval.EntityMeta{Content: "MID"}},
+			{Text: "HIGH", Score: 1.0, Type: "memory", Meta: retrieval.EntityMeta{Content: "HIGH"}},
 		},
 	}
 
-	b := &SystemPromptBuilder{
+	b := &PromptBuilder{
 		searchProviders: []SearchProvider{prov},
 	}
 
@@ -181,11 +181,11 @@ func TestBuildSortsByScore(t *testing.T) {
 func TestBuildSearchProviderError(t *testing.T) {
 	errProvider := &errorSearchProvider{}
 	okProvider := &testSearchProvider{
-		name:  "ok",
-		items: []retrieval.ContextPacket{{Text: "OK", Score: 0.5, Type: "ok"}},
+		name:  "memory",
+		items: []retrieval.ContextPacket{{Text: "OK", Score: 0.5, Type: "memory", Meta: retrieval.EntityMeta{Content: "OK"}}},
 	}
 
-	b := &SystemPromptBuilder{
+	b := &PromptBuilder{
 		searchProviders: []SearchProvider{errProvider, okProvider},
 	}
 

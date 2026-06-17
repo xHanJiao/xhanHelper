@@ -65,7 +65,7 @@ func (s *ThemeSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextP
 				Type:  "theme",
 				Text:  t.Name,
 				Score: vecScore,
-				Meta: themeMeta{
+				Meta: ThemeMeta{
 					Description: t.Description,
 					StateText:   t.StateText,
 				},
@@ -165,12 +165,6 @@ func (s *ThemeSource) searchChunks(queryVec []float64, userID string, topK int) 
 		}
 	}
 	return res
-}
-
-// themeMeta context packet 携带的元数据
-type themeMeta struct {
-	Description string `json:"description"`
-	StateText   string `json:"state_text"`
 }
 
 func (s *ThemeSource) Warmup(ctx context.Context, embedder *llm.Embedder) {

@@ -96,12 +96,12 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	// --- Orchestrator ---
 	promptCfg := promptbuilder.DefaultPromptConfig()
 	applyRetrievalConfig(&promptCfg, cfg.Retrieval)
-	pb := promptbuilder.NewSystemPromptBuilder(
+	pb := promptbuilder.NewPromptBuilder(
 		agent.BaseSystemPrompt,
 		tools.Registry,
 		repos.Prompt, cfg.LLM.UseNativeFC,
 		promptbuilder.WithScoreModifier(
-			promptbuilder.NewThemeProvider(themeSource, repos.ThemeState, repos.Conversation, &promptCfg),
+			promptbuilder.NewThemeProvider(themeSource, &promptCfg),
 			promptbuilder.BoostFactor(1.3),
 		),
 		promptbuilder.NewMemoryProvider(memSource, &promptCfg),

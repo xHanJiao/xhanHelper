@@ -125,11 +125,16 @@ func buildPackets(hits []historyHit, roundByUserMsgID map[string][]model.Message
 			continue
 		}
 		text := FormatMessageRound(filtered, h.vecScore)
+		msgs := make([]*model.Message, len(filtered))
+		for i := range filtered {
+			msgs[i] = &filtered[i]
+		}
 		packets = append(packets, ContextPacket{
 			ID:    h.msg.ID,
 			Type:  "history",
 			Text:  text,
 			Score: h.vecScore,
+			Meta:  HistoryMeta{Messages: msgs},
 		})
 	}
 	return packets, nearMiss

@@ -3,23 +3,19 @@ package promptbuilder
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"xhan-helper/internal/agent/retrieval"
-	"xhan-helper/internal/service"
 )
 
 // ==================== theme provider ====================
 
 type themeProvider struct {
-	source         retrieval.ContextSource
-	themeStateRepo *service.ThemeStateRepo
-	convRepo       *service.ConversationRepo
-	cfg            *PromptConfig
+	source retrieval.ContextSource
+	cfg    *PromptConfig
 }
 
-func NewThemeProvider(source retrieval.ContextSource, themeStateRepo *service.ThemeStateRepo, convRepo *service.ConversationRepo, cfg *PromptConfig) *themeProvider {
-	return &themeProvider{source: source, themeStateRepo: themeStateRepo, convRepo: convRepo, cfg: cfg}
+func NewThemeProvider(source retrieval.ContextSource, cfg *PromptConfig) *themeProvider {
+	return &themeProvider{source: source, cfg: cfg}
 }
 
 func (p *themeProvider) Name() string          { return "theme" }
@@ -40,41 +36,8 @@ func (p *themeProvider) Search(ctx context.Context, opts retrieval.SearchOptions
 		return nil, fmt.Errorf("theme fetch: %w", err)
 	}
 
-	// 补齐主题的上下文信息（状态摘要 + 最新事实）
-	enriched := make([]retrieval.ContextPacket, 0, len(packets))
-	themes, err := p.themeStateRepo.ListActive(ctx, opts.UserID)
-	if err != nil {
-		log.Printf("[theme] ListActive error: %v", err)
-	}
-	themeMap := make(map[string]string)
-	themeDetail := make(map[string]*struct {
-		StateText string
-	})
-	for _, t := range themes {
-		themeMap[t.ID] = t.Name
-		themeDetail[t.ID] = &struct {
-			StateText string
-		}{StateText: t.StateText}
-	}
-
-	for _, pkt := range packets {
-		name, ok := themeMap[pkt.ID]
-		if !ok {
-			enriched = append(enriched, pkt)
-			continue
-		}
-		pkt.Text = fmt.Sprintf("- 关注：**%s**", name)
-
-		detail := themeDetail[pkt.ID]
-		if detail != nil && detail.StateText != "" {
-			pkt.Text += fmt.Sprintf("\n  当前状态：%s", detail.StateText)
-		}
-
-		enriched = append(enriched, pkt)
-	}
-
-	traceItems := buildTraceItems(enriched, nearMiss)
-	return &SearchResult{Items: enriched, TraceItems: traceItems}, nil
+	traceItems := buildTraceItems(packets, nearMiss)
+	return &SearchResult{Items: packets, TraceItems: traceItems}, nil
 }
 
 // ==================== memory provider ====================

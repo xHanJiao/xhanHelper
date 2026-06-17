@@ -42,7 +42,7 @@ type Runner struct {
 	flashClient   llm.LLMClient
 	proClient     llm.LLMClient
 	registry      *tool.Registry
-	promptBuilder *promptbuilder.SystemPromptBuilder
+	promptBuilder *promptbuilder.PromptBuilder
 	embedder      *llm.Embedder
 	maxIterations int
 	maxTokens     *int
@@ -53,7 +53,7 @@ type RunnerConfig struct {
 	FlashClient   llm.LLMClient
 	ProClient     llm.LLMClient
 	Registry      *tool.Registry
-	PromptBuilder *promptbuilder.SystemPromptBuilder
+	PromptBuilder *promptbuilder.PromptBuilder
 	Embedder      *llm.Embedder
 	MaxIterations int
 	MaxTokens     *int

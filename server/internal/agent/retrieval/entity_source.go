@@ -213,6 +213,11 @@ func (s *EntitySource[T]) Fetch(ctx context.Context, opts SearchOptions) ([]Cont
 			Type:  s.name,
 			Text:  text,
 			Score: sc.vecScore,
+			Meta: EntityMeta{
+				Content:   sc.ent.GetContent(),
+				Topic:     sc.ent.GetTopic(),
+				CreatedAt: sc.ent.GetCreatedAt(),
+			},
 		})
 	}
 	return packets, nearMiss, nil

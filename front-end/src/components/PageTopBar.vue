@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useMobile } from '@/composables/useMobile'
+import { useAuthStore } from '@/stores/auth'
 import TopBarBtn from '@/components/TopBarBtn.vue'
 import { NPopover } from 'naive-ui'
 
@@ -32,6 +33,8 @@ function handleUnbind() {
 }
 
 const { isMobile, toggleDrawer, toggleSidebar, sidebarCollapsed } = useMobile()
+const auth = useAuthStore()
+const displayName = computed(() => (auth.user?.username || '') + 'Helper')
 
 const sidebarIcon = computed(() => {
   if (isMobile.value) return '☰'
@@ -62,7 +65,7 @@ const agentLabel = computed(() => {
   >
     <span style="font-size: var(--font-size-lg); font-weight: 500; color: var(--color-text); display: flex; align-items: center; gap: var(--space-xs);">
       <TopBarBtn :icon="sidebarIcon" variant="text" @click="isMobile ? toggleDrawer() : toggleSidebar()" />
-      {{ title }}
+      {{ displayName }}
     </span>
     <span style="display: flex; align-items: center; gap: var(--space-xs);">
       <!-- 已绑定 agent：切换/解绑 -->

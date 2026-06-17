@@ -61,6 +61,25 @@ func loginUser(userRepo *service.UserRepo, adminUsers []string) gin.HandlerFunc 
 	}
 }
 
+func changePassword(userRepo *service.UserRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetString("user_id")
+		var req struct {
+			OldPassword string `json:"old_password"`
+			NewPassword string `json:"new_password"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil || req.OldPassword == "" || req.NewPassword == "" {
+			view.JSONError(c, 400, "old_password and new_password required")
+			return
+		}
+		if err := userRepo.ChangePassword(c.Request.Context(), userID, req.OldPassword, req.NewPassword); err != nil {
+			view.JSONError(c, 401, "invalid old password")
+			return
+		}
+		view.JSONOK(c, gin.H{"ok": true})
+	}
+}
+
 func isAdmin(userID string, adminUsers []string) bool {
 	for _, id := range adminUsers {
 		if id == userID {

@@ -84,8 +84,11 @@ import PageTopBar from '@/components/PageTopBar.vue'
 import TopBarBtn from '@/components/TopBarBtn.vue'
 import { useDebugMode } from '@/composables/useDebugMode'
 import { useMobile } from '@/composables/useMobile'
+import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 
+const auth = useAuthStore()
+const isAdmin = computed(() => auth.user?.isAdmin === true)
 const theme = useThemeStore()
 const route = useRoute()
 const router = useRouter()
@@ -216,11 +219,6 @@ async function handleSelectAgent(agentId) {
     console.error('Failed to update agent binding', e)
   }
 }
-
-const currentTitle = computed(() => {
-  const conv = convs.list.find(c => c.id === chat.conversationId)
-  return conv?.title || '新对话'
-})
 
 const currentAgentName = computed(() => {
   const conv = convs.list.find(c => c.id === chat.conversationId)
@@ -638,9 +636,9 @@ function handleContainerClick(e) {
 
 <template>
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
-    <PageTopBar :title="currentTitle" :agent-id="currentAgentId" :agent-name="currentAgentName" :visible="!isMobile || isBarVisible" :agents="agentsList" @select-agent="handleSelectAgent" @popover-open="fetchAgents" >
+        <PageTopBar :agent-id="currentAgentId" :agent-name="currentAgentName" :visible="!isMobile || isBarVisible" :agents="agentsList" @select-agent="handleSelectAgent" @popover-open="fetchAgents" >
       <template #right>
-        <TopBarBtn v-if="!isMobile" :label="debugMode ? '调试:开' : '调试'" @click="toggleDebug" />
+        <TopBarBtn v-if="!isMobile && isAdmin" :label="debugMode ? '调试:开' : '调试'" @click="toggleDebug" />
         <TopBarBtn :label="theme.isDark ? '浅色' : '深色'" @click="theme.toggle()" />
       </template>
     </PageTopBar>

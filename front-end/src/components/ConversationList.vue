@@ -5,7 +5,7 @@ import { useConversationsStore } from '@/stores/conversations'
 import { useChatStore } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
 import { api } from '@/api/client'
-import { NButton, NPopconfirm, NModal, NInput, useMessage } from 'naive-ui'
+import { NButton, NPopconfirm, NModal, NInput, NForm, NFormItem, useMessage } from 'naive-ui'
 
 const router = useRouter()
 const route = useRoute()
@@ -72,6 +72,12 @@ function handleLoadMore() {
 const navExpanded = ref(false)
 const adminExpanded = ref(false)
 const historyExpanded = ref(true)
+const userExpanded = ref(false)
+const pwdModalVisible = ref(false)
+const oldPassword = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
+const pwdLoading = ref(false)
 
 const navItems = [
   // { label: '任务', path: '/missions' },
@@ -82,9 +88,9 @@ const navItems = [
 ]
 
 const adminItems = [
-  { label: '记忆', path: '/memories' },
-  { label: '笔记', path: '/notes' },
-  { label: '主题', path: '/themes' },
+  { label: '记忆', path: '/memories', adminOnly: true },
+  { label: '笔记', path: '/notes', adminOnly: true },
+  { label: '主题', path: '/themes', adminOnly: true },
   { label: '监控看板', path: '/admin', adminOnly: true },
   { label: '检索评测', path: '/admin/eval', adminOnly: true }
 ]
@@ -131,6 +137,37 @@ async function handleDelete(conv) {
   } else {
     message.error(res.message)
   }
+}
+
+async function confirmChangePassword() {
+  if (!oldPassword.value || !newPassword.value) {
+    message.warning('请填写旧密码和新密码')
+    return
+  }
+  if (newPassword.value !== confirmPassword.value) {
+    message.warning('两次输入的新密码不一致')
+    return
+  }
+  pwdLoading.value = true
+  try {
+    await api.post('/api/auth/change-password', {
+      old_password: oldPassword.value,
+      new_password: newPassword.value
+    })
+    message.success('密码修改成功')
+    pwdModalVisible.value = false
+    oldPassword.value = ''
+    newPassword.value = ''
+  } catch (e) {
+    message.error(e?.message || '修改失败，请检查旧密码是否正确')
+  } finally {
+    pwdLoading.value = false
+  }
+}
+
+async function handleLogout() {
+  await auth.logout()
+  router.push('/login')
 }
 
 function handleSelect(conv) {
@@ -220,7 +257,7 @@ function handleSelect(conv) {
     </div>
 
     <!-- 管理 -->
-    <div style="padding: var(--space-sm) var(--space-md) var(--space-sm);">
+    <div v-if="isAdmin" style="padding: var(--space-sm) var(--space-md) var(--space-sm);">
       <div
         @click="adminExpanded = !adminExpanded"
         :style="{
@@ -267,6 +304,7 @@ function handleSelect(conv) {
     </div>
 
     <!-- 历史对话 -->
+    <template v-if="isAdmin">
     <div style="padding: var(--space-sm) var(--space-md) var(--space-sm);">
       <div
         @click="historyExpanded = !historyExpanded"
@@ -341,6 +379,64 @@ function handleSelect(conv) {
         <NButton text size="small" :loading="convs.loading" @click="handleLoadMore" style="color: var(--color-text-muted);">加载更多</NButton>
       </div>
     </div>
+    </template>
+
+    <!-- 用户 -->
+    <div style="padding: var(--space-sm) var(--space-md);">
+      <div
+        @click="userExpanded = !userExpanded"
+        :style="{
+          padding: 'var(--space-sm) var(--space-md)',
+          borderRadius: 'var(--radius-md)',
+          marginBottom: userExpanded ? 'var(--space-xs)' : '0',
+          cursor: 'pointer',
+          fontSize: '13px',
+          color: 'var(--color-text-muted)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--space-xs)',
+          transition: 'background var(--transition-fast)'
+        }"
+        @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'"
+        @mouseout="e => e.currentTarget.style.background = 'transparent'"
+      >
+        <span style="transition: transform 0.2s;" :style="{ transform: userExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }">▾</span>
+        <span>用户</span>
+      </div>
+      <template v-if="userExpanded">
+        <div
+          @click="pwdModalVisible = true"
+          :style="{
+            padding: 'var(--space-sm) var(--space-md)',
+            borderRadius: 'var(--radius-md)',
+            marginBottom: 'var(--space-xs)',
+            cursor: 'pointer',
+            fontSize: '14px',
+            color: 'var(--color-text-secondary)',
+            transition: 'background var(--transition-fast)'
+          }"
+          @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'"
+          @mouseout="e => e.currentTarget.style.background = 'transparent'"
+        >
+          修改密码
+        </div>
+        <div
+          @click="handleLogout"
+          :style="{
+            padding: 'var(--space-sm) var(--space-md)',
+            borderRadius: 'var(--radius-md)',
+            cursor: 'pointer',
+            fontSize: '14px',
+            color: 'var(--color-danger)',
+            transition: 'background var(--transition-fast)'
+          }"
+          @mouseover="e => e.currentTarget.style.background = 'var(--color-surface-hover)'"
+          @mouseout="e => e.currentTarget.style.background = 'transparent'"
+        >
+          退出登录
+        </div>
+      </template>
+    </div>
   </div>
 
   <!-- 重命名弹窗 -->
@@ -349,6 +445,25 @@ function handleSelect(conv) {
     <div style="margin-top: var(--space-md); text-align: right;">
       <NButton style="margin-right: var(--space-sm);" @click="renameModalVisible = false">取消</NButton>
       <NButton type="primary" @click="confirmRename">确定</NButton>
+    </div>
+  </NModal>
+
+  <!-- 修改密码弹窗 -->
+  <NModal v-model:show="pwdModalVisible" preset="card" title="修改密码" style="width: 400px;" @after-leave="oldPassword = ''; newPassword = ''; confirmPassword = ''">
+    <NForm>
+      <NFormItem label="旧密码">
+        <NInput v-model:value="oldPassword" type="password" placeholder="请输入旧密码" />
+      </NFormItem>
+      <NFormItem label="新密码">
+        <NInput v-model:value="newPassword" type="password" placeholder="请输入新密码" />
+      </NFormItem>
+      <NFormItem label="确认新密码">
+        <NInput v-model:value="confirmPassword" type="password" placeholder="请再次输入新密码" @keyup.enter="confirmChangePassword" />
+      </NFormItem>
+    </NForm>
+    <div style="margin-top: var(--space-md); text-align: right;">
+      <NButton style="margin-right: var(--space-sm);" @click="pwdModalVisible = false">取消</NButton>
+      <NButton type="primary" :loading="pwdLoading" @click="confirmChangePassword">确定</NButton>
     </div>
   </NModal>
 </template>

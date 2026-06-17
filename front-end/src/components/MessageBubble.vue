@@ -5,8 +5,11 @@ import MarkdownIt from 'markdown-it'
 import ThinkingBlock from '@/components/ThinkingBlock.vue'
 import WaitingAnimation from '@/components/WaitingAnimation.vue'
 import { useDebugMode } from '@/composables/useDebugMode'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
+const isAdmin = computed(() => auth.user?.isAdmin === true)
 const { debugMode } = useDebugMode()
 
 const props = defineProps({
@@ -52,7 +55,7 @@ const associatedMemories = computed(() => {
         <div class="user-bubble" style="border-radius: var(--radius-lg); padding: 10px 18px; font-size: 15px; line-height: 1.6; position: relative;">
           <div class="message-content" v-html="contentHtml" style="margin: 0; overflow-wrap: break-word;"></div>
           <span
-            v-if="debugMode"
+            v-if="debugMode && isAdmin"
             @click="router.push(`/admin/message-debug/${message.id}`)"
             style="position: absolute; top: -6px; left: -6px; width: 18px; height: 18px; border-radius: 50%; background: var(--color-warning); color: #fff; font-size: 11px; line-height: 18px; text-align: center; cursor: pointer; opacity: 0.7;"
             title="调试此消息"

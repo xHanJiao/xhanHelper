@@ -1,6 +1,8 @@
 server:
   port: 8088
   mode: release
+  registration_enabled: true
+  allowed_users: [your-username]
   memory_auto_extract: true
   admin_users:
     - ${XHAN_HELPER_ADMIN}

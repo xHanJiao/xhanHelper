@@ -80,7 +80,8 @@ export const useAuthStore = defineStore('auth', () => {
   function startHeartbeat() {
     stopHeartbeat()
     if (!token.value) return
-    doHeartbeat() // 立即续期一次
+    // 不在 store 初始化期间立即调用 api，等第一次 interval 触发
+    // token TTL 5 分钟，心跳 2 分钟，有 3 分钟缓冲，安全
     heartbeatTimer = setInterval(doHeartbeat, HEARTBEAT_INTERVAL)
   }
 

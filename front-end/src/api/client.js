@@ -13,13 +13,14 @@ class AuthError extends Error {
 
 async function request(path, options = {}) {
   const auth = useAuthStore()
-  const headers = { ...options.headers }
+  const { headers: _h, ...rest } = options
+  const headers = { ..._h }
 
   if (auth.token) {
     headers['Authorization'] = `Bearer ${auth.token}`
   }
 
-  const res = await fetch(BASE + path, { ...options, headers })
+  const res = await fetch(BASE + path, { ...rest, headers })
 
   if (res.status === 401) {
     if (auth.token) {

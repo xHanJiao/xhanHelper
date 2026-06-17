@@ -46,7 +46,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reg.Register(tool.NewLoggingWrapper(toolRetriever, log.Default()))
 	reg.HideTool("tool_retriever")
 
-	reg.Register(tool.NewLoggingWrapper(tool.NewAgentTool(repos.Agent), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewAgentTool(repos.Agent, repos.Version), log.Default()))
 
 	// 从 DB 加载动态工具
 	reg.SetDynamicLoader(repos.Tool, cfg.Server.SidecarURL, repos.Tool, repos.Tool)

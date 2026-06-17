@@ -64,6 +64,16 @@ func (r *AgentRepo) Update(ctx context.Context, a *model.Agent) error {
 		Updates(a).Error
 }
 
+// FindByName 按名称+用户 查找智能体
+func (r *AgentRepo) FindByName(ctx context.Context, name, userID string) (*model.Agent, error) {
+	var a model.Agent
+	err := r.db.WithContext(ctx).Where("name = ? AND user_id = ?", name, userID).First(&a).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &a, err
+}
+
 // Delete 删除智能体
 func (r *AgentRepo) Delete(ctx context.Context, id, userID string) error {
 	return r.db.WithContext(ctx).

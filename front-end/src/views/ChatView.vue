@@ -550,8 +550,9 @@ async function handleSend() {
   inputValue.value = ''
   inputExpanded.value = false
   // 把当前会话移到列表最前面
-  if (chat.conversationId && currentTitle.value) {
-    convs.prepend({ id: chat.conversationId, title: currentTitle.value })
+  const conv = convs.list.find(c => c.id === chat.conversationId)
+  if (chat.conversationId && conv?.title) {
+    convs.prepend({ id: chat.conversationId, title: conv.title })
   }
   // 立即滚到底部（不管用户在浏览什么位置）
   nextTick(() => {

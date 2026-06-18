@@ -54,7 +54,7 @@ snowflake:
   datacenter_id: 1
 
 chat:
-  history_rounds: 10
+  history_rounds: 50
 
 share:
   default_valid_days: 7

@@ -1,5 +1,6 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { NConfigProvider, NMessageProvider } from 'naive-ui'
 import { useThemeStore } from '@/stores/theme'
 import { useAuthStore } from '@/stores/auth'
@@ -8,7 +9,18 @@ import ConversationList from '@/components/ConversationList.vue'
 
 const theme = useThemeStore()
 const auth = useAuthStore()
+const router = useRouter()
+const route = useRoute()
 const { isMobile, drawerOpen, closeDrawer, sidebarCollapsed } = useMobile()
+
+// token 失效时自动跳转登录页（覆盖心跳401/API401/跨tab登出等所有场景）
+watch(() => auth.token, (newToken, oldToken) => {
+  if (oldToken && !newToken) {
+    if (route.path !== '/login' && !route.path.startsWith('/s/')) {
+      router.push('/login')
+    }
+  }
+})
 
 const themeOverrides = computed(() => ({
   common: {

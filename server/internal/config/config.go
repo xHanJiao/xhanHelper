@@ -36,7 +36,8 @@ type Config struct {
 
 // ChatConfig — 对话配置
 type ChatConfig struct {
-	HistoryRounds int `yaml:"history_rounds"` // 加载历史消息轮数，默认 10
+	HistoryRounds    int `yaml:"history_rounds"`     // 加载历史消息轮数，默认 10
+	MaxSummaryRounds int `yaml:"max_summary_rounds"` // 单次摘要覆盖上限，0=等于 history_rounds
 }
 
 // ShareConfig — 分享配置

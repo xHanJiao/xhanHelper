@@ -322,6 +322,55 @@ func (r *MessageRepo) CountRecent(ctx context.Context, userID string, since time
 	return count, err
 }
 
+// CountUserMessagesBetween 统计指定时间范围内会话的 user role 消息数
+func (r *MessageRepo) CountUserMessagesBetween(ctx context.Context, convID string, after, before time.Time) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("conversation_id = ? AND role = 'user' AND created_at > ? AND created_at < ? AND status = ?",
+			convID, after, before, model.MsgStatusNormal).
+		Count(&count).Error
+	return count, err
+}
+
+// ListUserMessagesBefore 查询指定时间之前会话的 user role 消息，取最近的 limit 条（按时间正序返回）。
+// 内部用 DESC+反转，确保冷启动时取到窗口外最近的消息而非最老的。
+func (r *MessageRepo) ListUserMessagesBefore(ctx context.Context, convID string, before time.Time, limit int) ([]model.Message, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var list []model.Message
+	err := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND role = 'user' AND created_at < ? AND status = ?",
+			convID, before, model.MsgStatusNormal).
+		Order("created_at DESC").Limit(limit).
+		Find(&list).Error
+	if err != nil {
+		return nil, err
+	}
+	// 反转回时间正序
+	for i, j := 0, len(list)-1; i < j; i, j = i+1, j-1 {
+		list[i], list[j] = list[j], list[i]
+	}
+	return list, nil
+}
+
+// ListUserMessagesBetween 查询指定时间范围内会话的 user role 消息（按时间正序），最多 limit 条
+func (r *MessageRepo) ListUserMessagesBetween(ctx context.Context, convID string, after, before time.Time, limit int) ([]model.Message, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var list []model.Message
+	err := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND role = 'user' AND created_at > ? AND created_at < ? AND status = ?",
+			convID, after, before, model.MsgStatusNormal).
+		Order("created_at ASC").Limit(limit).
+		Find(&list).Error
+	if err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
 // ListWithTrace 分页列出有 prompt trace 的 assistant 消息，按时间倒序
 func (r *MessageRepo) ListWithTrace(ctx context.Context, userID string, limit, offset int) ([]model.Message, int64, error) {
 	if limit <= 0 {

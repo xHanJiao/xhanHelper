@@ -2,6 +2,7 @@ package appinit
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"xhan-helper/internal/agent"
@@ -75,6 +76,15 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	stateUpdater := agent.NewStateUpdater(llmClients.Flash, repos.Message, repos.Conversation,
 		agent.NewThemeStore(repos.ThemeState), repos.PendingFinding, infra.VectorStore, tools.ConceptEmbedService, chunkBuilder,
 		retrievalTools, repos.Trace)
+	// --- Summary 子系统 ---
+	summaryWorker := agent.NewSummaryWorker(&agent.SummaryWorkerConfig{
+		FlashClient:      llmClients.Flash,
+		MsgRepo:          repos.Message,
+		SummaryRepo:      repos.ConversationSummary,
+		HistoryRounds:    cfg.Chat.HistoryRounds,
+		MaxSummaryRounds: cfg.Chat.MaxSummaryRounds,
+	})
+
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{
 		Orch:              reflectionOrch,
 		StateUpdater:      stateUpdater,
@@ -86,6 +96,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		DelayedTaskRepo:   repos.DelayedTask,
 		MissionRunner:     missionRunner,
 		MissionRepo:       repos.Mission,
+		SummaryWorker:     summaryWorker,
 		DiscoverSchedules: cfg.Reflection.DailySchedules,
 		DeliverInterval:   time.Duration(cfg.Reflection.DeliverIntervalMinutes) * time.Minute,
 		MissionInterval:   time.Duration(cfg.Reflection.MissionCheckIntervalMinutes) * time.Minute,
@@ -123,11 +134,22 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MaxTokens:          cfg.LLM.DefaultMaxTokens,
 		MaxToolResultChars: cfg.LLM.MaxToolResultChars,
 		ToolMaxConcurrency: cfg.LLM.ToolMaxConcurrency,
-		OnChatEnd:          func(userID, convID string) { cronRunner.NotifyChatEnd(userID, convID) },
-		VerifyEnabled:      cfg.LLM.Verification.Enabled,
-		VerifyMaxRetries:   cfg.LLM.Verification.MaxRetries,
-		VerifyModel:        cfg.LLM.Verification.Model,
-		UseNativeFC:        cfg.LLM.UseNativeFC,
+		OnChatEnd: func(userID, convID string) {
+			cronRunner.NotifyChatEnd(userID, convID)
+			cronRunner.NotifySummaryCheck(userID, convID)
+		},
+		VerifyEnabled:    cfg.LLM.Verification.Enabled,
+		VerifyMaxRetries: cfg.LLM.Verification.MaxRetries,
+		VerifyModel:      cfg.LLM.Verification.Model,
+		UseNativeFC:      cfg.LLM.UseNativeFC,
+		LoadSummary: func(ctx context.Context, convID string) string {
+			summary, err := repos.ConversationSummary.GetLatest(ctx, convID)
+			if err != nil || summary == nil {
+				return ""
+			}
+			return fmt.Sprintf("<conversation_summary id=\"%s\">\n%s\n</conversation_summary>\n",
+				summary.ID, summary.SummaryText)
+		},
 	})
 
 	go cronRunner.Start(bgCtx)

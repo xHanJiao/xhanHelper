@@ -4,8 +4,8 @@ import { api } from '@/api/client'
 
 const STORAGE_KEY = 'xhanhelper_auth'
 
-// 心跳间隔：每 30 秒续期一次
-const HEARTBEAT_INTERVAL = 30 * 1000
+// 心跳间隔：每 3 分钟续期一次
+const HEARTBEAT_INTERVAL = 3 * 60 * 1000
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(null)
@@ -81,7 +81,7 @@ export const useAuthStore = defineStore('auth', () => {
     stopHeartbeat()
     if (!token.value) return
     // 不在 store 初始化期间立即调用 api，等第一次 interval 触发
-    // token TTL 5 分钟，心跳 2 分钟，有 3 分钟缓冲，安全
+    // token TTL 60 分钟，心跳每 3 分钟，缓冲区充裕
     heartbeatTimer = setInterval(doHeartbeat, HEARTBEAT_INTERVAL)
   }
 

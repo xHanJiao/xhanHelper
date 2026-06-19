@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import PageTopBar from '@/components/PageTopBar.vue'
 import { api } from '@/api/client'
@@ -18,17 +18,18 @@ const anchorMsg = ref(null)
 const historyMsgs = ref([])
 
 const running = ref(false)
-const results = ref({ a: null, b: null })
+const sideA = ref(null)
+const sideB = ref(null)
 
-const requestJSON = ref(null)
-const useRequestJSON = ref(false)
+const systemPromptSource = ref('live') // 'historical' | 'live'
+const historicalPrompt = ref('')
 
 const bPromptPreview = ref('')
 const bPromptLoading = ref(false)
 const bShowPrompt = ref(false)
 const bTrace = ref(null)
 
-const defaultConfigA = {
+const defaultConfigB = {
   skip_retrieval: false,
   max_tool_result_chars: 2000,
   max_iterations: 8,
@@ -39,9 +40,7 @@ const defaultConfigA = {
   deep_mode: false,
   override_system_prompt: null,
 }
-const defaultConfigB = { ...defaultConfigA }
 
-const configA = ref({ ...defaultConfigA })
 const configB = ref({ ...defaultConfigB })
 
 const roleLabel = (role) => ({ user: '用户', assistant: '助手', tool: '工具' }[role] || role)
@@ -57,8 +56,7 @@ async function loadAnchor() {
     })
     anchorMsg.value = res.anchor_message
     historyMsgs.value = res.messages || []
-    requestJSON.value = res.request_json || null
-    if (!res.request_json) useRequestJSON.value = false
+    historicalPrompt.value = res.historical_prompt || ''
   } catch (e) {
     error.value = '加载失败: ' + e.message
   } finally {
@@ -108,74 +106,76 @@ function resetBPrompt() {
 
 async function runCompare() {
   running.value = true
-  results.value = { a: null, b: null }
+  sideA.value = null
+  sideB.value = null
   error.value = ''
-
-  // A 永远不用 override
-  const cfgA = { ...configA.value }
-  cfgA.override_system_prompt = null
 
   const body = {
     anchor_message_id: msgId,
     history_count: 10,
-    config_a: cfgA,
     config_b: { ...configB.value },
-    use_request_json: useRequestJSON.value && !!requestJSON.value,
-    request_json: useRequestJSON.value ? requestJSON.value : undefined,
+    system_prompt_source: configB.value.override_system_prompt != null ? 'live' : systemPromptSource.value,
   }
 
+  // 如果用户手动覆盖了 system prompt，始终传给后端
+  // 后端在 override 非空时直接使用，不管 source
+
   try {
-    const res = await api.stream('/api/admin/replay/compare', body)
-    if (!res.ok) {
-      if (res.status === 401) { auth.logout(); return }
-      throw new Error(`HTTP ${res.status}`)
-    }
-    await parseReplaySSE(res)
+    const res = await api.post('/api/admin/replay/compare', body)
+    sideA.value = res.side_a
+    sideB.value = res.side_b
+    // 更新 anchor 和历史（以防有变化）
+    if (res.anchor_message) anchorMsg.value = res.anchor_message
+    if (res.history_messages) historyMsgs.value = res.history_messages
   } catch (e) {
-    if (e.name === 'AbortError') return
+    if (e.name === 'AuthError') { auth.logout(); return }
     error.value = '对比失败: ' + e.message
   } finally {
     running.value = false
   }
 }
 
-async function parseReplaySSE(res) {
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let currentEvent = ''
+// 将 A 侧原始消息处理为 B 侧 Result 风格的结构，方便复用渲染逻辑
+const sideADisplay = computed(() => {
+  if (!sideA.value?.messages) return null
+  const toolCalls = []
+  const reasoning = []
+  let reply = ''
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop()
-    for (const line of lines) {
-      if (line.startsWith('event: ')) {
-        currentEvent = line.slice(7).trim()
-      } else if (line.startsWith('data: ')) {
-        const raw = line.slice(6)
-        try {
-          const data = JSON.parse(raw)
-          if (currentEvent === 'replay_done') {
-            if (data.side === 'a') results.value.a = data.result
-            if (data.side === 'b') results.value.b = data.result
-          } else if (currentEvent === 'error') {
-            error.value = data.error || raw
-            return
-          }
-        } catch {
-          // ignore
+  for (const m of sideA.value.messages) {
+    if (m.role === 'assistant') {
+      if (m.reasoning_content) reasoning.push(m.reasoning_content)
+      if (m.content) reply += (reply ? '\n' : '') + m.content
+      if (m.tool_calls) {
+        let tcs = m.tool_calls
+        if (typeof tcs === 'string') {
+          try { tcs = JSON.parse(tcs) } catch { continue }
         }
+        for (const tc of tcs) {
+          const tool = tc.tool || (tc.function?.name || '').split('.')[0] || ''
+          const func = tc.function?.name || tc.function || ''
+          let args = tc.args || tc.function?.arguments || {}
+          if (typeof args === 'string') {
+            try { args = JSON.parse(args) } catch { /* raw string */ }
+          }
+          toolCalls.push({ tool, function: func, args, result: null })
+        }
+      }
+    } else if (m.role === 'tool') {
+      const pending = toolCalls.find(tc => !tc.result && tc.tool_call_id === m.tool_call_id) || toolCalls.find(tc => !tc.result)
+      if (pending) {
+        try { pending.result = typeof m.content === 'string' ? JSON.parse(m.content) : m.content }
+        catch { pending.result = m.content }
       }
     }
   }
-}
+
+  return { tool_calls: toolCalls, reasoning, reply }
+})
 
 function displayContent(msg) {
   if (msg.content) return msg.content.slice(0, 100)
-  if (msg.role === 'assistant' && msg.tool_calls_json) {
+  if (msg.tool_calls_json) {
     try {
       const parsed = typeof msg.tool_calls_json === 'string' ? JSON.parse(msg.tool_calls_json) : msg.tool_calls_json
       const tcNames = Array.isArray(parsed) ? parsed.map(tc => tc.function?.name || tc.tool + '.' + tc.function).join(', ') : '[工具调用]'
@@ -245,69 +245,46 @@ onMounted(loadAnchor)
           </summary>
           <div v-for="(msg, i) in historyMsgs" :key="i"
             style="padding: 4px 12px; font-size: 12px; color: var(--color-text-muted); font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-            [{{ roleLabel(msg.role) }}] {{ displayContent(msg) }}
+            [{{ roleLabel(msg.role) }}] {{ msg.content?.slice(0, 120) || displayContent(msg) }}
           </div>
         </details>
 
-        <!-- 配置面板 -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); margin-bottom: var(--space-xl);">
-          <!-- Config A -->
-          <div style="background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-md);">
-            <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-primary);">配置 A（对照组）</div>
+        <!-- 配置面板（仅 B 侧） -->
+        <div style="background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-md); margin-bottom: var(--space-xl);">
+          <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-warning);">配置 B（实验组）</div>
 
-            <!-- 历史 request_json 开关 -->
-            <label v-if="requestJSON" style="display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 6px 8px; margin-bottom: var(--space-sm); background: var(--color-bg-page); border-radius: var(--radius-md); cursor: pointer;">
-              <input type="checkbox" v-model="useRequestJSON" style="accent-color: var(--color-primary);" />
-              <span>使用历史 request_json（直接重放原 LLM 请求）</span>
+          <!-- System Prompt 来源 -->
+          <div v-if="historicalPrompt" style="margin-bottom: var(--space-sm); padding: 6px 8px; background: var(--color-bg-page); border-radius: var(--radius-md); font-size: 12px;">
+            <span style="color: var(--color-text-muted); margin-right: 8px;">System Prompt 起点：</span>
+            <label style="margin-right: 16px; cursor: pointer;">
+              <input type="radio" v-model="systemPromptSource" value="live" style="accent-color: var(--color-primary);" />
+              实时构建
             </label>
-            <div v-if="!requestJSON" style="font-size: 11px; color: var(--color-text-muted); margin-bottom: var(--space-sm); padding: 4px 8px; background: var(--color-bg-page); border-radius: var(--radius-md);">
-              此消息无可用的历史 request_json
-            </div>
-
-            <div v-if="!useRequestJSON" style="display: grid; gap: 6px; font-size: 12px;">
-              <label class="cfg-row"><span class="cfg-label">检索</span><select v-model="configA.skip_retrieval" class="replay-select"><option :value="false">开启</option><option :value="true">关闭</option></select></label>
-              <label class="cfg-row"><span class="cfg-label">模型</span><select v-model="configA.deep_mode" class="replay-select"><option :value="false">Flash</option><option :value="true">Pro</option></select></label>
-              <label class="cfg-row"><span class="cfg-label">截断长度</span><input type="number" v-model.number="configA.max_tool_result_chars" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">最大轮次</span><input type="number" v-model.number="configA.max_iterations" class="replay-input" /></label>
-              <div class="cfg-section">记忆检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.memory.threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.memory.limit" class="replay-input" /></label>
-              <div class="cfg-section">笔记检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.note.threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.note.limit" class="replay-input" /></label>
-              <div class="cfg-section">历史检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.history.threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.history.limit" class="replay-input" /></label>
-              <div class="cfg-section">主题检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configA.theme.threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configA.theme.limit" class="replay-input" /></label>
-            </div>
-            <div v-else style="font-size: 12px; color: var(--color-text-muted); padding: 8px; background: var(--color-bg-page); border-radius: var(--radius-md);">
-              A 组将直接发送历史 request_json 到 LLM，配置参数无效
-            </div>
+            <label style="cursor: pointer;">
+              <input type="radio" v-model="systemPromptSource" value="historical" style="accent-color: var(--color-primary);" />
+              历史原始
+            </label>
           </div>
 
-          <!-- Config B -->
-          <div style="background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-md);">
-            <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-warning);">配置 B（实验组）</div>
-            <div style="display: grid; gap: 6px; font-size: 12px;">
-              <label class="cfg-row"><span class="cfg-label">检索</span><select v-model="configB.skip_retrieval" class="replay-select"><option :value="false">开启</option><option :value="true">关闭</option></select></label>
-              <label class="cfg-row"><span class="cfg-label">模型</span><select v-model="configB.deep_mode" class="replay-select"><option :value="false">Flash</option><option :value="true">Pro</option></select></label>
-              <label class="cfg-row"><span class="cfg-label">截断长度</span><input type="number" v-model.number="configB.max_tool_result_chars" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">最大轮次</span><input type="number" v-model.number="configB.max_iterations" class="replay-input" /></label>
-              <div class="cfg-section">记忆检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.memory.threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.memory.limit" class="replay-input" /></label>
-              <div class="cfg-section">笔记检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.note.threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.note.limit" class="replay-input" /></label>
-              <div class="cfg-section">历史检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.history.threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.history.limit" class="replay-input" /></label>
-              <div class="cfg-section">主题检索</div>
-              <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.theme.threshold" step="0.05" class="replay-input" /></label>
-              <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.theme.limit" class="replay-input" /></label>
-            </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; font-size: 12px;">
+            <label class="cfg-row"><span class="cfg-label">检索</span><select v-model="configB.skip_retrieval" class="replay-select"><option :value="false">开启</option><option :value="true">关闭</option></select></label>
+            <label class="cfg-row"><span class="cfg-label">模型</span><select v-model="configB.deep_mode" class="replay-select"><option :value="false">Flash</option><option :value="true">Pro</option></select></label>
+            <label class="cfg-row"><span class="cfg-label">截断长度</span><input type="number" v-model.number="configB.max_tool_result_chars" class="replay-input" /></label>
+            <label class="cfg-row"><span class="cfg-label">最大轮次</span><input type="number" v-model.number="configB.max_iterations" class="replay-input" /></label>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px 12px; font-size: 12px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--color-border);">
+            <div class="cfg-section">记忆检索</div>
+            <div class="cfg-section">笔记检索</div>
+            <div class="cfg-section">历史检索</div>
+            <div class="cfg-section">主题检索</div>
+            <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.memory.threshold" step="0.05" class="replay-input" /></label>
+            <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.note.threshold" step="0.05" class="replay-input" /></label>
+            <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.history.threshold" step="0.05" class="replay-input" /></label>
+            <label class="cfg-row"><span class="cfg-label">阈值</span><input type="number" v-model.number="configB.theme.threshold" step="0.05" class="replay-input" /></label>
+            <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.memory.limit" class="replay-input" /></label>
+            <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.note.limit" class="replay-input" /></label>
+            <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.history.limit" class="replay-input" /></label>
+            <label class="cfg-row"><span class="cfg-label">条数</span><input type="number" v-model.number="configB.theme.limit" class="replay-input" /></label>
           </div>
         </div>
 
@@ -351,7 +328,7 @@ onMounted(loadAnchor)
             <div style="font-size: 11px; color: var(--color-warning); margin-top: 4px;">B 将使用此自定义提示词运行，跳过自动检索。点击「恢复默认」后自动构建。</div>
           </div>
 
-          <!-- 检索 Trace -->
+          <!-- 检索 Trace（预览时） -->
           <div v-if="bTrace?.providers?.length" style="margin-top: var(--space-md);">
             <details style="font-size: 13px;">
               <summary style="cursor: pointer; color: var(--color-text-muted); font-weight: 600;">检索 Trace（{{ bTrace.providers.length }} 个数据源）</summary>
@@ -391,50 +368,109 @@ onMounted(loadAnchor)
         <div v-if="error" style="text-align: center; margin-bottom: var(--space-md); color: var(--color-error); font-size: 13px;">{{ error }}</div>
 
         <!-- 对比结果 -->
-        <div v-if="results.a || results.b" style="margin-bottom: var(--space-xl);">
+        <div v-if="sideA || sideB" style="margin-bottom: var(--space-xl);">
           <div style="font-weight: 600; font-size: 15px; margin-bottom: var(--space-md); padding-bottom: 8px; border-bottom: 2px solid var(--color-border);">对比结果</div>
 
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md);">
-            <!-- Side A -->
+            <!-- Side A — 原始响应（DB） -->
             <div>
-              <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-primary);">配置 A（对照组）</div>
-              <div v-if="results.a?.tool_calls?.length" style="margin-bottom: var(--space-md);">
-                <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">工具调用</div>
-                <div v-for="(tc, idx) in results.a.tool_calls" :key="idx"
-                  :style="{
-                    background: 'var(--color-surface)',
-                    border: `1px solid ${results.b?.tool_calls?.[idx] && hasDiff(tc, results.b.tool_calls[idx]) ? 'var(--color-warning)' : 'var(--color-border)'}`,
-                    borderRadius: 'var(--radius-md)', padding: '10px 12px', marginBottom: '8px',
-                  }"
-                >
-                  <div style="font-weight: 600; font-size: 13px; margin-bottom: 4px;">{{ tc.tool }}.{{ tc.function }}</div>
-                  <div style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">参数:</div>
-                  <pre class="tc-pre">{{ formatArgs(tc.args) }}</pre>
-                  <div style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">结果:</div>
-                  <pre class="tc-pre" style="max-height: 200px; overflow-y: auto;">{{ formatResult(tc.result) }}</pre>
-                </div>
+              <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-primary);">
+                原始响应（数据库）
               </div>
-              <div v-else style="font-size: 12px; color: var(--color-text-muted); margin-bottom: var(--space-md);">无工具调用</div>
-              <details v-if="results.a?.reasoning?.length" style="margin-bottom: var(--space-md);">
-                <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">思考过程（{{ results.a.reasoning.length }} 轮）</summary>
-                <div v-for="(r, idx) in results.a.reasoning" :key="idx" class="reasoning-box" style="margin-bottom: 8px;">
-                  <div v-if="results.a.reasoning.length > 1" style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">第 {{ idx + 1 }} 轮</div>
-                  {{ r }}
-                </div>
+              <div v-if="sideA?.model_name" style="font-size: 11px; color: var(--color-text-muted); margin-bottom: var(--space-sm);">
+                模型: {{ sideA.model_name }}<span v-if="sideA.temperature != null"> · T={{ sideA.temperature }}</span>
+              </div>
+
+              <!-- A 侧 system prompt（只读折叠） -->
+              <details v-if="sideA?.system_prompt" style="margin-bottom: var(--space-sm);">
+                <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">原始 System Prompt（{{ sideA.system_prompt.length }} 字符）</summary>
+                <div class="md-preview" v-html="md.render(sideA.system_prompt)" style="max-height: 300px; margin-top: 8px;"></div>
               </details>
-              <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">回复</div>
-              <div class="reply-box">{{ results.a?.reply || '(无文本回复)' }}</div>
+
+              <!-- A 侧结果 -->
+              <template v-if="sideADisplay">
+                <div v-if="sideADisplay.tool_calls?.length" style="margin-bottom: var(--space-md);">
+                  <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">工具调用</div>
+                  <div v-for="(tc, idx) in sideADisplay.tool_calls" :key="idx"
+                    :style="{
+                      background: 'var(--color-surface)',
+                      border: `1px solid ${sideB?.result?.tool_calls?.[idx] && hasDiff(tc, sideB.result.tool_calls[idx]) ? 'var(--color-warning)' : 'var(--color-border)'}`,
+                      borderRadius: 'var(--radius-md)', padding: '10px 12px', marginBottom: '8px',
+                    }"
+                  >
+                    <div style="font-weight: 600; font-size: 13px; margin-bottom: 4px;">{{ tc.tool }}.{{ tc.function }}</div>
+                    <div style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">参数:</div>
+                    <pre class="tc-pre">{{ formatArgs(tc.args) }}</pre>
+                    <div style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">结果:</div>
+                    <pre class="tc-pre" style="max-height: 200px; overflow-y: auto;">{{ formatResult(tc.result) }}</pre>
+                  </div>
+                </div>
+                <div v-else style="font-size: 12px; color: var(--color-text-muted); margin-bottom: var(--space-md);">无工具调用</div>
+                <details v-if="sideADisplay.reasoning?.length" style="margin-bottom: var(--space-md);">
+                  <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">思考过程（{{ sideADisplay.reasoning.length }} 轮）</summary>
+                  <div v-for="(r, idx) in sideADisplay.reasoning" :key="idx" class="reasoning-box" style="margin-bottom: 8px;">
+                    <div v-if="sideADisplay.reasoning.length > 1" style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">第 {{ idx + 1 }} 轮</div>
+                    {{ r }}
+                  </div>
+                </details>
+                <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">回复</div>
+                <div class="reply-box">{{ sideADisplay.reply || '(无文本回复)' }}</div>
+              </template>
+              <div v-else style="font-size: 12px; color: var(--color-text-muted); padding: 16px; text-align: center;">无响应数据</div>
             </div>
 
-            <!-- Side B -->
+            <!-- Side B — 重放结果 -->
             <div>
-              <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-warning);">配置 B（实验组）</div>
-              <div v-if="results.b?.tool_calls?.length" style="margin-bottom: var(--space-md);">
+              <div style="font-weight: 600; font-size: 14px; margin-bottom: var(--space-sm); color: var(--color-warning);">重放结果（配置 B）</div>
+
+              <!-- B 侧 system prompt（折叠） -->
+              <details v-if="sideB?.system_prompt" style="margin-bottom: var(--space-sm);">
+                <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">实际 System Prompt（{{ sideB.system_prompt.length }} 字符）</summary>
+                <div class="md-preview" v-html="md.render(sideB.system_prompt)" style="max-height: 300px; margin-top: 8px;"></div>
+              </details>
+
+              <!-- B 侧检索溯源 -->
+              <div v-if="sideB?.retrieval_trace?.providers?.length" style="margin-bottom: var(--space-md);">
+                <details style="font-size: 13px;">
+                  <summary style="cursor: pointer; color: var(--color-text-muted); font-weight: 600;">检索溯源（{{ sideB.retrieval_trace.providers.length }} 个数据源）</summary>
+                  <div v-for="(prov, pi) in sideB.retrieval_trace.providers" :key="pi" style="margin-top: 8px; padding: 8px 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);">
+                    <div style="font-weight: 600; font-size: 12px; margin-bottom: 4px;">{{ prov.name }} <span style="color: var(--color-text-muted); font-weight: 400;">({{ prov.type }})</span></div>
+                    <div v-if="prov.error" style="color: var(--color-error); font-size: 11px;">错误: {{ prov.error }}</div>
+                    <table v-if="prov.items?.length" style="width: 100%; font-size: 11px; border-collapse: collapse;">
+                      <thead>
+                        <tr style="border-bottom: 1px solid var(--color-border); text-align: left;">
+                          <th style="padding: 2px 6px;">ID</th>
+                          <th style="padding: 2px 6px;">文本</th>
+                          <th style="padding: 2px 6px;">向量分</th>
+                          <th style="padding: 2px 6px;">状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="item in selectedItems(prov.items)" :key="item.id" style="border-bottom: 1px solid var(--color-border);">
+                          <td style="padding: 2px 6px; font-family: monospace;">{{ item.id?.slice(0, 8) }}</td>
+                          <td style="padding: 2px 6px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ item.text || '-' }}</td>
+                          <td style="padding: 2px 6px;">{{ item.score?.toFixed(3) || '-' }}</td>
+                          <td style="padding: 2px 6px; color: var(--color-success);">✓</td>
+                        </tr>
+                        <tr v-for="item in discardedItems(prov.items)" :key="item.id" style="border-bottom: 1px solid var(--color-border);">
+                          <td style="padding: 2px 6px; font-family: monospace;">{{ item.id?.slice(0, 8) }}</td>
+                          <td style="padding: 2px 6px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ item.text || '-' }}</td>
+                          <td style="padding: 2px 6px;">{{ item.score?.toFixed(3) || '-' }}</td>
+                          <td style="padding: 2px 6px; color: var(--color-warning);">{{ item.discard_reason }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <div v-else style="font-size: 11px; color: var(--color-text-muted);">无检索结果</div>
+                  </div>
+                </details>
+              </div>
+
+              <div v-if="sideB?.result?.tool_calls?.length" style="margin-bottom: var(--space-md);">
                 <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">工具调用</div>
-                <div v-for="(tc, idx) in results.b.tool_calls" :key="idx"
+                <div v-for="(tc, idx) in sideB.result.tool_calls" :key="idx"
                   :style="{
                     background: 'var(--color-surface)',
-                    border: `1px solid ${results.a?.tool_calls?.[idx] && hasDiff(results.a.tool_calls[idx], tc) ? 'var(--color-warning)' : 'var(--color-border)'}`,
+                    border: `1px solid ${sideADisplay?.tool_calls?.[idx] && hasDiff(sideADisplay.tool_calls[idx], tc) ? 'var(--color-warning)' : 'var(--color-border)'}`,
                     borderRadius: 'var(--radius-md)', padding: '10px 12px', marginBottom: '8px',
                   }"
                 >
@@ -446,15 +482,15 @@ onMounted(loadAnchor)
                 </div>
               </div>
               <div v-else style="font-size: 12px; color: var(--color-text-muted); margin-bottom: var(--space-md);">无工具调用</div>
-              <details v-if="results.b?.reasoning?.length" style="margin-bottom: var(--space-md);">
-                <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">思考过程（{{ results.b.reasoning.length }} 轮）</summary>
-                <div v-for="(r, idx) in results.b.reasoning" :key="idx" class="reasoning-box" style="margin-bottom: 8px;">
-                  <div v-if="results.b.reasoning.length > 1" style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">第 {{ idx + 1 }} 轮</div>
+              <details v-if="sideB?.result?.reasoning?.length" style="margin-bottom: var(--space-md);">
+                <summary style="cursor: pointer; font-size: 12px; color: var(--color-text-muted);">思考过程（{{ sideB.result.reasoning.length }} 轮）</summary>
+                <div v-for="(r, idx) in sideB.result.reasoning" :key="idx" class="reasoning-box" style="margin-bottom: 8px;">
+                  <div v-if="sideB.result.reasoning.length > 1" style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;">第 {{ idx + 1 }} 轮</div>
                   {{ r }}
                 </div>
               </details>
               <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">回复</div>
-              <div class="reply-box">{{ results.b?.reply || '(无文本回复)' }}</div>
+              <div class="reply-box">{{ sideB?.result?.reply || '(无文本回复)' }}</div>
             </div>
           </div>
         </div>
@@ -467,18 +503,18 @@ onMounted(loadAnchor)
 .cfg-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
 }
 .cfg-label {
   color: var(--color-text-muted);
-  width: 72px;
+  width: 56px;
+  font-size: 11px;
 }
 .cfg-section {
-  margin-top: 4px;
-  padding-top: 6px;
-  border-top: 1px solid var(--color-border);
+  padding-top: 2px;
   font-size: 11px;
   color: var(--color-text-muted);
+  font-weight: 600;
 }
 
 .replay-input,

@@ -55,6 +55,7 @@ type RunRequest struct {
 	Window             WindowResult
 
 	OverrideSystemPrompt *string
+	UserMessagePrefix    string // 预构建的检索前缀，配合 OverrideSystemPrompt 使用（replay 场景）
 
 	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
 	Memory  retrieval.SourceConfig
@@ -212,7 +213,10 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	log.Printf("[orch] run start: model=%s, msgs=%d", o.pickClient(req).ModelName(), len(req.Messages))
 
 	if req.OverrideSystemPrompt != nil {
-		systemPromptResult = &promptbuilder.BuildResult{Prompt: *req.OverrideSystemPrompt}
+		systemPromptResult = &promptbuilder.BuildResult{
+			Prompt:            *req.OverrideSystemPrompt,
+			UserMessagePrefix: req.UserMessagePrefix,
+		}
 	} else {
 		var err error
 		systemPromptResult, err = o.systemPromptBuilder.Build(ctx, mkPromptBuildOpt(req, queryVec, historyEmbeddings))

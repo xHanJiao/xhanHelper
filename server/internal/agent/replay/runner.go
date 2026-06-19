@@ -3,7 +3,6 @@ package replay
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"strings"
 
@@ -82,10 +81,12 @@ type CapturedToolCall struct {
 
 // Result — 一次重放的完整结果
 type Result struct {
-	ConversationID string             `json:"conversation_id"`
-	ToolCalls      []CapturedToolCall `json:"tool_calls"`
-	Reply          string             `json:"reply"`
-	Reasoning      []string           `json:"reasoning"`
+	ConversationID string                     `json:"conversation_id"`
+	ToolCalls      []CapturedToolCall         `json:"tool_calls"`
+	Reply          string                     `json:"reply"`
+	Reasoning      []string                   `json:"reasoning"`
+	SystemPrompt   string                     `json:"system_prompt,omitempty"`
+	RetrievalTrace *promptbuilder.PromptTrace `json:"retrieval_trace,omitempty"`
 }
 
 // PreviewResult — 预览结果，包含完整 system prompt、消息列表和检索 trace
@@ -164,6 +165,46 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		maxToolResultChars = 2000
 	}
 
+	// 预构建 system prompt 以捕获检索 trace。
+	// 构建结果（Prompt + UserMessagePrefix）透传给 orchestrator，
+	// 避免 orch 内部重复构建。
+	var overridePrompt *string
+	var userMsgPrefix string
+	var trace *promptbuilder.PromptTrace
+
+	if cfg.OverrideSystemPrompt != nil {
+		// 用户手动覆盖 system prompt —— 跳过检索，无 trace
+		overridePrompt = cfg.OverrideSystemPrompt
+	} else if !cfg.SkipRetrieval {
+		// 预构建：做 embedding → 检索 → 拿到 trace
+		var vec []float64
+		if r.embedder != nil {
+			v, err := r.embedder.Embed(ctx, anchorMsg.Content)
+			if err != nil {
+				log.Printf("[replay] embed error: %v", err)
+			} else {
+				vec = v
+			}
+		}
+		buildResult, err := r.promptBuilder.Build(ctx, promptbuilder.BuildOptions{
+			UserID:         anchorMsg.UserID,
+			ConversationID: anchorMsg.ConversationID,
+			UserMessage:    anchorMsg.Content,
+			Embedding:      vec,
+			Memory:         cfg.Memory,
+			Note:           cfg.Note,
+			History:        cfg.History,
+			Theme:          cfg.Theme,
+		})
+		if err != nil {
+			log.Printf("[replay] prompt build error: %v", err)
+		} else {
+			overridePrompt = &buildResult.Prompt
+			userMsgPrefix = buildResult.UserMessagePrefix
+			trace = buildResult.Trace
+		}
+	}
+
 	orch := agent.New(&agent.OrchestratorConfig{
 		FlashClient:        r.flashClient,
 		ProClient:          r.proClient,
@@ -187,8 +228,9 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		Messages:             msgs,
 		UserMessageContent:   anchorMsg.Content,
 		RawUserMessage:       anchorMsg.Content,
-		SkipRetrieval:        cfg.SkipRetrieval,
-		OverrideSystemPrompt: cfg.OverrideSystemPrompt,
+		SkipRetrieval:        true, // 已在上面预构建
+		OverrideSystemPrompt: overridePrompt,
+		UserMessagePrefix:    userMsgPrefix,
 		MaxIterations:        cfg.MaxIterations,
 		Temperature:          temperature,
 		MaxTokens:            r.maxTokens,
@@ -202,92 +244,12 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		return nil, err
 	}
 
-	return r.collectEvents(convID, events), nil
-}
-
-// RunFromRequestJSON 用历史 request_json 的 system prompt 走完整 ReAct 循环
-func (r *Runner) RunFromRequestJSON(ctx context.Context, anchorMsg *model.Message, history []model.Message, requestBody json.RawMessage) (*Result, error) {
-	// 1. 解析 request_json，只提取 system prompt 和 temperature
-	var apiReq struct {
-		Messages []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"messages"`
-		Temperature *float64 `json:"temperature"`
+	result := r.collectEvents(convID, events)
+	result.RetrievalTrace = trace
+	if overridePrompt != nil {
+		result.SystemPrompt = *overridePrompt
 	}
-	if err := json.Unmarshal(requestBody, &apiReq); err != nil {
-		return nil, fmt.Errorf("parse request_json: %w", err)
-	}
-
-	var systemPrompt string
-	for _, m := range apiReq.Messages {
-		if m.Role == "system" {
-			systemPrompt = m.Content
-			break
-		}
-	}
-	if systemPrompt == "" {
-		return nil, fmt.Errorf("no system message found in request_json")
-	}
-
-	// 2. 创建隔离的 SQLite 库 + orchestrator
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		return nil, err
-	}
-	if err := db.AutoMigrate(&model.Conversation{}, &model.Message{}); err != nil {
-		return nil, err
-	}
-
-	msgRepo := service.NewMessageRepo(db)
-	convRepo := service.NewConversationRepo(db)
-
-	convID := uuid.New().String()
-	if err := convRepo.Create(ctx, &model.Conversation{
-		ID:     convID,
-		UserID: anchorMsg.UserID,
-		Title:  "replay-raw-" + convID[:8],
-	}); err != nil {
-		return nil, err
-	}
-
-	maxToolResultChars := 2000
-	msgs := agent.BuildMessagesForFlash(history, maxToolResultChars, false) // replay 走旧格式
-
-	overridePrompt := systemPrompt
-	orch := agent.New(&agent.OrchestratorConfig{
-		FlashClient:        r.flashClient,
-		ProClient:          r.proClient,
-		Registry:           r.registry,
-		PromptBuilder:      r.promptBuilder,
-		MsgRepo:            msgRepo,
-		ConvRepo:           convRepo,
-		Embedder:           r.embedder,
-		VectorStore:        nil,
-		EmbeddingRepo:      nil,
-		MaxIterations:      r.maxIterations,
-		Temperature:        apiReq.Temperature,
-		MaxTokens:          r.maxTokens,
-		MaxToolResultChars: maxToolResultChars,
-		OnChatEnd:          nil,
-	})
-
-	events, err := orch.Run(ctx, &agent.RunRequest{
-		UserID:               anchorMsg.UserID,
-		ConversationID:       convID,
-		Messages:             msgs,
-		UserMessageContent:   anchorMsg.Content,
-		RawUserMessage:       anchorMsg.Content,
-		SkipRetrieval:        true,
-		OverrideSystemPrompt: &overridePrompt,
-		MaxIterations:        r.maxIterations,
-	})
-	if err != nil {
-		log.Printf("[replay] raw orch run error: %v", err)
-		return nil, err
-	}
-
-	return r.collectEvents(convID, events), nil
+	return result, nil
 }
 
 // collectEvents 从事件通道收集工具调用和最终回复

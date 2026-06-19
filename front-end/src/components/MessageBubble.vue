@@ -255,15 +255,10 @@ onBeforeUnmount(() => {
 
 .msg-wrapper.selected-round {
   border-left: 3px solid var(--color-primary);
-  background: var(--color-primary-light, rgba(24, 160, 251, 0.06));
 }
 
 [data-theme="dark"] .msg-wrapper.selectable:hover {
   background: var(--color-bg-hover, rgba(255,255,255,0.04));
-}
-
-[data-theme="dark"] .msg-wrapper.selected-round {
-  background: var(--color-primary-light, rgba(24, 160, 251, 0.10));
 }
 
 /* Shared view — suppress all interaction hints */

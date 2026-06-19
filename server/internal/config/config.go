@@ -36,8 +36,10 @@ type Config struct {
 
 // ChatConfig — 对话配置
 type ChatConfig struct {
-	HistoryRounds    int `yaml:"history_rounds"`     // 加载历史消息轮数，默认 10
-	MaxSummaryRounds int `yaml:"max_summary_rounds"` // 单次摘要覆盖上限，0=等于 history_rounds
+	HistoryRounds     int `yaml:"history_rounds"`      // 加载历史消息轮数，默认 10
+	MaxWindowRounds   int `yaml:"max_window_rounds"`   // 扩张窗口上限，默认 100
+	MaxSummaryRounds  int `yaml:"max_summary_rounds"`  // 单次摘要覆盖上限，0=等于 history_rounds
+	SessionGapMinutes int `yaml:"session_gap_minutes"` // session 间隔阈值（分钟），默认 30
 }
 
 // ShareConfig — 分享配置
@@ -476,6 +478,12 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Chat.HistoryRounds == 0 {
 		cfg.Chat.HistoryRounds = 10
+	}
+	if cfg.Chat.MaxWindowRounds == 0 {
+		cfg.Chat.MaxWindowRounds = 100
+	}
+	if cfg.Chat.SessionGapMinutes == 0 {
+		cfg.Chat.SessionGapMinutes = 30
 	}
 	if cfg.Share.DefaultValidDays == 0 {
 		cfg.Share.DefaultValidDays = 7

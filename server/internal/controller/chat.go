@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -161,7 +162,13 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 
 		// 加载历史消息：按轮次分组，每轮保留 user + 最终 assistant 回复
 		var history []model.Message
-		rounds, err := msgRepo.ListRecentRounds(c.Request.Context(), conv.ID, cfg.Chat.HistoryRounds)
+		// 计算扩张窗口大小
+		windowSize := computeWindowSize(c.Request.Context(), msgRepo, conv.ID, cfg)
+		n := windowSize
+		if n <= 0 {
+			n = cfg.Chat.HistoryRounds
+		}
+		rounds, err := msgRepo.ListRecentRounds(c.Request.Context(), conv.ID, n)
 		if err != nil {
 			log.Printf("[chat] ListRecentRounds error: %v", err)
 			view.JSONError(c, 500, "加载历史消息失败")
@@ -202,6 +209,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			Temperature:        agentTemperature,
 			MaxTokens:          agentMaxTokens,
 			Thinking:           agentThinking,
+			WindowSize:         windowSize,
 		})
 		if err != nil {
 			log.Printf("[chat] orch run error: %v", err)
@@ -403,4 +411,45 @@ func buildLLMConfigResponse(agent *model.Agent, defaultTemp *float64, defaultMax
 		}
 	}
 	return resp
+}
+
+// computeWindowSize 计算扩张窗口的当前轮数。
+//
+// 规则：
+//  1. 查同会话最近一条 user 消息的 created_at 和 Extra.WindowSize
+//  2. gap = now - lastMsgTime
+//  3. gap > SessionGapMinutes → 重置为 HistoryRounds（默认值）
+//  4. gap ≤ SessionGapMinutes → lastWindow + 1（扩张）
+//  5. lastWindow ≥ MaxWindowRounds → 折半到 MaxWindowRounds/2 再继续
+//  6. 没有上一条消息或 Extra 中没有 WindowSize → HistoryRounds
+func computeWindowSize(ctx context.Context, msgRepo *service.MessageRepo, convID string, cfg *config.Config) int {
+	defaultSize := cfg.Chat.HistoryRounds
+	gapMinutes := cfg.Chat.SessionGapMinutes
+
+	// 查最近一条 user 消息
+	lastUserMsgs, err := msgRepo.ListRecentUserMessages(ctx, convID, 1)
+	if err != nil || len(lastUserMsgs) == 0 {
+		return defaultSize
+	}
+	lastUserMsg := &lastUserMsgs[0]
+
+	// 读上次的窗口大小
+	lastWindow := defaultSize
+	if ws := agent.GetWindowSize(lastUserMsg); ws > 0 {
+		lastWindow = ws
+	}
+
+	// 判断是否同一 session
+	gap := time.Since(lastUserMsg.CreatedAt)
+	if gap > time.Duration(gapMinutes)*time.Minute {
+		return defaultSize
+	}
+
+	// 扩张
+	maxRounds := cfg.Chat.MaxWindowRounds
+	newWindow := lastWindow + 1
+	if newWindow >= maxRounds {
+		newWindow = maxRounds / 2 // 达到上限，折半
+	}
+	return newWindow
 }

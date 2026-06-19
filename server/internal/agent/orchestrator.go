@@ -45,6 +45,7 @@ type RunRequest struct {
 	MaxTokens          *int     // LLM 最大输出 token，nil 用配置默认
 	MaxIterations      int      // ReAct 最大轮次，0 用配置默认
 	Thinking           *bool    // 思考模式：nil=不传，true=开启，false=关闭
+	WindowSize         int      // 扩张窗口当前轮数，0=使用默认
 
 	OverrideSystemPrompt *string
 
@@ -296,6 +297,9 @@ func (o *Orchestrator) runReActLoop(
 	})
 
 	userMsg := mkUserMsg(req)
+	if req.WindowSize > 0 {
+		SetWindowSize(userMsg, req.WindowSize)
+	}
 	if err := o.msgRepo.Create(ctx, userMsg); err != nil {
 		log.Printf("[orch] save user msg error: %v", err)
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrInternal)})
@@ -847,18 +851,17 @@ func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, us
 		Content:        maybeInjectCreatedAt(msg.Content),
 		IsInternal:     isInternal,
 	}
-	if trace != nil || msg.Usage != nil || userMsgPrefix != "" {
-		extra := &MsgExtra{Usage: msg.Usage}
+	mergeMsgExtra(modelMsg, func(extra *MsgExtra) {
+		if msg.Usage != nil {
+			extra.Usage = msg.Usage
+		}
 		if userMsgPrefix != "" {
 			extra.UserMessagePrefix = userMsgPrefix
 		}
 		if trace != nil {
 			extra.Providers = trace.Providers
 		}
-		b, _ := json.Marshal(extra)
-		s := string(b)
-		modelMsg.Extra = &s
-	}
+	})
 	if msg.ReasoningContent != "" {
 		rc := msg.ReasoningContent
 		modelMsg.ReasoningContent = &rc

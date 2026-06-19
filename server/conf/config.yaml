@@ -54,8 +54,10 @@ snowflake:
   datacenter_id: 1
 
 chat:
-  history_rounds: 50
-  max_summary_rounds: 25      # 单次摘要最多覆盖的 user message 条数，N/2
+  history_rounds: 10
+  max_summary_rounds: 5       # 单次摘要最多覆盖的 user message 条数，N/2
+  max_window_rounds: 50       # 扩张窗口上限轮数
+  session_gap_minutes: 30     # session 间隔阈值（分钟），超过则重置窗口
 
 share:
   default_valid_days: 7

@@ -313,6 +313,16 @@ func (r *MessageRepo) GetMessagesSince(ctx context.Context, convID string, since
 	return list, err
 }
 
+// ListRecentUserMessages 获取会话最近 N 条 role=user 消息，按时间倒序
+func (r *MessageRepo) ListRecentUserMessages(ctx context.Context, convID string, limit int) ([]model.Message, error) {
+	var list []model.Message
+	err := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND role = 'user' AND status = ?", convID, model.MsgStatusNormal).
+		Order("created_at DESC").Limit(limit).
+		Find(&list).Error
+	return list, err
+}
+
 // CountRecent 统计用户最近 role=user 的消息数
 func (r *MessageRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
 	var count int64

@@ -115,8 +115,156 @@ N=50 时窗口更大，但绝对命中 token 数反而更低（6400 < 6656），
 
 这解释了为什么 N=51 组的数据不稳定——聊的次数太少，消息长度分布还没收敛，chunk 边界频繁漂移。需要积累足够轮数才能看到稳定模式。
 
+### 9. 消息长度分布实测
+
+#### 方法
+
+从 2026-06-19 所有 assistant 消息的 `request_json` 中提取每条消息的实际文本内容（`messages[].content`），与 `extra.Usage.prompt_tokens` 联合计算：
+
+```
+chars/token = 所有消息的总字符数 / 所有请求的总 prompt_tokens
+单条消息 est_token = 该消息字符数 / chars_per_token
+```
+
+使用 `request_json` 而非 `content` 字段的原因：
+- `request_json` 是实际发给 DeepSeek 的消息数组，包括 system、user、assistant、tool 全部角色
+- `prompt_tokens` 是 DeepSeek 返回的实际 token 计数值，比字符数推算更准确
+- 通过两者计算 chars/token 比，可反推各角色消息的 token 估算值
+
+#### 结果
+
+**chars/token 比 = 1.0**——因 request_json 中混有大量英文（工具 JSON 参数、XML 标签），中英混杂拉低了比率。
+
+| 角色 | 样本数 | 总 chars | 总 est_tokens | 平均 est_tokens |
+|---|---|---|---|---|
+| system | 46 | 48,806 | 50,600 | 1,100 |
+| user | 1,236 | 178,297 | 184,369 | **149** |
+| assistant | 1,741 | 453,901 | 470,290 | 270 |
+| tool | 595 | 237,210 | 245,783 | 413 |
+
+**user 消息 token 分布**：
+
+| token 范围 | 数量 | 占比 |
+|---|---|---|
+| 0-50 | 829 | **67%** |
+| 50-100 | 231 | 19% |
+| 100-200 | 94 | 8% |
+| 200-400 | 18 | 1.5% |
+| 400-800 | 11 | 0.9% |
+| 800+ | 53 | 4.3% |
+
+- **中位数 29 token**，一半以上的 user 消息不到 30 token（闲聊短句）
+- **平均值 149 token**，被 53 条 > 800 token 的长消息拖高（粘贴大面积文本）
+- min=2, max=6405 — 极差巨大
+
+#### 对缓存的含义
+
+典型一轮对话 ≈ user(30) + assistant(270) + 偶有 tool(413) ≈ **300–700 token**
+
+- N=50 窗口 ≈ 15,000–35,000 token ≈ **59–137 个 chunk**（@256 token/chunk）
+- 短消息密集时，连续多轮只占几个 chunk → 滑动几乎不碰边界 → 缓存极稳定
+- 突然出现长消息时 chunk 边界大幅漂移 → 命中全部丢失
+- **缓存表现取决于聊天内容**：闲聊 → 稳定；粘贴大段内容 → 震荡
+
+### 10. 深入追问：6000-6700 簇的内部差异
+
+#### 问题
+
+为什么 6000-6700 范围有 6016/6272/6400/6656/6784 多种值？
+
+#### 发现
+
+**不同值对应不同窗口大小：**
+
+| cache_hit | 对应 rounds | 说明 |
+|---|---|---|
+| 6016 | 11 | 旧 N=10 配置 |
+| 6272 | 11 | 同上，chunk 对齐差异 |
+| 6400 | 11 | 同上 |
+| 6656 | **21** | N=20 配置 |
+| 6656 | **51** | N=50 配置 |
+
+同是 6656，R=21 时覆盖 ~43% 的 prompt，R=51 时仅覆盖 ~20%。**窗口越大，绝对命中 token 数不变，但占比下降。**
+
+#### 空洞（6784 → 11136）
+
+跨请求的缓存天花板就是 ~6784。11136 及以上全部是 ReAct 循环内部红利（tool 调用轮的近全同前缀），不是滑动窗口间的真正命中。所以不是「空洞」而是「天花板」。
+
+### 11. 极端高值（>10000）的来源
+
+四个极端高命中：18816、18688、11648、11136。
+
+**全部是 ReAct 循环内前缀红利**：前一条请求的最后角色是 `tool`，当前请求在 tool 返回后继续推理。此时当前请求的 messages 只有末尾 2 条是新增的（assistant 回复 + user 新问题），前缀 94-97% 与上一轮完全相同 → 近乎全命中。
+
+**这些与滑动窗口完全无关。** 剔除后，真正的跨请求命中天花板是 6656-6784。
+
+### 12. 6656 的精确位置
+
+取三个 6656 命中的请求，截取各自前 6656 token 对应的文本，逐字符对比：
+
+- **三个请求的共同字符：精确 1151 字符**——恰好是 system prompt 的长度
+- 1151 字符 ≈ 500 token（= DeepSeek 内部 tokenization 的 system prompt）
+- 之后的所有字符完全不同（不同的 user 消息）
+
+**结论：6656 token 的缓存命中，只有 ~500 token 能从请求文本的字符匹配中解释。** 剩余 ~6100 token 来自 DeepSeek 内部的格式开销（ChatML 模板 token、特殊分隔 token、tool definitions 的 token 表示等）。这部分是黑盒，无法从 request_json 的文本对比中观测。
+
+### 13. L/H 交替的机制（已验证）
+
+- **从不出现连续 H-H**：6656 命中的下一轮必定跌回 ≤1024
+- 这不是因为「匹配不上上一轮的缓存」，而是因为 DeepSeek 的「请求结束位置落盘」——每个请求缓存自己的前缀后，下一个请求的前缀（字符层面）只有 1151 字符和它相同，其余全是新的 → 无法命中
+- delta % 256 与 cache_hit **无相关性**（分组统计数据完全均匀），排除了 chunk 偏移累积假设
+- **交替不是规律，是统计现象**——H 之后必 L 是因为文字级前缀只有 system prompt 匹配
+
+### 14. 最终认知
+
+| 已知 | 未知（黑盒） |
+|---|---|
+| 所有请求共享 ~1151 字符（system prompt），cache_hit=768 是这部分 | DeepSeek 内部 tokenization 如何把 1151 字符变成 500+ token |
+| **6000-6700 来自 tools 定义被独立缓存**（对照实验证实） | 为什么恰好是 6000-6700 而不是别的数 |
+| >10000 全部是 ReAct 内部红利，与滑动窗口无关 | chunk 边界对齐机制的具体实现 |
+| P90 间隔 = 29.3min ≈ 30min，30min 覆盖 90% 的 burst 内间隙 | — |
+
+### 15. 对照实验：证实 tools 是缓存来源
+
+**实验设计**：暂时移除请求中的 tools 定义，只发 system prompt + 消息。
+
+**结果**（2026-06-19 14:18 BJT 前后对比）：
+
+| | 有 tools（前） | 无 tools（后） |
+|---|---|---|
+| 样本 | 105 条 | 15 条 |
+| 平均 cache_hit | 3283 | **512** |
+| 最大 cache_hit | 31488 | **512** |
+| 高命中（>5000）占比 | 32% | **0%** |
+
+无 tools 后，所有缓存命中稳定在 512——恰好是 system prompt 的 token 量。6000+ 全部消失。
+
+**结论**：tools 定义字段被 DeepSeek 作为独立单元缓存。缓存命中 = system prompt（前缀匹配 ~500 token）+ tools 定义（独立缓存 ~5500-7000 token）= 6000-7500 token。不同命中值来自 tools 定义在不同版本间的长度变化。
+
+### 16. 向扩张窗口演进
+
+**认知转变**：滑动窗口每轮破坏前缀 → 前缀缓存本质上无法利用。但 tools 缓存说明 DeepSeek 对「重复出现的静态 payload」有独立的缓存机制。
+
+**推论**：如果能保证前缀长期不变（扩张窗口而非滑动窗口），system prompt + tools + 旧消息的前缀都能命中。
+
+**数据驱动**：分析默认会话（3b3f6e2f）835 条 user 消息的相邻间隔：
+- 中位数 1.7 分钟，P90 = 29.3 分钟，P95 = 125 分钟
+- **30 分钟阈值**能覆盖 90% 的 burst 内间隔
+- 30 min 阈值下：84 段，段均 10 条消息，段均 0.5h，最大段 77 条
+
+**策略**：扩张窗口。30 分钟内持续聊 → 窗口递增。超过 30 分钟 → 重置到 20 轮。
+
+**实用结论：扩张窗口 + 30 分钟 session break，最大化 DeepSeek 缓存利用率。**
+
 ---
 
 ## 分析工具
 
-`cmd/analyze-cache/main.go` — 从数据库中提取消息，分析 cache_hit 分布和 chunk 模式。
+- `cmd/analyze-cache/main.go` — Go 脚本：从数据库提取消息，分析 cache_hit 分布和 chunk 模式
+- `docs/learning/responses/analyze_extreme_hits.py` — 极端高命中分析（Python）
+- `docs/learning/responses/analyze_6000_range.py` — 6000-7000 范围分析（Python）
+- `docs/learning/responses/analyze_cache_content.py` — 正例/反例 chunk 级对比（Python）
+- `docs/learning/responses/analyze_cache_patterns.py` — 模式序列分析（Python）
+- `docs/learning/responses/verify_chunk_alignment.py` — chunk 对齐猜想验证（Python）
+- `docs/learning/responses/analyze_session_gaps.py` — 会话间隔分析（Python）
+

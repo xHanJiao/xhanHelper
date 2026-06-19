@@ -3,12 +3,10 @@ package promptbuilder
 import (
 	"context"
 	"encoding/xml"
-	"fmt"
 	"log"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/tool"
@@ -84,7 +82,7 @@ func NewPromptBuilder(
 	useNativeFC bool,
 	searchProviders ...SearchProvider,
 ) *PromptBuilder {
-	postRoleStatic := []StaticProvider{&currentTimeProvider{}}
+	postRoleStatic := []StaticProvider{}
 	if useNativeFC {
 		postRoleStatic = append([]StaticProvider{&nativeFCNoticeProvider{}}, postRoleStatic...)
 	} else {
@@ -156,7 +154,6 @@ func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildRes
 
 	// —— 动态上下文（不再拼入 system prompt，改为生成 user message 前缀） ——
 	idsByType, retrievedItems, userMsgPrefix := b.buildDynamicContext(ctx, opts, trace)
-	userMsgPrefix = b.appendCurrentTimeBlock(userMsgPrefix)
 	result := &BuildResult{
 		Prompt:            sb.String(),
 		UserMessagePrefix: userMsgPrefix,
@@ -245,19 +242,6 @@ func (b *PromptBuilder) buildDynamicContext(ctx context.Context, opts BuildOptio
 		}
 	}
 	return idsByType, retrievedItems, userPrefix.String()
-}
-
-// appendCurrentTimeBlock 在 user message 前缀末尾追加 <current_time> XML 块，
-// 使 LLM 在 user message 中直接获得精确到秒的当前时间。
-// 即使无检索内容（prefix 为空），也返回纯时间块。
-func (b *PromptBuilder) appendCurrentTimeBlock(prefix string) string {
-	now := time.Now()
-	timeBlock := fmt.Sprintf("<current_time>%s 北京时间 (UTC+8)</current_time>\n",
-		now.Format("2006-01-02 15:04:05 Monday"))
-	if prefix != "" {
-		return prefix + timeBlock
-	}
-	return timeBlock
 }
 
 // buildProviderXML 根据 provider 类型和 packets 生成结构化 XML 块。

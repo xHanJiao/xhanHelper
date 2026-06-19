@@ -2,10 +2,7 @@ package promptbuilder
 
 import (
 	"context"
-	"fmt"
-	"time"
 
-	"xhan-helper/internal/config"
 	"xhan-helper/internal/tool"
 )
 
@@ -49,16 +46,6 @@ func (p *toolDefinitionsProvider) Name() string         { return "tool_definitio
 func (p *toolDefinitionsProvider) SectionTitle() string { return "工具使用" }
 func (p *toolDefinitionsProvider) Render(ctx context.Context) string {
 	return p.registry.GeneratePromptWithOverview()
-}
-
-// currentTimeProvider — 注入当前日期时间，确保 LLM 知道现在的时间
-type currentTimeProvider struct{}
-
-func (p *currentTimeProvider) Name() string         { return "current_time" }
-func (p *currentTimeProvider) SectionTitle() string { return "当前时间" }
-func (p *currentTimeProvider) Render(ctx context.Context) string {
-	now := time.Now().In(config.BJ)
-	return fmt.Sprintf("当前时间是 %s（北京时间，UTC+8）。", now.Format("2006-01-02 Monday"))
 }
 
 // nativeFCNoticeProvider — 原生 FC 模式下提示 LLM 使用函数调用接口而非 JSON 文本

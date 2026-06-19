@@ -54,8 +54,8 @@ snowflake:
   datacenter_id: 1
 
 chat:
-  history_rounds: 20
-  max_summary_rounds: 0       # 单次摘要最多覆盖的 user message 条数，0=N/2
+  history_rounds: 50
+  max_summary_rounds: 25      # 单次摘要最多覆盖的 user message 条数，N/2
 
 share:
   default_valid_days: 7

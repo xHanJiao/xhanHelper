@@ -161,6 +161,64 @@ func TestBuildThemeXML(t *testing.T) {
 	}
 }
 
+func TestBuildHistoryXML_WithHitDate(t *testing.T) {
+	prevMsg := model.Message{Role: "user", Content: "明天有个面试"}
+	prevMsg.CreatedAt = makeTime(2026, 6, 18) // 前一天
+	hitMsg := model.Message{Role: "user", Content: "6/22 去面试"}
+	hitMsg.CreatedAt = makeTime(2026, 6, 19) // 命中日
+	asstMsg := model.Message{Role: "assistant", Content: "好的，记下了"}
+	asstMsg.CreatedAt = makeTime(2026, 6, 19)
+
+	hitDate := makeTime(2026, 6, 19)
+	items := []retrieval.ContextPacket{
+		{
+			Type: "history",
+			Meta: retrieval.HistoryMeta{
+				Messages: []*model.Message{&prevMsg, &hitMsg, &asstMsg},
+				HitDate:  &hitDate,
+			},
+		},
+	}
+
+	xml := buildHistoryXML(items)
+	// date 属性应该等于 HitDate（6/19），而非 prepend 的 prev msg 的日期（6/18）
+	if !strings.Contains(xml, `<round date="2026年06月19日">`) {
+		t.Errorf("expected date from HitDate (6/19), got: %s", xml)
+	}
+	if !strings.Contains(xml, `<message role="user">明天有个面试</message>`) {
+		t.Errorf("missing prev user message: %s", xml)
+	}
+	if !strings.Contains(xml, `<message role="user">6/22 去面试</message>`) {
+		t.Errorf("missing hit user message: %s", xml)
+	}
+	if !strings.Contains(xml, `<message role="assistant">好的，记下了</message>`) {
+		t.Errorf("missing assistant message: %s", xml)
+	}
+}
+
+func TestBuildHistoryXML_HitDateBackwardCompat(t *testing.T) {
+	// HitDate 为 nil 时，date 应该 fallback 到 Messages[0].CreatedAt
+	msg1 := model.Message{Role: "user", Content: "帮我记账"}
+	msg1.CreatedAt = makeTime(2026, 5, 28)
+	msg2 := model.Message{Role: "assistant", Content: "已记录"}
+	msg2.CreatedAt = makeTime(2026, 5, 28)
+
+	items := []retrieval.ContextPacket{
+		{
+			Type: "history",
+			Meta: retrieval.HistoryMeta{
+				Messages: []*model.Message{&msg1, &msg2},
+				HitDate:  nil, // 旧数据没有 HitDate
+			},
+		},
+	}
+
+	xml := buildHistoryXML(items)
+	if !strings.Contains(xml, `<round date="2026年05月28日">`) {
+		t.Errorf("expected date from first message (backward compat), got: %s", xml)
+	}
+}
+
 func TestBuildThemeXMLNoState(t *testing.T) {
 	items := []retrieval.ContextPacket{
 		{

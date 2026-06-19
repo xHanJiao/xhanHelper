@@ -182,3 +182,37 @@ func TestFormatMessageRound_WithScore(t *testing.T) {
 		t.Errorf("expected assistant content, got: %s", result)
 	}
 }
+
+func TestFormatMessageRound_WithPrevMsg(t *testing.T) {
+	now := time.Now()
+	// 3 条消息：prev user + hit user + assistant
+	msgs := []model.Message{
+		{ID: "p1", Role: "user", Content: "明天有个面试要准备", CreatedAt: now.Add(-time.Hour)},
+		{ID: "m1", Role: "user", Content: "6/22 去面试，地点在望京", CreatedAt: now},
+		{ID: "m2", Role: "assistant", Content: "好的，我记下了", CreatedAt: now.Add(time.Second)},
+	}
+
+	result := FormatMessageRound(msgs, 0.85)
+	if !strings.Contains(result, "相关度 0.85") {
+		t.Errorf("expected score header, got: %s", result)
+	}
+	// 应该包含所有 3 条消息的内容
+	if !strings.Contains(result, "明天有个面试要准备") {
+		t.Errorf("missing prev user message content: %s", result)
+	}
+	if !strings.Contains(result, "6/22 去面试，地点在望京") {
+		t.Errorf("missing hit user message content: %s", result)
+	}
+	if !strings.Contains(result, "好的，我记下了") {
+		t.Errorf("missing assistant message content: %s", result)
+	}
+	// 应该有 3 个 role 标签
+	userCount := strings.Count(result, "**用户**")
+	if userCount != 2 {
+		t.Errorf("expected 2 user role labels (prev + hit), got %d: %s", userCount, result)
+	}
+	asstCount := strings.Count(result, "**助手**")
+	if asstCount != 1 {
+		t.Errorf("expected 1 assistant role label, got %d: %s", asstCount, result)
+	}
+}

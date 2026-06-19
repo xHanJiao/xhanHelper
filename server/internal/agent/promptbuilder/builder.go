@@ -312,6 +312,11 @@ func buildHistoryXML(items []retrieval.ContextPacket) string {
 		var messages []xmlHistoryMsg
 		var dateStr string
 		if meta, ok := pkt.Meta.(retrieval.HistoryMeta); ok {
+			// HitDate 指向向量命中的消息时间——当前一条 user msg 被 prepend 时，
+			// 优先使用 HitDate 而非 Messages[0].CreatedAt，确保 date 属性反映命中消息的日期。
+			if meta.HitDate != nil {
+				dateStr = meta.HitDate.Format("2006年01月02日")
+			}
 			for _, m := range meta.Messages {
 				if m == nil {
 					continue

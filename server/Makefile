@@ -24,6 +24,7 @@ help:
 	@echo "  make deploy-frontend- 仅部署前端（构建 + 上传）"
 	@echo "  make deploy-only    - 仅上传已编译的二进制和conf（不重新编译）"
 	@echo "  make test           - API 自动化测试 (34项)"
+	@echo "  make db-pull        - 导出线上数据库并拉到本地 data/ 目录"
 	@echo "  make logs           - 实时查看远程服务器日志 (tail -f)"
 	@echo "  make clean          - 清理编译产物"
 
@@ -108,6 +109,25 @@ test: check-env
 	fi
 	@exit $$EXIT
 
+# 导出线上数据库并拉到本地
+db-pull:
+	@if [ -f .env ]; then . ./.env; fi; \
+	if [ -z "$$DEPLOY_USER" ] || [ -z "$$DEPLOY_HOST" ]; then \
+		echo "❌ 请先设置 .env 文件: DEPLOY_USER=xxx DEPLOY_HOST=xxx"; \
+		echo "   参考 .env.example"; \
+		exit 1; \
+	fi; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); \
+	echo "========================================"; \
+	echo "       导出线上数据库"; \
+	echo "========================================"; \
+	echo "1/2 上传 dump 脚本 + 远程执行导出..."; \
+	scp scripts/dump-db.sh $$U@$$H:$$P/scripts/dump-db.sh; \
+	ssh $$U@$$H "chmod +x $$P/scripts/dump-db.sh && cd $$P && bash scripts/dump-db.sh"; \
+	echo ""; \
+	echo "2/2 拉取最新 dump 到本地..."; \
+	bash ../../mysh/pull-mysqldump.sh
+
 # 编译生产二进制
 build:
 	go build -o xhan-helper ./cmd/xhan-helper/
@@ -176,7 +196,8 @@ deploy: build-frontend build-linux
 	scp $$B $$U@$$H:$$P/$(BINARY).tmp; \
 	echo "4/6 上传配置文件 + 控制脚本..."; \
 	scp conf/config.yaml conf/config.prod.yaml $$U@$$H:$$P/conf/; \
-	scp scripts/control-xhan-helper.sh $$U@$$H:$$P/; \
+	scp scripts/control-xhan-helper.sh scripts/dump-db.sh $$U@$$H:$$P/scripts/; \
+	ssh $$U@$$H "chmod +x $$P/scripts/dump-db.sh"; \
 	echo "5/6 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
 	echo "6/6 替换二进制并重启..."; \
@@ -209,7 +230,8 @@ deploy-backend: build-linux
 	ssh $$U@$$H "cd $$P && bash scripts/dump-db.sh" || (echo "❌ 数据库备份失败，部署中止"; exit 1); \
 	echo "3/5 上传配置文件 + 控制脚本..."; \
 	scp conf/config.yaml conf/config.prod.yaml $$U@$$H:$$P/conf/; \
-	scp scripts/control-xhan-helper.sh $$U@$$H:$$P/; \
+	scp scripts/control-xhan-helper.sh scripts/dump-db.sh $$U@$$H:$$P/scripts/; \
+	ssh $$U@$$H "chmod +x $$P/scripts/dump-db.sh"; \
 	echo "4/5 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
 	echo "5/5 替换二进制并重启..."; \
@@ -258,7 +280,8 @@ deploy-only:
 	ssh $$U@$$H "cd $$P && bash scripts/dump-db.sh" || (echo "❌ 数据库备份失败，部署中止"; exit 1); \
 	echo "3/5 上传配置文件 + 控制脚本..."; \
 	scp conf/config.yaml conf/config.prod.yaml $$U@$$H:$$P/conf/; \
-	scp scripts/control-xhan-helper.sh $$U@$$H:$$P/; \
+	scp scripts/control-xhan-helper.sh scripts/dump-db.sh $$U@$$H:$$P/scripts/; \
+	ssh $$U@$$H "chmod +x $$P/scripts/dump-db.sh"; \
 	echo "4/5 上传 SQL 迁移文件..."; \
 	scp -r migrations/ $$U@$$H:$$P/; \
 	echo "5/5 替换二进制并重启..."; \

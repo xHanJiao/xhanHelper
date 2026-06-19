@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# dump-db.sh — 导出线上 MySQL 数据库
+# 用法: bash scripts/dump-db.sh [output_dir]
+#   output_dir 默认: /srv/xhan-helper/mysqldumps
+# 需要环境变量: XHAN_HELPER_DB_PASSWORD（通常从 ~/.bashrc / ~/.zshrc 加载）
+
+# SSH 远程执行时不会自动 source 用户环境——strict mode 之前先加载
+for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do
+    source "$f" 2>/dev/null || true
+done
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+OUTPUT_DIR="${1:-$PROJECT_DIR/mysqldumps}"
+
+DB_HOST="${DB_HOST:-127.0.0.1}"
+DB_PORT="${DB_PORT:-3306}"
+DB_USER="${DB_USER:-xhan_helper_user}"
+DB_NAME="${DB_NAME:-xhan_helper}"
+DB_PASSWORD="${XHAN_HELPER_DB_PASSWORD:-}"
+
+if [ -z "$DB_PASSWORD" ]; then
+    echo "❌ XHAN_HELPER_DB_PASSWORD 未设置"
+    exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+OUTPUT_FILE="$OUTPUT_DIR/xhan_helper-$TIMESTAMP.sql.gz"
+
+echo "=== 导出数据库 ==="
+echo "  Host: $DB_HOST:$DB_PORT"
+echo "  Database: $DB_NAME"
+echo "  Output: $OUTPUT_FILE"
+
+mysqldump \
+    -h "$DB_HOST" -P "$DB_PORT" \
+    -u "$DB_USER" -p"$DB_PASSWORD" \
+    --single-transaction \
+    --routines \
+    --triggers \
+    --no-tablespaces \
+    --default-character-set=utf8mb4 \
+    "$DB_NAME" | gzip > "$OUTPUT_FILE"
+
+echo "✅ 导出完成: $OUTPUT_FILE ($(du -h "$OUTPUT_FILE" | cut -f1))"
+echo "$OUTPUT_FILE"

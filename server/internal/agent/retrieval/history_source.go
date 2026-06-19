@@ -109,8 +109,9 @@ func (s *HistorySource) filterHits(ctx context.Context, queryVec []float64, user
 	return hits, nearMiss, nil
 }
 
-// buildPackets 将 historyHit 结果格式化为 ContextPacket（向量分降序）
-func buildPackets(hits []historyHit, roundByUserMsgID map[string][]model.Message) ([]ContextPacket, []NearMissItem) {
+// buildPackets 将 historyHit 结果格式化为 ContextPacket（向量分降序）。
+// prevUserMsgs 为每个命中提供前一条用户消息（同会话），用于消除叙事歧义。
+func buildPackets(hits []historyHit, roundByUserMsgID map[string][]model.Message, prevUserMsgs map[string]*model.Message) ([]ContextPacket, []NearMissItem) {
 	var packets []ContextPacket
 	var nearMiss []NearMissItem
 	for _, h := range hits {
@@ -124,17 +125,27 @@ func buildPackets(hits []historyHit, roundByUserMsgID map[string][]model.Message
 			nearMiss = append(nearMiss, NearMissItem{ID: h.msg.ID, Text: h.msg.ID, VectorScore: h.vecScore, Reason: "round_empty"})
 			continue
 		}
+
+		// 前一条 user msg 提供叙事上下文，区分「计划」vs「事实」
+		if prev, ok := prevUserMsgs[h.msg.ID]; ok && prev != nil {
+			filtered = append([]model.Message{*prev}, filtered...)
+		}
+
 		text := FormatMessageRound(filtered, h.vecScore)
 		msgs := make([]*model.Message, len(filtered))
 		for i := range filtered {
 			msgs[i] = &filtered[i]
 		}
+		hitDate := h.msg.CreatedAt
 		packets = append(packets, ContextPacket{
 			ID:    h.msg.ID,
 			Type:  "history",
 			Text:  text,
 			Score: h.vecScore,
-			Meta:  HistoryMeta{Messages: msgs},
+			Meta: HistoryMeta{
+				Messages: msgs,
+				HitDate:  &hitDate,
+			},
 		})
 	}
 	return packets, nearMiss
@@ -157,6 +168,24 @@ func (s *HistorySource) fetchRounds(ctx context.Context, hits []historyHit) (map
 		}
 	}
 	return m, nil
+}
+
+// fetchPreviousUserMsgs 获取每个命中点的前一条用户消息（同会话，按时间最近）。
+// 提供叙事上下文，消除「计划 vs 事实」歧义——前一条 user msg 的语义流足以让 LLM 区分两者。
+// 失败时仅记录日志，不中断流程——调用方在缺失时降级为现有行为（只返回命中轮次内的消息）。
+func (s *HistorySource) fetchPreviousUserMsgs(ctx context.Context, hits []historyHit) map[string]*model.Message {
+	result := make(map[string]*model.Message, len(hits))
+	for _, h := range hits {
+		prevMsgs, err := s.msgRepo.ListUserMessagesBefore(ctx, h.msg.ConversationID, h.msg.CreatedAt, 1)
+		if err != nil {
+			log.Printf("[history] fetch previous user msg for %s: %v", h.msg.ID, err)
+			continue
+		}
+		if len(prevMsgs) > 0 {
+			result[h.msg.ID] = &prevMsgs[0]
+		}
+	}
+	return result
 }
 
 func (s *HistorySource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextPacket, []NearMissItem, error) {
@@ -216,7 +245,9 @@ func (s *HistorySource) Fetch(ctx context.Context, opts SearchOptions) ([]Contex
 		return nil, nearMiss, err
 	}
 
-	packets, extraNearMiss := buildPackets(passed, roundByUserMsgID)
+	prevUserMsgs := s.fetchPreviousUserMsgs(ctx, passed)
+
+	packets, extraNearMiss := buildPackets(passed, roundByUserMsgID, prevUserMsgs)
 	nearMiss = append(nearMiss, extraNearMiss...)
 	return packets, nearMiss, nil
 }

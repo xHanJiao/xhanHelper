@@ -21,6 +21,7 @@ func (EntityMeta) isPacketMeta() {}
 // 一轮对话含多条消息，所以在 Meta 里存完整消息切片，builder 做嵌套 XML 渲染时使用。
 type HistoryMeta struct {
 	Messages []*model.Message
+	HitDate  *time.Time // 向量命中的消息时间；XML date 属性优先使用此字段，nil 时 fallback 到 Messages[0].CreatedAt
 }
 
 func (HistoryMeta) isPacketMeta() {}

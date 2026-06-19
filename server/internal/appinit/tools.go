@@ -92,7 +92,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		"get_bill_stats":   billStatsTool,
 		"search_notes":     tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder),
 		"search_memories":  tool.NewSearchMemoriesV2Tool(infra.VectorStore, repos.Mem, repos.Chunk, infra.Embedder),
-		"search_messages":  tool.NewMessageSearchTool(repos.Message, repos.Conversation),
+		"search_messages":  tool.NewMessageSearchTool(repos.Message, repos.Conversation, cfg.Chat.HistoryRounds, cfg.Chat.MaxSummaryRounds),
 	}
 
 	// --- Phase 6: 反思系统工具 ---
@@ -139,7 +139,10 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewSearchMemoriesV2Tool(infra.VectorStore, repos.Mem, repos.Chunk, infra.Embedder), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
-		tool.NewMessageSearchTool(repos.Message, repos.Conversation), log.Default()))
+		tool.NewMessageSearchTool(repos.Message, repos.Conversation, cfg.Chat.HistoryRounds, cfg.Chat.MaxSummaryRounds), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(
+		tool.NewGetSummaryTool(repos.ConversationSummary), log.Default()))
+
 	missionEmbedder := agent.NewMissionEmbedder(infra, repos.Embedding)
 
 	reg.Register(tool.NewLoggingWrapper(

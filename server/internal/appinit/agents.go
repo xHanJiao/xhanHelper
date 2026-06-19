@@ -2,7 +2,6 @@ package appinit
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"xhan-helper/internal/agent"
@@ -45,7 +44,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	missionRetrievalTools := map[string]tool.Tool{
 		"search_notes":    tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder),
 		"search_memories": tool.NewSearchMemoriesV2Tool(infra.VectorStore, repos.Mem, repos.Chunk, infra.Embedder),
-		"search_messages": tool.NewMessageSearchTool(repos.Message, repos.Conversation),
+		"search_messages": tool.NewMessageSearchTool(repos.Message, repos.Conversation, cfg.Chat.HistoryRounds, cfg.Chat.MaxSummaryRounds),
 		"get_bill_stats":  tool.NewGetBillStatsTool(repos.Bill),
 	}
 	missionRunner := agent.NewMissionRunner(llmClients.Flash, repos.Mission, repos.Mailbox, missionRetrievalTools, repos.Trace)
@@ -71,7 +70,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		"get_bill_stats":     tool.NewGetBillStatsTool(repos.Bill),
 		"search_notes_v2":    tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder),
 		"search_memories_v2": tool.NewSearchMemoriesV2Tool(infra.VectorStore, repos.Mem, repos.Chunk, infra.Embedder),
-		"message_search":     tool.NewMessageSearchTool(repos.Message, repos.Conversation),
+		"message_search":     tool.NewMessageSearchTool(repos.Message, repos.Conversation, cfg.Chat.HistoryRounds, cfg.Chat.MaxSummaryRounds),
 	}
 	stateUpdater := agent.NewStateUpdater(llmClients.Flash, repos.Message, repos.Conversation,
 		agent.NewThemeStore(repos.ThemeState), repos.PendingFinding, infra.VectorStore, tools.ConceptEmbedService, chunkBuilder,
@@ -142,14 +141,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		VerifyMaxRetries: cfg.LLM.Verification.MaxRetries,
 		VerifyModel:      cfg.LLM.Verification.Model,
 		UseNativeFC:      cfg.LLM.UseNativeFC,
-		LoadSummary: func(ctx context.Context, convID string) string {
-			summary, err := repos.ConversationSummary.GetLatest(ctx, convID)
-			if err != nil || summary == nil {
-				return ""
-			}
-			return fmt.Sprintf("<conversation_summary id=\"%s\">\n%s\n</conversation_summary>\n",
-				summary.ID, summary.SummaryText)
-		},
+		SummaryRepo:      repos.ConversationSummary,
 	})
 
 	go cronRunner.Start(bgCtx)

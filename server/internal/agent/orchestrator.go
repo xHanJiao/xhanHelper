@@ -109,7 +109,7 @@ type Orchestrator struct {
 	verifyMaxRetries    int
 	verifyModel         string // "flash" | "pro"
 	useNativeFC         bool
-	loadSummary         func(ctx context.Context, convID string) string // 可选：加载会话摘要文本（含 XML 标签）
+	summaryRepo         *service.ConversationSummaryRepo
 }
 
 // OrchestratorConfig — Orchestrator 依赖配置
@@ -131,9 +131,9 @@ type OrchestratorConfig struct {
 	OnChatEnd          func(userID, convID string)
 	VerifyEnabled      bool
 	VerifyMaxRetries   int
-	VerifyModel        string                                          // "flash" | "pro"，默认 flash
-	UseNativeFC        bool                                            // 是否使用原生 function calling
-	LoadSummary        func(ctx context.Context, convID string) string // 可选：加载会话摘要
+	VerifyModel        string // "flash" | "pro"，默认 flash
+	UseNativeFC        bool   // 是否使用原生 function calling
+	SummaryRepo        *service.ConversationSummaryRepo
 }
 
 // New 创建 Orchestrator
@@ -168,7 +168,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		verifyMaxRetries:    cfg.VerifyMaxRetries,
 		verifyModel:         cfg.VerifyModel,
 		useNativeFC:         cfg.UseNativeFC,
-		loadSummary:         cfg.LoadSummary,
+		summaryRepo:         cfg.SummaryRepo,
 	}
 }
 
@@ -305,8 +305,17 @@ func (o *Orchestrator) runReActLoop(
 	util.SafeGo(func() { o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID) })
 
 	// 加载对话摘要（若有），放在 UserMessagePrefix 最前面
-	if o.loadSummary != nil {
-		if block := o.loadSummary(ctx, req.ConversationID); block != "" {
+	if o.summaryRepo != nil {
+		summary, err := o.summaryRepo.GetLatest(ctx, req.ConversationID)
+		if err != nil {
+			log.Printf("[orch] GetLatest summary error: %v", err)
+		} else if summary != nil {
+			parent := ""
+			if summary.ParentSummaryID != nil {
+				parent = *summary.ParentSummaryID
+			}
+			block := fmt.Sprintf("<conversation_summary id=\"%s\" cover_from=\"%s\" cover_to=\"%s\" parent=\"%s\">\n%s\n</conversation_summary>\n",
+				summary.ID, summary.CoverFromMsgID, summary.CoverToMsgID, parent, summary.SummaryText)
 			systemPromptResult.UserMessagePrefix = block + systemPromptResult.UserMessagePrefix
 		}
 	}

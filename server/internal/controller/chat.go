@@ -428,7 +428,7 @@ func computeWindowSize(ctx context.Context, msgRepo *service.MessageRepo, convID
 	// 查最近一条 user 消息
 	lastUserMsgs, err := msgRepo.ListRecentUserMessages(ctx, convID, 1)
 	if err != nil || len(lastUserMsgs) == 0 {
-		return agent.WindowResult{Size: defaultSize, IsNewSession: true}
+		return agent.WindowResult{Size: 3, IsNewSession: true}
 	}
 	lastUserMsg := &lastUserMsgs[0]
 
@@ -439,7 +439,7 @@ func computeWindowSize(ctx context.Context, msgRepo *service.MessageRepo, convID
 
 	gap := time.Since(lastUserMsg.CreatedAt)
 	if gap > time.Duration(gapMinutes)*time.Minute {
-		return agent.WindowResult{Size: defaultSize, IsNewSession: true}
+		return agent.WindowResult{Size: 3, IsNewSession: true}
 	}
 
 	maxRounds := cfg.Chat.MaxWindowRounds

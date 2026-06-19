@@ -39,7 +39,7 @@ func (t *MessageSearchTool) Functions() []FuncSchema {
 		{
 			Name:        "search_by_range",
 			Display:     "按消息ID范围搜索",
-			Description: "根据两条消息ID之间的范围查找用户发言。典型场景：先通过对话摘要了解话题脉络，摘要的 cover_from/cover_to 属性给出了消息ID范围，再用此函数查找该范围内的具体细节、数据或决策。只返回 role=user 的消息，最多 " + fmt.Sprintf("%d", t.maxSummaryRounds*2) + " 条",
+			Description: "根据两条消息ID之间的范围查找用户发言。典型场景：先通过对话摘要了解话题脉络，摘要的 cover_from/cover_to 属性给出了消息ID范围，再用此函数查找该范围内的具体细节、数据或决策。返回 role=user 的全部消息",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -163,7 +163,7 @@ func (t *MessageSearchTool) executeSearchByRange(ec *ExecuteContext, args json.R
 	}
 
 	// 找两条消息的 created_at
-	startMsg, err := t.msgRepo.GetByIDCols(ec.Ctx, a.MsgIDStart, "id", "created_at")
+	startMsg, err := t.msgRepo.GetByIDCols(ec.Ctx, a.MsgIDStart, "id", "conversation_id", "created_at")
 	if err != nil || startMsg == nil {
 		return &Result{Success: false, Error: fmt.Sprintf("消息 %s 不存在", a.MsgIDStart)}
 	}
@@ -179,8 +179,7 @@ func (t *MessageSearchTool) executeSearchByRange(ec *ExecuteContext, args json.R
 		after, before = before, after
 	}
 
-	limit := t.maxSummaryRounds * 2
-	msgs, err := t.msgRepo.ListUserMessagesBetween(ec.Ctx, startMsg.ConversationID, after.Add(-time.Second), before.Add(time.Second), limit)
+	msgs, err := t.msgRepo.ListUserMessagesBetween(ec.Ctx, startMsg.ConversationID, after.Add(-time.Second), before.Add(time.Second), 0)
 	if err != nil {
 		log.Printf("[message_search] search_by_range error: %v", err)
 		return &Result{Success: false, Error: fmt.Sprintf("范围查询失败: %v", err)}

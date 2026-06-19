@@ -114,6 +114,6 @@ func DefaultPromptConfig() PromptConfig {
 		Memory:  retrieval.SourceConfig{Threshold: 0.5, Limit: 8},
 		Note:    retrieval.SourceConfig{Threshold: 0.5, Limit: 5},
 		History: retrieval.SourceConfig{Threshold: 0.8, Limit: 1},
-		Theme:   retrieval.SourceConfig{Threshold: 0.5, Limit: 10},
+		Theme:   retrieval.SourceConfig{Threshold: 0.6, Limit: 10},
 	}
 }

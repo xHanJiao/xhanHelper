@@ -206,7 +206,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 		queryVec = o.tryEmbedContent(ctx, rawMsg)
 
 		// Phase 15: 从 VectorStore 按 ID 查最近 5 条历史用户消息 embedding
-		historyEmbeddings = o.embedHistoryUserMessages(req.Messages, 5)
+		historyEmbeddings = o.embedHistoryUserMessages(req.Messages, 10)
 	}
 
 	log.Printf("[orch] run start: model=%s, msgs=%d", o.pickClient(req).ModelName(), len(req.Messages))

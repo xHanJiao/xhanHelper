@@ -162,9 +162,9 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 
 		// 加载历史消息：按轮次分组，每轮保留 user + 最终 assistant 回复
 		var history []model.Message
-		// 计算扩张窗口大小
-		windowSize := computeWindowSize(c.Request.Context(), msgRepo, conv.ID, cfg)
-		n := windowSize
+		// 计算扩张窗口和 session 状态
+		wr := computeWindowSize(c.Request.Context(), msgRepo, conv.ID, cfg)
+		n := wr.Size
 		if n <= 0 {
 			n = cfg.Chat.HistoryRounds
 		}
@@ -209,7 +209,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			Temperature:        agentTemperature,
 			MaxTokens:          agentMaxTokens,
 			Thinking:           agentThinking,
-			WindowSize:         windowSize,
+			Window:             wr,
 		})
 		if err != nil {
 			log.Printf("[chat] orch run error: %v", err)
@@ -413,43 +413,43 @@ func buildLLMConfigResponse(agent *model.Agent, defaultTemp *float64, defaultMax
 	return resp
 }
 
-// computeWindowSize 计算扩张窗口的当前轮数。
+// computeWindowSize 计算扩张窗口和 session 状态。
 //
 // 规则：
-//  1. 查同会话最近一条 user 消息的 created_at 和 Extra.WindowSize
-//  2. gap = now - lastMsgTime
-//  3. gap > SessionGapMinutes → 重置为 HistoryRounds（默认值）
-//  4. gap ≤ SessionGapMinutes → lastWindow + 1（扩张）
-//  5. lastWindow ≥ MaxWindowRounds → 折半到 MaxWindowRounds/2 再继续
-//  6. 没有上一条消息或 Extra 中没有 WindowSize → HistoryRounds
-func computeWindowSize(ctx context.Context, msgRepo *service.MessageRepo, convID string, cfg *config.Config) int {
+//  1. 查同会话最近一条 user 消息的 created_at 和 Extra
+//  2. gap > SessionGapMinutes → 新 session，重置窗口
+//  3. gap ≤ SessionGapMinutes → 同一 session，窗口扩张，继承 SessionStartMsgID
+//  4. lastWindow ≥ MaxWindowRounds → 折半
+//  5. 没有上一条消息 → 新 session
+func computeWindowSize(ctx context.Context, msgRepo *service.MessageRepo, convID string, cfg *config.Config) agent.WindowResult {
 	defaultSize := cfg.Chat.HistoryRounds
 	gapMinutes := cfg.Chat.SessionGapMinutes
 
 	// 查最近一条 user 消息
 	lastUserMsgs, err := msgRepo.ListRecentUserMessages(ctx, convID, 1)
 	if err != nil || len(lastUserMsgs) == 0 {
-		return defaultSize
+		return agent.WindowResult{Size: defaultSize, IsNewSession: true}
 	}
 	lastUserMsg := &lastUserMsgs[0]
 
-	// 读上次的窗口大小
 	lastWindow := defaultSize
 	if ws := agent.GetWindowSize(lastUserMsg); ws > 0 {
 		lastWindow = ws
 	}
 
-	// 判断是否同一 session
 	gap := time.Since(lastUserMsg.CreatedAt)
 	if gap > time.Duration(gapMinutes)*time.Minute {
-		return defaultSize
+		return agent.WindowResult{Size: defaultSize, IsNewSession: true}
 	}
 
-	// 扩张
 	maxRounds := cfg.Chat.MaxWindowRounds
 	newWindow := lastWindow + 1
 	if newWindow >= maxRounds {
-		newWindow = maxRounds / 2 // 达到上限，折半
+		newWindow = maxRounds / 2
 	}
-	return newWindow
+	return agent.WindowResult{
+		Size:              newWindow,
+		IsNewSession:      false,
+		SessionStartMsgID: agent.GetSessionStart(lastUserMsg),
+	}
 }

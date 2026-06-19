@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -16,99 +15,71 @@ import (
 )
 
 // SummaryWorker — 对话摘要生成器。
-// 由 CronRunner 的 DelayedTask 驱动，检查窗口外是否有足够的未覆盖 user messages，
-// 达到阈值时调 Flash 做增量合并生成导航级摘要。
+// 由 CronRunner 的 DelayedTask 驱动，在 session 结束后覆盖整段 session 生成导航级摘要。
 type SummaryWorker struct {
-	flashClient      llm.LLMClient
-	msgRepo          *service.MessageRepo
-	summaryRepo      *service.ConversationSummaryRepo
-	historyRounds    int // N，原始窗口大小
-	maxSummaryRounds int // M，单次摘要最多覆盖的 user message 条数
+	flashClient llm.LLMClient
+	msgRepo     *service.MessageRepo
+	summaryRepo *service.ConversationSummaryRepo
 }
 
 // SummaryWorkerConfig — SummaryWorker 依赖配置
 type SummaryWorkerConfig struct {
-	FlashClient      llm.LLMClient
-	MsgRepo          *service.MessageRepo
-	SummaryRepo      *service.ConversationSummaryRepo
-	HistoryRounds    int
-	MaxSummaryRounds int
+	FlashClient llm.LLMClient
+	MsgRepo     *service.MessageRepo
+	SummaryRepo *service.ConversationSummaryRepo
 }
 
 // NewSummaryWorker 创建摘要生成器。
 func NewSummaryWorker(cfg *SummaryWorkerConfig) *SummaryWorker {
-	m := cfg.MaxSummaryRounds
-	if m <= 0 {
-		m = cfg.HistoryRounds / 2
-		if m < 1 {
-			m = 1
-		}
-	}
 	return &SummaryWorker{
-		flashClient:      cfg.FlashClient,
-		msgRepo:          cfg.MsgRepo,
-		summaryRepo:      cfg.SummaryRepo,
-		historyRounds:    cfg.HistoryRounds,
-		maxSummaryRounds: m,
+		flashClient: cfg.FlashClient,
+		msgRepo:     cfg.MsgRepo,
+		summaryRepo: cfg.SummaryRepo,
 	}
 }
 
-// ProcessTask 处理一条 summary_generation 延迟任务。路由到 bootstrap 或 append。
-func (w *SummaryWorker) ProcessTask(ctx context.Context, convID, userID string) (bool, error) {
-	windowStart, err := w.findWindowStart(ctx, convID)
+// ProcessSessionEnd 处理 session 结束摘要——覆盖从 session 起始到 lastMsgID 的全部消息。
+func (w *SummaryWorker) ProcessSessionEnd(ctx context.Context, convID, userID, lastMsgID string) (bool, error) {
+	// 读取 lastMsgID 对应的消息，获取 SessionStartMsgID
+	lastMsg, err := w.msgRepo.GetByID(ctx, lastMsgID)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("GetByID lastMsg: %w", err)
 	}
-	if windowStart.IsZero() {
-		return false, nil
+	if lastMsg == nil {
+		return false, fmt.Errorf("summary: lastMsg %s not found", lastMsgID[:8])
+	}
+	sessionStart := GetSessionStart(lastMsg)
+	if sessionStart == "" {
+		return false, nil // 没有 session 起始标记，跳过
 	}
 
-	latest, err := w.summaryRepo.GetLatest(ctx, convID)
+	// 查起始消息和结束消息的 created_at
+	startMsg, err := w.msgRepo.GetByID(ctx, sessionStart)
 	if err != nil {
-		return false, fmt.Errorf("GetLatest: %w", err)
+		return false, fmt.Errorf("GetByID sessionStart: %w", err)
+	}
+	if startMsg == nil {
+		return false, fmt.Errorf("summary: sessionStart %s not found", sessionStart[:8])
+	}
+	endMsg, err := w.msgRepo.GetByID(ctx, lastMsgID)
+	if err != nil {
+		return false, fmt.Errorf("GetByID endMsg: %w", err)
+	}
+	if endMsg == nil {
+		return false, fmt.Errorf("summary: endMsg %s not found", lastMsgID[:8])
 	}
 
-	if latest == nil {
-		return w.bootstrap(ctx, convID, userID, windowStart)
-	}
-	return w.append(ctx, convID, userID, latest, windowStart)
-}
-
-// findWindowStart 返回最近 N 轮中最老一条 user message 的 created_at。
-func (w *SummaryWorker) findWindowStart(ctx context.Context, convID string) (time.Time, error) {
-	rounds, err := w.msgRepo.ListRecentRounds(ctx, convID, w.historyRounds)
+	// 加载 session 内所有 user 消息
+	msgs, err := w.msgRepo.ListUserMessagesBetween(ctx, convID, startMsg.CreatedAt, endMsg.CreatedAt, 0)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("ListRecentRounds: %w", err)
-	}
-	if len(rounds) == 0 || len(rounds[0]) == 0 {
-		return time.Time{}, nil
-	}
-	return rounds[0][0].CreatedAt, nil
-}
-
-// bootstrap — 冷启动：加载窗口外最近的 M 条消息，生成第一段摘要。
-func (w *SummaryWorker) bootstrap(ctx context.Context, convID, userID string, windowStart time.Time) (bool, error) {
-	msgs, err := w.msgRepo.ListUserMessagesBefore(ctx, convID, windowStart, w.maxSummaryRounds)
-	if err != nil {
-		return false, fmt.Errorf("ListUserMessagesBefore: %w", err)
+		return false, fmt.Errorf("ListUserMessagesBetween: %w", err)
 	}
 	if len(msgs) == 0 {
 		return false, nil
 	}
 
-	// 冷启动也需要 K >= N/2 门槛
-	threshold := w.historyRounds / 2
-	if threshold < 1 {
-		threshold = 1
-	}
-	k, _ := w.msgRepo.CountUserMessagesBetween(ctx, convID, time.Time{}, windowStart)
-	if k < int64(threshold) {
-		log.Printf("[summary] bootstrap: conv=%s K=%d < threshold=%d, skipping", convID[:8], k, threshold)
-		return false, nil
-	}
-
-	log.Printf("[summary] bootstrap: conv=%s loading %d user messages (K=%d, limit=%d)",
-		convID[:8], len(msgs), k, w.maxSummaryRounds)
+	log.Printf("[summary] session_end: conv=%s loading %d user msgs for previous session",
+		convID[:8], len(msgs))
 
 	summaryText, reqJSON, respJSON, err := w.callFlash(ctx, "", msgs)
 	if err != nil {
@@ -121,72 +92,7 @@ func (w *SummaryWorker) bootstrap(ctx context.Context, convID, userID string, wi
 	return w.saveSummary(ctx, convID, userID, msgs, nil, summaryText, reqJSON, respJSON)
 }
 
-// append — 增量追加：从上次 cover_to 之后到窗口边界之间，K >= N/2 时增量生成。
-func (w *SummaryWorker) append(ctx context.Context, convID, userID string, latest *model.ConversationSummary, windowStart time.Time) (bool, error) {
-	afterTime, err := w.resolveAfterTime(ctx, latest)
-	if err != nil {
-		log.Printf("[summary] append: resolveAfterTime error: %v", err)
-		return false, nil
-	}
-
-	// 如果已覆盖到窗口边界，无需生成
-	if !afterTime.Before(windowStart) {
-		return false, nil
-	}
-
-	k, err := w.msgRepo.CountUserMessagesBetween(ctx, convID, afterTime, windowStart)
-	if err != nil {
-		return false, fmt.Errorf("CountUserMessagesBetween: %w", err)
-	}
-
-	threshold := w.historyRounds / 2
-	if threshold < 1 {
-		threshold = 1
-	}
-	if k < int64(threshold) {
-		log.Printf("[summary] append: conv=%s K=%d < threshold=%d, skipping", convID[:8], k, threshold)
-		return false, nil
-	}
-
-	msgs, err := w.msgRepo.ListUserMessagesBetween(ctx, convID, afterTime, windowStart, w.maxSummaryRounds)
-	if err != nil {
-		return false, fmt.Errorf("ListUserMessagesBetween: %w", err)
-	}
-	if len(msgs) == 0 {
-		return false, nil
-	}
-
-	log.Printf("[summary] append: conv=%s loading %d user messages (K=%d, limit=%d)",
-		convID[:8], len(msgs), k, w.maxSummaryRounds)
-
-	summaryText, reqJSON, respJSON, err := w.callFlash(ctx, latest.SummaryText, msgs)
-	if err != nil {
-		return false, fmt.Errorf("callFlash: %w", err)
-	}
-	if summaryText == "" {
-		return false, nil
-	}
-
-	return w.saveSummary(ctx, convID, userID, msgs, latest, summaryText, reqJSON, respJSON)
-}
-
-// resolveAfterTime 根据上段摘要的 cover_to_msg_id 找到对应消息的 created_at。
-func (w *SummaryWorker) resolveAfterTime(ctx context.Context, latest *model.ConversationSummary) (time.Time, error) {
-	coverMsg, err := w.msgRepo.GetByIDCols(ctx, latest.CoverToMsgID, "id", "created_at")
-	if err != nil {
-		return time.Time{}, err
-	}
-	if coverMsg == nil {
-		// 退化为从 cover_from_msg_id 查
-		coverMsg, err = w.msgRepo.GetByIDCols(ctx, latest.CoverFromMsgID, "id", "created_at")
-		if err != nil || coverMsg == nil {
-			return time.Time{}, fmt.Errorf("cover range messages missing for summary=%s", latest.ID[:8])
-		}
-	}
-	return coverMsg.CreatedAt, nil
-}
-
-// callFlash 调 Flash 生成增量摘要。返回文本及 request/response JSON（调试用）。
+// callFlash 调 Flash 生成摘要。返回文本及 request/response JSON（调试用）。
 func (w *SummaryWorker) callFlash(ctx context.Context, prevSummary string, msgs []model.Message) (string, *string, *string, error) {
 	systemPrompt := `你是一个对话摘要生成器。你的任务是基于对话历史生成一段导航级摘要。
 
@@ -270,13 +176,4 @@ func (w *SummaryWorker) saveSummary(
 	log.Printf("[summary] created: id=%s conv=%s cover=%s..%s text=%d chars",
 		record.ID[:8], convID[:8], coverFrom[:8], coverTo[:8], len(text))
 	return true, nil
-}
-
-// truncateRunes 按 rune 截断文本。
-func truncateRunes(s string, max int) string {
-	runes := []rune(s)
-	if len(runes) <= max {
-		return s
-	}
-	return string(runes[:max])
 }

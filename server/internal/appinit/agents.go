@@ -77,11 +77,9 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		retrievalTools, repos.Trace)
 	// --- Summary 子系统 ---
 	summaryWorker := agent.NewSummaryWorker(&agent.SummaryWorkerConfig{
-		FlashClient:      llmClients.Flash,
-		MsgRepo:          repos.Message,
-		SummaryRepo:      repos.ConversationSummary,
-		HistoryRounds:    cfg.Chat.HistoryRounds,
-		MaxSummaryRounds: cfg.Chat.MaxSummaryRounds,
+		FlashClient: llmClients.Flash,
+		MsgRepo:     repos.Message,
+		SummaryRepo: repos.ConversationSummary,
 	})
 
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{
@@ -96,6 +94,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MissionRunner:     missionRunner,
 		MissionRepo:       repos.Mission,
 		SummaryWorker:     summaryWorker,
+		SessionGapMinutes: cfg.Chat.SessionGapMinutes,
 		DiscoverSchedules: cfg.Reflection.DailySchedules,
 		DeliverInterval:   time.Duration(cfg.Reflection.DeliverIntervalMinutes) * time.Minute,
 		MissionInterval:   time.Duration(cfg.Reflection.MissionCheckIntervalMinutes) * time.Minute,
@@ -133,9 +132,9 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MaxTokens:          cfg.LLM.DefaultMaxTokens,
 		MaxToolResultChars: cfg.LLM.MaxToolResultChars,
 		ToolMaxConcurrency: cfg.LLM.ToolMaxConcurrency,
-		OnChatEnd: func(userID, convID string) {
+		OnChatEnd: func(userID, convID, userMsgID string) {
 			cronRunner.NotifyChatEnd(userID, convID)
-			cronRunner.NotifySummaryCheck(userID, convID)
+			cronRunner.NotifySummaryCheck(userID, convID, userMsgID)
 		},
 		VerifyEnabled:    cfg.LLM.Verification.Enabled,
 		VerifyMaxRetries: cfg.LLM.Verification.MaxRetries,

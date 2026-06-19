@@ -30,6 +30,13 @@ const BaseSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职
 
 const defaultMaxIterations = 8
 
+// WindowResult 是扩张窗口计算的结果，描述本次请求的窗口大小和 session 状态。
+type WindowResult struct {
+	Size              int    // 本次窗口轮数
+	IsNewSession      bool   // 本条消息开启了新 session
+	SessionStartMsgID string // 当前 session 的起始消息 ID（新 session 为空，orchestrator 用本条 msgID 填充）
+}
+
 // RunRequest — Orchestrator 输入
 type RunRequest struct {
 	UserID             string
@@ -45,7 +52,7 @@ type RunRequest struct {
 	MaxTokens          *int     // LLM 最大输出 token，nil 用配置默认
 	MaxIterations      int      // ReAct 最大轮次，0 用配置默认
 	Thinking           *bool    // 思考模式：nil=不传，true=开启，false=关闭
-	WindowSize         int      // 扩张窗口当前轮数，0=使用默认
+	Window             WindowResult
 
 	OverrideSystemPrompt *string
 
@@ -105,7 +112,7 @@ type Orchestrator struct {
 	defaultMaxTokens    *int
 	maxToolResultChars  int
 	maxConcurrency      int
-	onChatEnd           func(userID, convID string)
+	onChatEnd           func(userID, convID, userMsgID string)
 	verifyEnabled       bool
 	verifyMaxRetries    int
 	verifyModel         string // "flash" | "pro"
@@ -129,7 +136,7 @@ type OrchestratorConfig struct {
 	MaxTokens          *int
 	MaxToolResultChars int
 	ToolMaxConcurrency int
-	OnChatEnd          func(userID, convID string)
+	OnChatEnd          func(userID, convID, userMsgID string)
 	VerifyEnabled      bool
 	VerifyMaxRetries   int
 	VerifyModel        string // "flash" | "pro"，默认 flash
@@ -290,15 +297,15 @@ func (o *Orchestrator) runReActLoop(
 	req *RunRequest,
 ) {
 	defer close(events)
-	defer util.SafeGo(func() {
-		if o.onChatEnd != nil {
-			o.onChatEnd(req.UserID, req.ConversationID)
-		}
-	})
 
 	userMsg := mkUserMsg(req)
-	if req.WindowSize > 0 {
-		SetWindowSize(userMsg, req.WindowSize)
+	if req.Window.Size > 0 {
+		SetWindowSize(userMsg, req.Window.Size)
+	}
+	if req.Window.IsNewSession {
+		SetSessionStart(userMsg, userMsg.ID)
+	} else if req.Window.SessionStartMsgID != "" {
+		SetSessionStart(userMsg, req.Window.SessionStartMsgID)
 	}
 	if err := o.msgRepo.Create(ctx, userMsg); err != nil {
 		log.Printf("[orch] save user msg error: %v", err)
@@ -307,6 +314,11 @@ func (o *Orchestrator) runReActLoop(
 	}
 	util.SafeGo(func() { o.convRepo.Touch(ctx, req.ConversationID) })
 	util.SafeGo(func() { o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID) })
+	util.SafeGo(func() {
+		if o.onChatEnd != nil {
+			o.onChatEnd(req.UserID, req.ConversationID, userMsg.ID)
+		}
+	})
 
 	// 加载对话摘要（若有），放在 UserMessagePrefix 最前面
 	if o.summaryRepo != nil {

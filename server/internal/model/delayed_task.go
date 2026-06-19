@@ -19,7 +19,8 @@ type DelayedTask struct {
 
 // DelayedTaskMeta — TaskMeta 列的统一结构，不同 TaskType 使用不同字段组合
 type DelayedTaskMeta struct {
-	ConvID string `json:"conv_id,omitempty"`
+	ConvID    string `json:"conv_id,omitempty"`
+	LastMsgID string `json:"last_msg_id,omitempty"` // session_end_summary 使用的最后一条消息 ID
 }
 
 // SetMeta 将 DelayedTaskMeta 序列化写入 TaskMeta 列

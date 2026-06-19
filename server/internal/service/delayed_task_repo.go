@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -37,6 +38,19 @@ func (r *DelayedTaskRepo) ListDue(ctx context.Context, taskType string, limit in
 func (r *DelayedTaskRepo) MarkDone(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Model(&model.DelayedTask{}).Where("id = ?", id).
 		Update("status", "done").Error
+}
+
+// FindByID 按 ID 查任务，未找到返回 (nil, nil)
+func (r *DelayedTaskRepo) FindByID(ctx context.Context, id string) (*model.DelayedTask, error) {
+	var t model.DelayedTask
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&t).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 // MarkFailed 标记失败，重试次数+1，process_at 推后
@@ -75,6 +89,25 @@ func (r *DelayedTaskRepo) FindPendingByUserAndType(ctx context.Context, userID, 
 func (r *DelayedTaskRepo) UpdateProcessAt(ctx context.Context, id string, t time.Time) error {
 	return r.db.WithContext(ctx).Model(&model.DelayedTask{}).Where("id = ?", id).
 		Update("process_at", t).Error
+}
+
+// ScheduleRetry 安排重试：保持 pending 状态，retry_count+1, process_at 推后 delay。
+// 与 MarkFailed 不同：不改变 status，任务会被下一轮 ListDue 再次扫到。
+func (r *DelayedTaskRepo) ScheduleRetry(ctx context.Context, id string, retryCount int, delay time.Duration) error {
+	return r.db.WithContext(ctx).Model(&model.DelayedTask{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"retry_count": retryCount + 1,
+			"process_at":  time.Now().Add(delay),
+		}).Error
+}
+
+// UpdateProcessAtAndMeta 更新任务的处理时间和 TaskMeta（用于 debounce 时同步更新 LastMsgID）
+func (r *DelayedTaskRepo) UpdateProcessAtAndMeta(ctx context.Context, id string, t time.Time, meta string) error {
+	return r.db.WithContext(ctx).Model(&model.DelayedTask{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"process_at": t,
+			"task_meta":  meta,
+		}).Error
 }
 
 // CountPending 统计全局 pending 任务数

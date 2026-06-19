@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"sync"
 	"time"
@@ -44,8 +45,7 @@ type CronRunner struct {
 	missionRunner     *MissionRunner
 	missionRepo       *service.MissionRepo
 	summaryWorker     *SummaryWorker // 摘要生成器
-	summaryDelay      time.Duration  // 摘要任务延迟，默认 10 秒
-	summaryMaxDelay   time.Duration  // 摘要任务最大推迟上限，默认 60 秒
+	sessionGapMinutes int            // session 间隔阈值（分钟）
 
 	// 钩子状态追踪
 	mu              sync.Mutex
@@ -68,7 +68,7 @@ type CronRunnerConfig struct {
 	MissionRunner     *MissionRunner
 	MissionRepo       *service.MissionRepo
 	SummaryWorker     *SummaryWorker
-	SummaryDelay      time.Duration // 摘要任务延迟，默认 10 秒
+	SessionGapMinutes int // session 间隔阈值（分钟），用于摘要任务延迟
 	DiscoverSchedules []string
 	DeliverInterval   time.Duration
 	MissionInterval   time.Duration
@@ -94,11 +94,6 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 	if cfg.MissionInterval <= 0 {
 		cfg.MissionInterval = 30 * time.Minute
 	}
-	summaryDelay := cfg.SummaryDelay
-	if summaryDelay <= 0 {
-		summaryDelay = 10 * time.Second
-	}
-	summaryMaxDelay := summaryDelay * 6 // 默认 60s，防止活跃用户无限推迟
 	return &CronRunner{
 		orch:              cfg.Orch,
 		stateUpdater:      cfg.StateUpdater,
@@ -118,8 +113,7 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		memoryAutoExtract: cfg.MemoryAutoExtract,
 		taskPollInterval:  3 * time.Minute,
 		summaryWorker:     cfg.SummaryWorker,
-		summaryDelay:      summaryDelay,
-		summaryMaxDelay:   summaryMaxDelay,
+		sessionGapMinutes: cfg.SessionGapMinutes,
 	}
 }
 
@@ -206,53 +200,70 @@ func (cr *CronRunner) NotifyChatEnd(userID, convID string) {
 
 // NotifySummaryCheck 对话结束时入队摘要任务。
 // 每次 chat 结束都调——enqueue 内部的去重 + K≥N/2 门槛保证不会重复生成。
-func (cr *CronRunner) NotifySummaryCheck(userID, convID string) {
-	cr.enqueueSummaryTask(userID, convID)
+func (cr *CronRunner) NotifySummaryCheck(userID, convID, userMsgID string) {
+	cr.enqueueSummaryTask(userID, convID, userMsgID)
 }
 
-// enqueueSummaryTask 入队一条 summary_generation 任务，带去重（同 conv 的 pending 任务推迟 process_at）。
-func (cr *CronRunner) enqueueSummaryTask(userID, convID string) {
+// enqueueSummaryTask 入队一条 summary_generation 任务，暂存 userMsgID 防止竞态，带去重（同 conv 的 pending 任务推迟 process_at）。
+func (cr *CronRunner) enqueueSummaryTask(userID, convID, userMsgID string) {
 	// 去重：查同 user+type 的 pending 任务
 	pending, err := cr.delayedTaskRepo.FindPendingByUserAndType(context.Background(), userID, "summary_generation")
+	// 查重是优化——出错时不 return，直接走 insert 分支。
+	// 最坏情况多做一条 insert，seen map 在 processSummaryTasks 里兜底去重。
+	// 比"出错就丢一次摘要生成"代价小得多。
 	if err != nil {
 		log.Printf("[cron] FindPendingByUserAndType summary error: %v, fallback to insert", err)
 	} else {
 		for _, t := range pending {
 			meta, err := t.ParseMeta()
 			if err == nil && meta.ConvID == convID {
-				newTime := time.Now().Add(cr.summaryDelay)
-				// 上限：不晚于任务创建时间 + maxDelay，防止活跃用户无限推迟
-				deadline := t.CreatedAt.Add(cr.summaryMaxDelay)
-				if newTime.After(deadline) {
-					newTime = deadline
-				}
-				if err := cr.delayedTaskRepo.UpdateProcessAt(context.Background(), t.ID, newTime); err != nil {
-					log.Printf("[cron] UpdateProcessAt summary error: %v", err)
-				} else {
-					log.Printf("[cron] summary task debounced: id=%s new_process_at=%s", t.ID[:8], newTime.In(config.BJ).Format("15:04:05"))
-				}
+				cr.debounceSummaryTask(&t, convID, userMsgID)
 				return
 			}
 		}
 	}
 
+	cr.createSummaryTask(userID, convID, userMsgID)
+}
+
+// debounceSummaryTask 推迟已有 pending task，更新 LastMsgID。
+func (cr *CronRunner) debounceSummaryTask(t *model.DelayedTask, convID, userMsgID string) {
+	gapDuration := time.Duration(cr.sessionGapMinutes) * time.Minute
+	newTime := time.Now().Add(gapDuration)
+
+	newMeta, err := json.Marshal(model.DelayedTaskMeta{ConvID: convID, LastMsgID: userMsgID})
+	if err != nil {
+		log.Printf("[cron] debounceSummaryTask marshal error: %v", err)
+		return
+	}
+	if err := cr.delayedTaskRepo.UpdateProcessAtAndMeta(context.Background(), t.ID, newTime, string(newMeta)); err != nil {
+		log.Printf("[cron] debounceSummaryTask error: %v", err)
+		return
+	}
+	log.Printf("[cron] summary task debounced: id=%s new_process_at=%s last_msg=%s",
+		t.ID[:8], newTime.In(config.BJ).Format("15:04:05"), userMsgID[:8])
+}
+
+// createSummaryTask 新建一条 summary_generation 延迟任务。
+func (cr *CronRunner) createSummaryTask(userID, convID, userMsgID string) {
+	gapDuration := time.Duration(cr.sessionGapMinutes) * time.Minute
 	job := &model.DelayedTask{
 		ID:        uuid.New().String(),
 		UserID:    userID,
 		TaskType:  "summary_generation",
 		Status:    "pending",
-		ProcessAt: time.Now().Add(cr.summaryDelay),
+		ProcessAt: time.Now().Add(gapDuration),
 	}
-	if err := job.SetMeta(model.DelayedTaskMeta{ConvID: convID}); err != nil {
-		log.Printf("[cron] SetMeta summary error: %v", err)
+	if err := job.SetMeta(model.DelayedTaskMeta{ConvID: convID, LastMsgID: userMsgID}); err != nil {
+		log.Printf("[cron] createSummaryTask SetMeta error: %v", err)
 		return
 	}
 	if err := cr.delayedTaskRepo.Create(context.Background(), job); err != nil {
-		log.Printf("[cron] create summary task error: %v", err)
-	} else {
-		log.Printf("[cron] summary task created: id=%s conv=%s process_at=%s",
-			job.ID[:8], convID[:8], job.ProcessAt.In(config.BJ).Format("15:04:05"))
+		log.Printf("[cron] createSummaryTask error: %v", err)
+		return
 	}
+	log.Printf("[cron] summary task created: id=%s conv=%s process_at=%s last_msg=%s",
+		job.ID[:8], convID[:8], job.ProcessAt.In(config.BJ).Format("15:04:05"), userMsgID[:8])
 }
 
 // Start 启动调度循环（阻塞，用 goroutine 调用）
@@ -387,19 +398,26 @@ func (cr *CronRunner) processSummaryTasks(ctx context.Context) {
 		}
 		seen[key] = true
 
-		generated, err := cr.summaryWorker.ProcessTask(ctx, meta.ConvID, t.UserID)
+		generated, err := cr.summaryWorker.ProcessSessionEnd(ctx, meta.ConvID, t.UserID, meta.LastMsgID)
 		if err != nil {
-			log.Printf("[cron] summary ProcessTask error: conv=%s err=%v", meta.ConvID[:8], err)
-			// 重试最多 3 次
+			log.Printf("[cron] summary ProcessSessionEnd error: conv=%s err=%v", meta.ConvID[:8], err)
 			if t.RetryCount < 3 {
-				cr.delayedTaskRepo.MarkFailed(ctx, t.ID, t.RetryCount)
+				cr.delayedTaskRepo.ScheduleRetry(ctx, t.ID, t.RetryCount, 2*time.Minute)
 			} else {
-				cr.delayedTaskRepo.MarkDone(ctx, t.ID)
+				cr.delayedTaskRepo.MarkFailed(ctx, t.ID, t.RetryCount)
 			}
 			continue
 		}
 		if generated {
 			log.Printf("[cron] summary generated: user=%s conv=%s", t.UserID[:8], meta.ConvID[:8])
+		}
+
+		// 防止 TOCTOU：检查任务是否被并发 enqueue 改过（process_at 被推迟说明被 debounce 了）
+		if current, err := cr.delayedTaskRepo.FindByID(ctx, t.ID); err != nil {
+			log.Printf("[cron] summary FindByID error: %v, still marking done", err)
+		} else if current != nil && current.ProcessAt.After(t.ProcessAt) {
+			log.Printf("[cron] summary task %s debounced while processing, skipping MarkDone", t.ID[:8])
+			continue
 		}
 		if err := cr.delayedTaskRepo.MarkDone(ctx, t.ID); err != nil {
 			log.Printf("[cron] MarkDone summary error: %v", err)

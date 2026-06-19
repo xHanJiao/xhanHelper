@@ -32,6 +32,10 @@ type MsgExtra struct {
 	// 每条 user 消息记录当时的窗口大小，供下一条消息读取+递增。
 	// 0 表示未设置（默认使用配置的 history_rounds）。
 	WindowSize int `json:"window_size,omitempty"`
+
+	// SessionStartMsgID — 当前 session 的第一条 user 消息 ID。
+	// 同一 session 内所有消息共享此 ID，session 结束时用于确定摘要范围。
+	SessionStartMsgID string `json:"session_start_msg_id,omitempty"`
 }
 
 // mergeMsgExtra 从消息中读取已有 Extra，调用 fn 修改后写回。
@@ -65,6 +69,25 @@ func SetUsage(msg *model.Message, usage *llm.Usage) {
 	mergeMsgExtra(msg, func(extra *MsgExtra) {
 		extra.Usage = usage
 	})
+}
+
+// SetSessionStart 设置消息的 session 起始 ID。自动与已有 Extra 合并。
+func SetSessionStart(msg *model.Message, startMsgID string) {
+	mergeMsgExtra(msg, func(extra *MsgExtra) {
+		extra.SessionStartMsgID = startMsgID
+	})
+}
+
+// GetSessionStart 从消息 Extra 中读取 SessionStartMsgID，未设置返回空字符串。
+func GetSessionStart(msg *model.Message) string {
+	if msg.Extra == nil {
+		return ""
+	}
+	var extra MsgExtra
+	if err := json.Unmarshal([]byte(*msg.Extra), &extra); err != nil {
+		return ""
+	}
+	return extra.SessionStartMsgID
 }
 
 // GetWindowSize 从消息 Extra 中读取 WindowSize，未设置返回 0。

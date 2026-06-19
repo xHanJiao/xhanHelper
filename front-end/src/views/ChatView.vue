@@ -61,7 +61,7 @@
  * ============================================================================
  */
 
-import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useConversationsStore } from '@/stores/conversations'
@@ -79,6 +79,7 @@ import {
 } from 'naive-ui'
 import MessageBubble from '@/components/MessageBubble.vue'
 import ToolCallToast from '@/components/ToolCallToast.vue'
+import SelectionActionBar from '@/components/SelectionActionBar.vue'
 
 import PageTopBar from '@/components/PageTopBar.vue'
 import TopBarBtn from '@/components/TopBarBtn.vue'
@@ -115,6 +116,63 @@ const mobileInputRef = ref(null)
 const isInitialScrollDone = ref(false)
 const isAwayFromBottom = ref(false)
 const skipInputTransition = ref(false)
+
+// --- Selection mode state ---
+const selectionMode = ref(false)
+const selectedUserMsgIds = ref(new Set())
+
+function enterSelectionMode(roundKey) {
+  selectionMode.value = true
+  inputVisible.value = false
+  showCooldownActive = false
+  clearTimeout(hideCooldownTimer)
+  if (roundKey) {
+    selectedUserMsgIds.value = new Set([roundKey])
+  }
+}
+
+function exitSelectionMode() {
+  selectionMode.value = false
+  selectedUserMsgIds.value = new Set()
+  if (!isMobile.value) {
+    inputVisible.value = true
+  }
+}
+
+function toggleRound(roundKey) {
+  if (!roundKey) return
+  const s = new Set(selectedUserMsgIds.value)
+  if (s.has(roundKey)) {
+    s.delete(roundKey)
+  } else {
+    if (s.size >= 10) return
+    s.add(roundKey)
+  }
+  selectedUserMsgIds.value = s
+}
+
+// Compute roundKey for each message: each user msg starts a round,
+// subsequent non-user msgs inherit that roundKey until next user msg.
+const messagesWithRoundKeys = computed(() => {
+  let currentRoundKey = ''
+  return chat.messages.map(msg => {
+    if (msg.role === 'user') {
+      currentRoundKey = msg.id
+    }
+    return {
+      ...msg,
+      roundKey: currentRoundKey || '',
+    }
+  })
+})
+
+// Provide selection context to child components
+provide('selectionMode', selectionMode)
+provide('selectedUserMsgIds', selectedUserMsgIds)
+provide('toggleRound', toggleRound)
+provide('enterSelectionMode', enterSelectionMode)
+provide('exitSelectionMode', exitSelectionMode)
+// --- End selection mode state ---
 
 const { isBarVisible, showBar } = useScrollTopBar(messagesContainerRef)
 
@@ -412,6 +470,7 @@ function normalizeMessage(msg) {
 // 2. 外部事件要求重新加载当前会话（如信箱跳转）→ newId 不变，但 chat.needsRefetch 被设为 true
 // 3. 用户直接访问 /chat 无 id 或 id 被清空 → newId 为 undefined/null
 watch(() => route.params.id, async (newId, oldId) => {
+  exitSelectionMode()
   // --- 离开旧会话时，取消正在进行的 SSE 流 ---
   // 避免旧会话的流式响应继续污染新会话的消息列表
   if (oldId && chat.isStreaming) {
@@ -546,6 +605,8 @@ async function handleSend() {
   const content = inputValue.value.trim()
   if (!content || chat.isStreaming) return
 
+  exitSelectionMode()
+
   chat.addMessage({ id: Date.now().toString(), role: 'user', content, created_at: new Date().toISOString() })
   inputValue.value = ''
   inputExpanded.value = false
@@ -592,7 +653,7 @@ function handleScroll(e) {
   // 显示：即时触发，无需延迟（跟手体验）
   // 隐藏：即时触发，但在「刚显示后的冷却期」内拦截，防止 iPad Safari 弹性滚动振荡导致闪烁
   if (isInitialScrollDone.value && !isMobile.value) {
-    if (distFromBottom < 30 && !inputVisible.value) {
+    if (distFromBottom < 30 && !inputVisible.value && !selectionMode.value) {
       inputVisible.value = true
       showCooldownActive = true
       clearTimeout(hideCooldownTimer)
@@ -644,6 +705,8 @@ function handleContainerClick(e) {
       </template>
     </PageTopBar>
 
+    <SelectionActionBar />
+
     <div
       ref="messagesContainerRef"
       @scroll="handleScroll"
@@ -652,6 +715,7 @@ function handleContainerClick(e) {
       style="flex: 1; overflow-y: auto; padding: var(--space-lg); display: flex; justify-content: center;"
     >
       <div style="width: 100%; max-width: 900px; position: relative;">
+
         <div v-if="isLoadingHistory" style="text-align: center; padding: 20px 0;">
           <div style="width: 24px; height: 24px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block;"></div>
         </div>
@@ -661,10 +725,11 @@ function handleContainerClick(e) {
         </div>
 
         <MessageBubble
-          v-for="msg in chat.messages"
+          v-for="msg in messagesWithRoundKeys"
           :key="msg.id"
           :message="msg"
           :is-history="true"
+          :round-key="msg.roundKey"
         />
         <div style="position: relative;">
           <div ref="streamingBubbleRef" v-if="chat.streamingMessage">

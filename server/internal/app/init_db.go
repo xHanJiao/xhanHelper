@@ -50,6 +50,7 @@ func InitDB(cfg *config.Config) *gorm.DB {
 		&model.DelayedTask{},
 		&model.Document{},
 		&model.DocumentShare{},
+		&model.MessageShare{},
 		&model.ContentVersion{},
 		&model.Mission{},
 		&model.SearchUsage{},

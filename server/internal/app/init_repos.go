@@ -29,6 +29,7 @@ type Repos struct {
 	DelayedTask         *service.DelayedTaskRepo
 	Document            *service.DocumentRepo
 	DocumentShare       *service.DocumentShareRepo
+	MessageShare        *service.MessageShareRepo
 	Version             *service.VersionRepo
 	Mission             *service.MissionRepo
 	SearchUsage         *service.SearchUsageRepo
@@ -38,10 +39,11 @@ type Repos struct {
 // InitRepos 创建所有 repo 实例
 func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 	docRepo := service.NewDocumentRepo(db)
+	msgRepo := service.NewMessageRepo(db)
 	return &Repos{
 		User:                service.NewUserRepo(db, cfg.Server.TokenTTLMinutes, cfg.Server.MaxTokensPerUser),
 		Conversation:        service.NewConversationRepo(db),
-		Message:             service.NewMessageRepo(db),
+		Message:             msgRepo,
 		Bill:                service.NewBillRepo(db),
 		Mem:                 service.NewUserMemoryRepo(db),
 		Note:                service.NewNoteRepo(db),
@@ -59,6 +61,7 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		DelayedTask:         service.NewDelayedTaskRepo(db),
 		Document:            docRepo,
 		DocumentShare:       service.NewDocumentShareRepo(db, docRepo),
+		MessageShare:        service.NewMessageShareRepo(db, msgRepo),
 		Version:             service.NewVersionRepo(db),
 		Mission:             service.NewMissionRepo(db),
 		SearchUsage:         service.NewSearchUsageRepo(db),

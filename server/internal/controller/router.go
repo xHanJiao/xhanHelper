@@ -27,6 +27,7 @@ type RouterConfig struct {
 	PromptHandler        *PromptHandler
 	DocumentHandler      *DocumentHandler
 	DocumentShareHandler *DocumentShareHandler
+	MessageShareHandler  *MessageShareHandler
 	MemExtr              *agent.MemoryExtractor
 	ExtraMiddleware      []gin.HandlerFunc
 }
@@ -51,6 +52,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	r.POST("/api/auth/register", registerUser(rc.UserRepo, rc.Cfg.Server.RegistrationEnabled, rc.Cfg.Server.AllowedUsers, rc.Cfg.Server.AdminUsers))
 	r.POST("/api/auth/login", loginUser(rc.UserRepo, rc.Cfg.Server.AdminUsers))
 	// 公开分享
+	r.GET("/api/share/messages/:token", rc.MessageShareHandler.ViewSharedMessages)
 	r.GET("/api/share/:token", rc.DocumentShareHandler.ViewSharedDocument)
 	// 需要认证
 	auth := r.Group("/api")
@@ -71,6 +73,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.DELETE("/conversations/:id", deleteConversation(rc.ConvRepo))
 		auth.POST("/conversations/:id/extract-memories", extractMemories(rc.ConvRepo, rc.MemExtr))
 		auth.POST("/conversations/:id/extract-memories/stream", extractMemoriesStream(rc.ConvRepo, rc.MemExtr))
+		auth.POST("/conversations/:id/share-messages", rc.MessageShareHandler.CreateMessageShare)
 		auth.GET("/bills", rc.BillHandler.ListBills)
 		auth.GET("/bills/export", rc.BillHandler.ExportBills)
 		auth.POST("/bills/import", rc.BillHandler.ImportBills)

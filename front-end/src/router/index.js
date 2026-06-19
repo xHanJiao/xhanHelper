@@ -88,6 +88,11 @@ const routes = [
     component: () => import('@/views/EvalAnnotatorView.vue')
   },
   {
+    path: '/s/messages/:token',
+    name: 'SharedMessages',
+    component: () => import('@/views/SharedMessagesView.vue')
+  },
+  {
     path: '/s/:token',
     name: 'SharedDocument',
     component: () => import('@/views/SharedDocumentView.vue')

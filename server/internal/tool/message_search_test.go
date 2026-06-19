@@ -6,12 +6,12 @@ import (
 )
 
 func TestMessageSearchTool_Functions_Schema(t *testing.T) {
-	tool := NewMessageSearchTool(nil, nil, 50, 25)
+	tool := NewMessageSearchTool(nil, nil)
 	fns := tool.Functions()
-	if len(fns) != 2 {
-		t.Fatalf("expected 2 functions, got %d", len(fns))
+	if len(fns) != 1 {
+		t.Fatalf("expected 1 function, got %d", len(fns))
 	}
-	fn := fns[1] // search 是第二个（search_by_range 在前）
+	fn := fns[0]
 	if fn.Name != "search" {
 		t.Errorf("expected function name 'search', got %q", fn.Name)
 	}
@@ -38,7 +38,7 @@ func TestMessageSearchTool_Functions_Schema(t *testing.T) {
 }
 
 func TestMessageSearchTool_Execute_Errors(t *testing.T) {
-	tool := NewMessageSearchTool(nil, nil, 50, 25)
+	tool := NewMessageSearchTool(nil, nil)
 
 	t.Run("empty keyword", func(t *testing.T) {
 		args, _ := json.Marshal(map[string]string{"query": ""})

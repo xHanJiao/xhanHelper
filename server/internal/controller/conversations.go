@@ -214,11 +214,11 @@ func getMessagesCursor(msgRepo *service.MessageRepo, convRepo *service.Conversat
 		if !requireConversationOwner(c, convRepo, convID) {
 			return
 		}
-		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", strconv.Itoa(service.DefaultCursorRounds)))
 		cursor := c.Query("cursor")
 		direction := c.DefaultQuery("direction", "before")
 
-		result, err := msgRepo.ListByConversationCursor(c.Request.Context(), convID, cursor, direction, limit)
+		result, err := msgRepo.ListByConversationCursorByRounds(c.Request.Context(), convID, cursor, direction, limit)
 		if err != nil {
 			log.Printf("[conv] GetMessagesCursor error: %v", err)
 			view.JSONError(c, 500, "query messages failed")

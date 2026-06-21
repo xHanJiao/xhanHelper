@@ -11,6 +11,9 @@ import (
 	"xhan-helper/internal/util"
 )
 
+// DefaultCursorRounds — 游标分页默认轮数（轮级/条级通用）
+const DefaultCursorRounds = 5
+
 // MessageRepo — 消息数据访问
 type MessageRepo struct {
 	db *gorm.DB
@@ -209,6 +212,120 @@ func (r *MessageRepo) existsAfter(ctx context.Context, convID string, t time.Tim
 	return count > 0
 }
 
+// ListByConversationCursorByRounds 基于游标的轮级分页查询。
+// 与 ListByConversationCursor 不同：limit 语义为「N 轮」而非「N 条消息」，
+// 确保每批返回的消息至少包含一条 user 消息作为边界，避免全 assistant/tool 批导致的断流。
+//
+// cursor: 锚点消息 ID（空则从最新开始）
+// direction: "before" 加载更旧轮，"after" 加载更新轮
+func (r *MessageRepo) ListByConversationCursorByRounds(ctx context.Context, convID, cursor, direction string, rounds int) (*CursorResult, error) {
+	if rounds <= 0 || rounds > 50 {
+		rounds = DefaultCursorRounds
+	}
+
+	var anchorTime *time.Time
+	hasCursor := cursor != ""
+	if hasCursor {
+		var m model.Message
+		err := r.db.WithContext(ctx).Where("id = ?", cursor).First(&m).Error
+		if err == nil {
+			anchorTime = &m.CreatedAt
+		}
+	}
+
+	var userMsgs []model.Message
+	var endTime *time.Time
+	var err error
+
+	if direction == "after" && anchorTime != nil {
+		// after：多拉一轮作为上界，展开后裁掉末轮
+		userMsgs, err = r.loadUserMessagesAfter(ctx, convID, *anchorTime, rounds+1)
+	} else {
+		// before / 无 cursor：用 anchorTime 作为末轮上界，精准查 rounds 条
+		userMsgs, err = r.loadUserMessagesBefore(ctx, convID, anchorTime, rounds)
+		endTime = anchorTime
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	roundsData, err := r.buildRoundsFromUserMsgs(ctx, userMsgs, endTime)
+	if err != nil {
+		return nil, err
+	}
+
+	// after 方向：裁掉多拉的那一轮边界
+	if direction == "after" && anchorTime != nil && len(roundsData) > rounds {
+		roundsData = roundsData[:rounds]
+		if len(userMsgs) > rounds {
+			userMsgs = userMsgs[:rounds]
+		}
+	}
+
+	// flatten 多轮消息为一个列表
+	var messages []model.Message
+	for _, round := range roundsData {
+		messages = append(messages, round...)
+	}
+
+	result := &CursorResult{Messages: messages}
+	if len(messages) > 0 {
+		result.OldestCursor = messages[0].ID
+		result.NewestCursor = messages[len(messages)-1].ID
+		oldestUserTime := userMsgs[0].CreatedAt
+		result.HasMoreBefore = r.existsUserBefore(ctx, convID, oldestUserTime)
+		newestUserTime := userMsgs[len(userMsgs)-1].CreatedAt
+		result.HasMoreAfter = r.existsUserAfter(ctx, convID, newestUserTime)
+	}
+	return result, nil
+}
+
+// loadUserMessagesBefore 查询最近 N 条 role=user 消息（时间 < anchor），按时间正序返回。
+func (r *MessageRepo) loadUserMessagesBefore(ctx context.Context, convID string, anchor *time.Time, limit int) ([]model.Message, error) {
+	q := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND role = 'user' AND status = ?", convID, model.MsgStatusNormal)
+	if anchor != nil {
+		q = q.Where("created_at < ?", *anchor)
+	}
+	var temp []model.Message
+	err := q.Order("created_at DESC").Limit(limit).Find(&temp).Error
+	if err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(temp)-1; i < j; i, j = i+1, j-1 {
+		temp[i], temp[j] = temp[j], temp[i]
+	}
+	return temp, nil
+}
+
+// loadUserMessagesAfter 查询 anchor 之后 N 条 role=user 消息，按时间正序返回。
+func (r *MessageRepo) loadUserMessagesAfter(ctx context.Context, convID string, anchor time.Time, limit int) ([]model.Message, error) {
+	var list []model.Message
+	err := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND role = 'user' AND created_at > ? AND status = ?", convID, anchor, model.MsgStatusNormal).
+		Order("created_at ASC").Limit(limit).
+		Find(&list).Error
+	return list, err
+}
+
+// existsUserBefore 检查是否存在更早的 user 消息。
+func (r *MessageRepo) existsUserBefore(ctx context.Context, convID string, t time.Time) bool {
+	var count int64
+	r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("conversation_id = ? AND role = 'user' AND created_at < ? AND status = ?", convID, t, model.MsgStatusNormal).
+		Count(&count)
+	return count > 0
+}
+
+// existsUserAfter 检查是否存在更新的 user 消息。
+func (r *MessageRepo) existsUserAfter(ctx context.Context, convID string, t time.Time) bool {
+	var count int64
+	r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("conversation_id = ? AND role = 'user' AND created_at > ? AND status = ?", convID, t, model.MsgStatusNormal).
+		Count(&count)
+	return count > 0
+}
+
 // ListRecentRounds 取最近 N 轮，每轮是一个 user 消息及其后所有消息（直到下一个 user）
 func (r *MessageRepo) ListRecentRounds(ctx context.Context, convID string, n int) ([][]model.Message, error) {
 	// 1. 找到最近 N 条 user 消息
@@ -226,7 +343,7 @@ func (r *MessageRepo) ListRecentRounds(ctx context.Context, convID string, n int
 		userMsgs[i], userMsgs[j] = userMsgs[j], userMsgs[i]
 	}
 
-	return r.buildRoundsFromUserMsgs(ctx, userMsgs)
+	return r.buildRoundsFromUserMsgs(ctx, userMsgs, nil)
 }
 
 // GetRoundsByUserMsgIDs 根据一批 user 消息 ID 取出完整轮（不限制会话，支持跨会话检索）
@@ -242,18 +359,19 @@ func (r *MessageRepo) GetRoundsByUserMsgIDs(ctx context.Context, userMsgIDs []st
 	if err != nil {
 		return nil, err
 	}
-	return r.buildRoundsFromUserMsgs(ctx, userMsgs)
+	return r.buildRoundsFromUserMsgs(ctx, userMsgs, nil)
 }
 
 // buildRoundsFromUserMsgs 给定已排序的 user 消息列表，并发取出每轮的完整消息。
 // 每条 user 消息使用其自身的 ConversationID，支持跨会话的轮组装。
+// endTime 可选：不为 nil 时作为最后一个 user 消息的上界（避免末轮无界溢出到相邻批次）。
 //
 // 为什么用逐轮查询 + 并发，而不是一次全量拉取？
 // 上游 userMsgs 来自「最近 N 轮 + 向量检索 Top-M 轮」混合策略，命中点可能稀疏分布在消息历史中。
 // 一次 WHERE created_at >= earliestTime 会拖出最早到最晚之间的所有消息，读放大严重。
 // 逐轮查询每轮有 < nextUserMsg.CreatedAt 的紧上限 + Limit(20)，结果集小且可控；
 // 再通过 LoadConcurrent 以最大并发度 5 并行，总延迟接近单次查询，但没有读放大。
-func (r *MessageRepo) buildRoundsFromUserMsgs(ctx context.Context, userMsgs []model.Message) ([][]model.Message, error) {
+func (r *MessageRepo) buildRoundsFromUserMsgs(ctx context.Context, userMsgs []model.Message, endTime *time.Time) ([][]model.Message, error) {
 	if len(userMsgs) == 0 {
 		return nil, nil
 	}
@@ -265,9 +383,11 @@ func (r *MessageRepo) buildRoundsFromUserMsgs(ctx context.Context, userMsgs []mo
 		tasks[idx] = func(taskCtx context.Context) ([]model.Message, error) {
 			q := r.db.WithContext(taskCtx).
 				Where("conversation_id = ? AND created_at >= ? AND status = ?", userMsg.ConversationID, userMsg.CreatedAt, model.MsgStatusNormal)
-			// 仅当相邻的下一条 user 消息同属一个会话时才用它的时间作为上界
+			// 上界优先级：下一个 user 消息 > endTime 参数
 			if idx+1 < len(userMsgs) && userMsgs[idx+1].ConversationID == userMsg.ConversationID {
 				q = q.Where("created_at < ?", userMsgs[idx+1].CreatedAt)
+			} else if endTime != nil {
+				q = q.Where("created_at < ?", *endTime)
 			}
 			var msgs []model.Message
 			err := q.Order("created_at ASC").Limit(30).Find(&msgs).Error

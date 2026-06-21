@@ -295,7 +295,7 @@ func injectToolResult(msg *model.Message, resultJSON string) {
 }
 
 // mergeConsecutiveAssistant 合并连续的 assistant 消息（ReAct 多轮产生的碎片）。
-// 取最后一条的 content，合并所有条的 tool_calls_json。
+// 拼接所有条的 content 和 reasoning，合并所有条的 tool_calls_json。
 func mergeConsecutiveAssistant(msgs []model.Message) []model.Message {
 	if len(msgs) <= 1 {
 		return msgs
@@ -323,8 +323,18 @@ func mergeConsecutiveAssistant(msgs []model.Message) []model.Message {
 			continue
 		}
 
-		// 合并：取最后一条的 content/reasoning，合并所有条的 tool_calls
+		// 合并：拼接所有条的 content/reasoning，合并所有条的 tool_calls
 		merged := group[len(group)-1]
+
+		// 拼接所有非空 content，还原实时聊天中用户看到的完整文本流
+		var contents []string
+		for _, gm := range group {
+			if gm.Content != "" {
+				contents = append(contents, gm.Content)
+			}
+		}
+		merged.Content = strings.Join(contents, "\n\n")
+
 		var allTCs []json.RawMessage
 		for _, gm := range group {
 			if gm.ToolCallsJSON == nil || *gm.ToolCallsJSON == "" {
@@ -341,12 +351,18 @@ func mergeConsecutiveAssistant(msgs []model.Message) []model.Message {
 			s := string(b)
 			merged.ToolCallsJSON = &s
 		}
-		// 合并 reasoning：取最后一条有值的
-		for k := len(group) - 1; k >= 0; k-- {
-			if group[k].ReasoningContent != nil && *group[k].ReasoningContent != "" {
-				merged.ReasoningContent = group[k].ReasoningContent
-				break
+		// 合并 reasoning：拼接所有条有值的
+		var reasonings []string
+		for _, gm := range group {
+			if gm.ReasoningContent != nil && *gm.ReasoningContent != "" {
+				reasonings = append(reasonings, *gm.ReasoningContent)
 			}
+		}
+		if len(reasonings) > 0 {
+			s := strings.Join(reasonings, "\n\n")
+			merged.ReasoningContent = &s
+		} else {
+			merged.ReasoningContent = nil
 		}
 		out = append(out, merged)
 	}

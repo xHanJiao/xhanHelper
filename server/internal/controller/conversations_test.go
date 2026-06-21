@@ -58,8 +58,8 @@ func TestMergeConsecutiveAssistant_MergesTwo(t *testing.T) {
 		t.Fatalf("expected 2 messages (user + merged assistant), got %d", len(result))
 	}
 	merged := result[1]
-	if merged.Content != "已记录" {
-		t.Errorf("expected content='已记录' (last msg), got '%s'", merged.Content)
+	if merged.Content != "好的，我来查\n\n已记录" {
+		t.Errorf("expected content='好的，我来查\\n\\n已记录' (concatenated), got '%s'", merged.Content)
 	}
 	if merged.ToolCallsJSON == nil {
 		t.Fatal("expected ToolCallsJSON to be non-nil")
@@ -111,8 +111,8 @@ func TestMergeConsecutiveAssistant_KeepsLastReasoning(t *testing.T) {
 	}
 	result := mergeConsecutiveAssistant(msgs)
 	merged := result[0]
-	if merged.ReasoningContent == nil || *merged.ReasoningContent != "thinking 2" {
-		t.Errorf("expected last reasoning, got %v", merged.ReasoningContent)
+	if merged.ReasoningContent == nil || *merged.ReasoningContent != "thinking 1\n\nthinking 2" {
+		t.Errorf("expected concatenated reasoning, got %v", merged.ReasoningContent)
 	}
 }
 
@@ -131,7 +131,7 @@ func TestMergeConsecutiveAssistant_NoMergeOnSingle(t *testing.T) {
 
 func TestMergeConsecutiveAssistant_MixedJSONAndPlainText(t *testing.T) {
 	// 模拟真实场景：第一轮 LLM 返回纯文本（非 JSON），被容错接受
-	// 第二轮 LLM 返回 JSON 带 tool_calls。合并后 content 取最后的，tool_calls 只取 JSON 那轮的。
+	// 第二轮 LLM 返回 JSON 带 tool_calls。合并后 content 拼接所有轮，tool_calls 只取 JSON 那轮的。
 	tc := `[{"tool":"note","function":"record_note","args":{"topic":"t"}}]`
 	msgs := []model.Message{
 		{Role: "assistant", Content: "我觉得这个分析很有道理，让我展开说说..."},
@@ -142,8 +142,8 @@ func TestMergeConsecutiveAssistant_MixedJSONAndPlainText(t *testing.T) {
 		t.Fatalf("expected 1 merged message, got %d", len(result))
 	}
 	merged := result[0]
-	if merged.Content != "已记录" {
-		t.Errorf("expected content='已记录' (from last msg), got '%s'", merged.Content)
+	if merged.Content != "我觉得这个分析很有道理，让我展开说说...\n\n已记录" {
+		t.Errorf("expected concatenated content, got '%s'", merged.Content)
 	}
 	if merged.ToolCallsJSON == nil {
 		t.Fatal("expected ToolCallsJSON from the JSON round")
@@ -157,7 +157,7 @@ func TestMergeConsecutiveAssistant_MixedJSONAndPlainText(t *testing.T) {
 
 func TestMergeConsecutiveAssistant_JSONThenPlainText(t *testing.T) {
 	// 模拟：第一轮 JSON 带 tool_call → 工具执行 → 第二轮纯文本总结
-	// content 取第二轮纯文本，tool_calls 保留第一轮的 JSON
+	// content 拼接所有轮，tool_calls 保留第一轮的 JSON
 	tc := `[{"tool":"note","function":"record_note","args":{"topic":"t"}}]`
 	msgs := []model.Message{
 		{Role: "assistant", Content: "已记录", ToolCallsJSON: ptrStr(tc)},
@@ -168,8 +168,8 @@ func TestMergeConsecutiveAssistant_JSONThenPlainText(t *testing.T) {
 		t.Fatalf("expected 1 merged message, got %d", len(result))
 	}
 	merged := result[0]
-	if merged.Content != "还需要我做什么吗？" {
-		t.Errorf("expected content='还需要我做什么吗？' (from last msg), got '%s'", merged.Content)
+	if merged.Content != "已记录\n\n还需要我做什么吗？" {
+		t.Errorf("expected concatenated content, got '%s'", merged.Content)
 	}
 	if merged.ToolCallsJSON == nil {
 		t.Fatal("expected ToolCallsJSON preserved from first round")
@@ -185,6 +185,78 @@ func TestMergeConsecutiveAssistant_EmptyInput(t *testing.T) {
 	result := mergeConsecutiveAssistant(nil)
 	if len(result) != 0 {
 		t.Errorf("expected empty, got %d", len(result))
+	}
+}
+
+// TestMergeConsecutiveAssistant_PreservesAllContent 回归测试：
+// 合并时所有非空 content 都应保留，不能只取最后一条。
+// 对应 bug：assistant 带 content+tool_calls 的轮次，其文本被合并吞掉。
+func TestMergeConsecutiveAssistant_PreservesAllContent(t *testing.T) {
+	// 模拟 2955be55 场景：第一轮 assistant 有大量用户可见文本 + tool_call，
+	// 工具执行后第二轮 assistant 仅简短确认。tool 消息已被 cleanMessages 过滤，
+	// 两条 assistant 变为相邻，合并时必须保留第一轮的文本。
+	tc := `[{"tool":"note","function":"record_note","args":{"topic":"购物计划"}}]`
+	msgs := []model.Message{
+		{Role: "user", Content: "帮我记一下父亲节买笔记本的计划"},
+		{Role: "assistant", Content: "好，2000-3000预算，用途就是上网看视频、WPS轻办公、QQ围棋。\n\n我先记一下这个计划。", ToolCallsJSON: ptrStr(tc)},
+		{Role: "assistant", Content: "已帮你记下了"},
+	}
+	result := mergeConsecutiveAssistant(msgs)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 messages (user + merged assistant), got %d", len(result))
+	}
+	merged := result[1]
+	// 两条都有非空 content，应拼接
+	want := "好，2000-3000预算，用途就是上网看视频、WPS轻办公、QQ围棋。\n\n我先记一下这个计划。\n\n已帮你记下了"
+	if merged.Content != want {
+		t.Errorf("expected concatenated content, got '%s'", merged.Content)
+	}
+	// tool_calls 应合并
+	if merged.ToolCallsJSON == nil {
+		t.Fatal("expected ToolCallsJSON to be preserved")
+	}
+}
+
+// TestMergeConsecutiveAssistant_SkipsEmptyContent 回归测试：
+// 空 content 的 assistant（纯 tool_call 包装轮）不应在拼接时产生多余换行。
+func TestMergeConsecutiveAssistant_SkipsEmptyContent(t *testing.T) {
+	tc1 := `[{"tool":"datetime","function":"now","args":{}}]`
+	tc2 := `[{"tool":"note","function":"search","args":{"q":"test"}}]`
+	msgs := []model.Message{
+		{Role: "assistant", Content: "让我查一下", ToolCallsJSON: ptrStr(tc1)},
+		{Role: "assistant", Content: "", ToolCallsJSON: ptrStr(tc2)}, // 纯工具调用轮，无文本
+		{Role: "assistant", Content: "查到了，结果是..."},
+	}
+	result := mergeConsecutiveAssistant(msgs)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 merged message, got %d", len(result))
+	}
+	merged := result[0]
+	// 中间的 "" 应被跳过，不产生多余 \n\n
+	if merged.Content != "让我查一下\n\n查到了，结果是..." {
+		t.Errorf("expected content without empty gaps, got '%s'", merged.Content)
+	}
+}
+
+// TestMergeConsecutiveAssistant_MiddleEmptyPreservesReasoning
+// 即使中间 assistant 的 content 为空，其 reasoning 仍应被拼接。
+func TestMergeConsecutiveAssistant_MiddleEmptyPreservesReasoning(t *testing.T) {
+	r1 := "需要查时间"
+	r2 := "需要搜索笔记"
+	r3 := "结果已汇总"
+	msgs := []model.Message{
+		{Role: "assistant", Content: "开始处理", ReasoningContent: &r1},
+		{Role: "assistant", Content: "", ReasoningContent: &r2}, // 纯工具调用轮
+		{Role: "assistant", Content: "处理完成", ReasoningContent: &r3},
+	}
+	result := mergeConsecutiveAssistant(msgs)
+	merged := result[0]
+	if merged.ReasoningContent == nil {
+		t.Fatal("expected ReasoningContent to be non-nil")
+	}
+	want := "需要查时间\n\n需要搜索笔记\n\n结果已汇总"
+	if *merged.ReasoningContent != want {
+		t.Errorf("expected concatenated reasoning, got '%s'", *merged.ReasoningContent)
 	}
 }
 

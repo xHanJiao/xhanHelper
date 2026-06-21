@@ -665,16 +665,6 @@ function handleScroll(e) {
 
   const threshold = container.clientHeight * 0.15
   const nearTop = container.scrollTop <= threshold
-  if (nearTop) {
-    console.log('[scroll-debug]', JSON.stringify({
-      isInitialScrollDone: isInitialScrollDone.value,
-      scrollTop: container.scrollTop,
-      threshold,
-      hasMoreBefore: chat.hasMoreBefore,
-      isLoadingHistory: isLoadingHistory.value,
-      convId: chat.conversationId
-    }))
-  }
   if (isInitialScrollDone.value && nearTop && chat.hasMoreBefore && !isLoadingHistory.value) {
     loadHistory(chat.conversationId, 'before', chat.oldestCursor)
   }

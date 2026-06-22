@@ -19,6 +19,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	memDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Memory.FreshnessDecay)
 	noteDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Note.FreshnessDecay)
 	historyDecayer := retrieval.NewTimeDecay(cfg.Retrieval.History.FreshnessDecay)
+	summaryDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Summary.FreshnessDecay)
 
 	chunkBuilder := agent.NewChunkBuilder(infra, repos.Chunk, repos.Embedding)
 
@@ -26,12 +27,14 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	noteSource := retrieval.NewNoteSource(vs, repos.Note, repos.Embedding, repos.Chunk, chunkBuilder, noteDecayer)
 	historySource := retrieval.NewHistorySource(vs, repos.Message, repos.Embedding, historyDecayer)
 	themeSource := retrieval.NewThemeSource(repos.ThemeState, vs)
+	summarySource := retrieval.NewSummarySource(vs, repos.ConversationSummary, repos.Embedding, repos.Chunk, chunkBuilder, summaryDecayer)
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
 	memSource.Warmup(bgCtx, infra.Embedder)
 	noteSource.Warmup(bgCtx, infra.Embedder)
 	historySource.Warmup(bgCtx, infra.Embedder)
+	summarySource.Warmup(bgCtx, infra.Embedder)
 
 	// 从 embedding 表加载向量到内存 store
 	agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState)
@@ -77,9 +80,12 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		retrievalTools, repos.Trace)
 	// --- Summary 子系统 ---
 	summaryWorker := agent.NewSummaryWorker(&agent.SummaryWorkerConfig{
-		FlashClient: llmClients.Flash,
-		MsgRepo:     repos.Message,
-		SummaryRepo: repos.ConversationSummary,
+		FlashClient:   llmClients.Flash,
+		MsgRepo:       repos.Message,
+		SummaryRepo:   repos.ConversationSummary,
+		Embedder:      infra.Embedder,
+		ChunkBuilder:  chunkBuilder,
+		EmbeddingRepo: repos.Embedding,
 	})
 
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{

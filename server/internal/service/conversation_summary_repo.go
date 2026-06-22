@@ -53,6 +53,28 @@ func (r *ConversationSummaryRepo) GetByID(ctx context.Context, id, userID string
 	return &s, nil
 }
 
+// GetByIDs 批量获取摘要（不作 userID scope，调用方通过向量检索已过滤用户）。
+// 实现 retrieval.chunkRepo[T] 接口。
+func (r *ConversationSummaryRepo) GetByIDs(ctx context.Context, ids []string) ([]model.ConversationSummary, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var summaries []model.ConversationSummary
+	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&summaries).Error
+	return summaries, err
+}
+
+// ListAll 分页列出所有活跃摘要（供 EntitySource.Warmup 使用）。
+func (r *ConversationSummaryRepo) ListAll(ctx context.Context, limit, offset int) ([]model.ConversationSummary, error) {
+	var summaries []model.ConversationSummary
+	err := r.db.WithContext(ctx).
+		Where("status = ?", "active").
+		Order("created_at DESC").
+		Limit(limit).Offset(offset).
+		Find(&summaries).Error
+	return summaries, err
+}
+
 // MarkSuperseded 将指定摘要标记为已替代
 func (r *ConversationSummaryRepo) MarkSuperseded(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).

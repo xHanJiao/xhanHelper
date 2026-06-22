@@ -15,7 +15,7 @@ type PacketMeta interface {
 // ContextPacket — 上下文片段，来自任意数据源（也是 SearchProvider 的返回类型）。
 type ContextPacket struct {
 	ID    string     // 唯一标识
-	Type  string     // memory | note | history | theme | mission
+	Type  string     // memory | note | history | theme | mission | summary
 	Text  string     // 格式化文本（mission 仍依赖此字段；memory/note/history/theme 的 XML 生成已切到 Meta，Text 保留用于 trace 兼容）
 	Score float64    // 向量检索原始分数
 	Meta  PacketMeta `json:"-"` // source 自定义元数据（entityMeta / historyMeta / themeMeta）
@@ -57,6 +57,7 @@ type SearchOptions struct {
 	Note    SourceConfig // 笔记检索
 	History SourceConfig // 历史对话检索
 	Theme   SourceConfig // 主题检索
+	Summary SourceConfig // 摘要检索
 
 	// 排除已在当前消息列表中的消息 ID（避免系统提示词与历史消息重复）
 	ExcludeMsgIDs map[string]bool

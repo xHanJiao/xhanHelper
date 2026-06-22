@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"log"
 	"math"
 	"sync"
 
@@ -82,7 +81,7 @@ func (vs *VectorStore) Search(query []float64, topK int, filter func(retrieval.E
 	}
 
 	result := heapTopK(eligible, topN)
-	log.Printf("[vector] search: topK=%d/%d/%d, best=%.4f", topK, len(eligible), len(vs.vectors), result[0].Score)
+	// log.Printf("[vector] search: topK=%d/%d/%d, best=%.4f", topK, len(eligible), len(vs.vectors), result[0].Score)
 	return result
 }
 

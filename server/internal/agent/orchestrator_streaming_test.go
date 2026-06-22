@@ -24,6 +24,10 @@ func (m *mockMsgRepo) Create(ctx context.Context, msg *model.Message) error {
 	return nil
 }
 
+func (m *mockMsgRepo) ListRecentUserMessages(ctx context.Context, convID string, limit int) ([]model.Message, error) {
+	return nil, nil
+}
+
 type mockConvRepo struct {
 	touchCalls int
 }

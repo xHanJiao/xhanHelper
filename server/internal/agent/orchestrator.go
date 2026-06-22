@@ -85,6 +85,7 @@ type LLMResponse struct {
 // msgCreator — Orchestrator 需要的消息写入能力（*service.MessageRepo 自动满足）
 type msgCreator interface {
 	Create(ctx context.Context, m *model.Message) error
+	ListRecentUserMessages(ctx context.Context, convID string, limit int) ([]model.Message, error)
 }
 
 // convToucher — Orchestrator 需要的会话更新时间能力（*service.ConversationRepo 自动满足）
@@ -119,30 +120,38 @@ type Orchestrator struct {
 	verifyModel         string // "flash" | "pro"
 	useNativeFC         bool
 	summaryRepo         *service.ConversationSummaryRepo
+
+	// 摘要附着控制
+	maxSummaryAttachRounds    int
+	summaryRelevanceThreshold float64
+	summaryRelevanceHistoryN  int
 }
 
 // OrchestratorConfig — Orchestrator 依赖配置
 type OrchestratorConfig struct {
-	FlashClient        llm.LLMClient
-	Registry           *tool.Registry
-	ProClient          llm.LLMClient
-	PromptBuilder      promptBuilder
-	MsgRepo            *service.MessageRepo
-	ConvRepo           *service.ConversationRepo
-	Embedder           *llm.Embedder
-	VectorStore        *VectorStore
-	EmbeddingRepo      *service.EmbeddingRepo
-	MaxIterations      int
-	Temperature        *float64
-	MaxTokens          *int
-	MaxToolResultChars int
-	ToolMaxConcurrency int
-	OnChatEnd          func(userID, convID, userMsgID string)
-	VerifyEnabled      bool
-	VerifyMaxRetries   int
-	VerifyModel        string // "flash" | "pro"，默认 flash
-	UseNativeFC        bool   // 是否使用原生 function calling
-	SummaryRepo        *service.ConversationSummaryRepo
+	FlashClient               llm.LLMClient
+	Registry                  *tool.Registry
+	ProClient                 llm.LLMClient
+	PromptBuilder             promptBuilder
+	MsgRepo                   *service.MessageRepo
+	ConvRepo                  *service.ConversationRepo
+	Embedder                  *llm.Embedder
+	VectorStore               *VectorStore
+	EmbeddingRepo             *service.EmbeddingRepo
+	MaxIterations             int
+	Temperature               *float64
+	MaxTokens                 *int
+	MaxToolResultChars        int
+	ToolMaxConcurrency        int
+	OnChatEnd                 func(userID, convID, userMsgID string)
+	VerifyEnabled             bool
+	VerifyMaxRetries          int
+	VerifyModel               string // "flash" | "pro"，默认 flash
+	UseNativeFC               bool   // 是否使用原生 function calling
+	SummaryRepo               *service.ConversationSummaryRepo
+	MaxSummaryAttachRounds    int     // 摘要附着轮次上限，默认 5
+	SummaryRelevanceThreshold float64 // 摘要相关性阈值，默认 0.5
+	SummaryRelevanceHistoryN  int     // 相关性检查的历史消息窗口，默认 5
 }
 
 // New 创建 Orchestrator
@@ -158,26 +167,29 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 	}
 
 	return &Orchestrator{
-		flashClient:         cfg.FlashClient,
-		proClient:           cfg.ProClient,
-		registry:            cfg.Registry,
-		systemPromptBuilder: cfg.PromptBuilder,
-		msgRepo:             cfg.MsgRepo,
-		convRepo:            cfg.ConvRepo,
-		embedder:            cfg.Embedder,
-		vectorStore:         cfg.VectorStore,
-		embeddingRepo:       cfg.EmbeddingRepo,
-		maxIterations:       cfg.MaxIterations,
-		defaultTemperature:  cfg.Temperature,
-		defaultMaxTokens:    cfg.MaxTokens,
-		maxToolResultChars:  cfg.MaxToolResultChars,
-		maxConcurrency:      cfg.ToolMaxConcurrency,
-		onChatEnd:           cfg.OnChatEnd,
-		verifyEnabled:       cfg.VerifyEnabled,
-		verifyMaxRetries:    cfg.VerifyMaxRetries,
-		verifyModel:         cfg.VerifyModel,
-		useNativeFC:         cfg.UseNativeFC,
-		summaryRepo:         cfg.SummaryRepo,
+		flashClient:               cfg.FlashClient,
+		proClient:                 cfg.ProClient,
+		registry:                  cfg.Registry,
+		systemPromptBuilder:       cfg.PromptBuilder,
+		msgRepo:                   cfg.MsgRepo,
+		convRepo:                  cfg.ConvRepo,
+		embedder:                  cfg.Embedder,
+		vectorStore:               cfg.VectorStore,
+		embeddingRepo:             cfg.EmbeddingRepo,
+		maxIterations:             cfg.MaxIterations,
+		defaultTemperature:        cfg.Temperature,
+		defaultMaxTokens:          cfg.MaxTokens,
+		maxToolResultChars:        cfg.MaxToolResultChars,
+		maxConcurrency:            cfg.ToolMaxConcurrency,
+		onChatEnd:                 cfg.OnChatEnd,
+		verifyEnabled:             cfg.VerifyEnabled,
+		verifyMaxRetries:          cfg.VerifyMaxRetries,
+		verifyModel:               cfg.VerifyModel,
+		useNativeFC:               cfg.UseNativeFC,
+		summaryRepo:               cfg.SummaryRepo,
+		maxSummaryAttachRounds:    cfg.MaxSummaryAttachRounds,
+		summaryRelevanceThreshold: cfg.SummaryRelevanceThreshold,
+		summaryRelevanceHistoryN:  cfg.SummaryRelevanceHistoryN,
 	}
 }
 
@@ -302,15 +314,11 @@ func (o *Orchestrator) runReActLoop(
 ) {
 	defer close(events)
 
-	userMsg := mkUserMsg(req)
-	if req.Window.Size > 0 {
-		SetWindowSize(userMsg, req.Window.Size)
+	userMsg := o.prepareUserMsg(req)
+	if summaryBlock := o.resolveSummaryAttachment(ctx, req, userMsg, queryVec); summaryBlock != "" {
+		systemPromptResult.UserMessagePrefix = summaryBlock + systemPromptResult.UserMessagePrefix
 	}
-	if req.Window.IsNewSession {
-		SetSessionStart(userMsg, userMsg.ID)
-	} else if req.Window.SessionStartMsgID != "" {
-		SetSessionStart(userMsg, req.Window.SessionStartMsgID)
-	}
+
 	if err := o.msgRepo.Create(ctx, userMsg); err != nil {
 		log.Printf("[orch] save user msg error: %v", err)
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrInternal)})
@@ -318,26 +326,10 @@ func (o *Orchestrator) runReActLoop(
 	}
 	util.SafeGo(func() { o.convRepo.Touch(ctx, req.ConversationID) })
 	util.SafeGo(func() { o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID) })
-	util.SafeGo(func() {
-		if o.onChatEnd != nil {
-			o.onChatEnd(req.UserID, req.ConversationID, userMsg.ID)
-		}
-	})
 
-	// 加载对话摘要（若有），放在 UserMessagePrefix 最前面
-	if o.summaryRepo != nil {
-		summary, err := o.summaryRepo.GetLatest(ctx, req.ConversationID)
-		if err != nil {
-			log.Printf("[orch] GetLatest summary error: %v", err)
-		} else if summary != nil {
-			parent := ""
-			if summary.ParentSummaryID != nil {
-				parent = *summary.ParentSummaryID
-			}
-			block := fmt.Sprintf("<conversation_summary id=\"%s\" cover_from=\"%s\" cover_to=\"%s\" parent=\"%s\">\n%s\n</conversation_summary>\n",
-				summary.ID, summary.CoverFromMsgID, summary.CoverToMsgID, parent, summary.SummaryText)
-			systemPromptResult.UserMessagePrefix = block + systemPromptResult.UserMessagePrefix
-		}
+	// 在整个 ReAct 循环结束后通知外部（用于入队延迟任务：post_chat + summary）
+	if o.onChatEnd != nil {
+		defer o.onChatEnd(req.UserID, req.ConversationID, userMsg.ID)
 	}
 
 	userContent := req.UserMessageContent
@@ -358,6 +350,154 @@ func (o *Orchestrator) runReActLoop(
 
 	o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrMaxIterations)})
 	o.emitDone(events, req.ConversationID, "", userMsg.ID, "max iterations reached", systemPromptResult.IDsByType)
+}
+
+// prepareUserMsg 创建用户消息并设置 WindowSize/SessionStart Extra 字段。
+func (o *Orchestrator) prepareUserMsg(req *RunRequest) *model.Message {
+	userMsg := mkUserMsg(req)
+	if req.Window.Size > 0 {
+		SetWindowSize(userMsg, req.Window.Size)
+	}
+	if req.Window.IsNewSession {
+		SetSessionStart(userMsg, userMsg.ID)
+	} else if req.Window.SessionStartMsgID != "" {
+		SetSessionStart(userMsg, req.Window.SessionStartMsgID)
+	}
+	return userMsg
+}
+
+// resolveSummaryAttachment 决定本轮是否附着摘要，返回摘要 XML block（空串表示不附着）。
+// 副作用：设置 userMsg 的 SummaryAttachRound（必须在 Create 之前调用）。
+func (o *Orchestrator) resolveSummaryAttachment(
+	ctx context.Context,
+	req *RunRequest,
+	userMsg *model.Message,
+	queryVec []float64,
+) string {
+	// 查上一条用户消息的附着轮数
+	var prevUserMsg *model.Message
+	if recent, err := o.msgRepo.ListRecentUserMessages(ctx, req.ConversationID, 1); err == nil && len(recent) > 0 {
+		prevUserMsg = &recent[0]
+	} else if err != nil {
+		log.Printf("[orch] ListRecentUserMessages for summary attach error: %v", err)
+	}
+
+	// 确定本轮轮数
+	round := 1
+	if req.Window.IsNewSession {
+		round = 1
+	} else if prevUserMsg != nil {
+		prev := GetSummaryAttachRound(prevUserMsg)
+		log.Printf("[orch] previous user msg summary attach round: %d", prev)
+		if prev < 0 || prev >= o.maxSummaryAttachRounds {
+			round = -1
+		} else {
+			round = prev + 1
+		}
+	}
+	log.Printf("[orch] resolveSummaryAttachment: round=%d", round)
+
+	var block string
+	if o.summaryRepo != nil && round > 0 {
+		summary, err := o.summaryRepo.GetLatest(ctx, req.ConversationID)
+		if err != nil {
+			log.Printf("[orch] GetLatest summary error: %v", err)
+		} else if summary != nil {
+			if !o.checkSummaryRelevance(ctx, summary, req, queryVec) {
+				log.Printf("[orch] summary is not relevant: %s", summary.ID[:8])
+				round = -1
+			} else {
+				parent := ""
+				if summary.ParentSummaryID != nil {
+					parent = *summary.ParentSummaryID
+				}
+				block = fmt.Sprintf("<conversation_summary id=\"%s\" cover_from=\"%s\" cover_to=\"%s\" parent=\"%s\">\n%s\n</conversation_summary>\n",
+					summary.ID, summary.CoverFromMsgID, summary.CoverToMsgID, parent, summary.SummaryText)
+			}
+		}
+	}
+
+	SetSummaryAttachRound(userMsg, round)
+	return block
+}
+
+// checkSummaryRelevance 用 embedding 窗口检查摘要与当前对话的相关性。
+// 参照 Theme 系统的相似度检查模式：取当前消息 + 最近 N 条历史用户消息的 embedding，
+// 分别与摘要 embedding 做余弦相似度，取最大值判断是否 >= 阈值。
+func (o *Orchestrator) checkSummaryRelevance(
+	ctx context.Context,
+	summary *model.ConversationSummary,
+	req *RunRequest,
+	queryVec []float64,
+) bool {
+	summaryVec := o.getOrEmbedSummary(ctx, summary)
+	if len(summaryVec) == 0 {
+		// embed 失败，乐观附着
+		return true
+	}
+
+	// 收集查询向量窗口：上游已嵌入的 queryVec + 最近 N 条历史
+	var queryVecs [][]float64
+	if len(queryVec) > 0 {
+		queryVecs = append(queryVecs, queryVec)
+	}
+	if o.summaryRelevanceHistoryN > 0 {
+		queryVecs = append(queryVecs, o.embedHistoryUserMessages(req.Messages, o.summaryRelevanceHistoryN)...)
+	}
+	if o.summaryRelevanceHistoryN > 0 {
+		queryVecs = append(queryVecs, o.embedHistoryUserMessages(req.Messages, o.summaryRelevanceHistoryN)...)
+	}
+
+	if len(queryVecs) == 0 {
+		// 无查询向量，乐观附着
+		return true
+	}
+
+	// 计算 max 相似度
+	maxSim := 0.0
+	for _, v := range queryVecs {
+		if sim := cosineSimilarity(v, summaryVec); sim > maxSim {
+			maxSim = sim
+		}
+	}
+
+	return maxSim >= o.summaryRelevanceThreshold
+}
+
+// getOrEmbedSummary 获取摘要的 embedding（惰性 embed → VectorStore + DB 双写）。
+func (o *Orchestrator) getOrEmbedSummary(ctx context.Context, summary *model.ConversationSummary) []float64 {
+	vsKey := "summary:" + summary.ID
+	if vec, ok := o.vectorStore.GetVector(vsKey); ok {
+		return vec
+	}
+
+	vec, err := o.embedder.Embed(ctx, summary.SummaryText)
+	if err != nil {
+		log.Printf("[summary] embed summary %s error: %v", summary.ID[:8], err)
+		return nil
+	}
+
+	// 写入内存 VectorStore
+	o.vectorStore.Upsert(vsKey, vec, map[string]string{
+		"type":       "summary",
+		"summary_id": summary.ID,
+		"user_id":    summary.UserID,
+	})
+
+	// 写入 DB embeddings 表，供 warmup 恢复
+	embStr := llm.EmbeddingToString(vec)
+	if err := o.embeddingRepo.Upsert(ctx, &model.Embedding{
+		ID:         summary.ID,
+		EntityType: model.EntityTypeSummary,
+		EntityID:   summary.ID,
+		UserID:     summary.UserID,
+		Model:      o.embedder.ModelName(),
+		Embedding:  &embStr,
+	}); err != nil {
+		log.Printf("[summary] save embedding to DB error: %v", err)
+	}
+
+	return vec
 }
 
 // runOneRound 执行一轮 ReAct：LLM 调用 → 流式收集 → done/error 处理，返回 true 表示对话结束。

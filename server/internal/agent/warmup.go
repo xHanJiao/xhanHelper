@@ -18,6 +18,7 @@ func WarmupAll(ctx context.Context, vs app.VectorStore, embeddingRepo *service.E
 	warmupConceptEmbeddings(ctx, embeddingRepo, vs)
 	warmupToolEmbeddings(ctx, embeddingRepo, vs)
 	warmupMissionEmbeddings(ctx, embeddingRepo, vs)
+	warmupSummaryEmbeddings(ctx, embeddingRepo, vs)
 }
 
 func warmupThemeEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore app.VectorStore, conceptEmbedRepo *service.ConceptEmbeddingRepo, themeStateRepo *service.ThemeStateRepo) {
@@ -257,4 +258,38 @@ func warmupMissionEmbeddings(ctx context.Context, embeddingRepo *service.Embeddi
 		}
 	}
 	log.Printf("[warmup] mission embeddings: %d loaded into vector store", loaded)
+}
+
+func warmupSummaryEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore app.VectorStore) {
+	const pageSize = 100
+	loaded := 0
+	for offset := 0; ; offset += pageSize {
+		embeddings, err := embeddingRepo.ListByType(ctx, model.EntityTypeSummary, pageSize, offset)
+		if err != nil {
+			log.Printf("[warmup] summary embeddings ListByType error: %v", err)
+			break
+		}
+		if len(embeddings) == 0 {
+			break
+		}
+		for _, emb := range embeddings {
+			if emb.Embedding == nil {
+				continue
+			}
+			vec, err := llm.StringToEmbedding(*emb.Embedding)
+			if err != nil || len(vec) == 0 {
+				continue
+			}
+			vectorStore.Upsert("summary:"+emb.EntityID, vec, map[string]string{
+				"type":       "summary",
+				"summary_id": emb.EntityID,
+				"user_id":    emb.UserID,
+			})
+			loaded++
+		}
+		if len(embeddings) < pageSize {
+			break
+		}
+	}
+	log.Printf("[warmup] summary embeddings: %d loaded into vector store", loaded)
 }

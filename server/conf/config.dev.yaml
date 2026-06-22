@@ -46,6 +46,9 @@ search:
   quota_expires_at: "2026-09-01" # TODO: 填写实际到期日
   used_count: 109
 
+chat:
+  session_gap_minutes: 3       # dev 环境缩短 session 间隔，方便测试
+
 reflection:
   launch_max_iterations: 8
   analyst_max_iterations: 6

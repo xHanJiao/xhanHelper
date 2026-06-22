@@ -36,10 +36,13 @@ type Config struct {
 
 // ChatConfig — 对话配置
 type ChatConfig struct {
-	HistoryRounds     int `yaml:"history_rounds"`      // 加载历史消息轮数，默认 10
-	MaxWindowRounds   int `yaml:"max_window_rounds"`   // 扩张窗口上限，默认 100
-	MaxSummaryRounds  int `yaml:"max_summary_rounds"`  // 单次摘要覆盖上限，0=等于 history_rounds
-	SessionGapMinutes int `yaml:"session_gap_minutes"` // session 间隔阈值（分钟），默认 30
+	HistoryRounds             int     `yaml:"history_rounds"`              // 加载历史消息轮数，默认 10
+	MaxWindowRounds           int     `yaml:"max_window_rounds"`           // 扩张窗口上限，默认 100
+	MaxSummaryRounds          int     `yaml:"max_summary_rounds"`          // 单次摘要覆盖上限，0=等于 history_rounds
+	SessionGapMinutes         int     `yaml:"session_gap_minutes"`         // session 间隔阈值（分钟），默认 30
+	MaxSummaryAttachRounds    int     `yaml:"max_summary_attach_rounds"`   // 摘要附着轮次上限，默认 5
+	SummaryRelevanceThreshold float64 `yaml:"summary_relevance_threshold"` // 摘要相关性余弦相似度阈值，默认 0.5
+	SummaryRelevanceHistoryN  int     `yaml:"summary_relevance_history_n"` // 相关性检查的历史消息窗口大小，默认 5
 }
 
 // ShareConfig — 分享配置
@@ -371,6 +374,24 @@ func merge(dst, src *Config) {
 	if src.Chat.HistoryRounds != 0 {
 		dst.Chat.HistoryRounds = src.Chat.HistoryRounds
 	}
+	if src.Chat.MaxWindowRounds != 0 {
+		dst.Chat.MaxWindowRounds = src.Chat.MaxWindowRounds
+	}
+	if src.Chat.MaxSummaryRounds != 0 {
+		dst.Chat.MaxSummaryRounds = src.Chat.MaxSummaryRounds
+	}
+	if src.Chat.SessionGapMinutes != 0 {
+		dst.Chat.SessionGapMinutes = src.Chat.SessionGapMinutes
+	}
+	if src.Chat.MaxSummaryAttachRounds != 0 {
+		dst.Chat.MaxSummaryAttachRounds = src.Chat.MaxSummaryAttachRounds
+	}
+	if src.Chat.SummaryRelevanceThreshold > 0 {
+		dst.Chat.SummaryRelevanceThreshold = src.Chat.SummaryRelevanceThreshold
+	}
+	if src.Chat.SummaryRelevanceHistoryN != 0 {
+		dst.Chat.SummaryRelevanceHistoryN = src.Chat.SummaryRelevanceHistoryN
+	}
 }
 
 // mergeSourceWeights 按字段合并检索源配置，非零值覆盖
@@ -484,6 +505,15 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Chat.SessionGapMinutes == 0 {
 		cfg.Chat.SessionGapMinutes = 30
+	}
+	if cfg.Chat.MaxSummaryAttachRounds == 0 {
+		cfg.Chat.MaxSummaryAttachRounds = 5
+	}
+	if cfg.Chat.SummaryRelevanceThreshold == 0 {
+		cfg.Chat.SummaryRelevanceThreshold = 0.5
+	}
+	if cfg.Chat.SummaryRelevanceHistoryN == 0 {
+		cfg.Chat.SummaryRelevanceHistoryN = 5
 	}
 	if cfg.Share.DefaultValidDays == 0 {
 		cfg.Share.DefaultValidDays = 7

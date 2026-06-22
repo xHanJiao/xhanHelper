@@ -136,11 +136,14 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 			cronRunner.NotifyChatEnd(userID, convID)
 			cronRunner.NotifySummaryCheck(userID, convID, userMsgID)
 		},
-		VerifyEnabled:    cfg.LLM.Verification.Enabled,
-		VerifyMaxRetries: cfg.LLM.Verification.MaxRetries,
-		VerifyModel:      cfg.LLM.Verification.Model,
-		UseNativeFC:      cfg.LLM.UseNativeFC,
-		SummaryRepo:      repos.ConversationSummary,
+		VerifyEnabled:             cfg.LLM.Verification.Enabled,
+		VerifyMaxRetries:          cfg.LLM.Verification.MaxRetries,
+		VerifyModel:               cfg.LLM.Verification.Model,
+		UseNativeFC:               cfg.LLM.UseNativeFC,
+		SummaryRepo:               repos.ConversationSummary,
+		MaxSummaryAttachRounds:    cfg.Chat.MaxSummaryAttachRounds,
+		SummaryRelevanceThreshold: cfg.Chat.SummaryRelevanceThreshold,
+		SummaryRelevanceHistoryN:  cfg.Chat.SummaryRelevanceHistoryN,
 	})
 
 	go cronRunner.Start(bgCtx)

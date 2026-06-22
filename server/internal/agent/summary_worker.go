@@ -81,7 +81,17 @@ func (w *SummaryWorker) ProcessSessionEnd(ctx context.Context, convID, userID, l
 	log.Printf("[summary] session_end: conv=%s loading %d user msgs for previous session",
 		convID[:8], len(msgs))
 
-	summaryText, reqJSON, respJSON, err := w.callFlash(ctx, "", msgs)
+	// 查前序摘要，用于增量合并和 parent 链
+	prev, err := w.summaryRepo.GetLatest(ctx, convID)
+	if err != nil {
+		log.Printf("[summary] GetLatest error: %v, proceeding without incremental merge", err)
+	}
+	var prevText string
+	if prev != nil {
+		prevText = prev.SummaryText
+	}
+
+	summaryText, reqJSON, respJSON, err := w.callFlash(ctx, prevText, msgs)
 	if err != nil {
 		return false, fmt.Errorf("callFlash: %w", err)
 	}
@@ -89,7 +99,7 @@ func (w *SummaryWorker) ProcessSessionEnd(ctx context.Context, convID, userID, l
 		return false, nil
 	}
 
-	return w.saveSummary(ctx, convID, userID, msgs, nil, summaryText, reqJSON, respJSON)
+	return w.saveSummary(ctx, convID, userID, msgs, prev, summaryText, reqJSON, respJSON)
 }
 
 // callFlash 调 Flash 生成摘要。返回文本及 request/response JSON（调试用）。

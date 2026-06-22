@@ -41,3 +41,15 @@ type MissionMeta struct {
 }
 
 func (MissionMeta) isPacketMeta() {}
+
+// SummaryMeta 对话摘要的元数据。
+type SummaryMeta struct {
+	SummaryText     string // 摘要正文
+	ConversationID  string // 所属会话
+	CoverFromMsgID  string // 覆盖消息起始
+	CoverToMsgID    string // 覆盖消息结束
+	ParentSummaryID string // 前序摘要 ID（空=无）
+	Topics          string // 逗号分隔的话题标签
+}
+
+func (SummaryMeta) isPacketMeta() {}

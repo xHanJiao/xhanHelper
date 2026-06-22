@@ -7,14 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"xhan-helper/internal/agent/promptbuilder"
+	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 )
 
 func TestHandleOneRoundResponse_ParseErrorTriggersRetry(t *testing.T) {
 	// 非法 JSON → 应触发重试，不标记 done
-	o := &Orchestrator{msgRepo: nil}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, msgRepo: nil}
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 16)
@@ -24,7 +25,7 @@ func TestHandleOneRoundResponse_ParseErrorTriggersRetry(t *testing.T) {
 	}
 
 	state := &reactState{}
-	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, &promptbuilder.BuildResult{}, state)
+	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, "", (*ctxflow.RetrieveResult)(nil), state)
 
 	if done {
 		t.Error("expected done=false for parse error (should retry)")
@@ -65,7 +66,8 @@ func TestHandleOneRoundResponse_ParseErrorTriggersRetry(t *testing.T) {
 
 func TestHandleOneRoundResponse_InvalidJSON_UnescapedQuotes(t *testing.T) {
 	// LLM 常见错误：JSON 字符串里放了未转义的双引号，应触发重试
-	o := &Orchestrator{msgRepo: nil}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, msgRepo: nil}
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 16)
@@ -75,7 +77,7 @@ func TestHandleOneRoundResponse_InvalidJSON_UnescapedQuotes(t *testing.T) {
 	}
 
 	state := &reactState{}
-	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, &promptbuilder.BuildResult{}, state)
+	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, "", (*ctxflow.RetrieveResult)(nil), state)
 
 	if done {
 		t.Error("expected done=false for unescaped quotes (should retry)")
@@ -90,7 +92,8 @@ func TestHandleOneRoundResponse_InvalidJSON_UnescapedQuotes(t *testing.T) {
 
 func TestHandleOneRoundResponse_ValidJSONTextOnly(t *testing.T) {
 	// 严格 JSON 模式：纯文本回复带空 tool_calls → 应标记 done
-	o := &Orchestrator{msgRepo: nil}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, msgRepo: nil}
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 16)
@@ -100,7 +103,7 @@ func TestHandleOneRoundResponse_ValidJSONTextOnly(t *testing.T) {
 	}
 
 	state := &reactState{}
-	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, &promptbuilder.BuildResult{}, state)
+	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, "", (*ctxflow.RetrieveResult)(nil), state)
 
 	if !done {
 		t.Error("expected done=true for text-only JSON reply (no tool calls)")
@@ -109,7 +112,8 @@ func TestHandleOneRoundResponse_ValidJSONTextOnly(t *testing.T) {
 
 func TestHandleOneRoundResponse_PureTextFallback(t *testing.T) {
 	// 严格 JSON 模式：纯文本（无 JSON）→ parseLLMResponse 返回 nil → 触发重试
-	o := &Orchestrator{msgRepo: nil}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, msgRepo: nil}
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 16)
@@ -119,7 +123,7 @@ func TestHandleOneRoundResponse_PureTextFallback(t *testing.T) {
 	}
 
 	state := &reactState{}
-	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, &promptbuilder.BuildResult{}, state)
+	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, "", (*ctxflow.RetrieveResult)(nil), state)
 
 	// 纯文本容错接受，正常结束
 	if !done {
@@ -190,14 +194,15 @@ func TestNewAssistantMessage_WithToolCalls(t *testing.T) {
 // —— finalizeRound ——
 
 func TestFinalizeRound_ThoughtDone(t *testing.T) {
-	o := &Orchestrator{msgRepo: nil}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, msgRepo: nil}
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{}
 
 	se := &llm.StreamEvent{Type: "done"}
 	done := o.finalizeRound(context.Background(), events, se,
 		`{"reply":"ok"}`, "thinking...",
-		&RunRequest{ConversationID: "cv", UserID: "u1"}, &promptbuilder.BuildResult{}, state,
+		&RunRequest{ConversationID: "cv", UserID: "u1"}, "", (*ctxflow.RetrieveResult)(nil), state,
 	)
 
 	if !done {
@@ -216,14 +221,15 @@ func TestFinalizeRound_ThoughtDone(t *testing.T) {
 }
 
 func TestFinalizeRound_NoThoughtDoneWithoutReasoning(t *testing.T) {
-	o := &Orchestrator{msgRepo: nil}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, msgRepo: nil}
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{}
 
 	se := &llm.StreamEvent{Type: "done"}
 	_ = o.finalizeRound(context.Background(), events, se,
 		`{"reply":"ok"}`, "", // 空 reasoning
-		&RunRequest{ConversationID: "cv", UserID: "u1"}, &promptbuilder.BuildResult{}, state,
+		&RunRequest{ConversationID: "cv", UserID: "u1"}, "", (*ctxflow.RetrieveResult)(nil), state,
 	)
 
 	close(events)
@@ -235,14 +241,15 @@ func TestFinalizeRound_NoThoughtDoneWithoutReasoning(t *testing.T) {
 }
 
 func TestFinalizeRound_CleanTextExtraction(t *testing.T) {
-	o := &Orchestrator{msgRepo: nil}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, msgRepo: nil}
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{}
 
 	se := &llm.StreamEvent{Type: "done"}
 	_ = o.finalizeRound(context.Background(), events, se,
 		`{"reply":"你好，世界"}`, "",
-		&RunRequest{ConversationID: "cv", UserID: "u1"}, &promptbuilder.BuildResult{}, state,
+		&RunRequest{ConversationID: "cv", UserID: "u1"}, "", (*ctxflow.RetrieveResult)(nil), state,
 	)
 
 	close(events)
@@ -265,14 +272,15 @@ func TestFinalizeRound_CleanTextExtraction(t *testing.T) {
 }
 
 func TestFinalizeRound_ReturnsFalseOnParseError(t *testing.T) {
-	o := &Orchestrator{msgRepo: nil}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, msgRepo: nil}
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{}
 
 	se := &llm.StreamEvent{Type: "done"}
 	done := o.finalizeRound(context.Background(), events, se,
 		"这不是合法的 JSON {{{ broken", "",
-		&RunRequest{ConversationID: "cv", UserID: "u1"}, &promptbuilder.BuildResult{}, state,
+		&RunRequest{ConversationID: "cv", UserID: "u1"}, "", (*ctxflow.RetrieveResult)(nil), state,
 	)
 
 	if done {
@@ -291,14 +299,15 @@ func TestFinalizeRound_ReturnsFalseOnParseError(t *testing.T) {
 }
 
 func TestFinalizeRound_ReturnsTrueOnTextOnly(t *testing.T) {
-	o := &Orchestrator{msgRepo: nil}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, msgRepo: nil}
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{}
 
 	se := &llm.StreamEvent{Type: "done"}
 	done := o.finalizeRound(context.Background(), events, se,
 		`{"reply":"ok"}`, "",
-		&RunRequest{ConversationID: "cv", UserID: "u1"}, &promptbuilder.BuildResult{}, state,
+		&RunRequest{ConversationID: "cv", UserID: "u1"}, "", (*ctxflow.RetrieveResult)(nil), state,
 	)
 
 	// 无 tool_calls → handleOneRoundResponse 返回 done=true
@@ -322,7 +331,8 @@ func TestFinalizeRound_ReturnsTrueOnTextOnly(t *testing.T) {
 // —— streamTextChunks ——
 
 func TestStreamTextChunks_ShortText(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	events := make(chan *llm.StreamEvent, 16)
 
 	o.streamTextChunks(context.Background(), events, "好的")
@@ -343,7 +353,8 @@ func TestStreamTextChunks_ShortText(t *testing.T) {
 }
 
 func TestStreamTextChunks_LongText(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	events := make(chan *llm.StreamEvent, 64)
 
 	o.streamTextChunks(context.Background(), events, "你好世界今天天气不错")
@@ -374,7 +385,8 @@ func TestStreamTextChunks_LongText(t *testing.T) {
 }
 
 func TestStreamTextChunks_CancelMidStream(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	events := make(chan *llm.StreamEvent, 64)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -395,7 +407,8 @@ func TestStreamTextChunks_CancelMidStream(t *testing.T) {
 }
 
 func TestStreamTextChunks_EmptyText(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	events := make(chan *llm.StreamEvent, 16)
 
 	o.streamTextChunks(context.Background(), events, "")
@@ -530,6 +543,7 @@ func TestMkLlmChatReq_ParameterResolution(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			o := &Orchestrator{
+				contextFormatter:   &mockFormatter{},
 				proClient:          tt.proClient,
 				defaultTemperature: tt.defaultTemp,
 				defaultMaxTokens:   tt.defaultMax,
@@ -541,7 +555,7 @@ func TestMkLlmChatReq_ParameterResolution(t *testing.T) {
 				MaxTokens:   tt.reqMax,
 				Thinking:    tt.reqThink,
 			}
-			result := &promptbuilder.BuildResult{Prompt: "sys-prompt"}
+			result := "sys-prompt"
 			msgs := []llm.Message{{Role: "user", Content: "hi"}}
 
 			cr := o.mkLlmChatReq(req, result, msgs)
@@ -572,11 +586,12 @@ func TestMkLlmChatReq_ParameterResolution(t *testing.T) {
 
 func TestMkLlmChatReq_PassThroughFields(t *testing.T) {
 	o := &Orchestrator{
+		contextFormatter:   &mockFormatter{},
 		defaultTemperature: ptr(0.5),
 		defaultMaxTokens:   ptr(2048),
 	}
 
-	result := &promptbuilder.BuildResult{Prompt: "custom system prompt"}
+	result := "custom system prompt"
 	msgs := []llm.Message{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "world"},
@@ -608,16 +623,16 @@ func TestMkLlmChatReq_PassThroughFields(t *testing.T) {
 
 func TestMkLlmChatReq_DefaultsNilWhenNotSet(t *testing.T) {
 	// Orchestrator without defaults → Temperature/MaxTokens should stay nil
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	req := &RunRequest{
 		UserID:      "u1",
 		Temperature: nil,
 		MaxTokens:   nil,
 	}
-	result := &promptbuilder.BuildResult{Prompt: "p"}
 	msgs := []llm.Message{}
 
-	cr := o.mkLlmChatReq(req, result, msgs)
+	cr := o.mkLlmChatReq(req, "", msgs)
 
 	if cr.Temperature != nil {
 		t.Errorf("Temperature: want nil, got %v", *cr.Temperature)
@@ -645,6 +660,7 @@ func (m *recordingLLMClient) Chat(ctx context.Context, req *llm.ChatRequest) (<-
 
 func newTestOrch() *Orchestrator {
 	return &Orchestrator{
+		contextFormatter:   &mockFormatter{},
 		msgRepo:            nil,
 		defaultTemperature: ptr(0.5),
 		defaultMaxTokens:   ptr(2048),
@@ -659,9 +675,8 @@ func TestRunOneRound_ContextCancelled(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
-	done := o.runOneRound(ctx, events, &mockLLMClient{}, req, result, state, 0)
+	done := o.runOneRound(ctx, events, &mockLLMClient{}, req, "", (*ctxflow.RetrieveResult)(nil), state, 0)
 
 	if !done {
 		t.Error("expected done=true when context cancelled")
@@ -693,13 +708,12 @@ func TestRunOneRound_LLMError(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{err: fmt.Errorf("API timeout")}},
 	}
 
-	done := o.runOneRound(ctx, events, client, req, result, state, 0)
+	done := o.runOneRound(ctx, events, client, req, "", (*ctxflow.RetrieveResult)(nil), state, 0)
 
 	if !done {
 		t.Error("expected done=true on LLM error")
@@ -725,7 +739,6 @@ func TestRunOneRound_StreamError(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
@@ -736,7 +749,7 @@ func TestRunOneRound_StreamError(t *testing.T) {
 		}},
 	}
 
-	done := o.runOneRound(ctx, events, client, req, result, state, 0)
+	done := o.runOneRound(ctx, events, client, req, "", (*ctxflow.RetrieveResult)(nil), state, 0)
 
 	if !done {
 		t.Error("expected done=true on stream error")
@@ -756,7 +769,6 @@ func TestRunOneRound_DoneTextOnly(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 256)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
@@ -764,7 +776,7 @@ func TestRunOneRound_DoneTextOnly(t *testing.T) {
 		}},
 	}
 
-	done := o.runOneRound(ctx, events, client, req, result, state, 0)
+	done := o.runOneRound(ctx, events, client, req, "", (*ctxflow.RetrieveResult)(nil), state, 0)
 
 	if !done {
 		t.Error("expected done=true for text-only reply")
@@ -782,7 +794,6 @@ func TestRunOneRound_DoneParseErrorRetry(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 256)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
@@ -790,7 +801,7 @@ func TestRunOneRound_DoneParseErrorRetry(t *testing.T) {
 		}},
 	}
 
-	done := o.runOneRound(ctx, events, client, req, result, state, 0)
+	done := o.runOneRound(ctx, events, client, req, "", (*ctxflow.RetrieveResult)(nil), state, 0)
 
 	if done {
 		t.Error("expected done=false on parse error (should retry)")
@@ -821,7 +832,6 @@ func TestRunOneRound_DoneWithReasoning(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 256)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
@@ -833,7 +843,7 @@ func TestRunOneRound_DoneWithReasoning(t *testing.T) {
 		}},
 	}
 
-	done := o.runOneRound(ctx, events, client, req, result, state, 0)
+	done := o.runOneRound(ctx, events, client, req, "", (*ctxflow.RetrieveResult)(nil), state, 0)
 
 	if !done {
 		t.Error("expected done=true")
@@ -856,7 +866,6 @@ func TestRunOneRound_EmptyStream(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 256)
 	state := &reactState{msgs: []llm.Message{}}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
@@ -864,7 +873,7 @@ func TestRunOneRound_EmptyStream(t *testing.T) {
 		}},
 	}
 
-	done := o.runOneRound(ctx, events, client, req, result, state, 0)
+	done := o.runOneRound(ctx, events, client, req, "", (*ctxflow.RetrieveResult)(nil), state, 0)
 
 	if done {
 		t.Error("expected done=false when stream closes without done/error")
@@ -882,7 +891,6 @@ func TestRunOneRound_UsesStateMsgs(t *testing.T) {
 		},
 	}
 	req := &RunRequest{UserID: "u1", ConversationID: "c1"}
-	result := &promptbuilder.BuildResult{Prompt: "sys"}
 
 	recorder := &recordingLLMClient{
 		mockLLMClient: mockLLMClient{
@@ -892,7 +900,7 @@ func TestRunOneRound_UsesStateMsgs(t *testing.T) {
 		},
 	}
 
-	o.runOneRound(ctx, events, recorder, req, result, state, 0)
+	o.runOneRound(ctx, events, recorder, req, "", (*ctxflow.RetrieveResult)(nil), state, 0)
 
 	if recorder.lastReq == nil {
 		t.Fatal("expected Chat to be called")

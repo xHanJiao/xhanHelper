@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/agent/replay"
 	"xhan-helper/internal/agent/retrieval"
@@ -19,6 +20,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	memDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Memory.FreshnessDecay)
 	noteDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Note.FreshnessDecay)
 	historyDecayer := retrieval.NewTimeDecay(cfg.Retrieval.History.FreshnessDecay)
+	summaryDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Summary.FreshnessDecay)
 
 	chunkBuilder := agent.NewChunkBuilder(infra, repos.Chunk, repos.Embedding)
 
@@ -26,12 +28,14 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	noteSource := retrieval.NewNoteSource(vs, repos.Note, repos.Embedding, repos.Chunk, chunkBuilder, noteDecayer)
 	historySource := retrieval.NewHistorySource(vs, repos.Message, repos.Embedding, historyDecayer)
 	themeSource := retrieval.NewThemeSource(repos.ThemeState, vs)
+	summarySource := retrieval.NewSummarySource(vs, repos.ConversationSummary, repos.Embedding, repos.Chunk, chunkBuilder, summaryDecayer)
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
 	memSource.Warmup(bgCtx, infra.Embedder)
 	noteSource.Warmup(bgCtx, infra.Embedder)
 	historySource.Warmup(bgCtx, infra.Embedder)
+	summarySource.Warmup(bgCtx, infra.Embedder)
 
 	// 从 embedding 表加载向量到内存 store
 	agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState)
@@ -77,9 +81,12 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		retrievalTools, repos.Trace)
 	// --- Summary 子系统 ---
 	summaryWorker := agent.NewSummaryWorker(&agent.SummaryWorkerConfig{
-		FlashClient: llmClients.Flash,
-		MsgRepo:     repos.Message,
-		SummaryRepo: repos.ConversationSummary,
+		FlashClient:   llmClients.Flash,
+		MsgRepo:       repos.Message,
+		SummaryRepo:   repos.ConversationSummary,
+		Embedder:      infra.Embedder,
+		ChunkBuilder:  chunkBuilder,
+		EmbeddingRepo: repos.Embedding,
 	})
 
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{
@@ -103,20 +110,23 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	})
 
 	// --- Orchestrator ---
-	promptCfg := promptbuilder.DefaultPromptConfig()
-	applyRetrievalConfig(&promptCfg, cfg.Retrieval)
 	pb := promptbuilder.NewPromptBuilder(
 		agent.BaseSystemPrompt,
 		tools.Registry,
 		repos.Prompt, cfg.LLM.UseNativeFC,
-		promptbuilder.WithScoreModifier(
-			promptbuilder.NewThemeProvider(themeSource, &promptCfg),
-			promptbuilder.BoostFactor(1.3),
-		),
-		promptbuilder.NewMemoryProvider(memSource, &promptCfg),
-		promptbuilder.NewNoteProvider(noteSource, &promptCfg),
-		promptbuilder.NewHistoryProvider(historySource, &promptCfg),
 	)
+
+	// ContextRetriever
+	retrieveCfg := ctxflow.DefaultRetrieveConfig()
+	applyRetrieveConfig(&retrieveCfg, cfg.Retrieval)
+	retriever := ctxflow.NewContextRetriever(
+		[]retrieval.ContextSource{themeSource, memSource, noteSource, historySource, summarySource},
+		&retrieveCfg,
+	).WithModifier("theme", ctxflow.BoostFactor(1.3))
+
+	// ContextFormatter
+	formatter := ctxflow.NewXMLFormatter()
+
 	orch := agent.New(&agent.OrchestratorConfig{
 		FlashClient:        llmClients.Flash,
 		Registry:           tools.Registry,
@@ -141,6 +151,8 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		VerifyModel:               cfg.LLM.Verification.Model,
 		UseNativeFC:               cfg.LLM.UseNativeFC,
 		SummaryRepo:               repos.ConversationSummary,
+		ContextRetriever:          retriever,
+		ContextFormatter:          formatter,
 		MaxSummaryAttachRounds:    cfg.Chat.MaxSummaryAttachRounds,
 		SummaryRelevanceThreshold: cfg.Chat.SummaryRelevanceThreshold,
 		SummaryRelevanceHistoryN:  cfg.Chat.SummaryRelevanceHistoryN,
@@ -149,13 +161,15 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	go cronRunner.Start(bgCtx)
 
 	replayRunner := replay.NewRunner(&replay.RunnerConfig{
-		FlashClient:   llmClients.Flash,
-		ProClient:     llmClients.Strong,
-		Registry:      tools.Registry,
-		PromptBuilder: pb,
-		Embedder:      infra.Embedder,
-		MaxIterations: cfg.LLM.MaxIterations,
-		MaxTokens:     cfg.LLM.DefaultMaxTokens,
+		FlashClient:      llmClients.Flash,
+		ProClient:        llmClients.Strong,
+		Registry:         tools.Registry,
+		PromptBuilder:    pb,
+		Embedder:         infra.Embedder,
+		ContextRetriever: retriever,
+		ContextFormatter: formatter,
+		MaxIterations:    cfg.LLM.MaxIterations,
+		MaxTokens:        cfg.LLM.DefaultMaxTokens,
 	})
 
 	return &AgentBundle{
@@ -170,24 +184,36 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	}
 }
 
-// applyRetrievalConfig 将 yaml 配置中非零的 threshold/limit 覆盖到 PromptConfig
-func applyRetrievalConfig(pc *promptbuilder.PromptConfig, rc config.RetrievalConfig) {
+// applyRetrieveConfig 将 yaml 配置中非零的 threshold/limit 覆盖到 RetrieveConfig
+func applyRetrieveConfig(cfg *ctxflow.RetrieveConfig, rc config.RetrievalConfig) {
 	if rc.Memory.Threshold > 0 {
-		pc.Memory.Threshold = rc.Memory.Threshold
+		cfg.Memory.Threshold = rc.Memory.Threshold
 	}
 	if rc.Memory.Limit > 0 {
-		pc.Memory.Limit = rc.Memory.Limit
+		cfg.Memory.Limit = rc.Memory.Limit
 	}
 	if rc.Note.Threshold > 0 {
-		pc.Note.Threshold = rc.Note.Threshold
+		cfg.Note.Threshold = rc.Note.Threshold
 	}
 	if rc.Note.Limit > 0 {
-		pc.Note.Limit = rc.Note.Limit
+		cfg.Note.Limit = rc.Note.Limit
 	}
 	if rc.History.Threshold > 0 {
-		pc.History.Threshold = rc.History.Threshold
+		cfg.History.Threshold = rc.History.Threshold
 	}
 	if rc.History.Limit > 0 {
-		pc.History.Limit = rc.History.Limit
+		cfg.History.Limit = rc.History.Limit
+	}
+	if rc.Theme.Threshold > 0 {
+		cfg.Theme.Threshold = rc.Theme.Threshold
+	}
+	if rc.Theme.Limit > 0 {
+		cfg.Theme.Limit = rc.Theme.Limit
+	}
+	if rc.Summary.Threshold > 0 {
+		cfg.Summary.Threshold = rc.Summary.Threshold
+	}
+	if rc.Summary.Limit > 0 {
+		cfg.Summary.Limit = rc.Summary.Limit
 	}
 }

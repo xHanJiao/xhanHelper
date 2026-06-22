@@ -8,10 +8,21 @@ import (
 	"strings"
 	"testing"
 
+	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 )
+
+// mockFormatter 简单实现 ContextFormatter 接口供测试使用
+type mockFormatter struct{}
+
+func (m *mockFormatter) FormatUserMessage(result *ctxflow.RetrieveResult, userQuery string, extraBlocks ...ctxflow.ExtraBlock) string {
+	return "<user_query>" + userQuery + "</user_query>"
+}
+func (m *mockFormatter) FormatBlocks(result *ctxflow.RetrieveResult, extraBlocks ...ctxflow.ExtraBlock) string {
+	return ""
+}
 
 // —— mock 实现 ——
 
@@ -82,9 +93,10 @@ func (m *mockLLMClient) ModelName() string { return "mock" }
 
 func newTestOrchestrator(msgRepo msgCreator, convRepo convToucher) *Orchestrator {
 	return &Orchestrator{
-		msgRepo:       msgRepo,
-		convRepo:      convRepo,
-		maxIterations: 3,
+		contextFormatter: &mockFormatter{},
+		msgRepo:          msgRepo,
+		convRepo:         convRepo,
+		maxIterations:    3,
 	}
 }
 
@@ -164,7 +176,7 @@ func TestRunReActLoop_StrictJSON_TextOnlyReply(t *testing.T) {
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
 
-	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
+	result := "test prompt"
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -172,7 +184,7 @@ func TestRunReActLoop_StrictJSON_TextOnlyReply(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -204,7 +216,7 @@ func TestRunReActLoop_StrictJSON_ReplyWithEmptyToolCalls(t *testing.T) {
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
-	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
+	result := "test prompt"
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -212,7 +224,7 @@ func TestRunReActLoop_StrictJSON_ReplyWithEmptyToolCalls(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -242,7 +254,7 @@ func TestRunReActLoop_PureText_AcceptedGracefully(t *testing.T) {
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
-	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
+	result := "test prompt"
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -250,7 +262,7 @@ func TestRunReActLoop_PureText_AcceptedGracefully(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -288,7 +300,7 @@ func TestRunReActLoop_StrictJSON_InvalidJSONTriggersRetry(t *testing.T) {
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
-	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
+	result := "test prompt"
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -296,7 +308,7 @@ func TestRunReActLoop_StrictJSON_InvalidJSONTriggersRetry(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -335,7 +347,7 @@ func TestRunReActLoop_LLMError(t *testing.T) {
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
-	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
+	result := "test prompt"
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -343,7 +355,7 @@ func TestRunReActLoop_LLMError(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -363,7 +375,8 @@ func TestRunReActLoop_LLMError(t *testing.T) {
 
 func TestRun_EmptyConversationID(t *testing.T) {
 	// ConversationID 为空 → Run 直接返回 error
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	req := &RunRequest{
 		ConversationID:     "", // 空！
 		UserID:             "user-1",
@@ -395,7 +408,7 @@ func TestRunReActLoop_JSONWithPrefixText_AcceptedGracefully(t *testing.T) {
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
-	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
+	result := "test prompt"
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -403,7 +416,7 @@ func TestRunReActLoop_JSONWithPrefixText_AcceptedGracefully(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -442,7 +455,7 @@ func TestRunReActLoop_StreamingBuffersUntilDone(t *testing.T) {
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
-	result := &promptbuilder.BuildResult{Prompt: "test prompt"}
+	result := "test prompt"
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
@@ -450,7 +463,7 @@ func TestRunReActLoop_StreamingBuffersUntilDone(t *testing.T) {
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, req)
+	go o.runReActLoop(ctx, events, result, nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
@@ -489,6 +502,7 @@ func (m *mockPromptBuilder) Build(ctx context.Context, opts promptbuilder.BuildO
 
 func TestRun_PromptBuildError(t *testing.T) {
 	o := &Orchestrator{
+		contextFormatter:    &mockFormatter{},
 		flashClient:         &mockLLMClient{},
 		systemPromptBuilder: &mockPromptBuilder{buildErr: fmt.Errorf("theme state query failed")},
 	}

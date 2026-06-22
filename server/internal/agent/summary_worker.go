@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -17,24 +19,33 @@ import (
 // SummaryWorker — 对话摘要生成器。
 // 由 CronRunner 的 DelayedTask 驱动，在 session 结束后覆盖整段 session 生成导航级摘要。
 type SummaryWorker struct {
-	flashClient llm.LLMClient
-	msgRepo     *service.MessageRepo
-	summaryRepo *service.ConversationSummaryRepo
+	flashClient   llm.LLMClient
+	msgRepo       *service.MessageRepo
+	summaryRepo   *service.ConversationSummaryRepo
+	embedder      *llm.Embedder          // 摘要全文 embedding
+	chunkBuilder  app.ChunkEmbedder      // 摘要 chunk 建设
+	embeddingRepo *service.EmbeddingRepo // embedding 持久化
 }
 
 // SummaryWorkerConfig — SummaryWorker 依赖配置
 type SummaryWorkerConfig struct {
-	FlashClient llm.LLMClient
-	MsgRepo     *service.MessageRepo
-	SummaryRepo *service.ConversationSummaryRepo
+	FlashClient   llm.LLMClient
+	MsgRepo       *service.MessageRepo
+	SummaryRepo   *service.ConversationSummaryRepo
+	Embedder      *llm.Embedder          // 可选：摘要全文 embedding
+	ChunkBuilder  app.ChunkEmbedder      // 可选：摘要 chunk 建设
+	EmbeddingRepo *service.EmbeddingRepo // 可选：embedding 持久化
 }
 
 // NewSummaryWorker 创建摘要生成器。
 func NewSummaryWorker(cfg *SummaryWorkerConfig) *SummaryWorker {
 	return &SummaryWorker{
-		flashClient: cfg.FlashClient,
-		msgRepo:     cfg.MsgRepo,
-		summaryRepo: cfg.SummaryRepo,
+		flashClient:   cfg.FlashClient,
+		msgRepo:       cfg.MsgRepo,
+		summaryRepo:   cfg.SummaryRepo,
+		embedder:      cfg.Embedder,
+		chunkBuilder:  cfg.ChunkBuilder,
+		embeddingRepo: cfg.EmbeddingRepo,
 	}
 }
 
@@ -177,6 +188,13 @@ func (w *SummaryWorker) saveSummary(
 		return false, fmt.Errorf("Create summary: %w", err)
 	}
 
+	// 异步做全文 embedding + chunk 建设（不阻塞摘要保存流程）
+	go func() {
+		bgCtx, bgCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer bgCancel()
+		w.buildEmbeddingAndChunks(bgCtx, record)
+	}()
+
 	if prev != nil {
 		if err := w.summaryRepo.MarkSuperseded(ctx, prev.ID); err != nil {
 			log.Printf("[summary] MarkSuperseded error (old summary=%s still active): %v", prev.ID[:8], err)
@@ -186,4 +204,34 @@ func (w *SummaryWorker) saveSummary(
 	log.Printf("[summary] created: id=%s conv=%s cover=%s..%s text=%d chars",
 		record.ID[:8], convID[:8], coverFrom[:8], coverTo[:8], len(text))
 	return true, nil
+}
+
+// buildEmbeddingAndChunks 对新生成的摘要做全文 embedding 和 chunk 建设。
+// embedder / chunkBuilder / embeddingRepo 为强依赖，nil 时 panic 暴露接线 bug。
+func (w *SummaryWorker) buildEmbeddingAndChunks(ctx context.Context, s *model.ConversationSummary) {
+	// 1. 全文 embedding（供 full-embedding 检索）
+	vec, err := w.embedder.Embed(ctx, s.SummaryText)
+	if err != nil {
+		log.Printf("[summary] embed %s error: %v", s.ID[:8], err)
+		return
+	}
+	embStr := llm.EmbeddingToString(vec)
+	if err := w.embeddingRepo.Upsert(ctx, &model.Embedding{
+		ID:         s.ID,
+		EntityType: model.EntityTypeSummary,
+		EntityID:   s.ID,
+		UserID:     s.UserID,
+		Model:      w.embedder.ModelName(),
+		Embedding:  &embStr,
+	}); err != nil {
+		log.Printf("[summary] save embedding %s error: %v", s.ID[:8], err)
+	}
+
+	// 2. Chunk 建设（供 chunk 级检索）
+	cnt, err := w.chunkBuilder.BuildChunks(ctx, s.UserID, model.EntityTypeSummary, s.ID, s.SummaryText)
+	if err != nil {
+		log.Printf("[summary] build chunks %s error: %v", s.ID[:8], err)
+	} else if cnt > 0 {
+		log.Printf("[summary] built %d chunks for %s", cnt, s.ID[:8])
+	}
 }

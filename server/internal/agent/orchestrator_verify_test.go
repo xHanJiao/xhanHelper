@@ -10,7 +10,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
-	"xhan-helper/internal/agent/promptbuilder"
+	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -41,7 +41,8 @@ func setupOrchForVerify(t *testing.T) (*Orchestrator, *service.MessageRepo, func
 
 // 用例：verifyEnabled=false 时不触发
 func TestShouldVerify_Disabled(t *testing.T) {
-	o := &Orchestrator{verifyEnabled: false}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, verifyEnabled: false}
 	req := &RunRequest{}
 	state := &reactState{allToolCalls: []tool.ToolCall{{Tool: "bookkeeping"}}}
 	if o.shouldVerify(req, state) {
@@ -51,7 +52,8 @@ func TestShouldVerify_Disabled(t *testing.T) {
 
 // 用例：无工具调用时不触发
 func TestShouldVerify_NoToolCalls(t *testing.T) {
-	o := &Orchestrator{verifyEnabled: true}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, verifyEnabled: true}
 	req := &RunRequest{}
 	state := &reactState{allToolCalls: nil}
 	if o.shouldVerify(req, state) {
@@ -61,7 +63,8 @@ func TestShouldVerify_NoToolCalls(t *testing.T) {
 
 // 用例：有工具调用时触发
 func TestShouldVerify_WithToolCalls(t *testing.T) {
-	o := &Orchestrator{verifyEnabled: true}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, verifyEnabled: true}
 	req := &RunRequest{}
 	state := &reactState{allToolCalls: []tool.ToolCall{{Tool: "bookkeeping"}}}
 	if !o.shouldVerify(req, state) {
@@ -71,7 +74,8 @@ func TestShouldVerify_WithToolCalls(t *testing.T) {
 
 // 用例：SkipRetrieval=true 时跳过验证
 func TestShouldVerify_SkipRetrieval(t *testing.T) {
-	o := &Orchestrator{verifyEnabled: true}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, verifyEnabled: true}
 	req := &RunRequest{SkipRetrieval: true}
 	state := &reactState{allToolCalls: []tool.ToolCall{{Tool: "bookkeeping"}}}
 	if o.shouldVerify(req, state) {
@@ -83,7 +87,8 @@ func TestShouldVerify_SkipRetrieval(t *testing.T) {
 
 // 用例：构建检验 prompt，模拟真实的多工具调用场景（bookkeeping + search_notes_v2）
 func TestBuildVerifyPrompt_MultiTool(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	req := &RunRequest{
 		RawUserMessage: "帮我查一下最近喝酒的情况",
 	}
@@ -129,7 +134,8 @@ func TestBuildVerifyPrompt_MultiTool(t *testing.T) {
 // 用例：传入 retrieved items，prompt 应包含检索命中内容区块
 // 这个分支在所有现有测试中都是 nil 传入，实际调用时传 result.RetrievedItems
 func TestBuildVerifyPrompt_WithRetrievedItems(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	req := &RunRequest{RawUserMessage: "最近有什么重要的事"}
 	state := &reactState{
 		msgs: []llm.Message{
@@ -139,7 +145,7 @@ func TestBuildVerifyPrompt_WithRetrievedItems(t *testing.T) {
 	}
 	msg := llm.Message{Content: `{"reply":"你5月20日约了牙医。"}`}
 
-	retrieved := []promptbuilder.RetrievedItem{
+	retrieved := []retrievedItemView{
 		{Type: "memory", Text: "5月20日约了牙医下午3点"},
 		{Type: "note", Text: "牙医预约注意事项：带医保卡"},
 	}
@@ -167,7 +173,8 @@ func TestBuildVerifyPrompt_WithRetrievedItems(t *testing.T) {
 
 // 用例：无工具调用时的 prompt（纯聊天经过检验——不应发生但确保不崩溃）
 func TestBuildVerifyPrompt_NoTools(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	req := &RunRequest{RawUserMessage: "你好"}
 	state := &reactState{
 		msgs: []llm.Message{
@@ -190,7 +197,8 @@ func TestBuildVerifyPrompt_NoTools(t *testing.T) {
 
 // 用例：仅有幻觉时的反馈
 func TestBuildVerifyFeedback_HallucinationsOnly(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	vr := verifyResult{
 		Complete:       true,
 		Hallucinations: []string{"编造了 5月3日 购买青岛啤酒 15元，工具返回中无此记录"},
@@ -211,7 +219,8 @@ func TestBuildVerifyFeedback_HallucinationsOnly(t *testing.T) {
 
 // 用例：仅有缺失时的反馈
 func TestBuildVerifyFeedback_MissingOnly(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	vr := verifyResult{
 		Complete:       false,
 		Hallucinations: nil,
@@ -232,7 +241,8 @@ func TestBuildVerifyFeedback_MissingOnly(t *testing.T) {
 
 // 用例：同时有幻觉和缺失
 func TestBuildVerifyFeedback_Both(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	vr := verifyResult{
 		Complete:       false,
 		Hallucinations: []string{"金额 146 元不存在"},
@@ -247,7 +257,8 @@ func TestBuildVerifyFeedback_Both(t *testing.T) {
 
 // 用例：通过时的反馈（实际上通过不会调 buildVerifyFeedback，但确保空结构不崩溃）
 func TestBuildVerifyFeedback_Clean(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	vr := verifyResult{Complete: true}
 	feedback := o.buildVerifyFeedback(vr)
 	// 通过时不应有幻觉或缺失内容
@@ -260,7 +271,8 @@ func TestBuildVerifyFeedback_Clean(t *testing.T) {
 
 // 用例：验证 SSE 事件格式
 func TestSendVerifyEvent(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	events := make(chan *llm.StreamEvent, 1)
 
 	o.sendVerifyEvent(events, "checking", 1, "")
@@ -299,7 +311,7 @@ func TestSaveAssistantMsg_Internal(t *testing.T) {
 		Content:          `{"reply":"这是未通过检验的草稿"}`,
 		ReasoningContent: "一些思考...",
 	}
-	trace := &promptbuilder.PromptTrace{}
+	trace := &ctxflow.RetrieveTrace{}
 
 	mid := orch.saveAssistantMsgInternal(context.Background(), "c1", "u1", msg, trace)
 	if mid == "" {
@@ -325,7 +337,7 @@ func TestSaveAssistantMsg_Normal(t *testing.T) {
 	defer cleanup()
 
 	msg := llm.Message{Content: `{"reply":"正常回复"}`}
-	mid := orch.saveAssistantMsg(context.Background(), "c1", "u1", msg, nil, "")
+	mid := orch.saveAssistantMsg(context.Background(), "c1", "u1", msg, nil)
 	if mid == "" {
 		t.Fatal("应返回 message ID")
 	}
@@ -351,9 +363,9 @@ func TestVerifyAndMaybeRetry_MaxRetries(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 4)
 	msg := llm.Message{Content: `{"reply":"草稿"}`}
 	req := &RunRequest{ConversationID: "c1", UserID: "u1"}
-	result := &promptbuilder.BuildResult{}
+	result := ""
 
-	done := orch.verifyAndMaybeRetry(context.Background(), events, msg, req, result, state)
+	done := orch.verifyAndMaybeRetry(context.Background(), events, msg, req, result, nil, state)
 	if !done {
 		t.Error("超过 maxRetries 应直接返回 done=true")
 	}
@@ -365,7 +377,7 @@ func TestVerifyAndMaybeRetry_MaxRetries(t *testing.T) {
 // 用例：msgRepo 为 nil 时 saveAssistantMsg 安全返回空
 func TestSaveAssistantMsg_NilRepo(t *testing.T) {
 	orch := &Orchestrator{} // msgRepo 为 nil
-	mid := orch.saveAssistantMsgWithFlags(context.Background(), "c1", "u1", llm.Message{Content: "test"}, nil, false, "")
+	mid := orch.saveAssistantMsgWithFlags(context.Background(), "c1", "u1", llm.Message{Content: "test"}, nil, false)
 	if mid != "" {
 		t.Error("msgRepo=nil 时应返回空 ID")
 	}
@@ -375,7 +387,8 @@ func TestSaveAssistantMsg_NilRepo(t *testing.T) {
 // 用例：buildVerifyPrompt 包含真实脱敏数据场景
 // 模拟用户问"最近喝酒情况"，LLM只查了账单没查笔记和记忆的情况
 func TestBuildVerifyPrompt_RealisticBeerScenario(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	req := &RunRequest{
 		RawUserMessage: "我最近喝酒的情况怎么样，能用账单、笔记、记忆帮我综合分析一下吗",
 	}
@@ -419,7 +432,8 @@ func TestBuildVerifyPrompt_RealisticBeerScenario(t *testing.T) {
 // 数据来源：用户实际对话"query_bills 按酒搜索" → tool_retriever → query_bills → 最终回复
 
 func TestBuildVerifyPrompt_RealData_GoodReply(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	req := &RunRequest{
 		RawUserMessage: "query_bills 不是可以关键词搜索吗，你就按酒搜索一下呢",
 	}
@@ -472,7 +486,8 @@ func TestBuildVerifyPrompt_RealData_GoodReply(t *testing.T) {
 
 // 用例：同一真实数据，但 LLM 回复中编造了不存在的账单
 func TestBuildVerifyPrompt_RealData_BadReply_WithHallucination(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}}
 	req := &RunRequest{RawUserMessage: "query_bills 不是可以关键词搜索吗，你就按酒搜索一下呢"}
 
 	// 同样的对话历史

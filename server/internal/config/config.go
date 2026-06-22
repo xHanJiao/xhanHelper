@@ -151,6 +151,7 @@ type RetrievalConfig struct {
 	Memory         SourceWeights `yaml:"memory"`
 	Note           SourceWeights `yaml:"note"`
 	History        SourceWeights `yaml:"history"`
+	Theme          SourceWeights `yaml:"theme"`
 	Summary        SourceWeights `yaml:"summary"`
 }
 
@@ -327,6 +328,7 @@ func merge(dst, src *Config) {
 	mergeSourceWeights(&dst.Retrieval.Memory, &src.Retrieval.Memory)
 	mergeSourceWeights(&dst.Retrieval.Note, &src.Retrieval.Note)
 	mergeSourceWeights(&dst.Retrieval.History, &src.Retrieval.History)
+	mergeSourceWeights(&dst.Retrieval.Theme, &src.Retrieval.Theme)
 	mergeSourceWeights(&dst.Retrieval.Summary, &src.Retrieval.Summary)
 	if src.Reflection.LaunchMaxIterations != 0 {
 		dst.Reflection.LaunchMaxIterations = src.Reflection.LaunchMaxIterations
@@ -455,6 +457,7 @@ func validate(cfg *Config) error {
 	setSourceWeightsDefault(&cfg.Retrieval.Memory, cfg.Retrieval.FreshnessDecay, 0.5, 8)
 	setSourceWeightsDefault(&cfg.Retrieval.Note, 0, 0.5, 5)
 	setSourceWeightsDefault(&cfg.Retrieval.History, 0.005, 0.5, 5)
+	setSourceWeightsDefault(&cfg.Retrieval.Theme, 0, 0.6, 10)
 	setSourceWeightsDefault(&cfg.Retrieval.Summary, 0.02, 1.0, 0)
 	if cfg.Reflection.LaunchMaxIterations == 0 {
 		cfg.Reflection.LaunchMaxIterations = 8

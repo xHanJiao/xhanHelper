@@ -60,6 +60,7 @@ type RunRequest struct {
 	Note    retrieval.SourceConfig
 	History retrieval.SourceConfig
 	Theme   retrieval.SourceConfig
+	Summary retrieval.SourceConfig
 }
 
 // reactState — runReActLoop 循环过程中的可变状态
@@ -267,6 +268,7 @@ func mkSearchOptions(req *RunRequest, queryVec []float64, historyEmbeddings [][]
 		Note:              req.Note,
 		History:           req.History,
 		Theme:             req.Theme,
+		Summary:           req.Summary,
 		ExcludeMsgIDs:     excludeMsgIDs,
 	}
 }
@@ -449,9 +451,6 @@ func (o *Orchestrator) checkSummaryRelevance(
 	var queryVecs [][]float64
 	if len(queryVec) > 0 {
 		queryVecs = append(queryVecs, queryVec)
-	}
-	if o.summaryRelevanceHistoryN > 0 {
-		queryVecs = append(queryVecs, o.embedHistoryUserMessages(req.Messages, o.summaryRelevanceHistoryN)...)
 	}
 	if o.summaryRelevanceHistoryN > 0 {
 		queryVecs = append(queryVecs, o.embedHistoryUserMessages(req.Messages, o.summaryRelevanceHistoryN)...)

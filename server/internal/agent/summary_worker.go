@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -188,7 +189,11 @@ func (w *SummaryWorker) saveSummary(
 	}
 
 	// 异步做全文 embedding + chunk 建设（不阻塞摘要保存流程）
-	go w.buildEmbeddingAndChunks(context.Background(), record)
+	go func() {
+		bgCtx, bgCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer bgCancel()
+		w.buildEmbeddingAndChunks(bgCtx, record)
+	}()
 
 	if prev != nil {
 		if err := w.summaryRepo.MarkSuperseded(ctx, prev.ID); err != nil {

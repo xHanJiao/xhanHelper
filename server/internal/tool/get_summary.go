@@ -132,10 +132,10 @@ func (t *GetSummaryTool) searchSummaries(ec *ExecuteContext, args json.RawMessag
 		return &Result{Success: false, Error: fmt.Sprintf("查询嵌入失败: %v", err)}
 	}
 
-	// 向量搜索
-	topK := a.TopK * 3
-	if topK < 30 {
-		topK = 30
+	// 向量搜索：拉取足够候选项供后续去重+排序
+	topK := a.TopK * 5
+	if topK < 10 {
+		topK = 10
 	}
 	results := t.vectorStore.Search(vec, topK, func(id string, vec []float64, meta map[string]string) bool {
 		return meta["type"] == "summary" && meta["user_id"] == ec.UserID
@@ -156,14 +156,14 @@ func (t *GetSummaryTool) searchSummaries(ec *ExecuteContext, args json.RawMessag
 		return &Result{Success: true, Data: json.RawMessage("[]")}
 	}
 
-	// 批量加载摘要
+	// 批量加载摘要（DB 层做 user_id 纵深防御过滤）
 	ids := make([]string, 0, len(seen))
 	for id := range seen {
 		ids = append(ids, id)
 	}
-	summaries, err := t.summaryRepo.GetByIDs(ec.Ctx, ids)
+	summaries, err := t.summaryRepo.GetByIDsForUser(ec.Ctx, ids, ec.UserID)
 	if err != nil {
-		log.Printf("[search_summaries] GetByIDs error: %v", err)
+		log.Printf("[search_summaries] GetByIDsForUser error: %v", err)
 		return &Result{Success: false, Error: fmt.Sprintf("加载摘要失败: %v", err)}
 	}
 
@@ -175,9 +175,6 @@ func (t *GetSummaryTool) searchSummaries(ec *ExecuteContext, args json.RawMessag
 	}
 	items := make([]item, 0, len(summaries))
 	for _, s := range summaries {
-		if s.UserID != ec.UserID {
-			continue
-		}
 		items = append(items, item{id: s.ID, score: seen[s.ID], text: s.SummaryText})
 	}
 	// 简单冒泡排序（少量数据）

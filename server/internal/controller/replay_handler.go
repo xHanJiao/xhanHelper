@@ -42,6 +42,7 @@ type replayPreviewReq struct {
 	Note               retrieval.SourceConfig `json:"note"`
 	History            retrieval.SourceConfig `json:"history"`
 	Theme              retrieval.SourceConfig `json:"theme"`
+	Summary            retrieval.SourceConfig `json:"summary"`
 }
 
 type replayCompareReq struct {
@@ -103,6 +104,7 @@ func (h *ReplayHandler) PreviewReplay(c *gin.Context) {
 		Note:               req.Note,
 		History:            req.History,
 		Theme:              req.Theme,
+		Summary:            req.Summary,
 	})
 	if err != nil {
 		log.Printf("[replay] preview error: %v", err)

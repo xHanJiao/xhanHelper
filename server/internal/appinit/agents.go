@@ -204,6 +204,12 @@ func applyRetrieveConfig(cfg *ctxflow.RetrieveConfig, rc config.RetrievalConfig)
 	if rc.History.Limit > 0 {
 		cfg.History.Limit = rc.History.Limit
 	}
+	if rc.Theme.Threshold > 0 {
+		cfg.Theme.Threshold = rc.Theme.Threshold
+	}
+	if rc.Theme.Limit > 0 {
+		cfg.Theme.Limit = rc.Theme.Limit
+	}
 	if rc.Summary.Threshold > 0 {
 		cfg.Summary.Threshold = rc.Summary.Threshold
 	}

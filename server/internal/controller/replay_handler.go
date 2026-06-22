@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"xhan-helper/internal/agent"
-	"xhan-helper/internal/agent/promptbuilder"
+	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/agent/replay"
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/llm"
@@ -71,9 +71,9 @@ type sideAData struct {
 // —— B 侧（新跑的结果）——
 
 type sideBData struct {
-	Result         *replay.Result             `json:"result"`
-	SystemPrompt   string                     `json:"system_prompt"`
-	RetrievalTrace *promptbuilder.PromptTrace `json:"retrieval_trace,omitempty"`
+	Result         *replay.Result         `json:"result"`
+	SystemPrompt   string                 `json:"system_prompt"`
+	RetrievalTrace *ctxflow.RetrieveTrace `json:"retrieval_trace,omitempty"`
 }
 
 // PreviewReplay 预览重放时发给 LLM 的完整请求（含 system prompt + 消息列表）
@@ -111,7 +111,7 @@ func (h *ReplayHandler) PreviewReplay(c *gin.Context) {
 	systemPrompt := ""
 	messages := agent.BuildMessagesForFlash(history, req.MaxToolResultChars, false)
 	messages = append(messages, llm.Message{Role: "user", Content: anchor.Content})
-	var trace *promptbuilder.PromptTrace
+	var trace *ctxflow.RetrieveTrace
 
 	if preview != nil {
 		systemPrompt = preview.SystemPrompt

@@ -141,7 +141,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewMessageSearchTool(repos.Message, repos.Conversation, cfg.Chat.HistoryRounds, cfg.Chat.MaxSummaryRounds), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
-		tool.NewGetSummaryTool(repos.ConversationSummary), log.Default()))
+		tool.NewGetSummaryTool(repos.ConversationSummary, infra.VectorStore, infra.Embedder), log.Default()))
 
 	missionEmbedder := agent.NewMissionEmbedder(infra, repos.Embedding)
 

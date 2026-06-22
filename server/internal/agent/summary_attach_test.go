@@ -4,11 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"xhan-helper/internal/agent/promptbuilder"
+	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 )
 
+// mockFormatter 简单实现 ContextFormatter 接口供测试使用
 // —— MsgExtra SummaryAttachRound 读写 ——
 
 func TestSetAndGetSummaryAttachRound(t *testing.T) {
@@ -136,7 +137,8 @@ func TestGetOrEmbedSummary_CacheHit(t *testing.T) {
 		"summary_id": summaryID,
 	})
 
-	o := &Orchestrator{vectorStore: vs}
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, vectorStore: vs}
 	summary := &model.ConversationSummary{ID: summaryID, SummaryText: "不会用到"}
 
 	vec := o.getOrEmbedSummary(context.Background(), summary)
@@ -263,6 +265,7 @@ func TestSummaryAttachRound_NewSessionStartsAtOne(t *testing.T) {
 	repo := &testMsgRepo{}
 
 	o := &Orchestrator{
+		contextFormatter:          &mockFormatter{},
 		msgRepo:                   repo,
 		summaryRepo:               nil, // 无摘要 repo，不触发附着
 		maxSummaryAttachRounds:    5,
@@ -284,7 +287,7 @@ func TestSummaryAttachRound_NewSessionStartsAtOne(t *testing.T) {
 		},
 	}
 
-	o.runReActLoop(context.Background(), events, &promptbuilder.BuildResult{}, nil, req)
+	o.runReActLoop(context.Background(), events, "", (*ctxflow.RetrieveResult)(nil), nil, req)
 
 	// 验证 userMsg 的 SummaryAttachRound 被设为 1
 	if len(repo.created) != 1 {
@@ -309,6 +312,7 @@ func TestSummaryAttachRound_Increments(t *testing.T) {
 	}
 
 	o := &Orchestrator{
+		contextFormatter:          &mockFormatter{},
 		msgRepo:                   repo,
 		summaryRepo:               nil,
 		maxSummaryAttachRounds:    5,
@@ -331,7 +335,7 @@ func TestSummaryAttachRound_Increments(t *testing.T) {
 		},
 	}
 
-	o.runReActLoop(context.Background(), events, &promptbuilder.BuildResult{}, nil, req)
+	o.runReActLoop(context.Background(), events, "", (*ctxflow.RetrieveResult)(nil), nil, req)
 
 	// 应递增到 3
 	if len(repo.created) != 1 {
@@ -355,6 +359,7 @@ func TestSummaryAttachRound_AtLimitStops(t *testing.T) {
 	}
 
 	o := &Orchestrator{
+		contextFormatter:          &mockFormatter{},
 		msgRepo:                   repo,
 		summaryRepo:               nil,
 		maxSummaryAttachRounds:    5,
@@ -377,7 +382,7 @@ func TestSummaryAttachRound_AtLimitStops(t *testing.T) {
 		},
 	}
 
-	o.runReActLoop(context.Background(), events, &promptbuilder.BuildResult{}, nil, req)
+	o.runReActLoop(context.Background(), events, "", (*ctxflow.RetrieveResult)(nil), nil, req)
 
 	if len(repo.created) != 1 {
 		t.Fatalf("expected 1 created message, got %d", len(repo.created))
@@ -400,6 +405,7 @@ func TestSummaryAttachRound_PermanentlySkipPropagates(t *testing.T) {
 	}
 
 	o := &Orchestrator{
+		contextFormatter:          &mockFormatter{},
 		msgRepo:                   repo,
 		summaryRepo:               nil,
 		maxSummaryAttachRounds:    5,
@@ -422,7 +428,7 @@ func TestSummaryAttachRound_PermanentlySkipPropagates(t *testing.T) {
 		},
 	}
 
-	o.runReActLoop(context.Background(), events, &promptbuilder.BuildResult{}, nil, req)
+	o.runReActLoop(context.Background(), events, "", (*ctxflow.RetrieveResult)(nil), nil, req)
 
 	if len(repo.created) != 1 {
 		t.Fatalf("expected 1 created message, got %d", len(repo.created))
@@ -446,6 +452,7 @@ func TestSummaryAttachRound_NewSessionResets(t *testing.T) {
 	}
 
 	o := &Orchestrator{
+		contextFormatter:          &mockFormatter{},
 		msgRepo:                   repo,
 		summaryRepo:               nil,
 		maxSummaryAttachRounds:    5,
@@ -467,7 +474,7 @@ func TestSummaryAttachRound_NewSessionResets(t *testing.T) {
 		},
 	}
 
-	o.runReActLoop(context.Background(), events, &promptbuilder.BuildResult{}, nil, req)
+	o.runReActLoop(context.Background(), events, "", (*ctxflow.RetrieveResult)(nil), nil, req)
 
 	if len(repo.created) != 1 {
 		t.Fatalf("expected 1 created message, got %d", len(repo.created))

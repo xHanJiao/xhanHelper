@@ -61,16 +61,25 @@ function parseExtra(raw) {
 
 const extraParsed = computed(() => parseExtra(detailData.value.extra))
 
-const userMessagePrefix = computed(() => extraParsed.value?.user_message_prefix || '')
-
+// 从 request_json.messages 中提取最后一条 user 消息的完整内容
+// （已包含检索上下文 XML + <user_query> 标签，是发给 LLM 的原文）
 const userMsgBody = computed(() => {
-  if (!anchorMsg.value || !userMessagePrefix.value) return ''
-  return userMessagePrefix.value + '\n<user_query>' + anchorMsg.value.content + '</user_query>'
+  const rj = detailData.value.request_json
+  if (!rj) return ''
+  try {
+    const parsed = typeof rj === 'string' ? JSON.parse(rj) : rj
+    const msgs = parsed.messages
+    if (!msgs || !msgs.length) return ''
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'user') return msgs[i].content || ''
+    }
+  } catch { return '' }
+  return ''
 })
 
 const userMsgBodyHtml = computed(() => {
   const text = userMsgBody.value
-  if (!text) return '<span style="color:var(--color-text-muted)">(本轮无检索上下文，或用户消息前缀未记录)</span>'
+  if (!text) return '<span style="color:var(--color-text-muted)">(本轮无检索上下文，或请求 JSON 未记录)</span>'
   let html = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

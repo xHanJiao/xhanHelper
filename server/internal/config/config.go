@@ -455,7 +455,7 @@ func validate(cfg *Config) error {
 	setSourceWeightsDefault(&cfg.Retrieval.Memory, cfg.Retrieval.FreshnessDecay, 0.5, 8)
 	setSourceWeightsDefault(&cfg.Retrieval.Note, 0, 0.5, 5)
 	setSourceWeightsDefault(&cfg.Retrieval.History, 0.005, 0.5, 5)
-	setSourceWeightsDefault(&cfg.Retrieval.Summary, 0.02, 0.6, 5)
+	setSourceWeightsDefault(&cfg.Retrieval.Summary, 0.02, 1.0, 0)
 	if cfg.Reflection.LaunchMaxIterations == 0 {
 		cfg.Reflection.LaunchMaxIterations = 8
 	}

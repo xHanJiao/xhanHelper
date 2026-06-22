@@ -64,6 +64,12 @@ type summariesBlock struct {
 	Items   []summaryItem `xml:"summary" json:"items"`
 }
 
+// --- user_query ---
+type userQueryBlock struct {
+	XMLName struct{} `xml:"user_query" json:"-"`
+	Content string   `xml:",chardata" json:"content"`
+}
+
 // ==================== 构建 ====================
 
 // buildBlock 将某 type 的 packets 构建为可被 xml/json encoder 序列化的元素。

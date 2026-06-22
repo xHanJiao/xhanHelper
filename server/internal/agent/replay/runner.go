@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/agent/contextretriever"
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/llm"
@@ -32,42 +33,47 @@ type Config struct {
 	History retrieval.SourceConfig `json:"history"`
 	Theme   retrieval.SourceConfig `json:"theme"`
 
-	// 手动覆盖完整 system prompt（nil=自动构建，非 nil 直接使用，含空串）
 	OverrideSystemPrompt *string `json:"override_system_prompt,omitempty"`
 }
 
 // Runner 重放执行器，使用独立 SQLite 存储重放消息，复用主应用的 LLM/Tool/检索
 type Runner struct {
-	flashClient   llm.LLMClient
-	proClient     llm.LLMClient
-	registry      *tool.Registry
-	promptBuilder *promptbuilder.PromptBuilder
-	embedder      *llm.Embedder
-	maxIterations int
-	maxTokens     *int
+	flashClient      llm.LLMClient
+	proClient        llm.LLMClient
+	registry         *tool.Registry
+	promptBuilder    *promptbuilder.PromptBuilder
+	embedder         *llm.Embedder
+	contextRetriever *contextretriever.ContextRetriever
+	contextFormatter contextretriever.ContextFormatter
+	maxIterations    int
+	maxTokens        *int
 }
 
 // RunnerConfig — Runner 依赖
 type RunnerConfig struct {
-	FlashClient   llm.LLMClient
-	ProClient     llm.LLMClient
-	Registry      *tool.Registry
-	PromptBuilder *promptbuilder.PromptBuilder
-	Embedder      *llm.Embedder
-	MaxIterations int
-	MaxTokens     *int
+	FlashClient      llm.LLMClient
+	ProClient        llm.LLMClient
+	Registry         *tool.Registry
+	PromptBuilder    *promptbuilder.PromptBuilder
+	Embedder         *llm.Embedder
+	ContextRetriever *contextretriever.ContextRetriever
+	ContextFormatter contextretriever.ContextFormatter
+	MaxIterations    int
+	MaxTokens        *int
 }
 
 // NewRunner 创建重放执行器
 func NewRunner(cfg *RunnerConfig) *Runner {
 	return &Runner{
-		flashClient:   cfg.FlashClient,
-		proClient:     cfg.ProClient,
-		registry:      cfg.Registry,
-		promptBuilder: cfg.PromptBuilder,
-		embedder:      cfg.Embedder,
-		maxIterations: cfg.MaxIterations,
-		maxTokens:     cfg.MaxTokens,
+		flashClient:      cfg.FlashClient,
+		proClient:        cfg.ProClient,
+		registry:         cfg.Registry,
+		promptBuilder:    cfg.PromptBuilder,
+		embedder:         cfg.Embedder,
+		contextRetriever: cfg.ContextRetriever,
+		contextFormatter: cfg.ContextFormatter,
+		maxIterations:    cfg.MaxIterations,
+		maxTokens:        cfg.MaxTokens,
 	}
 }
 
@@ -81,57 +87,74 @@ type CapturedToolCall struct {
 
 // Result — 一次重放的完整结果
 type Result struct {
-	ConversationID string                     `json:"conversation_id"`
-	ToolCalls      []CapturedToolCall         `json:"tool_calls"`
-	Reply          string                     `json:"reply"`
-	Reasoning      []string                   `json:"reasoning"`
-	SystemPrompt   string                     `json:"system_prompt,omitempty"`
-	RetrievalTrace *promptbuilder.PromptTrace `json:"retrieval_trace,omitempty"`
+	ConversationID string                          `json:"conversation_id"`
+	ToolCalls      []CapturedToolCall              `json:"tool_calls"`
+	Reply          string                          `json:"reply"`
+	Reasoning      []string                        `json:"reasoning"`
+	SystemPrompt   string                          `json:"system_prompt,omitempty"`
+	RetrievalTrace *contextretriever.RetrieveTrace `json:"retrieval_trace,omitempty"`
 }
 
-// PreviewResult — 预览结果，包含完整 system prompt、消息列表和检索 trace
+// PreviewResult — 预览结果
 type PreviewResult struct {
-	SystemPrompt      string                     `json:"system_prompt"`
-	UserMessagePrefix string                     `json:"user_message_prefix"`
-	Messages          []llm.Message              `json:"messages"`
-	Trace             *promptbuilder.PromptTrace `json:"trace,omitempty"`
+	SystemPrompt      string                          `json:"system_prompt"`
+	UserMessagePrefix string                          `json:"user_message_prefix"`
+	Messages          []llm.Message                   `json:"messages"`
+	Trace             *contextretriever.RetrieveTrace `json:"trace,omitempty"`
 }
 
 // Preview 构建 system prompt 并返回完整的请求预览
 func (r *Runner) Preview(ctx context.Context, anchorMsg *model.Message, history []model.Message, cfg *Config) (*PreviewResult, error) {
-	msgs := agent.BuildMessagesForFlash(history, cfg.MaxToolResultChars, false) // replay 走旧格式
+	msgs := agent.BuildMessagesForFlash(history, cfg.MaxToolResultChars, false)
 	msgs = append(msgs, llm.Message{Role: "user", Content: anchorMsg.Content})
 
-	var vec []float64
-	if !cfg.SkipRetrieval && r.embedder != nil {
-		v, err := r.embedder.Embed(ctx, anchorMsg.Content)
-		if err != nil {
-			log.Printf("[replay] preview embed error: %v", err)
-		} else {
-			vec = v
-		}
-	}
-
-	result, err := r.promptBuilder.Build(ctx, promptbuilder.BuildOptions{
-		UserID:         anchorMsg.UserID,
-		ConversationID: anchorMsg.ConversationID,
-		UserMessage:    anchorMsg.Content,
-		Embedding:      vec,
-		Memory:         cfg.Memory,
-		Note:           cfg.Note,
-		History:        cfg.History,
-		Theme:          cfg.Theme,
+	// 1. 静态 system prompt
+	pbResult, err := r.promptBuilder.Build(ctx, promptbuilder.BuildOptions{
+		UserID:      anchorMsg.UserID,
+		AgentPrompt: "",
 	})
 	if err != nil {
 		log.Printf("[replay] preview build error: %v", err)
 		return &PreviewResult{Messages: msgs}, nil
 	}
 
+	// 2. 上下文检索
+	var retrieveResult *contextretriever.RetrieveResult
+	var userMsgPrefix string
+	if !cfg.SkipRetrieval && r.embedder != nil && r.contextRetriever != nil {
+		vec, err := r.embedder.Embed(ctx, anchorMsg.Content)
+		if err != nil {
+			log.Printf("[replay] preview embed error: %v", err)
+		} else {
+			retrieveResult, err = r.contextRetriever.Retrieve(ctx, retrieval.SearchOptions{
+				UserID:         anchorMsg.UserID,
+				ConversationID: anchorMsg.ConversationID,
+				Query:          anchorMsg.Content,
+				Embedding:      vec,
+				Memory:         cfg.Memory,
+				Note:           cfg.Note,
+				History:        cfg.History,
+				Theme:          cfg.Theme,
+			})
+			if err != nil {
+				log.Printf("[replay] preview retrieve error: %v", err)
+			}
+		}
+		if r.contextFormatter != nil && retrieveResult != nil {
+			userMsgPrefix = r.contextFormatter.FormatBlocks(retrieveResult)
+		}
+	}
+
+	var trace *contextretriever.RetrieveTrace
+	if retrieveResult != nil {
+		trace = retrieveResult.Trace
+	}
+
 	return &PreviewResult{
-		SystemPrompt:      result.Prompt,
-		UserMessagePrefix: result.UserMessagePrefix,
+		SystemPrompt:      pbResult.Prompt,
+		UserMessagePrefix: userMsgPrefix,
 		Messages:          msgs,
-		Trace:             result.Trace,
+		Trace:             trace,
 	}, nil
 }
 
@@ -157,7 +180,7 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		return nil, err
 	}
 
-	msgs := agent.BuildMessagesForFlash(history, cfg.MaxToolResultChars, false) // replay 走旧格式
+	msgs := agent.BuildMessagesForFlash(history, cfg.MaxToolResultChars, false)
 
 	temperature := cfg.Temperature
 	maxToolResultChars := cfg.MaxToolResultChars
@@ -165,18 +188,10 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		maxToolResultChars = 2000
 	}
 
-	// 预构建 system prompt 以捕获检索 trace。
-	// 构建结果（Prompt + UserMessagePrefix）透传给 orchestrator，
-	// 避免 orch 内部重复构建。
-	var overridePrompt *string
-	var userMsgPrefix string
-	var trace *promptbuilder.PromptTrace
+	var trace *contextretriever.RetrieveTrace
+	prebuiltContent := anchorMsg.Content
 
-	if cfg.OverrideSystemPrompt != nil {
-		// 用户手动覆盖 system prompt —— 跳过检索，无 trace
-		overridePrompt = cfg.OverrideSystemPrompt
-	} else if !cfg.SkipRetrieval {
-		// 预构建：做 embedding → 检索 → 拿到 trace
+	if !cfg.SkipRetrieval {
 		var vec []float64
 		if r.embedder != nil {
 			v, err := r.embedder.Embed(ctx, anchorMsg.Content)
@@ -186,10 +201,10 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 				vec = v
 			}
 		}
-		buildResult, err := r.promptBuilder.Build(ctx, promptbuilder.BuildOptions{
+		retrieveResult, err := r.contextRetriever.Retrieve(ctx, retrieval.SearchOptions{
 			UserID:         anchorMsg.UserID,
 			ConversationID: anchorMsg.ConversationID,
-			UserMessage:    anchorMsg.Content,
+			Query:          anchorMsg.Content,
 			Embedding:      vec,
 			Memory:         cfg.Memory,
 			Note:           cfg.Note,
@@ -197,12 +212,18 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 			Theme:          cfg.Theme,
 		})
 		if err != nil {
-			log.Printf("[replay] prompt build error: %v", err)
+			log.Printf("[replay] retrieve error: %v", err)
 		} else {
-			overridePrompt = &buildResult.Prompt
-			userMsgPrefix = buildResult.UserMessagePrefix
-			trace = buildResult.Trace
+			trace = retrieveResult.Trace
+			prebuiltContent = r.contextFormatter.FormatUserMessage(retrieveResult, anchorMsg.Content)
 		}
+	}
+
+	// 构建 system prompt（仅用于 Result 展示）
+	pbResult, _ := r.promptBuilder.Build(ctx, promptbuilder.BuildOptions{UserID: anchorMsg.UserID})
+	var systemPromptForDisplay string
+	if pbResult != nil {
+		systemPromptForDisplay = pbResult.Prompt
 	}
 
 	orch := agent.New(&agent.OrchestratorConfig{
@@ -223,21 +244,19 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 	})
 
 	events, err := orch.Run(ctx, &agent.RunRequest{
-		UserID:               anchorMsg.UserID,
-		ConversationID:       convID,
-		Messages:             msgs,
-		UserMessageContent:   anchorMsg.Content,
-		RawUserMessage:       anchorMsg.Content,
-		SkipRetrieval:        true, // 已在上面预构建
-		OverrideSystemPrompt: overridePrompt,
-		UserMessagePrefix:    userMsgPrefix,
-		MaxIterations:        cfg.MaxIterations,
-		Temperature:          temperature,
-		MaxTokens:            r.maxTokens,
-		Memory:               cfg.Memory,
-		Note:                 cfg.Note,
-		History:              cfg.History,
-		Theme:                cfg.Theme,
+		UserID:             anchorMsg.UserID,
+		ConversationID:     convID,
+		Messages:           msgs,
+		RawUserMessage:     anchorMsg.Content,
+		SkipRetrieval:      true, // 已在上面预构建
+		UserMessageContent: prebuiltContent,
+		MaxIterations:      cfg.MaxIterations,
+		Temperature:        temperature,
+		MaxTokens:          r.maxTokens,
+		Memory:             cfg.Memory,
+		Note:               cfg.Note,
+		History:            cfg.History,
+		Theme:              cfg.Theme,
 	})
 	if err != nil {
 		log.Printf("[replay] orch run error: %v", err)
@@ -246,9 +265,7 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 
 	result := r.collectEvents(convID, events)
 	result.RetrievalTrace = trace
-	if overridePrompt != nil {
-		result.SystemPrompt = *overridePrompt
-	}
+	result.SystemPrompt = systemPromptForDisplay
 	return result, nil
 }
 
@@ -279,7 +296,6 @@ func (r *Runner) collectEvents(convID string, events <-chan *llm.StreamEvent) *R
 		case "thought_delta":
 			curReasoning.WriteString(evt.Content)
 		case "thought_done":
-			// thought_done 标志一轮思考结束，压入切片，开始新的一轮
 			result.Reasoning = append(result.Reasoning, curReasoning.String())
 			curReasoning.Reset()
 		case "error":
@@ -287,7 +303,6 @@ func (r *Runner) collectEvents(convID string, events <-chan *llm.StreamEvent) *R
 			return result
 		}
 	}
-	// 兜底：如果最后一轮思考没有 thought_done 事件（异常情况），不丢失内容
 	if curReasoning.Len() > 0 {
 		result.Reasoning = append(result.Reasoning, curReasoning.String())
 	}

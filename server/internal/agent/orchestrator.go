@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/agent/contextretriever"
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/idgen"
@@ -54,9 +55,6 @@ type RunRequest struct {
 	Thinking           *bool    // 思考模式：nil=不传，true=开启，false=关闭
 	Window             WindowResult
 
-	OverrideSystemPrompt *string
-	UserMessagePrefix    string // 预构建的检索前缀，配合 OverrideSystemPrompt 使用（replay 场景）
-
 	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
 	Memory  retrieval.SourceConfig
 	Note    retrieval.SourceConfig
@@ -70,10 +68,9 @@ type reactState struct {
 	allToolCalls         []tool.ToolCall
 	lastAssistantMsgID   string
 	userMsgID            string
-	verifyRetries        int    // 本轮对话已重检验次数
-	nativeFCTextDeferred bool   // 原生 FC 下文本因 verify 暂缓推送
-	jsonBuffered         bool   // 原生 FC 下文本首字符为 { 暂缓推送，防 JSON 泄露
-	userMsgPrefix        string // 当前轮检索 XML 前缀，首次 saveAssistantMsg 时消费后清空
+	verifyRetries        int  // 本轮对话已重检验次数
+	nativeFCTextDeferred bool // 原生 FC 下文本因 verify 暂缓推送
+	jsonBuffered         bool // 原生 FC 下文本首字符为 { 暂缓推送，防 JSON 泄露
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（文本解析用）
@@ -120,6 +117,8 @@ type Orchestrator struct {
 	verifyModel         string // "flash" | "pro"
 	useNativeFC         bool
 	summaryRepo         *service.ConversationSummaryRepo
+	contextRetriever    *contextretriever.ContextRetriever // 上下文检索
+	contextFormatter    contextretriever.ContextFormatter  // 上下文格式化（接口）
 
 	// 摘要附着控制
 	maxSummaryAttachRounds    int
@@ -149,9 +148,11 @@ type OrchestratorConfig struct {
 	VerifyModel               string // "flash" | "pro"，默认 flash
 	UseNativeFC               bool   // 是否使用原生 function calling
 	SummaryRepo               *service.ConversationSummaryRepo
-	MaxSummaryAttachRounds    int     // 摘要附着轮次上限，默认 5
-	SummaryRelevanceThreshold float64 // 摘要相关性阈值，默认 0.5
-	SummaryRelevanceHistoryN  int     // 相关性检查的历史消息窗口，默认 5
+	ContextRetriever          *contextretriever.ContextRetriever // 上下文检索
+	ContextFormatter          contextretriever.ContextFormatter  // 上下文格式化
+	MaxSummaryAttachRounds    int                                // 摘要附着轮次上限，默认 5
+	SummaryRelevanceThreshold float64                            // 摘要相关性阈值，默认 0.5
+	SummaryRelevanceHistoryN  int                                // 相关性检查的历史消息窗口，默认 5
 }
 
 // New 创建 Orchestrator
@@ -187,6 +188,8 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		verifyModel:               cfg.VerifyModel,
 		useNativeFC:               cfg.UseNativeFC,
 		summaryRepo:               cfg.SummaryRepo,
+		contextRetriever:          cfg.ContextRetriever,
+		contextFormatter:          cfg.ContextFormatter,
 		maxSummaryAttachRounds:    cfg.MaxSummaryAttachRounds,
 		summaryRelevanceThreshold: cfg.SummaryRelevanceThreshold,
 		summaryRelevanceHistoryN:  cfg.SummaryRelevanceHistoryN,
@@ -206,7 +209,6 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	}
 
 	var queryVec []float64
-	var systemPromptResult *promptbuilder.BuildResult
 	var historyEmbeddings [][]float64
 	if o.embedder != nil && !req.SkipRetrieval {
 		// 使用原始消息（RawUserMessage）做 embedding 检索，而非归一化后的消息
@@ -217,33 +219,37 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 			rawMsg = req.UserMessageContent
 		}
 		queryVec = o.tryEmbedContent(ctx, rawMsg)
-
-		// Phase 15: 从 VectorStore 按 ID 查最近 5 条历史用户消息 embedding
+		// 从 VectorStore 按 ID 查最近 N 条历史用户消息 embedding
 		historyEmbeddings = o.embedHistoryUserMessages(req.Messages, 10)
 	}
 
 	log.Printf("[orch] run start: model=%s, msgs=%d", o.pickClient(req).ModelName(), len(req.Messages))
 
-	if req.OverrideSystemPrompt != nil {
-		systemPromptResult = &promptbuilder.BuildResult{
-			Prompt:            *req.OverrideSystemPrompt,
-			UserMessagePrefix: req.UserMessagePrefix,
-		}
-	} else {
-		var err error
-		systemPromptResult, err = o.systemPromptBuilder.Build(ctx, mkPromptBuildOpt(req, queryVec, historyEmbeddings))
+	// 1. 静态 system prompt
+	result, err := o.systemPromptBuilder.Build(ctx, promptbuilder.BuildOptions{
+		UserID:      req.UserID,
+		AgentPrompt: req.AgentSystemPrompt,
+	})
+	if err != nil {
+		log.Printf("[orch] prompt build error: %v", err)
+		return nil, err
+	}
+
+	// 2. 上下文检索
+	var retrieveResult *contextretriever.RetrieveResult
+	if !req.SkipRetrieval && len(queryVec) > 0 {
+		retrieveResult, err = o.contextRetriever.Retrieve(ctx, mkSearchOptions(req, queryVec, historyEmbeddings))
 		if err != nil {
-			log.Printf("[orch] prompt build error: %v", err)
-			return nil, err
+			log.Printf("[orch] retrieve error: %v", err)
 		}
 	}
 
 	events := make(chan *llm.StreamEvent, 512)
-	go o.runReActLoop(ctx, events, systemPromptResult, queryVec, req)
+	go o.runReActLoop(ctx, events, result.Prompt, retrieveResult, queryVec, req)
 	return events, nil
 }
 
-func mkPromptBuildOpt(req *RunRequest, queryVec []float64, historyEmbeddings [][]float64) promptbuilder.BuildOptions {
+func mkSearchOptions(req *RunRequest, queryVec []float64, historyEmbeddings [][]float64) retrieval.SearchOptions {
 	// 从已有消息中采集 DB ID，供检索时去重
 	excludeMsgIDs := make(map[string]bool)
 	for _, m := range req.Messages {
@@ -251,14 +257,12 @@ func mkPromptBuildOpt(req *RunRequest, queryVec []float64, historyEmbeddings [][
 			excludeMsgIDs[m.ID] = true
 		}
 	}
-
-	return promptbuilder.BuildOptions{
+	return retrieval.SearchOptions{
+		Query:             req.UserMessageContent,
 		UserID:            req.UserID,
 		ConversationID:    req.ConversationID,
-		UserMessage:       req.UserMessageContent,
 		Embedding:         queryVec,
 		HistoryEmbeddings: historyEmbeddings,
-		AgentPrompt:       req.AgentSystemPrompt,
 		Memory:            req.Memory,
 		Note:              req.Note,
 		History:           req.History,
@@ -308,16 +312,15 @@ func (o *Orchestrator) pickClient(req *RunRequest) llm.LLMClient {
 func (o *Orchestrator) runReActLoop(
 	ctx context.Context,
 	events chan<- *llm.StreamEvent,
-	systemPromptResult *promptbuilder.BuildResult,
+	systemPrompt string,
+	retrieveResult *contextretriever.RetrieveResult,
 	queryVec []float64,
 	req *RunRequest,
 ) {
 	defer close(events)
 
 	userMsg := o.prepareUserMsg(req)
-	if summaryBlock := o.resolveSummaryAttachment(ctx, req, userMsg, queryVec); summaryBlock != "" {
-		systemPromptResult.UserMessagePrefix = summaryBlock + systemPromptResult.UserMessagePrefix
-	}
+	summaryBlock := o.resolveSummaryAttachment(ctx, req, userMsg, queryVec)
 
 	if err := o.msgRepo.Create(ctx, userMsg); err != nil {
 		log.Printf("[orch] save user msg error: %v", err)
@@ -332,24 +335,30 @@ func (o *Orchestrator) runReActLoop(
 		defer o.onChatEnd(req.UserID, req.ConversationID, userMsg.ID)
 	}
 
-	userContent := req.UserMessageContent
-	if systemPromptResult.UserMessagePrefix != "" {
-		userContent = systemPromptResult.UserMessagePrefix + "\n<user_query>" + req.UserMessageContent + "</user_query>"
+	// 格式化 user 消息
+	var extraBlocks []contextretriever.ExtraBlock
+	if summaryBlock != "" {
+		extraBlocks = append(extraBlocks, contextretriever.ExtraBlock{Type: "summary", Content: summaryBlock})
 	}
-	state := &reactState{msgs: append(req.Messages, llm.Message{Role: "user", Content: userContent}), userMsgID: userMsg.ID, userMsgPrefix: systemPromptResult.UserMessagePrefix}
+	userContent := o.contextFormatter.FormatUserMessage(retrieveResult, req.UserMessageContent, extraBlocks...)
+
+	state := &reactState{
+		msgs:      append(req.Messages, llm.Message{Role: "user", Content: userContent}),
+		userMsgID: userMsg.ID,
+	}
 
 	maxIter := o.maxIterations
 	if req.MaxIterations > 0 {
 		maxIter = req.MaxIterations
 	}
 	for iter := 0; iter < maxIter; iter++ {
-		if o.runOneRound(ctx, events, o.pickClient(req), req, systemPromptResult, state, iter) {
+		if o.runOneRound(ctx, events, o.pickClient(req), req, systemPrompt, retrieveResult, state, iter) {
 			return
 		}
 	}
 
 	o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrMaxIterations)})
-	o.emitDone(events, req.ConversationID, "", userMsg.ID, "max iterations reached", systemPromptResult.IDsByType)
+	o.emitDone(events, req.ConversationID, "", userMsg.ID, "max iterations reached", idsByTypeFromResult(retrieveResult))
 }
 
 // prepareUserMsg 创建用户消息并设置 WindowSize/SessionStart Extra 字段。
@@ -506,7 +515,8 @@ func (o *Orchestrator) runOneRound(
 	events chan<- *llm.StreamEvent,
 	client llm.LLMClient,
 	req *RunRequest,
-	result *promptbuilder.BuildResult,
+	systemPrompt string,
+	retrieveResult *contextretriever.RetrieveResult,
 	state *reactState,
 	round int,
 ) bool {
@@ -519,7 +529,7 @@ func (o *Orchestrator) runOneRound(
 
 	state.nativeFCTextDeferred = o.shouldVerify(req, state)
 	llmStart := time.Now()
-	streamEvents, err := client.Chat(ctx, o.mkLlmChatReq(req, result, state.msgs))
+	streamEvents, err := client.Chat(ctx, o.mkLlmChatReq(req, systemPrompt, state.msgs))
 	if err != nil {
 		log.Printf("[orch] round %d LLM error: %v", round+1, err)
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrLLMApi)})
@@ -546,7 +556,7 @@ func (o *Orchestrator) runOneRound(
 			recordLLMCall(req.DeepMode && o.proClient != nil, elapsedMs, se.Usage)
 			log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
 				round+1, streamContent.Len(), streamReasoning.Len(), len(se.ToolCalls))
-			return o.finalizeRound(ctx, events, se, streamContent.String(), streamReasoning.String(), req, result, state)
+			return o.finalizeRound(ctx, events, se, streamContent.String(), streamReasoning.String(), req, systemPrompt, retrieveResult, state)
 		case "error":
 			o.sendEvent(events, se)
 			return true
@@ -555,7 +565,7 @@ func (o *Orchestrator) runOneRound(
 	return false
 }
 
-func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPromptResult *promptbuilder.BuildResult, msgs []llm.Message) *llm.ChatRequest {
+func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, msgs []llm.Message) *llm.ChatRequest {
 	isProMode := req.DeepMode && o.proClient != nil
 	temperature := req.Temperature
 	if temperature == nil {
@@ -575,7 +585,7 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPromptResult *promptb
 		tools = o.registry.GetNativeFCTools()
 	}
 	return &llm.ChatRequest{
-		SystemPrompt: systemPromptResult.Prompt,
+		SystemPrompt: systemPrompt,
 		Messages:     msgs,
 		Tools:        tools,
 		Temperature:  temperature,
@@ -629,7 +639,8 @@ func (o *Orchestrator) finalizeRound(
 	se *llm.StreamEvent,
 	streamContent, streamReasoning string,
 	req *RunRequest,
-	result *promptbuilder.BuildResult,
+	systemPrompt string,
+	retrieveResult *contextretriever.RetrieveResult,
 	state *reactState,
 ) bool {
 	if streamReasoning != "" {
@@ -638,7 +649,7 @@ func (o *Orchestrator) finalizeRound(
 
 	msg := newAssistantMessage(streamContent, streamReasoning, se)
 
-	done := o.handleOneRoundResponse(ctx, events, msg, req, result, state)
+	done := o.handleOneRoundResponse(ctx, events, msg, req, systemPrompt, retrieveResult, state)
 	if done {
 		if !o.useNativeFC {
 			cleanText := extractCleanText(streamContent)
@@ -648,7 +659,7 @@ func (o *Orchestrator) finalizeRound(
 		} else if (state.nativeFCTextDeferred || state.jsonBuffered) && streamContent != "" {
 			o.streamTextChunks(ctx, events, streamContent)
 		}
-		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "", result.IDsByType)
+		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "", idsByTypeFromResult(retrieveResult))
 	}
 	return done
 }
@@ -674,13 +685,14 @@ func (o *Orchestrator) handleOneRoundResponse(
 	events chan<- *llm.StreamEvent,
 	msg llm.Message,
 	req *RunRequest,
-	result *promptbuilder.BuildResult,
+	systemPrompt string,
+	retrieveResult *contextretriever.RetrieveResult,
 	state *reactState,
 ) bool {
 	// 原生 FC 路径：tool_calls 已由 API 在 done 事件中解析好
 	if o.useNativeFC && len(msg.ToolCalls) > 0 {
 		internalTCs := nativeToolCallsToInternal(msg.ToolCalls)
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		state.msgs = append(state.msgs, msg)
 		state.allToolCalls = append(state.allToolCalls, internalTCs...)
 		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, o.registry, internalTCs)
@@ -693,7 +705,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		// 兜底：DeepSeek 偶发不走原生 FC，仍在 text 中输出 JSON
 		if parsed, parseErr := ParseLLMResponse(msg.Content); parseErr == nil && parsed != nil {
 			if len(parsed.ToolCalls) > 0 {
-				return o.executePromptEngTools(ctx, events, msg, req, result, state, parsed)
+				return o.executePromptEngTools(ctx, events, msg, req, systemPrompt, retrieveResult, state, parsed)
 			}
 			// 纯 JSON（有 reply 无 tool_calls）：提取纯文本
 			msg.Content = parsed.Reply
@@ -703,9 +715,9 @@ func (o *Orchestrator) handleOneRoundResponse(
 			}
 		}
 		if o.shouldVerify(req, state) {
-			return o.verifyAndMaybeRetry(ctx, events, msg, req, result, state)
+			return o.verifyAndMaybeRetry(ctx, events, msg, req, systemPrompt, retrieveResult, state)
 		}
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		return true
 	}
 
@@ -713,7 +725,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 
 	if parseErr != nil {
 		log.Printf("[orch] round parse error: %v, saving raw and retrying", parseErr)
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, nil, "")
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, nil)
 		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "响应格式异常，正在重试…"})
 		state.msgs = append(state.msgs, llm.Message{
 			Role:    "user",
@@ -726,9 +738,9 @@ func (o *Orchestrator) handleOneRoundResponse(
 		// 纯文本（无 JSON），system prompt 已要求 JSON 但容错接受
 		log.Printf("[orch] round pure text (no JSON), accepting gracefully")
 		if o.shouldVerify(req, state) {
-			return o.verifyAndMaybeRetry(ctx, events, msg, req, result, state)
+			return o.verifyAndMaybeRetry(ctx, events, msg, req, systemPrompt, retrieveResult, state)
 		}
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		return true
 	}
 
@@ -739,13 +751,13 @@ func (o *Orchestrator) handleOneRoundResponse(
 	if len(parsed.ToolCalls) == 0 {
 		log.Printf("[orch] round text-only JSON reply, len=%d", len(msg.Content))
 		if o.shouldVerify(req, state) {
-			return o.verifyAndMaybeRetry(ctx, events, msg, req, result, state)
+			return o.verifyAndMaybeRetry(ctx, events, msg, req, systemPrompt, retrieveResult, state)
 		}
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		return true
 	}
 
-	return o.executePromptEngTools(ctx, events, msg, req, result, state, parsed)
+	return o.executePromptEngTools(ctx, events, msg, req, systemPrompt, retrieveResult, state, parsed)
 }
 
 // verifyResult — Flash 检验返回的结构
@@ -765,12 +777,13 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 	events chan<- *llm.StreamEvent,
 	msg llm.Message,
 	req *RunRequest,
-	result *promptbuilder.BuildResult,
+	systemPrompt string,
+	retrieveResult *contextretriever.RetrieveResult,
 	state *reactState,
 ) bool {
 	if state.verifyRetries >= o.verifyMaxRetries {
 		log.Printf("[verify] max retries reached (%d/%d), accepting draft", state.verifyRetries, o.verifyMaxRetries)
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		return true
 	}
 
@@ -787,7 +800,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 	}
 
 	// 构建检验 prompt——检索上下文注入 system prompt，避免误判为幻觉
-	retrievalCtx := buildRetrievalContext(result.RetrievedItems)
+	retrievalCtx := buildRetrievalContext(retrievedItemsFromPackets(retrieveResult))
 	verifyPrompt := o.buildVerifyPrompt(msg, req, state)
 	verifySystemPrompt := `你是一个内容检验助手。请判断模型的回复是否完整、准确。
 
@@ -810,7 +823,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 	if err != nil {
 		log.Printf("[verify] LLM call error: %v", err)
 		o.sendVerifyEvent(events, "done", state.verifyRetries, "")
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		return true
 	}
 
@@ -818,7 +831,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 	if err := json.Unmarshal([]byte(verifyMsg.Content), &vr); err != nil {
 		log.Printf("[verify] parse result error: %v, raw=%s", err, verifyMsg.Content)
 		o.sendVerifyEvent(events, "done", state.verifyRetries, "")
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		return true
 	}
 
@@ -829,14 +842,14 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 		o.saveVerifyFeedback(ctx, req.ConversationID, req.UserID, "检验通过：无幻觉，回复完整", verifySystemPrompt, verifyPrompt)
 		log.Printf("[verify] round %d passed", state.verifyRetries)
 		o.sendVerifyEvent(events, "done", state.verifyRetries, "")
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		return true
 	}
 
 	// 不通过：存档草稿（IsInternal），注入反馈，继续
 	log.Printf("[verify] round %d failed: complete=%v hallucinations=%d missing=%d", state.verifyRetries, vr.Complete, len(vr.Hallucinations), len(vr.MissingAspects))
 	o.sendVerifyEvent(events, "retry", state.verifyRetries, vr.Suggestion)
-	o.saveAssistantMsgInternal(ctx, req.ConversationID, req.UserID, msg, result.Trace)
+	o.saveAssistantMsgInternal(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 
 	feedback := o.buildVerifyFeedback(vr)
 	o.saveVerifyFeedback(ctx, req.ConversationID, req.UserID, feedback, verifySystemPrompt, verifyPrompt)
@@ -899,7 +912,7 @@ func (o *Orchestrator) buildVerifyPrompt(msg llm.Message, req *RunRequest, state
 
 // buildRetrievalContext 将检索命中内容格式化为 verify system prompt 的已知事实段。
 // 检索上下文注入 system prompt（而非 user prompt），确保检验 LLM 将其视为合法信息来源。
-func buildRetrievalContext(retrieved []promptbuilder.RetrievedItem) string {
+func buildRetrievalContext(retrieved []retrievedItemView) string {
 	if len(retrieved) == 0 {
 		return ""
 	}
@@ -919,15 +932,16 @@ func (o *Orchestrator) executePromptEngTools(
 	events chan<- *llm.StreamEvent,
 	msg llm.Message,
 	req *RunRequest,
-	result *promptbuilder.BuildResult,
+	systemPrompt string,
+	retrieveResult *contextretriever.RetrieveResult,
 	state *reactState,
 	parsed *LLMResponse,
 ) bool {
 	msg.ToolCalls = nil
-	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, result.Trace, popUserMsgPrefix(state))
+	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	state.allToolCalls = append(state.allToolCalls, parsed.ToolCalls...)
-	o.injectExcludeMemIDsForMemSearch(parsed, result.IDsByType["memory"])
+	o.injectExcludeMemIDsForMemSearch(parsed, idsByTypeFromResult(retrieveResult)["memory"])
 	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
 	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 	return false
@@ -961,8 +975,8 @@ func (o *Orchestrator) sendVerifyEvent(events chan<- *llm.StreamEvent, status st
 }
 
 // saveAssistantMsgInternal 以 IsInternal=true 保存草稿，仅存档不展示
-func (o *Orchestrator) saveAssistantMsgInternal(ctx context.Context, convID, userID string, msg llm.Message, trace *promptbuilder.PromptTrace) string {
-	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, true, "")
+func (o *Orchestrator) saveAssistantMsgInternal(ctx context.Context, convID, userID string, msg llm.Message, trace *contextretriever.RetrieveTrace) string {
+	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, true)
 }
 
 // saveVerifyFeedback 将检验反馈存为内部系统消息（含检验请求 request_json），调试页可见
@@ -994,7 +1008,7 @@ func (o *Orchestrator) saveVerifyFeedback(ctx context.Context, convID, userID, f
 	}
 }
 
-func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, userID string, msg llm.Message, trace *promptbuilder.PromptTrace, isInternal bool, userMsgPrefix string) string {
+func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, userID string, msg llm.Message, trace *contextretriever.RetrieveTrace, isInternal bool) string {
 	if o.msgRepo == nil || convID == "" {
 		return ""
 	}
@@ -1010,9 +1024,6 @@ func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, us
 	mergeMsgExtra(modelMsg, func(extra *MsgExtra) {
 		if msg.Usage != nil {
 			extra.Usage = msg.Usage
-		}
-		if userMsgPrefix != "" {
-			extra.UserMessagePrefix = userMsgPrefix
 		}
 		if trace != nil {
 			extra.Providers = trace.Providers
@@ -1037,6 +1048,46 @@ func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, us
 		return ""
 	}
 	return mid
+}
+
+// --- helpers for working with contextretriever types ---
+
+func traceFromResult(r *contextretriever.RetrieveResult) *contextretriever.RetrieveTrace {
+	if r == nil {
+		return nil
+	}
+	return r.Trace
+}
+
+func idsByTypeFromResult(r *contextretriever.RetrieveResult) map[string][]string {
+	if r == nil {
+		return nil
+	}
+	ids := make(map[string][]string)
+	for typ, packets := range r.Packets {
+		for _, pkt := range packets {
+			ids[typ] = append(ids[typ], pkt.ID)
+		}
+	}
+	return ids
+}
+
+type retrievedItemView struct {
+	Type string
+	Text string
+}
+
+func retrievedItemsFromPackets(r *contextretriever.RetrieveResult) []retrievedItemView {
+	if r == nil {
+		return nil
+	}
+	var items []retrievedItemView
+	for typ, packets := range r.Packets {
+		for _, pkt := range packets {
+			items = append(items, retrievedItemView{Type: typ, Text: pkt.Text})
+		}
+	}
+	return items
 }
 
 func (*Orchestrator) injectExcludeMemIDsForMemSearch(parsed *LLMResponse, memIDs []string) {
@@ -1161,14 +1212,8 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 
 // —— DB 保存 ——
 
-func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message, trace *promptbuilder.PromptTrace, userMsgPrefix string) string {
-	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, false, userMsgPrefix)
-}
-
-func popUserMsgPrefix(state *reactState) string {
-	pref := state.userMsgPrefix
-	state.userMsgPrefix = ""
-	return pref
+func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message, trace *contextretriever.RetrieveTrace) string {
+	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, false)
 }
 
 func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCallID string, content string) {

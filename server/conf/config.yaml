@@ -2,7 +2,7 @@ server:
   port: 8080
   mode: debug          # debug | release
   registration_enabled: false
-  token_ttl_minutes: 60 # token 过期时间（分钟），心跳续期保持登录态，关闭页面后快速过期
+  token_ttl_minutes: 2880 # token 过期时间（分钟），心跳续期保持登录态，关闭页面后快速过期
   max_tokens_per_user: 4 # 同一用户最多同时存在的 token 数，超出踢最老的
   agent_route_triggers: [2, 4, 6] # 异步路由触发消息数，空数组=禁用
   memory_auto_extract: false
@@ -20,12 +20,6 @@ db:
   charset: utf8mb4
 
 llm:
-  # provider: doubao
-  # api_key: ${LLM_API_KEY}
-  # model: doubao-seed-1-8-251228
-  # base_url: https://ark.cn-beijing.volces.com/api/v3
-
-# llm:
   api_key: ${LLM_API_KEY}
   provider: deepseek
   model: deepseek-v4-flash

@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"xhan-helper/internal/agent"
-	"xhan-helper/internal/agent/contextretriever"
+	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/llm"
@@ -43,8 +43,8 @@ type Runner struct {
 	registry         *tool.Registry
 	promptBuilder    *promptbuilder.PromptBuilder
 	embedder         *llm.Embedder
-	contextRetriever *contextretriever.ContextRetriever
-	contextFormatter contextretriever.ContextFormatter
+	contextRetriever *ctxflow.ContextRetriever
+	contextFormatter ctxflow.ContextFormatter
 	maxIterations    int
 	maxTokens        *int
 }
@@ -56,8 +56,8 @@ type RunnerConfig struct {
 	Registry         *tool.Registry
 	PromptBuilder    *promptbuilder.PromptBuilder
 	Embedder         *llm.Embedder
-	ContextRetriever *contextretriever.ContextRetriever
-	ContextFormatter contextretriever.ContextFormatter
+	ContextRetriever *ctxflow.ContextRetriever
+	ContextFormatter ctxflow.ContextFormatter
 	MaxIterations    int
 	MaxTokens        *int
 }
@@ -87,20 +87,20 @@ type CapturedToolCall struct {
 
 // Result — 一次重放的完整结果
 type Result struct {
-	ConversationID string                          `json:"conversation_id"`
-	ToolCalls      []CapturedToolCall              `json:"tool_calls"`
-	Reply          string                          `json:"reply"`
-	Reasoning      []string                        `json:"reasoning"`
-	SystemPrompt   string                          `json:"system_prompt,omitempty"`
-	RetrievalTrace *contextretriever.RetrieveTrace `json:"retrieval_trace,omitempty"`
+	ConversationID string                 `json:"conversation_id"`
+	ToolCalls      []CapturedToolCall     `json:"tool_calls"`
+	Reply          string                 `json:"reply"`
+	Reasoning      []string               `json:"reasoning"`
+	SystemPrompt   string                 `json:"system_prompt,omitempty"`
+	RetrievalTrace *ctxflow.RetrieveTrace `json:"retrieval_trace,omitempty"`
 }
 
 // PreviewResult — 预览结果
 type PreviewResult struct {
-	SystemPrompt      string                          `json:"system_prompt"`
-	UserMessagePrefix string                          `json:"user_message_prefix"`
-	Messages          []llm.Message                   `json:"messages"`
-	Trace             *contextretriever.RetrieveTrace `json:"trace,omitempty"`
+	SystemPrompt      string                 `json:"system_prompt"`
+	UserMessagePrefix string                 `json:"user_message_prefix"`
+	Messages          []llm.Message          `json:"messages"`
+	Trace             *ctxflow.RetrieveTrace `json:"trace,omitempty"`
 }
 
 // Preview 构建 system prompt 并返回完整的请求预览
@@ -119,7 +119,7 @@ func (r *Runner) Preview(ctx context.Context, anchorMsg *model.Message, history 
 	}
 
 	// 2. 上下文检索
-	var retrieveResult *contextretriever.RetrieveResult
+	var retrieveResult *ctxflow.RetrieveResult
 	var userMsgPrefix string
 	if !cfg.SkipRetrieval && r.embedder != nil && r.contextRetriever != nil {
 		vec, err := r.embedder.Embed(ctx, anchorMsg.Content)
@@ -145,7 +145,7 @@ func (r *Runner) Preview(ctx context.Context, anchorMsg *model.Message, history 
 		}
 	}
 
-	var trace *contextretriever.RetrieveTrace
+	var trace *ctxflow.RetrieveTrace
 	if retrieveResult != nil {
 		trace = retrieveResult.Trace
 	}
@@ -188,7 +188,7 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		maxToolResultChars = 2000
 	}
 
-	var trace *contextretriever.RetrieveTrace
+	var trace *ctxflow.RetrieveTrace
 	prebuiltContent := anchorMsg.Content
 
 	if !cfg.SkipRetrieval {

@@ -1,10 +1,10 @@
-// Package contextretriever — 上下文检索器
+// Package ctxflow — 上下文检索器
 //
 // 负责并发运行所有 ContextSource，返回按 type 分组的结果 map，
 // 由 ContextFormatter 负责格式化。与 promptbuilder 的关系：
 //   - promptbuilder：只做静态 system prompt 拼装
-//   - contextretriever：上下文检索 + 格式化
-package contextretriever
+//   - ctxflow：上下文检索 + 格式化
+package ctxflow
 
 import "xhan-helper/internal/agent/retrieval"
 

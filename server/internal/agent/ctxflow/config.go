@@ -1,4 +1,4 @@
-package contextretriever
+package ctxflow
 
 import "xhan-helper/internal/agent/retrieval"
 

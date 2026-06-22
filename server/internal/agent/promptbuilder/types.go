@@ -1,7 +1,7 @@
 // Package promptbuilder — system prompt 构建器
 //
 // 只负责静态 system prompt 拼装（行为准则 + 角色定义 + 工具定义），
-// 上下文检索已迁移到 contextretriever 包。
+// 上下文检索已迁移到 ctxflow 包。
 package promptbuilder
 
 import "context"

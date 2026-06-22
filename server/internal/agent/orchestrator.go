@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"xhan-helper/internal/agent/contextretriever"
+	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/idgen"
@@ -117,8 +117,8 @@ type Orchestrator struct {
 	verifyModel         string // "flash" | "pro"
 	useNativeFC         bool
 	summaryRepo         *service.ConversationSummaryRepo
-	contextRetriever    *contextretriever.ContextRetriever // 上下文检索
-	contextFormatter    contextretriever.ContextFormatter  // 上下文格式化（接口）
+	contextRetriever    *ctxflow.ContextRetriever // 上下文检索
+	contextFormatter    ctxflow.ContextFormatter  // 上下文格式化（接口）
 
 	// 摘要附着控制
 	maxSummaryAttachRounds    int
@@ -148,11 +148,11 @@ type OrchestratorConfig struct {
 	VerifyModel               string // "flash" | "pro"，默认 flash
 	UseNativeFC               bool   // 是否使用原生 function calling
 	SummaryRepo               *service.ConversationSummaryRepo
-	ContextRetriever          *contextretriever.ContextRetriever // 上下文检索
-	ContextFormatter          contextretriever.ContextFormatter  // 上下文格式化
-	MaxSummaryAttachRounds    int                                // 摘要附着轮次上限，默认 5
-	SummaryRelevanceThreshold float64                            // 摘要相关性阈值，默认 0.5
-	SummaryRelevanceHistoryN  int                                // 相关性检查的历史消息窗口，默认 5
+	ContextRetriever          *ctxflow.ContextRetriever // 上下文检索
+	ContextFormatter          ctxflow.ContextFormatter  // 上下文格式化
+	MaxSummaryAttachRounds    int                       // 摘要附着轮次上限，默认 5
+	SummaryRelevanceThreshold float64                   // 摘要相关性阈值，默认 0.5
+	SummaryRelevanceHistoryN  int                       // 相关性检查的历史消息窗口，默认 5
 }
 
 // New 创建 Orchestrator
@@ -236,7 +236,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	}
 
 	// 2. 上下文检索
-	var retrieveResult *contextretriever.RetrieveResult
+	var retrieveResult *ctxflow.RetrieveResult
 	if !req.SkipRetrieval && len(queryVec) > 0 {
 		retrieveResult, err = o.contextRetriever.Retrieve(ctx, mkSearchOptions(req, queryVec, historyEmbeddings))
 		if err != nil {
@@ -313,7 +313,7 @@ func (o *Orchestrator) runReActLoop(
 	ctx context.Context,
 	events chan<- *llm.StreamEvent,
 	systemPrompt string,
-	retrieveResult *contextretriever.RetrieveResult,
+	retrieveResult *ctxflow.RetrieveResult,
 	queryVec []float64,
 	req *RunRequest,
 ) {
@@ -336,9 +336,9 @@ func (o *Orchestrator) runReActLoop(
 	}
 
 	// 格式化 user 消息
-	var extraBlocks []contextretriever.ExtraBlock
+	var extraBlocks []ctxflow.ExtraBlock
 	if summaryBlock != "" {
-		extraBlocks = append(extraBlocks, contextretriever.ExtraBlock{Type: "summary", Content: summaryBlock})
+		extraBlocks = append(extraBlocks, ctxflow.ExtraBlock{Type: "summary", Content: summaryBlock})
 	}
 	userContent := o.contextFormatter.FormatUserMessage(retrieveResult, req.UserMessageContent, extraBlocks...)
 
@@ -516,7 +516,7 @@ func (o *Orchestrator) runOneRound(
 	client llm.LLMClient,
 	req *RunRequest,
 	systemPrompt string,
-	retrieveResult *contextretriever.RetrieveResult,
+	retrieveResult *ctxflow.RetrieveResult,
 	state *reactState,
 	round int,
 ) bool {
@@ -640,7 +640,7 @@ func (o *Orchestrator) finalizeRound(
 	streamContent, streamReasoning string,
 	req *RunRequest,
 	systemPrompt string,
-	retrieveResult *contextretriever.RetrieveResult,
+	retrieveResult *ctxflow.RetrieveResult,
 	state *reactState,
 ) bool {
 	if streamReasoning != "" {
@@ -686,7 +686,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 	msg llm.Message,
 	req *RunRequest,
 	systemPrompt string,
-	retrieveResult *contextretriever.RetrieveResult,
+	retrieveResult *ctxflow.RetrieveResult,
 	state *reactState,
 ) bool {
 	// 原生 FC 路径：tool_calls 已由 API 在 done 事件中解析好
@@ -778,7 +778,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 	msg llm.Message,
 	req *RunRequest,
 	systemPrompt string,
-	retrieveResult *contextretriever.RetrieveResult,
+	retrieveResult *ctxflow.RetrieveResult,
 	state *reactState,
 ) bool {
 	if state.verifyRetries >= o.verifyMaxRetries {
@@ -933,7 +933,7 @@ func (o *Orchestrator) executePromptEngTools(
 	msg llm.Message,
 	req *RunRequest,
 	systemPrompt string,
-	retrieveResult *contextretriever.RetrieveResult,
+	retrieveResult *ctxflow.RetrieveResult,
 	state *reactState,
 	parsed *LLMResponse,
 ) bool {
@@ -975,7 +975,7 @@ func (o *Orchestrator) sendVerifyEvent(events chan<- *llm.StreamEvent, status st
 }
 
 // saveAssistantMsgInternal 以 IsInternal=true 保存草稿，仅存档不展示
-func (o *Orchestrator) saveAssistantMsgInternal(ctx context.Context, convID, userID string, msg llm.Message, trace *contextretriever.RetrieveTrace) string {
+func (o *Orchestrator) saveAssistantMsgInternal(ctx context.Context, convID, userID string, msg llm.Message, trace *ctxflow.RetrieveTrace) string {
 	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, true)
 }
 
@@ -1008,7 +1008,7 @@ func (o *Orchestrator) saveVerifyFeedback(ctx context.Context, convID, userID, f
 	}
 }
 
-func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, userID string, msg llm.Message, trace *contextretriever.RetrieveTrace, isInternal bool) string {
+func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, userID string, msg llm.Message, trace *ctxflow.RetrieveTrace, isInternal bool) string {
 	if o.msgRepo == nil || convID == "" {
 		return ""
 	}
@@ -1050,16 +1050,16 @@ func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, us
 	return mid
 }
 
-// --- helpers for working with contextretriever types ---
+// --- helpers for working with ctxflow types ---
 
-func traceFromResult(r *contextretriever.RetrieveResult) *contextretriever.RetrieveTrace {
+func traceFromResult(r *ctxflow.RetrieveResult) *ctxflow.RetrieveTrace {
 	if r == nil {
 		return nil
 	}
 	return r.Trace
 }
 
-func idsByTypeFromResult(r *contextretriever.RetrieveResult) map[string][]string {
+func idsByTypeFromResult(r *ctxflow.RetrieveResult) map[string][]string {
 	if r == nil {
 		return nil
 	}
@@ -1077,7 +1077,7 @@ type retrievedItemView struct {
 	Text string
 }
 
-func retrievedItemsFromPackets(r *contextretriever.RetrieveResult) []retrievedItemView {
+func retrievedItemsFromPackets(r *ctxflow.RetrieveResult) []retrievedItemView {
 	if r == nil {
 		return nil
 	}
@@ -1212,7 +1212,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 
 // —— DB 保存 ——
 
-func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message, trace *contextretriever.RetrieveTrace) string {
+func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message, trace *ctxflow.RetrieveTrace) string {
 	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, false)
 }
 

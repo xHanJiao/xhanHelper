@@ -1,4 +1,4 @@
-package contextretriever
+package ctxflow
 
 import (
 	"bytes"

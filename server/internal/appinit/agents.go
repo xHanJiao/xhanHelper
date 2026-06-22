@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"xhan-helper/internal/agent"
-	"xhan-helper/internal/agent/contextretriever"
+	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/agent/replay"
 	"xhan-helper/internal/agent/retrieval"
@@ -117,15 +117,15 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	)
 
 	// ContextRetriever
-	retrieveCfg := contextretriever.DefaultRetrieveConfig()
+	retrieveCfg := ctxflow.DefaultRetrieveConfig()
 	applyRetrieveConfig(&retrieveCfg, cfg.Retrieval)
-	retriever := contextretriever.NewContextRetriever(
+	retriever := ctxflow.NewContextRetriever(
 		[]retrieval.ContextSource{themeSource, memSource, noteSource, historySource, summarySource},
 		&retrieveCfg,
-	).WithModifier("theme", contextretriever.BoostFactor(1.3))
+	).WithModifier("theme", ctxflow.BoostFactor(1.3))
 
 	// ContextFormatter
-	formatter := contextretriever.NewXMLFormatter()
+	formatter := ctxflow.NewXMLFormatter()
 
 	orch := agent.New(&agent.OrchestratorConfig{
 		FlashClient:        llmClients.Flash,
@@ -185,7 +185,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 }
 
 // applyRetrieveConfig 将 yaml 配置中非零的 threshold/limit 覆盖到 RetrieveConfig
-func applyRetrieveConfig(cfg *contextretriever.RetrieveConfig, rc config.RetrievalConfig) {
+func applyRetrieveConfig(cfg *ctxflow.RetrieveConfig, rc config.RetrievalConfig) {
 	if rc.Memory.Threshold > 0 {
 		cfg.Memory.Threshold = rc.Memory.Threshold
 	}

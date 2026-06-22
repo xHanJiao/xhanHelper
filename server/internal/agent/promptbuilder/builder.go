@@ -8,7 +8,7 @@ import (
 )
 
 // PromptBuilder — system prompt 构建器，只负责静态 prompt 拼装。
-// 上下文检索已迁移到 contextretriever 包。
+// 上下文检索已迁移到 ctxflow 包。
 type PromptBuilder struct {
 	preRoleStatic  []StaticProvider
 	postRoleStatic []StaticProvider

@@ -88,9 +88,9 @@ const navItems = [
 ]
 
 const adminItems = [
-  // { label: '记忆', path: '/memories', adminOnly: true },
-  // { label: '笔记', path: '/notes', adminOnly: true },
-  // { label: '主题', path: '/themes', adminOnly: true },
+  { label: '记忆', path: '/memories', adminOnly: true },
+  { label: '笔记', path: '/notes', adminOnly: true },
+  { label: '主题', path: '/themes', adminOnly: true },
   { label: '监控看板', path: '/admin', adminOnly: true },
   { label: '检索评测', path: '/admin/eval', adminOnly: true }
 ]

@@ -105,6 +105,10 @@ func (f *formatter) FormatBlocks(result *RetrieveResult, extraBlocks ...ExtraBlo
 	}
 
 	enc.Flush()
+	// 确保编码块末尾换行，避免 FormatUserMessage 追加 user_query 时粘在同一行
+	if len(blocks) > 0 {
+		buf.WriteByte('\n')
+	}
 	return buf.String()
 }
 

@@ -2,7 +2,9 @@ package ctxflow
 
 import (
 	"bytes"
+	"encoding/json"
 	"encoding/xml"
+	"io"
 	"log"
 	"time"
 
@@ -19,32 +21,50 @@ type ContextFormatter interface {
 	FormatBlocks(result *RetrieveResult, extraBlocks ...ExtraBlock) string
 }
 
-// XMLFormatter 以 XML 标签格式输出检索上下文。
-type XMLFormatter struct{}
+// EncoderFactory 创建 AnnotationEncoder，决定输出格式（XML / JSON / ...）。
+type EncoderFactory func(w io.Writer) AnnotationEncoder
 
-// NewXMLFormatter 创建 XML 格式化器。
-func NewXMLFormatter() *XMLFormatter {
-	return &XMLFormatter{}
+// formatter — 编码器可插拔的格式化实现。
+type formatter struct {
+	newEncoder EncoderFactory
 }
 
-// FormatUserMessage = FormatBlocks + <user_query> 包裹。
-func (f *XMLFormatter) FormatUserMessage(result *RetrieveResult, userQuery string, extraBlocks ...ExtraBlock) string {
+// NewXMLFormatter 创建 XML 格式化器。
+func NewXMLFormatter() ContextFormatter {
+	return &formatter{
+		newEncoder: func(w io.Writer) AnnotationEncoder {
+			return &xmlAdapter{Encoder: xml.NewEncoder(w)}
+		},
+	}
+}
+
+// NewJSONFormatter 创建 JSON 格式化器。
+func NewJSONFormatter() ContextFormatter {
+	return &formatter{
+		newEncoder: func(w io.Writer) AnnotationEncoder {
+			return &jsonAdapter{Encoder: json.NewEncoder(w)}
+		},
+	}
+}
+
+// FormatUserMessage = FormatBlocks + user_query 包裹。
+func (f *formatter) FormatUserMessage(result *RetrieveResult, userQuery string, extraBlocks ...ExtraBlock) string {
 	var buf bytes.Buffer
 	buf.WriteString(f.FormatBlocks(result, extraBlocks...))
-	enc := xml.NewEncoder(&buf)
-	enc.Indent("", "  ")
+	enc := f.newEncoder(&buf)
+	enc.SetIndent("", "  ")
 	enc.Encode(&userQueryBlock{Content: userQuery})
 	enc.Flush()
 	return buf.String()
 }
 
 // FormatBlocks 收集 → 排序 → 编码。
-// typed ExtraBlock（Type 在 typeOrder 中）和检索 Packets 统一走 buildBlock → 排序，
+// typed ExtraBlock（Type 在 typeRank 中）和检索 Packets 统一走 buildBlock → 排序，
 // 非 typed ExtraBlock 作为裸 XML 始终在最前面透传。
-func (f *XMLFormatter) FormatBlocks(result *RetrieveResult, extraBlocks ...ExtraBlock) string {
+func (f *formatter) FormatBlocks(result *RetrieveResult, extraBlocks ...ExtraBlock) string {
 	var buf bytes.Buffer
-	enc := xml.NewEncoder(&buf)
-	enc.Indent("", "  ")
+	enc := f.newEncoder(&buf)
+	enc.SetIndent("", "  ")
 
 	// 1. 收集：typed ExtraBlock + 检索 Packets 统一转 Block
 	var blocks []Block
@@ -80,7 +100,7 @@ func (f *XMLFormatter) FormatBlocks(result *RetrieveResult, extraBlocks ...Extra
 	// 4. 统一编码
 	for _, blk := range blocks {
 		if err := enc.Encode(blk); err != nil {
-			log.Printf("[xml] encode %s: %v", blk.TypeKey(), err)
+			log.Printf("[formatter] encode %s: %v", blk.TypeKey(), err)
 		}
 	}
 
@@ -89,7 +109,7 @@ func (f *XMLFormatter) FormatBlocks(result *RetrieveResult, extraBlocks ...Extra
 }
 
 // DateTimeBlock 生成 current_datetime 类型的 ExtraBlock。
-// Content 为纯时间字符串，XML 标签由 currentDatetimeBlock 的注解决定。
+// Content 为纯时间字符串，标签由 currentDatetimeBlock 的注解决定。
 func DateTimeBlock(t time.Time) ExtraBlock {
 	return ExtraBlock{
 		Type:    "current_datetime",

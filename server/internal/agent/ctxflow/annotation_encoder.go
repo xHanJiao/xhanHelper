@@ -3,6 +3,7 @@ package ctxflow
 import (
 	"encoding/json"
 	"encoding/xml"
+	"io"
 )
 
 // AnnotationEncoder — 注解驱动编码器，读取 struct tag 序列化 Block。
@@ -23,3 +24,16 @@ type jsonAdapter struct{ *json.Encoder }
 
 func (a *jsonAdapter) SetIndent(pre, ind string) { a.Encoder.SetIndent(pre, ind) }
 func (a *jsonAdapter) Flush() error              { return nil }
+
+// EncoderFactory 创建 AnnotationEncoder，决定输出格式。
+type EncoderFactory func(w io.Writer) AnnotationEncoder
+
+// XMLEncoder 工厂：xml.NewEncoder。
+func XMLEncoder(w io.Writer) AnnotationEncoder {
+	return &xmlAdapter{Encoder: xml.NewEncoder(w)}
+}
+
+// JSONEncoder 工厂：json.NewEncoder。
+func JSONEncoder(w io.Writer) AnnotationEncoder {
+	return &jsonAdapter{Encoder: json.NewEncoder(w)}
+}

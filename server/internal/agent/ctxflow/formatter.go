@@ -2,9 +2,6 @@ package ctxflow
 
 import (
 	"bytes"
-	"encoding/json"
-	"encoding/xml"
-	"io"
 	"log"
 	"time"
 
@@ -21,9 +18,6 @@ type ContextFormatter interface {
 	FormatBlocks(result *RetrieveResult, extraBlocks ...ExtraBlock) string
 }
 
-// EncoderFactory 创建 AnnotationEncoder，决定输出格式（XML / JSON / ...）。
-type EncoderFactory func(w io.Writer) AnnotationEncoder
-
 // formatter — 编码器可插拔的格式化实现。
 type formatter struct {
 	newEncoder EncoderFactory
@@ -31,20 +25,12 @@ type formatter struct {
 
 // NewXMLFormatter 创建 XML 格式化器。
 func NewXMLFormatter() ContextFormatter {
-	return &formatter{
-		newEncoder: func(w io.Writer) AnnotationEncoder {
-			return &xmlAdapter{Encoder: xml.NewEncoder(w)}
-		},
-	}
+	return &formatter{newEncoder: XMLEncoder}
 }
 
 // NewJSONFormatter 创建 JSON 格式化器。
 func NewJSONFormatter() ContextFormatter {
-	return &formatter{
-		newEncoder: func(w io.Writer) AnnotationEncoder {
-			return &jsonAdapter{Encoder: json.NewEncoder(w)}
-		},
-	}
+	return &formatter{newEncoder: JSONEncoder}
 }
 
 // FormatUserMessage = FormatBlocks + user_query 包裹。

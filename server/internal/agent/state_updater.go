@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -155,57 +154,12 @@ func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, theme
 		return
 	}
 
-	// 验证最多重试 2 次
-	const maxRetries = 2
-	for retry := 0; retry <= maxRetries; retry++ {
-		vr, err := VerifyStateUpdate(ctx, s.flashClient, userID, stateText, convText, output.UpdatedState)
-		if err != nil {
-			log.Printf("[state_updater] verify error: theme=%s err=%v", themeID[:8], err)
-			return
-		}
-
-		if vr.Complete {
-			if err := s.themeStore.SaveState(ctx, themeID, userID, output.UpdatedState); err != nil {
-				log.Printf("[state_updater] SaveState error: theme=%s err=%v", themeID[:8], err)
-				return
-			}
-			ChunkStateText(ctx, s.chunkBuilder, userID, themeID, output.UpdatedState)
-			log.Printf("[state_updater] updated theme %s (%s), retries=%d", themeID[:8], name, retry)
-			return
-		}
-
-		if retry < maxRetries && vr.Suggestion != "" {
-			correctiveMsg := fmt.Sprintf("## 当前状态页(草案)\n%s\n\n## 旧状态页\n%s\n\n上次结果被检验员退回，请修正以下问题后重新生成完整的 updated_state：\n\n%s",
-				output.UpdatedState, stateText, formatVerifyFeedback(vr))
-			correctiveLoop := NewReactLoop(s.flashClient, s.retrievalTools, stateUpdaterReActPrompt, maxIterations, userID, "StateUpdater:C", s.traceRepo, traceID)
-			correctResult, cErr := correctiveLoop.Run(ctx, correctiveMsg)
-			if cErr == nil {
-				var corrected struct {
-					UpdatedState string `json:"updated_state"`
-				}
-				if _, parseErr := ParseFlashJSON(correctResult.FinalResponse, &corrected); parseErr == nil && corrected.UpdatedState != "" {
-					output.UpdatedState = corrected.UpdatedState
-				}
-			}
-			log.Printf("[state_updater] retry %d/%d for theme %s", retry+1, maxRetries, themeID[:8])
-		}
+	if err := s.themeStore.SaveState(ctx, themeID, userID, output.UpdatedState); err != nil {
+		log.Printf("[state_updater] SaveState error: theme=%s err=%v", themeID[:8], err)
+		return
 	}
-
-	log.Printf("[state_updater] theme %s: max retries reached, state not updated", themeID[:8])
-}
-
-func formatVerifyFeedback(vr *VerifyResult) string {
-	var parts []string
-	if len(vr.Hallucinations) > 0 {
-		parts = append(parts, fmt.Sprintf("## 幻觉（无依据的陈述）\n%s", strings.Join(vr.Hallucinations, "\n")))
-	}
-	if len(vr.Missing) > 0 {
-		parts = append(parts, fmt.Sprintf("## 缺失（应保留的旧信息）\n%s", strings.Join(vr.Missing, "\n")))
-	}
-	if vr.Suggestion != "" {
-		parts = append(parts, fmt.Sprintf("## 改进建议\n%s", vr.Suggestion))
-	}
-	return strings.Join(parts, "\n\n")
+	ChunkStateText(ctx, s.chunkBuilder, userID, themeID, output.UpdatedState)
+	log.Printf("[state_updater] updated theme %s (%s)", themeID[:8], name)
 }
 
 // matchThemesFromMessages 从消息向量中匹配活跃主题，合并 name+desc 和 chunk 两路搜索的最高分

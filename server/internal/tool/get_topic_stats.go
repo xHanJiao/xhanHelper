@@ -181,8 +181,6 @@ func (t *GetTopicStatsTool) buildClusterStats(ctx context.Context, userID string
 		weekList = append(weekList, v)
 	}
 	stats["weekly_distribution"] = weekList
-	stats["conversation_count"] = 0 // 简化：后续通过 chunk 命中判断
-
 	return stats
 }
 

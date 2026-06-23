@@ -290,8 +290,12 @@ func (o *ReflectionOrchestrator) discoverNewThemes(ctx context.Context, userID, 
 		return 0
 	}
 
+	msgCount, noteCount, memCount := o.countRecentActivity(ctx, userID)
 	args, _ := json.Marshal(map[string]interface{}{
-		"mode": "stats",
+		"mode":              "stats",
+		"recent_msg_count":  msgCount,
+		"recent_note_count": noteCount,
+		"recent_mem_count":  memCount,
 	})
 	ec := &tool.ExecuteContext{Ctx: WithTraceID(ctx, traceID), UserID: userID}
 	res := discovererT.Execute(ec, "discover", args)

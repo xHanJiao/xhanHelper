@@ -110,6 +110,7 @@ func (r *ThemeStateRepo) UpdateState(ctx context.Context, id, userID, stateText 
 			"state_text":         stateText,
 			"history_state_text": history,
 			"last_run_at":        now,
+			"updated_at":         now,
 		}).Error
 }
 

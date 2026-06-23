@@ -106,105 +106,129 @@ type userQueryBlock struct {
 	Content string   `xml:",chardata" json:"content"`
 }
 
-// ==================== 构建 ====================
+// ==================== 构建器注册 ====================
 
-// buildBlock 将某 type 的 packets 构建为可序列化的 Block。
-// 返回 nil 表示无有效内容（如 history 的 messages 全为空）。
+type blockBuilder func(items []retrieval.ContextPacket) Block
+
+// blockBuilders 按 type 注册构建函数。新增类型只需加一行。
+var blockBuilders = map[string]blockBuilder{
+	"memory":           buildMemoriesBlock,
+	"note":             buildNotesBlock,
+	"history":          buildHistoryBlock,
+	"theme":            buildThemesBlock,
+	"summary":          buildSummariesBlock,
+	"current_datetime": buildCurrentDatetimeBlock,
+}
+
+// buildBlock 按 type 查找构建器并返回 Block，无匹配返回 nil。
 func buildBlock(typ string, items []retrieval.ContextPacket) Block {
-	switch typ {
-	case "memory":
-		b := memoriesBlock{}
-		for _, pkt := range items {
-			it := memoryItem{Content: pkt.Text}
-			if meta, ok := pkt.Meta.(retrieval.EntityMeta); ok {
-				it.Content = meta.Content
-				if meta.Topic != "" {
-					it.Topic = meta.Topic
-				}
-				if !meta.CreatedAt.IsZero() {
-					it.Date = meta.CreatedAt.Format("2006年01月02日")
-				}
-			}
-			b.Items = append(b.Items, it)
-		}
-		return &b
-	case "note":
-		b := notesBlock{}
-		for _, pkt := range items {
-			it := noteItem{Content: pkt.Text}
-			if meta, ok := pkt.Meta.(retrieval.EntityMeta); ok {
-				it.Content = meta.Content
-				if meta.Topic != "" {
-					it.Topic = meta.Topic
-				}
-				if !meta.CreatedAt.IsZero() {
-					it.Date = meta.CreatedAt.Format("2006年01月02日")
-				}
-			}
-			b.Items = append(b.Items, it)
-		}
-		return &b
-	case "history":
-		b := historyBlock{}
-		for _, pkt := range items {
-			var msgs []historyMsg
-			var dateStr string
-			if meta, ok := pkt.Meta.(retrieval.HistoryMeta); ok {
-				if meta.HitDate != nil {
-					dateStr = meta.HitDate.Format("2006年01月02日")
-				}
-				for _, m := range meta.Messages {
-					if m == nil {
-						continue
-					}
-					if dateStr == "" {
-						dateStr = m.CreatedAt.Format("2006年01月02日")
-					}
-					msgs = append(msgs, historyMsg{Role: m.Role, Content: m.Content})
-				}
-			}
-			if len(msgs) == 0 {
-				continue
-			}
-			b.Rounds = append(b.Rounds, historyRound{Messages: msgs, Date: dateStr})
-		}
-		if len(b.Rounds) == 0 {
-			return nil
-		}
-		return &b
-	case "theme":
-		b := themesBlock{}
-		for _, pkt := range items {
-			it := themeItem{Content: pkt.Text}
-			if meta, ok := pkt.Meta.(retrieval.ThemeMeta); ok {
-				it.Content = meta.Description
-				if meta.StateText != "" {
-					it.Description = meta.StateText
-				}
-			}
-			b.Items = append(b.Items, it)
-		}
-		return &b
-	case "summary":
-		b := summariesBlock{}
-		for _, pkt := range items {
-			it := summaryItem{Content: pkt.Text}
-			if meta, ok := pkt.Meta.(retrieval.SummaryMeta); ok {
-				it.Content = meta.SummaryText
-				if meta.Topics != "" {
-					it.Topics = meta.Topics
-				}
-			}
-			b.Items = append(b.Items, it)
-		}
-		return &b
-	case "current_datetime":
-		if len(items) == 0 {
-			return nil
-		}
-		return &currentDatetimeBlock{Content: items[0].Text}
+	if b, ok := blockBuilders[typ]; ok {
+		return b(items)
 	}
 	return nil
+}
+
+func buildMemoriesBlock(items []retrieval.ContextPacket) Block {
+	b := memoriesBlock{}
+	for _, pkt := range items {
+		it := memoryItem{Content: pkt.Text}
+		if meta, ok := pkt.Meta.(retrieval.EntityMeta); ok {
+			it.Content = meta.Content
+			if meta.Topic != "" {
+				it.Topic = meta.Topic
+			}
+			if !meta.CreatedAt.IsZero() {
+				it.Date = meta.CreatedAt.Format("2006年01月02日")
+			}
+		}
+		b.Items = append(b.Items, it)
+	}
+	return &b
+}
+
+func buildNotesBlock(items []retrieval.ContextPacket) Block {
+	b := notesBlock{}
+	for _, pkt := range items {
+		it := noteItem{Content: pkt.Text}
+		if meta, ok := pkt.Meta.(retrieval.EntityMeta); ok {
+			it.Content = meta.Content
+			if meta.Topic != "" {
+				it.Topic = meta.Topic
+			}
+			if !meta.CreatedAt.IsZero() {
+				it.Date = meta.CreatedAt.Format("2006年01月02日")
+			}
+		}
+		b.Items = append(b.Items, it)
+	}
+	return &b
+}
+
+func buildHistoryBlock(items []retrieval.ContextPacket) Block {
+	b := historyBlock{}
+	for _, pkt := range items {
+		var msgs []historyMsg
+		var dateStr string
+		if meta, ok := pkt.Meta.(retrieval.HistoryMeta); ok {
+			if meta.HitDate != nil {
+				dateStr = meta.HitDate.Format("2006年01月02日")
+			}
+			for _, m := range meta.Messages {
+				if m == nil {
+					continue
+				}
+				if dateStr == "" {
+					dateStr = m.CreatedAt.Format("2006年01月02日")
+				}
+				msgs = append(msgs, historyMsg{Role: m.Role, Content: m.Content})
+			}
+		}
+		if len(msgs) == 0 {
+			continue
+		}
+		b.Rounds = append(b.Rounds, historyRound{Messages: msgs, Date: dateStr})
+	}
+	if len(b.Rounds) == 0 {
+		return nil
+	}
+	return &b
+}
+
+func buildThemesBlock(items []retrieval.ContextPacket) Block {
+	b := themesBlock{}
+	for _, pkt := range items {
+		it := themeItem{Content: pkt.Text}
+		if meta, ok := pkt.Meta.(retrieval.ThemeMeta); ok {
+			it.Content = meta.Description
+			if meta.StateText != "" {
+				it.Description = meta.StateText
+			}
+		}
+		b.Items = append(b.Items, it)
+	}
+	return &b
+}
+
+func buildSummariesBlock(items []retrieval.ContextPacket) Block {
+	b := summariesBlock{}
+	for _, pkt := range items {
+		it := summaryItem{Content: pkt.Text}
+		if meta, ok := pkt.Meta.(retrieval.SummaryMeta); ok {
+			it.Content = meta.SummaryText
+			if meta.Topics != "" {
+				it.Topics = meta.Topics
+			}
+		}
+		b.Items = append(b.Items, it)
+	}
+	return &b
+}
+
+func buildCurrentDatetimeBlock(items []retrieval.ContextPacket) Block {
+	if len(items) == 0 {
+		return nil
+	}
+	return &currentDatetimeBlock{Content: items[0].Text}
 }
 
 // sortBlocks 按 typeRank 对 blocks 排序。

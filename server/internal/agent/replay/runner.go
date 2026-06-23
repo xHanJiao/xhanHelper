@@ -143,7 +143,8 @@ func (r *Runner) Preview(ctx context.Context, anchorMsg *model.Message, history 
 			}
 		}
 		if r.contextFormatter != nil && retrieveResult != nil {
-			userMsgPrefix = r.contextFormatter.FormatBlocks(retrieveResult)
+			extraBlocks := []ctxflow.ExtraBlock{ctxflow.DateTimeBlock(anchorMsg.CreatedAt)}
+			userMsgPrefix = r.contextFormatter.FormatBlocks(retrieveResult, extraBlocks...)
 		}
 	}
 
@@ -218,7 +219,8 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 			log.Printf("[replay] retrieve error: %v", err)
 		} else {
 			trace = retrieveResult.Trace
-			prebuiltContent = r.contextFormatter.FormatUserMessage(retrieveResult, anchorMsg.Content)
+			extraBlocks := []ctxflow.ExtraBlock{ctxflow.DateTimeBlock(anchorMsg.CreatedAt)}
+			prebuiltContent = r.contextFormatter.FormatUserMessage(retrieveResult, anchorMsg.Content, extraBlocks...)
 		}
 	}
 

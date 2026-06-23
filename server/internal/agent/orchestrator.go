@@ -339,6 +339,7 @@ func (o *Orchestrator) runReActLoop(
 
 	// 格式化 user 消息
 	var extraBlocks []ctxflow.ExtraBlock
+	extraBlocks = append(extraBlocks, ctxflow.DateTimeBlock(time.Now()))
 	if summaryBlock != "" {
 		extraBlocks = append(extraBlocks, ctxflow.ExtraBlock{Type: "summary", Content: summaryBlock})
 	}

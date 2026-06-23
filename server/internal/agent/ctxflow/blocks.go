@@ -1,9 +1,27 @@
 package ctxflow
 
-import "xhan-helper/internal/agent/retrieval"
+import (
+	"sort"
 
-// typeOrder 定义检索类型在 user 消息中的渲染顺序。
-var typeOrder = []string{"summary", "history", "memory", "note", "theme"}
+	"xhan-helper/internal/agent/retrieval"
+)
+
+// typeOrder 定义所有块的渲染顺序，也是 typeRank 的单一数据源。
+var typeOrder = []string{"summary", "history", "memory", "note", "theme", "current_datetime"}
+
+// typeRank 从 typeOrder 派生，供排序时 O(1) 查找顺序。
+var typeRank = func() map[string]int {
+	m := make(map[string]int, len(typeOrder))
+	for i, typ := range typeOrder {
+		m[typ] = i
+	}
+	return m
+}()
+
+// Block 让所有格式化块可收集、排序、统一编码。
+type Block interface {
+	TypeKey() string // 对应 typeOrder 中的 key
+}
 
 // ==================== 数据结构 ====================
 // 同一套 struct 可通过 xml/json tag 支持多种编码格式。
@@ -19,6 +37,8 @@ type memoriesBlock struct {
 	Items   []memoryItem `xml:"memory" json:"items"`
 }
 
+func (*memoriesBlock) TypeKey() string { return "memory" }
+
 // --- note ---
 type noteItem struct {
 	Topic   string `xml:"topic,attr,omitempty" json:"topic,omitempty"`
@@ -29,6 +49,8 @@ type notesBlock struct {
 	XMLName struct{}   `xml:"notes" json:"-"`
 	Items   []noteItem `xml:"note" json:"items"`
 }
+
+func (*notesBlock) TypeKey() string { return "note" }
 
 // --- history ---
 type historyMsg struct {
@@ -44,6 +66,8 @@ type historyBlock struct {
 	Rounds  []historyRound `xml:"round" json:"rounds"`
 }
 
+func (*historyBlock) TypeKey() string { return "history" }
+
 // --- theme ---
 type themeItem struct {
 	Description string `xml:"desc,attr,omitempty" json:"description,omitempty"`
@@ -53,6 +77,8 @@ type themesBlock struct {
 	XMLName struct{}    `xml:"topics" json:"-"`
 	Items   []themeItem `xml:"topic" json:"items"`
 }
+
+func (*themesBlock) TypeKey() string { return "theme" }
 
 // --- summary ---
 type summaryItem struct {
@@ -64,6 +90,16 @@ type summariesBlock struct {
 	Items   []summaryItem `xml:"summary" json:"items"`
 }
 
+func (*summariesBlock) TypeKey() string { return "summary" }
+
+// --- current_datetime ---
+type currentDatetimeBlock struct {
+	XMLName struct{} `xml:"current_datetime" json:"-"`
+	Content string   `xml:",chardata"`
+}
+
+func (*currentDatetimeBlock) TypeKey() string { return "current_datetime" }
+
 // --- user_query ---
 type userQueryBlock struct {
 	XMLName struct{} `xml:"user_query" json:"-"`
@@ -72,9 +108,9 @@ type userQueryBlock struct {
 
 // ==================== 构建 ====================
 
-// buildBlock 将某 type 的 packets 构建为可被 xml/json encoder 序列化的元素。
+// buildBlock 将某 type 的 packets 构建为可序列化的 Block。
 // 返回 nil 表示无有效内容（如 history 的 messages 全为空）。
-func buildBlock(typ string, items []retrieval.ContextPacket) any {
+func buildBlock(typ string, items []retrieval.ContextPacket) Block {
 	switch typ {
 	case "memory":
 		b := memoriesBlock{}
@@ -162,6 +198,18 @@ func buildBlock(typ string, items []retrieval.ContextPacket) any {
 			b.Items = append(b.Items, it)
 		}
 		return &b
+	case "current_datetime":
+		if len(items) == 0 {
+			return nil
+		}
+		return &currentDatetimeBlock{Content: items[0].Text}
 	}
 	return nil
+}
+
+// sortBlocks 按 typeRank 对 blocks 排序。
+func sortBlocks(blocks []Block) {
+	sort.Slice(blocks, func(i, j int) bool {
+		return typeRank[blocks[i].TypeKey()] < typeRank[blocks[j].TypeKey()]
+	})
 }

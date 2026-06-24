@@ -39,42 +39,48 @@ type Config struct {
 
 // Runner 重放执行器，使用独立 SQLite 存储重放消息，复用主应用的 LLM/Tool/检索
 type Runner struct {
-	flashClient      llm.LLMClient
-	proClient        llm.LLMClient
-	registry         *tool.Registry
-	promptBuilder    *promptbuilder.PromptBuilder
-	embedder         *llm.Embedder
-	contextRetriever *ctxflow.ContextRetriever
-	contextFormatter ctxflow.ContextFormatter
-	maxIterations    int
-	maxTokens        *int
+	flashClient        llm.LLMClient
+	proClient          llm.LLMClient
+	registry           *tool.Registry
+	promptBuilder      *promptbuilder.PromptBuilder
+	embedder           *llm.Embedder
+	contextRetriever   *ctxflow.ContextRetriever
+	contextFormatter   ctxflow.ContextFormatter
+	maxIterations      int
+	maxTokens          *int
+	toolMaxConcurrency int
+	useNativeFC        bool
 }
 
 // RunnerConfig — Runner 依赖
 type RunnerConfig struct {
-	FlashClient      llm.LLMClient
-	ProClient        llm.LLMClient
-	Registry         *tool.Registry
-	PromptBuilder    *promptbuilder.PromptBuilder
-	Embedder         *llm.Embedder
-	ContextRetriever *ctxflow.ContextRetriever
-	ContextFormatter ctxflow.ContextFormatter
-	MaxIterations    int
-	MaxTokens        *int
+	FlashClient        llm.LLMClient
+	ProClient          llm.LLMClient
+	Registry           *tool.Registry
+	PromptBuilder      *promptbuilder.PromptBuilder
+	Embedder           *llm.Embedder
+	ContextRetriever   *ctxflow.ContextRetriever
+	ContextFormatter   ctxflow.ContextFormatter
+	MaxIterations      int
+	MaxTokens          *int
+	ToolMaxConcurrency int
+	UseNativeFC        bool
 }
 
 // NewRunner 创建重放执行器
 func NewRunner(cfg *RunnerConfig) *Runner {
 	return &Runner{
-		flashClient:      cfg.FlashClient,
-		proClient:        cfg.ProClient,
-		registry:         cfg.Registry,
-		promptBuilder:    cfg.PromptBuilder,
-		embedder:         cfg.Embedder,
-		contextRetriever: cfg.ContextRetriever,
-		contextFormatter: cfg.ContextFormatter,
-		maxIterations:    cfg.MaxIterations,
-		maxTokens:        cfg.MaxTokens,
+		flashClient:        cfg.FlashClient,
+		proClient:          cfg.ProClient,
+		registry:           cfg.Registry,
+		promptBuilder:      cfg.PromptBuilder,
+		embedder:           cfg.Embedder,
+		contextRetriever:   cfg.ContextRetriever,
+		contextFormatter:   cfg.ContextFormatter,
+		maxIterations:      cfg.MaxIterations,
+		maxTokens:          cfg.MaxTokens,
+		toolMaxConcurrency: cfg.ToolMaxConcurrency,
+		useNativeFC:        cfg.UseNativeFC,
 	}
 }
 
@@ -245,7 +251,11 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		Temperature:        temperature,
 		MaxTokens:          r.maxTokens,
 		MaxToolResultChars: maxToolResultChars,
+		ToolMaxConcurrency: r.toolMaxConcurrency,
 		OnChatEnd:          nil,
+		UseNativeFC:        r.useNativeFC,
+		ContextRetriever:   r.contextRetriever,
+		ContextFormatter:   r.contextFormatter,
 	})
 
 	events, err := orch.Run(ctx, &agent.RunRequest{

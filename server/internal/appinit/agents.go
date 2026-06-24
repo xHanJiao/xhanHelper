@@ -161,15 +161,17 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	go cronRunner.Start(bgCtx)
 
 	replayRunner := replay.NewRunner(&replay.RunnerConfig{
-		FlashClient:      llmClients.Flash,
-		ProClient:        llmClients.Strong,
-		Registry:         tools.Registry,
-		PromptBuilder:    pb,
-		Embedder:         infra.Embedder,
-		ContextRetriever: retriever,
-		ContextFormatter: formatter,
-		MaxIterations:    cfg.LLM.MaxIterations,
-		MaxTokens:        cfg.LLM.DefaultMaxTokens,
+		FlashClient:        llmClients.Flash,
+		ProClient:          llmClients.Strong,
+		Registry:           tools.Registry,
+		PromptBuilder:      pb,
+		Embedder:           infra.Embedder,
+		ContextRetriever:   retriever,
+		ContextFormatter:   formatter,
+		MaxIterations:      cfg.LLM.MaxIterations,
+		MaxTokens:          cfg.LLM.DefaultMaxTokens,
+		ToolMaxConcurrency: cfg.LLM.ToolMaxConcurrency,
+		UseNativeFC:        cfg.LLM.UseNativeFC,
 	})
 
 	return &AgentBundle{

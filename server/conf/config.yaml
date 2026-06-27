@@ -33,7 +33,7 @@ llm:
   extract_msg_limit: 50            # 记忆提取每次最多取的消息数
   use_native_fc: true              # 是否使用原生 function calling（默认 true）
   verification:
-    enabled: true
+    enabled: false
     model: flash               # flash | pro，检验用模型
     max_retries: 1             # 最多重检验次数
 

@@ -131,6 +131,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		}
 		if isDefaultConv {
 			pl, err := pipeline.NewPipeline(
+				pipeline.NewForceDeepModeStep(),
 				pipeline.NewShortInputCheckStep(),
 				pipeline.NewNormalizeDatesStep(),
 			)
@@ -142,6 +143,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			}
 		} else {
 			pl, err := pipeline.NewPipeline(
+				pipeline.NewForceDeepModeStep(),
 				pipeline.NewShortInputCheckStep(),
 				pipeline.NewNormalizeDatesStep(),
 				pipeline.NewAutoRouteStep(orch.FlashClient(), agentRepo, conv.AgentID, conv.ID, msgRepo, routeInterval, convRepo),
@@ -155,6 +157,9 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		}
 
 		// 读取管线结果
+		if pc.ForceDeepMode {
+			req.DeepMode = true
+		}
 		normalizedMsg := pc.NormalizedMsg
 		if normalizedMsg == "" {
 			normalizedMsg = req.Message

@@ -22,6 +22,7 @@ type PreContext struct {
 	AgentName          string  // 匹配的智能体名称
 	Confidence         float64 // 匹配置信度
 	UserSpecifiedAgent bool    // 用户显式指定了 agent_id
+	ForceDeepMode      bool    // 强制使用 deep mode（pro 模型+thinking）
 }
 
 // preCtxKey — ctx 中存储 PreContext 的私有 key

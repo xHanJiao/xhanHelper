@@ -219,7 +219,7 @@ onMounted(fetchAgents)
             maxlength="3000"
           />
         </NFormItem>
-        <NFormItem label="默认 Pro 模式">
+        <!-- <NFormItem label="默认 Pro 模式">
           <NSwitch v-model:value="formValue.deep_mode" />
         </NFormItem>
         <NFormItem label="思考模式">
@@ -230,7 +230,7 @@ onMounted(fetchAgents)
         </NFormItem>
         <NFormItem label="Max Tokens">
           <NInput v-model:value="formValue.max_tokens" placeholder="默认 4096" />
-        </NFormItem>
+        </NFormItem> -->
       </NForm>
       <div style="margin-top: var(--space-md); text-align: right;">
         <NButton style="margin-right: 8px;" @click="modalVisible = false">取消</NButton>

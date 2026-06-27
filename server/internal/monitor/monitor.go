@@ -157,6 +157,9 @@ type Monitor struct {
 	embeddingLat   *LatencyTimer
 	embeddingLatMu sync.RWMutex // needed for lazily init
 
+	requestLat   *LatencyTimer
+	requestLatMu sync.RWMutex // needed for lazily init
+
 	// tokens
 	llmTokens   map[string]*TokenTracker
 	llmTokensMu sync.RWMutex
@@ -359,6 +362,18 @@ func (m *Monitor) RecordEmbedding(elapsedMs int64) {
 	m.embeddingLat.Record(elapsedMs)
 }
 
+// ===== Request Latency =====
+// 端到端请求耗时：从 runReActLoop 开始到 done 事件发出（涵盖检索 + 多轮 ReAct + 工具执行 + 检验）
+
+func (m *Monitor) RecordRequestLatency(elapsedMs int64) {
+	m.requestLatMu.Lock()
+	if m.requestLat == nil {
+		m.requestLat = NewLatencyTimer(m.sampleMaxAge)
+	}
+	m.requestLatMu.Unlock()
+	m.requestLat.Record(elapsedMs)
+}
+
 // ===== Snapshot =====
 
 func (m *Monitor) RecordPanic(location string) {
@@ -494,6 +509,12 @@ func (m *Monitor) latencySnapshot() map[string]interface{} {
 	}
 	m.embeddingLatMu.RUnlock()
 
+	m.requestLatMu.RLock()
+	if m.requestLat != nil {
+		l["request"] = m.requestLat.Stats()
+	}
+	m.requestLatMu.RUnlock()
+
 	return l
 }
 
@@ -543,6 +564,7 @@ func IncToolCallWithLatency(tool, fn string, err bool, ms int64) {
 	global.IncToolCallWithLatency(tool, fn, err, ms)
 }
 func RecordEmbedding(ms int64)              { global.RecordEmbedding(ms) }
+func RecordRequestLatency(ms int64)         { global.RecordRequestLatency(ms) }
 func Register(name string, fn SnapshotFunc) { global.Register(name, fn) }
 func RecordPanic(location string)           { global.RecordPanic(location) }
 func Global() *Monitor                      { return global }

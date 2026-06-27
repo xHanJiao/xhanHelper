@@ -321,6 +321,11 @@ func (o *Orchestrator) runReActLoop(
 ) {
 	defer close(events)
 
+	loopStart := time.Now()
+	defer func() {
+		monitor.RecordRequestLatency(time.Since(loopStart).Milliseconds())
+	}()
+
 	userMsg := o.prepareUserMsg(req)
 	summaryBlock := o.resolveSummaryAttachment(ctx, req, userMsg, queryVec)
 

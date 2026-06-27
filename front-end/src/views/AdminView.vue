@@ -256,6 +256,10 @@ function renderAllCharts() {
     }
   }
 
+  // ── Request latency (端到端) ──
+  const reqLat = h.latency?.request
+  if (reqLat?.recent?.length) makeLineChart('request-lat-chart', [{ label: '端到端耗时', data: reqLat.recent }])
+
   // ── Embedding latency ──
   const embLat = h.latency?.embedding
   if (embLat?.recent?.length) makeLineChart('embedding-chart', [{ label: 'embedding', data: embLat.recent }])
@@ -334,6 +338,12 @@ function latSummary(s) {
           <div style="font-size: 11px; color: var(--color-text-muted); margin-top: 2px;">内存: {{ (health.snapshots.vector_store.estimated_bytes / 1024).toFixed(0) }} KB</div>
         </NCard>
       </div>
+
+      <!-- 请求端到端耗时 -->
+      <NCard v-if="health.latency?.request?.count" size="small" title="请求耗时 (端到端)" style="margin-bottom: var(--space-lg);">
+        <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">{{ latSummary(health.latency.request) }}</div>
+        <canvas id="request-lat-chart" />
+      </NCard>
 
       <!-- 四级耗时：田字格 -->
       <div class="latency-grid">

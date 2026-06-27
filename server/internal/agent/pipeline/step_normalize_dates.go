@@ -47,7 +47,7 @@ func (s *NormalizeDatesStep) Run(ctx context.Context) (context.Context, error) {
 				daysUntil += weekOffset * 7
 			}
 			target := today.AddDate(0, 0, daysUntil)
-			normalized = strings.ReplaceAll(normalized, pattern, target.Format(dateFmt))
+			normalized = strings.ReplaceAll(normalized, pattern, pattern+"（"+target.Format(dateFmt)+"）")
 		}
 	}
 
@@ -56,13 +56,13 @@ func (s *NormalizeDatesStep) Run(ctx context.Context) (context.Context, error) {
 	normalized = daysAgoRe.ReplaceAllStringFunc(normalized, func(m string) string {
 		nStr := daysAgoRe.FindStringSubmatch(m)[1]
 		n, _ := strconv.Atoi(nStr)
-		return today.AddDate(0, 0, -n).Format(dateFmt)
+		return m + "（" + today.AddDate(0, 0, -n).Format(dateFmt) + "）"
 	})
 	daysLaterRe := regexp.MustCompile(`(\d+)天后`)
 	normalized = daysLaterRe.ReplaceAllStringFunc(normalized, func(m string) string {
 		nStr := daysLaterRe.FindStringSubmatch(m)[1]
 		n, _ := strconv.Atoi(nStr)
-		return today.AddDate(0, 0, n).Format(dateFmt)
+		return m + "（" + today.AddDate(0, 0, n).Format(dateFmt) + "）"
 	})
 
 	// 固定替换
@@ -74,7 +74,7 @@ func (s *NormalizeDatesStep) Run(ctx context.Context) (context.Context, error) {
 		"今天": today.Format(dateFmt),
 	}
 	for word, repl := range fixed {
-		normalized = strings.ReplaceAll(normalized, word, repl)
+		normalized = strings.ReplaceAll(normalized, word, word+"（"+repl+"）")
 	}
 
 	if normalized != pc.RawMsg {

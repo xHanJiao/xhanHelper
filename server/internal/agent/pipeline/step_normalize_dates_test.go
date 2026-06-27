@@ -21,15 +21,15 @@ func TestNormalizeDatesStep_Basic(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"今天天气真好", "2026-05-13天气真好"},
-		{"昨天花了100元", "2026-05-12花了100元"},
-		{"明天去超市", "2026-05-14去超市"},
-		{"前天买的", "2026-05-11买的"},
-		{"后天到货", "2026-05-15到货"},
-		{"3天前买的", "2026-05-10买的"},
-		{"5天后到", "2026-05-18到"},
-		{"1天前", "2026-05-12"},
-		{"10天后", "2026-05-23"},
+		{"今天天气真好", "今天（2026-05-13）天气真好"},
+		{"昨天花了100元", "昨天（2026-05-12）花了100元"},
+		{"明天去超市", "明天（2026-05-14）去超市"},
+		{"前天买的", "前天（2026-05-11）买的"},
+		{"后天到货", "后天（2026-05-15）到货"},
+		{"3天前买的", "3天前（2026-05-10）买的"},
+		{"5天后到", "5天后（2026-05-18）到"},
+		{"1天前", "1天前（2026-05-12）"},
+		{"10天后", "10天后（2026-05-23）"},
 	}
 
 	for _, c := range cases {
@@ -61,8 +61,8 @@ func TestNormalizeDatesStep_EarlyMorning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pc.NormalizedMsg != "2026-05-26早上发的消息" {
-		t.Errorf("early morning bug: expected '2026-05-26早上发的消息', got %q", pc.NormalizedMsg)
+	if pc.NormalizedMsg != "今天（2026-05-26）早上发的消息" {
+		t.Errorf("early morning bug: expected '今天（2026-05-26）早上发的消息', got %q", pc.NormalizedMsg)
 	}
 
 	// 补充 edge case: 北京时间凌晨 0 点-7 点各临界值
@@ -80,8 +80,8 @@ func TestNormalizeDatesStep_EarlyMorning(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if pc.NormalizedMsg != "2026-05-26" {
-			t.Errorf("at %s: expected '2026-05-26', got %q", now.Format("15:04"), pc.NormalizedMsg)
+		if pc.NormalizedMsg != "今天（2026-05-26）" {
+			t.Errorf("at %s: expected '今天（2026-05-26）', got %q", now.Format("15:04"), pc.NormalizedMsg)
 		}
 	}
 
@@ -90,8 +90,8 @@ func TestNormalizeDatesStep_EarlyMorning(t *testing.T) {
 	pc8 := &PreContext{RawMsg: "今天"}
 	ctx8 := WithPreContext(context.Background(), pc8)
 	_, _ = s8.Run(ctx8)
-	if pc8.NormalizedMsg != "2026-05-26" {
-		t.Errorf("at 08:00: expected '2026-05-26', got %q", pc8.NormalizedMsg)
+	if pc8.NormalizedMsg != "今天（2026-05-26）" {
+		t.Errorf("at 08:00: expected '今天（2026-05-26）', got %q", pc8.NormalizedMsg)
 	}
 }
 
@@ -104,30 +104,30 @@ func TestNormalizeDatesStep_Weekdays(t *testing.T) {
 
 	cases := []struct {
 		input    string
-		expected string
+		expected string // 原词保留，日期以括号标注
 	}{
-		{"上周一", "2026-05-04"},
-		{"上周二", "2026-05-05"},
-		{"上周三", "2026-05-06"},
-		{"上周四", "2026-05-07"},
-		{"上周五", "2026-05-08"},
-		{"上周六", "2026-05-09"},
-		{"上周日", "2026-05-03"},
-		{"上周天", "2026-05-03"}, // "天" = Sunday alias
-		{"这周一", "2026-05-11"},
-		{"这周二", "2026-05-12"},
-		{"这周三", "2026-05-13"},
-		{"这周四", "2026-05-14"},
-		{"这周五", "2026-05-15"},
-		{"这周六", "2026-05-16"},
-		{"这周日", "2026-05-10"},
-		{"下周一", "2026-05-18"},
-		{"下周二", "2026-05-19"},
-		{"下周三", "2026-05-20"},
-		{"下周四", "2026-05-21"},
-		{"下周五", "2026-05-22"},
-		{"下周六", "2026-05-23"},
-		{"下周日", "2026-05-17"},
+		{"上周一", "上周一（2026-05-04）"},
+		{"上周二", "上周二（2026-05-05）"},
+		{"上周三", "上周三（2026-05-06）"},
+		{"上周四", "上周四（2026-05-07）"},
+		{"上周五", "上周五（2026-05-08）"},
+		{"上周六", "上周六（2026-05-09）"},
+		{"上周日", "上周日（2026-05-03）"},
+		{"上周天", "上周天（2026-05-03）"}, // "天" = Sunday alias
+		{"这周一", "这周一（2026-05-11）"},
+		{"这周二", "这周二（2026-05-12）"},
+		{"这周三", "这周三（2026-05-13）"},
+		{"这周四", "这周四（2026-05-14）"},
+		{"这周五", "这周五（2026-05-15）"},
+		{"这周六", "这周六（2026-05-16）"},
+		{"这周日", "这周日（2026-05-10）"},
+		{"下周一", "下周一（2026-05-18）"},
+		{"下周二", "下周二（2026-05-19）"},
+		{"下周三", "下周三（2026-05-20）"},
+		{"下周四", "下周四（2026-05-21）"},
+		{"下周五", "下周五（2026-05-22）"},
+		{"下周六", "下周六（2026-05-23）"},
+		{"下周日", "下周日（2026-05-17）"},
 	}
 
 	for _, c := range cases {
@@ -158,8 +158,8 @@ func TestNormalizeDatesStep_WeekdayOnTargetDay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pc.NormalizedMsg != "2026-05-11开会" {
-		t.Errorf("expected '2026-05-11开会', got %q", pc.NormalizedMsg)
+	if pc.NormalizedMsg != "这周一（2026-05-11）开会" {
+		t.Errorf("expected '这周一（2026-05-11）开会', got %q", pc.NormalizedMsg)
 	}
 
 	// 上周一 = 05-04，下周一 = 05-18
@@ -167,8 +167,8 @@ func TestNormalizeDatesStep_WeekdayOnTargetDay(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"上周一", "2026-05-04"},
-		{"下周一", "2026-05-18"},
+		{"上周一", "上周一（2026-05-04）"},
+		{"下周一", "下周一（2026-05-18）"},
 	}
 	for _, c := range cases {
 		t.Run(c.input, func(t *testing.T) {
@@ -194,7 +194,7 @@ func TestNormalizeDatesStep_MultipleInMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := "2026-05-12买了东西，2026-05-14到货，2026-05-15要用"
+	expected := "昨天（2026-05-12）买了东西，明天（2026-05-14）到货，这周五（2026-05-15）要用"
 	if pc.NormalizedMsg != expected {
 		t.Errorf("expected %q, got %q", expected, pc.NormalizedMsg)
 	}
@@ -224,28 +224,27 @@ func TestNormalizeDatesStep_NoChange(t *testing.T) {
 	}
 }
 
-// TestNormalizeDatesStep_NoPartialMatch 验证中文日期词都被正确替换
+// TestNormalizeDatesStep_NoPartialMatch 验证中文日期词都被替换为「原词（日期）」格式
 func TestNormalizeDatesStep_NoPartialMatch(t *testing.T) {
 	step := &NormalizeDatesStep{
 		now: time.Date(2026, 5, 13, 10, 0, 0, 0, config.BJ),
 	}
 
 	cases := []struct {
-		input string
+		input    string
+		expected string
 	}{
-		{"今天的"},
-		{"昨天。"},
-		{"天气今天好"},
+		{"今天的", "今天（2026-05-13）的"},
+		{"昨天。", "昨天（2026-05-12）。"},
+		{"天气今天好", "天气今天（2026-05-13）好"},
 	}
 	for _, c := range cases {
 		t.Run(c.input, func(t *testing.T) {
 			pc := &PreContext{RawMsg: c.input}
 			ctx := WithPreContext(context.Background(), pc)
 			_, _ = step.Run(ctx)
-			for _, word := range []string{"今天", "昨天", "明天", "前天", "后天"} {
-				if strings.Contains(pc.NormalizedMsg, word) {
-					t.Errorf("input=%q: expected %q to be replaced, got %q", c.input, word, pc.NormalizedMsg)
-				}
+			if pc.NormalizedMsg != c.expected {
+				t.Errorf("input=%q: expected=%q, got=%q", c.input, c.expected, pc.NormalizedMsg)
 			}
 		})
 	}
@@ -260,8 +259,8 @@ func TestNormalizeDatesStep_MidnightBoundary(t *testing.T) {
 	pc := &PreContext{RawMsg: "今天跨年"}
 	ctx := WithPreContext(context.Background(), pc)
 	_, _ = s.Run(ctx)
-	if pc.NormalizedMsg != "2026-12-31跨年" {
-		t.Errorf("23:59: expected '2026-12-31跨年', got %q", pc.NormalizedMsg)
+	if pc.NormalizedMsg != "今天（2026-12-31）跨年" {
+		t.Errorf("23:59: expected '今天（2026-12-31）跨年', got %q", pc.NormalizedMsg)
 	}
 
 	// 北京时间 00:00，今天应该已经是新的一天
@@ -271,8 +270,8 @@ func TestNormalizeDatesStep_MidnightBoundary(t *testing.T) {
 	pc2 := &PreContext{RawMsg: "今天"}
 	ctx2 := WithPreContext(context.Background(), pc2)
 	_, _ = s2.Run(ctx2)
-	if pc2.NormalizedMsg != "2026-06-01" {
-		t.Errorf("00:00: expected '2026-06-01', got %q", pc2.NormalizedMsg)
+	if pc2.NormalizedMsg != "今天（2026-06-01）" {
+		t.Errorf("00:00: expected '今天（2026-06-01）', got %q", pc2.NormalizedMsg)
 	}
 
 	// 跨月: 5月31日 明天 = 6月1日
@@ -282,8 +281,8 @@ func TestNormalizeDatesStep_MidnightBoundary(t *testing.T) {
 	pc3 := &PreContext{RawMsg: "明天"}
 	ctx3 := WithPreContext(context.Background(), pc3)
 	_, _ = s3.Run(ctx3)
-	if pc3.NormalizedMsg != "2026-06-01" {
-		t.Errorf("cross-month: expected '2026-06-01', got %q", pc3.NormalizedMsg)
+	if pc3.NormalizedMsg != "明天（2026-06-01）" {
+		t.Errorf("cross-month: expected '明天（2026-06-01）', got %q", pc3.NormalizedMsg)
 	}
 
 	// 跨年: 12月31日 明天 = 次年1月1日
@@ -293,7 +292,7 @@ func TestNormalizeDatesStep_MidnightBoundary(t *testing.T) {
 	pc4 := &PreContext{RawMsg: "明天"}
 	ctx4 := WithPreContext(context.Background(), pc4)
 	_, _ = s4.Run(ctx4)
-	if pc4.NormalizedMsg != "2027-01-01" {
-		t.Errorf("cross-year: expected '2027-01-01', got %q", pc4.NormalizedMsg)
+	if pc4.NormalizedMsg != "明天（2027-01-01）" {
+		t.Errorf("cross-year: expected '明天（2027-01-01）', got %q", pc4.NormalizedMsg)
 	}
 }

@@ -103,6 +103,8 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 					}
 				}
 			}
+		} else if cfg.GlobalDefaultRole.SystemPrompt != "" {
+			agentSystemPrompt = cfg.GlobalDefaultRole.SystemPrompt
 		}
 
 		// 用户参数优先，Agent 参数仅作为默认值

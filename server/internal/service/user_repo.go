@@ -114,6 +114,25 @@ func (r *UserRepo) ListAll(ctx context.Context) ([]model.User, error) {
 	return users, err
 }
 
+// ListResult — 用户列表分页结果
+type ListResult struct {
+	Users      []model.User `json:"users"`
+	TotalCount int64        `json:"total_count"`
+}
+
+// List 分页列出用户
+func (r *UserRepo) List(ctx context.Context, offset, limit int) (*ListResult, error) {
+	var users []model.User
+	var total int64
+	if err := r.db.WithContext(ctx).Model(&model.User{}).Count(&total).Error; err != nil {
+		return nil, err
+	}
+	if err := r.db.WithContext(ctx).Order("created_at DESC").Offset(offset).Limit(limit).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	return &ListResult{Users: users, TotalCount: total}, nil
+}
+
 func (r *UserRepo) FindByToken(ctx context.Context, token string) (*model.User, error) {
 	var ut model.UserToken
 	if err := r.db.WithContext(ctx).Where("token = ?", token).First(&ut).Error; err != nil {

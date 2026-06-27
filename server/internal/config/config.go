@@ -21,17 +21,18 @@ func init() {
 
 // Config — 顶层配置
 type Config struct {
-	Server     ServerConfig     `yaml:"server"`
-	DB         DBConfig         `yaml:"db"`
-	LLM        LLMConfig        `yaml:"llm"`
-	Embedding  EmbeddingConfig  `yaml:"embedding"`
-	Reflection ReflectionConfig `yaml:"reflection"`
-	Retrieval  RetrievalConfig  `yaml:"retrieval"`
-	Search     SearchConfig     `yaml:"search"`
-	Chat       ChatConfig       `yaml:"chat"`
-	Share      ShareConfig      `yaml:"share"`
-	Snowflake  SnowflakeConfig  `yaml:"snowflake"`
-	MCP        MCPConfig        `yaml:"mcp"`
+	Server            ServerConfig            `yaml:"server"`
+	DB                DBConfig                `yaml:"db"`
+	LLM               LLMConfig               `yaml:"llm"`
+	Embedding         EmbeddingConfig         `yaml:"embedding"`
+	Reflection        ReflectionConfig        `yaml:"reflection"`
+	Retrieval         RetrievalConfig         `yaml:"retrieval"`
+	Search            SearchConfig            `yaml:"search"`
+	Chat              ChatConfig              `yaml:"chat"`
+	Share             ShareConfig             `yaml:"share"`
+	Snowflake         SnowflakeConfig         `yaml:"snowflake"`
+	MCP               MCPConfig               `yaml:"mcp"`
+	GlobalDefaultRole GlobalDefaultRoleConfig `yaml:"global_default_role"`
 }
 
 // ChatConfig — 对话配置
@@ -64,6 +65,11 @@ type MCPServerCfg struct {
 type MCPConfig struct {
 	MaxConcurrent int            `yaml:"max_concurrent"`
 	Servers       []MCPServerCfg `yaml:"servers"`
+}
+
+// GlobalDefaultRoleConfig — 全局默认角色（无 agent_id 时生效）
+type GlobalDefaultRoleConfig struct {
+	SystemPrompt string `yaml:"system_prompt"` // 全局默认角色 system prompt（Markdown）
 }
 
 // SnowflakeConfig — Snowflake ID 配置

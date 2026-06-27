@@ -73,6 +73,11 @@ const routes = [
     component: () => import('@/views/AdminView.vue')
   },
   {
+    path: '/admin/users',
+    name: 'AdminUsers',
+    component: () => import('@/views/AdminUsersView.vue')
+  },
+  {
     path: '/admin/message-debug/:id',
     name: 'MessageDebug',
     component: () => import('@/views/MessageDebugView.vue')

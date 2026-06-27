@@ -107,6 +107,8 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	// 管理员路由
 	admin := r.Group("/api/admin", middleware.Auth(rc.UserRepo), monitor.AdminOnly(rc.Cfg.Server.AdminUsers))
 	admin.GET("/health", monitor.HealthHandlerGlobal())
+	admin.POST("/users", createUserByAdmin(rc.UserRepo))
+	admin.GET("/users", listUsers(rc.UserRepo))
 
 	return r
 }

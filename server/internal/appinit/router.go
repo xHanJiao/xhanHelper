@@ -90,7 +90,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MessageTraceHandler:    messageTraceHandler,
 		MessageDebugHandler:    messageDebugHandler,
 		ReplayHandler:          replayHandler,
-		EnableReplay:           cfg.Server.Mode == "debug",
+		EnableReplay:           true, // admin 路由已有 AdminMiddleware 保护，生产环境开放
 		PendingFindingRepo:     repos.PendingFinding,
 		ReflectionOrch:         agents.ReflectionOrch,
 		MissionDiscoverer:      agents.MissionDiscoverer,

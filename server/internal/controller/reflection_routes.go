@@ -23,7 +23,7 @@ type ReflectionRoutesConfig struct {
 	MessageTraceHandler    *MessageTraceHandler
 	MessageDebugHandler    *MessageDebugHandler
 	ReplayHandler          *ReplayHandler
-	EnableReplay           bool // 仅 dev 环境开放
+	EnableReplay           bool // admin 路由已有 AdminMiddleware 保护，生产环境也开放
 	PendingFindingRepo     *service.PendingFindingRepo
 	ReflectionOrch         *agent.ReflectionOrchestrator
 	MissionDiscoverer      *agent.MissionDiscoverer

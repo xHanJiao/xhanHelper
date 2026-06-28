@@ -74,12 +74,9 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		// 保证后续携带 conversation_id 的请求也能正确走 HistoryBuilder 路径
 		isDefaultConv := conv.IsDefault
 
-		// 加载智能体 system prompt 和 LLM 参数（新会话和续聊都支持）
+		// 加载智能体 system prompt（新会话和续聊都支持）
 		var agentSystemPrompt string
 		var agentID string
-		var agentTemperature *float64
-		var agentMaxTokens *int
-		var agentThinking *bool
 		var originMsg = req.Message
 		if conv.AgentID != nil && *conv.AgentID != "" && agentRepo != nil {
 			a, err := agentRepo.FindByID(c.Request.Context(), *conv.AgentID, userID)
@@ -88,34 +85,9 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			} else if a != nil {
 				agentSystemPrompt = a.SystemPrompt
 				agentID = a.ID
-				if a.ParamsJSON != "" {
-					var params struct {
-						Temperature *float64 `json:"temperature"`
-						MaxTokens   *int     `json:"max_tokens"`
-						Thinking    *bool    `json:"thinking"`
-					}
-					if err := json.Unmarshal([]byte(a.ParamsJSON), &params); err != nil {
-						log.Printf("[chat] parse agent params_json error: %v", err)
-					} else {
-						agentTemperature = params.Temperature
-						agentMaxTokens = params.MaxTokens
-						agentThinking = params.Thinking
-					}
-				}
 			}
 		} else if cfg.GlobalDefaultRole.SystemPrompt != "" {
 			agentSystemPrompt = cfg.GlobalDefaultRole.SystemPrompt
-		}
-
-		// 用户参数优先，Agent 参数仅作为默认值
-		if req.Temperature != nil {
-			agentTemperature = req.Temperature
-		}
-		if req.MaxTokens != nil {
-			agentMaxTokens = req.MaxTokens
-		}
-		if req.Thinking != nil {
-			agentThinking = req.Thinking
 		}
 
 		// —— 预处理管线 ——
@@ -213,9 +185,6 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			AgentID:            agentID,
 			Memory:             req.Memory,
 			SkipRetrieval:      pc.SkipRetrieval,
-			Temperature:        agentTemperature,
-			MaxTokens:          agentMaxTokens,
-			Thinking:           agentThinking,
 			Window:             wr,
 		})
 		if err != nil {

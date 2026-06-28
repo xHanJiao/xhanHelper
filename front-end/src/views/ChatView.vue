@@ -72,9 +72,6 @@ import { api } from '@/api/client'
 import {
   NInput,
   NButton,
-  NPopover,
-  NInputNumber,
-  NSwitch,
   useMessage
 } from 'naive-ui'
 import MessageBubble from '@/components/MessageBubble.vue'
@@ -102,7 +99,6 @@ const { isIOS } = useDevice()
 const { debugMode, toggle: toggleDebug } = useDebugMode()
 
 onMounted(() => {
-  fetchLlmConfig()
   fetchAgents()
 })
 
@@ -207,41 +203,6 @@ function toggleExpand() {
   inputExpanded.value = !inputExpanded.value
 }
 
-// LLM 参数（从后端 API 获取，不存 localStorage）
-const showLlmSettings = ref(false)
-const llmSettings = ref({ temperature: null, max_tokens: null, thinking: true, deepMode: true })
-
-async function fetchLlmConfig() {
-  try {
-    const conv = convs.list.find(c => c.id === chat.conversationId)
-    const agentId = conv?.agent_id || chat.agentId
-    const qs = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : ''
-    const res = await api.get('/api/llm-config' + qs)
-    if (res && typeof res === 'object') {
-      llmSettings.value = {
-        temperature: res.temperature ?? null,
-        max_tokens: res.max_tokens ?? null,
-        thinking: res.thinking ?? true,
-        deepMode: res.deep_mode ?? llmSettings.value.deepMode
-      }
-    }
-  } catch (e) {
-    console.error('Failed to fetch LLM config', e)
-  }
-}
-
-// agent_matched 后更新参数
-watch(() => chat.llmParams, (params) => {
-  if (params) {
-    llmSettings.value = {
-      temperature: params.temperature ?? llmSettings.value.temperature,
-      max_tokens: params.max_tokens ?? llmSettings.value.max_tokens,
-      thinking: params.thinking ?? llmSettings.value.thinking,
-      deepMode: params.deep_mode ?? llmSettings.value.deepMode
-    }
-  }
-})
-
 // 智能体列表（用于切换/解绑）
 const agentsList = ref([])
 
@@ -271,8 +232,6 @@ async function handleSelectAgent(agentId) {
     chat.agentId = newAgentId
     chat.agentName = newAgentName
 
-    // 刷新 LLM 配置
-    fetchLlmConfig()
   } catch (e) {
     console.error('Failed to update agent binding', e)
   }
@@ -519,9 +478,6 @@ watch(() => route.params.id, async (newId, oldId) => {
       chat.agentName = null
     }
 
-    // ⑤ 根据当前智能体重新拉取 LLM 配置（temperature / max_tokens / thinking / deepMode）
-    fetchLlmConfig()
-
   // ====================================================================
   // 分支 B：当前会话不变但需要重新拉取消息
   // 例如：外部页面（信箱）触发跳转到某个已有会话时，newId 可能与 chat.conversationId 一致
@@ -557,7 +513,6 @@ watch(() => route.params.id, async (newId, oldId) => {
       chat.agentId = null
       chat.agentName = null
     }
-    fetchLlmConfig()
 
   // ====================================================================
   // 分支 C：路由里没有会话 ID（用户访问 /chat 或被重定向到无 id 状态）
@@ -583,7 +538,6 @@ watch(() => route.params.id, async (newId, oldId) => {
 
     // 无默认会话（首次使用），显示空白状态
     chat.reset()
-    fetchLlmConfig()
   }
 }, { immediate: true })
 
@@ -625,17 +579,7 @@ async function handleSend() {
 
   const opts = {
     conversationId: chat.conversationId,
-    deepMode: llmSettings.value.deepMode,
     agentId: chat.agentId
-  }
-  if (llmSettings.value.temperature !== null) {
-    opts.temperature = llmSettings.value.temperature
-  }
-  if (llmSettings.value.max_tokens !== null) {
-    opts.maxTokens = llmSettings.value.max_tokens
-  }
-  if (llmSettings.value.thinking !== null) {
-    opts.thinking = llmSettings.value.thinking
   }
   await sendMessage(content, opts)
 }
@@ -851,62 +795,6 @@ function handleContainerClick(e) {
         />
         <div :style="{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }">
           <div>
-            <NPopover trigger="click" :show="showLlmSettings" @update:show="(v) => showLlmSettings = v">
-              <template #trigger>
-                <NButton quaternary size="small" style="color: var(--color-text-muted)" @click="showLlmSettings = !showLlmSettings" title="LLM 参数">
-                  ⚙
-                </NButton>
-              </template>
-              <div style="width: 240px; padding: 4px 0;">
-                <!-- 模型选择 -->
-                <div style="margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
-                  <div>
-                    <span style="font-size: 13px; color: var(--color-text);">Pro 模型</span>
-                    <div style="font-size: 11px; color: var(--color-text-muted);">v4-pro，推理更强但较慢</div>
-                  </div>
-                  <NSwitch
-                    :value="llmSettings.deepMode"
-                    @update:value="(v) => { llmSettings.deepMode = v }"
-                    size="small"
-                  />
-                </div>
-                <div style="border-top: 1px solid var(--color-border); margin: 8px 0;"></div>
-                <!-- 思考模式 -->
-                <div style="margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
-                  <span style="font-size: 13px; color: var(--color-text);">思考模式</span>
-                  <NSwitch
-                    :value="llmSettings.deepMode ? true : llmSettings.thinking"
-                    @update:value="(v) => { llmSettings.thinking = v }"
-                    :disabled="llmSettings.deepMode"
-                    size="small"
-                  />
-                </div>
-                <div style="margin-bottom: 12px;">
-                  <div style="font-size: 13px; margin-bottom: 4px; color: var(--color-text);">Temperature</div>
-                  <NInputNumber
-                    :value="llmSettings.temperature"
-                    @update:value="(v) => { llmSettings.temperature = v }"
-                    :min="0" :max="2" :step="0.1"
-                    placeholder="默认 1.0"
-                    size="small"
-                    clearable
-                    style="width: 100%"
-                  />
-                </div>
-                <div>
-                  <div style="font-size: 13px; margin-bottom: 4px; color: var(--color-text);">Max Tokens</div>
-                  <NInputNumber
-                    :value="llmSettings.max_tokens"
-                    @update:value="(v) => { llmSettings.max_tokens = v }"
-                    :min="1" :step="100"
-                    placeholder="默认 4096"
-                    size="small"
-                    clearable
-                    style="width: 100%"
-                  />
-                </div>
-              </div>
-            </NPopover>
             <NButton quaternary size="small" @click="toggleExpand" style="color: var(--color-text-muted)">
               {{ inputExpanded ? '⤡ 收起输入框' : '⤢ 展开输入框' }}
             </NButton>

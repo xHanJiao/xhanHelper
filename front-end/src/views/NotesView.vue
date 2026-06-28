@@ -16,10 +16,12 @@ import {
 import ListItemCard from '@/components/ListItemCard.vue'
 import PageTopBar from '@/components/PageTopBar.vue'
 import TopBarBtn from '@/components/TopBarBtn.vue'
+import { useExportPDF } from '@/composables/useExportPDF'
 
 const message = useMessage()
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
+const { exportPDF } = useExportPDF()
 
 const notes = ref([])
 const loading = ref(false)
@@ -68,6 +70,7 @@ function parseTags(tags) {
 
 function getCardActions(note) {
   return [
+    { key: 'export-pdf', label: '导出PDF', onClick: () => exportPDF(note.content, note.topic || '无标题', 'text') },
     { key: 'delete', label: '删除', type: 'error', confirm: `确认删除笔记「${note.topic || '无标题'}」？`, onClick: () => handleDelete(note) }
   ]
 }

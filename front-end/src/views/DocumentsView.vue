@@ -18,10 +18,12 @@ import {
 import ListItemCard from '@/components/ListItemCard.vue'
 import PageTopBar from '@/components/PageTopBar.vue'
 import TopBarBtn from '@/components/TopBarBtn.vue'
+import { useExportPDF } from '@/composables/useExportPDF'
 
 const message = useMessage()
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
+const { exportPDF } = useExportPDF()
 
 const documents = ref([])
 const loading = ref(false)
@@ -139,6 +141,7 @@ function parseTags(tags) {
 
 function getCardActions(doc) {
   return [
+    { key: 'export-pdf', label: '导出PDF', onClick: () => exportPDF(doc.content, doc.title, 'markdown') },
     { key: 'share', label: '分享', onClick: () => handleShare(doc) },
     { key: 'download', label: '下载', onClick: () => handleDownload(doc) },
     { key: 'delete', label: '删除', type: 'error', confirm: `确认删除文档「${doc.title}」？`, onClick: () => handleDelete(doc) }

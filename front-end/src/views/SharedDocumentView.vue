@@ -2,8 +2,9 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import MarkdownIt from 'markdown-it'
-import { NSpin, NCard, NDivider } from 'naive-ui'
+import { NSpin, NCard, NDivider, NButton } from 'naive-ui'
 import { api } from '@/api/client'
+import { useExportPDF } from '@/composables/useExportPDF'
 
 const route = useRoute()
 const token = route.params.token
@@ -13,6 +14,7 @@ const error = ref(null)
 const doc = ref(null)
 
 const md = new MarkdownIt()
+const { exportPDF } = useExportPDF()
 
 function parseTags(tags) {
   if (!tags) return []
@@ -44,7 +46,16 @@ onMounted(async () => {
 
         <NCard v-if="doc" class="shared-doc-card">
           <div class="doc-header">
-            <h1>{{ doc.title }}</h1>
+            <div class="doc-header-top">
+              <h1>{{ doc.title }}</h1>
+              <NButton
+                type="primary"
+                size="small"
+                @click="exportPDF(doc.content, doc.title, 'markdown')"
+              >
+                导出 PDF
+              </NButton>
+            </div>
             <div v-if="parseTags(doc.tags).length > 0" class="doc-tags">
               <span v-for="tag in parseTags(doc.tags)" :key="tag" class="doc-tag">{{ tag }}</span>
             </div>
@@ -91,6 +102,17 @@ onMounted(async () => {
 
 .shared-error p {
   color: var(--color-text-muted);
+  margin: 0;
+}
+
+.doc-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.doc-header-top h1 {
   margin: 0;
 }
 

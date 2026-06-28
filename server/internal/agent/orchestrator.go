@@ -420,17 +420,12 @@ func (o *Orchestrator) resolveSummaryAttachment(
 		if err != nil {
 			log.Printf("[orch] GetLatest summary error: %v", err)
 		} else if summary != nil {
-			if !o.checkSummaryRelevance(ctx, summary, req, queryVec) {
-				log.Printf("[orch] summary is not relevant: %s", summary.ID[:8])
-				round = -1
-			} else {
-				parent := ""
-				if summary.ParentSummaryID != nil {
-					parent = *summary.ParentSummaryID
-				}
-				block = fmt.Sprintf("<conversation_summary id=\"%s\" cover_from=\"%s\" cover_to=\"%s\" parent=\"%s\">\n%s\n</conversation_summary>\n",
-					summary.ID, summary.CoverFromMsgID, summary.CoverToMsgID, parent, summary.SummaryText)
+			parent := ""
+			if summary.ParentSummaryID != nil {
+				parent = *summary.ParentSummaryID
 			}
+			block = fmt.Sprintf("<conversation_summary id=\"%s\" cover_from=\"%s\" cover_to=\"%s\" parent=\"%s\">\n%s\n</conversation_summary>\n",
+				summary.ID, summary.CoverFromMsgID, summary.CoverToMsgID, parent, summary.SummaryText)
 		}
 	}
 

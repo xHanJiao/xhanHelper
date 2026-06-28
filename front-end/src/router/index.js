@@ -20,77 +20,92 @@ const routes = [
   {
     path: '/memories',
     name: 'Memories',
-    component: () => import('@/views/MemoryView.vue')
+    component: () => import('@/views/MemoryView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/notes',
     name: 'Notes',
-    component: () => import('@/views/NotesView.vue')
+    component: () => import('@/views/NotesView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/bills',
     name: 'Bills',
-    component: () => import('@/views/BillsView.vue')
+    component: () => import('@/views/BillsView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/agents',
     name: 'Agents',
-    component: () => import('@/views/AgentView.vue')
+    component: () => import('@/views/AgentView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/prompts',
     name: 'Prompts',
-    component: () => import('@/views/PromptView.vue')
+    component: () => import('@/views/PromptView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/tools',
     name: 'Tools',
-    component: () => import('@/views/ToolView.vue')
+    component: () => import('@/views/ToolView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/themes',
     name: 'Themes',
-    component: () => import('@/views/ThemeView.vue')
+    component: () => import('@/views/ThemeView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/missions',
     name: 'Missions',
-    component: () => import('@/views/MissionsView.vue')
+    component: () => import('@/views/MissionsView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/mailbox',
     name: 'Mailbox',
-    component: () => import('@/views/MailboxView.vue')
+    component: () => import('@/views/MailboxView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/documents',
     name: 'Documents',
-    component: () => import('@/views/DocumentsView.vue')
+    component: () => import('@/views/DocumentsView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/admin',
     name: 'Admin',
-    component: () => import('@/views/AdminView.vue')
+    component: () => import('@/views/AdminView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/admin/users',
     name: 'AdminUsers',
-    component: () => import('@/views/AdminUsersView.vue')
+    component: () => import('@/views/AdminUsersView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/admin/message-debug/:id',
     name: 'MessageDebug',
-    component: () => import('@/views/MessageDebugView.vue')
+    component: () => import('@/views/MessageDebugView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/admin/replay-compare/:id',
     name: 'ReplayCompare',
-    component: () => import('@/views/ReplayCompareView.vue')
+    component: () => import('@/views/ReplayCompareView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/admin/eval',
     name: 'EvalAnnotator',
-    component: () => import('@/views/EvalAnnotatorView.vue')
+    component: () => import('@/views/EvalAnnotatorView.vue'),
+    meta: { backToChat: true }
   },
   {
     path: '/s/messages/:token',

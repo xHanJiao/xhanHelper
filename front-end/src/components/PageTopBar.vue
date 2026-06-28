@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useMobile } from '@/composables/useMobile'
 import { useAuthStore } from '@/stores/auth'
 import TopBarBtn from '@/components/TopBarBtn.vue'
@@ -32,6 +33,8 @@ function handleUnbind() {
   emit('select-agent', null)
 }
 
+const route = useRoute()
+const router = useRouter()
 const { isMobile, toggleDrawer, toggleSidebar, sidebarCollapsed } = useMobile()
 const auth = useAuthStore()
 const displayName = computed(() => (auth.user?.username || '') + 'Helper')
@@ -118,6 +121,7 @@ const agentLabel = computed(() => {
           </div>
         </div>
       </NPopover>
+      <TopBarBtn v-if="route.meta.backToChat" icon="←" label="返回聊天" @click="router.push('/chat')" />
       <slot name="right"></slot>
     </span>
   </div>

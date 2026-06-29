@@ -23,7 +23,7 @@ llm:
   strong_model: deepseek-v4-pro
   api_key: ${LLM_API_KEY}
   base_url: https://api.deepseek.com
-  max_iterations: 20
+  max_iterations: 50
   default_temperature: 1.0
   default_max_tokens: 30000
   tool_max_concurrency: 2         # 工具并发执行上限

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -497,6 +498,119 @@ func (r *MessageRepo) ListUserMessagesBetween(ctx context.Context, convID string
 	}
 	err := q.Find(&list).Error
 	if err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// buildMessageFilterQuery — 构造共享的 WHERE 过滤条件（user_id, status, role, keywords, convID, time range）。
+func (r *MessageRepo) buildMessageFilterQuery(ctx context.Context, userID string, keywords []string, role, convID string, after, before *time.Time) *gorm.DB {
+	q := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("user_id = ? AND status = ?", userID, model.MsgStatusNormal)
+
+	if role != "" {
+		q = q.Where("role IN ?", util.SplitAndTrim(role))
+	}
+	if len(keywords) > 0 {
+		var ors []string
+		var args []any
+		for _, kw := range keywords {
+			kw = strings.TrimSpace(kw)
+			if kw == "" {
+				continue
+			}
+			ors = append(ors, "content LIKE ?")
+			args = append(args, "%"+kw+"%")
+		}
+		if len(ors) > 0 {
+			q = q.Where("("+strings.Join(ors, " OR ")+")", args...)
+		}
+	}
+	if convID != "" {
+		q = q.Where("conversation_id = ?", convID)
+	}
+	if after != nil {
+		q = q.Where("created_at > ?", *after)
+	}
+	if before != nil {
+		q = q.Where("created_at < ?", *before)
+	}
+	return q
+}
+
+// searchMessages — 在 buildMessageFilterQuery 基础上叠加 cursor + order + limit+1 分页。
+func (r *MessageRepo) searchMessages(ctx context.Context, userID string, keywords []string, role, convID string, after, before *time.Time, cursor *time.Time, direction string, limit int) ([]model.Message, bool, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	q := r.buildMessageFilterQuery(ctx, userID, keywords, role, convID, after, before)
+
+	isAsc := direction == "asc"
+
+	if cursor != nil {
+		if isAsc {
+			q = q.Where("created_at > ?", *cursor)
+		} else {
+			q = q.Where("created_at < ?", *cursor)
+		}
+	}
+
+	if isAsc {
+		q = q.Order("created_at ASC")
+	} else {
+		q = q.Order("created_at DESC")
+	}
+
+	// limit+1 detect hasMore
+	var list []model.Message
+	if err := q.Limit(limit + 1).Find(&list).Error; err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(list) > limit
+	if hasMore {
+		list = list[:limit]
+	}
+	return list, hasMore, nil
+}
+
+// SearchMessagesByCursor 按关键词搜索消息，cursor 分页（DESC，最新在前）。
+// keywords 之间为 OR 关系。role 为空时不过滤 role（查全部角色），支持逗号分隔多 role。
+// convID 为空时跨所有会话搜索。cursor 为 nil 表示首页。
+func (r *MessageRepo) SearchMessagesByCursor(ctx context.Context, userID string, keywords []string, role, convID string, cursor *time.Time, limit int) ([]model.Message, bool, error) {
+	return r.searchMessages(ctx, userID, keywords, role, convID, nil, nil, cursor, "desc", limit)
+}
+
+// SearchMessagesByTimeCursor 按时间范围搜索消息，cursor 分页。
+// after/before 为 nil 表示不限制该方向。direction 为 "asc" 或 "desc"。cursor 为 nil 表示首页。
+func (r *MessageRepo) SearchMessagesByTimeCursor(ctx context.Context, userID, role, convID string, after, before *time.Time, cursor *time.Time, direction string, limit int) ([]model.Message, bool, error) {
+	return r.searchMessages(ctx, userID, nil, role, convID, after, before, cursor, direction, limit)
+}
+
+// CountMessages 统计符合条件的消息总数。支持 keyword+time+role+convID 全维度组合。
+func (r *MessageRepo) CountMessages(ctx context.Context, userID string, keywords []string, role, convID string, after, before *time.Time) (int64, error) {
+	var count int64
+	err := r.buildMessageFilterQuery(ctx, userID, keywords, role, convID, after, before).Count(&count).Error
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// GetByIDs 批量按 ID 获取消息（同一用户范围，静默跳过不存在的）。
+func (r *MessageRepo) GetByIDs(ctx context.Context, ids []string, userID string) ([]model.Message, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var list []model.Message
+	if err := r.db.WithContext(ctx).
+		Where("id IN ? AND user_id = ? AND status = ?", ids, userID, model.MsgStatusNormal).
+		Order("created_at ASC").
+		Find(&list).Error; err != nil {
 		return nil, err
 	}
 	return list, nil

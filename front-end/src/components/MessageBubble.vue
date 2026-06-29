@@ -332,4 +332,15 @@ onBeforeUnmount(() => {
   padding-left: 12px;
   flex-shrink: 0;
 }
+
+/* 触摸设备上禁用文本选中，避免长按弹出菜单时文字进入选中态 */
+@media (hover: none) and (pointer: coarse) {
+  .user-bubble,
+  .assistant-content,
+  .message-content {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
 </style>

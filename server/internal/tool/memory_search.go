@@ -170,8 +170,8 @@ func (t *MemorySearchTool) semanticSearch(ec *ExecuteContext, args json.RawMessa
 		return &Result{Success: false, Error: fmt.Sprintf("向量化失败: %v", err)}
 	}
 
-	// 取 topK*2 候选
-	hits := t.vectorStore.Search(vec, a.TopK*2, func(id string, _ []float64, metadata map[string]string) bool {
+	// 1. 全量嵌入搜索 (type=mem)
+	fullHits := t.vectorStore.Search(vec, a.TopK*2, func(id string, _ []float64, metadata map[string]string) bool {
 		if metadata["type"] != "mem" || metadata["user_id"] != ec.UserID {
 			return false
 		}
@@ -182,21 +182,47 @@ func (t *MemorySearchTool) semanticSearch(ec *ExecuteContext, args json.RawMessa
 		return true
 	})
 
+	// 2. chunk 搜索 (type=chunk, parent_type=memory) — 覆盖新创建还未进全量嵌入的记忆
+	chunkHits := t.vectorStore.Search(vec, a.TopK*2, func(id string, _ []float64, metadata map[string]string) bool {
+		return metadata["type"] == "chunk" &&
+			metadata["parent_type"] == "memory" &&
+			metadata["user_id"] == ec.UserID
+	})
+
 	skipIDs := make(map[string]bool, len(a.ExcludeIDs))
 	for _, id := range a.ExcludeIDs {
 		skipIDs[strings.TrimPrefix(id, "mem:")] = true
 		skipIDs[id] = true
 	}
 
-	var memIDs []string
+	// 合并两路结果，按 memory ID 取最高分
 	scoreMap := make(map[string]float64)
-	for _, hit := range hits {
+	for _, hit := range fullHits {
 		id := strings.TrimPrefix(hit.ID, "mem:")
 		if skipIDs[id] {
 			continue
 		}
+		if oldSc, ok := scoreMap[id]; !ok || hit.Score > oldSc {
+			scoreMap[id] = hit.Score
+		}
+	}
+	for _, hit := range chunkHits {
+		// chunk ID 格式: "mem:{memID}/chunk:{n}"
+		id := strings.TrimPrefix(hit.ID, "mem:")
+		if idx := strings.Index(id, "/"); idx > 0 {
+			id = id[:idx]
+		}
+		if id == "" || skipIDs[id] {
+			continue
+		}
+		if oldSc, ok := scoreMap[id]; !ok || hit.Score > oldSc {
+			scoreMap[id] = hit.Score
+		}
+	}
+
+	var memIDs []string
+	for id := range scoreMap {
 		memIDs = append(memIDs, id)
-		scoreMap[id] = hit.Score
 	}
 
 	if len(memIDs) == 0 {

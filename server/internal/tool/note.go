@@ -644,7 +644,8 @@ func (t *NoteTool) semanticSearch(ec *ExecuteContext, args json.RawMessage) *Res
 		return &Result{Success: false, Error: fmt.Sprintf("向量化失败: %v", err)}
 	}
 
-	hits := t.vectorStore.Search(vec, a.TopK*2, func(id string, _ []float64, metadata map[string]string) bool {
+	// 1. 全量嵌入搜索 (type=note)
+	fullHits := t.vectorStore.Search(vec, a.TopK*2, func(id string, _ []float64, metadata map[string]string) bool {
 		if metadata["type"] != "note" || metadata["user_id"] != ec.UserID {
 			return false
 		}
@@ -654,12 +655,38 @@ func (t *NoteTool) semanticSearch(ec *ExecuteContext, args json.RawMessage) *Res
 		return true
 	})
 
-	var noteIDs []string
+	// 2. chunk 搜索 (type=chunk, parent_type=note) — 覆盖新创建还未进全量嵌入的笔记
+	chunkHits := t.vectorStore.Search(vec, a.TopK*2, func(id string, _ []float64, metadata map[string]string) bool {
+		return metadata["type"] == "chunk" &&
+			metadata["parent_type"] == "note" &&
+			metadata["user_id"] == ec.UserID
+	})
+
+	// 合并两路结果，按 note ID 取最高分
 	scoreMap := make(map[string]float64)
-	for _, hit := range hits {
+	for _, hit := range fullHits {
 		id := strings.TrimPrefix(hit.ID, "note:")
+		if old, ok := scoreMap[id]; !ok || hit.Score > old {
+			scoreMap[id] = hit.Score
+		}
+	}
+	for _, hit := range chunkHits {
+		// chunk ID 格式: "note:{noteID}/chunk:{n}"
+		id := strings.TrimPrefix(hit.ID, "note:")
+		if idx := strings.Index(id, "/"); idx > 0 {
+			id = id[:idx]
+		}
+		if id == "" {
+			continue
+		}
+		if old, ok := scoreMap[id]; !ok || hit.Score > old {
+			scoreMap[id] = hit.Score
+		}
+	}
+
+	var noteIDs []string
+	for id := range scoreMap {
 		noteIDs = append(noteIDs, id)
-		scoreMap[id] = hit.Score
 	}
 
 	if len(noteIDs) == 0 {

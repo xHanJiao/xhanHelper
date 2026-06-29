@@ -665,14 +665,15 @@ func (t *NoteTool) semanticSearch(ec *ExecuteContext, args json.RawMessage) *Res
 	// 合并两路结果，按 note ID 取最高分
 	scoreMap := make(map[string]float64)
 	for _, hit := range fullHits {
+		// full-note ID 格式: "note:{noteID}"
 		id := strings.TrimPrefix(hit.ID, "note:")
 		if old, ok := scoreMap[id]; !ok || hit.Score > old {
 			scoreMap[id] = hit.Score
 		}
 	}
 	for _, hit := range chunkHits {
-		// chunk ID 格式: "note:{noteID}/chunk:{n}"
-		id := strings.TrimPrefix(hit.ID, "note:")
+		// chunk ID 格式: "chunk:note:{noteID}/{i}"
+		id := strings.TrimPrefix(hit.ID, "chunk:note:")
 		if idx := strings.Index(id, "/"); idx > 0 {
 			id = id[:idx]
 		}

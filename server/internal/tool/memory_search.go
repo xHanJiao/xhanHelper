@@ -198,6 +198,7 @@ func (t *MemorySearchTool) semanticSearch(ec *ExecuteContext, args json.RawMessa
 	// 合并两路结果，按 memory ID 取最高分
 	scoreMap := make(map[string]float64)
 	for _, hit := range fullHits {
+		// full-memory ID 格式: "mem:{memID}"
 		id := strings.TrimPrefix(hit.ID, "mem:")
 		if skipIDs[id] {
 			continue
@@ -207,8 +208,8 @@ func (t *MemorySearchTool) semanticSearch(ec *ExecuteContext, args json.RawMessa
 		}
 	}
 	for _, hit := range chunkHits {
-		// chunk ID 格式: "mem:{memID}/chunk:{n}"
-		id := strings.TrimPrefix(hit.ID, "mem:")
+		// chunk ID 格式: "chunk:memory:{memID}/{i}"
+		id := strings.TrimPrefix(hit.ID, "chunk:memory:")
 		if idx := strings.Index(id, "/"); idx > 0 {
 			id = id[:idx]
 		}

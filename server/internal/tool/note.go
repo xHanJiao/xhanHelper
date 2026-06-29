@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -14,7 +16,18 @@ import (
 	"xhan-helper/internal/service"
 )
 
-// NoteTool — 变量追踪笔记工具
+// ToolNoteOutput — 结构化 JSON 中的单条笔记
+type ToolNoteOutput struct {
+	ID              string          `json:"id"`
+	Topic           string          `json:"topic"`
+	Content         string          `json:"content"`
+	Tags            string          `json:"tags,omitempty"`
+	Variables       json.RawMessage `json:"variables,omitempty"`
+	CreatedAt       string          `json:"created_at"`
+	UpdatedAt       string          `json:"updated_at"`
+	RelevanceScore  *float64        `json:"relevance_score,omitempty"`
+	MatchedKeywords []string        `json:"matched_keywords,omitempty"`
+}
 type NoteTool struct {
 	noteRepo      *service.NoteRepo
 	versionRepo   *service.VersionRepo
@@ -39,6 +52,36 @@ func (t *NoteTool) Description() string {
 
 func (t *NoteTool) Functions() []FuncSchema {
 	return []FuncSchema{
+		{
+			Name:        "semantic_search",
+			Display:     "语义搜索",
+			Description: "用向量语义相似度搜索笔记。返回按创建时间倒序排列的结果。适合模糊概念、主题等语义匹配场景。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{"type": "string", "description": "搜索关键词或描述（用于语义匹配）"},
+					"top_k": map[string]interface{}{"type": "integer", "description": "返回条数，默认5，最大10"},
+					"topic": map[string]interface{}{"type": "string", "description": "限定 topic，不传则不限"},
+				},
+				"required": []string{"query"},
+			},
+		},
+		{
+			Name:        "count_notes",
+			Display:     "统计笔记数量",
+			Description: "统计符合条件的笔记总数。支持 keyword+topic+time 全维度组合过滤。在搜索前先调用此函数评估量级。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query":       map[string]interface{}{"type": "string", "description": "关键词（空格/逗号分隔，OR 关系）"},
+					"topic":       map[string]interface{}{"type": "string", "description": "限定 topic"},
+					"start_time":  map[string]interface{}{"type": "string", "description": "起始时间"},
+					"end_time":    map[string]interface{}{"type": "string", "description": "结束时间"},
+					"last_n_days": map[string]interface{}{"type": "integer", "description": "最近 N 天"},
+				},
+				"required": []string{},
+			},
+		},
 		{
 			Name:        "record_note",
 			Display:     "记录笔记",
@@ -72,22 +115,29 @@ func (t *NoteTool) Functions() []FuncSchema {
 		{
 			Name:        "query_notes",
 			Display:     "查询笔记",
-			Description: "查询已保存的笔记，按主题或关键词检索历史记录",
+			Description: "按关键词或主题搜索笔记。多关键词用空格/逗号/顿号分隔为 OR 关系。支持时间范围过滤、cursor 分页。先调 count_notes 评估量级。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"topic":   map[string]interface{}{"type": "string", "description": "按主题筛选，可选"},
-					"keyword": map[string]interface{}{"type": "string", "description": "在正文,主题和标签中搜索，可选"},
+					"query":       map[string]interface{}{"type": "string", "description": "搜索关键词，空格/逗号/顿号分隔多个词"},
+					"topic":       map[string]interface{}{"type": "string", "description": "限定 topic"},
+					"start_time":  map[string]interface{}{"type": "string", "description": "起始时间"},
+					"end_time":    map[string]interface{}{"type": "string", "description": "结束时间"},
+					"last_n_days": map[string]interface{}{"type": "integer", "description": "最近 N 天，与 start_time 互斥"},
+					"limit":       map[string]interface{}{"type": "integer", "description": "返回条数，默认20，最大50"},
+					"cursor":      map[string]interface{}{"type": "string", "description": "分页游标（上一页返回的 next_cursor），首页不传"},
 				},
+				"required": []string{},
 			},
 		},
 		{
-			Name:        "get_note_topics",
-			Display:     "笔记主题",
-			Description: "获取当前用户所有已有的笔记主题列表。需要了解有哪些主题的笔记时调用",
+			Name:        "list_topics",
+			Display:     "列出所有主题",
+			Description: "列出用户所有笔记中的 topic 及对应数量，按数量倒序排列。用于了解现有笔记覆盖的主题，辅助选择搜索方向。",
 			Parameters: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
+				"required":   []string{},
 			},
 		},
 		{
@@ -151,6 +201,10 @@ func (t *NoteTool) Functions() []FuncSchema {
 
 func (t *NoteTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {
+	case "semantic_search":
+		return t.semanticSearch(ec, args)
+	case "count_notes":
+		return t.countNotes(ec, args)
 	case "record_note":
 		return t.recordNote(ec, args)
 	case "get_note":
@@ -159,8 +213,8 @@ func (t *NoteTool) Execute(ec *ExecuteContext, funcName string, args json.RawMes
 		return t.queryNotes(ec, args)
 	case "update_note":
 		return t.updateNote(ec, args)
-	case "get_note_topics":
-		return t.getNoteTopics(ec, args)
+	case "list_topics":
+		return t.listTopics(ec, args)
 	case "rollback_note":
 		return t.rollbackNote(ec, args)
 	case "delete_note":
@@ -304,7 +358,7 @@ func (t *NoteTool) getNoteVersions(ec *ExecuteContext, args json.RawMessage) *Re
 	return &Result{Success: true, Data: data}
 }
 
-func (t *NoteTool) getNoteTopics(ec *ExecuteContext, args json.RawMessage) *Result {
+func (t *NoteTool) listTopics(ec *ExecuteContext, args json.RawMessage) *Result {
 	topics, err := t.noteRepo.DistinctTopics(ec.Ctx, ec.UserID)
 	if err != nil {
 		return &Result{Success: false, Error: fmt.Sprintf("get topics: %v", err)}
@@ -486,21 +540,200 @@ func (t *NoteTool) embedNote(note *model.Note) {
 }
 
 func (t *NoteTool) queryNotes(ec *ExecuteContext, args json.RawMessage) *Result {
-	var params struct {
-		Topic   string `json:"topic"`
-		Keyword string `json:"keyword"`
+	var a struct {
+		Query     string `json:"query"`
+		Topic     string `json:"topic"`
+		StartTime string `json:"start_time"`
+		EndTime   string `json:"end_time"`
+		LastNDays int    `json:"last_n_days"`
+		Limit     int    `json:"limit"`
+		Cursor    string `json:"cursor"`
 	}
-	if err := json.Unmarshal(args, &params); err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("parse args: %v", err)}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+	}
+	if a.Limit <= 0 {
+		a.Limit = 20
+	}
+	if a.Limit > 50 {
+		a.Limit = 50
 	}
 
-	notes, _, err := t.noteRepo.List(ec.Ctx, ec.UserID, params.Topic, params.Keyword, 50, 0)
+	var keywords []string
+	if a.Query != "" {
+		keywords = splitKeywords(a.Query)
+	}
+
+	after, before, err := parseTimeParams(a.StartTime, a.EndTime, a.LastNDays, 0)
 	if err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("query notes: %v", err)}
+		return &Result{Success: false, Error: err.Error()}
 	}
-	if notes == nil {
-		notes = []model.Note{}
+
+	var cursorTime *time.Time
+	if a.Cursor != "" {
+		parsed, err := parseTimeString(a.Cursor)
+		if err != nil {
+			return &Result{Success: false, Error: fmt.Sprintf("cursor 解析失败: %v", err)}
+		}
+		cursorTime = &parsed
 	}
-	data, _ := json.Marshal(notes)
+
+	notes, hasMore, err := t.noteRepo.SearchNotesByCursor(ec.Ctx, ec.UserID, keywords, a.Topic, after, before, cursorTime, a.Limit)
+	if err != nil {
+		log.Printf("[note] query_notes error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("查询笔记失败: %v", err)}
+	}
+
+	total, err := t.noteRepo.CountNotes(ec.Ctx, ec.UserID, keywords, a.Topic, after, before)
+	if err != nil {
+		log.Printf("[note] count error: %v", err)
+		total = int64(len(notes))
+	}
+
+	output := make([]ToolNoteOutput, 0, len(notes))
+	for _, n := range notes {
+		no := formatNote(n)
+		if len(keywords) > 0 {
+			no.MatchedKeywords = findMatchedKeywords(n.Content, keywords)
+		}
+		output = append(output, no)
+	}
+
+	var nextCursor string
+	if hasMore && len(notes) > 0 {
+		nextCursor = formatMsgTime(notes[len(notes)-1].CreatedAt)
+	}
+
+	resp := map[string]interface{}{
+		"total":    total,
+		"has_more": hasMore,
+		"notes":    output,
+	}
+	if nextCursor != "" {
+		resp["next_cursor"] = nextCursor
+	}
+
+	data, _ := json.Marshal(resp)
 	return &Result{Success: true, Data: data}
+}
+
+// ==================== semantic_search ====================
+
+func (t *NoteTool) semanticSearch(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a struct {
+		Query string `json:"query"`
+		TopK  int    `json:"top_k"`
+		Topic string `json:"topic"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+	}
+	if a.Query == "" {
+		return &Result{Success: false, Error: "query 不能为空"}
+	}
+	if a.TopK <= 0 {
+		a.TopK = 5
+	}
+	if a.TopK > 10 {
+		a.TopK = 10
+	}
+
+	vec, err := t.embedder.Embed(ec.Ctx, a.Query)
+	if err != nil {
+		log.Printf("[note] embed error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("向量化失败: %v", err)}
+	}
+
+	hits := t.vectorStore.Search(vec, a.TopK*2, func(id string, _ []float64, metadata map[string]string) bool {
+		if metadata["type"] != "note" || metadata["user_id"] != ec.UserID {
+			return false
+		}
+		if metaTopic, ok := metadata["topic"]; ok && metaTopic != "" && a.Topic != "" && metaTopic != a.Topic {
+			return false
+		}
+		return true
+	})
+
+	var noteIDs []string
+	scoreMap := make(map[string]float64)
+	for _, hit := range hits {
+		id := strings.TrimPrefix(hit.ID, "note:")
+		noteIDs = append(noteIDs, id)
+		scoreMap[id] = hit.Score
+	}
+
+	if len(noteIDs) == 0 {
+		data, _ := json.Marshal(map[string]interface{}{"total": 0, "notes": []ToolNoteOutput{}})
+		return &Result{Success: true, Data: data}
+	}
+
+	notes, err := t.noteRepo.GetByIDsAndUser(ec.Ctx, noteIDs, ec.UserID)
+	if err != nil {
+		log.Printf("[note] GetByIDsAndUser error: %v", err)
+	}
+
+	output := make([]ToolNoteOutput, 0, len(notes))
+	for _, n := range notes {
+		if a.Topic != "" && n.Topic != a.Topic {
+			continue
+		}
+		score := scoreMap[n.ID]
+		no := formatNote(n)
+		no.RelevanceScore = &score
+		output = append(output, no)
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{"total": len(output), "notes": output})
+	return &Result{Success: true, Data: data}
+}
+
+// ==================== count_notes ====================
+
+func (t *NoteTool) countNotes(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a struct {
+		Query     string `json:"query"`
+		Topic     string `json:"topic"`
+		StartTime string `json:"start_time"`
+		EndTime   string `json:"end_time"`
+		LastNDays int    `json:"last_n_days"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+	}
+
+	after, before, err := parseTimeParams(a.StartTime, a.EndTime, a.LastNDays, 0)
+	if err != nil {
+		return &Result{Success: false, Error: err.Error()}
+	}
+
+	var keywords []string
+	if a.Query != "" {
+		keywords = splitKeywords(a.Query)
+	}
+
+	count, err := t.noteRepo.CountNotes(ec.Ctx, ec.UserID, keywords, a.Topic, after, before)
+	if err != nil {
+		log.Printf("[note] count_notes error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("统计失败: %v", err)}
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{"count": count})
+	return &Result{Success: true, Data: data}
+}
+
+// ==================== format helpers ====================
+
+func formatNote(n model.Note) ToolNoteOutput {
+	no := ToolNoteOutput{
+		ID:        n.ID,
+		Topic:     n.Topic,
+		Content:   n.Content,
+		Tags:      n.Tags,
+		CreatedAt: formatMsgTime(n.CreatedAt),
+		UpdatedAt: formatMsgTime(n.UpdatedAt),
+	}
+	if n.Variables != nil {
+		no.Variables = json.RawMessage(*n.Variables)
+	}
+	return no
 }

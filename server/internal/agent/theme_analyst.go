@@ -37,7 +37,7 @@ var themeAnalystPrompt = fmt.Sprintf(`你是 xhanHelper 的「主题分析员」
 
 1. get_topic_detail(topic, topics) — 获取指定 topic 及其聚类关联 topic 下的所有 notes 和 memories 全文。每条带引用 ID（格式 note:xxx 或 mem:xxx）。
 2. get_bill_stats() — 获取账单统计摘要。返回结构化数据。
-3. search_notes_v2(query) — 用自然语言句子向量检索笔记。query 必须是完整句子（如「最近求职进展」），禁止关键词列表。
+3. note.semantic_search(query) — 用自然语言句子向量检索笔记。query 必须是完整句子（如「最近求职进展」），禁止关键词列表。
 4. memory_search.semantic_search(query) — 用自然语言句子向量检索长期记忆。query 同上。
 5. message_search(query) — 在历史消息中按关键词搜索。query 传核心关键词，不要传完整句子。
 

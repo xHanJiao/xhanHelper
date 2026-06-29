@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -325,6 +326,155 @@ func TestNoteSoftDelete_VectorStoreCleanedUp(t *testing.T) {
 	}
 	if vs.deleted[0] != "chunk:note:n1/0" || vs.deleted[1] != "chunk:note:n1/1" {
 		t.Errorf("删除的 chunk ID 不对: %v", vs.deleted)
+	}
+}
+
+// seedNotes 为查询测试创建多条笔记
+func seedNotes(t *testing.T, repo *service.NoteRepo, userID string) {
+	t.Helper()
+	notes := []model.Note{
+		{ID: "n1", UserID: userID, Topic: "Go开发", Content: "Go语言后端开发最佳实践包括错误处理、并发模式", Tags: "go,backend", CreatedAt: time.Now().Add(-72 * time.Hour)},
+		{ID: "n2", UserID: userID, Topic: "Go开发", Content: "Go 1.22新增的泛型特性使用指南", Tags: "go,generics", CreatedAt: time.Now().Add(-48 * time.Hour)},
+		{ID: "n3", UserID: userID, Topic: "Python", Content: "Python异步编程asyncio详解", Tags: "python,async", CreatedAt: time.Now().Add(-36 * time.Hour)},
+		{ID: "n4", UserID: userID, Topic: "数据库", Content: "MySQL索引优化策略和SQL调优经验", Tags: "mysql,sql", CreatedAt: time.Now().Add(-24 * time.Hour)},
+		{ID: "n5", UserID: userID, Topic: "数据库", Content: "PostgreSQL分区表实践", Tags: "postgres,partition", CreatedAt: time.Now().Add(-12 * time.Hour)},
+		{ID: "n6", UserID: "other-user", Topic: "私密", Content: "不应出现的笔记", Tags: "private", CreatedAt: time.Now().Add(-6 * time.Hour)},
+	}
+	for _, n := range notes {
+		if err := repo.Create(context.Background(), &n); err != nil {
+			t.Fatalf("seed note %s: %v", n.ID, err)
+		}
+	}
+}
+
+func TestNoteQueryBasic(t *testing.T) {
+	tool, cleanup := setupNoteTool(t)
+	defer cleanup()
+	userID := "user-1"
+	seedNotes(t, tool.noteRepo, userID)
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
+
+	res := tool.Execute(ec, "query_notes", mustMarshal(t, map[string]string{"query": "Go"}))
+	if !res.Success {
+		t.Fatalf("query failed: %s", res.Error)
+	}
+	var out map[string]interface{}
+	json.Unmarshal(res.Data, &out)
+	notes := out["notes"].([]interface{})
+	if len(notes) < 2 {
+		t.Fatalf("expected at least 2 Go notes, got %d", len(notes))
+	}
+	if out["total"] == nil {
+		t.Error("expected total field")
+	}
+}
+
+func TestNoteQueryTopicFilter(t *testing.T) {
+	tool, cleanup := setupNoteTool(t)
+	defer cleanup()
+	userID := "user-1"
+	seedNotes(t, tool.noteRepo, userID)
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
+
+	res := tool.Execute(ec, "query_notes", mustMarshal(t, map[string]interface{}{"topic": "Python"}))
+	if !res.Success {
+		t.Fatalf("query failed: %s", res.Error)
+	}
+	var out map[string]interface{}
+	json.Unmarshal(res.Data, &out)
+	notes := out["notes"].([]interface{})
+	if len(notes) != 1 {
+		t.Fatalf("expected 1 Python note, got %d", len(notes))
+	}
+}
+
+func TestNoteQueryCursorPagination(t *testing.T) {
+	tool, cleanup := setupNoteTool(t)
+	defer cleanup()
+	userID := "user-1"
+	seedNotes(t, tool.noteRepo, userID)
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
+
+	res := tool.Execute(ec, "query_notes", mustMarshal(t, map[string]interface{}{"limit": 2}))
+	if !res.Success {
+		t.Fatalf("query failed: %s", res.Error)
+	}
+	var p1 map[string]interface{}
+	json.Unmarshal(res.Data, &p1)
+	n1 := p1["notes"].([]interface{})
+	if len(n1) != 2 {
+		t.Fatalf("expected 2, got %d", len(n1))
+	}
+	cursor, ok := p1["next_cursor"].(string)
+	if !ok || cursor == "" || p1["has_more"] != true {
+		t.Fatal("expected has_more=true and next_cursor")
+	}
+
+	res = tool.Execute(ec, "query_notes", mustMarshal(t, map[string]interface{}{"limit": 2, "cursor": cursor}))
+	if !res.Success {
+		t.Fatalf("page 2 failed: %s", res.Error)
+	}
+	var p2 map[string]interface{}
+	json.Unmarshal(res.Data, &p2)
+	n2 := p2["notes"].([]interface{})
+	if len(n2) == 0 {
+		t.Error("expected messages in page 2")
+	}
+}
+
+func TestNoteCount(t *testing.T) {
+	tool, cleanup := setupNoteTool(t)
+	defer cleanup()
+	userID := "user-1"
+	seedNotes(t, tool.noteRepo, userID)
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
+
+	res := tool.Execute(ec, "count_notes", mustMarshal(t, map[string]interface{}{"query": "SQL"}))
+	if !res.Success {
+		t.Fatalf("count failed: %s", res.Error)
+	}
+	var out map[string]interface{}
+	json.Unmarshal(res.Data, &out)
+	if out["count"].(float64) < 1 {
+		t.Errorf("expected at least 1, got %v", out["count"])
+	}
+}
+
+func TestNoteListTopics(t *testing.T) {
+	tool, cleanup := setupNoteTool(t)
+	defer cleanup()
+	userID := "user-1"
+	seedNotes(t, tool.noteRepo, userID)
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
+
+	res := tool.Execute(ec, "list_topics", mustMarshal(t, map[string]interface{}{}))
+	if !res.Success {
+		t.Fatalf("list_topics failed: %s", res.Error)
+	}
+	var out map[string]interface{}
+	json.Unmarshal(res.Data, &out)
+	topics := out["topics"].([]interface{})
+	if len(topics) < 3 {
+		t.Errorf("expected at least 3 topics, got %d", len(topics))
+	}
+}
+
+func TestNoteOtherUserIsolation(t *testing.T) {
+	tool, cleanup := setupNoteTool(t)
+	defer cleanup()
+	seedNotes(t, tool.noteRepo, "user-1")
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "other-user"}
+
+	res := tool.Execute(ec, "query_notes", mustMarshal(t, map[string]string{}))
+	if !res.Success {
+		t.Fatalf("query failed: %s", res.Error)
+	}
+	var out map[string]interface{}
+	json.Unmarshal(res.Data, &out)
+	notes := out["notes"].([]interface{})
+	// n6 belongs to other-user, so they should see exactly 1 note
+	if len(notes) != 1 {
+		t.Errorf("other user should see only their own note, got %d", len(notes))
 	}
 }
 

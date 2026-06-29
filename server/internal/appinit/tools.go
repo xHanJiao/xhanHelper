@@ -90,7 +90,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		"get_topic_stats":  topicStatsTool,
 		"get_topic_detail": topicDetailTool,
 		"get_bill_stats":   billStatsTool,
-		"search_notes":     tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder),
 		"search_messages":  tool.NewMessageSearchTool(repos.Message, repos.Conversation, cfg.Chat.HistoryRounds, cfg.Chat.MaxSummaryRounds),
 	}
 
@@ -133,8 +132,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	commitmentTimer := agent.NewCommitmentTimer(repos.Commitment, repos.Mailbox)
 
 	// --- 搜索工具注册到主 Registry ---
-	reg.Register(tool.NewLoggingWrapper(
-		tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewMemorySearchTool(infra.VectorStore, repos.Mem, infra.Embedder), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(

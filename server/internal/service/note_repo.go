@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -130,4 +131,112 @@ func (r *NoteRepo) DistinctTopics(ctx context.Context, userID string) ([]string,
 		Where("user_id = ? AND status = ?", userID, model.NoteStatusNormal).
 		Distinct("topic").Pluck("topic", &topics).Error
 	return topics, err
+}
+
+// NoteTopicCount — topic + 笔记数量
+type NoteTopicCount struct {
+	Topic string `json:"topic"`
+	Count int64  `json:"count"`
+}
+
+// DistinctTopicsWithCount 获取用户所有不重复 topic 及对应笔记数量，按 count 倒序。
+func (r *NoteRepo) DistinctTopicsWithCount(ctx context.Context, userID string) ([]NoteTopicCount, error) {
+	var results []NoteTopicCount
+	err := r.db.WithContext(ctx).Model(&model.Note{}).
+		Select("topic, COUNT(*) AS count").
+		Where("user_id = ? AND status = ?", userID, model.NoteStatusNormal).
+		Group("topic").Order("count DESC").
+		Find(&results).Error
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// SearchNotesByCursor 按关键词搜索笔记，cursor 分页（DESC，最新在前）。
+// keywords OR LIKE，topic 精确过滤，after/before/cursor 为 nil 时跳过。
+func (r *NoteRepo) SearchNotesByCursor(ctx context.Context, userID string, keywords []string, topic string, after, before *time.Time, cursor *time.Time, limit int) ([]model.Note, bool, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	q := r.db.WithContext(ctx).Model(&model.Note{}).Where("user_id = ? AND status = ?", userID, model.NoteStatusNormal)
+
+	if topic != "" {
+		q = q.Where("topic = ?", topic)
+	}
+	if len(keywords) > 0 {
+		var ors []string
+		var args []any
+		for _, kw := range keywords {
+			kw = strings.TrimSpace(kw)
+			if kw == "" {
+				continue
+			}
+			ors = append(ors, "content LIKE ? OR tags LIKE ?")
+			args = append(args, "%"+kw+"%", "%"+kw+"%")
+		}
+		if len(ors) > 0 {
+			q = q.Where("("+strings.Join(ors, " OR ")+")", args...)
+		}
+	}
+	if after != nil {
+		q = q.Where("created_at > ?", *after)
+	}
+	if before != nil {
+		q = q.Where("created_at < ?", *before)
+	}
+	if cursor != nil {
+		q = q.Where("created_at < ?", *cursor)
+	}
+
+	var list []model.Note
+	if err := q.Order("created_at DESC").Limit(limit + 1).Find(&list).Error; err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(list) > limit
+	if hasMore {
+		list = list[:limit]
+	}
+	return list, hasMore, nil
+}
+
+// CountNotes 统计符合条件的笔记总数。支持 keyword+topic+time。
+func (r *NoteRepo) CountNotes(ctx context.Context, userID string, keywords []string, topic string, after, before *time.Time) (int64, error) {
+	q := r.db.WithContext(ctx).Model(&model.Note{}).Where("user_id = ? AND status = ?", userID, model.NoteStatusNormal)
+
+	if topic != "" {
+		q = q.Where("topic = ?", topic)
+	}
+	if len(keywords) > 0 {
+		var ors []string
+		var args []any
+		for _, kw := range keywords {
+			kw = strings.TrimSpace(kw)
+			if kw == "" {
+				continue
+			}
+			ors = append(ors, "content LIKE ? OR tags LIKE ?")
+			args = append(args, "%"+kw+"%", "%"+kw+"%")
+		}
+		if len(ors) > 0 {
+			q = q.Where("("+strings.Join(ors, " OR ")+")", args...)
+		}
+	}
+	if after != nil {
+		q = q.Where("created_at > ?", *after)
+	}
+	if before != nil {
+		q = q.Where("created_at < ?", *before)
+	}
+
+	var count int64
+	if err := q.Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
 }

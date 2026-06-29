@@ -91,7 +91,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		"get_topic_detail": topicDetailTool,
 		"get_bill_stats":   billStatsTool,
 		"search_notes":     tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder),
-		"search_memories":  tool.NewSearchMemoriesV2Tool(infra.VectorStore, repos.Mem, repos.Chunk, infra.Embedder),
 		"search_messages":  tool.NewMessageSearchTool(repos.Message, repos.Conversation, cfg.Chat.HistoryRounds, cfg.Chat.MaxSummaryRounds),
 	}
 
@@ -137,7 +136,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
-		tool.NewSearchMemoriesV2Tool(infra.VectorStore, repos.Mem, repos.Chunk, infra.Embedder), log.Default()))
+		tool.NewMemorySearchTool(infra.VectorStore, repos.Mem, infra.Embedder), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewMessageSearchTool(repos.Message, repos.Conversation, cfg.Chat.HistoryRounds, cfg.Chat.MaxSummaryRounds), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(

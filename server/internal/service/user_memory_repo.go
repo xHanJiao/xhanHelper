@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -159,4 +160,112 @@ func (r *UserMemoryRepo) CountRecent(ctx context.Context, userID string, since t
 		Where("user_id = ? AND created_at >= ?", userID, since).
 		Count(&count).Error
 	return count, err
+}
+
+// TopicCount — topic + 计数结果
+type TopicCount struct {
+	Topic string `json:"topic"`
+	Count int64  `json:"count"`
+}
+
+// SearchMemoriesByCursor 按关键词搜索记忆，cursor 分页（DESC，最新在前）。
+// keywords 之间为 OR 关系。topic 为空时不过滤。after/before 为 nil 时不过滤时间。cursor 为 nil 表示首页。
+func (r *UserMemoryRepo) SearchMemoriesByCursor(ctx context.Context, userID string, keywords []string, topic string, after, before *time.Time, cursor *time.Time, limit int) ([]model.UserMemory, bool, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	q := r.db.WithContext(ctx).Model(&model.UserMemory{}).Where("user_id = ?", userID)
+
+	if topic != "" {
+		q = q.Where("topic = ?", topic)
+	}
+	if len(keywords) > 0 {
+		var ors []string
+		var args []any
+		for _, kw := range keywords {
+			kw = strings.TrimSpace(kw)
+			if kw == "" {
+				continue
+			}
+			ors = append(ors, "memory_value LIKE ?")
+			args = append(args, "%"+kw+"%")
+		}
+		if len(ors) > 0 {
+			q = q.Where("("+strings.Join(ors, " OR ")+")", args...)
+		}
+	}
+	if after != nil {
+		q = q.Where("created_at > ?", *after)
+	}
+	if before != nil {
+		q = q.Where("created_at < ?", *before)
+	}
+	if cursor != nil {
+		q = q.Where("created_at < ?", *cursor)
+	}
+
+	var list []model.UserMemory
+	if err := q.Order("created_at DESC").Limit(limit + 1).Find(&list).Error; err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(list) > limit
+	if hasMore {
+		list = list[:limit]
+	}
+	return list, hasMore, nil
+}
+
+// CountMemories 统计符合条件的记忆总数。支持 keyword+topic+time 全维度。
+func (r *UserMemoryRepo) CountMemories(ctx context.Context, userID string, keywords []string, topic string, after, before *time.Time) (int64, error) {
+	q := r.db.WithContext(ctx).Model(&model.UserMemory{}).Where("user_id = ?", userID)
+
+	if topic != "" {
+		q = q.Where("topic = ?", topic)
+	}
+	if len(keywords) > 0 {
+		var ors []string
+		var args []any
+		for _, kw := range keywords {
+			kw = strings.TrimSpace(kw)
+			if kw == "" {
+				continue
+			}
+			ors = append(ors, "memory_value LIKE ?")
+			args = append(args, "%"+kw+"%")
+		}
+		if len(ors) > 0 {
+			q = q.Where("("+strings.Join(ors, " OR ")+")", args...)
+		}
+	}
+	if after != nil {
+		q = q.Where("created_at > ?", *after)
+	}
+	if before != nil {
+		q = q.Where("created_at < ?", *before)
+	}
+
+	var count int64
+	if err := q.Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// DistinctTopics 返回用户所有不重复 topic 及对应记忆数量，按 count 倒序。
+func (r *UserMemoryRepo) DistinctTopics(ctx context.Context, userID string) ([]TopicCount, error) {
+	var results []TopicCount
+	err := r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Select("topic, COUNT(*) AS count").
+		Where("user_id = ? AND topic != ''", userID).
+		Group("topic").Order("count DESC").
+		Find(&results).Error
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
 }

@@ -291,7 +291,7 @@ func (s *EntitySource[T]) Warmup(ctx context.Context, embedder *llm.Embedder) {
 					log.Printf("[vector] %s warmup: embed %.8s error: %v", s.name, e.GetID()[:8], err)
 					continue
 				}
-				s.vs.Upsert(s.idPrefix+e.GetID(), vec, map[string]string{"type": s.fullType, "user_id": e.GetUserID()})
+				s.vs.Upsert(s.idPrefix+e.GetID(), vec, map[string]string{"type": s.fullType, "user_id": e.GetUserID(), "topic": e.GetTopic()})
 				embStr := llm.EmbeddingToString(vec)
 				s.embeddingRepo.Upsert(ctx, &model.Embedding{
 					ID: e.GetID(), EntityType: s.entityType, EntityID: e.GetID(),

@@ -98,11 +98,13 @@ func (f *formatter) FormatBlocks(result *RetrieveResult, extraBlocks ...ExtraBlo
 	return buf.String()
 }
 
+var weekdaysCN = [...]string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
+
 // DateTimeBlock 生成 current_datetime 类型的 ExtraBlock。
 // Content 为纯时间字符串，标签由 currentDatetimeBlock 的注解决定。
 func DateTimeBlock(t time.Time) ExtraBlock {
 	return ExtraBlock{
 		Type:    "current_datetime",
-		Content: t.Format("2006年1月2日 星期一 15:04 MST"),
+		Content: t.Format("2006年1月2日 ") + weekdaysCN[t.Weekday()] + t.Format(" 15:04 MST"),
 	}
 }

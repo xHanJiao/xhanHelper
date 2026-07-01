@@ -85,6 +85,22 @@ func (r *ConversationSummaryRepo) ListAll(ctx context.Context, limit, offset int
 	return summaries, err
 }
 
+// SearchByKeyword 按关键词模糊搜索用户活跃摘要。
+// 多关键词为 OR 关系，按创建时间倒序，limit 为返回上限。
+func (r *ConversationSummaryRepo) SearchByKeyword(ctx context.Context, userID string, keywords []string, limit int) ([]model.ConversationSummary, error) {
+	query := r.db.WithContext(ctx).Where("user_id = ?", userID)
+	for i, kw := range keywords {
+		if i == 0 {
+			query = query.Where("summary_text LIKE ?", "%"+kw+"%")
+		} else {
+			query = query.Or("summary_text LIKE ?", "%"+kw+"%")
+		}
+	}
+	var list []model.ConversationSummary
+	err := query.Order("created_at DESC").Limit(limit).Find(&list).Error
+	return list, err
+}
+
 // MarkSuperseded 将指定摘要标记为已替代
 func (r *ConversationSummaryRepo) MarkSuperseded(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).

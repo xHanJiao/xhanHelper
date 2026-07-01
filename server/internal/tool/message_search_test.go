@@ -10,9 +10,18 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
+
+type mockMsgVS struct{}
+
+func (m *mockMsgVS) Upsert(_ string, _ []float64, _ map[string]string)               {}
+func (m *mockMsgVS) Search(_ []float64, _ int, _ app.VectorFilter) []app.VectorMatch { return nil }
+func (m *mockMsgVS) GetVector(_ string) ([]float64, bool)                            { return nil, false }
+func (m *mockMsgVS) Delete(_ string)                                                 {}
+func (m *mockMsgVS) Size() int                                                       { return 0 }
 
 func setupMessageSearchTool(t *testing.T) (*MessageSearchTool, func()) {
 	t.Helper()
@@ -25,7 +34,7 @@ func setupMessageSearchTool(t *testing.T) (*MessageSearchTool, func()) {
 	}
 	msgRepo := service.NewMessageRepo(db)
 	convRepo := service.NewConversationRepo(db)
-	return NewMessageSearchTool(msgRepo, convRepo, 50, 25), func() {}
+	return NewMessageSearchTool(msgRepo, convRepo, &mockEmbedder{}, &mockMsgVS{}, 50, 25), func() {}
 }
 
 func seedMessages(t *testing.T, repo *service.MessageRepo, userID string) {
@@ -66,18 +75,18 @@ func prepareUser(userID string) string {
 
 // ==================== Schema Tests ====================
 
-func TestMessageSearchTool_Functions_Returns5(t *testing.T) {
+func TestMessageSearchTool_Functions_Returns6(t *testing.T) {
 	tool, cleanup := setupMessageSearchTool(t)
 	defer cleanup()
 	fns := tool.Functions()
-	if len(fns) != 5 {
-		t.Fatalf("expected 5 functions, got %d", len(fns))
+	if len(fns) != 6 {
+		t.Fatalf("expected 6 functions, got %d", len(fns))
 	}
 	names := make(map[string]bool)
 	for _, f := range fns {
 		names[f.Name] = true
 	}
-	expected := []string{"search_by_keyword", "search_by_time", "count_messages", "get_by_ids", "search_by_range"}
+	expected := []string{"semantic_search", "search_by_keyword", "search_by_time", "count_messages", "get_by_ids", "search_by_range"}
 	for _, n := range expected {
 		if !names[n] {
 			t.Errorf("missing function: %s", n)

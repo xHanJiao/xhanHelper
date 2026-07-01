@@ -5,13 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
+	"xhan-helper/internal/app"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
 
-const assistantTruncateChars = 100
+const (
+	assistantTruncateChars = 100
+	messageSearchThreshold = 0.55
+)
 
 // ToolMessageOutput — 结构化 JSON 中的单条消息
 type ToolMessageOutput struct {
@@ -21,6 +26,7 @@ type ToolMessageOutput struct {
 	CreatedAt       string              `json:"created_at"`
 	ConversationID  string              `json:"conversation_id"`
 	Truncated       bool                `json:"truncated"`
+	RelevanceScore  *float64            `json:"relevance_score,omitempty"`
 	MatchedKeywords []string            `json:"matched_keywords,omitempty"`
 	RoundMessages   []ToolMessageOutput `json:"round_messages,omitempty"`
 }
@@ -30,28 +36,45 @@ type MessageSearchTool struct {
 	msgRepo          *service.MessageRepo
 	convRepo         *service.ConversationRepo
 	maxSummaryRounds int
+	embedder         app.Embedder
+	vectorStore      app.VectorStore
 }
 
-func NewMessageSearchTool(msgRepo *service.MessageRepo, convRepo *service.ConversationRepo, historyRounds, maxSummaryRounds int) *MessageSearchTool {
+func NewMessageSearchTool(msgRepo *service.MessageRepo, convRepo *service.ConversationRepo, embedder app.Embedder, vectorStore app.VectorStore, historyRounds, maxSummaryRounds int) *MessageSearchTool {
 	if maxSummaryRounds <= 0 {
 		maxSummaryRounds = historyRounds / 2
 		if maxSummaryRounds < 1 {
 			maxSummaryRounds = 1
 		}
 	}
-	return &MessageSearchTool{msgRepo: msgRepo, convRepo: convRepo, maxSummaryRounds: maxSummaryRounds}
+	return &MessageSearchTool{msgRepo: msgRepo, convRepo: convRepo, embedder: embedder, vectorStore: vectorStore, maxSummaryRounds: maxSummaryRounds}
 }
 
 func (t *MessageSearchTool) Name() string { return "message_search" }
 
 func (t *MessageSearchTool) Description() string {
-	return "在用户历史消息中检索。支持关键词搜索、时间范围搜索、按ID获取、统计数量。" +
+	return "在用户历史消息中检索。支持关键词搜索、时间范围搜索、语义搜索、按ID获取、统计数量。" +
 		"重要提示：做时间范围搜索前先调用 count_messages 评估量级；" +
-		"assistant 消息在时间搜索中会被截断，需要完整内容请用 get_by_ids"
+		"assistant 消息在时间搜索中会被截断，需要完整内容请用 get_by_ids；" +
+		"语义搜索结果包含全文内容和相关度分数，如需获取所在对话轮完整上下文请用 get_by_ids"
 }
 
 func (t *MessageSearchTool) Functions() []FuncSchema {
 	return []FuncSchema{
+		{
+			Name:        "semantic_search",
+			Display:     "语义搜索",
+			Description: "用向量语义相似度搜索用户历史消息。输入应为自然语言描述句（如'我最近聊过的关于戒酒的经历'），而非空格分隔的关键词组（如'喝酒 戒酒'）。关键词精确匹配请用 search_by_keyword。返回全文内容和语义相关度分数，可配合 get_by_ids 获取所在对话轮完整上下文。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query":           map[string]interface{}{"type": "string", "description": "搜索关键词或描述（用于语义匹配）"},
+					"top_k":           map[string]interface{}{"type": "integer", "description": "返回条数，默认5，最大10"},
+					"conversation_id": map[string]interface{}{"type": "string", "description": "限定会话 ID，不传则跨所有会话搜索"},
+				},
+				"required": []string{"query"},
+			},
+		},
 		{
 			Name:        "search_by_keyword",
 			Display:     "关键词搜索",
@@ -142,6 +165,8 @@ func (t *MessageSearchTool) Functions() []FuncSchema {
 // Execute — 统一入口
 func (t *MessageSearchTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {
+	case "semantic_search":
+		return t.semanticSearch(ec, args)
 	case "search_by_keyword":
 		return t.searchByKeyword(ec, args)
 	case "search_by_time":
@@ -155,6 +180,110 @@ func (t *MessageSearchTool) Execute(ec *ExecuteContext, funcName string, args js
 	default:
 		return &Result{Success: false, Error: fmt.Sprintf("unknown function: %s", funcName)}
 	}
+}
+
+// ==================== semantic_search ====================
+
+func (t *MessageSearchTool) semanticSearch(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a struct {
+		Query          string `json:"query"`
+		TopK           int    `json:"top_k"`
+		ConversationID string `json:"conversation_id"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+	}
+	if a.Query == "" {
+		return &Result{Success: false, Error: "query 不能为空"}
+	}
+	if a.TopK <= 0 {
+		a.TopK = defaultSemanticTopK
+	}
+	if a.TopK > maxSemanticTopK {
+		a.TopK = maxSemanticTopK
+	}
+
+	vec, err := t.embedder.Embed(ec.Ctx, a.Query)
+	if err != nil {
+		log.Printf("[message_search] embed error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("向量化失败: %v", err)}
+	}
+
+	hits := t.vectorStore.Search(vec, a.TopK*2, func(_ string, _ []float64, metadata map[string]string) bool {
+		if metadata["type"] != "msg" || metadata["user_id"] != ec.UserID {
+			return false
+		}
+		if a.ConversationID != "" && metadata["conv_id"] != "" && metadata["conv_id"] != a.ConversationID {
+			return false
+		}
+		return true
+	})
+	log.Printf("[message_search] semantic_search raw hits: %d (query=%.80s, topK=%d)", len(hits), a.Query, a.TopK)
+
+	type msgHit struct {
+		id    string
+		score float64
+	}
+	var topHits []msgHit
+	skippedThreshold := 0
+	skippedPrefix := 0
+	for _, hit := range hits {
+		log.Printf("[message_search] semantic_search hit: id=%.20s score=%.4f", hit.ID, hit.Score)
+		if hit.Score < messageSearchThreshold {
+			skippedThreshold++
+			continue
+		}
+		msgID := strings.TrimPrefix(hit.ID, "msg:")
+		if msgID == "" || msgID == hit.ID {
+			skippedPrefix++
+			continue
+		}
+		topHits = append(topHits, msgHit{id: msgID, score: hit.Score})
+	}
+	log.Printf("[message_search] semantic_search after filter: topHits=%d (skipped: threshold=%d prefix=%d)", len(topHits), skippedThreshold, skippedPrefix)
+
+	if len(topHits) == 0 {
+		log.Printf("[message_search] semantic_search zero results: raw=%d threshold=%.2f", len(hits), messageSearchThreshold)
+		data, _ := json.Marshal(map[string]interface{}{"total": 0, "messages": []ToolMessageOutput{}})
+		return &Result{Success: true, Data: data}
+	}
+
+	if len(topHits) > a.TopK {
+		topHits = topHits[:a.TopK]
+	}
+
+	ids := make([]string, len(topHits))
+	scoreMap := make(map[string]float64, len(topHits))
+	for i, h := range topHits {
+		ids[i] = h.id
+		scoreMap[h.id] = h.score
+	}
+
+	msgs, err := t.msgRepo.GetByIDs(ec.Ctx, ids, ec.UserID)
+	if err != nil {
+		log.Printf("[message_search] GetByIDs error: %v", err)
+	}
+	log.Printf("[message_search] semantic_search DB: requested=%d got=%d", len(ids), len(msgs))
+
+	output := make([]ToolMessageOutput, 0, len(msgs))
+	for _, m := range msgs {
+		score := scoreMap[m.ID]
+		mo := ToolMessageOutput{
+			ID:             m.ID,
+			Role:           m.Role,
+			Content:        m.Content,
+			CreatedAt:      formatMsgTime(m.CreatedAt),
+			ConversationID: m.ConversationID,
+			RelevanceScore: &score,
+		}
+		output = append(output, mo)
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"total":    len(output),
+		"messages": output,
+	})
+	return &Result{Success: true, Data: data}
 }
 
 // ==================== search_by_keyword ====================
@@ -175,10 +304,10 @@ func (t *MessageSearchTool) searchByKeyword(ec *ExecuteContext, args json.RawMes
 		return &Result{Success: false, Error: "query 不能为空"}
 	}
 	if a.Limit <= 0 {
-		a.Limit = 20
+		a.Limit = defaultQueryLimit
 	}
-	if a.Limit > 50 {
-		a.Limit = 50
+	if a.Limit > maxQueryLimit {
+		a.Limit = maxQueryLimit
 	}
 	if a.Role == "" {
 		a.Role = "user"
@@ -260,10 +389,10 @@ func (t *MessageSearchTool) searchByTime(ec *ExecuteContext, args json.RawMessag
 		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
 	}
 	if a.Limit <= 0 {
-		a.Limit = 20
+		a.Limit = defaultQueryLimit
 	}
-	if a.Limit > 50 {
-		a.Limit = 50
+	if a.Limit > maxQueryLimit {
+		a.Limit = maxQueryLimit
 	}
 	if a.Role == "" {
 		a.Role = "user"
@@ -396,7 +525,11 @@ func (t *MessageSearchTool) getByIDs(ec *ExecuteContext, args json.RawMessage) *
 
 	output := make([]ToolMessageOutput, 0, len(msgs))
 	for _, m := range msgs {
-		output = append(output, t.formatMessage(m, nil))
+		mo := t.formatMessage(m, nil)
+		if m.Role == "user" {
+			mo.RoundMessages = t.getRoundMessages(ec.Ctx, m)
+		}
+		output = append(output, mo)
 	}
 
 	data, _ := json.Marshal(map[string]interface{}{"messages": output})

@@ -39,7 +39,7 @@ type MemoryExtractor struct {
 	llmClient     llm.LLMClient
 	memRepo       *service.UserMemoryRepo
 	vectorStore   app.VectorStore
-	embedder      *llm.Embedder
+	embedder      app.Embedder
 	msgRepo       *service.MessageRepo
 	convRepo      *service.ConversationRepo
 	embeddingRepo *service.EmbeddingRepo
@@ -53,7 +53,7 @@ type MemoryExtractorConfig struct {
 	LLMClient     llm.LLMClient
 	MemRepo       *service.UserMemoryRepo
 	VectorStore   app.VectorStore
-	Embedder      *llm.Embedder
+	Embedder      app.Embedder
 	MsgRepo       *service.MessageRepo
 	ConvRepo      *service.ConversationRepo
 	EmbeddingRepo *service.EmbeddingRepo
@@ -362,13 +362,34 @@ func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
 	if memory.Tags != "" {
 		e.conceptEmbed.EnsureTagsEmbedded(ctx, memory.UserID, memory.Tags, "memory", memory.ID)
 	}
-	if memory.MemoryValue != "" {
-		n, err := e.chunkBuilder.BuildChunks(ctx, memory.UserID, "memory", memory.ID, memory.MemoryValue, nil)
-		if err != nil {
-			log.Printf("[memory] chunk build error: %v", err)
-		} else {
-			log.Printf("[memory] chunked mem %s: %d sentences", memory.ID[:8], n)
+	// 全文嵌入
+	vec, err := e.embedder.Embed(ctx, memory.MemoryValue)
+	if err != nil {
+		log.Printf("[memory] embed full mem %.8s error: %v", memory.ID, err)
+	} else {
+		e.vectorStore.Upsert("mem:"+memory.ID, vec, map[string]string{
+			"type":    "mem",
+			"user_id": memory.UserID,
+			"topic":   memory.Topic,
+		})
+		embStr := llm.EmbeddingToString(vec)
+		if err := e.embeddingRepo.Upsert(ctx, &model.Embedding{
+			ID:         memory.ID,
+			EntityType: "memory",
+			EntityID:   memory.ID,
+			UserID:     memory.UserID,
+			Model:      e.embedder.ModelName(),
+			Embedding:  &embStr,
+		}); err != nil {
+			log.Printf("[memory] upsert full embedding %.8s error: %v", memory.ID, err)
 		}
+	}
+
+	n, err := e.chunkBuilder.BuildChunks(ctx, memory.UserID, "memory", memory.ID, memory.MemoryValue, map[string]string{"topic": memory.Topic})
+	if err != nil {
+		log.Printf("[memory] chunk build error: %v", err)
+	} else {
+		log.Printf("[memory] chunked mem %s: %d sentences", memory.ID[:8], n)
 	}
 }
 

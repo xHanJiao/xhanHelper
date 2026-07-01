@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"xhan-helper/internal/app"
-	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
@@ -31,10 +30,10 @@ type ToolMemoryOutput struct {
 type MemorySearchTool struct {
 	vectorStore app.VectorStore
 	memRepo     *service.UserMemoryRepo
-	embedder    *llm.Embedder
+	embedder    app.Embedder
 }
 
-func NewMemorySearchTool(vs app.VectorStore, memRepo *service.UserMemoryRepo, embedder *llm.Embedder) *MemorySearchTool {
+func NewMemorySearchTool(vs app.VectorStore, memRepo *service.UserMemoryRepo, embedder app.Embedder) *MemorySearchTool {
 	return &MemorySearchTool{vectorStore: vs, memRepo: memRepo, embedder: embedder}
 }
 
@@ -158,10 +157,10 @@ func (t *MemorySearchTool) semanticSearch(ec *ExecuteContext, args json.RawMessa
 		return &Result{Success: false, Error: "query 不能为空"}
 	}
 	if a.TopK <= 0 {
-		a.TopK = 5
+		a.TopK = defaultSemanticTopK
 	}
-	if a.TopK > 10 {
-		a.TopK = 10
+	if a.TopK > maxSemanticTopK {
+		a.TopK = maxSemanticTopK
 	}
 
 	vec, err := t.embedder.Embed(ec.Ctx, a.Query)
@@ -182,11 +181,15 @@ func (t *MemorySearchTool) semanticSearch(ec *ExecuteContext, args json.RawMessa
 		return true
 	})
 
-	// 2. chunk 搜索 (type=chunk, parent_type=memory) — 覆盖新创建还未进全量嵌入的记忆
+	// 2. chunk 搜索 (type=chunk, parent_type=memory)
 	chunkHits := t.vectorStore.Search(vec, a.TopK*2, func(id string, _ []float64, metadata map[string]string) bool {
-		return metadata["type"] == "chunk" &&
-			metadata["parent_type"] == "memory" &&
-			metadata["user_id"] == ec.UserID
+		if metadata["type"] != "chunk" || metadata["parent_type"] != "memory" || metadata["user_id"] != ec.UserID {
+			return false
+		}
+		if metaTopic, ok := metadata["topic"]; ok && metaTopic != "" && a.Topic != "" && metaTopic != a.Topic {
+			return false
+		}
+		return true
 	})
 
 	skipIDs := make(map[string]bool, len(a.ExcludeIDs))
@@ -240,10 +243,6 @@ func (t *MemorySearchTool) semanticSearch(ec *ExecuteContext, args json.RawMessa
 
 	output := make([]ToolMemoryOutput, 0, len(memories))
 	for _, m := range memories {
-		// post-load topic 兜底过滤（处理旧嵌入无 topic metadata 的情况）
-		if a.Topic != "" && m.Topic != a.Topic {
-			continue
-		}
 		score := scoreMap[m.ID]
 		mo := formatMemory(m)
 		mo.RelevanceScore = &score

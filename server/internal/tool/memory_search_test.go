@@ -10,7 +10,6 @@ import (
 	"gorm.io/gorm"
 
 	"xhan-helper/internal/app"
-	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
@@ -58,10 +57,6 @@ func (vs *mockVectorStore) GetVector(id string) ([]float64, bool) { return nil, 
 func (vs *mockVectorStore) Delete(id string)                      {}
 func (vs *mockVectorStore) Size() int                             { return len(vs.entries) }
 
-// Ensure mocks satisfy interfaces
-var _ app.VectorStore = (*mockVectorStore)(nil)
-var _ *llm.Embedder = nil // just for type reference
-
 func setupMemorySearchTool(t *testing.T) (*MemorySearchTool, func()) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -73,7 +68,7 @@ func setupMemorySearchTool(t *testing.T) (*MemorySearchTool, func()) {
 	}
 	vs := &mockVectorStore{}
 	memRepo := service.NewUserMemoryRepo(db)
-	return NewMemorySearchTool(vs, memRepo, nil), func() {}
+	return NewMemorySearchTool(vs, memRepo, &mockEmbedder{}), func() {}
 }
 
 func seedMemories(t *testing.T, repo *service.UserMemoryRepo, userID string) {

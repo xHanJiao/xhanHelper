@@ -363,7 +363,7 @@ func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
 		e.conceptEmbed.EnsureTagsEmbedded(ctx, memory.UserID, memory.Tags, "memory", memory.ID)
 	}
 	if memory.MemoryValue != "" {
-		n, err := e.chunkBuilder.BuildChunks(ctx, memory.UserID, "memory", memory.ID, memory.MemoryValue)
+		n, err := e.chunkBuilder.BuildChunks(ctx, memory.UserID, "memory", memory.ID, memory.MemoryValue, nil)
 		if err != nil {
 			log.Printf("[memory] chunk build error: %v", err)
 		} else {

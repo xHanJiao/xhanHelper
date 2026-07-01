@@ -20,13 +20,17 @@ func setupNoteTool(t *testing.T) (*NoteTool, func()) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Note{}, &model.ContentVersion{}, &model.EmbeddingChunk{}); err != nil {
+	if err := db.AutoMigrate(&model.Note{}, &model.ContentVersion{}, &model.EmbeddingChunk{}, &model.Embedding{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	sqlDB, _ := db.DB()
+	sqlDB.SetMaxOpenConns(1)
+
 	noteRepo := service.NewNoteRepo(db)
 	versionRepo := service.NewVersionRepo(db)
 	chunkRepo := service.NewEmbeddingChunkRepo(db)
-	return NewNoteTool(noteRepo, versionRepo, nil, nil, nil, chunkRepo, nil, nil), func() {}
+	embeddingRepo := service.NewEmbeddingRepo(db)
+	return NewNoteTool(noteRepo, versionRepo, &mockVS{}, &mockNoteEmbedder{}, embeddingRepo, chunkRepo, &mockChunkEmbedder{}, &mockConceptEmbedder{}), func() {}
 }
 
 func TestNoteGetAndUpdate(t *testing.T) {
@@ -36,7 +40,6 @@ func TestNoteGetAndUpdate(t *testing.T) {
 	userID := "user-1"
 	ec := &ExecuteContext{Ctx: ctx, UserID: userID}
 
-	// record_note 需要 embedding 依赖，直接通过 repo 创建
 	note := &model.Note{
 		ID:      "note-1",
 		UserID:  userID,
@@ -290,6 +293,24 @@ func (m *mockVS) Search(query []float64, topK int, filter app.VectorFilter) []ap
 func (m *mockVS) GetVector(id string) ([]float64, bool) { return nil, false }
 func (m *mockVS) Delete(id string)                      { m.deleted = append(m.deleted, id) }
 func (m *mockVS) Size() int                             { return 0 }
+
+type mockChunkEmbedder struct{}
+
+func (m *mockChunkEmbedder) BuildChunks(_ context.Context, _, _, _, _ string, _ map[string]string) (int, error) {
+	return 0, nil
+}
+
+type mockConceptEmbedder struct{}
+
+func (m *mockConceptEmbedder) EnsureTopicEmbedded(_ context.Context, _, _, _, _ string) {}
+func (m *mockConceptEmbedder) EnsureTagsEmbedded(_ context.Context, _, _, _, _ string)  {}
+
+type mockNoteEmbedder struct{}
+
+func (m *mockNoteEmbedder) Embed(_ context.Context, _ string) ([]float64, error) {
+	return []float64{0.1}, nil
+}
+func (m *mockNoteEmbedder) ModelName() string { return "mock-embedder" }
 
 // 用例：软删除笔记时向量库中的 chunk 也被清掉
 func TestNoteSoftDelete_VectorStoreCleanedUp(t *testing.T) {

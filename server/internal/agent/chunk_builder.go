@@ -53,9 +53,29 @@ func splitSentences(text string) []string {
 	return result
 }
 
+var chunkMetaBaseKeys = map[string]bool{
+	"type": true, "parent_type": true, "parent_id": true, "user_id": true,
+}
+
+func buildChunkMeta(parentType, parentID, userID string, extra map[string]string) map[string]string {
+	md := map[string]string{
+		"type":        "chunk",
+		"parent_type": parentType,
+		"parent_id":   parentID,
+		"user_id":     userID,
+	}
+	for k, v := range extra {
+		if chunkMetaBaseKeys[k] {
+			continue
+		}
+		md[k] = v
+	}
+	return md
+}
+
 // BuildChunks 将文本拆分为句子并嵌入，写入 chunk 表 + embedding 表 + 向量库
 // 返回创建的 chunk 数量
-func (b *ChunkBuilder) BuildChunks(ctx context.Context, userID, parentType, parentID, text string) (int, error) {
+func (b *ChunkBuilder) BuildChunks(ctx context.Context, userID, parentType, parentID, text string, meta map[string]string) (int, error) {
 	sentences := splitSentences(text)
 	if len(sentences) == 0 {
 		return 0, nil
@@ -91,13 +111,7 @@ func (b *ChunkBuilder) BuildChunks(ctx context.Context, userID, parentType, pare
 			Embedding:  &embStr,
 		})
 
-		// 写入内存向量库
-		b.vectorStore.Upsert(chunkID, vec, map[string]string{
-			"type":        "chunk",
-			"parent_type": parentType,
-			"parent_id":   parentID,
-			"user_id":     userID,
-		})
+		b.vectorStore.Upsert(chunkID, vec, buildChunkMeta(parentType, parentID, userID, meta))
 	}
 
 	if err := b.chunkRepo.BatchCreate(ctx, chunks); err != nil {
@@ -116,7 +130,7 @@ func (b *ChunkBuilder) BuildChunks(ctx context.Context, userID, parentType, pare
 
 // DiffAndBuildChunks 对比新旧文本，仅对变化的句子重新嵌入。
 // 保留文本完全相同的旧 chunk，只嵌入新增和修改的句子。
-func (b *ChunkBuilder) DiffAndBuildChunks(ctx context.Context, userID, parentType, parentID, newText string) (int, int, error) {
+func (b *ChunkBuilder) DiffAndBuildChunks(ctx context.Context, userID, parentType, parentID, newText string, meta map[string]string) (int, int, error) {
 	sentences := splitSentences(newText)
 	if len(sentences) == 0 {
 		return 0, 0, nil
@@ -200,12 +214,7 @@ func (b *ChunkBuilder) DiffAndBuildChunks(ctx context.Context, userID, parentTyp
 			Model:      b.embedder.ModelName(),
 			Embedding:  &embStr,
 		})
-		b.vectorStore.Upsert(chunkID, vec, map[string]string{
-			"type":        "chunk",
-			"parent_type": parentType,
-			"parent_id":   parentID,
-			"user_id":     userID,
-		})
+		b.vectorStore.Upsert(chunkID, vec, buildChunkMeta(parentType, parentID, userID, meta))
 	}
 
 	// 删除 DB 中不再需要的旧 chunk

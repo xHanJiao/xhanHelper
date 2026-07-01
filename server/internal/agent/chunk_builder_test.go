@@ -70,7 +70,7 @@ func setupChunkBuilder(t *testing.T) *chunkBuilderFixture {
 // TestDiffAndBuildChunks_EmptyText 空文本：0 保留 0 新增，不触发嵌入
 func TestDiffAndBuildChunks_EmptyText(t *testing.T) {
 	fx := setupChunkBuilder(t)
-	kept, added, err := fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "")
+	kept, added, err := fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestDiffAndBuildChunks_EmptyText(t *testing.T) {
 func TestDiffAndBuildChunks_FirstTime(t *testing.T) {
 	fx := setupChunkBuilder(t)
 
-	kept, added, err := fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。第二句。第三句。")
+	kept, added, err := fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。第二句。第三句。", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -106,14 +106,14 @@ func TestDiffAndBuildChunks_SameText(t *testing.T) {
 	text := "第一句。第二句。第三句。"
 
 	// first pass: build initial chunks
-	fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", text)
+	fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", text, nil)
 
 	// 重置计数器，模拟第二次调用
 	fx.vs = &mockVSForChunk{upserted: make(map[string]bool), deleted: make(map[string]bool)}
 	fx.builder.vectorStore = fx.vs
 
 	// 相同文本再次调用：旧 chunk 文本完全匹配，不应触发任何嵌入
-	kept, added, err := fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", text)
+	kept, added, err := fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", text, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,13 +135,13 @@ func TestDiffAndBuildChunks_SameText(t *testing.T) {
 func TestDiffAndBuildChunks_OneSentenceChanged(t *testing.T) {
 	fx := setupChunkBuilder(t)
 
-	fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。第二句。第三句。")
+	fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。第二句。第三句。", nil)
 
 	fx.vs = &mockVSForChunk{upserted: make(map[string]bool), deleted: make(map[string]bool)}
 	fx.builder.vectorStore = fx.vs
 
 	// 修改中间句子，第一句和第三句不变
-	kept, added, err := fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。修改后的第二句。第三句。")
+	kept, added, err := fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。修改后的第二句。第三句。", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -158,13 +158,13 @@ func TestDiffAndBuildChunks_OneSentenceChanged(t *testing.T) {
 func TestDiffAndBuildChunks_SentenceAdded(t *testing.T) {
 	fx := setupChunkBuilder(t)
 
-	fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。第二句。")
+	fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。第二句。", nil)
 
 	fx.vs = &mockVSForChunk{upserted: make(map[string]bool), deleted: make(map[string]bool)}
 	fx.builder.vectorStore = fx.vs
 
 	// 新文本比旧文本多一句
-	kept, added, err := fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。第二句。新增的第三句。")
+	kept, added, err := fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。第二句。新增的第三句。", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -181,13 +181,13 @@ func TestDiffAndBuildChunks_SentenceAdded(t *testing.T) {
 func TestDiffAndBuildChunks_SentenceRemoved(t *testing.T) {
 	fx := setupChunkBuilder(t)
 
-	fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。第二句。第三句。")
+	fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。第二句。第三句。", nil)
 
 	fx.vs = &mockVSForChunk{upserted: make(map[string]bool), deleted: make(map[string]bool)}
 	fx.builder.vectorStore = fx.vs
 
 	// 新文本删掉第二句
-	kept, added, err := fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。第三句。")
+	kept, added, err := fx.builder.DiffAndBuildChunks(context.Background(), "u0000001", "theme", "t0000001", "第一句。第三句。", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

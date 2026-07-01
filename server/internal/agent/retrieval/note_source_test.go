@@ -39,7 +39,7 @@ func (m *mockVectorStore) Size() int                                            
 // stubChunkBuilder 存根，单测中不实际建 chunk
 type stubChunkBuilder struct{}
 
-func (s *stubChunkBuilder) BuildChunks(ctx context.Context, userID, parentType, parentID, text string) (int, error) {
+func (s *stubChunkBuilder) BuildChunks(ctx context.Context, userID, parentType, parentID, text string, meta map[string]string) (int, error) {
 	return 0, nil
 }
 

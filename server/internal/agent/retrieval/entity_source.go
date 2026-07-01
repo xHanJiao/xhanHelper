@@ -301,7 +301,7 @@ func (s *EntitySource[T]) Warmup(ctx context.Context, embedder *llm.Embedder) {
 			}
 
 			if !hasChunks[e.GetID()] && s.chunkBuilder != nil {
-				if cnt, err := s.chunkBuilder.BuildChunks(ctx, e.GetUserID(), s.entityType, e.GetID(), e.GetContent()); err != nil {
+				if cnt, err := s.chunkBuilder.BuildChunks(ctx, e.GetUserID(), s.entityType, e.GetID(), e.GetContent(), map[string]string{"topic": e.GetTopic()}); err != nil {
 					log.Printf("[vector] %s warmup: chunk build %.8s error: %v", s.name, e.GetID()[:8], err)
 				} else if cnt > 0 {
 					chunked++

@@ -228,7 +228,7 @@ func (w *SummaryWorker) buildEmbeddingAndChunks(ctx context.Context, s *model.Co
 	}
 
 	// 2. Chunk 建设（供 chunk 级检索）
-	cnt, err := w.chunkBuilder.BuildChunks(ctx, s.UserID, model.EntityTypeSummary, s.ID, s.SummaryText)
+	cnt, err := w.chunkBuilder.BuildChunks(ctx, s.UserID, model.EntityTypeSummary, s.ID, s.SummaryText, nil)
 	if err != nil {
 		log.Printf("[summary] build chunks %s error: %v", s.ID[:8], err)
 	} else if cnt > 0 {

@@ -6,9 +6,15 @@ import (
 	"xhan-helper/internal/model"
 )
 
+// Embedder 文本向量化接口，*llm.Embedder 满足此接口。
+type Embedder interface {
+	Embed(ctx context.Context, text string) ([]float64, error)
+	ModelName() string
+}
+
 // ChunkEmbedder 文本分句 + 嵌入接口，由 agent.ChunkBuilder 实现。
 type ChunkEmbedder interface {
-	BuildChunks(ctx context.Context, userID, parentType, parentID, text string) (int, error)
+	BuildChunks(ctx context.Context, userID, parentType, parentID, text string, meta map[string]string) (int, error)
 }
 
 // ConceptEmbedder 概念（topic / tag）嵌入接口，由 agent.ConceptEmbedService 实现。

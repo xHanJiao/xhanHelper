@@ -16,6 +16,13 @@ import (
 	"xhan-helper/internal/service"
 )
 
+const (
+	defaultQueryLimit   = 20
+	maxQueryLimit       = 50
+	defaultSemanticTopK = 5
+	maxSemanticTopK     = 10
+)
+
 // ToolNoteOutput — 结构化 JSON 中的单条笔记
 type ToolNoteOutput struct {
 	ID              string          `json:"id"`
@@ -32,14 +39,14 @@ type NoteTool struct {
 	noteRepo      *service.NoteRepo
 	versionRepo   *service.VersionRepo
 	vectorStore   app.VectorStore
-	embedder      *llm.Embedder
+	embedder      app.Embedder
 	embeddingRepo *service.EmbeddingRepo
 	chunkRepo     *service.EmbeddingChunkRepo
 	chunkBuilder  app.ChunkEmbedder
 	conceptEmbed  app.ConceptEmbedder
 }
 
-func NewNoteTool(noteRepo *service.NoteRepo, versionRepo *service.VersionRepo, vs app.VectorStore, emb *llm.Embedder,
+func NewNoteTool(noteRepo *service.NoteRepo, versionRepo *service.VersionRepo, vs app.VectorStore, emb app.Embedder,
 	embeddingRepo *service.EmbeddingRepo, chunkRepo *service.EmbeddingChunkRepo, chunkBuilder app.ChunkEmbedder, conceptEmbed app.ConceptEmbedder) *NoteTool {
 	return &NoteTool{noteRepo: noteRepo, versionRepo: versionRepo, vectorStore: vs, embedder: emb,
 		embeddingRepo: embeddingRepo, chunkRepo: chunkRepo, chunkBuilder: chunkBuilder, conceptEmbed: conceptEmbed}
@@ -47,6 +54,7 @@ func NewNoteTool(noteRepo *service.NoteRepo, versionRepo *service.VersionRepo, v
 
 func (t *NoteTool) Name() string { return "note" }
 func (t *NoteTool) Description() string {
+	// TODO 在这里可以简单介绍一下各个函数
 	return "自由笔记工具，记录值得长期追踪的信息——事实、数据、观点、事件、个人状态、人物关系等"
 }
 
@@ -222,6 +230,7 @@ func (t *NoteTool) Execute(ec *ExecuteContext, funcName string, args json.RawMes
 	case "get_note_versions":
 		return t.getNoteVersions(ec, args)
 	default:
+		// TODO 这里可以增加上对于已有函数名的返回，另外这种Execute 是否可以用反射做分发？
 		return &Result{Success: false, Error: fmt.Sprintf("unknown function: %s", funcName)}
 	}
 }
@@ -257,16 +266,10 @@ func (t *NoteTool) recordNote(ec *ExecuteContext, args json.RawMessage) *Result 
 		return &Result{Success: false, Error: fmt.Sprintf("create note: %v", err)}
 	}
 
-	// 异步嵌入：concept + chunk
-	if t.chunkBuilder != nil {
-		go func() {
-			t.conceptEmbed.EnsureTopicEmbedded(context.Background(), ec.UserID, note.Topic, "note", note.ID)
-			if note.Tags != "" {
-				t.conceptEmbed.EnsureTagsEmbedded(context.Background(), ec.UserID, note.Tags, "note", note.ID)
-			}
-			t.embedNote(note)
-		}()
-	}
+	// 异步嵌入：full + concept + chunk
+	go func() {
+		t.embedAll(context.Background(), note)
+	}()
 
 	data, _ := json.Marshal(note)
 	return &Result{Success: true, Data: data}
@@ -358,7 +361,7 @@ func (t *NoteTool) getNoteVersions(ec *ExecuteContext, args json.RawMessage) *Re
 	return &Result{Success: true, Data: data}
 }
 
-func (t *NoteTool) listTopics(ec *ExecuteContext, args json.RawMessage) *Result {
+func (t *NoteTool) listTopics(ec *ExecuteContext, _ json.RawMessage) *Result {
 	topics, err := t.noteRepo.DistinctTopics(ec.Ctx, ec.UserID)
 	if err != nil {
 		return &Result{Success: false, Error: fmt.Sprintf("get topics: %v", err)}
@@ -393,18 +396,7 @@ func (t *NoteTool) deleteNote(ec *ExecuteContext, args json.RawMessage) *Result 
 		return &Result{Success: false, Error: fmt.Sprintf("delete note failed: %v", err)}
 	}
 
-	// 清理向量库 + DB chunk
-	if t.chunkRepo != nil {
-		chunks, _ := t.chunkRepo.ListByParent(ec.Ctx, "note", params.ID)
-		for _, c := range chunks {
-			if t.vectorStore != nil {
-				t.vectorStore.Delete(c.ID)
-			}
-		}
-		if err := t.chunkRepo.DeleteByParent(ec.Ctx, "note", params.ID); err != nil {
-			log.Printf("[note] delete chunks for %s error: %v", params.ID, err)
-		}
-	}
+	t.cleanChunks(ec.Ctx, params.ID)
 
 	data, _ := json.Marshal(map[string]string{"deleted_id": params.ID})
 	return &Result{Success: true, Data: data}
@@ -454,16 +446,25 @@ func (t *NoteTool) updateNote(ec *ExecuteContext, args json.RawMessage) *Result 
 	}
 
 	// 更新了 content 则重新嵌入
-	// FIXME 重新嵌入，如果不删除之前的内容，会有幽灵空搜吧
-	if params.Content != "" && t.chunkBuilder != nil {
+	if params.Content != "" {
+		topic := params.Topic
+		if topic == "" {
+			topic = current.Topic
+		}
+		tags := params.Tags
+		if tags == "" {
+			tags = current.Tags
+		}
+		noteForEmbed := &model.Note{
+			ID:      params.ID,
+			UserID:  ec.UserID,
+			Topic:   topic,
+			Content: params.Content,
+			Tags:    tags,
+		}
 		go func() {
-			if params.Topic != "" {
-				t.conceptEmbed.EnsureTopicEmbedded(context.Background(), ec.UserID, params.Topic, "note", params.ID)
-			}
-			if params.Tags != "" {
-				t.conceptEmbed.EnsureTagsEmbedded(context.Background(), ec.UserID, params.Tags, "note", params.ID)
-			}
-			t.embedNote(&model.Note{ID: params.ID, Content: params.Content, UserID: ec.UserID})
+			t.cleanChunks(context.Background(), params.ID)
+			t.embedAll(context.Background(), noteForEmbed)
 		}()
 	}
 
@@ -530,12 +531,49 @@ func (t *NoteTool) rollbackNote(ec *ExecuteContext, args json.RawMessage) *Resul
 	return &Result{Success: true, Data: data}
 }
 
-func (t *NoteTool) embedNote(note *model.Note) {
-	n, err := t.chunkBuilder.BuildChunks(context.Background(), note.UserID, "note", note.ID, note.Content)
+func (t *NoteTool) embedAll(ctx context.Context, note *model.Note) {
+	t.conceptEmbed.EnsureTopicEmbedded(ctx, note.UserID, note.Topic, "note", note.ID)
+	if note.Tags != "" {
+		t.conceptEmbed.EnsureTagsEmbedded(ctx, note.UserID, note.Tags, "note", note.ID)
+	}
+
+	vec, err := t.embedder.Embed(ctx, note.Content)
+	if err != nil {
+		log.Printf("[note] embed full note %.8s error: %v", note.ID, err)
+	} else {
+		t.vectorStore.Upsert("note:"+note.ID, vec, map[string]string{
+			"type":    "note",
+			"user_id": note.UserID,
+			"topic":   note.Topic,
+		})
+		embStr := llm.EmbeddingToString(vec)
+		if err := t.embeddingRepo.Upsert(ctx, &model.Embedding{
+			ID:         note.ID,
+			EntityType: "note",
+			EntityID:   note.ID,
+			UserID:     note.UserID,
+			Model:      t.embedder.ModelName(),
+			Embedding:  &embStr,
+		}); err != nil {
+			log.Printf("[note] upsert full embedding %.8s error: %v", note.ID, err)
+		}
+	}
+
+	n, err := t.chunkBuilder.BuildChunks(ctx, note.UserID, "note", note.ID, note.Content, map[string]string{"topic": note.Topic})
 	if err != nil {
 		log.Printf("[note] chunk build error: %v", err)
 	} else {
-		log.Printf("[note] chunked note %s: %d sentences", note.ID[:8], n)
+		log.Printf("[note] chunked note %.8s: %d sentences", note.ID, n)
+	}
+}
+
+func (t *NoteTool) cleanChunks(ctx context.Context, noteID string) {
+	chunks, _ := t.chunkRepo.ListByParent(ctx, "note", noteID)
+	for _, c := range chunks {
+		t.vectorStore.Delete(c.ID)
+	}
+	if err := t.chunkRepo.DeleteByParent(ctx, "note", noteID); err != nil {
+		log.Printf("[note] clean chunks for %s error: %v", noteID, err)
 	}
 }
 
@@ -553,10 +591,10 @@ func (t *NoteTool) queryNotes(ec *ExecuteContext, args json.RawMessage) *Result 
 		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
 	}
 	if a.Limit <= 0 {
-		a.Limit = 20
+		a.Limit = defaultQueryLimit
 	}
-	if a.Limit > 50 {
-		a.Limit = 50
+	if a.Limit > maxQueryLimit {
+		a.Limit = maxQueryLimit
 	}
 
 	var keywords []string
@@ -566,6 +604,7 @@ func (t *NoteTool) queryNotes(ec *ExecuteContext, args json.RawMessage) *Result 
 
 	after, before, err := parseTimeParams(a.StartTime, a.EndTime, a.LastNDays, 0)
 	if err != nil {
+		log.Printf("[note] query_notes parse time params error: %v", err)
 		return &Result{Success: false, Error: err.Error()}
 	}
 
@@ -573,6 +612,7 @@ func (t *NoteTool) queryNotes(ec *ExecuteContext, args json.RawMessage) *Result 
 	if a.Cursor != "" {
 		parsed, err := parseTimeString(a.Cursor)
 		if err != nil {
+			log.Printf("[note] query_notes parse cursor error: %v", err)
 			return &Result{Success: false, Error: fmt.Sprintf("cursor 解析失败: %v", err)}
 		}
 		cursorTime = &parsed
@@ -632,10 +672,10 @@ func (t *NoteTool) semanticSearch(ec *ExecuteContext, args json.RawMessage) *Res
 		return &Result{Success: false, Error: "query 不能为空"}
 	}
 	if a.TopK <= 0 {
-		a.TopK = 5
+		a.TopK = defaultSemanticTopK
 	}
-	if a.TopK > 10 {
-		a.TopK = 10
+	if a.TopK > maxSemanticTopK {
+		a.TopK = maxSemanticTopK
 	}
 
 	vec, err := t.embedder.Embed(ec.Ctx, a.Query)
@@ -655,12 +695,18 @@ func (t *NoteTool) semanticSearch(ec *ExecuteContext, args json.RawMessage) *Res
 		return true
 	})
 
-	// 2. chunk 搜索 (type=chunk, parent_type=note) — 覆盖新创建还未进全量嵌入的笔记
+	// 2. chunk 搜索 (type=chunk, parent_type=note)
 	chunkHits := t.vectorStore.Search(vec, a.TopK*2, func(id string, _ []float64, metadata map[string]string) bool {
-		return metadata["type"] == "chunk" &&
-			metadata["parent_type"] == "note" &&
-			metadata["user_id"] == ec.UserID
+		if metadata["type"] != "chunk" || metadata["parent_type"] != "note" || metadata["user_id"] != ec.UserID {
+			return false
+		}
+		if metaTopic, ok := metadata["topic"]; ok && metaTopic != "" && a.Topic != "" && metaTopic != a.Topic {
+			return false
+		}
+		return true
 	})
+
+	// TODO 增加fullHits & chunkHits 的长度log
 
 	// 合并两路结果，按 note ID 取最高分
 	scoreMap := make(map[string]float64)
@@ -702,9 +748,6 @@ func (t *NoteTool) semanticSearch(ec *ExecuteContext, args json.RawMessage) *Res
 
 	output := make([]ToolNoteOutput, 0, len(notes))
 	for _, n := range notes {
-		if a.Topic != "" && n.Topic != a.Topic {
-			continue
-		}
 		score := scoreMap[n.ID]
 		no := formatNote(n)
 		no.RelevanceScore = &score

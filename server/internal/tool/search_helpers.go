@@ -2,6 +2,7 @@ package tool
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -141,4 +142,17 @@ func parseTimeParams(startTime, endTime string, lastNDays, lastNHours int) (afte
 // formatMsgTime 统一格式化为 ISO 8601 +08:00 时间。
 func formatMsgTime(t time.Time) string {
 	return t.In(config.BJ).Format(time.RFC3339)
+}
+
+// scoredHit 向量搜索结果，带 ID 和相关性分数。
+type scoredHit struct {
+	ID    string
+	Score float64
+}
+
+// sortScoredHits 按 Score 降序排列。
+func sortScoredHits(hits []scoredHit) {
+	sort.Slice(hits, func(i, j int) bool {
+		return hits[i].Score > hits[j].Score
+	})
 }

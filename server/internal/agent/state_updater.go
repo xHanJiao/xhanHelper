@@ -158,7 +158,7 @@ func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, theme
 		log.Printf("[state_updater] SaveState error: theme=%s err=%v", themeID[:8], err)
 		return
 	}
-	ChunkStateText(ctx, s.chunkBuilder, userID, themeID, output.UpdatedState)
+	ChunkStateText(ctx, s.chunkBuilder, userID, themeID, output.UpdatedState, name)
 	log.Printf("[state_updater] updated theme %s (%s)", themeID[:8], name)
 }
 

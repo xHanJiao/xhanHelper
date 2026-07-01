@@ -220,11 +220,7 @@ func (t *MessageSearchTool) semanticSearch(ec *ExecuteContext, args json.RawMess
 	})
 	log.Printf("[message_search] semantic_search raw hits: %d (query=%.80s, topK=%d)", len(hits), a.Query, a.TopK)
 
-	type msgHit struct {
-		id    string
-		score float64
-	}
-	var topHits []msgHit
+	var topHits []scoredHit
 	skippedThreshold := 0
 	skippedPrefix := 0
 	for _, hit := range hits {
@@ -238,7 +234,7 @@ func (t *MessageSearchTool) semanticSearch(ec *ExecuteContext, args json.RawMess
 			skippedPrefix++
 			continue
 		}
-		topHits = append(topHits, msgHit{id: msgID, score: hit.Score})
+		topHits = append(topHits, scoredHit{ID: msgID, Score: hit.Score})
 	}
 	log.Printf("[message_search] semantic_search after filter: topHits=%d (skipped: threshold=%d prefix=%d)", len(topHits), skippedThreshold, skippedPrefix)
 
@@ -255,8 +251,8 @@ func (t *MessageSearchTool) semanticSearch(ec *ExecuteContext, args json.RawMess
 	ids := make([]string, len(topHits))
 	scoreMap := make(map[string]float64, len(topHits))
 	for i, h := range topHits {
-		ids[i] = h.id
-		scoreMap[h.id] = h.score
+		ids[i] = h.ID
+		scoreMap[h.ID] = h.Score
 	}
 
 	msgs, err := t.msgRepo.GetByIDs(ec.Ctx, ids, ec.UserID)

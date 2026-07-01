@@ -187,7 +187,7 @@ func (ta *ThemeAnalyst) Execute(ec *tool.ExecuteContext, funcName string, args j
 	if saveErr := ta.themeStore.SaveState(ec.Ctx, a.ThemeID, ec.UserID, stateText); saveErr != nil {
 		log.Printf("[theme_analyst] save state error for %s: %v", a.ThemeName, saveErr)
 	} else {
-		ChunkStateText(ec.Ctx, ta.chunkBuilder, ec.UserID, a.ThemeID, stateText)
+		ChunkStateText(ec.Ctx, ta.chunkBuilder, ec.UserID, a.ThemeID, stateText, a.ThemeName)
 	}
 
 	data, _ := json.Marshal(map[string]interface{}{"updated_state": output.UpdatedState, "summary": output.Summary})

@@ -85,6 +85,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		Embedder:      infra.Embedder,
 		ChunkBuilder:  chunkBuilder,
 		EmbeddingRepo: repos.Embedding,
+		VectorStore:   infra.VectorStore,
 	})
 
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{

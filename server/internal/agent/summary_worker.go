@@ -22,9 +22,10 @@ type SummaryWorker struct {
 	flashClient   llm.LLMClient
 	msgRepo       *service.MessageRepo
 	summaryRepo   *service.ConversationSummaryRepo
-	embedder      *llm.Embedder          // 摘要全文 embedding
-	chunkBuilder  app.ChunkEmbedder      // 摘要 chunk 建设
-	embeddingRepo *service.EmbeddingRepo // embedding 持久化
+	embedder      app.Embedder
+	chunkBuilder  app.ChunkEmbedder
+	embeddingRepo *service.EmbeddingRepo
+	vectorStore   app.VectorStore
 }
 
 // SummaryWorkerConfig — SummaryWorker 依赖配置
@@ -32,9 +33,10 @@ type SummaryWorkerConfig struct {
 	FlashClient   llm.LLMClient
 	MsgRepo       *service.MessageRepo
 	SummaryRepo   *service.ConversationSummaryRepo
-	Embedder      *llm.Embedder          // 可选：摘要全文 embedding
-	ChunkBuilder  app.ChunkEmbedder      // 可选：摘要 chunk 建设
-	EmbeddingRepo *service.EmbeddingRepo // 可选：embedding 持久化
+	Embedder      app.Embedder
+	ChunkBuilder  app.ChunkEmbedder
+	EmbeddingRepo *service.EmbeddingRepo
+	VectorStore   app.VectorStore
 }
 
 // NewSummaryWorker 创建摘要生成器。
@@ -46,6 +48,7 @@ func NewSummaryWorker(cfg *SummaryWorkerConfig) *SummaryWorker {
 		embedder:      cfg.Embedder,
 		chunkBuilder:  cfg.ChunkBuilder,
 		embeddingRepo: cfg.EmbeddingRepo,
+		vectorStore:   cfg.VectorStore,
 	}
 }
 
@@ -226,6 +229,11 @@ func (w *SummaryWorker) buildEmbeddingAndChunks(ctx context.Context, s *model.Co
 	}); err != nil {
 		log.Printf("[summary] save embedding %s error: %v", s.ID[:8], err)
 	}
+	w.vectorStore.Upsert("summary:"+s.ID, vec, map[string]string{
+		"type":       "summary",
+		"user_id":    s.UserID,
+		"summary_id": s.ID,
+	})
 
 	// 2. Chunk 建设（供 chunk 级检索）
 	cnt, err := w.chunkBuilder.BuildChunks(ctx, s.UserID, model.EntityTypeSummary, s.ID, s.SummaryText, nil)

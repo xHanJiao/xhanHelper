@@ -10,6 +10,8 @@ import (
 	"xhan-helper/internal/service"
 )
 
+const summarySearchThreshold = 0.55
+
 // GetSummaryTool — 获取/搜索对话摘要。
 // 支持按 ID 获取 + 语义搜索 + 关键词搜索。
 type GetSummaryTool struct {
@@ -149,14 +151,29 @@ func (t *GetSummaryTool) searchSummaries(ec *ExecuteContext, args json.RawMessag
 	if topK < 10 {
 		topK = 10
 	}
-	results := t.vectorStore.Search(vec, topK, func(id string, vec []float64, meta map[string]string) bool {
+	results := t.vectorStore.Search(vec, topK, func(_ string, _ []float64, meta map[string]string) bool {
 		return meta["type"] == "summary" && meta["user_id"] == ec.UserID
+	})
+
+	chunkResults := t.vectorStore.Search(vec, topK, func(_ string, _ []float64, meta map[string]string) bool {
+		return meta["type"] == "chunk" &&
+			meta["parent_type"] == "summary" &&
+			meta["user_id"] == ec.UserID
 	})
 
 	seen := make(map[string]float64)
 	for _, r := range results {
 		sid := r.Metadata["summary_id"]
-		if sid == "" {
+		if sid == "" || r.Score < summarySearchThreshold {
+			continue
+		}
+		if old, ok := seen[sid]; !ok || r.Score > old {
+			seen[sid] = r.Score
+		}
+	}
+	for _, r := range chunkResults {
+		sid := r.Metadata["parent_id"]
+		if sid == "" || r.Score < summarySearchThreshold {
 			continue
 		}
 		if old, ok := seen[sid]; !ok || r.Score > old {

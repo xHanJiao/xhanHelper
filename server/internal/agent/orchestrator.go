@@ -329,6 +329,15 @@ func (o *Orchestrator) runReActLoop(
 	userMsg := o.prepareUserMsg(req)
 	summaryBlock := o.resolveSummaryAttachment(ctx, req, userMsg, queryVec)
 
+	// 构建 XML 上下文并持久化（会话级缓存），使后续轮次也能看到本轮的检索结果
+	var extraBlocks []ctxflow.ExtraBlock
+	extraBlocks = append(extraBlocks, ctxflow.DateTimeBlock(time.Now()))
+	if summaryBlock != "" {
+		extraBlocks = append(extraBlocks, ctxflow.ExtraBlock{Type: "summary", Content: summaryBlock})
+	}
+	userContent := o.contextFormatter.FormatUserMessage(retrieveResult, req.UserMessageContent, extraBlocks...)
+	userMsg.XMLContext = &userContent
+
 	if err := o.msgRepo.Create(ctx, userMsg); err != nil {
 		log.Printf("[orch] save user msg error: %v", err)
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrInternal)})
@@ -341,14 +350,6 @@ func (o *Orchestrator) runReActLoop(
 	if o.onChatEnd != nil {
 		defer o.onChatEnd(req.UserID, req.ConversationID, userMsg.ID)
 	}
-
-	// 格式化 user 消息
-	var extraBlocks []ctxflow.ExtraBlock
-	extraBlocks = append(extraBlocks, ctxflow.DateTimeBlock(time.Now()))
-	if summaryBlock != "" {
-		extraBlocks = append(extraBlocks, ctxflow.ExtraBlock{Type: "summary", Content: summaryBlock})
-	}
-	userContent := o.contextFormatter.FormatUserMessage(retrieveResult, req.UserMessageContent, extraBlocks...)
 
 	state := &reactState{
 		msgs:      append(req.Messages, llm.Message{Role: "user", Content: userContent}),
@@ -1306,7 +1307,11 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int, useN
 				})
 			}
 		} else {
-			msg := llm.Message{ID: m.ID, Role: m.Role, Content: m.Content}
+			content := m.Content
+			if m.Role == "user" && m.XMLContext != nil && *m.XMLContext != "" {
+				content = *m.XMLContext
+			}
+			msg := llm.Message{ID: m.ID, Role: m.Role, Content: content}
 			if m.ToolCallID != nil {
 				msg.ToolCallID = *m.ToolCallID
 			}

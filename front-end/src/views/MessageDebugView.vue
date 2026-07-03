@@ -4,10 +4,12 @@ import { useRoute, useRouter } from 'vue-router'
 import MarkdownIt from 'markdown-it'
 import PageTopBar from '@/components/PageTopBar.vue'
 import { api } from '@/api/client'
+import { useThemeStore } from '@/stores/theme'
 
 const route = useRoute()
 const router = useRouter()
 const msgId = route.params.id
+const themeStore = useThemeStore()
 
 const md = new MarkdownIt()
 
@@ -24,6 +26,7 @@ const tabs = [
   { key: 'user_msg', label: '用户消息体' },
   { key: 'prompt', label: '系统提示词' },
   { key: 'request_json', label: '请求JSON' },
+  { key: 'history_msgs', label: '历史消息' },
   { key: 'resources', label: '资源取舍明细' },
 ]
 
@@ -50,6 +53,31 @@ const requestJsonText = computed(() => {
     return JSON.stringify(parsed, null, 2)
   } catch { return String(rj) }
 })
+
+const bubbleMessages = computed(() => {
+  const rj = detailData.value.request_json
+  if (!rj) return []
+  try {
+    const parsed = typeof rj === 'string' ? JSON.parse(rj) : rj
+    return parsed.messages || []
+  } catch { return [] }
+})
+
+const expandedBubbleIdx = ref(null)
+const copiedBubbleIdx = ref(null)
+
+const lastUserMsgIdx = computed(() => {
+  const msgs = bubbleMessages.value
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'user') return i
+  }
+  return -1
+})
+
+function isHistorical(idx) {
+  if (lastUserMsgIdx.value < 0) return false
+  return idx < lastUserMsgIdx.value
+}
 
 // 兼容旧格式 { providers: [...] } 和新格式 { prompt_trace: { providers: [...] }, history_builder_msg_ids: [...] }
 function parseExtra(raw) {
@@ -186,6 +214,85 @@ function formatContent(content) {
   } catch {
     markdownResult.value = ''
     return content
+  }
+}
+
+const bubbleRoleLabel = (role) => ({ user: '用户', assistant: '助手', tool: '工具', system: '系统' }[role] || role)
+
+function bubbleHeaderBg(role) {
+  if (role === 'user') return 'var(--color-primary)'
+  if (role === 'assistant') return 'var(--color-surface)'
+  if (role === 'system') return themeStore.isDark ? 'rgba(168,85,247,0.12)' : '#f3e8ff'
+  if (role === 'tool') return themeStore.isDark ? 'rgba(245,158,11,0.1)' : '#fef3c7'
+  return 'var(--color-surface)'
+}
+
+function bubbleBodyBg(role) {
+  if (role === 'user') return 'var(--color-primary)'
+  if (role === 'assistant') return 'var(--color-surface)'
+  if (role === 'system') return themeStore.isDark ? 'rgba(168,85,247,0.06)' : '#faf5ff'
+  if (role === 'tool') return themeStore.isDark ? 'rgba(245,158,11,0.05)' : '#fffbeb'
+  return 'var(--color-surface)'
+}
+
+function bubbleBorderColor(role) {
+  if (role === 'system') return themeStore.isDark ? 'rgba(168,85,247,0.5)' : '#a855f7'
+  if (role === 'assistant') return 'var(--color-success)'
+  if (role === 'tool') return themeStore.isDark ? 'rgba(245,158,11,0.5)' : '#f59e0b'
+  return 'none'
+}
+
+function bubbleBadgeBg(role) {
+  if (role === 'user') return 'rgba(255,255,255,0.25)'
+  if (role === 'system') return themeStore.isDark ? 'rgba(168,85,247,0.5)' : '#a855f7'
+  if (role === 'tool') return themeStore.isDark ? 'rgba(245,158,11,0.5)' : '#d97706'
+  return 'var(--color-success)'
+}
+
+function bubbleHeaderTextColor(role) {
+  return role === 'user' ? 'rgba(255,255,255,0.7)' : 'var(--color-text-muted)'
+}
+
+function toggleBubble(idx) {
+  expandedBubbleIdx.value = expandedBubbleIdx.value === idx ? null : idx
+}
+
+function isBubbleExpanded(idx) {
+  return expandedBubbleIdx.value === idx
+}
+
+function bubbleContent(msg) {
+  if (msg.content) {
+    if (msg.role === 'tool') {
+      try { return JSON.stringify(JSON.parse(msg.content), null, 2) } catch { return msg.content }
+    }
+    return msg.content
+  }
+  if (msg.tool_calls && msg.tool_calls.length > 0) {
+    return msg.tool_calls.map(c => `调用: ${c.function?.name || '(无)'}`).join(', ')
+  }
+  return '(空)'
+}
+
+function rawBubbleContent(msg) {
+  if (msg.content) return msg.content
+  if (msg.tool_calls) return JSON.stringify(msg.tool_calls, null, 2)
+  return ''
+}
+
+async function copyBubbleContent(idx, msg) {
+  await navigator.clipboard.writeText(rawBubbleContent(msg))
+  copiedBubbleIdx.value = idx
+  setTimeout(() => { copiedBubbleIdx.value = null }, 1500)
+}
+
+function formatToolCallArgs(tc) {
+  if (!tc.function?.arguments) return ''
+  try {
+    const parsed = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    return String(tc.function.arguments)
   }
 }
 
@@ -449,6 +556,95 @@ onMounted(loadRound)
               <!-- 请求JSON -->
               <div v-if="activeTab === 'request_json'">
                 <pre style="font-size: 12px; line-height: 1.4; max-height: 600px; overflow: auto; background: var(--color-bg-page); padding: 12px; border-radius: var(--radius-md); margin: 0;">{{ requestJsonText }}</pre>
+              </div>
+
+              <!-- 历史消息 -->
+              <div v-if="activeTab === 'history_msgs'">
+                <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 12px;">
+                  共 {{ bubbleMessages.length }} 条消息
+                </div>
+                <div v-if="bubbleMessages.length === 0" style="color: var(--color-text-muted); padding: 20px; text-align: center;">
+                  无消息数据
+                </div>
+                <template v-for="(msg, idx) in bubbleMessages" :key="idx">
+                  <!-- 历史上下文分隔线 -->
+                  <div v-if="idx === lastUserMsgIdx && lastUserMsgIdx > 0"
+                    style="text-align: center; margin: 14px 0; font-size: 11px; color: var(--color-text-muted); position: relative;">
+                    <span style="position: absolute; top: 50%; left: 0; right: 0; border-top: 1px dashed var(--color-border);"></span>
+                    <span style="position: relative; background: var(--color-bg-page); padding: 0 12px;">── 以上为历史上下文 ──</span>
+                  </div>
+                  <div :style="{
+                    marginBottom: '10px',
+                    borderRadius: 'var(--radius-md)',
+                    overflow: 'hidden',
+                    borderLeft: isHistorical(idx) ? `5px solid ${bubbleBorderColor(msg.role)}` : msg.role === 'user' ? 'none' : `3px solid ${bubbleBorderColor(msg.role)}`,
+                  }">
+                    <!-- 消息头 -->
+                    <div :style="{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '6px 12px',
+                      background: bubbleHeaderBg(msg.role),
+                      borderBottom: isBubbleExpanded(idx) ? '1px solid var(--color-border)' : 'none',
+                    }">
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <span :style="{
+                          fontSize: '11px',
+                          padding: '1px 6px',
+                          borderRadius: '4px',
+                          background: bubbleBadgeBg(msg.role),
+                          color: '#fff',
+                        }">{{ bubbleRoleLabel(msg.role) }}</span>
+                        <span :style="{ fontSize: '11px', color: bubbleHeaderTextColor(msg.role) }">#{{ idx + 1 }}</span>
+                        <span v-if="msg.role === 'tool' && msg.tool_call_id" :style="{ fontSize: '11px', color: themeStore.isDark ? 'rgba(245,158,11,0.7)' : '#d97706', fontFamily: 'monospace' }">{{ msg.tool_call_id.slice(0, 20) }}...</span>
+                      </div>
+                      <span @click.stop="copyBubbleContent(idx, msg)" style="cursor: pointer; font-size: 14px; opacity: 0.7; line-height: 1;" :title="copiedBubbleIdx === idx ? '已复制' : '复制'">{{ copiedBubbleIdx === idx ? '✓' : '📋' }}</span>
+                    </div>
+                    <!-- 消息体 -->
+                    <div @click="toggleBubble(idx)" :style="{
+                      padding: '10px 14px',
+                      background: bubbleBodyBg(msg.role),
+                      cursor: 'pointer',
+                    }">
+                      <div v-if="!isBubbleExpanded(idx)" :style="{
+                        fontSize: '12px',
+                        lineHeight: '1.5',
+                        color: msg.role === 'user' ? 'rgba(255,255,255,0.9)' : 'var(--color-text)',
+                        overflow: 'hidden',
+                        display: '-webkit-box',
+                        WebkitLineClamp: '3',
+                        WebkitBoxOrient: 'vertical',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                      }">{{ bubbleContent(msg) }}</div>
+                      <pre v-else :style="{
+                        fontSize: '12px',
+                        lineHeight: '1.5',
+                        color: msg.role === 'user' ? 'rgba(255,255,255,0.95)' : 'var(--color-text)',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                        margin: 0,
+                        maxHeight: '400px',
+                        overflowY: 'auto',
+                      }">{{ bubbleContent(msg) }}</pre>
+                    </div>
+                    <!-- 助手消息的 tool_calls -->
+                    <div v-if="msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0" style="padding: 8px 14px; background: var(--color-bg-page); border-top: 1px solid var(--color-border);">
+                      <div style="font-size: 11px; color: var(--color-text-muted); margin-bottom: 6px; font-weight: 600;">工具调用 ({{ msg.tool_calls.length }})</div>
+                      <div v-for="(tc, tci) in msg.tool_calls" :key="tci" :style="{
+                        padding: '6px 10px',
+                        marginBottom: tci < msg.tool_calls.length - 1 ? '6px' : '0',
+                        background: 'var(--color-surface)',
+                        borderRadius: 'var(--radius-sm)',
+                        border: '1px solid var(--color-border)',
+                      }">
+                        <div style="font-size: 11px; font-weight: 600; color: var(--color-primary); margin-bottom: 4px;">{{ tc.function?.name || '(无函数名)' }}</div>
+                        <pre style="font-size: 11px; line-height: 1.4; margin: 0; white-space: pre-wrap; word-break: break-all; color: var(--color-text-muted);">{{ formatToolCallArgs(tc) }}</pre>
+                      </div>
+                    </div>
+                  </div>
+                </template>
               </div>
 
               <!-- 资源取舍明细 -->

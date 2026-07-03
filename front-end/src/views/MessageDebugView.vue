@@ -65,6 +65,7 @@ const bubbleMessages = computed(() => {
 
 const expandedBubbleIdx = ref(null)
 const copiedBubbleIdx = ref(null)
+const expandAllBubbles = ref(false)
 
 const lastUserMsgIdx = computed(() => {
   const msgs = bubbleMessages.value
@@ -258,7 +259,12 @@ function toggleBubble(idx) {
 }
 
 function isBubbleExpanded(idx) {
+  if (expandAllBubbles.value) return true
   return expandedBubbleIdx.value === idx
+}
+
+function toggleExpandAll() {
+  expandAllBubbles.value = !expandAllBubbles.value
 }
 
 function bubbleContent(msg) {
@@ -390,6 +396,8 @@ async function loadDetail(msgId) {
   detailLoading.value = true
   detailData.value = { request_json: null, extra: null }
   activeTab.value = 'prompt'
+  expandedBubbleIdx.value = null
+  expandAllBubbles.value = false
   try {
     const [rj, extra] = await Promise.all([
       api.get(`/api/admin/messages/${msgId}/debug-detail?field=request_json`),
@@ -560,8 +568,9 @@ onMounted(loadRound)
 
               <!-- 历史消息 -->
               <div v-if="activeTab === 'history_msgs'">
-                <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 12px;">
-                  共 {{ bubbleMessages.length }} 条消息
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                  <span style="font-size: 12px; color: var(--color-text-muted);">共 {{ bubbleMessages.length }} 条消息</span>
+                  <span @click="toggleExpandAll" style="cursor: pointer; font-size: 12px; color: var(--color-primary); user-select: none;">{{ expandAllBubbles ? '收起全部' : '展开全部' }}</span>
                 </div>
                 <div v-if="bubbleMessages.length === 0" style="color: var(--color-text-muted); padding: 20px; text-align: center;">
                   无消息数据

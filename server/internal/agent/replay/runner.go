@@ -193,7 +193,7 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 
 	temperature := cfg.Temperature
 	maxToolResultChars := cfg.MaxToolResultChars
-	if maxToolResultChars <= 0 {
+	if maxToolResultChars < 0 {
 		maxToolResultChars = 2000
 	}
 

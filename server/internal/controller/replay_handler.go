@@ -88,7 +88,7 @@ func (h *ReplayHandler) PreviewReplay(c *gin.Context) {
 	if req.HistoryCount <= 0 {
 		req.HistoryCount = 10
 	}
-	if req.MaxToolResultChars <= 0 {
+	if req.MaxToolResultChars < 0 {
 		req.MaxToolResultChars = 2000
 	}
 
@@ -156,7 +156,7 @@ func (h *ReplayHandler) CompareReplay(c *gin.Context) {
 
 	// —— B 侧：确定 system prompt 来源 ——
 	cfgB := req.ConfigB
-	if cfgB.MaxToolResultChars <= 0 {
+	if cfgB.MaxToolResultChars < 0 {
 		cfgB.MaxToolResultChars = 2000
 	}
 

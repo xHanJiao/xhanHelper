@@ -7,10 +7,12 @@ class DeviceManager: ObservableObject {
     @Published var userId: String?
     @Published var username: String?
     @Published var isLoggedIn = false
+    @Published var defaultConversation: ConversationData?
 
     private let tokenKey = "xhan_user_token"
     private let userIdKey = "xhan_user_id"
     private let usernameKey = "xhan_username"
+    private let defaultConvKey = "xhan_default_conversation_id"
 
     #if DEBUG
     static let defaultBaseURL = "http://hanxiaodeMacBook-Air.local:8080"
@@ -33,6 +35,9 @@ class DeviceManager: ObservableObject {
         self.userId = UserDefaults.standard.string(forKey: userIdKey)
         self.username = UserDefaults.standard.string(forKey: usernameKey)
         self.isLoggedIn = token != nil
+        if self.isLoggedIn {
+            Task { try? await getDefaultConversationInfo() }
+        }
     }
 
     func logout() async {
@@ -45,10 +50,12 @@ class DeviceManager: ObservableObject {
         UserDefaults.standard.removeObject(forKey: tokenKey)
         UserDefaults.standard.removeObject(forKey: userIdKey)
         UserDefaults.standard.removeObject(forKey: usernameKey)
+        UserDefaults.standard.removeObject(forKey: defaultConvKey)
         token = nil
         userId = nil
         username = nil
         isLoggedIn = false
+        defaultConversation = nil
     }
 
     func login(username: String, password: String) async throws {
@@ -66,6 +73,7 @@ class DeviceManager: ObservableObject {
             throw NSError(domain: "Auth", code: 401, userInfo: [NSLocalizedDescriptionKey: msg])
         }
         try saveAuthResponse(respData, username: username)
+        try await getDefaultConversationInfo()
     }
 
     func register(username: String, password: String) async throws {
@@ -83,6 +91,7 @@ class DeviceManager: ObservableObject {
             throw NSError(domain: "Auth", code: 409, userInfo: [NSLocalizedDescriptionKey: msg])
         }
         try saveAuthResponse(respData, username: username)
+        try await getDefaultConversationInfo()
     }
 
     private func saveAuthResponse(_ data: Data, username: String) throws {
@@ -101,6 +110,32 @@ class DeviceManager: ObservableObject {
         UserDefaults.standard.set(result.token, forKey: tokenKey)
         UserDefaults.standard.set(result.userId, forKey: userIdKey)
         UserDefaults.standard.set(username, forKey: usernameKey)
+    }
+    
+    private func getDefaultConversationInfo() async throws {
+        var req = URLRequest(url: URL(string: "\(baseURL)/api/conversations/default")!)
+        guard let token = token else {
+            throw URLError(.userAuthenticationRequired)
+        }
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.httpMethod = "GET"
+        
+        let (respData, resp) = try await URLSession.shared.data(for: req)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        
+        let conversation = try saveDefaultConversationInfo(respData)
+        self.defaultConversation = conversation
+        UserDefaults.standard.set(conversation.id, forKey: defaultConvKey)
+    }
+    
+    private func saveDefaultConversationInfo(_ respData: Data) throws -> ConversationData {
+        let response = try JSONDecoder().decode(APIResponse<ConversationData>.self, from: respData)
+        guard let data = response.data else {
+            throw URLError(.cannotParseResponse)
+        }
+        return data
     }
 }
 
@@ -127,4 +162,24 @@ private struct APIResponse<T: Decodable>: Decodable {
     let errorCode: Int
     let errMsg: String
     let data: T?
+}
+
+struct ConversationData: Codable {
+    let agentId: String
+    let agentName: String
+    let createdAt: String
+    let id: String
+    let isDefault: Bool
+    let title: String
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case agentId = "agent_id"
+        case agentName = "agent_name"
+        case createdAt = "created_at"
+        case id
+        case isDefault = "is_default"
+        case title
+        case updatedAt = "updated_at"
+    }
 }

@@ -50,6 +50,13 @@ struct ConversationListContentView: View {
     private var apiClient: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
     }
+    
+    private func enterConversation(_ conv: ConversationData) {
+        selectedConversationId = conv.id
+        let vm = ChatViewModel(apiClient: apiClient)
+        Task {await vm.loadConversation(id: conv.id, title: conv.title) }
+        chatVM = vm
+    }
 
     var body: some View {
         ZStack {
@@ -57,11 +64,6 @@ struct ConversationListContentView: View {
                 ChatView(viewModel: vm, agentId: nil, baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
                     .onAppear { isInChat = true }
                     .onDisappear { isInChat = false }
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarLeading) {
-                            Button("返回") { selectedConversationId = nil }
-                        }
-                    }
             } else if showNewChat {
                 let vm = ChatViewModel(apiClient: apiClient)
                 let aid = pendingAgentID
@@ -81,32 +83,13 @@ struct ConversationListContentView: View {
                         }
                     }
                     .onDisappear { isInChat = false }
-            } else {
-                let listVM = ConversationListViewModel(apiClient: apiClient)
-                ConversationListView(
-                    viewModel: listVM,
-                    onSelect: { cid, title in
-                        let vm = ChatViewModel(apiClient: apiClient)
-                        Task { await vm.loadConversation(id: cid, title: title) }
-                        chatVM = vm
-                        selectedConversationId = cid
-                    },
-                    onNewChat: {
-                        pendingAgentID = nil
-                        showNewChat = true
-                    }
-                )
-                .navigationTitle("xhanHelper")
-                .onChange(of: listVM.isUnauthorized) {
-                    if listVM.isUnauthorized {
-                        Task { await deviceManager.logout() }
-                    }
-                }
-                .onChange(of: pendingAgentID) {
-                    if pendingAgentID != nil {
-                        showNewChat = true
-                    }
-                }
+            }
+        }.onChange(of: deviceManager.defaultConversation?.id) { _, _ in
+            guard let conv = deviceManager.defaultConversation else { return }
+            enterConversation(conv)
+        }.onAppear {
+            if let conv = deviceManager.defaultConversation {
+                enterConversation(conv)
             }
         }
     }

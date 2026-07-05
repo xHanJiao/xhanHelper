@@ -9,6 +9,7 @@ const message = useMessage()
 // 表单
 const username = ref('')
 const password = ref('')
+const collapsed = ref(true)
 const creating = ref(false)
 
 // 列表
@@ -81,32 +82,40 @@ const columns = [
       <PageTopBar title="用户管理" />
     </div>
     <div class="users-content">
-      <NCard title="创建用户" style="margin-bottom: var(--space-lg);">
-        <NForm>
-          <NFormItem label="用户名">
-            <NInput
-              v-model:value="username"
-              placeholder="请输入用户名"
-              @keyup.enter="handleCreate"
-            />
-          </NFormItem>
-          <NFormItem label="密码">
-            <NInput
-              v-model:value="password"
-              type="password"
-              placeholder="请输入密码"
-              @keyup.enter="handleCreate"
-            />
-          </NFormItem>
-          <NButton
-            type="primary"
-            :loading="creating"
-            @click="handleCreate"
-            style="margin-top: var(--space-sm);"
-          >
-            创建用户
-          </NButton>
-        </NForm>
+      <NCard style="margin-bottom: var(--space-lg);">
+        <template #header>
+          <div class="card-header-collapsible" @click="collapsed = !collapsed">
+            <span>创建用户</span>
+            <span class="collapse-hint">{{ collapsed ? '展开' : '收起' }}</span>
+          </div>
+        </template>
+        <template v-if="!collapsed">
+          <NForm>
+            <NFormItem label="用户名">
+              <NInput
+                v-model:value="username"
+                placeholder="请输入用户名"
+                @keyup.enter="handleCreate"
+              />
+            </NFormItem>
+            <NFormItem label="密码">
+              <NInput
+                v-model:value="password"
+                type="password"
+                placeholder="请输入密码"
+                @keyup.enter="handleCreate"
+              />
+            </NFormItem>
+            <NButton
+              type="primary"
+              :loading="creating"
+              @click="handleCreate"
+              style="margin-top: var(--space-sm);"
+            >
+              创建用户
+            </NButton>
+          </NForm>
+        </template>
       </NCard>
 
       <NCard title="用户列表">
@@ -149,5 +158,16 @@ const columns = [
   max-width: 1100px;
   width: 100%;
   color: var(--color-text);
+}
+.card-header-collapsible {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+.collapse-hint {
+  font-size: 12px;
+  opacity: 0.5;
 }
 </style>

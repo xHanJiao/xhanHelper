@@ -161,6 +161,116 @@ func issueTokenTx(db *gorm.DB, userID string, ttlMinutes int) (string, error) {
 	return ut.Token, db.Create(ut).Error
 }
 
+// UserStats — 用户统计数据
+type UserStats struct {
+	LastMessageAt      *time.Time
+	RecentMessageCount int64
+	RecentNoteCount    int64
+	RecentMemoryCount  int64
+	RecentDocCount     int64
+}
+
+// GetUserStats 批量获取用户的统计数据：最后消息时间、最近消息/笔记/记忆/文档数
+func (r *UserRepo) GetUserStats(ctx context.Context, userIDs []string, since time.Time) (map[string]*UserStats, error) {
+	if len(userIDs) == 0 {
+		return map[string]*UserStats{}, nil
+	}
+
+	stats := make(map[string]*UserStats, len(userIDs))
+	for _, id := range userIDs {
+		stats[id] = &UserStats{}
+	}
+
+	// 消息：最后活跃时间 + 最近消息数
+	{
+		type row struct {
+			UserID string
+			LastAt *time.Time
+			Count  int64
+		}
+		var rows []row
+		if err := r.db.WithContext(ctx).
+			Model(&model.Message{}).
+			Select("user_id, MAX(created_at) AS last_at, SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS count", since).
+			Where("user_id IN ?", userIDs).
+			Where("status = ?", model.MsgStatusNormal).
+			Group("user_id").
+			Scan(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			stats[row.UserID].LastMessageAt = row.LastAt
+			stats[row.UserID].RecentMessageCount = row.Count
+		}
+	}
+
+	// 笔记
+	{
+		type row struct {
+			UserID string
+			Count  int64
+		}
+		var rows []row
+		if err := r.db.WithContext(ctx).
+			Model(&model.Note{}).
+			Select("user_id, COUNT(*) AS count").
+			Where("user_id IN ?", userIDs).
+			Where("created_at >= ?", since).
+			Where("status = ?", model.NoteStatusNormal).
+			Group("user_id").
+			Scan(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			stats[row.UserID].RecentNoteCount = row.Count
+		}
+	}
+
+	// 记忆
+	{
+		type row struct {
+			UserID string
+			Count  int64
+		}
+		var rows []row
+		if err := r.db.WithContext(ctx).
+			Model(&model.UserMemory{}).
+			Select("user_id, COUNT(*) AS count").
+			Where("user_id IN ?", userIDs).
+			Where("created_at >= ?", since).
+			Group("user_id").
+			Scan(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			stats[row.UserID].RecentMemoryCount = row.Count
+		}
+	}
+
+	// 文档
+	{
+		type row struct {
+			UserID string
+			Count  int64
+		}
+		var rows []row
+		if err := r.db.WithContext(ctx).
+			Model(&model.Document{}).
+			Select("user_id, COUNT(*) AS count").
+			Where("user_id IN ?", userIDs).
+			Where("created_at >= ?", since).
+			Group("user_id").
+			Scan(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			stats[row.UserID].RecentDocCount = row.Count
+		}
+	}
+
+	return stats, nil
+}
+
 // RefreshToken 延长 token 过期时间，用于心跳续期。
 // 仅当 token 存在且未过期时才续期；已过期的 token 返回 ErrTokenExpired。
 func (r *UserRepo) RefreshToken(ctx context.Context, token string) error {

@@ -3,6 +3,7 @@ package controller
 import (
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -45,19 +46,47 @@ func listUsers(userRepo *service.UserRepo) gin.HandlerFunc {
 			view.JSONError(c, 500, "获取用户列表失败")
 			return
 		}
-		// 安全：不暴露 password_hash，只返回公开字段
+
+		userIDs := make([]string, len(result.Users))
+		for i, u := range result.Users {
+			userIDs[i] = u.ID
+		}
+
+		threeDaysAgo := time.Now().Add(-72 * time.Hour)
+		statsMap, err := userRepo.GetUserStats(c.Request.Context(), userIDs, threeDaysAgo)
+		if err != nil {
+			log.Printf("[admin] get user stats error: %v", err)
+		}
+
 		type userDTO struct {
-			ID        string `json:"id"`
-			Username  string `json:"username"`
-			CreatedAt string `json:"created_at"`
+			ID                 string `json:"id"`
+			Username           string `json:"username"`
+			CreatedAt          string `json:"created_at"`
+			LastMessageAt      string `json:"last_message_at,omitempty"`
+			RecentMessageCount int64  `json:"recent_message_count"`
+			RecentNoteCount    int64  `json:"recent_note_count"`
+			RecentMemoryCount  int64  `json:"recent_memory_count"`
+			RecentDocCount     int64  `json:"recent_doc_count"`
 		}
 		users := make([]userDTO, 0, len(result.Users))
 		for _, u := range result.Users {
-			users = append(users, userDTO{
+			dto := userDTO{
 				ID:        u.ID,
 				Username:  u.Username,
 				CreatedAt: u.CreatedAt.Format("2006-01-02 15:04:05"),
-			})
+			}
+			if statsMap != nil {
+				if s, ok := statsMap[u.ID]; ok {
+					if s.LastMessageAt != nil {
+						dto.LastMessageAt = s.LastMessageAt.Format("2006-01-02 15:04:05")
+					}
+					dto.RecentMessageCount = s.RecentMessageCount
+					dto.RecentNoteCount = s.RecentNoteCount
+					dto.RecentMemoryCount = s.RecentMemoryCount
+					dto.RecentDocCount = s.RecentDocCount
+				}
+			}
+			users = append(users, dto)
 		}
 		view.JSONOK(c, gin.H{"users": users, "total_count": result.TotalCount})
 	}

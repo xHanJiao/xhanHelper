@@ -65,8 +65,13 @@ onMounted(() => {
 })
 
 const columns = [
-  { title: '用户名', key: 'username' },
-  { title: '创建时间', key: 'created_at' }
+  { title: '用户名', key: 'username', width: 120 },
+  { title: '创建时间', key: 'created_at', width: 160 },
+  { title: '上次对话', key: 'last_message_at', width: 160, render: (row) => row.last_message_at || '-' },
+  { title: '近3天消息', key: 'recent_message_count', width: 100, render: (row) => row.recent_message_count ?? 0 },
+  { title: '近3天笔记', key: 'recent_note_count', width: 100, render: (row) => row.recent_note_count ?? 0 },
+  { title: '近3天记忆', key: 'recent_memory_count', width: 100, render: (row) => row.recent_memory_count ?? 0 },
+  { title: '近3天文档', key: 'recent_doc_count', width: 100, render: (row) => row.recent_doc_count ?? 0 }
 ]
 </script>
 
@@ -141,7 +146,7 @@ const columns = [
   flex: 1;
   overflow-y: auto;
   padding: var(--space-lg);
-  max-width: 800px;
+  max-width: 1100px;
   width: 100%;
   color: var(--color-text);
 }

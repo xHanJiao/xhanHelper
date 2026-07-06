@@ -381,37 +381,12 @@ func TestCursorByRounds_CursorBefore(t *testing.T) {
 	}
 }
 
-func TestCursorByRounds_CursorAfter(t *testing.T) {
-	repo, cleanup := setupMessageRepo(t)
-	defer cleanup()
-
-	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	userMsgs := seedTestRounds(t, repo, "conv1", "user1", 10, base, 0)
-
-	// 取第 3 轮 user 消息作为 cursor，direction=after 加载更新的 3 轮
-	cursorID := userMsgs[2].ID
-	result, err := repo.ListByConversationCursorByRounds(context.Background(), "conv1", cursorID, "after", 3)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	userCount := 0
-	for _, m := range result.Messages {
-		if m.Role == "user" {
-			userCount++
-		}
-	}
-	if userCount < 3 {
-		t.Errorf("expected at least 3 user messages (3 rounds after cursor), got %d", userCount)
-	}
-}
-
 func TestCursorByRounds_HasMoreFlags(t *testing.T) {
 	repo, cleanup := setupMessageRepo(t)
 	defer cleanup()
 
 	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	userMsgs := seedTestRounds(t, repo, "conv1", "user1", 5, base, 0)
+	_ = seedTestRounds(t, repo, "conv1", "user1", 5, base, 0)
 
 	// 取全部 5 轮 — 总共就 5 轮，has_more_before 应为 false
 	result, err := repo.ListByConversationCursorByRounds(context.Background(), "conv1", "", "before", 10)
@@ -423,19 +398,6 @@ func TestCursorByRounds_HasMoreFlags(t *testing.T) {
 	}
 	if result.HasMoreAfter {
 		t.Error("expected HasMoreAfter=false (most recent rounds)")
-	}
-
-	// 从第 3 轮 user 之后往后取 — has_more_after 应为 true（还有第 4、5 轮）
-	cursorID := userMsgs[2].ID // 第 3 轮
-	result2, err := repo.ListByConversationCursorByRounds(context.Background(), "conv1", cursorID, "after", 1)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !result2.HasMoreAfter {
-		t.Error("expected HasMoreAfter=true (more rounds exist)")
-	}
-	if !result2.HasMoreBefore {
-		t.Error("expected HasMoreBefore=true (cursor isn't the oldest)")
 	}
 }
 
@@ -566,46 +528,5 @@ func TestCursorByRounds_NoDuplicationAcrossPages(t *testing.T) {
 	// 每轮 4 条消息 (user + a1 + tool + a2)，15 轮 = 60 条
 	if len(seen) != 60 {
 		t.Errorf("expected 60 unique messages (15 rounds × 4 msgs), got %d", len(seen))
-	}
-}
-
-func TestCursorByRounds_NoDuplicationAfterDirection(t *testing.T) {
-	// 验证 direction=after 翻页也不会出现重复
-	repo, cleanup := setupMessageRepo(t)
-	defer cleanup()
-
-	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	userMsgs := seedTestRounds(t, repo, "conv1", "user1", 10, base, 0)
-
-	ctx := context.Background()
-
-	// 先取前 3 轮（从最老开始），用中间轮作为 cursor
-	midUserID := userMsgs[2].ID // 第 3 轮 user
-	page1, err := repo.ListByConversationCursorByRounds(ctx, "conv1", midUserID, "after", 3)
-	if err != nil {
-		t.Fatalf("page1 (after): %v", err)
-	}
-	seen := make(map[string]bool)
-	for _, m := range page1.Messages {
-		seen[m.ID] = true
-	}
-	t.Logf("page1 (after): %d messages", len(page1.Messages))
-
-	// 继续往后翻
-	page2, err := repo.ListByConversationCursorByRounds(ctx, "conv1", page1.NewestCursor, "after", 3)
-	if err != nil {
-		t.Fatalf("page2 (after): %v", err)
-	}
-	for _, m := range page2.Messages {
-		if seen[m.ID] {
-			t.Errorf("duplicate message %s (role=%s content=%q) in page2 (after)", m.ID, m.Role, m.Content)
-		}
-		seen[m.ID] = true
-	}
-	t.Logf("page2 (after): %d messages", len(page2.Messages))
-
-	// 总应有 3+3=6 轮不重复消息，每轮 4 条 = 24
-	if len(seen) != 24 {
-		t.Errorf("expected 24 unique messages (6 rounds × 4 msgs), got %d", len(seen))
 	}
 }

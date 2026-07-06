@@ -15,7 +15,7 @@
  *   watch(route.params.id) (L339):
  *     三个分支，都会先 cancel() 旧 SSE 流
  *     【分支 A】切换到新会话 (newId !== convId)
- *       → loadHistory(newId)          GET messages-v2        拉取最近 20 条消息
+ *       → loadHistory(newId)          GET messages-v2        拉取最近 7 条消息
  *       → fetchAssociatedMemories()   POST /memories/batch   批量获取关联记忆详情
  *       → nextTick + scrollToBottom   滚动到底部
  *       → setTimeout 200ms            激活上滑加载监听（防误触发）
@@ -281,7 +281,7 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
   if (!convId) return
   isLoadingHistory.value = true
   try {
-    let url = `/api/conversations/${convId}/messages-v2?limit=20`
+    let url = `/api/conversations/${convId}/messages-v2?limit=7`
     if (cursor) {
       url += `&cursor=${cursor}&direction=${direction}`
     }

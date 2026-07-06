@@ -12,7 +12,8 @@ struct InputBar: View {
             TextField("输入消息...", text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .focused($isFocused)
-                .submitLabel(.return)
+                .submitLabel(.send)
+                .onSubmit { onSend() }
                 .lineLimit(1...15)
                 .padding(.leading, 12)
                 .padding(.trailing, 12)
@@ -20,6 +21,14 @@ struct InputBar: View {
                 .background(Color.gray.opacity(0.1))
                 .cornerRadius(16)
                 .disabled(isStreaming)
+                .onChange(of: text) { _, newValue in
+                    if newValue.contains("\n") {
+                        text = newValue.replacingOccurrences(of: "\n", with: "")
+                        if !text.trimmingCharacters(in: .whitespaces).isEmpty {
+                            onSend()
+                        }
+                    }
+                }
 
             if isStreaming {
                 Button(action: onStop) {
@@ -42,4 +51,38 @@ struct InputBar: View {
         .padding(.vertical, 8)
         .background(.regularMaterial)
     }
+}
+
+#Preview {
+    @Previewable @State var text = ""
+    @Previewable @FocusState var isFocused: Bool
+
+    VStack {
+        Spacer()
+        InputBar(
+            text: $text,
+            isStreaming: false,
+            isFocused: $isFocused,
+            onSend: {},
+            onStop: {}
+        )
+    }
+    .frame(height: 200)
+}
+
+#Preview("Streaming") {
+    @Previewable @State var text = "正在思考..."
+    @Previewable @FocusState var isFocused: Bool
+
+    VStack {
+        Spacer()
+        InputBar(
+            text: $text,
+            isStreaming: true,
+            isFocused: $isFocused,
+            onSend: {},
+            onStop: {}
+        )
+    }
+    .frame(height: 200)
 }

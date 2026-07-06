@@ -19,7 +19,6 @@ struct ContentView: View {
                 Label("聊天", systemImage: "bubble.left.and.bubble.right")
             }
             .tag("chat")
-            .toolbar(isInChat ? .hidden : .visible, for: .tabBar)
 
             NavigationStack {
                 SettingsView(deviceManager: deviceManager, onChatWithAgent: { agentID in

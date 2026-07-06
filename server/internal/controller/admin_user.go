@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
@@ -40,6 +41,10 @@ func listUsers(userRepo *service.UserRepo) gin.HandlerFunc {
 		if limit <= 0 || limit > 100 {
 			limit = 20
 		}
+		days, _ := strconv.Atoi(c.DefaultQuery("days", "3"))
+		if days <= 0 {
+			days = 3
+		}
 		result, err := userRepo.List(c.Request.Context(), offset, limit)
 		if err != nil {
 			log.Printf("[admin] list users error: %v", err)
@@ -52,8 +57,8 @@ func listUsers(userRepo *service.UserRepo) gin.HandlerFunc {
 			userIDs[i] = u.ID
 		}
 
-		threeDaysAgo := time.Now().Add(-72 * time.Hour)
-		statsMap, err := userRepo.GetUserStats(c.Request.Context(), userIDs, threeDaysAgo)
+		since := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+		statsMap, err := userRepo.GetUserStats(c.Request.Context(), userIDs, since)
 		if err != nil {
 			log.Printf("[admin] get user stats error: %v", err)
 		}
@@ -73,12 +78,12 @@ func listUsers(userRepo *service.UserRepo) gin.HandlerFunc {
 			dto := userDTO{
 				ID:        u.ID,
 				Username:  u.Username,
-				CreatedAt: u.CreatedAt.Format("2006-01-02 15:04:05"),
+				CreatedAt: u.CreatedAt.In(config.BJ).Format("2006-01-02 15:04:05"),
 			}
 			if statsMap != nil {
 				if s, ok := statsMap[u.ID]; ok {
 					if s.LastMessageAt != nil {
-						dto.LastMessageAt = s.LastMessageAt.Format("2006-01-02 15:04:05")
+						dto.LastMessageAt = s.LastMessageAt.In(config.BJ).Format("2006-01-02 15:04:05")
 					}
 					dto.RecentMessageCount = s.RecentMessageCount
 					dto.RecentNoteCount = s.RecentNoteCount

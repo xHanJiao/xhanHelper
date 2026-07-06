@@ -1,6 +1,6 @@
 <script setup>
-import { ref, onMounted } from 'vue'
-import { NButton, NInput, NForm, NFormItem, NDataTable, NPagination, NCard, useMessage } from 'naive-ui'
+import { ref, computed, onMounted } from 'vue'
+import { NButton, NInput, NForm, NFormItem, NDataTable, NPagination, NCard, NSelect, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
 import PageTopBar from '@/components/PageTopBar.vue'
 
@@ -18,6 +18,14 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = 20
 const loading = ref(false)
+const statsDays = ref(3)
+const statsDaysOptions = [
+  { label: '近1天', value: 1 },
+  { label: '近3天', value: 3 },
+  { label: '近5天', value: 5 },
+  { label: '近10天', value: 10 },
+  { label: '近30天', value: 30 }
+]
 
 async function handleCreate() {
   if (!username.value.trim() || !password.value.trim()) {
@@ -46,7 +54,7 @@ async function fetchUsers() {
   loading.value = true
   try {
     const offset = (page.value - 1) * pageSize
-    const res = await api.get(`/api/admin/users?offset=${offset}&limit=${pageSize}`)
+    const res = await api.get(`/api/admin/users?offset=${offset}&limit=${pageSize}&days=${statsDays.value}`)
     users.value = res.users || []
     total.value = res.total_count || 0
   } catch (e) {
@@ -65,15 +73,15 @@ onMounted(() => {
   fetchUsers()
 })
 
-const columns = [
+const columns = computed(() => [
   { title: '用户名', key: 'username', width: 120 },
   { title: '创建时间', key: 'created_at', width: 160 },
   { title: '上次对话', key: 'last_message_at', width: 160, render: (row) => row.last_message_at || '-' },
-  { title: '近3天消息', key: 'recent_message_count', width: 100, render: (row) => row.recent_message_count ?? 0 },
-  { title: '近3天笔记', key: 'recent_note_count', width: 100, render: (row) => row.recent_note_count ?? 0 },
-  { title: '近3天记忆', key: 'recent_memory_count', width: 100, render: (row) => row.recent_memory_count ?? 0 },
-  { title: '近3天文档', key: 'recent_doc_count', width: 100, render: (row) => row.recent_doc_count ?? 0 }
-]
+  { title: `近${statsDays.value}天消息`, key: 'recent_message_count', width: 100, render: (row) => row.recent_message_count ?? 0 },
+  { title: `近${statsDays.value}天笔记`, key: 'recent_note_count', width: 100, render: (row) => row.recent_note_count ?? 0 },
+  { title: `近${statsDays.value}天记忆`, key: 'recent_memory_count', width: 100, render: (row) => row.recent_memory_count ?? 0 },
+  { title: `近${statsDays.value}天文档`, key: 'recent_doc_count', width: 100, render: (row) => row.recent_doc_count ?? 0 }
+])
 </script>
 
 <template>
@@ -118,7 +126,19 @@ const columns = [
         </template>
       </NCard>
 
-      <NCard title="用户列表">
+      <NCard>
+        <template #header>
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span>用户列表</span>
+            <NSelect
+              v-model:value="statsDays"
+              :options="statsDaysOptions"
+              size="small"
+              style="width: 110px;"
+              @update:value="page = 1; fetchUsers()"
+            />
+          </div>
+        </template>
         <NDataTable
           :columns="columns"
           :data="users"

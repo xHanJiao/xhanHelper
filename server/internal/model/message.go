@@ -11,9 +11,9 @@ const (
 // Message — 对话消息
 type Message struct {
 	ID               string    `gorm:"primaryKey;size:36" json:"id"`
-	ConversationID   string    `gorm:"index:idx_conv_created,priority:1;size:36;not null" json:"conversation_id"`
+	ConversationID   string    `gorm:"index:idx_conv_created,priority:1;index:idx_conv_role_created,priority:1;size:36;not null" json:"conversation_id"`
 	UserID           string    `gorm:"size:36;not null;index" json:"user_id"`
-	Role             string    `gorm:"size:20;not null" json:"role"` // user | assistant | tool
+	Role             string    `gorm:"index:idx_conv_role_created,priority:2;size:20;not null" json:"role"` // user | assistant | tool
 	Content          string    `gorm:"type:text" json:"content"`
 	OriginalContent  *string   `gorm:"type:text;column:original_content" json:"original_content,omitempty"`
 	XMLContext       *string   `gorm:"type:mediumtext;column:xml_context" json:"xml_context,omitempty"`
@@ -26,5 +26,5 @@ type Message struct {
 	IsInternal       bool      `gorm:"default:false" json:"is_internal"` // 标记内部消息
 	Extra            *string   `gorm:"type:mediumtext;column:extra" json:"extra,omitempty"`
 	Status           int       `gorm:"default:1" json:"status"` // 1=正常 2=已删除
-	CreatedAt        time.Time `gorm:"index:idx_conv_created,priority:2;autoCreateTime" json:"created_at"`
+	CreatedAt        time.Time `gorm:"index:idx_conv_created,priority:2;index:idx_conv_role_created,priority:3;autoCreateTime" json:"created_at"`
 }

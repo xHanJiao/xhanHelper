@@ -35,6 +35,7 @@ class DeviceManager: ObservableObject {
         self.userId = UserDefaults.standard.string(forKey: userIdKey)
         self.username = UserDefaults.standard.string(forKey: usernameKey)
         self.isLoggedIn = token != nil
+        LogBuffer.shared.info("app launched, hasToken=\(self.isLoggedIn ? "yes" : "no")")
         if self.isLoggedIn {
             self.isVerifying = true
             Task { await verifyToken() }
@@ -44,7 +45,9 @@ class DeviceManager: ObservableObject {
     private func verifyToken() async {
         do {
             try await getDefaultConversationInfo()
+            LogBuffer.shared.info("verifyToken: ok")
         } catch {
+            LogBuffer.shared.error("verifyToken failed: \(error)")
             clearAuthState()
         }
         isVerifying = false
@@ -89,7 +92,9 @@ class DeviceManager: ObservableObject {
         isVerifying = true
         defer { isVerifying = false }
         try saveAuthResponse(respData, username: username)
+        LogBuffer.shared.info("login: token saved, user=\(username)")
         try await getDefaultConversationInfo()
+        LogBuffer.shared.debug("login: default conv loaded, id=\(self.defaultConversation?.id ?? "nil")")
     }
 
     func register(username: String, password: String) async throws {
@@ -109,7 +114,9 @@ class DeviceManager: ObservableObject {
         isVerifying = true
         defer { isVerifying = false }
         try saveAuthResponse(respData, username: username)
+        LogBuffer.shared.info("register: token saved, user=\(username)")
         try await getDefaultConversationInfo()
+        LogBuffer.shared.debug("register: default conv loaded, id=\(self.defaultConversation?.id ?? "nil")")
     }
 
     private func saveAuthResponse(_ data: Data, username: String) throws {
@@ -131,7 +138,7 @@ class DeviceManager: ObservableObject {
     }
     
     private func getDefaultConversationInfo() async throws {
-        var req = URLRequest(url: URL(string: "\(baseURL)/.api/conversations/default")!)
+        var req = URLRequest(url: URL(string: "\(baseURL)/api/conversations/default")!)
         guard let token = token else {
             throw URLError(.userAuthenticationRequired)
         }
@@ -142,6 +149,7 @@ class DeviceManager: ObservableObject {
         let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard statusCode == 200 else {
             let body = String(data: respData, encoding: .utf8) ?? ""
+            LogBuffer.shared.error("getDefaultConversationInfo failed: status=\(statusCode), body=\(body.prefix(200))")
             throw URLError(.badServerResponse)
         }
         

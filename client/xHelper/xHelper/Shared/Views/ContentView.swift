@@ -69,9 +69,11 @@ struct ConversationListContentView: View {
         }
         .task(id: retryToken) {
             guard let conv = deviceManager.defaultConversation else {
+                LogBuffer.shared.error("defaultConversation is nil")
                 loadState = .error("无法加载默认对话")
                 return
             }
+            LogBuffer.shared.debug("loading conversation \(conv.id)")
             let api = APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
             let vm = ChatViewModel(apiClient: api)
             loadState = .loaded(vm)

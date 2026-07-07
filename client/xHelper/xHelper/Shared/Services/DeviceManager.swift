@@ -86,6 +86,8 @@ class DeviceManager: ObservableObject {
             let msg = parseAuthError(raw)
             throw NSError(domain: "Auth", code: 401, userInfo: [NSLocalizedDescriptionKey: msg])
         }
+        isVerifying = true
+        defer { isVerifying = false }
         try saveAuthResponse(respData, username: username)
         try await getDefaultConversationInfo()
     }
@@ -104,6 +106,8 @@ class DeviceManager: ObservableObject {
             let msg = parseAuthError(raw)
             throw NSError(domain: "Auth", code: 409, userInfo: [NSLocalizedDescriptionKey: msg])
         }
+        isVerifying = true
+        defer { isVerifying = false }
         try saveAuthResponse(respData, username: username)
         try await getDefaultConversationInfo()
     }
@@ -127,7 +131,7 @@ class DeviceManager: ObservableObject {
     }
     
     private func getDefaultConversationInfo() async throws {
-        var req = URLRequest(url: URL(string: "\(baseURL)/api/conversations/default")!)
+        var req = URLRequest(url: URL(string: "\(baseURL)/.api/conversations/default")!)
         guard let token = token else {
             throw URLError(.userAuthenticationRequired)
         }
@@ -135,7 +139,9 @@ class DeviceManager: ObservableObject {
         req.httpMethod = "GET"
         
         let (respData, resp) = try await URLSession.shared.data(for: req)
-        guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
+        let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let body = String(data: respData, encoding: .utf8) ?? ""
             throw URLError(.badServerResponse)
         }
         
@@ -179,8 +185,8 @@ private struct APIResponse<T: Decodable>: Decodable {
 }
 
 struct ConversationData: Codable {
-    let agentId: String
-    let agentName: String
+    let agentId: String?
+    let agentName: String?
     let createdAt: String
     let id: String
     let isDefault: Bool

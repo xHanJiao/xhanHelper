@@ -38,32 +38,44 @@ struct ConversationListContentView: View {
     @ObservedObject var deviceManager: DeviceManager
     @Binding var pendingAgentID: String?
     @Binding var isInChat: Bool
-    @State private var chatVM: ChatViewModel?
 
-    private var apiClient: APIClient {
-        APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+    private enum LoadState {
+        case loading
+        case loaded(ChatViewModel)
+        case error(String)
     }
-    
-    private func enterConversation(_ conv: ConversationData) {
-        let vm = ChatViewModel(apiClient: apiClient)
-        Task {await vm.loadConversation(id: conv.id, title: conv.title) }
-        chatVM = vm
-    }
+
+    @State private var loadState: LoadState = .loading
+    @State private var retryToken: Int = 0
 
     var body: some View {
         ZStack {
-            if let vm = chatVM {
+            switch loadState {
+            case .loading:
+                ProgressView()
+            case .loaded(let vm):
                 ChatView(viewModel: vm, agentId: nil, baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
                     .onAppear { isInChat = true }
                     .onDisappear { isInChat = false }
+            case .error(let msg):
+                VStack(spacing: 12) {
+                    Text(msg).foregroundColor(.secondary)
+                    Button("重试") {
+                        loadState = .loading
+                        retryToken += 1
+                    }
+                }
             }
-        }.onChange(of: deviceManager.defaultConversation?.id) { _, _ in
-            guard let conv = deviceManager.defaultConversation else { return }
-            enterConversation(conv)
-        }.onAppear {
-            if let conv = deviceManager.defaultConversation {
-                enterConversation(conv)
+        }
+        .task(id: retryToken) {
+            guard let conv = deviceManager.defaultConversation else {
+                loadState = .error("无法加载默认对话")
+                return
             }
+            let api = APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+            let vm = ChatViewModel(apiClient: api)
+            loadState = .loaded(vm)
+            await vm.loadConversation(id: conv.id, title: conv.title)
         }
     }
 }

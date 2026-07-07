@@ -7,6 +7,7 @@ class DeviceManager: ObservableObject {
     @Published var userId: String?
     @Published var username: String?
     @Published var isLoggedIn = false
+    @Published var isVerifying = false
     @Published var defaultConversation: ConversationData?
 
     private let tokenKey = "xhan_user_token"
@@ -35,17 +36,21 @@ class DeviceManager: ObservableObject {
         self.username = UserDefaults.standard.string(forKey: usernameKey)
         self.isLoggedIn = token != nil
         if self.isLoggedIn {
-            Task { try? await getDefaultConversationInfo() }
+            self.isVerifying = true
+            Task { await verifyToken() }
         }
     }
 
-    func logout() async {
-        if let t = token {
-            var req = URLRequest(url: URL(string: "\(baseURL)/api/auth/logout")!)
-            req.httpMethod = "POST"
-            req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization")
-            _ = try? await URLSession.shared.data(for: req)
+    private func verifyToken() async {
+        do {
+            try await getDefaultConversationInfo()
+        } catch {
+            clearAuthState()
         }
+        isVerifying = false
+    }
+
+    private func clearAuthState() {
         UserDefaults.standard.removeObject(forKey: tokenKey)
         UserDefaults.standard.removeObject(forKey: userIdKey)
         UserDefaults.standard.removeObject(forKey: usernameKey)
@@ -55,6 +60,16 @@ class DeviceManager: ObservableObject {
         username = nil
         isLoggedIn = false
         defaultConversation = nil
+    }
+
+    func logout() async {
+        if let t = token {
+            var req = URLRequest(url: URL(string: "\(baseURL)/api/auth/logout")!)
+            req.httpMethod = "POST"
+            req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization")
+            _ = try? await URLSession.shared.data(for: req)
+        }
+        clearAuthState()
     }
 
     func login(username: String, password: String) async throws {

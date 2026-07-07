@@ -1,27 +1,13 @@
 import SwiftUI
-import UIKit
 
 @main
 struct xhanHelperApp: App {
     @StateObject private var deviceManager = DeviceManager()
-    @State private var isChecking = true
 
     var body: some Scene {
         WindowGroup {
-            if isChecking {
+            if deviceManager.isVerifying {
                 SplashView()
-                    .task {
-                        if deviceManager.isLoggedIn {
-                            let api = APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
-                            do {
-                                _ = try await api.listConversations()
-                            } catch {
-                                await deviceManager.logout()
-                            }
-                        }
-                        try? await Task.sleep(nanoseconds: 600_000_000)
-                        isChecking = false
-                    }
             } else if deviceManager.isLoggedIn {
                 ContentView(deviceManager: deviceManager)
             } else {

@@ -23,7 +23,6 @@ class DeviceManager: ObservableObject {
     var baseURL: String {
         #if DEBUG
         let url = UserDefaults.standard.string(forKey: "xhan_server_url") ?? Self.defaultBaseURL
-        print("[DeviceManager] baseURL = \(url)")
         return url
         #else
         return Self.defaultBaseURL

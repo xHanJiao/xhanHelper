@@ -67,6 +67,9 @@ struct SettingsView: View {
                 NavigationLink(destination: DocumentListView(apiClient: apiClient)) {
                     Label("文档", systemImage: "doc.text")
                 }
+                NavigationLink(destination: LogDiagnosticView()) {
+                    Label("诊断日志", systemImage: "exclamationmark.bubble")
+                }
             } header: {
                 Text("浏览")
             }

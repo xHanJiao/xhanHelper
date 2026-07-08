@@ -5,12 +5,18 @@ struct DocumentListView: View {
     @State private var documents: [Document] = []
     @State private var isLoading = true
     @State private var total = 0
+    @State private var errorMessage: String?
     private let pageSize = 24
 
     var body: some View {
         Group {
             if isLoading {
                 ProgressView()
+            } else if let err = errorMessage {
+                VStack(spacing: 12) {
+                    Text(err).foregroundColor(.secondary)
+                    Button("重试") { Task { await load() } }
+                }
             } else if documents.isEmpty {
                 Text("暂无文档")
                     .foregroundColor(.secondary)
@@ -63,7 +69,11 @@ struct DocumentListView: View {
             let resp = try await apiClient.listDocuments(limit: pageSize, offset: 0)
             documents = resp.documents
             total = resp.total
-        } catch {}
+            errorMessage = nil
+        } catch {
+            LogBuffer.shared.error("DocumentListView.load: \(error)")
+            errorMessage = "加载失败: \(error.localizedDescription)"
+        }
         isLoading = false
     }
 
@@ -73,7 +83,9 @@ struct DocumentListView: View {
         do {
             let resp = try await apiClient.listDocuments(limit: pageSize, offset: newOffset)
             documents.append(contentsOf: resp.documents)
-        } catch {}
+        } catch {
+            LogBuffer.shared.error("DocumentListView.loadMore: \(error)")
+        }
     }
 
     private func delete(_ doc: Document) async {
@@ -81,7 +93,9 @@ struct DocumentListView: View {
             try await apiClient.deleteDocument(id: doc.id)
             documents.removeAll { $0.id == doc.id }
             total -= 1
-        } catch {}
+        } catch {
+            LogBuffer.shared.error("DocumentListView.delete: \(error)")
+        }
     }
 
     private func formatDate(_ iso: String) -> String {

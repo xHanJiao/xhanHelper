@@ -138,6 +138,8 @@ class APIClient {
         if !p.isEmpty, let jsonData = try? JSONSerialization.data(withJSONObject: p),
            let jsonStr = String(data: jsonData, encoding: .utf8) {
             cb["params_json"] = jsonStr
+        } else if !p.isEmpty {
+            LogBuffer.shared.error("APIClient.createAgent: failed to serialize params_json")
         }
         return try await post("/api/agents", body: cb)
 	}
@@ -151,9 +153,11 @@ class APIClient {
 		if let t = thinking { p["thinking"] = t }
 		if let temp = temperature { p["temperature"] = temp }
 		if let mt = maxTokens { p["max_tokens"] = mt }
-		if !p.isEmpty, let jsonData = try? JSONSerialization.data(withJSONObject: p),
+        if !p.isEmpty, let jsonData = try? JSONSerialization.data(withJSONObject: p),
            let jsonStr = String(data: jsonData, encoding: .utf8) {
             body["params_json"] = jsonStr
+        } else if !p.isEmpty {
+            LogBuffer.shared.error("APIClient.updateAgent: failed to serialize params_json")
         }
 		return try await patch("/api/agents/\(id)", body: body)
 	}

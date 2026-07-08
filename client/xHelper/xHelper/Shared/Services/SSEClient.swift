@@ -1,6 +1,9 @@
 import Foundation
+import OSLog
 
 final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private static let log = Logger(subsystem: "com.xhan.xhanHelper", category: "sseclient")
+
     private var session: URLSession!
     private var task: URLSessionDataTask?
     private var lineBuffer = ""
@@ -31,6 +34,9 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         if memoryThreshold != 0.5 { body["memory_threshold"] = memoryThreshold }
         if memoryLimit != 8 { body["memory_limit"] = memoryLimit }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        if req.httpBody == nil {
+            Self.log.error("failed to serialize request body")
+        }
 
         task = session.dataTask(with: req)
         task?.resume()

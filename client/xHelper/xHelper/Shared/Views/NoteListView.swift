@@ -6,12 +6,18 @@ struct NoteListView: View {
     @State private var isLoading = true
     @State private var total = 0
     @State private var selectedNote: Note?
+    @State private var errorMessage: String?
     private let pageSize = 50
 
     var body: some View {
         Group {
             if isLoading {
                 ProgressView()
+            } else if let err = errorMessage {
+                VStack(spacing: 12) {
+                    Text(err).foregroundColor(.secondary)
+                    Button("重试") { Task { await load() } }
+                }
             } else if notes.isEmpty {
                 Text("暂无笔记")
                     .foregroundColor(.secondary)
@@ -73,7 +79,11 @@ struct NoteListView: View {
             let resp = try await apiClient.listNotes(limit: pageSize, offset: 0)
             notes = resp.notes
             total = resp.total
-        } catch {}
+            errorMessage = nil
+        } catch {
+            LogBuffer.shared.error("NoteListView.load: \(error)")
+            errorMessage = "加载失败: \(error.localizedDescription)"
+        }
         isLoading = false
     }
 
@@ -83,7 +93,9 @@ struct NoteListView: View {
         do {
             let resp = try await apiClient.listNotes(limit: pageSize, offset: newOffset)
             notes.append(contentsOf: resp.notes)
-        } catch {}
+        } catch {
+            LogBuffer.shared.error("NoteListView.loadMore: \(error)")
+        }
     }
 
     private func formatDate(_ iso: String) -> String {

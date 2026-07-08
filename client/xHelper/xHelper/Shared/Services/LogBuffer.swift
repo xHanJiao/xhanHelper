@@ -20,14 +20,18 @@ class LogBuffer: ObservableObject {
         append(entry)
     }
 
-    func info(_ msg: String, file: String = #file, line: Int = #line) {
-        let entry = LogEntry(level: .info, message: msg, file: file, line: line)
+    func info(_ msg: @autoclosure () -> String, file: String = #file, line: Int = #line) {
+        #if DEBUG
+        let entry = LogEntry(level: .info, message: msg(), file: file, line: line)
         append(entry)
+        #endif
     }
 
-    func debug(_ msg: String, file: String = #file, line: Int = #line) {
-        let entry = LogEntry(level: .debug, message: msg, file: file, line: line)
+    func debug(_ msg: @autoclosure () -> String, file: String = #file, line: Int = #line) {
+        #if DEBUG
+        let entry = LogEntry(level: .debug, message: msg(), file: file, line: line)
         append(entry)
+        #endif
     }
 
     private func append(_ entry: LogEntry) {

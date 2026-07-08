@@ -24,6 +24,7 @@ class ConversationListViewModel: ObservableObject {
             if nsErr.code == 401 {
                 isUnauthorized = true
             }
+            LogBuffer.shared.error("ConversationListViewModel.load: \(error)")
         }
     }
 
@@ -43,7 +44,7 @@ class ConversationListViewModel: ObservableObject {
                 )
             }
         } catch {
-            // 静默失败
+            LogBuffer.shared.error("ConversationListViewModel.rename: \(error)")
         }
     }
 
@@ -52,7 +53,7 @@ class ConversationListViewModel: ObservableObject {
             try await apiClient.deleteConversation(id: id)
             conversations.removeAll { $0.id == id }
         } catch {
-            // 静默失败
+            LogBuffer.shared.error("ConversationListViewModel.delete: \(error)")
         }
     }
 }

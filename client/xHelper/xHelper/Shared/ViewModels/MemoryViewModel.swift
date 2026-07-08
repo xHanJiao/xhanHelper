@@ -28,6 +28,7 @@ class MemoryViewModel: ObservableObject {
             memories = resp.memories
             hasMore = resp.total >= 50
         } catch {
+            LogBuffer.shared.error("MemoryViewModel.load: \(error)")
             errorMessage = error.localizedDescription
         }
         isLoading = false
@@ -42,6 +43,7 @@ class MemoryViewModel: ObservableObject {
             memories.append(contentsOf: resp.memories)
             hasMore = resp.total >= 50
         } catch {
+            LogBuffer.shared.error("MemoryViewModel.loadMore: \(error)")
             errorMessage = error.localizedDescription
         }
         isLoading = false
@@ -53,6 +55,7 @@ class MemoryViewModel: ObservableObject {
         do {
             try await apiClient.deleteMemory(id: id)
         } catch {
+            LogBuffer.shared.error("MemoryViewModel.delete: \(error)")
             withAnimation { memories.append(removed) }
             errorMessage = error.localizedDescription
         }
@@ -75,6 +78,7 @@ class MemoryViewModel: ObservableObject {
         do {
             try await apiClient.batchDeleteMemories(ids: ids)
         } catch {
+            LogBuffer.shared.error("MemoryViewModel.batchDelete: \(error)")
             errorMessage = error.localizedDescription
             await load()
         }

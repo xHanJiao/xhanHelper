@@ -41,7 +41,10 @@ class ChatViewModel: ObservableObject {
     }
 
     func refreshAndCacheLLMConfig() async {
-        guard let config = try? await apiClient.getLLMConfig() else { return }
+        guard let config = try? await apiClient.getLLMConfig() else {
+            LogBuffer.shared.warning("ChatViewModel.refreshAndCacheLLMConfig: failed, using cached defaults")
+            return
+        }
         if let t = config.temperature { Self.cachedTemperature = t }
         if let m = config.maxTokens { Self.cachedMaxTokens = m }
         if let th = config.thinking { Self.cachedThinking = th }
@@ -94,6 +97,7 @@ class ChatViewModel: ObservableObject {
             hasMoreBefore = result.hasMoreBefore
             hasMoreAfter = result.hasMoreAfter
         } catch {
+            LogBuffer.shared.error("ChatViewModel.loadConversation: \(error)")
             errorMessage = "加载消息失败: \(error.localizedDescription)"
         }
     }
@@ -125,6 +129,7 @@ class ChatViewModel: ObservableObject {
                 hasMoreAfter = result.hasMoreAfter
             }
         } catch {
+            LogBuffer.shared.error("ChatViewModel.loadMore: \(error)")
             errorMessage = "加载更多失败: \(error.localizedDescription)"
         }
         isLoadingMore = false
@@ -193,6 +198,7 @@ class ChatViewModel: ObservableObject {
             try await apiClient.deleteMessage(conversationId: convId, messageId: msg.id)
             messages.removeAll { $0.id == msg.id }
         } catch {
+            LogBuffer.shared.error("ChatViewModel.deleteMessage: \(error)")
             errorMessage = "删除消息失败: \(error.localizedDescription)"
         }
     }

@@ -22,6 +22,7 @@ class PromptViewModel: ObservableObject {
             flashPrompts = resp.prompts.filter { $0.promptType == "flash" }
             proPrompts = resp.prompts.filter { $0.promptType == "pro" }
         } catch {
+            LogBuffer.shared.error("PromptViewModel.load: \(error)")
             self.error = error.localizedDescription
         }
         isLoading = false
@@ -33,6 +34,7 @@ class PromptViewModel: ObservableObject {
             await load()
             return true
         } catch {
+            LogBuffer.shared.error("PromptViewModel.create: \(error)")
             self.error = error.localizedDescription
             return false
         }
@@ -43,6 +45,7 @@ class PromptViewModel: ObservableObject {
             try await apiClient.rollbackPrompt(id: prompt.id)
             await load()
         } catch {
+            LogBuffer.shared.error("PromptViewModel.rollback: \(error)")
             self.error = error.localizedDescription
         }
     }
@@ -52,6 +55,7 @@ class PromptViewModel: ObservableObject {
             try await apiClient.deletePrompt(id: prompt.id)
             await load()
         } catch {
+            LogBuffer.shared.error("PromptViewModel.delete: \(error)")
             self.error = error.localizedDescription
         }
     }

@@ -1,0 +1,4 @@
+*.xcsettings
+*.xcbkptlist
+*.plist
+xcschememanagement.plist

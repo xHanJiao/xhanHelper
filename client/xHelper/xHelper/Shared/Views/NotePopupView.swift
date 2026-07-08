@@ -6,12 +6,18 @@ struct NotePopupView: View {
 
     @State private var notes: [Note] = []
     @State private var isLoading = true
+    @State private var errorMessage: String?
 
     var body: some View {
         NavigationStack {
             Group {
                 if isLoading {
                     ProgressView("加载中...")
+                } else if let err = errorMessage {
+                    VStack(spacing: 12) {
+                        Text(err).foregroundColor(.secondary)
+                        Button("重试") { Task { await load() } }
+                    }
                 } else if notes.isEmpty {
                     Text("暂无笔记详情")
                         .foregroundColor(.secondary)
@@ -45,7 +51,11 @@ struct NotePopupView: View {
         guard !noteIDs.isEmpty else { isLoading = false; return }
         do {
             notes = try await apiClient.batchGetNotes(ids: noteIDs)
-        } catch {}
+            errorMessage = nil
+        } catch {
+            LogBuffer.shared.error("NotePopupView.load: \(error)")
+            errorMessage = "加载失败: \(error.localizedDescription)"
+        }
         isLoading = false
     }
 }

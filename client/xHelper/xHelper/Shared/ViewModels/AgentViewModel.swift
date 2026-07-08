@@ -24,6 +24,7 @@ class AgentViewModel: ObservableObject {
             let resp = try await apiClient.listAgents()
             agents = resp.agents
         } catch {
+            LogBuffer.shared.error("AgentViewModel.load: \(error)")
             errorMessage = error.localizedDescription
         }
         isLoading = false
@@ -35,6 +36,7 @@ class AgentViewModel: ObservableObject {
             agents.insert(agent, at: 0)
             showCreateSheet = false
         } catch {
+            LogBuffer.shared.error("AgentViewModel.create: \(error)")
             errorMessage = error.localizedDescription
         }
     }
@@ -47,6 +49,7 @@ class AgentViewModel: ObservableObject {
             }
             editingAgent = nil
         } catch {
+            LogBuffer.shared.error("AgentViewModel.update: \(error)")
             errorMessage = error.localizedDescription
         }
     }
@@ -56,6 +59,7 @@ class AgentViewModel: ObservableObject {
             try await apiClient.deleteAgent(id: id)
             agents.removeAll { $0.id == id }
         } catch {
+            LogBuffer.shared.error("AgentViewModel.delete: \(error)")
             errorMessage = error.localizedDescription
         }
     }

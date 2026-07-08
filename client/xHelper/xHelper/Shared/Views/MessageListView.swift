@@ -27,6 +27,11 @@ struct MessageListView: View {
                         guard initialLoadDone, isVisible, !viewModel.isLoadingMore else { return }
                         Task { await viewModel.loadMore(direction: "before") }
                     }
+                } else {
+                    Text("已无更早消息")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
                 }
 
                 ForEach(viewModel.messages) { msg in

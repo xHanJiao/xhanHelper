@@ -1,6 +1,5 @@
 import Combine
 import Foundation
-import QuartzCore
 import SwiftUI
 #if os(iOS)
 import UIKit
@@ -69,7 +68,6 @@ class ChatViewModel: ObservableObject {
     @Published var hasMoreBefore = false
     @Published var hasMoreAfter = false
     @Published var isLoadingMore = false
-    var anchorMessageID: String?
 
     private let apiClient: APIClient
     private let sseClient = SSEClient()
@@ -107,7 +105,6 @@ class ChatViewModel: ObservableObject {
         guard !isLoadingMore else { return }
         isLoadingMore = true
         let cursor = direction == "before" ? oldestCursor : newestCursor
-        print("[DIAG t=\(String(format: "%.3f", CACurrentMediaTime()))] loadMore(\(direction)) START cursor=\(cursor) currentCount=\(messages.count)")
         do {
             let result = try await apiClient.getMessagesCursor(
                 conversationId: conversationId ?? "",
@@ -116,8 +113,6 @@ class ChatViewModel: ObservableObject {
             )
             if direction == "before" {
                 let newMsgs = result.messages.flatMap { $0.withoutToolCalls() }
-                anchorMessageID = messages.first?.id
-                print("[DIAG t=\(String(format: "%.3f", CACurrentMediaTime()))] loadMore(before) FETCHED new=\(newMsgs.count) anchor=\(anchorMessageID ?? "nil")")
                 messages = newMsgs + messages
                 oldestCursor = result.oldestCursor
                 let stillHasMore = result.hasMoreBefore

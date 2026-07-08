@@ -68,6 +68,7 @@ class ChatViewModel: ObservableObject {
     @Published var hasMoreBefore = false
     @Published var hasMoreAfter = false
     @Published var isLoadingMore = false
+    @Published var isInitialLoading = true
 
     private let apiClient: APIClient
     private let sseClient = SSEClient()
@@ -88,6 +89,8 @@ class ChatViewModel: ObservableObject {
         isStreaming = false
         conversationId = id
         conversationTitle = title
+        isInitialLoading = true
+        defer { isInitialLoading = false }
         do {
             let result = try await apiClient.getMessagesCursor(conversationId: id)
             messages = result.messages.flatMap { $0.withoutToolCalls() }

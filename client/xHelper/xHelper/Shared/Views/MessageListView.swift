@@ -5,6 +5,37 @@ struct MessageListView: View {
     @State private var initialLoadDone = false
 
     var body: some View {
+        Group {
+            if !viewModel.messages.isEmpty {
+                messageScrollView
+            } else if viewModel.isInitialLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if viewModel.errorMessage != nil {
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Text("暂无消息")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .onAppear {
+            initialLoadDone = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                initialLoadDone = true
+            }
+        }
+        .onChange(of: viewModel.conversationId) { _, _ in
+            initialLoadDone = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                initialLoadDone = true
+            }
+        }
+    }
+
+    private var messageScrollView: some View {
         ScrollView {
             VStack(spacing: 12) {
                 // status（思考提示）→ 逻辑最前 → 视觉最底（最新消息下方）
@@ -37,18 +68,6 @@ struct MessageListView: View {
         .scaleEffect(y: -1)
         .defaultScrollAnchor(.top)
         .dismissKeyboardOnTap()
-        .onAppear {
-            initialLoadDone = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                initialLoadDone = true
-            }
-        }
-        .onChange(of: viewModel.conversationId) { _, _ in
-            initialLoadDone = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                initialLoadDone = true
-            }
-        }
     }
 
     // 单条消息行。流式那条：ChatBubble 在前、ThinkingBubble 在后，

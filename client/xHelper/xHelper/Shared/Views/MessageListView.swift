@@ -1,89 +1,105 @@
 import SwiftUI
+import QuartzCore
+
+func diagTS() -> String {
+    String(format: "%.3f", CACurrentMediaTime())
+}
 
 struct MessageListView: View {
     @ObservedObject var viewModel: ChatViewModel
-    @State private var scrollTarget: String?
     @State private var initialLoadDone = false
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 12) {
-                if viewModel.hasMoreBefore {
-                    HStack {
-                        if viewModel.isLoadingMore {
-                            ProgressView().scaleEffect(0.7)
-                        } else {
-                            Image(systemName: "arrow.up")
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 12) {
+                    if viewModel.hasMoreBefore {
+                        HStack {
+                            if viewModel.isLoadingMore {
+                                ProgressView().scaleEffect(0.7)
+                            } else {
+                                Image(systemName: "arrow.up")
+                            }
+                            Text(viewModel.isLoadingMore ? "正在加载..." : "加载更早的消息")
+                                .font(.caption)
                         }
-                        Text(viewModel.isLoadingMore ? "正在加载..." : "加载更早的消息")
-                            .font(.caption)
-                    }
-                    .foregroundColor(.blue)
-                    .onTapGesture {
-                        guard !viewModel.isLoadingMore else { return }
-                        Task { await viewModel.loadMore(direction: "before") }
-                    }
-                    .onScrollVisibilityChange(threshold: 0.1) { isVisible in
-                        guard initialLoadDone, isVisible, !viewModel.isLoadingMore else { return }
-                        Task { await viewModel.loadMore(direction: "before") }
-                    }
-                } else {
-                    Text("已无更早消息")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                ForEach(viewModel.messages) { msg in
-                    if msg.id == "__streaming__", let thought = viewModel.thoughtMessage {
-                        ThinkingBubble(text: thought, isStreaming: !viewModel.thoughtDone)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal)
-                    }
-                    if msg.role == "tool" {
-                        ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id, createdAt: msg.createdAt)
-                    } else if msg.role == "user" {
-                        ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt)
+                        .foregroundColor(.blue)
+                        .onTapGesture {
+                            guard !viewModel.isLoadingMore else { return }
+                            Task { await viewModel.loadMore(direction: "before") }
+                        }
+                        .onScrollVisibilityChange(threshold: 0.1) { isVisible in
+                            guard initialLoadDone, isVisible, !viewModel.isLoadingMore else { return }
+                            print("[DIAG t=\(diagTS())] header triggered loadMore(before) count=\(viewModel.messages.count)")
+                            Task { await viewModel.loadMore(direction: "before") }
+                        }
                     } else {
-                        ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt)
-                    }
-                }
-
-                if let status = viewModel.statusMessage {
-                    HStack {
-                        Image(systemName: "brain.head.profile")
+                        Text("已无更早消息")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        Text(status)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Spacer()
                     }
-                    .padding(.horizontal)
-                }
 
-                Color.clear.frame(height: 1).id("bottom")
+                    ForEach(viewModel.messages) { msg in
+                        if msg.id == "__streaming__", let thought = viewModel.thoughtMessage {
+                            ThinkingBubble(text: thought, isStreaming: !viewModel.thoughtDone)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal)
+                        }
+                        if msg.role == "tool" {
+                            ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id, createdAt: msg.createdAt)
+                        } else if msg.role == "user" {
+                            ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt)
+                        } else {
+                            ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt)
+                        }
+                    }
+
+                    if let status = viewModel.statusMessage {
+                        HStack {
+                            Image(systemName: "brain.head.profile")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text(status)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                        .padding(.horizontal)
+                    }
+
+                    Color.clear.frame(height: 1).id("bottom")
+                }
+                .padding(.vertical)
             }
-            .padding(.vertical)
-        }
-        .defaultScrollAnchor(viewModel.hasMoreBefore ? .bottom : .top)
-        .scrollPosition(id: $scrollTarget, anchor: .bottom)
-        .dismissKeyboardOnTap()
-        .onAppear {
-            initialLoadDone = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                initialLoadDone = true
+            .defaultScrollAnchor(viewModel.hasMoreBefore ? .bottom : .top)
+            .onScrollPhaseChange { oldPhase, newPhase, ctx in
+                print("[DIAG t=\(diagTS())] phase \(oldPhase)->\(newPhase) offsetY=\(String(format: "%.1f", ctx.geometry.contentOffset.y))")
             }
-        }
-        .onChange(of: viewModel.conversationId) { _, _ in
-            initialLoadDone = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                initialLoadDone = true
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
+                guard old != new else { return }
+                print("[DIAG t=\(diagTS())] contentHeight \(String(format: "%.1f", old))->\(String(format: "%.1f", new)) delta=\(String(format: "%.1f", new - old))")
             }
-        }
-        .onChange(of: viewModel.messages.count) { oldCount, newCount in
-            guard newCount > oldCount, let anchor = viewModel.anchorMessageID else { return }
-            scrollTarget = anchor
-            viewModel.anchorMessageID = nil
+            .dismissKeyboardOnTap()
+            .onAppear {
+                initialLoadDone = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    initialLoadDone = true
+                }
+            }
+            .onChange(of: viewModel.conversationId) { _, _ in
+                initialLoadDone = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    initialLoadDone = true
+                }
+            }
+            .onChange(of: viewModel.messages.count) { oldCount, newCount in
+                guard newCount > oldCount, let anchor = viewModel.anchorMessageID else { return }
+                print("[DIAG t=\(diagTS())] onChange count \(oldCount)->\(newCount) BEFORE scrollTo anchor=\(anchor)")
+                var t = Transaction(); t.disablesAnimations = true
+                withTransaction(t) { proxy.scrollTo(anchor, anchor: .top) }
+                print("[DIAG t=\(diagTS())] AFTER scrollTo anchor=\(anchor)")
+                viewModel.anchorMessageID = nil
+            }
         }
     }
 }

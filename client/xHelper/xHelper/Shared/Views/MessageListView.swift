@@ -32,7 +32,6 @@ struct MessageListView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                }
 
                 ForEach(viewModel.messages) { msg in
                     if msg.id == "__streaming__", let thought = viewModel.thoughtMessage {
@@ -41,11 +40,11 @@ struct MessageListView: View {
                             .padding(.horizontal)
                     }
                     if msg.role == "tool" {
-                        ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
+                        ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id, createdAt: msg.createdAt, onDelete: { Task { await viewModel.deleteMessage(msg) } })
                     } else if msg.role == "user" {
-                        ChatBubble(text: msg.content, isUser: true, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
+                        ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt, onDelete: { Task { await viewModel.deleteMessage(msg) } })
                     } else {
-                        ChatBubble(text: msg.content, isUser: false, messageId: msg.id, onDelete: { Task { await viewModel.deleteMessage(msg) } })
+                        ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt, onDelete: { Task { await viewModel.deleteMessage(msg) } })
                     }
                 }
 

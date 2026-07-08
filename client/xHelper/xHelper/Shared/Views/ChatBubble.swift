@@ -64,48 +64,66 @@ struct ChatBubble: View {
     let isUser: Bool
     var isTool: Bool = false
     var messageId: String = ""
+    var createdAt: String? = nil
     var onDelete: (() -> Void)? = nil
+
+    @State private var showTime = false
 
     private var isStreamingPlaceholder: Bool {
         messageId == "__streaming__" && text.isEmpty
     }
 
     var body: some View {
-        HStack {
-            if isUser || isTool { Spacer() }
+        VStack(spacing: 2) {
+            HStack {
+                if isUser || isTool { Spacer() }
 
-            if isTool {
-                toolBubble
-            } else if isUser {
-                Text(text)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(Color.blue).foregroundColor(.white).cornerRadius(18)
-                    .contextMenu { copyButton; if onDelete != nil { deleteButton } }
-            } else if isStreamingPlaceholder {
-                HStack(spacing: 5) {
-                    ForEach(0..<3) { i in
-                        DotView(delay: 0.2 * Double(i))
+                if isTool {
+                    toolBubble
+                } else if isUser {
+                    Text(text)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(Color.blue).foregroundColor(.white).cornerRadius(18)
+                        .contextMenu { copyButton; if onDelete != nil { deleteButton } }
+                } else if isStreamingPlaceholder {
+                    HStack(spacing: 5) {
+                        ForEach(0..<3) { i in
+                            DotView(delay: 0.2 * Double(i))
+                        }
                     }
-                }
-                .padding(.horizontal, 14).padding(.vertical, 12)
-                .background(Color.gray.opacity(0.15))
-                .cornerRadius(18)
-            } else {
-                Markdown(text)
-                    .markdownTheme(.gitHub)
-                    .markdownCodeSyntaxHighlighter(.plainText)
-                    .frame(alignment: .leading)
-                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .padding(.horizontal, 14).padding(.vertical, 12)
                     .background(Color.gray.opacity(0.15))
                     .cornerRadius(18)
-                    .contextMenu { copyButton; if onDelete != nil { deleteButton } }
+                } else {
+                    Markdown(text)
+                        .markdownTheme(.gitHub)
+                        .markdownCodeSyntaxHighlighter(.plainText)
+                        .frame(alignment: .leading)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(Color.gray.opacity(0.15))
+                        .cornerRadius(18)
+                        .contextMenu { copyButton; if onDelete != nil { deleteButton } }
+                }
+
+                if !isUser && !isTool { Spacer() }
             }
 
-            if !isUser && !isTool { Spacer() }
+            if let time = createdAt, showTime {
+                Text(formatCreatedAt(time))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+            }
         }
         .padding(.horizontal)
+        .onTapGesture {
+            guard createdAt != nil else { return }
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showTime.toggle()
+            }
+        }
     }
 
     var deleteButton: some View {
@@ -113,6 +131,23 @@ struct ChatBubble: View {
             onDelete?()
         } label: {
             Label("删除", systemImage: "trash")
+        }
+    }
+
+    private func formatCreatedAt(_ iso: String) -> String {
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = fmt.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else {
+            return iso
+        }
+        if Calendar.current.isDateInToday(date) {
+            let f = DateFormatter()
+            f.dateFormat = "HH:mm"
+            return f.string(from: date)
+        } else {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy/MM/dd HH:mm:ss"
+            return f.string(from: date)
         }
     }
 

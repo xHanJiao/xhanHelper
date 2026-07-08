@@ -40,11 +40,11 @@ struct MessageListView: View {
                             .padding(.horizontal)
                     }
                     if msg.role == "tool" {
-                        ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id, createdAt: msg.createdAt, onDelete: { Task { await viewModel.deleteMessage(msg) } })
+                        ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id, createdAt: msg.createdAt)
                     } else if msg.role == "user" {
-                        ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt, onDelete: { Task { await viewModel.deleteMessage(msg) } })
+                        ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt)
                     } else {
-                        ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt, onDelete: { Task { await viewModel.deleteMessage(msg) } })
+                        ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt)
                     }
                 }
 

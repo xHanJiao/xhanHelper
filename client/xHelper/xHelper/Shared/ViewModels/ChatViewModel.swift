@@ -192,17 +192,6 @@ class ChatViewModel: ObservableObject {
         finishStreaming()
     }
 
-    func deleteMessage(_ msg: Message) async {
-        guard let convId = conversationId, msg.id != "__streaming__" else { return }
-        do {
-            try await apiClient.deleteMessage(conversationId: convId, messageId: msg.id)
-            messages.removeAll { $0.id == msg.id }
-        } catch {
-            LogBuffer.shared.error("ChatViewModel.deleteMessage: \(error)")
-            errorMessage = "删除消息失败: \(error.localizedDescription)"
-        }
-    }
-
     // MARK: SSE Event Handling
 
     private func handleEvent(_ event: StreamEvent) {

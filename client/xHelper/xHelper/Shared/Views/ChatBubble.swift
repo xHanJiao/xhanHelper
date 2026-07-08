@@ -65,7 +65,6 @@ struct ChatBubble: View {
     var isTool: Bool = false
     var messageId: String = ""
     var createdAt: String? = nil
-    var onDelete: (() -> Void)? = nil
 
     @State private var showTime = false
 
@@ -86,7 +85,7 @@ struct ChatBubble: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(Color.blue).foregroundColor(.white).cornerRadius(18)
-                        .contextMenu { copyButton; if onDelete != nil { deleteButton } }
+                        .contextMenu { copyButton }
                 } else if isStreamingPlaceholder {
                     HStack(spacing: 5) {
                         ForEach(0..<3) { i in
@@ -104,7 +103,7 @@ struct ChatBubble: View {
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(Color.gray.opacity(0.15))
                         .cornerRadius(18)
-                        .contextMenu { copyButton; if onDelete != nil { deleteButton } }
+                        .contextMenu { copyButton }
                 }
 
                 if !isUser && !isTool { Spacer() }
@@ -123,14 +122,6 @@ struct ChatBubble: View {
             withAnimation(.easeInOut(duration: 0.2)) {
                 showTime.toggle()
             }
-        }
-    }
-
-    var deleteButton: some View {
-        Button(role: .destructive) {
-            onDelete?()
-        } label: {
-            Label("删除", systemImage: "trash")
         }
     }
 

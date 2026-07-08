@@ -51,7 +51,7 @@ struct LogDiagnosticView: View {
 
     private var sessionList: some View {
         List {
-            ForEach(logBuffer.entries) { entry in
+            ForEach(Array(logBuffer.entries.reversed())) { entry in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Text(entry.level.icon).font(.caption)

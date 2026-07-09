@@ -3,16 +3,21 @@ import SwiftUI
 @main
 struct xhanHelperApp: App {
     @StateObject private var deviceManager = DeviceManager()
+    @StateObject private var colorSchemeManager = ColorSchemeManager()
 
     var body: some Scene {
         WindowGroup {
-            if deviceManager.isVerifying {
-                SplashView()
-            } else if deviceManager.isLoggedIn {
-                ContentView(deviceManager: deviceManager)
-            } else {
-                LoginView(deviceManager: deviceManager)
+            Group {
+                if deviceManager.isVerifying {
+                    SplashView()
+                } else if deviceManager.isLoggedIn {
+                    ContentView(deviceManager: deviceManager)
+                } else {
+                    LoginView(deviceManager: deviceManager)
+                }
             }
+            .environmentObject(colorSchemeManager)
+            .preferredColorScheme(colorSchemeManager.selectedScheme.colorScheme)
         }
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var deviceManager: DeviceManager
+    @EnvironmentObject var colorSchemeManager: ColorSchemeManager
     @AppStorage("xhan_server_url") private var serverURL = DeviceManager.defaultBaseURL
     var onChatWithAgent: ((String) -> Void)?
 
@@ -44,6 +45,16 @@ struct SettingsView: View {
                 Text("服务器")
             }
             #endif
+
+            Section {
+                Picker("外观", selection: $colorSchemeManager.selectedScheme) {
+                    ForEach(AppColorScheme.allCases, id: \.self) { scheme in
+                        Text(scheme.label).tag(scheme)
+                    }
+                }
+            } header: {
+                Text("显示")
+            }
 
             Section {
                 let agentVM = AgentViewModel(apiClient: apiClient)

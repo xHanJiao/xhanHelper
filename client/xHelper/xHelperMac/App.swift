@@ -4,16 +4,21 @@ import AppKit
 @main
 struct xhanHelperMacApp: App {
     @StateObject private var deviceManager = DeviceManager()
+    @StateObject private var colorSchemeManager = ColorSchemeManager()
 
     var body: some Scene {
         WindowGroup {
-            if deviceManager.isLoggedIn {
-                ContentView(deviceManager: deviceManager)
-                    .frame(minWidth: 600, minHeight: 500)
-            } else {
-                LoginMacView(deviceManager: deviceManager)
-                    .frame(width: 400, height: 380)
+            Group {
+                if deviceManager.isLoggedIn {
+                    ContentView(deviceManager: deviceManager)
+                        .frame(minWidth: 600, minHeight: 500)
+                } else {
+                    LoginMacView(deviceManager: deviceManager)
+                        .frame(width: 400, height: 380)
+                }
             }
+            .environmentObject(colorSchemeManager)
+            .preferredColorScheme(colorSchemeManager.selectedScheme.colorScheme)
         }
         .windowResizability(.contentMinSize)
     }

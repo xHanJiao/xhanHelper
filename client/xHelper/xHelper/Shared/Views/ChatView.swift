@@ -11,6 +11,8 @@ struct ChatView: View {
 
     var body: some View {
         ZStack {
+            Color("chatBackground").ignoresSafeArea()
+
             VStack(spacing: 0) {
             // 消息列表
             MessageListView(viewModel: viewModel)

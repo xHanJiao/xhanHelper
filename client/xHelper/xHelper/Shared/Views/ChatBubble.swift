@@ -71,7 +71,6 @@ private struct PulsingText: View {
 struct ChatBubble: View {
     let text: String
     let isUser: Bool
-    var isTool: Bool = false
     var messageId: String = ""
     var createdAt: String? = nil
     var showTime: Bool = false
@@ -84,11 +83,9 @@ struct ChatBubble: View {
     var body: some View {
         VStack(spacing: 2) {
             HStack {
-                if isUser || isTool { Spacer() }
+                if isUser { Spacer() }
 
-                if isTool {
-                    toolBubble
-                } else if isUser {
+                if isUser {
                     Text(text)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 14).padding(.vertical, 10)
@@ -112,7 +109,7 @@ struct ChatBubble: View {
                         .cornerRadius(18)
                 }
 
-                if !isUser && !isTool { Spacer() }
+                if !isUser { Spacer() }
             }
 
             if let time = createdAt, showTime {
@@ -144,17 +141,6 @@ struct ChatBubble: View {
             f.dateFormat = "yyyy/MM/dd HH:mm:ss"
             return f.string(from: date)
         }
-    }
-
-    var toolBubble: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.caption).foregroundColor(.green)
-            Text(text).font(.caption).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
-            Spacer()
-        }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(Color("bubbleTool")).cornerRadius(12)
     }
 }
 

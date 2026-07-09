@@ -140,11 +140,7 @@ struct MessageListView: View {
     @ViewBuilder
     private func messageRow(_ msg: Message) -> some View {
         VStack(spacing: 12) {
-            if msg.role == "tool" {
-                ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id, createdAt: msg.createdAt,
-                           showTime: activeTimeBubbleId == msg.id,
-                           onTapToShowTime: { toggleTimeBubble(msg.id) })
-            } else if msg.role == "user" {
+            if msg.role == "user" {
                 ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
                            showTime: activeTimeBubbleId == msg.id,
                            onTapToShowTime: { toggleTimeBubble(msg.id) })
@@ -221,7 +217,7 @@ struct MessageListView: View {
                 Text(viewModel.isLoadingMore ? "正在加载..." : "加载更早的消息")
                     .font(.caption)
             }
-            .foregroundColor(Color("appAccent"))
+            .foregroundColor(Color("accentSecondary"))
             .onTapGesture {
                 guard !viewModel.isLoadingMore else { return }
                 Task { await viewModel.loadMore(direction: "before") }

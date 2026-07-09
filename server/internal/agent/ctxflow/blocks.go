@@ -3,6 +3,7 @@ package ctxflow
 import (
 	"math"
 	"sort"
+	"time"
 
 	"xhan-helper/internal/agent/retrieval"
 )
@@ -27,8 +28,17 @@ const (
 		"它还提供了在上次会话摘要之前，更早会话摘要的ID，可以通过这个ID查看更早的对话摘要，以快速浏览之前的聊天会话信息。本条在新会话开始时自动附着。"
 )
 
+const (
+	TypeSummary         = "summary"
+	TypeHistory         = "history"
+	TypeMemory          = "memory"
+	TypeNote            = "note"
+	TypeTheme           = "theme"
+	TypeCurrentDatetime = "current_datetime"
+)
+
 // typeOrder 定义所有块的渲染顺序，也是 typeRank 的单一数据源。
-var typeOrder = []string{"summary", "history", "memory", "note", "theme", "current_datetime"}
+var typeOrder = []string{TypeSummary, TypeHistory, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime}
 
 // typeRank 从 typeOrder 派生，供排序时 O(1) 查找顺序。
 var typeRank = func() map[string]int {
@@ -60,7 +70,7 @@ type memoriesBlock struct {
 	Items       []memoryItem `xml:"memory" json:"items"`
 }
 
-func (*memoriesBlock) TypeKey() string { return "memory" }
+func (*memoriesBlock) TypeKey() string { return TypeMemory }
 
 // --- note ---
 type noteItem struct {
@@ -75,7 +85,7 @@ type notesBlock struct {
 	Items       []noteItem `xml:"note" json:"items"`
 }
 
-func (*notesBlock) TypeKey() string { return "note" }
+func (*notesBlock) TypeKey() string { return TypeNote }
 
 // --- history ---
 type historyMsg struct {
@@ -93,7 +103,7 @@ type historyBlock struct {
 	Rounds      []historyRound `xml:"round" json:"rounds"`
 }
 
-func (*historyBlock) TypeKey() string { return "history" }
+func (*historyBlock) TypeKey() string { return TypeHistory }
 
 // --- theme ---
 type themeItem struct {
@@ -107,13 +117,17 @@ type themesBlock struct {
 	Items       []themeItem `xml:"topic" json:"items"`
 }
 
-func (*themesBlock) TypeKey() string { return "theme" }
+func (*themesBlock) TypeKey() string { return TypeTheme }
 
 // --- summary ---
 type summaryItem struct {
-	Topics  string  `xml:"topics,attr,omitempty" json:"topics,omitempty"`
-	Score   float64 `xml:"score,attr,omitempty" json:"score,omitempty"`
-	Content string  `xml:",chardata" json:"content"`
+	ID              string  `xml:"id,attr,omitempty" json:"id,omitempty"`
+	Topics          string  `xml:"topics,attr,omitempty" json:"topics,omitempty"`
+	CoverFrom       string  `xml:"cover_from,attr,omitempty" json:"cover_from,omitempty"`
+	CoverTo         string  `xml:"cover_to,attr,omitempty" json:"cover_to,omitempty"`
+	ParentSummaryID string  `xml:"parent,attr,omitempty" json:"parent_summary_id,omitempty"`
+	Score           float64 `xml:"score,attr,omitempty" json:"score,omitempty"`
+	Content         string  `xml:",chardata" json:"content"`
 }
 type summariesBlock struct {
 	XMLName     struct{}      `xml:"summaries" json:"-"`
@@ -121,7 +135,7 @@ type summariesBlock struct {
 	Items       []summaryItem `xml:"summary" json:"items"`
 }
 
-func (*summariesBlock) TypeKey() string { return "summary" }
+func (*summariesBlock) TypeKey() string { return TypeSummary }
 
 // --- current_datetime ---
 type currentDatetimeBlock struct {
@@ -129,7 +143,7 @@ type currentDatetimeBlock struct {
 	Content string   `xml:",chardata"`
 }
 
-func (*currentDatetimeBlock) TypeKey() string { return "current_datetime" }
+func (*currentDatetimeBlock) TypeKey() string { return TypeCurrentDatetime }
 
 // --- user_query ---
 type userQueryBlock struct {
@@ -143,12 +157,12 @@ type blockBuilder func(items []retrieval.ContextPacket) Block
 
 // blockBuilders 按 type 注册构建函数。新增类型只需加一行。
 var blockBuilders = map[string]blockBuilder{
-	"memory":           buildMemoriesBlock,
-	"note":             buildNotesBlock,
-	"history":          buildHistoryBlock,
-	"theme":            buildThemesBlock,
-	"summary":          buildSummariesBlock,
-	"current_datetime": buildCurrentDatetimeBlock,
+	TypeMemory:          buildMemoriesBlock,
+	TypeNote:            buildNotesBlock,
+	TypeHistory:         buildHistoryBlock,
+	TypeTheme:           buildThemesBlock,
+	TypeSummary:         buildSummariesBlock,
+	TypeCurrentDatetime: buildCurrentDatetimeBlock,
 }
 
 // buildBlock 按 type 查找构建器并返回 Block，无匹配返回 nil。
@@ -256,6 +270,10 @@ func buildSummariesBlock(items []retrieval.ContextPacket) Block {
 		it := summaryItem{Content: pkt.Text, Score: roundScore(pkt.Score)}
 		if meta, ok := pkt.Meta.(retrieval.SummaryMeta); ok {
 			it.Content = meta.SummaryText
+			it.ID = meta.SummaryID
+			it.CoverFrom = meta.CoverFromMsgID
+			it.CoverTo = meta.CoverToMsgID
+			it.ParentSummaryID = meta.ParentSummaryID
 			if meta.Topics != "" {
 				it.Topics = meta.Topics
 			}
@@ -275,6 +293,32 @@ func buildCurrentDatetimeBlock(items []retrieval.ContextPacket) Block {
 // roundScore 将相似度分数保留 4 位小数，避免 XML 中输出过长的浮点字面量。
 func roundScore(s float64) float64 {
 	return math.Round(s*10000) / 10000
+}
+
+var weekdaysCN = [...]string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
+
+// DateTimeText 返回当前时间的格式化中文字符串。
+func DateTimeText(t time.Time) string {
+	return t.Format("2006年1月2日 ") + weekdaysCN[t.Weekday()] + t.Format(" 15:04 MST")
+}
+
+// DateTimePacket 生成 current_datetime 类型的 ContextPacket。
+func DateTimePacket(t time.Time) retrieval.ContextPacket {
+	return retrieval.ContextPacket{Type: TypeCurrentDatetime, Text: DateTimeText(t)}
+}
+
+// MergePackets 合并附加 packet 与检索结果，按 type 归并。
+func MergePackets(retrieveResult *RetrieveResult, extra ...retrieval.ContextPacket) map[string][]retrieval.ContextPacket {
+	packets := make(map[string][]retrieval.ContextPacket)
+	for _, pkt := range extra {
+		packets[pkt.Type] = append(packets[pkt.Type], pkt)
+	}
+	if retrieveResult != nil {
+		for k, v := range retrieveResult.Packets {
+			packets[k] = append(packets[k], v...)
+		}
+	}
+	return packets
 }
 
 // sortBlocks 按 typeRank 对 blocks 排序。

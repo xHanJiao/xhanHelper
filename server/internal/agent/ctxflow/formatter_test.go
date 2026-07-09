@@ -6,38 +6,34 @@ import (
 	"time"
 )
 
-func TestDateTimeBlock(t *testing.T) {
+func TestDateTimeText(t *testing.T) {
 	// 2026-01-07 is a Wednesday, 14:30 UTC
 	tm := time.Date(2026, 1, 7, 14, 30, 0, 0, time.UTC)
 
-	block := DateTimeBlock(tm)
-
-	if block.Type != "current_datetime" {
-		t.Errorf("Type = %q, want %q", block.Type, "current_datetime")
-	}
+	content := DateTimeText(tm)
 
 	// Content should contain: "2026年1月7日 星期三 14:30 UTC"
-	if !strings.Contains(block.Content, "2026年1月7日") {
-		t.Errorf("Content missing date: %q", block.Content)
+	if !strings.Contains(content, "2026年1月7日") {
+		t.Errorf("Content missing date: %q", content)
 	}
-	if !strings.Contains(block.Content, "星期三") {
-		t.Errorf("Content missing weekday 星期三: %q", block.Content)
+	if !strings.Contains(content, "星期三") {
+		t.Errorf("Content missing weekday 星期三: %q", content)
 	}
-	if !strings.Contains(block.Content, "14:30") {
-		t.Errorf("Content missing time: %q", block.Content)
+	if !strings.Contains(content, "14:30") {
+		t.Errorf("Content missing time: %q", content)
 	}
-	if !strings.Contains(block.Content, "UTC") {
-		t.Errorf("Content missing timezone: %q", block.Content)
+	if !strings.Contains(content, "UTC") {
+		t.Errorf("Content missing timezone: %q", content)
 	}
 
 	// Verify exact format: "2006年1月2日 星期X 15:04 MST"
 	expected := "2026年1月7日 星期三 14:30 UTC"
-	if block.Content != expected {
-		t.Errorf("Content = %q, want %q", block.Content, expected)
+	if content != expected {
+		t.Errorf("Content = %q, want %q", content, expected)
 	}
 }
 
-func TestDateTimeBlock_AllWeekdays(t *testing.T) {
+func TestDateTimeText_AllWeekdays(t *testing.T) {
 	// Week of 2026-01-01 (Thu) to 2026-01-07 (Wed), covering all 7 weekdays.
 	// 2026-01-01 = Thursday, ..., 2026-01-04 = Sunday, ..., 2026-01-07 = Wednesday.
 	tests := []struct {
@@ -61,16 +57,16 @@ func TestDateTimeBlock_AllWeekdays(t *testing.T) {
 				t.Fatalf("bad test data: Go says %s, test expects %s", expectedFromGo, tt.weekday)
 			}
 
-			block := DateTimeBlock(tt.date)
-			if !strings.Contains(block.Content, tt.weekday) {
-				t.Errorf("DateTimeBlock(%s).Content = %q, want it to contain %q",
-					tt.date.Format("2006-01-02 Monday"), block.Content, tt.weekday)
+			content := DateTimeText(tt.date)
+			if !strings.Contains(content, tt.weekday) {
+				t.Errorf("DateTimeText(%s) = %q, want it to contain %q",
+					tt.date.Format("2006-01-02 Monday"), content, tt.weekday)
 			}
 		})
 	}
 }
 
-func TestDateTimeBlock_WeekdayIndexMapping(t *testing.T) {
+func TestDateTimeText_WeekdayIndexMapping(t *testing.T) {
 	// Verify weekdaysCN array maps correctly: Sunday=0, Monday=1, ..., Saturday=6.
 	expected := [...]string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
 	if weekdaysCN != expected {
@@ -89,40 +85,40 @@ func TestDateTimeBlock_WeekdayIndexMapping(t *testing.T) {
 	}
 }
 
-func TestDateTimeBlock_EdgeCases(t *testing.T) {
+func TestDateTimeText_EdgeCases(t *testing.T) {
 	// Midnight — should still produce correct format
 	tm := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
-	block := DateTimeBlock(tm)
-	if !strings.Contains(block.Content, "00:00") {
-		t.Errorf("midnight should show 00:00: %q", block.Content)
+	content := DateTimeText(tm)
+	if !strings.Contains(content, "00:00") {
+		t.Errorf("midnight should show 00:00: %q", content)
 	}
 
 	// 2026-12-31 is a Thursday
-	if !strings.Contains(block.Content, "星期四") {
-		t.Errorf("2026-12-31 should be 星期四: %q", block.Content)
+	if !strings.Contains(content, "星期四") {
+		t.Errorf("2026-12-31 should be 星期四: %q", content)
 	}
 
 	// Leap year day — 2028-02-29 is a Tuesday
 	tm = time.Date(2028, 2, 29, 12, 0, 0, 0, time.UTC)
-	block = DateTimeBlock(tm)
-	if !strings.Contains(block.Content, "星期二") {
-		t.Errorf("2028-02-29 should be 星期二: %q", block.Content)
+	content = DateTimeText(tm)
+	if !strings.Contains(content, "星期二") {
+		t.Errorf("2028-02-29 should be 星期二: %q", content)
 	}
-	if !strings.Contains(block.Content, "2028年2月29日") {
-		t.Errorf("leap day date missing: %q", block.Content)
+	if !strings.Contains(content, "2028年2月29日") {
+		t.Errorf("leap day date missing: %q", content)
 	}
 
 	// Single-digit month/day should NOT have leading zeros (Go's Format uses "1月2日")
 	tm = time.Date(2026, 3, 5, 9, 5, 0, 0, time.UTC)
-	block = DateTimeBlock(tm)
-	if strings.Contains(block.Content, "03月") {
-		t.Errorf("month should not have leading zero: %q", block.Content)
+	content = DateTimeText(tm)
+	if strings.Contains(content, "03月") {
+		t.Errorf("month should not have leading zero: %q", content)
 	}
-	if strings.Contains(block.Content, "05日") {
-		t.Errorf("day should not have leading zero: %q", block.Content)
+	if strings.Contains(content, "05日") {
+		t.Errorf("day should not have leading zero: %q", content)
 	}
 	expected := "2026年3月5日 星期四 09:05 UTC"
-	if block.Content != expected {
-		t.Errorf("Content = %q, want %q", block.Content, expected)
+	if content != expected {
+		t.Errorf("Content = %q, want %q", content, expected)
 	}
 }

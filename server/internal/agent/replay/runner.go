@@ -104,10 +104,9 @@ type Result struct {
 
 // PreviewResult — 预览结果
 type PreviewResult struct {
-	SystemPrompt      string                 `json:"system_prompt"`
-	UserMessagePrefix string                 `json:"user_message_prefix"`
-	Messages          []llm.Message          `json:"messages"`
-	Trace             *ctxflow.RetrieveTrace `json:"trace,omitempty"`
+	SystemPrompt string                 `json:"system_prompt"`
+	Messages     []llm.Message          `json:"messages"`
+	Trace        *ctxflow.RetrieveTrace `json:"trace,omitempty"`
 }
 
 // Preview 构建 system prompt 并返回完整的请求预览
@@ -127,7 +126,6 @@ func (r *Runner) Preview(ctx context.Context, anchorMsg *model.Message, history 
 
 	// 2. 上下文检索
 	var retrieveResult *ctxflow.RetrieveResult
-	var userMsgPrefix string
 	if !cfg.SkipRetrieval && r.embedder != nil && r.contextRetriever != nil {
 		vec, err := r.embedder.Embed(ctx, anchorMsg.Content)
 		if err != nil {
@@ -148,10 +146,6 @@ func (r *Runner) Preview(ctx context.Context, anchorMsg *model.Message, history 
 				log.Printf("[replay] preview retrieve error: %v", err)
 			}
 		}
-		if r.contextFormatter != nil && retrieveResult != nil {
-			extraBlocks := []ctxflow.ExtraBlock{ctxflow.DateTimeBlock(anchorMsg.CreatedAt)}
-			userMsgPrefix = r.contextFormatter.FormatBlocks(retrieveResult, extraBlocks...)
-		}
 	}
 
 	var trace *ctxflow.RetrieveTrace
@@ -160,10 +154,9 @@ func (r *Runner) Preview(ctx context.Context, anchorMsg *model.Message, history 
 	}
 
 	return &PreviewResult{
-		SystemPrompt:      pbResult.Prompt,
-		UserMessagePrefix: userMsgPrefix,
-		Messages:          msgs,
-		Trace:             trace,
+		SystemPrompt: pbResult.Prompt,
+		Messages:     msgs,
+		Trace:        trace,
 	}, nil
 }
 
@@ -225,8 +218,11 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 			log.Printf("[replay] retrieve error: %v", err)
 		} else {
 			trace = retrieveResult.Trace
-			extraBlocks := []ctxflow.ExtraBlock{ctxflow.DateTimeBlock(anchorMsg.CreatedAt)}
-			prebuiltContent = r.contextFormatter.FormatUserMessage(retrieveResult, anchorMsg.Content, extraBlocks...)
+		}
+		if r.contextFormatter != nil {
+			packets := ctxflow.MergePackets(retrieveResult,
+				ctxflow.DateTimePacket(anchorMsg.CreatedAt))
+			prebuiltContent = r.contextFormatter.FormatUserMessage(packets, anchorMsg.Content)
 		}
 	}
 

@@ -21,6 +21,8 @@ const expandedId = ref(null)
 const detailLoading = ref(false)
 const activeTab = ref('prompt')
 const detailData = ref({ request_json: null, extra: null })
+const userMsgViewMode = ref('pretty')
+const collapsedBlocks = ref(new Set())
 
 const tabs = [
   { key: 'user_msg', label: '用户消息体' },
@@ -118,6 +120,138 @@ const userMsgBodyHtml = computed(() => {
     '<span style="color:var(--color-primary);font-weight:600">&lt;$1$2&gt;</span>')
   return html
 })
+
+function parseXMLToBlocks(xmlText) {
+  try {
+    const parser = new DOMParser()
+    const wrapped = `<root>${xmlText}</root>`
+    const doc = parser.parseFromString(wrapped, 'text/xml')
+    if (doc.querySelector('parsererror')) return null
+    const blocks = []
+    const root = doc.documentElement
+    for (const el of root.children) {
+      const block = parseBlockElement(el)
+      if (block) blocks.push(block)
+    }
+    return blocks
+  } catch {
+    return null
+  }
+}
+
+function parseBlockElement(el) {
+  const tag = el.tagName
+  const attrs = Object.fromEntries(Array.from(el.attributes || []).map(a => [a.name, a.value]))
+
+  switch (tag) {
+    case 'memories':
+    case 'notes': {
+      const items = []
+      for (const child of el.children) {
+        items.push({
+          topic: child.getAttribute('topic') || '',
+          date: child.getAttribute('date') || '',
+          score: parseFloat(child.getAttribute('score')) || 0,
+          content: child.textContent?.trim() || '',
+        })
+      }
+      return { type: tag === 'memories' ? 'memory' : 'note', description: attrs.description || '', items }
+    }
+    case 'topics': {
+      const items = []
+      for (const child of el.children) {
+        items.push({
+          state: child.getAttribute('desc') || '',
+          score: parseFloat(child.getAttribute('score')) || 0,
+          content: child.textContent?.trim() || '',
+        })
+      }
+      return { type: 'theme', description: attrs.description || '', items }
+    }
+    case 'summaries': {
+      const items = []
+      for (const child of el.children) {
+        items.push({
+          topics: child.getAttribute('topics') || '',
+          score: parseFloat(child.getAttribute('score')) || 0,
+          content: child.textContent?.trim() || '',
+        })
+      }
+      return { type: 'summary', description: attrs.description || '', items }
+    }
+    case 'history': {
+      const rounds = []
+      for (const child of el.children) {
+        const msgs = []
+        for (const m of child.children) {
+          msgs.push({ role: m.getAttribute('role') || '', content: m.textContent?.trim() || '' })
+        }
+        rounds.push({
+          date: child.getAttribute('date') || '',
+          score: parseFloat(child.getAttribute('score')) || 0,
+          messages: msgs,
+        })
+      }
+      return { type: 'history', description: attrs.description || '', rounds }
+    }
+    case 'current_datetime':
+      return { type: 'current_datetime', content: el.textContent?.trim() || '' }
+    case 'user_query':
+      return { type: 'user_query', content: el.textContent?.trim() || '' }
+    default:
+      return null
+  }
+}
+
+const parsedBlocks = computed(() => {
+  const text = userMsgBody.value
+  if (!text) return []
+  return parseXMLToBlocks(text) || []
+})
+
+function blockTypeLabel(type) {
+  const map = { memory: '记忆 (memories)', note: '笔记 (notes)', theme: '主题 (themes)', history: '聊天记录 (history)', summary: '摘要 (summaries)', current_datetime: '当前时间', user_query: '用户查询' }
+  return map[type] || type
+}
+
+function blockTypeIcon(type) {
+  const map = { memory: '📋', note: '📝', theme: '🔗', history: '💬', summary: '📄', current_datetime: '🕐', user_query: '💭' }
+  return map[type] || '📦'
+}
+
+function blockItemCount(block) {
+  if (block.type === 'history') return block.rounds?.length || 0
+  return block.items?.length || 0
+}
+
+function toggleBlockCollapse(key) {
+  if (collapsedBlocks.value.has(key)) {
+    collapsedBlocks.value.delete(key)
+  } else {
+    collapsedBlocks.value.add(key)
+  }
+  collapsedBlocks.value = new Set(collapsedBlocks.value)
+}
+
+function isBlockCollapsed(key) {
+  return collapsedBlocks.value.has(key)
+}
+
+function blockHeaderBg(type) {
+  const base = { memory: '59,130,246', note: '34,197,94', theme: '245,158,11', history: '59,130,246', summary: '20,184,166' }
+  const rgb = base[type] || '100,100,100'
+  return themeStore.isDark ? `rgba(${rgb},0.12)` : `rgba(${rgb},0.06)`
+}
+
+function scorePercent(score) {
+  return Math.round(score * 100)
+}
+
+function scoreBarColor(score) {
+  if (score >= 0.85) return '#34c759'
+  if (score >= 0.7) return '#ff9f0a'
+  return '#ff3b30'
+}
 
 const providers = computed(() => {
   const ex = extraParsed.value
@@ -545,10 +679,115 @@ onMounted(loadRound)
 
               <!-- 用户消息体 -->
               <div v-if="activeTab === 'user_msg'">
-                <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 8px;">
-                  发给 LLM 的完整 user message（含检索上下文 XML 前缀）
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span style="font-size: 12px; color: var(--color-text-muted);">
+                    发给 LLM 的完整 user message（含检索上下文 XML 前缀）
+                  </span>
+                  <span
+                    @click="userMsgViewMode = userMsgViewMode === 'pretty' ? 'raw' : 'pretty'"
+                    style="cursor: pointer; font-size: 12px; color: var(--color-primary); user-select: none;"
+                  >{{ userMsgViewMode === 'pretty' ? '查看原始 XML' : '美化视图' }}</span>
                 </div>
-                <div
+
+                <!-- 美化视图 -->
+                <div v-if="userMsgViewMode === 'pretty' && parsedBlocks.length > 0" style="max-height: 600px; overflow-y: auto;">
+                  <div v-for="(block, idx) in parsedBlocks" :key="idx" style="margin-bottom: 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden;">
+                    <!-- Block Header -->
+                    <div
+                      @click="toggleBlockCollapse(idx)"
+                      :style="{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '8px 14px', cursor: 'pointer',
+                        background: blockHeaderBg(block.type),
+                        borderBottom: isBlockCollapsed(idx) ? 'none' : '1px solid var(--color-border)',
+                      }"
+                    >
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 15px;">{{ blockTypeIcon(block.type) }}</span>
+                        <span style="font-size: 13px; font-weight: 600; color: var(--color-text);">{{ blockTypeLabel(block.type) }}</span>
+                        <span style="font-size: 11px; color: var(--color-text-muted); background: var(--color-bg-page); padding: 1px 6px; border-radius: 10px;">{{ blockItemCount(block) }}条</span>
+                      </div>
+                      <span style="font-size: 11px; color: var(--color-text-muted);">{{ isBlockCollapsed(idx) ? '▶' : '▼' }}</span>
+                    </div>
+
+                    <!-- Block Body -->
+                    <div v-if="!isBlockCollapsed(idx)" style="padding: 10px 14px 14px; background: var(--color-surface);">
+                      <!-- Description -->
+                      <div v-if="block.description" style="font-size: 11px; color: var(--color-text-muted); line-height: 1.5; margin-bottom: 10px; max-height: 3em; overflow: hidden;" :title="block.description">{{ block.description }}</div>
+
+                      <!-- memory / note / theme / summary items -->
+                      <template v-if="['memory','note','theme','summary'].includes(block.type)">
+                        <div v-for="(item, i) in block.items" :key="i" :style="{
+                          padding: '10px 12px', marginBottom: i < block.items.length - 1 ? '8px' : '0',
+                          borderRadius: 'var(--radius-sm)',
+                          background: themeStore.isDark ? 'rgba(255,255,255,0.04)' : '#f8fafc',
+                          border: '1px solid var(--color-border)',
+                        }">
+                          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px;">
+                            <span v-if="item.topic" style="font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-primary); color: #fff; font-weight: 500;">{{ item.topic }}</span>
+                            <span v-if="item.state" style="font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--color-warning); color: #fff; font-weight: 500;">{{ item.state }}</span>
+                            <span v-if="item.topics" style="font-size: 11px; padding: 1px 6px; border-radius: 4px; background: rgba(20,184,166,0.15); color: #14b8a6; font-weight: 500;">{{ item.topics }}</span>
+                            <span v-if="item.date" style="font-size: 11px; color: var(--color-text-muted);">{{ item.date }}</span>
+                            <span v-if="item.score" style="font-size: 11px; color: var(--color-text-muted); margin-left: auto;">{{ scorePercent(item.score) }}%</span>
+                          </div>
+                          <div v-if="item.score" style="height: 3px; border-radius: 2px; background: var(--color-border); margin-bottom: 6px;">
+                            <div :style="{ width: scorePercent(item.score) + '%', height: '100%', borderRadius: '2px', background: scoreBarColor(item.score) }"></div>
+                          </div>
+                          <div style="font-size: 13px; color: var(--color-text); line-height: 1.6; white-space: pre-wrap; word-break: break-all;">{{ item.content || '(空)' }}</div>
+                        </div>
+                      </template>
+
+                      <!-- history rounds -->
+                      <template v-if="block.type === 'history'">
+                        <div v-for="(round, ri) in block.rounds" :key="ri" :style="{
+                          padding: '10px 12px', marginBottom: ri < block.rounds.length - 1 ? '10px' : '0',
+                          borderRadius: 'var(--radius-sm)',
+                          background: themeStore.isDark ? 'rgba(255,255,255,0.04)' : '#f8fafc',
+                          border: '1px solid var(--color-border)',
+                        }">
+                          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                            <span v-if="round.date" style="font-size: 11px; color: var(--color-text-muted);">{{ round.date }}</span>
+                            <span v-if="round.score" style="font-size: 11px; color: var(--color-text-muted); margin-left: auto;">{{ scorePercent(round.score) }}%</span>
+                          </div>
+                          <div v-if="round.score" style="height: 3px; border-radius: 2px; background: var(--color-border); margin-bottom: 8px;">
+                            <div :style="{ width: scorePercent(round.score) + '%', height: '100%', borderRadius: '2px', background: scoreBarColor(round.score) }"></div>
+                          </div>
+                          <div v-for="(m, mi) in round.messages" :key="mi" :style="{
+                            padding: '8px 12px', marginBottom: mi < round.messages.length - 1 ? '4px' : '0',
+                            borderRadius: 'var(--radius-sm)',
+                            borderLeft: `4px solid ${m.role === 'user' ? 'var(--color-primary)' : 'var(--color-success)'}`,
+                            background: themeStore.isDark ? (m.role === 'user' ? 'rgba(59,130,246,0.08)' : 'rgba(34,197,94,0.06)') : (m.role === 'user' ? '#eff6ff' : '#f0fdf4'),
+                          }">
+                            <span style="font-size: 10px; color: var(--color-text-muted); display: block; margin-bottom: 2px;">{{ m.role === 'user' ? '😀 用户' : m.role === 'assistant' ? '🤖 助手' : m.role }}</span>
+                            <div style="font-size: 12px; color: var(--color-text); line-height: 1.5; white-space: pre-wrap; word-break: break-all;">{{ m.content || '(空)' }}</div>
+                          </div>
+                        </div>
+                      </template>
+
+                      <!-- current_datetime / user_query -->
+                      <template v-if="['current_datetime','user_query'].includes(block.type)">
+                        <div :style="{
+                          padding: '10px 14px', borderRadius: 'var(--radius-md)',
+                          background: block.type === 'user_query' ? 'var(--color-primary)' : 'var(--color-bg-page)',
+                          color: block.type === 'user_query' ? '#fff' : 'var(--color-text)',
+                          fontSize: '14px', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                        }">
+                          <span v-if="block.type === 'current_datetime'" style="font-size: 11px; display: block; margin-bottom: 2px; opacity: 0.6;">🕐 当前时间</span>
+                          <span v-else style="font-size: 11px; display: block; margin-bottom: 2px; opacity: 0.7;">💭 用户查询</span>
+                          {{ block.content || '(空)' }}
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 解析失败或无数据 -->
+                <div v-else-if="userMsgViewMode === 'pretty'" style="color: var(--color-text-muted); padding: 20px; text-align: center; background: var(--color-bg-page); border-radius: var(--radius-md);">
+                  {{ userMsgBody ? 'XML 解析失败，请切换到原始 XML 查看' : '(本轮无检索上下文，或请求 JSON 未记录)' }}
+                </div>
+
+                <!-- 原始 XML 视图 -->
+                <div v-else
                   v-html="userMsgBodyHtml"
                   style="font-size: 13px; line-height: 1.7; max-height: 600px; overflow-y: auto; background: var(--color-bg-page); padding: 14px 16px; border-radius: var(--radius-md); font-family: 'SF Mono', 'Menlo', 'Monaco', monospace; white-space: pre-wrap; word-break: break-all;">
                 </div>

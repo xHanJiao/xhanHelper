@@ -322,21 +322,9 @@ func (o *Orchestrator) runReActLoop(
 	defer close(events)
 
 	loopStart := time.Now()
-	defer func() {
-		monitor.RecordRequestLatency(time.Since(loopStart).Milliseconds())
-	}()
+	defer func() { monitor.RecordRequestLatency(time.Since(loopStart).Milliseconds()) }()
 
-	userMsg := o.prepareUserMsg(req)
-	summaryBlock := o.resolveSummaryAttachment(ctx, req, userMsg, queryVec)
-
-	// 构建 XML 上下文并持久化（会话级缓存），使后续轮次也能看到本轮的检索结果
-	var extraBlocks []ctxflow.ExtraBlock
-	extraBlocks = append(extraBlocks, ctxflow.DateTimeBlock(time.Now()))
-	if summaryBlock != "" {
-		extraBlocks = append(extraBlocks, ctxflow.ExtraBlock{Type: "summary", Content: summaryBlock})
-	}
-	userContent := o.contextFormatter.FormatUserMessage(retrieveResult, req.UserMessageContent, extraBlocks...)
-	userMsg.XMLContext = &userContent
+	userMsg := o.buildUserMessage(ctx, req, retrieveResult)
 
 	if err := o.msgRepo.Create(ctx, userMsg); err != nil {
 		log.Printf("[orch] save user msg error: %v", err)
@@ -352,7 +340,7 @@ func (o *Orchestrator) runReActLoop(
 	}
 
 	state := &reactState{
-		msgs:      append(req.Messages, llm.Message{Role: "user", Content: userContent}),
+		msgs:      append(req.Messages, llm.Message{Role: "user", Content: *userMsg.XMLContext}),
 		userMsgID: userMsg.ID,
 	}
 
@@ -384,14 +372,13 @@ func (o *Orchestrator) prepareUserMsg(req *RunRequest) *model.Message {
 	return userMsg
 }
 
-// resolveSummaryAttachment 决定本轮是否附着摘要，返回摘要 XML block（空串表示不附着）。
+// resolveSummaryAttachment 决定本轮是否附着摘要，返回摘要 ContextPacket（nil 表示不附着）。
 // 副作用：设置 userMsg 的 SummaryAttachRound（必须在 Create 之前调用）。
 func (o *Orchestrator) resolveSummaryAttachment(
 	ctx context.Context,
 	req *RunRequest,
 	userMsg *model.Message,
-	queryVec []float64,
-) string {
+) *retrieval.ContextPacket {
 	// 查上一条用户消息的附着轮数
 	var prevUserMsg *model.Message
 	if recent, err := o.msgRepo.ListRecentUserMessages(ctx, req.ConversationID, 1); err == nil && len(recent) > 0 {
@@ -415,8 +402,8 @@ func (o *Orchestrator) resolveSummaryAttachment(
 	}
 	log.Printf("[orch] resolveSummaryAttachment: round=%d", round)
 
-	var block string
-	if o.summaryRepo != nil && round > 0 {
+	var pkt *retrieval.ContextPacket
+	if round > 0 && o.summaryRepo != nil {
 		summary, err := o.summaryRepo.GetLatest(ctx, req.ConversationID)
 		if err != nil {
 			log.Printf("[orch] GetLatest summary error: %v", err)
@@ -425,13 +412,49 @@ func (o *Orchestrator) resolveSummaryAttachment(
 			if summary.ParentSummaryID != nil {
 				parent = *summary.ParentSummaryID
 			}
-			block = fmt.Sprintf("<conversation_summary id=\"%s\" cover_from=\"%s\" cover_to=\"%s\" parent=\"%s\">\n%s\n</conversation_summary>\n",
-				summary.ID, summary.CoverFromMsgID, summary.CoverToMsgID, parent, summary.SummaryText)
+			pkt = &retrieval.ContextPacket{
+				ID:    summary.ID,
+				Type:  ctxflow.TypeSummary,
+				Text:  summary.SummaryText,
+				Score: 1.0,
+				Meta: retrieval.SummaryMeta{
+					SummaryID:       summary.ID,
+					SummaryText:     summary.SummaryText,
+					ConversationID:  summary.ConversationID,
+					CoverFromMsgID:  summary.CoverFromMsgID,
+					CoverToMsgID:    summary.CoverToMsgID,
+					ParentSummaryID: parent,
+					Topics:          summary.Topics,
+				},
+			}
 		}
 	}
 
 	SetSummaryAttachRound(userMsg, round)
-	return block
+	return pkt
+}
+
+// buildUserMessage 构建 user 消息的完整内容并写入 userMsg.XMLContext。
+func (o *Orchestrator) buildUserMessage(
+	ctx context.Context,
+	req *RunRequest,
+	retrieveResult *ctxflow.RetrieveResult,
+) *model.Message {
+
+	userMsg := o.prepareUserMsg(req)
+
+	var extraPackets = []retrieval.ContextPacket{ctxflow.DateTimePacket(time.Now())}
+
+	if summaryPkt := o.resolveSummaryAttachment(ctx, req, userMsg); summaryPkt != nil {
+		extraPackets = append(extraPackets, *summaryPkt)
+	}
+
+	userContent := o.contextFormatter.FormatUserMessage(
+		ctxflow.MergePackets(retrieveResult, extraPackets...),
+		req.UserMessageContent,
+	)
+	userMsg.XMLContext = &userContent
+	return userMsg
 }
 
 // checkSummaryRelevance 用 embedding 窗口检查摘要与当前对话的相关性。

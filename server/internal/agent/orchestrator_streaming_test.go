@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/agent/promptbuilder"
+	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 )
@@ -17,11 +17,8 @@ import (
 // mockFormatter 简单实现 ContextFormatter 接口供测试使用
 type mockFormatter struct{}
 
-func (m *mockFormatter) FormatUserMessage(result *ctxflow.RetrieveResult, userQuery string, extraBlocks ...ctxflow.ExtraBlock) string {
+func (m *mockFormatter) FormatUserMessage(packets map[string][]retrieval.ContextPacket, userQuery string) string {
 	return "<user_query>" + userQuery + "</user_query>"
-}
-func (m *mockFormatter) FormatBlocks(result *ctxflow.RetrieveResult, extraBlocks ...ctxflow.ExtraBlock) string {
-	return ""
 }
 
 // —— mock 实现 ——

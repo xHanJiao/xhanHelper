@@ -65,8 +65,8 @@ struct ChatBubble: View {
     var isTool: Bool = false
     var messageId: String = ""
     var createdAt: String? = nil
-
-    @State private var showTime = false
+    var showTime: Bool = false
+    var onTapToShowTime: (() -> Void)? = nil
 
     private var isStreamingPlaceholder: Bool {
         messageId == "__streaming__" && text.isEmpty
@@ -119,9 +119,7 @@ struct ChatBubble: View {
         .padding(.horizontal)
         .onTapGesture {
             guard createdAt != nil else { return }
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showTime.toggle()
-            }
+            onTapToShowTime?()
         }
     }
 

@@ -3,6 +3,8 @@ import SwiftUI
 struct MessageListView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var initialLoadDone = false
+    @State private var activeTimeBubbleId: String? = nil
+    @State private var autoDismissTask: Task<Void, Never>? = nil
 
     var body: some View {
         Group {
@@ -76,17 +78,49 @@ struct MessageListView: View {
     private func messageRow(_ msg: Message) -> some View {
         VStack(spacing: 12) {
             if msg.role == "tool" {
-                ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id, createdAt: msg.createdAt)
+                ChatBubble(text: msg.content, isUser: false, isTool: true, messageId: msg.id, createdAt: msg.createdAt,
+                           showTime: activeTimeBubbleId == msg.id,
+                           onTapToShowTime: { toggleTimeBubble(msg.id) })
             } else if msg.role == "user" {
-                ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt)
+                ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
+                           showTime: activeTimeBubbleId == msg.id,
+                           onTapToShowTime: { toggleTimeBubble(msg.id) })
             } else {
-                ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt)
+                ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt,
+                           showTime: activeTimeBubbleId == msg.id,
+                           onTapToShowTime: { toggleTimeBubble(msg.id) })
             }
 
             if msg.id == "__streaming__", let thought = viewModel.thoughtMessage {
                 ThinkingBubble(text: thought, isStreaming: !viewModel.thoughtDone)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal)
+            }
+        }
+    }
+
+    private func toggleTimeBubble(_ msgId: String) {
+        autoDismissTask?.cancel()
+        autoDismissTask = nil
+
+        if activeTimeBubbleId == msgId {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                activeTimeBubbleId = nil
+            }
+            return
+        }
+
+        withAnimation(.easeInOut(duration: 0.2)) {
+            activeTimeBubbleId = msgId
+        }
+
+        autoDismissTask = Task {
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    activeTimeBubbleId = nil
+                }
             }
         }
     }

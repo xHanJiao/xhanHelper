@@ -6,6 +6,10 @@ struct MessageListView: View {
     @State private var activeTimeBubbleId: String? = nil
     @State private var autoDismissTask: Task<Void, Never>? = nil
     @State private var menuMessageId: String? = nil
+    @State private var menuPoint: CGPoint = .zero
+    @State private var menuFrames: [String: CGRect] = [:]
+    @State private var menuDismissTask: Task<Void, Never>? = nil
+    @State private var viewHeight: CGFloat = 0
 
     var body: some View {
         Group {
@@ -24,6 +28,17 @@ struct MessageListView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .coordinateSpace(name: "menuSpace")
+        .background(
+            GeometryReader { geo in
+                Color.clear.onAppear {
+                    viewHeight = geo.size.height
+                }
+                .onChange(of: geo.size.height) { _, h in
+                    viewHeight = h
+                }
+            }
+        )
         .onAppear {
             initialLoadDone = false
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -34,6 +49,26 @@ struct MessageListView: View {
             initialLoadDone = false
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 initialLoadDone = true
+            }
+        }
+        .onChange(of: viewModel.messages.count) { _, _ in
+            menuMessageId = nil
+        }
+        .overlay {
+            if menuMessageId != nil {
+                Button {
+                    if let msg = viewModel.messages.first(where: { $0.id == menuMessageId }) {
+                        copyToPasteboard(msg.content)
+                    }
+                    menuMessageId = nil
+                } label: {
+                    Label("拷贝", systemImage: "doc.on.doc")
+                        .font(.subheadline)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(.regularMaterial)
+                .cornerRadius(8)
+                .position(menuPoint)
             }
         }
     }
@@ -59,12 +94,30 @@ struct MessageListView: View {
                 // 消息：倒序，最新在逻辑前=视觉底
                 ForEach(viewModel.messages.reversed()) { msg in
                     messageRow(msg)
+                        .background(
+                            GeometryReader { geo in
+                                Color.clear.onAppear {
+                                    menuFrames[msg.id] = geo.frame(in: .named("menuSpace"))
+                                }
+                                .onChange(of: geo.frame(in: .named("menuSpace"))) { _, newFrame in
+                                    menuFrames[msg.id] = newFrame
+                                }
+                            }
+                        )
                         .scaleEffect(y: -1)
                         .simultaneousGesture(
                             LongPressGesture(minimumDuration: 0.5)
                                 .onEnded { _ in
                                     if !msg.content.isEmpty {
-                                        menuMessageId = (menuMessageId == msg.id) ? nil : msg.id
+                                        if menuMessageId == msg.id {
+                                            menuMessageId = nil
+                                            return
+                                        }
+                                        menuMessageId = msg.id
+                                        if let frame = menuFrames[msg.id], viewHeight > 0 {
+                                            menuPoint = CGPoint(x: frame.midX, y: frame.midY)
+                                        }
+                                        startMenuDismissTimer()
                                     }
                                 }
                         )
@@ -93,15 +146,11 @@ struct MessageListView: View {
             } else if msg.role == "user" {
                 ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
                            showTime: activeTimeBubbleId == msg.id,
-                           onTapToShowTime: { toggleTimeBubble(msg.id) },
-                           isMenuShown: menuMessageId == msg.id,
-                           onMenuCopy: { copyToPasteboard(msg.content); menuMessageId = nil })
+                           onTapToShowTime: { toggleTimeBubble(msg.id) })
             } else {
                 ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt,
                            showTime: activeTimeBubbleId == msg.id,
-                           onTapToShowTime: { toggleTimeBubble(msg.id) },
-                           isMenuShown: menuMessageId == msg.id,
-                           onMenuCopy: { copyToPasteboard(msg.content); menuMessageId = nil })
+                           onTapToShowTime: { toggleTimeBubble(msg.id) })
             }
 
             if msg.id == "__streaming__", let thought = viewModel.thoughtMessage {
@@ -139,12 +188,24 @@ struct MessageListView: View {
     }
 
     private func copyToPasteboard(_ text: String) {
+        menuDismissTask?.cancel()
         #if os(iOS)
         UIPasteboard.general.string = text
         #else
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         #endif
+    }
+
+    private func startMenuDismissTimer() {
+        menuDismissTask?.cancel()
+        menuDismissTask = Task {
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                menuMessageId = nil
+            }
+        }
     }
 
     @ViewBuilder

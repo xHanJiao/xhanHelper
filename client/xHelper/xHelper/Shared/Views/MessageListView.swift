@@ -52,7 +52,7 @@ struct MessageListView: View {
             }
         }
         .onChange(of: viewModel.messages.count) { _, _ in
-            menuMessageId = nil
+            dismissMenu()
         }
         .overlay {
             if menuMessageId != nil {
@@ -60,7 +60,7 @@ struct MessageListView: View {
                     if let msg = viewModel.messages.first(where: { $0.id == menuMessageId }) {
                         copyToPasteboard(msg.content)
                     }
-                    menuMessageId = nil
+                    dismissMenu()
                 } label: {
                     Label("拷贝", systemImage: "doc.on.doc")
                         .font(.subheadline)
@@ -111,7 +111,7 @@ struct MessageListView: View {
                                 .onEnded { _ in
                                     if !msg.content.isEmpty {
                                         if menuMessageId == msg.id {
-                                            menuMessageId = nil
+                                            dismissMenu()
                                             return
                                         }
                                         menuMessageId = msg.id
@@ -133,6 +133,10 @@ struct MessageListView: View {
         .scaleEffect(y: -1)
         .defaultScrollAnchor(.top)
         .dismissKeyboardOnTap()
+        .onScrollPhaseChange { _, newPhase in
+            if newPhase != .idle { dismissMenu() }
+        }
+        .simultaneousGesture(TapGesture().onEnded { dismissMenu() })
     }
 
     // 单条消息行。流式那条：ChatBubble 在前、ThinkingBubble 在后，
@@ -159,6 +163,10 @@ struct MessageListView: View {
     }
 
     private func toggleTimeBubble(_ msgId: String) {
+        if menuMessageId != nil {
+            dismissMenu()
+            return
+        }
         autoDismissTask?.cancel()
         autoDismissTask = nil
 
@@ -185,13 +193,18 @@ struct MessageListView: View {
     }
 
     private func copyToPasteboard(_ text: String) {
-        menuDismissTask?.cancel()
         #if os(iOS)
         UIPasteboard.general.string = text
         #else
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         #endif
+    }
+
+    private func dismissMenu() {
+        menuDismissTask?.cancel()
+        menuDismissTask = nil
+        menuMessageId = nil
     }
 
     private func startMenuDismissTimer() {

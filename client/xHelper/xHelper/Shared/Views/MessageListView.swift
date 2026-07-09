@@ -39,7 +39,7 @@ struct MessageListView: View {
 
     private var messageScrollView: some View {
         ScrollView {
-            VStack(spacing: 12) {
+VStack(spacing: 18) {
                 // status（思考提示）→ 逻辑最前 → 视觉最底（最新消息下方）
                 if let status = viewModel.statusMessage {
                     HStack {

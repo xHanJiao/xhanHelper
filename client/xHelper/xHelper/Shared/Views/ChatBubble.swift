@@ -1,6 +1,15 @@
 import SwiftUI
 import MarkdownUI
 
+extension Theme {
+    static let chatBubble: Theme = Theme.gitHub
+        .text {
+            ForegroundColor(.primary)
+            BackgroundColor(.clear)
+            FontSize(17)
+        }
+}
+
 struct ThinkingBubble: View {
     let text: String
     let isStreaming: Bool
@@ -97,7 +106,7 @@ struct ChatBubble: View {
                     .cornerRadius(18)
                 } else {
                     Markdown(text)
-                        .markdownTheme(.gitHub)
+                        .markdownTheme(.chatBubble)
                         .markdownCodeSyntaxHighlighter(.plainText)
                         .frame(alignment: .leading)
                         .padding(.horizontal, 14).padding(.vertical, 10)

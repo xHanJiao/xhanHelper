@@ -5,6 +5,7 @@ struct MessageListView: View {
     @State private var initialLoadDone = false
     @State private var activeTimeBubbleId: String? = nil
     @State private var autoDismissTask: Task<Void, Never>? = nil
+    @State private var menuMessageId: String? = nil
 
     var body: some View {
         Group {
@@ -39,7 +40,7 @@ struct MessageListView: View {
 
     private var messageScrollView: some View {
         ScrollView {
-VStack(spacing: 18) {
+            VStack(spacing: 18) {
                 // status（思考提示）→ 逻辑最前 → 视觉最底（最新消息下方）
                 if let status = viewModel.statusMessage {
                     HStack {
@@ -59,6 +60,14 @@ VStack(spacing: 18) {
                 ForEach(viewModel.messages.reversed()) { msg in
                     messageRow(msg)
                         .scaleEffect(y: -1)
+                        .simultaneousGesture(
+                            LongPressGesture(minimumDuration: 0.5)
+                                .onEnded { _ in
+                                    if !msg.content.isEmpty {
+                                        menuMessageId = (menuMessageId == msg.id) ? nil : msg.id
+                                    }
+                                }
+                        )
                 }
 
                 // header（加载更早/已无更早）→ 逻辑最后 → 视觉最顶
@@ -84,11 +93,15 @@ VStack(spacing: 18) {
             } else if msg.role == "user" {
                 ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
                            showTime: activeTimeBubbleId == msg.id,
-                           onTapToShowTime: { toggleTimeBubble(msg.id) })
+                           onTapToShowTime: { toggleTimeBubble(msg.id) },
+                           isMenuShown: menuMessageId == msg.id,
+                           onMenuCopy: { copyToPasteboard(msg.content); menuMessageId = nil })
             } else {
                 ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt,
                            showTime: activeTimeBubbleId == msg.id,
-                           onTapToShowTime: { toggleTimeBubble(msg.id) })
+                           onTapToShowTime: { toggleTimeBubble(msg.id) },
+                           isMenuShown: menuMessageId == msg.id,
+                           onMenuCopy: { copyToPasteboard(msg.content); menuMessageId = nil })
             }
 
             if msg.id == "__streaming__", let thought = viewModel.thoughtMessage {
@@ -123,6 +136,15 @@ VStack(spacing: 18) {
                 }
             }
         }
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        #if os(iOS)
+        UIPasteboard.general.string = text
+        #else
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #endif
     }
 
     @ViewBuilder

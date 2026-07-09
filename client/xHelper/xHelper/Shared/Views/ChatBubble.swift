@@ -76,6 +76,8 @@ struct ChatBubble: View {
     var createdAt: String? = nil
     var showTime: Bool = false
     var onTapToShowTime: (() -> Void)? = nil
+    var isMenuShown: Bool = false
+    var onMenuCopy: (() -> Void)? = nil
 
     private var isStreamingPlaceholder: Bool {
         messageId == "__streaming__" && text.isEmpty
@@ -90,11 +92,15 @@ struct ChatBubble: View {
                     toolBubble
                 } else if isUser {
                     Text(text)
-                        .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(Color("bubbleSelf")).foregroundColor(.white).cornerRadius(18)
-                        .contextMenu { copyButton }
+                        .overlay(alignment: .bottomTrailing) {
+                            if isMenuShown {
+                                copyMenuButton
+                                    .offset(y: 8)
+                            }
+                        }
                 } else if isStreamingPlaceholder {
                     HStack(spacing: 5) {
                         ForEach(0..<3) { i in
@@ -112,7 +118,12 @@ struct ChatBubble: View {
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(Color("bubbleReply"))
                         .cornerRadius(18)
-                        .contextMenu { copyButton }
+                        .overlay(alignment: .bottomLeading) {
+                            if isMenuShown {
+                                copyMenuButton
+                                    .offset(y: 8)
+                            }
+                        }
                 }
 
                 if !isUser && !isTool { Spacer() }
@@ -149,21 +160,14 @@ struct ChatBubble: View {
         }
     }
 
-    var copyButton: some View {
-        #if os(iOS)
-        Button {
-            UIPasteboard.general.string = text
-        } label: {
+    var copyMenuButton: some View {
+        Button { onMenuCopy?() } label: {
             Label("拷贝", systemImage: "doc.on.doc")
+                .font(.subheadline)
         }
-        #else
-        Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-        } label: {
-            Label("拷贝", systemImage: "doc.on.doc")
-        }
-        #endif
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(.regularMaterial)
+        .cornerRadius(8)
     }
 
     var toolBubble: some View {

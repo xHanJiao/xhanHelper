@@ -65,9 +65,10 @@ struct MessageListView: View {
                     Label("拷贝", systemImage: "doc.on.doc")
                         .font(.subheadline)
                 }
-                .padding(.horizontal, 12).padding(.vertical, 6)
+                .padding(.horizontal, 16).padding(.vertical, 10)
                 .background(.regularMaterial)
-                .cornerRadius(8)
+                .clipShape(Capsule())
+                .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
                 .position(menuPoint)
             }
         }

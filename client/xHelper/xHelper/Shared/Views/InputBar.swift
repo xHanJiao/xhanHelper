@@ -21,9 +21,13 @@ struct InputBar: View {
                 .background(Color("surfaceInput"))
                 .cornerRadius(16)
                 .disabled(isStreaming)
-                .onChange(of: text) { _, newValue in
-                    if newValue.contains("\n") {
-                        text = newValue.replacingOccurrences(of: "\n", with: "")
+                .onChange(of: text) { oldValue, newValue in
+                    let addedCount = newValue.count - oldValue.count
+                    let addedNewlines = newValue.filter { $0 == "\n" }.count
+                                      - oldValue.filter { $0 == "\n" }.count
+                    // 仅"净增 1 个字符且是换行" = 回车键 → 发送；粘贴(多字符)不触发
+                    if addedCount == 1, addedNewlines == 1 {
+                        text = oldValue
                         if !text.trimmingCharacters(in: .whitespaces).isEmpty {
                             onSend()
                         }

@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var deviceManager: DeviceManager
-    @State private var pendingAgentID: String?
     @State private var selectedTab = "chat"
     @State private var isInChat = false
 
@@ -13,7 +12,7 @@ struct ContentView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
-                ConversationListContentView(deviceManager: deviceManager, pendingAgentID: $pendingAgentID, isInChat: $isInChat)
+                ConversationListContentView(deviceManager: deviceManager, isInChat: $isInChat)
             }
             .toolbarBackground(Color("chatBackground"), for: .tabBar)
             .toolbarBackground(.visible, for: .tabBar)
@@ -23,10 +22,7 @@ struct ContentView: View {
             .tag("chat")
 
             NavigationStack {
-                SettingsView(deviceManager: deviceManager, onChatWithAgent: { agentID in
-                    pendingAgentID = agentID
-                    selectedTab = "chat"
-                })
+                SettingsView(deviceManager: deviceManager)
             }
             .toolbarBackground(Color("chatBackground"), for: .tabBar)
             .toolbarBackground(.visible, for: .tabBar)
@@ -40,7 +36,6 @@ struct ContentView: View {
 
 struct ConversationListContentView: View {
     @ObservedObject var deviceManager: DeviceManager
-    @Binding var pendingAgentID: String?
     @Binding var isInChat: Bool
 
     private enum LoadState {

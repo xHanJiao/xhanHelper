@@ -4,7 +4,6 @@ struct SettingsView: View {
     @ObservedObject var deviceManager: DeviceManager
     @EnvironmentObject var colorSchemeManager: ColorSchemeManager
     @AppStorage("xhan_server_url") private var serverURL = DeviceManager.defaultBaseURL
-    var onChatWithAgent: ((String) -> Void)?
 
     private var apiClient: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
@@ -15,6 +14,7 @@ struct SettingsView: View {
             GlassBackground()
 
             Form {
+            #if DEBUG
             Section {
                 if deviceManager.isLoggedIn {
                     HStack {
@@ -22,13 +22,11 @@ struct SettingsView: View {
                         Spacer()
                         Text(deviceManager.username ?? "-").font(.caption)
                     }
-                    #if DEBUG
                     HStack {
                         Text("用户 ID")
                         Spacer()
                         Text(deviceManager.userId ?? "-").font(.caption).monospaced().lineLimit(1)
                     }
-                    #endif
                 } else {
                     Text("未登录")
                         .foregroundColor(.secondary)
@@ -37,6 +35,7 @@ struct SettingsView: View {
                 Text("账号信息")
             }
             .listRowBackground(Rectangle().fill(.ultraThinMaterial))
+            #endif
 
             #if DEBUG
             Section {
@@ -63,23 +62,8 @@ struct SettingsView: View {
             .listRowBackground(Rectangle().fill(.ultraThinMaterial))
 
             Section {
-                let agentVM = AgentViewModel(apiClient: apiClient)
-                NavigationLink(destination: AgentListView(viewModel: agentVM)
-                    .onAppear { agentVM.onChatWithAgent = onChatWithAgent }
-                ) {
-                    Label("智能体", systemImage: "person.badge.shield.checkmark")
-                }
-                NavigationLink(destination: MemoryListView(viewModel: MemoryViewModel(apiClient: apiClient))) {
-                    Label("记忆", systemImage: "brain")
-                }
-                NavigationLink(destination: PromptListView(viewModel: PromptViewModel(apiClient: apiClient))) {
-                    Label("系统提示词", systemImage: "terminal")
-                }
                 NavigationLink(destination: BillListView(apiClient: apiClient)) {
                     Label("账单记录", systemImage: "list.bullet.rectangle")
-                }
-                NavigationLink(destination: NoteListView(apiClient: apiClient)) {
-                    Label("笔记记录", systemImage: "note.text")
                 }
                 NavigationLink(destination: DocumentListView(apiClient: apiClient)) {
                     Label("文档", systemImage: "doc.text")

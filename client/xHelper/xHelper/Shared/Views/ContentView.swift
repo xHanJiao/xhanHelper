@@ -15,6 +15,8 @@ struct ContentView: View {
             NavigationStack {
                 ConversationListContentView(deviceManager: deviceManager, pendingAgentID: $pendingAgentID, isInChat: $isInChat)
             }
+            .toolbarBackground(Color("chatBackground"), for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
             .tabItem {
                 Label("聊天", systemImage: "bubble.left.and.bubble.right")
             }
@@ -26,6 +28,8 @@ struct ContentView: View {
                     selectedTab = "chat"
                 })
             }
+            .toolbarBackground(Color("chatBackground"), for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
             .tabItem {
                 Label("设置", systemImage: "gear")
             }

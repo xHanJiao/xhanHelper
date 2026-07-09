@@ -4,7 +4,7 @@ import MarkdownUI
 extension Theme {
     static let chatBubble: Theme = Theme.gitHub
         .text {
-            ForegroundColor(.primary)
+            ForegroundColor(Color("assistantText"))
             BackgroundColor(.clear)
             FontSize(17)
         }
@@ -44,8 +44,9 @@ struct ThinkingBubble: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(Color("bubbleReply"))
-        .cornerRadius(12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.35), lineWidth: 0.6))
+        .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
     }
 }
 
@@ -89,7 +90,10 @@ struct ChatBubble: View {
                     Text(text)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(Color("bubbleSelf")).foregroundColor(.white).cornerRadius(18)
+                        .foregroundColor(Color(red: 0.106, green: 0.286, blue: 0.396))
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.35), lineWidth: 0.6))
+                        .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
                 } else if isStreamingPlaceholder {
                     HStack(spacing: 5) {
                         ForEach(0..<3) { i in
@@ -97,16 +101,18 @@ struct ChatBubble: View {
                         }
                     }
                     .padding(.horizontal, 14).padding(.vertical, 12)
-                    .background(Color("bubbleReply"))
-                    .cornerRadius(18)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                    .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.35), lineWidth: 0.6))
+                    .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
                 } else {
                     Markdown(text)
                         .markdownTheme(.chatBubble)
                         .markdownCodeSyntaxHighlighter(.plainText)
                         .frame(alignment: .leading)
                         .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(Color("bubbleReply"))
-                        .cornerRadius(18)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.35), lineWidth: 0.6))
+                        .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
                 }
 
                 if !isUser { Spacer() }

@@ -11,7 +11,7 @@ struct ChatView: View {
 
     var body: some View {
         ZStack {
-            Color("chatBackground").ignoresSafeArea()
+            GlassBackground()
 
             VStack(spacing: 0) {
             // 消息列表

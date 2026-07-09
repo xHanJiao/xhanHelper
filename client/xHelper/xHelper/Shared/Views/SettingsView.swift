@@ -11,7 +11,10 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        Form {
+        ZStack {
+            GlassBackground()
+
+            Form {
             Section {
                 if deviceManager.isLoggedIn {
                     HStack {
@@ -33,6 +36,7 @@ struct SettingsView: View {
             } header: {
                 Text("账号信息")
             }
+            .listRowBackground(Rectangle().fill(.ultraThinMaterial))
 
             #if DEBUG
             Section {
@@ -44,6 +48,7 @@ struct SettingsView: View {
             } header: {
                 Text("服务器")
             }
+            .listRowBackground(Rectangle().fill(.ultraThinMaterial))
             #endif
 
             Section {
@@ -55,6 +60,7 @@ struct SettingsView: View {
             } header: {
                 Text("显示")
             }
+            .listRowBackground(Rectangle().fill(.ultraThinMaterial))
 
             Section {
                 let agentVM = AgentViewModel(apiClient: apiClient)
@@ -84,13 +90,19 @@ struct SettingsView: View {
             } header: {
                 Text("浏览")
             }
+            .listRowBackground(Rectangle().fill(.ultraThinMaterial))
 
             Section {
                 Button("退出登录", role: .destructive) {
                     Task { await deviceManager.logout() }
                 }
+                .foregroundStyle(.red)
             }
+            .listRowBackground(Rectangle().fill(.ultraThinMaterial))
         }
+        .scrollContentBackground(.hidden)
+        }
+        .tint(Color("appAccent"))
         .navigationTitle("设置")
     }
 }

@@ -137,7 +137,7 @@ VStack(spacing: 18) {
                 Text(viewModel.isLoadingMore ? "正在加载..." : "加载更早的消息")
                     .font(.caption)
             }
-            .foregroundColor(.blue)
+            .foregroundColor(Color("appAccent"))
             .onTapGesture {
                 guard !viewModel.isLoadingMore else { return }
                 Task { await viewModel.loadMore(direction: "before") }

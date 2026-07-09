@@ -59,7 +59,7 @@ struct AgentListView: View {
                         } label: {
                             Image(systemName: "bubble.left.and.bubble.right") // SF Symbol 聊天气泡
                                 .font(.body)
-                                .foregroundColor(.blue)
+                                 .foregroundColor(Color("appAccent"))
                         }
                         .buttonStyle(.plain) // 去掉按钮默认样式（不加底色边框）
                     }
@@ -94,7 +94,7 @@ struct AgentListView: View {
                         } label: {
                             Label("编辑", systemImage: "pencil")
                         }
-                        .tint(.orange) // 编辑按钮用橙色（区别于红色的删除）
+                        .tint(Color("appAccent")) // 编辑按钮用橙色（区别于红色的删除）
                     }
                 }
             }

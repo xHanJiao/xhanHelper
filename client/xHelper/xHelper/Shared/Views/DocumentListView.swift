@@ -31,7 +31,7 @@ struct DocumentListView: View {
                                     if let tagText = doc.tags, !tagText.isEmpty {
                                         Text(tagText.components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? tagText)
                                             .font(.caption)
-                                            .foregroundColor(.blue)
+                                            .foregroundColor(Color("appAccent"))
                                     }
                                     Spacer()
                                     Text(formatDate(doc.updatedAt))

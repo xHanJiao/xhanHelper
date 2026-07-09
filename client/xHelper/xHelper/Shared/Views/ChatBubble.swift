@@ -44,7 +44,7 @@ struct ThinkingBubble: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(Color.gray.opacity(0.08))
+        .background(Color("bubbleReply"))
         .cornerRadius(12)
     }
 }
@@ -93,7 +93,7 @@ struct ChatBubble: View {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(Color.blue).foregroundColor(.white).cornerRadius(18)
+                        .background(Color("bubbleSelf")).foregroundColor(.white).cornerRadius(18)
                         .contextMenu { copyButton }
                 } else if isStreamingPlaceholder {
                     HStack(spacing: 5) {
@@ -102,7 +102,7 @@ struct ChatBubble: View {
                         }
                     }
                     .padding(.horizontal, 14).padding(.vertical, 12)
-                    .background(Color.gray.opacity(0.15))
+                    .background(Color("bubbleReply"))
                     .cornerRadius(18)
                 } else {
                     Markdown(text)
@@ -110,7 +110,7 @@ struct ChatBubble: View {
                         .markdownCodeSyntaxHighlighter(.plainText)
                         .frame(alignment: .leading)
                         .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(Color.gray.opacity(0.15))
+                        .background(Color("bubbleReply"))
                         .cornerRadius(18)
                         .contextMenu { copyButton }
                 }
@@ -174,7 +174,7 @@ struct ChatBubble: View {
             Spacer()
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(Color.orange.opacity(0.1)).cornerRadius(12)
+        .background(Color("bubbleTool")).cornerRadius(12)
     }
 }
 

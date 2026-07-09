@@ -27,7 +27,7 @@ struct SplashView: View {
         VStack(spacing: 16) {
             Image(systemName: "bubble.left.and.bubble.right.fill")
                 .font(.system(size: 60))
-                .foregroundColor(.blue)
+                .foregroundColor(Color("appAccent"))
             Text("xhanHelper")
                 .font(.largeTitle)
                 .fontWeight(.bold)
@@ -49,7 +49,7 @@ struct LoginView: View {
         VStack(spacing: 24) {
             Image(systemName: "bubble.left.and.bubble.right.fill")
                 .font(.system(size: 60))
-                .foregroundColor(.blue)
+                .foregroundColor(Color("appAccent"))
 
             Text("xhanHelper")
                 .font(.largeTitle)

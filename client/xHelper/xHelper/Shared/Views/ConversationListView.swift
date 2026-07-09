@@ -50,7 +50,7 @@ struct ConversationListView: View {
                             } label: {
                                 Label("重命名", systemImage: "pencil")
                             }
-                            .tint(.orange)
+                            .tint(Color("appAccent"))
                         }
                     }
                 }

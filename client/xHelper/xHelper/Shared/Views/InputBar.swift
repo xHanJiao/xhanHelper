@@ -18,7 +18,7 @@ struct InputBar: View {
                 .padding(.leading, 12)
                 .padding(.trailing, 12)
                 .padding(.vertical, 8)
-                .background(Color.gray.opacity(0.1))
+                .background(Color("surfaceInput"))
                 .cornerRadius(16)
                 .disabled(isStreaming)
                 .onChange(of: text) { _, newValue in
@@ -41,7 +41,7 @@ struct InputBar: View {
                 Button(action: onSend) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
-                        .foregroundColor(text.trimmingCharacters(in: .whitespaces).isEmpty ? .gray : .blue)
+                        .foregroundColor(text.trimmingCharacters(in: .whitespaces).isEmpty ? .gray : Color("appAccent"))
                 }
                 .buttonStyle(.plain)
                 .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)

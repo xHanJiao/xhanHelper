@@ -8,6 +8,45 @@ extension Theme {
             BackgroundColor(.clear)
             FontSize(17)
         }
+        .code {
+            FontFamilyVariant(.monospaced)
+            FontSize(.em(0.85))
+            BackgroundColor(.clear)
+        }
+        .codeBlock { configuration in
+            ScrollView(.horizontal) {
+                configuration.label
+                    .fixedSize(horizontal: false, vertical: true)
+                    .relativeLineSpacing(.em(0.225))
+                    .markdownTextStyle {
+                        FontFamilyVariant(.monospaced)
+                        FontSize(.em(0.85))
+                    }
+                    .padding(14)
+            }
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .markdownMargin(top: 0, bottom: 16)
+        }
+        .blockquote { configuration in
+            HStack(spacing: 0) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.secondary.opacity(0.4))
+                    .frame(width: 3)
+                configuration.label
+                    .markdownTextStyle { ForegroundColor(Color("assistantText")) }
+                    .padding(.leading, 12)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .table { configuration in
+            configuration.label
+                .fixedSize(horizontal: false, vertical: true)
+                .markdownTableBorderStyle(.init(color: .secondary.opacity(0.3)))
+                .markdownTableBackgroundStyle(
+                    .alternatingRows(.clear, Color.secondary.opacity(0.06))
+                )
+                .markdownMargin(top: 0, bottom: 16)
+        }
 }
 
 struct ThinkingBubble: View {

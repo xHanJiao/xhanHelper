@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
@@ -10,7 +13,7 @@ struct ChatView: View {
     let token: String
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             GlassBackground()
 
             VStack(spacing: 0) {
@@ -40,6 +43,43 @@ struct ChatView: View {
             )
             .layoutPriority(1)
         }
+
+            topBarCover
         }
+    }
+
+    // 状态栏毛玻璃遮挡：顶部安全区实心毛玻璃，下缘渐隐过渡，避免气泡与状态栏文字重叠。
+    private var topBarCover: some View {
+        GeometryReader { _ in
+            let top = statusBarHeight
+            let fade: CGFloat = 10
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .frame(height: top + fade)
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black, location: 0),
+                            .init(color: .black, location: top / (top + fade)),
+                            .init(color: .clear, location: 1)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .ignoresSafeArea(edges: .top)
+        }
+        .allowsHitTesting(false)
+    }
+
+    // 真实状态栏高度（不含导航栏），各机型自适应。
+    private var statusBarHeight: CGFloat {
+        #if os(iOS)
+        (UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.statusBarManager?.statusBarFrame.height) ?? 20
+        #else
+        0
+        #endif
     }
 }

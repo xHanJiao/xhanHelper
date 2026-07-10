@@ -101,6 +101,27 @@ func (r *ConversationSummaryRepo) SearchByKeyword(ctx context.Context, userID st
 	return list, err
 }
 
+// ListByUser 按用户分页查询摘要，支持关键词模糊搜索摘要文本和话题
+func (r *ConversationSummaryRepo) ListByUser(ctx context.Context, userID, keyword string, limit, offset int) ([]model.ConversationSummary, int64, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		q = q.Where("summary_text LIKE ? OR topics LIKE ?", like, like)
+	}
+
+	var total int64
+	if err := q.Model(&model.ConversationSummary{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var list []model.ConversationSummary
+	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
+	return list, total, err
+}
+
 // MarkSuperseded 将指定摘要标记为已替代
 func (r *ConversationSummaryRepo) MarkSuperseded(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).

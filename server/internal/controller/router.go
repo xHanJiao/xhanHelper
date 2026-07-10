@@ -28,6 +28,7 @@ type RouterConfig struct {
 	DocumentHandler      *DocumentHandler
 	DocumentShareHandler *DocumentShareHandler
 	MessageShareHandler  *MessageShareHandler
+	SummaryHandler       *SummaryHandler
 	MemExtr              *agent.MemoryExtractor
 	ExtraMiddleware      []gin.HandlerFunc
 }
@@ -77,6 +78,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.GET("/bills", rc.BillHandler.ListBills)
 		auth.GET("/bills/export", rc.BillHandler.ExportBills)
 		auth.POST("/bills/import", rc.BillHandler.ImportBills)
+		auth.GET("/summaries", rc.SummaryHandler.ListSummaries)
 		auth.GET("/notes", rc.NoteHandler.ListNotes)
 		auth.POST("/notes/batch", rc.NoteHandler.BatchGetNotes)
 		auth.DELETE("/notes/:id", rc.NoteHandler.DeleteNote)

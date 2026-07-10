@@ -54,6 +54,12 @@ const routes = [
     meta: { backToChat: true }
   },
   {
+    path: '/summaries',
+    name: 'Summaries',
+    component: () => import('@/views/SummaryView.vue'),
+    meta: { backToChat: true }
+  },
+  {
     path: '/themes',
     name: 'Themes',
     component: () => import('@/views/ThemeView.vue'),

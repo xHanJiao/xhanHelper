@@ -91,6 +91,7 @@ const adminItems = [
   { label: '记忆', path: '/memories', adminOnly: true },
   { label: '笔记', path: '/notes', adminOnly: true },
   { label: '主题', path: '/themes', adminOnly: true },
+  { label: '摘要', path: '/summaries', adminOnly: true },
   { label: '监控看板', path: '/admin', adminOnly: true },
   { label: '用户管理', path: '/admin/users', adminOnly: true },
   { label: '检索评测', path: '/admin/eval', adminOnly: true }

@@ -1,5 +1,8 @@
 import SwiftUI
 import MarkdownUI
+#if os(iOS)
+import UIKit
+#endif
 
 extension Theme {
     static let chatBubble: Theme = Theme.gitHub
@@ -167,6 +170,9 @@ struct ChatBubble: View {
         .padding(.horizontal)
         .onTapGesture {
             guard createdAt != nil else { return }
+            #if os(iOS)
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            #endif
             onTapToShowTime?()
         }
     }

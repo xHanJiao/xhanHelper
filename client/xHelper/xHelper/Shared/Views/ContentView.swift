@@ -46,6 +46,8 @@ struct ConversationListContentView: View {
 
     @State private var loadState: LoadState = .loading
     @State private var retryToken: Int = 0
+    @State private var lastSyncAt = Date.distantPast
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack {
@@ -65,6 +67,18 @@ struct ConversationListContentView: View {
                     }
                 }
             }
+        }
+        // 多端同步兜底：App 从后台切回前台时，重建 ChatViewModel（重跑 .task），
+        // 拉取最新消息列表；翻转列表 ScrollView 随之新建，defaultScrollAnchor(.top)
+        // 重新生效，自动落到最新消息（视觉底部）。
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            // 正在流式回复时不重建，避免打断
+            if case .loaded(let vm) = loadState, vm.isStreaming { return }
+            let now = Date()
+            guard now.timeIntervalSince(lastSyncAt) >= 3 else { return }
+            lastSyncAt = now
+            retryToken += 1
         }
         .task(id: retryToken) {
             guard let conv = deviceManager.defaultConversation else {

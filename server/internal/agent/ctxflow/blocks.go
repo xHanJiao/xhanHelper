@@ -299,7 +299,11 @@ var weekdaysCN = [...]string{"星期日", "星期一", "星期二", "星期三",
 
 // DateTimeText 返回当前时间的格式化中文字符串。
 func DateTimeText(t time.Time) string {
-	return t.Format("2006年1月2日 ") + weekdaysCN[t.Weekday()] + t.Format(" 15:04 MST")
+	ampm := "上午"
+	if t.Hour() >= 12 {
+		ampm = "下午"
+	}
+	return t.Format("2006年1月2日 ") + weekdaysCN[t.Weekday()] + " " + ampm + t.Format("03:04 MST")
 }
 
 // DateTimePacket 生成 current_datetime 类型的 ContextPacket。

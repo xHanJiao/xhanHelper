@@ -12,22 +12,23 @@ func TestDateTimeText(t *testing.T) {
 
 	content := DateTimeText(tm)
 
-	// Content should contain: "2026年1月7日 星期三 14:30 UTC"
 	if !strings.Contains(content, "2026年1月7日") {
 		t.Errorf("Content missing date: %q", content)
 	}
 	if !strings.Contains(content, "星期三") {
 		t.Errorf("Content missing weekday 星期三: %q", content)
 	}
-	if !strings.Contains(content, "14:30") {
+	if !strings.Contains(content, "下午") {
+		t.Errorf("Content missing 下午: %q", content)
+	}
+	if !strings.Contains(content, "02:30") {
 		t.Errorf("Content missing time: %q", content)
 	}
 	if !strings.Contains(content, "UTC") {
 		t.Errorf("Content missing timezone: %q", content)
 	}
 
-	// Verify exact format: "2006年1月2日 星期X 15:04 MST"
-	expected := "2026年1月7日 星期三 14:30 UTC"
+	expected := "2026年1月7日 星期三 下午02:30 UTC"
 	if content != expected {
 		t.Errorf("Content = %q, want %q", content, expected)
 	}
@@ -86,39 +87,70 @@ func TestDateTimeText_WeekdayIndexMapping(t *testing.T) {
 }
 
 func TestDateTimeText_EdgeCases(t *testing.T) {
-	// Midnight — should still produce correct format
-	tm := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+	// Midnight — 12-hour format should show "上午12:00"
+	tm := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC) // Thursday
 	content := DateTimeText(tm)
-	if !strings.Contains(content, "00:00") {
-		t.Errorf("midnight should show 00:00: %q", content)
+	if !strings.Contains(content, "上午12:00") {
+		t.Errorf("midnight should show 上午12:00: %q", content)
 	}
-
-	// 2026-12-31 is a Thursday
 	if !strings.Contains(content, "星期四") {
 		t.Errorf("2026-12-31 should be 星期四: %q", content)
 	}
 
-	// Leap year day — 2028-02-29 is a Tuesday
-	tm = time.Date(2028, 2, 29, 12, 0, 0, 0, time.UTC)
-	content = DateTimeText(tm)
-	if !strings.Contains(content, "星期二") {
-		t.Errorf("2028-02-29 should be 星期二: %q", content)
-	}
-	if !strings.Contains(content, "2028年2月29日") {
-		t.Errorf("leap day date missing: %q", content)
+	// Noon — should show "下午12:00"
+	content2 := DateTimeText(time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC))
+	if !strings.Contains(content2, "下午12:00") {
+		t.Errorf("noon should show 下午12:00: %q", content2)
 	}
 
-	// Single-digit month/day should NOT have leading zeros (Go's Format uses "1月2日")
-	tm = time.Date(2026, 3, 5, 9, 5, 0, 0, time.UTC)
-	content = DateTimeText(tm)
-	if strings.Contains(content, "03月") {
-		t.Errorf("month should not have leading zero: %q", content)
+	// Leap year day — 2028-02-29 is a Tuesday, noon
+	content3 := DateTimeText(time.Date(2028, 2, 29, 12, 1, 0, 0, time.UTC))
+	if !strings.Contains(content3, "星期二") {
+		t.Errorf("2028-02-29 should be 星期二: %q", content3)
 	}
-	if strings.Contains(content, "05日") {
-		t.Errorf("day should not have leading zero: %q", content)
+	if !strings.Contains(content3, "2028年2月29日") {
+		t.Errorf("leap day date missing: %q", content3)
 	}
-	expected := "2026年3月5日 星期四 09:05 UTC"
-	if content != expected {
-		t.Errorf("Content = %q, want %q", content, expected)
+
+	// Single-digit month/day should NOT have leading zeros
+	content4 := DateTimeText(time.Date(2026, 3, 5, 9, 5, 0, 0, time.UTC))
+	if strings.Contains(content4, "03月") {
+		t.Errorf("month should not have leading zero: %q", content4)
+	}
+	if strings.Contains(content4, "05日") {
+		t.Errorf("day should not have leading zero: %q", content4)
+	}
+	expected := "2026年3月5日 星期四 上午09:05 UTC"
+	if content4 != expected {
+		t.Errorf("Content = %q, want %q", content4, expected)
+	}
+}
+
+func TestDateTimeText_Meridiem(t *testing.T) {
+	tests := []struct {
+		name     string
+		hour     int
+		meridiem string
+	}{
+		{"0am midnight", 0, "上午"},
+		{"1am", 1, "上午"},
+		{"5am", 5, "上午"},
+		{"8am", 8, "上午"},
+		{"11am", 11, "上午"},
+		{"12pm noon", 12, "下午"},
+		{"1pm", 13, "下午"},
+		{"5pm", 17, "下午"},
+		{"8pm", 20, "下午"},
+		{"11pm", 23, "下午"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm := time.Date(2026, 7, 10, tt.hour, 5, 0, 0, time.UTC)
+			content := DateTimeText(tm)
+			if !strings.Contains(content, tt.meridiem) {
+				t.Errorf("hour=%d: got %q, want it to contain %q", tt.hour, content, tt.meridiem)
+			}
+		})
 	}
 }

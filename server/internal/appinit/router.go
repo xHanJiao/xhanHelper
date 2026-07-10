@@ -51,7 +51,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	docHandler := controller.NewDocumentHandler(repos.Document)
 	documentShareHandler := controller.NewDocumentShareHandler(repos.DocumentShare, cfg)
 	messageShareHandler := controller.NewMessageShareHandler(repos.MessageShare, cfg)
-	summaryHandler := controller.NewSummaryHandler(repos.ConversationSummary)
+	summaryHandler := controller.NewSummaryHandler(repos.ConversationSummary, repos.Message)
 	mailboxService := service.NewMailboxService(repos.Mailbox, repos.ThemeState)
 	mailboxHandler := controller.NewMailboxHandler(mailboxService, repos.Mailbox, repos.Conversation, repos.ThemeState, repos.Message)
 	themeHandler := controller.NewThemeHandler(repos.ThemeState)

@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
@@ -17,6 +18,7 @@ import PageTopBar from '@/components/PageTopBar.vue'
 import TopBarBtn from '@/components/TopBarBtn.vue'
 
 const message = useMessage()
+const router = useRouter()
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
 
@@ -61,6 +63,16 @@ function buildTags(s) {
     tags.unshift({ text: '已替代', type: 'warning' })
   }
   return tags
+}
+
+function viewMessages(s) {
+  router.push(`/summaries/${s.id}/messages`)
+}
+
+function getCardActions(s) {
+  return [
+    { key: 'view', label: '查看消息', onClick: () => viewMessages(s) }
+  ]
 }
 
 function handleContainerClick(e) {
@@ -112,6 +124,7 @@ onMounted(fetchSummaries)
             :content="s.summary_text"
             :tags="buildTags(s)"
             :metadata="new Date(s.created_at).toLocaleString()"
+            :actions="getCardActions(s)"
             max-content-height="200px"
           />
         </NGi>

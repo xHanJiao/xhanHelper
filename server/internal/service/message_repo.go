@@ -299,6 +299,36 @@ func (r *MessageRepo) listRoundsWithCursor(ctx context.Context, convID string, c
 	return result, nil
 }
 
+// ListMessagesBetweenMsgIDs 根据两条消息 ID 拉取范围内的全部正常消息（含 user/assistant/tool）。
+// limit <= 0 时不限制条数。
+func (r *MessageRepo) ListMessagesBetweenMsgIDs(ctx context.Context, convID, fromMsgID, toMsgID string, limit int) ([]model.Message, error) {
+	from, err := r.GetByIDCols(ctx, fromMsgID, "id", "created_at")
+	if err != nil || from == nil {
+		return nil, err
+	}
+	to, err := r.GetByIDCols(ctx, toMsgID, "id", "created_at")
+	if err != nil || to == nil {
+		return nil, err
+	}
+
+	start, end := from.CreatedAt, to.CreatedAt
+	if start.After(end) {
+		start, end = end, start
+	}
+
+	q := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND status = ?", convID, model.MsgStatusNormal).
+		Where("created_at >= ? AND created_at <= ?", start, end)
+
+	var msgs []model.Message
+	if limit > 0 {
+		err = q.Order("created_at ASC").Limit(limit).Find(&msgs).Error
+	} else {
+		err = q.Order("created_at ASC").Find(&msgs).Error
+	}
+	return msgs, err
+}
+
 // loadMessagesInRange 拉取指定时间范围内的全部正常消息。
 func (r *MessageRepo) loadMessagesInRange(ctx context.Context, convID string, from, to *time.Time, limit int) ([]model.Message, error) {
 	q := r.db.WithContext(ctx).

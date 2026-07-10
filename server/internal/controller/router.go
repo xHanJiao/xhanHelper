@@ -79,6 +79,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.GET("/bills/export", rc.BillHandler.ExportBills)
 		auth.POST("/bills/import", rc.BillHandler.ImportBills)
 		auth.GET("/summaries", rc.SummaryHandler.ListSummaries)
+		auth.GET("/summaries/:id/messages", rc.SummaryHandler.GetSummaryMessages)
 		auth.GET("/notes", rc.NoteHandler.ListNotes)
 		auth.POST("/notes/batch", rc.NoteHandler.BatchGetNotes)
 		auth.DELETE("/notes/:id", rc.NoteHandler.DeleteNote)

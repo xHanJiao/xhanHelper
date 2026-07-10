@@ -53,7 +53,14 @@ struct InputBar: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
-        .background(.regularMaterial)
+        .background(
+            .regularMaterial,
+            in: UnevenRoundedRectangle(
+                bottomLeadingRadius: isFocused ? 16 : 0,
+                bottomTrailingRadius: isFocused ? 16 : 0
+            )
+        )
+        .animation(.easeInOut(duration: 0.25), value: isFocused)
     }
 }
 

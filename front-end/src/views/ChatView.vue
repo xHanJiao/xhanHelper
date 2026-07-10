@@ -100,6 +100,14 @@ const { debugMode, toggle: toggleDebug } = useDebugMode()
 
 onMounted(() => {
   fetchAgents()
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  // 复用已存在会话（从其它 tab 返回，route id 与 store 中 conversationId 相同，
+  // 导致 watcher 三分支全跳过）时，主动同步一次：拉取最新消息 + 滚到底，
+  // 避免看到陈旧列表且停在旧滚动位置。
+  // 注意：仅当 route id === store conversationId 时才补，避免与 watcher 分支 A（切换会话）重复请求。
+  if (chat.conversationId && route.params.id === chat.conversationId) {
+    syncCurrentConversation()
+  }
 })
 
 const inputValue = ref('')
@@ -316,6 +324,29 @@ async function loadHistory(convId, direction = 'before', cursor = null) {
     nMessage.error('加载历史消息失败')
   } finally {
     isLoadingHistory.value = false
+  }
+}
+
+// 多端同步兜底：tab 从后台切回前台时，全量刷新当前会话最新消息，
+// 补齐其他端（客户端/其它 tab）在此期间产生的新消息。
+let lastSyncAt = 0
+async function syncCurrentConversation() {
+  if (!chat.conversationId) return
+  if (chat.isStreaming) return
+  const now = Date.now()
+  if (now - lastSyncAt < 3000) return
+  lastSyncAt = now
+  await loadHistory(chat.conversationId)
+  await nextTick()
+  requestAnimationFrame(() => {
+    const el = messagesContainerRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    syncCurrentConversation()
   }
 }
 
@@ -543,6 +574,7 @@ watch(() => route.params.id, async (newId, oldId) => {
 
 onBeforeUnmount(() => {
   clearTimeout(hideCooldownTimer)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   if (chat.isStreaming) cancel()
 })
 

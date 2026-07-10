@@ -306,6 +306,7 @@ function handleSelect(conv) {
     </div>
 
     <!-- 历史对话 -->
+    <template v-if="false">
     <template v-if="isAdmin">
     <div style="padding: var(--space-sm) var(--space-md) var(--space-sm);">
       <div
@@ -381,6 +382,7 @@ function handleSelect(conv) {
         <NButton text size="small" :loading="convs.loading" @click="handleLoadMore" style="color: var(--color-text-muted);">加载更多</NButton>
       </div>
     </div>
+    </template>
     </template>
 
     <!-- 用户 -->

@@ -2,6 +2,7 @@ package appinit
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"xhan-helper/internal/agent"
@@ -158,6 +159,22 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	})
 
 	go cronRunner.Start(bgCtx)
+
+	// 统一搜索工具（语义搜索走 ContextSource，关键词搜索走 repo）
+	unifiedSearch := tool.NewUnifiedSearchTool(
+		map[string]retrieval.ContextSource{
+			"memory":  memSource,
+			"note":    noteSource,
+			"summary": summarySource,
+			"theme":   themeSource,
+		},
+		infra.Embedder,
+		repos.Mem,
+		repos.Note,
+		repos.ConversationSummary,
+		repos.ThemeState,
+	)
+	tools.Registry.Register(tool.NewLoggingWrapper(unifiedSearch, log.Default()))
 
 	replayRunner := replay.NewRunner(&replay.RunnerConfig{
 		FlashClient:        llmClients.Flash,

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -89,12 +90,14 @@ func (r *ConversationSummaryRepo) ListAll(ctx context.Context, limit, offset int
 // 多关键词为 OR 关系，按创建时间倒序，limit 为返回上限。
 func (r *ConversationSummaryRepo) SearchByKeyword(ctx context.Context, userID string, keywords []string, limit int) ([]model.ConversationSummary, error) {
 	query := r.db.WithContext(ctx).Where("user_id = ?", userID)
-	for i, kw := range keywords {
-		if i == 0 {
-			query = query.Where("summary_text LIKE ?", "%"+kw+"%")
-		} else {
-			query = query.Or("summary_text LIKE ?", "%"+kw+"%")
+	if len(keywords) > 0 {
+		var conds []string
+		var args []any
+		for _, kw := range keywords {
+			conds = append(conds, "summary_text LIKE ?")
+			args = append(args, "%"+kw+"%")
 		}
+		query = query.Where("("+strings.Join(conds, " OR ")+")", args...)
 	}
 	var list []model.ConversationSummary
 	err := query.Order("created_at DESC").Limit(limit).Find(&list).Error

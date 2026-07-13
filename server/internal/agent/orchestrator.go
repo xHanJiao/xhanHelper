@@ -719,7 +719,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		state.msgs = append(state.msgs, msg)
 		state.allToolCalls = append(state.allToolCalls, internalTCs...)
-		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, o.registry, internalTCs)
+		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, internalTCs)
 		state.msgs = o.collectToolResultsNative(ctx, internalTCs, msg.ToolCalls, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 		return false
 	}
@@ -729,7 +729,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		// 兜底：DeepSeek 偶发不走原生 FC，仍在 text 中输出 JSON
 		if parsed, parseErr := ParseLLMResponse(msg.Content); parseErr == nil && parsed != nil {
 			if len(parsed.ToolCalls) > 0 {
-				return o.executePromptEngTools(ctx, events, msg, req, systemPrompt, retrieveResult, state, parsed)
+				return o.executePromptEngTools(ctx, events, msg, req, retrieveResult, state, parsed)
 			}
 			// 纯 JSON（有 reply 无 tool_calls）：提取纯文本
 			msg.Content = parsed.Reply
@@ -781,7 +781,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		return true
 	}
 
-	return o.executePromptEngTools(ctx, events, msg, req, systemPrompt, retrieveResult, state, parsed)
+	return o.executePromptEngTools(ctx, events, msg, req, retrieveResult, state, parsed)
 }
 
 // verifyResult — Flash 检验返回的结构
@@ -956,7 +956,6 @@ func (o *Orchestrator) executePromptEngTools(
 	events chan<- *llm.StreamEvent,
 	msg llm.Message,
 	req *RunRequest,
-	systemPrompt string,
 	retrieveResult *ctxflow.RetrieveResult,
 	state *reactState,
 	parsed *LLMResponse,
@@ -966,7 +965,7 @@ func (o *Orchestrator) executePromptEngTools(
 	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	state.allToolCalls = append(state.allToolCalls, parsed.ToolCalls...)
 	o.injectExcludeMemIDsForMemSearch(parsed, idsByTypeFromResult(retrieveResult)["memory"])
-	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, o.registry, parsed.ToolCalls)
+	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, parsed.ToolCalls)
 	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 	return false
 }
@@ -1185,7 +1184,7 @@ func injectExcludeIDs(args json.RawMessage, memIDs []string) json.RawMessage {
 	return b
 }
 
-func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID string,
+func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID, convID string,
 	registry *tool.Registry, toolCalls []tool.ToolCall) []toolExecResult {
 
 	limit := o.maxConcurrency
@@ -1222,7 +1221,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 						r = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
 					}
 				}()
-				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID}
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID}
 				r = registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
 			}()
 

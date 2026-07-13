@@ -16,11 +16,12 @@ import (
 type AgentTool struct {
 	agentRepo   *service.AgentRepo
 	versionRepo *service.VersionRepo
+	convRepo    *service.ConversationRepo
 }
 
 // NewAgentTool 创建 AgentTool
-func NewAgentTool(agentRepo *service.AgentRepo, versionRepo *service.VersionRepo) *AgentTool {
-	return &AgentTool{agentRepo: agentRepo, versionRepo: versionRepo}
+func NewAgentTool(agentRepo *service.AgentRepo, versionRepo *service.VersionRepo, convRepo *service.ConversationRepo) *AgentTool {
+	return &AgentTool{agentRepo: agentRepo, versionRepo: versionRepo, convRepo: convRepo}
 }
 
 func (t *AgentTool) Name() string { return "agent" }
@@ -68,6 +69,30 @@ func (t *AgentTool) Functions() []FuncSchema {
 			Name:        "list_agents",
 			Display:     "智能体列表",
 			Description: "列出当前已有的智能体",
+			Parameters: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			Name:        "bind_agent",
+			Display:     "绑定智能体",
+			Description: "将指定智能体绑定到当前会话，后续该会话的对话都会使用该智能体的角色设定。当用户要求切换/使用某个智能体时调用。先用 list_agents/find_agent 拿到 agent_id。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"agent_id": map[string]interface{}{
+						"type":        "string",
+						"description": "要绑定的智能体 ID",
+					},
+				},
+				"required": []string{"agent_id"},
+			},
+		},
+		{
+			Name:        "unbind_agent",
+			Display:     "解绑智能体",
+			Description: "解除当前会话已绑定的智能体，恢复为默认助手。当用户要求退出/取消当前智能体时调用。",
 			Parameters: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
@@ -153,6 +178,10 @@ func (t *AgentTool) Execute(ec *ExecuteContext, funcName string, args json.RawMe
 		return t.findAgent(ec, args)
 	case "list_agents":
 		return t.listAgents(ec, args)
+	case "bind_agent":
+		return t.bindAgent(ec, args)
+	case "unbind_agent":
+		return t.unbindAgent(ec, args)
 	case "update_agent":
 		return t.updateAgent(ec, args)
 	case "get_agent_versions":
@@ -219,14 +248,64 @@ func (t *AgentTool) listAgents(ec *ExecuteContext, _ json.RawMessage) *Result {
 		return &Result{Success: false, Error: "list agents: " + err.Error()}
 	}
 	type brief struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Summary string `json:"summary"`
 	}
 	list := make([]brief, len(agents))
 	for i, a := range agents {
-		list[i] = brief{ID: a.ID, Name: a.Name}
+		list[i] = brief{ID: a.ID, Name: a.Name, Summary: a.Summary}
 	}
 	data, _ := json.Marshal(list)
+	return &Result{Success: true, Data: data}
+}
+
+func (t *AgentTool) bindAgent(ec *ExecuteContext, args json.RawMessage) *Result {
+	if ec.ConvID == "" {
+		return &Result{Success: false, Error: "no conversation context"}
+	}
+	var req struct {
+		AgentID string `json:"agent_id"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil {
+		return &Result{Success: false, Error: "parse args: " + err.Error()}
+	}
+	if req.AgentID == "" {
+		return &Result{Success: false, Error: "agent_id required"}
+	}
+
+	agent, err := t.agentRepo.FindByID(ec.Ctx, req.AgentID, ec.UserID)
+	if err != nil {
+		return &Result{Success: false, Error: "find agent: " + err.Error()}
+	}
+	if agent == nil {
+		return &Result{Success: false, Error: "agent not found"}
+	}
+
+	if err := t.convRepo.UpdateAgentID(ec.Ctx, ec.ConvID, &req.AgentID); err != nil {
+		return &Result{Success: false, Error: "bind agent: " + err.Error()}
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"conversation_id": ec.ConvID,
+		"agent_id":        req.AgentID,
+		"agent_name":      agent.Name,
+		"message":         fmt.Sprintf("已将会话绑定到智能体「%s」", agent.Name),
+	})
+	return &Result{Success: true, Data: data}
+}
+
+func (t *AgentTool) unbindAgent(ec *ExecuteContext, _ json.RawMessage) *Result {
+	if ec.ConvID == "" {
+		return &Result{Success: false, Error: "no conversation context"}
+	}
+	if err := t.convRepo.UpdateAgentID(ec.Ctx, ec.ConvID, nil); err != nil {
+		return &Result{Success: false, Error: "unbind agent: " + err.Error()}
+	}
+	data, _ := json.Marshal(map[string]interface{}{
+		"conversation_id": ec.ConvID,
+		"message":         "已解绑当前会话的智能体",
+	})
 	return &Result{Success: true, Data: data}
 }
 

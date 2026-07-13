@@ -88,7 +88,7 @@ func (t *MissionTool) Functions() []FuncSchema {
 		{
 			Name:        "pause_mission",
 			Display:     "暂停任务",
-			Description: "暂停一个追踪任务。用户说「先别盯XX了」「暂停XX任务」时调用。",
+			Description: "暂停一个追踪任务。用户说「先别盯XX了」「暂停XX任务」之类的话时调用。",
 			Parameters: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{"id": map[string]interface{}{"type": "string", "description": "任务 ID"}},
@@ -98,7 +98,7 @@ func (t *MissionTool) Functions() []FuncSchema {
 		{
 			Name:        "resume_mission",
 			Display:     "恢复任务",
-			Description: "恢复一个暂停的追踪任务。用户说「继续盯XX」「恢复XX任务」时调用。",
+			Description: "恢复一个暂停的追踪任务。用户说「继续盯XX」「恢复XX任务」之类的话时调用。",
 			Parameters: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{"id": map[string]interface{}{"type": "string", "description": "任务 ID"}},
@@ -108,7 +108,7 @@ func (t *MissionTool) Functions() []FuncSchema {
 		{
 			Name:        "complete_mission",
 			Display:     "完成任务",
-			Description: "标记一个追踪任务为已完成。用户说「XX学完了」「XX项目做完了，不用盯了」时调用。",
+			Description: "标记一个追踪任务为已完成。用户说「XX学完了」「XX项目做完了，不用盯了」之类的话时调用。",
 			Parameters: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{"id": map[string]interface{}{"type": "string", "description": "任务 ID"}},

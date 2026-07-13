@@ -25,6 +25,7 @@ type FuncSchema struct {
 type ExecuteContext struct {
 	Ctx    context.Context
 	UserID string
+	ConvID string // 当前会话 ID，绑定/解绑 agent 用
 }
 
 // Tool — 所有工具必须实现的接口

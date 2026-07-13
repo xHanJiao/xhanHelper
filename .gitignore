@@ -43,3 +43,5 @@ front-end/node_modules/
 *.db_bak
 
 server/data/markdownserver/data/
+
+.opencode

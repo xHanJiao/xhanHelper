@@ -25,6 +25,7 @@ type searchResult struct {
 	Notes     *unifiedDomainResult `json:"notes,omitempty"`
 	Summaries *unifiedDomainResult `json:"summaries,omitempty"`
 	Themes    *unifiedDomainResult `json:"themes,omitempty"`
+	History   *unifiedDomainResult `json:"history,omitempty"`
 }
 
 // memoryItem memory 和 note 共用（EntityMeta 字段一致）
@@ -55,6 +56,14 @@ type themeItem struct {
 	Score       float64 `json:"score,omitempty"`
 }
 
+type historyItem struct {
+	ID             string  `json:"id"`
+	Content        string  `json:"content"`
+	CreatedAt      string  `json:"created_at"`
+	Score          float64 `json:"score,omitempty"`
+	ConversationID string  `json:"conversation_id,omitempty"`
+}
+
 // roundScore 保留 4 位小数
 func roundScore(s float64) float64 {
 	return math.Round(s*10000) / 10000
@@ -67,6 +76,7 @@ type UnifiedSearchTool struct {
 	sources  map[string]retrieval.ContextSource
 	embedder app.Embedder
 
+	msgRepo     *service.MessageRepo
 	memRepo     *service.UserMemoryRepo
 	noteRepo    *service.NoteRepo
 	summaryRepo *service.ConversationSummaryRepo
@@ -77,6 +87,7 @@ type UnifiedSearchTool struct {
 func NewUnifiedSearchTool(
 	sources map[string]retrieval.ContextSource,
 	embedder app.Embedder,
+	msgRepo *service.MessageRepo,
 	memRepo *service.UserMemoryRepo,
 	noteRepo *service.NoteRepo,
 	summaryRepo *service.ConversationSummaryRepo,
@@ -85,6 +96,7 @@ func NewUnifiedSearchTool(
 	return &UnifiedSearchTool{
 		sources:     sources,
 		embedder:    embedder,
+		msgRepo:     msgRepo,
 		memRepo:     memRepo,
 		noteRepo:    noteRepo,
 		summaryRepo: summaryRepo,
@@ -97,7 +109,7 @@ func (t *UnifiedSearchTool) Name() string { return "unified_search" }
 
 // Description 工具描述
 func (t *UnifiedSearchTool) Description() string {
-	return "统一搜索工具，支持语义搜索和关键词搜索，覆盖记忆、笔记、摘要、主题四个域，返回结构化 JSON"
+	return "统一搜索工具，支持语义搜索和关键词搜索，覆盖记忆、笔记、摘要、主题、历史消息五个域，返回结构化 JSON"
 }
 
 // Functions 工具函数定义
@@ -106,7 +118,7 @@ func (t *UnifiedSearchTool) Functions() []FuncSchema {
 		{
 			Name:        "semantic_search",
 			Display:     "语义搜索",
-			Description: "用自然语言语义搜索记忆、笔记、摘要和主题，返回结构化 JSON。适合「查找相关...」「搜索关于...」等意图模糊的查询",
+			Description: "用自然语言语义搜索记忆、笔记、摘要、主题和历史消息，返回结构化 JSON。适合「查找相关...」「搜索关于...」等意图模糊的查询",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -116,7 +128,7 @@ func (t *UnifiedSearchTool) Functions() []FuncSchema {
 					"types": map[string]interface{}{
 						"type":        "array",
 						"items":       map[string]string{"type": "string"},
-						"description": "限定搜索域，可选值: memory/note/summary/theme，默认全部",
+						"description": "限定搜索域，可选值: memory/note/summary/theme/history，默认全部",
 					},
 					"top_k": map[string]interface{}{
 						"type": "integer", "description": "每类结果数上限，默认 5，最大 10",
@@ -128,7 +140,7 @@ func (t *UnifiedSearchTool) Functions() []FuncSchema {
 		{
 			Name:        "keyword_search",
 			Display:     "关键词搜索",
-			Description: "用关键词精确搜索记忆、笔记、摘要和主题，返回结构化 JSON。适合查找包含特定词汇的内容",
+			Description: "用关键词精确搜索记忆、笔记、摘要、主题和历史消息，返回结构化 JSON。适合查找包含特定词汇的内容",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -138,7 +150,7 @@ func (t *UnifiedSearchTool) Functions() []FuncSchema {
 					"types": map[string]interface{}{
 						"type":        "array",
 						"items":       map[string]string{"type": "string"},
-						"description": "限定搜索域，可选值: memory/note/summary/theme，默认全部",
+						"description": "限定搜索域，可选值: memory/note/summary/theme/history，默认全部",
 					},
 					"topic": map[string]interface{}{
 						"type": "string", "description": "主题过滤，仅对记忆和笔记生效",
@@ -190,7 +202,6 @@ func (t *UnifiedSearchTool) semanticSearch(ec *ExecuteContext, args json.RawMess
 		types = []string{"memory", "note", "summary", "theme"}
 	}
 
-	// 大模型可能输出空格分隔的多意图 query，拆开分别搜再合并去重
 	subQueries := splitSubQueries(a.Query)
 	if len(subQueries) == 0 {
 		subQueries = []string{a.Query}
@@ -237,6 +248,7 @@ func (t *UnifiedSearchTool) buildSearchOptions(userID, query string, emb []float
 		Note:      retrieval.SourceConfig{Threshold: 0.5, Limit: topK},
 		Summary:   retrieval.SourceConfig{Threshold: 0.55, Limit: topK},
 		Theme:     retrieval.SourceConfig{Threshold: 0.6, Limit: topK},
+		History:   retrieval.SourceConfig{Threshold: 0.55, Limit: topK},
 	}
 }
 
@@ -303,6 +315,11 @@ func (t *UnifiedSearchTool) keywordSearch(ec *ExecuteContext, args json.RawMessa
 			if len(pkts) > 0 {
 				packets["theme"] = pkts
 			}
+		case "history":
+			pkts := t.searchHistoryByKeyword(ec, keywords, a.TopK)
+			if len(pkts) > 0 {
+				packets["history"] = pkts
+			}
 		}
 	}
 
@@ -339,6 +356,11 @@ func (t *UnifiedSearchTool) buildSearchResult(packets map[string][]retrieval.Con
 			result.Themes = &unifiedDomainResult{
 				Description: retrieval.DescThemes,
 				Data:        t.convertThemePackets(pkts, includeScore),
+			}
+		case "history":
+			result.History = &unifiedDomainResult{
+				Description: retrieval.DescMessages,
+				Data:        t.convertHistoryPackets(pkts, includeScore),
 			}
 		}
 	}
@@ -488,6 +510,46 @@ func (t *UnifiedSearchTool) searchThemesByKeyword(ec *ExecuteContext, keywords [
 		matched = matched[:limit]
 	}
 	return matched
+}
+
+func (t *UnifiedSearchTool) searchHistoryByKeyword(ec *ExecuteContext, keywords []string, limit int) []retrieval.ContextPacket {
+	msgs, _, err := t.msgRepo.SearchMessagesByCursor(ec.Ctx, ec.UserID, keywords, "user", "", nil, limit)
+	if err != nil {
+		log.Printf("[unified_search] history keyword: %v", err)
+		return nil
+	}
+	pkts := make([]retrieval.ContextPacket, 0, len(msgs))
+	for _, m := range msgs {
+		pkts = append(pkts, retrieval.ContextPacket{
+			ID:   m.ID,
+			Type: "history",
+			Meta: retrieval.MessageMeta{
+				Content:        m.Content,
+				CreatedAt:      m.CreatedAt,
+				ConversationID: m.ConversationID,
+			},
+		})
+	}
+	return pkts
+}
+
+func (t *UnifiedSearchTool) convertHistoryPackets(pkts []retrieval.ContextPacket, includeScore bool) []historyItem {
+	items := make([]historyItem, 0, len(pkts))
+	for _, p := range pkts {
+		it := historyItem{ID: p.ID}
+		if meta, ok := p.Meta.(retrieval.MessageMeta); ok {
+			it.Content = meta.Content
+			it.ConversationID = meta.ConversationID
+			if !meta.CreatedAt.IsZero() {
+				it.CreatedAt = formatMsgTime(meta.CreatedAt)
+			}
+		}
+		if includeScore {
+			it.Score = roundScore(p.Score)
+		}
+		items = append(items, it)
+	}
+	return items
 }
 
 // ==================== 并发 Fetch ====================

@@ -28,6 +28,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	memSource := retrieval.NewMemorySource(vs, repos.Mem, repos.Embedding, repos.Chunk, chunkBuilder, memDecayer)
 	noteSource := retrieval.NewNoteSource(vs, repos.Note, repos.Embedding, repos.Chunk, chunkBuilder, noteDecayer)
 	historySource := retrieval.NewHistorySource(vs, repos.Message, repos.Embedding, historyDecayer)
+	simpleHistorySource := retrieval.NewSimpleHistorySource(vs, repos.Message)
 	themeSource := retrieval.NewThemeSource(repos.ThemeState, vs)
 	summarySource := retrieval.NewSummarySource(vs, repos.ConversationSummary, repos.Embedding, repos.Chunk, chunkBuilder, summaryDecayer)
 
@@ -167,8 +168,10 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 			"note":    noteSource,
 			"summary": summarySource,
 			"theme":   themeSource,
+			"history": simpleHistorySource,
 		},
 		infra.Embedder,
+		repos.Message,
 		repos.Mem,
 		repos.Note,
 		repos.ConversationSummary,

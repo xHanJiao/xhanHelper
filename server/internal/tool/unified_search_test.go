@@ -34,7 +34,7 @@ func (m *mockContextSource) Warmup(_ context.Context, _ *llm.Embedder) {}
 // ==================== Schema Tests ====================
 
 func TestUnifiedSearch_Functions(t *testing.T) {
-	tool := NewUnifiedSearchTool(nil, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(nil, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	fns := tool.Functions()
 	if len(fns) != 2 {
 		t.Fatalf("expected 2 functions, got %d", len(fns))
@@ -51,7 +51,7 @@ func TestUnifiedSearch_Functions(t *testing.T) {
 }
 
 func TestUnifiedSearch_NameDesc(t *testing.T) {
-	tool := NewUnifiedSearchTool(nil, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(nil, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	if tool.Name() != "unified_search" {
 		t.Errorf("expected name=unified_search, got %s", tool.Name())
 	}
@@ -65,7 +65,7 @@ func TestUnifiedSearch_NameDesc(t *testing.T) {
 func TestUnifiedSearch_Errors(t *testing.T) {
 	tool := NewUnifiedSearchTool(
 		map[string]retrieval.ContextSource{"memory": &mockContextSource{name: "memory"}},
-		&mockEmbedder{}, nil, nil, nil, nil,
+		&mockEmbedder{}, nil, nil, nil, nil, nil,
 	)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
@@ -104,7 +104,7 @@ func TestUnifiedSearch_TopKClamp(t *testing.T) {
 	}}
 	tool := NewUnifiedSearchTool(
 		map[string]retrieval.ContextSource{"memory": src},
-		&mockEmbedder{}, nil, nil, nil, nil,
+		&mockEmbedder{}, nil, nil, nil, nil, nil,
 	)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
@@ -141,7 +141,7 @@ func TestUnifiedSearch_SemanticAllTypes(t *testing.T) {
 			{ID: "t1", Type: "theme", Score: 0.78, Meta: retrieval.ThemeMeta{Description: "日本旅行", StateText: "进行中"}},
 		}},
 	}
-	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
 	res := tool.Execute(ec, "semantic_search", mustMarshal(t, map[string]string{"query": "旅行"}))
@@ -177,7 +177,7 @@ func TestUnifiedSearch_SemanticTypeFilter(t *testing.T) {
 			{ID: "n1", Type: "note", Meta: retrieval.EntityMeta{Content: "笔记", CreatedAt: time.Now()}},
 		}},
 	}
-	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
 	res := tool.Execute(ec, "semantic_search", mustMarshal(t, map[string]interface{}{
@@ -204,7 +204,7 @@ func TestUnifiedSearch_SemanticEmptyResults(t *testing.T) {
 		"memory": &mockContextSource{name: "memory", pkts: nil},
 		"note":   &mockContextSource{name: "note", pkts: []retrieval.ContextPacket{}},
 	}
-	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
 	res := tool.Execute(ec, "semantic_search", mustMarshal(t, map[string]string{"query": "不存在"}))
@@ -228,7 +228,7 @@ func TestUnifiedSearch_SemanticScoreIncluded(t *testing.T) {
 			{ID: "m1", Type: "memory", Score: 0.85, Meta: retrieval.EntityMeta{Content: "测试", CreatedAt: time.Now()}},
 		}},
 	}
-	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
 	res := tool.Execute(ec, "semantic_search", mustMarshal(t, map[string]string{"query": "测试"}))
@@ -248,7 +248,7 @@ func TestUnifiedSearch_SemanticScoreRounded(t *testing.T) {
 			{ID: "m1", Type: "memory", Score: 0.85327, Meta: retrieval.EntityMeta{Content: "测试", CreatedAt: time.Now()}},
 		}},
 	}
-	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
 	res := tool.Execute(ec, "semantic_search", mustMarshal(t, map[string]string{"query": "测试"}))
@@ -291,7 +291,7 @@ func TestUnifiedSearch_SemanticMultiQueryMerge(t *testing.T) {
 			},
 		},
 	}
-	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
 	res := tool.Execute(ec, "semantic_search", mustMarshal(t, map[string]string{"query": "睡眠 早睡"}))
@@ -334,7 +334,7 @@ func TestUnifiedSearch_SemanticMultiQuerySingleFragment(t *testing.T) {
 			{ID: "m1", Type: "memory", Score: 0.85, Meta: retrieval.EntityMeta{Content: "测试", CreatedAt: time.Now()}},
 		}},
 	}
-	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
 	res := tool.Execute(ec, "semantic_search", mustMarshal(t, map[string]string{"query": "最近睡眠"}))
@@ -365,7 +365,7 @@ func TestUnifiedSearch_SemanticDescriptionPresent(t *testing.T) {
 			{ID: "t1", Type: "theme", Meta: retrieval.ThemeMeta{Description: "主题"}},
 		}},
 	}
-	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
 	res := tool.Execute(ec, "semantic_search", mustMarshal(t, map[string]string{"query": "测试"}))
@@ -395,7 +395,7 @@ func TestUnifiedSearch_MemoryEntityMetaFields(t *testing.T) {
 			{ID: "m1", Type: "memory", Meta: retrieval.EntityMeta{Content: "喜欢吃辣", Topic: "偏好", CreatedAt: now}},
 		}},
 	}
-	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
 	res := tool.Execute(ec, "semantic_search", mustMarshal(t, map[string]string{"query": "辣"}))
@@ -427,7 +427,7 @@ func TestUnifiedSearch_SummaryMetaFields(t *testing.T) {
 			}},
 		}},
 	}
-	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
 	res := tool.Execute(ec, "semantic_search", mustMarshal(t, map[string]string{"query": "健身"}))
@@ -462,7 +462,7 @@ func TestUnifiedSearch_ThemeMetaFields(t *testing.T) {
 			{ID: "t1", Type: "theme", Score: 0.78, Meta: retrieval.ThemeMeta{Description: "日本旅行计划", StateText: "进行中"}},
 		}},
 	}
-	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
 	res := tool.Execute(ec, "semantic_search", mustMarshal(t, map[string]string{"query": "旅行"}))
@@ -488,7 +488,7 @@ func TestUnifiedSearch_EntityCreatedAtZero(t *testing.T) {
 			{ID: "m1", Type: "memory", Meta: retrieval.EntityMeta{Content: "无创建时间"}},
 		}},
 	}
-	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil)
+	tool := NewUnifiedSearchTool(sources, &mockEmbedder{}, nil, nil, nil, nil, nil)
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
 	res := tool.Execute(ec, "semantic_search", mustMarshal(t, map[string]string{"query": "无"}))
@@ -510,6 +510,7 @@ type appReposForTest struct {
 	note    *service.NoteRepo
 	summary *service.ConversationSummaryRepo
 	theme   *service.ThemeStateRepo
+	msg     *service.MessageRepo
 }
 
 func setupUnifiedSearchDB(t *testing.T) (*UnifiedSearchTool, *appReposForTest, func()) {
@@ -523,6 +524,7 @@ func setupUnifiedSearchDB(t *testing.T) (*UnifiedSearchTool, *appReposForTest, f
 		&model.Note{},
 		&model.ConversationSummary{},
 		&model.ThemeState{},
+		&model.Message{},
 	); err != nil {
 		t.Fatalf("auto-migrate: %v", err)
 	}
@@ -532,11 +534,13 @@ func setupUnifiedSearchDB(t *testing.T) (*UnifiedSearchTool, *appReposForTest, f
 		note:    service.NewNoteRepo(db),
 		summary: service.NewConversationSummaryRepo(db),
 		theme:   service.NewThemeStateRepo(db),
+		msg:     service.NewMessageRepo(db),
 	}
 
 	tool := NewUnifiedSearchTool(
 		nil,
 		nil, // embedder not needed for keyword search
+		repos.msg,
 		repos.mem,
 		repos.note,
 		repos.summary,
@@ -587,6 +591,18 @@ func seedAllDomains(t *testing.T, repos *appReposForTest, userID string) {
 	for _, th := range themes {
 		if err := repos.theme.Create(ctx, &th); err != nil {
 			t.Fatalf("seed theme %s: %v", th.ID, err)
+		}
+	}
+
+	messages := []model.Message{
+		{ID: "msg-1", UserID: userID, ConversationID: "conv-1", Role: "user", Content: "最近吃麻辣火锅上火了", Status: model.MsgStatusNormal, CreatedAt: time.Now().Add(-48 * time.Hour)},
+		{ID: "msg-2", UserID: userID, ConversationID: "conv-1", Role: "user", Content: "Go 的泛型约束怎么写比较优雅？", Status: model.MsgStatusNormal, CreatedAt: time.Now().Add(-24 * time.Hour)},
+		{ID: "msg-3", UserID: userID, ConversationID: "conv-2", Role: "assistant", Content: "你可以用 interface 定义约束", Status: model.MsgStatusNormal, CreatedAt: time.Now().Add(-24 * time.Hour)},
+		{ID: "msg-4", UserID: "other-user", ConversationID: "conv-3", Role: "user", Content: "另一个用户的消息不应出现", Status: model.MsgStatusNormal, CreatedAt: time.Now()},
+	}
+	for _, m := range messages {
+		if err := repos.msg.Create(ctx, &m); err != nil {
+			t.Fatalf("seed message %s: %v", m.ID, err)
 		}
 	}
 }
@@ -792,6 +808,107 @@ func TestUnifiedSearch_KeywordThemeInMemoryMatch(t *testing.T) {
 			t.Error("expected themes for keyword 'KV'")
 		}
 	})
+}
+
+// ==================== History Message Search ====================
+
+func TestUnifiedSearch_KeywordHistoryBasic(t *testing.T) {
+	tool, repos, cleanup := setupUnifiedSearchDB(t)
+	defer cleanup()
+	userID := "user-1"
+	seedAllDomains(t, repos, userID)
+
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
+
+	res := tool.Execute(ec, "keyword_search", mustMarshal(t, map[string]interface{}{
+		"keywords": "麻辣火锅",
+		"types":    []string{"history"},
+	}))
+	if !res.Success {
+		t.Fatalf("history keyword search failed: %s", res.Error)
+	}
+
+	var out searchResult
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if out.History == nil {
+		t.Fatal("expected history results for keyword '麻辣火锅'")
+	}
+
+	items := out.History.Data.([]interface{})
+	if len(items) != 1 {
+		t.Fatalf("expected 1 history item, got %d", len(items))
+	}
+	first := items[0].(map[string]interface{})
+	if first["content"].(string) != "最近吃麻辣火锅上火了" {
+		t.Errorf("expected content '最近吃麻辣火锅上火了', got %q", first["content"])
+	}
+	if first["conversation_id"] != "conv-1" {
+		t.Errorf("expected conversation_id=conv-1, got %v", first["conversation_id"])
+	}
+}
+
+func TestUnifiedSearch_KeywordHistorySummaryFields(t *testing.T) {
+	tool, repos, cleanup := setupUnifiedSearchDB(t)
+	defer cleanup()
+	userID := "user-1"
+	seedAllDomains(t, repos, userID)
+
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
+
+	res := tool.Execute(ec, "keyword_search", mustMarshal(t, map[string]interface{}{
+		"keywords": "泛型",
+		"types":    []string{"history"},
+	}))
+	if !res.Success {
+		t.Fatalf("history keyword search failed: %s", res.Error)
+	}
+
+	var out searchResult
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if out.History == nil {
+		t.Fatal("expected history results for keyword '泛型'")
+	}
+	if out.History.Description != retrieval.DescMessages {
+		t.Errorf("expected history description, got %q", out.History.Description)
+	}
+
+	items := out.History.Data.([]interface{})
+	first := items[0].(map[string]interface{})
+	if _, ok := first["score"]; ok {
+		t.Error("keyword search should not include score field")
+	}
+	if first["created_at"] == "" {
+		t.Error("created_at should not be empty")
+	}
+}
+
+func TestUnifiedSearch_KeywordHistoryUserIsolation(t *testing.T) {
+	tool, repos, cleanup := setupUnifiedSearchDB(t)
+	defer cleanup()
+	userID := "user-1"
+	seedAllDomains(t, repos, userID)
+
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "other-user"}
+
+	res := tool.Execute(ec, "keyword_search", mustMarshal(t, map[string]interface{}{
+		"keywords": "麻辣 泛型",
+		"types":    []string{"history"},
+	}))
+	if !res.Success {
+		t.Fatalf("history keyword search failed: %s", res.Error)
+	}
+
+	var out searchResult
+	json.Unmarshal(res.Data, &out)
+	if out.History != nil {
+		t.Error("history should be nil for other-user")
+	}
 }
 
 // ==================== User Isolation ====================

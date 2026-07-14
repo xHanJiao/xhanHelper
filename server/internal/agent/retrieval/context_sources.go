@@ -17,6 +17,16 @@ type EntityMeta struct {
 
 func (EntityMeta) isPacketMeta() {}
 
+// MessageMeta 用户消息的元数据（unified_search 的 history 域使用）。
+// 仅包含用户自己发送的消息，不含对话轮上下文和 AI 回复。
+type MessageMeta struct {
+	Content        string    // 消息原文
+	CreatedAt      time.Time // 消息时间
+	ConversationID string    // 所属会话 ID
+}
+
+func (MessageMeta) isPacketMeta() {}
+
 // HistoryMeta 历史消息的元数据。
 // 一轮对话含多条消息，所以在 Meta 里存完整消息切片，builder 做嵌套 XML 渲染时使用。
 type HistoryMeta struct {

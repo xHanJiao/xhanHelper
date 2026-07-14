@@ -7,6 +7,8 @@ struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var inputText = ""
     @FocusState private var isInputFocused: Bool
+    @State private var scrollPosition = ScrollPosition(edge: .top)
+    @State private var showScrollToBottom = false
     let agentId: String?
 
     let baseURL: String
@@ -18,7 +20,26 @@ struct ChatView: View {
 
             VStack(spacing: 0) {
             // 消息列表
-            MessageListView(viewModel: viewModel)
+            ZStack(alignment: .bottom) {
+                MessageListView(viewModel: viewModel, scrollPosition: $scrollPosition, showScrollToBottom: $showScrollToBottom)
+                if showScrollToBottom && !viewModel.messages.isEmpty {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            scrollPosition.scrollTo(edge: .top)
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.title3)
+                            .foregroundColor(.primary)
+                            .frame(width: 36, height: 36)
+                            .background(.ultraThinMaterial, in: Circle())
+                            .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+                    }
+                    .transition(.scale.combined(with: .opacity))
+                    .padding(.bottom, 12)
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: showScrollToBottom)
 
             // 错误提示
             if let err = viewModel.errorMessage {
@@ -36,6 +57,9 @@ struct ChatView: View {
                     isInputFocused = false
                     viewModel.sendMessage(inputText, baseURL: baseURL, token: token, agentId: agentId)
                     inputText = ""
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        scrollPosition.scrollTo(edge: .top)
+                    }
                 },
                 onStop: {
                     viewModel.stopStreaming()

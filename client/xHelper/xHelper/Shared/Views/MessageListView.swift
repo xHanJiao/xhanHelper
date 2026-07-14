@@ -10,6 +10,8 @@ struct MessageListView: View {
     @State private var menuFrames: [String: CGRect] = [:]
     @State private var menuDismissTask: Task<Void, Never>? = nil
     @State private var viewHeight: CGFloat = 0
+    @Binding var scrollPosition: ScrollPosition
+    @Binding var showScrollToBottom: Bool
 
     var body: some View {
         Group {
@@ -132,18 +134,29 @@ struct MessageListView: View {
         }
         .scaleEffect(y: -1)
         .defaultScrollAnchor(.top)
+        .scrollPosition($scrollPosition)
         .dismissKeyboardOnTap()
         .onScrollPhaseChange { _, newPhase in
             if newPhase != .idle { dismissMenu() }
         }
         .simultaneousGesture(TapGesture().onEnded { dismissMenu() })
+        .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }, action: { _, newY in
+            showScrollToBottom = newY > viewHeight * 0.75
+        })
+
     }
 
-    // 单条消息行。流式那条：ChatBubble 在前、ThinkingBubble 在后，
-    // 经外层 .scaleEffect(y:-1) 翻转后恢复「思考在上、回复在下」。
+    // 单条消息行。流式那条：ThinkingBubble 在前、ChatBubble 在后，
+    // 思考在上、回复在下。
     @ViewBuilder
     private func messageRow(_ msg: Message) -> some View {
         VStack(spacing: 12) {
+            if msg.id == "__streaming__", let thought = viewModel.thoughtMessage {
+                ThinkingBubble(text: thought, isStreaming: !viewModel.thoughtDone)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+            }
+
             if msg.role == "user" {
                 ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
                            showTime: activeTimeBubbleId == msg.id,
@@ -152,12 +165,6 @@ struct MessageListView: View {
                 ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt,
                            showTime: activeTimeBubbleId == msg.id,
                            onTapToShowTime: { toggleTimeBubble(msg.id) })
-            }
-
-            if msg.id == "__streaming__", let thought = viewModel.thoughtMessage {
-                ThinkingBubble(text: thought, isStreaming: !viewModel.thoughtDone)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
             }
         }
     }

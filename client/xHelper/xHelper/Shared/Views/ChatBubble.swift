@@ -133,9 +133,9 @@ struct ChatBubble: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .foregroundColor(Color("userText"))
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
-                        .background(Color("bubbleUserTint"), in: RoundedRectangle(cornerRadius: 18))
-                        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.35), lineWidth: 0.6))
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                        .background(Color("bubbleUserTint"), in: RoundedRectangle(cornerRadius: 14))
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.35), lineWidth: 0.6))
                         .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
                 } else if isStreamingPlaceholder {
                     HStack(spacing: 5) {

@@ -30,6 +30,8 @@ class ChatViewModel: ObservableObject {
     @Published var temperature: Double? = nil
     @Published var maxTokens: Int? = nil
 
+    private var lastHapticTime: Date = .distantPast
+
     @AppStorage("llm_temperature") static var cachedTemperature: Double = 1.0
     @AppStorage("llm_maxTokens") static var cachedMaxTokens: Int = 4096
     @AppStorage("llm_thinking") static var cachedThinking: Bool = true
@@ -223,6 +225,13 @@ class ChatViewModel: ObservableObject {
             if let delta = parseMessageDelta(event.data) {
                 streamingContent += delta
                 updateLastAssistantMessage(streamingContent)
+                let now = Date()
+                if now.timeIntervalSince(lastHapticTime) >= 0.15 {
+                    #if os(iOS)
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    #endif
+                    lastHapticTime = now
+                }
             }
 
         case .status:

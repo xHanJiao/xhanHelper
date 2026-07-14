@@ -6,7 +6,7 @@ import UIKit
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var inputText = ""
-    @FocusState private var isInputFocused: Bool
+    @State private var dismissKeyboard = false
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var showScrollToBottom = false
     let agentId: String?
@@ -51,12 +51,13 @@ struct ChatView: View {
             InputBar(
                 text: $inputText,
                 isStreaming: viewModel.isStreaming,
-                isFocused: $isInputFocused,
+                dismissKeyboard: dismissKeyboard,
                 onSend: {
                     guard !inputText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                    isInputFocused = false
+                    dismissKeyboard = true
                     viewModel.sendMessage(inputText, baseURL: baseURL, token: token, agentId: agentId)
                     inputText = ""
+                    DispatchQueue.main.async { dismissKeyboard = false }
                     withAnimation(.easeOut(duration: 0.3)) {
                         scrollPosition.scrollTo(edge: .top)
                     }

@@ -3,36 +3,29 @@ import SwiftUI
 struct InputBar: View {
     @Binding var text: String
     let isStreaming: Bool
-    @FocusState.Binding var isFocused: Bool
+    var dismissKeyboard: Bool
     let onSend: () -> Void
     let onStop: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
-            TextField("输入消息...", text: $text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .focused($isFocused)
-                .submitLabel(.send)
-                .onSubmit { onSend() }
-                .lineLimit(1...15)
-                .padding(.leading, 12)
-                .padding(.trailing, 12)
-                .padding(.vertical, 8)
-                .background(Color("surfaceInput"))
-                .cornerRadius(16)
-                .disabled(isStreaming)
-                .onChange(of: text) { oldValue, newValue in
-                    let addedCount = newValue.count - oldValue.count
-                    let addedNewlines = newValue.filter { $0 == "\n" }.count
-                                      - oldValue.filter { $0 == "\n" }.count
-                    // 仅"净增 1 个字符且是换行" = 回车键 → 发送；粘贴(多字符)不触发
-                    if addedCount == 1, addedNewlines == 1 {
-                        text = oldValue
-                        if !text.trimmingCharacters(in: .whitespaces).isEmpty {
-                            onSend()
-                        }
+            CustomTextView(
+                text: $text,
+                dismissKeyboard: dismissKeyboard,
+                isDisabled: isStreaming,
+                placeholder: "输入消息...",
+                onSubmit: {
+                    if !text.trimmingCharacters(in: .whitespaces).isEmpty {
+                        onSend()
                     }
                 }
+            )
+            .padding(.leading, 12)
+            .padding(.trailing, 12)
+            .padding(.vertical, 8)
+            .background(Color("surfaceInput"))
+            .cornerRadius(16)
+            .disabled(isStreaming)
 
             if isStreaming {
                 Button(action: onStop) {
@@ -58,14 +51,14 @@ struct InputBar: View {
 
 #Preview {
     @Previewable @State var text = ""
-    @Previewable @FocusState var isFocused: Bool
+    @Previewable @State var dismissKeyboard = false
 
     VStack {
         Spacer()
         InputBar(
             text: $text,
             isStreaming: false,
-            isFocused: $isFocused,
+            dismissKeyboard: dismissKeyboard,
             onSend: {},
             onStop: {}
         )
@@ -75,14 +68,14 @@ struct InputBar: View {
 
 #Preview("Streaming") {
     @Previewable @State var text = "正在思考..."
-    @Previewable @FocusState var isFocused: Bool
+    @Previewable @State var dismissKeyboard = false
 
     VStack {
         Spacer()
         InputBar(
             text: $text,
             isStreaming: true,
-            isFocused: $isFocused,
+            dismissKeyboard: dismissKeyboard,
             onSend: {},
             onStop: {}
         )

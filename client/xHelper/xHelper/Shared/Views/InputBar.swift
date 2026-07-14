@@ -3,7 +3,7 @@ import SwiftUI
 struct InputBar: View {
     @Binding var text: String
     let isStreaming: Bool
-    var dismissKeyboard: Bool
+    var dismissKeyboardToken: UUID?
     let onSend: () -> Void
     let onStop: () -> Void
 
@@ -11,7 +11,7 @@ struct InputBar: View {
         HStack(alignment: .center, spacing: 8) {
             CustomTextView(
                 text: $text,
-                dismissKeyboard: dismissKeyboard,
+                dismissKeyboardToken: dismissKeyboardToken,
                 isDisabled: isStreaming,
                 placeholder: "输入消息...",
                 onSubmit: {
@@ -51,14 +51,14 @@ struct InputBar: View {
 
 #Preview {
     @Previewable @State var text = ""
-    @Previewable @State var dismissKeyboard = false
+    @Previewable @State var dismissKeyboardToken: UUID? = nil
 
     VStack {
         Spacer()
         InputBar(
             text: $text,
             isStreaming: false,
-            dismissKeyboard: dismissKeyboard,
+            dismissKeyboardToken: dismissKeyboardToken,
             onSend: {},
             onStop: {}
         )
@@ -68,14 +68,14 @@ struct InputBar: View {
 
 #Preview("Streaming") {
     @Previewable @State var text = "正在思考..."
-    @Previewable @State var dismissKeyboard = false
+    @Previewable @State var dismissKeyboardToken: UUID? = nil
 
     VStack {
         Spacer()
         InputBar(
             text: $text,
             isStreaming: true,
-            dismissKeyboard: dismissKeyboard,
+            dismissKeyboardToken: dismissKeyboardToken,
             onSend: {},
             onStop: {}
         )

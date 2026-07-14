@@ -3,7 +3,7 @@ import UIKit
 
 struct CustomTextView: UIViewRepresentable {
     @Binding var text: String
-    var dismissKeyboard: Bool
+    var dismissKeyboardToken: UUID?
     var isDisabled: Bool
     var placeholder: String
     var onSubmit: (() -> Void)?
@@ -54,24 +54,28 @@ struct CustomTextView: UIViewRepresentable {
         }
         let maxH: CGFloat = 280
         if uiView.isScrollEnabled {
-            print(">>> [Size] proposal.width=\(proposal.width?.description ?? "nil") usedWidth=\(Int(width)) -> SCROLLING fixed \(Int(width))x\(Int(maxH))")
             return CGSize(width: width, height: maxH)
         }
         let fitHeight = uiView.sizeThatFits(CGSize(width: width, height: .infinity)).height
         let clamped = min(max(fitHeight, 0), maxH)
-        print(">>> [Size] proposal.width=\(proposal.width?.description ?? "nil") usedWidth=\(Int(width)) boundWidth=\(Int(uiView.bounds.width)) fitHeight=\(Int(fitHeight)) -> \(Int(width))x\(Int(clamped))")
         return CGSize(width: width, height: clamped)
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
-        if dismissKeyboard && uiView.isFirstResponder {
-            print(">>> [Focus] updateUIView: dismissKeyboard=true, resigning first responder")
-            uiView.resignFirstResponder()
+        if let token = dismissKeyboardToken, token != context.coordinator.lastDismissToken {
+            context.coordinator.lastDismissToken = token
+            if uiView.isFirstResponder {
+                uiView.resignFirstResponder()
+            }
         }
 
         if uiView.text != text {
             context.coordinator.isProgrammaticUpdate = true
             uiView.text = text
+            if text.isEmpty {
+                uiView.isScrollEnabled = false
+                uiView.invalidateIntrinsicContentSize()
+            }
         }
 
         uiView.isEditable = !isDisabled
@@ -84,6 +88,7 @@ struct CustomTextView: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         let parent: CustomTextView
         var isProgrammaticUpdate = false
+        var lastDismissToken: UUID?
 
         init(_ parent: CustomTextView) {
             self.parent = parent
@@ -103,19 +108,14 @@ struct CustomTextView: UIViewRepresentable {
             let actualHeight = textView.sizeThatFits(CGSize(width: textView.frame.width, height: .infinity)).height
             let shouldScroll = actualHeight > maxHeight
             if textView.isScrollEnabled != shouldScroll {
-                print(">>> [Height] toggling isScrollEnabled -> \(shouldScroll), actualHeight=\(Int(actualHeight)) frameHeight=\(Int(textView.frame.height))")
                 textView.isScrollEnabled = shouldScroll
                 textView.invalidateIntrinsicContentSize()
             }
         }
 
-        func textViewDidBeginEditing(_ textView: UITextView) {
-            print(">>> [Focus] textViewDidBeginEditing")
-        }
+        func textViewDidBeginEditing(_ textView: UITextView) {}
 
-        func textViewDidEndEditing(_ textView: UITextView) {
-            print(">>> [Focus] textViewDidEndEditing")
-        }
+        func textViewDidEndEditing(_ textView: UITextView) {}
 
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
             if text == "\n" {
@@ -126,7 +126,6 @@ struct CustomTextView: UIViewRepresentable {
         }
 
         func textView(_ textView: UITextView, editMenuForTextIn textRange: NSRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
-            print(">>> [Menu] editMenuForTextIn CALLED, range=\(textRange), suggestedActions count=\(suggestedActions.count)")
             return buildCustomMenu(from: suggestedActions, textView: textView)
         }
 
@@ -135,57 +134,34 @@ struct CustomTextView: UIViewRepresentable {
         }
 
         private func buildCustomMenu(from suggestedActions: [UIMenuElement], textView: UITextView) -> UIMenu {
-            print(">>> [Menu] buildCustomMenu START — suggestedActions count=\(suggestedActions.count)")
-
             var scanTextElement: UIMenuElement?
             var autoFillChildren: [UIMenuElement] = []
             var topActions: [UIMenuElement] = []
             var otherActions: [UIMenuElement] = []
 
-            for (idx, element) in suggestedActions.enumerated() {
+            for element in suggestedActions {
                 guard let menu = element as? UIMenu else {
-                    print(">>> [Menu]   [\(idx)] NOT UIMenu, type=\(type(of: element)) title=\"\(childTitle(element))\"")
                     otherActions.append(element)
                     continue
                 }
 
-                print(">>> [Menu]   [\(idx)] UIMenu title=\"\(menu.title)\" children=\(menu.children.count)")
-                for (ci, child) in menu.children.enumerated() {
-                    let title = childTitle(child)
-                    let typeStr = String(describing: type(of: child))
-                    if let subMenu = child as? UIMenu {
-                        print(">>> [Menu]     child[\(ci)] UIMenu title=\"\(subMenu.title)\" children=\(subMenu.children.count)")
-                        for (sci, sc) in subMenu.children.enumerated() {
-                            let st = childTitle(sc)
-                            print(">>> [Menu]       subchild[\(sci)] \(String(describing: type(of: sc))) title=\"\(st)\"")
-                        }
-                    } else {
-                        print(">>> [Menu]     child[\(ci)] \(typeStr) title=\"\(title)\"")
-                    }
-                }
-
                 if isAutoFillMenu(menu) {
-                    print(">>> [Menu]   [\(idx)] -> isAutoFillMenu = TRUE")
                     for child in menu.children {
                         if let subMenu = child as? UIMenu, isAutoFillMenu(subMenu) {
                             for sc in subMenu.children {
                                 if isScanTextElement(sc) {
-                                    print(">>> [Menu]     -> ScanText DETECTED: \"\(childTitle(sc))\"")
                                     scanTextElement = sc
                                 } else {
                                     autoFillChildren.append(sc)
                                 }
                             }
                         } else if isScanTextElement(child) {
-                            print(">>> [Menu]     -> ScanText DETECTED (direct): \"\(childTitle(child))\"")
                             scanTextElement = child
                         } else {
                             let title = childTitle(child)
                             if isStandardEditTitle(title) {
-                                print(">>> [Menu]     -> StandardEdit MATCH: \"\(title)\"")
                                 topActions.append(child)
                             } else {
-                                print(">>> [Menu]     -> other (autofill sibling): \"\(title)\"")
                                 otherActions.append(child)
                             }
                         }
@@ -194,10 +170,8 @@ struct CustomTextView: UIViewRepresentable {
                     for child in menu.children {
                         let title = childTitle(child)
                         if isStandardEditTitle(title) {
-                            print(">>> [Menu]     -> StandardEdit MATCH: \"\(title)\"")
                             topActions.append(child)
                         } else {
-                            print(">>> [Menu]     -> other: \"\(title)\"")
                             otherActions.append(child)
                         }
                     }
@@ -216,9 +190,6 @@ struct CustomTextView: UIViewRepresentable {
                     finalActions.append(relabeledElement(el, textView: textView))
                 }
             }
-
-            let titles = finalActions.map { titleOfElement($0) }
-            print(">>> [Menu] buildCustomMenu DONE — returning \(finalActions.count) actions: \(titles)")
 
             return UIMenu(children: finalActions)
         }
@@ -275,7 +246,6 @@ struct CustomTextView: UIViewRepresentable {
         private func relabeledElement(_ element: UIMenuElement, textView: UITextView) -> UIMenuElement {
             let title = childTitle(element)
             guard !title.isEmpty, let cn = chineseMap[title] else {
-                if !title.isEmpty { print(">>> [Relabel] \"\(title)\" SKIP (not in chineseMap)") }
                 return element
             }
 
@@ -286,17 +256,13 @@ struct CustomTextView: UIViewRepresentable {
             }()
 
             guard let sel = selector else {
-                print(">>> [Relabel] \"\(title)\" -> \"\(cn)\" (no selector, keeping original type=\(String(describing: type(of: element))))")
                 return element
             }
 
             let selName = NSStringFromSelector(sel)
             if selName == "delete:" {
-                print(">>> [Relabel] \"\(title)\" SKIP (delete: not supported on UITextView, keeping original)")
                 return element
             }
-
-            print(">>> [Relabel] \"\(title)\" -> \"\(cn)\" (UIAction, selector=\(selName))")
 
             return UIAction(title: cn, image: (element as? UIKeyCommand)?.image ?? (element as? UICommand)?.image) { [weak textView] _ in
                 guard let tv = textView else { return }

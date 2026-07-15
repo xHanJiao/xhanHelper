@@ -108,13 +108,12 @@ func (h *ReminderHandler) AckReminder(c *gin.Context) {
 		Content:        triggerMsg,
 		Status:         model.MsgStatusNormal,
 	}
+	agent.SetNoMerge(msg)
 	if err := h.msgRepo.Create(c.Request.Context(), msg); err != nil {
 		log.Printf("[reminders] create message error: %v", err)
 		view.JSONError(c, 500, "insert trigger message failed")
 		return
 	}
-
-	agent.SetNoMerge(msg)
 
 	if err := h.reminderRepo.Ack(c.Request.Context(), userID, id, msg.ID); err != nil {
 		log.Printf("[reminders] ack error: %v", err)

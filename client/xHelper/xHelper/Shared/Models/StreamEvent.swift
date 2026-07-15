@@ -12,6 +12,7 @@ enum StreamEventType: String {
     case message     // text_delta
     case toolCall    // tool_call
     case toolResult  // tool_result
+    case remindersChanged // reminders_changed — 服务端通知有新提醒需同步
     case done
     case error
 }

@@ -73,6 +73,15 @@ struct ContentView: View {
                 print("[Reminder] tap: processing reminder_id=\(reminderId)")
                 Task { await handleReminderTap(reminderId: reminderId) }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .remindersSyncTriggered)) { _ in
+                print("[Reminder] SSE triggered, will sync in 15s")
+                DispatchQueue.main.async {
+                    Task {
+                        try? await Task.sleep(nanoseconds: 15_000_000_000)
+                        await syncReminders()
+                    }
+                }
+            }
 
             if showAckLoading {
                 Color.black.opacity(0.4).ignoresSafeArea()

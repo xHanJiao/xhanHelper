@@ -243,6 +243,10 @@ class ChatViewModel: ObservableObject {
         case .toolResult:
             break
 
+        case .remindersChanged:
+            print("[Reminder] SSE reminders_changed received")
+            NotificationCenter.default.post(name: .remindersSyncTriggered, object: nil)
+
         case .done:
             finishStreaming()
             thoughtMessage = nil

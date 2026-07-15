@@ -3,6 +3,7 @@ import UserNotifications
 
 extension Notification.Name {
     static let reminderTapped = Notification.Name("ReminderTapped")
+    static let remindersSyncTriggered = Notification.Name("RemindersSyncTriggered")
 }
 
 /// 在 App.init() 中调用 register() 注册 UNUserNotificationCenter delegate。
@@ -35,5 +36,13 @@ final class NotificationDelegateRegistrar: NSObject, UNUserNotificationCenterDel
             userInfo: ["reminder_id": reminderId as Any]
         )
         completionHandler()
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                 willPresent notification: UNNotification,
+                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        let reminderId = notification.request.content.userInfo["reminder_id"] as? String
+        print("[Reminder] willPresent: id=\(reminderId ?? "nil"), showing banner")
+        completionHandler([.banner, .sound])
     }
 }

@@ -207,6 +207,8 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 				view.WriteSSE(w, flusher, evt.Type, evt.Content)
 			case "status":
 				view.WriteSSE(w, flusher, "status", evt.Content)
+			case "reminders_changed":
+				view.WriteSSE(w, flusher, "reminders_changed", evt.Content)
 			case "tool_call":
 				view.WriteSSE(w, flusher, "tool_call", evt.Content)
 			case "tool_result":

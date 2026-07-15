@@ -162,6 +162,14 @@ func (t *ReminderTool) createReminder(ec *ExecuteContext, args json.RawMessage) 
 		return &Result{Success: false, Error: fmt.Sprintf("创建提醒失败: %v", err)}
 	}
 
+	// 通知客户端有新提醒需同步（非阻塞，replay/测试时 Events 为 nil）
+	if ec.Events != nil {
+		select {
+		case ec.Events <- &llm.StreamEvent{Type: "reminders_changed", Content: "{}"}:
+		default:
+		}
+	}
+
 	go t.generateContent(rem.ID, req.Content, deadline)
 
 	log.Printf("[reminder] created: %s deadline=%v", rem.ID[:8], deadline)

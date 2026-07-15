@@ -1269,7 +1269,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 						r = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
 					}
 				}()
-				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID}
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, Events: events}
 				r = registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
 			}()
 

@@ -103,9 +103,16 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         case "message":          type = .message
         case "tool_call":        type = .toolCall
         case "tool_result":      type = .toolResult
+        case "reminders_changed": type = .remindersChanged
         case "done":             type = .done
         case "error":            type = .error
         default:                 return
+        }
+        let now = Date()
+        let df = DateFormatter()
+        df.dateFormat = "HH:mm:ss.SSS"
+        if type == .remindersChanged || type == .done {
+            print("[SSE] \(df.string(from: now)) \(event) data=\(data.prefix(100))")
         }
         onEvent?(StreamEvent(type: type, data: data))
     }

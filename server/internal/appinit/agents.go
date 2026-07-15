@@ -157,6 +157,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MaxSummaryAttachRounds:    cfg.Chat.MaxSummaryAttachRounds,
 		SummaryRelevanceThreshold: cfg.Chat.SummaryRelevanceThreshold,
 		SummaryRelevanceHistoryN:  cfg.Chat.SummaryRelevanceHistoryN,
+		ReminderRepo:              repos.Reminder,
 	})
 
 	go cronRunner.Start(bgCtx)

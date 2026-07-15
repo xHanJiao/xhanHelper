@@ -10,6 +10,7 @@ import (
 
 const (
 	TypeSummary         = "summary"
+	TypeReminder        = "reminder"
 	TypeHistory         = "history"
 	TypeMemory          = "memory"
 	TypeNote            = "note"
@@ -18,7 +19,7 @@ const (
 )
 
 // typeOrder 定义所有块的渲染顺序，也是 typeRank 的单一数据源。
-var typeOrder = []string{TypeSummary, TypeHistory, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime}
+var typeOrder = []string{TypeSummary, TypeReminder, TypeHistory, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime}
 
 // typeRank 从 typeOrder 派生，供排序时 O(1) 查找顺序。
 var typeRank = func() map[string]int {
@@ -117,6 +118,20 @@ type summariesBlock struct {
 
 func (*summariesBlock) TypeKey() string { return TypeSummary }
 
+// --- reminder ---
+type reminderItem struct {
+	ID      string `xml:"id,attr" json:"id"`
+	Content string `xml:",chardata" json:"content"`
+}
+
+type remindersBlock struct {
+	XMLName     struct{}       `xml:"reminders" json:"-"`
+	Description string         `xml:"description,attr" json:"description"`
+	Items       []reminderItem `xml:"reminder" json:"items"`
+}
+
+func (*remindersBlock) TypeKey() string { return TypeReminder }
+
 // --- current_datetime ---
 type currentDatetimeBlock struct {
 	XMLName struct{} `xml:"current_datetime" json:"-"`
@@ -140,6 +155,7 @@ var blockBuilders = map[string]blockBuilder{
 	TypeMemory:          buildMemoriesBlock,
 	TypeNote:            buildNotesBlock,
 	TypeHistory:         buildHistoryBlock,
+	TypeReminder:        buildRemindersBlock,
 	TypeTheme:           buildThemesBlock,
 	TypeSummary:         buildSummariesBlock,
 	TypeCurrentDatetime: buildCurrentDatetimeBlock,
@@ -259,6 +275,16 @@ func buildSummariesBlock(items []retrieval.ContextPacket) Block {
 			}
 		}
 		b.Items = append(b.Items, it)
+	}
+	return &b
+}
+
+func buildRemindersBlock(items []retrieval.ContextPacket) Block {
+	b := remindersBlock{
+		Description: retrieval.DescReminder,
+	}
+	for _, pkt := range items {
+		b.Items = append(b.Items, reminderItem{ID: pkt.ID, Content: pkt.Text})
 	}
 	return &b
 }

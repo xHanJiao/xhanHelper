@@ -120,6 +120,7 @@ type Orchestrator struct {
 	summaryRepo         *service.ConversationSummaryRepo
 	contextRetriever    *ctxflow.ContextRetriever // 上下文检索
 	contextFormatter    ctxflow.ContextFormatter  // 上下文格式化（接口）
+	reminderRepo        *service.ReminderRepo
 
 	// 摘要附着控制
 	maxSummaryAttachRounds    int
@@ -154,6 +155,7 @@ type OrchestratorConfig struct {
 	MaxSummaryAttachRounds    int                       // 摘要附着轮次上限，默认 5
 	SummaryRelevanceThreshold float64                   // 摘要相关性阈值，默认 0.5
 	SummaryRelevanceHistoryN  int                       // 相关性检查的历史消息窗口，默认 5
+	ReminderRepo              *service.ReminderRepo
 }
 
 // New 创建 Orchestrator
@@ -194,6 +196,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		maxSummaryAttachRounds:    cfg.MaxSummaryAttachRounds,
 		summaryRelevanceThreshold: cfg.SummaryRelevanceThreshold,
 		summaryRelevanceHistoryN:  cfg.SummaryRelevanceHistoryN,
+		reminderRepo:              cfg.ReminderRepo,
 	}
 }
 
@@ -449,12 +452,57 @@ func (o *Orchestrator) buildUserMessage(
 		extraPackets = append(extraPackets, *summaryPkt)
 	}
 
+	reminderPkts := o.buildReminderPackets(ctx, req.UserID)
+	extraPackets = append(extraPackets, reminderPkts...)
+
 	userContent := o.contextFormatter.FormatUserMessage(
 		ctxflow.MergePackets(retrieveResult, extraPackets...),
 		req.UserMessageContent,
 	)
 	userMsg.XMLContext = &userContent
 	return userMsg
+}
+
+// buildReminderPackets 查询用户 pending 提醒，生成 ContextPacket 列表注入 user message。
+func (o *Orchestrator) buildReminderPackets(ctx context.Context, userID string) []retrieval.ContextPacket {
+	if o.reminderRepo == nil {
+		return nil
+	}
+	now := time.Now()
+	upcoming, _ := o.reminderRepo.ListUpcoming(ctx, userID, now, 5)
+	expired, _ := o.reminderRepo.ListExpiredUnmentioned(ctx, userID, now, 3)
+
+	var packets []retrieval.ContextPacket
+	for _, r := range upcoming {
+		packets = append(packets, retrieval.ContextPacket{
+			ID:   r.ID,
+			Type: ctxflow.TypeReminder,
+			Text: fmt.Sprintf("%s（%s）", r.Content, r.Deadline.Format("01-02 15:04")),
+		})
+	}
+	for _, r := range expired {
+		ago := formatDuration(now.Sub(r.Deadline))
+		packets = append(packets, retrieval.ContextPacket{
+			ID:   r.ID,
+			Type: ctxflow.TypeReminder,
+			Text: fmt.Sprintf("%s（过期 %s）", r.Content, ago),
+		})
+	}
+	return packets
+}
+
+// formatDuration 将时间间隔格式化为可读中文。
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return "刚刚"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%d 分钟", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%d 小时", int(d.Hours()))
+	}
+	return fmt.Sprintf("%d 天", int(d.Hours()/24))
 }
 
 // checkSummaryRelevance 用 embedding 窗口检查摘要与当前对话的相关性。

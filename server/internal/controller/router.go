@@ -29,6 +29,7 @@ type RouterConfig struct {
 	DocumentShareHandler *DocumentShareHandler
 	MessageShareHandler  *MessageShareHandler
 	SummaryHandler       *SummaryHandler
+	ReminderHandler      *ReminderHandler
 	MemExtr              *agent.MemoryExtractor
 	ExtraMiddleware      []gin.HandlerFunc
 }
@@ -105,6 +106,9 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.DELETE("/documents/:id", rc.DocumentHandler.DeleteDocument)
 		auth.POST("/documents/:id/share", rc.DocumentShareHandler.CreateShare)
 		auth.GET("/documents/:id/share", rc.DocumentShareHandler.GetShare)
+		auth.GET("/reminders", rc.ReminderHandler.ListReminders)
+		auth.POST("/reminders/:id/ack", rc.ReminderHandler.AckReminder)
+		auth.POST("/reminders/:id/cancel", rc.ReminderHandler.CancelReminder)
 	}
 
 	// 管理员路由

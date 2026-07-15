@@ -52,6 +52,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	documentShareHandler := controller.NewDocumentShareHandler(repos.DocumentShare, cfg)
 	messageShareHandler := controller.NewMessageShareHandler(repos.MessageShare, cfg)
 	summaryHandler := controller.NewSummaryHandler(repos.ConversationSummary, repos.Message)
+	reminderHandler := controller.NewReminderHandler(repos.Reminder, repos.Conversation, repos.Message)
 	mailboxService := service.NewMailboxService(repos.Mailbox, repos.ThemeState)
 	mailboxHandler := controller.NewMailboxHandler(mailboxService, repos.Mailbox, repos.Conversation, repos.ThemeState, repos.Message)
 	themeHandler := controller.NewThemeHandler(repos.ThemeState)
@@ -78,6 +79,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		DocumentShareHandler: documentShareHandler,
 		MessageShareHandler:  messageShareHandler,
 		SummaryHandler:       summaryHandler,
+		ReminderHandler:      reminderHandler,
 		MemExtr:              tools.MemExtractor,
 		ExtraMiddleware:      []gin.HandlerFunc{middleware.RequestLogger(log.Default())},
 	})

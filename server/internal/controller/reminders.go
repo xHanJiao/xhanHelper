@@ -3,6 +3,7 @@ package controller
 import (
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -118,11 +119,12 @@ func (h *ReminderHandler) AckReminder(c *gin.Context) {
 		return
 	}
 
+	now := time.Now()
 	log.Printf("[reminders] ack'd: %s msg=%s", id[:8], msg.ID[:8])
 	view.JSONOK(c, gin.H{
 		"id":                     rem.ID,
 		"status":                 model.ReminderStatusAcknowledged,
-		"acknowledged_at":        rem.AcknowledgedAt,
+		"acknowledged_at":        now,
 		"trigger_message":        triggerMsg,
 		"trigger_message_msg_id": msg.ID,
 	})

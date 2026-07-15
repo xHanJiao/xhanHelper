@@ -18,15 +18,15 @@ type Reminder struct {
 	// 触发时间（精确到分钟）
 	Deadline time.Time `gorm:"not null;index:idx_reminders_query,priority:3" json:"deadline"`
 	// 循环规则 JSON，空串=一次性，预留
-	RecurrenceRule string `gorm:"type:json;not null;default:''" json:"recurrence_rule"`
+	RecurrenceRule string `gorm:"type:text;not null" json:"recurrence_rule"`
 	// generating | pending | acknowledged | cancelled
 	Status string `gorm:"size:20;not null;default:'generating';index:idx_reminders_query,priority:2" json:"status"`
 	// 系统通知标题，异步 LLM 生成
-	NotificationTitle string `gorm:"type:text;not null;default:''" json:"notification_title"`
+	NotificationTitle string `gorm:"type:text;not null" json:"notification_title"`
 	// 系统通知正文，异步 LLM 生成
-	NotificationBody string `gorm:"type:text;not null;default:''" json:"notification_body"`
+	NotificationBody string `gorm:"type:text;not null" json:"notification_body"`
 	// 用户点通知后助手说的话，异步 LLM 生成
-	TriggerMessage string `gorm:"type:text;not null;default:''" json:"trigger_message"`
+	TriggerMessage string `gorm:"type:text;not null" json:"trigger_message"`
 	// ack 时写入 messages 表的消息 ID，用于幂等控制
 	TriggerMessageMsgID string `gorm:"size:36;not null;default:''" json:"trigger_message_msg_id"`
 	// 用户点通知时间，zero=未处理

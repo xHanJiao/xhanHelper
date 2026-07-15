@@ -22,7 +22,6 @@ type HookStatus struct {
 	DeliverRemaining    string `json:"deliver_remaining"`
 	DiscoverRemaining   string `json:"discover_remaining"`
 	MissionRemaining    string `json:"mission_remaining"`
-	CommitmentTimers    int    `json:"commitment_timers"`
 }
 
 // CronRunner — 反思循环调度器
@@ -37,7 +36,6 @@ type CronRunner struct {
 	taskPollInterval  time.Duration // 延迟任务轮询间隔，默认 3 分钟
 	delayedTaskRepo   *service.DelayedTaskRepo
 	memExtractor      *MemoryExtractor
-	commitTimer       *CommitmentTimer
 	convRepo          *service.ConversationRepo
 	msgRepo           *service.MessageRepo
 	stateUpdater      *StateUpdater
@@ -61,7 +59,6 @@ type CronRunnerConfig struct {
 	StateUpdater      *StateUpdater
 	UserRepo          *service.UserRepo
 	MemExtractor      *MemoryExtractor
-	CommitTimer       *CommitmentTimer
 	ConvRepo          *service.ConversationRepo
 	MsgRepo           *service.MessageRepo
 	DelayedTaskRepo   *service.DelayedTaskRepo
@@ -99,7 +96,6 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		stateUpdater:      cfg.StateUpdater,
 		userRepo:          cfg.UserRepo,
 		memExtractor:      cfg.MemExtractor,
-		commitTimer:       cfg.CommitTimer,
 		convRepo:          cfg.ConvRepo,
 		msgRepo:           cfg.MsgRepo,
 		delayedTaskRepo:   cfg.DelayedTaskRepo,
@@ -135,9 +131,7 @@ func (cr *CronRunner) GetHookStatus() HookStatus {
 	defer cr.mu.Unlock()
 
 	now := time.Now()
-	s := HookStatus{
-		CommitmentTimers: cr.commitTimer.ActiveTimerCount(),
-	}
+	s := HookStatus{}
 	if cr.delayedTaskRepo != nil {
 		if n, err := cr.delayedTaskRepo.CountPending(context.Background()); err == nil {
 			s.PendingDelayedTasks = n
@@ -270,10 +264,6 @@ func (cr *CronRunner) createSummaryTask(userID, convID, userMsgID string) {
 func (cr *CronRunner) Start(ctx context.Context) {
 	log.Printf("[cron] started, discover_times=%v deliver_interval=%v mission_interval=%v post_chat_delay=%v",
 		cr.discoverTimes, cr.deliverInterval, cr.missionInterval, cr.postChatDelay)
-
-	// 启动时加载所有 pending 承诺，注册 timer
-	cr.commitTimer.LoadPending(ctx)
-	go cr.commitTimer.StartFallbackScan(ctx)
 
 	deliverTimer := time.NewTimer(cr.deliverInterval)
 	cr.setDeliverNext(time.Now().Add(cr.deliverInterval))

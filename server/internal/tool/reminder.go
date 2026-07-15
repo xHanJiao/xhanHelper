@@ -139,7 +139,7 @@ func (t *ReminderTool) createReminder(ec *ExecuteContext, args json.RawMessage) 
 	}
 
 	if time.Until(deadline) < 1*time.Minute {
-		return &Result{Success: false, Error: "提醒时间太近，请至少提前5分钟创建"}
+		return &Result{Success: false, Error: "提醒时间太近，请至少提前1分钟创建"}
 	}
 
 	rem := &model.Reminder{

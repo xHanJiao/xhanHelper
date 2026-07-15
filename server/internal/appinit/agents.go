@@ -95,7 +95,6 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		StateUpdater:      stateUpdater,
 		UserRepo:          repos.User,
 		MemExtractor:      tools.MemExtractor,
-		CommitTimer:       tools.CommitmentTimer,
 		ConvRepo:          repos.Conversation,
 		MsgRepo:           repos.Message,
 		DelayedTaskRepo:   repos.DelayedTask,

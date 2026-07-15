@@ -1,10 +1,6 @@
 package app
 
-import (
-	"context"
-
-	"xhan-helper/internal/model"
-)
+import "context"
 
 // Embedder 文本向量化接口，*llm.Embedder 满足此接口。
 type Embedder interface {
@@ -27,9 +23,4 @@ type ConceptEmbedder interface {
 // ThemeVectorWriter 主题向量写入接口，由 agent.ThemeEmbedder 实现。
 type ThemeVectorWriter interface {
 	EnsureEmbedded(ctx context.Context, userID, themeID, name, description string)
-}
-
-// CommitmentTimer 承诺定时接口，由 agent.CommitmentTimer 实现。
-type CommitmentTimer interface {
-	Schedule(c *model.Commitment)
 }

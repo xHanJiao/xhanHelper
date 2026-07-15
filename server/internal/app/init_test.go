@@ -95,7 +95,6 @@ func TestInitRepos(t *testing.T) {
 		"Chunk":        repos.Chunk != nil,
 		"ConceptEmbed": repos.ConceptEmbed != nil,
 		"PendingFind":  repos.PendingFinding != nil,
-		"Commitment":   repos.Commitment != nil,
 		"DelayedTask":  repos.DelayedTask != nil,
 		"Document":     repos.Document != nil,
 		"Version":      repos.Version != nil,

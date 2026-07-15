@@ -14,7 +14,6 @@ type ToolsBundle struct {
 	Registry            *tool.Registry
 	ReflectionReg       *tool.Registry
 	MCPManager          *mcp.Manager
-	CommitmentTimer     *agent.CommitmentTimer
 	MemExtractor        *agent.MemoryExtractor
 	MissionEmbedder     *agent.MissionEmbedder
 	ConceptEmbedService *agent.ConceptEmbedService

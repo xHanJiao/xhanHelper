@@ -244,7 +244,7 @@ class ChatViewModel: ObservableObject {
             break
 
         case .remindersChanged:
-            print("[Reminder] SSE reminders_changed received")
+            LogBuffer.shared.debug("[Reminder] SSE reminders_changed received")
             NotificationCenter.default.post(name: .remindersSyncTriggered, object: nil)
 
         case .done:

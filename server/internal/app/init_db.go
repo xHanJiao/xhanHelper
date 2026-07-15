@@ -47,7 +47,6 @@ func InitDB(cfg *config.Config) *gorm.DB {
 		&model.EmbeddingChunk{},
 		&model.ConceptEmbedding{},
 		&model.PendingFinding{},
-		&model.Commitment{},
 		&model.DelayedTask{},
 		&model.Document{},
 		&model.DocumentShare{},

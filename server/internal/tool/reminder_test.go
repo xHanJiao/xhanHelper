@@ -99,7 +99,7 @@ func TestReminderTool_CreateReminder_TooSoon(t *testing.T) {
 	tool, cleanup := setupReminderTool(t)
 	defer cleanup()
 
-	deadline := time.Now().Add(3 * time.Minute)
+	deadline := time.Now().Add(30 * time.Second)
 	args := a(map[string]string{
 		"content":  "test",
 		"deadline": deadline.Format(time.RFC3339),

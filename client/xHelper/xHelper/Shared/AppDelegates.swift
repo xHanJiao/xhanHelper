@@ -16,20 +16,14 @@ final class NotificationDelegateRegistrar: NSObject, UNUserNotificationCenterDel
         let d = NotificationDelegateRegistrar()
         instance = d
         UNUserNotificationCenter.current().delegate = d
-        print("[Reminder] UNUserNotificationCenter delegate registered")
+        LogBuffer.shared.info("[Reminder] UNUserNotificationCenter delegate registered")
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                  didReceive response: UNNotificationResponse,
                                  withCompletionHandler completionHandler: @escaping () -> Void) {
-        let userInfo = response.notification.request.content.userInfo
-        let reminderId = userInfo["reminder_id"] as? String
-        let title = response.notification.request.content.title
-        let body = response.notification.request.content.body
-        print("[Reminder] tap: received title=\(title) body=\(body.prefix(30)) reminder_id=\(reminderId ?? "nil")")
-        if reminderId == nil {
-            print("[Reminder] tap: no reminder_id in userInfo, keys=\(userInfo.keys.map { "\($0)" }.joined(separator: ","))")
-        }
+        let reminderId = response.notification.request.content.userInfo["reminder_id"] as? String
+        LogBuffer.shared.info("[Reminder] tap: received reminder_id=\(reminderId ?? "nil")")
         NotificationCenter.default.post(
             name: .reminderTapped,
             object: nil,
@@ -41,8 +35,6 @@ final class NotificationDelegateRegistrar: NSObject, UNUserNotificationCenterDel
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                  willPresent notification: UNNotification,
                                  withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        let reminderId = notification.request.content.userInfo["reminder_id"] as? String
-        print("[Reminder] willPresent: id=\(reminderId ?? "nil"), showing banner")
         completionHandler([.banner, .sound])
     }
 }

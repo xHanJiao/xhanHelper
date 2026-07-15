@@ -128,9 +128,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		ConceptEmbed:  conceptEmbedService,
 	})
 
-	// --- Commitment Timer ---
-	commitmentTimer := agent.NewCommitmentTimer(repos.Commitment, repos.Mailbox)
-
 	// --- 搜索工具注册到主 Registry ---
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewMemorySearchTool(infra.VectorStore, repos.Mem, infra.Embedder), log.Default()))
@@ -154,7 +151,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		Registry:            reg,
 		ReflectionReg:       reflectionReg,
 		MCPManager:          mcpManager,
-		CommitmentTimer:     commitmentTimer,
 		MemExtractor:        memExtractor,
 		MissionEmbedder:     missionEmbedder,
 		ConceptEmbedService: conceptEmbedService,

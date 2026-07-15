@@ -25,7 +25,6 @@ type Repos struct {
 	Chunk               *service.EmbeddingChunkRepo
 	ConceptEmbed        *service.ConceptEmbeddingRepo
 	PendingFinding      *service.PendingFindingRepo
-	Commitment          *service.CommitmentRepo
 	Reminder            *service.ReminderRepo
 	DelayedTask         *service.DelayedTaskRepo
 	Document            *service.DocumentRepo
@@ -58,7 +57,6 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		Chunk:               service.NewEmbeddingChunkRepo(db),
 		ConceptEmbed:        service.NewConceptEmbeddingRepo(db),
 		PendingFinding:      service.NewPendingFindingRepo(db),
-		Commitment:          service.NewCommitmentRepo(db),
 		Reminder:            service.NewReminderRepo(db),
 		DelayedTask:         service.NewDelayedTaskRepo(db),
 		Document:            docRepo,

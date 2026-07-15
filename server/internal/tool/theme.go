@@ -25,7 +25,7 @@ func NewThemeTool(repo *service.ThemeStateRepo, embedWriter app.ThemeVectorWrite
 
 func (t *ThemeTool) Name() string { return "theme" }
 func (t *ThemeTool) Description() string {
-	return "管理追踪主题：创建、关闭、重新激活"
+	return "管理用户生活中持续进行的事件主题。仅在用户明确提及持续性的生活事件（如戒酒、健身、备考、求职、旅行计划等有明确目标和时间跨度的活动）时才操作主题。禁止为一次性问题、闲聊话题、情绪表达创建主题。"
 }
 
 func (t *ThemeTool) Functions() []FuncSchema {
@@ -33,14 +33,30 @@ func (t *ThemeTool) Functions() []FuncSchema {
 		{
 			Name:        "create_theme",
 			Display:     "创建主题",
-			Description: "创建一个新的追踪主题",
+			Description: "创建一个新的追踪主题。仅当用户明确提及持续性生活事件（有目标、有时间跨度的活动，如戒酒/健身/备考/求职/装修/旅行等）且当前无对应主题时才创建。勿为一次性咨询、闲聊或情绪状态创建。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"name":        map[string]interface{}{"type": "string", "description": "主题名，简洁（5字以内）"},
-					"description": map[string]interface{}{"type": "string", "description": "主题追踪什么（20字以内）"},
+					"description": map[string]interface{}{"type": "string", "description": "主题追踪什么（20字以内），需描述具体目标和时间跨度"},
+					"state_text":  map[string]interface{}{"type": "string", "description": "初始状态（可选），如「用户表示计划每天跑步30分钟，尚未开始」。创建后会自动追加时间戳"},
 				},
 				"required": []string{"name", "description"},
+			},
+		},
+		{
+			Name:        "update_theme",
+			Display:     "更新主题",
+			Description: "更新主题的名称、描述或状态。状态更新采用增量追加模式——新内容会带上时间戳追加到现有状态文本末尾，不会覆盖已有记录。用于用户报告进展、状态变化、新增信息等。state_text 只需写新增信息/变化，勿重复已有内容。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name":        map[string]interface{}{"type": "string", "description": "要更新的主题名称（用于定位）"},
+					"new_name":    map[string]interface{}{"type": "string", "description": "新的主题名（可选，5字以内）"},
+					"description": map[string]interface{}{"type": "string", "description": "新的描述（可选，20字以内）"},
+					"state_text":  map[string]interface{}{"type": "string", "description": "用户报告的最新状态进展（可选）。此文本会被追加到状态页末尾（自动带时间戳），不会覆盖已有内容。只记录新增信息/变化，勿重复已有内容"},
+				},
+				"required": []string{"name"},
 			},
 		},
 		{
@@ -74,6 +90,8 @@ func (t *ThemeTool) Execute(ec *ExecuteContext, funcName string, args json.RawMe
 	switch funcName {
 	case "create_theme":
 		return t.createTheme(ec, args)
+	case "update_theme":
+		return t.updateTheme(ec, args)
 	case "close_theme":
 		return t.closeTheme(ec, args)
 	case "reactivate_theme":
@@ -87,6 +105,7 @@ func (t *ThemeTool) createTheme(ec *ExecuteContext, args json.RawMessage) *Resul
 	var a struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
+		StateText   string `json:"state_text"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
@@ -116,6 +135,9 @@ func (t *ThemeTool) createTheme(ec *ExecuteContext, args json.RawMessage) *Resul
 		Description: a.Description,
 		Status:      "active",
 	}
+	if a.StateText != "" {
+		theme.StateText = fmt.Sprintf("[刚刚创建] %s", a.StateText)
+	}
 	if err := t.themeRepo.Create(ec.Ctx, theme); err != nil {
 		log.Printf("[theme] create error: %v", err)
 		return &Result{Success: false, Error: fmt.Sprintf("创建主题失败: %v", err)}
@@ -130,6 +152,51 @@ func (t *ThemeTool) createTheme(ec *ExecuteContext, args json.RawMessage) *Resul
 		"id":     theme.ID,
 		"name":   theme.Name,
 		"status": "created",
+	})
+	return &Result{Success: true, Data: data}
+}
+
+func (t *ThemeTool) updateTheme(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a struct {
+		Name        string `json:"name"`
+		NewName     string `json:"new_name"`
+		Description string `json:"description"`
+		StateText   string `json:"state_text"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+	}
+	if a.NewName == "" && a.Description == "" && a.StateText == "" {
+		return &Result{Success: false, Error: "至少需要提供 new_name、description 或 state_text 之一"}
+	}
+
+	existing, err := t.themeRepo.GetByName(ec.Ctx, ec.UserID, a.Name)
+	if err != nil {
+		log.Printf("[theme] update GetByName error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("查询主题失败: %v", err)}
+	}
+	if existing == nil {
+		return &Result{Success: false, Error: fmt.Sprintf("主题 %s 不存在", a.Name)}
+	}
+
+	if a.NewName != "" || a.Description != "" {
+		if err := t.themeRepo.Update(ec.Ctx, existing.ID, ec.UserID, a.NewName, a.Description); err != nil {
+			log.Printf("[theme] update error: %v", err)
+			return &Result{Success: false, Error: fmt.Sprintf("更新主题失败: %v", err)}
+		}
+	}
+
+	if a.StateText != "" {
+		if err := t.themeRepo.AppendStateText(ec.Ctx, existing.ID, ec.UserID, a.StateText); err != nil {
+			log.Printf("[theme] AppendStateText error: %v", err)
+			return &Result{Success: false, Error: fmt.Sprintf("追加状态失败: %v", err)}
+		}
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"id":     existing.ID,
+		"name":   a.Name,
+		"status": "updated",
 	})
 	return &Result{Success: true, Data: data}
 }

@@ -88,6 +88,7 @@ func (*historyBlock) TypeKey() string { return TypeHistory }
 
 // --- theme ---
 type themeItem struct {
+	ID          string  `xml:"id,attr" json:"id"`
 	Description string  `xml:"desc,attr,omitempty" json:"description,omitempty"`
 	Score       float64 `xml:"score,attr,omitempty" json:"score,omitempty"`
 	Content     string  `xml:",chardata" json:"content"`
@@ -246,7 +247,7 @@ func buildThemesBlock(items []retrieval.ContextPacket) Block {
 		Description: retrieval.DescThemes,
 	}
 	for _, pkt := range items {
-		it := themeItem{Content: pkt.Text, Score: roundScore(pkt.Score)}
+		it := themeItem{ID: pkt.ID, Content: pkt.Text, Score: roundScore(pkt.Score)}
 		if meta, ok := pkt.Meta.(retrieval.ThemeMeta); ok {
 			it.Content = meta.Description
 			if meta.StateText != "" {

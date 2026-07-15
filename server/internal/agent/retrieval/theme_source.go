@@ -59,19 +59,20 @@ func (s *ThemeSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextP
 	for _, t := range activeThemes {
 		vecScore, hasVec := searchRes[t.ID]
 
+		meta := ThemeMeta{Description: t.Description}
 		if hasVec && vecScore >= threshold {
-			pkt := ContextPacket{
-				ID:    t.ID,
-				Type:  "theme",
-				Text:  t.Name,
-				Score: vecScore,
-				Meta: ThemeMeta{
-					Description: t.Description,
-					StateText:   t.StateText,
-				},
-			}
-			selected = append(selected, pkt)
-		} else {
+			meta.StateText = t.StateText
+		}
+
+		selected = append(selected, ContextPacket{
+			ID:    t.ID,
+			Type:  "theme",
+			Text:  t.Name,
+			Score: vecScore,
+			Meta:  meta,
+		})
+
+		if !hasVec || vecScore < threshold {
 			reason := "other_active"
 			nmScore := 0.0
 			if hasVec {

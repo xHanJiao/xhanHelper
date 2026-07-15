@@ -135,6 +135,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		tool.NewMessageSearchTool(repos.Message, repos.Conversation, infra.Embedder, infra.VectorStore, cfg.Chat.HistoryRounds, cfg.Chat.MaxSummaryRounds), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewThemeSearchTool(repos.ThemeState, infra.Embedder, infra.VectorStore), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(themeMgmtTool, log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewGetSummaryTool(repos.ConversationSummary, infra.VectorStore, infra.Embedder), log.Default()))
 

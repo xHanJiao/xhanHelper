@@ -95,10 +95,10 @@ func TestBuildHistoryBlockEmptyMessages(t *testing.T) {
 
 func TestBuildThemeBlock(t *testing.T) {
 	items := []retrieval.ContextPacket{
-		{Type: "theme", Meta: retrieval.ThemeMeta{Description: "健身计划", StateText: "活跃中"}},
+		{ID: "theme-1", Type: "theme", Meta: retrieval.ThemeMeta{Description: "健身计划", StateText: "活跃中"}},
 	}
 	got := marshalBlock(t, buildBlock("theme", items))
-	if !strings.Contains(got, `topic desc="活跃中"`) {
+	if !strings.Contains(got, `topic id="theme-1" desc="活跃中"`) {
 		t.Errorf("unexpected: %s", got)
 	}
 }
@@ -137,10 +137,10 @@ func TestBuildHistoryBlockHitDatePrecedence(t *testing.T) {
 
 func TestBuildThemeBlockNoState(t *testing.T) {
 	items := []retrieval.ContextPacket{
-		{Type: "theme", Meta: retrieval.ThemeMeta{Description: "阅读计划"}},
+		{ID: "theme-2", Type: "theme", Meta: retrieval.ThemeMeta{Description: "阅读计划"}},
 	}
 	got := marshalBlock(t, buildBlock("theme", items))
-	if !strings.Contains(got, `topic>阅读计划</topic>`) {
+	if !strings.Contains(got, `topic id="theme-2">阅读计划</topic>`) {
 		t.Errorf("unexpected: %s", got)
 	}
 }

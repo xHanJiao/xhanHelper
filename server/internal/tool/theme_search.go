@@ -60,11 +60,23 @@ func (t *ThemeSearchTool) Functions() []FuncSchema {
 		{
 			Name:        "list_active_themes",
 			Display:     "列出活跃主题",
-			Description: "列出用户当前所有活跃主题（即系统正在追踪的事件），返回每个主题的 id、name、description。用于了解用户身上正在发生哪些事。",
+			Description: "列出用户当前所有活跃主题（即系统正在追踪的事件），返回每个主题的 id、name、description、status 和 state_text（如有）。用于了解用户身上正在发生哪些事。",
 			Parameters: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
 				"required":   []string{},
+			},
+		},
+		{
+			Name:        "get_detail",
+			Display:     "获取主题详情",
+			Description: "根据主题 id 获取完整状态页，包含 name、description、status、state_text（完整状态文本）、duration、created_at、updated_at。用于深入了解某个主题的完整进展历史。id 可从上下文中的 <topic id=\"...\"> 属性获取。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{"type": "string", "description": "主题 ID，来自上下文中 <topic> 的 id 属性"},
+				},
+				"required": []string{"id"},
 			},
 		},
 	}
@@ -78,6 +90,8 @@ func (t *ThemeSearchTool) Execute(ec *ExecuteContext, funcName string, args json
 		return t.searchByKeyword(ec, args)
 	case "list_active_themes":
 		return t.listActiveThemes(ec, args)
+	case "get_detail":
+		return t.getDetail(ec, args)
 	default:
 		return &Result{Success: false, Error: fmt.Sprintf("unknown function: %s", funcName)}
 	}
@@ -252,6 +266,39 @@ func (t *ThemeSearchTool) searchByKeyword(ec *ExecuteContext, args json.RawMessa
 	return &Result{Success: true, Data: data}
 }
 
+func (t *ThemeSearchTool) getDetail(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+	}
+	if a.ID == "" {
+		return &Result{Success: false, Error: "id 不能为空"}
+	}
+
+	th, err := t.themeRepo.GetByID(ec.Ctx, a.ID, ec.UserID)
+	if err != nil {
+		log.Printf("[theme_search] get_detail GetByID error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("查询主题失败: %v", err)}
+	}
+	if th == nil {
+		return &Result{Success: false, Error: "主题不存在"}
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"id":          th.ID,
+		"name":        th.Name,
+		"description": th.Description,
+		"status":      th.Status,
+		"duration":    th.Duration,
+		"state_text":  th.StateText,
+		"created_at":  th.CreatedAt,
+		"updated_at":  th.UpdatedAt,
+	})
+	return &Result{Success: true, Data: data}
+}
+
 func (t *ThemeSearchTool) listActiveThemes(ec *ExecuteContext, _ json.RawMessage) *Result {
 	themes, err := t.themeRepo.ListActive(ec.Ctx, ec.UserID)
 	if err != nil {
@@ -261,11 +308,16 @@ func (t *ThemeSearchTool) listActiveThemes(ec *ExecuteContext, _ json.RawMessage
 
 	output := make([]map[string]interface{}, 0, len(themes))
 	for _, th := range themes {
-		output = append(output, map[string]interface{}{
+		m := map[string]interface{}{
 			"id":          th.ID,
 			"name":        th.Name,
 			"description": th.Description,
-		})
+			"status":      th.Status,
+		}
+		if th.StateText != "" {
+			m["state_text"] = th.StateText
+		}
+		output = append(output, m)
 	}
 
 	data, _ := json.Marshal(map[string]interface{}{

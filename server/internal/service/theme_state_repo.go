@@ -181,6 +181,41 @@ func (r *ThemeStateRepo) ExpireDrafts(ctx context.Context, userID string, days i
 	return result.Error
 }
 
+// Update 更新主题名称和描述
+func (r *ThemeStateRepo) Update(ctx context.Context, id, userID, name, description string) error {
+	updates := map[string]interface{}{"updated_at": time.Now()}
+	if name != "" {
+		updates["name"] = name
+	}
+	if description != "" {
+		updates["description"] = description
+	}
+	return r.db.WithContext(ctx).Model(&model.ThemeState{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Updates(updates).Error
+}
+
+// AppendStateText 增量追加状态文本：读取当前 state_text，在末尾追加带时间戳的新条目
+func (r *ThemeStateRepo) AppendStateText(ctx context.Context, id, userID, newText string) error {
+	var cur model.ThemeState
+	if err := r.db.WithContext(ctx).Where("id = ? AND user_id = ?", id, userID).First(&cur).Error; err != nil {
+		return err
+	}
+
+	entry := fmt.Sprintf("[%s] %s", time.Now().In(config.BJ).Format("2006-01-02 15:04"), newText)
+	newState := entry
+	if cur.StateText != "" {
+		newState = cur.StateText + "\n" + entry
+	}
+
+	return r.db.WithContext(ctx).Model(&model.ThemeState{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Updates(map[string]interface{}{
+			"state_text": newState,
+			"updated_at": time.Now(),
+		}).Error
+}
+
 // Close 关闭主题
 func (r *ThemeStateRepo) Close(ctx context.Context, id, userID string) error {
 	return r.db.WithContext(ctx).Model(&model.ThemeState{}).

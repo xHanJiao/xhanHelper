@@ -2,6 +2,13 @@ package model
 
 import "time"
 
+const (
+	ReminderStatusGenerating   = "generating"
+	ReminderStatusPending      = "pending"
+	ReminderStatusAcknowledged = "acknowledged"
+	ReminderStatusCancelled    = "cancelled"
+)
+
 type Reminder struct {
 	ID string `gorm:"primaryKey;size:36" json:"id"`
 	// 所属用户

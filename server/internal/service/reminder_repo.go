@@ -35,7 +35,7 @@ func (r *ReminderRepo) FindByID(ctx context.Context, userID, id string) (*model.
 func (r *ReminderRepo) FindByDeadline(ctx context.Context, userID string, deadline time.Time) (*model.Reminder, error) {
 	var rem model.Reminder
 	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND status = ? AND deadline = ?", userID, "pending", deadline).
+		Where("user_id = ? AND status = ? AND deadline = ?", userID, model.ReminderStatusPending, deadline).
 		First(&rem).Error
 	if err != nil {
 		return nil, err
@@ -67,7 +67,7 @@ func (r *ReminderRepo) ListExpiredUnmentioned(ctx context.Context, userID string
 	var list []model.Reminder
 	zeroTime := time.Time{}
 	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND status = ? AND deadline < ? AND mentioned_at = ?", userID, "pending", now, zeroTime).
+		Where("user_id = ? AND status = ? AND deadline < ? AND mentioned_at = ?", userID, model.ReminderStatusPending, now, zeroTime).
 		Order("deadline DESC").
 		Limit(limit).
 		Find(&list).Error
@@ -77,7 +77,7 @@ func (r *ReminderRepo) ListExpiredUnmentioned(ctx context.Context, userID string
 func (r *ReminderRepo) ListUpcoming(ctx context.Context, userID string, now time.Time, limit int) ([]model.Reminder, error) {
 	var list []model.Reminder
 	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND status = ? AND deadline >= ?", userID, "pending", now).
+		Where("user_id = ? AND status = ? AND deadline >= ?", userID, model.ReminderStatusPending, now).
 		Order("deadline ASC").
 		Limit(limit).
 		Find(&list).Error
@@ -88,7 +88,7 @@ func (r *ReminderRepo) Ack(ctx context.Context, userID, id, msgID string) error 
 	return r.db.WithContext(ctx).Model(&model.Reminder{}).
 		Where("id = ? AND user_id = ?", id, userID).
 		Updates(map[string]interface{}{
-			"status":                 "acknowledged",
+			"status":                 model.ReminderStatusAcknowledged,
 			"acknowledged_at":        time.Now(),
 			"trigger_message_msg_id": msgID,
 		}).Error
@@ -96,8 +96,8 @@ func (r *ReminderRepo) Ack(ctx context.Context, userID, id, msgID string) error 
 
 func (r *ReminderRepo) Cancel(ctx context.Context, userID, id string) error {
 	return r.db.WithContext(ctx).Model(&model.Reminder{}).
-		Where("id = ? AND user_id = ? AND status = ?", id, userID, "pending").
-		Update("status", "cancelled").Error
+		Where("id = ? AND user_id = ? AND status = ?", id, userID, model.ReminderStatusPending).
+		Update("status", model.ReminderStatusCancelled).Error
 }
 
 func (r *ReminderRepo) MarkMentioned(ctx context.Context, userID, id string) error {
@@ -106,13 +106,33 @@ func (r *ReminderRepo) MarkMentioned(ctx context.Context, userID, id string) err
 		Update("mentioned_at", time.Now()).Error
 }
 
-func (r *ReminderRepo) UpdateGeneratedContent(ctx context.Context, id, title, body, triggerMsg string) error {
+func (r *ReminderRepo) UpdateGeneratedContent(ctx context.Context, id, body, triggerMsg string) error {
 	return r.db.WithContext(ctx).Model(&model.Reminder{}).
-		Where("id = ? AND status = ?", id, "generating").
+		Where("id = ? AND status = ?", id, model.ReminderStatusGenerating).
 		Updates(map[string]interface{}{
-			"status":             "pending",
-			"notification_title": title,
-			"notification_body":  body,
-			"trigger_message":    triggerMsg,
+			"status":            model.ReminderStatusPending,
+			"notification_body": body,
+			"trigger_message":   triggerMsg,
 		}).Error
+}
+
+func (r *ReminderRepo) Search(ctx context.Context, userID, query, status string, limit, offset int) ([]model.Reminder, int64, error) {
+	var list []model.Reminder
+	var total int64
+
+	q := r.db.WithContext(ctx).
+		Where("user_id = ? AND content LIKE ?", userID, "%"+query+"%")
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+
+	if err := q.Model(&model.Reminder{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return list, total, nil
 }

@@ -144,7 +144,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	missionEmbedder := agent.NewMissionEmbedder(infra, repos.Embedding)
 
 	reg.Register(tool.NewLoggingWrapper(
-		tool.NewReminderTool(repos.Commitment, commitmentTimer), log.Default()))
+		tool.NewReminderTool(repos.Reminder, llmClients.Flash), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewMissionTool(repos.Mission, missionEmbedder), log.Default()))
 

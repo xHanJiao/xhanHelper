@@ -41,6 +41,7 @@ func InitDB(cfg *config.Config) *gorm.DB {
 		&model.MailboxItem{},
 		&model.ThemeState{},
 		&model.ReflectionTrace{},
+		&model.Reminder{},
 		&model.ReflectionLLMCall{},
 		&model.ReflectionDecision{},
 		&model.EmbeddingChunk{},

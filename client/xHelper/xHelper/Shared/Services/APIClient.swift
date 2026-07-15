@@ -465,3 +465,22 @@ struct UserPrompt: Identifiable, Codable {
         case createdAt = "created_at"
     }
 }
+
+// MARK: - Reminders
+
+extension APIClient {
+
+    func listReminders(status: String? = nil, limit: Int = 50, offset: Int = 0) async throws -> ReminderListResponse {
+        var path = "/api/reminders?limit=\(limit)&offset=\(offset)"
+        if let s = status { path += "&status=\(s)" }
+        return try await get(path)
+    }
+
+    func ackReminder(id: String) async throws -> AckReminderResponse {
+        return try await post("/api/reminders/\(id)/ack", body: [:])
+    }
+
+    func cancelReminder(id: String) async throws -> Reminder {
+        return try await post("/api/reminders/\(id)/cancel", body: [:])
+    }
+}

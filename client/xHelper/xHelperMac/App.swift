@@ -3,6 +3,10 @@ import AppKit
 
 @main
 struct xhanHelperMacApp: App {
+    init() {
+        NotificationDelegateRegistrar.register()
+    }
+
     @StateObject private var deviceManager = DeviceManager()
     @StateObject private var colorSchemeManager = ColorSchemeManager()
 

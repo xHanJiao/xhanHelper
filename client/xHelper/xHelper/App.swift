@@ -2,6 +2,10 @@ import SwiftUI
 
 @main
 struct xhanHelperApp: App {
+    init() {
+        NotificationDelegateRegistrar.register()
+    }
+
     @StateObject private var deviceManager = DeviceManager()
     @StateObject private var colorSchemeManager = ColorSchemeManager()
 

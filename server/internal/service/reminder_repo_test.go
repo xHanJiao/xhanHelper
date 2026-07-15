@@ -41,11 +41,13 @@ func seedReminder(t *testing.T, repo *ReminderRepo, userID, content string, dead
 	t.Helper()
 	seedCounter++
 	r := &model.Reminder{
-		ID:       fmt.Sprintf("id-%d", seedCounter),
-		UserID:   userID,
-		Content:  content,
-		Deadline: deadline,
-		Status:   status,
+		ID:             fmt.Sprintf("id-%d", seedCounter),
+		UserID:         userID,
+		Content:        content,
+		Deadline:       deadline,
+		Status:         status,
+		AcknowledgedAt: model.ReminderZeroTime,
+		MentionedAt:    model.ReminderZeroTime,
 	}
 	if err := repo.Create(context.Background(), r); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -59,11 +61,13 @@ func TestReminderRepo_CreateAndFind(t *testing.T) {
 
 	deadline := time.Date(2026, 7, 21, 13, 0, 0, 0, time.UTC)
 	rem := &model.Reminder{
-		ID:       "test-id-1",
-		UserID:   "user1",
-		Content:  "考科目二",
-		Deadline: deadline,
-		Status:   model.ReminderStatusGenerating,
+		ID:             "test-id-1",
+		UserID:         "user1",
+		Content:        "考科目二",
+		Deadline:       deadline,
+		Status:         model.ReminderStatusGenerating,
+		AcknowledgedAt: model.ReminderZeroTime,
+		MentionedAt:    model.ReminderZeroTime,
 	}
 	if err := repo.Create(context.Background(), rem); err != nil {
 		t.Fatalf("create: %v", err)

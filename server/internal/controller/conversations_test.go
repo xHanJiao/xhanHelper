@@ -520,3 +520,39 @@ func TestCleanMessages_KeepNonToolInternalMessagesFiltered(t *testing.T) {
 		t.Fatalf("expected 2 messages (internal non-tool filtered), got %d", len(result))
 	}
 }
+
+func TestMergeConsecutiveAssistant_NoMergeBreaksGrouping(t *testing.T) {
+	extraNoMerge := `{"no_merge":true}`
+	msgs := []model.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "first"},
+		{Role: "assistant", Content: "standalone", Extra: &extraNoMerge},
+		{Role: "assistant", Content: "third"},
+	}
+	result := mergeConsecutiveAssistant(msgs)
+	if len(result) != 4 {
+		t.Fatalf("expected 4 (user + first + standalone + third), got %d", len(result))
+	}
+	if result[1].Content != "first" {
+		t.Errorf("first: got %q", result[1].Content)
+	}
+	if result[2].Content != "standalone" {
+		t.Errorf("standalone: got %q", result[2].Content)
+	}
+	if result[3].Content != "third" {
+		t.Errorf("third: got %q", result[3].Content)
+	}
+}
+
+func TestMergeConsecutiveAssistant_NoMergeAtStart(t *testing.T) {
+	extraNoMerge := `{"no_merge":true}`
+	msgs := []model.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "standalone", Extra: &extraNoMerge},
+		{Role: "assistant", Content: "after"},
+	}
+	result := mergeConsecutiveAssistant(msgs)
+	if len(result) != 3 {
+		t.Fatalf("expected 3, got %d", len(result))
+	}
+}

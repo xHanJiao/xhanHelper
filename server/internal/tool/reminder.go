@@ -138,7 +138,7 @@ func (t *ReminderTool) createReminder(ec *ExecuteContext, args json.RawMessage) 
 		return &Result{Success: false, Error: fmt.Sprintf("deadline 格式错误，请使用 ISO8601 格式（如 2026-07-21T13:00:00+08:00）: %v", err)}
 	}
 
-	if time.Until(deadline) < 5*time.Minute {
+	if time.Until(deadline) < 1*time.Minute {
 		return &Result{Success: false, Error: "提醒时间太近，请至少提前5分钟创建"}
 	}
 
@@ -149,6 +149,8 @@ func (t *ReminderTool) createReminder(ec *ExecuteContext, args json.RawMessage) 
 		Deadline:          deadline,
 		Status:            model.ReminderStatusGenerating,
 		NotificationTitle: reminderNotificationTitle,
+		AcknowledgedAt:    model.ReminderZeroTime,
+		MentionedAt:       model.ReminderZeroTime,
 	}
 	if req.RecurrenceRule != nil && req.RecurrenceRule.Type != "" {
 		ruleJSON, _ := json.Marshal(req.RecurrenceRule)

@@ -54,6 +54,7 @@ struct ContentView: View {
                 LogBuffer.shared.debug("sync conversation \(conv.id) after scene active")
                 Task { await chatViewModel.loadConversation(id: conv.id, title: conv.title) }
 
+                print("[Reminder] scene active, triggering sync")
                 Task {
                     await syncReminders()
                 }
@@ -69,7 +70,7 @@ struct ContentView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .reminderTapped)) { notification in
                 guard let reminderId = notification.userInfo?["reminder_id"] as? String, !reminderId.isEmpty else { return }
-                LogBuffer.shared.debug("[Reminder] tap: processing reminder_id=\(reminderId)")
+                print("[Reminder] tap: processing reminder_id=\(reminderId)")
                 Task { await handleReminderTap(reminderId: reminderId) }
             }
 
@@ -96,69 +97,88 @@ struct ContentView: View {
     // MARK: - Reminder sync
 
     private func syncReminders() async {
-        guard let token = deviceManager.token else { return }
+        guard let token = deviceManager.token else {
+            print("[Reminder] sync: skipped, no token")
+            return
+        }
+        print("[Reminder] sync: fetching pending from server")
         let api = APIClient(baseURL: deviceManager.baseURL, token: token)
         do {
             let response = try await api.listReminders(status: "pending")
+            print("[Reminder] sync: got \(response.total) pending, items=\(response.items.count)")
             await notificationManager.syncWithServer(pending: response.items)
         } catch {
-            LogBuffer.shared.error("[Reminder] sync error: \(error)")
+            print("[Reminder] sync error: \(error)")
         }
     }
 
     // MARK: - Notification tap → ack → navigate
 
     private func handleReminderTap(reminderId: String) async {
+        print("[Reminder] tap: start processing reminder_id=\(reminderId)")
         showAckLoading = true
-        defer { showAckLoading = false }
+        defer {
+            showAckLoading = false
+            print("[Reminder] tap: loading dismissed")
+        }
 
         guard let token = deviceManager.token else {
+            print("[Reminder] tap: no token, aborting")
             ackErrorMessage = "未登录"
             showAckError = true
             return
         }
 
+        print("[Reminder] tap: calling ack API")
         let api = APIClient(baseURL: deviceManager.baseURL, token: token)
 
-        // Retry up to 2 times on timeout
         var lastError: Error?
         for attempt in 1...3 {
+            print("[Reminder] tap: ack attempt \(attempt)/3")
             do {
                 let response = try await api.ackReminder(id: reminderId)
-                LogBuffer.shared.debug("[Reminder] ack: success id=\(response.id) msg_id=\(response.triggerMessageMsgId) trigger=\(response.triggerMessage.prefix(30))")
+                print("[Reminder] tap: ack success id=\(response.id) status=\(response.status) msg_id=\(response.triggerMessageMsgId) trigger=\(response.triggerMessage.prefix(40))")
 
                 guard response.status == "acknowledged" else {
                     if response.status == "cancelled" {
-                        LogBuffer.shared.info("[Reminder] ack: reminder already cancelled")
+                        print("[Reminder] tap: reminder already cancelled")
                         ackErrorMessage = "此提醒已取消"
                         showAckError = true
+                    } else {
+                        print("[Reminder] tap: unexpected status=\(response.status)")
                     }
                     return
                 }
 
-                guard let conv = deviceManager.defaultConversation else { return }
-                selectedTab = "chat"
+                guard let conv = deviceManager.defaultConversation else {
+                    print("[Reminder] tap: no default conversation")
+                    return
+                }
+                print("[Reminder] tap: switching to chat tab, loading messages conv=\(conv.id)")
+                DispatchQueue.main.async {
+                    selectedTab = "chat"
+                }
                 await chatViewModel.loadConversation(id: conv.id, title: conv.title)
+                print("[Reminder] tap: done, chat loaded")
                 return
             } catch {
                 lastError = error
                 let nsErr = error as NSError
-                // Server returned a business error — don't retry
+                print("[Reminder] tap: ack attempt \(attempt) error code=\(nsErr.code) msg=\(nsErr.localizedDescription)")
                 if nsErr.code >= 400 && nsErr.code < 500 {
-                    LogBuffer.shared.error("[Reminder] ack: server error \(nsErr.code) \(nsErr.localizedDescription)")
                     ackErrorMessage = nsErr.localizedDescription
                     showAckError = true
                     return
                 }
-                LogBuffer.shared.error("[Reminder] ack: attempt \(attempt) error: \(error)")
                 if attempt < 3 {
                     let delay = UInt64(attempt) * 1_000_000_000
+                    print("[Reminder] tap: retrying in \(attempt)s")
                     try? await Task.sleep(nanoseconds: delay)
                 }
             }
         }
 
-        LogBuffer.shared.error("[Reminder] ack: all retries failed, last error: \(String(describing: lastError))")
+        print("[Reminder] tap: all 3 retries failed, last=\(String(describing: lastError))")
         ackErrorMessage = "网络错误，请稍后重试"
         showAckError = true
     }

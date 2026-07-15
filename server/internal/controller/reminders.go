@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/agent"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
@@ -112,6 +113,8 @@ func (h *ReminderHandler) AckReminder(c *gin.Context) {
 		view.JSONError(c, 500, "insert trigger message failed")
 		return
 	}
+
+	agent.SetNoMerge(msg)
 
 	if err := h.reminderRepo.Ack(c.Request.Context(), userID, id, msg.ID); err != nil {
 		log.Printf("[reminders] ack error: %v", err)

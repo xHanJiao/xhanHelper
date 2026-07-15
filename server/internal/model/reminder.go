@@ -9,6 +9,10 @@ const (
 	ReminderStatusCancelled    = "cancelled"
 )
 
+// ReminderZeroTime 是 acknowledged_at / mentioned_at 字段的"未设置"哨兵值。
+// MySQL NO_ZERO_DATE 模式拒绝 year=0 的日期，1970-01-01 永远合法。
+var ReminderZeroTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+
 type Reminder struct {
 	ID string `gorm:"primaryKey;size:36" json:"id"`
 	// 所属用户

@@ -15,14 +15,20 @@ final class NotificationDelegateRegistrar: NSObject, UNUserNotificationCenterDel
         let d = NotificationDelegateRegistrar()
         instance = d
         UNUserNotificationCenter.current().delegate = d
-        LogBuffer.shared.info("[Reminder] UNUserNotificationCenter delegate registered")
+        print("[Reminder] UNUserNotificationCenter delegate registered")
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                  didReceive response: UNNotificationResponse,
                                  withCompletionHandler completionHandler: @escaping () -> Void) {
-        let reminderId = response.notification.request.content.userInfo["reminder_id"] as? String
-        LogBuffer.shared.debug("[Reminder] tap: notification received, reminder_id=\(reminderId ?? "nil")")
+        let userInfo = response.notification.request.content.userInfo
+        let reminderId = userInfo["reminder_id"] as? String
+        let title = response.notification.request.content.title
+        let body = response.notification.request.content.body
+        print("[Reminder] tap: received title=\(title) body=\(body.prefix(30)) reminder_id=\(reminderId ?? "nil")")
+        if reminderId == nil {
+            print("[Reminder] tap: no reminder_id in userInfo, keys=\(userInfo.keys.map { "\($0)" }.joined(separator: ","))")
+        }
         NotificationCenter.default.post(
             name: .reminderTapped,
             object: nil,

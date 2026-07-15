@@ -42,6 +42,10 @@ type MsgExtra struct {
 	//  0: 未设置（无摘要或无前序消息）
 	// >0: 当前已附着轮数
 	SummaryAttachRound int `json:"summary_attach_round,omitempty"`
+
+	// NoMerge — 标记为独立消息，不被 mergeConsecutiveAssistant 合并到相邻 assistant。
+	// 用于提醒 ack 等系统自动创建的片段，防止被拼到上一轮助手回复末尾。
+	NoMerge bool `json:"no_merge,omitempty"`
 }
 
 // mergeMsgExtra 从消息中读取已有 Extra，调用 fn 修改后写回。
@@ -125,4 +129,23 @@ func GetSummaryAttachRound(msg *model.Message) int {
 		return 0
 	}
 	return extra.SummaryAttachRound
+}
+
+// SetNoMerge 标记消息为独立消息，不被 mergeConsecutiveAssistant 合并。
+func SetNoMerge(msg *model.Message) {
+	mergeMsgExtra(msg, func(extra *MsgExtra) {
+		extra.NoMerge = true
+	})
+}
+
+// GetNoMerge 读取消息的独立标记，未设置返回 false。
+func GetNoMerge(msg *model.Message) bool {
+	if msg.Extra == nil {
+		return false
+	}
+	var extra MsgExtra
+	if err := json.Unmarshal([]byte(*msg.Extra), &extra); err != nil {
+		return false
+	}
+	return extra.NoMerge
 }

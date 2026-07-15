@@ -65,9 +65,8 @@ func (r *ReminderRepo) List(ctx context.Context, userID, status string, limit, o
 
 func (r *ReminderRepo) ListExpiredUnmentioned(ctx context.Context, userID string, now time.Time, limit int) ([]model.Reminder, error) {
 	var list []model.Reminder
-	zeroTime := time.Time{}
 	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND status = ? AND deadline < ? AND mentioned_at = ?", userID, model.ReminderStatusPending, now, zeroTime).
+		Where("user_id = ? AND status = ? AND deadline < ? AND mentioned_at = ?", userID, model.ReminderStatusPending, now, model.ReminderZeroTime).
 		Order("deadline DESC").
 		Limit(limit).
 		Find(&list).Error

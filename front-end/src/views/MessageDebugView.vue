@@ -116,7 +116,7 @@ const userMsgBodyHtml = computed(() => {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/\n/g, '<br>')
-  html = html.replace(/&lt;(\/?)(memories|notes|topics|history|user_query)&gt;/g,
+  html = html.replace(/&lt;(\/?)(memories|notes|topics|history|user_query|reminders)&gt;/g,
     '<span style="color:var(--color-primary);font-weight:600">&lt;$1$2&gt;</span>')
   return html
 })
@@ -194,6 +194,16 @@ function parseBlockElement(el) {
       }
       return { type: 'history', description: attrs.description || '', rounds }
     }
+    case 'reminders': {
+      const items = []
+      for (const child of el.children) {
+        items.push({
+          id: child.getAttribute('id') || '',
+          content: child.textContent?.trim() || '',
+        })
+      }
+      return { type: 'reminder', description: attrs.description || '', items }
+    }
     case 'current_datetime':
       return { type: 'current_datetime', content: el.textContent?.trim() || '' }
     case 'user_query':
@@ -210,12 +220,12 @@ const parsedBlocks = computed(() => {
 })
 
 function blockTypeLabel(type) {
-  const map = { memory: '记忆 (memories)', note: '笔记 (notes)', theme: '主题 (themes)', history: '聊天记录 (history)', summary: '摘要 (summaries)', current_datetime: '当前时间', user_query: '用户查询' }
+  const map = { memory: '记忆 (memories)', note: '笔记 (notes)', theme: '主题 (themes)', history: '聊天记录 (history)', summary: '摘要 (summaries)', reminder: '提醒 (reminders)', current_datetime: '当前时间', user_query: '用户查询' }
   return map[type] || type
 }
 
 function blockTypeIcon(type) {
-  const map = { memory: '📋', note: '📝', theme: '🔗', history: '💬', summary: '📄', current_datetime: '🕐', user_query: '💭' }
+  const map = { memory: '📋', note: '📝', theme: '🔗', history: '💬', summary: '📄', reminder: '⏰', current_datetime: '🕐', user_query: '💭' }
   return map[type] || '📦'
 }
 
@@ -238,7 +248,7 @@ function isBlockCollapsed(key) {
 }
 
 function blockHeaderBg(type) {
-  const base = { memory: '59,130,246', note: '34,197,94', theme: '245,158,11', history: '59,130,246', summary: '20,184,166' }
+  const base = { memory: '59,130,246', note: '34,197,94', theme: '245,158,11', history: '59,130,246', summary: '20,184,166', reminder: '99,102,241' }
   const rgb = base[type] || '100,100,100'
   return themeStore.isDark ? `rgba(${rgb},0.12)` : `rgba(${rgb},0.06)`
 }
@@ -716,7 +726,7 @@ onMounted(loadRound)
                       <div v-if="block.description" style="font-size: 11px; color: var(--color-text-muted); line-height: 1.5; margin-bottom: 10px; max-height: 3em; overflow: hidden;" :title="block.description">{{ block.description }}</div>
 
                       <!-- memory / note / theme / summary items -->
-                      <template v-if="['memory','note','theme','summary'].includes(block.type)">
+                      <template v-if="['memory','note','theme','summary','reminder'].includes(block.type)">
                         <div v-for="(item, i) in block.items" :key="i" :style="{
                           padding: '10px 12px', marginBottom: i < block.items.length - 1 ? '8px' : '0',
                           borderRadius: 'var(--radius-sm)',

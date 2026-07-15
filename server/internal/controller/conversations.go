@@ -304,7 +304,7 @@ func mergeConsecutiveAssistant(msgs []model.Message) []model.Message {
 	i := 0
 	for i < len(msgs) {
 		m := msgs[i]
-		if m.Role != "assistant" {
+		if m.Role != "assistant" || agent.GetNoMerge(&m) {
 			out = append(out, m)
 			i++
 			continue
@@ -312,7 +312,7 @@ func mergeConsecutiveAssistant(msgs []model.Message) []model.Message {
 		// 收集连续的 assistant 消息
 		group := []model.Message{m}
 		j := i + 1
-		for j < len(msgs) && msgs[j].Role == "assistant" {
+		for j < len(msgs) && msgs[j].Role == "assistant" && !agent.GetNoMerge(&msgs[j]) {
 			group = append(group, msgs[j])
 			j++
 		}

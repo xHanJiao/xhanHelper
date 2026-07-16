@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -123,6 +124,24 @@ func (r *ConversationSummaryRepo) ListByUser(ctx context.Context, userID, keywor
 	var list []model.ConversationSummary
 	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
 	return list, total, err
+}
+
+// ListByTimeRange 按用户查询 [start, end) 时间范围内的摘要，按 created_at 倒序。
+// 不区分 status：增量合并模式下每个版本各自侧重一次 session 的内容，superseded 版本仍有信息量。
+func (r *ConversationSummaryRepo) ListByTimeRange(ctx context.Context, userID string, start, end time.Time, limit int) ([]model.ConversationSummary, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	var list []model.ConversationSummary
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND created_at >= ? AND created_at < ?", userID, start, end).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&list).Error
+	return list, err
 }
 
 // MarkSuperseded 将指定摘要标记为已替代

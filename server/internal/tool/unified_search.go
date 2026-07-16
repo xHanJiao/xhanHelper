@@ -480,6 +480,7 @@ func (t *UnifiedSearchTool) searchSummariesByKeyword(ec *ExecuteContext, keyword
 				CoverToMsgID:    s.CoverToMsgID,
 				ParentSummaryID: parentID,
 				Topics:          s.Topics,
+				CreatedAt:       s.CreatedAt,
 			},
 		})
 	}

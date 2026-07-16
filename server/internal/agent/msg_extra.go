@@ -37,12 +37,6 @@ type MsgExtra struct {
 	// 同一 session 内所有消息共享此 ID，session 结束时用于确定摘要范围。
 	SessionStartMsgID string `json:"session_start_msg_id,omitempty"`
 
-	// SummaryAttachRound — 当前 session 内摘要已附着的轮数。
-	// -1: 已永久跳过（相关性不足或超轮次上限）
-	//  0: 未设置（无摘要或无前序消息）
-	// >0: 当前已附着轮数
-	SummaryAttachRound int `json:"summary_attach_round,omitempty"`
-
 	// NoMerge — 标记为独立消息，不被 mergeConsecutiveAssistant 合并到相邻 assistant。
 	// 用于提醒 ack 等系统自动创建的片段，防止被拼到上一轮助手回复末尾。
 	NoMerge bool `json:"no_merge,omitempty"`
@@ -110,25 +104,6 @@ func GetWindowSize(msg *model.Message) int {
 		return 0
 	}
 	return extra.WindowSize
-}
-
-// SetSummaryAttachRound 设置消息的摘要附着轮数。自动与已有 Extra 合并。
-func SetSummaryAttachRound(msg *model.Message, round int) {
-	mergeMsgExtra(msg, func(extra *MsgExtra) {
-		extra.SummaryAttachRound = round
-	})
-}
-
-// GetSummaryAttachRound 从消息 Extra 中读取 SummaryAttachRound，未设置返回 0。
-func GetSummaryAttachRound(msg *model.Message) int {
-	if msg.Extra == nil {
-		return 0
-	}
-	var extra MsgExtra
-	if err := json.Unmarshal([]byte(*msg.Extra), &extra); err != nil {
-		return 0
-	}
-	return extra.SummaryAttachRound
 }
 
 // SetNoMerge 标记消息为独立消息，不被 mergeConsecutiveAssistant 合并。

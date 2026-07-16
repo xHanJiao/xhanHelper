@@ -53,7 +53,8 @@ chat:
   max_summary_rounds: 5       # 单次摘要最多覆盖的 user message 条数，N/2
   max_window_rounds: 200      # 扩张窗口上限轮数
   session_gap_minutes: 15     # session 间隔阈值（分钟），超过则重置窗口
-  max_summary_attach_rounds: 5      # 摘要附着轮次上限
+  summary_attach_count: 10          # 摘要附着条数上限
+  summary_attach_max_days: 3        # 摘要附着时间窗口（天）
   summary_relevance_threshold: 0.5  # 摘要相关性余弦相似度阈值
   summary_relevance_history_n: 5    # 相关性检查的历史消息窗口大小
 

@@ -83,7 +83,6 @@ type LLMResponse struct {
 // msgCreator — Orchestrator 需要的消息写入能力（*service.MessageRepo 自动满足）
 type msgCreator interface {
 	Create(ctx context.Context, m *model.Message) error
-	ListRecentUserMessages(ctx context.Context, convID string, limit int) ([]model.Message, error)
 }
 
 // convToucher — Orchestrator 需要的会话更新时间能力（*service.ConversationRepo 自动满足）
@@ -123,7 +122,8 @@ type Orchestrator struct {
 	reminderRepo        *service.ReminderRepo
 
 	// 摘要附着控制
-	maxSummaryAttachRounds    int
+	summaryAttachCount        int
+	summaryAttachMaxDays      int
 	summaryRelevanceThreshold float64
 	summaryRelevanceHistoryN  int
 }
@@ -152,7 +152,8 @@ type OrchestratorConfig struct {
 	SummaryRepo               *service.ConversationSummaryRepo
 	ContextRetriever          *ctxflow.ContextRetriever // 上下文检索
 	ContextFormatter          ctxflow.ContextFormatter  // 上下文格式化
-	MaxSummaryAttachRounds    int                       // 摘要附着轮次上限，默认 5
+	SummaryAttachCount        int                       // 摘要附着条数上限，默认 10
+	SummaryAttachMaxDays      int                       // 摘要附着时间窗口（天），默认 3
 	SummaryRelevanceThreshold float64                   // 摘要相关性阈值，默认 0.5
 	SummaryRelevanceHistoryN  int                       // 相关性检查的历史消息窗口，默认 5
 	ReminderRepo              *service.ReminderRepo
@@ -193,7 +194,8 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		summaryRepo:               cfg.SummaryRepo,
 		contextRetriever:          cfg.ContextRetriever,
 		contextFormatter:          cfg.ContextFormatter,
-		maxSummaryAttachRounds:    cfg.MaxSummaryAttachRounds,
+		summaryAttachCount:        cfg.SummaryAttachCount,
+		summaryAttachMaxDays:      cfg.SummaryAttachMaxDays,
 		summaryRelevanceThreshold: cfg.SummaryRelevanceThreshold,
 		summaryRelevanceHistoryN:  cfg.SummaryRelevanceHistoryN,
 		reminderRepo:              cfg.ReminderRepo,
@@ -375,66 +377,59 @@ func (o *Orchestrator) prepareUserMsg(req *RunRequest) *model.Message {
 	return userMsg
 }
 
-// resolveSummaryAttachment 决定本轮是否附着摘要，返回摘要 ContextPacket（nil 表示不附着）。
-// 副作用：设置 userMsg 的 SummaryAttachRound（必须在 Create 之前调用）。
-func (o *Orchestrator) resolveSummaryAttachment(
-	ctx context.Context,
-	req *RunRequest,
-	userMsg *model.Message,
-) *retrieval.ContextPacket {
-	// 查上一条用户消息的附着轮数
-	var prevUserMsg *model.Message
-	if recent, err := o.msgRepo.ListRecentUserMessages(ctx, req.ConversationID, 1); err == nil && len(recent) > 0 {
-		prevUserMsg = &recent[0]
-	} else if err != nil {
-		log.Printf("[orch] ListRecentUserMessages for summary attach error: %v", err)
+// buildSummaryPackets 拉取用户最近的对话摘要（跨会话），构建摘要 ContextPacket 列表。
+// 口径：最多 summaryAttachCount 条，且都在最近 summaryAttachMaxDays 天内；返回按时间旧→新排列。
+func (o *Orchestrator) buildSummaryPackets(ctx context.Context, req *RunRequest) []retrieval.ContextPacket {
+	if o.summaryRepo == nil {
+		log.Printf("[orch] WARNING: summaryRepo is nil, skip summary attachment (check wiring in appinit)")
+		return nil
+	}
+	count := o.summaryAttachCount
+	if count <= 0 {
+		count = 10
+	}
+	days := o.summaryAttachMaxDays
+	if days <= 0 {
+		days = 3
 	}
 
-	// 确定本轮轮数
-	round := 1
-	if req.Window.IsNewSession {
-		round = 1
-	} else if prevUserMsg != nil {
-		prev := GetSummaryAttachRound(prevUserMsg)
-		log.Printf("[orch] previous user msg summary attach round: %d", prev)
-		if prev < 0 || prev >= o.maxSummaryAttachRounds {
-			round = -1
-		} else {
-			round = prev + 1
+	now := time.Now()
+	summaries, err := o.summaryRepo.ListByTimeRange(ctx, req.UserID, now.AddDate(0, 0, -days), now, count)
+	if err != nil {
+		log.Printf("[orch] ListByTimeRange for summary attach error: %v", err)
+		return nil
+	}
+	if len(summaries) == 0 {
+		return nil
+	}
+
+	// repo 返回时间倒序，翻转为旧→新，便于 LLM 按时间线阅读
+	pkts := make([]retrieval.ContextPacket, 0, len(summaries))
+	for i := len(summaries) - 1; i >= 0; i-- {
+		s := summaries[i]
+		parent := ""
+		if s.ParentSummaryID != nil {
+			parent = *s.ParentSummaryID
 		}
+		pkts = append(pkts, retrieval.ContextPacket{
+			ID:    s.ID,
+			Type:  ctxflow.TypeSummary,
+			Text:  s.SummaryText,
+			Score: 1.0,
+			Meta: retrieval.SummaryMeta{
+				SummaryID:       s.ID,
+				SummaryText:     s.SummaryText,
+				ConversationID:  s.ConversationID,
+				CoverFromMsgID:  s.CoverFromMsgID,
+				CoverToMsgID:    s.CoverToMsgID,
+				ParentSummaryID: parent,
+				Topics:          s.Topics,
+				CreatedAt:       s.CreatedAt,
+			},
+		})
 	}
-	log.Printf("[orch] resolveSummaryAttachment: round=%d", round)
-
-	var pkt *retrieval.ContextPacket
-	if round > 0 && o.summaryRepo != nil {
-		summary, err := o.summaryRepo.GetLatest(ctx, req.ConversationID)
-		if err != nil {
-			log.Printf("[orch] GetLatest summary error: %v", err)
-		} else if summary != nil {
-			parent := ""
-			if summary.ParentSummaryID != nil {
-				parent = *summary.ParentSummaryID
-			}
-			pkt = &retrieval.ContextPacket{
-				ID:    summary.ID,
-				Type:  ctxflow.TypeSummary,
-				Text:  summary.SummaryText,
-				Score: 1.0,
-				Meta: retrieval.SummaryMeta{
-					SummaryID:       summary.ID,
-					SummaryText:     summary.SummaryText,
-					ConversationID:  summary.ConversationID,
-					CoverFromMsgID:  summary.CoverFromMsgID,
-					CoverToMsgID:    summary.CoverToMsgID,
-					ParentSummaryID: parent,
-					Topics:          summary.Topics,
-				},
-			}
-		}
-	}
-
-	SetSummaryAttachRound(userMsg, round)
-	return pkt
+	log.Printf("[orch] buildSummaryPackets: attached %d summaries (window=%dd, limit=%d)", len(pkts), days, count)
+	return pkts
 }
 
 // buildUserMessage 构建 user 消息的完整内容并写入 userMsg.XMLContext。
@@ -448,9 +443,7 @@ func (o *Orchestrator) buildUserMessage(
 
 	var extraPackets = []retrieval.ContextPacket{ctxflow.DateTimePacket(time.Now())}
 
-	if summaryPkt := o.resolveSummaryAttachment(ctx, req, userMsg); summaryPkt != nil {
-		extraPackets = append(extraPackets, *summaryPkt)
-	}
+	extraPackets = append(extraPackets, o.buildSummaryPackets(ctx, req)...)
 
 	reminderPkts := o.buildReminderPackets(ctx, req.UserID)
 	extraPackets = append(extraPackets, reminderPkts...)

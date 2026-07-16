@@ -54,13 +54,14 @@ func (MissionMeta) isPacketMeta() {}
 
 // SummaryMeta 对话摘要的元数据。
 type SummaryMeta struct {
-	SummaryID       string // 摘要自身的 ID
-	SummaryText     string // 摘要正文
-	ConversationID  string // 所属会话
-	CoverFromMsgID  string // 覆盖消息起始
-	CoverToMsgID    string // 覆盖消息结束
-	ParentSummaryID string // 前序摘要 ID（空=无）
-	Topics          string // 逗号分隔的话题标签
+	SummaryID       string    // 摘要自身的 ID
+	SummaryText     string    // 摘要正文
+	ConversationID  string    // 所属会话
+	CoverFromMsgID  string    // 覆盖消息起始
+	CoverToMsgID    string    // 覆盖消息结束
+	ParentSummaryID string    // 前序摘要 ID（空=无）
+	Topics          string    // 逗号分隔的话题标签
+	CreatedAt       time.Time // 摘要创建时间
 }
 
 func (SummaryMeta) isPacketMeta() {}

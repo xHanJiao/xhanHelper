@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
@@ -31,7 +32,11 @@ func NewGetSummaryTool(summaryRepo *service.ConversationSummaryRepo, vectorStore
 func (t *GetSummaryTool) Name() string { return "get_summary" }
 
 func (t *GetSummaryTool) Description() string {
-	return "对话摘要由系统自动从历史消息中提取，是对话主题和脉络的高层概括，适合快速回顾「之前聊了什么大方向」。相比直接查消息（message_search），摘要提供全局视角和浓缩话题，但丢失了细节信息。找到感兴趣的话题后，可配合 message_search.search_by_range 或 get_by_ids 查看覆盖范围内的原始消息。get_summary 按 ID 获取单条摘要并沿 parent 链回溯；search_summaries 用自然语言语义搜索；search_by_keyword 按关键词搜索。"
+	return "对话摘要由系统在每次对话 session 结束后自动提取，是对话主题和脉络的高层概括，适合快速了解用户过去某段时间聊了什么、发生了什么事。" +
+		"query_by_time 按时间范围拉取摘要（回顾过去几天/几周的对话脉络首选）；search_summaries 用自然语言语义搜索；search_by_keyword 按关键词搜索；" +
+		"get_summary 按 ID 获取单条摘要并沿 parent 链回溯。" +
+		"相比直接查消息（message_search），摘要提供全局视角和浓缩话题，但丢失了细节信息。" +
+		"找到感兴趣的话题后，可配合 message_search.search_by_range 查看覆盖范围内的原始消息。"
 }
 
 func (t *GetSummaryTool) Functions() []FuncSchema {
@@ -62,6 +67,20 @@ func (t *GetSummaryTool) Functions() []FuncSchema {
 			},
 		},
 		{
+			Name:        "query_by_time",
+			Display:     "按时间查摘要",
+			Description: "按时间范围拉取对话摘要，按时间倒序返回，每条带创建时间。用于快速了解用户在某段时间内聊了什么、发生了什么事，是回顾过去几天/几周对话脉络的首选方式。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"start_time": map[string]interface{}{"type": "string", "description": "起始时间，支持 2026-06-15 14:30:00 或 2026-06-15（纯日期按当日 00:00:00）"},
+					"end_time":   map[string]interface{}{"type": "string", "description": "结束时间，格式同上（纯日期含当天全部数据）"},
+					"limit":      map[string]interface{}{"type": "integer", "description": "返回条数，默认20，最大50"},
+				},
+				"required": []string{"start_time", "end_time"},
+			},
+		},
+		{
 			Name:        "search_by_keyword",
 			Display:     "关键词搜索",
 			Description: "按关键词在摘要文本中搜索。多关键词用空格/逗号/顿号分隔为 OR 关系。适合查找包含特定词汇的对话摘要。",
@@ -83,6 +102,8 @@ func (t *GetSummaryTool) Execute(ec *ExecuteContext, funcName string, args json.
 		return t.getSummary(ec, args)
 	case "search_summaries":
 		return t.searchSummaries(ec, args)
+	case "query_by_time":
+		return t.queryByTime(ec, args)
 	case "search_by_keyword":
 		return t.searchByKeyword(ec, args)
 	}
@@ -218,6 +239,64 @@ func (t *GetSummaryTool) searchSummaries(ec *ExecuteContext, args json.RawMessag
 	}
 
 	data, _ := json.Marshal(out)
+	return &Result{Success: true, Data: data}
+}
+
+func (t *GetSummaryTool) queryByTime(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a struct {
+		StartTime string `json:"start_time"`
+		EndTime   string `json:"end_time"`
+		Limit     int    `json:"limit"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+	}
+	if a.StartTime == "" || a.EndTime == "" {
+		return &Result{Success: false, Error: "start_time 和 end_time 不能为空"}
+	}
+	if a.Limit <= 0 {
+		a.Limit = 20
+	}
+	if a.Limit > 50 {
+		a.Limit = 50
+	}
+
+	start, err := parseTimeString(a.StartTime)
+	if err != nil {
+		return &Result{Success: false, Error: err.Error()}
+	}
+	end, err := parseTimeString(a.EndTime)
+	if err != nil {
+		return &Result{Success: false, Error: err.Error()}
+	}
+	// 纯日期 end_time → 含当日，推到次日 00:00:00
+	if isDateOnly(a.EndTime) {
+		end = end.Add(24 * time.Hour)
+	}
+	if !start.Before(end) {
+		return &Result{Success: false, Error: "start_time 必须早于 end_time"}
+	}
+
+	summaries, err := t.summaryRepo.ListByTimeRange(ec.Ctx, ec.UserID, start, end, a.Limit)
+	if err != nil {
+		log.Printf("[get_summary] query_by_time error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("查询摘要失败: %v", err)}
+	}
+
+	out := make([]map[string]interface{}, 0, len(summaries))
+	for _, s := range summaries {
+		out = append(out, map[string]interface{}{
+			"id":           s.ID,
+			"summary_text": s.SummaryText,
+			"topics":       s.Topics,
+			"created_at":   s.CreatedAt.In(config.BJ).Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"total":     len(out),
+		"summaries": out,
+	})
 	return &Result{Success: true, Data: data}
 }
 

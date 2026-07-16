@@ -41,7 +41,8 @@ type ChatConfig struct {
 	MaxWindowRounds           int     `yaml:"max_window_rounds"`           // 扩张窗口上限，默认 100
 	MaxSummaryRounds          int     `yaml:"max_summary_rounds"`          // 单次摘要覆盖上限，0=等于 history_rounds
 	SessionGapMinutes         int     `yaml:"session_gap_minutes"`         // session 间隔阈值（分钟），默认 30
-	MaxSummaryAttachRounds    int     `yaml:"max_summary_attach_rounds"`   // 摘要附着轮次上限，默认 5
+	SummaryAttachCount        int     `yaml:"summary_attach_count"`        // 摘要附着条数上限，默认 10
+	SummaryAttachMaxDays      int     `yaml:"summary_attach_max_days"`     // 摘要附着时间窗口（天），默认 3
 	SummaryRelevanceThreshold float64 `yaml:"summary_relevance_threshold"` // 摘要相关性余弦相似度阈值，默认 0.5
 	SummaryRelevanceHistoryN  int     `yaml:"summary_relevance_history_n"` // 相关性检查的历史消息窗口大小，默认 5
 }
@@ -395,8 +396,11 @@ func merge(dst, src *Config) {
 	if src.Chat.SessionGapMinutes != 0 {
 		dst.Chat.SessionGapMinutes = src.Chat.SessionGapMinutes
 	}
-	if src.Chat.MaxSummaryAttachRounds != 0 {
-		dst.Chat.MaxSummaryAttachRounds = src.Chat.MaxSummaryAttachRounds
+	if src.Chat.SummaryAttachCount != 0 {
+		dst.Chat.SummaryAttachCount = src.Chat.SummaryAttachCount
+	}
+	if src.Chat.SummaryAttachMaxDays != 0 {
+		dst.Chat.SummaryAttachMaxDays = src.Chat.SummaryAttachMaxDays
 	}
 	if src.Chat.SummaryRelevanceThreshold > 0 {
 		dst.Chat.SummaryRelevanceThreshold = src.Chat.SummaryRelevanceThreshold
@@ -520,8 +524,11 @@ func validate(cfg *Config) error {
 	if cfg.Chat.SessionGapMinutes == 0 {
 		cfg.Chat.SessionGapMinutes = 30
 	}
-	if cfg.Chat.MaxSummaryAttachRounds == 0 {
-		cfg.Chat.MaxSummaryAttachRounds = 5
+	if cfg.Chat.SummaryAttachCount == 0 {
+		cfg.Chat.SummaryAttachCount = 10
+	}
+	if cfg.Chat.SummaryAttachMaxDays == 0 {
+		cfg.Chat.SummaryAttachMaxDays = 3
 	}
 	if cfg.Chat.SummaryRelevanceThreshold == 0 {
 		cfg.Chat.SummaryRelevanceThreshold = 0.5

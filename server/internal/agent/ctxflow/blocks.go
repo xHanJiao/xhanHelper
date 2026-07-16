@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"xhan-helper/internal/agent/retrieval"
+	"xhan-helper/internal/config"
 )
 
 const (
@@ -104,6 +105,7 @@ func (*themesBlock) TypeKey() string { return TypeTheme }
 // --- summary ---
 type summaryItem struct {
 	ID              string  `xml:"id,attr,omitempty" json:"id,omitempty"`
+	CreatedAt       string  `xml:"created_at,attr,omitempty" json:"created_at,omitempty"`
 	Topics          string  `xml:"topics,attr,omitempty" json:"topics,omitempty"`
 	CoverFrom       string  `xml:"cover_from,attr,omitempty" json:"cover_from,omitempty"`
 	CoverTo         string  `xml:"cover_to,attr,omitempty" json:"cover_to,omitempty"`
@@ -271,6 +273,9 @@ func buildSummariesBlock(items []retrieval.ContextPacket) Block {
 			it.CoverFrom = meta.CoverFromMsgID
 			it.CoverTo = meta.CoverToMsgID
 			it.ParentSummaryID = meta.ParentSummaryID
+			if !meta.CreatedAt.IsZero() {
+				it.CreatedAt = meta.CreatedAt.In(config.BJ).Format("2006-01-02 15:04")
+			}
 			if meta.Topics != "" {
 				it.Topics = meta.Topics
 			}

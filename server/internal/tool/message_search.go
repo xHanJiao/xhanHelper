@@ -133,7 +133,7 @@ func (t *MessageSearchTool) Functions() []FuncSchema {
 		{
 			Name:        "get_by_ids",
 			Display:     "批量获取消息",
-			Description: "根据消息 ID 列表获取完整内容。不受截断限制。查不到的 ID 静默跳过。同一用户的任意会话消息都支持。最多 20 个 ID。",
+			Description: "根据消息 ID 列表获取指定消息ID的完整内容。不受截断限制。查不到的 ID 静默跳过。同一用户的任意会话消息都支持。最多 20 个 ID。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

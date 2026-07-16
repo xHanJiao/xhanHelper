@@ -79,18 +79,19 @@ type SnowflakeConfig struct {
 
 // ServerConfig — HTTP 服务配置
 type ServerConfig struct {
-	Port                int      `yaml:"port"`
-	Mode                string   `yaml:"mode"`                  // debug | release
-	RegistrationEnabled *bool    `yaml:"registration_enabled"`  // 是否允许新用户注册
-	AllowedUsers        []string `yaml:"allowed_users"`         // 允许注册的用户名列表（空=全部允许）
-	MemoryAutoExtract   bool     `yaml:"memory_auto_extract"`   // 是否自动提取记忆
-	MemoryDupeThreshold float64  `yaml:"memory_dupe_threshold"` // 记忆去重相似度阈值，默认 0.85
-	SidecarURL          string   `yaml:"sidecar_url"`           // Python sidecar MCP HTTP 地址
-	TokenTTLMinutes     int      `yaml:"token_ttl_minutes"`     // token 过期时间（分钟），默认 5
-	AgentRouteTriggers  []int    `yaml:"agent_route_triggers"`  // [已废弃] 异步路由触发消息数
-	AgentRouteInterval  int      `yaml:"agent_route_interval"`  // 自动路由间隔：每 N 条用户消息触发一次，0=禁用，默认 5
-	MaxTokensPerUser    int      `yaml:"max_tokens_per_user"`   // 同一用户最大 token 数，默认 4
-	AdminUsers          []string `yaml:"admin_users"`           // 管理员用户 ID 列表
+	Port                   int      `yaml:"port"`
+	Mode                   string   `yaml:"mode"`                     // debug | release
+	RegistrationEnabled    *bool    `yaml:"registration_enabled"`     // 是否允许新用户注册
+	AllowedUsers           []string `yaml:"allowed_users"`            // 允许注册的用户名列表（空=全部允许）
+	MemoryAutoExtract      bool     `yaml:"memory_auto_extract"`      // 是否自动提取记忆
+	MemoryDupeThreshold    float64  `yaml:"memory_dupe_threshold"`    // 记忆去重相似度阈值，默认 0.85
+	DisableBackgroundTasks bool     `yaml:"disable_background_tasks"` // 禁用所有后台任务（记忆提取/摘要/主题分析/反思等），dev 环境建议开启
+	SidecarURL             string   `yaml:"sidecar_url"`              // Python sidecar MCP HTTP 地址
+	TokenTTLMinutes        int      `yaml:"token_ttl_minutes"`        // token 过期时间（分钟），默认 5
+	AgentRouteTriggers     []int    `yaml:"agent_route_triggers"`     // [已废弃] 异步路由触发消息数
+	AgentRouteInterval     int      `yaml:"agent_route_interval"`     // 自动路由间隔：每 N 条用户消息触发一次，0=禁用，默认 5
+	MaxTokensPerUser       int      `yaml:"max_tokens_per_user"`      // 同一用户最大 token 数，默认 4
+	AdminUsers             []string `yaml:"admin_users"`              // 管理员用户 ID 列表
 }
 
 // DBConfig — 数据库配置
@@ -247,6 +248,7 @@ func merge(dst, src *Config) {
 	if src.Server.MemoryDupeThreshold > 0 {
 		dst.Server.MemoryDupeThreshold = src.Server.MemoryDupeThreshold
 	}
+	dst.Server.DisableBackgroundTasks = src.Server.DisableBackgroundTasks
 	if src.Server.SidecarURL != "" {
 		dst.Server.SidecarURL = src.Server.SidecarURL
 	}

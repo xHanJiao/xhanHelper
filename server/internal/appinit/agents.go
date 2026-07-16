@@ -143,6 +143,9 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MaxToolResultChars: cfg.LLM.MaxToolResultChars,
 		ToolMaxConcurrency: cfg.LLM.ToolMaxConcurrency,
 		OnChatEnd: func(userID, convID, userMsgID string) {
+			if cfg.Server.DisableBackgroundTasks {
+				return
+			}
 			cronRunner.NotifyChatEnd(userID, convID)
 			cronRunner.NotifySummaryCheck(userID, convID, userMsgID)
 		},
@@ -159,7 +162,11 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		ReminderRepo:              repos.Reminder,
 	})
 
-	go cronRunner.Start(bgCtx)
+	if !cfg.Server.DisableBackgroundTasks {
+		go cronRunner.Start(bgCtx)
+	} else {
+		log.Printf("[appinit] background tasks disabled, skip cronRunner")
+	}
 
 	// 统一搜索工具（语义搜索走 ContextSource，关键词搜索走 repo）
 	unifiedSearch := tool.NewUnifiedSearchTool(

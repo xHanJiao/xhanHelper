@@ -530,3 +530,192 @@ func TestCursorByRounds_NoDuplicationAcrossPages(t *testing.T) {
 		t.Errorf("expected 60 unique messages (15 rounds × 4 msgs), got %d", len(seen))
 	}
 }
+
+// ==================== ListUserMessagesBetween tests ====================
+
+func seedUserMessages(t *testing.T, repo *MessageRepo, convID, userID string, times []time.Time) []model.Message {
+	t.Helper()
+	ctx := context.Background()
+	var msgs []model.Message
+	for i, ts := range times {
+		m := model.Message{
+			ID:             fmt.Sprintf("ub-%s-%02d", convID, i),
+			ConversationID: convID,
+			UserID:         userID,
+			Role:           "user",
+			Content:        fmt.Sprintf("between msg %d for %s", i, convID),
+			CreatedAt:      ts,
+		}
+		if err := repo.Create(ctx, &m); err != nil {
+			t.Fatalf("seed between msg %d: %v", i, err)
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs
+}
+
+func TestListUserMessagesBetween_IncludesBoundaryMessages(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+
+	base := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	times := []time.Time{
+		base,                      // 0: 边界 after
+		base.Add(1 * time.Second), // 1: 中间
+		base.Add(2 * time.Second), // 2: 边界 before
+	}
+	allMsgs := seedUserMessages(t, repo, "conv1", "user1", times)
+
+	// 闭区间应包含首尾
+	msgs, err := repo.ListUserMessagesBetween(context.Background(), "conv1", times[0], times[2], 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages (inclusive both ends), got %d", len(msgs))
+	}
+	for i, expectedID := range []string{allMsgs[0].ID, allMsgs[1].ID, allMsgs[2].ID} {
+		if msgs[i].ID != expectedID {
+			t.Errorf("expected msg[%d]=%s, got %s", i, expectedID, msgs[i].ID)
+		}
+	}
+}
+
+func TestListUserMessagesBetween_SingleMessageSession(t *testing.T) {
+	// 单条消息 session: after == before → 应返回该消息自身
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+
+	base := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	times := []time.Time{base}
+	allMsgs := seedUserMessages(t, repo, "conv1", "user1", times)
+
+	msgs, err := repo.ListUserMessagesBetween(context.Background(), "conv1", times[0], times[0], 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message (self-inclusive), got %d", len(msgs))
+	}
+	if msgs[0].ID != allMsgs[0].ID {
+		t.Errorf("expected msg %s, got %s", allMsgs[0].ID, msgs[0].ID)
+	}
+}
+
+func TestListUserMessagesBetween_EmptyRange(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+
+	base := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	seedUserMessages(t, repo, "conv1", "user1", []time.Time{base})
+
+	// 查询时间范围在消息之前 → 空
+	before := base.Add(-2 * time.Second)
+	after := base.Add(-1 * time.Second)
+	msgs, err := repo.ListUserMessagesBetween(context.Background(), "conv1", after, before, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages for empty range, got %d", len(msgs))
+	}
+}
+
+func TestListUserMessagesBetween_ExcludesOtherConversations(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+
+	base := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	seedUserMessages(t, repo, "conv1", "user1", []time.Time{base, base.Add(time.Second)})
+	seedUserMessages(t, repo, "conv2", "user1", []time.Time{base, base.Add(time.Second)})
+
+	msgs, err := repo.ListUserMessagesBetween(context.Background(), "conv1", base, base.Add(2*time.Second), 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages for conv1, got %d", len(msgs))
+	}
+	for _, m := range msgs {
+		if m.ConversationID != "conv1" {
+			t.Errorf("unexpected convID: %s", m.ConversationID)
+		}
+	}
+}
+
+func TestListUserMessagesBetween_OnlyUserRole(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+
+	base := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	seedUserMessages(t, repo, "conv1", "user1", []time.Time{base, base.Add(time.Second)})
+
+	// 插入一条 assistant 消息（不应被返回）
+	assistantMsg := model.Message{
+		ID:             "a-test-role",
+		ConversationID: "conv1",
+		UserID:         "user1",
+		Role:           "assistant",
+		Content:        "I am an assistant",
+		CreatedAt:      base.Add(500 * time.Millisecond),
+	}
+	if err := repo.Create(context.Background(), &assistantMsg); err != nil {
+		t.Fatalf("seed assistant: %v", err)
+	}
+
+	msgs, err := repo.ListUserMessagesBetween(context.Background(), "conv1", base, base.Add(2*time.Second), 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 user messages (assistant filtered out), got %d", len(msgs))
+	}
+	for _, m := range msgs {
+		if m.Role != "user" {
+			t.Errorf("expected role=user, got role=%s (id=%s)", m.Role, m.ID)
+		}
+	}
+}
+
+func TestListUserMessagesBetween_Limit(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+
+	base := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	var times []time.Time
+	for i := 0; i < 10; i++ {
+		times = append(times, base.Add(time.Duration(i)*time.Second))
+	}
+	seedUserMessages(t, repo, "conv1", "user1", times)
+
+	// limit=3 应只返回 3 条并按时间正序
+	msgs, err := repo.ListUserMessagesBetween(context.Background(), "conv1", base, base.Add(10*time.Second), 3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages (limit=3), got %d", len(msgs))
+	}
+	for i := 1; i < len(msgs); i++ {
+		if !msgs[i].CreatedAt.After(msgs[i-1].CreatedAt) {
+			t.Errorf("messages not ordered ASC at index %d", i)
+		}
+	}
+}
+
+func TestListUserMessagesBetween_SwappedBounds(t *testing.T) {
+	// after > before → 结果应为空（时间窗无效）
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+
+	base := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	seedUserMessages(t, repo, "conv1", "user1", []time.Time{base})
+
+	msgs, err := repo.ListUserMessagesBetween(context.Background(), "conv1", base.Add(time.Second), base, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages for swapped bounds, got %d", len(msgs))
+	}
+}

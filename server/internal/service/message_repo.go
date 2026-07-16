@@ -539,11 +539,12 @@ func (r *MessageRepo) ListUserMessagesBefore(ctx context.Context, convID string,
 }
 
 // ListUserMessagesBetween 查询指定时间范围内会话的 user role 消息（按时间正序）。
+// after 和 before 为闭区间（含边界）。
 // limit <= 0 表示不限制数量。
 func (r *MessageRepo) ListUserMessagesBetween(ctx context.Context, convID string, after, before time.Time, limit int) ([]model.Message, error) {
 	var list []model.Message
 	q := r.db.WithContext(ctx).
-		Where("conversation_id = ? AND role = 'user' AND created_at > ? AND created_at < ? AND status = ?",
+		Where("conversation_id = ? AND role = 'user' AND created_at >= ? AND created_at <= ? AND status = ?",
 			convID, after, before, model.MsgStatusNormal).
 		Order("created_at ASC")
 	if limit > 0 {

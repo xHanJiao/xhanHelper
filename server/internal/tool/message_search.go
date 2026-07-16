@@ -561,7 +561,7 @@ func (t *MessageSearchTool) searchByRange(ec *ExecuteContext, args json.RawMessa
 		after, before = before, after
 	}
 
-	msgs, err := t.msgRepo.ListUserMessagesBetween(ec.Ctx, startMsg.ConversationID, after.Add(-time.Second), before.Add(time.Second), 0)
+	msgs, err := t.msgRepo.ListUserMessagesBetween(ec.Ctx, startMsg.ConversationID, after, before, 0)
 	if err != nil {
 		log.Printf("[message_search] search_by_range error: %v", err)
 		return &Result{Success: false, Error: fmt.Sprintf("范围查询失败: %v", err)}

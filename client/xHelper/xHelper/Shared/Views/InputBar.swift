@@ -6,9 +6,11 @@ import AppKit
 struct InputBar: View {
     @Binding var text: String
     let isStreaming: Bool
+    @Binding var showBusyHint: Bool
     var dismissKeyboardToken: UUID?
     let onSend: () -> Void
     let onStop: () -> Void
+    @State private var shakeOffset: CGFloat = 0
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
@@ -34,12 +36,28 @@ struct InputBar: View {
             let font = NSFont.preferredFont(forTextStyle: .body)
             let lineHeight = font.ascender + abs(font.descender) + font.leading
             TextEditor(text: $text)
+                .offset(x: shakeOffset)
                 .onKeyPress(.return, phases: .down) { keyPress in
                     if keyPress.modifiers.contains(.shift) {
                         return .ignored
                     }
                     if (NSApp.keyWindow?.firstResponder?.value(forKey: "hasMarkedText") as? Bool) == true {
                         return .ignored
+                    }
+                    if isStreaming {
+                        Task {
+                            for _ in 0..<3 {
+                                withAnimation(.easeInOut(duration: 0.06)) { shakeOffset = 6 }
+                                try? await Task.sleep(nanoseconds: 60_000_000)
+                                withAnimation(.easeInOut(duration: 0.06)) { shakeOffset = -6 }
+                                try? await Task.sleep(nanoseconds: 60_000_000)
+                            }
+                            withAnimation(.easeInOut(duration: 0.06)) { shakeOffset = 0 }
+                            showBusyHint = true
+                            try? await Task.sleep(nanoseconds: 2_000_000_000)
+                            showBusyHint = false
+                        }
+                        return .handled
                     }
                     if text.trimmingCharacters(in: .whitespaces).isEmpty {
                         return .ignored
@@ -88,12 +106,14 @@ struct InputBar: View {
 #Preview {
     @Previewable @State var text = ""
     @Previewable @State var dismissKeyboardToken: UUID? = nil
+    @Previewable @State var showHint = false
 
     VStack {
         Spacer()
         InputBar(
             text: $text,
             isStreaming: false,
+            showBusyHint: $showHint,
             dismissKeyboardToken: dismissKeyboardToken,
             onSend: {},
             onStop: {}
@@ -105,12 +125,14 @@ struct InputBar: View {
 #Preview("Streaming") {
     @Previewable @State var text = "正在思考..."
     @Previewable @State var dismissKeyboardToken: UUID? = nil
+    @Previewable @State var showHint = false
 
     VStack {
         Spacer()
         InputBar(
             text: $text,
             isStreaming: true,
+            showBusyHint: $showHint,
             dismissKeyboardToken: dismissKeyboardToken,
             onSend: {},
             onStop: {}

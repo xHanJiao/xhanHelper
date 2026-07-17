@@ -70,6 +70,23 @@ struct MacSettingsView: View {
     var body: some View {
         Form {
 #if DEBUG
+            Section("外观") {
+                Picker("", selection: Binding(
+                    get: { colorSchemeManager.selectedScheme },
+                    set: { newValue in
+                        DispatchQueue.main.async {
+                            colorSchemeManager.selectedScheme = newValue
+                        }
+                    }
+                )) {
+                    ForEach(AppColorScheme.allCases, id: \.self) { scheme in
+                        Text(scheme.label).tag(scheme)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+
             Section("账号") {
                 LabeledContent("用户名", value: deviceManager.username ?? "-")
                 LabeledContent("用户 ID", value: deviceManager.userId ?? "-")

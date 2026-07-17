@@ -186,9 +186,7 @@ struct ConversationListContentView: View {
 
     var body: some View {
         ZStack {
-            if chatViewModel.isInitialLoading && chatViewModel.messages.isEmpty {
-                ProgressView()
-            } else if let msg = loadError, chatViewModel.messages.isEmpty {
+            if let msg = loadError, chatViewModel.messages.isEmpty {
                 VStack(spacing: 12) {
                     Text(msg).foregroundColor(.secondary)
                 }

@@ -1,8 +1,33 @@
 import SwiftUI
 import AppKit
 
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillBecomeActive(_ notification: Notification) {
+        for window in NSApp.windows {
+            Self.configureWindow(window)
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        for window in NSApp.windows {
+            Self.configureWindow(window)
+        }
+    }
+
+    private static func configureWindow(_ window: NSWindow) {
+        guard window.isOpaque else { return }
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.contentView?.wantsLayer = true
+        window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
+    }
+}
+
 @main
 struct xhanHelperMacApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var deviceManager = DeviceManager()
     @StateObject private var colorSchemeManager = ColorSchemeManager()
 
@@ -19,7 +44,6 @@ struct xhanHelperMacApp: App {
             }
             .environmentObject(colorSchemeManager)
             .preferredColorScheme(colorSchemeManager.selectedScheme.colorScheme)
-            .animation(.easeInOut(duration: 0.25), value: deviceManager.isLoggedIn)
             .glassWindow()
         }
         .windowResizability(.contentMinSize)

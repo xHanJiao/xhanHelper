@@ -10,14 +10,25 @@
 		BB79374A2FA5B8190062C582 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = BB7937492FA5B8190062C582 /* MarkdownUI */; };
 		BB79377D2FA5ECE90062C582 /* ForceSimulation in Frameworks */ = {isa = PBXBuildFile; productRef = BB79377C2FA5ECE90062C582 /* ForceSimulation */; };
 		BB79377F2FA5ECE90062C582 /* Grape in Frameworks */ = {isa = PBXBuildFile; productRef = BB79377E2FA5ECE90062C582 /* Grape */; };
+		BBD116A6300A19CE007D6F5C /* (null) in Frameworks */ = {isa = PBXBuildFile; };
+		BBD116A7300A19CE007D6F5C /* (null) in Frameworks */ = {isa = PBXBuildFile; };
+		BBD116A8300A19CE007D6F5C /* (null) in Frameworks */ = {isa = PBXBuildFile; };
+		BBD116A9300A19CE007D6F5C /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = BB7937492FA5B8190062C582 /* MarkdownUI */; };
+		BBD116AA300A19CE007D6F5C /* ForceSimulation in Frameworks */ = {isa = PBXBuildFile; productRef = BB79377C2FA5ECE90062C582 /* ForceSimulation */; };
+		BBD116AB300A19CE007D6F5C /* Grape in Frameworks */ = {isa = PBXBuildFile; productRef = BB79377E2FA5ECE90062C582 /* Grape */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		BB0A7E612FA4138E007BD7D6 /* xHelper-test.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "xHelper-test.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		BB0A7E982FA41490007BD7D6 /* xHelperMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = xHelperMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB0A7E982FA41490007BD7D6 /* xHelperMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = xHelperMac.app; path = xhanHelper.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		89958FB3148D44E69FA2AC09 /* xHelper/Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = xHelper/Shared;
+			sourceTree = "<group>";
+		};
 		BB0A7E632FA4138E007BD7D6 /* xHelper */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = xHelper;
@@ -45,6 +56,12 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BBD116AB300A19CE007D6F5C /* Grape in Frameworks */,
+				BBD116A6300A19CE007D6F5C /* (null) in Frameworks */,
+				BBD116A7300A19CE007D6F5C /* (null) in Frameworks */,
+				BBD116A8300A19CE007D6F5C /* (null) in Frameworks */,
+				BBD116AA300A19CE007D6F5C /* ForceSimulation in Frameworks */,
+				BBD116A9300A19CE007D6F5C /* MarkdownUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -56,6 +73,7 @@
 			children = (
 				BB0A7E632FA4138E007BD7D6 /* xHelper */,
 				BB0A7E992FA41490007BD7D6 /* xHelperMac */,
+				89958FB3148D44E69FA2AC09 /* xHelper/Shared */,
 				BB79377B2FA5ECE90062C582 /* Frameworks */,
 				BB0A7E622FA4138E007BD7D6 /* Products */,
 			);
@@ -118,10 +136,14 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
+				89958FB3148D44E69FA2AC09 /* xHelper/Shared */,
 				BB0A7E992FA41490007BD7D6 /* xHelperMac */,
 			);
 			name = xHelperMac;
 			packageProductDependencies = (
+				BB7937492FA5B8190062C582 /* MarkdownUI */,
+				BB79377C2FA5ECE90062C582 /* ForceSimulation */,
+				BB79377E2FA5ECE90062C582 /* Grape */,
 			);
 			productName = xHelperMac;
 			productReference = BB0A7E982FA41490007BD7D6 /* xHelperMac.app */;
@@ -402,12 +424,15 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = NSJD2BRH7Z;
-				ENABLE_APP_SANDBOX = YES;
-				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleIconFile = AppIcon;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "需要访问本地网络以连接 xhanHelper 服务";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -415,7 +440,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.3;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = xhanx.cn.xHelperMac;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = xhanHelper;
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -438,12 +463,14 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = NSJD2BRH7Z;
-				ENABLE_APP_SANDBOX = YES;
-				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "需要访问本地网络以连接 xhanHelper 服务";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -451,7 +478,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.3;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = xhanx.cn.xHelperMac;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = xhanHelper;
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

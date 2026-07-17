@@ -156,7 +156,9 @@ struct AgentListView: View {
                     .padding()
                 }
                 .navigationTitle("智能体详情")
-                .navigationBarTitleDisplayMode(.inline) // 导航标题用内联样式（不放大）
+#if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+#endif
                 .toolbar {
                     // ToolbarItem: 导航栏上的按钮
                     ToolbarItem {
@@ -240,7 +242,9 @@ private func agentForm(title: String, name: Binding<String>, prompt: Binding<Str
             }
         }
         .navigationTitle(title)
+#if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+#endif
         .toolbar {
             // placement: .cancellationAction → iOS 自动放在左侧
             ToolbarItem(placement: .cancellationAction) {

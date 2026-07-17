@@ -82,7 +82,7 @@ struct MemoryListView: View {
                     .disabled(viewModel.selectedIDs.isEmpty)
                 }
             } else {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Button("选择") { viewModel.isEditMode = true }
                 }
             }
@@ -105,7 +105,9 @@ struct MemoryListView: View {
                     .padding()
                 }
                 .navigationTitle("记忆详情")
+                #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
+                #endif
             }
         }
     }

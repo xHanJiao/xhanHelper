@@ -94,8 +94,9 @@ struct PromptEditView: View {
             }
             // 导航栏标题：根据是否编辑已有内容显示不同文案
             .navigationTitle(existingPrompt != nil ? "编辑提示词" : "新增提示词")
-            // inline: 标题不放大（iOS 默认大标题）
+#if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+#endif
             .toolbar {
                 // cancellationAction: iOS 自动放在导航栏左侧
                 ToolbarItem(placement: .cancellationAction) {

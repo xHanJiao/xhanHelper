@@ -9,6 +9,7 @@ struct InputBar: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
+#if os(iOS)
             CustomTextView(
                 text: $text,
                 dismissKeyboardToken: dismissKeyboardToken,
@@ -26,6 +27,18 @@ struct InputBar: View {
             .background(Color("surfaceInput"))
             .cornerRadius(16)
             .disabled(isStreaming)
+#else
+            TextEditor(text: $text)
+                .scrollContentBackground(.hidden)
+                .font(.body)
+                .frame(minHeight: 36, maxHeight: 120)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 12)
+                .padding(.trailing, 12)
+                .padding(.vertical, 8)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .disabled(isStreaming)
+#endif
 
             if isStreaming {
                 Button(action: onStop) {

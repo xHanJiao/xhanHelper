@@ -59,7 +59,9 @@ struct BillListView: View {
                     DatePicker("结束日期", selection: $endDate, displayedComponents: .date)
                 }
                 .navigationTitle("导出 CSV")
+                #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
+                #endif
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("取消") { showExport = false }

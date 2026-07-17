@@ -22,26 +22,39 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            TabView(selection: $selectedTab) {
-                NavigationStack {
-                    ConversationListContentView(deviceManager: deviceManager, isInChat: $isInChat, chatViewModel: chatViewModel, loadError: conversationLoadError)
-                }
-                .toolbarBackground(Color("chatBackground"), for: .tabBar)
-                .toolbarBackground(.visible, for: .tabBar)
-                .tabItem {
-                    Label("聊天", systemImage: "bubble.left.and.bubble.right")
-                }
-                .tag("chat")
+            Group {
+#if os(iOS)
+                TabView(selection: $selectedTab) {
+                    NavigationStack {
+                        ConversationListContentView(deviceManager: deviceManager, isInChat: $isInChat, chatViewModel: chatViewModel, loadError: conversationLoadError)
+                    }
+                    .toolbarBackground(Color("chatBackground"), for: .tabBar)
+                    .toolbarBackground(.visible, for: .tabBar)
+                    .tabItem {
+                        Label("聊天", systemImage: "bubble.left.and.bubble.right")
+                    }
+                    .tag("chat")
 
-                NavigationStack {
-                    SettingsView(deviceManager: deviceManager)
+                    NavigationStack {
+                        SettingsView(deviceManager: deviceManager)
+                    }
+                    .toolbarBackground(Color("chatBackground"), for: .tabBar)
+                    .toolbarBackground(.visible, for: .tabBar)
+                    .tabItem {
+                        Label("设置", systemImage: "gear")
+                    }
+                    .tag("settings")
                 }
-                .toolbarBackground(Color("chatBackground"), for: .tabBar)
-                .toolbarBackground(.visible, for: .tabBar)
-                .tabItem {
-                    Label("设置", systemImage: "gear")
-                }
-                .tag("settings")
+#else
+                ConversationListContentView(deviceManager: deviceManager, isInChat: $isInChat, chatViewModel: chatViewModel, loadError: conversationLoadError)
+                    .navigationTitle("\(deviceManager.username ?? "xhan")Helper")
+                    .toolbar {
+                        ToolbarItem(placement: .automatic) {
+                            OpenSettingsButton()
+                        }
+                    }
+                    .toolbarBackground(.ultraThinMaterial, for: .windowToolbar)
+#endif
             }
             .onChange(of: scenePhase) { _, newPhase in
                 guard newPhase == .active else { return }
@@ -56,10 +69,9 @@ struct ContentView: View {
 
                 Task { await syncReminders() }
             }
-            .task {
+            .task(id: deviceManager.defaultConversation?.id) {
                 guard let conv = deviceManager.defaultConversation else {
-                    LogBuffer.shared.error("defaultConversation is nil")
-                    conversationLoadError = "无法加载默认对话"
+                    chatViewModel.isInitialLoading = false
                     return
                 }
                 LogBuffer.shared.debug("loading conversation \(conv.id)")
@@ -188,3 +200,16 @@ struct ConversationListContentView: View {
         }
     }
 }
+
+#if os(macOS)
+struct OpenSettingsButton: View {
+    @Environment(\.openSettings) private var openSettings
+    var body: some View {
+        Button {
+            openSettings()
+        } label: {
+            Image(systemName: "gear")
+        }
+    }
+}
+#endif

@@ -16,7 +16,7 @@ class DeviceManager: ObservableObject {
     private let defaultConvKey = "xhan_default_conversation_id"
 
     #if DEBUG
-    static let defaultBaseURL = "http://hanxiaodeMacBook-Air.local:8080"
+    static let defaultBaseURL = "http://127.0.0.1:8080"
     #else
     static let defaultBaseURL = "https://helper.xhanx.cn"
     #endif

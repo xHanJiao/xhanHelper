@@ -39,7 +39,9 @@ struct MemoryPopupView: View {
                 }
             }
             .navigationTitle("🧠 基于 \(memoryIDs.count) 条回忆")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .task { await load() }
         }
     }

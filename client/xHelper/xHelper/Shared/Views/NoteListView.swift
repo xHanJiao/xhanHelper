@@ -68,7 +68,9 @@ struct NoteListView: View {
                     .padding()
                 }
                 .navigationTitle("笔记详情")
+                #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
+                #endif
             }
         }
         .task { await load() }

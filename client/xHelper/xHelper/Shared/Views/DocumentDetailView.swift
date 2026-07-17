@@ -10,6 +10,8 @@ struct DocumentDetailView: View {
                 .padding()
         }
         .navigationTitle(document.title)
+#if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+#endif
     }
 }

@@ -3,10 +3,6 @@ import AppKit
 
 @main
 struct xhanHelperMacApp: App {
-    init() {
-        NotificationDelegateRegistrar.register()
-    }
-
     @StateObject private var deviceManager = DeviceManager()
     @StateObject private var colorSchemeManager = ColorSchemeManager()
 
@@ -15,18 +11,108 @@ struct xhanHelperMacApp: App {
             Group {
                 if deviceManager.isLoggedIn {
                     ContentView(deviceManager: deviceManager)
-                        .frame(minWidth: 600, minHeight: 500)
+                        .frame(minWidth: 750, minHeight: 500)
                 } else {
                     LoginMacView(deviceManager: deviceManager)
-                        .frame(width: 400, height: 380)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .environmentObject(colorSchemeManager)
             .preferredColorScheme(colorSchemeManager.selectedScheme.colorScheme)
+            .animation(.easeInOut(duration: 0.25), value: deviceManager.isLoggedIn)
+            .glassWindow()
         }
         .windowResizability(.contentMinSize)
+        .defaultSize(width: 800, height: 600)
+
+        Settings {
+            MacSettingsView(deviceManager: deviceManager)
+                .environmentObject(colorSchemeManager)
+        }
     }
 }
+
+// MARK: - Settings
+
+struct MacSettingsView: View {
+    @ObservedObject var deviceManager: DeviceManager
+    @EnvironmentObject var colorSchemeManager: ColorSchemeManager
+    @AppStorage("xhan_server_url") private var serverURL = DeviceManager.defaultBaseURL
+
+    private var apiClient: APIClient {
+        APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+    }
+
+    var body: some View {
+        Form {
+#if DEBUG
+            Section("账号") {
+                LabeledContent("用户名", value: deviceManager.username ?? "-")
+                LabeledContent("用户 ID", value: deviceManager.userId ?? "-")
+                    .fontDesign(.monospaced)
+            }
+
+            Section("服务器") {
+                TextField("服务地址", text: $serverURL)
+                    .textFieldStyle(.roundedBorder)
+            }
+#endif
+
+            Section("浏览") {
+                BrowseRow("账单记录", icon: "list.bullet.rectangle", destination: BillListView(apiClient: apiClient))
+                BrowseRow("诊断日志", icon: "exclamationmark.bubble", destination: LogDiagnosticView())
+            }
+
+            Section {
+                Button("退出登录") {
+                    Task { await deviceManager.logout() }
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.red)
+            }
+        }
+        .formStyle(.grouped)
+        .tint(Color("appAccent"))
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(minWidth: 380)
+    }
+}
+
+// MARK: - Browse Row
+
+struct BrowseRow<Destination: View>: View {
+    let title: String
+    let icon: String
+    let destination: Destination
+    @State private var showDetail = false
+
+    init(_ title: String, icon: String, destination: Destination) {
+        self.title = title
+        self.icon = icon
+        self.destination = destination
+    }
+
+    var body: some View {
+        Button {
+            showDetail = true
+        } label: {
+            Label(title, systemImage: icon)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.borderless)
+        .sheet(isPresented: $showDetail) {
+            destination
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("关闭") { showDetail = false }
+                    }
+                }
+                .frame(minWidth: 500, minHeight: 400)
+        }
+    }
+}
+
+// MARK: - Login
 
 struct LoginMacView: View {
     @ObservedObject var deviceManager: DeviceManager
@@ -38,42 +124,54 @@ struct LoginMacView: View {
 
     var body: some View {
         VStack(spacing: 24) {
+            Spacer()
+
             Image(systemName: "bubble.left.and.bubble.right.fill")
-                .font(.system(size: 60))
+                .font(.system(size: 56))
                 .foregroundColor(Color("appAccent"))
+                .padding(.bottom, 4)
 
             Text("xhanHelper")
-                .font(.largeTitle)
-                .fontWeight(.bold)
+                .font(.system(size: 28, weight: .bold))
 
             VStack(spacing: 12) {
                 TextField("用户名", text: $username)
                     .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 260)
 
                 SecureField("密码", text: $password)
                     .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 260)
             }
-            .padding(.horizontal, 40)
+            .onSubmit { Task { await performAuth() } }
 
             if let err = errorMessage {
-                Text(err).font(.caption).foregroundColor(.red)
+                Text(err)
+                    .font(.caption)
+                    .foregroundColor(.red)
             }
 
             if isLoading {
                 ProgressView()
+                    .scaleEffect(0.8)
             } else {
                 Button(isRegisterMode ? "注册" : "登录") {
                     Task { await performAuth() }
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
                 .disabled(username.isEmpty || password.isEmpty)
+                .frame(maxWidth: 260)
 
                 Button(isRegisterMode ? "已有账号？登录" : "没有账号？注册") {
                     isRegisterMode.toggle()
                     errorMessage = nil
                 }
                 .font(.caption)
+                .buttonStyle(.link)
             }
+
+            Spacer()
         }
     }
 

@@ -9,7 +9,6 @@ extension Theme {
         .text {
             ForegroundColor(Color("assistantText"))
             BackgroundColor(.clear)
-            FontSize(17)
         }
         .code {
             FontFamilyVariant(.monospaced)
@@ -130,6 +129,7 @@ struct ChatBubble: View {
 
                 if isUser {
                     Text(text)
+                        .font(.body)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .foregroundColor(Color("userText"))

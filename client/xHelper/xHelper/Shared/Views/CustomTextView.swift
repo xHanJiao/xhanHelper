@@ -1,6 +1,9 @@
 import SwiftUI
+#if os(iOS)
 import UIKit
+#endif
 
+#if os(iOS)
 struct CustomTextView: UIViewRepresentable {
     @Binding var text: String
     var dismissKeyboardToken: UUID?
@@ -277,3 +280,4 @@ struct CustomTextView: UIViewRepresentable {
         }
     }
 }
+#endif

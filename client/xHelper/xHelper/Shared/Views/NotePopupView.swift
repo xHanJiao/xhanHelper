@@ -42,7 +42,9 @@ struct NotePopupView: View {
                 }
             }
             .navigationTitle("📝 基于 \(noteIDs.count) 条笔记")
+#if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+#endif
             .task { await load() }
         }
     }

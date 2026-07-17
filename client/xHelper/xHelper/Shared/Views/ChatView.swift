@@ -15,10 +15,18 @@ struct ChatView: View {
     let token: String
 
     var body: some View {
+#if os(iOS)
         ZStack(alignment: .top) {
-            GlassBackground()
+            content
+            topBarCover
+        }
+#else
+        content
+#endif
+    }
 
-            VStack(spacing: 0) {
+    private var content: some View {
+        VStack(spacing: 0) {
             // 消息列表
             ZStack(alignment: .bottom) {
                 MessageListView(viewModel: viewModel, scrollPosition: $scrollPosition, showScrollToBottom: $showScrollToBottom)
@@ -33,8 +41,11 @@ struct ChatView: View {
                             .foregroundColor(.primary)
                             .frame(width: 36, height: 36)
                             .background(.ultraThinMaterial, in: Circle())
+#if os(iOS)
                             .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+#endif
                     }
+                    .buttonStyle(.plain)
                     .transition(.scale.combined(with: .opacity))
                     .padding(.bottom, 12)
                 }
@@ -45,7 +56,6 @@ struct ChatView: View {
             if let err = viewModel.errorMessage {
                 Text(err).font(.caption).foregroundColor(.red).padding(.horizontal)
             }
-
 
             // 输入栏
             InputBar(
@@ -67,12 +77,9 @@ struct ChatView: View {
             )
             .layoutPriority(1)
         }
-
-            topBarCover
-        }
     }
 
-    // 状态栏毛玻璃遮挡：顶部安全区实心毛玻璃，下缘渐隐过渡，避免气泡与状态栏文字重叠。
+#if os(iOS)
     private var topBarCover: some View {
         GeometryReader { _ in
             let top = statusBarHeight
@@ -96,14 +103,10 @@ struct ChatView: View {
         .allowsHitTesting(false)
     }
 
-    // 真实状态栏高度（不含导航栏），各机型自适应。
     private var statusBarHeight: CGFloat {
-        #if os(iOS)
         (UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first?.statusBarManager?.statusBarFrame.height) ?? 20
-        #else
-        0
-        #endif
     }
+#endif
 }

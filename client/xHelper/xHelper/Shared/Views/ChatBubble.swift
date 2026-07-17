@@ -168,7 +168,7 @@ struct ChatBubble: View {
                     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
             }
         }
-        .padding(.horizontal)
+        .padding(.horizontal, Layout.chatHorizontalPadding)
         .onTapGesture {
             guard createdAt != nil else { return }
             #if os(iOS)

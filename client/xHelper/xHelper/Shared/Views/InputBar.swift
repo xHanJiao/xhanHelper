@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct InputBar: View {
     @Binding var text: String
@@ -28,18 +31,33 @@ struct InputBar: View {
             .cornerRadius(16)
             .disabled(isStreaming)
 #else
+            let font = NSFont.preferredFont(forTextStyle: .body)
+            let lineHeight = font.ascender + abs(font.descender) + font.leading
             TextEditor(text: $text)
+                .onKeyPress(.return, phases: .down) { keyPress in
+                    if keyPress.modifiers.contains(.shift) {
+                        return .ignored
+                    }
+                    if text.trimmingCharacters(in: .whitespaces).isEmpty {
+                        return .ignored
+                    }
+                    DispatchQueue.main.async {
+                        onSend()
+                    }
+                    return .handled
+                }
                 .scrollContentBackground(.hidden)
                 .font(.body)
-                .frame(minHeight: 36, maxHeight: 120)
+                .frame(minHeight: lineHeight * 4, maxHeight: lineHeight * 8)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 12)
                 .padding(.trailing, 12)
-                .padding(.vertical, 8)
+                .padding(.vertical, 14)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
                 .disabled(isStreaming)
 #endif
 
+#if os(iOS)
             if isStreaming {
                 Button(action: onStop) {
                     Image(systemName: "stop.circle.fill")
@@ -47,7 +65,8 @@ struct InputBar: View {
                         .foregroundColor(.red)
                 }
                 .buttonStyle(.plain)
-            } else {
+            }
+            if !isStreaming {
                 Button(action: onSend) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
@@ -56,9 +75,10 @@ struct InputBar: View {
                 .buttonStyle(.plain)
                 .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
             }
+#endif
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
+        .padding(.horizontal, Layout.chatHorizontalPadding)
+        .padding(.vertical, 12)
     }
 }
 

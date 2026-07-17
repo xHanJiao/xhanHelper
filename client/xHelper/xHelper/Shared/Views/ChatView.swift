@@ -17,6 +17,7 @@ struct ChatView: View {
     var body: some View {
 #if os(iOS)
         ZStack(alignment: .top) {
+            GlassBackground()
             content
             topBarCover
         }

@@ -38,6 +38,9 @@ struct InputBar: View {
                     if keyPress.modifiers.contains(.shift) {
                         return .ignored
                     }
+                    if (NSApp.keyWindow?.firstResponder?.value(forKey: "hasMarkedText") as? Bool) == true {
+                        return .ignored
+                    }
                     if text.trimmingCharacters(in: .whitespaces).isEmpty {
                         return .ignored
                     }

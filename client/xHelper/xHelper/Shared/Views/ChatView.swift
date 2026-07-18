@@ -9,7 +9,6 @@ struct ChatView: View {
     @State private var dismissKeyboardToken: UUID?
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var showScrollToBottom = false
-    @State private var showBusyHint = false
     let agentId: String?
 
     let baseURL: String
@@ -24,17 +23,6 @@ struct ChatView: View {
         }
 #else
         content
-            .overlay {
-                if showBusyHint {
-                    Text("请等待上一条消息的回复接收完毕")
-                        .font(.callout)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .transition(.scale.combined(with: .opacity))
-                }
-            }
 #endif
     }
 
@@ -65,16 +53,12 @@ struct ChatView: View {
             }
             .animation(.easeInOut(duration: 0.2), value: showScrollToBottom)
 
-            // 错误提示
-            if let err = viewModel.errorMessage {
-                Text(err).font(.caption).foregroundColor(.red).padding(.horizontal)
-            }
+            // 错误提示改为全局 Toast（ToastCenter），此处不再内嵌红字
 
             // 输入栏
             InputBar(
                 text: $inputText,
                 isStreaming: viewModel.isStreaming,
-                showBusyHint: $showBusyHint,
                 dismissKeyboardToken: dismissKeyboardToken,
                 onSend: {
                     guard !inputText.trimmingCharacters(in: .whitespaces).isEmpty else { return }

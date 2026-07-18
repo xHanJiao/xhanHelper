@@ -102,7 +102,8 @@ class ChatViewModel: ObservableObject {
             hasMoreAfter = result.hasMoreAfter
         } catch {
             LogBuffer.shared.error("ChatViewModel.loadConversation: \(error)")
-            errorMessage = "加载消息失败: \(error.localizedDescription)"
+            errorMessage = "加载消息失败"
+            ToastCenter.shared.show("加载消息失败，请稍后重试")
         }
     }
 
@@ -131,7 +132,7 @@ class ChatViewModel: ObservableObject {
             }
         } catch {
             LogBuffer.shared.error("ChatViewModel.loadMore: \(error)")
-            errorMessage = "加载更多失败: \(error.localizedDescription)"
+            ToastCenter.shared.show("加载更多失败，请稍后重试")
         }
         isLoadingMore = false
     }
@@ -181,7 +182,8 @@ class ChatViewModel: ObservableObject {
                     self?.finishStreaming()
                     return
                 }
-                self?.errorMessage = error.localizedDescription
+                LogBuffer.shared.error("ChatViewModel.sse onError: \(error)")
+                ToastCenter.shared.show(ToastCenter.friendlyErrorText(nsError, action: "发送"))
                 self?.finishStreaming()
             }
         }
@@ -275,7 +277,8 @@ class ChatViewModel: ObservableObject {
             }
 
         case .error:
-            errorMessage = event.data
+            LogBuffer.shared.error("ChatViewModel.sse error event: \(event.data)")
+            ToastCenter.shared.show("服务出错：\(event.data)")
             finishStreaming()
 
         default:

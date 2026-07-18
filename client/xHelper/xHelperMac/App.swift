@@ -44,6 +44,7 @@ struct xhanHelperMacApp: App {
             }
             .environmentObject(colorSchemeManager)
             .preferredColorScheme(colorSchemeManager.selectedScheme.colorScheme)
+            .toast()
             .glassWindow()
         }
         .windowResizability(.contentMinSize)
@@ -160,7 +161,6 @@ struct LoginMacView: View {
     @State private var username = ""
     @State private var password = ""
     @State private var isRegisterMode = false
-    @State private var errorMessage: String?
     @State private var isLoading = false
 
     var body: some View {
@@ -186,12 +186,6 @@ struct LoginMacView: View {
             }
             .onSubmit { Task { await performAuth() } }
 
-            if let err = errorMessage {
-                Text(err)
-                    .font(.caption)
-                    .foregroundColor(.red)
-            }
-
             if isLoading {
                 ProgressView()
                     .scaleEffect(0.8)
@@ -206,7 +200,6 @@ struct LoginMacView: View {
 
                 Button(isRegisterMode ? "已有账号？登录" : "没有账号？注册") {
                     isRegisterMode.toggle()
-                    errorMessage = nil
                 }
                 .font(.caption)
                 .buttonStyle(.link)
@@ -218,7 +211,6 @@ struct LoginMacView: View {
 
     private func performAuth() async {
         isLoading = true
-        errorMessage = nil
         do {
             if isRegisterMode {
                 try await deviceManager.register(username: username, password: password)
@@ -226,7 +218,7 @@ struct LoginMacView: View {
                 try await deviceManager.login(username: username, password: password)
             }
         } catch {
-            errorMessage = error.localizedDescription
+            ToastCenter.shared.show(ToastCenter.friendlyErrorText(error, action: isRegisterMode ? "注册" : "登录"))
         }
         isLoading = false
     }

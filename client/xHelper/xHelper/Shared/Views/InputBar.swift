@@ -6,7 +6,6 @@ import AppKit
 struct InputBar: View {
     @Binding var text: String
     let isStreaming: Bool
-    @Binding var showBusyHint: Bool
     var dismissKeyboardToken: UUID?
     let onSend: () -> Void
     let onStop: () -> Void
@@ -53,9 +52,7 @@ struct InputBar: View {
                                 try? await Task.sleep(nanoseconds: 60_000_000)
                             }
                             withAnimation(.easeInOut(duration: 0.06)) { shakeOffset = 0 }
-                            showBusyHint = true
-                            try? await Task.sleep(nanoseconds: 2_000_000_000)
-                            showBusyHint = false
+                            ToastCenter.shared.show("请等待上一条消息的回复接收完毕")
                         }
                         return .handled
                     }
@@ -106,14 +103,12 @@ struct InputBar: View {
 #Preview {
     @Previewable @State var text = ""
     @Previewable @State var dismissKeyboardToken: UUID? = nil
-    @Previewable @State var showHint = false
 
     VStack {
         Spacer()
         InputBar(
             text: $text,
             isStreaming: false,
-            showBusyHint: $showHint,
             dismissKeyboardToken: dismissKeyboardToken,
             onSend: {},
             onStop: {}
@@ -125,14 +120,12 @@ struct InputBar: View {
 #Preview("Streaming") {
     @Previewable @State var text = "正在思考..."
     @Previewable @State var dismissKeyboardToken: UUID? = nil
-    @Previewable @State var showHint = false
 
     VStack {
         Spacer()
         InputBar(
             text: $text,
             isStreaming: true,
-            showBusyHint: $showHint,
             dismissKeyboardToken: dismissKeyboardToken,
             onSend: {},
             onStop: {}

@@ -66,13 +66,14 @@ type RunRequest struct {
 
 // reactState — runReActLoop 循环过程中的可变状态
 type reactState struct {
-	msgs                 []llm.Message
-	allToolCalls         []tool.ToolCall
-	lastAssistantMsgID   string
-	userMsgID            string
-	verifyRetries        int  // 本轮对话已重检验次数
-	nativeFCTextDeferred bool // 原生 FC 下文本因 verify 暂缓推送
-	jsonBuffered         bool // 原生 FC 下文本首字符为 { 暂缓推送，防 JSON 泄露
+	msgs                   []llm.Message
+	allToolCalls           []tool.ToolCall
+	lastAssistantMsgID     string
+	userMsgID              string
+	verifyRetries          int  // 本轮对话已重检验次数
+	nativeFCTextDeferred   bool // 原生 FC 下文本因 verify 暂缓推送
+	jsonBuffered           bool // 原生 FC 下文本首字符为 { 暂缓推送，防 JSON 泄露
+	clientToolsUnavailable bool // 客户端断连/超时后置位，本次 Run 内后续客户端工具调用快速失败
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（文本解析用）
@@ -773,7 +774,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		state.msgs = append(state.msgs, msg)
 		state.allToolCalls = append(state.allToolCalls, internalTCs...)
-		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, internalTCs, clientToolIndex(req.ClientTools, o.registry))
+		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, internalTCs, clientToolIndex(req.ClientTools, o.registry), state)
 		state.msgs = o.collectToolResultsNative(ctx, internalTCs, msg.ToolCalls, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 		return false
 	}
@@ -1019,7 +1020,13 @@ func (o *Orchestrator) executePromptEngTools(
 	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	state.allToolCalls = append(state.allToolCalls, parsed.ToolCalls...)
 	o.injectExcludeMemIDsForMemSearch(parsed, idsByTypeFromResult(retrieveResult)["memory"])
-	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, parsed.ToolCalls, clientToolIndex(req.ClientTools, o.registry))
+	// 客户端工具只在原生 FC 模式下发给 LLM（mkLlmChatReq），
+	// use_native_fc=false 时不参与分发，避免 LLM 幻觉出未告知的工具名被路由到客户端
+	var clientIdx map[string]bool
+	if o.useNativeFC {
+		clientIdx = clientToolIndex(req.ClientTools, o.registry)
+	}
+	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, parsed.ToolCalls, clientIdx, state)
 	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 	return false
 }
@@ -1239,7 +1246,7 @@ func injectExcludeIDs(args json.RawMessage, memIDs []string) json.RawMessage {
 }
 
 func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID, convID string,
-	registry *tool.Registry, toolCalls []tool.ToolCall, clientIdx map[string]bool) []toolExecResult {
+	registry *tool.Registry, toolCalls []tool.ToolCall, clientIdx map[string]bool, state *reactState) []toolExecResult {
 
 	limit := o.maxConcurrency
 	if limit <= 0 {
@@ -1292,7 +1299,17 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 
 	for _, idx := range clientCallIdxs {
 		tc := toolCalls[idx]
-		results[idx] = toolExecResult{tc: tc, result: o.executeClientTool(ctx, events, userID, tc)}
+		if state.clientToolsUnavailable {
+			// 本次 Run 内客户端已断连/超时，快速失败，避免每次调用都白等一个超时周期
+			results[idx] = toolExecResult{tc: tc, result: &tool.Result{Success: false,
+				Error: "客户端本地工具不可用（本轮对话中已发生断连或超时），已跳过 " + tc.Tool + "." + tc.Function + "。请不要再调用客户端本地工具，直接告知用户即可。"}}
+			continue
+		}
+		r, unavailable := o.executeClientTool(ctx, events, userID, tc)
+		if unavailable {
+			state.clientToolsUnavailable = true
+		}
+		results[idx] = toolExecResult{tc: tc, result: r}
 	}
 
 	wg.Wait()
@@ -1300,7 +1317,8 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 }
 
 // executeClientTool 将工具调用经桥中转到客户端执行，阻塞等待 HTTP 回传。
-func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm.StreamEvent, userID string, call tool.ToolCall) *tool.Result {
+// 第二个返回值表示客户端不可用（断连/超时），调用方据此对本次 Run 内后续客户端工具快速失败。
+func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm.StreamEvent, userID string, call tool.ToolCall) (*tool.Result, bool) {
 	if o.clientBridge == nil {
 		// 接线 bug：请求携带了 client_tools 却没有注入桥，炸在明处
 		panic("[orch] clientBridge is nil but client tool call dispatched")
@@ -1323,7 +1341,7 @@ func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm
 	})
 	if err != nil {
 		log.Printf("[orch] client tool payload marshal error: %v", err)
-		return &tool.Result{Success: false, Error: "客户端工具调用序列化失败"}
+		return &tool.Result{Success: false, Error: "客户端工具调用序列化失败"}, false
 	}
 
 	// 指令事件必须送达：阻塞发送 + 超时兜底。
@@ -1333,30 +1351,37 @@ func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm
 	case events <- &llm.StreamEvent{Type: "client_tool_call", Content: string(payload)}:
 	case <-time.After(5 * time.Second):
 		log.Printf("[orch] client_tool_call send timeout: %s (client disconnected?)", display)
-		return &tool.Result{Success: false, Error: "客户端未连接，无法执行本地工具 " + display}
+		return &tool.Result{Success: false, Error: "客户端未连接，无法执行本地工具 " + display + "。请不要再调用客户端本地工具，直接告知用户即可。"}, true
 	case <-ctx.Done():
-		return &tool.Result{Success: false, Error: "请求已取消"}
+		return &tool.Result{Success: false, Error: "请求已取消"}, false
 	}
 
-	select {
-	case r := <-ch:
-		if r.Error != "" {
-			log.Printf("[orch] client tool exec: %s error=%s", display, r.Error)
-			return &tool.Result{Success: false, Error: r.Error}
+	// 等待客户端回传：期间定期发心跳，防止 SSE 长时间静默被代理/客户端掐断
+	timeout := time.NewTimer(o.clientToolTimeout)
+	defer timeout.Stop()
+	heartbeat := time.NewTicker(clientToolHeartbeatInterval)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case r := <-ch:
+			if r.Error != "" {
+				errMsg := r.Error
+				if len(errMsg) > maxClientToolErrorChars {
+					errMsg = truncateToolResult(errMsg, maxClientToolErrorChars)
+				}
+				log.Printf("[orch] client tool exec: %s error=%s", display, errMsg)
+				return &tool.Result{Success: false, Error: errMsg}, false
+			}
+			log.Printf("[orch] client tool exec: %s success, result=%d bytes", display, len(r.Result))
+			return &tool.Result{Success: true, Data: normalizeClientToolData(r.Result)}, false
+		case <-heartbeat.C:
+			o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "正在等待客户端执行 " + display + "…"})
+		case <-timeout.C:
+			log.Printf("[orch] client tool timeout after %v: %s", o.clientToolTimeout, display)
+			return &tool.Result{Success: false, Error: fmt.Sprintf("客户端工具执行超时（%v）：%s。请不要再调用客户端本地工具，直接告知用户即可。", o.clientToolTimeout, display)}, true
+		case <-ctx.Done():
+			return &tool.Result{Success: false, Error: "请求已取消"}, false
 		}
-		log.Printf("[orch] client tool exec: %s success", display)
-		data := r.Result
-		if !json.Valid(data) {
-			// 客户端可能回传纯文本，包装成 JSON 字符串保证 Result 可序列化
-			wrapped, _ := json.Marshal(string(data))
-			data = wrapped
-		}
-		return &tool.Result{Success: true, Data: data}
-	case <-time.After(o.clientToolTimeout):
-		log.Printf("[orch] client tool timeout after %v: %s", o.clientToolTimeout, display)
-		return &tool.Result{Success: false, Error: fmt.Sprintf("客户端工具执行超时（%v）", o.clientToolTimeout)}
-	case <-ctx.Done():
-		return &tool.Result{Success: false, Error: "请求已取消"}
 	}
 }
 

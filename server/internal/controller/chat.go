@@ -229,22 +229,39 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 	}
 }
 
+// maxClientToolResultBytes — 单次回传 result 字段大小上限，超出以错误结果唤醒等待方并拒绝
+const maxClientToolResultBytes = 256 * 1024
+
+// maxToolResultBodyBytes — /api/chat/tool-result 请求体硬上限，防止超大 body 占用内存
+const maxToolResultBodyBytes = 1 << 20
+
 // chatToolResult — 客户端工具执行结果回传（POST /api/chat/tool-result）。
 // 按 call_id 唤醒 orchestrator 中阻塞等待的客户端工具调用。
 func chatToolResult(bridge *agent.ClientToolBridge) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxToolResultBodyBytes)
 		var req struct {
-			CallID string `json:"call_id" binding:"required"`
-			Result string `json:"result"`
-			Error  string `json:"error"`
+			CallID string          `json:"call_id" binding:"required"`
+			Result json.RawMessage `json:"result"` // 任意 JSON 值（对象/数组/字符串均可）
+			Error  string          `json:"error"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			view.JSONError(c, 400, "invalid request")
 			return
 		}
 		userID := c.GetString("user_id")
+		if len(req.Result) > maxClientToolResultBytes {
+			// 结果过大：以错误结果唤醒等待方（快速失败，避免 orchestrator 白等到超时），再拒绝本次回传
+			if err := bridge.OnResult(req.CallID, userID, agent.ClientToolResult{
+				Error: fmt.Sprintf("客户端工具结果过大（%d 字节，上限 %d 字节），已被服务端拒绝", len(req.Result), maxClientToolResultBytes),
+			}); err != nil {
+				log.Printf("[chat] oversize tool-result, wake pending failed: %v", err)
+			}
+			view.JSONError(c, 413, "result too large")
+			return
+		}
 		if err := bridge.OnResult(req.CallID, userID, agent.ClientToolResult{
-			Result: json.RawMessage(req.Result),
+			Result: req.Result,
 			Error:  req.Error,
 		}); err != nil {
 			// unknown call_id / user mismatch 统一 404，避免探测

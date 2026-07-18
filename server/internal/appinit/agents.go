@@ -127,6 +127,9 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	// ContextFormatter
 	formatter := ctxflow.NewXMLFormatter()
 
+	// 客户端工具桥（Mac 本地 MCP 工具的 pending 路由）
+	clientBridge := agent.NewClientToolBridge()
+
 	orch := agent.New(&agent.OrchestratorConfig{
 		FlashClient:        llmClients.Flash,
 		Registry:           tools.Registry,
@@ -153,6 +156,8 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		VerifyMaxRetries:          cfg.LLM.Verification.MaxRetries,
 		VerifyModel:               cfg.LLM.Verification.Model,
 		UseNativeFC:               cfg.LLM.UseNativeFC,
+		ClientBridge:              clientBridge,
+		ClientToolTimeoutSecs:     cfg.LLM.ClientToolTimeoutSecs,
 		SummaryRepo:               repos.ConversationSummary,
 		ContextRetriever:          retriever,
 		ContextFormatter:          formatter,
@@ -208,6 +213,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MissionRunner:     missionRunner,
 		MissionDiscoverer: missionDiscoverer,
 		ReplayRunner:      replayRunner,
+		ClientBridge:      clientBridge,
 		BGCtx:             bgCtx,
 		BGCancel:          bgCancel,
 	}

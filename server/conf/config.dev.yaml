@@ -29,6 +29,7 @@ llm:
   default_max_tokens: 30000
   tool_max_concurrency: 2         # 工具并发执行上限
   use_native_fc: true              # 使用原生 function calling
+  client_tool_timeout_secs: 60     # 客户端工具（Mac 本地 MCP）执行超时秒数
 
 embedding:
   enable_history_search: false

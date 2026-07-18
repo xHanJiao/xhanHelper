@@ -123,19 +123,20 @@ type VerificationConfig struct {
 }
 
 type LLMConfig struct {
-	Provider           string             `yaml:"provider"` // doubao | deepseek
-	APIKey             string             `yaml:"api_key"`
-	Model              string             `yaml:"model"`                 // 弱模型（日常使用）
-	StrongModel        string             `yaml:"strong_model"`          // 强模型（深度思考模式，可选，默认同 Model）
-	BaseURL            string             `yaml:"base_url"`              // LLM API 地址
-	MaxIterations      int                `yaml:"max_iterations"`        // ReAct 最大迭代次数（默认 8）
-	DefaultTemperature *float64           `yaml:"default_temperature"`   // 默认采样温度，nil 则用 LLM 自身默认
-	DefaultMaxTokens   *int               `yaml:"default_max_tokens"`    // 默认最大输出 token，nil 则用 LLM 自身默认
-	MaxToolResultChars int                `yaml:"max_tool_result_chars"` // 工具结果传入 LLM 的最大字符数，超出截断，默认 2000
-	ToolMaxConcurrency int                `yaml:"tool_max_concurrency"`  // 工具并发执行上限，0=不限制，默认 0
-	Verification       VerificationConfig `yaml:"verification"`          // 响应检验配置
-	ExtractMsgLimit    int                `yaml:"extract_msg_limit"`     // 记忆提取每次最多取的消息数，默认 50
-	UseNativeFC        bool               `yaml:"use_native_fc"`         // 是否使用原生 function calling（默认 true）
+	Provider              string             `yaml:"provider"` // doubao | deepseek
+	APIKey                string             `yaml:"api_key"`
+	Model                 string             `yaml:"model"`                    // 弱模型（日常使用）
+	StrongModel           string             `yaml:"strong_model"`             // 强模型（深度思考模式，可选，默认同 Model）
+	BaseURL               string             `yaml:"base_url"`                 // LLM API 地址
+	MaxIterations         int                `yaml:"max_iterations"`           // ReAct 最大迭代次数（默认 8）
+	DefaultTemperature    *float64           `yaml:"default_temperature"`      // 默认采样温度，nil 则用 LLM 自身默认
+	DefaultMaxTokens      *int               `yaml:"default_max_tokens"`       // 默认最大输出 token，nil 则用 LLM 自身默认
+	MaxToolResultChars    int                `yaml:"max_tool_result_chars"`    // 工具结果传入 LLM 的最大字符数，超出截断，默认 2000
+	ToolMaxConcurrency    int                `yaml:"tool_max_concurrency"`     // 工具并发执行上限，0=不限制，默认 0
+	Verification          VerificationConfig `yaml:"verification"`             // 响应检验配置
+	ExtractMsgLimit       int                `yaml:"extract_msg_limit"`        // 记忆提取每次最多取的消息数，默认 50
+	UseNativeFC           bool               `yaml:"use_native_fc"`            // 是否使用原生 function calling（默认 true）
+	ClientToolTimeoutSecs int                `yaml:"client_tool_timeout_secs"` // 客户端工具执行超时秒数，默认 60
 }
 
 // EmbeddingConfig — 向量化配置

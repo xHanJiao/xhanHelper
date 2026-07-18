@@ -164,6 +164,12 @@ func (r *Registry) GetToolMap() map[string]Tool {
 	return out
 }
 
+// Has 判断注册表中是否存在指定名称的工具
+func (r *Registry) Has(name string) bool {
+	_, ok := r.tools[name]
+	return ok
+}
+
 // GetNativeFCTools 导出所有非隐藏工具的函数定义（供 LLM 原生 function calling）。
 // 每个函数扁平化为独立的 tool definition，名称格式为 "toolName__funcName"。
 func (r *Registry) GetNativeFCTools() []llm.ToolDefinition {

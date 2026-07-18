@@ -1,6 +1,6 @@
 # Mac 客户端本地 MCP 集成方案
 
-> 2026-07-17 · 讨论稿 v2
+> 2026-07-18 · v3（Go 侧方案按代码实况细化，与 v2 的差异见「二、Go 服务端改动」开头）
 
 ## 动机
 
@@ -409,185 +409,153 @@ extension APIClient {
 
 ---
 
-## 二、Go 服务端改动
+## 二、Go 服务端改动（v3，按代码实况细化）
 
-### 2.1 新增文件: `agent/client_bridge.go`
+> **与 v2 的差异**：
+> 1. **不存在 prompt 注入问题**：`use_native_fc: true` 是全局配置（config.yaml），flash 也走原生 FC，工具在 LLM 请求体里（`mkLlmChatReq` → `GetNativeFCTools()`）。promptbuilder 零改动；`use_native_fc=false` 时客户端工具忽略 + 日志。
+> 2. **ClientToolBridge 去掉 `sendSSE` 回调**：orchestrator 没有 SSE writer，事件走 `events chan *llm.StreamEvent` 到 chat handler 再 `WriteSSE`。桥只管 pending 路由，拆成 Register/Unregister/OnResult 三步（先注册再发事件，消除回传竞态窗口）。
+> 3. **`client_tool_call` 事件必须阻塞发送**：现有 `sendEvent` 是非阻塞丢弃式，该事件丢失 = 工具永不执行。用带 5s 超时的阻塞发送兜底（chat 的 orch.Run 用 context.Background()，断连不会取消 ctx）。
+> 4. **不给 `tool.ToolCall` 加 Source 字段**：source 是请求级状态，orchestrator 用本次请求的 `clientIdx map[string]bool`（key=server_name）判断分发。
+> 5. **tool-result 请求去掉 `conversation_id`**：路由只需 call_id，归属由 pending 中记录的 userID 校验。
+> 6. 超时默认 60s（浏览器操作 30s 偏紧），配置项 `llm.client_tool_timeout_secs`。
+
+### 2.0 命名与分发
+
+原生 FC 扁平命名为 `tool__func`（deepseek.go），回程 `splitToolFuncName` 按最后一个 `__` 拆分。客户端工具复用：
+
+- 客户端上报：`server_name`（如 `browser`）+ `name`（如 `browser_navigate`）
+- 合并给 LLM：按 `server_name` 分组成 `llm.ToolDefinition{Name: serverName, Functions: [...]}` → LLM 看到 `browser__browser_navigate`
+- 回程拆出 `ToolCall{Tool:"browser", Function:"browser_navigate"}`，`clientIdx[tc.Tool]` 命中 → 客户端路由
+- `client_tool_call` 事件里 `tool_name` 用扁平名原样下发，Swift 端按前缀路由到对应 MCPServer，双方不重复实现拆名逻辑
+
+合并时校验（不合格跳过 + log 警告）：
+- `server_name` 与 registry 现有工具名冲突 → 跳过（防劫持）
+- 工具名含 `__` → 跳过（破坏 LastIndex 拆分）
+- 总数上限 50
+
+### 2.1 新增文件: `agent/client_bridge.go`（~80 行）
 
 ```go
-// ClientToolBridge — 客户端工具调用的 pending 管理
-// 和 mcp/client.go:86 的 pending map + channel 模式完全一致
-
 type ClientToolResult struct {
     Result json.RawMessage
     Error  string
 }
 
+type pendingCall struct {
+    userID string // 鉴权：回传者必须是发起者
+    ch     chan ClientToolResult
+}
+
 type ClientToolBridge struct {
     mu      sync.Mutex
-    pending map[string]chan ClientToolResult
+    pending map[string]*pendingCall
 }
 
-func NewClientToolBridge() *ClientToolBridge {
-    return &ClientToolBridge{
-        pending: make(map[string]chan ClientToolResult),
-    }
-}
-
-// ExecuteAndWait 发送 SSE 并阻塞等待客户端结果
-func (b *ClientToolBridge) ExecuteAndWait(
-    ctx context.Context,
-    callID string,
-    toolName string,
-    args json.RawMessage,
-    sendSSE func(event, data string),
-    timeout time.Duration,
-) (json.RawMessage, error) {
-    ch := make(chan ClientToolResult, 1)
-    b.mu.Lock()
-    b.pending[callID] = ch
-    b.mu.Unlock()
-    
-    defer func() {
-        b.mu.Lock()
-        delete(b.pending, callID)
-        b.mu.Unlock()
-    }()
-    
-    // 发送 SSE 事件给客户端
-    data, _ := json.Marshal(map[string]interface{}{
-        "call_id":   callID,
-        "tool_name": toolName,
-        "arguments": json.RawMessage(args),
-    })
-    sendSSE("client_tool_call", string(data))
-    
-    // 阻塞等待（带超时）
-    select {
-    case result := <-ch:
-        if result.Error != "" {
-            return nil, fmt.Errorf("client tool error: %s", result.Error)
-        }
-        return result.Result, nil
-    case <-time.After(timeout):
-        return nil, fmt.Errorf("client tool timeout after %v", timeout)
-    case <-ctx.Done():
-        return nil, ctx.Err()
-    }
-}
-
-// OnResult 收到 HTTP 回调时，唤醒对应的阻塞等待
-func (b *ClientToolBridge) OnResult(callID string, result ClientToolResult) error {
-    b.mu.Lock()
-    ch, ok := b.pending[callID]
-    b.mu.Unlock()
-    if !ok {
-        return fmt.Errorf("unknown call_id: %s", callID)
-    }
-    ch <- result
-    return nil
-}
+func NewClientToolBridge() *ClientToolBridge
+func (b *ClientToolBridge) Register(callID, userID string) <-chan ClientToolResult
+func (b *ClientToolBridge) Unregister(callID string)                 // defer 调用，幂等
+func (b *ClientToolBridge) OnResult(callID, userID string, r ClientToolResult) error
 ```
 
-~60 行。线程安全模型直接复用 `mcp/client.go` 里的 `pending map[int64]chan` 模式。
+线程安全模型与 `mcp/client.go` 的 `pending map[int64]chan` 一致。
 
-### 2.2 改动: `agent/orchestrator.go`
+### 2.2 请求链路
 
-**新增字段：**
+**新类型**（agent 包）：
 ```go
-type Orchestrator struct {
-    // ... 现有字段 ...
-    clientBridge *ClientToolBridge   // 新增
+type ClientTool struct {
+    ServerName  string                 `json:"server_name"`
+    Name        string                 `json:"name"`
+    Description string                 `json:"description"`
+    Parameters  map[string]interface{} `json:"parameters"` // JSON Schema 透传
 }
 ```
 
-**工具合并（buildSystemPrompt 附近）：**
+- `controller/chat.go` 请求结构体加 `ClientTools []agent.ClientTool \`json:"client_tools"\``
+- `RunRequest` 加 `ClientTools []ClientTool`，chat.go 构造处透传；replay 等其他构造点零值即可
+
+### 2.3 工具合并: `mkLlmChatReq`
+
 ```go
-func (o *Orchestrator) buildToolsForLLM(clientTools []ToolSchema) []ToolDefinition {
-    serverTools := o.registry.GetAllToolSchemas()  // 现有的
-    
-    // 标记 source
-    for i := range serverTools {
-        serverTools[i].Source = "server"
-    }
-    for i := range clientTools {
-        clientTools[i].Source = "client"
-    }
-    
-    return append(serverTools, clientTools...)
+var tools []llm.ToolDefinition
+if o.useNativeFC {
+    tools = o.registry.GetNativeFCTools()
+    tools = append(tools, buildClientToolDefs(req.ClientTools, o.registry)...)
+} else if len(req.ClientTools) > 0 {
+    log.Printf("[orch] client_tools ignored: use_native_fc=false")
 }
 ```
 
-**工具执行分支（executeOneRound 中）：**
-```go
-func (o *Orchestrator) executeToolCall(call tool.ToolCall, source string) (*tool.Result, error) {
-    if source == "server" {
-        // 原有逻辑：本地 Registry 执行
-        return o.registry.Execute(...)
-    }
-    
-    // 客户端工具：桥接执行
-    callID := uuid.New().String()
-    result, err := o.clientBridge.ExecuteAndWait(
-        ctx, callID, call.Name, call.Args,
-        o.view.SendSSE,  // SSE 发送函数
-        30*time.Second,  // 超时
-    )
-    if err != nil {
-        return &tool.Result{Success: false, Error: err.Error()}, nil
-    }
-    return &tool.Result{Success: true, Data: result}, nil
-}
+`buildClientToolDefs` 按 2.0 规则校验 + 分组。registry 新增 `Has(name string) bool`。
+
+### 2.4 执行分发: `executeConcurrently` 改造
+
+签名加参数 `clientIdx map[string]bool`（nil = 全 server，行为与现状一致）。内部保持 `results[i]` 与 `toolCalls[i]` 下标对齐，`collectToolResults` / `collectToolResultsNative` 零改动：
+
+```
+① 按 clientIdx[tc.Tool] 分成 server / client 两组
+② server 组：现有逻辑不变（FillDisplay + tool_call 事件 + 信号量并发 + panic 恢复）
+③ client 组：串行执行，对每个 call：
+   a. 发 "tool_call" 事件（非阻塞，UI 展示）
+   b. callID := uuid；ch := bridge.Register(callID, userID)；defer Unregister
+   c. 发 "client_tool_call" 事件 —— 阻塞发送 + 5s 超时兜底：
+      超时（客户端断连/channel 满）→ 该工具返回错误结果，继续下一个
+   d. select 等 ch / clientToolTimeout / ctx.Done()
+   e. 写 results[idx]
+④ wg.Wait()（server 组）→ 返回
 ```
 
-### 2.3 改动: `controller/chat.go`
+调用点（原生 FC 路径 + executePromptEngTools 文本兜底路径）都持有 `req`，均传入 clientIdx —— 文本 JSON 兜底撞上 client 工具时分发逻辑同样生效。
 
-**请求体新增字段：**
-```go
-type ChatRequest struct {
-    // ... 现有字段 ...
-    ClientTools []ToolSchema `json:"client_tools"` // 新增
-}
-```
+### 2.5 SSE 出口: `controller/chat.go`
 
-解析 `client_tools` 后传给 orchestrator。
-
-### 2.4 改动: `view/render.go`
-
-**新增 SSE 事件类型：**
+事件 switch 加：
 ```go
 case "client_tool_call":
-    // SSE: event: client_tool_call
-    //      data: {"call_id":"...","tool_name":"...","arguments":{...}}
+    view.WriteSSE(w, flusher, "client_tool_call", evt.Content)
 ```
 
-### 2.5 新增路由: `POST /api/chat/tool-result`
+### 2.6 回传路由: `POST /api/chat/tool-result`
 
 ```go
-// controller/chat.go 或新文件
-func (c *ChatController) HandleToolResult(ctx *gin.Context) {
-    var req struct {
-        ConversationID string `json:"conversation_id"`
-        CallID         string `json:"call_id"`
-        Result         string `json:"result"`
-        Error          string `json:"error"`
-    }
-    if err := ctx.ShouldBindJSON(&req); err != nil {
-        view.JSONError(ctx, 400, "invalid request")
-        return
-    }
-    
-    bridge := getClientBridge()  // 从 app 容器获取
-    err := bridge.OnResult(req.CallID, ClientToolResult{
-        Result: json.RawMessage(req.Result),
-        Error:  req.Error,
-    })
-    if err != nil {
-        view.JSONError(ctx, 404, err.Error())
-        return
-    }
-    view.JSONOK(ctx, map[string]string{"status": "ok"})
+func chatToolResult(bridge *agent.ClientToolBridge) gin.HandlerFunc {
+    // 从 auth 中间件取 user_id
+    // body: {call_id (required), result, error}
+    // bridge.OnResult 失败（unknown call_id / user mismatch）统一 404，避免探测
 }
 ```
+
+注册在 auth 组内：`auth.POST("/chat/tool-result", chatToolResult(rc.ClientBridge))`。
+
+### 2.7 接线
+
+| 文件 | 改动 |
+|------|------|
+| `appinit/agents.go` | `bridge := agent.NewClientToolBridge()` → OrchestratorConfig |
+| `agent/orchestrator.go` | OrchestratorConfig/Orchestrator 加 `ClientBridge` 字段（必要依赖，不做 nil 静默） |
+| `appinit/bundle.go` | AgentBundle 加 `ClientBridge` |
+| `controller/router.go` | RouterConfig 加 `ClientBridge` + 注册路由 |
+| `appinit/router.go` | 透传 `agents.ClientBridge` |
+
+### 2.8 配置
+
+`llm.client_tool_timeout_secs`，默认 60。
+
+### 2.9 边界情况
+
+| 场景 | 行为 |
+|------|------|
+| 客户端断连后 LLM 才发起 client 调用 | client_tool_call 阻塞发送 5s 超时 → 错误结果，LLM 下轮应对 |
+| 回传超时（>60s） | select 超时 → 错误结果 + Unregister；迟到回传 404 |
+| 重复回传 | ch 缓冲 1，首个生效；之后已 Unregister → 404 |
+| 跨用户伪造 call_id | OnResult 校验 userID → 404 |
+| iOS（不发 client_tools） | clientIdx 为 nil → 与现状完全一致 |
+
+### 2.10 测试
+
+- 单测：bridge（正常/超时/mismatch/重复/并发）；buildClientToolDefs 校验规则；混合分发下标对齐
+- `make test` 全绿
+- 手工联调：curl 开 SSE 带假 client_tools + 另一终端 curl 回传，验证 LLM 拿到结果继续推理（不依赖 Swift 端）
 
 ---
 
@@ -628,7 +596,8 @@ Mac App                              Go Server                           agent-b
   "conversation_id": "...",
   "client_tools": [
     {
-      "name": "agent_browser_open",
+      "server_name": "browser",
+      "name": "browser_navigate",
       "description": "Navigate to a URL",
       "parameters": {
         "type": "object",
@@ -636,34 +605,38 @@ Mac App                              Go Server                           agent-b
           "url": {"type": "string", "description": "The URL to navigate to"}
         },
         "required": ["url"]
-      },
-      "source": "client",
-      "server_name": "browser"
+      }
     }
   ]
 }
 ```
 
+> v3：去掉 `source` 字段（服务端按 server_name 分组即隐含 client 语义）；`name` 为 MCP 原始工具名。
+
 ### 3.3 client_tool_call SSE 事件（Server → Mac）
 
 ```
 event: client_tool_call
-data: {"call_id":"uuid-abc","tool_name":"agent_browser_open","arguments":{"url":"https://baidu.com"}}
+data: {"call_id":"uuid-abc","tool_name":"browser__browser_navigate","arguments":{"url":"https://baidu.com"}}
 ```
+
+> v3：`tool_name` 为扁平名 `serverName__toolName`，Swift 端按第一个 `__` 前缀路由到对应 MCPServer。
 
 ### 3.4 tool-result API（Mac → Server）
 
 ```
 POST /api/chat/tool-result
+Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-    "conversation_id": "xxx",
     "call_id": "uuid-abc",
     "result": "{\"pageTitle\":\"百度一下\"}",
     "error": null
 }
 ```
+
+> v3：去掉 `conversation_id`（路由只需 call_id，归属由 pending 中的 userID 校验）；unknown call_id / 用户不匹配统一返回 404。
 
 ---
 

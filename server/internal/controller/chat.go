@@ -32,9 +32,10 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			AgentID        *string                `json:"agent_id"`
 			Memory         retrieval.SourceConfig `json:"memory"`
 
-			Temperature *float64 `json:"temperature"`
-			MaxTokens   *int     `json:"max_tokens"`
-			Thinking    *bool    `json:"thinking"`
+			Temperature *float64           `json:"temperature"`
+			MaxTokens   *int               `json:"max_tokens"`
+			Thinking    *bool              `json:"thinking"`
+			ClientTools []agent.ClientTool `json:"client_tools"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.Message == "" {
 			view.JSONError(c, 400, "invalid request")
@@ -184,6 +185,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			Memory:             req.Memory,
 			SkipRetrieval:      pc.SkipRetrieval,
 			Window:             wr,
+			ClientTools:        req.ClientTools,
 		})
 		if err != nil {
 			log.Printf("[chat] orch run error: %v", err)
@@ -211,6 +213,8 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 				view.WriteSSE(w, flusher, "reminders_changed", evt.Content)
 			case "tool_call":
 				view.WriteSSE(w, flusher, "tool_call", evt.Content)
+			case "client_tool_call":
+				view.WriteSSE(w, flusher, "client_tool_call", evt.Content)
 			case "tool_result":
 				view.WriteSSE(w, flusher, "tool_result", evt.Content)
 			case "verify":
@@ -222,6 +226,33 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 				view.WriteSSE(w, flusher, "error", evt.Error)
 			}
 		}
+	}
+}
+
+// chatToolResult — 客户端工具执行结果回传（POST /api/chat/tool-result）。
+// 按 call_id 唤醒 orchestrator 中阻塞等待的客户端工具调用。
+func chatToolResult(bridge *agent.ClientToolBridge) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req struct {
+			CallID string `json:"call_id" binding:"required"`
+			Result string `json:"result"`
+			Error  string `json:"error"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			view.JSONError(c, 400, "invalid request")
+			return
+		}
+		userID := c.GetString("user_id")
+		if err := bridge.OnResult(req.CallID, userID, agent.ClientToolResult{
+			Result: json.RawMessage(req.Result),
+			Error:  req.Error,
+		}); err != nil {
+			// unknown call_id / user mismatch 统一 404，避免探测
+			log.Printf("[chat] tool-result rejected: %v", err)
+			view.JSONError(c, 404, "call not found")
+			return
+		}
+		view.JSONOK(c, gin.H{"status": "ok"})
 	}
 }
 

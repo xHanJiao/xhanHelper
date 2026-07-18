@@ -54,6 +54,7 @@ type RunRequest struct {
 	MaxIterations      int      // ReAct 最大轮次，0 用配置默认
 	Thinking           *bool    // 思考模式：nil=不传，true=开启，false=关闭
 	Window             WindowResult
+	ClientTools        []ClientTool // 客户端（Mac App）上报的本地 MCP 工具，可为空
 
 	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
 	Memory  retrieval.SourceConfig
@@ -116,6 +117,8 @@ type Orchestrator struct {
 	verifyMaxRetries    int
 	verifyModel         string // "flash" | "pro"
 	useNativeFC         bool
+	clientBridge        *ClientToolBridge
+	clientToolTimeout   time.Duration
 	summaryRepo         *service.ConversationSummaryRepo
 	contextRetriever    *ctxflow.ContextRetriever // 上下文检索
 	contextFormatter    ctxflow.ContextFormatter  // 上下文格式化（接口）
@@ -147,8 +150,10 @@ type OrchestratorConfig struct {
 	OnChatEnd                 func(userID, convID, userMsgID string)
 	VerifyEnabled             bool
 	VerifyMaxRetries          int
-	VerifyModel               string // "flash" | "pro"，默认 flash
-	UseNativeFC               bool   // 是否使用原生 function calling
+	VerifyModel               string            // "flash" | "pro"，默认 flash
+	UseNativeFC               bool              // 是否使用原生 function calling
+	ClientBridge              *ClientToolBridge // 客户端工具桥（客户端工具调用的 pending 路由）
+	ClientToolTimeoutSecs     int               // 客户端工具执行超时秒数，默认 60
 	SummaryRepo               *service.ConversationSummaryRepo
 	ContextRetriever          *ctxflow.ContextRetriever // 上下文检索
 	ContextFormatter          ctxflow.ContextFormatter  // 上下文格式化
@@ -169,6 +174,9 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 	}
 	if cfg.VerifyModel == "" {
 		cfg.VerifyModel = "flash"
+	}
+	if cfg.ClientToolTimeoutSecs <= 0 {
+		cfg.ClientToolTimeoutSecs = 60
 	}
 
 	return &Orchestrator{
@@ -191,6 +199,8 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		verifyMaxRetries:          cfg.VerifyMaxRetries,
 		verifyModel:               cfg.VerifyModel,
 		useNativeFC:               cfg.UseNativeFC,
+		clientBridge:              cfg.ClientBridge,
+		clientToolTimeout:         time.Duration(cfg.ClientToolTimeoutSecs) * time.Second,
 		summaryRepo:               cfg.SummaryRepo,
 		contextRetriever:          cfg.ContextRetriever,
 		contextFormatter:          cfg.ContextFormatter,
@@ -648,6 +658,9 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, msgs [
 	var tools []llm.ToolDefinition
 	if o.useNativeFC {
 		tools = o.registry.GetNativeFCTools()
+		tools = append(tools, buildClientToolDefs(req.ClientTools, o.registry)...)
+	} else if len(req.ClientTools) > 0 {
+		log.Printf("[orch] client_tools ignored: use_native_fc=false")
 	}
 	return &llm.ChatRequest{
 		SystemPrompt: systemPrompt,
@@ -760,7 +773,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		state.msgs = append(state.msgs, msg)
 		state.allToolCalls = append(state.allToolCalls, internalTCs...)
-		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, internalTCs)
+		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, internalTCs, clientToolIndex(req.ClientTools, o.registry))
 		state.msgs = o.collectToolResultsNative(ctx, internalTCs, msg.ToolCalls, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 		return false
 	}
@@ -1006,7 +1019,7 @@ func (o *Orchestrator) executePromptEngTools(
 	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	state.allToolCalls = append(state.allToolCalls, parsed.ToolCalls...)
 	o.injectExcludeMemIDsForMemSearch(parsed, idsByTypeFromResult(retrieveResult)["memory"])
-	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, parsed.ToolCalls)
+	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, parsed.ToolCalls, clientToolIndex(req.ClientTools, o.registry))
 	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 	return false
 }
@@ -1226,7 +1239,7 @@ func injectExcludeIDs(args json.RawMessage, memIDs []string) json.RawMessage {
 }
 
 func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID, convID string,
-	registry *tool.Registry, toolCalls []tool.ToolCall) []toolExecResult {
+	registry *tool.Registry, toolCalls []tool.ToolCall, clientIdx map[string]bool) []toolExecResult {
 
 	limit := o.maxConcurrency
 	if limit <= 0 {
@@ -1240,7 +1253,13 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 	var wg sync.WaitGroup
 	results := make([]toolExecResult, len(toolCalls))
 
+	var clientCallIdxs []int // 客户端工具下标，串行执行（见设计文档第五节）
+
 	for i, tc := range toolCalls {
+		if clientIdx[tc.Tool] {
+			clientCallIdxs = append(clientCallIdxs, i)
+			continue
+		}
 		registry.FillDisplay(&tc)
 		tcJSON, _ := json.Marshal(tc)
 		select {
@@ -1270,8 +1289,75 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 			results[idx] = toolExecResult{tc: call, result: r}
 		}(i, tc)
 	}
+
+	for _, idx := range clientCallIdxs {
+		tc := toolCalls[idx]
+		results[idx] = toolExecResult{tc: tc, result: o.executeClientTool(ctx, events, userID, tc)}
+	}
+
 	wg.Wait()
 	return results
+}
+
+// executeClientTool 将工具调用经桥中转到客户端执行，阻塞等待 HTTP 回传。
+func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm.StreamEvent, userID string, call tool.ToolCall) *tool.Result {
+	if o.clientBridge == nil {
+		// 接线 bug：请求携带了 client_tools 却没有注入桥，炸在明处
+		panic("[orch] clientBridge is nil but client tool call dispatched")
+	}
+	display := call.Tool + "." + call.Function
+
+	// UI 展示事件（非阻塞，丢失只影响展示）
+	call.Display = display
+	tcJSON, _ := json.Marshal(call)
+	o.sendEvent(events, &llm.StreamEvent{Type: "tool_call", Content: string(tcJSON)})
+
+	callID := uuid.New().String()
+	ch := o.clientBridge.Register(callID, userID)
+	defer o.clientBridge.Unregister(callID)
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"call_id":   callID,
+		"tool_name": call.Tool + "__" + call.Function,
+		"arguments": call.Args,
+	})
+	if err != nil {
+		log.Printf("[orch] client tool payload marshal error: %v", err)
+		return &tool.Result{Success: false, Error: "客户端工具调用序列化失败"}
+	}
+
+	// 指令事件必须送达：阻塞发送 + 超时兜底。
+	// chat 侧 orch.Run 用 context.Background()，客户端断连不会取消 ctx，
+	// 断连后 events 无人消费会填满，靠 time.After 防止 goroutine 永久阻塞。
+	select {
+	case events <- &llm.StreamEvent{Type: "client_tool_call", Content: string(payload)}:
+	case <-time.After(5 * time.Second):
+		log.Printf("[orch] client_tool_call send timeout: %s (client disconnected?)", display)
+		return &tool.Result{Success: false, Error: "客户端未连接，无法执行本地工具 " + display}
+	case <-ctx.Done():
+		return &tool.Result{Success: false, Error: "请求已取消"}
+	}
+
+	select {
+	case r := <-ch:
+		if r.Error != "" {
+			log.Printf("[orch] client tool exec: %s error=%s", display, r.Error)
+			return &tool.Result{Success: false, Error: r.Error}
+		}
+		log.Printf("[orch] client tool exec: %s success", display)
+		data := r.Result
+		if !json.Valid(data) {
+			// 客户端可能回传纯文本，包装成 JSON 字符串保证 Result 可序列化
+			wrapped, _ := json.Marshal(string(data))
+			data = wrapped
+		}
+		return &tool.Result{Success: true, Data: data}
+	case <-time.After(o.clientToolTimeout):
+		log.Printf("[orch] client tool timeout after %v: %s", o.clientToolTimeout, display)
+		return &tool.Result{Success: false, Error: fmt.Sprintf("客户端工具执行超时（%v）", o.clientToolTimeout)}
+	case <-ctx.Done():
+		return &tool.Result{Success: false, Error: "请求已取消"}
+	}
 }
 
 // —— DB 保存 ——

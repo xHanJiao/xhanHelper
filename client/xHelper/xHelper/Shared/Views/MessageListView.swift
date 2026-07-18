@@ -154,7 +154,7 @@ struct MessageListView: View {
             if msg.id == "__streaming__", let thought = viewModel.thoughtMessage {
                 ThinkingBubble(text: thought, isStreaming: !viewModel.thoughtDone)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
+                    .padding(.horizontal, Layout.chatHorizontalPadding)
             }
 
             if msg.role == "user" {

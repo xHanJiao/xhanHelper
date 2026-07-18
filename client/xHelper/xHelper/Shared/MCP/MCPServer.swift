@@ -129,8 +129,9 @@ final class MCPServer {
 
     // MARK: - 工具调用
 
-    // 返回 tools/call 的 result 原始 JSON（Data）
-    func callTool(name: String, args: [String: Any], timeoutSecs: TimeInterval = 60) async throws -> Data {
+    // 返回 tools/call 的 result 原始 JSON（Data）。
+    // 超时 55s：比服务端 60s 略小，保证客户端先回传明确错误，而非双方同时超时竞态。
+    func callTool(name: String, args: [String: Any], timeoutSecs: TimeInterval = 55) async throws -> Data {
         lock.lock()
         inFlight += 1
         lock.unlock()

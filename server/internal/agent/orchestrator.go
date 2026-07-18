@@ -1335,9 +1335,11 @@ func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm
 	defer o.clientBridge.Unregister(callID)
 
 	payload, err := json.Marshal(map[string]interface{}{
-		"call_id":   callID,
-		"tool_name": call.Tool + "__" + call.Function,
-		"arguments": call.Args,
+		"call_id":             callID,
+		"tool_name":           call.Tool + "__" + call.Function,
+		"arguments":           call.Args,
+		"result_budget_bytes": clientToolInjectBudgetBytes,
+		"timeout_secs":        int(o.clientToolTimeout.Seconds()),
 	})
 	if err != nil {
 		log.Printf("[orch] client tool payload marshal error: %v", err)

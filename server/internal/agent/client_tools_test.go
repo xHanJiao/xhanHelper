@@ -118,9 +118,9 @@ func TestNormalizeClientToolData(t *testing.T) {
 	}
 
 	// 超长内容截断且结果为合法 JSON
-	huge := json.RawMessage(`{"data":"` + strings.Repeat("a", maxClientToolResultChars+5000) + `"}`)
+	huge := json.RawMessage(`{"data":"` + strings.Repeat("a", clientToolInjectBudgetBytes+5000) + `"}`)
 	got := normalizeClientToolData(huge)
-	if len(got) > maxClientToolResultChars+1000 {
+	if len(got) > clientToolInjectBudgetBytes+1000 {
 		t.Errorf("oversize result not truncated: %d bytes", len(got))
 	}
 	if !json.Valid(got) {

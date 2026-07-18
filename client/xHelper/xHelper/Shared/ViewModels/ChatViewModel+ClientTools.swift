@@ -28,12 +28,15 @@ extension ChatViewModel {
             return
         }
         let argsData = (try? JSONSerialization.data(withJSONObject: obj["arguments"] ?? [String: Any]())) ?? Data("{}".utf8)
+        let budgetBytes = (obj["result_budget_bytes"] as? NSNumber)?.intValue ?? MCPManager.fallbackResultBudgetBytes
+        let timeoutSecs = (obj["timeout_secs"] as? NSNumber)?.doubleValue ?? 60
+        let deadline = timeoutSecs * 0.9
         let api = apiClient
 
         LogBuffer.shared.info("clientToolCall: \(toolName) call_id=\(callID)")
         Task {
             do {
-                let result = try await MCPManager.shared.callTool(flatName: toolName, argsJSON: argsData)
+                let result = try await MCPManager.shared.callTool(flatName: toolName, argsJSON: argsData, budgetBytes: budgetBytes, deadlineSecs: deadline)
                 try await api.submitToolResult(callId: callID, resultJSON: result)
                 LogBuffer.shared.info("clientToolCall: \(toolName) result submitted")
             } catch {

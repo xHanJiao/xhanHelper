@@ -34,6 +34,19 @@ actor MCPManager {
     private var idleReaperTask: Task<Void, Never>?
     nonisolated let activity = MCPActivityTracker()
 
+    // 分页阅读：超大结果缓存（只留最近一条，翻页场景天然串行）。
+    // 预算由服务端随 client_tool_call 事件下发（result_budget_bytes），
+    // 无下发时 fallback 该默认值（与 service 端 clientToolInjectBudgetBytes 一致）。
+    static let readMoreToolName = "result_read_more"
+    static let fallbackResultBudgetBytes = 20000
+    private var paged: PagedResult?
+
+    private struct PagedResult {
+        let token: String
+        let serverName: String
+        let pages: [String] // pre-computed pages (each a String, ready to JSON-encode)
+    }
+
     init(config: MCPManagerConfig) {
         self.config = config
     }
@@ -54,7 +67,7 @@ actor MCPManager {
         startIdleReaperIfNeeded()
     }
 
-    // 供 /api/chat 请求体上报的 client_tools 数组（按各 server 的白名单过滤）
+    // 供 /api/chat 请求体上报的 client_tools 数组（按各 server 的白名单过滤 + schema 瘦身）
     func clientToolsPayload() -> [[String: Any]] {
         var out: [[String: Any]] = []
         for sc in config.servers {
@@ -67,21 +80,42 @@ actor MCPManager {
                     "description": t.description,
                 ]
                 if let schema = t.inputSchema {
-                    item["parameters"] = schema
+                    item["parameters"] = slimSchema(schema, sc: sc)
                 }
                 out.append(item)
             }
+            // 分页虚拟工具（客户端合成，不来自 MCP server）：超大结果的续读入口
+            out.append([
+                "server_name": sc.name,
+                "name": Self.readMoreToolName,
+                "description": "当上一个工具结果过大被分页（结果中 truncated=true）时，按页继续读取剩余内容。需提供 page_token（首页返回，绑定该次分页）和 cursor（页码）。",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "cursor": ["type": "integer", "description": "页码，从 2 开始（第 1 页已随原结果返回）"],
+                        "page_token": ["type": "string", "description": "分页令牌，与首页 truncated 结果中的 page_token 一致，防止读到已被覆盖的缓存"],
+                    ],
+                    "required": ["cursor", "page_token"],
+                ],
+            ])
         }
         return out
     }
 
     // 执行客户端工具。flatName 为服务端下发的扁平名 "serverName__toolName"。
-    func callTool(flatName: String, argsJSON: Data) async throws -> Data {
+    // budgetBytes: 服务端下发的注入预算（result_budget_bytes），用于决定分页阈值和分块大小。
+    // deadlineSecs: 服务端下发的超时秒数（timeout_secs），客户端留 10% 余量；无下发时 fallback 默认。
+    func callTool(flatName: String, argsJSON: Data, budgetBytes: Int = fallbackResultBudgetBytes, deadlineSecs: TimeInterval = 54) async throws -> Data {
         guard let sepRange = flatName.range(of: "__") else {
             throw MCPError(message: "非法工具名: \(flatName)")
         }
         let serverName = String(flatName[..<sepRange.lowerBound])
         let toolName = String(flatName[sepRange.upperBound...])
+
+        // 分页虚拟工具：客户端直接处理，不经 MCP server（需在白名单校验前拦截）
+        if toolName == Self.readMoreToolName {
+            return readMoreChunk(serverName: serverName, argsJSON: argsJSON)
+        }
 
         // 执行侧白名单校验：服务端按 server_name 前缀转发，
         // LLM 幻觉调用未上报的工具（如 eval）也会被转发过来，必须在这里拒绝
@@ -95,21 +129,28 @@ actor MCPManager {
 
         let args = (try? JSONSerialization.jsonObject(with: argsJSON)) as? [String: Any] ?? [:]
         let server = try await ensureRunning(serverName)
-        var result = try await server.callTool(name: toolName, args: args)
+        let startTime = CFAbsoluteTimeGetCurrent()
+        var result = try await server.callTool(name: toolName, args: args, timeoutSecs: min(deadlineSecs, 55))
 
-        // 自愈：结果命中特征串（如坏 daemon 导致的 Auto-launch failed）时，
-        // 清理外部状态 → 重建 server → 重试一次。覆盖上次 App 崩溃/强退留下的残留。
+        // 自愈：结果命中特征串时，清理外部状态 → 重建 server → 重试一次。
+        // 必须检查剩余时间预算：重建+重试耗时可能超服务端 timeout_secs。
         if needsRecovery(result, sc: sc) {
-            MCPLog.error("[MCP] \(serverName) stale state detected, cleanup + rebuild + retry once")
+            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+            let remaining = deadlineSecs - elapsed
+            guard remaining >= 15 else {
+                MCPLog.error("[MCP] \(serverName) recovery skipped: insufficient time (elapsed=\(Int(elapsed))s, deadline=\(Int(deadlineSecs))s)")
+                throw MCPError(message: "工具执行异常（\(serverName) 状态异常且时间不足，无法自动恢复）。请稍后重试或手动重启浏览器。")
+            }
+            MCPLog.info("[MCP] \(serverName) stale state detected, cleanup + rebuild + retry (remaining=\(Int(remaining))s)")
             servers[serverName]?.stop()
             servers[serverName] = nil
             await runCleanup(sc)
             let fresh = try await ensureRunning(serverName)
-            result = try await fresh.callTool(name: toolName, args: args)
+            result = try await fresh.callTool(name: toolName, args: args, timeoutSecs: min(remaining, 55))
         }
 
         activity.markUsed(serverName)
-        return result
+        return paginateIfNeeded(slimResult(result, sc: sc), serverName: serverName, sc: sc, budgetBytes: budgetBytes)
     }
 
     // 弹窗清单：本次会话用过、且声明了外部资源名的 server
@@ -130,12 +171,171 @@ actor MCPManager {
             server.stop()
         }
         servers.removeAll()
+        paged = nil
 
         guard closeExternal else { return }
         let used = activity.snapshot()
         for sc in config.servers where used.contains(sc.name) {
             await runCleanup(sc)
         }
+    }
+
+    // MARK: - 结果/Schema 瘦身
+
+    // 递归剔除结果 JSON 中的噪音字段（stdout 重复/lifecycle 元数据等）
+    private func slimResult(_ data: Data, sc: MCPServerConfig) -> Data {
+        guard !sc.resultNoiseKeys.isEmpty,
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return data
+        }
+        let slimmed = Self.stripKeys(obj, keys: Set(sc.resultNoiseKeys))
+        return (try? JSONSerialization.data(withJSONObject: slimmed)) ?? data
+    }
+
+    private static func stripKeys(_ value: Any, keys: Set<String>) -> Any {
+        if let dict = value as? [String: Any] {
+            var out: [String: Any] = [:]
+            for (k, v) in dict where !keys.contains(k) {
+                out[k] = stripKeys(v, keys: keys)
+            }
+            return out
+        }
+        if let arr = value as? [Any] {
+            return arr.map { stripKeys($0, keys: keys) }
+        }
+        return value
+    }
+
+    // 超预算时缓存全文并返回第一页，后续通过 result_read_more(cursor, page_token) 续读。
+    // budgetBytes = 服务端下发的注入预算；分页后每页序列化 JSON 不会超过该值。
+    // sc.pageTextSource 决定如何从结果提取文本（.rawJSON 全文 / .mcpContentText 只取 content[].text）。
+    private func paginateIfNeeded(_ data: Data, serverName: String, sc: MCPServerConfig, budgetBytes: Int) -> Data {
+        guard data.count > budgetBytes else { return data }
+
+        var text: String
+        switch sc.pageTextSource {
+        case .mcpContentText:
+            if let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let content = obj["content"] as? [[String: Any]] {
+                text = content.compactMap { $0["text"] as? String }.joined(separator: "\n")
+            } else {
+                text = String(decoding: data, as: UTF8.self)
+            }
+        case .rawJSON:
+            text = String(decoding: data, as: UTF8.self)
+        }
+
+        guard !text.isEmpty else { return data }
+
+        let token = Self.randomPageToken()
+        let pages = Self.chunkPages(text: text, budgetBytes: budgetBytes)
+        let total = pages.count
+
+        let firstObj: [String: Any] = [
+            "truncated": true,
+            "total_bytes": text.utf8.count,
+            "chunk": "1/\(total)",
+            "page_token": token,
+            "note": "结果过大已分页（每页≤\(budgetBytes)字节）\(total>1 ? "续读调 \(Self.readMoreToolName)(cursor=2, page_token=\"\(token)\")" : "")。通常建议改用 snapshot/get_text 等定向工具获取目标内容，而非通读全文。",
+            "content": pages[0],
+        ]
+        paged = PagedResult(token: token, serverName: serverName, pages: pages)
+        MCPLog.info("[MCP] result paginated: \(data.count) bytes → \(total) pages (budget=\(budgetBytes))")
+        return (try? JSONSerialization.data(withJSONObject: firstObj)) ?? Data(#"{"truncated":true}"#.utf8)
+    }
+
+    // 将长文本切成若干页，每页序列化为 JSON 对象（含 content 字段）时不超 budgetBytes。
+    // 默认分页信封（不含 content）约 400-600 字节，分配 80% 预算给内容。
+    private static func chunkPages(text: String, budgetBytes: Int) -> [String] {
+        let contentBudget = max(1, budgetBytes * 80 / 100)
+        var pages: [String] = []
+        var remaining = text[...]
+        var pageNum = 0
+
+        while !remaining.isEmpty {
+            pageNum += 1
+            if pageNum > 300 {
+                // 极端保护：超过 300 页裁尾
+                MCPLog.error("[MCP] pagination capped at 300 pages, remaining text dropped")
+                break
+            }
+            let chunk = Self.extractUTF8Chunk(from: remaining, maxBytes: contentBudget)
+            pages.append(String(chunk))
+            let consumed = chunk.utf8.count
+            if consumed >= remaining.utf8.count {
+                break
+            }
+            // 移动到 consumed 之后的字符（Character 边界安全）
+            let idx = remaining.utf8.index(remaining.utf8.startIndex, offsetBy: consumed)
+            remaining = remaining.suffix(from: idx)
+        }
+        return pages
+    }
+
+    // 从字符串头部切出 ≤maxBytes 个 UTF-8 字节，保证不切在多字节字符中间。
+    private static func extractUTF8Chunk(from s: Substring, maxBytes: Int) -> Substring {
+        let utf8 = s.utf8
+        if utf8.count <= maxBytes { return s }
+        var byteCount = 0
+        var endIdx = s.startIndex
+        for ch in s {
+            let next = byteCount + ch.utf8.count
+            if next > maxBytes { break }
+            byteCount = next
+            endIdx = s.index(after: endIdx)
+        }
+        return endIdx == s.startIndex ? s.prefix(0) : s[..<endIdx]
+    }
+
+    // result_read_more 处理：按 cursor 返回缓存页
+    private func readMoreChunk(serverName: String, argsJSON: Data) -> Data {
+        let args = (try? JSONSerialization.jsonObject(with: argsJSON)) as? [String: Any] ?? [:]
+
+        guard let pageToken = args["page_token"] as? String, !pageToken.isEmpty else {
+            return jsonData(["error": "缺少必填参数 page_token"])
+        }
+        guard let cursorNum = args["cursor"] as? NSNumber else {
+            return jsonData(["error": "缺少或非法参数 cursor（需为整数）"])
+        }
+        let cursor = cursorNum.intValue
+
+        guard let p = paged, p.token == pageToken, p.serverName == serverName else {
+            return jsonData(["error": "分页缓存已失效（token 不匹配或被新工具结果覆盖），请重新执行原工具"])
+        }
+        let total = p.pages.count
+        guard cursor >= 1, cursor <= total else {
+            return jsonData(["error": "cursor 越界：有效范围 1-\(total)"])
+        }
+        return jsonData([
+            "chunk": "\(cursor)/\(total)",
+            "has_more": cursor < total,
+            "content": p.pages[cursor - 1],
+        ])
+    }
+
+    private func jsonData(_ obj: [String: Any]) -> Data {
+        (try? JSONSerialization.data(withJSONObject: obj)) ?? Data("{}".utf8)
+    }
+
+    private static func randomPageToken() -> String {
+        String(UInt32.random(in: 0..<UInt32.max), radix: 36)
+    }
+
+    // 从工具 schema 中剔除 LLM 用不到的公共高级参数
+    private func slimSchema(_ schema: [String: Any], sc: MCPServerConfig) -> [String: Any] {
+        guard !sc.schemaNoiseParams.isEmpty,
+              var props = schema["properties"] as? [String: Any] else {
+            return schema
+        }
+        var out = schema
+        for k in sc.schemaNoiseParams {
+            props.removeValue(forKey: k)
+        }
+        out["properties"] = props
+        if let required = schema["required"] as? [String] {
+            out["required"] = required.filter { !sc.schemaNoiseParams.contains($0) }
+        }
+        return out
     }
 
     // MARK: - 自愈/清理

@@ -75,6 +75,7 @@ class ChatViewModel: ObservableObject {
     let apiClient: APIClient // 扩展（ChatViewModel+ClientTools）需要访问
     private let sseClient = SSEClient()
     private var streamingContent = ""
+    private var throttleTimer: Timer?
     #if os(iOS)
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     #endif
@@ -229,7 +230,7 @@ class ChatViewModel: ObservableObject {
         case .message:
             if let delta = parseMessageDelta(event.data) {
                 streamingContent += delta
-                updateLastAssistantMessage(streamingContent)
+                throttleFlush()
                 let now = Date()
                 if now.timeIntervalSince(lastHapticTime) >= 0.15 {
                     #if os(iOS)
@@ -295,6 +296,9 @@ class ChatViewModel: ObservableObject {
     // MARK: Streaming Lifecycle
 
     private func finishStreaming() {
+        throttleTimer?.invalidate()
+        throttleTimer = nil
+        applyStreamingContent()
         isStreaming = false
         if thoughtMessage != nil { thoughtDone = true }
         #if os(iOS)
@@ -354,8 +358,7 @@ class ChatViewModel: ObservableObject {
 
     private func updateLastAssistantMessage(_ content: String) {
         guard var last = messages.last, last.id == "__streaming__" else { return }
-        messages.removeLast()
-        last = Message(
+        let newMsg = Message(
             id: "__streaming__",
             conversationId: last.conversationId,
             role: "assistant",
@@ -363,7 +366,22 @@ class ChatViewModel: ObservableObject {
             toolCallsJSON: nil,
             createdAt: last.createdAt
         )
-        messages.append(last)
+        messages[messages.count - 1] = newMsg
+    }
+
+    private func throttleFlush() {
+        guard throttleTimer == nil else { return }
+        throttleTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.throttleTimer = nil
+                self?.applyStreamingContent()
+            }
+        }
+    }
+
+    private func applyStreamingContent() {
+        guard messages.last?.content != streamingContent else { return }
+        updateLastAssistantMessage(streamingContent)
     }
 
     private func parseMessageDelta(_ data: String) -> String? {

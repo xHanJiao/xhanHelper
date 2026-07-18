@@ -30,7 +30,21 @@ struct ChatView: View {
         VStack(spacing: 0) {
             // 消息列表
             ZStack(alignment: .bottom) {
-                MessageListView(viewModel: viewModel, scrollPosition: $scrollPosition, showScrollToBottom: $showScrollToBottom)
+                MessageListView(
+                    messages: viewModel.messages,
+                    isStreaming: viewModel.isStreaming,
+                    isInitialLoading: viewModel.isInitialLoading,
+                    errorMessage: viewModel.errorMessage,
+                    conversationId: viewModel.conversationId,
+                    statusMessage: viewModel.statusMessage,
+                    thoughtMessage: viewModel.thoughtMessage,
+                    thoughtDone: viewModel.thoughtDone,
+                    hasMoreBefore: viewModel.hasMoreBefore,
+                    isLoadingMore: viewModel.isLoadingMore,
+                    onLoadMore: { direction in Task { await viewModel.loadMore(direction: direction) } },
+                    scrollPosition: $scrollPosition,
+                    showScrollToBottom: $showScrollToBottom
+                )
                 if showScrollToBottom && !viewModel.messages.isEmpty {
                     Button {
                         withAnimation(.easeOut(duration: 0.3)) {
@@ -47,11 +61,11 @@ struct ChatView: View {
 #endif
                     }
                     .buttonStyle(.plain)
+                    .animation(.easeInOut(duration: 0.2), value: showScrollToBottom)
                     .transition(.scale.combined(with: .opacity))
                     .padding(.bottom, 12)
                 }
             }
-            .animation(.easeInOut(duration: 0.2), value: showScrollToBottom)
 
             // 错误提示改为全局 Toast（ToastCenter），此处不再内嵌红字
 

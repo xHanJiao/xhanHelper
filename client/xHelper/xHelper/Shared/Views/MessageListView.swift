@@ -1,7 +1,17 @@
 import SwiftUI
 
 struct MessageListView: View {
-    @ObservedObject var viewModel: ChatViewModel
+    let messages: [Message]
+    let isStreaming: Bool
+    let isInitialLoading: Bool
+    let errorMessage: String?
+    let conversationId: String?
+    let statusMessage: String?
+    let thoughtMessage: String?
+    let thoughtDone: Bool
+    let hasMoreBefore: Bool
+    let isLoadingMore: Bool
+    let onLoadMore: (String) -> Void
     @State private var initialLoadDone = false
     @State private var activeTimeBubbleId: String? = nil
     @State private var autoDismissTask: Task<Void, Never>? = nil
@@ -15,12 +25,12 @@ struct MessageListView: View {
 
     var body: some View {
         Group {
-            if !viewModel.messages.isEmpty {
+            if !messages.isEmpty {
                 messageScrollView
-            } else if viewModel.isInitialLoading {
+            } else if isInitialLoading {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if viewModel.errorMessage != nil {
+            } else if errorMessage != nil {
                 Color.clear
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -47,19 +57,19 @@ struct MessageListView: View {
                 initialLoadDone = true
             }
         }
-        .onChange(of: viewModel.conversationId) { _, _ in
+        .onChange(of: conversationId) { _, _ in
             initialLoadDone = false
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 initialLoadDone = true
             }
         }
-        .onChange(of: viewModel.messages.count) { _, _ in
-            dismissMenu()
+        .onChange(of: messages.count) { _, _ in
+            if !isStreaming { dismissMenu() }
         }
         .overlay {
             if menuMessageId != nil {
                 Button {
-                    if let msg = viewModel.messages.first(where: { $0.id == menuMessageId }) {
+                    if let msg = messages.first(where: { $0.id == menuMessageId }) {
                         copyToPasteboard(msg.content)
                     }
                     dismissMenu()
@@ -80,7 +90,7 @@ struct MessageListView: View {
         ScrollView {
             VStack(spacing: 18) {
                 // status（思考提示）→ 逻辑最前 → 视觉最底（最新消息下方）
-                if let status = viewModel.statusMessage {
+                if let status = statusMessage {
                     HStack {
                         Image(systemName: "brain.head.profile")
                             .font(.caption)
@@ -95,7 +105,7 @@ struct MessageListView: View {
                 }
 
                 // 消息：倒序，最新在逻辑前=视觉底
-                ForEach(viewModel.messages.reversed()) { msg in
+                ForEach(messages.reversed()) { msg in
                     messageRow(msg)
                         .background(
                             GeometryReader { geo in
@@ -141,7 +151,9 @@ struct MessageListView: View {
         }
         .simultaneousGesture(TapGesture().onEnded { dismissMenu() })
         .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }, action: { _, newY in
-            showScrollToBottom = newY > viewHeight * 0.75
+            if isStreaming { return }
+            let shouldShow = newY > viewHeight * 0.75
+            if shouldShow != showScrollToBottom { showScrollToBottom = shouldShow }
         })
 
     }
@@ -151,8 +163,8 @@ struct MessageListView: View {
     @ViewBuilder
     private func messageRow(_ msg: Message) -> some View {
         VStack(spacing: 12) {
-            if msg.id == "__streaming__", let thought = viewModel.thoughtMessage {
-                ThinkingBubble(text: thought, isStreaming: !viewModel.thoughtDone)
+            if msg.id == "__streaming__", let thought = thoughtMessage {
+                ThinkingBubble(text: thought, isStreaming: !thoughtDone)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Layout.chatHorizontalPadding)
             }
@@ -227,24 +239,24 @@ struct MessageListView: View {
 
     @ViewBuilder
     private var loadMoreHeader: some View {
-        if viewModel.hasMoreBefore {
+        if hasMoreBefore {
             HStack {
-                if viewModel.isLoadingMore {
+                if isLoadingMore {
                     ProgressView().scaleEffect(0.7)
                 } else {
                     Image(systemName: "arrow.up")
                 }
-                Text(viewModel.isLoadingMore ? "正在加载..." : "加载更早的消息")
+                Text(isLoadingMore ? "正在加载..." : "加载更早的消息")
                     .font(.caption)
             }
             .foregroundColor(Color("accentSecondary"))
             .onTapGesture {
-                guard !viewModel.isLoadingMore else { return }
-                Task { await viewModel.loadMore(direction: "before") }
+                guard !isLoadingMore else { return }
+                onLoadMore("before")
             }
             .onScrollVisibilityChange(threshold: 0.1) { isVisible in
-                guard initialLoadDone, isVisible, !viewModel.isLoadingMore else { return }
-                Task { await viewModel.loadMore(direction: "before") }
+                guard initialLoadDone, isVisible, !isLoadingMore else { return }
+                onLoadMore("before")
             }
         } else {
             Text("已无更早消息")

@@ -2,7 +2,7 @@
 import Foundation
 
 // 单个 MCP server 的配置
-struct MCPServerConfig {
+struct MCPServerConfig: Sendable {
     let name: String              // server_name，如 "browser"（禁止含 "__"）
     let command: String           // 可执行文件名或绝对路径，如 "agent-browser"
     let args: [String]            // 如 ["mcp"]
@@ -10,10 +10,13 @@ struct MCPServerConfig {
     let idleTimeoutSecs: TimeInterval // 空闲回收阈值，默认 300
     let description: String
     let toolAllowlist: Set<String>?   // 上报/执行的工具白名单，nil = 不过滤
+    let cleanupCommand: [String]?     // 退出/自愈时的清理命令（一次性子进程），nil = 无需清理
+    let externalResourceName: String? // 对用户展示的外部资源名（退出确认弹窗用），nil = 不参与弹窗
+    let recoverPatterns: [String]     // 工具结果含任一特征串时触发清理+重建+重试（自愈）
 }
 
 // MCPManager 的配置
-struct MCPManagerConfig {
+struct MCPManagerConfig: Sendable {
     let maxConcurrent: Int        // 同时运行的 MCP server 上限
     let servers: [MCPServerConfig]
 
@@ -54,7 +57,10 @@ struct MCPManagerConfig {
                     // 等待
                     "agent_browser_wait_for_load",
                     "agent_browser_wait_for_selector",
-                ]
+                ],
+                cleanupCommand: ["agent-browser", "close", "--all"],
+                externalResourceName: "Chrome 浏览器窗口（agent-browser）",
+                recoverPatterns: ["Auto-launch failed", "No running Chrome instance"]
             )
         ]
     )

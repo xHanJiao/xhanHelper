@@ -1,6 +1,28 @@
 #if os(macOS)
 import Foundation
 
+// MCPActivityTracker — 记录本次 App 会话内使用过的 server（锁保护）。
+// 供退出确认弹窗在同步上下文（applicationShouldTerminate）读取。
+final class MCPActivityTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var used: Set<String> = []
+
+    func markUsed(_ name: String) {
+        lock.lock(); defer { lock.unlock() }
+        used.insert(name)
+    }
+
+    func clear(_ name: String) {
+        lock.lock(); defer { lock.unlock() }
+        used.remove(name)
+    }
+
+    func snapshot() -> Set<String> {
+        lock.lock(); defer { lock.unlock() }
+        return used
+    }
+}
+
 // MCPManager — 多 MCP server 生命周期管理（actor 保证串行）。
 // 懒启动 / 空闲回收 / LRU 抢占（maxConcurrent），工具 schema 缓存供 client_tools 上报。
 actor MCPManager {
@@ -10,6 +32,7 @@ actor MCPManager {
     private var servers: [String: MCPServer] = [:]
     private var toolCaches: [String: [MCPToolDef]] = [:] // server 停止后仍保留 schema
     private var idleReaperTask: Task<Void, Never>?
+    nonisolated let activity = MCPActivityTracker()
 
     init(config: MCPManagerConfig) {
         self.config = config
@@ -72,16 +95,88 @@ actor MCPManager {
 
         let args = (try? JSONSerialization.jsonObject(with: argsJSON)) as? [String: Any] ?? [:]
         let server = try await ensureRunning(serverName)
-        return try await server.callTool(name: toolName, args: args)
+        var result = try await server.callTool(name: toolName, args: args)
+
+        // 自愈：结果命中特征串（如坏 daemon 导致的 Auto-launch failed）时，
+        // 清理外部状态 → 重建 server → 重试一次。覆盖上次 App 崩溃/强退留下的残留。
+        if needsRecovery(result, sc: sc) {
+            MCPLog.error("[MCP] \(serverName) stale state detected, cleanup + rebuild + retry once")
+            servers[serverName]?.stop()
+            servers[serverName] = nil
+            await runCleanup(sc)
+            let fresh = try await ensureRunning(serverName)
+            result = try await fresh.callTool(name: toolName, args: args)
+        }
+
+        activity.markUsed(serverName)
+        return result
     }
 
-    func shutdown() {
+    // 弹窗清单：本次会话用过、且声明了外部资源名的 server
+    nonisolated func activeExternalResources() -> [String] {
+        let used = activity.snapshot()
+        return config.servers.compactMap { sc in
+            guard used.contains(sc.name), let res = sc.externalResourceName else { return nil }
+            return res
+        }
+    }
+
+    // 停止所有 MCP 进程；closeExternal=true 时对本次会话用过的 server 追加执行清理命令
+    // （关掉 agent-browser daemon 拉起的 Chrome 等外部资源）。
+    func shutdown(closeExternal: Bool) async {
         idleReaperTask?.cancel()
         idleReaperTask = nil
         for (_, server) in servers {
             server.stop()
         }
         servers.removeAll()
+
+        guard closeExternal else { return }
+        let used = activity.snapshot()
+        for sc in config.servers where used.contains(sc.name) {
+            await runCleanup(sc)
+        }
+    }
+
+    // MARK: - 自愈/清理
+
+    private func needsRecovery(_ result: Data, sc: MCPServerConfig) -> Bool {
+        guard sc.cleanupCommand != nil, !sc.recoverPatterns.isEmpty,
+              let text = String(data: result, encoding: .utf8) else { return false }
+        return sc.recoverPatterns.contains { text.contains($0) }
+    }
+
+    // 一次性子进程执行清理命令，最多等 5s
+    private func runCleanup(_ sc: MCPServerConfig) async {
+        guard let cmd = sc.cleanupCommand, !cmd.isEmpty else { return }
+        let p = Process()
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (env["PATH"] ?? "/usr/bin:/bin")
+        p.environment = env
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = cmd
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+
+        var launched = false
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            // handler 必须在 run() 前设置，避免命令秒退时错过回调
+            p.terminationHandler = { _ in cont.resume() }
+            do {
+                try p.run()
+                launched = true
+                // 看门狗：5s 未退出则终止（terminate 触发 terminationHandler）
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                    if p.isRunning { p.terminate() }
+                }
+            } catch {
+                MCPLog.error("[MCP] cleanup launch failed: \(error.localizedDescription)")
+                cont.resume() // run 失败时 handler 不会触发，手动结束等待
+            }
+        }
+        guard launched else { return }
+        MCPLog.info("[MCP] cleanup executed: \(cmd.joined(separator: " "))")
+        activity.clear(sc.name)
     }
 
     // MARK: - 生命周期

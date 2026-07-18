@@ -14,14 +14,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        // 关停 MCP 子进程（最多等 3s，避免 agent-browser 等孤儿进程残留）
-        let sem = DispatchSemaphore(value: 0)
-        Task.detached {
-            await MCPManager.shared.shutdown()
-            sem.signal()
+    // 退出确认：助手启动的外部程序（浏览器等）仍在运行时，询问是否一并关闭
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let resources = MCPManager.shared.activeExternalResources()
+
+        if resources.isEmpty {
+            Task.detached {
+                await MCPManager.shared.shutdown(closeExternal: false)
+                await MainActor.run { NSApp.reply(toApplicationShouldTerminate: true) }
+            }
+            return .terminateLater
         }
-        _ = sem.wait(timeout: .now() + 3)
+
+        let alert = NSAlert()
+        alert.messageText = "退出 xhanHelper"
+        alert.informativeText = "以下由助手启动的程序仍在运行：\n"
+            + resources.map { "• \($0)" }.joined(separator: "\n")
+        alert.addButton(withTitle: "退出并全部关闭") // 第一个按钮为默认
+        alert.addButton(withTitle: "退出但保留")
+        alert.addButton(withTitle: "取消")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            Task.detached {
+                await MCPManager.shared.shutdown(closeExternal: true)
+                await MainActor.run { NSApp.reply(toApplicationShouldTerminate: true) }
+            }
+            return .terminateLater
+        case .alertSecondButtonReturn:
+            Task.detached {
+                await MCPManager.shared.shutdown(closeExternal: false)
+                await MainActor.run { NSApp.reply(toApplicationShouldTerminate: true) }
+            }
+            return .terminateLater
+        default:
+            return .terminateCancel
+        }
     }
 
     private static func configureWindow(_ window: NSWindow) {

@@ -150,6 +150,10 @@ actor MCPManager {
         }
 
         activity.markUsed(serverName)
+        if sc.clearActivityTools.contains(toolName) {
+            MCPLog.info("[MCP] \(serverName) activity cleared by tool: \(toolName)")
+            activity.clear(serverName)
+        }
         return paginateIfNeeded(slimResult(result, sc: sc), serverName: serverName, sc: sc, budgetBytes: budgetBytes)
     }
 

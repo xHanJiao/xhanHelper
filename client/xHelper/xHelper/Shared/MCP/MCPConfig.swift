@@ -23,6 +23,7 @@ struct MCPServerConfig: Sendable {
     let resultNoiseKeys: [String]     // 回传前从工具结果 JSON 中递归剔除的噪音字段（省 token）
     let schemaNoiseParams: [String]   // 上报前从工具 schema properties 中剔除的高级参数（省 token）
     let pageTextSource: PageTextSource // 分页时如何提取文本内容（.rawJSON=原始JSON, .mcpContentText=content[].text拼接）
+    let clearActivityTools: Set<String> // 执行成功后清除 activity 的工具名（如 agent_browser_close）
 }
 
 // MCPManager 的配置
@@ -79,7 +80,9 @@ struct MCPManagerConfig: Sendable {
                     "restoreCheckFn", "session", "namespace", "extraArgs",
                     "allowedDomains", "webgpu", "headed", "timeoutMs",
                 ],
-                pageTextSource: .mcpContentText
+                pageTextSource: .mcpContentText,
+                // agent_browser_close 由 LLM 主动调用后，退出时不应再弹浏览器警告
+                clearActivityTools: Set(["agent_browser_close"])
             )
         ]
     )

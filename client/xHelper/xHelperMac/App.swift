@@ -27,23 +27,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let alert = NSAlert()
-        alert.messageText = "退出 xhanHelper"
-        alert.informativeText = "以下由助手启动的程序仍在运行：\n"
+        alert.messageText = "退出确认"
+        alert.informativeText = "退出时可能导致以下由助手启动的应用随之关闭：\n"
             + resources.map { "• \($0)" }.joined(separator: "\n")
-        alert.addButton(withTitle: "退出并全部关闭") // 第一个按钮为默认
-        alert.addButton(withTitle: "退出但保留")
+        alert.addButton(withTitle: "确认退出")
         alert.addButton(withTitle: "取消")
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             Task.detached {
                 await MCPManager.shared.shutdown(closeExternal: true)
-                await MainActor.run { NSApp.reply(toApplicationShouldTerminate: true) }
-            }
-            return .terminateLater
-        case .alertSecondButtonReturn:
-            Task.detached {
-                await MCPManager.shared.shutdown(closeExternal: false)
                 await MainActor.run { NSApp.reply(toApplicationShouldTerminate: true) }
             }
             return .terminateLater

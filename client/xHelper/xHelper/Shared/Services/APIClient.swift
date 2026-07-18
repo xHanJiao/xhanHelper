@@ -188,6 +188,23 @@ class APIClient {
 		try await delete("/api/prompts/\(id)")
 	}
 
+	// MARK: Client Tools（本地 MCP 工具结果回传）
+
+	// resultJSON: MCP tools/call 的 result 原始 JSON（对象）。
+	// 服务端按 json.RawMessage 绑定，这里以原生 JSON 值上送，避免双重编码。
+	func submitToolResult(callId: String, resultJSON: Data?, error: String? = nil) async throws {
+		var body: [String: Any] = ["call_id": callId]
+		if let d = resultJSON, !d.isEmpty {
+			if let obj = try? JSONSerialization.jsonObject(with: d) {
+				body["result"] = obj
+			} else {
+				body["result"] = String(data: d, encoding: .utf8) ?? ""
+			}
+		}
+		if let e = error { body["error"] = e }
+		let _: [String: String] = try await post("/api/chat/tool-result", body: body)
+	}
+
 	// MARK: Internal
 
     private func get<T: Decodable>(_ path: String) async throws -> T {

@@ -72,7 +72,7 @@ class ChatViewModel: ObservableObject {
     @Published var isLoadingMore = false
     @Published var isInitialLoading = true
 
-    private let apiClient: APIClient
+    let apiClient: APIClient // 扩展（ChatViewModel+ClientTools）需要访问
     private let sseClient = SSEClient()
     private var streamingContent = ""
     #if os(iOS)
@@ -161,13 +161,16 @@ class ChatViewModel: ObservableObject {
 
         messages.append(.streamingAssistant(conversationId: conversationId ?? ""))
 
-        setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId)
+        Task { @MainActor in
+            let clientTools = await Self.collectClientTools()
+            setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId, clientTools: clientTools)
+        }
         #if os(iOS)
         beginBackgroundTask()
         #endif
     }
 
-    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil) {
+    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil, clientTools: [[String: Any]]? = nil) {
         sseClient.disconnect()
         sseClient.onEvent = { [weak self] event in
             Task { @MainActor in
@@ -187,7 +190,7 @@ class ChatViewModel: ObservableObject {
                 self?.finishStreaming()
             }
         }
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools)
     }
 
     func stopStreaming() {
@@ -244,6 +247,9 @@ class ChatViewModel: ObservableObject {
 
         case .toolResult:
             break
+
+        case .clientToolCall:
+            handleClientToolCall(event.data)
 
         case .remindersChanged:
             LogBuffer.shared.debug("[Reminder] SSE reminders_changed received")

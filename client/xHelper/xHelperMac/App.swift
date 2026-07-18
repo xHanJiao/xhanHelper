@@ -14,6 +14,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        // 关停 MCP 子进程（最多等 3s，避免 agent-browser 等孤儿进程残留）
+        let sem = DispatchSemaphore(value: 0)
+        Task.detached {
+            await MCPManager.shared.shutdown()
+            sem.signal()
+        }
+        _ = sem.wait(timeout: .now() + 3)
+    }
+
     private static func configureWindow(_ window: NSWindow) {
         guard window.isOpaque else { return }
         window.isOpaque = false
@@ -46,6 +56,10 @@ struct xhanHelperMacApp: App {
             .preferredColorScheme(colorSchemeManager.selectedScheme.colorScheme)
             .toast()
             .glassWindow()
+            .task {
+                // 预热本地 MCP 工具缓存（拉一次 tools/list，供 client_tools 上报）
+                await MCPManager.shared.refreshToolCache()
+            }
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 800, height: 600)

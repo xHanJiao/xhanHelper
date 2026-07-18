@@ -17,7 +17,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
 
-    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, memoryThreshold: Double = 0.5, memoryLimit: Int = 8) {
+    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, memoryThreshold: Double = 0.5, memoryLimit: Int = 8, clientTools: [[String: Any]]? = nil) {
         let url = URL(string: "\(baseURL)/api/chat")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -33,6 +33,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         if let mt = maxTokens { body["max_tokens"] = mt }
         if memoryThreshold != 0.5 { body["memory_threshold"] = memoryThreshold }
         if memoryLimit != 8 { body["memory_limit"] = memoryLimit }
+        if let ct = clientTools, !ct.isEmpty { body["client_tools"] = ct }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         if req.httpBody == nil {
             Self.log.error("failed to serialize request body")
@@ -103,6 +104,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         case "message":          type = .message
         case "tool_call":        type = .toolCall
         case "tool_result":      type = .toolResult
+        case "client_tool_call": type = .clientToolCall
         case "reminders_changed": type = .remindersChanged
         case "done":             type = .done
         case "error":            type = .error

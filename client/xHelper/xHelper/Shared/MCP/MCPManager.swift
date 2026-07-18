@@ -5,19 +5,21 @@ import Foundation
 // 供退出确认弹窗在同步上下文（applicationShouldTerminate）读取。
 final class MCPActivityTracker: @unchecked Sendable {
     private let lock = NSLock()
-    private var used: Set<String> = []
+    private nonisolated(unsafe) var used: Set<String> = []
 
-    func markUsed(_ name: String) {
+    nonisolated init() {}
+
+    nonisolated func markUsed(_ name: String) {
         lock.lock(); defer { lock.unlock() }
         used.insert(name)
     }
 
-    func clear(_ name: String) {
+    nonisolated func clear(_ name: String) {
         lock.lock(); defer { lock.unlock() }
         used.remove(name)
     }
 
-    func snapshot() -> Set<String> {
+    nonisolated func snapshot() -> Set<String> {
         lock.lock(); defer { lock.unlock() }
         return used
     }
@@ -26,7 +28,7 @@ final class MCPActivityTracker: @unchecked Sendable {
 // MCPManager — 多 MCP server 生命周期管理（actor 保证串行）。
 // 懒启动 / 空闲回收 / LRU 抢占（maxConcurrent），工具 schema 缓存供 client_tools 上报。
 actor MCPManager {
-    static let shared = MCPManager(config: .default)
+    nonisolated static let shared = MCPManager(config: .default)
 
     private let config: MCPManagerConfig
     private var servers: [String: MCPServer] = [:]
@@ -37,8 +39,8 @@ actor MCPManager {
     // 分页阅读：超大结果缓存（只留最近一条，翻页场景天然串行）。
     // 预算由服务端随 client_tool_call 事件下发（result_budget_bytes），
     // 无下发时 fallback 该默认值（与 service 端 clientToolInjectBudgetBytes 一致）。
-    static let readMoreToolName = "result_read_more"
-    static let fallbackResultBudgetBytes = 20000
+    nonisolated static let readMoreToolName = "result_read_more"
+    nonisolated static let fallbackResultBudgetBytes = 20000
     private var paged: PagedResult?
 
     private struct PagedResult {

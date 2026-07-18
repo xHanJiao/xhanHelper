@@ -1,5 +1,5 @@
 #if os(macOS)
-import Foundation
+@preconcurrency import Foundation
 
 // 单条结果分页时文本提取策略：不同 MCP server 结果格式不同，
 // 页内容取法由 server 维度配置，不在通用路径假设结构。
@@ -31,7 +31,7 @@ struct MCPManagerConfig: Sendable {
     let maxConcurrent: Int        // 同时运行的 MCP server 上限
     let servers: [MCPServerConfig]
 
-    static let `default` = MCPManagerConfig(
+    nonisolated static let `default` = MCPManagerConfig(
         maxConcurrent: 2,
         servers: [
             MCPServerConfig(

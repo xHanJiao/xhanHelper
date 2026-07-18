@@ -1,40 +1,48 @@
 #if os(macOS)
-import Foundation
+@preconcurrency import Foundation
 
-enum MCPServerState {
+enum MCPServerState: Sendable, Equatable {
     case stopped
     case starting
     case ready
     case error
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        switch (lhs, rhs) {
+        case (.stopped, .stopped), (.starting, .starting), (.ready, .ready), (.error, .error):
+            return true
+        default: return false
+        }
+    }
 }
 
 // MCPServer — 单个 MCP 子进程封装。
 // JSON-RPC 2.0 over stdio（newline-delimited），pending 路由用
 // CheckedContinuation（等价 Go 的 pending map + channel）。
 // 生命周期由 MCPManager（actor）串行驱动；readLoop 回调线程只经 lock 触碰 pending。
-final class MCPServer {
+final class MCPServer: @unchecked Sendable {
     let config: MCPServerConfig
-    private(set) var state: MCPServerState = .stopped
-    private(set) var toolsCache: [MCPToolDef] = []
-    private(set) var lastUsedAt = Date()
-    private(set) var inFlight = 0
+    private(set) nonisolated(unsafe) var state: MCPServerState = .stopped
+    private(set) nonisolated(unsafe) var toolsCache: [MCPToolDef] = []
+    private(set) nonisolated(unsafe) var lastUsedAt = Date()
+    private(set) nonisolated(unsafe) var inFlight = 0
 
-    private var process: Process?
-    private var stdinPipe: Pipe?
-    private var stdoutPipe: Pipe?
-    private var buffer = Data()
-    private var nextID: Int64 = 0
-    private var pending: [Int64: CheckedContinuation<JSONRPCResponse, Error>] = [:]
+    private nonisolated(unsafe) var process: Process?
+    private nonisolated(unsafe) var stdinPipe: Pipe?
+    private nonisolated(unsafe) var stdoutPipe: Pipe?
+    private nonisolated(unsafe) var buffer = Data()
+    private nonisolated(unsafe) var nextID: Int64 = 0
+    private nonisolated(unsafe) var pending: [Int64: CheckedContinuation<JSONRPCResponse, Error>] = [:]
     private let lock = NSLock()
-    private var stopping = false
+    private nonisolated(unsafe) var stopping = false
 
-    init(config: MCPServerConfig) {
+    nonisolated init(config: MCPServerConfig) {
         self.config = config
     }
 
     // MARK: - 启动 + MCP 握手
 
-    func start() async throws {
+    nonisolated func start() async throws {
         state = .starting
         stopping = false
 
@@ -107,7 +115,7 @@ final class MCPServer {
 
     // MARK: - 停止
 
-    func stop() {
+    nonisolated func stop() {
         guard let p = process else { return }
         stopping = true
         state = .stopped
@@ -131,15 +139,13 @@ final class MCPServer {
 
     // 返回 tools/call 的 result 原始 JSON（Data）。
     // 超时 55s：比服务端 60s 略小，保证客户端先回传明确错误，而非双方同时超时竞态。
-    func callTool(name: String, args: [String: Any], timeoutSecs: TimeInterval = 55) async throws -> Data {
-        lock.lock()
-        inFlight += 1
-        lock.unlock()
+    nonisolated func callTool(name: String, args: [String: Any], timeoutSecs: TimeInterval = 55) async throws -> Data {
+        lock.withLock { inFlight += 1 }
         defer {
-            lock.lock()
-            inFlight -= 1
-            lastUsedAt = Date()
-            lock.unlock()
+            lock.withLock {
+                inFlight -= 1
+                lastUsedAt = Date()
+            }
         }
 
         let resp = try await call(method: "tools/call", params: [
@@ -157,23 +163,19 @@ final class MCPServer {
 
     // MARK: - JSON-RPC call（pending + continuation）
 
-    private func call(method: String, params: [String: Any]? = nil, timeoutSecs: TimeInterval) async throws -> JSONRPCResponse {
-        lock.lock()
-        nextID += 1
-        let id = nextID
-        lock.unlock()
+    nonisolated private func call(method: String, params: [String: Any]? = nil, timeoutSecs: TimeInterval) async throws -> JSONRPCResponse {
+        let id = lock.withLock {
+            nextID += 1
+            return nextID
+        }
 
         return try await withCheckedThrowingContinuation { cont in
-            lock.lock()
-            pending[id] = cont
-            lock.unlock()
+            lock.withLock { pending[id] = cont }
 
             do {
                 try send(JSONRPC.requestData(id: id, method: method, params: params))
             } catch {
-                lock.lock()
-                let c = pending.removeValue(forKey: id)
-                lock.unlock()
+                let c = lock.withLock { pending.removeValue(forKey: id) }
                 c?.resume(throwing: error)
                 return
             }
@@ -181,15 +183,13 @@ final class MCPServer {
             // 超时兜底
             DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSecs) { [weak self] in
                 guard let self else { return }
-                self.lock.lock()
-                let c = self.pending.removeValue(forKey: id)
-                self.lock.unlock()
+                let c = self.lock.withLock { self.pending.removeValue(forKey: id) }
                 c?.resume(throwing: MCPError(message: "\(method) 超时（\(Int(timeoutSecs))s）"))
             }
         }
     }
 
-    private func send(_ data: Data) throws {
+    nonisolated private func send(_ data: Data) throws {
         guard let fh = stdinPipe?.fileHandleForWriting else {
             throw MCPError(message: "MCP 进程未运行")
         }
@@ -198,7 +198,7 @@ final class MCPServer {
 
     // MARK: - readLoop
 
-    private func handleData(_ data: Data) {
+    nonisolated private func handleData(_ data: Data) {
         buffer.append(data)
         while let idx = buffer.firstIndex(of: 0x0A) {
             let line = buffer.subdata(in: buffer.startIndex..<idx)
@@ -206,14 +206,12 @@ final class MCPServer {
             guard !line.isEmpty, let resp = JSONRPCResponse.parse(line), let id = resp.id else {
                 continue // 通知或无法解析的行，忽略
             }
-            lock.lock()
-            let c = pending.removeValue(forKey: id)
-            lock.unlock()
+            let c = lock.withLock { pending.removeValue(forKey: id) }
             c?.resume(returning: resp)
         }
     }
 
-    private func handleEOF() {
+    nonisolated private func handleEOF() {
         stdoutPipe?.fileHandleForReading.readabilityHandler = nil
         guard !stopping else { return }
         MCPLog.error("[MCP] \(config.name) stdout closed")
@@ -221,11 +219,12 @@ final class MCPServer {
         state = .error
     }
 
-    private func failAllPending(_ error: Error) {
-        lock.lock()
-        let conts = pending
-        pending.removeAll()
-        lock.unlock()
+    nonisolated private func failAllPending(_ error: Error) {
+        let conts = lock.withLock {
+            let r = pending
+            pending.removeAll()
+            return r
+        }
         for (_, c) in conts {
             c.resume(throwing: error)
         }

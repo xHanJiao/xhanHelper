@@ -131,13 +131,14 @@ struct ChartBubble: View {
     #if os(macOS)
     private func hoverOverlay(proxy: ChartProxy) -> some View {
         GeometryReader { geo in
-            let plotRect = geo[proxy.plotFrame]
+            if let frame = proxy.plotFrame {
+                let plotRect = geo[frame]
 
-            ZStack(alignment: .top) {
-                Rectangle()
-                    .fill(.clear)
-                    .contentShape(Rectangle())
-                    .onContinuousHover { phase in
+                ZStack(alignment: .top) {
+                    Rectangle()
+                        .fill(.clear)
+                        .contentShape(Rectangle())
+                        .onContinuousHover { phase in
                         switch phase {
                         case .active(let location):
                             guard plotRect.minX <= location.x, location.x <= plotRect.maxX else {
@@ -155,7 +156,10 @@ struct ChartBubble: View {
 
                 if let idx = hoveredIndex, idx < chartData.labels.count {
                     tooltipView(for: idx)
+                    }
                 }
+            } else {
+                Color.clear
             }
         }
     }

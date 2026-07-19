@@ -78,8 +78,11 @@ struct xhanHelperMacApp: App {
             .toast()
             .glassWindow()
             .task {
-                // 预热本地 MCP 工具缓存（拉一次 tools/list，供 client_tools 上报）
                 await MCPManager.shared.refreshToolCache()
+                for ns in await MCPManager.shared.configuredNamespaces() {
+                    let wrapper = MCPProviderWrapper(namespace: ns, manager: MCPManager.shared)
+                    await LocalToolRegistry.shared.register(wrapper)
+                }
             }
         }
         .windowResizability(.contentMinSize)

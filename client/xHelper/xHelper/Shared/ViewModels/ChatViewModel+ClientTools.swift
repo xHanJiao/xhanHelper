@@ -9,7 +9,7 @@ extension ChatViewModel {
     // 收集本地工具 schema，供 /api/chat 请求体 client_tools 字段
     static func collectClientTools() async -> [[String: Any]]? {
         #if os(macOS)
-        let tools = await MCPManager.shared.clientToolsPayload()
+        let tools = await LocalToolRegistry.shared.clientToolsPayload()
         return tools.isEmpty ? nil : tools
         #else
         return nil
@@ -27,17 +27,33 @@ extension ChatViewModel {
             LogBuffer.shared.error("clientToolCall: bad payload: \(data.prefix(200))")
             return
         }
-        let argsData = (try? JSONSerialization.data(withJSONObject: obj["arguments"] ?? [String: Any]())) ?? Data("{}".utf8)
-        let budgetBytes = (obj["result_budget_bytes"] as? NSNumber)?.intValue ?? MCPManager.fallbackResultBudgetBytes
-        let timeoutSecs = (obj["timeout_secs"] as? NSNumber)?.doubleValue ?? 60
-        let deadline = timeoutSecs * 0.9
+        let args = (obj["arguments"] as? [String: Any]) ?? [:]
+        let budgetBytes = (obj["result_budget_bytes"] as? NSNumber)?.intValue
+        let timeoutSecs = (obj["timeout_secs"] as? NSNumber)?.doubleValue
+        let deadline = (timeoutSecs != nil) ? (timeoutSecs! * 0.9) : nil
         let api = apiClient
 
         LogBuffer.shared.info("clientToolCall: \(toolName) call_id=\(callID)")
         Task {
             do {
-                let result = try await MCPManager.shared.callTool(flatName: toolName, argsJSON: argsData, budgetBytes: budgetBytes, deadlineSecs: deadline)
-                try await api.submitToolResult(callId: callID, resultJSON: result)
+                let context = ExecuteContext(budgetBytes: budgetBytes, deadlineSecs: deadline)
+                let result = try await LocalToolRegistry.shared.execute(
+                    flatName: toolName,
+                    arguments: args,
+                    context: context
+                )
+
+                if let action = result.clientAction {
+                    _ = await ClientActionRouter.shared.handle(action: action)
+                }
+
+                if let data = result.serverResult {
+                    try await api.submitToolResult(callId: callID, resultJSON: data)
+                } else if let error = result.serverError {
+                    try await api.submitToolResult(callId: callID, resultJSON: nil, error: error)
+                } else {
+                    try await api.submitToolResult(callId: callID, resultJSON: Data("{}".utf8))
+                }
                 LogBuffer.shared.info("clientToolCall: \(toolName) result submitted")
             } catch {
                 LogBuffer.shared.error("clientToolCall: \(toolName) failed: \(error.localizedDescription)")

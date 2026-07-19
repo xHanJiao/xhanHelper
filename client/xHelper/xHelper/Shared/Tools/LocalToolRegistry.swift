@@ -1,0 +1,58 @@
+import Foundation
+
+actor LocalToolRegistry {
+    static let shared = LocalToolRegistry()
+
+    private var providers: [String: any LocalToolProvider] = [:]
+
+    // MARK: 注册
+
+    func register(_ provider: any LocalToolProvider) {
+        providers[provider.namespace] = provider
+    }
+
+    // MARK: Schema 合并
+
+    func clientToolsPayload() async -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        for (namespace, provider) in providers {
+            for s in await provider.toolSchemas() {
+                var item: [String: Any] = [
+                    "server_name": namespace,
+                    "name": s.name,
+                    "description": s.description,
+                ]
+                if let params = s.inputSchema {
+                    item["parameters"] = params
+                }
+                out.append(item)
+            }
+        }
+        return out
+    }
+
+    // MARK: 执行路由
+
+    func execute(
+        flatName: String,
+        arguments: [String: Any],
+        context: ExecuteContext
+    ) async throws -> LocalToolResult {
+        guard let sep = flatName.range(of: "__") else {
+            throw LocalToolError.invalidName(flatName)
+        }
+        let namespace = String(flatName[..<sep.lowerBound])
+        let tool = String(flatName[sep.upperBound...])
+
+        guard let provider = providers[namespace] else {
+            throw LocalToolError.unknownNamespace(namespace)
+        }
+
+        return try await provider.execute(tool: tool, arguments: arguments, context: context)
+    }
+}
+
+enum LocalToolError: Error {
+    case invalidName(String)
+    case unknownNamespace(String)
+}

@@ -69,6 +69,29 @@ actor MCPManager {
         startIdleReaperIfNeeded()
     }
 
+    func configuredNamespaces() -> [String] {
+        config.servers.map { $0.name }
+    }
+
+    func toolSchemas(for serverName: String) -> [LocalToolSchema] {
+        guard let tools = toolCaches[serverName],
+              let sc = config.servers.first(where: { $0.name == serverName })
+        else { return [] }
+
+        return tools.compactMap { t in
+            if let allowlist = sc.toolAllowlist, !allowlist.contains(t.name) { return nil }
+            var schema = t.inputSchema ?? [:]
+            if !sc.schemaNoiseParams.isEmpty {
+                schema = slimSchema(schema, sc: sc)
+            }
+            return LocalToolSchema(
+                name: t.name,
+                description: t.description,
+                inputSchema: schema.isEmpty ? nil : schema
+            )
+        }
+    }
+
     // 供 /api/chat 请求体上报的 client_tools 数组（按各 server 的白名单过滤 + schema 瘦身）
     func clientToolsPayload() -> [[String: Any]] {
         var out: [[String: Any]] = []

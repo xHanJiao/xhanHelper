@@ -169,7 +169,9 @@ struct MessageListView: View {
                     .padding(.horizontal, Layout.chatHorizontalPadding)
             }
 
-            if msg.role == "user" {
+            if let cd = msg.chartData {
+                ChartBubble(chartData: cd)
+            } else if msg.role == "user" {
                 ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
                            showTime: activeTimeBubbleId == msg.id,
                            onTapToShowTime: { toggleTimeBubble(msg.id) })

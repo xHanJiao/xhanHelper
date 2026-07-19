@@ -49,11 +49,9 @@ struct ContentView: View {
                 ConversationListContentView(deviceManager: deviceManager, isInChat: $isInChat, chatViewModel: chatViewModel, loadError: conversationLoadError)
                     .navigationTitle("\(deviceManager.username ?? "xhan")Helper")
                     .toolbar {
-#if DEBUG
                         ToolbarItem(placement: .automatic) {
                             OpenSettingsButton()
                         }
-#endif
                     }
                     .toolbarBackground(.ultraThinMaterial, for: .windowToolbar)
 #endif

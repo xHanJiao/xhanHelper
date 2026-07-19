@@ -97,6 +97,10 @@ class ChatViewModel: ObservableObject {
         do {
             let result = try await apiClient.getMessagesCursor(conversationId: id)
             messages = result.messages.flatMap { $0.withoutToolCalls() }
+            let chartMsgs = await ChartStore.shared.load(for: id)
+            if !chartMsgs.isEmpty {
+                messages = (messages + chartMsgs).sorted { $0.createdAt < $1.createdAt }
+            }
             oldestCursor = result.oldestCursor
             newestCursor = result.newestCursor
             hasMoreBefore = result.hasMoreBefore
@@ -380,6 +384,10 @@ class ChatViewModel: ObservableObject {
         )
         msg.chartData = cd
         messages.append(msg)
+
+        Task {
+            await ChartStore.shared.save(chartData: cd, message: msg)
+        }
     }
 
     private func throttleFlush() {

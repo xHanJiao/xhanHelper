@@ -46,6 +46,13 @@ actor ChartStore {
         guard let data = try? JSONEncoder().encode(entries) else { return }
         try? data.write(to: fileURL(for: conversationID), options: .atomic)
     }
+
+    func clearAll() {
+        charts.removeAll()
+        let rootURL = baseURL.deletingLastPathComponent()
+        try? FileManager.default.removeItem(at: rootURL)
+        try? FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+    }
 }
 
 private extension ChartStore.ChartMessageEntry {

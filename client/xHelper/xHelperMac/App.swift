@@ -102,6 +102,7 @@ struct MacSettingsView: View {
     @ObservedObject var deviceManager: DeviceManager
     @EnvironmentObject var colorSchemeManager: ColorSchemeManager
     @AppStorage("xhan_server_url") private var serverURL = DeviceManager.defaultBaseURL
+    @State private var showClearCacheAlert = false
 
     private var apiClient: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
@@ -142,6 +143,24 @@ struct MacSettingsView: View {
             Section("浏览") {
                 BrowseRow("账单记录", icon: "list.bullet.rectangle", destination: BillListView(apiClient: apiClient))
                 BrowseRow("诊断日志", icon: "exclamationmark.bubble", destination: LogDiagnosticView())
+            }
+
+            Section("缓存") {
+                Button {
+                    showClearCacheAlert = true
+                } label: {
+                    Label("清除本地缓存", systemImage: "trash")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+            }
+            .alert("确认清除", isPresented: $showClearCacheAlert) {
+                Button("取消", role: .cancel) {}
+                Button("清除", role: .destructive) {
+                    Task { await ChartStore.shared.clearAll() }
+                }
+            } message: {
+                Text("将清除所有本地缓存数据（图表等），下次打开会话时需重新生成。")
             }
 
             Section {

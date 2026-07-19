@@ -97,10 +97,8 @@ class ChatViewModel: ObservableObject {
         do {
             let result = try await apiClient.getMessagesCursor(conversationId: id)
             messages = result.messages.flatMap { $0.withoutToolCalls() }
-            let chartMsgs = await ChartStore.shared.load(for: id)
-            if !chartMsgs.isEmpty {
-                messages = (messages + chartMsgs).sorted { $0.createdAt < $1.createdAt }
-            }
+            let entries = await ChartStore.shared.entries(for: id)
+            mergePendingCharts(entries)
             oldestCursor = result.oldestCursor
             newestCursor = result.newestCursor
             hasMoreBefore = result.hasMoreBefore
@@ -129,6 +127,10 @@ class ChatViewModel: ObservableObject {
                 let stillHasMore = result.hasMoreBefore
                 DispatchQueue.main.async {
                     self.hasMoreBefore = stillHasMore
+                }
+                Task {
+                    let entries = await ChartStore.shared.entries(for: conversationId ?? "")
+                    await MainActor.run { mergePendingCharts(entries) }
                 }
             } else {
                 messages = messages + result.messages.flatMap { $0.withoutToolCalls() }
@@ -374,6 +376,10 @@ class ChatViewModel: ObservableObject {
     }
 
     func insertChartMessage(_ cd: ChartData) {
+        let prevId = messages.last(where: {
+            $0.id != "__streaming__" && !$0.id.hasPrefix("chart_")
+        })?.id
+
         var msg = Message(
             id: "chart_\(UUID().uuidString)",
             conversationId: conversationId ?? "",
@@ -386,7 +392,21 @@ class ChatViewModel: ObservableObject {
         messages.append(msg)
 
         Task {
-            await ChartStore.shared.save(chartData: cd, message: msg)
+            await ChartStore.shared.save(chartData: cd, message: msg, afterMessageID: prevId)
+        }
+    }
+
+    private func mergePendingCharts(_ entries: [ChartStore.ChartMessageEntry]) {
+        let insertedIds = Set(messages.lazy.filter { $0.role == "chart" }.map { $0.id })
+        let messageIds = Set(messages.map { $0.id })
+
+        for entry in entries {
+            guard !insertedIds.contains(entry.id) else { continue }
+            guard let afterId = entry.afterMessageID,
+                  messageIds.contains(afterId),
+                  let idx = messages.firstIndex(where: { $0.id == afterId }) else { continue }
+
+            messages.insert(entry.asMessage(conversationID: conversationId ?? ""), at: idx + 1)
         }
     }
 

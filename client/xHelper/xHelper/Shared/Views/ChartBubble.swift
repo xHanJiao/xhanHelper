@@ -49,7 +49,7 @@ struct ChartBubble: View {
                     }
                 }
             } else if chartData.type == .line {
-                for ds in chartData.datasets {
+                ForEach(chartData.datasets, id: \.label) { ds in
                     ForEach(Array(zip(Array(chartData.labels.enumerated()), ds.data)), id: \.0.offset) { idx, value in
                         LineMark(
                             x: .value("X", idx.element),
@@ -59,7 +59,7 @@ struct ChartBubble: View {
                     .foregroundStyle(by: .value("系列", ds.label))
                 }
             } else {
-                for ds in chartData.datasets {
+                ForEach(chartData.datasets, id: \.label) { ds in
                     ForEach(Array(zip(Array(chartData.labels.enumerated()), ds.data)), id: \.0.offset) { idx, value in
                         BarMark(
                             x: .value("X", idx.element),

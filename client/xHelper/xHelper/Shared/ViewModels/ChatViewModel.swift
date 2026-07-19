@@ -357,8 +357,9 @@ class ChatViewModel: ObservableObject {
     }
 
     private func updateLastAssistantMessage(_ content: String) {
-        guard let last = messages.last, last.id == "__streaming__" else { return }
-        let newMsg = Message(
+        guard let idx = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
+        let last = messages[idx]
+        messages[idx] = Message(
             id: "__streaming__",
             conversationId: last.conversationId,
             role: "assistant",
@@ -366,7 +367,6 @@ class ChatViewModel: ObservableObject {
             toolCallsJSON: nil,
             createdAt: last.createdAt
         )
-        messages[messages.count - 1] = newMsg
     }
 
     func insertChartMessage(_ cd: ChartData) {
@@ -393,7 +393,8 @@ class ChatViewModel: ObservableObject {
     }
 
     private func applyStreamingContent() {
-        guard messages.last?.content != streamingContent else { return }
+        let lastContent = messages.last(where: { $0.id == "__streaming__" })?.content
+        guard lastContent != streamingContent else { return }
         updateLastAssistantMessage(streamingContent)
     }
 

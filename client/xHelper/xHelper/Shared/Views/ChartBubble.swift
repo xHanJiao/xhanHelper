@@ -60,11 +60,24 @@ struct ChartBubble: View {
         Chart {
             if chartData.type == .pie {
                 if let ds = chartData.datasets.first {
+                    let total = ds.data.reduce(0, +)
                     ForEach(Array(zip(chartData.labels, ds.data)), id: \.0) { label, value in
                         SectorMark(
                             angle: .value("值", value)
                         )
                         .foregroundStyle(by: .value("分类", label))
+                        .annotation(position: .overlay, alignment: .center) {
+                            let pct = total > 0 ? Int(value / total * 100) : 0
+                            if pct >= 5 {
+                                VStack(spacing: 0) {
+                                    Text(label)
+                                        .font(.caption2)
+                                    Text("\(pct)%")
+                                        .font(.caption2.weight(.bold))
+                                }
+                                .foregroundColor(.white)
+                            }
+                        }
                     }
                 }
             } else if chartData.type == .line {

@@ -10,6 +10,19 @@ actor ChartStore {
         let id: String
         let createdAt: String
         let chartData: ChartData
+
+        func asMessage(conversationID: String) -> Message {
+            var msg = Message(
+                id: id,
+                conversationId: conversationID,
+                role: "chart",
+                content: "",
+                toolCallsJSON: nil,
+                createdAt: createdAt
+            )
+            msg.chartData = chartData
+            return msg
+        }
     }
 
     private init() {
@@ -55,17 +68,3 @@ actor ChartStore {
     }
 }
 
-private extension ChartStore.ChartMessageEntry {
-    func asMessage(conversationID: String) -> Message {
-        var msg = Message(
-            id: id,
-            conversationId: conversationID,
-            role: "chart",
-            content: "",
-            toolCallsJSON: nil,
-            createdAt: createdAt
-        )
-        msg.chartData = chartData
-        return msg
-    }
-}

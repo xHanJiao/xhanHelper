@@ -44,7 +44,7 @@ extension ChatViewModel {
                 )
 
                 if let action = result.clientAction {
-                    _ = await ClientActionRouter.shared.handle(action: action)
+                    handleClientAction(action)
                 }
 
                 if let data = result.serverResult {
@@ -67,5 +67,18 @@ extension ChatViewModel {
         #else
         LogBuffer.shared.warning("clientToolCall ignored on iOS")
         #endif
+    }
+
+    private func handleClientAction(_ action: ClientAction) {
+        switch action.type {
+        case "chart":
+            guard let cd = try? JSONDecoder().decode(ChartData.self, from: action.payload) else {
+                LogBuffer.shared.error("clientAction chart: decode failed")
+                return
+            }
+            insertChartMessage(cd)
+        default:
+            LogBuffer.shared.warning("clientAction: unknown type \(action.type)")
+        }
     }
 }

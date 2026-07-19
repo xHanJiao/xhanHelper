@@ -38,10 +38,4 @@ protocol LocalToolProvider: AnyObject {
     func execute(tool: String, arguments: [String: Any], context: ExecuteContext) async throws -> LocalToolResult
 }
 
-// MARK: - ClientActionHandler
 
-protocol ClientActionHandler: AnyObject {
-    var actionType: String { get }
-    func handle(action: ClientAction) async -> Bool
-    func stop() async
-}

@@ -11,6 +11,8 @@ struct Message: Identifiable, Codable {
     let toolCallId: String? = nil
     let createdAt: String
 
+    var chartData: ChartData? = nil
+
     enum CodingKeys: String, CodingKey {
         case id
         case conversationId = "conversation_id"

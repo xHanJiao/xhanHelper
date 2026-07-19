@@ -83,6 +83,7 @@ struct xhanHelperMacApp: App {
                     let wrapper = MCPProviderWrapper(namespace: ns, manager: MCPManager.shared)
                     await LocalToolRegistry.shared.register(wrapper)
                 }
+                await LocalToolRegistry.shared.register(ChartTool())
             }
         }
         .windowResizability(.contentMinSize)

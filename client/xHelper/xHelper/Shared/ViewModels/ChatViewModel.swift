@@ -369,6 +369,19 @@ class ChatViewModel: ObservableObject {
         messages[messages.count - 1] = newMsg
     }
 
+    func insertChartMessage(_ cd: ChartData) {
+        var msg = Message(
+            id: "chart_\(UUID().uuidString)",
+            conversationId: conversationId ?? "",
+            role: "chart",
+            content: "",
+            toolCallsJSON: nil,
+            createdAt: ISO8601DateFormatter().string(from: Date())
+        )
+        msg.chartData = cd
+        messages.append(msg)
+    }
+
     private func throttleFlush() {
         guard throttleTimer == nil else { return }
         throttleTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in

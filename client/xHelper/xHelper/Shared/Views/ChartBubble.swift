@@ -39,35 +39,34 @@ struct ChartBubble: View {
     @ViewBuilder
     private func chartContent(frameWidth: CGFloat) -> some View {
         Chart {
-            switch chartData.type {
-            case .line, .bar:
-                for ds in chartData.datasets {
-                    let pairs = Array(zip(Array(chartData.labels.enumerated()), ds.data))
-                    ForEach(pairs, id: \.0.offset) { idx, value in
-                        if chartData.type == .line {
-                            LineMark(
-                                x: .value("X", idx.element),
-                                y: .value("Y", value)
-                            )
-                        } else {
-                            BarMark(
-                                x: .value("X", idx.element),
-                                y: .value("Y", value)
-                            )
-                        }
-                    }
-                    .foregroundStyle(by: .value("系列", ds.label))
-                }
-
-            case .pie:
+            if chartData.type == .pie {
                 if let ds = chartData.datasets.first {
-                    let pairs = Array(zip(chartData.labels, ds.data))
-                    ForEach(pairs, id: \.0) { label, value in
+                    ForEach(Array(zip(chartData.labels, ds.data)), id: \.0) { label, value in
                         SectorMark(
                             angle: .value("值", value)
                         )
                         .foregroundStyle(by: .value("分类", label))
                     }
+                }
+            } else if chartData.type == .line {
+                for ds in chartData.datasets {
+                    ForEach(Array(zip(Array(chartData.labels.enumerated()), ds.data)), id: \.0.offset) { idx, value in
+                        LineMark(
+                            x: .value("X", idx.element),
+                            y: .value("Y", value)
+                        )
+                    }
+                    .foregroundStyle(by: .value("系列", ds.label))
+                }
+            } else {
+                for ds in chartData.datasets {
+                    ForEach(Array(zip(Array(chartData.labels.enumerated()), ds.data)), id: \.0.offset) { idx, value in
+                        BarMark(
+                            x: .value("X", idx.element),
+                            y: .value("Y", value)
+                        )
+                    }
+                    .foregroundStyle(by: .value("系列", ds.label))
                 }
             }
         }

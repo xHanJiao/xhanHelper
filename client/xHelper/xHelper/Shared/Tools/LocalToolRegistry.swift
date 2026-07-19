@@ -16,19 +16,24 @@ actor LocalToolRegistry {
     func clientToolsPayload() async -> [[String: Any]] {
         var out: [[String: Any]] = []
         for (namespace, provider) in providers {
-            for s in await provider.toolSchemas() {
-                var item: [String: Any] = [
-                    "server_name": namespace,
-                    "name": s.name,
-                    "description": s.description,
-                ]
-                if let params = s.inputSchema {
-                    item["parameters"] = params
-                }
-                out.append(item)
+            let schemas = await provider.toolSchemas()
+            for s in schemas {
+                out.append(Self.buildPayloadItem(namespace: namespace, schema: s))
             }
         }
         return out
+    }
+
+    nonisolated private static func buildPayloadItem(namespace: String, schema: LocalToolSchema) -> [String: Any] {
+        var item: [String: Any] = [
+            "server_name": namespace,
+            "name": schema.name,
+            "description": schema.description,
+        ]
+        if let params = schema.inputSchema {
+            item["parameters"] = params
+        }
+        return item
     }
 
     // MARK: 执行路由

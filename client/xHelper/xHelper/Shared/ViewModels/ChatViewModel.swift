@@ -357,7 +357,7 @@ class ChatViewModel: ObservableObject {
     }
 
     private func updateLastAssistantMessage(_ content: String) {
-        guard var last = messages.last, last.id == "__streaming__" else { return }
+        guard let last = messages.last, last.id == "__streaming__" else { return }
         let newMsg = Message(
             id: "__streaming__",
             conversationId: last.conversationId,

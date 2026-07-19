@@ -131,7 +131,7 @@ struct ChartBubble: View {
     #if os(macOS)
     private func hoverOverlay(proxy: ChartProxy) -> some View {
         GeometryReader { geo in
-            let plotRect = geo[proxy.plotAreaFrame]
+            let plotRect = geo[proxy.plotFrame]
 
             ZStack(alignment: .top) {
                 Rectangle()

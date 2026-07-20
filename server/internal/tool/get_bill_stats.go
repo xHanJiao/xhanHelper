@@ -42,8 +42,10 @@ func (t *GetBillStatsTool) Execute(ec *ExecuteContext, funcName string, args jso
 	now := time.Now().In(config.BJ)
 	since := now.AddDate(0, -3, 0) // 近 90 天
 
-	bills, _, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID,
-		since.Format("2006-01-02"), now.Format("2006-01-02"), "", "", "", 200, 0)
+	bills, _, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID, service.BillFilter{
+		StartDate: since.Format("2006-01-02"),
+		EndDate:   now.Format("2006-01-02"),
+	}, 200, 0)
 	if err != nil {
 		log.Printf("[get_bill_stats] ListFiltered error: %v", err)
 		return &Result{Success: false, Error: fmt.Sprintf("查询账单失败: %v", err)}

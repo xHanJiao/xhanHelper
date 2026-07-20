@@ -44,7 +44,7 @@ func TestListFilteredCategory2(t *testing.T) {
 	defer cleanup()
 	seedTestBills(t, repo, "u1")
 
-	bills, total, err := repo.ListFiltered(context.Background(), "u1", "", "", "", "啤酒", "", 50, 0)
+	bills, total, err := repo.ListFiltered(context.Background(), "u1", BillFilter{Category2: "啤酒"}, 50, 0)
 	if err != nil {
 		t.Fatalf("ListFiltered failed: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestListFilteredKeyword(t *testing.T) {
 	defer cleanup()
 	seedTestBills(t, repo, "u1")
 
-	bills, total, err := repo.ListFiltered(context.Background(), "u1", "", "", "", "", "啤酒", 50, 0)
+	bills, total, err := repo.ListFiltered(context.Background(), "u1", BillFilter{Keyword: "啤酒"}, 50, 0)
 	if err != nil {
 		t.Fatalf("ListFiltered failed: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestListFilteredKeywordRemark(t *testing.T) {
 	defer cleanup()
 	seedTestBills(t, repo, "u1")
 
-	bills, total, err := repo.ListFiltered(context.Background(), "u1", "", "", "", "", "朋友", 50, 0)
+	bills, total, err := repo.ListFiltered(context.Background(), "u1", BillFilter{Keyword: "朋友"}, 50, 0)
 	if err != nil {
 		t.Fatalf("ListFiltered failed: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestListFilteredDateRange(t *testing.T) {
 	defer cleanup()
 	seedTestBills(t, repo, "u1")
 
-	_, total, err := repo.ListFiltered(context.Background(), "u1", "2026-05-01", "2026-05-31", "", "", "", 50, 0)
+	_, total, err := repo.ListFiltered(context.Background(), "u1", BillFilter{StartDate: "2026-05-01", EndDate: "2026-05-31"}, 50, 0)
 	if err != nil {
 		t.Fatalf("ListFiltered failed: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestListFilteredExcludesCancelled(t *testing.T) {
 	defer cleanup()
 	seedTestBills(t, repo, "u1")
 
-	_, total, _ := repo.ListFiltered(context.Background(), "u1", "", "", "", "", "", 50, 0)
+	_, total, _ := repo.ListFiltered(context.Background(), "u1", BillFilter{}, 50, 0)
 	// 5 normal bills (b6 is cancelled)
 	if total != 5 {
 		t.Errorf("expected 5 normal bills, got %d", total)
@@ -164,7 +164,7 @@ func TestCategoryStats(t *testing.T) {
 	defer cleanup()
 	seedTestBills(t, repo, "u1")
 
-	rows, err := repo.CategoryStats(context.Background(), "u1", "", "")
+	rows, err := repo.CategoryStats(context.Background(), "u1", "", "", "")
 	if err != nil {
 		t.Fatalf("CategoryStats failed: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestCategoryStatsDateRange(t *testing.T) {
 	seedTestBills(t, repo, "u1")
 
 	// Only May
-	rows, err := repo.CategoryStats(context.Background(), "u1", "2026-05-01", "2026-05-31")
+	rows, err := repo.CategoryStats(context.Background(), "u1", "2026-05-01", "2026-05-31", "")
 	if err != nil {
 		t.Fatalf("CategoryStats failed: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestMonthlyStats(t *testing.T) {
 	defer cleanup()
 	seedTestBills(t, repo, "u1")
 
-	rows, err := repo.MonthlyStats(context.Background(), "u1", "2026-01-01", "2026-12-31", "", "")
+	rows, err := repo.MonthlyStats(context.Background(), "u1", "2026-01-01", "2026-12-31", "", "", "")
 	if err != nil {
 		t.Fatalf("MonthlyStats failed: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestMonthlyStatsCategoryFilter(t *testing.T) {
 	defer cleanup()
 	seedTestBills(t, repo, "u1")
 
-	rows, err := repo.MonthlyStats(context.Background(), "u1", "2026-01-01", "2026-12-31", "交通", "")
+	rows, err := repo.MonthlyStats(context.Background(), "u1", "2026-01-01", "2026-12-31", "交通", "", "")
 	if err != nil {
 		t.Fatalf("MonthlyStats failed: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestMonthlyStatsCategory2Filter(t *testing.T) {
 	defer cleanup()
 	seedTestBills(t, repo, "u1")
 
-	rows, err := repo.MonthlyStats(context.Background(), "u1", "2026-01-01", "2026-12-31", "", "啤酒")
+	rows, err := repo.MonthlyStats(context.Background(), "u1", "2026-01-01", "2026-12-31", "", "啤酒", "")
 	if err != nil {
 		t.Fatalf("MonthlyStats failed: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestMonthlyStatsEmptyYear(t *testing.T) {
 	defer cleanup()
 	seedTestBills(t, repo, "u1")
 
-	rows, err := repo.MonthlyStats(context.Background(), "u1", "2025-01-01", "2025-12-31", "", "")
+	rows, err := repo.MonthlyStats(context.Background(), "u1", "2025-01-01", "2025-12-31", "", "", "")
 	if err != nil {
 		t.Fatalf("MonthlyStats failed: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestCategoryStatsExcludesCancelled(t *testing.T) {
 	defer cleanup()
 	seedTestBills(t, repo, "u1")
 
-	rows, err := repo.CategoryStats(context.Background(), "u1", "", "")
+	rows, err := repo.CategoryStats(context.Background(), "u1", "", "", "")
 	if err != nil {
 		t.Fatalf("CategoryStats failed: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestMonthlyStatsExcludesCancelled(t *testing.T) {
 	defer cleanup()
 	seedTestBills(t, repo, "u1")
 
-	rows, err := repo.MonthlyStats(context.Background(), "u1", "2026-01-01", "2026-12-31", "", "")
+	rows, err := repo.MonthlyStats(context.Background(), "u1", "2026-01-01", "2026-12-31", "", "", "")
 	if err != nil {
 		t.Fatalf("MonthlyStats failed: %v", err)
 	}
@@ -348,5 +348,181 @@ func TestGetBillExcludesCancelled(t *testing.T) {
 	_, err := repo.GetBill(context.Background(), "u1", "b6")
 	if err == nil {
 		t.Error("cancelled bill b6 should not be retrievable")
+	}
+}
+
+func TestBatchUpdateOwner(t *testing.T) {
+	repo, cleanup := setupBillRepo(t)
+	defer cleanup()
+	seedTestBills(t, repo, "u1")
+
+	affected, err := repo.BatchUpdate(context.Background(), "u1",
+		BillFilter{Category2: "啤酒"},
+		BatchUpdateFields{Owner: "小王"},
+	)
+	if err != nil {
+		t.Fatalf("BatchUpdate failed: %v", err)
+	}
+	if affected != 2 {
+		t.Errorf("expected 2 affected, got %d", affected)
+	}
+
+	b, _ := repo.GetBill(context.Background(), "u1", "b1")
+	if b.Owner != "小王" {
+		t.Errorf("expected b1 owner=小王, got %s", b.Owner)
+	}
+
+	b, _ = repo.GetBill(context.Background(), "u1", "b4")
+	if b.Owner != "小王" {
+		t.Errorf("expected b4 owner=小王, got %s", b.Owner)
+	}
+
+	// b2 should be unaffected (not 啤酒)
+	b, _ = repo.GetBill(context.Background(), "u1", "b2")
+	if b.Owner != "" {
+		t.Errorf("expected b2 owner unchanged, got %s", b.Owner)
+	}
+}
+
+func TestBatchUpdateMultipleFields(t *testing.T) {
+	repo, cleanup := setupBillRepo(t)
+	defer cleanup()
+	seedTestBills(t, repo, "u1")
+
+	affected, err := repo.BatchUpdate(context.Background(), "u1",
+		BillFilter{Category1: "餐饮"},
+		BatchUpdateFields{Owner: "小李", Category2: "堂食"},
+	)
+	if err != nil {
+		t.Fatalf("BatchUpdate failed: %v", err)
+	}
+	if affected != 4 {
+		t.Errorf("expected 4 affected, got %d", affected)
+	}
+
+	for _, id := range []string{"b1", "b2", "b4", "b5"} {
+		b, _ := repo.GetBill(context.Background(), "u1", id)
+		if b.Owner != "小李" {
+			t.Errorf("expected %s owner=小李, got %s", id, b.Owner)
+		}
+		if b.Category2 != "堂食" {
+			t.Errorf("expected %s category2=堂食, got %s", id, b.Category2)
+		}
+	}
+}
+
+func TestBatchUpdateNoFields(t *testing.T) {
+	repo, cleanup := setupBillRepo(t)
+	defer cleanup()
+	seedTestBills(t, repo, "u1")
+
+	_, err := repo.BatchUpdate(context.Background(), "u1",
+		BillFilter{Category1: "餐饮"},
+		BatchUpdateFields{},
+	)
+	if err == nil {
+		t.Error("expected error for no fields to update")
+	}
+}
+
+func TestBatchUpdateUserIsolation(t *testing.T) {
+	repo, cleanup := setupBillRepo(t)
+	defer cleanup()
+	seedTestBills(t, repo, "u1")
+
+	affected, err := repo.BatchUpdate(context.Background(), "u2",
+		BillFilter{},
+		BatchUpdateFields{Owner: "hacker"},
+	)
+	if err != nil {
+		t.Fatalf("BatchUpdate failed: %v", err)
+	}
+	if affected != 0 {
+		t.Errorf("expected 0 affected for u2, got %d", affected)
+	}
+
+	// u1's bills should be unchanged
+	b, _ := repo.GetBill(context.Background(), "u1", "b1")
+	if b.Owner != "" {
+		t.Errorf("u1 bills should be unchanged, got owner=%s", b.Owner)
+	}
+}
+
+func TestBatchUpdateStartDate(t *testing.T) {
+	repo, cleanup := setupBillRepo(t)
+	defer cleanup()
+	seedTestBills(t, repo, "u1")
+
+	affected, err := repo.BatchUpdate(context.Background(), "u1",
+		BillFilter{StartDate: "2026-06-01"},
+		BatchUpdateFields{Remark: "6月之后"},
+	)
+	if err != nil {
+		t.Fatalf("BatchUpdate failed: %v", err)
+	}
+	if affected != 3 {
+		t.Errorf("expected 3 affected (June+ = b3,b4,b5), got %d", affected)
+	}
+}
+
+func TestListFilteredOwnerEmpty(t *testing.T) {
+	repo, cleanup := setupBillRepo(t)
+	defer cleanup()
+
+	// add bills with empty owner
+	emptyBills := []model.Bill{
+		{ID: "b7", UserID: "u1", Item: "测试", Amount: 10, Category1: "餐饮", Category2: "外卖", Date: "2026-07-01", Owner: "", Status: model.BillStatusNormal},
+		{ID: "b8", UserID: "u1", Item: "测试2", Amount: 20, Category1: "交通", Category2: "地铁", Date: "2026-07-02", Owner: "", Status: model.BillStatusNormal},
+	}
+	for _, b := range emptyBills {
+		repo.Create(context.Background(), &b)
+	}
+
+	// query with OwnerEmpty
+	bills, total, err := repo.ListFiltered(context.Background(), "u1", BillFilter{OwnerEmpty: true}, 50, 0)
+	if err != nil {
+		t.Fatalf("ListFiltered failed: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("expected 2 empty-owner bills, got %d", total)
+	}
+	for _, b := range bills {
+		if b.Owner != "" {
+			t.Errorf("expected empty owner, got %s for %s", b.Owner, b.ID)
+		}
+	}
+
+	// query with specific owner should only match non-empty
+	bills, total, _ = repo.ListFiltered(context.Background(), "u1", BillFilter{Owner: "test"}, 50, 0)
+	if total != 0 {
+		t.Errorf("expected 0 bills with owner=test, got %d", total)
+	}
+}
+
+func TestBatchUpdateOwnerEmpty(t *testing.T) {
+	repo, cleanup := setupBillRepo(t)
+	defer cleanup()
+
+	emptyBills := []model.Bill{
+		{ID: "b7", UserID: "u1", Item: "测试", Amount: 10, Category1: "餐饮", Category2: "外卖", Date: "2026-07-01", Owner: "", Status: model.BillStatusNormal},
+	}
+	for _, b := range emptyBills {
+		repo.Create(context.Background(), &b)
+	}
+
+	affected, err := repo.BatchUpdate(context.Background(), "u1",
+		BillFilter{OwnerEmpty: true},
+		BatchUpdateFields{Owner: "补全"},
+	)
+	if err != nil {
+		t.Fatalf("BatchUpdate failed: %v", err)
+	}
+	if affected != 1 {
+		t.Errorf("expected 1 affected, got %d", affected)
+	}
+
+	b, _ := repo.GetBill(context.Background(), "u1", "b7")
+	if b.Owner != "补全" {
+		t.Errorf("expected owner=补全 after batch update, got %s", b.Owner)
 	}
 }

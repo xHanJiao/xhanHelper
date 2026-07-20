@@ -9,6 +9,42 @@ import (
 	"xhan-helper/internal/model"
 )
 
+// BillFilter — 账单筛选条件
+type BillFilter struct {
+	StartDate   string
+	EndDate     string
+	Category1   string
+	Category2   string
+	Keyword     string
+	Owner       string
+	OwnerEmpty  bool
+	AmountMin   float64
+	AmountMax   float64
+	ConsumeType string
+	PayType     string
+	SortBy      string // "amount" | "date"，空则默认 date
+	SortOrder   string // "asc" | "desc"，空则默认 desc
+}
+
+func (f BillFilter) orderClause() string {
+	field := "date"
+	if f.SortBy == "amount" {
+		field = "amount"
+	}
+	dir := "DESC"
+	if f.SortOrder == "asc" {
+		dir = "ASC"
+	}
+	return fmt.Sprintf("%s %s, created_at DESC", field, dir)
+}
+
+// CategoryOptionsResult — 分类选项返回
+type CategoryOptionsResult struct {
+	Mapping       map[string][]string `json:"mapping"`
+	Category1List []string            `json:"category1_list"`
+	Category2List []string            `json:"category2_list"`
+}
+
 // CatStatRow — 分类统计查询结果行
 type CatStatRow struct {
 	Category1 string
@@ -82,8 +118,45 @@ func (r *BillRepo) ListByUser(ctx context.Context, userID string, limit, offset 
 	return list, err
 }
 
+// applyFilter 将 BillFilter 条件应用到 query
+func applyFilter(q *gorm.DB, f BillFilter) *gorm.DB {
+	if f.StartDate != "" {
+		q = q.Where("date >= ?", f.StartDate)
+	}
+	if f.EndDate != "" {
+		q = q.Where("date <= ?", f.EndDate)
+	}
+	if f.Category1 != "" {
+		q = q.Where("category1 = ?", f.Category1)
+	}
+	if f.Category2 != "" {
+		q = q.Where("category2 = ?", f.Category2)
+	}
+	if f.Keyword != "" {
+		q = q.Where("(item LIKE ? OR remark LIKE ?)", "%"+f.Keyword+"%", "%"+f.Keyword+"%")
+	}
+	if f.OwnerEmpty {
+		q = q.Where("owner = ?", "")
+	} else if f.Owner != "" {
+		q = q.Where("owner = ?", f.Owner)
+	}
+	if f.AmountMin > 0 {
+		q = q.Where("amount >= ?", f.AmountMin)
+	}
+	if f.AmountMax > 0 {
+		q = q.Where("amount <= ?", f.AmountMax)
+	}
+	if f.ConsumeType != "" {
+		q = q.Where("consume_type = ?", f.ConsumeType)
+	}
+	if f.PayType != "" {
+		q = q.Where("pay_type = ?", f.PayType)
+	}
+	return q
+}
+
 // ListFiltered 按条件筛选账单
-func (r *BillRepo) ListFiltered(ctx context.Context, userID, startDate, endDate, category, category2, keyword string, limit, offset int) ([]model.Bill, int64, error) {
+func (r *BillRepo) ListFiltered(ctx context.Context, userID string, f BillFilter, limit, offset int) ([]model.Bill, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -91,51 +164,20 @@ func (r *BillRepo) ListFiltered(ctx context.Context, userID, startDate, endDate,
 		return r.db.WithContext(ctx).
 			Where("user_id = ? AND status = ?", userID, model.BillStatusNormal)
 	}
-	q := base()
-	if startDate != "" {
-		q = q.Where("date >= ?", startDate)
-	}
-	if endDate != "" {
-		q = q.Where("date <= ?", endDate)
-	}
-	if category != "" {
-		q = q.Where("category1 = ?", category)
-	}
-	if category2 != "" {
-		q = q.Where("category2 = ?", category2)
-	}
-	if keyword != "" {
-		q = q.Where("(item LIKE ? OR remark LIKE ?)", "%"+keyword+"%", "%"+keyword+"%")
-	}
 
 	var total int64
-	countQ := base()
-	if startDate != "" {
-		countQ = countQ.Where("date >= ?", startDate)
-	}
-	if endDate != "" {
-		countQ = countQ.Where("date <= ?", endDate)
-	}
-	if category != "" {
-		countQ = countQ.Where("category1 = ?", category)
-	}
-	if category2 != "" {
-		countQ = countQ.Where("category2 = ?", category2)
-	}
-	if keyword != "" {
-		countQ = countQ.Where("(item LIKE ? OR remark LIKE ?)", "%"+keyword+"%", "%"+keyword+"%")
-	}
-	if err := countQ.Model(&model.Bill{}).Count(&total).Error; err != nil {
+	if err := applyFilter(base(), f).Model(&model.Bill{}).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
 	var list []model.Bill
-	err := q.Order("date DESC, created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
+	err := applyFilter(base(), f).Order(f.orderClause()).
+		Limit(limit).Offset(offset).Find(&list).Error
 	return list, total, err
 }
 
 // CategoryStats 按一级分类汇总金额和数量（MySQL/SQLite GROUP BY）
-func (r *BillRepo) CategoryStats(ctx context.Context, userID, startDate, endDate string) ([]CatStatRow, error) {
+func (r *BillRepo) CategoryStats(ctx context.Context, userID, startDate, endDate, owner string) ([]CatStatRow, error) {
 	q := r.db.WithContext(ctx).Model(&model.Bill{}).
 		Select("category1, SUM(amount) as amount, COUNT(*) as count").
 		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal)
@@ -145,6 +187,9 @@ func (r *BillRepo) CategoryStats(ctx context.Context, userID, startDate, endDate
 	if endDate != "" {
 		q = q.Where("date <= ?", endDate)
 	}
+	if owner != "" {
+		q = q.Where("owner = ?", owner)
+	}
 
 	var rows []CatStatRow
 	err := q.Group("category1").Order("amount DESC").Find(&rows).Error
@@ -152,7 +197,7 @@ func (r *BillRepo) CategoryStats(ctx context.Context, userID, startDate, endDate
 }
 
 // MonthlyStats 按月汇总金额和数量（MySQL/SQLite GROUP BY）
-func (r *BillRepo) MonthlyStats(ctx context.Context, userID, startDate, endDate, category, category2 string) ([]MonthlyStatRow, error) {
+func (r *BillRepo) MonthlyStats(ctx context.Context, userID, startDate, endDate, category, category2, owner string) ([]MonthlyStatRow, error) {
 	q := r.db.WithContext(ctx).Model(&model.Bill{}).
 		Select("SUBSTR(date, 1, 7) as month, SUM(amount) as amount, COUNT(*) as count").
 		Where("user_id = ? AND status = ? AND date >= ? AND date <= ?",
@@ -162,6 +207,9 @@ func (r *BillRepo) MonthlyStats(ctx context.Context, userID, startDate, endDate,
 	}
 	if category2 != "" {
 		q = q.Where("category2 = ?", category2)
+	}
+	if owner != "" {
+		q = q.Where("owner = ?", owner)
 	}
 
 	var rows []MonthlyStatRow
@@ -181,8 +229,8 @@ func (r *BillRepo) GetBill(ctx context.Context, userID, id string) (*model.Bill,
 	return &b, err
 }
 
-// CategoryOptions 从实际账单数据中提取一级分类 → 二级分类列表的映射
-func (r *BillRepo) CategoryOptions(ctx context.Context, userID string) (map[string][]string, error) {
+// CategoryOptions 从实际账单数据中提取一级分类 → 二级分类列表的映射，以及各自去重列表
+func (r *BillRepo) CategoryOptions(ctx context.Context, userID string) (*CategoryOptionsResult, error) {
 	type row struct {
 		Category1 string
 		Category2 string
@@ -197,9 +245,74 @@ func (r *BillRepo) CategoryOptions(ctx context.Context, userID string) (map[stri
 		return nil, err
 	}
 
-	result := make(map[string][]string)
+	result := &CategoryOptionsResult{
+		Mapping: make(map[string][]string),
+	}
+	c1Set := make(map[string]struct{})
+	c2Set := make(map[string]struct{})
 	for _, r := range rows {
-		result[r.Category1] = append(result[r.Category1], r.Category2)
+		result.Mapping[r.Category1] = append(result.Mapping[r.Category1], r.Category2)
+		c1Set[r.Category1] = struct{}{}
+		c2Set[r.Category2] = struct{}{}
+	}
+	for k := range c1Set {
+		result.Category1List = append(result.Category1List, k)
+	}
+	for k := range c2Set {
+		result.Category2List = append(result.Category2List, k)
 	}
 	return result, nil
+}
+
+// DistinctOwners 获取当前用户所有账单的归属人列表（去重）
+func (r *BillRepo) DistinctOwners(ctx context.Context, userID string) ([]string, error) {
+	var owners []string
+	err := r.db.WithContext(ctx).Model(&model.Bill{}).
+		Select("DISTINCT owner").
+		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal).
+		Order("owner").
+		Pluck("owner", &owners).Error
+	return owners, err
+}
+
+// BatchUpdateFields — 批量更新时允许修改的字段
+type BatchUpdateFields struct {
+	Owner       string `json:"owner,omitempty"`
+	Category1   string `json:"category1,omitempty"`
+	Category2   string `json:"category2,omitempty"`
+	ConsumeType string `json:"consume_type,omitempty"`
+	PayType     string `json:"pay_type,omitempty"`
+	Remark      string `json:"remark,omitempty"`
+}
+
+// BatchUpdate 按筛选条件批量更新账单字段，最多更新 500 条，返回实际影响行数
+func (r *BillRepo) BatchUpdate(ctx context.Context, userID string, f BillFilter, fields BatchUpdateFields) (int64, error) {
+	base := r.db.WithContext(ctx).Model(&model.Bill{}).
+		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal)
+
+	updates := map[string]interface{}{}
+	if fields.Owner != "" {
+		updates["owner"] = fields.Owner
+	}
+	if fields.Category1 != "" {
+		updates["category1"] = fields.Category1
+	}
+	if fields.Category2 != "" {
+		updates["category2"] = fields.Category2
+	}
+	if fields.ConsumeType != "" {
+		updates["consume_type"] = fields.ConsumeType
+	}
+	if fields.PayType != "" {
+		updates["pay_type"] = fields.PayType
+	}
+	if fields.Remark != "" {
+		updates["remark"] = fields.Remark
+	}
+	if len(updates) == 0 {
+		return 0, fmt.Errorf("no fields to update")
+	}
+
+	result := applyFilter(base, f).Limit(500).Updates(updates)
+	return result.RowsAffected, result.Error
 }

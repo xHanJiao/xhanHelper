@@ -30,10 +30,10 @@ func setupBookkeepingTool(t *testing.T) (*BookkeepingTool, func()) {
 func seedBookkeepingBills(t *testing.T, tool *BookkeepingTool, userID string) {
 	t.Helper()
 	bills := []model.Bill{
-		{ID: "b1", UserID: userID, Item: "啤酒", Amount: 50, Category1: "餐饮", Category2: "啤酒", ConsumeType: "一次性", Date: "2026-05-01", PayType: "现金", Status: model.BillStatusNormal},
-		{ID: "b2", UserID: userID, Item: "咖啡", Amount: 30, Category1: "餐饮", Category2: "咖啡奶茶", ConsumeType: "一次性", Date: "2026-05-05", PayType: "现金", Status: model.BillStatusNormal},
+		{ID: "b1", UserID: userID, Item: "啤酒", Amount: 50, Category1: "餐饮", Category2: "啤酒", ConsumeType: "一次性", Date: "2026-05-01", PayType: "现金", Owner: "张三", Status: model.BillStatusNormal},
+		{ID: "b2", UserID: userID, Item: "咖啡", Amount: 30, Category1: "餐饮", Category2: "咖啡奶茶", ConsumeType: "一次性", Date: "2026-05-05", PayType: "现金", Owner: "张三", Status: model.BillStatusNormal},
 		{ID: "b3", UserID: userID, Item: "地铁", Amount: 10, Category1: "交通", Category2: "地铁", ConsumeType: "周期", Date: "2026-06-10", PayType: "现金", Status: model.BillStatusNormal},
-		{ID: "b4", UserID: userID, Item: "精酿啤酒", Amount: 80, Category1: "餐饮", Category2: "啤酒", ConsumeType: "一次性", Date: "2026-06-15", PayType: "现金", Remark: "朋友聚会AA", Status: model.BillStatusNormal},
+		{ID: "b4", UserID: userID, Item: "精酿啤酒", Amount: 80, Category1: "餐饮", Category2: "啤酒", ConsumeType: "一次性", Date: "2026-06-15", PayType: "现金", Owner: "张三", Remark: "朋友聚会AA", Status: model.BillStatusNormal},
 	}
 	for _, b := range bills {
 		if err := tool.billRepo.Create(context.Background(), &b); err != nil {
@@ -52,7 +52,7 @@ func TestCreateBillDateValidation(t *testing.T) {
 	// Valid date
 	res := tool.Execute(ec, "create_bill", mustMarshal(t, map[string]interface{}{
 		"item": "测试", "amount": 100, "category1": "餐饮", "category2": "啤酒",
-		"consume_type": "一次性", "date": "2026-05-28",
+		"consume_type": "一次性", "date": "2026-05-28", "owner": "张三",
 	}))
 	if !res.Success {
 		t.Errorf("valid date should succeed: %s", res.Error)
@@ -61,7 +61,7 @@ func TestCreateBillDateValidation(t *testing.T) {
 	// Invalid date
 	res = tool.Execute(ec, "create_bill", mustMarshal(t, map[string]interface{}{
 		"item": "测试2", "amount": 200, "category1": "餐饮", "category2": "啤酒",
-		"consume_type": "一次性", "date": "2026年5月28日",
+		"consume_type": "一次性", "date": "2026年5月28日", "owner": "张三",
 	}))
 	if res.Success {
 		t.Error("invalid date format should fail")
@@ -70,7 +70,7 @@ func TestCreateBillDateValidation(t *testing.T) {
 	// Empty date defaults to today (should work)
 	res = tool.Execute(ec, "create_bill", mustMarshal(t, map[string]interface{}{
 		"item": "测试3", "amount": 300, "category1": "餐饮", "category2": "啤酒",
-		"consume_type": "一次性",
+		"consume_type": "一次性", "owner": "张三",
 	}))
 	if !res.Success {
 		t.Errorf("empty date should default to today: %s", res.Error)
@@ -140,8 +140,11 @@ func TestQueryBillsKeyword(t *testing.T) {
 	billJSON, _ := json.Marshal(bills[0])
 	var b map[string]interface{}
 	json.Unmarshal(billJSON, &b)
-	if _, ok := b["consume_type"]; ok {
-		t.Error("consume_type should not be in query_bills response")
+	if _, ok := b["consume_type"]; !ok {
+		t.Error("consume_type should be in query_bills response")
+	}
+	if _, ok := b["owner"]; !ok {
+		t.Error("owner should be in query_bills response")
 	}
 	if _, ok := b["id"]; !ok {
 		t.Error("id should be in query_bills response")
@@ -378,15 +381,21 @@ func TestGetCategoryOptions(t *testing.T) {
 		t.Fatalf("get_category_options failed: %s", res.Error)
 	}
 
-	var data map[string][]string
+	var data service.CategoryOptionsResult
 	if err := json.Unmarshal(res.Data, &data); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if _, ok := data["餐饮"]; !ok {
+	if _, ok := data.Mapping["餐饮"]; !ok {
 		t.Error("expected 餐饮 in category options")
 	}
-	if _, ok := data["交通"]; !ok {
+	if _, ok := data.Mapping["交通"]; !ok {
 		t.Error("expected 交通 in category options")
+	}
+	if len(data.Category1List) == 0 {
+		t.Error("expected non-empty category1_list")
+	}
+	if len(data.Category2List) == 0 {
+		t.Error("expected non-empty category2_list")
 	}
 }
 
@@ -400,9 +409,170 @@ func TestGetCategoryOptionsEmpty(t *testing.T) {
 		t.Fatalf("get_category_options failed: %s", res.Error)
 	}
 
-	var data map[string][]string
+	var data service.CategoryOptionsResult
 	json.Unmarshal(res.Data, &data)
-	if len(data) != 0 {
-		t.Errorf("expected empty options for user with no bills, got %d categories", len(data))
+	if len(data.Mapping) != 0 {
+		t.Errorf("expected empty options for user with no bills, got %d categories", len(data.Mapping))
+	}
+}
+
+func TestBatchUpdateBillsOwner(t *testing.T) {
+	tool, cleanup := setupBookkeepingTool(t)
+	defer cleanup()
+	seedBookkeepingBills(t, tool, "u1")
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1"}
+
+	res := tool.Execute(ec, "batch_update_bills", mustMarshal(t, map[string]interface{}{
+		"category2": "啤酒",
+		"set_owner": "李四",
+	}))
+	if !res.Success {
+		t.Fatalf("batch_update_bills failed: %s", res.Error)
+	}
+
+	var data map[string]interface{}
+	json.Unmarshal(res.Data, &data)
+	affected := data["updated"].(float64)
+	if affected != 2 {
+		t.Errorf("expected 2 updated, got %v", affected)
+	}
+
+	// verify b1 and b4 changed, b2 unchanged
+	checkRes := tool.Execute(ec, "get_bill_by_id", mustMarshal(t, map[string]string{"id": "b1"}))
+	var b1 model.Bill
+	json.Unmarshal(checkRes.Data, &b1)
+	if b1.Owner != "李四" {
+		t.Errorf("b1 owner expected 李四, got %s", b1.Owner)
+	}
+
+	checkRes = tool.Execute(ec, "get_bill_by_id", mustMarshal(t, map[string]string{"id": "b4"}))
+	var b4 model.Bill
+	json.Unmarshal(checkRes.Data, &b4)
+	if b4.Owner != "李四" {
+		t.Errorf("b4 owner expected 李四, got %s", b4.Owner)
+	}
+
+	checkRes = tool.Execute(ec, "get_bill_by_id", mustMarshal(t, map[string]string{"id": "b2"}))
+	var b2 model.Bill
+	json.Unmarshal(checkRes.Data, &b2)
+	if b2.Owner != "张三" {
+		t.Errorf("b2 owner expected unchanged 张三, got %s", b2.Owner)
+	}
+}
+
+func TestBatchUpdateBillsNoFields(t *testing.T) {
+	tool, cleanup := setupBookkeepingTool(t)
+	defer cleanup()
+	seedBookkeepingBills(t, tool, "u1")
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1"}
+
+	res := tool.Execute(ec, "batch_update_bills", mustMarshal(t, map[string]interface{}{
+		"category": "餐饮",
+	}))
+	if res.Success {
+		t.Error("expected error when no set_* field specified")
+	}
+}
+
+func TestBatchUpdateBillsMultipleFields(t *testing.T) {
+	tool, cleanup := setupBookkeepingTool(t)
+	defer cleanup()
+	seedBookkeepingBills(t, tool, "u1")
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1"}
+
+	res := tool.Execute(ec, "batch_update_bills", mustMarshal(t, map[string]interface{}{
+		"owner":            "张三",
+		"set_consume_type": "周期",
+		"set_remark":       "批量改的",
+	}))
+	if !res.Success {
+		t.Fatalf("batch_update_bills failed: %s", res.Error)
+	}
+
+	var data map[string]interface{}
+	json.Unmarshal(res.Data, &data)
+	affected := data["updated"].(float64)
+	if affected != 3 {
+		t.Errorf("expected 3 updated (张三's bills), got %v", affected)
+	}
+
+	for _, id := range []string{"b1", "b2", "b4"} {
+		checkRes := tool.Execute(ec, "get_bill_by_id", mustMarshal(t, map[string]string{"id": id}))
+		var b model.Bill
+		json.Unmarshal(checkRes.Data, &b)
+		if b.ConsumeType != "周期" {
+			t.Errorf("%s consume_type expected 周期, got %s", id, b.ConsumeType)
+		}
+		if b.Remark != "批量改的" {
+			t.Errorf("%s remark expected 批量改的, got %s", id, b.Remark)
+		}
+	}
+}
+
+func TestQueryBillsOwnerEmpty(t *testing.T) {
+	tool, cleanup := setupBookkeepingTool(t)
+	defer cleanup()
+
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1"}
+
+	tool.billRepo.Create(context.Background(), &model.Bill{
+		ID: "b-empty", UserID: "u1", Item: "无归属人账单", Amount: 100,
+		Category1: "餐饮", Category2: "外卖", ConsumeType: "一次性",
+		Date: "2026-07-01", PayType: "现金", Owner: "", Status: model.BillStatusNormal,
+	})
+	tool.billRepo.Create(context.Background(), &model.Bill{
+		ID: "b-owner", UserID: "u1", Item: "有归属人账单", Amount: 200,
+		Category1: "交通", Category2: "地铁", ConsumeType: "周期",
+		Date: "2026-07-01", PayType: "现金", Owner: "张三", Status: model.BillStatusNormal,
+	})
+
+	res := tool.Execute(ec, "query_bills", mustMarshal(t, map[string]interface{}{
+		"owner_is_empty": true,
+	}))
+	if !res.Success {
+		t.Fatalf("query_bills failed: %s", res.Error)
+	}
+
+	var data map[string]interface{}
+	json.Unmarshal(res.Data, &data)
+	total := data["total"].(float64)
+	if total != 1 {
+		t.Errorf("expected 1 empty-owner bill, got %v", total)
+	}
+}
+
+func TestBatchUpdateOwnerEmptyTool(t *testing.T) {
+	tool, cleanup := setupBookkeepingTool(t)
+	defer cleanup()
+
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "u1"}
+
+	tool.billRepo.Create(context.Background(), &model.Bill{
+		ID: "b-empty2", UserID: "u1", Item: "无归属人账单", Amount: 100,
+		Category1: "餐饮", Category2: "外卖", ConsumeType: "一次性",
+		Date: "2026-07-01", PayType: "现金", Owner: "", Status: model.BillStatusNormal,
+	})
+
+	res := tool.Execute(ec, "batch_update_bills", mustMarshal(t, map[string]interface{}{
+		"owner_is_empty": true,
+		"set_owner":      "补全",
+	}))
+	if !res.Success {
+		t.Fatalf("batch_update_bills failed: %s", res.Error)
+	}
+
+	var data map[string]interface{}
+	json.Unmarshal(res.Data, &data)
+	affected := data["updated"].(float64)
+	if affected != 1 {
+		t.Errorf("expected 1 updated, got %v", affected)
+	}
+
+	res = tool.Execute(ec, "query_bills", mustMarshal(t, map[string]interface{}{
+		"owner_is_empty": true,
+	}))
+	json.Unmarshal(res.Data, &data)
+	if data["total"].(float64) != 0 {
+		t.Error("expected 0 empty-owner bills after batch update")
 	}
 }

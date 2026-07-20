@@ -97,8 +97,9 @@ class ChatViewModel: ObservableObject {
         do {
             let result = try await apiClient.getMessagesCursor(conversationId: id)
             messages = result.messages.flatMap { $0.withoutToolCalls() }
-            let entries = await ChartStore.shared.entries(for: id)
-            mergePendingCharts(entries)
+            if let first = messages.first, let last = messages.last {
+                await mergeLocalToolResults(from: first.createdAt, to: last.createdAt)
+            }
             oldestCursor = result.oldestCursor
             newestCursor = result.newestCursor
             hasMoreBefore = result.hasMoreBefore
@@ -128,9 +129,8 @@ class ChatViewModel: ObservableObject {
                 DispatchQueue.main.async {
                     self.hasMoreBefore = stillHasMore
                 }
-                Task {
-                    let entries = await ChartStore.shared.entries(for: conversationId ?? "")
-                    await MainActor.run { mergePendingCharts(entries) }
+                if let first = newMsgs.first, let last = messages.last {
+                    Task { await mergeLocalToolResults(from: first.createdAt, to: last.createdAt) }
                 }
             } else {
                 messages = messages + result.messages.flatMap { $0.withoutToolCalls() }
@@ -255,9 +255,6 @@ class ChatViewModel: ObservableObject {
         case .toolResult:
             break
 
-        case .clientToolCall:
-            handleClientToolCall(event.data)
-
         case .remindersChanged:
             LogBuffer.shared.debug("[Reminder] SSE reminders_changed received")
             NotificationCenter.default.post(name: .remindersSyncTriggered, object: nil)
@@ -376,41 +373,6 @@ class ChatViewModel: ObservableObject {
             toolCallsJSON: nil,
             createdAt: last.createdAt
         )
-    }
-
-    func insertChartMessage(_ cd: ChartData) {
-        let prevId = messages.last(where: {
-            $0.id != "__streaming__" && !$0.id.hasPrefix("chart_")
-        })?.id
-
-        var msg = Message(
-            id: "chart_\(UUID().uuidString)",
-            conversationId: conversationId ?? "",
-            role: "chart",
-            content: "",
-            toolCallsJSON: nil,
-            createdAt: ISO8601DateFormatter().string(from: Date())
-        )
-        msg.chartData = cd
-        messages.append(msg)
-
-        Task {
-            await ChartStore.shared.save(chartData: cd, message: msg, afterMessageID: prevId)
-        }
-    }
-
-    private func mergePendingCharts(_ entries: [ChartStore.ChartMessageEntry]) {
-        let insertedIds = Set(messages.lazy.filter { $0.role == "chart" }.map { $0.id })
-        let messageIds = Set(messages.map { $0.id })
-
-        for entry in entries {
-            guard !insertedIds.contains(entry.id) else { continue }
-            guard let afterId = entry.afterMessageID,
-                  messageIds.contains(afterId),
-                  let idx = messages.firstIndex(where: { $0.id == afterId }) else { continue }
-
-            messages.insert(entry.asMessage(conversationID: conversationId ?? ""), at: idx + 1)
-        }
     }
 
     private func throttleFlush() {

@@ -12,6 +12,7 @@ struct Message: Identifiable, Codable {
     let createdAt: String
 
     var chartData: ChartData? = nil
+    var localToolResult: LocalToolResultData? = nil
 
     enum CodingKeys: String, CodingKey {
         case id

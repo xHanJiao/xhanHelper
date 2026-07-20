@@ -12,9 +12,8 @@ enum StreamEventType: String {
     case message     // text_delta
     case toolCall    // tool_call
     case toolResult  // tool_result
-    case clientToolCall // client_tool_call — 服务端要求客户端执行本地 MCP 工具
-    case remindersChanged // reminders_changed — 服务端通知有新提醒需同步
     case clientToolCall // client_tool_call — 服务端要求客户端执行本地工具
+    case remindersChanged // reminders_changed — 服务端通知有新提醒需同步
     case done
     case error
 }

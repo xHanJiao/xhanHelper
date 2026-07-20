@@ -78,12 +78,7 @@ struct xhanHelperMacApp: App {
             .toast()
             .glassWindow()
             .task {
-                await MCPManager.shared.refreshToolCache()
-                for ns in await MCPManager.shared.configuredNamespaces() {
-                    let wrapper = MCPProviderWrapper(namespace: ns, manager: MCPManager.shared)
-                    await LocalToolRegistry.shared.register(wrapper)
-                }
-                await LocalToolRegistry.shared.register(ChartTool())
+                LocalToolRegistry.shared.register(ChartTool())
             }
         }
         .windowResizability(.contentMinSize)
@@ -157,7 +152,7 @@ struct MacSettingsView: View {
             .alert("确认清除", isPresented: $showClearCacheAlert) {
                 Button("取消", role: .cancel) {}
                 Button("清除", role: .destructive) {
-                    Task { await ChartStore.shared.clearAll() }
+                    Task { await LocalToolResultStore.shared.clearAll() }
                 }
             } message: {
                 Text("将清除所有本地缓存数据（图表等），下次打开会话时需重新生成。")

@@ -106,6 +106,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         case "tool_result":      type = .toolResult
         case "client_tool_call": type = .clientToolCall
         case "reminders_changed": type = .remindersChanged
+        case "client_tool_call":  type = .clientToolCall
         case "done":             type = .done
         case "error":            type = .error
         default:                 return

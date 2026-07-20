@@ -262,6 +262,9 @@ class ChatViewModel: ObservableObject {
             LogBuffer.shared.debug("[Reminder] SSE reminders_changed received")
             NotificationCenter.default.post(name: .remindersSyncTriggered, object: nil)
 
+        case .clientToolCall:
+            handleClientToolCall(event.data)
+
         case .done:
             finishStreaming()
             thoughtMessage = nil
@@ -475,5 +478,61 @@ class ChatViewModel: ObservableObject {
               let ids = obj["note_ids"] as? [String]
         else { return nil }
         return ids
+    }
+
+    // MARK: Local Tool Results
+
+    func insertChartMessage(_ cd: ChartData) {
+        let payload = (try? JSONEncoder().encode(cd)) ?? Data()
+        var msg = Message(
+            id: "chart_\(UUID().uuidString)",
+            conversationId: conversationId ?? "",
+            role: "local_tool_result",
+            content: "",
+            toolCallsJSON: nil,
+            createdAt: ISO8601DateFormatter().string(from: Date())
+        )
+        msg.localToolResult = LocalToolResultData(type: .chart, payload: payload)
+        msg.chartData = cd
+        messages.append(msg)
+
+        Task {
+            await LocalToolResultStore.shared.upsert(type: .chart, payload: payload, message: msg)
+        }
+    }
+
+    private func mergeLocalToolResults(from: String, to: String) async {
+        let existingIDs = Set(messages.lazy.filter { $0.role == "local_tool_result" }.map { $0.id })
+        let entries = await LocalToolResultStore.shared.entries(for: conversationId ?? "", from: from, to: to)
+
+        for entry in entries where !existingIDs.contains(entry.id) {
+            var msg = Message(
+                id: entry.id,
+                conversationId: conversationId ?? "",
+                role: "local_tool_result",
+                content: "",
+                toolCallsJSON: nil,
+                createdAt: entry.createdAt
+            )
+            msg.localToolResult = LocalToolResultData(type: entry.type, payload: entry.payload)
+            if entry.type == .chart, let cd = try? JSONDecoder().decode(ChartData.self, from: entry.payload) {
+                msg.chartData = cd
+            }
+            messages.append(msg)
+        }
+
+        messages.sort { $0.createdAt < $1.createdAt }
+
+        for i in stride(from: messages.count - 1, through: 0, by: -1) {
+            guard messages[i].role == "local_tool_result" else { continue }
+            for j in i + 1 ..< messages.count {
+                if messages[j].role == "assistant" {
+                    let item = messages.remove(at: i)
+                    let insertAt = j > i ? j : j + 1
+                    messages.insert(item, at: min(insertAt, messages.count))
+                    break
+                }
+            }
+        }
     }
 }

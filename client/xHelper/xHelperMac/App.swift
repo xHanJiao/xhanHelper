@@ -78,6 +78,11 @@ struct xhanHelperMacApp: App {
             .toast()
             .glassWindow()
             .task {
+                await MCPManager.shared.refreshToolCache()
+                for ns in await MCPManager.shared.configuredNamespaces() {
+                    let wrapper = MCPProviderWrapper(namespace: ns, manager: MCPManager.shared)
+                    await LocalToolRegistry.shared.register(wrapper)
+                }
                 LocalToolRegistry.shared.register(ChartTool())
             }
         }

@@ -1,7 +1,115 @@
 import SwiftUI
 import AppKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+extension Notification.Name {
+    static let holdToQuitChanged = Notification.Name("HoldToQuitChanged")
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private(set) var isHoldingQuit = false
+    private(set) var holdProgress: Double = 0
+    private var quitTimer: Timer?
+    private var isQuittingByHold = false
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self,
+                  event.keyCode == 12,
+                  event.modifierFlags.contains(.command)
+            else { return event }
+
+            if isHoldingQuit {
+                return nil
+            }
+            startQuitHold()
+            return nil
+        }
+        NSEvent.addLocalMonitorForEvents(matching: .keyUp) { [weak self] event in
+            if event.keyCode == 12 {
+                self?.cancelQuitHold()
+            }
+            return event
+        }
+
+        for window in NSApp.windows {
+            window.delegate = self
+        }
+    }
+
+    // MARK: 红 X 关闭窗口
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        let resources = MCPManager.shared.activeExternalResources()
+        if resources.isEmpty {
+            NSApp.terminate(nil)
+            return true
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "退出确认"
+        alert.informativeText = "退出时可能导致以下由助手启动的应用随之关闭：\n"
+            + resources.map { "• \($0)" }.joined(separator: "\n")
+        alert.addButton(withTitle: "确认退出")
+        alert.addButton(withTitle: "取消")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            Task.detached {
+                await MCPManager.shared.shutdown(closeExternal: true)
+                await MainActor.run { NSApp.terminate(nil) }
+            }
+        default:
+            break
+        }
+        return false
+    }
+
+    // MARK: 长按 Cmd+Q 退出
+
+    private func startQuitHold() {
+        isHoldingQuit = true
+        holdProgress = 0
+        postQuitHoldChange()
+        let holdDuration: TimeInterval = 1.5
+        let interval: TimeInterval = 1.0 / 60.0
+        quitTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            self.holdProgress += interval / holdDuration
+            if self.holdProgress >= 1.0 {
+                timer.invalidate()
+                self.quitTimer = nil
+                self.holdProgress = 1.0
+                self.postQuitHoldChange()
+                self.isQuittingByHold = true
+                NSApp.terminate(nil)
+                DispatchQueue.main.async {
+                    self.isHoldingQuit = false
+                    self.holdProgress = 0
+                    self.postQuitHoldChange()
+                }
+            } else {
+                self.postQuitHoldChange()
+            }
+        }
+    }
+
+    private func cancelQuitHold() {
+        guard isHoldingQuit else { return }
+        quitTimer?.invalidate()
+        quitTimer = nil
+        isHoldingQuit = false
+        holdProgress = 0
+        postQuitHoldChange()
+    }
+
+    private func postQuitHoldChange() {
+        NotificationCenter.default.post(
+            name: .holdToQuitChanged,
+            object: nil,
+            userInfo: ["isActive": isHoldingQuit, "progress": holdProgress]
+        )
+    }
+
     func applicationWillBecomeActive(_ notification: Notification) {
         for window in NSApp.windows {
             Self.configureWindow(window)
@@ -14,9 +122,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // 退出确认：助手启动的外部程序（浏览器等）仍在运行时，询问是否一并关闭
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let resources = MCPManager.shared.activeExternalResources()
+
+        if isQuittingByHold {
+            isQuittingByHold = false
+            Task.detached {
+                await MCPManager.shared.shutdown(closeExternal: true)
+                await MainActor.run { NSApp.reply(toApplicationShouldTerminate: true) }
+            }
+            return .terminateLater
+        }
 
         if resources.isEmpty {
             Task.detached {
@@ -61,6 +177,8 @@ struct xhanHelperMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var deviceManager = DeviceManager()
     @StateObject private var colorSchemeManager = ColorSchemeManager()
+    @State private var isHoldingQuit = false
+    @State private var holdProgress: Double = 0
 
     var body: some Scene {
         WindowGroup {
@@ -85,6 +203,19 @@ struct xhanHelperMacApp: App {
                 }
                 LocalToolRegistry.shared.register(ChartTool())
             }
+            .onReceive(NotificationCenter.default.publisher(for: .holdToQuitChanged)) { notification in
+                if let active = notification.userInfo?["isActive"] as? Bool {
+                    isHoldingQuit = active
+                }
+                if let progress = notification.userInfo?["progress"] as? Double {
+                    holdProgress = progress
+                }
+            }
+            .overlay {
+                if isHoldingQuit {
+                    holdToQuitOverlay
+                }
+            }
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 800, height: 600)
@@ -93,6 +224,37 @@ struct xhanHelperMacApp: App {
             MacSettingsView(deviceManager: deviceManager)
                 .environmentObject(colorSchemeManager)
         }
+    }
+
+    private var holdToQuitOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.2)
+
+            VStack(spacing: 20) {
+                ZStack {
+                    Circle()
+                        .stroke(.secondary.opacity(0.15), lineWidth: 5)
+                        .frame(width: 56, height: 56)
+                    Circle()
+                        .trim(from: 0, to: holdProgress)
+                        .stroke(Color("appAccent"), style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                        .frame(width: 56, height: 56)
+                        .rotationEffect(.degrees(-90))
+                        .animation(.linear(duration: 0.05), value: holdProgress)
+                    Image(systemName: "xmark")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.secondary)
+                }
+
+                Text("长按 Command + Q 退出")
+                    .font(.system(size: 16, weight: .medium))
+            }
+            .padding(32)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+            .shadow(color: .black.opacity(0.15), radius: 20, y: 8)
+        }
+        .ignoresSafeArea()
+        .animation(.easeOut(duration: 0.15), value: isHoldingQuit)
     }
 }
 

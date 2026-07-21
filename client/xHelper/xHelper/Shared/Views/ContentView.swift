@@ -69,6 +69,20 @@ struct ContentView: View {
 
                 Task { await syncReminders() }
             }
+#if os(macOS)
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                guard !chatViewModel.isStreaming else { return }
+                let now = Date()
+                guard now.timeIntervalSince(lastSyncAt) >= 3 else { return }
+                lastSyncAt = now
+
+                guard let conv = deviceManager.defaultConversation else { return }
+                LogBuffer.shared.debug("sync conversation \(conv.id) after app became active (macOS)")
+                Task { await chatViewModel.loadConversation(id: conv.id, title: conv.title) }
+
+                Task { await syncReminders() }
+            }
+#endif
             .task(id: deviceManager.defaultConversation?.id) {
                 guard let conv = deviceManager.defaultConversation else {
                     chatViewModel.isInitialLoading = false

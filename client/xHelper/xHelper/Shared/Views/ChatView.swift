@@ -89,6 +89,13 @@ struct ChatView: View {
             )
             .layoutPriority(1)
         }
+        .onChange(of: viewModel.scrollToBottomRequested) { _, requested in
+            guard requested else { return }
+            withAnimation(.easeOut(duration: 0.3)) {
+                scrollPosition.scrollTo(edge: .top)
+            }
+            viewModel.scrollToBottomRequested = false
+        }
     }
 
 #if os(iOS)

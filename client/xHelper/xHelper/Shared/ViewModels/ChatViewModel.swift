@@ -71,6 +71,7 @@ class ChatViewModel: ObservableObject {
     @Published var hasMoreAfter = false
     @Published var isLoadingMore = false
     @Published var isInitialLoading = true
+    @Published var scrollToBottomRequested = false
 
     let apiClient: APIClient // 扩展（ChatViewModel+ClientTools）需要访问
     private let sseClient = SSEClient()
@@ -93,10 +94,14 @@ class ChatViewModel: ObservableObject {
         conversationId = id
         conversationTitle = title
         isInitialLoading = true
+        let oldLastId = messages.last?.id
         defer { isInitialLoading = false }
         do {
             let result = try await apiClient.getMessagesCursor(conversationId: id)
             messages = result.messages.flatMap { $0.withoutToolCalls() }
+            if oldLastId != nil, oldLastId != messages.last?.id {
+                scrollToBottomRequested = true
+            }
             if let first = messages.first, let last = messages.last {
                 await mergeLocalToolResults(from: first.createdAt, to: last.createdAt)
             }

@@ -185,7 +185,7 @@ struct xhanHelperMacApp: App {
             Group {
                 if deviceManager.isLoggedIn {
                     ContentView(deviceManager: deviceManager)
-                        .frame(minWidth: 750, minHeight: 500)
+                        .frame(minWidth: 320, minHeight: 400)
                 } else {
                     LoginMacView(deviceManager: deviceManager)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isHoldingQuit = true
         holdProgress = 0
         postQuitHoldChange()
-        let holdDuration: TimeInterval = 1.5
+        let holdDuration: TimeInterval = 1.0
         let interval: TimeInterval = 1.0 / 60.0
         quitTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }

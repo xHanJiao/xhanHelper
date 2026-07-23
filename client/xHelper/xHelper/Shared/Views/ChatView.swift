@@ -42,6 +42,8 @@ struct ChatView: View {
                     hasMoreBefore: viewModel.hasMoreBefore,
                     isLoadingMore: viewModel.isLoadingMore,
                     onLoadMore: { direction in Task { await viewModel.loadMore(direction: direction) } },
+                    baseURL: baseURL,
+                    token: token,
                     scrollPosition: $scrollPosition,
                     showScrollToBottom: $showScrollToBottom
                 )

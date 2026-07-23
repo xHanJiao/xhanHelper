@@ -214,6 +214,12 @@ class APIClient {
         let _: [String: Bool] = try await doRequest(req)
     }
 
+    // MARK: Share
+
+    func createMessageShare(conversationId: String, userMessageIds: [String]) async throws -> CreateShareToken {
+        return try await post("/api/conversations/\(conversationId)/share-messages", body: ["user_message_ids": userMessageIds])
+    }
+
 	// MARK: Internal
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
@@ -489,6 +495,18 @@ struct UserPrompt: Identifiable, Codable {
         case systemPrompt = "system_prompt"
         case status
         case createdAt = "created_at"
+    }
+}
+
+// MARK: Share
+
+struct CreateShareToken: Codable {
+    let token: String
+    let expiresAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case token
+        case expiresAt = "expires_at"
     }
 }
 

@@ -349,7 +349,7 @@ struct MessageListView: View {
     }
 
     private func buildShareableRounds(from msgs: [Message]) -> [[Message]] {
-        let ordered = Array(msgs.reversed())
+        let ordered = Array(msgs)
         var rounds: [[Message]] = []
         var current: [Message] = []
         for msg in ordered {

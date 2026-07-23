@@ -17,7 +17,7 @@ struct MessageListView: View {
     @State private var autoDismissTask: Task<Void, Never>? = nil
     @State private var menuMessageId: String? = nil
     @State private var menuPoint: CGPoint = .zero
-    @State private var menuFrames: [String: CGRect] = [:]
+    @State private var touchGlobalPoint: CGPoint = .zero
     @State private var menuDismissTask: Task<Void, Never>? = nil
     @State private var viewHeight: CGFloat = 0
     @Binding var scrollPosition: ScrollPosition
@@ -40,7 +40,6 @@ struct MessageListView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .coordinateSpace(name: "menuSpace")
         .background(
             GeometryReader { geo in
                 Color.clear.onAppear {
@@ -67,21 +66,26 @@ struct MessageListView: View {
             if !isStreaming { dismissMenu() }
         }
         .overlay {
-            if menuMessageId != nil {
-                Button {
-                    if let msg = messages.first(where: { $0.id == menuMessageId }) {
-                        copyToPasteboard(msg.content)
+            if let menuId = menuMessageId {
+                GeometryReader { overlayGeo in
+                    let origin = overlayGeo.frame(in: .global).origin
+                    let localX = menuPoint.x - origin.x
+                    let localY = menuPoint.y - origin.y
+                    Button {
+                        if let msg = messages.first(where: { $0.id == menuId }) {
+                            copyToPasteboard(msg.content)
+                        }
+                        dismissMenu()
+                    } label: {
+                        Label("拷贝", systemImage: "doc.on.doc")
+                            .font(.subheadline)
                     }
-                    dismissMenu()
-                } label: {
-                    Label("拷贝", systemImage: "doc.on.doc")
-                        .font(.subheadline)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.regularMaterial)
+                    .clipShape(Capsule())
+                    .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
+                    .position(x: localX, y: localY)
                 }
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                .background(.regularMaterial)
-                .clipShape(Capsule())
-                .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
-                .position(menuPoint)
             }
         }
     }
@@ -107,17 +111,13 @@ struct MessageListView: View {
                 // 消息：倒序，最新在逻辑前=视觉底
                 ForEach(messages.reversed()) { msg in
                     messageRow(msg)
-                        .background(
-                            GeometryReader { geo in
-                                Color.clear.onAppear {
-                                    menuFrames[msg.id] = geo.frame(in: .named("menuSpace"))
-                                }
-                                .onChange(of: geo.frame(in: .named("menuSpace"))) { _, newFrame in
-                                    menuFrames[msg.id] = newFrame
-                                }
-                            }
-                        )
                         .scaleEffect(y: -1)
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                                .onChanged { value in
+                                    touchGlobalPoint = value.startLocation
+                                }
+                        )
                         .simultaneousGesture(
                             LongPressGesture(minimumDuration: 0.5)
                                 .onEnded { _ in
@@ -126,10 +126,8 @@ struct MessageListView: View {
                                             dismissMenu()
                                             return
                                         }
+                                        menuPoint = touchGlobalPoint
                                         menuMessageId = msg.id
-                                        if let frame = menuFrames[msg.id], viewHeight > 0 {
-                                            menuPoint = CGPoint(x: frame.midX, y: frame.midY)
-                                        }
                                         startMenuDismissTimer()
                                     }
                                 }

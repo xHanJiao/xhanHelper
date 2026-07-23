@@ -2,6 +2,7 @@ import SwiftUI
 import CoreImage.CIFilterBuiltins
 #if os(iOS)
 import UIKit
+import UniformTypeIdentifiers
 #else
 import AppKit
 #endif
@@ -95,9 +96,28 @@ struct MessageListView: View {
         .overlay(alignment: .bottom) {
             if isShareSelectMode { shareBottomBar }
         }
-        .sheet(isPresented: $showShareResult) {
-            ShareResultView(shareUrl: shareUrl, shareToken: shareToken)
+        .overlay {
+            if showShareResult {
+                ZStack {
+                    Color.black.opacity(0.2)
+                        .ignoresSafeArea()
+                        .onTapGesture { showShareResult = false }
+
+                    ShareResultView(shareUrl: shareUrl, shareToken: shareToken)
+                        #if os(iOS)
+                        .frame(maxWidth: 320)
+                        #else
+                        .frame(maxWidth: 360)
+                        #endif
+                        .padding(24)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+                        .shadow(color: .black.opacity(0.15), radius: 20, y: 8)
+                        .padding(24)
+                }
+                .transition(.scale(scale: 0.9).combined(with: .opacity))
+            }
         }
+        .animation(.easeInOut(duration: 0.25), value: showShareResult)
     }
 
     // MARK: Menu overlay
@@ -553,78 +573,161 @@ typealias SharePlatformImage = NSImage
 struct ShareResultView: View {
     let shareUrl: String
     let shareToken: String
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(spacing: 20) {
-            Text("分享链接已生成")
-                .font(.headline)
+        let qrImage = generateQRCode(from: shareUrl)
 
-            if let qrImage = generateQRCode(from: shareUrl) {
+        ViewThatFits(in: .vertical) {
+            // Full: QR + caption + URL + buttons
+            VStack(spacing: 14) {
+                qrCard(qrImage)
+                Text("扫码查看对话")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                urlBar
+                buttonRow(qrImage)
+            }
+
+            // Compact: URL + buttons (no QR, no caption)
+            VStack(spacing: 12) {
+                urlBar
+                buttonRow(qrImage)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 280)
+    }
+
+    // MARK: Sub-views
+
+    private func qrCard(_ img: SharePlatformImage?) -> some View {
+        Group {
+            if let img = img {
                 #if os(iOS)
-                Image(uiImage: qrImage)
+                Image(uiImage: img)
                     .interpolation(.none)
                     .resizable()
-                    .frame(width: 180, height: 180)
+                    .frame(width: 160, height: 160)
                 #else
-                Image(nsImage: qrImage)
+                Image(nsImage: img)
                     .interpolation(.none)
                     .resizable()
-                    .frame(width: 180, height: 180)
+                    .frame(width: 160, height: 160)
                 #endif
             } else {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.secondary.opacity(0.15))
-                    .frame(width: 180, height: 180)
+                    .frame(width: 160, height: 160)
                     .overlay(Text("QR 生成失败").font(.caption).foregroundColor(.secondary))
             }
+        }
+        .padding(16)
+        .background(.white, in: RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.06), radius: 12, y: 6)
+    }
 
-            Text(shareUrl)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(.secondary)
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .padding(.horizontal, 20)
+    private var urlBar: some View {
+        Button {
+            copyURLToPasteboard(shareUrl)
+            ToastCenter.shared.show("链接已复制")
+            print("[ShareDebug] QR link copied: \(shareUrl)")
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "link")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(shareUrl)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "doc.on.doc")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+    }
 
-            HStack(spacing: 16) {
-                Button {
-                    copyToPasteboard(shareUrl)
-                    ToastCenter.shared.show("链接已复制")
-                    print("[ShareDebug] QR link copied: \(shareUrl)")
-                } label: {
-                    Label("拷贝链接", systemImage: "doc.on.doc")
-                        .font(.subheadline)
-                }
-                .buttonStyle(.bordered)
-
-                #if os(iOS)
-                if let url = URL(string: shareUrl) {
-                    ShareLink(item: url) {
-                        Label("分享", systemImage: "square.and.arrow.up")
-                            .font(.subheadline)
-                    }
-                    .buttonStyle(.bordered)
-                }
-                #else
-                Button {
-                    showMacShareMenu()
-                } label: {
-                    Label("分享", systemImage: "square.and.arrow.up")
-                        .font(.subheadline)
-                }
-                .buttonStyle(.bordered)
-                #endif
+    @ViewBuilder
+    private func buttonRow(_ qrImage: SharePlatformImage?) -> some View {
+        ViewThatFits(in: .horizontal) {
+            // Wide: text buttons
+            HStack(spacing: 12) {
+                copyBtn(qrImage, compact: false)
+                shareBtn(qrImage, compact: false)
             }
 
-            Button("关闭") {
-                dismiss()
+            // Narrow: icon-only
+            HStack(spacing: 12) {
+                copyBtn(qrImage, compact: true)
+                shareBtn(qrImage, compact: true)
+            }
+        }
+    }
+
+    private func copyBtn(_ img: SharePlatformImage?, compact: Bool) -> some View {
+        Button {
+            if let img = img {
+                copyQRToPasteboard(img)
+                print("[ShareDebug] QR image copied")
+            }
+        } label: {
+            if compact {
+                Image(systemName: "doc.on.doc")
+                    .font(.subheadline)
+                    .foregroundColor(.primary)
+            } else {
+                Text("拷贝二维码")
+                    .font(.subheadline)
+                    .foregroundColor(.primary)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .buttonStyle(.plain)
+        .modifier(GlassCapsuleModifier())
+    }
+
+    @ViewBuilder
+    private func shareBtn(_ img: SharePlatformImage?, compact: Bool) -> some View {
+        #if os(iOS)
+        if let img = img {
+            ShareLink(item: ShareQRImage(image: img), preview: SharePreview("xhanHelper 分享", image: Image(uiImage: img))) {
+                if compact {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                } else {
+                    Text("分享二维码")
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity)
+                }
             }
             .buttonStyle(.plain)
-            .font(.caption)
-            .foregroundColor(.secondary)
+            .modifier(GlassCapsuleModifier())
         }
-        .padding(24)
-        .frame(minWidth: 300, minHeight: 420)
+        #else
+        Button {
+            if let img = img { showMacShareMenu(qrImage: img) }
+        } label: {
+            if compact {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.subheadline)
+                    .foregroundColor(.primary)
+            } else {
+                Text("分享二维码")
+                    .font(.subheadline)
+                    .foregroundColor(.primary)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .buttonStyle(.plain)
+        .modifier(GlassCapsuleModifier())
+        #endif
     }
 
     private func generateQRCode(from string: String) -> SharePlatformImage? {
@@ -649,7 +752,7 @@ struct ShareResultView: View {
         #endif
     }
 
-    private func copyToPasteboard(_ text: String) {
+    private func copyURLToPasteboard(_ text: String) {
         #if os(iOS)
         UIPasteboard.general.string = text
         #else
@@ -658,15 +761,43 @@ struct ShareResultView: View {
         #endif
     }
 
+    private func copyQRToPasteboard(_ img: SharePlatformImage) {
+        #if os(iOS)
+        UIPasteboard.general.image = img
+        #else
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setData(img.tiffRepresentation, forType: .tiff)
+        #endif
+        ToastCenter.shared.show("二维码已复制")
+    }
+
     #if os(macOS)
-    private func showMacShareMenu() {
-        guard let url = URL(string: shareUrl) else { return }
-        let picker = NSSharingServicePicker(items: [url])
+    private func showMacShareMenu(qrImage: SharePlatformImage) {
+        let picker = NSSharingServicePicker(items: [qrImage])
         if let window = NSApp.keyWindow, let contentView = window.contentView {
             let frame = NSRect(x: contentView.bounds.midX, y: contentView.bounds.midY, width: 1, height: 1)
             picker.show(relativeTo: frame, of: contentView, preferredEdge: .minY)
         }
-        print("[ShareDebug] showing NSSharingServicePicker")
+        print("[ShareDebug] showing NSSharingServicePicker with QR image")
     }
     #endif
+}
+
+#if os(iOS)
+struct ShareQRImage: Transferable {
+    let image: UIImage
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(exportedContentType: .png) { item in
+            item.image.pngData() ?? Data()
+        }
+    }
+}
+#endif
+
+private struct GlassCapsuleModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .background(.regularMaterial, in: Capsule())
+    }
 }

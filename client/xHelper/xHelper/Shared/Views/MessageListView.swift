@@ -27,6 +27,7 @@ struct MessageListView: View {
     @State private var menuPoint: CGPoint = .zero
     @State private var touchGlobalPoint: CGPoint = .zero
     @State private var menuDismissTask: Task<Void, Never>? = nil
+    @State private var menuShownAt: Date = .distantPast
     @State private var viewHeight: CGFloat = 0
     @Binding var scrollPosition: ScrollPosition
     @Binding var showScrollToBottom: Bool
@@ -113,7 +114,6 @@ struct MessageListView: View {
                         } label: {
                             Label("拷贝", systemImage: "doc.on.doc")
                                 .font(.subheadline)
-                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(.plain)
                         .padding(.horizontal, 14).padding(.vertical, 10)
@@ -126,11 +126,11 @@ struct MessageListView: View {
                         } label: {
                             Label("分享", systemImage: "square.and.arrow.up")
                                 .font(.subheadline)
-                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(.plain)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                     }
+                    .fixedSize(horizontal: true, vertical: false)
                     .background(.regularMaterial)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
@@ -188,6 +188,7 @@ struct MessageListView: View {
                                                 return
                                             }
                                             menuPoint = touchGlobalPoint
+                                            menuShownAt = Date()
                                             menuMessageId = msg.id
                                             startMenuDismissTimer()
                                         }
@@ -211,6 +212,7 @@ struct MessageListView: View {
         }
         .simultaneousGesture(TapGesture().onEnded {
             guard !isShareSelectMode else { return }
+            if Date().timeIntervalSince(menuShownAt) < 0.5 { return }
             dismissMenu()
         })
         .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }, action: { _, newY in

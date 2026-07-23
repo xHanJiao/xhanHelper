@@ -5,50 +5,53 @@ import UIKit
 #endif
 
 extension Theme {
-    static let chatBubble: Theme = Theme.gitHub
-        .text {
-            ForegroundColor(Color("assistantText"))
-            BackgroundColor(.clear)
-        }
-        .code {
-            FontFamilyVariant(.monospaced)
-            FontSize(.em(0.85))
-            BackgroundColor(.clear)
-        }
-        .codeBlock { configuration in
-            ScrollView(.horizontal) {
+    static func chatBubble(fontSize: CGFloat) -> Theme {
+        Theme.gitHub
+            .text {
+                ForegroundColor(Color("assistantText"))
+                BackgroundColor(.clear)
+                FontSize(fontSize)
+            }
+            .code {
+                FontFamilyVariant(.monospaced)
+                FontSize(.em(0.85))
+                BackgroundColor(.clear)
+            }
+            .codeBlock { configuration in
+                ScrollView(.horizontal) {
+                    configuration.label
+                        .fixedSize(horizontal: false, vertical: true)
+                        .relativeLineSpacing(.em(0.225))
+                        .markdownTextStyle {
+                            FontFamilyVariant(.monospaced)
+                            FontSize(.em(0.85))
+                        }
+                        .padding(14)
+                }
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .markdownMargin(top: 0, bottom: 16)
+            }
+            .blockquote { configuration in
+                HStack(spacing: 0) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.secondary.opacity(0.4))
+                        .frame(width: 3)
+                    configuration.label
+                        .markdownTextStyle { ForegroundColor(Color("assistantText")) }
+                        .padding(.leading, 12)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .table { configuration in
                 configuration.label
                     .fixedSize(horizontal: false, vertical: true)
-                    .relativeLineSpacing(.em(0.225))
-                    .markdownTextStyle {
-                        FontFamilyVariant(.monospaced)
-                        FontSize(.em(0.85))
-                    }
-                    .padding(14)
+                    .markdownTableBorderStyle(.init(color: .secondary.opacity(0.3)))
+                    .markdownTableBackgroundStyle(
+                        .alternatingRows(.clear, Color.secondary.opacity(0.06))
+                    )
+                    .markdownMargin(top: 0, bottom: 16)
             }
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
-            .markdownMargin(top: 0, bottom: 16)
-        }
-        .blockquote { configuration in
-            HStack(spacing: 0) {
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(Color.secondary.opacity(0.4))
-                    .frame(width: 3)
-                configuration.label
-                    .markdownTextStyle { ForegroundColor(Color("assistantText")) }
-                    .padding(.leading, 12)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .table { configuration in
-            configuration.label
-                .fixedSize(horizontal: false, vertical: true)
-                .markdownTableBorderStyle(.init(color: .secondary.opacity(0.3)))
-                .markdownTableBackgroundStyle(
-                    .alternatingRows(.clear, Color.secondary.opacity(0.06))
-                )
-                .markdownMargin(top: 0, bottom: 16)
-        }
+    }
 }
 
 struct ThinkingBubble: View {
@@ -117,6 +120,11 @@ struct ChatBubble: View {
     var createdAt: String? = nil
     var showTime: Bool = false
     var onTapToShowTime: (() -> Void)? = nil
+    @EnvironmentObject var fontSizeManager: FontSizeManager
+
+    private var chatFont: Font {
+        .system(size: fontSizeManager.scaledSize)
+    }
 
     private var isStreamingPlaceholder: Bool {
         messageId == "__streaming__" && text.isEmpty
@@ -129,7 +137,7 @@ struct ChatBubble: View {
 
                 if isUser {
                     Text(text)
-                        .font(.body)
+                        .font(chatFont)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .foregroundColor(Color("userText"))
@@ -149,7 +157,7 @@ struct ChatBubble: View {
                     .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
                 } else {
                     Markdown(text)
-                        .markdownTheme(.chatBubble)
+                        .markdownTheme(.chatBubble(fontSize: fontSizeManager.scaledSize))
                         .markdownCodeSyntaxHighlighter(.plainText)
                         .frame(alignment: .leading)
                         .padding(.horizontal, 14).padding(.vertical, 10)

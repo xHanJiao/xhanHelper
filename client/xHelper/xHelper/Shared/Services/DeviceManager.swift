@@ -14,6 +14,8 @@ class DeviceManager: ObservableObject {
     private let userIdKey = "xhan_user_id"
     private let usernameKey = "xhan_username"
     private let defaultConvKey = "xhan_default_conversation_id"
+    private var refreshTimer: Timer?
+    private let refreshInterval: TimeInterval = 3600
 
     #if DEBUG
     static let defaultBaseURL = "http://127.0.0.1:8080"
@@ -43,9 +45,11 @@ class DeviceManager: ObservableObject {
     }
 
     private func verifyToken() async {
+        await performTokenRefresh()
         do {
             try await getDefaultConversationInfo()
             LogBuffer.shared.info("verifyToken: ok")
+            startTokenRefresh()
         } catch {
             LogBuffer.shared.error("verifyToken failed: \(error)")
             clearAuthState()
@@ -54,6 +58,7 @@ class DeviceManager: ObservableObject {
     }
 
     private func clearAuthState() {
+        stopTokenRefresh()
         UserDefaults.standard.removeObject(forKey: tokenKey)
         UserDefaults.standard.removeObject(forKey: userIdKey)
         UserDefaults.standard.removeObject(forKey: usernameKey)
@@ -93,6 +98,7 @@ class DeviceManager: ObservableObject {
         defer { isVerifying = false }
         try saveAuthResponse(respData, username: username)
         LogBuffer.shared.info("login: token saved, user=\(username)")
+        startTokenRefresh()
         try await getDefaultConversationInfo()
         LogBuffer.shared.debug("login: default conv loaded, id=\(self.defaultConversation?.id ?? "nil")")
     }
@@ -115,6 +121,7 @@ class DeviceManager: ObservableObject {
         defer { isVerifying = false }
         try saveAuthResponse(respData, username: username)
         LogBuffer.shared.info("register: token saved, user=\(username)")
+        startTokenRefresh()
         try await getDefaultConversationInfo()
         LogBuffer.shared.debug("register: default conv loaded, id=\(self.defaultConversation?.id ?? "nil")")
     }
@@ -164,6 +171,35 @@ class DeviceManager: ObservableObject {
             throw URLError(.cannotParseResponse)
         }
         return data
+    }
+
+    // MARK: Token Refresh
+
+    private func startTokenRefresh() {
+        stopTokenRefresh()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { await self.performTokenRefresh() }
+        }
+    }
+
+    private func stopTokenRefresh() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+    }
+
+    private func performTokenRefresh() async {
+        guard let token = token else { return }
+        let api = APIClient(baseURL: baseURL, token: token)
+        do {
+            try await api.refreshToken()
+            LogBuffer.shared.info("token refreshed ok")
+        } catch let error as NSError where error.code == 401 {
+            LogBuffer.shared.error("token refresh rejected (401), logging out")
+            clearAuthState()
+        } catch {
+            LogBuffer.shared.error("token refresh failed: \(error)")
+        }
     }
 }
 

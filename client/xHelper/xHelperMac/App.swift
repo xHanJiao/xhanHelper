@@ -31,6 +31,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return event
         }
 
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.contains(.command),
+                  !event.isARepeat
+            else { return event }
+
+            if event.keyCode == 24 {
+                FontSizeManager.shared.increase()
+                return nil
+            }
+            if event.keyCode == 27 {
+                FontSizeManager.shared.decrease()
+                return nil
+            }
+            return event
+        }
+
         for window in NSApp.windows {
             window.delegate = self
         }
@@ -192,6 +208,7 @@ struct xhanHelperMacApp: App {
                 }
             }
             .environmentObject(colorSchemeManager)
+            .environmentObject(FontSizeManager.shared)
             .preferredColorScheme(colorSchemeManager.selectedScheme.colorScheme)
             .toast()
             .glassWindow()
@@ -223,6 +240,7 @@ struct xhanHelperMacApp: App {
         Settings {
             MacSettingsView(deviceManager: deviceManager)
                 .environmentObject(colorSchemeManager)
+                .environmentObject(FontSizeManager.shared)
         }
     }
 

@@ -85,6 +85,10 @@ struct MessageListView: View {
             }
         }
         .onChange(of: messages.count) { _, _ in
+            if isShareSelectMode, !isStreaming {
+                print("[ShareDebug] messages changed in select mode, refreshing snapshot (\(messagesSnapshot.count) → \(messages.count))")
+                messagesSnapshot = messages
+            }
             if !isStreaming { dismissMenu() }
         }
         .overlay { menuOverlay }
@@ -399,6 +403,7 @@ struct MessageListView: View {
             print("[ShareDebug] toggle round[\(roundIndex)]: remove, selected now=\(selectedShareIds.count)")
         } else {
             let roundUserCount = round.filter { $0.role == "user" }.count
+            print("[ShareDebug] limit check: selected=\(selectedUserCount) + adding=\(roundUserCount) = \(selectedUserCount + roundUserCount)")
             if selectedUserCount + roundUserCount > 10 {
                 ToastCenter.shared.show("最多选择 10 轮")
                 print("[ShareDebug] limit reached: tried to add round[\(roundIndex)], already at max=\(selectedUserCount)/10")

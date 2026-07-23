@@ -21,6 +21,7 @@ struct xhanHelperApp: App {
                 }
             }
             .environmentObject(colorSchemeManager)
+            .environmentObject(FontSizeManager.shared)
             .preferredColorScheme(colorSchemeManager.selectedScheme.colorScheme)
             .toast()
         }

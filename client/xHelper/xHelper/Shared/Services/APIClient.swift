@@ -205,6 +205,15 @@ class APIClient {
 		let _: [String: String] = try await post("/api/chat/tool-result", body: body)
 	}
 
+    // MARK: Auth
+
+    func refreshToken() async throws {
+        var req = URLRequest(url: URL(string: "\(baseURL)/api/auth/refresh")!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let _: [String: Bool] = try await doRequest(req)
+    }
+
 	// MARK: Internal
 
     private func get<T: Decodable>(_ path: String) async throws -> T {

@@ -15,7 +15,9 @@ struct MermaidDiagramInlineView: View {
                 source: code,
                 theme: colorScheme == .dark ? .zincDark : .zincLight
             )
-            .frame(maxWidth: .infinity, minHeight: 120)
+            .frame(maxWidth: .infinity)
+            .frame(height: 250)
+            .clipped()
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 8)

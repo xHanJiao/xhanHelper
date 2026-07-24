@@ -11,15 +11,21 @@ struct MermaidDiagramInlineView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-            MermaidDiagramView(
-                source: code,
-                theme: colorScheme == .dark ? .zincDark : .zincLight
-            )
+            ScrollView([.horizontal, .vertical], showsIndicators: false) {
+                MermaidDiagramView(
+                    source: code,
+                    theme: colorScheme == .dark ? .zincDark : .zincLight
+                )
+            }
             .frame(maxWidth: .infinity)
-            .frame(height: 250)
-            .clipped()
+            .frame(height: min(400, idealHeight))
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 8)
+    }
+
+    private var idealHeight: CGFloat {
+        let lines = code.split(separator: "\n").count
+        return CGFloat(max(200, min(400, lines * 20)))
     }
 }

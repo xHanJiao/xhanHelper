@@ -156,14 +156,34 @@ struct ChatBubble: View {
                     .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.35), lineWidth: 0.6))
                     .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
                 } else {
-                    Markdown(text)
-                        .markdownTheme(.chatBubble(fontSize: fontSizeManager.scaledSize))
-                        .markdownCodeSyntaxHighlighter(.plainText)
-                        .frame(alignment: .leading)
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
-                        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.35), lineWidth: 0.6))
-                        .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
+                    let isStreaming = messageId == "__streaming__"
+                    let segments = isStreaming ? [] : MermaidUtility.splitContent(text)
+                    Group {
+                        if isStreaming || segments.isEmpty {
+                            Markdown(text)
+                                .markdownTheme(.chatBubble(fontSize: fontSizeManager.scaledSize))
+                                .markdownCodeSyntaxHighlighter(.plainText)
+                                .frame(alignment: .leading)
+                        } else {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(segments) { segment in
+                                    switch segment.type {
+                                    case .markdown:
+                                        Markdown(segment.content)
+                                            .markdownTheme(.chatBubble(fontSize: fontSizeManager.scaledSize))
+                                            .markdownCodeSyntaxHighlighter(.plainText)
+                                            .frame(alignment: .leading)
+                                    case .mermaid:
+                                        MermaidDiagramInlineView(code: segment.content)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                    .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.35), lineWidth: 0.6))
+                    .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
                 }
 
                 if !isUser { Spacer() }

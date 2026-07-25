@@ -64,7 +64,7 @@ struct MermaidDiagramInlineView: View {
         .sheet(isPresented: $showFullScreen) {
             FullScreenMermaidView(code: code, theme: theme)
         }
-        .task {
+        .task(id: colorScheme) {
             do {
                 renderedImage = try await MermaidRenderer.renderImageAsync(source: code, theme: theme)
             } catch {
@@ -148,7 +148,7 @@ struct FullScreenMermaidView: View {
             }
         }
         .frame(minWidth: 700, idealWidth: 900, minHeight: 400)
-        .task { renderImage() }
+        .task(id: theme) { renderImage() }
     }
 
     private func renderImage() {
@@ -228,7 +228,7 @@ struct FullScreenMermaidView: View {
                 ProgressView()
             }
         }
-        .task { renderImage() }
+        .task(id: theme) { renderImage() }
         .sheet(isPresented: $showShareSheet) {
             if let data = try? renderPNGData(), let uiImage = UIImage(data: data) {
                 ShareSheet(activityItems: [uiImage])

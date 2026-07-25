@@ -1,8 +1,5 @@
 import SwiftUI
 import BeautifulMermaid
-#if os(macOS)
-import AppKit
-import UniformTypeIdentifiers
 
 private func mermaidTheme(for colorScheme: ColorScheme) -> DiagramTheme {
     if colorScheme == .dark {
@@ -27,6 +24,10 @@ private func mermaidTheme(for colorScheme: ColorScheme) -> DiagramTheme {
         )
     }
 }
+
+#if os(macOS)
+import AppKit
+import UniformTypeIdentifiers
 #endif
 #if os(iOS)
 import UIKit
@@ -42,11 +43,7 @@ struct MermaidDiagramInlineView: View {
     @State private var showFullScreen = false
 
     private var theme: DiagramTheme {
-#if os(macOS)
         mermaidTheme(for: colorScheme)
-#else
-        colorScheme == .dark ? .zincDark : .zincLight
-#endif
     }
 
     var body: some View {

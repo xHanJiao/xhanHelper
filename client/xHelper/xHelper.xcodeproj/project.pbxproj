@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BB05871A3013517C00D3DF15 /* BeautifulMermaid in Frameworks */ = {isa = PBXBuildFile; productRef = BB0587193013517C00D3DF15 /* BeautifulMermaid */; };
+		BB121FB43014964E00374F84 /* BeautifulMermaid in Frameworks */ = {isa = PBXBuildFile; productRef = BB121FB33014964E00374F84 /* BeautifulMermaid */; };
 		BB79374A2FA5B8190062C582 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = BB7937492FA5B8190062C582 /* MarkdownUI */; };
 		BB79377D2FA5ECE90062C582 /* ForceSimulation in Frameworks */ = {isa = PBXBuildFile; productRef = BB79377C2FA5ECE90062C582 /* ForceSimulation */; };
 		BB79377F2FA5ECE90062C582 /* Grape in Frameworks */ = {isa = PBXBuildFile; productRef = BB79377E2FA5ECE90062C582 /* Grape */; };
@@ -46,6 +48,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BB121FB43014964E00374F84 /* BeautifulMermaid in Frameworks */,
 				BB79377F2FA5ECE90062C582 /* Grape in Frameworks */,
 				BB79374A2FA5B8190062C582 /* MarkdownUI in Frameworks */,
 				BB79377D2FA5ECE90062C582 /* ForceSimulation in Frameworks */,
@@ -62,6 +65,7 @@
 				BBD116A8300A19CE007D6F5C /* (null) in Frameworks */,
 				BBD116AA300A19CE007D6F5C /* ForceSimulation in Frameworks */,
 				BBD116A9300A19CE007D6F5C /* MarkdownUI in Frameworks */,
+				BB05871A3013517C00D3DF15 /* BeautifulMermaid in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -118,6 +122,7 @@
 				BB7937492FA5B8190062C582 /* MarkdownUI */,
 				BB79377C2FA5ECE90062C582 /* ForceSimulation */,
 				BB79377E2FA5ECE90062C582 /* Grape */,
+				BB121FB33014964E00374F84 /* BeautifulMermaid */,
 			);
 			productName = xHelper;
 			productReference = BB0A7E612FA4138E007BD7D6 /* xHelper-test.app */;
@@ -144,6 +149,7 @@
 				BB7937492FA5B8190062C582 /* MarkdownUI */,
 				BB79377C2FA5ECE90062C582 /* ForceSimulation */,
 				BB79377E2FA5ECE90062C582 /* Grape */,
+				BB0587193013517C00D3DF15 /* BeautifulMermaid */,
 			);
 			productName = xHelperMac;
 			productReference = BB0A7E982FA41490007BD7D6 /* xHelperMac.app */;
@@ -180,6 +186,7 @@
 			packageReferences = (
 				BB7937482FA5B8190062C582 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
 				BB7937782FA5EA940062C582 /* XCRemoteSwiftPackageReference "Grape" */,
+				BB0587183013517C00D3DF15 /* XCLocalSwiftPackageReference "../packages/beautiful-mermaid-swift-main" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BB0A7E622FA4138E007BD7D6 /* Products */;
@@ -522,6 +529,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		BB0587183013517C00D3DF15 /* XCLocalSwiftPackageReference "../packages/beautiful-mermaid-swift-main" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../packages/beautiful-mermaid-swift-main";
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		BB7937482FA5B8190062C582 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -542,6 +556,15 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		BB0587193013517C00D3DF15 /* BeautifulMermaid */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BeautifulMermaid;
+		};
+		BB121FB33014964E00374F84 /* BeautifulMermaid */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BB0587183013517C00D3DF15 /* XCLocalSwiftPackageReference "../packages/beautiful-mermaid-swift-main" */;
+			productName = BeautifulMermaid;
+		};
 		BB7937492FA5B8190062C582 /* MarkdownUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = BB7937482FA5B8190062C582 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;

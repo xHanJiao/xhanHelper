@@ -205,6 +205,7 @@ struct FullScreenMermaidView: View {
     @State private var currentScale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
     @State private var showShareSheet = false
+    @Environment(\.dismiss) private var dismiss
 
     private let renderScale: CGFloat = 3.0
 
@@ -236,6 +237,17 @@ struct FullScreenMermaidView: View {
             }
         }
         .task(id: theme) { renderImage() }
+        .overlay(alignment: .topTrailing) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.secondary)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .padding(12)
+        }
         .sheet(isPresented: $showShareSheet) {
             if let data = try? renderPNGData(), let uiImage = UIImage(data: data) {
                 ShareSheet(activityItems: [uiImage])

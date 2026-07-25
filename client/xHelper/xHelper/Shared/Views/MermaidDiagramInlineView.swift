@@ -38,8 +38,7 @@ struct MermaidDiagramInlineView: View {
         }
         .task {
             do {
-                renderedImage = try await MermaidRenderer.renderImageAsync(source: code, theme: theme)?
-                    .flippedForDisplay
+                renderedImage = try await MermaidRenderer.renderImageAsync(source: code, theme: theme)
             } catch {
                 renderError = error.localizedDescription
             }
@@ -67,6 +66,7 @@ struct MermaidDiagramInlineView: View {
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(maxHeight: 250)
+                .scaleEffect(y: -1)
         } else {
             ProgressView()
                 .frame(maxWidth: .infinity)
@@ -127,7 +127,7 @@ struct FullScreenMermaidView: View {
         renderer.theme = theme
         renderer.scale = renderScale
         if let data = try? renderer.renderPNG(from: code) {
-            renderedImage = NSImage(data: data)?.flippedForDisplay
+            renderedImage = NSImage(data: data)
         }
     }
 
@@ -148,14 +148,6 @@ struct FullScreenMermaidView: View {
     }
 }
 
-private extension NSImage {
-    var flippedForDisplay: NSImage {
-        NSImage(size: size, flipped: true) { rect in
-            self.draw(in: rect)
-            return true
-        }
-    }
-}
 #endif
 
 #if os(iOS)

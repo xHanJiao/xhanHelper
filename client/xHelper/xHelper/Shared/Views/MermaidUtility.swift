@@ -1,11 +1,11 @@
 import Foundation
 
 struct ContentSegment: Identifiable {
-    let id = UUID()
+    var id: String { "\(type.rawValue)_\(content.hashValue)" }
     let type: SegmentType
     let content: String
 
-    enum SegmentType {
+    enum SegmentType: String {
         case markdown
         case mermaid
     }

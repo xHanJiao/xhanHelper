@@ -161,17 +161,27 @@ struct FullScreenMermaidView: View {
     }
 
     private func saveImage() {
-        let renderer = MermaidImageRenderer()
-        renderer.theme = theme
-        renderer.scale = 2.0
-        guard let data = try? renderer.renderPNG(from: code) else { return }
+        guard let img = renderedImage else { return }
+
+        let flipped = NSImage(size: img.size)
+        flipped.lockFocus()
+        let transform = NSAffineTransform()
+        transform.translateX(by: 0, yBy: img.size.height)
+        transform.scaleX(by: 1, yBy: -1)
+        transform.concat()
+        img.draw(at: .zero, from: .zero, operation: .copy, fraction: 1)
+        flipped.unlockFocus()
+
+        guard let tiff = flipped.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff),
+              let pngData = rep.representation(using: .png, properties: [:]) else { return }
 
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.png]
         savePanel.nameFieldStringValue = "diagram.png"
         savePanel.begin { response in
             if response == .OK, let url = savePanel.url {
-                try? data.write(to: url)
+                try? pngData.write(to: url)
             }
         }
     }

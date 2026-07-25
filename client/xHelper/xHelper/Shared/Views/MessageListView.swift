@@ -29,7 +29,6 @@ struct MessageListView: View {
     @State private var menuMessageId: String? = nil
     @State private var menuPoint: CGPoint = .zero
     @State private var touchGlobalPoint: CGPoint = .zero
-    @State private var menuFrames: [String: CGRect] = [:]
     @State private var menuDismissTask: Task<Void, Never>? = nil
     @State private var menuShownAt: Date = .distantPast
     @State private var viewHeight: CGFloat = 0
@@ -200,9 +199,8 @@ struct MessageListView: View {
                         base.onTapGesture { toggleRound(for: msg) }
                     } else {
                         base
-#if os(macOS)
                             .simultaneousGesture(
-                                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                                DragGesture(minimumDistance: 2, coordinateSpace: .global)
                                     .onChanged { value in
                                         touchGlobalPoint = value.startLocation
                                     }
@@ -222,35 +220,6 @@ struct MessageListView: View {
                                         }
                                     }
                             )
-#else
-                            .background(
-                                GeometryReader { geo in
-                                    Color.clear.onAppear {
-                                        menuFrames[msg.id] = geo.frame(in: .global)
-                                    }
-                                    .onChange(of: geo.frame(in: .global)) { _, newFrame in
-                                        menuFrames[msg.id] = newFrame
-                                    }
-                                }
-                            )
-                            .simultaneousGesture(
-                                LongPressGesture(minimumDuration: 0.5)
-                                    .onEnded { _ in
-                                        if !msg.content.isEmpty {
-                                            if menuMessageId == msg.id {
-                                                dismissMenu()
-                                                return
-                                            }
-                                            if let frame = menuFrames[msg.id] {
-                                                menuPoint = CGPoint(x: frame.midX, y: frame.midY)
-                                            }
-                                            menuShownAt = Date()
-                                            menuMessageId = msg.id
-                                            startMenuDismissTimer()
-                                        }
-                                    }
-                            )
-#endif
                     }
                 }
 

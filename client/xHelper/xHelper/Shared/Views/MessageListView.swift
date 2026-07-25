@@ -544,7 +544,9 @@ struct MessageListView: View {
             onLoadMore: { onLoadMore("before") }
         )
         .onScrollVisibilityChange(threshold: 0.1) { isVisible in
+            print("[LoadMore] onScrollVisibilityChange isVisible=\(isVisible) isLoadingMore=\(isLoadingMore) error=\(loadMoreError != nil) hasMore=\(hasMoreBefore)")
             guard isVisible, !isLoadingMore, loadMoreError == nil else { return }
+            print("[LoadMore] → triggering onLoadMore(before)")
             onLoadMore("before")
         }
     }

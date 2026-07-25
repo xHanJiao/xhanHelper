@@ -242,12 +242,14 @@ struct MessageListView: View {
                                                 return
                                             }
                                             if let frame = menuFrames[msg.id], viewHeight > 0 {
-                                                let rawX = frame.midX
-                                                let rawY = frame.midY
                                                 let screenW = UIScreen.main.bounds.width
-                                                let clampedX = min(max(rawX, 80), screenW - 80)
-                                                let clampedY = min(max(rawY, viewHeight * 0.2), viewHeight * 0.8)
-                                                menuPoint = CGPoint(x: clampedX, y: clampedY)
+                                                let menuX = min(max(frame.midX, 80), screenW - 80)
+                                                let gap: CGFloat = 8
+                                                if frame.midY > viewHeight * 0.5 {
+                                                    menuPoint = CGPoint(x: menuX, y: max(frame.minY - gap, 50))
+                                                } else {
+                                                    menuPoint = CGPoint(x: menuX, y: min(frame.maxY + gap, viewHeight - 50))
+                                                }
                                             } else {
                                                 menuPoint = CGPoint(x: UIScreen.main.bounds.midX, y: viewHeight * 0.35)
                                             }

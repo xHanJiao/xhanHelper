@@ -38,7 +38,7 @@ struct MermaidDiagramInlineView: View {
         }
         .task {
             do {
-                renderedImage = try await MermaidRenderer.renderImageAsync(source: code, theme: theme)
+                renderedImage = try await MermaidRenderer.renderImageAsync(source: code, theme: theme)?
                     .flippedForDisplay
             } catch {
                 renderError = error.localizedDescription

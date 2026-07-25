@@ -252,7 +252,7 @@ struct FullScreenMermaidView: View {
         }
     }
 
-    private func renderPNGData() throws -> Data {
+    private func renderPNGData() throws -> Data? {
         let renderer = MermaidImageRenderer()
         renderer.theme = theme
         renderer.scale = 2.0

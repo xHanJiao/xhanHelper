@@ -18,7 +18,9 @@ struct MessageListView: View {
     let thoughtDone: Bool
     let hasMoreBefore: Bool
     let isLoadingMore: Bool
+    let loadMoreError: String?
     let onLoadMore: (String) -> Void
+    let onRetry: () -> Void
     let baseURL: String
     let token: String
     @State private var initialLoadDone = false
@@ -46,17 +48,17 @@ struct MessageListView: View {
         Group {
             if !messages.isEmpty {
                 messageScrollView
-            } else if isInitialLoading {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if errorMessage != nil {
-                Color.clear
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Text("暂无消息")
-                    .font(.callout)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                MinimumLoadingView(
+                    isLoading: isInitialLoading,
+                    errorMessage: errorMessage,
+                    onRetry: onRetry
+                ) {
+                    Text("暂无消息")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
         }
         .background(
@@ -535,29 +537,15 @@ struct MessageListView: View {
 
     @ViewBuilder
     private var loadMoreHeader: some View {
-        if hasMoreBefore {
-            HStack {
-                if isLoadingMore {
-                    ProgressView().scaleEffect(0.7)
-                } else {
-                    Image(systemName: "arrow.up")
-                }
-                Text(isLoadingMore ? "正在加载..." : "加载更早的消息")
-                    .font(.caption)
-            }
-            .foregroundColor(Color("accentSecondary"))
-            .onTapGesture {
-                guard !isLoadingMore else { return }
-                onLoadMore("before")
-            }
-            .onScrollVisibilityChange(threshold: 0.1) { isVisible in
-                guard initialLoadDone, isVisible, !isLoadingMore else { return }
-                onLoadMore("before")
-            }
-        } else {
-            Text("已无更早消息")
-                .font(.caption)
-                .foregroundColor(.secondary)
+        LoadMoreHeader(
+            isLoading: isLoadingMore,
+            errorMessage: loadMoreError,
+            hasMore: hasMoreBefore,
+            onLoadMore: { onLoadMore("before") }
+        )
+        .onScrollVisibilityChange(threshold: 0.1) { isVisible in
+            guard initialLoadDone, isVisible, !isLoadingMore, loadMoreError == nil else { return }
+            onLoadMore("before")
         }
     }
 }

@@ -18,7 +18,7 @@ class DeviceManager: ObservableObject {
     private let refreshInterval: TimeInterval = 3600
 
     #if DEBUG
-    static let defaultBaseURL = "http://127.0.0.1:8080"
+    static let defaultBaseURL = "http://10.1.2.142:8080"
     #else
     static let defaultBaseURL = "https://helper.xhanx.cn"
     #endif

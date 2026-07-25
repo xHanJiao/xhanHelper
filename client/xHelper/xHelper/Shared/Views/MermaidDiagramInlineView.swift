@@ -93,6 +93,7 @@ struct FullScreenMermaidView: View {
             if let img = renderedImage {
                 Image(nsImage: img)
                     .resizable()
+                    .scaleEffect(y: -1)
                     .frame(
                         width: img.size.width / renderScale * currentScale,
                         height: img.size.height / renderScale * currentScale

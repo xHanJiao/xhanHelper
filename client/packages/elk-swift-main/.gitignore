@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+.swiftpm-cache/
+.DS_Store
+xcuserdata/
+__pycache__/
+*.pyc

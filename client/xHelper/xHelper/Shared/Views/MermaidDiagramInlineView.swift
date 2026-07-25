@@ -66,6 +66,7 @@ struct MermaidDiagramInlineView: View {
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(maxHeight: 250)
+                .scaleEffect(y: -1)
         } else {
             ProgressView()
                 .frame(maxWidth: .infinity)

@@ -2,6 +2,7 @@ import SwiftUI
 import BeautifulMermaid
 #if os(macOS)
 import AppKit
+import UniformTypeIdentifiers
 #endif
 #if os(iOS)
 import UIKit

@@ -1,5 +1,13 @@
 import SwiftUI
 import BeautifulMermaid
+#if os(macOS)
+import AppKit
+#endif
+#if os(iOS)
+import UIKit
+#endif
+
+// MARK: - Inline view (message bubble)
 
 struct MermaidDiagramInlineView: View {
     let code: String
@@ -25,11 +33,7 @@ struct MermaidDiagramInlineView: View {
         .contentShape(Rectangle())
         .onTapGesture { showFullScreen = true }
         .sheet(isPresented: $showFullScreen) {
-            ScrollView([.horizontal, .vertical], showsIndicators: true) {
-                MermaidDiagramView(source: code, theme: theme)
-                    .padding(40)
-            }
-            .frame(minWidth: 700, idealWidth: 900, minHeight: 400)
+            FullScreenMermaidView(code: code, theme: theme)
         }
         .task {
             do {
@@ -68,3 +72,152 @@ struct MermaidDiagramInlineView: View {
         }
     }
 }
+
+// MARK: - Full-screen view with zoom & save
+
+#if os(macOS)
+struct FullScreenMermaidView: View {
+    let code: String
+    let theme: DiagramTheme
+
+    @State private var renderedImage: NSImage? = nil
+    @State private var currentScale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+
+    private let renderScale: CGFloat = 3.0
+
+    var body: some View {
+        ScrollView([.horizontal, .vertical], showsIndicators: true) {
+            if let img = renderedImage {
+                Image(nsImage: img)
+                    .resizable()
+                    .frame(
+                        width: img.size.width / renderScale * currentScale,
+                        height: img.size.height / renderScale * currentScale
+                    )
+                    .gesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                let delta = value / lastScale
+                                lastScale = value
+                                currentScale = min(max(currentScale * delta, 0.3), 5.0)
+                            }
+                            .onEnded { _ in lastScale = 1.0 }
+                    )
+                    .onTapGesture(count: 2) {
+                        withAnimation(.easeInOut) { currentScale = 1.0 }
+                    }
+                    .contextMenu {
+                        Button("保存图片...") { saveImage() }
+                    }
+                    .padding(40)
+            } else {
+                ProgressView()
+                    .frame(width: 700, height: 400)
+            }
+        }
+        .frame(minWidth: 700, idealWidth: 900, minHeight: 400)
+        .task { renderImage() }
+    }
+
+    private func renderImage() {
+        let renderer = MermaidImageRenderer()
+        renderer.theme = theme
+        renderer.scale = renderScale
+        if let data = try? renderer.renderPNG(from: code) {
+            renderedImage = NSImage(data: data)
+        }
+    }
+
+    private func saveImage() {
+        let renderer = MermaidImageRenderer()
+        renderer.theme = theme
+        renderer.scale = 2.0
+        guard let data = try? renderer.renderPNG(from: code) else { return }
+
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = [.png]
+        savePanel.nameFieldStringValue = "diagram.png"
+        savePanel.begin { response in
+            if response == .OK, let url = savePanel.url {
+                try? data.write(to: url)
+            }
+        }
+    }
+}
+#endif
+
+#if os(iOS)
+struct FullScreenMermaidView: View {
+    let code: String
+    let theme: DiagramTheme
+
+    @State private var renderedImage: UIImage? = nil
+    @State private var currentScale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    @State private var showShareSheet = false
+
+    private let renderScale: CGFloat = 3.0
+
+    var body: some View {
+        ScrollView([.horizontal, .vertical], showsIndicators: true) {
+            if let img = renderedImage {
+                Image(uiImage: img)
+                    .resizable()
+                    .frame(
+                        width: img.size.width / renderScale * currentScale,
+                        height: img.size.height / renderScale * currentScale
+                    )
+                    .gesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                let delta = value / lastScale
+                                lastScale = value
+                                currentScale = min(max(currentScale * delta, 0.3), 5.0)
+                            }
+                            .onEnded { _ in lastScale = 1.0 }
+                    )
+                    .onTapGesture(count: 2) {
+                        withAnimation(.easeInOut) { currentScale = 1.0 }
+                    }
+                    .onLongPressGesture { showShareSheet = true }
+                    .padding(40)
+            } else {
+                ProgressView()
+            }
+        }
+        .task { renderImage() }
+        .sheet(isPresented: $showShareSheet) {
+            if let data = try? renderPNGData(), let uiImage = UIImage(data: data) {
+                ShareSheet(activityItems: [uiImage])
+            }
+        }
+    }
+
+    private func renderImage() {
+        let renderer = MermaidImageRenderer()
+        renderer.theme = theme
+        renderer.scale = renderScale
+        if let data = try? renderer.renderPNG(from: code) {
+            renderedImage = UIImage(data: data)
+        }
+    }
+
+    private func renderPNGData() throws -> Data {
+        let renderer = MermaidImageRenderer()
+        renderer.theme = theme
+        renderer.scale = 2.0
+        return try renderer.renderPNG(from: code)
+    }
+}
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#endif

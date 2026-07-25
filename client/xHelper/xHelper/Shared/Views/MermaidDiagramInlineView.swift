@@ -37,7 +37,7 @@ import UIKit
 struct MermaidDiagramInlineView: View {
     let code: String
     @Environment(\.colorScheme) var colorScheme
-    @State private var renderedImage: NSImage? = nil
+    @State private var renderedImage: BMImage? = nil
     @State private var renderError: String? = nil
     @State private var showFullScreen = false
 
@@ -90,11 +90,18 @@ struct MermaidDiagramInlineView: View {
             .frame(maxWidth: .infinity)
             .frame(height: 250)
         } else if let img = renderedImage {
+#if os(macOS)
             Image(nsImage: img)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(maxHeight: 250)
                 .scaleEffect(y: -1)
+#else
+            Image(uiImage: img)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxHeight: 250)
+#endif
         } else {
             ProgressView()
                 .frame(maxWidth: .infinity)

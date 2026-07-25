@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		BB05871A3013517C00D3DF15 /* BeautifulMermaid in Frameworks */ = {isa = PBXBuildFile; productRef = BB0587193013517C00D3DF15 /* BeautifulMermaid */; };
+		BB121FB43014964E00374F84 /* BeautifulMermaid in Frameworks */ = {isa = PBXBuildFile; productRef = BB121FB33014964E00374F84 /* BeautifulMermaid */; };
 		BB79374A2FA5B8190062C582 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = BB7937492FA5B8190062C582 /* MarkdownUI */; };
 		BB79377D2FA5ECE90062C582 /* ForceSimulation in Frameworks */ = {isa = PBXBuildFile; productRef = BB79377C2FA5ECE90062C582 /* ForceSimulation */; };
 		BB79377F2FA5ECE90062C582 /* Grape in Frameworks */ = {isa = PBXBuildFile; productRef = BB79377E2FA5ECE90062C582 /* Grape */; };
@@ -47,6 +48,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BB121FB43014964E00374F84 /* BeautifulMermaid in Frameworks */,
 				BB79377F2FA5ECE90062C582 /* Grape in Frameworks */,
 				BB79374A2FA5B8190062C582 /* MarkdownUI in Frameworks */,
 				BB79377D2FA5ECE90062C582 /* ForceSimulation in Frameworks */,
@@ -120,6 +122,7 @@
 				BB7937492FA5B8190062C582 /* MarkdownUI */,
 				BB79377C2FA5ECE90062C582 /* ForceSimulation */,
 				BB79377E2FA5ECE90062C582 /* Grape */,
+				BB121FB33014964E00374F84 /* BeautifulMermaid */,
 			);
 			productName = xHelper;
 			productReference = BB0A7E612FA4138E007BD7D6 /* xHelper-test.app */;
@@ -555,6 +558,11 @@
 /* Begin XCSwiftPackageProductDependency section */
 		BB0587193013517C00D3DF15 /* BeautifulMermaid */ = {
 			isa = XCSwiftPackageProductDependency;
+			productName = BeautifulMermaid;
+		};
+		BB121FB33014964E00374F84 /* BeautifulMermaid */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BB0587183013517C00D3DF15 /* XCLocalSwiftPackageReference "../packages/beautiful-mermaid-swift-main" */;
 			productName = BeautifulMermaid;
 		};
 		BB7937492FA5B8190062C582 /* MarkdownUI */ = {

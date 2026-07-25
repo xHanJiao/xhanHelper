@@ -97,7 +97,7 @@ extension DiagramRenderer {
     private func _drawSubgraphBackgrounds(_ groups: [_PositionedGroupPayload], in context: CGContext) {
         for group in groups {
             let rect = CGRect(x: group.x, y: group.y, width: group.width, height: group.height)
-            let path = BMBezierPath(rect: rect)
+            let path = BMBezierPath(roundedRect: rect, cornerRadius: theme.cornerRadius)
 
             // Fill background
             context.setFillColor(theme.subgraphBackgroundColor().cgColor)
@@ -107,7 +107,7 @@ extension DiagramRenderer {
             // Fill header band at top of group box
             let headerY = group.y
             let headerRect = CGRect(x: group.x, y: headerY, width: group.width, height: group.headerHeight)
-            let headerPath = BMBezierPath(roundedRect: headerRect, cornerRadius: 0)
+            let headerPath = BMBezierPath(roundedRect: headerRect, cornerRadius: theme.cornerRadius)
             context.setFillColor(theme.subgraphHeaderColor().cgColor)
             context.addPath(headerPath.bm_cgPath)
             context.fillPath()

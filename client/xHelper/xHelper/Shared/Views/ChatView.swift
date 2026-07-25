@@ -41,7 +41,12 @@ struct ChatView: View {
                     thoughtDone: viewModel.thoughtDone,
                     hasMoreBefore: viewModel.hasMoreBefore,
                     isLoadingMore: viewModel.isLoadingMore,
+                    loadMoreError: viewModel.loadMoreError,
                     onLoadMore: { direction in Task { await viewModel.loadMore(direction: direction) } },
+                    onRetry: {
+                        guard let cid = viewModel.conversationId else { return }
+                        Task { await viewModel.loadConversation(id: cid, title: viewModel.conversationTitle ?? "") }
+                    },
                     baseURL: baseURL,
                     token: token,
                     scrollPosition: $scrollPosition,

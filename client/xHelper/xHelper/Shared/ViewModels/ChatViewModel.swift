@@ -71,6 +71,7 @@ class ChatViewModel: ObservableObject {
     @Published var hasMoreAfter = false
     @Published var isLoadingMore = false
     @Published var isInitialLoading = true
+    @Published var loadMoreError: String?
     @Published var scrollToBottomRequested = false
 
     let apiClient: APIClient // 扩展（ChatViewModel+ClientTools）需要访问
@@ -94,6 +95,8 @@ class ChatViewModel: ObservableObject {
         conversationId = id
         conversationTitle = title
         isInitialLoading = true
+        errorMessage = nil
+        loadMoreError = nil
         let oldLastId = messages.last?.id
         defer { isInitialLoading = false }
         do {
@@ -112,13 +115,13 @@ class ChatViewModel: ObservableObject {
         } catch {
             LogBuffer.shared.error("ChatViewModel.loadConversation: \(error)")
             errorMessage = "加载消息失败"
-            ToastCenter.shared.show("加载消息失败，请稍后重试")
         }
     }
 
     func loadMore(direction: String = "before") async {
         guard !isLoadingMore else { return }
         isLoadingMore = true
+        loadMoreError = nil
         let cursor = direction == "before" ? oldestCursor : newestCursor
         do {
             let result = try await apiClient.getMessagesCursor(
@@ -144,7 +147,7 @@ class ChatViewModel: ObservableObject {
             }
         } catch {
             LogBuffer.shared.error("ChatViewModel.loadMore: \(error)")
-            ToastCenter.shared.show("加载更多失败，请稍后重试")
+            loadMoreError = "加载失败，点击重试"
         }
         isLoadingMore = false
     }

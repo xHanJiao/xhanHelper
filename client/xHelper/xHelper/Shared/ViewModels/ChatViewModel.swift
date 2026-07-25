@@ -119,7 +119,6 @@ class ChatViewModel: ObservableObject {
     }
 
     func loadMore(direction: String = "before") async {
-        print("[LoadMore] ChatViewModel.loadMore direction=\(direction) isLoadingMore=\(isLoadingMore) cursor=\(direction == "before" ? oldestCursor : newestCursor)")
         guard !isLoadingMore else { return }
         isLoadingMore = true
         loadMoreError = nil
@@ -132,7 +131,6 @@ class ChatViewModel: ObservableObject {
             )
             if direction == "before" {
                 let newMsgs = result.messages.flatMap { $0.withoutToolCalls() }
-                print("[LoadMore] fetched \(newMsgs.count) messages hasBefore=\(result.hasMoreBefore)")
                 messages = newMsgs + messages
                 oldestCursor = result.oldestCursor
                 let stillHasMore = result.hasMoreBefore

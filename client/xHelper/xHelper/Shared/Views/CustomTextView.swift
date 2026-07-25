@@ -9,6 +9,7 @@ struct CustomTextView: UIViewRepresentable {
     var dismissKeyboardToken: UUID?
     var isDisabled: Bool
     var placeholder: String
+    var fontSize: CGFloat = FontSizeManager.baseSize
     var onSubmit: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
@@ -18,7 +19,7 @@ struct CustomTextView: UIViewRepresentable {
     func makeUIView(context: Context) -> UITextView {
         let textView = UITextView()
         textView.delegate = context.coordinator
-        textView.font = .preferredFont(forTextStyle: .body)
+        textView.font = .systemFont(ofSize: fontSize)
         textView.backgroundColor = .clear
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
@@ -31,7 +32,7 @@ struct CustomTextView: UIViewRepresentable {
 
         let placeholderLabel = UILabel()
         placeholderLabel.text = placeholder
-        placeholderLabel.font = .preferredFont(forTextStyle: .body)
+        placeholderLabel.font = .systemFont(ofSize: fontSize)
         placeholderLabel.textColor = .placeholderText
         placeholderLabel.tag = 999
         placeholderLabel.isHidden = !text.isEmpty

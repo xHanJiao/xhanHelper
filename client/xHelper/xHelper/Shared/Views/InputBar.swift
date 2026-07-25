@@ -9,6 +9,7 @@ struct InputBar: View {
     var dismissKeyboardToken: UUID?
     let onSend: () -> Void
     let onStop: () -> Void
+    @EnvironmentObject var fontSizeManager: FontSizeManager
     @State private var shakeOffset: CGFloat = 0
 
     var body: some View {
@@ -19,6 +20,7 @@ struct InputBar: View {
                 dismissKeyboardToken: dismissKeyboardToken,
                 isDisabled: isStreaming,
                 placeholder: "输入消息...",
+                fontSize: fontSizeManager.scaledSize,
                 onSubmit: {
                     if !text.trimmingCharacters(in: .whitespaces).isEmpty {
                         onSend()
@@ -32,7 +34,8 @@ struct InputBar: View {
             .cornerRadius(16)
             .disabled(isStreaming)
 #else
-            let font = NSFont.preferredFont(forTextStyle: .body)
+            let scaledSize = fontSizeManager.scaledSize
+            let font = NSFont.systemFont(ofSize: scaledSize)
             let lineHeight = font.ascender + abs(font.descender) + font.leading
             TextEditor(text: $text)
                 .offset(x: shakeOffset)
@@ -65,7 +68,7 @@ struct InputBar: View {
                     return .handled
                 }
                 .scrollContentBackground(.hidden)
-                .font(.body)
+                .font(.system(size: scaledSize))
                 .frame(minHeight: lineHeight * 4, maxHeight: lineHeight * 8)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 12)

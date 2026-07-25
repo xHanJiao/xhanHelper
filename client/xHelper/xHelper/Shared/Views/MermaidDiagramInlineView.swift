@@ -7,23 +7,23 @@ import UniformTypeIdentifiers
 private func mermaidTheme(for colorScheme: ColorScheme) -> DiagramTheme {
     if colorScheme == .dark {
         DiagramTheme(
-            background: "#2C2E2D",
-            foreground: "#E8DECB",
-            line: "#4A4A4C",
-            accent: "#92C8B4",
-            muted: "#3A3A3C",
-            surface: "#242426",
-            border: "#5A5A5C"
+            background: BMColor(hex: "#2C2E2D"),
+            foreground: BMColor(hex: "#E8DECB"),
+            line: BMColor(hex: "#4A4A4C"),
+            accent: BMColor(hex: "#92C8B4"),
+            muted: BMColor(hex: "#3A3A3C"),
+            surface: BMColor(hex: "#242426"),
+            border: BMColor(hex: "#5A5A5C")
         )
     } else {
         DiagramTheme(
-            background: "#F2F7F3",
-            foreground: "#3B2E1F",
-            line: "#C4B99A",
-            accent: "#7DB5A0",
-            muted: "#E0D8C0",
-            surface: "#FFFFFF",
-            border: "#D0C8B0"
+            background: BMColor(hex: "#F2F7F3"),
+            foreground: BMColor(hex: "#3B2E1F"),
+            line: BMColor(hex: "#C4B99A"),
+            accent: BMColor(hex: "#7DB5A0"),
+            muted: BMColor(hex: "#E0D8C0"),
+            surface: BMColor(hex: "#FFFFFF"),
+            border: BMColor(hex: "#D0C8B0")
         )
     }
 }

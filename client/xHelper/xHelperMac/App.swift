@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self,
                   event.keyCode == 12,
-                  event.modifierFlags.contains(.command)
+                  event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command
             else { return event }
 
             if isHoldingQuit {
@@ -25,7 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return nil
         }
         NSEvent.addLocalMonitorForEvents(matching: .keyUp) { [weak self] event in
-            if event.keyCode == 12 {
+            if event.keyCode == 12,
+               event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command {
                 self?.cancelQuitHold()
             }
             return event

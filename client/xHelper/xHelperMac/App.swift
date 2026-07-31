@@ -184,8 +184,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.backgroundColor = .clear
         window.contentView?.wantsLayer = true
         window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
-        window.titlebarAppearsTransparent = true
-        window.styleMask.insert(.fullSizeContentView)
+        window.isMovableByWindowBackground = true
+        window.toolbar = nil
     }
 }
 
@@ -237,6 +237,7 @@ struct xhanHelperMacApp: App {
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 800, height: 600)
+        .windowStyle(.hiddenTitleBar)
 
         Settings {
             MacSettingsView(deviceManager: deviceManager)
@@ -322,7 +323,11 @@ struct MacSettingsView: View {
 #endif
 
             Section("浏览") {
-                BrowseRow("账单记录", icon: "list.bullet.rectangle", destination: BillListView(apiClient: apiClient))
+                BrowseRow("账单记录", icon: "list.bullet.rectangle", destination: BillListView(
+                    viewModel: BillViewModel(apiClient: apiClient),
+                    baseURL: deviceManager.baseURL,
+                    token: deviceManager.token ?? ""
+                ))
                 BrowseRow("诊断日志", icon: "exclamationmark.bubble", destination: LogDiagnosticView())
             }
 

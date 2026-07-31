@@ -1,109 +1,111 @@
 import SwiftUI
+import MarkdownUI
 
 struct DocumentListView: View {
-    let apiClient: APIClient
-    @State private var documents: [Document] = []
-    @State private var isLoading = true
-    @State private var total = 0
-    @State private var errorMessage: String?
-    private let pageSize = 24
+    @StateObject var viewModel: DocumentViewModel
+    @State private var selectedDocument: Document?
 
     var body: some View {
-        Group {
-            if isLoading {
-                ProgressView()
-            } else if let err = errorMessage {
-                VStack(spacing: 12) {
-                    Text(err).foregroundColor(.secondary)
-                    Button("重试") { Task { await load() } }
-                }
-            } else if documents.isEmpty {
-                Text("暂无文档")
-                    .foregroundColor(.secondary)
-            } else {
-                List {
-                    ForEach(documents) { doc in
-                        NavigationLink(destination: DocumentDetailView(document: doc)) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(doc.title)
-                                    .font(.subheadline.weight(.medium))
-                                HStack {
-                                    if let tagText = doc.tags, !tagText.isEmpty {
-                                        Text(tagText.components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? tagText)
-                                            .font(.caption)
-                                            .foregroundColor(Color("appAccent"))
-                                    }
-                                    Spacer()
-                                    Text(formatDate(doc.updatedAt))
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                            .padding(.vertical, 2)
-                        }
-                        .swipeActions(edge: .trailing) {
-                            Button("删除", role: .destructive) {
-                                Task { await delete(doc) }
-                            }
-                        }
-                    }
-
-                    if documents.count < total {
-                        HStack {
-                            Spacer()
-                            ProgressView()
-                                .padding()
-                                .task { await loadMore() }
-                            Spacer()
-                        }
-                    }
+        if let doc = selectedDocument {
+            DocumentFullView(document: doc, onBack: { selectedDocument = nil })
+        } else {
+            PageContainer(
+                title: "文档",
+                icon: "doc.text",
+                isLoading: viewModel.isLoading,
+                errorMessage: viewModel.errorMessage,
+                isEmpty: viewModel.documents.isEmpty && !viewModel.isLoading,
+                emptyMessage: "还没有文档",
+                onRetry: { Task { await viewModel.load() } }
+            ) {
+                CardGridView(
+                    items: viewModel.documents,
+                    maxColumns: 1,
+                    minCardWidth: 300,
+                    onLoadMore: { await viewModel.loadMore() }
+                ) { doc in
+                    CardConfig(
+                        title: doc.title,
+                        subtitle: doc.content,
+                        tags: parseTags(doc.tags),
+                        style: .document,
+                        onTap: { selectedDocument = doc }
+                    )
                 }
             }
-        }
-        .navigationTitle("文档")
-        .task { await load() }
-    }
-
-    private func load() async {
-        do {
-            let resp = try await apiClient.listDocuments(limit: pageSize, offset: 0)
-            documents = resp.documents
-            total = resp.total
-            errorMessage = nil
-        } catch {
-            LogBuffer.shared.error("DocumentListView.load: \(error)")
-            errorMessage = "加载失败: \(error.localizedDescription)"
-        }
-        isLoading = false
-    }
-
-    private func loadMore() async {
-        let newOffset = documents.count
-        guard newOffset < total else { return }
-        do {
-            let resp = try await apiClient.listDocuments(limit: pageSize, offset: newOffset)
-            documents.append(contentsOf: resp.documents)
-        } catch {
-            LogBuffer.shared.error("DocumentListView.loadMore: \(error)")
+            .task { await viewModel.load() }
         }
     }
 
-    private func delete(_ doc: Document) async {
-        do {
-            try await apiClient.deleteDocument(id: doc.id)
-            documents.removeAll { $0.id == doc.id }
-            total -= 1
-        } catch {
-            LogBuffer.shared.error("DocumentListView.delete: \(error)")
+    private func parseTags(_ tags: String?) -> [TagBadge] {
+        guard let tags, !tags.isEmpty else { return [] }
+        return tags.split(separator: ",").map {
+            TagBadge(text: String($0).trimmingCharacters(in: .whitespaces), color: Color("appAccent"))
+        }
+    }
+}
+
+private struct DocumentFullView: View {
+    let document: Document
+    let onBack: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Button(action: onBack) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.body.weight(.medium))
+                        Text("返回文档列表")
+                            .font(.body)
+                    }
+                    .foregroundColor(Color("appAccent"))
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial.opacity(0.5))
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text(document.title)
+                        .font(.system(size: FontSizeManager.shared.scaledSize * 1.65, weight: .semibold))
+
+                    if let tags = document.tags, !tags.isEmpty {
+                        HStack(spacing: 6) {
+                            ForEach(parseTags(document.tags)) { tag in
+                                Text(tag.text)
+                                    .font(.system(size: FontSizeManager.shared.scaledSize * 0.76))
+                                    .foregroundColor(tag.color)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(tag.color.opacity(0.12))
+                                    .clipShape(Capsule())
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    Markdown(document.content)
+                        .markdownTheme(.chatBubble(fontSize: FontSizeManager.shared.scaledSize * 1.18))
+                        .markdownCodeSyntaxHighlighter(.plainText)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
-    private func formatDate(_ iso: String) -> String {
-        let fmt = ISO8601DateFormatter()
-        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = fmt.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else { return iso }
-        let df = DateFormatter()
-        df.dateFormat = "MM-dd HH:mm"
-        return df.string(from: date)
+    private func parseTags(_ tags: String?) -> [TagBadge] {
+        guard let tags else { return [] }
+        return tags.split(separator: ",").map {
+            TagBadge(text: String($0).trimmingCharacters(in: .whitespaces), color: Color("appAccent"))
+        }
     }
 }

@@ -62,10 +62,14 @@ struct SettingsView: View {
             .listRowBackground(Rectangle().fill(.ultraThinMaterial))
 
             Section {
-                NavigationLink(destination: BillListView(apiClient: apiClient)) {
+                NavigationLink(destination: BillListView(
+                    viewModel: BillViewModel(apiClient: apiClient),
+                    baseURL: apiClient.baseURL,
+                    token: apiClient.token
+                )) {
                     Label("账单记录", systemImage: "list.bullet.rectangle")
                 }
-                NavigationLink(destination: DocumentListView(apiClient: apiClient)) {
+                NavigationLink(destination: DocumentListView(viewModel: DocumentViewModel(apiClient: apiClient))) {
                     Label("文档", systemImage: "doc.text")
                 }
                 NavigationLink(destination: LogDiagnosticView()) {

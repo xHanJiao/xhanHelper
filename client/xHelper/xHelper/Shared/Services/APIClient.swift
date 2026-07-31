@@ -47,8 +47,12 @@ class APIClient {
 
     // MARK: Bills (P3 使用)
 
-    func getBills() async throws -> BillListResponse {
-        return try await get("/api/bills")
+    func getBills(limit: Int = 50, offset: Int = 0, category: String = "", startDate: String = "", endDate: String = "") async throws -> BillListResponse {
+        var path = "/api/bills?limit=\(limit)&offset=\(offset)"
+        if !category.isEmpty { path += "&category=\(category.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? category)" }
+        if !startDate.isEmpty { path += "&start_date=\(startDate)" }
+        if !endDate.isEmpty { path += "&end_date=\(endDate)" }
+        return try await get(path)
     }
 
     func uploadBillsCSV(_ csvText: String) async throws -> ImportResult {
@@ -72,8 +76,10 @@ class APIClient {
 
 	// MARK: Notes
 
-	func listNotes(limit: Int = 50, offset: Int = 0) async throws -> NoteListResponse {
-		return try await get("/api/notes?limit=\(limit)&offset=\(offset)")
+	func listNotes(limit: Int = 50, offset: Int = 0, keyword: String = "") async throws -> NoteListResponse {
+		var path = "/api/notes?limit=\(limit)&offset=\(offset)"
+		if !keyword.isEmpty { path += "&keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)" }
+		return try await get(path)
 	}
 
 	func batchGetNotes(ids: [String]) async throws -> [Note] {
@@ -524,7 +530,42 @@ extension APIClient {
         return try await post("/api/reminders/\(id)/ack", body: [:])
     }
 
-    func cancelReminder(id: String) async throws -> Reminder {
-        return try await post("/api/reminders/\(id)/cancel", body: [:])
+	func cancelReminder(id: String) async throws -> Reminder {
+		return try await post("/api/reminders/\(id)/cancel", body: [:])
+	}
+
+	// MARK: Themes
+
+	func listThemes(limit: Int = 50, offset: Int = 0) async throws -> AppThemeListResponse {
+		return try await get("/api/themes?limit=\(limit)&offset=\(offset)")
+	}
+}
+
+// MARK: AppTheme model
+
+struct AppTheme: Identifiable, Codable {
+    let id: String
+    let userId: String
+    let name: String
+    let description: String
+    let status: String
+    let stateText: String
+    let createdAt: String
+    let updatedAt: String
+    let lastRunAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case name, description, status
+        case stateText = "state_text"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case lastRunAt = "last_run_at"
     }
+}
+
+struct AppThemeListResponse: Codable {
+    let items: [AppTheme]
+    let total: Int
 }

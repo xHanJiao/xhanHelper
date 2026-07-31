@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var isInChat = false
     @State private var lastSyncAt = Date.distantPast
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var chatViewModel: ChatViewModel
     @State private var conversationLoadError: String?
 
@@ -13,6 +14,19 @@ struct ContentView: View {
     @State private var showAckLoading = false
     @State private var ackErrorMessage: String?
     @State private var showAckError = false
+
+#if os(macOS)
+    @State private var selectedSidebarTab: SidebarTab = .chat
+    @State private var sidebarWidth: CGFloat = Layout.sidebarDefaultWidth
+    @AppStorage("xhan_sidebar_width") private var storedSidebarWidth: Double = Layout.sidebarDefaultWidth
+    @State private var windowWidth: CGFloat = 800
+
+    private var api: APIClient {
+        APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+    }
+
+    private var allowExpand: Bool { windowWidth >= 600 }
+#endif
 
     init(deviceManager: DeviceManager) {
         self.deviceManager = deviceManager
@@ -46,14 +60,47 @@ struct ContentView: View {
                     .tag("settings")
                 }
 #else
-                ConversationListContentView(deviceManager: deviceManager, isInChat: $isInChat, chatViewModel: chatViewModel, loadError: conversationLoadError)
-                    .navigationTitle("\(deviceManager.username ?? "xhan")Helper")
-                    .toolbar {
-                        ToolbarItem(placement: .automatic) {
-                            OpenSettingsButton()
+                GeometryReader { geo in
+                    HStack(alignment: .top, spacing: 0) {
+                        SidebarView(
+                            selectedTab: $selectedSidebarTab,
+                            sidebarWidth: $sidebarWidth,
+                            allowExpand: allowExpand
+                        )
+                        .padding(.bottom, 12)
+                        .padding(.horizontal, 12)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+                        .padding(.top, 34)
+                        .padding(.bottom, 12)
+                        .padding(.leading, 8)
+                        .padding(.trailing, 12)
+
+                        macOSContentArea
+                    }
+                    .onChange(of: geo.size.width) { _, new in
+                        windowWidth = new
+                        if new < 600 && sidebarWidth > Layout.sidebarSnapThreshold {
+                            sidebarWidth = Layout.sidebarMinWidth
                         }
                     }
-                    .toolbarBackground(.ultraThinMaterial, for: .windowToolbar)
+                }
+                .overlay(alignment: .top) {
+                    VStack(spacing: 0) {
+                        Color(nsColor: .clear)
+                            .frame(height: 26)
+                    }
+                    .allowsHitTesting(false)
+                }
+                .ignoresSafeArea(edges: .top)
+                .onAppear {
+                    sidebarWidth = storedSidebarWidth
+                }
+                .onChange(of: sidebarWidth) { _, new in
+                    if new > Layout.sidebarSnapThreshold {
+                        storedSidebarWidth = new
+                    }
+                }
 #endif
             }
             .onChange(of: scenePhase) { _, newPhase in
@@ -124,6 +171,42 @@ struct ContentView: View {
             Text(ackErrorMessage ?? "未知错误")
         }
     }
+
+#if os(macOS)
+    @ViewBuilder
+    private var macOSContentArea: some View {
+        switch selectedSidebarTab {
+        case .chat:
+            ZStack {
+                if let msg = conversationLoadError, chatViewModel.messages.isEmpty {
+                    VStack(spacing: 12) {
+                        Text(msg).foregroundColor(.secondary)
+                    }
+                } else {
+                    ChatView(viewModel: chatViewModel, agentId: nil, baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+                        .onAppear { isInChat = true }
+                        .onDisappear { isInChat = false }
+                }
+            }
+        case .agents:
+            AgentListView(viewModel: AgentViewModel(apiClient: api))
+        case .bills:
+            BillListView(
+                viewModel: BillViewModel(apiClient: api),
+                baseURL: deviceManager.baseURL,
+                token: deviceManager.token ?? ""
+            )
+        case .memories:
+            MemoryListView(viewModel: MemoryViewModel(apiClient: api))
+        case .notes:
+            NoteListView(viewModel: NoteViewModel(apiClient: api))
+        case .documents:
+            DocumentListView(viewModel: DocumentViewModel(apiClient: api))
+        case .themes:
+            ThemeListView(viewModel: ThemeViewModel(apiClient: api))
+        }
+    }
+#endif
 
     // MARK: - Reminder sync
 

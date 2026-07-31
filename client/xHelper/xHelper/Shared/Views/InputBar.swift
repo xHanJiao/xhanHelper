@@ -5,12 +5,17 @@ import AppKit
 
 struct InputBar: View {
     @Binding var text: String
+    @Binding var isEditing: Bool
     let isStreaming: Bool
     var dismissKeyboardToken: UUID?
     let onSend: () -> Void
     let onStop: () -> Void
     @EnvironmentObject var fontSizeManager: FontSizeManager
     @State private var shakeOffset: CGFloat = 0
+#if os(macOS)
+    @FocusState private var isFocused: Bool
+    @State private var idleTask: Task<Void, Never>?
+#endif
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
@@ -39,6 +44,27 @@ struct InputBar: View {
             let lineHeight = font.ascender + abs(font.descender) + font.leading
             TextEditor(text: $text)
                 .offset(x: shakeOffset)
+                .focused($isFocused)
+                .onChange(of: text) {
+                    idleTask?.cancel()
+                    if !isEditing {
+                        print("[InputBar] typing started")
+                        isEditing = true
+                    }
+                    idleTask = Task {
+                        try? await Task.sleep(for: .seconds(5))
+                        guard !Task.isCancelled else { return }
+                        print("[InputBar] typing idle 5s")
+                        isEditing = false
+                    }
+                }
+                .onChange(of: isFocused) { _, new in
+                    if !new {
+                        idleTask?.cancel()
+                        print("[InputBar] focus lost")
+                        isEditing = false
+                    }
+                }
                 .onKeyPress(.return, phases: .down) { keyPress in
                     if keyPress.modifiers.contains(.shift) {
                         return .ignored
@@ -105,29 +131,33 @@ struct InputBar: View {
 
 #Preview {
     @Previewable @State var text = ""
-    @Previewable @State var dismissKeyboardToken: UUID? = nil
+        @Previewable @State var isEditing = false
+        @Previewable @State var dismissKeyboardToken: UUID? = nil
 
-    VStack {
-        Spacer()
-        InputBar(
-            text: $text,
-            isStreaming: false,
-            dismissKeyboardToken: dismissKeyboardToken,
-            onSend: {},
-            onStop: {}
-        )
+        VStack {
+            Spacer()
+            InputBar(
+                text: $text,
+                isEditing: $isEditing,
+                isStreaming: false,
+                dismissKeyboardToken: dismissKeyboardToken,
+                onSend: {},
+                onStop: {}
+            )
+        }
+        .frame(height: 200)
     }
-    .frame(height: 200)
-}
 
-#Preview("Streaming") {
-    @Previewable @State var text = "正在思考..."
-    @Previewable @State var dismissKeyboardToken: UUID? = nil
+    #Preview("Streaming") {
+        @Previewable @State var text = "正在思考..."
+        @Previewable @State var isEditing = false
+        @Previewable @State var dismissKeyboardToken: UUID? = nil
 
-    VStack {
-        Spacer()
-        InputBar(
-            text: $text,
+        VStack {
+            Spacer()
+            InputBar(
+                text: $text,
+                isEditing: $isEditing,
             isStreaming: true,
             dismissKeyboardToken: dismissKeyboardToken,
             onSend: {},

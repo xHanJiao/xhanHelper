@@ -137,7 +137,6 @@ struct DataTable<Item: Identifiable>: View {
             }
         }
         .frame(height: 32)
-        .background(.ultraThinMaterial)
     }
 
     private func headerCell(_ col: AnyColumn<Item>, totalWidth: CGFloat) -> some View {

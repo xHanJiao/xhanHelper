@@ -1,8 +1,4 @@
 import SwiftUI
-#if os(macOS)
-import AppKit
-import UniformTypeIdentifiers
-#endif
 
 enum FilterType { case date, category }
 
@@ -32,21 +28,6 @@ struct BillListView: View {
             onRetry: { Task { await viewModel.load() } }
         ) {
             VStack(spacing: 0) {
-                HStack {
-                    Spacer()
-                    Button {
-                        exportCSV()
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 14).weight(.medium))
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("导出 CSV")
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-
                 if viewModel.bills.isEmpty && !viewModel.isLoading {
                     EmptyView()
                 } else {
@@ -245,21 +226,4 @@ struct BillListView: View {
         fmt.dateFormat = "yyyy-MM-dd"
         return fmt.string(from: date)
     }
-
-#if os(macOS)
-    private func exportCSV() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.commaSeparatedText]
-        panel.nameFieldStringValue = "bills.csv"
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            Task {
-                guard let csv = await viewModel.exportCSV(baseURL: baseURL, token: token) else { return }
-                try? csv.write(to: url, atomically: true, encoding: .utf8)
-            }
-        }
-    }
-#else
-    private func exportCSV() {}
-#endif
 }

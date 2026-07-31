@@ -29,10 +29,11 @@ struct SidebarView: View {
     @Binding var sidebarWidth: CGFloat
     let allowExpand: Bool
 
-    @Environment(\.openSettings) private var openSettings
     @GestureState private var dragOffset: CGFloat = 0
     @State private var lastExpandedWidth: CGFloat = Layout.sidebarDefaultWidth
     @State private var isToggleHovered = false
+    
+    private static let topPadding: CGFloat = 20
 
     private var isCollapsed: Bool {
         sidebarWidth <= Layout.sidebarSnapThreshold
@@ -91,7 +92,7 @@ struct SidebarView: View {
 
     private var expandedContent: some View {
         VStack(spacing: 0) {
-            Spacer().frame(height: 40)
+            Spacer().frame(height: Self.topPadding)
                 .allowsHitTesting(false)
 
             ScrollView {
@@ -105,14 +106,12 @@ struct SidebarView: View {
             }
 
             Spacer()
-
-            expandedSettingsButton
         }
     }
 
     private var collapsedContent: some View {
         VStack(spacing: 0) {
-            Spacer().frame(height: 40)
+            Spacer().frame(height: Self.topPadding)
 
             ScrollView {
                 VStack(spacing: 8) {
@@ -125,8 +124,6 @@ struct SidebarView: View {
             }
 
             Spacer()
-
-            collapsedSettingsButton
         }
     }
 
@@ -140,7 +137,7 @@ struct SidebarView: View {
                     .frame(width: 20)
                     .foregroundColor(selectedTab == tab ? Color("appAccent") : .secondary)
                 Text(tab.rawValue)
-                    .font(.title3)
+                    .font(.title2)
                     .foregroundColor(selectedTab == tab ? Color("appAccent") : .primary)
                 Spacer()
             }
@@ -166,38 +163,6 @@ struct SidebarView: View {
                 .help(tab.rawValue)
         }
         .buttonStyle(.plain)
-    }
-
-    private var expandedSettingsButton: some View {
-        Button { openSettings() } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "gear")
-                    .font(.title3)
-                    .frame(width: 20)
-                    .foregroundColor(.secondary)
-                Text("设置")
-                    .font(.title3)
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-        }
-        .buttonStyle(.plain)
-        .padding(.bottom, 8)
-    }
-
-    private var collapsedSettingsButton: some View {
-        Button { openSettings() } label: {
-            Image(systemName: "gear")
-                .font(.title2)
-                .frame(width: 30, height: 30)
-                .frame(maxWidth: .infinity)
-                .foregroundColor(.secondary)
-                .help("设置")
-        }
-        .buttonStyle(.plain)
-        .padding(.bottom, 8)
     }
 
     private var sidebarDragGesture: some Gesture {

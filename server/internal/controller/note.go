@@ -24,6 +24,7 @@ func (h *NoteHandler) ListNotes(c *gin.Context) {
 	userID := c.GetString("user_id")
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
 	notes, total, err := h.noteRepo.List(c.Request.Context(), userID,
 		c.Query("topic"), c.Query("keyword"), limit, offset)
 	if err != nil {

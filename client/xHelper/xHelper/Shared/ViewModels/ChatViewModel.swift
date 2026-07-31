@@ -25,6 +25,11 @@ class ChatViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var conversationId: String?
     @Published var conversationTitle: String?
+    @Published var isEditing = false {
+        didSet {
+            print("[ChatVM] isEditing: \(isEditing)")
+        }
+    }
     @Published var deepMode = false
     @Published var thinkingMode = true
     @Published var temperature: Double? = nil

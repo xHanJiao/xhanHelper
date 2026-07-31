@@ -16,13 +16,29 @@ struct ContentView: View {
     @State private var showAckError = false
 
 #if os(macOS)
-    @State private var selectedSidebarTab: SidebarTab = .chat
+    @StateObject private var router = NavigationRouter()
     @State private var sidebarWidth: CGFloat = Layout.sidebarDefaultWidth
+    @State private var sidebarHovered = false
+    @State private var contentHovered = false
     @AppStorage("xhan_sidebar_width") private var storedSidebarWidth: Double = Layout.sidebarDefaultWidth
     @State private var windowWidth: CGFloat = 800
 
+    @StateObject private var agentVM: AgentViewModel
+    @StateObject private var billVM: BillViewModel
+    @StateObject private var memoryVM: MemoryViewModel
+    @StateObject private var noteVM: NoteViewModel
+    @StateObject private var documentVM: DocumentViewModel
+    @StateObject private var themeVM: ThemeViewModel
+
     private var api: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+    }
+
+    private var sidebarTabBinding: Binding<SidebarTab> {
+        Binding(
+            get: { router.currentTab },
+            set: { router.navigateTo($0) }
+        )
     }
 
     private var allowExpand: Bool { windowWidth >= 600 }
@@ -32,6 +48,14 @@ struct ContentView: View {
         self.deviceManager = deviceManager
         let api = APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
         _chatViewModel = StateObject(wrappedValue: ChatViewModel(apiClient: api))
+#if os(macOS)
+        _agentVM = StateObject(wrappedValue: AgentViewModel(apiClient: api))
+        _billVM = StateObject(wrappedValue: BillViewModel(apiClient: api))
+        _memoryVM = StateObject(wrappedValue: MemoryViewModel(apiClient: api))
+        _noteVM = StateObject(wrappedValue: NoteViewModel(apiClient: api))
+        _documentVM = StateObject(wrappedValue: DocumentViewModel(apiClient: api))
+        _themeVM = StateObject(wrappedValue: ThemeViewModel(apiClient: api))
+#endif
     }
 
     var body: some View {
@@ -63,18 +87,18 @@ struct ContentView: View {
                 GeometryReader { geo in
                     HStack(alignment: .top, spacing: 0) {
                         SidebarView(
-                            selectedTab: $selectedSidebarTab,
+                            selectedTab: sidebarTabBinding,
                             sidebarWidth: $sidebarWidth,
                             allowExpand: allowExpand
                         )
                         .padding(.bottom, 12)
                         .padding(.horizontal, 12)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                        .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
-                        .padding(.top, 34)
+                        .modifier(CardBackgroundModifier(isLifted: sidebarHovered))
+                        .padding(.top, 48)
                         .padding(.bottom, 12)
                         .padding(.leading, 8)
                         .padding(.trailing, 12)
+                        .onHover { sidebarHovered = $0 }
 
                         macOSContentArea
                     }
@@ -175,35 +199,49 @@ struct ContentView: View {
 #if os(macOS)
     @ViewBuilder
     private var macOSContentArea: some View {
-        switch selectedSidebarTab {
-        case .chat:
-            ZStack {
-                if let msg = conversationLoadError, chatViewModel.messages.isEmpty {
-                    VStack(spacing: 12) {
-                        Text(msg).foregroundColor(.secondary)
-                    }
-                } else {
-                    ChatView(viewModel: chatViewModel, agentId: nil, baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
-                        .onAppear { isInChat = true }
-                        .onDisappear { isInChat = false }
+        VStack(spacing: 0) {
+            NavigationToolbar(router: router)
+
+            Group {
+                switch router.currentTab {
+                case .chat:
+                    ChatPage(
+                        chatViewModel: chatViewModel,
+                        loadError: conversationLoadError,
+                        baseURL: deviceManager.baseURL,
+                        token: deviceManager.token ?? ""
+                    )
+                case .agents:
+                    AgentPage(router: router, viewModel: agentVM)
+                case .bills:
+                    BillPage(
+                        router: router,
+                        viewModel: billVM,
+                        baseURL: deviceManager.baseURL,
+                        token: deviceManager.token ?? ""
+                    )
+                case .memories:
+                    MemoryPage(router: router, viewModel: memoryVM)
+                case .notes:
+                    NotePage(router: router, viewModel: noteVM)
+                case .documents:
+                    DocumentPage(router: router, viewModel: documentVM)
+                case .themes:
+                    ThemePage(router: router, viewModel: themeVM)
                 }
             }
-        case .agents:
-            AgentListView(viewModel: AgentViewModel(apiClient: api))
-        case .bills:
-            BillListView(
-                viewModel: BillViewModel(apiClient: api),
-                baseURL: deviceManager.baseURL,
-                token: deviceManager.token ?? ""
-            )
-        case .memories:
-            MemoryListView(viewModel: MemoryViewModel(apiClient: api))
-        case .notes:
-            NoteListView(viewModel: NoteViewModel(apiClient: api))
-        case .documents:
-            DocumentListView(viewModel: DocumentViewModel(apiClient: api))
-        case .themes:
-            ThemeListView(viewModel: ThemeViewModel(apiClient: api))
+            .modifier(CardBackgroundModifier(isLifted: contentHovered || chatViewModel.isEditing))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+            .onHover { contentHovered = $0 }
+        }
+        .onChange(of: chatViewModel.isStreaming) { _, streaming in
+            router.setRefreshDisabled(for: .chat,
+                message: streaming ? "对话进行中，无法刷新" : nil)
+        }
+        .onChange(of: router.refreshCounts[.chat] ?? 0) { _, _ in
+            guard let conv = deviceManager.defaultConversation else { return }
+            Task { await chatViewModel.loadConversation(id: conv.id, title: conv.title) }
         }
     }
 #endif
@@ -251,7 +289,11 @@ struct ContentView: View {
 
                 guard let conv = deviceManager.defaultConversation else { return }
                 DispatchQueue.main.async {
+#if os(macOS)
+                    router.navigateTo(.chat)
+#else
                     selectedTab = "chat"
+#endif
                 }
                 await chatViewModel.loadConversation(id: conv.id, title: conv.title)
                 return

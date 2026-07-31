@@ -292,7 +292,6 @@ struct MacSettingsView: View {
 
     var body: some View {
         Form {
-#if DEBUG
             Section("外观") {
                 Picker("", selection: Binding(
                     get: { colorSchemeManager.selectedScheme },
@@ -310,6 +309,7 @@ struct MacSettingsView: View {
                 .labelsHidden()
             }
 
+#if DEBUG
             Section("账号") {
                 LabeledContent("用户名", value: deviceManager.username ?? "-")
                 LabeledContent("用户 ID", value: deviceManager.userId ?? "-")

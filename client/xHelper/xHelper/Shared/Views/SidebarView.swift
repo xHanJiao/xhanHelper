@@ -35,6 +35,7 @@ struct SidebarView: View {
 
     @GestureState private var dragOffset: CGFloat = 0
     @State private var lastExpandedWidth: CGFloat = Layout.sidebarDefaultWidth
+    @State private var isExpandHovered = false
     @State private var hoveredConversationID: String?
     @State private var renameTarget: Conversation?
     @State private var renameText = ""
@@ -229,6 +230,23 @@ struct SidebarView: View {
             }
 
             Spacer()
+
+            // 底部展开按钮：仅收起态 + 窗口宽度允许展开时出现
+            if allowExpand {
+                Button {
+                    sidebarWidth = max(lastExpandedWidth, 160)
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .frame(width: 30, height: 30)
+                        .background(isExpandHovered ? AnyShapeStyle(Color.primary.opacity(0.1)) : AnyShapeStyle(.clear), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .onHover { isExpandHovered = $0 }
+                .help("展开侧边栏")
+                .padding(.bottom, 10)
+            }
         }
     }
 

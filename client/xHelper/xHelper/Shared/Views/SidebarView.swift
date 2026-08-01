@@ -35,7 +35,6 @@ struct SidebarView: View {
 
     @GestureState private var dragOffset: CGFloat = 0
     @State private var lastExpandedWidth: CGFloat = Layout.sidebarDefaultWidth
-    @State private var isCollapseHovered = false
     @State private var hoveredConversationID: String?
     @State private var renameTarget: Conversation?
     @State private var renameText = ""
@@ -44,16 +43,6 @@ struct SidebarView: View {
 
     private var isCollapsed: Bool {
         sidebarWidth <= Layout.sidebarSnapThreshold
-    }
-
-    private func toggleSidebar() {
-        if isCollapsed {
-            guard allowExpand else { return }
-            sidebarWidth = max(lastExpandedWidth, 160)
-        } else {
-            lastExpandedWidth = sidebarWidth
-            sidebarWidth = Layout.sidebarMinWidth
-        }
     }
 
     var body: some View {
@@ -116,14 +105,6 @@ struct SidebarView: View {
                 .padding(.horizontal, 8)
 
             conversationListSection
-
-            // 底部收起
-            Divider()
-                .padding(.horizontal, 8)
-
-            collapseButton
-                .padding(.horizontal, 8)
-                .padding(.vertical, 8)
         }
     }
 
@@ -231,30 +212,6 @@ struct SidebarView: View {
         }
     }
 
-    private var collapseButton: some View {
-        Button {
-            toggleSidebar()
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "chevron.left")
-                Text("收起侧边栏")
-                Spacer()
-            }
-            .font(.subheadline)
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(isCollapseHovered ? AnyShapeStyle(Color.primary.opacity(0.1)) : AnyShapeStyle(.ultraThinMaterial), in: Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(.white.opacity(0.15), lineWidth: 0.5)
-            )
-            .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
-        }
-        .buttonStyle(.plain)
-        .onHover { isCollapseHovered = $0 }
-    }
-
     // MARK: - Collapsed
 
     private var collapsedContent: some View {
@@ -272,26 +229,15 @@ struct SidebarView: View {
             }
 
             Spacer()
-
-            // 底部展开按钮
-            Button {
-                toggleSidebar()
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.body)
-                    .frame(width: 30, height: 30)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .padding(.bottom, 10)
         }
     }
 
     // MARK: - Nav Items
 
     private func expandedNavItem(_ tab: SidebarTab) -> some View {
-        Button {
+        // 新建聊天是动作项，不显示选中底色/强调色，与其他功能 tab 区分开
+        let isSelected = selectedTab == tab && tab != .chat
+        return Button {
             if tab == .chat {
                 selectedTab = .chat
                 chatTabManager.newChat()
@@ -299,26 +245,28 @@ struct SidebarView: View {
                 selectedTab = tab
             }
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Image(systemName: tab.icon)
                     .font(.body)
-                    .frame(width: 20)
-                    .foregroundColor(selectedTab == tab ? Color("appAccent") : .secondary)
+                    .frame(width: 18)
+                    .offset(y: -1.5)
+                    .foregroundColor(isSelected ? Color("appAccent") : .secondary)
                 Text(tab.rawValue)
                     .font(.title2)
-                    .foregroundColor(selectedTab == tab ? Color("appAccent") : .primary)
+                    .foregroundColor(isSelected ? Color("appAccent") : .primary)
                 Spacer()
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(selectedTab == tab ? Color("appAccent").opacity(0.12) : .clear)
+            .background(isSelected ? Color("appAccent").opacity(0.12) : .clear)
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
     }
 
     private func collapsedNavItem(_ tab: SidebarTab) -> some View {
-        Button {
+        let isSelected = selectedTab == tab && tab != .chat
+        return Button {
             if tab == .chat {
                 selectedTab = .chat
                 chatTabManager.newChat()
@@ -330,8 +278,8 @@ struct SidebarView: View {
                 .font(.title2)
                 .frame(width: 30, height: 30)
                 .frame(maxWidth: .infinity)
-                .foregroundColor(selectedTab == tab ? Color("appAccent") : .secondary)
-                .background(selectedTab == tab ? Color("appAccent").opacity(0.15) : .clear)
+                .foregroundColor(isSelected ? Color("appAccent") : .secondary)
+                .background(isSelected ? Color("appAccent").opacity(0.15) : .clear)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .help(tab.rawValue)
         }

@@ -46,16 +46,17 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 
 		// 创建或加载会话
 		var conv *model.Conversation
-		if req.ConversationID != nil {
+		if req.ConversationID != nil && *req.ConversationID != "" {
 			var err error
 			conv, err = convRepo.FindByID(c.Request.Context(), *req.ConversationID)
 			if err != nil {
 				log.Printf("[chat] FindByID error: %v", err)
 			}
-		} else {
+		} else if req.ConversationID == nil {
 			// 新入口：查找默认会话，不存在则创建
 			conv, _ = convRepo.FindDefaultByUser(c.Request.Context(), userID)
 		}
+		// 空字符串 conversation_id 走这里：直接创建非默认新会话
 		if conv == nil {
 			conv = &model.Conversation{ID: uuid.New().String(), UserID: userID}
 			if req.ConversationID == nil {

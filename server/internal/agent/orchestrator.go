@@ -388,7 +388,7 @@ func (o *Orchestrator) prepareUserMsg(req *RunRequest) *model.Message {
 	return userMsg
 }
 
-// buildSummaryPackets 拉取用户最近的对话摘要（跨会话），构建摘要 ContextPacket 列表。
+// buildSummaryPackets 拉取当前会话最近的对话摘要，构建摘要 ContextPacket 列表。
 // 口径：最多 summaryAttachCount 条，且都在最近 summaryAttachMaxDays 天内；返回按时间旧→新排列。
 func (o *Orchestrator) buildSummaryPackets(ctx context.Context, req *RunRequest) []retrieval.ContextPacket {
 	if o.summaryRepo == nil {
@@ -405,7 +405,7 @@ func (o *Orchestrator) buildSummaryPackets(ctx context.Context, req *RunRequest)
 	}
 
 	now := time.Now()
-	summaries, err := o.summaryRepo.ListByTimeRange(ctx, req.UserID, now.AddDate(0, 0, -days), now, count)
+	summaries, err := o.summaryRepo.ListByTimeRange(ctx, req.UserID, req.ConversationID, now.AddDate(0, 0, -days), now, count)
 	if err != nil {
 		log.Printf("[orch] ListByTimeRange for summary attach error: %v", err)
 		return nil

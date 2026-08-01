@@ -34,6 +34,10 @@ class ChatViewModel: ObservableObject {
     @Published var thinkingMode = true
     @Published var temperature: Double? = nil
     @Published var maxTokens: Int? = nil
+    @Published var draftText = ""
+
+    /// 新建会话成功（空 tab 转正）时回调：(conversationId, title)
+    var onConversationCreated: ((String, String?) -> Void)?
 
     private var lastHapticTime: Date = .distantPast
 
@@ -125,12 +129,13 @@ class ChatViewModel: ObservableObject {
 
     func loadMore(direction: String = "before") async {
         guard !isLoadingMore else { return }
+        guard let cid = conversationId, !cid.isEmpty else { return }
         isLoadingMore = true
         loadMoreError = nil
         let cursor = direction == "before" ? oldestCursor : newestCursor
         do {
             let result = try await apiClient.getMessagesCursor(
-                conversationId: conversationId ?? "",
+                conversationId: cid,
                 cursor: cursor,
                 direction: direction
             )
@@ -159,6 +164,39 @@ class ChatViewModel: ObservableObject {
 
     func loadMessages(_ msgs: [Message]) {
         messages = msgs
+    }
+
+    // MARK: Reset
+
+    /// 重置为新聊天状态（不发消息不在后端创建会话，conversationId 置空字符串
+    /// 使 SSE 携带 conversation_id="" 由后端创建非默认新会话）
+    func resetForNewChat() {
+        stopStreaming()
+        messages = []
+        isStreaming = false
+        thoughtMessage = nil
+        thoughtDone = false
+        statusMessage = nil
+        errorMessage = nil
+        conversationId = ""
+        conversationTitle = nil
+        isEditing = false
+        planNodes = []
+        isPlanModalVisible = false
+        isPlanMinimized = false
+        lastMemoryIDs = nil
+        lastNoteIDs = nil
+        showMemoryPopup = false
+        showNotePopup = false
+        oldestCursor = ""
+        newestCursor = ""
+        hasMoreBefore = false
+        hasMoreAfter = false
+        isLoadingMore = false
+        isInitialLoading = false
+        loadMoreError = nil
+        draftText = ""
+        streamingContent = ""
     }
 
     // MARK: Send
@@ -281,6 +319,7 @@ class ChatViewModel: ObservableObject {
             statusMessage = nil
             if let cid = parseConversationIdFromDone(event.data) {
                 conversationId = cid
+                onConversationCreated?(cid, parseTitleFromDone(event.data))
             }
             if let t = parseTitleFromDone(event.data) {
                 conversationTitle = t

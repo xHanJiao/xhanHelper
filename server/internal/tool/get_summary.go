@@ -277,7 +277,7 @@ func (t *GetSummaryTool) queryByTime(ec *ExecuteContext, args json.RawMessage) *
 		return &Result{Success: false, Error: "start_time 必须早于 end_time"}
 	}
 
-	summaries, err := t.summaryRepo.ListByTimeRange(ec.Ctx, ec.UserID, start, end, a.Limit)
+	summaries, err := t.summaryRepo.ListByTimeRange(ec.Ctx, ec.UserID, "", start, end, a.Limit)
 	if err != nil {
 		log.Printf("[get_summary] query_by_time error: %v", err)
 		return &Result{Success: false, Error: fmt.Sprintf("查询摘要失败: %v", err)}

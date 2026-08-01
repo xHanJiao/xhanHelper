@@ -45,3 +45,7 @@ front-end/node_modules/
 server/data/markdownserver/data/
 
 .opencode
+
+# Xcode build artifacts
+build/
+DerivedData/

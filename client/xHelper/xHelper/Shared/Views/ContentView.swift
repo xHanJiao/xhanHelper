@@ -30,6 +30,8 @@ struct ContentView: View {
     @StateObject private var noteVM: NoteViewModel
     @StateObject private var documentVM: DocumentViewModel
     @StateObject private var themeVM: ThemeViewModel
+    @StateObject private var chatTabManager: ChatTabManager
+    @StateObject private var conversationListVM: ConversationListViewModel
 
     private var api: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
@@ -43,6 +45,30 @@ struct ContentView: View {
     }
 
     private var allowExpand: Bool { windowWidth >= 600 }
+
+    /// 当前活跃的聊天 VM（macOS 为当前聊天 tab；iOS 为全局单例）
+    private var activeChatViewModel: ChatViewModel? {
+        #if os(macOS)
+        return chatTabManager.currentTab?.viewModel
+        #else
+        return chatViewModel
+        #endif
+    }
+
+    private func syncActiveChat() async {
+        #if os(macOS)
+        // 激活时刷新当前所在对话（而非默认会话），避免劫持其他会话 tab
+        guard let tab = chatTabManager.currentTab,
+              !tab.isBlank,
+              let cid = tab.conversationId, !cid.isEmpty else { return }
+        LogBuffer.shared.debug("sync conversation \(cid) after scene active (macOS)")
+        await tab.viewModel.loadConversation(id: cid, title: tab.title)
+        #else
+        guard let conv = deviceManager.defaultConversation else { return }
+        LogBuffer.shared.debug("sync conversation \(conv.id) after scene active")
+        await chatViewModel.loadConversation(id: conv.id, title: conv.title)
+        #endif
+    }
 #endif
 
     init(deviceManager: DeviceManager) {
@@ -56,6 +82,12 @@ struct ContentView: View {
         _noteVM = StateObject(wrappedValue: NoteViewModel(apiClient: api))
         _documentVM = StateObject(wrappedValue: DocumentViewModel(apiClient: api))
         _themeVM = StateObject(wrappedValue: ThemeViewModel(apiClient: api))
+        _chatTabManager = StateObject(wrappedValue: ChatTabManager {
+            ChatViewModel(apiClient: APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? ""))
+        })
+        _conversationListVM = StateObject(wrappedValue: ConversationListViewModel(
+            apiClient: APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+        ))
 #endif
     }
 
@@ -118,6 +150,7 @@ struct ContentView: View {
                 .onAppear {
                     sidebarWidth = storedSidebarWidth
                     BrowserToolProvider.shared.rightSidebar = rightSidebar
+                    conversationListVM.defaultConversationID = deviceManager.defaultConversation?.id
                 }
                 .onChange(of: sidebarWidth) { _, new in
                     if new > Layout.sidebarSnapThreshold {
@@ -128,38 +161,41 @@ struct ContentView: View {
             }
             .onChange(of: scenePhase) { _, newPhase in
                 guard newPhase == .active else { return }
-                guard !chatViewModel.isStreaming else { return }
+                guard !(activeChatViewModel?.isStreaming ?? false) else { return }
                 let now = Date()
                 guard now.timeIntervalSince(lastSyncAt) >= 3 else { return }
                 lastSyncAt = now
 
-                guard let conv = deviceManager.defaultConversation else { return }
-                LogBuffer.shared.debug("sync conversation \(conv.id) after scene active")
-                Task { await chatViewModel.loadConversation(id: conv.id, title: conv.title) }
+                Task { await syncActiveChat() }
 
                 Task { await syncReminders() }
             }
 #if os(macOS)
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-                guard !chatViewModel.isStreaming else { return }
+                guard !(activeChatViewModel?.isStreaming ?? false) else { return }
                 let now = Date()
                 guard now.timeIntervalSince(lastSyncAt) >= 3 else { return }
                 lastSyncAt = now
 
-                guard let conv = deviceManager.defaultConversation else { return }
-                LogBuffer.shared.debug("sync conversation \(conv.id) after app became active (macOS)")
-                Task { await chatViewModel.loadConversation(id: conv.id, title: conv.title) }
+                Task { await syncActiveChat() }
 
                 Task { await syncReminders() }
             }
 #endif
             .task(id: deviceManager.defaultConversation?.id) {
                 guard let conv = deviceManager.defaultConversation else {
+                    #if os(macOS)
+                    #else
                     chatViewModel.isInitialLoading = false
+                    #endif
                     return
                 }
                 LogBuffer.shared.debug("loading conversation \(conv.id)")
+                #if os(macOS)
+                await chatTabManager.openConversation(id: conv.id, title: conv.title)
+                #else
                 await chatViewModel.loadConversation(id: conv.id, title: conv.title)
+                #endif
             }
             .onReceive(NotificationCenter.default.publisher(for: .reminderTapped)) { notification in
                 guard let reminderId = notification.userInfo?["reminder_id"] as? String, !reminderId.isEmpty else { return }
@@ -201,12 +237,17 @@ struct ContentView: View {
         Group {
             switch router.currentTab {
                 case .chat:
-                    ChatPage(
-                        chatViewModel: chatViewModel,
-                        loadError: conversationLoadError,
-                        baseURL: deviceManager.baseURL,
-                        token: deviceManager.token ?? ""
-                    )
+                    if let vm = chatTabManager.currentTab?.viewModel {
+                        ChatPage(
+                            chatViewModel: vm,
+                            loadError: conversationLoadError,
+                            baseURL: deviceManager.baseURL,
+                            token: deviceManager.token ?? ""
+                        )
+                    } else {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 case .agents:
                     AgentPage(router: router, viewModel: agentVM)
                 case .bills:
@@ -226,18 +267,20 @@ struct ContentView: View {
                     ThemePage(router: router, viewModel: themeVM)
                 }
             }
-            .modifier(CardBackgroundModifier(isLifted: contentHovered || chatViewModel.isEditing))
+            .modifier(CardBackgroundModifier(isLifted: contentHovered || (activeChatViewModel?.isEditing ?? false)))
             .padding(.top, 4)
             .padding(.horizontal, 12)
             .padding(.bottom, 12)
             .onHover { contentHovered = $0 }
-        .onChange(of: chatViewModel.isStreaming) { _, streaming in
+        .onChange(of: activeChatViewModel?.isStreaming) { _, streaming in
             router.setRefreshDisabled(for: .chat,
-                message: streaming ? "对话进行中，无法刷新" : nil)
+                message: streaming == true ? "对话进行中，无法刷新" : nil)
         }
         .onChange(of: router.refreshCounts[.chat] ?? 0) { _, _ in
-            guard let conv = deviceManager.defaultConversation else { return }
-            Task { await chatViewModel.loadConversation(id: conv.id, title: conv.title) }
+            if let vm = activeChatViewModel, let cid = vm.conversationId, !cid.isEmpty {
+                Task { await vm.loadConversation(id: cid, title: vm.conversationTitle ?? "") }
+            }
+            Task { await conversationListVM.reload() }
         }
     }
 
@@ -246,7 +289,10 @@ struct ContentView: View {
         SidebarView(
             selectedTab: sidebarTabBinding,
             sidebarWidth: $sidebarWidth,
-            allowExpand: allowExpand
+            allowExpand: allowExpand,
+            chatTabManager: chatTabManager,
+            conversationListVM: conversationListVM,
+            defaultConversationID: deviceManager.defaultConversation?.id
         )
         .padding(.bottom, 12)
         .padding(.horizontal, 12)
@@ -319,7 +365,11 @@ struct ContentView: View {
                     selectedTab = "chat"
 #endif
                 }
+#if os(macOS)
+                await chatTabManager.openConversation(id: conv.id, title: conv.title)
+#else
                 await chatViewModel.loadConversation(id: conv.id, title: conv.title)
+#endif
                 return
             } catch {
                 lastError = error

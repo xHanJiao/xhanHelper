@@ -15,6 +15,9 @@ type ConversationRepo struct {
 	db *gorm.DB
 }
 
+// ErrDefaultConversation 默认会话不可删除
+var ErrDefaultConversation = errors.New("default conversation cannot be deleted")
+
 // NewConversationRepo 创建 ConversationRepo
 func NewConversationRepo(db *gorm.DB) *ConversationRepo {
 	return &ConversationRepo{db: db}
@@ -69,7 +72,7 @@ func (r *ConversationRepo) FindDefaultByUser(ctx context.Context, userID string)
 	return &c, err
 }
 
-// ListByUser 获取设备未删除的会话列表（按更新时间倒序）
+// ListByUser 获取用户未删除的会话列表（默认会话恒置顶，其余按更新时间倒序）
 func (r *ConversationRepo) ListByUser(ctx context.Context, userID string, limit, offset int) ([]model.Conversation, int64, error) {
 	if limit <= 0 {
 		limit = 50
@@ -80,7 +83,7 @@ func (r *ConversationRepo) ListByUser(ctx context.Context, userID string, limit,
 		return nil, 0, err
 	}
 	var list []model.Conversation
-	err := q.Order("updated_at DESC").Limit(limit).Offset(offset).Find(&list).Error
+	err := q.Order("is_default DESC, updated_at DESC").Limit(limit).Offset(offset).Find(&list).Error
 	return list, total, err
 }
 
@@ -129,8 +132,15 @@ func (r *ConversationRepo) Touch(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).Where("id = ?", id).Update("updated_at", time.Now()).Error
 }
 
-// SoftDelete 软删除会话
+// SoftDelete 软删除会话。默认会话不可删除，返回 ErrDefaultConversation。
 func (r *ConversationRepo) SoftDelete(ctx context.Context, id string) error {
+	var c model.Conversation
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&c).Error; err != nil {
+		return err
+	}
+	if c.IsDefault {
+		return ErrDefaultConversation
+	}
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).
 		Where("id = ?", id).Update("is_deleted", true).Error
 }

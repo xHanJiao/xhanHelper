@@ -5,7 +5,6 @@ import UIKit
 
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
-    @State private var inputText = ""
     @State private var isEditing = false
     @State private var dismissKeyboardToken: UUID?
     @State private var scrollPosition = ScrollPosition(edge: .top)
@@ -79,15 +78,15 @@ struct ChatView: View {
 
             // 输入栏
             InputBar(
-                text: $inputText,
+                text: $viewModel.draftText,
                 isEditing: $isEditing,
                 isStreaming: viewModel.isStreaming,
                 dismissKeyboardToken: dismissKeyboardToken,
                 onSend: {
-                    guard !inputText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+                    guard !viewModel.draftText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
                     dismissKeyboardToken = UUID()
-                    viewModel.sendMessage(inputText, baseURL: baseURL, token: token, agentId: agentId)
-                    inputText = ""
+                    viewModel.sendMessage(viewModel.draftText, baseURL: baseURL, token: token, agentId: agentId)
+                    viewModel.draftText = ""
                     withAnimation(.easeOut(duration: 0.3)) {
                         scrollPosition.scrollTo(edge: .top)
                     }

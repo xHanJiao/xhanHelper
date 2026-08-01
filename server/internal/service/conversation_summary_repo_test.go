@@ -68,7 +68,7 @@ func TestListByTimeRange_WithinRangeOnly(t *testing.T) {
 	// 范围 [02:00, 05:00) → 应命中 02:00、03:00、04:00 三条
 	start := base.Add(2 * time.Hour)
 	end := base.Add(5 * time.Hour)
-	got, err := repo.ListByTimeRange(context.Background(), "u1", start, end, 10)
+	got, err := repo.ListByTimeRange(context.Background(), "u1", "conv-1", start, end, 10)
 	if err != nil {
 		t.Fatalf("ListByTimeRange error: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestListByTimeRange_OrderDesc(t *testing.T) {
 	base := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
 	seedSummaries(t, repo, "u1", 5, base, "active")
 
-	got, err := repo.ListByTimeRange(context.Background(), "u1", base, base.Add(24*time.Hour), 10)
+	got, err := repo.ListByTimeRange(context.Background(), "u1", "conv-1", base, base.Add(24*time.Hour), 10)
 	if err != nil {
 		t.Fatalf("ListByTimeRange error: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestListByTimeRange_LimitKeepsNewest(t *testing.T) {
 	base := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
 	seeded := seedSummaries(t, repo, "u1", 8, base, "active")
 
-	got, err := repo.ListByTimeRange(context.Background(), "u1", base, base.Add(24*time.Hour), 3)
+	got, err := repo.ListByTimeRange(context.Background(), "u1", "conv-1", base, base.Add(24*time.Hour), 3)
 	if err != nil {
 		t.Fatalf("ListByTimeRange error: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestListByTimeRange_UserScope(t *testing.T) {
 	seedSummaries(t, repo, "u1", 3, base, "active")
 	seedSummaries(t, repo, "u2", 3, base, "active")
 
-	got, err := repo.ListByTimeRange(context.Background(), "u1", base, base.Add(24*time.Hour), 10)
+	got, err := repo.ListByTimeRange(context.Background(), "u1", "conv-1", base, base.Add(24*time.Hour), 10)
 	if err != nil {
 		t.Fatalf("ListByTimeRange error: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestListByTimeRange_IncludesSuperseded(t *testing.T) {
 		t.Fatalf("seed active: %v", err)
 	}
 
-	got, err := repo.ListByTimeRange(context.Background(), "u1", base, base.Add(24*time.Hour), 10)
+	got, err := repo.ListByTimeRange(context.Background(), "u1", "conv-1", base, base.Add(24*time.Hour), 10)
 	if err != nil {
 		t.Fatalf("ListByTimeRange error: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestListByTimeRange_EmptyResult(t *testing.T) {
 	seedSummaries(t, repo, "u1", 3, base, "active")
 
 	// 查询范围在所有数据之前
-	got, err := repo.ListByTimeRange(context.Background(), "u1", base.Add(-48*time.Hour), base.Add(-24*time.Hour), 10)
+	got, err := repo.ListByTimeRange(context.Background(), "u1", "conv-1", base.Add(-48*time.Hour), base.Add(-24*time.Hour), 10)
 	if err != nil {
 		t.Fatalf("ListByTimeRange error: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestListByTimeRange_DefaultAndMaxLimit(t *testing.T) {
 	}
 
 	// limit <= 0 → 默认 20
-	got, err := repo.ListByTimeRange(ctx, "u1", base, base.Add(24*time.Hour), 0)
+	got, err := repo.ListByTimeRange(ctx, "u1", "conv-1", base, base.Add(24*time.Hour), 0)
 	if err != nil {
 		t.Fatalf("ListByTimeRange error: %v", err)
 	}
@@ -216,11 +216,63 @@ func TestListByTimeRange_DefaultAndMaxLimit(t *testing.T) {
 	}
 
 	// limit > 100 → 截到 100（数据只有 25 条，全部返回）
-	got, err = repo.ListByTimeRange(ctx, "u1", base, base.Add(24*time.Hour), 200)
+	got, err = repo.ListByTimeRange(ctx, "u1", "conv-1", base, base.Add(24*time.Hour), 200)
 	if err != nil {
 		t.Fatalf("ListByTimeRange error: %v", err)
 	}
 	if len(got) != 25 {
 		t.Errorf("limit=200: expected 25, got %d", len(got))
+	}
+}
+
+func TestListByTimeRange_ConversationFilter(t *testing.T) {
+	repo, cleanup := setupSummaryRepo(t)
+	defer cleanup()
+
+	base := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
+	// conv-1 3 条 + conv-2 2 条，同一用户
+	seedSummaries(t, repo, "u1", 3, base, "active")
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		s := model.ConversationSummary{
+			ID: fmt.Sprintf("s-c2-%d", i), ConversationID: "conv-2", UserID: "u1",
+			SummaryText: fmt.Sprintf("conv2 summary %d", i), Status: "active",
+			CreatedAt: base.Add(time.Duration(i) * time.Hour),
+		}
+		if err := repo.Create(ctx, &s); err != nil {
+			t.Fatalf("seed conv-2 %d: %v", i, err)
+		}
+	}
+
+	// 指定 conv-1 → 只命中 conv-1 的 3 条
+	got, err := repo.ListByTimeRange(ctx, "u1", "conv-1", base, base.Add(24*time.Hour), 10)
+	if err != nil {
+		t.Fatalf("ListByTimeRange error: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 summaries for conv-1, got %d", len(got))
+	}
+	for _, s := range got {
+		if s.ConversationID != "conv-1" {
+			t.Errorf("expected conversation_id=conv-1, got %s", s.ConversationID)
+		}
+	}
+
+	// 指定 conv-2 → 只命中 conv-2 的 2 条
+	got, err = repo.ListByTimeRange(ctx, "u1", "conv-2", base, base.Add(24*time.Hour), 10)
+	if err != nil {
+		t.Fatalf("ListByTimeRange error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 summaries for conv-2, got %d", len(got))
+	}
+
+	// 空会话 ID → 不过滤，返回全部 5 条
+	got, err = repo.ListByTimeRange(ctx, "u1", "", base, base.Add(24*time.Hour), 10)
+	if err != nil {
+		t.Fatalf("ListByTimeRange error: %v", err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("expected 5 summaries without filter, got %d", len(got))
 	}
 }

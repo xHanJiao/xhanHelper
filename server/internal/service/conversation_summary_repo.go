@@ -126,19 +126,23 @@ func (r *ConversationSummaryRepo) ListByUser(ctx context.Context, userID, keywor
 	return list, total, err
 }
 
-// ListByTimeRange 按用户查询 [start, end) 时间范围内的摘要，按 created_at 倒序。
+// ListByTimeRange 按用户（可选按会话）查询 [start, end) 时间范围内的摘要，按 created_at 倒序。
 // 不区分 status：增量合并模式下每个版本各自侧重一次 session 的内容，superseded 版本仍有信息量。
-func (r *ConversationSummaryRepo) ListByTimeRange(ctx context.Context, userID string, start, end time.Time, limit int) ([]model.ConversationSummary, error) {
+// conversationID 为空时不按会话过滤。
+func (r *ConversationSummaryRepo) ListByTimeRange(ctx context.Context, userID, conversationID string, start, end time.Time, limit int) ([]model.ConversationSummary, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	if limit > 100 {
 		limit = 100
 	}
+	q := r.db.WithContext(ctx).
+		Where("user_id = ? AND created_at >= ? AND created_at < ?", userID, start, end)
+	if conversationID != "" {
+		q = q.Where("conversation_id = ?", conversationID)
+	}
 	var list []model.ConversationSummary
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND created_at >= ? AND created_at < ?", userID, start, end).
-		Order("created_at DESC").
+	err := q.Order("created_at DESC").
 		Limit(limit).
 		Find(&list).Error
 	return list, err

@@ -78,13 +78,17 @@ struct ConversationListView: View {
     }
 
     private func formatDate(_ iso: String) -> String {
-        let fmt = ISO8601DateFormatter()
-        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = fmt.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else {
-            return iso
-        }
-        let relative = RelativeDateTimeFormatter()
-        relative.locale = Locale(identifier: "zh_CN")
-        return relative.localizedString(for: date, relativeTo: Date())
+        formatConversationDate(iso)
     }
+}
+
+func formatConversationDate(_ iso: String) -> String {
+    let fmt = ISO8601DateFormatter()
+    fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    guard let date = fmt.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else {
+        return iso
+    }
+    let relative = RelativeDateTimeFormatter()
+    relative.locale = Locale(identifier: "zh_CN")
+    return relative.localizedString(for: date, relativeTo: Date())
 }

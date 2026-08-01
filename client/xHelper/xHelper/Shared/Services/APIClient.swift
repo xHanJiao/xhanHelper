@@ -11,8 +11,8 @@ class APIClient {
 
     // MARK: Conversations
 
-    func listConversations() async throws -> ConversationListResponse {
-        return try await get("/api/conversations")
+    func listConversations(limit: Int = 50, offset: Int = 0) async throws -> ConversationListResponse {
+        return try await get("/api/conversations?limit=\(limit)&offset=\(offset)")
     }
 
     func getMessages(conversationId: String) async throws -> [Message] {
@@ -265,7 +265,29 @@ class APIClient {
         var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
         req.httpMethod = "DELETE"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        _ = try await doRequest(req) as [String: Bool]
+        try await doRequestStatusOnly(req)
+    }
+
+    /// 只校验统一包装（HTTP 200 + status=="ok"），不解析 data 具体结构。
+    /// 用于 DELETE 等 data 结构不确定、仅需确认成功的接口。
+    private func doRequestStatusOnly(_ req: URLRequest) async throws {
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 500
+        if statusCode == 401 {
+            throw NSError(domain: "APIClient", code: 401,
+                userInfo: [NSLocalizedDescriptionKey: "unauthorized"])
+        }
+        guard statusCode == 200 else {
+            let msg = String(data: data, encoding: .utf8) ?? "unknown"
+            throw NSError(domain: "APIClient", code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: msg])
+        }
+        let wrapper = try JSONDecoder().decode(APIResponse<EmptyData>.self, from: data)
+        guard wrapper.status == "ok" && wrapper.errorCode == 0 else {
+            let msg = wrapper.errMsg.isEmpty ? "unknown error (code: \(wrapper.errorCode))" : wrapper.errMsg
+            throw NSError(domain: "APIClient", code: wrapper.errorCode,
+                userInfo: [NSLocalizedDescriptionKey: msg])
+        }
     }
 
     @discardableResult
@@ -301,6 +323,9 @@ private struct APIResponse<T: Decodable>: Decodable {
     let errMsg: String
     let data: T?
 }
+
+/// 用于只关心包装层校验、忽略 data 具体结构的请求
+private struct EmptyData: Decodable {}
 
 // MARK: List Response models
 

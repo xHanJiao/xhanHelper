@@ -499,6 +499,17 @@ func deleteConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 		if !requireConversationOwner(c, convRepo, convID) {
 			return
 		}
+		conv, err := convRepo.FindByID(c.Request.Context(), convID)
+		if err != nil {
+			log.Printf("[conv] FindByID error: %v", err)
+			view.JSONError(c, 500, "query conversation failed")
+			return
+		}
+		if conv != nil && conv.IsDefault {
+			log.Printf("[conv] reject delete default conversation: id=%s", convID)
+			view.JSONError(c, 400, "默认会话不可删除")
+			return
+		}
 		if err := convRepo.SoftDelete(c.Request.Context(), convID); err != nil {
 			log.Printf("[conv] Delete error: %v", err)
 			view.JSONError(c, 500, "delete failed")

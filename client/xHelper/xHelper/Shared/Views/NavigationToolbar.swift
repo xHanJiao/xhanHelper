@@ -2,23 +2,14 @@ import SwiftUI
 
 struct NavigationToolbar: View {
     @ObservedObject var router: NavigationRouter
+    @ObservedObject var rightSidebar: RightSidebarManager
+    let navLeadingOffset: CGFloat
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         HStack(spacing: 0) {
             Spacer()
-
-            if !router.currentToolbarActions.isEmpty {
-                CapsuleGroup {
-                    ForEach(router.currentToolbarActions) { action in
-                        CapsuleButton(systemName: action.icon, enabled: true) {
-                            action.action()
-                        }
-                    }
-                }
-
-                separator
-            }
+                .frame(width: navLeadingOffset)
 
             CapsuleGroup {
                 CapsuleButton(systemName: "chevron.left", enabled: router.canGoBack) {
@@ -46,15 +37,34 @@ struct NavigationToolbar: View {
                 .keyboardShortcut("r", modifiers: .command)
             }
 
-            separator
+            Spacer()
+
+            if !router.currentToolbarActions.isEmpty {
+                CapsuleGroup {
+                    ForEach(router.currentToolbarActions) { action in
+                        CapsuleButton(systemName: action.icon, enabled: true) {
+                            action.action()
+                        }
+                    }
+                }
+
+                separator
+            }
 
             CapsuleGroup {
                 CapsuleButton(systemName: "gear", enabled: true) {
                     openSettings()
                 }
+
+                Divider()
+                    .frame(height: 14)
+
+                CapsuleButton(systemName: "sidebar.trailing", enabled: true) {
+                    rightSidebar.toggle()
+                }
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, Layout.toolbarHorizontalPadding)
         .padding(.vertical, 6)
     }
 

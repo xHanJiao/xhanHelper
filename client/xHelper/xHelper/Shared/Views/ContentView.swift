@@ -17,6 +17,7 @@ struct ContentView: View {
 
 #if os(macOS)
     @StateObject private var router = NavigationRouter()
+    @StateObject private var rightSidebar = RightSidebarManager()
     @State private var sidebarWidth: CGFloat = Layout.sidebarDefaultWidth
     @State private var sidebarHovered = false
     @State private var contentHovered = false
@@ -84,28 +85,25 @@ struct ContentView: View {
                     .tag("settings")
                 }
 #else
-                GeometryReader { geo in
-                    HStack(alignment: .top, spacing: 0) {
-                        SidebarView(
-                            selectedTab: sidebarTabBinding,
-                            sidebarWidth: $sidebarWidth,
-                            allowExpand: allowExpand
-                        )
-                        .padding(.bottom, 12)
-                        .padding(.horizontal, 12)
-                        .modifier(CardBackgroundModifier(isLifted: sidebarHovered))
-                        .padding(.top, 48)
-                        .padding(.bottom, 12)
-                        .padding(.leading, 8)
-                        .padding(.trailing, 12)
-                        .onHover { sidebarHovered = $0 }
+                VStack(spacing: 0) {
+                    NavigationToolbar(
+                        router: router,
+                        rightSidebar: rightSidebar,
+                        navLeadingOffset: sidebarWidth + Layout.navToolbarContentOffset
+                    )
 
-                        macOSContentArea
-                    }
-                    .onChange(of: geo.size.width) { _, new in
-                        windowWidth = new
-                        if new < 600 && sidebarWidth > Layout.sidebarSnapThreshold {
-                            sidebarWidth = Layout.sidebarMinWidth
+                    GeometryReader { geo in
+                        HStack(alignment: .top, spacing: 0) {
+                            sidebarCard
+                            macOSContentArea
+                            rightSidebarPanel
+                        }
+                        .animation(.easeInOut(duration: 0.2), value: rightSidebar.isOpen)
+                        .onChange(of: geo.size.width) { _, new in
+                            windowWidth = new
+                            if new < 600 && sidebarWidth > Layout.sidebarSnapThreshold {
+                                sidebarWidth = Layout.sidebarMinWidth
+                            }
                         }
                     }
                 }
@@ -119,6 +117,7 @@ struct ContentView: View {
                 .ignoresSafeArea(edges: .top)
                 .onAppear {
                     sidebarWidth = storedSidebarWidth
+                    BrowserToolProvider.shared.rightSidebar = rightSidebar
                 }
                 .onChange(of: sidebarWidth) { _, new in
                     if new > Layout.sidebarSnapThreshold {
@@ -199,11 +198,8 @@ struct ContentView: View {
 #if os(macOS)
     @ViewBuilder
     private var macOSContentArea: some View {
-        VStack(spacing: 0) {
-            NavigationToolbar(router: router)
-
-            Group {
-                switch router.currentTab {
+        Group {
+            switch router.currentTab {
                 case .chat:
                     ChatPage(
                         chatViewModel: chatViewModel,
@@ -231,10 +227,10 @@ struct ContentView: View {
                 }
             }
             .modifier(CardBackgroundModifier(isLifted: contentHovered || chatViewModel.isEditing))
+            .padding(.top, 4)
             .padding(.horizontal, 12)
             .padding(.bottom, 12)
             .onHover { contentHovered = $0 }
-        }
         .onChange(of: chatViewModel.isStreaming) { _, streaming in
             router.setRefreshDisabled(for: .chat,
                 message: streaming ? "对话进行中，无法刷新" : nil)
@@ -242,6 +238,34 @@ struct ContentView: View {
         .onChange(of: router.refreshCounts[.chat] ?? 0) { _, _ in
             guard let conv = deviceManager.defaultConversation else { return }
             Task { await chatViewModel.loadConversation(id: conv.id, title: conv.title) }
+        }
+    }
+
+    @ViewBuilder
+    private var sidebarCard: some View {
+        SidebarView(
+            selectedTab: sidebarTabBinding,
+            sidebarWidth: $sidebarWidth,
+            allowExpand: allowExpand
+        )
+        .padding(.bottom, 12)
+        .padding(.horizontal, 12)
+        .modifier(CardBackgroundModifier(isLifted: sidebarHovered))
+        .padding(.top, 4)
+        .padding(.bottom, 12)
+        .padding(.leading, 8)
+        .padding(.trailing, 12)
+        .onHover { sidebarHovered = $0 }
+    }
+
+    @ViewBuilder
+    private var rightSidebarPanel: some View {
+        if rightSidebar.isOpen {
+            RightSidebarView(manager: rightSidebar)
+                .padding(.top, 4)
+                .padding(.leading, 12)
+                .padding(.trailing, 8)
+                .transition(.move(edge: .trailing))
         }
     }
 #endif

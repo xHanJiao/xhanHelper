@@ -33,58 +33,7 @@ struct MCPManagerConfig: Sendable {
 
     nonisolated static let `default` = MCPManagerConfig(
         maxConcurrent: 2,
-        servers: [
-            MCPServerConfig(
-                name: "browser",
-                command: "agent-browser",
-                args: ["mcp"],
-                env: [
-                    "AGENT_BROWSER_HEADED": "true", // 显示浏览器窗口（默认 headless）
-                    "AGENT_BROWSER_ARGS": "--disable-blink-features=AutomationControlled", // 降低自动化特征，缓解反爬
-                ],
-                idleTimeoutSecs: 300,
-                description: "本地浏览器自动化（agent-browser）",
-                // core profile 29 个工具中裁剪 tab/eval/close 等，控制 prompt token 开销
-                toolAllowlist: [
-                    // 导航
-                    "agent_browser_open",
-                    "agent_browser_close",
-                    // 读取
-                    "agent_browser_read",
-                    "agent_browser_snapshot",
-                    "agent_browser_get_text",
-                    "agent_browser_get_url",
-                    "agent_browser_get_title",
-                    "agent_browser_screenshot",
-                    // 交互
-                    "agent_browser_click",
-                    "agent_browser_fill",
-                    "agent_browser_type",
-                    "agent_browser_press",
-                    "agent_browser_select",
-                    "agent_browser_check",
-                    "agent_browser_uncheck",
-                    "agent_browser_scroll",
-                    // 等待
-                    "agent_browser_wait_for_load",
-                    "agent_browser_wait_for_selector",
-                ],
-                cleanupCommand: ["agent-browser", "close", "--all"],
-                externalResourceName: "Chrome 浏览器窗口（agent-browser）",
-                recoverPatterns: ["Auto-launch failed", "No running Chrome instance"],
-                // stdout 是 structuredContent 的完整重复，lifecycle 是启动元数据，LLM 都用不到
-                resultNoiseKeys: ["stdout", "stderr", "exitCode", "lifecycle"],
-                // agent-browser 每个工具 schema 都拖着的公共高级参数，LLM 从不使用
-                schemaNoiseParams: [
-                    "restore", "restoreSave", "restoreCheckUrl", "restoreCheckText",
-                    "restoreCheckFn", "session", "namespace", "extraArgs",
-                    "allowedDomains", "webgpu", "headed", "timeoutMs",
-                ],
-                pageTextSource: .mcpContentText,
-                // agent_browser_close 由 LLM 主动调用后，退出时不应再弹浏览器警告
-                clearActivityTools: Set(["agent_browser_close"])
-            )
-        ]
+        servers: []
     )
 }
 #endif

@@ -3,11 +3,6 @@ import SwiftUI
 enum SidebarTab: String, CaseIterable, Identifiable {
     case chat = "新建聊天"
     case agents = "智能体"
-    case bills = "账单"
-    case memories = "记忆"
-    case notes = "笔记"
-    case documents = "文档"
-    case themes = "主题"
 
     var id: String { rawValue }
 
@@ -15,11 +10,6 @@ enum SidebarTab: String, CaseIterable, Identifiable {
         switch self {
         case .chat:      return "square.and.pencil"
         case .agents:    return "cpu"
-        case .bills:     return "yensign.circle"
-        case .memories:  return "brain.head.profile"
-        case .notes:     return "note.text"
-        case .documents: return "doc.text"
-        case .themes:    return "tag"
         }
     }
 }
@@ -80,32 +70,41 @@ struct SidebarView: View {
     // MARK: - Expanded
 
     private var expandedContent: some View {
-        VStack(spacing: 0) {
-            Spacer().frame(height: Self.topPadding)
-                .allowsHitTesting(false)
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                Spacer().frame(height: Self.topPadding)
+                    .allowsHitTesting(false)
 
-            // 功能导航（固定高度，不随会话列表滚动）
-            VStack(spacing: 2) {
-                ForEach(SidebarTab.allCases) { tab in
-                    expandedNavItem(tab)
+                // 功能导航（固定高度，不随会话列表滚动）
+                VStack(spacing: 2) {
+                    ForEach(SidebarTab.allCases) { tab in
+                        expandedNavItem(tab)
+                    }
                 }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
-
-            // 分区标题 + Divider
-            Text("最近会话")
-                .font(.caption)
-                .foregroundColor(.secondary.opacity(0.7))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 6)
-
-            Divider()
                 .padding(.horizontal, 8)
+                .padding(.vertical, 8)
 
-            conversationListSection
+                // 呼吸感：列表起点保持在卡片 ~30% 高度线（响应式）。
+                // 112 = topPadding(20) + 导航区(92，随导航项数量变化需同步）
+                Spacer()
+                    .frame(height: max(40, geo.size.height * 0.30 - 112))
+                    .allowsHitTesting(false)
+
+                // 分区标题 + Divider
+                Text("最近会话")
+                    .font(.caption)
+                    .foregroundColor(.secondary.opacity(0.7))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 6)
+
+                Divider()
+                    .padding(.horizontal, 8)
+
+                conversationListSection
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
         }
     }
 
@@ -157,7 +156,7 @@ struct SidebarView: View {
         return HStack(spacing: 2) {
             Button {
                 selectedTab = .chat
-                Task { await chatTabManager.openConversation(id: conv.id, title: conv.title) }
+                Task { await chatTabManager.openConversation(id: conv.id, title: conv.title, pushHistory: true) }
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(conv.title.isEmpty ? "新对话" : conv.title)

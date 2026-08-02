@@ -39,6 +39,10 @@ final class ChatTabManager: ObservableObject {
     @Published private(set) var tabs: [ChatTab] = []
     @Published private(set) var currentTabID: String?
 
+    /// 会话历史（< > 导航）：访问顺序的 convID，无重复，最新在末尾
+    @Published private(set) var history: [String] = []
+    @Published private(set) var historyIndex: Int = -1
+
     /// 内存中同时保留的会话 tab 上限（空 tab 不占用，全局最多 1 个）
     let maxCachedTabs = 5
 
@@ -55,6 +59,9 @@ final class ChatTabManager: ObservableObject {
     var currentConversationId: String? {
         currentTab?.conversationId
     }
+
+    var canGoBack: Bool { historyIndex > 0 }
+    var canGoForward: Bool { historyIndex >= 0 && historyIndex < history.count - 1 }
 
     /// 新建聊天：不发消息不在后端创建会话。空 tab 全局最多 1 个，
     /// 重复点击时重置/切换到已有空 tab。
@@ -79,9 +86,11 @@ final class ChatTabManager: ObservableObject {
     }
 
     /// 打开会话：缓存命中则切换恢复；未命中则新建 tab 并加载。切换时会销毁空 tab。
-    func openConversation(id: String, title: String) async {
+    /// pushHistory=true 表示用户主动切换，写入会话历史（< > 导航）；程序性切换（启动/提醒/回退驱动）传 false。
+    func openConversation(id: String, title: String, pushHistory: Bool = false) async {
         if let existing = tabs.first(where: { $0.conversationId == id }) {
             activate(existing)
+            if pushHistory { pushHistoryEntry(id) }
             return
         }
         closeBlankTab()
@@ -92,8 +101,23 @@ final class ChatTabManager: ObservableObject {
         let tab = ChatTab(id: id, conversationId: id, title: title, viewModel: vm)
         tabs.append(tab)
         activate(tab)
+        if pushHistory { pushHistoryEntry(id) }
         await vm.loadConversation(id: id, title: title)
         enforceCacheLimit()
+    }
+
+    /// 回退到上一个会话（< 按钮）；切换不入历史（防重入）
+    func goBackHistory() async {
+        guard canGoBack else { return }
+        historyIndex -= 1
+        await switchToHistoryEntry()
+    }
+
+    /// 前进到下一个会话（> 按钮）；切换不入历史（防重入）
+    func goForwardHistory() async {
+        guard canGoForward else { return }
+        historyIndex += 1
+        await switchToHistoryEntry()
     }
 
     /// 关闭指定会话 tab（删除会话后调用）。若关闭的是当前 tab，
@@ -103,16 +127,41 @@ final class ChatTabManager: ObservableObject {
         let tab = tabs[idx]
         tab.viewModel.stopStreaming()
         tabs.remove(at: idx)
-        guard currentTabID == tab.id else { return }
-        if let next = tabs.sorted(by: { $0.lastAccessedAt > $1.lastAccessedAt }).first {
-            activate(next)
-        } else {
-            currentTabID = nil
-            newChat()
+        // 从会话历史清理
+        if let hidx = history.firstIndex(of: conversationId) {
+            history.remove(at: hidx)
+            if historyIndex > hidx { historyIndex -= 1 }
+            if history.isEmpty { historyIndex = -1 }
+        }
+        if currentTabID == tab.id {
+            if let next = tabs.sorted(by: { $0.lastAccessedAt > $1.lastAccessedAt }).first {
+                activate(next)
+            } else {
+                currentTabID = nil
+                newChat()
+            }
         }
     }
 
     // MARK: - Private
+
+    /// 写入历史：截断前进分支 + 去重（同会话移到栈顶）
+    private func pushHistoryEntry(_ id: String) {
+        if historyIndex < history.count - 1 {
+            history.removeSubrange((historyIndex + 1)..<history.count)
+        }
+        history.removeAll { $0 == id }
+        history.append(id)
+        historyIndex = history.count - 1
+    }
+
+    /// 切换到历史当前位置对应的会话（不入历史）
+    private func switchToHistoryEntry() async {
+        guard historyIndex >= 0, historyIndex < history.count else { return }
+        let id = history[historyIndex]
+        // 软失效自愈：LRU 淘汰的会话会重新加载；删除的会话会被 close 清理不会出现在历史
+        await openConversation(id: id, title: currentTab?.title ?? "", pushHistory: false)
+    }
 
     private func activate(_ tab: ChatTab) {
         tab.lastAccessedAt = Date()

@@ -3,6 +3,7 @@ import SwiftUI
 struct NavigationToolbar: View {
     @ObservedObject var router: NavigationRouter
     @ObservedObject var rightSidebar: RightSidebarManager
+    @ObservedObject var chatTabManager: ChatTabManager
     let navLeadingOffset: CGFloat
     @Environment(\.openSettings) private var openSettings
 
@@ -11,30 +12,22 @@ struct NavigationToolbar: View {
             Spacer()
                 .frame(width: navLeadingOffset)
 
-            CapsuleGroup {
-                CapsuleButton(systemName: "chevron.left", enabled: router.canGoBack) {
-                    router.goBack()
+            // < > 会话历史导航：仅聊天区显示（其他功能区隐藏）
+            if router.currentTab == .chat {
+                CapsuleGroup {
+                    CapsuleButton(systemName: "chevron.left", enabled: chatTabManager.canGoBack) {
+                        Task { await chatTabManager.goBackHistory() }
+                    }
+                    .keyboardShortcut("[", modifiers: .command)
+
+                    Divider()
+                        .frame(height: 14)
+
+                    CapsuleButton(systemName: "chevron.right", enabled: chatTabManager.canGoForward) {
+                        Task { await chatTabManager.goForwardHistory() }
+                    }
+                    .keyboardShortcut("]", modifiers: .command)
                 }
-                .keyboardShortcut("[", modifiers: .command)
-
-                Divider()
-                    .frame(height: 14)
-
-                CapsuleButton(systemName: "chevron.right", enabled: router.canGoForward) {
-                    router.goForward()
-                }
-                .keyboardShortcut("]", modifiers: .command)
-
-                Divider()
-                    .frame(height: 14)
-
-                CapsuleRefreshButton(
-                    disabled: !router.canRefreshCurrentTab,
-                    disabledMessage: router.refreshDisabledMessage
-                ) {
-                    router.refresh()
-                }
-                .keyboardShortcut("r", modifiers: .command)
             }
 
             Spacer()
@@ -52,6 +45,17 @@ struct NavigationToolbar: View {
             }
 
             CapsuleGroup {
+                CapsuleRefreshButton(
+                    disabled: !router.canRefreshCurrentTab,
+                    disabledMessage: router.refreshDisabledMessage
+                ) {
+                    router.refresh()
+                }
+                .keyboardShortcut("r", modifiers: .command)
+
+                Divider()
+                    .frame(height: 14)
+
                 CapsuleButton(systemName: "gear", enabled: true) {
                     openSettings()
                 }

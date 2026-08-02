@@ -32,7 +32,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 "max_items": numProp("outline 标题数上限，默认 50"),
                 "max_chars": numProp("filter 每块截断 / full 全文截断字符数，默认 filter 2000 / full 10000")
             ])),
-            LocalToolSchema(name: "agent_browser_snapshot",         description: "获取页面可访问性快照（紧凑元素树，元素带 @eN 编号可用于 ref 交互；页面变化后编号会失效需重新快照）", inputSchema: objProps([
+            LocalToolSchema(name: "agent_browser_snapshot",         description: "获取页面可访问性快照（紧凑元素树，元素带 @eN 编号可用于 ref 交互；页面变化后编号会失效需重新快照）。链接均带 href，需要打开链接时直接取 href 用 agent_browser_open", inputSchema: objProps([
                 "mode": strProp("interactive（默认，只列可交互元素与标题）| full（追加页面可见文本前800字）"),
                 "include_href": strProp("是否输出链接 href，默认 true"),
                 "max_items": numProp("元素数量上限，默认 60")
@@ -48,8 +48,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             ])),
             LocalToolSchema(name: "agent_browser_get_url",          description: "获取当前页面 URL",                      inputSchema: objProps([:])),
             LocalToolSchema(name: "agent_browser_get_title",        description: "获取当前页面标题",                       inputSchema: objProps([:])),
-            LocalToolSchema(name: "agent_browser_click",            description: "点击元素（ref 优先，如 @e5；无 ref 用 CSS 选择器）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "selector": strProp("CSS选择器（ref 缺失时使用）")])),
-            LocalToolSchema(name: "agent_browser_click_text",       description: "按文本点击元素（模糊匹配 snapshot 中元素的文本/占位符，多个匹配用 index 指定）", inputSchema: objProps(["text": strProp("要点击的文本或关键词"), "index": numProp("多个匹配时指定第几个，默认 0")])),
+            LocalToolSchema(name: "agent_browser_click",            description: "点击元素（ref 优先，如 @e5；无 ref 用 CSS 选择器）。注意：target=\"_blank\" 的链接（新闻热榜/外链等）合成点击无效，工具会报错并返回目标 URL，此时请改用 agent_browser_open 直接打开该 URL（快照中已含各链接 href）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "selector": strProp("CSS选择器（ref 缺失时使用）")])),
+            LocalToolSchema(name: "agent_browser_click_text",       description: "按文本点击元素（模糊匹配 snapshot 中元素的文本/占位符，多个匹配用 index 指定）。target=\"_blank\" 链接同 click 的注意项：合成点击无效，请用 agent_browser_open 打开返回的 URL", inputSchema: objProps(["text": strProp("要点击的文本或关键词"), "index": numProp("多个匹配时指定第几个，默认 0")])),
             LocalToolSchema(name: "agent_browser_cgclick",         description: "真实系统级点击（兜底）：仅当 click/click_text 对目标无效（页面校验真实输入事件）时使用。执行时会前置激活 xhanHelper 窗口（可能打断用户当前操作），且需要辅助功能权限（未授权会弹窗引导）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "x": numProp("直接指定 viewport 坐标 x（调试用，与 ref 二选一）"), "y": numProp("直接指定 viewport 坐标 y（调试用，与 ref 二选一）")])),
             LocalToolSchema(name: "agent_browser_drag",            description: "真实拖拽（地图/滑块/画布，系统级事件，需辅助功能权限）：从起点按下拖动到终点。起点可用 ref（如地图 canvas 的 @eN）或 x/y", inputSchema: objProps(["ref": strProp("起点元素编号，如 @e12（地图 canvas），与 x/y 二选一"), "x": numProp("起点 viewport x（无 ref 时使用）"), "y": numProp("起点 viewport y（无 ref 时使用）"), "dx": numProp("水平位移量（viewport 像素）"), "dy": numProp("垂直位移量（viewport 像素）"), "steps": numProp("拖动步数，默认 10")])),
             LocalToolSchema(name: "agent_browser_fill",             description: "填充表单字段",                         inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（ref 缺失时使用）"), "value": strProp("填充值")])),
@@ -728,6 +728,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let session = TabSession()
         tabs[tabId] = session
         activeTabId = tabId
+        bindSessionTitle(session: session, tabId: tabId)
+        bindSessionUI(session: session)
 
         session.webView.load(URLRequest(url: url))
 
@@ -816,16 +818,90 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         activeTabId = id
     }
 
+    /// 取消浏览器 tab 激活（切到浏览面板时调用）
+    func deselectTab() {
+        activeTabId = nil
+    }
+
     func openBlankTab() {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
         let session = TabSession()
         tabs[tabId] = session
         activeTabId = tabId
-        session.webView.load(URLRequest(url: URL(string: "about:blank")!))
+        // 新标签页默认页（本地 HTML，替代 about:blank 白页）
+        session.webView.loadHTMLString(Self.newTabPageHTML, baseURL: nil)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
                               content: AnyView(BrowserTabView(webView: session.webView)))
+        bindSessionTitle(session: session, tabId: tabId)
+        bindSessionUI(session: session)
     }
+
+    /// tab 标题跟随页面标题
+    private func bindSessionTitle(session: TabSession, tabId: String) {
+        session.onTitleChange = { [weak self] title in
+            self?.rightSidebar?.updateTabTitle(id: tabId, title: title)
+        }
+    }
+
+    /// 新窗口（target=_blank / window.open）与 JS 弹窗接线
+    private func bindSessionUI(session: TabSession) {
+        session.onNewWindowRequest = { [weak self] configuration, navigationAction in
+            guard let self else { return nil }
+            // 开新浏览器 tab（保留 opener 关系的 configuration）
+            let tabId = "browser-\(self.tabCounter)"
+            self.tabCounter += 1
+            let newSession = TabSession(configuration: configuration)
+            self.tabs[tabId] = newSession
+            self.activeTabId = tabId
+            self.bindSessionTitle(session: newSession, tabId: tabId)
+            self.rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
+                                       content: AnyView(BrowserTabView(webView: newSession.webView)))
+            return newSession.webView
+        }
+        session.onJSAlert = { [weak self] message in
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "网页提示"
+                alert.informativeText = message
+                alert.addButton(withTitle: "好")
+                alert.runModal()
+            }
+        }
+        session.onJSConfirm = { [weak self] message, completion in
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "网页确认"
+                alert.informativeText = message
+                alert.addButton(withTitle: "确定")
+                alert.addButton(withTitle: "取消")
+                completion(alert.runModal() == .alertFirstButtonReturn)
+            }
+        }
+    }
+
+    /// 新标签页默认页：居中提示 + 常用站点快捷入口
+    static let newTabPageHTML = """
+    <html><head><meta charset="utf-8"><style>
+    body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;background:#f5f5f7;color:#1d1d1f}
+    h1{font-size:20px;font-weight:600;margin-bottom:28px}
+    .tiles{display:grid;grid-template-columns:repeat(4,120px);gap:12px}
+    a{display:flex;flex-direction:column;align-items:center;gap:6px;text-decoration:none;color:#1d1d1f;font-size:12px;padding:16px 8px;background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+    a:hover{background:#e8e8ed}
+    .icon{font-size:24px}
+    </style></head><body>
+    <h1>打开网址开始浏览</h1>
+    <div class="tiles">
+      <a href="https://www.baidu.com"><span class="icon">🔍</span>百度</a>
+      <a href="https://cn.bing.com"><span class="icon">🌐</span>必应</a>
+      <a href="https://www.google.com"><span class="icon">🔎</span>谷歌</a>
+      <a href="https://www.zhihu.com"><span class="icon">💬</span>知乎</a>
+      <a href="https://github.com"><span class="icon">🐙</span>GitHub</a>
+      <a href="https://xa.zu.ke.com"><span class="icon">🏠</span>贝壳找房</a>
+      <a href="https://map.baidu.com"><span class="icon">🗺️</span>百度地图</a>
+    </div>
+    </body></html>
+    """
 
     private func tabInfoList() -> [[String: String]] {
         tabs.map { id, session in
@@ -835,7 +911,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     // MARK: - TabSession
 
-    private final class TabSession: NSObject, WKNavigationDelegate {
+    private final class TabSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         let webView: WKWebView
         var loadContinuation: CheckedContinuation<String?, Never>?
         var loadTimeout: Task<Void, Never>?
@@ -847,20 +923,41 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         var lastNavStartAt: Date?
         /// 最近一次 snapshot 时各 @eN 元素的特征签名（ref 校验基准；导航时清空）
         var lastSnapshotItems: [[String: Any]]?
+        /// 页面标题变化回调（tab 标题跟随）
+        var onTitleChange: ((String) -> Void)?
+        /// 新窗口请求回调（target=_blank / window.open）：由 BrowserToolProvider 决定开新 tab
+        var onNewWindowRequest: ((WKWebViewConfiguration, WKNavigationAction) -> WKWebView?)?
+        /// JS 弹窗回调
+        var onJSAlert: ((String) -> Void)?
+        var onJSConfirm: ((String, @escaping (Bool) -> Void) -> Void)?
+        private var titleObservation: NSKeyValueObservation?
 
         override init() {
-            let config = WKWebViewConfiguration()
+            webView = TabSession.makeWebView(configuration: WKWebViewConfiguration())
+            super.init()
+            setupDelegates()
+        }
+
+        /// 新窗口（target=_blank / window.open）：外部传入 configuration（保留 opener 关系）
+        init(configuration: WKWebViewConfiguration) {
+            webView = TabSession.makeWebView(configuration: configuration)
+            super.init()
+            setupDelegates()
+        }
+
+        /// 统一构建 webView（应用 UA/缩放/注入脚本配置）
+        private static func makeWebView(configuration: WKWebViewConfiguration) -> WKWebView {
             let prefs = WKWebpagePreferences()
             prefs.allowsContentJavaScript = true
-            config.defaultWebpagePreferences = prefs
-            config.preferences.isElementFullscreenEnabled = false
+            configuration.defaultWebpagePreferences = prefs
+            configuration.preferences.isElementFullscreenEnabled = false
 
             let hideWebDriver = WKUserScript(
                 source: "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});",
                 injectionTime: .atDocumentStart,
                 forMainFrameOnly: true
             )
-            config.userContentController.addUserScript(hideWebDriver)
+            configuration.userContentController.addUserScript(hideWebDriver)
 
             // 指纹伪装（拟人化/反反爬）：补齐自动化痕迹，WebGL 与 Mac 真实 Chrome 对齐
             let fingerprintScript = WKUserScript(
@@ -868,15 +965,51 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 injectionTime: .atDocumentStart,
                 forMainFrameOnly: true
             )
-            config.userContentController.addUserScript(fingerprintScript)
+            configuration.userContentController.addUserScript(fingerprintScript)
 
-            webView = WKWebView(frame: .zero, configuration: config)
-            webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-            webView.allowsMagnification = true
-            webView.allowsBackForwardNavigationGestures = true
+            let wv = WKWebView(frame: .zero, configuration: configuration)
+            wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            wv.allowsMagnification = true
+            wv.allowsBackForwardNavigationGestures = true
+            return wv
+        }
 
-            super.init()
+        private func setupDelegates() {
             webView.navigationDelegate = self
+            webView.uiDelegate = self
+
+            // 页面标题 KVO：tab 标题跟随页面（空标题忽略，加载中/about:blank 不覆盖）
+            titleObservation = webView.observe(\.title, options: [.new]) { [weak self] _, change in
+                guard let self, let t = change.newValue as? String,
+                      !t.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+                self.onTitleChange?(t)
+            }
+        }
+
+        // MARK: - WKUIDelegate
+
+        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                     for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+            onNewWindowRequest?(configuration, navigationAction)
+        }
+
+        func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                     initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+            onJSAlert?(message)
+            completionHandler()
+        }
+
+        func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                     initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+            onJSConfirm?(message, completionHandler)
+        }
+
+        func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
+                     defaultText: String?, initiatedByFrame frame: WKFrameInfo,
+                     completionHandler: @escaping (String?) -> Void) {
+            // 简化：提示忽略，返回空
+            onJSAlert?(prompt)
+            completionHandler(nil)
         }
 
         func cancelLoadWait() {

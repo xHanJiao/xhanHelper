@@ -121,6 +121,7 @@ struct ContentView: View {
                     NavigationToolbar(
                         router: router,
                         rightSidebar: rightSidebar,
+                        chatTabManager: chatTabManager,
                         navLeadingOffset: sidebarWidth + Layout.navToolbarContentOffset
                     )
 
@@ -250,21 +251,6 @@ struct ContentView: View {
                     }
                 case .agents:
                     AgentPage(router: router, viewModel: agentVM)
-                case .bills:
-                    BillPage(
-                        router: router,
-                        viewModel: billVM,
-                        baseURL: deviceManager.baseURL,
-                        token: deviceManager.token ?? ""
-                    )
-                case .memories:
-                    MemoryPage(router: router, viewModel: memoryVM)
-                case .notes:
-                    NotePage(router: router, viewModel: noteVM)
-                case .documents:
-                    DocumentPage(router: router, viewModel: documentVM)
-                case .themes:
-                    ThemePage(router: router, viewModel: themeVM)
                 }
             }
             .modifier(CardBackgroundModifier(isLifted: contentHovered || (activeChatViewModel?.isEditing ?? false)))
@@ -307,11 +293,20 @@ struct ContentView: View {
     @ViewBuilder
     private var rightSidebarPanel: some View {
         if rightSidebar.isOpen {
-            RightSidebarView(manager: rightSidebar)
-                .padding(.top, 4)
-                .padding(.leading, 12)
-                .padding(.trailing, 8)
-                .transition(.move(edge: .trailing))
+            RightSidebarView(
+                manager: rightSidebar,
+                billVM: billVM,
+                memoryVM: memoryVM,
+                noteVM: noteVM,
+                documentVM: documentVM,
+                themeVM: themeVM,
+                baseURL: deviceManager.baseURL,
+                token: deviceManager.token ?? ""
+            )
+            .padding(.top, 4)
+            .padding(.leading, 12)
+            .padding(.trailing, 8)
+            .transition(.move(edge: .trailing))
         }
     }
 #endif

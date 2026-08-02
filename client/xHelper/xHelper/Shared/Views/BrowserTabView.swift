@@ -4,43 +4,120 @@ import WebKit
 struct BrowserTabView: View {
     let webView: WKWebView
     @State private var urlText = ""
+    @State private var isLoading = false
+    @State private var canGoBack = false
+    @State private var canGoForward = false
     @State private var isHovered = false
+    @State private var observations: [NSKeyValueObservation] = []
+    @FocusState private var urlFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "globe")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-
-                TextField("输入网址", text: $urlText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .onSubmit { navigateToURL() }
-
-                Button { navigateToURL() } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("重新加载")
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(.ultraThinMaterial)
-
+            toolbar
             Divider()
-
             BrowserWebView(webView: webView)
         }
-        .onAppear { urlText = webView.url?.absoluteString ?? "" }
+        .onAppear {
+            let initial = webView.url?.absoluteString ?? ""
+            urlText = initial == "about:blank" ? "" : initial
+            isLoading = webView.isLoading
+            canGoBack = webView.canGoBack
+            canGoForward = webView.canGoForward
+            startObserving()
+        }
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 6) {
+            // 后退 / 前进
+            Button {
+                webView.goBack()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canGoBack)
+            .opacity(canGoBack ? 1 : 0.3)
+            .help("后退")
+
+            Button {
+                webView.goForward()
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canGoForward)
+            .opacity(canGoForward ? 1 : 0.3)
+            .help("前进")
+
+            Image(systemName: "globe")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+
+            TextField("输入网址", text: $urlText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .focused($urlFocused)
+                .onSubmit { navigateToURL() }
+
+            // 加载中显示停止，否则刷新
+            Button {
+                if isLoading {
+                    webView.stopLoading()
+                } else {
+                    webView.reload()
+                }
+            } label: {
+                Image(systemName: isLoading ? "xmark" : "arrow.clockwise")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(isLoading ? "停止" : "重新加载")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial)
     }
 
     private func navigateToURL() {
         guard !urlText.isEmpty,
               let url = URL(string: urlText.hasPrefix("http") ? urlText : "https://\(urlText)") else { return }
         webView.load(URLRequest(url: url))
+    }
+
+    private func startObserving() {
+        observations = [
+            webView.observe(\.url, options: [.new]) { _, change in
+                DispatchQueue.main.async {
+                    guard let url = change.newValue as? URL?,
+                          let u = url, !urlFocused else { return }
+                    // 新标签页默认页（about:blank）不显示在地址栏
+                    urlText = u.absoluteString == "about:blank" ? "" : u.absoluteString
+                }
+            },
+            webView.observe(\.isLoading, options: [.new]) { _, change in
+                DispatchQueue.main.async {
+                    if let v = change.newValue { isLoading = v }
+                }
+            },
+            webView.observe(\.canGoBack, options: [.new]) { _, change in
+                DispatchQueue.main.async {
+                    if let v = change.newValue { canGoBack = v }
+                }
+            },
+            webView.observe(\.canGoForward, options: [.new]) { _, change in
+                DispatchQueue.main.async {
+                    if let v = change.newValue { canGoForward = v }
+                }
+            },
+        ]
     }
 }
 

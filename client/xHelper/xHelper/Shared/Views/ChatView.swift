@@ -90,10 +90,23 @@ struct ChatView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             #endif
 
-            // 执行计划（todo）丑版列表：当前会话已保存的计划步骤（UI 后续优化）
-            if !viewModel.planTodo.isEmpty {
+            // 执行计划（todo）：进行中显示步骤列表（可 × 隐藏）；完成/取消后消失（扩散动画）
+            if viewModel.planState == .active && !viewModel.planDismissed {
                 planTodoList
+                    .transition(Self.planDismissTransition)
+                    .animation(.easeOut(duration: 0.25), value: viewModel.planState)
+                    .animation(.easeOut(duration: 0.25), value: viewModel.planDismissed)
             }
+            // —— 完成/取消态横幅（已砍掉，保留注释供未来恢复）——
+            // if let banner = viewModel.planFlashBanner {
+            //     Text(banner)
+            //         .font(.caption)
+            //         .foregroundColor(.green)
+            //         .padding(.horizontal, 12)
+            //         .padding(.vertical, 6)
+            //         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            //         .padding(.horizontal, 4)
+            // }
 
             // 输入栏
             InputBar(
@@ -189,13 +202,25 @@ struct ChatView: View {
     }
 
     /// L3 工具执行确认行（无背景，橙色图标/按钮）
-    /// 执行计划（todo）丑版列表：goal + 步骤状态
+    /// 执行计划（todo）列表：goal + 步骤状态 + × 隐藏按钮（隐藏跨会话保持，新计划自动恢复）
     private var planTodoList: some View {
         VStack(alignment: .leading, spacing: 3) {
-            if !viewModel.planGoal.isEmpty {
-                Text(viewModel.planGoal)
-                    .font(.caption).bold()
-                    .foregroundColor(.secondary)
+            HStack {
+                if !viewModel.planGoal.isEmpty {
+                    Text(viewModel.planGoal)
+                        .font(.caption).bold()
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Button {
+                    viewModel.dismissPlanTodo()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("隐藏计划列表")
             }
             ForEach(viewModel.planTodo) { step in
                 HStack(spacing: 5) {
@@ -215,6 +240,27 @@ struct ChatView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         .padding(.horizontal, 4)
     }
+
+    /// 计划栏消失的扩散态（放大 + 淡出 + 模糊）
+    private struct PlanDismissModifier: ViewModifier {
+        let active: Bool
+        func body(content: Content) -> some View {
+            content
+                .scaleEffect(active ? 1.15 : 1)
+                .opacity(active ? 0 : 1)
+                .blur(radius: active ? 6 : 0)
+        }
+    }
+
+    /// 计划栏过渡动画：出现轻微缩放，消失时扩散（scale 放大 + 淡出 + 模糊）
+    private static let planDismissTransition = AnyTransition
+        .asymmetric(
+            insertion: .scale(scale: 0.95).combined(with: .opacity),
+            removal: .modifier(
+                active: PlanDismissModifier(active: true),
+                identity: PlanDismissModifier(active: false)
+            )
+        )
 
     private func planStepIcon(_ status: String) -> String {
         switch status {

@@ -23,6 +23,14 @@ struct ToolConfirmation: Identifiable {
     let continuation: CheckedContinuation<Bool, Never>
 }
 
+/// 执行计划生命周期状态（客户端从 steps 推断）
+enum PlanState: Equatable {
+    case none        // 无计划
+    case active      // 进行中（存在 pending/in_progress）
+    case completed   // 已完成（无进行中步骤且非全取消）
+    case cancelled   // 已取消（全部 cancelled）
+}
+
 // MARK: - ChatViewModel
 
 @MainActor
@@ -93,17 +101,102 @@ class ChatViewModel: ObservableObject {
     @Published var isPlanModalVisible = false
     @Published var isPlanMinimized = false
 
-    /// 执行计划（todo，丑版展示）：goal + 步骤列表，对话结束/加载会话时刷新
+    /// 执行计划（todo）：goal + 步骤列表 + 生命周期状态。对话结束/加载会话时刷新。
     @Published var planGoal = ""
     @Published var planTodo: [PlanStep] = []
+    @Published var planState: PlanState = .none
+    /// 用户主动隐藏（×）：内存态，持久记录在 UserDefaults（per conversation）
+    @Published var planDismissed = false
+    // —— 完成/取消态横幅：已砍掉（2026-08-02 简化：完成/取消后列表直接消失，不做提示）。
+    //     保留注释供未来恢复：显示 5s 后消失，不受 dismissed 影响；触发条件是"对话内状态转变"。
+    // @Published var planFlashBanner: String?
+    // private var planFlashTask: Task<Void, Never>?
 
-    /// 从服务端拉取当前会话的执行计划（丑版 UI 用，UI 优化后续）
+    /// 从服务端拉取当前会话的执行计划，并按生命周期状态机更新 UI。
     func loadPlanTodo() async {
         guard let cid = conversationId, !cid.isEmpty else { return }
         guard let plan = try? await apiClient.getConversationPlan(conversationId: cid) else { return }
         planGoal = plan.goal
         planTodo = plan.steps
+        evaluatePlanState(cid: cid)
     }
+
+    /// × 按钮：隐藏当前计划（记录指纹到 UserDefaults，进度更新不打扰，新计划指纹变化重新显示）
+    func dismissPlanTodo() {
+        guard let cid = conversationId, !cid.isEmpty else { return }
+        planDefaultsSet(dismissedFingerprint: planFingerprint(), for: cid)
+        planDismissed = true
+    }
+
+    /// 计划状态机：active（列表）/ completed|cancelled（一次性横幅）/ none（不显示）
+    private func evaluatePlanState(cid: String) {
+        guard !planTodo.isEmpty else {
+            planState = .none
+            planDismissed = false
+            return
+        }
+        let hasActive = planTodo.contains { $0.status == "pending" || $0.status == "in_progress" }
+        if hasActive {
+            planState = .active
+            // 隐藏保持：指纹相同（同一计划，进度更新不打扰）；指纹变化（新计划）→ 打破隐藏
+            let fp = planFingerprint()
+            let hiddenFP = planDefaultsDismissedFingerprint(for: cid)
+            planDismissed = hiddenFP != nil && hiddenFP == fp
+            if hiddenFP != nil && !planDismissed {
+                planDefaultsSet(dismissedFingerprint: nil, for: cid) // 新计划：清掉旧隐藏记录
+            }
+            return
+        }
+        // 无进行中步骤：completed 或 cancelled —— 简化版：直接不显示（列表消失，无提示）。
+        let allCancelled = planTodo.allSatisfy { $0.status == "cancelled" }
+        planState = allCancelled ? .cancelled : .completed
+        planDismissed = false
+        // —— 完成/取消态横幅（已砍掉，保留注释供未来恢复）——
+        // 原逻辑：对话内状态转变到 completed/cancelled 且 completedSeen 未记录 → 显示横幅 5s。
+        // 需要恢复时启用：planDefaultsCompletedSeen + planDefaultsSet(completedSeen:) + showPlanFlash。
+    }
+
+    private func planFingerprint() -> String {
+        planGoal + "|" + planTodo.map(\.content).joined(separator: "|")
+    }
+
+    // —— 完成/取消态横幅（已砍掉，保留注释供未来恢复）——
+    // private func showPlanFlash(_ text: String) {
+    //     planFlashBanner = text
+    //     planFlashTask?.cancel()
+    //     planFlashTask = Task { @MainActor [weak self] in
+    //         try? await Task.sleep(for: .seconds(5))
+    //         guard !Task.isCancelled else { return }
+    //         self?.planFlashBanner = nil
+    //     }
+    // }
+
+    // —— 计划持久化（UserDefaults，per conversation）——
+
+    private func planDefaultsDismissedFingerprint(for cid: String) -> String? {
+        (UserDefaults.standard.dictionary(forKey: "plan_dismissed") as? [String: String])?[cid]
+    }
+
+    private func planDefaultsSet(dismissedFingerprint fp: String?, for cid: String) {
+        var dict = (UserDefaults.standard.dictionary(forKey: "plan_dismissed") as? [String: String]) ?? [:]
+        if let fp {
+            dict[cid] = fp
+        } else {
+            dict.removeValue(forKey: cid)
+        }
+        UserDefaults.standard.set(dict, forKey: "plan_dismissed")
+    }
+
+    // —— completedSeen 持久化（完成/取消态横幅已砍掉，保留注释供未来恢复）——
+    // private func planDefaultsCompletedSeen(for cid: String) -> Bool {
+    //     (UserDefaults.standard.dictionary(forKey: "plan_completed_seen") as? [String: Bool])?[cid] ?? false
+    // }
+    //
+    // private func planDefaultsSet(completedSeen seen: Bool, for cid: String) {
+    //     var dict = (UserDefaults.standard.dictionary(forKey: "plan_completed_seen") as? [String: Bool]) ?? [:]
+    //     dict[cid] = seen
+    //     UserDefaults.standard.set(dict, forKey: "plan_completed_seen")
+    // }
 
     /// L3 工具执行确认（同一时刻最多一个，client tool 顺序执行）
     @Published var pendingToolConfirmation: ToolConfirmation?
@@ -218,6 +311,9 @@ class ChatViewModel: ObservableObject {
         }
         planGoal = ""
         planTodo = []
+        planState = .none
+        planDismissed = false
+        // planFlashBanner = nil（横幅已砍掉）
         isInitialLoading = true
         errorMessage = nil
         loadMoreError = nil

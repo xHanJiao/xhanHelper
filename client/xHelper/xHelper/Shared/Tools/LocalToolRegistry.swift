@@ -21,6 +21,11 @@ final class LocalToolRegistry {
         "browser__agent_browser_wait_for_selector": 1,
         // L3 需用户确认：打开任意 URL（可能导航到任意站点）
         "browser__agent_browser_open": 3,
+        // L3 需用户确认：下载文件到本地（写入磁盘，需用户同意）
+        "browser__agent_browser_download": 3,
+        // L3 需用户确认：真实系统级点击/拖拽（注入系统事件，可能打断用户操作/点错目标）
+        "browser__agent_browser_cgclick": 3,
+        "browser__agent_browser_drag": 3,
     ]
 
     func riskLevel(for flatName: String) -> Int {

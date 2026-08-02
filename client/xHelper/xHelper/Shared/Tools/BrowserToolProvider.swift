@@ -64,6 +64,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             LocalToolSchema(name: "agent_browser_wait_for_selector", description: "等待指定选择器出现",                   inputSchema: objProps(["selector": strProp("CSS选择器"), "timeout_ms": numProp("超时毫秒，默认5000")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_go_back",          description: "浏览器后退到上一页",                         inputSchema: objProps([:]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_go_forward",       description: "浏览器前进到下一页（有页面可前进时生效）",          inputSchema: objProps([:]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_get_media_sources", description: "获取页面中的视频/图片资源列表（分页，实时抓取）。页面为动态内容（广告自动播放、懒加载）会导致资源随时变化，下载失败或列表疑似过期时重新调用本函数获取最新列表。videos 的 playing 字段标识当前播放中的视频（自动播放的广告可能稍后消失，要下载需趁早）", inputSchema: objProps(["page": numProp("页码，从 1 开始，默认 1"), "limit": numProp("每页数量，默认 15（视频和图片共用）")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_download",          description: "下载指定 URL 到本地（~/Downloads/xhanHelper/）。使用真实浏览器请求特征（UA/Referer/Cookie），需用户确认（L3）。仅允许媒体文件（视频/图片/音频），危险类型（可执行/压缩/脚本）会被拒绝。下载前建议先 get_media_sources 确认地址；失败（404/403）时资源可能已失效，请重新 get_media_sources 获取最新地址。调用时尽量传 filename（带扩展名），让用户确认条能看到文件名和类型", inputSchema: objProps(["url": strProp("要下载的资源 URL（http/https）"), "filename": strProp("可选：自定义文件名（含扩展名），默认从响应或 URL 推断")]), isReadOnly: true),
         ]
 #if DEBUG
         schemas.append(LocalToolSchema(name: "agent_browser_execute_script", description: "执行 JS 脚本并返回结果（仅开发环境）", inputSchema: objProps(["script": strProp("要执行的JS代码，用return返回结果，如 return JSON.stringify({w:window.innerWidth})")]), isReadOnly: true))
@@ -134,6 +136,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     if session.webView.canGoForward { session.webView.goForward() }
                     return .init(serverResult: Self.jsonDict(["forward": session.webView.canGoForward]), serverError: nil, clientAction: nil)
                 }
+            case "agent_browser_get_media_sources":
+                return await handleGetMediaSources(session: session, arguments: arguments)
+            case "agent_browser_download":
+                return await handleDownload(session: session, arguments: arguments)
 #if DEBUG
             case "agent_browser_execute_script":
                 let script = arguments["script"] as? String ?? ""
@@ -670,6 +676,259 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return .init(serverResult: Self.jsonDict(out), serverError: nil, clientAction: nil)
     }
 
+    // MARK: - Media sources & download
+
+    /// get_media_sources：实时抓取页面 video/img 资源（分页 + 动态感知）。
+    /// 全局 index 跨页连续；playing 标识当前播放中的视频；page_hash 帮助判断列表是否过期。
+    private func handleGetMediaSources(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
+        let page = max(1, (arguments["page"] as? NSNumber)?.intValue ?? 1)
+        let limit = max(1, min(50, (arguments["limit"] as? NSNumber)?.intValue ?? 15))
+
+        guard let result = await session.jsJSON(Self.mediaSourcesJS) as? [String: Any] else {
+            return .init(serverResult: nil, serverError: "获取媒体资源失败：JS 异常", clientAction: nil)
+        }
+        let videos = result["videos"] as? [[String: Any]] ?? []
+        let images = result["images"] as? [[String: Any]] ?? []
+
+        // 全局 index（跨页连续）+ 分页切片
+        var pagedVideos: [[String: Any]] = []
+        var pagedImages: [[String: Any]] = []
+        for (i, v) in videos.enumerated() {
+            var item = v
+            item["index"] = i + 1
+            pagedVideos.append(item)
+        }
+        for (i, im) in images.enumerated() {
+            var item = im
+            item["index"] = i + 1
+            pagedImages.append(item)
+        }
+
+        let videoStart = (page - 1) * limit
+        let videoSlice = videoStart < pagedVideos.count ? Array(pagedVideos[videoStart..<min(videoStart + limit, pagedVideos.count)]) : []
+        let imageStart = (page - 1) * limit
+        let imageSlice = imageStart < pagedImages.count ? Array(pagedImages[imageStart..<min(imageStart + limit, pagedImages.count)]) : []
+
+        let hash = await session.contentHash()
+        var dict: [String: Any] = [
+            "page": page,
+            "page_size": limit,
+            "total_videos": videos.count,
+            "total_images": images.count,
+            "has_more": videoStart + limit < videos.count || imageStart + limit < images.count,
+            "videos": videoSlice,
+            "images": imageSlice,
+        ]
+        if let h = hash { dict["page_hash"] = h }
+        return .init(serverResult: Self.jsonDict(dict), serverError: nil, clientAction: nil)
+    }
+
+    /// download：拟人化下载（真实浏览器 UA/Referer/Cookie + 随机延迟）到 ~/Downloads/xhanHelper/。
+    /// L3 确认由 LocalToolRegistry riskLevel 层处理（handleClientToolCall），此处只负责执行。
+    private func handleDownload(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
+        guard let urlStr = arguments["url"] as? String,
+              let url = URL(string: urlStr),
+              url.scheme == "http" || url.scheme == "https",
+              let host = url.host, !host.isEmpty else {
+            return .init(serverResult: nil, serverError: "无效的下载 URL（仅支持 http/https 且需含主机名）", clientAction: nil)
+        }
+        // 安全：危险扩展名黑名单（可执行/压缩/脚本类直接拒绝，下载前拦截）
+        let urlExt = url.pathExtension.lowercased()
+        if Self.dangerousExtensions.contains(urlExt) {
+            return .init(serverResult: nil, serverError: "拒绝下载危险文件类型（.\(urlExt)）：仅允许媒体文件（视频/图片/音频）", clientAction: nil)
+        }
+        let customName = (arguments["filename"] as? String)?.trimmingCharacters(in: .whitespaces)
+        // 安全：用户指定文件名也过黑名单
+        if let customName, !customName.isEmpty,
+           Self.dangerousExtensions.contains((customName as NSString).pathExtension.lowercased()) {
+            return .init(serverResult: nil, serverError: "拒绝下载危险文件类型（\(customName)）：仅允许媒体文件", clientAction: nil)
+        }
+
+        // 拟人化：随机延迟 1-3s（模拟人类点击下载的节奏）
+        try? await Task.sleep(for: .milliseconds(Int.random(in: 1000...3000)))
+
+        // 真实浏览器请求特征：UA（页面 JS 读取）、Referer（当前页）、Cookie（WebView 会话）
+        let ua = (await session.jsResult("navigator.userAgent")).text ?? ""
+        let referer = session.webView.url?.absoluteString ?? ""
+        var cookieHeader = ""
+        let allCookies = await session.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+        if !allCookies.isEmpty {
+            // 安全：只发送匹配目标域名的 cookie（RFC 6265 domain-match），杜绝跨站 cookie 泄露
+            let matched = Self.matchingCookies(allCookies, for: url)
+            if !matched.isEmpty {
+                cookieHeader = matched.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+            }
+        }
+
+        var req = URLRequest(url: url)
+        if !ua.isEmpty { req.setValue(ua, forHTTPHeaderField: "User-Agent") }
+        if !referer.isEmpty { req.setValue(referer, forHTTPHeaderField: "Referer") }
+        req.setValue("video/mp4,video/webm,video/*,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        req.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
+        if !cookieHeader.isEmpty { req.setValue(cookieHeader, forHTTPHeaderField: "Cookie") }
+
+        let dlConfig = URLSessionConfiguration.default
+        dlConfig.timeoutIntervalForResource = 600 // 大文件下载需要长超时（默认 60s 会杀）
+        let dlSession = URLSession(configuration: dlConfig)
+        defer { dlSession.finishTasksAndInvalidate() }
+
+        let (tmpURL, response): (URL, URLResponse)
+        do {
+            (tmpURL, response) = try await dlSession.download(for: req)
+        } catch {
+            return .init(serverResult: nil, serverError: "下载失败（资源可能已失效或页面已变化）：\(error.localizedDescription)。请重新调用 get_media_sources 获取最新地址", clientAction: nil)
+        }
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            return .init(serverResult: nil, serverError: "下载失败（HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)）：资源可能已失效或需要登录。请重新调用 get_media_sources 获取最新地址", clientAction: nil)
+        }
+
+        // 保存到 ~/Downloads/xhanHelper/
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads/xhanHelper", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            return .init(serverResult: nil, serverError: "创建下载目录失败：\(error.localizedDescription)", clientAction: nil)
+        }
+
+        let suggested = http.suggestedFilename
+        let fileName: String
+        if let customName, !customName.isEmpty {
+            fileName = Self.sanitizeFileName(customName)
+        } else if let suggested, !suggested.isEmpty {
+            fileName = Self.sanitizeFileName(suggested)
+        } else {
+            fileName = url.lastPathComponent.isEmpty ? "download-\(Int(Date().timeIntervalSince1970))" : Self.sanitizeFileName(url.lastPathComponent)
+        }
+
+        // 重名加序号
+        var dest = dir.appendingPathComponent(fileName)
+        var counter = 1
+        while FileManager.default.fileExists(atPath: dest.path) {
+            let ext = dest.pathExtension
+            let base = (fileName as NSString).deletingPathExtension
+            dest = dir.appendingPathComponent(ext.isEmpty ? "\(base)-\(counter)" : "\(base)-\(counter).\(ext)")
+            counter += 1
+        }
+
+        // 安全：魔数校验（伪造扩展名防护）—— 内容必须确实是媒体文件，否则删除并拒绝
+        guard let mediaData = try? Data(contentsOf: tmpURL, options: .mappedIfSafe),
+              Self.isAllowedMediaFile(mediaData) else {
+            try? FileManager.default.removeItem(at: tmpURL)
+            return .init(serverResult: nil, serverError: "下载内容不是允许的媒体类型（视频/图片/音频），已拒绝保存", clientAction: nil)
+        }
+
+        do {
+            try FileManager.default.moveItem(at: tmpURL, to: dest)
+        } catch {
+            return .init(serverResult: nil, serverError: "保存文件失败：\(error.localizedDescription)", clientAction: nil)
+        }
+
+        let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
+        let size = (attrs?[.size] as? NSNumber)?.intValue ?? 0
+        print("[B-Download] saved \(dest.path) (\(size) bytes)")
+        return .init(serverResult: Self.jsonDict([
+            "path": dest.path,
+            "filename": dest.lastPathComponent,
+            "size_bytes": size,
+        ]), serverError: nil, clientAction: nil)
+    }
+
+    /// mediaSourcesJS：实时收集页面 video/img 资源 + 附近上下文文本（向上找容器，60 字符截断）。
+    /// playing = 当前未暂停且未结束（自动播放的广告）；data: 图片过滤。
+    private static let mediaSourcesJS = """
+    (function(){
+      function ctx(el, max) {
+        var node = el;
+        for (var i = 0; i < 4 && node; i++) {
+          node = node.parentElement;
+          if (!node) break;
+          var tag = node.tagName;
+          if (tag === 'FIGURE' || tag === 'ARTICLE' || tag === 'SECTION' || tag === 'DIV') {
+            var t = (node.innerText || '').replace(/\\s+/g, ' ').trim();
+            if (t) return t.length > max ? t.slice(0, max) + '…' : t;
+          }
+        }
+        return '';
+      }
+      var videos = Array.from(document.querySelectorAll('video')).map(function(v) {
+        var src = v.currentSrc || v.src || '';
+        if (!src) return null;
+        return {src: src, playing: !v.paused && !v.ended, poster: v.poster || '',
+                duration: isFinite(v.duration) ? Math.round(v.duration) : null,
+                width: v.videoWidth || null, height: v.videoHeight || null,
+                title: ctx(v, 60) || v.getAttribute('aria-label') || v.getAttribute('alt') || ''};
+      }).filter(Boolean);
+      var images = Array.from(document.querySelectorAll('img')).map(function(im) {
+        var src = im.currentSrc || im.src || '';
+        if (!src || src.indexOf('data:') === 0) return null;
+        return {src: src, alt: im.alt || '', width: im.naturalWidth || null,
+                context: ctx(im, 60) || im.getAttribute('aria-label') || ''};
+      }).filter(Boolean);
+      return JSON.stringify({videos: videos, images: images});
+    })()
+    """
+
+    // MARK: - Download security helpers
+
+    /// 危险扩展名黑名单（可执行/压缩/脚本类，下载前拦截）
+    private static let dangerousExtensions: Set<String> = [
+        "sh", "dmg", "zip", "exe", "app", "pkg", "command", "run", "msi", "jar",
+        "bat", "bin", "py", "php", "js", "html", "htm", "swift", "go", "rb",
+    ]
+
+    /// RFC 6265 domain-match：只返回匹配目标 URL 的 cookie（杜绝跨站 cookie 泄露）。
+    /// 规则：host 精确匹配或子域匹配；secure cookie 仅 https 发送。
+    private static func matchingCookies(_ cookies: [HTTPCookie], for url: URL) -> [HTTPCookie] {
+        guard let host = url.host?.lowercased() else { return [] }
+        let isHTTPS = url.scheme == "https"
+        return cookies.filter { c in
+            if c.isSecure && !isHTTPS { return false }
+            let d = c.domain.lowercased()
+            let domain = d.hasPrefix(".") ? String(d.dropFirst()) : d
+            return host == domain || host.hasSuffix("." + domain)
+        }
+    }
+
+    /// 文件名 sanitize：只保留路径最后一段（防 ../ 路径穿越），去控制字符。
+    private static func sanitizeFileName(_ raw: String) -> String {
+        let last = (raw as NSString).lastPathComponent
+        var cleaned = last.replacingOccurrences(of: "..", with: "")
+        cleaned = cleaned.components(separatedBy: CharacterSet.controlCharacters).joined()
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.isEmpty || cleaned == "." {
+            return "download-\(Int(Date().timeIntervalSince1970))"
+        }
+        return cleaned
+    }
+
+    /// 魔数白名单校验（伪造扩展名防护）：内容必须是视频/图片/音频。
+    private static func isAllowedMediaFile(_ data: Data) -> Bool {
+        guard data.count >= 12 else { return false }
+        let b = [UInt8](data.prefix(12))
+        // mp4 / m4v / mov: "....ftyp"
+        if b[4] == 0x66 && b[5] == 0x74 && b[6] == 0x79 && b[7] == 0x70 { return true }
+        // jpg / jpeg
+        if b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF { return true }
+        // png
+        if b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47 { return true }
+        // gif
+        if b[0] == 0x47 && b[1] == 0x49 && b[2] == 0x46 && b[3] == 0x38 { return true }
+        // webm / mkv (EBML)
+        if b[0] == 0x1A && b[1] == 0x45 && b[2] == 0xDF && b[3] == 0xA3 { return true }
+        // RIFF family (avi / wav / webp)
+        if b[0] == 0x52 && b[1] == 0x49 && b[2] == 0x46 && b[3] == 0x46 { return true }
+        // mp3: ID3 tag
+        if b[0] == 0x49 && b[1] == 0x44 && b[2] == 0x33 { return true }
+        // mp3 / aac: frame sync 0xFFFx
+        if b[0] == 0xFF && (b[1] & 0xE0) == 0xE0 { return true }
+        // flac
+        if b[0] == 0x66 && b[1] == 0x4C && b[2] == 0x61 && b[3] == 0x43 { return true }
+        // bmp
+        if b[0] == 0x42 && b[1] == 0x4D { return true }
+        return false
+    }
+
     // MARK: - Nav context wrapper
 
     /// 交互操作统一附加 url/title/nav + 内容 hash/changed（供 LLM 判断页面是否变化，避免重复快照）
@@ -724,6 +983,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let urlStr = args["url"] as? String ?? ""
         guard let url = URL(string: urlStr) else {
             return .init(serverResult: Self.jsonDict(["error": "无效的URL"]), serverError: nil, clientAction: nil)
+        }
+        // 安全：scheme 白名单（仅 http/https）。file:/javascript:/data: 等协议
+        // 可能读取本地文件或执行任意 JS（本地文件泄露风险），一律拒绝。
+        guard url.scheme == "http" || url.scheme == "https" else {
+            return .init(serverResult: nil, serverError: "仅支持打开 http/https 网页，拒绝协议: \(url.scheme ?? "nil")", clientAction: nil)
+        }
+        guard let host = url.host, !host.isEmpty else {
+            return .init(serverResult: nil, serverError: "无效的 URL（缺少主机名）", clientAction: nil)
         }
 
         let tabId = "browser-\(tabCounter)"
@@ -1164,6 +1431,23 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             Task { @MainActor in
                 lastNavStartAt = Date()
             }
+        }
+
+        /// 安全：拦截非 http/https 导航（含 302 重定向到 file:// 等协议绕过）。
+        /// 允许 about:blank（默认新标签页）；其余一律 .cancel。
+        nonisolated func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if let url = navigationAction.request.url {
+                let scheme = url.scheme?.lowercased() ?? ""
+                if scheme == "http" || scheme == "https" || scheme == "about" {
+                    decisionHandler(.allow)
+                    return
+                }
+                print("[Browser] blocked navigation to scheme: \(scheme) (\(url.absoluteString.prefix(80)))")
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
         }
 
         nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

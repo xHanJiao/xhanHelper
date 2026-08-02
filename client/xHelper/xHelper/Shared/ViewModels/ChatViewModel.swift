@@ -16,7 +16,7 @@ struct PlanNode: Identifiable {
 // MARK: - Tool Confirmation（L3 工具执行前用户确认）
 
 struct ToolConfirmation: Identifiable {
-    let id = UUID()
+    let id: UUID
     let toolName: String
     let displayName: String
     let argsSummary: String
@@ -153,13 +153,18 @@ class ChatViewModel: ObservableObject {
             ? "(无参数)"
             : String(arguments.map { "\($0.key)=\($0.value)" }.joined(separator: ", ").prefix(80))
         confirmationResolved = false
+        let myID = UUID() // per-confirmation 标识：超时任务只处理"当前 pending 还是自己"的确认，杜绝双重 resume
         return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
             let displayName = LocalToolRegistry.shared.displayName(for: toolName)
-            pendingToolConfirmation = ToolConfirmation(toolName: toolName, displayName: displayName, argsSummary: argsSummary, continuation: cont)
-            // 60s 超时自动拒绝（confirmationResolved 防双重 resume）
+            pendingToolConfirmation = ToolConfirmation(id: myID, toolName: toolName, displayName: displayName, argsSummary: argsSummary, continuation: cont)
+            // 60s 超时自动拒绝。confirmationResolved 是共享标志（新确认会重置），
+            // 必须叠加 id 检查：旧确认的超时任务醒来时 pending 已是新确认（或 nil），跳过，
+            // 否则会对已解决/已替换的 continuation 二次 resume 导致崩溃。
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(60))
-                guard let self, !self.confirmationResolved else { return }
+                guard let self,
+                      self.pendingToolConfirmation?.id == myID,
+                      !self.confirmationResolved else { return }
                 self.confirmationResolved = true
                 self.pendingToolConfirmation = nil
                 cont.resume(returning: false)

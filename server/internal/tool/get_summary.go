@@ -96,6 +96,8 @@ func (t *GetSummaryTool) Functions() []FuncSchema {
 	}
 }
 
+func (t *GetSummaryTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 func (t *GetSummaryTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {
 	case "get_summary":

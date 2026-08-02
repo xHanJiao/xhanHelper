@@ -64,6 +64,9 @@ func (t *MailboxTool) Functions() []FuncSchema {
 	}}
 }
 
+// ReadOnlyFuncs — 信箱投递为写操作（plan 模式全拦）
+func (t *MailboxTool) ReadOnlyFuncs() map[string]bool { return nil }
+
 func (t *MailboxTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	var a mailboxDeliverArgs
 	if err := json.Unmarshal(args, &a); err != nil {

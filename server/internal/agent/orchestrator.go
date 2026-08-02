@@ -64,6 +64,7 @@ type RunRequest struct {
 	Thinking           *bool    // 思考模式：nil=不传，true=开启，false=关闭
 	Window             WindowResult
 	ClientTools        []ClientTool // 客户端（Mac App）上报的本地 MCP 工具，可为空
+	Mode               string       // 会话模式：model.ConvModeWork（默认）| model.ConvModePlan（写操作被拦截）
 
 	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
 	Memory  retrieval.SourceConfig
@@ -814,7 +815,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		state.msgs = append(state.msgs, msg)
 		state.allToolCalls = append(state.allToolCalls, internalTCs...)
-		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, internalTCs, clientToolIndex(req.ClientTools, o.registry), state)
+		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, internalTCs, clientToolIndex(req.ClientTools, o.registry), state, req.Mode, clientToolReadOnlyIndex(req.ClientTools))
 		state.msgs = o.collectToolResultsNative(ctx, internalTCs, msg.ToolCalls, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 		return false
 	}
@@ -1066,7 +1067,7 @@ func (o *Orchestrator) executePromptEngTools(
 	if o.useNativeFC {
 		clientIdx = clientToolIndex(req.ClientTools, o.registry)
 	}
-	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, parsed.ToolCalls, clientIdx, state)
+	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, parsed.ToolCalls, clientIdx, state, req.Mode, clientToolReadOnlyIndex(req.ClientTools))
 	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 	return false
 }
@@ -1286,7 +1287,8 @@ func injectExcludeIDs(args json.RawMessage, memIDs []string) json.RawMessage {
 }
 
 func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID, convID string,
-	registry *tool.Registry, toolCalls []tool.ToolCall, clientIdx map[string]bool, state *reactState) []toolExecResult {
+	registry *tool.Registry, toolCalls []tool.ToolCall, clientIdx map[string]bool, state *reactState,
+	mode string, clientReadOnly map[string]bool) []toolExecResult {
 
 	limit := o.maxConcurrency
 	if limit <= 0 {
@@ -1328,7 +1330,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 						r = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
 					}
 				}()
-				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, Events: events}
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, Mode: mode, Events: events}
 				r = registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
 			}()
 
@@ -1345,7 +1347,13 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 				Error: "客户端本地工具不可用（本轮对话中已发生断连或超时），已跳过 " + tc.Tool + "." + tc.Function + "。请不要再调用客户端本地工具，直接告知用户即可。"}}
 			continue
 		}
-		r, unavailable := o.executeClientTool(ctx, events, userID, tc)
+		// —— Plan 模式拦截：客户端工具在分派前检查只读标记（执行在客户端，服务端在此拦断）——
+		if mode == model.ConvModePlan && !clientReadOnly[tc.Tool+"__"+tc.Function] {
+			results[idx] = toolExecResult{tc: tc, result: &tool.Result{Success: false,
+				Error: fmt.Sprintf("当前处于计划模式（只读讨论状态），禁止执行客户端工具 %s.%s（写操作）。请仅进行方案讨论或使用只读查询工具；如需执行该操作，请让用户切换到工作模式。", tc.Tool, tc.Function)}}
+			continue
+		}
+		r, unavailable := o.executeClientTool(ctx, events, userID, tc, mode)
 		if unavailable {
 			state.clientToolsUnavailable = true
 		}
@@ -1358,7 +1366,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 
 // executeClientTool 将工具调用经桥中转到客户端执行，阻塞等待 HTTP 回传。
 // 第二个返回值表示客户端不可用（断连/超时），调用方据此对本次 Run 内后续客户端工具快速失败。
-func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm.StreamEvent, userID string, call tool.ToolCall) (*tool.Result, bool) {
+func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm.StreamEvent, userID string, call tool.ToolCall, mode string) (*tool.Result, bool) {
 	if o.clientBridge == nil {
 		// 接线 bug：请求携带了 client_tools 却没有注入桥，炸在明处
 		panic("[orch] clientBridge is nil but client tool call dispatched")
@@ -1380,6 +1388,7 @@ func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm
 		"arguments":           call.Args,
 		"result_budget_bytes": clientToolInjectBudgetBytes,
 		"timeout_secs":        int(o.clientToolTimeout.Seconds()),
+		"mode":                mode, // 会话模式，客户端可按需做二次拦截/展示
 	})
 	if err != nil {
 		log.Printf("[orch] client tool payload marshal error: %v", err)

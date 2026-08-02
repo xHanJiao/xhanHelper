@@ -68,6 +68,9 @@ func (s *Secretary) Functions() []tool.FuncSchema {
 	}}
 }
 
+// ReadOnlyFuncs — 内部反思/分析工具，全函数只读（不参与主对话 plan 模式拦截）
+func (s *Secretary) ReadOnlyFuncs() map[string]bool { return tool.AllReadOnly(s) }
+
 func (s *Secretary) Execute(ec *tool.ExecuteContext, funcName string, args json.RawMessage) *tool.Result {
 	var a secretaryArgs
 	if err := json.Unmarshal(args, &a); err != nil {

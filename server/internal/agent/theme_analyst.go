@@ -104,6 +104,9 @@ type themeAnalystArgs struct {
 	ThemeID   string `json:"theme_id"`
 }
 
+// ReadOnlyFuncs — 内部反思/分析工具，全函数只读（不参与主对话 plan 模式拦截）
+func (ta *ThemeAnalyst) ReadOnlyFuncs() map[string]bool { return tool.AllReadOnly(ta) }
+
 func (ta *ThemeAnalyst) Execute(ec *tool.ExecuteContext, funcName string, args json.RawMessage) *tool.Result {
 	var a themeAnalystArgs
 	if err := json.Unmarshal(args, &a); err != nil {

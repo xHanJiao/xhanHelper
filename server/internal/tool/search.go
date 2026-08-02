@@ -90,6 +90,8 @@ func (t *SearchTool) Functions() []FuncSchema {
 	}
 }
 
+func (t *SearchTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 func (t *SearchTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	if _, err := t.usageRepo.TryUse(ec.Ctx, t.provider, t.totalQuota, t.quotaExpiresAt, t.usedCount); err != nil {
 		return &Result{Success: false, Error: err.Error()}

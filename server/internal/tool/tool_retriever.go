@@ -107,6 +107,8 @@ func (t *ToolRetriever) Functions() []FuncSchema {
 	}
 }
 
+func (t *ToolRetriever) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 func (t *ToolRetriever) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	if funcName != "search" {
 		return &Result{Success: false, Error: "unknown function: " + funcName}

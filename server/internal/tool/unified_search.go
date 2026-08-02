@@ -165,6 +165,8 @@ func (t *UnifiedSearchTool) Functions() []FuncSchema {
 	}
 }
 
+func (t *UnifiedSearchTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 // Execute 路由函数
 func (t *UnifiedSearchTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {

@@ -236,6 +236,7 @@ struct ConversationData: Codable {
     let isDefault: Bool
     let title: String
     let updatedAt: String
+    let mode: String?
 
     enum CodingKeys: String, CodingKey {
         case agentId = "agent_id"
@@ -245,5 +246,6 @@ struct ConversationData: Codable {
         case isDefault = "is_default"
         case title
         case updatedAt = "updated_at"
+        case mode
     }
 }

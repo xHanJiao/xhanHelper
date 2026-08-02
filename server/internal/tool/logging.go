@@ -21,6 +21,9 @@ func NewLoggingWrapper(inner Tool, logger *log.Logger) *LoggingWrapper {
 func (w *LoggingWrapper) Name() string            { return w.inner.Name() }
 func (w *LoggingWrapper) Description() string     { return w.inner.Description() }
 func (w *LoggingWrapper) Functions() []FuncSchema { return w.inner.Functions() }
+func (w *LoggingWrapper) ReadOnlyFuncs() map[string]bool {
+	return w.inner.ReadOnlyFuncs()
+}
 
 func (w *LoggingWrapper) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	start := time.Now()

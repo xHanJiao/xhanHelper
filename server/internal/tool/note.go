@@ -207,6 +207,18 @@ func (t *NoteTool) Functions() []FuncSchema {
 	}
 }
 
+// ReadOnlyFuncs — 检索/查询/版本类函数只读，记录/修改/删除类为写（plan 模式拦截）
+func (t *NoteTool) ReadOnlyFuncs() map[string]bool {
+	return map[string]bool{
+		"semantic_search":   true,
+		"count_notes":       true,
+		"get_note":          true,
+		"query_notes":       true,
+		"list_topics":       true,
+		"get_note_versions": true,
+	}
+}
+
 func (t *NoteTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {
 	case "semantic_search":

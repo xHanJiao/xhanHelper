@@ -76,6 +76,7 @@ class ConversationListViewModel: ObservableObject {
                     title: title,
                     agentId: old.agentId,
                     agentName: old.agentName,
+                    mode: old.mode,
                     createdAt: old.createdAt,
                     updatedAt: old.updatedAt
                 )

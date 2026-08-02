@@ -38,6 +38,8 @@ func (t *GetBillStatsTool) Functions() []FuncSchema {
 	}}
 }
 
+func (t *GetBillStatsTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 func (t *GetBillStatsTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	now := time.Now().In(config.BJ)
 	since := now.AddDate(0, -3, 0) // 近 90 天

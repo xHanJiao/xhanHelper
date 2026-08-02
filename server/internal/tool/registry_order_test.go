@@ -12,9 +12,11 @@ type mockOrderTool struct {
 	fns  []FuncSchema
 }
 
-func (m *mockOrderTool) Name() string            { return m.name }
-func (m *mockOrderTool) Description() string     { return m.desc }
-func (m *mockOrderTool) Functions() []FuncSchema { return m.fns }
+func (m *mockOrderTool) Name() string                   { return m.name }
+func (m *mockOrderTool) Description() string            { return m.desc }
+func (m *mockOrderTool) Functions() []FuncSchema        { return m.fns }
+func (m *mockOrderTool) ReadOnlyFuncs() map[string]bool { return nil }
+
 func (m *mockOrderTool) Execute(_ *ExecuteContext, funcName string, _ json.RawMessage) *Result {
 	return &Result{Success: true, Data: json.RawMessage(`"ok"`)}
 }

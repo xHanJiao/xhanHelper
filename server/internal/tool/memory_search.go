@@ -123,6 +123,8 @@ func (t *MemorySearchTool) Functions() []FuncSchema {
 	}
 }
 
+func (t *MemorySearchTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 // Execute — 统一入口
 func (t *MemorySearchTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {

@@ -39,6 +39,8 @@ func (t *GetTopicDetailTool) Functions() []FuncSchema {
 	}}
 }
 
+func (t *GetTopicDetailTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 type topicDetailArgs struct {
 	Topic  string   `json:"topic"`
 	Topics []string `json:"topics"`

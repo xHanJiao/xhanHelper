@@ -139,6 +139,17 @@ func (t *DocumentTool) Functions() []FuncSchema {
 	}
 }
 
+// ReadOnlyFuncs — 查看/查询/版本/标签类只读，增删改/回滚为写（plan 模式拦截）
+func (t *DocumentTool) ReadOnlyFuncs() map[string]bool {
+	return map[string]bool{
+		"get_document":          true,
+		"get_document_versions": true,
+		"query_documents":       true,
+		"list_documents":        true,
+		"list_tags":             true,
+	}
+}
+
 func (t *DocumentTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {
 	case "create_document":

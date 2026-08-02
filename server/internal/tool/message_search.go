@@ -162,6 +162,8 @@ func (t *MessageSearchTool) Functions() []FuncSchema {
 	}
 }
 
+func (t *MessageSearchTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 // Execute — 统一入口
 func (t *MessageSearchTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {

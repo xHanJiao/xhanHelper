@@ -233,6 +233,18 @@ type billArgs struct {
 
 // --- Execute ---
 
+// ReadOnlyFuncs — 查询/统计/选项类只读，增删改为写（plan 模式拦截）
+func (t *BookkeepingTool) ReadOnlyFuncs() map[string]bool {
+	return map[string]bool{
+		"query_bills":          true,
+		"get_bill_by_id":       true,
+		"get_monthly_stats":    true,
+		"get_category_stats":   true,
+		"get_category_options": true,
+		"get_owner_options":    true,
+	}
+}
+
 func (t *BookkeepingTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {
 	case "create_bill":

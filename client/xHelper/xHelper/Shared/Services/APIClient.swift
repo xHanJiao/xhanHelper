@@ -33,6 +33,11 @@ class APIClient {
         try await patch("/api/conversations/\(id)", body: ["title": title])
     }
 
+    /// 切换会话模式（"work" | "plan"）。模式只能由用户/客户端切换，LLM 无控制权。
+    func updateConversationMode(id: String, mode: String) async throws {
+        try await patch("/api/conversations/\(id)/mode", body: ["mode": mode])
+    }
+
     func deleteConversation(id: String) async throws {
         try await delete("/api/conversations/\(id)")
     }

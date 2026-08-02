@@ -82,6 +82,8 @@ func (t *ThemeSearchTool) Functions() []FuncSchema {
 	}
 }
 
+func (t *ThemeSearchTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 func (t *ThemeSearchTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {
 	case "semantic_search":

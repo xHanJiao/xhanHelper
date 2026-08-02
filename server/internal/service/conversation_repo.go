@@ -111,6 +111,12 @@ func (r *ConversationRepo) UpdateAgentID(ctx context.Context, convID string, age
 		Where("id = ?", convID).Update("agent_id", agentID).Error
 }
 
+// SetMode 切换会话模式（work/plan）。模式只能由用户/客户端切换，LLM 无控制权。
+func (r *ConversationRepo) SetMode(ctx context.Context, convID, mode string) error {
+	return r.db.WithContext(ctx).Model(&model.Conversation{}).
+		Where("id = ?", convID).Update("mode", mode).Error
+}
+
 // CountActive 统计指定时间段内有活动的会话数
 func (r *ConversationRepo) CountActive(ctx context.Context, since time.Duration) int {
 	var count int64

@@ -46,6 +46,16 @@ class ChatViewModel: ObservableObject {
     @Published var maxTokens: Int? = nil
     @Published var draftText = ""
 
+    /// 会话模式："work"（默认）| "plan"（只读讨论）。只能由用户切换（Tab 快捷键/胶囊条）。
+    /// TODO: 会话重新加载时从服务端同步真实 mode（当前先重置为 work，需会话详情 API 完善）
+    @Published var mode: String = "work" {
+        didSet {
+            print("[ChatVM] mode -> \(mode)")
+        }
+    }
+    /// plan 模式展示名（只读讨论状态）
+    var isPlanMode: Bool { mode == "plan" }
+
     /// 新建会话成功（空 tab 转正）时回调：(conversationId, title)
     var onConversationCreated: ((String, String?) -> Void)?
 
@@ -86,6 +96,25 @@ class ChatViewModel: ObservableObject {
     /// L3 工具执行确认（同一时刻最多一个，client tool 顺序执行）
     @Published var pendingToolConfirmation: ToolConfirmation?
     private var confirmationResolved = false
+
+    /// 切换会话模式（work ↔ plan）。仅用户可触发（Tab 快捷键 / 胶囊条点击）。
+    /// 已有会话：PATCH 落库，失败回滚；空 tab（无会话）：只改本地，第一条消息经 init_mode 落库。
+    func toggleMode() async {
+        let next = isPlanMode ? "work" : "plan"
+        guard let cid = conversationId, !cid.isEmpty else {
+            mode = next // 空 tab：会话尚未创建，模式暂存本地，待首条消息 init_mode 落库
+            return
+        }
+        let previous = mode
+        mode = next
+        do {
+            try await apiClient.updateConversationMode(id: cid, mode: next)
+            LogBuffer.shared.info("ChatViewModel.toggleMode: conv=\(cid) -> \(next)")
+        } catch {
+            LogBuffer.shared.warning("ChatViewModel.toggleMode failed: \(error)")
+            mode = previous // 回滚
+        }
+    }
 
     /// 挂起等待用户确认 L3 工具执行；60s 超时视为拒绝
     func awaitToolConfirmation(toolName: String, arguments: [String: Any]) async -> Bool {
@@ -140,11 +169,12 @@ class ChatViewModel: ObservableObject {
 
     // MARK: Load
 
-    func loadConversation(id: String, title: String) async {
+    func loadConversation(id: String, title: String, mode: String? = nil) async {
         sseClient.disconnect()
         isStreaming = false
         conversationId = id
         conversationTitle = title
+        self.mode = mode ?? "work" // 会话列表数据带 mode（服务端权威）；旧数据缺失时默认 work
         isInitialLoading = true
         errorMessage = nil
         loadMoreError = nil
@@ -290,7 +320,9 @@ class ChatViewModel: ObservableObject {
                 self?.finishStreaming()
             }
         }
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools)
+        // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）
+        let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode)
     }
 
     func stopStreaming() {

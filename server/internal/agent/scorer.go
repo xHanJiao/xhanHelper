@@ -128,6 +128,9 @@ func (s *Scorer) Functions() []tool.FuncSchema {
 	}}
 }
 
+// ReadOnlyFuncs — 内部反思/分析工具，全函数只读（不参与主对话 plan 模式拦截）
+func (s *Scorer) ReadOnlyFuncs() map[string]bool { return tool.AllReadOnly(s) }
+
 func (s *Scorer) Execute(ec *tool.ExecuteContext, funcName string, args json.RawMessage) *tool.Result {
 	var a scorerArgs
 	if err := json.Unmarshal(args, &a); err != nil {

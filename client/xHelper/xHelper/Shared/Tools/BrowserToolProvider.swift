@@ -22,50 +22,50 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     func toolSchemas() async -> [LocalToolSchema] {
         var schemas: [LocalToolSchema] = [
-            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL",                          inputSchema: objProps(["url": strProp("要打开的网址")])),
-            LocalToolSchema(name: "agent_browser_close",            description: "关闭所有浏览器标签页",                       inputSchema: objProps([:])),
-            LocalToolSchema(name: "agent_browser_list_tabs",        description: "列出当前所有打开的标签页（id/url/title）",      inputSchema: objProps([:])),
-            LocalToolSchema(name: "agent_browser_switch_tab",       description: "切换到指定标签页",                        inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")])),
+            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL",                          inputSchema: objProps(["url": strProp("要打开的网址")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_close",            description: "关闭所有浏览器标签页",                       inputSchema: objProps([:]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_list_tabs",        description: "列出当前所有打开的标签页（id/url/title）",      inputSchema: objProps([:]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_switch_tab",       description: "切换到指定标签页",                        inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_read",             description: "读取页面文本。分层用法：outline=标题树（长文导航，省 token）；filter=按关键词返回匹配章节；full=全文（最后手段，很耗 token）。建议先 snapshot → read(outline) → read(filter)/get_text(@eN) 定位 → 确需通读才 read(full)", inputSchema: objProps([
                 "mode": strProp("full（默认，全文）| outline（h1-h6 标题树）| filter（按关键词返回匹配章节）"),
                 "query": strProp("filter 模式的关键词"),
                 "max_items": numProp("outline 标题数上限，默认 50"),
                 "max_chars": numProp("filter 每块截断 / full 全文截断字符数，默认 filter 2000 / full 10000")
-            ])),
+            ]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_snapshot",         description: "获取页面可访问性快照（紧凑元素树，元素带 @eN 编号可用于 ref 交互；页面变化后编号会失效需重新快照）。链接均带 href，需要打开链接时直接取 href 用 agent_browser_open", inputSchema: objProps([
                 "mode": strProp("interactive（默认，只列可交互元素与标题）| full（追加页面可见文本前800字）"),
                 "include_href": strProp("是否输出链接 href，默认 true"),
                 "max_items": numProp("元素数量上限，默认 60")
-            ])),
+            ]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_get_text",         description: "获取页面/元素可见文本。元素级（ref/selector）远省 token；无参数返回全量", inputSchema: objProps([
                 "ref": strProp("元素编号，如 @e8，只读该元素文本"),
                 "selector": strProp("CSS选择器，只读该区域文本"),
                 "max_chars": numProp("元素级截断字符数，默认 2000")
-            ])),
+            ]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_get_value",        description: "读取表单元素当前值（fill/type 后回读验证、select 选中项、textarea 内容；checkbox/radio 返回 checked 状态）", inputSchema: objProps([
                 "ref": strProp("元素编号，如 @e5"),
                 "selector": strProp("CSS选择器（ref 缺失时使用）")
-            ])),
-            LocalToolSchema(name: "agent_browser_get_url",          description: "获取当前页面 URL",                      inputSchema: objProps([:])),
-            LocalToolSchema(name: "agent_browser_get_title",        description: "获取当前页面标题",                       inputSchema: objProps([:])),
-            LocalToolSchema(name: "agent_browser_click",            description: "点击元素（ref 优先，如 @e5；无 ref 用 CSS 选择器）。注意：target=\"_blank\" 的链接（新闻热榜/外链等）合成点击无效，工具会报错并返回目标 URL，此时请改用 agent_browser_open 直接打开该 URL（快照中已含各链接 href）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "selector": strProp("CSS选择器（ref 缺失时使用）")])),
-            LocalToolSchema(name: "agent_browser_click_text",       description: "按文本点击元素（模糊匹配 snapshot 中元素的文本/占位符，多个匹配用 index 指定）。target=\"_blank\" 链接同 click 的注意项：合成点击无效，请用 agent_browser_open 打开返回的 URL", inputSchema: objProps(["text": strProp("要点击的文本或关键词"), "index": numProp("多个匹配时指定第几个，默认 0")])),
-            LocalToolSchema(name: "agent_browser_cgclick",         description: "真实系统级点击（兜底）：仅当 click/click_text 对目标无效（页面校验真实输入事件）时使用。执行时会前置激活 xhanHelper 窗口（可能打断用户当前操作），且需要辅助功能权限（未授权会弹窗引导）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "x": numProp("直接指定 viewport 坐标 x（调试用，与 ref 二选一）"), "y": numProp("直接指定 viewport 坐标 y（调试用，与 ref 二选一）")])),
-            LocalToolSchema(name: "agent_browser_drag",            description: "真实拖拽（地图/滑块/画布，系统级事件，需辅助功能权限）：从起点按下拖动到终点。起点可用 ref（如地图 canvas 的 @eN）或 x/y", inputSchema: objProps(["ref": strProp("起点元素编号，如 @e12（地图 canvas），与 x/y 二选一"), "x": numProp("起点 viewport x（无 ref 时使用）"), "y": numProp("起点 viewport y（无 ref 时使用）"), "dx": numProp("水平位移量（viewport 像素）"), "dy": numProp("垂直位移量（viewport 像素）"), "steps": numProp("拖动步数，默认 10")])),
-            LocalToolSchema(name: "agent_browser_fill",             description: "填充表单字段",                         inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（ref 缺失时使用）"), "value": strProp("填充值")])),
-            LocalToolSchema(name: "agent_browser_type",             description: "在元素中逐字符输入文本（追加语义，如需覆盖请先用 fill 清空）", inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（ref 缺失时使用）"), "text": strProp("输入文本")])),
-            LocalToolSchema(name: "agent_browser_press",            description: "按下键盘按键",                         inputSchema: objProps(["key": strProp("按键名称")])),
-            LocalToolSchema(name: "agent_browser_select",           description: "选择下拉选项",                         inputSchema: objProps(["ref": strProp("元素编号，如 @e6"), "selector": strProp("CSS选择器（ref 缺失时使用）"), "value": strProp("选项值")])),
-            LocalToolSchema(name: "agent_browser_check",            description: "勾选复选框",                           inputSchema: objProps(["ref": strProp("元素编号，如 @e5"), "selector": strProp("CSS选择器（ref 缺失时使用）")])),
-            LocalToolSchema(name: "agent_browser_uncheck",          description: "取消勾选复选框",                         inputSchema: objProps(["ref": strProp("元素编号，如 @e5"), "selector": strProp("CSS选择器（ref 缺失时使用）")])),
-            LocalToolSchema(name: "agent_browser_scroll",           description: "滚动页面（x/y 像素）",                   inputSchema: objProps(["x": intProp, "y": intProp])),
-            LocalToolSchema(name: "agent_browser_wait_for_load",    description: "等待页面加载完成",                       inputSchema: objProps(["timeout_ms": numProp("超时毫秒，默认10000")])),
-            LocalToolSchema(name: "agent_browser_wait_for_selector", description: "等待指定选择器出现",                   inputSchema: objProps(["selector": strProp("CSS选择器"), "timeout_ms": numProp("超时毫秒，默认5000")])),
-            LocalToolSchema(name: "agent_browser_go_back",          description: "浏览器后退到上一页",                         inputSchema: objProps([:])),
-            LocalToolSchema(name: "agent_browser_go_forward",       description: "浏览器前进到下一页（有页面可前进时生效）",          inputSchema: objProps([:])),
+            ]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_get_url",          description: "获取当前页面 URL",                      inputSchema: objProps([:]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_get_title",        description: "获取当前页面标题",                       inputSchema: objProps([:]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_click",            description: "点击元素（ref 优先，如 @e5；无 ref 用 CSS 选择器）。注意：target=\"_blank\" 的链接（新闻热榜/外链等）合成点击无效，工具会报错并返回目标 URL，此时请改用 agent_browser_open 直接打开该 URL（快照中已含各链接 href）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "selector": strProp("CSS选择器（ref 缺失时使用）")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_click_text",       description: "按文本点击元素（模糊匹配 snapshot 中元素的文本/占位符，多个匹配用 index 指定）。target=\"_blank\" 链接同 click 的注意项：合成点击无效，请用 agent_browser_open 打开返回的 URL", inputSchema: objProps(["text": strProp("要点击的文本或关键词"), "index": numProp("多个匹配时指定第几个，默认 0")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_cgclick",         description: "真实系统级点击（兜底）：仅当 click/click_text 对目标无效（页面校验真实输入事件）时使用。执行时会前置激活 xhanHelper 窗口（可能打断用户当前操作），且需要辅助功能权限（未授权会弹窗引导）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "x": numProp("直接指定 viewport 坐标 x（调试用，与 ref 二选一）"), "y": numProp("直接指定 viewport 坐标 y（调试用，与 ref 二选一）")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_drag",            description: "真实拖拽（地图/滑块/画布，系统级事件，需辅助功能权限）：从起点按下拖动到终点。起点可用 ref（如地图 canvas 的 @eN）或 x/y", inputSchema: objProps(["ref": strProp("起点元素编号，如 @e12（地图 canvas），与 x/y 二选一"), "x": numProp("起点 viewport x（无 ref 时使用）"), "y": numProp("起点 viewport y（无 ref 时使用）"), "dx": numProp("水平位移量（viewport 像素）"), "dy": numProp("垂直位移量（viewport 像素）"), "steps": numProp("拖动步数，默认 10")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_fill",             description: "填充表单字段",                         inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（ref 缺失时使用）"), "value": strProp("填充值")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_type",             description: "在元素中逐字符输入文本（追加语义，如需覆盖请先用 fill 清空）", inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（ref 缺失时使用）"), "text": strProp("输入文本")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_press",            description: "按下键盘按键",                         inputSchema: objProps(["key": strProp("按键名称")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_select",           description: "选择下拉选项",                         inputSchema: objProps(["ref": strProp("元素编号，如 @e6"), "selector": strProp("CSS选择器（ref 缺失时使用）"), "value": strProp("选项值")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_check",            description: "勾选复选框",                           inputSchema: objProps(["ref": strProp("元素编号，如 @e5"), "selector": strProp("CSS选择器（ref 缺失时使用）")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_uncheck",          description: "取消勾选复选框",                         inputSchema: objProps(["ref": strProp("元素编号，如 @e5"), "selector": strProp("CSS选择器（ref 缺失时使用）")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_scroll",           description: "滚动页面（x/y 像素）",                   inputSchema: objProps(["x": intProp, "y": intProp]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_wait_for_load",    description: "等待页面加载完成",                       inputSchema: objProps(["timeout_ms": numProp("超时毫秒，默认10000")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_wait_for_selector", description: "等待指定选择器出现",                   inputSchema: objProps(["selector": strProp("CSS选择器"), "timeout_ms": numProp("超时毫秒，默认5000")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_go_back",          description: "浏览器后退到上一页",                         inputSchema: objProps([:]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_go_forward",       description: "浏览器前进到下一页（有页面可前进时生效）",          inputSchema: objProps([:]), isReadOnly: true),
         ]
 #if DEBUG
-        schemas.append(LocalToolSchema(name: "agent_browser_execute_script", description: "执行 JS 脚本并返回结果（仅开发环境）", inputSchema: objProps(["script": strProp("要执行的JS代码，用return返回结果，如 return JSON.stringify({w:window.innerWidth})")])))
+        schemas.append(LocalToolSchema(name: "agent_browser_execute_script", description: "执行 JS 脚本并返回结果（仅开发环境）", inputSchema: objProps(["script": strProp("要执行的JS代码，用return返回结果，如 return JSON.stringify({w:window.innerWidth})")]), isReadOnly: true))
 #endif
         return schemas
     }

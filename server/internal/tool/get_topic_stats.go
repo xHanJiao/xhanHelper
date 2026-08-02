@@ -46,6 +46,8 @@ func (t *GetTopicStatsTool) Functions() []FuncSchema {
 	}}
 }
 
+func (t *GetTopicStatsTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 func (t *GetTopicStatsTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	// 1. 读取所有 concept（topic + tag）
 	concepts, err := t.conceptRepo.ListAllByUser(ec.Ctx, ec.UserID)

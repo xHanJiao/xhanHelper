@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/tool"
 )
 
@@ -184,7 +185,7 @@ func TestExecuteClientTool_TimeoutSetsUnavailable(t *testing.T) {
 	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 50 * time.Millisecond}
 	events := make(chan *llm.StreamEvent, 16)
 
-	r, unavailable := o.executeClientTool(context.Background(), events, "u1", tool.ToolCall{Tool: "browser", Function: "navigate"})
+	r, unavailable := o.executeClientTool(context.Background(), events, "u1", tool.ToolCall{Tool: "browser", Function: "navigate"}, "")
 	if r.Success {
 		t.Error("expected failure on timeout")
 	}
@@ -219,7 +220,7 @@ func TestExecuteClientTool_ResultDelivered(t *testing.T) {
 		}
 	}()
 
-	r, unavailable := o.executeClientTool(context.Background(), events, "u1", tool.ToolCall{Tool: "browser", Function: "navigate"})
+	r, unavailable := o.executeClientTool(context.Background(), events, "u1", tool.ToolCall{Tool: "browser", Function: "navigate"}, "")
 	if !r.Success || unavailable {
 		t.Fatalf("expected success, got %+v unavailable=%v", r, unavailable)
 	}
@@ -239,7 +240,7 @@ func TestExecuteConcurrently_SkipsClientToolsAfterUnavailable(t *testing.T) {
 
 	start := time.Now()
 	results := o.executeConcurrently(context.Background(), events, "u1", "c1",
-		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state)
+		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state, "", nil)
 	elapsed := time.Since(start)
 
 	if !state.clientToolsUnavailable {
@@ -260,12 +261,107 @@ func nameN(i int) string {
 	return "tool_" + string(rune('a'+i%26)) + string(rune('a'+(i/26)%26))
 }
 
+// —— plan 模式客户端工具分派拦截 ——
+
+func TestExecuteConcurrently_PlanModeBlocksClientWrite(t *testing.T) {
+	// plan 模式：客户端写工具（IsReadOnly=false）在分派前被拦，不会发到客户端
+	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 2 * time.Second}
+	events := make(chan *llm.StreamEvent, 16)
+	state := &reactState{}
+	calls := []tool.ToolCall{
+		{Tool: "browser", Function: "agent_browser_click"}, // 写
+		{Tool: "chart", Function: "render"},                // 写
+	}
+	clientTools := []ClientTool{
+		{ServerName: "browser", Name: "agent_browser_click"}, // 默认 IsReadOnly=false
+		{ServerName: "chart", Name: "render"},
+	}
+
+	results := o.executeConcurrently(context.Background(), events, "u1", "c1",
+		tool.NewRegistry(), calls, map[string]bool{"browser": true, "chart": true}, state,
+		model.ConvModePlan, clientToolReadOnlyIndex(clientTools))
+
+	for i, res := range results {
+		if res.result.Success {
+			t.Errorf("plan 模式客户端写工具 #%d 应被拦截", i)
+		}
+		if !strings.Contains(res.result.Error, "计划模式") {
+			t.Errorf("拦截错误应说明计划模式, #%d: %s", i, res.result.Error)
+		}
+	}
+	if state.clientToolsUnavailable {
+		t.Error("拦截不应标记客户端不可用")
+	}
+}
+
+func TestExecuteConcurrently_PlanModeAllowsClientReadOnly(t *testing.T) {
+	// plan 模式：客户端只读工具（agent_browser 特例）放行 → 走正常执行（超时路径）
+	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 50 * time.Millisecond}
+	events := make(chan *llm.StreamEvent, 16)
+	state := &reactState{}
+	calls := []tool.ToolCall{
+		{Tool: "browser", Function: "agent_browser_open"}, // 只读（特例）
+	}
+	clientTools := []ClientTool{
+		{ServerName: "browser", Name: "agent_browser_open", IsReadOnly: true},
+	}
+
+	results := o.executeConcurrently(context.Background(), events, "u1", "c1",
+		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state,
+		model.ConvModePlan, clientToolReadOnlyIndex(clientTools))
+
+	// 放行后走正常桥接路径：无客户端回传 → 超时失败（但错误不应是"计划模式拦截"）
+	if strings.Contains(results[0].result.Error, "计划模式") {
+		t.Errorf("只读客户端工具不应被计划模式拦截, got: %s", results[0].result.Error)
+	}
+	if !strings.Contains(results[0].result.Error, "超时") {
+		t.Errorf("放行的只读工具应走正常执行路径（超时兜底）, got: %s", results[0].result.Error)
+	}
+}
+
+func TestExecuteConcurrently_WorkModeAllowsClientWrite(t *testing.T) {
+	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 50 * time.Millisecond}
+	events := make(chan *llm.StreamEvent, 16)
+	state := &reactState{}
+	calls := []tool.ToolCall{{Tool: "browser", Function: "agent_browser_click"}}
+	clientTools := []ClientTool{{ServerName: "browser", Name: "agent_browser_click"}}
+
+	results := o.executeConcurrently(context.Background(), events, "u1", "c1",
+		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state,
+		model.ConvModeWork, clientToolReadOnlyIndex(clientTools))
+
+	if strings.Contains(results[0].result.Error, "计划模式") {
+		t.Errorf("work 模式客户端写工具应放行, got: %s", results[0].result.Error)
+	}
+}
+
+func TestClientToolReadOnlyIndex(t *testing.T) {
+	idx := clientToolReadOnlyIndex([]ClientTool{
+		{ServerName: "browser", Name: "open", IsReadOnly: true},
+		{ServerName: "browser", Name: "click"},
+	})
+	if !idx["browser__open"] {
+		t.Error("browser__open 应标记只读")
+	}
+	if idx["browser__click"] {
+		t.Error("browser__click 不应标记只读")
+	}
+	if idx["browser__nope"] {
+		t.Error("未声明的函数不应命中")
+	}
+	if got := clientToolReadOnlyIndex(nil); got != nil {
+		t.Errorf("空输入应返回 nil, got %v", got)
+	}
+}
+
 // fakeTool — 测试用最小工具实现
 type fakeTool struct{ name string }
 
-func (f *fakeTool) Name() string                 { return f.name }
-func (f *fakeTool) Description() string          { return "fake" }
-func (f *fakeTool) Functions() []tool.FuncSchema { return nil }
+func (f *fakeTool) Name() string                   { return f.name }
+func (f *fakeTool) Description() string            { return "fake" }
+func (f *fakeTool) Functions() []tool.FuncSchema   { return nil }
+func (f *fakeTool) ReadOnlyFuncs() map[string]bool { return nil }
+
 func (f *fakeTool) Execute(ec *tool.ExecuteContext, funcName string, args json.RawMessage) *tool.Result {
 	return &tool.Result{Success: true}
 }

@@ -10,6 +10,7 @@ var (
 	ErrMaxIterations    = errors.New("max iterations reached")
 	ErrInternal         = errors.New("internal error")
 	ErrContextCancelled = errors.New("request cancelled")
+	ErrPlanModeBlocked  = errors.New("plan mode blocks write operation")
 )
 
 // UserErrorMessage 将 sentinel error 映射为用户可读的中文提示。
@@ -24,6 +25,8 @@ func UserErrorMessage(err error) string {
 		return "任务未完成，请简化后重试"
 	case errors.Is(err, ErrContextCancelled):
 		return "请求已取消"
+	case errors.Is(err, ErrPlanModeBlocked):
+		return "计划模式下禁止执行写操作"
 	default:
 		return "服务繁忙，请重试"
 	}

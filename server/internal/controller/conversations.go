@@ -594,3 +594,32 @@ func extractMemoriesStream(convRepo *service.ConversationRepo, extractor *agent.
 		extractor.ExtractFromConversationWithCallback(c.Request.Context(), conv, cb)
 	}
 }
+
+// updateConversationMode — 切换会话模式（work/plan）。
+// 模式只能由用户/客户端显式切换（客户端 Tab 快捷键 / 手动调用），LLM 无任何控制权。
+func updateConversationMode(convRepo *service.ConversationRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		convID := c.Param("id")
+		if !requireConversationOwner(c, convRepo, convID) {
+			return
+		}
+		var req struct {
+			Mode string `json:"mode"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			view.JSONError(c, 400, "invalid request")
+			return
+		}
+		if req.Mode != model.ConvModeWork && req.Mode != model.ConvModePlan {
+			view.JSONError(c, 400, "mode must be work or plan")
+			return
+		}
+		if err := convRepo.SetMode(c.Request.Context(), convID, req.Mode); err != nil {
+			log.Printf("[conv] SetMode error: %v", err)
+			view.JSONError(c, 500, "update mode failed")
+			return
+		}
+		log.Printf("[conv] mode switched: conv=%s mode=%s (user=%s)", convID[:8], req.Mode, c.GetString("user_id"))
+		view.JSONOK(c, gin.H{"id": convID, "mode": req.Mode})
+	}
+}

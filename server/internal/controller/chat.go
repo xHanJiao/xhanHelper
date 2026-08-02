@@ -22,6 +22,18 @@ import (
 	"xhan-helper/internal/view"
 )
 
+// planModePromptSuffix — plan 模式追加的 system prompt 约束段。
+// 服务端已强制拦截写操作（Registry/客户端工具分派前），此处只是行为引导。
+const planModePromptSuffix = `
+
+## 计划模式（只读讨论状态）
+
+你当前处于计划模式，这是一个只读的讨论状态：
+- 你可以检索信息（记忆、笔记、账单统计、网页、浏览器等只读操作）来支撑方案讨论
+- 严禁执行任何写操作（记账、写笔记、改文档、增删改、状态变更等）—— 服务端会强制拦截，调用即失败
+- 输出方案、计划、利弊分析，与用户充分讨论；需要信息时用只读检索工具查证
+- 当讨论完成、用户准备执行时，请告知用户切换回工作模式`
+
 func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.ConversationRepo,
 	msgRepo *service.MessageRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -31,6 +43,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			DeepMode       bool                   `json:"deep_mode"`
 			AgentID        *string                `json:"agent_id"`
 			Memory         retrieval.SourceConfig `json:"memory"`
+			InitMode       string                 `json:"init_mode"` // 可选：仅新建会话时应用的初始模式（work/plan）；已有会话忽略
 
 			Temperature *float64           `json:"temperature"`
 			MaxTokens   *int               `json:"max_tokens"`
@@ -65,6 +78,11 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			if req.AgentID != nil && *req.AgentID != "" {
 				conv.AgentID = req.AgentID
 			}
+			// 空 tab 场景：会话尚未存在，客户端已切的模式经 init_mode 传入，创建时落库
+			// （仅 plan 有意义，非法值忽略，兼容旧客户端）
+			if req.InitMode == model.ConvModePlan {
+				conv.Mode = model.ConvModePlan
+			}
 			if err := convRepo.Create(c.Request.Context(), conv); err != nil {
 				log.Printf("[chat] CreateConversation error: %v", err)
 				view.JSONError(c, 500, "create conversation failed")
@@ -86,6 +104,15 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			}
 		} else if cfg.GlobalDefaultRole.SystemPrompt != "" {
 			agentSystemPrompt = cfg.GlobalDefaultRole.SystemPrompt
+		}
+
+		// 会话模式：plan 模式下追加只读讨论约束（写操作由服务端强制拦截，prompt 只是引导）
+		convMode := conv.Mode
+		if convMode == "" {
+			convMode = model.ConvModeWork
+		}
+		if convMode == model.ConvModePlan {
+			agentSystemPrompt += planModePromptSuffix
 		}
 
 		// —— 预处理管线 ——
@@ -180,6 +207,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			SkipRetrieval:      pc.SkipRetrieval,
 			Window:             wr,
 			ClientTools:        req.ClientTools,
+			Mode:               convMode,
 		})
 		if err != nil {
 			log.Printf("[chat] orch run error: %v", err)

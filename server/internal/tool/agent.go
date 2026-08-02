@@ -170,6 +170,15 @@ func (t *AgentTool) Functions() []FuncSchema {
 	}
 }
 
+// ReadOnlyFuncs — 查询/列表/版本类只读；bind/unbind 会改会话绑定（写，且影响缓存，谨慎使用）
+func (t *AgentTool) ReadOnlyFuncs() map[string]bool {
+	return map[string]bool{
+		"find_agent":         true,
+		"list_agents":        true,
+		"get_agent_versions": true,
+	}
+}
+
 func (t *AgentTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {
 	case "create_agent":

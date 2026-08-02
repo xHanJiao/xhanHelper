@@ -106,6 +106,8 @@ func (t *CalculatorTool) Functions() []FuncSchema {
 	}
 }
 
+func (t *CalculatorTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 func (t *CalculatorTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {
 	case "evaluate_batch":

@@ -6,6 +6,9 @@ struct LocalToolSchema: @unchecked Sendable {
     let name: String
     let description: String
     let inputSchema: [String: Any]?
+    /// 只读标记（必备字段，构造时必须显式标注）。
+    /// 服务端 plan 模式（只读讨论状态）依据此字段拦截写工具；无默认值 = 编译期强制每个函数声明。
+    let isReadOnly: Bool
 }
 
 // MARK: - ExecuteContext

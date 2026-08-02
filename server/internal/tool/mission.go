@@ -118,6 +118,13 @@ func (t *MissionTool) Functions() []FuncSchema {
 	}
 }
 
+// ReadOnlyFuncs — 仅列表只读，创建/更新/状态变更为写（plan 模式拦截）
+func (t *MissionTool) ReadOnlyFuncs() map[string]bool {
+	return map[string]bool{
+		"list_missions": true,
+	}
+}
+
 func (t *MissionTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {
 	case "create_mission":

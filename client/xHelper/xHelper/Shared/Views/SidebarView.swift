@@ -156,7 +156,7 @@ struct SidebarView: View {
         return HStack(spacing: 2) {
             Button {
                 selectedTab = .chat
-                Task { await chatTabManager.openConversation(id: conv.id, title: conv.title, pushHistory: true) }
+                Task { await chatTabManager.openConversation(id: conv.id, title: conv.title, pushHistory: true, mode: conv.mode) }
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(conv.title.isEmpty ? "新对话" : conv.title)

@@ -24,6 +24,8 @@ func (t *DatetimeTool) Functions() []FuncSchema {
 	}
 }
 
+func (t *DatetimeTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 func (t *DatetimeTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	now := time.Now().In(config.BJ)
 	data, _ := json.Marshal(map[string]string{

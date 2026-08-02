@@ -100,6 +100,14 @@ func (t *ReminderTool) Functions() []FuncSchema {
 	}
 }
 
+// ReadOnlyFuncs — 列表/搜索只读，创建/取消/状态变更为写（plan 模式拦截）
+func (t *ReminderTool) ReadOnlyFuncs() map[string]bool {
+	return map[string]bool{
+		"list_reminders":   true,
+		"search_reminders": true,
+	}
+}
+
 func (t *ReminderTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {
 	case "create_reminder":

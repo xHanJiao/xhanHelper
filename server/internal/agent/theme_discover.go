@@ -189,6 +189,10 @@ type createdTheme struct {
 //  1. LLM 发现 candidates
 //  2. dedup — 向量去重 + 名称查重（多路）
 //  3. 为通过去重的 candidate 创建 active 主题，用 rationale 写初始状态页
+
+// ReadOnlyFuncs — 内部反思/分析工具，全函数只读（不参与主对话 plan 模式拦截）
+func (td *ThemeDiscoverer) ReadOnlyFuncs() map[string]bool { return tool.AllReadOnly(td) }
+
 func (td *ThemeDiscoverer) Execute(ec *tool.ExecuteContext, funcName string, args json.RawMessage) *tool.Result {
 	var a discovererArgs
 	if err := json.Unmarshal(args, &a); err != nil {

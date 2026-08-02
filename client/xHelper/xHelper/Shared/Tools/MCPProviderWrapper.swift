@@ -25,7 +25,8 @@ extension MCPProviderWrapper: LocalToolProvider {
                     "page_token": ["type": "string", "description": "分页令牌，与首页 truncated 结果中的 page_token 一致，防止读到已被覆盖的缓存"],
                 ],
                 "required": ["cursor", "page_token"],
-            ]
+            ],
+            isReadOnly: false // 当前无 MCP 使用，全部按写保守标注；readOnlyHint 支持留待未来
         ))
         return schemas
     }

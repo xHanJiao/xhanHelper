@@ -42,6 +42,8 @@ func (t *SearchMemoriesTool) Functions() []FuncSchema {
 	}}
 }
 
+func (t *SearchMemoriesTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 func (t *SearchMemoriesTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	var a struct {
 		Query string `json:"query"`

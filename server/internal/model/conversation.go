@@ -2,6 +2,13 @@ package model
 
 import "time"
 
+// 会话模式常量：plan 模式下写操作被服务端拦截（只读讨论状态）。
+// 模式只能由用户/客户端切换（PATCH /api/conversations/:id/mode），LLM 无控制权。
+const (
+	ConvModeWork = "work" // 正常工作模式（默认）：工具全量可用
+	ConvModePlan = "plan" // 计划模式：只读讨论，写函数被拦截
+)
+
 // Conversation — 对话会话
 type Conversation struct {
 	ID                 string     `gorm:"primaryKey;size:36" json:"id"`
@@ -12,7 +19,9 @@ type Conversation struct {
 	LastExtractedMsgID *string    `gorm:"size:36" json:"last_extracted_msg_id,omitempty"`
 	LastExtractedAt    *time.Time `json:"last_extracted_at,omitempty"`
 	AgentID            *string    `gorm:"size:36" json:"agent_id,omitempty"`
-	Extra              string     `gorm:"type:text;not null" json:"extra"` // JSON: {"used_tool_ids": ["..."]}
+	ParentID           *string    `gorm:"size:36" json:"parent_id,omitempty"` // 子会话（subAgent）的父会话 ID，nil=普通会话
+	Mode               string     `gorm:"size:10;default:work" json:"mode"`   // 会话模式：work（默认）| plan（只读讨论）
+	Extra              string     `gorm:"type:text;not null" json:"extra"`    // JSON: {"used_tool_ids": ["..."]}
 	CreatedAt          time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt          time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 	Messages           []Message  `gorm:"foreignKey:ConversationID" json:"-"`

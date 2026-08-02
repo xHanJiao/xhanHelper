@@ -10,6 +10,8 @@ struct InputBar: View {
     var dismissKeyboardToken: UUID?
     let onSend: () -> Void
     let onStop: () -> Void
+    /// Tab 快捷键切换会话模式（work ↔ plan，参照 opencode）
+    let onToggleMode: () -> Void
     @EnvironmentObject var fontSizeManager: FontSizeManager
     @State private var shakeOffset: CGFloat = 0
 #if os(macOS)
@@ -93,6 +95,11 @@ struct InputBar: View {
                     }
                     return .handled
                 }
+                .onKeyPress(.tab, phases: .down) { _ in
+                    // Tab 切换会话模式（work ↔ plan）。返回 .handled 阻止 TextEditor 插入 tab 字符
+                    onToggleMode()
+                    return .handled
+                }
                 .scrollContentBackground(.hidden)
                 .font(.system(size: scaledSize))
                 .frame(minHeight: lineHeight * 4, maxHeight: lineHeight * 8)
@@ -153,7 +160,8 @@ struct InputBar: View {
                 isStreaming: false,
                 dismissKeyboardToken: dismissKeyboardToken,
                 onSend: {},
-                onStop: {}
+                onStop: {},
+                onToggleMode: {}
             )
         }
         .frame(height: 200)
@@ -172,7 +180,8 @@ struct InputBar: View {
             isStreaming: true,
             dismissKeyboardToken: dismissKeyboardToken,
             onSend: {},
-            onStop: {}
+            onStop: {},
+            onToggleMode: {}
         )
     }
     .frame(height: 200)

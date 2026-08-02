@@ -48,10 +48,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 
 	reg.Register(tool.NewLoggingWrapper(tool.NewAgentTool(repos.Agent, repos.Version, repos.Conversation), log.Default()))
 
-	// 从 DB 加载动态工具
-	reg.SetDynamicLoader(repos.Tool, cfg.Server.SidecarURL, repos.Tool, repos.Tool)
-
-	// --- MCP Manager ---
+	// --- MCP Manager（保留：monitor 看板统计用；MCP proxy 工具已废弃下掉） ---
 	mcpCfg := mcp.Config{MaxConcurrent: cfg.MCP.MaxConcurrent}
 	for _, s := range cfg.MCP.Servers {
 		if s.Name == "" || s.Command == "" {
@@ -67,14 +64,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		})
 	}
 	mcpManager := mcp.NewManager(mcpCfg)
-
-	// 为每个 MCP server 注册 Proxy 工具
-	for _, s := range mcpCfg.Servers {
-		proxy := tool.NewMCPProxyTool(s, mcpManager)
-		reg.Register(tool.NewLoggingWrapper(proxy, log.Default()))
-		reg.HideTool(s.Name)
-		log.Printf("[mcp] proxy tool registered (hidden): %s", s.Name)
-	}
 
 	// --- Phase 6: 检索工具 ---
 	conceptEmbedService := agent.NewConceptEmbedService(infra, repos.ConceptEmbed, repos.Embedding)
@@ -147,6 +136,8 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		tool.NewMissionTool(repos.Mission, missionEmbedder), log.Default()))
 
 	reg.ValidateNativeFC()
+	// 校验 ReadOnlyFuncs 声明与 Functions() 一致（plan 模式只读拦截依赖，拼错直接 panic）
+	reg.ValidateReadOnlyFuncs()
 
 	return &ToolsBundle{
 		Registry:            reg,

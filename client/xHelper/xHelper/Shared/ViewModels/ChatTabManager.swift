@@ -87,7 +87,7 @@ final class ChatTabManager: ObservableObject {
 
     /// 打开会话：缓存命中则切换恢复；未命中则新建 tab 并加载。切换时会销毁空 tab。
     /// pushHistory=true 表示用户主动切换，写入会话历史（< > 导航）；程序性切换（启动/提醒/回退驱动）传 false。
-    func openConversation(id: String, title: String, pushHistory: Bool = false) async {
+    func openConversation(id: String, title: String, pushHistory: Bool = false, mode: String? = nil) async {
         if let existing = tabs.first(where: { $0.conversationId == id }) {
             activate(existing)
             if pushHistory { pushHistoryEntry(id) }
@@ -102,7 +102,7 @@ final class ChatTabManager: ObservableObject {
         tabs.append(tab)
         activate(tab)
         if pushHistory { pushHistoryEntry(id) }
-        await vm.loadConversation(id: id, title: title)
+        await vm.loadConversation(id: id, title: title, mode: mode)
         enforceCacheLimit()
     }
 

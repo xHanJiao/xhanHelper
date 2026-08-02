@@ -16,7 +16,11 @@ type ClientTool struct {
 	ServerName  string                 `json:"server_name"` // MCP server 分组名，如 "browser"
 	Name        string                 `json:"name"`        // MCP 原始工具名，如 "browser_navigate"
 	Description string                 `json:"description"`
-	Parameters  map[string]interface{} `json:"parameters"` // JSON Schema，透传
+	Parameters  map[string]interface{} `json:"parameters"`   // JSON Schema，透传
+	IsReadOnly  bool                   `json:"is_read_only"` // 只读标记：plan 模式下仅只读客户端工具可执行。
+	// 客户端工具在客户端本地执行，服务端无法拦截执行本身，但在分派前（executeClientTool）
+	// 会依据此字段拦截写工具（plan 模式）。agent_browser 因操作难以精确界定读写，
+	// 整体标记只读（决策特例：调研场景需要 + 风险由客户端 riskLevel 兜底）。
 }
 
 // maxClientTools — 单次请求客户端工具数量上限，防 prompt 膨胀
@@ -117,6 +121,22 @@ func clientToolIndex(clientTools []ClientTool, registry *tool.Registry) map[stri
 	idx := make(map[string]bool, len(defs))
 	for _, d := range defs {
 		idx[d.Name] = true
+	}
+	return idx
+}
+
+// clientToolReadOnlyIndex 构建 flatName("server__func") → 是否只读 的索引，
+// 供 plan 模式下客户端工具分派前拦截（executeClientTool）。查不到 = 非只读（plan 拦截）。
+func clientToolReadOnlyIndex(clientTools []ClientTool) map[string]bool {
+	if len(clientTools) == 0 {
+		return nil
+	}
+	idx := make(map[string]bool, len(clientTools))
+	for _, ct := range clientTools {
+		if ct.ServerName == "" || ct.Name == "" {
+			continue
+		}
+		idx[ct.ServerName+"__"+ct.Name] = ct.IsReadOnly
 	}
 	return idx
 }

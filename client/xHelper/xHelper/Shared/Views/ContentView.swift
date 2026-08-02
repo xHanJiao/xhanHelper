@@ -62,11 +62,11 @@ struct ContentView: View {
               !tab.isBlank,
               let cid = tab.conversationId, !cid.isEmpty else { return }
         LogBuffer.shared.debug("sync conversation \(cid) after scene active (macOS)")
-        await tab.viewModel.loadConversation(id: cid, title: tab.title)
+        await tab.viewModel.loadConversation(id: cid, title: tab.title, mode: tab.viewModel.mode) // 保持当前模式（scene 激活刷新）
         #else
         guard let conv = deviceManager.defaultConversation else { return }
         LogBuffer.shared.debug("sync conversation \(conv.id) after scene active")
-        await chatViewModel.loadConversation(id: conv.id, title: conv.title)
+        await chatViewModel.loadConversation(id: conv.id, title: conv.title, mode: conv.mode)
         #endif
     }
 #endif
@@ -193,9 +193,9 @@ struct ContentView: View {
                 }
                 LogBuffer.shared.debug("loading conversation \(conv.id)")
                 #if os(macOS)
-                await chatTabManager.openConversation(id: conv.id, title: conv.title)
+                await chatTabManager.openConversation(id: conv.id, title: conv.title, mode: conv.mode)
                 #else
-                await chatViewModel.loadConversation(id: conv.id, title: conv.title)
+                await chatViewModel.loadConversation(id: conv.id, title: conv.title, mode: conv.mode)
                 #endif
             }
             .onReceive(NotificationCenter.default.publisher(for: .reminderTapped)) { notification in
@@ -264,7 +264,7 @@ struct ContentView: View {
         }
         .onChange(of: router.refreshCounts[.chat] ?? 0) { _, _ in
             if let vm = activeChatViewModel, let cid = vm.conversationId, !cid.isEmpty {
-                Task { await vm.loadConversation(id: cid, title: vm.conversationTitle ?? "") }
+                Task { await vm.loadConversation(id: cid, title: vm.conversationTitle ?? "", mode: vm.mode) } // 刷新保持当前模式
             }
             Task { await conversationListVM.reload() }
         }
@@ -361,9 +361,9 @@ struct ContentView: View {
 #endif
                 }
 #if os(macOS)
-                await chatTabManager.openConversation(id: conv.id, title: conv.title)
+                await chatTabManager.openConversation(id: conv.id, title: conv.title, mode: conv.mode)
 #else
-                await chatViewModel.loadConversation(id: conv.id, title: conv.title)
+                await chatViewModel.loadConversation(id: conv.id, title: conv.title, mode: conv.mode)
 #endif
                 return
             } catch {

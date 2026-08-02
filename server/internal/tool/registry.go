@@ -5,11 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
-	"sync"
-	"time"
 
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -17,13 +14,8 @@ import (
 
 // Registry — 工具注册表
 type Registry struct {
-	tools         map[string]Tool
-	hiddenNames   map[string]bool
-	dynamicLoader DynamicToolLoader
-	sidecarURL    string
-	cacheReader   CacheReader
-	cacheWriter   CacheWriter
-	lastLoadTime  time.Time
+	tools       map[string]Tool
+	hiddenNames map[string]bool
 }
 
 // NewRegistry 创建空的注册表
@@ -31,6 +23,25 @@ func NewRegistry() *Registry {
 	return &Registry{
 		tools:       make(map[string]Tool),
 		hiddenNames: make(map[string]bool),
+	}
+}
+
+// ValidateReadOnlyFuncs 校验所有工具的 ReadOnlyFuncs 声明：函数名必须存在于 Functions()。
+// 在 Register 完成后调用，发现拼写错误直接 panic（防止只读声明失效导致 plan 模式漏拦）。
+func (r *Registry) ValidateReadOnlyFuncs() {
+	for toolName, t := range r.tools {
+		if r.hiddenNames[toolName] {
+			continue
+		}
+		defined := make(map[string]bool)
+		for _, fn := range t.Functions() {
+			defined[fn.Name] = true
+		}
+		for fnName := range t.ReadOnlyFuncs() {
+			if !defined[fnName] {
+				panic(fmt.Sprintf("[tool] ReadOnlyFuncs references undefined function: %s.%s (must match Functions())", toolName, fnName))
+			}
+		}
 	}
 }
 
@@ -52,14 +63,6 @@ func (r *Registry) ValidateNativeFC() {
 // HideTool 将工具从 prompt 中隐藏（不会告诉 LLM，但 ExecuteByName 仍可用）
 func (r *Registry) HideTool(name string) {
 	r.hiddenNames[name] = true
-}
-
-// SetDynamicLoader 设置动态工具加载器（由 main.go 调用）
-func (r *Registry) SetDynamicLoader(loader DynamicToolLoader, sidecarURL string, cacheReader CacheReader, cacheWriter CacheWriter) {
-	r.dynamicLoader = loader
-	r.sidecarURL = sidecarURL
-	r.cacheReader = cacheReader
-	r.cacheWriter = cacheWriter
 }
 
 // SearchTools 在内存中的工具（含 MCP 占位工具）里关键词搜索
@@ -95,55 +98,6 @@ func (r *Registry) SearchTools(query string) []ToolInfo {
 // DynamicToolLoader — 动态工具加载器接口（由 service.ToolRepo 实现）
 type DynamicToolLoader interface {
 	ListActiveTools(ctx context.Context) ([]model.ToolRegistry, error)
-}
-
-var reloadMu sync.Mutex
-
-// maybeReloadDynamic 30s TTL，过期自动从 DB 刷新动态工具
-func (r *Registry) maybeReloadDynamic() {
-	if r.dynamicLoader == nil {
-		return
-	}
-	if time.Since(r.lastLoadTime) < 30*time.Second {
-		return
-	}
-	reloadMu.Lock()
-	defer reloadMu.Unlock()
-	// 双重检查
-	if time.Since(r.lastLoadTime) < 30*time.Second {
-		return
-	}
-	r.loadFromDB()
-}
-
-func (r *Registry) loadFromDB() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	records, err := r.dynamicLoader.ListActiveTools(ctx)
-	if err != nil {
-		log.Printf("[tool] reload dynamic tools error: %v", err)
-		return // 失败时保留原有工具
-	}
-	// 替换旧的动态工具，保留硬编码工具
-	for name := range r.tools {
-		if _, ok := r.tools[name].(*DynamicTool); ok {
-			delete(r.tools, name)
-		}
-	}
-	for _, rec := range records {
-		dt := NewDynamicTool(ToolRegistryRecord{
-			Name:        rec.Name,
-			Description: rec.Description,
-			SchemaJSON:  rec.SchemaJSON,
-		}, r.sidecarURL)
-		if r.cacheReader != nil {
-			dt.SetCache(r.cacheReader, r.cacheWriter)
-		}
-		r.Register(dt)
-		log.Printf("[tool] dynamic tool loaded: %s", rec.Name)
-	}
-	r.lastLoadTime = time.Now()
 }
 
 // Register 注册一个工具
@@ -616,5 +570,14 @@ func (r *Registry) ExecuteByName(ec *ExecuteContext, toolName, funcName string, 
 			"未找到工具 '%s'。请先调用 tool_retriever.search 用关键词搜索可用工具，例如 tool_retriever.search(\"%s\")。禁止在未查询工具定义的情况下凭猜测调用。",
 			toolName, toolName)}
 	}
+
+	// —— Plan 模式写操作拦截（集中式，所有工具一视同仁）——
+	// plan 模式下仅允许工具声明为只读的函数；写函数返回统一错误，LLM 收到后应转为规划讨论。
+	if ec.Mode == model.ConvModePlan && !t.ReadOnlyFuncs()[funcName] {
+		return &Result{Success: false, Error: fmt.Sprintf(
+			"当前处于计划模式（只读讨论状态），禁止执行 %s.%s（写操作）。请仅进行方案讨论或使用只读查询工具；如需执行该操作，请让用户切换到工作模式。",
+			toolName, funcName)}
+	}
+
 	return t.Execute(ec, funcName, args)
 }

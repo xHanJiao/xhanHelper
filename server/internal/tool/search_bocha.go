@@ -72,6 +72,8 @@ func (t *BochaSearchTool) Functions() []FuncSchema {
 	}
 }
 
+func (t *BochaSearchTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 func (t *BochaSearchTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	if _, err := t.usageRepo.TryUse(ec.Ctx, "bocha", t.totalQuota, t.quotaExpiresAt, t.usedCount); err != nil {
 		return &Result{Success: false, Error: err.Error()}

@@ -42,7 +42,8 @@ extension ChartTool: LocalToolProvider {
                     ],
                 ],
                 "required": ["chart_type", "labels", "datasets"],
-            ]
+            ],
+            isReadOnly: true // 画图只做可视化展示，不产生数据副作用 → 只读（plan 模式可用）
         )]
     }
 

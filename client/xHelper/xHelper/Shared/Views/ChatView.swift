@@ -45,7 +45,7 @@ struct ChatView: View {
                     onLoadMore: { direction in Task { await viewModel.loadMore(direction: direction) } },
                     onRetry: {
                         guard let cid = viewModel.conversationId else { return }
-                        Task { await viewModel.loadConversation(id: cid, title: viewModel.conversationTitle ?? "") }
+                        Task { await viewModel.loadConversation(id: cid, title: viewModel.conversationTitle ?? "", mode: viewModel.mode) } // 重试保持当前模式
                     },
                     baseURL: baseURL,
                     token: token,
@@ -81,6 +81,9 @@ struct ChatView: View {
                 toolConfirmationBar(conf)
             }
 
+            // 会话模式条：work（正常）/ plan（只读讨论）。点击或 Tab 快捷键切换。
+            modeBar
+
             // 输入栏
             InputBar(
                 text: $viewModel.draftText,
@@ -98,6 +101,9 @@ struct ChatView: View {
                 },
                 onStop: {
                     viewModel.stopStreaming()
+                },
+                onToggleMode: {
+                    Task { await viewModel.toggleMode() }
                 }
             )
             .layoutPriority(1)
@@ -115,9 +121,34 @@ struct ChatView: View {
         }
     }
 
+    /// 会话模式条：work（正常，蓝）/ plan（只读讨论，橙）。点击或 Tab 快捷键切换。
+    private var modeBar: some View {
+        Button {
+            Task { await viewModel.toggleMode() }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: viewModel.isPlanMode ? "eye.slash" : "square.and.pencil")
+                    .font(.caption2)
+                Text(viewModel.isPlanMode ? "计划模式 · 只读" : "工作模式")
+                    .font(.caption)
+            }
+            .foregroundColor(viewModel.isPlanMode ? .orange : .blue)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 3)
+            .background(
+                Capsule().fill(
+                    (viewModel.isPlanMode ? Color.orange : Color.blue).opacity(0.12)
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Tab 快捷键或点击切换会话模式：工作（可执行全部工具）/ 计划（只读讨论，写操作被拦截）")
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+    }
+
     /// L3 工具执行确认行（无背景，橙色图标/按钮）
-    private func toolConfirmationBar(_ conf: ToolConfirmation) -> some View {
-        HStack(spacing: 8) {
+    private func toolConfirmationBar(_ conf: ToolConfirmation) -> some View {        HStack(spacing: 8) {
             Image(systemName: "shield.lefthalf.filled")
                 .font(.caption)
                 .foregroundColor(.orange)

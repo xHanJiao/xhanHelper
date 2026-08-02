@@ -87,7 +87,8 @@ actor MCPManager {
             return LocalToolSchema(
                 name: t.name,
                 description: t.description,
-                inputSchema: schema.isEmpty ? nil : schema
+                inputSchema: schema.isEmpty ? nil : schema,
+                isReadOnly: false // 当前无 MCP 使用，全部按写保守标注；readOnlyHint 支持留待未来
             )
         }
     }
@@ -103,6 +104,7 @@ actor MCPManager {
                     "server_name": sc.name,
                     "name": t.name,
                     "description": t.description,
+                    "is_read_only": false, // 当前无 MCP 使用，全部按写保守标注
                 ]
                 if let schema = t.inputSchema {
                     item["parameters"] = slimSchema(schema, sc: sc)
@@ -114,6 +116,7 @@ actor MCPManager {
                 "server_name": sc.name,
                 "name": Self.readMoreToolName,
                 "description": "当上一个工具结果过大被分页（结果中 truncated=true）时，按页继续读取剩余内容。需提供 page_token（首页返回，绑定该次分页）和 cursor（页码）。",
+                "is_read_only": false,
                 "parameters": [
                     "type": "object",
                     "properties": [

@@ -44,6 +44,8 @@ func (t *SearchNotesV2Tool) Functions() []FuncSchema {
 	}}
 }
 
+func (t *SearchNotesV2Tool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+
 func (t *SearchNotesV2Tool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	var a struct {
 		Query string `json:"query"`

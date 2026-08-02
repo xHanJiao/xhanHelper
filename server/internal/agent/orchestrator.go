@@ -608,6 +608,11 @@ func (o *Orchestrator) runOneRound(
 	streamEvents, err := client.Chat(ctx, o.mkLlmChatReq(req, systemPrompt, state.msgs))
 	if err != nil {
 		log.Printf("[orch] round %d LLM error: %v", round+1, err)
+		// 主动取消/停止（runCtx 被取消）：静默退出，不向用户报"服务出错"
+		if ctx.Err() != nil {
+			o.sendEvent(events, &llm.StreamEvent{Type: "done"})
+			return true
+		}
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrLLMApi)})
 		return true
 	}

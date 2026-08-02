@@ -66,6 +66,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.POST("/auth/change-password", changePassword(rc.UserRepo))
 		auth.POST("/chat", chat(rc.Orch, rc.Cfg, rc.ConvRepo, rc.MsgRepo, rc.AgentRepo))
 		auth.POST("/chat/tool-result", chatToolResult(rc.ClientBridge))
+		auth.POST("/chat/stop", stopChat(rc.ConvRepo))
 		auth.GET("/llm-config", llmConfig(rc.Cfg, rc.AgentRepo))
 		auth.POST("/conversations", createConversation(rc.ConvRepo, rc.AgentRepo))
 		auth.GET("/conversations", listConversations(rc.ConvRepo, rc.AgentRepo))

@@ -174,7 +174,22 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		var messages []llm.Message
 		messages = agent.BuildMessagesForFlash(history, cfg.LLM.MaxToolResultChars, cfg.LLM.UseNativeFC)
 
-		events, err := orch.Run(context.Background(), &agent.RunRequest{
+		// 注册终止信号：显式停止接口（/api/chat/stop）通过关闭 channel 取消 ReAct 循环。
+		// 使用独立于 Request.Context 的运行 ctx——网络波动（SSE 断开）不会误终止正常执行。
+		stopCh := chatStops.Register(conv.ID)
+		defer chatStops.Unregister(conv.ID)
+
+		runCtx, cancelRun := context.WithCancel(context.Background())
+		defer cancelRun()
+		go func() {
+			select {
+			case <-stopCh:
+				cancelRun()
+			case <-runCtx.Done():
+			}
+		}()
+
+		events, err := orch.Run(runCtx, &agent.RunRequest{
 			UserID:             userID,
 			ConversationID:     conv.ID,
 			Messages:           messages,
@@ -194,11 +209,22 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			return
 		}
 
+		// 客户端断开（SSE 断开/关客户端）时只停止转发，不中断 ReAct 运行——
+		// 独立 runCtx 不受 Request.Context 影响，网络波动不误终止正常执行。
+		clientGone := false
 		for evt := range events {
 			select {
 			case <-c.Request.Context().Done():
-				return
+				clientGone = true
 			default:
+			}
+			if clientGone {
+				// 继续消费 events 直到 ReAct 完成（消息完整入库），但不再写 SSE。
+				// done 事件的标题合并用背景 ctx（Request.Context 已取消，DB 操作会失败）
+				if evt.Type == "done" {
+					mergeTitle(context.Background(), orch, convRepo, conv, req.Message, evt.Content)
+				}
+				continue
 			}
 			switch evt.Type {
 			case "text_delta":

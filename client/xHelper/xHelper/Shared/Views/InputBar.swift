@@ -102,6 +102,17 @@ struct InputBar: View {
                 .padding(.vertical, 14)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
                 .disabled(isStreaming)
+
+            // macOS 停止按钮：流式时显示，点击显式终止服务端 ReAct 循环
+            if isStreaming {
+                Button(action: onStop) {
+                    Image(systemName: "stop.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(.plain)
+                .help("停止生成")
+            }
 #endif
 
 #if os(iOS)

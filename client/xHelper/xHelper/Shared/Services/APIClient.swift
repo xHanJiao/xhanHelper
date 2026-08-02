@@ -37,6 +37,15 @@ class APIClient {
         try await delete("/api/conversations/\(id)")
     }
 
+    /// 显式终止运行中的 chat（ReAct 循环），返回是否找到运行中的会话
+    func stopChat(conversationId: String) async throws -> Bool {
+        struct StopResp: Decodable {
+            let stopped: Bool
+        }
+        let resp: StopResp = try await post("/api/chat/stop", body: ["conversation_id": conversationId])
+        return resp.stopped
+    }
+
     // MARK: LLM Config
 
     func getLLMConfig(agentId: String? = nil) async throws -> LlmConfig {

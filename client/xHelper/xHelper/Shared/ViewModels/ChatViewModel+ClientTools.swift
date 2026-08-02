@@ -36,6 +36,17 @@ extension ChatViewModel {
         LogBuffer.shared.info("clientToolCall: \(toolName) call_id=\(callID)")
         Task {
             do {
+                // 工具分级：L3（高风险写）执行前需用户确认（60s 超时视为拒绝）
+                let level = LocalToolRegistry.shared.riskLevel(for: toolName)
+                if level >= 3 {
+                    let confirmed = await self.awaitToolConfirmation(toolName: toolName, arguments: args)
+                    guard confirmed else {
+                        LogBuffer.shared.warning("clientToolCall: \(toolName) rejected by user")
+                        try await api.submitToolResult(callId: callID, resultJSON: nil, error: "用户拒绝执行")
+                        return
+                    }
+                }
+
                 let context = ExecuteContext(budgetBytes: budgetBytes, deadlineSecs: deadline)
                 let result = try await LocalToolRegistry.shared.execute(
                     flatName: toolName,

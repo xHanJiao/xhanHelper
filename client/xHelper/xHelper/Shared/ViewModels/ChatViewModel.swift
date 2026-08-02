@@ -13,6 +13,16 @@ struct PlanNode: Identifiable {
     var status: String // running | done | failed
 }
 
+// MARK: - Tool Confirmation（L3 工具执行前用户确认）
+
+struct ToolConfirmation: Identifiable {
+    let id = UUID()
+    let toolName: String
+    let displayName: String
+    let argsSummary: String
+    let continuation: CheckedContinuation<Bool, Never>
+}
+
 // MARK: - ChatViewModel
 
 @MainActor
@@ -72,6 +82,38 @@ class ChatViewModel: ObservableObject {
     @Published var planNodes: [PlanNode] = []
     @Published var isPlanModalVisible = false
     @Published var isPlanMinimized = false
+
+    /// L3 工具执行确认（同一时刻最多一个，client tool 顺序执行）
+    @Published var pendingToolConfirmation: ToolConfirmation?
+    private var confirmationResolved = false
+
+    /// 挂起等待用户确认 L3 工具执行；60s 超时视为拒绝
+    func awaitToolConfirmation(toolName: String, arguments: [String: Any]) async -> Bool {
+        let argsSummary = arguments.isEmpty
+            ? "(无参数)"
+            : String(arguments.map { "\($0.key)=\($0.value)" }.joined(separator: ", ").prefix(80))
+        confirmationResolved = false
+        return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            let displayName = LocalToolRegistry.shared.displayName(for: toolName)
+            pendingToolConfirmation = ToolConfirmation(toolName: toolName, displayName: displayName, argsSummary: argsSummary, continuation: cont)
+            // 60s 超时自动拒绝（confirmationResolved 防双重 resume）
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(60))
+                guard let self, !self.confirmationResolved else { return }
+                self.confirmationResolved = true
+                self.pendingToolConfirmation = nil
+                cont.resume(returning: false)
+            }
+        }
+    }
+
+    /// 用户点击允许/拒绝，结束确认等待
+    func resolveToolConfirmation(allow: Bool) {
+        guard let conf = pendingToolConfirmation, !confirmationResolved else { return }
+        confirmationResolved = true
+        pendingToolConfirmation = nil
+        conf.continuation.resume(returning: allow)
+    }
 
     // 游标分页
     @Published var oldestCursor = ""
@@ -252,8 +294,22 @@ class ChatViewModel: ObservableObject {
     }
 
     func stopStreaming() {
+        // 先立即断开 SSE + UI 收尾（思考框消失），再后台通知服务端显式终止 ReAct。
+        // 顺序保证：UI 即时响应，stopChat 失败/慢速不影响停止体验。
+        let api = apiClient
+        let cid = conversationId
         sseClient.disconnect()
         finishStreaming()
+        Task {
+            if let cid, !cid.isEmpty {
+                do {
+                    let stopped = try await api.stopChat(conversationId: cid)
+                    LogBuffer.shared.info("stopChat: stopped=\(stopped)")
+                } catch {
+                    LogBuffer.shared.error("stopChat failed: \(error)")
+                }
+            }
+        }
     }
 
     // MARK: SSE Event Handling
@@ -357,8 +413,15 @@ class ChatViewModel: ObservableObject {
         throttleTimer?.invalidate()
         throttleTimer = nil
         applyStreamingContent()
+        // 停止/出错时若 __streaming__ 占位无内容，直接移除（防三个点动画残留）
+        if let idx = messages.lastIndex(where: { $0.id == "__streaming__" }),
+           messages[idx].content.isEmpty {
+            messages.remove(at: idx)
+        }
         isStreaming = false
-        if thoughtMessage != nil { thoughtDone = true }
+        // 停止/出错路径无 done 事件，主动清思考状态避免思考框残留（正常 done 路径同样安全）
+        thoughtMessage = nil
+        thoughtDone = true
         #if os(iOS)
         endBackgroundTask()
         #endif

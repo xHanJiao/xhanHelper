@@ -493,6 +493,29 @@ func renameConversation(convRepo *service.ConversationRepo, agentRepo *service.A
 	}
 }
 
+// stopChat 显式终止运行中的 chat（ReAct 循环）。
+// 通过关闭 chatStops 注册的 channel 传播终止信号；需会话归属校验。
+func stopChat(convRepo *service.ConversationRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req struct {
+			ConversationID string `json:"conversation_id"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil || req.ConversationID == "" {
+			view.JSONError(c, 400, "conversation_id is required")
+			return
+		}
+		if !requireConversationOwner(c, convRepo, req.ConversationID) {
+			return
+		}
+		if chatStops.Stop(req.ConversationID) {
+			log.Printf("[chat] stop signal sent: conv=%s", req.ConversationID)
+			view.JSONOK(c, gin.H{"stopped": true})
+			return
+		}
+		view.JSONOK(c, gin.H{"stopped": false, "reason": "no running chat"})
+	}
+}
+
 func deleteConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")

@@ -76,6 +76,11 @@ struct ChatView: View {
 
             // 错误提示改为全局 Toast（ToastCenter），此处不再内嵌红字
 
+            // L3 工具确认行：输入框上方，固定可见（浏览历史消息时也不会错过许可请求）
+            if let conf = viewModel.pendingToolConfirmation {
+                toolConfirmationBar(conf)
+            }
+
             // 输入栏
             InputBar(
                 text: $viewModel.draftText,
@@ -108,6 +113,30 @@ struct ChatView: View {
             print("[ChatView] isEditing: \(new)")
             viewModel.isEditing = new
         }
+    }
+
+    /// L3 工具执行确认行（无背景，橙色图标/按钮）
+    private func toolConfirmationBar(_ conf: ToolConfirmation) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "shield.lefthalf.filled")
+                .font(.caption)
+                .foregroundColor(.orange)
+            Text("请求执行工具：「\(conf.displayName)」：\(conf.argsSummary)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .lineLimit(2)
+            Button("允许") { viewModel.resolveToolConfirmation(allow: true) }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(.orange)
+                .padding(.leading, 12)
+            Button("拒绝") { viewModel.resolveToolConfirmation(allow: false) }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(.orange)
+        }
+        .padding(.horizontal, Layout.chatHorizontalPadding)
+        .padding(.vertical, 4)
     }
 
 #if os(iOS)

@@ -45,7 +45,7 @@ struct ChatView: View {
                     onLoadMore: { direction in Task { await viewModel.loadMore(direction: direction) } },
                     onRetry: {
                         guard let cid = viewModel.conversationId else { return }
-                        Task { await viewModel.loadConversation(id: cid, title: viewModel.conversationTitle ?? "", mode: viewModel.mode) } // 重试保持当前模式
+                        Task { await viewModel.loadConversation(id: cid, title: viewModel.conversationTitle ?? "", mode: viewModel.mode, preserveTrustedMode: true) } // 重试保持当前模式/信任模式
                     },
                     baseURL: baseURL,
                     token: token,
@@ -89,6 +89,11 @@ struct ChatView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             #endif
+
+            // 执行计划（todo）丑版列表：当前会话已保存的计划步骤（UI 后续优化）
+            if !viewModel.planTodo.isEmpty {
+                planTodoList
+            }
 
             // 输入栏
             InputBar(
@@ -184,6 +189,51 @@ struct ChatView: View {
     }
 
     /// L3 工具执行确认行（无背景，橙色图标/按钮）
+    /// 执行计划（todo）丑版列表：goal + 步骤状态
+    private var planTodoList: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if !viewModel.planGoal.isEmpty {
+                Text(viewModel.planGoal)
+                    .font(.caption).bold()
+                    .foregroundColor(.secondary)
+            }
+            ForEach(viewModel.planTodo) { step in
+                HStack(spacing: 5) {
+                    Image(systemName: planStepIcon(step.status))
+                        .font(.caption2)
+                        .foregroundColor(planStepColor(step.status))
+                    Text(step.content)
+                        .font(.caption)
+                        .strikethrough(step.status == "completed" || step.status == "cancelled")
+                        .foregroundColor(step.status == "cancelled" ? .secondary : .primary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 4)
+    }
+
+    private func planStepIcon(_ status: String) -> String {
+        switch status {
+        case "completed": return "checkmark.circle.fill"
+        case "in_progress": return "circle.inset.filled"
+        case "cancelled": return "xmark.circle"
+        default: return "circle"
+        }
+    }
+
+    private func planStepColor(_ status: String) -> Color {
+        switch status {
+        case "completed": return .green
+        case "in_progress": return .orange
+        case "cancelled": return .secondary
+        default: return .gray
+        }
+    }
+
     private func toolConfirmationBar(_ conf: ToolConfirmation) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "shield.lefthalf.filled")

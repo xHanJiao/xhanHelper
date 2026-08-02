@@ -34,6 +34,7 @@ type Repos struct {
 	Mission             *service.MissionRepo
 	SearchUsage         *service.SearchUsageRepo
 	ConversationSummary *service.ConversationSummaryRepo
+	ConversationPlan    *service.ConversationPlanRepo
 }
 
 // InitRepos 创建所有 repo 实例
@@ -66,5 +67,6 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		Mission:             service.NewMissionRepo(db),
 		SearchUsage:         service.NewSearchUsageRepo(db),
 		ConversationSummary: service.NewConversationSummaryRepo(db),
+		ConversationPlan:    service.NewConversationPlanRepo(db),
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,17 +23,27 @@ import (
 	"xhan-helper/internal/view"
 )
 
-// planModePromptSuffix — plan 模式追加的 system prompt 约束段。
-// 服务端已强制拦截写操作（Registry/客户端工具分派前），此处只是行为引导。
-const planModePromptSuffix = `
+// planModeNotice — plan 模式每轮注入的提示（notice 块，仅 LLM 可见，用户不可见）。
+// 动态内容绝不放 system prompt（会破坏前缀缓存），全部注入当前 user 消息的 XMLContext。
+const planModeNotice = `[计划模式] 当前处于计划模式（只读讨论状态）：
+- 只做调研与方案设计（检索、浏览器、网页等只读操作可用）
+- 输出完整方案：目标、现状与信息收集、方案设计、利弊权衡、实施步骤拆解
+- 不要执行任何写操作（会被拦截）：不写笔记/文档、不调用 plan 工具
+- 方案将在退出计划模式后整理为文档，本阶段只讨论
+- 如用户要求直接执行，请告知用户先退出计划模式`
 
-## 计划模式（只读讨论状态）
+// planExitNotice — 退出 plan 模式后首条消息注入一次（notice 块，仅 LLM 可见）。
+const planExitNotice = `[系统] 用户已退出计划模式（只读讨论结束）。若对话中已讨论出方案且用户未放弃：
+1. 用 document 工具将方案整理为 markdown 文档（正式产出，便于用户阅读）
+2. 从方案中提取实施步骤，调用 plan.save 保存完整步骤列表
+3. 用户明确要求执行（如"ok"/"开始"）→ 直接开始执行；未明确 → 简述并询问是否开始
+若未讨论出方案或用户已放弃：正常响应用户当前消息`
 
-你当前处于计划模式，这是一个只读的讨论状态：
-- 你可以检索信息（记忆、笔记、账单统计、网页、浏览器等只读操作）来支撑方案讨论
-- 严禁执行任何写操作（记账、写笔记、改文档、增删改、状态变更等）—— 服务端会强制拦截，调用即失败
-- 输出方案、计划、利弊分析，与用户充分讨论；需要信息时用只读检索工具查证
-- 当讨论完成、用户准备执行时，请告知用户切换回工作模式`
+// planNoticeMarker / planExitNoticeMarker — 注入检测标记（子串匹配，区分两类提示）。
+const (
+	planNoticeMarker     = "当前处于计划模式（只读讨论状态）"
+	planExitNoticeMarker = "用户已退出计划模式（只读讨论结束）"
+)
 
 func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.ConversationRepo,
 	msgRepo *service.MessageRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
@@ -111,8 +122,13 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		if convMode == "" {
 			convMode = model.ConvModeWork
 		}
+		// 模式提示（注入当前 user 消息 XMLContext，仅 LLM 可见）：
+		//   plan 模式 → 每轮注入 plan 提示；work 模式且上一条 user 消息是 plan 提示 → 注入退出提示（一次）
+		modeNotice := ""
 		if convMode == model.ConvModePlan {
-			agentSystemPrompt += planModePromptSuffix
+			modeNotice = planModeNotice
+		} else if containsPlanNotice(c.Request.Context(), msgRepo, conv.ID) {
+			modeNotice = planExitNotice
 		}
 
 		// —— 预处理管线 ——
@@ -208,6 +224,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			Window:             wr,
 			ClientTools:        req.ClientTools,
 			Mode:               convMode,
+			ModeNotice:         modeNotice,
 		})
 		if err != nil {
 			log.Printf("[chat] orch run error: %v", err)
@@ -478,6 +495,21 @@ func buildLLMConfigResponse(agent *model.Agent, defaultTemp *float64, defaultMax
 //  3. gap ≤ SessionGapMinutes → 同一 session，窗口扩张，继承 SessionStartMsgID
 //  4. lastWindow ≥ MaxWindowRounds → 折半
 //  5. 没有上一条消息 → 新 session
+//
+// containsPlanNotice 判断会话最近一条 user 消息的 XMLContext 是否含 plan 提示标记。
+// 用于"退出计划模式后首条消息"注入退出提示（仅一次）：上一条是 plan 提示 → 注入退出；
+// 上一条已是退出提示（或更早）→ 不再注入。
+func containsPlanNotice(ctx context.Context, msgRepo *service.MessageRepo, convID string) bool {
+	msgs, err := msgRepo.ListRecentUserMessages(ctx, convID, 1)
+	if err != nil || len(msgs) == 0 {
+		return false
+	}
+	if msgs[0].XMLContext == nil {
+		return false
+	}
+	return strings.Contains(*msgs[0].XMLContext, planNoticeMarker)
+}
+
 func computeWindowSize(ctx context.Context, msgRepo *service.MessageRepo, convID string, cfg *config.Config) agent.WindowResult {
 	defaultSize := cfg.Chat.HistoryRounds
 	gapMinutes := cfg.Chat.SessionGapMinutes

@@ -65,6 +65,7 @@ type RunRequest struct {
 	Window             WindowResult
 	ClientTools        []ClientTool // 客户端（Mac App）上报的本地 MCP 工具，可为空
 	Mode               string       // 会话模式：model.ConvModeWork（默认）| model.ConvModePlan（写操作被拦截）
+	ModeNotice         string       // 模式提示（注入当前 user 消息 XMLContext 的 notice 块，仅 LLM 可见，用户不可见）
 
 	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
 	Memory  retrieval.SourceConfig
@@ -489,6 +490,11 @@ func (o *Orchestrator) buildUserMessage(
 	userMsg := o.prepareUserMsg(req)
 
 	var extraPackets = []retrieval.ContextPacket{ctxflow.DateTimePacket(time.Now())}
+
+	// 模式提示（计划模式约束 / 退出提示）：注入 notice 块，仅 LLM 可见
+	if req.ModeNotice != "" {
+		extraPackets = append(extraPackets, ctxflow.NoticePacket(req.ModeNotice))
+	}
 
 	extraPackets = append(extraPackets, o.buildSummaryPackets(ctx, req)...)
 

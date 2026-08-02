@@ -55,6 +55,7 @@ func InitDB(cfg *config.Config) *gorm.DB {
 		&model.Mission{},
 		&model.SearchUsage{},
 		&model.ConversationSummary{},
+		&model.ConversationPlan{},
 	); err != nil {
 		log.Printf("[db] AutoMigrate error: %v", err)
 	}

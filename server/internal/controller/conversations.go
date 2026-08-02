@@ -623,3 +623,28 @@ func updateConversationMode(convRepo *service.ConversationRepo) gin.HandlerFunc 
 		view.JSONOK(c, gin.H{"id": convID, "mode": req.Mode})
 	}
 }
+
+// getConversationPlan — 获取当前会话的执行计划（todo，前端展示用）。
+func getConversationPlan(convRepo *service.ConversationRepo, planRepo *service.ConversationPlanRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		convID := c.Param("id")
+		if !requireConversationOwner(c, convRepo, convID) {
+			return
+		}
+		userID := c.GetString("user_id")
+		plan, err := planRepo.Get(c.Request.Context(), convID, userID)
+		if err != nil {
+			log.Printf("[plan] get error: %v", err)
+			view.JSONError(c, 500, "读取计划失败")
+			return
+		}
+		if plan == nil {
+			view.JSONOK(c, gin.H{"goal": "", "steps": []model.PlanStep{}})
+			return
+		}
+		view.JSONOK(c, gin.H{
+			"goal":  plan.Goal,
+			"steps": service.ParsePlanSteps(plan),
+		})
+	}
+}

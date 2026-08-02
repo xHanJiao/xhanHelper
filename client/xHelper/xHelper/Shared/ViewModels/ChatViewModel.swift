@@ -93,6 +93,18 @@ class ChatViewModel: ObservableObject {
     @Published var isPlanModalVisible = false
     @Published var isPlanMinimized = false
 
+    /// 执行计划（todo，丑版展示）：goal + 步骤列表，对话结束/加载会话时刷新
+    @Published var planGoal = ""
+    @Published var planTodo: [PlanStep] = []
+
+    /// 从服务端拉取当前会话的执行计划（丑版 UI 用，UI 优化后续）
+    func loadPlanTodo() async {
+        guard let cid = conversationId, !cid.isEmpty else { return }
+        guard let plan = try? await apiClient.getConversationPlan(conversationId: cid) else { return }
+        planGoal = plan.goal
+        planTodo = plan.steps
+    }
+
     /// L3 工具执行确认（同一时刻最多一个，client tool 顺序执行）
     @Published var pendingToolConfirmation: ToolConfirmation?
     private var confirmationResolved = false
@@ -188,18 +200,25 @@ class ChatViewModel: ObservableObject {
 
     // MARK: Load
 
-    func loadConversation(id: String, title: String, mode: String? = nil) async {
+    /// 加载会话。mode 从会话数据带入（服务端权威）；trustedMode 仅"切换会话"时重置，
+    /// 同一会话刷新（scene 激活/重试/手动刷新）传 preserveTrustedMode=true 保持。
+    func loadConversation(id: String, title: String, mode: String? = nil, preserveTrustedMode: Bool = false) async {
         sseClient.disconnect()
         isStreaming = false
         conversationId = id
         conversationTitle = title
         self.mode = mode ?? "work" // 会话列表数据带 mode（服务端权威）；旧数据缺失时默认 work
-        trustedMode = false // 信任模式会话级：换会话自动关闭（安全默认）
+        if !preserveTrustedMode {
+            trustedMode = false // 信任模式会话级：换会话自动关闭（安全默认）
+        }
+        planGoal = ""
+        planTodo = []
         isInitialLoading = true
         errorMessage = nil
         loadMoreError = nil
         let oldLastId = messages.last?.id
         defer { isInitialLoading = false }
+        Task { await self.loadPlanTodo() }
         do {
             let result = try await apiClient.getMessagesCursor(conversationId: id)
             messages = result.messages.flatMap { $0.withoutToolCalls() }
@@ -435,6 +454,8 @@ class ChatViewModel: ObservableObject {
             if let msgID = parseMessageIdFromDone(event.data) {
                 replaceStreamingMessageID(with: msgID)
             }
+            // 对话结束刷新执行计划（todo 可能被 plan.save 更新）
+            Task { await self.loadPlanTodo() }
             if let mids = parseMemoryIDsFromDone(event.data), !mids.isEmpty {
                 lastMemoryIDs = mids
             }

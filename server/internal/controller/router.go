@@ -17,6 +17,7 @@ type RouterConfig struct {
 	Orch                 *agent.Orchestrator
 	UserRepo             *service.UserRepo
 	ConvRepo             *service.ConversationRepo
+	PlanRepo             *service.ConversationPlanRepo
 	MsgRepo              *service.MessageRepo
 	AgentRepo            *service.AgentRepo
 	BillHandler          *BillHandler
@@ -76,6 +77,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.DELETE("/conversations/:id/messages/:msgId", deleteMessage(rc.MsgRepo, rc.ConvRepo))
 		auth.PATCH("/conversations/:id", renameConversation(rc.ConvRepo, rc.AgentRepo))
 		auth.PATCH("/conversations/:id/mode", updateConversationMode(rc.ConvRepo))
+		auth.GET("/conversations/:id/plans", getConversationPlan(rc.ConvRepo, rc.PlanRepo))
 		auth.DELETE("/conversations/:id", deleteConversation(rc.ConvRepo))
 		auth.POST("/conversations/:id/extract-memories", extractMemories(rc.ConvRepo, rc.MemExtr))
 		auth.POST("/conversations/:id/extract-memories/stream", extractMemoriesStream(rc.ConvRepo, rc.MemExtr))

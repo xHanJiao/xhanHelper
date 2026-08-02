@@ -525,9 +525,9 @@ func TestCursorByRounds_NoDuplicationAcrossPages(t *testing.T) {
 	t.Logf("page3: %d messages, oldestCursor=%s", len(page3.Messages), page3.OldestCursor)
 
 	// 总共 15 轮，3 页各 5 轮，应无遗漏、无重复
-	// 每轮 4 条消息 (user + a1 + tool + a2)，15 轮 = 60 条
-	if len(seen) != 60 {
-		t.Errorf("expected 60 unique messages (15 rounds × 4 msgs), got %d", len(seen))
+	// 每轮 3 条非 tool 消息 (user + a1 + a2；tool 被前端分页排除)，15 轮 = 45 条
+	if len(seen) != 45 {
+		t.Errorf("expected 45 unique messages (15 rounds × 3 non-tool msgs), got %d", len(seen))
 	}
 }
 
@@ -717,5 +717,227 @@ func TestListUserMessagesBetween_SwappedBounds(t *testing.T) {
 	}
 	if len(msgs) != 0 {
 		t.Errorf("expected 0 messages for swapped bounds, got %d", len(msgs))
+	}
+}
+
+// —— 巨型工具轮场景（前端分页不截断 + LLM 路径单轮完整）——
+
+// TestCursorByRounds_MassiveToolRoundsNoTruncation
+// 回归：前端分页（messages-v2）此前拉全量消息（含 tool），巨型 ReAct 轮（150+ 条）
+// 超过 Limit(rounds*30) 导致最新消息被截断（用户最后几条消息消失）。
+// 修复：loadMessagesInRange 排除 role='tool' → 前端分页只返回 user+assistant，无截断。
+func TestCursorByRounds_MassiveToolRoundsNoTruncation(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	convID := "conv-massive"
+	userID := "u1"
+	base := time.Now().Add(-time.Hour)
+
+	// 5 轮正常
+	seedTestRounds(t, repo, convID, userID, 5, base, 0)
+
+	// 第 6 轮（最新）：1 user + 1 assistant(tool_calls) + 50 tool + 1 assistant 最终回复
+	tick := base.Add(5 * 4 * time.Second)
+	um := model.Message{ID: "u-massive-6", ConversationID: convID, UserID: userID, Role: "user", Content: "最新用户消息", CreatedAt: tick}
+	if err := repo.Create(ctx, &um); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	tick = tick.Add(time.Second)
+	tcJSON := `[{"tool":"note","function":"search","args":{"q":"x"}}]`
+	if err := repo.Create(ctx, &model.Message{ID: "a-massive-6a", ConversationID: convID, UserID: userID, Role: "assistant", Content: "", ToolCallsJSON: &tcJSON, CreatedAt: tick}); err != nil {
+		t.Fatalf("seed assistant a: %v", err)
+	}
+	for i := 0; i < 50; i++ {
+		tick = tick.Add(50 * time.Millisecond)
+		if err := repo.Create(ctx, &model.Message{ID: fmt.Sprintf("t-massive-6-%02d", i), ConversationID: convID, UserID: userID, Role: "tool", Content: `{"success":true}`, IsInternal: true, CreatedAt: tick}); err != nil {
+			t.Fatalf("seed tool %d: %v", i, err)
+		}
+	}
+	tick = tick.Add(time.Second)
+	if err := repo.Create(ctx, &model.Message{ID: "a-massive-6b", ConversationID: convID, UserID: userID, Role: "assistant", Content: "最终回复", CreatedAt: tick}); err != nil {
+		t.Fatalf("seed assistant final: %v", err)
+	}
+
+	// 前端分页：最近 7 轮（实际 6 轮）→ 应完整包含最新 user + 最终回复，且不含 tool
+	res, err := repo.ListByConversationCursorByRounds(ctx, convID, "", "before", 7)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(res.Messages) == 0 {
+		t.Fatal("不应为空")
+	}
+	// 不含 role=tool
+	for _, m := range res.Messages {
+		if m.Role == "tool" {
+			t.Errorf("前端分页不应包含 tool 消息: %s", m.ID)
+		}
+	}
+	// 最新 user 消息必须在列（修复前被截断）
+	foundLatestUser := false
+	foundFinalReply := false
+	for _, m := range res.Messages {
+		if m.ID == "u-massive-6" {
+			foundLatestUser = true
+		}
+		if m.ID == "a-massive-6b" {
+			foundFinalReply = true
+		}
+	}
+	if !foundLatestUser {
+		t.Error("最新 user 消息被截断（修复目标）")
+	}
+	if !foundFinalReply {
+		t.Error("最终 assistant 回复被截断")
+	}
+	// 6 轮全量 user 都应在（u-…-00 ~ u-massive-6）
+	userCount := 0
+	for _, m := range res.Messages {
+		if m.Role == "user" {
+			userCount++
+		}
+	}
+	if userCount != 6 {
+		t.Errorf("应包含 6 条 user 消息, got %d", userCount)
+	}
+}
+
+// TestBuildRoundsFromUserMsgs_LongToolRound
+// 回归：LLM 上下文路径单轮 >30 条工具消息时，旧 Limit(30) 截断轮尾导致孤儿 tool_call。
+// 修复：Limit(30) → 100。
+func TestBuildRoundsFromUserMsgs_LongToolRound(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	convID := "conv-longround"
+	userID := "u1"
+	base := time.Now().Add(-time.Hour)
+
+	// 第 1 轮：1 user + 40 tool（> 30）
+	tick := base
+	um := model.Message{ID: "u-lr-1", ConversationID: convID, UserID: userID, Role: "user", Content: "第一轮", CreatedAt: tick}
+	if err := repo.Create(ctx, &um); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	tick = tick.Add(time.Second)
+	tcJSON := `[{"tool":"note","function":"search","args":{"q":"x"}}]`
+	if err := repo.Create(ctx, &model.Message{ID: "a-lr-1a", ConversationID: convID, UserID: userID, Role: "assistant", Content: "", ToolCallsJSON: &tcJSON, CreatedAt: tick}); err != nil {
+		t.Fatalf("seed assistant a: %v", err)
+	}
+	for i := 0; i < 40; i++ {
+		tick = tick.Add(50 * time.Millisecond)
+		if err := repo.Create(ctx, &model.Message{ID: fmt.Sprintf("t-lr-1-%02d", i), ConversationID: convID, UserID: userID, Role: "tool", Content: `{"success":true}`, IsInternal: true, CreatedAt: tick}); err != nil {
+			t.Fatalf("seed tool %d: %v", i, err)
+		}
+	}
+	tick = tick.Add(time.Second)
+	if err := repo.Create(ctx, &model.Message{ID: "a-lr-1b", ConversationID: convID, UserID: userID, Role: "assistant", Content: "第一轮回复", CreatedAt: tick}); err != nil {
+		t.Fatalf("seed assistant final: %v", err)
+	}
+
+	// 第 2 轮：正常（user + assistant）
+	tick = tick.Add(4 * time.Second)
+	um2 := model.Message{ID: "u-lr-2", ConversationID: convID, UserID: userID, Role: "user", Content: "第二轮", CreatedAt: tick}
+	if err := repo.Create(ctx, &um2); err != nil {
+		t.Fatalf("seed user2: %v", err)
+	}
+	tick = tick.Add(time.Second)
+	if err := repo.Create(ctx, &model.Message{ID: "a-lr-2", ConversationID: convID, UserID: userID, Role: "assistant", Content: "第二轮回复", CreatedAt: tick}); err != nil {
+		t.Fatalf("seed assistant2: %v", err)
+	}
+
+	rounds, err := repo.ListRecentRounds(ctx, convID, 2)
+	if err != nil {
+		t.Fatalf("ListRecentRounds: %v", err)
+	}
+	if len(rounds) != 2 {
+		t.Fatalf("应返回 2 轮, got %d", len(rounds))
+	}
+	// 第 1 轮应包含全部 40 条 tool（旧 Limit(30) 会截断）
+	toolCount := 0
+	for _, m := range rounds[0] {
+		if m.Role == "tool" {
+			toolCount++
+		}
+	}
+	if toolCount != 40 {
+		t.Errorf("第 1 轮 tool 消息应完整（40 条）, got %d（旧 Limit(30) 截断回归）", toolCount)
+	}
+}
+
+// TestBuildRoundsFromUserMsgs_MassiveReActRound
+// 回归：真实长 ReAct 循环在 DB 语义下属于同一轮（user 到下一个 user 之间），
+// 一轮可达 150+ 条消息（46 轮循环 ≈ 1 user + 46 assistant + ~100 tool）。
+// 此前 Limit(30/100) 会截断轮尾 → 孤儿 tool_call → 后续对话丢失该轮内容。
+// 修复：完全去掉每轮 Limit（created_at 紧上界精确查询）。
+func TestBuildRoundsFromUserMsgs_MassiveReActRound(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	convID := "conv-massive-react"
+	userID := "u1"
+	base := time.Now().Add(-time.Hour)
+
+	// 第 1 轮：巨型 ReAct 轮（1 user + 50 assistant(tool_calls) + 100 tool + 1 final assistant）
+	tick := base
+	um := model.Message{ID: "u-mr-1", ConversationID: convID, UserID: userID, Role: "user", Content: "复杂任务", CreatedAt: tick}
+	if err := repo.Create(ctx, &um); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	tick = tick.Add(time.Second)
+	for i := 0; i < 50; i++ {
+		tcJSON := fmt.Sprintf(`[{"tool":"note","function":"search","args":{"q":"x%d"}}]`, i)
+		if err := repo.Create(ctx, &model.Message{ID: fmt.Sprintf("a-mr-1-%02d", i), ConversationID: convID, UserID: userID, Role: "assistant", Content: "", ToolCallsJSON: &tcJSON, CreatedAt: tick}); err != nil {
+			t.Fatalf("seed assistant %d: %v", i, err)
+		}
+		tick = tick.Add(50 * time.Millisecond)
+		for j := 0; j < 2; j++ {
+			if err := repo.Create(ctx, &model.Message{ID: fmt.Sprintf("t-mr-1-%02d-%d", i, j), ConversationID: convID, UserID: userID, Role: "tool", Content: `{"success":true}`, IsInternal: true, CreatedAt: tick}); err != nil {
+				t.Fatalf("seed tool %d-%d: %v", i, j, err)
+			}
+			tick = tick.Add(50 * time.Millisecond)
+		}
+	}
+	tick = tick.Add(time.Second)
+	if err := repo.Create(ctx, &model.Message{ID: "a-mr-1-final", ConversationID: convID, UserID: userID, Role: "assistant", Content: "最终回复", CreatedAt: tick}); err != nil {
+		t.Fatalf("seed final: %v", err)
+	}
+
+	// 第 2 轮：正常（user + assistant）
+	tick = tick.Add(4 * time.Second)
+	um2 := model.Message{ID: "u-mr-2", ConversationID: convID, UserID: userID, Role: "user", Content: "第二轮", CreatedAt: tick}
+	if err := repo.Create(ctx, &um2); err != nil {
+		t.Fatalf("seed user2: %v", err)
+	}
+	tick = tick.Add(time.Second)
+	if err := repo.Create(ctx, &model.Message{ID: "a-mr-2", ConversationID: convID, UserID: userID, Role: "assistant", Content: "第二轮回复", CreatedAt: tick}); err != nil {
+		t.Fatalf("seed assistant2: %v", err)
+	}
+
+	// 断言：第 1 轮完整（1 user + 50 assistant + 100 tool + 1 final = 152 条），无截断
+	rounds, err := repo.ListRecentRounds(ctx, convID, 2)
+	if err != nil {
+		t.Fatalf("ListRecentRounds: %v", err)
+	}
+	if len(rounds) != 2 {
+		t.Fatalf("应返回 2 轮, got %d", len(rounds))
+	}
+	first := rounds[0]
+	if len(first) != 152 {
+		t.Fatalf("第 1 轮应完整 152 条, got %d（Limit 截断回归）", len(first))
+	}
+	// 轮尾完整性：最终回复必须是该轮最后一条（截断时轮尾丢失）
+	if first[len(first)-1].ID != "a-mr-1-final" {
+		t.Errorf("轮尾最终回复应保留, got %s", first[len(first)-1].ID)
+	}
+	// tool 数量完整
+	toolCount := 0
+	for _, m := range first {
+		if m.Role == "tool" {
+			toolCount++
+		}
+	}
+	if toolCount != 100 {
+		t.Errorf("第 1 轮 tool 应完整 100 条, got %d", toolCount)
 	}
 }

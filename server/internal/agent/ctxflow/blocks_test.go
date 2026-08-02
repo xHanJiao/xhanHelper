@@ -225,3 +225,17 @@ func TestMergePackets_RetrieveNilPackets(t *testing.T) {
 		t.Errorf("missing datetime: %v", got)
 	}
 }
+
+func TestNoticeBlock_RendersInUserMessage(t *testing.T) {
+	f := NewXMLFormatter()
+	packets := map[string][]retrieval.ContextPacket{
+		TypeNotice: {NoticePacket("[计划模式] 只读讨论")},
+	}
+	out := f.FormatUserMessage(packets, "帮我调研")
+	if !strings.Contains(out, "<notice>") || !strings.Contains(out, "[计划模式] 只读讨论") {
+		t.Errorf("notice 块应渲染进 user 消息: %s", out)
+	}
+	if !strings.Contains(out, "<user_query>") {
+		t.Errorf("user_query 应保留: %s", out)
+	}
+}

@@ -251,7 +251,7 @@ func (r *MessageRepo) listRoundsNoCursor(ctx context.Context, convID string, rou
 	}
 
 	oldestTime := userMsgs[0].CreatedAt
-	messages, err := r.loadMessagesInRange(ctx, convID, &oldestTime, nil, rounds*30)
+	messages, err := r.loadMessagesInRange(ctx, convID, &oldestTime, nil, rounds*30, true) // 前端分页排除 tool 消息
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +284,7 @@ func (r *MessageRepo) listRoundsWithCursor(ctx context.Context, convID string, c
 	}
 
 	oldestTime := userMsgs[0].CreatedAt
-	messages, err := r.loadMessagesInRange(ctx, convID, &oldestTime, cursorTime, rounds*30)
+	messages, err := r.loadMessagesInRange(ctx, convID, &oldestTime, cursorTime, rounds*30, true) // 前端分页排除 tool 消息
 	if err != nil {
 		return nil, err
 	}
@@ -330,9 +330,15 @@ func (r *MessageRepo) ListMessagesBetweenMsgIDs(ctx context.Context, convID, fro
 }
 
 // loadMessagesInRange 拉取指定时间范围内的全部正常消息。
-func (r *MessageRepo) loadMessagesInRange(ctx context.Context, convID string, from, to *time.Time, limit int) ([]model.Message, error) {
+// loadMessagesInRange 拉取指定时间范围内的正常消息。
+// excludeTool=true 时排除 role='tool' 消息（前端分页用：tool 结果最终被 cleanMessages
+// 丢弃并注入 assistant，查询时直接过滤可避免巨型工具轮撑爆 limit 截断最新消息）。
+func (r *MessageRepo) loadMessagesInRange(ctx context.Context, convID string, from, to *time.Time, limit int, excludeTool bool) ([]model.Message, error) {
 	q := r.db.WithContext(ctx).
 		Where("conversation_id = ? AND status = ?", convID, model.MsgStatusNormal)
+	if excludeTool {
+		q = q.Where("role != ?", "tool")
+	}
 	if from != nil {
 		q = q.Where("created_at >= ?", *from)
 	}
@@ -444,7 +450,10 @@ func (r *MessageRepo) buildRoundsFromUserMsgs(ctx context.Context, userMsgs []mo
 				q = q.Where("created_at < ?", *endTime)
 			}
 			var msgs []model.Message
-			err := q.Order("created_at ASC").Limit(30).Find(&msgs).Error
+			// 无 Limit：每轮查询已有 created_at 紧上界（< 下一条 user 消息），
+			// 拉取的是该轮真实消息数（巨型 ReAct 轮可达 150+ 条）——这是 LLM 后续推理必需的数据，
+			// 设上限会截断轮尾（孤儿 tool_call、后续对话丢失该轮内容）。
+			err := q.Order("created_at ASC").Find(&msgs).Error
 			return msgs, err
 		}
 	}

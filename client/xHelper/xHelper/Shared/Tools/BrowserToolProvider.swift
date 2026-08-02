@@ -22,8 +22,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     func toolSchemas() async -> [LocalToolSchema] {
         var schemas: [LocalToolSchema] = [
-            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL",                          inputSchema: objProps(["url": strProp("要打开的网址")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。打开新页面后，不再需要的旧页面请及时调用 close_tab 关闭（调研场景会开很多页面，避免标签页堆积占用内存）", inputSchema: objProps(["url": strProp("要打开的网址")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_close",            description: "关闭所有浏览器标签页",                       inputSchema: objProps([:]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_close_tab",        description: "关闭指定的单个标签页，释放内存。tabId 从 list_tabs 获取；不用的页面请及时关闭", inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_list_tabs",        description: "列出当前所有打开的标签页（id/url/title）",      inputSchema: objProps([:]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_switch_tab",       description: "切换到指定标签页",                        inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_read",             description: "读取页面文本。分层用法：outline=标题树（长文导航，省 token）；filter=按关键词返回匹配章节；full=全文（最后手段，很耗 token）。建议先 snapshot → read(outline) → read(filter)/get_text(@eN) 定位 → 确需通读才 read(full)", inputSchema: objProps([
@@ -76,6 +77,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             return await handleOpen(arguments)
         case "agent_browser_close":
             return handleClose()
+        case "agent_browser_close_tab":
+            return handleCloseTab(arguments)
         case "agent_browser_list_tabs":
             return handleListTabs()
         case "agent_browser_switch_tab":
@@ -795,6 +798,34 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         tabs.removeAll()
         activeTabId = nil
         return .init(serverResult: Self.jsonDict(["closed": true, "count": count]), serverError: nil, clientAction: nil)
+    }
+
+    /// 关闭单个标签页（释放内存）：cancelLoadWait + 侧栏关闭 + 移除 + 若关的是激活页则置空。
+    private func handleCloseTab(_ args: [String: Any]) -> LocalToolResult {
+        let tabId = args["tabId"] as? String ?? ""
+        guard !tabId.isEmpty, let session = tabs[tabId] else {
+            return .init(serverResult: nil, serverError: "tabId 不存在: \(tabId)，请先 list_tabs 获取有效 tabId", clientAction: nil)
+        }
+        let wasActive = activeTabId == tabId
+        session.cancelLoadWait()
+        rightSidebar?.closeTab(tabId)
+        tabs.removeValue(forKey: tabId)
+        if wasActive {
+            // Bad Case 17 修复：关掉激活页后自动切到"最近打开的"剩余 tab（tabId 为递增 browser-N，
+            // 数字最大 = 最近打开），并同步右侧栏 —— 否则后续操作（get_url/snapshot 等依赖
+            // activeSession）会报"没有打开的页面"，需手动 switch_tab 才能恢复。
+            let next = tabs.keys
+                .compactMap { id -> (String, Int)? in
+                    guard id.hasPrefix("browser-"), let n = Int(id.dropFirst(8)) else { return nil }
+                    return (id, n)
+                }
+                .max(by: { $0.1 < $1.1 })?.0
+            activeTabId = next
+            if let rs = rightSidebar, let rid = next {
+                rs.activeTabId = rid
+            }
+        }
+        return .init(serverResult: Self.jsonDict(["closed": tabId, "remaining": tabs.count, "activeTabId": activeTabId ?? ""]), serverError: nil, clientAction: nil)
     }
 
     private func handleListTabs() -> LocalToolResult {

@@ -67,6 +67,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		Orch:                 agents.Orch,
 		UserRepo:             repos.User,
 		ConvRepo:             repos.Conversation,
+		PlanRepo:             repos.ConversationPlan,
 		MsgRepo:              repos.Message,
 		AgentRepo:            repos.Agent,
 		BillHandler:          billHandler,

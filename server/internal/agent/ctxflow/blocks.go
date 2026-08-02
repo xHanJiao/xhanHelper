@@ -17,10 +17,11 @@ const (
 	TypeNote            = "note"
 	TypeTheme           = "theme"
 	TypeCurrentDatetime = "current_datetime"
+	TypeNotice          = "notice"
 )
 
 // typeOrder 定义所有块的渲染顺序，也是 typeRank 的单一数据源。
-var typeOrder = []string{TypeSummary, TypeReminder, TypeHistory, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime}
+var typeOrder = []string{TypeSummary, TypeReminder, TypeHistory, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime, TypeNotice}
 
 // typeRank 从 typeOrder 派生，供排序时 O(1) 查找顺序。
 var typeRank = func() map[string]int {
@@ -143,6 +144,16 @@ type currentDatetimeBlock struct {
 
 func (*currentDatetimeBlock) TypeKey() string { return TypeCurrentDatetime }
 
+// --- notice ---
+// noticeBlock 通用提示块：注入模式提示等系统通知（如计划模式只读约束、模式切换提示）。
+// 仅进入 LLM 上下文（xml_context），用户在前端不可见。
+type noticeBlock struct {
+	XMLName struct{} `xml:"notice" json:"-"`
+	Content string   `xml:",chardata"`
+}
+
+func (*noticeBlock) TypeKey() string { return TypeNotice }
+
 // --- user_query ---
 type userQueryBlock struct {
 	XMLName struct{} `xml:"user_query" json:"-"`
@@ -162,6 +173,7 @@ var blockBuilders = map[string]blockBuilder{
 	TypeTheme:           buildThemesBlock,
 	TypeSummary:         buildSummariesBlock,
 	TypeCurrentDatetime: buildCurrentDatetimeBlock,
+	TypeNotice:          buildNoticeBlock,
 }
 
 // buildBlock 按 type 查找构建器并返回 Block，无匹配返回 nil。
@@ -302,6 +314,13 @@ func buildCurrentDatetimeBlock(items []retrieval.ContextPacket) Block {
 	return &currentDatetimeBlock{Content: items[0].Text}
 }
 
+func buildNoticeBlock(items []retrieval.ContextPacket) Block {
+	if len(items) == 0 {
+		return nil
+	}
+	return &noticeBlock{Content: items[0].Text}
+}
+
 // roundScore 将相似度分数保留 4 位小数，避免 XML 中输出过长的浮点字面量。
 func roundScore(s float64) float64 {
 	return math.Round(s*10000) / 10000
@@ -321,6 +340,11 @@ func DateTimeText(t time.Time) string {
 // DateTimePacket 生成 current_datetime 类型的 ContextPacket。
 func DateTimePacket(t time.Time) retrieval.ContextPacket {
 	return retrieval.ContextPacket{Type: TypeCurrentDatetime, Text: DateTimeText(t)}
+}
+
+// NoticePacket 生成 notice 类型的 ContextPacket（模式提示等系统通知，仅 LLM 可见）。
+func NoticePacket(text string) retrieval.ContextPacket {
+	return retrieval.ContextPacket{Type: TypeNotice, Text: text}
 }
 
 // MergePackets 合并附加 packet 与检索结果，按 type 归并。

@@ -38,6 +38,11 @@ class APIClient {
         try await patch("/api/conversations/\(id)/mode", body: ["mode": mode])
     }
 
+    /// 获取当前会话的执行计划（todo，丑版展示用）
+    func getConversationPlan(conversationId: String) async throws -> ConversationPlan {
+        try await get("/api/conversations/\(conversationId)/plans")
+    }
+
     func deleteConversation(id: String) async throws {
         try await delete("/api/conversations/\(id)")
     }
@@ -508,6 +513,18 @@ struct Agent: Identifiable, Codable {
 }
 
 // MARK: UserPrompt model
+
+/// 执行计划（todo）—— 服务端 GET /api/conversations/:id/plans
+struct ConversationPlan: Codable {
+    let goal: String
+    let steps: [PlanStep]
+}
+
+struct PlanStep: Identifiable, Codable {
+    let content: String
+    let status: String
+    var id: String { content + status }
+}
 
 struct CursorMessages: Codable {
     let messages: [Message]

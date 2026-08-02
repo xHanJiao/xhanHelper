@@ -72,10 +72,6 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			}
 		}
 
-		// 使用 conversation 的 IsDefault 标记判断，而非请求参数
-		// 保证后续携带 conversation_id 的请求也能正确走 HistoryBuilder 路径
-		isDefaultConv := conv.IsDefault
-
 		// 加载智能体 system prompt（新会话和续聊都支持）
 		var agentSystemPrompt string
 		var agentID string
@@ -101,33 +97,15 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		}
 		pipelineCtx := pipeline.WithPreContext(c.Request.Context(), pc)
 
-		routeInterval := cfg.Server.AgentRouteInterval
-		if routeInterval <= 0 {
-			routeInterval = 5 // 默认每 5 条触发
+		pl, err := pipeline.NewPipeline(
+			pipeline.NewShortInputCheckStep(),
+			pipeline.NewNormalizeDatesStep(),
+		)
+		if err != nil {
+			log.Printf("[chat] pipeline init error: %v", err)
 		}
-		if isDefaultConv {
-			pl, err := pipeline.NewPipeline(
-				pipeline.NewShortInputCheckStep(),
-				pipeline.NewNormalizeDatesStep(),
-			)
-			if err != nil {
-				log.Printf("[chat] pipeline init error: %v", err)
-			}
-			if _, pipeErr := pl.Run(pipelineCtx); pipeErr != nil {
-				log.Printf("[chat] pipeline run error: %v", pipeErr)
-			}
-		} else {
-			pl, err := pipeline.NewPipeline(
-				pipeline.NewShortInputCheckStep(),
-				pipeline.NewNormalizeDatesStep(),
-				pipeline.NewAutoRouteStep(orch.FlashClient(), agentRepo, conv.AgentID, conv.ID, msgRepo, routeInterval, convRepo),
-			)
-			if err != nil {
-				log.Printf("[chat] pipeline init error: %v", err)
-			}
-			if _, pipeErr := pl.Run(pipelineCtx); pipeErr != nil {
-				log.Printf("[chat] pipeline run error: %v", pipeErr)
-			}
+		if _, pipeErr := pl.Run(pipelineCtx); pipeErr != nil {
+			log.Printf("[chat] pipeline run error: %v", pipeErr)
 		}
 
 		// 读取管线结果

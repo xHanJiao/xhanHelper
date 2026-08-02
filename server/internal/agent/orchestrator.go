@@ -1107,7 +1107,7 @@ func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, us
 		UserID:         userID,
 		ConversationID: convID,
 		Role:           "assistant",
-		Content:        maybeInjectCreatedAt(msg.Content),
+		Content:        msg.Content,
 		IsInternal:     isInternal,
 	}
 	mergeMsgExtra(modelMsg, func(extra *MsgExtra) {
@@ -1496,6 +1496,12 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int, useN
 			if m.ToolCallID != nil {
 				msg.ToolCallID = *m.ToolCallID
 			}
+			// 必须回传 reasoning_content：ReAct 循环内发送的 assistant 消息带思维链，
+			// 若重放时省略，请求字节与上一轮不一致，破坏 DeepSeek 上下文前缀缓存。
+			// （DeepSeek 文档：工具调用轮的 reasoning_content 必须回传；纯文本轮回传会被忽略，无害）
+			if m.ReasoningContent != nil {
+				msg.ReasoningContent = *m.ReasoningContent
+			}
 			if useNativeFC && m.ToolCallsJSON != nil {
 				var tcs []llm.ToolCall
 				if err := json.Unmarshal([]byte(*m.ToolCallsJSON), &tcs); err == nil {
@@ -1715,23 +1721,7 @@ func extractToolCallsJSON(raw string) *string {
 	return &s
 }
 
-// maybeInjectCreatedAt 如果 content 是合法 JSON（含 reply 字段），注入 created_at
-func maybeInjectCreatedAt(raw string) string {
-	var m map[string]interface{}
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		return raw
-	}
-	if _, ok := m["reply"]; !ok {
-		return raw
-	}
-	m["created_at"] = time.Now().Format(time.RFC3339)
-	b, err := json.Marshal(m)
-	if err != nil {
-		return raw
-	}
-	return string(b)
-}
-
+// extractCleanText 提取 JSON 回复中的可见文本（供流式展示）
 func extractCleanText(raw string) string {
 	parsed, err := ParseLLMResponse(raw)
 	if err != nil {

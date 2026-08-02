@@ -89,8 +89,6 @@ type ServerConfig struct {
 	DisableBackgroundTasks bool     `yaml:"disable_background_tasks"` // 禁用所有后台任务（记忆提取/摘要/主题分析/反思等），dev 环境建议开启
 	SidecarURL             string   `yaml:"sidecar_url"`              // Python sidecar MCP HTTP 地址
 	TokenTTLMinutes        int      `yaml:"token_ttl_minutes"`        // token 过期时间（分钟），默认 5
-	AgentRouteTriggers     []int    `yaml:"agent_route_triggers"`     // [已废弃] 异步路由触发消息数
-	AgentRouteInterval     int      `yaml:"agent_route_interval"`     // 自动路由间隔：每 N 条用户消息触发一次，0=禁用，默认 5
 	MaxTokensPerUser       int      `yaml:"max_tokens_per_user"`      // 同一用户最大 token 数，默认 4
 	AdminUsers             []string `yaml:"admin_users"`              // 管理员用户 ID 列表
 }
@@ -262,12 +260,6 @@ func merge(dst, src *Config) {
 	}
 	if len(src.Server.AdminUsers) > 0 {
 		dst.Server.AdminUsers = src.Server.AdminUsers
-	}
-	if len(src.Server.AgentRouteTriggers) > 0 {
-		dst.Server.AgentRouteTriggers = src.Server.AgentRouteTriggers
-	}
-	if src.Server.AgentRouteInterval != 0 {
-		dst.Server.AgentRouteInterval = src.Server.AgentRouteInterval
 	}
 	if src.DB.Driver != "" {
 		dst.DB.Driver = src.DB.Driver

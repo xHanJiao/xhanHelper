@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -90,12 +91,17 @@ func buildClientToolDefs(clientTools []ClientTool, registry *tool.Registry) []ll
 		})
 	}
 
+	// 按 server_name 排序 + 组内函数按名排序，保证同集合请求的 tools 数组字节稳定
+	// （客户端上报顺序可能随连接状态变化，排序后与缓存前缀对齐）
+	sort.Strings(order)
 	defs := make([]llm.ToolDefinition, 0, len(order))
 	for _, name := range order {
+		funcs := grouped[name]
+		sort.Slice(funcs, func(i, j int) bool { return funcs[i].Name < funcs[j].Name })
 		defs = append(defs, llm.ToolDefinition{
 			Name:        name,
 			Description: "Mac 客户端本地工具（" + name + "）",
-			Functions:   grouped[name],
+			Functions:   funcs,
 		})
 	}
 	return defs

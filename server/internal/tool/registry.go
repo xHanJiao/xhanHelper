@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -170,14 +171,28 @@ func (r *Registry) Has(name string) bool {
 	return ok
 }
 
-// GetNativeFCTools 导出所有非隐藏工具的函数定义（供 LLM 原生 function calling）。
-// 每个函数扁平化为独立的 tool definition，名称格式为 "toolName__funcName"。
-func (r *Registry) GetNativeFCTools() []llm.ToolDefinition {
-	defs := make([]llm.ToolDefinition, 0, len(r.tools))
-	for name, t := range r.tools {
+// sortedVisibleToolNames 返回所有非隐藏工具名，按字典序排序。
+// Go map 遍历顺序随机，若直接遍历会导致 LLM 请求体（tools 数组 / 工具定义文本）
+// 每次请求字节不同，破坏 DeepSeek 上下文前缀缓存。所有 LLM 可见输出必须走此函数。
+func (r *Registry) sortedVisibleToolNames() []string {
+	names := make([]string, 0, len(r.tools))
+	for name := range r.tools {
 		if r.hiddenNames[name] {
 			continue
 		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// GetNativeFCTools 导出所有非隐藏工具的函数定义（供 LLM 原生 function calling）。
+// 每个函数扁平化为独立的 tool definition，名称格式为 "toolName__funcName"。
+// 输出按工具名排序，保证同集合请求的 tools 数组字节稳定。
+func (r *Registry) GetNativeFCTools() []llm.ToolDefinition {
+	defs := make([]llm.ToolDefinition, 0, len(r.tools))
+	for _, name := range r.sortedVisibleToolNames() {
+		t := r.tools[name]
 		funcs := make([]llm.FuncDef, len(t.Functions()))
 		for i, f := range t.Functions() {
 			funcs[i] = llm.FuncDef{
@@ -195,10 +210,12 @@ func (r *Registry) GetNativeFCTools() []llm.ToolDefinition {
 	return defs
 }
 
-// GetLLMTools 导出所有工具定义（供 LLM native function calling）
+// GetLLMTools 导出所有工具定义（供 LLM native function calling）。
+// 输出按工具名排序，保证字节稳定。
 func (r *Registry) GetLLMTools() []llm.ToolDefinition {
 	defs := make([]llm.ToolDefinition, 0, len(r.tools))
-	for _, t := range r.tools {
+	for _, name := range r.sortedVisibleToolNames() {
+		t := r.tools[name]
 		funcs := make([]llm.FuncDef, len(t.Functions()))
 		for i, f := range t.Functions() {
 			funcs[i] = llm.FuncDef{
@@ -208,7 +225,7 @@ func (r *Registry) GetLLMTools() []llm.ToolDefinition {
 			}
 		}
 		defs = append(defs, llm.ToolDefinition{
-			Name:        t.Name(),
+			Name:        name,
 			Description: t.Description(),
 			Functions:   funcs,
 		})
@@ -248,13 +265,11 @@ func (r *Registry) GeneratePromptWithOverview() string {
 
 	// 其他工具概览（需通过 tool_retriever.search 查询详细定义后才能调用）
 	var overview []string
-	for name, t := range r.tools {
+	for _, name := range r.sortedVisibleToolNames() {
 		if name == "tool_retriever" || name == "note" {
 			continue
 		}
-		if r.hiddenNames[name] {
-			continue
-		}
+		t := r.tools[name]
 		overview = append(overview, fmt.Sprintf("工具名: %s —— %s\n", name, t.Description()))
 	}
 	if len(overview) > 0 {
@@ -348,10 +363,8 @@ func (r *Registry) GeneratePrompt() string {
 	buf.WriteString("你可以使用以下工具来完成用户的请求。\n")
 	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
 
-	for _, t := range r.tools {
-		if r.hiddenNames[t.Name()] {
-			continue
-		}
+	for _, name := range r.sortedVisibleToolNames() {
+		t := r.tools[name]
 		buf.WriteString(fmt.Sprintf("## 工具: %s\n", t.Name()))
 		buf.WriteString(fmt.Sprintf("描述: %s\n\n", t.Description()))
 		buf.WriteString("函数:\n")
@@ -416,11 +429,12 @@ func (r *Registry) GeneratePrompt() string {
 // ToolOverview 生成所有可用工具的名称+描述概览（不含详细参数），供 LLM 了解工具能力
 func (r *Registry) ToolOverview() string {
 	var buf bytes.Buffer
-	for _, t := range r.tools {
-		if t.Name() == "tool_retriever" {
+	for _, name := range r.sortedVisibleToolNames() {
+		if name == "tool_retriever" {
 			continue
 		}
-		buf.WriteString(fmt.Sprintf("工具名: %s —— %s\n", t.Name(), t.Description()))
+		t := r.tools[name]
+		buf.WriteString(fmt.Sprintf("工具名: %s —— %s\n", name, t.Description()))
 	}
 	result := buf.String()
 	if result == "" {

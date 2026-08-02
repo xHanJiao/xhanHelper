@@ -100,8 +100,56 @@ func TestBuildClientToolDefs_DedupDuplicateName(t *testing.T) {
 	if len(defs) != 1 || len(defs[0].Functions) != 2 {
 		t.Fatalf("expected 1 group with 2 functions after dedup, got %+v", defs)
 	}
-	if defs[0].Functions[0].Description != "first" {
-		t.Errorf("dedup should keep first occurrence, got %q", defs[0].Functions[0].Description)
+	// 组内按名排序（click < navigate），断言按名字查找而非下标
+	var navDesc, clickDesc string
+	for _, fn := range defs[0].Functions {
+		switch fn.Name {
+		case "navigate":
+			navDesc = fn.Description
+		case "click":
+			clickDesc = fn.Description
+		}
+	}
+	if navDesc != "first" {
+		t.Errorf("dedup should keep first occurrence, got %q", navDesc)
+	}
+	if clickDesc != "" {
+		t.Errorf("click description should be empty, got %q", clickDesc)
+	}
+}
+
+func TestBuildClientToolDefs_Sorted(t *testing.T) {
+	// 输入乱序 → 输出按 server_name 排序、组内函数按名排序、两次调用字节一致
+	reg := tool.NewRegistry()
+	input := []ClientTool{
+		{ServerName: "zeta", Name: "fn_b"},
+		{ServerName: "alpha", Name: "fn_b"},
+		{ServerName: "zeta", Name: "fn_a"},
+		{ServerName: "alpha", Name: "fn_a"},
+		{ServerName: "mid", Name: "fn_a"},
+	}
+	a := buildClientToolDefs(input, reg)
+	b := buildClientToolDefs(input, reg)
+
+	if len(a) != 3 {
+		t.Fatalf("expected 3 groups, got %d", len(a))
+	}
+	got := []string{a[0].Name, a[1].Name, a[2].Name}
+	want := []string{"alpha", "mid", "zeta"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("groups 应按 server_name 排序, got %v, want %v", got, want)
+		}
+	}
+	// 组内函数按名排序
+	if a[0].Functions[0].Name != "fn_a" || a[0].Functions[1].Name != "fn_b" {
+		t.Errorf("alpha 组内函数应按名排序, got %+v", a[0].Functions)
+	}
+
+	ja, _ := json.Marshal(a)
+	jb, _ := json.Marshal(b)
+	if string(ja) != string(jb) {
+		t.Error("buildClientToolDefs 两次调用应字节一致")
 	}
 }
 

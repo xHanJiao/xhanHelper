@@ -558,7 +558,7 @@ func TestMkLlmChatReq_ParameterResolution(t *testing.T) {
 			result := "sys-prompt"
 			msgs := []llm.Message{{Role: "user", Content: "hi"}}
 
-			cr := o.mkLlmChatReq(req, result, msgs)
+			cr := o.mkLlmChatReq(req, result, msgs, false)
 
 			if cr.SystemPrompt != "sys-prompt" {
 				t.Errorf("SystemPrompt: want 'sys-prompt', got '%s'", cr.SystemPrompt)
@@ -602,7 +602,7 @@ func TestMkLlmChatReq_PassThroughFields(t *testing.T) {
 		MaxTokens:   ptr(4096),
 	}
 
-	cr := o.mkLlmChatReq(req, result, msgs)
+	cr := o.mkLlmChatReq(req, result, msgs, false)
 
 	if cr.SystemPrompt != "custom system prompt" {
 		t.Errorf("SystemPrompt: want 'custom system prompt', got '%s'", cr.SystemPrompt)
@@ -632,7 +632,7 @@ func TestMkLlmChatReq_DefaultsNilWhenNotSet(t *testing.T) {
 	}
 	msgs := []llm.Message{}
 
-	cr := o.mkLlmChatReq(req, "", msgs)
+	cr := o.mkLlmChatReq(req, "", msgs, false)
 
 	if cr.Temperature != nil {
 		t.Errorf("Temperature: want nil, got %v", *cr.Temperature)

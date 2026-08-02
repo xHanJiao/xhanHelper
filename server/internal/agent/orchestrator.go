@@ -31,6 +31,15 @@ const BaseSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职
 
 const defaultMaxIterations = 8
 
+// finalRoundPrompt — 达到 max_iterations 上限后的收尾轮指令。
+// 作为 assistant 消息追加到 state.msgs（仅内存，不落库），要求 LLM 停止工具调用、输出总结。
+const finalRoundPrompt = `[系统] 本轮已达本任务的最大步数限制。请不要再调用任何工具，直接输出最终回复。
+回复须诚实说明完成情况，必须包含：
+1. 已完成：概括本轮完成的工作与关键结论
+2. 未完成：说明因步骤限制未能覆盖的部分
+3. 后续建议：若需要继续，下一步可以做什么
+如信息已充分，正常给出最终回答即可，不必提及内部限制。`
+
 // WindowResult 是扩张窗口计算的结果，描述本次请求的窗口大小和 session 状态。
 type WindowResult struct {
 	Size              int    // 本次窗口轮数
@@ -74,6 +83,7 @@ type reactState struct {
 	nativeFCTextDeferred   bool // 原生 FC 下文本因 verify 暂缓推送
 	jsonBuffered           bool // 原生 FC 下文本首字符为 { 暂缓推送，防 JSON 泄露
 	clientToolsUnavailable bool // 客户端断连/超时后置位，本次 Run 内后续客户端工具调用快速失败
+	finalRound             bool // 达到 max_iterations 后的收尾轮：禁用工具，强制输出总结
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（文本解析用）
@@ -370,8 +380,33 @@ func (o *Orchestrator) runReActLoop(
 		}
 	}
 
-	o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrMaxIterations)})
-	o.emitDone(events, req.ConversationID, "", userMsg.ID, "max iterations reached", idsByTypeFromResult(retrieveResult))
+	// 达到 max_iterations 仍未收敛：执行收尾轮（注入收尾指令 + 禁用工具，强制输出总结），
+	// 不再直接报"任务未完成"硬错误。
+	o.runFinalRound(ctx, events, req, systemPrompt, retrieveResult, state, maxIter)
+}
+
+// runFinalRound — 收尾轮：达到 max_iterations 后的最后一轮 LLM 调用。
+// 在 state.msgs 追加收尾指令（仅内存不落库，避免污染历史前缀缓存），
+// 并以空工具集调用 LLM，强制其输出最终总结。
+func (o *Orchestrator) runFinalRound(
+	ctx context.Context,
+	events chan<- *llm.StreamEvent,
+	req *RunRequest,
+	systemPrompt string,
+	retrieveResult *ctxflow.RetrieveResult,
+	state *reactState,
+	iter int,
+) {
+	state.finalRound = true
+	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: finalRoundPrompt})
+	log.Printf("[orch] final round: max iterations reached, forcing summary (msgs=%d)", len(state.msgs))
+
+	done := o.runOneRound(ctx, events, o.pickClient(req), req, systemPrompt, retrieveResult, state, iter)
+	if !done {
+		// 兜底：收尾轮仍未结束（如 prompt-eng 模式 LLM 仍返回工具调用），保留硬错误行为
+		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrMaxIterations)})
+		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "max iterations reached", idsByTypeFromResult(retrieveResult))
+	}
 }
 
 // prepareUserMsg 创建用户消息并设置 WindowSize/SessionStart Extra 字段。
@@ -605,7 +640,7 @@ func (o *Orchestrator) runOneRound(
 
 	state.nativeFCTextDeferred = o.shouldVerify(req, state)
 	llmStart := time.Now()
-	streamEvents, err := client.Chat(ctx, o.mkLlmChatReq(req, systemPrompt, state.msgs))
+	streamEvents, err := client.Chat(ctx, o.mkLlmChatReq(req, systemPrompt, state.msgs, state.finalRound))
 	if err != nil {
 		log.Printf("[orch] round %d LLM error: %v", round+1, err)
 		// 主动取消/停止（runCtx 被取消）：静默退出，不向用户报"服务出错"
@@ -646,7 +681,7 @@ func (o *Orchestrator) runOneRound(
 	return false
 }
 
-func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, msgs []llm.Message) *llm.ChatRequest {
+func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, msgs []llm.Message, finalRound bool) *llm.ChatRequest {
 	isProMode := req.DeepMode && o.proClient != nil
 	temperature := req.Temperature
 	if temperature == nil {
@@ -662,10 +697,10 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, msgs [
 		thinking = &t
 	}
 	var tools []llm.ToolDefinition
-	if o.useNativeFC {
+	if !finalRound && o.useNativeFC {
 		tools = o.registry.GetNativeFCTools()
 		tools = append(tools, buildClientToolDefs(req.ClientTools, o.registry)...)
-	} else if len(req.ClientTools) > 0 {
+	} else if len(req.ClientTools) > 0 && !finalRound {
 		log.Printf("[orch] client_tools ignored: use_native_fc=false")
 	}
 	return &llm.ChatRequest{
@@ -853,7 +888,7 @@ type verifyResult struct {
 }
 
 func (o *Orchestrator) shouldVerify(req *RunRequest, state *reactState) bool {
-	return o.verifyEnabled && len(state.allToolCalls) > 0 && !req.SkipRetrieval
+	return o.verifyEnabled && len(state.allToolCalls) > 0 && !req.SkipRetrieval && !state.finalRound
 }
 
 func (o *Orchestrator) verifyAndMaybeRetry(

@@ -27,7 +27,7 @@ llm:
   base_url: https://api.deepseek.com
   default_temperature: 1.0
   default_max_tokens: 30000
-  max_iterations: 50
+  max_iterations: 80
   max_tool_result_chars: -1
   tool_max_concurrency: 2         # 工具并发执行上限，0=不限制
   extract_msg_limit: 50            # 记忆提取每次最多取的消息数

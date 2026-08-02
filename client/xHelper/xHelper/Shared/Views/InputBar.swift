@@ -10,8 +10,10 @@ struct InputBar: View {
     var dismissKeyboardToken: UUID?
     let onSend: () -> Void
     let onStop: () -> Void
-    /// Tab 快捷键切换会话模式（work ↔ plan，参照 opencode）
+    /// 切换计划模式（work ↔ plan，胶囊点击切换）
     let onToggleMode: () -> Void
+    /// 切换信任模式（跳过 L3 工具确认，胶囊点击切换）
+    let onToggleTrustedMode: () -> Void
     @EnvironmentObject var fontSizeManager: FontSizeManager
     @State private var shakeOffset: CGFloat = 0
 #if os(macOS)
@@ -95,11 +97,6 @@ struct InputBar: View {
                     }
                     return .handled
                 }
-                .onKeyPress(.tab, phases: .down) { _ in
-                    // Tab 切换会话模式（work ↔ plan）。返回 .handled 阻止 TextEditor 插入 tab 字符
-                    onToggleMode()
-                    return .handled
-                }
                 .scrollContentBackground(.hidden)
                 .font(.system(size: scaledSize))
                 .frame(minHeight: lineHeight * 4, maxHeight: lineHeight * 8)
@@ -161,7 +158,8 @@ struct InputBar: View {
                 dismissKeyboardToken: dismissKeyboardToken,
                 onSend: {},
                 onStop: {},
-                onToggleMode: {}
+                onToggleMode: {},
+                onToggleTrustedMode: {}
             )
         }
         .frame(height: 200)
@@ -181,7 +179,8 @@ struct InputBar: View {
             dismissKeyboardToken: dismissKeyboardToken,
             onSend: {},
             onStop: {},
-            onToggleMode: {}
+            onToggleMode: {},
+            onToggleTrustedMode: {}
         )
     }
     .frame(height: 200)

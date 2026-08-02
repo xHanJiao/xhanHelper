@@ -97,7 +97,12 @@ class ChatViewModel: ObservableObject {
     @Published var pendingToolConfirmation: ToolConfirmation?
     private var confirmationResolved = false
 
-    /// 切换会话模式（work ↔ plan）。仅用户可触发（Tab 快捷键 / 胶囊条点击）。
+    /// 信任模式（会话级本地状态）：开启后跳过 L3 工具确认，直接执行。
+    /// 适合固定流程/重复操作；只影响客户端确认弹窗，服务端零感知。
+    /// 换会话（loadConversation）自动关闭，安全默认。
+    @Published var trustedMode = false
+
+    /// 切换计划模式（work ↔ plan）。仅用户可触发（胶囊条点击）。
     /// 已有会话：PATCH 落库，失败回滚；空 tab（无会话）：只改本地，第一条消息经 init_mode 落库。
     func toggleMode() async {
         let next = isPlanMode ? "work" : "plan"
@@ -116,8 +121,22 @@ class ChatViewModel: ObservableObject {
         }
     }
 
+    /// 切换信任模式。仅用户可触发（胶囊条点击），切换时 Toast 明确反馈。
+    func toggleTrustedMode() {
+        trustedMode.toggle()
+        if trustedMode {
+            ToastCenter.shared.show("已进入信任模式：高风险工具不再确认")
+        } else {
+            ToastCenter.shared.show("已退出信任模式")
+        }
+    }
+
     /// 挂起等待用户确认 L3 工具执行；60s 超时视为拒绝
     func awaitToolConfirmation(toolName: String, arguments: [String: Any]) async -> Bool {
+        // 信任模式：跳过确认直接放行
+        if trustedMode {
+            return true
+        }
         let argsSummary = arguments.isEmpty
             ? "(无参数)"
             : String(arguments.map { "\($0.key)=\($0.value)" }.joined(separator: ", ").prefix(80))
@@ -175,6 +194,7 @@ class ChatViewModel: ObservableObject {
         conversationId = id
         conversationTitle = title
         self.mode = mode ?? "work" // 会话列表数据带 mode（服务端权威）；旧数据缺失时默认 work
+        trustedMode = false // 信任模式会话级：换会话自动关闭（安全默认）
         isInitialLoading = true
         errorMessage = nil
         loadMoreError = nil

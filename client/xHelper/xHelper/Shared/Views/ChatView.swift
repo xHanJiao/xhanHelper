@@ -81,8 +81,14 @@ struct ChatView: View {
                 toolConfirmationBar(conf)
             }
 
-            // 会话模式条：work（正常）/ plan（只读讨论）。点击或 Tab 快捷键切换。
-            modeBar
+            // 模式条（macOS）：计划模式（work/plan）+ 信任模式，点击切换
+            #if os(macOS)
+            HStack(spacing: 8) {
+                modeBar
+                trustedModeBar
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            #endif
 
             // 输入栏
             InputBar(
@@ -104,6 +110,9 @@ struct ChatView: View {
                 },
                 onToggleMode: {
                     Task { await viewModel.toggleMode() }
+                },
+                onToggleTrustedMode: {
+                    viewModel.toggleTrustedMode()
                 }
             )
             .layoutPriority(1)
@@ -121,7 +130,7 @@ struct ChatView: View {
         }
     }
 
-    /// 会话模式条：work（正常，蓝）/ plan（只读讨论，橙）。点击或 Tab 快捷键切换。
+    /// 会话模式条：work（正常，蓝）/ plan（只读讨论，橙）。点击切换。
     private var modeBar: some View {
         Button {
             Task { await viewModel.toggleMode() }
@@ -142,13 +151,41 @@ struct ChatView: View {
             )
         }
         .buttonStyle(.plain)
-        .help("Tab 快捷键或点击切换会话模式：工作（可执行全部工具）/ 计划（只读讨论，写操作被拦截）")
+        .help("点击切换会话模式：工作（可执行全部工具）/ 计划（只读讨论，写操作被拦截）")
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+    }
+
+    /// 信任模式状态条：默认"正常模式"（蓝），开启"信任模式 · 免确认"（橙）。点击切换。
+    /// 仅 macOS 显示（iOS 纯聊天无 L3 工具，不需要）。
+    private var trustedModeBar: some View {
+        Button {
+            viewModel.toggleTrustedMode()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: viewModel.trustedMode ? "shield.checkered" : "shield")
+                    .font(.caption2)
+                Text(viewModel.trustedMode ? "信任模式 · 免确认" : "正常模式")
+                    .font(.caption)
+            }
+            .foregroundColor(viewModel.trustedMode ? .orange : .blue)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 3)
+            .background(
+                Capsule().fill(
+                    (viewModel.trustedMode ? Color.orange : Color.blue).opacity(0.12)
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .help("点击切换信任模式：开启后高风险工具（L3）不再弹确认，直接执行")
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 4)
     }
 
     /// L3 工具执行确认行（无背景，橙色图标/按钮）
-    private func toolConfirmationBar(_ conf: ToolConfirmation) -> some View {        HStack(spacing: 8) {
+    private func toolConfirmationBar(_ conf: ToolConfirmation) -> some View {
+        HStack(spacing: 8) {
             Image(systemName: "shield.lefthalf.filled")
                 .font(.caption)
                 .foregroundColor(.orange)

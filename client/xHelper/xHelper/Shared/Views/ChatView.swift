@@ -81,15 +81,6 @@ struct ChatView: View {
                 toolConfirmationBar(conf)
             }
 
-            // 模式条（macOS）：计划模式（work/plan）+ 信任模式，点击切换
-            #if os(macOS)
-            HStack(spacing: 8) {
-                modeBar
-                trustedModeBar
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            #endif
-
             // 执行计划（todo）：进行中显示步骤列表（可 × 隐藏）；完成/取消后消失（扩散动画）
             if viewModel.planState == .active && !viewModel.planDismissed {
                 planTodoList
@@ -108,31 +99,60 @@ struct ChatView: View {
             //         .padding(.horizontal, 4)
             // }
 
-            // 输入栏
+            // 输入栏（驾驶舱）：按钮通过 builder 注入，收起/展开双态
             InputBar(
                 text: $viewModel.draftText,
                 isEditing: $isEditing,
                 isStreaming: viewModel.isStreaming,
                 dismissKeyboardToken: dismissKeyboardToken,
-                onSend: {
-                    guard !viewModel.draftText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                    dismissKeyboardToken = UUID()
-                    viewModel.sendMessage(viewModel.draftText, baseURL: baseURL, token: token, agentId: agentId)
-                    viewModel.draftText = ""
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        scrollPosition.scrollTo(edge: .top)
-                    }
-                },
+                containerTint: inputBarTint,
+                onSend: sendDraft,
                 onStop: {
                     viewModel.stopStreaming()
-                },
-                onToggleMode: {
+                }
+            ) { ctx in
+                #if os(macOS)
+                ModePill(context: ctx, isPlanMode: viewModel.isPlanMode) {
                     Task { await viewModel.toggleMode() }
-                },
-                onToggleTrustedMode: {
+                }
+                TrustedPill(context: ctx, trusted: viewModel.trustedMode) {
                     viewModel.toggleTrustedMode()
                 }
-            )
+                #endif
+            } trailingActions: { ctx in
+                #if os(macOS)
+                SendStopButton(
+                    context: ctx,
+                    isStreaming: viewModel.isStreaming,
+                    canSend: ctx.canSend,
+                    onSend: sendDraft,
+                    onStop: {
+                        viewModel.stopStreaming()
+                    }
+                )
+                #else
+                if ctx.isStreaming {
+                    IconButton(
+                        visibility: .always,
+                        context: ctx,
+                        symbol: "stop.circle.fill",
+                        tint: .red,
+                        tooltip: "停止生成",
+                        action: { viewModel.stopStreaming() }
+                    )
+                } else {
+                    IconButton(
+                        visibility: .always,
+                        context: ctx,
+                        symbol: "arrow.up.circle.fill",
+                        tint: ctx.canSend ? Color("appAccent") : .gray,
+                        isEnabled: ctx.canSend,
+                        tooltip: "发送",
+                        action: sendDraft
+                    )
+                }
+                #endif
+            }
             .layoutPriority(1)
         }
         .onChange(of: viewModel.scrollToBottomRequested) { _, requested in
@@ -148,57 +168,22 @@ struct ChatView: View {
         }
     }
 
-    /// 会话模式条：work（正常，蓝）/ plan（只读讨论，橙）。点击切换。
-    private var modeBar: some View {
-        Button {
-            Task { await viewModel.toggleMode() }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: viewModel.isPlanMode ? "eye.slash" : "square.and.pencil")
-                    .font(.caption2)
-                Text(viewModel.isPlanMode ? "计划模式 · 只读" : "工作模式")
-                    .font(.caption)
-            }
-            .foregroundColor(viewModel.isPlanMode ? .orange : .blue)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 3)
-            .background(
-                Capsule().fill(
-                    (viewModel.isPlanMode ? Color.orange : Color.blue).opacity(0.12)
-                )
-            )
-        }
-        .buttonStyle(.plain)
-        .help("点击切换会话模式：工作（可执行全部工具）/ 计划（只读讨论，写操作被拦截）")
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 4)
+    /// 输入栏容器描边/光晕色：计划模式橙、信任模式金、其余默认强调色。
+    private var inputBarTint: Color {
+        if viewModel.isPlanMode { return .orange }
+        if viewModel.trustedMode { return Color(red: 0.85, green: 0.6, blue: 0.0) }
+        return Color("appAccent")
     }
 
-    /// 信任模式状态条：默认"正常模式"（蓝），开启"信任模式 · 免确认"（橙）。点击切换。
-    /// 仅 macOS 显示（iOS 纯聊天无 L3 工具，不需要）。
-    private var trustedModeBar: some View {
-        Button {
-            viewModel.toggleTrustedMode()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: viewModel.trustedMode ? "shield.checkered" : "shield")
-                    .font(.caption2)
-                Text(viewModel.trustedMode ? "信任模式 · 免确认" : "正常模式")
-                    .font(.caption)
-            }
-            .foregroundColor(viewModel.trustedMode ? .orange : .blue)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 3)
-            .background(
-                Capsule().fill(
-                    (viewModel.trustedMode ? Color.orange : Color.blue).opacity(0.12)
-                )
-            )
+    /// 发送草稿：校验非空 → 清输入 → 发消息 → 滚到底部。
+    private func sendDraft() {
+        guard !viewModel.draftText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        dismissKeyboardToken = UUID()
+        viewModel.sendMessage(viewModel.draftText, baseURL: baseURL, token: token, agentId: agentId)
+        viewModel.draftText = ""
+        withAnimation(.easeOut(duration: 0.3)) {
+            scrollPosition.scrollTo(edge: .top)
         }
-        .buttonStyle(.plain)
-        .help("点击切换信任模式：开启后高风险工具（L3）不再弹确认，直接执行")
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 4)
     }
 
     /// L3 工具执行确认行（无背景，橙色图标/按钮）

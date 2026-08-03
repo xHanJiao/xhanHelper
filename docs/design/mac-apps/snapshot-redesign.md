@@ -125,8 +125,13 @@ viewport 空间感知（阶段 2 的可见性模型）为桌面宠物提供"屏�
 - **同源 iframe**：递归 `iframe.contentDocument`；交互点击/取中心用 `viewportRect` 逐级累加 iframe 偏移换算到主视口坐标。**跨域 iframe 保持缺口**（访问抛错跳过，cgclick 兜底）。
 - **ref 签名重定位兜底**：`locateElJS` 按稳定 id 未命中时，用快照签名（tag/type/id/name/text）在活 DOM 找回（元素被重建/WeakMap 丢失时）。
 
-## 阶段 4（未实施）
-- 工具描述加固（`@eN` 是稳定句柄、密码禁 selector）；全量回归（S1/S2/G2/G3/PiP）。
+## 阶段 4（已完成）：工具描述加固 + 指示器配色
+
+- **工具描述加固**：全部 ref 工具（click/fill/type/select/check/uncheck/get_text/get_value/cgclick/drag）描述强化——`ref（@eN 稳定句柄，须先 snapshot 获取，DOM 变化后仍有效）优先；selector 仅用于 snapshot 无法捕获的元素（自定义/动态组件）；密码等敏感字段禁止用 selector 定位（必须用 ref）`。
+- **指示器配色（A1）**：活动条统一 accent 单色（浅色=蓝 #0a8dda、深色=浅青绿 #92c8b4，`appAccent` 双变体，均有对比度）；状态靠右侧图标——running 转圈、done 勾号 `.primary`（自适应深浅色，避免深色下白勾叠浅青绿不可见）。弃用绿色。
+
+## 阶段 4 全量回归（R1-R7，待测）
+- R1 快照基础 / R2 S1 密码脱敏 / R3 S2 高敏域 L3 + 确认条人话 / R4 G2 指示器 / R5 G3 内容拦截 / R6 工具描述 ref 优先 / R7 稳定句柄终检。
 
 ## 八、改动文件
 

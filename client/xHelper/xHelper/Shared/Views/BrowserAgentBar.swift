@@ -10,8 +10,9 @@ struct BrowserAgentActivityBar: View {
     var body: some View {
         Group {
             if let act = center.activity {
-                let done = act.state == .done
-                let accent = done ? Color.green : Color("appAccent")
+                // A1：单 accent 色（浅色=蓝、深色=浅青绿，均有对比度），状态靠右侧图标区分。
+                // done 勾用 .primary（自适应深浅色），不用固定白——深色下 accent 是浅色，白勾会不可见。
+                let accent = Color("appAccent")
                 ZStack {
                     HStack(spacing: 6) {
                         Text("AI 正在操作浏览器 ·")
@@ -42,11 +43,9 @@ struct BrowserAgentActivityBar: View {
                                 .padding(.trailing, 12)
                         } else {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundColor(.white)
-                                .frame(width: 14, height: 14)
-                                .background(Circle().fill(Color.green))
-                                .padding(.trailing, 12)
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.primary)
+                                .padding(.trailing, 13)
                         }
                     }
                 }

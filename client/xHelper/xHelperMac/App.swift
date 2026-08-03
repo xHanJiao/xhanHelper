@@ -193,6 +193,7 @@ struct xhanHelperMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var deviceManager = DeviceManager()
     @StateObject private var colorSchemeManager = ColorSchemeManager()
+    @StateObject private var resizeGhost = ResizeGhostState()
     @State private var isHoldingQuit = false
     @State private var holdProgress: Double = 0
 
@@ -200,7 +201,7 @@ struct xhanHelperMacApp: App {
         WindowGroup {
             Group {
                 if deviceManager.isLoggedIn {
-                    ContentView(deviceManager: deviceManager)
+                    ContentView(deviceManager: deviceManager, resizeGhost: resizeGhost)
                         .frame(minWidth: 400, minHeight: 400)
                 } else {
                     LoginMacView(deviceManager: deviceManager)

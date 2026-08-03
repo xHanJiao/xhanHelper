@@ -2,6 +2,9 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var deviceManager: DeviceManager
+    /// 拖拽调宽的共享幽灵线状态（由 App 持有并注入，本视图只改不观察，
+    /// 避免拖拽逐帧重渲染整个 ContentView；子视图通过 @ObservedObject 观察）。
+    let resizeGhost: ResizeGhostState
     @State private var selectedTab = "chat"
     @State private var isInChat = false
     @State private var lastSyncAt = Date.distantPast
@@ -20,6 +23,9 @@ struct ContentView: View {
     @StateObject private var rightSidebar = RightSidebarManager()
     @State private var sidebarWidth: CGFloat = Layout.sidebarDefaultWidth
     @State private var contentHovered = false
+    /// 左/右面板分隔线（seam）的 x 坐标（content 坐标系），由 SeamMarker 上报。
+    @State private var leftSeamX: CGFloat = 0
+    @State private var rightSeamX: CGFloat = 0
     @AppStorage("xhan_sidebar_width") private var storedSidebarWidth: Double = Layout.sidebarDefaultWidth
     @State private var windowWidth: CGFloat = 800
 
@@ -83,8 +89,9 @@ struct ContentView: View {
     }
 #endif
 
-    init(deviceManager: DeviceManager) {
+    init(deviceManager: DeviceManager, resizeGhost: ResizeGhostState) {
         self.deviceManager = deviceManager
+        self.resizeGhost = resizeGhost
         let api = APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
         _chatViewModel = StateObject(wrappedValue: ChatViewModel(apiClient: api))
 #if os(macOS)
@@ -145,13 +152,16 @@ struct ContentView: View {
                                 allowExpand: allowExpand,
                                 chatTabManager: chatTabManager,
                                 conversationListVM: conversationListVM,
-                                defaultConversationID: deviceManager.defaultConversation?.id
+                                defaultConversationID: deviceManager.defaultConversation?.id,
+                                ghost: resizeGhost
                             )
+                            SeamMarker(x: $leftSeamX)
                             macOSContentArea
                             if rightSidebar.isOpen {
+                                SeamMarker(x: $rightSeamX)
                                 RightResizablePanel(
                                     manager: rightSidebar,
-                                    maxWidth: rightSidebarMaxAvailable,
+                                    ghost: resizeGhost,
                                     billVM: billVM,
                                     memoryVM: memoryVM,
                                     noteVM: noteVM,
@@ -161,6 +171,40 @@ struct ContentView: View {
                                     token: deviceManager.token ?? ""
                                 )
                                 .transition(.move(edge: .trailing))
+                            }
+                        }
+                        .coordinateSpace(name: "content")
+                        .overlay(alignment: .topLeading) {
+                            ZStack(alignment: .topLeading) {
+                                // 左手柄：浮在左分隔线（seam）上方，不占布局空间
+                                if allowExpand {
+                                    ResizeHandle(
+                                        width: Double(sidebarWidth),
+                                        minWidth: Double(Layout.sidebarMinWidth),
+                                        maxWidth: Double(Layout.sidebarMaxWidth),
+                                        onLiveChange: { resizeGhost.leftWidth = CGFloat($0) },
+                                        onCommit: { final in
+                                            resizeGhost.leftWidth = nil
+                                            sidebarWidth = CGFloat(final)
+                                        }
+                                    )
+                                    .offset(x: leftSeamX - 7.5)
+                                }
+                                // 右手柄：浮在右分隔线（seam）上方
+                                if rightSidebar.isOpen {
+                                    ResizeHandle(
+                                        width: rightSidebar.width,
+                                        minWidth: 340,
+                                        maxWidth: rightSidebarMaxAvailable,
+                                        reversed: true,
+                                        onLiveChange: { resizeGhost.rightWidth = $0 },
+                                        onCommit: { final in
+                                            resizeGhost.rightWidth = nil
+                                            rightSidebar.width = final
+                                        }
+                                    )
+                                    .offset(x: rightSeamX - 7.5)
+                                }
                             }
                         }
                         .animation(.easeInOut(duration: 0.2), value: rightSidebar.isOpen)
@@ -416,6 +460,27 @@ struct OpenSettingsButton: View {
         } label: {
             Image(systemName: "gear")
         }
+    }
+}
+#endif
+
+#if os(macOS)
+/// 1pt 透明分隔线标记：维持面板间缝隙，并把自己的 x 坐标（content 坐标系）
+/// 上报给 ContentView，用于定位浮在手柄。
+private struct SeamMarker: View {
+    @Binding var x: CGFloat
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: 1)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { x = proxy.frame(in: .named("content")).minX }
+                        .onChange(of: proxy.frame(in: .named("content")).minX) { _, new in x = new }
+                }
+            )
     }
 }
 #endif

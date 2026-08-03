@@ -1,13 +1,12 @@
 import SwiftUI
 
 #if os(macOS)
-/// 右侧栏 + 左缘调宽手柄的独立子视图。
-/// 拖拽期间面板宽度不变，只画一条幽灵线指示目标边界（避免三张毛玻璃卡片
-/// 逐帧重布局/重合成导致整窗闪动）；松手才把最终宽度提交到 manager.width。
+/// 右侧栏卡片视图。拖拽调宽手柄在 ContentView 覆盖层（不占布局空间），
+/// 幽灵线通过共享的 ResizeGhostState 驱动。
 struct RightResizablePanel: View {
     @ObservedObject var manager: RightSidebarManager
-    /// 当前窗口/布局下允许的最大宽度（由 ContentView 传入）。
-    let maxWidth: Double
+    /// 拖拽调宽共享状态（观察幽灵线宽度）。
+    @ObservedObject var ghost: ResizeGhostState
 
     let billVM: BillViewModel
     let memoryVM: MemoryViewModel
@@ -17,43 +16,31 @@ struct RightResizablePanel: View {
     let baseURL: String
     let token: String
 
-    @State private var liveWidth: Double?
-
     var body: some View {
         ZStack(alignment: .topLeading) {
-            HStack(spacing: 0) {
-                ResizeHandle(
-                    width: manager.width,
-                    minWidth: 340,
-                    maxWidth: maxWidth,
-                    reversed: true,
-                    onLiveChange: { liveWidth = $0 },
-                    onCommit: { final in
-                        liveWidth = nil
-                        manager.width = final
-                    }
-                )
-                RightSidebarView(
-                    manager: manager,
-                    billVM: billVM,
-                    memoryVM: memoryVM,
-                    noteVM: noteVM,
-                    documentVM: documentVM,
-                    themeVM: themeVM,
-                    baseURL: baseURL,
-                    token: token
-                )
-                .padding(.top, 4)
-                .padding(.leading, 12)
-                .padding(.trailing, 8)
-            }
+            RightSidebarView(
+                manager: manager,
+                billVM: billVM,
+                memoryVM: memoryVM,
+                noteVM: noteVM,
+                documentVM: documentVM,
+                themeVM: themeVM,
+                baseURL: baseURL,
+                token: token
+            )
+            .padding(.top, 4)
+            .padding(.leading, 12)
+            .padding(.trailing, 8)
 
-            if let live = liveWidth {
-                Rectangle()
-                    .fill(Color("appAccent").opacity(0.7))
-                    .frame(width: 2)
-                    .offset(x: manager.width - live)
-                    .allowsHitTesting(false)
+            if let live = ghost.rightWidth {
+                VStack(alignment: .leading, spacing: 0) {
+                    Rectangle()
+                        .fill(Color("appAccent").opacity(0.7))
+                        .frame(width: 2)
+                    Spacer(minLength: 16) // 底部留白，线不到底
+                }
+                .offset(x: manager.width - live)
+                .allowsHitTesting(false)
             }
         }
     }

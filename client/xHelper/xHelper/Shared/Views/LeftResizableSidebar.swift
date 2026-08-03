@@ -1,9 +1,8 @@
 import SwiftUI
 
 #if os(macOS)
-/// 左侧栏 + 右缘调宽手柄的独立子视图。
-/// 拖拽期间侧栏宽度不变，只画一条幽灵线指示目标边界（避免整窗闪动）；
-/// 松手才把最终宽度提交到 sidebarWidth。
+/// 左侧栏卡片视图。拖拽调宽手柄在 ContentView 覆盖层（不占布局空间），
+/// 幽灵线通过共享的 ResizeGhostState 驱动。
 struct LeftResizableSidebar: View {
     @Binding var sidebarWidth: CGFloat
     @Binding var selectedTab: SidebarTab
@@ -11,53 +10,42 @@ struct LeftResizableSidebar: View {
     @ObservedObject var chatTabManager: ChatTabManager
     @ObservedObject var conversationListVM: ConversationListViewModel
     let defaultConversationID: String?
+    /// 拖拽调宽共享状态（观察幽灵线宽度）。
+    @ObservedObject var ghost: ResizeGhostState
 
-    @State private var liveWidth: CGFloat?
     @State private var sidebarHovered = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            ZStack(alignment: .trailing) {
-                SidebarView(
-                    selectedTab: $selectedTab,
-                    sidebarWidth: $sidebarWidth,
-                    allowExpand: allowExpand,
-                    chatTabManager: chatTabManager,
-                    conversationListVM: conversationListVM,
-                    defaultConversationID: defaultConversationID
-                )
-                .padding(.bottom, 12)
-                .padding(.horizontal, 12)
-                .modifier(CardBackgroundModifier(isLifted: sidebarHovered))
-                .padding(.top, 4)
-                .padding(.bottom, 12)
-                .padding(.leading, 8)
-                .padding(.trailing, 12)
-                .onHover { sidebarHovered = $0 }
+        ZStack(alignment: .trailing) {
+            SidebarView(
+                selectedTab: $selectedTab,
+                sidebarWidth: $sidebarWidth,
+                allowExpand: allowExpand,
+                chatTabManager: chatTabManager,
+                conversationListVM: conversationListVM,
+                defaultConversationID: defaultConversationID
+            )
+            .padding(.bottom, 12)
+            .padding(.horizontal, 12)
+            .modifier(CardBackgroundModifier(isLifted: sidebarHovered))
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+            .padding(.leading, 8)
+            .padding(.trailing, 12)
+            .onHover { sidebarHovered = $0 }
 
-                if let live = liveWidth {
+            if let live = ghost.leftWidth {
+                VStack(alignment: .leading, spacing: 0) {
                     Rectangle()
                         .fill(Color("appAccent").opacity(0.7))
                         .frame(width: 2)
-                        .offset(x: live - sidebarWidth)
-                        .allowsHitTesting(false)
+                    Spacer(minLength: 16) // 底部留白，线不到底
                 }
-            }
-            .zIndex(1) // 幽灵线向右溢出到聊天区时，保证渲染在聊天区之上
-
-            if allowExpand {
-                ResizeHandle(
-                    width: Double(sidebarWidth),
-                    minWidth: Double(Layout.sidebarMinWidth),
-                    maxWidth: Double(Layout.sidebarMaxWidth),
-                    onLiveChange: { liveWidth = CGFloat($0) },
-                    onCommit: { final in
-                        liveWidth = nil
-                        sidebarWidth = CGFloat(final)
-                    }
-                )
+                .offset(x: live - sidebarWidth)
+                .allowsHitTesting(false)
             }
         }
+        .zIndex(1) // 幽灵线向右溢出到聊天区时，保证渲染在聊天区之上
     }
 }
 #endif

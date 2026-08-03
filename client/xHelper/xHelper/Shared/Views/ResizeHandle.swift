@@ -1,9 +1,17 @@
 import SwiftUI
+import Combine
 #if os(macOS)
 import AppKit
 #endif
 
 #if os(macOS)
+/// 拖拽调宽的共享幽灵线状态。手柄在 ContentView 覆盖层上报实时宽度，
+/// 各面板子视图观察此状态绘制幽灵线——避免 ContentView 逐帧重渲染。
+final class ResizeGhostState: ObservableObject {
+    @Published var leftWidth: CGFloat?
+    @Published var rightWidth: Double?
+}
+
 /// 面板边缘的拖拽调宽手柄。
 /// 使用独立 DragGesture（而非挂在面板本体上），避免与面板内部的
 /// ScrollView 抢手势——这是左侧栏原来整栏挂手势导致拖拽调宽失效的根因。
@@ -29,8 +37,8 @@ struct ResizeHandle: View {
     var body: some View {
         Rectangle()
             .fill(Color.clear)
-            .frame(width: 1)
-            .contentShape(Rectangle().inset(by: -3.5))
+            .frame(width: 15)
+            .contentShape(Rectangle())
             .overlay(alignment: .center) {
                 Rectangle()
                     .fill(

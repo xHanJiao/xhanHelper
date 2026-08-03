@@ -263,6 +263,7 @@ class ChatViewModel: ObservableObject {
         }
         // 浏览器工具走人话摘要（ref→元素文本、密码脱敏、来源等），其余保留原始参数
         let argsSummary: String
+        #if os(macOS)
         if bridgeToBrowser {
             argsSummary = BrowserActivityCenter.shared.confirmationBody(toolName: toolName, arguments: arguments)
         } else {
@@ -270,10 +271,16 @@ class ChatViewModel: ObservableObject {
                 ? "(无参数)"
                 : String(arguments.map { "\($0.key)=\($0.value)" }.joined(separator: ", ").prefix(80))
         }
+        #else
+        argsSummary = arguments.isEmpty
+            ? "(无参数)"
+            : String(arguments.map { "\($0.key)=\($0.value)" }.joined(separator: ", ").prefix(80))
+        #endif
         confirmationResolved = false
         let myID = UUID() // per-confirmation 标识：超时任务只处理"当前 pending 还是自己"的确认，杜绝双重 resume
         let displayName = LocalToolRegistry.shared.displayName(for: toolName)
-        // 浏览器确认桥：与 pendingToolConfirmation 同步发布，两处确认条同时出现
+        // 浏览器确认桥：与 pendingToolConfirmation 同步发布，两处确认条同时出现（macOS only）
+        #if os(macOS)
         if bridgeToBrowser {
             BrowserActivityCenter.shared.presentConfirmation(
                 displayName: displayName,
@@ -283,6 +290,7 @@ class ChatViewModel: ObservableObject {
                 }
             )
         }
+        #endif
         return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
             pendingToolConfirmation = ToolConfirmation(id: myID, toolName: toolName, displayName: displayName, argsSummary: argsSummary, continuation: cont)
             // 60s 超时自动拒绝。confirmationResolved 是共享标志（新确认会重置），
@@ -295,7 +303,9 @@ class ChatViewModel: ObservableObject {
                       !self.confirmationResolved else { return }
                 self.confirmationResolved = true
                 self.pendingToolConfirmation = nil
+                #if os(macOS)
                 BrowserActivityCenter.shared.dismissConfirmation()
+                #endif
                 cont.resume(returning: false)
             }
         }
@@ -306,7 +316,9 @@ class ChatViewModel: ObservableObject {
         guard let conf = pendingToolConfirmation, !confirmationResolved else { return }
         confirmationResolved = true
         pendingToolConfirmation = nil
+        #if os(macOS)
         BrowserActivityCenter.shared.dismissConfirmation()
+        #endif
         conf.continuation.resume(returning: allow)
     }
 

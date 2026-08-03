@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 
+#if os(macOS)
 /// agent 操作浏览器的可见性中心（G2）：在 `handleClientToolCall` 咽喉点广播浏览器工具的
 /// 执行动作，供浏览器内容区顶部细条指示器展示。仅反映浏览器 namespace 的工具。
 /// 文案不展示敏感值（fill/type 只显示目标占位符，不显示输入内容）。
@@ -252,3 +253,4 @@ final class BrowserActivityCenter: ObservableObject {
         return lines.joined(separator: "\n")
     }
 }
+#endif

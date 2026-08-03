@@ -193,6 +193,8 @@ struct FloatingChatPanel: View {
                 }
             }
             .frame(width: size.width, height: size.height)
+            // 按面板 frame 裁剪内容（计划便签/输入框等溢出时不渲染到面板外）
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -241,7 +243,6 @@ struct FloatingChatPanel: View {
                 compactFont: compactFont
             )
         }
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(alignment: .bottomTrailing) {
             resizeHandle
         }

@@ -21,7 +21,7 @@ struct RightSidebarView: View {
             }
             contentArea
         }
-        .frame(width: max(manager.width, 340))
+        .frame(width: max(manager.width, Layout.rightSidebarMinWidth))
         .modifier(CardBackgroundModifier(isLifted: isHovered))
         .onHover { isHovered = $0 }
     }

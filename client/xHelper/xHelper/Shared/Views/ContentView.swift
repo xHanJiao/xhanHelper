@@ -23,6 +23,7 @@ struct ContentView: View {
     @StateObject private var rightSidebar = RightSidebarManager()
     @State private var sidebarWidth: CGFloat = Layout.sidebarDefaultWidth
     @State private var contentHovered = false
+    @State private var sidebarHovered = false
     /// 左/右面板分隔线（seam）的 x 坐标（content 坐标系），由 SeamMarker 上报。
     @State private var leftSeamX: CGFloat = 0
     @State private var rightSeamX: CGFloat = 0
@@ -52,16 +53,59 @@ struct ContentView: View {
     private var allowExpand: Bool { windowWidth >= 600 }
 
     /// 右侧栏在当前窗口/侧栏布局下可用的最大宽度。
-    /// 中间聊天区保留 340，再减去两侧拖拽手柄（各 1pt 占位）。
+    /// 减去左栏元素（内容+外扩）、两个 seam、中间、右栏外扩。
     private var rightSidebarMaxAvailable: Double {
-        let available = Double(windowWidth) - Double(sidebarWidth) - 340 - 2
-        return max(340, min(1200, available))
+        let available = Double(windowWidth)
+            - Double(sidebarWidth + Layout.sidebarOuterPadding)
+            - Double(Layout.seamWidth + Layout.middleMinWidth + Layout.seamWidth)
+            - Double(Layout.rightSidebarOuterPadding)
+        return max(Double(Layout.rightSidebarMinWidth), min(1200, available))
     }
+
+    /// 左侧栏可拖拽的最大宽度。右栏打开时受窗口可用空间钳制（保证右栏不被挤爆）；
+    /// 右栏关闭时保持 Layout.sidebarMaxWidth。
+    private var leftSidebarMaxAvailable: Double {
+        guard rightSidebar.isOpen else { return Double(Layout.sidebarMaxWidth) }
+        let available = Double(windowWidth)
+            - Double(Layout.sidebarOuterPadding)
+            - Double(Layout.middleAndRightMinSpan)
+        return min(Double(Layout.sidebarMaxWidth), max(Double(Layout.sidebarMinWidth), available))
+    }
+
+    /// 右栏打开时所需的内容最小宽（由 Layout 派生）。
+    private static let rightSidebarOpenMinWidth: CGFloat = Layout.rightSidebarOpenMinContentWidth
+    /// 右栏关闭时窗口基准最小内容宽。
+    private static let baseMinWidth: CGFloat = 400
 
     /// 把右侧栏宽度钳制到可用范围，保证窄窗口下不溢出、内容可见。
     private func clampRightSidebarWidth() {
         guard rightSidebar.isOpen, windowWidth > 0 else { return }
-        rightSidebar.width = min(max(rightSidebar.width, 340), rightSidebarMaxAvailable)
+        rightSidebar.width = min(max(rightSidebar.width, Double(Layout.rightSidebarMinWidth)), rightSidebarMaxAvailable)
+    }
+
+    /// 右栏打开时更新窗口：先收左栏腾空间 → 窗口太窄则自动放大 → 设最小内容宽（防再缩窄）。
+    private func updateWindowForRightSidebarOpen() {
+        // 1. 先收左栏：左栏 + 中间 + 右栏（含各自外扩、seam）放不下时
+        if windowWidth < sidebarWidth + Layout.sidebarOuterPadding + Layout.middleAndRightMinSpan && sidebarWidth > Layout.sidebarSnapThreshold {
+            sidebarWidth = Layout.sidebarMinWidth
+        }
+
+        // 2. 通知窗口最小内容宽（windowWillResize 会据此拒绝更窄）
+        AppDelegate.requiredMinContentWidth = Self.rightSidebarOpenMinWidth
+
+        // 3. 自动放大窗口到所需内容宽（按内容缺口增量放大，保留窗口 chrome）
+        guard let window = NSApp.keyWindow else { return }
+        let deficit = Self.rightSidebarOpenMinWidth - windowWidth
+        if deficit > 0 {
+            var frame = window.frame
+            frame.size.width += deficit
+            window.setFrame(frame, display: true, animate: true)
+        }
+    }
+
+    /// 右栏关闭时恢复窗口最小内容宽。
+    private func restoreWindowMinWidth() {
+        AppDelegate.requiredMinContentWidth = Self.baseMinWidth
     }
 
     /// 当前活跃的聊天 VM（macOS 为当前聊天 tab；iOS 为全局单例）
@@ -146,22 +190,28 @@ struct ContentView: View {
 
                     GeometryReader { geo in
                         HStack(alignment: .top, spacing: 0) {
-                            LeftResizableSidebar(
-                                sidebarWidth: $sidebarWidth,
+                            // 左侧栏卡片
+                            SidebarView(
                                 selectedTab: sidebarTabBinding,
-                                allowExpand: allowExpand,
+                                sidebarWidth: $sidebarWidth,
                                 chatTabManager: chatTabManager,
                                 conversationListVM: conversationListVM,
-                                defaultConversationID: deviceManager.defaultConversation?.id,
-                                ghost: resizeGhost
+                                defaultConversationID: deviceManager.defaultConversation?.id
                             )
+                            .padding(.bottom, 12)
+                            .padding(.horizontal, Layout.sidebarHPadding)
+                            .modifier(CardBackgroundModifier(isLifted: sidebarHovered))
+                            .padding(.top, 4)
+                            .padding(.bottom, 12)
+                            .padding(.leading, Layout.sidebarLeadingPadding)
+                            .padding(.trailing, Layout.sidebarTrailingPadding)
+                            .onHover { sidebarHovered = $0 }
                             SeamMarker(x: $leftSeamX)
                             macOSContentArea
                             if rightSidebar.isOpen {
                                 SeamMarker(x: $rightSeamX)
-                                RightResizablePanel(
+                                RightSidebarView(
                                     manager: rightSidebar,
-                                    ghost: resizeGhost,
                                     billVM: billVM,
                                     memoryVM: memoryVM,
                                     noteVM: noteVM,
@@ -170,53 +220,60 @@ struct ContentView: View {
                                     baseURL: deviceManager.baseURL,
                                     token: deviceManager.token ?? ""
                                 )
+                                .padding(.top, 4)
+                                .padding(.leading, Layout.rightSidebarLeadingPadding)
+                                .padding(.trailing, Layout.rightSidebarTrailingPadding)
                                 .transition(.move(edge: .trailing))
                             }
                         }
-                        .coordinateSpace(name: "content")
+                        .coordinateSpace(name: ResizeDividerSpace.name)
                         .overlay(alignment: .topLeading) {
                             ZStack(alignment: .topLeading) {
                                 // 左手柄：浮在左分隔线（seam）上方，不占布局空间
                                 if allowExpand {
-                                    ResizeHandle(
-                                        width: Double(sidebarWidth),
+                                    ResizableDivider(
+                                        id: "left",
+                                        width: Binding(
+                                            get: { Double(sidebarWidth) },
+                                            set: { sidebarWidth = CGFloat($0) }
+                                        ),
                                         minWidth: Double(Layout.sidebarMinWidth),
-                                        maxWidth: Double(Layout.sidebarMaxWidth),
-                                        onLiveChange: { resizeGhost.leftWidth = CGFloat($0) },
-                                        onCommit: { final in
-                                            resizeGhost.leftWidth = nil
-                                            sidebarWidth = CGFloat(final)
-                                        }
+                                        maxWidth: leftSidebarMaxAvailable,
+                                        ghost: resizeGhost,
+                                        seamX: $leftSeamX
                                     )
-                                    .offset(x: leftSeamX - 7.5)
                                 }
                                 // 右手柄：浮在右分隔线（seam）上方
                                 if rightSidebar.isOpen {
-                                    ResizeHandle(
-                                        width: rightSidebar.width,
-                                        minWidth: 340,
+                                    ResizableDivider(
+                                        id: "right",
+                                        width: $rightSidebar.width,
+                                        minWidth: Double(Layout.rightSidebarMinWidth),
                                         maxWidth: rightSidebarMaxAvailable,
                                         reversed: true,
-                                        onLiveChange: { resizeGhost.rightWidth = $0 },
-                                        onCommit: { final in
-                                            resizeGhost.rightWidth = nil
-                                            rightSidebar.width = final
-                                        }
+                                        ghost: resizeGhost,
+                                        seamX: $rightSeamX
                                     )
-                                    .offset(x: rightSeamX - 7.5)
                                 }
                             }
                         }
                         .animation(.easeInOut(duration: 0.2), value: rightSidebar.isOpen)
                         .onChange(of: geo.size.width) { _, new in
                             windowWidth = new
-                            if new < 600 && sidebarWidth > Layout.sidebarSnapThreshold {
+                            let needCollapse = new < 600
+                                || (rightSidebar.isOpen && new < sidebarWidth + Layout.sidebarOuterPadding + Layout.middleAndRightMinSpan)
+                            if needCollapse && sidebarWidth > Layout.sidebarSnapThreshold {
                                 sidebarWidth = Layout.sidebarMinWidth
                             }
                             clampRightSidebarWidth()
                         }
                         .onChange(of: rightSidebar.isOpen) { _, isOpen in
-                            if isOpen { clampRightSidebarWidth() }
+                            if isOpen {
+                                updateWindowForRightSidebarOpen()
+                                clampRightSidebarWidth()
+                            } else {
+                                restoreWindowMinWidth()
+                            }
                         }
                         .onChange(of: sidebarWidth) { _, _ in
                             clampRightSidebarWidth()
@@ -232,7 +289,7 @@ struct ContentView: View {
                 }
                 .ignoresSafeArea(edges: .top)
                 .onAppear {
-                    sidebarWidth = storedSidebarWidth
+                    sidebarWidth = min(storedSidebarWidth, Layout.sidebarMaxWidth)
                     BrowserToolProvider.shared.rightSidebar = rightSidebar
                     conversationListVM.defaultConversationID = deviceManager.defaultConversation?.id
                 }
@@ -340,7 +397,7 @@ struct ContentView: View {
             .padding(.top, 4)
             .padding(.horizontal, 12)
             .padding(.bottom, 12)
-            .frame(minWidth: 340, alignment: .leading)
+            .frame(minWidth: Layout.middleMinWidth, alignment: .leading)
             .onHover { contentHovered = $0 }
         .onChange(of: activeChatViewModel?.isStreaming) { _, streaming in
             router.setRefreshDisabled(for: .chat,
@@ -460,27 +517,6 @@ struct OpenSettingsButton: View {
         } label: {
             Image(systemName: "gear")
         }
-    }
-}
-#endif
-
-#if os(macOS)
-/// 1pt 透明分隔线标记：维持面板间缝隙，并把自己的 x 坐标（content 坐标系）
-/// 上报给 ContentView，用于定位浮在手柄。
-private struct SeamMarker: View {
-    @Binding var x: CGFloat
-
-    var body: some View {
-        Rectangle()
-            .fill(Color.clear)
-            .frame(width: 1)
-            .background(
-                GeometryReader { proxy in
-                    Color.clear
-                        .onAppear { x = proxy.frame(in: .named("content")).minX }
-                        .onChange(of: proxy.frame(in: .named("content")).minX) { _, new in x = new }
-                }
-            )
     }
 }
 #endif

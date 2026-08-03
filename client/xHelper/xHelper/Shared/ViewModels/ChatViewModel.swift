@@ -107,17 +107,29 @@ class ChatViewModel: ObservableObject {
     @Published var planState: PlanState = .none
     /// 用户主动隐藏（×）：内存态，持久记录在 UserDefaults（per conversation）
     @Published var planDismissed = false
+    /// 便签展开/收起：纯内存态，新计划（指纹变化）出现时默认展开；不持久化
+    @Published var planExpanded = false
     // —— 完成/取消态横幅：已砍掉（2026-08-02 简化：完成/取消后列表直接消失，不做提示）。
     //     保留注释供未来恢复：显示 5s 后消失，不受 dismissed 影响；触发条件是"对话内状态转变"。
     // @Published var planFlashBanner: String?
     // private var planFlashTask: Task<Void, Never>?
 
     /// 从服务端拉取当前会话的执行计划，并按生命周期状态机更新 UI。
-    func loadPlanTodo() async {
+    /// - Parameters:
+    ///   - previousFingerprint: 重置前上一个计划的指纹（loadConversation 传）；
+    ///     nil 时用当前指纹（done 刷新路径）。
+    ///   - previousExpanded: 重置前便签折叠态，用于"同计划重载"恢复；nil 时保持当前值。
+    func loadPlanTodo(previousFingerprint: String? = nil, previousExpanded: Bool? = nil) async {
         guard let cid = conversationId, !cid.isEmpty else { return }
         guard let plan = try? await apiClient.getConversationPlan(conversationId: cid) else { return }
+        let oldFingerprint = previousFingerprint ?? planFingerprint()
         planGoal = plan.goal
         planTodo = plan.steps
+        if planFingerprint() != oldFingerprint {
+            planExpanded = true // 新计划（指纹变化）→ 便签默认展开
+        } else if let previousExpanded {
+            planExpanded = previousExpanded // 同计划重载 → 恢复之前的折叠态（不打扰收起）
+        }
         evaluatePlanState(cid: cid)
     }
 
@@ -126,6 +138,11 @@ class ChatViewModel: ObservableObject {
         guard let cid = conversationId, !cid.isEmpty else { return }
         planDefaultsSet(dismissedFingerprint: planFingerprint(), for: cid)
         planDismissed = true
+    }
+
+    /// 切换便签展开/收起（点击便签触发）。
+    func togglePlanExpand() {
+        planExpanded.toggle()
     }
 
     /// 计划状态机：active（列表）/ completed|cancelled（一次性横幅）/ none（不显示）
@@ -309,6 +326,10 @@ class ChatViewModel: ObservableObject {
         if !preserveTrustedMode {
             trustedMode = false // 信任模式会话级：换会话自动关闭（安全默认）
         }
+        // 记录重置前计划指纹与折叠态：同会话重载（scene 激活/刷新/重试）时保持收起状态，
+        // 真·新计划（指纹变化/切换会话）仍默认展开。捕获必须在清空之前。
+        let previousPlanFingerprint = planFingerprint()
+        let previousPlanExpanded = planExpanded
         planGoal = ""
         planTodo = []
         planState = .none
@@ -319,7 +340,7 @@ class ChatViewModel: ObservableObject {
         loadMoreError = nil
         let oldLastId = messages.last?.id
         defer { isInitialLoading = false }
-        Task { await self.loadPlanTodo() }
+        Task { await self.loadPlanTodo(previousFingerprint: previousPlanFingerprint, previousExpanded: previousPlanExpanded) }
         do {
             let result = try await apiClient.getMessagesCursor(conversationId: id)
             messages = result.messages.flatMap { $0.withoutToolCalls() }
@@ -396,6 +417,11 @@ class ChatViewModel: ObservableObject {
         planNodes = []
         isPlanModalVisible = false
         isPlanMinimized = false
+        planGoal = ""
+        planTodo = []
+        planState = .none
+        planDismissed = false
+        planExpanded = false
         lastMemoryIDs = nil
         lastNoteIDs = nil
         showMemoryPopup = false

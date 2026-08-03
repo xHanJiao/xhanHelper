@@ -8,8 +8,9 @@ import AppKit
 /// InputBar 只负责：区域摆放（状态行/编辑器/尾部动作）、收起↔展开动画、
 /// 玻璃容器样式、聚焦/Return/打字空闲等编辑逻辑。具体按钮通过两个
 /// @ViewBuilder 闭包从外部（ChatView）注入，各自带 ButtonVisibility 决定
-/// 在收起态/展开态是否出现。增删按钮不改本文件。
-struct InputBar<StatusRow: View, TrailingActions: View>: View {
+/// 在收起态/展开态是否出现；上缘便签面板通过第三个闭包注入（锚定胶囊右上缘，
+/// 不注入时为空视图）。增删按钮不改本文件。
+struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
     @Binding var text: String
     @Binding var isEditing: Bool
     let isStreaming: Bool
@@ -22,6 +23,8 @@ struct InputBar<StatusRow: View, TrailingActions: View>: View {
     let statusRow: (InputBarContext) -> StatusRow
     /// 尾部动作按钮（🎤/发送/停止等，位置随态变化）。
     let trailingActions: (InputBarContext) -> TrailingActions
+    /// 上缘便签面板（可选注入，锚定 720 胶囊右上缘；不注入时为空视图）。
+    let topTrailingNote: (InputBarContext) -> TopNote
 
     @EnvironmentObject var fontSizeManager: FontSizeManager
     @State private var shakeOffset: CGFloat = 0
@@ -32,6 +35,7 @@ struct InputBar<StatusRow: View, TrailingActions: View>: View {
     @State private var streamingGlow: CGFloat = 0
 #endif
 
+    /// 便捷 init（无便签面板，TopNote 为 EmptyView）。
     init(
         text: Binding<String>,
         isEditing: Binding<Bool>,
@@ -42,6 +46,33 @@ struct InputBar<StatusRow: View, TrailingActions: View>: View {
         onStop: @escaping () -> Void,
         @ViewBuilder statusRow: @escaping (InputBarContext) -> StatusRow,
         @ViewBuilder trailingActions: @escaping (InputBarContext) -> TrailingActions
+    ) where TopNote == EmptyView {
+        self.init(
+            text: text,
+            isEditing: isEditing,
+            isStreaming: isStreaming,
+            dismissKeyboardToken: dismissKeyboardToken,
+            containerTint: containerTint,
+            onSend: onSend,
+            onStop: onStop,
+            statusRow: statusRow,
+            trailingActions: trailingActions,
+            topTrailingNote: { _ in EmptyView() }
+        )
+    }
+
+    /// 完整 init（可注入上缘便签面板）。
+    init(
+        text: Binding<String>,
+        isEditing: Binding<Bool>,
+        isStreaming: Bool,
+        dismissKeyboardToken: UUID? = nil,
+        containerTint: Color = Color("appAccent"),
+        onSend: @escaping () -> Void,
+        onStop: @escaping () -> Void,
+        @ViewBuilder statusRow: @escaping (InputBarContext) -> StatusRow,
+        @ViewBuilder trailingActions: @escaping (InputBarContext) -> TrailingActions,
+        @ViewBuilder topTrailingNote: @escaping (InputBarContext) -> TopNote
     ) {
         self._text = text
         self._isEditing = isEditing
@@ -52,6 +83,7 @@ struct InputBar<StatusRow: View, TrailingActions: View>: View {
         self.onStop = onStop
         self.statusRow = statusRow
         self.trailingActions = trailingActions
+        self.topTrailingNote = topTrailingNote
     }
 
     var body: some View {
@@ -81,31 +113,38 @@ struct InputBar<StatusRow: View, TrailingActions: View>: View {
     @State private var barWidth: CGFloat = Layout.inputBarTwoRowThreshold
 
     private var macOSBody: some View {
-        Group {
-            if barWidth < Layout.inputBarTwoRowThreshold {
-                twoRowLayout
-            } else {
-                oneRowLayout
+        VStack(alignment: .trailing, spacing: 0) {
+            // 上缘便签：内容自适应，最宽不超过输入框一半；右缘距胶囊右缘 10pt。
+            // 无便签时为空视图，不占空间。
+            topTrailingNote(context)
+                .frame(maxWidth: barWidth / 2, alignment: .trailing)
+                .padding(.trailing, 10)
+            Group {
+                if barWidth < Layout.inputBarTwoRowThreshold {
+                    twoRowLayout
+                } else {
+                    oneRowLayout
+                }
             }
+            .background(
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { barWidth = proxy.size.width }
+                        .onChange(of: proxy.size.width) { _, w in barWidth = w }
+                }
+            )
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(.regularMaterial)
+            )
+            .shadow(
+                color: containerTint.opacity(0.18 + streamingGlow * 0.14),
+                radius: 10 + streamingGlow * 7
+            )
         }
-        .background(
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { barWidth = proxy.size.width }
-                    .onChange(of: proxy.size.width) { _, w in barWidth = w }
-            }
-        )
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.regularMaterial)
-        )
-        .shadow(
-            color: containerTint.opacity(0.18 + streamingGlow * 0.14),
-            radius: 10 + streamingGlow * 7
-        )
-        .frame(maxWidth: 720)
+        .frame(maxWidth: 720, alignment: .trailing)
         .padding(.horizontal, Layout.chatHorizontalPadding)
         .padding(.bottom, 24)
         .frame(maxWidth: .infinity, alignment: .center)
@@ -206,8 +245,8 @@ struct InputBar<StatusRow: View, TrailingActions: View>: View {
             .frame(minHeight: lineHeight, maxHeight: lineHeight * 8)
             .fixedSize(horizontal: false, vertical: true)
             .background(InputBarScrollHider(reapplyToken: barWidth))
-            .padding(.leading, 8)
-            .padding(.trailing, 8)
+            .padding(.leading, 6)
+            .padding(.trailing, 6)
             .padding(.vertical, 6)
             .disabled(isStreaming)
     }
@@ -217,30 +256,36 @@ struct InputBar<StatusRow: View, TrailingActions: View>: View {
 
 #if os(iOS)
     private var iOSBody: some View {
-        HStack(alignment: .center, spacing: 8) {
-            CustomTextView(
-                text: $text,
-                dismissKeyboardToken: dismissKeyboardToken,
-                isDisabled: isStreaming,
-                placeholder: "输入消息...",
-                fontSize: fontSizeManager.scaledSize,
-                onSubmit: {
-                    if hasText {
-                        onSend()
+        VStack(alignment: .trailing, spacing: 0) {
+            topTrailingNote(context)
+                .frame(maxWidth: 320, alignment: .trailing)
+                .padding(.trailing, 10)
+            HStack(alignment: .center, spacing: 8) {
+                CustomTextView(
+                    text: $text,
+                    dismissKeyboardToken: dismissKeyboardToken,
+                    isDisabled: isStreaming,
+                    placeholder: "输入消息...",
+                    fontSize: fontSizeManager.scaledSize,
+                    onSubmit: {
+                        if hasText {
+                            onSend()
+                        }
                     }
-                }
-            )
-            .padding(.leading, 12)
-            .padding(.trailing, 12)
-            .padding(.vertical, 8)
-            .background(Color("surfaceInput"))
-            .cornerRadius(16)
-            .disabled(isStreaming)
+                )
+                .padding(.leading, 12)
+                .padding(.trailing, 12)
+                .padding(.vertical, 8)
+                .background(Color("surfaceInput"))
+                .cornerRadius(16)
+                .disabled(isStreaming)
 
-            trailingActions(context)
+                trailingActions(context)
+            }
+            .padding(.horizontal, Layout.chatHorizontalPadding)
+            .padding(.vertical, 12)
         }
-        .padding(.horizontal, Layout.chatHorizontalPadding)
-        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
     }
 #endif
 }

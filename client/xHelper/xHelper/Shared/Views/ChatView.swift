@@ -81,13 +81,8 @@ struct ChatView: View {
                 toolConfirmationBar(conf)
             }
 
-            // 执行计划（todo）：进行中显示步骤列表（可 × 隐藏）；完成/取消后消失（扩散动画）
-            if viewModel.planState == .active && !viewModel.planDismissed {
-                planTodoList
-                    .transition(Self.planDismissTransition)
-                    .animation(.easeOut(duration: 0.25), value: viewModel.planState)
-                    .animation(.easeOut(duration: 0.25), value: viewModel.planDismissed)
-            }
+            // 执行计划便签：由 InputBar 的 topTrailingNote 注入，右停靠在驾驶舱上缘
+            // （便签在 InputBar 内部 overlay 渲染，不占此处布局）
             // —— 完成/取消态横幅（已砍掉，保留注释供未来恢复）——
             // if let banner = viewModel.planFlashBanner {
             //     Text(banner)
@@ -157,8 +152,24 @@ struct ChatView: View {
                     )
                 }
                 #endif
+            } topTrailingNote: { ctx in
+                // 执行计划便签：经 InputBar 注入，窄幅右停在驾驶舱上缘。
+                // 完成/取消后 state 变为非 active → 扩散消失。
+                if viewModel.planState == .active && !viewModel.planDismissed {
+                    PlanNoteView(
+                        goal: viewModel.planGoal,
+                        steps: viewModel.planTodo,
+                        expanded: viewModel.planExpanded,
+                        onToggle: { viewModel.togglePlanExpand() },
+                        onDismiss: { viewModel.dismissPlanTodo() }
+                    )
+                    .transition(Self.planDismissTransition)
+                    .animation(.easeOut(duration: 0.25), value: viewModel.planState)
+                    .animation(.easeOut(duration: 0.25), value: viewModel.planDismissed)
+                }
             }
             .layoutPriority(1)
+            .animation(.easeOut(duration: 0.2), value: viewModel.planExpanded)
         }
         .onChange(of: viewModel.scrollToBottomRequested) { _, requested in
             guard requested else { return }
@@ -191,46 +202,6 @@ struct ChatView: View {
         }
     }
 
-    /// L3 工具执行确认行（无背景，橙色图标/按钮）
-    /// 执行计划（todo）列表：goal + 步骤状态 + × 隐藏按钮（隐藏跨会话保持，新计划自动恢复）
-    private var planTodoList: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                if !viewModel.planGoal.isEmpty {
-                    Text(viewModel.planGoal)
-                        .font(.caption).bold()
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                Button {
-                    viewModel.dismissPlanTodo()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("隐藏计划列表")
-            }
-            ForEach(viewModel.planTodo) { step in
-                HStack(spacing: 5) {
-                    Image(systemName: planStepIcon(step.status))
-                        .font(.caption2)
-                        .foregroundColor(planStepColor(step.status))
-                    Text(step.content)
-                        .font(.caption)
-                        .strikethrough(step.status == "completed" || step.status == "cancelled")
-                        .foregroundColor(step.status == "cancelled" ? .secondary : .primary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .padding(.horizontal, 4)
-    }
-
     /// 计划栏消失的扩散态（放大 + 淡出 + 模糊）
     private struct PlanDismissModifier: ViewModifier {
         let active: Bool
@@ -251,24 +222,6 @@ struct ChatView: View {
                 identity: PlanDismissModifier(active: false)
             )
         )
-
-    private func planStepIcon(_ status: String) -> String {
-        switch status {
-        case "completed": return "checkmark.circle.fill"
-        case "in_progress": return "circle.inset.filled"
-        case "cancelled": return "xmark.circle"
-        default: return "circle"
-        }
-    }
-
-    private func planStepColor(_ status: String) -> Color {
-        switch status {
-        case "completed": return .green
-        case "in_progress": return .orange
-        case "cancelled": return .secondary
-        default: return .gray
-        }
-    }
 
     private func toolConfirmationBar(_ conf: ToolConfirmation) -> some View {
         HStack(spacing: 8) {

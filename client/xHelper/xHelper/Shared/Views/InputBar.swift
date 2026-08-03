@@ -254,8 +254,13 @@ struct InputBarScrollHider: NSViewRepresentable {
             onSend: {},
             onStop: {}
         ) { ctx in
-            ModePill(context: ctx, isPlanMode: false) {}
-            TrustedPill(context: ctx, trusted: false) {}
+            CollapsibleModeControls(
+                context: ctx,
+                isPlanMode: false,
+                trustedMode: false,
+                onToggleMode: {},
+                onToggleTrusted: {}
+            )
         } trailingActions: { ctx in
             SendStopButton(context: ctx, isStreaming: false, canSend: ctx.canSend, onSend: {}, onStop: {})
         }
@@ -277,8 +282,13 @@ struct InputBarScrollHider: NSViewRepresentable {
             onSend: {},
             onStop: {}
         ) { ctx in
-            ModePill(context: ctx, isPlanMode: true) {}
-            TrustedPill(context: ctx, trusted: true) {}
+            CollapsibleModeControls(
+                context: ctx,
+                isPlanMode: true,
+                trustedMode: true,
+                onToggleMode: {},
+                onToggleTrusted: {}
+            )
         } trailingActions: { ctx in
             SendStopButton(context: ctx, isStreaming: true, canSend: true, onSend: {}, onStop: {})
         }

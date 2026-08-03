@@ -112,12 +112,17 @@ struct ChatView: View {
                 }
             ) { ctx in
                 #if os(macOS)
-                ModePill(context: ctx, isPlanMode: viewModel.isPlanMode) {
-                    Task { await viewModel.toggleMode() }
-                }
-                TrustedPill(context: ctx, trusted: viewModel.trustedMode) {
-                    viewModel.toggleTrustedMode()
-                }
+                CollapsibleModeControls(
+                    context: ctx,
+                    isPlanMode: viewModel.isPlanMode,
+                    trustedMode: viewModel.trustedMode,
+                    onToggleMode: {
+                        Task { await viewModel.toggleMode() }
+                    },
+                    onToggleTrusted: {
+                        viewModel.toggleTrustedMode()
+                    }
+                )
                 #endif
             } trailingActions: { ctx in
                 #if os(macOS)

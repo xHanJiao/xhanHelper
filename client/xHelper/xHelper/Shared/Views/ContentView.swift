@@ -19,7 +19,6 @@ struct ContentView: View {
     @StateObject private var router = NavigationRouter()
     @StateObject private var rightSidebar = RightSidebarManager()
     @State private var sidebarWidth: CGFloat = Layout.sidebarDefaultWidth
-    @State private var sidebarHovered = false
     @State private var contentHovered = false
     @AppStorage("xhan_sidebar_width") private var storedSidebarWidth: Double = Layout.sidebarDefaultWidth
     @State private var windowWidth: CGFloat = 800
@@ -45,6 +44,19 @@ struct ContentView: View {
     }
 
     private var allowExpand: Bool { windowWidth >= 600 }
+
+    /// 右侧栏在当前窗口/侧栏布局下可用的最大宽度。
+    /// 中间聊天区保留 340，再减去两侧拖拽手柄（各 1pt 占位）。
+    private var rightSidebarMaxAvailable: Double {
+        let available = Double(windowWidth) - Double(sidebarWidth) - 340 - 2
+        return max(340, min(1200, available))
+    }
+
+    /// 把右侧栏宽度钳制到可用范围，保证窄窗口下不溢出、内容可见。
+    private func clampRightSidebarWidth() {
+        guard rightSidebar.isOpen, windowWidth > 0 else { return }
+        rightSidebar.width = min(max(rightSidebar.width, 340), rightSidebarMaxAvailable)
+    }
 
     /// 当前活跃的聊天 VM（macOS 为当前聊天 tab；iOS 为全局单例）
     private var activeChatViewModel: ChatViewModel? {
@@ -127,9 +139,29 @@ struct ContentView: View {
 
                     GeometryReader { geo in
                         HStack(alignment: .top, spacing: 0) {
-                            sidebarCard
+                            LeftResizableSidebar(
+                                sidebarWidth: $sidebarWidth,
+                                selectedTab: sidebarTabBinding,
+                                allowExpand: allowExpand,
+                                chatTabManager: chatTabManager,
+                                conversationListVM: conversationListVM,
+                                defaultConversationID: deviceManager.defaultConversation?.id
+                            )
                             macOSContentArea
-                            rightSidebarPanel
+                            if rightSidebar.isOpen {
+                                RightResizablePanel(
+                                    manager: rightSidebar,
+                                    maxWidth: rightSidebarMaxAvailable,
+                                    billVM: billVM,
+                                    memoryVM: memoryVM,
+                                    noteVM: noteVM,
+                                    documentVM: documentVM,
+                                    themeVM: themeVM,
+                                    baseURL: deviceManager.baseURL,
+                                    token: deviceManager.token ?? ""
+                                )
+                                .transition(.move(edge: .trailing))
+                            }
                         }
                         .animation(.easeInOut(duration: 0.2), value: rightSidebar.isOpen)
                         .onChange(of: geo.size.width) { _, new in
@@ -137,6 +169,13 @@ struct ContentView: View {
                             if new < 600 && sidebarWidth > Layout.sidebarSnapThreshold {
                                 sidebarWidth = Layout.sidebarMinWidth
                             }
+                            clampRightSidebarWidth()
+                        }
+                        .onChange(of: rightSidebar.isOpen) { _, isOpen in
+                            if isOpen { clampRightSidebarWidth() }
+                        }
+                        .onChange(of: sidebarWidth) { _, _ in
+                            clampRightSidebarWidth()
                         }
                     }
                 }
@@ -257,6 +296,7 @@ struct ContentView: View {
             .padding(.top, 4)
             .padding(.horizontal, 12)
             .padding(.bottom, 12)
+            .frame(minWidth: 340, alignment: .leading)
             .onHover { contentHovered = $0 }
         .onChange(of: activeChatViewModel?.isStreaming) { _, streaming in
             router.setRefreshDisabled(for: .chat,
@@ -267,46 +307,6 @@ struct ContentView: View {
                 Task { await vm.loadConversation(id: cid, title: vm.conversationTitle ?? "", mode: vm.mode, preserveTrustedMode: true) } // 刷新保持当前模式/信任模式
             }
             Task { await conversationListVM.reload() }
-        }
-    }
-
-    @ViewBuilder
-    private var sidebarCard: some View {
-        SidebarView(
-            selectedTab: sidebarTabBinding,
-            sidebarWidth: $sidebarWidth,
-            allowExpand: allowExpand,
-            chatTabManager: chatTabManager,
-            conversationListVM: conversationListVM,
-            defaultConversationID: deviceManager.defaultConversation?.id
-        )
-        .padding(.bottom, 12)
-        .padding(.horizontal, 12)
-        .modifier(CardBackgroundModifier(isLifted: sidebarHovered))
-        .padding(.top, 4)
-        .padding(.bottom, 12)
-        .padding(.leading, 8)
-        .padding(.trailing, 12)
-        .onHover { sidebarHovered = $0 }
-    }
-
-    @ViewBuilder
-    private var rightSidebarPanel: some View {
-        if rightSidebar.isOpen {
-            RightSidebarView(
-                manager: rightSidebar,
-                billVM: billVM,
-                memoryVM: memoryVM,
-                noteVM: noteVM,
-                documentVM: documentVM,
-                themeVM: themeVM,
-                baseURL: deviceManager.baseURL,
-                token: deviceManager.token ?? ""
-            )
-            .padding(.top, 4)
-            .padding(.leading, 12)
-            .padding(.trailing, 8)
-            .transition(.move(edge: .trailing))
         }
     }
 #endif

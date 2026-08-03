@@ -23,7 +23,6 @@ struct SidebarView: View {
     /// 默认会话不可删除，由 ContentView 注入（deviceManager.defaultConversation?.id）
     let defaultConversationID: String?
 
-    @GestureState private var dragOffset: CGFloat = 0
     @State private var lastExpandedWidth: CGFloat = Layout.sidebarDefaultWidth
     @State private var isExpandHovered = false
     @State private var hoveredConversationID: String?
@@ -44,9 +43,7 @@ struct SidebarView: View {
                 expandedContent
             }
         }
-        .frame(width: max(Layout.sidebarMinWidth, sidebarWidth + dragOffset))
-        .gesture(sidebarDragGesture)
-        .animation(.easeInOut(duration: 0.15), value: sidebarWidth)
+        .frame(width: sidebarWidth)
         .alert("重命名会话", isPresented: .init(
             get: { renameTarget != nil },
             set: { if !$0 { renameTarget = nil } }
@@ -301,28 +298,5 @@ struct SidebarView: View {
                 .help(tab.rawValue)
         }
         .buttonStyle(.plain)
-    }
-
-    private var sidebarDragGesture: some Gesture {
-        DragGesture(minimumDistance: 3)
-            .updating($dragOffset) { value, state, _ in
-                state = value.translation.width
-            }
-            .onEnded { value in
-                let proposed = sidebarWidth + value.translation.width
-                let clamped = min(max(proposed, Layout.sidebarMinWidth), Layout.sidebarMaxWidth)
-                if clamped < Layout.sidebarSnapThreshold {
-                    lastExpandedWidth = sidebarWidth
-                    sidebarWidth = Layout.sidebarMinWidth
-                } else if clamped < 160 {
-                    guard allowExpand else { return }
-                    sidebarWidth = 160
-                    lastExpandedWidth = 160
-                } else {
-                    guard allowExpand else { return }
-                    sidebarWidth = clamped
-                    lastExpandedWidth = clamped
-                }
-            }
     }
 }

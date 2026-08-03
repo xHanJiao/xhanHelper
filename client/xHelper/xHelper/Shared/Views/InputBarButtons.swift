@@ -1,42 +1,40 @@
 import SwiftUI
 
-/// 会话模式胶囊：聊天（青绿）/ 计划（橙）。点击切换。
-/// 收起态与展开态均显示（可读的会话状态）。
+/// 会话模式图标按钮：聊天（青绿）/ 计划（橙），点击切换。仅图标，hover 看 tooltip。
 struct ModePill: View {
     let context: InputBarContext
     let isPlanMode: Bool
     let action: () -> Void
 
     var body: some View {
-        TogglePill(
+        IconButton(
             visibility: .always,
             context: context,
-            isActive: isPlanMode,
-            icon: isPlanMode ? "eye.slash" : "square.and.pencil",
-            text: isPlanMode ? "计划" : "聊天",
-            color: isPlanMode ? .orange : Color("appAccent"),
-            tooltip: "点击切换会话模式：聊天（可执行全部工具）/ 计划（只读讨论）",
+            symbol: isPlanMode ? "eye.slash" : "bubble.left",
+            tint: isPlanMode ? .orange : Color("appAccent"),
+            tooltip: isPlanMode
+                ? "计划模式 · 只读，点击切换聊天"
+                : "聊天模式，点击切换计划",
             action: action
         )
     }
 }
 
-/// 信任模式胶囊：安全（青绿）/ 信任（橙）。点击切换。
-/// 收起态与展开态均显示（你可以在浏览态直接切换）。
+/// 信任模式图标按钮：安全（青绿）/ 信任（橙），点击切换。仅图标，hover 看 tooltip。
 struct TrustedPill: View {
     let context: InputBarContext
     let trusted: Bool
     let action: () -> Void
 
     var body: some View {
-        TogglePill(
+        IconButton(
             visibility: .always,
             context: context,
-            isActive: trusted,
-            icon: trusted ? "shield.checkered" : "shield",
-            text: trusted ? "信任" : "安全",
-            color: trusted ? .orange : Color("appAccent"),
-            tooltip: "点击切换信任模式：开启后高风险工具（L3）不再弹确认",
+            symbol: trusted ? "shield.checkered" : "shield",
+            tint: trusted ? .orange : Color("appAccent"),
+            tooltip: trusted
+                ? "信任模式 · 免确认，点击切换安全"
+                : "安全模式，点击切换信任",
             action: action
         )
     }
@@ -52,7 +50,7 @@ struct SendStopButton: View {
 
     var body: some View {
         IconButton(
-            visibility: .whenExpanded,
+            visibility: .always,
             context: context,
             symbol: isStreaming ? "stop.fill" : "arrow.up",
             tint: isStreaming ? .red : Color("appAccent"),

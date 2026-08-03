@@ -21,7 +21,8 @@ final class RightSidebarManager: ObservableObject {
     }
 
     init() {
-        width = 840
+        let stored = UserDefaults.standard.double(forKey: "xhan_right_sidebar_width")
+        width = stored >= 300 && stored <= 1200 ? stored : 840
     }
 
     var hasTabs: Bool { !tabs.isEmpty }

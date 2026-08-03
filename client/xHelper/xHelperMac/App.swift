@@ -184,7 +184,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.backgroundColor = .clear
         window.contentView?.wantsLayer = true
         window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
-        window.isMovableByWindowBackground = true
         window.toolbar = nil
     }
 }
@@ -202,7 +201,7 @@ struct xhanHelperMacApp: App {
             Group {
                 if deviceManager.isLoggedIn {
                     ContentView(deviceManager: deviceManager)
-                        .frame(minWidth: 320, minHeight: 400)
+                        .frame(minWidth: 400, minHeight: 400)
                 } else {
                     LoginMacView(deviceManager: deviceManager)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)

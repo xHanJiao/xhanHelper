@@ -64,88 +64,25 @@ struct InputBar<StatusRow: View, TrailingActions: View>: View {
 
     // MARK: - 状态上下文
 
-#if os(macOS)
-    /// 展开态：聚焦 / 有草稿 / 流式中任一成立。否则收起。
-    private var isExpanded: Bool {
-        isFocused || !text.trimmingCharacters(in: .whitespaces).isEmpty || isStreaming
-    }
-#endif
-
     private var hasText: Bool {
         !text.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     private var context: InputBarContext {
-#if os(macOS)
         InputBarContext(
-            isCollapsed: !isExpanded,
             isStreaming: isStreaming,
-            canSend: hasText,
-            isFocused: isFocused
+            canSend: hasText
         )
-#else
-        InputBarContext(
-            isCollapsed: false,
-            isStreaming: isStreaming,
-            canSend: hasText,
-            isFocused: true
-        )
-#endif
     }
 
-    // MARK: - macOS 驾驶舱
+    // MARK: - macOS 输入栏
 
 #if os(macOS)
     private var macOSBody: some View {
-        VStack(spacing: 0) {
-            // 展开态状态行
-            if isExpanded {
-                HStack(spacing: 8) {
-                    statusRow(context)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.top, 6)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
-            ZStack {
-                // 编辑器常驻（保证 .focused 始终有绑定目标，修复收起态点击后无法输入）；
-                // 收起时压缩到 0 高度 + 裁剪，不占布局空间。
-                HStack(alignment: .center, spacing: 4) {
-                    editor
-                    if isExpanded {
-                        trailingActions(context)
-                    }
-                }
-                .frame(height: isExpanded ? nil : 0, alignment: .bottom)
-                .clipped()
-
-                // 收起态占位条：覆盖在零高度编辑器上方，点任意空白聚焦展开
-                if !isExpanded {
-                    HStack(spacing: 8) {
-                        statusRow(context)
-                        Text("输入消息…")
-                            .font(.system(size: fontSizeManager.scaledSize))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Spacer(minLength: 8)
-                        trailingActions(context)
-                    }
-                    .padding(.leading, 12)
-                    .padding(.trailing, 8)
-                    .padding(.vertical, 8)
-                    .frame(minHeight: 38)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        print("[InputBar] collapsed bar tapped -> focus")
-                        isFocused = true
-                    }
-                    .transition(.opacity)
-                }
-            }
+        HStack(alignment: .center, spacing: 4) {
+            editor
+            statusRow(context)
+            trailingActions(context)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
@@ -158,12 +95,10 @@ struct InputBar<StatusRow: View, TrailingActions: View>: View {
             radius: 10 + streamingGlow * 7
         )
         .frame(maxWidth: 720)
+        .padding(.horizontal, Layout.chatHorizontalPadding)
         .padding(.bottom, 24)
-        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: isExpanded)
+        .frame(maxWidth: .infinity, alignment: .center)
         .animation(.easeInOut(duration: 0.4), value: containerTint)
-        .onChange(of: isExpanded) { _, new in
-            print("[InputBar] isExpanded -> \(new) (focused=\(isFocused) hasText=\(hasText) streaming=\(isStreaming))")
-        }
         .onChange(of: isStreaming) { _, streaming in
             print("[InputBar] isStreaming -> \(streaming)")
             if streaming {

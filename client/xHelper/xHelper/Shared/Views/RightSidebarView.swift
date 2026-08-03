@@ -55,6 +55,21 @@ struct RightSidebarView: View {
                 .frame(height: 32)
             }
 
+            // 聊天画中画切换：释放中间聊天区，聊天缩成悬浮面板
+            Button {
+                manager.isPipChat.toggle()
+                pipLog("toggle button: isPipChat=\(manager.isPipChat) tabs=\(manager.tabs.count) activeTab=\(manager.activeTabId ?? "nil")")
+            } label: {
+                Image(systemName: manager.isPipChat ? "pip.exit" : "pip.enter")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 22, height: 22)
+                    .foregroundColor(manager.isPipChat ? Color("appAccent") : .secondary)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(manager.isPipChat ? "退出画中画" : "画中画：聊天悬浮在浏览器上")
+            .padding(.horizontal, 2)
+
             // 新空白页按钮（固定在 tab 条最右侧，不随 tab 滚动）
             Button {
                 BrowserToolProvider.shared.openBlankTab()

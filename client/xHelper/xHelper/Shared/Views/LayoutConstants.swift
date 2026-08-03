@@ -50,4 +50,24 @@ enum Layout {
     ///      + sidebarTrailingPad(12) + contentLeadingPad(12)
     ///      - toolbarHPad(16) = 40
     static let navToolbarContentOffset: CGFloat = 40
+
+    // MARK: - 聊天画中画面板（PiP）
+
+    /// 面板默认尺寸（首次进入/未持久化时），可调。
+    static let floatingPanelDefaultWidth: CGFloat = 360
+    static let floatingPanelDefaultHeight: CGFloat = 480
+    /// 面板缩小地板：拖拽缩放不可小于此（被窗口既有最小值天然保证）。
+    static let floatingPanelMinWidth: CGFloat = 240
+    static let floatingPanelMinHeight: CGFloat = 200
+    /// 面板放大硬上限（避免拖得过大/边界怪异）。
+    static let floatingPanelMaxWidth: CGFloat = 800
+    static let floatingPanelMaxHeight: CGFloat = 900
+    /// 面板距容器边缘的最小留白。
+    static let floatingPanelEdgeMargin: CGFloat = 8
+    /// 拖拽结束距边缘小于该阈值时吸附（x/y 独立判定）。
+    static let floatingPanelSnapThreshold: CGFloat = 16
+    /// 收起态小条高度。
+    static let floatingPanelCollapsedHeight: CGFloat = 40
+    /// 面板内紧凑字号系数（乘在全局字号之上）。
+    static let floatingPanelCompactFontFactor: Double = 0.75
 }

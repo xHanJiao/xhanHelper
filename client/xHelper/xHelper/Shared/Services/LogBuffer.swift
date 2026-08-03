@@ -34,6 +34,13 @@ class LogBuffer: ObservableObject {
         #endif
     }
 
+    /// 恒编译的诊断日志（debug/info 均为 #if DEBUG 门控，release 里调用会静默消失；
+    /// 本方法不做门控，供 PiPLog 在 release 下写入日志文件/内存供 LogDiagnosticView 查看）。
+    func diag(_ msg: String, file: String = #file, line: Int = #line) {
+        let entry = LogEntry(level: .debug, message: msg, file: file, line: line)
+        append(entry)
+    }
+
     private func append(_ entry: LogEntry) {
         entries.append(entry)
         if entries.count > maxEntries {

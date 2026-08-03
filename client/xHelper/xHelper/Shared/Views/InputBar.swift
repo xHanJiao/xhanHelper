@@ -78,12 +78,23 @@ struct InputBar<StatusRow: View, TrailingActions: View>: View {
     // MARK: - macOS 输入栏
 
 #if os(macOS)
+    @State private var barWidth: CGFloat = Layout.inputBarTwoRowThreshold
+
     private var macOSBody: some View {
-        HStack(alignment: .center, spacing: 4) {
-            editor
-            statusRow(context)
-            trailingActions(context)
+        Group {
+            if barWidth < Layout.inputBarTwoRowThreshold {
+                twoRowLayout
+            } else {
+                oneRowLayout
+            }
         }
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { barWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, w in barWidth = w }
+            }
+        )
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
         .background(
@@ -109,6 +120,27 @@ struct InputBar<StatusRow: View, TrailingActions: View>: View {
                 withAnimation(.easeOut(duration: 0.3)) {
                     streamingGlow = 0
                 }
+            }
+        }
+    }
+
+    /// 单行布局：编辑器 + 模式按钮 + 发送（宽度充足时）。
+    private var oneRowLayout: some View {
+        HStack(alignment: .center, spacing: 4) {
+            editor
+            statusRow(context)
+            trailingActions(context)
+        }
+    }
+
+    /// 两行布局：编辑器全宽在上，模式/发送按钮右对齐在下（宽度窄时）。
+    private var twoRowLayout: some View {
+        VStack(spacing: 6) {
+            editor
+            HStack(spacing: 4) {
+                Spacer(minLength: 0)
+                statusRow(context)
+                trailingActions(context)
             }
         }
     }
@@ -173,7 +205,7 @@ struct InputBar<StatusRow: View, TrailingActions: View>: View {
             .font(.system(size: scaledSize))
             .frame(minHeight: lineHeight, maxHeight: lineHeight * 8)
             .fixedSize(horizontal: false, vertical: true)
-            .background(InputBarScrollHider())
+            .background(InputBarScrollHider(reapplyToken: barWidth))
             .padding(.leading, 8)
             .padding(.trailing, 8)
             .padding(.vertical, 6)
@@ -217,12 +249,21 @@ struct InputBar<StatusRow: View, TrailingActions: View>: View {
 /// 隐藏 TextEditor 内部 NSScrollView 的垂直滚动条。
 /// 保留 maxHeight 高度上限（输入栏不无限长高），内容超出上限后仍可
 /// 内部滚动（触控板/滚轮），但看不到可见滚动条。
+/// 布局切换/宽度变化会重建 TextEditor 的 NSScrollView（恢复默认滚动条），
+/// 因此传入 reapplyToken：token 变化时 updateNSView 重新应用隐藏。
 struct InputBarScrollHider: NSViewRepresentable {
+    /// 变化即触发重新隐藏（传 barWidth 或"是否两行"）。
+    var reapplyToken: CGFloat
+
     func makeNSView(context: Context) -> NSView {
         NSView()
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
+        hideScroller(from: nsView)
+    }
+
+    private func hideScroller(from nsView: NSView) {
         DispatchQueue.main.async {
             guard let root = nsView.superview else { return }
             var queue: [NSView] = [root]

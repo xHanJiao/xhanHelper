@@ -86,28 +86,46 @@
 
 viewport 空间感知（阶段 2 的可见性模型）为桌面宠物提供"屏幕上有什么"的感知基础。
 
-## 七、阶段 2/3 计划（未实施）
+## 七、阶段 2 实施与测试（已完成）
 
 ### 阶段 2：可见性模型 + 滚动驱动
-- `snapshot` 参数：`scope=viewport|document`（默认 viewport）、`offset`、`limit`、`filter`。
-- **viewport scope**：只列视口内 + 阈值（1000px）元素，getComputedStyle 过滤 display:none/visibility:hidden/opacity:0；返回 `hidden_below`（下方交互元素 + 距几屏）。
-- **分页按钮识别**：next/prev/页码文本模式 → 返回 `pagination` 提示。
-- **document scope**：扁平 offset/limit 全量扫描，响应带 `total/has_more`。
 
-### 阶段 3：内容质量
+已实现：
+- `snapshot` 参数：`scope=viewport|document`（默认 viewport）、`offset`、`limit`（兼容 `max_items`）、`filter`。
+- **viewport scope**：只列视口内 + 阈值（1000px）元素，`getComputedStyle` 滤 visibility:hidden/opacity:0（display:none 已被 rect=0 捕获）；返回 `hidden_below`（下方交互元素 + 距几屏，上限 10）+ `hidden_below_count`。
+- **分页按钮识别**：next/prev/页码文本模式 → `pagination`（带稳定句柄），**viewport/document 都输出**（覆盖视口外底部按钮）。
+- **document scope**：扁平 offset/limit 全量扫描，响应带 `total/offset/has_more`，快照页脚提示翻页。
+- **交互增强**：`refClickDownJS`/`refCenterJS` 元素不在视口时先 `scrollIntoView` 居中（document scope 下可直接点视口外元素）。
+
+### 阶段 2 测试报告（P1-P8，全绿）
+
+| 用例 | 结果 | 关键证据 |
+|---|---|---|
+| P1 viewport 默认 | ✅ | 百度一屏显示完无提示行；搜狐 `hidden_below_count=10` + 「视口下方还有 10+ 个交互元素」带距离标注 |
+| P2 滚动驱动 | ✅ | scroll 后 @e32/@e34/@e46/@e67/@e68 全部 id 不变；hidden_below 元素进入视口有 @eN；懒加载 total 87→123 |
+| P3 document 翻页 | ✅ | 第1页 @e1-@e60 / 第2页 @e61-@e120 无重复不冲突；total=447 恒定 |
+| P4 filter | ✅ | 登录 1/28、图片 @e2（id 不重排）、0 命中语义清晰 |
+| P5 分页识别 | ✅ | 分页 @e108-@e113 [page] + 结构化 `pagination`；click @e108 → nav:true + pn=10 |
+| P6 视口外操作 | ✅ | get_text @e180（下 5 屏）成功；click 视口外按钮自动滚动 |
+| P7 回归 | ✅ | fill→click→nav:true 跳结果页；filter 命中 25 条 |
+| P8 销毁检测 | ✅ | 换一换销毁后旧 @e17 → 「ref 不存在，页面已变化」不悬垂 |
+
+### 阶段 2 观察点（已处理）
+
+1. **filter 消耗 id 分配**（文档化，不修）：filter 快照先遇到的元素拿小 id，后续全量保持该 id、其他顺延，输出出现 `@e14→@e1` 跳变。这是稳定句柄模型的固有性质（id 按首次遇到顺序分配、非 DOM 序）；"修"只有重编号（破坏稳定）或按 id 排序（破坏空间序）两条死路。ref 定位不受影响。
+2. **分页段 viewport 默认也输出**（已修）：分页识别覆盖视口外候选项（hidden 带句柄），viewport 默认快照可直接点底部页按钮。
+
+## 阶段 3（未实施）：内容质量
 - 可访问名升级（`aria-labelledby` / `<label for>` 解析）。
 - 状态字段（aria-expanded/checked/selected/disabled、tabindex、contenteditable）。
 - 点击信号：监听器表（addEventListener 包装已埋）+ `onclick` 属性 + `cursor:pointer`（带上限）+ tabindex≥0。
 - 开放 shadow root 遍历；同源 iframe 纳入（跨 frame id 唯一 + 坐标换算）。
 - ref 签名重定位兜底（元素被重建时按 tag+type+id+name+text 找回）。
 
-### 阶段 4
+## 阶段 4（未实施）
 - 工具描述加固（`@eN` 是稳定句柄、密码禁 selector）；全量回归（S1/S2/G2/G3/PiP）。
 
-## 八、改动文件（阶段 1）
+## 八、改动文件
 
-- `BrowserToolProvider.swift`：a11y 注册表注入、collectEls/locateElJS、快照输出稳定 id、全部交互工具迁移、snapshotItem/snapshotText 按 handle、blank guard 修复、handleGetValue dictErr。
-- `BrowserActivityCenter.swift`：`confirmationBody` 实现。
-- `ChatViewModel.swift`：`awaitToolConfirmation` 浏览器工具接 confirmationBody。
-- `BrowserAgentBar.swift`：完成态浅绿反馈 + 确认条 lineLimit(3)。
-- `ChatView.swift`：确认条 lineLimit(3)。
+- **阶段 1**：`BrowserToolProvider.swift`（a11y 注册表、collectEls/locateElJS、交互迁移、snapshotItem/snapshotText 按 handle、blank guard、handleGetValue dictErr）、`BrowserActivityCenter.swift`（confirmationBody）、`ChatViewModel.swift`（接 confirmationBody）、`BrowserAgentBar.swift`（完成态浅绿 + lineLimit(3)）、`ChatView.swift`（lineLimit(3)）。
+- **阶段 2**：`BrowserToolProvider.swift`（collectSnapshotJS scope/offset/limit/filter/hidden_below/pagination、handleSnapshot 重写、scrollIntoView、snapshot 工具描述）。

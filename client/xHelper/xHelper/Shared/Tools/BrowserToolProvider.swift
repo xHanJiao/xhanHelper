@@ -36,10 +36,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 "max_items": numProp("outline 标题数上限，默认 50"),
                 "max_chars": numProp("filter 每块截断 / full 全文截断字符数，默认 filter 2000 / full 10000")
             ]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_snapshot",         description: "获取页面可访问性快照（紧凑元素树，元素带 @eN 编号可用于 ref 交互；页面变化后编号会失效需重新快照）。链接均带 href，需要打开链接时直接取 href 用 agent_browser_open", inputSchema: objProps([
+            LocalToolSchema(name: "agent_browser_snapshot",         description: "获取页面可访问性快照（紧凑元素树，元素带 @eN 稳定句柄用于 ref 交互；DOM 变化后句柄仍有效，元素销毁才需重新快照）。默认 viewport 范围只列当前屏幕内（含往下 1000px）的元素，视口下方元素会以提示列出，滚动后重新快照即可看到；需要通读整页用 scope=document 配合 offset/limit 翻页。链接均带 href，打开链接直接取 href 用 agent_browser_open", inputSchema: objProps([
                 "mode": strProp("interactive（默认，只列可交互元素与标题）| full（追加页面可见文本前800字）"),
+                "scope": strProp("viewport（默认，当前屏幕+1000px，滚动驱动）| document（扁平全量，配 offset/limit 翻页）"),
+                "offset": numProp("document scope 分页偏移，默认 0"),
+                "limit": numProp("每页元素数，默认 60，上限 200（兼容旧参数 max_items）"),
+                "filter": strProp("按文本/占位符/类型/role 关键词过滤，如 filter=登录"),
                 "include_href": strProp("是否输出链接 href，默认 true"),
-                "max_items": numProp("元素数量上限，默认 60")
+                "max_items": numProp("（已废弃，用 limit）元素数量上限，默认 60")
             ]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_get_text",         description: "获取页面/元素可见文本。元素级（ref/selector）远省 token；无参数返回全量", inputSchema: objProps([
                 "ref": strProp("元素编号，如 @e8，只读该元素文本"),
@@ -444,10 +448,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return .init(serverResult: Self.jsonDict(["dragged": true, "target": "viewport(\(Int(start.x)),\(Int(start.y)))→(\(Int(end.x)),\(Int(end.y)))"]), serverError: nil, clientAction: nil)
     }
 
-    /// ref 元素中心 viewport 坐标（cgclick/cgDrag 定位用，含 ±20% 随机偏移拟人化）
+    /// ref 元素中心 viewport 坐标（cgclick/cgDrag 定位用，含 ±20% 随机偏移拟人化）。
+    /// 元素不在视口内时先 scrollIntoView 居中（document scope 下可用）。
     private func refCenterJS(_ handle: Int) -> String {
         return "(function(){\(collectEls(200))\(locateElJS(handle))" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
+            "var _r0=e.getBoundingClientRect();" +
+            "if(_r0.top<0||_r0.bottom>window.innerHeight||_r0.left<0||_r0.right>window.innerWidth)e.scrollIntoView({block:'center'});" +
             "var r=e.getBoundingClientRect();" +
             "var x=Math.round(r.left+r.width/2+(Math.random()-0.5)*r.width*0.4);" +
             "var y=Math.round(r.top+r.height/2+(Math.random()-0.5)*r.height*0.4);" +
@@ -477,18 +484,64 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         } else {
             includeHref = true
         }
-        let maxItems = (arguments["max_items"] as? NSNumber)?.intValue ?? 60
-        guard let arr = await session.jsJSON(collectInteractablesJS(maxItems)) as? [[String: Any]] else {
+        // 阶段 2 参数：scope（viewport 滚动驱动 / document 扁平分页）、offset、limit、filter
+        let scope = (arguments["scope"] as? String) ?? "viewport"
+        let offset = max(0, (arguments["offset"] as? NSNumber)?.intValue ?? 0)
+        let limit = (arguments["limit"] as? NSNumber)?.intValue ?? (arguments["max_items"] as? NSNumber)?.intValue ?? 60
+        let filter = (arguments["filter"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+        let threshold = 1000
+
+        guard let result = await session.jsJSON(collectSnapshotJS(limit: min(max(limit, 1), 200), offset: offset, scope: scope, threshold: threshold, filter: esc(filter))) as? [String: Any],
+              let arr = result["items"] as? [[String: Any]] else {
             return .init(serverResult: nil, serverError: "快照失败：JS 异常", clientAction: nil)
         }
+        let hiddenBelow = result["hidden_below"] as? [[String: Any]] ?? []
+        let pagination = result["pagination"] as? [[String: Any]] ?? []
+        let total = (result["total"] as? NSNumber)?.intValue ?? arr.count
+        let hasMore = (result["has_more"] as? Bool) ?? false
+        let snapshotScope = (result["scope"] as? String) ?? scope
+
         var lines: [String] = []
         lines.append(Self.pageContentDisclaimer)
         lines.append("Page: \(session.webView.title ?? "")")
         lines.append("URL: \(session.webView.url?.absoluteString ?? "")")
         lines.append("")
-        for item in arr {
-            lines.append(axLine(item: item, includeHref: includeHref))
+        if arr.isEmpty {
+            lines.append("（当前范围内无可交互元素）")
+        } else {
+            for item in arr {
+                lines.append(axLine(item: item, includeHref: includeHref))
+            }
         }
+
+        // 滚动驱动提示：视口下方还有多少交互元素、各距几屏（viewport scope）
+        if snapshotScope == "viewport", !hiddenBelow.isEmpty {
+            lines.append("")
+            lines.append("--- 视口下方还有 \(hiddenBelow.count)+ 个交互元素（滚动后重新 snapshot 可见）---")
+            for h in hiddenBelow.prefix(5) {
+                let tag = h["tag"] as? String ?? ""
+                let text = (h["text"] as? String ?? "").replacingOccurrences(of: "\"", with: "'")
+                let pages = h["pages"] as? Int ?? 1
+                lines.append("  [\(tag)] \"\(text)\" 约下 \(pages) 屏")
+            }
+        }
+        // 分页按钮提示
+        if !pagination.isEmpty {
+            lines.append("")
+            lines.append("--- 分页 ---")
+            for p in pagination {
+                let handle = p["handle"] as? Int ?? -1
+                let text = (p["text"] as? String ?? "").replacingOccurrences(of: "\"", with: "'")
+                let kind = p["kind"] as? String ?? ""
+                lines.append("  @e\(handle) [\(kind)] \"\(text)\"")
+            }
+        }
+        // document scope 分页状态
+        if snapshotScope == "document" {
+            lines.append("")
+            lines.append("--- 第 \(offset / max(limit, 1) + 1) 页，共 \(total) 个元素\(hasMore ? "，还有更多（可 snapshot offset=\(offset + limit) 翻页）" : "（已到底）") ---")
+        }
+
         if mode == "full" {
             let (preview, _) = await session.jsResult("(document.body?(document.body.innerText||''):'').slice(0,800)")
             if let p = preview, !p.isEmpty {
@@ -500,7 +553,20 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let hash = await session.contentHash()
         session.lastContentHash = hash
         session.lastSnapshotItems = arr
-        var dict: [String: Any] = ["snapshot": lines.joined(separator: "\n"), "count": arr.count]
+        var dict: [String: Any] = [
+            "snapshot": lines.joined(separator: "\n"),
+            "count": arr.count,
+            "scope": snapshotScope,
+            "total": total,
+            "offset": offset,
+            "has_more": hasMore,
+        ]
+        if snapshotScope == "viewport", !hiddenBelow.isEmpty {
+            dict["hidden_below_count"] = hiddenBelow.count
+        }
+        if !pagination.isEmpty {
+            dict["pagination"] = pagination
+        }
         if let h = hash { dict["hash"] = h }
         return .init(serverResult: Self.jsonDict(dict), serverError: nil, clientAction: nil)
     }
@@ -1550,6 +1616,75 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
     """
 
+    /// snapshot 用：按 scope 收集（viewport 滚动驱动 / document 扁平分页），
+    /// 含 hidden_below 提示与分页按钮识别。过滤逻辑与 collectElsBody 一致（含 S1 脱敏）。
+    private func collectSnapshotJS(limit: Int, offset: Int, scope: String, threshold: Int, filter: String) -> String {
+        return """
+        (function(){
+        \(a11yGuardJS)
+        var LIMIT=\(limit),OFFSET=\(offset),THRESHOLD=\(threshold);
+        var SCOPE='\(scope)',FILTER='\(filter)';
+        var sels='h1,h2,h3,a,button,input,select,textarea,canvas,[role="button"],[role="checkbox"],[role="tab"],[role="link"]';
+        var all=document.querySelectorAll(sels);
+        var vh=window.innerHeight,vy=window.scrollY;
+        var items=[],hidden=[],allDoc=[],capHidden=0;
+        var matchFilter=function(e){
+          if(!FILTER)return true;
+          var hay=(e.getAttribute('aria-label')||e.textContent||e.placeholder||e.value||e.type||e.getAttribute('role')||'').toLowerCase();
+          return hay.indexOf(FILTER.toLowerCase())>=0;
+        };
+        var cssHidden=function(e){var s=getComputedStyle(e);return s.visibility==='hidden'||parseFloat(s.opacity)<=0;};
+        var metaOf=function(e){
+          var pw=(e.tagName.toLowerCase()==='input'&&e.type==='password');
+          return {handle:a11y.id(e),tag:e.tagName.toLowerCase(),role:e.getAttribute('role')||'',text:(e.getAttribute('aria-label')||e.textContent||(pw?'':e.value)||e.placeholder||'').trim().replace(/\\s+/g,' ').slice(0,40),href:e.href||'',placeholder:e.placeholder||'',type:e.type||'',checked:!!e.checked,id:e.id||'',name:e.name||''};
+        };
+        for(var i=0;i<all.length;i++){
+          var e=all[i];var r=e.getBoundingClientRect();
+          if(r.width<1||r.height<1)continue;
+          if(e.disabled)continue;
+          var tag=e.tagName.toLowerCase();
+          if(tag==='input'&&e.type==='hidden')continue;
+          if(!matchFilter(e))continue;
+          if(SCOPE==='document'){
+            if(cssHidden(e))continue;
+            allDoc.push(metaOf(e));
+            }else{
+            var inBand=(r.top<vh+THRESHOLD&&r.bottom>-THRESHOLD);
+            if(inBand){
+              if(cssHidden(e))continue;
+              items.push(metaOf(e));
+            }else if(r.top>=vh+THRESHOLD&&capHidden<20){
+              capHidden++;
+              var _mh=metaOf(e);
+              hidden.push({handle:_mh.handle,tag:tag,text:_mh.text,pages:Math.max(1,Math.round((r.top+vy)/vh))});
+            }
+          }
+        }
+        // 分页识别覆盖视口外候选项（分页按钮常在页面底部，viewport 默认也能直接点）
+        var pagination=detectPagination(SCOPE==='document'?allDoc:items.concat(hidden));
+        if(SCOPE==='document'){
+          var total=allDoc.length;
+          return JSON.stringify({items:allDoc.slice(OFFSET,OFFSET+LIMIT),total:total,offset:OFFSET,has_more:OFFSET+LIMIT<total,hidden_below:[],pagination:pagination,scope:'document'});
+        }
+        return JSON.stringify({items:items.slice(0,LIMIT),total:items.length,offset:0,has_more:false,hidden_below:hidden.slice(0,10),pagination:pagination,scope:'viewport'});
+        function detectPagination(list){
+          var out=[];
+          for(var i=0;i<list.length;i++){var it=list[i];
+            if(!(it.tag==='a'||it.tag==='button'))continue;
+            var t=(it.text||'').trim().toLowerCase();
+            if(!t)continue;
+            var kind=null;
+            if(/next|»|→|>/.test(t))kind='next';
+            else if(/prev|«|←|</.test(t))kind='prev';
+            else if(/^\\d{1,2}$/.test(t))kind='page';
+            if(kind)out.push({handle:it.handle,text:it.text.slice(0,20),kind:kind});
+          }
+          return out.slice(0,6);
+        }
+        })()
+        """
+    }
+
     /// snapshot 用：收集可交互元素并返回 JSON 元数据数组（handle=稳定 id，供 ref 定位）
     private func collectInteractablesJS(_ limit: Int) -> String {
         let body = collectEls(limit)
@@ -1795,11 +1930,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         "return true;})()"
     }
 
-    /// ref 点击第一步（含 _blank 拦截，按稳定句柄定位）
+    /// ref 点击第一步（含 _blank 拦截，按稳定句柄定位）。元素不在视口内先居中滚动。
     private func refClickDownJS(_ handle: Int) -> String {
         return "(function(){\(collectEls(200))\(locateElJS(handle))" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             blankTabGuardJS +
+            "var _r0=e.getBoundingClientRect();" +
+            "if(_r0.top<0||_r0.bottom>window.innerHeight||_r0.left<0||_r0.right>window.innerWidth)e.scrollIntoView({block:'center'});" +
             "var r=e.getBoundingClientRect();" +
             "var x=r.left+r.width/2+(Math.random()-0.5)*r.width*0.4;" +
             "var y=r.top+r.height/2+(Math.random()-0.5)*r.height*0.4;" +

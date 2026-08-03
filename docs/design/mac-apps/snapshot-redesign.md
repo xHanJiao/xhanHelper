@@ -1,0 +1,113 @@
+# 快照重设计：稳定句柄模型（阶段 1）
+
+> 日期：2026-08-04
+> 分支：feat/browser-polish
+> 状态：阶段 1（稳定句柄核心）已实施并测试闭环；阶段 2/3 规划见文末。
+
+## 一、背景问题
+
+原有 `snapshot` 的 ref（`@eN`）是**位置索引**——"第 N 个满足快照过滤条件的元素"。它的四个硬伤：
+
+1. **前 60 个限制**：`LIMIT` 默认 60，且**无分页/offset**，密集页面后面的元素永远进不了快照。
+2. **ref 过期**：快照后 DOM 一插入/重排，`@eN` 就指向别的元素；`refProbe` 只能"校验失败报错"，不能找回目标。
+3. **位置悬垂（Bad Case 15）**：元素被销毁后，旧索引可能"悬垂"到位置相同的新节点上，误操作错误元素。
+4. **覆盖面窄**：自定义组件（无 role）、纯 JS 绑定点击的元素、shadow DOM、iframe 内的元素不可见。
+
+## 二、调研：业界怎么做
+
+| 方案 | 做法 | 我们的取舍 |
+|------|------|-----------|
+| **Chrome CDP `Accessibility`** | `enable()` 后 AXNodeId 跨调用稳定；每个 AX 节点带 **`backendDOMNodeId`**（DOM 变动后仍稳定）；`getFullAXTree` 全量、`queryAXTree` 按 name/role 定向 | WKWebView 无 CDP，用 **JS WeakMap 注册表模拟 backendNodeId** |
+| **browser-use（最流行开源浏览器 agent）** | 模型看 `selector_index`，点击用内部 `backend_node_id`（每次重新序列化）；**滚动驱动 + viewport 阈值**（默认 1000px）；识别分页按钮；AX 树 + `getEventListeners` 检测纯 JS 点击目标；`pierce:true` 穿透 shadow/iframe | 我们的 WeakMap **跨交互持久**（比它强，不需每次重新序列化）；滚动驱动模型采纳进阶段 2；JS 监听检测用 addEventListener 包装近似 |
+| **Playwright locator** | 每次操作前按 selector 重新解析 | 签名重定位思路（阶段 3 采纳） |
+
+**JS 环境的三个做不到（如实记录）**：
+- 纯 JS 监听器绑定检测 → 用 **addEventListener 包装脚本**近似（阶段 1 已埋，阶段 3 接入收集）。
+- 跨域 iframe → JS 够不到（见"未来路径"）；同源 iframe 阶段 3 纳入；跨域用 cgclick 兜底。
+- 闭合 shadow root → 无 JS 路径，接受跳过（实践中极罕见）。
+
+## 三、稳定句柄模型（阶段 1 核心）
+
+### 3.1 机制
+
+- `makeWebView` 注入 `a11yRegistryScript`（documentStart，forMainFrameOnly）：
+  - `window.__xhanA11y = { id: WeakMap 注册表 }` —— `a11y.id(el)` 首次遇到分配单调 id、之后恒定（JS 版 backendNodeId）。
+  - **addEventListener 包装**：记录元素绑定的点击监听（Gap 1 基础）。
+- **`@eN` 语义升级**：N 从"第 N 个元素"变"稳定 id"。首次快照按 DOM 序分配 1..N（表现与旧版一致），DOM 变动后 id 不变。
+- 交互工具用 `locateElJS(handle)` 在**当前 DOM** 里按 `a11y.id(el) === handle` 定位，不依赖位置。
+
+### 3.2 关键性质
+
+- **跨快照稳定**：同一元素（节点未重建）跨多次快照 id 不变。
+- **对插入/重排免疫**：顶部插广告、列表重排，`@e6` 仍指向原元素。
+- **不悬垂**：元素销毁 → id 消失 → 报"ref @eN 不存在，页面已变化，请重新 snapshot"，**不会指向位置相同的新节点**（Bad Case 15 根治）。
+- **页面跳转自然重置**：documentStart 重新建注册表，id 重新分配。
+
+### 3.3 迁移
+
+- `refIndex`（位置）→ `refHandle`（稳定 id）；移除位置签名校验 `refMismatchError`（稳定 id 本身就是身份）。
+- 全部交互工具（click/fill/type/select/check/get_text/get_value/cgclick/cgDrag）改为 `collectEls + locateElJS` 定位。
+- `snapshotItem/snapshotText` 按稳定 id 反查（确认条摘要/指示器 ref→文本复用）。
+
+## 四、阶段 1 测试报告（T1-T7 第二轮，全绿）
+
+环境：浏览器重置后从零开始。结果：
+
+| # | 用例 | 结果 | 关键证据 |
+|---|------|------|---------|
+| T1 | 快照基本格式 | ✅ | baidu 首行标注 + @e1-@e31 连续递增 |
+| T2 | 稳定 id 跨快照 | ✅ | 「换一换」整组替换：存活元素 @e1-@e16/@e27-@e31 保持原 id；新节点从 @e32 起 |
+| T3 | 旧 ref 安全 | ✅ | 已销毁 @e18 → 正确报错不悬垂；存活 @e16 直接命中 |
+| T4 | S1 脱敏 | ✅ | get_value 密码框返回「敏感字段不可读取」；fill 假值后 snapshot 零泄露 |
+| T5 | 工具回归 | ✅ | fill→click→nav、get_text、check/uncheck 双向全正常 |
+| T6/T7 | L3 确认条 | ✅ | 支付宝高敏域点击弹确认条（人话摘要）、确认后执行 |
+
+**核心收益**：稳定 id 机制验证通过；顺带解决 Bad Case 15 位置悬垂（本轮最大收益）。
+
+## 五、缺陷清单（阶段 1 修复闭环）
+
+| # | 缺陷 | 根因 | 修复 |
+|---|------|------|------|
+| ① | L3 确认条显示 `ref=@e10` 非「点击「帮助」」 | `confirmationBody` 未实现 + `awaitToolConfirmation` 的 argsSummary 未接它（仍是原始参数转储） | 实现 `confirmationBody`（全工具人话摘要：ref→元素文本/href、密码脱敏、跨域标注、敏感页 ⚠）；`bridgeToBrowser` 时 argsSummary 走它，聊天/浏览器条同享；body lineLimit(3) |
+| ② | get_value 密码框报「未找到元素」而非「敏感字段不可读取」 | `handleGetValue` guard 吞掉 JS err | 改用 `dictErr` 透出 JS 错误 |
+| ③ | 指示器完成态绿字绿底看不清 | 绿勾叠浅 accent 底 | 完成态整条转浅绿反馈（bg green 0.15 + 绿描边 + 白勾圆） |
+
+**新观察（已修复）**：必应 @e10「换一批」_blank 拦截错误缺目标 URL——非 `<a>` 元素无 `href`。blank guard 改为 `closest('a')` 向上找 href + 附元素文本。
+
+## 六、未来路径
+
+### 6.1 跨域 iframe（研究项，不本期做）
+
+- 现状：JS 够不到跨域 frame；支付/登录/嵌入多为跨域 iframe，agent 不可结构化操作，只能 cgclick 兜底。
+- 未来方向：WKWebView `evaluateJavaScript(_:in: contentWorld:)` 可按 WKFrameInfo 定向执行——通过 `decidePolicyFor` 的 `targetFrame` 收集子 frame 句柄，跨域也可能注入（内容拦截器同款机制）。需原型验证（有不确定性）。
+- 与产品策略一致：支付/登录用户自己来，不交给 LLM。
+
+### 6.2 桌面小宠物（潜在复用）
+
+viewport 空间感知（阶段 2 的可见性模型）为桌面宠物提供"屏幕上有什么"的感知基础。
+
+## 七、阶段 2/3 计划（未实施）
+
+### 阶段 2：可见性模型 + 滚动驱动
+- `snapshot` 参数：`scope=viewport|document`（默认 viewport）、`offset`、`limit`、`filter`。
+- **viewport scope**：只列视口内 + 阈值（1000px）元素，getComputedStyle 过滤 display:none/visibility:hidden/opacity:0；返回 `hidden_below`（下方交互元素 + 距几屏）。
+- **分页按钮识别**：next/prev/页码文本模式 → 返回 `pagination` 提示。
+- **document scope**：扁平 offset/limit 全量扫描，响应带 `total/has_more`。
+
+### 阶段 3：内容质量
+- 可访问名升级（`aria-labelledby` / `<label for>` 解析）。
+- 状态字段（aria-expanded/checked/selected/disabled、tabindex、contenteditable）。
+- 点击信号：监听器表（addEventListener 包装已埋）+ `onclick` 属性 + `cursor:pointer`（带上限）+ tabindex≥0。
+- 开放 shadow root 遍历；同源 iframe 纳入（跨 frame id 唯一 + 坐标换算）。
+- ref 签名重定位兜底（元素被重建时按 tag+type+id+name+text 找回）。
+
+### 阶段 4
+- 工具描述加固（`@eN` 是稳定句柄、密码禁 selector）；全量回归（S1/S2/G2/G3/PiP）。
+
+## 八、改动文件（阶段 1）
+
+- `BrowserToolProvider.swift`：a11y 注册表注入、collectEls/locateElJS、快照输出稳定 id、全部交互工具迁移、snapshotItem/snapshotText 按 handle、blank guard 修复、handleGetValue dictErr。
+- `BrowserActivityCenter.swift`：`confirmationBody` 实现。
+- `ChatViewModel.swift`：`awaitToolConfirmation` 浏览器工具接 confirmationBody。
+- `BrowserAgentBar.swift`：完成态浅绿反馈 + 确认条 lineLimit(3)。
+- `ChatView.swift`：确认条 lineLimit(3)。

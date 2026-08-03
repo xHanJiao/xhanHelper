@@ -213,95 +213,42 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         case click, fill, type, select
     }
 
-    /// ref（@eN）解析为 collect 数组索引；格式不合法返回 nil
-    private func refIndex(_ ref: String) -> Int? {
+    /// ref（@eN）解析为稳定句柄（N 即稳定 id，1 基）；格式不合法返回 nil。
+    /// 稳定 id 由 a11y 注册表分配，DOM 插入/重排后仍指向同一元素（不再是位置索引）。
+    private func refHandle(_ ref: String) -> Int? {
         let s = ref.trimmingCharacters(in: .whitespaces)
         guard s.hasPrefix("@") else { return nil }
         let body = s.dropFirst().lowercased().hasPrefix("e") ? String(s.dropFirst().dropFirst()) : String(s.dropFirst())
         guard let n = Int(body), n >= 1 else { return nil }
-        return n - 1
+        return n
     }
 
-    /// ref 特征校验：将当前 DOM 第 N 个元素的特征与快照时记录的签名对比，
-    /// 不一致（页面变化导致编号错位）时返回错误提示，要求重新 snapshot。
-    /// 对比规则：tag/href/type/id/name 必比；text 仅非表单元素比（input value 动态，不误拦）。
-    private func refMismatchError(session: TabSession, index: Int) async -> String? {
-        guard let items = session.lastSnapshotItems else {
-            return "请先 snapshot 获取 @eN 编号"
-        }
-        guard index < items.count else {
-            return "ref @e\(index + 1) 超出快照范围，请重新 snapshot"
-        }
-        guard let probe = await session.jsJSON(refProbeJS(index)) as? [String: Any],
-              let ok = probe["ok"] as? Bool, ok else {
-            return "ref @e\(index + 1) 不存在，请重新 snapshot"
-        }
-        let expected = items[index]
-        let expTag = expected["tag"] as? String ?? ""
-        let tag = probe["tag"] as? String ?? ""
-        if tag != expTag {
-            return "页面内容已变化（@e\(index + 1) 由 [\(expTag)] 变为 [\(tag)]），请重新 snapshot 获取最新编号"
-        }
-        let expHref = expected["href"] as? String ?? ""
-        let href = probe["href"] as? String ?? ""
-        if href != expHref {
-            return "页面内容已变化（@e\(index + 1) 链接目标不同），请重新 snapshot 获取最新编号"
-        }
-        let expType = expected["type"] as? String ?? ""
-        let type = probe["type"] as? String ?? ""
-        if type != expType {
-            return "页面内容已变化（@e\(index + 1) 类型由 \(expType) 变为 \(type)），请重新 snapshot 获取最新编号"
-        }
-        let expId = expected["id"] as? String ?? ""
-        let id = probe["id"] as? String ?? ""
-        let expName = expected["name"] as? String ?? ""
-        let name = probe["name"] as? String ?? ""
-        if id != expId || name != expName {
-            return "页面内容已变化（@e\(index + 1) 表单标识不同），请重新 snapshot 获取最新编号"
-        }
-        let formTags = ["input", "select", "textarea"]
-        if !formTags.contains(expTag) {
-            let expText = expected["text"] as? String ?? ""
-            let text = probe["text"] as? String ?? ""
-            if text != expText {
-                return "页面内容已变化（@e\(index + 1) 文本不一致），请重新 snapshot 获取最新编号"
-            }
-        }
-        return nil
-    }
-
-    /// 交互统一入口：ref 优先，无 ref 退回 selector（向后兼容）
+    /// 交互统一入口：ref（稳定句柄）优先，无 ref 退回 selector（向后兼容）
     private func interact(session: TabSession, arguments: [String: Any], kind: InteractKind, successKey: String) async -> LocalToolResult {
         if kind == .type {
             return await typeText(session: session, arguments: arguments, successKey: successKey)
         }
-        if let idx = refIndex(arguments["ref"] as? String ?? "") {
-            // ref 编号基于快照，页面变化后先拦截提示重新 snapshot
-            if let stale = await refMismatchError(session: session, index: idx) {
-                return .init(serverResult: nil, serverError: stale, clientAction: nil)
-            }
-        }
-        if let idx = refIndex(arguments["ref"] as? String ?? "") {
+        if let handle = refHandle(arguments["ref"] as? String ?? "") {
             switch kind {
             case .click:
-                let result = await session.jsJSON(refClickDownJS(idx))
+                let result = await session.jsJSON(refClickDownJS(handle))
                 guard let dict = result as? [String: Any], let ok = dict["ok"] as? Bool, ok else {
-                    return .init(serverResult: nil, serverError: dictErr(dict: result, fallback: "ref @e\(idx + 1) 点击失败，请重新 snapshot"), clientAction: nil)
+                    return .init(serverResult: nil, serverError: dictErr(dict: result, fallback: "ref @e\(handle) 点击失败，请重新 snapshot"), clientAction: nil)
                 }
                 let px = (dict["x"] as? NSNumber)?.intValue ?? -1
                 let py = (dict["y"] as? NSNumber)?.intValue ?? -1
                 let delay = Int.random(in: 50...150)
-                print("[B-Click] ref=@e\(idx + 1) pos=(\(px),\(py)) release_delay=\(delay)ms")
+                print("[B-Click] ref=@e\(handle) pos=(\(px),\(py)) release_delay=\(delay)ms")
                 try? await Task.sleep(for: .milliseconds(delay))
                 _ = await session.jsBool(refClickUpJS())
                 return .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
             case .fill:
-                let js = refFillJS(idx, arguments["value"] as? String ?? "")
+                let js = refFillJS(handle, arguments["value"] as? String ?? "")
                 return await interpretRefResult(await session.jsJSON(js), successKey: successKey)
             case .type:
                 return await typeText(session: session, arguments: arguments, successKey: successKey)
             case .select:
-                let js = refSelectJS(idx, arguments["value"] as? String ?? "")
+                let js = refSelectJS(handle, arguments["value"] as? String ?? "")
                 return await interpretRefResult(await session.jsJSON(js), successKey: successKey)
             }
         }
@@ -339,14 +286,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         guard !text.isEmpty else {
             return .init(serverResult: nil, serverError: "type 需要 text", clientAction: nil)
         }
-        if let idx = refIndex(arguments["ref"] as? String ?? "") {
-            if let stale = await refMismatchError(session: session, index: idx) {
-                return .init(serverResult: nil, serverError: stale, clientAction: nil)
-            }
-        }
         let initOK: (ok: Bool, jsError: String?)
-        if let idx = refIndex(arguments["ref"] as? String ?? "") {
-            initOK = await session.jsBool(typeInitRefJS(idx))
+        if let handle = refHandle(arguments["ref"] as? String ?? "") {
+            initOK = await session.jsBool(typeInitRefJS(handle))
         } else if let sel = arguments["selector"] as? String, !sel.isEmpty {
             initOK = await session.jsBool(typeInitSelJS(sel))
         } else {
@@ -376,8 +318,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     private func interactChecked(session: TabSession, arguments: [String: Any], checked: Bool) async -> LocalToolResult {
-        if let idx = refIndex(arguments["ref"] as? String ?? "") {
-            return await interpretRefResult(await session.jsJSON(refCheckJS(idx, checked)), successKey: checked ? "checked" : "unchecked")
+        if let handle = refHandle(arguments["ref"] as? String ?? "") {
+            return await interpretRefResult(await session.jsJSON(refCheckJS(handle, checked)), successKey: checked ? "checked" : "unchecked")
         }
         let sel = arguments["selector"] as? String ?? ""
         let (ok, jsErr) = await session.jsBool(checkJS(sel, checked))
@@ -396,11 +338,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         // 定位目标点：ref（元素中心）或直接 x/y（调试）
         var viewportPoint: CGPoint?
         var targetDesc = ""
-        if let idx = refIndex(arguments["ref"] as? String ?? "") {
-            if let stale = await refMismatchError(session: session, index: idx) {
-                return .init(serverResult: nil, serverError: stale, clientAction: nil)
-            }
-            let result = await session.jsJSON(refCenterJS(idx))
+        if let handle = refHandle(arguments["ref"] as? String ?? "") {
+            let result = await session.jsJSON(refCenterJS(handle))
             guard let dict = result as? [String: Any],
                   let ok = dict["ok"] as? Bool, ok,
                   let x = (dict["x"] as? NSNumber)?.doubleValue,
@@ -409,7 +348,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 return .init(serverResult: nil, serverError: dictErr(dict: result, fallback: "cgclick 定位失败，请重新 snapshot"), clientAction: nil)
             }
             viewportPoint = CGPoint(x: x, y: y)
-            targetDesc = "ref @e\(idx + 1)"
+            targetDesc = "ref @e\(handle)"
         } else if let x = (arguments["x"] as? NSNumber)?.doubleValue,
                   let y = (arguments["y"] as? NSNumber)?.doubleValue {
             viewportPoint = CGPoint(x: x, y: y)
@@ -467,11 +406,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         var vpStart: CGPoint?
-        if let idx = refIndex(arguments["ref"] as? String ?? "") {
-            if let stale = await refMismatchError(session: session, index: idx) {
-                return .init(serverResult: nil, serverError: stale, clientAction: nil)
-            }
-            let result = await session.jsJSON(refCenterJS(idx))
+        if let handle = refHandle(arguments["ref"] as? String ?? "") {
+            let result = await session.jsJSON(refCenterJS(handle))
             guard let dict = result as? [String: Any], let ok = dict["ok"] as? Bool, ok,
                   let x = (dict["x"] as? NSNumber)?.doubleValue,
                   let y = (dict["y"] as? NSNumber)?.doubleValue
@@ -509,10 +445,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// ref 元素中心 viewport 坐标（cgclick/cgDrag 定位用，含 ±20% 随机偏移拟人化）
-    private func refCenterJS(_ index: Int) -> String {
-        let body = collectElsBody.replacingOccurrences(of: "LIMIT", with: "200")
-        return "(function(){\(body)" +
-            "var e=out[\(index)];if(!e)return JSON.stringify({ok:false,err:'ref @e\(index + 1) 不存在，请重新 snapshot'});" +
+    private func refCenterJS(_ handle: Int) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+            "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             "var r=e.getBoundingClientRect();" +
             "var x=Math.round(r.left+r.width/2+(Math.random()-0.5)*r.width*0.4);" +
             "var y=Math.round(r.top+r.height/2+(Math.random()-0.5)*r.height*0.4);" +
@@ -551,8 +486,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         lines.append("Page: \(session.webView.title ?? "")")
         lines.append("URL: \(session.webView.url?.absoluteString ?? "")")
         lines.append("")
-        for (i, item) in arr.enumerated() {
-            lines.append(axLine(index: i + 1, item: item, includeHref: includeHref))
+        for item in arr {
+            lines.append(axLine(item: item, includeHref: includeHref))
         }
         if mode == "full" {
             let (preview, _) = await session.jsResult("(document.body?(document.body.innerText||''):'').slice(0,800)")
@@ -570,7 +505,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return .init(serverResult: Self.jsonDict(dict), serverError: nil, clientAction: nil)
     }
 
-    private func axLine(index: Int, item: [String: Any], includeHref: Bool) -> String {
+    /// 渲染一行快照项：@e<稳定id> [attr] "text" ...
+    private func axLine(item: [String: Any], includeHref: Bool) -> String {
+        let handle = item["handle"] as? Int ?? -1
         let tag = item["tag"] as? String ?? ""
         let role = item["role"] as? String ?? ""
         let text = (item["text"] as? String ?? "").replacingOccurrences(of: "\"", with: "'")
@@ -584,7 +521,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         if tag == "h1" || tag == "h2" || tag == "h3" { attr = "heading" }
         if tag == "input" && !type.isEmpty { attr += " type=\(type)" }
 
-        var line = "@e\(index) [\(attr)]"
+        var line = "@e\(handle) [\(attr)]"
         if !text.isEmpty { line += " \"\(text)\"" }
         if !placeholder.isEmpty { line += " placeholder=\"\(placeholder)\"" }
         if includeHref && tag == "a" && !href.isEmpty { line += " href=\"\(href)\"" }
@@ -629,11 +566,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// get_text：元素级（ref/selector）读取，无参数返回全量
     private func handleGetText(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
         let maxChars = (arguments["max_chars"] as? NSNumber)?.intValue ?? 2000
-        if let idx = refIndex(arguments["ref"] as? String ?? "") {
-            if let stale = await refMismatchError(session: session, index: idx) {
-                return .init(serverResult: nil, serverError: stale, clientAction: nil)
-            }
-            let result = await session.jsJSON(elementTextJS(idx, maxChars))
+        if let handle = refHandle(arguments["ref"] as? String ?? "") {
+            let result = await session.jsJSON(elementTextJS(handle, maxChars))
             return interpretTextResult(result)
         }
         if let sel = arguments["selector"] as? String, !sel.isEmpty {
@@ -658,19 +592,17 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// get_value：读取表单值；checkbox/radio 返回 checked 状态
     private func handleGetValue(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
         let locator: (js: String, desc: String)
-        if let idx = refIndex(arguments["ref"] as? String ?? "") {
-            if let stale = await refMismatchError(session: session, index: idx) {
-                return .init(serverResult: nil, serverError: stale, clientAction: nil)
-            }
-            locator = (elementValueJS(idx), "@e\(idx + 1)")
+        if let handle = refHandle(arguments["ref"] as? String ?? "") {
+            locator = (elementValueJS(handle), "@e\(handle)")
         } else if let sel = arguments["selector"] as? String, !sel.isEmpty {
             locator = (elementValueSelJS(sel), sel)
         } else {
             return .init(serverResult: nil, serverError: "get_value 需要 ref 或 selector", clientAction: nil)
         }
-        guard let dict = await session.jsJSON(locator.js) as? [String: Any],
+        let jsResult = await session.jsJSON(locator.js)
+        guard let dict = jsResult as? [String: Any],
               let ok = dict["ok"] as? Bool, ok else {
-            return .init(serverResult: nil, serverError: "未找到元素: \(locator.desc)", clientAction: nil)
+            return .init(serverResult: nil, serverError: dictErr(dict: jsResult, fallback: "未找到元素: \(locator.desc)"), clientAction: nil)
         }
         var out: [String: Any] = [:]
         if let checked = dict["checked"] as? Bool {
@@ -1036,13 +968,18 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return false
     }
 
-    /// 把上次 snapshot 的 @eN ref 解析成元素文本（供指示器显示"点击「登录」"而非"点击 @e13"）
+    /// 把上次 snapshot 的 @eN（稳定句柄）解析成元素文本（供指示器显示"点击「登录」"而非"点击 @e13"）
     func snapshotText(forRef ref: String) -> String? {
-        guard let idx = refIndex(ref),
-              let items = activeSession?.lastSnapshotItems,
-              items.indices.contains(idx),
-              let text = items[idx]["text"] as? String, !text.isEmpty else { return nil }
+        guard let item = snapshotItem(forRef: ref),
+              let text = item["text"] as? String, !text.isEmpty else { return nil }
         return text
+    }
+
+    /// 按稳定句柄在 lastSnapshotItems 中反查元素元数据（供确认条摘要/ref→文本）
+    func snapshotItem(forRef ref: String) -> [String: Any]? {
+        guard let handle = refHandle(ref),
+              let items = activeSession?.lastSnapshotItems else { return nil }
+        return items.first { ($0["handle"] as? Int) == handle }
     }
 
     private func handleOpen(_ args: [String: Any]) async -> LocalToolResult {
@@ -1331,6 +1268,16 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             )
             configuration.userContentController.addUserScript(fingerprintScript)
 
+            // 稳定元素句柄注册表（documentStart，先于页面脚本）：a11y.id(el) 分配/返回
+            // 元素稳定 id（JS 版 backendNodeId，DOM 变动后仍稳定）；addEventListener 包装
+            // 记录元素绑定的点击监听（补纯 JS 绑定点击目标）。
+            let a11yScript = WKUserScript(
+                source: BrowserToolProvider.a11yRegistryScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+            configuration.userContentController.addUserScript(a11yScript)
+
             // G3：内容拦截（广告/追踪脚本），减少注入面 + 隐私 + 节能
             if let ruleList = ContentBlocker.ruleList {
                 configuration.userContentController.add(ruleList)
@@ -1559,8 +1506,30 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     // MARK: - JS string builders
 
+    /// 确保 a11y 注册表存在（userScript 已装完整版，这里是兜底：仅 id 分配）。
+    private var a11yGuardJS: String {
+        """
+        if(!window.__xhanA11y){(function(){var m=new WeakMap(),c=0;window.__xhanA11y={id:function(e){var v=m.get(e);if(v===undefined){c++;m.set(e,c);return c;}return v;},hasListener:function(){return false;},listeners:function(){return [];}};})();}
+        var a11y=window.__xhanA11y;
+        """
+    }
+
+    /// 收集候选元素（含 a11y 注册表兜底）。LIMIT 为收集上限。
+    private func collectEls(_ limit: Int) -> String {
+        a11yGuardJS + collectElsBody.replacingOccurrences(of: "LIMIT", with: String(limit))
+    }
+
+    /// 按稳定 id 定位元素：设置 `var e`（找到）或 `e=null` + `_locErr`（未找到/页面已变化）。
+    /// 放在 collectEls 之后使用（`out` 已就绪）。稳定 id 对 DOM 插入/重排免疫。
+    private func locateElJS(_ handle: Int) -> String {
+        """
+        var e=null;var _locErr='ref @e\(handle) 不存在，页面已变化，请重新 snapshot';
+        for(var i=0;i<out.length;i++){if(a11y.id(out[i])===\(handle)){e=out[i];break;}}
+        """
+    }
+
     /// 共享元素收集主体（元素引用数组 + 过滤）。collectInteractablesJS 与 ref 交互共用，
-    /// 过滤逻辑必须一致，否则 @eN 编号会错位。LIMIT 为占位符，使用前替换。
+    /// 过滤逻辑必须一致。LIMIT 为占位符，使用前替换。
     /// 安全（S1）：隐藏字段（token/CSRF）不进快照；密码框 value 永不读入——防敏感信息进 LLM。
     private let collectElsBody = """
     var out=[];var sels='h1,h2,h3,a,button,input,select,textarea,canvas,[role="button"],[role="checkbox"],[role="tab"],[role="link"]';
@@ -1581,29 +1550,20 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
     """
 
-    /// snapshot 用：收集可交互元素并返回 JSON 元数据数组（含 id/name 供 ref 特征校验）
+    /// snapshot 用：收集可交互元素并返回 JSON 元数据数组（handle=稳定 id，供 ref 定位）
     private func collectInteractablesJS(_ limit: Int) -> String {
-        let body = collectElsBody.replacingOccurrences(of: "LIMIT", with: String(limit))
+        let body = collectEls(limit)
         return """
         (function(){
         \(body)
         var meta=[];
         for(var i=0;i<out.length;i++){var e=out[i];
           var pw=(e.tagName.toLowerCase()==='input'&&e.type==='password');
-          meta.push({tag:e.tagName.toLowerCase(),role:e.getAttribute('role')||'',text:(e.getAttribute('aria-label')||e.textContent||(pw?'':e.value)||e.placeholder||'').trim().replace(/\\s+/g,' ').slice(0,40),href:e.href||'',placeholder:e.placeholder||'',type:e.type||'',checked:!!e.checked,id:e.id||'',name:e.name||''});
+          meta.push({handle:a11y.id(e),tag:e.tagName.toLowerCase(),role:e.getAttribute('role')||'',text:(e.getAttribute('aria-label')||e.textContent||(pw?'':e.value)||e.placeholder||'').trim().replace(/\\s+/g,' ').slice(0,40),href:e.href||'',placeholder:e.placeholder||'',type:e.type||'',checked:!!e.checked,id:e.id||'',name:e.name||''});
         }
         return JSON.stringify(meta);
         })()
         """
-    }
-
-    /// ref 特征探测：解析当前 DOM 第 N 个元素的特征（与 snapshot 元数据同构），供 ref 校验对比
-    private func refProbeJS(_ index: Int) -> String {
-        let body = collectElsBody.replacingOccurrences(of: "LIMIT", with: "200")
-        return "(function(){\(body)" +
-            "var e=out[\(index)];if(!e)return JSON.stringify({ok:false});" +
-            "var pw=(e.tagName.toLowerCase()==='input'&&e.type==='password');" +
-            "return JSON.stringify({ok:true,tag:e.tagName.toLowerCase(),href:e.href||'',type:e.type||'',id:e.id||'',name:e.name||'',text:(e.getAttribute('aria-label')||e.textContent||(pw?'':e.value)||e.placeholder||'').trim().replace(/\\s+/g,' ').slice(0,40)});})()"
     }
 
     // MARK: - 读取 JS
@@ -1656,11 +1616,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         """
     }
 
-    /// 元素可见文本（ref 路径）
-    private func elementTextJS(_ index: Int, _ maxChars: Int) -> String {
-        let body = collectElsBody.replacingOccurrences(of: "LIMIT", with: "200")
-        return "(function(){\(body)" +
-            "var e=out[\(index)];if(!e)return JSON.stringify({ok:false,err:'ref @e\(index + 1) 不存在，请重新 snapshot'});" +
+    /// 元素可见文本（ref 路径，按稳定句柄定位）
+    private func elementTextJS(_ handle: Int, _ maxChars: Int) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+            "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             "var t=(e.innerText||e.textContent||'').trim().replace(/\\s+/g,' ').slice(0,\(maxChars));" +
             "return JSON.stringify({ok:true,text:t});})()"
     }
@@ -1673,10 +1632,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// 表单元素值（ref 路径）；checkbox/radio 返回 checked。安全（S1）：密码/隐藏字段拒绝读取。
-    private func elementValueJS(_ index: Int) -> String {
-        let body = collectElsBody.replacingOccurrences(of: "LIMIT", with: "200")
-        return "(function(){\(body)" +
-            "var e=out[\(index)];if(!e)return JSON.stringify({ok:false,err:'ref @e\(index + 1) 不存在，请重新 snapshot'});" +
+    private func elementValueJS(_ handle: Int) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+            "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             "if(e.type==='checkbox'||e.type==='radio')return JSON.stringify({ok:true,checked:!!e.checked});" +
             "if(e.type==='password'||e.type==='hidden')return JSON.stringify({ok:false,err:'敏感字段（密码/隐藏）不可读取'});" +
             "return JSON.stringify({ok:true,value:e.value!=null?e.value:''});})()"
@@ -1690,17 +1648,20 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         "return JSON.stringify({ok:true,value:e.value!=null?e.value:''});})()"
     }
 
-    /// _blank 链接合成点击无效（不触发新标签导航），拦截并引导改用 open
+    /// _blank 链接合成点击无效（不触发新标签导航），拦截并引导改用 open。
+    /// 非 <a> 元素（button/div 带 target=_blank）没有 href，向上找 closest('a') 并附元素文本。
     private let blankTabGuardJS = """
     if(e.getAttribute&&e.getAttribute('target')==='_blank'){
-      return JSON.stringify({ok:false,err:'链接为 _blank 新标签打开（合成点击无效），建议改用 agent_browser_open 打开: '+(e.href||'')});
+      var _anc=e.closest?e.closest('a'):null;
+      var _href=e.href||(_anc?_anc.href:'')||'';
+      var _txt=(e.getAttribute('aria-label')||e.textContent||'').trim().replace(/\\s+/g,' ').slice(0,40);
+      return JSON.stringify({ok:false,err:'链接为 _blank 新标签打开（合成点击无效），建议改用 agent_browser_open 打开'+(_href?': '+_href:'')+(_txt?'（'+_txt+'）':'')});
     }
     """
 
-    private func refFillJS(_ index: Int, _ val: String) -> String {
-        let body = collectElsBody.replacingOccurrences(of: "LIMIT", with: "200")
-        return "(function(){\(body)" +
-            "var e=out[\(index)];if(!e)return JSON.stringify({ok:false,err:'ref @e\(index + 1) 不存在，请重新 snapshot'});" +
+    private func refFillJS(_ handle: Int, _ val: String) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+            "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             "e.focus();e.select();" +
             "var proto=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:(e.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype);" +
             "var setter=Object.getOwnPropertyDescriptor(proto,'value').set;" +
@@ -1711,20 +1672,18 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             "return JSON.stringify({ok:true});})()"
     }
 
-    private func refSelectJS(_ index: Int, _ val: String) -> String {
-        let body = collectElsBody.replacingOccurrences(of: "LIMIT", with: "200")
-        return "(function(){\(body)" +
-            "var e=out[\(index)];if(!e)return JSON.stringify({ok:false,err:'ref @e\(index + 1) 不存在，请重新 snapshot'});" +
+    private func refSelectJS(_ handle: Int, _ val: String) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+            "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             "e.focus();e.value='\(esc(val))';" +
             "e.dispatchEvent(new Event('input',{bubbles:true}));" +
             "e.dispatchEvent(new Event('change',{bubbles:true}));" +
             "e.blur();return JSON.stringify({ok:true});})()"
     }
 
-    private func refCheckJS(_ index: Int, _ checked: Bool) -> String {
-        let body = collectElsBody.replacingOccurrences(of: "LIMIT", with: "200")
-        return "(function(){\(body)" +
-            "var e=out[\(index)];if(!e)return JSON.stringify({ok:false,err:'ref @e\(index + 1) 不存在，请重新 snapshot'});" +
+    private func refCheckJS(_ handle: Int, _ checked: Bool) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+            "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             "e.focus();" +
             "if(!!e.checked!==\(checked))e.click();" +
             "e.dispatchEvent(new Event('change',{bubbles:true}));" +
@@ -1777,6 +1736,32 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     })()
     """
 
+    /// 稳定元素句柄注册表（documentStart 注入，先于页面脚本，forMainFrameOnly）。
+    /// - `a11y.id(el)`：分配/返回元素稳定 id（首次遇到分配、之后恒定），JS 版 CDP backendNodeId。
+    /// - addEventListener 包装：记录元素绑定的点击监听（补纯 JS 绑定点击目标，Gap 1）。
+    static let a11yRegistryScript = """
+    (function(){
+      if(window.__xhanA11y)return;
+      var m=new WeakMap(),c=0,lm=new WeakMap();
+      var _id=function(el){var v=m.get(el);if(v===undefined){c++;m.set(el,c);return c;}return v;};
+      var _rec=function(el,type,add){
+        if(!el||el.nodeType!==1)return;
+        var s=lm.get(el);
+        if(add){if(!s){s=new Set();lm.set(el,s);}s.add(type);}
+        else if(s){s.delete(type);if(!s.size)lm.delete(el);}
+      };
+      var O=EventTarget.prototype;
+      var oa=O.addEventListener,or=O.removeEventListener;
+      O.addEventListener=function(t,fn,o){_rec(this,t,true);return oa.call(this,t,fn,o);};
+      O.removeEventListener=function(t,fn,o){_rec(this,t,false);return or.call(this,t,fn,o);};
+      window.__xhanA11y={
+        id:_id,
+        hasListener:function(el,type){var s=lm.get(el);return s?s.has(type):false;},
+        listeners:function(el){var s=lm.get(el);return s?Array.from(s):[];}
+      };
+    })()
+    """
+
     /// 合成点击第一步：定位元素（随机偏移点）→ 聚焦 → mousedown → 打标记
     /// 第二步 clickUpJS 抬起（两步间由 Swift 随机延迟，拟人化）
     private func clickDownJS(_ sel: String) -> String {
@@ -1810,11 +1795,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         "return true;})()"
     }
 
-    /// ref 点击第一步（含 _blank 拦截）
-    private func refClickDownJS(_ index: Int) -> String {
-        let body = collectElsBody.replacingOccurrences(of: "LIMIT", with: "200")
-        return "(function(){\(body)" +
-            "var e=out[\(index)];if(!e)return JSON.stringify({ok:false,err:'ref @e\(index + 1) 不存在，请重新 snapshot'});" +
+    /// ref 点击第一步（含 _blank 拦截，按稳定句柄定位）
+    private func refClickDownJS(_ handle: Int) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+            "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             blankTabGuardJS +
             "var r=e.getBoundingClientRect();" +
             "var x=r.left+r.width/2+(Math.random()-0.5)*r.width*0.4;" +
@@ -1836,8 +1820,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// 按文本匹配第一步（贝壳「两居」类场景兜底；点击由 clickUpJS 完成）
     private func clickTextDownJS(_ text: String, _ index: Int) -> String {
-        let body = collectElsBody.replacingOccurrences(of: "LIMIT", with: "200")
-        return "(function(){\(body)" +
+        return "(function(){\(collectEls(200))" +
             "var hits=[];for(var i=0;i<out.length;i++){var e=out[i];" +
             "var t=(e.getAttribute('aria-label')||e.textContent||e.value||e.placeholder||'').trim();" +
             "if(t.indexOf('\(esc(text))')>=0||(e.placeholder||'').indexOf('\(esc(text))')>=0)hits.push(i);}" +
@@ -1856,9 +1839,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     // MARK: - 逐字符输入（拟人化）
 
-    private func typeInitRefJS(_ index: Int) -> String {
-        let body = collectElsBody.replacingOccurrences(of: "LIMIT", with: "200")
-        return "(function(){\(body)var e=out[\(index)];if(!e)return false;e.setAttribute('data-xh-type','1');e.focus();return true;})()"
+    private func typeInitRefJS(_ handle: Int) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle))if(!e)return false;e.setAttribute('data-xh-type','1');e.focus();return true;})()"
     }
     private func typeInitSelJS(_ sel: String) -> String {
         "(function(){var e=document.querySelector('\(esc(sel))');if(!e)return false;e.setAttribute('data-xh-type','1');e.focus();return true;})()"

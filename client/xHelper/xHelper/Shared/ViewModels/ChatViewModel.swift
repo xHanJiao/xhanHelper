@@ -261,9 +261,15 @@ class ChatViewModel: ObservableObject {
         if trustedMode && !force {
             return true
         }
-        let argsSummary = arguments.isEmpty
-            ? "(无参数)"
-            : String(arguments.map { "\($0.key)=\($0.value)" }.joined(separator: ", ").prefix(80))
+        // 浏览器工具走人话摘要（ref→元素文本、密码脱敏、来源等），其余保留原始参数
+        let argsSummary: String
+        if bridgeToBrowser {
+            argsSummary = BrowserActivityCenter.shared.confirmationBody(toolName: toolName, arguments: arguments)
+        } else {
+            argsSummary = arguments.isEmpty
+                ? "(无参数)"
+                : String(arguments.map { "\($0.key)=\($0.value)" }.joined(separator: ", ").prefix(80))
+        }
         confirmationResolved = false
         let myID = UUID() // per-confirmation 标识：超时任务只处理"当前 pending 还是自己"的确认，杜绝双重 resume
         let displayName = LocalToolRegistry.shared.displayName(for: toolName)

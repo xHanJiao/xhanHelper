@@ -10,13 +10,15 @@ struct BrowserAgentActivityBar: View {
     var body: some View {
         Group {
             if let act = center.activity {
+                let done = act.state == .done
+                let accent = done ? Color.green : Color("appAccent")
                 ZStack {
                     HStack(spacing: 6) {
                         Text("AI 正在操作浏览器 ·")
                             .foregroundColor(.secondary)
                         Text(act.verb)
                             .fontWeight(.semibold)
-                            .foregroundColor(Color("appAccent"))
+                            .foregroundColor(accent)
                         if !act.target.isEmpty {
                             Text(act.target)
                         }
@@ -30,7 +32,7 @@ struct BrowserAgentActivityBar: View {
                     .overlay(alignment: .leading) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(Color("appAccent"))
+                            .foregroundColor(accent)
                             .padding(.leading, 10)
                     }
                     .overlay(alignment: .trailing) {
@@ -40,19 +42,21 @@ struct BrowserAgentActivityBar: View {
                                 .padding(.trailing, 12)
                         } else {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.green)
-                                .padding(.trailing, 14)
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 14, height: 14)
+                                .background(Circle().fill(Color.green))
+                                .padding(.trailing, 12)
                         }
                     }
                 }
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color("appAccent").opacity(0.16))
+                        .fill(accent.opacity(0.15))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color("appAccent").opacity(0.35), lineWidth: 1)
+                        .stroke(accent.opacity(0.35), lineWidth: 1)
                 )
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
@@ -84,7 +88,7 @@ struct BrowserAgentConfirmBar: View {
                         Text(conf.argsSummary)
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
-                            .lineLimit(2)
+                            .lineLimit(3)
                     }
                     Spacer(minLength: 8)
                     Button("拒绝") { conf.onResolve(false) }

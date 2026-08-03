@@ -20,9 +20,53 @@ final class RightSidebarManager: ObservableObject {
         didSet { UserDefaults.standard.set(width, forKey: "xhan_right_sidebar_width") }
     }
 
+    /// 聊天画中画（PiP）：进入时聊天区让位给右栏全宽，聊天缩成悬浮面板。
+    @Published var isPipChat = false {
+        didSet { pipLog("isPipChat: \(isPipChat)") }
+    }
+
+    /// 悬浮面板位置（容器坐标系，未钳制）。拖拽实时更新不落盘（每帧写 UserDefaults 太频繁），
+    /// 由面板在拖拽结束/重钳制时调用 `persistPipPosition()`。
+    @Published var pipPosition: CGPoint = .zero
+
+    func persistPipPosition() {
+        UserDefaults.standard.set(pipPosition.x, forKey: "xhan_pip_chat_x")
+        UserDefaults.standard.set(pipPosition.y, forKey: "xhan_pip_chat_y")
+    }
+
+    /// 悬浮面板尺寸（用户拖拽缩放后的偏好尺寸），面板侧做容器钳制。
+    @Published var pipSize: CGSize = .zero
+
+    func persistPipSize() {
+        UserDefaults.standard.set(pipSize.width, forKey: "xhan_pip_chat_w")
+        UserDefaults.standard.set(pipSize.height, forKey: "xhan_pip_chat_h")
+    }
+
+    /// 悬浮面板收起态（记住上次状态）。
+    @Published var pipCollapsed = false {
+        didSet { UserDefaults.standard.set(pipCollapsed, forKey: "xhan_pip_chat_collapsed") }
+    }
+
     init() {
         let stored = UserDefaults.standard.double(forKey: "xhan_right_sidebar_width")
-        width = stored >= 300 && stored <= 1200 ? stored : 840
+        // PiP 时右栏可铺满整窗（可 > 1200），上限放宽防崩溃持久化值被丢弃
+        width = stored >= 300 && stored <= 4000 ? stored : 840
+        let x = UserDefaults.standard.double(forKey: "xhan_pip_chat_x")
+        let y = UserDefaults.standard.double(forKey: "xhan_pip_chat_y")
+        // x/y 任一非法（未保存或越界）时标记为未设置，由面板 onAppear 给默认值。
+        if x > 0 && y > 0 {
+            pipPosition = CGPoint(x: x, y: y)
+        } else {
+            pipPosition = CGPoint(x: -1, y: -1)
+        }
+        let w = UserDefaults.standard.double(forKey: "xhan_pip_chat_w")
+        let h = UserDefaults.standard.double(forKey: "xhan_pip_chat_h")
+        if w >= Layout.floatingPanelMinWidth && h >= Layout.floatingPanelMinHeight {
+            pipSize = CGSize(width: w, height: h)
+        } else {
+            pipSize = CGSize(width: Layout.floatingPanelDefaultWidth, height: Layout.floatingPanelDefaultHeight)
+        }
+        pipCollapsed = UserDefaults.standard.bool(forKey: "xhan_pip_chat_collapsed")
     }
 
     var hasTabs: Bool { !tabs.isEmpty }

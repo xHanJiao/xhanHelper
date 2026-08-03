@@ -29,6 +29,10 @@ struct ContentView: View {
     @State private var rightSeamX: CGFloat = 0
     @AppStorage("xhan_sidebar_width") private var storedSidebarWidth: Double = Layout.sidebarDefaultWidth
     @State private var windowWidth: CGFloat = 800
+    /// 进入 PiP 前右栏宽度，退出时恢复。
+    @State private var prePipSidebarWidth: Double?
+    /// PiP 自动退出原因（onChange 里消费，避免状态翻转与副作用耦合）。
+    @State private var pipExitReason = "userExit"
 
     @StateObject private var agentVM: AgentViewModel
     @StateObject private var billVM: BillViewModel
@@ -52,14 +56,27 @@ struct ContentView: View {
 
     private var allowExpand: Bool { windowWidth >= 600 }
 
+    /// 中间区跨度：PiP 时聊天区消失，只剩一个 seam（布局让位给右栏浏览器）。
+    private var middleSpan: Double {
+        rightSidebar.isPipChat
+            ? Double(Layout.seamWidth)
+            : Double(Layout.seamWidth + Layout.middleMinWidth + Layout.seamWidth)
+    }
+
+    /// 中间区 + 右栏最小宽的横向跨度（pip 感知）。
+    private var middleAndRightMinSpanPipAware: Double {
+        middleSpan + Double(Layout.rightSidebarMinWidth + Layout.rightSidebarOuterPadding)
+    }
+
     /// 右侧栏在当前窗口/侧栏布局下可用的最大宽度。
-    /// 减去左栏元素（内容+外扩）、两个 seam、中间、右栏外扩。
+    /// 减去左栏元素（内容+外扩）、中间跨度、右栏外扩。PiP 时中间让位，右栏可铺满整窗（不设 1200 上限）。
     private var rightSidebarMaxAvailable: Double {
         let available = Double(windowWidth)
             - Double(sidebarWidth + Layout.sidebarOuterPadding)
-            - Double(Layout.seamWidth + Layout.middleMinWidth + Layout.seamWidth)
+            - middleSpan
             - Double(Layout.rightSidebarOuterPadding)
-        return max(Double(Layout.rightSidebarMinWidth), min(1200, available))
+        let cap = rightSidebar.isPipChat ? 4000.0 : 1200.0
+        return max(Double(Layout.rightSidebarMinWidth), min(cap, available))
     }
 
     /// 左侧栏可拖拽的最大宽度。右栏打开时受窗口可用空间钳制（保证右栏不被挤爆）；
@@ -68,7 +85,7 @@ struct ContentView: View {
         guard rightSidebar.isOpen else { return Double(Layout.sidebarMaxWidth) }
         let available = Double(windowWidth)
             - Double(Layout.sidebarOuterPadding)
-            - Double(Layout.middleAndRightMinSpan)
+            - middleAndRightMinSpanPipAware
         return min(Double(Layout.sidebarMaxWidth), max(Double(Layout.sidebarMinWidth), available))
     }
 
@@ -76,11 +93,42 @@ struct ContentView: View {
     private static let rightSidebarOpenMinWidth: CGFloat = Layout.rightSidebarOpenMinContentWidth
     /// 右栏关闭时窗口基准最小内容宽。
     private static let baseMinWidth: CGFloat = 400
+    /// PiP 时所需的内容最小宽（左栏收起 + seam + 右栏最小）。
+    private static let pipMinContentWidth: CGFloat =
+        Layout.sidebarMinWidth + Layout.sidebarOuterPadding
+        + Layout.seamWidth
+        + Layout.rightSidebarMinWidth + Layout.rightSidebarOuterPadding
+
+    /// 窗口最小内容宽唯一派生入口：由 (isOpen, isPipChat) 实时推导，幂等设置，
+    /// 消除"进入保存/退出恢复"的竞态。
+    private func updateWindowMinWidth() {
+        let minContent: CGFloat
+        if rightSidebar.isOpen {
+            minContent = rightSidebar.isPipChat ? Self.pipMinContentWidth : Self.rightSidebarOpenMinWidth
+        } else {
+            minContent = Self.baseMinWidth
+        }
+        AppDelegate.requiredMinContentWidth = minContent
+        pipLog("window min width: \(Int(minContent)) (open=\(rightSidebar.isOpen) pip=\(rightSidebar.isPipChat))")
+    }
 
     /// 把右侧栏宽度钳制到可用范围，保证窄窗口下不溢出、内容可见。
+    /// PiP 时改为"填满"：左栏变窄/窗口变宽后右栏自动补位占满释放的空间。
     private func clampRightSidebarWidth() {
         guard rightSidebar.isOpen, windowWidth > 0 else { return }
-        rightSidebar.width = min(max(rightSidebar.width, Double(Layout.rightSidebarMinWidth)), rightSidebarMaxAvailable)
+        if rightSidebar.isPipChat {
+            let fill = rightSidebarMaxAvailable
+            if fill != rightSidebar.width {
+                pipLog("right sidebar fill: \(Int(rightSidebar.width)) -> \(Int(fill))")
+                rightSidebar.width = fill
+            }
+        } else {
+            let clamped = min(max(rightSidebar.width, Double(Layout.rightSidebarMinWidth)), rightSidebarMaxAvailable)
+            if clamped != rightSidebar.width {
+                pipLog("right sidebar clamp: \(Int(rightSidebar.width)) -> \(Int(clamped))")
+                rightSidebar.width = clamped
+            }
+        }
     }
 
     /// 右栏打开时更新窗口：先收左栏腾空间 → 窗口太窄则自动放大 → 设最小内容宽（防再缩窄）。
@@ -91,7 +139,7 @@ struct ContentView: View {
         }
 
         // 2. 通知窗口最小内容宽（windowWillResize 会据此拒绝更窄）
-        AppDelegate.requiredMinContentWidth = Self.rightSidebarOpenMinWidth
+        updateWindowMinWidth()
 
         // 3. 自动放大窗口到所需内容宽（按内容缺口增量放大，保留窗口 chrome）
         guard let window = NSApp.keyWindow else { return }
@@ -105,7 +153,44 @@ struct ContentView: View {
 
     /// 右栏关闭时恢复窗口最小内容宽。
     private func restoreWindowMinWidth() {
-        AppDelegate.requiredMinContentWidth = Self.baseMinWidth
+        updateWindowMinWidth()
+    }
+
+    // MARK: - 聊天画中画（PiP）
+
+    /// 进入 PiP 副作用（由 onChange(of: isPipChat) 驱动，幂等）。
+    private func enterPipEffects() {
+        guard rightSidebar.isPipChat else { return }
+        // 非聊天 tab 时进入 PiP 会隐藏该页面，先切到聊天，让悬浮面板承载对话
+        if router.currentTab != .chat {
+            router.navigateTo(.chat)
+        }
+        prePipSidebarWidth = rightSidebar.width
+        pipExitReason = "userExit"
+        let target = rightSidebarMaxAvailable
+        withAnimation(.easeInOut(duration: 0.2)) {
+            rightSidebar.width = target
+        }
+        updateWindowMinWidth()
+        pipLog("enter: prePipWidth=\(Int(prePipSidebarWidth ?? 0)) targetWidth=\(Int(target)) maxAvailable=\(Int(rightSidebarMaxAvailable)) windowW=\(Int(windowWidth))")
+    }
+
+    /// 退出 PiP 副作用（onChange 统一入口，reason 用于诊断）。
+    private func exitPipEffects(reason: String) {
+        let restored = min(prePipSidebarWidth ?? rightSidebar.width, rightSidebarMaxAvailable)
+        prePipSidebarWidth = nil
+        withAnimation(.easeInOut(duration: 0.2)) {
+            rightSidebar.width = restored
+        }
+        updateWindowMinWidth()
+        pipLog("exit: reason=\(reason) restoredWidth=\(Int(restored)) maxAvailable=\(Int(rightSidebarMaxAvailable))")
+    }
+
+    /// 自动退出触发点统一入口：先记 reason，再翻转状态（副作用由 onChange 消费）。
+    private func autoExitPip(reason: String) {
+        guard rightSidebar.isPipChat else { return }
+        pipExitReason = reason
+        rightSidebar.isPipChat = false
     }
 
     /// 当前活跃的聊天 VM（macOS 为当前聊天 tab；iOS 为全局单例）
@@ -207,7 +292,9 @@ struct ContentView: View {
                             .padding(.trailing, Layout.sidebarTrailingPadding)
                             .onHover { sidebarHovered = $0 }
                             SeamMarker(x: $leftSeamX)
-                            macOSContentArea
+                            if !rightSidebar.isPipChat {
+                                macOSContentArea
+                            }
                             if rightSidebar.isOpen {
                                 SeamMarker(x: $rightSeamX)
                                 RightSidebarView(
@@ -243,8 +330,8 @@ struct ContentView: View {
                                         seamX: $leftSeamX
                                     )
                                 }
-                                // 右手柄：浮在右分隔线（seam）上方
-                                if rightSidebar.isOpen {
+                                // 右手柄：浮在右分隔线（seam）上方（PiP 时中间区消失、两 seam 重合，隐藏）
+                                if rightSidebar.isOpen && !rightSidebar.isPipChat {
                                     ResizableDivider(
                                         id: "right",
                                         width: $rightSidebar.width,
@@ -257,22 +344,61 @@ struct ContentView: View {
                                 }
                             }
                         }
+                        .overlay(alignment: .topLeading) {
+                            // 聊天画中画面板：悬浮在右栏浏览器之上，可拖动/吸附/收起
+                            if rightSidebar.isPipChat, let vm = chatTabManager.currentTab?.viewModel {
+                                FloatingChatPanel(
+                                    viewModel: vm,
+                                    manager: rightSidebar,
+                                    loadError: conversationLoadError,
+                                    baseURL: deviceManager.baseURL,
+                                    token: deviceManager.token ?? "",
+                                    containerSize: geo.size,
+                                    onExit: { autoExitPip(reason: "userExit") }
+                                )
+                            }
+                        }
                         .animation(.easeInOut(duration: 0.2), value: rightSidebar.isOpen)
                         .onChange(of: geo.size.width) { _, new in
                             windowWidth = new
                             let needCollapse = new < 600
-                                || (rightSidebar.isOpen && new < sidebarWidth + Layout.sidebarOuterPadding + Layout.middleAndRightMinSpan)
+                                || (rightSidebar.isOpen && new < sidebarWidth + Layout.sidebarOuterPadding + middleAndRightMinSpanPipAware)
                             if needCollapse && sidebarWidth > Layout.sidebarSnapThreshold {
                                 sidebarWidth = Layout.sidebarMinWidth
                             }
                             clampRightSidebarWidth()
                         }
                         .onChange(of: rightSidebar.isOpen) { _, isOpen in
+                            if !isOpen {
+                                autoExitPip(reason: "sidebarClosed")
+                            }
                             if isOpen {
                                 updateWindowForRightSidebarOpen()
                                 clampRightSidebarWidth()
                             } else {
                                 restoreWindowMinWidth()
+                            }
+                        }
+                        .onChange(of: rightSidebar.isPipChat) { _, isPip in
+                            if isPip {
+                                enterPipEffects()
+                            } else {
+                                exitPipEffects(reason: pipExitReason)
+                            }
+                        }
+                        .onChange(of: router.currentTab) { _, newTab in
+                            if newTab != .chat {
+                                autoExitPip(reason: "tabChanged")
+                            }
+                        }
+                        .onChange(of: rightSidebar.tabs.count) { _, count in
+                            if count == 0 {
+                                autoExitPip(reason: "browserEmpty")
+                            }
+                        }
+                        .onChange(of: rightSidebar.activeTabId) { _, id in
+                            if id == nil {
+                                autoExitPip(reason: "browsePanel")
                             }
                         }
                         .onChange(of: sidebarWidth) { _, _ in

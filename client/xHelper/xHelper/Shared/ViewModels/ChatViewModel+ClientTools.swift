@@ -35,11 +35,29 @@ extension ChatViewModel {
 
         LogBuffer.shared.info("clientToolCall: \(toolName) call_id=\(callID)")
         Task {
+            let isBrowser = toolName.hasPrefix("browser__")
             do {
                 // 工具分级：L3（高风险写）执行前需用户确认（60s 超时视为拒绝）
-                let level = LocalToolRegistry.shared.riskLevel(for: toolName)
+                // S2/G6：交互工具在高敏域或 http 明文页上动态升 L3（防注入诱导自动操作账户）。
+                // forcedL3 标记"敏感上下文升的级"，信任模式也不跳过。
+                var level = LocalToolRegistry.shared.riskLevel(for: toolName)
+                var forcedL3 = false
+                if level < 3, isBrowser, BrowserToolProvider.shared.shouldElevateToL3(flatName: toolName) {
+                    level = 3
+                    forcedL3 = true
+                    LogBuffer.shared.warning("clientToolCall: \(toolName) elevated to L3 (sensitive/plaintext context)")
+                }
+
+                // S6：跨域下载在确认信息里标注来源，防下载来源伪装
+                var confirmArgs = args
+                if toolName == "browser__agent_browser_download",
+                   let urlStr = args["url"] as? String, let url = URL(string: urlStr),
+                   let dlHost = url.host, dlHost != BrowserToolProvider.shared.activeURL?.host {
+                    confirmArgs["跨域下载"] = dlHost
+                }
+
                 if level >= 3 {
-                    let confirmed = await self.awaitToolConfirmation(toolName: toolName, arguments: args)
+                    let confirmed = await self.awaitToolConfirmation(toolName: toolName, arguments: confirmArgs, force: forcedL3, bridgeToBrowser: isBrowser)
                     guard confirmed else {
                         LogBuffer.shared.warning("clientToolCall: \(toolName) rejected by user")
                         try await api.submitToolResult(callId: callID, resultJSON: nil, error: "用户拒绝执行")
@@ -47,12 +65,17 @@ extension ChatViewModel {
                     }
                 }
 
+                // G2：浏览器工具执行可见性（执行前广播"运行中"，完成/失败消退）
+                if isBrowser { BrowserActivityCenter.shared.start(flatName: toolName, arguments: args) }
+
                 let context = ExecuteContext(budgetBytes: budgetBytes, deadlineSecs: deadline)
                 let result = try await LocalToolRegistry.shared.execute(
                     flatName: toolName,
                     arguments: args,
                     context: context
                 )
+
+                if isBrowser { BrowserActivityCenter.shared.finish() }
 
                 if let action = result.clientAction {
                     handleClientAction(action)
@@ -67,6 +90,7 @@ extension ChatViewModel {
                 }
                 LogBuffer.shared.info("clientToolCall: \(toolName) result submitted")
             } catch {
+                if isBrowser { BrowserActivityCenter.shared.clear() }
                 LogBuffer.shared.error("clientToolCall: \(toolName) failed: \(error.localizedDescription)")
                 do {
                     try await api.submitToolResult(callId: callID, resultJSON: nil, error: error.localizedDescription)

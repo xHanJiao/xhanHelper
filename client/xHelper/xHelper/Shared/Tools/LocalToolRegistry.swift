@@ -36,8 +36,43 @@ final class LocalToolRegistry {
     /// clientToolsPayload 构建时填充，动态 MCP 工具注册后随重建自动更新。
     private var schemaDescriptions: [String: String] = [:]
 
-    /// 用户可读的工具展示名：优先用 schema 的中文 description（截断），未命中兜底 flatName
+    /// 浏览器工具的简短展示名（确认条标题用，避免显示冗长工具描述）。
+    private static let shortNames: [String: String] = [
+        "browser__agent_browser_open": "打开网址",
+        "browser__agent_browser_close": "关闭所有标签页",
+        "browser__agent_browser_close_tab": "关闭标签页",
+        "browser__agent_browser_list_tabs": "列出标签页",
+        "browser__agent_browser_switch_tab": "切换标签页",
+        "browser__agent_browser_read": "读取页面",
+        "browser__agent_browser_snapshot": "读取页面快照",
+        "browser__agent_browser_get_text": "读取元素文本",
+        "browser__agent_browser_get_value": "读取表单值",
+        "browser__agent_browser_get_url": "读取网址",
+        "browser__agent_browser_get_title": "读取标题",
+        "browser__agent_browser_click": "点击页面元素",
+        "browser__agent_browser_click_text": "点击文本",
+        "browser__agent_browser_cgclick": "真实点击",
+        "browser__agent_browser_drag": "拖拽元素",
+        "browser__agent_browser_fill": "填写表单",
+        "browser__agent_browser_type": "输入文本",
+        "browser__agent_browser_press": "按键",
+        "browser__agent_browser_select": "选择选项",
+        "browser__agent_browser_check": "勾选",
+        "browser__agent_browser_uncheck": "取消勾选",
+        "browser__agent_browser_scroll": "滚动页面",
+        "browser__agent_browser_wait_for_load": "等待加载",
+        "browser__agent_browser_wait_for_selector": "等待元素",
+        "browser__agent_browser_go_back": "后退",
+        "browser__agent_browser_go_forward": "前进",
+        "browser__agent_browser_get_media_sources": "获取媒体资源",
+        "browser__agent_browser_download": "下载文件",
+    ]
+
+    /// 用户可读的工具展示名：优先用简短名，其次 schema 的中文 description（截断），未命中兜底 flatName
     func displayName(for flatName: String) -> String {
+        if let short = Self.shortNames[flatName] {
+            return short
+        }
         guard let desc = schemaDescriptions[flatName] else { return flatName }
         let trimmed = desc.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.count > 20 ? String(trimmed.prefix(20)) + "…" : trimmed

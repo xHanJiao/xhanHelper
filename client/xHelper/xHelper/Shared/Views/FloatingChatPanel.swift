@@ -7,7 +7,8 @@ import SwiftUI
 /// 反闪动设计（沿用 ResizableDivider 的幽灵线思路）：
 /// 1. 拖动/缩放改走「幽灵外框」——拖拽中面板本体静止，只移动一条轻量描边外框跟随光标，
 ///    松手才把面板动画落到外框位置。面板材质/WKWebView 背板在拖拽全程不重渲染。
-/// 2. 聊天内容抽成 Equatable 子视图 + .equatable()，拖动帧跳过内容 body 求值。
+/// 2. 聊天内容抽成独立子视图（PipChatContent），与面板拖动状态解耦。
+///    注意：不用 .equatable()——它与 @ObservedObject + TextEditor 焦点冲突，会破坏输入框聚焦。
 /// 3. 实时位置/尺寸只写本地 @State，仅在交互端点写回共享 manager 并落盘。
 struct FloatingChatPanel: View {
     @ObservedObject var viewModel: ChatViewModel
@@ -182,7 +183,7 @@ struct FloatingChatPanel: View {
     // MARK: - Body
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topLeading) {
             // 面板本体（拖拽帧静止）
             Group {
                 if manager.pipCollapsed {
@@ -198,17 +199,22 @@ struct FloatingChatPanel: View {
                     .stroke(.white.opacity(0.15), lineWidth: 0.5)
             )
             .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
-            .offset(x: pos.x, y: pos.y)
+            // 用 .position 定位而非 .offset：macOS 上 .offset 包裹 TextEditor 会破坏
+            // first responder（点击输入框不出光标、无法输入）。
+            .position(x: pos.x + size.width / 2, y: pos.y + size.height / 2)
 
             // 幽灵外框：拖动/缩放中跟随光标，松手才落位
             if let go = dragGhostOffset {
                 ghostRect(width: size.width, height: size.height)
-                    .offset(x: pos.x + go.width, y: pos.y + go.height)
+                    .position(x: pos.x + go.width + size.width / 2,
+                              y: pos.y + go.height + size.height / 2)
             } else if let rs = resizeGhostSize {
                 ghostRect(width: rs.width, height: rs.height)
-                    .offset(x: pos.x, y: pos.y)
+                    .position(x: pos.x + rs.width / 2,
+                              y: pos.y + rs.height / 2)
             }
         }
+        .frame(width: containerSize.width, height: containerSize.height)
         .onAppear { onAppearSetup() }
         .onChange(of: containerSize) { _, new in reClamp(container: new) }
         .onChange(of: manager.pipCollapsed) { _, _ in reClamp(container: containerSize) }
@@ -234,7 +240,6 @@ struct FloatingChatPanel: View {
                 token: token,
                 compactFont: compactFont
             )
-            .equatable()
         }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(alignment: .bottomTrailing) {
@@ -337,22 +342,14 @@ struct FloatingChatPanel: View {
     }
 }
 
-/// 聊天内容子视图：Equatable + .equatable() 让拖动帧跳过内容 body 求值。
-/// 输入在拖动中不变 → SwiftUI 不重渲染 markdown 气泡等重内容。
-private struct PipChatContent: View, Equatable {
+/// 聊天内容子视图：与面板拖动状态解耦（拖动/缩放 ghost 帧不重渲染重内容）。
+/// 注意：不要给本视图加 .equatable()——它与 @ObservedObject + TextEditor 焦点有冲突，会导致输入框无法聚焦。
+private struct PipChatContent: View {
     @ObservedObject var viewModel: ChatViewModel
     let loadError: String?
     let baseURL: String
     let token: String
     let compactFont: FontSizeManager
-
-    static func == (lhs: PipChatContent, rhs: PipChatContent) -> Bool {
-        lhs.viewModel === rhs.viewModel
-            && lhs.loadError == rhs.loadError
-            && lhs.baseURL == rhs.baseURL
-            && lhs.token == rhs.token
-            && lhs.compactFont === rhs.compactFont
-    }
 
     var body: some View {
         ChatPage(chatViewModel: viewModel, loadError: loadError, baseURL: baseURL, token: token)

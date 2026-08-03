@@ -227,6 +227,7 @@ struct xhanHelperMacApp: App {
             .glassWindow()
             .task {
                 await LocalToolRegistry.shared.register(BrowserToolProvider.shared)
+                ContentBlocker.load()
                 await MCPManager.shared.refreshToolCache()
                 for ns in await MCPManager.shared.configuredNamespaces() {
                     let wrapper = MCPProviderWrapper(namespace: ns, manager: MCPManager.shared)

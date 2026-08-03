@@ -15,6 +15,9 @@ struct BrowserTabView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
+            // G2：地址栏下方统一放"确认条（状态 C）+ 活动条（A/B）"，两者同区、位置一致
+            BrowserAgentConfirmBar()
+            BrowserAgentActivityBar()
             BrowserWebView(webView: webView)
         }
         .onAppear {

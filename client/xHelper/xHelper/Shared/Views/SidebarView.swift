@@ -72,7 +72,7 @@ struct SidebarView: View {
                 // 功能导航（固定高度，不随会话列表滚动）
                 VStack(spacing: 2) {
                     ForEach(SidebarTab.allCases) { tab in
-                        expandedNavItem(tab)
+                        expandedNavItem(tab, showText: showNavText)
                     }
                 }
                 .padding(.horizontal, 8)
@@ -228,7 +228,19 @@ struct SidebarView: View {
 
     // MARK: - Nav Items
 
-    private func expandedNavItem(_ tab: SidebarTab) -> some View {
+    /// 导航文字能否一行展示：侧栏宽度 ≥ 最宽导航项所需的宽度。
+    /// 最宽文字宽按 CJK 每字≈字号估算（图标18 + 间距8 + 项padding20 + 段padding16）。
+    private var showNavText: Bool {
+        sidebarWidth >= navTextThreshold
+    }
+
+    private var navTextThreshold: CGFloat {
+        let widestCount = SidebarTab.allCases.map { $0.rawValue.count }.max() ?? 0
+        let textWidth = CGFloat(widestCount) * Layout.sidebarNavFontSize
+        return 16 + 20 + 18 + 8 + textWidth
+    }
+
+    private func expandedNavItem(_ tab: SidebarTab, showText: Bool) -> some View {
         // 新建聊天是动作项，不显示选中底色/强调色，与其他功能 tab 区分开
         let isSelected = selectedTab == tab && tab != .chat
         return Button {
@@ -245,9 +257,11 @@ struct SidebarView: View {
                     .frame(width: 18)
                     .offset(y: -1.5)
                     .foregroundColor(isSelected ? Color("appAccent") : .secondary)
-                Text(tab.rawValue)
-                    .font(.title2)
-                    .foregroundColor(isSelected ? Color("appAccent") : .primary)
+                if showText {
+                    Text(tab.rawValue)
+                        .font(.system(size: Layout.sidebarNavFontSize, weight: .medium))
+                        .foregroundColor(isSelected ? Color("appAccent") : .primary)
+                }
                 Spacer()
             }
             .padding(.horizontal, 10)
@@ -256,6 +270,7 @@ struct SidebarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .help(tab.rawValue)
     }
 
     private func collapsedNavItem(_ tab: SidebarTab) -> some View {

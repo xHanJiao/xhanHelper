@@ -18,6 +18,9 @@ enum Layout {
     /// 分隔线（SeamMarker）宽度。
     static let seamWidth: CGFloat = 1
 
+    /// 左栏导航项文字字号。
+    static let sidebarNavFontSize: CGFloat = 16
+
     /// 左栏卡片外水平 padding。
     static let sidebarHPadding: CGFloat = 12
     static let sidebarLeadingPadding: CGFloat = 8

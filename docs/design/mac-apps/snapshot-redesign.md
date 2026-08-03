@@ -115,12 +115,15 @@ viewport 空间感知（阶段 2 的可见性模型）为桌面宠物提供"屏�
 1. **filter 消耗 id 分配**（文档化，不修）：filter 快照先遇到的元素拿小 id，后续全量保持该 id、其他顺延，输出出现 `@e14→@e1` 跳变。这是稳定句柄模型的固有性质（id 按首次遇到顺序分配、非 DOM 序）；"修"只有重编号（破坏稳定）或按 id 排序（破坏空间序）两条死路。ref 定位不受影响。
 2. **分页段 viewport 默认也输出**（已修）：分页识别覆盖视口外候选项（hidden 带句柄），viewport 默认快照可直接点底部页按钮。
 
-## 阶段 3（未实施）：内容质量
-- 可访问名升级（`aria-labelledby` / `<label for>` 解析）。
-- 状态字段（aria-expanded/checked/selected/disabled、tabindex、contenteditable）。
-- 点击信号：监听器表（addEventListener 包装已埋）+ `onclick` 属性 + `cursor:pointer`（带上限）+ tabindex≥0。
-- 开放 shadow root 遍历；同源 iframe 纳入（跨 frame id 唯一 + 坐标换算）。
-- ref 签名重定位兜底（元素被重建时按 tag+type+id+name+text 找回）。
+## 阶段 3（已完成）：内容质量
+
+已实现：
+- **可访问名升级**（`accName` 简化版）：`aria-label` > `aria-labelledby`（解析引用的元素文本）> `label[for]`（CSS.escape 安全查询）> `placeholder` > `title` > `textContent`。**不使用 value**——密码等敏感值永不进入（S1 更彻底，表单值不是名字）。
+- **状态字段**：`expanded`（aria-expanded）/ `selected`（aria-selected）/ `disabled`（disabled|aria-disabled）/ `tabindex` / `contenteditable`，快照行渲染 `disabled/expanded/selected/tabindex=n/editable`。
+- **点击信号**（小页面 ≤3000 元素全量扫描）：监听器表（addEventListener 包装）+ `onclick` 属性 + `tabindex≥0` + `cursor:pointer`；非语义元素也纳入快照与交互定位。大页面退化语义集（限成本）。
+- **开放 shadow DOM**：手动递归 `element.shadowRoot`（querySelectorAll 不穿透）。
+- **同源 iframe**：递归 `iframe.contentDocument`；交互点击/取中心用 `viewportRect` 逐级累加 iframe 偏移换算到主视口坐标。**跨域 iframe 保持缺口**（访问抛错跳过，cgclick 兜底）。
+- **ref 签名重定位兜底**：`locateElJS` 按稳定 id 未命中时，用快照签名（tag/type/id/name/text）在活 DOM 找回（元素被重建/WeakMap 丢失时）。
 
 ## 阶段 4（未实施）
 - 工具描述加固（`@eN` 是稳定句柄、密码禁 selector）；全量回归（S1/S2/G2/G3/PiP）。

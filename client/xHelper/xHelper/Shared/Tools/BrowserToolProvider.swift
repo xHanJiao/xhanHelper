@@ -235,7 +235,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         if let handle = refHandle(arguments["ref"] as? String ?? "") {
             switch kind {
             case .click:
-                let result = await session.jsJSON(refClickDownJS(handle))
+                let result = await session.jsJSON(refClickDownJS(handle, session))
                 guard let dict = result as? [String: Any], let ok = dict["ok"] as? Bool, ok else {
                     return .init(serverResult: nil, serverError: dictErr(dict: result, fallback: "ref @e\(handle) 点击失败，请重新 snapshot"), clientAction: nil)
                 }
@@ -247,12 +247,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 _ = await session.jsBool(refClickUpJS())
                 return .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
             case .fill:
-                let js = refFillJS(handle, arguments["value"] as? String ?? "")
+                let js = refFillJS(handle, session, arguments["value"] as? String ?? "")
                 return await interpretRefResult(await session.jsJSON(js), successKey: successKey)
             case .type:
                 return await typeText(session: session, arguments: arguments, successKey: successKey)
             case .select:
-                let js = refSelectJS(handle, arguments["value"] as? String ?? "")
+                let js = refSelectJS(handle, session, arguments["value"] as? String ?? "")
                 return await interpretRefResult(await session.jsJSON(js), successKey: successKey)
             }
         }
@@ -292,7 +292,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
         let initOK: (ok: Bool, jsError: String?)
         if let handle = refHandle(arguments["ref"] as? String ?? "") {
-            initOK = await session.jsBool(typeInitRefJS(handle))
+            initOK = await session.jsBool(typeInitRefJS(handle, session))
         } else if let sel = arguments["selector"] as? String, !sel.isEmpty {
             initOK = await session.jsBool(typeInitSelJS(sel))
         } else {
@@ -323,7 +323,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     private func interactChecked(session: TabSession, arguments: [String: Any], checked: Bool) async -> LocalToolResult {
         if let handle = refHandle(arguments["ref"] as? String ?? "") {
-            return await interpretRefResult(await session.jsJSON(refCheckJS(handle, checked)), successKey: checked ? "checked" : "unchecked")
+            return await interpretRefResult(await session.jsJSON(refCheckJS(handle, session, checked)), successKey: checked ? "checked" : "unchecked")
         }
         let sel = arguments["selector"] as? String ?? ""
         let (ok, jsErr) = await session.jsBool(checkJS(sel, checked))
@@ -343,7 +343,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         var viewportPoint: CGPoint?
         var targetDesc = ""
         if let handle = refHandle(arguments["ref"] as? String ?? "") {
-            let result = await session.jsJSON(refCenterJS(handle))
+            let result = await session.jsJSON(refCenterJS(handle, session))
             guard let dict = result as? [String: Any],
                   let ok = dict["ok"] as? Bool, ok,
                   let x = (dict["x"] as? NSNumber)?.doubleValue,
@@ -411,7 +411,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         var vpStart: CGPoint?
         if let handle = refHandle(arguments["ref"] as? String ?? "") {
-            let result = await session.jsJSON(refCenterJS(handle))
+            let result = await session.jsJSON(refCenterJS(handle, session))
             guard let dict = result as? [String: Any], let ok = dict["ok"] as? Bool, ok,
                   let x = (dict["x"] as? NSNumber)?.doubleValue,
                   let y = (dict["y"] as? NSNumber)?.doubleValue
@@ -450,12 +450,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// ref 元素中心 viewport 坐标（cgclick/cgDrag 定位用，含 ±20% 随机偏移拟人化）。
     /// 元素不在视口内时先 scrollIntoView 居中（document scope 下可用）。
-    private func refCenterJS(_ handle: Int) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+    private func refCenterJS(_ handle: Int, _ session: TabSession) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
-            "var _r0=e.getBoundingClientRect();" +
+            "var _vr=function(el){var r=el.getBoundingClientRect();var w=el.ownerDocument.defaultView;while(w&&w!==window){var fe=w.frameElement;if(!fe)break;var fr=fe.getBoundingClientRect();r={left:r.left+fr.left,top:r.top+fr.top,width:r.width,height:r.height};w=fe.ownerDocument.defaultView;}return r;};" +
+            "var _r0=_vr(e);" +
             "if(_r0.top<0||_r0.bottom>window.innerHeight||_r0.left<0||_r0.right>window.innerWidth)e.scrollIntoView({block:'center'});" +
-            "var r=e.getBoundingClientRect();" +
+            "var r=_vr(e);" +
             "var x=Math.round(r.left+r.width/2+(Math.random()-0.5)*r.width*0.4);" +
             "var y=Math.round(r.top+r.height/2+(Math.random()-0.5)*r.height*0.4);" +
             "return JSON.stringify({ok:true,x:x,y:y});})()"
@@ -491,9 +492,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let filter = (arguments["filter"] as? String ?? "").trimmingCharacters(in: .whitespaces)
         let threshold = 1000
 
-        guard let result = await session.jsJSON(collectSnapshotJS(limit: min(max(limit, 1), 200), offset: offset, scope: scope, threshold: threshold, filter: esc(filter))) as? [String: Any],
+        let (snapText, jsErr) = await session.jsResult(collectSnapshotJS(limit: min(max(limit, 1), 200), offset: offset, scope: scope, threshold: threshold, filter: esc(filter)))
+        guard let text = snapText,
+              let data = text.data(using: .utf8),
+              let result = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let arr = result["items"] as? [[String: Any]] else {
-            return .init(serverResult: nil, serverError: "快照失败：JS 异常", clientAction: nil)
+            let detail = (jsErr?.isEmpty == false) ? jsErr! : "JS 返回异常"
+            return .init(serverResult: nil, serverError: "快照失败：\(detail)", clientAction: nil)
         }
         let hiddenBelow = result["hidden_below"] as? [[String: Any]] ?? []
         let pagination = result["pagination"] as? [[String: Any]] ?? []
@@ -581,6 +586,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let placeholder = (item["placeholder"] as? String ?? "").replacingOccurrences(of: "\"", with: "'")
         let type = item["type"] as? String ?? ""
         let checked = (item["checked"] as? Bool) ?? false
+        let state = item["state"] as? [String: Any] ?? [:]
 
         var attr = role.isEmpty ? tag : role
         if tag == "a" && role.isEmpty { attr = "link" }
@@ -592,6 +598,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         if !placeholder.isEmpty { line += " placeholder=\"\(placeholder)\"" }
         if includeHref && tag == "a" && !href.isEmpty { line += " href=\"\(href)\"" }
         if tag == "input" && type == "checkbox" && checked { line += " checked" }
+        // 状态字段（3a）：disabled/expanded/collapsed/selected/tabindex/contenteditable
+        if (state["disabled"] as? Bool) == true { line += " disabled" }
+        if let exp = state["expanded"] as? Bool { line += exp ? " expanded" : " collapsed" }
+        if (state["selected"] as? Bool) == true { line += " selected" }
+        if let tabi = state["tabindex"] as? Int { line += " tabindex=\(tabi)" }
+        if (state["contenteditable"] as? Bool) == true { line += " editable" }
         return line
     }
 
@@ -633,7 +645,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private func handleGetText(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
         let maxChars = (arguments["max_chars"] as? NSNumber)?.intValue ?? 2000
         if let handle = refHandle(arguments["ref"] as? String ?? "") {
-            let result = await session.jsJSON(elementTextJS(handle, maxChars))
+            let result = await session.jsJSON(elementTextJS(handle, session, maxChars))
             return interpretTextResult(result)
         }
         if let sel = arguments["selector"] as? String, !sel.isEmpty {
@@ -659,7 +671,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private func handleGetValue(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
         let locator: (js: String, desc: String)
         if let handle = refHandle(arguments["ref"] as? String ?? "") {
-            locator = (elementValueJS(handle), "@e\(handle)")
+            locator = (elementValueJS(handle, session), "@e\(handle)")
         } else if let sel = arguments["selector"] as? String, !sel.isEmpty {
             locator = (elementValueSelJS(sel), sel)
         } else {
@@ -1585,34 +1597,83 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         a11yGuardJS + collectElsBody.replacingOccurrences(of: "LIMIT", with: String(limit))
     }
 
-    /// 按稳定 id 定位元素：设置 `var e`（找到）或 `e=null` + `_locErr`（未找到/页面已变化）。
-    /// 放在 collectEls 之后使用（`out` 已就绪）。稳定 id 对 DOM 插入/重排免疫。
-    private func locateElJS(_ handle: Int) -> String {
-        """
+    /// 从快照项构造定位签名（供 locate 重定位兜底）；句柄不在快照返回空对象
+    private func signatureJSON(for handle: Int, items: [[String: Any]]?) -> String {
+        guard let item = items?.first(where: { ($0["handle"] as? Int) == handle }) else { return "{}" }
+        var sig: [String: String] = [:]
+        if let t = item["tag"] as? String { sig["tag"] = t }
+        if let t = item["type"] as? String { sig["type"] = t }
+        if let t = item["id"] as? String { sig["id"] = t }
+        if let t = item["name"] as? String { sig["name"] = t }
+        if let t = item["text"] as? String { sig["text"] = t }
+        guard let data = try? JSONSerialization.data(withJSONObject: sig),
+              let s = String(data: data, encoding: .utf8) else { return "{}" }
+        return s
+    }
+
+    /// 按稳定 id 定位元素，未命中时用快照签名重定位（元素被重建/WeakMap 丢失时找回）。
+    /// 设置 `var e`（找到）或 `e=null` + `_locErr`（未找到）。放在 collectEls 之后使用。
+    private func locateElJS(_ handle: Int, session: TabSession) -> String {
+        let exp = signatureJSON(for: handle, items: session.lastSnapshotItems)
+        return """
         var e=null;var _locErr='ref @e\(handle) 不存在，页面已变化，请重新 snapshot';
         for(var i=0;i<out.length;i++){if(a11y.id(out[i])===\(handle)){e=out[i];break;}}
+        if(!e){
+          var exp=\(exp);
+          if(exp.tag){
+            for(var j=0;j<out.length;j++){
+              var c=out[j];
+              if(c.tagName.toLowerCase()!==exp.tag)continue;
+              if((exp.type||'')&&(c.type||'')!==exp.type)continue;
+              if((exp.id||'')&&(c.id||'')!==exp.id)continue;
+              if((exp.name||'')&&(c.name||'')!==exp.name)continue;
+              if(!(exp.tag==='input'||exp.tag==='select'||exp.tag==='textarea')){
+                var ctxt=(c.getAttribute('aria-label')||c.textContent||'').trim().replace(/\\s+/g,' ');
+                if(ctxt!==exp.text)continue;
+              }
+              e=c;break;
+            }
+          }
+        }
         """
     }
 
     /// 共享元素收集主体（元素引用数组 + 过滤）。collectInteractablesJS 与 ref 交互共用，
-    /// 过滤逻辑必须一致。LIMIT 为占位符，使用前替换。
-    /// 安全（S1）：隐藏字段（token/CSRF）不进快照；密码框 value 永不读入——防敏感信息进 LLM。
+    /// 过滤逻辑必须与 collectSnapshotJS 一致。LIMIT 为占位符，使用前替换。
+    /// 小页面全量扫描（语义候选 + 点击信号候选）；大页面退化语义集（限成本）。
+    /// 安全（S1）：隐藏字段（token/CSRF）不进；密码框 value 永不读入。
     private let collectElsBody = """
     var out=[];var sels='h1,h2,h3,a,button,input,select,textarea,canvas,[role="button"],[role="checkbox"],[role="tab"],[role="link"]';
-    var all=document.querySelectorAll(sels);
-    for(var i=0;i<all.length;i++){
-      var e=all[i];var r=e.getBoundingClientRect();
-      if(r.width<1||r.height<1)continue;
-      if(e.disabled)continue;
+    var clickSig=function(e){
+      if(a11y.hasListener(e,'click')||a11y.hasListener(e,'mousedown')||a11y.hasListener(e,'pointerdown'))return true;
+      if(e.onclick||e.onmousedown||e.onpointerdown)return true;
+      var ti=parseInt(e.getAttribute('tabindex'));
+      if(!isNaN(ti)&&ti>=0)return true;
+      try{var cs=getComputedStyle(e);if(cs.cursor==='pointer')return true;}catch(x){}
+      return false;
+    };
+    // 开放 shadow DOM + 同源 iframe 遍历（3c/3e）：querySelectorAll 不穿透 shadowRoot/iframe，
+    // 手动递归。跨域 iframe 访问 contentDocument 抛错 → 跳过（文档化缺口，cgclick 兜底）。
+    var __allEls=[];var __walk=function(root){var ns=root.querySelectorAll('*');for(var i=0;i<ns.length;i++){var n=ns[i];__allEls.push(n);if(n.shadowRoot)__walk(n.shadowRoot);if(n.tagName==='IFRAME'||n.tagName==='FRAME'){try{var cd=n.contentDocument;if(cd&&cd!==root)__walk(cd);}catch(x){}}}};__walk(document);
+    var push=function(e){
+      var r=e.getBoundingClientRect();
+      if(r.width<1||r.height<1)return;
       var tag=e.tagName.toLowerCase();
-      if(tag==='input'&&e.type==='hidden')continue;
-      var isPassword=tag==='input'&&e.type==='password';
-      var t=(e.getAttribute('aria-label')||e.textContent||(isPassword?'':e.value)||e.placeholder||'').trim().replace(/\\s+/g,' ').slice(0,40);
-      // 表单元素与 canvas 即使无文本也保留（高频交互目标，如空搜索框）
-      var isForm=tag==='input'||tag==='select'||tag==='textarea';
-      if(!t&&!e.href&&!e.placeholder&&!isForm&&tag!=='canvas')continue;
+      if(tag==='input'&&e.type==='hidden')return;
       out.push(e);
-      if(out.length>=LIMIT)break;
+    };
+    var allCount=__allEls.length;
+    if(allCount<=3000){
+      for(var i=0;i<__allEls.length&&out.length<LIMIT;i++){
+        var e=__allEls[i];if(e.nodeType!==1)continue;
+        var tag=e.tagName.toLowerCase();
+        var semantic=(tag==='a'||tag==='button'||tag==='input'||tag==='select'||tag==='textarea'||tag==='canvas'||tag==='h1'||tag==='h2'||tag==='h3'||!!e.getAttribute('role'));
+        if(semantic){push(e);continue;}
+        if(clickSig(e))push(e);
+      }
+    }else{
+      var all=document.querySelectorAll(sels);
+      for(var i=0;i<all.length&&out.length<LIMIT;i++){push(all[i]);}
     }
     """
 
@@ -1625,33 +1686,71 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         var LIMIT=\(limit),OFFSET=\(offset),THRESHOLD=\(threshold);
         var SCOPE='\(scope)',FILTER='\(filter)';
         var sels='h1,h2,h3,a,button,input,select,textarea,canvas,[role="button"],[role="checkbox"],[role="tab"],[role="link"]';
-        var all=document.querySelectorAll(sels);
         var vh=window.innerHeight,vy=window.scrollY;
         var items=[],hidden=[],allDoc=[],capHidden=0;
+        var cssHidden=function(e){var s=getComputedStyle(e);return s.visibility==='hidden'||parseFloat(s.opacity)<=0;};
+        // 可访问名（accname 简化版）：aria-label > aria-labelledby > label[for] > placeholder > title > textContent。
+        // 不使用 value（密码等敏感值永不进入；表单值不是名字）。
+        var accName=function(e){
+          var a=e.getAttribute('aria-label');
+          if(a&&a.trim())return a.trim().replace(/\\s+/g,' ').slice(0,60);
+          var tag=e.tagName.toLowerCase();
+          var isForm=(tag==='input'||tag==='select'||tag==='textarea');
+          var tc=(e.textContent||'').trim().replace(/\\s+/g,' ');
+          if(!isForm&&tc)return tc.slice(0,60);
+          var lb=e.getAttribute('aria-labelledby');
+          if(lb){var o=[],ps=lb.split(/\\s+/);for(var i=0;i<ps.length;i++){var el=document.getElementById(ps[i]);if(el&&(el.textContent||'').trim())o.push(el.textContent.trim());}if(o.length)return o.join(' ').replace(/\\s+/g,' ').slice(0,60);}
+          if(e.id){var lab=null;try{lab=document.querySelector('label[for="'+CSS.escape(e.id)+'"]');}catch(x){}
+            if(lab&&(lab.textContent||'').trim())return lab.textContent.trim().replace(/\\s+/g,' ').slice(0,60);
+          }
+          var ph=e.getAttribute('placeholder');
+          if(ph&&ph.trim())return ph.trim().slice(0,60);
+          var ti=e.getAttribute('title');
+          if(ti&&ti.trim())return ti.trim().slice(0,60);
+          return tc.slice(0,60);
+        };
         var matchFilter=function(e){
           if(!FILTER)return true;
-          var hay=(e.getAttribute('aria-label')||e.textContent||e.placeholder||e.value||e.type||e.getAttribute('role')||'').toLowerCase();
+          var hay=(accName(e)+' '+e.type+' '+e.getAttribute('role')+' '+(e.getAttribute('placeholder')||'')).toLowerCase();
           return hay.indexOf(FILTER.toLowerCase())>=0;
         };
-        var cssHidden=function(e){var s=getComputedStyle(e);return s.visibility==='hidden'||parseFloat(s.opacity)<=0;};
         var metaOf=function(e){
-          var pw=(e.tagName.toLowerCase()==='input'&&e.type==='password');
-          return {handle:a11y.id(e),tag:e.tagName.toLowerCase(),role:e.getAttribute('role')||'',text:(e.getAttribute('aria-label')||e.textContent||(pw?'':e.value)||e.placeholder||'').trim().replace(/\\s+/g,' ').slice(0,40),href:e.href||'',placeholder:e.placeholder||'',type:e.type||'',checked:!!e.checked,id:e.id||'',name:e.name||''};
+          var tag=e.tagName.toLowerCase(),type=e.type||'';
+          var st={};
+          var ae=e.getAttribute('aria-expanded');
+          if(ae)st.expanded=(ae==='true');
+          var asel=e.getAttribute('aria-selected');
+          if(asel)st.selected=(asel==='true');
+          if(e.disabled||e.getAttribute('aria-disabled')==='true')st.disabled=true;
+          var ti=e.getAttribute('tabindex');
+          if(ti&&parseInt(ti)>=0)st.tabindex=parseInt(ti);
+          var ce=e.getAttribute('contenteditable');
+          if(ce&&ce!=='false')st.contenteditable=true;
+          return {handle:a11y.id(e),tag:tag,role:e.getAttribute('role')||'',text:accName(e),href:e.href||'',placeholder:e.getAttribute('placeholder')||'',type:type,checked:!!e.checked,id:e.id||'',name:e.name||'',state:st};
         };
-        for(var i=0;i<all.length;i++){
-          var e=all[i];var r=e.getBoundingClientRect();
-          if(r.width<1||r.height<1)continue;
-          if(e.disabled)continue;
+        // 点击信号（3b）：监听器表 / onclick 属性 / tabindex≥0 / cursor:pointer
+        var clickableBySignal=function(e){
+          if(a11y.hasListener(e,'click')||a11y.hasListener(e,'mousedown')||a11y.hasListener(e,'pointerdown'))return true;
+          if(e.onclick||e.onmousedown||e.onpointerdown)return true;
+          var ti=parseInt(e.getAttribute('tabindex'));
+          if(!isNaN(ti)&&ti>=0)return true;
+          try{var cs=getComputedStyle(e);if(cs.cursor==='pointer')return true;}catch(x){}
+          return false;
+        };
+        // 候选处理（scope/filter/脱敏共用）
+        var process=function(e){
+          var r=e.getBoundingClientRect();
+          if(r.width<1||r.height<1)return;
           var tag=e.tagName.toLowerCase();
-          if(tag==='input'&&e.type==='hidden')continue;
-          if(!matchFilter(e))continue;
+          if(tag==='input'&&e.type==='hidden')return;
+          if(!matchFilter(e))return;
           if(SCOPE==='document'){
-            if(cssHidden(e))continue;
+            if(cssHidden(e))return;
             allDoc.push(metaOf(e));
-            }else{
+          }else{
             var inBand=(r.top<vh+THRESHOLD&&r.bottom>-THRESHOLD);
             if(inBand){
-              if(cssHidden(e))continue;
+              if(cssHidden(e))return;
               items.push(metaOf(e));
             }else if(r.top>=vh+THRESHOLD&&capHidden<20){
               capHidden++;
@@ -1659,6 +1758,24 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
               hidden.push({handle:_mh.handle,tag:tag,text:_mh.text,pages:Math.max(1,Math.round((r.top+vy)/vh))});
             }
           }
+        };
+        // 开放 shadow DOM + 同源 iframe 遍历（3c/3e）：querySelectorAll 不穿透 shadowRoot/iframe，
+        // 手动递归。跨域 iframe 访问 contentDocument 抛错 → 跳过（文档化缺口，cgclick 兜底）。
+        var __allEls=[];var __walk=function(root){var ns=root.querySelectorAll('*');for(var i=0;i<ns.length;i++){var n=ns[i];__allEls.push(n);if(n.shadowRoot)__walk(n.shadowRoot);if(n.tagName==='IFRAME'||n.tagName==='FRAME'){try{var cd=n.contentDocument;if(cd&&cd!==root)__walk(cd);}catch(x){}}}};__walk(document);
+        // 小页面全量扫描（语义候选 + 点击信号候选，含 shadow）；大页面退化语义集（限成本）
+        var allCount=__allEls.length;
+        if(allCount<=3000){
+          for(var i=0;i<__allEls.length;i++){
+            var e=__allEls[i];
+            if(e.nodeType!==1)continue;
+            var tag=e.tagName.toLowerCase();
+            var semantic=(tag==='a'||tag==='button'||tag==='input'||tag==='select'||tag==='textarea'||tag==='canvas'||tag==='h1'||tag==='h2'||tag==='h3'||!!e.getAttribute('role'));
+            if(semantic){process(e);continue;}
+            if(clickableBySignal(e))process(e);
+          }
+        }else{
+          var all=document.querySelectorAll(sels);
+          for(var i=0;i<all.length;i++){process(all[i]);}
         }
         // 分页识别覆盖视口外候选项（分页按钮常在页面底部，viewport 默认也能直接点）
         var pagination=detectPagination(SCOPE==='document'?allDoc:items.concat(hidden));
@@ -1752,8 +1869,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// 元素可见文本（ref 路径，按稳定句柄定位）
-    private func elementTextJS(_ handle: Int, _ maxChars: Int) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+    private func elementTextJS(_ handle: Int, _ session: TabSession, _ maxChars: Int) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             "var t=(e.innerText||e.textContent||'').trim().replace(/\\s+/g,' ').slice(0,\(maxChars));" +
             "return JSON.stringify({ok:true,text:t});})()"
@@ -1767,8 +1884,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// 表单元素值（ref 路径）；checkbox/radio 返回 checked。安全（S1）：密码/隐藏字段拒绝读取。
-    private func elementValueJS(_ handle: Int) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+    private func elementValueJS(_ handle: Int, _ session: TabSession) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             "if(e.type==='checkbox'||e.type==='radio')return JSON.stringify({ok:true,checked:!!e.checked});" +
             "if(e.type==='password'||e.type==='hidden')return JSON.stringify({ok:false,err:'敏感字段（密码/隐藏）不可读取'});" +
@@ -1794,8 +1911,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
     """
 
-    private func refFillJS(_ handle: Int, _ val: String) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+    private func refFillJS(_ handle: Int, _ session: TabSession, _ val: String) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             "e.focus();e.select();" +
             "var proto=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:(e.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype);" +
@@ -1807,8 +1924,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             "return JSON.stringify({ok:true});})()"
     }
 
-    private func refSelectJS(_ handle: Int, _ val: String) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+    private func refSelectJS(_ handle: Int, _ session: TabSession, _ val: String) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             "e.focus();e.value='\(esc(val))';" +
             "e.dispatchEvent(new Event('input',{bubbles:true}));" +
@@ -1816,8 +1933,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             "e.blur();return JSON.stringify({ok:true});})()"
     }
 
-    private func refCheckJS(_ handle: Int, _ checked: Bool) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+    private func refCheckJS(_ handle: Int, _ session: TabSession, _ checked: Bool) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             "e.focus();" +
             "if(!!e.checked!==\(checked))e.click();" +
@@ -1931,13 +2048,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// ref 点击第一步（含 _blank 拦截，按稳定句柄定位）。元素不在视口内先居中滚动。
-    private func refClickDownJS(_ handle: Int) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle))" +
+    private func refClickDownJS(_ handle: Int, _ session: TabSession) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))" +
             "if(!e)return JSON.stringify({ok:false,err:_locErr});" +
             blankTabGuardJS +
-            "var _r0=e.getBoundingClientRect();" +
+            "var _vr=function(el){var r=el.getBoundingClientRect();var w=el.ownerDocument.defaultView;while(w&&w!==window){var fe=w.frameElement;if(!fe)break;var fr=fe.getBoundingClientRect();r={left:r.left+fr.left,top:r.top+fr.top,width:r.width,height:r.height};w=fe.ownerDocument.defaultView;}return r;};" +
+            "var _r0=_vr(e);" +
             "if(_r0.top<0||_r0.bottom>window.innerHeight||_r0.left<0||_r0.right>window.innerWidth)e.scrollIntoView({block:'center'});" +
-            "var r=e.getBoundingClientRect();" +
+            "var r=_vr(e);" +
             "var x=r.left+r.width/2+(Math.random()-0.5)*r.width*0.4;" +
             "var y=r.top+r.height/2+(Math.random()-0.5)*r.height*0.4;" +
             "e.focus();" +
@@ -1976,8 +2094,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     // MARK: - 逐字符输入（拟人化）
 
-    private func typeInitRefJS(_ handle: Int) -> String {
-        return "(function(){\(collectEls(200))\(locateElJS(handle))if(!e)return false;e.setAttribute('data-xh-type','1');e.focus();return true;})()"
+    private func typeInitRefJS(_ handle: Int, _ session: TabSession) -> String {
+        return "(function(){\(collectEls(200))\(locateElJS(handle, session: session))if(!e)return false;e.setAttribute('data-xh-type','1');e.focus();return true;})()"
     }
     private func typeInitSelJS(_ sel: String) -> String {
         "(function(){var e=document.querySelector('\(esc(sel))');if(!e)return false;e.setAttribute('data-xh-type','1');e.focus();return true;})()"

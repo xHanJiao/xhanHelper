@@ -46,7 +46,25 @@ struct BrowsePanelView: View {
     let baseURL: String
     let token: String
 
-    private let columns = Array(repeating: GridItem(.fixed(110), spacing: 16), count: 3)
+    /// 根据网格可用宽度自适应列：先维持 110 的格子宽、把剩余空间给间距；
+    /// 空间不足时间距压到最小、格子随之收缩；空间富余时间距封顶、格子保持 110。
+    private func adaptiveColumns(width: CGFloat) -> (columns: [GridItem], spacing: CGFloat) {
+        let maxTile: CGFloat = 110
+        let minTile: CGFloat = 84
+        let maxSpacing: CGFloat = 20
+        let minSpacing: CGFloat = 6
+
+        var spacing = (width - 3 * maxTile) / 2
+        var tile = maxTile
+        if spacing < minSpacing {
+            spacing = minSpacing
+            tile = max(minTile, (width - 2 * minSpacing) / 3)
+        } else if spacing > maxSpacing {
+            spacing = maxSpacing
+        }
+        let columns = Array(repeating: GridItem(.fixed(tile), spacing: spacing), count: 3)
+        return (columns, spacing)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -63,10 +81,10 @@ struct BrowsePanelView: View {
     // MARK: - 网格
 
     private var grid: some View {
-        // 固定 6 格无需滚动，垂直居中展示；格子间距收紧
-        VStack(spacing: 0) {
-            Spacer()
-            LazyVGrid(columns: columns, spacing: 14) {
+        // 固定 6 格无需滚动，垂直居中展示；间距/格子随可用宽度自适应收缩
+        GeometryReader { geo in
+            let (columns, spacing) = adaptiveColumns(width: geo.size.width - 48)
+            LazyVGrid(columns: columns, spacing: spacing) {
                 browserTile
                 ForEach(BrowsePanel.allCases) { panel in
                     tile(icon: panel.icon, title: panel.rawValue, help: panel.help) {
@@ -76,9 +94,8 @@ struct BrowsePanelView: View {
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 20)
-            Spacer()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var browserTile: some View {

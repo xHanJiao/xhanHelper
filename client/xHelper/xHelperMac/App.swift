@@ -53,6 +53,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// 当前要求的最小内容宽（右栏打开时 730，否则 400）。由 ContentView 更新。
+    static var requiredMinContentWidth: CGFloat = 400
+
+    /// 拦截窗口缩放：宽度不得低于要求的最小内容宽（+ 窗口 chrome）。
+    /// 用 delegate 而不是 minSize——SwiftUI 会在布局时用内容 min 覆盖 minSize。
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        let contentWidth = sender.contentView?.frame.width ?? sender.frame.width
+        let chrome = sender.frame.width - contentWidth
+        let minFrameWidth = Self.requiredMinContentWidth + chrome
+        return NSSize(width: max(frameSize.width, minFrameWidth), height: frameSize.height)
+    }
+
     // MARK: 红 X 关闭窗口
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -184,7 +196,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.backgroundColor = .clear
         window.contentView?.wantsLayer = true
         window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
-        window.isMovableByWindowBackground = true
         window.toolbar = nil
     }
 }
@@ -194,6 +205,7 @@ struct xhanHelperMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var deviceManager = DeviceManager()
     @StateObject private var colorSchemeManager = ColorSchemeManager()
+    @StateObject private var resizeGhost = ResizeGhostState()
     @State private var isHoldingQuit = false
     @State private var holdProgress: Double = 0
 
@@ -201,8 +213,8 @@ struct xhanHelperMacApp: App {
         WindowGroup {
             Group {
                 if deviceManager.isLoggedIn {
-                    ContentView(deviceManager: deviceManager)
-                        .frame(minWidth: 320, minHeight: 400)
+                    ContentView(deviceManager: deviceManager, resizeGhost: resizeGhost)
+                        .frame(minWidth: 400, minHeight: 400)
                 } else {
                     LoginMacView(deviceManager: deviceManager)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)

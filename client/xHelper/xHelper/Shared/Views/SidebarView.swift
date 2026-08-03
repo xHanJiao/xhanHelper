@@ -17,15 +17,11 @@ enum SidebarTab: String, CaseIterable, Identifiable {
 struct SidebarView: View {
     @Binding var selectedTab: SidebarTab
     @Binding var sidebarWidth: CGFloat
-    let allowExpand: Bool
     @ObservedObject var chatTabManager: ChatTabManager
     @ObservedObject var conversationListVM: ConversationListViewModel
     /// 默认会话不可删除，由 ContentView 注入（deviceManager.defaultConversation?.id）
     let defaultConversationID: String?
 
-    @GestureState private var dragOffset: CGFloat = 0
-    @State private var lastExpandedWidth: CGFloat = Layout.sidebarDefaultWidth
-    @State private var isExpandHovered = false
     @State private var hoveredConversationID: String?
     @State private var renameTarget: Conversation?
     @State private var renameText = ""
@@ -44,9 +40,7 @@ struct SidebarView: View {
                 expandedContent
             }
         }
-        .frame(width: max(Layout.sidebarMinWidth, sidebarWidth + dragOffset))
-        .gesture(sidebarDragGesture)
-        .animation(.easeInOut(duration: 0.15), value: sidebarWidth)
+        .frame(width: sidebarWidth)
         .alert("重命名会话", isPresented: .init(
             get: { renameTarget != nil },
             set: { if !$0 { renameTarget = nil } }
@@ -78,7 +72,7 @@ struct SidebarView: View {
                 // 功能导航（固定高度，不随会话列表滚动）
                 VStack(spacing: 2) {
                     ForEach(SidebarTab.allCases) { tab in
-                        expandedNavItem(tab)
+                        expandedNavItem(tab, showText: showNavText)
                     }
                 }
                 .padding(.horizontal, 8)
@@ -229,29 +223,24 @@ struct SidebarView: View {
             }
 
             Spacer()
-
-            // 底部展开按钮：仅收起态 + 窗口宽度允许展开时出现
-            if allowExpand {
-                Button {
-                    sidebarWidth = max(lastExpandedWidth, 160)
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.secondary)
-                        .frame(width: 30, height: 30)
-                        .background(isExpandHovered ? AnyShapeStyle(Color.primary.opacity(0.1)) : AnyShapeStyle(.clear), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .onHover { isExpandHovered = $0 }
-                .help("展开侧边栏")
-                .padding(.bottom, 10)
-            }
         }
     }
 
     // MARK: - Nav Items
 
-    private func expandedNavItem(_ tab: SidebarTab) -> some View {
+    /// 导航文字能否一行展示：侧栏宽度 ≥ 最宽导航项所需的宽度。
+    /// 最宽文字宽按 CJK 每字≈字号估算（图标18 + 间距8 + 项padding20 + 段padding16）。
+    private var showNavText: Bool {
+        sidebarWidth >= navTextThreshold
+    }
+
+    private var navTextThreshold: CGFloat {
+        let widestCount = SidebarTab.allCases.map { $0.rawValue.count }.max() ?? 0
+        let textWidth = CGFloat(widestCount) * Layout.sidebarNavFontSize
+        return 16 + 20 + 18 + 8 + textWidth
+    }
+
+    private func expandedNavItem(_ tab: SidebarTab, showText: Bool) -> some View {
         // 新建聊天是动作项，不显示选中底色/强调色，与其他功能 tab 区分开
         let isSelected = selectedTab == tab && tab != .chat
         return Button {
@@ -268,9 +257,11 @@ struct SidebarView: View {
                     .frame(width: 18)
                     .offset(y: -1.5)
                     .foregroundColor(isSelected ? Color("appAccent") : .secondary)
-                Text(tab.rawValue)
-                    .font(.title2)
-                    .foregroundColor(isSelected ? Color("appAccent") : .primary)
+                if showText {
+                    Text(tab.rawValue)
+                        .font(.system(size: Layout.sidebarNavFontSize, weight: .medium))
+                        .foregroundColor(isSelected ? Color("appAccent") : .primary)
+                }
                 Spacer()
             }
             .padding(.horizontal, 10)
@@ -279,6 +270,7 @@ struct SidebarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .help(tab.rawValue)
     }
 
     private func collapsedNavItem(_ tab: SidebarTab) -> some View {
@@ -301,28 +293,5 @@ struct SidebarView: View {
                 .help(tab.rawValue)
         }
         .buttonStyle(.plain)
-    }
-
-    private var sidebarDragGesture: some Gesture {
-        DragGesture(minimumDistance: 3)
-            .updating($dragOffset) { value, state, _ in
-                state = value.translation.width
-            }
-            .onEnded { value in
-                let proposed = sidebarWidth + value.translation.width
-                let clamped = min(max(proposed, Layout.sidebarMinWidth), Layout.sidebarMaxWidth)
-                if clamped < Layout.sidebarSnapThreshold {
-                    lastExpandedWidth = sidebarWidth
-                    sidebarWidth = Layout.sidebarMinWidth
-                } else if clamped < 160 {
-                    guard allowExpand else { return }
-                    sidebarWidth = 160
-                    lastExpandedWidth = 160
-                } else {
-                    guard allowExpand else { return }
-                    sidebarWidth = clamped
-                    lastExpandedWidth = clamped
-                }
-            }
     }
 }

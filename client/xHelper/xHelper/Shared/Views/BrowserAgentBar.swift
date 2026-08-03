@@ -3,25 +3,30 @@ import SwiftUI
 #if os(macOS)
 /// G2：浏览器地址栏下方的细条指示器——agent 操作浏览器的可见性。
 /// 状态 A（运行中）：转圈；状态 B（完成）：✓，2.5s 后由 BrowserActivityCenter 自动消退。
-/// 文字居中，图标/状态左右固定，accent 底色较醒目。
+/// 方案 B：实色 accent 条 + 对比自适应文字（浅色=白字加粗、深色=近黑字）。
 struct BrowserAgentActivityBar: View {
     @ObservedObject private var center = BrowserActivityCenter.shared
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// 实色 accent 条上的对比文字色：浅色 accent=蓝 → 白字；深色 accent=浅青绿 → 近黑字（白字会不可见）。
+    private var statusForeground: Color {
+        colorScheme == .dark ? Color(white: 0.12) : .white
+    }
 
     var body: some View {
         Group {
             if let act = center.activity {
-                // A1：单 accent 色（浅色=蓝、深色=浅青绿，均有对比度），状态靠右侧图标区分。
-                // done 勾用 .primary（自适应深浅色），不用固定白——深色下 accent 是浅色，白勾会不可见。
-                let accent = Color("appAccent")
                 ZStack {
                     HStack(spacing: 6) {
                         Text("AI 正在操作浏览器 ·")
-                            .foregroundColor(.secondary)
+                            .foregroundColor(statusForeground.opacity(0.75))
                         Text(act.verb)
-                            .fontWeight(.semibold)
-                            .foregroundColor(accent)
+                            .fontWeight(.bold)
+                            .foregroundColor(statusForeground)
                         if !act.target.isEmpty {
                             Text(act.target)
+                                .fontWeight(.semibold)
+                                .foregroundColor(statusForeground)
                         }
                     }
                     .font(.system(size: 12, weight: .medium))
@@ -33,29 +38,30 @@ struct BrowserAgentActivityBar: View {
                     .overlay(alignment: .leading) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(accent)
+                            .foregroundColor(statusForeground)
                             .padding(.leading, 10)
                     }
                     .overlay(alignment: .trailing) {
                         if act.state == .running {
                             ProgressView()
                                 .controlSize(.mini)
+                                .tint(statusForeground)
                                 .padding(.trailing, 12)
                         } else {
                             Image(systemName: "checkmark")
                                 .font(.system(size: 11, weight: .bold))
-                                .foregroundColor(.primary)
+                                .foregroundColor(statusForeground)
                                 .padding(.trailing, 13)
                         }
                     }
                 }
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(accent.opacity(0.15))
+                        .fill(Color("appAccent"))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(accent.opacity(0.35), lineWidth: 1)
+                        .stroke(statusForeground.opacity(0.28), lineWidth: 1)
                 )
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)

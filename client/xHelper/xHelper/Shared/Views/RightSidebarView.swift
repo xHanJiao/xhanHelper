@@ -1,4 +1,8 @@
 import SwiftUI
+import WebKit
+#if os(macOS)
+import AppKit
+#endif
 
 /// 右侧栏：浏览面板（默认态，无 tab 条）+ 浏览器标签页（tab 条 + 返回按钮）。
 struct RightSidebarView: View {
@@ -70,6 +74,20 @@ struct RightSidebarView: View {
             .help(manager.isPipChat ? "退出画中画" : "画中画：聊天悬浮在浏览器上")
             .padding(.horizontal, 2)
 
+            // S5：清除浏览数据（Cookie/登录态/缓存），一键退出所有登录态
+            Button {
+                confirmClearBrowsingData()
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.secondary)
+            .help("清除浏览数据（Cookie/登录态/缓存）")
+            .padding(.horizontal, 2)
+
             // 新空白页按钮（固定在 tab 条最右侧，不随 tab 滚动）
             Button {
                 BrowserToolProvider.shared.openBlankTab()
@@ -85,6 +103,24 @@ struct RightSidebarView: View {
             .padding(.horizontal, 4)
         }
         .padding(.leading, 6)
+    }
+
+    /// S5：确认后清除全部网站数据（cookie/localStorage/site data/缓存）
+    private func confirmClearBrowsingData() {
+        #if os(macOS)
+        let alert = NSAlert()
+        alert.messageText = "清除浏览数据"
+        alert.informativeText = "将删除所有网站的 Cookie、本地存储与缓存，退出所有登录态。此操作不可撤销。"
+        alert.addButton(withTitle: "清除")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        WKWebsiteDataStore.default().removeData(
+            ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+            modifiedSince: .distantPast
+        ) {
+            ToastCenter.shared.show("浏览数据已清除")
+        }
+        #endif
     }
 
     private func browserTabButton(_ tab: RightSidebarTab) -> some View {

@@ -231,7 +231,7 @@ struct ChatView: View {
             Text("请求执行工具：「\(conf.displayName)」：\(conf.argsSummary)")
                 .font(.caption)
                 .foregroundColor(.secondary)
-                .lineLimit(2)
+                .lineLimit(3)
             Button("允许") { viewModel.resolveToolConfirmation(allow: true) }
                 .buttonStyle(.bordered)
                 .controlSize(.small)

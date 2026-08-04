@@ -17,6 +17,7 @@ struct RightSidebarView: View {
 
     @State private var isHovered = false
     @ObservedObject private var downloadStore = DownloadHistoryStore.shared
+    @ObservedObject private var bookmarkStore = BookmarkStore.shared
 
     #if os(macOS)
     @ObservedObject private var faviconStore = FaviconStore.shared
@@ -58,7 +59,7 @@ struct RightSidebarView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
                     ForEach(manager.tabs) { tab in
-                        browserTabButton(tab)
+                        tabButton(tab)
                     }
                 }
                 .frame(height: 32)
@@ -119,9 +120,66 @@ struct RightSidebarView: View {
             .buttonStyle(.plain)
             .foregroundColor(.secondary)
             .help("下载记录")
+            .padding(.trailing, 2)
+
+            // 收藏当前页（实心=已收藏）
+            Button {
+                toggleBookmarkCurrentPage()
+            } label: {
+                Image(systemName: currentPageBookmarked ? "star.fill" : "star")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(currentPageBookmarked ? .yellow : .secondary)
+            .help(currentPageBookmarked ? "取消收藏当前页" : "收藏当前页")
+            .padding(.trailing, 2)
+
+            // 收藏夹面板入口
+            Button {
+                manager.openBookmarkTab()
+            } label: {
+                Image(systemName: "bookmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.secondary)
+            .help("收藏夹")
+            .padding(.trailing, 2)
+
+            // 历史面板入口
+            Button {
+                manager.openHistoryTab()
+            } label: {
+                Image(systemName: "clock")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.secondary)
+            .help("浏览历史")
             .padding(.trailing, 4)
         }
         .padding(.leading, 6)
+    }
+
+    /// 当前页是否已收藏
+    private var currentPageBookmarked: Bool {
+        guard let url = BrowserToolProvider.shared.activeWebView?.url?.absoluteString else { return false }
+        return bookmarkStore.isBookmarked(url: url)
+    }
+
+    private func toggleBookmarkCurrentPage() {
+        guard let wv = BrowserToolProvider.shared.activeWebView,
+              let url = wv.url,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return }
+        let title = wv.title ?? url.host ?? ""
+        bookmarkStore.toggle(title: title, url: url.absoluteString)
     }
 
     /// S5：确认后清除全部网站数据（cookie/localStorage/site data/缓存）。
@@ -155,6 +213,22 @@ struct RightSidebarView: View {
             clearData()
         }
         #endif
+    }
+
+    /// tab 按钮：网页 tab 可拖拽重排；特殊 tab（下载/收藏/历史）固定不可拖
+    @ViewBuilder
+    private func tabButton(_ tab: RightSidebarTab) -> some View {
+        if RightSidebarManager.specialTabIDs.contains(tab.id) {
+            browserTabButton(tab)
+        } else {
+            browserTabButton(tab)
+                .draggable(tab.id)
+                .dropDestination(for: String.self) { items, _ in
+                    guard let dragged = items.first else { return false }
+                    manager.moveTab(from: dragged, to: tab.id)
+                    return true
+                }
+        }
     }
 
     private func browserTabButton(_ tab: RightSidebarTab) -> some View {

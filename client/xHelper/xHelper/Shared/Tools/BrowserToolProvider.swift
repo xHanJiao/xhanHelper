@@ -1317,6 +1317,39 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         bindSessionUI(session: session)
     }
 
+    /// 一键进入浏览器：有 tab 切到激活的（或第一个网页 tab），无 tab 开空白页；确保侧栏展开。
+    func enterBrowser() {
+        guard let rs = rightSidebar else { return }
+        rs.isOpen = true
+        if rs.hasTabs {
+            let target = rs.activeTabId
+                ?? rs.tabs.first(where: { !RightSidebarManager.specialTabIDs.contains($0.id) })?.id
+                ?? rs.tabs.first?.id
+            if let target {
+                rs.activeTabId = target
+                if !RightSidebarManager.specialTabIDs.contains(target) {
+                    selectTab(target)
+                }
+            }
+        } else {
+            openBlankTab()
+        }
+    }
+
+    /// 立即开新 tab 并加载 URL（收藏夹/历史点击打开，不等加载完成就显示 tab）。
+    func openURL(_ url: URL) {
+        let tabId = "browser-\(tabCounter)"
+        tabCounter += 1
+        let session = TabSession()
+        tabs[tabId] = session
+        switchActiveTab(to: tabId)
+        bindSessionTitle(session: session, tabId: tabId)
+        bindSessionUI(session: session)
+        rightSidebar?.openTab(id: tabId, title: url.host ?? "新标签页", icon: "globe",
+                              content: AnyView(BrowserTabView(webView: session.webView)))
+        session.webView.load(URLRequest(url: url))
+    }
+
     /// Cmd+W：关闭当前激活 tab（与工具 close_tab 同一收尾路径），无激活 tab 时忽略。
     func closeActiveTab() {
         guard let id = activeTabId, tabs[id] != nil else { return }
@@ -1367,13 +1400,19 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
     }
 
-    /// 导航变化：更新 tab host（favicon 查询键）+ 提取 favicon
+    /// 导航变化：更新 tab host（favicon 查询键）+ 提取 favicon + 记录历史
     private func handleNavigation(session: TabSession, tabId: String, url: URL) {
         let host = url.host ?? ""
         if !host.isEmpty {
             rightSidebar?.updateTabHost(id: tabId, host: host)
         }
         refreshFavicon(for: tabId)
+        // 浏览历史：仅 http/https（about:blank 等被 HistoryStore scheme 过滤）
+        HistoryStore.shared.record(
+            title: session.webView.title ?? host,
+            url: url.absoluteString,
+            host: host
+        )
     }
 
     /// 提取当前页 favicon href 并交给 FaviconStore 缓存（host 维度幂等）

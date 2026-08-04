@@ -59,6 +59,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil
             }
 
+            // Cmd+Shift+[ / Cmd+Shift+]：切换上一个/下一个 tab（焦点无关，只要浏览器有 tab）
+            if (event.keyCode == 33 || event.keyCode == 30),
+               event.modifierFlags.contains(.shift),
+               NSApp.modalWindow == nil,
+               BrowserToolProvider.shared.rightSidebar?.hasTabs == true {
+                BrowserToolProvider.shared.rightSidebar?.switchTab(delta: event.keyCode == 33 ? -1 : 1)
+                return nil
+            }
+
             // 浏览器聚焦时拦截浏览器快捷键（事件不下发 → 工具栏 keyboardShortcut/默认菜单不触发）
             if BrowserFocus.isFocused() {
                 switch event.keyCode {

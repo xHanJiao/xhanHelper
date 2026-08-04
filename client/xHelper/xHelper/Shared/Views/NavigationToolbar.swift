@@ -53,6 +53,12 @@ struct NavigationToolbar: View {
                 }
                 .keyboardShortcut("r", modifiers: .command)
 
+                // 一键进浏览器 + PiP（对话栏变悬浮窗、浏览器全宽）
+                CapsuleButton(systemName: "globe", enabled: true) {
+                    BrowserToolProvider.shared.enterBrowser()
+                    rightSidebar.isPipChat = true
+                }
+
                 Divider()
                     .frame(height: 14)
 

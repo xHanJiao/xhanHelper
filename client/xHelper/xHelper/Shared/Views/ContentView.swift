@@ -175,6 +175,10 @@ struct ContentView: View {
         }
         updateWindowMinWidth()
         pipLog("enter: prePipWidth=\(Int(prePipSidebarWidth ?? 0)) targetWidth=\(Int(target)) maxAvailable=\(Int(rightSidebarMaxAvailable)) windowW=\(Int(windowWidth))")
+        // 动画/布局落定后二次校准：避免 manager.width 与 HStack 实际分配空间有微小偏差导致右侧白块
+        DispatchQueue.main.async {
+            clampRightSidebarWidth()
+        }
     }
 
     /// 退出 PiP 副作用（onChange 统一入口，reason 用于诊断）。
@@ -425,6 +429,7 @@ struct ContentView: View {
                             } else {
                                 exitPipEffects(reason: pipExitReason)
                             }
+                            clampRightSidebarWidth()
                         }
                         .onChange(of: router.currentTab) { _, newTab in
                             if newTab != .chat {

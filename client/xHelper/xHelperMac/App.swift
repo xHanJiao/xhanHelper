@@ -34,6 +34,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // L3 工具确认：Tab=允许，Esc=拒绝（无需 Command，优先级最高）。
+            // resolveToolConfirmation 有 confirmationResolved 防重入守卫，连按安全。
+            if AppShortcutBridge.shared.confirmationPending?() == true {
+                if event.keyCode == 48 { // Tab
+                    AppShortcutBridge.shared.resolveConfirmation?(true)
+                    return nil
+                }
+                if event.keyCode == 53 { // Esc
+                    AppShortcutBridge.shared.resolveConfirmation?(false)
+                    return nil
+                }
+            }
+
             // Esc：浏览器查找栏打开时关闭（无需 Command 修饰）
             if event.keyCode == 53,
                BrowserFindCoordinator.shared.isPresented,
@@ -45,6 +58,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard event.modifierFlags.contains(.command),
                   !event.isARepeat
             else { return event }
+
+            // Cmd+Shift+B：切换右侧栏（焦点无关，无模态时生效，对齐 VS Code）
+            if event.keyCode == 11,
+               event.modifierFlags.contains(.shift),
+               NSApp.modalWindow == nil {
+                BrowserToolProvider.shared.rightSidebar?.toggle()
+                return nil
+            }
+
+            // Cmd+B：切换左侧栏（焦点无关，无模态时生效）
+            if event.keyCode == 11,
+               NSApp.modalWindow == nil {
+                AppShortcutBridge.shared.onToggleLeftSidebar?()
+                return nil
+            }
 
             // Cmd+T / Cmd+Shift+T：焦点无关，只要浏览器有 tab 就生效（对齐 Chrome）。
             // NSApp.modalWindow == nil：模态弹窗（NSAlert.runModal）期间不触发——避免模态 run loop 内改浏览器层级。

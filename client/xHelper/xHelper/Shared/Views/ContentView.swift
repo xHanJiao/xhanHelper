@@ -202,6 +202,32 @@ struct ContentView: View {
         #endif
     }
 
+#if os(macOS)
+    /// Cmd+B：切换左侧栏。收起时恢复到记忆的展开宽度，展开时收到最小宽（48）。
+    private func toggleLeftSidebar() {
+        let collapsed = sidebarWidth <= Layout.sidebarSnapThreshold
+        if collapsed {
+            sidebarWidth = min(max(CGFloat(storedSidebarWidth), Layout.sidebarDefaultWidth), Layout.sidebarMaxWidth)
+        } else {
+            sidebarWidth = Layout.sidebarMinWidth
+        }
+    }
+
+    /// 注册 App 级快捷键桥（macOS：Cmd+B / Tab·Esc L3 确认）。
+    private func registerAppShortcutBridge() {
+        // ContentView 是 struct，闭包捕获的是值拷贝，无循环引用，不需 weak
+        AppShortcutBridge.shared.onToggleLeftSidebar = {
+            self.toggleLeftSidebar()
+        }
+        AppShortcutBridge.shared.confirmationPending = {
+            self.activeChatViewModel?.pendingToolConfirmation != nil
+        }
+        AppShortcutBridge.shared.resolveConfirmation = { allow in
+            self.activeChatViewModel?.resolveToolConfirmation(allow: allow)
+        }
+    }
+#endif
+
     private func syncActiveChat() async {
         #if os(macOS)
         // 激活时刷新当前所在对话（而非默认会话），避免劫持其他会话 tab
@@ -376,6 +402,8 @@ struct ContentView: View {
                             } else {
                                 restoreWindowMinWidth()
                             }
+                            // 浏览器按钮组随侧栏可见性注册/注销（修复：侧栏收起时左槽组残留）
+                            BrowserToolProvider.shared.refreshBrowserGroup()
                         }
                         .onChange(of: rightSidebar.isPipChat) { _, isPip in
                             if isPip {
@@ -416,6 +444,7 @@ struct ContentView: View {
                     sidebarWidth = min(storedSidebarWidth, Layout.sidebarMaxWidth)
                     BrowserToolProvider.shared.rightSidebar = rightSidebar
                     conversationListVM.defaultConversationID = deviceManager.defaultConversation?.id
+                    registerAppShortcutBridge()
                 }
                 .onChange(of: sidebarWidth) { _, new in
                     if new > Layout.sidebarSnapThreshold {

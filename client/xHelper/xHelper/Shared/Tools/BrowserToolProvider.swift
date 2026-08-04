@@ -1376,9 +1376,16 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     private var browserGroupRegistered = false
 
-    /// tab 增删后同步浏览器组注册状态（有 tab 注册 priority 10 组 → 顶栏左槽/中槽；无 tab 注销）
+    /// 浏览器组是否应注册：有 tab 且右侧栏打开（浏览器可见）。
+    /// 只按"有 tab"注册会导致：侧栏收起（isOpen=false）时左槽组残留。
+    private var browserGroupShouldShow: Bool {
+        !tabs.isEmpty && (rightSidebar?.isOpen ?? false)
+    }
+
+    /// tab 增删/侧栏可见性变化后同步浏览器组注册状态。
+    /// 有 tab 且侧栏打开 → 注册 priority 10 组；否则注销。
     private func syncBrowserGroup() {
-        let shouldRegister = !tabs.isEmpty
+        let shouldRegister = browserGroupShouldShow
         if shouldRegister && !browserGroupRegistered {
             registerBrowserGroups()
             browserGroupRegistered = true
@@ -1386,6 +1393,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             TopBarRegistry.shared.unregister(prefix: "browser-")
             browserGroupRegistered = false
         }
+    }
+
+    /// 侧栏开关变化时由 ContentView 调用，重新同步浏览器组注册（幂等）。
+    func refreshBrowserGroup() {
+        syncBrowserGroup()
     }
 
     private func registerBrowserGroups() {

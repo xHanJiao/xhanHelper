@@ -117,9 +117,15 @@ func (s *StateUpdater) UpdateThemesFromConversation(ctx context.Context, userID 
 
 	for _, t := range actives {
 		score, ok := matched[t.ID]
-		if !ok || score < defaultVecThreshold {
+		if !ok {
+			log.Printf("[state_updater] theme %s (%s) not matched (score map has %d keys)", t.ID[:8], t.Name, len(matched))
 			continue
 		}
+		if score < defaultVecThreshold {
+			log.Printf("[state_updater] theme %s (%s) score %.3f < %.2f, skip", t.ID[:8], t.Name, score, defaultVecThreshold)
+			continue
+		}
+		log.Printf("[state_updater] theme %s (%s) matched score %.3f, updating", t.ID[:8], t.Name, score)
 		s.UpdateFromConversation(ctx, userID, t.ID, t.Name, convText, traceID)
 	}
 
@@ -129,6 +135,7 @@ func (s *StateUpdater) UpdateThemesFromConversation(ctx context.Context, userID 
 
 // UpdateFromConversation 对单个主题基于对话文本更新状态页，ReAct + 验证 + 矫正
 func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, themeID, themeName, convText string, traceID string) {
+	log.Printf("[state_updater] UpdateFromConversation enter: theme=%s (%s)", themeID[:8], themeName)
 	stateText := s.themeStore.LoadState(ctx, themeID, userID)
 	name := s.themeStore.GetName(ctx, themeID, userID)
 	if name == "" {
@@ -145,6 +152,7 @@ func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, theme
 		log.Printf("[state_updater] ReactLoop error: theme=%s err=%v", themeID[:8], err)
 		return
 	}
+	log.Printf("[state_updater] ReactLoop done: theme=%s iters=%d finalRespLen=%d err=%v", themeID[:8], result.Iterations, len(result.FinalResponse), result.Error)
 
 	var output struct {
 		UpdatedState string `json:"updated_state"`

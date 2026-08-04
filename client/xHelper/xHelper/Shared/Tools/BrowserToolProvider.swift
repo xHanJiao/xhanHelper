@@ -1914,7 +1914,6 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 forMainFrameOnly: true
             )
             configuration.userContentController.addUserScript(a11yScript)
-            
 
             // G3：内容拦截（仅用户自定义域名，默认不拦截任何站点）
             if let ruleList = ContentBlocker.ruleList {

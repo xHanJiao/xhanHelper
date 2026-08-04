@@ -712,7 +712,6 @@ export const api = {
 | 删除单条消息 | `DELETE /api/conversations/:id/messages/:msgId` |
 | 重命名会话 | `PATCH /api/conversations/:id` |
 | 删除会话 | `DELETE /api/conversations/:id` |
-| 手动提取记忆 | `POST /api/conversations/:id/extract-memories` |
 
 ### 账单
 | 前端功能 | 后端 API |

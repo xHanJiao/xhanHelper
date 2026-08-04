@@ -75,7 +75,7 @@ class APIClient {
     }
 
     func uploadBillsCSV(_ csvText: String) async throws -> ImportResult {
-        let path = "/api/bills/import?extract_memories=true"
+        let path = "/api/bills/import"
         var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

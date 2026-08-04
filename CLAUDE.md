@@ -255,7 +255,6 @@ make clean        # 清理
 | DELETE | `/api/conversations/:id/messages/:msgId` | 删除消息 |
 | PATCH | `/api/conversations/:id` | 重命名会话 |
 | DELETE | `/api/conversations/:id` | 删除会话 |
-| POST | `/api/conversations/:id/extract-memories` | 手动提取记忆 |
 
 ### 账单 / 笔记 / 记忆 / 文档
 | 方法 | 路径 | 说明 |

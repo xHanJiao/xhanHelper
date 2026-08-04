@@ -60,3 +60,16 @@ private struct CardShadowRenderer: ViewModifier {
             .animation(.easeInOut(duration: 0.25), value: isLifted)
     }
 }
+
+/// 带 hover 浮动提升的玻璃卡片行容器（下载/收藏夹/配置页共用）。
+struct HoverCardRow<Content: View>: View {
+    @State private var isHovered = false
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(10)
+            .modifier(CardBackgroundModifier(isLifted: isHovered))
+            .onHover { isHovered = $0 }
+    }
+}

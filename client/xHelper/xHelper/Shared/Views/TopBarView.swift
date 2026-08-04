@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 /// 通用顶栏：按槽位渲染 TopBarRegistry 中最优先的按钮组（同优先多组共存）。
 /// 替代原 NavigationToolbar；各功能区通过注册/注销按钮组向槽位贡献按钮。
@@ -10,6 +13,8 @@ struct TopBarView: View {
 
     #if os(macOS)
     @Environment(\.openSettings) private var openSettings
+    @EnvironmentObject private var colorSchemeManager: ColorSchemeManager
+    @Environment(\.colorScheme) private var colorScheme
     #endif
 
     var body: some View {
@@ -24,10 +29,25 @@ struct TopBarView: View {
 
             renderSlot(.right)
         }
+        // 双击顶栏空白区缩放窗口：contentShape 让空白区可命中，按钮区域由按钮自身
+        // 手势优先消费（SwiftUI 子视图手势优先），双击按钮不会触发缩放。
+        .contentShape(Rectangle())
+        #if os(macOS)
+        .onTapGesture(count: 2) { zoomWindow() }
+        #endif
         .padding(.horizontal, Layout.toolbarHorizontalPadding)
         .padding(.vertical, 6)
         .ignoresSafeArea(edges: .top)
         .onAppear { registerDefaultGroups() }
+    }
+
+    /// 双击顶栏空白区：窗口普通缩放（放大到屏幕可用区域）↔ 还原。仅空白 Spacer 响应，按钮区域不受影响。
+    private func zoomWindow() {
+        #if os(macOS)
+        guard let window = NSApp.keyWindow else { return }
+        if window.styleMask.contains(.fullScreen) { return } // 已在系统全屏时不处理
+        window.zoom(nil)
+        #endif
     }
 
     // MARK: - 默认组（永不注销；同 id 覆盖幂等）
@@ -45,21 +65,48 @@ struct TopBarView: View {
                          help: { "一键进入浏览器（画中画）" }),
         ]
         #if os(macOS)
+        buttons.append(TopBarButton(id: "maximize-sidebar",
+                                    icon: { rightSidebar.isPipChat ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right" },
+                                    enabled: { rightSidebar.isOpen },
+                                    action: { rightSidebar.isPipChat.toggle() },
+                                    help: { rightSidebar.isPipChat ? "还原侧栏" : "最大化侧栏内容" },
+                                    visible: { rightSidebar.isOpen })) // 侧栏未打开时按钮不显示
+        buttons.append(TopBarButton(id: "sidebar", icon: { "sidebar.trailing" },
+                                    enabled: { true },
+                                    action: { rightSidebar.toggle() },
+                                    help: { "切换右侧栏" }))
+        // 深浅色切换：深色=月亮、浅色=太阳；跟随系统时按当前实际配色显示，点击切到相反显式模式
+        buttons.append(TopBarButton(id: "color-scheme",
+                                    icon: { colorSchemeManager.selectedScheme == .dark ? "moon.fill" : "sun.max.fill" },
+                                    enabled: { true },
+                                    action: { toggleColorScheme() },
+                                    help: { colorSchemeManager.selectedScheme == .dark ? "切换浅色模式" : "切换深色模式" }))
+        // 设置固定最右
         buttons.append(TopBarButton(id: "settings", icon: { "gear" },
                                     enabled: { true },
                                     action: { openSettings() },
                                     help: { "设置" }))
         #endif
-        buttons.append(TopBarButton(id: "sidebar", icon: { "sidebar.trailing" },
-                                    enabled: { true },
-                                    action: { rightSidebar.toggle() },
-                                    help: { "切换右侧栏" }))
         TopBarRegistry.shared.register(TopBarGroup(
             id: "default-right",
             slot: .right,
             priority: 5,
             buttons: buttons
         ))
+    }
+
+    /// 深浅色切换：light ↔ dark 互切；跟随系统时先落到与当前实际配色相反的模式。
+    private func toggleColorScheme() {
+        #if os(macOS)
+        switch colorSchemeManager.selectedScheme {
+        case .system:
+            colorSchemeManager.selectedScheme = (colorScheme == .dark) ? .light : .dark
+        case .light:
+            colorSchemeManager.selectedScheme = .dark
+        case .dark:
+            colorSchemeManager.selectedScheme = .light
+        }
+        #endif
     }
 
     @ViewBuilder
@@ -81,7 +128,9 @@ struct TopBarView: View {
 
     @ViewBuilder
     private func buttonRow(_ group: TopBarGroup) -> some View {
-        ForEach(Array(group.buttons.enumerated()), id: \.element.id) { index, button in
+        // 先按 visible() 过滤，再基于可见按钮计算分隔线（避免隐藏按钮导致多/少 Divider）
+        let visibleButtons = group.buttons.filter { $0.visible() }
+        ForEach(Array(visibleButtons.enumerated()), id: \.element.id) { index, button in
             if index > 0 {
                 Divider().frame(height: 14)
             }
@@ -97,10 +146,9 @@ struct TopBarView: View {
             }
             .keyboardShortcutIfNeeded(button)
         } else {
-            CapsuleButton(systemName: button.icon(), enabled: button.enabled()) {
+            CapsuleButton(systemName: button.icon(), enabled: button.enabled(), tooltip: button.help()) {
                 button.action()
             }
-            .help(button.help())
             .keyboardShortcutIfNeeded(button)
         }
     }
@@ -149,6 +197,7 @@ private struct CapsuleButtonBackground: ViewModifier {
 private struct CapsuleButton: View {
     let systemName: String
     let enabled: Bool
+    let tooltip: String
     let action: () -> Void
     @State private var isHovered = false
 
@@ -160,6 +209,7 @@ private struct CapsuleButton: View {
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.25)
         .onHover { isHovered = $0 }
+        .hoverTooltip(tooltip, direction: .down, delay: 0.25)
     }
 }
 
@@ -192,7 +242,7 @@ private struct CapsuleRefreshButton: View {
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.25 : 1)
-        .help(disabledMessage ?? "")
+        .hoverTooltip(disabledMessage ?? "", direction: .down, delay: 0.25)
         .onHover { isHovered = $0 }
     }
 }

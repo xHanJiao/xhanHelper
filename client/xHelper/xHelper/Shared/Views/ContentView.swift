@@ -237,6 +237,9 @@ struct ContentView: View {
         AppShortcutBridge.shared.onToggleLeftSidebar = {
             self.toggleLeftSidebar()
         }
+        AppShortcutBridge.shared.onNewChat = {
+            self.chatTabManager.newChat()
+        }
         AppShortcutBridge.shared.confirmationPending = {
             self.activeChatViewModel?.pendingToolConfirmation != nil
         }
@@ -304,6 +307,9 @@ struct ContentView: View {
                         rightSidebar: rightSidebar,
                         navLeadingOffset: sidebarWidth + Layout.navToolbarContentOffset
                     )
+                    // 提升到内容区卡片之上：顶栏 hover tooltip 向下浮层不被下方卡片遮挡
+                    // （VStack 后声明的兄弟绘制在上层，不加 zIndex 时 tooltip 会被盖住）
+                    .zIndex(1)
 
                     GeometryReader { geo in
                         HStack(alignment: .top, spacing: 0) {

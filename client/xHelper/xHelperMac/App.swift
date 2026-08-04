@@ -74,6 +74,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil
             }
 
+            // Cmd+N：新建对话（焦点无关，无模态时生效；排除 Cmd+Shift+N）
+            if event.keyCode == 45,
+               !event.modifierFlags.contains(.shift),
+               NSApp.modalWindow == nil {
+                AppShortcutBridge.shared.onNewChat?()
+                return nil
+            }
+
             // Cmd+T / Cmd+Shift+T：焦点无关，只要浏览器有 tab 就生效（对齐 Chrome）。
             // NSApp.modalWindow == nil：模态弹窗（NSAlert.runModal）期间不触发——避免模态 run loop 内改浏览器层级。
             if event.keyCode == 17,
@@ -362,7 +370,6 @@ struct xhanHelperMacApp: App {
             .toast()
             .glassWindow()
             .task {
-                MainThreadWatchdog.shared.start()
                 await LocalToolRegistry.shared.register(BrowserToolProvider.shared)
                 ContentBlocker.load()
                 await MCPManager.shared.refreshToolCache()

@@ -150,7 +150,6 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
         .frame(maxWidth: .infinity, alignment: .center)
         .animation(.easeInOut(duration: 0.4), value: containerTint)
         .onChange(of: isStreaming) { _, streaming in
-            print("[InputBar] isStreaming -> \(streaming)")
             if streaming {
                 withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
                     streamingGlow = 1
@@ -194,21 +193,17 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
             .onChange(of: text) {
                 idleTask?.cancel()
                 if !isEditing {
-                    print("[InputBar] typing started")
                     isEditing = true
                 }
                 idleTask = Task {
                     try? await Task.sleep(for: .seconds(5))
                     guard !Task.isCancelled else { return }
-                    print("[InputBar] typing idle 5s")
                     isEditing = false
                 }
             }
             .onChange(of: isFocused) { _, new in
-                print("[InputBar] isFocused -> \(new)")
                 if !new {
                     idleTask?.cancel()
-                    print("[InputBar] focus lost")
                     isEditing = false
                 }
             }

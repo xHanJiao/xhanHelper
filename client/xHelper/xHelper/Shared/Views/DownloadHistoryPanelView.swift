@@ -15,12 +15,17 @@ struct DownloadHistoryPanelView: View {
             } else {
                 // TimelineView 每秒刷新：进行中行显示已用时间/速度/剩余
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
-                    List {
-                        ForEach(store.records) { record in
-                            recordRow(record)
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(store.records) { record in
+                                HoverCardRow {
+                                    recordContent(record)
+                                }
+                            }
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
                     }
-                    .listStyle(.plain)
                 }
             }
         }
@@ -74,7 +79,7 @@ struct DownloadHistoryPanelView: View {
 
     // MARK: - Row
 
-    private func recordRow(_ record: DownloadHistoryStore.DownloadRecord) -> some View {
+    private func recordContent(_ record: DownloadHistoryStore.DownloadRecord) -> some View {
         HStack(spacing: 8) {
             Image(systemName: statusIcon(record.state))
                 .font(.system(size: 12, weight: .semibold))
@@ -100,11 +105,11 @@ struct DownloadHistoryPanelView: View {
                 Text("\(Int(record.progress * 100))%")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
+                    .padding(.leading, 4)
             }
 
             actions(for: record)
         }
-        .padding(.vertical, 5)
     }
 
     private func subtitle(_ record: DownloadHistoryStore.DownloadRecord) -> String {
@@ -137,8 +142,8 @@ struct DownloadHistoryPanelView: View {
         case .downloading:
             Button { store.cancel(id: record.id) } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .frame(width: 20, height: 20)
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 24, height: 24)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -146,19 +151,23 @@ struct DownloadHistoryPanelView: View {
             .help("取消下载")
         case .done:
             Button { openFile(record) } label: {
-                Text("打开").font(.system(size: 11))
+                Text("打开").font(.system(size: 12))
             }
             .buttonStyle(.plain)
-            .foregroundColor(.accentColor)
+            .foregroundColor(Color("appAccent"))
             Button { revealFile(record) } label: {
-                Text("在 Finder 中显示").font(.system(size: 11))
+                Image(systemName: "folder")
+                    .font(.system(size: 12))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundColor(.secondary)
+            .help("在 Finder 中显示")
             Button { store.remove(id: record.id) } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: 10))
-                    .frame(width: 20, height: 20)
+                    .font(.system(size: 12))
+                    .frame(width: 24, height: 24)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -167,8 +176,8 @@ struct DownloadHistoryPanelView: View {
         case .failed, .cancelled:
             Button { store.retry(id: record.id) } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 10, weight: .semibold))
-                    .frame(width: 20, height: 20)
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 24, height: 24)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -176,8 +185,8 @@ struct DownloadHistoryPanelView: View {
             .help("重试下载")
             Button { store.remove(id: record.id) } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: 10))
-                    .frame(width: 20, height: 20)
+                    .font(.system(size: 12))
+                    .frame(width: 24, height: 24)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

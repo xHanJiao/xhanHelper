@@ -9,9 +9,6 @@ private struct InputBarControlModifier: ViewModifier {
     let tooltip: String
 
     @State private var hovering = false
-    @State private var lastVisible: Bool?
-    @State private var tooltipVisible = false
-    @State private var tooltipTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         let visible = visibility.isVisible(in: context)
@@ -24,54 +21,10 @@ private struct InputBarControlModifier: ViewModifier {
                     .disabled(!isEnabled)
                     .onHover { isHovering in
                         hovering = isHovering
-                        scheduleTooltip(isHovering)
                     }
-                    .overlay(alignment: .top) {
-                        if tooltipVisible && !tooltip.isEmpty {
-                            tooltipLabel
-                                .transition(.opacity.combined(with: .move(edge: .bottom)))
-                        }
-                    }
-                    .animation(.easeOut(duration: 0.15), value: tooltipVisible)
+                    .hoverTooltip(tooltip, direction: .up, delay: 0.45)
             }
         }
-        .onChange(of: visible) { _, nowVisible in
-            if lastVisible != nowVisible {
-                let name = tooltip.isEmpty ? "button" : tooltip
-                print("[InputBar][\(name)] visible=\(nowVisible) (streaming=\(context.isStreaming))")
-                lastVisible = nowVisible
-            }
-        }
-    }
-
-    /// hover 后延迟 0.45s 显示标签，移开立即消失。
-    private func scheduleTooltip(_ show: Bool) {
-        tooltipTask?.cancel()
-        if show {
-            tooltipTask = Task {
-                try? await Task.sleep(for: .milliseconds(450))
-                guard !Task.isCancelled else { return }
-                tooltipVisible = true
-            }
-        } else {
-            tooltipVisible = false
-        }
-    }
-
-    private var tooltipLabel: some View {
-        Text(tooltip)
-            .font(.caption)
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
-            .offset(y: -26)
     }
 }
 

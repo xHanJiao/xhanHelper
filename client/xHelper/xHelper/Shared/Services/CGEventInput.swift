@@ -35,21 +35,29 @@ enum CGEventInput {
                 guard let cv = w.contentView else { return false }
                 return webView.isDescendant(of: cv)
             }
-            print("[CGEvent] screenPoint: webView has no window")
+            LogBuffer.shared.warning("[CGEvent] screenPoint: webView has no window; inAnyWindow=\(inAnyWindow)")
+            #if DEBUG
             print("[CGEvent] diag inAnyWindow=\(inAnyWindow) webViewSuper=\(String(describing: webView.superview))")
+            #endif
+            #if DEBUG
             print("[CGEvent] diag appWindows=[\(appWindows.joined(separator: ", "))]")
+            #endif
             return nil
         }
         // 诊断预埋：WebView/窗口布局信息，用于核对转换基准
+        #if DEBUG
         print("[CGEvent] diag webView.frame=(\(Int(webView.frame.minX)),\(Int(webView.frame.minY)),\(Int(webView.frame.width)),\(Int(webView.frame.height))) " +
               "bounds=(\(Int(webView.bounds.width)),\(Int(webView.bounds.height))) " +
               "window.frame=(\(Int(window.frame.minX)),\(Int(window.frame.minY)),\(Int(window.frame.width)),\(Int(window.frame.height)))")
+        #endif
 
         // WebView 在屏幕上的真实矩形（AppKit 屏幕坐标，左下原点）
         // convert(bounds, to: nil) 得到 window base 坐标，window.convertToScreen 转屏幕坐标
         let rectInWindow = webView.convert(webView.bounds, to: nil)
         let webRect = window.convertToScreen(rectInWindow)
+        #if DEBUG
         print("[CGEvent] webRectOnScreen=(minX:\(Int(webRect.minX)),minY:\(Int(webRect.minY)),maxX:\(Int(webRect.maxX)),maxY:\(Int(webRect.maxY)))")
+        #endif
 
         // viewport（左上原点）→ AppKit 屏幕坐标（左下原点）：y 从底部数
         let screenPt = CGPoint(x: webRect.minX + viewportPoint.x, y: webRect.maxY - viewportPoint.y)
@@ -58,8 +66,10 @@ enum CGEventInput {
         let maxY = NSScreen.screens.map { $0.frame.maxY }.max() ?? 0
         let quartz = CGPoint(x: screenPt.x, y: maxY - screenPt.y)
 
+        #if DEBUG
         print("[CGEvent] viewport=(\(Int(viewportPoint.x)),\(Int(viewportPoint.y))) " +
               "screenPt=(\(Int(screenPt.x)),\(Int(screenPt.y))) maxY=\(Int(maxY)) quartz=(\(Int(quartz.x)),\(Int(quartz.y)))")
+        #endif
         return quartz
     }
 
@@ -131,7 +141,9 @@ enum CGEventInput {
         // 注入后交叉验证：读取实际鼠标位置（Quartz 坐标）与目标对比
         if let actual = CGEvent(source: nil)?.location {
             let delta = CGPoint(x: actual.x - point.x, y: actual.y - point.y)
+            #if DEBUG
             print("[CGEvent] post-click mouse=(\(Int(actual.x)),\(Int(actual.y))) expected=(\(Int(point.x)),\(Int(point.y))) delta=(\(Int(delta.x)),\(Int(delta.y)))")
+            #endif
         }
     }
 
@@ -160,7 +172,9 @@ enum CGEventInput {
             randomDelay(minMs: 10, maxMs: 30)
         }
         CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: to, mouseButton: .left)?.post(tap: .cghidEventTap)
+        #if DEBUG
         print("[B-Drag] from=(\(Int(from.x)),\(Int(from.y))) to=(\(Int(to.x)),\(Int(to.y))) steps=\(steps) elapsed=\(Int(Date().timeIntervalSince(startTime) * 1000))ms")
+        #endif
     }
 
     // MARK: - 键盘注入（真实默认行为：Enter 提交/方向键滚动）
@@ -195,7 +209,9 @@ enum CGEventInput {
         let hold = Int.random(in: 40...90)
         usleep(useconds_t(hold * 1000))
         CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: false)?.post(tap: .cghidEventTap)
+        #if DEBUG
         print("[B-Press] vk=\(virtualKey) hold=\(hold)ms elapsed=\(Int(Date().timeIntervalSince(startTime) * 1000))ms")
+        #endif
     }
 }
 #endif

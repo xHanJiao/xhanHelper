@@ -43,11 +43,7 @@ class ChatViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var conversationId: String?
     @Published var conversationTitle: String?
-    @Published var isEditing = false {
-        didSet {
-            print("[ChatVM] isEditing: \(isEditing)")
-        }
-    }
+    @Published var isEditing = false
     @Published var deepMode = false
     @Published var thinkingMode = true
     @Published var temperature: Double? = nil
@@ -56,11 +52,7 @@ class ChatViewModel: ObservableObject {
 
     /// 会话模式："work"（默认）| "plan"（只读讨论）。只能由用户切换（Tab 快捷键/胶囊条）。
     /// TODO: 会话重新加载时从服务端同步真实 mode（当前先重置为 work，需会话详情 API 完善）
-    @Published var mode: String = "work" {
-        didSet {
-            print("[ChatVM] mode -> \(mode)")
-        }
-    }
+    @Published var mode: String = "work"
     /// plan 模式展示名（只读讨论状态）
     var isPlanMode: Bool { mode == "plan" }
 
@@ -253,6 +245,26 @@ class ChatViewModel: ObservableObject {
         }
     }
 
+    // MARK: - 模型切换（deep/flash，会话级客户端持久化）
+
+    /// deep 模式持久化键：按会话 ID 区分；空白 tab（未建会话）用共享键，
+    /// 首条消息创建会话后经 SSE done 把当前选择写入新会话键（预存继承）。
+    private var deepModeDefaultsKey: String {
+        guard let cid = conversationId, !cid.isEmpty else { return "xhan_conv_deep_mode_pending" }
+        return "xhan_conv_deep_mode_\(cid)"
+    }
+
+    /// 切换当前会话模型：deep（pro 模型 + thinking）↔ flash（快速模型）。
+    /// 仅客户端本地状态；deep 强制联动 thinking=true（thinking 不再作为独立开关）。
+    func toggleDeepMode() {
+        deepMode.toggle()
+        if deepMode {
+            thinkingMode = true // deep 联动：pro 模型 + 思考
+        }
+        UserDefaults.standard.set(deepMode, forKey: deepModeDefaultsKey)
+        ToastCenter.shared.show(deepMode ? "已切换：深度模型" : "已切换：快速模型")
+    }
+
     /// 挂起等待用户确认 L3 工具执行；60s 超时视为拒绝。
     /// force=true 时信任模式不跳过（用于敏感域/明文页等注入高风险场景——信任模式本身就不可信）。
     /// bridgeToBrowser=true 时把确认同步发布到 BrowserActivityCenter，浏览器内也显示确认条（与聊天条同步出现）。
@@ -355,6 +367,11 @@ class ChatViewModel: ObservableObject {
         conversationId = id
         conversationTitle = title
         self.mode = mode ?? "work" // 会话列表数据带 mode（服务端权威）；旧数据缺失时默认 work
+        // deep/flash 会话级本地状态：从该会话键恢复，无记录默认 flash
+        deepMode = UserDefaults.standard.bool(forKey: "xhan_conv_deep_mode_\(id)")
+        if deepMode {
+            thinkingMode = true // deep 联动 thinking
+        }
         if !preserveTrustedMode {
             trustedMode = false // 信任模式会话级：换会话自动关闭（安全默认）
         }
@@ -606,6 +623,8 @@ class ChatViewModel: ObservableObject {
             if let cid = parseConversationIdFromDone(event.data) {
                 conversationId = cid
                 onConversationCreated?(cid, parseTitleFromDone(event.data))
+                // 空白 tab 首条消息建会话后：把当前 deep/flash 选择预存到新会话键（后续重载继承）
+                UserDefaults.standard.set(deepMode, forKey: "xhan_conv_deep_mode_\(cid)")
             }
             if let t = parseTitleFromDone(event.data) {
                 conversationTitle = t

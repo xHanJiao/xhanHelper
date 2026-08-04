@@ -12,6 +12,8 @@ struct TopBarButton: Identifiable {
     let id: String
     let icon: () -> String
     let enabled: () -> Bool
+    /// 是否渲染（false 时整个按钮不显示；默认恒显示，仅 enabled 置灰）
+    let visible: () -> Bool
     let action: () -> Void
     let help: () -> String
     let isRefresh: Bool
@@ -20,10 +22,12 @@ struct TopBarButton: Identifiable {
 
     init(id: String, icon: @escaping () -> String, enabled: @escaping () -> Bool,
          action: @escaping () -> Void, help: @escaping () -> String, isRefresh: Bool = false,
+         visible: @escaping () -> Bool = { true },
          keyEquivalent: (key: KeyEquivalent, modifiers: EventModifiers)? = nil) {
         self.id = id
         self.icon = icon
         self.enabled = enabled
+        self.visible = visible
         self.action = action
         self.help = help
         self.isRefresh = isRefresh

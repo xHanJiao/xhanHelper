@@ -15,12 +15,17 @@ struct BookmarkPanelView: View {
             if filtered.isEmpty {
                 emptyState
             } else {
-                List {
-                    ForEach(filtered) { bookmark in
-                        row(bookmark)
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(filtered) { bookmark in
+                            HoverCardRow {
+                                rowContent(bookmark)
+                            }
+                        }
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                 }
-                .listStyle(.plain)
             }
         }
     }
@@ -77,7 +82,7 @@ struct BookmarkPanelView: View {
 
     // MARK: - Row
 
-    private func row(_ b: BookmarkStore.Bookmark) -> some View {
+    private func rowContent(_ b: BookmarkStore.Bookmark) -> some View {
         HStack(spacing: 8) {
             favicon(for: b)
             VStack(alignment: .leading, spacing: 2) {
@@ -92,21 +97,24 @@ struct BookmarkPanelView: View {
             }
             Spacer(minLength: 8)
             Button { BrowserToolProvider.shared.openURL(URL(string: b.url)!) } label: {
-                Text("打开").font(.system(size: 11))
+                Image(systemName: "arrow.up.forward.app")
+                    .font(.system(size: 12))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundColor(.accentColor)
+            .foregroundColor(.secondary)
+            .help("打开")
             Button { store.remove(id: b.id) } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: 10))
-                    .frame(width: 20, height: 20)
+                    .font(.system(size: 12))
+                    .frame(width: 24, height: 24)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundColor(.secondary)
             .help("删除收藏")
         }
-        .padding(.vertical, 4)
     }
 
     @ViewBuilder

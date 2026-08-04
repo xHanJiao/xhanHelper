@@ -40,6 +40,36 @@ struct TrustedPill: View {
     }
 }
 
+/// 模型切换图标按钮：快速（bolt 绿）/ 深度（pro+thinking，蓝紫），点击切换。仅图标，hover 看 tooltip。
+struct ModelPill: View {
+    let context: InputBarContext
+    let isDeep: Bool
+    let action: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// 深度模式蓝紫：明暗自适应（不用 asset 命名色，避免新增 colorset 在增量构建时
+    /// 未被 actool 编译导致 Color("name") 解析失败变透明）。
+    private var deepColor: Color {
+        colorScheme == .dark
+            ? Color(red: 0.63, green: 0.58, blue: 1.0)
+            : Color(red: 0.42, green: 0.36, blue: 0.95)
+    }
+
+    var body: some View {
+        IconButton(
+            visibility: .always,
+            context: context,
+            symbol: isDeep ? "brain.head.profile.fill" : "bolt",
+            tint: isDeep ? deepColor : Color("appAccent"),
+            tooltip: isDeep
+                ? "深度模型 · pro+思考，点击切换快速"
+                : "快速模型，点击切换深度",
+            action: action
+        )
+    }
+}
+
 /// 发送/停止按钮：仅展开态显示。流式时 morph 为红色停止，否则为发送箭头。
 struct SendStopButton: View {
     let context: InputBarContext

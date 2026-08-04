@@ -40,6 +40,8 @@ struct BrowserTabView: View {
                 Divider()
             }
             BrowserWebView(webView: webView)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
         }
         .onAppear {
             // 重置浏览器字段焦点标志（防旧 tab 残留；FocusState 初始 false 不触发 onChange）

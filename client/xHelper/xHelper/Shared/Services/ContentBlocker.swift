@@ -11,26 +11,8 @@ enum ContentBlocker {
 
     private static let identifier = "xhan_blocklist"
 
-    /// 内置规则（内置域名走这里，用户自定义域名运行时拼接）。
-    private static let builtInRulesJSON = """
-    [
-      {"trigger":{"url-filter":".*doubleclick\\\\.net.*","resource-type":["script","image","xmlhttprequest","media"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*googlesyndication\\\\.com.*","resource-type":["script","image","xmlhttprequest","media"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*googletagservices\\\\.com.*","resource-type":["script","image","xmlhttprequest","media"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*googleadservices\\\\.com.*","resource-type":["script","image","xmlhttprequest","media"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*adservice\\\\.google\\\\.com.*","resource-type":["script","image","xmlhttprequest","media"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*google-analytics\\\\.com.*","resource-type":["script","image","xmlhttprequest","media"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*googletagmanager\\\\.com.*","resource-type":["script","image","xmlhttprequest","media"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*connect\\\\.facebook\\\\.net.*","resource-type":["script","image","xmlhttprequest","media"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*facebook\\\\.com/tr.*","resource-type":["script","xmlhttprequest"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*criteo\\\\.com.*","resource-type":["script","image","xmlhttprequest","media"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*taboola\\\\.com.*","resource-type":["script","image","xmlhttprequest","media"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*outbrain\\\\.com.*","resource-type":["script","image","xmlhttprequest","media"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*cnzz\\\\.com.*","resource-type":["script","image","xmlhttprequest"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*umeng\\\\.com.*","resource-type":["script","image","xmlhttprequest"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*mmstat\\\\.com.*","resource-type":["script","image","xmlhttprequest"]},"action":{"type":"block"}}
-    ]
-    """
+    /// 内置规则（空，仅保留用户自定义域名扩展能力；默认不拦截任何站点）。
+    private static let builtInRulesJSON = "[]"
 
     /// 生成完整规则 JSON：内置规则 + 用户自定义域名（转义 `.` 为正则 `\.`）。
     private static func rulesJSON() -> String {

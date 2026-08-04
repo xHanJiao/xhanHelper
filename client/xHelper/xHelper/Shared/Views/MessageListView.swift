@@ -81,7 +81,6 @@ struct MessageListView: View {
         .onChange(of: conversationId) { _, _ in
             initialLoadDone = false
             if isShareSelectMode {
-                print("[ShareDebug] conversation changed, clearing select mode")
                 exitShareSelectMode()
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -90,7 +89,6 @@ struct MessageListView: View {
         }
         .onChange(of: messages.count) { _, _ in
             if isShareSelectMode, !isStreaming {
-                print("[ShareDebug] messages changed in select mode, refreshing snapshot (\(messagesSnapshot.count) → \(messages.count))")
                 messagesSnapshot = messages
             }
             if !isStreaming { dismissMenu() }
@@ -440,21 +438,17 @@ struct MessageListView: View {
     }
 
     private func enterShareSelectMode() {
-        print("[ShareDebug] select mode ON — disabling menus, timebubble, scrollToBottom")
         messagesSnapshot = messages
         let rounds = buildShareableRounds(from: messagesSnapshot)
         let totalShareable = rounds.reduce(0) { $0 + $1.count }
-        print("[ShareDebug] snapshot: \(messagesSnapshot.count) msgs, \(rounds.count) rounds, \(totalShareable) shareable")
         for (i, round) in rounds.enumerated() {
             let ids = round.map { "\($0.role.prefix(1)):\($0.id.prefix(8))" }.joined(separator: ", ")
-            print("[ShareDebug] round[\(i)]: \(round.count) msgs — \(ids)")
         }
         selectedShareIds = []
         isShareSelectMode = true
     }
 
     private func exitShareSelectMode() {
-        print("[ShareDebug] select mode OFF — enabling menus, timebubble, scrollToBottom")
         isShareSelectMode = false
         selectedShareIds = []
         messagesSnapshot = []
@@ -470,23 +464,18 @@ struct MessageListView: View {
 
         if isRoundSelected {
             selectedShareIds.subtract(roundIds)
-            print("[ShareDebug] toggle round[\(roundIndex)]: remove, selected now=\(selectedShareIds.count)")
         } else {
             let roundUserCount = round.filter { $0.role == "user" }.count
-            print("[ShareDebug] limit check: selected=\(selectedUserCount) + adding=\(roundUserCount) = \(selectedUserCount + roundUserCount)")
             if selectedUserCount + roundUserCount > 10 {
                 ToastCenter.shared.show("最多选择 10 轮")
-                print("[ShareDebug] limit reached: tried to add round[\(roundIndex)], already at max=\(selectedUserCount)/10")
                 return
             }
             selectedShareIds.formUnion(roundIds)
-            print("[ShareDebug] toggle round[\(roundIndex)]: add, selected now=\(selectedUserCount)")
         }
     }
 
     private func createShare() {
         guard let convId = conversationId else {
-            print("[ShareDebug] API aborted: no conversationId")
             return
         }
         let userIds = selectedShareIds.filter { id in
@@ -503,7 +492,6 @@ struct MessageListView: View {
         Task {
             do {
                 let result = try await api.createMessageShare(conversationId: convId, userMessageIds: Array(userIds))
-                print("[ShareDebug] API success: token=\(result.token), expires=\(result.expiresAt)")
                 await MainActor.run {
                     isCreatingShare = false
                     shareToken = result.token
@@ -516,7 +504,6 @@ struct MessageListView: View {
                     exitShareSelectMode()
                 }
             } catch {
-                print("[ShareDebug] API failed: \(error)")
                 await MainActor.run {
                     isCreatingShare = false
                     ToastCenter.shared.show("分享失败：\(error.localizedDescription)")
@@ -666,7 +653,6 @@ struct ShareResultView: View {
         Button {
             copyURLToPasteboard(shareUrl)
             ToastCenter.shared.show("链接已复制")
-            print("[ShareDebug] QR link copied: \(shareUrl)")
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "link")
@@ -709,7 +695,6 @@ struct ShareResultView: View {
         Button {
             if let img = img {
                 copyQRToPasteboard(img)
-                print("[ShareDebug] QR image copied")
             }
         } label: {
             if compact {
@@ -771,10 +756,8 @@ struct ShareResultView: View {
         filter.message = Data(string.utf8)
         filter.correctionLevel = "M"
         guard let output = filter.outputImage else {
-            print("[ShareDebug] QR failed: input length=\(string.count)")
             return nil
         }
-        print("[ShareDebug] QR generated: \(Int(output.extent.width))x\(Int(output.extent.height)), correctionLevel=M")
         let scaled = output.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
         #if os(iOS)
         let ctx = CIContext()
@@ -814,7 +797,6 @@ struct ShareResultView: View {
             let frame = NSRect(x: contentView.bounds.midX, y: contentView.bounds.midY, width: 1, height: 1)
             picker.show(relativeTo: frame, of: contentView, preferredEdge: .minY)
         }
-        print("[ShareDebug] showing NSSharingServicePicker with QR image")
     }
     #endif
 }

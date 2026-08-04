@@ -193,6 +193,14 @@ struct FloatingChatPanel: View {
                 }
             }
             .frame(width: size.width, height: size.height)
+            // 缩放把手钉在面板自身 frame 的右下角（不随内容 VStack 溢出偏移）。
+            // 此前把手挂在 expandedBody 上，内容溢出（计划便签/两行输入框/L3 确认条）
+            // 会把把手顶出可见区，被下方 clipShape 裁掉 → 缩到太小后调不回来。
+            .overlay(alignment: .bottomTrailing) {
+                if !manager.pipCollapsed {
+                    resizeHandle
+                }
+            }
             // 按面板 frame 裁剪内容（计划便签/输入框等溢出时不渲染到面板外）
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -242,9 +250,6 @@ struct FloatingChatPanel: View {
                 token: token,
                 compactFont: compactFont
             )
-        }
-        .overlay(alignment: .bottomTrailing) {
-            resizeHandle
         }
     }
 

@@ -7,6 +7,7 @@ import Foundation
 /// 承载的快捷键（macOS）：
 /// - Cmd+B          切换左侧栏（焦点无关）
 /// - Cmd+Shift+B    切换右侧栏（焦点无关，直接走 BrowserToolProvider.shared.rightSidebar）
+/// - Cmd+N          新建对话（焦点无关）
 /// - Tab / Esc      有 L3 工具确认待处理时：Tab=允许，Esc=拒绝（无需 Command）
 @MainActor
 final class AppShortcutBridge {
@@ -14,6 +15,9 @@ final class AppShortcutBridge {
 
     /// 切换左侧栏（由 ContentView 注册，操作其 @State sidebarWidth）
     var onToggleLeftSidebar: (() -> Void)?
+
+    /// 新建对话（由 ContentView 注册，走 chatTabManager.newChat）
+    var onNewChat: (() -> Void)?
 
     /// 当前是否有待处理的 L3 工具确认（由 ContentView 注册，查激活 tab 的 ChatViewModel）
     var confirmationPending: (() -> Bool)?

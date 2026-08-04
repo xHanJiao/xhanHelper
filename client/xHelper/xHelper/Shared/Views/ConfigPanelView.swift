@@ -161,16 +161,14 @@ struct ConfigPanelView: View {
             }
         }
         .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        )
+        .modifier(CardBackgroundModifier(isLifted: false))
     }
 
     private func tag(_ value: String, deletable: Bool, onDelete: (() -> Void)? = nil) -> some View {
         HStack(spacing: 4) {
             Text(value)
                 .font(.system(size: 11))
+                .foregroundColor(deletable ? Color("appAccent") : .secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if deletable {
                 Button {
@@ -188,7 +186,7 @@ struct ConfigPanelView: View {
         .padding(.vertical, 5)
         .background(
             Capsule()
-                .fill(deletable ? Color(nsColor: .unemphasizedSelectedContentBackgroundColor).opacity(0.5) : Color(nsColor: .controlBackgroundColor))
+                .fill(Color("appAccent").opacity(0.12))
         )
     }
 

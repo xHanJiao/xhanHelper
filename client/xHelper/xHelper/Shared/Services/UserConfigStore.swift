@@ -37,12 +37,7 @@ final class UserConfigStore: ObservableObject {
         "bat", "bin", "py", "php", "js", "html", "htm", "swift", "go", "rb",
     ]
 
-    static let builtInContentBlockerDomains: [String] = [
-        "doubleclick.net", "googlesyndication.com", "googletagservices.com",
-        "googleadservices.com", "adservice.google.com", "google-analytics.com",
-        "googletagmanager.com", "connect.facebook.net", "facebook.com/tr",
-        "criteo.com", "taboola.com", "outbrain.com", "cnzz.com", "umeng.com", "mmstat.com",
-    ]
+    static let builtInContentBlockerDomains: [String] = [] // 清空默认屏蔽域名，仅保留用户自定义扩展能力
 
     // MARK: - 合并视图（内置 + 用户，去重，内置在前）
 

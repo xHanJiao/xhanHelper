@@ -107,17 +107,23 @@ struct ChatView: View {
                 }
             ) { ctx in
                 #if os(macOS)
-                CollapsibleModeControls(
-                    context: ctx,
-                    isPlanMode: viewModel.isPlanMode,
-                    trustedMode: viewModel.trustedMode,
-                    onToggleMode: {
-                        Task { await viewModel.toggleMode() }
-                    },
-                    onToggleTrusted: {
-                        viewModel.toggleTrustedMode()
+                HStack(spacing: 4) {
+                    CollapsibleModeControls(
+                        context: ctx,
+                        isPlanMode: viewModel.isPlanMode,
+                        trustedMode: viewModel.trustedMode,
+                        onToggleMode: {
+                            Task { await viewModel.toggleMode() }
+                        },
+                        onToggleTrusted: {
+                            viewModel.toggleTrustedMode()
+                        }
+                    )
+                    // 常驻模型切换（chevron 与发送按钮之间）：deep（pro+thinking）↔ flash
+                    ModelPill(context: ctx, isDeep: viewModel.deepMode) {
+                        viewModel.toggleDeepMode()
                     }
-                )
+                }
                 #endif
             } trailingActions: { ctx in
                 #if os(macOS)
@@ -179,7 +185,6 @@ struct ChatView: View {
             viewModel.scrollToBottomRequested = false
         }
         .onChange(of: isEditing) { _, new in
-            print("[ChatView] isEditing: \(new)")
             viewModel.isEditing = new
         }
     }

@@ -99,40 +99,15 @@ private struct DocumentFullView: View {
 
             HStack(alignment: .top, spacing: 0) {
                 if !tocItems.isEmpty {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("目录")
-                            .font(.caption.weight(.semibold))
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-
-                        Divider().opacity(0.3)
-
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 2) {
-                                ForEach(tocItems) { item in
-                                    Button {
-                                        withAnimation {
-                                            scrollToAnchor = item.anchor
-                                        }
-                                    } label: {
-                                        Text(item.text)
-                                            .font(item.level <= 2 ? .caption : .caption2)
-                                            .foregroundColor(item.level == 1 ? .primary : .secondary)
-                                            .lineLimit(2)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 3)
-                                    .padding(.leading, CGFloat(item.level - 1) * 12)
-                                }
-                            }
-                            .padding(.vertical, 8)
-                        }
+                    #if os(macOS)
+                    if isTocCollapsed {
+                        tocCollapsedStrip
+                    } else {
+                        tocSidebar
                     }
-                    .frame(width: 220)
-
+                    #else
+                    tocSidebar
+                    #endif
                     Divider()
                 }
 
@@ -175,6 +150,83 @@ private struct DocumentFullView: View {
     }
 
     @State private var scrollToAnchor: String = ""
+    /// 目录栏收起态（仅 macOS；不持久化，每次进文档默认展开）
+    @State private var isTocCollapsed = false
+
+    /// 展开态目录栏：标题行（右侧收起按钮）+ 标题大纲。
+    private var tocSidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 4) {
+                Text("目录")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+                Spacer()
+                #if os(macOS)
+                Button {
+                    withAnimation { isTocCollapsed = true }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("收起目录")
+                #endif
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+
+            Divider().opacity(0.3)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(tocItems) { item in
+                        Button {
+                            withAnimation {
+                                scrollToAnchor = item.anchor
+                            }
+                        } label: {
+                            Text(item.text)
+                                .font(item.level <= 2 ? .caption : .caption2)
+                                .foregroundColor(item.level == 1 ? .primary : .secondary)
+                                .lineLimit(2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 3)
+                        .padding(.leading, CGFloat(item.level - 1) * 12)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        .frame(width: 220)
+    }
+
+    /// 收起态窄条：保留展开入口，垂直居中一个 chevron.right。
+    #if os(macOS)
+    private var tocCollapsedStrip: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            Button {
+                withAnimation { isTocCollapsed = false }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("展开目录")
+            Spacer()
+        }
+        .frame(width: 32)
+    }
+    #endif
 
     private func parseTags(_ tags: String?) -> [TagBadge] {
         guard let tags else { return [] }

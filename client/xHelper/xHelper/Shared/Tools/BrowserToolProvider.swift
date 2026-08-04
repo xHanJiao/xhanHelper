@@ -201,7 +201,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     // 触发浏览器默认行为；iOS 无 CGEvent 注入，回退到 JS 合成键盘事件
                     #if os(macOS)
                     if let code = CGEventInput.keyCode(for: key) {
+                        #if DEBUG
                         print("[B-Press] key=\(key) vk=\(code)")
+                        #endif
                         CGEventInput.activateWindow(for: session.webView)
                         session.webView.window?.makeFirstResponder(session.webView)
                         CGEventInput.pressKey(code)
@@ -260,7 +262,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 let px = (dict["x"] as? NSNumber)?.intValue ?? -1
                 let py = (dict["y"] as? NSNumber)?.intValue ?? -1
                 let delay = Int.random(in: 50...150)
+                #if DEBUG
                 print("[B-Click] ref=@e\(handle) pos=(\(px),\(py)) release_delay=\(delay)ms")
+                #endif
                 try? await Task.sleep(for: .milliseconds(delay))
                 _ = await session.jsBool(refClickUpJS())
                 return .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
@@ -284,7 +288,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             let px = (dict["x"] as? NSNumber)?.intValue ?? -1
             let py = (dict["y"] as? NSNumber)?.intValue ?? -1
             let delay = Int.random(in: 50...150)
+            #if DEBUG
             print("[B-Click] sel=\(sel) pos=(\(px),\(py)) release_delay=\(delay)ms")
+            #endif
             try? await Task.sleep(for: .milliseconds(delay))
             _ = await session.jsBool(clickUpJS())
             return .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
@@ -333,7 +339,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         // 回读 value 验证（拟人化诊断）
         if let peek = await session.jsJSON(typePeekValueJS()) as? [String: Any] {
             let value = peek["value"] as? String ?? ""
+            #if DEBUG
             print("[B-Type] len=\(text.count) intervals=[\(intervals.map(String.init).joined(separator: ","))] value=\"\(value)\"")
+            #endif
         }
         _ = await session.jsBool(typeEndJS())
         return .init(serverResult: Self.jsonDict([successKey: true]), serverError: nil, clientAction: nil)
@@ -354,7 +362,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         #if os(macOS)
         guard CGEventInput.isTrusted() else {
             let granted = CGEventInput.requestPermission()
+            #if DEBUG
             print("[CGEvent] permission granted=\(granted)")
+            #endif
             return .init(serverResult: nil, serverError: "需要辅助功能权限：请在 系统设置→隐私与安全→辅助功能 勾选 xhanHelper 后重试（已授权仍报错请重启 App）", clientAction: nil)
         }
 
@@ -383,7 +393,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
         guard let screenPoint = CGEventInput.screenPoint(for: vp, in: session.webView) else {
             // Bad Case 17 诊断：窗口不可用时输出工具层上下文
+            #if DEBUG
             print("[B-CGClick] diag activeTabId=\(activeTabId ?? "nil") rightSidebarTab=\(rightSidebar?.activeTabId ?? "nil") tabs=\(tabs.count)")
+            #endif
             return .init(serverResult: nil, serverError: "cgclick 坐标转换失败：页面窗口不可用", clientAction: nil)
         }
         // 越界校验：目标超出屏幕范围会被 macOS clamp 到屏幕边缘，可能误触 Dock/其他区域，拒绝注入
@@ -401,7 +413,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             let tag = active["tag"] as? String ?? ""
             let id = active["id"] as? String ?? ""
             let name = active["name"] as? String ?? ""
+            #if DEBUG
             print("[B-CGClick] active=\(tag) id=\(id) name=\(name)")
+            #endif
         }
 
         return .init(serverResult: Self.jsonDict(["clicked": true, "target": targetDesc, "point_debug": "viewport=\(Int(vp.x)),\(Int(vp.y)) screen=\(Int(screenPoint.x)),\(Int(screenPoint.y))"]), serverError: nil, clientAction: nil)
@@ -422,7 +436,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         #if os(macOS)
         guard CGEventInput.isTrusted() else {
             let granted = CGEventInput.requestPermission()
+            #if DEBUG
             print("[CGEvent] permission granted=\(granted)")
+            #endif
             return .init(serverResult: nil, serverError: "需要辅助功能权限：请在 系统设置→隐私与安全→辅助功能 勾选 xhanHelper 后重试（已授权仍报错请重启 App）", clientAction: nil)
         }
         let dx = (arguments["dx"] as? NSNumber)?.doubleValue ?? 0
@@ -453,7 +469,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let end = CGPoint(x: start.x + dx, y: start.y + dy)
         guard let screenStart = CGEventInput.screenPoint(for: start, in: session.webView),
               let screenEnd = CGEventInput.screenPoint(for: end, in: session.webView) else {
+            #if DEBUG
             print("[B-Drag] diag activeTabId=\(activeTabId ?? "nil") rightSidebarTab=\(rightSidebar?.activeTabId ?? "nil") tabs=\(tabs.count)")
+            #endif
             return .init(serverResult: nil, serverError: "drag 坐标转换失败：页面窗口不可用", clientAction: nil)
         }
         // 逐插值点越界预检（不注入任何事件，杜绝 clamp 误触）
@@ -942,7 +960,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
         let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
         let size = (attrs?[.size] as? NSNumber)?.intValue ?? 0
+        #if DEBUG
         print("[B-Download] saved \(dest.path) (\(size) bytes)")
+        #endif
         return (.init(serverResult: Self.jsonDict([
             "path": dest.path,
             "filename": dest.lastPathComponent,
@@ -1283,6 +1303,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let count = tabs.count
         for (id, session) in tabs {
             session.cancelLoadWait()
+            tearDownWebView(session) // 停止加载与媒体播放（如 bilibili 视频声音）
             rightSidebar?.closeTab(id)
         }
         // 保活仍有活跃下载的 session（WKDownload delegate 不失效），其余释放
@@ -1304,6 +1325,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let wasActive = activeTabId == tabId
         closedStack.append((url: session.webView.url, title: session.webView.title ?? session.webView.url?.host ?? ""))
         session.cancelLoadWait()
+        tearDownWebView(session) // 停止加载与媒体播放
         rightSidebar?.closeTab(tabId)
         tabs.removeValue(forKey: tabId)
         syncBrowserGroup()
@@ -1326,6 +1348,19 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             }
         }
         return .init(serverResult: Self.jsonDict(["closed": tabId, "remaining": tabs.count, "activeTabId": activeTabId ?? ""]), serverError: nil, clientAction: nil)
+    }
+
+    /// 停止 webView 的网络加载与页面媒体播放（video/audio），断开 delegate 引用，
+    /// 帮助 session 快速释放。有活跃下载时跳过（保活下载不中断）。
+    private func tearDownWebView(_ session: TabSession) {
+        guard !session.hasActiveDownloads else { return }
+        session.webView.stopLoading()
+        session.webView.evaluateJavaScript(
+            "document.querySelectorAll('video,audio').forEach(function(e){e.pause();e.removeAttribute('src')})",
+            completionHandler: nil)
+        session.webView.uiDelegate = nil
+        session.webView.navigationDelegate = nil
+        session.webView.removeFromSuperview()
     }
 
     private func handleListTabs() -> LocalToolResult {
@@ -1363,7 +1398,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         switchActiveTab(to: tabId)
         syncBrowserGroup()
         // 新标签页默认页（本地 HTML，替代 about:blank 白页）
-        session.webView.loadHTMLString(Self.newTabPageHTML, baseURL: nil)
+        session.webView.loadHTMLString(Self.newTabPageHTML(), baseURL: nil)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
                               content: AnyView(BrowserTabView(webView: session.webView)))
         bindSessionTitle(session: session, tabId: tabId)
@@ -1424,14 +1459,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             slot: .left,
             priority: 10,
             buttons: [
-                TopBarButton(id: "pip", icon: { [weak self] in
-                    (self?.rightSidebar?.isPipChat ?? false) ? "pip.exit" : "pip.enter"
-                },
-                enabled: { true },
-                action: { [weak self] in self?.rightSidebar?.isPipChat.toggle() },
-                help: { [weak self] in
-                    (self?.rightSidebar?.isPipChat ?? false) ? "退出画中画" : "画中画"
-                }),
+                // pip（画中画）按钮已由通用「最大化侧栏」按钮（TopBarView default-right 组）覆盖
                 TopBarButton(id: "clear-data", icon: { "trash" },
                              enabled: { true },
                              action: { BrowserToolProvider.clearBrowsingData() },
@@ -1674,28 +1702,96 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
     #endif
 
-    /// 新标签页默认页：居中提示 + 常用站点快捷入口
-    static let newTabPageHTML = """
-    <html><head><meta charset="utf-8"><style>
-    body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;background:#f5f5f7;color:#1d1d1f}
-    h1{font-size:20px;font-weight:600;margin-bottom:28px}
-    .tiles{display:grid;grid-template-columns:repeat(4,120px);gap:12px}
-    a{display:flex;flex-direction:column;align-items:center;gap:6px;text-decoration:none;color:#1d1d1f;font-size:12px;padding:16px 8px;background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-    a:hover{background:#e8e8ed}
-    .icon{font-size:24px}
-    </style></head><body>
-    <h1>打开网址开始浏览</h1>
-    <div class="tiles">
-      <a href="https://www.baidu.com"><span class="icon">🔍</span>百度</a>
-      <a href="https://cn.bing.com"><span class="icon">🌐</span>必应</a>
-      <a href="https://www.google.com"><span class="icon">🔎</span>谷歌</a>
-      <a href="https://www.zhihu.com"><span class="icon">💬</span>知乎</a>
-      <a href="https://github.com"><span class="icon">🐙</span>GitHub</a>
-      <a href="https://xa.zu.ke.com"><span class="icon">🏠</span>贝壳找房</a>
-      <a href="https://map.baidu.com"><span class="icon">🗺️</span>百度地图</a>
-    </div>
-    </body></html>
-    """
+    // MARK: - 新标签页（首页快捷站：纯自动聚合，Chrome 式）
+
+    /// 默认兜底站点（冷启动无历史时显示，谷歌因不可达已移除）
+    private static let defaultSites: [(title: String, url: String, emoji: String)] = [
+        ("百度",   "https://www.baidu.com",   "🔍"),
+        ("必应",   "https://cn.bing.com",     "🌐"),
+        ("知乎",   "https://www.zhihu.com",   "💬"),
+        ("GitHub",  "https://github.com",      "🐙"),
+        ("贝壳找房", "https://xa.zu.ke.com",   "🏠"),
+        ("百度地图", "https://map.baidu.com",   "🗺️"),
+    ]
+
+    /// 按 host 聚合访问频率 + 默认站补齐（最多 8 个），动态在前、默认在后。
+    /// 每次开新标签页调用，自动跟踪浏览习惯变化。
+    private static func recommendedSites() -> [(title: String, url: String, host: String, emoji: String?)] {
+        let entries = HistoryStore.shared.entries
+        var hostCounts: [String: Int] = [:]       // host → 访问次数
+        var hostLatestTitle: [String: String] = [:] // host → 最近一次页面标题
+
+        for entry in entries {
+            let key = entry.host.lowercased()
+            guard !key.isEmpty else { continue }
+            hostCounts[key, default: 0] += 1
+            if hostLatestTitle[key] == nil {
+                hostLatestTitle[key] = entry.title
+            }
+        }
+
+        let sorted = hostCounts.sorted { $0.value > $1.value }
+        var sites: [(title: String, url: String, host: String, emoji: String?)] = []
+        var seenHosts = Set<String>()
+
+        // 动态推荐（访问频率 Top 8）
+        for (host, _) in sorted.prefix(8) {
+            let title = hostLatestTitle[host] ?? host
+            sites.append((title: title, url: "https://\(host)", host: host, emoji: nil))
+            seenHosts.insert(host)
+        }
+
+        // 不足 8 个时用默认站补齐（排除动态推荐已有的 host）
+        for ds in defaultSites {
+            guard sites.count < 8 else { break }
+            let dsHost = URL(string: ds.url)?.host?.lowercased() ?? ""
+            guard !seenHosts.contains(dsHost) else { continue }
+            sites.append((title: ds.0, url: ds.1, host: dsHost, emoji: ds.2))
+            seenHosts.insert(dsHost)
+        }
+
+        return sites
+    }
+
+    /// 生成新标签页 HTML：动态推荐的站点用 favicon 图标（WebKit HTTP 缓存自动缓存），
+    /// 加载失败兜底 host 首字母；默认站点用 emoji。
+    /// 默认只展示图标（72×72 卡片），hover 时标题从卡片底部淡入。
+    static func newTabPageHTML() -> String {
+        let sites = recommendedSites()
+        var tilesHTML = ""
+        for site in sites {
+            if let emoji = site.emoji {
+                tilesHTML += """
+                  <a href="\(site.url)"><span class="icon">\(emoji)</span><span class="label">\(site.title)</span></a>\n
+                """
+            } else {
+                let firstChar = String(site.host.prefix(1)).uppercased()
+                tilesHTML += """
+                  <a href="\(site.url)"><img class="favicon" src="https://\(site.host)/favicon.ico" onerror="this.style.display='none';this.nextElementSibling.style.display=''"><span class="icon fallback" style="display:none">\(firstChar)</span><span class="label">\(site.title)</span></a>\n
+                """
+            }
+        }
+
+        return """
+        <!DOCTYPE html>
+        <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+        html,body{height:100%}
+        body{min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;margin:0;background:#f5f5f7;color:#1d1d1f}
+        h1{font-size:20px;font-weight:600;margin-bottom:32px}
+        .tiles{display:grid;grid-template-columns:repeat(4,72px);gap:16px}
+        a{display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;width:72px;height:72px;text-decoration:none;color:#1d1d1f;background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);transition:background .15s,box-shadow .15s}
+        a:hover{background:#e8e8ed;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+        .icon{font-size:28px}
+        .favicon{width:28px;height:28px}
+        .label{position:absolute;bottom:8px;left:2px;right:2px;font-size:10px;text-align:center;opacity:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;transition:opacity .15s}
+        a:hover .label{opacity:1}
+        </style></head><body>
+        <h1>打开网址开始浏览</h1>
+        <div class="tiles">
+        \(tilesHTML)</div>
+        </body></html>
+        """
+    }
 
     private func tabInfoList() -> [[String: String]] {
         tabs.map { id, session in
@@ -1785,7 +1881,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             )
             configuration.userContentController.addUserScript(a11yScript)
 
-            // G3：内容拦截（广告/追踪脚本），减少注入面 + 隐私 + 节能
+            // G3：内容拦截（仅用户自定义域名，默认不拦截任何站点）
             if let ruleList = ContentBlocker.ruleList {
                 configuration.userContentController.add(ruleList)
             }
@@ -1923,7 +2019,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 let result = try await webView.evaluateJavaScript(js)
                 return ((result as? String), nil)
             } catch {
-                print("[Browser] JS error: \(error.localizedDescription)")
+                LogBuffer.shared.error("[Browser] JS error: \(error.localizedDescription)")
                 return (nil, error.localizedDescription)
             }
         }
@@ -1933,7 +2029,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 let result = try await webView.evaluateJavaScript(js)
                 return ((result as? Bool) ?? false, nil)
             } catch {
-                print("[Browser] JS error: \(error.localizedDescription)")
+                LogBuffer.shared.error("[Browser] JS error: \(error.localizedDescription)")
                 return (false, error.localizedDescription)
             }
         }
@@ -1999,7 +2095,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                         decisionHandler(.allow)
                         return
                     }
-                    print("[Browser] blocked navigation to scheme: \(scheme) (\(url.absoluteString.prefix(80)))")
+                    LogBuffer.shared.info("[Browser] blocked navigation to scheme: \(scheme) (\(url.absoluteString.prefix(80)))")
                     decisionHandler(.cancel)
                     return
                 }
@@ -2102,7 +2198,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             do {
                 try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             } catch {
-                print("[B-Download] create dir failed: \(error)")
+                LogBuffer.shared.error("[B-Download] create dir failed: \(error)")
                 completionHandler(nil)
                 return
             }
@@ -2117,7 +2213,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             )
             activeRecordIDs[ObjectIdentifier(download)] = itemID
             attachProgress(download, id: itemID)
+            #if DEBUG
             print("[B-Download] user download -> \(dest.path)")
+            #endif
             completionHandler(dest)
         }
 
@@ -2150,7 +2248,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             guard let id = activeRecordIDs.removeValue(forKey: key) else { return }
             // 已取消（store.cancel 置 .cancelled）时 finish 被守卫跳过，不会覆盖状态
             DownloadHistoryStore.shared.finish(id: id, ok: false)
-            print("[B-Download] failed: \(error.localizedDescription)")
+            LogBuffer.shared.error("[B-Download] failed: \(error.localizedDescription)")
             onDownloadsSettled?()
         }
     }

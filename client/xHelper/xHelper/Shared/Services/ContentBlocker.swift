@@ -26,7 +26,6 @@ enum ContentBlocker {
       {"trigger":{"url-filter":".*taboola\\\\.com.*","resource-type":["script","image","xmlhttprequest","media"]},"action":{"type":"block"}},
       {"trigger":{"url-filter":".*outbrain\\\\.com.*","resource-type":["script","image","xmlhttprequest","media"]},"action":{"type":"block"}},
       {"trigger":{"url-filter":".*cnzz\\\\.com.*","resource-type":["script","image","xmlhttprequest"]},"action":{"type":"block"}},
-      {"trigger":{"url-filter":".*hm\\\\.baidu\\\\.com.*","resource-type":["script","image","xmlhttprequest"]},"action":{"type":"block"}},
       {"trigger":{"url-filter":".*umeng\\\\.com.*","resource-type":["script","image","xmlhttprequest"]},"action":{"type":"block"}},
       {"trigger":{"url-filter":".*mmstat\\\\.com.*","resource-type":["script","image","xmlhttprequest"]},"action":{"type":"block"}}
     ]

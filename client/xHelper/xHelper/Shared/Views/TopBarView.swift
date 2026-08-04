@@ -1,0 +1,218 @@
+import SwiftUI
+
+/// 通用顶栏：按槽位渲染 TopBarRegistry 中最优先的按钮组（同优先多组共存）。
+/// 替代原 NavigationToolbar；各功能区通过注册/注销按钮组向槽位贡献按钮。
+struct TopBarView: View {
+    @ObservedObject private var registry = TopBarRegistry.shared
+    @ObservedObject private var bookmarkStore = BookmarkStore.shared
+    @ObservedObject var rightSidebar: RightSidebarManager
+    let navLeadingOffset: CGFloat
+
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Spacer()
+                .frame(width: navLeadingOffset)
+
+            renderSlot(.left)
+            renderSlot(.center)
+
+            Spacer()
+
+            renderSlot(.right)
+        }
+        .padding(.horizontal, Layout.toolbarHorizontalPadding)
+        .padding(.vertical, 6)
+        .ignoresSafeArea(edges: .top)
+        .onAppear { registerDefaultGroups() }
+    }
+
+    // MARK: - 默认组（永不注销；同 id 覆盖幂等）
+
+    private func registerDefaultGroups() {
+        // 默认左槽为空：无浏览器时左侧不放按钮（浏览器态由浏览器组 priority 10 填充）
+        // 右槽位 priority 5：重要功能（🌐/⚙/侧栏），防被普通组覆盖
+        TopBarRegistry.shared.register(TopBarGroup(
+            id: "default-right",
+            slot: .right,
+            priority: 5,
+            buttons: [
+                TopBarButton(id: "enter-browser", icon: { "globe" },
+                             enabled: { true },
+                             action: {
+                                 BrowserToolProvider.shared.enterBrowser()
+                                 rightSidebar.isPipChat = true
+                             },
+                             help: { "一键进入浏览器（画中画）" }),
+                TopBarButton(id: "settings", icon: { "gear" },
+                             enabled: { true },
+                             action: { openSettings() },
+                             help: { "设置" }),
+                TopBarButton(id: "sidebar", icon: { "sidebar.trailing" },
+                             enabled: { true },
+                             action: { rightSidebar.toggle() },
+                             help: { "切换右侧栏" }),
+            ]
+        ))
+    }
+
+    @ViewBuilder
+    private func renderSlot(_ slot: TopBarSlot) -> some View {
+        let groups = registry.visibleGroups(for: slot)
+        if !groups.isEmpty {
+            HStack(spacing: 0) {
+                ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
+                    if index > 0 {
+                        Divider().frame(height: 14).padding(.horizontal, 4)
+                    }
+                    CapsuleGroup {
+                        buttonRow(group)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func buttonRow(_ group: TopBarGroup) -> some View {
+        ForEach(Array(group.buttons.enumerated()), id: \.element.id) { index, button in
+            if index > 0 {
+                Divider().frame(height: 14)
+            }
+            renderButton(button)
+        }
+    }
+
+    @ViewBuilder
+    private func renderButton(_ button: TopBarButton) -> some View {
+        if button.isRefresh {
+            CapsuleRefreshButton(disabled: !button.enabled(), disabledMessage: button.help()) {
+                button.action()
+            }
+            .keyboardShortcutIfNeeded(button)
+        } else {
+            CapsuleButton(systemName: button.icon(), enabled: button.enabled()) {
+                button.action()
+            }
+            .help(button.help())
+            .keyboardShortcutIfNeeded(button)
+        }
+    }
+}
+
+// MARK: - 键盘快捷键（可空）
+
+private extension View {
+    @ViewBuilder
+    func keyboardShortcutIfNeeded(_ button: TopBarButton) -> some View {
+        if let shortcut = button.keyEquivalent {
+            keyboardShortcut(shortcut.key, modifiers: shortcut.modifiers)
+        } else {
+            self
+        }
+    }
+}
+
+// MARK: - 胶囊组件（自原 NavigationToolbar 迁移）
+
+private struct CapsuleIcon: View {
+    let systemName: String
+    let showBackground: Bool
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 16, weight: .medium))
+            .foregroundColor(.primary.opacity(0.7))
+            .frame(width: 26, height: 26)
+            .modifier(CapsuleButtonBackground(show: showBackground))
+    }
+}
+
+private struct CapsuleButtonBackground: ViewModifier {
+    let show: Bool
+
+    func body(content: Content) -> some View {
+        if show {
+            content.background(.quaternary.opacity(0.5), in: Circle())
+        } else {
+            content
+        }
+    }
+}
+
+private struct CapsuleButton: View {
+    let systemName: String
+    let enabled: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            CapsuleIcon(systemName: systemName, showBackground: isHovered && enabled)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.25)
+        .onHover { isHovered = $0 }
+    }
+}
+
+private struct CapsuleRefreshButton: View {
+    let disabled: Bool
+    let disabledMessage: String?
+    let action: () -> Void
+    @State private var isAnimating = false
+    @State private var isHovered = false
+
+    private var isDisabled: Bool { disabled || isAnimating }
+
+    var body: some View {
+        Button {
+            guard !isDisabled else { return }
+            action()
+            withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.5)) {
+                isAnimating = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.5)) {
+                    isAnimating = false
+                }
+            }
+        } label: {
+            CapsuleIcon(systemName: "arrow.clockwise", showBackground: isHovered && !isDisabled)
+                .rotationEffect(.degrees(isAnimating ? 360 : 0))
+                .scaleEffect(isAnimating ? 0.85 : 1.0)
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.25 : 1)
+        .help(disabledMessage ?? "")
+        .onHover { isHovered = $0 }
+    }
+}
+
+private struct CapsuleGroup<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            content()
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(.white.opacity(0.15), lineWidth: 0.5)
+        )
+        .shadow(
+            color: .black.opacity(isHovered ? 0.2 : 0.12),
+            radius: isHovered ? 8 : 4,
+            y: isHovered ? 4 : 2
+        )
+        .animation(.easeInOut(duration: 0.2), value: isHovered)
+        .onHover { isHovered = $0 }
+    }
+}

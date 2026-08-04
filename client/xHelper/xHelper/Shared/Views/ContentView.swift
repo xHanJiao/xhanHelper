@@ -266,10 +266,8 @@ struct ContentView: View {
                 }
 #else
                 VStack(spacing: 0) {
-                    NavigationToolbar(
-                        router: router,
+                    TopBarView(
                         rightSidebar: rightSidebar,
-                        chatTabManager: chatTabManager,
                         navLeadingOffset: sidebarWidth + Layout.navToolbarContentOffset
                     )
 

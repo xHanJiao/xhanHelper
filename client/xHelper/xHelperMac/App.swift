@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import WebKit
 
 extension Notification.Name {
     static let holdToQuitChanged = Notification.Name("HoldToQuitChanged")
@@ -33,9 +34,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Esc：浏览器查找栏打开时关闭（无需 Command 修饰）
+            if event.keyCode == 53,
+               BrowserFindCoordinator.shared.isPresented,
+               BrowserFocus.isFocused() {
+                BrowserFindCoordinator.shared.close()
+                return nil
+            }
+
             guard event.modifierFlags.contains(.command),
                   !event.isARepeat
             else { return event }
+
+            // Cmd+T / Cmd+Shift+T：焦点无关，只要浏览器有 tab 就生效（对齐 Chrome）。
+            // NSApp.modalWindow == nil：模态弹窗（NSAlert.runModal）期间不触发——避免模态 run loop 内改浏览器层级。
+            if event.keyCode == 17,
+               NSApp.modalWindow == nil,
+               BrowserToolProvider.shared.rightSidebar?.hasTabs == true {
+                if event.modifierFlags.contains(.shift) {
+                    BrowserToolProvider.shared.restoreLastClosedTab()
+                } else {
+                    BrowserToolProvider.shared.openBlankTab()
+                }
+                return nil
+            }
+
+            // Cmd+Shift+[ / Cmd+Shift+]：切换上一个/下一个 tab（焦点无关，只要浏览器有 tab）
+            if (event.keyCode == 33 || event.keyCode == 30),
+               event.modifierFlags.contains(.shift),
+               NSApp.modalWindow == nil,
+               BrowserToolProvider.shared.rightSidebar?.hasTabs == true {
+                BrowserToolProvider.shared.rightSidebar?.switchTab(delta: event.keyCode == 33 ? -1 : 1)
+                return nil
+            }
+
+            // 浏览器聚焦时拦截浏览器快捷键（事件不下发 → 工具栏 keyboardShortcut/默认菜单不触发）
+            if BrowserFocus.isFocused() {
+                switch event.keyCode {
+                case 13: // Cmd+W 关闭当前 tab（替代默认关窗）
+                    BrowserToolProvider.shared.closeActiveTab()
+                    return nil
+                case 33: // Cmd+[ 后退
+                    BrowserToolProvider.shared.activeWebView?.goBack()
+                    return nil
+                case 30: // Cmd+] 前进
+                    BrowserToolProvider.shared.activeWebView?.goForward()
+                    return nil
+                case 15: // Cmd+R 刷新
+                    BrowserToolProvider.shared.activeWebView?.reload()
+                    return nil
+                case 24: // Cmd+= 页面放大
+                    Self.zoomWebView(by: 0.1)
+                    return nil
+                case 27: // Cmd+- 页面缩小
+                    Self.zoomWebView(by: -0.1)
+                    return nil
+                case 3: // Cmd+F 页内查找
+                    if let wv = BrowserToolProvider.shared.activeWebView {
+                        BrowserFindCoordinator.shared.requestShow(wv)
+                    }
+                    return nil
+                case 5: // Cmd+G / Cmd+Shift+G 查找跳转（栏显示时才拦截）
+                    guard BrowserFindCoordinator.shared.isPresented else { break }
+                    if event.modifierFlags.contains(.shift) {
+                        BrowserFindCoordinator.shared.previous()
+                    } else {
+                        BrowserFindCoordinator.shared.next()
+                    }
+                    return nil
+                default:
+                    break
+                }
+            } else if Self.isBrowserShortcutKey(event.keyCode) {
+                // 诊断：浏览器快捷键因焦点路由被跳过
+                let rs = BrowserToolProvider.shared.rightSidebar
+                pipLog("shortcut key=\(event.keyCode) skipped: browserNotFocused activeTab=\(rs?.activeTabId ?? "nil") tabs=\(rs?.tabs.count ?? 0) webViewWindow=\(BrowserToolProvider.shared.activeWebView?.window != nil)")
+            }
 
             if event.keyCode == 24 {
                 FontSizeManager.shared.increase()
@@ -56,6 +130,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 当前要求的最小内容宽（右栏打开时 730，否则 400）。由 ContentView 更新。
     static var requiredMinContentWidth: CGFloat = 400
 
+    /// 浏览器页面缩放（Cmd+±，钳制 0.5x–2.5x）
+    private static func zoomWebView(by delta: CGFloat) {
+        guard let wv = BrowserToolProvider.shared.activeWebView else { return }
+        wv.pageZoom = min(max(wv.pageZoom + delta, 0.5), 2.5)
+    }
+
+    /// 浏览器快捷键键码集合（诊断用：命中但被焦点路由跳过时打日志）
+    private static func isBrowserShortcutKey(_ keyCode: UInt16) -> Bool {
+        switch keyCode {
+        case 13, 33, 30, 15, 24, 27, 3, 5:
+            return true
+        default:
+            return false
+        }
+    }
+
     /// 拦截窗口缩放：宽度不得低于要求的最小内容宽（+ 窗口 chrome）。
     /// 用 delegate 而不是 minSize——SwiftUI 会在布局时用内容 min 覆盖 minSize。
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
@@ -74,21 +164,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return true
         }
 
-        let alert = NSAlert()
-        alert.messageText = "退出确认"
-        alert.informativeText = "退出时可能导致以下由助手启动的应用随之关闭：\n"
-            + resources.map { "• \($0)" }.joined(separator: "\n")
-        alert.addButton(withTitle: "确认退出")
-        alert.addButton(withTitle: "取消")
-
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            Task.detached {
-                await MCPManager.shared.shutdown(closeExternal: true)
-                await MainActor.run { NSApp.terminate(nil) }
+        // 非阻塞 sheet 确认（runModal 会卡主线程 → 终止 reply 死锁 → 外部 SIGTERM）
+        confirmQuitIfNeeded(on: sender) { confirmed in
+            if confirmed {
+                Task.detached {
+                    await MCPManager.shared.shutdown(closeExternal: true)
+                    await MainActor.run { NSApp.terminate(nil) }
+                }
             }
-        default:
-            break
         }
         return false
     }
@@ -171,6 +254,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return .terminateLater
         }
 
+        // 非阻塞 sheet 确认（runModal 会卡主线程 → MainActor.run reply 死锁 → 外部 SIGTERM）
+        confirmQuitIfNeeded(on: NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first) { confirmed in
+            if confirmed {
+                Task.detached {
+                    await MCPManager.shared.shutdown(closeExternal: true)
+                    await MainActor.run { NSApp.reply(toApplicationShouldTerminate: true) }
+                }
+            } else {
+                NSApp.reply(toApplicationShouldTerminate: false)
+            }
+        }
+        return .terminateLater
+    }
+
+    // MARK: 退出确认（非阻塞 sheet）
+
+    /// 退出确认 sheet 是否正在展示（防重入）
+    private var isQuitConfirmShowing = false
+
+    /// 退出确认（非阻塞 sheet）：避免 runModal 卡主线程导致终止流程死锁（→ 外部 SIGTERM）。
+    /// 已有一张确认 sheet 时不再弹；无窗口时回退 runModal（罕见）。
+    private func confirmQuitIfNeeded(on window: NSWindow?, completion: @escaping (Bool) -> Void) {
+        guard !isQuitConfirmShowing else { return }
+        let resources = MCPManager.shared.activeExternalResources()
         let alert = NSAlert()
         alert.messageText = "退出确认"
         alert.informativeText = "退出时可能导致以下由助手启动的应用随之关闭：\n"
@@ -178,15 +285,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         alert.addButton(withTitle: "确认退出")
         alert.addButton(withTitle: "取消")
 
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            Task.detached {
-                await MCPManager.shared.shutdown(closeExternal: true)
-                await MainActor.run { NSApp.reply(toApplicationShouldTerminate: true) }
+        guard let window else {
+            DispatchQueue.main.async {
+                completion(alert.runModal() == .alertFirstButtonReturn)
             }
-            return .terminateLater
-        default:
-            return .terminateCancel
+            return
+        }
+        isQuitConfirmShowing = true
+        alert.beginSheetModal(for: window) { response in
+            self.isQuitConfirmShowing = false
+            completion(response == .alertFirstButtonReturn)
         }
     }
 
@@ -226,6 +334,7 @@ struct xhanHelperMacApp: App {
             .toast()
             .glassWindow()
             .task {
+                MainThreadWatchdog.shared.start()
                 await LocalToolRegistry.shared.register(BrowserToolProvider.shared)
                 ContentBlocker.load()
                 await MCPManager.shared.refreshToolCache()

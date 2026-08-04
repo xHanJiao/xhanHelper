@@ -6,6 +6,8 @@ struct RightSidebarTab: Identifiable {
     var title: String
     let icon: String
     var content: AnyView
+    /// 当前页 host（favicon 查询键，随导航更新）
+    var host: String?
 }
 
 final class RightSidebarManager: ObservableObject {
@@ -80,17 +82,131 @@ final class RightSidebarManager: ObservableObject {
         if tabs.contains(where: { $0.id == id }) {
             activeTabId = id
         } else {
-            tabs.append(RightSidebarTab(id: id, title: title, icon: icon, content: content))
+            let tab = RightSidebarTab(id: id, title: title, icon: icon, content: content)
+            if Self.specialTabIDs.contains(id) {
+                // 特殊 tab（下载/收藏/历史）固定最右：追加到末尾
+                tabs.append(tab)
+            } else if let firstSpecial = tabs.firstIndex(where: { Self.specialTabIDs.contains($0.id) }) {
+                // 网页 tab 插入到特殊 tab 块之前
+                tabs.insert(tab, at: firstSpecial)
+            } else {
+                tabs.append(tab)
+            }
             activeTabId = id
         }
         isOpen = true
     }
 
+    /// 特殊 tab（浏览器内工具页），固定最右、不可拖拽重排
+    static let specialTabIDs = [downloadTabID, bookmarkTabID, historyTabID]
+
+    /// 网页 tab 之间拖拽重排（特殊 tab 不参与）
+    func moveTab(from id: String, to targetID: String) {
+        guard id != targetID else { return }
+        guard !Self.specialTabIDs.contains(id), !Self.specialTabIDs.contains(targetID) else { return }
+        guard let fromIdx = tabs.firstIndex(where: { $0.id == id }),
+              let toIdx = tabs.firstIndex(where: { $0.id == targetID }) else { return }
+        let tab = tabs.remove(at: fromIdx)
+        tabs.insert(tab, at: toIdx)
+    }
+
+    /// Cmd+Shift+[ / Cmd+Shift+]：切换上一个/下一个 tab（含特殊 tab，环绕）
+    func switchTab(delta: Int) {
+        guard !tabs.isEmpty else { return }
+        let currentIndex = tabs.firstIndex { $0.id == activeTabId } ?? 0
+        let nextIndex = (currentIndex + delta + tabs.count) % tabs.count
+        let next = tabs[nextIndex]
+        activeTabId = next.id
+        if Self.specialTabIDs.contains(next.id) {
+            BrowserToolProvider.shared.deselectTab()
+        } else {
+            BrowserToolProvider.shared.selectTab(next.id)
+        }
+    }
+
     func closeTab(_ id: String) {
+        // 下载 tab：仅当它是唯一 tab 且还有活跃下载时禁关（保持浏览器不收起）；
+        // 有其它网页 tab 时允许关闭（下载在 store 独立跟踪，关面板不影响）。
+        if id == Self.downloadTabID,
+           DownloadHistoryStore.shared.hasActiveDownloads,
+           !tabs.contains(where: { $0.id != Self.downloadTabID }) {
+            return
+        }
         tabs.removeAll { $0.id == id }
         if activeTabId == id { activeTabId = tabs.last?.id }
-        // 关掉所有浏览器 tab → 回到浏览面板（不收起侧栏）
-        if tabs.isEmpty { activeTabId = nil }
+        // 关掉所有浏览器 tab：有活跃下载时自动开下载 tab 保活浏览器，否则回到浏览面板（不收起侧栏）
+        if tabs.isEmpty {
+            if DownloadHistoryStore.shared.hasActiveDownloads {
+                openDownloadTab()
+            } else {
+                activeTabId = nil
+            }
+        }
+    }
+
+    /// 打开/激活下载 tab（浏览器内，chrome://downloads 式）
+    func openDownloadTab() {
+        if let existing = tabs.first(where: { $0.id == Self.downloadTabID }) {
+            activeTabId = existing.id
+        } else {
+            openTab(
+                id: Self.downloadTabID,
+                title: "下载",
+                icon: "arrow.down.circle",
+                content: Self.downloadTabContent()
+            )
+        }
+    }
+
+    /// 下载 tab 固定 id
+    static let downloadTabID = "downloads"
+
+    /// 下载 tab 内容（macOS 专属：DownloadHistoryPanelView）
+    private static func downloadTabContent() -> AnyView {
+        #if os(macOS)
+        AnyView(DownloadHistoryPanelView())
+        #else
+        AnyView(EmptyView())
+        #endif
+    }
+
+    /// 打开/激活收藏夹 tab
+    func openBookmarkTab() {
+        if let existing = tabs.first(where: { $0.id == Self.bookmarkTabID }) {
+            activeTabId = existing.id
+        } else {
+            openTab(id: Self.bookmarkTabID, title: "收藏夹", icon: "bookmark",
+                    content: Self.bookmarkTabContent())
+        }
+    }
+
+    /// 打开/激活历史 tab
+    func openHistoryTab() {
+        if let existing = tabs.first(where: { $0.id == Self.historyTabID }) {
+            activeTabId = existing.id
+        } else {
+            openTab(id: Self.historyTabID, title: "历史", icon: "clock",
+                    content: Self.historyTabContent())
+        }
+    }
+
+    static let bookmarkTabID = "bookmarks"
+    static let historyTabID = "history"
+
+    private static func bookmarkTabContent() -> AnyView {
+        #if os(macOS)
+        AnyView(BookmarkPanelView())
+        #else
+        AnyView(EmptyView())
+        #endif
+    }
+
+    private static func historyTabContent() -> AnyView {
+        #if os(macOS)
+        AnyView(HistoryPanelView())
+        #else
+        AnyView(EmptyView())
+        #endif
     }
 
     /// 切回浏览面板（浏览器态 → 面板态）
@@ -105,6 +221,13 @@ final class RightSidebarManager: ObservableObject {
         guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
         var updated = tabs[i]
         updated.title = title
+        tabs[i] = updated
+    }
+
+    func updateTabHost(id: String, host: String) {
+        guard !host.isEmpty, let i = tabs.firstIndex(where: { $0.id == id }) else { return }
+        var updated = tabs[i]
+        updated.host = host
         tabs[i] = updated
     }
 

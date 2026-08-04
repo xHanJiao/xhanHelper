@@ -8,7 +8,9 @@ struct TopBarView: View {
     @ObservedObject var rightSidebar: RightSidebarManager
     let navLeadingOffset: CGFloat
 
+    #if os(macOS)
     @Environment(\.openSettings) private var openSettings
+    #endif
 
     var body: some View {
         HStack(spacing: 8) {
@@ -33,27 +35,30 @@ struct TopBarView: View {
     private func registerDefaultGroups() {
         // 默认左槽为空：无浏览器时左侧不放按钮（浏览器态由浏览器组 priority 10 填充）
         // 右槽位 priority 5：重要功能（🌐/⚙/侧栏），防被普通组覆盖
+        var buttons: [TopBarButton] = [
+            TopBarButton(id: "enter-browser", icon: { "globe" },
+                         enabled: { true },
+                         action: {
+                             BrowserToolProvider.shared.enterBrowser()
+                             rightSidebar.isPipChat = true
+                         },
+                         help: { "一键进入浏览器（画中画）" }),
+        ]
+        #if os(macOS)
+        buttons.append(TopBarButton(id: "settings", icon: { "gear" },
+                                    enabled: { true },
+                                    action: { openSettings() },
+                                    help: { "设置" }))
+        #endif
+        buttons.append(TopBarButton(id: "sidebar", icon: { "sidebar.trailing" },
+                                    enabled: { true },
+                                    action: { rightSidebar.toggle() },
+                                    help: { "切换右侧栏" }))
         TopBarRegistry.shared.register(TopBarGroup(
             id: "default-right",
             slot: .right,
             priority: 5,
-            buttons: [
-                TopBarButton(id: "enter-browser", icon: { "globe" },
-                             enabled: { true },
-                             action: {
-                                 BrowserToolProvider.shared.enterBrowser()
-                                 rightSidebar.isPipChat = true
-                             },
-                             help: { "一键进入浏览器（画中画）" }),
-                TopBarButton(id: "settings", icon: { "gear" },
-                             enabled: { true },
-                             action: { openSettings() },
-                             help: { "设置" }),
-                TopBarButton(id: "sidebar", icon: { "sidebar.trailing" },
-                             enabled: { true },
-                             action: { rightSidebar.toggle() },
-                             help: { "切换右侧栏" }),
-            ]
+            buttons: buttons
         ))
     }
 

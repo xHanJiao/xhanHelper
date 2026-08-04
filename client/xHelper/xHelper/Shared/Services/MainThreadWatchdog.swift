@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import os
 import Darwin
@@ -188,3 +189,4 @@ final class MainThreadWatchdog {
         return f.string(from: date)
     }
 }
+#endif

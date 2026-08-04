@@ -197,7 +197,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             case "agent_browser_press":
                 return await withNavContext(session) {
                     let key = arguments["key"] as? String ?? ""
-                    // 特殊键（Enter/方向键/Tab/Escape 等）走真实键盘事件，触发浏览器默认行为
+                    // 特殊键（Enter/方向键/Tab/Escape 等）走真实键盘事件（仅 macOS，需辅助功能权限），
+                    // 触发浏览器默认行为；iOS 无 CGEvent 注入，回退到 JS 合成键盘事件
+                    #if os(macOS)
                     if let code = CGEventInput.keyCode(for: key) {
                         print("[B-Press] key=\(key) vk=\(code)")
                         CGEventInput.activateWindow(for: session.webView)
@@ -205,6 +207,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                         CGEventInput.pressKey(code)
                         return .init(serverResult: Self.jsonDict(["pressed": true, "real": true]), serverError: nil, clientAction: nil)
                     }
+                    #endif
                     let (_, jsErr) = await session.jsBool(pressJS(key))
                     if let e = jsErr {
                         return .init(serverResult: nil, serverError: "press失败: \(e)", clientAction: nil)
@@ -348,6 +351,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// 真实系统级点击（CGEvent 兜底）：权限检查 → 定位元素中心 → 坐标转换 → 前置窗口 → 注入
     private func cgClick(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
+        #if os(macOS)
         guard CGEventInput.isTrusted() else {
             let granted = CGEventInput.requestPermission()
             print("[CGEvent] permission granted=\(granted)")
@@ -401,6 +405,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         return .init(serverResult: Self.jsonDict(["clicked": true, "target": targetDesc, "point_debug": "viewport=\(Int(vp.x)),\(Int(vp.y)) screen=\(Int(screenPoint.x)),\(Int(screenPoint.y))"]), serverError: nil, clientAction: nil)
+        #else
+        return .init(serverResult: nil, serverError: "cgclick 仅 macOS 支持", clientAction: nil)
+        #endif
     }
 
     private func dictErr(dict: Any?, fallback: String) -> String {
@@ -412,6 +419,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// 真实系统级拖拽（CGEvent，地图/滑块/canvas）：起点定位 → 转换 → 逐点越界预检 → 注入
     private func cgDrag(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
+        #if os(macOS)
         guard CGEventInput.isTrusted() else {
             let granted = CGEventInput.requestPermission()
             print("[CGEvent] permission granted=\(granted)")
@@ -461,6 +469,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         CGEventInput.activateWindow(for: session.webView)
         CGEventInput.drag(from: screenStart, to: screenEnd, steps: steps)
         return .init(serverResult: Self.jsonDict(["dragged": true, "target": "viewport(\(Int(start.x)),\(Int(start.y)))→(\(Int(end.x)),\(Int(end.y)))"]), serverError: nil, clientAction: nil)
+        #else
+        return .init(serverResult: nil, serverError: "drag 仅 macOS 支持", clientAction: nil)
+        #endif
     }
 
     /// ref 元素中心 viewport 坐标（cgclick/cgDrag 定位用，含 ±20% 随机偏移拟人化）。
@@ -824,8 +835,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         if !cookieHeader.isEmpty { req.setValue(cookieHeader, forHTTPHeaderField: "Cookie") }
 
         // 目录 + 预置名（customName 或 URL 末段；无自定义名时响应后可用服务器建议名替换）
-        let dir = FileManager.default.homeDirectoryForCurrentUser
+        let dir: URL
+        #if os(macOS)
+        dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Downloads/xhanHelper", isDirectory: true)
+        #else
+        dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("xhanHelper", isDirectory: true)
+        #endif
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         } catch {
@@ -1598,6 +1615,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         // run loop，页面连续弹窗 / 加载中弹窗时容易重入崩溃（mach_msg2_trap + SIGABRT）。
         // sheet 不阻塞主线程，completion 由用户点按后回调。
         session.onJSAlert = { [weak session] message, completion in
+            #if os(macOS)
             Self.presentJSDialog(
                 title: "网页提示",
                 message: message,
@@ -1605,8 +1623,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 onWindow: session?.webView.window ?? NSApp.keyWindow,
                 onDone: { _ in completion() }
             )
+            #else
+            completion()
+            #endif
         }
         session.onJSConfirm = { [weak session] message, completion in
+            #if os(macOS)
             Self.presentJSDialog(
                 title: "网页确认",
                 message: message,
@@ -1615,11 +1637,15 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 onWindow: session?.webView.window ?? NSApp.keyWindow,
                 onDone: { confirmed in completion(confirmed) }
             )
+            #else
+            completion(true)
+            #endif
         }
     }
 
     /// 非阻塞 JS 对话框：优先挂到窗口上做 sheet；无窗口时回退 runModal（罕见，仅打日志）。
     /// 返回主按钮是否被点击（两键时为第一个按钮）。
+    #if os(macOS)
     private static func presentJSDialog(
         title: String,
         message: String,
@@ -1646,6 +1672,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             onDone(response == .alertFirstButtonReturn)
         }
     }
+    #endif
 
     /// 新标签页默认页：居中提示 + 常用站点快捷入口
     static let newTabPageHTML = """
@@ -1765,7 +1792,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
             let wv = WKWebView(frame: .zero, configuration: configuration)
             wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            #if os(macOS)
             wv.allowsMagnification = true
+            #endif
             wv.allowsBackForwardNavigationGestures = true
             return wv
         }
@@ -2062,8 +2091,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         /// 完成后 AppKit 自动写入，无需手工移动。
         func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                       suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
-            let dir = FileManager.default.homeDirectoryForCurrentUser
+            let dir: URL
+            #if os(macOS)
+            dir = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Downloads/xhanHelper", isDirectory: true)
+            #else
+            dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("xhanHelper", isDirectory: true)
+            #endif
             do {
                 try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             } catch {

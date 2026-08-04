@@ -355,6 +355,7 @@ struct BrowserTabView: View {
     }
 }
 
+#if os(macOS)
 private struct BrowserWebView: NSViewRepresentable {
     let webView: WKWebView
 
@@ -369,6 +370,21 @@ private struct BrowserWebView: NSViewRepresentable {
         }
     }
 }
+#else
+private struct BrowserWebView: UIViewRepresentable {
+    let webView: WKWebView
+
+    func makeUIView(context: Context) -> WKWebView {
+        return webView
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        if uiView !== webView {
+            pipLog("webview UPDATE (stale!): attached=\(ObjectIdentifier(uiView)) want=\(ObjectIdentifier(webView))")
+        }
+    }
+}
+#endif
 
 struct BrowserErrorPageView: View {
     let url: String

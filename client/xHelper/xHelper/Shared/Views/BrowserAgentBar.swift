@@ -1,6 +1,5 @@
 import SwiftUI
 
-#if os(macOS)
 /// G2：浏览器地址栏下方的细条指示器——agent 操作浏览器的可见性。
 /// 状态 A（运行中）：转圈；状态 B（完成）：✓，2.5s 后由 BrowserActivityCenter 自动消退。
 /// 方案 B：实色 accent 条 + 对比自适应文字（浅色=白字加粗、深色=近黑字）。
@@ -123,4 +122,3 @@ struct BrowserAgentConfirmBar: View {
         .animation(.easeOut(duration: 0.2), value: center.pendingConfirmation != nil)
     }
 }
-#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import ApplicationServices
 import CoreGraphics
@@ -197,3 +198,4 @@ enum CGEventInput {
         print("[B-Press] vk=\(virtualKey) hold=\(hold)ms elapsed=\(Int(Date().timeIntervalSince(startTime) * 1000))ms")
     }
 }
+#endif

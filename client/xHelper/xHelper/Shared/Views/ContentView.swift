@@ -2,9 +2,11 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var deviceManager: DeviceManager
+    #if os(macOS)
     /// 拖拽调宽的共享幽灵线状态（由 App 持有并注入，本视图只改不观察，
     /// 避免拖拽逐帧重渲染整个 ContentView；子视图通过 @ObservedObject 观察）。
     let resizeGhost: ResizeGhostState
+    #endif
     @State private var selectedTab = "chat"
     @State private var isInChat = false
     @State private var lastSyncAt = Date.distantPast
@@ -192,6 +194,7 @@ struct ContentView: View {
         pipExitReason = reason
         rightSidebar.isPipChat = false
     }
+#endif
 
     /// 当前活跃的聊天 VM（macOS 为当前聊天 tab；iOS 为全局单例）
     private var activeChatViewModel: ChatViewModel? {
@@ -199,6 +202,21 @@ struct ContentView: View {
         return chatTabManager.currentTab?.viewModel
         #else
         return chatViewModel
+        #endif
+    }
+
+    private func syncActiveChat() async {
+        #if os(macOS)
+        // 激活时刷新当前所在对话（而非默认会话），避免劫持其他会话 tab
+        guard let tab = chatTabManager.currentTab,
+              !tab.isBlank,
+              let cid = tab.conversationId, !cid.isEmpty else { return }
+        LogBuffer.shared.debug("sync conversation \(cid) after scene active (macOS)")
+        await tab.viewModel.loadConversation(id: cid, title: tab.title, mode: tab.viewModel.mode, preserveTrustedMode: true) // scene 激活刷新：保持当前模式/信任模式
+        #else
+        guard let conv = deviceManager.defaultConversation else { return }
+        LogBuffer.shared.debug("sync conversation \(conv.id) after scene active")
+        await chatViewModel.loadConversation(id: conv.id, title: conv.title, mode: conv.mode)
         #endif
     }
 
@@ -228,28 +246,12 @@ struct ContentView: View {
     }
 #endif
 
-    private func syncActiveChat() async {
-        #if os(macOS)
-        // 激活时刷新当前所在对话（而非默认会话），避免劫持其他会话 tab
-        guard let tab = chatTabManager.currentTab,
-              !tab.isBlank,
-              let cid = tab.conversationId, !cid.isEmpty else { return }
-        LogBuffer.shared.debug("sync conversation \(cid) after scene active (macOS)")
-        await tab.viewModel.loadConversation(id: cid, title: tab.title, mode: tab.viewModel.mode, preserveTrustedMode: true) // scene 激活刷新：保持当前模式/信任模式
-        #else
-        guard let conv = deviceManager.defaultConversation else { return }
-        LogBuffer.shared.debug("sync conversation \(conv.id) after scene active")
-        await chatViewModel.loadConversation(id: conv.id, title: conv.title, mode: conv.mode)
-        #endif
-    }
-#endif
-
+    #if os(macOS)
     init(deviceManager: DeviceManager, resizeGhost: ResizeGhostState) {
         self.deviceManager = deviceManager
         self.resizeGhost = resizeGhost
         let api = APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
         _chatViewModel = StateObject(wrappedValue: ChatViewModel(apiClient: api))
-#if os(macOS)
         _agentVM = StateObject(wrappedValue: AgentViewModel(apiClient: api))
         _billVM = StateObject(wrappedValue: BillViewModel(apiClient: api))
         _memoryVM = StateObject(wrappedValue: MemoryViewModel(apiClient: api))
@@ -262,8 +264,14 @@ struct ContentView: View {
         _conversationListVM = StateObject(wrappedValue: ConversationListViewModel(
             apiClient: APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
         ))
-#endif
     }
+    #else
+    init(deviceManager: DeviceManager) {
+        self.deviceManager = deviceManager
+        let api = APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
+        _chatViewModel = StateObject(wrappedValue: ChatViewModel(apiClient: api))
+    }
+    #endif
 
     var body: some View {
         ZStack {

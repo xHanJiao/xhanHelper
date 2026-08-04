@@ -15,6 +15,7 @@ struct BrowserTabView: View {
     @FocusState private var findFocused: Bool
     @ObservedObject private var findCoordinator = BrowserFindCoordinator.shared
     @ObservedObject private var downloadStore = DownloadHistoryStore.shared
+    @ObservedObject private var bookmarkStore = BookmarkStore.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -123,10 +124,45 @@ struct BrowserTabView: View {
                 .font(.system(size: 12))
                 .focused($urlFocused)
                 .onSubmit { navigateToURL() }
+
+            bookmarkButton
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(.ultraThinMaterial)
+    }
+
+    /// 收藏当前页（原顶栏收藏按钮移至地址栏最右）
+    private var bookmarkButton: some View {
+        let isBookmarked = currentPageBookmarked()
+        return Button {
+            guard let url = currentURL ?? webView.url,
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else { return }
+            BookmarkStore.shared.toggle(title: webView.title ?? url.host ?? "", url: url.absoluteString)
+        } label: {
+            Image(systemName: isBookmarked ? "star.fill" : "star")
+                .font(.system(size: 12))
+                .foregroundColor(isBookmarked ? Color("appAccent") : .secondary)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(currentPageURL() == nil)
+        .opacity(currentPageURL() == nil ? 0.3 : 1)
+        .help(isBookmarked ? "取消收藏当前页" : "收藏当前页")
+    }
+
+    private func currentPageBookmarked() -> Bool {
+        guard let urlStr = currentPageURL() else { return false }
+        return BookmarkStore.shared.isBookmarked(url: urlStr)
+    }
+
+    private func currentPageURL() -> String? {
+        guard let url = (currentURL ?? webView.url)?.absoluteString,
+              let scheme = URL(string: url)?.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return nil }
+        return url
     }
 
     private func navigateToURL() {

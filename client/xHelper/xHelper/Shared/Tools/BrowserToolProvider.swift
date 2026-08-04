@@ -29,37 +29,45 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     func toolSchemas() async -> [LocalToolSchema] {
         var schemas: [LocalToolSchema] = [
-            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。打开新页面后，不再需要的旧页面请及时调用 close_tab 关闭（调研场景会开很多页面，避免标签页堆积占用内存）", inputSchema: objProps(["url": strProp("要打开的网址")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。打开新页面后，不再需要的旧页面请及时调用 close_tab 关闭（调研场景会开很多页面，避免标签页堆积占用内存）。background 参数：false（默认）前台打开并激活，切走当前页，适合用户未在阅读或需立即与新页交互（click/fill）的场景；true 后台加载不切走当前页，适合『用户正在阅读某页、需并行调研另一页』的场景，此时配合 snapshot/read/get_text 等工具的 tabId 参数可全程静默（流程：open(url, background:true) 拿 tabId → snapshot/read(tabId:...) 静默抓取 → close_tab(tabId:...) 清理，用户页面不闪不切）", inputSchema: objProps(["url": strProp("要打开的网址"), "background": boolProp("是否后台打开（不切走当前标签页），默认 false")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_close",            description: "关闭所有浏览器标签页",                       inputSchema: objProps([:]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_close_tab",        description: "关闭指定的单个标签页，释放内存。tabId 从 list_tabs 获取；不用的页面请及时关闭", inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_list_tabs",        description: "列出当前所有打开的标签页（id/url/title）",      inputSchema: objProps([:]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_switch_tab",       description: "切换到指定标签页",                        inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_read",             description: "读取页面文本。分层用法：outline=标题树（长文导航，省 token）；filter=按关键词返回匹配章节；full=全文（最后手段，很耗 token）。建议先 snapshot → read(outline) → read(filter)/get_text(@eN) 定位 → 确需通读才 read(full)", inputSchema: objProps([
+            LocalToolSchema(name: "agent_browser_read",             description: "读取页面文本。分层用法：outline=标题树（长文导航，省 token）；filter=按关键词返回匹配章节；full=全文（最后手段，很耗 token）。建议先 snapshot → read(outline) → read(filter)/get_text(@eN) 定位 → 确需通读才 read(full)。tabId 可指定后台 tab 静默读取（不切走当前页），不传则读当前激活页", inputSchema: objProps([
                 "mode": strProp("full（默认，全文）| outline（h1-h6 标题树）| filter（按关键词返回匹配章节）"),
                 "query": strProp("filter 模式的关键词"),
                 "max_items": numProp("outline 标题数上限，默认 50"),
-                "max_chars": numProp("filter 每块截断 / full 全文截断字符数，默认 filter 2000 / full 10000")
+                "max_chars": numProp("filter 每块截断 / full 全文截断字符数，默认 filter 2000 / full 10000"),
+                "tabId": strProp("（可选）目标标签页ID，从 list_tabs 获取；传了则读该后台 tab，不切走当前页")
             ]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_snapshot",         description: "获取页面可访问性快照（紧凑元素树，元素带 @eN 稳定句柄用于 ref 交互；DOM 变化后句柄仍有效，元素销毁才需重新快照）。默认 viewport 范围只列当前屏幕内（含往下 1000px）的元素，视口下方元素会以提示列出，滚动后重新快照即可看到；需要通读整页用 scope=document 配合 offset/limit 翻页。链接均带 href，打开链接直接取 href 用 agent_browser_open", inputSchema: objProps([
+            LocalToolSchema(name: "agent_browser_snapshot",         description: "获取页面可访问性快照（紧凑元素树，元素带 @eN 稳定句柄用于 ref 交互；DOM 变化后句柄仍有效，元素销毁才需重新快照）。默认 viewport 范围只列当前屏幕内（含往下 1000px）的元素，视口下方元素会以提示列出，滚动后重新快照即可看到；需要通读整页用 scope=document 配合 offset/limit 翻页。链接均带 href，打开链接直接取 href 用 agent_browser_open。tabId 可指定后台 tab 静默读取（不切走当前页），不传则读当前激活页", inputSchema: objProps([
                 "mode": strProp("interactive（默认，只列可交互元素与标题）| full（追加页面可见文本前800字）"),
                 "scope": strProp("viewport（默认，当前屏幕+1000px，滚动驱动）| document（扁平全量，配 offset/limit 翻页）"),
                 "offset": numProp("document scope 分页偏移，默认 0"),
                 "limit": numProp("每页元素数，默认 60，上限 200（兼容旧参数 max_items）"),
                 "filter": strProp("按文本/占位符/类型/role 关键词过滤，如 filter=登录"),
                 "include_href": strProp("是否输出链接 href，默认 true"),
-                "max_items": numProp("（已废弃，用 limit）元素数量上限，默认 60")
+                "max_items": numProp("（已废弃，用 limit）元素数量上限，默认 60"),
+                "tabId": strProp("（可选）目标标签页ID，从 list_tabs 获取；传了则读该后台 tab，不切走当前页")
             ]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_get_text",         description: "获取页面/元素可见文本。元素级（ref/selector）远省 token；无参数返回全量。ref（@eN 稳定句柄，须先 snapshot 获取）优先", inputSchema: objProps([
+            LocalToolSchema(name: "agent_browser_get_text",         description: "获取页面/元素可见文本。元素级（ref/selector）远省 token；无参数返回全量。ref（@eN 稳定句柄，须先 snapshot 获取）优先。tabId 可指定后台 tab 静默读取（不切走当前页），不传则读当前激活页", inputSchema: objProps([
                 "ref": strProp("元素编号，如 @e8，只读该元素文本"),
                 "selector": strProp("CSS选择器，只读该区域文本"),
-                "max_chars": numProp("元素级截断字符数，默认 2000")
+                "max_chars": numProp("元素级截断字符数，默认 2000"),
+                "tabId": strProp("（可选）目标标签页ID，从 list_tabs 获取；传了则读该后台 tab，不切走当前页")
             ]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_get_value",        description: "读取表单元素当前值（fill/type 后回读验证、select 选中项、textarea 内容；checkbox/radio 返回 checked 状态）。ref（@eN 稳定句柄，须先 snapshot 获取）优先；密码框不可读（返回敏感字段错误）", inputSchema: objProps([
+            LocalToolSchema(name: "agent_browser_get_value",        description: "读取表单元素当前值（fill/type 后回读验证、select 选中项、textarea 内容；checkbox/radio 返回 checked 状态）。ref（@eN 稳定句柄，须先 snapshot 获取）优先；密码框不可读（返回敏感字段错误）。tabId 可指定后台 tab 静默读取（不切走当前页），不传则读当前激活页", inputSchema: objProps([
                 "ref": strProp("元素编号，如 @e5"),
-                "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）")
+                "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"),
+                "tabId": strProp("（可选）目标标签页ID，从 list_tabs 获取；传了则读该后台 tab，不切走当前页")
             ]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_get_url",          description: "获取当前页面 URL",                      inputSchema: objProps([:]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_get_title",        description: "获取当前页面标题",                       inputSchema: objProps([:]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_get_url",          description: "获取当前页面 URL。tabId 可指定后台 tab 静默读取（不切走当前页），不传则读当前激活页", inputSchema: objProps([
+                "tabId": strProp("（可选）目标标签页ID，从 list_tabs 获取；传了则读该后台 tab，不切走当前页")
+            ]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_get_title",        description: "获取当前页面标题。tabId 可指定后台 tab 静默读取（不切走当前页），不传则读当前激活页", inputSchema: objProps([
+                "tabId": strProp("（可选）目标标签页ID，从 list_tabs 获取；传了则读该后台 tab，不切走当前页")
+            ]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_click",            description: "点击元素。ref（@eN 稳定句柄，须先 snapshot 获取，DOM 变化后仍有效）优先；selector 仅用于 snapshot 无法捕获的元素（自定义/动态组件）。密码等敏感字段禁止用 selector 定位。注意：target=\"_blank\" 的链接（新闻热榜/外链等）合成点击无效，工具会报错并返回目标 URL，此时请改用 agent_browser_open 直接打开该 URL（快照中已含各链接 href）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_click_text",       description: "按文本点击元素（模糊匹配 snapshot 中元素的文本/占位符，多个匹配用 index 指定）。target=\"_blank\" 链接同 click 的注意项：合成点击无效，请用 agent_browser_open 打开返回的 URL", inputSchema: objProps(["text": strProp("要点击的文本或关键词"), "index": numProp("多个匹配时指定第几个，默认 0")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_cgclick",         description: "真实系统级点击（兜底）：仅当 click/click_text 对目标无效（页面校验真实输入事件）时使用。ref（@eN 稳定句柄，须先 snapshot 获取）优先。执行时会前置激活 xhanHelper 窗口（可能打断用户当前操作），且需要辅助功能权限（未授权会弹窗引导）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "x": numProp("直接指定 viewport 坐标 x（调试用，与 ref 二选一）"), "y": numProp("直接指定 viewport 坐标 y（调试用，与 ref 二选一）")]), isReadOnly: true),
@@ -94,8 +102,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         case "agent_browser_switch_tab":
             return handleSwitchTab(arguments)
         default:
-            guard let session = activeSession else {
-                return .init(serverResult: nil, serverError: "没有打开的页面", clientAction: nil)
+            // 只读工具支持 tabId 读取后台 tab（静默，不切激活页）；其余工具仅能操作激活 tab
+            let session = Self.readToolsWithTabId.contains(tool) ? sessionFor(arguments) : activeSession
+            guard let session = session else {
+                let hadTabId = (arguments["tabId"] as? String).map { !$0.isEmpty } ?? false
+                return .init(serverResult: nil, serverError: hadTabId ? "指定的 tabId 不存在，请先 list_tabs 获取有效 tabId" : "没有打开的页面", clientAction: nil)
             }
             switch tool {
             case "agent_browser_get_url":
@@ -962,11 +973,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     // MARK: - Download security helpers
 
-    /// 危险扩展名黑名单（可执行/压缩/脚本类，下载前拦截）
-    private static let dangerousExtensions: Set<String> = [
-        "sh", "dmg", "zip", "exe", "app", "pkg", "command", "run", "msi", "jar",
-        "bat", "bin", "py", "php", "js", "html", "htm", "swift", "go", "rb",
-    ]
+    /// 危险扩展名黑名单（可执行/压缩/脚本类，下载前拦截）。
+    /// 内置默认 + 用户自定义（UserConfigStore 合并）。
+    private static var dangerousExtensions: Set<String> {
+        Set(UserConfigStore.shared.mergedDangerousExtensions)
+    }
 
     /// RFC 6265 domain-match：只返回匹配目标 URL 的 cookie（杜绝跨站 cookie 泄露）。
     /// 规则：host 精确匹配或子域匹配；secure cookie 仅 https 发送。
@@ -1083,6 +1094,21 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return tabs[id]
     }
 
+    /// 解析工具目标 session：读工具支持 tabId 静默读取后台 tab（不切走当前页）。
+    /// 传了 tabId 用 tabs[tabId]（不存在返回 nil → 报错），没传用当前激活 tab。
+    private func sessionFor(_ args: [String: Any]) -> TabSession? {
+        guard let tabId = args["tabId"] as? String, !tabId.isEmpty else {
+            return activeSession
+        }
+        return tabs[tabId]
+    }
+
+    /// 只读工具（支持 tabId 后台读取）；交互/导航工具仍只能操作激活 tab。
+    private static let readToolsWithTabId: Set<String> = [
+        "agent_browser_snapshot", "agent_browser_read", "agent_browser_get_text",
+        "agent_browser_get_value", "agent_browser_get_url", "agent_browser_get_title",
+    ]
+
     var activeURL: URL? { activeSession?.webView.url }
 
     /// 激活 tab 的 webView（快捷键/焦点路由用）
@@ -1097,16 +1123,17 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         "agent_browser_uncheck", "agent_browser_press",
     ]
 
-    /// 高敏域主机关键词（命中即视为敏感，agent 交互需用户确认）。可扩展。
-    private static let sensitiveHostKeywords: [String] = [
-        "bank", "banking", "alipay", "wechatpay", "paypal", "stripe", "2fa",
-        "mail", "webmail", "email", "verify", "auth",
-    ]
+    /// 高敏域主机关键词（命中即视为敏感，agent 交互需用户确认）。
+    /// 内置默认 + 用户自定义（UserConfigStore 合并）。
+    private static var sensitiveHostKeywords: [String] {
+        UserConfigStore.shared.mergedSensitiveHosts
+    }
 
-    /// 高敏路径关键词（URL path 命中即视为敏感，如登录/转账/安全中心）
-    private static let sensitivePathKeywords: [String] = [
-        "/transfer", "/payment", "/withdraw", "/security", "/account", "/login", "/signin", "/2fa", "/verify",
-    ]
+    /// 高敏路径关键词（URL path 命中即视为敏感，如登录/转账/安全中心）。
+    /// 内置默认 + 用户自定义。
+    private static var sensitivePathKeywords: [String] {
+        UserConfigStore.shared.mergedSensitivePaths
+    }
 
     /// 交互工具在敏感上下文（高敏域 / http 明文页）下需升到 L3（用户确认）。
     func shouldElevateToL3(flatName: String) -> Bool {
@@ -1154,6 +1181,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     private func handleOpen(_ args: [String: Any]) async -> LocalToolResult {
         let urlStr = args["url"] as? String ?? ""
+        let background = args["background"] as? Bool ?? false
         guard let url = URL(string: urlStr) else {
             return .init(serverResult: Self.jsonDict(["error": "无效的URL"]), serverError: nil, clientAction: nil)
         }
@@ -1170,7 +1198,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         tabCounter += 1
         let session = TabSession()
         tabs[tabId] = session
-        switchActiveTab(to: tabId)
+        // 首个 tab 必须激活展示（无可保留的前台页），否则后台打开会得到不显示的 tab
+        let activate = !background || tabs.count == 1
+        if activate {
+            switchActiveTab(to: tabId)
+        }
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
         syncBrowserGroup()
@@ -1193,14 +1225,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     Task { @MainActor in
                         await self?.retryOpen(session: session, tabId: tabId, url: url)
                     }
-                })))
+                })), activate: activate)
             return .init(serverResult: Self.jsonDict(["error": "打开失败: \(msg)", "tabId": tabId]), serverError: nil, clientAction: nil)
         }
 
         let title = session.webView.title ?? url.host ?? urlStr
         rightSidebar?.openTab(id: tabId, title: title, icon: "globe",
-                              content: AnyView(BrowserTabView(webView: session.webView)))
-        return .init(serverResult: Self.jsonDict(["url": urlStr, "title": title, "tabId": tabId]), serverError: nil, clientAction: nil)
+                              content: AnyView(BrowserTabView(webView: session.webView)), activate: activate)
+        return .init(serverResult: Self.jsonDict(["url": urlStr, "title": title, "tabId": tabId, "background": background]), serverError: nil, clientAction: nil)
     }
 
     private func retryOpen(session: TabSession, tabId: String, url: URL) async {
@@ -1383,14 +1415,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                              enabled: { true },
                              action: { [weak self] in self?.rightSidebar?.openDownloadTab() },
                              help: { "下载记录" }),
-                TopBarButton(id: "bookmark-star", icon: { [weak self] in
-                    (self?.currentPageBookmarked ?? false) ? "star.fill" : "star"
-                },
-                enabled: { [weak self] in self?.currentPageBookmarkedURL != nil },
-                action: { [weak self] in self?.toggleCurrentPageBookmark() },
-                help: { [weak self] in
-                    (self?.currentPageBookmarked ?? false) ? "取消收藏当前页" : "收藏当前页"
-                }),
+                TopBarButton(id: "browser-config", icon: { "shield" },
+                             enabled: { true },
+                             action: { [weak self] in self?.rightSidebar?.openConfigTab() },
+                             help: { "浏览器配置" }),
                 TopBarButton(id: "bookmark-panel", icon: { "bookmark" },
                              enabled: { true },
                              action: { [weak self] in self?.rightSidebar?.openBookmarkTab() },
@@ -1401,25 +1429,6 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                              help: { "浏览历史" }),
             ]
         ))
-    }
-
-    /// 当前页是否已收藏
-    var currentPageBookmarked: Bool {
-        currentPageBookmarkedURL != nil && BookmarkStore.shared.isBookmarked(url: currentPageBookmarkedURL!)
-    }
-
-    var currentPageBookmarkedURL: String? {
-        guard let url = activeWebView?.url?.absoluteString,
-              let scheme = URL(string: url)?.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else { return nil }
-        return url
-    }
-
-    func toggleCurrentPageBookmark() {
-        guard let wv = activeWebView, let url = wv.url,
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else { return }
-        BookmarkStore.shared.toggle(title: wv.title ?? url.host ?? "", url: url.absoluteString)
     }
 
     /// 清除浏览数据（顶栏/浏览器清数据按钮共用；sheet 确认，非阻塞）
@@ -2679,6 +2688,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     private func strProp(_ desc: String) -> [String: Any] { ["type": "string", "description": desc] }
+    private func boolProp(_ desc: String) -> [String: Any] { ["type": "boolean", "description": desc] }
     private var intProp: [String: Any] { ["type": "integer", "description": "像素值"] }
     private func numProp(_ desc: String) -> [String: Any] { ["type": "number", "description": desc] }
     private func objProps(_ props: [String: [String: Any]]) -> [String: Any] { ["type": "object", "properties": props] }

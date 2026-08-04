@@ -282,9 +282,17 @@ struct MessageListView: View {
             dismissMenu()
         })
         .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }, action: { _, newY in
-            if isStreaming || isShareSelectMode { return }
-            let shouldShow = newY > viewHeight * 0.75
-            if shouldShow != showScrollToBottom { showScrollToBottom = shouldShow }
+            if isShareSelectMode { return }
+            if isStreaming {
+                // 流式期间只灭不亮：消息动态增长导致 contentOffset 有短暂抖动，
+                // 放开亮灯会误触发且因后续逻辑无法回底灭灯（按钮常亮 bug）
+                if newY <= viewHeight * 0.75, showScrollToBottom {
+                    showScrollToBottom = false
+                }
+            } else {
+                let shouldShow = newY > viewHeight * 0.75
+                if shouldShow != showScrollToBottom { showScrollToBottom = shouldShow }
+            }
         })
     }
 

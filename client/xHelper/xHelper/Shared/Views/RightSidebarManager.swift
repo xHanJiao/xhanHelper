@@ -78,9 +78,9 @@ final class RightSidebarManager: ObservableObject {
         activeTabId == nil || tabs.isEmpty
     }
 
-    func openTab(id: String, title: String, icon: String, content: AnyView) {
+    func openTab(id: String, title: String, icon: String, content: AnyView, activate: Bool = true) {
         if tabs.contains(where: { $0.id == id }) {
-            activeTabId = id
+            if activate { activeTabId = id }
         } else {
             let tab = RightSidebarTab(id: id, title: title, icon: icon, content: content)
             if Self.specialTabIDs.contains(id) {
@@ -92,13 +92,13 @@ final class RightSidebarManager: ObservableObject {
             } else {
                 tabs.append(tab)
             }
-            activeTabId = id
+            if activate { activeTabId = id }
         }
         isOpen = true
     }
 
     /// 特殊 tab（浏览器内工具页），固定最右、不可拖拽重排
-    static let specialTabIDs = [downloadTabID, bookmarkTabID, historyTabID]
+    static let specialTabIDs = [downloadTabID, bookmarkTabID, historyTabID, configTabID]
 
     /// 网页 tab 之间拖拽重排（特殊 tab 不参与）
     func moveTab(from id: String, to targetID: String) {
@@ -190,8 +190,19 @@ final class RightSidebarManager: ObservableObject {
         }
     }
 
+    /// 打开/激活浏览器配置 tab（内置默认值展示 + 用户自定义管理）
+    func openConfigTab() {
+        if let existing = tabs.first(where: { $0.id == Self.configTabID }) {
+            activeTabId = existing.id
+        } else {
+            openTab(id: Self.configTabID, title: "浏览器配置", icon: "shield",
+                    content: Self.configTabContent())
+        }
+    }
+
     static let bookmarkTabID = "bookmarks"
     static let historyTabID = "history"
+    static let configTabID = "config-browser"
 
     private static func bookmarkTabContent() -> AnyView {
         #if os(macOS)
@@ -204,6 +215,14 @@ final class RightSidebarManager: ObservableObject {
     private static func historyTabContent() -> AnyView {
         #if os(macOS)
         AnyView(HistoryPanelView())
+        #else
+        AnyView(EmptyView())
+        #endif
+    }
+
+    private static func configTabContent() -> AnyView {
+        #if os(macOS)
+        AnyView(ConfigPanelView())
         #else
         AnyView(EmptyView())
         #endif

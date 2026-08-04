@@ -109,8 +109,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		MemRepo:       repos.Mem,
 		VectorStore:   infra.VectorStore,
 		Embedder:      infra.Embedder,
-		MsgRepo:       repos.Message,
-		ConvRepo:      repos.Conversation,
 		EmbeddingRepo: repos.Embedding,
 		DupeThreshold: cfg.Server.MemoryDupeThreshold,
 		ChunkBuilder:  chunkBuilder,

@@ -75,7 +75,7 @@ class APIClient {
     }
 
     func uploadBillsCSV(_ csvText: String) async throws -> ImportResult {
-        let path = "/api/bills/import?extract_memories=true"
+        let path = "/api/bills/import"
         var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -129,10 +129,6 @@ class APIClient {
 		if !keyword.isEmpty { path += "&keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)" }
 		if !source.isEmpty { path += "&source=\(source)" }
 		return try await get(path)
-	}
-
-	func extractMemoriesFromConversation(id: String) async throws {
-		let _: [String: String] = try await post("/api/conversations/\(id)/extract-memories", body: [:])
 	}
 
 	func deleteMemory(id: String) async throws {

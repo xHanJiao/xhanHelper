@@ -19,68 +19,7 @@ import (
 	"xhan-helper/internal/service"
 )
 
-// ExtractEvent — 流式提取事件
-type ExtractEvent struct {
-	Type       string            // "status" | "memory" | "duplicate" | "done" | "error"
-	Phase      string            // Type=status 时: "fetching" | "extracting"
-	Message    string            // Type=status/error 时的消息
-	Memory     *model.UserMemory // Type=memory 时
-	DupValue   string            // Type=duplicate 时: 被跳过的内容
-	DupReason  string            // Type=duplicate 时: 跳过原因
-	Created    int               // Type=done 时: 创建条数
-	Duplicates int               // Type=done 时: 跳过条数
-}
-
-// ExtractCallback — 流式提取回调，每产生一条记忆或事件时调用
-type ExtractCallback func(event ExtractEvent)
-
-// MemoryExtractor — 从会话中提取记忆，向量去重
-type MemoryExtractor struct {
-	llmClient     llm.LLMClient
-	memRepo       *service.UserMemoryRepo
-	vectorStore   app.VectorStore
-	embedder      app.Embedder
-	msgRepo       *service.MessageRepo
-	convRepo      *service.ConversationRepo
-	embeddingRepo *service.EmbeddingRepo
-	dupeThreshold float64
-	chunkBuilder  *ChunkBuilder
-	conceptEmbed  *ConceptEmbedService
-}
-
-// MemoryExtractorConfig — 记忆提取器依赖配置
-type MemoryExtractorConfig struct {
-	LLMClient     llm.LLMClient
-	MemRepo       *service.UserMemoryRepo
-	VectorStore   app.VectorStore
-	Embedder      app.Embedder
-	MsgRepo       *service.MessageRepo
-	ConvRepo      *service.ConversationRepo
-	EmbeddingRepo *service.EmbeddingRepo
-	DupeThreshold float64
-	ChunkBuilder  *ChunkBuilder
-	ConceptEmbed  *ConceptEmbedService
-}
-
-// NewMemoryExtractor 创建提取器
-func NewMemoryExtractor(cfg *MemoryExtractorConfig) *MemoryExtractor {
-	if cfg.DupeThreshold <= 0 {
-		cfg.DupeThreshold = 0.85
-	}
-	return &MemoryExtractor{
-		llmClient:     cfg.LLMClient,
-		memRepo:       cfg.MemRepo,
-		vectorStore:   cfg.VectorStore,
-		embedder:      cfg.Embedder,
-		msgRepo:       cfg.MsgRepo,
-		convRepo:      cfg.ConvRepo,
-		embeddingRepo: cfg.EmbeddingRepo,
-		dupeThreshold: cfg.DupeThreshold,
-		chunkBuilder:  cfg.ChunkBuilder,
-		conceptEmbed:  cfg.ConceptEmbed,
-	}
-}
-
+// extractResult — 记忆提取 LLM 输出结构
 type extractResult struct {
 	Extracted bool     `json:"extracted"`
 	Summary   string   `json:"summary"`
@@ -97,37 +36,52 @@ const extractPromptPrefix = `从以下对话中提取有长期价值的信息，
 {"extracted":true,"summary":"一句话概括核心信息","facts":["支持细节1"],"topic":"一个关键主题词（如睡眠管理、职业规划、家庭关系），禁止斜杠、逗号、多个主题","tags":"关键词1,关键词2"}
 tags 是从内容中提取的逗号分隔关键词（如 褪黑素,早醒,生物钟）。没有值得提取的内容时返回 {"extracted":false}。`
 
-// BuildConversationText 读取会话新增消息，构建 "[role]: content\n" 格式文本
-func BuildConversationText(ctx context.Context, msgRepo *service.MessageRepo, conv *model.Conversation, limit int) ([]model.Message, string, error) {
-	var msgs []model.Message
-	var err error
-	if conv.LastExtractedMsgID != nil && *conv.LastExtractedMsgID != "" {
-		msgs, err = msgRepo.ListByConversationSince(ctx, conv.ID, *conv.LastExtractedMsgID, limit)
-	} else {
-		msgs, err = msgRepo.ListByConversation(ctx, conv.ID, limit)
-	}
-	if err != nil || len(msgs) == 0 {
-		return nil, "", err
-	}
-	var sb strings.Builder
-	for _, m := range msgs {
-		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, m.Content))
-	}
-	return msgs, sb.String(), nil
+// MemoryExtractor — 从对话中提取记忆，向量去重。
+// 由 MemoryWorker（PostChatWorker）调用；输入为 session 快照中的 user 消息。
+type MemoryExtractor struct {
+	llmClient     llm.LLMClient
+	memRepo       *service.UserMemoryRepo
+	vectorStore   app.VectorStore
+	embedder      app.Embedder
+	embeddingRepo *service.EmbeddingRepo
+	dupeThreshold float64
+	chunkBuilder  *ChunkBuilder
+	conceptEmbed  *ConceptEmbedService
 }
 
-// ExtractFromConversation 从指定会话中增量提取记忆。返回提取到的记忆（可能为 nil）。
-func (e *MemoryExtractor) ExtractFromConversation(ctx context.Context, conv *model.Conversation) (*model.UserMemory, error) {
-	msgs, convText, err := BuildConversationText(ctx, e.msgRepo, conv, 400)
-	if err != nil || len(msgs) == 0 {
-		return nil, err
-	}
-	return e.ExtractFromMessages(ctx, conv, msgs, convText)
+// MemoryExtractorConfig — 记忆提取器依赖配置
+type MemoryExtractorConfig struct {
+	LLMClient     llm.LLMClient
+	MemRepo       *service.UserMemoryRepo
+	VectorStore   app.VectorStore
+	Embedder      app.Embedder
+	EmbeddingRepo *service.EmbeddingRepo
+	DupeThreshold float64
+	ChunkBuilder  *ChunkBuilder
+	ConceptEmbed  *ConceptEmbedService
 }
 
-// ExtractFromMessages 用已构建的消息文本提取记忆，统一 BuildConversationText 输入。
-func (e *MemoryExtractor) ExtractFromMessages(ctx context.Context, conv *model.Conversation, msgs []model.Message, convText string) (*model.UserMemory, error) {
+// NewMemoryExtractor 创建提取器
+func NewMemoryExtractor(cfg *MemoryExtractorConfig) *MemoryExtractor {
+	if cfg.DupeThreshold <= 0 {
+		cfg.DupeThreshold = 0.85
+	}
+	return &MemoryExtractor{
+		llmClient:     cfg.LLMClient,
+		memRepo:       cfg.MemRepo,
+		vectorStore:   cfg.VectorStore,
+		embedder:      cfg.Embedder,
+		embeddingRepo: cfg.EmbeddingRepo,
+		dupeThreshold: cfg.DupeThreshold,
+		chunkBuilder:  cfg.ChunkBuilder,
+		conceptEmbed:  cfg.ConceptEmbed,
+	}
+}
 
+// ExtractFromMessages 从给定消息文本中提取记忆。
+// 不做游标/进度更新（session-window 驱动，天然增量，无 LastExtractedMsgID 概念）。
+// 返回提取到的记忆（可能为 nil）。
+func (e *MemoryExtractor) ExtractFromMessages(ctx context.Context, userID string, convText string) (*model.UserMemory, error) {
 	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
 	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, convText)
 	promptHash := hashPrompt(prompt)
@@ -140,15 +94,12 @@ func (e *MemoryExtractor) ExtractFromMessages(ctx context.Context, conv *model.C
 		return nil, fmt.Errorf("extract memory: %w", err)
 	}
 
-	lastMsg := msgs[len(msgs)-1]
 	result := parseExtractResult(msg.Content)
 	if result == nil || isEmptyResult(result) {
-		e.updateProgress(ctx, conv, lastMsg.ID)
 		return nil, nil
 	}
 
-	if e.isDuplicate(ctx, conv.UserID, result.Summary) {
-		e.updateProgress(ctx, conv, lastMsg.ID)
+	if e.isDuplicate(ctx, userID, result.Summary) {
 		return nil, nil
 	}
 
@@ -156,7 +107,7 @@ func (e *MemoryExtractor) ExtractFromMessages(ctx context.Context, conv *model.C
 	rawStr := string(rawJSON)
 	memory := &model.UserMemory{
 		ID:              uuid.New().String(),
-		UserID:          conv.UserID,
+		UserID:          userID,
 		MemoryKey:       formatMemoryKey(result),
 		MemoryValue:     result.Summary,
 		RawJSON:         &rawStr,
@@ -172,142 +123,8 @@ func (e *MemoryExtractor) ExtractFromMessages(ctx context.Context, conv *model.C
 	}
 	e.storeMemory(memory)
 
-	log.Printf("[memory] extracted memory from conv %s: %s", conv.ID[:8], truncate(result.Summary, 80))
-	e.updateProgress(ctx, conv, lastMsg.ID)
+	log.Printf("[memory] extracted memory: %s", truncate(result.Summary, 80))
 	return memory, nil
-}
-
-// ExtractFromConversationWithCallback 流式版本——通过回调逐条推送提取结果
-func (e *MemoryExtractor) ExtractFromConversationWithCallback(ctx context.Context, conv *model.Conversation, cb ExtractCallback) error {
-	if cb == nil {
-		_, err := e.ExtractFromConversation(ctx, conv)
-		return err
-	}
-
-	msgs, convText, err := BuildConversationText(ctx, e.msgRepo, conv, 400)
-	if err != nil {
-		cb(ExtractEvent{Type: "error", Message: err.Error()})
-		return err
-	}
-	if len(msgs) == 0 {
-		cb(ExtractEvent{Type: "done", Created: 0})
-		return nil
-	}
-
-	cb(ExtractEvent{Type: "status", Phase: "fetching", Message: fmt.Sprintf("加载了 %d 条新消息", len(msgs))})
-
-	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
-	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, convText)
-	promptHash := hashPrompt(prompt)
-
-	cb(ExtractEvent{Type: "status", Phase: "extracting", Message: "正在调用 LLM 提取记忆..."})
-
-	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: extractSystemPrompt,
-		Messages:     []llm.Message{{Role: "user", Content: prompt}},
-	})
-	if err != nil {
-		cb(ExtractEvent{Type: "error", Message: fmt.Sprintf("LLM 调用失败: %v", err)})
-		return fmt.Errorf("extract memory: %w", err)
-	}
-
-	lastMsg := msgs[len(msgs)-1]
-	result := parseExtractResult(msg.Content)
-	if result == nil || isEmptyResult(result) {
-		cb(ExtractEvent{Type: "done", Created: 0})
-		e.updateProgress(ctx, conv, lastMsg.ID)
-		return nil
-	}
-
-	created := 0
-	dupes := 0
-
-	// 先处理 summary
-	if !e.isDuplicate(ctx, conv.UserID, result.Summary) {
-		rawJSON, _ := json.Marshal(result)
-		rawStr := string(rawJSON)
-		memory := &model.UserMemory{
-			ID:              uuid.New().String(),
-			UserID:          conv.UserID,
-			MemoryKey:       truncate(result.Summary, 50),
-			MemoryValue:     result.Summary,
-			RawJSON:         &rawStr,
-			Source:          "conversation",
-			Topic:           result.Topic,
-			Tags:            result.Tags,
-			ConfirmCount:    1,
-			LastConfirmedAt: time.Now(),
-			ExtractPrompt:   &prompt,
-			PromptHash:      promptHash,
-			ContentHash:     hashPrompt(result.Summary),
-		}
-		e.storeMemory(memory)
-		cb(ExtractEvent{Type: "memory", Memory: memory})
-		created++
-		log.Printf("[memory] extracted memory from conv %s: %s", conv.ID[:8], truncate(result.Summary, 80))
-	} else {
-		cb(ExtractEvent{Type: "duplicate", DupValue: result.Summary, DupReason: "已存在相似记忆"})
-		dupes++
-	}
-
-	cb(ExtractEvent{Type: "done", Created: created, Duplicates: dupes})
-	e.updateProgress(ctx, conv, lastMsg.ID)
-	return nil
-}
-
-// ExtractFromPrompt 从任意文本中提取记忆（CSV 导入等场景）
-func (e *MemoryExtractor) ExtractFromPrompt(ctx context.Context, userID, promptText, source string) {
-	promptHash := hashPrompt(promptText)
-	existing, err := e.memRepo.FindByPromptHash(ctx, userID, promptHash)
-	if err != nil {
-		log.Printf("[memory] FindByPromptHash error: %v", err)
-	}
-	if existing != nil {
-		log.Printf("[memory] prompt hash matched, skip extraction (source=%s)", source)
-		return
-	}
-
-	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
-	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, promptText)
-
-	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: extractSystemPrompt,
-		Messages:     []llm.Message{{Role: "user", Content: prompt}},
-	})
-	if err != nil {
-		log.Printf("[memory] extract from prompt error: %v", err)
-		return
-	}
-
-	result := parseExtractResult(msg.Content)
-	if result == nil || isEmptyResult(result) {
-		return
-	}
-	if e.isDuplicate(ctx, userID, result.Summary) {
-		return
-	}
-
-	rawJSON, _ := json.Marshal(result)
-	rawStr := string(rawJSON)
-	memory := &model.UserMemory{
-		ID:              uuid.New().String(),
-		UserID:          userID,
-		MemoryKey:       formatMemoryKey(result),
-		MemoryValue:     result.Summary,
-		RawJSON:         &rawStr,
-		Source:          source,
-		Topic:           result.Topic,
-		Tags:            result.Tags,
-		Facts:           factsPtr(result.Facts),
-		ConfirmCount:    1,
-		LastConfirmedAt: time.Now(),
-		ExtractPrompt:   &prompt,
-		PromptHash:      promptHash,
-		ContentHash:     hashPrompt(result.Summary),
-	}
-	e.storeMemory(memory)
-
-	log.Printf("[memory] extracted memory from prompt (source=%s): %s", source, truncate(result.Summary, 80))
 }
 
 // parseExtractResult 从 LLM 回复中解析 JSON
@@ -355,7 +172,7 @@ func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
 		log.Printf("[memory] create error: %v", err)
 		return
 	}
-	// 同步嵌入，确保 StateUpdater 在后续步骤中能搜到该记忆的向量
+	// 同步嵌入，确保 StateWorker 在后续步骤中能搜到该记忆的向量
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
 	e.conceptEmbed.EnsureTopicEmbedded(ctx, memory.UserID, memory.Topic, "memory", memory.ID)
@@ -390,15 +207,6 @@ func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
 		log.Printf("[memory] chunk build error: %v", err)
 	} else {
 		log.Printf("[memory] chunked mem %s: %d sentences", memory.ID[:8], n)
-	}
-}
-
-func (e *MemoryExtractor) updateProgress(ctx context.Context, conv *model.Conversation, lastMsgID string) {
-	now := time.Now()
-	conv.LastExtractedMsgID = &lastMsgID
-	conv.LastExtractedAt = &now
-	if err := e.convRepo.Update(ctx, conv); err != nil {
-		log.Printf("[memory] update progress error: %v", err)
 	}
 }
 

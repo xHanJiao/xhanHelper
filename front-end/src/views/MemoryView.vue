@@ -1,18 +1,15 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import { api } from '@/api/client'
 import { useMobile } from '@/composables/useMobile'
 import { useScrollTopBar } from '@/composables/useScrollTopBar'
 import { useDevice } from '@/composables/useDevice'
 import {
-  NButton,
   NInput,
   NPagination,
   NGrid,
   NGi,
   NEmpty,
-  NTag,
   useMessage
 } from 'naive-ui'
 import ListItemCard from '@/components/ListItemCard.vue'
@@ -22,8 +19,6 @@ import TopBarBtn from '@/components/TopBarBtn.vue'
 const message = useMessage()
 const { isMobile } = useMobile()
 const { isIOS } = useDevice()
-const route = useRoute()
-const router = useRouter()
 
 const memories = ref([])
 const loading = ref(false)
@@ -33,11 +28,6 @@ const total = ref(0)
 const keyword = ref('')
 const contentContainerRef = ref(null)
 const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
-
-const extracting = ref(false)
-const extractStatus = ref('')
-const extractProgress = ref('')
-const extractCount = ref(0)
 
 
 async function fetchMemories() {
@@ -82,99 +72,6 @@ function getCardActions(mem) {
   ]
 }
 
-async function startExtract(convId) {
-  extracting.value = true
-  extractStatus.value = '正在加载消息...'
-  extractCount.value = 0
-
-  try {
-    const token = localStorage.getItem('xhanhelper_auth')
-    let authHeader = {}
-    if (token) {
-      try {
-        authHeader = { 'Authorization': 'Bearer ' + JSON.parse(token).token }
-      } catch {}
-    }
-    const res = await fetch(`/api/conversations/${convId}/extract-memories/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeader }
-    })
-
-    if (!res.ok) {
-      extracting.value = false
-      extractStatus.value = '提取失败'
-      router.replace({ query: { conv_id: route.query.conv_id } })
-      return
-    }
-
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-      // 按 \n\n 分割完整 SSE 事件
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop()
-
-      for (const part of parts) {
-        const lines = part.split('\n')
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const evt = JSON.parse(line.slice(6))
-              handleExtractEvent(evt)
-            } catch { /* skip malformed */ }
-          }
-        }
-      }
-    }
-  } catch (e) {
-    extracting.value = false
-    extractStatus.value = '提取失败: ' + e.message
-    router.replace({ query: { conv_id: route.query.conv_id } })
-  }
-}
-
-function handleExtractEvent(evt) {
-  switch (evt.Type) {
-    case 'status':
-      extractStatus.value = evt.Message || evt.Phase
-      break
-    case 'memory':
-      if (evt.Memory) {
-        memories.value = [evt.Memory, ...memories.value]
-        total.value++
-        extractCount.value++
-      }
-      break
-    case 'duplicate':
-      // could show a toast but keeping it minimal
-      break
-    case 'done':
-      extracting.value = false
-      extractStatus.value = ''
-      if (evt.Created > 0) {
-        extractProgress.value = `提取完成，新增 ${evt.Created} 条记忆`
-      } else {
-        extractProgress.value = '未提取到新记忆'
-      }
-      if (evt.Duplicates > 0) {
-        extractProgress.value += `，跳过 ${evt.Duplicates} 条重复`
-      }
-      router.replace({ query: { conv_id: route.query.conv_id } })
-      break
-    case 'error':
-      extracting.value = false
-      extractStatus.value = '提取失败: ' + (evt.Message || '')
-      router.replace({ query: { conv_id: route.query.conv_id } })
-      break
-  }
-}
-
 function handleContainerClick(e) {
   if (!isIOS) return
   const container = contentContainerRef.value
@@ -188,11 +85,6 @@ function handleContainerClick(e) {
 }
 
 onMounted(() => {
-  const convId = route.query.conv_id
-  const shouldExtract = route.query.extracting === 'true'
-  if (shouldExtract && convId) {
-    startExtract(convId)
-  }
   fetchMemories()
 })
 </script>
@@ -222,16 +114,6 @@ onMounted(() => {
       style="flex: 1; overflow-y: auto; padding: var(--space-lg);"
     >
       <!-- 提取状态 -->
-      <div v-if="extracting || extractProgress" :style="{ marginBottom: 'var(--space-md)', padding: 'var(--space-md)', background: 'var(--color-surface)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)' }">
-        <div v-if="extracting" style="display: flex; align-items: center; gap: 8px; color: var(--color-text-muted);">
-          <div style="width: 16px; height: 16px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
-          <span>{{ extractStatus }}</span>
-        </div>
-        <div v-if="extractProgress && !extracting" :style="{ color: extractProgress.includes('未提取') ? 'var(--color-text-muted)' : 'var(--color-success)', fontSize: '14px' }">
-          {{ extractProgress }}
-        </div>
-      </div>
-
       <NGrid v-if="memories.length > 0" cols="1 s:2 m:3" :x-gap="16" :y-gap="16">
         <NGi v-for="mem in memories" :key="mem.id">
           <ListItemCard
@@ -244,7 +126,7 @@ onMounted(() => {
           />
         </NGi>
       </NGrid>
-      <NEmpty v-else-if="!loading && !extracting" description="还没有记忆" />
+      <NEmpty v-else-if="!loading" description="还没有记忆" />
       <div v-if="total > pageSize" style="margin-top: var(--space-lg); display: flex; justify-content: center;">
         <NPagination
           v-model:page="page"
@@ -257,8 +139,4 @@ onMounted(() => {
 </template>
 
 <style scoped>
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
 </style>

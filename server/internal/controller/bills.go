@@ -2,7 +2,6 @@ package controller
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"io"
 	"log"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"xhan-helper/internal/agent"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -21,13 +19,12 @@ import (
 
 // BillHandler — 账单 REST API
 type BillHandler struct {
-	billRepo  *service.BillRepo
-	extractor *agent.MemoryExtractor
+	billRepo *service.BillRepo
 }
 
 // NewBillHandler 创建 BillHandler
-func NewBillHandler(billRepo *service.BillRepo, extractor *agent.MemoryExtractor) *BillHandler {
-	return &BillHandler{billRepo: billRepo, extractor: extractor}
+func NewBillHandler(billRepo *service.BillRepo) *BillHandler {
+	return &BillHandler{billRepo: billRepo}
 }
 
 // ListBills GET /api/bills?limit=50&offset=0
@@ -143,14 +140,6 @@ func (h *BillHandler) ImportBills(c *gin.Context) {
 		importedBills = append(importedBills, *bill)
 	}
 
-	// 异步分析导入的账单
-	if c.Query("extract_memories") == "true" && h.extractor != nil && len(importedBills) > 0 {
-		go func() {
-			log.Printf("[memory] CSV import: extracting memories from %d bills...", len(importedBills))
-			h.extractBillMemories(userID, importedBills)
-		}()
-	}
-
 	view.JSONOK(c, gin.H{
 		"imported": imported,
 		"skipped":  skipped,
@@ -214,22 +203,4 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
-}
-
-// extractBillMemories 从导入的账单中提取聚合记忆
-func (h *BillHandler) extractBillMemories(userID string, bills []model.Bill) {
-	ctx := context.Background()
-	var sb strings.Builder
-	limit := len(bills)
-	if limit > 500 {
-		limit = 500
-	}
-	for _, b := range bills[:limit] {
-		sb.WriteString(fmt.Sprintf("%s | %.2f元 | %s/%s | %s | %s | %s\n",
-			b.Date, b.Amount, b.Category1, b.Category2, b.ConsumeType, b.PayType, b.Item))
-	}
-
-	prompt := fmt.Sprintf("以下是用户的%d条账单记录:\n%s\n请从以上账单中提取用户的消费习惯、偏好和规律。关注: 常去的地点、消费水平、分类偏好、周期性的规律、变化趋势。没有值得提取的就回复\"无\"。", limit, sb.String())
-
-	h.extractor.ExtractFromPrompt(ctx, userID, prompt, "csv_import")
 }

@@ -205,33 +205,14 @@ IMPORT_RESULT=$(curl -s -X POST "$BASE_URL/api/bills/import" \
 assert "导入成功 imported > 0" '"imported":13' "$IMPORT_RESULT"
 assert "无跳过 skipped = 0"    '"skipped":0'    "$IMPORT_RESULT"
 
-# ── 13b. CSV 导入 + 记忆提取 ──
+# ── 13b. CSV 导入（记忆提取已并入 session_end 后处理，不再单独触发） ──
 echo ""
-echo "【16/26】CSV 导入 + 记忆提取"
-IMPORT_RESULT=$(curl -s -X POST "$BASE_URL/api/bills/import?extract_memories=true" \
+echo "【16/26】CSV 导入"
+IMPORT_RESULT=$(curl -s -X POST "$BASE_URL/api/bills/import" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: text/plain" \
     --data-binary @"$SCRIPT_DIR/test-bills.csv")
 assert "导入成功 imported > 0" '"imported":13' "$IMPORT_RESULT"
-# 记忆提取是异步的，稍等一下
-sleep 2
-echo "  (记忆提取已触发)"
-
-# ── 提取记忆 API 测试 ──
-echo ""
-echo "【16b】提取记忆 — 从会话提取"
-EXTRACT_RESP=$(curl -s -X POST "$BASE_URL/api/conversations/$CONV_ID/extract-memories" \
-    -H "Authorization: Bearer $TOKEN")
-assert "提取请求已接受" "extracting" "$EXTRACT_RESP"
-echo "  (提取中，等待 LLM 处理...)"
-sleep 5
-
-echo ""
-echo "【16c】提取记忆 — 验证结果"
-MEMORIES=$(curl -s "$BASE_URL/api/memories?limit=10&source=conversation" \
-    -H "Authorization: Bearer $TOKEN")
-assert "存在记忆记录" "memory_value" "$MEMORIES"
-# 检查 raw_json 字段
 
 # ── 14. 导入后确认总数 ──
 echo ""
@@ -449,10 +430,7 @@ source "$SCRIPT_DIR/api-test-agent-route.sh"
 # ═══════════════════════════════════════════
 source "$SCRIPT_DIR/api-test-model-switch.sh"
 
-# ═══════════════════════════════════════════
-# 记忆流式提取测试（extract-memories/stream）
-# ═══════════════════════════════════════════
-source "$SCRIPT_DIR/api-test-memory-stream.sh"
+# 记忆流式提取测试已随 extract-memories API 移除（记忆提取并入 session_end 后处理）
 
 # ── 19. 重命名会话 ──
 echo ""

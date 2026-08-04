@@ -27,6 +27,9 @@ embedding:
   base_url: https://ark.cn-beijing.volces.com
   model: doubao-embedding-vision-251215
 
+chat:
+  session_gap_minutes: 3
+
 reflection:
   launch_max_iterations: 8
   analyst_max_iterations: 6

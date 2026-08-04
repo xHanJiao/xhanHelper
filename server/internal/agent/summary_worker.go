@@ -16,11 +16,10 @@ import (
 	"xhan-helper/internal/service"
 )
 
-// SummaryWorker — 对话摘要生成器。
-// 由 CronRunner 的 DelayedTask 驱动，在 session 结束后覆盖整段 session 生成导航级摘要。
+// SummaryWorker — 对话摘要生成器（PostChatWorker）。
+// 由 PostChatWorkerGroup 分发 session 快照，覆盖整段 session 生成导航级摘要。
 type SummaryWorker struct {
 	flashClient   llm.LLMClient
-	msgRepo       *service.MessageRepo
 	summaryRepo   *service.ConversationSummaryRepo
 	embedder      app.Embedder
 	chunkBuilder  app.ChunkEmbedder
@@ -31,7 +30,6 @@ type SummaryWorker struct {
 // SummaryWorkerConfig — SummaryWorker 依赖配置
 type SummaryWorkerConfig struct {
 	FlashClient   llm.LLMClient
-	MsgRepo       *service.MessageRepo
 	SummaryRepo   *service.ConversationSummaryRepo
 	Embedder      app.Embedder
 	ChunkBuilder  app.ChunkEmbedder
@@ -43,7 +41,6 @@ type SummaryWorkerConfig struct {
 func NewSummaryWorker(cfg *SummaryWorkerConfig) *SummaryWorker {
 	return &SummaryWorker{
 		flashClient:   cfg.FlashClient,
-		msgRepo:       cfg.MsgRepo,
 		summaryRepo:   cfg.SummaryRepo,
 		embedder:      cfg.Embedder,
 		chunkBuilder:  cfg.ChunkBuilder,
@@ -52,51 +49,14 @@ func NewSummaryWorker(cfg *SummaryWorkerConfig) *SummaryWorker {
 	}
 }
 
-// ProcessSessionEnd 处理 session 结束摘要——覆盖从 session 起始到 lastMsgID 的全部消息。
-func (w *SummaryWorker) ProcessSessionEnd(ctx context.Context, convID, userID, lastMsgID string) (bool, error) {
-	// 读取 lastMsgID 对应的消息，获取 SessionStartMsgID
-	lastMsg, err := w.msgRepo.GetByID(ctx, lastMsgID)
-	if err != nil {
-		return false, fmt.Errorf("GetByID lastMsg: %w", err)
-	}
-	if lastMsg == nil {
-		return false, fmt.Errorf("summary: lastMsg %s not found", lastMsgID[:8])
-	}
-	sessionStart := GetSessionStart(lastMsg)
-	if sessionStart == "" {
-		return false, nil // 没有 session 起始标记，跳过
-	}
+// Name 实现 PostChatWorker。
+func (w *SummaryWorker) Name() string { return "summary" }
 
-	// 查起始消息和结束消息的 created_at
-	startMsg, err := w.msgRepo.GetByID(ctx, sessionStart)
-	if err != nil {
-		return false, fmt.Errorf("GetByID sessionStart: %w", err)
-	}
-	if startMsg == nil {
-		return false, fmt.Errorf("summary: sessionStart %s not found", sessionStart[:8])
-	}
-	endMsg, err := w.msgRepo.GetByID(ctx, lastMsgID)
-	if err != nil {
-		return false, fmt.Errorf("GetByID endMsg: %w", err)
-	}
-	if endMsg == nil {
-		return false, fmt.Errorf("summary: endMsg %s not found", lastMsgID[:8])
-	}
-
-	// 加载 session 内所有 user 消息
-	msgs, err := w.msgRepo.ListUserMessagesBetween(ctx, convID, startMsg.CreatedAt, endMsg.CreatedAt, 0)
-	if err != nil {
-		return false, fmt.Errorf("ListUserMessagesBetween: %w", err)
-	}
-	if len(msgs) == 0 {
-		return false, nil
-	}
-
-	log.Printf("[summary] session_end: conv=%s loading %d user msgs for previous session",
-		convID[:8], len(msgs))
-
+// Process 处理一个 session：拉旧摘要（增量合并）→ LLM 生成 → 持久化 + embedding。
+// 实现 PostChatWorker。
+func (w *SummaryWorker) Process(ctx context.Context, sess *SessionSnapshot) error {
 	// 查前序摘要，用于增量合并和 parent 链
-	prev, err := w.summaryRepo.GetLatest(ctx, convID)
+	prev, err := w.summaryRepo.GetLatest(ctx, sess.ConvID)
 	if err != nil {
 		log.Printf("[summary] GetLatest error: %v, proceeding without incremental merge", err)
 	}
@@ -105,15 +65,15 @@ func (w *SummaryWorker) ProcessSessionEnd(ctx context.Context, convID, userID, l
 		prevText = prev.SummaryText
 	}
 
-	summaryText, reqJSON, respJSON, err := w.callFlash(ctx, prevText, msgs)
+	summaryText, reqJSON, respJSON, err := w.callFlash(ctx, prevText, sess.Messages)
 	if err != nil {
-		return false, fmt.Errorf("callFlash: %w", err)
+		return fmt.Errorf("callFlash: %w", err)
 	}
 	if summaryText == "" {
-		return false, nil
+		return nil
 	}
 
-	return w.saveSummary(ctx, convID, userID, msgs, prev, summaryText, reqJSON, respJSON)
+	return w.saveSummary(ctx, sess.ConvID, sess.UserID, sess.Messages, prev, summaryText, reqJSON, respJSON)
 }
 
 // callFlash 调 Flash 生成摘要。返回文本及 request/response JSON（调试用）。
@@ -167,7 +127,7 @@ func (w *SummaryWorker) saveSummary(
 	prev *model.ConversationSummary,
 	text string,
 	reqJSON, respJSON *string,
-) (bool, error) {
+) error {
 	coverFrom := msgs[0].ID
 	coverTo := msgs[len(msgs)-1].ID
 	var parentID *string
@@ -188,7 +148,7 @@ func (w *SummaryWorker) saveSummary(
 		Status:          "active",
 	}
 	if err := w.summaryRepo.Create(ctx, record); err != nil {
-		return false, fmt.Errorf("Create summary: %w", err)
+		return fmt.Errorf("Create summary: %w", err)
 	}
 
 	// 异步做全文 embedding + chunk 建设（不阻塞摘要保存流程）
@@ -206,7 +166,7 @@ func (w *SummaryWorker) saveSummary(
 
 	log.Printf("[summary] created: id=%s conv=%s cover=%s..%s text=%d chars",
 		record.ID[:8], convID[:8], coverFrom[:8], coverTo[:8], len(text))
-	return true, nil
+	return nil
 }
 
 // buildEmbeddingAndChunks 对新生成的摘要做全文 embedding 和 chunk 建设。

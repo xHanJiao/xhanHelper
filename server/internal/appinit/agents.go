@@ -82,7 +82,6 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	// --- Summary 子系统 ---
 	summaryWorker := agent.NewSummaryWorker(&agent.SummaryWorkerConfig{
 		FlashClient:   llmClients.Flash,
-		MsgRepo:       repos.Message,
 		SummaryRepo:   repos.ConversationSummary,
 		Embedder:      infra.Embedder,
 		ChunkBuilder:  chunkBuilder,
@@ -90,23 +89,29 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		VectorStore:   infra.VectorStore,
 	})
 
+	// --- 对话后处理组（session_end）：摘要 + 记忆提取 + 主题状态更新 ---
+	sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
+		summaryWorker,
+		agent.NewMemoryWorker(&agent.MemoryWorkerConfig{
+			Extractor:         tools.MemExtractor,
+			MemoryAutoExtract: cfg.Server.MemoryAutoExtract,
+		}),
+		agent.NewStateWorker(&agent.StateWorkerConfig{
+			Updater: stateUpdater,
+		}),
+	}, repos.Message)
+
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{
 		Orch:              reflectionOrch,
-		StateUpdater:      stateUpdater,
 		UserRepo:          repos.User,
-		MemExtractor:      tools.MemExtractor,
-		ConvRepo:          repos.Conversation,
-		MsgRepo:           repos.Message,
 		DelayedTaskRepo:   repos.DelayedTask,
 		MissionRunner:     missionRunner,
 		MissionRepo:       repos.Mission,
-		SummaryWorker:     summaryWorker,
+		SessionEndGroup:   sessionEndGroup,
 		SessionGapMinutes: cfg.Chat.SessionGapMinutes,
 		DiscoverSchedules: cfg.Reflection.DailySchedules,
 		DeliverInterval:   time.Duration(cfg.Reflection.DeliverIntervalMinutes) * time.Minute,
 		MissionInterval:   time.Duration(cfg.Reflection.MissionCheckIntervalMinutes) * time.Minute,
-		PostChatDelay:     time.Duration(cfg.Reflection.PostChatDelaySeconds) * time.Second,
-		MemoryAutoExtract: cfg.Server.MemoryAutoExtract,
 	})
 
 	// --- Orchestrator ---
@@ -149,8 +154,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 			if cfg.Server.DisableBackgroundTasks {
 				return
 			}
-			cronRunner.NotifyChatEnd(userID, convID)
-			cronRunner.NotifySummaryCheck(userID, convID, userMsgID)
+			cronRunner.NotifySessionEnd(userID, convID, userMsgID)
 		},
 		VerifyEnabled:             cfg.LLM.Verification.Enabled,
 		VerifyMaxRetries:          cfg.LLM.Verification.MaxRetries,

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>JS 弹窗测试页</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+    max-width: 640px; margin: 40px auto; padding: 0 20px;
+    background: #f5f5f7; color: #1d1d1f;
+  }
+  h1 { font-size: 22px; }
+  p.desc { color: #6e6e73; font-size: 13px; line-height: 1.6; }
+  .card { background: #fff; border-radius: 12px; padding: 16px 18px; margin: 14px 0;
+          box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card h2 { font-size: 15px; margin: 0 0 6px; }
+  .card p { font-size: 12px; color: #6e6e73; margin: 0 0 10px; }
+  button { font-size: 13px; padding: 6px 14px; border-radius: 8px; border: none;
+           background: #0a84ff; color: #fff; cursor: pointer; margin-right: 8px; }
+  button.secondary { background: #e8e8ed; color: #1d1d1f; }
+  .status { font-size: 12px; color: #34c759; font-weight: 600; margin-top: 8px; }
+  pre { background: #1d1d1f; color: #f5f5f7; border-radius: 8px; padding: 10px; font-size: 12px;
+        white-space: pre-wrap; }
+</style>
+</head>
+<body>
+  <h1>JS 弹窗测试页</h1>
+  <p class="desc">
+    用于验证 xhanHelper 浏览器对 JS 对话框（alert / confirm / prompt）的处理。
+    历史问题：页面连续弹窗或加载中弹窗时，旧实现（runModal 嵌套 run loop）会崩溃（mach_msg2_trap + SIGABRT）。
+    修复后应全部以非阻塞 sheet 弹出，页面不卡死、不崩溃。
+  </p>
+
+  <div class="card">
+    <h2>1. 单个 alert</h2>
+    <p>最基础场景：弹一个提示框，点「好」关闭。</p>
+    <button onclick="singleAlert()">弹 alert</button>
+  </div>
+
+  <div class="card">
+    <h2>2. 单个 confirm</h2>
+    <p>点「确定」返回 true，点「取消」返回 false，结果写入下方日志。</p>
+    <button onclick="singleConfirm()">弹 confirm</button>
+  </div>
+
+  <div class="card">
+    <h2>3. 连续 3 个 alert（崩溃复现器）</h2>
+    <p>旧实现下第二次弹窗打进来时第一个 modal 还开着 → 嵌套 runModal → 崩溃。修复后应依次弹出 3 个 sheet。</p>
+    <button onclick="burstAlerts()">连发 3 个 alert</button>
+  </div>
+
+  <div class="card">
+    <h2>4. alert + confirm 连发</h2>
+    <p>先 alert 再 confirm，再 alert。验证不同对话框交替时的稳定性。</p>
+    <button onclick="mixedDialogs()">alert + confirm + alert</button>
+  </div>
+
+  <div class="card">
+    <h2>5. prompt</h2>
+    <p>触发 textInput 面板。当前实现以「网页提示」展示，点好返回空字符串。</p>
+    <button onclick="promptTest()">弹 prompt</button>
+  </div>
+
+  <div class="card">
+    <h2>6. 模拟「加载即弹」</h2>
+    <p>页面刚加载完立刻弹 alert（模拟真实站点 onload 弹窗），配合 handleOpen 的加载等待逻辑。</p>
+    <button onclick="simulateLoadAlert()">重新模拟加载即弹</button>
+    <p class="status" id="loadStatus"></p>
+  </div>
+
+  <div class="card">
+    <h2>运行日志</h2>
+    <pre id="log">（页面已就绪。也可以加 ?auto=1 打开页面后自动跑 3/4 两组）</pre>
+  </div>
+
+<script>
+  const logEl = document.getElementById('log');
+  function log(line) {
+    const t = new Date().toLocaleTimeString();
+    logEl.textContent = `[${t}] ${line}\n` + logEl.textContent;
+  }
+
+  function singleAlert() {
+    log('调用 alert()');
+    alert('单个 alert：这是一条来自页面的提示');
+    log('alert() 已返回');
+  }
+
+  function singleConfirm() {
+    log('调用 confirm()');
+    const ok = confirm('单个 confirm：确定还是取消？');
+    log(`confirm() 返回 ${ok}`);
+  }
+
+  function burstAlerts() {
+    log('开始连发 3 个 alert（间隔 200ms）');
+    for (let i = 1; i <= 3; i++) {
+      setTimeout(() => {
+        log(`连发 alert #${i}`);
+        alert(`连发第 ${i} 个 alert`);
+        log(`连发 alert #${i} 已返回`);
+      }, i * 200);
+    }
+    log('已排入 3 个 alert 任务');
+  }
+
+  function mixedDialogs() {
+    log('开始 alert + confirm + alert');
+    alert('第 1 步：alert');
+    const ok = confirm('第 2 步：confirm，确定？');
+    log(`confirm 返回 ${ok}`);
+    alert('第 3 步：alert');
+    log('混合弹窗完成');
+  }
+
+  function promptTest() {
+    log('调用 prompt()');
+    const v = prompt('prompt 输入框（当前以提示框展示）', '默认值');
+    log(`prompt() 返回 ${JSON.stringify(v)}`);
+  }
+
+  function simulateLoadAlert() {
+    const st = document.getElementById('loadStatus');
+    st.textContent = '已模拟：在脚本执行时立刻 alert（与 onload 弹窗等价）';
+    log('模拟加载即弹：立刻 alert');
+    alert('加载即弹 alert：模拟站点 onload 弹窗');
+    log('加载即弹 alert 已返回');
+  }
+
+  // ?auto=1：打开后自动依次跑 连发 alert + 混合弹窗，方便一键复现
+  if (new URLSearchParams(location.search).get('auto') === '1') {
+    setTimeout(() => { burstAlerts(); }, 500);
+    setTimeout(() => { mixedDialogs(); }, 2500);
+  }
+</script>
+</body>
+</html>

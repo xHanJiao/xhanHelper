@@ -16,6 +16,11 @@ struct RightSidebarView: View {
     let token: String
 
     @State private var isHovered = false
+    @ObservedObject private var downloadStore = DownloadHistoryStore.shared
+
+    #if os(macOS)
+    @ObservedObject private var faviconStore = FaviconStore.shared
+    #endif
 
     var body: some View {
         VStack(spacing: 0) {
@@ -101,11 +106,26 @@ struct RightSidebarView: View {
             .foregroundColor(.secondary)
             .help("新空白页")
             .padding(.horizontal, 4)
+
+            // 下载记录入口（同 Chrome 下箭头）
+            Button {
+                manager.showDownloads()
+            } label: {
+                Image(systemName: "arrow.down.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.secondary)
+            .help("下载记录")
+            .padding(.trailing, 4)
         }
         .padding(.leading, 6)
     }
 
-    /// S5：确认后清除全部网站数据（cookie/localStorage/site data/缓存）
+    /// S5：确认后清除全部网站数据（cookie/localStorage/site data/缓存）。
+    /// 用非阻塞 sheet（runModal 会卡主线程，与 JS 弹窗同样的终止死锁隐患）。
     private func confirmClearBrowsingData() {
         #if os(macOS)
         let alert = NSAlert()
@@ -113,25 +133,50 @@ struct RightSidebarView: View {
         alert.informativeText = "将删除所有网站的 Cookie、本地存储与缓存，退出所有登录态。此操作不可撤销。"
         alert.addButton(withTitle: "清除")
         alert.addButton(withTitle: "取消")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        WKWebsiteDataStore.default().removeData(
-            ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
-            modifiedSince: .distantPast
-        ) {
-            ToastCenter.shared.show("浏览数据已清除")
+
+        let clearData: () -> Void = {
+            WKWebsiteDataStore.default().removeData(
+                ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+                modifiedSince: .distantPast
+            ) {
+                ToastCenter.shared.show("浏览数据已清除")
+            }
+        }
+
+        guard let window = NSApp.keyWindow else {
+            DispatchQueue.main.async {
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                clearData()
+            }
+            return
+        }
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            clearData()
         }
         #endif
     }
 
     private func browserTabButton(_ tab: RightSidebarTab) -> some View {
         let isActive = manager.activeTabId == tab.id
+        // 下载 tab 禁关态：它是唯一 tab 且仍有下载（浏览器保活 A）
+        let isDownloadTab = tab.id == RightSidebarManager.downloadTabID
+        let hasOtherTabs = manager.tabs.contains { $0.id != RightSidebarManager.downloadTabID }
+        let downloadLocked = isDownloadTab && downloadStore.hasActiveDownloads && !hasOtherTabs
         return HStack(spacing: 4) {
-            Image(systemName: tab.icon).font(.system(size: 11))
-            Text(tab.title).font(.system(size: 11)).lineLimit(1)
-            Button { manager.closeTab(tab.id) } label: {
-                Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+            faviconView(tab)
+            Text(tab.title)
+                .font(.system(size: 11))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 160)
+            Button { BrowserToolProvider.shared.closeTab(tab.id) } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .opacity(downloadLocked ? 0.35 : 1)
             }
             .buttonStyle(.plain)
+            .help(downloadLocked ? "下载进行中，完成后可关闭" : "关闭")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -151,6 +196,23 @@ struct RightSidebarView: View {
         }
     }
 
+    /// tab 图标：优先显示网站 favicon，否则回退系统符号
+    @ViewBuilder
+    private func faviconView(_ tab: RightSidebarTab) -> some View {
+        #if os(macOS)
+        if let host = tab.host, let img = faviconStore.image(forHost: host) {
+            Image(nsImage: img)
+                .resizable()
+                .interpolation(.medium)
+                .frame(width: 12, height: 12)
+        } else {
+            Image(systemName: tab.icon).font(.system(size: 11))
+        }
+        #else
+        Image(systemName: tab.icon).font(.system(size: 11))
+        #endif
+    }
+
     // MARK: - Content
 
     @ViewBuilder
@@ -166,14 +228,12 @@ struct RightSidebarView: View {
                 baseURL: baseURL,
                 token: token
             )
-        } else {
-            ZStack {
-                ForEach(manager.tabs) { tab in
-                    tab.content
-                        .opacity(tab.id == manager.activeTabId ? 1 : 0)
-                        .allowsHitTesting(tab.id == manager.activeTabId)
-                }
-            }
+        } else if let active = manager.tabs.first(where: { $0.id == manager.activeTabId }) {
+            // 节能：只渲染激活 tab。非激活 WKWebView 摘除视图层级（不再合成渲染），
+            // 实例保留在 BrowserToolProvider.tabs，切回时同 NSView 重新挂载、页面状态不丢。
+            // .id() 必须：content 是同类型 AnyView(BrowserTabView)，不加 id 切 tab 时
+            // SwiftUI 会判定"同位置同类型→原地更新"，旧 webView 不卸、新 webView 不挂。
+            active.content.id(active.id)
         }
     }
 }

@@ -11,6 +11,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private var tabs: [String: TabSession] = [:]
     private var activeTabId: String?
     private var tabCounter = 0
+    /// 最近关闭的 tab（Cmd+Shift+T 恢复）
+    private var closedStack: [(url: URL?, title: String)] = []
+    /// 已从 UI 移除但仍有活跃下载、需保活的 session（WKDownload delegate 不能失效，否则下载中断）
+    private var retiringSessions: [TabSession] = []
     private let maxResultChars: Int
 
     /// S3'：页面内容不可信标注（纵深防御，非主防御——提示词级约束可被注入绕过）
@@ -143,7 +147,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             case "agent_browser_get_media_sources":
                 return await handleGetMediaSources(session: session, arguments: arguments)
             case "agent_browser_download":
-                return await handleDownload(session: session, arguments: arguments)
+                return await handleDownload(arguments: arguments)
             case "agent_browser_click":
                 return await withNavContext(session) {
                     await interact(session: session, arguments: arguments, kind: .click, successKey: "clicked")
@@ -740,7 +744,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// download：拟人化下载（真实浏览器 UA/Referer/Cookie + 随机延迟）到 ~/Downloads/xhanHelper/。
     /// L3 确认由 LocalToolRegistry riskLevel 层处理（handleClientToolCall），此处只负责执行。
-    private func handleDownload(session: TabSession, arguments: [String: Any]) async -> LocalToolResult {
+    /// 安全（逐条保留）：scheme 白名单 / 危险扩展名黑名单 / cookie 域匹配 / sanitize / 魔数媒体校验。
+    private func handleDownload(arguments: [String: Any]) async -> LocalToolResult {
         guard let urlStr = arguments["url"] as? String,
               let url = URL(string: urlStr),
               url.scheme == "http" || url.scheme == "https",
@@ -758,46 +763,56 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
            Self.dangerousExtensions.contains((customName as NSString).pathExtension.lowercased()) {
             return .init(serverResult: nil, serverError: "拒绝下载危险文件类型（\(customName)）：仅允许媒体文件", clientAction: nil)
         }
+        return await runDownload(url: url, preferredName: customName, delay: true, enforceMedia: true)
+    }
 
-        // 拟人化：随机延迟 1-3s（模拟人类点击下载的节奏）
-        try? await Task.sleep(for: .milliseconds(Int.random(in: 1000...3000)))
+    /// 历史页重试：用记录的 URL 重新走同一条下载链（delay=false 无拟人延迟；enforceMedia 按原记录）。
+    /// 安全底线：重试同样拒绝危险扩展名。
+    func retryDownload(url: URL, preferredName: String?, enforceMedia: Bool) async -> LocalToolResult {
+        guard url.scheme == "http" || url.scheme == "https",
+              let host = url.host, !host.isEmpty else {
+            return .init(serverResult: nil, serverError: "重试失败：无效的下载 URL", clientAction: nil)
+        }
+        let urlExt = url.pathExtension.lowercased()
+        if Self.dangerousExtensions.contains(urlExt) {
+            return .init(serverResult: nil, serverError: "拒绝下载危险文件类型（.\(urlExt)）", clientAction: nil)
+        }
+        return await runDownload(url: url, preferredName: preferredName, delay: false, enforceMedia: enforceMedia)
+    }
 
-        // 真实浏览器请求特征：UA（页面 JS 读取）、Referer（当前页）、Cookie（WebView 会话）
-        let ua = (await session.jsResult("navigator.userAgent")).text ?? ""
-        let referer = session.webView.url?.absoluteString ?? ""
+    /// 下载核心（task 版）：可实时进度 + 可取消 + 写入下载历史。
+    /// - 安全链路在 `consumeDownload`：HTTP 状态 →（enforceMedia）魔数校验 → moveItem；
+    ///   取消/失败时临时文件由 URLSession 清理，绝不会进入目标路径。
+    /// - 临时文件必须在 completion 内消费（返回后 URLSession 删除）。
+    private func runDownload(url: URL, preferredName: String?, delay: Bool, enforceMedia: Bool) async -> LocalToolResult {
+        // 拟人化：随机延迟 1-3s（仅 agent 驱动；retry 不走）
+        if delay {
+            try? await Task.sleep(for: .milliseconds(Int.random(in: 1000...3000)))
+        }
+
+        // 真实浏览器请求特征：UA（页面 JS 读取，无会话回退默认）、Referer（当前页）、Cookie（WebView 会话）
+        let ua = (await activeSession?.jsResult("navigator.userAgent"))?.text ?? Self.defaultChromeUA
+        let referer = activeSession?.webView.url?.absoluteString ?? ""
         var cookieHeader = ""
-        let allCookies = await session.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
-        if !allCookies.isEmpty {
-            // 安全：只发送匹配目标域名的 cookie（RFC 6265 domain-match），杜绝跨站 cookie 泄露
-            let matched = Self.matchingCookies(allCookies, for: url)
-            if !matched.isEmpty {
-                cookieHeader = matched.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+        if let session = activeSession {
+            let allCookies = await session.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+            if !allCookies.isEmpty {
+                // 安全：只发送匹配目标域名的 cookie（RFC 6265 domain-match），杜绝跨站 cookie 泄露
+                let matched = Self.matchingCookies(allCookies, for: url)
+                if !matched.isEmpty {
+                    cookieHeader = matched.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+                }
             }
         }
 
         var req = URLRequest(url: url)
-        if !ua.isEmpty { req.setValue(ua, forHTTPHeaderField: "User-Agent") }
+        req.setValue(ua, forHTTPHeaderField: "User-Agent")
         if !referer.isEmpty { req.setValue(referer, forHTTPHeaderField: "Referer") }
         req.setValue("video/mp4,video/webm,video/*,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
         req.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
         if !cookieHeader.isEmpty { req.setValue(cookieHeader, forHTTPHeaderField: "Cookie") }
 
-        let dlConfig = URLSessionConfiguration.default
-        dlConfig.timeoutIntervalForResource = 600 // 大文件下载需要长超时（默认 60s 会杀）
-        let dlSession = URLSession(configuration: dlConfig)
-        defer { dlSession.finishTasksAndInvalidate() }
-
-        let (tmpURL, response): (URL, URLResponse)
-        do {
-            (tmpURL, response) = try await dlSession.download(for: req)
-        } catch {
-            return .init(serverResult: nil, serverError: "下载失败（资源可能已失效或页面已变化）：\(error.localizedDescription)。请重新调用 get_media_sources 获取最新地址", clientAction: nil)
-        }
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            return .init(serverResult: nil, serverError: "下载失败（HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)）：资源可能已失效或需要登录。请重新调用 get_media_sources 获取最新地址", clientAction: nil)
-        }
-
-        // 保存到 ~/Downloads/xhanHelper/
+        // 目录 + 预置名（customName 或 URL 末段；无自定义名时响应后可用服务器建议名替换）
         let dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Downloads/xhanHelper", isDirectory: true)
         do {
@@ -805,49 +820,110 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         } catch {
             return .init(serverResult: nil, serverError: "创建下载目录失败：\(error.localizedDescription)", clientAction: nil)
         }
+        let fallback = preferredName?.isEmpty == false ? Self.sanitizeFileName(preferredName!) : Self.sanitizeFileName(url.lastPathComponent)
+        let placeholderName = fallback.isEmpty ? "download-\(Int(Date().timeIntervalSince1970))" : fallback
+        let dest = Self.uniqueDestination(in: dir, name: placeholderName)
+        let recordID = DownloadHistoryStore.shared.startDownload(
+            filename: dest.lastPathComponent,
+            url: url.absoluteString,
+            destination: dest,
+            enforceMedia: enforceMedia
+        )
 
-        let suggested = http.suggestedFilename
-        let fileName: String
-        if let customName, !customName.isEmpty {
-            fileName = Self.sanitizeFileName(customName)
-        } else if let suggested, !suggested.isEmpty {
-            fileName = Self.sanitizeFileName(suggested)
-        } else {
-            fileName = url.lastPathComponent.isEmpty ? "download-\(Int(Date().timeIntervalSince1970))" : Self.sanitizeFileName(url.lastPathComponent)
+        let dlConfig = URLSessionConfiguration.default
+        dlConfig.timeoutIntervalForResource = 600 // 大文件下载需要长超时（默认 60s 会杀）
+        let dlSession = URLSession(configuration: dlConfig)
+
+        return await withCheckedContinuation { (cont: CheckedContinuation<LocalToolResult, Never>) in
+            var progressObservation: NSKeyValueObservation?
+            let task = dlSession.downloadTask(with: req) { tmpURL, response, error in
+                progressObservation?.invalidate()
+                dlSession.finishTasksAndInvalidate()
+
+                // 无自定义名时，用服务器建议名（重名再序号），否则沿用预置名
+                let useServerName = preferredName?.isEmpty ?? true
+                let finalDest: URL
+                if useServerName,
+                   let http = response as? HTTPURLResponse,
+                   let suggested = http.suggestedFilename, !suggested.isEmpty {
+                    let suggestedName = Self.sanitizeFileName(suggested)
+                    finalDest = suggestedName != dest.lastPathComponent
+                        ? Self.uniqueDestination(in: dir, name: suggestedName)
+                        : dest
+                } else {
+                    finalDest = dest
+                }
+
+                // 文件层校验与移动（completion 内，临时文件消费）
+                let outcome = Self.consumeDownload(tmpURL: tmpURL, response: response, error: error,
+                                                   dest: finalDest, enforceMedia: enforceMedia)
+
+                Task { @MainActor in
+                    if finalDest != dest {
+                        DownloadHistoryStore.shared.rename(id: recordID, filename: finalDest.lastPathComponent, destination: finalDest)
+                    }
+                    if outcome.success {
+                        DownloadHistoryStore.shared.finish(id: recordID, ok: true, sizeBytes: outcome.size)
+                    } else {
+                        DownloadHistoryStore.shared.finish(id: recordID, ok: false)
+                    }
+                    cont.resume(returning: outcome.result)
+                }
+            }
+            DownloadHistoryStore.shared.attachTask(id: recordID, task: task)
+            progressObservation = task.progress.observe(\.fractionCompleted, options: [.new]) { progress, _ in
+                Task { @MainActor in
+                    DownloadHistoryStore.shared.updateProgress(
+                        id: recordID,
+                        fraction: progress.fractionCompleted,
+                        completed: progress.completedUnitCount,
+                        total: progress.totalUnitCount
+                    )
+                }
+            }
+            task.resume()
         }
+    }
 
-        // 重名加序号
-        var dest = dir.appendingPathComponent(fileName)
-        var counter = 1
-        while FileManager.default.fileExists(atPath: dest.path) {
-            let ext = dest.pathExtension
-            let base = (fileName as NSString).deletingPathExtension
-            dest = dir.appendingPathComponent(ext.isEmpty ? "\(base)-\(counter)" : "\(base)-\(counter).\(ext)")
-            counter += 1
+    /// 文件层校验与移动（下载完成回调内同步执行，纯文件操作；临时文件必须在回调返回前消费）。
+    /// 返回 (result, success, size)。
+    nonisolated private static func consumeDownload(tmpURL: URL?, response: URLResponse?, error: Error?,
+                                        dest: URL, enforceMedia: Bool) -> (result: LocalToolResult, success: Bool, size: Int) {
+        if let error {
+            let cancelled = (error as NSError).code == NSURLErrorCancelled
+            let msg = cancelled
+                ? "下载已取消"
+                : "下载失败（资源可能已失效或页面已变化）：\(error.localizedDescription)。请重新调用 get_media_sources 获取最新地址"
+            return (.init(serverResult: nil, serverError: msg, clientAction: nil), false, 0)
         }
-
-        // 安全：魔数校验（伪造扩展名防护）—— 内容必须确实是媒体文件，否则删除并拒绝
-        guard let mediaData = try? Data(contentsOf: tmpURL, options: .mappedIfSafe),
-              Self.isAllowedMediaFile(mediaData) else {
-            try? FileManager.default.removeItem(at: tmpURL)
-            return .init(serverResult: nil, serverError: "下载内容不是允许的媒体类型（视频/图片/音频），已拒绝保存", clientAction: nil)
+        guard let tmpURL, let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            return (.init(serverResult: nil, serverError: "下载失败（HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)）：资源可能已失效或需要登录。请重新调用 get_media_sources 获取最新地址", clientAction: nil), false, 0)
         }
-
+        // 安全：魔数校验（伪造扩展名防护）—— enforceMedia 时内容必须确实是媒体文件，否则删除并拒绝
+        if enforceMedia {
+            guard let data = try? Data(contentsOf: tmpURL, options: .mappedIfSafe),
+                  Self.isAllowedMediaFile(data) else {
+                try? FileManager.default.removeItem(at: tmpURL)
+                return (.init(serverResult: nil, serverError: "下载内容不是允许的媒体类型（视频/图片/音频），已拒绝保存", clientAction: nil), false, 0)
+            }
+        }
         do {
             try FileManager.default.moveItem(at: tmpURL, to: dest)
         } catch {
-            return .init(serverResult: nil, serverError: "保存文件失败：\(error.localizedDescription)", clientAction: nil)
+            return (.init(serverResult: nil, serverError: "保存文件失败：\(error.localizedDescription)", clientAction: nil), false, 0)
         }
-
         let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
         let size = (attrs?[.size] as? NSNumber)?.intValue ?? 0
         print("[B-Download] saved \(dest.path) (\(size) bytes)")
-        return .init(serverResult: Self.jsonDict([
+        return (.init(serverResult: Self.jsonDict([
             "path": dest.path,
             "filename": dest.lastPathComponent,
             "size_bytes": size,
-        ]), serverError: nil, clientAction: nil)
+        ]), serverError: nil, clientAction: nil), true, size)
     }
+
+    /// 默认 Chrome UA（无会话可用时的下载兜底，与 webView customUserAgent 对齐）
+    private static let defaultChromeUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
     /// mediaSourcesJS：实时收集页面 video/img 资源 + 附近上下文文本（向上找容器，60 字符截断）。
     /// playing = 当前未暂停且未结束（自动播放的广告）；data: 图片过滤。
@@ -906,7 +982,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// 文件名 sanitize：只保留路径最后一段（防 ../ 路径穿越），去控制字符。
-    private static func sanitizeFileName(_ raw: String) -> String {
+    nonisolated private static func sanitizeFileName(_ raw: String) -> String {
         let last = (raw as NSString).lastPathComponent
         var cleaned = last.replacingOccurrences(of: "..", with: "")
         cleaned = cleaned.components(separatedBy: CharacterSet.controlCharacters).joined()
@@ -917,8 +993,21 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return cleaned
     }
 
+    /// 目标路径：目录内重名自动加序号（foo.txt → foo-1.txt）。
+    nonisolated static func uniqueDestination(in dir: URL, name: String) -> URL {
+        var dest = dir.appendingPathComponent(name)
+        var counter = 1
+        while FileManager.default.fileExists(atPath: dest.path) {
+            let ext = dest.pathExtension
+            let base = (name as NSString).deletingPathExtension
+            dest = dir.appendingPathComponent(ext.isEmpty ? "\(base)-\(counter)" : "\(base)-\(counter).\(ext)")
+            counter += 1
+        }
+        return dest
+    }
+
     /// 魔数白名单校验（伪造扩展名防护）：内容必须是视频/图片/音频。
-    private static func isAllowedMediaFile(_ data: Data) -> Bool {
+    nonisolated private static func isAllowedMediaFile(_ data: Data) -> Bool {
         guard data.count >= 12 else { return false }
         let b = [UInt8](data.prefix(12))
         // mp4 / m4v / mov: "....ftyp"
@@ -995,6 +1084,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     var activeURL: URL? { activeSession?.webView.url }
+
+    /// 激活 tab 的 webView（快捷键/焦点路由用）
+    var activeWebView: WKWebView? { activeSession?.webView }
 
     // MARK: - 风险分级（S2 高敏域 / G6 明文页）
 
@@ -1078,7 +1170,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         tabCounter += 1
         let session = TabSession()
         tabs[tabId] = session
-        activeTabId = tabId
+        switchActiveTab(to: tabId)
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
 
@@ -1143,21 +1235,29 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             session.cancelLoadWait()
             rightSidebar?.closeTab(id)
         }
+        // 保活仍有活跃下载的 session（WKDownload delegate 不失效），其余释放
+        retiringSessions.append(contentsOf: tabs.values.filter { $0.hasActiveDownloads })
         tabs.removeAll()
+        closedStack.removeAll()
         activeTabId = nil
         return .init(serverResult: Self.jsonDict(["closed": true, "count": count]), serverError: nil, clientAction: nil)
     }
 
-    /// 关闭单个标签页（释放内存）：cancelLoadWait + 侧栏关闭 + 移除 + 若关的是激活页则置空。
+    /// 关闭单个标签页：cancelLoadWait + 侧栏关闭 + 移除 + 若关的是激活页则置空。
+    /// 有活跃下载时 session 转入 retiringSessions 保活（WKDownload delegate 不失效），下载完再清理。
     private func handleCloseTab(_ args: [String: Any]) -> LocalToolResult {
         let tabId = args["tabId"] as? String ?? ""
         guard !tabId.isEmpty, let session = tabs[tabId] else {
             return .init(serverResult: nil, serverError: "tabId 不存在: \(tabId)，请先 list_tabs 获取有效 tabId", clientAction: nil)
         }
         let wasActive = activeTabId == tabId
+        closedStack.append((url: session.webView.url, title: session.webView.title ?? session.webView.url?.host ?? ""))
         session.cancelLoadWait()
         rightSidebar?.closeTab(tabId)
         tabs.removeValue(forKey: tabId)
+        if session.hasActiveDownloads {
+            retiringSessions.append(session)
+        }
         if wasActive {
             // Bad Case 17 修复：关掉激活页后自动切到"最近打开的"剩余 tab（tabId 为递增 browser-N，
             // 数字最大 = 最近打开），并同步右侧栏 —— 否则后续操作（get_url/snapshot 等依赖
@@ -1168,7 +1268,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     return (id, n)
                 }
                 .max(by: { $0.1 < $1.1 })?.0
-            activeTabId = next
+            switchActiveTab(to: next)
             if let rs = rightSidebar, let rid = next {
                 rs.activeTabId = rid
             }
@@ -1185,7 +1285,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         guard !tabId.isEmpty, tabs[tabId] != nil else {
             return .init(serverResult: nil, serverError: "tabId 不存在: \(tabId)", clientAction: nil)
         }
-        activeTabId = tabId
+        switchActiveTab(to: tabId)
         if let rs = rightSidebar {
             rs.activeTabId = tabId
         }
@@ -1194,12 +1294,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     func selectTab(_ id: String) {
         guard tabs[id] != nil else { return }
-        activeTabId = id
+        pipLog("selectTab: \(activeTabId ?? "nil") -> \(id)")
+        switchActiveTab(to: id)
     }
 
     /// 取消浏览器 tab 激活（切到浏览面板时调用）
     func deselectTab() {
-        activeTabId = nil
+        switchActiveTab(to: nil)
     }
 
     func openBlankTab() {
@@ -1207,7 +1308,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         tabCounter += 1
         let session = TabSession()
         tabs[tabId] = session
-        activeTabId = tabId
+        switchActiveTab(to: tabId)
         // 新标签页默认页（本地 HTML，替代 about:blank 白页）
         session.webView.loadHTMLString(Self.newTabPageHTML, baseURL: nil)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
@@ -1216,15 +1317,94 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         bindSessionUI(session: session)
     }
 
+    /// Cmd+W：关闭当前激活 tab（与工具 close_tab 同一收尾路径），无激活 tab 时忽略。
+    func closeActiveTab() {
+        guard let id = activeTabId, tabs[id] != nil else { return }
+        _ = handleCloseTab(["tabId": id])
+    }
+
+    /// UI（tab 条 X 按钮）关闭指定 tab：与工具 close_tab 同路径（含 closedStack 记录），可被 Cmd+Shift+T 恢复。
+    func closeTab(_ id: String) {
+        guard tabs[id] != nil else {
+            rightSidebar?.closeTab(id)
+            return
+        }
+        _ = handleCloseTab(["tabId": id])
+    }
+
+    /// Cmd+Shift+T：恢复最近关闭的 tab（复用 open 流程开新 tab 并加载原 URL）。
+    func restoreLastClosedTab() {
+        guard let last = closedStack.popLast() else { return }
+        if let url = last.url, url.scheme == "http" || url.scheme == "https" {
+            Task { @MainActor in
+                _ = await handleOpen(["url": url.absoluteString])
+            }
+        } else {
+            openBlankTab()
+        }
+    }
+
+    /// 切激活 tab：先暂停旧 tab 媒体（节能），再切换。
+    private func switchActiveTab(to id: String?) {
+        if let prev = activeTabId, prev != id, let prevSession = tabs[prev] {
+            prevSession.webView.pauseAllMediaPlayback()
+        }
+        activeTabId = id
+    }
+
+    /// 清理已完成下载的保活 session（下载全结束时由 onDownloadsSettled 触发）。
+    private func settleRetiringSessions() {
+        retiringSessions.removeAll { !$0.hasActiveDownloads }
+    }
+
     /// tab 标题跟随页面标题
     private func bindSessionTitle(session: TabSession, tabId: String) {
         session.onTitleChange = { [weak self] title in
             self?.rightSidebar?.updateTabTitle(id: tabId, title: title)
         }
+        session.onURLChanged = { [weak self] url in
+            self?.handleNavigation(session: session, tabId: tabId, url: url)
+        }
     }
+
+    /// 导航变化：更新 tab host（favicon 查询键）+ 提取 favicon
+    private func handleNavigation(session: TabSession, tabId: String, url: URL) {
+        let host = url.host ?? ""
+        if !host.isEmpty {
+            rightSidebar?.updateTabHost(id: tabId, host: host)
+        }
+        refreshFavicon(for: tabId)
+    }
+
+    /// 提取当前页 favicon href 并交给 FaviconStore 缓存（host 维度幂等）
+    private func refreshFavicon(for tabId: String) {
+        guard let session = tabs[tabId], let host = session.webView.url?.host else { return }
+        Task { @MainActor in
+            let href = (await session.jsResult(BrowserToolProvider.faviconJS)).text ?? ""
+            guard !href.isEmpty, let pageURL = session.webView.url else { return }
+            FaviconStore.shared.loadFavicon(
+                href: href,
+                pageURL: pageURL,
+                host: host,
+                userAgent: session.webView.customUserAgent
+            )
+        }
+    }
+
+    /// 提取页面 favicon 链接的 JS（取最后一个 icon 链接，回退 shortcut icon）
+    static let faviconJS = """
+    (function(){
+      var els = document.querySelectorAll('link[rel~="icon"],link[rel="shortcut icon"]');
+      for (var i = els.length - 1; i >= 0; i--) { var h = els[i].href; if (h) return h; }
+      return '';
+    })()
+    """
 
     /// 新窗口（target=_blank / window.open）与 JS 弹窗接线
     private func bindSessionUI(session: TabSession) {
+        session.onDownloadsSettled = { [weak self] in
+            self?.settleRetiringSessions()
+        }
         session.onNewWindowRequest = { [weak self] configuration, navigationAction in
             guard let self else { return nil }
             // 开新浏览器 tab（保留 opener 关系的 configuration）
@@ -1232,30 +1412,62 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             self.tabCounter += 1
             let newSession = TabSession(configuration: configuration)
             self.tabs[tabId] = newSession
-            self.activeTabId = tabId
+            self.switchActiveTab(to: tabId)
             self.bindSessionTitle(session: newSession, tabId: tabId)
             self.rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
                                        content: AnyView(BrowserTabView(webView: newSession.webView)))
             return newSession.webView
         }
-        session.onJSAlert = { [weak self] message in
-            DispatchQueue.main.async {
-                let alert = NSAlert()
-                alert.messageText = "网页提示"
-                alert.informativeText = message
-                alert.addButton(withTitle: "好")
-                alert.runModal()
-            }
+        // JS 弹窗：用 beginSheetModal（非阻塞 sheet）而非 runModal——runModal 会在主线程开嵌套
+        // run loop，页面连续弹窗 / 加载中弹窗时容易重入崩溃（mach_msg2_trap + SIGABRT）。
+        // sheet 不阻塞主线程，completion 由用户点按后回调。
+        session.onJSAlert = { [weak session] message, completion in
+            Self.presentJSDialog(
+                title: "网页提示",
+                message: message,
+                primary: "好",
+                onWindow: session?.webView.window ?? NSApp.keyWindow,
+                onDone: { _ in completion() }
+            )
         }
-        session.onJSConfirm = { [weak self] message, completion in
+        session.onJSConfirm = { [weak session] message, completion in
+            Self.presentJSDialog(
+                title: "网页确认",
+                message: message,
+                primary: "确定",
+                secondary: "取消",
+                onWindow: session?.webView.window ?? NSApp.keyWindow,
+                onDone: { confirmed in completion(confirmed) }
+            )
+        }
+    }
+
+    /// 非阻塞 JS 对话框：优先挂到窗口上做 sheet；无窗口时回退 runModal（罕见，仅打日志）。
+    /// 返回主按钮是否被点击（两键时为第一个按钮）。
+    private static func presentJSDialog(
+        title: String,
+        message: String,
+        primary: String,
+        secondary: String? = nil,
+        onWindow: NSWindow?,
+        onDone: @escaping (Bool) -> Void
+    ) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = String(message.prefix(2000))
+        alert.addButton(withTitle: primary)
+        if let secondary { alert.addButton(withTitle: secondary) }
+        pipLog("js dialog: \(title) thread=\(Thread.isMainThread ? "main" : "bg") msg=\(message.prefix(80)) sheet=\(onWindow != nil)")
+
+        guard let window = onWindow else {
+            pipLog("js dialog: no window, runModal fallback title=\(title) msg=\(message.prefix(80))")
             DispatchQueue.main.async {
-                let alert = NSAlert()
-                alert.messageText = "网页确认"
-                alert.informativeText = message
-                alert.addButton(withTitle: "确定")
-                alert.addButton(withTitle: "取消")
-                completion(alert.runModal() == .alertFirstButtonReturn)
+                onDone(alert.runModal() == .alertFirstButtonReturn)
             }
+            return
+        }
+        alert.beginSheetModal(for: window) { response in
+            onDone(response == .alertFirstButtonReturn)
         }
     }
 
@@ -1290,7 +1502,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     // MARK: - TabSession
 
-    private final class TabSession: NSObject, WKNavigationDelegate, WKUIDelegate {
+    private final class TabSession: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         let webView: WKWebView
         var loadContinuation: CheckedContinuation<String?, Never>?
         var loadTimeout: Task<Void, Never>?
@@ -1304,12 +1516,26 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         var lastSnapshotItems: [[String: Any]]?
         /// 页面标题变化回调（tab 标题跟随）
         var onTitleChange: ((String) -> Void)?
+        /// URL 变化回调（导航提交/加载完成）：宿主更新 tab host + 提取 favicon
+        var onURLChanged: ((URL) -> Void)?
         /// 新窗口请求回调（target=_blank / window.open）：由 BrowserToolProvider 决定开新 tab
         var onNewWindowRequest: ((WKWebViewConfiguration, WKNavigationAction) -> WKWebView?)?
-        /// JS 弹窗回调
-        var onJSAlert: ((String) -> Void)?
+        /// JS 弹窗回调（completion 由 sheet 关闭后调用，避免 runModal 嵌套 run loop 崩）
+        var onJSAlert: ((String, @escaping () -> Void) -> Void)?
         var onJSConfirm: ((String, @escaping (Bool) -> Void) -> Void)?
+        /// 下载全部结束时回调（宿主清理 retiringSessions）
+        var onDownloadsSettled: (() -> Void)?
         private var titleObservation: NSKeyValueObservation?
+        private var urlObservation: NSKeyValueObservation?
+
+        /// 是否有进行中的用户下载（关 tab 时用于决定 session 是否保活）
+        var hasActiveDownloads: Bool {
+            !activeRecordIDs.isEmpty
+        }
+
+        /// 活动下载记录（user-initiated）：WKDownload 对象 → 历史记录 id
+        private var activeRecordIDs: [ObjectIdentifier: UUID] = [:]
+        private var downloadProgressObservations: [ObjectIdentifier: NSKeyValueObservation] = [:]
 
         override init() {
             webView = TabSession.makeWebView(configuration: WKWebViewConfiguration())
@@ -1378,6 +1604,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                       !t.trimmingCharacters(in: .whitespaces).isEmpty else { return }
                 self.onTitleChange?(t)
             }
+
+            // URL KVO：导航提交时通知宿主（更新 tab host / 提取 favicon）
+            urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, change in
+                guard let self, let u = change.newValue as? URL?, let url = u else { return }
+                self.onURLChanged?(url)
+            }
         }
 
         // MARK: - WKUIDelegate
@@ -1389,8 +1621,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                      initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
-            onJSAlert?(message)
-            completionHandler()
+            onJSAlert?(message) { completionHandler() }
         }
 
         func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
@@ -1401,9 +1632,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
                      defaultText: String?, initiatedByFrame frame: WKFrameInfo,
                      completionHandler: @escaping (String?) -> Void) {
-            // 简化：提示忽略，返回空
-            onJSAlert?(prompt)
-            completionHandler(nil)
+            // 简化：以提示框展示，用户点好返回空
+            onJSAlert?(prompt) { completionHandler(nil) }
         }
 
         // MARK: 权限（S4）— 摄像头/麦克风/定位一律拒绝，防恶意页采集设备/位置
@@ -1547,24 +1777,59 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         /// 安全：拦截非 http/https 导航（含 302 重定向到 file:// 等协议绕过）。
         /// 允许 about:blank（默认新标签页）；其余一律 .cancel。
+        /// 声明式下载（<a download>）：确认后走 .download。
+        /// WebKit 保证这些回调在主线程执行，故用 assumeIsolated 直读 @MainActor 属性。
         nonisolated func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            if let url = navigationAction.request.url {
-                let scheme = url.scheme?.lowercased() ?? ""
-                if scheme == "http" || scheme == "https" || scheme == "about" {
+            MainActor.assumeIsolated {
+                if navigationAction.shouldPerformDownload {
+                    confirmDownload(request: navigationAction.request, suggestedName: nil) { allow in
+                        decisionHandler(allow ? .download : .cancel)
+                    }
+                    return
+                }
+                if let url = navigationAction.request.url {
+                    let scheme = url.scheme?.lowercased() ?? ""
+                    if scheme == "http" || scheme == "https" || scheme == "about" {
+                        decisionHandler(.allow)
+                        return
+                    }
+                    print("[Browser] blocked navigation to scheme: \(scheme) (\(url.absoluteString.prefix(80)))")
+                    decisionHandler(.cancel)
+                    return
+                }
+                decisionHandler(.allow)
+            }
+        }
+
+        /// 响应不可渲染（content-disposition 附件等文件下载）→ 确认后走 .download。
+        nonisolated func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+                                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+            MainActor.assumeIsolated {
+                if navigationResponse.canShowMIMEType {
                     decisionHandler(.allow)
                     return
                 }
-                print("[Browser] blocked navigation to scheme: \(scheme) (\(url.absoluteString.prefix(80)))")
-                decisionHandler(.cancel)
-                return
+                let url = navigationResponse.response.url
+                let suggested = (navigationResponse.response as? HTTPURLResponse)?.suggestedFilename
+                confirmDownload(request: url.map { URLRequest(url: $0) }, suggestedName: suggested) { allow in
+                    decisionHandler(allow ? .download : .cancel)
+                }
             }
-            decisionHandler(.allow)
+        }
+
+        func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+            download.delegate = self
+        }
+
+        func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+            download.delegate = self
         }
 
         nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             Task { @MainActor in
                 resumeLoad(nil)
+                if let url = webView.url { onURLChanged?(url) }
             }
         }
 
@@ -1579,6 +1844,103 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 let code = (error as NSError).code
                 resumeLoad(code == NSURLErrorCancelled ? nil : "加载失败: \(error.localizedDescription)")
             }
+        }
+
+        // MARK: - WKDownloadDelegate（用户点击触发的下载）
+
+        /// 用户下载确认（L3 样式，走浏览器确认条）。30s 未处理自动取消。
+        @MainActor
+        private func confirmDownload(request: URLRequest?, suggestedName: String?, completion: @escaping (Bool) -> Void) {
+            let name = suggestedName?.isEmpty == false
+                ? suggestedName!
+                : (request?.url?.lastPathComponent ?? "文件")
+            let source = request?.url?.absoluteString ?? ""
+            var resolved = false
+            let once: (Bool) -> Void = { allow in
+                guard !resolved else { return }
+                resolved = true
+                completion(allow)
+            }
+            #if os(macOS)
+            let summary = "名称: \(String(name.prefix(120)))"
+                + "\n来源: \(source.isEmpty ? "(未知)" : String(source.prefix(160)))"
+            BrowserActivityCenter.shared.presentConfirmation(
+                displayName: "下载文件",
+                argsSummary: summary,
+                onResolve: { allow in
+                    BrowserActivityCenter.shared.dismissConfirmation()
+                    once(allow)
+                }
+            )
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(30))
+                BrowserActivityCenter.shared.dismissConfirmation()
+                once(false)
+            }
+            #else
+            once(true)
+            #endif
+        }
+
+        /// 决定保存路径：~/Downloads/xhanHelper/ + 文件名 sanitize + 重名序号。
+        /// 完成后 AppKit 自动写入，无需手工移动。
+        func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
+                      suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+            let dir = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Downloads/xhanHelper", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            } catch {
+                print("[B-Download] create dir failed: \(error)")
+                completionHandler(nil)
+                return
+            }
+            let name = BrowserToolProvider.sanitizeFileName(suggestedFilename)
+            let dest = BrowserToolProvider.uniqueDestination(in: dir, name: name)
+            let url = download.originalRequest?.url?.absoluteString ?? response.url?.absoluteString ?? ""
+            let itemID = DownloadHistoryStore.shared.startDownload(
+                filename: dest.lastPathComponent,
+                url: url,
+                destination: dest,
+                download: download
+            )
+            activeRecordIDs[ObjectIdentifier(download)] = itemID
+            attachProgress(download, id: itemID)
+            print("[B-Download] user download -> \(dest.path)")
+            completionHandler(dest)
+        }
+
+        /// 进度：KVO WKDownload.progress.fractionCompleted（顺带上报字节数算速度）
+        private func attachProgress(_ download: WKDownload, id: UUID) {
+            let key = ObjectIdentifier(download)
+            downloadProgressObservations[key] = download.progress.observe(\.fractionCompleted, options: [.new]) { progress, _ in
+                Task { @MainActor in
+                    DownloadHistoryStore.shared.updateProgress(
+                        id: id,
+                        fraction: progress.fractionCompleted,
+                        completed: progress.completedUnitCount,
+                        total: progress.totalUnitCount
+                    )
+                }
+            }
+        }
+
+        func downloadDidFinish(_ download: WKDownload) {
+            let key = ObjectIdentifier(download)
+            downloadProgressObservations.removeValue(forKey: key)
+            guard let id = activeRecordIDs.removeValue(forKey: key) else { return }
+            DownloadHistoryStore.shared.finish(id: id, ok: true)
+            onDownloadsSettled?()
+        }
+
+        func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+            let key = ObjectIdentifier(download)
+            downloadProgressObservations.removeValue(forKey: key)
+            guard let id = activeRecordIDs.removeValue(forKey: key) else { return }
+            // 已取消（store.cancel 置 .cancelled）时 finish 被守卫跳过，不会覆盖状态
+            DownloadHistoryStore.shared.finish(id: id, ok: false)
+            print("[B-Download] failed: \(error.localizedDescription)")
+            onDownloadsSettled?()
         }
     }
 
@@ -2157,7 +2519,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return .init(serverResult: nil, serverError: "选择器超时: \(selector)", clientAction: nil)
     }
 
-    private static func jsonDict(_ dict: [String: Any]) -> Data {
+    nonisolated private static func jsonDict(_ dict: [String: Any]) -> Data {
         (try? JSONSerialization.data(withJSONObject: dict)) ?? Data("{}".utf8)
     }
 

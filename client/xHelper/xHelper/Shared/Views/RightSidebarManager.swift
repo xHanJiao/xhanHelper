@@ -6,6 +6,8 @@ struct RightSidebarTab: Identifiable {
     var title: String
     let icon: String
     var content: AnyView
+    /// 当前页 host（favicon 查询键，随导航更新）
+    var host: String?
 }
 
 final class RightSidebarManager: ObservableObject {
@@ -87,10 +89,49 @@ final class RightSidebarManager: ObservableObject {
     }
 
     func closeTab(_ id: String) {
+        // 下载 tab：仅当它是唯一 tab 且还有活跃下载时禁关（保持浏览器不收起）；
+        // 有其它网页 tab 时允许关闭（下载在 store 独立跟踪，关面板不影响）。
+        if id == Self.downloadTabID,
+           DownloadHistoryStore.shared.hasActiveDownloads,
+           !tabs.contains(where: { $0.id != Self.downloadTabID }) {
+            return
+        }
         tabs.removeAll { $0.id == id }
         if activeTabId == id { activeTabId = tabs.last?.id }
-        // 关掉所有浏览器 tab → 回到浏览面板（不收起侧栏）
-        if tabs.isEmpty { activeTabId = nil }
+        // 关掉所有浏览器 tab：有活跃下载时自动开下载 tab 保活浏览器，否则回到浏览面板（不收起侧栏）
+        if tabs.isEmpty {
+            if DownloadHistoryStore.shared.hasActiveDownloads {
+                openDownloadTab()
+            } else {
+                activeTabId = nil
+            }
+        }
+    }
+
+    /// 打开/激活下载 tab（浏览器内，chrome://downloads 式）
+    func openDownloadTab() {
+        if let existing = tabs.first(where: { $0.id == Self.downloadTabID }) {
+            activeTabId = existing.id
+        } else {
+            openTab(
+                id: Self.downloadTabID,
+                title: "下载",
+                icon: "arrow.down.circle",
+                content: Self.downloadTabContent()
+            )
+        }
+    }
+
+    /// 下载 tab 固定 id
+    static let downloadTabID = "downloads"
+
+    /// 下载 tab 内容（macOS 专属：DownloadHistoryPanelView）
+    private static func downloadTabContent() -> AnyView {
+        #if os(macOS)
+        AnyView(DownloadHistoryPanelView())
+        #else
+        AnyView(EmptyView())
+        #endif
     }
 
     /// 切回浏览面板（浏览器态 → 面板态）
@@ -99,12 +140,24 @@ final class RightSidebarManager: ObservableObject {
         BrowserToolProvider.shared.deselectTab()
     }
 
+    /// 跳转到下载记录（浏览器内 tab）
+    func showDownloads() {
+        openDownloadTab()
+    }
+
     func toggle() { isOpen.toggle() }
 
     func updateTabTitle(id: String, title: String) {
         guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
         var updated = tabs[i]
         updated.title = title
+        tabs[i] = updated
+    }
+
+    func updateTabHost(id: String, host: String) {
+        guard !host.isEmpty, let i = tabs.firstIndex(where: { $0.id == id }) else { return }
+        var updated = tabs[i]
+        updated.host = host
         tabs[i] = updated
     }
 

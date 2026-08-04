@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>popup 确认测试</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
+  button, a { display: block; margin: 12px 0; padding: 10px 20px; font-size: 16px; }
+  .label { color: #666; font-size: 14px; margin: 20px 0 6px; border-top: 1px solid #eee; padding-top: 12px; }
+</style>
+</head>
+<body>
+  <h2>window.open 确认弹窗测试</h2>
+  <p>点击以下按钮，应弹出 NSAlert sheet 询问是否允许。</p>
+
+  <div class="label">场景 1：click 触发 window.open</div>
+  <button onclick="window.open('https://www.baidu.com')">window.open → baidu.com</button>
+
+  <div class="label">场景 2：&lt;a target=_blank&gt;</div>
+  <a href="https://github.com" target="_blank">a[target=_blank] → github.com</a>
+
+  <div class="label">场景 3：JS 延迟 popup（setTimeout 中的 window.open）</div>
+  <button onclick="setTimeout(()=>window.open('https://www.zhihu.com'),500)">延迟 500ms → window.open zhihu.com</button>
+
+  <div class="label">场景 4：点击取消应不创建 Tab</div>
+  <button onclick="var w=window.open('https://www.apple.com'); if(!w) document.getElementById('result').textContent='popup 被阻断（webView 返回 nil）'">window.open → apple.com（并检测返回值）</button>
+  <p id="result" style="color: green;"></p>
+
+  <div class="label">场景 5：跨域 iframe 内 window.open</div>
+  <button onclick="window.open('https://example.com')">window.open → example.com</button>
+
+  <div class="label">场景 6：current URL 含 query/hash 的 window.open</div>
+  <button onclick="window.open('https://cn.bing.com/search?q=test')">window.open → bing search</button>
+
+  <div class="label">验证项</div>
+  <ul>
+    <li>每次点按钮 → 应弹出 sheet"网页试图打开新窗口"</li>
+    <li>sheet 显示来源域名和目标 URL</li>
+    <li>点「取消」→ 不创建新 Tab</li>
+    <li>点「允许」→ 创建新 Tab 并加载目标 URL</li>
+    <li>AI agent 发起的 agent_browser_open 不弹确认（正常打开）</li>
+  </ul>
+</body>
+</html>

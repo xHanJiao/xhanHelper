@@ -1625,19 +1625,35 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         session.onDownloadsSettled = { [weak self] in
             self?.settleRetiringSessions()
         }
-        session.onNewWindowRequest = { [weak self] configuration, navigationAction in
-            guard let self else { return nil }
-            // 开新浏览器 tab（保留 opener 关系的 configuration）
-            let tabId = "browser-\(self.tabCounter)"
-            self.tabCounter += 1
-            let newSession = TabSession(configuration: configuration)
-            self.tabs[tabId] = newSession
-            self.switchActiveTab(to: tabId)
-            self.syncBrowserGroup()
-            self.bindSessionTitle(session: newSession, tabId: tabId)
-            self.rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
-                                       content: AnyView(BrowserTabView(webView: newSession.webView)))
-            return newSession.webView
+        session.onNewWindowRequest = { [weak self, weak session] configuration, navigationAction in
+            guard let self, let session else { return nil }
+            let targetURL = navigationAction.request.url
+
+            // 用户点击 <a target=_blank> → 直接放行（百度搜索结果等场景）
+            if navigationAction.navigationType == .linkActivated {
+                return self.openPopupTab(configuration: configuration, targetURL: targetURL)
+            }
+
+            // window.open / form target=_blank → 弹确认
+            let targetStr = targetURL?.absoluteString ?? "(未知)"
+            let sourceHost = session.webView.url?.host ?? "当前页面"
+
+            #if os(macOS)
+            Self.presentJSDialog(
+                title: "网页试图打开新窗口",
+                message: "来源: \(sourceHost)\n目标: \(String(targetStr.prefix(160)))",
+                primary: "允许",
+                secondary: "取消",
+                onWindow: session.webView.window ?? NSApp.keyWindow,
+                onDone: { [weak self] confirmed in
+                    guard let self, confirmed else { return }
+                    Task { @MainActor in
+                        _ = self.openPopupTab(configuration: configuration, targetURL: targetURL)
+                    }
+                }
+            )
+            #endif
+            return nil
         }
         // JS 弹窗：用 beginSheetModal（非阻塞 sheet）而非 runModal——runModal 会在主线程开嵌套
         // run loop，页面连续弹窗 / 加载中弹窗时容易重入崩溃（mach_msg2_trap + SIGABRT）。
@@ -1701,6 +1717,23 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
     }
     #endif
+
+    @MainActor
+    private func openPopupTab(configuration: WKWebViewConfiguration, targetURL: URL?) -> WKWebView? {
+        let tabId = "browser-\(tabCounter)"
+        tabCounter += 1
+        let newSession = TabSession(configuration: configuration)
+        tabs[tabId] = newSession
+        switchActiveTab(to: tabId)
+        syncBrowserGroup()
+        bindSessionTitle(session: newSession, tabId: tabId)
+        rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
+                              content: AnyView(BrowserTabView(webView: newSession.webView)))
+        if let targetURL {
+            newSession.webView.load(URLRequest(url: targetURL))
+        }
+        return newSession.webView
+    }
 
     // MARK: - 新标签页（首页快捷站：纯自动聚合，Chrome 式）
 
@@ -1855,6 +1888,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             prefs.allowsContentJavaScript = true
             configuration.defaultWebpagePreferences = prefs
             configuration.preferences.isElementFullscreenEnabled = false
+            if #available(macOS 14.0, *) {
+                configuration.preferences.isFraudulentWebsiteWarningEnabled = true
+            }
 
             let hideWebDriver = WKUserScript(
                 source: "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});",
@@ -1872,14 +1908,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             configuration.userContentController.addUserScript(fingerprintScript)
 
             // 稳定元素句柄注册表（documentStart，先于页面脚本）：a11y.id(el) 分配/返回
-            // 元素稳定 id（JS 版 backendNodeId，DOM 变动后仍稳定）；addEventListener 包装
-            // 记录元素绑定的点击监听（补纯 JS 绑定点击目标）。
             let a11yScript = WKUserScript(
                 source: BrowserToolProvider.a11yRegistryScript,
                 injectionTime: .atDocumentStart,
                 forMainFrameOnly: true
             )
             configuration.userContentController.addUserScript(a11yScript)
+            
 
             // G3：内容拦截（仅用户自定义域名，默认不拦截任何站点）
             if let ruleList = ContentBlocker.ruleList {
@@ -2813,7 +2848,21 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         "return true;})()"
     }
 
-    private func esc(_ s: String) -> String { s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'") }
+    private func esc(_ s: String) -> String {
+        var r = ""
+        for c in s {
+            switch c {
+            case "\\": r += "\\\\"
+            case "'":  r += "\\'"
+            case "\r": r += "\\r"
+            case "\n": r += "\\n"
+            case "\u{2028}": r += "\\u2028"
+            case "\u{2029}": r += "\\u2029"
+            default: r.append(c)
+            }
+        }
+        return r
+    }
 
     // MARK: - Static helpers
 

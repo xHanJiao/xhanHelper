@@ -215,11 +215,6 @@ final class RightSidebarManager: ObservableObject {
         BrowserToolProvider.shared.deselectTab()
     }
 
-    /// 跳转到下载记录（浏览器内 tab）
-    func showDownloads() {
-        openDownloadTab()
-    }
-
     func toggle() { isOpen.toggle() }
 
     func updateTabTitle(id: String, title: String) {

@@ -17,7 +17,6 @@ struct RightSidebarView: View {
 
     @State private var isHovered = false
     @ObservedObject private var downloadStore = DownloadHistoryStore.shared
-    @ObservedObject private var bookmarkStore = BookmarkStore.shared
 
     #if os(macOS)
     @ObservedObject private var faviconStore = FaviconStore.shared
@@ -64,155 +63,9 @@ struct RightSidebarView: View {
                 }
                 .frame(height: 32)
             }
-
-            // 聊天画中画切换：释放中间聊天区，聊天缩成悬浮面板
-            Button {
-                manager.isPipChat.toggle()
-                pipLog("toggle button: isPipChat=\(manager.isPipChat) tabs=\(manager.tabs.count) activeTab=\(manager.activeTabId ?? "nil")")
-            } label: {
-                Image(systemName: manager.isPipChat ? "pip.exit" : "pip.enter")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 22, height: 22)
-                    .foregroundColor(manager.isPipChat ? Color("appAccent") : .secondary)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(manager.isPipChat ? "退出画中画" : "画中画：聊天悬浮在浏览器上")
-            .padding(.horizontal, 2)
-
-            // S5：清除浏览数据（Cookie/登录态/缓存），一键退出所有登录态
-            Button {
-                confirmClearBrowsingData()
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .help("清除浏览数据（Cookie/登录态/缓存）")
-            .padding(.horizontal, 2)
-
-            // 新空白页按钮（固定在 tab 条最右侧，不随 tab 滚动）
-            Button {
-                BrowserToolProvider.shared.openBlankTab()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .help("新空白页")
-            .padding(.horizontal, 4)
-
-            // 下载记录入口（同 Chrome 下箭头）
-            Button {
-                manager.showDownloads()
-            } label: {
-                Image(systemName: "arrow.down.circle")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .help("下载记录")
-            .padding(.trailing, 2)
-
-            // 收藏当前页（实心=已收藏）
-            Button {
-                toggleBookmarkCurrentPage()
-            } label: {
-                Image(systemName: currentPageBookmarked ? "star.fill" : "star")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(currentPageBookmarked ? .yellow : .secondary)
-            .help(currentPageBookmarked ? "取消收藏当前页" : "收藏当前页")
-            .padding(.trailing, 2)
-
-            // 收藏夹面板入口
-            Button {
-                manager.openBookmarkTab()
-            } label: {
-                Image(systemName: "bookmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .help("收藏夹")
-            .padding(.trailing, 2)
-
-            // 历史面板入口
-            Button {
-                manager.openHistoryTab()
-            } label: {
-                Image(systemName: "clock")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .help("浏览历史")
-            .padding(.trailing, 4)
+            // 原固定按钮（PiP/清数据/+/下载/⭐/书签/🕐）已移到顶栏中槽位（TopBarRegistry）
         }
         .padding(.leading, 6)
-    }
-
-    /// 当前页是否已收藏
-    private var currentPageBookmarked: Bool {
-        guard let url = BrowserToolProvider.shared.activeWebView?.url?.absoluteString else { return false }
-        return bookmarkStore.isBookmarked(url: url)
-    }
-
-    private func toggleBookmarkCurrentPage() {
-        guard let wv = BrowserToolProvider.shared.activeWebView,
-              let url = wv.url,
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else { return }
-        let title = wv.title ?? url.host ?? ""
-        bookmarkStore.toggle(title: title, url: url.absoluteString)
-    }
-
-    /// S5：确认后清除全部网站数据（cookie/localStorage/site data/缓存）。
-    /// 用非阻塞 sheet（runModal 会卡主线程，与 JS 弹窗同样的终止死锁隐患）。
-    private func confirmClearBrowsingData() {
-        #if os(macOS)
-        let alert = NSAlert()
-        alert.messageText = "清除浏览数据"
-        alert.informativeText = "将删除所有网站的 Cookie、本地存储与缓存，退出所有登录态。此操作不可撤销。"
-        alert.addButton(withTitle: "清除")
-        alert.addButton(withTitle: "取消")
-
-        let clearData: () -> Void = {
-            WKWebsiteDataStore.default().removeData(
-                ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
-                modifiedSince: .distantPast
-            ) {
-                ToastCenter.shared.show("浏览数据已清除")
-            }
-        }
-
-        guard let window = NSApp.keyWindow else {
-            DispatchQueue.main.async {
-                guard alert.runModal() == .alertFirstButtonReturn else { return }
-                clearData()
-            }
-            return
-        }
-        alert.beginSheetModal(for: window) { response in
-            guard response == .alertFirstButtonReturn else { return }
-            clearData()
-        }
-        #endif
     }
 
     /// tab 按钮：网页 tab 可拖拽重排；特殊 tab（下载/收藏/历史）固定不可拖

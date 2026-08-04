@@ -1173,6 +1173,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         switchActiveTab(to: tabId)
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
+        syncBrowserGroup()
 
         session.webView.load(URLRequest(url: url))
 
@@ -1240,6 +1241,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         tabs.removeAll()
         closedStack.removeAll()
         activeTabId = nil
+        syncBrowserGroup()
         return .init(serverResult: Self.jsonDict(["closed": true, "count": count]), serverError: nil, clientAction: nil)
     }
 
@@ -1255,6 +1257,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         session.cancelLoadWait()
         rightSidebar?.closeTab(tabId)
         tabs.removeValue(forKey: tabId)
+        syncBrowserGroup()
         if session.hasActiveDownloads {
             retiringSessions.append(session)
         }
@@ -1309,6 +1312,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let session = TabSession()
         tabs[tabId] = session
         switchActiveTab(to: tabId)
+        syncBrowserGroup()
         // 新标签页默认页（本地 HTML，替代 about:blank 白页）
         session.webView.loadHTMLString(Self.newTabPageHTML, baseURL: nil)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
@@ -1336,6 +1340,116 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
     }
 
+    // MARK: - 顶栏浏览器组（TopBarRegistry）
+
+    private var browserGroupRegistered = false
+
+    /// tab 增删后同步浏览器组注册状态（有 tab 注册 priority 10 组 → 顶栏左槽/中槽；无 tab 注销）
+    private func syncBrowserGroup() {
+        let shouldRegister = !tabs.isEmpty
+        if shouldRegister && !browserGroupRegistered {
+            registerBrowserGroups()
+            browserGroupRegistered = true
+        } else if !shouldRegister && browserGroupRegistered {
+            TopBarRegistry.shared.unregister(prefix: "browser-")
+            browserGroupRegistered = false
+        }
+    }
+
+    private func registerBrowserGroups() {
+        // 左槽位（priority 10）：浏览器专属操作（仅浏览器态显示）。无 < > 切换tab（用 Cmd+Shift+[/]）
+        TopBarRegistry.shared.register(TopBarGroup(
+            id: "browser-actions",
+            slot: .left,
+            priority: 10,
+            buttons: [
+                TopBarButton(id: "pip", icon: { [weak self] in
+                    (self?.rightSidebar?.isPipChat ?? false) ? "pip.exit" : "pip.enter"
+                },
+                enabled: { true },
+                action: { [weak self] in self?.rightSidebar?.isPipChat.toggle() },
+                help: { [weak self] in
+                    (self?.rightSidebar?.isPipChat ?? false) ? "退出画中画" : "画中画"
+                }),
+                TopBarButton(id: "clear-data", icon: { "trash" },
+                             enabled: { true },
+                             action: { BrowserToolProvider.clearBrowsingData() },
+                             help: { "清除浏览数据" }),
+                TopBarButton(id: "new-tab", icon: { "plus" },
+                             enabled: { true },
+                             action: { [weak self] in self?.openBlankTab() },
+                             help: { "新空白页" }),
+                TopBarButton(id: "downloads", icon: { "arrow.down.circle" },
+                             enabled: { true },
+                             action: { [weak self] in self?.rightSidebar?.openDownloadTab() },
+                             help: { "下载记录" }),
+                TopBarButton(id: "bookmark-star", icon: { [weak self] in
+                    (self?.currentPageBookmarked ?? false) ? "star.fill" : "star"
+                },
+                enabled: { [weak self] in self?.currentPageBookmarkedURL != nil },
+                action: { [weak self] in self?.toggleCurrentPageBookmark() },
+                help: { [weak self] in
+                    (self?.currentPageBookmarked ?? false) ? "取消收藏当前页" : "收藏当前页"
+                }),
+                TopBarButton(id: "bookmark-panel", icon: { "bookmark" },
+                             enabled: { true },
+                             action: { [weak self] in self?.rightSidebar?.openBookmarkTab() },
+                             help: { "收藏夹" }),
+                TopBarButton(id: "history", icon: { "clock" },
+                             enabled: { true },
+                             action: { [weak self] in self?.rightSidebar?.openHistoryTab() },
+                             help: { "浏览历史" }),
+            ]
+        ))
+    }
+
+    /// 当前页是否已收藏
+    var currentPageBookmarked: Bool {
+        currentPageBookmarkedURL != nil && BookmarkStore.shared.isBookmarked(url: currentPageBookmarkedURL!)
+    }
+
+    var currentPageBookmarkedURL: String? {
+        guard let url = activeWebView?.url?.absoluteString,
+              let scheme = URL(string: url)?.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return nil }
+        return url
+    }
+
+    func toggleCurrentPageBookmark() {
+        guard let wv = activeWebView, let url = wv.url,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return }
+        BookmarkStore.shared.toggle(title: wv.title ?? url.host ?? "", url: url.absoluteString)
+    }
+
+    /// 清除浏览数据（顶栏/浏览器清数据按钮共用；sheet 确认，非阻塞）
+    static func clearBrowsingData() {
+        #if os(macOS)
+        let alert = NSAlert()
+        alert.messageText = "清除浏览数据"
+        alert.informativeText = "将删除所有网站的 Cookie、本地存储与缓存，退出所有登录态。此操作不可撤销。"
+        alert.addButton(withTitle: "清除")
+        alert.addButton(withTitle: "取消")
+        let clearData: () -> Void = {
+            WKWebsiteDataStore.default().removeData(
+                ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+                modifiedSince: .distantPast
+            ) { ToastCenter.shared.show("浏览数据已清除") }
+        }
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first else {
+            DispatchQueue.main.async {
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                clearData()
+            }
+            return
+        }
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            clearData()
+        }
+        #endif
+    }
+
     /// 立即开新 tab 并加载 URL（收藏夹/历史点击打开，不等加载完成就显示 tab）。
     func openURL(_ url: URL) {
         let tabId = "browser-\(tabCounter)"
@@ -1343,6 +1457,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let session = TabSession()
         tabs[tabId] = session
         switchActiveTab(to: tabId)
+        syncBrowserGroup()
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
         rightSidebar?.openTab(id: tabId, title: url.host ?? "新标签页", icon: "globe",
@@ -1452,6 +1567,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             let newSession = TabSession(configuration: configuration)
             self.tabs[tabId] = newSession
             self.switchActiveTab(to: tabId)
+            self.syncBrowserGroup()
             self.bindSessionTitle(session: newSession, tabId: tabId)
             self.rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
                                        content: AnyView(BrowserTabView(webView: newSession.webView)))

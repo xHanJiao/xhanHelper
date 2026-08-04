@@ -101,15 +101,7 @@ struct BrowserTabView: View {
             .opacity(canGoForward ? 1 : 0.3)
             .help("前进")
 
-            securityIndicator
-
-            TextField("输入网址或搜索", text: $urlText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .focused($urlFocused)
-                .onSubmit { navigateToURL() }
-
-            // 加载中显示停止，否则刷新
+            // 加载中显示停止，否则刷新（放在 < > 右边）
             Button {
                 if isLoading {
                     webView.stopLoading()
@@ -123,6 +115,14 @@ struct BrowserTabView: View {
             }
             .buttonStyle(.plain)
             .help(isLoading ? "停止" : "重新加载")
+
+            securityIndicator
+
+            TextField("输入网址或搜索", text: $urlText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .focused($urlFocused)
+                .onSubmit { navigateToURL() }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)

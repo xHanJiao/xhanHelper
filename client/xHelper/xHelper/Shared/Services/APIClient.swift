@@ -131,10 +131,6 @@ class APIClient {
 		return try await get(path)
 	}
 
-	func extractMemoriesFromConversation(id: String) async throws {
-		let _: [String: String] = try await post("/api/conversations/\(id)/extract-memories", body: [:])
-	}
-
 	func deleteMemory(id: String) async throws {
 		try await delete("/api/memories/\(id)")
 	}

@@ -174,11 +174,13 @@ type SearchConfig struct {
 
 // ReflectionConfig — 反思系统配置
 type ReflectionConfig struct {
-	LaunchMaxIterations         int            `yaml:"launch_max_iterations"`          // 启动 Agent 最大轮次，默认 8
-	AnalystMaxIterations        int            `yaml:"analyst_max_iterations"`         // ThemeAnalyst 内部最大轮次，默认 3
-	DiscoverMaxIterations       int            `yaml:"discover_max_iterations"`        // ThemeDiscoverer 内部最大轮次，默认 3
-	ClusterThreshold            float64        `yaml:"cluster_threshold"`              // topic 聚类余弦相似度阈值，默认 0.70
-	PostChatDelaySeconds        int            `yaml:"post_chat_delay_seconds"`        // 对话后延迟触发秒数，默认 1800（30分钟）
+	LaunchMaxIterations   int     `yaml:"launch_max_iterations"`   // 启动 Agent 最大轮次，默认 8
+	AnalystMaxIterations  int     `yaml:"analyst_max_iterations"`  // ThemeAnalyst 内部最大轮次，默认 3
+	DiscoverMaxIterations int     `yaml:"discover_max_iterations"` // ThemeDiscoverer 内部最大轮次，默认 3
+	ClusterThreshold      float64 `yaml:"cluster_threshold"`       // topic 聚类余弦相似度阈值，默认 0.70
+	// Deprecated: post_chat_group 重构后不再使用（统一由 session_end 延迟任务驱动，
+	// 延迟用 chat.session_gap_minutes）。字段保留兼容旧配置，不再读取。
+	PostChatDelaySeconds        int            `yaml:"post_chat_delay_seconds"`
 	DailySchedules              []string       `yaml:"daily_schedules"`                // 早晚回顾定时触发时间列表，默认 ["09:00","20:00"]
 	DeliverIntervalMinutes      int            `yaml:"deliver_interval_minutes"`       // 投递窗口间隔分钟，默认 60
 	MaxDeliveryRetries          int            `yaml:"max_delivery_retries"`           // 投递重试上限，默认 3

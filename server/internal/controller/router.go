@@ -31,7 +31,6 @@ type RouterConfig struct {
 	MessageShareHandler  *MessageShareHandler
 	SummaryHandler       *SummaryHandler
 	ReminderHandler      *ReminderHandler
-	MemExtr              *agent.MemoryExtractor
 	ClientBridge         *agent.ClientToolBridge
 	ExtraMiddleware      []gin.HandlerFunc
 }
@@ -79,8 +78,6 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.PATCH("/conversations/:id/mode", updateConversationMode(rc.ConvRepo))
 		auth.GET("/conversations/:id/plans", getConversationPlan(rc.ConvRepo, rc.PlanRepo))
 		auth.DELETE("/conversations/:id", deleteConversation(rc.ConvRepo))
-		auth.POST("/conversations/:id/extract-memories", extractMemories(rc.ConvRepo, rc.MemExtr))
-		auth.POST("/conversations/:id/extract-memories/stream", extractMemoriesStream(rc.ConvRepo, rc.MemExtr))
 		auth.POST("/conversations/:id/share-messages", rc.MessageShareHandler.CreateMessageShare)
 		auth.GET("/bills", rc.BillHandler.ListBills)
 		auth.GET("/bills/export", rc.BillHandler.ExportBills)

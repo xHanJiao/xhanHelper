@@ -1,10 +1,8 @@
 package controller
 
 import (
-	"context"
 	"encoding/json"
 	"log"
-	"net/http"
 	"strconv"
 	"strings"
 
@@ -539,59 +537,6 @@ func deleteConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 			return
 		}
 		view.JSONOK(c, gin.H{"status": "deleted"})
-	}
-}
-
-func extractMemories(convRepo *service.ConversationRepo, extractor *agent.MemoryExtractor) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		convID := c.Param("id")
-		if !requireConversationOwner(c, convRepo, convID) {
-			return
-		}
-		conv, err := convRepo.FindByID(c.Request.Context(), convID)
-		if err != nil {
-			log.Printf("[conv] FindByID error: %v", err)
-		}
-		if conv == nil {
-			view.JSONError(c, 404, "conversation not found")
-			return
-		}
-		go extractor.ExtractFromConversation(context.Background(), conv)
-		view.JSONOK(c, gin.H{"status": "extracting"})
-	}
-}
-
-func extractMemoriesStream(convRepo *service.ConversationRepo, extractor *agent.MemoryExtractor) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		convID := c.Param("id")
-		if !requireConversationOwner(c, convRepo, convID) {
-			return
-		}
-		conv, err := convRepo.FindByID(c.Request.Context(), convID)
-		if err != nil {
-			log.Printf("[conv] FindByID error: %v", err)
-		}
-		if conv == nil {
-			view.JSONError(c, 404, "conversation not found")
-			return
-		}
-
-		w := c.Writer
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			view.JSONError(c, 500, "streaming not supported")
-			return
-		}
-
-		cb := func(evt agent.ExtractEvent) {
-			data, _ := json.Marshal(evt)
-			view.WriteSSE(w, flusher, evt.Type, string(data))
-		}
-
-		extractor.ExtractFromConversationWithCallback(c.Request.Context(), conv, cb)
 	}
 }
 

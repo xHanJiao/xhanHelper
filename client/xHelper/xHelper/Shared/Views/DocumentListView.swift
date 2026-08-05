@@ -133,9 +133,25 @@ private struct DocumentFullView: View {
 
                             Divider()
 
-                            Markdown(document.content)
-                                .markdownTheme(.chatBubble(fontSize: FontSizeManager.shared.scaledSize * 1.18))
-                                .markdownCodeSyntaxHighlighter(.plainText)
+                            let segments = MermaidUtility.splitContent(document.content)
+                            if segments.isEmpty {
+                                Markdown(document.content)
+                                    .markdownTheme(.chatBubble(fontSize: FontSizeManager.shared.scaledSize * 1.18))
+                                    .markdownCodeSyntaxHighlighter(.plainText)
+                            } else {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    ForEach(segments) { segment in
+                                        switch segment.type {
+                                        case .markdown:
+                                            Markdown(segment.content)
+                                                .markdownTheme(.chatBubble(fontSize: FontSizeManager.shared.scaledSize * 1.18))
+                                                .markdownCodeSyntaxHighlighter(.plainText)
+                                        case .mermaid:
+                                            MermaidDiagramInlineView(code: segment.content)
+                                        }
+                                    }
+                                }
+                            }
                         }
                         .padding(24)
                         .frame(maxWidth: .infinity, alignment: .leading)

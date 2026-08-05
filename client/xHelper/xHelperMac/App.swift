@@ -461,6 +461,7 @@ struct MacSettingsView: View {
     @ObservedObject var deviceManager: DeviceManager
     @EnvironmentObject var colorSchemeManager: ColorSchemeManager
     @AppStorage("xhan_server_url") private var serverURL = DeviceManager.defaultBaseURL
+    @AppStorage("xhan_l3_alert_sound") private var l3AlertSound = true
     @State private var showClearCacheAlert = false
 
     private var apiClient: APIClient {
@@ -484,6 +485,10 @@ struct MacSettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+            }
+
+            Section("提醒") {
+                Toggle("提示音", isOn: $l3AlertSound)
             }
 
 #if DEBUG

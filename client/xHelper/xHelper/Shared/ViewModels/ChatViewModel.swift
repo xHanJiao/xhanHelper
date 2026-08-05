@@ -4,6 +4,9 @@ import SwiftUI
 #if os(iOS)
 import UIKit
 #endif
+#if os(macOS)
+import AppKit
+#endif
 
 // MARK: - Plan Node
 
@@ -305,6 +308,7 @@ class ChatViewModel: ObservableObject {
         #endif
         return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
             pendingToolConfirmation = ToolConfirmation(id: myID, toolName: toolName, displayName: displayName, argsSummary: argsSummary, continuation: cont)
+            playConfirmationAlert()
             // 60s 超时自动拒绝。confirmationResolved 是共享标志（新确认会重置），
             // 必须叠加 id 检查：旧确认的超时任务醒来时 pending 已是新确认（或 nil），跳过，
             // 否则会对已解决/已替换的 continuation 二次 resume 导致崩溃。
@@ -332,6 +336,20 @@ class ChatViewModel: ObservableObject {
         BrowserActivityCenter.shared.dismissConfirmation()
         #endif
         conf.continuation.resume(returning: allow)
+    }
+
+    /// L3 确认出现时播放提示音（macOS：Glass 系统音，设置可关；iOS 静默）。
+    private func playConfirmationAlert() {
+        #if os(macOS)
+        if UserDefaults.standard.object(forKey: "xhan_l3_alert_sound") == nil
+            || UserDefaults.standard.bool(forKey: "xhan_l3_alert_sound") {
+            if let sound = NSSound(named: .init("Glass")) {
+                sound.play()
+            } else {
+                NSSound.beep()
+            }
+        }
+        #endif
     }
 
     // 游标分页

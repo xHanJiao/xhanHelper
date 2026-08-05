@@ -1646,6 +1646,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 return self.openPopupTab(configuration: configuration, targetURL: targetURL)
             }
 
+            // window.open / form target=_blank：http/https 直接放行开新 tab（对齐 Chrome，不再弹窗）；
+            // 非 http 协议（javascript:/data:/file: 等）仍弹确认，防止被诱导执行本地/危险操作
+            if let url = targetURL, url.scheme == "http" || url.scheme == "https" {
+                return self.openPopupTab(configuration: configuration, targetURL: targetURL)
+            }
+
             // window.open / form target=_blank → 弹确认
             let targetStr = targetURL?.absoluteString ?? "(未知)"
             let sourceHost = session.webView.url?.host ?? "当前页面"

@@ -36,7 +36,7 @@ struct TopBarView: View {
         .onTapGesture(count: 2) { zoomWindow() }
         #endif
         .padding(.horizontal, Layout.toolbarHorizontalPadding)
-        .padding(.vertical, 6)
+        .padding(.vertical, Layout.toolbarVGap)
         .ignoresSafeArea(edges: .top)
         .onAppear { registerDefaultGroups() }
     }

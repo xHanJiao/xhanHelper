@@ -311,13 +311,12 @@ struct ContentView: View {
                         rightSidebar: rightSidebar,
                         navLeadingOffset: sidebarWidth + Layout.navToolbarContentOffset
                     )
-                    // 提升到内容区卡片之上：顶栏 hover tooltip 向下浮层不被下方卡片遮挡
-                    // （VStack 后声明的兄弟绘制在上层，不加 zIndex 时 tooltip 会被盖住）
                     .zIndex(1)
 
                     GeometryReader { geo in
                         HStack(alignment: .top, spacing: 0) {
-                            // 左侧栏卡片
+                            HSpace(Layout.cardGap)
+
                             SidebarView(
                                 selectedTab: sidebarTabBinding,
                                 sidebarWidth: $sidebarWidth,
@@ -325,20 +324,22 @@ struct ContentView: View {
                                 conversationListVM: conversationListVM,
                                 defaultConversationID: deviceManager.defaultConversation?.id
                             )
-                            .padding(.bottom, 12)
                             .padding(.horizontal, Layout.sidebarHPadding)
                             .modifier(CardBackgroundModifier(isLifted: sidebarHovered))
-                            .padding(.top, 4)
-                            .padding(.bottom, 12)
-                            .padding(.leading, Layout.sidebarLeadingPadding)
-                            .padding(.trailing, Layout.sidebarTrailingPadding)
                             .onHover { sidebarHovered = $0 }
+
+                            HSpace(Layout.seamHalfGap)
                             SeamMarker(x: $leftSeamX)
+                            HSpace(Layout.seamHalfGap)
+
                             if !rightSidebar.isPipChat {
                                 macOSContentArea
                             }
                             if rightSidebar.isOpen {
+                                HSpace(Layout.seamHalfGap)
                                 SeamMarker(x: $rightSeamX)
+                                HSpace(Layout.seamHalfGap)
+
                                 RightSidebarView(
                                     manager: rightSidebar,
                                     billVM: billVM,
@@ -349,11 +350,10 @@ struct ContentView: View {
                                     baseURL: deviceManager.baseURL,
                                     token: deviceManager.token ?? ""
                                 )
-                                .padding(.top, 4)
-                                .padding(.leading, Layout.rightSidebarLeadingPadding)
-                                .padding(.trailing, Layout.rightSidebarTrailingPadding)
                                 .transition(.move(edge: .trailing))
                             }
+
+                            HSpace(Layout.cardGap)
                         }
                         .coordinateSpace(name: ResizeDividerSpace.name)
                         .overlay(alignment: .topLeading) {
@@ -450,6 +450,7 @@ struct ContentView: View {
                             clampRightSidebarWidth()
                         }
                     }
+                    VSpace(Layout.cardBottomGap)
                 }
                 .overlay(alignment: .top) {
                     VStack(spacing: 0) {
@@ -565,10 +566,8 @@ struct ContentView: View {
                     AgentPage(router: router, viewModel: agentVM)
                 }
             }
-            .modifier(CardBackgroundModifier(isLifted: contentHovered || (activeChatViewModel?.isEditing ?? false)))
-            .padding(.top, 4)
             .padding(.horizontal, 12)
-            .padding(.bottom, 12)
+            .modifier(CardBackgroundModifier(isLifted: contentHovered || (activeChatViewModel?.isEditing ?? false)))
             .frame(minWidth: Layout.middleMinWidth, alignment: .leading)
             .onHover { contentHovered = $0 }
         .onChange(of: activeChatViewModel?.isStreaming) { _, streaming in

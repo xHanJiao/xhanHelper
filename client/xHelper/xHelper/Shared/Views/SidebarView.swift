@@ -103,43 +103,53 @@ struct SidebarView: View {
     }
 
     private var conversationListSection: some View {
-        ScrollView {
-            LazyVStack(spacing: 2) {
-                ForEach(conversationListVM.conversations) { conv in
-                    conversationRow(conv)
-                }
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(conversationListVM.conversations) { conv in
+                        conversationRow(conv)
+                            .id(conv.id)
+                    }
 
-                if conversationListVM.hasMore {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .onAppear {
-                            Task { await conversationListVM.loadMore() }
-                        }
-                }
+                    if conversationListVM.hasMore {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .onAppear {
+                                Task { await conversationListVM.loadMore() }
+                            }
+                    }
 
-                if conversationListVM.isLoading && conversationListVM.conversations.isEmpty {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 24)
-                }
+                    if conversationListVM.isLoading && conversationListVM.conversations.isEmpty {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 24)
+                    }
 
-                if conversationListVM.conversations.isEmpty && !conversationListVM.isLoading {
-                    Text("暂无会话")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 24)
+                    if conversationListVM.conversations.isEmpty && !conversationListVM.isLoading {
+                        Text("暂无会话")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 24)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+            }
+            .task {
+                if !conversationListVM.hasLoadedOnce {
+                    await conversationListVM.load()
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
-        }
-        .task {
-            if !conversationListVM.hasLoadedOnce {
-                await conversationListVM.load()
+            // 快捷键/外部跳转切到某个会话时，把它滚动到可视区（侧栏点击本身已可见，滚动无副作用）
+            .onChange(of: chatTabManager.currentConversationId) { _, newID in
+                guard let newID, !newID.isEmpty else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(newID, anchor: .center)
+                }
             }
         }
     }

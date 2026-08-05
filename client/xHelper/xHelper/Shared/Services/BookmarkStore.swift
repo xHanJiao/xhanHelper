@@ -73,6 +73,13 @@ final class BookmarkStore: ObservableObject {
         scheduleSave()
     }
 
+    /// 重命名收藏（允许清空：空名称 = 无名字，展示时只显示图标）。
+    func rename(id: UUID, title: String) {
+        guard let i = bookmarks.firstIndex(where: { $0.id == id }) else { return }
+        bookmarks[i].title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        scheduleSave()
+    }
+
     func remove(url: String) {
         let key = url.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         bookmarks.removeAll { $0.url.lowercased() == key }

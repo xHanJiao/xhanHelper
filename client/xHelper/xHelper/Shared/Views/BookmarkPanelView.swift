@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 struct BookmarkPanelView: View {
     @ObservedObject private var store = BookmarkStore.shared
     @State private var query = ""
+    @State private var renaming: BookmarkStore.Bookmark?
+    @State private var renameText = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +28,16 @@ struct BookmarkPanelView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                 }
+            }
+        }
+        .alert("重命名收藏", isPresented: Binding(
+            get: { renaming != nil },
+            set: { if !$0 { renaming = nil } }
+        )) {
+            TextField("名称（留空则只显示图标）", text: $renameText)
+            Button("取消", role: .cancel) { }
+            Button("保存") {
+                if let b = renaming { store.rename(id: b.id, title: renameText) }
             }
         }
     }
@@ -114,6 +126,13 @@ struct BookmarkPanelView: View {
             .buttonStyle(.plain)
             .foregroundColor(.secondary)
             .help("删除收藏")
+        }
+        .contextMenu {
+            Button("重命名") {
+                renaming = b
+                renameText = b.title
+            }
+            Button("删除收藏", role: .destructive) { store.remove(id: b.id) }
         }
     }
 

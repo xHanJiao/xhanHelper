@@ -18,10 +18,15 @@ struct BrowserTabView: View {
     @ObservedObject private var findCoordinator = BrowserFindCoordinator.shared
     @ObservedObject private var downloadStore = DownloadHistoryStore.shared
     @ObservedObject private var bookmarkStore = BookmarkStore.shared
+    @ObservedObject private var bookmarksBarState = BookmarksBarState.shared
 
     var body: some View {
         VStack(spacing: 0) {
             toolbar
+            if bookmarksBarState.isVisible {
+                BookmarksBarView()
+                Divider()
+            }
             if isLoading && progress > 0 && progress < 1 {
                 ProgressView(value: progress)
                     .progressViewStyle(.linear)

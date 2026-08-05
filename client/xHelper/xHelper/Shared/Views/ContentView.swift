@@ -176,6 +176,7 @@ struct ContentView: View {
         }
         prePipSidebarWidth = rightSidebar.width
         pipExitReason = "userExit"
+        rightSidebar.width = rightSidebarMaxAvailable
         updateWindowMinWidth()
         guard let window = NSApp.keyWindow else { return }
         let deficit = Self.pipMinContentWidth - windowWidth
@@ -364,8 +365,7 @@ struct ContentView: View {
                                     baseURL: deviceManager.baseURL,
                                     token: deviceManager.token ?? ""
                                 )
-                                .frame(maxWidth: rightSidebar.isPipChat ? .infinity : rightSidebar.width)
-                                .layoutPriority(1)
+                                .frame(width: rightSidebar.isPipChat ? nil : rightSidebar.width)
                                 .transition(.move(edge: .trailing))
                             }
 
@@ -592,8 +592,8 @@ struct ContentView: View {
             }
             .padding(.horizontal, 12)
             .modifier(CardBackgroundModifier(isLifted: contentHovered || (activeChatViewModel?.isEditing ?? false)))
-            .frame(minWidth: Layout.middleMinWidth, maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(2)
+            .frame(minWidth: Layout.middleMinWidth, idealWidth: Layout.middleMinWidth, maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
             .onHover { contentHovered = $0 }
         .onChange(of: activeChatViewModel?.isStreaming) { _, streaming in
             router.setRefreshDisabled(for: .chat,

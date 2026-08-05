@@ -18,6 +18,7 @@ private struct LightCardBackgroundModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             .modifier(CardShadowRenderer(
                 isLifted: isLifted,
@@ -32,6 +33,7 @@ private struct DarkCardBackgroundModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             .modifier(CardShadowRenderer(
                 isLifted: isLifted,

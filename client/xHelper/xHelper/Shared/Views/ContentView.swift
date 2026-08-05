@@ -94,7 +94,11 @@ struct ContentView: View {
     /// 右栏打开时所需的内容最小宽（由 Layout 派生）。
     private static let rightSidebarOpenMinWidth: CGFloat = Layout.rightSidebarOpenMinContentWidth
     /// 右栏关闭时窗口基准最小内容宽。
-    private static let baseMinWidth: CGFloat = 400
+    private static let baseMinWidth: CGFloat =
+        Layout.cardGap * 2
+        + Layout.sidebarMinWidth + Layout.sidebarHPadding * 2
+        + Layout.seamHalfGap * 2 + Layout.seamWidth
+        + Layout.middleMinWidth
     /// PiP 时所需的内容最小宽（左栏收起 + seam + 右栏最小）。
     private static let pipMinContentWidth: CGFloat =
         Layout.sidebarMinWidth + Layout.sidebarOuterPadding
@@ -163,22 +167,15 @@ struct ContentView: View {
     /// 进入 PiP 副作用（由 onChange(of: isPipChat) 驱动，幂等）。
     private func enterPipEffects() {
         guard rightSidebar.isPipChat else { return }
+        rightSidebar.pipCollapsed = false
         // 非聊天 tab 时进入 PiP 会隐藏该页面，先切到聊天，让悬浮面板承载对话
         if router.currentTab != .chat {
             router.navigateTo(.chat)
         }
         prePipSidebarWidth = rightSidebar.width
         pipExitReason = "userExit"
-        let target = rightSidebarMaxAvailable
-        withAnimation(.easeInOut(duration: 0.2)) {
-            rightSidebar.width = target
-        }
         updateWindowMinWidth()
-        pipLog("enter: prePipWidth=\(Int(prePipSidebarWidth ?? 0)) targetWidth=\(Int(target)) maxAvailable=\(Int(rightSidebarMaxAvailable)) windowW=\(Int(windowWidth))")
-        // 动画/布局落定后二次校准：避免 manager.width 与 HStack 实际分配空间有微小偏差导致右侧白块
-        DispatchQueue.main.async {
-            clampRightSidebarWidth()
-        }
+        pipLog("enter: prePipWidth=\(Int(prePipSidebarWidth ?? 0)) windowW=\(Int(windowWidth))")
     }
 
     /// 退出 PiP 副作用（onChange 统一入口，reason 用于诊断）。
@@ -314,18 +311,35 @@ struct ContentView: View {
                     .zIndex(1)
 
                     GeometryReader { geo in
+                        let fixedSpacing: CGFloat = Layout.cardGap * 2
+                            + Layout.sidebarHPadding * 2
+                            + Layout.seamHalfGap * 2 + Layout.seamWidth
+                            + (rightSidebar.isOpen ? Layout.seamHalfGap * 2 + Layout.seamWidth : 0)
+                        let otherMinWidths: CGFloat = (rightSidebar.isPipChat ? 0 : Layout.middleMinWidth)
+                            + (rightSidebar.isOpen ? Layout.rightSidebarMinWidth : 0)
+                        let availableForSidebar = geo.size.width - fixedSpacing - otherMinWidths
+                        let rawSidebar: CGFloat = min(sidebarWidth, max(Layout.sidebarMinWidth, availableForSidebar))
+                        let effectiveSidebarWidth: CGFloat = rawSidebar <= Layout.sidebarSnapThreshold
+                            ? Layout.sidebarMinWidth
+                            : rawSidebar
+                        let sidebarBinding = Binding<CGFloat>(
+                            get: { effectiveSidebarWidth },
+                            set: { sidebarWidth = $0 }
+                        )
                         HStack(alignment: .top, spacing: 0) {
                             HSpace(Layout.cardGap)
 
                             SidebarView(
                                 selectedTab: sidebarTabBinding,
-                                sidebarWidth: $sidebarWidth,
+                                sidebarWidth: sidebarBinding,
                                 chatTabManager: chatTabManager,
                                 conversationListVM: conversationListVM,
                                 defaultConversationID: deviceManager.defaultConversation?.id
                             )
+                            .frame(minWidth: Layout.sidebarMinWidth)
                             .padding(.horizontal, Layout.sidebarHPadding)
                             .modifier(CardBackgroundModifier(isLifted: sidebarHovered))
+                            .layoutPriority(3)
                             .onHover { sidebarHovered = $0 }
 
                             HSpace(Layout.seamHalfGap)
@@ -350,6 +364,7 @@ struct ContentView: View {
                                     baseURL: deviceManager.baseURL,
                                     token: deviceManager.token ?? ""
                                 )
+                                .layoutPriority(1)
                                 .transition(.move(edge: .trailing))
                             }
 
@@ -363,11 +378,11 @@ struct ContentView: View {
                                     ResizableDivider(
                                         id: "left",
                                         width: Binding(
-                                            get: { Double(sidebarWidth) },
+                                            get: { Double(effectiveSidebarWidth) },
                                             set: { sidebarWidth = CGFloat($0) }
                                         ),
                                         minWidth: Double(Layout.sidebarMinWidth),
-                                        maxWidth: leftSidebarMaxAvailable,
+                                        maxWidth: Double(max(Layout.sidebarMinWidth, min(Layout.sidebarMaxWidth, availableForSidebar))),
                                         ghost: resizeGhost,
                                         seamX: $leftSeamX
                                     )
@@ -403,11 +418,6 @@ struct ContentView: View {
                         .animation(.easeInOut(duration: 0.2), value: rightSidebar.isOpen)
                         .onChange(of: geo.size.width) { _, new in
                             windowWidth = new
-                            let needCollapse = new < 600
-                                || (rightSidebar.isOpen && new < sidebarWidth + Layout.sidebarOuterPadding + middleAndRightMinSpanPipAware)
-                            if needCollapse && sidebarWidth > Layout.sidebarSnapThreshold {
-                                sidebarWidth = Layout.sidebarMinWidth
-                            }
                             clampRightSidebarWidth()
                         }
                         .onChange(of: rightSidebar.isOpen) { _, isOpen in
@@ -568,7 +578,8 @@ struct ContentView: View {
             }
             .padding(.horizontal, 12)
             .modifier(CardBackgroundModifier(isLifted: contentHovered || (activeChatViewModel?.isEditing ?? false)))
-            .frame(minWidth: Layout.middleMinWidth, alignment: .leading)
+            .frame(minWidth: Layout.middleMinWidth, maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(2)
             .onHover { contentHovered = $0 }
         .onChange(of: activeChatViewModel?.isStreaming) { _, streaming in
             router.setRefreshDisabled(for: .chat,

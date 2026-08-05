@@ -29,7 +29,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     func toolSchemas() async -> [LocalToolSchema] {
         var schemas: [LocalToolSchema] = [
-            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。打开新页面后，不再需要的旧页面请及时调用 close_tab 关闭（调研场景会开很多页面，避免标签页堆积占用内存）。background 参数：false（默认）前台打开并激活，切走当前页，适合用户未在阅读或需立即与新页交互（click/fill）的场景；true 后台加载不切走当前页，适合『用户正在阅读某页、需并行调研另一页』的场景，此时配合 snapshot/read/get_text 等工具的 tabId 参数可全程静默（流程：open(url, background:true) 拿 tabId → snapshot/read(tabId:...) 静默抓取 → close_tab(tabId:...) 清理，用户页面不闪不切）", inputSchema: objProps(["url": strProp("要打开的网址"), "background": boolProp("是否后台打开（不切走当前标签页），默认 false")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。默认规则：除非用户明确要求前台打开/查看该页、或需立即对其 click/fill 交互，否则一律用 background:true 后台打开（不切走当前页，用户无感知）。打开新页面后，不再需要的旧页面请及时调用 close_tab 关闭（调研场景会开很多页面，避免标签页堆积占用内存）。background 参数：true（默认）后台加载不切走当前页，配合 snapshot/read/get_text 等工具的 tabId 参数可全程静默（流程：open(url, background:true) 拿 tabId → snapshot/read(tabId:...) 静默抓取 → close_tab(tabId:...) 清理，用户页面不闪不切）；false 前台打开并激活，切走当前页，仅用于用户明确要求查看页面或需立即交互（click/fill）时。若页面需用户在登录后手动操作，再切回前台", inputSchema: objProps(["url": strProp("要打开的网址"), "background": boolProp("是否后台打开（不切走当前标签页），默认 true")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_close",            description: "关闭所有浏览器标签页",                       inputSchema: objProps([:]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_close_tab",        description: "关闭指定的单个标签页，释放内存。tabId 从 list_tabs 获取；不用的页面请及时关闭", inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_list_tabs",        description: "列出当前所有打开的标签页（id/url/title）",      inputSchema: objProps([:]), isReadOnly: true),
@@ -1218,7 +1218,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     private func handleOpen(_ args: [String: Any]) async -> LocalToolResult {
         let urlStr = args["url"] as? String ?? ""
-        let background = args["background"] as? Bool ?? false
+        let background = args["background"] as? Bool ?? true
         guard let url = URL(string: urlStr) else {
             return .init(serverResult: Self.jsonDict(["error": "无效的URL"]), serverError: nil, clientAction: nil)
         }
@@ -1563,7 +1563,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         guard let last = closedStack.popLast() else { return }
         if let url = last.url, url.scheme == "http" || url.scheme == "https" {
             Task { @MainActor in
-                _ = await handleOpen(["url": url.absoluteString])
+                _ = await handleOpen(["url": url.absoluteString, "background": false])
             }
         } else {
             openBlankTab()

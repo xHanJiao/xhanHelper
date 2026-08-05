@@ -114,6 +114,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil
             }
 
+            // Cmd+Shift+↑ / Cmd+Shift+↓：会话列表上/下切换（焦点无关，无模态时生效；
+            // 已通过上方 guard 的 !isARepeat 拦截按住重复）
+            if event.keyCode == 126 || event.keyCode == 125,
+               event.modifierFlags.contains(.shift),
+               NSApp.modalWindow == nil {
+                AppShortcutBridge.shared.onSwitchConversation?(event.keyCode == 126 ? -1 : 1)
+                return nil
+            }
+
             // 浏览器聚焦时拦截浏览器快捷键（事件不下发 → 工具栏 keyboardShortcut/默认菜单不触发）
             if BrowserFocus.isFocused() {
                 switch event.keyCode {

@@ -242,6 +242,28 @@ struct ContentView: View {
         }
     }
 
+    /// Cmd+Shift+↑ / ↓：在会话列表中上/下切换会话（delta：-1 上移，+1 下移）。
+    /// 当前会话不在已加载列表（新建空 tab / 分页未加载）时回退到列表第一项（最近会话）。
+    private func switchConversation(delta: Int) async {
+        if !conversationListVM.hasLoadedOnce {
+            await conversationListVM.load()
+        }
+        let conversations = conversationListVM.conversations
+        guard !conversations.isEmpty else { return }
+
+        let currentID = chatTabManager.currentConversationId
+        let target: Conversation
+        if let idx = conversations.firstIndex(where: { $0.id == currentID }) {
+            let newIdx = min(max(idx + delta, 0), conversations.count - 1)
+            target = conversations[newIdx]
+        } else {
+            target = conversations[0]
+        }
+
+        router.navigateTo(.chat)
+        await chatTabManager.openConversation(id: target.id, title: target.title, pushHistory: true, mode: target.mode)
+    }
+
     /// 注册 App 级快捷键桥（macOS：Cmd+B / Tab·Esc L3 确认）。
     private func registerAppShortcutBridge() {
         // ContentView 是 struct，闭包捕获的是值拷贝，无循环引用，不需 weak
@@ -250,6 +272,9 @@ struct ContentView: View {
         }
         AppShortcutBridge.shared.onNewChat = {
             self.chatTabManager.newChat()
+        }
+        AppShortcutBridge.shared.onSwitchConversation = { delta in
+            Task { await self.switchConversation(delta: delta) }
         }
         AppShortcutBridge.shared.confirmationPending = {
             self.activeChatViewModel?.pendingToolConfirmation != nil

@@ -31,6 +31,8 @@ struct ContentView: View {
     @State private var rightSeamX: CGFloat = 0
     @AppStorage("xhan_sidebar_width") private var storedSidebarWidth: Double = Layout.sidebarDefaultWidth
     @State private var windowWidth: CGFloat = 800
+    /// 侧栏是否为自动收起，窗口拉宽后自动恢复。
+    @State private var sidebarAutoCollapsed = false
     /// 进入 PiP 前右栏宽度，退出时恢复。
     @State private var prePipSidebarWidth: Double?
     /// PiP 自动退出原因（onChange 里消费，避免状态翻转与副作用耦合）。
@@ -175,6 +177,13 @@ struct ContentView: View {
         prePipSidebarWidth = rightSidebar.width
         pipExitReason = "userExit"
         updateWindowMinWidth()
+        guard let window = NSApp.keyWindow else { return }
+        let deficit = Self.pipMinContentWidth - windowWidth
+        if deficit > 0 {
+            var frame = window.frame
+            frame.size.width += deficit
+            window.setFrame(frame, display: true, animate: true)
+        }
         pipLog("enter: prePipWidth=\(Int(prePipSidebarWidth ?? 0)) windowW=\(Int(windowWidth))")
     }
 
@@ -311,27 +320,18 @@ struct ContentView: View {
                     .zIndex(1)
 
                     GeometryReader { geo in
-                        let fixedSpacing: CGFloat = Layout.cardGap * 2
-                            + Layout.sidebarHPadding * 2
-                            + Layout.seamHalfGap * 2 + Layout.seamWidth
-                            + (rightSidebar.isOpen ? Layout.seamHalfGap * 2 + Layout.seamWidth : 0)
-                        let otherMinWidths: CGFloat = (rightSidebar.isPipChat ? 0 : Layout.middleMinWidth)
-                            + (rightSidebar.isOpen ? Layout.rightSidebarMinWidth : 0)
-                        let availableForSidebar = geo.size.width - fixedSpacing - otherMinWidths
-                        let rawSidebar: CGFloat = min(sidebarWidth, max(Layout.sidebarMinWidth, availableForSidebar))
-                        let effectiveSidebarWidth: CGFloat = rawSidebar <= Layout.sidebarSnapThreshold
-                            ? Layout.sidebarMinWidth
-                            : rawSidebar
-                        let sidebarBinding = Binding<CGFloat>(
-                            get: { effectiveSidebarWidth },
-                            set: { sidebarWidth = $0 }
-                        )
+                        let rightMax: Double = max(Double(Layout.rightSidebarMinWidth),
+                            min(rightSidebar.isPipChat ? 4000 : 1200,
+                                Double(geo.size.width)
+                                - Double(sidebarWidth + Layout.sidebarOuterPadding)
+                                - middleSpan
+                                - Double(Layout.rightSidebarOuterPadding)))
                         HStack(alignment: .top, spacing: 0) {
                             HSpace(Layout.cardGap)
 
                             SidebarView(
                                 selectedTab: sidebarTabBinding,
-                                sidebarWidth: sidebarBinding,
+                                sidebarWidth: $sidebarWidth,
                                 chatTabManager: chatTabManager,
                                 conversationListVM: conversationListVM,
                                 defaultConversationID: deviceManager.defaultConversation?.id
@@ -364,6 +364,7 @@ struct ContentView: View {
                                     baseURL: deviceManager.baseURL,
                                     token: deviceManager.token ?? ""
                                 )
+                                .frame(maxWidth: rightSidebar.isPipChat ? .infinity : rightSidebar.width)
                                 .layoutPriority(1)
                                 .transition(.move(edge: .trailing))
                             }
@@ -378,11 +379,11 @@ struct ContentView: View {
                                     ResizableDivider(
                                         id: "left",
                                         width: Binding(
-                                            get: { Double(effectiveSidebarWidth) },
+                                            get: { Double(sidebarWidth) },
                                             set: { sidebarWidth = CGFloat($0) }
                                         ),
                                         minWidth: Double(Layout.sidebarMinWidth),
-                                        maxWidth: Double(max(Layout.sidebarMinWidth, min(Layout.sidebarMaxWidth, availableForSidebar))),
+                                        maxWidth: leftSidebarMaxAvailable,
                                         ghost: resizeGhost,
                                         seamX: $leftSeamX
                                     )
@@ -393,7 +394,7 @@ struct ContentView: View {
                                         id: "right",
                                         width: $rightSidebar.width,
                                         minWidth: Double(Layout.rightSidebarMinWidth),
-                                        maxWidth: rightSidebarMaxAvailable,
+                                        maxWidth: rightMax,
                                         reversed: true,
                                         ghost: resizeGhost,
                                         seamX: $rightSeamX
@@ -418,6 +419,16 @@ struct ContentView: View {
                         .animation(.easeInOut(duration: 0.2), value: rightSidebar.isOpen)
                         .onChange(of: geo.size.width) { _, new in
                             windowWidth = new
+                            let extra: CGFloat = rightSidebar.isPipChat ? 396
+                                : rightSidebar.isOpen ? 736
+                                : 385
+                            if new < sidebarWidth + extra && sidebarWidth > Layout.sidebarMinWidth {
+                                sidebarWidth = Layout.sidebarMinWidth
+                                sidebarAutoCollapsed = true
+                            } else if sidebarAutoCollapsed && new >= CGFloat(storedSidebarWidth) + extra {
+                                sidebarWidth = min(CGFloat(storedSidebarWidth), Layout.sidebarMaxWidth)
+                                sidebarAutoCollapsed = false
+                            }
                             clampRightSidebarWidth()
                         }
                         .onChange(of: rightSidebar.isOpen) { _, isOpen in
@@ -456,7 +467,10 @@ struct ContentView: View {
                                 autoExitPip(reason: "browsePanel")
                             }
                         }
-                        .onChange(of: sidebarWidth) { _, _ in
+                        .onChange(of: sidebarWidth) { _, new in
+                            if new > Layout.sidebarMinWidth {
+                                sidebarAutoCollapsed = false
+                            }
                             clampRightSidebarWidth()
                         }
                     }

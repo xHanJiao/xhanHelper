@@ -634,6 +634,7 @@ class ChatViewModel: ObservableObject {
             }
             // 对话结束刷新执行计划（todo 可能被 plan.save 更新）
             Task { await self.loadPlanTodo() }
+            NotificationCenter.default.post(name: .conversationListNeedsRefresh, object: nil)
             if let mids = parseMemoryIDsFromDone(event.data), !mids.isEmpty {
                 lastMemoryIDs = mids
             }

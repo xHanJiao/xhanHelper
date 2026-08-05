@@ -139,6 +139,13 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(.regularMaterial)
             )
+            // 整颗胶囊（含 14/6 留白）都可点聚焦：留白区点击走此手势把焦点移入编辑器，
+            // 按钮/编辑器本体由子视图优先消费（SwiftUI 子视图手势优先），不受影响。
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .onTapGesture {
+                guard !isStreaming else { return }
+                isFocused = true
+            }
             .shadow(
                 color: containerTint.opacity(0.18 + streamingGlow * 0.14),
                 radius: 10 + streamingGlow * 7

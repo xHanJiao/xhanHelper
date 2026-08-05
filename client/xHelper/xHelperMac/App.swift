@@ -123,12 +123,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil
             }
 
+            // Cmd+W：全局拦截，禁用默认"关闭窗口"菜单快捷键（防止误触退出）。
+            // 浏览器聚焦时对齐 Chrome 关闭当前 tab；否则忽略，不做任何事。
+            if event.keyCode == 13 {
+                if BrowserFocus.isFocused() {
+                    BrowserToolProvider.shared.closeActiveTab()
+                }
+                return nil
+            }
+
             // 浏览器聚焦时拦截浏览器快捷键（事件不下发 → 工具栏 keyboardShortcut/默认菜单不触发）
             if BrowserFocus.isFocused() {
                 switch event.keyCode {
-                case 13: // Cmd+W 关闭当前 tab（替代默认关窗）
-                    BrowserToolProvider.shared.closeActiveTab()
-                    return nil
                 case 33: // Cmd+[ 后退
                     BrowserToolProvider.shared.activeWebView?.goBack()
                     return nil
@@ -194,7 +200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 浏览器快捷键键码集合（诊断用：命中但被焦点路由跳过时打日志）
     private static func isBrowserShortcutKey(_ keyCode: UInt16) -> Bool {
         switch keyCode {
-        case 13, 33, 30, 15, 24, 27, 3, 5:
+        case 33, 30, 15, 24, 27, 3, 5:
             return true
         default:
             return false

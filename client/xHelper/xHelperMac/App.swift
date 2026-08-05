@@ -67,6 +67,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil
             }
 
+            // Cmd+Shift+M：最大化/还原侧栏内容（焦点无关，无模态时生效；侧栏未开时静默不生效）。
+            // M 与系统 Cmd+M（最小化窗口）语义对仗，方便记忆。
+            if event.keyCode == 46,
+               event.modifierFlags.contains(.shift),
+               NSApp.modalWindow == nil,
+               BrowserToolProvider.shared.rightSidebar?.isOpen == true {
+                BrowserToolProvider.shared.rightSidebar?.isPipChat.toggle()
+                return nil
+            }
+
             // Cmd+B：切换左侧栏（焦点无关，无模态时生效）
             if event.keyCode == 11,
                NSApp.modalWindow == nil {

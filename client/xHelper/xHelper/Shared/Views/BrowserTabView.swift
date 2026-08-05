@@ -3,6 +3,7 @@ import WebKit
 
 struct BrowserTabView: View {
     let webView: WKWebView
+    let onSetupErrorBinding: ((_ onError: @escaping (String) -> Void) -> Void)?
     @State private var urlText = ""
     @State private var isLoading = false
     @State private var progress: Double = 0
@@ -11,6 +12,7 @@ struct BrowserTabView: View {
     @State private var canGoForward = false
     @State private var isHovered = false
     @State private var observations: [NSKeyValueObservation] = []
+    @State private var loadError: String?
     @FocusState private var urlFocused: Bool
     @FocusState private var findFocused: Bool
     @ObservedObject private var findCoordinator = BrowserFindCoordinator.shared
@@ -39,9 +41,18 @@ struct BrowserTabView: View {
                 downloadsBar
                 Divider()
             }
-            BrowserWebView(webView: webView)
+            if let error = loadError {
+                BrowserErrorPageView(
+                    url: urlText.isEmpty ? (webView.url?.absoluteString ?? "") : urlText,
+                    error: error,
+                    onRetry: { webView.reload() }
+                )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipped()
+            } else {
+                BrowserWebView(webView: webView)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            }
         }
         .onAppear {
             // 重置浏览器字段焦点标志（防旧 tab 残留；FocusState 初始 false 不触发 onChange）
@@ -53,6 +64,10 @@ struct BrowserTabView: View {
             isLoading = webView.isLoading
             canGoBack = webView.canGoBack
             canGoForward = webView.canGoForward
+            onSetupErrorBinding?({ [weak webView] msg in
+                // 确保 error 只更新给当前 webView 对应的 tab
+                loadError = msg
+            })
             startObserving()
             findCoordinator.attach(webView)
             // 新标签页自动聚焦地址栏
@@ -68,6 +83,9 @@ struct BrowserTabView: View {
         }
         .onChange(of: findCoordinator.isPresented) { _, presented in
             if presented { findFocused = true }
+        }
+        .onChange(of: isLoading) { _, loading in
+            if loading { loadError = nil }
         }
         .onDisappear {
             BrowserFocus.isUrlFieldFocused = false
@@ -182,9 +200,9 @@ struct BrowserTabView: View {
             guard let u = URL(string: "https://cn.bing.com/search?q=\(q)") else { return }
             target = u
         }
-        webView.load(URLRequest(url: target))
+        webView.load(URLRequest(url: target, timeoutInterval: 15))
+        loadError = nil
     }
-
     /// 地址栏安全指示：https=锁 / http=警示 / 其他（空白页等）=globe
     @ViewBuilder
     private var securityIndicator: some View {

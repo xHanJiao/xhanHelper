@@ -1244,7 +1244,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         bindSessionUI(session: session)
         syncBrowserGroup()
 
-        session.webView.load(URLRequest(url: url))
+        session.webView.load(URLRequest(url: url, timeoutInterval: 15))
 
         let errorMsg = await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
             session.loadContinuation = cont
@@ -1268,12 +1268,15 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         let title = session.webView.title ?? url.host ?? urlStr
         rightSidebar?.openTab(id: tabId, title: title, icon: "globe",
-                              content: AnyView(BrowserTabView(webView: session.webView)), activate: activate)
+                              content: AnyView(BrowserTabView(webView: session.webView,
+                                                              onSetupErrorBinding: { [weak session] onError in
+                                                                  session?.onNavigationError = onError
+                                                              })), activate: activate)
         return .init(serverResult: Self.jsonDict(["url": urlStr, "title": title, "tabId": tabId, "background": background]), serverError: nil, clientAction: nil)
     }
 
     private func retryOpen(session: TabSession, tabId: String, url: URL) async {
-        session.webView.load(URLRequest(url: url))
+        session.webView.load(URLRequest(url: url, timeoutInterval: 15))
         let errorMsg = await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
             session.loadContinuation = cont
             session.loadTimeout = Task {
@@ -1295,7 +1298,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             let title = session.webView.title ?? url.host ?? url.absoluteString
             rightSidebar?.updateTabTitle(id: tabId, title: title)
             rightSidebar?.replaceTabContent(id: tabId,
-                content: AnyView(BrowserTabView(webView: session.webView)))
+                content: AnyView(BrowserTabView(webView: session.webView,
+                                                onSetupErrorBinding: { [weak session] onError in
+                                                    session?.onNavigationError = onError
+                                                })))
         }
     }
 
@@ -1400,7 +1406,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         // 新标签页默认页（本地 HTML，替代 about:blank 白页）
         session.webView.loadHTMLString(Self.newTabPageHTML(), baseURL: nil)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
-                              content: AnyView(BrowserTabView(webView: session.webView)))
+                              content: AnyView(BrowserTabView(webView: session.webView,
+                                                              onSetupErrorBinding: { [weak session] onError in
+                                                                  session?.onNavigationError = onError
+                                                              })))
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
     }
@@ -1527,8 +1536,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
         rightSidebar?.openTab(id: tabId, title: url.host ?? "新标签页", icon: "globe",
-                              content: AnyView(BrowserTabView(webView: session.webView)))
-        session.webView.load(URLRequest(url: url))
+                              content: AnyView(BrowserTabView(webView: session.webView,
+                                                              onSetupErrorBinding: { [weak session] onError in
+                                                                  session?.onNavigationError = onError
+                                                              })))
+        session.webView.load(URLRequest(url: url, timeoutInterval: 15))
     }
 
     /// Cmd+W：关闭当前激活 tab（与工具 close_tab 同一收尾路径），无激活 tab 时忽略。
@@ -1728,9 +1740,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         syncBrowserGroup()
         bindSessionTitle(session: newSession, tabId: tabId)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
-                              content: AnyView(BrowserTabView(webView: newSession.webView)))
+                              content: AnyView(BrowserTabView(webView: newSession.webView,
+                                                              onSetupErrorBinding: { [weak newSession] onError in
+                                                                  newSession?.onNavigationError = onError
+                                                              })))
         if let targetURL {
-            newSession.webView.load(URLRequest(url: targetURL))
+            newSession.webView.load(URLRequest(url: targetURL, timeoutInterval: 15))
         }
         return newSession.webView
     }
@@ -1857,6 +1872,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         var onJSConfirm: ((String, @escaping (Bool) -> Void) -> Void)?
         /// 下载全部结束时回调（宿主清理 retiringSessions）
         var onDownloadsSettled: (() -> Void)?
+        /// 导航失败回调（DNS/网络错误等，hosts 屏蔽等场景），NSURLErrorCancelled 除外
+        var onNavigationError: ((String) -> Void)?
         private var titleObservation: NSKeyValueObservation?
         private var urlObservation: NSKeyValueObservation?
 
@@ -2170,14 +2187,22 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             Task { @MainActor in
-                resumeLoad((error as NSError).code == NSURLErrorCancelled ? nil : error.localizedDescription)
+                let msg = error.localizedDescription
+                resumeLoad((error as NSError).code == NSURLErrorCancelled ? nil : msg)
+                if (error as NSError).code != NSURLErrorCancelled {
+                    onNavigationError?(msg)
+                }
             }
         }
 
         nonisolated func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             Task { @MainActor in
                 let code = (error as NSError).code
-                resumeLoad(code == NSURLErrorCancelled ? nil : "加载失败: \(error.localizedDescription)")
+                let msg = error.localizedDescription
+                resumeLoad(code == NSURLErrorCancelled ? nil : "加载失败: \(msg)")
+                if code != NSURLErrorCancelled {
+                    onNavigationError?("加载失败: \(msg)")
+                }
             }
         }
 

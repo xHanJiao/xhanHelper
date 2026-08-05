@@ -94,7 +94,7 @@ struct SidebarView: View {
                     .padding(.bottom, 6)
 
                 Divider()
-                    .padding(.horizontal, 8)
+                .padding(.horizontal, 4)
 
                 conversationListSection
             }

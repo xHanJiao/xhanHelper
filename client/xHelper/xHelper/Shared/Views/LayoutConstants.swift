@@ -2,7 +2,7 @@ import Foundation
 
 enum Layout {
     static let chatHorizontalPadding: CGFloat = 24
-    static let sidebarMinWidth: CGFloat = 48
+    static let sidebarMinWidth: CGFloat = 38
     static let sidebarMaxWidth: CGFloat = 276
     static let sidebarSnapThreshold: CGFloat = 120
     static let sidebarDefaultWidth: CGFloat = 200
@@ -25,7 +25,7 @@ enum Layout {
     static let inputBarTwoRowThreshold: CGFloat = 380
 
     /// 左栏卡片外水平 padding。
-    static let sidebarHPadding: CGFloat = 12
+    static let sidebarHPadding: CGFloat = 6
     static let sidebarLeadingPadding: CGFloat = 8
     static let sidebarTrailingPadding: CGFloat = 12
     /// 右栏卡片外水平 padding。

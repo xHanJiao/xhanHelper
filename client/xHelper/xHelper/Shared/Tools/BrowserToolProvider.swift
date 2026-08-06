@@ -1486,7 +1486,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                              action: { [weak self] in self?.rightSidebar?.openConfigTab() },
                              help: { "浏览器配置" }),
                 TopBarButton(id: "bookmarks-bar",
-                             icon: { BookmarksBarState.shared.isVisible ? "menubar.rectangle.fill" : "menubar.rectangle" },
+                             icon: { "menubar.rectangle" },
                              enabled: { true },
                              action: { BookmarksBarState.shared.toggle() },
                              help: { BookmarksBarState.shared.isVisible ? "隐藏收藏夹栏" : "显示收藏夹栏" }),

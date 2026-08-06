@@ -80,6 +80,16 @@ final class BookmarkStore: ObservableObject {
         scheduleSave()
     }
 
+    /// 拖拽重排：把 id 对应收藏移到指定下标（target 为移动后的最终下标）。
+    func move(id: UUID, toIndex target: Int) {
+        guard let from = bookmarks.firstIndex(where: { $0.id == id }) else { return }
+        let target = min(max(target, 0), bookmarks.count - 1)
+        guard from != target else { return }
+        let b = bookmarks.remove(at: from)
+        bookmarks.insert(b, at: target > from ? target - 1 : target)
+        scheduleSave()
+    }
+
     func remove(url: String) {
         let key = url.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         bookmarks.removeAll { $0.url.lowercased() == key }

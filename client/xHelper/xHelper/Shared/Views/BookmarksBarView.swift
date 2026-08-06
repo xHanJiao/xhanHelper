@@ -16,6 +16,7 @@ struct BookmarksBarView: View {
                     HStack(spacing: 2) {
                         ForEach(store.bookmarks) { bookmark in
                             bookmarkItem(bookmark)
+                                .bookmarkReorderable(bookmark, axis: .horizontal)
                         }
                     }
                 }

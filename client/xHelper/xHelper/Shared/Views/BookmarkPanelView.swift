@@ -20,9 +20,7 @@ struct BookmarkPanelView: View {
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(filtered) { bookmark in
-                            HoverCardRow {
-                                rowContent(bookmark)
-                            }
+                            panelRow(bookmark)
                         }
                     }
                     .padding(.horizontal, 12)
@@ -93,6 +91,17 @@ struct BookmarkPanelView: View {
     }
 
     // MARK: - Row
+
+    /// 面板行：搜索状态下顺序由搜索确定，禁止拖拽重排；空搜索才可拖。
+    @ViewBuilder
+    private func panelRow(_ b: BookmarkStore.Bookmark) -> some View {
+        let row = HoverCardRow { rowContent(b) }
+        if query.isEmpty {
+            row.bookmarkReorderable(b, axis: .vertical)
+        } else {
+            row
+        }
+    }
 
     private func rowContent(_ b: BookmarkStore.Bookmark) -> some View {
         HStack(spacing: 8) {

@@ -123,7 +123,11 @@ struct ChatBubble: View {
     @EnvironmentObject var fontSizeManager: FontSizeManager
 
     private var chatFont: Font {
-        .system(size: fontSizeManager.scaledSize)
+        #if os(iOS)
+        return .system(size: UIFontMetrics.default.scaledValue(for: fontSizeManager.scaledSize))
+        #else
+        return .system(size: fontSizeManager.scaledSize)
+        #endif
     }
 
     private var isStreamingPlaceholder: Bool {

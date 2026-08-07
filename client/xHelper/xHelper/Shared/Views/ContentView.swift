@@ -518,6 +518,7 @@ struct ContentView: View {
                                 exitBrowserFocusEffects(reason: "userExit")
                             }
                             clampRightSidebarWidth()
+                            refillBrowserFocus()
                         }
                         .onChange(of: rightSidebar.isPipChat) { _, isPip in
                             if isPip {
@@ -539,10 +540,9 @@ struct ContentView: View {
                         }
                         .onChange(of: rightSidebar.activeTabId) { _, id in
                             if id == nil {
+                                rightSidebar.middleMinimized = false
                                 autoExitPip(reason: "browsePanel")
                             }
-                            // 返回浏览面板 / 切回浏览器 tab / 关激活 tab：重算顶栏浏览器组（注册一次 + visible 闭包）。
-                            // 顶栏组件已观察 rightSidebar 会自然重算，此处 refresh 兜底保证立即生效。
                             BrowserToolProvider.shared.refreshBrowserGroup()
                         }
                         .onChange(of: sidebarWidth) { _, new in
@@ -550,6 +550,7 @@ struct ContentView: View {
                                 sidebarAutoCollapsed = false
                             }
                             clampRightSidebarWidth()
+                            refillBrowserFocus()
                         }
                     }
                     VSpace(Layout.cardBottomGap)

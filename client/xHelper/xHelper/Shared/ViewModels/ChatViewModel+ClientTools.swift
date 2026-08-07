@@ -36,11 +36,20 @@ extension ChatViewModel {
         LogBuffer.shared.info("clientToolCall: \(toolName) call_id=\(callID)")
         Task {
             let isBrowser = toolName.hasPrefix("browser__")
+            let isFS = toolName.hasPrefix("fs__")
             do {
+                if isFS {
+                    if let blocked = LocalToolRegistry.shared.fsBlockedPaths(arguments: args) {
+                        LogBuffer.shared.warning("clientToolCall: \(toolName) blocked: \(blocked)")
+                        try await api.submitToolResult(callId: callID, resultJSON: nil, error: blocked)
+                        return
+                    }
+                }
+
                 // 工具分级：L3（高风险写）执行前需用户确认（60s 超时视为拒绝）
                 // S2/G6：交互工具在高敏域或 http 明文页上动态升 L3（防注入诱导自动操作账户）。
                 // forcedL3 标记"敏感上下文升的级"，信任模式也不跳过。
-                var level = LocalToolRegistry.shared.riskLevel(for: toolName)
+                var level = LocalToolRegistry.shared.riskLevel(for: toolName, arguments: args)
                 var forcedL3 = false
                 if level < 3, isBrowser, BrowserToolProvider.shared.shouldElevateToL3(flatName: toolName) {
                     level = 3
@@ -62,6 +71,15 @@ extension ChatViewModel {
                         LogBuffer.shared.warning("clientToolCall: \(toolName) rejected by user")
                         try await api.submitToolResult(callId: callID, resultJSON: nil, error: "用户拒绝执行")
                         return
+                    }
+                }
+
+                if isFS, level == 3 {
+                    let paths = FileSystemToolProvider.extractPaths(flatName: toolName, arguments: args)
+                    for path in paths {
+                        if !DirectoryAuthorizationManager.shared.isAuthorized(path) {
+                            DirectoryAuthorizationManager.shared.authorize(path, permanent: false)
+                        }
                     }
                 }
 

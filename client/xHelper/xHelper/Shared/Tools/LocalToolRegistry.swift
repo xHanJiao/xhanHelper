@@ -32,6 +32,30 @@ final class LocalToolRegistry {
         riskLevels[flatName] ?? 2
     }
 
+    #if os(macOS)
+    func riskLevel(for flatName: String, arguments: [String: Any]) -> Int {
+        if flatName.hasPrefix("fs__") {
+            let paths = FileSystemToolProvider.extractPaths(flatName: flatName, arguments: arguments)
+            for path in paths {
+                if !DirectoryAuthorizationManager.shared.isAuthorized(path) {
+                    return 3
+                }
+            }
+            return 2
+        }
+        return riskLevels[flatName] ?? 2
+    }
+
+    func fsBlockedPaths(arguments: [String: Any]) -> String? {
+        for path in FileSystemToolProvider.extractPaths(flatName: "fs__", arguments: arguments) {
+            if let reason = SensitiveFileBlocker.check(path) {
+                return reason
+            }
+        }
+        return nil
+    }
+    #endif
+
     /// 工具 schema 描述缓存（flatName → description），供用户可读展示名使用。
     /// clientToolsPayload 构建时填充，动态 MCP 工具注册后随重建自动更新。
     private var schemaDescriptions: [String: String] = [:]
@@ -66,6 +90,10 @@ final class LocalToolRegistry {
         "browser__agent_browser_go_forward": "前进",
         "browser__agent_browser_get_media_sources": "获取媒体资源",
         "browser__agent_browser_download": "下载文件",
+        // fs 文件探索工具
+        "fs__glob": "搜索文件",
+        "fs__grep": "搜索内容",
+        "fs__read": "读取文件",
     ]
 
     /// 用户可读的工具展示名：优先用简短名，其次 schema 的中文 description（截断），未命中兜底 flatName

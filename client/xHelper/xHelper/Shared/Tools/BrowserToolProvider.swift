@@ -1418,6 +1418,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     func enterBrowser() {
         guard let rs = rightSidebar else { return }
         rs.isOpen = true
+        rs.middleMinimized = true
         if rs.hasTabs {
             let target = rs.activeTabId
                 ?? rs.tabs.first(where: { !RightSidebarManager.specialTabIDs.contains($0.id) })?.id

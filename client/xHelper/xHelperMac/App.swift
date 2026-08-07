@@ -403,6 +403,7 @@ struct xhanHelperMacApp: App {
                     await LocalToolRegistry.shared.register(wrapper)
                 }
                 LocalToolRegistry.shared.register(ChartTool())
+                LocalToolRegistry.shared.register(FileSystemToolProvider())
             }
             .onReceive(NotificationCenter.default.publisher(for: .holdToQuitChanged)) { notification in
                 if let active = notification.userInfo?["isActive"] as? Bool {
@@ -469,6 +470,8 @@ struct MacSettingsView: View {
     @AppStorage("xhan_server_url") private var serverURL = DeviceManager.defaultBaseURL
     @AppStorage("xhan_l3_alert_sound") private var l3AlertSound = true
     @State private var showClearCacheAlert = false
+    @State private var showAddDirSheet = false
+    @State private var authorizedDirs: [String] = DirectoryAuthorizationManager.shared.permanentDirs
 
     private var apiClient: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
@@ -495,6 +498,44 @@ struct MacSettingsView: View {
 
             Section("提醒") {
                 Toggle("提示音", isOn: $l3AlertSound)
+            }
+
+            Section("文件访问授权") {
+                ForEach(authorizedDirs, id: \.self) { dir in
+                    HStack {
+                        Text(dir)
+                            .font(.system(.body, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button {
+                            DirectoryAuthorizationManager.shared.removePermanent(dir)
+                            authorizedDirs = DirectoryAuthorizationManager.shared.permanentDirs
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                if authorizedDirs.isEmpty {
+                    Text("暂无永久授权目录")
+                        .foregroundStyle(.secondary)
+                        .font(.subheadline)
+                }
+                Button {
+                    showAddDirSheet = true
+                } label: {
+                    Label("添加授权目录", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                .padding(.top, 4)
+            }
+            .sheet(isPresented: $showAddDirSheet) {
+                AddDirView { dir in
+                    DirectoryAuthorizationManager.shared.authorize(dir, permanent: true)
+                    authorizedDirs = DirectoryAuthorizationManager.shared.permanentDirs
+                }
             }
 
 #if DEBUG
@@ -654,4 +695,96 @@ struct LoginMacView: View {
         }
         isLoading = false
     }
+}
+
+// MARK: - 添加授权目录
+
+struct AddDirView: View {
+    let onSelect: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var pathText = ""
+    @State private var showOpenPanel = false
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("添加授权目录")
+                .font(.headline)
+
+            Text("xhanHelper 将永久获得此目录及其子目录的只读访问权限。\n敏感文件（如 .env、SSH 密钥等）始终会被拦截。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                TextField("输入目录路径", text: $pathText)
+                    .textFieldStyle(.roundedBorder)
+                Button("浏览…") {
+                    showOpenPanel = true
+                }
+                .buttonStyle(.bordered)
+            }
+            .frame(maxWidth: 400)
+            .onAppear {
+                DispatchQueue.main.async {
+                    showOpenPanel = true
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button("取消") {
+                    dismiss()
+                }
+                .keyboardShortcut(.escape)
+
+                Button("添加") {
+                    let resolved = (pathText as NSString).expandingTildeInPath
+                    let standardized = (resolved as NSString).standardizingPath
+                    guard !standardized.isEmpty else { return }
+                    onSelect(standardized)
+                    dismiss()
+                }
+                .keyboardShortcut(.return)
+                .disabled(pathText.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding(.top, 8)
+        }
+        .padding(24)
+        .frame(minWidth: 400)
+        .background(
+            OpenDirectoryPanel(
+                isPresented: $showOpenPanel,
+                onSelect: { url in
+                    pathText = url.path
+                }
+            )
+        )
+    }
+}
+
+struct OpenDirectoryPanel: NSViewRepresentable {
+    @Binding var isPresented: Bool
+    let onSelect: (URL) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            guard isPresented else { return }
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.allowsMultipleSelection = false
+            panel.prompt = "选择"
+            panel.message = "选择要授权的目录"
+            panel.begin { response in
+                if response == .OK, let url = panel.url {
+                    onSelect(url)
+                }
+                isPresented = false
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }

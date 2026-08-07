@@ -1915,7 +1915,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             let prefs = WKWebpagePreferences()
             prefs.allowsContentJavaScript = true
             configuration.defaultWebpagePreferences = prefs
-            configuration.preferences.isElementFullscreenEnabled = false
+            configuration.preferences.isElementFullscreenEnabled = true
             if #available(macOS 14.0, *) {
                 configuration.preferences.isFraudulentWebsiteWarningEnabled = true
             }

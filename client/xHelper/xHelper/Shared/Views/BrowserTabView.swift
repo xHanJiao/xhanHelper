@@ -385,7 +385,6 @@ private struct BrowserWebView: NSViewRepresentable {
     let webView: WKWebView
 
     func makeNSView(context: Context) -> WKWebView {
-        pipLog("webview attach: \(ObjectIdentifier(webView))")
         return webView
     }
 

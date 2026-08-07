@@ -1455,7 +1455,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         // 无 < > 切换tab（用 Cmd+Shift+[/]）
         TopBarRegistry.shared.register(TopBarGroup(
             id: "browser-actions",
-            slot: .left,
+            slot: .center,
             priority: 10,
             buttons: [
                 // pip（画中画）按钮已由通用「最大化侧栏」按钮（TopBarView default-right 组）覆盖

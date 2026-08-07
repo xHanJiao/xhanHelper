@@ -23,10 +23,10 @@ struct TopBarView: View {
                 .frame(width: navLeadingOffset)
 
             renderSlot(.left)
-            renderSlot(.center)
 
             Spacer()
 
+            renderSlot(.center)
             renderSlot(.right)
         }
         // 双击顶栏空白区缩放窗口：contentShape 让空白区可命中，按钮区域由按钮自身

@@ -38,7 +38,7 @@ final class DocumentSelectionCoordinator: ObservableObject {
         groupRegistered = true
         TopBarRegistry.shared.register(TopBarGroup(
             id: "document-actions",
-            slot: .left,
+            slot: .center,
             priority: 8,
             buttons: [
                 TopBarButton(id: "document-download", icon: { "arrow.down.circle" },

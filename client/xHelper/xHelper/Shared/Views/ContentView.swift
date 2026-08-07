@@ -119,7 +119,6 @@ struct ContentView: View {
             minContent = Self.baseMinWidth
         }
         AppDelegate.requiredMinContentWidth = minContent
-        pipLog("window min width: \(Int(minContent)) (open=\(rightSidebar.isOpen) pip=\(rightSidebar.isPipChat))")
     }
 
     /// 把右侧栏宽度钳制到可用范围，保证窄窗口下不溢出、内容可见。
@@ -219,7 +218,6 @@ struct ContentView: View {
             rightSidebar.width = rightSidebarMaxAvailable
         }
         updateWindowMinWidth()
-        pipLog("browser focus: enter preWidth=\(Int(preFocusSidebarWidth ?? 0)) fillWidth=\(Int(rightSidebar.width))")
     }
 
     /// 窗口变宽后浏览器聚焦态补满（onChange(of: geo.size.width) 触发，幂等）。

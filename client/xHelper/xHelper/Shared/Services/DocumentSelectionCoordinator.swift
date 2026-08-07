@@ -45,6 +45,10 @@ final class DocumentSelectionCoordinator: ObservableObject {
                              enabled: { true },
                              action: { [weak self] in self?.downloadSelected() },
                              help: { "下载文档 (.md)" }),
+                TopBarButton(id: "document-export-pdf", icon: { "doc.richtext" },
+                             enabled: { true },
+                             action: { [weak self] in self?.exportPDF() },
+                             help: { "导出 PDF（排版）" }),
             ],
             visible: { [weak self] in self?.isDocumentDetailVisible ?? false }
         ))
@@ -73,6 +77,31 @@ final class DocumentSelectionCoordinator: ObservableObject {
                 ToastCenter.shared.show("已下载 \(url.lastPathComponent)")
             } catch {
                 LogBuffer.shared.error("document download failed: \(error.localizedDescription)")
+            }
+        }
+        #endif
+    }
+
+    /// 导出当前文档为排版 PDF（macOS NSSavePanel + WebKit 分页导出）
+    private func exportPDF() {
+        guard let doc = selectedDocument else { return }
+        #if os(macOS)
+        let fileName = (doc.title.isEmpty ? doc.id : doc.title) + ".pdf"
+        let panel = NSSavePanel()
+        panel.title = "导出 PDF"
+        panel.nameFieldStringValue = fileName
+        panel.allowedContentTypes = [.pdf]
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                do {
+                    try await DocumentPDFExporter.export(doc, to: url)
+                    ToastCenter.shared.show("已导出 \(url.lastPathComponent)")
+                } catch {
+                    print("[PDFExport] coordinator catch: \(error)")
+                    LogBuffer.shared.error("document pdf export failed: \(error.localizedDescription)")
+                    ToastCenter.shared.show("导出 PDF 失败")
+                }
             }
         }
         #endif

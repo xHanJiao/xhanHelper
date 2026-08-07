@@ -75,13 +75,14 @@ struct ContentView: View {
     }
 
     /// 右侧栏在当前窗口/侧栏布局下可用的最大宽度。
-    /// 减去左栏元素（内容+外扩）、中间跨度、右栏外扩。PiP 时中间让位，右栏可铺满整窗（不设 1200 上限）。
+    /// 减去左栏元素（内容+外扩）、中间跨度、右栏外扩。PiP 或浏览器聚焦时中间让位，
+    /// 右栏可铺满整窗（不设 1200 上限）。
     private var rightSidebarMaxAvailable: Double {
         let available = Double(windowWidth)
             - Double(sidebarWidth + Layout.sidebarOuterPadding)
             - middleSpan
             - Double(Layout.rightSidebarOuterPadding)
-        let cap = rightSidebar.isPipChat ? 4000.0 : 1200.0
+        let cap = (rightSidebar.isPipChat || rightSidebar.middleMinimized) ? 4000.0 : 1200.0
         return max(Double(Layout.rightSidebarMinWidth), min(cap, available))
     }
 
@@ -384,7 +385,7 @@ struct ContentView: View {
 
                     GeometryReader { geo in
                         let rightMax: Double = max(Double(Layout.rightSidebarMinWidth),
-                            min(rightSidebar.isPipChat ? 4000 : 1200,
+                            min((rightSidebar.isPipChat || rightSidebar.middleMinimized) ? 4000 : 1200,
                                 Double(geo.size.width)
                                 - Double(sidebarWidth + Layout.sidebarOuterPadding)
                                 - middleSpan
@@ -479,7 +480,7 @@ struct ContentView: View {
                             }
                         }
                         .animation(.easeInOut(duration: 0.2), value: rightSidebar.isOpen)
-                        .onChange(of: geo.size.width) { _, new in
+                        .onChange(of: geo.size.width, initial: true) { _, new in
                             windowWidth = new
                             let extra: CGFloat = rightSidebar.isPipChat ? 396
                                 : rightSidebar.isOpen ? 736

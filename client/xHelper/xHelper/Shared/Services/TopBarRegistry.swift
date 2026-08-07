@@ -35,12 +35,25 @@ struct TopBarButton: Identifiable {
     }
 }
 
-/// 顶栏按钮组：归属于某槽位，带优先级（越高越优先；同最高优先级多组共存）
+/// 顶栏按钮组：归属于某槽位，带优先级（越高越优先；同最高优先级多组共存）。
+/// `visible` 闭包在渲染时求值决定整组显隐（与按钮级 visible 对齐）：
+/// 通用契约 = 注册一次 + visible 闭包判自身状态 + 状态变化时调 `TopBarRegistry.refresh()`，
+/// 不再需要 register/unregister 来切换显隐。
 struct TopBarGroup: Identifiable {
     let id: String
     let slot: TopBarSlot
     let priority: Int
     let buttons: [TopBarButton]
+    let visible: () -> Bool
+
+    init(id: String, slot: TopBarSlot, priority: Int, buttons: [TopBarButton],
+         visible: @escaping () -> Bool = { true }) {
+        self.id = id
+        self.slot = slot
+        self.priority = priority
+        self.buttons = buttons
+        self.visible = visible
+    }
 }
 
 /// 通用顶栏注册中心（@MainActor 单例）。
@@ -85,12 +98,19 @@ final class TopBarRegistry: ObservableObject {
         if changed { bump() }
     }
 
-    /// 某槽位可见的组：取最高优先级，同优先多组共存（按注册顺序）
+    /// 某槽位可见的组：先过滤 visible() 为 true 的组，再取最高优先级；同优先多组共存（按注册顺序）。
+    /// 高优先级组不可见时自动让位给低优先级可见组（如浏览器组隐藏时其他功能区按钮可显示）。
     func visibleGroups(for slot: TopBarSlot) -> [TopBarGroup] {
-        let slotGroups = groups[slot] ?? []
-        guard !slotGroups.isEmpty else { return [] }
-        let maxPriority = slotGroups.map(\.priority).max() ?? 0
-        return slotGroups.filter { $0.priority == maxPriority }
+        let shown = (groups[slot] ?? []).filter { $0.visible() }
+        guard !shown.isEmpty else { return [] }
+        let maxPriority = shown.map(\.priority).max() ?? 0
+        return shown.filter { $0.priority == maxPriority }
+    }
+
+    /// 触发顶栏重算：组外部状态（未依附于顶栏观察的对象）变化后调用，让 visible 闭包重新求值。
+    /// 组可见状态依附于顶栏已观察的对象（如 RightSidebarManager）时顶栏会自动重算，可不调；统一调用最稳妥。
+    func refresh() {
+        bump()
     }
 
     private func bump() {

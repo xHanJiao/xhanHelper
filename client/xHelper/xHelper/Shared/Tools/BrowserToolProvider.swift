@@ -1242,7 +1242,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
-        syncBrowserGroup()
+        refreshBrowserGroup()
 
         session.webView.load(URLRequest(url: url, timeoutInterval: 15))
 
@@ -1317,7 +1317,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         tabs.removeAll()
         closedStack.removeAll()
         activeTabId = nil
-        syncBrowserGroup()
+        refreshBrowserGroup()
         return .init(serverResult: Self.jsonDict(["closed": true, "count": count]), serverError: nil, clientAction: nil)
     }
 
@@ -1334,7 +1334,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         tearDownWebView(session) // 停止加载与媒体播放
         rightSidebar?.closeTab(tabId)
         tabs.removeValue(forKey: tabId)
-        syncBrowserGroup()
+        refreshBrowserGroup()
         if session.hasActiveDownloads {
             retiringSessions.append(session)
         }
@@ -1402,7 +1402,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let session = TabSession()
         tabs[tabId] = session
         switchActiveTab(to: tabId)
-        syncBrowserGroup()
+        refreshBrowserGroup()
         // 新标签页默认页（本地 HTML，替代 about:blank 白页）
         session.webView.loadHTMLString(Self.newTabPageHTML(), baseURL: nil)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
@@ -1438,32 +1438,21 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     private var browserGroupRegistered = false
 
-    /// 浏览器组是否应注册：有 tab 且右侧栏打开（浏览器可见）。
-    /// 只按"有 tab"注册会导致：侧栏收起（isOpen=false）时左槽组残留。
-    private var browserGroupShouldShow: Bool {
-        !tabs.isEmpty && (rightSidebar?.isOpen ?? false)
-    }
-
-    /// tab 增删/侧栏可见性变化后同步浏览器组注册状态。
-    /// 有 tab 且侧栏打开 → 注册 priority 10 组；否则注销。
-    private func syncBrowserGroup() {
-        let shouldRegister = browserGroupShouldShow
-        if shouldRegister && !browserGroupRegistered {
+    /// 浏览器焦点变化时由 ContentView 与各 tab 操作路径触发（幂等）：
+    /// 浏览器组只注册一次，显隐完全由组的 visible 闭包决定（右栏是否正显示浏览器 tab），
+    /// 本方法只负责首次确保注册 + 每次 bump 触发重算。
+    func refreshBrowserGroup() {
+        if !browserGroupRegistered {
             registerBrowserGroups()
             browserGroupRegistered = true
-        } else if !shouldRegister && browserGroupRegistered {
-            TopBarRegistry.shared.unregister(prefix: "browser-")
-            browserGroupRegistered = false
         }
-    }
-
-    /// 侧栏开关变化时由 ContentView 调用，重新同步浏览器组注册（幂等）。
-    func refreshBrowserGroup() {
-        syncBrowserGroup()
+        TopBarRegistry.shared.refresh()
     }
 
     private func registerBrowserGroups() {
-        // 左槽位（priority 10）：浏览器专属操作（仅浏览器态显示）。无 < > 切换tab（用 Cmd+Shift+[/]）
+        // 左槽位（priority 10）：浏览器专属操作。visible：右栏正显示浏览器 tab（activeTabId 非空）
+        // 而非"有残余 tab"——返回浏览面板（activeTabId=nil）即隐藏，切回/新开 tab 即显示。
+        // 无 < > 切换tab（用 Cmd+Shift+[/]）
         TopBarRegistry.shared.register(TopBarGroup(
             id: "browser-actions",
             slot: .left,
@@ -1499,8 +1488,18 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                              enabled: { true },
                              action: { [weak self] in self?.rightSidebar?.openHistoryTab() },
                              help: { "浏览历史" }),
-            ]
+            ],
+            visible: { [weak self] in
+                guard let rs = self?.rightSidebar else { return false }
+                return rs.activeTabId != nil && !rs.tabs.isEmpty && rs.isOpen
+            }
         ))
+    }
+
+    /// 退出浏览器：关闭全部标签、释放 WebView（等价 agent_browser_close 工具），回到浏览面板。
+    /// 顶栏「退出」按钮调用；区别于「返回」（仅切浏览面板、保留标签与页面状态）。
+    func exitBrowser() {
+        _ = handleClose()
     }
 
     /// 清除浏览数据（顶栏/浏览器清数据按钮共用；sheet 确认，非阻塞）
@@ -1538,7 +1537,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let session = TabSession()
         tabs[tabId] = session
         switchActiveTab(to: tabId)
-        syncBrowserGroup()
+        refreshBrowserGroup()
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
         rightSidebar?.openTab(id: tabId, title: url.host ?? "新标签页", icon: "globe",
@@ -1749,7 +1748,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let newSession = TabSession(configuration: configuration)
         tabs[tabId] = newSession
         switchActiveTab(to: tabId)
-        syncBrowserGroup()
+        refreshBrowserGroup()
         bindSessionTitle(session: newSession, tabId: tabId)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
                               content: AnyView(BrowserTabView(webView: newSession.webView,

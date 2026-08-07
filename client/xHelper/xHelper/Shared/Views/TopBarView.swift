@@ -110,7 +110,9 @@ struct TopBarView: View {
 
     @ViewBuilder
     private func renderSlot(_ slot: TopBarSlot) -> some View {
+        // 组内至少有一个可见按钮才渲染，避免空胶囊（组级 visible 命中但按钮级全隐藏时）
         let groups = registry.visibleGroups(for: slot)
+            .filter { group in group.buttons.contains { $0.visible() } }
         if !groups.isEmpty {
             HStack(spacing: 0) {
                 ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in

@@ -35,7 +35,32 @@ struct RightSidebarView: View {
         .onHover { isHovered = $0 }
     }
 
-    // MARK: - Browser tab bar（仅浏览器态显示）
+    // MARK: - 浏览器 tab 栏（仅浏览器态显示）
+
+    /// 退出浏览器确认（关闭全部标签，释放网页内存；sheet 确认，非阻塞）
+    private func confirmExitBrowser() {
+        #if os(macOS)
+        let alert = NSAlert()
+        alert.messageText = "退出浏览器"
+        alert.informativeText = "将关闭所有打开的标签页并退出浏览器，重新进入时将是一个全新的空浏览状态。"
+        alert.addButton(withTitle: "退出")
+        alert.addButton(withTitle: "取消")
+        let exit: () -> Void = { BrowserToolProvider.shared.exitBrowser() }
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first else {
+            DispatchQueue.main.async {
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                exit()
+            }
+            return
+        }
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            exit()
+        }
+        #else
+        BrowserToolProvider.shared.exitBrowser()
+        #endif
+    }
 
     private var browserTabBar: some View {
         HStack(spacing: 0) {
@@ -54,6 +79,23 @@ struct RightSidebarView: View {
             .buttonStyle(.plain)
             .foregroundColor(.secondary)
             .help("返回浏览面板")
+
+            // 退出浏览器：关闭所有标签、彻底退出（区别于「返回」保留标签）。确认后执行。
+            Button {
+                confirmExitBrowser()
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("退出").font(.system(size: 11))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.secondary)
+            .help("退出浏览器，关闭所有标签")
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {

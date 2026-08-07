@@ -60,9 +60,8 @@ struct TopBarView: View {
                          enabled: { true },
                          action: {
                              BrowserToolProvider.shared.enterBrowser()
-                             rightSidebar.isPipChat = true
                          },
-                         help: { "一键进入浏览器（画中画）" }),
+                         help: { "一键进入浏览器" }),
         ]
         #if os(macOS)
         buttons.append(TopBarButton(id: "maximize-sidebar",

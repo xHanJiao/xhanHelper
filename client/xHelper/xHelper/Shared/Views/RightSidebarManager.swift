@@ -27,6 +27,9 @@ final class RightSidebarManager: ObservableObject {
         didSet { pipLog("isPipChat: \(isPipChat)") }
     }
 
+    /// 浏览器聚焦：进入浏览器时聊天区缩到最小宽，右栏填满腾出的空间。
+    @Published var middleMinimized = false
+
     /// 悬浮面板位置（容器坐标系，未钳制）。拖拽实时更新不落盘（每帧写 UserDefaults 太频繁），
     /// 由面板在拖拽结束/重钳制时调用 `persistPipPosition()`。
     @Published var pipPosition: CGPoint = .zero

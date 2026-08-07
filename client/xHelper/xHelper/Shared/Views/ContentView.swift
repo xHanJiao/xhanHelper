@@ -35,6 +35,8 @@ struct ContentView: View {
     @State private var sidebarAutoCollapsed = false
     /// 进入 PiP 前右栏宽度，退出时恢复。
     @State private var prePipSidebarWidth: Double?
+    /// 进入浏览器聚焦（middleMinimized）前右栏宽度，退出时恢复。
+    @State private var preFocusSidebarWidth: Double?
     /// PiP 自动退出原因（onChange 里消费，避免状态翻转与副作用耦合）。
     @State private var pipExitReason = "userExit"
 
@@ -204,6 +206,43 @@ struct ContentView: View {
         guard rightSidebar.isPipChat else { return }
         pipExitReason = reason
         rightSidebar.isPipChat = false
+    }
+
+    // MARK: - 浏览器聚焦（中间栏缩到最小宽）
+
+    /// 进入浏览器聚焦副作用（onChange(of: middleMinimized) 驱动，幂等）。
+    private func enterBrowserFocusEffects() {
+        guard rightSidebar.middleMinimized else { return }
+        if rightSidebar.isPipChat { return } // PiP 已让中间栏让位，无需重复处理
+        preFocusSidebarWidth = rightSidebar.width
+        withAnimation(.easeInOut(duration: 0.2)) {
+            rightSidebar.width = rightSidebarMaxAvailable
+        }
+        updateWindowMinWidth()
+        pipLog("browser focus: enter preWidth=\(Int(preFocusSidebarWidth ?? 0)) fillWidth=\(Int(rightSidebar.width))")
+    }
+
+    /// 窗口变宽后浏览器聚焦态补满（onChange(of: geo.size.width) 触发，幂等）。
+    private func refillBrowserFocus() {
+        guard rightSidebar.middleMinimized, !rightSidebar.isPipChat, rightSidebar.isOpen else { return }
+        let fill = rightSidebarMaxAvailable
+        if fill != rightSidebar.width {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                rightSidebar.width = fill
+            }
+            pipLog("browser focus: refill \(Int(rightSidebar.width)) -> \(Int(fill))")
+        }
+    }
+
+    /// 退出浏览器聚焦副作用（onChange 统一入口，reason 用于诊断）。
+    private func exitBrowserFocusEffects(reason: String) {
+        let restored = min(preFocusSidebarWidth ?? rightSidebar.width, rightSidebarMaxAvailable)
+        preFocusSidebarWidth = nil
+        withAnimation(.easeInOut(duration: 0.2)) {
+            rightSidebar.width = restored
+        }
+        updateWindowMinWidth()
+        pipLog("browser focus: exit reason=\(reason) restoredWidth=\(Int(restored))")
     }
 #endif
 
@@ -455,10 +494,13 @@ struct ContentView: View {
                                 sidebarAutoCollapsed = false
                             }
                             clampRightSidebarWidth()
+                            refillBrowserFocus() // 窗口放大后浏览器聚焦态补满（含进入时异步放大窗口的场景）
                         }
                         .onChange(of: rightSidebar.isOpen) { _, isOpen in
                             if !isOpen {
                                 autoExitPip(reason: "sidebarClosed")
+                                // 关闭右侧栏时退出浏览器聚焦，恢复中间栏宽度
+                                rightSidebar.middleMinimized = false
                             }
                             if isOpen {
                                 updateWindowForRightSidebarOpen()
@@ -468,6 +510,14 @@ struct ContentView: View {
                             }
                             // 浏览器按钮组随侧栏可见性注册/注销（修复：侧栏收起时左槽组残留）
                             BrowserToolProvider.shared.refreshBrowserGroup()
+                        }
+                        .onChange(of: rightSidebar.middleMinimized) { _, minimized in
+                            if minimized {
+                                enterBrowserFocusEffects()
+                            } else {
+                                exitBrowserFocusEffects(reason: "userExit")
+                            }
+                            clampRightSidebarWidth()
                         }
                         .onChange(of: rightSidebar.isPipChat) { _, isPip in
                             if isPip {
@@ -617,7 +667,9 @@ struct ContentView: View {
             }
             .padding(.horizontal, 12)
             .modifier(CardBackgroundModifier(isLifted: contentHovered || (activeChatViewModel?.isEditing ?? false)))
-            .frame(minWidth: Layout.middleMinWidth, idealWidth: Layout.middleMinWidth, maxWidth: .infinity, alignment: .leading)
+            .frame(minWidth: Layout.middleMinWidth, idealWidth: Layout.middleMinWidth,
+                   maxWidth: rightSidebar.middleMinimized ? Layout.middleMinWidth : .infinity,
+                   alignment: .leading)
             .layoutPriority(1)
             .onHover { contentHovered = $0 }
         .onChange(of: activeChatViewModel?.isStreaming) { _, streaming in

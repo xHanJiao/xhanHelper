@@ -565,6 +565,8 @@ struct ContentView: View {
                 .onAppear {
                     sidebarWidth = min(storedSidebarWidth, Layout.sidebarMaxWidth)
                     BrowserToolProvider.shared.rightSidebar = rightSidebar
+                    DocumentSelectionCoordinator.shared.rightSidebar = rightSidebar
+                    DocumentSelectionCoordinator.shared.ensureRegisteredGroup()
                     conversationListVM.defaultConversationID = deviceManager.defaultConversation?.id
                     registerAppShortcutBridge()
                 }

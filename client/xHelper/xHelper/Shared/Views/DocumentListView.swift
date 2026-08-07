@@ -6,34 +6,44 @@ struct DocumentListView: View {
     @State private var selectedDocument: Document?
 
     var body: some View {
-        if let doc = selectedDocument {
-            DocumentFullView(document: doc, onBack: { selectedDocument = nil })
-        } else {
-            PageContainer(
-                title: "文档",
-                icon: "doc.text",
-                isLoading: viewModel.isLoading,
-                errorMessage: viewModel.errorMessage,
-                isEmpty: viewModel.documents.isEmpty && !viewModel.isLoading,
-                emptyMessage: "还没有文档",
-                onRetry: { Task { await viewModel.load() } }
-            ) {
-                CardGridView(
-                    items: viewModel.documents,
-                    maxColumns: 1,
-                    minCardWidth: 300,
-                    onLoadMore: { await viewModel.loadMore() }
-                ) { doc in
-                    CardConfig(
-                        title: doc.title,
-                        subtitle: doc.content,
-                        tags: parseTags(doc.tags),
-                        style: .document,
-                        onTap: { selectedDocument = doc }
-                    )
+        Group {
+            if let doc = selectedDocument {
+                DocumentFullView(document: doc, onBack: { selectedDocument = nil })
+            } else {
+                PageContainer(
+                    title: "文档",
+                    icon: "doc.text",
+                    isLoading: viewModel.isLoading,
+                    errorMessage: viewModel.errorMessage,
+                    isEmpty: viewModel.documents.isEmpty && !viewModel.isLoading,
+                    emptyMessage: "还没有文档",
+                    onRetry: { Task { await viewModel.load() } }
+                ) {
+                    CardGridView(
+                        items: viewModel.documents,
+                        maxColumns: 1,
+                        minCardWidth: 300,
+                        onLoadMore: { await viewModel.loadMore() }
+                    ) { doc in
+                        CardConfig(
+                            title: doc.title,
+                            subtitle: doc.content,
+                            tags: parseTags(doc.tags),
+                            style: .document,
+                            onTap: { selectedDocument = doc }
+                        )
+                    }
                 }
+                .task { await viewModel.load() }
             }
-            .task { await viewModel.load() }
+        }
+        // 同步选中态到顶栏文档按钮组（显隐由 Coordinator visible 闭包决定）
+        .onChange(of: selectedDocument) { _, doc in
+            if let doc {
+                DocumentSelectionCoordinator.shared.select(doc)
+            } else {
+                DocumentSelectionCoordinator.shared.deselect()
+            }
         }
     }
 

@@ -460,7 +460,7 @@ struct Note: Identifiable, Codable {
     }
 }
 
-struct Document: Identifiable, Codable {
+struct Document: Identifiable, Codable, Equatable {
     let id: String
     let userId: String
     let title: String

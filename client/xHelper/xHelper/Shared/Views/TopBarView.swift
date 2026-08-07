@@ -24,9 +24,19 @@ struct TopBarView: View {
 
             renderSlot(.left)
 
+            // 左中两侧都有可见组时才显示分隔线，避免孤立胶囊
+            if !visibleGroups(for: .left).isEmpty && !visibleGroups(for: .center).isEmpty {
+                UnresizableDivider()
+            }
+
             Spacer()
 
             renderSlot(.center)
+
+            // 中右两侧都有可见组时才显示分隔线
+            if !visibleGroups(for: .center).isEmpty && !visibleGroups(for: .right).isEmpty {
+                UnresizableDivider()
+            }
             renderSlot(.right)
         }
         // 双击顶栏空白区缩放窗口：contentShape 让空白区可命中，按钮区域由按钮自身
@@ -108,11 +118,16 @@ struct TopBarView: View {
         #endif
     }
 
+    /// 某槽位的可见组列表：先按组级 visible 过滤，再过滤掉"组内无任何可见按钮"的空组
+    /// （避免空胶囊：组级 visible 命中但按钮级全隐藏时）。
+    private func visibleGroups(for slot: TopBarSlot) -> [TopBarGroup] {
+        registry.visibleGroups(for: slot)
+            .filter { group in group.buttons.contains { $0.visible() } }
+    }
+
     @ViewBuilder
     private func renderSlot(_ slot: TopBarSlot) -> some View {
-        // 组内至少有一个可见按钮才渲染，避免空胶囊（组级 visible 命中但按钮级全隐藏时）
-        let groups = registry.visibleGroups(for: slot)
-            .filter { group in group.buttons.contains { $0.visible() } }
+        let groups = visibleGroups(for: slot)
         if !groups.isEmpty {
             HStack(spacing: 0) {
                 ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
@@ -178,7 +193,7 @@ private struct CapsuleIcon: View {
         Image(systemName: systemName)
             .font(.system(size: 16, weight: .medium))
             .foregroundColor(.primary.opacity(0.7))
-            .frame(width: 26, height: 26)
+            .frame(width: Layout.topBarIconSize, height: Layout.topBarIconSize)
             .modifier(CapsuleButtonBackground(show: showBackground))
     }
 }
@@ -256,8 +271,8 @@ private struct CapsuleGroup<Content: View>: View {
         HStack(spacing: 4) {
             content()
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 5)
+        .padding(.horizontal, Layout.topBarCapsuleHPadding)
+        .padding(.vertical, Layout.topBarCapsuleVPadding)
         .background(.ultraThinMaterial, in: Capsule())
         .overlay(
             Capsule()

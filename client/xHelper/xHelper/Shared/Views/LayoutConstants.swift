@@ -9,6 +9,17 @@ enum Layout {
 
     static let toolbarHorizontalPadding: CGFloat = 16
 
+    // MARK: - 顶栏胶囊（icon 边长 + 组内边距，高度为派生值，改动自动跟随）
+
+    /// 胶囊内 icon 边长（CapsuleIcon frame）。
+    static let topBarIconSize: CGFloat = 26
+    /// 胶囊组水平内边距（CapsuleGroup）。
+    static let topBarCapsuleHPadding: CGFloat = 6
+    /// 胶囊组垂直内边距（CapsuleGroup）。
+    static let topBarCapsuleVPadding: CGFloat = 5
+    /// 胶囊组总高（icon + 上下内边距），顶栏分割线等按此对齐。
+    static let topBarCapsuleHeight: CGFloat = topBarIconSize + topBarCapsuleVPadding * 2
+
     // MARK: - 三栏布局（单点改基础值，派生值自动跟随）
 
     /// 卡片与窗口边缘的横向间隙（缝线两侧各取一半确保视觉等宽）。

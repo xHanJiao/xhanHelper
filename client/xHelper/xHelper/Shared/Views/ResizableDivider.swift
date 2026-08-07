@@ -91,4 +91,32 @@ struct ResizableDivider: View {
         }
     }
 }
+
+/// 不可拖拽分隔线：与 ResizableDivider 同款视觉（1pt 渐变竖线，常显淡色），
+/// 但不响应拖拽、不绑定坐标。用于顶栏等「需要视觉分隔但不调宽」的场景。
+struct UnresizableDivider: View {
+    var height: CGFloat
+    init(height: CGFloat = Layout.topBarCapsuleHeight) { self.height = height }
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: 5, height: height)
+            .overlay(alignment: .center) {
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                .clear,
+                                Color.primary.opacity(0.25),
+                                .clear
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 1)
+            }
+    }
+}
 #endif

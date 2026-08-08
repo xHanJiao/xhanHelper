@@ -201,8 +201,8 @@ extractNormal(userID, sessionMessages):
     <!-- 其余 8 个字段同上，遍历 ProfileFields 的 ExtractDesc -->
   </fields>
   <messages>
-    <msg time="08-08 15:30" id="msg_xxx">我老家是河南焦作的</msg>
-    <msg time="08-08 15:32" id="msg_yyy">我女朋友叫CJ</msg>
+    <msg time="08-08 15:30">我老家是河南焦作的</msg>
+    <msg time="08-08 15:32">我女朋友叫CJ</msg>
   </messages>
   <rules>
     <rule>只提取用户明确陈述的事实，不要从对话中推断</rule>
@@ -215,7 +215,6 @@ extractNormal(userID, sessionMessages):
 ```
 
 - `<existing_profile>` — 已有画像为空时不输出该块（`omitempty`）
-- `<msg id="...">` — 带消息 ID，后续作为 `source_msg_id` 证据
 - 用 `encoding/xml` 编码，复用现有 `ctxflow/annotation_encoder.go` 的编码器
 
 ### 5.5 写入规则
@@ -299,7 +298,6 @@ CREATE TABLE user_profile (
   field         VARCHAR(64) NOT NULL,   -- 白名单字段
   field_value   TEXT NOT NULL,
   source        VARCHAR(16) NOT NULL,   -- "explicit" / "llm_additional"
-  source_msg_id VARCHAR(36),            -- 证据：哪条消息说的
   updated_at    DATETIME NOT NULL,
   PRIMARY KEY (user_id, field)
 );
@@ -311,12 +309,11 @@ CREATE TABLE user_profile (
 
 ```go
 type UserProfile struct {
-    UserID      string    `gorm:"primaryKey;size:36"`
-    Field       string    `gorm:"primaryKey;size:64"`
-    FieldValue  string    `gorm:"type:text;not null"`
-    Source      string    `gorm:"size:16;not null;default:explicit"`
-    SourceMsgID *string   `gorm:"size:36"`
-    UpdatedAt   time.Time `gorm:"autoUpdateTime"`
+    UserID     string    `gorm:"primaryKey;size:36"`
+    Field      string    `gorm:"primaryKey;size:64"`
+    FieldValue string    `gorm:"type:text;not null"`
+    Source     string    `gorm:"size:16;not null;default:explicit"`
+    UpdatedAt  time.Time `gorm:"autoUpdateTime"`
 }
 ```
 

@@ -166,8 +166,8 @@ func TestBuildProfileExtractionXML_Basic(t *testing.T) {
 	if !strings.Contains(xml, `key="籍贯"`) {
 		t.Error("missing existing field key")
 	}
-	if !strings.Contains(xml, `<msg time="08-08 15:30" id="msg-1">`) {
-		t.Error("missing msg element with time and id")
+	if !strings.Contains(xml, `<msg time="08-08 15:30">我老家是河南焦作的</msg>`) {
+		t.Error("missing msg element with time and content")
 	}
 	if !strings.Contains(xml, "<rules>") {
 		t.Error("missing <rules>")

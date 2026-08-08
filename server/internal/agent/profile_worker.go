@@ -158,7 +158,7 @@ func (w *UserProfileWorker) runColdStartReAct(ctx context.Context, userID string
 		return nil // 不重试，下次 session_end 自然重跑
 	}
 	log.Printf("[profile] cold start: extracted %d fields, iterations=%d", len(extracted), result.Iterations)
-	w.upsertExtracted(ctx, userID, extracted, nil)
+	w.upsertExtracted(ctx, userID, extracted)
 	return nil
 }
 
@@ -193,14 +193,14 @@ func (w *UserProfileWorker) extractNormal(ctx context.Context, sess *SessionSnap
 		return nil
 	}
 	log.Printf("[profile] normal: extracted %d fields, conv=%s", len(extracted), sess.ConvID[:min(8, len(sess.ConvID))])
-	w.upsertExtracted(ctx, sess.UserID, extracted, nil)
+	w.upsertExtracted(ctx, sess.UserID, extracted)
 	return nil
 }
 
 // ==================== 写入 ====================
 
 // upsertExtracted 按白名单过滤并写入画像。补充说明字段 source=llm_additional，其余 source=explicit。
-func (w *UserProfileWorker) upsertExtracted(ctx context.Context, userID string, extracted map[string]string, sourceMsgID *string) {
+func (w *UserProfileWorker) upsertExtracted(ctx context.Context, userID string, extracted map[string]string) {
 	for field, value := range extracted {
 		if !InProfileWhitelist(field) {
 			log.Printf("[profile] field %q not in whitelist, drop", field)
@@ -215,11 +215,10 @@ func (w *UserProfileWorker) upsertExtracted(ctx context.Context, userID string, 
 			source = model.ProfileSourceLLMAdditional
 		}
 		p := &model.UserProfile{
-			UserID:      userID,
-			Field:       field,
-			FieldValue:  value,
-			Source:      source,
-			SourceMsgID: sourceMsgID,
+			UserID:     userID,
+			Field:      field,
+			FieldValue: value,
+			Source:     source,
 		}
 		if err := w.profileRepo.Upsert(ctx, p); err != nil {
 			log.Printf("[profile] upsert field %s error: %v", field, err)
@@ -257,7 +256,6 @@ type profileFieldDefXML struct {
 
 type profileMsgXML struct {
 	Time string `xml:"time,attr"`
-	ID   string `xml:"id,attr,omitempty"`
 	Text string `xml:",chardata"`
 }
 
@@ -277,7 +275,6 @@ func buildProfileExtractionXML(existing []model.UserProfile, msgs []model.Messag
 			for _, m := range msgs {
 				out = append(out, profileMsgXML{
 					Time: m.CreatedAt.In(config.BJ).Format("01-02 15:04"),
-					ID:   m.ID,
 					Text: m.Content,
 				})
 			}

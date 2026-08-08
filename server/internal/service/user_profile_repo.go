@@ -26,7 +26,7 @@ func (r *UserProfileRepo) Upsert(ctx context.Context, p *model.UserProfile) erro
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "user_id"}, {Name: "field"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"field_value", "source", "source_msg_id", "updated_at",
+			"field_value", "source", "updated_at",
 		}),
 	}).Create(p).Error
 }

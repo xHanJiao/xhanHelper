@@ -65,3 +65,13 @@ type SummaryMeta struct {
 }
 
 func (SummaryMeta) isPacketMeta() {}
+
+// ProfileMeta 用户画像稳定层的元数据。
+type ProfileMeta struct {
+	Key       string    // 字段名（籍贯/伴侣/...）
+	Value     string    // 字段值
+	Source    string    // explicit / llm_additional
+	UpdatedAt time.Time // 更新时间
+}
+
+func (ProfileMeta) isPacketMeta() {}

@@ -136,6 +136,7 @@ type Orchestrator struct {
 	contextRetriever    *ctxflow.ContextRetriever // 上下文检索
 	contextFormatter    ctxflow.ContextFormatter  // 上下文格式化（接口）
 	reminderRepo        *service.ReminderRepo
+	profileRepo         *service.UserProfileRepo
 
 	// 摘要附着控制
 	summaryAttachCount        int
@@ -175,6 +176,7 @@ type OrchestratorConfig struct {
 	SummaryRelevanceThreshold float64                   // 摘要相关性阈值，默认 0.5
 	SummaryRelevanceHistoryN  int                       // 相关性检查的历史消息窗口，默认 5
 	ReminderRepo              *service.ReminderRepo
+	ProfileRepo               *service.UserProfileRepo
 }
 
 // New 创建 Orchestrator
@@ -222,6 +224,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		summaryRelevanceThreshold: cfg.SummaryRelevanceThreshold,
 		summaryRelevanceHistoryN:  cfg.SummaryRelevanceHistoryN,
 		reminderRepo:              cfg.ReminderRepo,
+		profileRepo:               cfg.ProfileRepo,
 	}
 }
 
@@ -501,6 +504,9 @@ func (o *Orchestrator) buildUserMessage(
 	reminderPkts := o.buildReminderPackets(ctx, req.UserID)
 	extraPackets = append(extraPackets, reminderPkts...)
 
+	profilePkts := o.buildProfilePackets(ctx, req.UserID)
+	extraPackets = append(extraPackets, profilePkts...)
+
 	userContent := o.contextFormatter.FormatUserMessage(
 		ctxflow.MergePackets(retrieveResult, extraPackets...),
 		req.UserMessageContent,
@@ -533,6 +539,24 @@ func (o *Orchestrator) buildReminderPackets(ctx context.Context, userID string) 
 			Type: ctxflow.TypeReminder,
 			Text: fmt.Sprintf("%s（过期 %s）", r.Content, ago),
 		})
+	}
+	return packets
+}
+
+// buildProfilePackets 加载用户画像稳定层，生成 ContextPacket 列表注入 user message。
+// 画像为空时不注入任何块（profileRepo 为 nil 时也跳过）。
+func (o *Orchestrator) buildProfilePackets(ctx context.Context, userID string) []retrieval.ContextPacket {
+	if o.profileRepo == nil {
+		return nil
+	}
+	profiles, err := o.profileRepo.GetByUser(ctx, userID)
+	if err != nil {
+		log.Printf("[orch] profile GetByUser error: %v", err)
+		return nil
+	}
+	packets := make([]retrieval.ContextPacket, 0, len(profiles))
+	for i := range profiles {
+		packets = append(packets, ctxflow.ProfilePacket(&profiles[i]))
 	}
 	return packets
 }

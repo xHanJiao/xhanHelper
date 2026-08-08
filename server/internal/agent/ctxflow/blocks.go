@@ -7,9 +7,11 @@ import (
 
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/config"
+	"xhan-helper/internal/model"
 )
 
 const (
+	TypeProfile         = "profile"
 	TypeSummary         = "summary"
 	TypeReminder        = "reminder"
 	TypeHistory         = "history"
@@ -21,7 +23,8 @@ const (
 )
 
 // typeOrder 定义所有块的渲染顺序，也是 typeRank 的单一数据源。
-var typeOrder = []string{TypeSummary, TypeReminder, TypeHistory, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime, TypeNotice}
+// profile 是最稳定的用户事实画像，放在最前面，便于 LLM 优先关注。
+var typeOrder = []string{TypeProfile, TypeSummary, TypeReminder, TypeHistory, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime, TypeNotice}
 
 // typeRank 从 typeOrder 派生，供排序时 O(1) 查找顺序。
 var typeRank = func() map[string]int {
@@ -154,6 +157,24 @@ type noticeBlock struct {
 
 func (*noticeBlock) TypeKey() string { return TypeNotice }
 
+// --- profile ---
+// profileBlock 用户画像稳定层块：用户核心事实，全量注入（量小不走检索）。
+// 字段带 updated_at（信息新旧）与 source（explicit 高置信度 / llm_additional 较低置信度）。
+// 画像为空时不注入本块。
+type profileFieldItem struct {
+	Key       string `xml:"key,attr" json:"key"`
+	UpdatedAt string `xml:"updated_at,attr,omitempty" json:"updated_at,omitempty"`
+	Source    string `xml:"source,attr,omitempty" json:"source,omitempty"`
+	Value     string `xml:",chardata" json:"value"`
+}
+type profileBlock struct {
+	XMLName     struct{}           `xml:"profile" json:"-"`
+	Description string             `xml:"description,attr,omitempty" json:"description,omitempty"`
+	Items       []profileFieldItem `xml:"field" json:"items"`
+}
+
+func (*profileBlock) TypeKey() string { return TypeProfile }
+
 // --- user_query ---
 type userQueryBlock struct {
 	XMLName struct{} `xml:"user_query" json:"-"`
@@ -166,6 +187,7 @@ type blockBuilder func(items []retrieval.ContextPacket) Block
 
 // blockBuilders 按 type 注册构建函数。新增类型只需加一行。
 var blockBuilders = map[string]blockBuilder{
+	TypeProfile:         buildProfileBlock,
 	TypeMemory:          buildMemoriesBlock,
 	TypeNote:            buildNotesBlock,
 	TypeHistory:         buildHistoryBlock,
@@ -321,6 +343,30 @@ func buildNoticeBlock(items []retrieval.ContextPacket) Block {
 	return &noticeBlock{Content: items[0].Text}
 }
 
+// buildProfileBlock 构建画像块。items 为空返回 nil（不注入空块）。
+func buildProfileBlock(items []retrieval.ContextPacket) Block {
+	if len(items) == 0 {
+		return nil
+	}
+	b := profileBlock{
+		Description: "用户的核心事实画像，由系统从对话记录中自动提取。信息可能有滞后，以用户最新陈述为准。",
+	}
+	for _, pkt := range items {
+		it := profileFieldItem{Key: pkt.ID, Value: pkt.Text}
+		if meta, ok := pkt.Meta.(retrieval.ProfileMeta); ok {
+			if meta.Key != "" {
+				it.Key = meta.Key
+			}
+			if !meta.UpdatedAt.IsZero() {
+				it.UpdatedAt = meta.UpdatedAt.In(config.BJ).Format("2006-01-02")
+			}
+			it.Source = meta.Source
+		}
+		b.Items = append(b.Items, it)
+	}
+	return &b
+}
+
 // roundScore 将相似度分数保留 4 位小数，避免 XML 中输出过长的浮点字面量。
 func roundScore(s float64) float64 {
 	return math.Round(s*10000) / 10000
@@ -345,6 +391,21 @@ func DateTimePacket(t time.Time) retrieval.ContextPacket {
 // NoticePacket 生成 notice 类型的 ContextPacket（模式提示等系统通知，仅 LLM 可见）。
 func NoticePacket(text string) retrieval.ContextPacket {
 	return retrieval.ContextPacket{Type: TypeNotice, Text: text}
+}
+
+// ProfilePacket 生成 profile 类型的 ContextPacket（用户画像稳定层字段）。
+func ProfilePacket(p *model.UserProfile) retrieval.ContextPacket {
+	return retrieval.ContextPacket{
+		ID:   p.Field,
+		Type: TypeProfile,
+		Text: p.FieldValue,
+		Meta: retrieval.ProfileMeta{
+			Key:       p.Field,
+			Value:     p.FieldValue,
+			Source:    p.Source,
+			UpdatedAt: p.UpdatedAt,
+		},
+	}
 }
 
 // MergePackets 合并附加 packet 与检索结果，按 type 归并。

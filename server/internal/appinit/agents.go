@@ -89,7 +89,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		VectorStore:   infra.VectorStore,
 	})
 
-	// --- 对话后处理组（session_end）：摘要 + 记忆提取 + 主题状态更新 ---
+	// --- 对话后处理组（session_end）：摘要 + 记忆提取 + 主题状态更新 + 用户画像 ---
 	sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
 		summaryWorker,
 		agent.NewMemoryWorker(&agent.MemoryWorkerConfig{
@@ -98,6 +98,11 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		}),
 		agent.NewStateWorker(&agent.StateWorkerConfig{
 			Updater: stateUpdater,
+		}),
+		agent.NewUserProfileWorker(&agent.UserProfileWorkerConfig{
+			FlashClient: llmClients.Flash,
+			Registry:    tools.Registry,
+			ProfileRepo: repos.UserProfile,
 		}),
 	}, repos.Message)
 
@@ -170,6 +175,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		SummaryRelevanceThreshold: cfg.Chat.SummaryRelevanceThreshold,
 		SummaryRelevanceHistoryN:  cfg.Chat.SummaryRelevanceHistoryN,
 		ReminderRepo:              repos.Reminder,
+		ProfileRepo:               repos.UserProfile,
 	})
 
 	if !cfg.Server.DisableBackgroundTasks {

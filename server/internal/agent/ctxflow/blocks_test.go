@@ -239,3 +239,54 @@ func TestNoticeBlock_RendersInUserMessage(t *testing.T) {
 		t.Errorf("user_query 应保留: %s", out)
 	}
 }
+
+func TestBuildProfileBlock(t *testing.T) {
+	items := []retrieval.ContextPacket{
+		ProfilePacket(&model.UserProfile{
+			Field: "籍贯", FieldValue: "河南焦作", Source: "explicit",
+			UpdatedAt: makeTime(2026, 8, 7),
+		}),
+	}
+	got := marshalBlock(t, buildBlock(TypeProfile, items))
+	if !strings.Contains(got, `<profile`) {
+		t.Errorf("should produce profile root: %s", got)
+	}
+	if !strings.Contains(got, `key="籍贯"`) {
+		t.Errorf("missing field key: %s", got)
+	}
+	if !strings.Contains(got, `source="explicit"`) {
+		t.Errorf("missing source attr: %s", got)
+	}
+	if !strings.Contains(got, `updated_at="2026-08-07"`) {
+		t.Errorf("missing updated_at attr: %s", got)
+	}
+	if !strings.Contains(got, ">河南焦作</field>") {
+		t.Errorf("missing field value: %s", got)
+	}
+}
+
+func TestBuildProfileBlock_EmptyReturnsNil(t *testing.T) {
+	if buildBlock(TypeProfile, nil) != nil {
+		t.Error("empty profile should return nil (not injected)")
+	}
+}
+
+func TestProfileBlock_RendersFirstInUserMessage(t *testing.T) {
+	f := NewXMLFormatter()
+	packets := map[string][]retrieval.ContextPacket{
+		TypeProfile: {
+			ProfilePacket(&model.UserProfile{Field: "籍贯", FieldValue: "河南焦作", Source: "explicit", UpdatedAt: makeTime(2026, 8, 7)}),
+		},
+		TypeCurrentDatetime: {DateTimePacket(makeTime(2026, 8, 8))},
+		TypeMemory:          {retrieval.ContextPacket{Type: TypeMemory, Text: "某记忆"}},
+	}
+	out := f.FormatUserMessage(packets, "你好")
+	if !strings.Contains(out, "<profile ") && !strings.Contains(out, "<profile>") {
+		t.Errorf("profile block should render: %s", out)
+	}
+	profileIdx := strings.Index(out, "<profile")
+	datetimeIdx := strings.Index(out, "<current_datetime>")
+	if profileIdx < 0 || datetimeIdx < 0 || profileIdx > datetimeIdx {
+		t.Errorf("profile should render before current_datetime: %s", out)
+	}
+}

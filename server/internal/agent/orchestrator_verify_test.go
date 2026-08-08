@@ -33,6 +33,7 @@ func setupOrchForVerify(t *testing.T) (*Orchestrator, *service.MessageRepo, func
 		VerifyEnabled:    true,
 		VerifyMaxRetries: 3,
 		VerifyModel:      "flash",
+		DebugPersistJSON: true, // 测试检验 request_json 持久化
 	})
 	return orch, msgRepo, func() {}
 }
@@ -534,7 +535,7 @@ func TestSaveVerifyFeedback_StoresRequestJSON(t *testing.T) {
 	db.AutoMigrate(&model.Message{})
 	msgRepo := service.NewMessageRepo(db)
 
-	orch := &Orchestrator{msgRepo: msgRepo}
+	orch := &Orchestrator{msgRepo: msgRepo, debugPersistJSON: true}
 	orch.saveVerifyFeedback(context.Background(), "c1", "u1",
 		"[系统] 内部检验发现幻觉：编造了红酒账单",
 		"你是一个检验助手",

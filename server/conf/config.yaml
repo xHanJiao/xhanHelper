@@ -33,6 +33,7 @@ llm:
   extract_msg_limit: 50            # 记忆提取每次最多取的消息数
   use_native_fc: true              # 是否使用原生 function calling（默认 true）
   client_tool_timeout_secs: 60     # 客户端工具（Mac 本地 MCP）执行超时秒数，默认 60
+  debug_persist_json: false        # 是否持久化完整 LLM 请求/响应 JSON 到 DB（仅 dev 调试用，线上关闭以节省磁盘 IO）
   verification:
     enabled: false
     model: flash               # flash | pro，检验用模型

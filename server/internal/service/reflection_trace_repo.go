@@ -11,11 +11,12 @@ import (
 
 // ReflectionTraceRepo — 反思可观测性数据访问
 type ReflectionTraceRepo struct {
-	db *gorm.DB
+	db           *gorm.DB
+	persistDebug bool // 是否持久化完整 LLM 请求/响应 JSON（仅 dev 调试用）
 }
 
-func NewReflectionTraceRepo(db *gorm.DB) *ReflectionTraceRepo {
-	return &ReflectionTraceRepo{db: db}
+func NewReflectionTraceRepo(db *gorm.DB, persistDebug bool) *ReflectionTraceRepo {
+	return &ReflectionTraceRepo{db: db, persistDebug: persistDebug}
 }
 
 // CreateTrace 创建一条反思 trace 记录
@@ -42,6 +43,10 @@ func (r *ReflectionTraceRepo) EndTrace(ctx context.Context, id string, status st
 
 // CreateLLMCall 记录一次子 Agent 的 LLM 调用
 func (r *ReflectionTraceRepo) CreateLLMCall(ctx context.Context, call *model.ReflectionLLMCall) error {
+	if !r.persistDebug {
+		call.RequestJSON = nil
+		call.ResponseJSON = nil
+	}
 	return r.db.WithContext(ctx).Create(call).Error
 }
 

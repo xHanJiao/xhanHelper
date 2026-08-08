@@ -131,6 +131,7 @@ type Orchestrator struct {
 	verifyMaxRetries    int
 	verifyModel         string // "flash" | "pro"
 	useNativeFC         bool
+	debugPersistJSON    bool
 	clientBridge        *ClientToolBridge
 	clientToolTimeout   time.Duration
 	summaryRepo         *service.ConversationSummaryRepo
@@ -167,6 +168,7 @@ type OrchestratorConfig struct {
 	VerifyMaxRetries          int
 	VerifyModel               string            // "flash" | "pro"，默认 flash
 	UseNativeFC               bool              // 是否使用原生 function calling
+	DebugPersistJSON          bool              // 是否持久化完整 LLM 请求/响应 JSON（仅 dev 调试用）
 	ClientBridge              *ClientToolBridge // 客户端工具桥（客户端工具调用的 pending 路由）
 	ClientToolTimeoutSecs     int               // 客户端工具执行超时秒数，默认 60
 	SummaryRepo               *service.ConversationSummaryRepo
@@ -215,6 +217,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		verifyMaxRetries:          cfg.VerifyMaxRetries,
 		verifyModel:               cfg.VerifyModel,
 		useNativeFC:               cfg.UseNativeFC,
+		debugPersistJSON:          cfg.DebugPersistJSON,
 		clientBridge:              cfg.ClientBridge,
 		clientToolTimeout:         time.Duration(cfg.ClientToolTimeoutSecs) * time.Second,
 		summaryRepo:               cfg.SummaryRepo,
@@ -1155,13 +1158,17 @@ func (o *Orchestrator) saveVerifyFeedback(ctx context.Context, convID, userID, f
 		return
 	}
 	reqStr := string(reqJSON)
+	var reqJSONPtr *string
+	if o.debugPersistJSON {
+		reqJSONPtr = &reqStr
+	}
 	if err := o.msgRepo.Create(ctx, &model.Message{
 		ID:             uuid.New().String(),
 		UserID:         userID,
 		ConversationID: convID,
 		Role:           "system",
 		Content:        feedback,
-		RequestJSON:    &reqStr,
+		RequestJSON:    reqJSONPtr,
 		IsInternal:     true,
 	}); err != nil {
 		log.Printf("[verify] save feedback error: %v", err)
@@ -1200,7 +1207,7 @@ func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, us
 		s := string(b)
 		modelMsg.ToolCallsJSON = &s
 	}
-	if msg.RequestJSON != nil {
+	if o.debugPersistJSON && msg.RequestJSON != nil {
 		modelMsg.RequestJSON = msg.RequestJSON
 	}
 	if err := o.msgRepo.Create(ctx, modelMsg); err != nil {

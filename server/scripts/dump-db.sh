@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # dump-db.sh — 导出线上 MySQL 数据库
-# 用法: bash scripts/dump-db.sh [output_dir]
+# 用法: bash scripts/dump-db.sh [output_dir] [keep_count]
 #   output_dir 默认: /srv/xhan-helper/mysqldumps
+#   keep_count 默认: 3（保留最近 N 份，自动清理旧备份）
 # 需要环境变量: XHAN_HELPER_DB_PASSWORD（通常从 ~/.bashrc / ~/.zshrc 加载）
 
 # SSH 远程执行时不会自动 source 用户环境——strict mode 之前先加载
@@ -14,6 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_DIR="${1:-$PROJECT_DIR/mysqldumps}"
+KEEP_COUNT="${2:-3}"
 
 DB_HOST="${DB_HOST:-127.0.0.1}"
 DB_PORT="${DB_PORT:-3306}"
@@ -48,3 +50,13 @@ mysqldump \
 
 echo "✅ 导出完成: $OUTPUT_FILE ($(du -h "$OUTPUT_FILE" | cut -f1))"
 echo "$OUTPUT_FILE"
+
+# 自动清理：只保留最近 KEEP_COUNT 份备份，防止 mysqldumps 无限堆积
+KEPT=0
+for OLD in $(ls -t "$OUTPUT_DIR"/xhan_helper-*.sql.gz 2>/dev/null); do
+    KEPT=$((KEPT + 1))
+    if [ "$KEPT" -gt "$KEEP_COUNT" ]; then
+        rm -f "$OLD"
+        echo "🧹 已清理旧备份: $OLD"
+    fi
+done

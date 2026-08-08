@@ -25,6 +25,7 @@ type SummaryWorker struct {
 	chunkBuilder  app.ChunkEmbedder
 	embeddingRepo *service.EmbeddingRepo
 	vectorStore   app.VectorStore
+	persistDebug  bool
 }
 
 // SummaryWorkerConfig — SummaryWorker 依赖配置
@@ -35,6 +36,7 @@ type SummaryWorkerConfig struct {
 	ChunkBuilder  app.ChunkEmbedder
 	EmbeddingRepo *service.EmbeddingRepo
 	VectorStore   app.VectorStore
+	PersistDebug  bool // 是否持久化完整 LLM 请求/响应 JSON（仅 dev 调试用）
 }
 
 // NewSummaryWorker 创建摘要生成器。
@@ -46,6 +48,7 @@ func NewSummaryWorker(cfg *SummaryWorkerConfig) *SummaryWorker {
 		chunkBuilder:  cfg.ChunkBuilder,
 		embeddingRepo: cfg.EmbeddingRepo,
 		vectorStore:   cfg.VectorStore,
+		persistDebug:  cfg.PersistDebug,
 	}
 }
 
@@ -143,9 +146,11 @@ func (w *SummaryWorker) saveSummary(
 		CoverFromMsgID:  coverFrom,
 		CoverToMsgID:    coverTo,
 		ParentSummaryID: parentID,
-		RequestJSON:     reqJSON,
-		ResponseJSON:    respJSON,
 		Status:          "active",
+	}
+	if w.persistDebug {
+		record.RequestJSON = reqJSON
+		record.ResponseJSON = respJSON
 	}
 	if err := w.summaryRepo.Create(ctx, record); err != nil {
 		return fmt.Errorf("Create summary: %w", err)

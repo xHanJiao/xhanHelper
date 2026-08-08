@@ -135,6 +135,7 @@ type LLMConfig struct {
 	ExtractMsgLimit       int                `yaml:"extract_msg_limit"`        // 记忆提取每次最多取的消息数，默认 50
 	UseNativeFC           bool               `yaml:"use_native_fc"`            // 是否使用原生 function calling（默认 true）
 	ClientToolTimeoutSecs int                `yaml:"client_tool_timeout_secs"` // 客户端工具执行超时秒数，默认 60
+	DebugPersistJSON      bool               `yaml:"debug_persist_json"`       // 是否持久化完整 LLM 请求/响应 JSON 到 DB（仅 dev 调试用，线上关闭以节省磁盘 IO）
 }
 
 // EmbeddingConfig — 向量化配置
@@ -314,6 +315,7 @@ func merge(dst, src *Config) {
 	if src.LLM.ExtractMsgLimit != 0 {
 		dst.LLM.ExtractMsgLimit = src.LLM.ExtractMsgLimit
 	}
+	dst.LLM.DebugPersistJSON = src.LLM.DebugPersistJSON
 	if src.Embedding.APIKey != "" {
 		dst.Embedding.APIKey = src.Embedding.APIKey
 	}

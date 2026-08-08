@@ -95,6 +95,8 @@ struct BrowserTabView: View {
         .onDisappear {
             BrowserFocus.isUrlFieldFocused = false
             BrowserFocus.isFindFieldFocused = false
+            for obs in observations { obs.invalidate() }
+            observations = []
         }
     }
 

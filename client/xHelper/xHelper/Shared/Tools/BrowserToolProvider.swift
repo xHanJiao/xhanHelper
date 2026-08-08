@@ -15,6 +15,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private var closedStack: [(url: URL?, title: String)] = []
     /// 已从 UI 移除但仍有活跃下载、需保活的 session（WKDownload delegate 不能失效，否则下载中断）
     private var retiringSessions: [TabSession] = []
+    /// 退保 session 入队时间（用于 60s 超时强制清理）
+    private var retiringSessionSince: [ObjectIdentifier: Date] = [:]
+    /// 后台管家定时器（agent 标签空闲清理 + 退保超时清理）
+    private var housekeepingTimer: Timer?
     private let maxResultChars: Int
 
     /// S3'：页面内容不可信标注（纵深防御，非主防御——提示词级约束可被注入绕过）
@@ -23,6 +27,21 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     init(maxResultChars: Int = 10_000) {
         self.maxResultChars = maxResultChars
         super.init()
+        startHousekeepingTimer()
+    }
+
+    private func startHousekeepingTimer() {
+        guard housekeepingTimer == nil else { return }
+        housekeepingTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.housekeepingTick()
+            }
+        }
+    }
+
+    private func housekeepingTick() {
+        cleanupIdleAgentTabs()
+        settleRetiringSessions()
     }
 
     // MARK: - LocalToolProvider
@@ -1133,11 +1152,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// 解析工具目标 session：读工具支持 tabId 静默读取后台 tab（不切走当前页）。
     /// 传了 tabId 用 tabs[tabId]（不存在返回 nil → 报错），没传用当前激活 tab。
+    /// 通过 tabId 访问后台 tab 时自动刷新 lastAccessedAt，防止 agent 正在用的标签被自动关闭。
     private func sessionFor(_ args: [String: Any]) -> TabSession? {
         guard let tabId = args["tabId"] as? String, !tabId.isEmpty else {
             return activeSession
         }
-        return tabs[tabId]
+        guard let session = tabs[tabId] else { return nil }
+        session.lastAccessedAt = Date()
+        return session
     }
 
     /// 只读工具（支持 tabId 后台读取）；交互/导航工具仍只能操作激活 tab。
@@ -1234,6 +1256,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
         let session = TabSession()
+        session.isAgentTab = true
         tabs[tabId] = session
         // 首个 tab 必须激活展示（无可保留的前台页），否则后台打开会得到不显示的 tab
         let activate = !background || tabs.count == 1
@@ -1313,7 +1336,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             rightSidebar?.closeTab(id)
         }
         // 保活仍有活跃下载的 session（WKDownload delegate 不失效），其余释放
-        retiringSessions.append(contentsOf: tabs.values.filter { $0.hasActiveDownloads })
+        let now = Date()
+        for session in tabs.values where session.hasActiveDownloads {
+            retiringSessions.append(session)
+            retiringSessionSince[ObjectIdentifier(session)] = now
+        }
         tabs.removeAll()
         closedStack.removeAll()
         activeTabId = nil
@@ -1337,6 +1364,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         refreshBrowserGroup()
         if session.hasActiveDownloads {
             retiringSessions.append(session)
+            retiringSessionSince[ObjectIdentifier(session)] = Date()
         }
         if wasActive {
             // Bad Case 17 修复：关掉激活页后自动切到"最近打开的"剩余 tab（tabId 为递增 browser-N，
@@ -1356,14 +1384,20 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return .init(serverResult: Self.jsonDict(["closed": tabId, "remaining": tabs.count, "activeTabId": activeTabId ?? ""]), serverError: nil, clientAction: nil)
     }
 
-    /// 停止 webView 的网络加载与页面媒体播放（video/audio），断开 delegate 引用，
-    /// 帮助 session 快速释放。有活跃下载时跳过（保活下载不中断）。
+    /// 清理 webView 所有资源：空白页冲掉页面内存 → 失效 KVO → 移除注入脚本/规则 → 断开 delegate → 移除视图层级。
+    /// 有活跃下载时跳过（保活下载不中断）。
     private func tearDownWebView(_ session: TabSession) {
         guard !session.hasActiveDownloads else { return }
+        session.cleanupObservations()
         session.webView.stopLoading()
         session.webView.evaluateJavaScript(
             "document.querySelectorAll('video,audio').forEach(function(e){e.pause();e.removeAttribute('src')})",
             completionHandler: nil)
+        session.webView.loadHTMLString("<html><body></body></html>", baseURL: nil)
+        session.webView.configuration.userContentController.removeAllUserScripts()
+        if let ruleList = ContentBlocker.ruleList {
+            session.webView.configuration.userContentController.remove(ruleList)
+        }
         session.webView.uiDelegate = nil
         session.webView.navigationDelegate = nil
         session.webView.removeFromSuperview()
@@ -1386,8 +1420,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     func selectTab(_ id: String) {
-        guard tabs[id] != nil else { return }
+        guard let session = tabs[id] else { return }
         pipLog("selectTab: \(activeTabId ?? "nil") -> \(id)")
+        session.isAgentTab = false
         switchActiveTab(to: id)
     }
 
@@ -1575,17 +1610,59 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
     }
 
-    /// 切激活 tab：先暂停旧 tab 媒体（节能），再切换。
+    /// 切激活 tab：先暂停旧 tab 媒体（节能），再切换。更新新 tab 最后访问时间。
     private func switchActiveTab(to id: String?) {
         if let prev = activeTabId, prev != id, let prevSession = tabs[prev] {
             prevSession.webView.pauseAllMediaPlayback()
         }
+        if let id, let session = tabs[id] {
+            session.lastAccessedAt = Date()
+        }
         activeTabId = id
     }
 
-    /// 清理已完成下载的保活 session（下载全结束时由 onDownloadsSettled 触发）。
+    /// 清理已完成下载或超时的保活 session。
+    /// 下载全结束时由 onDownloadsSettled 立即触发；兜底由 housekeeping 定时器每 30s 扫描。
+    /// 超过 60s 未完成的下载强制取消并销毁 session。
     private func settleRetiringSessions() {
-        retiringSessions.removeAll { !$0.hasActiveDownloads }
+        let now = Date()
+        retiringSessions.removeAll { session in
+            if !session.hasActiveDownloads {
+                tearDownWebView(session)
+                retiringSessionSince.removeValue(forKey: ObjectIdentifier(session))
+                return true
+            }
+            if let since = retiringSessionSince[ObjectIdentifier(session)], now.timeIntervalSince(since) > 60 {
+                LogBuffer.shared.warning("[Browser] retiring session timeout, force cleanup")
+                session.cancelLoadWait()
+                session.forceCancelDownloads()
+                tearDownWebView(session)
+                retiringSessionSince.removeValue(forKey: ObjectIdentifier(session))
+                return true
+            }
+            return false
+        }
+    }
+
+    /// 扫描 agent 打开的标签，空闲超时（DEBUG=1min / RELEASE=10min）且无下载时自动关闭，释放内存。
+    private func cleanupIdleAgentTabs() {
+        let now = Date()
+        let idleThreshold: TimeInterval = {
+            #if DEBUG
+            return 60
+            #else
+            return 600
+            #endif
+        }()
+        let toClose = tabs.filter { id, session in
+            session.isAgentTab
+            && !session.hasActiveDownloads
+            && now.timeIntervalSince(session.lastAccessedAt) > idleThreshold
+        }
+        for (id, _) in toClose {
+            LogBuffer.shared.info("[Browser] auto-closing idle agent tab: \(id)")
+            _ = handleCloseTab(["tabId": id])
+        }
     }
 
     /// tab 标题跟随页面标题
@@ -1648,13 +1725,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
             // 用户点击 <a target=_blank> → 直接放行（百度搜索结果等场景）
             if navigationAction.navigationType == .linkActivated {
-                return self.openPopupTab(configuration: configuration, targetURL: targetURL)
+                return self.openPopupTab(configuration: configuration, targetURL: targetURL, isAgentTab: session.isAgentTab)
             }
 
             // window.open / form target=_blank：http/https 直接放行开新 tab（对齐 Chrome，不再弹窗）；
             // 非 http 协议（javascript:/data:/file: 等）仍弹确认，防止被诱导执行本地/危险操作
             if let url = targetURL, url.scheme == "http" || url.scheme == "https" {
-                return self.openPopupTab(configuration: configuration, targetURL: targetURL)
+                return self.openPopupTab(configuration: configuration, targetURL: targetURL, isAgentTab: session.isAgentTab)
             }
 
             // window.open / form target=_blank → 弹确认
@@ -1668,10 +1745,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 primary: "允许",
                 secondary: "取消",
                 onWindow: session.webView.window ?? NSApp.keyWindow,
-                onDone: { [weak self] confirmed in
+                onDone: { [weak self, weak session] confirmed in
                     guard let self, confirmed else { return }
+                    let agentTab = session?.isAgentTab ?? false
                     Task { @MainActor in
-                        _ = self.openPopupTab(configuration: configuration, targetURL: targetURL)
+                        _ = self.openPopupTab(configuration: configuration, targetURL: targetURL, isAgentTab: agentTab)
                     }
                 }
             )
@@ -1742,10 +1820,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     #endif
 
     @MainActor
-    private func openPopupTab(configuration: WKWebViewConfiguration, targetURL: URL?) -> WKWebView? {
+    private func openPopupTab(configuration: WKWebViewConfiguration, targetURL: URL?, isAgentTab: Bool = false) -> WKWebView? {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
         let newSession = TabSession(configuration: configuration)
+        newSession.isAgentTab = isAgentTab
         tabs[tabId] = newSession
         switchActiveTab(to: tabId)
         refreshBrowserGroup()
@@ -1893,9 +1972,34 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             !activeRecordIDs.isEmpty
         }
 
+        func forceCancelDownloads() {
+            for (_, recordID) in activeRecordIDs {
+                DownloadHistoryStore.shared.cancel(id: recordID)
+            }
+            activeRecordIDs.removeAll()
+            downloadProgressObservations.removeAll()
+        }
+
         /// 活动下载记录（user-initiated）：WKDownload 对象 → 历史记录 id
         private var activeRecordIDs: [ObjectIdentifier: UUID] = [:]
         private var downloadProgressObservations: [ObjectIdentifier: NSKeyValueObservation] = [:]
+
+        /// agent 打开的标签（用于空闲超时自动关闭，用户自开的标签不受影响）
+        var isAgentTab = false
+        /// 最后一次被激活/访问的时间（用于空闲超时判断）
+        var lastAccessedAt = Date()
+
+        deinit {
+            titleObservation?.invalidate()
+            urlObservation?.invalidate()
+        }
+
+        func cleanupObservations() {
+            titleObservation?.invalidate()
+            titleObservation = nil
+            urlObservation?.invalidate()
+            urlObservation = nil
+        }
 
         override init() {
             webView = TabSession.makeWebView(configuration: WKWebViewConfiguration())

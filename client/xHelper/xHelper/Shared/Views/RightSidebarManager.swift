@@ -8,6 +8,8 @@ struct RightSidebarTab: Identifiable {
     var content: AnyView
     /// 当前页 host（favicon 查询键，随导航更新）
     var host: String?
+    /// agent 打开的标签（淡蓝底色区分；用户点击翻牌后置 false）
+    var isAgentTab: Bool = false
 }
 
 final class RightSidebarManager: ObservableObject {
@@ -81,11 +83,11 @@ final class RightSidebarManager: ObservableObject {
         activeTabId == nil || tabs.isEmpty
     }
 
-    func openTab(id: String, title: String, icon: String, content: AnyView, activate: Bool = true) {
+    func openTab(id: String, title: String, icon: String, content: AnyView, activate: Bool = true, isAgentTab: Bool = false) {
         if tabs.contains(where: { $0.id == id }) {
             if activate { activeTabId = id }
         } else {
-            let tab = RightSidebarTab(id: id, title: title, icon: icon, content: content)
+            let tab = RightSidebarTab(id: id, title: title, icon: icon, content: content, isAgentTab: isAgentTab)
             if Self.specialTabIDs.contains(id) {
                 // 特殊 tab（下载/收藏/历史）固定最右：追加到末尾
                 tabs.append(tab)
@@ -250,6 +252,14 @@ final class RightSidebarManager: ObservableObject {
         guard !host.isEmpty, let i = tabs.firstIndex(where: { $0.id == id }) else { return }
         var updated = tabs[i]
         updated.host = host
+        tabs[i] = updated
+    }
+
+    /// 更新 tab 的 agent 属性（用户点击翻牌后 agent tab → 用户 tab，底色随之切换）
+    func updateTabAgentState(id: String, isAgentTab: Bool) {
+        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
+        var updated = tabs[i]
+        updated.isAgentTab = isAgentTab
         tabs[i] = updated
     }
 

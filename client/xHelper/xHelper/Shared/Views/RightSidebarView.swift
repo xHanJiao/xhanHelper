@@ -152,7 +152,9 @@ struct RightSidebarView: View {
         .background(
             isActive
                 ? AnyShapeStyle(.regularMaterial)
-                : AnyShapeStyle(.clear),
+                : (tab.isAgentTab
+                    ? AnyShapeStyle(Color.blue.opacity(0.18))
+                    : AnyShapeStyle(.clear)),
             in: UnevenRoundedRectangle(
                 topLeadingRadius: 6, bottomLeadingRadius: 0,
                 bottomTrailingRadius: 0, topTrailingRadius: 6

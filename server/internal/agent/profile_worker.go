@@ -11,6 +11,7 @@ import (
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
+	"xhan-helper/internal/profilefield"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
@@ -133,7 +134,7 @@ func coldStartSystemPrompt() string {
 - 只填写用户明确陈述过的事实，禁止用你的推断填充
 - 值要简洁，一句话能说清
 - 不确定的信息宁可省略，不要猜测
-- 你最多有 9 轮搜索机会，合理规划搜索内容`, ProfileExtractFieldText())
+- 你最多有 9 轮搜索机会，合理规划搜索内容`, profilefield.ProfileExtractFieldText())
 }
 
 // runColdStartReAct 冷启动：LLM 用 unified_search 自主搜集信息，输出画像 JSON 后写入 DB。
@@ -222,7 +223,7 @@ func (w *UserProfileWorker) extractNormal(ctx context.Context, sess *SessionSnap
 // upsertExtracted 按白名单过滤并写入画像。补充说明字段 source=llm_additional，其余 source=explicit。
 func (w *UserProfileWorker) upsertExtracted(ctx context.Context, userID string, extracted map[string]string) {
 	for field, value := range extracted {
-		if !InProfileWhitelist(field) {
+		if !profilefield.InProfileWhitelist(field) {
 			log.Printf("[profile] field %q not in whitelist, drop", field)
 			continue
 		}
@@ -284,8 +285,8 @@ func buildProfileExtractionXML(existing []model.UserProfile, msgs []model.Messag
 	doc := profileExtractionXML{
 		Task: "从以下对话记录中提取用户新画像信息",
 		Fields: func() []profileFieldDefXML {
-			fields := make([]profileFieldDefXML, 0, len(ProfileFields))
-			for _, f := range ProfileFields {
+			fields := make([]profileFieldDefXML, 0, len(profilefield.ProfileFields))
+			for _, f := range profilefield.ProfileFields {
 				fields = append(fields, profileFieldDefXML{Name: f.Field, Description: f.ExtractDesc})
 			}
 			return fields

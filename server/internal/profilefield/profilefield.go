@@ -1,4 +1,4 @@
-package agent
+package profilefield
 
 import "strings"
 
@@ -132,6 +132,15 @@ func ProfileFieldDesc(field string) *ProfileFieldDef {
 		return nil
 	}
 	return &f
+}
+
+// ProfileFieldNames 返回白名单字段名列表（供工具 enum、校验等使用）。
+func ProfileFieldNames() []string {
+	names := make([]string, 0, len(ProfileFields))
+	for _, f := range ProfileFields {
+		names = append(names, f.Field)
+	}
+	return names
 }
 
 // ProfileExtractFieldText 生成冷启动/提取 prompt 中的字段定义文本（"字段名\n描述" 逐字段拼接）。

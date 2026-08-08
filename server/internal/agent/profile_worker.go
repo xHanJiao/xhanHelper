@@ -23,8 +23,12 @@ const postChatSharedSystemPrompt = `你是一个对话后处理助手。负责�
 // coldStartUserMessage — 冷启动 ReAct 的初始 user 消息（极简触发，具体指令在 system prompt 里）。
 const coldStartUserMessage = "请搜索并提取我的用户画像。"
 
-// coldStartMaxIterations — 冷启动 mini ReAct 最大轮次。
-const coldStartMaxIterations = 5
+// coldStartMaxIterations — 冷启动 mini ReAct 最大轮次（含强制收敛轮，计入总数）。
+const coldStartMaxIterations = 10
+
+// coldStartFinalRoundPrompt — 冷启动强制收敛轮指令：主循环耗尽后逼出画像 JSON。
+const coldStartFinalRoundPrompt = `[系统] 本轮已达最大步数限制。请不要再调用任何工具，直接根据你已收集到的信息输出用户画像 JSON。
+按输出格式要求输出：{"字段名1":"值1","字段名2":"值2"}。没找到信息的字段省略；完全没找到输出 {}。`
 
 // coldStartTools — 冷启动开放的只读工具（统一搜索覆盖 memory/note/summary/theme/history 五个域）。
 const coldStartTools = "unified_search"
@@ -47,21 +51,23 @@ var profilePlaceholders = map[string]bool{
 
 // UserProfileWorker — 用户画像稳定层提取（PostChatWorker）。
 // 双模式：
-//   - 冷启动（画像表为空）：mini ReAct，LLM 用 unified_search 自主搜集信息后生成画像
+//   - 冷启动（画像表为空）：mini ReAct（deep mode，Pro 模型，可选），LLM 用 unified_search 自主搜集信息后生成画像
 //   - 正常增量（已有画像）：单次 Flash 提取当前 session user 消息中的新事实
 //
 // 稳定层只走本 worker 单一写入通道，不向对话 LLM 提供画像修改工具。
 type UserProfileWorker struct {
-	flashClient llm.LLMClient
-	registry    *tool.Registry
-	profileRepo *service.UserProfileRepo
+	flashClient  llm.LLMClient
+	strongClient llm.LLMClient // 可选：冷启动用 Pro 模型（deep mode），nil 回退 Flash
+	registry     *tool.Registry
+	profileRepo  *service.UserProfileRepo
 }
 
 // UserProfileWorkerConfig — UserProfileWorker 依赖配置。
 type UserProfileWorkerConfig struct {
-	FlashClient llm.LLMClient
-	Registry    *tool.Registry
-	ProfileRepo *service.UserProfileRepo
+	FlashClient  llm.LLMClient
+	StrongClient llm.LLMClient // 可选：冷启动用 Pro 模型（deep mode），nil 回退 Flash
+	Registry     *tool.Registry
+	ProfileRepo  *service.UserProfileRepo
 }
 
 // NewUserProfileWorker 创建画像提取 worker。必需依赖为 nil 时 panic（接线 bug 暴露在明处）。
@@ -70,9 +76,10 @@ func NewUserProfileWorker(cfg *UserProfileWorkerConfig) *UserProfileWorker {
 		panic("profile worker: required dependency nil (wiring bug)")
 	}
 	return &UserProfileWorker{
-		flashClient: cfg.FlashClient,
-		registry:    cfg.Registry,
-		profileRepo: cfg.ProfileRepo,
+		flashClient:  cfg.FlashClient,
+		strongClient: cfg.StrongClient,
+		registry:     cfg.Registry,
+		profileRepo:  cfg.ProfileRepo,
 	}
 }
 
@@ -126,22 +133,35 @@ func coldStartSystemPrompt() string {
 - 只填写用户明确陈述过的事实，禁止用你的推断填充
 - 值要简洁，一句话能说清
 - 不确定的信息宁可省略，不要猜测
-- 你最多有 5 轮搜索机会，合理规划搜索内容`, ProfileExtractFieldText())
+- 你最多有 9 轮搜索机会，合理规划搜索内容`, ProfileExtractFieldText())
 }
 
 // runColdStartReAct 冷启动：LLM 用 unified_search 自主搜集信息，输出画像 JSON 后写入 DB。
 // 使用通用 MiniReAct 组件执行循环。
 func (w *UserProfileWorker) runColdStartReAct(ctx context.Context, userID string) error {
 	tools := w.registry.GetLLMToolsFiltered([]string{coldStartTools})
+
+	// 冷启动用 deep mode（Pro 模型）提升提取质量；未注入 StrongClient 时回退 Flash
+	client := w.flashClient
+	var thinking *bool
+	if w.strongClient != nil {
+		client = w.strongClient
+		t := true
+		thinking = &t
+	}
+
 	react := NewMiniReAct(&MiniReActConfig{
-		Client:        w.flashClient,
-		Tools:         tools,
-		ToolRegistry:  w.registry,
-		SystemPrompt:  coldStartSystemPrompt(),
-		UserID:        userID,
-		MaxIterations: coldStartMaxIterations,
-		Caller:        "profile-coldstart",
+		Client:           client,
+		Tools:            tools,
+		ToolRegistry:     w.registry,
+		SystemPrompt:     coldStartSystemPrompt(),
+		FinalRoundPrompt: coldStartFinalRoundPrompt,
+		Thinking:         thinking,
+		UserID:           userID,
+		MaxIterations:    coldStartMaxIterations,
+		Caller:           "profile-coldstart",
 	})
+	log.Printf("[profile] cold start: model=%s max_iter=%d", client.ModelName(), coldStartMaxIterations)
 	result, err := react.Run(ctx, coldStartUserMessage)
 	if err != nil {
 		return fmt.Errorf("profile: cold start: %w", err)

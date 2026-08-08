@@ -89,14 +89,13 @@ func TestMiniReAct_ToolCallThenFinal(t *testing.T) {
 	}
 }
 
-func TestMiniReAct_MaxIterationsTerminates(t *testing.T) {
-	// 每轮都返回 tool_call，永不产出最终内容
-	llmClient := &syncMockLLM{responses: make([]llm.Message, 3)}
-	for i := range llmClient.responses {
-		llmClient.responses[i] = llm.Message{ToolCalls: []llm.ToolCall{
-			{ID: "call", Function: llm.ToolCallFunction{Name: "unified_search__semantic_search", Arguments: `{"query":"x"}`}},
-		}}
-	}
+func TestMiniReAct_FinalRound_ForcesContent(t *testing.T) {
+	// 主循环 2 轮全 tool_call，强制轮（第 3 轮，Tools=nil）产出最终内容
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{ToolCalls: []llm.ToolCall{{ID: "call-1", Function: llm.ToolCallFunction{Name: "unified_search__semantic_search", Arguments: `{"query":"x"}`}}}},
+		{ToolCalls: []llm.ToolCall{{ID: "call-2", Function: llm.ToolCallFunction{Name: "unified_search__semantic_search", Arguments: `{"query":"y"}`}}}},
+		{Content: `{"籍贯":"河南焦作"}`},
+	}}
 	m := NewMiniReAct(&MiniReActConfig{
 		Client:        llmClient,
 		Tools:         registryWithUnifiedSearch().GetLLMToolsFiltered([]string{"unified_search"}),
@@ -110,14 +109,81 @@ func TestMiniReAct_MaxIterationsTerminates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !result.TerminatedEarly {
-		t.Error("should terminate early at max iterations")
+	if result.TerminatedEarly {
+		t.Error("final round should produce content, not terminate early")
 	}
-	if result.FinalContent != "" {
-		t.Errorf("no final content expected, got: %s", result.FinalContent)
+	if result.FinalContent != `{"籍贯":"河南焦作"}` {
+		t.Errorf("expected forced final content, got: %s", result.FinalContent)
 	}
+	// 强制轮计入总轮数
 	if result.Iterations != 3 {
-		t.Errorf("expected 3 iterations, got %d", result.Iterations)
+		t.Errorf("expected iterations=3 (incl final round), got %d", result.Iterations)
+	}
+	if result.ToolCalls != 2 {
+		t.Errorf("expected 2 tool calls (2 search rounds), got %d", result.ToolCalls)
+	}
+	// 强制轮应使用空工具集（Tools=nil）
+	if len(llmClient.reqs) != 3 {
+		t.Fatalf("expected 3 requests, got %d", len(llmClient.reqs))
+	}
+	if len(llmClient.reqs[2].Tools) != 0 {
+		t.Errorf("final round should disable tools, got %d tool defs", len(llmClient.reqs[2].Tools))
+	}
+}
+
+func TestMiniReAct_FinalRound_CustomPrompt(t *testing.T) {
+	custom := "[系统] 请直接输出画像 JSON"
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{ToolCalls: []llm.ToolCall{{ID: "call-1", Function: llm.ToolCallFunction{Name: "unified_search__semantic_search", Arguments: `{"query":"x"}`}}}},
+		{Content: `{}`},
+	}}
+	m := NewMiniReAct(&MiniReActConfig{
+		Client:           llmClient,
+		Tools:            registryWithUnifiedSearch().GetLLMToolsFiltered([]string{"unified_search"}),
+		ToolRegistry:     registryWithUnifiedSearch(),
+		SystemPrompt:     "sys",
+		FinalRoundPrompt: custom,
+		UserID:           "user-1",
+		MaxIterations:    2,
+		Caller:           "test",
+	})
+	if _, err := m.Run(context.Background(), "任务"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(llmClient.reqs) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(llmClient.reqs))
+	}
+	// 强制轮请求中应包含自定义指令（作为 assistant 消息追加）
+	foundCustom := false
+	for _, msg := range llmClient.reqs[1].Messages {
+		if msg.Content == custom {
+			foundCustom = true
+		}
+	}
+	if !foundCustom {
+		t.Errorf("final round should append custom prompt, got messages: %+v", llmClient.reqs[1].Messages)
+	}
+}
+
+func TestMiniReAct_FinalRound_LLMError(t *testing.T) {
+	// 主循环 1 轮 tool_call，强制轮（第 2 轮）LLM 报错
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{ToolCalls: []llm.ToolCall{{ID: "call-1", Function: llm.ToolCallFunction{Name: "unified_search__semantic_search", Arguments: `{"query":"x"}`}}}},
+		{Content: `{}`}, // 占位，实际被 errorLLMClient 替代
+	}}
+	_ = llmClient
+	failClient := &errorLLMClient{err: errors.New("boom")}
+	m := NewMiniReAct(&MiniReActConfig{
+		Client:        failClient,
+		ToolRegistry:  registryWithUnifiedSearch(),
+		SystemPrompt:  "sys",
+		UserID:        "user-1",
+		MaxIterations: 2,
+		Caller:        "test",
+	})
+	_, err := m.Run(context.Background(), "任务")
+	if err == nil {
+		t.Fatal("expected error from final round LLM call")
 	}
 }
 

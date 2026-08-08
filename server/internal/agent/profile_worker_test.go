@@ -372,11 +372,75 @@ func TestProfileWorker_ColdStart_DirectJSON(t *testing.T) {
 	}
 }
 
+func TestProfileWorker_ColdStart_DeepModeUsesStrongClient(t *testing.T) {
+	repo, cleanup := setupProfileRepo(t)
+	defer cleanup()
+
+	// StrongClient 被调用（冷启动 deep mode）
+	strongClient := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"籍贯":"河南焦作"}`},
+	}}
+	flashClient := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"籍贯":"错的值"}`},
+	}}
+	w := &UserProfileWorker{
+		flashClient:  flashClient,
+		strongClient: strongClient,
+		registry:     noopRegistry(),
+		profileRepo:  repo,
+	}
+
+	if err := w.runColdStartReAct(context.Background(), "user-1"); err != nil {
+		t.Fatalf("runColdStartReAct: %v", err)
+	}
+	// 画像应来自 StrongClient，而非 Flash
+	if strongClient.callCount != 1 {
+		t.Errorf("expected strong client called, calls=%d", strongClient.callCount)
+	}
+	if flashClient.callCount != 0 {
+		t.Errorf("expected flash NOT called for cold start, calls=%d", flashClient.callCount)
+	}
+	p, _ := repo.GetByUserAndField(context.Background(), "user-1", "籍贯")
+	if p == nil || p.FieldValue != "河南焦作" {
+		t.Fatalf("expected 籍贯=河南焦作 (from strong), got %+v", p)
+	}
+	// thinking 已开启
+	if len(strongClient.reqs) == 0 || strongClient.reqs[0].Thinking == nil || !*strongClient.reqs[0].Thinking {
+		t.Errorf("expected thinking=true in strong client request, got %+v", strongClient.reqs)
+	}
+}
+
+func TestProfileWorker_ColdStart_DeepModeFallsBackToFlash(t *testing.T) {
+	repo, cleanup := setupProfileRepo(t)
+	defer cleanup()
+
+	// 未注入 StrongClient → 回退 Flash
+	flashClient := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"籍贯":"河南焦作"}`},
+	}}
+	w := &UserProfileWorker{
+		flashClient: flashClient,
+		registry:    noopRegistry(),
+		profileRepo: repo,
+	}
+
+	if err := w.runColdStartReAct(context.Background(), "user-1"); err != nil {
+		t.Fatalf("runColdStartReAct: %v", err)
+	}
+	if flashClient.callCount != 1 {
+		t.Errorf("expected flash called (fallback), calls=%d", flashClient.callCount)
+	}
+	p, _ := repo.GetByUserAndField(context.Background(), "user-1", "籍贯")
+	if p == nil || p.FieldValue != "河南焦作" {
+		t.Fatalf("expected 籍贯=河南焦作, got %+v", p)
+	}
+}
+
 func TestProfileWorker_ColdStart_MaxIterations_NoWrite(t *testing.T) {
 	repo, cleanup := setupProfileRepo(t)
 	defer cleanup()
 
-	// 5 轮全部返回 tool_call（始终不产出最终 JSON）
+	// 全部轮次返回 tool_call（强制轮也拿不到最终 JSON），画像不应写入
 	llmClient := &syncMockLLM{responses: make([]llm.Message, coldStartMaxIterations)}
 	for i := range llmClient.responses {
 		llmClient.responses[i] = llm.Message{ToolCalls: []llm.ToolCall{

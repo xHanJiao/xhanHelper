@@ -100,9 +100,10 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 			Updater: stateUpdater,
 		}),
 		agent.NewUserProfileWorker(&agent.UserProfileWorkerConfig{
-			FlashClient: llmClients.Flash,
-			Registry:    tools.Registry,
-			ProfileRepo: repos.UserProfile,
+			FlashClient:  llmClients.Flash,
+			StrongClient: llmClients.Strong,
+			Registry:     tools.Registry,
+			ProfileRepo:  repos.UserProfile,
 		}),
 	}, repos.Message)
 

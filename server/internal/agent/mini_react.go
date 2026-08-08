@@ -23,30 +23,38 @@ import (
 //   - prompt-engineering 模式（Tools 为空时，工具定义拼入 system prompt，结果 role=user）
 //   - 工具并发执行
 type MiniReAct struct {
-	client        llm.LLMClient
-	tools         []llm.ToolDefinition // 原生 FC 工具定义；为空则无工具
-	toolRegistry  *tool.Registry
-	systemPrompt  string
-	userID        string
-	maxIterations int
-	maxToolResult int
-	caller        string
-	onEvent       func(evt *llm.StreamEvent) // nil = 静默执行（后台 worker 场景）
-	toolCallLog   []ToolCallLog              // 本轮执行的完整工具调用历史
+	client           llm.LLMClient
+	tools            []llm.ToolDefinition // 原生 FC 工具定义；为空则无工具
+	toolRegistry     *tool.Registry
+	systemPrompt     string
+	finalRoundPrompt string // 强制收敛轮指令（主循环耗尽后追加，禁止再调工具）
+	userID           string
+	maxIterations    int
+	maxToolResult    int
+	caller           string
+	onEvent          func(evt *llm.StreamEvent) // nil = 静默执行（后台 worker 场景）
+	toolCallLog      []ToolCallLog              // 本轮执行的完整工具调用历史
+	thinking         *bool                      // 思考模式（deep mode 用 Pro 时开启），nil 用 LLM 默认
 }
 
 // MiniReActConfig — MiniReAct 依赖配置。
 type MiniReActConfig struct {
-	Client        llm.LLMClient
-	Tools         []llm.ToolDefinition // 原生 FC 工具定义（nil 表示无工具，纯文本对话）
-	ToolRegistry  *tool.Registry
-	SystemPrompt  string
-	UserID        string
-	MaxIterations int                    // 默认 5
-	MaxToolResult int                    // 单条工具结果注入上限字符数，默认 2000
-	Caller        string                 // 日志前缀，便于区分调用方
-	OnEvent       func(*llm.StreamEvent) // 事件回调，nil = 静默执行（后台 worker 场景）
+	Client           llm.LLMClient
+	Tools            []llm.ToolDefinition // 原生 FC 工具定义（nil 表示无工具，纯文本对话）
+	ToolRegistry     *tool.Registry
+	SystemPrompt     string
+	FinalRoundPrompt string // 强制收敛轮指令（主循环耗尽后追加，禁止再调工具），默认 genericFinalRoundPrompt
+	UserID           string
+	MaxIterations    int                    // 总轮数上限（含强制收敛轮），默认 10
+	MaxToolResult    int                    // 单条工具结果注入上限字符数，默认 2000
+	Caller           string                 // 日志前缀，便于区分调用方
+	Thinking         *bool                  // 思考模式（deep mode 用 Pro 时开启），nil 用 LLM 默认
+	OnEvent          func(*llm.StreamEvent) // 事件回调，nil = 静默执行（后台 worker 场景）
 }
+
+// genericFinalRoundPrompt — 默认强制收敛轮指令。
+const genericFinalRoundPrompt = `[系统] 本轮已达任务的最大步数限制。请不要再调用任何工具，直接输出最终结果。
+如信息已充分，正常给出最终回答即可，不必提及内部限制。`
 
 // MiniReAct 事件类型（带 mini_react: 前缀，独立命名空间，避免与主对话 SSE 事件串台）。
 const (
@@ -65,7 +73,7 @@ func NewMiniReAct(cfg *MiniReActConfig) *MiniReAct {
 	}
 	maxIter := cfg.MaxIterations
 	if maxIter <= 0 {
-		maxIter = 5
+		maxIter = 10
 	}
 	maxResult := cfg.MaxToolResult
 	if maxResult <= 0 {
@@ -75,16 +83,22 @@ func NewMiniReAct(cfg *MiniReActConfig) *MiniReAct {
 	if caller == "" {
 		caller = "mini_react"
 	}
+	finalPrompt := cfg.FinalRoundPrompt
+	if finalPrompt == "" {
+		finalPrompt = genericFinalRoundPrompt
+	}
 	return &MiniReAct{
-		client:        cfg.Client,
-		tools:         cfg.Tools,
-		toolRegistry:  cfg.ToolRegistry,
-		systemPrompt:  cfg.SystemPrompt,
-		userID:        cfg.UserID,
-		maxIterations: maxIter,
-		maxToolResult: maxResult,
-		caller:        caller,
-		onEvent:       cfg.OnEvent,
+		client:           cfg.Client,
+		tools:            cfg.Tools,
+		toolRegistry:     cfg.ToolRegistry,
+		systemPrompt:     cfg.SystemPrompt,
+		finalRoundPrompt: finalPrompt,
+		userID:           cfg.UserID,
+		maxIterations:    maxIter,
+		maxToolResult:    maxResult,
+		caller:           caller,
+		onEvent:          cfg.OnEvent,
+		thinking:         cfg.Thinking,
 	}
 }
 
@@ -110,6 +124,8 @@ type MiniReActResult struct {
 // Run 执行 mini ReAct 循环。
 // 每轮：ChatSync（带原生 FC 工具）→ 有 ToolCalls 则执行工具并回传 role=tool → 继续；
 // 无 ToolCalls 视为完成，返回 FinalContent。
+// 主循环耗尽（达到 maxIterations-1 轮）后追加一轮强制收敛轮（计入 maxIterations），
+// 追加 FinalRoundPrompt 并以空工具集调用，强制 LLM 产出最终内容，避免空手结束。
 // 事件序列：status（每轮） → [thought] → [tool_call + tool_result]×N → done | error。
 func (m *MiniReAct) Run(ctx context.Context, userMessage string) (*MiniReActResult, error) {
 	msgs := []llm.Message{{Role: "user", Content: userMessage}}
@@ -121,7 +137,8 @@ func (m *MiniReAct) Run(ctx context.Context, userMessage string) (*MiniReActResu
 		Content: fmt.Sprintf("开始执行（最多 %d 轮）", m.maxIterations),
 	})
 
-	for iter := 0; iter < m.maxIterations; iter++ {
+	// 主循环最多跑 maxIterations-1 轮，预留最后一轮给强制收敛
+	for iter := 0; iter < m.maxIterations-1; iter++ {
 		if ctx.Err() != nil {
 			result.Err = ctx.Err()
 			result.TerminatedEarly = true
@@ -139,12 +156,14 @@ func (m *MiniReAct) Run(ctx context.Context, userMessage string) (*MiniReActResu
 			SystemPrompt: m.systemPrompt,
 			Messages:     msgs,
 			Tools:        m.tools,
+			Thinking:     m.thinking,
 			UserID:       m.userID,
 		})
 		if err != nil {
 			result.Err = err
 			result.TerminatedEarly = true
 			result.ToolCallLog = m.toolCallLog
+			m.logToolCallLog(result.ToolCallLog)
 			m.emit(&llm.StreamEvent{Type: MiniReactEventError, Error: err.Error()})
 			return result, fmt.Errorf("mini_react[%s] chat iter=%d: %w", m.caller, iter, err)
 		}
@@ -156,6 +175,7 @@ func (m *MiniReAct) Run(ctx context.Context, userMessage string) (*MiniReActResu
 		}
 
 		if len(resp.ToolCalls) > 0 {
+			log.Printf("mini_react[%s] iter=%d/%d: tool_calls=%d", m.caller, iter+1, m.maxIterations, len(resp.ToolCalls))
 			result.ToolCalls += len(resp.ToolCalls)
 			msgs = append(msgs, llm.Message{Role: "assistant", Content: resp.Content, ToolCalls: resp.ToolCalls})
 			msgs = m.executeToolCalls(ctx, msgs, resp.ToolCalls)
@@ -163,17 +183,59 @@ func (m *MiniReAct) Run(ctx context.Context, userMessage string) (*MiniReActResu
 		}
 
 		// 无工具调用 → 视为完成
+		log.Printf("mini_react[%s] iter=%d/%d: no tool_calls, final content len=%d", m.caller, iter+1, m.maxIterations, len(resp.Content))
 		result.FinalContent = resp.Content
 		result.ToolCallLog = m.toolCallLog
 		m.emitDone(result)
 		return result, nil
 	}
 
-	result.TerminatedEarly = true
+	// 主循环耗尽 → 强制收敛轮（计入 maxIterations）
+	log.Printf("mini_react[%s] iter=%d/%d: max search rounds reached, forcing final round", m.caller, m.maxIterations, m.maxIterations)
+	m.emit(&llm.StreamEvent{
+		Type:    MiniReactEventStatus,
+		Content: fmt.Sprintf("第 %d/%d 轮（强制收敛）", m.maxIterations, m.maxIterations),
+	})
+
+	msgs = append(msgs, llm.Message{Role: "assistant", Content: m.finalRoundPrompt})
+	resp, err := m.client.ChatSync(ctx, &llm.ChatRequest{
+		SystemPrompt: m.systemPrompt,
+		Messages:     msgs,
+		Tools:        nil, // 强制轮禁工具，逼出最终内容
+		Thinking:     m.thinking,
+		UserID:       m.userID,
+	})
+	result.Iterations = m.maxIterations
+	if err != nil {
+		result.Err = err
+		result.TerminatedEarly = true
+		result.ToolCallLog = m.toolCallLog
+		m.logToolCallLog(result.ToolCallLog)
+		m.emit(&llm.StreamEvent{Type: MiniReactEventError, Error: err.Error()})
+		return result, fmt.Errorf("mini_react[%s] final round: %w", m.caller, err)
+	}
+
+	result.FinalContent = resp.Content
 	result.ToolCallLog = m.toolCallLog
-	log.Printf("mini_react[%s] max iterations (%d) reached without final content", m.caller, m.maxIterations)
+	log.Printf("mini_react[%s] final round done, content len=%d", m.caller, len(resp.Content))
 	m.emitDone(result)
 	return result, nil
+}
+
+// logToolCallLog 打印工具调用历史摘要（出错/提前结束时调用，便于诊断）。
+func (m *MiniReAct) logToolCallLog(logs []ToolCallLog) {
+	if len(logs) == 0 {
+		log.Printf("mini_react[%s] terminated, tool_calls=0", m.caller)
+		return
+	}
+	log.Printf("mini_react[%s] terminated, tool_calls=%d, log:", m.caller, len(logs))
+	for i, tc := range logs {
+		ok := "fail"
+		if tc.Result != nil && tc.Result.Success {
+			ok = "success"
+		}
+		log.Printf("mini_react[%s]   [%d] %s.%s args=%s result=%s", m.caller, i+1, tc.Tool, tc.Function, truncateStr(string(tc.Args), 120), ok)
+	}
 }
 
 // emitDone 发送 done 事件，Content 为 JSON（含 iterations/tool_calls/tool_call_logs）。
@@ -230,6 +292,7 @@ func (m *MiniReAct) executeToolCalls(ctx context.Context, msgs []llm.Message, na
 		if m.maxToolResult > 0 && len(resJSON) > m.maxToolResult {
 			resJSON = resJSON[:m.maxToolResult]
 		}
+		log.Printf("mini_react[%s]   exec %s.%s success=%v result_bytes=%d", m.caller, tc.Tool, tc.Function, result.Success, len(resJSON))
 		m.emit(&llm.StreamEvent{Type: MiniReactEventToolResult, Content: string(resJSON)})
 		msgs = append(msgs, llm.Message{Role: "tool", Content: string(resJSON), ToolCallID: nativeTCs[i].ID})
 	}

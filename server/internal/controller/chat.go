@@ -205,7 +205,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		// 注册终止信号：显式停止接口（/api/chat/stop）通过关闭 channel 取消 ReAct 循环。
 		// 使用独立于 Request.Context 的运行 ctx——网络波动（SSE 断开）不会误终止正常执行。
 		stopCh := chatStops.Register(conv.ID)
-		defer chatStops.Unregister(conv.ID)
+		defer chatStops.Unregister(conv.ID, stopCh)
 
 		runCtx, cancelRun := context.WithCancel(context.Background())
 		defer cancelRun()

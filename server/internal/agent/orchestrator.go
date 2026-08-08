@@ -1599,7 +1599,52 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int, useN
 		}
 	}
 	if useNativeFC {
+		msgs = sanitizeOrphanToolMsgs(msgs)
 		sanitizeOrphanToolCalls(msgs)
+	}
+	return msgs
+}
+
+// sanitizeOrphanToolMsgs 清理孤儿 tool 消息（与 sanitizeOrphanToolCalls 反向）：
+// role=tool 消息的 tool_call_id 必须能对应到其前侧最近一个携带 tool_calls 的
+// assistant 消息，且两者之间不能被 user 等其他消息隔断。
+//
+// 产生背景：同一会话并发执行两个 ReAct 循环（旧循环客户端工具超时等待期间，
+// 用户重发消息启动新循环）且写入交叉时，DB 会留下 assistant(tool_calls) → user →
+// tool 的错位结构。DeepSeek 对 role=tool 校验"必须是前置 assistant tool_calls 的
+// 响应"，此时返回 400 拒绝整个请求，会话后续所有消息报废。
+//
+// 孤儿 tool 消息降级为 role=user（保留工具结果内容，LLM 仍可引用），随后
+// sanitizeOrphanToolCalls 会把对应 assistant 上已无结果的 tool_calls 剔除，
+// 两者组合保证发给 LLM 的消息结构合法。
+func sanitizeOrphanToolMsgs(msgs []llm.Message) []llm.Message {
+	for i := range msgs {
+		if msgs[i].Role != "tool" {
+			continue
+		}
+		matched := false
+		for j := i - 1; j >= 0; j-- {
+			if msgs[j].Role == "tool" {
+				continue
+			}
+			// 遇到非 tool 消息即停止：最近的相关消息不是 assistant(tool_calls)
+			// （user 隔断 / assistant 无 tool_calls / 序列开头）则视为孤儿
+			if msgs[j].Role == "assistant" {
+				for _, tc := range msgs[j].ToolCalls {
+					if tc.ID == msgs[i].ToolCallID {
+						matched = true
+						break
+					}
+				}
+			}
+			break
+		}
+		if !matched {
+			log.Printf("[orch] sanitize: degrading orphan tool result (no matching preceding tool_calls), tool_call_id=%s → role=tool becomes user", msgs[i].ToolCallID)
+			msgs[i].Role = "user"
+			// tool_call_id 仅对 role=tool 合法，降级后必须清掉
+			msgs[i].ToolCallID = ""
+		}
 	}
 	return msgs
 }

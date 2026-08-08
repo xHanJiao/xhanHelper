@@ -460,7 +460,16 @@ struct ContentView: View {
                                         maxWidth: rightMax,
                                         reversed: true,
                                         ghost: resizeGhost,
-                                        seamX: $rightSeamX
+                                        seamX: $rightSeamX,
+                                        onDragStart: {
+                                            // 手动拖动中↔右缝隙 = 退出浏览器聚焦：
+                                            // 清空 preFocus 避免恢复跳变（拖拽本身提供新宽度），
+                                            // 中栏随之可自由伸缩接管余量。
+                                            if rightSidebar.middleMinimized {
+                                                preFocusSidebarWidth = nil
+                                                rightSidebar.middleMinimized = false
+                                            }
+                                        }
                                     )
                                 }
                             }
@@ -673,7 +682,7 @@ struct ContentView: View {
             .padding(.horizontal, 12)
             .modifier(CardBackgroundModifier(isLifted: contentHovered || (activeChatViewModel?.isEditing ?? false)))
             .frame(minWidth: Layout.middleMinWidth, idealWidth: Layout.middleMinWidth,
-                   maxWidth: rightSidebar.middleMinimized ? Layout.middleMinWidth : .infinity,
+                   maxWidth: .infinity,
                    alignment: .leading)
             .layoutPriority(1)
             .onHover { contentHovered = $0 }

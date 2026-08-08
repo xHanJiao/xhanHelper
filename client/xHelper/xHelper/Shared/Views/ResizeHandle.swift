@@ -22,6 +22,8 @@ struct ResizeHandle: View {
     var onLiveChange: (Double) -> Void = { _ in }
     /// 松手回调（传入最终宽度）。
     var onCommit: (Double) -> Void = { _ in }
+    /// 拖拽开始回调（首次 onChanged 触发，用于在拖拽前切换布局状态）。
+    var onDragStart: () -> Void = {}
 
     @State private var dragStartWidth: Double?
     @State private var hovering = false
@@ -66,6 +68,9 @@ struct ResizeHandle: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
+                        if dragStartWidth == nil {
+                            onDragStart()
+                        }
                         let base = dragStartWidth ?? width
                         dragStartWidth = base
                         let delta = (reversed ? -1 : 1) * value.translation.width

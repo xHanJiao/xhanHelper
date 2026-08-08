@@ -67,6 +67,8 @@ struct ResizableDivider: View {
     @ObservedObject var ghost: ResizeGhostState
     /// 分隔线 x 坐标（由 SeamMarker 上报）。
     @Binding var seamX: CGFloat
+    /// 拖拽开始回调（透传给 ResizeHandle）。
+    var onDragStart: () -> Void = {}
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -79,7 +81,8 @@ struct ResizableDivider: View {
                 onCommit: { final in
                     ghost.widths[id] = nil
                     width = final
-                }
+                },
+                onDragStart: onDragStart
             )
             .offset(x: seamX - 7.5)
 

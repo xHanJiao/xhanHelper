@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -545,6 +546,7 @@ func (o *Orchestrator) buildReminderPackets(ctx context.Context, userID string) 
 
 // buildProfilePackets 加载用户画像稳定层，生成 ContextPacket 列表注入 user message。
 // 画像为空时不注入任何块（profileRepo 为 nil 时也跳过）。
+// 注意：字段按名字母序排序（字段名是白名单常量，稳定不变），保证块内顺序确定，缓存友好。
 func (o *Orchestrator) buildProfilePackets(ctx context.Context, userID string) []retrieval.ContextPacket {
 	if o.profileRepo == nil {
 		return nil
@@ -558,6 +560,9 @@ func (o *Orchestrator) buildProfilePackets(ctx context.Context, userID string) [
 	for i := range profiles {
 		packets = append(packets, ctxflow.ProfilePacket(&profiles[i]))
 	}
+	sort.SliceStable(packets, func(i, j int) bool {
+		return packets[i].ID < packets[j].ID
+	})
 	return packets
 }
 

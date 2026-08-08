@@ -290,3 +290,81 @@ func TestProfileBlock_RendersFirstInUserMessage(t *testing.T) {
 		t.Errorf("profile should render before current_datetime: %s", out)
 	}
 }
+
+func TestSortPacketsByType_ProfileAlphabetical(t *testing.T) {
+	// 乱序输入，期望按字段名字母序输出（确定性，与更新时间无关）
+	pkts := []retrieval.ContextPacket{
+		ProfilePacket(&model.UserProfile{Field: "伴侣", FieldValue: "CJ", Source: "explicit", UpdatedAt: makeTime(2026, 8, 7)}),
+		ProfilePacket(&model.UserProfile{Field: "籍贯", FieldValue: "河南焦作", Source: "explicit", UpdatedAt: makeTime(2026, 8, 1)}),
+		ProfilePacket(&model.UserProfile{Field: "出生年份", FieldValue: "1995", Source: "explicit", UpdatedAt: makeTime(2026, 8, 8)}),
+	}
+	sortPacketsByType(TypeProfile, pkts)
+	got := make([]string, 0, len(pkts))
+	for _, p := range pkts {
+		got = append(got, p.ID)
+	}
+	want := []string{"伴侣", "出生年份", "籍贯"} // 按 UTF-8 字节序："伴" < "出" < "籍"
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	}
+}
+
+func TestSortPacketsByType_ScoreDescThenID(t *testing.T) {
+	pkts := []retrieval.ContextPacket{
+		{ID: "b", Score: 0.5, Text: "low"},
+		{ID: "c", Score: 0.9, Text: "high-c"},
+		{ID: "a", Score: 0.9, Text: "high-a"},
+	}
+	sortPacketsByType(TypeMemory, pkts)
+	if pkts[0].ID != "a" || pkts[1].ID != "c" || pkts[2].ID != "b" {
+		t.Fatalf("expected a,c,b got %s,%s,%s", pkts[0].ID, pkts[1].ID, pkts[2].ID)
+	}
+}
+
+func TestSortPacketsByType_SummaryKeepsChronological(t *testing.T) {
+	pkts := []retrieval.ContextPacket{
+		{ID: "s3", Type: TypeSummary, Score: 1.0, Meta: retrieval.SummaryMeta{CreatedAt: makeTime(2026, 8, 8)}},
+		{ID: "s1", Type: TypeSummary, Score: 1.0, Meta: retrieval.SummaryMeta{CreatedAt: makeTime(2026, 8, 6)}},
+		{ID: "s2", Type: TypeSummary, Score: 1.0, Meta: retrieval.SummaryMeta{CreatedAt: makeTime(2026, 8, 7)}},
+	}
+	sortPacketsByType(TypeSummary, pkts)
+	got := []string{pkts[0].ID, pkts[1].ID, pkts[2].ID}
+	want := []string{"s1", "s2", "s3"} // 时间旧→新
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	}
+}
+
+func TestSortPacketsByType_ReminderKeepsProducerOrder(t *testing.T) {
+	pkts := []retrieval.ContextPacket{
+		{ID: "upcoming-2", Score: 0, Text: "到期提醒"},
+		{ID: "expired-1", Score: 0, Text: "过期提醒"},
+	}
+	sortPacketsByType(TypeReminder, pkts)
+	if pkts[0].ID != "upcoming-2" || pkts[1].ID != "expired-1" {
+		t.Fatalf("reminder order should be preserved: %s,%s", pkts[0].ID, pkts[1].ID)
+	}
+}
+
+func TestFormatUserMessage_ProfileItemsSorted(t *testing.T) {
+	f := NewXMLFormatter()
+	packets := map[string][]retrieval.ContextPacket{
+		TypeProfile: {
+			ProfilePacket(&model.UserProfile{Field: "籍贯", FieldValue: "河南焦作", Source: "explicit", UpdatedAt: makeTime(2026, 8, 1)}),
+			ProfilePacket(&model.UserProfile{Field: "伴侣", FieldValue: "CJ", Source: "explicit", UpdatedAt: makeTime(2026, 8, 7)}),
+		},
+	}
+	out := f.FormatUserMessage(packets, "你好")
+	companionIdx := strings.Index(out, `key="伴侣"`)
+	hometownIdx := strings.Index(out, `key="籍贯"`)
+	if companionIdx < 0 || hometownIdx < 0 {
+		t.Fatalf("expected both fields in output: %s", out)
+	}
+	if companionIdx > hometownIdx {
+		t.Errorf("profile items should be sorted alphabetically (伴侣 before 籍贯): %s", out)
+	}
+}

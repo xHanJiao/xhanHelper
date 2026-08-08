@@ -48,6 +48,8 @@ func (f *formatter) formatPackets(packets map[string][]retrieval.ContextPacket) 
 	var blocks []Block
 	for typ, pkts := range packets {
 		if _, ok := typeRank[typ]; ok && len(pkts) > 0 {
+			// 硬约束：块内先做稳定排序，保证相同输入产出字节一致的输出（缓存友好）
+			sortPacketsByType(typ, pkts)
 			if b := buildBlock(typ, pkts); b != nil {
 				blocks = append(blocks, b)
 			}

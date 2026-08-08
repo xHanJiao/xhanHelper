@@ -428,3 +428,37 @@ func sortBlocks(blocks []Block) {
 		return typeRank[blocks[i].TypeKey()] < typeRank[blocks[j].TypeKey()]
 	})
 }
+
+// sortPacketsByType 对同一类型块内的 packet 做稳定排序（硬约束：块内顺序必须确定且可重现，保证缓存稳定）。
+// 各类型排序规则：
+//   - profile：按字段名（packet.ID）字母序——字段名是白名单常量，永远稳定，与更新时间无关
+//   - summary：按 SummaryMeta.CreatedAt 时间旧→新，与 buildSummaryPackets 的阅读顺序一致（确定性 + 语义保持）
+//   - 检索类（memory/note/history/theme）：Score 降序 → 同分按 ID 字母序（保证确定性）
+//   - reminder：保持生产者顺序（upcoming 在 expired 前，语义上有意义，内部各自已按 deadline 排序）
+//   - datetime/notice：单 item，无需排序
+func sortPacketsByType(typ string, packets []retrieval.ContextPacket) {
+	switch typ {
+	case TypeProfile:
+		sort.SliceStable(packets, func(i, j int) bool {
+			return packets[i].ID < packets[j].ID
+		})
+	case TypeSummary:
+		sort.SliceStable(packets, func(i, j int) bool {
+			ti, oki := packets[i].Meta.(retrieval.SummaryMeta)
+			tj, okj := packets[j].Meta.(retrieval.SummaryMeta)
+			if oki && okj {
+				return ti.CreatedAt.Before(tj.CreatedAt)
+			}
+			return packets[i].ID < packets[j].ID
+		})
+	case TypeReminder:
+		// 保持生产者顺序，不重排
+	default:
+		sort.SliceStable(packets, func(i, j int) bool {
+			if packets[i].Score != packets[j].Score {
+				return packets[i].Score > packets[j].Score
+			}
+			return packets[i].ID < packets[j].ID
+		})
+	}
+}

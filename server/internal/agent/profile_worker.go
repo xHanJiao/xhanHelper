@@ -3,7 +3,6 @@ package agent
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"log"
@@ -131,64 +130,36 @@ func coldStartSystemPrompt() string {
 }
 
 // runColdStartReAct 冷启动：LLM 用 unified_search 自主搜集信息，输出画像 JSON 后写入 DB。
+// 使用通用 MiniReAct 组件执行循环。
 func (w *UserProfileWorker) runColdStartReAct(ctx context.Context, userID string) error {
-	msgs := []llm.Message{{Role: "user", Content: coldStartUserMessage}}
 	tools := w.registry.GetLLMToolsFiltered([]string{coldStartTools})
-
-	for iter := 0; iter < coldStartMaxIterations; iter++ {
-		resp, err := w.flashClient.ChatSync(ctx, &llm.ChatRequest{
-			SystemPrompt: coldStartSystemPrompt(),
-			Messages:     msgs,
-			Tools:        tools,
-			UserID:       userID,
-		})
-		if err != nil {
-			return fmt.Errorf("profile: cold start chat iter=%d: %w", iter, err)
-		}
-
-		if len(resp.ToolCalls) > 0 {
-			msgs = append(msgs, llm.Message{Role: "assistant", Content: resp.Content, ToolCalls: resp.ToolCalls})
-			msgs = w.executeToolCalls(ctx, msgs, resp.ToolCalls, userID)
-			continue
-		}
-
-		// 无工具调用 → 解析最终画像 JSON
-		var extracted map[string]string
-		if _, err := ParseFlashJSON(resp.Content, &extracted); err != nil {
-			log.Printf("[profile] cold start: final JSON parse error: %v, raw=%s", err, truncateStr(resp.Content, 200))
-			return nil // 不重试，下次 session_end 自然重跑
-		}
-		log.Printf("[profile] cold start: extracted %d fields, iter=%d", len(extracted), iter)
-		w.upsertExtracted(ctx, userID, extracted, nil)
+	react := NewMiniReAct(&MiniReActConfig{
+		Client:        w.flashClient,
+		Tools:         tools,
+		ToolRegistry:  w.registry,
+		SystemPrompt:  coldStartSystemPrompt(),
+		UserID:        userID,
+		MaxIterations: coldStartMaxIterations,
+		Caller:        "profile-coldstart",
+	})
+	result, err := react.Run(ctx, coldStartUserMessage)
+	if err != nil {
+		return fmt.Errorf("profile: cold start: %w", err)
+	}
+	if result.TerminatedEarly || result.FinalContent == "" {
+		log.Printf("[profile] cold start: ended without final JSON (iterations=%d), skip", result.Iterations)
 		return nil
 	}
 
-	log.Printf("[profile] cold start: max iterations (%d) reached without final JSON, skip", coldStartMaxIterations)
-	return nil
-}
-
-// executeToolCalls 执行原生 FC 返回的工具调用，将结果以 role=tool 追加到 msgs。
-func (w *UserProfileWorker) executeToolCalls(ctx context.Context, msgs []llm.Message, nativeTCs []llm.ToolCall, userID string) []llm.Message {
-	internal := nativeToolCallsToInternal(nativeTCs)
-	for i, tc := range internal {
-		var result *tool.Result
-		func() {
-			defer func() {
-				if p := recover(); p != nil {
-					log.Printf("[profile] tool exec panic: %s.%s panic=%v", tc.Tool, tc.Function, p)
-					result = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
-				}
-			}()
-			ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, Mode: model.ConvModeWork}
-			result = w.registry.ExecuteByName(ec, tc.Tool, tc.Function, tc.Args)
-		}()
-		resJSON, err := json.Marshal(result)
-		if err != nil {
-			resJSON = []byte(fmt.Sprintf(`{"success":false,"error":"marshal failed: %s"}`, result.Error))
-		}
-		msgs = append(msgs, llm.Message{Role: "tool", Content: string(resJSON), ToolCallID: nativeTCs[i].ID})
+	// 无工具调用 → 解析最终画像 JSON
+	var extracted map[string]string
+	if _, err := ParseFlashJSON(result.FinalContent, &extracted); err != nil {
+		log.Printf("[profile] cold start: final JSON parse error: %v, raw=%s", err, truncateStr(result.FinalContent, 200))
+		return nil // 不重试，下次 session_end 自然重跑
 	}
-	return msgs
+	log.Printf("[profile] cold start: extracted %d fields, iterations=%d", len(extracted), result.Iterations)
+	w.upsertExtracted(ctx, userID, extracted, nil)
+	return nil
 }
 
 // ==================== 正常增量提取 ====================

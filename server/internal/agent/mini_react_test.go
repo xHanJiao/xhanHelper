@@ -203,3 +203,208 @@ func (t *panicTool) ReadOnlyFuncs() map[string]bool { return nil }
 func (t *panicTool) Execute(_ *tool.ExecuteContext, funcName string, args json.RawMessage) *tool.Result {
 	panic("intentional panic")
 }
+
+// ---- 事件系统测试 ----
+
+func TestMiniReAct_Events_Sequence(t *testing.T) {
+	var evts []*llm.StreamEvent
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{
+			ReasoningContent: "先搜索用户信息",
+			ToolCalls: []llm.ToolCall{
+				{ID: "call-1", Function: llm.ToolCallFunction{Name: "unified_search__semantic_search", Arguments: `{"query":"用户基本信息"}`}},
+			},
+		},
+		{Content: `{"籍贯":"河南焦作"}`},
+	}}
+	reg := registryWithUnifiedSearch()
+	m := NewMiniReAct(&MiniReActConfig{
+		Client:        llmClient,
+		Tools:         reg.GetLLMToolsFiltered([]string{"unified_search"}),
+		ToolRegistry:  reg,
+		SystemPrompt:  "sys",
+		UserID:        "user-1",
+		MaxIterations: 5,
+		Caller:        "test",
+		OnEvent:       func(evt *llm.StreamEvent) { evts = append(evts, evt) },
+	})
+
+	result, err := m.Run(context.Background(), "请提取画像")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// 断言事件序列：status(开始) → status(第1轮) → thought → tool_call → tool_result → status(第2轮) → done
+	wantTypes := []string{
+		MiniReactEventStatus,
+		MiniReactEventStatus,
+		MiniReactEventThought,
+		MiniReactEventToolCall,
+		MiniReactEventToolResult,
+		MiniReactEventStatus,
+		MiniReactEventDone,
+	}
+	if len(evts) != len(wantTypes) {
+		t.Fatalf("expected %d events, got %d: %+v", len(wantTypes), len(evts), evtTypes(evts))
+	}
+	for i, w := range wantTypes {
+		if evts[i].Type != w {
+			t.Fatalf("event[%d]: expected %q, got %q", i, w, evts[i].Type)
+		}
+	}
+
+	// done 事件 Content 是 JSON，含 iterations/tool_calls/tool_call_logs
+	var done struct {
+		Iterations  int           `json:"iterations"`
+		ToolCalls   int           `json:"tool_calls"`
+		ToolCallLog []ToolCallLog `json:"tool_call_logs"`
+	}
+	doneEvt := evts[len(evts)-1]
+	if err := json.Unmarshal([]byte(doneEvt.Content), &done); err != nil {
+		t.Fatalf("parse done event: %v", err)
+	}
+	if done.Iterations != 2 || done.ToolCalls != 1 {
+		t.Errorf("done mismatch: iterations=%d tool_calls=%d", done.Iterations, done.ToolCalls)
+	}
+	if len(done.ToolCallLog) != 1 {
+		t.Fatalf("expected 1 tool_call_log, got %d", len(done.ToolCallLog))
+	}
+	if done.ToolCallLog[0].Tool != "unified_search" || done.ToolCallLog[0].Function != "semantic_search" {
+		t.Errorf("unexpected log: %+v", done.ToolCallLog[0])
+	}
+
+	// 返回值也应带完整历史
+	if len(result.ToolCallLog) != 1 {
+		t.Errorf("expected ToolCallLog in result, got %d", len(result.ToolCallLog))
+	}
+}
+
+func TestMiniReAct_Events_OnEventNil_NoPanic(t *testing.T) {
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"籍贯":"河南焦作"}`},
+	}}
+	reg := registryWithUnifiedSearch()
+	m := NewMiniReAct(&MiniReActConfig{
+		Client:        llmClient,
+		Tools:         reg.GetLLMToolsFiltered([]string{"unified_search"}),
+		ToolRegistry:  reg,
+		SystemPrompt:  "sys",
+		UserID:        "user-1",
+		MaxIterations: 5,
+		Caller:        "test",
+		// OnEvent 不设 → 静默
+	})
+	_, err := m.Run(context.Background(), "任务")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
+func TestMiniReAct_Events_Error(t *testing.T) {
+	var evts []*llm.StreamEvent
+	failClient := &errorLLMClient{err: errors.New("boom")}
+	m := NewMiniReAct(&MiniReActConfig{
+		Client:        failClient,
+		ToolRegistry:  noopRegistry(),
+		SystemPrompt:  "sys",
+		UserID:        "user-1",
+		MaxIterations: 5,
+		Caller:        "test",
+		OnEvent:       func(evt *llm.StreamEvent) { evts = append(evts, evt) },
+	})
+	_, err := m.Run(context.Background(), "任务")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	foundErr := false
+	for _, e := range evts {
+		if e.Type == MiniReactEventError && e.Error == "boom" {
+			foundErr = true
+		}
+	}
+	if !foundErr {
+		t.Errorf("expected mini_react:error event, got: %+v", evtTypes(evts))
+	}
+}
+
+func TestMiniReAct_Events_Thought(t *testing.T) {
+	var evts []*llm.StreamEvent
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{ReasoningContent: "思考过程", Content: `{"籍贯":"河南焦作"}`},
+	}}
+	m := NewMiniReAct(&MiniReActConfig{
+		Client:        llmClient,
+		ToolRegistry:  noopRegistry(),
+		SystemPrompt:  "sys",
+		UserID:        "user-1",
+		MaxIterations: 5,
+		Caller:        "test",
+		OnEvent:       func(evt *llm.StreamEvent) { evts = append(evts, evt) },
+	})
+	if _, err := m.Run(context.Background(), "任务"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	foundThought := false
+	for _, e := range evts {
+		if e.Type == MiniReactEventThought && e.Content == "思考过程" {
+			foundThought = true
+		}
+	}
+	if !foundThought {
+		t.Errorf("expected mini_react:thought event, got: %+v", evtTypes(evts))
+	}
+}
+
+func TestMiniReAct_Events_ToolCallHasDisplay(t *testing.T) {
+	var evts []*llm.StreamEvent
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{
+			ToolCalls: []llm.ToolCall{
+				{ID: "call-1", Function: llm.ToolCallFunction{Name: "unified_search__semantic_search", Arguments: `{"query":"x"}`}},
+			},
+		},
+		{Content: `{}`},
+	}}
+	reg := registryWithUnifiedSearch()
+	m := NewMiniReAct(&MiniReActConfig{
+		Client:        llmClient,
+		Tools:         reg.GetLLMToolsFiltered([]string{"unified_search"}),
+		ToolRegistry:  reg,
+		SystemPrompt:  "sys",
+		UserID:        "user-1",
+		MaxIterations: 5,
+		Caller:        "test",
+		OnEvent:       func(evt *llm.StreamEvent) { evts = append(evts, evt) },
+	})
+	if _, err := m.Run(context.Background(), "任务"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	foundCall := false
+	for _, e := range evts {
+		if e.Type != MiniReactEventToolCall {
+			continue
+		}
+		var tc struct {
+			Tool     string `json:"tool"`
+			Function string `json:"function"`
+			Display  string `json:"display"`
+		}
+		if err := json.Unmarshal([]byte(e.Content), &tc); err != nil {
+			t.Fatalf("parse tool_call event: %v", err)
+		}
+		if tc.Tool == "unified_search" && tc.Function == "semantic_search" {
+			foundCall = true
+		}
+	}
+	if !foundCall {
+		t.Errorf("expected tool_call event with unified_search.semantic_search, got: %+v", evtTypes(evts))
+	}
+}
+
+func evtTypes(evts []*llm.StreamEvent) []string {
+	out := make([]string, len(evts))
+	for i, e := range evts {
+		out[i] = e.Type
+	}
+	return out
+}

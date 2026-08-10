@@ -96,6 +96,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.GET("/agents/:id", rc.AgentHandler.GetAgent)
 		auth.PATCH("/agents/:id", rc.AgentHandler.UpdateAgent)
 		auth.DELETE("/agents/:id", rc.AgentHandler.DeleteAgent)
+		auth.GET("/agents-for-input-bar", rc.AgentHandler.ListAgentsForInputBar)
 		auth.GET("/tools", rc.ToolHandler.ListTools)
 		auth.POST("/tools", rc.ToolHandler.CreateTool)
 		auth.PATCH("/tools/:id", rc.ToolHandler.UpdateTool)

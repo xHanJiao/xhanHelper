@@ -41,9 +41,6 @@ enum Layout {
     /// 左栏导航项文字字号。
     static let sidebarNavFontSize: CGFloat = 16
 
-    /// 输入栏内容宽低于该值时切两行布局（按钮移到编辑器下方）。
-    static let inputBarTwoRowThreshold: CGFloat = 380
-
     /// 左栏卡片内容水平内边距（卡片背景内部呼吸区）。
     static let sidebarHPadding: CGFloat = 6
 

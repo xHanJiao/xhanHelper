@@ -11,6 +11,15 @@ struct ChatView: View {
     @State private var showScrollToBottom = false
     let agentId: String?
 
+    /// 输入栏智能体选择器状态：当前选中 / 分页列表 / 加载进度
+    @State private var selectedAgentID: String?
+    @State private var pickerAgents: [InputBarAgent] = []
+    @State private var pickerCursor = 0
+    @State private var pickerHasMore = false
+    @State private var isLoadingPicker = false
+    /// 首次列表加载是否完成（完成前不展示按钮，避免空列表闪烁；用户无智能体时保持隐藏）
+    @State private var hasLoadedAgents = false
+
     let baseURL: String
     let token: String
 
@@ -119,6 +128,24 @@ struct ChatView: View {
                             viewModel.toggleTrustedMode()
                         }
                     )
+                    // 智能体选择器：展开按钮与模型切换之间，cpu 图标与侧边栏一致。
+                    // 仅当已确认用户存在智能体时才展示（无智能体时隐藏，避免无意义按钮）。
+                    if hasLoadedAgents && !pickerAgents.isEmpty {
+                        AgentPickerButton(
+                            context: ctx,
+                            activeAgentID: selectedAgentID,
+                            activeAgentName: displayAgents.first?.name,
+                            agents: displayAgents,
+                            hasMore: pickerHasMore,
+                            isLoadingMore: isLoadingPicker,
+                            onSelect: { agent in
+                                Task { await switchAgent(agent) }
+                            },
+                            onLoadMore: {
+                                Task { await loadAgentPickerPage(cursor: pickerCursor) }
+                            }
+                        )
+                    }
                     // 常驻模型切换（chevron 与发送按钮之间）：deep（pro+thinking）↔ flash
                     ModelPill(context: ctx, isDeep: viewModel.deepMode) {
                         viewModel.toggleDeepMode()
@@ -187,6 +214,18 @@ struct ChatView: View {
         .onChange(of: isEditing) { _, new in
             viewModel.isEditing = new
         }
+        // 智能体选择器：页面出现/回到会话（如从智能体页切回，此时可能刚创建第一个
+        // 智能体）时拉取列表；会话切换（含空 tab 转正）时重新拉取激活项。
+        .onAppear {
+#if os(macOS)
+            Task { await reloadAgentPicker() }
+#endif
+        }
+        .onChange(of: viewModel.conversationId) { _, _ in
+#if os(macOS)
+            Task { await reloadAgentPicker() }
+#endif
+        }
     }
 
     /// 输入栏容器描边/光晕色：计划模式橙、信任模式金、其余默认强调色。
@@ -200,10 +239,78 @@ struct ChatView: View {
     private func sendDraft() {
         guard !viewModel.draftText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         dismissKeyboardToken = UUID()
-        viewModel.sendMessage(viewModel.draftText, baseURL: baseURL, token: token, agentId: agentId)
+        viewModel.sendMessage(viewModel.draftText, baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
         viewModel.draftText = ""
         withAnimation(.easeOut(duration: 0.3)) {
             scrollPosition.scrollTo(edge: .top)
+        }
+    }
+
+    // MARK: - 智能体选择器
+
+    /// 菜单展示列表：选中/激活项恒置首位，其余保持服务端创建时间倒序。
+    private var displayAgents: [InputBarAgent] {
+        guard let selID = selectedAgentID,
+              let sel = pickerAgents.first(where: { $0.id == selID }) else {
+            return pickerAgents
+        }
+        return [sel] + pickerAgents.filter { $0.id != selID }
+    }
+
+    /// 会话切换/页面出现后重新拉取第一页。
+    private func reloadAgentPicker() async {
+        pickerAgents = []
+        pickerCursor = 0
+        pickerHasMore = false
+        hasLoadedAgents = false
+        selectedAgentID = nil
+        await loadAgentPickerPage(cursor: 0)
+        hasLoadedAgents = true
+    }
+
+    /// 分页拉取（cursor 为 offset，服务端每页 10 条）。
+    private func loadAgentPickerPage(cursor: Int) async {
+        guard !isLoadingPicker else { return }
+        isLoadingPicker = true
+        defer { isLoadingPicker = false }
+        let convID = viewModel.conversationId
+        let effective = (convID == nil || convID!.isEmpty) ? nil : convID
+        do {
+            let resp = try await viewModel.apiClient.listAgentsForInputBar(convID: effective, cursor: cursor)
+            let existingIDs = Set(pickerAgents.map(\.id))
+            pickerAgents += resp.agents.filter { !existingIDs.contains($0.id) }
+            pickerCursor += 10
+            // 服务端每页最多 10 条非激活项：满页则有下一页
+            pickerHasMore = resp.agents.filter { !$0.active }.count == 10
+            // 已有绑定会话时，首页首位即激活智能体 → 同步选中
+            if cursor == 0, let active = resp.agents.first(where: { $0.active }) {
+                selectedAgentID = active.id
+            }
+        } catch {
+            LogBuffer.shared.error("ChatView.listAgentsForInputBar: \(error)")
+        }
+    }
+
+    /// 点击切换智能体：
+    /// - 已有会话 → 立即 PATCH 绑定；
+    /// - 空白 tab → 先创建会话并绑定智能体（空 tab 转正），后续首条消息直接携带 agent_id 防重复绑定。
+    private func switchAgent(_ agent: InputBarAgent) async {
+        selectedAgentID = agent.id
+        if let cid = viewModel.conversationId, !cid.isEmpty {
+            do {
+                _ = try await viewModel.apiClient.setConversationAgent(id: cid, agentID: agent.id)
+            } catch {
+                LogBuffer.shared.error("ChatView.setConversationAgent: \(error)")
+            }
+            return
+        }
+        do {
+            let conv = try await viewModel.apiClient.createConversation(agentID: agent.id)
+            viewModel.conversationId = conv.id
+            viewModel.conversationTitle = conv.title
+            viewModel.onConversationCreated?(conv.id, conv.title)
+        } catch {
+            LogBuffer.shared.error("ChatView.createConversation: \(error)")
         }
     }
 

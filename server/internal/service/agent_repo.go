@@ -80,3 +80,83 @@ func (r *AgentRepo) Delete(ctx context.Context, id, userID string) error {
 		Where("id = ? AND user_id = ?", id, userID).
 		Delete(&model.Agent{}).Error
 }
+
+// inputBarPageSize 输入栏智能体选择器的分页大小
+const inputBarPageSize = 10
+
+// ListByCursor 按创建时间倒序游标分页获取用户智能体（cursor 为 offset）。
+// 返回 InputBarAgentDTO，供输入栏智能体选择器使用。
+func (r *AgentRepo) ListByCursor(ctx context.Context, userID string, cursor int) ([]*model.InputBarAgentDTO, error) {
+	if cursor < 0 {
+		cursor = 0
+	}
+	var agents []model.Agent
+	err := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Order("created_at DESC").
+		Limit(inputBarPageSize).
+		Offset(cursor).
+		Find(&agents).Error
+	if err != nil {
+		return nil, err
+	}
+	dtos := make([]*model.InputBarAgentDTO, 0, len(agents))
+	for i := range agents {
+		dtos = append(dtos, &model.InputBarAgentDTO{Agent: agents[i]})
+	}
+	return dtos, nil
+}
+
+// GetActiveAgent 获取会话当前绑定的智能体（Active=true），未绑定返回 nil。
+func (r *AgentRepo) GetActiveAgent(ctx context.Context, userID, convID string) (*model.InputBarAgentDTO, error) {
+	var conv model.Conversation
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND user_id = ?", convID, userID).
+		First(&conv).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if conv.AgentID == nil || *conv.AgentID == "" {
+		return nil, nil
+	}
+	var agent model.Agent
+	err = r.db.WithContext(ctx).
+		Where("id = ? AND user_id = ?", *conv.AgentID, userID).
+		First(&agent).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &model.InputBarAgentDTO{Agent: agent, Active: true}, nil
+}
+
+// ListByCursorWithActiveSetTop 按创建时间倒序游标分页获取用户智能体，
+// 排除已激活的智能体（activeID 非空时），避免与首位激活项重复。
+func (r *AgentRepo) ListByCursorWithActiveSetTop(ctx context.Context, userID, activeID string, cursor int) ([]*model.InputBarAgentDTO, error) {
+	if cursor < 0 {
+		cursor = 0
+	}
+	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
+	if activeID != "" {
+		q = q.Where("id != ?", activeID)
+	}
+	var agents []model.Agent
+	err := q.
+		Order("created_at DESC").
+		Limit(inputBarPageSize).
+		Offset(cursor).
+		Find(&agents).Error
+	if err != nil {
+		return nil, err
+	}
+	dtos := make([]*model.InputBarAgentDTO, 0, len(agents))
+	for i := range agents {
+		dtos = append(dtos, &model.InputBarAgentDTO{Agent: agents[i]})
+	}
+	return dtos, nil
+}

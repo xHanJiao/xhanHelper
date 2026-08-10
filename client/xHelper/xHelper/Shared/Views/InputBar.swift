@@ -110,7 +110,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
     // MARK: - macOS 输入栏
 
 #if os(macOS)
-    @State private var barWidth: CGFloat = Layout.inputBarTwoRowThreshold
+    @State private var barWidth: CGFloat = 720
 
     private var macOSBody: some View {
         VStack(alignment: .trailing, spacing: 0) {
@@ -119,13 +119,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
             topTrailingNote(context)
                 .frame(maxWidth: barWidth / 2, alignment: .trailing)
                 .padding(.trailing, 10)
-            Group {
-                if barWidth < Layout.inputBarTwoRowThreshold {
-                    twoRowLayout
-                } else {
-                    oneRowLayout
-                }
-            }
+            twoRowLayout
             .background(
                 GeometryReader { proxy in
                     Color.clear
@@ -169,16 +163,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
         }
     }
 
-    /// 单行布局：编辑器 + 模式按钮 + 发送（宽度充足时）。
-    private var oneRowLayout: some View {
-        HStack(alignment: .center, spacing: 4) {
-            editor
-            statusRow(context)
-            trailingActions(context)
-        }
-    }
-
-    /// 两行布局：编辑器全宽在上，模式/发送按钮右对齐在下（宽度窄时）。
+    /// 两行布局：编辑器全宽在上，模式/发送按钮右对齐在下。
     private var twoRowLayout: some View {
         VStack(spacing: 6) {
             editor
@@ -382,5 +367,89 @@ struct InputBarScrollHider: NSViewRepresentable {
         }
     }
     .frame(height: 260)
+    .environmentObject(FontSizeManager.shared)
+}
+
+#Preview("Agent Menu (expanded)") {
+    @Previewable @State var text = ""
+    @Previewable @State var isEditing = false
+
+    VStack {
+        Spacer()
+        InputBar(
+            text: $text,
+            isEditing: $isEditing,
+            isStreaming: false,
+            onSend: {},
+            onStop: {}
+        ) { ctx in
+            HStack(spacing: 4) {
+                CollapsibleModeControls(
+                    context: ctx,
+                    isPlanMode: false,
+                    trustedMode: false,
+                    onToggleMode: {},
+                    onToggleTrusted: {}
+                )
+                AgentPickerButton(
+                    context: ctx,
+                    activeAgentID: "agent-active",
+                    activeAgentName: "生活管家",
+                    agents: [
+                        InputBarAgent(
+                            id: "agent-active",
+                            userId: "u1",
+                            name: "生活管家",
+                            systemPrompt: "负责生活记录的智能体",
+                            summary: "记账、提醒、日程",
+                            model: "deepseek-v4-flash",
+                            paramsJson: nil,
+                            createdAt: "2026-08-01T10:00:00Z",
+                            active: true
+                        ),
+                        InputBarAgent(
+                            id: "agent-reader",
+                            userId: "u1",
+                            name: "读书助手",
+                            systemPrompt: "读书方法论的智能体",
+                            summary: "读书、拆书、笔记",
+                            model: "deepseek-v4-flash",
+                            paramsJson: nil,
+                            createdAt: "2026-07-20T10:00:00Z",
+                            active: false
+                        ),
+                        InputBarAgent(
+                            id: "agent-dev",
+                            userId: "u1",
+                            name: "代码评审官",
+                            systemPrompt: "评审代码的智能体",
+                            summary: "评审、重构、测试",
+                            model: "deepseek-v4-pro",
+                            paramsJson: nil,
+                            createdAt: "2026-07-01T10:00:00Z",
+                            active: false
+                        ),
+                        InputBarAgent(
+                            id: "agent-translator",
+                            userId: "u1",
+                            name: "翻译官",
+                            systemPrompt: "翻译校对的智能体",
+                            summary: "翻译、润色、校对",
+                            model: "deepseek-v4-flash",
+                            paramsJson: nil,
+                            createdAt: "2026-06-15T10:00:00Z",
+                            active: false
+                        )
+                    ],
+                    hasMore: true,
+                    initiallyPresented: true
+                )
+                ModelPill(context: ctx, isDeep: false) {}
+            }
+        } trailingActions: { ctx in
+            SendStopButton(context: ctx, isStreaming: false, canSend: ctx.canSend, onSend: {}, onStop: {})
+        }
+    }
+    .frame(height: 460)
     .environmentObject(FontSizeManager.shared)
 }

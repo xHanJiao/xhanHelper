@@ -96,12 +96,14 @@ func createConversation(convRepo *service.ConversationRepo, agentRepo *service.A
 
 		resp := map[string]interface{}{
 			"id":         conv.ID,
+			"user_id":    conv.UserID,
 			"title":      conv.Title,
 			"is_default": conv.IsDefault,
 			"agent_id":   conv.AgentID,
 			"created_at": conv.CreatedAt,
 			"updated_at": conv.UpdatedAt,
 		}
+		resp["agent_name"] = ""
 		if conv.AgentID != nil && *conv.AgentID != "" && agentRepo != nil {
 			a, err := agentRepo.FindByID(c.Request.Context(), *conv.AgentID, userID)
 			if err != nil {

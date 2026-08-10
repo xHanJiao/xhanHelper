@@ -33,6 +33,19 @@ class APIClient {
         try await patch("/api/conversations/\(id)", body: ["title": title])
     }
 
+    /// 创建新会话（空白 tab 点击智能体绑定时用），agentID 可选绑定。
+    func createConversation(agentID: String? = nil) async throws -> Conversation {
+        var body: [String: Any] = [:]
+        if let aid = agentID { body["agent_id"] = aid }
+        return try await post("/api/conversations", body: body)
+    }
+
+    /// 切换会话绑定的智能体（复用 PATCH /api/conversations/:id 的 agent_id 字段），
+    /// 返回服务端确认的 agent_id / agent_name。
+    func setConversationAgent(id: String, agentID: String) async throws -> [String: String] {
+        try await patch("/api/conversations/\(id)", body: ["agent_id": agentID])
+    }
+
     /// 切换会话模式（"work" | "plan"）。模式只能由用户/客户端切换，LLM 无控制权。
     func updateConversationMode(id: String, mode: String) async throws {
         try await patch("/api/conversations/\(id)/mode", body: ["mode": mode])
@@ -147,6 +160,14 @@ class APIClient {
 
 	func listAgents(limit: Int = 50) async throws -> AgentListResponse {
 		return try await get("/api/agents?limit=\(limit)")
+	}
+
+	/// 输入栏智能体选择器列表：首位为当前会话激活智能体（active=true），
+	/// 其余按创建时间倒序分页（cursor 为 offset，每页 10 条）。
+	func listAgentsForInputBar(convID: String?, cursor: Int = 0) async throws -> InputBarAgentListResponse {
+		var path = "/api/agents-for-input-bar?cursor=\(cursor)"
+		if let cid = convID, !cid.isEmpty { path += "&conv_id=\(cid)" }
+		return try await get(path)
 	}
 
 	func createAgent(name: String, systemPrompt: String, model: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil) async throws -> Agent {
@@ -367,6 +388,34 @@ struct MemoryListResponse: Codable {
 struct AgentListResponse: Codable {
     let agents: [Agent]
     let total: Int
+}
+
+/// 输入栏智能体选择器条目：服务端 InputBarAgentDTO（Agent 全字段 + active）。
+struct InputBarAgent: Identifiable, Codable {
+    let id: String
+    let userId: String
+    let name: String
+    let systemPrompt: String
+    let summary: String?
+    let model: String
+    let paramsJson: String?
+    let createdAt: String
+    let active: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case name
+        case systemPrompt = "system_prompt"
+        case summary, model
+        case paramsJson = "params_json"
+        case createdAt = "created_at"
+        case active
+    }
+}
+
+struct InputBarAgentListResponse: Codable {
+    let agents: [InputBarAgent]
 }
 
 struct PromptListResponse: Codable {

@@ -849,7 +849,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         // 真实浏览器请求特征：UA（页面 JS 读取，无会话回退默认）、Referer（当前页）、Cookie（WebView 会话）
-        let ua = (await activeSession?.jsResult("navigator.userAgent"))?.text ?? Self.defaultChromeUA
+        let ua = (await activeSession?.jsResult("navigator.userAgent"))?.text ?? Self.defaultBrowserUA
         let referer = activeSession?.webView.url?.absoluteString ?? ""
         var cookieHeader = ""
         if let session = activeSession {
@@ -988,8 +988,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         ]), serverError: nil, clientAction: nil), true, size)
     }
 
-    /// 默认 Chrome UA（无会话可用时的下载兜底，与 webView customUserAgent 对齐）
-    private static let defaultChromeUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    /// 默认 Safari UA（无会话可用时的下载兜底，与 webView customUserAgent 对齐）
+    private static let defaultBrowserUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
 
     /// mediaSourcesJS：实时收集页面 video/img 资源 + 附近上下文文本（向上找容器，60 字符截断）。
     /// playing = 当前未暂停且未结束（自动播放的广告）；data: 图片过滤。
@@ -2096,20 +2096,21 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 configuration.preferences.isFraudulentWebsiteWarningEnabled = true
             }
 
-            let hideWebDriver = WKUserScript(
-                source: "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});",
+            // Safari 伪装（WKWebView 与 Safari.app 仅存的两处 JS 差异）：
+            // 1. webdriver：WKWebView 恒为 true → 原型层覆盖为 false（不残留实例 own property，与 Safari 一致）
+            // 2. window.safari：Safari.app 才有该全局对象 → 注入最小壳子（UA 声称 Safari 但该对象缺失会被一眼识破）
+            let safariSpoof = WKUserScript(
+                source: """
+                (function(){
+                  try{Object.defineProperty(Navigator.prototype,'webdriver',{get:function(){return false;},configurable:true});}
+                  catch(e){try{Object.defineProperty(navigator,'webdriver',{get:function(){return false;}});}catch(e2){}}
+                  try{if(!window.safari){window.safari={pushNotification:function(){}};}}catch(e){}
+                })()
+                """,
                 injectionTime: .atDocumentStart,
                 forMainFrameOnly: true
             )
-            configuration.userContentController.addUserScript(hideWebDriver)
-
-            // 指纹伪装（拟人化/反反爬）：补齐自动化痕迹，WebGL 与 Mac 真实 Chrome 对齐
-            let fingerprintScript = WKUserScript(
-                source: BrowserToolProvider.fingerprintJS,
-                injectionTime: .atDocumentStart,
-                forMainFrameOnly: true
-            )
-            configuration.userContentController.addUserScript(fingerprintScript)
+            configuration.userContentController.addUserScript(safariSpoof)
 
             // 稳定元素句柄注册表（documentStart，先于页面脚本）：a11y.id(el) 分配/返回
             let a11yScript = WKUserScript(
@@ -2125,7 +2126,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             }
 
             let wv = WKWebView(frame: .zero, configuration: configuration)
-            wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
             #if os(macOS)
             wv.allowsMagnification = true
             #endif
@@ -2946,37 +2947,6 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
       var h=5381;
       for(var j=0;j<s.length;j++){h=((h<<5)+h+s.charCodeAt(j))|0;}
       return String(h>>>0);
-    })()
-    """
-
-    /// 浏览器指纹伪装：与 Mac 真实 Chrome 对齐，消除自动化痕迹
-    static let fingerprintJS = """
-    (function(){
-      try{
-        var mk=function(obj,key,val){
-          try{Object.defineProperty(obj,key,{get:function(){return val;}});}catch(e){}
-        };
-        var plugins=[];
-        var names=[['Chrome PDF Plugin','PDF Viewer'],['Chrome PDF Viewer','pdf'],['Native Client','application/x-nacl'],['Widevine Content Decryption Module','application/x-ppapi-widevine-cdm']];
-        for(var i=0;i<names.length;i++){
-          var p={name:names[i][0],filename:names[i][0]+'.plugin',description:names[i][0],length:1};
-          try{plugins.push(p);}catch(e){}
-        }
-        mk(navigator,'plugins',plugins);
-        mk(navigator,'languages',['zh-CN','zh','en-US']);
-        mk(navigator,'hardwareConcurrency',8);
-        mk(navigator,'platform','MacIntel');
-        mk(navigator,'deviceMemory',8);
-        mk(navigator,'maxTouchPoints',0);
-        var gp=WebGLRenderingContext.prototype.getParameter;
-        if(gp){
-          WebGLRenderingContext.prototype.getParameter=function(p){
-            if(p===37445)return 'Apple Inc.';
-            if(p===37446)return 'Apple GPU';
-            return gp.apply(this,arguments);
-          };
-        }
-      }catch(e){}
     })()
     """
 

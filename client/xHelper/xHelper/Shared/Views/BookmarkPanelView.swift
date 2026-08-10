@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 /// 收藏夹面板（浏览器内特殊 tab）：列表 + 搜索 + 导入/导出。
 struct BookmarkPanelView: View {
     @ObservedObject private var store = BookmarkStore.shared
+    @ObservedObject private var faviconStore = FaviconStore.shared
     @State private var query = ""
     @State private var renaming: BookmarkStore.Bookmark?
     @State private var renameText = ""
@@ -147,7 +148,7 @@ struct BookmarkPanelView: View {
 
     @ViewBuilder
     private func favicon(for b: BookmarkStore.Bookmark) -> some View {
-        if let img = FaviconStore.shared.image(forHost: b.host) {
+        if let img = faviconStore.image(forHost: b.host) {
             Image(nsImage: img)
                 .resizable()
                 .interpolation(.medium)

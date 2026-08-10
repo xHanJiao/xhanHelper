@@ -5,6 +5,7 @@ import AppKit
 /// 浏览历史面板（浏览器内特殊 tab）：新→旧平铺，打开/删除/清空。
 struct HistoryPanelView: View {
     @ObservedObject private var store = HistoryStore.shared
+    @ObservedObject private var faviconStore = FaviconStore.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -88,7 +89,7 @@ struct HistoryPanelView: View {
 
     @ViewBuilder
     private func favicon(for e: HistoryStore.HistoryEntry) -> some View {
-        if let img = FaviconStore.shared.image(forHost: e.host) {
+        if let img = faviconStore.image(forHost: e.host) {
             Image(nsImage: img)
                 .resizable()
                 .interpolation(.medium)

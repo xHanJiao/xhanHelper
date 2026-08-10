@@ -4,6 +4,7 @@ import SwiftUI
 struct BookmarksBarView: View {
     @ObservedObject private var store = BookmarkStore.shared
     @ObservedObject private var barState = BookmarksBarState.shared
+    @ObservedObject private var faviconStore = FaviconStore.shared
     @State private var renaming: BookmarkStore.Bookmark?
     @State private var renameText = ""
 
@@ -96,7 +97,7 @@ struct BookmarksBarView: View {
 
     @ViewBuilder
     private func favicon(for b: BookmarkStore.Bookmark) -> some View {
-        if let img = FaviconStore.shared.image(forHost: b.host) {
+        if let img = faviconStore.image(forHost: b.host) {
             #if os(macOS)
             Image(nsImage: img)
                 .resizable()

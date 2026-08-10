@@ -2125,7 +2125,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 configuration.userContentController.add(ruleList)
             }
 
+            #if os(macOS)
+            // AppBrowserWebView 子类：拦截右键"用X搜索"菜单项，改为 App 内新 tab 搜索（防跳 Safari）
+            let wv = AppBrowserWebView(frame: .zero, configuration: configuration)
+            #else
             let wv = WKWebView(frame: .zero, configuration: configuration)
+            #endif
             wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
             #if os(macOS)
             wv.allowsMagnification = true

@@ -69,6 +69,7 @@ struct AgentPickerButton: View {
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 16)
+                        .frame(maxWidth: .infinity)
                 } else {
                     ForEach(agents) { agent in
                         AgentRow(
@@ -81,21 +82,22 @@ struct AgentPickerButton: View {
                         )
                         if agent.id != agents.last?.id {
                             Divider()
+                                .opacity(0.3)
                         }
                     }
                 }
                 if isLoadingMore {
                     Divider()
-                    HStack(spacing: 8) {
+                        .opacity(0.3)
+                    HStack(spacing: 6) {
                         ProgressView()
                             .controlSize(.small)
                         Text("加载中…")
-                            .font(.system(size: 12))
+                            .font(.system(size: 11))
                             .foregroundColor(.secondary)
-                        Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
                 } else if hasMore {
                     // 哨兵：滚到底进入可见区即触发加载下一页（LazyVStack 懒创建保证
                     // 列表够长未滚到时不会提前触发；ChatView 侧有 isLoadingPicker 去重）
@@ -105,9 +107,10 @@ struct AgentPickerButton: View {
                 }
             }
         }
-        .frame(width: 280)
-        .frame(minHeight: 0, idealHeight: 320, maxHeight: 360)
-        .padding(.vertical, 6)
+        .frame(width: 200)
+        .frame(minHeight: 0, maxHeight: 480)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 
@@ -123,18 +126,18 @@ private struct AgentRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Text(agent.name)
-                    .font(.system(size: 13, weight: isActive ? .semibold : .regular))
+                    .font(.system(size: 12, weight: isActive ? .semibold : .regular))
                     .lineLimit(1)
                     .foregroundColor(.primary)
                 Spacer(minLength: 0)
                 if isActive {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(Color("appAccent"))
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
             .contentShape(Rectangle())
             .background(rowBackground)
         }

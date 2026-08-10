@@ -86,24 +86,39 @@ struct ContentView: View {
         return max(Double(Layout.rightSidebarMinWidth), min(cap, available))
     }
 
-    /// 左侧栏可拖拽的最大宽度。右栏打开时受窗口可用空间钳制（保证右栏不被挤爆）；
-    /// 右栏关闭时保持 Layout.sidebarMaxWidth。
+    /// 左侧栏可拖拽的最大宽度。始终按窗口可用空间钳制（右栏开启时再扣右栏区），
+    /// 防止拖拽提交超出 HStack 容纳能力的宽度——否则弹性槽位（.frame(minWidth:)）
+    /// 被压缩而内部刚性宽度溢出，出现「内容变宽但容器没变宽」。
     private var leftSidebarMaxAvailable: Double {
-        guard rightSidebar.isOpen else { return Double(Layout.sidebarMaxWidth) }
-        let available = Double(windowWidth)
-            - Double(Layout.sidebarOuterPadding)
-            - middleAndRightMinSpanPipAware
+        var available = Double(windowWidth) - Double(
+            Layout.cardGap                                          // HSpace 左
+            + Layout.sidebarHPadding * 2                            // 侧栏卡片内边距
+            + Layout.seamHalfGap * 2 + Layout.seamWidth             // 左 seam 区
+            + Layout.middleMinWidth                                 // 中间栏最小宽（含自身 padding）
+            + Layout.cardGap                                        // HSpace 右
+        )
+        if rightSidebar.isOpen && !rightSidebar.isPipChat {
+            available -= Double(
+                Layout.seamHalfGap * 2 + Layout.seamWidth           // 右 seam 区
+                + Layout.rightSidebarMinWidth                       // 右栏最小宽
+                + Layout.rightSidebarOuterPadding
+            )
+        }
         return min(Double(Layout.sidebarMaxWidth), max(Double(Layout.sidebarMinWidth), available))
     }
 
     /// 右栏打开时所需的内容最小宽（由 Layout 派生）。
     private static let rightSidebarOpenMinWidth: CGFloat = Layout.rightSidebarOpenMinContentWidth
-    /// 右栏关闭时窗口基准最小内容宽。
-    private static let baseMinWidth: CGFloat =
-        Layout.cardGap * 2
-        + Layout.sidebarMinWidth + Layout.sidebarHPadding * 2
-        + Layout.seamHalfGap * 2 + Layout.seamWidth
-        + Layout.middleMinWidth
+    /// 右栏关闭时窗口最小内容宽：预留当前侧栏实际宽度（含卡片内边距），
+    /// 侧栏越宽窗口越不能缩窄——防止缩窗后 HStack 压缩侧栏槽位导致内容溢出。
+    /// 初始 200 默认宽 → 585，窄窗口打开的旧会话会自动走 sidebarAutoCollapsed 收窄。
+    private var baseMinWidth: CGFloat {
+        let sidebar = min(max(Double(sidebarWidth), Double(Layout.sidebarMinWidth)), leftSidebarMaxAvailable)
+        return Layout.cardGap * 2
+            + CGFloat(sidebar) + Layout.sidebarHPadding * 2
+            + Layout.seamHalfGap * 2 + Layout.seamWidth
+            + Layout.middleMinWidth
+    }
     /// PiP 时所需的内容最小宽（左栏收起 + seam + 右栏最小）。
     private static let pipMinContentWidth: CGFloat =
         Layout.sidebarMinWidth + Layout.sidebarOuterPadding
@@ -117,7 +132,7 @@ struct ContentView: View {
         if rightSidebar.isOpen {
             minContent = rightSidebar.isPipChat ? Self.pipMinContentWidth : Self.rightSidebarOpenMinWidth
         } else {
-            minContent = Self.baseMinWidth
+            minContent = baseMinWidth
         }
         AppDelegate.requiredMinContentWidth = minContent
     }
@@ -274,7 +289,7 @@ struct ContentView: View {
     private func toggleLeftSidebar() {
         let collapsed = sidebarWidth <= Layout.sidebarSnapThreshold
         if collapsed {
-            sidebarWidth = min(max(CGFloat(storedSidebarWidth), Layout.sidebarDefaultWidth), Layout.sidebarMaxWidth)
+            sidebarWidth = min(max(CGFloat(storedSidebarWidth), Layout.sidebarDefaultWidth), leftSidebarMaxAvailable)
         } else {
             sidebarWidth = Layout.sidebarMinWidth
         }
@@ -559,6 +574,7 @@ struct ContentView: View {
                             }
                             clampRightSidebarWidth()
                             refillBrowserFocus()
+                            updateWindowMinWidth() // 侧栏越宽，窗口最小内容宽跟着涨，防缩窗溢出
                         }
                     }
                     VSpace(Layout.cardBottomGap)

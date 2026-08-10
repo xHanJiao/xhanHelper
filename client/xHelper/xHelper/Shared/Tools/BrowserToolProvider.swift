@@ -1813,6 +1813,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             #endif
             return nil
         }
+        // R2：noopener target=_blank 等无目标 frame 导航 → 宿主开新 tab（对齐 Chrome）
+        session.onNoTargetNavigation = { [weak self] url in
+            self?.openURL(url)
+        }
         // JS 弹窗：用 beginSheetModal（非阻塞 sheet）而非 runModal——runModal 会在主线程开嵌套
         // run loop，页面连续弹窗 / 加载中弹窗时容易重入崩溃（mach_msg2_trap + SIGABRT）。
         // sheet 不阻塞主线程，completion 由用户点按后回调。
@@ -1886,6 +1890,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         switchActiveTab(to: tabId)
         refreshBrowserGroup()
         bindSessionTitle(session: newSession, tabId: tabId)
+        // R1：弹窗 tab 必须接 UI 回调（onNewWindowRequest/onNoTargetNavigation/JS 弹窗），
+        // 否则该 tab 内再点 target=_blank / window.open 会静默失败（createWebViewWith 返回 nil）。
+        bindSessionUI(session: newSession)
         rightSidebar?.openTab(id: tabId, title: "新标签页", icon: "globe",
                               content: AnyView(BrowserTabView(webView: newSession.webView,
                                                               onSetupErrorBinding: { [weak newSession] onError in
@@ -2009,6 +2016,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         var lastContentHash: String?
         /// 最近一次网络导航开始时间（didStartProvisionalNavigation），用于 nav 判定
         var lastNavStartAt: Date?
+        /// 最近一次导航 commit 时间（didCommit），与 lastNavStartAt 计算 prov→commit 耗时
+        var lastNavCommitAt: Date?
         /// 最近一次 snapshot 时各 @eN 元素的特征签名（ref 校验基准；导航时清空）
         var lastSnapshotItems: [[String: Any]]?
         /// 页面标题变化回调（tab 标题跟随）
@@ -2017,6 +2026,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         var onURLChanged: ((URL) -> Void)?
         /// 新窗口请求回调（target=_blank / window.open）：由 BrowserToolProvider 决定开新 tab
         var onNewWindowRequest: ((WKWebViewConfiguration, WKNavigationAction) -> WKWebView?)?
+        /// 无目标 frame 导航回调（noopener target=_blank 等，走 decidePolicyFor 而非 createWebViewWith）：
+        /// 由宿主开新 tab（对齐 Chrome），避免"点击没反应"。
+        var onNoTargetNavigation: ((URL) -> Void)?
         /// JS 弹窗回调（completion 由 sheet 关闭后调用，避免 runModal 嵌套 run loop 崩）
         var onJSAlert: ((String, @escaping () -> Void) -> Void)?
         var onJSConfirm: ((String, @escaping (Bool) -> Void) -> Void)?
@@ -2078,6 +2090,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             prefs.allowsContentJavaScript = true
             configuration.defaultWebpagePreferences = prefs
             configuration.preferences.isElementFullscreenEnabled = true
+            // 右键"检查元素"：设置私有 preference key developerExtrasEnabled（isInspectable 的运行时配套）
+            configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
             if #available(macOS 14.0, *) {
                 configuration.preferences.isFraudulentWebsiteWarningEnabled = true
             }
@@ -2116,6 +2130,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             wv.allowsMagnification = true
             #endif
             wv.allowsBackForwardNavigationGestures = true
+            // 右键"检查元素"→ Web Inspector（Console/元素/网络）；部署目标 ≥ 13.3(iOS 16.4+) 无条件可用
+            wv.isInspectable = true
             return wv
         }
 
@@ -2141,7 +2157,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            onNewWindowRequest?(configuration, navigationAction)
+            MainActor.assumeIsolated {
+                let created = onNewWindowRequest?(configuration, navigationAction)
+                let target = navigationAction.request.url?.absoluteString ?? "(空)"
+                let source = webView.url?.host ?? ""
+                LogBuffer.shared.diag("[BrowserNav] createWebView src=\(source) type=\(navigationAction.navigationType.rawValue) target=\(target.prefix(160)) -> \(created != nil ? "new-tab" : "nil")")
+                return created
+            }
         }
 
         func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
@@ -2300,6 +2322,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             }
         }
 
+        nonisolated func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            Task { @MainActor in
+                lastNavCommitAt = Date()
+            }
+        }
+
         /// 安全：拦截非 http/https 导航（含 302 重定向到 file:// 等协议绕过）。
         /// 允许 about:blank（默认新标签页）；其余一律 .cancel。
         /// 声明式下载（<a download>）：确认后走 .download。
@@ -2315,9 +2343,29 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 }
                 if let url = navigationAction.request.url {
                     let scheme = url.scheme?.lowercased() ?? ""
+                    let targetIsMain = navigationAction.targetFrame?.isMainFrame ?? false
+                    let hasNoTarget = navigationAction.targetFrame == nil
+
+                    // R2：noopener target=_blank 等无目标 frame 的 http(s) 导航 → 宿主开新 tab（对齐 Chrome），
+                    // 本次导航 .cancel，避免"点击没反应"（此前 .allow 后无目标 frame，导航被静默丢弃）。
+                    if hasNoTarget, scheme == "http" || scheme == "https" {
+                        logNavDecision(action: navigationAction, url: url, decision: "open-new-tab", reason: "no-target-frame")
+                        let target = url
+                        Task { @MainActor in
+                            self.onNoTargetNavigation?(target)
+                        }
+                        decisionHandler(.cancel)
+                        return
+                    }
                     if scheme == "http" || scheme == "https" || scheme == "about" {
+                        if targetIsMain {
+                            logNavDecision(action: navigationAction, url: url, decision: "allow", reason: "scheme-\(scheme)")
+                        }
                         decisionHandler(.allow)
                         return
+                    }
+                    if targetIsMain || hasNoTarget {
+                        logNavDecision(action: navigationAction, url: url, decision: "cancel", reason: "blocked-scheme-\(scheme)")
                     }
                     LogBuffer.shared.info("[Browser] blocked navigation to scheme: \(scheme) (\(url.absoluteString.prefix(80)))")
                     decisionHandler(.cancel)
@@ -2325,6 +2373,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 }
                 decisionHandler(.allow)
             }
+        }
+
+        /// 导航决策诊断行（仅主 frame / 无目标 frame，过滤 iframe 噪音），复现"点击不跳转"时定位。
+        @MainActor
+        private func logNavDecision(action: WKNavigationAction, url: URL, decision: String, reason: String) {
+            let targetDesc = action.targetFrame.map { $0.isMainFrame ? "main" : "iframe" } ?? "nil"
+            LogBuffer.shared.diag("[BrowserNav] \(decision) type=\(action.navigationType.rawValue) target=\(targetDesc) reason=\(reason) host=\(url.host ?? "") url=\(url.absoluteString.prefix(160))")
         }
 
         /// 响应不可渲染（content-disposition 附件等文件下载）→ 确认后走 .download。
@@ -2355,7 +2410,43 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             Task { @MainActor in
                 resumeLoad(nil)
                 if let url = webView.url { onURLChanged?(url) }
+                await self.logPerf(url: webView.url)
             }
+        }
+
+        /// 导航完成后采样页面性能指标（PerformanceNavigationTiming + FCP），输出 [BrowserPerf] 诊断行。
+        /// 仅 http/https 主文档；about:blank / 新标签页（loadHTMLString）host 为空直接跳过。
+        @MainActor
+        private func logPerf(url: URL?) async {
+            guard let url, url.scheme == "http" || url.scheme == "https" else { return }
+            let host = url.host ?? ""
+            var native = ""
+            if let start = lastNavStartAt {
+                let finishMs = Int(Date().timeIntervalSince(start) * 1000)
+                if let commit = lastNavCommitAt {
+                    let commitMs = Int(commit.timeIntervalSince(start) * 1000)
+                    native = " prov->commit=\(commitMs)ms commit->finish=\(max(finishMs - commitMs, 0))ms"
+                } else {
+                    native = " prov->finish=\(finishMs)ms"
+                }
+            }
+            let js = """
+            (function(){
+              try{
+                var n = performance.getEntriesByType('navigation')[0] || {};
+                var p = performance.getEntriesByType('paint') || [];
+                var fcp = 0;
+                for(var i = 0; i < p.length; i++){ if(p[i].name === 'first-contentful-paint'){ fcp = Math.round(p[i].startTime); break; } }
+                return JSON.stringify({ttfb: Math.round(n.responseStart || 0), dcl: Math.round(n.domContentLoadedEventEnd || 0), load: Math.round(n.loadEventEnd || 0), fcp: fcp});
+              }catch(e){ return ''; }
+            })()
+            """
+            let (text, _) = await jsResult(js)
+            guard let t = text, !t.isEmpty else {
+                LogBuffer.shared.diag("[BrowserPerf] host=\(host)\(native) js=n/a")
+                return
+            }
+            LogBuffer.shared.diag("[BrowserPerf] host=\(host)\(native) \(t)")
         }
 
         nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

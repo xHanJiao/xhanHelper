@@ -150,7 +150,7 @@ func (h *AgentHandler) ListAgentsForInputBar(c *gin.Context) {
 		return
 	}
 	log.Printf("[agent] ListAgentsForInputBar conv_id=%q cursor=%d count=%d", convID, cursor, len(agents))
-	view.JSONOK(c, gin.H{"agents": agents})
+	view.JSONOK(c, gin.H{"agents": agents, "page_size": service.InputBarPageSize})
 }
 
 // GetAgent GET /api/agents/:id

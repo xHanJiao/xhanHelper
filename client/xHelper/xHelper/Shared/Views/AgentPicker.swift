@@ -84,35 +84,30 @@ struct AgentPickerButton: View {
                         }
                     }
                 }
-                if hasMore {
+                if isLoadingMore {
                     Divider()
-                    loadMoreRow
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("加载中…")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                } else if hasMore {
+                    // 哨兵：滚到底进入可见区即触发加载下一页（LazyVStack 懒创建保证
+                    // 列表够长未滚到时不会提前触发；ChatView 侧有 isLoadingPicker 去重）
+                    Color.clear
+                        .frame(width: 0, height: 0)
+                        .onAppear { onLoadMore() }
                 }
             }
         }
         .frame(width: 280)
         .frame(minHeight: 0, idealHeight: 320, maxHeight: 360)
         .padding(.vertical, 6)
-    }
-
-    private var loadMoreRow: some View {
-        Button(action: onLoadMore) {
-            HStack(spacing: 8) {
-                if isLoadingMore {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-                Text(isLoadingMore ? "加载中…" : "加载更多")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(isLoadingMore)
     }
 }
 

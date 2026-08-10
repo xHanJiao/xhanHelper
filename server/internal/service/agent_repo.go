@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"gorm.io/gorm"
+
 	"xhan-helper/internal/model"
 )
 
@@ -81,8 +82,8 @@ func (r *AgentRepo) Delete(ctx context.Context, id, userID string) error {
 		Delete(&model.Agent{}).Error
 }
 
-// inputBarPageSize 输入栏智能体选择器的分页大小
-const inputBarPageSize = 10
+// InputBarPageSize 输入栏智能体选择器的分页大小（响应中随 page_size 下发给客户端）
+const InputBarPageSize = 3
 
 // ListByCursor 按创建时间倒序游标分页获取用户智能体（cursor 为 offset）。
 // 返回 InputBarAgentDTO，供输入栏智能体选择器使用。
@@ -94,7 +95,7 @@ func (r *AgentRepo) ListByCursor(ctx context.Context, userID string, cursor int)
 	err := r.db.WithContext(ctx).
 		Where("user_id = ?", userID).
 		Order("created_at DESC").
-		Limit(inputBarPageSize).
+		Limit(InputBarPageSize).
 		Offset(cursor).
 		Find(&agents).Error
 	if err != nil {
@@ -148,7 +149,7 @@ func (r *AgentRepo) ListByCursorWithActiveSetTop(ctx context.Context, userID, ac
 	var agents []model.Agent
 	err := q.
 		Order("created_at DESC").
-		Limit(inputBarPageSize).
+		Limit(InputBarPageSize).
 		Offset(cursor).
 		Find(&agents).Error
 	if err != nil {

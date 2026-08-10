@@ -268,7 +268,7 @@ struct ChatView: View {
         hasLoadedAgents = true
     }
 
-    /// 分页拉取（cursor 为 offset，服务端每页 10 条）。
+    /// 分页拉取（cursor 为 offset，分页大小由服务端 page_size 下发）。
     private func loadAgentPickerPage(cursor: Int) async {
         guard !isLoadingPicker else { return }
         isLoadingPicker = true
@@ -277,11 +277,12 @@ struct ChatView: View {
         let effective = (convID == nil || convID!.isEmpty) ? nil : convID
         do {
             let resp = try await viewModel.apiClient.listAgentsForInputBar(convID: effective, cursor: cursor)
+            let pageSize = resp.pageSize
             let existingIDs = Set(pickerAgents.map(\.id))
             pickerAgents += resp.agents.filter { !existingIDs.contains($0.id) }
-            pickerCursor += 10
-            // 服务端每页最多 10 条非激活项：满页则有下一页
-            pickerHasMore = resp.agents.filter { !$0.active }.count == 10
+            pickerCursor += pageSize
+            // 服务端每页最多 pageSize 条非激活项：满页则有下一页
+            pickerHasMore = resp.agents.filter { !$0.active }.count == pageSize
             // 已有绑定会话时，首页首位即激活智能体 → 同步选中
             if cursor == 0, let active = resp.agents.first(where: { $0.active }) {
                 selectedAgentID = active.id

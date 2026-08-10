@@ -414,8 +414,21 @@ struct InputBarAgent: Identifiable, Codable {
     }
 }
 
-struct InputBarAgentListResponse: Codable {
+struct InputBarAgentListResponse: Decodable {
     let agents: [InputBarAgent]
+    /// 服务端分页大小（cursor 按此步进；旧服务端未下发时默认 10）
+    let pageSize: Int
+
+    enum CodingKeys: String, CodingKey {
+        case agents
+        case pageSize = "page_size"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        agents = try c.decode([InputBarAgent].self, forKey: .agents)
+        pageSize = try c.decodeIfPresent(Int.self, forKey: .pageSize) ?? 10
+    }
 }
 
 struct PromptListResponse: Codable {

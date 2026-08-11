@@ -31,6 +31,9 @@ struct ContentView: View {
     @State private var rightSeamX: CGFloat = 0
     @AppStorage("xhan_sidebar_width") private var storedSidebarWidth: Double = Layout.sidebarDefaultWidth
     @State private var windowWidth: CGFloat = 800
+    /// 最近一次 geo.size.width（SwiftUI 内容布局宽）。窗口缩到内容底线后该值冻结在底线
+    /// （如 813），didResize 检测到它大于窗口实际内容宽即确认溢出，写入内容实测底线。
+    @State private var lastGeoWidth: CGFloat = 0
     /// 侧栏是否为自动收起，窗口拉宽后自动恢复。
     @State private var sidebarAutoCollapsed = false
     /// 进入 PiP 前右栏宽度，退出时恢复。
@@ -119,18 +122,22 @@ struct ContentView: View {
             + Layout.seamHalfGap * 2 + Layout.seamWidth
             + Layout.middleMinWidth
     }
-    /// PiP 时所需的内容最小宽（左栏收起 + seam + 右栏最小）。
-    private static let pipMinContentWidth: CGFloat =
-        Layout.sidebarMinWidth + Layout.sidebarOuterPadding
-        + Layout.seamWidth
-        + Layout.rightSidebarMinWidth + Layout.rightSidebarOuterPadding
+    /// PiP 时所需的内容最小宽：随左栏当前实际宽度动态变化（左栏越宽窗口越不能缩窄）。
+    /// 结构同 baseMinWidth，把中间区最小宽换成右栏最小宽。
+    private var pipMinContentWidth: CGFloat {
+        let sidebar = min(max(Double(sidebarWidth), Double(Layout.sidebarMinWidth)), leftSidebarMaxAvailable)
+        return Layout.cardGap * 2
+            + CGFloat(sidebar) + Layout.sidebarHPadding * 2
+            + Layout.seamHalfGap * 2 + Layout.seamWidth
+            + Layout.rightSidebarMinWidth
+    }
 
     /// 窗口最小内容宽唯一派生入口：由 (isOpen, isPipChat) 实时推导，幂等设置，
     /// 消除"进入保存/退出恢复"的竞态。
     private func updateWindowMinWidth() {
         let minContent: CGFloat
         if rightSidebar.isOpen {
-            minContent = rightSidebar.isPipChat ? Self.pipMinContentWidth : Self.rightSidebarOpenMinWidth
+            minContent = rightSidebar.isPipChat ? pipMinContentWidth : Self.rightSidebarOpenMinWidth
         } else {
             minContent = baseMinWidth
         }
@@ -196,7 +203,7 @@ struct ContentView: View {
         rightSidebar.width = rightSidebarMaxAvailable
         updateWindowMinWidth()
         guard let window = NSApp.keyWindow else { return }
-        let deficit = Self.pipMinContentWidth - windowWidth
+        let deficit = pipMinContentWidth - windowWidth
         if deficit > 0 {
             var frame = window.frame
             frame.size.width += deficit
@@ -429,9 +436,12 @@ struct ContentView: View {
                                 macOSContentArea
                             }
                             if rightSidebar.isOpen {
-                                HSpace(Layout.seamHalfGap)
-                                SeamMarker(x: $rightSeamX)
-                                HSpace(Layout.seamHalfGap)
+                                // PiP 时中间区消失、两 seam 重合，只保留左 seam（避免缝隙翻倍）
+                                if !rightSidebar.isPipChat {
+                                    HSpace(Layout.seamHalfGap)
+                                    SeamMarker(x: $rightSeamX)
+                                    HSpace(Layout.seamHalfGap)
+                                }
 
                                 RightSidebarView(
                                     manager: rightSidebar,
@@ -506,18 +516,46 @@ struct ContentView: View {
                         .animation(.easeInOut(duration: 0.2), value: rightSidebar.isOpen)
                         .onChange(of: geo.size.width, initial: true) { _, new in
                             windowWidth = new
-                            let extra: CGFloat = rightSidebar.isPipChat ? 396
-                                : rightSidebar.isOpen ? 736
-                                : 385
-                            if new < sidebarWidth + extra && sidebarWidth > Layout.sidebarMinWidth {
+                            lastGeoWidth = new
+                            // geo 变化 = 内容布局宽已变，旧实测底线（measuredContentMinWidth）失效，
+                            // 复位待 didResize 重新实测（底线随左栏/顶栏状态变化）。
+                            AppDelegate.measuredContentMinWidth = 0
+                            // 3 栏/右栏关闭：原阈值逻辑（PiP 由 didResize 检测冻结后触发收起，
+                            // 因为 PiP 底线 813 > 阈值 661，geo 冻结在 813 时这里已不再触发）。
+                            let overhead: CGFloat = rightSidebar.isPipChat
+                                ? max(385, AppDelegate.measuredContentMinWidth - sidebarWidth)
+                                : rightSidebar.isOpen ? 736 : 385
+                            var restoreAt = CGFloat(storedSidebarWidth) + overhead
+                            if rightSidebar.isPipChat {
+                                // 恢复下限 = 展开态内容底线（收起瞬间实测），窗口没大到能容下展开内容前不恢复
+                                restoreAt = max(restoreAt, AppDelegate.pipExpandedFloor)
+                            }
+                            if new <= sidebarWidth + overhead && sidebarWidth > Layout.sidebarMinWidth {
                                 sidebarWidth = Layout.sidebarMinWidth
                                 sidebarAutoCollapsed = true
-                            } else if sidebarAutoCollapsed && new >= CGFloat(storedSidebarWidth) + extra {
+                            } else if sidebarAutoCollapsed && new >= restoreAt {
                                 sidebarWidth = min(CGFloat(storedSidebarWidth), Layout.sidebarMaxWidth)
                                 sidebarAutoCollapsed = false
                             }
                             clampRightSidebarWidth()
                             refillBrowserFocus() // 窗口放大后浏览器聚焦态补满（含进入时异步放大窗口的场景）
+                        }
+                        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { note in
+                            guard let win = note.object as? NSWindow, win === NSApp.keyWindow else { return }
+                            guard lastGeoWidth > 0 else { return }
+                            let contentW = win.contentView?.frame.width ?? 0
+                            // ① 溢出检测：geo 冻结值 > 窗口实际内容宽 → lastGeoWidth 即内容真实底线。
+                            // windowWillResize 用 max(requiredMin, measured) 钳制，窗口物理停在此处。
+                            if lastGeoWidth > contentW + 1 {
+                                AppDelegate.measuredContentMinWidth = lastGeoWidth
+                            }
+                            // ② PiP 缩窗至内容底线：先收左栏 → 顶栏 navLeadingOffset 缩小 → 底线降下来
+                            // （如 813→575）→ 窗口可继续缩。与 3 栏「先收再缩」行为对齐。
+                            if rightSidebar.isPipChat, lastGeoWidth > contentW + 1, sidebarWidth > Layout.sidebarMinWidth {
+                                AppDelegate.pipExpandedFloor = lastGeoWidth
+                                sidebarWidth = Layout.sidebarMinWidth
+                                sidebarAutoCollapsed = true
+                            }
                         }
                         .onChange(of: rightSidebar.isOpen) { _, isOpen in
                             if !isOpen {
@@ -525,6 +563,9 @@ struct ContentView: View {
                                 // 关闭右侧栏时退出浏览器聚焦，恢复中间栏宽度
                                 rightSidebar.middleMinimized = false
                             }
+                            // 浏览器按钮组随侧栏开/关注册/注销，内容底线变化 → 旧实测值失效
+                            AppDelegate.measuredContentMinWidth = 0
+                            AppDelegate.pipExpandedFloor = 0
                             if isOpen {
                                 updateWindowForRightSidebarOpen()
                                 clampRightSidebarWidth()
@@ -549,6 +590,9 @@ struct ContentView: View {
                             } else {
                                 exitPipEffects(reason: pipExitReason)
                             }
+                            // 顶栏按钮组随 PiP 注册/注销，内容底线变化 → 旧实测值失效
+                            AppDelegate.measuredContentMinWidth = 0
+                            AppDelegate.pipExpandedFloor = 0
                             clampRightSidebarWidth()
                         }
                         .onChange(of: router.currentTab) { _, newTab in
@@ -572,6 +616,8 @@ struct ContentView: View {
                             if new > Layout.sidebarMinWidth {
                                 sidebarAutoCollapsed = false
                             }
+                            // 顶栏 navLeadingOffset 随左栏宽变化，内容底线随之变化 → 旧实测值失效
+                            AppDelegate.measuredContentMinWidth = 0
                             clampRightSidebarWidth()
                             refillBrowserFocus()
                             updateWindowMinWidth() // 侧栏越宽，窗口最小内容宽跟着涨，防缩窗溢出

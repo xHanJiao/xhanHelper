@@ -9,6 +9,7 @@ enum StreamEventType: String {
     case thoughtDelta     // 思考内容增量（Pro 流式思维链）
     case thoughtDone      // 思考完成
     case status           // 状态提示
+    case verify           // 响应检验 verify:checking|done|retry
     case message     // text_delta
     case toolCall    // tool_call
     case toolResult  // tool_result

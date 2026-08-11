@@ -16,6 +16,8 @@ struct MessageListView: View {
     let statusMessage: String?
     let thoughtMessage: String?
     let thoughtDone: Bool
+    let toolQueue: [ToolCallDisplay]  // 工具调用展示队列（最新助手气泡下方 pill）
+    let verifyStatus: VerifyStatus?   // 响应检验状态（最新助手气泡下方 pill）
     let hasMoreBefore: Bool
     let isLoadingMore: Bool
     let loadMoreError: String?
@@ -325,6 +327,13 @@ struct MessageListView: View {
                            showTime: activeTimeBubbleId == msg.id,
                            onTapToShowTime: { toggleTimeBubble(msg.id) })
                     .allowsHitTesting(!isShareSelectMode)
+            }
+
+            // 工具调用 / 响应检验 pill：仅挂在最新助手气泡下
+            if msg.id == "__streaming__" && (!toolQueue.isEmpty || verifyStatus != nil) {
+                ToolActivityToast(toolQueue: toolQueue, verifyStatus: verifyStatus)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Layout.chatHorizontalPadding)
             }
         }
     }

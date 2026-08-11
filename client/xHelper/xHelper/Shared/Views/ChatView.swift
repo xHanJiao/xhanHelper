@@ -48,6 +48,8 @@ struct ChatView: View {
                     statusMessage: viewModel.statusMessage,
                     thoughtMessage: viewModel.thoughtMessage,
                     thoughtDone: viewModel.thoughtDone,
+                    toolQueue: viewModel.toolQueue,
+                    verifyStatus: viewModel.verifyStatus,
                     hasMoreBefore: viewModel.hasMoreBefore,
                     isLoadingMore: viewModel.isLoadingMore,
                     loadMoreError: viewModel.loadMoreError,
@@ -149,6 +151,10 @@ struct ChatView: View {
                     // 常驻模型切换（chevron 与发送按钮之间）：deep（pro+thinking）↔ flash
                     ModelPill(context: ctx, isDeep: viewModel.deepMode) {
                         viewModel.toggleDeepMode()
+                    }
+                    // 响应校验开关（每轮多一次 LLM 检查）
+                    VerifyPill(context: ctx, isOn: viewModel.verifyEnabled) {
+                        viewModel.toggleVerify()
                     }
                 }
                 #endif

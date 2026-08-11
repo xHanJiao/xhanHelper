@@ -73,6 +73,39 @@ func TestShouldVerify_WithToolCalls(t *testing.T) {
 	}
 }
 
+// 用例：per-request 显式 true 覆盖全局关闭
+func TestShouldVerify_RequestOverrideOn(t *testing.T) {
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, verifyEnabled: false}
+	req := &RunRequest{VerifyEnabled: boolPtr(true)}
+	state := &reactState{allToolCalls: []tool.ToolCall{{Tool: "bookkeeping"}}}
+	if !o.shouldVerify(req, state) {
+		t.Error("VerifyEnabled=true 应覆盖全局关闭，返回 true")
+	}
+}
+
+// 用例：per-request 显式 false 覆盖全局开启
+func TestShouldVerify_RequestOverrideOff(t *testing.T) {
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, verifyEnabled: true}
+	req := &RunRequest{VerifyEnabled: boolPtr(false)}
+	state := &reactState{allToolCalls: []tool.ToolCall{{Tool: "bookkeeping"}}}
+	if o.shouldVerify(req, state) {
+		t.Error("VerifyEnabled=false 应覆盖全局开启，返回 false")
+	}
+}
+
+// 用例：per-request nil 跟随全局配置
+func TestShouldVerify_RequestOverrideNil(t *testing.T) {
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{}, verifyEnabled: true}
+	req := &RunRequest{}
+	state := &reactState{allToolCalls: []tool.ToolCall{{Tool: "bookkeeping"}}}
+	if !o.shouldVerify(req, state) {
+		t.Error("VerifyEnabled=nil 应跟随全局配置（开启），返回 true")
+	}
+}
+
 // 用例：SkipRetrieval=true 时跳过验证
 func TestShouldVerify_SkipRetrieval(t *testing.T) {
 	o := &Orchestrator{
@@ -566,4 +599,8 @@ func TestSaveVerifyFeedback_StoresRequestJSON(t *testing.T) {
 	if msg.Role != "system" {
 		t.Errorf("role 应为 system，实际 %s", msg.Role)
 	}
+}
+
+func boolPtr(b bool) *bool {
+	return &b
 }

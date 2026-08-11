@@ -67,6 +67,7 @@ type RunRequest struct {
 	ClientTools        []ClientTool // 客户端（Mac App）上报的本地 MCP 工具，可为空
 	Mode               string       // 会话模式：model.ConvModeWork（默认）| model.ConvModePlan（写操作被拦截）
 	ModeNotice         string       // 模式提示（注入当前 user 消息 XMLContext 的 notice 块，仅 LLM 可见，用户不可见）
+	VerifyEnabled      *bool        // 响应检验开关覆盖：nil=跟随全局配置，true/false=强制覆盖
 
 	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
 	Memory  retrieval.SourceConfig
@@ -927,7 +928,11 @@ type verifyResult struct {
 }
 
 func (o *Orchestrator) shouldVerify(req *RunRequest, state *reactState) bool {
-	return o.verifyEnabled && len(state.allToolCalls) > 0 && !req.SkipRetrieval && !state.finalRound
+	enabled := o.verifyEnabled
+	if req.VerifyEnabled != nil {
+		enabled = *req.VerifyEnabled
+	}
+	return enabled && len(state.allToolCalls) > 0 && !req.SkipRetrieval && !state.finalRound
 }
 
 func (o *Orchestrator) verifyAndMaybeRetry(

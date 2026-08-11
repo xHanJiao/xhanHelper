@@ -26,6 +26,29 @@ struct ToolConfirmation: Identifiable {
     let continuation: CheckedContinuation<Bool, Never>
 }
 
+// MARK: - 工具调用展示（tool_call / tool_result 事件）
+
+struct ToolCallDisplay: Identifiable {
+    let id = UUID()
+    let display: String
+    var status: Status
+    var summary: String?
+
+    enum Status: Equatable {
+        case running
+        case done
+        case failed
+    }
+}
+
+// MARK: - 响应检验状态（verify 事件）
+
+struct VerifyStatus: Equatable {
+    let status: String // checking | done | retry
+    let retry: Int
+    let reason: String
+}
+
 /// 执行计划生命周期状态（客户端从 steps 推断）
 enum PlanState: Equatable {
     case none        // 无计划
@@ -52,6 +75,13 @@ class ChatViewModel: ObservableObject {
     @Published var temperature: Double? = nil
     @Published var maxTokens: Int? = nil
     @Published var draftText = ""
+
+    /// 响应检验（verify）开关，会话级：默认关。开=强制开启，关=强制关闭（后端全局配置作兜底）
+    @Published var verifyEnabled = false
+    /// 当前流的工具调用展示队列（tool_call 入队，tool_result 更新状态）
+    @Published var toolQueue: [ToolCallDisplay] = []
+    /// 响应检验事件状态（verify:checking|done|retry）
+    @Published var verifyStatus: VerifyStatus?
 
     /// 会话模式："work"（默认）| "plan"（只读讨论）。只能由用户切换（Tab 快捷键/胶囊条）。
     /// TODO: 会话重新加载时从服务端同步真实 mode（当前先重置为 work，需会话详情 API 完善）
@@ -268,6 +298,21 @@ class ChatViewModel: ObservableObject {
         ToastCenter.shared.show(deepMode ? "已切换：深度模型" : "已切换：快速模型")
     }
 
+    // MARK: - 响应检验开关（verify，会话级客户端持久化，macOS only）
+
+    private var verifyEnabledDefaultsKey: String {
+        guard let cid = conversationId, !cid.isEmpty else { return "xhan_conv_verify_enabled_pending" }
+        return "xhan_conv_verify_enabled_\(cid)"
+    }
+
+    /// 切换响应检验：开=强制开启（每轮多一次 LLM 检验调用），关=强制关闭。
+    /// 仅客户端本地状态，随每次请求经 verify_enabled 传给服务端。
+    func toggleVerify() {
+        verifyEnabled.toggle()
+        UserDefaults.standard.set(verifyEnabled, forKey: verifyEnabledDefaultsKey)
+        ToastCenter.shared.show(verifyEnabled ? "已开启：回复校验（每轮多一次检查）" : "已关闭：回复校验")
+    }
+
     /// 挂起等待用户确认 L3 工具执行；60s 超时视为拒绝。
     /// force=true 时信任模式不跳过（用于敏感域/明文页等注入高风险场景——信任模式本身就不可信）。
     /// bridgeToBrowser=true 时把确认同步发布到 BrowserActivityCenter，浏览器内也显示确认条（与聊天条同步出现）。
@@ -390,6 +435,10 @@ class ChatViewModel: ObservableObject {
         if deepMode {
             thinkingMode = true // deep 联动 thinking
         }
+        // 响应检验开关会话级恢复：无记录默认关
+        verifyEnabled = UserDefaults.standard.bool(forKey: "xhan_conv_verify_enabled_\(id)")
+        toolQueue = []
+        verifyStatus = nil
         if !preserveTrustedMode {
             trustedMode = false // 信任模式会话级：换会话自动关闭（安全默认）
         }
@@ -521,6 +570,8 @@ class ChatViewModel: ObservableObject {
         isPlanMinimized = false
         lastMemoryIDs = nil
         lastNoteIDs = nil
+        toolQueue = []
+        verifyStatus = nil
 
         messages.append(.streamingAssistant(conversationId: conversationId ?? ""))
 
@@ -555,7 +606,7 @@ class ChatViewModel: ObservableObject {
         }
         // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）
         let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled)
     }
 
     func stopStreaming() {
@@ -606,6 +657,10 @@ class ChatViewModel: ObservableObject {
             thoughtDone = true
 
         case .message:
+            // 文本开始推送：清「正在分析/等待」提示 + 工具/校验 pill（内容才是主角，对齐前端行为）
+            statusMessage = nil
+            toolQueue = []
+            verifyStatus = nil
             if let delta = parseMessageDelta(event.data) {
                 streamingContent += delta
                 throttleFlush()
@@ -622,10 +677,27 @@ class ChatViewModel: ObservableObject {
             statusMessage = parseStatus(event.data)
 
         case .toolCall:
-            break
+            if let tc = parseToolCall(event.data) {
+                // 新工具调用 = 新一轮工具执行：清掉上一轮已完结的 pill，防旧 done 阻塞新 running 展示
+                toolQueue.removeAll { $0.status != .running }
+                toolQueue.append(ToolCallDisplay(display: tc.display, status: .running))
+            }
 
         case .toolResult:
-            break
+            if let tr = parseToolResult(event.data) {
+                if let idx = toolQueue.lastIndex(where: { $0.status == .running }) {
+                    let display = toolQueue[idx].display
+                    toolQueue[idx].status = tr.success ? .done : .failed
+                    toolQueue[idx].summary = tr.success ? "✅ \(display) 已完成" : "❌ \(display): \(tr.error ?? "失败")"
+                }
+            }
+
+        case .verify:
+            if let vs = parseVerify(event.data) {
+                // verify 只在全部工具结束后发生：清空工具 pill，让位校验 pill
+                toolQueue = []
+                verifyStatus = VerifyStatus(status: vs.status, retry: vs.retry, reason: vs.reason ?? "")
+            }
 
         case .remindersChanged:
             LogBuffer.shared.debug("[Reminder] SSE reminders_changed received")
@@ -638,11 +710,18 @@ class ChatViewModel: ObservableObject {
             finishStreaming()
             thoughtMessage = nil
             statusMessage = nil
+            toolQueue = []
+            verifyStatus = nil
+            if let err = parseDoneError(event.data) {
+                ToastCenter.shared.show("服务提示：\(err)")
+            }
             if let cid = parseConversationIdFromDone(event.data) {
                 conversationId = cid
                 onConversationCreated?(cid, parseTitleFromDone(event.data))
                 // 空白 tab 首条消息建会话后：把当前 deep/flash 选择预存到新会话键（后续重载继承）
                 UserDefaults.standard.set(deepMode, forKey: "xhan_conv_deep_mode_\(cid)")
+                // 同上：响应检验开关预存
+                UserDefaults.standard.set(verifyEnabled, forKey: "xhan_conv_verify_enabled_\(cid)")
             }
             if let t = parseTitleFromDone(event.data) {
                 conversationTitle = t
@@ -671,7 +750,6 @@ class ChatViewModel: ObservableObject {
             LogBuffer.shared.error("ChatViewModel.sse error event: \(event.data)")
             ToastCenter.shared.show("服务出错：\(event.data)")
             finishStreaming()
-
         default:
             break
         }
@@ -692,6 +770,9 @@ class ChatViewModel: ObservableObject {
         // 停止/出错路径无 done 事件，主动清思考状态避免思考框残留（正常 done 路径同样安全）
         thoughtMessage = nil
         thoughtDone = true
+        // 停止/出错时清工具/校验状态，防 pill 残留
+        toolQueue = []
+        verifyStatus = nil
         #if os(iOS)
         endBackgroundTask()
         #endif
@@ -825,6 +906,55 @@ class ChatViewModel: ObservableObject {
               let ids = obj["note_ids"] as? [String]
         else { return nil }
         return ids
+    }
+
+    // MARK: Tool call / result / verify 解析
+
+    private struct ParsedToolCall {
+        let display: String
+    }
+
+    private func parseToolCall(_ data: String) -> ParsedToolCall? {
+        guard let jsonData = data.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+        else { return nil }
+        let display = obj["display"] as? String ?? obj["function"] as? String ?? "工具"
+        return ParsedToolCall(display: display)
+    }
+
+    private struct ParsedToolResult {
+        let success: Bool
+        let error: String?
+    }
+
+    private func parseToolResult(_ data: String) -> ParsedToolResult? {
+        guard let jsonData = data.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let success = obj["success"] as? Bool
+        else { return nil }
+        return ParsedToolResult(success: success, error: obj["error"] as? String)
+    }
+
+    private struct ParsedVerify {
+        let status: String
+        let retry: Int
+        let reason: String?
+    }
+
+    private func parseVerify(_ data: String) -> ParsedVerify? {
+        guard let jsonData = data.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let status = obj["status"] as? String
+        else { return nil }
+        return ParsedVerify(status: status, retry: obj["retry"] as? Int ?? 0, reason: obj["reason"] as? String)
+    }
+
+    private func parseDoneError(_ data: String) -> String? {
+        guard let jsonData = data.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let err = obj["error"] as? String, !err.isEmpty
+        else { return nil }
+        return err
     }
 
     // MARK: Local Tool Results

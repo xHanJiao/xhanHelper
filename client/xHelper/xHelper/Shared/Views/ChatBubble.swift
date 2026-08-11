@@ -94,6 +94,17 @@ struct ThinkingBubble: View {
     }
 }
 
+private extension View {
+    @ViewBuilder
+    func macosTextSelection() -> some View {
+        #if os(macOS)
+        textSelection(.enabled)
+        #else
+        self
+        #endif
+    }
+}
+
 private struct PulsingText: View {
     let text: String
     @State private var opacity: Double = 1.0
@@ -149,6 +160,7 @@ struct ChatBubble: View {
                         .background(Color("bubbleUserTint"), in: RoundedRectangle(cornerRadius: 14))
                         .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.35), lineWidth: 0.6))
                         .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
+                        .macosTextSelection()
                 } else if isStreamingPlaceholder {
                     HStack(spacing: 5) {
                         ForEach(0..<3) { i in
@@ -168,6 +180,7 @@ struct ChatBubble: View {
                                 .markdownTheme(.chatBubble(fontSize: fontSizeManager.scaledSize))
                                 .markdownCodeSyntaxHighlighter(.plainText)
                                 .frame(alignment: .leading)
+                                .macosTextSelection()
                         } else {
                             VStack(alignment: .leading, spacing: 0) {
                                 ForEach(segments) { segment in
@@ -177,6 +190,7 @@ struct ChatBubble: View {
                                             .markdownTheme(.chatBubble(fontSize: fontSizeManager.scaledSize))
                                             .markdownCodeSyntaxHighlighter(.plainText)
                                             .frame(alignment: .leading)
+                                            .macosTextSelection()
                                     case .mermaid:
                                         MermaidDiagramInlineView(code: segment.content)
                                     }

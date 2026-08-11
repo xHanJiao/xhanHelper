@@ -28,7 +28,6 @@ struct MessageListView: View {
     @State private var autoDismissTask: Task<Void, Never>? = nil
     @State private var menuMessageId: String? = nil
     @State private var menuPoint: CGPoint = .zero
-    @State private var touchGlobalPoint: CGPoint = .zero
     @State private var menuFrames: [String: CGRect] = [:]
     @State private var menuDismissTask: Task<Void, Never>? = nil
     @State private var menuShownAt: Date = .distantPast
@@ -199,27 +198,20 @@ struct MessageListView: View {
                     } else {
                         base
 #if os(macOS)
-                            .simultaneousGesture(
-                                DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                                    .onChanged { value in
-                                        touchGlobalPoint = value.startLocation
+                            .contextMenu {
+                                if !msg.content.isEmpty {
+                                    Button {
+                                        copyToPasteboard(msg.content)
+                                    } label: {
+                                        Label("拷贝", systemImage: "doc.on.doc")
                                     }
-                            )
-                            .simultaneousGesture(
-                                LongPressGesture(minimumDuration: 0.5)
-                                    .onEnded { _ in
-                                        if !msg.content.isEmpty {
-                                            if menuMessageId == msg.id {
-                                                dismissMenu()
-                                                return
-                                            }
-                                            menuPoint = touchGlobalPoint
-                                            menuShownAt = Date()
-                                            menuMessageId = msg.id
-                                            startMenuDismissTimer()
-                                        }
+                                    Button {
+                                        enterShareSelectMode()
+                                    } label: {
+                                        Label("分享", systemImage: "square.and.arrow.up")
                                     }
-                            )
+                                }
+                            }
 #else
                             .background(
                                 GeometryReader { geo in

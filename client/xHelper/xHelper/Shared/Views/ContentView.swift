@@ -429,9 +429,12 @@ struct ContentView: View {
                                 macOSContentArea
                             }
                             if rightSidebar.isOpen {
-                                HSpace(Layout.seamHalfGap)
-                                SeamMarker(x: $rightSeamX)
-                                HSpace(Layout.seamHalfGap)
+                                // PiP 时中间区消失、两 seam 重合，只保留左 seam（避免缝隙翻倍）
+                                if !rightSidebar.isPipChat {
+                                    HSpace(Layout.seamHalfGap)
+                                    SeamMarker(x: $rightSeamX)
+                                    HSpace(Layout.seamHalfGap)
+                                }
 
                                 RightSidebarView(
                                     manager: rightSidebar,

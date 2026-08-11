@@ -189,6 +189,37 @@ VStack 宽度 = 最宽子视图宽度。顶栏和底栏共享同一宽度，**�
 - 所以测量必须下沉到 SwiftUI 侧（`geo.size.width` 冻结值），再通过静态变量桥接给 AppKit 守卫
 - **写代码前先确认「数据在哪一层」，否则会在拿不到数据的层瞎找尺子**
 
+### AppKit 层 vs SwiftUI 层：为什么是两个层、数据为什么不通
+
+macOS 上 SwiftUI app 实际跑在两个层上：
+
+| 层 | 角色 | 类比 |
+|----|------|------|
+| **AppKit** | 窗口的物理矩形：frame 尺寸、屏幕位置、边缘拖拽手柄。`windowWillResize` 在此层被调用（AppKit 问「用户想把窗框拖到多宽」） | 房子的墙壁/窗框 |
+| **SwiftUI** | 内容布局：VStack/HStack/TopBarView/SidebarView 怎么摆。`GeometryReader`（`geo.size.width`）在此层报告「家具至少要占多宽」 | 房子里的家具 |
+
+关键点：
+
+- **SwiftUI 不独立存在**——它嵌在 AppKit 的一个特殊 NSView `NSHostingView` 里，这是两层之间的桥
+- AppKit 问桥「你最小要多宽？」桥回答 `intrinsicContentSize = -1`（`NSViewNoIntrinsicMetric`）——「我弹性，给多宽摆多宽」。因为 SwiftUI 内容里有 greedy 的 GeometryReader，SwiftUI 对桥的请求也报弹性
+- **所以 AppKit 只看到窗框尺寸（661），永远问不出家具的 813**。813 只在 SwiftUI 布局引擎内部算得出（`geo.size.width` 冻结值）
+
+代码里的体现：
+
+```
+windowWillResize（AppKit 层）想量内容最小宽：
+  sender.contentMinSize.width                → 400（窗框声明的最小宽度，根视图 minWidth）
+  sender.contentView?.intrinsicContentSize   → -1（桥说「我弹性」）
+  → 守卫只能 = max(661, 0) = 661            ← 量不到 813
+
+geo.size.width（SwiftUI 层）：
+  → 813（家具真实最小占位）
+  → 窗口 661 < 813 → 家具超出墙壁 → 居中 → 左栏出墙
+```
+
+正确做法：**SwiftUI 层量出家具真实宽度 → 写进共享静态变量（`AppDelegate.measuredContentMinWidth`）→ AppKit 层读它当守卫**。两层不直接通话，通过静态变量桥接。
+
+
 ### 布点教训
 
 `onChange(of: geo.size.width)` 在内容冻结后（宽度不再变化）会**停止触发**——冻结引发的次级失效（自动收起/钳制）不能靠它兜底。真正的检测必须在 `windowWillResize` / `NSWindow.didResizeNotification`（窗口帧层，始终触发）。

@@ -163,6 +163,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         BrowserFindCoordinator.shared.next()
                     }
                     return nil
+                case 2: // Cmd+D 收藏/取消收藏当前页（对齐 Chrome）
+                    Self.toggleBookmarkForActivePage()
+                    return nil
                 default:
                     break
                 }
@@ -204,10 +207,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         wv.pageZoom = min(max(wv.pageZoom + delta, 0.5), 2.5)
     }
 
+    /// 收藏/取消收藏当前页（Cmd+D，与地址栏星标按钮逻辑一致）
+    private static func toggleBookmarkForActivePage() {
+        guard let wv = BrowserToolProvider.shared.activeWebView,
+              let url = wv.url,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return }
+        BookmarkStore.shared.toggle(title: wv.title ?? url.host ?? "", url: url.absoluteString)
+    }
+
     /// 浏览器快捷键键码集合（诊断用：命中但被焦点路由跳过时打日志）
     private static func isBrowserShortcutKey(_ keyCode: UInt16) -> Bool {
         switch keyCode {
-        case 33, 30, 15, 24, 27, 3, 5:
+        case 33, 30, 15, 24, 27, 3, 5, 2:
             return true
         default:
             return false

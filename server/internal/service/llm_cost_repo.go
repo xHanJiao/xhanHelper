@@ -29,42 +29,39 @@ func (r *LlmCostRepo) Insert(ctx context.Context, detail *model.LlmCostDetail) e
 	return r.db.WithContext(ctx).Create(detail).Error
 }
 
+// ============================================================
+// 聚合查询
+// ============================================================
+
 // QueryParams 聚合查询参数
 type QueryParams struct {
-	Start    string // 开始日期 YYYY-MM-DD（含）
-	End      string // 结束日期 YYYY-MM-DD（含）
-	UserID   string // 可选，按用户筛选
-	Category string // 可选，按大类筛选
-	GroupBy  string // 一级分组字段：date / category / model / user_id / sub_category
-	SubGroup string // 二级分组字段，与 GroupBy 不同即可
+	Start    string   // 开始日期 YYYY-MM-DD（含）
+	End      string   // 结束日期 YYYY-MM-DD（含）
+	UserIDs  []string // 可选，多选用户；为空 = 所有用户
+	Category string   // 可选，按大类筛选
+	GroupBy  string   // 分组字段：date / category / model / user_id / sub_category
 }
 
-// QueryResult 聚合查询结果
-type QueryResult struct {
-	TotalTokens      int64      `json:"total_tokens"`
-	PromptTokens     int64      `json:"prompt_tokens"`
-	CompletionTokens int64      `json:"completion_tokens"`
-	TotalCalls       int64      `json:"total_calls"`
-	Groups           []GroupRow `json:"groups"`
+// TokenTotal 一段数据的 token 汇总（含缓存拆分）
+type TokenTotal struct {
+	PromptCacheHit  int64   `json:"prompt_cache_hit"`
+	PromptCacheMiss int64   `json:"prompt_cache_miss"`
+	Completion      int64   `json:"completion"`
+	TotalTokens     int64   `json:"total_tokens"`
+	CallCount       int64   `json:"call_count"`
+	CacheHitRate    float64 `json:"cache_hit_rate"`
 }
 
 // GroupRow 单个分组行
 type GroupRow struct {
-	Key              string     `json:"key"`
-	TotalTokens      int64      `json:"total_tokens"`
-	PromptTokens     int64      `json:"prompt_tokens"`
-	CompletionTokens int64      `json:"completion_tokens"`
-	CallCount        int64      `json:"call_count"`
-	SubGroups        []GroupRow `json:"sub_groups,omitempty"`
+	Key string `json:"key"`
+	TokenTotal
 }
 
-// resultRow GORM Scan 的中间结构体
-type resultRow struct {
-	TotalTokens      int64
-	PromptTokens     int64
-	CompletionTokens int64
-	CallCount        int64
-	Key              string
+// QueryResult 聚合查询结果
+type QueryResult struct {
+	Total  TokenTotal `json:"total"`
+	Groups []GroupRow `json:"groups"`
 }
 
 var validDims = map[string]bool{
@@ -89,17 +86,16 @@ func dimToColumn(dim string) string {
 	}
 }
 
+const tokenSelectCols = "COALESCE(SUM(prompt_cache_hit_tokens),0) as prompt_cache_hit," +
+	"COALESCE(SUM(prompt_cache_miss_tokens),0) as prompt_cache_miss," +
+	"COALESCE(SUM(completion_tokens),0) as completion," +
+	"COALESCE(SUM(total_tokens),0) as total_tokens," +
+	"COUNT(*) as call_count"
+
 // Query 执行聚合查询。
-// 不支持跨维度 SubGroup（如 GroupBy=date 时 SubGroup=date），调用方自行保证。
 func (r *LlmCostRepo) Query(ctx context.Context, params QueryParams) (*QueryResult, error) {
 	if !validDims[params.GroupBy] {
 		return nil, fmt.Errorf("invalid group_by: %s", params.GroupBy)
-	}
-	if params.SubGroup != "" && !validDims[params.SubGroup] {
-		return nil, fmt.Errorf("invalid sub_group: %s", params.SubGroup)
-	}
-	if params.SubGroup == params.GroupBy {
-		return nil, fmt.Errorf("sub_group must differ from group_by")
 	}
 
 	q := r.db.WithContext(ctx).Model(&model.LlmCostDetail{})
@@ -109,67 +105,157 @@ func (r *LlmCostRepo) Query(ctx context.Context, params QueryParams) (*QueryResu
 	if params.End != "" {
 		q = q.Where("date <= ?", params.End)
 	}
-	if params.UserID != "" {
-		q = q.Where("user_id = ?", params.UserID)
+	if len(params.UserIDs) > 0 {
+		q = q.Where("user_id IN ?", params.UserIDs)
 	}
 	if params.Category != "" {
 		q = q.Where("category = ?", params.Category)
 	}
 
 	// --- 总额 ---
-	var total resultRow
-	if err := q.Select(
-		"COALESCE(SUM(total_tokens),0) as total_tokens," +
-			"COALESCE(SUM(prompt_tokens),0) as prompt_tokens," +
-			"COALESCE(SUM(completion_tokens),0) as completion_tokens," +
-			"COUNT(*) as call_count",
-	).Scan(&total).Error; err != nil {
+	var total TokenTotal
+	if err := q.Select(tokenSelectCols).Scan(&total).Error; err != nil {
 		return nil, fmt.Errorf("query totals: %w", err)
 	}
+	total.CacheHitRate = cacheHitRate(total.PromptCacheHit, total.PromptCacheMiss)
 
-	// --- 一级分组 ---
+	// --- 分组 ---
 	groupCol := dimToColumn(params.GroupBy)
-	selectCols := groupCol + " as `key`," +
-		"SUM(total_tokens) as total_tokens," +
-		"SUM(prompt_tokens) as prompt_tokens," +
-		"SUM(completion_tokens) as completion_tokens," +
-		"COUNT(*) as call_count"
-
 	var groups []GroupRow
-	if err := q.Select(selectCols).
+	if err := q.Select(groupCol + " as `key`," + tokenSelectCols).
 		Group(groupCol).
 		Order("total_tokens DESC").
 		Scan(&groups).Error; err != nil {
 		return nil, fmt.Errorf("query groups: %w", err)
 	}
-
-	// --- 二级分组 ---
-	if params.SubGroup != "" && len(groups) > 0 {
-		subCol := dimToColumn(params.SubGroup)
-		for i := range groups {
-			var subs []GroupRow
-			if err := q.Where(groupCol+" = ?", groups[i].Key).
-				Select(
-					subCol + " as `key`," +
-						"SUM(total_tokens) as total_tokens," +
-						"SUM(prompt_tokens) as prompt_tokens," +
-						"SUM(completion_tokens) as completion_tokens," +
-						"COUNT(*) as call_count",
-				).
-				Group(subCol).
-				Order("total_tokens DESC").
-				Scan(&subs).Error; err != nil {
-				return nil, fmt.Errorf("query sub groups: %w", err)
-			}
-			groups[i].SubGroups = subs
-		}
+	for i := range groups {
+		groups[i].Key = normalizeDateKey(groups[i].Key)
+		groups[i].CacheHitRate = cacheHitRate(groups[i].PromptCacheHit, groups[i].PromptCacheMiss)
+	}
+	if groups == nil {
+		groups = []GroupRow{}
 	}
 
-	return &QueryResult{
-		TotalTokens:      total.TotalTokens,
-		PromptTokens:     total.PromptTokens,
-		CompletionTokens: total.CompletionTokens,
-		TotalCalls:       total.CallCount,
-		Groups:           groups,
-	}, nil
+	return &QueryResult{Total: total, Groups: groups}, nil
+}
+
+// normalizeDateKey SQLite 驱动可能把 date 列读回 RFC3339（"2026-08-11T00:00:00Z"），
+// MySQL 返回纯日期串（"2026-08-11"）。统一截取日期部分。
+func normalizeDateKey(s string) string {
+	if len(s) > 10 && s[4] == '-' {
+		return s[:10]
+	}
+	return s
+}
+
+// cacheHitRate 缓存命中率：hit / (hit + miss)，分母为 0 返回 0。
+func cacheHitRate(hit, miss int64) float64 {
+	if hit+miss == 0 {
+		return 0
+	}
+	return float64(hit) / float64(hit+miss)
+}
+
+// ============================================================
+// 明细 / 用户列表 / 汇总
+// ============================================================
+
+// ListParams 明细分页查询参数
+type ListParams struct {
+	Start    string
+	End      string
+	UserIDs  []string
+	Category string
+	Date     string // 精确日期筛选
+}
+
+// ListDetails 分页查询调用明细（created_at DESC）
+func (r *LlmCostRepo) ListDetails(ctx context.Context, params ListParams, page, pageSize int) ([]model.LlmCostDetail, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	q := r.db.WithContext(ctx).Model(&model.LlmCostDetail{})
+	if params.Start != "" {
+		q = q.Where("date >= ?", params.Start)
+	}
+	if params.End != "" {
+		q = q.Where("date <= ?", params.End)
+	}
+	if len(params.UserIDs) > 0 {
+		q = q.Where("user_id IN ?", params.UserIDs)
+	}
+	if params.Category != "" {
+		q = q.Where("category = ?", params.Category)
+	}
+	if params.Date != "" {
+		q = q.Where("date = ?", params.Date)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("count details: %w", err)
+	}
+
+	var rows []model.LlmCostDetail
+	err := q.Order("created_at DESC").
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
+		Find(&rows).Error
+	if err != nil {
+		return nil, 0, fmt.Errorf("list details: %w", err)
+	}
+	for i := range rows {
+		rows[i].Date = normalizeDateKey(rows[i].Date)
+	}
+	return rows, total, nil
+}
+
+// UserCostSummary 用户在统计时段内的消耗汇总（下拉列表排序用）
+type UserCostSummary struct {
+	UserID      string `json:"user_id"`
+	TotalTokens int64  `json:"total_tokens"`
+	CallCount   int64  `json:"call_count"`
+}
+
+// ListUsers 列出有成本记录的用户（total_tokens DESC），userID 非空过滤。
+func (r *LlmCostRepo) ListUsers(ctx context.Context, start, end string) ([]UserCostSummary, error) {
+	q := r.db.WithContext(ctx).Model(&model.LlmCostDetail{}).
+		Select("user_id, SUM(total_tokens) as total_tokens, COUNT(*) as call_count").
+		Where("user_id != ''")
+	if start != "" {
+		q = q.Where("date >= ?", start)
+	}
+	if end != "" {
+		q = q.Where("date <= ?", end)
+	}
+	var rows []UserCostSummary
+	err := q.Group("user_id").Order("total_tokens DESC").Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	return rows, nil
+}
+
+// Summary 返回时间段内的汇总（不含分组）
+func (r *LlmCostRepo) Summary(ctx context.Context, start, end string, userIDs []string) (*TokenTotal, error) {
+	q := r.db.WithContext(ctx).Model(&model.LlmCostDetail{})
+	if start != "" {
+		q = q.Where("date >= ?", start)
+	}
+	if end != "" {
+		q = q.Where("date <= ?", end)
+	}
+	if len(userIDs) > 0 {
+		q = q.Where("user_id IN ?", userIDs)
+	}
+	var total TokenTotal
+	if err := q.Select(tokenSelectCols).Scan(&total).Error; err != nil {
+		return nil, fmt.Errorf("query summary: %w", err)
+	}
+	total.CacheHitRate = cacheHitRate(total.PromptCacheHit, total.PromptCacheMiss)
+	return &total, nil
 }

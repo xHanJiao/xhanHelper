@@ -114,6 +114,13 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		RunHandler:      evalRunHandler,
 	})
 
+	controller.RegisterCostRoutes(controller.CostRoutesConfig{
+		R:               router,
+		AuthMiddleware:  middleware.Auth(repos.User),
+		AdminMiddleware: monitor.AdminOnly(cfg.Server.AdminUsers),
+		Repo:            repos.LlmCost,
+	})
+
 	return router
 }
 

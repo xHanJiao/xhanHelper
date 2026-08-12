@@ -79,7 +79,7 @@ func TestChat_RecordsUsageFromDoneEvent(t *testing.T) {
 		chatFn: func(ctx context.Context, req *llm.ChatRequest) (<-chan *llm.StreamEvent, error) {
 			ch := make(chan *llm.StreamEvent, 2)
 			ch <- &llm.StreamEvent{Type: "text_delta", Content: "hi"}
-			ch <- &llm.StreamEvent{Type: "done", Usage: &llm.Usage{PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150}}
+			ch <- &llm.StreamEvent{Type: "done", Usage: &llm.Usage{PromptTokens: 100, PromptCacheHitTokens: 60, PromptCacheMissTokens: 40, CompletionTokens: 50, TotalTokens: 150}}
 			close(ch)
 			return ch, nil
 		},
@@ -119,6 +119,9 @@ func TestChat_RecordsUsageFromDoneEvent(t *testing.T) {
 	}
 	if got.TotalTokens != 150 || got.PromptTokens != 100 || got.CompletionTokens != 50 {
 		t.Errorf("token mismatch: %+v", got)
+	}
+	if got.PromptCacheHitTokens != 60 || got.PromptCacheMissTokens != 40 {
+		t.Errorf("cache token mismatch: %+v", got)
 	}
 	if got.Date.IsZero() {
 		t.Error("Date should be set")

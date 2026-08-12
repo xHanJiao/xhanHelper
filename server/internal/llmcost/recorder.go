@@ -5,18 +5,20 @@ import "time"
 // UsageRecord 代表一次 LLM 调用的完整记录。
 // 字段含义见设计文档 llm-cost-center.md。
 type UsageRecord struct {
-	Date             time.Time
-	UserID           string
-	Category         string
-	SubCategory      string
-	Model            string
-	ConvID           string
-	RefType          string
-	RefID            string
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-	Meta             map[string]interface{}
+	Date                  time.Time
+	UserID                string
+	Category              string
+	SubCategory           string
+	Model                 string
+	ConvID                string
+	RefType               string
+	RefID                 string
+	PromptTokens          int
+	PromptCacheHitTokens  int
+	PromptCacheMissTokens int
+	CompletionTokens      int
+	TotalTokens           int
+	Meta                  map[string]interface{}
 }
 
 // Recorder 记录器接口。

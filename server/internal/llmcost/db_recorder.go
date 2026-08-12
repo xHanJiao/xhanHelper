@@ -45,17 +45,19 @@ func (r *DBRecorder) Close() {
 func (r *DBRecorder) worker() {
 	for record := range r.ch {
 		detail := &model.LlmCostDetail{
-			Date:             record.Date.Format("2006-01-02"),
-			UserID:           record.UserID,
-			Category:         record.Category,
-			SubCategory:      record.SubCategory,
-			Model:            record.Model,
-			ConvID:           record.ConvID,
-			RefType:          record.RefType,
-			RefID:            record.RefID,
-			PromptTokens:     int64(record.PromptTokens),
-			CompletionTokens: int64(record.CompletionTokens),
-			TotalTokens:      int64(record.TotalTokens),
+			Date:                  record.Date.Format("2006-01-02"),
+			UserID:                record.UserID,
+			Category:              record.Category,
+			SubCategory:           record.SubCategory,
+			Model:                 record.Model,
+			ConvID:                record.ConvID,
+			RefType:               record.RefType,
+			RefID:                 record.RefID,
+			PromptTokens:          int64(record.PromptTokens),
+			PromptCacheHitTokens:  int64(record.PromptCacheHitTokens),
+			PromptCacheMissTokens: int64(record.PromptCacheMissTokens),
+			CompletionTokens:      int64(record.CompletionTokens),
+			TotalTokens:           int64(record.TotalTokens),
 		}
 		if record.Meta != nil {
 			b, err := json.Marshal(record.Meta)

@@ -75,18 +75,20 @@ func (t *CostTracker) ModelName() string {
 func (t *CostTracker) record(ctx context.Context, req *llm.ChatRequest, usage *llm.Usage) {
 	scenario, _ := ScenarioFromContext(ctx)
 	rec := UsageRecord{
-		Date:             time.Now(),
-		UserID:           scenario.UserID,
-		Category:         scenario.Category,
-		SubCategory:      scenario.SubCategory,
-		Model:            t.inner.ModelName(),
-		ConvID:           scenario.ConvID,
-		RefType:          scenario.RefType,
-		RefID:            scenario.RefID,
-		PromptTokens:     usage.PromptTokens,
-		CompletionTokens: usage.CompletionTokens,
-		TotalTokens:      usage.TotalTokens,
-		Meta:             scenario.Meta,
+		Date:                  time.Now(),
+		UserID:                scenario.UserID,
+		Category:              scenario.Category,
+		SubCategory:           scenario.SubCategory,
+		Model:                 t.inner.ModelName(),
+		ConvID:                scenario.ConvID,
+		RefType:               scenario.RefType,
+		RefID:                 scenario.RefID,
+		PromptTokens:          usage.PromptTokens,
+		PromptCacheHitTokens:  usage.PromptCacheHitTokens,
+		PromptCacheMissTokens: usage.PromptCacheMissTokens,
+		CompletionTokens:      usage.CompletionTokens,
+		TotalTokens:           usage.TotalTokens,
+		Meta:                  scenario.Meta,
 	}
 	if rec.UserID == "" {
 		rec.UserID = req.UserID

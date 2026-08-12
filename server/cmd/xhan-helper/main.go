@@ -13,7 +13,6 @@ import (
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/monitor"
-	"xhan-helper/internal/service"
 	"xhan-helper/internal/util"
 )
 
@@ -46,11 +45,10 @@ func main() {
 	vsAdapter := agent.NewVectorSearchAdapter(vs)
 	infra := app.InitInfra(cfg, db, func(apiKey, baseURL, model string) *llm.Embedder { return embedder }, vsAdapter)
 
-	costRepo := service.NewLlmCostRepo(db)
-	costRecorder := llmcost.NewDBRecorder(costRepo)
+	repos := app.InitRepos(cfg, db)
+	costRecorder := llmcost.NewDBRecorder(repos.LlmCost)
 
 	llmClients := app.InitLLM(cfg, llm.NewClient, llm.NewStrongClient, costRecorder)
-	repos := app.InitRepos(cfg, db)
 
 	// --- 工具 & Agent 系统 ---
 	tools := appinit.InitTools(cfg, repos, infra, llmClients)

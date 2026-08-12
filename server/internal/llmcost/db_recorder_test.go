@@ -17,6 +17,12 @@ func newTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// :memory: 库每个连接独立，限单连接保证 worker goroutine 与测试共享同一库
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.SetMaxOpenConns(1)
 	if err := db.AutoMigrate(&model.LlmCostDetail{}); err != nil {
 		t.Fatal(err)
 	}
@@ -28,16 +34,18 @@ func TestDBRecorder_InsertsDetail(t *testing.T) {
 	rec := NewDBRecorder(service.NewLlmCostRepo(db))
 
 	rec.Record(UsageRecord{
-		Date:             time.Date(2026, 8, 12, 10, 0, 0, 0, time.Local),
-		UserID:           "user-1",
-		Category:         "main_chat",
-		SubCategory:      "reat_loop",
-		Model:            "deepseek-v4-flash",
-		ConvID:           "conv-1",
-		PromptTokens:     100,
-		CompletionTokens: 50,
-		TotalTokens:      150,
-		Meta:             map[string]interface{}{"round": 2},
+		Date:                  time.Date(2026, 8, 12, 10, 0, 0, 0, time.Local),
+		UserID:                "user-1",
+		Category:              "main_chat",
+		SubCategory:           "re_act_loop",
+		Model:                 "deepseek-v4-flash",
+		ConvID:                "conv-1",
+		PromptTokens:          100,
+		PromptCacheHitTokens:  60,
+		PromptCacheMissTokens: 40,
+		CompletionTokens:      50,
+		TotalTokens:           150,
+		Meta:                  map[string]interface{}{"round": 2},
 	})
 
 	var detail model.LlmCostDetail
@@ -56,13 +64,16 @@ func TestDBRecorder_InsertsDetail(t *testing.T) {
 	if len(detail.Date) < 10 || detail.Date[:10] != "2026-08-12" {
 		t.Errorf("date mismatch: %s", detail.Date)
 	}
-	if detail.UserID != "user-1" || detail.Category != "main_chat" || detail.SubCategory != "reat_loop" {
+	if detail.UserID != "user-1" || detail.Category != "main_chat" || detail.SubCategory != "re_act_loop" {
 		t.Errorf("dimensions mismatch: %+v", detail)
 	}
 	if detail.Model != "deepseek-v4-flash" || detail.ConvID != "conv-1" {
 		t.Errorf("model/conv mismatch: %+v", detail)
 	}
-	if detail.PromptTokens != 100 || detail.CompletionTokens != 50 || detail.TotalTokens != 150 {
+	if detail.PromptTokens != 100 || detail.PromptCacheHitTokens != 60 || detail.PromptCacheMissTokens != 40 {
+		t.Errorf("prompt tokens mismatch: %+v", detail)
+	}
+	if detail.CompletionTokens != 50 || detail.TotalTokens != 150 {
 		t.Errorf("tokens mismatch: %+v", detail)
 	}
 	if detail.MetaJSON != `{"round":2}` {

@@ -315,6 +315,13 @@ struct MessageListView: View {
                     .padding(.horizontal, Layout.chatHorizontalPadding)
             }
 
+            // 工具调用 / 响应检验 pill：挂在正文上方（时序：思考 → 工具/校验 → 正文）
+            if msg.id == "__streaming__" && (!toolQueue.isEmpty || verifyStatus != nil) {
+                ToolActivityToast(toolQueue: toolQueue, verifyStatus: verifyStatus)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Layout.chatHorizontalPadding)
+            }
+
             if let cd = msg.chartData {
                 ChartBubble(chartData: cd)
             } else if msg.role == "user" {
@@ -327,13 +334,6 @@ struct MessageListView: View {
                            showTime: activeTimeBubbleId == msg.id,
                            onTapToShowTime: { toggleTimeBubble(msg.id) })
                     .allowsHitTesting(!isShareSelectMode)
-            }
-
-            // 工具调用 / 响应检验 pill：仅挂在最新助手气泡下
-            if msg.id == "__streaming__" && (!toolQueue.isEmpty || verifyStatus != nil) {
-                ToolActivityToast(toolQueue: toolQueue, verifyStatus: verifyStatus)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, Layout.chatHorizontalPadding)
             }
         }
     }

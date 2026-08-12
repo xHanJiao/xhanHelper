@@ -450,6 +450,36 @@ case .message:
 - 死代码（PlanModal 等）
 - 后端 `verify` 事件转发已存在（`chat.go:278`），无需改
 
+## 最终实现差异（相对初稿）
+
+### 1. ToolActivityToast 位置：正文上方
+
+初稿挂在 ChatBubble 下方，评审后改为 **ChatBubble 上方**（`MessageListView.messageRowContent` VStack：ThinkingBubble → ToolActivityToast → ChatBubble）。原因：verify 阶段（prompt-eng 路径）正文尚未流式，三点占位在"思考气泡 + 校验 pill"之间被上下夹击，视觉怪异。改后时序自然：**思考 → 工具执行/校验 → 正文**。
+
+### 2. verify LLM 调用：前缀缓存复用
+
+初稿：verify 使用独立 `verifySystemPrompt`（"你是一个内容检验助手..."）+ 单条消息 → 与主对话上下文完全不同，**前缀缓存 0 命中**，verify 每次全额 token。
+
+最终：**system prompt 与历史消息原样复用**，检验任务编码为追加的一条用户消息：
+
+```go
+// 完整历史 + 检验任务 = 最终消息列表；history 前缀与上次主对话调用一致 → 缓存命中
+verifyMsgs := append(append([]llm.Message{}, state.msgs...),
+    llm.Message{Role: "user", Content: verifyInstructions + "\n\n" + verifyPrompt})
+
+client.ChatSync(ctx, &llm.ChatRequest{
+    SystemPrompt: systemPrompt, // 与主对话完全一致 → 前缀缓存命中
+    Messages:     verifyMsgs,
+})
+```
+
+- 检验指令（JSON 格式 + 标准）移入用户消息，system prompt 不再拼装
+- 检索上下文不再单独注入（对话 system prompt Layer 3 已含）
+- `buildVerifyPrompt` 简化为仅输出【模型回复草稿】（用户问题/工具调用/返回经 verifyMsgs 消息列表原样传递，不再重复拼入文本——旧实现把 state.msgs 又拼了一遍）
+- 删除死代码：`buildRetrievalContext` / `retrievedItemView` / `retrievedItemsFromPackets`
+- 每轮对话内 system prompt + 历史前缀稳定 → DeepSeek 前缀缓存命中，仅增量 token 付费
+- `saveVerifyFeedback` 落库 system prompt 改为对话的 `systemPrompt`
+
 ## 参考文献
 
 - SSE 事件调研：本代码库 `agent/orchestrator.go`、`controller/chat.go`、`view/render.go`

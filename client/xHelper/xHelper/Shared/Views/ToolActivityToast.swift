@@ -2,9 +2,9 @@ import SwiftUI
 
 // MARK: - ToolActivityToast — 工具调用 & 响应检验气泡
 //
-// 仿前端 ToolCallToast：挂在最新助手气泡下方。
-// - 工具 pill：显示队列第一个（running 脉冲 → done ✅ → failed ❌），
-//   后端 tool_result 更新后自然切换，无需定时器。
+// 仿前端 ToolCallToast：挂在最新助手气泡上方。
+// - 工具 pill：只在成功/失败时出现（✅ done / ❌ failed），队列逐个展示；
+//   running 分支为防御兜底（VM 已改为 tool_result 到达才构造 pill）。
 // - verify pill：工具队列清空后展示，checking 常驻，done/retry 更新文字。
 // - 文本流开始（message delta）→ VM 清 toolQueue/verifyStatus → 自动退场。
 

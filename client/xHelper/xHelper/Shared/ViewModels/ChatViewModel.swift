@@ -80,6 +80,8 @@ class ChatViewModel: ObservableObject {
     @Published var verifyEnabled = false
     /// 当前流的工具调用展示队列（tool_call 入队，tool_result 更新状态）
     @Published var toolQueue: [ToolCallDisplay] = []
+    /// 待展示工具名 FIFO：tool_call 暂存 display，tool_result 到后取出构造完结 pill（不展示 running）
+    private var pendingToolDisplays: [String] = []
     /// 响应检验事件状态（verify:checking|done|retry）
     @Published var verifyStatus: VerifyStatus?
 
@@ -438,6 +440,7 @@ class ChatViewModel: ObservableObject {
         // 响应检验开关会话级恢复：无记录默认关
         verifyEnabled = UserDefaults.standard.bool(forKey: "xhan_conv_verify_enabled_\(id)")
         toolQueue = []
+        pendingToolDisplays = []
         verifyStatus = nil
         if !preserveTrustedMode {
             trustedMode = false // 信任模式会话级：换会话自动关闭（安全默认）
@@ -571,6 +574,7 @@ class ChatViewModel: ObservableObject {
         lastMemoryIDs = nil
         lastNoteIDs = nil
         toolQueue = []
+        pendingToolDisplays = []
         verifyStatus = nil
 
         messages.append(.streamingAssistant(conversationId: conversationId ?? ""))
@@ -660,6 +664,7 @@ class ChatViewModel: ObservableObject {
             // 文本开始推送：清「正在分析/等待」提示 + 工具/校验 pill（内容才是主角，对齐前端行为）
             statusMessage = nil
             toolQueue = []
+            pendingToolDisplays = []
             verifyStatus = nil
             if let delta = parseMessageDelta(event.data) {
                 streamingContent += delta
@@ -678,17 +683,25 @@ class ChatViewModel: ObservableObject {
 
         case .toolCall:
             if let tc = parseToolCall(event.data) {
-                // 新工具调用 = 新一轮工具执行：清掉上一轮已完结的 pill，防旧 done 阻塞新 running 展示
-                toolQueue.removeAll { $0.status != .running }
-                toolQueue.append(ToolCallDisplay(display: tc.display, status: .running))
+                // 新一轮工具执行（上一轮 pending 已清空）：清掉旧完结 pill
+                if pendingToolDisplays.isEmpty { toolQueue = [] }
+                pendingToolDisplays.append(tc.display)
             }
 
         case .toolResult:
-            if let tr = parseToolResult(event.data) {
-                if let idx = toolQueue.lastIndex(where: { $0.status == .running }) {
-                    let display = toolQueue[idx].display
-                    toolQueue[idx].status = tr.success ? .done : .failed
-                    toolQueue[idx].summary = tr.success ? "✅ \(display) 已完成" : "❌ \(display): \(tr.error ?? "失败")"
+            if let tr = parseToolResult(event.data), !pendingToolDisplays.isEmpty {
+                // 只在成功/失败时展示 pill（不展示 running）
+                let display = pendingToolDisplays.removeFirst()
+                let summary = tr.success ? "✅ \(display) 已完成" : "❌ \(display): \(tr.error ?? "失败")"
+                let tc = ToolCallDisplay(display: display, status: tr.success ? .done : .failed, summary: summary)
+                toolQueue.append(tc)
+                // 自动退场：成功 1.5s / 失败 3s；若期间被 message/verify/done/新 tool_call
+                // 清掉队列（队首 id 不匹配）则 no-op，不重复删除
+                let id = tc.id
+                let delay: UInt64 = tr.success ? 1_500_000_000 : 3_000_000_000
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: delay)
+                    if toolQueue.first?.id == id { toolQueue.removeFirst() }
                 }
             }
 
@@ -696,6 +709,7 @@ class ChatViewModel: ObservableObject {
             if let vs = parseVerify(event.data) {
                 // verify 只在全部工具结束后发生：清空工具 pill，让位校验 pill
                 toolQueue = []
+                pendingToolDisplays = []
                 verifyStatus = VerifyStatus(status: vs.status, retry: vs.retry, reason: vs.reason ?? "")
             }
 
@@ -711,6 +725,7 @@ class ChatViewModel: ObservableObject {
             thoughtMessage = nil
             statusMessage = nil
             toolQueue = []
+            pendingToolDisplays = []
             verifyStatus = nil
             if let err = parseDoneError(event.data) {
                 ToastCenter.shared.show("服务提示：\(err)")
@@ -772,6 +787,7 @@ class ChatViewModel: ObservableObject {
         thoughtDone = true
         // 停止/出错时清工具/校验状态，防 pill 残留
         toolQueue = []
+        pendingToolDisplays = []
         verifyStatus = nil
         #if os(iOS)
         endBackgroundTask()

@@ -444,6 +444,9 @@ class ChatViewModel: ObservableObject {
         verifyStatus = nil
         if !preserveTrustedMode {
             trustedMode = false // 信任模式会话级：换会话自动关闭（安全默认）
+            // 思考内容会话级：仅切会话时清空（同会话刷新/scene 激活保留折叠态）
+            thoughtMessage = nil
+            thoughtDone = false
         }
         // 记录重置前计划指纹与折叠态：同会话重载（scene 激活/刷新/重试）时保持收起状态，
         // 真·新计划（指纹变化/切换会话）仍默认展开。捕获必须在清空之前。
@@ -701,7 +704,10 @@ class ChatViewModel: ObservableObject {
                 let delay: UInt64 = tr.success ? 1_500_000_000 : 3_000_000_000
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: delay)
-                    if toolQueue.first?.id == id { toolQueue.removeFirst() }
+                    // 按 id 移除（不限于队首）：多 pill 时各自 timer 独立退场
+                    if let idx = toolQueue.firstIndex(where: { $0.id == id }) {
+                        toolQueue.remove(at: idx)
+                    }
                 }
             }
 
@@ -722,7 +728,6 @@ class ChatViewModel: ObservableObject {
 
         case .done:
             finishStreaming()
-            thoughtMessage = nil
             statusMessage = nil
             toolQueue = []
             pendingToolDisplays = []
@@ -776,17 +781,19 @@ class ChatViewModel: ObservableObject {
         throttleTimer?.invalidate()
         throttleTimer = nil
         applyStreamingContent()
-        // 停止/出错时若 __streaming__ 占位无内容，直接移除（防三个点动画残留）
+        // 停止/出错时若 __streaming__ 占位无内容，直接移除（防三个点动画残留）；
+        // 思考内容保留供折叠查看——但占位消息被移除时思考块无处挂，一并清空
         if let idx = messages.lastIndex(where: { $0.id == "__streaming__" }),
            messages[idx].content.isEmpty {
             messages.remove(at: idx)
+            thoughtMessage = nil
         }
         isStreaming = false
-        // 停止/出错路径无 done 事件，主动清思考状态避免思考框残留（正常 done 路径同样安全）
-        thoughtMessage = nil
+        // 停止/出错路径无 done 事件，思考块转静态折叠态（done 路径同样安全）
         thoughtDone = true
-        // 停止/出错时清工具/校验状态，防 pill 残留
-        toolQueue = []
+        // 停止/出错时清校验状态，防 pill 残留
+        // 注意：不清 toolQueue——工具 pill 由各自自动退场 timer 清理，
+        // done 路径由 .done handler 清（此处清了 timer 永远没机会跑）
         pendingToolDisplays = []
         verifyStatus = nil
         #if os(iOS)

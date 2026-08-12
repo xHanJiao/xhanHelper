@@ -309,7 +309,9 @@ struct MessageListView: View {
     @ViewBuilder
     private func messageRowContent(_ msg: Message) -> some View {
         VStack(spacing: 12) {
-            if msg.id == "__streaming__", let thought = thoughtMessage {
+            // 思考块：挂在最后一条 assistant 消息上（流式时是 __streaming__，
+            // done 后 id 替换为真实消息 id——仍是最后一条），结束后保留折叠态可展开查看
+            if let thought = thoughtMessage, msg.role == "assistant", msg.id == messages.last?.id {
                 ThinkingBubble(text: thought, isStreaming: !thoughtDone)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Layout.chatHorizontalPadding)

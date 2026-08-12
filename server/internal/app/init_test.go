@@ -118,7 +118,7 @@ func TestInitLLM(t *testing.T) {
 		return mockStrong, nil
 	}
 
-	clients := InitLLM(cfg, factory, strongFactory)
+	clients := InitLLM(cfg, factory, strongFactory, nil)
 
 	if clients == nil {
 		t.Fatal("InitLLM returned nil")
@@ -142,7 +142,7 @@ func TestInitLLM_NoStrongModel(t *testing.T) {
 		return nil, nil // strong 不可用
 	}
 
-	clients := InitLLM(cfg, factory, strongFactory)
+	clients := InitLLM(cfg, factory, strongFactory, nil)
 
 	if clients.Flash == nil {
 		t.Error("LLMClients.Flash is nil")

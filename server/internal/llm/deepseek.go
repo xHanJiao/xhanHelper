@@ -423,6 +423,7 @@ func (c *baseClient) callSyncAPI(ctx context.Context, req *ChatRequest, model st
 		Usage struct {
 			PromptTokens          int `json:"prompt_tokens"`
 			CompletionTokens      int `json:"completion_tokens"`
+			TotalTokens           int `json:"total_tokens"`
 			PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`
 			PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"`
 		} `json:"usage"`
@@ -439,6 +440,7 @@ func (c *baseClient) callSyncAPI(ctx context.Context, req *ChatRequest, model st
 		Usage: &Usage{
 			PromptTokens:          result.Usage.PromptTokens,
 			CompletionTokens:      result.Usage.CompletionTokens,
+			TotalTokens:           result.Usage.TotalTokens,
 			PromptCacheHitTokens:  result.Usage.PromptCacheHitTokens,
 			PromptCacheMissTokens: result.Usage.PromptCacheMissTokens,
 		},

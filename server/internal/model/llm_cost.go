@@ -7,13 +7,13 @@ import "time"
 type LlmCostDetail struct {
 	ID               uint      `gorm:"primaryKey"`
 	Date             string    `gorm:"type:date;not null;index"`
-	UserID           string    `gorm:"type:varchar(32);not null;default:'';index"`
+	UserID           string    `gorm:"size:36;not null;default:'';index"`
 	Category         string    `gorm:"type:varchar(30);not null;index"`
 	SubCategory      string    `gorm:"type:varchar(50);not null"`
 	Model            string    `gorm:"type:varchar(50);not null"`
-	ConvID           string    `gorm:"type:varchar(32);index"`
+	ConvID           string    `gorm:"size:36;index"`
 	RefType          string    `gorm:"type:varchar(30);index"`
-	RefID            string    `gorm:"type:varchar(32);index"`
+	RefID            string    `gorm:"size:36;index"`
 	PromptTokens     int64     `gorm:"not null;default:0"`
 	CompletionTokens int64     `gorm:"not null;default:0"`
 	TotalTokens      int64     `gorm:"not null;default:0"`

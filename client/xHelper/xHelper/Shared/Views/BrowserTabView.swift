@@ -127,7 +127,8 @@ struct BrowserTabView: View {
                 suggestionList
             }
         }
-        .background(.ultraThinMaterial)
+        // 显式直角 Rectangle：隔离外层卡片 clipShape 圆角对材质的渲染影响（地址栏保持直角）
+        .background(Rectangle().fill(.ultraThinMaterial))
     }
 
     private var addressBarRow: some View {
@@ -227,8 +228,9 @@ struct BrowserTabView: View {
             }
         }
         .frame(maxHeight: 260)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
+        // 直角：与地址栏/收藏夹栏保持一致的方形风格
+        .background(Rectangle().fill(.regularMaterial))
+        .overlay(Rectangle().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
         .padding(.horizontal, 8)
         .padding(.bottom, 6)

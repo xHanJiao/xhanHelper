@@ -27,7 +27,8 @@ struct BookmarksBarView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .background(.ultraThinMaterial)
+        // 显式直角 Rectangle：隔离外层卡片 clipShape 圆角对材质的渲染影响（收藏夹栏保持直角）
+        .background(Rectangle().fill(.ultraThinMaterial))
         .contextMenu {
             Button("隐藏收藏夹栏") { barState.isVisible = false }
         }

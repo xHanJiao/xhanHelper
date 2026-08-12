@@ -41,6 +41,29 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     private func housekeepingTick() {
         cleanupIdleAgentTabs()
+        verifyKeptAliveTabs()
+    }
+
+    /// 定期复查后台保活 tab（有媒体在播、留在视图层级）：媒体已停止的摘除保活并暂停，
+    /// 让视图层级释放合成渲染资源。每 30s 一次，成本可忽略。
+    private func verifyKeptAliveTabs() {
+        guard let rs = rightSidebar, !rs.keptAliveTabIds.isEmpty else { return }
+        for tabId in rs.keptAliveTabIds {
+            guard let session = tabs[tabId] else {
+                rs.keptAliveTabIds.remove(tabId)
+                continue
+            }
+            session.webView.evaluateJavaScript(Self.mediaCheckScript) { [weak self] result, error in
+                let hasMedia = error == nil && (result as? Bool) == true
+                guard !hasMedia else { return }
+                DispatchQueue.main.async {
+                    guard let self, self.activeTabId != tabId else { return }
+                    LogBuffer.shared.info("[Browser] keep-alive tab \(tabId) 媒体已停止，摘除视图层级")
+                    self.rightSidebar?.keptAliveTabIds.remove(tabId)
+                    session.webView.pauseAllMediaPlayback()
+                }
+            }
+        }
     }
 
     // MARK: - LocalToolProvider
@@ -1414,6 +1437,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         session.forceCancelDownloads()
         tearDownWebView(session) // 停止加载与媒体播放
         rightSidebar?.closeTab(tabId)
+        rightSidebar?.keptAliveTabIds.remove(tabId)
         tabs.removeValue(forKey: tabId)
         refreshBrowserGroup()
         if wasActive {
@@ -1692,16 +1716,46 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
     }
 
-    /// 切激活 tab：先暂停旧 tab 媒体（节能），再切换。更新新 tab 最后访问时间。
+    /// 切激活 tab：旧 tab 先异步检测是否有媒体在播——有则保活（留在视图层级继续播放，
+    /// 由 verifyKeptAliveTabs 定期复查），无则暂停 + 摘除视图层级（节能）。agent 标签不保活。
+    /// 更新新 tab 最后访问时间。
     private func switchActiveTab(to id: String?) {
         if let prev = activeTabId, prev != id, let prevSession = tabs[prev] {
-            prevSession.webView.pauseAllMediaPlayback()
+            if prevSession.isAgentTab {
+                // agent 标签不保活：直接暂停（原有节能逻辑）
+                prevSession.webView.pauseAllMediaPlayback()
+            } else {
+                // 先乐观加入保活（确保视图层级不摘除），JS 检测完成后决定去留
+                rightSidebar?.keptAliveTabIds.insert(prev)
+                prevSession.webView.evaluateJavaScript(Self.mediaCheckScript) { [weak self] result, error in
+                    let hasMedia = error == nil && (result as? Bool) == true
+                    if hasMedia {
+                        LogBuffer.shared.info("[Browser] keep-alive tab \(prev) 有媒体播放，后台续播")
+                    } else {
+                        // 仅在 tab 仍非激活时才摘除（用户可能已快速切回）
+                        DispatchQueue.main.async {
+                            guard let self, self.activeTabId != prev else { return }
+                            self.rightSidebar?.keptAliveTabIds.remove(prev)
+                            prevSession.webView.pauseAllMediaPlayback()
+                        }
+                    }
+                }
+            }
         }
         if let id, let session = tabs[id] {
             session.lastAccessedAt = Date()
+            rightSidebar?.keptAliveTabIds.remove(id)
         }
         activeTabId = id
     }
+
+    /// 页面内活跃媒体检测脚本：任一未暂停/未结束的 video/audio 即视为有媒体播放。
+    private static let mediaCheckScript = """
+    (function(){var v=document.querySelectorAll('video'),a=document.querySelectorAll('audio');
+    for(var i=0;i<v.length;i++){if(!v[i].paused&&!v[i].ended&&v[i].readyState>=2)return true;}
+    for(var i=0;i<a.length;i++){if(!a[i].paused&&!a[i].ended&&a[i].readyState>=2)return true;}
+    return false;})()
+    """
 
     /// 扫描 agent 打开的标签，空闲超时（DEBUG=1min / RELEASE=10min）且无下载时自动关闭，释放内存。
     private func cleanupIdleAgentTabs() {

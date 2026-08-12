@@ -188,23 +188,37 @@ struct RightSidebarView: View {
 
     @ViewBuilder
     private var contentArea: some View {
-        if manager.isBrowseActive {
-            BrowsePanelView(
-                manager: manager,
-                billVM: billVM,
-                memoryVM: memoryVM,
-                noteVM: noteVM,
-                documentVM: documentVM,
-                themeVM: themeVM,
-                baseURL: baseURL,
-                token: token
-            )
-        } else if let active = manager.tabs.first(where: { $0.id == manager.activeTabId }) {
-            // 节能：只渲染激活 tab。非激活 WKWebView 摘除视图层级（不再合成渲染），
-            // 实例保留在 BrowserToolProvider.tabs，切回时同 NSView 重新挂载、页面状态不丢。
+        ZStack {
+            if manager.isBrowseActive {
+                BrowsePanelView(
+                    manager: manager,
+                    billVM: billVM,
+                    memoryVM: memoryVM,
+                    noteVM: noteVM,
+                    documentVM: documentVM,
+                    themeVM: themeVM,
+                    baseURL: baseURL,
+                    token: token
+                )
+            }
+            // 节能：只渲染激活 tab + 有媒体在播的后台保活 tab（keptAliveTabIds）。
+            // 激活 tab 正常显示；保活 tab 以 opacity(0) 留在视图层级（WKWebView 不被摘除，
+            // 媒体继续播放，切回浏览面板也续播），但不响应事件；其余 tab 摘除视图层级
+            // （不参与合成渲染），实例保留在 BrowserToolProvider.tabs，切回时同 NSView
+            // 重新挂载、页面状态不丢。
             // .id() 必须：content 是同类型 AnyView(BrowserTabView)，不加 id 切 tab 时
             // SwiftUI 会判定"同位置同类型→原地更新"，旧 webView 不卸、新 webView 不挂。
-            active.content.id(active.id)
+            ForEach(manager.tabs.filter { tab in
+                tab.id == manager.activeTabId || manager.keptAliveTabIds.contains(tab.id)
+            }) { tab in
+                let isActive = !manager.isBrowseActive && tab.id == manager.activeTabId
+                tab.content
+                    .opacity(isActive ? 1 : 0)
+                    .allowsHitTesting(isActive)
+                    .disabled(!isActive)
+                    .zIndex(isActive ? 1 : 0)
+                    .id(tab.id)
+            }
         }
     }
 }

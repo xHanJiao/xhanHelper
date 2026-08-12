@@ -2,6 +2,22 @@ import SwiftUI
 import Combine
 import WebKit
 
+// MARK: - 导航白名单
+
+/// 允许导航的同源定义。scheme + host + port 精确比较（nil port = 默认端口），
+/// 防止 `localhost:5173` vs `localhost:51730` 这类前缀混淆。
+struct XHWebViewOrigin: Equatable {
+    let scheme: String
+    let host: String
+    let port: Int?
+
+    func matches(_ url: URL) -> Bool {
+        guard url.scheme == scheme, url.host == host else { return false }
+        let urlPort = url.port ?? (scheme == "https" ? 443 : scheme == "http" ? 80 : nil)
+        return (port ?? urlPort) == urlPort
+    }
+}
+
 // MARK: - 共享状态
 
 /// XHWebView 的共享状态与控制器。
@@ -10,23 +26,38 @@ import WebKit
 final class XHWebViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var loadError: String?
+    @Published var blockedNotice: String?
     @Published private(set) var currentURL: URL?
 
     private weak var webView: WKWebView?
+
+    private var noticeTask: Task<Void, Never>?
 
     func attach(_ webView: WKWebView) {
         self.webView = webView
     }
 
-    /// 外部刷新入口（面板 header 刷新按钮）
+    /// 外部刷新入口（面板 header 刷新按钮）。reloadFromOrigin 忽略本地缓存强制回源，
+    /// 部署新版本后点刷新必拉到最新。
     func reload() {
         loadError = nil
         if let webView {
             if webView.url != nil {
-                webView.reload()
+                webView.reloadFromOrigin()
             } else if let currentURL {
                 webView.load(URLRequest(url: currentURL))
             }
+        }
+    }
+
+    /// 白名单外导航被拦截时调用，底部 toast 提示，2.5s 自动消退。
+    func showBlockedNotice(_ message: String) {
+        blockedNotice = message
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard !Task.isCancelled else { return }
+            self?.blockedNotice = nil
         }
     }
 
@@ -38,15 +69,16 @@ final class XHWebViewModel: ObservableObject {
 // MARK: - 基础 WebView
 
 /// 无浏览器 chrome 的基础 WebView。
-/// 业务无关：只负责渲染 + 加载/错误状态 + 外链/新窗口拦截（抛给系统浏览器）。
+/// 业务无关：只负责渲染 + 加载/错误状态 + 导航白名单拦截。
 /// 调用方通过 `configuration` 注入 user scripts 与 script message handlers（见 XHWebViewBridge）。
 struct XHWebView: View {
     @ObservedObject var model: XHWebViewModel
     let url: URL
     let configuration: WKWebViewConfiguration
+    var allowedOrigins: [XHWebViewOrigin] = []
 
     var body: some View {
-        XHWebViewRepresentable(model: model, url: url, configuration: configuration)
+        XHWebViewRepresentable(model: model, url: url, configuration: configuration, allowedOrigins: allowedOrigins)
             .onAppear { model.setCurrentURL(url) }
     }
 }
@@ -56,8 +88,9 @@ struct XHWebViewRepresentable: NSViewRepresentable {
     @ObservedObject var model: XHWebViewModel
     let url: URL
     let configuration: WKWebViewConfiguration
+    var allowedOrigins: [XHWebViewOrigin] = []
 
-    func makeCoordinator() -> Coordinator { Coordinator(model: model) }
+    func makeCoordinator() -> Coordinator { Coordinator(model: model, allowedOrigins: allowedOrigins) }
 
     func makeNSView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -86,10 +119,12 @@ struct XHWebViewRepresentable: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let model: XHWebViewModel
+        let allowedOrigins: [XHWebViewOrigin]
         weak var webView: WKWebView?
 
-        init(model: XHWebViewModel) {
+        init(model: XHWebViewModel, allowedOrigins: [XHWebViewOrigin]) {
             self.model = model
+            self.allowedOrigins = allowedOrigins
         }
 
         // MARK: WKNavigationDelegate
@@ -118,23 +153,30 @@ struct XHWebViewRepresentable: NSViewRepresentable {
             model.loadError = error.localizedDescription
         }
 
-        /// 外链（新标签打开）→ 系统浏览器，不在面板内跳走
+        /// 导航白名单：白名单内放行，白名单外静默拦截 + toast 提示。
+        /// javascript:/data:/about: 等非白名单 scheme 一律 cancel，天然防注入执行。
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            if navigationAction.navigationType == .linkActivated,
-               let url = navigationAction.request.url {
-                NSWorkspace.shared.open(url)
+            guard let url = navigationAction.request.url else {
                 decisionHandler(.cancel)
                 return
             }
-            decisionHandler(.allow)
+            if allowedOrigins.contains(where: { $0.matches(url) }) {
+                decisionHandler(.allow)
+                return
+            }
+            // 静默拦截（不抛系统浏览器），弹 toast 提示
+            let host = url.host ?? url.absoluteString
+            model.showBlockedNotice("已拦截外部跳转：\(host)")
+            decisionHandler(.cancel)
         }
 
-        /// window.open() / 新窗口 → 系统浏览器
+        /// window.open() / 新窗口：静默拦截
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url {
-                NSWorkspace.shared.open(url)
+                let host = url.host ?? url.absoluteString
+                model.showBlockedNotice("已拦截新窗口：\(host)")
             }
             return nil
         }
@@ -145,8 +187,9 @@ struct XHWebViewRepresentable: UIViewRepresentable {
     @ObservedObject var model: XHWebViewModel
     let url: URL
     let configuration: WKWebViewConfiguration
+    var allowedOrigins: [XHWebViewOrigin] = []
 
-    func makeCoordinator() -> Coordinator { Coordinator(model: model) }
+    func makeCoordinator() -> Coordinator { Coordinator(model: model, allowedOrigins: allowedOrigins) }
 
     func makeUIView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -206,19 +249,24 @@ struct XHWebViewRepresentable: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            if navigationAction.navigationType == .linkActivated,
-               let url = navigationAction.request.url {
-                UIApplication.shared.open(url)
+            guard let url = navigationAction.request.url else {
                 decisionHandler(.cancel)
                 return
             }
-            decisionHandler(.allow)
+            if allowedOrigins.contains(where: { $0.matches(url) }) {
+                decisionHandler(.allow)
+                return
+            }
+            let host = url.host ?? url.absoluteString
+            model.showBlockedNotice("已拦截外部跳转：\(host)")
+            decisionHandler(.cancel)
         }
 
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url {
-                UIApplication.shared.open(url)
+                let host = url.host ?? url.absoluteString
+                model.showBlockedNotice("已拦截新窗口：\(host)")
             }
             return nil
         }
@@ -228,16 +276,17 @@ struct XHWebViewRepresentable: UIViewRepresentable {
 
 // MARK: - 组合面板（WebView + 加载/错误 overlay）
 
-/// 通用无 chrome WebView 面板：XHWebView + 加载指示器 + 错误重试。
+/// 通用无 chrome WebView 面板：XHWebView + 加载指示器 + 错误重试 + 拦截提示。
 /// 业务无关，配合 XHPanel 使用。
 struct XHWebViewPanel: View {
     @ObservedObject var model: XHWebViewModel
     let url: URL
     let configuration: WKWebViewConfiguration
+    var allowedOrigins: [XHWebViewOrigin] = []
 
     var body: some View {
         ZStack {
-            XHWebView(model: model, url: url, configuration: configuration)
+            XHWebView(model: model, url: url, configuration: configuration, allowedOrigins: allowedOrigins)
 
             if model.isLoading && model.loadError == nil {
                 ProgressView()
@@ -271,6 +320,18 @@ struct XHWebViewPanel: View {
                 #else
                 .background(Color(uiColor: .systemBackground))
                 #endif
+            }
+
+            // 白名单拦截 toast（底部）
+            if let notice = model.blockedNotice {
+                Text(notice)
+                    .font(.system(size: 11))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.black.opacity(0.75), in: Capsule())
+                    .padding(.bottom, 12)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
             }
         }
     }

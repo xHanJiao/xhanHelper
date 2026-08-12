@@ -16,6 +16,13 @@ export const useAuthStore = defineStore('auth', () => {
 
   function loadFromStorage() {
     try {
+      // macOS WebView 注入的原生 token 优先（更新鲜），仅存内存不落盘——
+      // 每次页面加载桥接都会重新注入，无需持久化（token 不写 WebView 磁盘存储）
+      const bridgeToken = typeof window !== 'undefined' ? window.XH_BRIDGE?.token : null
+      if (bridgeToken) {
+        token.value = bridgeToken
+        return
+      }
       const stored = localStorage.getItem(STORAGE_KEY)
       if (stored) {
         const data = JSON.parse(stored)

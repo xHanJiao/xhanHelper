@@ -66,29 +66,36 @@ struct BrowsePanelView: View {
         #endif
     }
 
-    /// 监控看板 WebView 配置：注入 XH_BRIDGE 全局对象 + 外链转发系统浏览器
+    /// 监控看板 WebView 配置：注入 XH_BRIDGE 全局对象（含 token 免登录）+ 外链转发系统浏览器
     private var dashboardConfig: WKWebViewConfiguration {
         let externalLink = XHWebViewBridge.ScriptMessageHandler { body in
-            let urlString: String?
-            if let dict = body as? [String: Any] {
-                urlString = dict["url"] as? String
-            } else {
-                urlString = body as? String
-            }
-            if let urlString, let url = URL(string: urlString) {
-                #if os(macOS)
-                NSWorkspace.shared.open(url)
-                #endif
-            }
+            // 仅接受 dict 形式 {url: "..."}；scheme 白名单 http/https + 长度上限
+            guard let urlString = (body as? [String: Any])?["url"] as? String,
+                  urlString.count <= 4096,
+                  let url = URL(string: urlString),
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else { return }
+            #if os(macOS)
+            NSWorkspace.shared.open(url)
+            #endif
         }
         return XHWebViewBridge.makeConfiguration(
             bridgeObjectName: "XH_BRIDGE",
             dictionary: [
                 "baseURL": baseURL,
                 "platform": "macOS",
+                "token": token,
             ],
             messageHandlers: [("externalLink", externalLink)]
         )
+    }
+
+    /// 导航白名单：仅允许前端所在同源，其余一律静默拦截
+    private var dashboardAllowedOrigins: [XHWebViewOrigin] {
+        [
+            XHWebViewOrigin(scheme: "http", host: "localhost", port: 5173),      // DEBUG Vite dev server
+            XHWebViewOrigin(scheme: "https", host: "helper.xhanx.cn", port: nil), // RELEASE 远程
+        ]
     }
 
     /// 根据网格可用宽度自适应列数：宽时 4 列（8 格 2 行），窄时 2 列（8 格 4 行）。
@@ -267,7 +274,8 @@ struct BrowsePanelView: View {
                     XHWebViewPanel(
                         model: dashboardWebModel,
                         url: url,
-                        configuration: dashboardConfig
+                        configuration: dashboardConfig,
+                        allowedOrigins: dashboardAllowedOrigins
                     )
                 }
             } else {

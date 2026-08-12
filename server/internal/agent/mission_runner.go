@@ -12,6 +12,7 @@ import (
 
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
@@ -98,6 +99,13 @@ func (r *MissionRunner) Run(ctx context.Context, m *model.Mission) error {
 		StartedAt: time.Now(), Status: "running",
 	})
 
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryReflection,
+		SubCategory: llmcost.SubMissionRun,
+		UserID:      m.UserID,
+		RefType:     "mission",
+		RefID:       m.ID,
+	})
 	reactLoop := NewReactLoop(r.flashClient, r.retrievalTools, promptText, 30, m.UserID,
 		"mission_runner", r.traceRepo, traceID)
 	reactResult, err := reactLoop.Run(ctx, "请执行本次检查。")

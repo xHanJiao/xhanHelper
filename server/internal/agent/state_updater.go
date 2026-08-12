@@ -10,6 +10,7 @@ import (
 
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
@@ -136,6 +137,13 @@ func (s *StateUpdater) UpdateThemesFromConversation(ctx context.Context, userID 
 
 // UpdateFromConversation 对单个主题基于对话文本更新状态页，ReAct + 验证 + 矫正
 func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, themeID, themeName, convText string, traceID string) {
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryReflection,
+		SubCategory: llmcost.SubStateUpdate,
+		UserID:      userID,
+		RefType:     "theme",
+		RefID:       themeID,
+	})
 	log.Printf("[state_updater] UpdateFromConversation enter: theme=%s (%s)", themeID[:8], themeName)
 	stateText := s.themeStore.LoadState(ctx, themeID, userID)
 	name := s.themeStore.GetName(ctx, themeID, userID)

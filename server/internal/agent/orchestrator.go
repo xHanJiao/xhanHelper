@@ -17,6 +17,7 @@ import (
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
@@ -679,6 +680,14 @@ func (o *Orchestrator) runOneRound(
 
 	state.nativeFCTextDeferred = o.shouldVerify(req, state)
 	llmStart := time.Now()
+	if _, ok := llmcost.ScenarioFromContext(ctx); !ok {
+		ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+			Category:    llmcost.CategoryMainChat,
+			SubCategory: llmcost.SubReActLoop,
+			UserID:      req.UserID,
+			ConvID:      req.ConversationID,
+		})
+	}
 	streamEvents, err := client.Chat(ctx, o.mkLlmChatReq(req, systemPrompt, state.msgs, state.finalRound))
 	if err != nil {
 		log.Printf("[orch] round %d LLM error: %v", round+1, err)
@@ -974,6 +983,14 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 	}
 
 	// 保存检验请求到 DB（调试页可见）
+	if _, ok := llmcost.ScenarioFromContext(ctx); !ok {
+		ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+			Category:    llmcost.CategoryMainChat,
+			SubCategory: llmcost.SubVerify,
+			UserID:      req.UserID,
+			ConvID:      req.ConversationID,
+		})
+	}
 	verifyMsg, err := client.ChatSync(ctx, &llm.ChatRequest{
 		SystemPrompt: verifySystemPrompt,
 		Messages:     []llm.Message{{Role: "user", Content: verifyPrompt}},

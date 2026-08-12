@@ -12,6 +12,7 @@ import (
 
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
@@ -181,6 +182,13 @@ func (d *MissionDiscoverer) evaluateTheme(ctx context.Context, userID string, th
 	prompt += fmt.Sprintf("\n\n## 主题信息\n名称: %s\n描述: %s\n状态页:\n%s",
 		theme.Name, theme.Description, theme.StateText)
 
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryReflection,
+		SubCategory: llmcost.SubMissionDiscover,
+		UserID:      userID,
+		RefType:     "mission_disc",
+		RefID:       theme.ID,
+	})
 	req := &llm.ChatRequest{
 		SystemPrompt: "你是一个智能助理的后台评估模块。只输出 JSON 数组，不要有任何其他内容。",
 		Messages: []llm.Message{
@@ -236,6 +244,12 @@ func (d *MissionDiscoverer) rankAndDedup(ctx context.Context, userID string, can
 
 	prompt := fmt.Sprintf(missionRankPrompt, existingText, candidatesText)
 
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryReflection,
+		SubCategory: llmcost.SubMissionRank,
+		UserID:      userID,
+		RefType:     "mission",
+	})
 	req := &llm.ChatRequest{
 		SystemPrompt: "你是一个任务优先级排序助手。只输出 JSON 数组，不要有任何其他内容。",
 		Messages: []llm.Message{

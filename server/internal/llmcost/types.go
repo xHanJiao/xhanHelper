@@ -48,6 +48,7 @@ const (
 	// admin
 	SubAgentSummary = "agent_summary"
 	SubReplay       = "replay"
+	SubEvalPreLabel = "eval_prelabel"
 )
 
 // ============================================================

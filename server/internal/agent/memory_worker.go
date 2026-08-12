@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+
+	"xhan-helper/internal/llmcost"
 )
 
 // MemoryWorker — 记忆提取子任务（PostChatWorker）。
@@ -34,6 +36,12 @@ func (w *MemoryWorker) Process(ctx context.Context, sess *SessionSnapshot) error
 	if !w.memoryAutoExtract || w.extractor == nil {
 		return nil
 	}
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryPostChat,
+		SubCategory: llmcost.SubMemoryExtract,
+		UserID:      sess.UserID,
+		ConvID:      sess.ConvID,
+	})
 	_, err := w.extractor.ExtractFromMessages(ctx, sess.UserID, sess.Messages)
 	return err
 }

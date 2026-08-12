@@ -14,6 +14,7 @@ import (
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
@@ -60,6 +61,12 @@ func (w *SummaryWorker) Name() string { return "summary" }
 // Process 处理一个 session：拉旧摘要（增量合并）→ LLM 生成 → 持久化 + embedding。
 // 实现 PostChatWorker。
 func (w *SummaryWorker) Process(ctx context.Context, sess *SessionSnapshot) error {
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryPostChat,
+		SubCategory: llmcost.SubSummary,
+		UserID:      sess.UserID,
+		ConvID:      sess.ConvID,
+	})
 	// 查前序摘要，用于增量合并和 parent 链
 	prev, err := w.summaryRepo.GetLatest(ctx, sess.ConvID)
 	if err != nil {

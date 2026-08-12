@@ -15,6 +15,7 @@ import (
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
@@ -254,6 +255,12 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		ContextFormatter:   r.contextFormatter,
 	})
 
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryAdmin,
+		SubCategory: llmcost.SubReplay,
+		UserID:      anchorMsg.UserID,
+		ConvID:      convID,
+	})
 	events, err := orch.Run(ctx, &agent.RunRequest{
 		UserID:             anchorMsg.UserID,
 		ConversationID:     convID,

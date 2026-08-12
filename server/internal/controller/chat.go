@@ -17,6 +17,7 @@ import (
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
@@ -334,6 +335,12 @@ func mergeTitle(ctx context.Context, orch *agent.Orchestrator, convRepo *service
 	if conv.Title != "新对话" || userMsg == "" {
 		return doneContent
 	}
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryMainChat,
+		SubCategory: llmcost.SubTitle,
+		UserID:      conv.UserID,
+		ConvID:      conv.ID,
+	})
 	t := orch.GenerateTitle(ctx, userMsg)
 	if t == "" {
 		return doneContent

@@ -11,6 +11,7 @@ import (
 
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
@@ -288,6 +289,12 @@ func formatThemeList(themes []ThemeStateInfo) string {
 }
 
 func (td *ThemeDiscoverer) discoverByConversation(ctx context.Context, userID, themeList string, a discovererArgs) ([]themeCandidate, []rejectedItem, error) {
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryReflection,
+		SubCategory: llmcost.SubThemeDiscoverConv,
+		UserID:      userID,
+		RefType:     "theme",
+	})
 	prompt := themeDiscovererPrompt + themeList + "\n请直接从以下对话消息中判断是否有值得提名的候选主题。不要调检索工具。\n"
 	resp, err := td.flashClient.ChatSync(ctx, &llm.ChatRequest{
 		SystemPrompt: prompt,
@@ -314,6 +321,12 @@ func (td *ThemeDiscoverer) discoverByStats(ctx context.Context, userID, themeLis
 	sb.WriteString(fmt.Sprintf("- 新增记忆：%d 条\n", a.RecentMemCount))
 	sb.WriteString("\n请检索并判断是否有值得提名的候选主题。\n")
 
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryReflection,
+		SubCategory: llmcost.SubThemeDiscoverStats,
+		UserID:      userID,
+		RefType:     "theme",
+	})
 	loop := NewReactLoop(td.flashClient, td.retrievalTools, themeDiscovererPrompt, td.maxIterations, userID, "ThemeDiscoverer", td.traceRepo, CtxTraceID(ctx))
 	result, err := loop.Run(ctx, sb.String())
 	if err != nil {

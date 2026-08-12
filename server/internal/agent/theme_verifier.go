@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 )
 
 var stateVerifyPrompt = `你是一个状态页检验助手。对比旧状态和原始数据，判断新提出的状态页是否准确。
@@ -47,6 +48,12 @@ type VerifyResult struct {
 // VerifyStateUpdate 检验提出的 state_text 是否准确完整。
 // sourceText 对 StateUpdater 是对话文本，对 ThemeAnalyst 是检索结果。
 func VerifyStateUpdate(ctx context.Context, flashClient llm.LLMClient, userID string, oldState, sourceText, proposed string) (*VerifyResult, error) {
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryReflection,
+		SubCategory: llmcost.SubStateVerify,
+		UserID:      userID,
+		RefType:     "theme",
+	})
 	prompt := formatVerifyPrompt(oldState, sourceText, proposed)
 
 	resp, err := flashClient.ChatSync(ctx, &llm.ChatRequest{

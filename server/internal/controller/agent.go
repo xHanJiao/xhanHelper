@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
@@ -72,10 +73,17 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		UserID:       userID,
 		Name:         req.Name,
 		SystemPrompt: req.SystemPrompt,
-		Summary:      h.generateSummary(c.Request.Context(), req.SystemPrompt),
 		Model:        req.Model,
 		ParamsJSON:   req.ParamsJSON,
 	}
+	ctx := llmcost.WithScenario(c.Request.Context(), llmcost.Scenario{
+		Category:    llmcost.CategoryAdmin,
+		SubCategory: llmcost.SubAgentSummary,
+		UserID:      userID,
+		RefType:     "agent",
+		RefID:       agent.ID,
+	})
+	agent.Summary = h.generateSummary(ctx, req.SystemPrompt)
 	if err := h.agentRepo.Create(c.Request.Context(), agent); err != nil {
 		log.Printf("[agent] Create error: %v", err)
 		view.JSONError(c, 500, "create agent failed")
@@ -209,7 +217,14 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 			return
 		}
 		existing.SystemPrompt = *req.SystemPrompt
-		existing.Summary = h.generateSummary(c.Request.Context(), *req.SystemPrompt)
+		ctx := llmcost.WithScenario(c.Request.Context(), llmcost.Scenario{
+			Category:    llmcost.CategoryAdmin,
+			SubCategory: llmcost.SubAgentSummary,
+			UserID:      c.GetString("user_id"),
+			RefType:     "agent",
+			RefID:       existing.ID,
+		})
+		existing.Summary = h.generateSummary(ctx, *req.SystemPrompt)
 	}
 	if req.Model != nil {
 		existing.Model = *req.Model

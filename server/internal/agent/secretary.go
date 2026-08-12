@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
@@ -82,6 +83,13 @@ func (s *Secretary) Execute(ec *tool.ExecuteContext, funcName string, args json.
 
 	findingsJSON, _ := json.Marshal(a.Findings)
 	userMsg := fmt.Sprintf("请将以下分析发现转化：\n\n%s", string(findingsJSON))
+
+	ec.Ctx = llmcost.WithScenario(ec.Ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryReflection,
+		SubCategory: llmcost.SubFindingHumanize,
+		UserID:      ec.UserID,
+		RefType:     "finding",
+	})
 
 	resp, err := s.flashClient.ChatSync(ec.Ctx, &llm.ChatRequest{
 		SystemPrompt: secretaryPrompt,

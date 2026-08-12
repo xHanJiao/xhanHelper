@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
@@ -148,6 +149,17 @@ func (s *Scorer) Execute(ec *tool.ExecuteContext, funcName string, args json.Raw
 	// 构建输入：把 findings 序列化发给 LLM
 	findingsJSON, _ := json.Marshal(a.Findings)
 	userMsg := fmt.Sprintf("请对以下 %d 条发现打分排序：\n\n%s", len(a.Findings), string(findingsJSON))
+
+	scenario := llmcost.Scenario{
+		Category:    llmcost.CategoryReflection,
+		SubCategory: llmcost.SubFindingScore,
+		UserID:      ec.UserID,
+		RefType:     "finding",
+	}
+	if len(a.Findings) > 0 {
+		scenario.RefID = a.Findings[0].FindingID
+	}
+	ec.Ctx = llmcost.WithScenario(ec.Ctx, scenario)
 
 	resp, err := s.flashClient.ChatSync(ec.Ctx, &llm.ChatRequest{
 		SystemPrompt: scorerPrompt,

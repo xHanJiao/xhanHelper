@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 )
 
 func stripMarkdownFence(s string) string {
@@ -48,6 +49,10 @@ func (s *DefaultLabelStrategy) PreLabel(ctx context.Context, client ChatLLM, que
 		sb.WriteString("\n\n")
 	}
 
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryAdmin,
+		SubCategory: llmcost.SubEvalPreLabel,
+	})
 	req := &llm.ChatRequest{
 		SystemPrompt: prelabelSystemPrompt,
 		Messages: []llm.Message{

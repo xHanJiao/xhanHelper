@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
@@ -178,7 +179,7 @@ func (t *ReminderTool) createReminder(ec *ExecuteContext, args json.RawMessage) 
 		}
 	}
 
-	go t.generateContent(rem.ID, req.Content, deadline)
+	go t.generateContent(rem.ID, ec.UserID, req.Content, deadline)
 
 	log.Printf("[reminder] created: %s deadline=%v", rem.ID[:8], deadline)
 	data, _ := json.Marshal(map[string]interface{}{
@@ -307,7 +308,7 @@ func (t *ReminderTool) markReminderMentioned(ec *ExecuteContext, args json.RawMe
 
 // generateContent 异步调用 LLM 生成 notification_body 和 trigger_message，
 // 校验不与 content 重复且彼此不同，失败重试最多 3 次，最终兜底。
-func (t *ReminderTool) generateContent(id, content string, deadline time.Time) {
+func (t *ReminderTool) generateContent(id, userID, content string, deadline time.Time) {
 	if t.llmClient == nil {
 		t.fallbackGenerate(id, content)
 		return
@@ -334,6 +335,13 @@ func (t *ReminderTool) generateContent(id, content string, deadline time.Time) {
 
 	for attempt := 1; attempt <= 2; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+			Category:    llmcost.CategoryTool,
+			SubCategory: llmcost.SubReminderGen,
+			UserID:      userID,
+			RefType:     "reminder",
+			RefID:       id,
+		})
 
 		resp, err := t.llmClient.ChatSync(ctx, &llm.ChatRequest{
 			SystemPrompt: systemPrompt,

@@ -10,6 +10,7 @@ import (
 
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/profilefield"
 	"xhan-helper/internal/service"
@@ -89,6 +90,12 @@ func (w *UserProfileWorker) Name() string { return "profile" }
 
 // Process 实现 PostChatWorker。按画像是否存在分流冷启动 / 正常增量。
 func (w *UserProfileWorker) Process(ctx context.Context, sess *SessionSnapshot) error {
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryPostChat,
+		SubCategory: llmcost.SubProfileExtract,
+		UserID:      sess.UserID,
+		ConvID:      sess.ConvID,
+	})
 	hasAny, err := w.profileRepo.HasAny(ctx, sess.UserID)
 	if err != nil {
 		return fmt.Errorf("profile: HasAny: %w", err)
@@ -140,6 +147,11 @@ func coldStartSystemPrompt() string {
 // runColdStartReAct 冷启动：LLM 用 unified_search 自主搜集信息，输出画像 JSON 后写入 DB。
 // 使用通用 MiniReAct 组件执行循环。
 func (w *UserProfileWorker) runColdStartReAct(ctx context.Context, userID string) error {
+	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryPostChat,
+		SubCategory: llmcost.SubProfileColdStart,
+		UserID:      userID,
+	})
 	tools := w.registry.GetLLMToolsFiltered([]string{coldStartTools})
 
 	// 冷启动用 deep mode（Pro 模型）提升提取质量；未注入 StrongClient 时回退 Flash

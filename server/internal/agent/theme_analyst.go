@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
@@ -118,6 +119,14 @@ func (ta *ThemeAnalyst) Execute(ec *tool.ExecuteContext, funcName string, args j
 
 	stateText := ta.themeStore.LoadState(ec.Ctx, a.ThemeID, ec.UserID)
 	inputMsg := fmt.Sprintf("## 分析主题\n名称：%s\n\n## 当前状态页\n%s\n\n请检索数据，对比状态页，更新状态页。", a.ThemeName, stateText)
+
+	ec.Ctx = llmcost.WithScenario(ec.Ctx, llmcost.Scenario{
+		Category:    llmcost.CategoryReflection,
+		SubCategory: llmcost.SubThemeAnalyze,
+		UserID:      ec.UserID,
+		RefType:     "theme",
+		RefID:       a.ThemeID,
+	})
 
 	loop := NewReactLoop(ta.flashClient, ta.retrievalTools, themeAnalystPrompt, ta.maxIterations, ec.UserID, "ThemeAnalyst", ta.traceRepo, CtxTraceID(ec.Ctx))
 

@@ -37,8 +37,6 @@ struct ToolActivityToast: View {
                 .lineLimit(1)
         }
         .padding(.horizontal, 12).padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.35), lineWidth: 0.5))
     }
 
     private func pillText(for tc: ToolCallDisplay) -> String {
@@ -78,8 +76,6 @@ struct ToolActivityToast: View {
                 .lineLimit(1)
         }
         .padding(.horizontal, 12).padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.35), lineWidth: 0.5))
     }
 
     private func verifyText(for vs: VerifyStatus) -> String {

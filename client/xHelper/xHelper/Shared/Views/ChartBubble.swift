@@ -36,9 +36,6 @@ struct ChartBubble: View {
         }
         .padding(.bottom, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.35), lineWidth: 0.6))
-        .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
         .padding(.horizontal, isFullScreen ? 0 : Layout.chatHorizontalPadding)
         .onTapGesture {
             guard !isFullScreen else { return }

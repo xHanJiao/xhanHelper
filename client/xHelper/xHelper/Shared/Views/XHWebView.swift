@@ -287,6 +287,9 @@ struct XHWebViewPanel: View {
     var body: some View {
         ZStack {
             XHWebView(model: model, url: url, configuration: configuration, allowedOrigins: allowedOrigins)
+                // 每次面板打开强制回源：WKWebView 持久缓存会抱着旧 index.html，
+                // 部署新前端后自动失效（reload() 内部走 reloadFromOrigin）
+                .onAppear { model.reload() }
 
             if model.isLoading && model.loadError == nil {
                 ProgressView()

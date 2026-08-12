@@ -1,4 +1,5 @@
 import SwiftUI
+import WebKit
 #if os(macOS)
 import AppKit
 
@@ -29,6 +30,15 @@ struct HistoryPanelView: View {
             Text("历史")
                 .font(.system(size: 13, weight: .semibold))
             Spacer()
+            Button { clearCache() } label: {
+                Image(systemName: "externaldrive.badge.xmark")
+                    .font(.system(size: 11))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.secondary)
+            .help("清除网页缓存（重新打开页面生效）")
             Button { store.clear() } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 11))
@@ -41,6 +51,18 @@ struct HistoryPanelView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// 清除 WKWebView HTTP 缓存（磁盘 + 内存 + 离线缓存）。历史≠缓存，清历史不动缓存。
+    private func clearCache() {
+        let types: Set<String> = [
+            WKWebsiteDataTypeDiskCache,
+            WKWebsiteDataTypeMemoryCache,
+            WKWebsiteDataTypeOfflineWebApplicationCache,
+        ]
+        WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: .distantPast) {
+            // 已加载的 webview 保持内存态，下次打开/刷新即生效
+        }
     }
 
     private var emptyState: some View {

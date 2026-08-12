@@ -39,15 +39,13 @@ embedding:
   base_url: https://ark.cn-beijing.volces.com
   model: doubao-embedding-vision-251215
 
-search:
-  provider: bocha
-  api_key: ${BOCHA_API_KEY}
-  base_url: https://api.bocha.cn/v1
-  # 包配额：total_quota 为套餐总次数，quota_expires_at 为到期日
-  # used_count 仅首次创建 DB 记录时写入，后续由 DB 自动管理
-  total_quota: 1000
-  quota_expires_at: "2026-09-01" # TODO: 填写实际到期日
-  used_count: 109
+# search: # 联网搜索工具已下掉（不再注册），配置保留备用
+#   provider: anysearch
+#   api_key: ${SEARCH_API_KEY}
+#   base_url: https://api.anysearch.com/v1
+#   total_quota: 100
+#   quota_expires_at: "2026-01-01"
+#   used_count: 0
 
 chat:
   session_gap_minutes: 3       # dev 环境缩短 session 间隔，方便测试

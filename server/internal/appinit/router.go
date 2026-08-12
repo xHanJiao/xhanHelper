@@ -24,20 +24,17 @@ import (
 )
 
 // RegisterMonitorSnapshots 注册监控快照
-func RegisterMonitorSnapshots(vs *agent.VectorStore, mcpManager *mcp.Manager, convRepo *service.ConversationRepo, themeStateRepo *service.ThemeStateRepo, cfg *config.Config, searchUsageRepo *service.SearchUsageRepo) {
+func RegisterMonitorSnapshots(vs *agent.VectorStore, mcpManager *mcp.Manager, convRepo *service.ConversationRepo, themeStateRepo *service.ThemeStateRepo) {
 	snapshots := &snapshotProvider{
-		vectorStore:     vs,
-		mcpManager:      mcpManager,
-		convRepo:        convRepo,
-		themeStateRepo:  themeStateRepo,
-		searchUsageRepo: searchUsageRepo,
-		searchProvider:  cfg.Search.Provider,
+		vectorStore:    vs,
+		mcpManager:     mcpManager,
+		convRepo:       convRepo,
+		themeStateRepo: themeStateRepo,
 	}
 	monitor.Register("vector_store", snapshots.VectorStore)
 	monitor.Register("mcp", snapshots.MCP)
 	monitor.Register("active_conversations", snapshots.ActiveConversations)
 	monitor.Register("themes", snapshots.Themes)
-	monitor.Register("search_usage", snapshots.SearchUsage)
 }
 
 // InitRouter 创建路由、注册所有 handler
@@ -155,12 +152,10 @@ func Serve(cfg *config.Config, router *gin.Engine, bgCancel context.CancelFunc, 
 
 // snapshotProvider 提供监控看板的快照数据
 type snapshotProvider struct {
-	vectorStore     *agent.VectorStore
-	mcpManager      *mcp.Manager
-	convRepo        *service.ConversationRepo
-	themeStateRepo  *service.ThemeStateRepo
-	searchUsageRepo *service.SearchUsageRepo
-	searchProvider  string
+	vectorStore    *agent.VectorStore
+	mcpManager     *mcp.Manager
+	convRepo       *service.ConversationRepo
+	themeStateRepo *service.ThemeStateRepo
 }
 
 func (p *snapshotProvider) VectorStore() any {
@@ -193,11 +188,4 @@ func (p *snapshotProvider) Themes() any {
 		return map[string]interface{}{"error": err.Error()}
 	}
 	return stats
-}
-
-func (p *snapshotProvider) SearchUsage() any {
-	if p.searchUsageRepo == nil {
-		return nil
-	}
-	return p.searchUsageRepo.Snapshot(context.Background(), p.searchProvider)
 }

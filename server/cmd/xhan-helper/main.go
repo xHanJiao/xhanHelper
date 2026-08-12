@@ -55,7 +55,7 @@ func main() {
 	agents := appinit.InitAgents(cfg, repos, infra, llmClients, tools, vs)
 
 	// --- 监控 ---
-	appinit.RegisterMonitorSnapshots(vs, tools.MCPManager, repos.Conversation, repos.ThemeState, cfg, repos.SearchUsage)
+	appinit.RegisterMonitorSnapshots(vs, tools.MCPManager, repos.Conversation, repos.ThemeState)
 	tools.MCPManager.StartIdleReaper(agents.BGCtx)
 
 	// --- 路由 & 服务 ---

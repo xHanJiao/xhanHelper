@@ -43,7 +43,6 @@ var builtinToolSeeds = []builtinToolSeed{
 	{Name: "memory_search", Description: "检索用户长期记忆，支持语义搜索、关键词搜索、时间过滤、topic 分类", Category: "search"},
 	{Name: "message_search", Description: "检索历史对话消息，支持关键词搜索、时间范围搜索、ID 获取、统计", Category: "search"},
 	{Name: "reminder", Description: "设置提醒事项，支持一次性/每日/每周/每月/工作日重复", Category: "utility"},
-	{Name: "search", Description: "联网搜索工具，搜索实时信息——新闻、技术文档、百科、金融数据等", Category: "search"},
 	{Name: "tool_retriever", Description: "根据用户需求检索相关工具，当不确定该用什么工具时调用", Category: "system"},
 	{Name: "profile", Description: "用户画像工具，在用户明确要求时更新/新增画像字段", Category: "profile"},
 }

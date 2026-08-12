@@ -13,6 +13,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
     case documents = "文档"
     case themes = "主题"
     case dashboard = "监控看版"
+    case agents = "智能体"
 
     var id: String { rawValue }
 
@@ -24,6 +25,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
         case .documents: return "doc.text"
         case .themes:    return "tag"
         case .dashboard: return "chart.bar.xaxis"
+        case .agents:    return "cpu"
         }
     }
 
@@ -35,11 +37,12 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
         case .documents: return "Markdown 文档与版本"
         case .themes:    return "主题状态追踪"
         case .dashboard: return "前端监控看板（成本统计等）"
+        case .agents:    return "自定义智能体管理"
         }
     }
 }
 
-/// 右侧栏浏览面板：2×3 网格入口（含打开浏览器）+ 浏览页面切换
+/// 右侧栏浏览面板：网格入口（含打开浏览器）+ 浏览页面切换
 struct BrowsePanelView: View {
     @ObservedObject var manager: RightSidebarManager
     @ObservedObject var billVM: BillViewModel
@@ -47,6 +50,7 @@ struct BrowsePanelView: View {
     @ObservedObject var noteVM: NoteViewModel
     @ObservedObject var documentVM: DocumentViewModel
     @ObservedObject var themeVM: ThemeViewModel
+    @ObservedObject var agentVM: AgentViewModel
     let baseURL: String
     let token: String
 
@@ -87,24 +91,43 @@ struct BrowsePanelView: View {
         )
     }
 
-    /// 根据网格可用宽度自适应列：先维持 110 的格子宽、把剩余空间给间距；
-    /// 空间不足时间距压到最小、格子随之收缩；空间富余时间距封顶、格子保持 110。
+    /// 根据网格可用宽度自适应列数：宽时 4 列（8 格 2 行），窄时 2 列（8 格 4 行）。
+    /// 宽态：先维持 110 的格子宽、把剩余空间给间距；空间不足时间距压到最小、格子随之收缩；
+    /// 空间富余时间距封顶、格子保持 110。
     private func adaptiveColumns(width: CGFloat) -> (columns: [GridItem], spacing: CGFloat) {
-        let maxTile: CGFloat = 110
-        let minTile: CGFloat = 84
-        let maxSpacing: CGFloat = 20
-        let minSpacing: CGFloat = 6
+        if width >= 480 {
+            let maxTile: CGFloat = 110
+            let minTile: CGFloat = 84
+            let maxSpacing: CGFloat = 20
+            let minSpacing: CGFloat = 6
 
-        var spacing = (width - 3 * maxTile) / 2
-        var tile = maxTile
-        if spacing < minSpacing {
-            spacing = minSpacing
-            tile = max(minTile, (width - 2 * minSpacing) / 3)
-        } else if spacing > maxSpacing {
-            spacing = maxSpacing
+            var spacing = (width - 4 * maxTile) / 3
+            var tile = maxTile
+            if spacing < minSpacing {
+                spacing = minSpacing
+                tile = max(minTile, (width - 3 * minSpacing) / 4)
+            } else if spacing > maxSpacing {
+                spacing = maxSpacing
+            }
+            let columns = Array(repeating: GridItem(.fixed(tile), spacing: spacing), count: 4)
+            return (columns, spacing)
+        } else {
+            let maxTile: CGFloat = 160
+            let minTile: CGFloat = 90
+            let maxSpacing: CGFloat = 20
+            let minSpacing: CGFloat = 8
+
+            var spacing = width - 2 * maxTile
+            var tile = maxTile
+            if spacing < minSpacing {
+                spacing = minSpacing
+                tile = max(minTile, (width - minSpacing) / 2)
+            } else if spacing > maxSpacing {
+                spacing = maxSpacing
+            }
+            let columns = Array(repeating: GridItem(.fixed(tile), spacing: spacing), count: 2)
+            return (columns, spacing)
         }
-        let columns = Array(repeating: GridItem(.fixed(tile), spacing: spacing), count: 3)
-        return (columns, spacing)
     }
 
     var body: some View {
@@ -127,7 +150,7 @@ struct BrowsePanelView: View {
     // MARK: - 网格
 
     private var grid: some View {
-        // 固定 6 格无需滚动，垂直居中展示；间距/格子随可用宽度自适应收缩
+        // 固定 8 格无需滚动，垂直居中展示；间距/格子随可用宽度自适应收缩
         GeometryReader { geo in
             let (columns, spacing) = adaptiveColumns(width: geo.size.width - 48)
             LazyVGrid(columns: columns, spacing: spacing) {
@@ -226,6 +249,8 @@ struct BrowsePanelView: View {
             DocumentPage(viewModel: documentVM)
         case .themes:
             ThemePage(viewModel: themeVM)
+        case .agents:
+            AgentPage(viewModel: agentVM)
         case .dashboard:
             if let url = dashboardURL {
                 XHPanel(

@@ -25,19 +25,11 @@ struct ChatPage: View {
 }
 
 struct AgentPage: View {
-    let router: NavigationRouter
     @ObservedObject var viewModel: AgentViewModel
 
     var body: some View {
         AgentListView(viewModel: viewModel)
-            .onAppear {
-                guard !router.loadedTabs.contains(.agents) else { return }
-                router.markLoaded(.agents)
-                Task { await viewModel.load() }
-            }
-            .onChange(of: router.refreshCounts[.agents] ?? 0) { _, _ in
-                Task { await viewModel.load() }
-            }
+            .task { await viewModel.load() }
     }
 }
 

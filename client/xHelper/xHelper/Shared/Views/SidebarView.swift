@@ -2,14 +2,12 @@ import SwiftUI
 
 enum SidebarTab: String, CaseIterable, Identifiable {
     case chat = "新建聊天"
-    case agents = "智能体"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
         case .chat:      return "square.and.pencil"
-        case .agents:    return "cpu"
         }
     }
 }

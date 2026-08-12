@@ -12,6 +12,7 @@ struct RightSidebarView: View {
     @ObservedObject var noteVM: NoteViewModel
     @ObservedObject var documentVM: DocumentViewModel
     @ObservedObject var themeVM: ThemeViewModel
+    @ObservedObject var agentVM: AgentViewModel
     let baseURL: String
     let token: String
 
@@ -197,6 +198,7 @@ struct RightSidebarView: View {
                     noteVM: noteVM,
                     documentVM: documentVM,
                     themeVM: themeVM,
+                    agentVM: agentVM,
                     baseURL: baseURL,
                     token: token
                 )

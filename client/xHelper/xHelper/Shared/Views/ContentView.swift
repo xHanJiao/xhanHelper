@@ -450,6 +450,7 @@ struct ContentView: View {
                                     noteVM: noteVM,
                                     documentVM: documentVM,
                                     themeVM: themeVM,
+                                    agentVM: agentVM,
                                     baseURL: deviceManager.baseURL,
                                     token: deviceManager.token ?? ""
                                 )
@@ -737,8 +738,6 @@ struct ContentView: View {
                         ProgressView()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                case .agents:
-                    AgentPage(router: router, viewModel: agentVM)
                 }
             }
             .padding(.horizontal, 12)

@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
 	"log"
 	"strings"
@@ -79,32 +81,58 @@ func (w *SummaryWorker) Process(ctx context.Context, sess *SessionSnapshot) erro
 	return w.saveSummary(ctx, sess.ConvID, sess.UserID, sess.Messages, prev, summaryText, reqJSON, respJSON)
 }
 
-// callFlash 调 Flash 生成摘要。返回文本及 request/response JSON（调试用）。
-func (w *SummaryWorker) callFlash(ctx context.Context, prevSummary string, msgs []model.Message) (string, *string, *string, error) {
-	systemPrompt := `你是一个对话摘要生成器。你的任务是基于对话历史生成一段导航级摘要。
+// summaryInstructionXML — 摘要生成指令消息的 XML 结构。
+// 固定部分（task/rules/output_format）在文档前部，构成同 worker 内可命中的缓存前缀；
+// 变化部分 previous_summary 放文档尾部，miss 的只有 tail。
+type summaryInstructionXML struct {
+	XMLName         struct{} `xml:"summary_extraction"`
+	Task            string   `xml:"task"`
+	Rules           []string `xml:"rules>rule"`
+	OutputFormat    string   `xml:"output_format"`
+	PreviousSummary string   `xml:"previous_summary,omitempty"`
+}
 
-规则：
-1. 只记录话题流、分岔和结论方向，不记录具体事实细节
-2. 如果提供了上一段摘要，请基于它和新对话消息，生成更新后的完整摘要（增量合并）
-3. 如果旧话题在新增对话中不再出现，可以在摘要中淡出或删除
-4. 纯文本叙事输出，不分点不分节
-5. 300 字以内
-6. 只输出摘要正文，不要加任何前缀、后缀或解释`
-
-	var userMsg strings.Builder
-	if prevSummary != "" {
-		userMsg.WriteString("上一段摘要：\n")
-		userMsg.WriteString(prevSummary)
-		userMsg.WriteString("\n\n")
+// buildSummaryInstructionXML 构建摘要 worker 的指令 user 消息。
+func buildSummaryInstructionXML(prevSummary string) string {
+	doc := summaryInstructionXML{
+		Task: "基于对话历史生成一段导航级摘要",
+		Rules: []string{
+			"只记录话题流、分岔和结论方向，不记录具体事实细节",
+			"如果提供了上一段摘要，请基于它和新对话消息，生成更新后的完整摘要（增量合并）",
+			"如果旧话题在新增对话中不再出现，可以在摘要中淡出或删除",
+			"纯文本叙事输出，不分点不分节",
+			"300 字以内",
+			"只输出摘要正文，不要加任何前缀、后缀或解释",
+		},
+		OutputFormat: "输出摘要正文纯文本，不要用 markdown 代码块包裹，不要加任何前后缀",
 	}
-	userMsg.WriteString("新增对话消息（只含用户发言）：\n")
-	userMsg.WriteString(buildMsgBlock(msgs))
+	if prevSummary != "" {
+		doc.PreviousSummary = prevSummary
+	}
+
+	var buf bytes.Buffer
+	enc := xml.NewEncoder(&buf)
+	enc.Indent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		log.Printf("[summary] encode instruction XML error: %v", err)
+		return ""
+	}
+	return buf.String()
+}
+
+// callFlash 调 Flash 生成摘要。返回文本及 request/response JSON（调试用）。
+// 缓存友好：system prompt 共享固定串；历史消息逐条展开（跨 worker 同 session 前缀命中）；
+// 指令 XML 放最后一条消息（固定前缀命中，previous_summary tail miss）。
+func (w *SummaryWorker) callFlash(ctx context.Context, prevSummary string, msgs []model.Message) (string, *string, *string, error) {
+	chatMsgs := make([]llm.Message, 0, len(msgs)+1)
+	for _, m := range msgs {
+		chatMsgs = append(chatMsgs, llm.Message{Role: m.Role, Content: m.Content})
+	}
+	chatMsgs = append(chatMsgs, llm.Message{Role: "user", Content: buildSummaryInstructionXML(prevSummary)})
 
 	resp, err := w.flashClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: systemPrompt,
-		Messages: []llm.Message{
-			{Role: "user", Content: userMsg.String()},
-		},
+		SystemPrompt: postChatSharedSystemPrompt,
+		Messages:     chatMsgs,
 	})
 	if err != nil {
 		return "", nil, nil, err

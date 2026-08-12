@@ -34,6 +34,6 @@ func (w *MemoryWorker) Process(ctx context.Context, sess *SessionSnapshot) error
 	if !w.memoryAutoExtract || w.extractor == nil {
 		return nil
 	}
-	_, err := w.extractor.ExtractFromMessages(ctx, sess.UserID, buildMsgBlock(sess.Messages))
+	_, err := w.extractor.ExtractFromMessages(ctx, sess.UserID, sess.Messages)
 	return err
 }

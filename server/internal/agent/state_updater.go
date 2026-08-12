@@ -23,7 +23,8 @@ const statePageUpdateRules = `1. 保留上一轮状态页中仍然有效的关�
 
 const defaultVecThreshold = 0.5
 
-var stateUpdaterReActPrompt = `你是 xhanHelper 的主题状态维护员。基于用户最近的对话，更新该主题的状态页。
+// stateUpdaterTaskPrefix — 状态页更新的任务指令（编码进 ReactLoop 的首条 user message，system prompt 用共享固定串）。
+var stateUpdaterTaskPrefix = `你是 xhanHelper 的主题状态维护员。基于用户最近的对话，更新该主题的状态页。
 
 ## 核心原则
 
@@ -145,9 +146,8 @@ func (s *StateUpdater) UpdateFromConversation(ctx context.Context, userID, theme
 	inputMsg := fmt.Sprintf("## 主题：%s\n\n## 当前状态页\n%s\n\n## 最近对话\n%s", name, stateText, convText)
 
 	const maxIterations = 10
-	loop := NewReactLoop(s.flashClient, s.retrievalTools, stateUpdaterReActPrompt, maxIterations, userID, "StateUpdater", s.traceRepo, traceID)
-
-	result, err := loop.Run(ctx, inputMsg)
+	loop := NewReactLoop(s.flashClient, s.retrievalTools, postChatSharedSystemPrompt, maxIterations, userID, "StateUpdater", s.traceRepo, traceID)
+	result, err := loop.Run(ctx, stateUpdaterTaskPrefix+"\n\n===== 任务输入 =====\n\n"+inputMsg)
 	if err != nil {
 		log.Printf("[state_updater] ReactLoop error: theme=%s err=%v", themeID[:8], err)
 		return

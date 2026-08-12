@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"log"
 	"strings"
@@ -28,13 +30,40 @@ type extractResult struct {
 	Tags      string   `json:"tags,omitempty"` // 逗号分隔标签
 }
 
-const extractSystemPrompt = "你是记忆提取助手。合并同类信息，不要逐条复述。不编造、不推测。信息不足时返回 {\"extracted\":false}。重要：将\"今天\"、\"昨天\"等相对时间转为绝对日期（如 2026-05-15）。"
+// memoryInstructionXML — 记忆提取指令消息的 XML 结构。
+// 固定部分（task/rules/output_format）在文档前部，构成同 worker 内可命中的缓存前缀；
+// 变化部分 current_time 放文档尾部，miss 的只有 tail。
+type memoryInstructionXML struct {
+	XMLName      struct{} `xml:"memory_extraction"`
+	Task         string   `xml:"task"`
+	Rules        []string `xml:"rules>rule"`
+	OutputFormat string   `xml:"output_format"`
+	CurrentTime  string   `xml:"current_time,omitempty"`
+}
 
-const extractPromptPrefix = `从以下对话中提取有长期价值的信息，包括：用户的事实/偏好/习惯/计划、用户反复讨论的话题、用户表达的观点和判断、用户分享的外部信息、用户的反思/自我剖析/复盘、用户做的重大决定及理由、用户从经历中总结的经验教训、用户偏好或价值观的变化。合并同类信息，每次最多提取3条最重要的。
+// buildMemoryInstructionXML 构建记忆提取 worker 的指令 user 消息。
+func buildMemoryInstructionXML(now string) string {
+	doc := memoryInstructionXML{
+		Task: "从以下对话中提取有长期价值的信息，包括：用户的事实/偏好/习惯/计划、用户反复讨论的话题、用户表达的观点和判断、用户分享的外部信息、用户的反思/自我剖析/复盘、用户做的重大决定及理由、用户从经历中总结的经验教训、用户偏好或价值观的变化。合并同类信息，每次最多提取3条最重要的。",
+		Rules: []string{
+			"合并同类信息，不要逐条复述。不编造、不推测",
+			"信息不足时返回 {\"extracted\":false}",
+			"将\"今天\"、\"昨天\"等相对时间转为绝对日期（如 2026-05-15）",
+		},
+		OutputFormat: `{"extracted":true,"summary":"一句话概括核心信息","facts":["支持细节1"],"topic":"一个关键主题词（如睡眠管理、职业规划、家庭关系），禁止斜杠、逗号、多个主题","tags":"关键词1,关键词2"}
+tags 是从内容中提取的逗号分隔关键词（如 褪黑素,早醒,生物钟）。没有值得提取的内容时返回 {"extracted":false}`,
+		CurrentTime: now,
+	}
 
-请严格按以下 JSON 格式输出，不要包含其他内容：
-{"extracted":true,"summary":"一句话概括核心信息","facts":["支持细节1"],"topic":"一个关键主题词（如睡眠管理、职业规划、家庭关系），禁止斜杠、逗号、多个主题","tags":"关键词1,关键词2"}
-tags 是从内容中提取的逗号分隔关键词（如 褪黑素,早醒,生物钟）。没有值得提取的内容时返回 {"extracted":false}。`
+	var buf bytes.Buffer
+	enc := xml.NewEncoder(&buf)
+	enc.Indent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		log.Printf("[memory] encode instruction XML error: %v", err)
+		return ""
+	}
+	return buf.String()
+}
 
 // MemoryExtractor — 从对话中提取记忆，向量去重。
 // 由 MemoryWorker（PostChatWorker）调用；输入为 session 快照中的 user 消息。
@@ -78,17 +107,24 @@ func NewMemoryExtractor(cfg *MemoryExtractorConfig) *MemoryExtractor {
 	}
 }
 
-// ExtractFromMessages 从给定消息文本中提取记忆。
+// ExtractFromMessages 从给定会话消息中提取记忆。
 // 不做游标/进度更新（session-window 驱动，天然增量，无 LastExtractedMsgID 概念）。
 // 返回提取到的记忆（可能为 nil）。
-func (e *MemoryExtractor) ExtractFromMessages(ctx context.Context, userID string, convText string) (*model.UserMemory, error) {
+// 缓存友好：system prompt 用共享固定串，任务指令全部编码进 user message（与 profile worker 同模式）。
+func (e *MemoryExtractor) ExtractFromMessages(ctx context.Context, userID string, msgs []model.Message) (*model.UserMemory, error) {
 	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
-	prompt := fmt.Sprintf("%s\n\n当前时间: %s\n\n%s", extractPromptPrefix, now, convText)
+	prompt := buildMemoryInstructionXML(now)
 	promptHash := hashPrompt(prompt)
 
+	chatMsgs := make([]llm.Message, 0, len(msgs)+1)
+	for _, m := range msgs {
+		chatMsgs = append(chatMsgs, llm.Message{Role: m.Role, Content: m.Content})
+	}
+	chatMsgs = append(chatMsgs, llm.Message{Role: "user", Content: prompt})
+
 	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: extractSystemPrompt,
-		Messages:     []llm.Message{{Role: "user", Content: prompt}},
+		SystemPrompt: postChatSharedSystemPrompt,
+		Messages:     chatMsgs,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("extract memory: %w", err)

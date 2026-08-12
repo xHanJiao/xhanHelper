@@ -1,11 +1,13 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { api } from '@/api/client'
-import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NEmpty, NAlert, NButton } from 'naive-ui'
+import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NEmpty, NAlert, NButton, NCheckbox, useMessage } from 'naive-ui'
 import { Chart, registerables } from 'chart.js'
 import PageTopBar from '@/components/PageTopBar.vue'
 
 Chart.register(...registerables)
+
+const message = useMessage()
 
 const activeTab = ref('overview')
 const health = ref(null)
@@ -164,8 +166,15 @@ async function fetchHooks() {
 }
 
 onMounted(() => { fetchHealth(); fetchHooks(); restartTimer(); fetchTraces() })
-watch(activeTab, (tab) => { if (tab === 'msg-trace' && msgTraces.value.length === 0) fetchMsgTraces(); if (tab === 'pending-findings' && findings.value.length === 0) fetchFindings() })
-onUnmounted(() => { clearInterval(timer); destroyCharts() })
+watch(activeTab, (tab) => {
+  if (tab === 'msg-trace' && msgTraces.value.length === 0) fetchMsgTraces()
+  if (tab === 'pending-findings' && findings.value.length === 0) fetchFindings()
+  if (tab === 'cost' && !costLoaded.value) {
+    costLoaded.value = true
+    fetchCostCategories(); fetchCostUsers(); refreshCost()
+  }
+})
+onUnmounted(() => { clearInterval(timer); destroyCharts(); destroyCostCharts() })
 
 function formatJSON(raw) {
   if (!raw) return ''
@@ -207,16 +216,16 @@ function makeLineChart(id, datasets) {
   chartInstances.push(ch)
 }
 
-function makeBarChart(id, labels, datasets, horizontal) {
+function makeBarChart(id, labels, datasets, horizontal, trackIn = chartInstances) {
   const canvas = document.getElementById(id)
   if (!canvas) return
   Chart.getChart(id)?.destroy()
   const ch = new Chart(canvas, {
     type: 'bar',
     data: { labels, datasets },
-    options: { responsive: true, indexAxis: horizontal ? 'y' : 'x', plugins: { legend: { display: labels.length > 1, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } }, scales: horizontal ? { x: { beginAtZero: true } } : { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
+    options: { responsive: true, indexAxis: horizontal ? 'y' : 'x', interaction: { mode: 'index' }, plugins: { legend: { display: labels.length > 1, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } }, scales: horizontal ? { x: { beginAtZero: true } } : { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
   })
-  chartInstances.push(ch)
+  trackIn.push(ch)
 }
 
 function renderAllCharts() {
@@ -280,6 +289,172 @@ function latSummary(s) {
   if (!s || !s.count) return '暂无数据'
   return `avg: ${s.avg_ms}ms | P50: ${s.p50_ms}ms | P99: ${s.p99_ms}ms | 样本: ${s.count}`
 }
+
+// ── Token 消耗 Tab ──
+const costRangeDays = ref(30)
+const costCategory = ref(null)
+const costUsers = ref([])
+const costUserOptions = ref([])
+const costCategoryOptions = ref([])
+const costSummary = ref(null)
+const costLoading = ref(false)
+const costLoaded = ref(false)
+const costBarStack = ref({ hit: true, miss: true, completion: false })
+let costCharts = []
+
+// 堆叠维度切换：至少保留一个维度，全取消时拦截并提示
+function toggleBarStack(key) {
+  const next = { ...costBarStack.value, [key]: !costBarStack.value[key] }
+  if (!next.hit && !next.miss && !next.completion) {
+    message.warning('至少保留一个展示维度')
+    return
+  }
+  costBarStack.value = next
+}
+
+const costRanges = [
+  { label: '3 天', value: 3 },
+  { label: '7 天', value: 7 },
+  { label: '15 天', value: 15 },
+  { label: '30 天', value: 30 }
+]
+
+function costDateRange() {
+  const end = new Date()
+  const start = new Date()
+  start.setDate(start.getDate() - (costRangeDays.value - 1))
+  // 本地日期格式化（toISOString 是 UTC，凌晨会差一天）
+  const fmt = d => {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+  return { start: fmt(start), end: fmt(end) }
+}
+
+async function fetchCostCategories() {
+  try {
+    const list = await api.get('/api/admin/cost/categories') || []
+    costCategoryOptions.value = list.map(c => ({ label: c, value: c }))
+  } catch (_) {}
+}
+
+async function fetchCostUsers() {
+  try {
+    const users = await api.get('/api/admin/cost/users') || []
+    costUserOptions.value = users.map(u => ({ label: u.user_id.slice(0, 8) + '...', value: u.user_id }))
+  } catch (_) {}
+}
+
+async function fetchCostSummary() {
+  try {
+    const ids = costUsers.value
+    const qs = ids.length ? '?user_id=' + ids.join('&user_id=') : ''
+    costSummary.value = await api.get('/api/admin/cost/summary' + qs)
+  } catch (_) {}
+}
+
+async function fetchCostStats(groupBy) {
+  const { start, end } = costDateRange()
+  const params = [`start=${start}`, `end=${end}`, `group_by=${groupBy}`]
+  if (costCategory.value) params.push(`category=${costCategory.value}`)
+  if (costUsers.value.length) params.push(...costUsers.value.map(id => `user_id=${id}`))
+  const res = await api.get('/api/admin/cost/stats?' + params.join('&'))
+  return res || { total: {}, groups: [] }
+}
+
+function destroyCostCharts() {
+  costCharts.forEach(c => c.destroy?.())
+  costCharts = []
+}
+
+function makePieChart(id, labels, data) {
+  const canvas = document.getElementById(id)
+  if (!canvas) return
+  Chart.getChart(id)?.destroy()
+  const colors = ['#5b6abf', '#e74c3c', '#27ae60', '#f39c12', '#8e44ad', '#3498db', '#1abc9c', '#e67e22']
+  const ch = new Chart(canvas, {
+    type: 'pie',
+    data: { labels, datasets: [{ data, backgroundColor: labels.map((_, i) => colors[i % colors.length]) }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } } }
+  })
+  costCharts.push(ch)
+}
+
+async function renderCostCharts() {
+  destroyCostCharts()
+  try {
+    // 每日柱状图（堆叠维度由勾选决定）
+    const daily = await fetchCostStats('date')
+    const labels = daily.groups.map(g => g.key)
+    const datasets = []
+    if (costBarStack.value.hit) datasets.push({ label: '缓存命中', data: daily.groups.map(g => g.prompt_cache_hit), backgroundColor: '#5b6abf' })
+    if (costBarStack.value.miss) datasets.push({ label: '缓存未命中', data: daily.groups.map(g => g.prompt_cache_miss), backgroundColor: '#e74c3c' })
+    if (costBarStack.value.completion) datasets.push({ label: '生成', data: daily.groups.map(g => g.completion), backgroundColor: '#27ae60' })
+    if (datasets.length) makeBarChart('cost-daily-chart', labels, datasets, false, costCharts)
+
+    // 三个饼图
+    const cat = await fetchCostStats('category')
+    makePieChart('cost-cat-chart', cat.groups.map(g => g.key), cat.groups.map(g => g.total_tokens))
+    const model = await fetchCostStats('model')
+    makePieChart('cost-model-chart', model.groups.map(g => g.key), model.groups.map(g => g.total_tokens))
+    const sub = await fetchCostStats('sub_category')
+    makePieChart('cost-sub-chart', sub.groups.map(g => g.key), sub.groups.map(g => g.total_tokens))
+  } catch (_) {}
+}
+
+async function refreshCost() {
+  costLoading.value = true
+  try {
+    await Promise.all([fetchCostSummary(), renderCostCharts()])
+  } finally {
+    costLoading.value = false
+  }
+}
+
+function fmtTokens(n) {
+  if (n == null) return '0'
+  return n.toLocaleString()
+}
+
+function hitRate(t) {
+  if (!t) return '0'
+  const denom = (t.prompt_cache_hit || 0) + (t.prompt_cache_miss || 0)
+  return denom ? ((t.prompt_cache_hit / denom) * 100).toFixed(1) : '0'
+}
+
+// 筛选变化时刷新图表。必须放在所有 cost 声明之后（const 不提升，提前引用会 TDZ 报错）
+watch([costRangeDays, costCategory, costUsers, costBarStack], () => { if (activeTab.value === 'cost') refreshCost() }, { deep: true })
+
+// 窗口拖拽 resize 时 Chart.js 有 ~100ms 内建 debounce，停止拖拽后强制校准一次，
+// 避免 canvas 内联尺寸滞后导致柱状图/饼图右沿不对齐。
+// cost 柱状图实例也挂在 costCharts 上（makeBarChart 的 trackIn 参数），统一校准。
+let costResizeTimer = null
+function onCostWindowResize() {
+  clearTimeout(costResizeTimer)
+  costResizeTimer = setTimeout(() => {
+    // 先尝试原地 resize（轻量）
+    costCharts.forEach(c => c.resize?.())
+    chartInstances.forEach(c => c.resize?.())
+    // 拖拽后仍不对齐（canvas 内联尺寸与容器脱节）时，重建一次图表兜底
+    setTimeout(() => {
+      if (activeTab.value === 'cost') {
+        const stale = costCharts.some(c => {
+          const parent = c.canvas?.parentElement
+          return parent && Math.abs(c.canvas.clientWidth - parent.clientWidth) > 2
+        })
+        if (stale) renderCostCharts()
+      }
+    }, 200)
+  }, 150)
+}
+window.addEventListener('resize', onCostWindowResize)
+onUnmounted(() => {
+  clearTimeout(costResizeTimer)
+  window.removeEventListener('resize', onCostWindowResize)
+})
+
 </script>
 
 <template>
@@ -295,6 +470,7 @@ function latSummary(s) {
       <NTabPane name="reflection" tab="反思" />
       <NTabPane name="msg-trace" tab="消息Trace" />
       <NTabPane name="pending-findings" tab="主题发现" />
+      <NTabPane name="cost" tab="Token 消耗" />
     </NTabs>
     <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
 
@@ -556,6 +732,61 @@ function latSummary(s) {
         </NCard>
       </div>
     </div>
+    <!-- ========== Token 消耗 Tab ========== -->
+    <div v-if="activeTab === 'cost'" style="padding-top: var(--space-sm);">
+      <!-- 筛选栏 -->
+      <div style="display: flex; gap: var(--space-md); align-items: center; margin-bottom: var(--space-md); flex-wrap: wrap;">
+        <NSelect v-model:value="costRangeDays" :options="costRanges" size="small" style="width: 110px;" />
+        <NSelect v-model:value="costCategory" :options="costCategoryOptions" size="small" style="width: 140px;" clearable placeholder="全部分类" />
+        <NSelect v-model:value="costUsers" :options="costUserOptions" size="small" multiple clearable style="min-width: 200px;" placeholder="全部用户" />
+        <div style="display: flex; gap: var(--space-sm); align-items: center; margin-left: auto;">
+          <span style="font-size: 12px; color: var(--color-text-muted);">堆叠:</span>
+          <NCheckbox :checked="costBarStack.hit" @update:checked="toggleBarStack('hit')">命中</NCheckbox>
+          <NCheckbox :checked="costBarStack.miss" @update:checked="toggleBarStack('miss')">未命中</NCheckbox>
+          <NCheckbox :checked="costBarStack.completion" @update:checked="toggleBarStack('completion')">生成</NCheckbox>
+          <NButton size="small" @click="refreshCost()" :loading="costLoading">刷新</NButton>
+        </div>
+      </div>
+
+      <!-- 概览卡片 -->
+      <div class="stats-grid" style="margin-bottom: var(--space-lg);">
+        <NCard size="small" title="今日 Token">
+          <div style="font-size: 22px; font-weight: 600;">{{ fmtTokens(costSummary?.today?.total_tokens) }}</div>
+          <div style="font-size: 12px; color: var(--color-text-muted);">{{ costSummary?.today?.call_count ?? 0 }} 次调用 · 命中率 {{ hitRate(costSummary?.today) }}%</div>
+        </NCard>
+        <NCard size="small" title="昨日 Token">
+          <div style="font-size: 22px; font-weight: 600;">{{ fmtTokens(costSummary?.yesterday?.total_tokens) }}</div>
+          <div style="font-size: 12px; color: var(--color-text-muted);">{{ costSummary?.yesterday?.call_count ?? 0 }} 次调用 · 命中率 {{ hitRate(costSummary?.yesterday) }}%</div>
+        </NCard>
+        <NCard size="small" title="本月 Token">
+          <div style="font-size: 22px; font-weight: 600;">{{ fmtTokens(costSummary?.this_month?.total_tokens) }}</div>
+          <div style="font-size: 12px; color: var(--color-text-muted);">{{ costSummary?.this_month?.call_count ?? 0 }} 次调用 · 命中率 {{ hitRate(costSummary?.this_month) }}%</div>
+        </NCard>
+        <NCard size="small" title="本月缓存">
+          <div style="font-size: 22px; font-weight: 600;">命中 {{ hitRate(costSummary?.this_month) }}%</div>
+          <div style="font-size: 12px; color: var(--color-text-muted);">命中 {{ fmtTokens(costSummary?.this_month?.prompt_cache_hit) }} · 未命中 {{ fmtTokens(costSummary?.this_month?.prompt_cache_miss) }}</div>
+        </NCard>
+      </div>
+
+      <!-- 图表区：柱状图 + 饼图共享同一弹性容器，保证左右边界对齐 -->
+      <div class="cost-charts">
+        <NCard size="small" title="每日 Token 消耗">
+          <canvas id="cost-daily-chart" />
+        </NCard>
+
+        <div class="cost-pie-grid">
+          <NCard size="small" title="分类分布">
+            <div class="pie-box"><canvas id="cost-cat-chart" /></div>
+          </NCard>
+          <NCard size="small" title="模型分布">
+            <div class="pie-box"><canvas id="cost-model-chart" /></div>
+          </NCard>
+          <NCard size="small" title="子类分布">
+            <div class="pie-box"><canvas id="cost-sub-chart" /></div>
+          </NCard>
+        </div>
+      </div>
+    </div>
   </div>
   </div>
 </template>
@@ -589,6 +820,29 @@ function latSummary(s) {
 }
 .latency-grid canvas {
   max-height: 200px;
+}
+
+/* Token 消耗 Tab：图表区统一弹性容器，柱状图与饼图左右对齐 */
+.cost-charts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+/* Token 消耗 Tab：三个饼图一行排布 */
+.cost-pie-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-md);
+}
+/* 饼图容器定高：Chart.js maintainAspectRatio:false 需要容器有确定高度 */
+.pie-box {
+  height: 300px;
+}
+@media (max-width: 900px) {
+  .cost-pie-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
 

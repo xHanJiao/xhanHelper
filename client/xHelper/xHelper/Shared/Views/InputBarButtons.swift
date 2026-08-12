@@ -70,6 +70,27 @@ struct ModelPill: View {
     }
 }
 
+/// 响应校验开关图标按钮（macOS）：text.magnifyingglass，开=accent 高亮，关=灰。
+/// 校验 = 每次工具调用后 LLM 复查回复质量（每轮多一次调用，有延迟成本）。
+struct VerifyPill: View {
+    let context: InputBarContext
+    let isOn: Bool
+    let action: () -> Void
+
+    var body: some View {
+        IconButton(
+            visibility: .always,
+            context: context,
+            symbol: "text.magnifyingglass",
+            tint: isOn ? Color("appAccent") : .gray,
+            tooltip: isOn
+                ? "回复校验已开启，点击关闭"
+                : "回复校验已关闭，点击开启（每轮多一次检查）",
+            action: action
+        )
+    }
+}
+
 /// 发送/停止按钮：仅展开态显示。流式时 morph 为红色停止，否则为发送箭头。
 struct SendStopButton: View {
     let context: InputBarContext

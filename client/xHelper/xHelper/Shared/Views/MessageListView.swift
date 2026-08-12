@@ -16,6 +16,8 @@ struct MessageListView: View {
     let statusMessage: String?
     let thoughtMessage: String?
     let thoughtDone: Bool
+    let toolQueue: [ToolCallDisplay]  // 工具调用展示队列（最新助手气泡下方 pill）
+    let verifyStatus: VerifyStatus?   // 响应检验状态（最新助手气泡下方 pill）
     let hasMoreBefore: Bool
     let isLoadingMore: Bool
     let loadMoreError: String?
@@ -307,8 +309,17 @@ struct MessageListView: View {
     @ViewBuilder
     private func messageRowContent(_ msg: Message) -> some View {
         VStack(spacing: 12) {
-            if msg.id == "__streaming__", let thought = thoughtMessage {
+            // 思考块：挂在最后一条 assistant 消息上（流式时是 __streaming__，
+            // done 后 id 替换为真实消息 id——仍是最后一条），结束后保留折叠态可展开查看
+            if let thought = thoughtMessage, msg.role == "assistant", msg.id == messages.last?.id {
                 ThinkingBubble(text: thought, isStreaming: !thoughtDone)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Layout.chatHorizontalPadding)
+            }
+
+            // 工具调用 / 响应检验 pill：挂在正文上方（时序：思考 → 工具/校验 → 正文）
+            if msg.id == "__streaming__" && (!toolQueue.isEmpty || verifyStatus != nil) {
+                ToolActivityToast(toolQueue: toolQueue, verifyStatus: verifyStatus)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Layout.chatHorizontalPadding)
             }

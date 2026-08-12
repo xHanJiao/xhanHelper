@@ -68,6 +68,8 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			MaxTokens   *int               `json:"max_tokens"`
 			Thinking    *bool              `json:"thinking"`
 			ClientTools []agent.ClientTool `json:"client_tools"`
+			// 响应检验（verify）开关：nil=跟随服务端全局配置，true/false=强制覆盖
+			VerifyEnabled *bool `json:"verify_enabled"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.Message == "" {
 			view.JSONError(c, 400, "invalid request")
@@ -233,6 +235,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			ClientTools:        req.ClientTools,
 			Mode:               convMode,
 			ModeNotice:         modeNotice,
+			VerifyEnabled:      req.VerifyEnabled,
 		})
 		if err != nil {
 			log.Printf("[chat] orch run error: %v", err)

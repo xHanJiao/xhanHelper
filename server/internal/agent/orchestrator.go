@@ -68,6 +68,7 @@ type RunRequest struct {
 	ClientTools        []ClientTool // 客户端（Mac App）上报的本地 MCP 工具，可为空
 	Mode               string       // 会话模式：model.ConvModeWork（默认）| model.ConvModePlan（写操作被拦截）
 	ModeNotice         string       // 模式提示（注入当前 user 消息 XMLContext 的 notice 块，仅 LLM 可见，用户不可见）
+	VerifyEnabled      *bool        // 响应检验开关覆盖：nil=跟随全局配置，true/false=强制覆盖
 
 	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
 	Memory  retrieval.SourceConfig
@@ -936,7 +937,11 @@ type verifyResult struct {
 }
 
 func (o *Orchestrator) shouldVerify(req *RunRequest, state *reactState) bool {
-	return o.verifyEnabled && len(state.allToolCalls) > 0 && !req.SkipRetrieval && !state.finalRound
+	enabled := o.verifyEnabled
+	if req.VerifyEnabled != nil {
+		enabled = *req.VerifyEnabled
+	}
+	return enabled && len(state.allToolCalls) > 0 && !req.SkipRetrieval && !state.finalRound
 }
 
 func (o *Orchestrator) verifyAndMaybeRetry(
@@ -966,21 +971,23 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 		client = o.proClient
 	}
 
-	// 构建检验 prompt——检索上下文注入 system prompt，避免误判为幻觉
-	retrievalCtx := buildRetrievalContext(retrievedItemsFromPackets(retrieveResult))
-	verifyPrompt := o.buildVerifyPrompt(msg, req, state)
-	verifySystemPrompt := `你是一个内容检验助手。请判断模型的回复是否完整、准确。
+	// 构建检验请求——复用对话的 system prompt（与上一次主对话调用完全一致 → 前缀缓存命中），
+	// 检验指令 + 被检验的对话上下文编码为追加的一条用户消息（不修改 system prompt 与历史）。
+	verifyPrompt := o.buildVerifyPrompt(msg)
+	verifyInstructions := `你是一个内容检验助手。请判断模型的回复是否完整、准确。
 
 严格按以下 JSON 格式回复，不要加任何额外文字：
 {"complete":true或false,"hallucinations":["模型捏造的事实，必须能在工具返回数据中找到依据，没有则为空数组"],"missing_aspects":["还缺少的信息维度，如未查笔记/未查记忆/未查账单等，没有则为空数组"],"suggestion":"针对缺失或幻觉的具体建议，complete为true且无幻觉时留空"}
 
 检验标准：
 - complete: 用户问题是否已被充分回答？信息源是否需要多角度交叉验证？
-- hallucinations: 回复中的数据必须在【工具返回数据】或【检索上下文】中找到依据。检索上下文中的信息是合法的已知事实，模型引用它们不算幻觉。
+- hallucinations: 回复中的数据必须在【工具返回数据】或【system prompt 检索上下文】中找到依据。检索上下文中的信息是合法的已知事实，模型引用它们不算幻觉。
 - 不要因为措辞风格标记为幻觉，只标记实质性的数据错误`
-	if retrievalCtx != "" {
-		verifySystemPrompt += "\n\n" + retrievalCtx
-	}
+
+	// 完整历史 + 检验任务 = 最终消息列表；history 前缀与上次主对话调用一致 → 缓存命中，仅增量 token 付费
+	verifyMsgs := make([]llm.Message, 0, len(state.msgs)+1)
+	verifyMsgs = append(verifyMsgs, state.msgs...)
+	verifyMsgs = append(verifyMsgs, llm.Message{Role: "user", Content: verifyInstructions + "\n\n" + verifyPrompt})
 
 	// 保存检验请求到 DB（调试页可见）
 	if _, ok := llmcost.ScenarioFromContext(ctx); !ok {
@@ -992,8 +999,8 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 		})
 	}
 	verifyMsg, err := client.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: verifySystemPrompt,
-		Messages:     []llm.Message{{Role: "user", Content: verifyPrompt}},
+		SystemPrompt: systemPrompt,
+		Messages:     verifyMsgs,
 	})
 	if err != nil {
 		log.Printf("[verify] LLM call error: %v", err)
@@ -1014,7 +1021,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 
 	// 通过：无幻觉且完成
 	if vr.Complete && len(vr.Hallucinations) == 0 {
-		o.saveVerifyFeedback(ctx, req.ConversationID, req.UserID, "检验通过：无幻觉，回复完整", verifySystemPrompt, verifyPrompt)
+		o.saveVerifyFeedback(ctx, req.ConversationID, req.UserID, "检验通过：无幻觉，回复完整", systemPrompt, verifyInstructions+"\n\n"+verifyPrompt)
 		log.Printf("[verify] round %d passed", state.verifyRetries)
 		o.sendVerifyEvent(events, "done", state.verifyRetries, "")
 		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
@@ -1027,7 +1034,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 	o.saveAssistantMsgInternal(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 
 	feedback := o.buildVerifyFeedback(vr)
-	o.saveVerifyFeedback(ctx, req.ConversationID, req.UserID, feedback, verifySystemPrompt, verifyPrompt)
+	o.saveVerifyFeedback(ctx, req.ConversationID, req.UserID, feedback, systemPrompt, verifyInstructions+"\n\n"+verifyPrompt)
 	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	state.msgs = append(state.msgs, llm.Message{
 		Role:    "user",
@@ -1036,67 +1043,11 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 	return false
 }
 
-func (o *Orchestrator) buildVerifyPrompt(msg llm.Message, req *RunRequest, state *reactState) string {
-	var sb strings.Builder
-	sb.WriteString("【用户问题】\n")
-	sb.WriteString(req.RawUserMessage)
-
-	sb.WriteString("\n\n【模型准备回复的内容】\n")
-	sb.WriteString(msg.Content)
-
-	sb.WriteString("\n\n【工具调用历史】\n")
-	hasTools := false
-	for _, m := range state.msgs {
-		switch m.Role {
-		case "assistant":
-			if len(m.ToolCalls) > 0 {
-				// 原生 FC：输出 tool_calls 的函数名 + 参数
-				hasTools = true
-				for _, tc := range m.ToolCalls {
-					sb.WriteString(fmt.Sprintf("[工具调用] %s(%s)\n", tc.Function.Name, tc.Function.Arguments))
-				}
-			} else if strings.Contains(m.Content, "tool_calls") {
-				// 旧格式：content 包含 JSON 工具调用
-				hasTools = true
-				sb.WriteString("[工具调用] ")
-				sb.WriteString(m.Content)
-				sb.WriteString("\n")
-			}
-		case "tool":
-			// 原生 FC：工具结果
-			hasTools = true
-			sb.WriteString("[工具返回] ")
-			sb.WriteString(m.Content)
-			sb.WriteString("\n")
-		case "user":
-			if strings.Contains(m.Content, `"success"`) {
-				// 旧格式：工具结果伪装成 user 消息
-				hasTools = true
-				sb.WriteString("[工具返回] ")
-				sb.WriteString(m.Content)
-				sb.WriteString("\n")
-			}
-		}
-	}
-	if !hasTools {
-		sb.WriteString("（本轮未调用工具）\n")
-	}
-
-	return sb.String()
-}
-
-// buildRetrievalContext 将检索命中内容格式化为 verify system prompt 的已知事实段。
-// 检索上下文注入 system prompt（而非 user prompt），确保检验 LLM 将其视为合法信息来源。
-func buildRetrievalContext(retrieved []retrievedItemView) string {
-	if len(retrieved) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString("【检索上下文——以下信息是已知事实，模型回复引用它们不算幻觉】\n")
-	for _, it := range retrieved {
-		sb.WriteString(fmt.Sprintf("[%s] %s\n", it.Type, it.Text))
-	}
-	return sb.String()
+// buildVerifyPrompt 输出待检验的模型回复草稿。
+// 对话历史（用户问题、工具调用、工具返回）经 verifyMsgs 以原始消息格式传给检验 LLM，
+// 草稿回复是消息列表中尚不存在的内容，这里单独补充。
+func (o *Orchestrator) buildVerifyPrompt(msg llm.Message) string {
+	return "【模型回复草稿】\n" + msg.Content
 }
 
 // executePromptEngTools 统一处理 prompt engineering 工具调用路径：
@@ -1254,24 +1205,6 @@ func idsByTypeFromResult(r *ctxflow.RetrieveResult) map[string][]string {
 		}
 	}
 	return ids
-}
-
-type retrievedItemView struct {
-	Type string
-	Text string
-}
-
-func retrievedItemsFromPackets(r *ctxflow.RetrieveResult) []retrievedItemView {
-	if r == nil {
-		return nil
-	}
-	var items []retrievedItemView
-	for typ, packets := range r.Packets {
-		for _, pkt := range packets {
-			items = append(items, retrievedItemView{Type: typ, Text: pkt.Text})
-		}
-	}
-	return items
 }
 
 func (*Orchestrator) injectExcludeMemIDsForMemSearch(parsed *LLMResponse, memIDs []string) {

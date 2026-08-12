@@ -1,4 +1,5 @@
 import SwiftUI
+import WebKit
 #if os(macOS)
 import AppKit
 import UniformTypeIdentifiers
@@ -11,6 +12,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
     case notes = "笔记"
     case documents = "文档"
     case themes = "主题"
+    case dashboard = "监控看版"
 
     var id: String { rawValue }
 
@@ -21,6 +23,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
         case .notes:     return "note.text"
         case .documents: return "doc.text"
         case .themes:    return "tag"
+        case .dashboard: return "chart.bar.xaxis"
         }
     }
 
@@ -31,6 +34,7 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
         case .notes:     return "笔记与标签检索"
         case .documents: return "Markdown 文档与版本"
         case .themes:    return "主题状态追踪"
+        case .dashboard: return "前端监控看板（成本统计等）"
         }
     }
 }
@@ -45,6 +49,43 @@ struct BrowsePanelView: View {
     @ObservedObject var themeVM: ThemeViewModel
     let baseURL: String
     let token: String
+
+    /// 监控看板 WebView 共享状态（header 刷新按钮 + WebView 共用）
+    @StateObject private var dashboardWebModel = XHWebViewModel()
+
+    /// 监控看板前端地址：DEBUG 用 Vite dev server，RELEASE 用同源后端（nginx 已 serve）
+    private var dashboardURL: URL? {
+        #if DEBUG
+        URL(string: "http://localhost:5173/admin")
+        #else
+        URL(string: baseURL + "/admin")
+        #endif
+    }
+
+    /// 监控看板 WebView 配置：注入 XH_BRIDGE 全局对象 + 外链转发系统浏览器
+    private var dashboardConfig: WKWebViewConfiguration {
+        let externalLink = XHWebViewBridge.ScriptMessageHandler { body in
+            let urlString: String?
+            if let dict = body as? [String: Any] {
+                urlString = dict["url"] as? String
+            } else {
+                urlString = body as? String
+            }
+            if let urlString, let url = URL(string: urlString) {
+                #if os(macOS)
+                NSWorkspace.shared.open(url)
+                #endif
+            }
+        }
+        return XHWebViewBridge.makeConfiguration(
+            bridgeObjectName: "XH_BRIDGE",
+            dictionary: [
+                "baseURL": baseURL,
+                "platform": "macOS",
+            ],
+            messageHandlers: [("externalLink", externalLink)]
+        )
+    }
 
     /// 根据网格可用宽度自适应列：先维持 110 的格子宽、把剩余空间给间距；
     /// 空间不足时间距压到最小、格子随之收缩；空间富余时间距封顶、格子保持 110。
@@ -69,9 +110,14 @@ struct BrowsePanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             if let panel = manager.browsePanelSelection {
-                panelHeader(panel)
-                Divider()
-                panelContent(panel)
+                if panel == .dashboard {
+                    // 监控看板自带 XHPanel header（含刷新按钮）
+                    panelContent(panel)
+                } else {
+                    panelHeader(panel)
+                    Divider()
+                    panelContent(panel)
+                }
             } else {
                 grid
             }
@@ -180,6 +226,31 @@ struct BrowsePanelView: View {
             DocumentPage(viewModel: documentVM)
         case .themes:
             ThemePage(viewModel: themeVM)
+        case .dashboard:
+            if let url = dashboardURL {
+                XHPanel(
+                    title: panel.rawValue,
+                    onBack: { manager.browsePanelSelection = nil },
+                    trailingButtons: [
+                        XHPanel.XHPanelButton(
+                            icon: "arrow.clockwise",
+                            help: "刷新",
+                            action: { dashboardWebModel.reload() }
+                        )
+                    ]
+                ) {
+                    XHWebViewPanel(
+                        model: dashboardWebModel,
+                        url: url,
+                        configuration: dashboardConfig
+                    )
+                }
+            } else {
+                Text("无法构建监控看板地址")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 

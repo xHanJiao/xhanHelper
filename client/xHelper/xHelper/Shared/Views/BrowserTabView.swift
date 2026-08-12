@@ -13,12 +13,28 @@ struct BrowserTabView: View {
     @State private var isHovered = false
     @State private var observations: [NSKeyValueObservation] = []
     @State private var loadError: String?
+    @State private var suggestions: [URLSuggestion] = []
+    @State private var selectedSuggestion = 0
+    @State private var showSuggestions = false
+    @State private var suppressSuggestions = false
     @FocusState private var urlFocused: Bool
     @FocusState private var findFocused: Bool
     @ObservedObject private var findCoordinator = BrowserFindCoordinator.shared
     @ObservedObject private var downloadStore = DownloadHistoryStore.shared
     @ObservedObject private var bookmarkStore = BookmarkStore.shared
+    @ObservedObject private var historyStore = HistoryStore.shared
     @ObservedObject private var bookmarksBarState = BookmarksBarState.shared
+
+    /// 地址栏建议条目：历史与收藏合并，物理存储各自在 history.json / bookmarks.json，这里只是内存快照。
+    fileprivate struct URLSuggestion: Identifiable, Equatable {
+        let id: UUID
+        let title: String
+        let url: String
+        let host: String
+        let isBookmark: Bool
+        let historyID: UUID?
+        let bookmarkID: UUID?
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -82,6 +98,10 @@ struct BrowserTabView: View {
         }
         .onChange(of: urlFocused) { _, focused in
             BrowserFocus.isUrlFieldFocused = focused
+            if !focused { hideSuggestions() }
+        }
+        .onChange(of: urlText) { _, new in
+            updateSuggestions(for: new)
         }
         .onChange(of: findFocused) { _, focused in
             BrowserFocus.isFindFieldFocused = focused
@@ -101,6 +121,16 @@ struct BrowserTabView: View {
     }
 
     private var toolbar: some View {
+        VStack(spacing: 0) {
+            addressBarRow
+            if showSuggestions && !suggestions.isEmpty {
+                suggestionList
+            }
+        }
+        .background(.ultraThinMaterial)
+    }
+
+    private var addressBarRow: some View {
         HStack(spacing: 6) {
             // 后退 / 前进
             Button {
@@ -151,12 +181,128 @@ struct BrowserTabView: View {
                 .font(.system(size: 12))
                 .focused($urlFocused)
                 .onSubmit { navigateToURL() }
+                .onKeyPress(.downArrow, phases: .down) { _ in moveSuggestionSelection(1) }
+                .onKeyPress(.upArrow, phases: .down) { _ in moveSuggestionSelection(-1) }
+                .onKeyPress(.return, phases: .down) { keyPress in
+                    #if os(macOS)
+                    // 输入法组词中回车是确认拼音，放行给输入法
+                    if (NSApp.keyWindow?.firstResponder?.value(forKey: "hasMarkedText") as? Bool) == true {
+                        return .ignored
+                    }
+                    #endif
+                    return acceptSuggestionFromKeyboard()
+                }
+                .onKeyPress(.tab, phases: .down) { _ in acceptSuggestionFromKeyboard() }
+                .onKeyPress(.escape, phases: .down) { _ in handleEscapeKey() }
 
             bookmarkButton
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(.ultraThinMaterial)
+    }
+
+    // MARK: - 地址栏建议（历史 + 收藏，前缀匹配，兼容有无协议头）
+
+    /// 建议列表：favicon + 标题 + URL（高亮匹配前缀），悬停显示 X 可单独删除。
+    private var suggestionList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, s in
+                        SuggestionRow(
+                            suggestion: s,
+                            isSelected: index == selectedSuggestion,
+                            query: urlText,
+                            onSelect: { selectSuggestion(at: index) },
+                            onDelete: { deleteSuggestion(s) }
+                        )
+                        .id(s.id)
+                    }
+                }
+                .padding(4)
+            }
+            .onChange(of: selectedSuggestion) { _, new in
+                guard !suggestions.isEmpty, new < suggestions.count else { return }
+                withAnimation(.snappy) { proxy.scrollTo(suggestions[new].id, anchor: .center) }
+            }
+        }
+        .frame(maxHeight: 260)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 6)
+    }
+
+    /// 逐条删除：历史条目删 history.json，收藏删 bookmarks.json（建议无独立存储，删完即时重算）。
+    private func deleteSuggestion(_ s: URLSuggestion) {
+        if let hid = s.historyID { historyStore.remove(id: hid) }
+        if let bid = s.bookmarkID { bookmarkStore.remove(id: bid) }
+        updateSuggestions(for: urlText)
+    }
+
+    private func selectSuggestion(at index: Int) {
+        guard suggestions.indices.contains(index) else { return }
+        urlText = suggestions[index].url
+        // 抑制下一次 urlText 变化的建议重算（否则填入完整 URL 后列表又弹出来）
+        suppressSuggestions = true
+        hideSuggestions()
+        navigateToURL()
+    }
+
+    private func moveSuggestionSelection(_ delta: Int) -> KeyPress.Result {
+        guard showSuggestions, !suggestions.isEmpty else { return .ignored }
+        selectedSuggestion = (selectedSuggestion + delta + suggestions.count) % suggestions.count
+        return .handled
+    }
+
+    private func acceptSuggestionFromKeyboard() -> KeyPress.Result {
+        guard showSuggestions, !suggestions.isEmpty else { return .ignored }
+        selectSuggestion(at: selectedSuggestion)
+        return .handled
+    }
+
+    private func handleEscapeKey() -> KeyPress.Result {
+        guard showSuggestions else { return .ignored }
+        hideSuggestions()
+        return .handled
+    }
+
+    private func hideSuggestions() {
+        showSuggestions = false
+        suggestions = []
+    }
+
+    /// 输入变化时重算建议：<2 字符或失焦不显示；历史优先，收藏补位，按归一化 URL 去重。
+    private func updateSuggestions(for text: String) {
+        let suppressed = suppressSuggestions
+        suppressSuggestions = false
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2, urlFocused, !suppressed else {
+            hideSuggestions()
+            return
+        }
+        var seen: Set<String> = []
+        var merged: [URLSuggestion] = []
+        func appendHistory(_ e: HistoryStore.HistoryEntry) {
+            let key = HistoryStore.normalizeURL(e.url)
+            guard !seen.contains(key) else { return }
+            seen.insert(key)
+            merged.append(URLSuggestion(id: e.id, title: e.title, url: e.url, host: e.host,
+                                        isBookmark: false, historyID: e.id, bookmarkID: nil))
+        }
+        func appendBookmark(_ b: BookmarkStore.Bookmark) {
+            let key = HistoryStore.normalizeURL(b.url)
+            guard !seen.contains(key) else { return }
+            seen.insert(key)
+            merged.append(URLSuggestion(id: b.id, title: b.title, url: b.url, host: b.host,
+                                        isBookmark: true, historyID: nil, bookmarkID: b.id))
+        }
+        for e in historyStore.suggest(query: text) { appendHistory(e) }
+        for b in bookmarkStore.suggest(query: text, maxResults: 6) { appendBookmark(b) }
+        suggestions = merged
+        showSuggestions = !merged.isEmpty
+        if selectedSuggestion >= merged.count { selectedSuggestion = 0 }
     }
 
     /// 收藏当前页（原顶栏收藏按钮移至地址栏最右）
@@ -417,7 +563,6 @@ struct BrowserErrorPageView: View {
     let error: String
     let onRetry: () -> Void
     @State private var isHovered = false
-
     var body: some View {
         VStack(spacing: 16) {
             Spacer()
@@ -445,5 +590,98 @@ struct BrowserErrorPageView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// 地址栏建议行：favicon + 标题（收藏带星）+ URL（高亮匹配前缀），悬停出现 X 可单独删除。
+private struct SuggestionRow: View {
+    let suggestion: BrowserTabView.URLSuggestion
+    let isSelected: Bool
+    let query: String
+    let onSelect: () -> Void
+    let onDelete: () -> Void
+    @State private var isHovered = false
+    @ObservedObject private var faviconStore = FaviconStore.shared
+
+    var body: some View {
+        HStack(spacing: 8) {
+            favicon
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(suggestion.title)
+                        .font(.system(size: 12))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    if suggestion.isBookmark {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 8))
+                            .foregroundColor(.yellow)
+                    }
+                }
+                highlightURL
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            Button {
+                onDelete()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(isHovered || isSelected ? 1 : 0)
+            .help(suggestion.isBookmark ? "删除该收藏" : "从历史记录删除")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .contentShape(Rectangle())
+        .background(
+            isSelected ? Color.accentColor.opacity(0.15) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 5)
+        )
+        .onHover { isHovered = $0 }
+        .onTapGesture { onSelect() }
+    }
+
+    @ViewBuilder
+    private var favicon: some View {
+        if let img = faviconStore.image(forHost: suggestion.host) {
+            #if os(macOS)
+            Image(nsImage: img)
+                .resizable()
+                .interpolation(.medium)
+                .frame(width: 14, height: 14)
+            #else
+            Image(uiImage: img)
+                .resizable()
+                .interpolation(.medium)
+                .frame(width: 14, height: 14)
+            #endif
+        } else {
+            Image(systemName: "globe")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+        }
+    }
+
+    /// URL 显示去掉协议头，命中前缀加粗高亮（选中行高亮更明显）。
+    private var highlightURL: Text {
+        let display = HistoryStore.normalizeURL(suggestion.url)
+        let q = HistoryStore.normalizeURL(query)
+        guard !q.isEmpty, let range = display.range(of: q) else {
+            return Text(display)
+        }
+        let before = String(display[..<range.lowerBound])
+        let match = String(display[range])
+        let after = String(display[range.upperBound...])
+        if isSelected {
+            return Text(before) + Text(match).fontWeight(.semibold).foregroundColor(.primary) + Text(after)
+        }
+        return Text(before) + Text(match).fontWeight(.semibold) + Text(after)
     }
 }

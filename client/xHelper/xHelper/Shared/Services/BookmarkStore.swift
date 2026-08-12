@@ -112,6 +112,25 @@ final class BookmarkStore: ObservableObject {
         }
     }
 
+    /// 地址栏建议：按输入前缀匹配收藏 URL（兼容有无协议头），归一化去重后按收藏时间排序。
+    func suggest(query: String, maxResults: Int = 6) -> [Bookmark] {
+        let normalized = HistoryStore.normalizeURL(query)
+        guard !normalized.isEmpty else { return [] }
+        let raw = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var seen: Set<String> = []
+        var results: [Bookmark] = []
+        for b in bookmarks {
+            let key = b.url.lowercased()
+            if seen.contains(key) { continue }
+            let matches = key.hasPrefix(raw) || HistoryStore.normalizeURL(b.url).hasPrefix(normalized)
+            guard matches else { continue }
+            seen.insert(key)
+            results.append(b)
+            if results.count >= maxResults { break }
+        }
+        return results
+    }
+
     /// 导入 Netscape HTML 书签（Chrome/Edge/Safari「导出书签」格式），返回新增数。
     @discardableResult
     func importFromHTML(data: Data) -> Int {

@@ -89,21 +89,26 @@ struct ChatView: View {
 
             // 子任务用户介入条（ask_user）：输入栏上方，独立于 toolQueue 不被文本流清理。
             // 多个请求堆叠折叠，逐条回答/已处理/跳过；早于 L3 确认条展示（它是待执行工具的确认，ask_user 是待办介入）。
+            // 宽度约束与 InputBar 完全一致（maxWidth 720 + trailing + chatHorizontalPadding），保证同宽。
             if !viewModel.pendingUserRequests.isEmpty {
                 AskUserBar(requests: viewModel.pendingUserRequests) { callID, reply in
                     viewModel.resolveUserRequest(callID: callID, reply: reply)
                 }
+                .frame(maxWidth: 720, alignment: .trailing)
                 .padding(.horizontal, Layout.chatHorizontalPadding)
+                .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.bottom, 8)
             }
 
             // 子任务活动面板：运行/已完成子任务状态行 + 展开消息列表（上推聊天区布局，不遮挡）。
-            // 水平边距与输入框/气泡对齐（Layout.chatHorizontalPadding），不超宽。
+            // 宽度约束与 InputBar 完全一致（maxWidth 720 + trailing + chatHorizontalPadding），保证同宽。
             if !viewModel.subagentSessions.isEmpty {
                 SubagentPanel(sessions: viewModel.subagentSessions) { convID in
                     viewModel.toggleSubagentExpand(convID)
                 }
+                .frame(maxWidth: 720, alignment: .trailing)
                 .padding(.horizontal, Layout.chatHorizontalPadding)
+                .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.bottom, 6)
             }
 

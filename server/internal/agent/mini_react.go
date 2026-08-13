@@ -34,14 +34,15 @@ type MiniReAct struct {
 	maxIterations    int
 	maxToolResult    int
 	caller           string
-	onEvent          func(evt *llm.StreamEvent) // nil = 静默执行（后台 worker 场景）
-	toolCallLog      []ToolCallLog              // 本轮执行的完整工具调用历史
-	thinking         *bool                      // 思考模式（deep mode 用 Pro 时开启），nil 用 LLM 默认
+	onEvent          func(evt *llm.StreamEvent) bool // nil = 静默执行（后台 worker 场景）。返回 false 表示事件未送达（如 client_tool_call 转发超时）
+	toolCallLog      []ToolCallLog                   // 本轮执行的完整工具调用历史
+	thinking         *bool                           // 思考模式（deep mode 用 Pro 时开启），nil 用 LLM 默认
 
 	// subAgent 场景扩展（零值 = 不启用，profile_worker 等既有调用方零变化）
 	subAgent               SubAgentExt
 	clientIdx              map[string]bool // 运行时构建：server_name → 客户端工具分发索引（Run 内初始化）
 	clientToolsUnavailable bool            // 运行时状态：客户端断连/超时后置位，后续客户端工具快速失败
+	clientUnavailableAt    time.Time       // 运行时状态：上次置位时间（衰减窗口用，见 clientUnavailableRecoverAfter）
 }
 
 // SubAgentExt — MiniReAct 的 subAgent 场景扩展配置（含客户端工具、白名单、持久化回调）。
@@ -70,12 +71,12 @@ type MiniReActConfig struct {
 	SystemPrompt     string
 	FinalRoundPrompt string // 强制收敛轮指令（主循环耗尽后追加，禁止再调工具），默认 genericFinalRoundPrompt
 	UserID           string
-	ConvID           string                 // 注入 ExecuteContext，空=无
-	MaxIterations    int                    // 总轮数上限（含强制收敛轮），默认 10
-	MaxToolResult    int                    // 单条工具结果注入上限字符数，默认 2000
-	Caller           string                 // 日志前缀，便于区分调用方
-	Thinking         *bool                  // 思考模式（deep mode 用 Pro 时开启），nil 用 LLM 默认
-	OnEvent          func(*llm.StreamEvent) // 事件回调，nil = 静默执行（后台 worker 场景）
+	ConvID           string                      // 注入 ExecuteContext，空=无
+	MaxIterations    int                         // 总轮数上限（含强制收敛轮），默认 10
+	MaxToolResult    int                         // 单条工具结果注入上限字符数，默认 2000
+	Caller           string                      // 日志前缀，便于区分调用方
+	Thinking         *bool                       // 思考模式（deep mode 用 Pro 时开启），nil 用 LLM 默认
+	OnEvent          func(*llm.StreamEvent) bool // 事件回调，nil = 静默执行（后台 worker 场景）。返回 false 表示未送达
 
 	// subAgent 场景扩展（零值 = 不启用，既有调用方零变化）：
 	SubAgent SubAgentExt
@@ -139,13 +140,14 @@ func NewMiniReAct(cfg *MiniReActConfig) *MiniReAct {
 	}
 }
 
-// emit 发送事件。onEvent 为 nil 时静默（后台 worker 场景零开销）。
-// 回调内 panic 视为组件 bug，让上层 recover 处理（不吞）。
-func (m *MiniReAct) emit(evt *llm.StreamEvent) {
+// emit 发送事件。onEvent 为 nil 时静默（后台 worker 场景零开销，视为送达）。
+// 返回 false 表示事件未送达（onEvent 回调返回 false——如 client_tool_call 转发超时），
+// 调用方（execClientTool mustSend）据此快速失败，避免白等整个超时预算。
+func (m *MiniReAct) emit(evt *llm.StreamEvent) bool {
 	if m.onEvent == nil {
-		return
+		return true
 	}
-	m.onEvent(evt)
+	return m.onEvent(evt)
 }
 
 // MiniReActResult — MiniReAct 运行结果。
@@ -170,6 +172,7 @@ func (m *MiniReAct) Run(ctx context.Context, userMessage string) (*MiniReActResu
 	m.toolCallLog = nil
 	m.clientIdx = clientToolIndex(m.subAgent.ClientTools, m.toolRegistry)
 	m.clientToolsUnavailable = false
+	m.clientUnavailableAt = time.Time{}
 
 	if m.subAgent.MsgSink != nil {
 		m.subAgent.MsgSink.SaveUserMsg(userMessage)
@@ -375,26 +378,50 @@ func (m *MiniReAct) clientToolBudgetFor(ctx context.Context, toolName string) ti
 	return m.subAgent.ClientToolTimeout
 }
 
+// clientProbeFuncs — 浏览器只读探活函数：轻量、可验证客户端存活。
+// 客户端工具不可用标志下仍允许真实执行；执行成功即认为客户端已恢复，清除标志。
+var clientProbeFuncs = map[string]bool{
+	"agent_browser_list_tabs": true,
+	"agent_browser_get_url":   true,
+	"agent_browser_get_title": true,
+	"agent_browser_snapshot":  true,
+}
+
+// clientUnavailableRecoverAfter — unavailable 标志的时间衰减窗口。
+// 超时/断连后经过该窗口，允许再次真实调用（客户端可能只是瞬时忙/排队），
+// 成功则恢复；防止"一次超时锁死整个子任务到结束"（并行任务实测 Bad Case）。
+const clientUnavailableRecoverAfter = 30 * time.Second
+
 // execClientTool 经共享 clientToolCaller 分派客户端工具。
-// 超时/断连后置位 clientToolsUnavailable，本次 Run 内后续客户端工具快速失败。
-// 例外：ui 工具（ask_user 用户介入）豁免 fast-fail——它只依赖客户端 UI 展示，
-// 不依赖浏览器执行链路；客户端真断连时由 client_tool_call 5s 送达超时兜底报错。
+// 超时/断连后置位 clientToolsUnavailable，后续客户端工具快速失败，但：
+//   - ui 工具（ask_user 用户介入）豁免：只依赖客户端 UI 展示，不依赖浏览器链路
+//   - 探活函数（list_tabs 等只读轻操作）豁免：真实执行，成功即清除标志（客户端恢复）
+//   - 时间衰减：距上次失败 ≥ clientUnavailableRecoverAfter 允许再次真实调用
+//
+// 目的：一次 open 超时（可能是事件送达竞争/客户端瞬时忙）不应让整个子任务
+// 剩余浏览器调用全部白等——探活能确认客户端真实状态并恢复。
 func (m *MiniReAct) execClientTool(ctx context.Context, tc tool.ToolCall) (*tool.Result, bool) {
-	if m.clientToolsUnavailable && tc.Tool != "ui" {
+	if m.clientToolsUnavailable && tc.Tool != "ui" && !clientProbeFuncs[tc.Function] &&
+		time.Since(m.clientUnavailableAt) < clientUnavailableRecoverAfter {
 		return &tool.Result{Success: false,
 			Error: "客户端本地工具不可用（本轮已发生断连或超时），已跳过 " + tc.Tool + "." + tc.Function + "。"}, false
 	}
 	cc := &clientToolCaller{bridge: m.subAgent.ClientBridge, timeout: m.clientToolBudgetFor(ctx, tc.Tool)}
 	r, unavailable := cc.Call(ctx,
-		// MiniReAct 无内部 channel：事件经 onEvent 回调转发（RunSubAgent 的 forwarder 提供阻塞送达语义）
+		// MiniReAct 无内部 channel：事件经 onEvent 回调转发（RunSubAgent 的 forwarder 提供阻塞送达语义）。
+		// emit 返回送达结果：client_tool_call 未送达（如转发 5s 超时）→ mustSend false →
+		// clientToolCaller 立即失败，不再白等整个预算。
 		func(evt *llm.StreamEvent) bool {
-			m.emit(evt)
-			return true
+			return m.emit(evt)
 		},
 		func(evt *llm.StreamEvent) { m.emit(evt) },
-		m.userID, tc, model.ConvModeWork)
+		m.userID, tc, model.ConvModeWork, "subagent:"+m.convID)
 	if unavailable {
 		m.clientToolsUnavailable = true
+		m.clientUnavailableAt = time.Now()
+	} else if r.Success && (tc.Tool == "ui" || clientProbeFuncs[tc.Function]) {
+		// 探活/用户介入成功 = 客户端可用，恢复
+		m.clientToolsUnavailable = false
 	}
 	return r, unavailable
 }

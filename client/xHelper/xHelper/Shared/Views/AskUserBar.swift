@@ -87,7 +87,6 @@ struct AskUserBar: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .padding(.horizontal, 8)
     }
 
     @ViewBuilder
@@ -129,7 +128,6 @@ struct AskUserBar: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 6)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-            .padding(.horizontal, 8)
         }
     }
 }

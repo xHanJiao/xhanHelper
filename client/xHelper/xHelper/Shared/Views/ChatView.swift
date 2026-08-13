@@ -89,12 +89,22 @@ struct ChatView: View {
 
             // 子任务用户介入条（ask_user）：输入栏上方，独立于 toolQueue 不被文本流清理。
             // 多个请求堆叠折叠，逐条回答/已处理/跳过；早于 L3 确认条展示（它是待执行工具的确认，ask_user 是待办介入）。
-            // 底部留 8pt 间距，避免卡片与输入框顶部粘连。
             if !viewModel.pendingUserRequests.isEmpty {
                 AskUserBar(requests: viewModel.pendingUserRequests) { callID, reply in
                     viewModel.resolveUserRequest(callID: callID, reply: reply)
                 }
+                .padding(.horizontal, Layout.chatHorizontalPadding)
                 .padding(.bottom, 8)
+            }
+
+            // 子任务活动面板：运行/已完成子任务状态行 + 展开消息列表（上推聊天区布局，不遮挡）。
+            // 水平边距与输入框/气泡对齐（Layout.chatHorizontalPadding），不超宽。
+            if !viewModel.subagentSessions.isEmpty {
+                SubagentPanel(sessions: viewModel.subagentSessions) { convID in
+                    viewModel.toggleSubagentExpand(convID)
+                }
+                .padding(.horizontal, Layout.chatHorizontalPadding)
+                .padding(.bottom, 6)
             }
 
             // L3 工具确认行：输入框上方，固定可见（浏览历史消息时也不会错过许可请求）

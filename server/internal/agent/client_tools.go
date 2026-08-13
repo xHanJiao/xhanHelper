@@ -249,8 +249,9 @@ type clientToolCaller struct {
 // mustSend：指令类事件（client_tool_call）必须送达，由调用方保证阻塞语义（5s 兜底）；
 // 返回 false 表示未送达（发送超时/ctx 取消），本方法据此判定客户端不可用。
 // bestEffort：展示/心跳类事件，非阻塞丢失只影响展示。
-// 返回 (result, unavailable)：unavailable=true 表示客户端断连/超时，
-// 调用方应置位 fast-fail 标志，本次 Run 内后续客户端工具快速失败。
+// 返回 (result, unavailable)：unavailable=true 仅表示**送达失败（真断连）**，
+// 调用方据此置位 fast-fail 标志；执行超时（事件已送达客户端但未回传）返回 unavailable=false——
+// 客户端可能只是慢/排队，不应锁死整个任务。
 func (cc *clientToolCaller) Call(
 	ctx context.Context,
 	mustSend func(*llm.StreamEvent) bool,
@@ -258,6 +259,7 @@ func (cc *clientToolCaller) Call(
 	userID string,
 	call tool.ToolCall,
 	mode string,
+	owner string, // 标签归属："main"（主循环）或 "subagent:<convID>"。客户端据此做标签隔离（list_tabs 标注 / close_tab 保护）
 ) (*tool.Result, bool) {
 	if cc.bridge == nil {
 		// 接线 bug：请求携带了 client_tools 却没有注入桥，炸在明处
@@ -281,6 +283,7 @@ func (cc *clientToolCaller) Call(
 		"result_budget_bytes": clientToolInjectBudgetBytes,
 		"timeout_secs":        int(cc.timeout.Seconds()),
 		"mode":                mode, // 会话模式，客户端可按需做二次拦截/展示
+		"owner":               owner,
 	})
 	if err != nil {
 		log.Printf("[clientToolCaller] client tool payload marshal error: %v", err)
@@ -293,6 +296,7 @@ func (cc *clientToolCaller) Call(
 			return &tool.Result{Success: false, Error: "请求已取消"}, false
 		}
 		log.Printf("[clientToolCaller] client_tool_call send timeout: %s (client disconnected?)", display)
+		// 送达失败 = 真断连（客户端收不到事件）：置位 unavailable（后续快速失败）
 		return &tool.Result{Success: false, Error: "客户端未连接，无法执行本地工具 " + display + "。请不要再调用客户端本地工具，直接告知用户即可。"}, true
 	}
 
@@ -318,7 +322,9 @@ func (cc *clientToolCaller) Call(
 			bestEffort(&llm.StreamEvent{Type: "status", Content: "正在等待客户端执行 " + display + "…"})
 		case <-timeout.C:
 			log.Printf("[clientToolCaller] client tool timeout after %v: %s", cc.timeout, display)
-			return &tool.Result{Success: false, Error: fmt.Sprintf("客户端工具执行超时（%v）：%s。请不要再调用客户端本地工具，直接告知用户即可。", cc.timeout, display)}, true
+			// 执行超时 ≠ 客户端断连（事件已送达、客户端可能只是慢/排队）：不置位 unavailable，
+			// 仅本次调用失败，LLM 可重试或换方案——避免一次慢调用锁死整个子任务。
+			return &tool.Result{Success: false, Error: fmt.Sprintf("客户端工具执行超时（%v）：%s。可稍后重试或换方案。", cc.timeout, display)}, false
 		case <-ctx.Done():
 			return &tool.Result{Success: false, Error: "请求已取消"}, false
 		}

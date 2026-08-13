@@ -41,6 +41,7 @@ const explorePrompt = `你是联网调研专家，擅长通过网页抓取与本
 - 同一任务累计 4 次网络类失败（超时/断连/网络不通）→ 立即停止开页，把失败清单交回主任务
 - 页面打开超时/加载失败 → 换源，不要反复重试
 - tab 节制：默认 background 打开；读完即 close_tab 清理；同一时刻活跃标签不超过 3 个；配额满时先 close_tab 腾出配额再打开
+- 标签归属：多个子任务共享浏览器，list_tabs 结果里每个标签带 owner 标注——只操作 owner 为自己（subagent）的标签，**禁止关闭其他任务的标签**（close_tab 会被服务端拒绝，报错里会说明归属）
 
 页面拦截与止损（重要）：
 - 识别结构性拦截：页面标题含 "Attention Required"/Cloudflare、HTTP 403/404 等 → 该站不可达，立即换源，禁止重试同一 URL
@@ -250,8 +251,13 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 			AllowedTools:      whitelistMap(exploreWhitelist),
 			MsgSink:           &subAgentMsgSink{msgRepo: o.subMsgRepo, convID: subConv.ID, userID: userID},
 		},
-		OnEvent: o.makeSubAgentForwarder(opts.MainEvents),
+		OnEvent: o.makeSubAgentForwarder(opts.MainEvents, subConv.ID, opts.Description),
 	})
+
+	// 子任务活动面板：start 事件
+	if opts.MainEvents != nil {
+		o.sendEvent(opts.MainEvents, &llm.StreamEvent{Type: "subagent", Content: subAgentEventJSON(subConv.ID, opts.Description, "start", "", "started")})
+	}
 
 	// 步骤 8 — 超时控制与执行（成本中心：子循环 LLM 调用记 main_chat/sub_agent_run）
 	timeout := o.subAgentTimeout
@@ -271,18 +277,24 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 		},
 	})
 
-	// 子任务结束（completed/timeout/failed 三态）关闭本次循环打开的全部浏览器标签。
-	// 只清自己的 tabId（ToolCallLog 收集），不动主 agent/其他子任务的标签；
-	// 失败（已关/断连）忽略，housekeeping 空闲清理兜底。
+	// 子任务结束（completed/timeout/failed 三态）：
+	// 1) 发 end 事件给活动面板；2) 关闭本次循环打开的全部浏览器标签（只清自己的）。
 	var result *MiniReActResult
+	endState := "completed"
+	endSummary := ""
 	defer func() {
+		if opts.MainEvents != nil {
+			o.sendEvent(opts.MainEvents, &llm.StreamEvent{Type: "subagent", Content: subAgentEventJSON(subConv.ID, opts.Description, "end", endSummary, endState)})
+		}
 		if o.clientBridge != nil && result != nil && len(result.ToolCallLog) > 0 {
-			o.cleanupSubAgentTabs(opts.MainEvents, userID, result.ToolCallLog)
+			o.cleanupSubAgentTabs(opts.MainEvents, userID, subConv.ID, result.ToolCallLog)
 		}
 	}()
 
 	result, err = react.Run(subCtx, opts.Prompt)
 	if err == nil {
+		endState = "completed"
+		endSummary = truncateToolResult(result.FinalContent, 200)
 		return &tool.SubAgentRunResult{
 			Success: true,
 			State:   "completed",
@@ -296,6 +308,8 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(subCtx.Err(), context.DeadlineExceeded) {
 		state = "timeout"
 	}
+	endState = state
+	endSummary = truncateToolResult(summarizeToolCallLog(result.ToolCallLog), 200)
 	return &tool.SubAgentRunResult{
 		Success: false,
 		State:   state,
@@ -324,35 +338,55 @@ func toClientTools(infos []tool.ClientToolInfo) []ClientTool {
 }
 
 // makeSubAgentForwarder 构造子循环事件 → 主 SSE 的转发器。
-// 复用主 SSE 事件类型（子循环执行期间主循环阻塞于 wg.Wait，无串台风险，前端零改动）：
-//   - client_tool_call：阻塞送达（5s 兜底）——浏览器指令必须到客户端
-//   - status / mini_react:status：加"子任务"前缀 best-effort 转发
-//   - tool_call / tool_result / mini_react:tool_*：转对应主类型原样转发
-//   - thought / done / error：丢弃
-func (o *Orchestrator) makeSubAgentForwarder(mainEvents chan<- *llm.StreamEvent) func(*llm.StreamEvent) {
+// 子任务活动面板（SubagentPanel）专用：统一发 subagent 事件（JSON 含 conv_id/description/
+// type/content），客户端按 conv_id 归集；client_tool_call 保持原通道阻塞送达（浏览器指令 +
+// ask_user 必须到客户端）。
+// 返回 bool：false 仅用于 client_tool_call 转发超时（5s 未送达）——MiniReAct mustSend
+// 据此立即失败，不再白等整个客户端工具预算（并行任务高事件率下事件可能因 channel 满被丢）。
+// 子循环执行期间主循环阻塞于 wg.Wait，无串台风险。
+func (o *Orchestrator) makeSubAgentForwarder(mainEvents chan<- *llm.StreamEvent, convID, description string) func(*llm.StreamEvent) bool {
 	if mainEvents == nil {
 		// replay/测试场景：无主 SSE，全部丢弃
-		return func(*llm.StreamEvent) {}
+		return func(*llm.StreamEvent) bool { return true }
 	}
-	return func(evt *llm.StreamEvent) {
+	return func(evt *llm.StreamEvent) bool {
 		switch evt.Type {
 		case "client_tool_call":
 			select {
 			case mainEvents <- evt:
+				return true
 			case <-time.After(5 * time.Second):
 				log.Printf("[subagent] client_tool_call forward timeout (main SSE full?)")
+				return false
 			}
-		case "status":
-			o.sendEvent(mainEvents, &llm.StreamEvent{Type: "status", Content: "子任务 · " + evt.Content})
-		case "tool_call", "tool_result":
-			o.sendEvent(mainEvents, evt)
+		case "status", "tool_call", "tool_result":
+			o.sendEvent(mainEvents, &llm.StreamEvent{Type: "subagent", Content: subAgentEventJSON(convID, description, evt.Type, evt.Content, "")})
 		case "mini_react:status":
-			o.sendEvent(mainEvents, &llm.StreamEvent{Type: "status", Content: "子任务 · " + evt.Content})
+			o.sendEvent(mainEvents, &llm.StreamEvent{Type: "subagent", Content: subAgentEventJSON(convID, description, "status", evt.Content, "")})
 		case "mini_react:tool_call", "mini_react:tool_result":
-			o.sendEvent(mainEvents, &llm.StreamEvent{Type: strings.TrimPrefix(evt.Type, "mini_react:"), Content: evt.Content})
+			o.sendEvent(mainEvents, &llm.StreamEvent{Type: "subagent", Content: subAgentEventJSON(convID, description, strings.TrimPrefix(evt.Type, "mini_react:"), evt.Content, "")})
 			// mini_react:thought / mini_react:done / mini_react:error → 丢弃（不暴露子循环内部）
 		}
+		return true
 	}
+}
+
+// subAgentEvent — 子任务活动面板 SSE 事件。
+// type: start | end | status | tool_call | tool_result；start/end 带 state。
+type subAgentEvent struct {
+	ConvID      string `json:"conv_id"`
+	Description string `json:"description"`
+	Type        string `json:"type"`
+	Content     string `json:"content"`
+	State       string `json:"state,omitempty"`
+}
+
+func subAgentEventJSON(convID, description, evtType, content, state string) string {
+	b, _ := json.Marshal(subAgentEvent{
+		ConvID: convID, Description: description,
+		Type: evtType, Content: content, State: state,
+	})
+	return string(b)
 }
 
 // summarizeToolCallLog 将子循环工具调用日志组装为摘要文本（超时/失败时回传主 LLM 的部分成果）。
@@ -410,7 +444,7 @@ func collectTabIDsFromLog(logs []ToolCallLog) []string {
 // cleanupSubAgentTabs 子任务结束时逐个关闭本次循环打开的浏览器标签。
 // 复用客户端工具协议（close_tab），独立短超时 ctx（单 tab 上限由 subAgentCleanupTimeout
 // 控制，不占子循环预算）；失败（tab 已关/客户端断连）忽略，客户端 housekeeping 兜底。
-func (o *Orchestrator) cleanupSubAgentTabs(mainEvents chan<- *llm.StreamEvent, userID string, logs []ToolCallLog) {
+func (o *Orchestrator) cleanupSubAgentTabs(mainEvents chan<- *llm.StreamEvent, userID string, convID string, logs []ToolCallLog) {
 	tabIDs := collectTabIDsFromLog(logs)
 	if len(tabIDs) == 0 {
 		return
@@ -425,6 +459,6 @@ func (o *Orchestrator) cleanupSubAgentTabs(mainEvents chan<- *llm.StreamEvent, u
 	for _, tabID := range tabIDs {
 		args, _ := json.Marshal(map[string]string{"tabId": tabID})
 		_, _ = o.executeClientTool(ctx, mainEvents, userID,
-			tool.ToolCall{Tool: "browser", Function: "agent_browser_close_tab", Args: args}, model.ConvModeWork)
+			tool.ToolCall{Tool: "browser", Function: "agent_browser_close_tab", Args: args}, model.ConvModeWork, "subagent:"+convID)
 	}
 }

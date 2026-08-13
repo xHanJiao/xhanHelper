@@ -1365,7 +1365,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 				Error: fmt.Sprintf("当前处于计划模式（只读讨论状态），禁止执行客户端工具 %s.%s（写操作）。请仅进行方案讨论或使用只读查询工具；如需执行该操作，请让用户切换到工作模式。", tc.Tool, tc.Function)}}
 			continue
 		}
-		r, unavailable := o.executeClientTool(ctx, events, userID, tc, mode)
+		r, unavailable := o.executeClientTool(ctx, events, userID, tc, mode, "main")
 		if unavailable {
 			state.clientToolsUnavailable = true
 		}
@@ -1379,7 +1379,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 // executeClientTool 将工具调用经桥中转到客户端执行，阻塞等待 HTTP 回传。
 // 第二个返回值表示客户端不可用（断连/超时），调用方据此对本次 Run 内后续客户端工具快速失败。
 // 实现委托共享的 clientToolCaller（orchestrator / MiniReAct 共用，见 client_tools.go）。
-func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm.StreamEvent, userID string, call tool.ToolCall, mode string) (*tool.Result, bool) {
+func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm.StreamEvent, userID string, call tool.ToolCall, mode string, owner string) (*tool.Result, bool) {
 	if o.clientBridge == nil {
 		// 接线 bug：请求携带了 client_tools 却没有注入桥，炸在明处
 		panic("[orch] clientBridge is nil but client tool call dispatched")
@@ -1400,7 +1400,7 @@ func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm
 			}
 		},
 		func(evt *llm.StreamEvent) { o.sendEvent(events, evt) },
-		userID, call, mode)
+		userID, call, mode, "main") // 主循环标签归属：main
 }
 
 // —— DB 保存 ——

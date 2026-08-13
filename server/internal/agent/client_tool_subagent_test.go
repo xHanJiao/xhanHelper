@@ -22,7 +22,10 @@ type captureSink struct {
 	events []*llm.StreamEvent
 }
 
-func (s *captureSink) onEvent(evt *llm.StreamEvent) { s.events = append(s.events, evt) }
+func (s *captureSink) onEvent(evt *llm.StreamEvent) bool {
+	s.events = append(s.events, evt)
+	return true
+}
 
 func (s *captureSink) clientToolCallID() string {
 	for _, evt := range s.events {
@@ -201,13 +204,13 @@ func TestSubAgent_ClientApprovalBeyondBudget(t *testing.T) {
 	if !strings.Contains(result.ToolCallLog[0].Result.Error, "执行超时") {
 		t.Errorf("错误应说明超时: %s", result.ToolCallLog[0].Result.Error)
 	}
-	if !m.clientToolsUnavailable {
-		t.Error("超时后应置位 clientToolsUnavailable")
+	if m.clientToolsUnavailable {
+		t.Error("执行超时不应置位 clientToolsUnavailable（可重试）")
 	}
-	// 后续客户端工具快速失败（不白等）
+	// 后续调用真实执行（可重试），而非快速失败
 	r, _ := m.execClientTool(context.Background(), tool.ToolCall{Tool: "browser", Function: "navigate"})
-	if r.Success || !strings.Contains(r.Error, "已跳过") {
-		t.Errorf("后续客户端工具应快速失败: %+v", r)
+	if r.Success || strings.Contains(r.Error, "已跳过") {
+		t.Errorf("超时后应可重试（真实执行）: %+v", r)
 	}
 }
 
@@ -227,11 +230,12 @@ func TestSubAgent_ClientToolFastFailExemptsUI(t *testing.T) {
 			ClientBridge:      bridge,
 			ClientToolTimeout: 30 * time.Millisecond,
 		},
-		OnEvent: func(*llm.StreamEvent) {},
+		OnEvent: func(*llm.StreamEvent) bool { return true },
 	})
 
-	// 置位 fast-fail（模拟浏览器断连）
+	// 置位 fast-fail（模拟浏览器断连），并记录失败时间（衰减窗口内）
 	m.clientToolsUnavailable = true
+	m.clientUnavailableAt = time.Now()
 
 	// browser 工具：快速失败
 	r, _ := m.execClientTool(context.Background(), tool.ToolCall{Tool: "browser", Function: "navigate"})
@@ -312,4 +316,89 @@ func TestSubAgent_AskUserDispatch(t *testing.T) {
 	default:
 		t.Fatal("客户端未收到 ui__ask_user 分发")
 	}
+}
+
+// TestMiniReAct_ClientToolProbeRecovers — unavailable 后探活函数（list_tabs）真实执行，
+// 成功即清除标志，后续浏览器调用恢复正常（并行任务"锁死到结束"修复）。
+func TestMiniReAct_ClientToolProbeRecovers(t *testing.T) {
+	bridge := NewClientToolBridge()
+	sink := &captureSink{}
+	m := NewMiniReAct(&MiniReActConfig{
+		Client:        &blockingLLM{},
+		ToolRegistry:  noopRegistry(),
+		SystemPrompt:  "sys",
+		UserID:        "u1",
+		MaxIterations: 5,
+		Caller:        "test",
+		SubAgent: SubAgentExt{
+			ClientTools:       []ClientTool{{ServerName: "browser", Name: "agent_browser_list_tabs", IsReadOnly: true}},
+			ClientBridge:      bridge,
+			ClientToolTimeout: 2 * time.Second,
+		},
+		OnEvent: sink.onEvent,
+	})
+	m.clientToolsUnavailable = true
+	m.clientUnavailableAt = time.Now()
+
+	// 客户端模拟：收到 client_tool_call → 回传成功
+	go func() {
+		for {
+			id := sink.clientToolCallID()
+			if id != "" {
+				_ = bridge.OnResult(id, "u1", ClientToolResult{Result: json.RawMessage(`{"tabs":[]}`)})
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	r, unavailable := m.execClientTool(context.Background(), tool.ToolCall{Tool: "browser", Function: "agent_browser_list_tabs"})
+	if !r.Success {
+		t.Fatalf("探活应真实执行成功: %+v", r)
+	}
+	if unavailable {
+		t.Fatal("探活成功不应标记 unavailable")
+	}
+	if m.clientToolsUnavailable {
+		t.Error("探活成功应清除 unavailable 标志（客户端恢复）")
+	}
+}
+
+// TestSubAgent_ClientToolPayloadHasOwner — client_tool_call payload 带归属（子任务 convID），
+// 客户端据此做标签隔离（open 记录 / list_tabs 标注 / close_tab 保护）。
+func TestSubAgent_ClientToolPayloadHasOwner(t *testing.T) {
+	bridge := NewClientToolBridge()
+	sink := &captureSink{}
+	m := NewMiniReAct(&MiniReActConfig{
+		Client:        &blockingLLM{},
+		ToolRegistry:  noopRegistry(),
+		SystemPrompt:  "sys",
+		UserID:        "u1",
+		ConvID:        "sub-9",
+		MaxIterations: 5,
+		Caller:        "test",
+		SubAgent: SubAgentExt{
+			ClientTools:       []ClientTool{{ServerName: "browser", Name: "agent_browser_open", IsReadOnly: true}},
+			ClientBridge:      bridge,
+			ClientToolTimeout: 100 * time.Millisecond,
+		},
+		OnEvent: sink.onEvent,
+	})
+	_, _ = m.execClientTool(context.Background(), tool.ToolCall{Tool: "browser", Function: "agent_browser_open"})
+	for _, evt := range sink.events {
+		if evt.Type != "client_tool_call" {
+			continue
+		}
+		var payload struct {
+			Owner string `json:"owner"`
+		}
+		if err := json.Unmarshal([]byte(evt.Content), &payload); err != nil {
+			t.Fatalf("payload 解析失败: %v", err)
+		}
+		if payload.Owner != "subagent:sub-9" {
+			t.Errorf("owner 应为 subagent:sub-9, got %q", payload.Owner)
+		}
+		return
+	}
+	t.Fatal("未捕获 client_tool_call 事件")
 }

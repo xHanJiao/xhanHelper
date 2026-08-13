@@ -1005,7 +1005,6 @@ SubAgentTimeoutSecs:   cfg.SubAgent.ExploreTimeoutSeconds,
 - Vue 前端适配（无浏览器场景注入条件已排除）
 
 #### 3.10.6 真机反馈修复（首轮实测）
-
 首轮真机三个并行调研任务的教训与修复：
 
 | 问题 | 现象 | 修复 |
@@ -1018,8 +1017,39 @@ SubAgentTimeoutSecs:   cfg.SubAgent.ExploreTimeoutSeconds,
 | 轮次过大 | 50 轮兜底太大，任务转不完 | explore_max_iterations 50 → 20 |
 | 数据边界 | 子任务可读记忆/历史/摘要（私密对话数据） | 白名单收窄：仅保留笔记检索（search_notes_v2）；unified_search/search_memories_v2/message_search 移除；prompt 声明边界 |
 | tab 配额不友好 | 10 tab 上限对调研任务太紧 | 客户端配额 10 → 20；子任务结束时服务端清理本次打开的全部标签（collectTabIDsFromLog + close_tab，只清自己的，10s/tab 超时，失败忽略由 housekeeping 兜底） |
+| 会话共享踩踏（加码验证升级） | 并行子任务共享同一浏览器实例：list_tabs 看到所有任务的标签，某任务的 close 把其他任务的标签全清空（贝壳 4 标签被清、小区页均价丢失）——这才是此前"客户端本地工具不可用"的真正源头 | **标签归属隔离**：client_tool_call payload 带 `owner`（main / subagent:\<convID\>）；客户端 open 记录归属、list_tabs 标注 owner、**close_tab 拒绝关闭其他归属的标签**（报错说明归属，LLM 据此止损）；explorePrompt 加"只操作自己的标签"规则；用户主动关闭（Cmd+W/UI）绕过保护 |
 
 **后处理防线**：子会话消息（MsgSink 落库）带 `IsSubAgent` 标记，MessageRepo 按用户扫描的查询（CountRecent/SearchMessagesByCursor/CountMessages——反射活动统计与 message_search 聚合）统一排除，杜绝子会话消息进入任何后台后处理。
+
+### 3.11 子任务活动面板（SubagentPanel）
+
+**动机**：真机反馈"子 agent 在后台咔咔干活，但反馈路径太少"（3.10.6）。opencode 等价能力是"子会话视图"——本方案取其轻量版：状态行 + 展开消息列表。
+
+**交互**（用户拍板）：
+- **上推布局**：面板在输入栏上方（AskUserBar 之下），不遮挡聊天区
+- 每个子任务一行状态：图标（⏳ 转圈/✓ 完成/⚠ 超时）+ 描述 + 轮次 + 最新动作
+- 点击展开为整宽卡片：子会话消息列表（轻量行：👤/🤖/🔧 图标 + 文本），内部滚动限高 300pt
+- 多任务垂直堆叠；完成/超时行收起为单行摘要
+- 展开态收到新事件 → 防抖 1s 重拉 DB 消息（轮数有限，幂等覆盖，不做取消）
+
+**数据流**：
+
+```
+服务端：
+  RunSubAgent 发 subagent:start（conv_id/description/state=started）
+  forwarder 统一打包 subagent 事件（conv_id/description/type/content）：
+    status（轮次/心跳）/ tool_call / tool_result
+  defer 发 subagent:end（state=completed|timeout|failed + 结果摘要）
+  controller chat.go case "subagent" 原样透传
+客户端：
+  handleSubagentEvent → subagentSessions（按 conv_id 归集）
+  状态行更新（round/latestAction/summary）；展开态防抖重拉
+  toggleSubagentExpand → reloadSubagentMessages（GET messages 现成接口，MsgSink 已落库）
+```
+
+**平铺转发移除**：原 forwarder 将子循环事件平铺为 status/tool_call/tool_result（主 toast 展示）已改——子任务活动统一走 subagent 事件，主循环自己的工具 toast 不受影响。client_tool_call 保持原通道（浏览器指令/ask_user 必须送达）。
+
+**测试**：TestSubAgent_EventForwarding（subagent 事件打包格式）、TestRunSubAgent_EmitsStartEnd（start/end 事件与 state）。
 
 ---
 

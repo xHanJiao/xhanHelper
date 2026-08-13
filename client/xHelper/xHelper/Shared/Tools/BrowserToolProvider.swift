@@ -6,23 +6,52 @@ import SwiftUI
 /// P1-4a：并发子 agent/主 agent 共享同一浏览器实例，并行操作会互踩
 /// （tab 切换/导航/快照竞态）甚至压垮 WebView 进程——所有浏览器工具调用串行执行，
 /// 长操作（open/waitForLoad 等）期间其他调用排队（持锁），用户等待不在此锁内。
+/// 排队带超时（acquireTimeout）：避免前序操作卡死时排队者无限等待（服务端预算 120s
+/// 白白耗尽）。排队超时返回 false，调用方直接报错给服务端。
 private final class BrowserExecutionQueue {
-    private let lock = NSLock()
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-    private var held = false
+    private final class Waiter {
+        let cont: CheckedContinuation<Bool, Never>
+        init(_ cont: CheckedContinuation<Bool, Never>) { self.cont = cont }
+    }
 
-    func acquire() async {
+    private let lock = NSLock()
+    private var waiters: [Waiter] = []
+    private var held = false
+    let acquireTimeout: TimeInterval
+
+    init(acquireTimeout: TimeInterval = 30) {
+        self.acquireTimeout = acquireTimeout
+    }
+
+    /// 排队获取执行权。返回 false = 排队超时（前序操作卡死），调用方应报错而非继续等。
+    func acquire() async -> Bool {
         lock.lock()
         if held {
             lock.unlock()
-            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
                 lock.lock()
-                waiters.append(cont)
+                let waiter = Waiter(cont)
+                waiters.append(waiter)
+                let waitStart = Date()
+                print("[Browser] queue: waiting for lock (waiters=\(waiters.count))")
                 lock.unlock()
+                Task {
+                    try? await Task.sleep(for: .seconds(self.acquireTimeout))
+                    lock.lock()
+                    if let idx = waiters.firstIndex(where: { $0 === waiter }) {
+                        waiters.remove(at: idx)
+                        lock.unlock()
+                        print("[Browser] queue: acquire timeout after \(Int(self.acquireTimeout))s")
+                        cont.resume(returning: false)
+                    } else {
+                        lock.unlock()
+                    }
+                }
             }
         } else {
             held = true
             lock.unlock()
+            return true
         }
     }
 
@@ -31,7 +60,7 @@ private final class BrowserExecutionQueue {
         if waiters.isEmpty {
             held = false
         } else {
-            waiters.removeFirst().resume()
+            waiters.removeFirst().cont.resume(returning: true)
         }
         lock.unlock()
     }
@@ -171,20 +200,29 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     func execute(tool: String, arguments: [String: Any], context: ExecuteContext) async throws -> LocalToolResult {
-        // 串行执行：并发子 agent/主 agent 的浏览器调用排队（持锁）
-        await executionQueue.acquire()
-        defer { executionQueue.release() }
+        // 串行执行：并发子 agent/主 agent 的浏览器调用排队（持锁）。
+        // 排队带超时（BrowserExecutionQueue 30s）——前序操作卡死时不无限等待。
+        let start = Date()
+        let acquired = await executionQueue.acquire()
+        if !acquired {
+            return .init(serverResult: nil, serverError: "浏览器忙（其他操作排队超过 30s），本次调用失败。请稍后重试或改用其他工具。", clientAction: nil)
+        }
+        defer {
+            executionQueue.release()
+            let elapsed = Int(Date().timeIntervalSince(start) * 1000)
+            print("[Browser] execute done: \(tool) elapsed=\(elapsed)ms")
+        }
         return await runExecute(tool: tool, arguments: arguments, context: context)
     }
 
     private func runExecute(tool: String, arguments: [String: Any], context: ExecuteContext) async -> LocalToolResult {
         switch tool {
         case "agent_browser_open":
-            return await handleOpen(arguments)
+            return await handleOpen(arguments, owner: context.owner)
         case "agent_browser_close":
             return handleClose()
         case "agent_browser_close_tab":
-            return handleCloseTab(arguments)
+            return handleCloseTab(arguments, owner: context.owner)
         case "agent_browser_list_tabs":
             return handleListTabs()
         case "agent_browser_switch_tab":
@@ -1311,7 +1349,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return items.first { ($0["handle"] as? Int) == handle }
     }
 
-    private func handleOpen(_ args: [String: Any]) async -> LocalToolResult {
+    private func handleOpen(_ args: [String: Any], owner: String?) async -> LocalToolResult {
         let urlStr = args["url"] as? String ?? ""
         let background = args["background"] as? Bool ?? true
         guard let url = URL(string: urlStr) else {
@@ -1342,6 +1380,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         tabCounter += 1
         let session = TabSession()
         session.isAgentTab = true
+        session.owner = owner
         tabs[tabId] = session
         // 首个 tab 必须激活展示（无可保留的前台页），否则后台打开会得到不显示的 tab
         let activate = !background || tabs.count == 1
@@ -1359,11 +1398,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             session.loadTimeout = Task {
                 try? await Task.sleep(for: .seconds(15))
                 guard !Task.isCancelled else { return }
+                print("[Browser] loadWait resolved: loadTimeout(15s) url=\(urlStr.prefix(80))")
                 cont.resume(returning: "timeout")
                 session.loadContinuation = nil
             }
         }
-
         if let msg = errorMsg {
             rightSidebar?.openTab(id: tabId, title: url.host ?? urlStr, icon: "globe",
                 content: AnyView(BrowserErrorPageView(url: urlStr, error: msg, onRetry: { [weak self] in
@@ -1403,6 +1442,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             session.loadTimeout = Task {
                 try? await Task.sleep(for: .seconds(15))
                 guard !Task.isCancelled else { return }
+                print("[Browser] loadWait resolved: retryLoadTimeout(15s) url=\(url.absoluteString.prefix(80))")
                 cont.resume(returning: "timeout")
                 session.loadContinuation = nil
             }
@@ -1462,10 +1502,15 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// 关闭单个标签页：cancelLoadWait + 侧栏关闭 + 移除 + 若关的是激活页则置空。
     /// 有活跃下载时先弹确认（WKDownload delegate 绑定在 session 上，直接释放会中断下载），确认后才关闭。
-    private func handleCloseTab(_ args: [String: Any]) -> LocalToolResult {
+    private func handleCloseTab(_ args: [String: Any], owner: String?) -> LocalToolResult {
         let tabId = args["tabId"] as? String ?? ""
         guard !tabId.isEmpty, let session = tabs[tabId] else {
             return .init(serverResult: nil, serverError: "tabId 不存在: \(tabId)，请先 list_tabs 获取有效 tabId", clientAction: nil)
+        }
+        // 标签归属保护：并发子任务共享同一浏览器实例，close 会互相踩踏（实测：并行任务
+        // 关掉了其他任务的标签导致数据丢失）。只允许关闭自己的标签（owner 相同）或用户标签。
+        if let tabOwner = session.owner, tabOwner != owner {
+            return .init(serverResult: nil, serverError: "该标签（\(tabId)）属于其他并发任务（\(tabOwner)），不可关闭。list_tabs 中标注了每个标签的归属，只操作标注为你自己的标签", clientAction: nil)
         }
         if session.hasActiveDownloads {
             #if os(macOS)
@@ -1753,26 +1798,28 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// Cmd+W：关闭当前激活 tab（与工具 close_tab 同一收尾路径），无激活 tab 时忽略。
+    /// 用户主动操作：传 tab 自身 owner（self-close，绕过并发任务归属保护）。
     func closeActiveTab() {
-        guard let id = activeTabId, tabs[id] != nil else { return }
-        _ = handleCloseTab(["tabId": id])
+        guard let id = activeTabId, let session = tabs[id] else { return }
+        _ = handleCloseTab(["tabId": id], owner: session.owner)
     }
 
     /// UI（tab 条 X 按钮）关闭指定 tab：与工具 close_tab 同路径（含 closedStack 记录），可被 Cmd+Shift+T 恢复。
     func closeTab(_ id: String) {
-        guard tabs[id] != nil else {
+        guard let session = tabs[id] else {
             rightSidebar?.closeTab(id)
             return
         }
-        _ = handleCloseTab(["tabId": id])
+        _ = handleCloseTab(["tabId": id], owner: session.owner)
     }
 
     /// Cmd+Shift+T：恢复最近关闭的 tab（复用 open 流程开新 tab 并加载原 URL）。
+    /// 用户主动恢复：owner=nil（视为用户标签，不参与并发任务归属保护）。
     func restoreLastClosedTab() {
         guard let last = closedStack.popLast() else { return }
         if let url = last.url, url.scheme == "http" || url.scheme == "https" {
             Task { @MainActor in
-                _ = await handleOpen(["url": url.absoluteString, "background": false])
+                _ = await handleOpen(["url": url.absoluteString, "background": false], owner: nil)
             }
         } else {
             openBlankTab()
@@ -1837,7 +1884,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
         for (id, _) in toClose {
             LogBuffer.shared.info("[Browser] auto-closing idle agent tab: \(id)")
-            _ = handleCloseTab(["tabId": id])
+            // housekeeping 按标签自身 owner self-close（不能传 nil：agent 标签带归属，nil 会被归属保护拦住）
+            _ = handleCloseTab(["tabId": id], owner: tabs[id]?.owner)
         }
     }
 
@@ -2117,7 +2165,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             ["id": id,
              "url": session.webView.url?.absoluteString ?? "",
              "title": session.webView.title ?? "",
-             "isAgentTab": session.isAgentTab]
+             "isAgentTab": session.isAgentTab,
+             "owner": session.owner ?? "user"] // 归属标注：并发任务据此区分自己的标签，避免误关/误用
         }
     }
 
@@ -2173,6 +2222,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         /// agent 打开的标签（用于空闲超时自动关闭，用户自开的标签不受影响）
         var isAgentTab = false
+        /// 标签归属（client_tool_call owner 下发）："main" / "subagent:<convID>"，nil=用户标签。
+        /// 并发子任务共享浏览器实例，close_tab 保护只允许关闭同归属标签（防互相踩踏）。
+        var owner: String?
         /// 最后一次被激活/访问的时间（用于空闲超时判断）
         var lastAccessedAt = Date()
 
@@ -2323,6 +2375,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         func cancelLoadWait() {
+            print("[Browser] loadWait cancelled (cancelLoadWait)")
             loadContinuation?.resume(returning: nil)
             loadContinuation = nil
             loadTimeout?.cancel()
@@ -2331,8 +2384,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             readyPollTask = nil
         }
 
-        /// 统一结束一次加载等待（didFinish/didFail/轮询/超时共用），清理所有等待资源
-        private func resumeLoad(_ value: String?) {
+        /// 统一结束一次加载等待（didFinish/didFail/轮询共用），清理所有等待资源。
+        /// reason 用于诊断"先派发者 open 卡满超时"（排查 load continuation 是否一直未 resume）。
+        private func resumeLoad(_ value: String?, reason: String) {
+            print("[Browser] loadWait resolved: \(reason) value=\(value ?? "nil")")
             loadContinuation?.resume(returning: value)
             loadContinuation = nil
             loadTimeout?.cancel()
@@ -2361,7 +2416,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                         try? await Task.sleep(for: .milliseconds(200))
                         guard let self, !Task.isCancelled else { return }
                         if await self.isPageReady() {
-                            self.resumeLoad(nil)
+                            self.resumeLoad(nil, reason: "readyPoll")
                             return
                         }
                     }
@@ -2369,6 +2424,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 loadTimeout = Task {
                     try? await Task.sleep(for: .milliseconds(timeoutMs))
                     guard !Task.isCancelled else { return }
+                    print("[Browser] loadWait resolved: waitForLoadTimeout(\(timeoutMs)ms)")
                     cont.resume(returning: "timeout")
                     loadContinuation = nil
                     readyPollTask?.cancel()
@@ -2532,7 +2588,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             Task { @MainActor in
-                resumeLoad(nil)
+                resumeLoad(nil, reason: "didFinish")
                 if let url = webView.url { onURLChanged?(url) }
                 await self.logPerf(url: webView.url)
             }
@@ -2576,7 +2632,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             Task { @MainActor in
                 let msg = error.localizedDescription
-                resumeLoad((error as NSError).code == NSURLErrorCancelled ? nil : msg)
+                resumeLoad((error as NSError).code == NSURLErrorCancelled ? nil : msg, reason: "didFail")
                 if (error as NSError).code != NSURLErrorCancelled {
                     onNavigationError?(msg)
                 }
@@ -2587,7 +2643,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             Task { @MainActor in
                 let code = (error as NSError).code
                 let msg = error.localizedDescription
-                resumeLoad(code == NSURLErrorCancelled ? nil : "加载失败: \(msg)")
+                resumeLoad(code == NSURLErrorCancelled ? nil : "加载失败: \(msg)", reason: "didFailProvisional")
                 if code != NSURLErrorCancelled {
                     onNavigationError?("加载失败: \(msg)")
                 }

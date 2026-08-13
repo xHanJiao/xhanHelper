@@ -188,13 +188,13 @@ func TestRunSubAgent_TimeoutSalvagesPartial(t *testing.T) {
 func TestSubAgent_EventForwarding(t *testing.T) {
 	orch := &Orchestrator{}
 	mainEvents := make(chan *llm.StreamEvent, 16)
-	fwd := orch.makeSubAgentForwarder(mainEvents)
+	fwd := orch.makeSubAgentForwarder(mainEvents, "sub-1", "调研LLM")
 
 	// client_tool_call 必须送达
 	fwd(&llm.StreamEvent{Type: "client_tool_call", Content: "payload"})
-	// status 加"子任务"前缀
-	fwd(&llm.StreamEvent{Type: "mini_react:status", Content: "第 2/6 轮"})
-	// tool_call 原样转发
+	// status 打包为 subagent 事件（含 conv_id）
+	fwd(&llm.StreamEvent{Type: "mini_react:status", Content: "第 2/20 轮"})
+	// tool_call 打包为 subagent 事件
 	fwd(&llm.StreamEvent{Type: "mini_react:tool_call", Content: `{"tool":"webfetch"}`})
 	// thought/done 丢弃
 	fwd(&llm.StreamEvent{Type: "mini_react:thought", Content: "思考"})
@@ -211,15 +211,23 @@ func TestSubAgent_EventForwarding(t *testing.T) {
 	if got[0].Type != "client_tool_call" || got[0].Content != "payload" {
 		t.Errorf("client_tool_call 转发错误: %+v", got[0])
 	}
-	if got[1].Type != "status" || got[1].Content != "子任务 · 第 2/6 轮" {
-		t.Errorf("status 应带子任务前缀: %+v", got[1])
+	// subagent 事件：JSON 含 conv_id/description/type/content
+	var e1, e2 subAgentEvent
+	if err := json.Unmarshal([]byte(got[1].Content), &e1); err != nil {
+		t.Fatalf("subagent 事件应为 JSON: %v", err)
 	}
-	if got[2].Type != "tool_call" || !strings.Contains(got[2].Content, "webfetch") {
-		t.Errorf("tool_call 应转主类型转发: %+v", got[2])
+	if e1.ConvID != "sub-1" || e1.Description != "调研LLM" || e1.Type != "status" || e1.Content != "第 2/20 轮" {
+		t.Errorf("status 打包错误: %+v", e1)
+	}
+	if err := json.Unmarshal([]byte(got[2].Content), &e2); err != nil {
+		t.Fatalf("subagent 事件应为 JSON: %v", err)
+	}
+	if e2.Type != "tool_call" || !strings.Contains(e2.Content, "webfetch") {
+		t.Errorf("tool_call 打包错误: %+v", e2)
 	}
 
 	// nil 通道 = 丢弃全部
-	noop := orch.makeSubAgentForwarder(nil)
+	noop := orch.makeSubAgentForwarder(nil, "sub-1", "d")
 	noop(&llm.StreamEvent{Type: "client_tool_call", Content: "x"})
 }
 
@@ -288,10 +296,11 @@ func TestMiniReAct_WhitelistGuard(t *testing.T) {
 	}
 }
 
-func TestMiniReAct_ClientToolTimeoutFastFail(t *testing.T) {
+// 执行超时不置位 unavailable（客户端可能只是慢，可重试）
+func TestMiniReAct_ClientToolTimeoutNoFastFail(t *testing.T) {
 	bridge := NewClientToolBridge()
 	m := NewMiniReAct(&MiniReActConfig{
-		Client:        &blockingLLM{}, // 不会真正走到（第一轮就 timeout）
+		Client:        &blockingLLM{},
 		ToolRegistry:  noopRegistry(),
 		SystemPrompt:  "sys",
 		UserID:        "u1",
@@ -302,16 +311,52 @@ func TestMiniReAct_ClientToolTimeoutFastFail(t *testing.T) {
 			ClientBridge:      bridge,
 			ClientToolTimeout: 30 * time.Millisecond,
 		},
-		OnEvent: func(*llm.StreamEvent) {},
+		OnEvent: func(*llm.StreamEvent) bool { return true },
 	})
-	// 直接测 execClientTool：首个超时 → 置位 → 后续快速失败
+	// 首个超时：不置位，可重试
+	_, unavailable := m.execClientTool(context.Background(), tool.ToolCall{Tool: "browser", Function: "navigate"})
+	if unavailable {
+		t.Fatal("执行超时不应标记不可用")
+	}
+	if m.clientToolsUnavailable {
+		t.Fatal("执行超时不应置位 clientToolsUnavailable")
+	}
+	// 后续调用真实执行（再超时），而非快速失败
+	r, _ := m.execClientTool(context.Background(), tool.ToolCall{Tool: "browser", Function: "navigate"})
+	if r.Success || strings.Contains(r.Error, "已跳过") {
+		t.Errorf("超时后应可重试（真实执行）: %+v", r)
+	}
+}
+
+// 送达失败（事件未到客户端）= 真断连：置位 unavailable，后续快速失败
+func TestMiniReAct_ClientToolSendFailFastFails(t *testing.T) {
+	bridge := NewClientToolBridge()
+	m := NewMiniReAct(&MiniReActConfig{
+		Client:        &blockingLLM{},
+		ToolRegistry:  noopRegistry(),
+		SystemPrompt:  "sys",
+		UserID:        "u1",
+		MaxIterations: 5,
+		Caller:        "test",
+		SubAgent: SubAgentExt{
+			ClientTools:       []ClientTool{{ServerName: "browser", Name: "navigate", IsReadOnly: true}},
+			ClientBridge:      bridge,
+			ClientToolTimeout: 2 * time.Second,
+		},
+		// 模拟事件送达失败（forwarder 5s 超时丢弃）：OnEvent 返回 false
+		OnEvent: func(*llm.StreamEvent) bool { return false },
+	})
 	_, unavailable := m.execClientTool(context.Background(), tool.ToolCall{Tool: "browser", Function: "navigate"})
 	if !unavailable {
-		t.Fatal("首个客户端工具超时应标记不可用")
+		t.Fatal("送达失败应标记不可用（真断连）")
 	}
+	if !m.clientToolsUnavailable {
+		t.Fatal("送达失败应置位 clientToolsUnavailable")
+	}
+	// 后续快速失败
 	r, _ := m.execClientTool(context.Background(), tool.ToolCall{Tool: "browser", Function: "navigate"})
 	if r.Success || !strings.Contains(r.Error, "已跳过") {
-		t.Errorf("后续客户端工具应快速失败: %+v", r)
+		t.Errorf("断连后后续客户端工具应快速失败: %+v", r)
 	}
 }
 
@@ -378,6 +423,11 @@ func TestRunSubAgent_CostScenario(t *testing.T) {
 	})
 	if !res.Success {
 		t.Fatalf("RunSubAgent: %+v", res)
+	}
+	// CostTracker record 是异步的（go t.record），轮询等待
+	deadline := time.Now().Add(2 * time.Second)
+	for len(rec.records) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
 	}
 	if len(rec.records) != 1 {
 		t.Fatalf("应记录 1 条成本, got %d", len(rec.records))
@@ -479,5 +529,61 @@ func TestRunSubAgent_ClosesTabsOnEnd(t *testing.T) {
 	case tabID := <-closed:
 		t.Errorf("不应重复关闭 tab: %s", tabID)
 	default:
+	}
+}
+
+// TestRunSubAgent_EmitsStartEnd — 子任务活动面板 start/end 事件
+func TestRunSubAgent_EmitsStartEnd(t *testing.T) {
+	convRepo, msgRepo, _, cleanup := setupSubAgentRepos(t)
+	defer cleanup()
+	ctx := context.Background()
+	if err := convRepo.Create(ctx, &model.Conversation{ID: "main-1", UserID: "u1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	orch := newSubAgentOrchestrator(&syncMockLLM{responses: []llm.Message{{Content: "结论"}}}, convRepo, msgRepo)
+	mainEvents := make(chan *llm.StreamEvent, 16)
+	startCh := make(chan subAgentEvent, 2)
+	go func() {
+		for evt := range mainEvents {
+			if evt.Type != "subagent" {
+				continue
+			}
+			var e subAgentEvent
+			if json.Unmarshal([]byte(evt.Content), &e) == nil {
+				startCh <- e
+			}
+		}
+	}()
+
+	res := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
+		SubAgentType: "explore", Description: "调研", Prompt: "p", ParentConvID: "main-1", MainEvents: mainEvents,
+	})
+	if !res.Success {
+		t.Fatalf("RunSubAgent: %+v", res)
+	}
+	// start 事件
+	select {
+	case e := <-startCh:
+		if e.Type != "start" || e.State != "started" || e.ConvID != res.ConvID || e.Description != "调研" {
+			t.Errorf("start 事件错误: %+v", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("未收到 start 事件")
+	}
+	// end 事件（跳过中间的 status/tool_call）
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case e := <-startCh:
+			if e.Type == "end" {
+				if e.State != "completed" || e.ConvID != res.ConvID {
+					t.Errorf("end 事件错误: %+v", e)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("未收到 end 事件")
+		}
 	}
 }

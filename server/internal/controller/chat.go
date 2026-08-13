@@ -274,6 +274,9 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 				view.WriteSSE(w, flusher, "reminders_changed", evt.Content)
 			case "tool_call":
 				view.WriteSSE(w, flusher, "tool_call", evt.Content)
+			case "subagent":
+				// 子任务活动面板事件（start/end/status/tool_call/tool_result，JSON 含 conv_id）
+				view.WriteSSE(w, flusher, "subagent", evt.Content)
 			case "client_tool_call":
 				view.WriteSSE(w, flusher, "client_tool_call", evt.Content)
 			case "tool_result":

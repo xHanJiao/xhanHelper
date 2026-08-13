@@ -37,6 +37,20 @@ struct UserRequest: Identifiable {
     let continuation: CheckedContinuation<String?, Never> // nil=跳过/超时；""=已处理无文本；非空=用户回答
 }
 
+// MARK: - Subagent Session（子任务活动面板）
+
+struct SubagentSession: Identifiable {
+    let convID: String
+    let description: String
+    var state: String      // started/completed/timeout/failed
+    var round: Int?
+    var latestAction: String?
+    var summary: String?
+    var expanded: Bool = false
+    var messages: [Message] = []
+    var id: String { convID }
+}
+
 // MARK: - 工具调用展示（tool_call / tool_result 事件）
 
 struct ToolCallDisplay: Identifiable {
@@ -261,6 +275,9 @@ class ChatViewModel: ObservableObject {
     /// 独立于 toolQueue——不被文本流清理（ToolActivityToast 在文本流开始时退场）。
     @Published var pendingUserRequests: [UserRequest] = []
 
+    /// 子任务活动面板（SubagentPanel）：按 conv_id 归集，独立于消息流。
+    @Published var subagentSessions: [SubagentSession] = []
+
     /// 信任模式（会话级本地状态）：开启后跳过 L3 工具确认，直接执行。
     /// 适合固定流程/重复操作；只影响客户端确认弹窗，服务端零感知。
     /// 换会话（loadConversation）自动关闭，安全默认。
@@ -426,6 +443,83 @@ class ChatViewModel: ObservableObject {
         req.continuation.resume(returning: reply)
     }
 
+    // MARK: - 子任务活动面板（subagent SSE 事件）
+
+    /// 解析 subagent 事件（start/end/status/tool_call/tool_result）并更新活动面板。
+    /// 展开中的会话收到新事件后防抖 1s 重拉 DB 消息（MsgSink 已落库，事件只驱动刷新）。
+    private func handleSubagentEvent(_ data: String) {
+        guard let d = data.data(using: .utf8),
+              let obj = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
+              let convID = obj["conv_id"] as? String else { return }
+        let type = obj["type"] as? String ?? ""
+        let content = obj["content"] as? String ?? ""
+        let state = obj["state"] as? String ?? ""
+        let description = obj["description"] as? String ?? "子任务"
+
+        switch type {
+        case "start":
+            if let idx = subagentSessions.firstIndex(where: { $0.convID == convID }) {
+                subagentSessions[idx].state = "started"
+            } else {
+                subagentSessions.append(SubagentSession(convID: convID, description: description, state: "started"))
+            }
+        case "end":
+            if let idx = subagentSessions.firstIndex(where: { $0.convID == convID }) {
+                subagentSessions[idx].state = state.isEmpty ? "completed" : state
+                subagentSessions[idx].summary = content.isEmpty ? nil : content
+            }
+            scheduleSubagentReload(convID)
+        case "status":
+            if let idx = subagentSessions.firstIndex(where: { $0.convID == convID }) {
+                subagentSessions[idx].round = parseSubagentRound(content)
+            }
+            scheduleSubagentReload(convID)
+        case "tool_call":
+            if let idx = subagentSessions.firstIndex(where: { $0.convID == convID }),
+               let tc = parseToolCall(content) {
+                subagentSessions[idx].latestAction = tc.display
+            }
+        case "tool_result":
+            scheduleSubagentReload(convID)
+        default:
+            break
+        }
+    }
+
+    /// 展开中的会话防抖重拉消息（轮数有限，重复拉取幂等覆盖，不做取消）
+    private func scheduleSubagentReload(_ convID: String) {
+        guard subagentSessions.first(where: { $0.convID == convID })?.expanded == true else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            await reloadSubagentMessages(convID)
+        }
+    }
+
+    /// 拉取子会话完整消息（DB 为准，活动面板展开态渲染）
+    func reloadSubagentMessages(_ convID: String) async {
+        guard let msgs = try? await apiClient.getMessages(conversationId: convID),
+              let idx = subagentSessions.firstIndex(where: { $0.convID == convID }) else { return }
+        subagentSessions[idx].messages = msgs
+    }
+
+    /// 展开/收起子任务卡片；展开时立即拉一次消息
+    func toggleSubagentExpand(_ convID: String) {
+        guard let idx = subagentSessions.firstIndex(where: { $0.convID == convID }) else { return }
+        subagentSessions[idx].expanded.toggle()
+        if subagentSessions[idx].expanded {
+            Task { await reloadSubagentMessages(convID) }
+        }
+    }
+
+    /// 从 MiniReAct 状态文本解析轮次（"第 N/M 轮"）
+    private func parseSubagentRound(_ content: String) -> Int? {
+        let pattern = #"第 (\d+)/"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let m = regex.firstMatch(in: content, range: NSRange(content.startIndex..., in: content)),
+              let r = Range(m.range(at: 1), in: content) else { return nil }
+        return Int(content[r])
+    }
+
     /// ask_user 到达时发 macOS 系统通知（仅队列首个），让用户知道子任务需要他
     private func playAskUserNotification(_ message: String) {
         #if os(macOS)
@@ -500,6 +594,8 @@ class ChatViewModel: ObservableObject {
             // 思考内容会话级：仅切会话时清空（同会话刷新/scene 激活保留折叠态）
             thoughtMessage = nil
             thoughtDone = false
+            // 子任务活动面板同款：仅切会话时清空
+            subagentSessions = []
         }
         // 记录重置前计划指纹与折叠态：同会话重载（scene 激活/刷新/重试）时保持收起状态，
         // 真·新计划（指纹变化/切换会话）仍默认展开。捕获必须在清空之前。
@@ -584,6 +680,7 @@ class ChatViewModel: ObservableObject {
         isStreaming = false
         thoughtMessage = nil
         thoughtDone = false
+        subagentSessions = []
         statusMessage = nil
         errorMessage = nil
         conversationId = ""
@@ -622,6 +719,7 @@ class ChatViewModel: ObservableObject {
         streamingContent = ""
         thoughtMessage = nil
         thoughtDone = false
+        subagentSessions = []
         statusMessage = nil
         errorMessage = nil
         planNodes = []
@@ -778,6 +876,9 @@ class ChatViewModel: ObservableObject {
 
         case .clientToolCall:
             handleClientToolCall(event.data)
+
+        case .subagent:
+            handleSubagentEvent(event.data)
 
         case .done:
             finishStreaming()

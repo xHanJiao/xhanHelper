@@ -31,9 +31,10 @@ extension ChatViewModel {
         let budgetBytes = (obj["result_budget_bytes"] as? NSNumber)?.intValue
         let timeoutSecs = (obj["timeout_secs"] as? NSNumber)?.doubleValue
         let deadline = (timeoutSecs != nil) ? (timeoutSecs! * 0.9) : nil
+        let owner = obj["owner"] as? String
         let api = apiClient
 
-        LogBuffer.shared.info("clientToolCall: \(toolName) call_id=\(callID)")
+        print("clientToolCall: \(toolName) call_id=\(callID) owner=\(owner ?? "nil")")
         Task {
             let isBrowser = toolName.hasPrefix("browser__")
             let isFS = toolName.hasPrefix("fs__")
@@ -102,7 +103,7 @@ extension ChatViewModel {
                 // G2：浏览器工具执行可见性（执行前广播"运行中"，完成/失败消退）
                 if isBrowser { BrowserActivityCenter.shared.start(flatName: toolName, arguments: args) }
 
-                let context = ExecuteContext(budgetBytes: budgetBytes, deadlineSecs: deadline)
+                let context = ExecuteContext(budgetBytes: budgetBytes, deadlineSecs: deadline, owner: owner)
                 let result = try await LocalToolRegistry.shared.execute(
                     flatName: toolName,
                     arguments: args,

@@ -292,7 +292,7 @@ func TestMiniReAct_Events_Sequence(t *testing.T) {
 		UserID:        "user-1",
 		MaxIterations: 5,
 		Caller:        "test",
-		OnEvent:       func(evt *llm.StreamEvent) { evts = append(evts, evt) },
+		OnEvent:       func(evt *llm.StreamEvent) bool { evts = append(evts, evt); return true },
 	})
 
 	result, err := m.Run(context.Background(), "请提取画像")
@@ -376,7 +376,7 @@ func TestMiniReAct_Events_Error(t *testing.T) {
 		UserID:        "user-1",
 		MaxIterations: 5,
 		Caller:        "test",
-		OnEvent:       func(evt *llm.StreamEvent) { evts = append(evts, evt) },
+		OnEvent:       func(evt *llm.StreamEvent) bool { evts = append(evts, evt); return true },
 	})
 	_, err := m.Run(context.Background(), "任务")
 	if err == nil {
@@ -405,7 +405,7 @@ func TestMiniReAct_Events_Thought(t *testing.T) {
 		UserID:        "user-1",
 		MaxIterations: 5,
 		Caller:        "test",
-		OnEvent:       func(evt *llm.StreamEvent) { evts = append(evts, evt) },
+		OnEvent:       func(evt *llm.StreamEvent) bool { evts = append(evts, evt); return true },
 	})
 	if _, err := m.Run(context.Background(), "任务"); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -440,7 +440,7 @@ func TestMiniReAct_Events_ToolCallHasDisplay(t *testing.T) {
 		UserID:        "user-1",
 		MaxIterations: 5,
 		Caller:        "test",
-		OnEvent:       func(evt *llm.StreamEvent) { evts = append(evts, evt) },
+		OnEvent:       func(evt *llm.StreamEvent) bool { evts = append(evts, evt); return true },
 	})
 	if _, err := m.Run(context.Background(), "任务"); err != nil {
 		t.Fatalf("Run: %v", err)

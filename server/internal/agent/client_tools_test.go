@@ -181,18 +181,19 @@ func TestNormalizeClientToolData(t *testing.T) {
 	}
 }
 
-func TestExecuteClientTool_TimeoutSetsUnavailable(t *testing.T) {
+// 执行超时 ≠ 客户端断连（事件已送达、客户端可能只是慢/排队）：不置位 unavailable
+func TestExecuteClientTool_TimeoutNotUnavailable(t *testing.T) {
 	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 50 * time.Millisecond}
 	events := make(chan *llm.StreamEvent, 16)
 
-	r, unavailable := o.executeClientTool(context.Background(), events, "u1", tool.ToolCall{Tool: "browser", Function: "navigate"}, "")
+	r, unavailable := o.executeClientTool(context.Background(), events, "u1", tool.ToolCall{Tool: "browser", Function: "navigate"}, "", "main")
 	if r.Success {
 		t.Error("expected failure on timeout")
 	}
-	if !unavailable {
-		t.Error("timeout should mark client unavailable")
+	if unavailable {
+		t.Error("执行超时不应标记 unavailable（可重试）")
 	}
-	if !strings.Contains(r.Error, "超时") {
+	if !strings.Contains(r.Error, "超时") || !strings.Contains(r.Error, "重试") {
 		t.Errorf("unexpected error: %s", r.Error)
 	}
 }
@@ -220,7 +221,7 @@ func TestExecuteClientTool_ResultDelivered(t *testing.T) {
 		}
 	}()
 
-	r, unavailable := o.executeClientTool(context.Background(), events, "u1", tool.ToolCall{Tool: "browser", Function: "navigate"}, "")
+	r, unavailable := o.executeClientTool(context.Background(), events, "u1", tool.ToolCall{Tool: "browser", Function: "navigate"}, "", "main")
 	if !r.Success || unavailable {
 		t.Fatalf("expected success, got %+v unavailable=%v", r, unavailable)
 	}
@@ -229,7 +230,8 @@ func TestExecuteClientTool_ResultDelivered(t *testing.T) {
 	}
 }
 
-func TestExecuteConcurrently_SkipsClientToolsAfterUnavailable(t *testing.T) {
+// 执行超时不置位 unavailable（可重试）：两个调用都真实执行并各自超时
+func TestExecuteConcurrently_TimeoutDoesNotSetUnavailable(t *testing.T) {
 	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 30 * time.Millisecond}
 	events := make(chan *llm.StreamEvent, 32)
 	state := &reactState{}
@@ -238,22 +240,17 @@ func TestExecuteConcurrently_SkipsClientToolsAfterUnavailable(t *testing.T) {
 		{Tool: "browser", Function: "click"},
 	}
 
-	start := time.Now()
 	results := o.executeConcurrently(context.Background(), events, "u1", "c1",
 		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state, "", nil, nil)
-	elapsed := time.Since(start)
 
-	if !state.clientToolsUnavailable {
-		t.Error("expected clientToolsUnavailable flag set after timeout")
+	if state.clientToolsUnavailable {
+		t.Error("执行超时不应置位 clientToolsUnavailable（可重试）")
 	}
 	if results[0].result.Success || results[1].result.Success {
 		t.Error("both client calls should fail")
 	}
-	if !strings.Contains(results[1].result.Error, "已跳过") {
-		t.Errorf("second call should be skipped fast, got: %s", results[1].result.Error)
-	}
-	if elapsed > 2*time.Second {
-		t.Errorf("second call should not wait another timeout cycle, elapsed=%v", elapsed)
+	if strings.Contains(results[1].result.Error, "已跳过") {
+		t.Errorf("超时不快速失败，second call 应真实执行: %s", results[1].result.Error)
 	}
 }
 

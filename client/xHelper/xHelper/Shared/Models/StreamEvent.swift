@@ -14,6 +14,7 @@ enum StreamEventType: String {
     case toolCall    // tool_call
     case toolResult  // tool_result
     case clientToolCall // client_tool_call — 服务端要求客户端执行本地工具
+    case subagent    // 子任务活动面板事件（start/end/status/tool_call/tool_result，JSON 含 conv_id）
     case remindersChanged // reminders_changed — 服务端通知有新提醒需同步
     case done
     case error

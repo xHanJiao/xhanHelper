@@ -16,6 +16,9 @@ struct LocalToolSchema: @unchecked Sendable {
 struct ExecuteContext: Sendable {
     let budgetBytes: Int?
     let deadlineSecs: TimeInterval?
+    /// 标签归属（client_tool_call payload 下发）："main"=主循环，"subagent:<convID>"=子任务。
+    /// 浏览器工具据此做标签隔离：open 记录归属、list_tabs 标注、close_tab 保护其他归属的标签。
+    let owner: String?
 }
 
 // MARK: - ClientAction

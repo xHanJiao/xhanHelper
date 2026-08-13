@@ -38,6 +38,19 @@ extension ChatViewModel {
             let isBrowser = toolName.hasPrefix("browser__")
             let isFS = toolName.hasPrefix("fs__")
             do {
+                // 子任务用户介入（ask_user）：弹 AskUserBar + 系统通知，等用户 ok/deny
+                if toolName == "ui__ask_user" {
+                    let message = (args["message"] as? String) ?? "子任务需要你的帮助"
+                    LogBuffer.shared.info("askUser: \(message.prefix(120))")
+                    let answered = await self.awaitUserRequest(callID: callID, message: message, timeoutSecs: timeoutSecs)
+                    if answered {
+                        try await api.submitToolResult(callId: callID, resultJSON: Data(#"{"answered":true}"#.utf8))
+                    } else {
+                        try await api.submitToolResult(callId: callID, resultJSON: nil, error: "用户未处理，已跳过")
+                    }
+                    return
+                }
+
                 if isFS {
                     if let blocked = LocalToolRegistry.shared.fsBlockedPaths(arguments: args) {
                         LogBuffer.shared.warning("clientToolCall: \(toolName) blocked: \(blocked)")

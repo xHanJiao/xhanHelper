@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -29,12 +30,36 @@ type MiniReAct struct {
 	systemPrompt     string
 	finalRoundPrompt string // 强制收敛轮指令（主循环耗尽后追加，禁止再调工具）
 	userID           string
+	convID           string // 注入 ExecuteContext（工具按会话上下文工作），空=无
 	maxIterations    int
 	maxToolResult    int
 	caller           string
 	onEvent          func(evt *llm.StreamEvent) // nil = 静默执行（后台 worker 场景）
 	toolCallLog      []ToolCallLog              // 本轮执行的完整工具调用历史
 	thinking         *bool                      // 思考模式（deep mode 用 Pro 时开启），nil 用 LLM 默认
+
+	// subAgent 场景扩展（零值 = 不启用，profile_worker 等既有调用方零变化）
+	subAgent               SubAgentExt
+	clientIdx              map[string]bool // 运行时构建：server_name → 客户端工具分发索引（Run 内初始化）
+	clientToolsUnavailable bool            // 运行时状态：客户端断连/超时后置位，后续客户端工具快速失败
+}
+
+// SubAgentExt — MiniReAct 的 subAgent 场景扩展配置（含客户端工具、白名单、持久化回调）。
+// 零值 = 不启用，profile_worker 等既有调用方零变化。
+type SubAgentExt struct {
+	ClientTools       []ClientTool      // 客户端工具定义（browser 等）
+	ClientBridge      *ClientToolBridge // 客户端工具结果回传桥
+	ClientToolTimeout time.Duration     // 客户端工具执行超时，0 = 60s
+	AllowedTools      map[string]bool   // 运行时白名单 guard，nil=不限
+	MsgSink           MsgSink           // 可选持久化回调，nil=纯内存
+}
+
+// MsgSink — MiniReAct 的可选持久化回调。nil = 纯内存运行（profile_worker 现状）。
+// RunSubAgent 注入落库实现，子会话消息完整落库（可观测/可调试）。
+type MsgSink interface {
+	SaveUserMsg(content string)
+	SaveAssistantMsg(msg llm.Message)
+	SaveToolMsg(toolCallID, content string)
 }
 
 // MiniReActConfig — MiniReAct 依赖配置。
@@ -45,11 +70,15 @@ type MiniReActConfig struct {
 	SystemPrompt     string
 	FinalRoundPrompt string // 强制收敛轮指令（主循环耗尽后追加，禁止再调工具），默认 genericFinalRoundPrompt
 	UserID           string
+	ConvID           string                 // 注入 ExecuteContext，空=无
 	MaxIterations    int                    // 总轮数上限（含强制收敛轮），默认 10
 	MaxToolResult    int                    // 单条工具结果注入上限字符数，默认 2000
 	Caller           string                 // 日志前缀，便于区分调用方
 	Thinking         *bool                  // 思考模式（deep mode 用 Pro 时开启），nil 用 LLM 默认
 	OnEvent          func(*llm.StreamEvent) // 事件回调，nil = 静默执行（后台 worker 场景）
+
+	// subAgent 场景扩展（零值 = 不启用，既有调用方零变化）：
+	SubAgent SubAgentExt
 }
 
 // genericFinalRoundPrompt — 默认强制收敛轮指令。
@@ -87,6 +116,12 @@ func NewMiniReAct(cfg *MiniReActConfig) *MiniReAct {
 	if finalPrompt == "" {
 		finalPrompt = genericFinalRoundPrompt
 	}
+	clientToolTimeout := cfg.SubAgent.ClientToolTimeout
+	if clientToolTimeout <= 0 {
+		clientToolTimeout = 60 * time.Second
+	}
+	subAgent := cfg.SubAgent
+	subAgent.ClientToolTimeout = clientToolTimeout
 	return &MiniReAct{
 		client:           cfg.Client,
 		tools:            cfg.Tools,
@@ -94,11 +129,13 @@ func NewMiniReAct(cfg *MiniReActConfig) *MiniReAct {
 		systemPrompt:     cfg.SystemPrompt,
 		finalRoundPrompt: finalPrompt,
 		userID:           cfg.UserID,
+		convID:           cfg.ConvID,
 		maxIterations:    maxIter,
 		maxToolResult:    maxResult,
 		caller:           caller,
 		onEvent:          cfg.OnEvent,
 		thinking:         cfg.Thinking,
+		subAgent:         subAgent,
 	}
 }
 
@@ -131,6 +168,12 @@ func (m *MiniReAct) Run(ctx context.Context, userMessage string) (*MiniReActResu
 	msgs := []llm.Message{{Role: "user", Content: userMessage}}
 	result := &MiniReActResult{}
 	m.toolCallLog = nil
+	m.clientIdx = clientToolIndex(m.subAgent.ClientTools, m.toolRegistry)
+	m.clientToolsUnavailable = false
+
+	if m.subAgent.MsgSink != nil {
+		m.subAgent.MsgSink.SaveUserMsg(userMessage)
+	}
 
 	m.emit(&llm.StreamEvent{
 		Type:    MiniReactEventStatus,
@@ -174,6 +217,10 @@ func (m *MiniReAct) Run(ctx context.Context, userMessage string) (*MiniReActResu
 			m.emit(&llm.StreamEvent{Type: MiniReactEventThought, Content: resp.ReasoningContent})
 		}
 
+		if m.subAgent.MsgSink != nil {
+			m.subAgent.MsgSink.SaveAssistantMsg(llm.Message{Role: "assistant", Content: resp.Content, ToolCalls: resp.ToolCalls})
+		}
+
 		if len(resp.ToolCalls) > 0 {
 			log.Printf("mini_react[%s] iter=%d/%d: tool_calls=%d", m.caller, iter+1, m.maxIterations, len(resp.ToolCalls))
 			result.ToolCalls += len(resp.ToolCalls)
@@ -213,6 +260,9 @@ func (m *MiniReAct) Run(ctx context.Context, userMessage string) (*MiniReActResu
 		m.logToolCallLog(result.ToolCallLog)
 		m.emit(&llm.StreamEvent{Type: MiniReactEventError, Error: err.Error()})
 		return result, fmt.Errorf("mini_react[%s] final round: %w", m.caller, err)
+	}
+	if m.subAgent.MsgSink != nil {
+		m.subAgent.MsgSink.SaveAssistantMsg(llm.Message{Role: "assistant", Content: resp.Content})
 	}
 
 	result.FinalContent = resp.Content
@@ -258,6 +308,7 @@ func (m *MiniReAct) emitDone(result *MiniReActResult) {
 
 // executeToolCalls 执行原生 FC 返回的工具调用，将结果以 role=tool 追加到 msgs。
 // 每次调用发送 tool_call + tool_result 事件，并累积到 m.toolCallLog。
+// 分发顺序：白名单 guard → 客户端工具（clientIdx）→ 服务端 registry。
 func (m *MiniReAct) executeToolCalls(ctx context.Context, msgs []llm.Message, nativeTCs []llm.ToolCall) []llm.Message {
 	internal := nativeToolCallsToInternal(nativeTCs)
 	for i, tc := range internal {
@@ -267,16 +318,24 @@ func (m *MiniReAct) executeToolCalls(ctx context.Context, msgs []llm.Message, na
 		}
 
 		var result *tool.Result
-		func() {
-			defer func() {
-				if p := recover(); p != nil {
-					log.Printf("mini_react[%s] tool exec panic: %s.%s panic=%v", m.caller, tc.Tool, tc.Function, p)
-					result = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
-				}
+		if m.subAgent.AllowedTools != nil && !m.subAgent.AllowedTools[tc.Tool] {
+			// 白名单 guard：LLM 幻觉出未授权工具（原生 FC 下本不应发生，防御性拦截）
+			log.Printf("mini_react[%s] whitelist guard: %s not allowed", m.caller, tc.Tool)
+			result = &tool.Result{Success: false, Error: fmt.Sprintf("子任务无权调用工具 '%s'（不在白名单中）", tc.Tool)}
+		} else if m.clientIdx[tc.Tool] {
+			result, _ = m.execClientTool(ctx, tc)
+		} else {
+			func() {
+				defer func() {
+					if p := recover(); p != nil {
+						log.Printf("mini_react[%s] tool exec panic: %s.%s panic=%v", m.caller, tc.Tool, tc.Function, p)
+						result = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
+					}
+				}()
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: m.userID, ConvID: m.convID, Mode: model.ConvModeWork}
+				result = m.toolRegistry.ExecuteByName(ec, tc.Tool, tc.Function, tc.Args)
 			}()
-			ec := &tool.ExecuteContext{Ctx: ctx, UserID: m.userID, Mode: model.ConvModeWork}
-			result = m.toolRegistry.ExecuteByName(ec, tc.Tool, tc.Function, tc.Args)
-		}()
+		}
 
 		m.toolCallLog = append(m.toolCallLog, ToolCallLog{
 			Tool:     tc.Tool,
@@ -292,9 +351,50 @@ func (m *MiniReAct) executeToolCalls(ctx context.Context, msgs []llm.Message, na
 		if m.maxToolResult > 0 && len(resJSON) > m.maxToolResult {
 			resJSON = resJSON[:m.maxToolResult]
 		}
+		if m.subAgent.MsgSink != nil {
+			m.subAgent.MsgSink.SaveToolMsg(nativeTCs[i].ID, string(resJSON))
+		}
 		log.Printf("mini_react[%s]   exec %s.%s success=%v result_bytes=%d", m.caller, tc.Tool, tc.Function, result.Success, len(resJSON))
 		m.emit(&llm.StreamEvent{Type: MiniReactEventToolResult, Content: string(resJSON)})
 		msgs = append(msgs, llm.Message{Role: "tool", Content: string(resJSON), ToolCallID: nativeTCs[i].ID})
 	}
 	return msgs
+}
+
+// clientToolBudgetFor 计算客户端工具的执行预算（clientToolCaller 的等待超时）。
+// ui server（ask_user 用户介入）特判：用户思考时间不计入 120s 默认预算，
+// 用 ctx 剩余时间（subAgent 600s 总预算自然封顶）；无 deadline 时回退默认值。
+func (m *MiniReAct) clientToolBudgetFor(ctx context.Context, toolName string) time.Duration {
+	if toolName == "ui" {
+		if dl, ok := ctx.Deadline(); ok {
+			if remaining := time.Until(dl); remaining > 0 {
+				return remaining
+			}
+		}
+	}
+	return m.subAgent.ClientToolTimeout
+}
+
+// execClientTool 经共享 clientToolCaller 分派客户端工具。
+// 超时/断连后置位 clientToolsUnavailable，本次 Run 内后续客户端工具快速失败。
+// 例外：ui 工具（ask_user 用户介入）豁免 fast-fail——它只依赖客户端 UI 展示，
+// 不依赖浏览器执行链路；客户端真断连时由 client_tool_call 5s 送达超时兜底报错。
+func (m *MiniReAct) execClientTool(ctx context.Context, tc tool.ToolCall) (*tool.Result, bool) {
+	if m.clientToolsUnavailable && tc.Tool != "ui" {
+		return &tool.Result{Success: false,
+			Error: "客户端本地工具不可用（本轮已发生断连或超时），已跳过 " + tc.Tool + "." + tc.Function + "。"}, false
+	}
+	cc := &clientToolCaller{bridge: m.subAgent.ClientBridge, timeout: m.clientToolBudgetFor(ctx, tc.Tool)}
+	r, unavailable := cc.Call(ctx,
+		// MiniReAct 无内部 channel：事件经 onEvent 回调转发（RunSubAgent 的 forwarder 提供阻塞送达语义）
+		func(evt *llm.StreamEvent) bool {
+			m.emit(evt)
+			return true
+		},
+		func(evt *llm.StreamEvent) { m.emit(evt) },
+		m.userID, tc, model.ConvModeWork)
+	if unavailable {
+		m.clientToolsUnavailable = true
+	}
+	return r, unavailable
 }

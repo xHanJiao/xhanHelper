@@ -1,6 +1,9 @@
 import Combine
 import Foundation
 import SwiftUI
+#if os(macOS)
+import UserNotifications
+#endif
 #if os(iOS)
 import UIKit
 #endif
@@ -23,6 +26,14 @@ struct ToolConfirmation: Identifiable {
     let toolName: String
     let displayName: String
     let argsSummary: String
+    let continuation: CheckedContinuation<Bool, Never>
+}
+
+// MARK: - User Request（子任务 ask_user 用户介入）
+
+struct UserRequest: Identifiable {
+    let id: String // call_id
+    let message: String
     let continuation: CheckedContinuation<Bool, Never>
 }
 
@@ -246,6 +257,10 @@ class ChatViewModel: ObservableObject {
     @Published var pendingToolConfirmation: ToolConfirmation?
     private var confirmationResolved = false
 
+    /// 子任务用户介入请求（ask_user）：数组支持多 task 并发排队。
+    /// 独立于 toolQueue——不被文本流清理（ToolActivityToast 在文本流开始时退场）。
+    @Published var pendingUserRequests: [UserRequest] = []
+
     /// 信任模式（会话级本地状态）：开启后跳过 L3 工具确认，直接执行。
     /// 适合固定流程/重复操作；只影响客户端确认弹窗，服务端零感知。
     /// 换会话（loadConversation）自动关闭，安全默认。
@@ -383,6 +398,44 @@ class ChatViewModel: ObservableObject {
         BrowserActivityCenter.shared.dismissConfirmation()
         #endif
         conf.continuation.resume(returning: allow)
+    }
+
+    /// 子任务请求用户介入（ask_user）：弹 AskUserBar + 系统通知（仅队列首个发，避免轰炸）。
+    /// 等待用户 ok/deny；超时（下发 timeout_secs×0.9，至少 10s）视为跳过。
+    /// 返回 true=用户已处理。
+    func awaitUserRequest(callID: String, message: String, timeoutSecs: Double?) async -> Bool {
+        let timeout = max(10, (timeoutSecs ?? 120) * 0.9)
+        return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            pendingUserRequests.append(UserRequest(id: callID, message: message, continuation: cont))
+            if pendingUserRequests.count == 1 {
+                playAskUserNotification(message)
+            }
+            // 超时自动跳过。并发安全性：只有该 callID 仍在队列时才 resolve（防止已手动响应后的双重 resume）
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(timeout))
+                guard let self, self.pendingUserRequests.contains(where: { $0.id == callID }) else { return }
+                self.resolveUserRequest(callID: callID, answered: false)
+            }
+        }
+    }
+
+    /// 用户响应 ask_user：answered=true 已处理，false 跳过
+    func resolveUserRequest(callID: String, answered: Bool) {
+        guard let idx = pendingUserRequests.firstIndex(where: { $0.id == callID }) else { return }
+        let req = pendingUserRequests.remove(at: idx)
+        req.continuation.resume(returning: answered)
+    }
+
+    /// ask_user 到达时发 macOS 系统通知（仅队列首个），让用户知道子任务需要他
+    private func playAskUserNotification(_ message: String) {
+        #if os(macOS)
+        let content = UNMutableNotificationContent()
+        content.title = "子任务需要你"
+        content.body = message
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: "ask_user_\(UUID().uuidString)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { _ in }
+        #endif
     }
 
     /// L3 确认出现时播放提示音（macOS：Glass 系统音，设置可关；iOS 静默）。

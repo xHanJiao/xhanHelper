@@ -28,6 +28,7 @@ type Config struct {
 	Reflection        ReflectionConfig        `yaml:"reflection"`
 	Retrieval         RetrievalConfig         `yaml:"retrieval"`
 	WebFetch          WebFetchConfig          `yaml:"webfetch"`
+	SubAgent          SubAgentConfig          `yaml:"subagent"`
 	Chat              ChatConfig              `yaml:"chat"`
 	Share             ShareConfig             `yaml:"share"`
 	Snowflake         SnowflakeConfig         `yaml:"snowflake"`
@@ -57,6 +58,12 @@ type WebFetchConfig struct {
 	Enabled        bool `yaml:"enabled"`         // 是否启用 webfetch（默认 false 关闭；启用后仅 subAgent 可见）
 	TimeoutSeconds int  `yaml:"timeout_seconds"` // 抓取超时秒数，默认 15
 	MaxBytes       int  `yaml:"max_bytes"`       // 正文大小上限（字节），默认 51200
+}
+
+// SubAgentConfig — 子 agent（task 工具）配置
+type SubAgentConfig struct {
+	ExploreMaxIterations  int `yaml:"explore_max_iterations"`  // explore 子 agent 最大轮次（含强制收敛轮），默认 20（防死循环兜底，timeout 才是真实预算）
+	ExploreTimeoutSeconds int `yaml:"explore_timeout_seconds"` // explore 子 agent 执行超时秒数，默认 600
 }
 
 // MCPServerCfg — 单个 MCP server 配置

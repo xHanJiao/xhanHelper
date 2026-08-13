@@ -23,6 +23,7 @@
 | re_act_loop | `agent/orchestrator.go:682` | Chat（流式） | Flash/Pro | 用户每次发消息 |
 | verify | `agent/orchestrator.go:977` | ChatSync | Flash/Pro | ReAct 结束后幻觉验证 |
 | title | `agent/orchestrator.go:1775` | ChatSync | Flash | 新会话首条消息后 |
+| sub_agent_run | `agent/subagent.go`（RunSubAgent） | ChatSync | Flash | task 工具派生子 agent，子循环每轮 |
 
 ### 对话后处理（post_chat）
 

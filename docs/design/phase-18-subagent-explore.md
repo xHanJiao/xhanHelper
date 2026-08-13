@@ -400,21 +400,23 @@ func (t *TaskTool) Name() string                     { return "task" }
 func (t *TaskTool) ReadOnlyFuncs() map[string]bool   { return AllReadOnly(t) }
 
 func (t *TaskTool) Description() string {
-    return `启动一个子 agent 独立完成复杂任务，执行完毕后返回结果。
+    return `启动一个子 agent 独立完成单一目标的小粒度任务，执行完毕后返回结果。
+
+核心原则：一个 task 只做一件事。任务应在子 agent 有限的轮次预算内完成；大任务拆成多个 task 并行，不要塞进一个 task。
 
 何时使用：
-- 需要联网调研多步信息（搜索 → 抓取多个网页 → 提炼结论）
-- 多个独立任务可并行执行
+- 需要联网调研多步信息（搜索 → 浏览网页 → 提炼结论）
+- 多个独立子任务可并行（利用并行加速）
 - 任务量大、需要独立上下文避免污染当前对话
 
 何时不用：
 - 单次简单的查询/计算/查笔记 → 直接用对应工具
-- 任务短小、一两个工具调用就能完成
+- 目标不明确、方向需用户中途决策 → 先与用户澄清，不要贸然派 task
+- 任务太大（预计超出子 agent 轮次预算）→ 拆成多个 task
 
 用法：
-- 可一次并发多个 task（利用并行加速）
-- 子任务的内部思考与最终回复不展示给用户（用户仅看到子任务的工具调用过程），你必须用自然语言总结转发给用户
-- prompt 要写详细：明确要做什么、期望返回什么、用什么格式`
+- 子任务的内部思考与最终回复不展示给用户（用户仅看到工具调用过程），你必须用自然语言总结转发给用户
+- prompt 要写详细：单一目标、明确要调研什么、返回什么格式`
 }
 
 func (t *TaskTool) Functions() []FuncSchema {
@@ -426,7 +428,7 @@ func (t *TaskTool) Functions() []FuncSchema {
             "properties": map[string]interface{}{
                 "description": map[string]interface{}{
                     "type":        "string",
-                    "description": "任务简短描述（3-5 词，如 调研XX技术）",
+                    "description": "任务简短描述（3-5 词，用作子任务标题，如 调研XX技术）",
                 },
                 "subagent_type": map[string]interface{}{
                     "type":        "string",
@@ -434,7 +436,15 @@ func (t *TaskTool) Functions() []FuncSchema {
                 },
                 "prompt": map[string]interface{}{
                     "type":        "string",
-                    "description": "给子 agent 的完整任务描述。必须自包含（子 agent 不共享当前对话上下文）。写明要调研什么、要返回什么、遵循什么格式。",
+                    "description": `给子 agent 的完整任务描述。必须自包含（子 agent 不共享当前对话上下文）。
+
+任务必须单一目标、小粒度（一次信息收集循环能完成）；大任务拆成多个 task 并行。
+
+拆分示例（用户请求 → 多个子 task）：
+- "调研 Vue/React/Svelte 哪个适合我" → 拆 3 个 task："调研 Vue 3.5 特性与适用场景"、"调研 React 19 特性与适用场景"、"调研 Svelte 5 特性与适用场景"，全部完成后由你综合对比给出建议
+- "调研 AI 行业动态" → 目标太宽泛，先与用户确认具体方向（如大模型/Agent/具身智能），再按主题拆 task
+- "调研 DeepSeek 上下文缓存机制" → 单一主题，一个 task 搞定：机制原理、计费方式、适用场景
+- "帮我搞定毕业论文" → 粒度太大且需用户中途决策，应分步进行，不要一次派 task`,
                 },
             },
             "required": []interface{}{"description", "subagent_type", "prompt"},
@@ -592,13 +602,13 @@ const explorePrompt = `你是联网调研专家，擅长通过网页抓取与本
 </research_result>`
 
 // exploreWhitelist — explore 子 agent 可用工具白名单
+// 数据边界：仅保留笔记检索（search_notes_v2）；记忆/历史/摘要（unified_search、
+// search_memories_v2、message_search）对子任务不可见——子任务不应自动读取私密对话数据
 var exploreWhitelist = []string{
     "webfetch",
     "browser",
-    "unified_search",
-    "search_memories_v2",
+    "ui", // 用户介入（ask_user），仅客户端在线时注入 defs
     "search_notes_v2",
-    "message_search",
     "datetime",
     "calculator",
 }
@@ -695,7 +705,7 @@ tools = append(tools, filterClientToolsByWhitelist(buildClientToolDefs(agentClie
 ```go
 maxIter := o.subAgentMaxIterations
 if maxIter <= 0 {
-    maxIter = 6
+    maxIter = 20 // 兜底防死循环（timeout 才是真实预算）
 }
 react := NewMiniReAct(&MiniReActConfig{
     Client:            o.flashClient, // 子 agent 固定 Flash
@@ -733,7 +743,7 @@ react := NewMiniReAct(&MiniReActConfig{
 ```go
 timeout := o.subAgentTimeout
 if timeout <= 0 {
-    timeout = 300
+    timeout = 600
 }
 subCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 defer cancel()
@@ -865,8 +875,8 @@ func (cc *clientToolCaller) Call(
 
 ```yaml
 subagent:
-  explore_max_iterations: 6
-  explore_timeout_seconds: 300
+  explore_max_iterations: 20    # 防死循环兜底（timeout 才是真实预算）；轮次太多任务转不完
+  explore_timeout_seconds: 600
 ```
 
 `config/config.go` 新增：
@@ -927,6 +937,90 @@ SubAgentTimeoutSecs:   cfg.SubAgent.ExploreTimeoutSeconds,
   5. 子会话在 DB 中存在（`parent_id` 指向主会话），消息完整落库
 - 子会话中 webfetch 和 browser（如 Mac App 在线）能正常使用
 - 主会话的 tool_call toast 正确显示 task 工具调用状态
+
+### 3.10 用户介入机制（ask_user）
+
+**动机**：explore 走 browser 时可能遇到验证码/登录墙，需要用户介入才能继续。子 agent 在后台操作浏览器 tab，用户对"需要他"这件事完全无感知——必须要有显式的唤醒机制。**设计原则：子 agent 不主动中断用户，但必须能让用户知道并响应。**
+
+**方案**：`ui__ask_user` 特殊客户端工具——复用现有客户端工具协议（client_tool_call 事件 + tool-result 回传），零新协议。
+
+#### 3.10.1 数据流
+
+```
+子循环 LLM 调 ui__ask_user(message)
+  → MiniReAct execClientTool（ui 特殊预算：subCtx 剩余时间）
+  → client_tool_call SSE → 主循环 forwarder 转发（已有逻辑）
+  → 客户端 handleClientToolCall 识别 ui__ask_user → 弹 AskUserBar + 系统通知
+  → 用户点 [已处理] → submitToolResult(result: {"answered":true})
+  → 用户点 [跳过] / UI 超时 → submitToolResult(error: "用户未处理，已跳过")
+  → 子循环 LLM 收到结果：已处理则继续当前操作；跳过则换来源
+```
+
+**仅子循环可见**：ui 工具由服务端在 `RunSubAgent` 注入 `SubAgentExt.ClientTools`，主循环 defs 不含它——主 agent 用自然语言对话，不需要该工具。**注入条件**：仅当客户端工具非空（Mac 客户端在线）时注入——纯 Vue 场景无浏览器，ask_user 无意义。
+
+#### 3.10.2 服务端改动
+
+| 文件 | 改动 |
+|------|------|
+| `agent/client_tools.go` | `buildAskUserDef()`：构造 `ui` server + `ask_user` 函数 def。参数：`message` 必填（展示给用户的话术）、`context` 可选 |
+| `agent/subagent.go` | 注入 ui 工具；explorePrompt 加规则（见下） |
+| `agent/mini_react.go` | `execClientTool` 对 `ui` server 特判：预算 = subCtx 剩余时间（600s 总预算封顶）而非 120s 客户端默认 |
+
+**explorePrompt 新增规则**：
+- 仅在必须用户介入时调用 ask_user（验证码、登录墙等），一次只请求一个用户动作
+- message 必须指明哪个页面/tab（如"XX 网站的验证码，请处理"）——多子任务并发时用户才能区分
+- 用户跳过或超时后必须换方案，不得重复请求同一动作
+
+**不做硬限次**：浏览器验证码可能反复出现（换页面又遇验证码），子循环允许多次 ask_user。
+
+#### 3.10.3 客户端改动（Mac）
+
+| 文件 | 改动 |
+|------|------|
+| `ChatViewModel` | 新发布状态 `pendingUserRequests: [UserRequest]`（数组，多 task 并行排队），独立于 toolQueue——**不被文本流清理**（ToolActivityToast 在文本流开始时清 toolQueue 退场，不能承载 ask_user） |
+| 新组件 `AskUserBar` | 非模态悬浮条，位置在输入栏上方（与 L3 确认条同区）：图标 + 话术 + [已处理] [跳过] 按钮；持续驻留直到响应或超时 |
+| `ChatViewModel+ClientTools.swift` | `ui__ask_user` 分支：发系统通知 + 弹条 + 等待（timeout_secs × 0.9 超时视为跳过）→ submitToolResult |
+
+**多请求行为**：
+- 每请求完全独立：callID 隔离、独立 deadline、独立等待 Task（客户端现有 client_tool_call 已按事件开独立 Task）
+- **堆叠 + 折叠**：第 1 个完整展示（图标+文案+按钮）；第 2+ 个折叠为"+N 个待处理"，点击展开列表；响应/超时后队列前进
+- **通知策略**：只有第 1 个请求发系统通知（带声音）；后续只弹条不发通知，避免通知轰炸；队列清空后新请求到达再发一次
+- 同一子循环连续 ask_user 天然串行（等待期间子循环阻塞），不会同时出现两个
+- 不设请求数硬上限——响应/超时自然消化
+
+**注意（既有问题非新增）**：浏览器是单例（`BrowserToolProvider.shared`），多子循环并发操作浏览器本身可能互踩 tab——ask_user 的 message 必须带页面上下文以帮助用户区分（见 explorePrompt 规则）。
+
+#### 3.10.4 测试
+
+| 测试 | 覆盖点 |
+|------|--------|
+| `TestAskUserDef_InjectedOnlyWithClientTools` | 客户端工具非空才注入 ui 工具；空则无 |
+| `TestMiniReAct_AskUserBudget` | ui 工具预算 = subCtx 剩余时间（<120s 时取剩余值，无 deadline 时用默认） |
+| `TestAskUser_DefStructure` | buildAskUserDef 参数结构（message 必填/context 可选） |
+| 真机（Xcode 验证） | 验证码页面 → 弹条 + 通知出现 → [已处理] 子循环继续 / [跳过] 子循环换来源 / UI 超时视为跳过 |
+
+#### 3.10.5 明确不做
+
+- 自由文本回复（先 ok/deny，文本输入后续再加）
+- ask_user 硬限次（验证码反复出现，需多次介入）
+- Vue 前端适配（无浏览器场景注入条件已排除）
+
+#### 3.10.6 真机反馈修复（首轮实测）
+
+首轮真机三个并行调研任务的教训与修复：
+
+| 问题 | 现象 | 修复 |
+|------|------|------|
+| P0 失败不传播 | open 返回 success=true 但内嵌 error:timeout/Cloudflare 验证页，LLM 误判成功无效重试 10 次耗尽 tab 配额 | 客户端：加载失败/超时、拦截页标题（Attention Required/Cloudflare/403）、wait_for_load 超时一律走 serverError 硬失败（BrowserToolProvider） |
+| P0 拦截止损 | 对 Cloudflare/403 结构性拦截站不死心反复重试 | 服务端 explorePrompt 规则：识别拦截特征 → 立即换源；同域名失败 2 次禁试；tab 节制（后台打开/读完即关/活跃 ≤3） |
+| P0 ask_user 被 fast-fail 拦截 | 浏览器断连后 ask_user 也报"客户端不可用"，子任务想求助都找不到人 | 服务端：fast-fail 对 ui 工具豁免（ask_user 不依赖浏览器链路，断连由 5s 送达超时兜底） |
+| P1 浏览器并发竞争 | 三任务并行共享 BrowserToolProvider 单例，tab 配额全局共享，可能压垮 WebView 进程 | 客户端：浏览器工具执行串行队列（持锁），所有调用排队 |
+| 成本中心缺失 | 子循环 LLM 调用未记录成本 | 服务端：subCtx 注入 Scenario（main_chat/sub_agent_run，ConvID=子会话，Meta 含 subagent_type/description） |
+| 轮次过大 | 50 轮兜底太大，任务转不完 | explore_max_iterations 50 → 20 |
+| 数据边界 | 子任务可读记忆/历史/摘要（私密对话数据） | 白名单收窄：仅保留笔记检索（search_notes_v2）；unified_search/search_memories_v2/message_search 移除；prompt 声明边界 |
+| tab 配额不友好 | 10 tab 上限对调研任务太紧 | 客户端配额 10 → 20；子任务结束时服务端清理本次打开的全部标签（collectTabIDsFromLog + close_tab，只清自己的，10s/tab 超时，失败忽略由 housekeeping 兜底） |
+
+**后处理防线**：子会话消息（MsgSink 落库）带 `IsSubAgent` 标记，MessageRepo 按用户扫描的查询（CountRecent/SearchMessagesByCursor/CountMessages——反射活动统计与 message_search 聚合）统一排除，杜绝子会话消息进入任何后台后处理。
 
 ---
 
@@ -1004,6 +1098,7 @@ SubAgentTimeoutSecs:   cfg.SubAgent.ExploreTimeoutSeconds,
 | 结果 | `<task id state>` XML 包裹 | 同左；超时/失败带部分成果，state=timeout/failed |
 | 并行 | 一条消息多个 task 并发执行 | 复用现有 executeConcurrently |
 | 深度限制 | subagent_depth 配置 | 写死 1 层（ParentID 链 ≥1 拒绝） |
+| 用户介入 | — | `ui__ask_user` 客户端工具（仅子循环注入），AskUserBar + 系统通知（见 3.10） |
 | 续跑 | task_id 复用子会话 | Phase 19 |
 | 后台模式 | background job + 完成注入 | Phase 19 |
 
@@ -1013,5 +1108,6 @@ SubAgentTimeoutSecs:   cfg.SubAgent.ExploreTimeoutSeconds,
 |------|------|------|
 | Phase 18-1 | `tool/webfetch.go`、`tool/webfetch_test.go`、`tool/registry_hidden_test.go` | `appinit/tools.go`、`tool/registry.go`、`conf/config.yaml`、`internal/config/config.go`、`internal/app/init_repos.go`、删除 `tool/search.go` `tool/search_bocha.go` |
 | Phase 18-2 | `tool/subagent.go`、`tool/task.go` | `model/conversation.go`、`tool/tool.go`、`service/conversation_repo.go`、`agent/orchestrator.go` |
-| Phase 18-3 | `agent/subagent.go`、`agent/subagent_test.go` | `agent/client_tools.go`、`agent/mini_react.go`、`appinit/agents.go`、`conf/config.yaml` |
+| Phase 18-3 | `agent/subagent.go`、`agent/subagent_test.go` | `agent/client_tools.go`、`agent/mini_react.go`、`agent/orchestrator.go`、`internal/config/config.go`、`appinit/agents.go`、`conf/config.yaml` |
+| Phase 18-3 客户端（ask_user，见 3.10） | `client/.../Views/AskUserBar.swift` | `client/.../ChatViewModel.swift`、`client/.../ChatViewModel+ClientTools.swift` |
 | Phase 18-4 | — | 文档更新 |

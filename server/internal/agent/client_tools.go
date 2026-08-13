@@ -1,11 +1,15 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/tool"
@@ -125,6 +129,42 @@ func clientToolIndex(clientTools []ClientTool, registry *tool.Registry) map[stri
 	return idx
 }
 
+// buildAskUserDef 构造 ui server 的 ask_user 工具定义（子循环注入用）。
+// ask_user 是"用户介入"特殊客户端工具：仅 subAgent 可见，主循环 defs 不含它——
+// 由 RunSubAgent 注入 SubAgentExt.ClientTools，客户端 handleClientToolCall 识别
+// ui__ask_user 走 AskUserBar 分支（弹条 + 系统通知 + 等待用户 ok/deny）。
+func buildAskUserDef() llm.ToolDefinition {
+	return llm.ToolDefinition{
+		Name:        "ui",
+		Description: "Mac 客户端 UI 工具",
+		Functions: []llm.FuncDef{
+			{
+				Name:        "ask_user",
+				Description: "必须用户介入时调用：请求用户处理浏览器页面上的问题（如验证码、登录墙）。用户确认后继续当前操作；用户跳过或超时后必须换方案（换来源/跳过该页），不得重复请求同一动作。一次只请求一个动作，message 必须指明哪个页面/tab。",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"message": map[string]interface{}{
+							"type":        "string",
+							"description": "展示给用户的话术，须指明页面/tab（如『XX 网站的验证码，请处理』）",
+						},
+					},
+					"required": []interface{}{"message"},
+				},
+			},
+		},
+	}
+}
+
+// appendAskUserTool 客户端在线（ClientTools 非空）时注入 ask_user 工具定义。
+// 返回 (defs, 是否注入)。纯 Vue/无浏览器场景不注入——ask_user 无意义。
+func appendAskUserTool(tools []llm.ToolDefinition, clientTools []ClientTool) ([]llm.ToolDefinition, bool) {
+	if len(clientTools) == 0 {
+		return tools, false
+	}
+	return append(tools, buildAskUserDef()), true
+}
+
 // toToolClientInfos 将 agent.ClientTool 转换为 tool.ClientToolInfo（ExecuteContext 注入用）。
 // 普通工具无需使用；task 工具通过 ExecuteContext.ClientTools 透传给子循环。
 func toToolClientInfos(clientTools []ClientTool) []tool.ClientToolInfo {
@@ -179,4 +219,90 @@ func normalizeClientToolData(data json.RawMessage) json.RawMessage {
 		return wrapped
 	}
 	return data
+}
+
+// clientToolCaller — 客户端工具执行器（orchestrator / MiniReAct 共用，消除重复实现）。
+type clientToolCaller struct {
+	bridge  *ClientToolBridge
+	timeout time.Duration
+}
+
+// Call 分派一次客户端工具调用，阻塞等待客户端回传。
+// mustSend：指令类事件（client_tool_call）必须送达，由调用方保证阻塞语义（5s 兜底）；
+// 返回 false 表示未送达（发送超时/ctx 取消），本方法据此判定客户端不可用。
+// bestEffort：展示/心跳类事件，非阻塞丢失只影响展示。
+// 返回 (result, unavailable)：unavailable=true 表示客户端断连/超时，
+// 调用方应置位 fast-fail 标志，本次 Run 内后续客户端工具快速失败。
+func (cc *clientToolCaller) Call(
+	ctx context.Context,
+	mustSend func(*llm.StreamEvent) bool,
+	bestEffort func(*llm.StreamEvent),
+	userID string,
+	call tool.ToolCall,
+	mode string,
+) (*tool.Result, bool) {
+	if cc.bridge == nil {
+		// 接线 bug：请求携带了 client_tools 却没有注入桥，炸在明处
+		panic("[clientToolCaller] bridge is nil but client tool call dispatched")
+	}
+	display := call.Tool + "." + call.Function
+
+	// UI 展示事件（非阻塞，丢失只影响展示）
+	call.Display = display
+	tcJSON, _ := json.Marshal(call)
+	bestEffort(&llm.StreamEvent{Type: "tool_call", Content: string(tcJSON)})
+
+	callID := uuid.New().String()
+	ch := cc.bridge.Register(callID, userID)
+	defer cc.bridge.Unregister(callID)
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"call_id":             callID,
+		"tool_name":           call.Tool + "__" + call.Function,
+		"arguments":           call.Args,
+		"result_budget_bytes": clientToolInjectBudgetBytes,
+		"timeout_secs":        int(cc.timeout.Seconds()),
+		"mode":                mode, // 会话模式，客户端可按需做二次拦截/展示
+	})
+	if err != nil {
+		log.Printf("[clientToolCaller] client tool payload marshal error: %v", err)
+		return &tool.Result{Success: false, Error: "客户端工具调用序列化失败"}, false
+	}
+
+	// 指令事件必须送达：阻塞发送 + 超时兜底（5s）
+	if !mustSend(&llm.StreamEvent{Type: "client_tool_call", Content: string(payload)}) {
+		if ctx.Err() != nil {
+			return &tool.Result{Success: false, Error: "请求已取消"}, false
+		}
+		log.Printf("[clientToolCaller] client_tool_call send timeout: %s (client disconnected?)", display)
+		return &tool.Result{Success: false, Error: "客户端未连接，无法执行本地工具 " + display + "。请不要再调用客户端本地工具，直接告知用户即可。"}, true
+	}
+
+	// 等待客户端回传：期间定期发心跳，防止 SSE 长时间静默被代理/客户端掐断
+	timeout := time.NewTimer(cc.timeout)
+	defer timeout.Stop()
+	heartbeat := time.NewTicker(clientToolHeartbeatInterval)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case r := <-ch:
+			if r.Error != "" {
+				errMsg := r.Error
+				if len(errMsg) > maxClientToolErrorChars {
+					errMsg = truncateToolResult(errMsg, maxClientToolErrorChars)
+				}
+				log.Printf("[clientToolCaller] client tool exec: %s error=%s", display, errMsg)
+				return &tool.Result{Success: false, Error: errMsg}, false
+			}
+			log.Printf("[clientToolCaller] client tool exec: %s success, result=%d bytes", display, len(r.Result))
+			return &tool.Result{Success: true, Data: normalizeClientToolData(r.Result)}, false
+		case <-heartbeat.C:
+			bestEffort(&llm.StreamEvent{Type: "status", Content: "正在等待客户端执行 " + display + "…"})
+		case <-timeout.C:
+			log.Printf("[clientToolCaller] client tool timeout after %v: %s", cc.timeout, display)
+			return &tool.Result{Success: false, Error: fmt.Sprintf("客户端工具执行超时（%v）：%s。请不要再调用客户端本地工具，直接告知用户即可。", cc.timeout, display)}, true
+		case <-ctx.Done():
+			return &tool.Result{Success: false, Error: "请求已取消"}, false
+		}
+	}
 }

@@ -170,6 +170,8 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		DebugPersistJSON:          cfg.LLM.DebugPersistJSON,
 		ClientBridge:              clientBridge,
 		ClientToolTimeoutSecs:     cfg.LLM.ClientToolTimeoutSecs,
+		SubAgentMaxIterations:     cfg.SubAgent.ExploreMaxIterations,
+		SubAgentTimeoutSecs:       cfg.SubAgent.ExploreTimeoutSeconds,
 		SummaryRepo:               repos.ConversationSummary,
 		ContextRetriever:          retriever,
 		ContextFormatter:          formatter,
@@ -204,6 +206,15 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		repos.ThemeState,
 	)
 	tools.Registry.Register(tool.NewLoggingWrapper(unifiedSearch, log.Default()))
+
+	// v2 检索工具注册到主 Registry（explore 子 agent 白名单依赖，chunk 级语义检索）
+	tools.Registry.Register(tool.NewLoggingWrapper(
+		tool.NewSearchMemoriesV2Tool(infra.VectorStore, repos.Mem, repos.Chunk, infra.Embedder), log.Default()))
+	tools.Registry.Register(tool.NewLoggingWrapper(
+		tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder), log.Default()))
+
+	// 二次注册 task 工具（依赖 Orchestrator 实现 SubAgentRunner，避免 tool → agent 循环依赖）
+	tools.Registry.Register(tool.NewLoggingWrapper(tool.NewTaskTool(orch), log.Default()))
 
 	replayRunner := replay.NewRunner(&replay.RunnerConfig{
 		FlashClient:        llmClients.Flash,

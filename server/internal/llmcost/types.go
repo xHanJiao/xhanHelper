@@ -20,9 +20,10 @@ const (
 
 const (
 	// main_chat
-	SubReActLoop = "re_act_loop"
-	SubVerify    = "verify"
-	SubTitle     = "title"
+	SubReActLoop   = "re_act_loop"
+	SubVerify      = "verify"
+	SubTitle       = "title"
+	SubSubAgentRun = "sub_agent_run" // 子 agent（task 工具）内部循环
 
 	// post_chat
 	SubMemoryExtract    = "memory_extract"

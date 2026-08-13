@@ -20,21 +20,23 @@ func (t *TaskTool) Name() string                   { return "task" }
 func (t *TaskTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
 
 func (t *TaskTool) Description() string {
-	return `启动一个子 agent 独立完成复杂任务，执行完毕后返回结果。
+	return `启动一个子 agent 独立完成单一目标的小粒度任务，执行完毕后返回结果。
+
+核心原则：一个 task 只做一件事。任务应在子 agent 有限的轮次预算内完成；大任务拆成多个 task 并行，不要塞进一个 task。
 
 何时使用：
-- 需要联网调研多步信息（搜索 → 抓取多个网页 → 提炼结论）
-- 多个独立任务可并行执行
+- 需要联网调研多步信息（搜索 → 浏览网页 → 提炼结论）
+- 多个独立子任务可并行（利用并行加速）
 - 任务量大、需要独立上下文避免污染当前对话
 
 何时不用：
 - 单次简单的查询/计算/查笔记 → 直接用对应工具
-- 任务短小、一两个工具调用就能完成
+- 目标不明确、方向需用户中途决策 → 先与用户澄清，不要贸然派 task
+- 任务太大（预计超出子 agent 轮次预算）→ 拆成多个 task
 
 用法：
-- 可一次并发多个 task（利用并行加速）
-- 子任务的内部思考与最终回复不展示给用户（用户仅看到子任务的工具调用过程），你必须用自然语言总结转发给用户
-- prompt 要写详细：明确要做什么、期望返回什么、用什么格式`
+- 子任务的内部思考与最终回复不展示给用户（用户仅看到工具调用过程），你必须用自然语言总结转发给用户
+- prompt 要写详细：单一目标、明确要调研什么、返回什么格式`
 }
 
 func (t *TaskTool) Functions() []FuncSchema {
@@ -47,15 +49,23 @@ func (t *TaskTool) Functions() []FuncSchema {
 			"properties": map[string]interface{}{
 				"description": map[string]interface{}{
 					"type":        "string",
-					"description": "任务简短描述（3-5 词，如 调研XX技术）",
+					"description": "任务简短描述（3-5 词，用作子任务标题，如 调研XX技术）",
 				},
 				"subagent_type": map[string]interface{}{
 					"type":        "string",
 					"description": "子 agent 类型，当前可用：explore（联网调研，只读）",
 				},
 				"prompt": map[string]interface{}{
-					"type":        "string",
-					"description": "给子 agent 的完整任务描述。必须自包含（子 agent 不共享当前对话上下文）。写明要调研什么、要返回什么、遵循什么格式。",
+					"type": "string",
+					"description": `给子 agent 的完整任务描述。必须自包含（子 agent 不共享当前对话上下文）。
+
+任务必须单一目标、小粒度（一次信息收集循环能完成）；大任务拆成多个 task 并行。
+
+拆分示例（用户请求 → 多个子 task）：
+- "调研 Vue/React/Svelte 哪个适合我" → 拆 3 个 task："调研 Vue 3.5 特性与适用场景"、"调研 React 19 特性与适用场景"、"调研 Svelte 5 特性与适用场景"，全部完成后由你综合对比给出建议
+- "调研 AI 行业动态" → 目标太宽泛，先与用户确认具体方向（如大模型/Agent/具身智能），再按主题拆 task
+- "调研 DeepSeek 上下文缓存机制" → 单一主题，一个 task 搞定：机制原理、计费方式、适用场景
+- "帮我搞定毕业论文" → 粒度太大且需用户中途决策，应分步进行，不要一次派 task`,
 				},
 			},
 			"required": []interface{}{"description", "subagent_type", "prompt"},

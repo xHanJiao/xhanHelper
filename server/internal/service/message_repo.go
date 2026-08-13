@@ -506,11 +506,12 @@ func (r *MessageRepo) ListRecentUserMessages(ctx context.Context, convID string,
 	return list, err
 }
 
-// CountRecent 统计用户最近 role=user 的消息数
+// CountRecent 统计用户最近 role=user 的消息数（排除子会话消息）
 func (r *MessageRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.Message{}).
 		Where("user_id = ? AND created_at >= ? AND role = 'user'", userID, since).
+		Where(subConversationExclusion).
 		Count(&count).Error
 	return count, err
 }
@@ -567,9 +568,16 @@ func (r *MessageRepo) ListUserMessagesBetween(ctx context.Context, convID string
 }
 
 // buildMessageFilterQuery — 构造共享的 WHERE 过滤条件（user_id, status, role, keywords, convID, time range）。
+// subConversationExclusion — 排除子会话（subAgent）消息的 SQL 条件。
+// 子会话消息（MsgSink 落库时置 IsSubAgent=true）只服务于其任务本身，
+// 不参与任何"按用户扫描"的后台统计/检索聚合（反射主题发现的活动统计、
+// message_search 等），避免污染用户活动数据。
+const subConversationExclusion = "is_sub_agent = 0"
+
 func (r *MessageRepo) buildMessageFilterQuery(ctx context.Context, userID string, keywords []string, role, convID string, after, before *time.Time) *gorm.DB {
 	q := r.db.WithContext(ctx).Model(&model.Message{}).
-		Where("user_id = ? AND status = ?", userID, model.MsgStatusNormal)
+		Where("user_id = ? AND status = ?", userID, model.MsgStatusNormal).
+		Where(subConversationExclusion)
 
 	if role != "" {
 		q = q.Where("role IN ?", util.SplitAndTrim(role))

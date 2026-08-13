@@ -114,33 +114,38 @@ type promptBuilder interface {
 
 // Orchestrator — ReAct 循环编排器
 type Orchestrator struct {
-	flashClient         llm.LLMClient
-	proClient           llm.LLMClient
-	registry            *tool.Registry
-	systemPromptBuilder promptBuilder
-	msgRepo             msgCreator
-	convRepo            convToucher
-	embedder            *llm.Embedder
-	vectorStore         *VectorStore
-	embeddingRepo       *service.EmbeddingRepo
-	maxIterations       int
-	defaultTemperature  *float64
-	defaultMaxTokens    *int
-	maxToolResultChars  int
-	maxConcurrency      int
-	onChatEnd           func(userID, convID, userMsgID string)
-	verifyEnabled       bool
-	verifyMaxRetries    int
-	verifyModel         string // "flash" | "pro"
-	useNativeFC         bool
-	debugPersistJSON    bool
-	clientBridge        *ClientToolBridge
-	clientToolTimeout   time.Duration
-	summaryRepo         *service.ConversationSummaryRepo
-	contextRetriever    *ctxflow.ContextRetriever // 上下文检索
-	contextFormatter    ctxflow.ContextFormatter  // 上下文格式化（接口）
-	reminderRepo        *service.ReminderRepo
-	profileRepo         *service.UserProfileRepo
+	flashClient            llm.LLMClient
+	proClient              llm.LLMClient
+	registry               *tool.Registry
+	systemPromptBuilder    promptBuilder
+	msgRepo                msgCreator
+	convRepo               convToucher
+	subMsgRepo             *service.MessageRepo      // 具体类型（subAgent 落库用），与 msgRepo 同源
+	subConvRepo            *service.ConversationRepo // 具体类型（subAgent 建子会话用），与 convRepo 同源
+	embedder               *llm.Embedder
+	vectorStore            *VectorStore
+	embeddingRepo          *service.EmbeddingRepo
+	maxIterations          int
+	defaultTemperature     *float64
+	defaultMaxTokens       *int
+	maxToolResultChars     int
+	maxConcurrency         int
+	onChatEnd              func(userID, convID, userMsgID string)
+	verifyEnabled          bool
+	verifyMaxRetries       int
+	verifyModel            string // "flash" | "pro"
+	useNativeFC            bool
+	debugPersistJSON       bool
+	clientBridge           *ClientToolBridge
+	clientToolTimeout      time.Duration
+	subAgentMaxIterations  int
+	subAgentTimeout        time.Duration
+	subAgentCleanupTimeout time.Duration // 子任务结束标签清理单 tab 超时，默认 10s
+	summaryRepo            *service.ConversationSummaryRepo
+	contextRetriever       *ctxflow.ContextRetriever // 上下文检索
+	contextFormatter       ctxflow.ContextFormatter  // 上下文格式化（接口）
+	reminderRepo           *service.ReminderRepo
+	profileRepo            *service.UserProfileRepo
 
 	// 摘要附着控制
 	summaryAttachCount        int
@@ -173,6 +178,8 @@ type OrchestratorConfig struct {
 	DebugPersistJSON          bool              // 是否持久化完整 LLM 请求/响应 JSON（仅 dev 调试用）
 	ClientBridge              *ClientToolBridge // 客户端工具桥（客户端工具调用的 pending 路由）
 	ClientToolTimeoutSecs     int               // 客户端工具执行超时秒数，默认 60
+	SubAgentMaxIterations     int               // 子 agent 最大轮次（含强制收敛轮），默认 20（防死循环兜底）
+	SubAgentTimeoutSecs       int               // 子 agent 执行超时秒数，默认 600（真实预算）
 	SummaryRepo               *service.ConversationSummaryRepo
 	ContextRetriever          *ctxflow.ContextRetriever // 上下文检索
 	ContextFormatter          ctxflow.ContextFormatter  // 上下文格式化
@@ -196,7 +203,15 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		cfg.VerifyModel = "flash"
 	}
 	if cfg.ClientToolTimeoutSecs <= 0 {
-		cfg.ClientToolTimeoutSecs = 60
+		// 默认 120s：覆盖客户端 L3 工具审批（60s 超时视为拒绝）+ 执行余量（0.9×下发值）
+		cfg.ClientToolTimeoutSecs = 120
+	}
+	if cfg.SubAgentMaxIterations <= 0 {
+		// 兜底防死循环（timeout 才是真实预算上限）；不设太大——轮次太多任务转不完
+		cfg.SubAgentMaxIterations = 20
+	}
+	if cfg.SubAgentTimeoutSecs <= 0 {
+		cfg.SubAgentTimeoutSecs = 600
 	}
 
 	return &Orchestrator{
@@ -206,6 +221,8 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		systemPromptBuilder:       cfg.PromptBuilder,
 		msgRepo:                   cfg.MsgRepo,
 		convRepo:                  cfg.ConvRepo,
+		subMsgRepo:                cfg.MsgRepo,
+		subConvRepo:               cfg.ConvRepo,
 		embedder:                  cfg.Embedder,
 		vectorStore:               cfg.VectorStore,
 		embeddingRepo:             cfg.EmbeddingRepo,
@@ -222,6 +239,9 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		debugPersistJSON:          cfg.DebugPersistJSON,
 		clientBridge:              cfg.ClientBridge,
 		clientToolTimeout:         time.Duration(cfg.ClientToolTimeoutSecs) * time.Second,
+		subAgentMaxIterations:     cfg.SubAgentMaxIterations,
+		subAgentTimeout:           time.Duration(cfg.SubAgentTimeoutSecs) * time.Second,
+		subAgentCleanupTimeout:    10 * time.Second,
 		summaryRepo:               cfg.SummaryRepo,
 		contextRetriever:          cfg.ContextRetriever,
 		contextFormatter:          cfg.ContextFormatter,
@@ -1358,74 +1378,29 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 
 // executeClientTool 将工具调用经桥中转到客户端执行，阻塞等待 HTTP 回传。
 // 第二个返回值表示客户端不可用（断连/超时），调用方据此对本次 Run 内后续客户端工具快速失败。
+// 实现委托共享的 clientToolCaller（orchestrator / MiniReAct 共用，见 client_tools.go）。
 func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm.StreamEvent, userID string, call tool.ToolCall, mode string) (*tool.Result, bool) {
 	if o.clientBridge == nil {
 		// 接线 bug：请求携带了 client_tools 却没有注入桥，炸在明处
 		panic("[orch] clientBridge is nil but client tool call dispatched")
 	}
-	display := call.Tool + "." + call.Function
-
-	// UI 展示事件（非阻塞，丢失只影响展示）
-	call.Display = display
-	tcJSON, _ := json.Marshal(call)
-	o.sendEvent(events, &llm.StreamEvent{Type: "tool_call", Content: string(tcJSON)})
-
-	callID := uuid.New().String()
-	ch := o.clientBridge.Register(callID, userID)
-	defer o.clientBridge.Unregister(callID)
-
-	payload, err := json.Marshal(map[string]interface{}{
-		"call_id":             callID,
-		"tool_name":           call.Tool + "__" + call.Function,
-		"arguments":           call.Args,
-		"result_budget_bytes": clientToolInjectBudgetBytes,
-		"timeout_secs":        int(o.clientToolTimeout.Seconds()),
-		"mode":                mode, // 会话模式，客户端可按需做二次拦截/展示
-	})
-	if err != nil {
-		log.Printf("[orch] client tool payload marshal error: %v", err)
-		return &tool.Result{Success: false, Error: "客户端工具调用序列化失败"}, false
-	}
-
-	// 指令事件必须送达：阻塞发送 + 超时兜底。
-	// chat 侧 orch.Run 用 context.Background()，客户端断连不会取消 ctx，
-	// 断连后 events 无人消费会填满，靠 time.After 防止 goroutine 永久阻塞。
-	select {
-	case events <- &llm.StreamEvent{Type: "client_tool_call", Content: string(payload)}:
-	case <-time.After(5 * time.Second):
-		log.Printf("[orch] client_tool_call send timeout: %s (client disconnected?)", display)
-		return &tool.Result{Success: false, Error: "客户端未连接，无法执行本地工具 " + display + "。请不要再调用客户端本地工具，直接告知用户即可。"}, true
-	case <-ctx.Done():
-		return &tool.Result{Success: false, Error: "请求已取消"}, false
-	}
-
-	// 等待客户端回传：期间定期发心跳，防止 SSE 长时间静默被代理/客户端掐断
-	timeout := time.NewTimer(o.clientToolTimeout)
-	defer timeout.Stop()
-	heartbeat := time.NewTicker(clientToolHeartbeatInterval)
-	defer heartbeat.Stop()
-	for {
-		select {
-		case r := <-ch:
-			if r.Error != "" {
-				errMsg := r.Error
-				if len(errMsg) > maxClientToolErrorChars {
-					errMsg = truncateToolResult(errMsg, maxClientToolErrorChars)
-				}
-				log.Printf("[orch] client tool exec: %s error=%s", display, errMsg)
-				return &tool.Result{Success: false, Error: errMsg}, false
+	cc := &clientToolCaller{bridge: o.clientBridge, timeout: o.clientToolTimeout}
+	return cc.Call(ctx,
+		func(evt *llm.StreamEvent) bool {
+			// 指令事件必须送达：阻塞发送 + 超时兜底。
+			// chat 侧 orch.Run 用 context.Background()，客户端断连不会取消 ctx，
+			// 断连后 events 无人消费会填满，靠 time.After 防止 goroutine 永久阻塞。
+			select {
+			case events <- evt:
+				return true
+			case <-time.After(5 * time.Second):
+				return false
+			case <-ctx.Done():
+				return false
 			}
-			log.Printf("[orch] client tool exec: %s success, result=%d bytes", display, len(r.Result))
-			return &tool.Result{Success: true, Data: normalizeClientToolData(r.Result)}, false
-		case <-heartbeat.C:
-			o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "正在等待客户端执行 " + display + "…"})
-		case <-timeout.C:
-			log.Printf("[orch] client tool timeout after %v: %s", o.clientToolTimeout, display)
-			return &tool.Result{Success: false, Error: fmt.Sprintf("客户端工具执行超时（%v）：%s。请不要再调用客户端本地工具，直接告知用户即可。", o.clientToolTimeout, display)}, true
-		case <-ctx.Done():
-			return &tool.Result{Success: false, Error: "请求已取消"}, false
-		}
-	}
+		},
+		func(evt *llm.StreamEvent) { o.sendEvent(events, evt) },
+		userID, call, mode)
 }
 
 // —— DB 保存 ——

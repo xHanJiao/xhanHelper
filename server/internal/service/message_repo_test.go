@@ -23,7 +23,7 @@ func setupMessageRepo(t *testing.T) (*MessageRepo, func()) {
 	if err != nil {
 		t.Fatalf("failed to open db: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Message{}); err != nil {
+	if err := db.AutoMigrate(&model.Message{}, &model.Conversation{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
 	cleanup := func() {
@@ -939,5 +939,76 @@ func TestBuildRoundsFromUserMsgs_MassiveReActRound(t *testing.T) {
 	}
 	if toolCount != 100 {
 		t.Errorf("第 1 轮 tool 应完整 100 条, got %d", toolCount)
+	}
+}
+
+// TestCountRecent_ExcludesSubConversation — 子会话（subAgent）消息不参与用户活动统计
+func TestCountRecent_ExcludesSubConversation(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	parentID := "parent-1"
+	convRepo := NewConversationRepo(repo.db)
+	now := time.Now()
+
+	// 主会话 + 子会话
+	convRepo.Create(ctx, &model.Conversation{ID: "conv-main", UserID: "u1"})
+	convRepo.Create(ctx, &model.Conversation{ID: "conv-sub", UserID: "u1", ParentID: &parentID})
+
+	for _, m := range []model.Message{
+		{ID: "m-main-1", ConversationID: "conv-main", UserID: "u1", Role: "user", Content: "主会话消息", CreatedAt: now.Add(-time.Hour)},
+		{ID: "m-sub-1", ConversationID: "conv-sub", UserID: "u1", Role: "user", Content: "子会话任务消息", IsSubAgent: true, CreatedAt: now.Add(-time.Hour)},
+	} {
+		if err := repo.Create(ctx, &m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	count, err := repo.CountRecent(ctx, "u1", now.Add(-2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("CountRecent 应排除子会话消息, got %d", count)
+	}
+}
+
+// TestSearchMessages_ExcludesSubConversation — message_search 聚合检索不返回子会话消息
+func TestSearchMessages_ExcludesSubConversation(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	parentID := "parent-1"
+	convRepo := NewConversationRepo(repo.db)
+	convRepo.Create(ctx, &model.Conversation{ID: "conv-main", UserID: "u1"})
+	convRepo.Create(ctx, &model.Conversation{ID: "conv-sub", UserID: "u1", ParentID: &parentID})
+
+	for _, m := range []model.Message{
+		{ID: "m-main-1", ConversationID: "conv-main", UserID: "u1", Role: "user", Content: "聊过上下文缓存优化", CreatedAt: time.Now().Add(-time.Hour)},
+		{ID: "m-sub-1", ConversationID: "conv-sub", UserID: "u1", Role: "user", Content: "子任务里也聊上下文缓存", IsSubAgent: true, CreatedAt: time.Now().Add(-time.Hour)},
+	} {
+		if err := repo.Create(ctx, &m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 关键词检索
+	msgs, _, err := repo.SearchMessagesByCursor(ctx, "u1", []string{"缓存"}, "user", "", nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 || msgs[0].ID != "m-main-1" {
+		t.Errorf("关键词检索应只返回主会话消息, got %+v", msgs)
+	}
+
+	// 统计
+	total, err := repo.CountMessages(ctx, "u1", []string{"缓存"}, "user", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Errorf("CountMessages 应排除子会话消息, got %d", total)
 	}
 }

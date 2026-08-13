@@ -7,13 +7,22 @@
     <title>xhanHelper</title>
     <script>
       (function() {
-        var t = localStorage.getItem('xhanhelper_theme');
-        if (t != null) {
-          document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
+        var embedded = false;
+        try { embedded = !!(window.XH_BRIDGE && window.XH_BRIDGE.platform === 'macOS'); } catch (e) {}
+        var theme;
+        if (embedded) {
+          // 内嵌 WebView：跟随 app 外观（经窗口 effectiveAppearance 传导到媒体查询）
+          theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         } else {
-          var h = new Date().getHours();
-          document.documentElement.setAttribute('data-theme', (h >= 18 || h < 8) ? 'dark' : 'light');
+          var t = localStorage.getItem('xhanhelper_theme');
+          if (t != null) {
+            theme = t === 'dark' ? 'dark' : 'light';
+          } else {
+            var h = new Date().getHours();
+            theme = (h >= 18 || h < 8) ? 'dark' : 'light';
+          }
         }
+        document.documentElement.setAttribute('data-theme', theme);
       })()
     </script>
   </head>

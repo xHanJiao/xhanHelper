@@ -39,14 +39,6 @@ embedding:
   base_url: https://ark.cn-beijing.volces.com
   model: doubao-embedding-vision-251215
 
-# search: # 联网搜索工具已下掉（不再注册），配置保留备用
-#   provider: anysearch
-#   api_key: ${SEARCH_API_KEY}
-#   base_url: https://api.anysearch.com/v1
-#   total_quota: 100
-#   quota_expires_at: "2026-01-01"
-#   used_count: 0
-
 chat:
   session_gap_minutes: 3       # dev 环境缩短 session 间隔，方便测试
 

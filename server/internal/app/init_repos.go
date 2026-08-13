@@ -32,7 +32,6 @@ type Repos struct {
 	MessageShare        *service.MessageShareRepo
 	Version             *service.VersionRepo
 	Mission             *service.MissionRepo
-	SearchUsage         *service.SearchUsageRepo
 	ConversationSummary *service.ConversationSummaryRepo
 	ConversationPlan    *service.ConversationPlanRepo
 	UserProfile         *service.UserProfileRepo
@@ -67,7 +66,6 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		MessageShare:        service.NewMessageShareRepo(db, msgRepo),
 		Version:             service.NewVersionRepo(db),
 		Mission:             service.NewMissionRepo(db),
-		SearchUsage:         service.NewSearchUsageRepo(db),
 		ConversationSummary: service.NewConversationSummaryRepo(db),
 		ConversationPlan:    service.NewConversationPlanRepo(db),
 		UserProfile:         service.NewUserProfileRepo(db),

@@ -18,6 +18,12 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reg.Register(tool.NewLoggingWrapper(tool.NewBookkeepingTool(repos.Bill), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewDatetimeTool(), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewCalculatorTool(), log.Default()))
+	// webfetch：仅 subAgent（explore）可见，对主循环隐藏（与 tool_retriever 同款模式，见 docs/design/phase-18-subagent-explore.md 1.2）
+	// 由配置 webfetch.enabled 控制是否启用（默认关闭，token 消耗大）
+	if cfg.WebFetch.Enabled {
+		reg.Register(tool.NewLoggingWrapper(tool.NewWebFetchTool(cfg.WebFetch.TimeoutSeconds, cfg.WebFetch.MaxBytes), log.Default()))
+		reg.HideTool("webfetch")
+	}
 	reg.Register(tool.NewLoggingWrapper(tool.NewDocumentTool(repos.Document, repos.Version), log.Default()))
 
 	// 种子内置工具到 tool_registries 表（幂等）

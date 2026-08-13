@@ -21,7 +21,7 @@ xhanHelper 是单会话单 ReAct 循环架构。浏览器能力接入后，一�
 | `Agent.Info{name, mode:"subagent", prompt, permission}` | Conversation.Extra.SubAgentType + 角色 prompt |
 | `tool/task.ts` （task 工具） | `tool/task.go` |
 | `sessions.create({parentID})` | `Conversation.ParentID`（字段已存在，conversation.go:25） |
-| `Permission.merge` + 子 deny 规则 | 工具白名单过滤（`RunRequest.ToolWhitelist`） |
+| `Permission.merge` + 子 deny 规则 | 工具白名单双层拦截（工具定义过滤 + MiniReAct `AllowedTools` 运行时 guard） |
 | `renderOutput`（`<task id state>` XML） | 同格式 |
 | `BackgroundJob` + `inject` 后台通知 | Phase 19（本期不做） |
 | `subagent_depth` 配置 | 写死 1 层 |
@@ -33,7 +33,7 @@ Phase 18-1 (webfetch + Bocha 下掉)
      │
      ├──→ Phase 18-2 (SubAgent 基础设施：模型/接口/类型)
      │         │
-     │         └──→ Phase 18-3 (explore 子 agent 完整实现)
+     │         └──→ Phase 18-3 (explore 子 agent：复用 MiniReAct，同步阻塞)
      │                   │
      │                   └──→ Phase 18-4 (端到端验收 + 收尾)
      │
@@ -44,7 +44,7 @@ Phase 18-1 (webfetch + Bocha 下掉)
 
 ## 一、Phase 18-1：webfetch 工具 + Bocha 搜索下掉
 
-**目标**：主会话获得服务端直抓 URL 能力；下掉已停止付费的 Bocha 搜索。
+**目标**：subAgent（explore）获得服务端直抓 URL 能力——webfetch 仅子 agent 可见，对主循环隐藏（见 1.2）；下掉已停止付费的 Bocha 搜索。
 
 **依赖**：无。
 
@@ -59,7 +59,8 @@ Phase 18-1 (webfetch + Bocha 下掉)
 
 | 文件 | 改动 |
 |------|------|
-| `server/internal/appinit/tools.go` | 注册 webfetch；移除 Bocha 搜索注册 |
+| `server/internal/appinit/tools.go` | 注册 webfetch 并 `HideTool("webfetch")`；移除 Bocha 搜索注册 |
+| `server/internal/tool/registry.go` | `SearchTools` 跳过 hidden 工具（堵 tool_retriever.search 泄漏，见 1.2） |
 | `server/conf/config.yaml` | 加 `webfetch:` 配置节 |
 
 ### 1.1 webfetch 工具定义
@@ -135,7 +136,24 @@ func (t *WebFetchTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 }
 ```
 
-### 1.2 fetchURL 实现
+### 1.2 可见性：webfetch 仅 subAgent 可用
+
+**需求**：webfetch 不暴露给主 agent（主循环 LLM 不得看到/调用），只允许子 agent（explore）使用。
+
+**实现**：`webfetch.enabled=true` 时注册，随后调用 `reg.HideTool("webfetch")`（与 tool_retriever 同款模式，registry.go:64）；默认关闭。隐藏的生效面：
+
+| 路径 | 行为 |
+|------|------|
+| 主循环原生 FC defs（`GetNativeFCTools`） | 不含 webfetch（sortedVisibleToolNames 排除） |
+| 主循环 prompt-eng prompt（`GeneratePromptWithOverview`，promptbuilder/static.go:51） | 不含 webfetch |
+| `tool_retriever.search`（Registry 内存搜索，registry.go:69） | **需修复**：`SearchTools` 当前不过滤 hiddenNames，主 LLM 可直接 search 出 webfetch 完整定义 → 加 `if r.hiddenNames[name] { continue }`（顺带堵 ExecuteByName 模糊纠错建议，registry.go:559） |
+| `tool_retriever.search`（DB keyword/vector 策略） | 无泄漏：webfetch **不进 `builtinToolSeeds`**（seeder.go:34）。DB seed 功能后续整体下掉，不做 DB 侧过滤 |
+| `ExecuteByName` | 仍可执行（子循环经 MiniReAct 白名单调用） |
+| 反思系统（reflectionReg）/ profile_worker | 不涉及：reflectionReg 是独立 registry；profile_worker 用显式名单 |
+
+**不做**（防御纵深）：`ExecuteByName` 对 hidden 工具的执行拦截。主循环 LLM 无任何途径获知 webfetch 存在（defs/prompt/检索均不可见），幻觉调用概率等价于幻觉不存在的工具名，现有未知工具纠错已能拒绝。保持 HideTool 语义简单（"对 LLM 隐藏，但可执行"）。
+
+### 1.3 fetchURL 实现
 
 流程：
 
@@ -145,12 +163,12 @@ func (t *WebFetchTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 4. 若 `Content-Type` 非 `text/html` 或 `text/plain` → 返回 `"内容类型为 <type>，请改用 browser 工具访问该页面"`
 5. 读 body，`io.LimitReader` 限制 `t.maxBytes`
 6. 根据 Content-Type：
-   - `text/html` → html2text（见 1.3）
+   - `text/html` → html2text（见 1.4）
    - `text/plain` → 直接返回
 7. 截断到 `t.maxBytes`（如果 html2text 后仍超限，尾部加 `"[内容已截断]"`）
 8. 返回 JSON: `{"url": "...", "title": "<title 内容或空>", "text": "<正文>"}`
 
-### 1.3 html2text 提取
+### 1.4 html2text 提取
 
 ```go
 // 用 golang.org/x/net/html Tokenizer 抽取正文文本
@@ -198,19 +216,20 @@ func html2text(body []byte) string {
 }
 ```
 
-### 1.4 配置
+### 1.5 配置
 
 `conf/config.yaml` 新增：
 
 ```yaml
 webfetch:
+  enabled: false          # 默认关闭（token 消耗大）；启用后仅 subAgent 可见
   timeout_seconds: 15
   max_bytes: 51200
 ```
 
 `config/config.go` 增加对应结构体字段，从 YAML 加载。
 
-### 1.5 Bocha 搜索移除
+### 1.6 Bocha 搜索移除
 
 `appinit/tools.go`：
 
@@ -227,7 +246,7 @@ if cfg.Search.Enabled {
 
 同时检查 `config.SearchConfig` / `config.Search` 字段是否仅在搜索工具中使用——若是，一并移除结构体定义和 YAML 加载。`SearchUsageRepo` 注入点也移除。**保留 `search_usage` 表结构和模型不删**（历史数据不动）。
 
-### 1.6 测试（`tool/webfetch_test.go`）
+### 1.7 测试（`tool/webfetch_test.go` + `tool/registry_hidden_test.go`）
 
 | 用例 | 输入 | 预期 |
 |------|------|------|
@@ -238,11 +257,17 @@ if cfg.Search.Enabled {
 | 超时 | 无响应的服务器 | 超时错误 |
 | 超限截断 | body > maxBytes | 截断末尾加 "[内容已截断]" |
 | 空白/空页面 | 空白 HTML | 返回空 text |
+| 隐藏后主循环不可见 | `HideTool("webfetch")` 后 `GetNativeFCTools` / `GeneratePromptWithOverview` | 不含 webfetch |
+| `SearchTools` 跳过 hidden | 注册 hidden 工具后 `SearchTools` | 结果不含 hidden 工具 |
+| `GetLLMToolsFiltered` 含 hidden | 注册 hidden 工具后 `GetLLMToolsFiltered(["webfetch"])` | 按显式名单可导出（子 agent 路径依赖） |
 
-### 1.7 Phase 18-1 验收
+hidden 语义测试在 `registry_hidden_test.go`（复用 mockOrderTool，不依赖真实 webfetch 工具）。
 
-- `go test ./tool/ -run WebFetch -v` 绿
-- 真机说一句 "帮我把 https://example.com 的内容总结一下" → 主 agent 调 webfetch → 返回文本 → 总结
+### 1.8 Phase 18-1 验收
+
+- `go test ./tool/ -run WebFetch -v` 绿（含 1.7 新增 hidden 用例）
+- webfetch 已隐藏：主循环 LLM 的 tools/prompt 中不含 webfetch，`tool_retriever.search("webfetch")` 查不到
+- 真机 webfetch 功能验证推迟到 Phase 18-3（子 agent 就绪后走调研场景；主循环无法直接调用隐藏工具）
 
 ---
 
@@ -257,7 +282,7 @@ if cfg.Search.Enabled {
 | 文件 | 说明 |
 |------|------|
 | `server/internal/tool/subagent.go` | `SubAgentRunner` 接口 + `SubAgentRunOptions` + `SubAgentRunResult` + `ClientToolInfo` |
-| `server/internal/tool/task.go` | task 工具骨架（Execute 空实现，不注册） |
+| `server/internal/tool/task.go` | task 工具（完整实现：包裹/部分结果逻辑，不注册） |
 
 **修改文件**：
 
@@ -266,7 +291,7 @@ if cfg.Search.Enabled {
 | `server/internal/model/conversation.go` | `ConversationExtra` 加 `SubAgentType` |
 | `server/internal/tool/tool.go` | `ExecuteContext` 加 `ClientTools []ClientToolInfo` |
 | `server/internal/service/conversation_repo.go` | `ListByUser` 加 `parent_id IS NULL` |
-| `server/internal/agent/orchestrator.go` | `RunRequest` 加 `ToolWhitelist`；`executeConcurrently` 构造 `ec` 时填入 `ClientTools`；`executeConcurrently` 加 `toolWhitelist` 参数 + 过滤逻辑 |
+| `server/internal/agent/orchestrator.go` | `executeConcurrently` 构造 `ec` 时填入 `ClientTools`（从 `req.ClientTools` 转换） |
 
 ### 2.1 `model/conversation.go` — Extra 扩展
 
@@ -317,8 +342,10 @@ type SubAgentRunOptions struct {
 type SubAgentRunResult struct {
     Success bool
     Error   string
-    Text    string // 子 agent 最终回复（未包裹 <task> 标签，由 task 工具包裹）
-    ConvID  string // 子会话 ID
+    Text    string // 子 agent 最终回复（未包裹 <task> 标签，由 task 工具包裹）。
+    // 超时/失败时 Text 为工具日志摘要（部分成果），task 工具以 state=timeout/failed 包裹回传主 LLM
+    ConvID string // 子会话 ID
+    State  string // 执行状态：completed | timeout | failed。空默认 completed
 }
 
 // SubAgentRunner — 子 agent 执行器接口
@@ -350,7 +377,7 @@ type ExecuteContext struct {
 }
 ```
 
-### 2.4 `tool/task.go` — 骨架（新文件）
+### 2.4 `tool/task.go` — 完整实现（新文件）
 
 ```go
 package tool
@@ -358,6 +385,7 @@ package tool
 import (
     "encoding/json"
     "fmt"
+    "strings"
 )
 
 type TaskTool struct {
@@ -385,7 +413,7 @@ func (t *TaskTool) Description() string {
 
 用法：
 - 可一次并发多个 task（利用并行加速）
-- 子任务的执行过程和结果对用户不可见，你必须用自然语言总结转发给用户
+- 子任务的内部思考与最终回复不展示给用户（用户仅看到子任务的工具调用过程），你必须用自然语言总结转发给用户
 - prompt 要写详细：明确要做什么、期望返回什么、用什么格式`
 }
 
@@ -415,11 +443,9 @@ func (t *TaskTool) Functions() []FuncSchema {
 }
 
 func (t *TaskTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
-    // Phase 18-2: 骨架，直接返回错误（未注册，不会触发）
     if t.runner == nil {
         return &Result{Success: false, Error: "task 工具尚未启用（runner 未注入）"}
     }
-    // Phase 18-3 实现（见第三节）
     var params struct {
         Description  string `json:"description"`
         SubAgentType string `json:"subagent_type"`
@@ -439,19 +465,31 @@ func (t *TaskTool) Execute(ec *ExecuteContext, funcName string, args json.RawMes
     }
     result := t.runner.RunSubAgent(ec.Ctx, opts)
 
-    if !result.Success {
+    // 失败且无任何产出 → 硬错误（主 LLM 需知道子任务不可用）
+    if !result.Success && strings.TrimSpace(result.Text) == "" {
         return &Result{Success: false, Error: result.Error}
+    }
+
+    // 正常完成，或超时/失败但有部分产出（Text 为工具日志摘要）→ 包裹返回，
+    // 让主 LLM 利用部分成果。state 由 runner 标注实际状态。
+    state := result.State
+    if state == "" {
+        state = "completed"
+    }
+    summary := fmt.Sprintf("子任务完成: %s", params.Description)
+    if !result.Success {
+        summary = fmt.Sprintf("子任务%s（含部分结果）: %s", state, params.Description)
     }
 
     // 包裹结果（opencode renderOutput 风格）
     output := fmt.Sprintf(
-        `<task id="%s" state="completed">
-<summary>子任务完成: %s</summary>
+        `<task id="%s" state="%s">
+<summary>%s</summary>
 <task_result>
 %s
 </task_result>
 </task>`,
-        result.ConvID, params.Description, result.Text,
+        result.ConvID, state, summary, result.Text,
     )
     data, _ := json.Marshal(map[string]string{"result": output})
     return &Result{Success: true, Data: data}
@@ -472,31 +510,12 @@ q := r.db.WithContext(ctx).Where("user_id = ? AND is_deleted = ? AND parent_id I
 
 影响面：前端会话列表 API（`controller/conversations.go:124`），无其他调用处。
 
-### 2.6 `agent/orchestrator.go` — 四处修改
+### 2.6 `agent/orchestrator.go` — 一处修改
 
-#### 2.6.1 `RunRequest` 加字段
+> 原方案的 `RunRequest.ToolWhitelist` + `executeConcurrently` 白名单参数 + `mkLlmChatReq` 过滤已**全部取消**：
+> 白名单在 MiniReAct 内生效（工具定义过滤 + `AllowedTools` 运行时 guard），主循环代码无需任何白名单逻辑。
 
-```go
-type RunRequest struct {
-    // ... 现有字段 ...
-    ToolWhitelist []string // 新增：子循环工具白名单，nil=全量（主循环行为不变）
-}
-```
-
-#### 2.6.2 `executeConcurrently` 签名变化
-
-```go
-// 前：
-func (o *Orchestrator) executeConcurrently(ctx context.Context,
-    events chan<- *llm.StreamEvent, userID, convID string, ...)
-
-// 后：
-func (o *Orchestrator) executeConcurrently(ctx context.Context,
-    events chan<- *llm.StreamEvent, userID, convID string,
-    ..., toolWhitelist []string, clientTools []tool.ClientToolInfo)
-```
-
-#### 2.6.3 EC 构造注入 ClientTools
+#### 2.6.1 EC 构造注入 ClientTools
 
 ```go
 // 前（line 1375）：
@@ -513,58 +532,7 @@ ec := &tool.ExecuteContext{
 }
 ```
 
-#### 2.6.4 白名单运行时过滤
-
-服务端工具路径（`registry.ExecuteByName` 之前）：
-
-```go
-// 构建 whitelist map 一次
-whitelistMap := make(map[string]bool, len(toolWhitelist))
-for _, name := range toolWhitelist {
-    whitelistMap[name] = true
-}
-
-// 在 ec := ... 之后立即加：
-if len(toolWhitelist) > 0 && !whitelistMap[call.Tool] {
-    r = &tool.Result{Success: false,
-        Error: fmt.Sprintf("子任务无权调用工具 '%s'（不在白名单中）", call.Tool)}
-    results[idx] = toolExecResult{tc: call, result: r}
-    return // 跳过执行
-}
-```
-
-客户端工具路径同理（`executeClientTool` 之前）：
-
-```go
-if len(toolWhitelist) > 0 && !whitelistMap[tc.Tool] {
-    results[idx] = toolExecResult{tc: tc, result: &tool.Result{Success: false,
-        Error: fmt.Sprintf("子任务无权调用客户端工具 '%s'（不在白名单中）", tc.Tool)}}
-    continue
-}
-```
-
-#### 2.6.5 `finalizeRound` 传递白名单
-
-`finalizeRound` 已有 `req *RunRequest` 参数。在调用 `executeConcurrently` 处：
-
-```go
-// 构造 tool.ClientToolInfo 切片
-clientToolInfos := make([]tool.ClientToolInfo, len(req.ClientTools))
-for i, ct := range req.ClientTools {
-    clientToolInfos[i] = tool.ClientToolInfo{
-        ServerName:  ct.ServerName,
-        Name:        ct.Name,
-        Description: ct.Description,
-        Parameters:  ct.Parameters,
-        IsReadOnly:  ct.IsReadOnly,
-    }
-}
-
-results := o.executeConcurrently(
-    ctx, events, req.UserID, req.ConversationID,
-    ..., req.ToolWhitelist, clientToolInfos,
-)
-```
+`clientTools` 由 `req.ClientTools`（`[]agent.ClientTool`）转换为 `[]tool.ClientToolInfo`，在 `finalizeRound` 调用 `executeConcurrently` 处构造一次。
 
 ### 2.7 Phase 18-2 验收
 
@@ -574,26 +542,28 @@ results := o.executeConcurrently(
 
 ---
 
-## 三、Phase 18-3：explore 子 agent 完整实现
+## 三、Phase 18-3：explore 子 agent 完整实现（复用 MiniReAct）
 
 **目标**：主循环可调 task 工具 → explore 在独立上下文中完成联网调研 → `<task>` 结果返回主循环。
 
-**依赖**：Phase 18-1（webfetch 必须在 registry 中）+ Phase 18-2（接口/类型/白名单字段就绪）。
+**核心决策**：同步阻塞执行（task 工具阻塞主循环，`explore_timeout_seconds` 上限 + 进度事件转发 + 超时部分结果回传）。不新增第三套循环——扩展既有 MiniReAct（其注释即声明面向 subAgent 场景，且已具备强制收敛轮/工具日志/事件回调）。
+
+**依赖**：Phase 18-1（webfetch 必须在 registry 中）+ Phase 18-2（接口/类型/EC.ClientTools 就绪）。
 
 **新增文件**：
 
 | 文件 | 说明 |
 |------|------|
-| `server/internal/agent/subagent.go` | explore 角色定义 + 白名单 + `RunSubAgent` + `runSubAgentLoop` + `buildSubAgentSystemPrompt` |
-| `server/internal/agent/subagent_test.go` | 白名单过滤、深度检查、结果包裹、后处理跳过测试 |
+| `server/internal/agent/subagent.go` | explore 角色定义 + 白名单 + `RunSubAgent` + `buildSubAgentSystemPrompt` + 事件 forwarder + 超时摘要 |
+| `server/internal/agent/subagent_test.go` | 深度检查、结果包裹、事件转发、超时部分结果、MsgSink 落库测试 |
 
 **修改文件**：
 
 | 文件 | 改动 |
 |------|------|
-| `server/internal/agent/orchestrator.go` | `mkLlmChatReq` 按 ToolWhitelist 过滤工具；`runReActLoop` 的 Touch/embedding/onChatEnd 加 `isSubAgent` 条件跳过 |
-| `server/internal/appinit/tools.go` | Phase 18-2 注册占位移除（task 工具改在 agents.go 二次注册） |
-| `server/internal/appinit/agents.go` | Orchestrator 构造后 `registry.Register(taskTool)` |
+| `server/internal/agent/client_tools.go` | 提取 `clientToolCaller` 共享客户端工具执行器（orchestrator 改用它，行为零变化） |
+| `server/internal/agent/mini_react.go` | 扩展：ClientTools/ClientBridge/ClientToolTimeout、AllowedTools、ConvID、MsgSink、客户端工具 fast-fail |
+| `server/internal/appinit/agents.go` | Orchestrator 注入 SubAgent 配置；构造后 `registry.Register(taskTool)` |
 | `server/conf/config.yaml` | 加 `subagent:` 配置节 |
 
 ### 3.1 explore 角色 prompt（`agent/subagent.go`）
@@ -602,7 +572,7 @@ results := o.executeConcurrently(
 const explorePrompt = `你是联网调研专家，擅长通过网页抓取与本地检索收集信息并提炼结论。
 
 能力：
-- 用 webfetch 抓取具体 URL 的正文（首选，快且不依赖客户端）
+- 用 webfetch 抓取具体 URL 的正文（注意：结果全部进入上下文，token 消耗大——单页可达 5 万字符。只抓最有价值的一两个页面，优先汇总页/官方文档/百科，禁止逐页深挖）
 - 用 browser 工具访问需要 JS 渲染的动态页面（需 Mac 客户端在线）
 - 用 unified_search、search_memories_v2、search_notes_v2、message_search 结合用户笔记/记忆进行本地调研
 - 仅做只读操作，禁止写入任何数据
@@ -709,47 +679,56 @@ for i, ct := range opts.ClientTools {
 }
 ```
 
-#### 步骤 5 — 构造子 RunRequest
+#### 步骤 5 — 构建工具定义（白名单过滤，双重来源）
+
+```go
+// 服务端工具：GetLLMToolsFiltered 按显式名单导出（不跳过 hidden——webfetch 对主循环隐藏但子 agent 可用）
+// 客户端工具：buildClientToolDefs 按 server_name 分组后按白名单过滤
+tools := o.registry.GetLLMToolsFiltered(exploreWhitelist)
+tools = append(tools, filterClientToolsByWhitelist(buildClientToolDefs(agentClientTools, o.registry), exploreWhitelist)...)
+```
+
+`filterClientToolsByWhitelist` 按 `ToolDefinition.Name`（= server_name）过滤——`browser` 等客户端 server 在 whitelist 内才下发。`GetLLMToolsFiltered` 遍历白名单名从注册表导出，未注册名（客户端 server，如 `browser`）自动跳过；白名单为编译期固定顺序，输出字节稳定（前缀缓存友好）。两个 helper（`filterClientToolsByWhitelist` / `whitelistMap`）为 `subagent.go` 内的小函数。
+
+#### 步骤 6 — 构造 MiniReAct（复用既有组件）
 
 ```go
 maxIter := o.subAgentMaxIterations
 if maxIter <= 0 {
     maxIter = 6
 }
-subReq := &RunRequest{
-    UserID:             userID,
-    ConversationID:     subConv.ID,
-    Messages:           nil,            // 子循环 buildUserMessage
-    DeepMode:           false,          // 不用 Pro
-    UserMessageContent: opts.Prompt,
-    AgentSystemPrompt:  explorePrompt,
-    SkipRetrieval:      true,           // 不注入检索上下文
-    MaxIterations:      maxIter,
-    ClientTools:        agentClientTools,
-    ToolWhitelist:      exploreWhitelist,
-    Mode:               model.ConvModeWork,
-}
+react := NewMiniReAct(&MiniReActConfig{
+    Client:            o.flashClient, // 子 agent 固定 Flash
+    Tools:             tools,
+    ToolRegistry:      o.registry,
+    SystemPrompt:      buildSubAgentSystemPrompt(req),
+    UserID:            userID,
+    ConvID:            subConv.ID,
+    MaxIterations:     maxIter, // 主循环 maxIter-1 轮 + 1 轮强制收敛（MiniReAct 内置，见 3.3）
+    Caller:            "subagent:" + opts.SubAgentType,
+    ClientTools:       agentClientTools,
+    ClientBridge:      o.clientBridge,
+    ClientToolTimeout: o.clientToolTimeout,
+    AllowedTools:      whitelistMap(exploreWhitelist),
+    MsgSink:           newSubAgentMsgSink(o.msgRepo, subConv.ID, userID),
+    OnEvent:           makeSubAgentForwarder(opts.MainEvents),
+})
 ```
 
-#### 步骤 6 — 构建子循环 events 代理
+#### 步骤 7 — 事件 forwarder（进度反馈，复用主 SSE 事件类型）
 
-```go
-subEvents := make(chan *llm.StreamEvent, 512)
-go func() {
-    for se := range subEvents {
-        // 只转发 client_tool_call 到主 SSE（浏览器工具需要客户端监听）
-        if se.Type == "client_tool_call" && opts.MainEvents != nil {
-            select {
-            case opts.MainEvents <- se:
-            default:
-            }
-        }
-        // 其余事件丢弃（子循环进度不暴露给用户）
-    }
-}()
-```
+子循环执行期间主循环阻塞于 `wg.Wait()`，主 SSE 无其他事件——**复用现有事件类型**，前端零改动：
 
-#### 步骤 7 — 超时控制
+| 子循环事件 | 转发动作 |
+|-----------|---------|
+| `client_tool_call` | **阻塞送达**（5s 超时兜底，对齐 executeClientTool 语义）——浏览器指令必须到客户端 |
+| `status`（客户端工具执行期间心跳） | best-effort，加"子任务"前缀 |
+| `tool_call` / `tool_result`（客户端工具执行器展示事件） | best-effort 原样转发 |
+| `mini_react:status` | 转 `status`，加"子任务"前缀（如 "子任务 · 第 2/6 轮"） |
+| `mini_react:tool_call` / `mini_react:tool_result` | 转对应主类型原样转发（前端 ToolCallToast 直接展示 webfetch 等调用） |
+| `mini_react:thought` / `mini_react:done` / `mini_react:error` | 丢弃 |
+
+#### 步骤 8 — 超时控制与执行
 
 ```go
 timeout := o.subAgentTimeout
@@ -758,208 +737,131 @@ if timeout <= 0 {
 }
 subCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 defer cancel()
-```
 
-#### 步骤 8 — 执行核心循环
-
-```go
-result := o.runSubAgentLoop(subCtx, subEvents, subReq)
-close(subEvents)
-
-if !result.Success && result.Error == "" {
-    result.Error = "子任务超时"
-}
-return result
-```
-
-### 3.3 `runSubAgentLoop` — 独立子循环
-
-```go
-func (o *Orchestrator) runSubAgentLoop(
-    ctx context.Context,
-    events chan<- *llm.StreamEvent,
-    req *RunRequest,
-) *tool.SubAgentRunResult {
-```
-
-**完整实现**（不经过 `runReActLoop`，完全独立）：
-
-```go
-    // 1. 构建简化 system prompt（角色 + 白名单工具定义，全量内联）
-    systemPrompt := buildSubAgentSystemPrompt(o.registry, req)
-
-    // 2. 创建并落库第一条用户消息（走 buildUserMessage 以保证 ID 和 XML 结构完整）
-    userMsg := o.buildUserMessage(ctx, req, nil)
-    if err := o.msgRepo.Create(ctx, userMsg); err != nil {
-        return &tool.SubAgentRunResult{Success: false, Error: err.Error()}
-    }
-    // 注意：不调用 saveUserMsgEmbedding / convRepo.Touch —— 子会话不做后处理
-
-    // 3. 初始化独立 state
-    state := &reactState{
-        msgs: []llm.Message{{Role: "user", Content: userMsg.XMLContext}},
-    }
-    client := o.pickClient(req) // DeepMode=false → Flash
-
-    // 4. 循环 runOneRound
-    var lastText string
-    for round := 0; round < req.MaxIterations; round++ {
-        if ctx.Err() != nil {
-            lastText = extractLastAssistantText(state)
-            return &tool.SubAgentRunResult{
-                Success: false,
-                Error:   "子任务超时",
-                Text:    lastText,
-                ConvID:  req.ConversationID,
-            }
-        }
-        done := o.runOneRound(ctx, events, client, req, systemPrompt, nil, state, round)
-        if done {
-            break
-        }
-    }
-
-    // 5. 取最终回复文本
-    text := extractLastAssistantText(state)
+result, err := react.Run(subCtx, opts.Prompt)
+if err == nil {
     return &tool.SubAgentRunResult{
         Success: true,
-        Text:    text,
-        ConvID:  req.ConversationID,
+        State:   "completed",
+        Text:    result.FinalContent,
+        ConvID:  subConv.ID,
     }
-}
-
-// extractLastAssistantText 从 state.msgs 中提取最后一条 assistant 消息的文本
-func extractLastAssistantText(state *reactState) string {
-    for i := len(state.msgs) - 1; i >= 0; i-- {
-        if state.msgs[i].Role == "assistant" && state.msgs[i].Content != "" {
-            return state.msgs[i].Content
-        }
-    }
-    return ""
 }
 ```
 
-**关键差异 vs 主循环 `runReActLoop`**：
-- 无 `onChatEnd` defer（不触发 session_end 延迟任务）
-- 无 `saveUserMsgEmbedding` 调用（子会话消息不嵌入向量库）
-- 无 `convRepo.Touch` 调用（子会话时间戳不更新，进一步隐身）
-- 无 `retrieveResult`（`SkipRetrieval=true`）
-- 用独立 `reactState`
+#### 步骤 9 — 超时/失败部分结果组装（不丢调研成果）
+
+MiniReAct 出错时已返回完整 `ToolCallLog`（工具调用 + 结果）——子循环已完成的调研成果不回传就是浪费。超时/失败也把工具日志摘要回传主 LLM：
+
+```go
+state := "failed"
+if errors.Is(err, context.DeadlineExceeded) || errors.Is(subCtx.Err(), context.DeadlineExceeded) {
+    state = "timeout"
+}
+return &tool.SubAgentRunResult{
+    Success: false,
+    State:   state,
+    Error:   fmt.Sprintf("子任务%s: %v", state, err),
+    Text:    summarizeToolCallLog(result.ToolCallLog),
+    ConvID:  subConv.ID,
+}
+```
+
+`summarizeToolCallLog`（subagent.go 内实现）：每条工具调用输出 `tool.function → success/fail + 结果截断 ~500 字符`，总预算 ~4000 字符（复用 `truncateToolResult`）。task 工具收到 `Success=false` 但 `Text` 非空时，以 `<task state="timeout|failed">` 包裹返回给主 LLM 利用部分成果（见 2.4）。
+
+### 3.3 MiniReAct 扩展（替代原 runSubAgentLoop 方案）
+
+**决策**：不新增第三套循环（原 runSubAgentLoop 建立在 runOneRound 之上）。MiniReAct 已具备子循环所需的一切：同步 ChatSync、原生 FC、强制收敛轮（mini_react.go:194）、工具日志（ToolCallLog）、事件回调（`mini_react:` 命名空间，mini_react.go:61-67）。本阶段只做增量扩展。
+
+#### 3.3.1 MiniReActConfig 新增字段
+
+| 字段 | 类型 | 用途 | 缺省 |
+|------|------|------|------|
+| `ClientTools` | `[]ClientTool` | 客户端工具定义（browser 等） | nil = 无客户端工具 |
+| `ClientBridge` | `*ClientToolBridge` | 客户端工具结果回传桥 | nil = 不分发客户端工具 |
+| `ClientToolTimeout` | `time.Duration` | 客户端工具执行超时 | 0 = 60s（与 orchestrator 同款默认） |
+| `ConvID` | `string` | 注入 `ExecuteContext`（工具按会话上下文工作） | "" |
+| `AllowedTools` | `map[string]bool` | 运行时白名单 guard | nil = 不限 |
+| `MsgSink` | `MsgSink` | 可选持久化回调 | nil = 纯内存（profile_worker 不变） |
+
+```go
+// MsgSink — MiniReAct 的可选持久化回调。nil = 纯内存运行（profile_worker 现状）。
+// RunSubAgent 注入落库实现，子会话消息完整落库（可观测/可调试）。
+type MsgSink interface {
+    SaveUserMsg(content string)
+    SaveAssistantMsg(msg llm.Message)
+    SaveToolMsg(toolCallID, content string)
+}
+```
+
+#### 3.3.2 executeToolCalls 改动
+
+1. **客户端工具分发**：`clientIdx[tc.Tool]` 命中 → 调共享 `clientToolCaller`（见 3.5）
+2. **白名单 guard**：`AllowedTools` 非空且 `tc.Tool` 不在内 → 错误结果（防 LLM 幻觉工具名，未来 prompt-eng 扩展路径也用得上）
+3. **clientToolsUnavailable fast-fail**：客户端工具超时/断连后置位，本次 Run 内后续客户端工具快速失败（对齐 orchestrator 语义）
+4. **`ExecuteContext` 补 `ConvID`**（当前 mini_react.go:277 未传）
+5. **客户端工具结果走 `normalizeClientToolData` 预算链**
+6. **持久化回调**：Run 开头 `SaveUserMsg`；每轮 assistant 消息 `SaveAssistantMsg`；每条工具结果 `SaveToolMsg`
+
+**后处理天然跳过**：MiniReAct 不触发 Touch / embedding / onChatEnd——子会话天然隐身，无需原方案的 `isSubAgent` 三处跳过（原 3.6 整节删除）。
 
 ### 3.4 `buildSubAgentSystemPrompt`
 
 ```go
-func buildSubAgentSystemPrompt(registry *tool.Registry, req *RunRequest) string {
+func buildSubAgentSystemPrompt() string {
     var buf bytes.Buffer
 
     // Layer 1: 环境信息 + 当前时间
     buf.WriteString("你是 xhanHelper 的子 agent。\n")
     buf.WriteString(fmt.Sprintf("当前时间: %s\n\n", time.Now().Format("2006-01-02 15:04:05")))
 
-    // Layer 2: 角色定义
-    buf.WriteString(req.AgentSystemPrompt) // explorePrompt
+    // Layer 2: 角色定义（explore 角色 prompt）
+    buf.WriteString(explorePrompt)
     buf.WriteString("\n\n")
 
-    // Layer 3: 工具定义（全量内联，不用 tool_retriever）
-    toolPrompt := registry.GeneratePromptFor(req.ToolWhitelist)
-    buf.WriteString(toolPrompt)
-
+    // 工具定义不进 prompt：原生 FC 下经 MiniReActConfig.Tools 传入（3.2 步骤 5）
     return buf.String()
 }
 ```
 
 **与主循环 SystemPrompt 的区别**：
 - 不经过三层 `promptbuilder.Build`（不注入检索上下文/记忆 packet）
-- 不走 `tool_retriever` 机制（白名单 8 个工具直接全量内联）
+- 原生 FC 下工具定义走 `ChatRequest.Tools`（MiniReAct 配置传入），不进 prompt
 - 不含 `GenerateImportantRules`（该规则依赖 tool_retriever 存在）
 
-### 3.5 `mkLlmChatReq` — 按 ToolWhitelist 过滤
+### 3.5 clientToolCaller 提取（`client_tools.go`）
+
+把 orchestrator 的 `executeClientTool`（orchestrator.go:1361）抽成独立结构，orchestrator 与 MiniReAct 共用，消除重复实现：
 
 ```go
-func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string,
-    msgs []llm.Message, finalRound bool) *llm.ChatRequest {
-    // ... 现有逻辑 ...
-    var tools []llm.ToolDefinition
-    if !finalRound && o.useNativeFC {
-        tools = o.registry.GetNativeFCTools()
-        // 新增：按白名单过滤（仅子循环生效，主循环 whitelist=nil → 全量）
-        if len(req.ToolWhitelist) > 0 {
-            tools = filterToolsByWhitelist(tools, req.ToolWhitelist)
-        }
-        tools = append(tools, buildClientToolDefs(req.ClientTools, o.registry)...)
-    }
-    // prompt eng 路径：system prompt 里已经用 GeneratePromptFor 过滤过，这里不需要改
-    // ... 其余逻辑不变 ...
+// clientToolCaller — 客户端工具执行器（orchestrator / MiniReAct 共用）。
+type clientToolCaller struct {
+    bridge  *ClientToolBridge
+    timeout time.Duration
 }
 
-func filterToolsByWhitelist(tools []llm.ToolDefinition, whitelist []string) []llm.ToolDefinition {
-    wl := make(map[string]bool, len(whitelist))
-    for _, name := range whitelist {
-        wl[name] = true
-    }
-    filtered := make([]llm.ToolDefinition, 0, len(tools))
-    for _, t := range tools {
-        if wl[t.Name] {
-            filtered = append(filtered, t)
-        }
-    }
-    return filtered
-}
+// Call 分派一次客户端工具调用，阻塞等待客户端回传。
+// mustSend：指令类事件（client_tool_call）必须送达，由调用方保证阻塞语义（5s 兜底）；
+// bestEffort：展示/心跳类事件，非阻塞丢失只影响展示。
+// 返回 (result, unavailable)：unavailable=true 表示客户端断连/超时，
+// 调用方应置位 fast-fail 标志，本次 Run 内后续客户端工具快速失败。
+func (cc *clientToolCaller) Call(
+    ctx context.Context,
+    mustSend func(*llm.StreamEvent) bool,
+    bestEffort func(*llm.StreamEvent),
+    userID string,
+    call tool.ToolCall,
+    mode string,
+) (*tool.Result, bool)
 ```
 
-### 3.6 `runReActLoop` 后处理跳过
+**行为零变化要求**：orchestrator 改用它后，事件类型/心跳间隔（15s）/超时文案/预算链与现状完全一致——现有 `client_tools_test.go` 用例兜底回归。
 
-在 `orchestrator.go` 中 `runReActLoop` 加入子会话检测（三处跳过）：
+两侧接线：
+- orchestrator：`mustSend` = 阻塞发送 + 5s 兜底，`bestEffort` = 现有 `sendEvent`（非阻塞）
+- MiniReAct：`mustSend` = onEvent 直达（RunSubAgent 的 forwarder 保证阻塞送达语义），`bestEffort` = `emit`
 
-```go
-func (o *Orchestrator) runReActLoop(ctx context.Context, events chan<- *llm.StreamEvent, ...) {
-    // 新增：检测是否为子会话
-    extra, _ := o.convRepo.GetExtra(ctx, req.ConversationID)
-    isSubAgent := extra != nil && extra.SubAgentType != ""
-
-    // ...
-
-    // Touch：仅主会话
-    if !isSubAgent {
-        util.SafeGo(func() { o.convRepo.Touch(ctx, req.ConversationID) })
-    }
-
-    // Embedding：仅主会话
-    if !isSubAgent {
-        util.SafeGo(func() {
-            o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID)
-        })
-    }
-
-    // onChatEnd：仅主会话
-    if !isSubAgent && o.onChatEnd != nil {
-        defer o.onChatEnd(req.UserID, req.ConversationID, userMsg.ID)
-    }
-
-    // ... 继续循环 ...
-}
-```
-
-### 3.7 Wiring（`appinit/tools.go` + `appinit/agents.go`）
-
-`appinit/agents.go`（Orchestrator 构造后）：
-
-```go
-// Orchestrator 构造完成后，二次注册 task 工具（依赖 runner 回调，避免循环依赖）
-taskTool := tool.NewTaskTool(orch)
-reg.Register(taskTool)
-```
-
-`appinit/tools.go`：Phase 18-2 如有 task 占位注册行，移除。webfetch 仍在 tools.go 正常注册。
-
-`appinit/router.go` 或 `cmd/xhan-helper/main.go`：`OrchestratorConfig` 传入新配置：
-
-```go
-SubAgentMaxIterations: cfg.SubAgent.ExploreMaxIterations,
-SubAgentTimeoutSecs:   cfg.SubAgent.ExploreTimeoutSeconds,
-```
-
-### 3.8 配置（`conf/config.yaml`）
+### 3.6 配置（`conf/config.yaml`）
 
 ```yaml
 subagent:
@@ -976,22 +878,43 @@ type SubAgentConfig struct {
 }
 ```
 
-### 3.9 测试（`agent/subagent_test.go`）
+### 3.7 Wiring（`appinit/agents.go`）
+
+`appinit/agents.go`（Orchestrator 构造后）：
+
+```go
+// Orchestrator 构造完成后，二次注册 task 工具（依赖 runner 回调，避免循环依赖）
+taskTool := tool.NewTaskTool(orch)
+reg.Register(taskTool)
+```
+
+webfetch 仍在 `appinit/tools.go` 注册（`webfetch.enabled=true` 时，含 `HideTool("webfetch")`，见 1.2）。`OrchestratorConfig` 传入新配置：
+
+```go
+SubAgentMaxIterations: cfg.SubAgent.ExploreMaxIterations,
+SubAgentTimeoutSecs:   cfg.SubAgent.ExploreTimeoutSeconds,
+```
+
+### 3.8 测试
 
 | 测试 | 覆盖点 |
 |------|--------|
-| `TestWhitelistFilter_ServerTools` | 构造 tools list + whitelist → 验证白名单外的 tool 被过滤 |
-| `TestWhitelistFilter_ClientTools` | 同上，client tools 路径 |
-| `TestExecuteConcurrently_WhitelistRejection` | whitelist=["webfetch"] + tool_call=["bookkeeping"] → 返回错误 |
 | `TestDepthCheck_SubAgentRejectsNested` | 父会话 ParentID 链 depth=1 → RunSubAgent 拒绝 |
 | `TestDepthCheck_MainAllows` | 主会话 depth=0 → RunSubAgent 通过 |
-| `TestResultWrapFormat` | 模拟 runner 返回文本 → task 工具包裹 `<task id state>` → 验证格式 |
-| `TestSubAgent_SkipsPostProcessing` | 创建子会话 → 跑子循环 → 断言无 Touch/embedding/session_end 任务 |
-| `TestBuildSubAgentSystemPrompt` | 调用 buildSubAgentSystemPrompt → 检查含 explorePrompt + 8 个工具定义 |
+| `TestResultWrapFormat` | 模拟 runner 返回文本 → task 工具包裹 `<task id state>` → 验证 completed/timeout/failed 三态格式 |
+| `TestTaskTool_PartialResultOnFailure` | runner 返回 Success=false + Text 非空 → 包裹 state=timeout 返回；Text 空 → 硬错误 |
+| `TestSubAgent_EventForwarding` | 模拟 forwarder 各类事件 → client_tool_call 阻塞送达 / status 加"子任务"前缀 / thought 丢弃 |
+| `TestSubAgent_TimeoutSalvagesToolLog` | 子循环 ctx 超时 → 结果含 ToolCallLog 摘要文本 + state=timeout |
+| `TestSubAgent_MsgSinkPersists` | MsgSink 注入 → 子会话 user/assistant/tool 消息完整落库 |
+| `TestSubAgent_SkipsPostProcessing` | 子会话跑完 → 断言无 Touch/embedding/session_end 任务（MiniReAct 天然不触发） |
+| `TestMiniReAct_ClientToolDispatch` | ClientTools 命中 → 走桥分发；回传结果走 normalize 预算链 |
+| `TestMiniReAct_ClientToolTimeoutFastFail` | 首个客户端工具超时 → 后续客户端工具快速失败 |
+| `TestMiniReAct_WhitelistGuard` | AllowedTools 不含某工具 → 错误结果 |
+| `TestSubAgent_ToolsIncludeHiddenWebFetch` | registry 中 webfetch 已 HideTool → 子循环 defs 含 webfetch、主循环 defs 不含 |
+| `TestBuildSubAgentSystemPrompt` | 检查含 explorePrompt + 当前时间 |
 | `TestWebFetch_HTML2Text` | 含 script/style/br/p/div 的 HTML → 纯文本 |
-| `TestSubAgentLoop_ExitOnMaxIter` | 循环到 maxIter → 正常退出 + 捕获最后文本 |
 
-### 3.10 Phase 18-3 验收
+### 3.9 Phase 18-3 验收
 
 终验（按 CLAUDE.md 主链路分级的完整验收）：
 
@@ -1062,6 +985,8 @@ type SubAgentConfig struct {
 | general 子 agent | Phase 19：带写权限的多步执行子 agent |
 | 子循环内 compaction | 留待探索：调研任务足够长时再考虑压缩早期轮次 |
 | 前端子任务 UI | Phase 19：子任务进度面板、结果展开/收起 |
+| 孤儿子会话 | 客户端超时重发同一条消息 → 创建新子会话，旧的成孤儿（列表不可见）。explore 只读，损失=LLM 花费+DB 行数。Phase 19 考虑：派发前复用同 ParentID 未完成子会话或标记废弃 |
+| 并行 task 无 429 重试 | 多个子循环并发触发 DeepSeek 限流时直接失败（部分成果经 state=failed 回传）。个人助手量级可接受，暂不做重试 |
 
 ---
 
@@ -1072,11 +997,11 @@ type SubAgentConfig struct {
 | 环节 | opencode | xhanHelper |
 |------|----------|------------|
 | 触发 | 原生 FC 调 task 工具 | Flash JSON `tool_calls` 或原生 FC |
-| 权限 | Permission.ask + 子权限推导 | 白名单过滤（mkLlmChatReq + executeConcurrently 双点拦截） |
+| 权限 | Permission.ask + 子权限推导 | 白名单双层拦截（工具定义过滤 + MiniReAct AllowedTools 运行时 guard） |
 | 会话 | 新建独立 Session(parentID) | 新建子 Conversation(ParentID + Extra.SubAgentType) |
 | 上下文 | 全新，仅 prompt 文本 | 全新，仅任务 prompt |
-| 进度回传 | 子会话事件带 sessionID 流式推送 | 只转发 client_tool_call（浏览器工具必需）；其余事件丢弃 |
-| 结果 | `<task id state>` XML 包裹 | 同左 |
+| 进度回传 | 子会话事件带 sessionID 流式推送 | 复用主 SSE 事件类型转发（status/tool_call/tool_result + client_tool_call 阻塞送达），前端零改动 |
+| 结果 | `<task id state>` XML 包裹 | 同左；超时/失败带部分成果，state=timeout/failed |
 | 并行 | 一条消息多个 task 并发执行 | 复用现有 executeConcurrently |
 | 深度限制 | subagent_depth 配置 | 写死 1 层（ParentID 链 ≥1 拒绝） |
 | 续跑 | task_id 复用子会话 | Phase 19 |
@@ -1086,7 +1011,7 @@ type SubAgentConfig struct {
 
 | 阶段 | 新增 | 修改 |
 |------|------|------|
-| Phase 18-1 | `tool/webfetch.go`、`tool/webfetch_test.go` | `appinit/tools.go`、`conf/config.yaml` |
+| Phase 18-1 | `tool/webfetch.go`、`tool/webfetch_test.go`、`tool/registry_hidden_test.go` | `appinit/tools.go`、`tool/registry.go`、`conf/config.yaml`、`internal/config/config.go`、`internal/app/init_repos.go`、删除 `tool/search.go` `tool/search_bocha.go` |
 | Phase 18-2 | `tool/subagent.go`、`tool/task.go` | `model/conversation.go`、`tool/tool.go`、`service/conversation_repo.go`、`agent/orchestrator.go` |
-| Phase 18-3 | `agent/subagent.go`、`agent/subagent_test.go` | `agent/orchestrator.go`、`appinit/tools.go`、`appinit/agents.go`、`conf/config.yaml` |
+| Phase 18-3 | `agent/subagent.go`、`agent/subagent_test.go` | `agent/client_tools.go`、`agent/mini_react.go`、`appinit/agents.go`、`conf/config.yaml` |
 | Phase 18-4 | — | 文档更新 |

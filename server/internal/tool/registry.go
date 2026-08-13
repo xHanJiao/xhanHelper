@@ -65,12 +65,13 @@ func (r *Registry) HideTool(name string) {
 	r.hiddenNames[name] = true
 }
 
-// SearchTools 在内存中的工具（含 MCP 占位工具）里关键词搜索
+// SearchTools 在内存中的工具（含 MCP 占位工具）里关键词搜索。
+// hidden 工具不参与搜索（tool_retriever 查不到，主循环 LLM 无途径获知）。
 func (r *Registry) SearchTools(query string) []ToolInfo {
 	var results []ToolInfo
 	q := strings.ToLower(query)
 	for name, t := range r.tools {
-		if name == "tool_retriever" {
+		if r.hiddenNames[name] {
 			continue
 		}
 		desc := strings.ToLower(t.Description())

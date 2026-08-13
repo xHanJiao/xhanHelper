@@ -62,13 +62,10 @@ chat:
 share:
   default_valid_days: 7
 
-# search: # 联网搜索工具已下掉（不再注册），配置保留备用
-#   provider: anysearch
-#   api_key: ${SEARCH_API_KEY}
-#   base_url: https://api.anysearch.com/v1
-#   total_quota: 100
-#   quota_expires_at: "2026-01-01"
-#   used_count: 0
+webfetch:
+  enabled: false          # 默认关闭（token 消耗大）；启用后仅 subAgent 可见
+  timeout_seconds: 15
+  max_bytes: 51200
 
 retrieval:
   freshness_decay: 0.02           # 时间衰减系数，作为默认值

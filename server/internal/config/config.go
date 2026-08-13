@@ -27,7 +27,7 @@ type Config struct {
 	Embedding         EmbeddingConfig         `yaml:"embedding"`
 	Reflection        ReflectionConfig        `yaml:"reflection"`
 	Retrieval         RetrievalConfig         `yaml:"retrieval"`
-	Search            SearchConfig            `yaml:"search"`
+	WebFetch          WebFetchConfig          `yaml:"webfetch"`
 	Chat              ChatConfig              `yaml:"chat"`
 	Share             ShareConfig             `yaml:"share"`
 	Snowflake         SnowflakeConfig         `yaml:"snowflake"`
@@ -50,6 +50,13 @@ type ChatConfig struct {
 // ShareConfig — 分享配置
 type ShareConfig struct {
 	DefaultValidDays int `yaml:"default_valid_days"` // 分享链接默认有效天数，默认 7
+}
+
+// WebFetchConfig — webfetch 工具配置
+type WebFetchConfig struct {
+	Enabled        bool `yaml:"enabled"`         // 是否启用 webfetch（默认 false 关闭；启用后仅 subAgent 可见）
+	TimeoutSeconds int  `yaml:"timeout_seconds"` // 抓取超时秒数，默认 15
+	MaxBytes       int  `yaml:"max_bytes"`       // 正文大小上限（字节），默认 51200
 }
 
 // MCPServerCfg — 单个 MCP server 配置
@@ -161,16 +168,6 @@ type RetrievalConfig struct {
 	History        SourceWeights `yaml:"history"`
 	Theme          SourceWeights `yaml:"theme"`
 	Summary        SourceWeights `yaml:"summary"`
-}
-
-// SearchConfig — 搜索工具配置（通用，支持多 provider）
-type SearchConfig struct {
-	Provider       string `yaml:"provider"`
-	APIKey         string `yaml:"api_key"`
-	BaseURL        string `yaml:"base_url"`
-	TotalQuota     int    `yaml:"total_quota"`      // 包配额总数，如 1000；0 表示不限制
-	QuotaExpiresAt string `yaml:"quota_expires_at"` // 配额到期日，如 "2026-09-01"
-	UsedCount      int    `yaml:"used_count"`       // 当前已用次数，仅首次写入 DB 记录时生效，后续由 DB 管理
 }
 
 // ReflectionConfig — 反思系统配置
@@ -363,24 +360,6 @@ func merge(dst, src *Config) {
 	if len(src.Reflection.ActiveDurationDays) > 0 {
 		dst.Reflection.ActiveDurationDays = src.Reflection.ActiveDurationDays
 	}
-	if src.Search.Provider != "" {
-		dst.Search.Provider = src.Search.Provider
-	}
-	if src.Search.APIKey != "" {
-		dst.Search.APIKey = src.Search.APIKey
-	}
-	if src.Search.BaseURL != "" {
-		dst.Search.BaseURL = src.Search.BaseURL
-	}
-	if src.Search.TotalQuota != 0 {
-		dst.Search.TotalQuota = src.Search.TotalQuota
-	}
-	if src.Search.QuotaExpiresAt != "" {
-		dst.Search.QuotaExpiresAt = src.Search.QuotaExpiresAt
-	}
-	if src.Search.UsedCount != 0 {
-		dst.Search.UsedCount = src.Search.UsedCount
-	}
 	if src.Chat.HistoryRounds != 0 {
 		dst.Chat.HistoryRounds = src.Chat.HistoryRounds
 	}
@@ -438,7 +417,6 @@ func resolveEnvVars(cfg *Config) {
 	cfg.DB.Password = os.ExpandEnv(cfg.DB.Password)
 	cfg.LLM.APIKey = os.ExpandEnv(cfg.LLM.APIKey)
 	cfg.Embedding.APIKey = os.ExpandEnv(cfg.Embedding.APIKey)
-	cfg.Search.APIKey = os.ExpandEnv(cfg.Search.APIKey)
 }
 
 func validate(cfg *Config) error {
@@ -503,15 +481,6 @@ func validate(cfg *Config) error {
 	if cfg.LLM.ExtractMsgLimit == 0 {
 		cfg.LLM.ExtractMsgLimit = 50
 	}
-	if cfg.Search.Provider == "" {
-		cfg.Search.Provider = "anysearch"
-	}
-	if cfg.Search.BaseURL == "" {
-		cfg.Search.BaseURL = "https://api.anysearch.com/v1"
-	}
-	if cfg.Search.TotalQuota == 0 {
-		cfg.Search.TotalQuota = 100
-	}
 	if cfg.Chat.HistoryRounds == 0 {
 		cfg.Chat.HistoryRounds = 10
 	}
@@ -535,6 +504,12 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Share.DefaultValidDays == 0 {
 		cfg.Share.DefaultValidDays = 7
+	}
+	if cfg.WebFetch.TimeoutSeconds == 0 {
+		cfg.WebFetch.TimeoutSeconds = 15
+	}
+	if cfg.WebFetch.MaxBytes == 0 {
+		cfg.WebFetch.MaxBytes = 51200
 	}
 	return nil
 }

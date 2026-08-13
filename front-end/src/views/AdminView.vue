@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { api } from '@/api/client'
-import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NEmpty, NAlert, NButton, NCheckbox, useMessage } from 'naive-ui'
+import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NEmpty, NAlert, NButton, NCheckbox, NModal, useMessage } from 'naive-ui'
 import { Chart, registerables } from 'chart.js'
 import PageTopBar from '@/components/PageTopBar.vue'
 
@@ -302,6 +302,53 @@ const costLoaded = ref(false)
 const costBarStack = ref({ hit: true, miss: true, completion: false })
 let costCharts = []
 
+// 饼图钻取：点击扇形 → 弹层展示该分组的 命中/未命中/生成 三色占比
+const costDrillOpen = ref(false)
+const costDrillDown = ref(null)
+
+// 选中维度求和：勾了哪些 checkbox，饼图就只算哪些维度的 token
+function selectedTotal(g) {
+  let sum = 0
+  if (costBarStack.value.hit) sum += g.prompt_cache_hit || 0
+  if (costBarStack.value.miss) sum += g.prompt_cache_miss || 0
+  if (costBarStack.value.completion) sum += g.completion || 0
+  return sum
+}
+
+// 给饼图挂点击钻取：从 group 行读 hit/miss/completion（stats 响应自带，零新 API）
+function attachDrillDown(chartId, groups) {
+  const ch = Chart.getChart(chartId)
+  if (!ch) return
+  ch.options.onClick = (_evt, elements) => {
+    if (!elements?.length) return
+    const idx = elements[0].index
+    const g = groups[idx]
+    if (!g) return
+    costDrillDown.value = {
+      title: `${ch.data.labels[idx]} 维度占比`,
+      labels: ['命中缓存', '未命中缓存', '生成'],
+      data: [g.prompt_cache_hit, g.prompt_cache_miss, g.completion],
+    }
+    costDrillOpen.value = true
+  }
+}
+
+// 钻取弹层内的小饼图（NModal after-enter 后 canvas 才在 DOM）
+function renderDrillChart() {
+  const d = costDrillDown.value
+  if (!d) return
+  const canvas = document.getElementById('cost-drill-chart')
+  if (!canvas) return
+  Chart.getChart('cost-drill-chart')?.destroy()
+  const colors = ['#5b6abf', '#e74c3c', '#27ae60']
+  const ch = new Chart(canvas, {
+    type: 'pie',
+    data: { labels: d.labels, datasets: [{ data: d.data, backgroundColor: colors }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } } }
+  })
+  costCharts.push(ch)
+}
+
 // 堆叠维度切换：至少保留一个维度，全取消时拦截并提示
 function toggleBarStack(key) {
   const next = { ...costBarStack.value, [key]: !costBarStack.value[key] }
@@ -394,13 +441,16 @@ async function renderCostCharts() {
     if (costBarStack.value.completion) datasets.push({ label: '生成', data: daily.groups.map(g => g.completion), backgroundColor: '#27ae60' })
     if (datasets.length) makeBarChart('cost-daily-chart', labels, datasets, false, costCharts)
 
-    // 三个饼图
+    // 三个饼图（数据跟随维度筛选，点击扇形钻取三维度占比）
     const cat = await fetchCostStats('category')
-    makePieChart('cost-cat-chart', cat.groups.map(g => g.key), cat.groups.map(g => g.total_tokens))
+    makePieChart('cost-cat-chart', cat.groups.map(g => g.key), cat.groups.map(g => selectedTotal(g)))
+    attachDrillDown('cost-cat-chart', cat.groups)
     const model = await fetchCostStats('model')
-    makePieChart('cost-model-chart', model.groups.map(g => g.key), model.groups.map(g => g.total_tokens))
+    makePieChart('cost-model-chart', model.groups.map(g => g.key), model.groups.map(g => selectedTotal(g)))
+    attachDrillDown('cost-model-chart', model.groups)
     const sub = await fetchCostStats('sub_category')
-    makePieChart('cost-sub-chart', sub.groups.map(g => g.key), sub.groups.map(g => g.total_tokens))
+    makePieChart('cost-sub-chart', sub.groups.map(g => g.key), sub.groups.map(g => selectedTotal(g)))
+    attachDrillDown('cost-sub-chart', sub.groups)
   } catch (_) {}
 }
 
@@ -785,6 +835,14 @@ onUnmounted(() => {
           </NCard>
         </div>
       </div>
+
+      <!-- 钻取弹层：点击饼图扇形查看该分组三维度占比 -->
+      <NModal v-model:show="costDrillOpen" preset="card" :title="costDrillDown?.title" style="width: 420px;" @after-enter="renderDrillChart">
+        <div class="pie-box"><canvas id="cost-drill-chart" /></div>
+        <div style="font-size: 11px; color: var(--color-text-muted); margin-top: var(--space-sm);">
+          命中 {{ fmtTokens(costDrillDown?.data?.[0]) }} · 未命中 {{ fmtTokens(costDrillDown?.data?.[1]) }} · 生成 {{ fmtTokens(costDrillDown?.data?.[2]) }}
+        </div>
+      </NModal>
     </div>
   </div>
   </div>

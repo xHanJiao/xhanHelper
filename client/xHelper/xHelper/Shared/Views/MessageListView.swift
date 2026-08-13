@@ -327,15 +327,27 @@ struct MessageListView: View {
             if let cd = msg.chartData {
                 ChartBubble(chartData: cd)
             } else if msg.role == "user" {
+                #if os(macOS)
+                ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
+                           showTime: true)
+                    .allowsHitTesting(!isShareSelectMode)
+                #else
                 ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
                            showTime: activeTimeBubbleId == msg.id,
                            onTapToShowTime: { toggleTimeBubble(msg.id) })
                     .allowsHitTesting(!isShareSelectMode)
+                #endif
             } else {
+                #if os(macOS)
+                ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt,
+                           showTime: true)
+                    .allowsHitTesting(!isShareSelectMode)
+                #else
                 ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt,
                            showTime: activeTimeBubbleId == msg.id,
                            onTapToShowTime: { toggleTimeBubble(msg.id) })
                     .allowsHitTesting(!isShareSelectMode)
+                #endif
             }
         }
     }

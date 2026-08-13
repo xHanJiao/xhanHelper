@@ -978,7 +978,7 @@ SubAgentTimeoutSecs:   cfg.SubAgent.ExploreTimeoutSeconds,
 | 文件 | 改动 |
 |------|------|
 | `ChatViewModel` | 新发布状态 `pendingUserRequests: [UserRequest]`（数组，多 task 并行排队），独立于 toolQueue——**不被文本流清理**（ToolActivityToast 在文本流开始时清 toolQueue 退场，不能承载 ask_user） |
-| 新组件 `AskUserBar` | 非模态悬浮条，位置在输入栏上方（与 L3 确认条同区）：图标 + 话术 + [已处理] [跳过] 按钮；持续驻留直到响应或超时 |
+| 新组件 `AskUserBar` | 非模态悬浮条，位置在输入栏上方（与 L3 确认条同区）：图标 + 话术 + 可选回答输入框 + [已处理/发送] [跳过] 按钮；持续驻留直到响应或超时。有输入时主按钮变"发送"（回答随结果回传 LLM，`{"answered":true,"reply":"..."}`）；无输入点"已处理"（`{"answered":true}`）；"跳过"走错误通道 |
 | `ChatViewModel+ClientTools.swift` | `ui__ask_user` 分支：发系统通知 + 弹条 + 等待（timeout_secs × 0.9 超时视为跳过）→ submitToolResult |
 
 **多请求行为**：
@@ -1001,7 +1001,6 @@ SubAgentTimeoutSecs:   cfg.SubAgent.ExploreTimeoutSeconds,
 
 #### 3.10.5 明确不做
 
-- 自由文本回复（先 ok/deny，文本输入后续再加）
 - ask_user 硬限次（验证码反复出现，需多次介入）
 - Vue 前端适配（无浏览器场景注入条件已排除）
 

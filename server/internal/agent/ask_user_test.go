@@ -32,15 +32,19 @@ func TestAskUserDef_Structure(t *testing.T) {
 
 func TestAppendAskUserTool_InjectedOnlyWithClientTools(t *testing.T) {
 	base := []llm.ToolDefinition{{Name: "browser"}}
-	// 客户端在线 → 注入
-	defs, injected := appendAskUserTool(base, []ClientTool{{ServerName: "browser", Name: "navigate"}})
-	if !injected || len(defs) != 2 || defs[1].Name != "ui" {
-		t.Errorf("客户端在线应注入 ask_user: injected=%v defs=%+v", injected, defs)
+	cts := []ClientTool{{ServerName: "browser", Name: "navigate"}}
+	// 客户端在线 → def 与 ClientTools 都注入（缺一不可：def 供 LLM 可见，ClientTools 供分发索引）
+	defs, updated := appendAskUserTool(base, cts)
+	if len(defs) != 2 || defs[1].Name != "ui" {
+		t.Errorf("客户端在线应注入 ui def: %+v", defs)
 	}
-	// 客户端离线 → 不注入
-	defs2, injected2 := appendAskUserTool(base, nil)
-	if injected2 || len(defs2) != 1 {
-		t.Errorf("客户端离线不应注入: injected=%v defs=%+v", injected2, defs2)
+	if len(updated) != 2 || updated[1].ServerName != "ui" || updated[1].Name != "ask_user" {
+		t.Errorf("客户端在线应注入 ui ClientTool（分发索引用）: %+v", updated)
+	}
+	// 客户端离线 → 均不注入
+	defs2, updated2 := appendAskUserTool(base, nil)
+	if len(defs2) != 1 || len(updated2) != 0 {
+		t.Errorf("客户端离线不应注入: defs=%+v cts=%+v", defs2, updated2)
 	}
 }
 

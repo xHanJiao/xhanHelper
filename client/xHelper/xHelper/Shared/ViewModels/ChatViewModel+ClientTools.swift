@@ -38,13 +38,16 @@ extension ChatViewModel {
             let isBrowser = toolName.hasPrefix("browser__")
             let isFS = toolName.hasPrefix("fs__")
             do {
-                // 子任务用户介入（ask_user）：弹 AskUserBar + 系统通知，等用户 ok/deny
+                // 子任务用户介入（ask_user）：弹 AskUserBar + 系统通知，用户可输入回答或直接已处理/跳过
                 if toolName == "ui__ask_user" {
                     let message = (args["message"] as? String) ?? "子任务需要你的帮助"
                     LogBuffer.shared.info("askUser: \(message.prefix(120))")
-                    let answered = await self.awaitUserRequest(callID: callID, message: message, timeoutSecs: timeoutSecs)
-                    if answered {
-                        try await api.submitToolResult(callId: callID, resultJSON: Data(#"{"answered":true}"#.utf8))
+                    let reply = await self.awaitUserRequest(callID: callID, message: message, timeoutSecs: timeoutSecs)
+                    if let reply {
+                        var payload: [String: Any] = ["answered": true]
+                        if !reply.isEmpty { payload["reply"] = reply }
+                        let data = try JSONSerialization.data(withJSONObject: payload)
+                        try await api.submitToolResult(callId: callID, resultJSON: data)
                     } else {
                         try await api.submitToolResult(callId: callID, resultJSON: nil, error: "用户未处理，已跳过")
                     }

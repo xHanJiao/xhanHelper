@@ -88,11 +88,13 @@ struct ChatView: View {
             // 错误提示改为全局 Toast（ToastCenter），此处不再内嵌红字
 
             // 子任务用户介入条（ask_user）：输入栏上方，独立于 toolQueue 不被文本流清理。
-            // 多个请求堆叠折叠，逐条 ok/deny；早于 L3 确认条展示（它是待执行工具的确认，ask_user 是待办介入）
+            // 多个请求堆叠折叠，逐条回答/已处理/跳过；早于 L3 确认条展示（它是待执行工具的确认，ask_user 是待办介入）。
+            // 底部留 8pt 间距，避免卡片与输入框顶部粘连。
             if !viewModel.pendingUserRequests.isEmpty {
-                AskUserBar(requests: viewModel.pendingUserRequests) { callID, answered in
-                    viewModel.resolveUserRequest(callID: callID, answered: answered)
+                AskUserBar(requests: viewModel.pendingUserRequests) { callID, reply in
+                    viewModel.resolveUserRequest(callID: callID, reply: reply)
                 }
+                .padding(.bottom, 8)
             }
 
             // L3 工具确认行：输入框上方，固定可见（浏览历史消息时也不会错过许可请求）

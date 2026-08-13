@@ -252,3 +252,64 @@ func TestSubAgent_ClientToolFastFailExemptsUI(t *testing.T) {
 		t.Error("ask_user 应真实等待而非快速失败")
 	}
 }
+
+// TestSubAgent_AskUserDispatch — ask_user 从"LLM 调用"到"客户端收到 client_tool_call"全链路：
+// ui 工具必须同时注入 def 与 ClientTools（clientIdx），否则 LLM 能调但路由不到客户端。
+func TestSubAgent_AskUserDispatch(t *testing.T) {
+	bridge := NewClientToolBridge()
+	sink := &captureSink{}
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{Content: "", ToolCalls: []llm.ToolCall{{ID: "ask-1", Function: llm.ToolCallFunction{Name: "ui__ask_user", Arguments: `{"message":"请帮我处理验证码"}`}}}},
+		{Content: "验证码已处理，继续调研"},
+	}}
+
+	// 模拟客户端：收到 ui__ask_user → 回传"已处理"
+	dispatchCh := make(chan string, 4)
+	go func() {
+		for {
+			id := sink.clientToolCallID()
+			if id != "" {
+				dispatchCh <- id
+				_ = bridge.OnResult(id, "u1", ClientToolResult{Result: json.RawMessage(`{"answered":true}`)})
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	m := NewMiniReAct(&MiniReActConfig{
+		Client:        llmClient,
+		ToolRegistry:  noopRegistry(),
+		SystemPrompt:  "sys",
+		UserID:        "u1",
+		MaxIterations: 5,
+		Caller:        "test",
+		SubAgent: SubAgentExt{
+			// 模拟 RunSubAgent 注入结果：browser + ui 都在 ClientTools（clientIdx 依赖）
+			ClientTools: []ClientTool{
+				{ServerName: "browser", Name: "agent_browser_open", IsReadOnly: true},
+				{ServerName: "ui", Name: "ask_user", IsReadOnly: true},
+			},
+			ClientBridge:      bridge,
+			ClientToolTimeout: 2 * time.Second,
+			AllowedTools:      map[string]bool{"browser": true, "ui": true},
+		},
+		OnEvent: sink.onEvent,
+	})
+
+	result, err := m.Run(context.Background(), "调研")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.FinalContent != "验证码已处理，继续调研" {
+		t.Errorf("ask_user 回传后子循环应继续: %s", result.FinalContent)
+	}
+	if len(result.ToolCallLog) != 1 || !result.ToolCallLog[0].Result.Success {
+		t.Fatalf("ask_user 应成功: %+v", result.ToolCallLog)
+	}
+	select {
+	case <-dispatchCh:
+	default:
+		t.Fatal("客户端未收到 ui__ask_user 分发")
+	}
+}

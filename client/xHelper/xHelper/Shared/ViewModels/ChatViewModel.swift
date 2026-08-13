@@ -34,7 +34,7 @@ struct ToolConfirmation: Identifiable {
 struct UserRequest: Identifiable {
     let id: String // call_id
     let message: String
-    let continuation: CheckedContinuation<Bool, Never>
+    let continuation: CheckedContinuation<String?, Never> // nil=跳过/超时；""=已处理无文本；非空=用户回答
 }
 
 // MARK: - 工具调用展示（tool_call / tool_result 事件）
@@ -401,11 +401,11 @@ class ChatViewModel: ObservableObject {
     }
 
     /// 子任务请求用户介入（ask_user）：弹 AskUserBar + 系统通知（仅队列首个发，避免轰炸）。
-    /// 等待用户 ok/deny；超时（下发 timeout_secs×0.9，至少 10s）视为跳过。
-    /// 返回 true=用户已处理。
-    func awaitUserRequest(callID: String, message: String, timeoutSecs: Double?) async -> Bool {
+    /// 等待用户：可仅点"已处理"（返回空字符串），也可输入回答文本（返回文本），
+    /// 或"跳过"（返回 nil）；超时（下发 timeout_secs×0.9，至少 10s）视为跳过。
+    func awaitUserRequest(callID: String, message: String, timeoutSecs: Double?) async -> String? {
         let timeout = max(10, (timeoutSecs ?? 120) * 0.9)
-        return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+        return await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
             pendingUserRequests.append(UserRequest(id: callID, message: message, continuation: cont))
             if pendingUserRequests.count == 1 {
                 playAskUserNotification(message)
@@ -414,16 +414,16 @@ class ChatViewModel: ObservableObject {
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(timeout))
                 guard let self, self.pendingUserRequests.contains(where: { $0.id == callID }) else { return }
-                self.resolveUserRequest(callID: callID, answered: false)
+                self.resolveUserRequest(callID: callID, reply: nil)
             }
         }
     }
 
-    /// 用户响应 ask_user：answered=true 已处理，false 跳过
-    func resolveUserRequest(callID: String, answered: Bool) {
+    /// 用户响应 ask_user：reply=nil 跳过；""=已处理无文本；非空=回答文本
+    func resolveUserRequest(callID: String, reply: String?) {
         guard let idx = pendingUserRequests.firstIndex(where: { $0.id == callID }) else { return }
         let req = pendingUserRequests.remove(at: idx)
-        req.continuation.resume(returning: answered)
+        req.continuation.resume(returning: reply)
     }
 
     /// ask_user 到达时发 macOS 系统通知（仅队列首个），让用户知道子任务需要他

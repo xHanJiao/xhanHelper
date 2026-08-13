@@ -224,8 +224,10 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 	// 步骤 5 — 构建工具定义（服务端 + 客户端分别按白名单过滤）
 	tools := o.registry.GetLLMToolsFiltered(exploreWhitelist)
 	tools = append(tools, filterClientToolsByWhitelist(buildClientToolDefs(agentClientTools, o.registry), exploreWhitelist)...)
-	// ask_user 注入：仅当客户端在线（ClientTools 非空）时——无浏览器场景 ask_user 无意义
-	tools, _ = appendAskUserTool(tools, agentClientTools)
+	// ask_user 注入：仅当客户端在线（ClientTools 非空）时——无浏览器场景 ask_user 无意义。
+	// 注意：def 必须同时进入 tools（LLM 可见）与 ClientTools（MiniReAct clientIdx 分发索引），
+	// 缺一不可——只加 def 会导致 LLM 能调用但分发路由不到客户端（"未找到工具 'ui'"）。
+	tools, agentClientTools = appendAskUserTool(tools, agentClientTools)
 
 	// 步骤 6 — 构造 MiniReAct（复用既有组件，含强制收敛轮/工具日志/事件回调）
 	maxIter := o.subAgentMaxIterations

@@ -156,13 +156,31 @@ func buildAskUserDef() llm.ToolDefinition {
 	}
 }
 
-// appendAskUserTool 客户端在线（ClientTools 非空）时注入 ask_user 工具定义。
-// 返回 (defs, 是否注入)。纯 Vue/无浏览器场景不注入——ask_user 无意义。
-func appendAskUserTool(tools []llm.ToolDefinition, clientTools []ClientTool) ([]llm.ToolDefinition, bool) {
+// appendAskUserTool 客户端在线（ClientTools 非空）时注入 ui 工具（ask_user）。
+// 同时返回更新后的 tools（LLM 可见 def）与 clientTools（MiniReAct clientIdx 分发索引）——
+// 两者缺一不可：只加 def 会让 LLM 能调用但路由不到客户端（"未找到工具 'ui'"）。
+func appendAskUserTool(tools []llm.ToolDefinition, clientTools []ClientTool) ([]llm.ToolDefinition, []ClientTool) {
 	if len(clientTools) == 0 {
-		return tools, false
+		return tools, clientTools
 	}
-	return append(tools, buildAskUserDef()), true
+	tools = append(tools, buildAskUserDef())
+	clientTools = append(clientTools, ClientTool{
+		ServerName:  "ui",
+		Name:        "ask_user",
+		Description: "请求用户介入（验证码/登录墙等）",
+		Parameters: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"message": map[string]interface{}{
+					"type":        "string",
+					"description": "展示给用户的话术",
+				},
+			},
+			"required": []interface{}{"message"},
+		},
+		IsReadOnly: true,
+	})
+	return tools, clientTools
 }
 
 // toToolClientInfos 将 agent.ClientTool 转换为 tool.ClientToolInfo（ExecuteContext 注入用）。

@@ -788,7 +788,6 @@ onUnmounted(() => {
       <!-- 筛选栏 -->
       <div style="display: flex; gap: var(--space-md); align-items: center; margin-bottom: var(--space-md); flex-wrap: wrap;">
         <NSelect v-model:value="costRangeDays" :options="costRanges" size="small" style="width: 110px;" />
-        <NSelect v-model:value="costCategory" :options="costCategoryOptions" size="small" style="width: 140px;" clearable placeholder="全部分类" />
         <NSelect v-model:value="costUsers" :options="costUserOptions" size="small" multiple clearable style="min-width: 200px;" placeholder="全部用户" />
         <div style="display: flex; gap: var(--space-sm); align-items: center; margin-left: auto;">
           <span style="font-size: 12px; color: var(--color-text-muted);">堆叠:</span>

@@ -125,6 +125,25 @@ func clientToolIndex(clientTools []ClientTool, registry *tool.Registry) map[stri
 	return idx
 }
 
+// toToolClientInfos 将 agent.ClientTool 转换为 tool.ClientToolInfo（ExecuteContext 注入用）。
+// 普通工具无需使用；task 工具通过 ExecuteContext.ClientTools 透传给子循环。
+func toToolClientInfos(clientTools []ClientTool) []tool.ClientToolInfo {
+	if len(clientTools) == 0 {
+		return nil
+	}
+	infos := make([]tool.ClientToolInfo, len(clientTools))
+	for i, ct := range clientTools {
+		infos[i] = tool.ClientToolInfo{
+			ServerName:  ct.ServerName,
+			Name:        ct.Name,
+			Description: ct.Description,
+			Parameters:  ct.Parameters,
+			IsReadOnly:  ct.IsReadOnly,
+		}
+	}
+	return infos
+}
+
 // clientToolReadOnlyIndex 构建 flatName("server__func") → 是否只读 的索引，
 // 供 plan 模式下客户端工具分派前拦截（executeClientTool）。查不到 = 非只读（plan 拦截）。
 func clientToolReadOnlyIndex(clientTools []ClientTool) map[string]bool {

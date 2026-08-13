@@ -863,7 +863,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		state.msgs = append(state.msgs, msg)
 		state.allToolCalls = append(state.allToolCalls, internalTCs...)
-		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, internalTCs, clientToolIndex(req.ClientTools, o.registry), state, req.Mode, clientToolReadOnlyIndex(req.ClientTools))
+		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, internalTCs, clientToolIndex(req.ClientTools, o.registry), state, req.Mode, clientToolReadOnlyIndex(req.ClientTools), toToolClientInfos(req.ClientTools))
 		state.msgs = o.collectToolResultsNative(ctx, internalTCs, msg.ToolCalls, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 		return false
 	}
@@ -1073,7 +1073,7 @@ func (o *Orchestrator) executePromptEngTools(
 	if o.useNativeFC {
 		clientIdx = clientToolIndex(req.ClientTools, o.registry)
 	}
-	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, parsed.ToolCalls, clientIdx, state, req.Mode, clientToolReadOnlyIndex(req.ClientTools))
+	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, parsed.ToolCalls, clientIdx, state, req.Mode, clientToolReadOnlyIndex(req.ClientTools), toToolClientInfos(req.ClientTools))
 	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 	return false
 }
@@ -1280,7 +1280,7 @@ func injectExcludeIDs(args json.RawMessage, memIDs []string) json.RawMessage {
 
 func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID, convID string,
 	registry *tool.Registry, toolCalls []tool.ToolCall, clientIdx map[string]bool, state *reactState,
-	mode string, clientReadOnly map[string]bool) []toolExecResult {
+	mode string, clientReadOnly map[string]bool, clientTools []tool.ClientToolInfo) []toolExecResult {
 
 	limit := o.maxConcurrency
 	if limit <= 0 {
@@ -1322,7 +1322,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 						r = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
 					}
 				}()
-				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, Mode: mode, Events: events}
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, Mode: mode, Events: events, ClientTools: clientTools}
 				r = registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
 			}()
 

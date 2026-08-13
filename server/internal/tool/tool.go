@@ -44,6 +44,10 @@ type ExecuteContext struct {
 	// 重要：必须在工具 Execute() 方法返回前发送，不可在异步 goroutine 中使用 channel。
 	// channel 在 ReAct 循环结束后关闭，延迟发送会 Panic。replay/测试场景下为 nil。
 	Events chan<- *llm.StreamEvent
+
+	// ClientTools — 客户端上报的本地工具定义（task 工具用此字段传给子循环）。
+	// 普通工具无需关注，仅 task 工具使用。replay/测试场景下为 nil 或空。
+	ClientTools []ClientToolInfo
 }
 
 // Tool — 所有工具必须实现的接口

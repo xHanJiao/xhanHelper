@@ -32,8 +32,9 @@ type Conversation struct {
 
 // ConversationExtra — Conversation.Extra 的结构化数据
 type ConversationExtra struct {
-	UsedToolIDs []string         `json:"used_tool_ids"`
-	Context     *ConversationCtx `json:"context,omitempty"` // 信箱跳转带上的主题上下文
+	UsedToolIDs  []string         `json:"used_tool_ids"`
+	Context      *ConversationCtx `json:"context,omitempty"`       // 信箱跳转带上的主题上下文
+	SubAgentType string           `json:"subagent_type,omitempty"` // 子会话类型（"explore"等），空=普通会话
 }
 
 // ConversationCtx — 会话上下文（从 mailbox 跳转带入）

@@ -240,7 +240,7 @@ func TestExecuteConcurrently_SkipsClientToolsAfterUnavailable(t *testing.T) {
 
 	start := time.Now()
 	results := o.executeConcurrently(context.Background(), events, "u1", "c1",
-		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state, "", nil)
+		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state, "", nil, nil)
 	elapsed := time.Since(start)
 
 	if !state.clientToolsUnavailable {
@@ -279,7 +279,7 @@ func TestExecuteConcurrently_PlanModeBlocksClientWrite(t *testing.T) {
 
 	results := o.executeConcurrently(context.Background(), events, "u1", "c1",
 		tool.NewRegistry(), calls, map[string]bool{"browser": true, "chart": true}, state,
-		model.ConvModePlan, clientToolReadOnlyIndex(clientTools))
+		model.ConvModePlan, clientToolReadOnlyIndex(clientTools), nil)
 
 	for i, res := range results {
 		if res.result.Success {
@@ -308,7 +308,7 @@ func TestExecuteConcurrently_PlanModeAllowsClientReadOnly(t *testing.T) {
 
 	results := o.executeConcurrently(context.Background(), events, "u1", "c1",
 		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state,
-		model.ConvModePlan, clientToolReadOnlyIndex(clientTools))
+		model.ConvModePlan, clientToolReadOnlyIndex(clientTools), nil)
 
 	// 放行后走正常桥接路径：无客户端回传 → 超时失败（但错误不应是"计划模式拦截"）
 	if strings.Contains(results[0].result.Error, "计划模式") {
@@ -328,7 +328,7 @@ func TestExecuteConcurrently_WorkModeAllowsClientWrite(t *testing.T) {
 
 	results := o.executeConcurrently(context.Background(), events, "u1", "c1",
 		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state,
-		model.ConvModeWork, clientToolReadOnlyIndex(clientTools))
+		model.ConvModeWork, clientToolReadOnlyIndex(clientTools), nil)
 
 	if strings.Contains(results[0].result.Error, "计划模式") {
 		t.Errorf("work 模式客户端写工具应放行, got: %s", results[0].result.Error)

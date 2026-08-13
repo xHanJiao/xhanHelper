@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -122,5 +123,29 @@ func TestListByUser_DefaultFirst(t *testing.T) {
 			t.Errorf("expected DESC order, got[%d]=%v after got[%d]=%v",
 				i, list[i].CreatedAt, i-1, list[i-1].CreatedAt)
 		}
+	}
+}
+
+func TestListByUser_ExcludesSubConversations(t *testing.T) {
+	repo, cleanup := setupConversationRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	parent := "main-1"
+	if err := repo.Create(ctx, &model.Conversation{ID: "conv-main", UserID: "u1"}); err != nil {
+		t.Fatalf("create main: %v", err)
+	}
+	// 子会话（subAgent）：parent_id 指向主会话，Extra 带 SubAgentType
+	extraJSON, _ := json.Marshal(&model.ConversationExtra{SubAgentType: "explore"})
+	if err := repo.Create(ctx, &model.Conversation{ID: "conv-sub", UserID: "u1", ParentID: &parent, Extra: string(extraJSON)}); err != nil {
+		t.Fatalf("create sub: %v", err)
+	}
+
+	list, total, err := repo.ListByUser(ctx, "u1", 10, 0)
+	if err != nil {
+		t.Fatalf("ListByUser error: %v", err)
+	}
+	if total != 1 || len(list) != 1 || list[0].ID != "conv-main" {
+		t.Fatalf("子会话不应出现在用户列表: total=%d list=%+v", total, list)
 	}
 }

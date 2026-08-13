@@ -72,12 +72,13 @@ func (r *ConversationRepo) FindDefaultByUser(ctx context.Context, userID string)
 	return &c, err
 }
 
-// ListByUser 获取用户未删除的会话列表（默认会话恒置顶，其余按更新时间倒序）
+// ListByUser 获取用户未删除的会话列表（默认会话恒置顶，其余按更新时间倒序）。
+// 排除子会话（subAgent，parent_id 非空）——子会话不进用户会话列表。
 func (r *ConversationRepo) ListByUser(ctx context.Context, userID string, limit, offset int) ([]model.Conversation, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	q := r.db.WithContext(ctx).Where("user_id = ? AND is_deleted = ?", userID, false)
+	q := r.db.WithContext(ctx).Where("user_id = ? AND is_deleted = ? AND parent_id IS NULL", userID, false)
 	var total int64
 	if err := q.Model(&model.Conversation{}).Count(&total).Error; err != nil {
 		return nil, 0, err

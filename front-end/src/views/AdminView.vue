@@ -4,6 +4,7 @@ import { api } from '@/api/client'
 import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NEmpty, NAlert, NButton, NCheckbox, NModal, useMessage } from 'naive-ui'
 import { Chart, registerables } from 'chart.js'
 import PageTopBar from '@/components/PageTopBar.vue'
+import { isMacEmbedded } from '@/utils/embed'
 
 Chart.register(...registerables)
 
@@ -509,7 +510,8 @@ onUnmounted(() => {
 
 <template>
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
-    <PageTopBar title="系统监控" :visible="true">
+    <!-- App 内嵌 WebView 时隐藏顶部导航（macOS 客户端已有自己的面板 chrome） -->
+    <PageTopBar v-if="!isMacEmbedded()" title="系统监控" :visible="true">
       <template #right>
         <NSelect v-if="activeTab === 'overview'" v-model:value="refreshInterval" :options="refreshOptions" size="small" style="width: 100px;" />
         <span v-else style="font-size: 12px; color: var(--color-text-muted);">共 {{ activeTab === 'pending-findings' ? findingsTotal : tracesTotal }} 条记录</span>

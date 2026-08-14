@@ -180,7 +180,7 @@ function handleSelect(conv) {
 <template>
   <div style="width: 280px; background: var(--color-surface); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; height: 100%;">
     <!-- 新对话按钮 -->
-    <!-- <div style="padding: var(--space-md) var(--space-md) 0;">
+    <div style="padding: var(--space-md) var(--space-md) 0;">
       <button
         @click="handleNewConversation"
         style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 0; border: 1px solid var(--color-border); border-radius: 24px; background: var(--color-primary-soft); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); color: var(--color-text-secondary); font-size: 14px; font-weight: 500; cursor: pointer; transition: all var(--transition-fast);"
@@ -193,7 +193,7 @@ function handleSelect(conv) {
         </svg>
         新对话
       </button>
-    </div> -->
+    </div>
 
     <!-- 导航区 -->
     <div style="padding: var(--space-md) var(--space-md) var(--space-sm);">
@@ -306,7 +306,6 @@ function handleSelect(conv) {
     </div>
 
     <!-- 历史对话 -->
-    <template v-if="false">
     <template v-if="isAdmin">
     <div style="padding: var(--space-sm) var(--space-md) var(--space-sm);">
       <div
@@ -382,7 +381,6 @@ function handleSelect(conv) {
         <NButton text size="small" :loading="convs.loading" @click="handleLoadMore" style="color: var(--color-text-muted);">加载更多</NButton>
       </div>
     </div>
-    </template>
     </template>
 
     <!-- 用户 -->

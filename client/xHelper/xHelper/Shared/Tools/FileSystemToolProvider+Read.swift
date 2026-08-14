@@ -152,9 +152,7 @@ extension FileSystemToolProvider {
         }
         defer { try? fh.close() }
 
-        guard let probe = try? fh.read(upToCount: 64 * 1024) else {
-            return LocalToolResult(serverResult: nil, serverError: "无法读取文件: \(path)", clientAction: nil)
-        }
+        let probe = (try? fh.read(upToCount: 64 * 1024)) ?? Data()
 
         let encoding = detectEncoding(probe)
         try? fh.seek(toOffset: 0)
@@ -170,10 +168,10 @@ extension FileSystemToolProvider {
             guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
                 return LocalToolResult(serverResult: nil, serverError: "无法读取文件: \(path)", clientAction: nil)
             }
-            guard let text = decodeNonUTF8(data) else {
+            guard let decoded = decodeNonUTF8(data) else {
                 return LocalToolResult(serverResult: nil, serverError: "无法识别文件编码（非 UTF-8 且非 GB18030/UTF-16）: \(path)", clientAction: nil)
             }
-            return windowText(text, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: "GB18030")
+            return windowText(decoded.text, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: decoded.label)
         case .utf16LE, .utf16BE:
             if fileSize > UInt64(maxDecodeBytes) {
                 return LocalToolResult(serverResult: nil, serverError: "文件为 UTF-16 编码且大于 \(maxDecodeBytes / 1024 / 1024)MB，无法解码。请转换为 UTF-8 后再读。", clientAction: nil)
@@ -197,6 +195,8 @@ extension FileSystemToolProvider {
     }
 
     private func detectEncoding(_ probe: Data) -> DetectedEncoding {
+        if probe.isEmpty { return .utf8 }
+
         let bytes = [UInt8](probe.prefix(4))
         if bytes.count >= 3, bytes[0] == 0xEF, bytes[1] == 0xBB, bytes[2] == 0xBF {
             return .utf8
@@ -207,22 +207,50 @@ extension FileSystemToolProvider {
         if bytes.count >= 2, bytes[0] == 0xFE, bytes[1] == 0xFF {
             return .utf16BE
         }
-        if String(data: probe, encoding: .utf8) != nil {
-            return .utf8
+
+        // 无 BOM 的 UTF-16：null 字节位置启发（LE 的 ASCII 高字节在奇数位，BE 在偶数位）
+        let sample = probe.prefix(64 * 1024)
+        var nulls = 0
+        var nullAtOdd = 0
+        for (i, b) in sample.enumerated() {
+            if b == 0 {
+                nulls += 1
+                if i % 2 == 1 { nullAtOdd += 1 }
+            }
+        }
+        if nulls >= 8 {
+            let ratio = Double(nullAtOdd) / Double(nulls)
+            if ratio >= 0.8 { return .utf16LE }
+            if ratio <= 0.2 { return .utf16BE }
+        }
+
+        // UTF-8：先去尾部 1-3 字节（64KB 截断可能切在多字节字符中间）
+        var count = sample.count
+        while count > 0 {
+            if String(data: sample.prefix(count), encoding: .utf8) != nil {
+                return .utf8
+            }
+            count -= 1
+            if sample.count - count > 3 { break }
         }
         return .nonUTF8
     }
 
-    private func decodeNonUTF8(_ data: Data) -> String? {
-        // GB18030（含 GBK 超集）兜底
+    private func decodeNonUTF8(_ data: Data) -> (text: String, label: String)? {
+        // GB18030（含 GBK 超集）
         let gb18030 = CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
         let nsEncoding = CFStringConvertEncodingToNSStringEncoding(gb18030)
         let encoding = String.Encoding(rawValue: nsEncoding)
         if let text = String(data: data, encoding: encoding) {
-            return text
+            return (text, "GB18030")
         }
-        return String(data: data, encoding: .utf16LittleEndian)
-            ?? String(data: data, encoding: .utf16BigEndian)
+        if let text = String(data: data, encoding: .utf16LittleEndian) {
+            return (text, "UTF-16")
+        }
+        if let text = String(data: data, encoding: .utf16BigEndian) {
+            return (text, "UTF-16")
+        }
+        return nil
     }
 
     /// 全量解码后的文本按行窗口输出。
@@ -234,7 +262,15 @@ extension FileSystemToolProvider {
         var cut = false
         var more = false
 
-        let allLines = text.components(separatedBy: "\n")
+        var source = text
+        if source.hasPrefix("\u{FEFF}") {
+            source.removeFirst()
+        }
+        var allLines = source.components(separatedBy: "\n")
+        if source.hasSuffix("\n") {
+            allLines.removeLast()
+        }
+
         for rawLine in allLines {
             lineCount += 1
             if lineCount < offset { continue }
@@ -243,6 +279,9 @@ extension FileSystemToolProvider {
                 break
             }
             var line = rawLine
+            if line.hasSuffix("\r") {
+                line = String(line.dropLast())
+            }
             if isHTML {
                 line = stripScriptStyle(line, inBlock: &inBlock)
             }
@@ -305,7 +344,11 @@ extension FileSystemToolProvider {
             let raw = lineFragment + text
             let parts = raw.components(separatedBy: "\n")
             let hasIncomplete = !trailing.isEmpty || (validData.last != UInt8(ascii: "\n"))
-            let count = hasIncomplete ? parts.count - 1 : parts.count
+            var count = hasIncomplete ? parts.count - 1 : parts.count
+            // 文件以 \n 结尾时 components 多出尾部空串，不计为一行
+            if !hasIncomplete, parts.last == "" {
+                count -= 1
+            }
             lineFragment = hasIncomplete ? (parts.last ?? "") : ""
 
             for i in 0..<max(0, count) {
@@ -322,6 +365,10 @@ extension FileSystemToolProvider {
                 if nullCheck.contains(0) {
                     try? fh.close()
                     return LocalToolResult(serverResult: nil, serverError: "Cannot read binary file: \(path)", clientAction: nil)
+                }
+
+                if line.hasSuffix("\r") {
+                    line = String(line.dropLast())
                 }
 
                 if isHTML {
@@ -355,6 +402,9 @@ extension FileSystemToolProvider {
             lineCount += 1
             if lineCount >= offset, lines.count < limit, totalBytes < budget {
                 var line = lineFragment
+                if line.hasSuffix("\r") {
+                    line = String(line.dropLast())
+                }
                 if isHTML {
                     line = stripScriptStyle(line, inBlock: &inBlock)
                 }

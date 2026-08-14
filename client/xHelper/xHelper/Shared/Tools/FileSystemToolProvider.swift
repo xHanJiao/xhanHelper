@@ -12,9 +12,29 @@ final class FileSystemToolProvider: @unchecked Sendable {
     /// 解码全量文件（GB18030 等非 UTF-8 编码）的大小上限。
     let maxDecodeBytes = 5 * 1024 * 1024
 
+    /// 会话级"已读"追踪：path(real) → mtime。
+    /// write/edit 覆盖已有文件前必须 read 过（防盲写），mtime 变化视为外部改动未读。
+    private let readLock = NSLock()
+    private var readPaths: [String: Date] = [:]
+
+    func markRead(_ path: String) {
+        let mtime = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate]) as? Date
+        readLock.lock()
+        readPaths[path] = mtime ?? Date()
+        readLock.unlock()
+    }
+
+    func hasRead(_ path: String) -> Bool {
+        readLock.lock()
+        defer { readLock.unlock() }
+        guard let stored = readPaths[path] else { return false }
+        let mtime = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate]) as? Date
+        return stored == mtime
+    }
+
     /// 解析路径：展开 ~、标准化（.. / 重复斜杠），并解析 symlink 到真实路径。
     /// 存在性由调用方确认（不存在时保持标准化路径，供错误提示使用）。
-    func resolvePath(_ path: String) -> String {
+    static func resolvePath(_ path: String) -> String {
         var resolved = (path as NSString).expandingTildeInPath
         resolved = (resolved as NSString).standardizingPath
         let url = URL(fileURLWithPath: resolved).resolvingSymlinksInPath()
@@ -108,6 +128,40 @@ extension FileSystemToolProvider: LocalToolProvider {
                 isReadOnly: true
             ),
             LocalToolSchema(
+                name: "write",
+                description: """
+                写入本地文件（新建 / 覆盖 / 追加）。
+
+                用法：
+                - path 必须是绝对路径；content 为要写入的完整内容。
+                - mode=overwrite（默认）：覆盖整个文件；mode=append：追加到文件末尾。
+                - 覆盖或追加已有文件前，必须先在本会话内用 read 读过该文件，否则报错。
+                - 修改已有文件优先用 edit 渐进修改，避免整文件重写（write 用于新建或整体替换）。
+                - 每次只写一个小片段，多次调用渐进完成，不要一次写入超大内容。
+                首次访问某个目录时会请求用户授权，授权后一小时内无需重复确认。
+                """,
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "path": [
+                            "type": "string",
+                            "description": "文件绝对路径",
+                        ],
+                        "content": [
+                            "type": "string",
+                            "description": "要写入的完整内容",
+                        ],
+                        "mode": [
+                            "type": "string",
+                            "enum": ["overwrite", "append"],
+                            "description": "overwrite=覆盖（默认）/ append=追加",
+                        ],
+                    ],
+                    "required": ["path", "content"],
+                ],
+                isReadOnly: false
+            ),
+            LocalToolSchema(
                 name: "read",
                 description: """
                 读取本地文件系统中的文件或目录。路径不存在时返回错误。
@@ -178,6 +232,8 @@ extension FileSystemToolProvider: LocalToolProvider {
             return try await handleGlob(arguments: arguments, context: context)
         case "grep":
             return try await handleGrep(arguments: arguments, context: context)
+        case "write":
+            return try await handleWrite(arguments: arguments, context: context)
         case "read":
             return try await handleRead(arguments: arguments, context: context)
         default:

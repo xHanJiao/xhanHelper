@@ -12,7 +12,7 @@ extension FileSystemToolProvider {
             return LocalToolResult(serverResult: nil, serverError: "缺少 filePath 参数", clientAction: nil)
         }
 
-        let resolvedPath = resolvePath(rawPath)
+        let resolvedPath = FileSystemToolProvider.resolvePath(rawPath)
 
         if let blocked = SensitiveFileBlocker.check(resolvedPath) {
             return LocalToolResult(serverResult: nil, serverError: blocked, clientAction: nil)
@@ -34,10 +34,14 @@ extension FileSystemToolProvider {
         fm.fileExists(atPath: resolvedPath, isDirectory: &isDir)
 
         if isDir.boolValue {
-            return readDirectory(resolvedPath, arguments: arguments, budgetBytes: context.budgetBytes)
+            let result = readDirectory(resolvedPath, arguments: arguments, budgetBytes: context.budgetBytes)
+            if result.serverError == nil { markRead(resolvedPath) }
+            return result
         }
 
-        return readFile(resolvedPath, arguments: arguments, budgetBytes: context.budgetBytes)
+        let result = readFile(resolvedPath, arguments: arguments, budgetBytes: context.budgetBytes)
+        if result.serverError == nil { markRead(resolvedPath) }
+        return result
     }
 
     // MARK: - 目录
@@ -154,7 +158,7 @@ extension FileSystemToolProvider {
 
         let probe = (try? fh.read(upToCount: 64 * 1024)) ?? Data()
 
-        let encoding = detectEncoding(probe)
+        let encoding = FileSystemToolProvider.detectEncoding(probe)
         try? fh.seek(toOffset: 0)
 
         switch encoding {
@@ -168,7 +172,7 @@ extension FileSystemToolProvider {
             guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
                 return LocalToolResult(serverResult: nil, serverError: "无法读取文件: \(path)", clientAction: nil)
             }
-            guard let decoded = decodeNonUTF8(data) else {
+            guard let decoded = FileSystemToolProvider.decodeNonUTF8(data) else {
                 return LocalToolResult(serverResult: nil, serverError: "无法识别文件编码（非 UTF-8 且非 GB18030/UTF-16）: \(path)", clientAction: nil)
             }
             return windowText(decoded.text, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: decoded.label)
@@ -187,14 +191,14 @@ extension FileSystemToolProvider {
         }
     }
 
-    private enum DetectedEncoding {
+    enum DetectedEncoding {
         case utf8
         case nonUTF8
         case utf16LE
         case utf16BE
     }
 
-    private func detectEncoding(_ probe: Data) -> DetectedEncoding {
+    static func detectEncoding(_ probe: Data) -> DetectedEncoding {
         if probe.isEmpty { return .utf8 }
 
         let bytes = [UInt8](probe.prefix(4))
@@ -236,7 +240,7 @@ extension FileSystemToolProvider {
         return .nonUTF8
     }
 
-    private func decodeNonUTF8(_ data: Data) -> (text: String, label: String)? {
+    static func decodeNonUTF8(_ data: Data) -> (text: String, label: String)? {
         // GB18030（含 GBK 超集）
         let gb18030 = CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
         let nsEncoding = CFStringConvertEncodingToNSStringEncoding(gb18030)

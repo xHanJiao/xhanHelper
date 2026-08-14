@@ -83,7 +83,39 @@ extension ChatViewModel {
                 }
 
                 if level >= 3 {
-                    let confirmed = await self.awaitToolConfirmation(toolName: toolName, arguments: confirmArgs, force: forcedL3, bridgeToBrowser: isBrowser)
+                    // fs 写工具：确认前预演 diff（不落盘），确认条展示。大文件全量读放后台执行。
+                    var diffText: String?
+                    var additions: Int?
+                    var deletions: Int?
+                    var fsPath: String?
+                    if isFS, toolName == "fs__write" {
+                        let pathArg = args["path"] as? String
+                        let contentArg = args["content"] as? String
+                        let modeArg = args["mode"] as? String
+                        let preview = await Task.detached(priority: .userInitiated) {
+                            FileSystemToolProvider.previewWrite(arguments: [
+                                "path": pathArg ?? "",
+                                "content": contentArg ?? "",
+                                "mode": modeArg ?? "overwrite",
+                            ])
+                        }.value
+                        if let preview {
+                            diffText = preview.diffText
+                            additions = preview.additions
+                            deletions = preview.deletions
+                            fsPath = preview.filePath
+                        }
+                    }
+                    let confirmed = await self.awaitToolConfirmation(
+                        toolName: toolName,
+                        arguments: confirmArgs,
+                        force: forcedL3,
+                        bridgeToBrowser: isBrowser,
+                        diffText: diffText,
+                        additions: additions,
+                        deletions: deletions,
+                        filePath: fsPath
+                    )
                     guard confirmed else {
                         LogBuffer.shared.warning("clientToolCall: \(toolName) rejected by user")
                         try await api.submitToolResult(callId: callID, resultJSON: nil, error: "用户拒绝执行")

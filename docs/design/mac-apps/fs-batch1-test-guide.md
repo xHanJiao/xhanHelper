@@ -124,3 +124,33 @@
 
 - `FileSystemToolProvider+Grep.swift` 中 `LogBuffer.shared.warning` 存在 MainActor 隔离报错（既有代码，提交前已存在；若 Xcode 编译不过需单独修复）。
 - 服务端 `make test` 有既有失败（测试数据库残留），与本次改动无关。
+
+## 七、Batch 2 验收（fs__write + diff 确认条）
+
+> 前提：先完成 Batch 1 冒烟；授权 fs-test 目录（读一次任意文件即可）。
+
+### 用例
+
+| # | 操作（聊天对话） | 预期 |
+|---|------------------|------|
+| 1 | 让 agent 新建 `fs-test/new-note.txt`，内容 "hello" | 确认条出现：`📝 写入文件`（displayName=写入文件）+ 路径 + 全 + 行 diff + `+1 -0`；点允许 → 落盘；结果返回 Wrote N bytes |
+| 2 | 让 agent 写 `fs-test/resume.html` 的"技能"一节（改内容） | **覆盖已有文件**：确认条显示 diff（绿/红/上下文着色）+ `+N -M`；拒绝 → 文件不变 + LLM 收到"用户拒绝"；超时 60s → 同上 |
+| 3 | 直接让 agent 覆盖 `fs-test/utf8.txt`（本轮未读过） | 不弹确认，直接报错"请先用 read 读取该文件后再覆盖写入" |
+| 4 | 先读 `fs-test/bom_utf8.txt`，再让其覆盖写一行 | 允许后文件仍带 UTF-8 BOM（`file` 命令验证 "with BOM"） |
+| 5 | 先读 `fs-test/utf8.txt`，让 agent append 一行 | 确认条显示追加 diff；允许后原内容保留、新增一行，且原行尾若缺 \n 自动补 |
+| 6 | 让 agent 写 `fs-test/sensitive/test.env` | 不弹确认，直接 BLOCKED |
+| 7 | 让 agent 写 `fs-test/symlink-out.txt`（→ /etc/hosts） | 确认后执行时报错"路径不在已授权目录内"（realpath 复检） |
+| 8 | 信任模式开启后让 agent 写文件 | 不弹确认直接落盘（L3 被信任模式跳过） |
+| 9 | 让 agent 写 `fs-test/big.txt`（覆盖，先读过） | 确认条显示"文件较大…未生成行级 diff 预览"（degraded，非卡死） |
+| 10 | 写目录路径（如 `fs-test/testdir/`） | 报错"路径是目录，不是文件" |
+
+### 快速冒烟（时间紧）
+
+用例 1 + 2 + 3 + 6。
+
+### 判定要点
+
+- 确认条 diff 逐行着色：`+` 绿底、`-` 红底、`@@` 灰、上下文白
+- 大 diff 可滚动（240pt 上限），不截断
+- 新建 = 全绿行；覆盖 = 混合；追加 = 尾部绿
+- 写成功后在客户端日志（LogBuffer）可见结果字节数

@@ -26,6 +26,11 @@ struct ToolConfirmation: Identifiable {
     let toolName: String
     let displayName: String
     let argsSummary: String
+    /// diff 预览（fs 写工具）：unified patch 文本 + 增减统计 + 目标路径。nil = 无 diff 展示
+    let diffText: String?
+    let additions: Int?
+    let deletions: Int?
+    let filePath: String?
     let continuation: CheckedContinuation<Bool, Never>
 }
 
@@ -350,7 +355,17 @@ class ChatViewModel: ObservableObject {
     /// 挂起等待用户确认 L3 工具执行；60s 超时视为拒绝。
     /// force=true 时信任模式不跳过（用于敏感域/明文页等注入高风险场景——信任模式本身就不可信）。
     /// bridgeToBrowser=true 时把确认同步发布到 BrowserActivityCenter，浏览器内也显示确认条（与聊天条同步出现）。
-    func awaitToolConfirmation(toolName: String, arguments: [String: Any], force: Bool = false, bridgeToBrowser: Bool = false) async -> Bool {
+    /// diffText/additions/deletions/filePath：fs 写工具传 diff 预览，确认条展示 diff 卡片。
+    func awaitToolConfirmation(
+        toolName: String,
+        arguments: [String: Any],
+        force: Bool = false,
+        bridgeToBrowser: Bool = false,
+        diffText: String? = nil,
+        additions: Int? = nil,
+        deletions: Int? = nil,
+        filePath: String? = nil
+    ) async -> Bool {
         // 信任模式：跳过确认直接放行（force 时不跳过）
         if trustedMode && !force {
             return true
@@ -386,7 +401,17 @@ class ChatViewModel: ObservableObject {
         }
         #endif
         return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
-            pendingToolConfirmation = ToolConfirmation(id: myID, toolName: toolName, displayName: displayName, argsSummary: argsSummary, continuation: cont)
+            pendingToolConfirmation = ToolConfirmation(
+                id: myID,
+                toolName: toolName,
+                displayName: displayName,
+                argsSummary: argsSummary,
+                diffText: diffText,
+                additions: additions,
+                deletions: deletions,
+                filePath: filePath,
+                continuation: cont
+            )
             playConfirmationAlert()
             // 60s 超时自动拒绝。confirmationResolved 是共享标志（新确认会重置），
             // 必须叠加 id 检查：旧确认的超时任务醒来时 pending 已是新确认（或 nil），跳过，

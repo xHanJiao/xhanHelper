@@ -96,6 +96,35 @@ enum DiffRenderer {
             return Result(text: "（无内容变更）", additions: 0, deletions: 0, degraded: false)
         }
 
+        // git 惯例重排：连续变更段内先 remove 后 insert（红上绿下），上下文行不动
+        var orderedOps: [Op] = []
+        var run: [Op] = []
+        func flushRun() {
+            guard !run.isEmpty else { return }
+            let removes = run.compactMap { op -> Op? in
+                if case .remove = op { return op }
+                return nil
+            }
+            let inserts = run.compactMap { op -> Op? in
+                if case .insert = op { return op }
+                return nil
+            }
+            orderedOps.append(contentsOf: removes)
+            orderedOps.append(contentsOf: inserts)
+            run.removeAll()
+        }
+        for op in ops {
+            switch op {
+            case .context:
+                flushRun()
+                orderedOps.append(op)
+            case .remove, .insert:
+                run.append(op)
+            }
+        }
+        flushRun()
+        ops = orderedOps
+
         // 变更簇分组 → hunk 区间（含上下文）
         let changeIdxs = ops.indices.filter {
             switch ops[$0] {

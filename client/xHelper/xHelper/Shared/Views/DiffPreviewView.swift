@@ -11,7 +11,9 @@ struct DiffPreviewView: View {
     let filePath: String
 
     private var lines: [String] {
-        diffText.components(separatedBy: "\n").filter { !$0.isEmpty }
+        // 过滤 ---/+++ 文件头（卡片 header 已显示路径，避免被 +/- 前缀误着色成红绿）
+        diffText.components(separatedBy: "\n")
+            .filter { !$0.isEmpty && !$0.hasPrefix("--- ") && !$0.hasPrefix("+++ ") }
     }
 
     var body: some View {
@@ -59,9 +61,10 @@ private struct DiffLineView: View {
     }
 
     private var kind: Kind {
+        // 顺序关键：@@/---/+++ 头先判，避免 "+"/"-" 前缀误着色
+        if line.hasPrefix("@") || line.hasPrefix("---") || line.hasPrefix("+++") { return .meta }
         if line.hasPrefix("+") { return .added }
         if line.hasPrefix("-") { return .removed }
-        if line.hasPrefix("@") || line.hasPrefix("---") || line.hasPrefix("+++") { return .meta }
         return .context
     }
 

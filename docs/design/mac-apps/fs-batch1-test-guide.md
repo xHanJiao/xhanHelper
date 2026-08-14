@@ -139,7 +139,7 @@
 | 4 | 先读 `fs-test/bom_utf8.txt`，再让其覆盖写一行 | 允许后文件仍带 UTF-8 BOM（`file` 命令验证 "with BOM"） |
 | 5 | 先读 `fs-test/utf8.txt`，让 agent append 一行 | 确认条显示追加 diff；允许后原内容保留、新增一行，且原行尾若缺 \n 自动补 |
 | 6 | 让 agent 写 `fs-test/sensitive/test.env` | 不弹确认，直接 BLOCKED |
-| 7 | 让 agent 写 `fs-test/symlink-out.txt`（→ /etc/hosts） | 确认后执行时报错"路径不在已授权目录内"（realpath 复检） |
+| 7 | 让 agent 写 `fs-test/symlink-out.txt`（→ /etc/hosts），**信任模式需关闭** | 确认条弹出且显示解析后的真实路径 `/etc/hosts`；点允许后执行时报错"路径不在已授权目录内"（realpath 复检） |
 | 8 | 信任模式开启后让 agent 写文件 | 不弹确认直接落盘（L3 被信任模式跳过） |
 | 9 | 让 agent 写 `fs-test/big.txt`（覆盖，先读过） | 确认条显示"文件较大…未生成行级 diff 预览"（degraded，非卡死） |
 | 10 | 写目录路径（如 `fs-test/testdir/`） | 报错"路径是目录，不是文件" |

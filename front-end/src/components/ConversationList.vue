@@ -58,16 +58,16 @@ function handleLoadMore() {
   convs.fetchList(convs.list.length)
 }
 
-// async function handleNewConversation(agentId) {
-//   try {
-//     const res = await api.post('/api/conversations', agentId ? { agent_id: agentId } : {})
-//     chat.reset()
-//     convs.prepend({ id: res.id, title: res.title, agent_id: res.agent_id, agent_name: res.agent_name })
-//     router.push(`/chat/${res.id}`)
-//   } catch (e) {
-//     message.error('创建对话失败')
-//   }
-// }
+async function handleNewConversation() {
+  try {
+    const res = await api.post('/api/conversations', {})
+    chat.reset()
+    convs.prepend({ id: res.id, title: res.title, agent_id: res.agent_id, agent_name: res.agent_name })
+    router.push(`/chat/${res.id}`)
+  } catch (e) {
+    message.error('创建对话失败')
+  }
+}
 
 const navExpanded = ref(false)
 const adminExpanded = ref(false)

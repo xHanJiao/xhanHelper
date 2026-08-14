@@ -60,19 +60,6 @@ async function handleSubmit() {
   }
 }
 
-const triggering = ref(false)
-async function triggerReflection() {
-  triggering.value = true
-  try {
-    await api.post('/api/reflection/trigger')
-    message.success('反思已触发，稍后查看信箱')
-  } catch (e) {
-    message.error('触发失败: ' + (e.message || ''))
-  } finally {
-    triggering.value = false
-  }
-}
-
 async function handleStatusChange(item, status) {
   try {
     await api.patch(`/api/themes/${item.id}`, { status })
@@ -139,7 +126,6 @@ onMounted(fetchList)
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
     <PageTopBar title="主题管理" :visible="true">
       <template #right>
-        <TopBarBtn label="触发反思" @click="triggerReflection" />
         <TopBarBtn label="新建主题" @click="openCreate" />
       </template>
     </PageTopBar>

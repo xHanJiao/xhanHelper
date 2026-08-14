@@ -200,10 +200,11 @@ type ReflectionConfig struct {
 	// 延迟用 chat.session_gap_minutes）。字段保留兼容旧配置，不再读取。
 	PostChatDelaySeconds        int            `yaml:"post_chat_delay_seconds"`
 	DailySchedules              []string       `yaml:"daily_schedules"`                // 早晚回顾定时触发时间列表，默认 ["09:00","20:00"]
-	DeliverIntervalMinutes      int            `yaml:"deliver_interval_minutes"`       // 投递窗口间隔分钟，默认 60
+	DeliverIntervalMinutes      int            `yaml:"deliver_interval_minutes"`       // 投递窗口间隔分钟，默认 60；<=0 关闭投递（pending findings 会积压，恢复后补投）
 	MaxDeliveryRetries          int            `yaml:"max_delivery_retries"`           // 投递重试上限，默认 3
 	ActiveDurationDays          map[string]int `yaml:"active_duration_days"`           // active 各 duration 的衰减天数，默认 long:90 medium:30 short:14 ephemeral:7
-	MissionCheckIntervalMinutes int            `yaml:"mission_check_interval_minutes"` // Mission 检查间隔，默认 30 分钟
+	MissionCheckIntervalMinutes int            `yaml:"mission_check_interval_minutes"` // Mission 检查间隔，默认 30 分钟；<=0 表示关闭定时检查
+	MinActiveDays               int            `yaml:"min_active_days"`                // 反思门控：用户最近 N 天内有聊天才跑，默认 3；<0 表示不过滤
 }
 
 // Load 加载配置：base YAML + env YAML 合并 → 环境变量替换
@@ -381,6 +382,12 @@ func merge(dst, src *Config) {
 	if len(src.Reflection.ActiveDurationDays) > 0 {
 		dst.Reflection.ActiveDurationDays = src.Reflection.ActiveDurationDays
 	}
+	if src.Reflection.MissionCheckIntervalMinutes != 0 {
+		dst.Reflection.MissionCheckIntervalMinutes = src.Reflection.MissionCheckIntervalMinutes
+	}
+	if src.Reflection.MinActiveDays != 0 {
+		dst.Reflection.MinActiveDays = src.Reflection.MinActiveDays
+	}
 	if src.Chat.HistoryRounds != 0 {
 		dst.Chat.HistoryRounds = src.Chat.HistoryRounds
 	}
@@ -513,7 +520,7 @@ func validate(cfg *Config) error {
 	if len(cfg.Reflection.DailySchedules) == 0 {
 		cfg.Reflection.DailySchedules = []string{"09:00", "20:00"}
 	}
-	if cfg.Reflection.DeliverIntervalMinutes == 0 {
+	if cfg.Reflection.DeliverIntervalMinutes < 0 {
 		cfg.Reflection.DeliverIntervalMinutes = 60
 	}
 	if cfg.Reflection.MaxDeliveryRetries == 0 {
@@ -523,6 +530,9 @@ func validate(cfg *Config) error {
 		cfg.Reflection.ActiveDurationDays = map[string]int{
 			"long": 90, "medium": 30, "short": 14, "ephemeral": 7,
 		}
+	}
+	if cfg.Reflection.MinActiveDays == 0 {
+		cfg.Reflection.MinActiveDays = 3
 	}
 	if cfg.LLM.MaxToolResultChars == 0 {
 		cfg.LLM.MaxToolResultChars = 2000

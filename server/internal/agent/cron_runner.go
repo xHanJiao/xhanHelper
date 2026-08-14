@@ -29,14 +29,15 @@ type CronRunner struct {
 	orch              *ReflectionOrchestrator
 	userRepo          *service.UserRepo
 	discoverTimes     []string      // 发现候选主题定时列表
-	deliverInterval   time.Duration // 投递窗口间隔，默认 1 小时
-	missionInterval   time.Duration // Mission 检查间隔，默认 30 分钟
+	deliverInterval   time.Duration // 投递窗口间隔，默认 1 小时；<=0 关闭投递
+	missionInterval   time.Duration // Mission 检查间隔，默认 30 分钟；<=0 关闭
 	runTimeout        time.Duration // 单次反思超时，默认 30 分钟
 	delayedTaskRepo   *service.DelayedTaskRepo
 	missionRunner     *MissionRunner
 	missionRepo       *service.MissionRepo
 	sessionEndGroup   *PostChatWorkerGroup // 对话后处理组（摘要/记忆/主题）
 	sessionGapMinutes int                  // session 间隔阈值（分钟）
+	minActiveDays     int                  // 反思门控：最近 N 天内有聊天的用户才跑；<0 不过滤
 
 	// 钩子状态追踪
 	mu                sync.Mutex
@@ -59,6 +60,7 @@ type CronRunnerConfig struct {
 	DeliverInterval   time.Duration
 	MissionInterval   time.Duration
 	RunTimeout        time.Duration
+	MinActiveDays     int // 反思门控：最近 N 天内有聊天的用户才跑；<0 不过滤
 }
 
 // NewCronRunner 创建调度器
@@ -66,14 +68,8 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 	if len(cfg.DiscoverSchedules) == 0 {
 		cfg.DiscoverSchedules = []string{"09:00", "18:00"}
 	}
-	if cfg.DeliverInterval <= 0 {
-		cfg.DeliverInterval = 1 * time.Hour
-	}
 	if cfg.RunTimeout <= 0 {
 		cfg.RunTimeout = 30 * time.Minute
-	}
-	if cfg.MissionInterval <= 0 {
-		cfg.MissionInterval = 30 * time.Minute
 	}
 	return &CronRunner{
 		orch:              cfg.Orch,
@@ -87,6 +83,7 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		runTimeout:        cfg.RunTimeout,
 		sessionEndGroup:   cfg.SessionEndGroup,
 		sessionGapMinutes: cfg.SessionGapMinutes,
+		minActiveDays:     cfg.MinActiveDays,
 	}
 }
 
@@ -117,11 +114,27 @@ func (cr *CronRunner) GetHookStatus() HookStatus {
 			s.NextDelayedTaskAt = earliest.In(config.BJ).Format("15:04:05")
 		}
 	}
-	s.DeliverRemaining = cr.deliverNext.Sub(now).Round(time.Second).String()
-	s.DiscoverRemaining = cr.discoverNext.Sub(now).Round(time.Second).String()
-	s.MissionRemaining = cr.missionNext.Sub(now).Round(time.Second).String()
+	s.DeliverRemaining = remainingLabel(cr.deliverNext, now)
+	s.DiscoverRemaining = remainingLabel(cr.discoverNext, now)
+	s.MissionRemaining = remainingLabel(cr.missionNext, now)
 
 	return s
+}
+
+// remainingLabel 计算距下一次触发的剩余时间；zero 时间表示该循环已关闭
+func remainingLabel(next, now time.Time) string {
+	if next.IsZero() {
+		return "disabled"
+	}
+	return next.Sub(now).Round(time.Second).String()
+}
+
+// intervalLabel 间隔显示；<=0 表示关闭
+func intervalLabel(d time.Duration) string {
+	if d <= 0 {
+		return "disabled"
+	}
+	return d.String()
 }
 
 // NotifySessionEnd 对话结束时入队 session_end 后处理任务。
@@ -194,11 +207,16 @@ func (cr *CronRunner) createSessionEndTask(userID, convID, userMsgID string) {
 // Start 启动调度循环（阻塞，用 goroutine 调用）
 func (cr *CronRunner) Start(ctx context.Context) {
 	log.Printf("[cron] started, discover_times=%v deliver_interval=%v mission_interval=%v",
-		cr.discoverTimes, cr.deliverInterval, cr.missionInterval)
+		cr.discoverTimes, intervalLabel(cr.deliverInterval), intervalLabel(cr.missionInterval))
 
-	deliverTimer := time.NewTimer(cr.deliverInterval)
-	cr.setDeliverNext(time.Now().Add(cr.deliverInterval))
-	defer deliverTimer.Stop()
+	var deliverTimer *time.Timer
+	if cr.deliverInterval > 0 {
+		deliverTimer = time.NewTimer(cr.deliverInterval)
+		defer deliverTimer.Stop()
+		cr.setDeliverNext(time.Now().Add(cr.deliverInterval))
+	} else {
+		cr.setDeliverNext(time.Time{})
+	}
 	discoverTimer := time.NewTimer(nextDailyDelay(cr.discoverTimes))
 	cr.setDiscoverNext(time.Now().Add(nextDailyDelay(cr.discoverTimes)))
 	defer discoverTimer.Stop()
@@ -206,10 +224,13 @@ func (cr *CronRunner) Start(ctx context.Context) {
 	sessionEndTicker := time.NewTicker(30 * time.Second)
 	defer sessionEndTicker.Stop()
 
-	missionTicker := time.NewTicker(cr.missionInterval)
-	defer missionTicker.Stop()
-	if cr.missionRunner != nil {
+	var missionTicker *time.Ticker
+	if cr.missionRunner != nil && cr.missionInterval > 0 {
+		missionTicker = time.NewTicker(cr.missionInterval)
+		defer missionTicker.Stop()
 		cr.missionNext = time.Now().Add(cr.missionInterval)
+	} else {
+		cr.missionNext = time.Time{}
 	}
 
 	for {
@@ -220,7 +241,7 @@ func (cr *CronRunner) Start(ctx context.Context) {
 
 		case <-deliverTimer.C:
 			log.Printf("[cron] deliver window trigger")
-			users, _ := cr.userRepo.ListAll(context.Background())
+			users, _ := cr.activeUsers(context.Background())
 			for _, u := range users {
 				cr.deliverOnce(ctx, u.ID)
 			}
@@ -229,7 +250,7 @@ func (cr *CronRunner) Start(ctx context.Context) {
 
 		case <-discoverTimer.C:
 			log.Printf("[cron] discover trigger")
-			users, _ := cr.userRepo.ListAll(context.Background())
+			users, _ := cr.activeUsers(context.Background())
 			for _, u := range users {
 				cr.discoverOnce(ctx, u.ID)
 			}
@@ -257,6 +278,36 @@ func (cr *CronRunner) Start(ctx context.Context) {
 			cr.missionNext = time.Now().Add(cr.missionInterval)
 		}
 	}
+}
+
+// activeUsers 返回应执行反思的用户列表。
+// minActiveDays < 0 时不过滤（全部用户）；否则只返回最近 N 天内有聊天的用户。
+func (cr *CronRunner) activeUsers(ctx context.Context) ([]model.User, error) {
+	if cr.minActiveDays < 0 {
+		return cr.userRepo.ListAll(ctx)
+	}
+	since := time.Now().AddDate(0, 0, -cr.minActiveDays)
+	users, err := cr.userRepo.ListActiveSince(ctx, since)
+	if err != nil {
+		log.Printf("[cron] ListActiveSince error: %v", err)
+		return nil, err
+	}
+	log.Printf("[cron] active users=%d (min_active_days=%d)", len(users), cr.minActiveDays)
+	return users, nil
+}
+
+// IsUserActive 判断用户最近是否活跃（用于手动触发门控）。查询失败时放行，不阻塞手动操作。
+func (cr *CronRunner) IsUserActive(ctx context.Context, userID string) bool {
+	if cr.minActiveDays < 0 {
+		return true
+	}
+	since := time.Now().AddDate(0, 0, -cr.minActiveDays)
+	active, err := cr.userRepo.IsActiveSince(ctx, userID, since)
+	if err != nil {
+		log.Printf("[cron] IsActiveSince error: %v", err)
+		return true
+	}
+	return active
 }
 
 // processSessionEndTasks 扫延迟任务表中到期的 session_end 任务并执行。

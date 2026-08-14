@@ -1,8 +1,6 @@
 package controller
 
 import (
-	"context"
-	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -25,8 +23,6 @@ type ReflectionRoutesConfig struct {
 	ReplayHandler          *ReplayHandler
 	EnableReplay           bool // admin 路由已有 AdminMiddleware 保护，生产环境也开放
 	PendingFindingRepo     *service.PendingFindingRepo
-	ReflectionOrch         *agent.ReflectionOrchestrator
-	MissionDiscoverer      *agent.MissionDiscoverer
 	CronRunner             *agent.CronRunner
 	AuthMiddleware         gin.HandlerFunc
 	AdminMiddleware        gin.HandlerFunc
@@ -51,34 +47,11 @@ func RegisterReflectionRoutes(rc *ReflectionRoutesConfig) {
 		auth.POST("/themes", rc.ThemeHandler.CreateTheme)
 		auth.PATCH("/themes/:id", rc.ThemeHandler.UpdateTheme)
 
-		// 任务管理（Mission）
+		// 任务管理（Mission）——仅保留免费操作；/missions/:id/check、/missions/discover、
+		// /reflection/trigger 等手动触发接口已下掉（每次触发都有 LLM 成本）
 		auth.GET("/missions", rc.MissionHandler.ListMissions)
 		auth.GET("/missions/:id", rc.MissionHandler.GetMission)
 		auth.PATCH("/missions/:id", rc.MissionHandler.UpdateMission)
-		auth.POST("/missions/:id/check", rc.MissionHandler.TriggerCheck)
-
-		// 手动触发 Mission 发现
-		auth.POST("/missions/discover", func(c *gin.Context) {
-			userID := c.GetString("user_id")
-			go func() {
-				if created, err := rc.MissionDiscoverer.Discover(context.Background(), userID); err != nil {
-					_ = created
-				}
-			}()
-			c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "Mission 发现已触发，稍后查看任务列表"})
-		})
-
-		// 手动触发反思
-		auth.POST("/reflection/trigger", func(c *gin.Context) {
-			userID := c.GetString("user_id")
-			go func() {
-				if err := rc.ReflectionOrch.RunOnce(context.Background(), userID, "manual"); err != nil {
-					// 错误已记录在 trace 中
-					_ = err
-				}
-			}()
-			c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "反思已触发，稍后查看信箱"})
-		})
 	}
 
 	// 管理员路由

@@ -21,32 +21,6 @@ async function fetchList() {
   }
 }
 
-const triggering = ref({})
-async function triggerCheck(item) {
-  triggering.value[item.id] = true
-  try {
-    await api.post(`/api/missions/${item.id}/check`)
-    message.success('任务检查已触发，稍后查看信箱')
-  } catch (e) {
-    message.error('触发失败: ' + (e.message || ''))
-  } finally {
-    triggering.value[item.id] = false
-  }
-}
-
-const discovering = ref(false)
-async function triggerDiscover() {
-  discovering.value = true
-  try {
-    await api.post('/api/missions/discover')
-    message.success('Mission 发现已触发，稍后刷新查看')
-  } catch (e) {
-    message.error('触发失败: ' + (e.message || ''))
-  } finally {
-    discovering.value = false
-  }
-}
-
 async function handleStatusChange(item, status) {
   try {
     await api.patch(`/api/missions/${item.id}`, { status })
@@ -105,7 +79,6 @@ function buildActions(item) {
   const actions = []
   switch (item.status) {
     case 'active':
-      actions.push({ key: 'check', label: '立即检查', onClick: () => triggerCheck(item) })
       actions.push({ key: 'pause', label: '暂停', onClick: () => handleStatusChange(item, 'paused') })
       actions.push({ key: 'complete', label: '完成', confirm: '确定标记为已完成？', onClick: () => handleStatusChange(item, 'completed') })
       break
@@ -128,7 +101,6 @@ onMounted(fetchList)
   <div style="display: flex; flex-direction: column; height: 100vh; background: var(--color-bg-page); min-width: 0;">
     <PageTopBar title="任务追踪" :visible="true">
       <template #right>
-        <TopBarBtn label="触发发现" @click="triggerDiscover" />
         <TopBarBtn label="刷新" @click="fetchList" />
       </template>
     </PageTopBar>

@@ -114,6 +114,36 @@ func (r *UserRepo) ListAll(ctx context.Context) ([]model.User, error) {
 	return users, err
 }
 
+// ListActiveSince 返回最近 since 以来有过正常用户消息（排除子 agent 消息）的用户。
+// 用作后台定时任务（反思等）的活跃度门控：用户重新使用后自动恢复。
+func (r *UserRepo) ListActiveSince(ctx context.Context, since time.Time) ([]model.User, error) {
+	var users []model.User
+	err := r.db.WithContext(ctx).
+		Where("id IN (?)",
+			r.db.Model(&model.Message{}).
+				Select("user_id").
+				Where("created_at >= ?", since).
+				Where("status = ?", model.MsgStatusNormal).
+				Where("is_sub_agent = ?", false).
+				Group("user_id"),
+		).
+		Find(&users).Error
+	return users, err
+}
+
+// IsActiveSince 判断单用户最近 since 以来是否有正常用户消息，供手动触发场景门控。
+func (r *UserRepo) IsActiveSince(ctx context.Context, userID string, since time.Time) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&model.Message{}).
+		Where("user_id = ?", userID).
+		Where("created_at >= ?", since).
+		Where("status = ?", model.MsgStatusNormal).
+		Where("is_sub_agent = ?", false).
+		Count(&count).Error
+	return count > 0, err
+}
+
 // ListResult — 用户列表分页结果
 type ListResult struct {
 	Users      []model.User `json:"users"`

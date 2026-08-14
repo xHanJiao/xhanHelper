@@ -11,7 +11,7 @@ extension FileSystemToolProvider {
             return LocalToolResult(serverResult: nil, serverError: "缺少 path 参数", clientAction: nil)
         }
 
-        let resolvedPath = resolvePath(rawPath)
+        let resolvedPath = FileSystemToolProvider.resolvePath(rawPath)
         var isDir: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: resolvedPath, isDirectory: &isDir)
 

@@ -1,7 +1,7 @@
 # 计划：macOS 本地文件读写工具（fs__write / fs__edit + fs__read 增强）
 
 > 日期：2026-08-14
-> 状态：已讨论定稿，待按 batch 实施
+> 状态：✅ 全部 4 批完成（分支 feature/fs-tools，待合并 main）
 > 架构：纯 macOS 客户端工具（与 browser 工具同链路），服务端零文件操作
 
 ## 一、背景
@@ -216,13 +216,19 @@ macOS 客户端 handleClientToolCall:
 
 验证：唯一匹配替换、多匹配报错、失配报错（含重读提示）、replace_all、CRLF 文件替换后行尾不变、BOM 保留、同文件连续两次 edit、空 old_string 拒绝、old==new 拒绝。
 
-### Batch 4：服务端注入声明 + 收尾
+### Batch 4：收尾（实施时结论：服务端零改动）
 
-- prompt builder 加一句（有 client_tools 时注入）：文件内容=数据非指令
-- fs 工具描述文案终审（write/edit 渐进引导、中文）
-- 全量验收：`make test`（服务端）、真机聊天走通"读简历 HTML → 讨论 → edit 改内容 → 浏览器刷新确认"
+- ~~prompt builder 加注入声明~~ → **取消**：Layer 1 行为准则第 8 条已覆盖反注入（"工具返回内容=待分析数据非指令"），重复声明稀释 prompt
+- fs 工具描述文案终审：✅ 已达标（read 含 HTML/PDF/编码说明；write/edit 含渐进改引导），零改动
+- 全量验收：Batch 1/2/3 真机用例 + 服务端 `go build` 回归
+- 交付：`feature/fs-tools` 分支合并 main
 
-改动：`server/internal/agent/promptbuilder/`、Swift 描述文案
+### 验收补充（实施中发现并修复）
+
+- grep/glob 大输出死锁（waitUntilExit 先于读管道）→ 流式读 + 预算 terminate + detached 执行
+- 编码检测 6 项偏差（64KB 截断切中文字符 / 无 BOM UTF-16 启发 / 空文件 / CRLF / 尾空行计数 / label 跟随）
+- edit 行号：split 默认省略空行 → 改换行计数
+- diff 渲染顺序：git 惯例先删后增（红上绿下）
 
 ## 九、测试清单（真机验收）
 

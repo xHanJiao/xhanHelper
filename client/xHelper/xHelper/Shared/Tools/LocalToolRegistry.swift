@@ -26,6 +26,9 @@ final class LocalToolRegistry {
         // L3 需用户确认：真实系统级点击/拖拽（注入系统事件，可能打断用户操作/点错目标）
         "browser__agent_browser_cgclick": 3,
         "browser__agent_browser_drag": 3,
+        // L3 需用户确认：本地文件写入（覆盖/追加/编辑，破坏性操作）
+        "fs__write": 3,
+        "fs__edit": 3,
     ]
 
     func riskLevel(for flatName: String) -> Int {
@@ -41,7 +44,8 @@ final class LocalToolRegistry {
                     return 3
                 }
             }
-            return 2
+            // 已授权目录内也按风险表定级（fs__write 恒 L3）
+            return riskLevels[flatName] ?? 2
         }
         return riskLevels[flatName] ?? 2
     }
@@ -94,6 +98,8 @@ final class LocalToolRegistry {
         "fs__glob": "搜索文件",
         "fs__grep": "搜索内容",
         "fs__read": "读取文件",
+        "fs__write": "写入文件",
+        "fs__edit": "编辑文件",
     ]
 
     /// 用户可读的工具展示名：优先用简短名，其次 schema 的中文 description（截断），未命中兜底 flatName

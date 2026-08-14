@@ -8,6 +8,60 @@ final class FileSystemToolProvider: @unchecked Sendable {
     let maxReadBytes = 50 * 1024
     let maxLineChars = 2000
     let defaultReadLimit = 2000
+
+    /// 解码全量文件（GB18030 等非 UTF-8 编码）的大小上限。
+    let maxDecodeBytes = 5 * 1024 * 1024
+
+    /// 会话级"已读"追踪：path(real) → mtime。
+    /// write/edit 覆盖已有文件前必须 read 过（防盲写），mtime 变化视为外部改动未读。
+    private let readLock = NSLock()
+    private var readPaths: [String: Date] = [:]
+
+    func markRead(_ path: String) {
+        let mtime = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate]) as? Date
+        readLock.lock()
+        readPaths[path] = mtime ?? Date()
+        readLock.unlock()
+    }
+
+    func hasRead(_ path: String) -> Bool {
+        readLock.lock()
+        defer { readLock.unlock() }
+        guard let stored = readPaths[path] else { return false }
+        let mtime = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate]) as? Date
+        return stored == mtime
+    }
+
+    /// 解析路径：展开 ~、标准化（.. / 重复斜杠），并解析 symlink 到真实路径。
+    /// 存在性由调用方确认（不存在时保持标准化路径，供错误提示使用）。
+    static func resolvePath(_ path: String) -> String {
+        var resolved = (path as NSString).expandingTildeInPath
+        resolved = (resolved as NSString).standardizingPath
+        let url = URL(fileURLWithPath: resolved).resolvingSymlinksInPath()
+        let real = url.path
+        if FileManager.default.fileExists(atPath: real) {
+            return real
+        }
+        return resolved
+    }
+
+    /// 输出预算上限：client 下发预算（20KB）− 1KB 余量；无预算时用 50KB 绝对上限。
+    func budgetCap(_ budgetBytes: Int?) -> Int {
+        let budget = budgetBytes ?? maxReadBytes
+        return min(max(budget - 1024, 1024), maxReadBytes)
+    }
+
+    /// 结果超预算时截断并追加提示。
+    func cappedOutput(_ output: String, budget: Int, continueHint: String) -> (text: String, truncated: Bool) {
+        if output.utf8.count <= budget {
+            return (output, false)
+        }
+        var text = String(output.prefix(budget))
+        if let range = text.range(of: "\n", options: .backwards) {
+            text = String(text[..<range.lowerBound])
+        }
+        return (text + "\n(Output capped at \(budget / 1024) KB. \(continueHint))", true)
+    }
 }
 
 extension FileSystemToolProvider: LocalToolProvider {
@@ -74,6 +128,79 @@ extension FileSystemToolProvider: LocalToolProvider {
                 isReadOnly: true
             ),
             LocalToolSchema(
+                name: "write",
+                description: """
+                写入本地文件（新建 / 覆盖 / 追加）。
+
+                用法：
+                - path 必须是绝对路径；content 为要写入的完整内容。
+                - mode=overwrite（默认）：覆盖整个文件；mode=append：追加到文件末尾。
+                - 覆盖或追加已有文件前，必须先在本会话内用 read 读过该文件，否则报错。
+                - 修改已有文件优先用 edit 渐进修改，避免整文件重写（write 用于新建或整体替换）。
+                - 每次只写一个小片段，多次调用渐进完成，不要一次写入超大内容。
+                首次访问某个目录时会请求用户授权，授权后一小时内无需重复确认。
+                """,
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "path": [
+                            "type": "string",
+                            "description": "文件绝对路径",
+                        ],
+                        "content": [
+                            "type": "string",
+                            "description": "要写入的完整内容",
+                        ],
+                        "mode": [
+                            "type": "string",
+                            "enum": ["overwrite", "append"],
+                            "description": "overwrite=覆盖（默认）/ append=追加",
+                        ],
+                    ],
+                    "required": ["path", "content"],
+                ],
+                isReadOnly: false
+            ),
+            LocalToolSchema(
+                name: "edit",
+                description: """
+                文件内精确字符串替换（渐进修改已有文件的主力工具）。
+
+                用法：
+                - path 必须是绝对路径；old_string 为要替换的原文，new_string 为替换后的内容。
+                - 修改已有文件优先用本工具，每次只改一个小片段，多次调用渐进完成。
+                - 编辑前必须先用 read 读过该文件（本会话内），否则报错。
+                - old_string 必须在文件中唯一匹配（含空格/缩进/换行），否则报错。
+                - 多匹配时报错并提示：加大上下文使其唯一，或 replace_all=true 全部替换。
+                - old_string 为空拒绝；old_string 与 new_string 相同拒绝。
+                - 文件行尾风格（LF/CRLF）自动保留；新建或整体替换用 write。
+                首次访问某个目录时会请求用户授权，授权后一小时内无需重复确认。
+                """,
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "path": [
+                            "type": "string",
+                            "description": "文件绝对路径",
+                        ],
+                        "old_string": [
+                            "type": "string",
+                            "description": "要替换的原文（必须与文件内容精确一致，含空白/缩进）",
+                        ],
+                        "new_string": [
+                            "type": "string",
+                            "description": "替换后的内容（必须与 old_string 不同）",
+                        ],
+                        "replace_all": [
+                            "type": "boolean",
+                            "description": "替换所有匹配（默认 false：要求唯一匹配）",
+                        ],
+                    ],
+                    "required": ["path", "old_string", "new_string"],
+                ],
+                isReadOnly: false
+            ),
+            LocalToolSchema(
                 name: "read",
                 description: """
                 读取本地文件系统中的文件或目录。路径不存在时返回错误。
@@ -90,7 +217,10 @@ extension FileSystemToolProvider: LocalToolProvider {
                 - 单行超过 2000 字符会被截断。
                 - 可以同时读取多个文件（并行调用）。
                 - 避免小块切割读取（30 行一读）；需要更多上下文时就一次读更大的范围。
-                - 可以读取图片（JPEG/PNG/GIF/WebP）和 PDF 并以 base64 格式返回。
+                - HTML 文件（.html/.htm）会剥离 <script>/<style> 内容（替换为占位标记），行号保持不变。
+                - 非 UTF-8 编码（GBK/GB18030/UTF-16）自动解码。
+                - 图片（JPEG/PNG/GIF/WebP）以 base64 返回。
+                - PDF 提取纯文本（按页），page_offset/page_limit 分页续读；扫描件（无文本层）无法提取。
                 首次访问某个目录时会请求用户授权，授权后一小时内无需重复确认。
                 """,
                 inputSchema: [
@@ -107,6 +237,14 @@ extension FileSystemToolProvider: LocalToolProvider {
                         "limit": [
                             "type": "integer",
                             "description": "最大行数，默认 2000",
+                        ],
+                        "page_offset": [
+                            "type": "integer",
+                            "description": "PDF 起始页（1-indexed），默认 1",
+                        ],
+                        "page_limit": [
+                            "type": "integer",
+                            "description": "PDF 最大页数，默认 10",
                         ],
                     ],
                     "required": ["filePath"],
@@ -133,6 +271,10 @@ extension FileSystemToolProvider: LocalToolProvider {
             return try await handleGlob(arguments: arguments, context: context)
         case "grep":
             return try await handleGrep(arguments: arguments, context: context)
+        case "write":
+            return try await handleWrite(arguments: arguments, context: context)
+        case "edit":
+            return try await handleEdit(arguments: arguments, context: context)
         case "read":
             return try await handleRead(arguments: arguments, context: context)
         default:

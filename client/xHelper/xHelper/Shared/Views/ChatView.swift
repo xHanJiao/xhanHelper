@@ -367,27 +367,61 @@ struct ChatView: View {
             )
         )
 
+    @ViewBuilder
     private func toolConfirmationBar(_ conf: ToolConfirmation) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "shield.lefthalf.filled")
-                .font(.caption)
-                .foregroundColor(.orange)
-            Text("请求执行工具：「\(conf.displayName)」：\(conf.argsSummary)")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .lineLimit(3)
-            Button("允许") { viewModel.resolveToolConfirmation(allow: true) }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(.orange)
-                .padding(.leading, 12)
-            Button("拒绝") { viewModel.resolveToolConfirmation(allow: false) }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(.orange)
+        if let diff = conf.diffText {
+            // fs 写工具：diff 预览卡片 + 操作按钮
+            VStack(alignment: .leading, spacing: 8) {
+                DiffPreviewView(
+                    diffText: diff,
+                    additions: conf.additions,
+                    deletions: conf.deletions,
+                    op: conf.displayName,
+                    filePath: conf.filePath ?? ""
+                )
+                HStack(spacing: 8) {
+                    Image(systemName: "shield.lefthalf.filled")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                    Text("60s 未处理自动拒绝")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("允许") { viewModel.resolveToolConfirmation(allow: true) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(.orange)
+                    Button("拒绝") { viewModel.resolveToolConfirmation(allow: false) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(.orange)
+                }
+            }
+            .padding(.horizontal, Layout.chatHorizontalPadding)
+            .padding(.vertical, 6)
+            .frame(maxWidth: 720, alignment: .center)
+        } else {
+            HStack(spacing: 8) {
+                Image(systemName: "shield.lefthalf.filled")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                Text("请求执行工具：「\(conf.displayName)」：\(conf.argsSummary)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(3)
+                Button("允许") { viewModel.resolveToolConfirmation(allow: true) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.orange)
+                    .padding(.leading, 12)
+                Button("拒绝") { viewModel.resolveToolConfirmation(allow: false) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.orange)
+            }
+            .padding(.horizontal, Layout.chatHorizontalPadding)
+            .padding(.vertical, 4)
         }
-        .padding(.horizontal, Layout.chatHorizontalPadding)
-        .padding(.vertical, 4)
     }
 
 #if os(iOS)

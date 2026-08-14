@@ -24,14 +24,14 @@ final class DirectoryAuthorizationManager {
     func isAuthorized(_ path: String) -> Bool {
         let resolved = resolvePath(path)
         for dir in permanentDirs {
-            if resolved.hasPrefix(resolvePath(dir)) {
+            if resolved.lowercased().hasPrefix(resolvePath(dir).lowercased()) {
                 return true
             }
         }
         cleanExpired()
         for (dir, expires) in temporaryDirs {
             if Date() >= expires { continue }
-            if resolved.hasPrefix(resolvePath(dir)) {
+            if resolved.lowercased().hasPrefix(resolvePath(dir).lowercased()) {
                 return true
             }
         }
@@ -42,7 +42,7 @@ final class DirectoryAuthorizationManager {
         let resolved = resolvePath(path)
         if permanent {
             var dirs = permanentDirs
-            if !dirs.contains(where: { resolvePath($0) == resolved }) {
+            if !dirs.contains(where: { resolvePath($0).lowercased() == resolved.lowercased() }) {
                 dirs.append(resolved)
                 permanentDirs = dirs
             }
@@ -56,7 +56,7 @@ final class DirectoryAuthorizationManager {
     func removePermanent(_ path: String) {
         let resolved = resolvePath(path)
         var dirs = permanentDirs
-        dirs.removeAll { resolvePath($0) == resolved }
+        dirs.removeAll { resolvePath($0).lowercased() == resolved.lowercased() }
         permanentDirs = dirs
     }
 

@@ -29,23 +29,67 @@ extension FileSystemToolProvider {
         }
 
         let include = arguments["include"] as? String
-
-        let matches = runGrep(pattern: pattern, path: resolvedPath, include: include, isDir: isDir.boolValue)
-        let output = formatGrepOutput(matches: matches, pattern: pattern)
         let budget = budgetCap(context.budgetBytes)
+
+        let matches = await runGrep(pattern: pattern, path: resolvedPath, include: include, isDir: isDir.boolValue, budget: budget)
+        let output = formatGrepOutput(matches: matches, pattern: pattern)
         let capped = cappedOutput(output, budget: budget, continueHint: "考虑缩小搜索范围或改用更具体的 pattern")
         let sanitized = OutputSanitizer.sanitize(capped.text)
         return LocalToolResult(serverResult: sanitized.data(using: .utf8), serverError: nil, clientAction: nil)
     }
 
-    private func runGrep(pattern: String, path: String, include: String?, isDir: Bool) -> [GrepMatch] {
+    private func runGrep(pattern: String, path: String, include: String?, isDir: Bool, budget: Int) async -> [GrepMatch] {
         if let rgPath = findRgBinary() {
-            return runRgGrep(rgPath: rgPath, pattern: pattern, path: path, include: include, isDir: isDir)
+            return await runRgGrep(rgPath: rgPath, pattern: pattern, path: path, include: include, isDir: isDir, budget: budget)
         }
-        return runSystemGrep(pattern: pattern, path: path, include: include, isDir: isDir)
+        return await runSystemGrep(pattern: pattern, path: path, include: include, isDir: isDir, budget: budget)
     }
 
-    private func runRgGrep(rgPath: String, pattern: String, path: String, include: String?, isDir: Bool) -> [GrepMatch] {
+    /// 在后台执行进程：流式读取 stdout，超预算即 terminate，避免大输出死锁 + 主线程阻塞。
+    func runCapturedProcess(
+        _ proc: Process,
+        budget: Int
+    ) async -> (data: Data, capped: Bool) {
+        await withCheckedContinuation { continuation in
+            Task.detached(priority: .userInitiated) {
+                let pipe = Pipe()
+                proc.standardOutput = pipe
+                proc.standardError = Pipe()
+                let fh = pipe.fileHandleForReading
+
+                do {
+                    try proc.run()
+                } catch {
+                    try? fh.close()
+                    continuation.resume(returning: (Data(), false))
+                    return
+                }
+
+                var data = Data()
+                var capped = false
+                while true {
+                    let chunk = fh.readData(ofLength: 8192)
+                    if chunk.isEmpty { break }
+                    data.append(chunk)
+                    if data.count > budget {
+                        capped = true
+                        proc.terminate()
+                        // 排空剩余避免死锁，然后退出
+                        while true {
+                            let rest = fh.readData(ofLength: 8192)
+                            if rest.isEmpty { break }
+                        }
+                        break
+                    }
+                }
+                proc.waitUntilExit()
+                try? fh.close()
+                continuation.resume(returning: (data, capped))
+            }
+        }
+    }
+
+    private func runRgGrep(rgPath: String, pattern: String, path: String, include: String?, isDir: Bool, budget: Int) async -> [GrepMatch] {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: rgPath)
 
@@ -55,29 +99,13 @@ extension FileSystemToolProvider {
         }
         args.append("--")
         args.append(pattern)
-
-        if isDir {
-            args.append(path)
-        } else {
-            args.append(path)
-        }
+        args.append(path)
 
         proc.arguments = args
 
-        let outPipe = Pipe()
-        proc.standardOutput = outPipe
-        proc.standardError = Pipe()
-
-        do {
-            try proc.run()
-            proc.waitUntilExit()
-
-            let data = outPipe.fileHandleForReading.readDataToEndOfFile()
-            return parseRgJSON(data)
-        } catch {
-            LogBuffer.shared.warning("fs__grep rg failed: \(error.localizedDescription)")
-            return []
-        }
+        let (data, _) = await runCapturedProcess(proc, budget: budget)
+        guard !data.isEmpty else { return [] }
+        return parseRgJSON(data)
     }
 
     private func parseRgJSON(_ data: Data) -> [GrepMatch] {
@@ -103,7 +131,7 @@ extension FileSystemToolProvider {
         return matches
     }
 
-    private func runSystemGrep(pattern: String, path: String, include: String?, isDir: Bool) -> [GrepMatch] {
+    private func runSystemGrep(pattern: String, path: String, include: String?, isDir: Bool, budget: Int) async -> [GrepMatch] {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/grep")
         var args = ["-rn", "--include=*"]
@@ -114,32 +142,21 @@ extension FileSystemToolProvider {
         args.append(path)
 
         proc.arguments = args
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = Pipe()
 
-        do {
-            try proc.run()
-            proc.waitUntilExit()
+        let (data, _) = await runCapturedProcess(proc, budget: budget)
+        guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { return [] }
 
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let text = String(data: data, encoding: .utf8) else { return [] }
-
-            var matches: [GrepMatch] = []
-            for line in text.components(separatedBy: "\n") {
-                if matches.count >= maxResults { break }
-                let parts = line.components(separatedBy: ":")
-                guard parts.count >= 3, let lineNum = Int(parts[1]) else { continue }
-                let filePath = parts[0]
-                let content = parts[2...].joined(separator: ":")
-                let display = content.count > maxLineChars ? String(content.prefix(maxLineChars)) + "..." : content
-                matches.append(GrepMatch(file: filePath, line: lineNum, text: display))
-            }
-            return matches
-        } catch {
-            LogBuffer.shared.warning("fs__grep system grep failed: \(error.localizedDescription)")
-            return []
+        var matches: [GrepMatch] = []
+        for line in text.components(separatedBy: "\n") {
+            if matches.count >= maxResults { break }
+            let parts = line.components(separatedBy: ":")
+            guard parts.count >= 3, let lineNum = Int(parts[1]) else { continue }
+            let filePath = parts[0]
+            let content = parts[2...].joined(separator: ":")
+            let display = content.count > maxLineChars ? String(content.prefix(maxLineChars)) + "..." : content
+            matches.append(GrepMatch(file: filePath, line: lineNum, text: display))
         }
+        return matches
     }
 
     private func formatGrepOutput(matches: [GrepMatch], pattern: String) -> String {

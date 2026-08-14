@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MarkdownIt from 'markdown-it'
 import PageTopBar from '@/components/PageTopBar.vue'
+import { isMacEmbedded } from '@/utils/embed'
 import { api } from '@/api/client'
 import { useThemeStore } from '@/stores/theme'
 
@@ -575,7 +576,7 @@ onMounted(loadRound)
 
 <template>
   <div style="height: 100vh; display: flex; flex-direction: column; background: var(--color-bg-page);">
-    <PageTopBar title="消息调试" :visible="true">
+    <PageTopBar v-if="!isMacEmbedded()" title="消息调试" :visible="true">
       <template #right>
         <span @click="router.push(`/admin/replay-compare/${msgId}`)" style="cursor: pointer; font-size: 13px; color: var(--color-warning); margin-right: 16px;">对比重放</span>
         <span @click="goBack" style="cursor: pointer; font-size: 14px; color: var(--color-primary);">← 返回</span>

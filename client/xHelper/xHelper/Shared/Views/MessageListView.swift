@@ -46,6 +46,12 @@ struct MessageListView: View {
     @State private var shareUrl: String = ""
     @State private var isCreatingShare = false
 
+    // MARK: 右键调试菜单（macOS）
+    #if os(macOS)
+    @State private var rightClickMenu = MessageRightClickMenu()
+    #endif
+    @State private var debugTarget: MessageDebugTarget? = nil
+
     var body: some View {
         Group {
             if !messages.isEmpty {
@@ -75,9 +81,17 @@ struct MessageListView: View {
         )
         .onAppear {
             initialLoadDone = false
+            #if os(macOS)
+            installRightClickMenu()
+            #endif
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 initialLoadDone = true
             }
+        }
+        .onDisappear {
+            #if os(macOS)
+            rightClickMenu.uninstall()
+            #endif
         }
         .onChange(of: conversationId) { _, _ in
             initialLoadDone = false
@@ -120,7 +134,22 @@ struct MessageListView: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: showShareResult)
+        .sheet(item: $debugTarget) { target in
+            MessageDebugPanelView(baseURL: baseURL, token: token, messageID: target.id, onClose: { debugTarget = nil })
+        }
     }
+
+    // MARK: 右键菜单（macOS）
+
+    #if os(macOS)
+    private func installRightClickMenu() {
+        rightClickMenu.onDebug = { id in debugTarget = MessageDebugTarget(id: id) }
+        rightClickMenu.onCopy = { content in copyToPasteboard(content) }
+        rightClickMenu.onShare = { enterShareSelectMode() }
+        rightClickMenu.isSelectionMode = { isShareSelectMode }
+        rightClickMenu.install()
+    }
+    #endif
 
     // MARK: Menu overlay
 
@@ -198,8 +227,23 @@ struct MessageListView: View {
                     if isShareSelectMode {
                         base.onTapGesture { toggleRound(for: msg) }
                     } else {
+                        #if os(macOS)
+                        // 每行注册自己的矩形到右键注册表（chatList 命名空间，布局几何）
                         base
-#if os(macOS)
+                            .background(
+                                GeometryReader { geo in
+                                    Color.clear
+                                        .onAppear {
+                                            rightClickMenu.registry.update(id: msg.id, role: msg.role, content: msg.content, frame: geo.frame(in: .named("chatList")))
+                                        }
+                                        .onChange(of: geo.frame(in: .named("chatList"))) { _, f in
+                                            rightClickMenu.registry.update(id: msg.id, role: msg.role, content: msg.content, frame: f)
+                                        }
+                                        .onDisappear {
+                                            rightClickMenu.registry.remove(id: msg.id)
+                                        }
+                                }
+                            )
                             .contextMenu {
                                 if !msg.content.isEmpty {
                                     Button {
@@ -214,7 +258,8 @@ struct MessageListView: View {
                                     }
                                 }
                             }
-#else
+                        #else
+                        base
                             .background(
                                 GeometryReader { geo in
                                     Color.clear.onAppear {
@@ -251,7 +296,7 @@ struct MessageListView: View {
                                         }
                                     }
                             )
-#endif
+                        #endif
                     }
                 }
 
@@ -263,6 +308,15 @@ struct MessageListView: View {
         .scaleEffect(y: -1)
         .defaultScrollAnchor(.top)
         .scrollPosition($scrollPosition)
+        #if os(macOS)
+        // 右键菜单坐标空间 + 换算锚点（几何不受 scaleEffect 翻转影响）
+        .coordinateSpace(name: "chatList")
+        .background(
+            CoordinateAnchor { view in
+                rightClickMenu.registry.anchor = view
+            }
+        )
+        #endif
         .dismissKeyboardOnTap()
         .onScrollPhaseChange { _, newPhase in
             guard !isShareSelectMode else { return }

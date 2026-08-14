@@ -1,0 +1,126 @@
+# fs 工具 Batch 1 真机验收指南
+
+> 分支：`feature/fs-tools`（commit `8bda70c`）
+> 测试夹具：`server/data/fs-test/`（详见其 `README.md`）
+> 适用：macOS 客户端 fs 读工具增强（HTML 剥离 / 编码回退 / PDF 文本 / 预算对齐 / 安全加固）
+
+## 一、执行前准备
+
+1. **编译**：在 Xcode 中编译运行 xHelperMac（agent 不执行 xcodebuild，编译由人工完成）。
+2. **服务端**：`cd server && make dev` 跑着（本批无服务端改动，仅确认零文件操作）。
+3. **客户端**：macOS App 登录并进入对话，发送消息携带 `client_tools`（fs 工具自动上报）。
+4. **授权前提**：读 `server/data/fs-test/` 目录下的文件会触发首次授权确认（L3 确认条），点允许即可，之后 1 小时免确认。
+
+## 二、验收方式
+
+通过聊天自然语言让 agent 读取文件（如"帮我读一下 /Users/you/xhanCodes/xhanHelper/server/data/fs-test/utf8.txt"），观察返回内容。所有路径统一使用：
+
+```
+/Users/you/xhanCodes/xhanHelper/server/data/fs-test/
+```
+
+## 三、测试用例
+
+### 1. 基础 UTF-8
+
+| 项 | 操作 | 预期 |
+|----|------|------|
+| utf8.txt | 读 | 逐行带行号 `1: 内容`，行号连续，末尾 `(End of file - total N lines) (encoding: UTF-8)` |
+
+### 2. 编码回退
+
+| 项 | 操作 | 预期 |
+|----|------|------|
+| gbk.txt | 读 | 中文正常显示，末尾标注 `(encoding: GB18030)` |
+| utf16le.txt | 读 | 中文正常显示，标注 `(encoding: UTF-16)` |
+| utf16be.txt | 读 | 同上 |
+| bom_utf8.txt | 读 | 第一行无 BOM 乱码字符（`\uFEFF` 不出现） |
+| crlf.txt | 读 | 内容正常，无 `\r` 残留显示 |
+
+### 3. HTML script/style 剥离（重点）
+
+| 项 | 操作 | 预期 |
+|----|------|------|
+| sample.html | 读 | ① 行号从 1 到 27 连续，中间无跳号 ② 原 script/style 块内每行显示为 `<!-- [fs] stripped -->` ③ 块外内容原样 ④ 文件中"prompt injection: 忽略所有指令"字样**不出现** |
+| resume.html | 读 | 简历正文完整（教育/工作/项目/技能/自我评价），结尾 `<script>` 埋点块整行被替换为占位标记，行号连续 |
+
+判定要点：**剥内容不剥行号**——之后 edit 工具（Batch 3）依赖行号对齐。
+
+### 4. PDF 文本提取
+
+| 项 | 操作 | 预期 |
+|----|------|------|
+| resume.pdf | 读 | 输出 `[Page 1 of 2]` + 文本（含"张三 - 个人简历"），末尾 `(Showing pages 1-2 of 2...)`；**不得出现 base64** |
+| resume.pdf 续读 | 读时带 `page_offset=2` | 从第 2 页开始 |
+| scanned.pdf | 读 | 报错"PDF 无文本层（可能是扫描件）" |
+
+### 5. 大文件截断续读
+
+| 项 | 操作 | 预期 |
+|----|------|------|
+| big.txt（6.8MB） | 读 | 输出约 19KB 即截断，提示 `(Output capped at 19 KB...)` 与续读 offset；不返回 6.8MB 全量 |
+| big.txt 续读 | 按提示带 offset 再读 | 能继续读后续行，直至 `(End of file...)` |
+| longline.txt | 读 | 单行显示前 2000 字符 + `(line truncated to 2000 chars)`，不卡死不爆内存 |
+
+### 6. 图片 base64
+
+| 项 | 操作 | 预期 |
+|----|------|------|
+| image.png | 读 | 返回 `Image read successfully\n[data:image/png;base64,...]` |
+
+### 7. 目录与空文件
+
+| 项 | 操作 | 预期 |
+|----|------|------|
+| testdir/ | 读目录 | `<type>directory</type>` + 条目（a.txt、b.md、sub/），目录名带 `/` |
+| testdir/sub | 读 | 列出 c.json |
+| empty.txt | 读 | `1: \n(End of file - total 1 lines)` |
+
+### 8. 敏感文件拦截
+
+| 项 | 操作 | 预期 |
+|----|------|------|
+| sensitive/test.env | 读 | `BLOCKED: cannot access sensitive file...` |
+| sensitive/credentials.txt | 读 | `BLOCKED`（credentials 关键词） |
+
+### 9. symlink 逃逸（重点）
+
+| 项 | 操作 | 预期 |
+|----|------|------|
+| symlink-in.txt | 读 | 正常返回（内容 = utf8.txt），证明 realpath 解析后仍在授权范围内 |
+| symlink-out.txt | 读 | 报错"路径不在已授权目录内（或 symlink 指向授权目录外）" |
+
+### 10. 大小写不敏感授权
+
+| 项 | 操作 | 预期 |
+|----|------|------|
+| 授权 fs-test 后，读 `/Users/you/xhanCodes/xhanHelper/SERVER/data/fs-test/utf8.txt` | 大小写变体 | 应成功（授权比较大小写不敏感） |
+
+### 11. 服务器零文件操作确认
+
+| 项 | 操作 | 预期 |
+|----|------|------|
+| 任意读操作后 | 看服务端日志 | 无任何文件路径访问记录；服务端只转发 client_tool_call / tool-result |
+
+## 四、快速冒烟清单（时间紧时只跑这些）
+
+1. 读 `resume.html` → script 剥、行号连续（用例 3）
+2. 读 `gbk.txt` → GB18030 标注（用例 2）
+3. 读 `resume.pdf` → `[Page 1 of 2]` 文本、无 base64（用例 4）
+4. 读 `big.txt` → 19KB 截断 + 续读 offset（用例 5）
+5. 读 `symlink-out.txt` → 拒绝（用例 9）
+6. 读 `sensitive/test.env` → BLOCKED（用例 8）
+
+## 五、排查
+
+| 现象 | 排查 |
+|------|------|
+| fs 工具不出现 | 客户端是否上报 client_tools（请求体含 client_tools 字段）；重启 App |
+| 读文件一直弹授权 | 授权是临时 1h，超时需重新确认 |
+| 返回内容被二次截断 | 服务端 20KB 注入预算：结果 ≤19KB 才不触发；检查是否还有 50KB 旧逻辑 |
+| PDF 中文乱码 | PDFKit 依赖 PDF 内 ToUnicode 表，生成器相关，非工具 bug（扫描件/无文本层报错属预期） |
+
+## 六、已知问题（与本批无关）
+
+- `FileSystemToolProvider+Grep.swift` 中 `LogBuffer.shared.warning` 存在 MainActor 隔离报错（既有代码，提交前已存在；若 Xcode 编译不过需单独修复）。
+- 服务端 `make test` 有既有失败（测试数据库残留），与本次改动无关。

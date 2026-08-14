@@ -30,10 +30,12 @@ struct FloatingChatPanel: View {
     @State private var dragGhostOffset: CGSize?
     @State private var resizeStartSize: CGSize?
     @State private var resizeGhostSize: CGSize?
+    /// 流式时圆点呼吸闪烁的目标透明度（onChange 驱动）。
+    @State private var streamingOpacity: Double = 1
 
     // MARK: - 尺寸 / 位置钳制
 
-    /// 用户偏好尺寸 clamp 到 [min, min(容器−2×边距, 硬上限)]；收起时高度固定小条。
+    /// 用户偏好尺寸 clamp 到 [min, min(容器−2×边距, 硬上限)]；收起时固定圆点方形。
     private func clampSize(_ preferred: CGSize, container: CGSize, collapsed: Bool) -> CGSize {
         let margin = Layout.floatingPanelEdgeMargin
         let maxW = max(Layout.floatingPanelMinWidth,
@@ -42,8 +44,8 @@ struct FloatingChatPanel: View {
                        min(Layout.floatingPanelMaxHeight, container.height - 2 * margin))
         let w = min(max(preferred.width, Layout.floatingPanelMinWidth), maxW)
         if collapsed {
-            let h = min(Layout.floatingPanelCollapsedHeight, max(0, container.height - 2 * margin))
-            return CGSize(width: w, height: h)
+            return CGSize(width: Layout.floatingPanelCollapsedDotSize,
+                          height: Layout.floatingPanelCollapsedDotSize)
         }
         let h = min(max(preferred.height, Layout.floatingPanelMinHeight), maxH)
         return CGSize(width: w, height: h)
@@ -187,9 +189,17 @@ struct FloatingChatPanel: View {
             // 面板本体（拖拽帧静止）
             Group {
                 if manager.pipCollapsed {
-                    collapsedBar
+                    collapsedDot
+                        .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
                 } else {
                     expandedBody
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(.white.opacity(0.15), lineWidth: 0.5)
+                        )
+                        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
                 }
             }
             .frame(width: size.width, height: size.height)
@@ -201,14 +211,6 @@ struct FloatingChatPanel: View {
                     resizeHandle
                 }
             }
-            // 按面板 frame 裁剪内容（计划便签/输入框等溢出时不渲染到面板外）
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(.white.opacity(0.15), lineWidth: 0.5)
-            )
-            .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
             // 用 .position 定位而非 .offset：macOS 上 .offset 包裹 TextEditor 会破坏
             // first responder（点击输入框不出光标、无法输入）。
             .position(x: pos.x + size.width / 2, y: pos.y + size.height / 2)
@@ -303,48 +305,37 @@ struct FloatingChatPanel: View {
             .help("拖拽右下角调整大小")
     }
 
-    // MARK: - 收起态（collapsedContent 槽位，V2 可替换为 SpritePetView）
+    // MARK: - 收起态（小圆点，V2 可替换为 SpritePetView）
 
-    private var collapsedBar: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 11))
-                .foregroundColor(Color("appAccent"))
-            Text(viewModel.conversationTitle ?? "对话")
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
+    private var collapsedDot: some View {
+        ZStack {
+            Circle()
+                .fill(.regularMaterial)
+                .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 0.5))
             if viewModel.isStreaming {
-                PulseDot()
+                Circle()
+                    .fill(Color("appAccent").opacity(0.3))
             }
-            Spacer()
-            Button { toggleCollapse() } label: {
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 10, weight: .semibold))
-                    .frame(width: 20, height: 20)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .help("展开")
-            Button {
-                pipLog("panel exit tapped (collapsed)")
-                onExit()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .frame(width: 20, height: 20)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .help("退出画中画")
+            Image(systemName: "bubble.left.and.bubble.right")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(Color("appAccent"))
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .opacity(viewModel.isStreaming ? streamingOpacity : 1)
+        .onChange(of: viewModel.isStreaming) { _, streaming in
+            if streaming {
+                streamingOpacity = 0.55
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                    streamingOpacity = 1
+                }
+            } else {
+                streamingOpacity = 1
+            }
+        }
+        .frame(width: Layout.floatingPanelCollapsedDotSize, height: Layout.floatingPanelCollapsedDotSize)
         .contentShape(Rectangle())
         .gesture(dragGesture)
-        .simultaneousGesture(TapGesture(count: 2).onEnded { toggleCollapse() })
-        .help("双击展开/收起")
+        .simultaneousGesture(TapGesture().onEnded { toggleCollapse() })
+        .help("单击展开 / 拖动移动")
     }
 }
 
@@ -360,23 +351,6 @@ private struct PipChatContent: View {
     var body: some View {
         ChatPage(chatViewModel: viewModel, loadError: loadError, baseURL: baseURL, token: token)
             .environmentObject(compactFont)
-    }
-}
-
-/// 流式进行中的脉冲圆点。
-private struct PulseDot: View {
-    @State private var opacity: Double = 1
-
-    var body: some View {
-        Circle()
-            .fill(Color("appAccent"))
-            .frame(width: 7, height: 7)
-            .opacity(opacity)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
-                    opacity = 0.25
-                }
-            }
     }
 }
 #endif

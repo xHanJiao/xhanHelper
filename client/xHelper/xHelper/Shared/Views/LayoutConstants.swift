@@ -76,8 +76,8 @@ enum Layout {
     static let floatingPanelEdgeMargin: CGFloat = 8
     /// 拖拽结束距边缘小于该阈值时吸附（x/y 独立判定）。
     static let floatingPanelSnapThreshold: CGFloat = 16
-    /// 收起态小条高度。
-    static let floatingPanelCollapsedHeight: CGFloat = 40
+    /// 收起态圆点边长。
+    static let floatingPanelCollapsedDotSize: CGFloat = 45
     /// 面板内紧凑字号系数（乘在全局字号之上）。
     static let floatingPanelCompactFontFactor: Double = 0.75
 }

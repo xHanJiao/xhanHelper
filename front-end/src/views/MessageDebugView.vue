@@ -117,7 +117,7 @@ const userMsgBodyHtml = computed(() => {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/\n/g, '<br>')
-  html = html.replace(/&lt;(\/?)(memories|notes|topics|history|user_query|reminders)&gt;/g,
+  html = html.replace(/&lt;(\/?)(memories|notes|topics|history|summaries|current_datetime|profile|notice|user_query|reminders)&gt;/g,
     '<span style="color:var(--color-primary);font-weight:600">&lt;$1$2&gt;</span>')
   return html
 })
@@ -207,6 +207,20 @@ function parseBlockElement(el) {
     }
     case 'current_datetime':
       return { type: 'current_datetime', content: el.textContent?.trim() || '' }
+    case 'notice':
+      return { type: 'notice', content: el.textContent?.trim() || '' }
+    case 'profile': {
+      const items = []
+      for (const child of el.children) {
+        items.push({
+          key: child.getAttribute('key') || '',
+          updatedAt: child.getAttribute('updated_at') || '',
+          source: child.getAttribute('source') || '',
+          value: child.textContent?.trim() || '',
+        })
+      }
+      return { type: 'profile', description: attrs.description || '', items }
+    }
     case 'user_query':
       return { type: 'user_query', content: el.textContent?.trim() || '' }
     default:
@@ -221,17 +235,18 @@ const parsedBlocks = computed(() => {
 })
 
 function blockTypeLabel(type) {
-  const map = { memory: '记忆 (memories)', note: '笔记 (notes)', theme: '主题 (themes)', history: '聊天记录 (history)', summary: '摘要 (summaries)', reminder: '提醒 (reminders)', current_datetime: '当前时间', user_query: '用户查询' }
+  const map = { memory: '记忆 (memories)', note: '笔记 (notes)', theme: '主题 (themes)', history: '聊天记录 (history)', summary: '摘要 (summaries)', reminder: '提醒 (reminders)', current_datetime: '当前时间', profile: '用户画像 (profile)', notice: '系统提示 (notice)', user_query: '用户查询' }
   return map[type] || type
 }
 
 function blockTypeIcon(type) {
-  const map = { memory: '📋', note: '📝', theme: '🔗', history: '💬', summary: '📄', reminder: '⏰', current_datetime: '🕐', user_query: '💭' }
+  const map = { memory: '📋', note: '📝', theme: '🔗', history: '💬', summary: '📄', reminder: '⏰', current_datetime: '🕐', profile: '👤', notice: '📢', user_query: '💭' }
   return map[type] || '📦'
 }
 
 function blockItemCount(block) {
   if (block.type === 'history') return block.rounds?.length || 0
+  if (block.type === 'notice') return 1
   return block.items?.length || 0
 }
 
@@ -249,7 +264,7 @@ function isBlockCollapsed(key) {
 }
 
 function blockHeaderBg(type) {
-  const base = { memory: '59,130,246', note: '34,197,94', theme: '245,158,11', history: '59,130,246', summary: '20,184,166', reminder: '99,102,241' }
+  const base = { memory: '59,130,246', note: '34,197,94', theme: '245,158,11', history: '59,130,246', summary: '20,184,166', reminder: '99,102,241', profile: '139,92,246', notice: '120,113,108' }
   const rgb = base[type] || '100,100,100'
   return themeStore.isDark ? `rgba(${rgb},0.12)` : `rgba(${rgb},0.06)`
 }
@@ -748,6 +763,28 @@ onMounted(loadRound)
                         </div>
                       </template>
 
+                      <!-- profile 用户画像字段 -->
+                      <template v-if="block.type === 'profile'">
+                        <div v-for="(item, i) in block.items" :key="i" :style="{
+                          padding: '10px 12px', marginBottom: i < block.items.length - 1 ? '8px' : '0',
+                          borderRadius: 'var(--radius-sm)',
+                          background: themeStore.isDark ? 'rgba(255,255,255,0.04)' : '#f8fafc',
+                          border: '1px solid var(--color-border)',
+                        }">
+                          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px;">
+                            <span style="font-size: 11px; padding: 1px 8px; border-radius: 4px; background: var(--color-primary); color: #fff; font-weight: 500;">{{ item.key }}</span>
+                            <span v-if="item.source" :style="{
+                              fontSize: '11px', padding: '1px 6px', borderRadius: 4,
+                              background: item.source === 'explicit' ? 'rgba(34,197,94,0.15)' : 'rgba(100,116,139,0.15)',
+                              color: item.source === 'explicit' ? '#16a34a' : 'var(--color-text-secondary)',
+                              fontWeight: 500,
+                            }">{{ item.source === 'explicit' ? '显式' : 'LLM补充' }}</span>
+                            <span v-if="item.updatedAt" style="font-size: 11px; color: var(--color-text-muted);">{{ item.updatedAt }}</span>
+                          </div>
+                          <div style="font-size: 13px; color: var(--color-text); line-height: 1.6; white-space: pre-wrap; word-break: break-all;">{{ item.value || '(空)' }}</div>
+                        </div>
+                      </template>
+
                       <!-- history rounds -->
                       <template v-if="block.type === 'history'">
                         <div v-for="(round, ri) in block.rounds" :key="ri" :style="{
@@ -775,8 +812,8 @@ onMounted(loadRound)
                         </div>
                       </template>
 
-                      <!-- current_datetime / user_query -->
-                      <template v-if="['current_datetime','user_query'].includes(block.type)">
+                      <!-- current_datetime / notice / user_query -->
+                      <template v-if="['current_datetime','notice','user_query'].includes(block.type)">
                         <div :style="{
                           padding: '10px 14px', borderRadius: 'var(--radius-md)',
                           background: block.type === 'user_query' ? 'var(--color-primary)' : 'var(--color-bg-page)',
@@ -784,6 +821,7 @@ onMounted(loadRound)
                           fontSize: '14px', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
                         }">
                           <span v-if="block.type === 'current_datetime'" style="font-size: 11px; display: block; margin-bottom: 2px; opacity: 0.6;">🕐 当前时间</span>
+                          <span v-else-if="block.type === 'notice'" style="font-size: 11px; display: block; margin-bottom: 2px; opacity: 0.6;">📢 系统提示</span>
                           <span v-else style="font-size: 11px; display: block; margin-bottom: 2px; opacity: 0.7;">💭 用户查询</span>
                           {{ block.content || '(空)' }}
                         </div>

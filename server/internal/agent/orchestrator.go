@@ -463,7 +463,7 @@ func (o *Orchestrator) buildSummaryPackets(ctx context.Context, req *RunRequest)
 	}
 	count := o.summaryAttachCount
 	if count <= 0 {
-		count = 10
+		count = 2
 	}
 	days := o.summaryAttachMaxDays
 	if days <= 0 {

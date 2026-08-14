@@ -134,8 +134,8 @@ func TestPlanTool_ReadOnlyFuncs(t *testing.T) {
 	}
 }
 
-func TestPlanTool_PlanModeBlocksSave(t *testing.T) {
-	// plan 模式（只读）下 save 被 Registry 拦截
+func TestPlanTool_PlanModeBlocksAll(t *testing.T) {
+	// plan 模式（纯讨论）下所有函数（含只读 get）都被 Registry 拦截（2026-08-14 收紧）
 	tool, cleanup := newPlanTestTool(t)
 	defer cleanup()
 	r := NewRegistry()
@@ -148,9 +148,12 @@ func TestPlanTool_PlanModeBlocksSave(t *testing.T) {
 	if !strings.Contains(res.Error, "计划模式") {
 		t.Errorf("拦截错误应说明计划模式: %s", res.Error)
 	}
-	// get 放行
+	// get 同样拦截（工具全禁用）
 	res = r.ExecuteByName(ec, "plan", "get", json.RawMessage(`{}`))
-	if !res.Success {
-		t.Errorf("plan 模式下 plan.get 应放行: %s", res.Error)
+	if res.Success {
+		t.Fatal("plan 模式下 plan.get 应被拦截")
+	}
+	if !strings.Contains(res.Error, "计划模式") {
+		t.Errorf("拦截错误应说明计划模式: %s", res.Error)
 	}
 }

@@ -291,13 +291,13 @@ func TestExecuteConcurrently_PlanModeBlocksClientWrite(t *testing.T) {
 	}
 }
 
-func TestExecuteConcurrently_PlanModeAllowsClientReadOnly(t *testing.T) {
-	// plan 模式：客户端只读工具（agent_browser 特例）放行 → 走正常执行（超时路径）
+func TestExecuteConcurrently_PlanModeBlocksClientReadOnly(t *testing.T) {
+	// 2026-08-14 激进收紧：plan 模式客户端工具全量禁用，只读工具（agent_browser 特例）同样拦截
 	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 50 * time.Millisecond}
 	events := make(chan *llm.StreamEvent, 16)
 	state := &reactState{}
 	calls := []tool.ToolCall{
-		{Tool: "browser", Function: "agent_browser_open"}, // 只读（特例）
+		{Tool: "browser", Function: "agent_browser_open"}, // 只读（旧特例，现同样拦截）
 	}
 	clientTools := []ClientTool{
 		{ServerName: "browser", Name: "agent_browser_open", IsReadOnly: true},
@@ -307,12 +307,14 @@ func TestExecuteConcurrently_PlanModeAllowsClientReadOnly(t *testing.T) {
 		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state,
 		model.ConvModePlan, clientToolReadOnlyIndex(clientTools), nil)
 
-	// 放行后走正常桥接路径：无客户端回传 → 超时失败（但错误不应是"计划模式拦截"）
-	if strings.Contains(results[0].result.Error, "计划模式") {
-		t.Errorf("只读客户端工具不应被计划模式拦截, got: %s", results[0].result.Error)
+	if results[0].result.Success {
+		t.Fatal("plan 模式只读客户端工具应被拦截")
 	}
-	if !strings.Contains(results[0].result.Error, "超时") {
-		t.Errorf("放行的只读工具应走正常执行路径（超时兜底）, got: %s", results[0].result.Error)
+	if !strings.Contains(results[0].result.Error, "计划模式") {
+		t.Errorf("拦截错误应说明计划模式, got: %s", results[0].result.Error)
+	}
+	if state.clientToolsUnavailable {
+		t.Error("拦截不应标记客户端不可用")
 	}
 }
 

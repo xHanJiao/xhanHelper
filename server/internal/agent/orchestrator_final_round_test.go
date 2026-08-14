@@ -207,6 +207,31 @@ func TestMkLlmChatReq_FinalRound_NoTools(t *testing.T) {
 	}
 }
 
+// —— mkLlmChatReq plan 模式隐藏全部工具（native FC）——
+
+func TestMkLlmChatReq_PlanMode_NoTools(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "note"})
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{},
+		registry:         reg,
+		useNativeFC:      true,
+	}
+	msgs := []llm.Message{{Role: "user", Content: "hi"}}
+	clientTools := []ClientTool{{ServerName: "browser", Name: "navigate"}}
+
+	// work 模式：服务端 + 客户端工具都下发
+	work := o.mkLlmChatReq(&RunRequest{UserID: "u1", Mode: model.ConvModeWork, ClientTools: clientTools}, "sys", msgs, false)
+	if len(work.Tools) == 0 {
+		t.Error("work 模式应下发工具定义")
+	}
+	// plan 模式：工具全隐藏（服务端 + 客户端都不下发）
+	plan := o.mkLlmChatReq(&RunRequest{UserID: "u1", Mode: model.ConvModePlan, ClientTools: clientTools}, "sys", msgs, false)
+	if plan.Tools != nil && len(plan.Tools) != 0 {
+		t.Errorf("plan 模式 tools 应为空, got %d 个", len(plan.Tools))
+	}
+}
+
 // —— shouldVerify 收尾轮跳过 ——
 
 func TestShouldVerify_SkipInFinalRound(t *testing.T) {

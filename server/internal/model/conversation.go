@@ -2,11 +2,11 @@ package model
 
 import "time"
 
-// 会话模式常量：plan 模式下写操作被服务端拦截（只读讨论状态）。
+// 会话模式常量：plan 模式下全部工具被服务端禁用（纯讨论状态，2026-08-14 起不再放行只读工具）。
 // 模式只能由用户/客户端切换（PATCH /api/conversations/:id/mode），LLM 无控制权。
 const (
 	ConvModeWork = "work" // 正常工作模式（默认）：工具全量可用
-	ConvModePlan = "plan" // 计划模式：只读讨论，写函数被拦截
+	ConvModePlan = "plan" // 计划模式：纯讨论，全部工具被禁用
 )
 
 // Conversation — 对话会话

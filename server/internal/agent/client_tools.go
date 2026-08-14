@@ -21,10 +21,11 @@ type ClientTool struct {
 	Name        string                 `json:"name"`        // MCP 原始工具名，如 "browser_navigate"
 	Description string                 `json:"description"`
 	Parameters  map[string]interface{} `json:"parameters"`   // JSON Schema，透传
-	IsReadOnly  bool                   `json:"is_read_only"` // 只读标记：plan 模式下仅只读客户端工具可执行。
-	// 客户端工具在客户端本地执行，服务端无法拦截执行本身，但在分派前（executeClientTool）
-	// 会依据此字段拦截写工具（plan 模式）。agent_browser 因操作难以精确界定读写，
-	// 整体标记只读（决策特例：调研场景需要 + 风险由客户端 riskLevel 兜底）。
+	IsReadOnly  bool                   `json:"is_read_only"` // 只读标记。
+	// 注（2026-08-14）：plan 模式已收紧为全量禁用客户端工具，此字段不再参与 plan 拦截，
+	// 仅保留供未来"只读浏览模式"复用。客户端工具在客户端本地执行，服务端无法拦截执行本身，
+	// 但分派前（executeConcurrently）会按会话模式拦断。agent_browser 因操作难以精确界定读写，
+	// 整体标记只读（历史决策特例：调研场景需要 + 风险由客户端 riskLevel 兜底）。
 }
 
 // maxClientTools — 单次请求客户端工具数量上限，防 prompt 膨胀

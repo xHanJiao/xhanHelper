@@ -7,7 +7,8 @@ struct LocalToolSchema: @unchecked Sendable {
     let description: String
     let inputSchema: [String: Any]?
     /// 只读标记（必备字段，构造时必须显式标注）。
-    /// 服务端 plan 模式（只读讨论状态）依据此字段拦截写工具；无默认值 = 编译期强制每个函数声明。
+    /// 注（2026-08-14）：服务端 plan 模式已收紧为全量禁用客户端工具，不再依据此字段放行；
+    /// 字段保留仅为未来"只读浏览模式"复用。无默认值 = 编译期强制每个函数声明。
     let isReadOnly: Bool
 }
 

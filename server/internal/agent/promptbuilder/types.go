@@ -26,6 +26,7 @@ type StaticProvider interface {
 type BuildOptions struct {
 	UserID      string // 用于 PromptResolver
 	AgentPrompt string // 可选 agent 覆盖
+	Mode        string // 会话模式：plan 模式下跳过工具定义段（工具全隐藏），空=work
 }
 
 // BuildResult — Build() 的返回值。

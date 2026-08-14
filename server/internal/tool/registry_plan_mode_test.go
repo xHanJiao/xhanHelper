@@ -57,12 +57,16 @@ func TestExecuteByName_PlanModeBlocksWrite(t *testing.T) {
 	}
 }
 
-func TestExecuteByName_PlanModeAllowsRead(t *testing.T) {
+func TestExecuteByName_PlanModeBlocksRead(t *testing.T) {
+	// 2026-08-14 激进收紧：plan 模式全量禁用工具，只读函数同样拦截
 	r := newPlanMockRegistry()
 	ec := &ExecuteContext{Ctx: context.Background(), Mode: model.ConvModePlan}
 	res := r.ExecuteByName(ec, "mock_mixed", "query", json.RawMessage(`{}`))
-	if !res.Success {
-		t.Errorf("plan 模式应放行只读函数, got: %s", res.Error)
+	if res.Success {
+		t.Fatal("plan 模式应拦截只读函数")
+	}
+	if !strings.Contains(res.Error, "计划模式") {
+		t.Errorf("拦截错误应说明计划模式, got: %s", res.Error)
 	}
 }
 

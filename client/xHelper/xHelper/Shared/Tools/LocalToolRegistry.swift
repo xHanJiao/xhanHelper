@@ -123,7 +123,7 @@ final class LocalToolRegistry {
                     "server_name": namespace,
                     "name": s.name,
                     "description": s.description,
-                    "is_read_only": s.isReadOnly, // 函数级必备字段：服务端 plan 模式依据它拦截写工具
+                    "is_read_only": s.isReadOnly, // 函数级必备字段；plan 模式已全量禁用（2026-08-14），保留待未来只读模式复用
                 ]
                 if let params = s.inputSchema {
                     item["parameters"] = params

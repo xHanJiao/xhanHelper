@@ -59,3 +59,7 @@ func (p *nativeFCNoticeProvider) SectionTitle() string { return "输出格式与
 func (p *nativeFCNoticeProvider) Render(ctx context.Context) string {
 	return "你已经通过函数调用接口获得了所有可用工具的定义。回复时直接输出纯文本即可，**严禁在文本中输出 JSON 格式内容**。如需调用工具，必须使用函数调用接口。"
 }
+
+// planModeNoToolsNotice — plan 模式下替代 nativeFCNoticeProvider 的声明：
+// 本模式不注入任何工具定义，LLM 不应发起任何函数调用（执行级拦截仍为最终兜底）。
+const planModeNoToolsNotice = "当前处于计划模式：本模式不提供任何工具调用能力（服务端已强制禁用），请勿调用任何工具，仅基于已有上下文进行方案讨论。回复使用纯文本即可。"

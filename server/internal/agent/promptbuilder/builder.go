@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/tool"
 )
 
@@ -66,16 +67,28 @@ func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildRes
 	}
 
 	// Layer 3: 输出规范 + 工具定义
+	// plan 模式：工具全隐藏——prompt-eng 跳过工具定义段；native FC 的通知替换为"无工具"声明
+	plan := opts.Mode == model.ConvModePlan
 	for _, sp := range b.postRoleStatic {
-		if s := sp.Render(ctx); s != "" {
-			if title := sp.SectionTitle(); title != "" {
-				sb.WriteString("## ")
-				sb.WriteString(title)
-				sb.WriteString("\n\n")
-			}
-			sb.WriteString(s)
-			sb.WriteString("\n")
+		var section string
+		switch {
+		case plan && sp.Name() == "tool_definitions":
+			continue
+		case plan && sp.Name() == "native_fc_notice":
+			section = planModeNoToolsNotice
+		default:
+			section = sp.Render(ctx)
 		}
+		if section == "" {
+			continue
+		}
+		if title := sp.SectionTitle(); title != "" {
+			sb.WriteString("## ")
+			sb.WriteString(title)
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString(section)
+		sb.WriteString("\n")
 	}
 
 	return &BuildResult{Prompt: sb.String()}, nil

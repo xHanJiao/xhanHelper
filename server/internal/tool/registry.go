@@ -572,11 +572,12 @@ func (r *Registry) ExecuteByName(ec *ExecuteContext, toolName, funcName string, 
 			toolName, toolName)}
 	}
 
-	// —— Plan 模式写操作拦截（集中式，所有工具一视同仁）——
-	// plan 模式下仅允许工具声明为只读的函数；写函数返回统一错误，LLM 收到后应转为规划讨论。
-	if ec.Mode == model.ConvModePlan && !t.ReadOnlyFuncs()[funcName] {
+	// —— Plan 模式工具全部禁用（集中式，所有工具一视同仁）——
+	// plan 模式为纯讨论状态：不区分只读/写，任何工具调用一律拦截（2026-08-14 激进收紧）。
+	// 工具仍保留 ReadOnlyFuncs 声明，仅为未来可能的"只读浏览模式"预留，当前拦截不再使用。
+	if ec.Mode == model.ConvModePlan {
 		return &Result{Success: false, Error: fmt.Sprintf(
-			"当前处于计划模式（只读讨论状态），禁止执行 %s.%s（写操作）。请仅进行方案讨论或使用只读查询工具；如需执行该操作，请让用户切换到工作模式。",
+			"当前处于计划模式（只读讨论状态），本模式下已禁用全部工具调用，禁止执行 %s.%s。请仅进行方案讨论；如需执行操作，请让用户切换到工作模式。",
 			toolName, funcName)}
 	}
 

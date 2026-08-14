@@ -78,6 +78,7 @@ final class MessageRightClickMenu: NSObject {
     let registry = MessageRowFrameRegistry()
     private var monitor: Any?
     private var retainedTargets: [MenuActionTarget] = []
+    private var menuClosedAt = Date.distantPast
 
     func install() {
         guard monitor == nil else { return }
@@ -94,6 +95,12 @@ final class MessageRightClickMenu: NSObject {
     }
 
     private func handle(_ event: NSEvent) -> NSEvent? {
+        // 菜单刚关闭：吞掉 AppKit re-dispatch 的原始 rightMouseDown，防系统菜单再弹
+        // （点菜单项关闭时事件被消费不 re-dispatch；点外面取消时会 re-dispatch）
+        if event.type == .rightMouseDown,
+           Date().timeIntervalSince(menuClosedAt) < 0.3 {
+            return nil
+        }
         guard isSelectionMode?() != true,
               let window = event.window,
               let anchor = registry.anchor,
@@ -122,10 +129,12 @@ final class MessageRightClickMenu: NSObject {
             menu.addItem(makeItem("分享", symbol: "square.and.arrow.up") { onShare() })
         }
         guard menu.items.count > 0, let anchor = registry.anchor else { return }
-        // 用坐标定位而非传原始事件：popUpContextMenu 会在菜单关闭后 re-dispatch
-        // rightMouseDown 到视图，导致再弹一个系统菜单；popUp(positioning:) 无此行为
+        // 用坐标定位而非传原始事件：popUpContextMenu 会把 rightMouseDown 传进菜单，
+        // 关闭后 re-dispatch 到视图再弹系统菜单；popUp(positioning:) 定位更干净
         let pos = anchor.convert(event.locationInWindow, from: nil)
         menu.popUp(positioning: nil, at: pos, in: anchor)
+        // 菜单已关闭：标记时间，handle 内吞掉 re-dispatch 的原始右键
+        menuClosedAt = Date()
     }
 
     private func makeItem(_ title: String, symbol: String, action: @escaping () -> Void) -> NSMenuItem {

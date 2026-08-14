@@ -122,7 +122,10 @@ final class MessageRightClickMenu: NSObject {
             menu.addItem(makeItem("分享", symbol: "square.and.arrow.up") { onShare() })
         }
         guard menu.items.count > 0, let anchor = registry.anchor else { return }
-        NSMenu.popUpContextMenu(menu, with: event, for: anchor)
+        // 用坐标定位而非传原始事件：popUpContextMenu 会在菜单关闭后 re-dispatch
+        // rightMouseDown 到视图，导致再弹一个系统菜单；popUp(positioning:) 无此行为
+        let pos = anchor.convert(event.locationInWindow, from: nil)
+        menu.popUp(positioning: nil, at: pos, in: anchor)
     }
 
     private func makeItem(_ title: String, symbol: String, action: @escaping () -> Void) -> NSMenuItem {

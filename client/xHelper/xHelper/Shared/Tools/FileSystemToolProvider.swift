@@ -162,6 +162,45 @@ extension FileSystemToolProvider: LocalToolProvider {
                 isReadOnly: false
             ),
             LocalToolSchema(
+                name: "edit",
+                description: """
+                文件内精确字符串替换（渐进修改已有文件的主力工具）。
+
+                用法：
+                - path 必须是绝对路径；old_string 为要替换的原文，new_string 为替换后的内容。
+                - 修改已有文件优先用本工具，每次只改一个小片段，多次调用渐进完成。
+                - 编辑前必须先用 read 读过该文件（本会话内），否则报错。
+                - old_string 必须在文件中唯一匹配（含空格/缩进/换行），否则报错。
+                - 多匹配时报错并提示：加大上下文使其唯一，或 replace_all=true 全部替换。
+                - old_string 为空拒绝；old_string 与 new_string 相同拒绝。
+                - 文件行尾风格（LF/CRLF）自动保留；新建或整体替换用 write。
+                首次访问某个目录时会请求用户授权，授权后一小时内无需重复确认。
+                """,
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "path": [
+                            "type": "string",
+                            "description": "文件绝对路径",
+                        ],
+                        "old_string": [
+                            "type": "string",
+                            "description": "要替换的原文（必须与文件内容精确一致，含空白/缩进）",
+                        ],
+                        "new_string": [
+                            "type": "string",
+                            "description": "替换后的内容（必须与 old_string 不同）",
+                        ],
+                        "replace_all": [
+                            "type": "boolean",
+                            "description": "替换所有匹配（默认 false：要求唯一匹配）",
+                        ],
+                    ],
+                    "required": ["path", "old_string", "new_string"],
+                ],
+                isReadOnly: false
+            ),
+            LocalToolSchema(
                 name: "read",
                 description: """
                 读取本地文件系统中的文件或目录。路径不存在时返回错误。
@@ -234,6 +273,8 @@ extension FileSystemToolProvider: LocalToolProvider {
             return try await handleGrep(arguments: arguments, context: context)
         case "write":
             return try await handleWrite(arguments: arguments, context: context)
+        case "edit":
+            return try await handleEdit(arguments: arguments, context: context)
         case "read":
             return try await handleRead(arguments: arguments, context: context)
         default:

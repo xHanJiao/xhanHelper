@@ -1,11 +1,11 @@
 #if os(macOS)
 import Foundation
 
-// MARK: - Write 预览
+// MARK: - 写/编辑预览（统一类型）
 
-struct FSWritePreview {
+struct FSPreview {
     let filePath: String
-    /// "新建" | "覆盖" | "追加"
+    /// "新建" | "覆盖" | "追加" | "编辑"
     let op: String
     let diffText: String
     let additions: Int?
@@ -17,11 +17,20 @@ struct FSWritePreview {
 
 extension FileSystemToolProvider {
 
+    /// 按工具名分派预览（确认条用）：write/edit 各自预演并生成 diff。参数非法返回 nil。
+    static func previewForTool(tool: String, arguments: [String: Any]) -> FSPreview? {
+        switch tool {
+        case "fs__write": return previewWrite(arguments: arguments)
+        case "fs__edit": return previewEdit(arguments: arguments)
+        default: return nil
+        }
+    }
+
     // MARK: 预览（L3 确认前计算 diff，不落盘）
 
     /// 依据参数预演写入并生成 diff 文本，供确认条展示。
     /// 参数非法/文件不可读时返回 nil（执行时会给出明确错误）。
-    static func previewWrite(arguments: [String: Any]) -> FSWritePreview? {
+    static func previewWrite(arguments: [String: Any]) -> FSPreview? {
         guard let rawPath = arguments["path"] as? String, !rawPath.isEmpty,
               let content = arguments["content"] as? String else {
             return nil
@@ -50,7 +59,7 @@ extension FileSystemToolProvider {
 
         let result = DiffRenderer.render(oldText: oldText, newText: newText, filePath: path)
         let op = exists ? (mode == "append" ? "追加" : "覆盖") : "新建"
-        return FSWritePreview(
+        return FSPreview(
             filePath: path,
             op: op,
             diffText: result.text,
@@ -121,20 +130,9 @@ extension FileSystemToolProvider {
         }
 
         // 原子写：同目录 temp + 权限保留 + replace/move
-        let target = URL(fileURLWithPath: path)
-        let tmp = URL(fileURLWithPath: path + ".\(UUID().uuidString).tmp")
         do {
-            try data.write(to: tmp, options: .withoutOverwriting)
-            if let perms = (try? fm.attributesOfItem(atPath: path))?[.posixPermissions] {
-                try fm.setAttributes([.posixPermissions: perms], ofItemAtPath: tmp.path)
-            }
-            if exists {
-                _ = try fm.replaceItemAt(target, withItemAt: tmp)
-            } else {
-                try fm.moveItem(at: tmp, to: target)
-            }
+            try atomicReplaceFile(data: data, targetPath: path, fileExists: exists)
         } catch {
-            try? fm.removeItem(at: tmp)
             return LocalToolResult(serverResult: nil, serverError: "写入失败: \(error.localizedDescription)", clientAction: nil)
         }
 
@@ -151,6 +149,38 @@ extension FileSystemToolProvider {
     }
 
     // MARK: 辅助
+
+    /// 原子替换文件：同目录 temp 写入 → 保留原权限 → replaceItemAt/moveItem。
+    func atomicReplaceFile(data: Data, targetPath: String, fileExists: Bool) throws {
+        let fm = FileManager.default
+        let target = URL(fileURLWithPath: targetPath)
+        let tmp = URL(fileURLWithPath: targetPath + ".\(UUID().uuidString).tmp")
+        do {
+            try data.write(to: tmp, options: .withoutOverwriting)
+            if let perms = (try? fm.attributesOfItem(atPath: targetPath))?[.posixPermissions] {
+                try fm.setAttributes([.posixPermissions: perms], ofItemAtPath: tmp.path)
+            }
+            if fileExists {
+                _ = try fm.replaceItemAt(target, withItemAt: tmp)
+            } else {
+                try fm.moveItem(at: tmp, to: target)
+            }
+        } catch {
+            try? fm.removeItem(at: tmp)
+            throw error
+        }
+    }
+
+    /// 内容转字节；原文件带 UTF-8 BOM 时补回 BOM。
+    func bomPrefixed(_ content: String, originalData: Data?) -> Data {
+        var body = Data(content.utf8)
+        if let original = originalData,
+           original.count >= 3,
+           original[0] == 0xEF, original[1] == 0xBB, original[2] == 0xBF {
+            body = Data([0xEF, 0xBB, 0xBF]) + body
+        }
+        return body
+    }
 
     /// 全量读取文件文本（按检测编码解码，剥 BOM）。失败返回 nil。
     static func readFullText(_ path: String) -> String? {

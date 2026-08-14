@@ -154,3 +154,32 @@
 - 大 diff 可滚动（240pt 上限），不截断
 - 新建 = 全绿行；覆盖 = 混合；追加 = 尾部绿
 - 写成功后在客户端日志（LogBuffer）可见结果字节数
+
+## 八、Batch 3 验收（fs__edit 渐进改）
+
+> 前提：Batch 1/2 通过；每次 edit 前先 read 目标文件（本会话）。
+
+### 用例
+
+| # | 操作（聊天对话） | 预期 |
+|---|------------------|------|
+| 1 | 读 `fs-test/resume.html` 后，让 agent edit "技能"节一处（如 `Go / Swift / Python` → `Go / Swift / Python / Rust`） | 确认条弹 diff（改动块红绿）；允许 → 替换成功，返回"Replaced 1 occurrence at line(s) N" |
+| 2 | edit 带缩进误差的 old_string（少缩进/多空格） | 仍匹配成功（line-trimmed / ws-normalized 兜底） |
+| 3 | old_string 匹配到多处（如 edit `XX大学` 不带上下文） | 报错"N 处匹配 + 行号"，提示加上下文或 replace_all；LLM 应变通 |
+| 4 | 同文件连续 3 次小 edit（渐进改，每次先 read 或基于前次结果） | 3 次都成功，内容逐段变化 |
+| 5 | 先读 `fs-test/crlf.txt`，edit 一行 | 替换成功且文件仍 CRLF（`file` 验证） |
+| 6 | 未 read 直接 edit `fs-test/utf8.txt` | 报错"请先用 read 读取该文件后再编辑" |
+| 7 | old_string 与 new_string 相同 / old_string 为空 | 明确报错，不落盘 |
+| 8 | old_string 是文件中不存在的内容 | 报错"未找到 old_string"+ 重读提示 |
+| 9 | edit `fs-test/sensitive/test.env` | 直接 BLOCKED，不弹确认 |
+| 10 | 信任模式开启下 edit | 不弹确认直接改（L3 被跳过） |
+
+### 快速冒烟
+
+用例 1 + 3 + 6。
+
+### 判定要点
+
+- 确认条与 write 同款 diff 卡片（复用）
+- 每次 edit 都是小 diff（红绿集中在改动块），不是全量
+- 失败话术要能引导 LLM 重读/加上下文/用 replace_all，不重复死磕同一 old_string

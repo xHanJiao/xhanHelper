@@ -23,11 +23,18 @@ extension FileSystemToolProvider {
             return LocalToolResult(serverResult: nil, serverError: blocked, clientAction: nil)
         }
 
+        // symlink 复检：真实路径须在授权目录内
+        if !DirectoryAuthorizationManager.shared.isAuthorized(resolvedPath) {
+            return LocalToolResult(serverResult: nil, serverError: "路径不在已授权目录内（或 symlink 指向授权目录外）: \(resolvedPath)", clientAction: nil)
+        }
+
         let include = arguments["include"] as? String
 
         let matches = runGrep(pattern: pattern, path: resolvedPath, include: include, isDir: isDir.boolValue)
         let output = formatGrepOutput(matches: matches, pattern: pattern)
-        let sanitized = OutputSanitizer.sanitize(output)
+        let budget = budgetCap(context.budgetBytes)
+        let capped = cappedOutput(output, budget: budget, continueHint: "考虑缩小搜索范围或改用更具体的 pattern")
+        let sanitized = OutputSanitizer.sanitize(capped.text)
         return LocalToolResult(serverResult: sanitized.data(using: .utf8), serverError: nil, clientAction: nil)
     }
 

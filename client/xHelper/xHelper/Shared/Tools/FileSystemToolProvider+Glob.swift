@@ -21,6 +21,11 @@ extension FileSystemToolProvider {
             return LocalToolResult(serverResult: nil, serverError: blocked, clientAction: nil)
         }
 
+        // symlink 复检：真实路径须在授权目录内
+        if !DirectoryAuthorizationManager.shared.isAuthorized(resolvedPath) {
+            return LocalToolResult(serverResult: nil, serverError: "路径不在已授权目录内（或 symlink 指向授权目录外）: \(resolvedPath)", clientAction: nil)
+        }
+
         let files = runGlob(pattern: pattern, cwd: resolvedPath)
         if files.isEmpty {
             let encoded = try? JSONSerialization.data(withJSONObject: ["files": [], "count": 0, "pattern": pattern])
@@ -33,6 +38,9 @@ extension FileSystemToolProvider {
         if truncated {
             result += "\n\n(Results truncated: showing first \(maxResults). Consider using a more specific pattern.)"
         }
+        let budget = budgetCap(context.budgetBytes)
+        let capped = cappedOutput(result, budget: budget, continueHint: "考虑缩小 glob 范围")
+        result = capped.text
         let encoded = try? JSONSerialization.data(withJSONObject: ["files": files, "count": files.count, "truncated": truncated, "pattern": pattern])
         return LocalToolResult(serverResult: OutputSanitizer.sanitize(result).data(using: .utf8), serverError: nil, clientAction: nil)
     }

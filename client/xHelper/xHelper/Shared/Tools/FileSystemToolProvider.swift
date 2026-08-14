@@ -8,6 +8,40 @@ final class FileSystemToolProvider: @unchecked Sendable {
     let maxReadBytes = 50 * 1024
     let maxLineChars = 2000
     let defaultReadLimit = 2000
+
+    /// 解码全量文件（GB18030 等非 UTF-8 编码）的大小上限。
+    let maxDecodeBytes = 5 * 1024 * 1024
+
+    /// 解析路径：展开 ~、标准化（.. / 重复斜杠），并解析 symlink 到真实路径。
+    /// 存在性由调用方确认（不存在时保持标准化路径，供错误提示使用）。
+    func resolvePath(_ path: String) -> String {
+        var resolved = (path as NSString).expandingTildeInPath
+        resolved = (resolved as NSString).standardizingPath
+        let url = URL(fileURLWithPath: resolved).resolvingSymlinksInPath()
+        let real = url.path
+        if FileManager.default.fileExists(atPath: real) {
+            return real
+        }
+        return resolved
+    }
+
+    /// 输出预算上限：client 下发预算（20KB）− 1KB 余量；无预算时用 50KB 绝对上限。
+    func budgetCap(_ budgetBytes: Int?) -> Int {
+        let budget = budgetBytes ?? maxReadBytes
+        return min(max(budget - 1024, 1024), maxReadBytes)
+    }
+
+    /// 结果超预算时截断并追加提示。
+    func cappedOutput(_ output: String, budget: Int, continueHint: String) -> (text: String, truncated: Bool) {
+        if output.utf8.count <= budget {
+            return (output, false)
+        }
+        var text = String(output.prefix(budget))
+        if let range = text.range(of: "\n", options: .backwards) {
+            text = String(text[..<range.lowerBound])
+        }
+        return (text + "\n(Output capped at \(budget / 1024) KB. \(continueHint))", true)
+    }
 }
 
 extension FileSystemToolProvider: LocalToolProvider {
@@ -90,7 +124,10 @@ extension FileSystemToolProvider: LocalToolProvider {
                 - 单行超过 2000 字符会被截断。
                 - 可以同时读取多个文件（并行调用）。
                 - 避免小块切割读取（30 行一读）；需要更多上下文时就一次读更大的范围。
-                - 可以读取图片（JPEG/PNG/GIF/WebP）和 PDF 并以 base64 格式返回。
+                - HTML 文件（.html/.htm）会剥离 <script>/<style> 内容（替换为占位标记），行号保持不变。
+                - 非 UTF-8 编码（GBK/GB18030/UTF-16）自动解码。
+                - 图片（JPEG/PNG/GIF/WebP）以 base64 返回。
+                - PDF 提取纯文本（按页），page_offset/page_limit 分页续读；扫描件（无文本层）无法提取。
                 首次访问某个目录时会请求用户授权，授权后一小时内无需重复确认。
                 """,
                 inputSchema: [
@@ -107,6 +144,14 @@ extension FileSystemToolProvider: LocalToolProvider {
                         "limit": [
                             "type": "integer",
                             "description": "最大行数，默认 2000",
+                        ],
+                        "page_offset": [
+                            "type": "integer",
+                            "description": "PDF 起始页（1-indexed），默认 1",
+                        ],
+                        "page_limit": [
+                            "type": "integer",
+                            "description": "PDF 最大页数，默认 10",
                         ],
                     ],
                     "required": ["filePath"],

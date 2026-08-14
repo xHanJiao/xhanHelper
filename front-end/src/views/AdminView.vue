@@ -361,6 +361,7 @@ function toggleBarStack(key) {
 }
 
 const costRanges = [
+  { label: '1 天', value: 1 },
   { label: '3 天', value: 3 },
   { label: '7 天', value: 7 },
   { label: '15 天', value: 15 },

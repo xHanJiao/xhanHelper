@@ -367,6 +367,7 @@ struct ChatView: View {
             )
         )
 
+    @ViewBuilder
     private func toolConfirmationBar(_ conf: ToolConfirmation) -> some View {
         if let diff = conf.diffText {
             // fs 写工具：diff 预览卡片 + 操作按钮

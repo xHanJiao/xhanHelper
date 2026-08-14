@@ -156,7 +156,8 @@ extension FileSystemToolProvider {
                 throw FSEditError(message: "拒绝替换：匹配到的跨度远大于 old_string。请重读文件，提供完整精确的 old_string（含空白与缩进）")
             }
 
-            let matchLines = ranges.map { content[..<$0.lowerBound].split(separator: "\n").count + 1 }
+            // 换行计数（split 默认省略空行，会导致行号偏小）
+            let matchLines = ranges.map { content[..<$0.lowerBound].filter { $0 == "\n" }.count + 1 }
             let newContent: String
             let count: Int
             if replaceAll {

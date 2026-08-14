@@ -142,6 +142,9 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	// 客户端工具桥（Mac 本地 MCP 工具的 pending 路由）
 	clientBridge := agent.NewClientToolBridge()
 
+	// 调试 JSON 异步持久化（限频队列 + 保留清理）
+	debugJSONSink := InitDebugJSON(cfg, repos.Message, bgCtx)
+
 	orch := agent.New(&agent.OrchestratorConfig{
 		FlashClient:        llmClients.Flash,
 		Registry:           tools.Registry,
@@ -168,6 +171,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		VerifyModel:               cfg.LLM.Verification.Model,
 		UseNativeFC:               cfg.LLM.UseNativeFC,
 		DebugPersistJSON:          cfg.LLM.DebugPersistJSON,
+		DebugJSONSink:             debugJSONSink,
 		ClientBridge:              clientBridge,
 		ClientToolTimeoutSecs:     cfg.LLM.ClientToolTimeoutSecs,
 		SubAgentMaxIterations:     cfg.SubAgent.ExploreMaxIterations,

@@ -1012,3 +1012,96 @@ func TestSearchMessages_ExcludesSubConversation(t *testing.T) {
 		t.Errorf("CountMessages 应排除子会话消息, got %d", total)
 	}
 }
+
+// TestBatchUpdateDebugJSON — 批量异步刷盘 request_json
+func TestBatchUpdateDebugJSON(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	for _, m := range []model.Message{
+		{ID: "m1", ConversationID: "c1", UserID: "u1", Role: "assistant", Content: "a", CreatedAt: time.Now()},
+		{ID: "m2", ConversationID: "c1", UserID: "u1", Role: "assistant", Content: "b", CreatedAt: time.Now()},
+	} {
+		if err := repo.Create(ctx, &m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	req1, req2 := `{"req":1}`, `{"req":2}`
+	if err := repo.BatchUpdateDebugJSON(ctx, []DebugJSONUpdate{
+		{MessageID: "m1", RequestJSON: &req1},
+		{MessageID: "m2", RequestJSON: &req2},
+	}); err != nil {
+		t.Fatalf("BatchUpdateDebugJSON error: %v", err)
+	}
+
+	m1, err := repo.GetByID(ctx, "m1")
+	if err != nil || m1 == nil || m1.RequestJSON == nil || *m1.RequestJSON != req1 {
+		t.Errorf("m1 request_json 应为 %s, got %v", req1, m1.RequestJSON)
+	}
+	m2, _ := repo.GetByID(ctx, "m2")
+	if m2.RequestJSON == nil || *m2.RequestJSON != req2 {
+		t.Errorf("m2 request_json 应为 %s, got %v", req2, m2.RequestJSON)
+	}
+}
+
+// TestBatchUpdateDebugJSON_Empty — 空批次直接返回
+func TestBatchUpdateDebugJSON_Empty(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	if err := repo.BatchUpdateDebugJSON(context.Background(), nil); err != nil {
+		t.Errorf("空批次应无错误, got %v", err)
+	}
+}
+
+// TestClearDebugJSONBefore — 保留清理：只清空 cutoff 之前有 request_json 的行，分批生效
+func TestClearDebugJSONBefore(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now()
+
+	req := `{"req":1}`
+	oldMsg := model.Message{ID: "old", ConversationID: "c1", UserID: "u1", Role: "assistant",
+		Content: "old", RequestJSON: &req, CreatedAt: now.Add(-48 * time.Hour)}
+	newMsg := model.Message{ID: "new", ConversationID: "c1", UserID: "u1", Role: "assistant",
+		Content: "new", RequestJSON: &req, CreatedAt: now.Add(-time.Hour)}
+	noReq := model.Message{ID: "noreq", ConversationID: "c1", UserID: "u1", Role: "assistant",
+		Content: "noreq", CreatedAt: now.Add(-48 * time.Hour)}
+	for _, m := range []model.Message{oldMsg, newMsg, noReq} {
+		if err := repo.Create(ctx, &m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 分批清理：limit=1 时一轮只能清 1 行
+	cutoff := now.Add(-24 * time.Hour)
+	n, err := repo.ClearDebugJSONBefore(ctx, cutoff, 1)
+	if err != nil {
+		t.Fatalf("ClearDebugJSONBefore error: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("第一轮应清 1 行, got %d", n)
+	}
+	n, err = repo.ClearDebugJSONBefore(ctx, cutoff, 1)
+	if err != nil {
+		t.Fatalf("ClearDebugJSONBefore error: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("第二轮应清 0 行（只剩 noReq 无 request_json 不计入）, got %d", n)
+	}
+
+	mOld, _ := repo.GetByID(ctx, "old")
+	if mOld.RequestJSON != nil {
+		t.Errorf("旧消息 request_json 应被清空")
+	}
+	mNew, _ := repo.GetByID(ctx, "new")
+	if mNew.RequestJSON == nil || *mNew.RequestJSON != req {
+		t.Errorf("新消息 request_json 应保留")
+	}
+	mNoReq, _ := repo.GetByID(ctx, "noreq")
+	if mNoReq.RequestJSON != nil {
+		t.Errorf("无 request_json 的行不应被改动")
+	}
+}

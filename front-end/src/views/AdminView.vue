@@ -285,6 +285,8 @@ watch(health, () => { if (health.value) setTimeout(renderAllCharts, 100) }, { de
 
 // ── helpers ──
 function fmtMB(v) { if (v == null || v === -1) return 'N/A'; return (v * 1).toFixed(1) + ' MB' }
+function fmtKB(v) { if (v == null) return '0 KB'; return (v / 1024).toFixed(0) + ' KB' }
+function fmtBytes(v) { if (v == null) return '0 MB'; return (v / 1048576).toFixed(1) + ' MB' }
 function uptime(s) { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h > 0 ? `${h}h ${m}m` : `${m}m` }
 function latSummary(s) {
   if (!s || !s.count) return '暂无数据'
@@ -540,6 +542,16 @@ onUnmounted(() => {
         <NCard size="small" title="内存"><div>堆: {{ fmtMB(health.memory?.heap_alloc_mb) }}</div><div style="font-size: 12px; color: var(--color-text-muted);">RSS: {{ fmtMB(health.memory?.os_rss_mb) }}</div></NCard>
         <NCard size="small" title="SSE 连接"><div style="font-size: 22px; font-weight: 600;">{{ health.counters?.sse_connections ?? 0 }}</div></NCard>
         <NCard size="small" title="活跃会话"><div style="font-size: 22px; font-weight: 600;">{{ health.snapshots?.active_conversations ?? 0 }}</div><div style="font-size: 12px; color: var(--color-text-muted);">最近 1h</div></NCard>
+        <NCard v-if="health.snapshots?.debug_json_queue" size="small" title="Debug JSON 队列">
+          <div><span style="font-size: 22px; font-weight: 600;">{{ health.snapshots.debug_json_queue.pending ?? 0 }}</span><span style="font-size: 12px; color: var(--color-text-muted);"> 排队</span><span style="font-size: 12px; color: var(--color-text-muted);"> · {{ fmtKB(health.snapshots.debug_json_queue.pending_bytes ?? 0) }}</span></div>
+          <div style="font-size: 12px; color: var(--color-text-muted); margin-top: 2px;">
+            已刷 {{ (health.snapshots.debug_json_queue.processed ?? 0).toLocaleString() }} 条 / {{ fmtBytes(health.snapshots.debug_json_queue.processed_bytes ?? 0) }}
+          </div>
+          <div style="font-size: 12px; color: var(--color-text-muted); margin-top: 2px;">
+            丢弃 <span :style="{ color: ((health.snapshots.debug_json_queue.dropped_full ?? 0) + (health.snapshots.debug_json_queue.dropped_oversize ?? 0)) > 0 ? 'var(--color-warning)' : 'var(--color-text-muted)' }">{{ (health.snapshots.debug_json_queue.dropped_full ?? 0) + (health.snapshots.debug_json_queue.dropped_oversize ?? 0) }}</span>
+            · 失败批次 <span :style="{ color: (health.snapshots.debug_json_queue.process_errors ?? 0) > 0 ? 'var(--color-danger)' : 'var(--color-text-muted)' }">{{ health.snapshots.debug_json_queue.process_errors ?? 0 }}</span>
+          </div>
+        </NCard>
         <NCard v-if="health.snapshots?.markdown_files" size="small" title="Markdown"><div style="font-size: 22px; font-weight: 600;">{{ health.snapshots.markdown_files.count }}</div><div style="font-size: 12px; color: var(--color-text-muted);">个文件</div></NCard>
       </div>
 

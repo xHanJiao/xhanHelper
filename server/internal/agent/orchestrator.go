@@ -136,6 +136,7 @@ type Orchestrator struct {
 	verifyModel            string // "flash" | "pro"
 	useNativeFC            bool
 	debugPersistJSON       bool
+	debugJSONSink          DebugJSONSink // request_json 异步落库 sink（开关开启时必须注入）
 	clientBridge           *ClientToolBridge
 	clientToolTimeout      time.Duration
 	subAgentMaxIterations  int
@@ -175,7 +176,8 @@ type OrchestratorConfig struct {
 	VerifyMaxRetries          int
 	VerifyModel               string            // "flash" | "pro"，默认 flash
 	UseNativeFC               bool              // 是否使用原生 function calling
-	DebugPersistJSON          bool              // 是否持久化完整 LLM 请求/响应 JSON（仅 dev 调试用）
+	DebugPersistJSON          bool              // 是否持久化完整 LLM 请求 JSON（异步限频写入，配 debug_json 控制频率与保留）
+	DebugJSONSink             DebugJSONSink     // request_json 异步落库 sink，DebugPersistJSON 开启时必填
 	ClientBridge              *ClientToolBridge // 客户端工具桥（客户端工具调用的 pending 路由）
 	ClientToolTimeoutSecs     int               // 客户端工具执行超时秒数，默认 60
 	SubAgentMaxIterations     int               // 子 agent 最大轮次（含强制收敛轮），默认 20（防死循环兜底）
@@ -213,6 +215,9 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 	if cfg.SubAgentTimeoutSecs <= 0 {
 		cfg.SubAgentTimeoutSecs = 600
 	}
+	if cfg.DebugPersistJSON && cfg.DebugJSONSink == nil {
+		panic("[orch] debug_persist_json 开启但 DebugJSONSink 为 nil（接线 bug）")
+	}
 
 	return &Orchestrator{
 		flashClient:               cfg.FlashClient,
@@ -237,6 +242,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		verifyModel:               cfg.VerifyModel,
 		useNativeFC:               cfg.UseNativeFC,
 		debugPersistJSON:          cfg.DebugPersistJSON,
+		debugJSONSink:             cfg.DebugJSONSink,
 		clientBridge:              cfg.ClientBridge,
 		clientToolTimeout:         time.Duration(cfg.ClientToolTimeoutSecs) * time.Second,
 		subAgentMaxIterations:     cfg.SubAgentMaxIterations,
@@ -1132,6 +1138,16 @@ func (o *Orchestrator) saveAssistantMsgInternal(ctx context.Context, convID, use
 	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, true)
 }
 
+// DebugJSONSink — 调试 JSON 异步持久化接口：消息落库后把 request_json 交给后台限频写入。
+type DebugJSONSink interface {
+	Submit(msgID string, reqJSON *string) bool
+}
+
+// NoopDebugJSONSink — debug_persist_json 关闭时的空实现。
+type NoopDebugJSONSink struct{}
+
+func (NoopDebugJSONSink) Submit(string, *string) bool { return false }
+
 // saveVerifyFeedback 将检验反馈存为内部系统消息（含检验请求 request_json），调试页可见
 func (o *Orchestrator) saveVerifyFeedback(ctx context.Context, convID, userID, feedback, systemPrompt, userPrompt string) {
 	if o.msgRepo == nil || convID == "" {
@@ -1148,20 +1164,21 @@ func (o *Orchestrator) saveVerifyFeedback(ctx context.Context, convID, userID, f
 		return
 	}
 	reqStr := string(reqJSON)
-	var reqJSONPtr *string
-	if o.debugPersistJSON {
-		reqJSONPtr = &reqStr
-	}
-	if err := o.msgRepo.Create(ctx, &model.Message{
+	msg := &model.Message{
 		ID:             uuid.New().String(),
 		UserID:         userID,
 		ConversationID: convID,
 		Role:           "system",
 		Content:        feedback,
-		RequestJSON:    reqJSONPtr,
 		IsInternal:     true,
-	}); err != nil {
+	}
+	if err := o.msgRepo.Create(ctx, msg); err != nil {
 		log.Printf("[verify] save feedback error: %v", err)
+		return
+	}
+	// 消息落库成功后才异步刷 request_json（避免对不存在的行做无效 UPDATE）
+	if o.debugPersistJSON {
+		o.debugJSONSink.Submit(msg.ID, &reqStr)
 	}
 }
 
@@ -1197,12 +1214,13 @@ func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, us
 		s := string(b)
 		modelMsg.ToolCallsJSON = &s
 	}
-	if o.debugPersistJSON && msg.RequestJSON != nil {
-		modelMsg.RequestJSON = msg.RequestJSON
-	}
 	if err := o.msgRepo.Create(ctx, modelMsg); err != nil {
 		log.Printf("[orch] save assistant msg error: %v", err)
 		return ""
+	}
+	// 消息落库成功后才异步刷 request_json（避免对不存在的行做无效 UPDATE）
+	if o.debugPersistJSON && msg.RequestJSON != nil {
+		o.debugJSONSink.Submit(mid, msg.RequestJSON)
 	}
 	return mid
 }

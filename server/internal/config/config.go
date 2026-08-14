@@ -149,7 +149,20 @@ type LLMConfig struct {
 	ExtractMsgLimit       int                `yaml:"extract_msg_limit"`        // 记忆提取每次最多取的消息数，默认 50
 	UseNativeFC           bool               `yaml:"use_native_fc"`            // 是否使用原生 function calling（默认 true）
 	ClientToolTimeoutSecs int                `yaml:"client_tool_timeout_secs"` // 客户端工具执行超时秒数，默认 60
-	DebugPersistJSON      bool               `yaml:"debug_persist_json"`       // 是否持久化完整 LLM 请求/响应 JSON 到 DB（仅 dev 调试用，线上关闭以节省磁盘 IO）
+	DebugPersistJSON      bool               `yaml:"debug_persist_json"`       // 是否持久化完整 LLM 请求 JSON 到 DB（异步限频写入，配 debug_json 控制频率与保留）
+	DebugJSON             DebugJSONConfig    `yaml:"debug_json"`               // 调试 JSON 异步持久化参数
+}
+
+// DebugJSONConfig — 调试 JSON 异步持久化配置
+type DebugJSONConfig struct {
+	RetentionDays        int   `yaml:"retention_days"`         // request_json 保留天数，默认 3
+	FlushIntervalMs      int   `yaml:"flush_interval_ms"`      // 异步刷盘间隔毫秒，默认 1000
+	MaxBytesPerFlush     int64 `yaml:"max_bytes_per_flush"`    // 每批字节预算（限频核心），默认 2MB
+	MaxPayloadBytes      int64 `yaml:"max_payload_bytes"`      // 单条 payload 上限，超限丢弃，默认 1MB
+	QueueMaxEntries      int   `yaml:"queue_max_entries"`      // 排队条数上限，默认 2048
+	QueueMaxBytes        int64 `yaml:"queue_max_bytes"`        // 排队字节上限，默认 64MB
+	CleanupIntervalHours int   `yaml:"cleanup_interval_hours"` // 保留清理周期（小时），默认 6
+	CleanupBatchRows     int   `yaml:"cleanup_batch_rows"`     // 清理每批行数，默认 500
 }
 
 // EmbeddingConfig — 向量化配置
@@ -320,6 +333,7 @@ func merge(dst, src *Config) {
 		dst.LLM.ExtractMsgLimit = src.LLM.ExtractMsgLimit
 	}
 	dst.LLM.DebugPersistJSON = src.LLM.DebugPersistJSON
+	mergeDebugJSON(&dst.LLM.DebugJSON, &src.LLM.DebugJSON)
 	if src.Embedding.APIKey != "" {
 		dst.Embedding.APIKey = src.Embedding.APIKey
 	}
@@ -403,6 +417,34 @@ func mergeSourceWeights(dst, src *SourceWeights) {
 	}
 	if src.Limit != 0 {
 		dst.Limit = src.Limit
+	}
+}
+
+// mergeDebugJSON 按字段合并调试 JSON 配置，非零值覆盖
+func mergeDebugJSON(dst, src *DebugJSONConfig) {
+	if src.RetentionDays != 0 {
+		dst.RetentionDays = src.RetentionDays
+	}
+	if src.FlushIntervalMs != 0 {
+		dst.FlushIntervalMs = src.FlushIntervalMs
+	}
+	if src.MaxBytesPerFlush != 0 {
+		dst.MaxBytesPerFlush = src.MaxBytesPerFlush
+	}
+	if src.MaxPayloadBytes != 0 {
+		dst.MaxPayloadBytes = src.MaxPayloadBytes
+	}
+	if src.QueueMaxEntries != 0 {
+		dst.QueueMaxEntries = src.QueueMaxEntries
+	}
+	if src.QueueMaxBytes != 0 {
+		dst.QueueMaxBytes = src.QueueMaxBytes
+	}
+	if src.CleanupIntervalHours != 0 {
+		dst.CleanupIntervalHours = src.CleanupIntervalHours
+	}
+	if src.CleanupBatchRows != 0 {
+		dst.CleanupBatchRows = src.CleanupBatchRows
 	}
 }
 
@@ -517,6 +559,32 @@ func validate(cfg *Config) error {
 	}
 	if cfg.WebFetch.MaxBytes == 0 {
 		cfg.WebFetch.MaxBytes = 51200
+	}
+	// Debug JSON 默认值（配 debug_persist_json 开关使用）
+	d := &cfg.LLM.DebugJSON
+	if d.RetentionDays == 0 {
+		d.RetentionDays = 3
+	}
+	if d.FlushIntervalMs == 0 {
+		d.FlushIntervalMs = 1000
+	}
+	if d.MaxBytesPerFlush == 0 {
+		d.MaxBytesPerFlush = 2 << 20
+	}
+	if d.MaxPayloadBytes == 0 {
+		d.MaxPayloadBytes = 1 << 20
+	}
+	if d.QueueMaxEntries == 0 {
+		d.QueueMaxEntries = 2048
+	}
+	if d.QueueMaxBytes == 0 {
+		d.QueueMaxBytes = 64 << 20
+	}
+	if d.CleanupIntervalHours == 0 {
+		d.CleanupIntervalHours = 6
+	}
+	if d.CleanupBatchRows == 0 {
+		d.CleanupBatchRows = 500
 	}
 	return nil
 }

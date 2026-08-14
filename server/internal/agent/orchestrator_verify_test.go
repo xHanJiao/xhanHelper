@@ -17,6 +17,14 @@ import (
 	"xhan-helper/internal/tool"
 )
 
+// syncDebugJSONSink — 测试用同步 sink：Submit 立即写入消息行，保持 DB 断言方式
+type syncDebugJSONSink struct{ repo *service.MessageRepo }
+
+func (s *syncDebugJSONSink) Submit(msgID string, reqJSON *string) bool {
+	return s.repo.BatchUpdateDebugJSON(context.Background(),
+		[]service.DebugJSONUpdate{{MessageID: msgID, RequestJSON: reqJSON}}) == nil
+}
+
 // setupOrchForVerify 创建一个带真实 msgRepo 的 orchestrator，用于测试存盘逻辑
 func setupOrchForVerify(t *testing.T) (*Orchestrator, *service.MessageRepo, func()) {
 	t.Helper()
@@ -34,6 +42,7 @@ func setupOrchForVerify(t *testing.T) (*Orchestrator, *service.MessageRepo, func
 		VerifyMaxRetries: 3,
 		VerifyModel:      "flash",
 		DebugPersistJSON: true, // 测试检验 request_json 持久化
+		DebugJSONSink:    &syncDebugJSONSink{repo: msgRepo},
 	})
 	return orch, msgRepo, func() {}
 }
@@ -444,7 +453,7 @@ func TestSaveVerifyFeedback_StoresRequestJSON(t *testing.T) {
 	db.AutoMigrate(&model.Message{})
 	msgRepo := service.NewMessageRepo(db)
 
-	orch := &Orchestrator{msgRepo: msgRepo, debugPersistJSON: true}
+	orch := &Orchestrator{msgRepo: msgRepo, debugPersistJSON: true, debugJSONSink: &syncDebugJSONSink{repo: msgRepo}}
 	orch.saveVerifyFeedback(context.Background(), "c1", "u1",
 		"[系统] 内部检验发现幻觉：编造了红酒账单",
 		"你是一个检验助手",

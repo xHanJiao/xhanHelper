@@ -30,6 +30,42 @@ func (r *MessageRepo) Create(ctx context.Context, m *model.Message) error {
 	return r.db.WithContext(ctx).Create(m).Error
 }
 
+// DebugJSONUpdate — 单条调试 JSON 落库更新（异步刷盘用）
+type DebugJSONUpdate struct {
+	MessageID   string
+	RequestJSON *string
+}
+
+// BatchUpdateDebugJSON 单事务批量更新 request_json（异步刷盘用）。
+// 任一条失败整个事务回滚（debug 数据 best-effort，不逐条兜底）。
+func (r *MessageRepo) BatchUpdateDebugJSON(ctx context.Context, updates []DebugJSONUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, u := range updates {
+			if err := tx.Model(&model.Message{}).
+				Where("id = ?", u.MessageID).
+				Update("request_json", u.RequestJSON).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// ClearDebugJSONBefore 清空 before 之前消息的 request_json（保留清理用，limit 控制单批行数）。
+func (r *MessageRepo) ClearDebugJSONBefore(ctx context.Context, before time.Time, limit int) (int64, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	res := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("created_at < ? AND request_json IS NOT NULL", before).
+		Limit(limit).
+		Update("request_json", nil)
+	return res.RowsAffected, res.Error
+}
+
 // CountByRole 统计会话下指定角色的消息数
 func (r *MessageRepo) CountByRole(ctx context.Context, convID, role string) (int, error) {
 	var count int64

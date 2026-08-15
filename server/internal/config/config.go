@@ -183,12 +183,23 @@ type SourceWeights struct {
 
 // RetrievalConfig — 记忆检索配置
 type RetrievalConfig struct {
-	FreshnessDecay float64       `yaml:"freshness_decay"` // 时间衰减系数，保留作为默认值
-	Memory         SourceWeights `yaml:"memory"`
-	Note           SourceWeights `yaml:"note"`
-	History        SourceWeights `yaml:"history"`
-	Theme          SourceWeights `yaml:"theme"`
-	Summary        SourceWeights `yaml:"summary"`
+	FreshnessDecay float64            `yaml:"freshness_decay"` // 时间衰减系数，保留作为默认值
+	Memory         SourceWeights      `yaml:"memory"`
+	Note           SourceWeights      `yaml:"note"`
+	History        SourceWeights      `yaml:"history"`
+	Theme          SourceWeights      `yaml:"theme"`
+	Summary        SourceWeights      `yaml:"summary"`
+	ResourceZone   ResourceZoneConfig `yaml:"resource_zone"` // 公共资源区（phase-10 任务 B）
+}
+
+// ResourceZoneConfig — 公共资源区配置
+type ResourceZoneConfig struct {
+	Enabled      bool `yaml:"enabled"`       // 是否启用资源区（历史消息不再重放 XML）
+	BudgetChars  int  `yaml:"budget_chars"`  // 预算帽（UTF-8 字符数，中文 1 字=1；4000 字符 ≈ 3000-4000 tokens），超限从最旧砍
+	QuotaSummary int  `yaml:"quota_summary"` // 摘要配额，默认 2
+	QuotaMemory  int  `yaml:"quota_memory"`  // 记忆配额，默认 8
+	QuotaNote    int  `yaml:"quota_note"`    // 笔记配额，默认 10
+	QuotaTopic   int  `yaml:"quota_topic"`   // 主题配额（只收 matched），默认 5
 }
 
 // ReflectionConfig — 反思系统配置
@@ -506,6 +517,21 @@ func validate(cfg *Config) error {
 	setSourceWeightsDefault(&cfg.Retrieval.History, 0.005, 0.5, 5)
 	setSourceWeightsDefault(&cfg.Retrieval.Theme, 0, 0.6, 10)
 	setSourceWeightsDefault(&cfg.Retrieval.Summary, 0.02, 1.0, 0)
+	if cfg.Retrieval.ResourceZone.BudgetChars == 0 {
+		cfg.Retrieval.ResourceZone.BudgetChars = 4000
+	}
+	if cfg.Retrieval.ResourceZone.QuotaSummary == 0 {
+		cfg.Retrieval.ResourceZone.QuotaSummary = 2
+	}
+	if cfg.Retrieval.ResourceZone.QuotaMemory == 0 {
+		cfg.Retrieval.ResourceZone.QuotaMemory = 8
+	}
+	if cfg.Retrieval.ResourceZone.QuotaNote == 0 {
+		cfg.Retrieval.ResourceZone.QuotaNote = 10
+	}
+	if cfg.Retrieval.ResourceZone.QuotaTopic == 0 {
+		cfg.Retrieval.ResourceZone.QuotaTopic = 5
+	}
 	if cfg.Reflection.LaunchMaxIterations == 0 {
 		cfg.Reflection.LaunchMaxIterations = 8
 	}

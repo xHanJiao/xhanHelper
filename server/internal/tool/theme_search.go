@@ -33,11 +33,13 @@ func (t *ThemeSearchTool) Functions() []FuncSchema {
 		{
 			Name:        "list_active_themes",
 			Display:     "列出活跃主题",
-			Description: "列出用户当前所有活跃主题（即系统正在追踪的事件），返回每个主题的 id、name、description、status 和 state_text（如有）。用于了解用户身上正在发生哪些事。",
+			Description: "列出用户当前活跃主题（即系统正在追踪的事件），返回简表（id/name/status，不含详情）。默认 20 条。需要完整状态页用 get_detail。用于了解用户身上正在发生哪些事。",
 			Parameters: map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{},
-				"required":   []string{},
+				"type": "object",
+				"properties": map[string]interface{}{
+					"limit": map[string]interface{}{"type": "integer", "description": "返回条数，默认20，最大50"},
+				},
+				"required": []string{},
 			},
 		},
 		{
@@ -101,29 +103,41 @@ func (t *ThemeSearchTool) getDetail(ec *ExecuteContext, args json.RawMessage) *R
 	return &Result{Success: true, Data: data}
 }
 
-func (t *ThemeSearchTool) listActiveThemes(ec *ExecuteContext, _ json.RawMessage) *Result {
+func (t *ThemeSearchTool) listActiveThemes(ec *ExecuteContext, args json.RawMessage) *Result {
+	var a struct {
+		Limit int `json:"limit"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
+	}
+	if a.Limit <= 0 {
+		a.Limit = 20
+	}
+	if a.Limit > 50 {
+		a.Limit = 50
+	}
+
 	themes, err := t.themeRepo.ListActive(ec.Ctx, ec.UserID)
 	if err != nil {
 		log.Printf("[theme_search] list_active_themes error: %v", err)
 		return &Result{Success: false, Error: fmt.Sprintf("查询主题失败: %v", err)}
 	}
 
+	// 简表：只给 id/name/status，详情走 get_detail（主题多时避免 description/state_text 撑爆上下文）
+	if len(themes) > a.Limit {
+		themes = themes[:a.Limit]
+	}
 	output := make([]map[string]interface{}, 0, len(themes))
 	for _, th := range themes {
-		m := map[string]interface{}{
-			"id":          th.ID,
-			"name":        th.Name,
-			"description": th.Description,
-			"status":      th.Status,
-		}
-		if th.StateText != "" {
-			m["state_text"] = th.StateText
-		}
-		output = append(output, m)
+		output = append(output, map[string]interface{}{
+			"id":     th.ID,
+			"name":   th.Name,
+			"status": th.Status,
+		})
 	}
 
 	data, _ := json.Marshal(map[string]interface{}{
-		"total":  len(output),
+		"total":  len(themes),
 		"themes": output,
 	})
 	return &Result{Success: true, Data: data}

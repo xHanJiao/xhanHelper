@@ -138,7 +138,11 @@ unified_search 覆盖 memory/note/summary/theme/history 五域（语义+关键�
 **效果**：主对话 tools 数组从 ~23 工具减至 ~19，且 message_search/get_summary/theme_search
 的 schema 体积显著缩小（各删 2 个函数）。检索入口唯一化降低 LLM 工具选择混淆。
 
-## 四、任务 B：公共资源区重构（下一 phase）
+## 四、任务 B：公共资源区重构（已实施，2026-08-15）
+
+实施要点落地情况：B0（theme 只注入 matched）、B1（历史消息简化重放 `[MM-DD HH:mm] 原文`，`SimpleUserContent`）、
+B2（`ctxflow/resource_zone.go`：增量解析上一条 XMLContext + ID/内容双索引去重 + quota + 预算帽 4000）、
+B3（reminder 不进资源区每轮重查）、配置 `retrieval.resource_zone`。单测覆盖 parse/merge/quota/budget/round-trip。
 
 ### 目标
 

@@ -45,6 +45,7 @@ type Block interface {
 
 // --- memory ---
 type memoryItem struct {
+	ID      string  `xml:"id,attr,omitempty" json:"id,omitempty"`
 	Topic   string  `xml:"topic,attr,omitempty" json:"topic,omitempty"`
 	Date    string  `xml:"date,attr,omitempty" json:"date,omitempty"`
 	Score   float64 `xml:"score,attr,omitempty" json:"score,omitempty"`
@@ -60,6 +61,7 @@ func (*memoriesBlock) TypeKey() string { return TypeMemory }
 
 // --- note ---
 type noteItem struct {
+	ID      string  `xml:"id,attr,omitempty" json:"id,omitempty"`
 	Topic   string  `xml:"topic,attr,omitempty" json:"topic,omitempty"`
 	Date    string  `xml:"date,attr,omitempty" json:"date,omitempty"`
 	Score   float64 `xml:"score,attr,omitempty" json:"score,omitempty"`
@@ -211,7 +213,7 @@ func buildMemoriesBlock(items []retrieval.ContextPacket) Block {
 		Description: retrieval.DescMemory,
 	}
 	for _, pkt := range items {
-		it := memoryItem{Content: pkt.Text, Score: roundScore(pkt.Score)}
+		it := memoryItem{ID: pkt.ID, Content: pkt.Text, Score: roundScore(pkt.Score)}
 		if meta, ok := pkt.Meta.(retrieval.EntityMeta); ok {
 			it.Content = meta.Content
 			if meta.Topic != "" {
@@ -231,7 +233,7 @@ func buildNotesBlock(items []retrieval.ContextPacket) Block {
 		Description: retrieval.DescNotes,
 	}
 	for _, pkt := range items {
-		it := noteItem{Content: pkt.Text, Score: roundScore(pkt.Score)}
+		it := noteItem{ID: pkt.ID, Content: pkt.Text, Score: roundScore(pkt.Score)}
 		if meta, ok := pkt.Meta.(retrieval.EntityMeta); ok {
 			it.Content = meta.Content
 			if meta.Topic != "" {

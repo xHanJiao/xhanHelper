@@ -95,6 +95,14 @@ retrieval:
     freshness_decay: 0.008
     threshold: 0.6
     limit: 2
+  # 公共资源区：历史消息不再重放检索注入，资源收敛到最新消息（phase-10 任务 B）
+  resource_zone:
+    enabled: true
+    budget_chars: 4000        # 预算帽（UTF-8 字符数，中文 1 字=1 ≈ 3000-4000 tokens），超限从最旧砍
+    quota_summary: 2          # 摘要配额
+    quota_memory: 8           # 记忆配额
+    quota_note: 10            # 笔记配额
+    quota_topic: 5            # 主题配额（只收 matched）
 
 global_default_role:
   system_prompt: |

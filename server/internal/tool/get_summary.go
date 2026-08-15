@@ -62,7 +62,7 @@ func (t *GetSummaryTool) Functions() []FuncSchema {
 				"properties": map[string]interface{}{
 					"start_time": map[string]interface{}{"type": "string", "description": "起始时间，支持 2026-06-15 14:30:00 或 2026-06-15（纯日期按当日 00:00:00）"},
 					"end_time":   map[string]interface{}{"type": "string", "description": "结束时间，格式同上（纯日期含当天全部数据）"},
-					"limit":      map[string]interface{}{"type": "integer", "description": "返回条数，默认20，最大50"},
+					"limit":      map[string]interface{}{"type": "integer", "description": "返回条数，默认5，最大50"},
 				},
 				"required": []string{"start_time", "end_time"},
 			},
@@ -132,7 +132,7 @@ func (t *GetSummaryTool) queryByTime(ec *ExecuteContext, args json.RawMessage) *
 		return &Result{Success: false, Error: "start_time 和 end_time 不能为空"}
 	}
 	if a.Limit <= 0 {
-		a.Limit = 20
+		a.Limit = 5
 	}
 	if a.Limit > 50 {
 		a.Limit = 50

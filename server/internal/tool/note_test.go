@@ -532,3 +532,21 @@ func TestNoteSoftDelete_ChunksCleanedUp(t *testing.T) {
 		t.Errorf("删除后 chunk 应被清空，实际 %d 条", len(chunks))
 	}
 }
+
+func TestNoteQueryNotes_DefaultLimit5(t *testing.T) {
+	tool, cleanup := setupNoteTool(t)
+	defer cleanup()
+	seedNotes(t, tool.noteRepo, "user-1")
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	res := tool.Execute(ec, "query_notes", mustMarshal(t, map[string]string{}))
+	if !res.Success {
+		t.Fatalf("query failed: %s", res.Error)
+	}
+	var out map[string]interface{}
+	json.Unmarshal(res.Data, &out)
+	notes := out["notes"].([]interface{})
+	if len(notes) > 5 {
+		t.Errorf("default limit should be 5, got %d", len(notes))
+	}
+}

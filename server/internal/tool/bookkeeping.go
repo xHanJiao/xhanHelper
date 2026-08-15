@@ -136,7 +136,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 		{
 			Name:        "query_bills",
 			Display:     "查询账单",
-			Description: "查询账单列表，支持按时间范围、分类、归属人、金额范围、消费/支付类型和关键词筛选，最多返回 200 条",
+			Description: "查询账单列表，支持按时间范围、分类、归属人、金额范围、消费/支付类型和关键词筛选，默认返回 50 条，最多 200 条",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -153,6 +153,7 @@ func (t *BookkeepingTool) Functions() []FuncSchema {
 					"pay_type":       map[string]interface{}{"type": "string", "enum": []interface{}{"现金", "公积金"}, "description": "按支付方式筛选，可选"},
 					"sort_by":        map[string]interface{}{"type": "string", "enum": []interface{}{"date", "amount"}, "description": "排序字段，可选 date 或 amount，默认 date"},
 					"sort_order":     map[string]interface{}{"type": "string", "enum": []interface{}{"asc", "desc"}, "description": "排序方向，asc 升序或 desc 降序，默认 desc"},
+					"limit":          map[string]interface{}{"type": "integer", "description": "返回条数，默认50，最大200"},
 				},
 			},
 		},
@@ -448,6 +449,7 @@ type queryBillsArgs struct {
 	PayType      string  `json:"pay_type,omitempty"`
 	SortBy       string  `json:"sort_by,omitempty"`
 	SortOrder    string  `json:"sort_order,omitempty"`
+	Limit        int     `json:"limit,omitempty"`
 }
 
 type batchUpdateBillsArgs struct {
@@ -513,6 +515,13 @@ func (t *BookkeepingTool) queryBills(ec *ExecuteContext, args json.RawMessage) *
 		log.Printf("[bookkeeping] parse args error: %v", err)
 	}
 
+	limit := a.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
 	bills, total, err := t.billRepo.ListFiltered(ec.Ctx, ec.UserID, service.BillFilter{
 		StartDate:   a.StartDate,
 		EndDate:     a.EndDate,
@@ -527,7 +536,7 @@ func (t *BookkeepingTool) queryBills(ec *ExecuteContext, args json.RawMessage) *
 		PayType:     a.PayType,
 		SortBy:      a.SortBy,
 		SortOrder:   a.SortOrder,
-	}, 200, 0)
+	}, limit, 0)
 	if err != nil {
 		return &Result{Success: false, Error: "query bills failed: " + err.Error()}
 	}
@@ -537,8 +546,8 @@ func (t *BookkeepingTool) queryBills(ec *ExecuteContext, args json.RawMessage) *
 		"bills": summaries,
 		"total": total,
 	}
-	if total > 200 {
-		result["notice"] = fmt.Sprintf("共 %d 条记录，仅返回前 200 条，请缩小筛选范围", total)
+	if total > int64(limit) {
+		result["notice"] = fmt.Sprintf("共 %d 条记录，仅返回前 %d 条，请缩小筛选范围或用 limit 增大", total, limit)
 	}
 	data, _ := json.Marshal(result)
 	return &Result{Success: true, Data: data}

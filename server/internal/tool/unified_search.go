@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 
@@ -232,7 +233,7 @@ func (t *UnifiedSearchTool) semanticSearch(ec *ExecuteContext, args json.RawMess
 				batches = append(batches, batch)
 			}
 		}
-		packets = mergePacketBatches(batches)
+		packets = mergePacketBatches(batches, a.TopK)
 	}
 
 	result := t.buildSearchResult(packets, true)
@@ -596,8 +597,9 @@ func (t *UnifiedSearchTool) fetchAll(ctx context.Context, types []string, opts r
 	return packets
 }
 
-// mergePacketBatches 合并多 sub-query 的检索结果，同 ID 保留最高 Score
-func mergePacketBatches(batches []map[string][]retrieval.ContextPacket) map[string][]retrieval.ContextPacket {
+// mergePacketBatches 合并多 sub-query 的检索结果，同 ID 保留最高 Score。
+// maxPerType 限制每域返回条数（防 sub-query 拆分放大：5 子查询 × topK 会超量）。
+func mergePacketBatches(batches []map[string][]retrieval.ContextPacket, maxPerType int) map[string][]retrieval.ContextPacket {
 	typeKey := make(map[string]map[string]retrieval.ContextPacket)
 	for _, batch := range batches {
 		for typ, pkts := range batch {
@@ -611,11 +613,21 @@ func mergePacketBatches(batches []map[string][]retrieval.ContextPacket) map[stri
 			}
 		}
 	}
+	if maxPerType <= 0 {
+		maxPerType = 5
+	}
 	result := make(map[string][]retrieval.ContextPacket)
 	for typ, idMap := range typeKey {
+		pkts := make([]retrieval.ContextPacket, 0, len(idMap))
 		for _, p := range idMap {
-			result[typ] = append(result[typ], p)
+			pkts = append(pkts, p)
 		}
+		// 按 Score 降序，截断到 maxPerType
+		sort.Slice(pkts, func(i, j int) bool { return pkts[i].Score > pkts[j].Score })
+		if len(pkts) > maxPerType {
+			pkts = pkts[:maxPerType]
+		}
+		result[typ] = pkts
 	}
 	return result
 }

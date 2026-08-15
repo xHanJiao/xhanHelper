@@ -58,19 +58,25 @@ func (s *ThemeSource) Fetch(ctx context.Context, opts SearchOptions) ([]ContextP
 
 	for _, t := range activeThemes {
 		vecScore, hasVec := searchRes[t.ID]
+		matched := hasVec && vecScore >= threshold
 
 		meta := ThemeMeta{Description: t.Description}
-		if hasVec && vecScore >= threshold {
+		if matched {
 			meta.StateText = t.StateText
 		}
 
-		selected = append(selected, ContextPacket{
-			ID:    t.ID,
-			Type:  "theme",
-			Text:  t.Name,
-			Score: vecScore,
-			Meta:  meta,
-		})
+		// 只注入匹配的主题（带 StateText 详情）。未匹配主题不再进 selected——
+		// 实测 77% 的消息 0 个匹配、最多 3 个，全量注入 25-41 个主题名是 token 浪费。
+		// 主题名/状态文本不匹配时仅进 nearMiss 供调试；LLM 可用 theme_search.list_active_themes 主动查全量。
+		if matched {
+			selected = append(selected, ContextPacket{
+				ID:    t.ID,
+				Type:  "theme",
+				Text:  t.Name,
+				Score: vecScore,
+				Meta:  meta,
+			})
+		}
 
 		if !hasVec || vecScore < threshold {
 			reason := "other_active"

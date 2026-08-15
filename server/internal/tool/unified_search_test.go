@@ -938,3 +938,60 @@ func TestUnifiedSearch_KeywordUserIsolation(t *testing.T) {
 // Note: semantic_search and keyword_search are separate functions.
 // The tool does not auto-fallback between them; the LLM decides which to call.
 // The test coverage above independently verifies each path.
+
+func TestMergePacketBatches_TruncatesPerType(t *testing.T) {
+	// 3 个子查询 × 每域 2 条 → 合并去重后 3 条同域不同 ID，maxPerType=2 应截断
+	batches := []map[string][]retrieval.ContextPacket{
+		{"memory": {
+			{ID: "m1", Type: "memory", Score: 0.9},
+			{ID: "m2", Type: "memory", Score: 0.7},
+		}},
+		{"memory": {
+			{ID: "m3", Type: "memory", Score: 0.8},
+		}},
+		{"memory": {
+			{ID: "m4", Type: "memory", Score: 0.6},
+		}},
+	}
+	out := mergePacketBatches(batches, 2)
+	mem := out["memory"]
+	if len(mem) != 2 {
+		t.Fatalf("expected 2 memory after truncation, got %d", len(mem))
+	}
+	// 按 score 降序：m1(0.9), m3(0.8)
+	if mem[0].ID != "m1" || mem[1].ID != "m3" {
+		t.Errorf("expected top-2 by score (m1,m3), got %s,%s", mem[0].ID, mem[1].ID)
+	}
+}
+
+func TestMergePacketBatches_DedupKeepsHighestScore(t *testing.T) {
+	batches := []map[string][]retrieval.ContextPacket{
+		{"note": {{ID: "n1", Type: "note", Score: 0.5}}},
+		{"note": {{ID: "n1", Type: "note", Score: 0.95}}}, // 同 ID 高分
+	}
+	out := mergePacketBatches(batches, 5)
+	notes := out["note"]
+	if len(notes) != 1 {
+		t.Fatalf("expected 1 after dedup, got %d", len(notes))
+	}
+	if notes[0].Score != 0.95 {
+		t.Errorf("expected highest score kept (0.95), got %.2f", notes[0].Score)
+	}
+}
+
+func TestMergePacketBatches_DefaultMaxPerType(t *testing.T) {
+	batches := []map[string][]retrieval.ContextPacket{
+		{"theme": {
+			{ID: "t1", Type: "theme", Score: 1},
+			{ID: "t2", Type: "theme", Score: 1},
+			{ID: "t3", Type: "theme", Score: 1},
+			{ID: "t4", Type: "theme", Score: 1},
+			{ID: "t5", Type: "theme", Score: 1},
+			{ID: "t6", Type: "theme", Score: 1},
+		}},
+	}
+	out := mergePacketBatches(batches, 0)
+	if len(out["theme"]) != 5 {
+		t.Errorf("default maxPerType should be 5, got %d", len(out["theme"]))
+	}
+}

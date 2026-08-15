@@ -562,9 +562,14 @@ func computeWindowSize(ctx context.Context, msgRepo *service.MessageRepo, convID
 	if newWindow >= maxRounds {
 		newWindow = maxRounds / 2
 	}
+	prevXML := ""
+	if lastUserMsg.XMLContext != nil {
+		prevXML = *lastUserMsg.XMLContext
+	}
 	return agent.WindowResult{
 		Size:              newWindow,
 		IsNewSession:      false,
 		SessionStartMsgID: agent.GetSessionStart(lastUserMsg),
+		PrevUserXML:       prevXML,
 	}
 }

@@ -21,6 +21,9 @@ const (
 	maxQueryLimit       = 50
 	defaultSemanticTopK = 5
 	maxSemanticTopK     = 10
+
+	// defaultNoteQueryLimit — query_notes 默认条数（笔记内容长，5 条足够浏览定位，更多靠 limit/cursor）
+	defaultNoteQueryLimit = 5
 )
 
 // ToolNoteOutput — 结构化 JSON 中的单条笔记
@@ -132,7 +135,7 @@ func (t *NoteTool) Functions() []FuncSchema {
 					"start_time":  map[string]interface{}{"type": "string", "description": "起始时间"},
 					"end_time":    map[string]interface{}{"type": "string", "description": "结束时间"},
 					"last_n_days": map[string]interface{}{"type": "integer", "description": "最近 N 天，与 start_time 互斥"},
-					"limit":       map[string]interface{}{"type": "integer", "description": "返回条数，默认20，最大50"},
+					"limit":       map[string]interface{}{"type": "integer", "description": "返回条数，默认5，最大50（更多结果用 cursor 翻页）"},
 					"cursor":      map[string]interface{}{"type": "string", "description": "分页游标（上一页返回的 next_cursor），首页不传"},
 				},
 				"required": []string{},
@@ -603,7 +606,7 @@ func (t *NoteTool) queryNotes(ec *ExecuteContext, args json.RawMessage) *Result 
 		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
 	}
 	if a.Limit <= 0 {
-		a.Limit = defaultQueryLimit
+		a.Limit = defaultNoteQueryLimit
 	}
 	if a.Limit > maxQueryLimit {
 		a.Limit = maxQueryLimit

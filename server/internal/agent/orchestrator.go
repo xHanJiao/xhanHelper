@@ -15,6 +15,7 @@ import (
 	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/agent/retrieval"
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/llmcost"
@@ -47,6 +48,7 @@ type WindowResult struct {
 	Size              int    // 本次窗口轮数
 	IsNewSession      bool   // 本条消息开启了新 session
 	SessionStartMsgID string // 当前 session 的起始消息 ID（新 session 为空，orchestrator 用本条 msgID 填充）
+	PrevUserXML       string // 上一条 user 消息的 XMLContext（资源区增量来源，空=无上一条）
 }
 
 // RunRequest — Orchestrator 输入
@@ -69,6 +71,10 @@ type RunRequest struct {
 	Mode               string       // 会话模式：model.ConvModeWork（默认）| model.ConvModePlan（全部工具被禁用）
 	ModeNotice         string       // 模式提示（注入当前 user 消息 XMLContext 的 notice 块，仅 LLM 可见，用户不可见）
 	VerifyEnabled      *bool        // 响应检验开关覆盖：nil=跟随全局配置，true/false=强制覆盖
+
+	// 资源区方案：上一条 user 消息的 XMLContext（增量资源区来源，零额外 DB 读）。
+	// 历史消息不再重放完整 XML；注入资源收敛到当前消息的公共资源区。
+	PreviousUserXMLContext string
 
 	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
 	Memory  retrieval.SourceConfig
@@ -154,6 +160,11 @@ type Orchestrator struct {
 	summaryRelevanceThreshold float64
 	summaryRelevanceHistoryN  int
 	summaryDedupThreshold     float64
+
+	// 公共资源区控制
+	resourceZoneEnabled bool
+	resourceZoneBudget  int
+	resourceZoneQuotas  ctxflow.ZoneQuotas
 }
 
 // OrchestratorConfig — Orchestrator 依赖配置
@@ -191,6 +202,9 @@ type OrchestratorConfig struct {
 	SummaryRelevanceThreshold float64                   // 摘要相关性阈值，默认 0.5
 	SummaryRelevanceHistoryN  int                       // 相关性检查的历史消息窗口，默认 5
 	SummaryDedupThreshold     float64                   // 摘要附着去重阈值，默认 0.85
+	ResourceZoneEnabled       bool                      // 公共资源区开关
+	ResourceZoneBudget        int                       // 资源区预算帽（chars）
+	ResourceZoneQuotas        ctxflow.ZoneQuotas        // 资源区每类型配额
 	ReminderRepo              *service.ReminderRepo
 	ProfileRepo               *service.UserProfileRepo
 }
@@ -258,6 +272,9 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		summaryRelevanceThreshold: cfg.SummaryRelevanceThreshold,
 		summaryRelevanceHistoryN:  cfg.SummaryRelevanceHistoryN,
 		summaryDedupThreshold:     cfg.SummaryDedupThreshold,
+		resourceZoneEnabled:       cfg.ResourceZoneEnabled,
+		resourceZoneBudget:        cfg.ResourceZoneBudget,
+		resourceZoneQuotas:        cfg.ResourceZoneQuotas,
 		reminderRepo:              cfg.ReminderRepo,
 		profileRepo:               cfg.ProfileRepo,
 	}
@@ -274,6 +291,9 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	if req.ConversationID == "" {
 		return nil, fmt.Errorf("conversation id is required")
 	}
+
+	// 资源区增量来源：上一条 user 消息的 XMLContext（computeWindowSize 已查，零额外 DB 读）
+	req.PreviousUserXMLContext = req.Window.PrevUserXML
 
 	var queryVec []float64
 	var historyEmbeddings [][]float64
@@ -539,7 +559,8 @@ func (o *Orchestrator) buildUserMessage(
 		extraPackets = append(extraPackets, ctxflow.NoticePacket(req.ModeNotice))
 	}
 
-	extraPackets = append(extraPackets, o.buildSummaryPackets(ctx, req)...)
+	summaryPkts := o.buildSummaryPackets(ctx, req)
+	extraPackets = append(extraPackets, summaryPkts...)
 
 	reminderPkts := o.buildReminderPackets(ctx, req.UserID)
 	extraPackets = append(extraPackets, reminderPkts...)
@@ -547,10 +568,62 @@ func (o *Orchestrator) buildUserMessage(
 	profilePkts := o.buildProfilePackets(ctx, req.UserID)
 	extraPackets = append(extraPackets, profilePkts...)
 
-	userContent := o.contextFormatter.FormatUserMessage(
-		ctxflow.MergePackets(retrieveResult, extraPackets...),
-		req.UserMessageContent,
-	)
+	// —— 公共资源区：资源类检索结果（memory/note/theme/summary）收敛到资源区 ——
+	// 增量式：只解析上一条消息的 XMLContext + 本轮检索 merge（去重 → quota → 预算帽），
+	// 历史消息重放不再携带注入资源（BuildMessagesForFlash 已简化）。
+	var zoneXML string
+	if o.resourceZoneEnabled {
+		var zoneFresh []retrieval.ContextPacket
+		zoneFresh = append(zoneFresh, summaryPkts...)
+		if retrieveResult != nil {
+			for typ, pkts := range retrieveResult.Packets {
+				switch typ {
+				case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme, ctxflow.TypeSummary:
+					zoneFresh = append(zoneFresh, pkts...)
+				}
+			}
+		}
+		zonePkts := ctxflow.MergeResourceZone(
+			ctxflow.ParseResourceZone(req.PreviousUserXMLContext),
+			zoneFresh,
+			o.resourceZoneQuotas,
+		)
+		zonePkts = ctxflow.BudgetResourceZone(zonePkts, o.resourceZoneBudget)
+		if len(zonePkts) > 0 {
+			zoneXML = ctxflow.FormatResourceZone(zonePkts)
+		}
+	}
+
+	// 非资源类 packets（history/reminders/profile/datetime/notice）+ user_query 走常规格式化。
+	// 资源类 packets 已进资源区，从常规注入中剔除（避免重复）。
+	var packets map[string][]retrieval.ContextPacket
+	if zoneXML != "" {
+		packets = make(map[string][]retrieval.ContextPacket)
+		for _, pkt := range extraPackets {
+			switch pkt.Type {
+			case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme, ctxflow.TypeSummary:
+				continue
+			}
+			packets[pkt.Type] = append(packets[pkt.Type], pkt)
+		}
+		if retrieveResult != nil {
+			for typ, pkts := range retrieveResult.Packets {
+				switch typ {
+				case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme, ctxflow.TypeSummary:
+					continue
+				}
+				packets[typ] = append(packets[typ], pkts...)
+			}
+		}
+	} else {
+		packets = ctxflow.MergePackets(retrieveResult, extraPackets...)
+	}
+
+	userContent := o.contextFormatter.FormatUserMessage(packets, req.UserMessageContent)
+	if zoneXML != "" {
+		// 资源区放最前（显式工作记忆），与常规块 + user_query 拼接
+		userContent = zoneXML + "\n" + userContent
+	}
 	userMsg.XMLContext = &userContent
 	return userMsg
 }
@@ -1476,6 +1549,17 @@ func truncateToolResult(content string, maxLen int) string {
 	return content[:head] + fmt.Sprintf("\n…[已截断 %d 字符]…\n", truncated) + content[len(content)-tail:]
 }
 
+// SimpleUserContent 生成历史 user 消息的简化内容：原文 + 时间戳（资源区方案）。
+// 优先 OriginalContent（管线改动前的原始输入），否则用 Content（处理后的内容）。
+// 时间戳按北京时间，格式 `[01-02 15:04] `。
+func SimpleUserContent(m *model.Message) string {
+	text := m.Content
+	if m.OriginalContent != nil && *m.OriginalContent != "" {
+		text = *m.OriginalContent
+	}
+	return fmt.Sprintf("[%s] %s", m.CreatedAt.In(config.BJ).Format("01-02 15:04"), text)
+}
+
 // FlattenRound 裁剪一轮消息为 LLM 上下文格式。
 // 保留完整的 user → assistant(tool_calls) → tool(result) → assistant(final) 链路，
 // 过滤 system 消息和内部 assistant（verify 草稿），但保留 tool 消息（含 IsInternal 的）。
@@ -1532,7 +1616,9 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int, useN
 		} else {
 			content := m.Content
 			if m.Role == "user" && m.XMLContext != nil && *m.XMLContext != "" {
-				content = *m.XMLContext
+				// 资源区方案：历史 user 消息不再重放完整 XMLContext（含当时注入的检索资源），
+				// 只发原文 + 时间戳。注入资源收敛到最新消息的公共资源区，消除历史重复放大。
+				content = SimpleUserContent(&m)
 			}
 			msg := llm.Message{ID: m.ID, Role: m.Role, Content: content}
 			if m.ToolCallID != nil {

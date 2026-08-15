@@ -202,8 +202,16 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		SummaryRelevanceThreshold: cfg.Chat.SummaryRelevanceThreshold,
 		SummaryRelevanceHistoryN:  cfg.Chat.SummaryRelevanceHistoryN,
 		SummaryDedupThreshold:     cfg.Chat.SummaryDedupThreshold,
-		ReminderRepo:              repos.Reminder,
-		ProfileRepo:               repos.UserProfile,
+		ResourceZoneEnabled:       cfg.Retrieval.ResourceZone.Enabled,
+		ResourceZoneBudget:        cfg.Retrieval.ResourceZone.BudgetChars,
+		ResourceZoneQuotas: ctxflow.ZoneQuotas{
+			Summary: cfg.Retrieval.ResourceZone.QuotaSummary,
+			Memory:  cfg.Retrieval.ResourceZone.QuotaMemory,
+			Note:    cfg.Retrieval.ResourceZone.QuotaNote,
+			Topic:   cfg.Retrieval.ResourceZone.QuotaTopic,
+		},
+		ReminderRepo: repos.Reminder,
+		ProfileRepo:  repos.UserProfile,
 	})
 
 	if !cfg.Server.DisableBackgroundTasks {

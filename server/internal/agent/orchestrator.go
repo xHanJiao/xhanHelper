@@ -163,7 +163,8 @@ type Orchestrator struct {
 
 	// 公共资源区控制
 	resourceZoneEnabled bool
-	resourceZoneBudget  int
+	resourceZoneBudget  int                 // 总预算帽（chars）
+	resourceZoneBudgets ctxflow.ZoneBudgets // 每类型预算（chars）
 	resourceZoneQuotas  ctxflow.ZoneQuotas
 }
 
@@ -203,7 +204,8 @@ type OrchestratorConfig struct {
 	SummaryRelevanceHistoryN  int                       // 相关性检查的历史消息窗口，默认 5
 	SummaryDedupThreshold     float64                   // 摘要附着去重阈值，默认 0.85
 	ResourceZoneEnabled       bool                      // 公共资源区开关
-	ResourceZoneBudget        int                       // 资源区预算帽（chars）
+	ResourceZoneBudget        int                       // 资源区总预算帽（chars）
+	ResourceZoneBudgets       ctxflow.ZoneBudgets       // 资源区每类型预算（chars）
 	ResourceZoneQuotas        ctxflow.ZoneQuotas        // 资源区每类型配额
 	ReminderRepo              *service.ReminderRepo
 	ProfileRepo               *service.UserProfileRepo
@@ -274,6 +276,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		summaryDedupThreshold:     cfg.SummaryDedupThreshold,
 		resourceZoneEnabled:       cfg.ResourceZoneEnabled,
 		resourceZoneBudget:        cfg.ResourceZoneBudget,
+		resourceZoneBudgets:       cfg.ResourceZoneBudgets,
 		resourceZoneQuotas:        cfg.ResourceZoneQuotas,
 		reminderRepo:              cfg.ReminderRepo,
 		profileRepo:               cfg.ProfileRepo,
@@ -566,7 +569,9 @@ func (o *Orchestrator) buildUserMessage(
 	extraPackets = append(extraPackets, reminderPkts...)
 
 	profilePkts := o.buildProfilePackets(ctx, req.UserID)
-	extraPackets = append(extraPackets, profilePkts...)
+	if !o.resourceZoneEnabled {
+		extraPackets = append(extraPackets, profilePkts...)
+	}
 
 	// —— 公共资源区：资源类检索结果（memory/note/theme/summary）收敛到资源区 ——
 	// 增量式：只解析上一条消息的 XMLContext + 本轮检索 merge（去重 → quota → 预算帽），
@@ -575,6 +580,7 @@ func (o *Orchestrator) buildUserMessage(
 	if o.resourceZoneEnabled {
 		var zoneFresh []retrieval.ContextPacket
 		zoneFresh = append(zoneFresh, summaryPkts...)
+		zoneFresh = append(zoneFresh, profilePkts...) // 稳定画像层进资源区（field key 去重）
 		if retrieveResult != nil {
 			for typ, pkts := range retrieveResult.Packets {
 				switch typ {
@@ -588,7 +594,7 @@ func (o *Orchestrator) buildUserMessage(
 			zoneFresh,
 			o.resourceZoneQuotas,
 		)
-		zonePkts = ctxflow.BudgetResourceZone(zonePkts, o.resourceZoneBudget)
+		zonePkts = ctxflow.BudgetResourceZone(zonePkts, o.resourceZoneBudgets, o.resourceZoneBudget)
 		if len(zonePkts) > 0 {
 			zoneXML = ctxflow.FormatResourceZone(zonePkts)
 		}
@@ -601,7 +607,7 @@ func (o *Orchestrator) buildUserMessage(
 		packets = make(map[string][]retrieval.ContextPacket)
 		for _, pkt := range extraPackets {
 			switch pkt.Type {
-			case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme, ctxflow.TypeSummary:
+			case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme, ctxflow.TypeSummary, ctxflow.TypeProfile:
 				continue
 			}
 			packets[pkt.Type] = append(packets[pkt.Type], pkt)

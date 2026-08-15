@@ -155,13 +155,18 @@ B3（reminder 不进资源区每轮重查）、配置 `retrieval.resource_zone`�
    + 本轮检索结果 merge
 3. **quota 制**（数据驱动）：note 10 / memory 8 / summary 2 / topic 5（只收 matched）；
    reminder 不进资源区、每轮重查（upcoming 1 + expired 1，已确认 ack/cancelled/mentioned 过滤闭环）
-4. **预算帽** 4000 chars 兜底（quota 后实测 median 3.1k / p90 4.5k）
+4. **预算帽** 总预算 7000 chars 兜底 + per-type 预算（profile 1600/note 3000/summary 800/memory 600/topic 200，
+数据依据：近30天实测 note p75 272×10、memory 62×8、summary 265×2、topic 16×5、profile 块 p90 1407）；
+两阶段：先每类独立截断（防跨类挤占），再总预算按砍序 memory→note→theme→summary→profile 兜底
 5. **ID 去重**：summary/reminder/theme 已有 id；memory/note 新增 `id,attr`（旧 XML 降级内容匹配）；
    summary 另走 0.85 余弦判重
 6. **时间线序**：历史累计在前 + 新检索追加在后（不重算相似度，quota 后条目少排序收益小）
 7. **theme 注入策略**：只注入 matched（带 StateText 详情的），unmatched 不再注入
    （数据：77% 消息 0 个匹配；补偿路径 `theme_search.list_active_themes`）
-8. 解析失败打日志降级（禁止静默）；不做旧数据兼容
+8. **profile 进资源区**：稳定画像层（field key 去重、值更新替换），不参与条数 quota，
+   预算砍序最低优先级（最后砍画像）
+9. **分组编码**：资源区按类型分组单块输出（每类型一个块，description 不重复 N 次）
+10. 解析失败打日志降级（禁止静默）；不做旧数据兼容
 
 ### 缓存推演结论
 

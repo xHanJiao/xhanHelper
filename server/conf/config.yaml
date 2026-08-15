@@ -98,7 +98,12 @@ retrieval:
   # 公共资源区：历史消息不再重放检索注入，资源收敛到最新消息（phase-10 任务 B）
   resource_zone:
     enabled: true
-    budget_chars: 4000        # 预算帽（UTF-8 字符数，中文 1 字=1 ≈ 3000-4000 tokens），超限从最旧砍
+    budget_chars: 7000        # 总预算帽（UTF-8 字符数，中文 1 字=1 ≈ 5500-7000 tokens）
+    budget_profile: 1600      # profile 预算（稳定画像层）
+    budget_summary: 800       # summary 预算
+    budget_memory: 600        # memory 预算
+    budget_note: 3000         # note 预算（note 价值最高给最多）
+    budget_topic: 200         # topic 预算
     quota_summary: 2          # 摘要配额
     quota_memory: 8           # 记忆配额
     quota_note: 10            # 笔记配额

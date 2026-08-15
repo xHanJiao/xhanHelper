@@ -204,6 +204,13 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		SummaryDedupThreshold:     cfg.Chat.SummaryDedupThreshold,
 		ResourceZoneEnabled:       cfg.Retrieval.ResourceZone.Enabled,
 		ResourceZoneBudget:        cfg.Retrieval.ResourceZone.BudgetChars,
+		ResourceZoneBudgets: ctxflow.ZoneBudgets{
+			Profile: cfg.Retrieval.ResourceZone.BudgetProfile,
+			Summary: cfg.Retrieval.ResourceZone.BudgetSummary,
+			Memory:  cfg.Retrieval.ResourceZone.BudgetMemory,
+			Note:    cfg.Retrieval.ResourceZone.BudgetNote,
+			Topic:   cfg.Retrieval.ResourceZone.BudgetTopic,
+		},
 		ResourceZoneQuotas: ctxflow.ZoneQuotas{
 			Summary: cfg.Retrieval.ResourceZone.QuotaSummary,
 			Memory:  cfg.Retrieval.ResourceZone.QuotaMemory,

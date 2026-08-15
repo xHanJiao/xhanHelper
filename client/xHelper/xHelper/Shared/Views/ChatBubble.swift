@@ -89,17 +89,6 @@ struct ThinkingBubble: View {
     }
 }
 
-private extension View {
-    @ViewBuilder
-    func macosTextSelection() -> some View {
-        #if os(macOS)
-        textSelection(.enabled)
-        #else
-        self
-        #endif
-    }
-}
-
 private struct PulsingText: View {
     let text: String
     @State private var opacity: Double = 1.0

@@ -148,6 +148,7 @@ private struct DocumentFullView: View {
                                 Markdown(document.content)
                                     .markdownTheme(.chatBubble(fontSize: FontSizeManager.shared.scaledSize * 1.18))
                                     .markdownCodeSyntaxHighlighter(.plainText)
+                                    .macosTextSelection()
                             } else {
                                 VStack(alignment: .leading, spacing: 0) {
                                     ForEach(segments) { segment in
@@ -156,6 +157,7 @@ private struct DocumentFullView: View {
                                             Markdown(segment.content)
                                                 .markdownTheme(.chatBubble(fontSize: FontSizeManager.shared.scaledSize * 1.18))
                                                 .markdownCodeSyntaxHighlighter(.plainText)
+                                                .macosTextSelection()
                                         case .mermaid:
                                             MermaidDiagramInlineView(code: segment.content)
                                         }

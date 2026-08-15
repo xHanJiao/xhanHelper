@@ -66,7 +66,7 @@ type CronRunnerConfig struct {
 // NewCronRunner 创建调度器
 func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 	if len(cfg.DiscoverSchedules) == 0 {
-		cfg.DiscoverSchedules = []string{"09:00", "18:00"}
+		cfg.DiscoverSchedules = []string{"03:00"}
 	}
 	if cfg.RunTimeout <= 0 {
 		cfg.RunTimeout = 30 * time.Minute

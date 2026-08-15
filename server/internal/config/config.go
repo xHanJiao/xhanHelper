@@ -199,7 +199,7 @@ type ReflectionConfig struct {
 	// Deprecated: post_chat_group 重构后不再使用（统一由 session_end 延迟任务驱动，
 	// 延迟用 chat.session_gap_minutes）。字段保留兼容旧配置，不再读取。
 	PostChatDelaySeconds        int            `yaml:"post_chat_delay_seconds"`
-	DailySchedules              []string       `yaml:"daily_schedules"`                // 早晚回顾定时触发时间列表，默认 ["09:00","20:00"]
+	DailySchedules              []string       `yaml:"daily_schedules"`                // 主题发现定时触发时间列表，默认 ["03:00"]（每天一次）
 	DeliverIntervalMinutes      int            `yaml:"deliver_interval_minutes"`       // 投递窗口间隔分钟，默认 60；<=0 关闭投递（pending findings 会积压，恢复后补投）
 	MaxDeliveryRetries          int            `yaml:"max_delivery_retries"`           // 投递重试上限，默认 3
 	ActiveDurationDays          map[string]int `yaml:"active_duration_days"`           // active 各 duration 的衰减天数，默认 long:90 medium:30 short:14 ephemeral:7

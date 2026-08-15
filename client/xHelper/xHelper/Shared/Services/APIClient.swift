@@ -262,6 +262,14 @@ class APIClient {
         return try await post("/api/conversations/\(conversationId)/share-messages", body: ["user_message_ids": userMessageIds])
     }
 
+    func getDocumentShare(docID: String) async throws -> DocumentShareResult {
+        return try await get("/api/documents/\(docID)/share")
+    }
+
+    func createDocumentShare(docID: String) async throws -> DocumentShareResult {
+        return try await post("/api/documents/\(docID)/share", body: [:])
+    }
+
 	// MARK: Internal
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
@@ -626,6 +634,20 @@ struct CreateShareToken: Codable {
 
     enum CodingKeys: String, CodingKey {
         case token
+        case expiresAt = "expires_at"
+    }
+}
+
+struct DocumentShareResult: Codable {
+    let id: String
+    let token: String
+    let url: String
+    let expiresAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case token
+        case url
         case expiresAt = "expires_at"
     }
 }

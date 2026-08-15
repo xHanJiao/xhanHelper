@@ -527,11 +527,8 @@ struct MessageListView: View {
                 await MainActor.run {
                     isCreatingShare = false
                     shareToken = result.token
-                    #if DEBUG
-                    shareUrl = "http://localhost:5173/s/messages/\(result.token)"
-                    #else
-                    shareUrl = "\(baseURL)/s/messages/\(result.token)"
-                    #endif
+                    // 分享链接指向前端源（本地开发 5173、线上同源），与后端 API 地址分离
+                    shareUrl = "\(DeviceManager.webBaseURL)/s/messages/\(result.token)"
                     showShareResult = true
                     exitShareSelectMode()
                 }

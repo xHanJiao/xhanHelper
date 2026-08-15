@@ -4,6 +4,7 @@ struct SettingsView: View {
     @ObservedObject var deviceManager: DeviceManager
     @EnvironmentObject var colorSchemeManager: ColorSchemeManager
     @AppStorage("xhan_server_url") private var serverURL = DeviceManager.defaultBaseURL
+    @AppStorage("xhan_web_url") private var webURL = DeviceManager.defaultWebBaseURL
 
     private var apiClient: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
@@ -44,8 +45,15 @@ struct SettingsView: View {
                 #if os(iOS)
                     .keyboardType(.URL)
                 #endif
+                TextField("网页地址", text: $webURL)
+                    .autocorrectionDisabled()
+                #if os(iOS)
+                    .keyboardType(.URL)
+                #endif
             } header: {
                 Text("服务器")
+            } footer: {
+                Text("服务地址为后端 API；网页地址为前端页面（分享链接使用），本地开发两者分端口")
             }
             .listRowBackground(Rectangle().fill(.ultraThinMaterial))
             #endif

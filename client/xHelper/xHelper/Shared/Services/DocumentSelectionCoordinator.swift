@@ -16,6 +16,11 @@ final class DocumentSelectionCoordinator: ObservableObject {
     /// 右侧栏管理器（弱引用，由 ContentView 注入），用于判断文档页是否恰好在右栏前台。
     weak var rightSidebar: RightSidebarManager?
 
+    /// API 访问信息（ContentView 注入，分享文档用）
+    private var baseURL = ""
+    private var token = ""
+    private var isCreatingShare = false
+
     @Published private(set) var selectedDocument: Document?
 
     private var groupRegistered = false
@@ -30,6 +35,12 @@ final class DocumentSelectionCoordinator: ObservableObject {
     func deselect() {
         selectedDocument = nil
         TopBarRegistry.shared.refresh()
+    }
+
+    /// 注入 API 访问信息（ContentView 设置，分享文档用）
+    func configure(baseURL: String, token: String) {
+        self.baseURL = baseURL
+        self.token = token
     }
 
     /// 注册顶栏文档组（幂等，参照浏览器组「注册一次 + visible 闭包」模式）。
@@ -49,6 +60,10 @@ final class DocumentSelectionCoordinator: ObservableObject {
                              enabled: { true },
                              action: { [weak self] in self?.exportPDF() },
                              help: { "导出 PDF（排版）" }),
+                TopBarButton(id: "document-share", icon: { "link" },
+                             enabled: { true },
+                             action: { [weak self] in self?.shareSelected() },
+                             help: { "分享文档" }),
             ],
             visible: { [weak self] in self?.isDocumentDetailVisible ?? false }
         ))
@@ -102,6 +117,37 @@ final class DocumentSelectionCoordinator: ObservableObject {
                     LogBuffer.shared.error("document pdf export failed: \(error.localizedDescription)")
                     ToastCenter.shared.show("导出 PDF 失败")
                 }
+            }
+        }
+        #endif
+    }
+
+    /// 分享当前文档：先查已有分享链接（重复点击不重置），没有则创建；
+    /// 把完整链接复制到剪贴板并 Toast 提示（对齐 Web 端行为，跳过弹窗）。
+    private func shareSelected() {
+        guard let doc = selectedDocument, !isCreatingShare else { return }
+        #if os(macOS)
+        isCreatingShare = true
+        let api = APIClient(baseURL: baseURL, token: token)
+        Task {
+            do {
+                let share: DocumentShareResult
+                do {
+                    share = try await api.getDocumentShare(docID: doc.id)
+                } catch {
+                    share = try await api.createDocumentShare(docID: doc.id)
+                }
+                // 分享链接指向前端源（本地开发 5173、线上同源），与后端 API 地址分离
+                let fullURL = "\(DeviceManager.webBaseURL)\(share.url)"
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(fullURL, forType: .string)
+                isCreatingShare = false
+                ToastCenter.shared.show("分享链接已复制")
+            } catch {
+                isCreatingShare = false
+                LogBuffer.shared.error("document share failed: \(error.localizedDescription)")
+                ToastCenter.shared.show("分享失败：\(error.localizedDescription)")
             }
         }
         #endif

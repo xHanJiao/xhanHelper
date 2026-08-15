@@ -32,6 +32,24 @@ class DeviceManager: ObservableObject {
         #endif
     }
 
+    /// 网页链接（分享页等前端页面）的源地址。
+    /// 本地开发：前端跑在 5173（Vite）、后端 8080，两者不同源，分享链接必须指向前端；
+    /// 线上：前端与 API 同源（helper.xhanx.cn）。
+    #if DEBUG
+    static let defaultWebBaseURL = "http://localhost:5173"
+    #else
+    static let defaultWebBaseURL = "https://helper.xhanx.cn"
+    #endif
+
+    static var webBaseURL: String {
+        #if DEBUG
+        let url = UserDefaults.standard.string(forKey: "xhan_web_url") ?? Self.defaultWebBaseURL
+        return url
+        #else
+        return Self.defaultWebBaseURL
+        #endif
+    }
+
     init() {
         self.token = UserDefaults.standard.string(forKey: tokenKey)
         self.userId = UserDefaults.standard.string(forKey: userIdKey)

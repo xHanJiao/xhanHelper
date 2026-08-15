@@ -23,13 +23,13 @@ enum Layout {
     // MARK: - 三栏布局（单点改基础值，派生值自动跟随）
 
     /// 卡片与窗口边缘的横向间隙（缝线两侧各取一半确保视觉等宽）。
-    static let cardGap: CGFloat = 11
+    static let cardGap: CGFloat = 6
     /// 缝线单侧间隙 = (cardGap - seamWidth) / 2。
-    static let seamHalfGap: CGFloat = 5
+    static let seamHalfGap: CGFloat = (cardGap - seamWidth) / 2
     /// 顶栏上/下纵向间隙（窗口上缘↔按钮、按钮↔卡片）。
     static let toolbarVGap: CGFloat = 6
     /// 卡片底部与窗口边缘的纵向间隙。
-    static let cardBottomGap: CGFloat = 12
+    static let cardBottomGap: CGFloat = 6
 
     /// 中间聊天区最小宽。
     static let middleMinWidth: CGFloat = 340
@@ -57,9 +57,17 @@ enum Layout {
     static let rightSidebarOpenMinContentWidth: CGFloat =
         sidebarMinWidth + sidebarOuterPadding + middleAndRightMinSpan
 
+    /// 无右栏时，侧栏宽度之外的内容最小宽（左侧栏恢复展开的窗口阈值开销）。
+    static let contentOverheadNoRightSidebar: CGFloat =
+        cardGap * 2 + sidebarHPadding * 2 + seamHalfGap * 2 + seamWidth + middleMinWidth
+    /// 右栏打开时，侧栏宽度之外的内容最小宽（同上，右栏开启场景）。
+    static let contentOverheadRightSidebarOpen: CGFloat =
+        rightSidebarOpenMinContentWidth - sidebarMinWidth
+
     /// 顶栏导航胶囊左缘对齐中部内容卡片左缘的偏移。
-    /// 构成: cardGap(11) + sidebarHPadding×2(12) + cardGap(11) = 34
-    static let navToolbarContentOffset: CGFloat = 34
+    /// 构成: cardGap + sidebarHPadding×2 + cardGap（第二项 cardGap 即缝线区 seamHalfGap×2+seamWidth）。
+    static let navToolbarContentOffset: CGFloat =
+        cardGap * 2 + sidebarHPadding * 2
 
     // MARK: - 聊天画中画面板（PiP）
 

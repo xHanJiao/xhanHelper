@@ -524,8 +524,8 @@ struct ContentView: View {
                             // 3 栏/右栏关闭：原阈值逻辑（PiP 由 didResize 检测冻结后触发收起，
                             // 因为 PiP 底线 813 > 阈值 661，geo 冻结在 813 时这里已不再触发）。
                             let overhead: CGFloat = rightSidebar.isPipChat
-                                ? max(385, AppDelegate.measuredContentMinWidth - sidebarWidth)
-                                : rightSidebar.isOpen ? 736 : 385
+                                ? max(Layout.contentOverheadNoRightSidebar, AppDelegate.measuredContentMinWidth - sidebarWidth)
+                                : rightSidebar.isOpen ? Layout.contentOverheadRightSidebarOpen : Layout.contentOverheadNoRightSidebar
                             var restoreAt = CGFloat(storedSidebarWidth) + overhead
                             if rightSidebar.isPipChat {
                                 // 恢复下限 = 展开态内容底线（收起瞬间实测），窗口没大到能容下展开内容前不恢复

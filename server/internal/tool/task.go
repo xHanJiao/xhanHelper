@@ -25,7 +25,8 @@ func (t *TaskTool) Description() string {
 核心原则：一个 task 只做一件事。任务应在子 agent 有限的轮次预算内完成；大任务拆成多个 task 并行，不要塞进一个 task。
 
 何时使用：
-- 需要联网调研多步信息（搜索 → 浏览网页 → 提炼结论）
+- 需要联网调研多步信息（搜索 → 浏览网页 → 提炼结论）→ web_explore
+- 需要在用户本地文件系统上搜索/阅读多个文件（代码、文档、配置等）→ file_explore
 - 多个独立子任务可并行（利用并行加速）
 - 任务量大、需要独立上下文避免污染当前对话
 
@@ -52,8 +53,11 @@ func (t *TaskTool) Functions() []FuncSchema {
 					"description": "任务简短描述（3-5 词，用作子任务标题，如 调研XX技术）",
 				},
 				"subagent_type": map[string]interface{}{
-					"type":        "string",
-					"description": "子 agent 类型，当前可用：explore（联网调研，只读）",
+					"type": "string",
+					"description": `子 agent 类型：
+- web_explore：联网调研（基于 Mac 浏览器，只读）
+- file_explore：本地文件检索（搜索/阅读用户 Mac 上的文件，只读）
+两者都需要 macOS 客户端在线；客户端离线时子任务无法执行。`,
 				},
 				"prompt": map[string]interface{}{
 					"type": "string",

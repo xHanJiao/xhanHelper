@@ -296,7 +296,7 @@ func TestSubAgent_AskUserDispatch(t *testing.T) {
 			},
 			ClientBridge:      bridge,
 			ClientToolTimeout: 2 * time.Second,
-			AllowedTools:      map[string]bool{"browser": true, "ui": true},
+			AllowedTools:      map[string][]string{"browser": nil, "ui": nil},
 		},
 		OnEvent: sink.onEvent,
 	})

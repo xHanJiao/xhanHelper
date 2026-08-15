@@ -16,7 +16,8 @@ import (
 )
 
 // WebFetchTool — 抓取 URL 网页正文，剥离 HTML 标签返回纯文本。
-// 仅 subAgent（explore）可见：注册时 HideTool（见 appinit/tools.go）。
+// 历史：subAgent（explore）专用，已随 web_explore 砍掉 webfetch 而停用；
+// 仍注册但 HideTool（主 LLM 不可见），保留备用。
 type WebFetchTool struct {
 	client   *http.Client
 	maxBytes int

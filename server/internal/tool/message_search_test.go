@@ -75,18 +75,18 @@ func prepareUser(userID string) string {
 
 // ==================== Schema Tests ====================
 
-func TestMessageSearchTool_Functions_Returns6(t *testing.T) {
+func TestMessageSearchTool_Functions_Returns4(t *testing.T) {
 	tool, cleanup := setupMessageSearchTool(t)
 	defer cleanup()
 	fns := tool.Functions()
-	if len(fns) != 6 {
-		t.Fatalf("expected 6 functions, got %d", len(fns))
+	if len(fns) != 4 {
+		t.Fatalf("expected 4 functions, got %d", len(fns))
 	}
 	names := make(map[string]bool)
 	for _, f := range fns {
 		names[f.Name] = true
 	}
-	expected := []string{"semantic_search", "search_by_keyword", "search_by_time", "count_messages", "get_by_ids", "search_by_range"}
+	expected := []string{"search_by_time", "count_messages", "get_by_ids", "search_by_range"}
 	for _, n := range expected {
 		if !names[n] {
 			t.Errorf("missing function: %s", n)
@@ -227,250 +227,6 @@ func TestMessageSearchTool_Errors(t *testing.T) {
 }
 
 // ==================== search_by_keyword Tests ====================
-
-func TestSearchByKeyword_Basic(t *testing.T) {
-	tool, cleanup := setupMessageSearchTool(t)
-	defer cleanup()
-	userID := prepareUser("user-1")
-	seedMessages(t, tool.msgRepo, userID)
-	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
-
-	res := tool.Execute(ec, "search_by_keyword", mustMarshal(t, map[string]string{"query": "羽毛球"}))
-	if !res.Success {
-		t.Fatalf("search failed: %s", res.Error)
-	}
-	var out map[string]interface{}
-	json.Unmarshal(res.Data, &out)
-
-	msgs := out["messages"].([]interface{})
-	if len(msgs) == 0 {
-		t.Fatal("expected at least 1 result")
-	}
-	first := msgs[0].(map[string]interface{})
-	if first["role"] != "user" {
-		t.Errorf("expected role user, got %v", first["role"])
-	}
-	kw := first["matched_keywords"].([]interface{})
-	if len(kw) == 0 {
-		t.Error("expected matched_keywords")
-	}
-}
-
-func TestSearchByKeyword_MultiKeyword(t *testing.T) {
-	tool, cleanup := setupMessageSearchTool(t)
-	defer cleanup()
-	userID := prepareUser("user-1")
-	seedMessages(t, tool.msgRepo, userID)
-	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
-
-	// OR match: 羽毛球 SQL should match both messages with 羽毛球 and SQL
-	res := tool.Execute(ec, "search_by_keyword", mustMarshal(t, map[string]string{"query": "羽毛球 SQL"}))
-	if !res.Success {
-		t.Fatalf("search failed: %s", res.Error)
-	}
-	var out map[string]interface{}
-	json.Unmarshal(res.Data, &out)
-
-	msgs := out["messages"].([]interface{})
-	if len(msgs) < 2 {
-		t.Fatalf("expected at least 2 results (OR match), got %d", len(msgs))
-	}
-}
-
-func TestSearchByKeyword_RoleFilter(t *testing.T) {
-	tool, cleanup := setupMessageSearchTool(t)
-	defer cleanup()
-	userID := prepareUser("user-1")
-	seedMessages(t, tool.msgRepo, userID)
-	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
-
-	res := tool.Execute(ec, "search_by_keyword", mustMarshal(t, map[string]interface{}{
-		"query": "SQL",
-		"role":  "assistant",
-	}))
-	if !res.Success {
-		t.Fatalf("search failed: %s", res.Error)
-	}
-	var out map[string]interface{}
-	json.Unmarshal(res.Data, &out)
-
-	msgs := out["messages"].([]interface{})
-	for _, m := range msgs {
-		msg := m.(map[string]interface{})
-		if msg["role"] != "assistant" {
-			t.Errorf("expected assistant only, got %v", msg["role"])
-		}
-	}
-}
-
-func TestSearchByKeyword_ConversationFilter(t *testing.T) {
-	tool, cleanup := setupMessageSearchTool(t)
-	defer cleanup()
-	userID := prepareUser("user-1")
-	seedMessages(t, tool.msgRepo, userID)
-	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
-
-	res := tool.Execute(ec, "search_by_keyword", mustMarshal(t, map[string]interface{}{
-		"query":           "好吃 SQL 羽毛球 记账",
-		"conversation_id": "conv-2",
-	}))
-	if !res.Success {
-		t.Fatalf("search failed: %s", res.Error)
-	}
-	var out map[string]interface{}
-	json.Unmarshal(res.Data, &out)
-
-	msgs := out["messages"].([]interface{})
-	for _, m := range msgs {
-		msg := m.(map[string]interface{})
-		if msg["conversation_id"] != "conv-2" {
-			t.Errorf("expected conv-2 only, got %v", msg["conversation_id"])
-		}
-	}
-}
-
-func TestSearchByKeyword_NoMatch(t *testing.T) {
-	tool, cleanup := setupMessageSearchTool(t)
-	defer cleanup()
-	userID := prepareUser("user-1")
-	seedMessages(t, tool.msgRepo, userID)
-	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
-
-	res := tool.Execute(ec, "search_by_keyword", mustMarshal(t, map[string]string{"query": "外星人"}))
-	if !res.Success {
-		t.Fatalf("search failed: %s", res.Error)
-	}
-	var out map[string]interface{}
-	json.Unmarshal(res.Data, &out)
-
-	msgs := out["messages"].([]interface{})
-	if len(msgs) != 0 {
-		t.Errorf("expected 0 results, got %d", len(msgs))
-	}
-	total := out["total"].(float64)
-	if total != 0 {
-		t.Errorf("expected total=0, got %v", total)
-	}
-}
-
-// ==================== Cursor Pagination Tests ====================
-
-func TestSearchByKeyword_CursorPagination(t *testing.T) {
-	tool, cleanup := setupMessageSearchTool(t)
-	defer cleanup()
-	userID := prepareUser("user-1")
-	seedMessages(t, tool.msgRepo, userID)
-	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
-
-	// Page 1: limit=2
-	res := tool.Execute(ec, "search_by_keyword", mustMarshal(t, map[string]interface{}{
-		"query": "SQL 羽毛球 深圳 记账",
-		"limit": 2,
-	}))
-	if !res.Success {
-		t.Fatalf("search failed: %s", res.Error)
-	}
-	var page1 map[string]interface{}
-	json.Unmarshal(res.Data, &page1)
-
-	msgs1 := page1["messages"].([]interface{})
-	if len(msgs1) != 2 {
-		t.Fatalf("expected 2 messages page 1, got %d", len(msgs1))
-	}
-	if page1["has_more"] != true {
-		t.Error("expected has_more=true for page 1")
-	}
-	cursor, ok := page1["next_cursor"].(string)
-	if !ok || cursor == "" {
-		t.Fatal("expected next_cursor in page 1")
-	}
-
-	// Page 2: use cursor
-	res = tool.Execute(ec, "search_by_keyword", mustMarshal(t, map[string]interface{}{
-		"query":  "SQL 羽毛球 深圳 记账",
-		"limit":  2,
-		"cursor": cursor,
-	}))
-	if !res.Success {
-		t.Fatalf("search page 2 failed: %s", res.Error)
-	}
-	var page2 map[string]interface{}
-	json.Unmarshal(res.Data, &page2)
-
-	msgs2 := page2["messages"].([]interface{})
-	if len(msgs2) == 0 {
-		t.Error("expected messages in page 2")
-	}
-	// Messages should be different from page 1
-	if len(msgs2) > 0 {
-		p1First := msgs1[0].(map[string]interface{})["id"].(string)
-		p2First := msgs2[0].(map[string]interface{})["id"].(string)
-		if p1First == p2First {
-			t.Error("page 1 and page 2 should have different messages")
-		}
-	}
-}
-
-// ==================== Expand Context Tests ====================
-
-func TestSearchByKeyword_ExpandContext(t *testing.T) {
-	tool, cleanup := setupMessageSearchTool(t)
-	defer cleanup()
-	userID := prepareUser("user-1")
-	seedMessages(t, tool.msgRepo, userID)
-	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
-
-	// 搜索记账——展开上下文会看到同一轮中的 assistant 回复
-	res := tool.Execute(ec, "search_by_keyword", mustMarshal(t, map[string]interface{}{
-		"query":          "记账",
-		"expand_context": true,
-	}))
-	if !res.Success {
-		t.Fatalf("search failed: %s", res.Error)
-	}
-	var out map[string]interface{}
-	json.Unmarshal(res.Data, &out)
-
-	msgs := out["messages"].([]interface{})
-	if len(msgs) == 0 {
-		t.Fatal("expected at least 1 result")
-	}
-	first := msgs[0].(map[string]interface{})
-	round := first["round_messages"].([]interface{})
-	if len(round) == 0 {
-		t.Error("expected round_messages with expand_context=true")
-	}
-}
-
-func TestSearchByKeyword_ExpandContextFalse(t *testing.T) {
-	tool, cleanup := setupMessageSearchTool(t)
-	defer cleanup()
-	userID := prepareUser("user-1")
-	seedMessages(t, tool.msgRepo, userID)
-	ec := &ExecuteContext{Ctx: context.Background(), UserID: userID}
-
-	res := tool.Execute(ec, "search_by_keyword", mustMarshal(t, map[string]interface{}{
-		"query":          "记账",
-		"expand_context": false,
-	}))
-	if !res.Success {
-		t.Fatalf("search failed: %s", res.Error)
-	}
-	var out map[string]interface{}
-	json.Unmarshal(res.Data, &out)
-
-	msgs := out["messages"].([]interface{})
-	if len(msgs) == 0 {
-		t.Fatal("expected at least 1 result")
-	}
-	first := msgs[0].(map[string]interface{})
-	// round_messages should be omitted (nil in Go becomes omitted in JSON)
-	if _, exists := first["round_messages"]; exists {
-		t.Error("round_messages should be omitted when expand_context=false")
-	}
-}
-
-// ==================== search_by_time Tests ====================
 
 func TestSearchByTime_LastNDays(t *testing.T) {
 	tool, cleanup := setupMessageSearchTool(t)
@@ -856,14 +612,18 @@ func TestOtherUserIsolation(t *testing.T) {
 	ec := &ExecuteContext{Ctx: context.Background(), UserID: "other-user"}
 
 	// All searches should return empty for other-user
-	res := tool.Execute(ec, "search_by_keyword", mustMarshal(t, map[string]string{"query": "羽毛球"}))
+	res := tool.Execute(ec, "search_by_time", mustMarshal(t, map[string]interface{}{"last_n_days": 30}))
 	if !res.Success {
 		t.Fatalf("search failed: %s", res.Error)
 	}
 	var out map[string]interface{}
 	json.Unmarshal(res.Data, &out)
 	msgs := out["messages"].([]interface{})
-	if len(msgs) != 0 {
-		t.Error("other-user should not see any messages")
+	// other-user 只能看到自己的消息（seed 中的 msg-o1），绝不应看到 user-1 的消息
+	for _, m := range msgs {
+		mid := m.(map[string]interface{})["id"].(string)
+		if mid != "msg-o1" {
+			t.Errorf("other-user 不应看到消息 %s（user-1 的数据隔离失败）", mid)
+		}
 	}
 }

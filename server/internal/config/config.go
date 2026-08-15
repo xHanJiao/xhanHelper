@@ -46,6 +46,7 @@ type ChatConfig struct {
 	SummaryAttachMaxDays      int     `yaml:"summary_attach_max_days"`     // 摘要附着时间窗口（天），默认 3
 	SummaryRelevanceThreshold float64 `yaml:"summary_relevance_threshold"` // 摘要相关性余弦相似度阈值，默认 0.5
 	SummaryRelevanceHistoryN  int     `yaml:"summary_relevance_history_n"` // 相关性检查的历史消息窗口大小，默认 5
+	SummaryDedupThreshold     float64 `yaml:"summary_dedup_threshold"`     // 摘要附着去重余弦相似度阈值（相邻摘要更相似则丢弃较旧者），默认 0.85
 }
 
 // ShareConfig — 分享配置
@@ -412,6 +413,9 @@ func merge(dst, src *Config) {
 	if src.Chat.SummaryRelevanceHistoryN != 0 {
 		dst.Chat.SummaryRelevanceHistoryN = src.Chat.SummaryRelevanceHistoryN
 	}
+	if src.Chat.SummaryDedupThreshold > 0 {
+		dst.Chat.SummaryDedupThreshold = src.Chat.SummaryDedupThreshold
+	}
 }
 
 // mergeSourceWeights 按字段合并检索源配置，非零值覆盖
@@ -560,6 +564,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Chat.SummaryRelevanceHistoryN == 0 {
 		cfg.Chat.SummaryRelevanceHistoryN = 5
+	}
+	if cfg.Chat.SummaryDedupThreshold == 0 {
+		cfg.Chat.SummaryDedupThreshold = 0.85
 	}
 	if cfg.Share.DefaultValidDays == 0 {
 		cfg.Share.DefaultValidDays = 7

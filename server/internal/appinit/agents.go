@@ -42,15 +42,33 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	// 从 embedding 表加载向量到内存 store
 	agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState)
 
+	// 统一搜索工具（语义搜索走 ContextSource，关键词搜索走 repo）。
+	// 检索统一入口：主对话 + 内部子系统（MissionRunner/StateUpdater/ThemeAnalyst）共用。
+	unifiedSearch := tool.NewUnifiedSearchTool(
+		map[string]retrieval.ContextSource{
+			"memory":  memSource,
+			"note":    noteSource,
+			"summary": summarySource,
+			"theme":   themeSource,
+			"history": simpleHistorySource,
+		},
+		infra.Embedder,
+		repos.Message,
+		repos.Mem,
+		repos.Note,
+		repos.ConversationSummary,
+		repos.ThemeState,
+	)
+	tools.Registry.Register(tool.NewLoggingWrapper(unifiedSearch, log.Default()))
+
 	// --- Mission 子系统 ---
 	missionEmbedder := tools.MissionEmbedder
 	missionDiscoverer := agent.NewMissionDiscoverer(llmClients.Strong, agent.NewThemeStore(repos.ThemeState), repos.Mission, missionEmbedder)
 
 	// MissionRunner 的检索工具集
 	missionRetrievalTools := map[string]tool.Tool{
-		"search_notes":    tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder),
-		"search_messages": tool.NewMessageSearchTool(repos.Message, repos.Conversation, infra.Embedder, infra.VectorStore, cfg.Chat.HistoryRounds, cfg.Chat.MaxSummaryRounds),
-		"get_bill_stats":  tool.NewGetBillStatsTool(repos.Bill),
+		"unified_search": unifiedSearch,
+		"get_bill_stats": tool.NewGetBillStatsTool(repos.Bill),
 	}
 	missionRunner := agent.NewMissionRunner(llmClients.Flash, repos.Mission, repos.Mailbox, missionRetrievalTools, repos.Trace)
 
@@ -73,8 +91,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	retrievalTools := map[string]tool.Tool{
 		"get_topic_detail": tool.NewGetTopicDetailTool(repos.Note, repos.Mem),
 		"get_bill_stats":   tool.NewGetBillStatsTool(repos.Bill),
-		"search_notes_v2":  tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder),
-		"message_search":   tool.NewMessageSearchTool(repos.Message, repos.Conversation, infra.Embedder, infra.VectorStore, cfg.Chat.HistoryRounds, cfg.Chat.MaxSummaryRounds),
+		"unified_search":   unifiedSearch,
 	}
 	stateUpdater := agent.NewStateUpdater(llmClients.Flash, repos.Message, repos.Conversation,
 		agent.NewThemeStore(repos.ThemeState), repos.PendingFinding, infra.VectorStore, tools.ConceptEmbedService, chunkBuilder,
@@ -184,6 +201,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		SummaryAttachMaxDays:      cfg.Chat.SummaryAttachMaxDays,
 		SummaryRelevanceThreshold: cfg.Chat.SummaryRelevanceThreshold,
 		SummaryRelevanceHistoryN:  cfg.Chat.SummaryRelevanceHistoryN,
+		SummaryDedupThreshold:     cfg.Chat.SummaryDedupThreshold,
 		ReminderRepo:              repos.Reminder,
 		ProfileRepo:               repos.UserProfile,
 	})
@@ -193,30 +211,6 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	} else {
 		log.Printf("[appinit] background tasks disabled, skip cronRunner")
 	}
-
-	// 统一搜索工具（语义搜索走 ContextSource，关键词搜索走 repo）
-	unifiedSearch := tool.NewUnifiedSearchTool(
-		map[string]retrieval.ContextSource{
-			"memory":  memSource,
-			"note":    noteSource,
-			"summary": summarySource,
-			"theme":   themeSource,
-			"history": simpleHistorySource,
-		},
-		infra.Embedder,
-		repos.Message,
-		repos.Mem,
-		repos.Note,
-		repos.ConversationSummary,
-		repos.ThemeState,
-	)
-	tools.Registry.Register(tool.NewLoggingWrapper(unifiedSearch, log.Default()))
-
-	// v2 检索工具注册到主 Registry（explore 子 agent 白名单依赖，chunk 级语义检索）
-	tools.Registry.Register(tool.NewLoggingWrapper(
-		tool.NewSearchMemoriesV2Tool(infra.VectorStore, repos.Mem, repos.Chunk, infra.Embedder), log.Default()))
-	tools.Registry.Register(tool.NewLoggingWrapper(
-		tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder), log.Default()))
 
 	// 二次注册 task 工具（依赖 Orchestrator 实现 SubAgentRunner，避免 tool → agent 循环依赖）
 	// 传入子 agent 预算：描述动态注入具体数字，主 LLM 据此判断任务拆解粒度

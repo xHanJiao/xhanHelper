@@ -115,24 +115,6 @@ func TestGeneratePrompt_Deterministic(t *testing.T) {
 	}
 }
 
-func TestGeneratePromptWithOverview_Deterministic(t *testing.T) {
-	r := newOrderTestRegistry()
-	a := r.GeneratePromptWithOverview()
-	b := r.GeneratePromptWithOverview()
-	if a != b {
-		t.Error("GeneratePromptWithOverview 两次调用应字节一致")
-	}
-	ia := indexOf(a, "工具名: alpha")
-	im := indexOf(a, "工具名: mid")
-	iz := indexOf(a, "工具名: zeta")
-	if ia < 0 || im < 0 || iz < 0 {
-		t.Fatalf("概览应包含全部工具: %d %d %d", ia, im, iz)
-	}
-	if !(ia < im && im < iz) {
-		t.Error("GeneratePromptWithOverview 概览应按名排序")
-	}
-}
-
 func TestToolOverview_Deterministic(t *testing.T) {
 	r := newOrderTestRegistry()
 	a := r.ToolOverview()

@@ -54,19 +54,6 @@ func (t *GetSummaryTool) Functions() []FuncSchema {
 			},
 		},
 		{
-			Name:        "search_summaries",
-			Display:     "语义搜索",
-			Description: "用自然语言语义搜索所有历史对话摘要，返回按相关度排序的摘要列表。每个摘要包含文本、话题、时间范围、parent 链。获取感兴趣的摘要后可调用 get_summary 追溯更早的 parent 摘要，或调用 message_search.search_by_range 查看摘要覆盖的原始消息",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"query": map[string]interface{}{"type": "string", "description": "自然语言搜索句子"},
-					"top_k": map[string]interface{}{"type": "integer", "description": "返回条数上限，默认 5"},
-				},
-				"required": []string{"query"},
-			},
-		},
-		{
 			Name:        "query_by_time",
 			Display:     "按时间查摘要",
 			Description: "按时间范围拉取对话摘要，按时间倒序返回，每条带创建时间。用于快速了解用户在某段时间内聊了什么、发生了什么事，是回顾过去几天/几周对话脉络的首选方式。",
@@ -80,19 +67,6 @@ func (t *GetSummaryTool) Functions() []FuncSchema {
 				"required": []string{"start_time", "end_time"},
 			},
 		},
-		{
-			Name:        "search_by_keyword",
-			Display:     "关键词搜索",
-			Description: "按关键词在摘要文本中搜索。多关键词用空格/逗号/顿号分隔为 OR 关系。适合查找包含特定词汇的对话摘要。",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"query": map[string]interface{}{"type": "string", "description": "搜索关键词，空格/逗号/顿号分隔多个词"},
-					"limit": map[string]interface{}{"type": "integer", "description": "返回条数，默认10"},
-				},
-				"required": []string{"query"},
-			},
-		},
 	}
 }
 
@@ -102,12 +76,8 @@ func (t *GetSummaryTool) Execute(ec *ExecuteContext, funcName string, args json.
 	switch funcName {
 	case "get_summary":
 		return t.getSummary(ec, args)
-	case "search_summaries":
-		return t.searchSummaries(ec, args)
 	case "query_by_time":
 		return t.queryByTime(ec, args)
-	case "search_by_keyword":
-		return t.searchByKeyword(ec, args)
 	}
 	return &Result{Success: false, Error: fmt.Sprintf("未知函数: %s", funcName)}
 }
@@ -146,101 +116,6 @@ func (t *GetSummaryTool) getSummary(ec *ExecuteContext, args json.RawMessage) *R
 		"cover_to_msg_id":   summary.CoverToMsgID,
 		"created_at":        summary.CreatedAt.In(config.BJ).Format("2006-01-02 15:04"),
 	})
-	return &Result{Success: true, Data: data}
-}
-
-func (t *GetSummaryTool) searchSummaries(ec *ExecuteContext, args json.RawMessage) *Result {
-	var a struct {
-		Query string `json:"query"`
-		TopK  int    `json:"top_k"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
-	}
-	if a.Query == "" {
-		return &Result{Success: false, Error: "query 不能为空"}
-	}
-	if a.TopK <= 0 {
-		a.TopK = 5
-	}
-
-	vec, err := t.embedder.Embed(ec.Ctx, a.Query)
-	if err != nil {
-		log.Printf("[search_summaries] embed error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("查询嵌入失败: %v", err)}
-	}
-
-	topK := a.TopK * 5
-	if topK < 10 {
-		topK = 10
-	}
-	results := t.vectorStore.Search(vec, topK, func(_ string, _ []float64, meta map[string]string) bool {
-		return meta["type"] == "summary" && meta["user_id"] == ec.UserID
-	})
-
-	chunkResults := t.vectorStore.Search(vec, topK, func(_ string, _ []float64, meta map[string]string) bool {
-		return meta["type"] == "chunk" &&
-			meta["parent_type"] == "summary" &&
-			meta["user_id"] == ec.UserID
-	})
-
-	seen := make(map[string]float64)
-	for _, r := range results {
-		sid := r.Metadata["summary_id"]
-		if sid == "" || r.Score < summarySearchThreshold {
-			continue
-		}
-		if old, ok := seen[sid]; !ok || r.Score > old {
-			seen[sid] = r.Score
-		}
-	}
-	for _, r := range chunkResults {
-		sid := r.Metadata["parent_id"]
-		if sid == "" || r.Score < summarySearchThreshold {
-			continue
-		}
-		if old, ok := seen[sid]; !ok || r.Score > old {
-			seen[sid] = r.Score
-		}
-	}
-	if len(seen) == 0 {
-		return &Result{Success: true, Data: json.RawMessage("[]")}
-	}
-
-	ids := make([]string, 0, len(seen))
-	for id := range seen {
-		ids = append(ids, id)
-	}
-	summaries, err := t.summaryRepo.GetByIDsForUser(ec.Ctx, ids, ec.UserID)
-	if err != nil {
-		log.Printf("[search_summaries] GetByIDsForUser error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("加载摘要失败: %v", err)}
-	}
-
-	textMap := make(map[string]string, len(summaries))
-	for _, s := range summaries {
-		textMap[s.ID] = s.SummaryText
-	}
-
-	var topHits []scoredHit
-	for id, score := range seen {
-		topHits = append(topHits, scoredHit{ID: id, Score: score})
-	}
-	sortScoredHits(topHits)
-	if len(topHits) > a.TopK {
-		topHits = topHits[:a.TopK]
-	}
-
-	out := make([]map[string]interface{}, 0, len(topHits))
-	for _, h := range topHits {
-		out = append(out, map[string]interface{}{
-			"id":           h.ID,
-			"summary_text": textMap[h.ID],
-			"score":        h.Score,
-		})
-	}
-
-	data, _ := json.Marshal(out)
 	return &Result{Success: true, Data: data}
 }
 
@@ -292,56 +167,6 @@ func (t *GetSummaryTool) queryByTime(ec *ExecuteContext, args json.RawMessage) *
 			"summary_text": s.SummaryText,
 			"topics":       s.Topics,
 			"created_at":   s.CreatedAt.In(config.BJ).Format("2006-01-02 15:04:05"),
-		})
-	}
-
-	data, _ := json.Marshal(map[string]interface{}{
-		"total":     len(out),
-		"summaries": out,
-	})
-	return &Result{Success: true, Data: data}
-}
-
-func (t *GetSummaryTool) searchByKeyword(ec *ExecuteContext, args json.RawMessage) *Result {
-	var a struct {
-		Query string `json:"query"`
-		Limit int    `json:"limit"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
-	}
-	if a.Query == "" {
-		return &Result{Success: false, Error: "query 不能为空"}
-	}
-	if a.Limit <= 0 {
-		a.Limit = 10
-	}
-
-	keywords := splitKeywords(a.Query)
-	if len(keywords) == 0 {
-		return &Result{Success: false, Error: "query 未产生有效关键词"}
-	}
-
-	summaries, err := t.summaryRepo.SearchByKeyword(ec.Ctx, ec.UserID, keywords, a.Limit)
-	if err != nil {
-		log.Printf("[get_summary] search_by_keyword error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("查询摘要失败: %v", err)}
-	}
-
-	out := make([]map[string]interface{}, 0, len(summaries))
-	for _, s := range summaries {
-		parent := ""
-		if s.ParentSummaryID != nil {
-			parent = *s.ParentSummaryID
-		}
-		out = append(out, map[string]interface{}{
-			"id":                s.ID,
-			"summary_text":      s.SummaryText,
-			"topics":            s.Topics,
-			"parent_summary_id": parent,
-			"cover_from_msg_id": s.CoverFromMsgID,
-			"cover_to_msg_id":   s.CoverToMsgID,
-			"created_at":        s.CreatedAt.In(config.BJ).Format("2006-01-02 15:04"),
 		})
 	}
 

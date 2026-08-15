@@ -43,9 +43,9 @@ var stateUpdaterTaskPrefix = `你是 xhanHelper 的主题状态维护员。基�
 
 ## 可用检索工具（按需使用，不必每轮都调用）
 
-1. memory_search.semantic_search(query) — 用自然语言句子向量检索长期记忆。query 必须是完整句子。也支持 search_by_keyword 关键词搜索、count_memories 统计、list_topics 查看主题
+1. unified_search.semantic_search(query, types) — 语义检索长期记忆（types=["memory"]）或笔记（types=["note"]）。query 必须是完整句子，禁止关键词列表
 2. note.semantic_search(query) — 用自然语言句子向量检索笔记
-3. message_search(query) — 在历史消息中按关键词搜索。query 传核心关键词
+3. unified_search.keyword_search(keywords, types=["history"]) — 在历史消息中按关键词搜索。keywords 传核心关键词
 4. get_topic_detail(topic) — 获取指定话题下的所有笔记和记忆全文
 5. get_bill_stats() — 获取账单统计摘要
 

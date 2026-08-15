@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"xhan-helper/internal/app"
@@ -53,45 +52,14 @@ func NewMessageSearchTool(msgRepo *service.MessageRepo, convRepo *service.Conver
 func (t *MessageSearchTool) Name() string { return "message_search" }
 
 func (t *MessageSearchTool) Description() string {
-	return "在用户历史消息中检索。支持关键词搜索、时间范围搜索、语义搜索、按ID获取、统计数量。" +
+	return "在用户历史消息中按时间/ID 精确查询（语义与关键词检索统一走 unified_search）。" +
+		"支持时间范围搜索、按消息ID范围搜索、按ID获取完整内容、统计数量。" +
 		"重要提示：做时间范围搜索前先调用 count_messages 评估量级；" +
-		"assistant 消息在时间搜索中会被截断，需要完整内容请用 get_by_ids；" +
-		"语义搜索结果包含全文内容和相关度分数，如需获取所在对话轮完整上下文请用 get_by_ids"
+		"assistant 消息在时间搜索中会被截断，需要完整内容请用 get_by_ids"
 }
 
 func (t *MessageSearchTool) Functions() []FuncSchema {
 	return []FuncSchema{
-		{
-			Name:        "semantic_search",
-			Display:     "语义搜索",
-			Description: "用向量语义相似度搜索用户历史消息。输入应为自然语言描述句（如'我最近聊过的关于戒酒的经历'），而非空格分隔的关键词组（如'喝酒 戒酒'）。关键词精确匹配请用 search_by_keyword。返回全文内容和语义相关度分数，可配合 get_by_ids 获取所在对话轮完整上下文。",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"query":           map[string]interface{}{"type": "string", "description": "搜索关键词或描述（用于语义匹配）"},
-					"top_k":           map[string]interface{}{"type": "integer", "description": "返回条数，默认5，最大10"},
-					"conversation_id": map[string]interface{}{"type": "string", "description": "限定会话 ID，不传则跨所有会话搜索"},
-				},
-				"required": []string{"query"},
-			},
-		},
-		{
-			Name:        "search_by_keyword",
-			Display:     "关键词搜索",
-			Description: "在用户历史消息中按关键词搜索。从查询中提取核心关键词（如'羽毛球'、'SQL优化'）作为 query，空格/逗号/顿号分隔的多个词为 OR 关系。默认展开命中消息所在对话轮上下文的完整内容。大量结果时用 cursor 翻页。",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"query":           map[string]interface{}{"type": "string", "description": "搜索关键词，空格/逗号/顿号分隔多个词"},
-					"conversation_id": map[string]interface{}{"type": "string", "description": "限定会话 ID，不传则跨所有会话搜索"},
-					"role":            map[string]interface{}{"type": "string", "description": "消息角色过滤，默认 user，可传 assistant 或 user,assistant"},
-					"limit":           map[string]interface{}{"type": "integer", "description": "返回条数，默认20，最大50"},
-					"cursor":          map[string]interface{}{"type": "string", "description": "分页游标（上一页返回的 next_cursor），首页不传。格式如 2026-06-15T14:30:00+08:00"},
-					"expand_context":  map[string]interface{}{"type": "boolean", "description": "是否展开命中消息所在对话轮上下文，默认 true"},
-				},
-				"required": []string{"query"},
-			},
-		},
 		{
 			Name:        "search_by_time",
 			Display:     "时间范围搜索",
@@ -167,10 +135,6 @@ func (t *MessageSearchTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly
 // Execute — 统一入口
 func (t *MessageSearchTool) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	switch funcName {
-	case "semantic_search":
-		return t.semanticSearch(ec, args)
-	case "search_by_keyword":
-		return t.searchByKeyword(ec, args)
 	case "search_by_time":
 		return t.searchByTime(ec, args)
 	case "count_messages":
@@ -185,191 +149,6 @@ func (t *MessageSearchTool) Execute(ec *ExecuteContext, funcName string, args js
 }
 
 // ==================== semantic_search ====================
-
-func (t *MessageSearchTool) semanticSearch(ec *ExecuteContext, args json.RawMessage) *Result {
-	var a struct {
-		Query          string `json:"query"`
-		TopK           int    `json:"top_k"`
-		ConversationID string `json:"conversation_id"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
-	}
-	if a.Query == "" {
-		return &Result{Success: false, Error: "query 不能为空"}
-	}
-	if a.TopK <= 0 {
-		a.TopK = defaultSemanticTopK
-	}
-	if a.TopK > maxSemanticTopK {
-		a.TopK = maxSemanticTopK
-	}
-
-	vec, err := t.embedder.Embed(ec.Ctx, a.Query)
-	if err != nil {
-		log.Printf("[message_search] embed error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("向量化失败: %v", err)}
-	}
-
-	hits := t.vectorStore.Search(vec, a.TopK*2, func(_ string, _ []float64, metadata map[string]string) bool {
-		if metadata["type"] != "msg" || metadata["user_id"] != ec.UserID {
-			return false
-		}
-		if a.ConversationID != "" && metadata["conv_id"] != "" && metadata["conv_id"] != a.ConversationID {
-			return false
-		}
-		return true
-	})
-	log.Printf("[message_search] semantic_search raw hits: %d (query=%.80s, topK=%d)", len(hits), a.Query, a.TopK)
-
-	var topHits []scoredHit
-	skippedThreshold := 0
-	skippedPrefix := 0
-	for _, hit := range hits {
-		log.Printf("[message_search] semantic_search hit: id=%.20s score=%.4f", hit.ID, hit.Score)
-		if hit.Score < messageSearchThreshold {
-			skippedThreshold++
-			continue
-		}
-		msgID := strings.TrimPrefix(hit.ID, "msg:")
-		if msgID == "" || msgID == hit.ID {
-			skippedPrefix++
-			continue
-		}
-		topHits = append(topHits, scoredHit{ID: msgID, Score: hit.Score})
-	}
-	log.Printf("[message_search] semantic_search after filter: topHits=%d (skipped: threshold=%d prefix=%d)", len(topHits), skippedThreshold, skippedPrefix)
-
-	if len(topHits) == 0 {
-		log.Printf("[message_search] semantic_search zero results: raw=%d threshold=%.2f", len(hits), messageSearchThreshold)
-		data, _ := json.Marshal(map[string]interface{}{"total": 0, "messages": []ToolMessageOutput{}})
-		return &Result{Success: true, Data: data}
-	}
-
-	if len(topHits) > a.TopK {
-		topHits = topHits[:a.TopK]
-	}
-
-	ids := make([]string, len(topHits))
-	scoreMap := make(map[string]float64, len(topHits))
-	for i, h := range topHits {
-		ids[i] = h.ID
-		scoreMap[h.ID] = h.Score
-	}
-
-	msgs, err := t.msgRepo.GetByIDs(ec.Ctx, ids, ec.UserID)
-	if err != nil {
-		log.Printf("[message_search] GetByIDs error: %v", err)
-	}
-	log.Printf("[message_search] semantic_search DB: requested=%d got=%d", len(ids), len(msgs))
-
-	output := make([]ToolMessageOutput, 0, len(msgs))
-	for _, m := range msgs {
-		score := scoreMap[m.ID]
-		mo := ToolMessageOutput{
-			ID:             m.ID,
-			Role:           m.Role,
-			Content:        m.Content,
-			CreatedAt:      formatMsgTime(m.CreatedAt),
-			ConversationID: m.ConversationID,
-			RelevanceScore: &score,
-		}
-		output = append(output, mo)
-	}
-
-	data, _ := json.Marshal(map[string]interface{}{
-		"total":    len(output),
-		"messages": output,
-	})
-	return &Result{Success: true, Data: data}
-}
-
-// ==================== search_by_keyword ====================
-
-func (t *MessageSearchTool) searchByKeyword(ec *ExecuteContext, args json.RawMessage) *Result {
-	var a struct {
-		Query          string `json:"query"`
-		ConversationID string `json:"conversation_id"`
-		Role           string `json:"role"`
-		Limit          int    `json:"limit"`
-		Cursor         string `json:"cursor"`
-		ExpandContext  *bool  `json:"expand_context"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return &Result{Success: false, Error: fmt.Sprintf("参数解析失败: %v", err)}
-	}
-	if a.Query == "" {
-		return &Result{Success: false, Error: "query 不能为空"}
-	}
-	if a.Limit <= 0 {
-		a.Limit = defaultQueryLimit
-	}
-	if a.Limit > maxQueryLimit {
-		a.Limit = maxQueryLimit
-	}
-	if a.Role == "" {
-		a.Role = "user"
-	}
-	expandCtx := true
-	if a.ExpandContext != nil {
-		expandCtx = *a.ExpandContext
-	}
-
-	keywords := splitKeywords(a.Query)
-	if len(keywords) == 0 {
-		return &Result{Success: false, Error: "query 未产生有效关键词，请提供有意义的搜索词"}
-	}
-
-	var cursorTime *time.Time
-	if a.Cursor != "" {
-		parsed, err := parseTimeString(a.Cursor)
-		if err != nil {
-			return &Result{Success: false, Error: fmt.Sprintf("cursor 解析失败: %v", err)}
-		}
-		cursorTime = &parsed
-	}
-
-	msgs, hasMore, err := t.msgRepo.SearchMessagesByCursor(ec.Ctx, ec.UserID, keywords, a.Role, a.ConversationID, cursorTime, a.Limit)
-	if err != nil {
-		log.Printf("[message_search] search_by_keyword error: %v", err)
-		return &Result{Success: false, Error: fmt.Sprintf("搜索消息失败: %v", err)}
-	}
-
-	total, err := t.msgRepo.CountMessages(ec.Ctx, ec.UserID, keywords, a.Role, a.ConversationID, nil, nil)
-	if err != nil {
-		log.Printf("[message_search] count error: %v", err)
-		total = int64(len(msgs))
-	}
-
-	output := make([]ToolMessageOutput, 0, len(msgs))
-	for _, m := range msgs {
-		mo := t.formatMessage(m, nil)
-		mo.MatchedKeywords = findMatchedKeywords(m.Content, keywords)
-		if expandCtx && m.Role == "user" {
-			mo.RoundMessages = t.getRoundMessages(ec.Ctx, m)
-		}
-		output = append(output, mo)
-	}
-
-	var nextCursor string
-	if hasMore && len(msgs) > 0 {
-		nextCursor = formatMsgTime(msgs[len(msgs)-1].CreatedAt)
-	}
-
-	resp := map[string]interface{}{
-		"total":    total,
-		"has_more": hasMore,
-		"messages": output,
-	}
-	if nextCursor != "" {
-		resp["next_cursor"] = nextCursor
-	}
-
-	data, _ := json.Marshal(resp)
-	return &Result{Success: true, Data: data}
-}
-
-// ==================== search_by_time ====================
 
 func (t *MessageSearchTool) searchByTime(ec *ExecuteContext, args json.RawMessage) *Result {
 	var a struct {

@@ -26,7 +26,7 @@ const webExplorePrompt = `你是联网调研专家，擅长通过浏览器访问
 
 能力：
 - 用 browser 工具访问需要 JS 渲染的动态页面（需 Mac 客户端在线）
-- 用 search_notes_v2 检索用户笔记（用户主动整理的知识库，可用于补充调研）
+- 用 unified_search 检索用户笔记（用户主动整理的知识库，可用于补充调研）
 - 仅做只读操作，禁止写入任何数据
 - 数据边界：用户的记忆、历史对话、摘要对子任务不可见，禁止尝试读取（没有对应工具）
 
@@ -116,7 +116,7 @@ type subagentSpec struct {
 }
 
 // subagentSpecs — 子 agent 类型注册表。数据边界说明：
-//   - web_explore：浏览器（browser）+ 笔记检索（search_notes_v2——用户主动整理的知识库）。
+//   - web_explore：浏览器（browser）+ 笔记检索（unified_search——用户主动整理的知识库）。
 //     记忆/历史对话/摘要对子任务不可见。webfetch 已移除（单页 5 万字符全量进上下文、
 //     token 消耗大且被 2000 字符截断破坏——用户决策）。
 //   - file_explore：仅本地文件只读工具（fs 的 glob/grep/read，写工具函数级剥除）。
@@ -124,7 +124,7 @@ type subagentSpec struct {
 var subagentSpecs = map[string]subagentSpec{
 	"web_explore": {
 		prompt:          webExplorePrompt,
-		serverWhitelist: []string{"search_notes_v2", "datetime", "calculator"},
+		serverWhitelist: []string{"unified_search", "datetime", "calculator"},
 		clientWhitelist: map[string][]string{"browser": nil, "ui": nil},
 		maxToolResult:   2000,
 		requiresClient:  true,

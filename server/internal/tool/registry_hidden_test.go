@@ -28,13 +28,11 @@ func TestHiddenTool_ExcludedFromMainDefs(t *testing.T) {
 			t.Error("webfetch 不应出现在 GetNativeFCTools（主循环原生 FC）")
 		}
 	}
-	for _, name := range []string{"GeneratePrompt", "GeneratePromptWithOverview", "ToolOverview"} {
+	for _, name := range []string{"GeneratePrompt", "ToolOverview"} {
 		var s string
 		switch name {
 		case "GeneratePrompt":
 			s = r.GeneratePrompt()
-		case "GeneratePromptWithOverview":
-			s = r.GeneratePromptWithOverview()
 		case "ToolOverview":
 			s = r.ToolOverview()
 		}

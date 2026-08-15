@@ -198,3 +198,89 @@ func TestGetOrEmbedSummary_NewEmbed(t *testing.T) {
 	// embedder 是硬依赖，此测试需要真实 embedder — 跳过
 	t.Skip("requires real embedder for cache miss path")
 }
+
+// —— dedupSummaries ——
+
+func TestDedupSummaries_SimilarDropsOlder(t *testing.T) {
+	vs := NewVectorStore()
+	// 两条相邻摘要高度相似（增量合并的典型形态）→ 丢弃较旧者
+	vs.Upsert("summary:s1", []float64{1, 0, 0}, nil)
+	vs.Upsert("summary:s2", []float64{0.99, 0.01, 0}, nil)
+	o := &Orchestrator{vectorStore: vs, summaryDedupThreshold: 0.85}
+
+	out := o.dedupSummaries(context.Background(), []model.ConversationSummary{
+		{ID: "s1", SummaryText: "旧摘要"},
+		{ID: "s2", SummaryText: "新摘要"},
+	})
+	if len(out) != 1 {
+		t.Fatalf("expected 1 summary after dedup, got %d", len(out))
+	}
+	if out[0].ID != "s2" {
+		t.Errorf("expected newer summary s2 kept, got %s", out[0].ID)
+	}
+}
+
+func TestDedupSummaries_DissimilarKeepsBoth(t *testing.T) {
+	vs := NewVectorStore()
+	// 两条摘要正交 → 保留两条
+	vs.Upsert("summary:s1", []float64{1, 0, 0}, nil)
+	vs.Upsert("summary:s2", []float64{0, 1, 0}, nil)
+	o := &Orchestrator{vectorStore: vs, summaryDedupThreshold: 0.85}
+
+	out := o.dedupSummaries(context.Background(), []model.ConversationSummary{
+		{ID: "s1", SummaryText: "摘要A"},
+		{ID: "s2", SummaryText: "摘要B"},
+	})
+	if len(out) != 2 {
+		t.Fatalf("expected 2 summaries kept, got %d", len(out))
+	}
+	if out[0].ID != "s1" || out[1].ID != "s2" {
+		t.Errorf("unexpected order: %s, %s", out[0].ID, out[1].ID)
+	}
+}
+
+func TestDedupSummaries_ChainDedup(t *testing.T) {
+	// 三条链式：s1≈s2（丢 s1），s3 与 s2 不同（保留）→ 结果 [s2, s3]
+	vs := NewVectorStore()
+	vs.Upsert("summary:s1", []float64{1, 0, 0}, nil)
+	vs.Upsert("summary:s2", []float64{0.99, 0.01, 0}, nil)
+	vs.Upsert("summary:s3", []float64{0, 1, 0}, nil)
+	o := &Orchestrator{vectorStore: vs, summaryDedupThreshold: 0.85}
+
+	out := o.dedupSummaries(context.Background(), []model.ConversationSummary{
+		{ID: "s1", SummaryText: "摘要1"},
+		{ID: "s2", SummaryText: "摘要2"},
+		{ID: "s3", SummaryText: "摘要3"},
+	})
+	if len(out) != 2 {
+		t.Fatalf("expected 2 summaries, got %d", len(out))
+	}
+	if out[0].ID != "s2" || out[1].ID != "s3" {
+		t.Errorf("unexpected result: %s, %s", out[0].ID, out[1].ID)
+	}
+}
+
+func TestDedupSummaries_ThresholdBoundary(t *testing.T) {
+	// 相似度恰好低于阈值（0.8 < 0.85）→ 保留两条
+	vs := NewVectorStore()
+	vs.Upsert("summary:s1", []float64{1, 0, 0}, nil)
+	vs.Upsert("summary:s2", []float64{0.8, 0.6, 0}, nil) // cos = 0.8
+	o := &Orchestrator{vectorStore: vs, summaryDedupThreshold: 0.85}
+
+	out := o.dedupSummaries(context.Background(), []model.ConversationSummary{
+		{ID: "s1", SummaryText: "摘要A"},
+		{ID: "s2", SummaryText: "摘要B"},
+	})
+	if len(out) != 2 {
+		t.Fatalf("expected 2 summaries (0.8 < 0.85), got %d", len(out))
+	}
+}
+
+func TestDedupSummaries_SingleKept(t *testing.T) {
+	vs := NewVectorStore()
+	o := &Orchestrator{vectorStore: vs, summaryDedupThreshold: 0.85}
+	out := o.dedupSummaries(context.Background(), []model.ConversationSummary{{ID: "s1", SummaryText: "唯一摘要"}})
+	if len(out) != 1 {
+		t.Fatalf("expected 1 summary, got %d", len(out))
+	}
+}

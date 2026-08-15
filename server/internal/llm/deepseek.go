@@ -590,7 +590,7 @@ func (c *FlashClient) BuildSystemPrompt(base string, tools []ToolDefinition) str
 			b.WriteString(fmt.Sprintf("- %s: %s\n", fn.Name, fn.Description))
 		}
 	}
-	b.WriteString("\n只能使用上面列出的函数。如需使用其他工具，必须先调用 tool_retriever__search 查询其定义。当用户请求涉及可以使用函数的操作时，可以使用对应函数。不确定时直接反问用户。\n")
+	b.WriteString("\n只能使用上面列出的函数，调用时必须严格遵循对应参数定义。当用户请求涉及可以使用函数的操作时，可以使用对应函数。不确定时直接反问用户。\n")
 	return b.String()
 }
 
@@ -640,7 +640,7 @@ func (c *ProClient) BuildSystemPrompt(base string, tools []ToolDefinition) strin
 			b.WriteString(fmt.Sprintf("- %s: %s\n", fn.Name, fn.Description))
 		}
 	}
-	b.WriteString("\n只能使用上面列出的函数。如需使用其他工具，必须先调用 tool_retriever__search 查询其定义。\n")
+	b.WriteString("\n只能使用上面列出的函数，调用时必须严格遵循对应参数定义。\n")
 	return b.String()
 }
 

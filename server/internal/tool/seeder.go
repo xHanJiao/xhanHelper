@@ -38,13 +38,22 @@ var builtinToolSeeds = []builtinToolSeed{
 	{Name: "note", Description: "自由笔记工具，记录/查询/更新/回滚笔记，获取主题列表", Category: "note"},
 	{Name: "document", Description: "文档管理工具，创建/查看/更新/删除文档，支持版本回滚和标签检索", Category: "document"},
 	{Name: "agent", Description: "管理智能体：创建、查看、删除自定义 AI 助手", Category: "agent"},
-	{Name: "search_notes_v2", Description: "向量检索笔记（chunk 级），返回匹配片段和全文", Category: "search"},
-	{Name: "search_memories_v2", Description: "向量检索长期记忆（chunk 级），返回匹配片段和全文", Category: "search"},
-	{Name: "memory_search", Description: "检索用户长期记忆，支持语义搜索、关键词搜索、时间过滤、topic 分类", Category: "search"},
-	{Name: "message_search", Description: "检索历史对话消息，支持关键词搜索、时间范围搜索、ID 获取、统计", Category: "search"},
+	{Name: "unified_search", Description: "统一检索：长期记忆/笔记/对话摘要/主题/历史消息，支持语义与关键词两种模式", Category: "search"},
+	{Name: "message_search", Description: "查询历史消息：时间范围/ID 范围/按 ID 获取/数量统计", Category: "search"},
 	{Name: "reminder", Description: "设置提醒事项，支持一次性/每日/每周/每月/工作日重复", Category: "utility"},
-	{Name: "tool_retriever", Description: "根据用户需求检索相关工具，当不确定该用什么工具时调用", Category: "system"},
 	{Name: "profile", Description: "用户画像工具，在用户明确要求时更新/新增画像字段", Category: "profile"},
+}
+
+// retiredBuiltinTools 已下线、不再注册的内置工具名。代码移除后线上 DB 可能残留 active 记录
+// （动态工具每 30s 从 DB 加载，残留会导致工具仍对 LLM 可见）——seed 时统一置为 inactive。
+var retiredBuiltinTools = map[string]bool{
+	"search_memories_v2": true, // 30天 0 次调用，被 unified_search 取代
+	"mission":            true, // 30天 6 次调用，价值低
+	"search_memories":    true, // 死代码，从未注册
+	"search_notes":       true, // 死代码，从未注册
+	"memory_search":      true, // 检索被 unified_search 覆盖（30天 61 次 → 统一入口）
+	"search_notes_v2":    true, // 检索被 unified_search 覆盖（30天 6 次）
+	"tool_retriever":     true, // 工具发现元工具，native FC 下多余，长期 0 次调用
 }
 
 // SeedBuiltinTools 启动时确保内置工具的 DB 记录和 embedding 存在（幂等）
@@ -56,7 +65,18 @@ func SeedBuiltinTools(ctx context.Context, toolRepo ToolRepo, embedder *llm.Embe
 
 	existingByName := make(map[string]*model.ToolRegistry)
 	for i := range existing {
-		existingByName[existing[i].Name] = &existing[i]
+		t := &existing[i]
+		// 下线工具：置 inactive 后跳过，不再被 Registry 加载
+		if retiredBuiltinTools[t.Name] && t.UserID == systemUserID {
+			t.Status = "inactive"
+			if err := toolRepo.UpdateTool(ctx, t); err != nil {
+				log.Printf("[seeder] retire tool %s error: %v", t.Name, err)
+			} else {
+				log.Printf("[seeder] retired builtin tool: %s", t.Name)
+			}
+			continue
+		}
+		existingByName[t.Name] = t
 	}
 
 	for _, seed := range builtinToolSeeds {

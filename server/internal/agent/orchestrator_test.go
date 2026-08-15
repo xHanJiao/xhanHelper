@@ -967,7 +967,7 @@ func TestFlattenRound_ReActMultiRound(t *testing.T) {
 		{ID: "u1", Role: "user", Content: "今天干了什么", CreatedAt: now},
 		{ID: "a1", Role: "assistant", Content: `{"reply":"","tool_calls":[{"tool":"note","function":"search"}]}`, CreatedAt: now.Add(time.Second)},
 		{ID: "t1", Role: "tool", Content: `[{"id":"n1","content":"..."}]`, CreatedAt: now.Add(2 * time.Second), IsInternal: true},
-		{ID: "a2", Role: "assistant", Content: `{"reply":"","tool_calls":[{"tool":"memory_search","function":"search"}]}`, CreatedAt: now.Add(3 * time.Second)},
+		{ID: "a2", Role: "assistant", Content: `{"reply":"","tool_calls":[{"tool":"unified_search","function":"semantic_search"}]}`, CreatedAt: now.Add(3 * time.Second)},
 		{ID: "t2", Role: "tool", Content: `[{"id":"m1","text":"..."}]`, CreatedAt: now.Add(4 * time.Second), IsInternal: true},
 		{ID: "a3", Role: "assistant", Content: "今天你记了笔记、喝了啤酒，过得挺充实😄", CreatedAt: now.Add(5 * time.Second)},
 	}

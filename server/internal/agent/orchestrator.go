@@ -153,6 +153,7 @@ type Orchestrator struct {
 	summaryAttachMaxDays      int
 	summaryRelevanceThreshold float64
 	summaryRelevanceHistoryN  int
+	summaryDedupThreshold     float64
 }
 
 // OrchestratorConfig — Orchestrator 依赖配置
@@ -189,6 +190,7 @@ type OrchestratorConfig struct {
 	SummaryAttachMaxDays      int                       // 摘要附着时间窗口（天），默认 3
 	SummaryRelevanceThreshold float64                   // 摘要相关性阈值，默认 0.5
 	SummaryRelevanceHistoryN  int                       // 相关性检查的历史消息窗口，默认 5
+	SummaryDedupThreshold     float64                   // 摘要附着去重阈值，默认 0.85
 	ReminderRepo              *service.ReminderRepo
 	ProfileRepo               *service.UserProfileRepo
 }
@@ -255,6 +257,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		summaryAttachMaxDays:      cfg.SummaryAttachMaxDays,
 		summaryRelevanceThreshold: cfg.SummaryRelevanceThreshold,
 		summaryRelevanceHistoryN:  cfg.SummaryRelevanceHistoryN,
+		summaryDedupThreshold:     cfg.SummaryDedupThreshold,
 		reminderRepo:              cfg.ReminderRepo,
 		profileRepo:               cfg.ProfileRepo,
 	}
@@ -487,6 +490,10 @@ func (o *Orchestrator) buildSummaryPackets(ctx context.Context, req *RunRequest)
 		return nil
 	}
 
+	// 相邻摘要按 embedding 余弦相似度判重：更相似则丢弃较旧者（增量合并生成的相邻摘要内容高度重叠）。
+	// embedding 走 getOrEmbedSummary 缓存（VectorStore/DB），无额外 embed 调用。
+	summaries = o.dedupSummaries(ctx, summaries)
+
 	// repo 返回时间倒序，翻转为旧→新，便于 LLM 按时间线阅读
 	pkts := make([]retrieval.ContextPacket, 0, len(summaries))
 	for i := len(summaries) - 1; i >= 0; i-- {
@@ -650,6 +657,32 @@ func (o *Orchestrator) checkSummaryRelevance(
 	}
 
 	return maxSim >= o.summaryRelevanceThreshold
+}
+
+// dedupSummaries 相邻摘要按 embedding 余弦相似度判重：相似度 >= 阈值时丢弃较旧者，保留最新。
+// summaries 需按时间旧→新排列（与 buildSummaryPackets 的阅读顺序一致）。
+// embedding 缺失时乐观保留（不判重），避免误丢。
+func (o *Orchestrator) dedupSummaries(ctx context.Context, summaries []model.ConversationSummary) []model.ConversationSummary {
+	threshold := o.summaryDedupThreshold
+	if threshold <= 0 {
+		threshold = 0.85
+	}
+	result := make([]model.ConversationSummary, 0, len(summaries))
+	for _, s := range summaries {
+		if len(result) > 0 {
+			last := &result[len(result)-1]
+			cur := s
+			lastVec := o.getOrEmbedSummary(ctx, last)
+			vec := o.getOrEmbedSummary(ctx, &cur)
+			if len(lastVec) > 0 && len(vec) > 0 && cosineSimilarity(lastVec, vec) >= threshold {
+				// 相邻摘要内容重叠：丢弃较旧者（result 尾部即较旧者）
+				result[len(result)-1] = s
+				continue
+			}
+		}
+		result = append(result, s)
+	}
+	return result
 }
 
 // getOrEmbedSummary 获取摘要的 embedding（惰性 embed → VectorStore + DB 双写）。
@@ -1094,7 +1127,6 @@ func (o *Orchestrator) executePromptEngTools(
 	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	state.allToolCalls = append(state.allToolCalls, parsed.ToolCalls...)
-	o.injectExcludeMemIDsForMemSearch(parsed, idsByTypeFromResult(retrieveResult)["memory"])
 	// 客户端工具只在原生 FC 模式下发给 LLM（mkLlmChatReq），
 	// use_native_fc=false 时不参与分发，避免 LLM 幻觉出未告知的工具名被路由到客户端
 	var clientIdx map[string]bool
@@ -1247,14 +1279,6 @@ func idsByTypeFromResult(r *ctxflow.RetrieveResult) map[string][]string {
 	return ids
 }
 
-func (*Orchestrator) injectExcludeMemIDsForMemSearch(parsed *LLMResponse, memIDs []string) {
-	for i := range parsed.ToolCalls {
-		if (parsed.ToolCalls[i].Tool == "memory_search") && len(memIDs) > 0 {
-			parsed.ToolCalls[i].Args = injectExcludeIDs(parsed.ToolCalls[i].Args, memIDs)
-		}
-	}
-}
-
 func (o *Orchestrator) collectToolResults(ctx context.Context, parsed *LLMResponse, toolCallResults []toolExecResult, events chan<- *llm.StreamEvent, convID string, userID string, msgs []llm.Message) []llm.Message {
 	for i := range parsed.ToolCalls {
 		res := toolCallResults[i].result
@@ -1301,23 +1325,6 @@ type toolExecResult struct {
 }
 
 // injectExcludeIDs 将 exclude_ids（已注入的记忆 ID）注入到 memory_search 工具的 args 中
-func injectExcludeIDs(args json.RawMessage, memIDs []string) json.RawMessage {
-	var m map[string]interface{}
-	if err := json.Unmarshal(args, &m); err != nil {
-		return args
-	}
-	ids := make([]interface{}, len(memIDs))
-	for i, id := range memIDs {
-		ids[i] = id
-	}
-	m["exclude_ids"] = ids
-	b, err := json.Marshal(m)
-	if err != nil {
-		return args
-	}
-	return b
-}
-
 func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID, convID string,
 	registry *tool.Registry, toolCalls []tool.ToolCall, clientIdx map[string]bool, state *reactState,
 	mode string, clientReadOnly map[string]bool, clientTools []tool.ClientToolInfo) []toolExecResult {

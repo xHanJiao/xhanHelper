@@ -67,6 +67,7 @@ chat:
   summary_attach_max_days: 3        # 摘要附着时间窗口（天）
   summary_relevance_threshold: 0.5  # 摘要相关性余弦相似度阈值
   summary_relevance_history_n: 5    # 相关性检查的历史消息窗口大小
+  summary_dedup_threshold: 0.85     # 摘要附着去重阈值（相邻摘要更相似则丢弃较旧者）
 
 share:
   default_valid_days: 7

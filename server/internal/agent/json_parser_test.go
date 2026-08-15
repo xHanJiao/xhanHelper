@@ -396,12 +396,12 @@ func TestParseFlashJSON(t *testing.T) {
 		}
 	})
 
-	t.Run("real sample 2: memory_search", func(t *testing.T) {
+	t.Run("real sample 2: unified_search", func(t *testing.T) {
 		raw := `{
     "reply": "好的，单独搜「求职」看看分数分布有什么不同。",
     "tool_calls": [
         {
-            "tool": "memory_search",
+            "tool": "unified_search",
             "function": "search",
             "args": {
                 "query": "求职"
@@ -417,8 +417,8 @@ func TestParseFlashJSON(t *testing.T) {
 		if len(resp.ToolCalls) != 1 {
 			t.Fatalf("expected 1 tool_call, got %d", len(resp.ToolCalls))
 		}
-		if resp.ToolCalls[0].Tool != "memory_search" {
-			t.Errorf("tool = %q, want memory_search", resp.ToolCalls[0].Tool)
+		if resp.ToolCalls[0].Tool != "unified_search" {
+			t.Errorf("tool = %q, want unified_search", resp.ToolCalls[0].Tool)
 		}
 	})
 

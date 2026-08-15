@@ -133,49 +133,14 @@ func (t *AgentTool) Functions() []FuncSchema {
 				"required": []string{"id"},
 			},
 		},
-		{
-			Name:        "get_agent_versions",
-			Display:     "智能体版本历史",
-			Description: "查看指定智能体的版本历史记录",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"id": map[string]interface{}{
-						"type":        "string",
-						"description": "智能体 ID",
-					},
-				},
-				"required": []string{"id"},
-			},
-		},
-		{
-			Name:        "rollback_agent",
-			Display:     "回滚智能体",
-			Description: "将智能体回滚到指定版本。回滚前会自动保存当前状态为新的版本快照。",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"id": map[string]interface{}{
-						"type":        "string",
-						"description": "智能体 ID",
-					},
-					"version": map[string]interface{}{
-						"type":        "integer",
-						"description": "目标版本号",
-					},
-				},
-				"required": []string{"id", "version"},
-			},
-		},
 	}
 }
 
-// ReadOnlyFuncs — 查询/列表/版本类只读；bind/unbind 会改会话绑定（写，且影响缓存，谨慎使用）
+// ReadOnlyFuncs — 查询/列表类只读；bind/unbind 会改会话绑定（写，且影响缓存，谨慎使用）
 func (t *AgentTool) ReadOnlyFuncs() map[string]bool {
 	return map[string]bool{
-		"find_agent":         true,
-		"list_agents":        true,
-		"get_agent_versions": true,
+		"find_agent":  true,
+		"list_agents": true,
 	}
 }
 
@@ -193,10 +158,6 @@ func (t *AgentTool) Execute(ec *ExecuteContext, funcName string, args json.RawMe
 		return t.unbindAgent(ec, args)
 	case "update_agent":
 		return t.updateAgent(ec, args)
-	case "get_agent_versions":
-		return t.getAgentVersions(ec, args)
-	case "rollback_agent":
-		return t.rollbackAgent(ec, args)
 	default:
 		return &Result{Success: false, Error: fmt.Sprintf("unknown function: %s", funcName)}
 	}
@@ -384,107 +345,6 @@ func (t *AgentTool) updateAgent(ec *ExecuteContext, args json.RawMessage) *Resul
 	data, _ := json.Marshal(map[string]interface{}{
 		"id":      req.ID,
 		"message": "智能体已更新",
-	})
-	return &Result{Success: true, Data: data}
-}
-
-func (t *AgentTool) getAgentVersions(ec *ExecuteContext, args json.RawMessage) *Result {
-	var req struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(args, &req); err != nil {
-		return &Result{Success: false, Error: "parse args: " + err.Error()}
-	}
-	if req.ID == "" {
-		return &Result{Success: false, Error: "id required"}
-	}
-
-	// 确保 agent 存在且属于当前用户
-	current, err := t.agentRepo.FindByID(context.Background(), req.ID, ec.UserID)
-	if err != nil || current == nil {
-		return &Result{Success: false, Error: "agent not found"}
-	}
-
-	versions, err := t.versionRepo.GetVersions(context.Background(), "agent", req.ID)
-	if err != nil {
-		return &Result{Success: false, Error: "get versions: " + err.Error()}
-	}
-
-	type versionBrief struct {
-		Version   int    `json:"version"`
-		CreatedAt string `json:"created_at"`
-	}
-	list := make([]versionBrief, len(versions))
-	for i, v := range versions {
-		list[i] = versionBrief{Version: v.Version, CreatedAt: v.CreatedAt.Format("2006-01-02 15:04:05")}
-	}
-
-	data, _ := json.Marshal(list)
-	return &Result{Success: true, Data: data}
-}
-
-func (t *AgentTool) rollbackAgent(ec *ExecuteContext, args json.RawMessage) *Result {
-	var req struct {
-		ID      string `json:"id"`
-		Version int    `json:"version"`
-	}
-	if err := json.Unmarshal(args, &req); err != nil {
-		return &Result{Success: false, Error: "parse args: " + err.Error()}
-	}
-	if req.ID == "" || req.Version <= 0 {
-		return &Result{Success: false, Error: "id and version required"}
-	}
-
-	current, err := t.agentRepo.FindByID(context.Background(), req.ID, ec.UserID)
-	if err != nil || current == nil {
-		return &Result{Success: false, Error: "agent not found"}
-	}
-
-	// 回滚前先存当前状态快照
-	if err := t.versionRepo.CreateSnapshot(context.Background(), "agent", req.ID, map[string]interface{}{
-		"name":          current.Name,
-		"system_prompt": current.SystemPrompt,
-		"summary":       current.Summary,
-		"model":         current.Model,
-		"params_json":   current.ParamsJSON,
-	}); err != nil {
-		log.Printf("[agent] create snapshot before rollback %s: %v", req.ID, err)
-	}
-
-	// 获取目标版本快照
-	snap, err := t.versionRepo.GetSnapshot(context.Background(), "agent", req.ID, req.Version)
-	if err != nil {
-		return &Result{Success: false, Error: "version not found: " + err.Error()}
-	}
-
-	var snapData struct {
-		Name         string `json:"name"`
-		SystemPrompt string `json:"system_prompt"`
-		Summary      string `json:"summary"`
-		Model        string `json:"model"`
-		ParamsJSON   string `json:"params_json"`
-	}
-	if err := json.Unmarshal([]byte(snap.Snapshot), &snapData); err != nil {
-		return &Result{Success: false, Error: "parse snapshot: " + err.Error()}
-	}
-
-	agent := &model.Agent{
-		ID:           req.ID,
-		UserID:       ec.UserID,
-		Name:         snapData.Name,
-		SystemPrompt: snapData.SystemPrompt,
-		Summary:      snapData.Summary,
-		Model:        snapData.Model,
-		ParamsJSON:   snapData.ParamsJSON,
-	}
-	if err := t.agentRepo.Update(context.Background(), agent); err != nil {
-		return &Result{Success: false, Error: "rollback agent: " + err.Error()}
-	}
-
-	data, _ := json.Marshal(map[string]interface{}{
-		"id":      req.ID,
-		"version": req.Version,
-		"message": "智能体已回滚",
 	})
 	return &Result{Success: true, Data: data}
 }

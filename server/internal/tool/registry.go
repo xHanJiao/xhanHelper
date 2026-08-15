@@ -65,8 +65,23 @@ func (r *Registry) HideTool(name string) {
 	r.hiddenNames[name] = true
 }
 
+// ToolFunctionInfo — 工具函数信息（SearchTools 返回结构）。
+type ToolFunctionInfo struct {
+	Name        string
+	Description string
+	Parameters  map[string]interface{}
+}
+
+// ToolInfo — 工具信息（SearchTools 返回结构）。
+type ToolInfo struct {
+	ID          string
+	Name        string
+	Description string
+	Functions   []ToolFunctionInfo
+}
+
 // SearchTools 在内存中的工具（含 MCP 占位工具）里关键词搜索。
-// hidden 工具不参与搜索（tool_retriever 查不到，主循环 LLM 无途径获知）。
+// hidden 工具不参与搜索（主循环 LLM 无途径获知）。
 func (r *Registry) SearchTools(query string) []ToolInfo {
 	var results []ToolInfo
 	q := strings.ToLower(query)
@@ -188,56 +203,6 @@ func (r *Registry) GetLLMTools() []llm.ToolDefinition {
 	return defs
 }
 
-// GeneratePromptWithOverview 混排模式：tool_retriever 完整 + note.record_note 内联，其他工具仅概览
-func (r *Registry) GeneratePromptWithOverview() string {
-	var buf bytes.Buffer
-	buf.WriteString("你可以使用以下工具来完成用户的请求。\n")
-	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
-
-	// tool_retriever 完整定义
-	if tr := r.tools["tool_retriever"]; tr != nil {
-		r.writeToolFullDef(&buf, tr)
-	}
-
-	// note 工具：仅内联 record_note 函数，其他函数仍需 search
-	if nt := r.tools["note"]; nt != nil {
-		buf.WriteString(fmt.Sprintf("## 工具: %s\n", nt.Name()))
-		buf.WriteString(fmt.Sprintf("描述: %s\n\n", nt.Description()))
-		buf.WriteString("直接可用函数（无需 search）:\n")
-		var otherFuncs []string
-		for _, fn := range nt.Functions() {
-			if fn.Name == "record_note" {
-				r.writeFunctionDef(&buf, fn)
-			} else {
-				otherFuncs = append(otherFuncs, fn.Name)
-			}
-		}
-		if len(otherFuncs) > 0 {
-			buf.WriteString(fmt.Sprintf("其他函数需先 tool_retriever.search(\"note\") 查询后调用: %s\n", strings.Join(otherFuncs, ", ")))
-		}
-		buf.WriteString("\n")
-	}
-
-	// 其他工具概览（需通过 tool_retriever.search 查询详细定义后才能调用）
-	var overview []string
-	for _, name := range r.sortedVisibleToolNames() {
-		if name == "tool_retriever" || name == "note" {
-			continue
-		}
-		t := r.tools[name]
-		overview = append(overview, fmt.Sprintf("工具名: %s —— %s\n", name, t.Description()))
-	}
-	if len(overview) > 0 {
-		buf.WriteString("\n## 其他可用工具\n")
-		buf.WriteString("【强制规则】以下只是工具概览，不包含函数签名和参数定义。直接调用会失败！必须先 tool_retriever.search(工具名) 获取完整定义后才能调用。禁止凭猜测填写参数！\n\n")
-		buf.WriteString(strings.Join(overview, "\n"))
-		buf.WriteString("\n")
-	}
-
-	r.writePromptFooter(&buf)
-	return buf.String()
-}
-
 // writeFunctionDef 写入单个函数的完整定义（含参数 schema）
 func (r *Registry) writeFunctionDef(buf *bytes.Buffer, fn FuncSchema) {
 	buf.WriteString(fmt.Sprintf("  - %s: %s\n", fn.Name, fn.Description))
@@ -274,15 +239,6 @@ func (r *Registry) writeFunctionDef(buf *bytes.Buffer, fn FuncSchema) {
 	buf.WriteString("\n")
 }
 
-func (r *Registry) writeToolFullDef(buf *bytes.Buffer, t Tool) {
-	buf.WriteString(fmt.Sprintf("## 工具: %s\n", t.Name()))
-	buf.WriteString(fmt.Sprintf("描述: %s\n\n", t.Description()))
-	buf.WriteString("函数:\n")
-	for _, fn := range t.Functions() {
-		r.writeFunctionDef(buf, fn)
-	}
-}
-
 func (r *Registry) writePromptFooter(buf *bytes.Buffer) {
 	buf.WriteString("\n### 输出格式（必须严格遵守）\n\n")
 	buf.WriteString("你的每次回复都必须是一个完整的 JSON 对象，即使一句简单的「好的」也必须包裹在 JSON 中。\n")
@@ -303,13 +259,6 @@ func (r *Registry) writePromptFooter(buf *bytes.Buffer) {
 	buf.WriteString("- 当本轮需要调用工具时（tool_calls 非空），reply 字段必须为空字符串 \"\"。只有不需要调用工具的最终回复才写 reply。例如：查账单时返回 {\"reply\":\"\",\"tool_calls\":[...]}，工具返回结果后再给出 {\"reply\":\"查到 12 笔...\",\"tool_calls\":[]}。\n")
 	buf.WriteString("- 一条回复中 tool_calls 可以包含多个工具调用，按顺序执行。工具执行结果会追加到对话中，你可以据此继续回复用户。\n")
 	buf.WriteString("- JSON 字符串值内的英文双引号必须用反斜杠转义（\\\"）。\n")
-}
-
-// GenerateImportantRules 生成输出规范文本（不含工具定义，放在角色定义之后、工具使用之前）
-func (r *Registry) GenerateImportantRules() string {
-	var buf bytes.Buffer
-	buf.WriteString("【强制工具查询规则】除 tool_retriever 外，任何工具在调用前必须先通过 tool_retriever.search 查询其完整定义（函数签名和参数 schema）。禁止凭工具名称和概览描述猜测参数直接调用！例如：要用 bookkeeping 记账，必须先 search(\"bookkeeping\") 拿到 create_bill 的参数。不确定用什么工具时，用 tool_retriever.search 搜索关键词。\n")
-	return buf.String()
 }
 
 // GeneratePrompt 生成工具定义文本，追加到 system prompt 中
@@ -385,9 +334,6 @@ func (r *Registry) GeneratePrompt() string {
 func (r *Registry) ToolOverview() string {
 	var buf bytes.Buffer
 	for _, name := range r.sortedVisibleToolNames() {
-		if name == "tool_retriever" {
-			continue
-		}
 		t := r.tools[name]
 		buf.WriteString(fmt.Sprintf("工具名: %s —— %s\n", name, t.Description()))
 	}
@@ -395,13 +341,7 @@ func (r *Registry) ToolOverview() string {
 	if result == "" {
 		return ""
 	}
-	return "\n\n## 可用工具概览\n" +
-		"【强制规则】以上只是工具概览，不包含函数签名和参数定义。\n" +
-		"如果用户的问题需要用到某个工具，你必须先用 tool_retriever.search 查询该工具的详细定义，然后才能调用它。\n" +
-		"直接调用未查询过的工具会失败——例如调用 bookkeeping__create 前，必须先 search(\"bookkeeping\") 拿到 create 的参数 schema。\n" +
-		"不确定工具名时也可以用 tool_retriever.search 搜索关键词。\n\n" +
-		result +
-		"\n再次强调：必须先 tool_retriever.search(工具名) 再调用工具，禁止跳过查询步骤！\n"
+	return "\n\n## 可用工具概览\n" + result
 }
 
 // GetLLMToolsFiltered 只导出指定名称的工具定义（供 Phase 5/6 按需加载）
@@ -564,12 +504,11 @@ func (r *Registry) ExecuteByName(ec *ExecuteContext, toolName, funcName string, 
 				names[i] = fmt.Sprintf("%s（%s）", c.Name, c.Description)
 			}
 			return &Result{Success: false, Error: fmt.Sprintf(
-				"未找到工具 '%s'。你是否想使用以下工具？%s。请先调用 tool_retriever.search 查询其详细定义，不要凭猜测直接调用。",
+				"未找到工具 '%s'。你是否想使用以下工具？%s。请核对工具名后重试。",
 				toolName, strings.Join(names, "；"))}
 		}
 		return &Result{Success: false, Error: fmt.Sprintf(
-			"未找到工具 '%s'。请先调用 tool_retriever.search 用关键词搜索可用工具，例如 tool_retriever.search(\"%s\")。禁止在未查询工具定义的情况下凭猜测调用。",
-			toolName, toolName)}
+			"未找到工具 '%s'。请核对工具名后重试。", toolName)}
 	}
 
 	// —— Plan 模式工具全部禁用（集中式，所有工具一视同仁）——

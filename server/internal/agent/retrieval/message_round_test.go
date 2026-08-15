@@ -78,7 +78,7 @@ func TestFilterMessageRound(t *testing.T) {
 			CreatedAt: now.Add(time.Second)}
 		toolResult := model.Message{ID: "r3", Role: "tool", Content: `{"results":[]}`, CreatedAt: now.Add(2 * time.Second), IsInternal: true}
 		reactMid2 := model.Message{ID: "r4", Role: "assistant",
-			Content:   `{"reply":"","tool_calls":[{"tool":"memory_search","function":"search","args":{"limit":3,"query":"2026-05-27"}}]}`,
+			Content:   `{"reply":"","tool_calls":[{"tool":"unified_search","function":"semantic_search","args":{"limit":3,"query":"2026-05-27"}}]}`,
 			CreatedAt: now.Add(3 * time.Second)}
 		toolResult2 := model.Message{ID: "r5", Role: "tool", Content: `{"results":[]}`, CreatedAt: now.Add(4 * time.Second), IsInternal: true}
 		finalReply := model.Message{ID: "r6", Role: "assistant",

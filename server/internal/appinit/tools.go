@@ -18,7 +18,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reg.Register(tool.NewLoggingWrapper(tool.NewBookkeepingTool(repos.Bill), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewDatetimeTool(), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewCalculatorTool(), log.Default()))
-	// webfetch：仅 subAgent（explore）可见，对主循环隐藏（与 tool_retriever 同款模式，见 docs/design/phase-18-subagent-explore.md 1.2）
+	// webfetch：仅 subAgent（explore）可见，对主循环隐藏（HideTool 模式，见 docs/design/phase-18-subagent-explore.md 1.2）
 	// 由配置 webfetch.enabled 控制是否启用（默认关闭，token 消耗大）
 	if cfg.WebFetch.Enabled {
 		reg.Register(tool.NewLoggingWrapper(tool.NewWebFetchTool(cfg.WebFetch.TimeoutSeconds, cfg.WebFetch.MaxBytes), log.Default()))
@@ -30,15 +30,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	if err := tool.SeedBuiltinTools(context.Background(), repos.Tool, infra.Embedder, repos.Embedding); err != nil {
 		log.Printf("[seed] SeedBuiltinTools error: %v", err)
 	}
-
-	// tool_retriever（hybrid: 向量检索 + 关键词检索）
-	keywordStrategy := tool.NewSimpleKeywordStrategy(repos.Tool)
-	vectorStrategy := tool.NewVectorRetrievalStrategy(infra.Embedder, infra.VectorStore, repos.Tool)
-	hybridStrategy := tool.NewHybridRetrievalStrategy(keywordStrategy, vectorStrategy, 0.7, 0.3)
-	toolRetriever := tool.NewToolRetriever(hybridStrategy)
-	toolRetriever.SetRegistrySearcher(reg)
-	reg.Register(tool.NewLoggingWrapper(toolRetriever, log.Default()))
-	reg.HideTool("tool_retriever")
 
 	reg.Register(tool.NewLoggingWrapper(tool.NewAgentTool(repos.Agent, repos.Version, repos.Conversation), log.Default()))
 
@@ -111,8 +102,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 
 	// --- 搜索工具注册到主 Registry ---
 	reg.Register(tool.NewLoggingWrapper(
-		tool.NewMemorySearchTool(infra.VectorStore, repos.Mem, infra.Embedder), log.Default()))
-	reg.Register(tool.NewLoggingWrapper(
 		tool.NewMessageSearchTool(repos.Message, repos.Conversation, infra.Embedder, infra.VectorStore, cfg.Chat.HistoryRounds, cfg.Chat.MaxSummaryRounds), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewThemeSearchTool(repos.ThemeState, infra.Embedder, infra.VectorStore), log.Default()))
@@ -124,8 +113,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewReminderTool(repos.Reminder, llmClients.Flash), log.Default()))
-	reg.Register(tool.NewLoggingWrapper(
-		tool.NewMissionTool(repos.Mission, missionEmbedder), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewPlanTool(repos.ConversationPlan), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(

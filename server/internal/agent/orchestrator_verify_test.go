@@ -194,7 +194,7 @@ func TestBuildVerifyFeedback_MissingOnly(t *testing.T) {
 		Complete:       false,
 		Hallucinations: nil,
 		MissingAspects: []string{"未查询笔记", "未查询记忆"},
-		Suggestion:     "建议调用 search_notes_v2 和 search_memories_v2",
+		Suggestion:     "建议调用 unified_search",
 	}
 	feedback := o.buildVerifyFeedback(vr)
 	if !strings.Contains(feedback, "缺失") {
@@ -203,7 +203,7 @@ func TestBuildVerifyFeedback_MissingOnly(t *testing.T) {
 	if !strings.Contains(feedback, "未查询笔记") {
 		t.Error("应包含缺失方面")
 	}
-	if !strings.Contains(feedback, "search_notes_v2") {
+	if !strings.Contains(feedback, "unified_search") {
 		t.Error("应包含建议")
 	}
 }

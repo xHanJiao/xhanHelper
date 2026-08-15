@@ -386,13 +386,19 @@ func TestSummarizeToolCallLog(t *testing.T) {
 }
 
 func TestBuildSubAgentSystemPrompt(t *testing.T) {
-	web := buildSubAgentSystemPrompt(subagentSpecs["web_explore"])
+	web := buildSubAgentSystemPrompt(subagentSpecs["web_explore"], 20, 600)
 	if !strings.Contains(web, "联网调研专家") || !strings.Contains(web, "当前时间") {
 		t.Errorf("web_explore system prompt 应含角色与时间: %s", web)
 	}
-	file := buildSubAgentSystemPrompt(subagentSpecs["file_explore"])
+	if !strings.Contains(web, "最多执行 19 轮工具调用") || !strings.Contains(web, "第 20 轮为强制总结轮") || !strings.Contains(web, "总时长约 600 秒") {
+		t.Errorf("web_explore system prompt 应含固定预算: %s", web)
+	}
+	file := buildSubAgentSystemPrompt(subagentSpecs["file_explore"], 20, 600)
 	if !strings.Contains(file, "本地文件检索专家") {
 		t.Errorf("file_explore system prompt 应含本地检索角色: %s", file)
+	}
+	if !strings.Contains(file, "最多执行 19 轮工具调用") {
+		t.Errorf("file_explore system prompt 应含预算: %s", file)
 	}
 }
 

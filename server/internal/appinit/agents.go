@@ -219,7 +219,9 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		tool.NewSearchNotesV2Tool(infra.VectorStore, repos.Note, repos.Chunk, infra.Embedder), log.Default()))
 
 	// 二次注册 task 工具（依赖 Orchestrator 实现 SubAgentRunner，避免 tool → agent 循环依赖）
-	tools.Registry.Register(tool.NewLoggingWrapper(tool.NewTaskTool(orch), log.Default()))
+	// 传入子 agent 预算：描述动态注入具体数字，主 LLM 据此判断任务拆解粒度
+	tools.Registry.Register(tool.NewLoggingWrapper(
+		tool.NewTaskTool(orch, cfg.SubAgent.ExploreMaxIterations, cfg.SubAgent.ExploreTimeoutSeconds), log.Default()))
 
 	replayRunner := replay.NewRunner(&replay.RunnerConfig{
 		FlashClient:        llmClients.Flash,

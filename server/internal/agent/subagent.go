@@ -199,14 +199,20 @@ func clientToolGroupNames(wl map[string][]string) string {
 	return strings.Join(names, ", ")
 }
 
-// buildSubAgentSystemPrompt 构建子 agent 的简化 system prompt（时间 + 类型角色）。
+// buildSubAgentSystemPrompt 构建子 agent 的简化 system prompt（时间 + 类型角色 + 固定预算）。
 // 工具定义不进 prompt：原生 FC 下经 MiniReActConfig.Tools 传入。
-func buildSubAgentSystemPrompt(spec subagentSpec) string {
+// 预算文案固定不变（不随轮次更新），system prompt 跨轮保持一致 → 不破坏 LLM 前缀缓存；
+// 子 agent 每轮都能看到预算，据此控制工作幅度，避免无限制扩张。
+func buildSubAgentSystemPrompt(spec subagentSpec, maxIter, timeoutSecs int) string {
 	var buf strings.Builder
 	buf.WriteString("你是 xhanHelper 的子 agent。\n")
 	buf.WriteString(fmt.Sprintf("当前时间: %s\n\n", time.Now().Format("2006-01-02 15:04:05")))
 	buf.WriteString(spec.prompt)
 	buf.WriteString("\n\n")
+	buf.WriteString("任务预算（重要）：\n")
+	buf.WriteString(fmt.Sprintf("- 你最多执行 %d 轮工具调用（第 %d 轮为强制总结轮，届时禁止调用工具）\n", maxIter-1, maxIter))
+	buf.WriteString(fmt.Sprintf("- 总时长约 %d 秒\n", timeoutSecs))
+	buf.WriteString("请据此控制工作幅度，在预算内一次性完成，不要无限制地扩张步骤。\n")
 	return buf.String()
 }
 
@@ -360,11 +366,15 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 	if maxIter <= 0 {
 		maxIter = 20 // 兜底防死循环（timeout 才是真实预算）
 	}
+	timeout := o.subAgentTimeout
+	if timeout <= 0 {
+		timeout = 600 * time.Second
+	}
 	react := NewMiniReAct(&MiniReActConfig{
 		Client:        o.flashClient, // 子 agent 固定 Flash
 		Tools:         tools,
 		ToolRegistry:  o.registry,
-		SystemPrompt:  buildSubAgentSystemPrompt(spec),
+		SystemPrompt:  buildSubAgentSystemPrompt(spec, maxIter, int(timeout.Seconds())),
 		UserID:        userID,
 		ConvID:        subConv.ID,
 		MaxIterations: maxIter, // 主循环 maxIter-1 轮 + 1 轮强制收敛（MiniReAct 内置）
@@ -386,10 +396,7 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 	}
 
 	// 步骤 8 — 超时控制与执行（成本中心：子循环 LLM 调用记 main_chat/sub_agent_run）
-	timeout := o.subAgentTimeout
-	if timeout <= 0 {
-		timeout = 600 * time.Second
-	}
+	// timeout 兜底已在步骤 6 归一（与 system prompt 预算文案同源）
 	subCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	subCtx = llmcost.WithScenario(subCtx, llmcost.Scenario{

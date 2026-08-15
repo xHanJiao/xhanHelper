@@ -10,19 +10,32 @@ import (
 // 仅由 Orchestrator 实现 SubAgentRunner 后二次注册（见 appinit/agents.go），本文件不注册。
 type TaskTool struct {
 	runner SubAgentRunner // nil = 未启用（Phase 18-2 接线前不应触发）
+	// 子 agent 预算（描述动态注入，主 LLM 据此判断任务该不该拆）：
+	maxIterations int // 含强制收敛轮的最大轮次，0 = 用默认 20
+	timeoutSecs   int // 执行超时秒数，0 = 默认 600
 }
 
-func NewTaskTool(runner SubAgentRunner) *TaskTool {
-	return &TaskTool{runner: runner}
+func NewTaskTool(runner SubAgentRunner, maxIterations, timeoutSecs int) *TaskTool {
+	return &TaskTool{runner: runner, maxIterations: maxIterations, timeoutSecs: timeoutSecs}
 }
 
 func (t *TaskTool) Name() string                   { return "task" }
 func (t *TaskTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
 
 func (t *TaskTool) Description() string {
-	return `启动一个子 agent 独立完成单一目标的小粒度任务，执行完毕后返回结果。
+	maxIter := t.maxIterations
+	if maxIter <= 0 {
+		maxIter = 20
+	}
+	timeout := t.timeoutSecs
+	if timeout <= 0 {
+		timeout = 600
+	}
+	return fmt.Sprintf(`启动一个子 agent 独立完成单一目标的小粒度任务，执行完毕后返回结果。
 
 核心原则：一个 task 只做一件事。任务应在子 agent 有限的轮次预算内完成；大任务拆成多个 task 并行，不要塞进一个 task。
+
+子 agent 预算：最多执行 %d 轮工具调用（第 %d 轮为强制总结轮，届时禁止调用工具），总时长约 %d 秒。超出预算会被强制收敛/超时截断，任务颗粒度必须明显小于该预算——预计接近或超过预算的任务必须拆成多个 task。
 
 何时使用：
 - 需要联网调研多步信息（搜索 → 浏览网页 → 提炼结论）→ web_explore
@@ -37,7 +50,7 @@ func (t *TaskTool) Description() string {
 
 用法：
 - 子任务的内部思考与最终回复不展示给用户（用户仅看到工具调用过程），你必须用自然语言总结转发给用户
-- prompt 要写详细：单一目标、明确要调研什么、返回什么格式`
+- prompt 要写详细：单一目标、明确要调研什么、返回什么格式`, maxIter-1, maxIter, timeout)
 }
 
 func (t *TaskTool) Functions() []FuncSchema {

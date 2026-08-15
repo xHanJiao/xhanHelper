@@ -19,7 +19,7 @@ func (m *mockSubAgentRunner) RunSubAgent(ctx context.Context, opts *SubAgentRunO
 }
 
 func newTaskTestTool(runner *mockSubAgentRunner) *TaskTool {
-	return NewTaskTool(runner)
+	return NewTaskTool(runner, 20, 600)
 }
 
 func runTask(t *testing.T, tool *TaskTool, ec *ExecuteContext, args map[string]interface{}) *Result {
@@ -126,7 +126,7 @@ func TestTaskTool_ClientToolsPropagated(t *testing.T) {
 }
 
 func TestTaskTool_RunnerNil(t *testing.T) {
-	tool := NewTaskTool(nil)
+	tool := NewTaskTool(nil, 0, 0)
 	res := runTask(t, tool, &ExecuteContext{}, map[string]interface{}{
 		"description": "d", "subagent_type": "web_explore", "prompt": "p",
 	})
@@ -136,7 +136,7 @@ func TestTaskTool_RunnerNil(t *testing.T) {
 }
 
 func TestTaskTool_BadArgs(t *testing.T) {
-	tool := NewTaskTool(nil)
+	tool := NewTaskTool(nil, 0, 0)
 	res := tool.Execute(&ExecuteContext{}, "run", json.RawMessage(`{"bad`))
 	if res.Success {
 		t.Fatal("非法参数应失败")
@@ -144,5 +144,17 @@ func TestTaskTool_BadArgs(t *testing.T) {
 	res = tool.Execute(&ExecuteContext{}, "nope", nil)
 	if res.Success {
 		t.Fatal("未知函数应失败")
+	}
+}
+
+func TestTaskTool_DescriptionContainsBudget(t *testing.T) {
+	tool := NewTaskTool(nil, 20, 600)
+	desc := tool.Description()
+	if !strings.Contains(desc, "最多执行 19 轮工具调用") || !strings.Contains(desc, "第 20 轮为强制总结轮") || !strings.Contains(desc, "总时长约 600 秒") {
+		t.Errorf("描述应注入子 agent 预算数字: %s", desc)
+	}
+	tool0 := NewTaskTool(nil, 0, 0)
+	if !strings.Contains(tool0.Description(), "最多执行 19 轮工具调用") {
+		t.Errorf("零值应回落默认预算: %s", tool0.Description())
 	}
 }

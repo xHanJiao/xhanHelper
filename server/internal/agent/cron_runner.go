@@ -209,10 +209,12 @@ func (cr *CronRunner) Start(ctx context.Context) {
 	log.Printf("[cron] started, discover_times=%v deliver_interval=%v mission_interval=%v",
 		cr.discoverTimes, intervalLabel(cr.deliverInterval), intervalLabel(cr.missionInterval))
 
+	var deliverChan <-chan time.Time
 	var deliverTimer *time.Timer
 	if cr.deliverInterval > 0 {
 		deliverTimer = time.NewTimer(cr.deliverInterval)
 		defer deliverTimer.Stop()
+		deliverChan = deliverTimer.C
 		cr.setDeliverNext(time.Now().Add(cr.deliverInterval))
 	} else {
 		cr.setDeliverNext(time.Time{})
@@ -224,10 +226,11 @@ func (cr *CronRunner) Start(ctx context.Context) {
 	sessionEndTicker := time.NewTicker(30 * time.Second)
 	defer sessionEndTicker.Stop()
 
-	var missionTicker *time.Ticker
+	var missionChan <-chan time.Time
 	if cr.missionRunner != nil && cr.missionInterval > 0 {
-		missionTicker = time.NewTicker(cr.missionInterval)
+		missionTicker := time.NewTicker(cr.missionInterval)
 		defer missionTicker.Stop()
+		missionChan = missionTicker.C
 		cr.missionNext = time.Now().Add(cr.missionInterval)
 	} else {
 		cr.missionNext = time.Time{}
@@ -239,7 +242,7 @@ func (cr *CronRunner) Start(ctx context.Context) {
 			log.Printf("[cron] stopped")
 			return
 
-		case <-deliverTimer.C:
+		case <-deliverChan:
 			log.Printf("[cron] deliver window trigger")
 			users, _ := cr.activeUsers(context.Background())
 			for _, u := range users {
@@ -272,7 +275,7 @@ func (cr *CronRunner) Start(ctx context.Context) {
 				cr.mu.Unlock()
 			}()
 
-		case <-missionTicker.C:
+		case <-missionChan:
 			log.Printf("[cron] mission check trigger")
 			go cr.processMissions(ctx)
 			cr.missionNext = time.Now().Add(cr.missionInterval)

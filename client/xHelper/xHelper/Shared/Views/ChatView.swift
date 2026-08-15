@@ -161,7 +161,9 @@ struct ChatView: View {
                         AgentPickerButton(
                             context: ctx,
                             activeAgentID: selectedAgentID,
-                            activeAgentName: displayAgents.first?.name,
+                            activeAgentName: selectedAgentID.flatMap { selID in
+                                pickerAgents.first(where: { $0.id == selID })?.name
+                            },
                             agents: displayAgents,
                             hasMore: pickerHasMore,
                             isLoadingMore: isLoadingPicker,
@@ -331,8 +333,10 @@ struct ChatView: View {
         if let cid = viewModel.conversationId, !cid.isEmpty {
             do {
                 _ = try await viewModel.apiClient.setConversationAgent(id: cid, agentID: agent.id)
+                ToastCenter.shared.show("已切换智能体：\(agent.name)")
             } catch {
                 LogBuffer.shared.error("ChatView.setConversationAgent: \(error)")
+                ToastCenter.shared.show("切换智能体失败：\(error.localizedDescription)")
             }
             return
         }
@@ -341,8 +345,10 @@ struct ChatView: View {
             viewModel.conversationId = conv.id
             viewModel.conversationTitle = conv.title
             viewModel.onConversationCreated?(conv.id, conv.title)
+            ToastCenter.shared.show("已切换智能体：\(agent.name)")
         } catch {
             LogBuffer.shared.error("ChatView.createConversation: \(error)")
+            ToastCenter.shared.show("切换智能体失败：\(error.localizedDescription)")
         }
     }
 

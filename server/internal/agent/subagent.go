@@ -76,6 +76,9 @@ const fileExplorePrompt = `你是本地文件检索专家，擅长在用户的 M
 - fs__glob：按文件名模式找文件（pattern 支持 "**/*.go" 等，path 为绝对路径起步目录）
 - fs__grep：正则搜索文件内容，返回文件+行号+匹配行
 - fs__read：读文件（每行带行号前缀）或列目录；offset/limit 分页读大文件
+- fs__read 支持 PDF：按页提取纯文本，page_offset（起始页，默认 1）/page_limit（最多页数，默认 10）续读；
+  每页带 [Page X of N] 标记；大 PDF 先读前 10 页摸清结构，再按 page_offset 定位关键页细读，不要一次读满
+- 扫描件 PDF（无文本层）无法提取文本，报错后如实告知主任务，不要假装读完
 - datetime / calculator：辅助
 
 工作准则：

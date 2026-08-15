@@ -49,3 +49,6 @@ server/data/markdownserver/data/
 # Xcode build artifacts
 build/
 DerivedData/
+
+# SPM (FsCore swift test)
+.build/

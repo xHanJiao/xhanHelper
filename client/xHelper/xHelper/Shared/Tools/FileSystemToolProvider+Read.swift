@@ -56,10 +56,16 @@ extension FileSystemToolProvider {
                 .sorted { $0.localizedCompare($1) == .orderedAscending }
 
             var entries: [String] = []
+            var omittedSensitive = 0
             for name in contents {
                 let full = "\(path)/\(name)"
                 var isDir: ObjCBool = false
                 let isDirectory = FileManager.default.fileExists(atPath: full, isDirectory: &isDir) && isDir.boolValue
+                // 敏感条目（.env/.git 等）不进列表（与 grep/glob 安检一致）
+                if SensitiveFileBlocker.check(full) != nil {
+                    omittedSensitive += 1
+                    continue
+                }
                 entries.append(isDirectory ? "\(name)/" : name)
             }
 
@@ -71,6 +77,9 @@ extension FileSystemToolProvider {
                 output += "<type>directory</type>\n"
                 output += "<entries>\n"
                 output += "(0 entries shown of \(total). Offset \(offset) out of range.)\n"
+                if omittedSensitive > 0 {
+                    output += "(\(omittedSensitive) 个敏感条目已隐藏。)\n"
+                }
                 output += "</entries>"
                 return LocalToolResult(serverResult: output.data(using: .utf8), serverError: nil, clientAction: nil)
             }
@@ -100,11 +109,14 @@ extension FileSystemToolProvider {
 
             if byteCut {
                 let next = start + sliced.count + 1
-                output += "(Output capped at \(budget / 1024) KB. Showing \(sliced.count) of \(total) entries. Use offset=\(next) to continue.)"
+                output += "(Output capped at \((budget + 1023) / 1024) KB. Showing \(sliced.count) of \(total) entries. Use offset=\(next) to continue.)"
             } else if truncated {
                 output += "(Showing \(sliced.count) of \(total) entries. Use offset=\(end + 1) to continue.)"
             } else {
                 output += "(\(total) entries)"
+            }
+            if omittedSensitive > 0 {
+                output += "\n(\(omittedSensitive) 个敏感条目已隐藏。如需访问请在客户端设置中添加豁免。)"
             }
             output += "\n</entries>"
 
@@ -443,7 +455,7 @@ extension FileSystemToolProvider {
         if cut {
             let lastLine = offset + lines.count - 1
             let nextOffset = offset + lines.count
-            output += "(Output capped at \(budget / 1024) KB. Showing lines \(offset)-\(lastLine). Use offset=\(nextOffset) to continue.)"
+            output += "(Output capped at \((budget + 1023) / 1024) KB. Showing lines \(offset)-\(lastLine). Use offset=\(nextOffset) to continue.)"
         } else if more {
             let lastLine = offset + lines.count - 1
             let nextOffset = offset + lines.count
@@ -607,7 +619,7 @@ extension FileSystemToolProvider {
         var suffix = ""
         if cut {
             let nextPage = end + 1
-            suffix = "(Output capped at \(budget / 1024) KB. Use page_offset=\(nextPage) to continue.)"
+            suffix = "(Output capped at \((budget + 1023) / 1024) KB. Use page_offset=\(nextPage) to continue.)"
         } else if end < totalPages {
             suffix = "(Showing pages \(start)-\(end) of \(totalPages). Use page_offset=\(end + 1) to continue.)"
         } else {

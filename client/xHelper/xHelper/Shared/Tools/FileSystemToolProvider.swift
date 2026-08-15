@@ -9,6 +9,10 @@ final class FileSystemToolProvider: @unchecked Sendable {
     let maxLineChars = 2000
     let defaultReadLimit = 2000
 
+    /// 收集循环的纯安全网预算（grep/glob 的 walk 停止由"第 maxResults+1 条"决定，
+    /// 预算只防失控输出撑爆内存；正常流程永不触发，保证结果确定性）。
+    let collectionSafetyBudget = 8 * 1024 * 1024
+
     /// 解码全量文件（GB18030 等非 UTF-8 编码）的大小上限。
     let maxDecodeBytes = 5 * 1024 * 1024
 
@@ -45,13 +49,14 @@ final class FileSystemToolProvider: @unchecked Sendable {
         return resolved
     }
 
-    /// 输出预算上限：client 下发预算（20KB）− 1KB 余量；无预算时用 50KB 绝对上限。
+    /// 输出预算上限：client 下发预算（20KB）− 256B 余量（JSON 信封）；
+    /// 无预算时用 50KB 绝对上限。
     func budgetCap(_ budgetBytes: Int?) -> Int {
         let budget = budgetBytes ?? maxReadBytes
-        return min(max(budget - 1024, 1024), maxReadBytes)
+        return min(max(budget - 256, 1024), maxReadBytes)
     }
 
-    /// 结果超预算时截断并追加提示。
+    /// 结果超预算时截断并追加提示。KB 显示四舍五入（与下发预算口径一致，如 20KB）。
     func cappedOutput(_ output: String, budget: Int, continueHint: String) -> (text: String, truncated: Bool) {
         if output.utf8.count <= budget {
             return (output, false)
@@ -60,7 +65,73 @@ final class FileSystemToolProvider: @unchecked Sendable {
         if let range = text.range(of: "\n", options: .backwards) {
             text = String(text[..<range.lowerBound])
         }
-        return (text + "\n(Output capped at \(budget / 1024) KB. \(continueHint))", true)
+        return (text + "\n(Output capped at \((budget + 1023) / 1024) KB. \(continueHint))", true)
+    }
+
+    /// 流式读取进程输出：按行回调，onLine 返回 false 即 terminate（收集器收满时提前停，
+    /// 不再靠预算硬掐——预算改为纯安全网）。超预算 terminate 并返回 capped=true。
+    /// 行缓冲处理 chunk 边界断行；数据只累积到预算即截断，避免大输出死锁。
+    func runCapturedProcessLines(
+        _ proc: Process,
+        budget: Int,
+        onLine: @escaping (String) -> Bool
+    ) async -> Bool {
+        await withCheckedContinuation { continuation in
+            Task.detached(priority: .userInitiated) {
+                let pipe = Pipe()
+                proc.standardOutput = pipe
+                proc.standardError = Pipe()
+                let fh = pipe.fileHandleForReading
+
+                do {
+                    try proc.run()
+                } catch {
+                    try? fh.close()
+                    continuation.resume(returning: false)
+                    return
+                }
+
+                var data = Data()
+                var lineBuffer = ""
+                var capped = false
+                while true {
+                    let chunk = fh.readData(ofLength: 8192)
+                    if chunk.isEmpty { break }
+                    data.append(chunk)
+                    // 先处理行（收集器可能在收满时提前停）——让 match 上限优先于预算掐断，
+                    // 保证翻页语义稳定（~100 条/页），预算只作安全网
+                    lineBuffer += String(data: chunk, encoding: .utf8) ?? ""
+                    while let newline = lineBuffer.firstIndex(of: "\n") {
+                        let line = String(lineBuffer[..<newline])
+                        lineBuffer.removeSubrange(...newline)
+                        if !onLine(line) {
+                            proc.terminate()
+                            // 排空剩余避免死锁，然后退出
+                            while true {
+                                let rest = fh.readData(ofLength: 8192)
+                                if rest.isEmpty { break }
+                            }
+                            continuation.resume(returning: capped)
+                            try? fh.close()
+                            return
+                        }
+                    }
+                    if data.count > budget {
+                        capped = true
+                        proc.terminate()
+                        // 排空剩余避免死锁，然后退出
+                        while true {
+                            let rest = fh.readData(ofLength: 8192)
+                            if rest.isEmpty { break }
+                        }
+                        break
+                    }
+                }
+                proc.waitUntilExit()
+                try? fh.close()
+                continuation.resume(returning: capped)
+            }
+        }
     }
 }
 
@@ -102,7 +173,9 @@ extension FileSystemToolProvider: LocalToolProvider {
                 文件内容正则搜索工具。
                 - 搜索文件内容，支持完整正则语法（如 "log.*Error"、"func\\s+\\w+"）
                 - 通过 include 参数过滤文件类型（如 "*.go"、"*.{ts,tsx}"）
-                - 返回文件路径和行号，附带匹配行内容，最多 100 条
+                - 返回文件路径和行号，附带匹配行内容，每页最多 100 条
+                - 结果末尾提示 "Use skip=N to continue" 时，用 skip 参数翻下一页（从第 N 条开始）
+                - 敏感文件（.env、.git 内部等）的匹配会自动省略，省略数会标注
                 - 当你需要在文件中定位特定内容时使用本工具——先用 grep 找到位置，再用 read 读上下文
                 - 对于大文件或长行的文件，用 grep 定位比直接 read 更高效
                 首次访问某个目录时会请求用户授权，授权后一小时内无需重复确认。
@@ -121,6 +194,10 @@ extension FileSystemToolProvider: LocalToolProvider {
                         "include": [
                             "type": "string",
                             "description": "文件类型过滤，如 *.go 或 *.{ts,tsx}。可选。",
+                        ],
+                        "skip": [
+                            "type": "integer",
+                            "description": "从第 N 条匹配开始返回（翻页用，默认 0）",
                         ],
                     ],
                     "required": ["pattern", "path"],

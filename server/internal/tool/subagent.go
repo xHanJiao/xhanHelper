@@ -17,11 +17,11 @@ type ClientToolInfo struct {
 
 // SubAgentRunOptions — task 工具向 runner 传递的参数
 type SubAgentRunOptions struct {
-	SubAgentType string                  // 子 agent 类型："explore"
+	SubAgentType string                  // 子 agent 类型："web_explore" / "file_explore"
 	Description  string                  // 3-5 词任务描述
 	Prompt       string                  // 任务全文
 	ParentConvID string                  // 主会话 ID
-	ClientTools  []ClientToolInfo        // 透传客户端工具定义（explore 要用浏览器）
+	ClientTools  []ClientToolInfo        // 透传客户端工具定义（子任务依赖 macOS 客户端）
 	MainEvents   chan<- *llm.StreamEvent // 主 SSE events 通道（子循环需转发 client_tool_call 给客户端）
 }
 

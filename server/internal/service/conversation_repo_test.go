@@ -136,7 +136,7 @@ func TestListByUser_ExcludesSubConversations(t *testing.T) {
 		t.Fatalf("create main: %v", err)
 	}
 	// 子会话（subAgent）：parent_id 指向主会话，Extra 带 SubAgentType
-	extraJSON, _ := json.Marshal(&model.ConversationExtra{SubAgentType: "explore"})
+	extraJSON, _ := json.Marshal(&model.ConversationExtra{SubAgentType: "web_explore"})
 	if err := repo.Create(ctx, &model.Conversation{ID: "conv-sub", UserID: "u1", ParentID: &parent, Extra: string(extraJSON)}); err != nil {
 		t.Fatalf("create sub: %v", err)
 	}

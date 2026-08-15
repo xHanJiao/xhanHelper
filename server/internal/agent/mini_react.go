@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"slices"
+	"sort"
 	"time"
+	"unicode/utf8"
 
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -48,11 +51,16 @@ type MiniReAct struct {
 // SubAgentExt — MiniReAct 的 subAgent 场景扩展配置（含客户端工具、白名单、持久化回调）。
 // 零值 = 不启用，profile_worker 等既有调用方零变化。
 type SubAgentExt struct {
-	ClientTools       []ClientTool      // 客户端工具定义（browser 等）
+	ClientTools       []ClientTool      // 客户端工具定义（browser/fs 等）
 	ClientBridge      *ClientToolBridge // 客户端工具结果回传桥
 	ClientToolTimeout time.Duration     // 客户端工具执行超时，0 = 60s
-	AllowedTools      map[string]bool   // 运行时白名单 guard，nil=不限
-	MsgSink           MsgSink           // 可选持久化回调，nil=纯内存
+	// AllowedTools 运行时白名单 guard，nil map = 不限（既有调用方零变化）。
+	// key = server_name（含服务端工具名与客户端 server_name），value = 允许的函数名：
+	//   - value 为 nil：该 server 全部函数放行（服务端工具/浏览器整组放行）
+	//   - value 非 nil：仅放行列出的函数（如 fs 只留 glob/grep/read，剥写工具）
+	//   - key 不存在：拒绝（map 非 nil 时）
+	AllowedTools map[string][]string
+	MsgSink      MsgSink // 可选持久化回调，nil=纯内存
 }
 
 // MsgSink — MiniReAct 的可选持久化回调。nil = 纯内存运行（profile_worker 现状）。
@@ -321,10 +329,17 @@ func (m *MiniReAct) executeToolCalls(ctx context.Context, msgs []llm.Message, na
 		}
 
 		var result *tool.Result
-		if m.subAgent.AllowedTools != nil && !m.subAgent.AllowedTools[tc.Tool] {
-			// 白名单 guard：LLM 幻觉出未授权工具（原生 FC 下本不应发生，防御性拦截）
-			log.Printf("mini_react[%s] whitelist guard: %s not allowed", m.caller, tc.Tool)
-			result = &tool.Result{Success: false, Error: fmt.Sprintf("子任务无权调用工具 '%s'（不在白名单中）", tc.Tool)}
+		if m.subAgent.AllowedTools != nil {
+			// 白名单 guard：LLM 幻觉出未授权工具/函数（原生 FC 下本不应发生，防御性拦截）。
+			// key 不存在 → 拒绝；value nil → 该 server 全部函数放行；value 非 nil → 函数级过滤
+			funcs, restricted := m.subAgent.AllowedTools[tc.Tool]
+			if !restricted || (funcs != nil && !slices.Contains(funcs, tc.Function)) {
+				log.Printf("mini_react[%s] whitelist guard: %s.%s not allowed", m.caller, tc.Tool, tc.Function)
+				result = &tool.Result{Success: false, Error: fmt.Sprintf("子任务无权调用工具 '%s__%s'（不在白名单中）", tc.Tool, tc.Function)}
+			}
+		}
+		if result != nil {
+			// 白名单 guard 已拒绝，跳过执行
 		} else if m.clientIdx[tc.Tool] {
 			result, _ = m.execClientTool(ctx, tc)
 		} else {
@@ -352,7 +367,8 @@ func (m *MiniReAct) executeToolCalls(ctx context.Context, msgs []llm.Message, na
 			resJSON = []byte(fmt.Sprintf(`{"success":false,"error":"marshal failed: %s"}`, result.Error))
 		}
 		if m.maxToolResult > 0 && len(resJSON) > m.maxToolResult {
-			resJSON = resJSON[:m.maxToolResult]
+			// 保结构截断：不裸切 JSON（断结构/劈 UTF-8/丢尾），见 truncateToolResultJSON
+			resJSON = truncateToolResultJSON(resJSON, m.maxToolResult)
 		}
 		if m.subAgent.MsgSink != nil {
 			m.subAgent.MsgSink.SaveToolMsg(nativeTCs[i].ID, string(resJSON))
@@ -362,6 +378,106 @@ func (m *MiniReAct) executeToolCalls(ctx context.Context, msgs []llm.Message, na
 		msgs = append(msgs, llm.Message{Role: "tool", Content: string(resJSON), ToolCallID: nativeTCs[i].ID})
 	}
 	return msgs
+}
+
+// truncateToolResultJSON 对 tool.Result 的 JSON 做保结构截断（替代裸字节切片）。
+// 裸切的四个病：① JSON 结构断裂；② 切在多字节 UTF-8 中间变乱码；③ 只留头丢尾；
+// ④ fs_read 一页 20KB 只注入 2KB。本函数：
+//  1. 反序列化到通用结构，收集树中全部字符串节点；
+//  2. 从最长的字符串开始按字符做"头 70% + 尾 20% + 标记"截断（保 UTF-8），直到重序列化进预算；
+//  3. LLM 永远收到合法 JSON，且有头有尾；
+//  4. 反序列化失败/无字符串节点/重序列化仍超限 → 回退字节切片（保底，不 panic）。
+func truncateToolResultJSON(data []byte, maxLen int) []byte {
+	if maxLen <= 0 || len(data) <= maxLen {
+		return data
+	}
+	var v interface{}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return data[:maxLen]
+	}
+	var refs []strRef
+	collectStrRefs(v, &refs)
+	if len(refs) == 0 {
+		return data[:maxLen]
+	}
+
+	// 估算 JSON 骨架开销（字段名/引号/花括号/逗号），剩余预算分给字符串字段。
+	// 预留 64 字节给截断标记（…[已截断 N 字符]…），保证重序列化不超过 maxLen。
+	overhead := len(data)
+	for _, r := range refs {
+		overhead -= len(r.value())
+	}
+	budget := maxLen - overhead - 64
+	if budget < 128 {
+		budget = 128
+	}
+
+	// 从最长字符串开始截断；截完一个就重试序列化，仍超限则对该 ref 预算减半继续截。
+	// 预算按 rune 计（truncateStringKeepHeadTail 按字符切），避免中文多字节导致的过度截断；
+	// 每 ref 用独立预算副本，不互相影响。
+	sort.Slice(refs, func(i, j int) bool { return len(refs[i].value()) > len(refs[j].value()) })
+	for _, r := range refs {
+		refBudget := budget
+		for {
+			if utf8.RuneCountInString(r.value()) <= refBudget {
+				break
+			}
+			r.set(truncateStringKeepHeadTail(r.value(), refBudget))
+			if out, err := json.Marshal(v); err == nil && len(out) <= maxLen {
+				return out
+			}
+			refBudget /= 2
+			if refBudget < 32 {
+				break
+			}
+		}
+	}
+	return data[:maxLen]
+}
+
+// strRef — 一棵 JSON 树中某个字符串字段的引用（便于原地改写）。
+type strRef struct {
+	owner map[string]interface{}
+	key   string
+}
+
+func (r strRef) value() string { return r.owner[r.key].(string) }
+func (r strRef) set(s string)  { r.owner[r.key] = s }
+
+// collectStrRefs 递归收集 JSON 树中全部非空字符串字段引用。
+func collectStrRefs(v interface{}, refs *[]strRef) {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		for k, val := range t {
+			if s, ok := val.(string); ok {
+				if s != "" {
+					*refs = append(*refs, strRef{owner: t, key: k})
+				}
+			} else {
+				collectStrRefs(val, refs)
+			}
+		}
+	case []interface{}:
+		for _, item := range t {
+			collectStrRefs(item, refs)
+		}
+	}
+}
+
+// truncateStringKeepHeadTail 按字符截断字符串：留头 70% + 尾 20%，中间标注截断量。
+// 与 truncateToolResult（字节切片）不同：按 rune 切，不劈多字节字符。
+func truncateStringKeepHeadTail(s string, maxLen int) string {
+	if maxLen <= 0 || utf8.RuneCountInString(s) <= maxLen {
+		return s
+	}
+	rs := []rune(s)
+	head := maxLen * 7 / 10
+	tail := maxLen * 2 / 10
+	if head+tail > maxLen {
+		tail = maxLen - head
+	}
+	truncated := len(rs) - head - tail
+	return string(rs[:head]) + fmt.Sprintf("\n…[已截断 %d 字符]…\n", truncated) + string(rs[len(rs)-tail:])
 }
 
 // clientToolBudgetFor 计算客户端工具的执行预算（clientToolCaller 的等待超时）。

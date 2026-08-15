@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,12 +20,11 @@ import (
 	"xhan-helper/internal/tool"
 )
 
-// explorePrompt — explore 子 agent 角色 prompt。
-// 联网调研（webfetch/browser）只读专家；一次性完成调研后按固定结构输出结论。
-const explorePrompt = `你是联网调研专家，擅长通过网页抓取与本地检索收集信息并提炼结论。
+// webExplorePrompt — web_explore 子 agent 角色 prompt。
+// Mac 浏览器（browser）只读调研专家；一次性完成调研后按固定结构输出结论。
+const webExplorePrompt = `你是联网调研专家，擅长通过浏览器访问网页收集信息并提炼结论。
 
 能力：
-- 用 webfetch 抓取具体 URL 的正文（注意：结果全部进入上下文，token 消耗大——单页可达 5 万字符。只抓最有价值的一两个页面，优先汇总页/官方文档/百科，禁止逐页深挖）
 - 用 browser 工具访问需要 JS 渲染的动态页面（需 Mac 客户端在线）
 - 用 search_notes_v2 检索用户笔记（用户主动整理的知识库，可用于补充调研）
 - 仅做只读操作，禁止写入任何数据
@@ -66,50 +67,142 @@ const explorePrompt = `你是联网调研专家，擅长通过网页抓取与本
 <open_questions>未解决的问题（没有则填"无"）</open_questions>
 </research_result>`
 
-// exploreWhitelist — explore 子 agent 可用工具白名单。
-// 含服务端工具名与客户端工具 server_name（browser）；与定义过滤（GetLLMToolsFiltered）
-// 和运行时 guard（MiniReAct AllowedTools）双层拦截一致。
-//
-// 数据边界：仅保留笔记检索（search_notes_v2——用户主动整理的知识库）。
-// 记忆/历史对话/摘要（unified_search、search_memories_v2、message_search）对子任务
-// 不可见——子任务不应自动读取用户的私密对话数据。
-var exploreWhitelist = []string{
-	"webfetch",
-	"browser",
-	"ui", // 用户介入（ask_user），仅客户端在线时注入 defs（见 appendAskUserTool）
-	"search_notes_v2",
-	"datetime",
-	"calculator",
+// fileExplorePrompt — file_explore 子 agent 角色 prompt。
+// 本地文件检索（fs__glob/grep/read）只读专家；一次性完成检索后按固定结构输出结论。
+const fileExplorePrompt = `你是本地文件检索专家，擅长在用户的 Mac 文件系统上快速定位文件、搜索内容并提炼结论。
+你的输出将直接交给主 agent 汇总回答用户，不直接面向用户。
+
+能力（只读）：
+- fs__glob：按文件名模式找文件（pattern 支持 "**/*.go" 等，path 为绝对路径起步目录）
+- fs__grep：正则搜索文件内容，返回文件+行号+匹配行
+- fs__read：读文件（每行带行号前缀）或列目录；offset/limit 分页读大文件
+- datetime / calculator：辅助
+
+工作准则：
+- 先规划：明确找什么、在哪找（用户主目录、项目目录等）
+- 定位顺序：glob 找文件 → grep 定位行 → read 读上下文。不要上来就 read 大文件
+- 多文件独立读取要并行调用（一次回复多个工具调用），不要串行等待
+- 避免小块切割读取（30 行一读）；需要更多上下文就一次读更大范围
+- 结果被截断（有 "Output capped"/"Results truncated"/"Use skip=N to continue" 提示）→
+  换更精确 pattern/path，或 read 用 offset 续读、grep 用 skip 参数翻下一页（不要重复同一 pattern 不加 skip）
+- 搜索路径无授权时会触发用户确认；被拒绝后换方案，不要重复请求同一路径
+- 遇到二进制文件/超大文件，用 grep 定位而不是 read
+
+安全与边界：
+- 严禁写入/修改/删除任何文件（没有写工具）
+- 敏感文件（.env、密钥、证书等）会被客户端拦截，属预期，不要尝试绕过
+- 数据边界：用户的笔记、记忆、历史对话对子任务不可见（没有对应工具）
+
+最终输出必须严格使用以下结构（不要在结构外输出任何文字）：
+<file_explore_result>
+<summary>3-5 句话的总体结论</summary>
+<findings>发现清单，每条：文件绝对路径 + 行号（file:line）+ 内容要点，用分号分隔</findings>
+<files_read>已读文件清单（绝对路径），没读填"无"</files_read>
+<open_questions>未解决的问题（没有则填"无"）</open_questions>
+</file_explore_result>`
+
+// subagentSpec — 子 agent 类型定义表（prompt / 白名单 / 结果注入预算 / 客户端要求）。
+// RunSubAgent 按 subagent_type 查表分派：prompt、服务端白名单、客户端函数级白名单、
+// MiniReAct maxToolResult、客户端硬要求。新增类型 = 表里加一行，骨架零改动。
+type subagentSpec struct {
+	prompt          string              // 角色 prompt（buildSubAgentSystemPrompt 用）
+	serverWhitelist []string            // 服务端工具名（registry.GetLLMToolsFiltered）
+	clientWhitelist map[string][]string // 客户端 server_name → 允许函数名；nil=该组全部函数
+	maxToolResult   int                 // MiniReAct 工具结果注入上限字符数；0=默认 2000
+	requiresClient  bool                // 客户端硬要求：无 macOS 客户端在线直接报错，不降级
 }
 
-// whitelistMap 将白名单切片转为 map（MiniReAct AllowedTools 运行时 guard 用）。
-func whitelistMap(names []string) map[string]bool {
-	m := make(map[string]bool, len(names))
-	for _, n := range names {
-		m[n] = true
+// subagentSpecs — 子 agent 类型注册表。数据边界说明：
+//   - web_explore：浏览器（browser）+ 笔记检索（search_notes_v2——用户主动整理的知识库）。
+//     记忆/历史对话/摘要对子任务不可见。webfetch 已移除（单页 5 万字符全量进上下文、
+//     token 消耗大且被 2000 字符截断破坏——用户决策）。
+//   - file_explore：仅本地文件只读工具（fs 的 glob/grep/read，写工具函数级剥除）。
+//     browser 不注入；ui（ask_user 用户介入）保留；笔记/记忆均不可见（子任务不应自动读取用户私密数据）。
+var subagentSpecs = map[string]subagentSpec{
+	"web_explore": {
+		prompt:          webExplorePrompt,
+		serverWhitelist: []string{"search_notes_v2", "datetime", "calculator"},
+		clientWhitelist: map[string][]string{"browser": nil, "ui": nil},
+		maxToolResult:   2000,
+		requiresClient:  true,
+	},
+	"file_explore": {
+		prompt:          fileExplorePrompt,
+		serverWhitelist: []string{"datetime", "calculator"},
+		clientWhitelist: map[string][]string{"fs": {"glob", "grep", "read"}, "ui": nil},
+		// 对齐客户端注入预算（clientToolInjectBudgetBytes）：fs_read 单页 ≈19KB，
+		// 2000 默认会把读文件能力砍到 1/10
+		maxToolResult:  clientToolInjectBudgetBytes,
+		requiresClient: true,
+	},
+}
+
+// buildAllowedTools 将 spec 的服务端+客户端白名单合并为 MiniReAct 运行时 guard 索引。
+// 服务端工具整组放行（nil funcs）；客户端按 spec.clientWhitelist 的函数粒度限制。
+func buildAllowedTools(spec subagentSpec) map[string][]string {
+	m := make(map[string][]string, len(spec.serverWhitelist)+len(spec.clientWhitelist))
+	for _, n := range spec.serverWhitelist {
+		m[n] = nil
+	}
+	for name, funcs := range spec.clientWhitelist {
+		m[name] = funcs
 	}
 	return m
 }
 
-// filterClientToolsByWhitelist 按 ToolDefinition.Name（= server_name）过滤客户端工具定义。
-func filterClientToolsByWhitelist(defs []llm.ToolDefinition, whitelist []string) []llm.ToolDefinition {
-	wl := whitelistMap(whitelist)
+// filterClientToolsByFuncWhitelist 按 server_name → 允许函数名 过滤客户端工具定义。
+// funcs 为 nil 表示该 server 全部函数放行；否则逐函数过滤（剥掉 fs__write/fs__edit 等）。
+// 与运行时 guard（MiniReAct AllowedTools 函数级）双层拦截一致。
+func filterClientToolsByFuncWhitelist(defs []llm.ToolDefinition, wl map[string][]string) []llm.ToolDefinition {
+	if len(defs) == 0 || len(wl) == 0 {
+		return nil
+	}
 	filtered := make([]llm.ToolDefinition, 0, len(defs))
 	for _, d := range defs {
-		if wl[d.Name] {
-			filtered = append(filtered, d)
+		funcs, ok := wl[d.Name]
+		if !ok {
+			continue
 		}
+		if funcs == nil {
+			filtered = append(filtered, d)
+			continue
+		}
+		kept := make([]llm.FuncDef, 0, len(d.Functions))
+		for _, f := range d.Functions {
+			if slices.Contains(funcs, f.Name) {
+				kept = append(kept, f)
+			}
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		d.Functions = kept
+		filtered = append(filtered, d)
 	}
 	return filtered
 }
 
-// buildSubAgentSystemPrompt 构建子 agent 的简化 system prompt（时间 + 角色）。
+// clientToolGroupNames 提取客户端白名单的 server 组名（错误信息用）。
+// ui（ask_user 用户介入）是可选注入的，不列为必需工具组。
+func clientToolGroupNames(wl map[string][]string) string {
+	names := make([]string, 0, len(wl))
+	for n := range wl {
+		if n == "ui" {
+			continue
+		}
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+// buildSubAgentSystemPrompt 构建子 agent 的简化 system prompt（时间 + 类型角色）。
 // 工具定义不进 prompt：原生 FC 下经 MiniReActConfig.Tools 传入。
-func buildSubAgentSystemPrompt() string {
+func buildSubAgentSystemPrompt(spec subagentSpec) string {
 	var buf strings.Builder
 	buf.WriteString("你是 xhanHelper 的子 agent。\n")
 	buf.WriteString(fmt.Sprintf("当前时间: %s\n\n", time.Now().Format("2006-01-02 15:04:05")))
-	buf.WriteString(explorePrompt)
+	buf.WriteString(spec.prompt)
 	buf.WriteString("\n\n")
 	return buf.String()
 }
@@ -176,6 +269,15 @@ func (s *subAgentMsgSink) SaveToolMsg(toolCallID, content string) {
 // RunSubAgent 实现 tool.SubAgentRunner：创建子会话 → MiniReAct 独立循环 →
 // 结果（含超时/失败的部分成果）返回给 task 工具。
 func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOptions) *tool.SubAgentRunResult {
+	// 步骤 0 — 类型查表分派（prompt/白名单/maxToolResult/客户端要求）
+	spec, ok := subagentSpecs[opts.SubAgentType]
+	if !ok {
+		return &tool.SubAgentRunResult{
+			Success: false,
+			Error:   fmt.Sprintf("未知子 agent 类型: %s（可用：web_explore、file_explore）", opts.SubAgentType),
+		}
+	}
+
 	// 步骤 1 — 深度检查（写死 ≤1 层：主会话可派子会话，子会话不可再派）
 	depth := 0
 	currentID := opts.ParentConvID
@@ -201,7 +303,34 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 	}
 	userID := mainConv.UserID
 
-	// 步骤 3 — 创建子 Conversation（列表不可见：ListByUser 已过滤 parent_id IS NULL）
+	// 步骤 3 — 客户端硬要求（web_explore/file_explore 都依赖 macOS 客户端，不降级）：
+	//   - clientBridge 为 nil = 接线 bug（appinit 全局注入，prod 永不 nil）
+	//   - 请求未携带客户端工具 = 客户端离线/Web 前端，直接报错，不再退化为无工具空转
+	//   - 客户端在线但没提供所需工具组（如 file_explore 但客户端无 fs 工具）→ 同样报错
+	// 全部放在创建子会话之前，避免错误路径留下孤儿子会话。
+	agentClientTools := toClientTools(opts.ClientTools)
+	clientBridge := o.clientBridge
+	if clientBridge == nil {
+		return &tool.SubAgentRunResult{
+			Success: false,
+			Error:   "客户端工具桥未就绪（接线错误），子任务无法执行。请稍后重试。",
+		}
+	}
+	if spec.requiresClient && len(agentClientTools) == 0 {
+		return &tool.SubAgentRunResult{
+			Success: false,
+			Error:   fmt.Sprintf("子任务 %s 需要 macOS 客户端在线（当前请求未携带客户端工具）。请先打开 Mac 客户端再发起该任务。", opts.SubAgentType),
+		}
+	}
+	clientDefs := filterClientToolsByFuncWhitelist(buildClientToolDefs(agentClientTools, o.registry), spec.clientWhitelist)
+	if spec.clientWhitelist != nil && len(clientDefs) == 0 {
+		return &tool.SubAgentRunResult{
+			Success: false,
+			Error:   fmt.Sprintf("客户端未提供子任务 %s 所需的本地工具（%s），无法执行。", opts.SubAgentType, clientToolGroupNames(spec.clientWhitelist)),
+		}
+	}
+
+	// 步骤 4 — 创建子 Conversation（列表不可见：ListByUser 已过滤 parent_id IS NULL）
 	extraJSON, _ := json.Marshal(&model.ConversationExtra{SubAgentType: opts.SubAgentType})
 	subConv := &model.Conversation{
 		ID:       uuid.New().String(),
@@ -215,16 +344,9 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 		return &tool.SubAgentRunResult{Success: false, Error: fmt.Sprintf("创建子会话失败: %v", err)}
 	}
 
-	// 步骤 4 — 转换 ClientTools（无客户端桥时不下发客户端工具，explore 退化为仅 webfetch）
-	agentClientTools := toClientTools(opts.ClientTools)
-	clientBridge := o.clientBridge
-	if clientBridge == nil {
-		agentClientTools = nil
-	}
-
-	// 步骤 5 — 构建工具定义（服务端 + 客户端分别按白名单过滤）
-	tools := o.registry.GetLLMToolsFiltered(exploreWhitelist)
-	tools = append(tools, filterClientToolsByWhitelist(buildClientToolDefs(agentClientTools, o.registry), exploreWhitelist)...)
+	// 步骤 5 — 构建工具定义（服务端 + 客户端分别按白名单过滤，客户端按函数粒度）
+	tools := o.registry.GetLLMToolsFiltered(spec.serverWhitelist)
+	tools = append(tools, clientDefs...)
 	// ask_user 注入：仅当客户端在线（ClientTools 非空）时——无浏览器场景 ask_user 无意义。
 	// 注意：def 必须同时进入 tools（LLM 可见）与 ClientTools（MiniReAct clientIdx 分发索引），
 	// 缺一不可——只加 def 会导致 LLM 能调用但分发路由不到客户端（"未找到工具 'ui'"）。
@@ -239,16 +361,17 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 		Client:        o.flashClient, // 子 agent 固定 Flash
 		Tools:         tools,
 		ToolRegistry:  o.registry,
-		SystemPrompt:  buildSubAgentSystemPrompt(),
+		SystemPrompt:  buildSubAgentSystemPrompt(spec),
 		UserID:        userID,
 		ConvID:        subConv.ID,
 		MaxIterations: maxIter, // 主循环 maxIter-1 轮 + 1 轮强制收敛（MiniReAct 内置）
+		MaxToolResult: spec.maxToolResult,
 		Caller:        "subagent:" + opts.SubAgentType,
 		SubAgent: SubAgentExt{
 			ClientTools:       agentClientTools,
 			ClientBridge:      clientBridge,
 			ClientToolTimeout: o.clientToolTimeout,
-			AllowedTools:      whitelistMap(exploreWhitelist),
+			AllowedTools:      buildAllowedTools(spec),
 			MsgSink:           &subAgentMsgSink{msgRepo: o.subMsgRepo, convID: subConv.ID, userID: userID},
 		},
 		OnEvent: o.makeSubAgentForwarder(opts.MainEvents, subConv.ID, opts.Description),

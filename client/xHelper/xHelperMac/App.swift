@@ -494,7 +494,9 @@ struct MacSettingsView: View {
     @AppStorage("xhan_l3_alert_sound") private var l3AlertSound = true
     @State private var showClearCacheAlert = false
     @State private var showAddDirSheet = false
+    @State private var showAddExemptSheet = false
     @State private var authorizedDirs: [String] = DirectoryAuthorizationManager.shared.permanentDirs
+    @State private var exemptPaths: [String] = SensitiveFileBlocker.exemptPaths
 
     private var apiClient: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
@@ -558,6 +560,49 @@ struct MacSettingsView: View {
                 AddDirView { dir in
                     DirectoryAuthorizationManager.shared.authorize(dir, permanent: true)
                     authorizedDirs = DirectoryAuthorizationManager.shared.permanentDirs
+                }
+            }
+
+            Section("敏感文件豁免") {
+                ForEach(exemptPaths, id: \.self) { path in
+                    HStack {
+                        Text(path)
+                            .font(.system(.body, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button {
+                            SensitiveFileBlocker.removeExemption(path)
+                            exemptPaths = SensitiveFileBlocker.exemptPaths
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                if exemptPaths.isEmpty {
+                    Text("暂无豁免路径")
+                        .foregroundStyle(.secondary)
+                        .font(.subheadline)
+                }
+                Button {
+                    showAddExemptSheet = true
+                } label: {
+                    Label("添加豁免路径", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                .padding(.top, 4)
+            }
+            .sheet(isPresented: $showAddExemptSheet) {
+                AddDirView(
+                    title: "添加敏感文件豁免",
+                    message: "添加后，该路径将跳过敏感文件拦截（如 .env、.git 内部等）。\n豁免只解除敏感锁，仍受「文件访问授权」约束。",
+                    allowFiles: true,
+                    chooseMessage: "选择要豁免的文件或目录"
+                ) { path in
+                    SensitiveFileBlocker.addExemption(path)
+                    exemptPaths = SensitiveFileBlocker.exemptPaths
                 }
             }
 
@@ -723,6 +768,10 @@ struct LoginMacView: View {
 // MARK: - 添加授权目录
 
 struct AddDirView: View {
+    var title = "添加授权目录"
+    var message = "xhanHelper 将永久获得此目录及其子目录的只读访问权限。\n敏感文件（如 .env、SSH 密钥等）始终会被拦截。"
+    var allowFiles = false
+    var chooseMessage = "选择要授权的目录"
     let onSelect: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var pathText = ""
@@ -730,10 +779,10 @@ struct AddDirView: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            Text("添加授权目录")
+            Text(title)
                 .font(.headline)
 
-            Text("xhanHelper 将永久获得此目录及其子目录的只读访问权限。\n敏感文件（如 .env、SSH 密钥等）始终会被拦截。")
+            Text(message)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -777,6 +826,8 @@ struct AddDirView: View {
         .background(
             OpenDirectoryPanel(
                 isPresented: $showOpenPanel,
+                allowFiles: allowFiles,
+                chooseMessage: chooseMessage,
                 onSelect: { url in
                     pathText = url.path
                 }
@@ -787,6 +838,8 @@ struct AddDirView: View {
 
 struct OpenDirectoryPanel: NSViewRepresentable {
     @Binding var isPresented: Bool
+    var allowFiles = false
+    var chooseMessage = "选择要授权的目录"
     let onSelect: (URL) -> Void
 
     func makeNSView(context: Context) -> NSView {
@@ -795,10 +848,10 @@ struct OpenDirectoryPanel: NSViewRepresentable {
             guard isPresented else { return }
             let panel = NSOpenPanel()
             panel.canChooseDirectories = true
-            panel.canChooseFiles = false
+            panel.canChooseFiles = allowFiles
             panel.allowsMultipleSelection = false
             panel.prompt = "选择"
-            panel.message = "选择要授权的目录"
+            panel.message = chooseMessage
             panel.begin { response in
                 if response == .OK, let url = panel.url {
                     onSelect(url)

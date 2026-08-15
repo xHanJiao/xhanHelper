@@ -78,22 +78,19 @@ func TestMiniReAct_AskUserBudget(t *testing.T) {
 }
 
 func TestExplorePrompt_AskUserRules(t *testing.T) {
-	s := explorePrompt
+	s := subagentSpecs["web_explore"].prompt
 	for _, want := range []string{"ask_user", "验证码", "哪个页面", "不得重复请求"} {
 		if !strings.Contains(s, want) {
-			t.Errorf("explorePrompt 应含规则 %q", want)
+			t.Errorf("web_explore prompt 应含规则 %q", want)
 		}
 	}
 }
 
 func TestExploreWhitelist_ContainsUI(t *testing.T) {
-	found := false
-	for _, name := range exploreWhitelist {
-		if name == "ui" {
-			found = true
-		}
+	if _, ok := subagentSpecs["web_explore"].clientWhitelist["ui"]; !ok {
+		t.Error("web_explore 客户端白名单应含 ui（ask_user 运行时 guard 放行）")
 	}
-	if !found {
-		t.Error("exploreWhitelist 应含 ui（ask_user 运行时 guard 放行）")
+	if _, ok := subagentSpecs["file_explore"].clientWhitelist["ui"]; !ok {
+		t.Error("file_explore 客户端白名单应含 ui（ask_user 运行时 guard 放行）")
 	}
 }

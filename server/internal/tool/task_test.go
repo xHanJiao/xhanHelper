@@ -32,7 +32,7 @@ func TestTaskTool_WrapCompleted(t *testing.T) {
 	r := &mockSubAgentRunner{result: &SubAgentRunResult{Success: true, State: "completed", Text: "调研结论", ConvID: "sub-1"}}
 	tool := newTaskTestTool(r)
 	res := runTask(t, tool, &ExecuteContext{ConvID: "main-1"}, map[string]interface{}{
-		"description": "调研LLM", "subagent_type": "explore", "prompt": "去调研",
+		"description": "调研LLM", "subagent_type": "web_explore", "prompt": "去调研",
 	})
 
 	if !res.Success {
@@ -52,7 +52,7 @@ func TestTaskTool_WrapCompleted(t *testing.T) {
 	if r.gotOpts == nil {
 		t.Fatal("runner 应收到 opts")
 	}
-	if r.gotOpts.ParentConvID != "main-1" || r.gotOpts.Prompt != "去调研" || r.gotOpts.SubAgentType != "explore" {
+	if r.gotOpts.ParentConvID != "main-1" || r.gotOpts.Prompt != "去调研" || r.gotOpts.SubAgentType != "web_explore" {
 		t.Errorf("opts 透传错误: %+v", r.gotOpts)
 	}
 }
@@ -64,7 +64,7 @@ func TestTaskTool_PartialResultOnTimeout(t *testing.T) {
 	}}
 	tool := newTaskTestTool(r)
 	res := runTask(t, tool, &ExecuteContext{}, map[string]interface{}{
-		"description": "调研", "subagent_type": "explore", "prompt": "p",
+		"description": "调研", "subagent_type": "web_explore", "prompt": "p",
 	})
 
 	if !res.Success {
@@ -87,7 +87,7 @@ func TestTaskTool_HardErrorWhenNoText(t *testing.T) {
 	r := &mockSubAgentRunner{result: &SubAgentRunResult{Success: false, State: "failed", Error: "LLM API 错误"}}
 	tool := newTaskTestTool(r)
 	res := runTask(t, tool, &ExecuteContext{}, map[string]interface{}{
-		"description": "调研", "subagent_type": "explore", "prompt": "p",
+		"description": "调研", "subagent_type": "web_explore", "prompt": "p",
 	})
 	if res.Success {
 		t.Fatal("无产出失败应返回硬错误")
@@ -101,7 +101,7 @@ func TestTaskTool_StateDefaultCompleted(t *testing.T) {
 	r := &mockSubAgentRunner{result: &SubAgentRunResult{Success: true, Text: "x", ConvID: "sub-3"}}
 	tool := newTaskTestTool(r)
 	res := runTask(t, tool, &ExecuteContext{}, map[string]interface{}{
-		"description": "d", "subagent_type": "explore", "prompt": "p",
+		"description": "d", "subagent_type": "web_explore", "prompt": "p",
 	})
 	if !res.Success {
 		t.Fatal("state 为空且 Success 应视为 completed")
@@ -118,7 +118,7 @@ func TestTaskTool_ClientToolsPropagated(t *testing.T) {
 	tool := newTaskTestTool(r)
 	cts := []ClientToolInfo{{ServerName: "browser", Name: "navigate", IsReadOnly: true}}
 	runTask(t, tool, &ExecuteContext{ClientTools: cts}, map[string]interface{}{
-		"description": "d", "subagent_type": "explore", "prompt": "p",
+		"description": "d", "subagent_type": "web_explore", "prompt": "p",
 	})
 	if len(r.gotOpts.ClientTools) != 1 || r.gotOpts.ClientTools[0].ServerName != "browser" {
 		t.Errorf("ClientTools 应透传: %+v", r.gotOpts.ClientTools)
@@ -128,7 +128,7 @@ func TestTaskTool_ClientToolsPropagated(t *testing.T) {
 func TestTaskTool_RunnerNil(t *testing.T) {
 	tool := NewTaskTool(nil)
 	res := runTask(t, tool, &ExecuteContext{}, map[string]interface{}{
-		"description": "d", "subagent_type": "explore", "prompt": "p",
+		"description": "d", "subagent_type": "web_explore", "prompt": "p",
 	})
 	if res.Success || !strings.Contains(res.Error, "未启用") {
 		t.Errorf("runner 未注入应报未启用: %+v", res)

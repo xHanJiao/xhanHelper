@@ -26,51 +26,70 @@ extension FileSystemToolProvider {
             return LocalToolResult(serverResult: nil, serverError: "路径不在已授权目录内（或 symlink 指向授权目录外）: \(resolvedPath)", clientAction: nil)
         }
 
-        let files = await runGlob(pattern: pattern, cwd: resolvedPath, budget: budgetCap(context.budgetBytes))
-        if files.isEmpty {
+        let budget = budgetCap(context.budgetBytes)
+        let collect = await runGlob(pattern: pattern, cwd: resolvedPath)
+        if collect.files.isEmpty && collect.omittedSensitive == 0 {
             let encoded = try? JSONSerialization.data(withJSONObject: ["files": [], "count": 0, "pattern": pattern])
             return LocalToolResult(serverResult: OutputSanitizer.sanitize(String(data: encoded ?? Data(), encoding: .utf8) ?? "").data(using: .utf8), serverError: nil, clientAction: nil)
         }
 
-        let output = files.joined(separator: "\n")
-        let truncated = files.count >= maxResults
-        var result = output
-        if truncated {
-            result += "\n\n(Results truncated: showing first \(maxResults). Consider using a more specific pattern.)"
+        var result = collect.files.joined(separator: "\n")
+        if collect.truncated {
+            result += "\n\n(Results truncated: showing first \(collect.files.count). Use a more specific pattern, or narrow the path.)"
+        } else if collect.budgetCapped {
+            result += "\n\n(Output budget reached at \(collect.files.count) entries. Narrow the glob pattern or path.)"
         }
-        let budget = budgetCap(context.budgetBytes)
+        if collect.omittedSensitive > 0 {
+            result += "\n(\(collect.omittedSensitive) 个敏感文件条目已省略。如需访问请在客户端设置中添加豁免。)"
+        }
         let capped = cappedOutput(result, budget: budget, continueHint: "考虑缩小 glob 范围")
-        result = capped.text
-        return LocalToolResult(serverResult: OutputSanitizer.sanitize(result).data(using: .utf8), serverError: nil, clientAction: nil)
+        return LocalToolResult(serverResult: OutputSanitizer.sanitize(capped.text).data(using: .utf8), serverError: nil, clientAction: nil)
     }
 
-    private func runGlob(pattern: String, cwd: String, budget: Int) async -> [String] {
+    private struct GlobCollect {
+        var files: [String] = []
+        var omittedSensitive = 0
+        var truncated = false   // 收满 maxResults
+        var budgetCapped = false // 预算安全网掐断（未收满）
+    }
+
+    private func runGlob(pattern: String, cwd: String) async -> GlobCollect {
         if let rgPath = findRgBinary() {
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: rgPath)
-            proc.arguments = ["--no-config", "--files", "--glob=\(pattern)", "--glob=!**/.git/**", "."]
+            // -j1 单线程：输出顺序确定（与 grep 同要求），预算为纯安全网
+            proc.arguments = ["--no-config", "--files", "-j1", "--glob=\(pattern)", "--glob=!**/.git/**", "."]
             proc.currentDirectoryURL = URL(fileURLWithPath: cwd)
 
-            let (data, _) = await runCapturedProcess(proc, budget: budget)
-            if !data.isEmpty {
-                guard let text = String(data: data, encoding: .utf8) else { return [] }
-                let lines = text.components(separatedBy: "\n")
-                    .map { $0.trimmingCharacters(in: .whitespaces) }
-                    .filter { !$0.isEmpty }
-                    .prefix(maxResults)
-                return lines.map { line in
-                    let cleaned = line
-                        .replacingOccurrences(of: #"^\.\/+"#, with: "", options: NSString.CompareOptions.regularExpression)
-                        .replacingOccurrences(of: "\\", with: "/")
-                    return "\(cwd)/\(cleaned)"
+            var collect = GlobCollect()
+            let capped = await runCapturedProcessLines(proc, budget: collectionSafetyBudget) { line in
+                let cleaned = line
+                    .trimmingCharacters(in: .whitespaces)
+                    .replacingOccurrences(of: #"^\.\/+"#, with: "", options: NSString.CompareOptions.regularExpression)
+                    .replacingOccurrences(of: "\\", with: "/")
+                guard !cleaned.isEmpty else { return true }
+                let absPath = "\(cwd)/\(cleaned)"
+                if SensitiveFileBlocker.check(absPath) != nil {
+                    collect.omittedSensitive += 1
+                    return true
                 }
+                if collect.files.count >= self.maxResults {
+                    collect.truncated = true
+                    return false
+                }
+                collect.files.append(absPath)
+                return true
             }
+            if capped && !collect.truncated {
+                collect.budgetCapped = true
+            }
+            return collect
         }
 
-        return await runFindGlob(pattern: pattern, cwd: cwd, budget: budget)
+        return await runFindGlob(pattern: pattern, cwd: cwd)
     }
 
-    private func runFindGlob(pattern: String, cwd: String, budget: Int) async -> [String] {
+    private func runFindGlob(pattern: String, cwd: String) async -> GlobCollect {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/find")
         proc.arguments = [
@@ -81,13 +100,25 @@ extension FileSystemToolProvider {
             "-maxdepth", "20",
         ]
 
-        let (data, _) = await runCapturedProcess(proc, budget: budget)
-        guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { return [] }
-        return text.components(separatedBy: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .prefix(maxResults)
-            .map { $0 }
+        var collect = GlobCollect()
+        let capped = await runCapturedProcessLines(proc, budget: collectionSafetyBudget) { line in
+            let absPath = line.trimmingCharacters(in: .whitespaces)
+            guard !absPath.isEmpty else { return true }
+            if SensitiveFileBlocker.check(absPath) != nil {
+                collect.omittedSensitive += 1
+                return true
+            }
+            if collect.files.count >= self.maxResults {
+                collect.truncated = true
+                return false
+            }
+            collect.files.append(absPath)
+            return true
+        }
+        if capped && !collect.truncated {
+            collect.budgetCapped = true
+        }
+        return collect
     }
 
     func findRgBinary() -> String? {

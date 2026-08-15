@@ -1,12 +1,14 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -76,7 +78,13 @@ func newSubAgentOrchestrator(flash llm.LLMClient, convRepo *service.Conversation
 		subConvRepo:           convRepo,
 		subAgentMaxIterations: 6,
 		subAgentTimeout:       5 * time.Second,
+		clientBridge:          NewClientToolBridge(), // 子 agent 硬要求客户端在线（prod 由 appinit 全局注入）
 	}
+}
+
+// testClientToolOpts 模拟客户端在线：请求携带浏览器工具（web_explore 依赖）。
+func testClientToolOpts() []tool.ClientToolInfo {
+	return []tool.ClientToolInfo{{ServerName: "browser", Name: "navigate", IsReadOnly: true}}
 }
 
 func TestDepthCheck_SubAgentRejectsNested(t *testing.T) {
@@ -95,7 +103,7 @@ func TestDepthCheck_SubAgentRejectsNested(t *testing.T) {
 
 	orch := newSubAgentOrchestrator(&syncMockLLM{}, convRepo, msgRepo)
 	res := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
-		SubAgentType: "explore", Description: "调研", Prompt: "p", ParentConvID: subID,
+		SubAgentType: "web_explore", Description: "调研", Prompt: "p", ParentConvID: subID, ClientTools: testClientToolOpts(),
 	})
 	if res.Success {
 		t.Fatal("子会话再派生子任务应被拒绝")
@@ -120,7 +128,7 @@ func TestRunSubAgent_Completes(t *testing.T) {
 	}}
 	orch := newSubAgentOrchestrator(llmClient, convRepo, msgRepo)
 	res := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
-		SubAgentType: "explore", Description: "调研LLM", Prompt: "去调研", ParentConvID: mainID,
+		SubAgentType: "web_explore", Description: "调研LLM", Prompt: "去调研", ParentConvID: mainID, ClientTools: testClientToolOpts(),
 	})
 
 	if !res.Success {
@@ -139,7 +147,7 @@ func TestRunSubAgent_Completes(t *testing.T) {
 		t.Fatalf("子会话应存在: %v", err)
 	}
 	extra, err := convRepo.GetExtra(ctx, res.ConvID)
-	if err != nil || extra == nil || extra.SubAgentType != "explore" {
+	if err != nil || extra == nil || extra.SubAgentType != "web_explore" {
 		t.Errorf("子会话 Extra.SubAgentType 应为 explore: %+v", extra)
 	}
 	if subConv.ParentID == nil || *subConv.ParentID != mainID {
@@ -169,7 +177,7 @@ func TestRunSubAgent_TimeoutSalvagesPartial(t *testing.T) {
 
 	start := time.Now()
 	res := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
-		SubAgentType: "explore", Description: "调研", Prompt: "p", ParentConvID: mainID,
+		SubAgentType: "web_explore", Description: "调研", Prompt: "p", ParentConvID: mainID, ClientTools: testClientToolOpts(),
 	})
 	if time.Since(start) > 2*time.Second {
 		t.Errorf("超时兜底过慢: %v", time.Since(start))
@@ -279,7 +287,7 @@ func TestMiniReAct_WhitelistGuard(t *testing.T) {
 		UserID:        "u1",
 		MaxIterations: 5,
 		Caller:        "test",
-		SubAgent:      SubAgentExt{AllowedTools: map[string]bool{"webfetch": true}}, // 不包含 unified_search
+		SubAgent:      SubAgentExt{AllowedTools: map[string][]string{}}, // 空 map = 全部拒绝，不含 unified_search
 	})
 	result, err := m.Run(context.Background(), "任务")
 	if err != nil {
@@ -378,20 +386,172 @@ func TestSummarizeToolCallLog(t *testing.T) {
 }
 
 func TestBuildSubAgentSystemPrompt(t *testing.T) {
-	s := buildSubAgentSystemPrompt()
-	if !strings.Contains(s, "联网调研专家") || !strings.Contains(s, "当前时间") {
-		t.Errorf("system prompt 应含角色与时间: %s", s)
+	web := buildSubAgentSystemPrompt(subagentSpecs["web_explore"])
+	if !strings.Contains(web, "联网调研专家") || !strings.Contains(web, "当前时间") {
+		t.Errorf("web_explore system prompt 应含角色与时间: %s", web)
+	}
+	file := buildSubAgentSystemPrompt(subagentSpecs["file_explore"])
+	if !strings.Contains(file, "本地文件检索专家") {
+		t.Errorf("file_explore system prompt 应含本地检索角色: %s", file)
 	}
 }
 
-func TestFilterClientToolsByWhitelist(t *testing.T) {
+func TestFilterClientToolsByFuncWhitelist(t *testing.T) {
 	defs := []llm.ToolDefinition{
-		{Name: "browser", Description: "b"},
+		{Name: "browser", Description: "b", Functions: []llm.FuncDef{{Name: "navigate"}, {Name: "close_tab"}}},
+		{Name: "fs", Description: "fs", Functions: []llm.FuncDef{{Name: "glob"}, {Name: "grep"}, {Name: "read"}, {Name: "write"}, {Name: "edit"}}},
 		{Name: "chart", Description: "c"},
 	}
-	filtered := filterClientToolsByWhitelist(defs, []string{"browser"})
-	if len(filtered) != 1 || filtered[0].Name != "browser" {
-		t.Errorf("白名单外客户端工具应过滤: %+v", filtered)
+
+	// fs 函数级过滤：只留 glob/grep/read，剥 write/edit
+	filtered := filterClientToolsByFuncWhitelist(defs, map[string][]string{"fs": {"glob", "grep", "read"}})
+	if len(filtered) != 1 || filtered[0].Name != "fs" {
+		t.Fatalf("应只保留 fs 组: %+v", filtered)
+	}
+	names := make([]string, 0, len(filtered[0].Functions))
+	for _, f := range filtered[0].Functions {
+		names = append(names, f.Name)
+	}
+	if strings.Join(names, ",") != "glob,grep,read" {
+		t.Errorf("fs 应只留 glob/grep/read: %v", names)
+	}
+
+	// nil funcs = 整组放行
+	filtered2 := filterClientToolsByFuncWhitelist(defs, map[string][]string{"browser": nil})
+	if len(filtered2) != 1 || len(filtered2[0].Functions) != 2 {
+		t.Errorf("browser 整组应放行: %+v", filtered2)
+	}
+
+	// 白名单外 server 过滤
+	filtered3 := filterClientToolsByFuncWhitelist(defs, map[string][]string{"chart": nil})
+	if len(filtered3) != 1 || filtered3[0].Name != "chart" {
+		t.Errorf("chart 应保留: %+v", filtered3)
+	}
+
+	// 空白名单 / 空 defs
+	if got := filterClientToolsByFuncWhitelist(defs, nil); got != nil {
+		t.Errorf("nil 白名单应返回 nil: %+v", got)
+	}
+	if got := filterClientToolsByFuncWhitelist(nil, map[string][]string{"fs": nil}); got != nil {
+		t.Errorf("nil defs 应返回 nil: %+v", got)
+	}
+}
+
+func TestSubAgentSpecs_DispatchTable(t *testing.T) {
+	if len(subagentSpecs) != 2 {
+		t.Fatalf("应有 2 种子 agent 类型: %+v", subagentSpecs)
+	}
+	web := subagentSpecs["web_explore"]
+	if !web.requiresClient || web.maxToolResult <= 0 {
+		t.Errorf("web_explore 应 requiresClient + 正数预算: %+v", web)
+	}
+	// webfetch 已从 web_explore 移除（用户决策：无用且费 token）
+	for _, n := range web.serverWhitelist {
+		if n == "webfetch" {
+			t.Error("web_explore 不应含 webfetch")
+		}
+	}
+	file := subagentSpecs["file_explore"]
+	if !file.requiresClient || file.maxToolResult <= web.maxToolResult {
+		t.Errorf("file_explore 应 requiresClient + 预算大于 web_explore: %+v", file)
+	}
+	// file_explore 客户端白名单：fs 只读三函数 + ui
+	fsFuncs := file.clientWhitelist["fs"]
+	if fsFuncs == nil || strings.Join(fsFuncs, ",") != "glob,grep,read" {
+		t.Errorf("file_explore fs 白名单应只含 glob/grep/read: %v", fsFuncs)
+	}
+	if _, ok := file.clientWhitelist["ui"]; !ok {
+		t.Error("file_explore 应含 ui（ask_user）")
+	}
+	// 服务端白名单不含 webfetch/检索类
+	for _, n := range file.serverWhitelist {
+		if n == "webfetch" || n == "search_notes_v2" || n == "unified_search" {
+			t.Errorf("file_explore 服务端白名单不应含 %s", n)
+		}
+	}
+}
+
+func TestRunSubAgent_UnknownType(t *testing.T) {
+	convRepo, msgRepo, _, cleanup := setupSubAgentRepos(t)
+	defer cleanup()
+	ctx := context.Background()
+	if err := convRepo.Create(ctx, &model.Conversation{ID: "main-1", UserID: "u1"}); err != nil {
+		t.Fatal(err)
+	}
+	orch := newSubAgentOrchestrator(&syncMockLLM{}, convRepo, msgRepo)
+	res := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
+		SubAgentType: "explore", Description: "调研", Prompt: "p", ParentConvID: "main-1", ClientTools: testClientToolOpts(),
+	})
+	if res.Success {
+		t.Fatal("未知类型应失败")
+	}
+	if !strings.Contains(res.Error, "未知子 agent 类型") {
+		t.Errorf("应提示未知类型: %s", res.Error)
+	}
+	// 不创建子会话
+	var count int64
+	convRepo.DB().Model(&model.Conversation{}).Where("parent_id = ?", "main-1").Count(&count)
+	if count != 0 {
+		t.Errorf("未知类型不应创建子会话, got %d", count)
+	}
+}
+
+func TestRunSubAgent_RequiresClient(t *testing.T) {
+	convRepo, msgRepo, _, cleanup := setupSubAgentRepos(t)
+	defer cleanup()
+	ctx := context.Background()
+	if err := convRepo.Create(ctx, &model.Conversation{ID: "main-1", UserID: "u1"}); err != nil {
+		t.Fatal(err)
+	}
+	orch := newSubAgentOrchestrator(&syncMockLLM{}, convRepo, msgRepo)
+	// 请求未携带客户端工具（客户端离线）
+	res := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
+		SubAgentType: "web_explore", Description: "调研", Prompt: "p", ParentConvID: "main-1",
+	})
+	if res.Success {
+		t.Fatal("客户端离线应失败")
+	}
+	if !strings.Contains(res.Error, "需要 macOS 客户端在线") {
+		t.Errorf("应提示客户端在线要求: %s", res.Error)
+	}
+	// file_explore 同理
+	res2 := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
+		SubAgentType: "file_explore", Description: "检索", Prompt: "p", ParentConvID: "main-1",
+	})
+	if res2.Success || !strings.Contains(res2.Error, "需要 macOS 客户端在线") {
+		t.Errorf("file_explore 离线应失败: %+v", res2)
+	}
+	// 不创建子会话
+	var count int64
+	convRepo.DB().Model(&model.Conversation{}).Where("parent_id = ?", "main-1").Count(&count)
+	if count != 0 {
+		t.Errorf("离线失败不应创建子会话, got %d", count)
+	}
+}
+
+func TestRunSubAgent_FileExplore_ClientWithoutFs(t *testing.T) {
+	convRepo, msgRepo, _, cleanup := setupSubAgentRepos(t)
+	defer cleanup()
+	ctx := context.Background()
+	if err := convRepo.Create(ctx, &model.Conversation{ID: "main-1", UserID: "u1"}); err != nil {
+		t.Fatal(err)
+	}
+	orch := newSubAgentOrchestrator(&syncMockLLM{}, convRepo, msgRepo)
+	// 客户端在线但只带浏览器工具（无 fs）
+	res := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
+		SubAgentType: "file_explore", Description: "检索", Prompt: "p", ParentConvID: "main-1", ClientTools: testClientToolOpts(),
+	})
+	if res.Success {
+		t.Fatal("file_explore 无 fs 工具应失败")
+	}
+	if !strings.Contains(res.Error, "客户端未提供") {
+		t.Errorf("应提示缺少本地工具: %s", res.Error)
+	}
+	// 不留下孤儿子会话（错误路径在创建子会话之前）
+	var count int64
+	convRepo.DB().Model(&model.Conversation{}).Where("parent_id = ?", "main-1").Count(&count)
+	if count != 0 {
+		t.Errorf("缺少工具失败不应创建子会话, got %d", count)
 	}
 }
 
@@ -419,7 +579,7 @@ func TestRunSubAgent_CostScenario(t *testing.T) {
 
 	orch := newSubAgentOrchestrator(wrapped, convRepo, msgRepo)
 	res := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
-		SubAgentType: "explore", Description: "调研", Prompt: "p", ParentConvID: "main-1",
+		SubAgentType: "web_explore", Description: "调研", Prompt: "p", ParentConvID: "main-1", ClientTools: testClientToolOpts(),
 	})
 	if !res.Success {
 		t.Fatalf("RunSubAgent: %+v", res)
@@ -511,7 +671,7 @@ func TestRunSubAgent_ClosesTabsOnEnd(t *testing.T) {
 	}()
 
 	res := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
-		SubAgentType: "explore", Description: "调研", Prompt: "p", ParentConvID: "main-1", MainEvents: mainEvents,
+		SubAgentType: "web_explore", Description: "调研", Prompt: "p", ParentConvID: "main-1", MainEvents: mainEvents,
 		ClientTools: []tool.ClientToolInfo{{ServerName: "browser", Name: "agent_browser_open", IsReadOnly: true}},
 	})
 	if !res.Success {
@@ -557,7 +717,7 @@ func TestRunSubAgent_EmitsStartEnd(t *testing.T) {
 	}()
 
 	res := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
-		SubAgentType: "explore", Description: "调研", Prompt: "p", ParentConvID: "main-1", MainEvents: mainEvents,
+		SubAgentType: "web_explore", Description: "调研", Prompt: "p", ParentConvID: "main-1", ClientTools: testClientToolOpts(), MainEvents: mainEvents,
 	})
 	if !res.Success {
 		t.Fatalf("RunSubAgent: %+v", res)
@@ -585,5 +745,64 @@ func TestRunSubAgent_EmitsStartEnd(t *testing.T) {
 		case <-deadline:
 			t.Fatal("未收到 end 事件")
 		}
+	}
+}
+
+// ---- truncateToolResultJSON 保结构截断 ----
+
+func TestTruncateToolResultJSON_KeepsValidJSON(t *testing.T) {
+	content := strings.Repeat("文件内容", 5000) // 15000 字符
+	data, _ := json.Marshal(&tool.Result{Success: true, Data: json.RawMessage(`{"content":"` + content + `"}`)})
+
+	out := truncateToolResultJSON(data, 2000)
+	if len(out) > 2200 {
+		t.Fatalf("截断后仍过大: %d", len(out))
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("截断后必须是合法 JSON: %v\n%s", err, out)
+	}
+	if m["success"] != true {
+		t.Errorf("success 字段应保留: %+v", m)
+	}
+	if !strings.Contains(string(out), "已截断") {
+		t.Errorf("应有截断标记: %s", out)
+	}
+	// 尾部保留：原文尾缀在输出中（截断的是 data 内部字符串）
+	if !strings.Contains(string(out), "文件内容") {
+		t.Errorf("应保留尾部内容")
+	}
+}
+
+func TestTruncateToolResultJSON_NoTruncationBelowLimit(t *testing.T) {
+	data, _ := json.Marshal(&tool.Result{Success: true, Data: json.RawMessage(`{"content":"短内容"}`)})
+	out := truncateToolResultJSON(data, 2000)
+	if string(out) != string(data) {
+		t.Errorf("未超限不应截断: %s", out)
+	}
+}
+
+func TestTruncateToolResultJSON_FallbackOnInvalidJSON(t *testing.T) {
+	// 反序列化失败 → 回退字节切片（不 panic）
+	invalid := append([]byte(`{"success":true,"data":"`), bytes.Repeat([]byte("a"), 5000)...)
+	invalid = append(invalid, ')')
+	out := truncateToolResultJSON(invalid, 100)
+	if len(out) != 100 {
+		t.Errorf("回退应字节切片: %d", len(out))
+	}
+}
+
+func TestTruncateStringKeepHeadTail_NoUTF8Split(t *testing.T) {
+	s := strings.Repeat("中文内容", 3000) // 12000 字符
+	out := truncateStringKeepHeadTail(s, 2000)
+	if !utf8.ValidString(out) {
+		t.Fatal("截断后必须是合法 UTF-8")
+	}
+	if !strings.Contains(out, "已截断") || !strings.HasPrefix(out, "中文内容") || !strings.HasSuffix(out, "内容") {
+		t.Errorf("头尾保留错误: %s...", out[:30])
+	}
+	// 短字符串不动
+	if got := truncateStringKeepHeadTail("short", 100); got != "short" {
+		t.Errorf("短字符串不应截断: %s", got)
 	}
 }

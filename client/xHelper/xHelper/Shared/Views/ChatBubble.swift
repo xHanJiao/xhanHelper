@@ -151,7 +151,6 @@ struct ChatBubble: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .foregroundColor(Color("userText"))
-                        .macosTextSelection()
                 } else if isStreamingPlaceholder {
                     HStack(spacing: 5) {
                         ForEach(0..<3) { i in

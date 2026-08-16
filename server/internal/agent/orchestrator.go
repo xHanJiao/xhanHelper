@@ -684,7 +684,8 @@ func (o *Orchestrator) buildProfilePackets(ctx context.Context, userID string) [
 	}
 	packets := make([]retrieval.ContextPacket, 0, len(byField))
 	for field, agg := range byField {
-		packets = append(packets, ctxflow.ProfilePacket(field, strings.Join(agg.values, "; "), agg.updatedAt))
+		// 聚合用换行分隔每条 fact（行 = fact 边界，避免与 fact 内部的全角分号混淆）
+		packets = append(packets, ctxflow.ProfilePacket(field, strings.Join(agg.values, "\n"), agg.updatedAt))
 	}
 	sort.SliceStable(packets, func(i, j int) bool {
 		return packets[i].ID < packets[j].ID

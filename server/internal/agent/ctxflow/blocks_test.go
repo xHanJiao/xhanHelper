@@ -242,7 +242,7 @@ func TestNoticeBlock_RendersInUserMessage(t *testing.T) {
 
 func TestBuildProfileBlock(t *testing.T) {
 	items := []retrieval.ContextPacket{
-		ProfilePacket("补充说明", "睡眠差; 房价观察", makeTime(2026, 8, 7)),
+		ProfilePacket("补充说明", "睡眠差\n房价观察", makeTime(2026, 8, 7)),
 	}
 	got := marshalBlock(t, buildBlock(TypeProfile, items))
 	if !strings.Contains(got, `<profile`) {
@@ -257,7 +257,7 @@ func TestBuildProfileBlock(t *testing.T) {
 	if !strings.Contains(got, `updated_at="2026-08-07"`) {
 		t.Errorf("missing updated_at attr: %s", got)
 	}
-	if !strings.Contains(got, ">睡眠差; 房价观察</field>") {
+	if !strings.Contains(got, ">睡眠差\n房价观察</field>") {
 		t.Errorf("missing field value: %s", got)
 	}
 }

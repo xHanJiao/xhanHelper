@@ -64,7 +64,8 @@ struct TopBarView: View {
 
     private func registerDefaultGroups() {
         // 默认左槽为空：无浏览器时左侧不放按钮（浏览器态由浏览器组 priority 10 填充）
-        // 右槽位 priority 5：重要功能（🌐/⚙/侧栏），防被普通组覆盖
+        // 右槽位 priority 5：导航组（文档/账单/监控/浏览器）+ 工具组（侧栏/深浅色/设置），防被普通组覆盖。
+        // 两组合并进同一优先级，注册顺序决定渲染顺序：导航组在左、工具组在右，组间自动分隔线。
         var buttons: [TopBarButton] = [
             TopBarButton(id: "enter-browser", icon: { "globe" },
                          enabled: { true },
@@ -74,27 +75,20 @@ struct TopBarView: View {
                          help: { "一键进入浏览器" }),
         ]
         #if os(macOS)
-        buttons.append(TopBarButton(id: "maximize-sidebar",
-                                    icon: { rightSidebar.isPipChat ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right" },
-                                    enabled: { rightSidebar.isOpen },
-                                    action: { rightSidebar.isPipChat.toggle() },
-                                    help: { rightSidebar.isPipChat ? "还原侧栏" : "最大化侧栏内容" },
-                                    visible: { rightSidebar.isOpen })) // 侧栏未打开时按钮不显示
-        buttons.append(TopBarButton(id: "sidebar", icon: { "sidebar.trailing" },
-                                    enabled: { true },
-                                    action: { rightSidebar.toggle() },
-                                    help: { "切换右侧栏" }))
-        // 深浅色切换：深色=月亮、浅色=太阳；跟随系统时按当前实际配色显示，点击切到相反显式模式
-        buttons.append(TopBarButton(id: "color-scheme",
-                                    icon: { colorSchemeManager.selectedScheme == .dark ? "moon.fill" : "sun.max.fill" },
-                                    enabled: { true },
-                                    action: { toggleColorScheme() },
-                                    help: { colorSchemeManager.selectedScheme == .dark ? "切换浅色模式" : "切换深色模式" }))
-        // 设置固定最右
-        buttons.append(TopBarButton(id: "settings", icon: { "gear" },
-                                    enabled: { true },
-                                    action: { openSettings() },
-                                    help: { "设置" }))
+        buttons.insert(contentsOf: [
+            TopBarButton(id: "open-documents", icon: { "doc.text" },
+                         enabled: { true },
+                         action: { openBrowsePanel(.documents) },
+                         help: { "打开文档" }),
+            TopBarButton(id: "open-bills", icon: { "yensign.circle" },
+                         enabled: { true },
+                         action: { openBrowsePanel(.bills) },
+                         help: { "打开账单" }),
+            TopBarButton(id: "open-monitor", icon: { "chart.bar.xaxis" },
+                         enabled: { true },
+                         action: { openBrowsePanel(.dashboard) },
+                         help: { "打开监控" }),
+        ], at: 0)
         #endif
         TopBarRegistry.shared.register(TopBarGroup(
             id: "default-right",
@@ -102,6 +96,44 @@ struct TopBarView: View {
             priority: 5,
             buttons: buttons
         ))
+
+        #if os(macOS)
+        TopBarRegistry.shared.register(TopBarGroup(
+            id: "default-utility",
+            slot: .right,
+            priority: 5,
+            buttons: [
+                TopBarButton(id: "maximize-sidebar",
+                             icon: { rightSidebar.isPipChat ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right" },
+                             enabled: { rightSidebar.isOpen },
+                             action: { rightSidebar.isPipChat.toggle() },
+                             help: { rightSidebar.isPipChat ? "还原侧栏" : "最大化侧栏内容" },
+                             visible: { rightSidebar.isOpen }), // 侧栏未打开时按钮不显示
+                TopBarButton(id: "sidebar", icon: { "sidebar.trailing" },
+                             enabled: { true },
+                             action: { rightSidebar.toggle() },
+                             help: { "切换右侧栏" }),
+                // 深浅色切换：深色=月亮、浅色=太阳；跟随系统时按当前实际配色显示，点击切到相反显式模式
+                TopBarButton(id: "color-scheme",
+                             icon: { colorSchemeManager.selectedScheme == .dark ? "moon.fill" : "sun.max.fill" },
+                             enabled: { true },
+                             action: { toggleColorScheme() },
+                             help: { colorSchemeManager.selectedScheme == .dark ? "切换浅色模式" : "切换深色模式" }),
+                // 设置固定最右
+                TopBarButton(id: "settings", icon: { "gear" },
+                             enabled: { true },
+                             action: { openSettings() },
+                             help: { "设置" }),
+            ]
+        ))
+        #endif
+    }
+
+    /// 打开右侧栏浏览面板（文档/账单/监控），复用浏览面板态
+    private func openBrowsePanel(_ panel: BrowsePanel) {
+        rightSidebar.isOpen = true
+        rightSidebar.showBrowsePanel()
+        rightSidebar.browsePanelSelection = panel
     }
 
     /// 深浅色切换：light ↔ dark 互切；跟随系统时先落到与当前实际配色相反的模式。

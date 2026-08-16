@@ -95,17 +95,18 @@ type SnowflakeConfig struct {
 
 // ServerConfig — HTTP 服务配置
 type ServerConfig struct {
-	Port                   int      `yaml:"port"`
-	Mode                   string   `yaml:"mode"`                     // debug | release
-	RegistrationEnabled    *bool    `yaml:"registration_enabled"`     // 是否允许新用户注册
-	AllowedUsers           []string `yaml:"allowed_users"`            // 允许注册的用户名列表（空=全部允许）
-	MemoryAutoExtract      bool     `yaml:"memory_auto_extract"`      // 是否自动提取记忆
-	MemoryDupeThreshold    float64  `yaml:"memory_dupe_threshold"`    // 记忆去重相似度阈值，默认 0.85
-	DisableBackgroundTasks bool     `yaml:"disable_background_tasks"` // 禁用所有后台任务（记忆提取/摘要/主题分析/反思等），dev 环境建议开启
-	SidecarURL             string   `yaml:"sidecar_url"`              // Python sidecar MCP HTTP 地址
-	TokenTTLMinutes        int      `yaml:"token_ttl_minutes"`        // token 过期时间（分钟），默认 5
-	MaxTokensPerUser       int      `yaml:"max_tokens_per_user"`      // 同一用户最大 token 数，默认 4
-	AdminUsers             []string `yaml:"admin_users"`              // 管理员用户 ID 列表
+	Port                    int      `yaml:"port"`
+	Mode                    string   `yaml:"mode"`                      // debug | release
+	RegistrationEnabled     *bool    `yaml:"registration_enabled"`      // 是否允许新用户注册
+	AllowedUsers            []string `yaml:"allowed_users"`             // 允许注册的用户名列表（空=全部允许）
+	MemoryAutoExtract       bool     `yaml:"memory_auto_extract"`       // 是否自动提取记忆
+	ProfileStartupMigration bool     `yaml:"profile_startup_migration"` // 启动时异步迁移旧画像（facts 空才迁，单用户场景用）
+	MemoryDupeThreshold     float64  `yaml:"memory_dupe_threshold"`     // 记忆去重相似度阈值，默认 0.85
+	DisableBackgroundTasks  bool     `yaml:"disable_background_tasks"`  // 禁用所有后台任务（记忆提取/摘要/主题分析/反思等），dev 环境建议开启
+	SidecarURL              string   `yaml:"sidecar_url"`               // Python sidecar MCP HTTP 地址
+	TokenTTLMinutes         int      `yaml:"token_ttl_minutes"`         // token 过期时间（分钟），默认 5
+	MaxTokensPerUser        int      `yaml:"max_tokens_per_user"`       // 同一用户最大 token 数，默认 4
+	AdminUsers              []string `yaml:"admin_users"`               // 管理员用户 ID 列表
 }
 
 // DBConfig — 数据库配置
@@ -209,13 +210,10 @@ type ResourceZoneConfig struct {
 
 // ReflectionConfig — 反思系统配置
 type ReflectionConfig struct {
-	LaunchMaxIterations   int     `yaml:"launch_max_iterations"`   // 启动 Agent 最大轮次，默认 8
-	AnalystMaxIterations  int     `yaml:"analyst_max_iterations"`  // ThemeAnalyst 内部最大轮次，默认 3
-	DiscoverMaxIterations int     `yaml:"discover_max_iterations"` // ThemeDiscoverer 内部最大轮次，默认 3
-	ClusterThreshold      float64 `yaml:"cluster_threshold"`       // topic 聚类余弦相似度阈值，默认 0.70
-	// Deprecated: post_chat_group 重构后不再使用（统一由 session_end 延迟任务驱动，
-	// 延迟用 chat.session_gap_minutes）。字段保留兼容旧配置，不再读取。
-	PostChatDelaySeconds        int            `yaml:"post_chat_delay_seconds"`
+	LaunchMaxIterations         int            `yaml:"launch_max_iterations"`          // 启动 Agent 最大轮次，默认 8
+	AnalystMaxIterations        int            `yaml:"analyst_max_iterations"`         // ThemeAnalyst 内部最大轮次，默认 3
+	DiscoverMaxIterations       int            `yaml:"discover_max_iterations"`        // ThemeDiscoverer 内部最大轮次，默认 3
+	ClusterThreshold            float64        `yaml:"cluster_threshold"`              // topic 聚类余弦相似度阈值，默认 0.70
 	DailySchedules              []string       `yaml:"daily_schedules"`                // 主题发现定时触发时间列表，默认 ["03:00"]（每天一次）
 	DeliverIntervalMinutes      int            `yaml:"deliver_interval_minutes"`       // 投递窗口间隔分钟，默认 60；<=0 关闭投递（pending findings 会积压，恢复后补投）
 	MaxDeliveryRetries          int            `yaml:"max_delivery_retries"`           // 投递重试上限，默认 3
@@ -383,9 +381,6 @@ func merge(dst, src *Config) {
 	}
 	if src.Reflection.ClusterThreshold != 0 {
 		dst.Reflection.ClusterThreshold = src.Reflection.ClusterThreshold
-	}
-	if src.Reflection.PostChatDelaySeconds != 0 {
-		dst.Reflection.PostChatDelaySeconds = src.Reflection.PostChatDelaySeconds
 	}
 	if len(src.Reflection.DailySchedules) > 0 {
 		dst.Reflection.DailySchedules = src.Reflection.DailySchedules
@@ -563,9 +558,6 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Reflection.ClusterThreshold == 0 {
 		cfg.Reflection.ClusterThreshold = 0.70
-	}
-	if cfg.Reflection.PostChatDelaySeconds == 0 {
-		cfg.Reflection.PostChatDelaySeconds = 1800
 	}
 	if len(cfg.Reflection.DailySchedules) == 0 {
 		cfg.Reflection.DailySchedules = []string{"09:00", "20:00"}

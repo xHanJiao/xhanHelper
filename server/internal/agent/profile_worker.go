@@ -58,6 +58,22 @@ const profileOutputFormat = `输出纯JSON（不要用markdown代码块包裹）
 // profileLegacyTask — 延迟迁移模式的 task 提示（facts 表为空、旧表有值时）。
 const profileLegacyTask = "从以下对话记录中提取用户画像。注意：existing_profile 中的值是历史画像文本（可能混装多条事实），请拆分为独立事实列表后按格式输出"
 
+// profileMigrationTask — 启动迁移的 task（纯拆分历史画像，无新对话）。
+const profileMigrationTask = "请将以下历史画像文本拆分为独立事实列表"
+
+// profileMigrationRules — 启动迁移专用规则（与增量不同：要求全量输出所有字段）。
+var profileMigrationRules = []string{
+	"对所有已有画像字段输出完整事实列表（拆分为独立事实）",
+	"事实短句：无引导词，直接写事实；并列项用分号分隔；禁散文长句",
+	"未过时的信息必须保留（可适当压缩原文）；不确定的信息保留原文",
+	"单值字段输出长度为 1 的数组",
+}
+
+// profileMigrationOutputFormat — 启动迁移输出格式（全量，非"仅变化字段"）。
+const profileMigrationOutputFormat = `输出纯JSON（不要用markdown代码块包裹）：{"字段名":["事实1","事实2"],...}。
+对所有已有画像字段输出完整事实列表；单值字段输出长度为1的数组，如{"称呼":["哥"]}。
+如果完全没有可拆分的信息，输出 {}。`
+
 // quotaRetryMax — 配额校验失败后反馈 LLM 重新生成的最大次数。
 const quotaRetryMax = 2
 
@@ -82,6 +98,7 @@ type UserProfileWorker struct {
 	registry     *tool.Registry
 	profileRepo  *service.UserProfileRepo // 旧表（延迟迁移读取）
 	factRepo     *service.UserProfileFactRepo
+	userRepo     *service.UserRepo // 启动迁移遍历用户
 }
 
 // UserProfileWorkerConfig — UserProfileWorker 依赖配置。
@@ -91,6 +108,7 @@ type UserProfileWorkerConfig struct {
 	Registry     *tool.Registry
 	ProfileRepo  *service.UserProfileRepo
 	FactRepo     *service.UserProfileFactRepo
+	UserRepo     *service.UserRepo // 启动迁移遍历用户；nil 时 RunStartupMigration 直接返回
 }
 
 // NewUserProfileWorker 创建画像提取 worker。必需依赖为 nil 时 panic（接线 bug 暴露在明处）。
@@ -104,6 +122,7 @@ func NewUserProfileWorker(cfg *UserProfileWorkerConfig) *UserProfileWorker {
 		registry:     cfg.Registry,
 		profileRepo:  cfg.ProfileRepo,
 		factRepo:     cfg.FactRepo,
+		userRepo:     cfg.UserRepo,
 	}
 }
 
@@ -242,47 +261,56 @@ func (w *UserProfileWorker) extractNormal(ctx context.Context, sess *SessionSnap
 		return err
 	}
 
-	messages := []llm.Message{{Role: "user", Content: userMsg}}
-	var extracted map[string][]string
-	for attempt := 0; ; attempt++ {
-		resp, err := w.flashClient.ChatSync(ctx, &llm.ChatRequest{
-			SystemPrompt: postChatSharedSystemPrompt,
-			Messages:     messages,
-			UserID:       sess.UserID,
-		})
-		if err != nil {
-			return fmt.Errorf("profile: normal chat: %w", err)
-		}
-		parsed, err := parseExtractedFacts(resp.Content)
-		if err != nil {
-			log.Printf("[profile] normal: JSON parse error: %v, raw=%s", err, truncateStr(resp.Content, 200))
-			return nil
-		}
-		violations := w.validateQuota(ctx, sess.UserID, parsed)
-		if len(violations) == 0 {
-			extracted = parsed
-			break
-		}
-		if attempt >= quotaRetryMax {
-			// 重试仍超限（极罕见）→ 截断兜底 + log，保留信息主体
-			log.Printf("[profile] normal: quota retries exhausted (%d), truncate fallback: %s",
-				quotaRetryMax, strings.Join(violations, "; "))
-			w.applyExtracted(ctx, sess.UserID, parsed)
-			return nil
-		}
-		log.Printf("[profile] normal: quota violation (attempt %d): %s", attempt+1, strings.Join(violations, "; "))
-		messages = append(messages,
-			llm.Message{Role: "assistant", Content: resp.Content},
-			llm.Message{Role: "user", Content: buildQuotaFeedback(violations)},
-		)
+	extracted, err := w.chatExtractWithQuotaRetry(ctx, sess.UserID, userMsg)
+	if err != nil {
+		return err
 	}
-
 	if len(extracted) == 0 {
 		return nil
 	}
 	log.Printf("[profile] normal: extracted %d fields, conv=%s", len(extracted), sess.ConvID[:min(8, len(sess.ConvID))])
 	w.applyExtracted(ctx, sess.UserID, extracted)
 	return nil
+}
+
+// chatExtractWithQuotaRetry 公共提取调用：ChatSync → parse → 配额校验，违规反馈 LLM 重新生成
+// （最多 quotaRetryMax 次）；重试耗尽仍超限 → 截断兜底（返回 parsed，调用方 applyExtracted 时
+// filterFacts 截断）。extractNormal 与 RunStartupMigration 共用。
+func (w *UserProfileWorker) chatExtractWithQuotaRetry(ctx context.Context, userID, userMsg string) (map[string][]string, error) {
+	messages := []llm.Message{{Role: "user", Content: userMsg}}
+	var extracted map[string][]string
+	for attempt := 0; ; attempt++ {
+		resp, err := w.flashClient.ChatSync(ctx, &llm.ChatRequest{
+			SystemPrompt: postChatSharedSystemPrompt,
+			Messages:     messages,
+			UserID:       userID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("profile: extract chat: %w", err)
+		}
+		parsed, err := parseExtractedFacts(resp.Content)
+		if err != nil {
+			log.Printf("[profile] extract: JSON parse error: %v, raw=%s", err, truncateStr(resp.Content, 200))
+			return nil, nil
+		}
+		violations := w.validateQuota(ctx, userID, parsed)
+		if len(violations) == 0 {
+			extracted = parsed
+			break
+		}
+		if attempt >= quotaRetryMax {
+			// 重试仍超限（极罕见）→ 截断兜底 + log，保留信息主体
+			log.Printf("[profile] extract: quota retries exhausted (%d), truncate fallback: %s",
+				quotaRetryMax, strings.Join(violations, "; "))
+			return parsed, nil
+		}
+		log.Printf("[profile] extract: quota violation (attempt %d): %s", attempt+1, strings.Join(violations, "; "))
+		messages = append(messages,
+			llm.Message{Role: "assistant", Content: resp.Content},
+			llm.Message{Role: "user", Content: buildQuotaFeedback(violations)},
+		)
+	}
+	return extracted, nil
 }
 
 // ==================== 解析与写入 ====================
@@ -440,6 +468,83 @@ func truncateRunes(s string, n int) string {
 		return s
 	}
 	return string(runes[:n])
+}
+
+// ==================== 启动迁移 ====================
+
+// RunStartupMigration 启动时异步迁移旧画像：对 facts 表为空但旧表有数据的用户，
+// 用专用 prompt 全量拆分旧值写入 facts 表。幂等（HasActive 已迁则跳过），
+// 失败只打日志不阻塞（下次启动或 session_end legacy 兜底重试）。
+// 单用户场景配置开关控制，迁移完成后可关闭。
+func (w *UserProfileWorker) RunStartupMigration(ctx context.Context) {
+	if w.userRepo == nil {
+		log.Printf("[profile] startup migration: userRepo nil, skip")
+		return
+	}
+	users, err := w.userRepo.ListAll(ctx)
+	if err != nil {
+		log.Printf("[profile] startup migration: ListAll error: %v", err)
+		return
+	}
+	for _, u := range users {
+		hasFacts, err := w.factRepo.HasActive(ctx, u.ID)
+		if err != nil {
+			log.Printf("[profile] startup migration: HasActive error: %v", err)
+			continue
+		}
+		if hasFacts {
+			continue // 已迁移（或已有增量数据），跳过
+		}
+		legacy, err := w.profileRepo.GetByUser(ctx, u.ID)
+		if err != nil {
+			log.Printf("[profile] startup migration: GetByUser error: %v", err)
+			continue
+		}
+		if len(legacy) == 0 {
+			continue
+		}
+		log.Printf("[profile] startup migration: user=%s legacy_fields=%d", u.ID[:min(8, len(u.ID))], len(legacy))
+		userMsg, err := w.buildMigrationXML(ctx, legacy)
+		if err != nil {
+			log.Printf("[profile] startup migration: build XML error: %v", err)
+			continue
+		}
+		extracted, err := w.chatExtractWithQuotaRetry(ctx, u.ID, userMsg)
+		if err != nil {
+			log.Printf("[profile] startup migration: chat error: %v", err)
+			continue
+		}
+		if len(extracted) == 0 {
+			continue
+		}
+		log.Printf("[profile] startup migration: user=%s extracted %d fields", u.ID[:min(8, len(u.ID))], len(extracted))
+		w.applyExtracted(ctx, u.ID, extracted)
+	}
+	log.Printf("[profile] startup migration: done")
+}
+
+// buildMigrationXML 构造启动迁移的 user message XML（existing = 旧表全部字段，无 messages）。
+func (w *UserProfileWorker) buildMigrationXML(ctx context.Context, legacy []model.UserProfile) (string, error) {
+	doc := profileExtractionXML{
+		Task:         profileMigrationTask,
+		Fields:       profilefield.ProfileExtractFieldTextBrief(),
+		Rules:        profileMigrationRules,
+		OutputFormat: profileMigrationOutputFormat,
+	}
+	if len(legacy) > 0 {
+		ex := &existingProfileXML{Fields: make([]existingFieldXML, 0, len(legacy))}
+		for _, p := range legacy {
+			ex.Fields = append(ex.Fields, existingFieldXML{Key: p.Field, Value: p.FieldValue})
+		}
+		doc.ExistingProfile = ex
+	}
+	var buf bytes.Buffer
+	enc := xml.NewEncoder(&buf)
+	enc.Indent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		return "", fmt.Errorf("profile: encode migration XML: %w", err)
+	}
+	return buf.String(), nil
 }
 
 // ==================== XML 编码 ====================

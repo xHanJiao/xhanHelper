@@ -108,6 +108,14 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	})
 
 	// --- 对话后处理组（session_end）：摘要 + 记忆提取 + 主题状态更新 + 用户画像 ---
+	profileWorker := agent.NewUserProfileWorker(&agent.UserProfileWorkerConfig{
+		FlashClient:  llmClients.Flash,
+		StrongClient: llmClients.Strong,
+		Registry:     tools.Registry,
+		ProfileRepo:  repos.UserProfile,
+		FactRepo:     repos.UserProfileFact,
+		UserRepo:     repos.User,
+	})
 	sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
 		summaryWorker,
 		agent.NewMemoryWorker(&agent.MemoryWorkerConfig{
@@ -117,13 +125,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		agent.NewStateWorker(&agent.StateWorkerConfig{
 			Updater: stateUpdater,
 		}),
-		agent.NewUserProfileWorker(&agent.UserProfileWorkerConfig{
-			FlashClient:  llmClients.Flash,
-			StrongClient: llmClients.Strong,
-			Registry:     tools.Registry,
-			ProfileRepo:  repos.UserProfile,
-			FactRepo:     repos.UserProfileFact,
-		}),
+		profileWorker,
 	}, repos.Message)
 
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{
@@ -226,6 +228,13 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		go cronRunner.Start(bgCtx)
 	} else {
 		log.Printf("[appinit] background tasks disabled, skip cronRunner")
+	}
+
+	// 启动时异步迁移旧画像（开关控制，facts 空才迁；迁移完成后可关）
+	if cfg.Server.ProfileStartupMigration && !cfg.Server.DisableBackgroundTasks {
+		go profileWorker.RunStartupMigration(bgCtx)
+	} else {
+		log.Printf("[appinit] profile startup migration disabled")
 	}
 
 	// 二次注册 task 工具（依赖 Orchestrator 实现 SubAgentRunner，避免 tool → agent 循环依赖）

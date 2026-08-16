@@ -35,7 +35,6 @@ reflection:
   analyst_max_iterations: 6
   discover_max_iterations: 6
   cluster_threshold: 0.70
-  post_chat_delay_seconds: 30
   daily_schedules: ["03:00"]
   mission_check_interval_minutes: 30
   deliver_interval_minutes: 60

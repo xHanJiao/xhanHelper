@@ -611,6 +611,144 @@ func TestProfileRules_Caveman(t *testing.T) {
 	}
 }
 
+// ---- 启动迁移 ----
+
+func TestProfileWorker_RunStartupMigration_MigratesLegacy(t *testing.T) {
+	legacyRepo, factRepo := setupProfileRepos(t)
+	ctx := context.Background()
+	// 造一个用户 + 旧表混装值
+	db := newTestUserRepoDB(t)
+	userRepo := service.NewUserRepo(db, 60, 4)
+	if err := db.Create(&model.User{ID: "user-1", Username: "u1"}).Error; err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-1", Field: "职业领域", FieldValue: "5年Go后端；gap期求职中"}); err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-1", Field: "重要关系", FieldValue: "CJ: 伴侣"}); err != nil {
+		t.Fatalf("seed legacy2: %v", err)
+	}
+
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"职业领域":["5年Go后端","gap期求职中"],"重要关系":["CJ: 伴侣"]}`},
+	}}
+	w := &UserProfileWorker{flashClient: llmClient, profileRepo: legacyRepo, factRepo: factRepo, userRepo: userRepo}
+
+	w.RunStartupMigration(ctx)
+
+	// 请求是迁移专用 prompt（全量拆分，非"仅变化字段"）
+	req := llmClient.reqs[0]
+	reqMsg := req.Messages[0].Content
+	if !strings.Contains(reqMsg, "拆分为独立事实列表") {
+		t.Errorf("migration should use dedicated task, got: %s", reqMsg)
+	}
+	if strings.Contains(reqMsg, "只输出有变化或需修订的字段") {
+		t.Error("migration rules must NOT contain incremental only-changed rule")
+	}
+	if !strings.Contains(reqMsg, "所有已有画像字段") {
+		t.Error("migration rules should require full output of all fields")
+	}
+
+	// facts 写入两个字段
+	facts, err := factRepo.GetActiveByUser(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("GetActiveByUser: %v", err)
+	}
+	if len(facts) != 3 {
+		t.Fatalf("expected 3 facts, got %+v", facts)
+	}
+}
+
+func TestProfileWorker_RunStartupMigration_SkipsMigrated(t *testing.T) {
+	legacyRepo, factRepo := setupProfileRepos(t)
+	ctx := context.Background()
+	db := newTestUserRepoDB(t)
+	userRepo := service.NewUserRepo(db, 60, 4)
+	if err := db.Create(&model.User{ID: "user-1", Username: "u1"}).Error; err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-1", Field: "籍贯", FieldValue: "河南焦作"}); err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+	// facts 已有数据 → 应跳过
+	if err := factRepo.ReplaceFieldFacts(ctx, "user-1", "籍贯", []string{"河南焦作"}, "b0"); err != nil {
+		t.Fatalf("seed facts: %v", err)
+	}
+
+	llmClient := &syncMockLLM{responses: []llm.Message{{Content: `{"籍贯":["别处"]}`}}}
+	w := &UserProfileWorker{flashClient: llmClient, profileRepo: legacyRepo, factRepo: factRepo, userRepo: userRepo}
+
+	w.RunStartupMigration(ctx)
+
+	if llmClient.callCount != 0 {
+		t.Errorf("migrated user should skip LLM call, calls=%d", llmClient.callCount)
+	}
+}
+
+func TestProfileWorker_RunStartupMigration_SkipsNoLegacy(t *testing.T) {
+	_, factRepo := setupProfileRepos(t)
+	ctx := context.Background()
+	db := newTestUserRepoDB(t)
+	userRepo := service.NewUserRepo(db, 60, 4)
+	if err := db.Create(&model.User{ID: "user-1", Username: "u1"}).Error; err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	llmClient := &syncMockLLM{responses: []llm.Message{{Content: `{}`}}}
+	w := &UserProfileWorker{flashClient: llmClient, profileRepo: service.NewUserProfileRepo(db), factRepo: factRepo, userRepo: userRepo}
+
+	w.RunStartupMigration(ctx)
+
+	if llmClient.callCount != 0 {
+		t.Errorf("no legacy data should skip LLM call, calls=%d", llmClient.callCount)
+	}
+}
+
+func TestProfileWorker_RunStartupMigration_QuotaRetry(t *testing.T) {
+	legacyRepo, factRepo := setupProfileRepos(t)
+	ctx := context.Background()
+	db := newTestUserRepoDB(t)
+	userRepo := service.NewUserRepo(db, 60, 4)
+	if err := db.Create(&model.User{ID: "user-1", Username: "u1"}).Error; err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	// 补充说明 MaxLen=30，旧值是一整段长文本
+	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-1", Field: "补充说明", FieldValue: "这是一段非常非常非常非常非常非常非常非常非常非常非常非常长的旧值"}); err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+
+	longFact := strings.Repeat("超", 100)
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"补充说明":["` + longFact + `"]}`},
+		{Content: `{"补充说明":["睡眠差"]}`}, // 重生成后合规
+	}}
+	w := &UserProfileWorker{flashClient: llmClient, profileRepo: legacyRepo, factRepo: factRepo, userRepo: userRepo}
+
+	w.RunStartupMigration(ctx)
+
+	if llmClient.callCount != 2 {
+		t.Fatalf("expected 2 LLM calls (1 retry), got %d", llmClient.callCount)
+	}
+	facts, err := factRepo.GetActiveByField(ctx, "user-1", "补充说明")
+	if err != nil {
+		t.Fatalf("GetActiveByField: %v", err)
+	}
+	if len(facts) != 1 || facts[0].Value != "睡眠差" {
+		t.Fatalf("expected retried fact written, got %+v", facts)
+	}
+}
+
+func newTestUserRepoDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.User{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return db
+}
+
 // ---- 老 repo 测试保留 ----
 
 func TestUserProfileRepo_UpsertOverwrite(t *testing.T) {

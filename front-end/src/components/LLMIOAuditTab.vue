@@ -54,6 +54,10 @@ function fmtTime(ts) {
 }
 
 async function openDetail(row) {
+  if (!row.id) {
+    message.error('记录 ID 缺失')
+    return
+  }
   detailLoading.value = true
   detail.value = null
   try {
@@ -69,6 +73,19 @@ function fmtJSON(s) {
   if (!s) return ''
   try {
     return JSON.stringify(JSON.parse(s), null, 2)
+  } catch {
+    return s
+  }
+}
+
+// messages 逐条渲染：content 里的 XML（worker 生成时已带缩进）经 JSON.parse 还原换行后直接好看，
+// 不需要 XML 解析器
+function fmtMessages(s) {
+  if (!s) return ''
+  try {
+    return JSON.parse(s)
+      .map(m => `[${m.role}]\n${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`)
+      .join('\n\n')
   } catch {
     return s
   }
@@ -115,9 +132,8 @@ onMounted(fetchList)
       :loading="loading"
       :row-key="r => r.id"
       :pagination="{ page, pageSize, itemCount: total, onChange: p => { page = p; fetchList() } }"
+      :row-props="row => ({ style: 'cursor: pointer;', onClick: () => openDetail(row) })"
       size="small"
-      @row-click="(_, row) => openDetail(row)"
-      style="cursor: pointer;"
     />
 
     <NDrawer :show="!!detail" :width="720" placement="right" @update:show="v => { if (!v) detail = null }">
@@ -134,8 +150,8 @@ onMounted(fetchList)
             <NButton size="tiny" style="margin-top: 4px;" @click="copyText(detail.system_prompt)">复制</NButton>
           </NCollapseItem>
           <NCollapseItem title="Messages" name="msgs">
-            <pre class="io-pre">{{ fmtJSON(detail.messages_json) }}</pre>
-            <NButton size="tiny" style="margin-top: 4px;" @click="copyText(fmtJSON(detail.messages_json))">复制</NButton>
+            <pre class="io-pre">{{ fmtMessages(detail.messages_json) }}</pre>
+            <NButton size="tiny" style="margin-top: 4px;" @click="copyText(fmtMessages(detail.messages_json))">复制</NButton>
           </NCollapseItem>
           <NCollapseItem title="Response" name="response">
             <pre class="io-pre">{{ fmtJSON(detail.response) }}</pre>

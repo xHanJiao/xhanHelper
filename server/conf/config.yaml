@@ -5,6 +5,7 @@ server:
   token_ttl_minutes: 2880 # token 过期时间（分钟），心跳续期保持登录态，关闭页面后快速过期
   max_tokens_per_user: 4 # 同一用户最多同时存在的 token 数，超出踢最老的
   memory_auto_extract: false
+  profile_startup_migration: true # 启动时异步迁移旧画像（facts 空才迁；迁移完成后可关）
   disable_background_tasks: false # 禁用所有后台任务（记忆提取/摘要/主题分析/反思等）
   sidecar_url: http://127.0.0.1:9090
   allowed_users:

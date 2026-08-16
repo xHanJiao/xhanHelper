@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -122,6 +123,7 @@ func (w *IOAuditWrapper) ChatSync(ctx context.Context, req *llm.ChatRequest) (ll
 // persist 异步落库。审计是旁路，失败只打日志，不重试。
 func (w *IOAuditWrapper) persist(audit IOAudit) {
 	row := &model.LLMCallIO{
+		ID:               idgen.Next(),
 		Category:         audit.Category,
 		SubCategory:      audit.SubCategory,
 		UserID:           audit.UserID,

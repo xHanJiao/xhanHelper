@@ -38,7 +38,12 @@ type RouterConfig struct {
 // NewRouter 注册所有路由
 func NewRouter(rc *RouterConfig) *gin.Engine {
 
-	r := gin.Default()
+	// 关闭 gin 自动重定向（尾斜杠/大小写修正会返回 301，而 301 响应不带 CORS 头，
+	// 跨域直连下浏览器报误导性的 "Cross-origin redirection denied"）——错误路径直接 404。
+	r := gin.New()
+	r.RedirectTrailingSlash = false
+	r.RedirectFixedPath = false
+	r.Use(gin.Logger(), gin.Recovery())
 
 	for _, m := range rc.ExtraMiddleware {
 		r.Use(m)

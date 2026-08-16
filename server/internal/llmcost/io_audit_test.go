@@ -10,10 +10,15 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
+
+func init() {
+	idgen.Init(1)
+}
 
 // auditMockLLM 记录调用、返回预设响应。
 type auditMockLLM struct {

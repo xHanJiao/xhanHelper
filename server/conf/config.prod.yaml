@@ -20,7 +20,6 @@ reflection:
   analyst_max_iterations: 6
   discover_max_iterations: 6
   cluster_threshold: 0.70
-  post_chat_delay_seconds: 1800
   daily_schedules: ["03:00"]
   min_active_days: 3
   deliver_interval_minutes: 0        # 关闭 mailbox 投递窗口（省成本），pending findings 积压待恢复后补投

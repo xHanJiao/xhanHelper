@@ -1,7 +1,7 @@
 server:
   mode: debug
   registration_enabled: true
-  disable_background_tasks: true # dev 环境开启后台任务（后处理/post_chat 需要）
+  disable_background_tasks: false # dev 环境开启后台任务（后处理/post_chat 需要）
   memory_auto_extract: true
   max_tokens_per_user: 4
   admin_users:
@@ -47,7 +47,6 @@ reflection:
   analyst_max_iterations: 6
   discover_max_iterations: 6
   cluster_threshold: 0.70
-  post_chat_delay_seconds: 30
   daily_schedules: ["03:00"]
   mission_check_interval_minutes: 30
   deliver_interval_minutes: 60

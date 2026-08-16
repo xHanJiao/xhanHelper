@@ -3,12 +3,16 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"xhan-helper/internal/config"
+	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
@@ -26,25 +30,39 @@ const postChatSharedSystemPrompt = `你是一个对话后处理助手。负责�
 const coldStartUserMessage = "请搜索并提取我的用户画像。"
 
 // coldStartMaxIterations — 冷启动 mini ReAct 最大轮次（含强制收敛轮，计入总数）。
-const coldStartMaxIterations = 10
+const coldStartMaxIterations = 6
 
 // coldStartFinalRoundPrompt — 冷启动强制收敛轮指令：主循环耗尽后逼出画像 JSON。
 const coldStartFinalRoundPrompt = `[系统] 本轮已达最大步数限制。请不要再调用任何工具，直接根据你已收集到的信息输出用户画像 JSON。
-按输出格式要求输出：{"字段名1":"值1","字段名2":"值2"}。没找到信息的字段省略；完全没找到输出 {}。`
+按输出格式要求输出：{"字段名":["事实1","事实2"]}。没找到信息的字段省略；完全没找到输出 {}。`
 
 // coldStartTools — 冷启动开放的只读工具（统一搜索覆盖 memory/note/summary/theme/history 五个域）。
 const coldStartTools = "unified_search"
 
 // profileRules — 正常增量提取的规则（注入 user message XML <rules>）。
 var profileRules = []string{
+	"事实短句：无引导词（不写\"用户表示/他认为\"），直接写事实",
+	"并列项用分号分隔；禁散文长句、禁重复",
+	"已有事实未过时必须原样保留（复制原文）；已过时的省略",
+	"若某字段所有事实均已过时，输出空数组表示清空该字段（如{\"长期目标\":[]}）",
+	"只输出有变化或需修订的字段；无变化输出 {}",
 	"只提取用户明确陈述的事实，不要从对话中推断",
-	"值要简洁，一句话能说清的事不要展开",
-	"与已有画像一致的信息不要重复输出",
 	"无法确定的信息宁可省略，不要猜测",
 }
 
 // profileOutputFormat — 正常增量提取的输出格式约束（注入 user message XML <output_format>）。
-const profileOutputFormat = "输出纯JSON（不要用markdown代码块包裹），仅包含本次对话中新出现或变更的字段：{\"字段名\":\"新值\"}。如果本次对话中没有发现任何新画像信息，输出 {}"
+const profileOutputFormat = `输出纯JSON（不要用markdown代码块包裹）：{"字段名":["事实1","事实2"],...}。
+每个字段输出其完整事实列表（含保留的旧事实，原样复制原文）；仅输出本次有新信息或需修订的字段；无变化输出 {}。
+单值字段输出长度为1的数组，如{"称呼":["哥"]}。`
+
+// profileLegacyTask — 延迟迁移模式的 task 提示（facts 表为空、旧表有值时）。
+const profileLegacyTask = "从以下对话记录中提取用户画像。注意：existing_profile 中的值是历史画像文本（可能混装多条事实），请拆分为独立事实列表后按格式输出"
+
+// quotaRetryMax — 配额校验失败后反馈 LLM 重新生成的最大次数。
+const quotaRetryMax = 2
+
+// cleanOutdatedKeepBatches — outdated 审计保留的批次数量，更旧的物理清理。
+const cleanOutdatedKeepBatches = 3
 
 // profilePlaceholders — LLM 可能输出的占位值，视为无信息，跳过写入。
 var profilePlaceholders = map[string]bool{
@@ -53,15 +71,17 @@ var profilePlaceholders = map[string]bool{
 
 // UserProfileWorker — 用户画像稳定层提取（PostChatWorker）。
 // 双模式：
-//   - 冷启动（画像表为空）：mini ReAct（deep mode，Pro 模型，可选），LLM 用 unified_search 自主搜集信息后生成画像
+//   - 冷启动（facts 表为空且旧表为空）：mini ReAct（deep mode，Pro 模型，可选），LLM 用 unified_search 自主搜集信息后生成画像
 //   - 正常增量（已有画像）：单次 Flash 提取当前 session user 消息中的新事实
+//   - 延迟迁移（facts 表为空但旧表有值）：增量提取路径，existing 用旧表整段值，LLM 拆分后写入 facts 表
 //
 // 稳定层只走本 worker 单一写入通道，不向对话 LLM 提供画像修改工具。
 type UserProfileWorker struct {
 	flashClient  llm.LLMClient
 	strongClient llm.LLMClient // 可选：冷启动用 Pro 模型（deep mode），nil 回退 Flash
 	registry     *tool.Registry
-	profileRepo  *service.UserProfileRepo
+	profileRepo  *service.UserProfileRepo // 旧表（延迟迁移读取）
+	factRepo     *service.UserProfileFactRepo
 }
 
 // UserProfileWorkerConfig — UserProfileWorker 依赖配置。
@@ -70,11 +90,12 @@ type UserProfileWorkerConfig struct {
 	StrongClient llm.LLMClient // 可选：冷启动用 Pro 模型（deep mode），nil 回退 Flash
 	Registry     *tool.Registry
 	ProfileRepo  *service.UserProfileRepo
+	FactRepo     *service.UserProfileFactRepo
 }
 
 // NewUserProfileWorker 创建画像提取 worker。必需依赖为 nil 时 panic（接线 bug 暴露在明处）。
 func NewUserProfileWorker(cfg *UserProfileWorkerConfig) *UserProfileWorker {
-	if cfg.FlashClient == nil || cfg.Registry == nil || cfg.ProfileRepo == nil {
+	if cfg.FlashClient == nil || cfg.Registry == nil || cfg.ProfileRepo == nil || cfg.FactRepo == nil {
 		panic("profile worker: required dependency nil (wiring bug)")
 	}
 	return &UserProfileWorker{
@@ -82,6 +103,7 @@ func NewUserProfileWorker(cfg *UserProfileWorkerConfig) *UserProfileWorker {
 		strongClient: cfg.StrongClient,
 		registry:     cfg.Registry,
 		profileRepo:  cfg.ProfileRepo,
+		factRepo:     cfg.FactRepo,
 	}
 }
 
@@ -96,15 +118,23 @@ func (w *UserProfileWorker) Process(ctx context.Context, sess *SessionSnapshot) 
 		UserID:      sess.UserID,
 		ConvID:      sess.ConvID,
 	})
-	hasAny, err := w.profileRepo.HasAny(ctx, sess.UserID)
+	hasFacts, err := w.factRepo.HasActive(ctx, sess.UserID)
 	if err != nil {
-		return fmt.Errorf("profile: HasAny: %w", err)
+		return fmt.Errorf("profile: HasActive: %w", err)
 	}
-	if !hasAny {
+	if hasFacts {
+		return w.extractNormal(ctx, sess, false)
+	}
+	hasLegacy, err := w.profileRepo.HasAny(ctx, sess.UserID)
+	if err != nil {
+		return fmt.Errorf("profile: HasAny(legacy): %w", err)
+	}
+	if !hasLegacy {
 		log.Printf("[profile] cold start: user=%s conv=%s", sess.UserID, sess.ConvID[:min(8, len(sess.ConvID))])
 		return w.runColdStartReAct(ctx, sess.UserID)
 	}
-	return w.extractNormal(ctx, sess)
+	log.Printf("[profile] legacy migration: user=%s conv=%s", sess.UserID, sess.ConvID[:min(8, len(sess.ConvID))])
+	return w.extractNormal(ctx, sess, true)
 }
 
 // ==================== 冷启动：mini ReAct ====================
@@ -131,20 +161,22 @@ func coldStartSystemPrompt() string {
 —————— 输出格式 ——————
 
 信息收集完成后，输出纯 JSON（不要用 markdown 代码块包裹）：
-{"字段名1":"值1","字段名2":"值2"}
+{"字段名":["事实1","事实2"],...}
+每个字段输出完整事实列表；单值字段输出长度为1的数组，如{"称呼":["哥"]}。
 
 没找到信息的字段直接省略，不要填"未知"、"无"等占位符。
 如果完全没有找到任何信息，输出 {}。
 
 —————— 重要规则 ——————
 
+- 事实短句：无引导词，直接写事实；并列项分号分隔，禁散文长句
 - 只填写用户明确陈述过的事实，禁止用你的推断填充
-- 值要简洁，一句话能说清
+- 若某字段所有事实均已过时，输出空数组表示清空该字段（如{"长期目标":[]}）
 - 不确定的信息宁可省略，不要猜测
-- 你最多有 9 轮搜索机会，合理规划搜索内容`, profilefield.ProfileExtractFieldText())
+- 你最多有 6 轮搜索机会，合理规划搜索内容`, profilefield.ProfileExtractFieldText())
 }
 
-// runColdStartReAct 冷启动：LLM 用 unified_search 自主搜集信息，输出画像 JSON 后写入 DB。
+// runColdStartReAct 冷启动：LLM 用 unified_search 自主搜集信息，输出画像 JSON 后写入 facts 表。
 // 使用通用 MiniReAct 组件执行循环。
 func (w *UserProfileWorker) runColdStartReAct(ctx context.Context, userID string) error {
 	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
@@ -185,91 +217,242 @@ func (w *UserProfileWorker) runColdStartReAct(ctx context.Context, userID string
 	}
 
 	// 无工具调用 → 解析最终画像 JSON
-	var extracted map[string]string
-	if _, err := ParseFlashJSON(result.FinalContent, &extracted); err != nil {
+	extracted, err := parseExtractedFacts(result.FinalContent)
+	if err != nil {
 		log.Printf("[profile] cold start: final JSON parse error: %v, raw=%s", err, truncateStr(result.FinalContent, 200))
 		return nil // 不重试，下次 session_end 自然重跑
 	}
 	log.Printf("[profile] cold start: extracted %d fields, iterations=%d", len(extracted), result.Iterations)
-	w.upsertExtracted(ctx, userID, extracted)
+	w.applyExtracted(ctx, userID, extracted)
 	return nil
 }
 
 // ==================== 正常增量提取 ====================
 
 // extractNormal 正常增量：加载已有画像 + session user 消息编码为 XML，单次 Flash 提取新事实。
-func (w *UserProfileWorker) extractNormal(ctx context.Context, sess *SessionSnapshot) error {
-	existing, err := w.profileRepo.GetByUser(ctx, sess.UserID)
-	if err != nil {
-		return fmt.Errorf("profile: GetByUser: %w", err)
-	}
+// legacy=true 时（facts 空 + 旧表有值）走延迟迁移：existing 用旧表整段值，LLM 拆分为事实列表。
+// 配额校验失败时反馈 LLM 重新生成（最多 quotaRetryMax 次），仍失败则截断兜底。
+func (w *UserProfileWorker) extractNormal(ctx context.Context, sess *SessionSnapshot, legacy bool) error {
 	if len(sess.Messages) == 0 {
 		return nil
 	}
 
-	userMsg := buildProfileExtractionXML(existing, sess.Messages)
-	resp, err := w.flashClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: postChatSharedSystemPrompt,
-		Messages:     []llm.Message{{Role: "user", Content: userMsg}},
-		UserID:       sess.UserID,
-	})
+	userMsg, err := w.buildExtractionXML(ctx, sess, legacy)
 	if err != nil {
-		return fmt.Errorf("profile: normal chat: %w", err)
+		return err
 	}
 
-	var extracted map[string]string
-	if _, err := ParseFlashJSON(resp.Content, &extracted); err != nil {
-		log.Printf("[profile] normal: JSON parse error: %v, raw=%s", err, truncateStr(resp.Content, 200))
-		return nil
+	messages := []llm.Message{{Role: "user", Content: userMsg}}
+	var extracted map[string][]string
+	for attempt := 0; ; attempt++ {
+		resp, err := w.flashClient.ChatSync(ctx, &llm.ChatRequest{
+			SystemPrompt: postChatSharedSystemPrompt,
+			Messages:     messages,
+			UserID:       sess.UserID,
+		})
+		if err != nil {
+			return fmt.Errorf("profile: normal chat: %w", err)
+		}
+		parsed, err := parseExtractedFacts(resp.Content)
+		if err != nil {
+			log.Printf("[profile] normal: JSON parse error: %v, raw=%s", err, truncateStr(resp.Content, 200))
+			return nil
+		}
+		violations := w.validateQuota(ctx, sess.UserID, parsed)
+		if len(violations) == 0 {
+			extracted = parsed
+			break
+		}
+		if attempt >= quotaRetryMax {
+			// 重试仍超限（极罕见）→ 截断兜底 + log，保留信息主体
+			log.Printf("[profile] normal: quota retries exhausted (%d), truncate fallback: %s",
+				quotaRetryMax, strings.Join(violations, "; "))
+			w.applyExtracted(ctx, sess.UserID, parsed)
+			return nil
+		}
+		log.Printf("[profile] normal: quota violation (attempt %d): %s", attempt+1, strings.Join(violations, "; "))
+		messages = append(messages,
+			llm.Message{Role: "assistant", Content: resp.Content},
+			llm.Message{Role: "user", Content: buildQuotaFeedback(violations)},
+		)
 	}
+
 	if len(extracted) == 0 {
 		return nil
 	}
 	log.Printf("[profile] normal: extracted %d fields, conv=%s", len(extracted), sess.ConvID[:min(8, len(sess.ConvID))])
-	w.upsertExtracted(ctx, sess.UserID, extracted)
+	w.applyExtracted(ctx, sess.UserID, extracted)
 	return nil
 }
 
-// ==================== 写入 ====================
+// ==================== 解析与写入 ====================
 
-// upsertExtracted 按白名单过滤并写入画像。补充说明字段 source=llm_additional，其余 source=explicit。
-func (w *UserProfileWorker) upsertExtracted(ctx context.Context, userID string, extracted map[string]string) {
-	for field, value := range extracted {
+// parseExtractedFacts 解析 LLM 输出 JSON。兼容字符串单值（"字段":"值"）与数组（"字段":["f1","f2"]）。
+func parseExtractedFacts(content string) (map[string][]string, error) {
+	var raw map[string]json.RawMessage
+	if _, err := ParseFlashJSON(content, &raw); err != nil {
+		return nil, err
+	}
+	out := make(map[string][]string, len(raw))
+	for field, r := range raw {
+		var s string
+		if err := json.Unmarshal(r, &s); err == nil {
+			out[field] = []string{s}
+			continue
+		}
+		var arr []string
+		if err := json.Unmarshal(r, &arr); err != nil {
+			log.Printf("[profile] field %q value not string or []string: %s", field, truncateStr(string(r), 80))
+			continue
+		}
+		out[field] = arr
+	}
+	return out, nil
+}
+
+// quotaViolation — 配额校验违规项（文案直接给 LLM 看）。
+type quotaViolation struct {
+	Field string
+	Msg   string
+}
+
+// validateQuota 校验提取结果的配额（MaxLen 单条长度 / MaxFacts 条数）。
+// 只校验配额，不校验白名单（白名单外的字段在 applyExtracted 静默丢弃，不浪费重生成）。
+// 返回违规列表，空 = 合规。
+func (w *UserProfileWorker) validateQuota(_ context.Context, _ string, extracted map[string][]string) []string {
+	var violations []string
+	for field, facts := range extracted {
+		def := profilefield.ProfileFieldDesc(field)
+		if def == nil {
+			continue
+		}
+		for i, f := range facts {
+			if utf8.RuneCountInString(f) > def.MaxLen {
+				violations = append(violations, fmt.Sprintf("字段\"%s\"第 %d 条 %d 字，超过上限 %d 字", field, i+1, utf8.RuneCountInString(f), def.MaxLen))
+			}
+		}
+		if len(facts) > def.MaxFacts {
+			violations = append(violations, fmt.Sprintf("字段\"%s\"共 %d 条，超过上限 %d 条", field, len(facts), def.MaxFacts))
+		}
+	}
+	return violations
+}
+
+// buildQuotaFeedback 把违规项拼成给 LLM 的反馈（要求重新输出）。
+func buildQuotaFeedback(violations []string) string {
+	return "以下输出不满足约束：\n" + strings.Join(violations, "\n") + "\n请精简/拆分/删除违规内容后，按原格式重新输出完整 JSON（不要用 markdown 代码块包裹）。"
+}
+
+// applyExtracted 按白名单过滤并写入 facts 表。
+// 每字段：与现有 active facts 精确比较（排序后 join），相同则跳过（防膨胀第一道闸）；
+// 不同则全量替换（旧 active 标 outdated + 新 facts 插入）。
+// 超限兜底：单条 rune 截断、条数截取前 N（重试耗尽后的降级路径）。
+func (w *UserProfileWorker) applyExtracted(ctx context.Context, userID string, extracted map[string][]string) {
+	batchID := idgen.Next()
+	existing, err := w.factRepo.GetActiveByUser(ctx, userID)
+	if err != nil {
+		log.Printf("[profile] GetActiveByUser error: %v", err)
+		return
+	}
+	activeByField := make(map[string][]string, 8)
+	for _, f := range existing {
+		activeByField[f.Field] = append(activeByField[f.Field], f.Value)
+	}
+
+	for field, facts := range extracted {
 		if !profilefield.InProfileWhitelist(field) {
 			log.Printf("[profile] field %q not in whitelist, drop", field)
 			continue
 		}
-		value = strings.TrimSpace(value)
-		if profilePlaceholders[value] {
+		def := profilefield.ProfileFieldDesc(field)
+		// 空数组 = 清空意图（LLM 判定该字段所有事实均已过时）
+		if len(facts) == 0 {
+			if len(activeByField[field]) == 0 {
+				continue
+			}
+			if err := w.factRepo.ReplaceFieldFacts(ctx, userID, field, nil, batchID); err != nil {
+				log.Printf("[profile] ReplaceFieldFacts field %s error: %v", field, err)
+				continue
+			}
+			log.Printf("[profile] cleared field %s", field)
 			continue
 		}
-		source := model.ProfileSourceExplicit
-		if field == "补充说明" {
-			source = model.ProfileSourceLLMAdditional
+		facts = filterFacts(facts, def)
+		if len(facts) == 0 {
+			continue // 过滤后变空（全是占位符）→ 忽略，不当作清空
 		}
-		p := &model.UserProfile{
-			UserID:     userID,
-			Field:      field,
-			FieldValue: value,
-			Source:     source,
+		if factsEqual(facts, activeByField[field]) {
+			continue // 无变化，跳过（不产生新批次）
 		}
-		if err := w.profileRepo.Upsert(ctx, p); err != nil {
-			log.Printf("[profile] upsert field %s error: %v", field, err)
+		if err := w.factRepo.ReplaceFieldFacts(ctx, userID, field, facts, batchID); err != nil {
+			log.Printf("[profile] ReplaceFieldFacts field %s error: %v", field, err)
+			continue
 		}
+		log.Printf("[profile] replaced field %s: %d facts", field, len(facts))
 	}
+
+	// outdated 审计保留最近 N 批，更旧物理清理
+	if n, err := w.factRepo.CleanupOutdated(ctx, userID, cleanOutdatedKeepBatches); err != nil {
+		log.Printf("[profile] CleanupOutdated error: %v", err)
+	} else if n > 0 {
+		log.Printf("[profile] cleaned %d outdated facts (user=%s)", n, userID)
+	}
+}
+
+// filterFacts 过滤占位值 + 超限兜底截断（按 MaxLen 截单条、MaxFacts 截条数）。
+func filterFacts(facts []string, def *profilefield.ProfileFieldDef) []string {
+	out := make([]string, 0, len(facts))
+	for _, f := range facts {
+		f = strings.TrimSpace(f)
+		if profilePlaceholders[f] {
+			continue
+		}
+		if utf8.RuneCountInString(f) > def.MaxLen {
+			log.Printf("[profile] fact too long (field=%s, %d>%d), truncate: %s",
+				def.Field, utf8.RuneCountInString(f), def.MaxLen, truncateStr(f, 60))
+			f = truncateRunes(f, def.MaxLen)
+		}
+		out = append(out, f)
+	}
+	if len(out) > def.MaxFacts {
+		log.Printf("[profile] too many facts (field=%s, %d>%d), keep first %d",
+			def.Field, len(out), def.MaxFacts, def.MaxFacts)
+		out = out[:def.MaxFacts]
+	}
+	return out
+}
+
+// factsEqual 判断两个事实集是否等价：排序后拼接比较（顺序无关，内容精确）。
+func factsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sa := append([]string(nil), a...)
+	sb := append([]string(nil), b...)
+	sort.Strings(sa)
+	sort.Strings(sb)
+	return strings.Join(sa, "\x00") == strings.Join(sb, "\x00")
+}
+
+func truncateRunes(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n])
 }
 
 // ==================== XML 编码 ====================
 
 // profileExtractionXML — 正常增量 user message 的 XML 结构。
 type profileExtractionXML struct {
-	XMLName         struct{}             `xml:"profile_extraction"`
-	Task            string               `xml:"task"`
-	ExistingProfile *existingProfileXML  `xml:"existing_profile,omitempty"`
-	Fields          []profileFieldDefXML `xml:"fields>field"`
-	Messages        []profileMsgXML      `xml:"messages>msg"`
-	Rules           []string             `xml:"rules>rule"`
-	OutputFormat    string               `xml:"output_format"`
+	XMLName         struct{}            `xml:"profile_extraction"`
+	Task            string              `xml:"task"`
+	ExistingProfile *existingProfileXML `xml:"existing_profile,omitempty"`
+	Fields          string              `xml:"fields"`
+	Messages        []profileMsgXML     `xml:"messages>msg"`
+	Rules           []string            `xml:"rules>rule"`
+	OutputFormat    string              `xml:"output_format"`
 }
 
 type existingProfileXML struct {
@@ -277,14 +460,14 @@ type existingProfileXML struct {
 }
 
 type existingFieldXML struct {
-	Key       string `xml:"key,attr"`
-	Value     string `xml:",chardata"`
-	UpdatedAt string `xml:"updated_at,attr,omitempty"`
+	Key   string            `xml:"key,attr"`
+	Facts []existingFactXML `xml:"fact"`
+	Value string            `xml:"chardata,omitempty"` // legacy 模式（旧表整段值）
 }
 
-type profileFieldDefXML struct {
-	Name        string `xml:"name,attr"`
-	Description string `xml:"description"`
+type existingFactXML struct {
+	CreatedAt string `xml:"created_at,attr,omitempty"`
+	Text      string `xml:",chardata"`
 }
 
 type profileMsgXML struct {
@@ -292,50 +475,73 @@ type profileMsgXML struct {
 	Text string `xml:",chardata"`
 }
 
-// buildProfileExtractionXML 构建正常增量提取的 user message XML。
-func buildProfileExtractionXML(existing []model.UserProfile, msgs []model.Message) string {
+// buildExtractionXML 构建增量提取的 user message XML。
+// 优先用 facts 表 active 事实；legacy=true 时用旧表整段值（延迟迁移拆分）。
+func (w *UserProfileWorker) buildExtractionXML(ctx context.Context, sess *SessionSnapshot, legacy bool) (string, error) {
 	doc := profileExtractionXML{
-		Task: "从以下对话记录中提取用户新画像信息",
-		Fields: func() []profileFieldDefXML {
-			fields := make([]profileFieldDefXML, 0, len(profilefield.ProfileFields))
-			for _, f := range profilefield.ProfileFields {
-				fields = append(fields, profileFieldDefXML{Name: f.Field, Description: f.ExtractDesc})
-			}
-			return fields
-		}(),
-		Messages: func() []profileMsgXML {
-			out := make([]profileMsgXML, 0, len(msgs))
-			for _, m := range msgs {
-				out = append(out, profileMsgXML{
-					Time: m.CreatedAt.In(config.BJ).Format("01-02 15:04"),
-					Text: m.Content,
-				})
-			}
-			return out
-		}(),
+		Fields:       profilefield.ProfileExtractFieldTextBrief(),
+		Messages:     buildProfileMsgs(sess.Messages),
 		Rules:        profileRules,
 		OutputFormat: profileOutputFormat,
 	}
-	if len(existing) > 0 {
-		ex := &existingProfileXML{Fields: make([]existingFieldXML, 0, len(existing))}
-		for _, p := range existing {
-			ex.Fields = append(ex.Fields, existingFieldXML{
-				Key:       p.Field,
-				Value:     p.FieldValue,
-				UpdatedAt: p.UpdatedAt.In(config.BJ).Format("2006-01-02"),
-			})
+
+	if legacy {
+		doc.Task = profileLegacyTask
+		existing, err := w.profileRepo.GetByUser(ctx, sess.UserID)
+		if err != nil {
+			return "", fmt.Errorf("profile: GetByUser(legacy): %w", err)
 		}
-		doc.ExistingProfile = ex
+		if len(existing) > 0 {
+			ex := &existingProfileXML{Fields: make([]existingFieldXML, 0, len(existing))}
+			for _, p := range existing {
+				ex.Fields = append(ex.Fields, existingFieldXML{
+					Key:   p.Field,
+					Value: p.FieldValue,
+				})
+			}
+			doc.ExistingProfile = ex
+		}
+	} else {
+		doc.Task = "从以下对话记录中提取用户新画像信息"
+		existing, err := w.factRepo.GetActiveByUser(ctx, sess.UserID)
+		if err != nil {
+			return "", fmt.Errorf("profile: GetActiveByUser: %w", err)
+		}
+		if len(existing) > 0 {
+			byField := make(map[string][]existingFactXML)
+			for _, f := range existing {
+				byField[f.Field] = append(byField[f.Field], existingFactXML{
+					CreatedAt: f.CreatedAt.In(config.BJ).Format("2006-01-02"),
+					Text:      f.Value,
+				})
+			}
+			ex := &existingProfileXML{Fields: make([]existingFieldXML, 0, len(byField))}
+			for field, facts := range byField {
+				ex.Fields = append(ex.Fields, existingFieldXML{Key: field, Facts: facts})
+			}
+			doc.ExistingProfile = ex
+		}
 	}
 
 	var buf bytes.Buffer
 	enc := xml.NewEncoder(&buf)
 	enc.Indent("", "  ")
 	if err := enc.Encode(doc); err != nil {
-		log.Printf("[profile] encode extraction XML error: %v", err)
-		return ""
+		return "", fmt.Errorf("profile: encode extraction XML: %w", err)
 	}
-	return buf.String()
+	return buf.String(), nil
+}
+
+// buildProfileMsgs 把 session user 消息编码为 <messages> 块。
+func buildProfileMsgs(msgs []model.Message) []profileMsgXML {
+	out := make([]profileMsgXML, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, profileMsgXML{
+			Time: m.CreatedAt.In(config.BJ).Format("01-02 15:04"),
+			Text: m.Content,
+		})
+	}
+	return out
 }
 
 // truncateStr 截断长字符串用于日志。

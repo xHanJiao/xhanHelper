@@ -122,6 +122,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 			StrongClient: llmClients.Strong,
 			Registry:     tools.Registry,
 			ProfileRepo:  repos.UserProfile,
+			FactRepo:     repos.UserProfileFact,
 		}),
 	}, repos.Message)
 

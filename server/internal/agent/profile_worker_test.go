@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -75,201 +76,368 @@ func registryWithUnifiedSearch() *tool.Registry {
 	return r
 }
 
-// setupProfileRepo 创建内存 sqlite 的 UserProfileRepo。
-func setupProfileRepo(t *testing.T) (*service.UserProfileRepo, func()) {
+// setupProfileRepos 创建内存 sqlite 的旧表 + facts 表 repo。
+func setupProfileRepos(t *testing.T) (*service.UserProfileRepo, *service.UserProfileFactRepo) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&model.UserProfile{}); err != nil {
+	if err := db.AutoMigrate(&model.UserProfile{}, &model.UserProfileFact{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	repo := service.NewUserProfileRepo(db)
-	cleanup := func() {
-		sqlDB, _ := db.DB()
-		if sqlDB != nil {
-			sqlDB.Close()
-		}
-	}
-	return repo, cleanup
+	return service.NewUserProfileRepo(db), service.NewUserProfileFactRepo(db)
 }
 
-func newTestProfileWorker(llmClient llm.LLMClient, repo *service.UserProfileRepo) *UserProfileWorker {
+func newTestProfileWorker(llmClient llm.LLMClient, legacyRepo *service.UserProfileRepo, factRepo *service.UserProfileFactRepo) *UserProfileWorker {
 	return &UserProfileWorker{
 		flashClient: llmClient,
 		registry:    noopRegistry(),
-		profileRepo: repo,
+		profileRepo: legacyRepo,
+		factRepo:    factRepo,
 	}
 }
 
-// ---- buildProfileExtractionXML 测试 ----
+func testSess(msgs ...string) *SessionSnapshot {
+	out := make([]model.Message, 0, len(msgs))
+	for i, c := range msgs {
+		out = append(out, model.Message{ID: string(rune('a' + i)), Content: c})
+	}
+	return &SessionSnapshot{ConvID: "conv-1", UserID: "user-1", Messages: out}
+}
 
-func TestBuildProfileExtractionXML_Basic(t *testing.T) {
-	msgs := []model.Message{
-		{ID: "msg-1", Content: "我老家是河南焦作的", CreatedAt: time.Date(2026, 8, 8, 7, 30, 0, 0, time.UTC)},
-		{ID: "msg-2", Content: "我女朋友叫CJ", CreatedAt: time.Date(2026, 8, 8, 7, 32, 0, 0, time.UTC)},
-	}
-	existing := []model.UserProfile{
-		{Field: "籍贯", FieldValue: "河南焦作", Source: "explicit", UpdatedAt: time.Date(2026, 8, 7, 0, 0, 0, 0, time.UTC)},
-	}
+// ---- buildExtractionXML 测试 ----
 
-	xml := buildProfileExtractionXML(existing, msgs)
+func TestBuildExtractionXML_FactMode(t *testing.T) {
+	_, factRepo := setupProfileRepos(t)
+	ctx := context.Background()
+	if err := factRepo.ReplaceFieldFacts(ctx, "user-1", "重要关系", []string{"CJ: 伴侣"}, "b0"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	w := newTestProfileWorker(nil, nil, factRepo)
 
-	// 结构断言
-	if !strings.Contains(xml, "<profile_extraction>") {
-		t.Error("missing <profile_extraction>")
+	xmlStr, err := w.buildExtractionXML(ctx, testSess("我老家是河南焦作的"), false)
+	if err != nil {
+		t.Fatalf("buildExtractionXML: %v", err)
 	}
-	if !strings.Contains(xml, "<existing_profile>") {
-		t.Error("missing <existing_profile>")
+	for _, want := range []string{
+		"<profile_extraction>",
+		`<field key="重要关系">`,
+		`<fact created_at=`,
+		"CJ: 伴侣",
+		"<output_format>",
+		"事实短句",          // caveman 规则
+		"已有事实未过时必须原样保留", // caveman 规则
+		"(≤", // 极简字段清单带配额
+	} {
+		if !strings.Contains(xmlStr, want) {
+			t.Errorf("fact mode XML missing %q\n---\n%s", want, xmlStr)
+		}
 	}
-	if !strings.Contains(xml, `key="籍贯"`) {
-		t.Error("missing existing field key")
-	}
-	if !strings.Contains(xml, `<msg time="08-08 15:30">我老家是河南焦作的</msg>`) {
-		t.Error("missing msg element with time and content")
-	}
-	if !strings.Contains(xml, "<rules>") {
-		t.Error("missing <rules>")
-	}
-	if !strings.Contains(xml, "<output_format>") {
-		t.Error("missing <output_format>")
-	}
-	// fields 定义块
-	if !strings.Contains(xml, `<field name="称呼">`) {
-		t.Error("missing field definition block for 称呼")
-	}
-	if !strings.Contains(xml, "<description>") {
-		t.Error("missing description in field defs")
+	if strings.Contains(xmlStr, "用户希望你如何称呼") {
+		t.Error("fact mode should use brief field list, not full ExtractDesc")
 	}
 }
 
-func TestBuildProfileExtractionXML_EmptyExisting(t *testing.T) {
-	msgs := []model.Message{{ID: "msg-1", Content: "你好"}}
-	xml := buildProfileExtractionXML(nil, msgs)
-	if strings.Contains(xml, "<existing_profile>") {
+func TestBuildExtractionXML_LegacyMode(t *testing.T) {
+	legacyRepo, _ := setupProfileRepos(t)
+	ctx := context.Background()
+	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-1", Field: "籍贯", FieldValue: "河南焦作"}); err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+	w := newTestProfileWorker(nil, legacyRepo, nil)
+
+	xmlStr, err := w.buildExtractionXML(ctx, testSess("你好"), true)
+	if err != nil {
+		t.Fatalf("buildExtractionXML: %v", err)
+	}
+	for _, want := range []string{
+		"<existing_profile>",
+		`key="籍贯"`,
+		"河南焦作",
+		"历史画像文本", // legacy task 提示
+	} {
+		if !strings.Contains(xmlStr, want) {
+			t.Errorf("legacy mode XML missing %q\n---\n%s", want, xmlStr)
+		}
+	}
+}
+
+func TestBuildExtractionXML_NoExisting(t *testing.T) {
+	_, factRepo := setupProfileRepos(t)
+	w := newTestProfileWorker(nil, nil, factRepo)
+	xmlStr, err := w.buildExtractionXML(context.Background(), testSess("你好"), false)
+	if err != nil {
+		t.Fatalf("buildExtractionXML: %v", err)
+	}
+	if strings.Contains(xmlStr, "<existing_profile>") {
 		t.Error("existing_profile should be omitted when empty")
 	}
 }
 
 // ---- 正常增量提取 ----
 
-func TestProfileWorker_NormalExtraction_Upserts(t *testing.T) {
-	repo, cleanup := setupProfileRepo(t)
-	defer cleanup()
+func TestProfileWorker_NormalExtraction_WritesFacts(t *testing.T) {
+	legacyRepo, factRepo := setupProfileRepos(t)
 
 	llmClient := &syncMockLLM{responses: []llm.Message{
-		{Content: `{"籍贯":"河南焦作","不存在字段":"x"}`},
+		{Content: `{"职业领域":["5年Go后端","gap期求职中"],"不存在字段":["x"]}`},
 	}}
-	w := newTestProfileWorker(llmClient, repo)
+	w := newTestProfileWorker(llmClient, legacyRepo, factRepo)
 
-	sess := &SessionSnapshot{
-		ConvID: "conv-1",
-		UserID: "user-1",
-		Messages: []model.Message{
-			{ID: "msg-1", Content: "我老家是河南焦作的"},
-		},
-	}
-
-	if err := w.extractNormal(context.Background(), sess); err != nil {
+	if err := w.extractNormal(context.Background(), testSess("我在面试"), false); err != nil {
 		t.Fatalf("extractNormal: %v", err)
 	}
-
-	// 已 upsert 籍贯（白名单内），丢弃不存在字段（白名单外）
-	p, err := repo.GetByUserAndField(context.Background(), "user-1", "籍贯")
+	facts, err := factRepo.GetActiveByField(context.Background(), "user-1", "职业领域")
 	if err != nil {
-		t.Fatalf("GetByUserAndField: %v", err)
+		t.Fatalf("GetActiveByField: %v", err)
 	}
-	if p == nil || p.FieldValue != "河南焦作" {
-		t.Fatalf("expected 籍贯=河南焦作, got %+v", p)
+	if len(facts) != 2 {
+		t.Fatalf("expected 2 facts, got %+v", facts)
 	}
-	if p.Source != model.ProfileSourceExplicit {
-		t.Errorf("expected source=explicit, got %s", p.Source)
+	if facts[0].Value != "5年Go后端" || facts[1].Value != "gap期求职中" {
+		t.Errorf("unexpected facts order: %+v", facts)
 	}
-	non, _ := repo.GetByUserAndField(context.Background(), "user-1", "不存在字段")
-	if non != nil {
-		t.Error("non-whitelist field should not be written")
+	for _, f := range facts {
+		if f.Status != model.FactStatusActive {
+			t.Errorf("fact should be active, got %s", f.Status)
+		}
 	}
 }
 
-func TestProfileWorker_NormalExtraction_AdditionalFieldSource(t *testing.T) {
-	repo, cleanup := setupProfileRepo(t)
-	defer cleanup()
+func TestProfileWorker_NormalExtraction_SingleStringValue(t *testing.T) {
+	_, factRepo := setupProfileRepos(t)
 
+	// 兼容字符串单值输出（旧格式）
 	llmClient := &syncMockLLM{responses: []llm.Message{
-		{Content: `{"补充说明":"养了一只猫"}`},
+		{Content: `{"籍贯":"河南焦作"}`},
 	}}
-	w := newTestProfileWorker(llmClient, repo)
+	w := newTestProfileWorker(llmClient, nil, factRepo)
 
-	sess := &SessionSnapshot{
-		ConvID: "conv-1",
-		UserID: "user-1",
-		Messages: []model.Message{
-			{ID: "msg-1", Content: "我养了一只猫"},
-		},
-	}
-
-	if err := w.extractNormal(context.Background(), sess); err != nil {
+	if err := w.extractNormal(context.Background(), testSess("我老家河南的"), false); err != nil {
 		t.Fatalf("extractNormal: %v", err)
 	}
-	p, err := repo.GetByUserAndField(context.Background(), "user-1", "补充说明")
+	facts, err := factRepo.GetActiveByField(context.Background(), "user-1", "籍贯")
 	if err != nil {
-		t.Fatalf("GetByUserAndField: %v", err)
+		t.Fatalf("GetActiveByField: %v", err)
 	}
-	if p == nil {
-		t.Fatal("expected 补充说明 to be written")
-	}
-	if p.Source != model.ProfileSourceLLMAdditional {
-		t.Errorf("expected source=llm_additional, got %s", p.Source)
+	if len(facts) != 1 || facts[0].Value != "河南焦作" {
+		t.Fatalf("expected 1 fact 河南焦作, got %+v", facts)
 	}
 }
 
-func TestProfileWorker_NormalExtraction_EmptyResponse(t *testing.T) {
-	repo, cleanup := setupProfileRepo(t)
-	defer cleanup()
+func TestProfileWorker_NormalExtraction_NoChangeSkip(t *testing.T) {
+	_, factRepo := setupProfileRepos(t)
+	ctx := context.Background()
+	if err := factRepo.ReplaceFieldFacts(ctx, "user-1", "籍贯", []string{"河南焦作"}, "b0"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
 
 	llmClient := &syncMockLLM{responses: []llm.Message{
-		{Content: `{}`},
+		{Content: `{"籍贯":["河南焦作"]}`}, // 与现有相同（顺序无关）
 	}}
-	w := newTestProfileWorker(llmClient, repo)
+	w := newTestProfileWorker(llmClient, nil, factRepo)
 
-	sess := &SessionSnapshot{ConvID: "conv-1", UserID: "user-1", Messages: []model.Message{{ID: "m1", Content: "你好"}}}
-	if err := w.extractNormal(context.Background(), sess); err != nil {
+	if err := w.extractNormal(ctx, testSess("我老家河南的"), false); err != nil {
 		t.Fatalf("extractNormal: %v", err)
 	}
-	hasAny, err := repo.HasAny(context.Background(), "user-1")
+	facts, err := factRepo.GetActiveByField(ctx, "user-1", "籍贯")
 	if err != nil {
-		t.Fatalf("HasAny: %v", err)
+		t.Fatalf("GetActiveByField: %v", err)
+	}
+	if len(facts) != 1 {
+		t.Fatalf("expected 1 fact, got %+v", facts)
+	}
+	if facts[0].BatchID != "b0" {
+		t.Errorf("no-change extract should not rewrite facts (batch should stay b0), got %s", facts[0].BatchID)
+	}
+}
+
+func TestProfileWorker_NormalExtraction_QuotaRetry(t *testing.T) {
+	_, factRepo := setupProfileRepos(t)
+
+	longFact := strings.Repeat("长", 100) // 职业领域 MaxLen=60
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"职业领域":["` + longFact + `"]}`},
+		{Content: `{"职业领域":["5年Go后端"]}`}, // 重试后合规
+	}}
+	w := newTestProfileWorker(llmClient, nil, factRepo)
+
+	if err := w.extractNormal(context.Background(), testSess("我是后端"), false); err != nil {
+		t.Fatalf("extractNormal: %v", err)
+	}
+	if llmClient.callCount != 2 {
+		t.Fatalf("expected 2 LLM calls (1 retry), got %d", llmClient.callCount)
+	}
+	// 第二次请求的 messages 应含反馈
+	msgs := llmClient.reqs[1].Messages
+	last := msgs[len(msgs)-1]
+	if last.Role != "user" || !strings.Contains(last.Content, "不满足约束") {
+		t.Errorf("retry should include quota feedback, got role=%s content=%s", last.Role, last.Content)
+	}
+	if !strings.Contains(last.Content, "职业领域") || !strings.Contains(last.Content, "上限 60 字") {
+		t.Errorf("feedback should mention field and limit, got %s", last.Content)
+	}
+	facts, err := factRepo.GetActiveByField(context.Background(), "user-1", "职业领域")
+	if err != nil {
+		t.Fatalf("GetActiveByField: %v", err)
+	}
+	if len(facts) != 1 || facts[0].Value != "5年Go后端" {
+		t.Fatalf("expected retried fact written, got %+v", facts)
+	}
+}
+
+func TestProfileWorker_NormalExtraction_QuotaRetryExhausted_TruncateFallback(t *testing.T) {
+	_, factRepo := setupProfileRepos(t)
+
+	tooLong := strings.Repeat("超", 200) // 职业领域 MaxLen=60
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"职业领域":["` + tooLong + `"]}`},
+		{Content: `{"职业领域":["` + tooLong + `"]}`},
+		{Content: `{"职业领域":["` + tooLong + `"]}`}, // 重试耗尽（初始+2次）
+	}}
+	w := newTestProfileWorker(llmClient, nil, factRepo)
+
+	if err := w.extractNormal(context.Background(), testSess("我是后端"), false); err != nil {
+		t.Fatalf("extractNormal: %v", err)
+	}
+	facts, err := factRepo.GetActiveByField(context.Background(), "user-1", "职业领域")
+	if err != nil {
+		t.Fatalf("GetActiveByField: %v", err)
+	}
+	if len(facts) != 1 {
+		t.Fatalf("expected 1 truncated fact, got %+v", facts)
+	}
+	if utf8.RuneCountInString(facts[0].Value) != 60 {
+		t.Errorf("fallback fact should be truncated to MaxLen=60, got %d chars", utf8.RuneCountInString(facts[0].Value))
+	}
+}
+
+func TestProfileWorker_NormalExtraction_MaxFactsTruncate(t *testing.T) {
+	_, factRepo := setupProfileRepos(t)
+
+	// 补充说明 MaxFacts=10，输出 12 条 → 重试耗尽后截取前 10
+	facts := make([]string, 12)
+	for i := range facts {
+		facts[i] = "杂项" + string(rune('a'+i))
+	}
+	payload, _ := json.Marshal(map[string][]string{"补充说明": facts})
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{Content: string(payload)},
+		{Content: string(payload)},
+		{Content: string(payload)}, // 初始 + 2 次重试，仍超限 → 截断兜底
+	}}
+	w := newTestProfileWorker(llmClient, nil, factRepo)
+
+	if err := w.extractNormal(context.Background(), testSess("杂事一堆"), false); err != nil {
+		t.Fatalf("extractNormal: %v", err)
+	}
+	got, err := factRepo.GetActiveByField(context.Background(), "user-1", "补充说明")
+	if err != nil {
+		t.Fatalf("GetActiveByField: %v", err)
+	}
+	if len(got) != 10 {
+		t.Errorf("expected 10 facts after MaxFacts truncate, got %d", len(got))
+	}
+}
+
+func TestProfileWorker_NormalExtraction_EmptyArrayClearsField(t *testing.T) {
+	_, factRepo := setupProfileRepos(t)
+	ctx := context.Background()
+	if err := factRepo.ReplaceFieldFacts(ctx, "user-1", "长期目标", []string{"转型全栈", "定居买房"}, "b0"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// LLM 判定该字段所有事实均已过时 → 输出空数组 → 字段清空
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"长期目标":[]}`},
+	}}
+	w := newTestProfileWorker(llmClient, nil, factRepo)
+
+	if err := w.extractNormal(ctx, testSess("目标都完成了"), false); err != nil {
+		t.Fatalf("extractNormal: %v", err)
+	}
+	facts, err := factRepo.GetActiveByField(ctx, "user-1", "长期目标")
+	if err != nil {
+		t.Fatalf("GetActiveByField: %v", err)
+	}
+	if len(facts) != 0 {
+		t.Errorf("empty array should clear field, got %d active facts: %+v", len(facts), facts)
+	}
+	hasAny, err := factRepo.HasActive(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("HasActive: %v", err)
 	}
 	if hasAny {
-		t.Error("empty response should not write anything")
+		t.Error("no active facts should remain after clear")
 	}
 }
 
-func TestProfileWorker_NormalExtraction_UsesSharedSystemPrompt(t *testing.T) {
-	repo, cleanup := setupProfileRepo(t)
-	defer cleanup()
+func TestProfileWorker_NormalExtraction_PlaceholderOnly_NotClearing(t *testing.T) {
+	_, factRepo := setupProfileRepos(t)
+	ctx := context.Background()
+	if err := factRepo.ReplaceFieldFacts(ctx, "user-1", "称呼", []string{"哥"}, "b0"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
 
-	llmClient := &syncMockLLM{responses: []llm.Message{{Content: `{}`}}}
-	w := newTestProfileWorker(llmClient, repo)
+	// 全是占位符 → 过滤后变空 → 忽略，不清空（防 LLM 输出"未知"误清字段）
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"称呼":["未知"]}`},
+	}}
+	w := newTestProfileWorker(llmClient, nil, factRepo)
 
-	sess := &SessionSnapshot{ConvID: "conv-1", UserID: "user-1", Messages: []model.Message{{ID: "m1", Content: "你好"}}}
-	if err := w.extractNormal(context.Background(), sess); err != nil {
+	if err := w.extractNormal(ctx, testSess("你好"), false); err != nil {
 		t.Fatalf("extractNormal: %v", err)
 	}
-	if len(llmClient.reqs) == 0 {
-		t.Fatal("no LLM call made")
+	facts, err := factRepo.GetActiveByField(ctx, "user-1", "称呼")
+	if err != nil {
+		t.Fatalf("GetActiveByField: %v", err)
 	}
-	if llmClient.reqs[0].SystemPrompt != postChatSharedSystemPrompt {
-		t.Errorf("normal extraction should use shared system prompt, got: %q", llmClient.reqs[0].SystemPrompt)
+	if len(facts) != 1 || facts[0].Value != "哥" || facts[0].BatchID != "b0" {
+		t.Errorf("placeholder-only output should be ignored, got %+v", facts)
+	}
+}
+
+// ---- 延迟迁移 ----
+
+func TestProfileWorker_LegacyMigration_SplitsToFacts(t *testing.T) {
+	legacyRepo, factRepo := setupProfileRepos(t)
+	ctx := context.Background()
+	// 旧表混装值
+	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-1", Field: "职业领域", FieldValue: "5年Go后端；gap期求职中"}); err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+
+	llmClient := &syncMockLLM{responses: []llm.Message{
+		{Content: `{"职业领域":["5年Go后端","gap期求职中"],"称呼":["哥"]}`},
+	}}
+	w := newTestProfileWorker(llmClient, legacyRepo, factRepo)
+
+	if err := w.extractNormal(ctx, testSess("我在面试"), true); err != nil {
+		t.Fatalf("extractNormal legacy: %v", err)
+	}
+	// LLM 看到的 existing 应含旧表整段值
+	if !strings.Contains(llmClient.reqs[0].Messages[0].Content, "5年Go后端；gap期求职中") {
+		t.Error("legacy extract should show old table value in existing_profile")
+	}
+	facts, err := factRepo.GetActiveByField(ctx, "user-1", "职业领域")
+	if err != nil {
+		t.Fatalf("GetActiveByField: %v", err)
+	}
+	if len(facts) != 2 {
+		t.Fatalf("expected 2 split facts, got %+v", facts)
+	}
+	// 旧表不动（保留审计）
+	p, err := legacyRepo.GetByUserAndField(ctx, "user-1", "职业领域")
+	if err != nil || p == nil {
+		t.Fatalf("legacy row should remain: %v", err)
 	}
 }
 
 // ---- 冷启动 ----
 
-func TestProfileWorker_ColdStart_ReActFlow(t *testing.T) {
-	repo, cleanup := setupProfileRepo(t)
-	defer cleanup()
+func TestProfileWorker_ColdStart_WritesFacts(t *testing.T) {
+	legacyRepo, factRepo := setupProfileRepos(t)
 
 	// 第一轮：返回 tool_call 请求（unified_search），第二轮：返回最终画像 JSON
 	llmClient := &syncMockLLM{responses: []llm.Message{
@@ -279,166 +447,137 @@ func TestProfileWorker_ColdStart_ReActFlow(t *testing.T) {
 				{ID: "call-1", Function: llm.ToolCallFunction{Name: "unified_search__semantic_search", Arguments: `{"query":"用户基本信息"}`}},
 			},
 		},
-		{Content: `{"籍贯":"河南焦作"}`},
+		{Content: `{"籍贯":["河南焦作"],"称呼":["小韩"]}`},
 	}}
 	w := &UserProfileWorker{
 		flashClient: llmClient,
 		registry:    registryWithUnifiedSearch(),
-		profileRepo: repo,
+		profileRepo: legacyRepo,
+		factRepo:    factRepo,
 	}
 
 	if err := w.runColdStartReAct(context.Background(), "user-1"); err != nil {
 		t.Fatalf("runColdStartReAct: %v", err)
 	}
-
-	// 工具调用被追加为 role=tool 消息（第二次请求的 messages 应包含 assistant + tool）
 	if len(llmClient.reqs) < 2 {
 		t.Fatalf("expected at least 2 LLM calls, got %d", len(llmClient.reqs))
 	}
 	if len(llmClient.reqs[0].Tools) == 0 {
 		t.Error("cold start request should include tools")
 	}
-
-	// 画像写入
-	p, err := repo.GetByUserAndField(context.Background(), "user-1", "籍贯")
+	facts, err := factRepo.GetActiveByField(context.Background(), "user-1", "籍贯")
 	if err != nil {
-		t.Fatalf("GetByUserAndField: %v", err)
+		t.Fatalf("GetActiveByField: %v", err)
 	}
-	if p == nil || p.FieldValue != "河南焦作" {
-		t.Fatalf("expected 籍贯=河南焦作, got %+v", p)
+	if len(facts) != 1 || facts[0].Value != "河南焦作" {
+		t.Fatalf("expected 籍贯 fact, got %+v", facts)
 	}
 }
 
 func TestProfileWorker_ColdStart_DirectJSON(t *testing.T) {
-	repo, cleanup := setupProfileRepo(t)
-	defer cleanup()
+	legacyRepo, factRepo := setupProfileRepos(t)
 
-	// 第一轮直接返回 JSON，不调用工具
 	llmClient := &syncMockLLM{responses: []llm.Message{
-		{Content: `{"籍贯":"河南焦作","称呼":"小韩"}`},
+		{Content: `{"籍贯":["河南焦作"]}`},
 	}}
-	w := newTestProfileWorker(llmClient, repo)
+	w := newTestProfileWorker(llmClient, legacyRepo, factRepo)
 
 	if err := w.runColdStartReAct(context.Background(), "user-1"); err != nil {
 		t.Fatalf("runColdStartReAct: %v", err)
 	}
-	p, _ := repo.GetByUserAndField(context.Background(), "user-1", "籍贯")
-	if p == nil || p.FieldValue != "河南焦作" {
-		t.Fatalf("expected 籍贯=河南焦作, got %+v", p)
-	}
-	p2, _ := repo.GetByUserAndField(context.Background(), "user-1", "称呼")
-	if p2 == nil || p2.FieldValue != "小韩" {
-		t.Fatalf("expected 称呼=小韩, got %+v", p2)
+	facts, _ := factRepo.GetActiveByField(context.Background(), "user-1", "籍贯")
+	if len(facts) != 1 || facts[0].Value != "河南焦作" {
+		t.Fatalf("expected 籍贯=河南焦作, got %+v", facts)
 	}
 }
 
 func TestProfileWorker_ColdStart_DeepModeUsesStrongClient(t *testing.T) {
-	repo, cleanup := setupProfileRepo(t)
-	defer cleanup()
+	legacyRepo, factRepo := setupProfileRepos(t)
 
-	// StrongClient 被调用（冷启动 deep mode）
 	strongClient := &syncMockLLM{responses: []llm.Message{
-		{Content: `{"籍贯":"河南焦作"}`},
+		{Content: `{"籍贯":["河南焦作"]}`},
 	}}
 	flashClient := &syncMockLLM{responses: []llm.Message{
-		{Content: `{"籍贯":"错的值"}`},
+		{Content: `{"籍贯":["错的值"]}`},
 	}}
 	w := &UserProfileWorker{
 		flashClient:  flashClient,
 		strongClient: strongClient,
 		registry:     noopRegistry(),
-		profileRepo:  repo,
+		profileRepo:  legacyRepo,
+		factRepo:     factRepo,
 	}
 
 	if err := w.runColdStartReAct(context.Background(), "user-1"); err != nil {
 		t.Fatalf("runColdStartReAct: %v", err)
 	}
-	// 画像应来自 StrongClient，而非 Flash
 	if strongClient.callCount != 1 {
 		t.Errorf("expected strong client called, calls=%d", strongClient.callCount)
 	}
 	if flashClient.callCount != 0 {
-		t.Errorf("expected flash NOT called for cold start, calls=%d", flashClient.callCount)
+		t.Errorf("expected flash NOT called, calls=%d", flashClient.callCount)
 	}
-	p, _ := repo.GetByUserAndField(context.Background(), "user-1", "籍贯")
-	if p == nil || p.FieldValue != "河南焦作" {
-		t.Fatalf("expected 籍贯=河南焦作 (from strong), got %+v", p)
-	}
-	// thinking 已开启
 	if len(strongClient.reqs) == 0 || strongClient.reqs[0].Thinking == nil || !*strongClient.reqs[0].Thinking {
-		t.Errorf("expected thinking=true in strong client request, got %+v", strongClient.reqs)
-	}
-}
-
-func TestProfileWorker_ColdStart_DeepModeFallsBackToFlash(t *testing.T) {
-	repo, cleanup := setupProfileRepo(t)
-	defer cleanup()
-
-	// 未注入 StrongClient → 回退 Flash
-	flashClient := &syncMockLLM{responses: []llm.Message{
-		{Content: `{"籍贯":"河南焦作"}`},
-	}}
-	w := &UserProfileWorker{
-		flashClient: flashClient,
-		registry:    noopRegistry(),
-		profileRepo: repo,
-	}
-
-	if err := w.runColdStartReAct(context.Background(), "user-1"); err != nil {
-		t.Fatalf("runColdStartReAct: %v", err)
-	}
-	if flashClient.callCount != 1 {
-		t.Errorf("expected flash called (fallback), calls=%d", flashClient.callCount)
-	}
-	p, _ := repo.GetByUserAndField(context.Background(), "user-1", "籍贯")
-	if p == nil || p.FieldValue != "河南焦作" {
-		t.Fatalf("expected 籍贯=河南焦作, got %+v", p)
+		t.Errorf("expected thinking=true, got %+v", strongClient.reqs)
 	}
 }
 
 func TestProfileWorker_ColdStart_MaxIterations_NoWrite(t *testing.T) {
-	repo, cleanup := setupProfileRepo(t)
-	defer cleanup()
+	legacyRepo, factRepo := setupProfileRepos(t)
 
-	// 全部轮次返回 tool_call（强制轮也拿不到最终 JSON），画像不应写入
 	llmClient := &syncMockLLM{responses: make([]llm.Message, coldStartMaxIterations)}
 	for i := range llmClient.responses {
 		llmClient.responses[i] = llm.Message{ToolCalls: []llm.ToolCall{
 			{ID: "call", Function: llm.ToolCallFunction{Name: "unified_search__semantic_search", Arguments: `{"query":"x"}`}},
 		}}
 	}
-	w := newTestProfileWorker(llmClient, repo)
+	w := newTestProfileWorker(llmClient, legacyRepo, factRepo)
 
 	if err := w.runColdStartReAct(context.Background(), "user-1"); err != nil {
 		t.Fatalf("runColdStartReAct: %v", err)
 	}
-	hasAny, _ := repo.HasAny(context.Background(), "user-1")
+	hasAny, _ := factRepo.HasActive(context.Background(), "user-1")
 	if hasAny {
-		t.Error("max iterations reached without final JSON should not write profile")
+		t.Error("max iterations without final JSON should not write")
 	}
 }
 
 // ---- Process 分流 ----
 
-func TestProfileWorker_Process_ColdStartVsNormal(t *testing.T) {
-	repo, cleanup := setupProfileRepo(t)
-	defer cleanup()
+func TestProfileWorker_Process_Routing(t *testing.T) {
+	legacyRepo, factRepo := setupProfileRepos(t)
+	ctx := context.Background()
 
-	// 无画像 → 冷启动
-	llmCold := &syncMockLLM{responses: []llm.Message{{Content: `{"籍贯":"河南焦作"}`}}}
-	w := newTestProfileWorker(llmCold, repo)
-	sess := &SessionSnapshot{ConvID: "conv-1", UserID: "user-1", Messages: []model.Message{{ID: "m1", Content: "你好"}}}
-	if err := w.Process(context.Background(), sess); err != nil {
+	// 1. 无 facts 无 legacy → 冷启动
+	llmCold := &syncMockLLM{responses: []llm.Message{{Content: `{"籍贯":["河南焦作"]}`}}}
+	w := newTestProfileWorker(llmCold, legacyRepo, factRepo)
+	if err := w.Process(ctx, testSess("你好")); err != nil {
 		t.Fatalf("Process (cold): %v", err)
 	}
 	if !strings.Contains(llmCold.reqs[0].SystemPrompt, "用户画像提取助手") {
 		t.Error("cold start should use dedicated system prompt")
 	}
 
-	// 已有画像 → 正常增量
+	// 2. facts 空 + legacy 有值 → 延迟迁移（共享 prompt + legacy task）——用 user-2（user-1 已被冷启动写入 facts）
+	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "user-2", Field: "籍贯", FieldValue: "河南焦作"}); err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+	llmLagacy := &syncMockLLM{responses: []llm.Message{{Content: `{}`}}}
+	w2 := newTestProfileWorker(llmLagacy, legacyRepo, factRepo)
+	if err := w2.Process(ctx, &SessionSnapshot{ConvID: "conv-1", UserID: "user-2", Messages: []model.Message{{ID: "m1", Content: "你好"}}}); err != nil {
+		t.Fatalf("Process (legacy): %v", err)
+	}
+	if llmLagacy.reqs[0].SystemPrompt != postChatSharedSystemPrompt {
+		t.Error("legacy mode should use shared system prompt")
+	}
+	if !strings.Contains(llmLagacy.reqs[0].Messages[0].Content, "历史画像文本") {
+		t.Error("legacy mode task should mention splitting")
+	}
+
+	// 3. facts 有值 → 正常增量
 	llmNormal := &syncMockLLM{responses: []llm.Message{{Content: `{}`}}}
-	w2 := newTestProfileWorker(llmNormal, repo)
-	if err := w2.Process(context.Background(), sess); err != nil {
+	w3 := newTestProfileWorker(llmNormal, legacyRepo, factRepo)
+	if err := w3.Process(ctx, testSess("你好")); err != nil {
 		t.Fatalf("Process (normal): %v", err)
 	}
 	if llmNormal.reqs[0].SystemPrompt != postChatSharedSystemPrompt {
@@ -446,40 +585,64 @@ func TestProfileWorker_Process_ColdStartVsNormal(t *testing.T) {
 	}
 }
 
-// ---- repo 测试 ----
+// ---- 输出格式文本断言 ----
+
+func TestProfileOutputFormat_ArrayFormat(t *testing.T) {
+	if !strings.Contains(profileOutputFormat, "[\"事实1\",\"事实2\"]") {
+		t.Error("output format should instruct array format")
+	}
+	if !strings.Contains(profileOutputFormat, "无变化输出 {}") {
+		t.Error("output format should require only-changed-fields")
+	}
+}
+
+func TestProfileRules_Caveman(t *testing.T) {
+	for _, want := range []string{"无引导词", "分号分隔", "原样保留", "只输出有变化"} {
+		found := false
+		for _, r := range profileRules {
+			if strings.Contains(r, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("rule mentioning %q not found", want)
+		}
+	}
+}
+
+// ---- 老 repo 测试保留 ----
 
 func TestUserProfileRepo_UpsertOverwrite(t *testing.T) {
-	repo, cleanup := setupProfileRepo(t)
-	defer cleanup()
+	legacyRepo, _ := setupProfileRepos(t)
 	ctx := context.Background()
 
-	if err := repo.Upsert(ctx, &model.UserProfile{UserID: "u1", Field: "籍贯", FieldValue: "河南焦作", Source: "explicit"}); err != nil {
+	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "u1", Field: "籍贯", FieldValue: "河南焦作", Source: "explicit"}); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
-	// 冲突覆盖
-	if err := repo.Upsert(ctx, &model.UserProfile{UserID: "u1", Field: "籍贯", FieldValue: "郑州", Source: "explicit"}); err != nil {
+	if err := legacyRepo.Upsert(ctx, &model.UserProfile{UserID: "u1", Field: "籍贯", FieldValue: "郑州", Source: "explicit"}); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
-	p, err := repo.GetByUserAndField(ctx, "u1", "籍贯")
+	p, err := legacyRepo.GetByUserAndField(ctx, "u1", "籍贯")
 	if err != nil {
 		t.Fatalf("GetByUserAndField: %v", err)
 	}
 	if p.FieldValue != "郑州" {
 		t.Errorf("expected overwritten value 郑州, got %s", p.FieldValue)
 	}
-	list, err := repo.GetByUser(ctx, "u1")
+}
+
+func TestProfileWorker_TimeInMsg(t *testing.T) {
+	_, factRepo := setupProfileRepos(t)
+	msgs := []model.Message{
+		{ID: "m1", Content: "我老家是河南焦作的", CreatedAt: time.Date(2026, 8, 8, 7, 30, 0, 0, time.UTC)},
+	}
+	w := newTestProfileWorker(nil, nil, factRepo)
+	xmlStr, err := w.buildExtractionXML(context.Background(), &SessionSnapshot{ConvID: "c", UserID: "u", Messages: msgs}, false)
 	if err != nil {
-		t.Fatalf("GetByUser: %v", err)
+		t.Fatalf("buildExtractionXML: %v", err)
 	}
-	if len(list) != 1 {
-		t.Errorf("expected 1 row, got %d", len(list))
-	}
-	hasAny, err := repo.HasAny(ctx, "u1")
-	if err != nil || !hasAny {
-		t.Errorf("HasAny should be true, got %v err=%v", hasAny, err)
-	}
-	hasAny2, _ := repo.HasAny(ctx, "nobody")
-	if hasAny2 {
-		t.Error("HasAny for unknown user should be false")
+	if !strings.Contains(xmlStr, `<msg time="08-08 15:30">我老家是河南焦作的</msg>`) {
+		t.Errorf("msg element should carry BJ time and content\n%s", xmlStr)
 	}
 }

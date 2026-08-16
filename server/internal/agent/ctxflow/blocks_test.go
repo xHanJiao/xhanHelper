@@ -242,26 +242,31 @@ func TestNoticeBlock_RendersInUserMessage(t *testing.T) {
 
 func TestBuildProfileBlock(t *testing.T) {
 	items := []retrieval.ContextPacket{
-		ProfilePacket(&model.UserProfile{
-			Field: "籍贯", FieldValue: "河南焦作", Source: "explicit",
-			UpdatedAt: makeTime(2026, 8, 7),
-		}),
+		ProfilePacket("补充说明", "睡眠差; 房价观察", makeTime(2026, 8, 7)),
 	}
 	got := marshalBlock(t, buildBlock(TypeProfile, items))
 	if !strings.Contains(got, `<profile`) {
 		t.Errorf("should produce profile root: %s", got)
 	}
-	if !strings.Contains(got, `key="籍贯"`) {
+	if !strings.Contains(got, `key="补充说明"`) {
 		t.Errorf("missing field key: %s", got)
 	}
-	if !strings.Contains(got, `source="explicit"`) {
-		t.Errorf("missing source attr: %s", got)
+	if !strings.Contains(got, `source="llm_additional"`) {
+		t.Errorf("补充说明 field should derive source=llm_additional: %s", got)
 	}
 	if !strings.Contains(got, `updated_at="2026-08-07"`) {
 		t.Errorf("missing updated_at attr: %s", got)
 	}
-	if !strings.Contains(got, ">河南焦作</field>") {
+	if !strings.Contains(got, ">睡眠差; 房价观察</field>") {
 		t.Errorf("missing field value: %s", got)
+	}
+}
+
+func TestProfilePacket_NonAdditionalField_NoSource(t *testing.T) {
+	pkt := ProfilePacket("籍贯", "河南焦作", makeTime(2026, 8, 7))
+	meta := pkt.Meta.(retrieval.ProfileMeta)
+	if meta.Source != "" {
+		t.Errorf("non-补充说明 field should have empty source, got %q", meta.Source)
 	}
 }
 
@@ -275,7 +280,7 @@ func TestProfileBlock_RendersFirstInUserMessage(t *testing.T) {
 	f := NewXMLFormatter()
 	packets := map[string][]retrieval.ContextPacket{
 		TypeProfile: {
-			ProfilePacket(&model.UserProfile{Field: "籍贯", FieldValue: "河南焦作", Source: "explicit", UpdatedAt: makeTime(2026, 8, 7)}),
+			ProfilePacket("籍贯", "河南焦作", makeTime(2026, 8, 7)),
 		},
 		TypeCurrentDatetime: {DateTimePacket(makeTime(2026, 8, 8))},
 		TypeMemory:          {retrieval.ContextPacket{Type: TypeMemory, Text: "某记忆"}},
@@ -294,9 +299,9 @@ func TestProfileBlock_RendersFirstInUserMessage(t *testing.T) {
 func TestSortPacketsByType_ProfileAlphabetical(t *testing.T) {
 	// 乱序输入，期望按字段名字母序输出（确定性，与更新时间无关）
 	pkts := []retrieval.ContextPacket{
-		ProfilePacket(&model.UserProfile{Field: "伴侣", FieldValue: "CJ", Source: "explicit", UpdatedAt: makeTime(2026, 8, 7)}),
-		ProfilePacket(&model.UserProfile{Field: "籍贯", FieldValue: "河南焦作", Source: "explicit", UpdatedAt: makeTime(2026, 8, 1)}),
-		ProfilePacket(&model.UserProfile{Field: "出生年份", FieldValue: "1995", Source: "explicit", UpdatedAt: makeTime(2026, 8, 8)}),
+		ProfilePacket("伴侣", "CJ", makeTime(2026, 8, 7)),
+		ProfilePacket("籍贯", "河南焦作", makeTime(2026, 8, 1)),
+		ProfilePacket("出生日期", "1995", makeTime(2026, 8, 8)),
 	}
 	sortPacketsByType(TypeProfile, pkts)
 	got := make([]string, 0, len(pkts))
@@ -354,8 +359,8 @@ func TestFormatUserMessage_ProfileItemsSorted(t *testing.T) {
 	f := NewXMLFormatter()
 	packets := map[string][]retrieval.ContextPacket{
 		TypeProfile: {
-			ProfilePacket(&model.UserProfile{Field: "籍贯", FieldValue: "河南焦作", Source: "explicit", UpdatedAt: makeTime(2026, 8, 1)}),
-			ProfilePacket(&model.UserProfile{Field: "伴侣", FieldValue: "CJ", Source: "explicit", UpdatedAt: makeTime(2026, 8, 7)}),
+			ProfilePacket("籍贯", "河南焦作", makeTime(2026, 8, 1)),
+			ProfilePacket("伴侣", "CJ", makeTime(2026, 8, 7)),
 		},
 	}
 	out := f.FormatUserMessage(packets, "你好")

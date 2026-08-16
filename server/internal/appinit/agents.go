@@ -218,8 +218,8 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 			Note:    cfg.Retrieval.ResourceZone.QuotaNote,
 			Topic:   cfg.Retrieval.ResourceZone.QuotaTopic,
 		},
-		ReminderRepo: repos.Reminder,
-		ProfileRepo:  repos.UserProfile,
+		ReminderRepo:    repos.Reminder,
+		ProfileFactRepo: repos.UserProfileFact,
 	})
 
 	if !cfg.Server.DisableBackgroundTasks {

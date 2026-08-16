@@ -7,7 +7,6 @@ import (
 
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/config"
-	"xhan-helper/internal/model"
 )
 
 const (
@@ -395,17 +394,22 @@ func NoticePacket(text string) retrieval.ContextPacket {
 	return retrieval.ContextPacket{Type: TypeNotice, Text: text}
 }
 
-// ProfilePacket 生成 profile 类型的 ContextPacket（用户画像稳定层字段）。
-func ProfilePacket(p *model.UserProfile) retrieval.ContextPacket {
+// ProfilePacket 生成 profile 类型的 ContextPacket（用户画像稳定层字段，fact 聚合后的值）。
+// source 由字段派生：补充说明是 LLM 自行判断（低置信），其余字段只提取用户明确陈述。
+func ProfilePacket(field, value string, updatedAt time.Time) retrieval.ContextPacket {
+	source := ""
+	if field == "补充说明" {
+		source = "llm_additional"
+	}
 	return retrieval.ContextPacket{
-		ID:   p.Field,
+		ID:   field,
 		Type: TypeProfile,
-		Text: p.FieldValue,
+		Text: value,
 		Meta: retrieval.ProfileMeta{
-			Key:       p.Field,
-			Value:     p.FieldValue,
-			Source:    p.Source,
-			UpdatedAt: p.UpdatedAt,
+			Key:       field,
+			Value:     value,
+			Source:    source,
+			UpdatedAt: updatedAt,
 		},
 	}
 }

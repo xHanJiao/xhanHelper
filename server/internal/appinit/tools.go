@@ -115,8 +115,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		tool.NewReminderTool(repos.Reminder, llmClients.Flash), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewPlanTool(repos.ConversationPlan), log.Default()))
-	reg.Register(tool.NewLoggingWrapper(
-		tool.NewProfileTool(repos.UserProfile), log.Default()))
 
 	reg.ValidateNativeFC()
 	// 校验 ReadOnlyFuncs 声明与 Functions() 一致（plan 模式只读拦截依赖，拼错直接 panic）

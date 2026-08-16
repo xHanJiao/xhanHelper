@@ -152,7 +152,7 @@ type Orchestrator struct {
 	contextRetriever       *ctxflow.ContextRetriever // 上下文检索
 	contextFormatter       ctxflow.ContextFormatter  // 上下文格式化（接口）
 	reminderRepo           *service.ReminderRepo
-	profileRepo            *service.UserProfileRepo
+	profileFactRepo        *service.UserProfileFactRepo
 
 	// 摘要附着控制
 	summaryAttachCount        int
@@ -208,7 +208,7 @@ type OrchestratorConfig struct {
 	ResourceZoneBudgets       ctxflow.ZoneBudgets       // 资源区每类型预算（chars）
 	ResourceZoneQuotas        ctxflow.ZoneQuotas        // 资源区每类型配额
 	ReminderRepo              *service.ReminderRepo
-	ProfileRepo               *service.UserProfileRepo
+	ProfileFactRepo           *service.UserProfileFactRepo
 }
 
 // New 创建 Orchestrator
@@ -279,7 +279,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		resourceZoneBudgets:       cfg.ResourceZoneBudgets,
 		resourceZoneQuotas:        cfg.ResourceZoneQuotas,
 		reminderRepo:              cfg.ReminderRepo,
-		profileRepo:               cfg.ProfileRepo,
+		profileFactRepo:           cfg.ProfileFactRepo,
 	}
 }
 
@@ -662,21 +662,29 @@ func (o *Orchestrator) buildReminderPackets(ctx context.Context, userID string) 
 	return packets
 }
 
-// buildProfilePackets 加载用户画像稳定层，生成 ContextPacket 列表注入 user message。
-// 画像为空时不注入任何块（profileRepo 为 nil 时也跳过）。
-// 注意：字段按名字母序排序（字段名是白名单常量，稳定不变），保证块内顺序确定，缓存友好。
+// buildProfilePackets 加载用户画像稳定层（facts 表 active 事实），按字段聚合后生成 ContextPacket。
+// 画像为空时不注入任何块。字段按名字母序排序，保证块内顺序确定，缓存友好。
 func (o *Orchestrator) buildProfilePackets(ctx context.Context, userID string) []retrieval.ContextPacket {
-	if o.profileRepo == nil {
-		return nil
-	}
-	profiles, err := o.profileRepo.GetByUser(ctx, userID)
+	facts, err := o.profileFactRepo.GetActiveByUser(ctx, userID)
 	if err != nil {
-		log.Printf("[orch] profile GetByUser error: %v", err)
+		log.Printf("[orch] profile GetActiveByUser error: %v", err)
 		return nil
 	}
-	packets := make([]retrieval.ContextPacket, 0, len(profiles))
-	for i := range profiles {
-		packets = append(packets, ctxflow.ProfilePacket(&profiles[i]))
+	byField := make(map[string]struct {
+		values    []string
+		updatedAt time.Time
+	}, 8)
+	for _, f := range facts {
+		agg := byField[f.Field]
+		agg.values = append(agg.values, f.Value)
+		if f.CreatedAt.After(agg.updatedAt) {
+			agg.updatedAt = f.CreatedAt
+		}
+		byField[f.Field] = agg
+	}
+	packets := make([]retrieval.ContextPacket, 0, len(byField))
+	for field, agg := range byField {
+		packets = append(packets, ctxflow.ProfilePacket(field, strings.Join(agg.values, "; "), agg.updatedAt))
 	}
 	sort.SliceStable(packets, func(i, j int) bool {
 		return packets[i].ID < packets[j].ID

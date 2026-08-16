@@ -41,7 +41,6 @@ var builtinToolSeeds = []builtinToolSeed{
 	{Name: "unified_search", Description: "统一检索：长期记忆/笔记/对话摘要/主题/历史消息，支持语义与关键词两种模式", Category: "search"},
 	{Name: "message_search", Description: "查询历史消息：时间范围/ID 范围/按 ID 获取/数量统计", Category: "search"},
 	{Name: "reminder", Description: "设置提醒事项，支持一次性/每日/每周/每月/工作日重复", Category: "utility"},
-	{Name: "profile", Description: "用户画像工具，在用户明确要求时更新/新增画像字段", Category: "profile"},
 }
 
 // retiredBuiltinTools 已下线、不再注册的内置工具名。代码移除后线上 DB 可能残留 active 记录
@@ -54,6 +53,7 @@ var retiredBuiltinTools = map[string]bool{
 	"memory_search":      true, // 检索被 unified_search 覆盖（30天 61 次 → 统一入口）
 	"search_notes_v2":    true, // 检索被 unified_search 覆盖（30天 6 次）
 	"tool_retriever":     true, // 工具发现元工具，native FC 下多余，长期 0 次调用
+	"profile":            true, // 画像修改工具废弃，单一写入通道 = 后处理 worker 自动提取
 }
 
 // SeedBuiltinTools 启动时确保内置工具的 DB 记录和 embedding 存在（幂等）

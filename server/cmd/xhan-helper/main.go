@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"log"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/appinit"
+	"xhan-helper/internal/async"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
@@ -49,10 +52,30 @@ func main() {
 	costRecorder := llmcost.NewDBRecorder(repos.LlmCost)
 
 	llmClients := app.InitLLM(cfg, llm.NewClient, llm.NewStrongClient, costRecorder)
+	llmClients.Flash = llmcost.WrapIOAudit(llmClients.Flash, repos.LLMCallIO)
+	llmClients.Strong = llmcost.WrapIOAudit(llmClients.Strong, repos.LLMCallIO)
 
 	// --- 工具 & Agent 系统 ---
 	tools := appinit.InitTools(cfg, repos, infra, llmClients)
 	agents := appinit.InitAgents(cfg, repos, infra, llmClients, tools, vs)
+
+	// LLM 审计保留清理：每日删 7 天前记录
+	if !cfg.Server.DisableBackgroundTasks {
+		cleanup := func(ctx context.Context) {
+			cutoff := time.Now().Add(-7 * 24 * time.Hour)
+			for {
+				n, err := repos.LLMCallIO.CleanupBefore(ctx, cutoff, 500)
+				if err != nil {
+					log.Printf("[llm_audit] retention cleanup error: %v", err)
+					return
+				}
+				if n < 500 {
+					return
+				}
+			}
+		}
+		go async.NewIntervalRunner("llm_io_retention", 24*time.Hour, cleanup).Start(agents.BGCtx)
+	}
 
 	// --- 监控 ---
 	appinit.RegisterMonitorSnapshots(vs, tools.MCPManager, repos.Conversation, repos.ThemeState)

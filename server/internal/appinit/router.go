@@ -116,6 +116,13 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		Repo:            repos.LlmCost,
 	})
 
+	controller.RegisterLLMIOAuditRoutes(controller.LLMIOAuditRoutesConfig{
+		R:               router,
+		AuthMiddleware:  middleware.Auth(repos.User),
+		AdminMiddleware: monitor.AdminOnly(cfg.Server.AdminUsers),
+		Repo:            repos.LLMCallIO,
+	})
+
 	return router
 }
 

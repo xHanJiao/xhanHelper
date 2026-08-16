@@ -4,6 +4,7 @@ import { api } from '@/api/client'
 import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NEmpty, NAlert, NButton, NCheckbox, NModal, useMessage } from 'naive-ui'
 import { Chart, registerables } from 'chart.js'
 import PageTopBar from '@/components/PageTopBar.vue'
+import LLMIOAuditTab from '@/components/LLMIOAuditTab.vue'
 import { isMacEmbedded } from '@/utils/embed'
 
 Chart.register(...registerables)
@@ -526,6 +527,7 @@ onUnmounted(() => {
       <NTabPane name="msg-trace" tab="消息Trace" />
       <NTabPane name="pending-findings" tab="主题发现" />
       <NTabPane name="cost" tab="Token 消耗" />
+      <NTabPane name="llm-io" tab="LLM 审计" />
     </NTabs>
     <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
 
@@ -795,6 +797,10 @@ onUnmounted(() => {
           </div>
         </NCard>
       </div>
+    </div>
+    <!-- ========== LLM 审计 Tab ========== -->
+    <div v-if="activeTab === 'llm-io'" style="padding-top: var(--space-sm);">
+      <LLMIOAuditTab />
     </div>
     <!-- ========== Token 消耗 Tab ========== -->
     <div v-if="activeTab === 'cost'" style="padding-top: var(--space-sm);">

@@ -12,6 +12,8 @@ db:
   database: xhan_helper
   charset: utf8mb4
 
+llm:
+  debug_persist_json: true        # 持久化完整 LLM 请求 JSON 到 DB（异步限频写入，retention_days 走 config.yaml 默认 3 天）
 
 reflection:
   launch_max_iterations: 8

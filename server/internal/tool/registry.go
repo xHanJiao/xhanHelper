@@ -65,6 +65,16 @@ func (r *Registry) HideTool(name string) {
 	r.hiddenNames[name] = true
 }
 
+// IsHidden 判断工具是否被隐藏（expose_tools 校验用）
+func (r *Registry) IsHidden(name string) bool {
+	return r.hiddenNames[name]
+}
+
+// VisibleToolNames 返回所有非隐藏工具名（按字典序排序，字节稳定）。
+func (r *Registry) VisibleToolNames() []string {
+	return r.sortedVisibleToolNames()
+}
+
 // ToolFunctionInfo — 工具函数信息（SearchTools 返回结构）。
 type ToolFunctionInfo struct {
 	Name        string

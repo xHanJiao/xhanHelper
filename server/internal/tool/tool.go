@@ -48,6 +48,11 @@ type ExecuteContext struct {
 	// ClientTools — 客户端上报的本地工具定义（task 工具用此字段传给子循环）。
 	// 普通工具无需关注，仅 task 工具使用。replay/测试场景下为 nil 或空。
 	ClientTools []ClientToolInfo
+
+	// Expose — 渐进式工具暴露回调（仅 expose_tools 工具使用）。
+	// Orchestrator 注入，把指定工具组加入本会话窗口的暴露集。nil 表示当前上下文不支持暴露。
+	// 可选依赖（回调），nil 时 expose_tools 返回不可用错误。
+	Expose func(groups []string) *ExposeResult
 }
 
 // Tool — 所有工具必须实现的接口

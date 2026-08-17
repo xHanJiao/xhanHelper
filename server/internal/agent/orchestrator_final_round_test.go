@@ -195,13 +195,13 @@ func TestMkLlmChatReq_FinalRound_NoTools(t *testing.T) {
 	req := &RunRequest{UserID: "u1"}
 	msgs := []llm.Message{{Role: "user", Content: "hi"}}
 
-	// 正常轮：有工具
-	normal := o.mkLlmChatReq(req, "sys", msgs, false)
+	// 正常轮：常驻 expose_tools + 已暴露工具
+	normal := o.mkLlmChatReq(req, "sys", &reactState{msgs: msgs, exposedTools: map[string]bool{"note": true}})
 	if len(normal.Tools) == 0 {
 		t.Error("正常轮应下发工具定义")
 	}
 	// 收尾轮：禁工具
-	final := o.mkLlmChatReq(req, "sys", msgs, true)
+	final := o.mkLlmChatReq(req, "sys", &reactState{msgs: msgs, finalRound: true})
 	if final.Tools != nil && len(final.Tools) != 0 {
 		t.Errorf("收尾轮 tools 应为空, got %d 个", len(final.Tools))
 	}
@@ -220,13 +220,13 @@ func TestMkLlmChatReq_PlanMode_NoTools(t *testing.T) {
 	msgs := []llm.Message{{Role: "user", Content: "hi"}}
 	clientTools := []ClientTool{{ServerName: "browser", Name: "navigate"}}
 
-	// work 模式：服务端 + 客户端工具都下发
-	work := o.mkLlmChatReq(&RunRequest{UserID: "u1", Mode: model.ConvModeWork, ClientTools: clientTools}, "sys", msgs, false)
+	// work 模式：常驻 expose_tools + 客户端工具都下发
+	work := o.mkLlmChatReq(&RunRequest{UserID: "u1", Mode: model.ConvModeWork, ClientTools: clientTools}, "sys", &reactState{msgs: msgs})
 	if len(work.Tools) == 0 {
 		t.Error("work 模式应下发工具定义")
 	}
 	// plan 模式：工具全隐藏（服务端 + 客户端都不下发）
-	plan := o.mkLlmChatReq(&RunRequest{UserID: "u1", Mode: model.ConvModePlan, ClientTools: clientTools}, "sys", msgs, false)
+	plan := o.mkLlmChatReq(&RunRequest{UserID: "u1", Mode: model.ConvModePlan, ClientTools: clientTools}, "sys", &reactState{msgs: msgs})
 	if plan.Tools != nil && len(plan.Tools) != 0 {
 		t.Errorf("plan 模式 tools 应为空, got %d 个", len(plan.Tools))
 	}

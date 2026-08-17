@@ -26,7 +26,7 @@ func NewPromptBuilder(
 ) *PromptBuilder {
 	postRoleStatic := []StaticProvider{}
 	if useNativeFC {
-		postRoleStatic = append([]StaticProvider{&nativeFCNoticeProvider{}}, postRoleStatic...)
+		postRoleStatic = append([]StaticProvider{&toolCatalogProvider{registry: registry}}, postRoleStatic...)
 	} else {
 		postRoleStatic = append([]StaticProvider{&toolDefinitionsProvider{registry: registry}}, postRoleStatic...)
 	}
@@ -67,14 +67,14 @@ func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildRes
 	}
 
 	// Layer 3: 输出规范 + 工具定义
-	// plan 模式：工具全隐藏——prompt-eng 跳过工具定义段；native FC 的通知替换为"无工具"声明
+	// plan 模式：工具全隐藏——prompt-eng 跳过工具定义段；native FC 的目录替换为"无工具"声明
 	plan := opts.Mode == model.ConvModePlan
 	for _, sp := range b.postRoleStatic {
 		var section string
 		switch {
 		case plan && sp.Name() == "tool_definitions":
 			continue
-		case plan && sp.Name() == "native_fc_notice":
+		case plan && sp.Name() == "tool_catalog":
 			section = planModeNoToolsNotice
 		default:
 			section = sp.Render(ctx)

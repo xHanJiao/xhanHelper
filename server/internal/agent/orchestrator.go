@@ -95,6 +95,10 @@ type reactState struct {
 	jsonBuffered           bool // 原生 FC 下文本首字符为 { 暂缓推送，防 JSON 泄露
 	clientToolsUnavailable bool // 客户端断连/超时后置位，本次 Run 内后续客户端工具调用快速失败
 	finalRound             bool // 达到 max_iterations 后的收尾轮：禁用工具，强制输出总结
+
+	// 渐进式工具暴露：本会话窗口内已启用的工具组（仅 native FC 主循环使用）。
+	exposedTools map[string]bool
+	expMutex     sync.Mutex // 并发工具调用写 exposedTools 用
 }
 
 // LLMResponse — LLM 返回的结构化 JSON（文本解析用）
@@ -112,9 +116,11 @@ type profileFactGetter interface {
 	GetActiveByUser(ctx context.Context, userID string) ([]model.UserProfileFact, error)
 }
 
-// convToucher — Orchestrator 需要的会话更新时间能力（*service.ConversationRepo 自动满足）
+// convToucher — Orchestrator 需要的会话更新/读取能力（*service.ConversationRepo 自动满足）
 type convToucher interface {
 	Touch(ctx context.Context, id string) error
+	GetExtra(ctx context.Context, convID string) (*model.ConversationExtra, error)
+	UpdateExtraField(ctx context.Context, convID string, fn func(extra *model.ConversationExtra)) error
 }
 
 // promptBuilder — Orchestrator 需要的 prompt 构建能力（*promptbuilder.PromptBuilder 自动满足）
@@ -440,6 +446,8 @@ func (o *Orchestrator) runReActLoop(
 		msgs:      append(req.Messages, llm.Message{Role: "user", Content: *userMsg.XMLContext}),
 		userMsgID: userMsg.ID,
 	}
+	o.loadExposure(ctx, req, userMsg, state)
+	defer o.persistExposure(ctx, req, userMsg, state)
 
 	maxIter := o.maxIterations
 	if req.MaxIterations > 0 {
@@ -492,6 +500,66 @@ func (o *Orchestrator) prepareUserMsg(req *RunRequest) *model.Message {
 		SetSessionStart(userMsg, req.Window.SessionStartMsgID)
 	}
 	return userMsg
+}
+
+// exposureWindowKey 返回当前会话窗口的暴露 key（与 prepareUserMsg 的 SessionStart 同口径）。
+func exposureWindowKey(req *RunRequest, userMsg *model.Message) string {
+	if req.Window.IsNewSession {
+		return userMsg.ID
+	}
+	return req.Window.SessionStartMsgID
+}
+
+// loadExposure 从会话 Extra 加载本窗口的已暴露工具组。
+// key 不匹配（新窗口/无记录）→ 空集。仅 native FC 主循环使用。
+func (o *Orchestrator) loadExposure(ctx context.Context, req *RunRequest, userMsg *model.Message, state *reactState) {
+	state.exposedTools = map[string]bool{}
+	if !o.useNativeFC || req.Mode == model.ConvModePlan {
+		return
+	}
+	extra, err := o.convRepo.GetExtra(ctx, req.ConversationID)
+	if err != nil {
+		log.Printf("[orch] loadExposure GetExtra error: %v", err)
+		return
+	}
+	if extra == nil || extra.ToolExposure == nil {
+		return
+	}
+	if extra.ToolExposure.SessionStartMsgID != exposureWindowKey(req, userMsg) {
+		return // 旧窗口记录，自然失效
+	}
+	for _, t := range extra.ToolExposure.Tools {
+		state.exposedTools[t] = true
+	}
+}
+
+// persistExposure 把本窗口的已暴露工具组写回会话 Extra。
+// 走事务内的 UpdateExtraField 读-改-写，只改 ToolExposure 字段，绝不覆盖并发写入的其它字段
+// （used_tool_ids / subagent_type 等）。空集不写（避免无意义 DB 写）。
+// 持久化失败降级为日志（下次 run 重新暴露，无副作用）。
+func (o *Orchestrator) persistExposure(ctx context.Context, req *RunRequest, userMsg *model.Message, state *reactState) {
+	if !o.useNativeFC || req.Mode == model.ConvModePlan || len(state.exposedTools) == 0 {
+		return
+	}
+	state.expMutex.Lock()
+	tools := make([]string, 0, len(state.exposedTools))
+	for t := range state.exposedTools {
+		tools = append(tools, t)
+	}
+	sort.Strings(tools)
+	state.expMutex.Unlock()
+
+	key := exposureWindowKey(req, userMsg)
+	err := o.convRepo.UpdateExtraField(ctx, req.ConversationID, func(extra *model.ConversationExtra) {
+		if extra.ToolExposure == nil {
+			extra.ToolExposure = &model.ToolExposure{}
+		}
+		extra.ToolExposure.SessionStartMsgID = key
+		extra.ToolExposure.Tools = tools
+	})
+	if err != nil {
+		log.Printf("[orch] persistExposure UpdateExtraField error: %v", err)
+	}
 }
 
 // buildSummaryPackets 拉取当前会话最近的对话摘要，构建摘要 ContextPacket 列表。
@@ -860,7 +928,7 @@ func (o *Orchestrator) runOneRound(
 			ConvID:      req.ConversationID,
 		})
 	}
-	streamEvents, err := client.Chat(ctx, o.mkLlmChatReq(req, systemPrompt, state.msgs, state.finalRound))
+	streamEvents, err := client.Chat(ctx, o.mkLlmChatReq(req, systemPrompt, state))
 	if err != nil {
 		log.Printf("[orch] round %d LLM error: %v", round+1, err)
 		// 主动取消/停止（runCtx 被取消）：静默退出，不向用户报"服务出错"
@@ -901,7 +969,7 @@ func (o *Orchestrator) runOneRound(
 	return false
 }
 
-func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, msgs []llm.Message, finalRound bool) *llm.ChatRequest {
+func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state *reactState) *llm.ChatRequest {
 	isProMode := req.DeepMode && o.proClient != nil
 	temperature := req.Temperature
 	if temperature == nil {
@@ -918,22 +986,52 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, msgs [
 	}
 	var tools []llm.ToolDefinition
 	// plan 模式：工具全部隐藏（LLM 看不到任何工具定义，配合执行级拦截双保险）
-	if !finalRound && o.useNativeFC && req.Mode != model.ConvModePlan {
-		tools = o.registry.GetNativeFCTools()
+	if !state.finalRound && o.useNativeFC && req.Mode != model.ConvModePlan {
+		// 渐进式暴露：常驻 expose_tools + 已暴露工具组的完整定义 + 客户端工具。
+		state.expMutex.Lock()
+		exposed := make([]string, 0, len(state.exposedTools))
+		for name := range state.exposedTools {
+			exposed = append(exposed, name)
+		}
+		sort.Strings(exposed)
+		state.expMutex.Unlock()
+		tools = append(tools, o.exposeToolsDefinition())
+		tools = append(tools, o.registry.GetLLMToolsFiltered(exposed)...)
 		tools = filterToolDefs(tools, o.toolExcludes)
 		tools = append(tools, buildClientToolDefs(req.ClientTools, o.registry)...)
-	} else if len(req.ClientTools) > 0 && !finalRound {
+	} else if len(req.ClientTools) > 0 && !state.finalRound {
 		log.Printf("[orch] client_tools ignored: use_native_fc=false")
 	}
 	return &llm.ChatRequest{
 		SystemPrompt: systemPrompt,
-		Messages:     msgs,
+		Messages:     state.msgs,
 		Tools:        tools,
 		Temperature:  temperature,
 		MaxTokens:    maxTokens,
 		UserID:       req.UserID,
 		Thinking:     thinking,
 	}
+}
+
+// exposeToolsDefinition 返回唯一常驻工具 expose_tools 的完整定义（供请求体 tools 字段）。
+// 优先取注册表中的函数定义；未注册（测试/降级场景）回退内置定义，避免 schema 文案重复维护。
+func (o *Orchestrator) exposeToolsDefinition() llm.ToolDefinition {
+	t := o.registry.Get("expose_tools")
+	if t == nil {
+		fallback := tool.NewExposeToolsTool()
+		fns := fallback.Functions()
+		funcs := make([]llm.FuncDef, len(fns))
+		for i, f := range fns {
+			funcs[i] = llm.FuncDef{Name: f.Name, Description: f.Description, Parameters: f.Parameters}
+		}
+		return llm.ToolDefinition{Name: fallback.Name(), Description: fallback.Description(), Functions: funcs}
+	}
+	fns := t.Functions()
+	funcs := make([]llm.FuncDef, len(fns))
+	for i, f := range fns {
+		funcs[i] = llm.FuncDef{Name: f.Name, Description: f.Description, Parameters: f.Parameters}
+	}
+	return llm.ToolDefinition{Name: t.Name(), Description: t.Description(), Functions: funcs}
 }
 
 // filterToolDefs 从工具定义中剔除配置排除的工具（按工具名精确匹配，控 token 成本）。
@@ -1454,6 +1552,37 @@ type toolExecResult struct {
 	result *tool.Result
 }
 
+// makeExposeFn 构造 expose_tools 的回调：校验组名（存在/未隐藏/未排除/非 expose_tools 自身），
+// 合法组写入 state.exposedTools（并发安全）。返回结果含可用组全集，供 LLM 纠正。
+func (o *Orchestrator) makeExposeFn(state *reactState) func(groups []string) *tool.ExposeResult {
+	excluded := make(map[string]bool, len(o.toolExcludes))
+	for _, n := range o.toolExcludes {
+		excluded[n] = true
+	}
+	available := o.registry.VisibleToolNames()
+	return func(groups []string) *tool.ExposeResult {
+		res := &tool.ExposeResult{Available: available}
+		state.expMutex.Lock()
+		defer state.expMutex.Unlock()
+		for _, g := range groups {
+			switch {
+			case g == "expose_tools":
+				res.Rejected = append(res.Rejected, g)
+			case !o.registry.Has(g):
+				res.Rejected = append(res.Rejected, g)
+			case o.registry.IsHidden(g):
+				res.Rejected = append(res.Rejected, g)
+			case excluded[g]:
+				res.Rejected = append(res.Rejected, g)
+			default:
+				state.exposedTools[g] = true
+				res.Enabled = append(res.Enabled, g)
+			}
+		}
+		return res
+	}
+}
+
 // injectExcludeIDs 将 exclude_ids（已注入的记忆 ID）注入到 memory_search 工具的 args 中
 func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID, convID string,
 	registry *tool.Registry, toolCalls []tool.ToolCall, clientIdx map[string]bool, state *reactState,
@@ -1501,7 +1630,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 						r = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
 					}
 				}()
-				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, Mode: mode, Events: events, ClientTools: clientTools}
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, Mode: mode, Events: events, ClientTools: clientTools, Expose: o.makeExposeFn(state)}
 				r = registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
 			}()
 

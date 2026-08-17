@@ -40,15 +40,20 @@ func (p *toolDefinitionsProvider) Render(ctx context.Context) string {
 	return p.registry.GeneratePrompt()
 }
 
-// nativeFCNoticeProvider — 原生 FC 模式下提示 LLM 使用函数调用接口而非 JSON 文本
-type nativeFCNoticeProvider struct{}
-
-func (p *nativeFCNoticeProvider) Name() string         { return "native_fc_notice" }
-func (p *nativeFCNoticeProvider) SectionTitle() string { return "输出格式与工具使用" }
-func (p *nativeFCNoticeProvider) Render(ctx context.Context) string {
-	return "你已经通过函数调用接口获得了所有可用工具的定义。回复时直接输出纯文本即可，**严禁在文本中输出 JSON 格式内容**。如需调用工具，必须使用函数调用接口。"
+// toolCatalogProvider — 原生 FC 模式：注入渐进式工具目录（组名 + 描述 + 函数名列表）。
+// 初始仅 expose_tools 常驻请求体；LLM 需要某组能力时先调用 expose_tools.enable 启用，
+// 启用后该组完整函数定义进入后续请求体。目录由 registry.ToolCatalog() 生成（字节稳定）。
+type toolCatalogProvider struct {
+	registry *tool.Registry
 }
 
-// planModeNoToolsNotice — plan 模式下替代 nativeFCNoticeProvider 的声明：
+func (p *toolCatalogProvider) Name() string         { return "tool_catalog" }
+func (p *toolCatalogProvider) SectionTitle() string { return "工具使用" }
+func (p *toolCatalogProvider) Render(ctx context.Context) string {
+	return p.registry.ToolCatalog() + `
+回复时直接输出纯文本即可，**严禁在文本中输出 JSON 格式内容**。如需调用工具，必须使用函数调用接口。`
+}
+
+// planModeNoToolsNotice — plan 模式下替代工具目录的声明：
 // 本模式不注入任何工具定义，LLM 不应发起任何函数调用（执行级拦截仍为最终兜底）。
 const planModeNoToolsNotice = "当前处于计划模式：本模式不提供任何工具调用能力（服务端已强制禁用），请勿调用任何工具，仅基于已有上下文进行方案讨论。回复使用纯文本即可。"

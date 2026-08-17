@@ -216,6 +216,35 @@ func (r *ConversationRepo) AddUsedTool(ctx context.Context, convID, toolID strin
 	return nil
 }
 
+// UpdateExtraField — 事务内读取最新 extra，调用 fn 修改后写回。
+// 读-改-写在单事务内完成，避免并发写入覆盖其它字段（对齐 mergeMsgExtra 的单字段合并语义）。
+// fn 内只改自己关心的字段，其它字段原样保留。
+func (r *ConversationRepo) UpdateExtraField(ctx context.Context, convID string, fn func(extra *model.ConversationExtra)) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var c model.Conversation
+		if err := tx.Where("id = ?", convID).Select("extra").First(&c).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return gorm.ErrRecordNotFound
+			}
+			return err
+		}
+
+		var extra model.ConversationExtra
+		if c.Extra != "" && c.Extra != "{}" {
+			if err := json.Unmarshal([]byte(c.Extra), &extra); err != nil {
+				return err
+			}
+		}
+
+		fn(&extra)
+		b, err := json.Marshal(&extra)
+		if err != nil {
+			return err
+		}
+		return tx.Model(&model.Conversation{}).Where("id = ?", convID).Update("extra", string(b)).Error
+	})
+}
+
 // GetUsedToolIDs — 获取使用过的工具 id 列表
 func (r *ConversationRepo) GetUsedToolIDs(ctx context.Context, convID string) ([]string, error) {
 	extra, err := r.GetExtra(ctx, convID)

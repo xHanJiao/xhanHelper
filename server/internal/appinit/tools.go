@@ -15,6 +15,8 @@ import (
 func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients) *ToolsBundle {
 	// --- 主 Registry + 内置工具 ---
 	reg := tool.NewRegistry()
+	// 渐进式暴露元工具（唯一常驻请求体）：注册必须在最前，GetNativeFCTools/目录生成会跳过它
+	reg.Register(tool.NewLoggingWrapper(tool.NewExposeToolsTool(), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewBookkeepingTool(repos.Bill), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewDatetimeTool(), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(tool.NewCalculatorTool(), log.Default()))

@@ -35,6 +35,14 @@ type ConversationExtra struct {
 	UsedToolIDs  []string         `json:"used_tool_ids"`
 	Context      *ConversationCtx `json:"context,omitempty"`       // 信箱跳转带上的主题上下文
 	SubAgentType string           `json:"subagent_type,omitempty"` // 子会话类型（"web_explore"/"file_explore"），空=普通会话
+	ToolExposure *ToolExposure    `json:"tool_exposure,omitempty"` // 渐进式工具暴露注册表（窗口级，key=SessionStartMsgID）
+}
+
+// ToolExposure — 渐进式工具暴露注册表（窗口级）。
+// 同一会话窗口（SessionStartMsgID）内共享暴露集；窗口边界（新 SessionStartMsgID）自然失效，无清理逻辑。
+type ToolExposure struct {
+	SessionStartMsgID string   `json:"session_start_msg_id"`
+	Tools             []string `json:"tools"` // 已暴露的工具组名（排序，字节稳定）
 }
 
 // ConversationCtx — 会话上下文（从 mailbox 跳转带入）

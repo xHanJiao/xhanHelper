@@ -149,3 +149,71 @@ func TestListByUser_ExcludesSubConversations(t *testing.T) {
 		t.Fatalf("子会话不应出现在用户列表: total=%d list=%+v", total, list)
 	}
 }
+
+func TestUpdateExtraField_MergesWithoutOverwrite(t *testing.T) {
+	repo, cleanup := setupConversationRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	// 已有 extra 含 used_tool_ids
+	extraJSON, _ := json.Marshal(&model.ConversationExtra{UsedToolIDs: []string{"tool-1"}})
+	if err := repo.Create(ctx, &model.Conversation{ID: "conv-extra", UserID: "u1", Extra: string(extraJSON)}); err != nil {
+		t.Fatalf("create conv: %v", err)
+	}
+
+	// 只改 ToolExposure，其它字段必须保留
+	err := repo.UpdateExtraField(ctx, "conv-extra", func(extra *model.ConversationExtra) {
+		extra.ToolExposure = &model.ToolExposure{SessionStartMsgID: "w1", Tools: []string{"note"}}
+	})
+	if err != nil {
+		t.Fatalf("UpdateExtraField error: %v", err)
+	}
+
+	got, err := repo.GetExtra(ctx, "conv-extra")
+	if err != nil {
+		t.Fatalf("GetExtra error: %v", err)
+	}
+	if len(got.UsedToolIDs) != 1 || got.UsedToolIDs[0] != "tool-1" {
+		t.Errorf("used_tool_ids must be preserved, got %v", got.UsedToolIDs)
+	}
+	if got.ToolExposure == nil || got.ToolExposure.SessionStartMsgID != "w1" || len(got.ToolExposure.Tools) != 1 {
+		t.Errorf("ToolExposure not written correctly: %+v", got.ToolExposure)
+	}
+}
+
+func TestUpdateExtraField_OnEmptyExtra(t *testing.T) {
+	repo, cleanup := setupConversationRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	// 原始 extra 为 ""（零值）
+	if err := repo.Create(ctx, &model.Conversation{ID: "conv-empty", UserID: "u1"}); err != nil {
+		t.Fatalf("create conv: %v", err)
+	}
+
+	err := repo.UpdateExtraField(ctx, "conv-empty", func(extra *model.ConversationExtra) {
+		extra.ToolExposure = &model.ToolExposure{SessionStartMsgID: "w2", Tools: []string{"bookkeeping"}}
+	})
+	if err != nil {
+		t.Fatalf("UpdateExtraField error: %v", err)
+	}
+
+	got, err := repo.GetExtra(ctx, "conv-empty")
+	if err != nil {
+		t.Fatalf("GetExtra error: %v", err)
+	}
+	if got.ToolExposure == nil || got.ToolExposure.SessionStartMsgID != "w2" {
+		t.Errorf("ToolExposure not written: %+v", got.ToolExposure)
+	}
+}
+
+func TestUpdateExtraField_NonexistentConversation(t *testing.T) {
+	repo, cleanup := setupConversationRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	err := repo.UpdateExtraField(ctx, "no-such-conv", func(extra *model.ConversationExtra) {})
+	if err == nil {
+		t.Error("expected error for nonexistent conversation")
+	}
+}

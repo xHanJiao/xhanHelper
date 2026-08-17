@@ -44,11 +44,37 @@ func (m *mockUserProfileFactRepo) GetActiveByUser(ctx context.Context, userID st
 
 type mockConvRepo struct {
 	touchCalls int
+	extra      *model.ConversationExtra // 模拟会话 Extra（GetExtra 返回，UpdateExtraField 更新）
 }
 
 func (m *mockConvRepo) Touch(ctx context.Context, id string) error {
 	m.touchCalls++
 	return nil
+}
+
+func (m *mockConvRepo) GetExtra(ctx context.Context, convID string) (*model.ConversationExtra, error) {
+	if m.extra == nil {
+		return &model.ConversationExtra{}, nil
+	}
+	return m.extra, nil
+}
+
+func (m *mockConvRepo) UpdateExtraField(ctx context.Context, convID string, fn func(extra *model.ConversationExtra)) error {
+	e := m.GetExtraSync()
+	fn(e)
+	m.extra = e
+	return nil
+}
+
+func (m *mockConvRepo) GetExtraSync() *model.ConversationExtra {
+	base := &model.ConversationExtra{}
+	if m.extra != nil {
+		base = m.extra
+	}
+	b, _ := json.Marshal(base)
+	var e model.ConversationExtra
+	_ = json.Unmarshal(b, &e)
+	return &e
 }
 
 type mockLLMResponse struct {

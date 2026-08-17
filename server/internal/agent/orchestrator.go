@@ -639,6 +639,7 @@ func (o *Orchestrator) buildUserMessage(
 }
 
 // buildReminderPackets 查询用户 pending 提醒，生成 ContextPacket 列表注入 user message。
+// 长提醒（>120 字）中间截断，保留 deadline（尾部），LLM 可调 search_reminders 查看全文。
 func (o *Orchestrator) buildReminderPackets(ctx context.Context, userID string) []retrieval.ContextPacket {
 	if o.reminderRepo == nil {
 		return nil
@@ -652,7 +653,7 @@ func (o *Orchestrator) buildReminderPackets(ctx context.Context, userID string) 
 		packets = append(packets, retrieval.ContextPacket{
 			ID:   r.ID,
 			Type: ctxflow.TypeReminder,
-			Text: fmt.Sprintf("%s（%s）", r.Content, r.Deadline.Format("01-02 15:04")),
+			Text: truncateReminderInjection(fmt.Sprintf("%s（%s）", r.Content, r.Deadline.Format("01-02 15:04"))),
 		})
 	}
 	for _, r := range expired {
@@ -660,11 +661,26 @@ func (o *Orchestrator) buildReminderPackets(ctx context.Context, userID string) 
 		packets = append(packets, retrieval.ContextPacket{
 			ID:   r.ID,
 			Type: ctxflow.TypeReminder,
-			Text: fmt.Sprintf("%s（过期 %s）", r.Content, ago),
+			Text: truncateReminderInjection(fmt.Sprintf("%s（过期 %s）", r.Content, ago)),
 		})
 	}
 	return packets
 }
+
+// truncateReminderInjection 长提醒注入中间截断（保留 deadline 等尾部信息）。
+func truncateReminderInjection(text string) string {
+	truncated := util.TruncateMiddle(text, reminderInjectedHead, reminderInjectedTail)
+	if truncated != text {
+		return truncated + "（已截断，可调 search_reminders 查看全文）"
+	}
+	return truncated
+}
+
+// 长提醒注入截断参数：单条超过 120 字时中间截断，保留头部 100 字与尾部 20 字。
+const (
+	reminderInjectedHead = 100
+	reminderInjectedTail = 20
+)
 
 // buildProfilePackets 加载用户画像稳定层（facts 表 active 事实），按字段聚合后生成 ContextPacket。
 // 画像为空时不注入任何块。字段按名字母序排序，保证块内顺序确定，缓存友好。

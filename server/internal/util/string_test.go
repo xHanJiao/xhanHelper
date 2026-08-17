@@ -26,3 +26,27 @@ func TestTruncateContent(t *testing.T) {
 		})
 	}
 }
+
+func TestTruncateMiddle(t *testing.T) {
+	long := "这是一条非常长的笔记内容，包含很多细节信息，需要被中间截断以节省token，保留关键的开头部分和结尾的deadline信息。"
+	head, tail := 10, 5
+	got := TruncateMiddle(long, head, tail)
+	if got != "这是一条非常长的笔记…ne信息。" {
+		t.Errorf("TruncateMiddle = %q", got)
+	}
+
+	short := "短文本"
+	if got := TruncateMiddle(short, 10, 5); got != short {
+		t.Errorf("short should pass through unchanged, got %q", got)
+	}
+
+	exact := "12345"
+	if got := TruncateMiddle(exact, 3, 2); got != exact {
+		t.Errorf("exact-fit head+tail should pass through, got %q", got)
+	}
+
+	ascii := "abcdefghijklmnopqrstuvwxyz"
+	if got := TruncateMiddle(ascii, 5, 5); got != "abcde…vwxyz" {
+		t.Errorf("ascii truncate = %q", got)
+	}
+}

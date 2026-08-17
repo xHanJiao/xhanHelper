@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -33,16 +34,19 @@ func (t *ReminderTool) Description() string {
 	return "设置、查看、搜索、取消待办提醒。提醒到期后系统会弹通知，点击通知助手会主动在聊天里提起。支持一次性提醒，循环提醒预留中。"
 }
 
+// maxReminderContentLen 单条提醒正文上限（字）。提醒必须一句话，越短越好。
+const maxReminderContentLen = 120
+
 func (t *ReminderTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
 			Name:        "create_reminder",
 			Display:     "创建提醒",
-			Description: "创建一个待办提醒。用户说「提醒我XX」「帮我记一下XX」「别忘了XX」时调用。截止时间必须是具体的日期时间（如 2026-07-21T13:00:00+08:00），不允许模糊。如果用户没有给具体时间，追问确认后再调用。",
+			Description: fmt.Sprintf("创建一个待办提醒。用户说「提醒我XX」「帮我记一下XX」「别忘了XX」时调用。截止时间必须是具体的日期时间（如 2026-07-21T13:00:00+08:00），不允许模糊。如果用户没有给具体时间，追问确认后再调用。提醒内容必须是一句话（≤%d 字），超长会被拒绝", maxReminderContentLen),
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"content":  map[string]interface{}{"type": "string", "description": "提醒内容"},
+					"content":  map[string]interface{}{"type": "string", "description": fmt.Sprintf("提醒内容，一句话（≤%d 字）", maxReminderContentLen)},
 					"deadline": map[string]interface{}{"type": "string", "description": "ISO8601 截止时间，如 2026-07-21T13:00:00+08:00"},
 				},
 				"required": []string{"content", "deadline"},
@@ -137,6 +141,9 @@ func (t *ReminderTool) createReminder(ec *ExecuteContext, args json.RawMessage) 
 	}
 	if req.Content == "" {
 		return &Result{Success: false, Error: "content 不能为空"}
+	}
+	if utf8.RuneCountInString(req.Content) > maxReminderContentLen {
+		return &Result{Success: false, Error: fmt.Sprintf("提醒内容超长（≤%d 字），请精简成一句话", maxReminderContentLen)}
 	}
 	if req.Deadline == "" {
 		return &Result{Success: false, Error: "deadline 不能为空，请提供具体的提醒时间"}

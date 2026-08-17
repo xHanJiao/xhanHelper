@@ -11,6 +11,7 @@ import (
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
+	"xhan-helper/internal/util"
 )
 
 // chunkRepo is the minimal DB interface needed by EntitySource for Fetch.
@@ -207,7 +208,15 @@ func (s *EntitySource[T]) Fetch(ctx context.Context, opts SearchOptions) ([]Cont
 
 	packets := make([]ContextPacket, 0, len(scored))
 	for _, sc := range scored {
-		text := formatEntityPacket(sc.ent, sc.vecScore)
+		content := sc.ent.GetContent()
+		if s.name == "note" {
+			// 长笔记注入中间截断（保留头尾），LLM 可调 get_note 获取全文；Meta.Content 保留全文
+			content = util.TruncateMiddle(content, noteInjectedHead, noteInjectedTail)
+			if content != sc.ent.GetContent() {
+				content += "\n（内容过长已截断，如需全文请调用 get_note）"
+			}
+		}
+		text := formatEntityPacket(sc.ent.GetTopic(), content, sc.vecScore)
 		packets = append(packets, ContextPacket{
 			ID:    sc.ent.GetID(),
 			Type:  s.name,
@@ -336,13 +345,18 @@ func mapToSortedHits(candidates map[string]float64, max int) []hit {
 	return hits
 }
 
-func formatEntityPacket(e model.ChunkEntity, score float64) string {
-	topic := ""
-	if t := e.GetTopic(); t != "" {
-		topic = fmt.Sprintf("[%s] ", t)
+func formatEntityPacket(topic, content string, score float64) string {
+	if topic != "" {
+		topic = fmt.Sprintf("[%s] ", topic)
 	}
-	return fmt.Sprintf("- %s%s (相关度 %.2f)\n", topic, e.GetContent(), score)
+	return fmt.Sprintf("- %s%s (相关度 %.2f)\n", topic, content, score)
 }
+
+// 长笔记注入截断参数：单条正文超过 150 字时中间截断，保留头部 100 字与尾部 50 字。
+const (
+	noteInjectedHead = 100
+	noteInjectedTail = 50
+)
 
 // parseChunkParentID 从 chunk ID 提取 parent entity ID
 // chunk ID 格式: chunk:<parentType>:<parentID>/<index>

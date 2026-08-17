@@ -2,6 +2,7 @@ package retrieval
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -299,5 +300,74 @@ func TestNoteSource_FilterOtherUsers(t *testing.T) {
 	}
 	if len(packets) != 1 {
 		t.Errorf("应只返回 u1 的笔记，实际 %d 条", len(packets))
+	}
+}
+
+func TestNoteSource_LongNote_TruncatedInjection(t *testing.T) {
+	f := setupNoteSource(t)
+	defer f.cleanup()
+	longContent := strings.Repeat("这是一段很长的笔记细节内容，包含日期金额决定等大量信息。", 10)
+	note := model.Note{ID: "n-long", UserID: "u1", Topic: "长笔记", Content: longContent}
+	if err := f.noteRepo.Create(context.Background(), &note); err != nil {
+		t.Fatalf("create long note: %v", err)
+	}
+
+	f.src.vs = &mockVectorStore{results: []SearchResult{
+		fullNoteResult("n-long", 0.75),
+	}}
+
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "长笔记", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(packets) != 1 {
+		t.Fatalf("应返回 1 条笔记，实际 %d 条", len(packets))
+	}
+
+	// 注入文本应被中间截断并提示可调 get_note
+	if !strings.Contains(packets[0].Text, "…") {
+		t.Errorf("注入文本应被中间截断（含 …），实际: %.80s", packets[0].Text)
+	}
+	if !strings.Contains(packets[0].Text, "get_note") {
+		t.Errorf("注入文本应提示可调 get_note 获取全文，实际: %.80s", packets[0].Text)
+	}
+	if strings.Contains(packets[0].Text, longContent) {
+		t.Error("注入文本不应包含完整超长内容")
+	}
+
+	// Meta.Content 必须保留全文（供后续处理/取全量）
+	meta, ok := packets[0].Meta.(EntityMeta)
+	if !ok {
+		t.Fatalf("Meta should be EntityMeta, got %T", packets[0].Meta)
+	}
+	if meta.Content != longContent {
+		t.Error("Meta.Content 应保留完整内容")
+	}
+}
+
+func TestNoteSource_ShortNote_NotTruncated(t *testing.T) {
+	f := setupNoteSource(t)
+	defer f.cleanup()
+	note := model.Note{ID: "n-short", UserID: "u1", Topic: "短笔记", Content: "这是条短笔记"}
+	if err := f.noteRepo.Create(context.Background(), &note); err != nil {
+		t.Fatalf("create short note: %v", err)
+	}
+
+	f.src.vs = &mockVectorStore{results: []SearchResult{
+		fullNoteResult("n-short", 0.75),
+	}}
+
+	packets, _, err := f.src.Fetch(context.Background(), SearchOptions{Embedding: nil, Query: "短笔记", UserID: "u1", ConversationID: "c1", Note: SourceConfig{Threshold: 0.5, Limit: 5}})
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(packets) != 1 {
+		t.Fatalf("应返回 1 条笔记，实际 %d 条", len(packets))
+	}
+	if !strings.Contains(packets[0].Text, "这是条短笔记") {
+		t.Errorf("短笔记不应被截断，实际: %s", packets[0].Text)
+	}
+	if strings.Contains(packets[0].Text, "已截断") {
+		t.Error("短笔记不应出现截断提示")
 	}
 }

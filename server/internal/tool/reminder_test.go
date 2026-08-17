@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -403,5 +404,44 @@ func TestReminderTool_FallbackGenerate(t *testing.T) {
 			// Might still be generating if async hasn't completed
 			t.Logf("status is %q (may be generating if async not yet completed)", item.Status)
 		}
+	}
+}
+
+func TestReminderTool_CreateReminder_ContentTooLong_Rejected(t *testing.T) {
+	tool, cleanup := setupReminderTool(t)
+	defer cleanup()
+
+	deadline := time.Now().Add(1 * time.Hour)
+	longContent := strings.Repeat("提醒事项", 40)
+	args := a(map[string]string{
+		"content":  longContent,
+		"deadline": deadline.Format(time.RFC3339),
+	})
+
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user1"}
+	result := tool.Execute(ec, "create_reminder", args)
+	if result.Success {
+		t.Fatal("create_reminder should reject content over limit")
+	}
+	if !strings.Contains(result.Error, "120") {
+		t.Errorf("error should mention the 120 limit, got: %s", result.Error)
+	}
+}
+
+func TestReminderTool_CreateReminder_Boundary120_Accepted(t *testing.T) {
+	tool, cleanup := setupReminderTool(t)
+	defer cleanup()
+
+	deadline := time.Now().Add(1 * time.Hour)
+	boundary := strings.Repeat("字", 120)
+	args := a(map[string]string{
+		"content":  boundary,
+		"deadline": deadline.Format(time.RFC3339),
+	})
+
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user1"}
+	result := tool.Execute(ec, "create_reminder", args)
+	if !result.Success {
+		t.Fatalf("boundary 120 content should be accepted: %s", result.Error)
 	}
 }

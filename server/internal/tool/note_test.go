@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -548,5 +549,61 @@ func TestNoteQueryNotes_DefaultLimit5(t *testing.T) {
 	notes := out["notes"].([]interface{})
 	if len(notes) > 5 {
 		t.Errorf("default limit should be 5, got %d", len(notes))
+	}
+}
+
+func TestNoteRecordNote_ContentTooLong_Rejected(t *testing.T) {
+	tool, cleanup := setupNoteTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	longContent := strings.Repeat("很长的内容", 40)
+	res := tool.Execute(ec, "record_note", mustMarshal(t, map[string]string{
+		"topic": "测试", "content": longContent,
+	}))
+	if res.Success {
+		t.Fatal("record_note should reject content over limit")
+	}
+	if !strings.Contains(res.Error, "150") {
+		t.Errorf("error should mention the 150 limit, got: %s", res.Error)
+	}
+}
+
+func TestNoteUpdateNote_ContentTooLong_Rejected(t *testing.T) {
+	tool, cleanup := setupNoteTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+	seedNotes(t, tool.noteRepo, "user-1")
+
+	longContent := strings.Repeat("超长内容", 40)
+	res := tool.Execute(ec, "update_note", mustMarshal(t, map[string]string{
+		"id": "n1", "content": longContent,
+	}))
+	if res.Success {
+		t.Fatal("update_note should reject content over limit")
+	}
+
+	// 原内容不应被改动
+	note, err := tool.noteRepo.GetByID(context.Background(), "n1", "user-1")
+	if err != nil {
+		t.Fatalf("get note: %v", err)
+	}
+	if note.Content == longContent {
+		t.Error("note content should not be modified on rejected update")
+	}
+}
+
+func TestNoteRecordNote_Boundary150_Accepted(t *testing.T) {
+	tool, cleanup := setupNoteTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	// 恰好 150 字应通过
+	boundary := strings.Repeat("字", 150)
+	res := tool.Execute(ec, "record_note", mustMarshal(t, map[string]string{
+		"topic": "测试", "content": boundary,
+	}))
+	if !res.Success {
+		t.Fatalf("boundary 150 content should be accepted: %s", res.Error)
 	}
 }

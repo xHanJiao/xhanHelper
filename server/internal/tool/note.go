@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -61,6 +62,9 @@ func (t *NoteTool) Description() string {
 	return "自由笔记工具，记录值得长期追踪的信息——事实、数据、观点、事件、个人状态、人物关系等"
 }
 
+// maxNoteContentLen 单条笔记正文上限（字）。超出请先建文档，笔记只存摘要。
+const maxNoteContentLen = 150
+
 func (t *NoteTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{
@@ -96,12 +100,12 @@ func (t *NoteTool) Functions() []FuncSchema {
 		{
 			Name:        "record_note",
 			Display:     "记录笔记",
-			Description: "保存一条值得长期追踪的笔记。当用户分享事实、数据、观点、事件、个人状态、人物关系时调用。日常闲聊不需要记录",
+			Description: fmt.Sprintf("保存一条值得长期追踪的笔记。当用户分享事实、数据、观点、事件、个人状态、人物关系时调用。日常闲聊不需要记录。正文 ≤%d 字：如果确实需要超长内容，先建文档（document 工具），笔记只存精简摘要并在 content 末尾注明 document_id", maxNoteContentLen),
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"topic":   map[string]interface{}{"type": "string", "description": "主题: 房地产/睡眠/人物关系/健康/..."},
-					"content": map[string]interface{}{"type": "string", "description": "笔记正文，忠实保留用户原文，不要总结或删减"},
+					"content": map[string]interface{}{"type": "string", "description": fmt.Sprintf("笔记正文，≤%d 字，保留关键事实（日期/人物/金额/决定）。超长会被拒绝，请先建文档再存摘要", maxNoteContentLen)},
 					"tags":    map[string]interface{}{"type": "string", "description": "逗号分隔标签，可选"},
 					"variables": map[string]interface{}{
 						"type":        "object",
@@ -154,13 +158,13 @@ func (t *NoteTool) Functions() []FuncSchema {
 		{
 			Name:        "update_note",
 			Display:     "修改笔记",
-			Description: "更新已有笔记。修改前请先用 get_note 读取完整内容，在其基础上修改后传入。仅传需要修改的字段",
+			Description: fmt.Sprintf("更新已有笔记。修改前请先用 get_note 读取完整内容，在其基础上修改后传入。仅传需要修改的字段。正文 ≤%d 字，超长会被拒绝", maxNoteContentLen),
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"id":      map[string]interface{}{"type": "string", "description": "笔记 ID，必填"},
 					"topic":   map[string]interface{}{"type": "string", "description": "新主题，可选"},
-					"content": map[string]interface{}{"type": "string", "description": "新正文，可选"},
+					"content": map[string]interface{}{"type": "string", "description": fmt.Sprintf("新正文，≤%d 字，可选", maxNoteContentLen)},
 					"tags":    map[string]interface{}{"type": "string", "description": "新标签，可选"},
 					"variables": map[string]interface{}{
 						"type":        "object",
@@ -262,6 +266,9 @@ func (t *NoteTool) recordNote(ec *ExecuteContext, args json.RawMessage) *Result 
 	}
 	if params.Topic == "" || params.Content == "" {
 		return &Result{Success: false, Error: "topic and content are required"}
+	}
+	if utf8.RuneCountInString(params.Content) > maxNoteContentLen {
+		return &Result{Success: false, Error: fmt.Sprintf("笔记正文超长（≤%d 字），请精简；长内容请先建文档，笔记只存摘要并记录 document_id", maxNoteContentLen)}
 	}
 
 	note := &model.Note{
@@ -430,6 +437,9 @@ func (t *NoteTool) updateNote(ec *ExecuteContext, args json.RawMessage) *Result 
 	}
 	if params.ID == "" {
 		return &Result{Success: false, Error: "id is required"}
+	}
+	if utf8.RuneCountInString(params.Content) > maxNoteContentLen {
+		return &Result{Success: false, Error: fmt.Sprintf("笔记正文超长（≤%d 字），请精简；长内容请先建文档，笔记只存摘要并记录 document_id", maxNoteContentLen)}
 	}
 
 	// 更新前先创建版本快照

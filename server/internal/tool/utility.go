@@ -14,6 +14,13 @@ func NewDatetimeTool() *DatetimeTool        { return &DatetimeTool{} }
 func (t *DatetimeTool) Name() string        { return "datetime" }
 func (t *DatetimeTool) Description() string { return "获取当前日期时间信息" }
 
+func (t *DatetimeTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "时间。今天几号、当前时间、星期、时区。",
+		Funcs:     []string{"get_current_time"},
+	}, true
+}
+
 func (t *DatetimeTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{

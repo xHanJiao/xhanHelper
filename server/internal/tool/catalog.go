@@ -6,30 +6,11 @@ import (
 	"strings"
 )
 
-// catalogDescriptions — 渐进式工具目录的 caveman 风格组描述。
-// 仅用于系统提示词目录展示（组名 + 描述 + 函数名列表），不改动各工具原 Description()
-// （prompt-eng 模式、seeder embedding 等仍用原文）。缺省条目回退 Description()。
-var catalogDescriptions = map[string]string{
-	"bookkeeping":    "记账。加/改/查/删账单，月/分类统计，分类选项。",
-	"datetime":       "时间。今天几号、当前时间。",
-	"calculator":     "计算。四则运算、括号、sqrt/pow/sin/cos。",
-	"note":           "笔记。记录/检索长期追踪信息：事实、观点、事件、状态、关系。",
-	"document":       "文档。写/查/改/删 Markdown 文档，版本回滚。用户明确要求才用。",
-	"agent":          "智能体。建/查/改自定义 AI 助手，绑定/解绑会话。",
-	"reminder":       "提醒。设/查/取消待办。",
-	"theme":          "主题管理。建/改/关/重启持续追踪事件（健身、求职）。",
-	"theme_search":   "主题状态。列活跃主题、看状态页详情。",
-	"get_summary":    "对话摘要。按时间/ID 查过去聊了什么。",
-	"message_search": "历史消息。按时间/ID 精确查。语义检索走 unified_search。",
-	"unified_search": "统一检索。语义/关键词搜记忆、笔记、摘要、主题、历史消息。",
-	"plan":           "执行计划。存/读当前会话步骤清单（todo）。",
-	"task":           "子任务。派子 agent 独立干活：联网调研 web_explore、本地文件 file_explore。",
-	"webfetch":       "抓取网页正文。token 消耗大，仅读取页面原文时用。",
-}
-
-// ToolCatalog 生成工具组目录（组名 + 描述 + 函数名列表，不含参数 schema），
+// ToolCatalog 生成工具组目录（组名 + 描述 + 高频函数名列表，不含参数 schema），
 // 供渐进式工具暴露的初始提示词使用。输出按工具名排序，字节稳定（前缀缓存友好）。
 // expose_tools 与 hidden 工具不进入目录。
+// 各组的目录信息（ShortDesc/Funcs/Others）由工具自身 Catalog() 提供（CatalogProvider）；
+// 未实现该接口的工具回退到 Description() + 全部函数名。
 func (r *Registry) ToolCatalog() string {
 	var buf bytes.Buffer
 	buf.WriteString("可用工具组（函数完整定义按需加载）。需要某组能力时先调用 expose_tools.enable([\"组名\"])，一次可多组，启用后下一轮即可直接调用其函数。\n")
@@ -39,17 +20,56 @@ func (r *Registry) ToolCatalog() string {
 			continue
 		}
 		t := r.tools[name]
-		desc := catalogDescriptions[name]
-		if desc == "" {
-			desc = t.Description()
+		entry := CatalogEntry{ShortDesc: t.Description(), Funcs: functionNames(t.Functions())}
+		if provider, ok := t.(CatalogProvider); ok {
+			if e, ok2 := provider.Catalog(); ok2 {
+				entry = e
+			}
 		}
-		funcs := t.Functions()
-		names := make([]string, len(funcs))
-		for i, f := range funcs {
-			names[i] = f.Name
+		buf.WriteString(fmt.Sprintf("- %s: %s\n", name, entry.ShortDesc))
+		if len(entry.Funcs) > 0 {
+			buf.WriteString(fmt.Sprintf("  函数: %s\n", strings.Join(entry.Funcs, ", ")))
 		}
-		buf.WriteString(fmt.Sprintf("- %s: %s\n", name, desc))
-		buf.WriteString(fmt.Sprintf("  函数: %s\n", strings.Join(names, ", ")))
+		if entry.Others != "" {
+			buf.WriteString(fmt.Sprintf("  另有: %s\n", entry.Others))
+		}
 	}
 	return buf.String()
+}
+
+// ValidateCatalog 校验所有可见（非 hidden、非 expose_tools）工具：
+// 1) 必须实现 CatalogProvider（否则 LLM 目录里看不到其定制信息，新增工具忘写即 panic）
+// 2) ShortDesc 非空；Funcs 中每个函数名必须存在于 Functions()（防拼写错误）。
+// 在 Register 完成后调用。
+func (r *Registry) ValidateCatalog() {
+	for name, t := range r.tools {
+		if name == "expose_tools" || r.hiddenNames[name] {
+			continue
+		}
+		provider, ok := t.(CatalogProvider)
+		if !ok {
+			panic(fmt.Sprintf("[tool] tool %q must implement CatalogProvider (tool catalog requires custom short description)", name))
+		}
+		entry, _ := provider.Catalog()
+		if strings.TrimSpace(entry.ShortDesc) == "" {
+			panic(fmt.Sprintf("[tool] tool %q Catalog().ShortDesc is empty", name))
+		}
+		defined := make(map[string]bool)
+		for _, fn := range t.Functions() {
+			defined[fn.Name] = true
+		}
+		for _, fnName := range entry.Funcs {
+			if !defined[fnName] {
+				panic(fmt.Sprintf("[tool] tool %q Catalog().Funcs references undefined function: %s (must match Functions())", name, fnName))
+			}
+		}
+	}
+}
+
+func functionNames(funcs []FuncSchema) []string {
+	names := make([]string, len(funcs))
+	for i, f := range funcs {
+		names[i] = f.Name
+	}
+	return names
 }

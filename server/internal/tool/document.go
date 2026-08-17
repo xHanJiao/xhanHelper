@@ -27,6 +27,14 @@ func (t *DocumentTool) Description() string {
 	return "管理用户的结构化 Markdown 文档。仅在用户明确要求生成/保存/修改/查询/删除文章、报告、总结等文档时使用。不要主动创建或修改文档。日常的信息记录请用 note 工具。"
 }
 
+func (t *DocumentTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "文档。写/查/改/删 Markdown 文档，版本回滚。用户明确要求才用。",
+		Funcs:     []string{"create_document", "get_document", "update_document", "query_documents"},
+		Others:    "删除、版本回滚、版本列表、标签 等",
+	}, true
+}
+
 func (t *DocumentTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{

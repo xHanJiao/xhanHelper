@@ -28,6 +28,13 @@ func (t *ThemeSearchTool) Description() string {
 	return "主题代表用户身上正在发生或追踪的事件（如\"戒酒计划\"\"求职\"\"健身\"等），由系统自动发现和维护状态页。此工具提供主题管理能力：列出活跃主题、获取主题详情（语义/关键词检索统一走 unified_search）。当你想了解用户近况、某个领域的状态变化时，先查看主题是最高效的入口，比直接翻消息或笔记更能抓住全局。"
 }
 
+func (t *ThemeSearchTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "主题状态。列活跃主题、看状态页详情。",
+		Funcs:     []string{"list_active_themes", "get_detail"},
+	}, true
+}
+
 func (t *ThemeSearchTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{

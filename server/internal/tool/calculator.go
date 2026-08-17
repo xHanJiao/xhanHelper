@@ -19,6 +19,13 @@ func (t *CalculatorTool) Description() string {
 	return "安全的数学表达式计算器，支持加减乘除、括号、以及 sqrt/pow/sin/cos/abs/round/ceil/floor/log2/log10 函数"
 }
 
+func (t *CalculatorTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "计算。四则运算、括号、sqrt/pow/sin/cos。",
+		Funcs:     []string{"evaluate", "evaluate_batch"},
+	}, true
+}
+
 // calculatorFunctions 注册的数学函数
 func arg1(args []interface{}, fn func(float64) float64) (interface{}, error) {
 	if len(args) < 1 {

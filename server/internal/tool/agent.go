@@ -29,6 +29,14 @@ func (t *AgentTool) Description() string {
 	return "管理智能体：创建、查找、更新、删除、回滚自定义 AI 助手"
 }
 
+func (t *AgentTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "智能体。建/查/改自定义 AI 助手，绑定/解绑会话。",
+		Funcs:     []string{"create_agent", "find_agent", "list_agents", "bind_agent"},
+		Others:    "解绑、更新 等",
+	}, true
+}
+
 func (t *AgentTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{

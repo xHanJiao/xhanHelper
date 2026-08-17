@@ -25,6 +25,14 @@ func (w *LoggingWrapper) ReadOnlyFuncs() map[string]bool {
 	return w.inner.ReadOnlyFuncs()
 }
 
+// Catalog 透传 CatalogProvider（若 inner 实现），保证被 wrapper 包裹的工具目录信息可用。
+func (w *LoggingWrapper) Catalog() (CatalogEntry, bool) {
+	if p, ok := w.inner.(CatalogProvider); ok {
+		return p.Catalog()
+	}
+	return CatalogEntry{}, false
+}
+
 func (w *LoggingWrapper) Execute(ec *ExecuteContext, funcName string, args json.RawMessage) *Result {
 	start := time.Now()
 	w.logger.Printf("[%s.%s] INPUT: %s", w.Name(), funcName, string(args))

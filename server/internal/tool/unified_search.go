@@ -113,6 +113,13 @@ func (t *UnifiedSearchTool) Description() string {
 	return "统一搜索工具，支持语义搜索和关键词搜索，覆盖记忆、笔记、摘要、主题、历史消息五个域，返回结构化 JSON"
 }
 
+func (t *UnifiedSearchTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "统一检索。语义/关键词搜记忆、笔记、摘要、主题、历史消息。",
+		Funcs:     []string{"semantic_search", "keyword_search"},
+	}, true
+}
+
 // Functions 工具函数定义
 func (t *UnifiedSearchTool) Functions() []FuncSchema {
 	return []FuncSchema{

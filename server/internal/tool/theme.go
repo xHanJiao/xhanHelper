@@ -28,6 +28,13 @@ func (t *ThemeTool) Description() string {
 	return "管理用户生活中持续进行的事件主题。仅在用户明确提及持续性的生活事件（如戒酒、健身、备考、求职、旅行计划等有明确目标和时间跨度的活动）时才操作主题。禁止为一次性问题、闲聊话题、情绪表达创建主题。"
 }
 
+func (t *ThemeTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "主题管理。建/改/关/重启持续追踪事件（健身、求职）。",
+		Funcs:     []string{"create_theme", "update_theme", "close_theme", "reactivate_theme"},
+	}, true
+}
+
 func (t *ThemeTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{

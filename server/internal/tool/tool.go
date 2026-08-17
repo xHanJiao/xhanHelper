@@ -67,3 +67,17 @@ type Tool interface {
 	// 注意：函数名必须与 Functions() 中的定义一致，Registry 启动时会校验，拼错会 panic。
 	ReadOnlyFuncs() map[string]bool
 }
+
+// CatalogEntry — 工具组在渐进式工具目录（ToolCatalog）中的展示信息。
+// 由工具自身提供，替代原 catalog.go 中的独立 map，新增工具不实现即启动 panic，杜绝"LLM 永远看不到"。
+type CatalogEntry struct {
+	ShortDesc string   // 组级 caveman 描述
+	Funcs     []string // 目录中透出的高频函数名（须与 Functions() 一致，ValidateCatalog 校验）
+	Others    string   // 未列出函数的概略描述，如 "删除、统计、导出、导入 等"
+}
+
+// CatalogProvider — 可选接口：工具实现后，其目录条目（描述 + 高频函数过滤）由自身提供。
+// 不实现则回退到 Description() + 全部函数名（兼容 mock/未适配工具）。
+type CatalogProvider interface {
+	Catalog() (CatalogEntry, bool)
+}

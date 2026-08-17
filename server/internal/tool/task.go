@@ -53,6 +53,13 @@ func (t *TaskTool) Description() string {
 - prompt 要写详细：单一目标、明确要调研什么、返回什么格式`, maxIter-1, maxIter, timeout)
 }
 
+func (t *TaskTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "子任务。派子 agent 独立干活：联网调研 web_explore、本地文件 file_explore。",
+		Funcs:     []string{"run"},
+	}, true
+}
+
 func (t *TaskTool) Functions() []FuncSchema {
 	return []FuncSchema{{
 		Name:        "run",

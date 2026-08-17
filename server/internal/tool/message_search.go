@@ -58,6 +58,14 @@ func (t *MessageSearchTool) Description() string {
 		"assistant 消息在时间搜索中会被截断，需要完整内容请用 get_by_ids"
 }
 
+func (t *MessageSearchTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "历史消息。按时间/ID 精确查。语义检索走 unified_search。",
+		Funcs:     []string{"search_by_time", "search_by_range"},
+		Others:    "按ID查、统计数量 等",
+	}, true
+}
+
 func (t *MessageSearchTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{

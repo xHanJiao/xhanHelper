@@ -28,6 +28,14 @@ func (t *BookkeepingTool) Description() string {
 	return "记账工具，可以新增、修改、删除、查询账单，并且查看账单的统计数据"
 }
 
+func (t *BookkeepingTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "记账。加/改/查/删账单，月/分类统计，分类选项。",
+		Funcs:     []string{"create_bill", "update_bill", "query_bills"},
+		Others:    "批量改、取消账单、月度/分类统计、分类/归属选项 等",
+	}, true
+}
+
 func (t *BookkeepingTool) Functions() []FuncSchema {
 	// 共享的字段定义（有枚举约束）
 	category1Field := func() map[string]interface{} {

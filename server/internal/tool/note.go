@@ -62,6 +62,14 @@ func (t *NoteTool) Description() string {
 	return "自由笔记工具，记录值得长期追踪的信息——事实、数据、观点、事件、个人状态、人物关系等"
 }
 
+func (t *NoteTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "笔记。记录/检索长期追踪信息：事实、观点、事件、状态、关系。",
+		Funcs:     []string{"record_note", "semantic_search", "query_notes", "update_note"},
+		Others:    "计数、主题列表、版本回滚、删除 等",
+	}, true
+}
+
 // maxNoteContentLen 单条笔记正文上限（字）。超出请先建文档，笔记只存摘要。
 const maxNoteContentLen = 150
 

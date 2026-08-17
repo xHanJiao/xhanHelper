@@ -39,6 +39,13 @@ func (t *GetSummaryTool) Description() string {
 		"找到感兴趣的话题后，可配合 message_search.search_by_range 查看覆盖范围内的原始消息。"
 }
 
+func (t *GetSummaryTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "对话摘要。按时间/ID 查过去聊了什么。",
+		Funcs:     []string{"get_summary", "query_by_time"},
+	}, true
+}
+
 func (t *GetSummaryTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{

@@ -26,6 +26,13 @@ func (t *PlanTool) Description() string {
 	return "执行计划（todo）管理：保存/更新当前会话的执行步骤清单，供执行时追踪进度。方案讨论产出后用 plan.save 保存实施步骤，执行中每完成一步重传完整列表（将该步标为 completed）。"
 }
 
+func (t *PlanTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "执行计划。存/读当前会话步骤清单（todo）。",
+		Funcs:     []string{"save", "get"},
+	}, true
+}
+
 func (t *PlanTool) Functions() []FuncSchema {
 	return []FuncSchema{
 		{

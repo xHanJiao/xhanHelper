@@ -86,3 +86,103 @@ func TestToolCatalog(t *testing.T) {
 		t.Error("catalog must be byte-stable across calls")
 	}
 }
+
+// mockCatalogTool — 实现 CatalogProvider 的 mock，验证目录渲染走定制信息
+type mockCatalogTool struct {
+	mockOrderTool
+	entry CatalogEntry
+}
+
+func (m *mockCatalogTool) Catalog() (CatalogEntry, bool) { return m.entry, true }
+
+func TestToolCatalog_UsesProviderEntry(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(&mockCatalogTool{
+		mockOrderTool: mockOrderTool{name: "bookkeeping", desc: "冗长描述", fns: []FuncSchema{
+			{Name: "create_bill"}, {Name: "update_bill"}, {Name: "query_bills"}, {Name: "get_category_options"},
+		}},
+		entry: CatalogEntry{
+			ShortDesc: "记账。加/改/查/删账单。",
+			Funcs:     []string{"create_bill", "update_bill", "query_bills"},
+			Others:    "批量改、取消、统计、选项 等",
+		},
+	})
+
+	catalog := reg.ToolCatalog()
+	if strings.Contains(catalog, "冗长描述") {
+		t.Error("provider 应覆盖 Description(), 不应出现冗长描述")
+	}
+	if !strings.Contains(catalog, "记账。加/改/查/删账单。") {
+		t.Errorf("应包含 ShortDesc, got:\n%s", catalog)
+	}
+	if !strings.Contains(catalog, "create_bill, update_bill, query_bills") {
+		t.Errorf("应只列出高频函数名, got:\n%s", catalog)
+	}
+	if strings.Contains(catalog, "get_category_options") {
+		t.Errorf("低频函数不应透出, got:\n%s", catalog)
+	}
+	if !strings.Contains(catalog, "另有: 批量改、取消、统计、选项 等") {
+		t.Errorf("应包含 Others 概略, got:\n%s", catalog)
+	}
+}
+
+func TestValidateCatalog_PanicsOnMissingProvider(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(&mockOrderTool{name: "plain", desc: "无 Provider", fns: []FuncSchema{{Name: "fn"}}})
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic when visible tool lacks CatalogProvider")
+		}
+	}()
+	reg.ValidateCatalog()
+}
+
+func TestValidateCatalog_PanicsOnUndefinedFunc(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(&mockCatalogTool{
+		mockOrderTool: mockOrderTool{name: "broken", desc: "x", fns: []FuncSchema{{Name: "real_fn"}}},
+		entry:         CatalogEntry{ShortDesc: "ok", Funcs: []string{"typo_fn"}},
+	})
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic when Funcs references undefined function")
+		}
+	}()
+	reg.ValidateCatalog()
+}
+
+func TestValidateCatalog_PanicsOnEmptyShortDesc(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(&mockCatalogTool{
+		mockOrderTool: mockOrderTool{name: "blank", desc: "x", fns: []FuncSchema{{Name: "fn"}}},
+		entry:         CatalogEntry{ShortDesc: "  ", Funcs: []string{"fn"}},
+	})
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic when ShortDesc empty")
+		}
+	}()
+	reg.ValidateCatalog()
+}
+
+func TestValidateCatalog_IgnoresExposeAndHidden(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(&mockOrderTool{name: "expose_tools", desc: "元工具", fns: []FuncSchema{{Name: "enable"}}})
+	reg.Register(&mockOrderTool{name: "hidden_tool", desc: "隐藏", fns: []FuncSchema{{Name: "fn"}}})
+	reg.HideTool("hidden_tool")
+	// 不应 panic：expose_tools 与 hidden 都跳过校验
+	reg.ValidateCatalog()
+}
+
+func TestValidateCatalog_AcceptsProviderTools(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(&mockCatalogTool{
+		mockOrderTool: mockOrderTool{name: "good", desc: "x", fns: []FuncSchema{{Name: "a"}, {Name: "b"}}},
+		entry:         CatalogEntry{ShortDesc: "ok", Funcs: []string{"a", "b"}},
+	})
+	// 不应 panic
+	reg.ValidateCatalog()
+}

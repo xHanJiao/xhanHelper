@@ -121,6 +121,8 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reg.ValidateNativeFC()
 	// 校验 ReadOnlyFuncs 声明与 Functions() 一致（plan 模式只读拦截依赖，拼错直接 panic）
 	reg.ValidateReadOnlyFuncs()
+	// 校验所有可见工具实现了 CatalogProvider（渐进式目录依赖，缺省直接 panic）
+	reg.ValidateCatalog()
 
 	return &ToolsBundle{
 		Registry:            reg,

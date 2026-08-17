@@ -34,6 +34,14 @@ func (t *ReminderTool) Description() string {
 	return "设置、查看、搜索、取消待办提醒。提醒到期后系统会弹通知，点击通知助手会主动在聊天里提起。支持一次性提醒，循环提醒预留中。"
 }
 
+func (t *ReminderTool) Catalog() (CatalogEntry, bool) {
+	return CatalogEntry{
+		ShortDesc: "提醒。设/查/取消待办。",
+		Funcs:     []string{"create_reminder", "list_reminders", "search_reminders"},
+		Others:    "取消、标记已提及 等",
+	}, true
+}
+
 // maxReminderContentLen 单条提醒正文上限（字）。提醒必须一句话，越短越好。
 const maxReminderContentLen = 120
 

@@ -392,7 +392,8 @@ function costDateRange() {
 async function fetchCostCategories() {
   try {
     const list = await api.get('/api/admin/cost/categories') || []
-    costCategoryOptions.value = list.map(c => ({ label: c, value: c }))
+    const labelMap = { main_chat: '主聊天', post_chat: '对话后处理', reflection: '反思', tool: '工具', admin: '管理与评估' }
+    costCategoryOptions.value = list.map(c => ({ label: labelMap[c] || c, value: c }))
   } catch (_) {}
 }
 
@@ -406,7 +407,10 @@ async function fetchCostUsers() {
 async function fetchCostSummary() {
   try {
     const ids = costUsers.value
-    const qs = ids.length ? '?user_id=' + ids.join('&user_id=') : ''
+    const params = []
+    if (ids.length) params.push(...ids.map(id => `user_id=${id}`))
+    if (costCategory.value) params.push(`category=${costCategory.value}`)
+    const qs = params.length ? '?' + params.join('&') : ''
     costSummary.value = await api.get('/api/admin/cost/summary' + qs)
   } catch (_) {}
 }
@@ -813,6 +817,7 @@ onUnmounted(() => {
       <div style="display: flex; gap: var(--space-md); align-items: center; margin-bottom: var(--space-md); flex-wrap: wrap;">
         <NSelect v-model:value="costRangeDays" :options="costRanges" size="small" style="width: 110px;" />
         <NSelect v-model:value="costUsers" :options="costUserOptions" size="small" multiple clearable style="min-width: 200px;" placeholder="全部用户" />
+        <NSelect v-model:value="costCategory" :options="costCategoryOptions" size="small" clearable style="min-width: 130px;" placeholder="全部分类" />
         <div style="display: flex; gap: var(--space-sm); align-items: center; margin-left: auto;">
           <span style="font-size: 12px; color: var(--color-text-muted);">堆叠:</span>
           <NCheckbox :checked="costBarStack.hit" @update:checked="toggleBarStack('hit')">命中</NCheckbox>

@@ -262,7 +262,7 @@ func (r *LlmCostRepo) ListUsers(ctx context.Context, start, end string) ([]UserC
 }
 
 // Summary 返回时间段内的汇总（不含分组）
-func (r *LlmCostRepo) Summary(ctx context.Context, start, end string, userIDs []string) (*TokenTotal, error) {
+func (r *LlmCostRepo) Summary(ctx context.Context, start, end string, userIDs []string, category string) (*TokenTotal, error) {
 	q := r.db.WithContext(ctx).Model(&model.LlmCostDetail{})
 	if start != "" {
 		q = q.Where("date >= ?", start)
@@ -272,6 +272,9 @@ func (r *LlmCostRepo) Summary(ctx context.Context, start, end string, userIDs []
 	}
 	if len(userIDs) > 0 {
 		q = q.Where("user_id IN ?", userIDs)
+	}
+	if category != "" {
+		q = q.Where("category = ?", category)
 	}
 	var total TokenTotal
 	if err := q.Select(tokenSelectCols).Scan(&total).Error; err != nil {

@@ -80,24 +80,25 @@ func (h *CostHandler) Stats(c *gin.Context) {
 // Summary GET /api/admin/cost/summary — 概览卡片（今日/昨日/本月）
 func (h *CostHandler) Summary(c *gin.Context) {
 	userIDs := queryUserIDs(c)
+	category := c.Query("category")
 	ctx := c.Request.Context()
 	today := time.Now().Format("2006-01-02")
 	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
 	firstOfMonth := time.Now().AddDate(0, 0, -time.Now().Day()+1).Format("2006-01-02")
 
-	todayTotal, err := h.repo.Summary(ctx, today, today, userIDs)
+	todayTotal, err := h.repo.Summary(ctx, today, today, userIDs, category)
 	if err != nil {
 		log.Printf("[cost] summary today error: %v", err)
 		view.JSONError(c, 500, "query cost summary failed")
 		return
 	}
-	yesterdayTotal, err := h.repo.Summary(ctx, yesterday, yesterday, userIDs)
+	yesterdayTotal, err := h.repo.Summary(ctx, yesterday, yesterday, userIDs, category)
 	if err != nil {
 		log.Printf("[cost] summary yesterday error: %v", err)
 		view.JSONError(c, 500, "query cost summary failed")
 		return
 	}
-	monthTotal, err := h.repo.Summary(ctx, firstOfMonth, today, userIDs)
+	monthTotal, err := h.repo.Summary(ctx, firstOfMonth, today, userIDs, category)
 	if err != nil {
 		log.Printf("[cost] summary month error: %v", err)
 		view.JSONError(c, 500, "query cost summary failed")

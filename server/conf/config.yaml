@@ -61,7 +61,7 @@ snowflake:
 
 chat:
   history_rounds: 10
-  max_summary_rounds: 5       # 单次摘要最多覆盖的 user message 条数，N/2
+  max_summary_rounds: 5       # 单次摘要最多覆盖的 user message 条数，N/2, 目前无用
   max_window_rounds: 800     # 扩张窗口上限轮数（agent 复杂任务需要长上下文；缓存命中后成本可控）
   session_gap_minutes: 15     # session 间隔阈值（分钟），超过则重置窗口
   summary_attach_count: 2           # 摘要附着条数上限
@@ -79,7 +79,7 @@ webfetch:
   max_bytes: 51200
 
 subagent:
-  explore_max_iterations: 20    # 防死循环兜底（timeout 才是真实预算）；调太多轮转不完
+  explore_max_iterations: 10    # 防死循环兜底（timeout 才是真实预算）；调太多轮转不完
   explore_timeout_seconds: 600
 
 retrieval:
@@ -99,11 +99,11 @@ retrieval:
   # 公共资源区：历史消息不再重放检索注入，资源收敛到最新消息（phase-10 任务 B）
   resource_zone:
     enabled: true
-    budget_chars: 7000        # 总预算帽（UTF-8 字符数，中文 1 字=1 ≈ 5500-7000 tokens）
+    budget_chars: 5000        # 总预算帽（UTF-8 字符数，中文 1 字=1 ≈ 5500-7000 tokens）
     budget_profile: 1600      # profile 预算（稳定画像层）
     budget_summary: 800       # summary 预算
     budget_memory: 600        # memory 预算
-    budget_note: 3000         # note 预算（note 价值最高给最多）
+    budget_note: 1500         # note 预算（note 价值最高给最多）
     budget_topic: 200         # topic 预算
     quota_summary: 2          # 摘要配额
     quota_memory: 8           # 记忆配额
@@ -122,19 +122,6 @@ global_default_role:
     - 直接、简洁、追问事实，不替用户脑补
     - 像朋友而非客服，可以指出矛盾，但不越界指导
     - 不渲染情绪，不滥用修辞
-
-    ## 对话节奏——核心：永远不要冷场
-    - 每次回复都必须给对方一个能接住的球，不允许以"嗯"、"好的"、"有道理"之类的话结束
-    - 球的形式不限于提问，可以是：深挖同一话题、指出矛盾或空白、精炼总结对方的话、给出一个相关事实或数据、抛假设情境
-    - 球必须和当前聊的是同一条线，禁止生硬切换到不相关话题（如聊着职业突然问晚饭）
-    - 只有用户明确表示"不聊了"、"下次再说"、"就到这吧"等结束信号时，才停止
-    - 如果感觉话题快枯竭了，提前换方向，不要等冷场，但换方向时给出过渡（如"话说回来""回到你之前提到的XX"）
-    - **⚠️ 关键：如果抛出的球对方没有接（包括：对方跳过没回应、只回了"嗯"/"好的"等敷衍词、表达了明确的负面态度），禁止再次抛出同一方向的问题/话题。立即转入以下之一：换一个相关但不重复的角度、换话题、允许自然结束。同一话题的"深挖"不允许变成同一问题的重复追问。**
-
-    ## 主动发起话题
-    - 主动发起话题没有限制，随时可以进行
-    - 话题方向：对用户之前聊过的事情做延伸、事实性问题、两难推理、反常识数据、假设性推演
-    - 如果用户沉默或回应简短，立刻换一个方向问，不要干等
 
     ## 禁止
     - 不说教、不灌鸡汤、不评价用户选择

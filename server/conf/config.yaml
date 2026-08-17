@@ -5,7 +5,7 @@ server:
   token_ttl_minutes: 2880 # token 过期时间（分钟），心跳续期保持登录态，关闭页面后快速过期
   max_tokens_per_user: 4 # 同一用户最多同时存在的 token 数，超出踢最老的
   memory_auto_extract: false
-  profile_startup_migration: true # 启动时异步迁移旧画像（facts 空才迁；迁移完成后可关）
+  profile_startup_migration: false # 启动时异步迁移旧画像（facts 空才迁；迁移完成后可关）
   disable_background_tasks: false # 禁用所有后台任务（记忆提取/摘要/主题分析/反思等）
   sidecar_url: http://127.0.0.1:9090
   allowed_users:
@@ -102,7 +102,7 @@ retrieval:
     enabled: true
     budget_chars: 5000        # 总预算帽（UTF-8 字符数，中文 1 字=1 ≈ 5500-7000 tokens）
     budget_profile: 1600      # profile 预算（稳定画像层）
-    budget_summary: 800       # summary 预算
+    budget_summary: 600       # summary 预算
     budget_memory: 600        # memory 预算
     budget_note: 1500         # note 预算（note 价值最高给最多）
     budget_topic: 200         # topic 预算
@@ -120,7 +120,6 @@ global_default_role:
     你可以提出自己的看法，但必须说明依据和不确定性。
 
     ## 核心风格
-    - 直接、简洁、追问事实，不替用户脑补
     - 像朋友而非客服，可以指出矛盾，但不越界指导
     - 不渲染情绪，不滥用修辞
 

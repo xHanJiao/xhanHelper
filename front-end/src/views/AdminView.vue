@@ -218,14 +218,18 @@ function makeLineChart(id, datasets) {
   chartInstances.push(ch)
 }
 
-function makeBarChart(id, labels, datasets, horizontal, trackIn = chartInstances) {
+function makeBarChart(id, labels, datasets, horizontal, trackIn = chartInstances, dualAxis = false) {
   const canvas = document.getElementById(id)
   if (!canvas) return
   Chart.getChart(id)?.destroy()
+  const scales = horizontal ? { x: { beginAtZero: true } } : { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }
+  if (dualAxis) {
+    scales.y1 = { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false } }
+  }
   const ch = new Chart(canvas, {
     type: 'bar',
     data: { labels, datasets },
-    options: { responsive: true, indexAxis: horizontal ? 'y' : 'x', interaction: { mode: 'index' }, plugins: { legend: { display: labels.length > 1, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } }, scales: horizontal ? { x: { beginAtZero: true } } : { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
+    options: { responsive: true, indexAxis: horizontal ? 'y' : 'x', interaction: { mode: 'index' }, plugins: { legend: { display: labels.length > 1, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } }, scales }
   })
   trackIn.push(ch)
 }
@@ -303,7 +307,7 @@ const costCategoryOptions = ref([])
 const costSummary = ref(null)
 const costLoading = ref(false)
 const costLoaded = ref(false)
-const costBarStack = ref({ hit: true, miss: true, completion: false })
+const costBarStack = ref({ hit: true, miss: true, completion: true })
 let costCharts = []
 
 // 饼图钻取：点击扇形 → 弹层展示该分组的 命中/未命中/生成 三色占比
@@ -444,7 +448,8 @@ async function renderCostCharts() {
     if (costBarStack.value.hit) datasets.push({ label: '缓存命中', data: daily.groups.map(g => g.prompt_cache_hit), backgroundColor: '#5b6abf' })
     if (costBarStack.value.miss) datasets.push({ label: '缓存未命中', data: daily.groups.map(g => g.prompt_cache_miss), backgroundColor: '#e74c3c' })
     if (costBarStack.value.completion) datasets.push({ label: '生成', data: daily.groups.map(g => g.completion), backgroundColor: '#27ae60' })
-    if (datasets.length) makeBarChart('cost-daily-chart', labels, datasets, false, costCharts)
+    datasets.push({ label: '平均 token/次', type: 'line', yAxisID: 'y1', data: daily.groups.map(g => Math.round(selectedTotal(g) / (g.call_count || 1))), borderColor: '#8e44ad', backgroundColor: '#8e44ad22', fill: false, pointRadius: 2, tension: 0.3 })
+    if (datasets.length) makeBarChart('cost-daily-chart', labels, datasets, false, costCharts, true)
 
     // 三个饼图（数据跟随维度筛选，点击扇形钻取三维度占比）
     const cat = await fetchCostStats('category')

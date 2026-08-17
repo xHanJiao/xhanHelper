@@ -145,6 +145,7 @@ type Orchestrator struct {
 	verifyMaxRetries       int
 	verifyModel            string // "flash" | "pro"
 	useNativeFC            bool
+	toolExcludes           []string // 对 LLM 隐藏的工具名（控 token 成本）
 	debugPersistJSON       bool
 	debugJSONSink          DebugJSONSink // request_json 异步落库 sink（开关开启时必须注入）
 	clientBridge           *ClientToolBridge
@@ -193,6 +194,7 @@ type OrchestratorConfig struct {
 	VerifyMaxRetries          int
 	VerifyModel               string            // "flash" | "pro"，默认 flash
 	UseNativeFC               bool              // 是否使用原生 function calling
+	ToolExcludes              []string          // 对 LLM 隐藏的工具名列表（控 token 成本）
 	DebugPersistJSON          bool              // 是否持久化完整 LLM 请求 JSON（异步限频写入，配 debug_json 控制频率与保留）
 	DebugJSONSink             DebugJSONSink     // request_json 异步落库 sink，DebugPersistJSON 开启时必填
 	ClientBridge              *ClientToolBridge // 客户端工具桥（客户端工具调用的 pending 路由）
@@ -263,6 +265,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		verifyMaxRetries:          cfg.VerifyMaxRetries,
 		verifyModel:               cfg.VerifyModel,
 		useNativeFC:               cfg.UseNativeFC,
+		toolExcludes:              cfg.ToolExcludes,
 		debugPersistJSON:          cfg.DebugPersistJSON,
 		debugJSONSink:             cfg.DebugJSONSink,
 		clientBridge:              cfg.ClientBridge,
@@ -917,6 +920,7 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, msgs [
 	// plan 模式：工具全部隐藏（LLM 看不到任何工具定义，配合执行级拦截双保险）
 	if !finalRound && o.useNativeFC && req.Mode != model.ConvModePlan {
 		tools = o.registry.GetNativeFCTools()
+		tools = filterToolDefs(tools, o.toolExcludes)
 		tools = append(tools, buildClientToolDefs(req.ClientTools, o.registry)...)
 	} else if len(req.ClientTools) > 0 && !finalRound {
 		log.Printf("[orch] client_tools ignored: use_native_fc=false")
@@ -930,6 +934,24 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, msgs [
 		UserID:       req.UserID,
 		Thinking:     thinking,
 	}
+}
+
+// filterToolDefs 从工具定义中剔除配置排除的工具（按工具名精确匹配，控 token 成本）。
+func filterToolDefs(defs []llm.ToolDefinition, excludes []string) []llm.ToolDefinition {
+	if len(excludes) == 0 {
+		return defs
+	}
+	excluded := make(map[string]bool, len(excludes))
+	for _, n := range excludes {
+		excluded[n] = true
+	}
+	kept := make([]llm.ToolDefinition, 0, len(defs))
+	for _, d := range defs {
+		if !excluded[d.Name] {
+			kept = append(kept, d)
+		}
+	}
+	return kept
 }
 
 func mkUserMsg(req *RunRequest) *model.Message {

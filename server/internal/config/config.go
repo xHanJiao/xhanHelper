@@ -38,15 +38,16 @@ type Config struct {
 
 // ChatConfig — 对话配置
 type ChatConfig struct {
-	HistoryRounds             int     `yaml:"history_rounds"`              // 加载历史消息轮数，默认 10
-	MaxWindowRounds           int     `yaml:"max_window_rounds"`           // 扩张窗口上限，默认 100
-	MaxSummaryRounds          int     `yaml:"max_summary_rounds"`          // 单次摘要覆盖上限，0=等于 history_rounds
-	SessionGapMinutes         int     `yaml:"session_gap_minutes"`         // session 间隔阈值（分钟），默认 30
-	SummaryAttachCount        int     `yaml:"summary_attach_count"`        // 摘要附着条数上限，默认 10
-	SummaryAttachMaxDays      int     `yaml:"summary_attach_max_days"`     // 摘要附着时间窗口（天），默认 3
-	SummaryRelevanceThreshold float64 `yaml:"summary_relevance_threshold"` // 摘要相关性余弦相似度阈值，默认 0.5
-	SummaryRelevanceHistoryN  int     `yaml:"summary_relevance_history_n"` // 相关性检查的历史消息窗口大小，默认 5
-	SummaryDedupThreshold     float64 `yaml:"summary_dedup_threshold"`     // 摘要附着去重余弦相似度阈值（相邻摘要更相似则丢弃较旧者），默认 0.85
+	HistoryRounds             int      `yaml:"history_rounds"`              // 加载历史消息轮数，默认 10
+	MaxWindowRounds           int      `yaml:"max_window_rounds"`           // 扩张窗口上限，默认 100
+	MaxSummaryRounds          int      `yaml:"max_summary_rounds"`          // 单次摘要覆盖上限，0=等于 history_rounds
+	SessionGapMinutes         int      `yaml:"session_gap_minutes"`         // session 间隔阈值（分钟），默认 30
+	SummaryAttachCount        int      `yaml:"summary_attach_count"`        // 摘要附着条数上限，默认 10
+	SummaryAttachMaxDays      int      `yaml:"summary_attach_max_days"`     // 摘要附着时间窗口（天），默认 3
+	SummaryRelevanceThreshold float64  `yaml:"summary_relevance_threshold"` // 摘要相关性余弦相似度阈值，默认 0.5
+	SummaryRelevanceHistoryN  int      `yaml:"summary_relevance_history_n"` // 相关性检查的历史消息窗口大小，默认 5
+	SummaryDedupThreshold     float64  `yaml:"summary_dedup_threshold"`     // 摘要附着去重余弦相似度阈值（相邻摘要更相似则丢弃较旧者），默认 0.85
+	ToolExcludes              []string `yaml:"tool_excludes"`               // 对 LLM 隐藏的工具名列表（控 token 成本），默认空
 }
 
 // ShareConfig — 分享配置
@@ -426,6 +427,9 @@ func merge(dst, src *Config) {
 	}
 	if src.Chat.SummaryDedupThreshold > 0 {
 		dst.Chat.SummaryDedupThreshold = src.Chat.SummaryDedupThreshold
+	}
+	if src.Chat.ToolExcludes != nil {
+		dst.Chat.ToolExcludes = src.Chat.ToolExcludes
 	}
 }
 

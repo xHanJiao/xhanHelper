@@ -747,3 +747,26 @@ func TestTruncateReminderInjection_Long_KeepsDeadline(t *testing.T) {
 		t.Errorf("truncated reminder too long: %d", len([]rune(got)))
 	}
 }
+
+// ==================== filterToolDefs ====================
+
+func TestFilterToolDefs_NoExcludes(t *testing.T) {
+	defs := []llm.ToolDefinition{{Name: "chart"}, {Name: "mailbox"}, {Name: "note"}}
+	got := filterToolDefs(defs, nil)
+	if len(got) != 3 {
+		t.Errorf("no excludes should keep all, got %d", len(got))
+	}
+}
+
+func TestFilterToolDefs_RemovesExcluded(t *testing.T) {
+	defs := []llm.ToolDefinition{{Name: "chart"}, {Name: "mailbox"}, {Name: "note"}, {Name: "bookkeeping"}}
+	got := filterToolDefs(defs, []string{"chart", "mailbox"})
+	if len(got) != 2 {
+		t.Fatalf("expected 2 kept, got %d", len(got))
+	}
+	for _, d := range got {
+		if d.Name == "chart" || d.Name == "mailbox" {
+			t.Errorf("excluded tool %s should be removed", d.Name)
+		}
+	}
+}

@@ -108,6 +108,10 @@ type msgCreator interface {
 	Create(ctx context.Context, m *model.Message) error
 }
 
+type profileFactGetter interface {
+	GetActiveByUser(ctx context.Context, userID string) ([]model.UserProfileFact, error)
+}
+
 // convToucher — Orchestrator 需要的会话更新时间能力（*service.ConversationRepo 自动满足）
 type convToucher interface {
 	Touch(ctx context.Context, id string) error
@@ -152,7 +156,7 @@ type Orchestrator struct {
 	contextRetriever       *ctxflow.ContextRetriever // 上下文检索
 	contextFormatter       ctxflow.ContextFormatter  // 上下文格式化（接口）
 	reminderRepo           *service.ReminderRepo
-	profileFactRepo        *service.UserProfileFactRepo
+	profileFactRepo        profileFactGetter
 
 	// 摘要附着控制
 	summaryAttachCount        int

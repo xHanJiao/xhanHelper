@@ -257,7 +257,7 @@ func TestBuildProfileBlock(t *testing.T) {
 	if !strings.Contains(got, `updated_at="2026-08-07"`) {
 		t.Errorf("missing updated_at attr: %s", got)
 	}
-	if !strings.Contains(got, ">睡眠差\n房价观察</field>") {
+	if !strings.Contains(got, ">睡眠差&#xA;房价观察</field>") {
 		t.Errorf("missing field value: %s", got)
 	}
 }
@@ -308,7 +308,7 @@ func TestSortPacketsByType_ProfileAlphabetical(t *testing.T) {
 	for _, p := range pkts {
 		got = append(got, p.ID)
 	}
-	want := []string{"伴侣", "出生年份", "籍贯"} // 按 UTF-8 字节序："伴" < "出" < "籍"
+	want := []string{"伴侣", "出生日期", "籍贯"} // 按 UTF-8 字节序："伴" < "出" < "籍"
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("expected %v, got %v", want, got)

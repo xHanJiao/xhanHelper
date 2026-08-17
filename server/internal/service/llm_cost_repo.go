@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"gorm.io/gorm"
@@ -56,6 +57,24 @@ type TokenTotal struct {
 type GroupRow struct {
 	Key string `json:"key"`
 	TokenTotal
+}
+
+// GroupRows
+type GroupRows []GroupRow
+
+// Len 返回切片长度
+func (g GroupRows) Len() int {
+	return len(g)
+}
+
+// Less 默认从小到大排序，按 Key 比较
+func (g GroupRows) Less(i, j int) bool {
+	return g[i].Key < g[j].Key
+}
+
+// Swap 交换两个元素
+func (g GroupRows) Swap(i, j int) {
+	g[i], g[j] = g[j], g[i]
 }
 
 // QueryResult 聚合查询结果
@@ -135,8 +154,10 @@ func (r *LlmCostRepo) Query(ctx context.Context, params QueryParams) (*QueryResu
 	if groups == nil {
 		groups = []GroupRow{}
 	}
+	var groupRows GroupRows = groups
+	sort.Sort(groupRows)
 
-	return &QueryResult{Total: total, Groups: groups}, nil
+	return &QueryResult{Total: total, Groups: groupRows}, nil
 }
 
 // normalizeDateKey SQLite 驱动可能把 date 列读回 RFC3339（"2026-08-11T00:00:00Z"），

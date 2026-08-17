@@ -36,6 +36,12 @@ func (m *mockMsgRepo) ListRecentUserMessages(ctx context.Context, convID string,
 	return nil, nil
 }
 
+type mockUserProfileFactRepo struct{}
+
+func (m *mockUserProfileFactRepo) GetActiveByUser(ctx context.Context, userID string) ([]model.UserProfileFact, error) {
+	return nil, nil
+}
+
 type mockConvRepo struct {
 	touchCalls int
 }
@@ -93,6 +99,7 @@ func newTestOrchestrator(msgRepo msgCreator, convRepo convToucher) *Orchestrator
 		contextFormatter: &mockFormatter{},
 		msgRepo:          msgRepo,
 		convRepo:         convRepo,
+		profileFactRepo:  &mockUserProfileFactRepo{},
 		maxIterations:    3,
 	}
 }

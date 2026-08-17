@@ -76,15 +76,15 @@ func TestQuery_GroupByDate_CacheSplit(t *testing.T) {
 	if len(res.Groups) != 2 {
 		t.Fatalf("expected 2 groups, got %d", len(res.Groups))
 	}
-	if res.Groups[0].Key != "2026-08-11" || res.Groups[0].TotalTokens != 790 {
-		t.Errorf("group[0] mismatch: %+v", res.Groups[0])
+	if res.Groups[1].Key != "2026-08-11" || res.Groups[1].TotalTokens != 790 {
+		t.Errorf("group[0] mismatch: %+v", res.Groups[1])
 	}
-	if res.Groups[1].Key != "2026-08-10" || res.Groups[1].TotalTokens != 350 {
-		t.Errorf("group[1] mismatch: %+v", res.Groups[1])
+	if res.Groups[0].Key != "2026-08-10" || res.Groups[0].TotalTokens != 350 {
+		t.Errorf("group[1] mismatch: %+v", res.Groups[0])
 	}
 	// 08-11 hit = 150+400 = 550, miss = 150, rate = 0.786
-	if res.Groups[0].CacheHitRate < 0.785 || res.Groups[0].CacheHitRate > 0.787 {
-		t.Errorf("group hit rate mismatch: %f", res.Groups[0].CacheHitRate)
+	if res.Groups[1].CacheHitRate < 0.785 || res.Groups[1].CacheHitRate > 0.787 {
+		t.Errorf("group hit rate mismatch: %f", res.Groups[1].CacheHitRate)
 	}
 }
 

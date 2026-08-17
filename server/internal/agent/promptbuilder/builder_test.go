@@ -18,7 +18,7 @@ func TestCorePrinciplesProvider(t *testing.T) {
 		t.Errorf("name = %q", p.Name())
 	}
 	out := p.Render(context.Background())
-	if !strings.Contains(out, "简洁回复") {
+	if !strings.Contains(out, "话少") {
 		t.Error("should contain core principles")
 	}
 }

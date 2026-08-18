@@ -11,10 +11,11 @@ import (
 // PromptBuilder — system prompt 构建器，只负责静态 prompt 拼装。
 // 上下文检索已迁移到 ctxflow 包。
 type PromptBuilder struct {
-	preRoleStatic  []StaticProvider
-	postRoleStatic []StaticProvider
-	basePrompt     string
-	promptResolver PromptResolver
+	preRoleStatic    []StaticProvider
+	postRoleStatic   []StaticProvider
+	contextProviders []ContextProvider // 动态上下文注入（per-run 可变内容）
+	basePrompt       string
+	promptResolver   PromptResolver
 }
 
 // NewPromptBuilder 创建构建器。
@@ -37,6 +38,9 @@ func NewPromptBuilder(
 			&corePrinciplesProvider{},
 		},
 		postRoleStatic: postRoleStatic,
+		contextProviders: []ContextProvider{
+			&stableContextProvider{},
+		},
 	}
 }
 
@@ -83,6 +87,21 @@ func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildRes
 			continue
 		}
 		if title := sp.SectionTitle(); title != "" {
+			sb.WriteString("## ")
+			sb.WriteString(title)
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString(section)
+		sb.WriteString("\n")
+	}
+
+	// Layer 4: 动态上下文（稳定上下文，plan 模式同样注入——讨论也需要画像）
+	for _, cp := range b.contextProviders {
+		section := cp.Render(ctx, opts)
+		if section == "" {
+			continue
+		}
+		if title := cp.SectionTitle(); title != "" {
 			sb.WriteString("## ")
 			sb.WriteString(title)
 			sb.WriteString("\n\n")

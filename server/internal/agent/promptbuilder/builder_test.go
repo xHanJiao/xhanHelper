@@ -180,3 +180,36 @@ func TestBuild_PlanModeHidesToolDefinitions(t *testing.T) {
 		t.Error("plan 模式不应提示使用函数调用接口")
 	}
 }
+
+func TestBuild_StableContextInjected(t *testing.T) {
+	reg := tool.NewRegistry()
+	b := NewPromptBuilder("base", reg, nil, true)
+	stableXML := "<profile description=\"画像\">\n  <field key=\"工作\">后端工程师</field>\n</profile>"
+
+	// work 模式注入
+	work, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork, StableContextXML: stableXML})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(work.Prompt, "## 稳定上下文") || !strings.Contains(work.Prompt, "<profile") {
+		t.Errorf("work 模式应注入稳定上下文段, got:\n%s", work.Prompt)
+	}
+
+	// plan 模式同样注入（讨论也需要画像）
+	plan, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModePlan, StableContextXML: stableXML})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.Prompt, "## 稳定上下文") || !strings.Contains(plan.Prompt, "<profile") {
+		t.Errorf("plan 模式应注入稳定上下文段, got:\n%s", plan.Prompt)
+	}
+
+	// 空 XML → 不出现空段
+	empty, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(empty.Prompt, "## 稳定上下文") {
+		t.Error("StableContextXML 为空时不应出现稳定上下文段")
+	}
+}

@@ -330,11 +330,13 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 
 	log.Printf("[orch] run start: model=%s, msgs=%d", o.pickClient(req).ModelName(), len(req.Messages))
 
-	// 1. 静态 system prompt（plan 模式传入 Mode，构建器跳过工具定义段）
+	// 1. 静态 system prompt + 稳定上下文（画像+摘要，会话内字节稳定）
+	stableXML := o.buildStableContextXML(ctx, req)
 	result, err := o.systemPromptBuilder.Build(ctx, promptbuilder.BuildOptions{
-		UserID:      req.UserID,
-		AgentPrompt: req.AgentSystemPrompt,
-		Mode:        req.Mode,
+		UserID:           req.UserID,
+		AgentPrompt:      req.AgentSystemPrompt,
+		Mode:             req.Mode,
+		StableContextXML: stableXML,
 	})
 	if err != nil {
 		log.Printf("[orch] prompt build error: %v", err)
@@ -632,6 +634,28 @@ func (o *Orchestrator) buildSummaryPackets(ctx context.Context, req *RunRequest)
 	return pkts
 }
 
+// buildStableContextXML 构建稳定上下文（画像 + 近期摘要）的 XML，注入 system prompt。
+// 两类内容会话内基本不变（画像只在后台提取更新时变、摘要在会话边界变化），
+// 放进 system prompt 使请求前缀字节稳定 → Prompt Cache 全程命中。
+// 预算沿用资源区配置的 Profile/Summary 预算，总帽 = 两者之和；确定性排序（profile 按 key、summary 按时间）。
+// 依赖仓库为 nil 时（replay/测试场景）跳过，返回空串。
+func (o *Orchestrator) buildStableContextXML(ctx context.Context, req *RunRequest) string {
+	var pkts []retrieval.ContextPacket
+	if o.summaryRepo != nil {
+		pkts = append(pkts, o.buildSummaryPackets(ctx, req)...)
+	}
+	if o.profileFactRepo != nil {
+		pkts = append(pkts, o.buildProfilePackets(ctx, req.UserID)...)
+	}
+	if len(pkts) == 0 {
+		return ""
+	}
+	budgets := o.resourceZoneBudgets
+	total := budgets.Profile + budgets.Summary
+	pkts = ctxflow.BudgetResourceZone(pkts, budgets, total)
+	return ctxflow.FormatResourceZone(pkts)
+}
+
 // buildUserMessage 构建 user 消息的完整内容并写入 userMsg.XMLContext。
 func (o *Orchestrator) buildUserMessage(
 	ctx context.Context,
@@ -648,25 +672,16 @@ func (o *Orchestrator) buildUserMessage(
 		extraPackets = append(extraPackets, ctxflow.NoticePacket(req.ModeNotice))
 	}
 
-	summaryPkts := o.buildSummaryPackets(ctx, req)
-	extraPackets = append(extraPackets, summaryPkts...)
-
 	reminderPkts := o.buildReminderPackets(ctx, req.UserID)
 	extraPackets = append(extraPackets, reminderPkts...)
 
-	profilePkts := o.buildProfilePackets(ctx, req.UserID)
-	if !o.resourceZoneEnabled {
-		extraPackets = append(extraPackets, profilePkts...)
-	}
-
-	// —— 公共资源区：资源类检索结果（memory/note/theme/summary）收敛到资源区 ——
+	// —— 公共资源区：资源类检索结果（memory/note/theme）收敛到资源区 ——
 	// 增量式：只解析上一条消息的 XMLContext + 本轮检索 merge（去重 → quota → 预算帽），
 	// 历史消息重放不再携带注入资源（BuildMessagesForFlash 已简化）。
+	// profile/summary 已移入 system prompt 稳定上下文，不再进资源区。
 	var zoneXML string
 	if o.resourceZoneEnabled {
 		var zoneFresh []retrieval.ContextPacket
-		zoneFresh = append(zoneFresh, summaryPkts...)
-		zoneFresh = append(zoneFresh, profilePkts...) // 稳定画像层进资源区（field key 去重）
 		if retrieveResult != nil {
 			for typ, pkts := range retrieveResult.Packets {
 				switch typ {
@@ -686,7 +701,7 @@ func (o *Orchestrator) buildUserMessage(
 		}
 	}
 
-	// 非资源类 packets（history/reminders/profile/datetime/notice）+ user_query 走常规格式化。
+	// 非资源类 packets（history/reminders/datetime/notice）+ user_query 走常规格式化。
 	// 资源类 packets 已进资源区，从常规注入中剔除（避免重复）。
 	var packets map[string][]retrieval.ContextPacket
 	if zoneXML != "" {

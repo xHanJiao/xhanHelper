@@ -457,10 +457,10 @@ async function renderCostCharts() {
 
     // 三个饼图（数据跟随维度筛选，点击扇形钻取三维度占比）
     const cat = await fetchCostStats('category')
-    makePieChart('cost-cat-chart', cat.groups.map(g => g.key), cat.groups.map(g => selectedTotal(g)))
+    makePieChart('cost-cat-chart', cat.groups.map(g => g.key || '未分类'), cat.groups.map(g => selectedTotal(g)))
     attachDrillDown('cost-cat-chart', cat.groups)
     const model = await fetchCostStats('model')
-    makePieChart('cost-model-chart', model.groups.map(g => g.key), model.groups.map(g => selectedTotal(g)))
+    makePieChart('cost-model-chart', model.groups.map(g => g.key || '未分类'), model.groups.map(g => selectedTotal(g)))
     attachDrillDown('cost-model-chart', model.groups)
     const sub = await fetchCostStats('sub_category')
     makePieChart('cost-sub-chart', sub.groups.map(g => g.key || '未分类'), sub.groups.map(g => selectedTotal(g)))

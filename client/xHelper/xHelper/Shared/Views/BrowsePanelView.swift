@@ -57,12 +57,18 @@ struct BrowsePanelView: View {
     /// 监控看板 WebView 共享状态（header 刷新按钮 + WebView 共用）
     @StateObject private var dashboardWebModel = XHWebViewModel()
 
+    /// 缓存击穿戳：每次打开面板/点刷新自增，URL 带 ?t= 强制回源拉新 index.html。
+    /// 服务器静态资源无 Cache-Control，WKWebView 启发式缓存会让 reloadFromOrigin 命中旧文档，
+    /// 只有换 URL 才能绕过。
+    @State private var dashboardBust = Int(Date().timeIntervalSince1970)
+
     /// 监控看板前端地址：DEBUG 用 Vite dev server，RELEASE 用同源后端（nginx 已 serve）
     private var dashboardURL: URL? {
+        let suffix = "?t=\(dashboardBust)"
         #if DEBUG
-        URL(string: "http://localhost:5173/admin")
+        return URL(string: "http://localhost:5173/admin" + suffix)
         #else
-        URL(string: baseURL + "/admin")
+        return URL(string: baseURL + "/admin" + suffix)
         #endif
     }
 
@@ -267,7 +273,7 @@ struct BrowsePanelView: View {
                         XHPanel.XHPanelButton(
                             icon: "arrow.clockwise",
                             help: "刷新",
-                            action: { dashboardWebModel.reload() }
+                            action: { dashboardBust = Int(Date().timeIntervalSince1970) }
                         )
                     ]
                 ) {

@@ -504,6 +504,11 @@ func (w *UserProfileWorker) RunStartupMigration(ctx context.Context) {
 			continue
 		}
 		log.Printf("[profile] startup migration: user=%s legacy_fields=%d", u.ID[:min(8, len(u.ID))], len(legacy))
+		ctx = llmcost.WithScenario(ctx, llmcost.Scenario{
+			Category:    llmcost.CategoryPostChat,
+			SubCategory: llmcost.SubProfileExtract,
+			UserID:      u.ID,
+		})
 		userMsg, err := w.buildMigrationXML(ctx, legacy)
 		if err != nil {
 			log.Printf("[profile] startup migration: build XML error: %v", err)

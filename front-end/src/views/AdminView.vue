@@ -463,7 +463,7 @@ async function renderCostCharts() {
     makePieChart('cost-model-chart', model.groups.map(g => g.key), model.groups.map(g => selectedTotal(g)))
     attachDrillDown('cost-model-chart', model.groups)
     const sub = await fetchCostStats('sub_category')
-    makePieChart('cost-sub-chart', sub.groups.map(g => g.key), sub.groups.map(g => selectedTotal(g)))
+    makePieChart('cost-sub-chart', sub.groups.map(g => g.key || '未分类'), sub.groups.map(g => selectedTotal(g)))
     attachDrillDown('cost-sub-chart', sub.groups)
   } catch (_) {}
 }
@@ -532,11 +532,11 @@ onUnmounted(() => {
     </PageTopBar>
     <NTabs v-model:value="activeTab" type="line" style="padding: 0 var(--space-lg); background: var(--color-surface); flex-shrink: 0;">
       <NTabPane name="overview" tab="概览" />
-      <NTabPane name="reflection" tab="反思" />
-      <NTabPane name="msg-trace" tab="消息Trace" />
-      <NTabPane name="pending-findings" tab="主题发现" />
-      <NTabPane name="cost" tab="Token 消耗" />
-      <NTabPane name="llm-io" tab="LLM 审计" />
+      <!-- <NTabPane name="reflection" tab="反思" /> -->
+      <!-- <NTabPane name="msg-trace" tab="消息Trace" />
+      <NTabPane name="pending-findings" tab="主题发现" /> -->
+      <NTabPane name="cost" tab="成本中心" />
+      <NTabPane name="llm-io" tab="后处理审计" />
     </NTabs>
     <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
 

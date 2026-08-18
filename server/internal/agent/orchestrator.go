@@ -47,6 +47,7 @@ const finalRoundPrompt = `[系统] 本轮已达本任务的最大步数限制。
 type WindowResult struct {
 	Size              int    // 本次窗口轮数
 	IsNewSession      bool   // 本条消息开启了新 session
+	SkipHistory       bool   // 新窗口首条不重放旧消息（Size 仍记录，供下一条窗口扩张）
 	SessionStartMsgID string // 当前 session 的起始消息 ID（新 session 为空，orchestrator 用本条 msgID 填充）
 	PrevUserXML       string // 上一条 user 消息的 XMLContext（资源区增量来源，空=无上一条）
 }
@@ -571,7 +572,7 @@ func (o *Orchestrator) buildSummaryPackets(ctx context.Context, req *RunRequest)
 	}
 	count := o.summaryAttachCount
 	if count <= 0 {
-		count = 2
+		count = 1
 	}
 	days := o.summaryAttachMaxDays
 	if days <= 0 {
@@ -659,7 +660,7 @@ func (o *Orchestrator) buildUserMessage(
 		if retrieveResult != nil {
 			for typ, pkts := range retrieveResult.Packets {
 				switch typ {
-				case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme, ctxflow.TypeSummary:
+				case ctxflow.TypeMemory, ctxflow.TypeNote, ctxflow.TypeTheme:
 					zoneFresh = append(zoneFresh, pkts...)
 				}
 			}

@@ -180,15 +180,18 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		var history []model.Message
 		// 计算扩张窗口和 session 状态
 		wr := computeWindowSize(c.Request.Context(), msgRepo, conv.ID, cfg)
-		n := wr.Size
-		if n <= 0 {
-			n = cfg.Chat.HistoryRounds
-		}
-		rounds, err := msgRepo.ListRecentRounds(c.Request.Context(), conv.ID, n)
-		if err != nil {
-			log.Printf("[chat] ListRecentRounds error: %v", err)
-			view.JSONError(c, 500, "加载历史消息失败")
-			return
+		var rounds [][]model.Message
+		if !wr.SkipHistory {
+			n := wr.Size
+			if n <= 0 {
+				n = cfg.Chat.HistoryRounds
+			}
+			rounds, err = msgRepo.ListRecentRounds(c.Request.Context(), conv.ID, n)
+			if err != nil {
+				log.Printf("[chat] ListRecentRounds error: %v", err)
+				view.JSONError(c, 500, "加载历史消息失败")
+				return
+			}
 		}
 		for _, round := range rounds {
 			history = append(history, agent.FlattenRound(round)...)
@@ -554,7 +557,8 @@ func computeWindowSize(ctx context.Context, msgRepo *service.MessageRepo, convID
 
 	gap := time.Since(lastUserMsg.CreatedAt)
 	if gap > time.Duration(gapMinutes)*time.Minute {
-		return agent.WindowResult{Size: 3, IsNewSession: true}
+		// 新窗口：资源区保持现状（重置），不重放旧消息；Size 记 1 供下一条窗口扩张。
+		return agent.WindowResult{Size: 1, IsNewSession: true, SkipHistory: true}
 	}
 
 	maxRounds := cfg.Chat.MaxWindowRounds

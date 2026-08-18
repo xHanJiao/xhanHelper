@@ -42,7 +42,7 @@ type ChatConfig struct {
 	MaxWindowRounds           int      `yaml:"max_window_rounds"`           // 扩张窗口上限，默认 100
 	MaxSummaryRounds          int      `yaml:"max_summary_rounds"`          // 单次摘要覆盖上限，0=等于 history_rounds
 	SessionGapMinutes         int      `yaml:"session_gap_minutes"`         // session 间隔阈值（分钟），默认 30
-	SummaryAttachCount        int      `yaml:"summary_attach_count"`        // 摘要附着条数上限，默认 10
+	SummaryAttachCount        int      `yaml:"summary_attach_count"`        // 摘要附着条数上限，默认 1
 	SummaryAttachMaxDays      int      `yaml:"summary_attach_max_days"`     // 摘要附着时间窗口（天），默认 3
 	SummaryRelevanceThreshold float64  `yaml:"summary_relevance_threshold"` // 摘要相关性余弦相似度阈值，默认 0.5
 	SummaryRelevanceHistoryN  int      `yaml:"summary_relevance_history_n"` // 相关性检查的历史消息窗口大小，默认 5
@@ -203,7 +203,7 @@ type ResourceZoneConfig struct {
 	BudgetMemory  int  `yaml:"budget_memory"`  // memory 预算，默认 600
 	BudgetNote    int  `yaml:"budget_note"`    // note 预算，默认 3000
 	BudgetTopic   int  `yaml:"budget_topic"`   // topic 预算，默认 200
-	QuotaSummary  int  `yaml:"quota_summary"`  // 摘要配额，默认 2
+	QuotaSummary  int  `yaml:"quota_summary"`  // 摘要配额，默认 1
 	QuotaMemory   int  `yaml:"quota_memory"`   // 记忆配额，默认 8
 	QuotaNote     int  `yaml:"quota_note"`     // 笔记配额，默认 10
 	QuotaTopic    int  `yaml:"quota_topic"`    // 主题配额（只收 matched），默认 5
@@ -540,7 +540,7 @@ func validate(cfg *Config) error {
 		cfg.Retrieval.ResourceZone.BudgetTopic = 200
 	}
 	if cfg.Retrieval.ResourceZone.QuotaSummary == 0 {
-		cfg.Retrieval.ResourceZone.QuotaSummary = 2
+		cfg.Retrieval.ResourceZone.QuotaSummary = 1
 	}
 	if cfg.Retrieval.ResourceZone.QuotaMemory == 0 {
 		cfg.Retrieval.ResourceZone.QuotaMemory = 8
@@ -596,7 +596,7 @@ func validate(cfg *Config) error {
 		cfg.Chat.SessionGapMinutes = 30
 	}
 	if cfg.Chat.SummaryAttachCount == 0 {
-		cfg.Chat.SummaryAttachCount = 10
+		cfg.Chat.SummaryAttachCount = 1
 	}
 	if cfg.Chat.SummaryAttachMaxDays == 0 {
 		cfg.Chat.SummaryAttachMaxDays = 3

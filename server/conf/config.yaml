@@ -64,7 +64,7 @@ chat:
   max_summary_rounds: 5       # 单次摘要最多覆盖的 user message 条数，N/2, 目前无用
   max_window_rounds: 800     # 扩张窗口上限轮数（agent 复杂任务需要长上下文；缓存命中后成本可控）
   session_gap_minutes: 15     # session 间隔阈值（分钟），超过则重置窗口
-  summary_attach_count: 2           # 摘要附着条数上限
+  summary_attach_count: 1           # 摘要附着条数上限
   summary_attach_max_days: 3        # 摘要附着时间窗口（天）
   summary_relevance_threshold: 0.5  # 摘要相关性余弦相似度阈值
   summary_relevance_history_n: 5    # 相关性检查的历史消息窗口大小
@@ -100,16 +100,16 @@ retrieval:
   # 公共资源区：历史消息不再重放检索注入，资源收敛到最新消息（phase-10 任务 B）
   resource_zone:
     enabled: true
-    budget_chars: 5000        # 总预算帽（UTF-8 字符数，中文 1 字=1 ≈ 5500-7000 tokens）
+    budget_chars: 4500        # 总预算帽（UTF-8 字符数，中文 1 字=1 ≈ 5500-7000 tokens）
     budget_profile: 1600      # profile 预算（稳定画像层）
-    budget_summary: 600       # summary 预算
-    budget_memory: 600        # memory 预算
-    budget_note: 1500         # note 预算（note 价值最高给最多）
+    budget_summary: 500       # summary 预算
+    budget_memory: 300        # memory 预算
+    budget_note: 1000         # note 预算（note 价值最高给最多）
     budget_topic: 200         # topic 预算
-    quota_summary: 2          # 摘要配额
-    quota_memory: 8           # 记忆配额
-    quota_note: 10            # 笔记配额
-    quota_topic: 5            # 主题配额（只收 matched）
+    quota_summary: 1          # 摘要配额
+    quota_memory: 3           # 记忆配额
+    quota_note: 5            # 笔记配额
+    quota_topic: 3            # 主题配额（只收 matched）
 
 global_default_role:
   system_prompt: |

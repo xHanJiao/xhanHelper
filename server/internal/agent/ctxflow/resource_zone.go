@@ -28,9 +28,9 @@ type ZoneQuotas struct {
 	Topic   int
 }
 
-// DefaultZoneQuotas 默认配额：note 10 / memory 8 / summary 2 / topic 5。
+// DefaultZoneQuotas 默认配额：note 5 / memory 3 / summary 1 / topic 5。
 func DefaultZoneQuotas() ZoneQuotas {
-	return ZoneQuotas{Summary: 2, Memory: 8, Note: 10, Topic: 5}
+	return ZoneQuotas{Summary: 1, Memory: 3, Note: 5, Topic: 5}
 }
 
 // ZoneBudgets 资源区每类型字符预算（chars，UTF-8 rune count）。
@@ -317,6 +317,7 @@ func MergeResourceZone(prev, fresh []retrieval.ContextPacket, q ZoneQuotas) []re
 	}
 
 	// quota：每类型从头部砍到上限（profile quota 极大，不砍）
+	preQuota := flattenGroups(groups)
 	for typ, list := range groups {
 		quota := 0
 		switch typ {
@@ -335,6 +336,7 @@ func MergeResourceZone(prev, fresh []retrieval.ContextPacket, q ZoneQuotas) []re
 			groups[typ] = list[len(list)-quota:]
 		}
 	}
+	zoneTrimLog("quota", preQuota, flattenGroups(groups))
 
 	// 按 zoneTypeOrder 展平
 	var out []retrieval.ContextPacket
@@ -380,10 +382,12 @@ var budgetTypePriority = []string{TypeMemory, TypeNote, TypeTheme, TypeSummary, 
 //
 // 输入 pkts 需为 MergeResourceZone 输出（类型分组、组内时间线序）。
 // 预算单位：UTF-8 字符数（rune count，中文 1 字 = 1）。
-func BudgetResourceZone(pkts []retrieval.ContextPacket, budgets ZoneBudgets, totalChars int) []retrieval.ContextPacket {
+func BudgetResourceZone(pkts []retrieval.ContextPacket, budgets ZoneBudgets, totalChars int) (out []retrieval.ContextPacket) {
 	if len(pkts) == 0 {
 		return pkts
 	}
+	before := pkts
+	defer func() { zoneTrimLog("budget", before, out) }()
 	// 阶段 1：per-type 截断
 	pkts = budgetPerType(pkts, budgets)
 	// 阶段 2：总预算兜底
@@ -476,4 +480,70 @@ func dropFirstOfType(pkts []retrieval.ContextPacket, typ string) []retrieval.Con
 		}
 	}
 	return pkts
+}
+
+// flattenGroups 按 zoneTypeOrder 展平类型分组（MergeResourceZone 内部快照用）。
+func flattenGroups(groups map[string][]retrieval.ContextPacket) []retrieval.ContextPacket {
+	var out []retrieval.ContextPacket
+	for _, typ := range zoneTypeOrder {
+		out = append(out, groups[typ]...)
+	}
+	return out
+}
+
+// zoneCharStats 统计资源区各子区（按类型）编码字符数（rune），与裁剪计量口径一致。
+func zoneCharStats(pkts []retrieval.ContextPacket) map[string]int {
+	stats := make(map[string]int)
+	groups := make(map[string][]retrieval.ContextPacket)
+	for _, p := range pkts {
+		groups[p.Type] = append(groups[p.Type], p)
+	}
+	for typ, group := range groups {
+		stats[typ] = utf8.RuneCountInString(FormatResourceZone(group))
+	}
+	return stats
+}
+
+// zoneShortKey 日志友好的条目标识：优先 ID，无 ID 的内容 key 截断到 40 字。
+func zoneShortKey(pkt retrieval.ContextPacket) string {
+	if pkt.ID != "" {
+		return pkt.Type + ":" + pkt.ID
+	}
+	k := zoneContentKey(pkt)
+	if r := []rune(k); len(r) > 40 {
+		return string(r[:40]) + "…"
+	}
+	return k
+}
+
+// zoneTrimLog 输出一次裁剪日志：总字符与各子区字符的前后变化、选中条目、淘汰条目。
+// phase 区分阶段（quota 条数帽 / budget 字符帽）。
+func zoneTrimLog(phase string, before, after []retrieval.ContextPacket) {
+	if len(before) == 0 && len(after) == 0 {
+		return
+	}
+	bStats, aStats := zoneCharStats(before), zoneCharStats(after)
+	bTotal, aTotal := 0, 0
+	for _, n := range bStats {
+		bTotal += n
+	}
+	for _, n := range aStats {
+		aTotal += n
+	}
+	selected := make([]string, 0, len(after))
+	for _, p := range after {
+		selected = append(selected, zoneShortKey(p))
+	}
+	afterSet := make(map[string]bool, len(after))
+	for _, p := range after {
+		afterSet[zoneKey(p)] = true
+	}
+	var dropped []string
+	for _, p := range before {
+		if !afterSet[zoneKey(p)] {
+			dropped = append(dropped, zoneShortKey(p))
+		}
+	}
+	log.Printf("[resource_zone] %s trim: total %d→%d chars; per-zone %v→%v; selected=%v; dropped=%v",
+		phase, bTotal, aTotal, bStats, aStats, selected, dropped)
 }

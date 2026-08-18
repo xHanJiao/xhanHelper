@@ -153,7 +153,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	retrieveCfg := ctxflow.DefaultRetrieveConfig()
 	applyRetrieveConfig(&retrieveCfg, cfg.Retrieval)
 	retriever := ctxflow.NewContextRetriever(
-		[]retrieval.ContextSource{themeSource, memSource, noteSource, historySource, summarySource},
+		[]retrieval.ContextSource{themeSource, memSource, noteSource},
 		&retrieveCfg,
 	).WithModifier("theme", ctxflow.BoostFactor(1.3))
 

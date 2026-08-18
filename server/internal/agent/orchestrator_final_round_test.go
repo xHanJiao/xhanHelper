@@ -186,7 +186,7 @@ func TestRunReActLoop_FinalRound_StateMsgsCarryInstruction(t *testing.T) {
 
 func TestMkLlmChatReq_FinalRound_NoTools(t *testing.T) {
 	reg := tool.NewRegistry()
-	reg.Register(&fakeTool{name: "note"})
+	reg.Register(&namedMockTool{name: "note", fns: []string{"record_note"}})
 	o := &Orchestrator{
 		contextFormatter: &mockFormatter{},
 		registry:         reg,
@@ -195,8 +195,8 @@ func TestMkLlmChatReq_FinalRound_NoTools(t *testing.T) {
 	req := &RunRequest{UserID: "u1"}
 	msgs := []llm.Message{{Role: "user", Content: "hi"}}
 
-	// 正常轮：常驻 expose_tools + 已暴露工具
-	normal := o.mkLlmChatReq(req, "sys", &reactState{msgs: msgs, exposedTools: map[string]bool{"note": true}})
+	// 正常轮：常驻 expose_tools + 已暴露函数
+	normal := o.mkLlmChatReq(req, "sys", &reactState{msgs: msgs, exposedTools: map[string]bool{"note.record_note": true}})
 	if len(normal.Tools) == 0 {
 		t.Error("正常轮应下发工具定义")
 	}

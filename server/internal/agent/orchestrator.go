@@ -97,7 +97,8 @@ type reactState struct {
 	clientToolsUnavailable bool // 客户端断连/超时后置位，本次 Run 内后续客户端工具调用快速失败
 	finalRound             bool // 达到 max_iterations 后的收尾轮：禁用工具，强制输出总结
 
-	// 渐进式工具暴露：本会话窗口内已启用的工具组（仅 native FC 主循环使用）。
+	// 渐进式工具暴露：本会话窗口内已启用的函数（仅 native FC 主循环使用）。
+	// key = "组名.函数名"（如 "note.search"）。
 	exposedTools map[string]bool
 	expMutex     sync.Mutex // 并发工具调用写 exposedTools 用
 }
@@ -511,8 +512,9 @@ func exposureWindowKey(req *RunRequest, userMsg *model.Message) string {
 	return req.Window.SessionStartMsgID
 }
 
-// loadExposure 从会话 Extra 加载本窗口的已暴露工具组。
+// loadExposure 从会话 Extra 加载本窗口的已暴露函数。
 // key 不匹配（新窗口/无记录）→ 空集。仅 native FC 主循环使用。
+// 兼容旧格式：裸组名条目（无 "."）展开为该组全部函数。
 func (o *Orchestrator) loadExposure(ctx context.Context, req *RunRequest, userMsg *model.Message, state *reactState) {
 	state.exposedTools = map[string]bool{}
 	if !o.useNativeFC || req.Mode == model.ConvModePlan {
@@ -529,12 +531,20 @@ func (o *Orchestrator) loadExposure(ctx context.Context, req *RunRequest, userMs
 	if extra.ToolExposure.SessionStartMsgID != exposureWindowKey(req, userMsg) {
 		return // 旧窗口记录，自然失效
 	}
-	for _, t := range extra.ToolExposure.Tools {
-		state.exposedTools[t] = true
+	for _, entry := range extra.ToolExposure.Tools {
+		if strings.Contains(entry, ".") {
+			state.exposedTools[entry] = true
+			continue
+		}
+		if t := o.registry.Get(entry); t != nil {
+			for _, f := range t.Functions() {
+				state.exposedTools[entry+"."+f.Name] = true
+			}
+		}
 	}
 }
 
-// persistExposure 把本窗口的已暴露工具组写回会话 Extra。
+// persistExposure 把本窗口的已暴露函数写回会话 Extra。
 // 走事务内的 UpdateExtraField 读-改-写，只改 ToolExposure 字段，绝不覆盖并发写入的其它字段
 // （used_tool_ids / subagent_type 等）。空集不写（避免无意义 DB 写）。
 // 持久化失败降级为日志（下次 run 重新暴露，无副作用）。
@@ -543,11 +553,11 @@ func (o *Orchestrator) persistExposure(ctx context.Context, req *RunRequest, use
 		return
 	}
 	state.expMutex.Lock()
-	tools := make([]string, 0, len(state.exposedTools))
-	for t := range state.exposedTools {
-		tools = append(tools, t)
+	entries := make([]string, 0, len(state.exposedTools))
+	for e := range state.exposedTools {
+		entries = append(entries, e)
 	}
-	sort.Strings(tools)
+	sort.Strings(entries)
 	state.expMutex.Unlock()
 
 	key := exposureWindowKey(req, userMsg)
@@ -556,7 +566,7 @@ func (o *Orchestrator) persistExposure(ctx context.Context, req *RunRequest, use
 			extra.ToolExposure = &model.ToolExposure{}
 		}
 		extra.ToolExposure.SessionStartMsgID = key
-		extra.ToolExposure.Tools = tools
+		extra.ToolExposure.Tools = entries
 	})
 	if err != nil {
 		log.Printf("[orch] persistExposure UpdateExtraField error: %v", err)
@@ -988,16 +998,17 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state 
 	var tools []llm.ToolDefinition
 	// plan 模式：工具全部隐藏（LLM 看不到任何工具定义，配合执行级拦截双保险）
 	if !state.finalRound && o.useNativeFC && req.Mode != model.ConvModePlan {
-		// 渐进式暴露：常驻 expose_tools + 已暴露工具组的完整定义 + 客户端工具。
+		// 渐进式暴露：常驻 expose_tools + 已暴露函数（函数粒度）的完整定义 + 客户端工具。
 		state.expMutex.Lock()
 		exposed := make([]string, 0, len(state.exposedTools))
-		for name := range state.exposedTools {
-			exposed = append(exposed, name)
+		for e := range state.exposedTools {
+			exposed = append(exposed, e)
 		}
 		sort.Strings(exposed)
 		state.expMutex.Unlock()
 		tools = append(tools, o.exposeToolsDefinition())
-		tools = append(tools, o.registry.GetLLMToolsFiltered(exposed)...)
+		exposedDefs := o.registry.GetLLMToolsFiltered(exposedFuncTools(exposed))
+		tools = append(tools, filterExposedFuncDefs(exposedDefs, exposed)...)
 		tools = filterToolDefs(tools, o.toolExcludes)
 		tools = append(tools, buildClientToolDefs(req.ClientTools, o.registry)...)
 	} else if len(req.ClientTools) > 0 && !state.finalRound {
@@ -1033,6 +1044,49 @@ func (o *Orchestrator) exposeToolsDefinition() llm.ToolDefinition {
 		funcs[i] = llm.FuncDef{Name: f.Name, Description: f.Description, Parameters: f.Parameters}
 	}
 	return llm.ToolDefinition{Name: t.Name(), Description: t.Description(), Functions: funcs}
+}
+
+// exposedFuncTools 从扁平暴露集（"组名.函数名"）推导去重后的组名集合（供 GetLLMToolsFiltered 使用）。
+func exposedFuncTools(exposed []string) []string {
+	seen := make(map[string]bool, len(exposed))
+	names := make([]string, 0, len(exposed))
+	for _, e := range exposed {
+		name := e
+		if i := strings.IndexByte(e, '.'); i >= 0 {
+			name = e[:i]
+		}
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// filterExposedFuncDefs 按函数级暴露集过滤工具定义：每个 def 只保留 "组名.函数名" 在 exposed 中的
+// FuncDef；过滤后无函数的 def 丢弃。exposed 为空时返回 nil。
+func filterExposedFuncDefs(defs []llm.ToolDefinition, exposed []string) []llm.ToolDefinition {
+	if len(exposed) == 0 {
+		return nil
+	}
+	keep := make(map[string]bool, len(exposed))
+	for _, e := range exposed {
+		keep[e] = true
+	}
+	out := make([]llm.ToolDefinition, 0, len(defs))
+	for _, d := range defs {
+		kept := make([]llm.FuncDef, 0, len(d.Functions))
+		for _, fn := range d.Functions {
+			if keep[d.Name+"."+fn.Name] {
+				kept = append(kept, fn)
+			}
+		}
+		if len(kept) > 0 {
+			d.Functions = kept
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // filterToolDefs 从工具定义中剔除配置排除的工具（按工具名精确匹配，控 token 成本）。
@@ -1553,19 +1607,21 @@ type toolExecResult struct {
 	result *tool.Result
 }
 
-// makeExposeFn 构造 expose_tools 的回调：校验组名（存在/未隐藏/未排除/非 expose_tools 自身），
-// 合法组写入 state.exposedTools（并发安全）。返回结果含可用组全集，供 LLM 纠正。
-func (o *Orchestrator) makeExposeFn(state *reactState) func(groups []string) *tool.ExposeResult {
+// makeExposeFn 构造 expose_tools 的回调：组级校验（存在/未隐藏/未排除/非 expose_tools 自身）+
+// 函数级校验（函数名存在于该组 Functions()），合法函数写入 state.exposedTools（并发安全）。
+// 组级失败以组名入 Rejected，函数级失败以 "组名.函数名" 入 Rejected。返回结果含可用组全集，供 LLM 纠正。
+func (o *Orchestrator) makeExposeFn(state *reactState) func(specs []tool.ExposeSpec) *tool.ExposeResult {
 	excluded := make(map[string]bool, len(o.toolExcludes))
 	for _, n := range o.toolExcludes {
 		excluded[n] = true
 	}
 	available := o.registry.VisibleToolNames()
-	return func(groups []string) *tool.ExposeResult {
+	return func(specs []tool.ExposeSpec) *tool.ExposeResult {
 		res := &tool.ExposeResult{Available: available}
 		state.expMutex.Lock()
 		defer state.expMutex.Unlock()
-		for _, g := range groups {
+		for _, spec := range specs {
+			g := spec.Tool
 			switch {
 			case g == "expose_tools":
 				res.Rejected = append(res.Rejected, g)
@@ -1576,8 +1632,19 @@ func (o *Orchestrator) makeExposeFn(state *reactState) func(groups []string) *to
 			case excluded[g]:
 				res.Rejected = append(res.Rejected, g)
 			default:
-				state.exposedTools[g] = true
-				res.Enabled = append(res.Enabled, g)
+				defined := make(map[string]bool)
+				for _, f := range o.registry.Get(g).Functions() {
+					defined[f.Name] = true
+				}
+				for _, fn := range spec.Functions {
+					key := g + "." + fn
+					if !defined[fn] {
+						res.Rejected = append(res.Rejected, key)
+						continue
+					}
+					state.exposedTools[key] = true
+					res.Enabled = append(res.Enabled, key)
+				}
 			}
 		}
 		return res

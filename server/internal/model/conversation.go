@@ -38,11 +38,11 @@ type ConversationExtra struct {
 	ToolExposure *ToolExposure    `json:"tool_exposure,omitempty"` // 渐进式工具暴露注册表（窗口级，key=SessionStartMsgID）
 }
 
-// ToolExposure — 渐进式工具暴露注册表（窗口级）。
+// ToolExposure — 渐进式工具暴露注册表（窗口级，函数粒度）。
 // 同一会话窗口（SessionStartMsgID）内共享暴露集；窗口边界（新 SessionStartMsgID）自然失效，无清理逻辑。
 type ToolExposure struct {
 	SessionStartMsgID string   `json:"session_start_msg_id"`
-	Tools             []string `json:"tools"` // 已暴露的工具组名（排序，字节稳定）
+	Tools             []string `json:"tools"` // 已暴露的函数条目："组名.函数名"（排序，字节稳定）。旧格式裸组名加载时展开为全部函数
 }
 
 // ConversationCtx — 会话上下文（从 mailbox 跳转带入）

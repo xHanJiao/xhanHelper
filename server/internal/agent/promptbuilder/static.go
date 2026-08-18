@@ -39,9 +39,9 @@ func (p *toolDefinitionsProvider) Render(ctx context.Context) string {
 	return p.registry.GeneratePrompt()
 }
 
-// toolCatalogProvider — 原生 FC 模式：注入渐进式工具目录（组名 + 描述 + 函数名列表）。
-// 初始仅 expose_tools 常驻请求体；LLM 需要某组能力时先调用 expose_tools.enable 启用，
-// 启用后该组完整函数定义进入后续请求体。目录由 registry.ToolCatalog() 生成（字节稳定）。
+// toolCatalogProvider — 原生 FC 模式：注入渐进式工具目录（组名 + 描述 + 全部函数名）。
+// 初始仅 expose_tools 常驻请求体；LLM 需要调用某函数时先按函数粒度调用 expose_tools.enable 启用，
+// 启用后该函数完整定义进入后续请求体。目录由 registry.ToolCatalog() 生成（字节稳定）。
 type toolCatalogProvider struct {
 	registry *tool.Registry
 }

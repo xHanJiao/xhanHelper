@@ -6,15 +6,14 @@ import (
 	"strings"
 )
 
-// ToolCatalog 生成工具组目录（组名 + 描述 + 高频函数名列表，不含参数 schema），
+// ToolCatalog 生成工具组目录（组名 + 描述 + 全部函数名，不含参数 schema），
 // 供渐进式工具暴露的初始提示词使用。输出按工具名排序，字节稳定（前缀缓存友好）。
 // expose_tools 与 hidden 工具不进入目录。
-// 各组的目录信息（ShortDesc/Funcs/Others）由工具自身 Catalog() 提供（CatalogProvider）；
-// 未实现该接口的工具回退到 Description() + 全部函数名。
+// 函数名全量透出（LLM 需按函数名调用 expose_tools.enable）；组级描述由工具自身
+// Catalog() 提供（CatalogProvider），未实现该接口的工具回退到 Description()。
 func (r *Registry) ToolCatalog() string {
 	var buf bytes.Buffer
-	buf.WriteString("可用工具组（函数完整定义按需加载）。需要某组能力时先调用 expose_tools.enable([\"组名\"])，一次可多组，启用后下一轮即可直接调用其函数。\n")
-	buf.WriteString("目录中的函数名可直接调用（参数简单时）；若参数结构复杂或不确定，先调用 expose_tools.enable 启用该组以获取完整参数定义，再调用其函数。\n\n")
+	buf.WriteString("可用工具组（函数完整定义按需加载）。需要调用某组函数时，先调用 expose_tools.enable([{name:\"组名\", functions:[\"函数名\"]}])，一次可启用多个组的多个函数，启用后下一轮即可直接调用。目录中的函数名可直接调用（参数简单时）；若参数结构复杂或不确定，先按需启用以获取完整参数定义。\n\n")
 	for _, name := range r.sortedVisibleToolNames() {
 		if name == "expose_tools" {
 			continue
@@ -27,8 +26,9 @@ func (r *Registry) ToolCatalog() string {
 			}
 		}
 		buf.WriteString(fmt.Sprintf("- %s: %s\n", name, entry.ShortDesc))
-		if len(entry.Funcs) > 0 {
-			buf.WriteString(fmt.Sprintf("  函数: %s\n", strings.Join(entry.Funcs, ", ")))
+		allNames := functionNames(t.Functions())
+		if len(allNames) > 0 {
+			buf.WriteString(fmt.Sprintf("  函数: %s\n", strings.Join(allNames, ", ")))
 		}
 		if entry.Others != "" {
 			buf.WriteString(fmt.Sprintf("  另有: %s\n", entry.Others))

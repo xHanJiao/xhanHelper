@@ -15,19 +15,23 @@ func TestExposeToolsTool_Enable(t *testing.T) {
 		t.Fatalf("Functions: want single 'enable', got %+v", tt.Functions())
 	}
 
-	var called []string
+	var called []ExposeSpec
 	ec := &ExecuteContext{
-		Expose: func(groups []string) *ExposeResult {
-			called = groups
-			return &ExposeResult{Enabled: groups, Available: []string{"note", "bookkeeping"}}
+		Expose: func(specs []ExposeSpec) *ExposeResult {
+			called = specs
+			enabled := make([]string, 0, len(specs))
+			for _, s := range specs {
+				enabled = append(enabled, s.Tool+"."+s.Functions[0])
+			}
+			return &ExposeResult{Enabled: enabled, Available: []string{"note", "bookkeeping"}}
 		},
 	}
-	res := tt.Execute(ec, "enable", json.RawMessage(`{"groups":["note","bookkeeping"]}`))
+	res := tt.Execute(ec, "enable", json.RawMessage(`{"tools":[{"name":"note","functions":["search"]},{"name":"bookkeeping","functions":["create_bill"]}]}`))
 	if !res.Success {
 		t.Fatalf("expected success, got %+v", res)
 	}
-	if len(called) != 2 || called[0] != "note" {
-		t.Errorf("callback groups: want [note bookkeeping], got %v", called)
+	if len(called) != 2 || called[0].Tool != "note" || called[0].Functions[0] != "search" {
+		t.Errorf("callback specs: want [note.search bookkeeping.create_bill], got %+v", called)
 	}
 	var out ExposeResult
 	if err := json.Unmarshal(res.Data, &out); err != nil {
@@ -41,7 +45,7 @@ func TestExposeToolsTool_Enable(t *testing.T) {
 func TestExposeToolsTool_NilCallback(t *testing.T) {
 	tt := NewExposeToolsTool()
 	ec := &ExecuteContext{} // Expose nil
-	res := tt.Execute(ec, "enable", json.RawMessage(`{"groups":["note"]}`))
+	res := tt.Execute(ec, "enable", json.RawMessage(`{"tools":[{"name":"note","functions":["search"]}]}`))
 	if res.Success {
 		t.Error("expected failure when Expose callback is nil")
 	}
@@ -49,9 +53,18 @@ func TestExposeToolsTool_NilCallback(t *testing.T) {
 
 func TestExposeToolsTool_BadArgs(t *testing.T) {
 	tt := NewExposeToolsTool()
-	ec := &ExecuteContext{Expose: func([]string) *ExposeResult { return &ExposeResult{} }}
+	ec := &ExecuteContext{Expose: func([]ExposeSpec) *ExposeResult { return &ExposeResult{} }}
 	if res := tt.Execute(ec, "enable", json.RawMessage(`{}`)); res.Success {
-		t.Error("expected failure on empty groups")
+		t.Error("expected failure on empty tools")
+	}
+	if res := tt.Execute(ec, "enable", json.RawMessage(`{"groups":["note"]}`)); res.Success {
+		t.Error("expected failure on legacy groups param")
+	}
+	if res := tt.Execute(ec, "enable", json.RawMessage(`{"tools":[{"name":"note"}]}`)); res.Success {
+		t.Error("expected failure on missing functions")
+	}
+	if res := tt.Execute(ec, "enable", json.RawMessage(`{"tools":[{"name":"note","functions":[]}]}`)); res.Success {
+		t.Error("expected failure on empty functions")
 	}
 	if res := tt.Execute(ec, "enable", json.RawMessage(`not-json`)); res.Success {
 		t.Error("expected failure on invalid JSON")
@@ -115,11 +128,8 @@ func TestToolCatalog_UsesProviderEntry(t *testing.T) {
 	if !strings.Contains(catalog, "记账。加/改/查/删账单。") {
 		t.Errorf("应包含 ShortDesc, got:\n%s", catalog)
 	}
-	if !strings.Contains(catalog, "create_bill, update_bill, query_bills") {
-		t.Errorf("应只列出高频函数名, got:\n%s", catalog)
-	}
-	if strings.Contains(catalog, "get_category_options") {
-		t.Errorf("低频函数不应透出, got:\n%s", catalog)
+	if !strings.Contains(catalog, "create_bill, update_bill, query_bills, get_category_options") {
+		t.Errorf("应列出全部函数名（函数级暴露需要精确名）, got:\n%s", catalog)
 	}
 	if !strings.Contains(catalog, "另有: 批量改、取消、统计、选项 等") {
 		t.Errorf("应包含 Others 概略, got:\n%s", catalog)

@@ -572,7 +572,7 @@ func NewFlashClient(cfg config.LLMConfig) *FlashClient {
 		baseClient: &baseClient{
 			apiKey:     cfg.APIKey,
 			baseURL:    cfg.BaseURL,
-			httpClient: &http.Client{Timeout: 120 * time.Second},
+			httpClient: &http.Client{Timeout: time.Duration(cfg.HTTPTimeoutSecs) * time.Second},
 		},
 		model: cfg.Model,
 	}
@@ -622,7 +622,7 @@ func NewProClient(cfg config.LLMConfig, model string) *ProClient {
 		baseClient: &baseClient{
 			apiKey:     cfg.APIKey,
 			baseURL:    cfg.BaseURL,
-			httpClient: &http.Client{Timeout: 600 * time.Second},
+			httpClient: &http.Client{Timeout: time.Duration(cfg.StrongHTTPTimeoutSecs) * time.Second},
 		},
 		model: model,
 	}

@@ -144,6 +144,8 @@ type LLMConfig struct {
 	Model                 string             `yaml:"model"`                    // 弱模型（日常使用）
 	StrongModel           string             `yaml:"strong_model"`             // 强模型（深度思考模式，可选，默认同 Model）
 	BaseURL               string             `yaml:"base_url"`                 // LLM API 地址
+	HTTPTimeoutSecs       int                `yaml:"http_timeout_secs"`        // Flash LLM HTTP 请求超时秒数，默认 120
+	StrongHTTPTimeoutSecs int                `yaml:"strong_http_timeout_secs"` // Pro LLM HTTP 请求超时秒数，默认 600
 	MaxIterations         int                `yaml:"max_iterations"`           // ReAct 最大迭代次数（默认 8）
 	DefaultTemperature    *float64           `yaml:"default_temperature"`      // 默认采样温度，nil 则用 LLM 自身默认
 	DefaultMaxTokens      *int               `yaml:"default_max_tokens"`       // 默认最大输出 token，nil 则用 LLM 自身默认
@@ -346,6 +348,12 @@ func merge(dst, src *Config) {
 	}
 	if src.LLM.MaxToolResultChars != 0 {
 		dst.LLM.MaxToolResultChars = src.LLM.MaxToolResultChars
+	}
+	if src.LLM.HTTPTimeoutSecs != 0 {
+		dst.LLM.HTTPTimeoutSecs = src.LLM.HTTPTimeoutSecs
+	}
+	if src.LLM.StrongHTTPTimeoutSecs != 0 {
+		dst.LLM.StrongHTTPTimeoutSecs = src.LLM.StrongHTTPTimeoutSecs
 	}
 	if src.LLM.ExtractMsgLimit != 0 {
 		dst.LLM.ExtractMsgLimit = src.LLM.ExtractMsgLimit
@@ -586,6 +594,12 @@ func validate(cfg *Config) error {
 	}
 	if cfg.LLM.MaxToolResultChars == 0 {
 		cfg.LLM.MaxToolResultChars = 2000
+	}
+	if cfg.LLM.HTTPTimeoutSecs == 0 {
+		cfg.LLM.HTTPTimeoutSecs = 120
+	}
+	if cfg.LLM.StrongHTTPTimeoutSecs == 0 {
+		cfg.LLM.StrongHTTPTimeoutSecs = 600
 	}
 	if cfg.LLM.ExtractMsgLimit == 0 {
 		cfg.LLM.ExtractMsgLimit = 50

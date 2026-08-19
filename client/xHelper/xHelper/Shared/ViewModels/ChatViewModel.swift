@@ -928,6 +928,9 @@ class ChatViewModel: ObservableObject {
             if let msgID = parseMessageIdFromDone(event.data) {
                 replaceStreamingMessageID(with: msgID)
             }
+            if let userMsgID = parseUserMessageIdFromDone(event.data) {
+                replaceUserMessageID(with: userMsgID)
+            }
             // 对话结束刷新执行计划（todo 可能被 plan.save 更新）
             Task { await self.loadPlanTodo() }
             NotificationCenter.default.post(name: .conversationListNeedsRefresh, object: nil)
@@ -1030,6 +1033,19 @@ class ChatViewModel: ObservableObject {
         messages.insert(msg, at: index)
     }
 
+    private func replaceUserMessageID(with msgID: String) {
+        guard let index = messages.lastIndex(where: { $0.role == "user" }) else { return }
+        let msg = messages[index]
+        messages[index] = Message(
+            id: msgID,
+            conversationId: msg.conversationId,
+            role: "user",
+            content: msg.content,
+            toolCallsJSON: nil,
+            createdAt: msg.createdAt
+        )
+    }
+
     private func updateLastAssistantMessage(_ content: String) {
         guard let idx = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
         let last = messages[idx]
@@ -1092,6 +1108,13 @@ class ChatViewModel: ObservableObject {
               let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
         else { return nil }
         return obj["message_id"] as? String
+    }
+
+    private func parseUserMessageIdFromDone(_ data: String) -> String? {
+        guard let jsonData = data.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+        else { return nil }
+        return obj["user_message_id"] as? String
     }
 
     private func parseMemoryIDsFromDone(_ data: String) -> [String]? {

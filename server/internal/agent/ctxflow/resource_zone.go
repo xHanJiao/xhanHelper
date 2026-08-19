@@ -49,7 +49,7 @@ func DefaultZoneBudgets() ZoneBudgets {
 	return ZoneBudgets{Profile: 1600, Summary: 800, Memory: 600, Note: 3000, Topic: 200}
 }
 
-// zoneContainer XML 反解容器：只提取资源类块（profile/memories/notes/summaries/topics），
+// zoneContainer XML 反解容器：只提取资源类块（profile/memories/notes/summaries/topics/recent），
 // history/reminders/datetime/notice/user_query 忽略（不进资源区）。
 type zoneContainer struct {
 	Profile   *profileBlock   `xml:"profile"`
@@ -57,6 +57,7 @@ type zoneContainer struct {
 	Notes     *notesBlock     `xml:"notes"`
 	Summaries *summariesBlock `xml:"summaries"`
 	Topics    *themesBlock    `xml:"topics"`
+	Recent    *recentBlock    `xml:"recent"`
 }
 
 // ParseResourceZone 从历史 XMLContext 提取资源类块，还原为 packets（保持块内原有顺序）。
@@ -156,6 +157,20 @@ func ParseResourceZone(xmlText string) []retrieval.ContextPacket {
 			})
 		}
 	}
+	if c.Recent != nil {
+		for i := range c.Recent.Items {
+			it := &c.Recent.Items[i]
+			pkts = append(pkts, retrieval.ContextPacket{
+				ID:   it.ID,
+				Type: TypeRecent,
+				Text: it.Content,
+				Meta: retrieval.RecentMeta{
+					Content:   it.Content,
+					CreatedAt: parseZoneDateTime(it.Date),
+				},
+			})
+		}
+	}
 	return pkts
 }
 
@@ -227,6 +242,9 @@ func zoneQuota(pkt retrieval.ContextPacket, q ZoneQuotas) int {
 	case TypeProfile:
 		// 画像字段数天然少（8-9 个），不参与条数 quota
 		return 1 << 30
+	case TypeRecent:
+		// recent 为窗口首条注入的固定 3 条，量小且定，不参与条数 quota
+		return 1 << 30
 	}
 	return 0
 }
@@ -249,7 +267,7 @@ func zoneBudget(pkt retrieval.ContextPacket, b ZoneBudgets) int {
 }
 
 // zoneTypeOrder 资源区类型展示顺序（profile 稳定层最先，时间线阅读）。
-var zoneTypeOrder = []string{TypeProfile, TypeSummary, TypeMemory, TypeNote, TypeTheme}
+var zoneTypeOrder = []string{TypeProfile, TypeSummary, TypeRecent, TypeMemory, TypeNote, TypeTheme}
 
 // MergeResourceZone 旧资源（prev，时间线序）+ 本轮检索（fresh）→ 去重 + quota + 时间线序。
 // 规则：

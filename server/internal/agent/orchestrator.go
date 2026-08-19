@@ -337,11 +337,10 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	// 1. 静态 system prompt + 稳定上下文（画像+摘要，会话内字节稳定）
 	stableXML := o.buildStableContextXML(ctx, req)
 	result, err := o.systemPromptBuilder.Build(ctx, promptbuilder.BuildOptions{
-		UserID:            req.UserID,
-		AgentPrompt:       req.AgentSystemPrompt,
-		Mode:              req.Mode,
-		StableContextXML:  stableXML,
-		RecentUserContext: buildRecentUserContext(req.RecentUserMessages),
+		UserID:           req.UserID,
+		AgentPrompt:      req.AgentSystemPrompt,
+		Mode:             req.Mode,
+		StableContextXML: stableXML,
 	})
 	if err != nil {
 		log.Printf("[orch] prompt build error: %v", err)
@@ -694,6 +693,10 @@ func (o *Orchestrator) buildUserMessage(
 					zoneFresh = append(zoneFresh, pkts...)
 				}
 			}
+		}
+		// 新窗口首条注入最近用户消息到资源区，随后随增量携带、新窗口重置
+		if req.Window.IsNewSession {
+			zoneFresh = append(zoneFresh, buildRecentUserPackets(req.RecentUserMessages)...)
 		}
 		zonePkts := ctxflow.MergeResourceZone(
 			ctxflow.ParseResourceZone(req.PreviousUserXMLContext),
@@ -1834,16 +1837,16 @@ func SimpleUserContent(m *model.Message) string {
 	return fmt.Sprintf("[%s] %s", m.CreatedAt.In(config.BJ).Format("01-02 15:04"), text)
 }
 
-// buildRecentUserContext 渲染新窗口注入的最近用户消息（纯文本，无 XMLContext/tool）。
-// 每条截断到 500 字防超长粘贴；按时间正序输出（不依赖入参顺序）。
+// buildRecentUserPackets 构建新窗口注入的 recent 资源区段 packets。
+// 只含用户原文（无 XMLContext/tool），按时间正序；单条截断 500 字防超长粘贴。
 // ponytail: 单条 500 字硬编码，需要更细粒度时提配置。
-func buildRecentUserContext(msgs []model.Message) string {
+func buildRecentUserPackets(msgs []model.Message) []retrieval.ContextPacket {
 	if len(msgs) == 0 {
-		return ""
+		return nil
 	}
 	sorted := append([]model.Message(nil), msgs...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].CreatedAt.Before(sorted[j].CreatedAt) })
-	lines := make([]string, 0, len(sorted))
+	pkts := make([]retrieval.ContextPacket, 0, len(sorted))
 	for _, m := range sorted {
 		text := m.Content
 		if m.OriginalContent != nil && *m.OriginalContent != "" {
@@ -1852,9 +1855,9 @@ func buildRecentUserContext(msgs []model.Message) string {
 		if r := []rune(text); len(r) > 500 {
 			text = string(r[:500]) + "…"
 		}
-		lines = append(lines, fmt.Sprintf("%d. [%s] %s", len(lines)+1, m.CreatedAt.In(config.BJ).Format("01-02 15:04"), text))
+		pkts = append(pkts, ctxflow.RecentPacket(m.ID, m.CreatedAt, text))
 	}
-	return strings.Join(lines, "\n")
+	return pkts
 }
 
 // FlattenRound 裁剪一轮消息为 LLM 上下文格式。

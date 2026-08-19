@@ -213,27 +213,3 @@ func TestBuild_StableContextInjected(t *testing.T) {
 		t.Error("StableContextXML 为空时不应出现稳定上下文段")
 	}
 }
-
-func TestBuild_RecentUserContextInjected(t *testing.T) {
-	reg := tool.NewRegistry()
-	b := NewPromptBuilder("base", reg, nil, true)
-
-	// 非空 → 渲染段
-	recent := "1. [08-18 10:00] 记录一下今天买了咖啡\n2. [08-18 10:05] 把昨天的账也记上"
-	got, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork, RecentUserContext: recent})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(got.Prompt, "## 用户最近消息") || !strings.Contains(got.Prompt, "记录一下今天买了咖啡") {
-		t.Errorf("应注入用户最近消息段, got:\n%s", got.Prompt)
-	}
-
-	// 空 → 不出现段
-	empty, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(empty.Prompt, "## 用户最近消息") {
-		t.Error("RecentUserContext 为空时不应出现用户最近消息段")
-	}
-}

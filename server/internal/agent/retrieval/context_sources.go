@@ -27,6 +27,14 @@ type MessageMeta struct {
 
 func (MessageMeta) isPacketMeta() {}
 
+// RecentMeta 新窗口注入的最近用户消息元数据（资源区 recent 段）。
+type RecentMeta struct {
+	Content   string
+	CreatedAt time.Time
+}
+
+func (RecentMeta) isPacketMeta() {}
+
 // HistoryMeta 历史消息的元数据。
 // 一轮对话含多条消息，所以在 Meta 里存完整消息切片，builder 做嵌套 XML 渲染时使用。
 type HistoryMeta struct {

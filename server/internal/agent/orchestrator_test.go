@@ -12,25 +12,24 @@ import (
 	"xhan-helper/internal/model"
 )
 
-func TestBuildRecentUserContext_OrderAndTruncate(t *testing.T) {
+func TestBuildRecentUserPackets_OrderAndTruncate(t *testing.T) {
 	long := strings.Repeat("长", 600)
 	msgs := []model.Message{
-		{CreatedAt: time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC), Content: "第一条"},
-		{CreatedAt: time.Date(2026, 8, 18, 10, 5, 0, 0, time.UTC), Content: long},
+		{ID: "m1", CreatedAt: time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC), Content: "第一条"},
+		{ID: "m2", CreatedAt: time.Date(2026, 8, 18, 10, 5, 0, 0, time.UTC), Content: long},
 	}
-	got := buildRecentUserContext(msgs)
-	lines := strings.Split(got, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("应 2 行, got %d:\n%s", len(lines), got)
+	pkts := buildRecentUserPackets(msgs)
+	if len(pkts) != 2 {
+		t.Fatalf("应 2 个 packet, got %d", len(pkts))
 	}
-	if !strings.HasPrefix(lines[0], "1. [08-18 18:00] 第一条") {
-		t.Errorf("第一条应在最前且带时间戳, got: %s", lines[0])
+	if pkts[0].ID != "m1" || pkts[0].Text != "第一条" || pkts[0].Type != "recent" {
+		t.Errorf("首条应为 m1/第一条, got %+v", pkts[0])
 	}
-	if !strings.HasSuffix(lines[1], "…") || len([]rune(lines[1])) > 560 {
-		t.Errorf("第二条应截断到 500 字, len=%d, got: %.80s…", len([]rune(lines[1])), lines[1])
+	if pkts[1].ID != "m2" || !strings.HasSuffix(pkts[1].Text, "…") || len([]rune(pkts[1].Text)) > 510 {
+		t.Errorf("第二条应截断到 500 字, len=%d, got: %.80s…", len([]rune(pkts[1].Text)), pkts[1].Text)
 	}
-	if buildRecentUserContext(nil) != "" {
-		t.Error("空输入应返回空串")
+	if buildRecentUserPackets(nil) != nil {
+		t.Error("空输入应返回 nil")
 	}
 }
 

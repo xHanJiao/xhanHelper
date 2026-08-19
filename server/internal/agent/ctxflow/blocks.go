@@ -17,6 +17,7 @@ const (
 	TypeMemory          = "memory"
 	TypeNote            = "note"
 	TypeTheme           = "theme"
+	TypeRecent          = "recent"
 	TypeCurrentDatetime = "current_datetime"
 	TypeNotice          = "notice"
 )
@@ -158,6 +159,22 @@ type noticeBlock struct {
 
 func (*noticeBlock) TypeKey() string { return TypeNotice }
 
+// --- recent ---
+// recentBlock 新窗口注入的最近用户消息：上个窗口用户最后说的内容（仅用户原文 + 时间，无 AI 回复/tool）。
+// 注入资源区后随窗口增量携带，新窗口重置。
+type recentMsg struct {
+	ID      string `xml:"id,attr,omitempty" json:"id,omitempty"`
+	Date    string `xml:"date,attr,omitempty" json:"date,omitempty"`
+	Content string `xml:",chardata" json:"content"`
+}
+type recentBlock struct {
+	XMLName     struct{}    `xml:"recent" json:"-"`
+	Description string      `xml:"description,attr,omitempty" json:"description,omitempty"`
+	Items       []recentMsg `xml:"message" json:"items"`
+}
+
+func (*recentBlock) TypeKey() string { return TypeRecent }
+
 // --- profile ---
 // profileBlock 用户画像稳定层块：用户核心事实，全量注入（量小不走检索）。
 // 字段带 updated_at（信息新旧）与 source（explicit 高置信度 / llm_additional 较低置信度）。
@@ -195,6 +212,7 @@ var blockBuilders = map[string]blockBuilder{
 	TypeReminder:        buildRemindersBlock,
 	TypeTheme:           buildThemesBlock,
 	TypeSummary:         buildSummariesBlock,
+	TypeRecent:          buildRecentBlock,
 	TypeCurrentDatetime: buildCurrentDatetimeBlock,
 	TypeNotice:          buildNoticeBlock,
 }
@@ -344,6 +362,29 @@ func buildNoticeBlock(items []retrieval.ContextPacket) Block {
 	return &noticeBlock{Content: items[0].Text}
 }
 
+// buildRecentBlock 构建最近用户消息块。items 为空返回 nil（不注入空块）。
+func buildRecentBlock(items []retrieval.ContextPacket) Block {
+	if len(items) == 0 {
+		return nil
+	}
+	b := recentBlock{
+		Description: "上个窗口用户最后说的消息（仅用户原文，时间正序，供了解背景）",
+	}
+	for _, pkt := range items {
+		it := recentMsg{ID: pkt.ID, Content: pkt.Text}
+		if meta, ok := pkt.Meta.(retrieval.RecentMeta); ok {
+			if meta.Content != "" {
+				it.Content = meta.Content
+			}
+			if !meta.CreatedAt.IsZero() {
+				it.Date = meta.CreatedAt.In(config.BJ).Format("2006-01-02 15:04")
+			}
+		}
+		b.Items = append(b.Items, it)
+	}
+	return &b
+}
+
 // buildProfileBlock 构建画像块。items 为空返回 nil（不注入空块）。
 func buildProfileBlock(items []retrieval.ContextPacket) Block {
 	if len(items) == 0 {
@@ -392,6 +433,16 @@ func DateTimePacket(t time.Time) retrieval.ContextPacket {
 // NoticePacket 生成 notice 类型的 ContextPacket（模式提示等系统通知，仅 LLM 可见）。
 func NoticePacket(text string) retrieval.ContextPacket {
 	return retrieval.ContextPacket{Type: TypeNotice, Text: text}
+}
+
+// RecentPacket 生成 recent 类型的 ContextPacket（新窗口注入的最近用户消息）。
+func RecentPacket(id string, createdAt time.Time, content string) retrieval.ContextPacket {
+	return retrieval.ContextPacket{
+		ID:   id,
+		Type: TypeRecent,
+		Text: content,
+		Meta: retrieval.RecentMeta{Content: content, CreatedAt: createdAt},
+	}
 }
 
 // ProfilePacket 生成 profile 类型的 ContextPacket（用户画像稳定层字段，fact 聚合后的值）。
@@ -459,6 +510,8 @@ func sortPacketsByType(typ string, packets []retrieval.ContextPacket) {
 		})
 	case TypeReminder:
 		// 保持生产者顺序，不重排
+	case TypeRecent:
+		// recent 按时间正序注入，不重排
 	default:
 		sort.SliceStable(packets, func(i, j int) bool {
 			if packets[i].Score != packets[j].Score {

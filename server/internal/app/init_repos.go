@@ -58,7 +58,7 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		Embedding:           service.NewEmbeddingRepo(db),
 		Mailbox:             service.NewMailboxRepo(db),
 		ThemeState:          service.NewThemeStateRepo(db),
-		Trace:               service.NewReflectionTraceRepo(db, cfg.LLM.DebugPersistJSON),
+		Trace:               service.NewReflectionTraceRepo(db, cfg.LLM.DebugPersist()),
 		Chunk:               service.NewEmbeddingChunkRepo(db),
 		ConceptEmbed:        service.NewConceptEmbeddingRepo(db),
 		PendingFinding:      service.NewPendingFindingRepo(db),

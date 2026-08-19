@@ -155,8 +155,13 @@ type LLMConfig struct {
 	ExtractMsgLimit       int                `yaml:"extract_msg_limit"`        // 记忆提取每次最多取的消息数，默认 50
 	UseNativeFC           bool               `yaml:"use_native_fc"`            // 是否使用原生 function calling（默认 true）
 	ClientToolTimeoutSecs int                `yaml:"client_tool_timeout_secs"` // 客户端工具执行超时秒数，默认 60
-	DebugPersistJSON      bool               `yaml:"debug_persist_json"`       // 是否持久化完整 LLM 请求 JSON 到 DB（异步限频写入，配 debug_json 控制频率与保留）
+	DebugPersistJSON      *bool              `yaml:"debug_persist_json"`       // 是否持久化完整 LLM 请求 JSON 到 DB（异步限频写入，配 debug_json 控制频率与保留）；nil=未显式配置
 	DebugJSON             DebugJSONConfig    `yaml:"debug_json"`               // 调试 JSON 异步持久化参数
+}
+
+// DebugPersist 返回 debug_persist_json 是否开启（nil=未显式配置时按 base 值生效）
+func (l *LLMConfig) DebugPersist() bool {
+	return l.DebugPersistJSON != nil && *l.DebugPersistJSON
 }
 
 // DebugJSONConfig — 调试 JSON 异步持久化配置
@@ -358,7 +363,9 @@ func merge(dst, src *Config) {
 	if src.LLM.ExtractMsgLimit != 0 {
 		dst.LLM.ExtractMsgLimit = src.LLM.ExtractMsgLimit
 	}
-	dst.LLM.DebugPersistJSON = src.LLM.DebugPersistJSON
+	if src.LLM.DebugPersistJSON != nil {
+		dst.LLM.DebugPersistJSON = src.LLM.DebugPersistJSON
+	}
 	mergeDebugJSON(&dst.LLM.DebugJSON, &src.LLM.DebugJSON)
 	if src.Embedding.APIKey != "" {
 		dst.Embedding.APIKey = src.Embedding.APIKey

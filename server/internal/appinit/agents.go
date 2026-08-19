@@ -104,7 +104,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		ChunkBuilder:  chunkBuilder,
 		EmbeddingRepo: repos.Embedding,
 		VectorStore:   infra.VectorStore,
-		PersistDebug:  cfg.LLM.DebugPersistJSON,
+		PersistDebug:  cfg.LLM.DebugPersist(),
 	})
 
 	// --- 对话后处理组（session_end）：摘要 + 记忆提取 + 主题状态更新 + 用户画像 ---
@@ -192,7 +192,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		VerifyModel:               cfg.LLM.Verification.Model,
 		UseNativeFC:               cfg.LLM.UseNativeFC,
 		ToolExcludes:              cfg.Chat.ToolExcludes,
-		DebugPersistJSON:          cfg.LLM.DebugPersistJSON,
+		DebugPersistJSON:          cfg.LLM.DebugPersist(),
 		DebugJSONSink:             debugJSONSink,
 		ClientBridge:              clientBridge,
 		ClientToolTimeoutSecs:     cfg.LLM.ClientToolTimeoutSecs,

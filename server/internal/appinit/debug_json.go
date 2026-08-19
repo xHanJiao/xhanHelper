@@ -25,7 +25,7 @@ func (s *debugJSONQueueSink) Submit(msgID string, reqJSON *string) bool {
 //
 // 队列刷盘与保留清理在 bgCtx 下运行。
 func InitDebugJSON(cfg *config.Config, msgRepo *service.MessageRepo, bgCtx context.Context) agent.DebugJSONSink {
-	if !cfg.LLM.DebugPersistJSON {
+	if !cfg.LLM.DebugPersist() {
 		return agent.NoopDebugJSONSink{}
 	}
 	d := cfg.LLM.DebugJSON

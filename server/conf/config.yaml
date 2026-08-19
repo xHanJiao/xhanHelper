@@ -24,7 +24,7 @@ llm:
   api_key: ${LLM_API_KEY}
   provider: deepseek
   model: deepseek-ai/DeepSeek-V4-Flash
-  strong_model: deepseek-ai/DeepSeek-V4-Pro
+  strong_model: deepseek-ai/DeepSeek-V4-Flash
   base_url: https://api.siliconflow.cn/v1
   http_timeout_secs: 240            # Flash LLM 请求超时（硅基流动响应较慢，放宽预算）
   strong_http_timeout_secs: 600     # Pro LLM 请求超时

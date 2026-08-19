@@ -3,11 +3,13 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"time"
 
 	"gorm.io/gorm"
 
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 )
 
@@ -235,11 +237,346 @@ func (r *LlmCostRepo) ListDetails(ctx context.Context, params ListParams, page, 
 	return rows, total, nil
 }
 
+// ============================================================
+// 花销计算（价格匹配在内存完成）
+// ============================================================
+
+// ExpenseRow 明细行（价格匹配的输入）。
+// 不做 SQL 聚合：峰谷时段必须按北京时间换算，SQL 字符串函数提取时分在不同方言/时区下不可靠，
+// 因此在 Go 内用 CreatedAt.In(config.BJ) 换算后内存聚合。
+// ponytail: 个人量级（30 天数万行）内存扫描毫秒级；若数据量级到百万行/月，
+// 升级为写时落 time_of_day 列（db_recorder 计算，存 "HH:MM" 北京时间字符串）+ SQL GROUP BY。
+type ExpenseRow struct {
+	Date      string
+	Model     string
+	Category  string
+	CreatedAt time.Time
+	Hit       int64
+	Miss      int64
+	Output    int64
+}
+
+// ExpenseDay 单日花销（含命中/未命中/生成与峰谷拆分）
+type ExpenseDay struct {
+	Date       string  `json:"date"`
+	Cost       float64 `json:"cost"`
+	CostHit    float64 `json:"cost_hit"`
+	CostMiss   float64 `json:"cost_miss"`
+	CostOutput float64 `json:"cost_output"`
+	CostPeak   float64 `json:"cost_peak"`
+	CostOff    float64 `json:"cost_off"`
+}
+
+// ExpenseGroup 按分类/模型聚合的花销
+type ExpenseGroup struct {
+	Key  string  `json:"key"`
+	Cost float64 `json:"cost"`
+}
+
+// ExpenseResult 花销聚合结果
+type ExpenseResult struct {
+	Total          float64        `json:"total"`
+	TotalHit       float64        `json:"total_hit"`
+	TotalMiss      float64        `json:"total_miss"`
+	TotalOutput    float64        `json:"total_output"`
+	TotalPeak      float64        `json:"total_peak"`
+	TotalOff       float64        `json:"total_off"`
+	Days           []ExpenseDay   `json:"days"`
+	Categories     []ExpenseGroup `json:"categories"`
+	Models         []ExpenseGroup `json:"models"`
+	UnpricedModels []string       `json:"unpriced_models"`
+}
+
+type priceSet struct {
+	hit, miss, output float64
+}
+
+// priceAt 返回某模型在指定日期+北京时刻的有效价格。
+// 生效规则：effective_date <= date 的最新一条；峰段内用峰价，其余用谷价。
+// 第二返回值表示该时刻是否峰价；false 表示该模型在 date 无有效价格记录。
+func priceAt(schedule []model.LlmModelPrice, date, hm string) (priceSet, bool, bool) {
+	// schedule 已按 effective_date 升序；倒序找第一条 <= date 的即可
+	var cur *model.LlmModelPrice
+	for i := len(schedule) - 1; i >= 0; i-- {
+		if schedule[i].EffectiveDate <= date {
+			cur = &schedule[i]
+			break
+		}
+	}
+	if cur == nil {
+		return priceSet{}, false, false
+	}
+	segs, err := parsePeakSegmentsJSON(cur.PeakSegments)
+	if err != nil {
+		log.Printf("[cost] invalid peak segments for %s@%s: %v", cur.Model, cur.EffectiveDate, err)
+		segs = nil
+	}
+	peak := isPeak(hm, segs)
+	if peak {
+		return priceSet{cur.PriceHit, cur.PriceMiss, cur.PriceOutput}, true, true
+	}
+	return priceSet{cur.PriceHitOff, cur.PriceMissOff, cur.PriceOutputOff}, false, true
+}
+
+// ExpenseQuery 计算指定范围的花销。
+// prices 为 llm_model_prices 全量记录（由 controller 拉取后传入），内存按模型+日期+北京时刻匹配。
+func (r *LlmCostRepo) ExpenseQuery(ctx context.Context, params QueryParams, prices []model.LlmModelPrice) (*ExpenseResult, error) {
+	// 按模型分组、按生效日期升序的价格表
+	byModel := make(map[string][]model.LlmModelPrice)
+	for _, p := range prices {
+		byModel[p.Model] = append(byModel[p.Model], p)
+	}
+	for m := range byModel {
+		sort.Slice(byModel[m], func(i, j int) bool {
+			return byModel[m][i].EffectiveDate < byModel[m][j].EffectiveDate
+		})
+	}
+
+	q := r.db.WithContext(ctx).Model(&model.LlmCostDetail{})
+	if params.Start != "" {
+		q = q.Where("date >= ?", params.Start)
+	}
+	if params.End != "" {
+		q = q.Where("date <= ?", params.End)
+	}
+	if len(params.UserIDs) > 0 {
+		q = q.Where("user_id IN ?", params.UserIDs)
+	}
+	if params.Category != "" {
+		q = q.Where("category = ?", params.Category)
+	}
+
+	var rows []ExpenseRow
+	if err := q.Select("date, model, category, created_at," +
+		"prompt_cache_hit_tokens as hit," +
+		"prompt_cache_miss_tokens as miss," +
+		"completion_tokens as output").
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("query expense rows: %w", err)
+	}
+
+	// 内存聚合：key = date + model + category + 北京时分
+	type aggKey struct{ date, model, category, hm string }
+	type agg struct{ hit, miss, output int64 }
+	buckets := make(map[aggKey]*agg)
+	for _, row := range rows {
+		hm := row.CreatedAt.In(config.BJ).Format("15:04")
+		key := aggKey{normalizeDateKey(row.Date), row.Model, row.Category, hm}
+		b := buckets[key]
+		if b == nil {
+			b = &agg{}
+			buckets[key] = b
+		}
+		b.hit += row.Hit
+		b.miss += row.Miss
+		b.output += row.Output
+	}
+
+	res := &ExpenseResult{Days: []ExpenseDay{}, Categories: []ExpenseGroup{}, Models: []ExpenseGroup{}, UnpricedModels: []string{}}
+	dayIdx := make(map[string]int)
+	catCost := make(map[string]float64)
+	modelCost := make(map[string]float64)
+	unpriced := make(map[string]bool)
+
+	for key, b := range buckets {
+		ps, peak, ok := priceAt(byModel[key.model], key.date, key.hm)
+		if !ok {
+			unpriced[key.model] = true
+			continue
+		}
+		hitCost := float64(b.hit) / 1e6 * ps.hit
+		missCost := float64(b.miss) / 1e6 * ps.miss
+		outCost := float64(b.output) / 1e6 * ps.output
+		cost := hitCost + missCost + outCost
+
+		res.Total += cost
+		res.TotalHit += hitCost
+		res.TotalMiss += missCost
+		res.TotalOutput += outCost
+
+		idx, ok := dayIdx[key.date]
+		if !ok {
+			idx = len(res.Days)
+			dayIdx[key.date] = idx
+			res.Days = append(res.Days, ExpenseDay{Date: key.date})
+		}
+		res.Days[idx].Cost += cost
+		res.Days[idx].CostHit += hitCost
+		res.Days[idx].CostMiss += missCost
+		res.Days[idx].CostOutput += outCost
+		if peak {
+			res.TotalPeak += cost
+			res.Days[idx].CostPeak += cost
+		} else {
+			res.TotalOff += cost
+			res.Days[idx].CostOff += cost
+		}
+
+		catCost[key.category] += cost
+		modelCost[key.model] += cost
+	}
+
+	for m := range unpriced {
+		res.UnpricedModels = append(res.UnpricedModels, m)
+	}
+	sort.Strings(res.UnpricedModels)
+
+	for key, cost := range catCost {
+		res.Categories = append(res.Categories, ExpenseGroup{Key: key, Cost: cost})
+	}
+	for key, cost := range modelCost {
+		res.Models = append(res.Models, ExpenseGroup{Key: key, Cost: cost})
+	}
+	sort.Slice(res.Categories, func(i, j int) bool { return res.Categories[i].Cost > res.Categories[j].Cost })
+	sort.Slice(res.Models, func(i, j int) bool { return res.Models[i].Cost > res.Models[j].Cost })
+
+	sort.Slice(res.Days, func(i, j int) bool { return res.Days[i].Date < res.Days[j].Date })
+
+	return res, nil
+}
+
+// ============================================================
+// 单日分时（24 小时）聚合
+// ============================================================
+
+// HourlyBucket 单个小时桶
+type HourlyBucket struct {
+	Hour       string  `json:"hour"` // "00".."23"
+	Hit        int64   `json:"hit"`
+	Miss       int64   `json:"miss"`
+	Output     int64   `json:"output"`
+	Cost       float64 `json:"cost"`
+	CostHit    float64 `json:"cost_hit"`
+	CostMiss   float64 `json:"cost_miss"`
+	CostOutput float64 `json:"cost_output"`
+}
+
+// HourlyTotals 单日总量（峰谷拆分）
+type HourlyTotals struct {
+	Hit        int64   `json:"hit"`
+	Miss       int64   `json:"miss"`
+	Output     int64   `json:"output"`
+	Cost       float64 `json:"cost"`
+	CostHit    float64 `json:"cost_hit"`
+	CostMiss   float64 `json:"cost_miss"`
+	CostOutput float64 `json:"cost_output"`
+	CostPeak   float64 `json:"cost_peak"`
+	CostOff    float64 `json:"cost_off"`
+}
+
+// HourlyResult 单日分时聚合结果
+type HourlyResult struct {
+	Date           string         `json:"date"`
+	Hours          []HourlyBucket `json:"hours"`
+	Totals         HourlyTotals   `json:"totals"`
+	UnpricedModels []string       `json:"unpriced_models"`
+}
+
+// HourlyQuery 计算指定日期的分时（24 小时）token 与花销。
+// 逐行按真实分钟判峰谷（分钟精度不受小时桶影响），再聚到小时桶。
+func (r *LlmCostRepo) HourlyQuery(ctx context.Context, date string, params QueryParams, prices []model.LlmModelPrice) (*HourlyResult, error) {
+	byModel := make(map[string][]model.LlmModelPrice)
+	for _, p := range prices {
+		byModel[p.Model] = append(byModel[p.Model], p)
+	}
+	for m := range byModel {
+		sort.Slice(byModel[m], func(i, j int) bool {
+			return byModel[m][i].EffectiveDate < byModel[m][j].EffectiveDate
+		})
+	}
+
+	q := r.db.WithContext(ctx).Model(&model.LlmCostDetail{}).Where("date = ?", date)
+	if len(params.UserIDs) > 0 {
+		q = q.Where("user_id IN ?", params.UserIDs)
+	}
+	if params.Category != "" {
+		q = q.Where("category = ?", params.Category)
+	}
+
+	var rows []ExpenseRow
+	if err := q.Select("date, model, category, created_at," +
+		"prompt_cache_hit_tokens as hit," +
+		"prompt_cache_miss_tokens as miss," +
+		"completion_tokens as output").
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("query hourly rows: %w", err)
+	}
+
+	res := &HourlyResult{
+		Date:           date,
+		Hours:          make([]HourlyBucket, 24),
+		UnpricedModels: []string{},
+	}
+	for i := range res.Hours {
+		res.Hours[i].Hour = fmt.Sprintf("%02d", i)
+	}
+	unpriced := make(map[string]bool)
+
+	for _, row := range rows {
+		bj := row.CreatedAt.In(config.BJ)
+		hm := bj.Format("15:04")
+		h := bj.Hour()
+
+		ps, peak, ok := priceAt(byModel[row.Model], normalizeDateKey(row.Date), hm)
+		var hitCost, missCost, outCost, cost float64
+		if !ok {
+			unpriced[row.Model] = true
+		} else {
+			hitCost = float64(row.Hit) / 1e6 * ps.hit
+			missCost = float64(row.Miss) / 1e6 * ps.miss
+			outCost = float64(row.Output) / 1e6 * ps.output
+			cost = hitCost + missCost + outCost
+		}
+
+		b := &res.Hours[h]
+		b.Hit += row.Hit
+		b.Miss += row.Miss
+		b.Output += row.Output
+		b.Cost += cost
+		b.CostHit += hitCost
+		b.CostMiss += missCost
+		b.CostOutput += outCost
+
+		res.Totals.Hit += row.Hit
+		res.Totals.Miss += row.Miss
+		res.Totals.Output += row.Output
+		res.Totals.Cost += cost
+		res.Totals.CostHit += hitCost
+		res.Totals.CostMiss += missCost
+		res.Totals.CostOutput += outCost
+		if peak {
+			res.Totals.CostPeak += cost
+		} else {
+			res.Totals.CostOff += cost
+		}
+	}
+
+	for m := range unpriced {
+		res.UnpricedModels = append(res.UnpricedModels, m)
+	}
+	sort.Strings(res.UnpricedModels)
+
+	return res, nil
+}
+
 // UserCostSummary 用户在统计时段内的消耗汇总（下拉列表排序用）
 type UserCostSummary struct {
 	UserID      string `json:"user_id"`
 	TotalTokens int64  `json:"total_tokens"`
 	CallCount   int64  `json:"call_count"`
+}
+
+// ListModels 列出有成本记录的模型名（去重，供定价表单下拉选择）。
+func (r *LlmCostRepo) ListModels(ctx context.Context) ([]string, error) {
+	var rows []string
+	if err := r.db.WithContext(ctx).Model(&model.LlmCostDetail{}).
+		Distinct().Order("model").Pluck("model", &rows).Error; err != nil {
+		return nil, fmt.Errorf("list models: %w", err)
+	}
+	if rows == nil {
+		rows = []string{}
+	}
+	return rows, nil
 }
 
 // ListUsers 列出有成本记录的用户（total_tokens DESC），userID 非空过滤。

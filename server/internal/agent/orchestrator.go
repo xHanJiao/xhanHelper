@@ -758,7 +758,7 @@ func (o *Orchestrator) buildReminderPackets(ctx context.Context, userID string) 
 		packets = append(packets, retrieval.ContextPacket{
 			ID:   r.ID,
 			Type: ctxflow.TypeReminder,
-			Text: truncateReminderInjection(fmt.Sprintf("%s（%s）", r.Content, r.Deadline.Format("01-02 15:04"))),
+			Text: truncateReminderInjection(fmt.Sprintf("%s（%s）", r.Content, r.Deadline.In(config.BJ).Format("01-02 15:04"))),
 		})
 	}
 	for _, r := range expired {

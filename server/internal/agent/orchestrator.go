@@ -77,6 +77,10 @@ type RunRequest struct {
 	// 历史消息不再重放完整 XML；注入资源收敛到当前消息的公共资源区。
 	PreviousUserXMLContext string
 
+	// RecentUserMessages 新窗口（SkipHistory）时单独加载的最近用户消息，
+	// 渲染后注入 system prompt，供 LLM 知晓用户之前最后说了什么（不重放完整轮）。
+	RecentUserMessages []model.Message
+
 	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
 	Memory  retrieval.SourceConfig
 	Note    retrieval.SourceConfig
@@ -333,10 +337,11 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	// 1. 静态 system prompt + 稳定上下文（画像+摘要，会话内字节稳定）
 	stableXML := o.buildStableContextXML(ctx, req)
 	result, err := o.systemPromptBuilder.Build(ctx, promptbuilder.BuildOptions{
-		UserID:           req.UserID,
-		AgentPrompt:      req.AgentSystemPrompt,
-		Mode:             req.Mode,
-		StableContextXML: stableXML,
+		UserID:            req.UserID,
+		AgentPrompt:       req.AgentSystemPrompt,
+		Mode:              req.Mode,
+		StableContextXML:  stableXML,
+		RecentUserContext: buildRecentUserContext(req.RecentUserMessages),
 	})
 	if err != nil {
 		log.Printf("[orch] prompt build error: %v", err)
@@ -1827,6 +1832,29 @@ func SimpleUserContent(m *model.Message) string {
 		text = *m.OriginalContent
 	}
 	return fmt.Sprintf("[%s] %s", m.CreatedAt.In(config.BJ).Format("01-02 15:04"), text)
+}
+
+// buildRecentUserContext 渲染新窗口注入的最近用户消息（纯文本，无 XMLContext/tool）。
+// 每条截断到 500 字防超长粘贴；按时间正序输出（不依赖入参顺序）。
+// ponytail: 单条 500 字硬编码，需要更细粒度时提配置。
+func buildRecentUserContext(msgs []model.Message) string {
+	if len(msgs) == 0 {
+		return ""
+	}
+	sorted := append([]model.Message(nil), msgs...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].CreatedAt.Before(sorted[j].CreatedAt) })
+	lines := make([]string, 0, len(sorted))
+	for _, m := range sorted {
+		text := m.Content
+		if m.OriginalContent != nil && *m.OriginalContent != "" {
+			text = *m.OriginalContent
+		}
+		if r := []rune(text); len(r) > 500 {
+			text = string(r[:500]) + "…"
+		}
+		lines = append(lines, fmt.Sprintf("%d. [%s] %s", len(lines)+1, m.CreatedAt.In(config.BJ).Format("01-02 15:04"), text))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // FlattenRound 裁剪一轮消息为 LLM 上下文格式。

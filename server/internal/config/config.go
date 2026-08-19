@@ -39,6 +39,7 @@ type Config struct {
 // ChatConfig — 对话配置
 type ChatConfig struct {
 	HistoryRounds             int      `yaml:"history_rounds"`              // 加载历史消息轮数，默认 10
+	RecentUserMsgs            int      `yaml:"recent_user_msgs"`            // 新窗口注入 system prompt 的最近用户消息条数，默认 3
 	MaxWindowRounds           int      `yaml:"max_window_rounds"`           // 扩张窗口上限，默认 100
 	MaxSummaryRounds          int      `yaml:"max_summary_rounds"`          // 单次摘要覆盖上限，0=等于 history_rounds
 	SessionGapMinutes         int      `yaml:"session_gap_minutes"`         // session 间隔阈值（分钟），默认 30
@@ -404,6 +405,9 @@ func merge(dst, src *Config) {
 	if src.Chat.HistoryRounds != 0 {
 		dst.Chat.HistoryRounds = src.Chat.HistoryRounds
 	}
+	if src.Chat.RecentUserMsgs != 0 {
+		dst.Chat.RecentUserMsgs = src.Chat.RecentUserMsgs
+	}
 	if src.Chat.MaxWindowRounds != 0 {
 		dst.Chat.MaxWindowRounds = src.Chat.MaxWindowRounds
 	}
@@ -588,6 +592,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Chat.HistoryRounds == 0 {
 		cfg.Chat.HistoryRounds = 10
+	}
+	if cfg.Chat.RecentUserMsgs == 0 {
+		cfg.Chat.RecentUserMsgs = 3
 	}
 	if cfg.Chat.MaxWindowRounds == 0 {
 		cfg.Chat.MaxWindowRounds = 100

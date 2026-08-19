@@ -12,6 +12,28 @@ import (
 	"xhan-helper/internal/model"
 )
 
+func TestBuildRecentUserContext_OrderAndTruncate(t *testing.T) {
+	long := strings.Repeat("长", 600)
+	msgs := []model.Message{
+		{CreatedAt: time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC), Content: "第一条"},
+		{CreatedAt: time.Date(2026, 8, 18, 10, 5, 0, 0, time.UTC), Content: long},
+	}
+	got := buildRecentUserContext(msgs)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("应 2 行, got %d:\n%s", len(lines), got)
+	}
+	if !strings.HasPrefix(lines[0], "1. [08-18 18:00] 第一条") {
+		t.Errorf("第一条应在最前且带时间戳, got: %s", lines[0])
+	}
+	if !strings.HasSuffix(lines[1], "…") || len([]rune(lines[1])) > 560 {
+		t.Errorf("第二条应截断到 500 字, len=%d, got: %.80s…", len([]rune(lines[1])), lines[1])
+	}
+	if buildRecentUserContext(nil) != "" {
+		t.Error("空输入应返回空串")
+	}
+}
+
 func TestHandleOneRoundResponse_ParseErrorTriggersRetry(t *testing.T) {
 	// 非法 JSON → 应触发重试，不标记 done
 	o := &Orchestrator{

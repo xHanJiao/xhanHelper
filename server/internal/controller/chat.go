@@ -196,6 +196,17 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		for _, round := range rounds {
 			history = append(history, agent.FlattenRound(round)...)
 		}
+		// 新窗口（SkipHistory）不重放完整轮（含 tool 调用，token 贵），
+		// 单独取最近几条用户消息注入 system prompt，让 LLM 知道用户之前最后说了什么。
+		var recentUserMsgs []model.Message
+		if wr.SkipHistory && cfg.Chat.RecentUserMsgs > 0 {
+			recentUserMsgs, err = msgRepo.ListRecentUserMessages(c.Request.Context(), conv.ID, cfg.Chat.RecentUserMsgs)
+			if err != nil {
+				log.Printf("[chat] ListRecentUserMessages error: %v", err)
+				view.JSONError(c, 500, "加载历史消息失败")
+				return
+			}
+		}
 
 		w := c.Writer
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -241,6 +252,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			Memory:             req.Memory,
 			SkipRetrieval:      pc.SkipRetrieval,
 			Window:             wr,
+			RecentUserMessages: recentUserMsgs,
 			ClientTools:        req.ClientTools,
 			Mode:               convMode,
 			ModeNotice:         modeNotice,
@@ -557,7 +569,8 @@ func computeWindowSize(ctx context.Context, msgRepo *service.MessageRepo, convID
 
 	gap := time.Since(lastUserMsg.CreatedAt)
 	if gap > time.Duration(gapMinutes)*time.Minute {
-		// 新窗口：资源区保持现状（重置），不重放旧消息；Size 记 1 供下一条窗口扩张。
+		// 新窗口：不重放旧轮（tool 调用 token 贵），改为最近用户消息注入 system prompt；
+		// Size 记 1 供下一条窗口扩张。
 		return agent.WindowResult{Size: 1, IsNewSession: true, SkipHistory: true}
 	}
 

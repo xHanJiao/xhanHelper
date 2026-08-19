@@ -40,6 +40,7 @@ func NewPromptBuilder(
 		postRoleStatic: postRoleStatic,
 		contextProviders: []ContextProvider{
 			&stableContextProvider{},
+			&recentUserContextProvider{},
 		},
 	}
 }

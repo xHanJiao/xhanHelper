@@ -37,6 +37,7 @@ type Repos struct {
 	UserProfile         *service.UserProfileRepo
 	UserProfileFact     *service.UserProfileFactRepo
 	LlmCost             *service.LlmCostRepo
+	LlmPrice            *service.LlmPriceRepo
 	LLMCallIO           *service.LLMCallIORepo
 }
 
@@ -73,6 +74,7 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		UserProfile:         service.NewUserProfileRepo(db),
 		UserProfileFact:     service.NewUserProfileFactRepo(db),
 		LlmCost:             service.NewLlmCostRepo(db),
+		LlmPrice:            service.NewLlmPriceRepo(db),
 		LLMCallIO:           service.NewLLMCallIORepo(db),
 	}
 }

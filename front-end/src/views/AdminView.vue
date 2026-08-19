@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { api } from '@/api/client'
-import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NEmpty, NAlert, NButton, NCheckbox, NModal, useMessage } from 'naive-ui'
+import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NEmpty, NAlert, NButton, NCheckbox, NModal, NInput, NInputNumber, useMessage } from 'naive-ui'
 import { Chart, registerables } from 'chart.js'
 import PageTopBar from '@/components/PageTopBar.vue'
 import LLMIOAuditTab from '@/components/LLMIOAuditTab.vue'
@@ -173,7 +173,7 @@ watch(activeTab, (tab) => {
   if (tab === 'pending-findings' && findings.value.length === 0) fetchFindings()
   if (tab === 'cost' && !costLoaded.value) {
     costLoaded.value = true
-    fetchCostCategories(); fetchCostUsers(); refreshCost()
+    fetchCostCategories(); fetchCostUsers(); fetchCostPrices(); refreshCost()
   }
 })
 onUnmounted(() => { clearInterval(timer); destroyCharts(); destroyCostCharts() })
@@ -310,6 +310,16 @@ const costLoaded = ref(false)
 const costBarStack = ref({ hit: true, miss: true, completion: true })
 let costCharts = []
 
+// ── 花销（¥）与定价 ──
+const costExpense = ref(null)
+const costSelectedDate = ref(null)
+const costHourly = ref(null)
+const priceRows = ref([])
+const priceForm = ref({ model: '', effective_date: '', price_hit: 0, price_miss: 0, price_output: 0, price_hit_off: 0, price_miss_off: 0, price_output_off: 0, peak_segments: '' })
+const priceSaving = ref(false)
+const priceModelOptions = ref([])
+const priceEditingId = ref(null)
+
 // 饼图钻取：点击扇形 → 弹层展示该分组的 命中/未命中/生成 三色占比
 const costDrillOpen = ref(false)
 const costDrillDown = ref(null)
@@ -416,12 +426,18 @@ async function fetchCostSummary() {
 }
 
 async function fetchCostStats(groupBy) {
-  const { start, end } = costDateRange()
+  const { start, end } = effectiveRange()
   const params = [`start=${start}`, `end=${end}`, `group_by=${groupBy}`]
   if (costCategory.value) params.push(`category=${costCategory.value}`)
   if (costUsers.value.length) params.push(...costUsers.value.map(id => `user_id=${id}`))
   const res = await api.get('/api/admin/cost/stats?' + params.join('&'))
   return res || { total: {}, groups: [] }
+}
+
+// 统计范围：分时模式下收窄到选中日，否则按时间范围
+function effectiveRange() {
+  if (costSelectedDate.value) return { start: costSelectedDate.value, end: costSelectedDate.value }
+  return costDateRange()
 }
 
 function destroyCostCharts() {
@@ -445,17 +461,25 @@ function makePieChart(id, labels, data) {
 async function renderCostCharts() {
   destroyCostCharts()
   try {
-    // 每日柱状图（堆叠维度由勾选决定）
-    const daily = await fetchCostStats('date')
-    const labels = daily.groups.map(g => g.key)
-    const datasets = []
-    if (costBarStack.value.hit) datasets.push({ label: '缓存命中', data: daily.groups.map(g => g.prompt_cache_hit), backgroundColor: '#5b6abf' })
-    if (costBarStack.value.miss) datasets.push({ label: '缓存未命中', data: daily.groups.map(g => g.prompt_cache_miss), backgroundColor: '#e74c3c' })
-    if (costBarStack.value.completion) datasets.push({ label: '生成', data: daily.groups.map(g => g.completion), backgroundColor: '#27ae60' })
-    datasets.push({ label: '平均 token/次', type: 'line', yAxisID: 'y1', data: daily.groups.map(g => Math.round(selectedTotal(g) / (g.call_count || 1))), borderColor: '#8e44ad', backgroundColor: '#8e44ad22', fill: false, pointRadius: 2, tension: 0.3 })
-    if (datasets.length) makeBarChart('cost-daily-chart', labels, datasets, false, costCharts, true)
+    // 分时模式下 token 柱状图由 fetchCostHourly 拿到数据后统一渲染（避免用上一次的陈旧数据），这里只画饼图
+    if (!costSelectedDate.value) {
+      // 每日柱状图（堆叠维度由勾选决定）
+      const daily = await fetchCostStats('date')
+      const labels = daily.groups.map(g => g.key)
+      const datasets = []
+      if (costBarStack.value.hit) datasets.push({ label: '缓存命中', data: daily.groups.map(g => g.prompt_cache_hit), backgroundColor: '#5b6abf' })
+      if (costBarStack.value.miss) datasets.push({ label: '缓存未命中', data: daily.groups.map(g => g.prompt_cache_miss), backgroundColor: '#e74c3c' })
+      if (costBarStack.value.completion) datasets.push({ label: '生成', data: daily.groups.map(g => g.completion), backgroundColor: '#27ae60' })
+      datasets.push({ label: '平均 token/次', type: 'line', yAxisID: 'y1', data: daily.groups.map(g => Math.round(selectedTotal(g) / (g.call_count || 1))), borderColor: '#8e44ad', backgroundColor: '#8e44ad22', fill: false, pointRadius: 2, tension: 0.3 })
+      if (datasets.length) {
+        makeBarChart('cost-daily-chart', labels, datasets, false, costCharts, true)
+        // 点击柱子 → 进入该日分时视图
+        const ch = Chart.getChart('cost-daily-chart')
+        if (ch) ch.options.onClick = (_evt, el) => { if (el?.length) selectDate(labels[el[0].index]) }
+      }
+    }
 
-    // 三个饼图（数据跟随维度筛选，点击扇形钻取三维度占比）
+    // 三个饼图（分时模式下范围=选中日，自动跟随）
     const cat = await fetchCostStats('category')
     makePieChart('cost-cat-chart', cat.groups.map(g => g.key || '未分类'), cat.groups.map(g => selectedTotal(g)))
     attachDrillDown('cost-cat-chart', cat.groups)
@@ -468,12 +492,198 @@ async function renderCostCharts() {
   } catch (_) {}
 }
 
+// 分时 token 柱状图（00-23 时，堆叠 hit/miss/output，跟随勾选）
+function renderHourlyTokenChart() {
+  const h = costHourly.value
+  const canvas = document.getElementById('cost-daily-chart')
+  if (!canvas || !h) return
+  Chart.getChart('cost-daily-chart')?.destroy()
+  const datasets = []
+  if (costBarStack.value.hit) datasets.push({ label: '缓存命中', data: h.hours.map(x => x.hit), backgroundColor: '#5b6abf' })
+  if (costBarStack.value.miss) datasets.push({ label: '缓存未命中', data: h.hours.map(x => x.miss), backgroundColor: '#e74c3c' })
+  if (costBarStack.value.completion) datasets.push({ label: '生成', data: h.hours.map(x => x.output), backgroundColor: '#27ae60' })
+  const ch = new Chart(canvas, {
+    type: 'bar',
+    data: { labels: h.hours.map(x => x.hour + ':00'), datasets },
+    options: { responsive: true, interaction: { mode: 'index' }, plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
+  })
+  costCharts.push(ch)
+}
+
 async function refreshCost() {
   costLoading.value = true
   try {
-    await Promise.all([fetchCostSummary(), renderCostCharts()])
+    await Promise.all([
+      fetchCostSummary(),
+      renderCostCharts(),
+      costSelectedDate.value ? fetchCostHourly() : fetchCostExpense()
+    ])
   } finally {
     costLoading.value = false
+  }
+}
+
+function selectDate(date) {
+  if (costSelectedDate.value === date) { costSelectedDate.value = null; refreshCost(); return }
+  costSelectedDate.value = date
+  refreshCost()
+}
+
+function clearDate() {
+  costSelectedDate.value = null
+  refreshCost()
+}
+
+function fmtMoney(n) {
+  if (n == null) return '¥0.00'
+  return '¥' + Number(n).toFixed(2)
+}
+
+// 存储的峰段是 compact JSON [[start,end],...]，转回可读文本；空 = 全天谷
+function fmtPeakSegments(s) {
+  if (!s) return '全天谷'
+  try {
+    const segs = JSON.parse(s)
+    if (!segs.length) return '全天谷'
+    return segs.map(x => `${x[0]}-${x[1]}`).join(', ')
+  } catch {
+    return s
+  }
+}
+
+async function fetchCostExpense() {
+  const { start, end } = effectiveRange()
+  const params = [`start=${start}`, `end=${end}`]
+  if (costCategory.value) params.push(`category=${costCategory.value}`)
+  if (costUsers.value.length) params.push(...costUsers.value.map(id => `user_id=${id}`))
+  const res = await api.get('/api/admin/cost/expense?' + params.join('&'))
+  const cur = effectiveRange()
+  // 响应返回期间筛选/分时已变化 → 丢弃陈旧数据，避免旧图覆盖新图
+  if (costSelectedDate.value || cur.start !== start || cur.end !== end) return
+  costExpense.value = res || { total: 0, days: [], categories: [], models: [], unpriced_models: [] }
+  renderExpenseChart()
+}
+
+async function fetchCostHourly() {
+  const date = costSelectedDate.value
+  if (!date) return
+  const params = [`date=${date}`]
+  if (costCategory.value) params.push(`category=${costCategory.value}`)
+  if (costUsers.value.length) params.push(...costUsers.value.map(id => `user_id=${id}`))
+  const res = await api.get('/api/admin/cost/hourly?' + params.join('&'))
+  if (costSelectedDate.value !== date) return // 已切到别的日期/退出分时，丢弃陈旧响应
+  costHourly.value = res || { date, hours: [], totals: {}, unpriced_models: [] }
+  // 同一次响应渲染两个分时图，时间轴必然一致
+  renderHourlyTokenChart()
+  renderExpenseChart()
+}
+
+// 堆叠柱状图柱顶显示当日总值（¥）
+const barTotalPlugin = {
+  id: 'barTotal',
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart
+    const xScale = chart.scales.x
+    const yScale = chart.scales.y
+    if (!xScale || !yScale || !chart.data?.labels?.length) return
+    const ds = chart.data.datasets.filter((_, i) => chart.isDatasetVisible(i))
+    if (!ds.length) return
+    chart.data.labels.forEach((_, i) => {
+      const total = ds.reduce((s, d) => s + (Number(d.data[i]) || 0), 0)
+      if (total <= 0) return
+      const x = xScale.getPixelForValue(i)
+      const y = yScale.getPixelForValue(total)
+      ctx.save()
+      ctx.font = '10px sans-serif'
+      ctx.fillStyle = '#8a8f98'
+      ctx.textAlign = 'center'
+      ctx.fillText('¥' + total.toFixed(2), x, y - 4)
+      ctx.restore()
+    })
+  }
+}
+
+function renderExpenseChart() {
+  const e = costSelectedDate.value ? costHourly.value : costExpense.value
+  const canvas = document.getElementById('cost-expense-chart')
+  if (!canvas || !e) return
+  Chart.getChart('cost-expense-chart')?.destroy()
+  const datasets = []
+  const labels = costSelectedDate.value ? e.hours.map(x => x.hour + ':00') : e.days.map(d => d.date)
+  const data = costSelectedDate.value ? e.hours : e.days
+  if (costBarStack.value.hit) datasets.push({ label: '缓存命中', data: data.map(d => d.cost_hit), backgroundColor: '#5b6abf' })
+  if (costBarStack.value.miss) datasets.push({ label: '缓存未命中', data: data.map(d => d.cost_miss), backgroundColor: '#e74c3c' })
+  if (costBarStack.value.completion) datasets.push({ label: '生成', data: data.map(d => d.cost_output), backgroundColor: '#27ae60' })
+  const ch = new Chart(canvas, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: { responsive: true, interaction: { mode: 'index' }, plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, title: { display: true, text: '¥' } } } },
+    plugins: [barTotalPlugin]
+  })
+  if (!costSelectedDate.value) {
+    // 点击柱子 → 进入该日分时视图
+    ch.options.onClick = (_evt, el) => { if (el?.length) selectDate(labels[el[0].index]) }
+  }
+  costCharts.push(ch)
+}
+
+async function fetchCostPrices() {
+  try { priceRows.value = await api.get('/api/admin/cost/prices') || [] } catch (_) {}
+  try {
+    const models = await api.get('/api/admin/cost/models') || []
+    priceModelOptions.value = models.map(m => ({ label: m, value: m }))
+  } catch (_) {}
+}
+
+async function savePrice() {
+  const f = priceForm.value
+  if (!f.model || !f.effective_date) {
+    message.warning('请填写模型名和生效日期')
+    return
+  }
+  priceSaving.value = true
+  try {
+    await api.post('/api/admin/cost/prices', f)
+    message.success(priceEditingId.value ? '已更新' : '已保存')
+    priceForm.value = { model: '', effective_date: '', price_hit: 0, price_miss: 0, price_output: 0, price_hit_off: 0, price_miss_off: 0, price_output_off: 0, peak_segments: '' }
+    priceEditingId.value = null
+    await Promise.all([fetchCostPrices(), fetchCostExpense()])
+  } catch (e) {
+    message.error(e.message || '保存失败')
+  } finally {
+    priceSaving.value = false
+  }
+}
+
+// 编辑：把记录填回表单（峰段 JSON 转回文本），保存走 Upsert 覆盖
+function editPrice(p) {
+  priceEditingId.value = p.id
+  priceForm.value = {
+    model: p.model,
+    effective_date: p.effective_date,
+    price_hit: p.price_hit,
+    price_miss: p.price_miss,
+    price_output: p.price_output,
+    price_hit_off: p.price_hit_off,
+    price_miss_off: p.price_miss_off,
+    price_output_off: p.price_output_off,
+    peak_segments: fmtPeakSegments(p.peak_segments) === '全天谷' ? '' : fmtPeakSegments(p.peak_segments),
+  }
+  message.info('已填入表单，修改后点保存（同模型+日期覆盖原记录）')
+}
+
+function cancelEditPrice() {
+  priceEditingId.value = null
+  priceForm.value = { model: '', effective_date: '', price_hit: 0, price_miss: 0, price_output: 0, price_hit_off: 0, price_miss_off: 0, price_output_off: 0, peak_segments: '' }
+}
+
+async function deletePrice(id) {
+  try {
+    await api.delete(`/api/admin/cost/prices/${id}`)
+    message.success('已删除')
+    await Promise.all([fetchCostPrices(), fetchCostExpense()])
+  } catch (e) {
+    message.error(e.message || '删除失败')
   }
 }
 
@@ -488,8 +698,12 @@ function hitRate(t) {
   return denom ? ((t.prompt_cache_hit / denom) * 100).toFixed(1) : '0'
 }
 
-// 筛选变化时刷新图表。必须放在所有 cost 声明之后（const 不提升，提前引用会 TDZ 报错）
-watch([costRangeDays, costCategory, costUsers, costBarStack], () => { if (activeTab.value === 'cost') refreshCost() }, { deep: true })
+// 筛选变化时刷新图表。时间范围变化时退出分时（选中日可能不在新范围）；分类/用户/维度变化保留分时。
+// 必须放在所有 cost 声明之后（const 不提升，提前引用会 TDZ 报错）
+watch([costRangeDays, costCategory, costUsers, costBarStack], ([newR], [oldR]) => {
+  if (newR !== oldR && costSelectedDate.value) costSelectedDate.value = null
+  if (activeTab.value === 'cost') refreshCost()
+}, { deep: true })
 
 // 窗口拖拽 resize 时 Chart.js 有 ~100ms 内建 debounce，停止拖拽后强制校准一次，
 // 避免 canvas 内联尺寸滞后导致柱状图/饼图右沿不对齐。
@@ -849,8 +1063,34 @@ onUnmounted(() => {
 
       <!-- 图表区：柱状图 + 饼图共享同一弹性容器，保证左右边界对齐 -->
       <div class="cost-charts">
-        <NCard size="small" title="每日 Token 消耗">
+        <div v-if="costSelectedDate" style="display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-sm);">
+          <NButton size="small" @click="clearDate">← 返回按日</NButton>
+          <span style="font-size: 13px; font-weight: 600;">{{ costSelectedDate }} 分时详情（24 小时，北京时间）</span>
+        </div>
+        <NCard size="small">
+          <template #header>
+            <span>{{ costSelectedDate ? '分时 Token 消耗' : '每日 Token 消耗' }}</span>
+          </template>
           <canvas id="cost-daily-chart" />
+        </NCard>
+
+        <NCard size="small">
+          <template #header>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span>{{ costSelectedDate ? '分时花销' : '每日花销' }}</span>
+              <span style="font-size: 13px; color: var(--color-primary); font-weight: 600;">
+                {{ costSelectedDate ? fmtMoney(costHourly?.totals?.cost) : fmtMoney(costExpense?.total) }}
+                <span style="color: var(--color-text-muted); font-weight: 400;">
+                  （峰 {{ costSelectedDate ? fmtMoney(costHourly?.totals?.cost_peak) : fmtMoney(costExpense?.total_peak) }} /
+                  谷 {{ costSelectedDate ? fmtMoney(costHourly?.totals?.cost_off) : fmtMoney(costExpense?.total_off) }}）
+                </span>
+              </span>
+            </div>
+          </template>
+          <NAlert v-if="(costSelectedDate ? costHourly?.unpriced_models : costExpense?.unpriced_models)?.length" type="warning" style="margin-bottom: var(--space-md);">
+            以下模型无有效价格，按 0 计：{{ (costSelectedDate ? costHourly.unpriced_models : costExpense.unpriced_models).join(', ') }}
+          </NAlert>
+          <canvas id="cost-expense-chart" />
         </NCard>
 
         <div class="cost-pie-grid">
@@ -864,6 +1104,65 @@ onUnmounted(() => {
             <div class="pie-box"><canvas id="cost-sub-chart" /></div>
           </NCard>
         </div>
+
+        <!-- 模型定价管理 -->
+        <NCard size="small" title="模型定价 (元/1M tokens，北京时间)">
+          <div style="display: flex; gap: var(--space-sm); align-items: flex-end; flex-wrap: wrap; margin-bottom: var(--space-md);">
+            <div>
+              <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">模型名</div>
+              <NSelect v-model:value="priceForm.model" :options="priceModelOptions" filterable clearable placeholder="选择模型" size="small" style="width: 200px;" />
+            </div>
+            <div>
+              <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">生效日期</div>
+              <NInput v-model:value="priceForm.effective_date" type="date" placeholder="" size="small" style="width: 150px;" />
+            </div>
+            <div>
+              <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">峰·命中</div>
+              <NInputNumber v-model:value="priceForm.price_hit" :min="0" :precision="4" size="small" style="width: 100px;" />
+            </div>
+            <div>
+              <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">峰·未命中</div>
+              <NInputNumber v-model:value="priceForm.price_miss" :min="0" :precision="4" size="small" style="width: 100px;" />
+            </div>
+            <div>
+              <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">峰·生成</div>
+              <NInputNumber v-model:value="priceForm.price_output" :min="0" :precision="4" size="small" style="width: 100px;" />
+            </div>
+            <div>
+              <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">谷·命中</div>
+              <NInputNumber v-model:value="priceForm.price_hit_off" :min="0" :precision="4" size="small" style="width: 100px;" />
+            </div>
+            <div>
+              <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">谷·未命中</div>
+              <NInputNumber v-model:value="priceForm.price_miss_off" :min="0" :precision="4" size="small" style="width: 100px;" />
+            </div>
+            <div>
+              <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">谷·生成</div>
+              <NInputNumber v-model:value="priceForm.price_output_off" :min="0" :precision="4" size="small" style="width: 100px;" />
+            </div>
+            <div>
+              <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">峰时段</div>
+              <NInput v-model:value="priceForm.peak_segments" placeholder="08:30-12:00,14:00-17:00 留空=全天谷" size="small" style="width: 230px;" />
+            </div>
+            <NButton size="small" type="primary" :loading="priceSaving" @click="savePrice">{{ priceEditingId ? '更新' : '保存' }}</NButton>
+            <NButton v-if="priceEditingId" size="small" @click="cancelEditPrice">取消</NButton>
+          </div>
+          <div style="font-size: 11px; color: var(--color-text-muted); margin-bottom: var(--space-sm);">
+            峰时段格式：HH:MM-HH:MM，多段用英文逗号分隔；峰段内用峰价，其余用谷价（段开始含、结束不含）；全部按北京时间判定。
+          </div>
+          <div v-if="priceRows.length" style="display: flex; flex-direction: column; gap: 4px;">
+            <div v-for="p in priceRows" :key="p.id" style="display: flex; align-items: center; gap: var(--space-sm); font-size: 13px; padding: 4px 0; border-top: 1px solid var(--color-border);">
+              <span style="font-weight: 500; min-width: 150px;">{{ p.model }}</span>
+              <NTag size="tiny">{{ p.effective_date }}</NTag>
+              <span style="color: var(--color-text-secondary);">峰 {{ p.price_hit }}/{{ p.price_miss }}/{{ p.price_output }}</span>
+              <span style="color: var(--color-text-secondary);">谷 {{ p.price_hit_off }}/{{ p.price_miss_off }}/{{ p.price_output_off }}</span>
+              <span style="color: var(--color-text-secondary);">{{ fmtPeakSegments(p.peak_segments) }}</span>
+              <NButton size="tiny" quaternary style="margin-left: auto;" @click="editPrice(p)">编辑</NButton>
+              <NButton size="tiny" quaternary type="error" @click="deletePrice(p.id)">删除</NButton>
+            </div>
+          </div>
+          <NEmpty v-else description="暂无定价记录，请先添加" />
+        </NCard>
       </div>
 
       <!-- 钻取弹层：点击饼图扇形查看该分组三维度占比 -->

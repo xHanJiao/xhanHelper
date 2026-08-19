@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"xhan-helper/internal/llmcost"
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
@@ -18,6 +19,7 @@ type CostRoutesConfig struct {
 	AuthMiddleware  gin.HandlerFunc
 	AdminMiddleware gin.HandlerFunc
 	Repo            *service.LlmCostRepo
+	PriceRepo       *service.LlmPriceRepo
 }
 
 // RegisterCostRoutes 注册成本统计 API 路由（Admin）
@@ -27,19 +29,26 @@ func RegisterCostRoutes(rc CostRoutesConfig) {
 	{
 		cost := admin.Group("/cost")
 		{
-			h := &CostHandler{repo: rc.Repo}
+			h := &CostHandler{repo: rc.Repo, priceRepo: rc.PriceRepo}
 			cost.GET("/stats", h.Stats)
 			cost.GET("/summary", h.Summary)
 			cost.GET("/details", h.Details)
 			cost.GET("/categories", h.Categories)
 			cost.GET("/users", h.Users)
+			cost.GET("/models", h.Models)
+			cost.GET("/expense", h.Expense)
+			cost.GET("/hourly", h.Hourly)
+			cost.GET("/prices", h.Prices)
+			cost.POST("/prices", h.SavePrice)
+			cost.DELETE("/prices/:id", h.DeletePrice)
 		}
 	}
 }
 
 // CostHandler LLM 成本统计
 type CostHandler struct {
-	repo *service.LlmCostRepo
+	repo      *service.LlmCostRepo
+	priceRepo *service.LlmPriceRepo
 }
 
 // queryUserIDs 解析多选用户参数（?user_id=a&user_id=b）
@@ -155,4 +164,122 @@ func (h *CostHandler) Users(c *gin.Context) {
 		users = []service.UserCostSummary{}
 	}
 	view.JSONOK(c, users)
+}
+
+// Models GET /api/admin/cost/models — 模型下拉列表（定价表单用）
+func (h *CostHandler) Models(c *gin.Context) {
+	models, err := h.repo.ListModels(c.Request.Context())
+	if err != nil {
+		log.Printf("[cost] models error: %v", err)
+		view.JSONError(c, 500, "query cost models failed")
+		return
+	}
+	view.JSONOK(c, models)
+}
+
+// Expense GET /api/admin/cost/expense — 花销聚合（每日/分类/模型，按价格表折算）
+func (h *CostHandler) Expense(c *gin.Context) {
+	prices, err := h.priceRepo.List(c.Request.Context())
+	if err != nil {
+		log.Printf("[cost] expense prices error: %v", err)
+		view.JSONError(c, 500, "query model prices failed")
+		return
+	}
+	res, err := h.repo.ExpenseQuery(c.Request.Context(), service.QueryParams{
+		Start:    c.Query("start"),
+		End:      c.Query("end"),
+		UserIDs:  queryUserIDs(c),
+		Category: c.Query("category"),
+	}, prices)
+	if err != nil {
+		log.Printf("[cost] expense error: %v", err)
+		view.JSONError(c, 500, "query cost expense failed")
+		return
+	}
+	view.JSONOK(c, res)
+}
+
+// Hourly GET /api/admin/cost/hourly — 单日分时（24 小时）token 与花销
+func (h *CostHandler) Hourly(c *gin.Context) {
+	date := c.Query("date")
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		view.JSONError(c, 400, "date required, format YYYY-MM-DD")
+		return
+	}
+	prices, err := h.priceRepo.List(c.Request.Context())
+	if err != nil {
+		log.Printf("[cost] hourly prices error: %v", err)
+		view.JSONError(c, 500, "query model prices failed")
+		return
+	}
+	res, err := h.repo.HourlyQuery(c.Request.Context(), date, service.QueryParams{
+		UserIDs:  queryUserIDs(c),
+		Category: c.Query("category"),
+	}, prices)
+	if err != nil {
+		log.Printf("[cost] hourly error: %v", err)
+		view.JSONError(c, 500, "query cost hourly failed")
+		return
+	}
+	view.JSONOK(c, res)
+}
+
+// Prices GET /api/admin/cost/prices — 价格记录列表
+func (h *CostHandler) Prices(c *gin.Context) {
+	rows, err := h.priceRepo.List(c.Request.Context())
+	if err != nil {
+		log.Printf("[cost] prices error: %v", err)
+		view.JSONError(c, 500, "query model prices failed")
+		return
+	}
+	view.JSONOK(c, rows)
+}
+
+// SavePrice POST /api/admin/cost/prices — 新增/更新价格（同模型同日期覆盖）
+func (h *CostHandler) SavePrice(c *gin.Context) {
+	var p model.LlmModelPrice
+	if err := c.ShouldBindJSON(&p); err != nil {
+		view.JSONError(c, 400, "invalid price payload: "+err.Error())
+		return
+	}
+	if p.Model == "" {
+		view.JSONError(c, 400, "model required")
+		return
+	}
+	if _, err := time.Parse("2006-01-02", p.EffectiveDate); err != nil {
+		view.JSONError(c, 400, "effective_date must be YYYY-MM-DD")
+		return
+	}
+	if p.PriceHit < 0 || p.PriceMiss < 0 || p.PriceOutput < 0 ||
+		p.PriceHitOff < 0 || p.PriceMissOff < 0 || p.PriceOutputOff < 0 {
+		view.JSONError(c, 400, "prices must be >= 0")
+		return
+	}
+	norm, err := service.NormalizePeakSegments(p.PeakSegments)
+	if err != nil {
+		view.JSONError(c, 400, "peak_segments: "+err.Error())
+		return
+	}
+	p.PeakSegments = norm
+	if err := h.priceRepo.Save(c.Request.Context(), &p); err != nil {
+		log.Printf("[cost] save price error: %v", err)
+		view.JSONError(c, 500, "save model price failed")
+		return
+	}
+	view.JSONOK(c, p)
+}
+
+// DeletePrice DELETE /api/admin/cost/prices/:id — 删除价格记录
+func (h *CostHandler) DeletePrice(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		view.JSONError(c, 400, "invalid price id")
+		return
+	}
+	if err := h.priceRepo.Delete(c.Request.Context(), uint(id)); err != nil {
+		log.Printf("[cost] delete price error: %v", err)
+		view.JSONError(c, 500, "delete model price failed")
+		return
+	}
+	view.JSONOK(c, gin.H{"deleted": id})
 }

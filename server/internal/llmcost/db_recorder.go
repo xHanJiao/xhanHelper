@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
@@ -45,7 +46,7 @@ func (r *DBRecorder) Close() {
 func (r *DBRecorder) worker() {
 	for record := range r.ch {
 		detail := &model.LlmCostDetail{
-			Date:                  record.Date.Format("2006-01-02"),
+			Date:                  record.Date.In(config.BJ).Format("2006-01-02"),
 			UserID:                record.UserID,
 			Category:              record.Category,
 			SubCategory:           record.SubCategory,

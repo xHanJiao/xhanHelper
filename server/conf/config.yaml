@@ -1,6 +1,6 @@
 server:
   port: 8080
-  mode: debug          # debug | release
+  mode: debug # debug | release
   registration_enabled: false
   token_ttl_minutes: 2880 # token 过期时间（分钟），心跳续期保持登录态，关闭页面后快速过期
   max_tokens_per_user: 4 # 同一用户最多同时存在的 token 数，超出踢最老的
@@ -12,7 +12,7 @@ server:
     - ${ALLOWED_USER}
 
 db:
-  driver: mysql         # mysql | sqlite
+  driver: mysql # mysql | sqlite
   host: 127.0.0.1
   port: 3306
   database: xhan_helper
@@ -30,24 +30,36 @@ llm:
   default_max_tokens: 30000
   max_iterations: 80
   max_tool_result_chars: -1
-  tool_max_concurrency: 2         # 工具并发执行上限，0=不限制
-  extract_msg_limit: 50            # 记忆提取每次最多取的消息数
-  use_native_fc: true              # 是否使用原生 function calling（默认 true）
-  client_tool_timeout_secs: 120    # 客户端工具执行超时秒数（默认 120：覆盖 L3 审批 60s + 执行余量），
-  debug_persist_json: false        # 是否持久化完整 LLM 请求 JSON 到 DB（异步限频写入，prod 可开启，配 debug_json 控制频率与保留）
+  tool_max_concurrency: 2 # 工具并发执行上限，0=不限制
+  extract_msg_limit: 50 # 记忆提取每次最多取的消息数
+  use_native_fc: true # 是否使用原生 function calling（默认 true）
+  client_tool_timeout_secs: 120 # 客户端工具执行超时秒数（默认 120：覆盖 L3 审批 60s + 执行余量），
+  debug_persist_json: false # 是否持久化完整 LLM 请求 JSON 到 DB（异步限频写入，prod 可开启，配 debug_json 控制频率与保留）
   debug_json:
-    retention_days: 3               # request_json 保留天数，超出后定时清理
-    flush_interval_ms: 1000         # 异步刷盘间隔毫秒
-    max_bytes_per_flush: 2097152    # 每批字节预算（2MB/批，限频核心，实测吞吐 ~111MB/s 的 ~2%）
-    max_payload_bytes: 1048576      # 单条 payload 上限，超限丢弃（1MB）
-    queue_max_entries: 2048         # 排队条数上限
-    queue_max_bytes: 67108864       # 排队字节上限（64MB，防 2G 内存被打爆）
-    cleanup_interval_hours: 6       # 保留清理周期
-    cleanup_batch_rows: 500         # 清理每批行数
+    retention_days: 3 # request_json 保留天数，超出后定时清理
+    flush_interval_ms: 1000 # 异步刷盘间隔毫秒
+    max_bytes_per_flush: 2097152 # 每批字节预算（2MB/批，限频核心，实测吞吐 ~111MB/s 的 ~2%）
+    max_payload_bytes: 1048576 # 单条 payload 上限，超限丢弃（1MB）
+    queue_max_entries: 2048 # 排队条数上限
+    queue_max_bytes: 67108864 # 排队字节上限（64MB，防 2G 内存被打爆）
+    cleanup_interval_hours: 6 # 保留清理周期
+    cleanup_batch_rows: 500 # 清理每批行数
   verification:
     enabled: false
-    model: flash               # flash | pro，检验用模型
-    max_retries: 1             # 最多重检验次数
+    model: flash # flash | pro，检验用模型
+    max_retries: 1 # 最多重检验次数
+
+# 后台任务专用 LLM（记忆提取/摘要/画像/主题/反思/任务/提醒等异步链路）。
+# model 留空 = 未启用，自动复用上方 llm 配置（行为与以前完全一致）。
+# 启用后：在线聊天仍走 llm，所有后台 LLM 调用走此供应商。
+llm_bg:
+  api_key: ${LLM_BG_API_KEY}
+  provider: deepseek # 填 deepseek（OpenAI 兼容协议族，硅基流动走此分支）
+  model: "deepseek-ai/DeepSeek-V4-Flash"
+  strong_model: "deepseek-ai/DeepSeek-V4-Pro"
+  base_url: https://api.siliconflow.cn/v1
+  http_timeout_secs: 120
+  strong_http_timeout_secs: 600
 
 embedding:
   enable_history_search: false
@@ -61,31 +73,31 @@ snowflake:
 
 chat:
   history_rounds: 10
-  recent_user_msgs: 3          # 新窗口注入 system prompt 的最近用户消息条数（不重放完整轮）
-  max_summary_rounds: 5       # 单次摘要最多覆盖的 user message 条数，N/2, 目前无用
-  max_window_rounds: 800     # 扩张窗口上限轮数（agent 复杂任务需要长上下文；缓存命中后成本可控）
-  session_gap_minutes: 15     # session 间隔阈值（分钟），超过则重置窗口
-  summary_attach_count: 1           # 摘要附着条数上限
-  summary_attach_max_days: 3        # 摘要附着时间窗口（天）
-  summary_relevance_threshold: 0.5  # 摘要相关性余弦相似度阈值
-  summary_relevance_history_n: 5    # 相关性检查的历史消息窗口大小
-  summary_dedup_threshold: 0.85     # 摘要附着去重阈值（相邻摘要更相似则丢弃较旧者）
-  tool_excludes: [mailbox]          # 对 LLM 隐藏的工具名（控 token 成本，使用频率低的冷门工具）
+  recent_user_msgs: 3 # 新窗口注入 system prompt 的最近用户消息条数（不重放完整轮）
+  max_summary_rounds: 5 # 单次摘要最多覆盖的 user message 条数，N/2, 目前无用
+  max_window_rounds: 800 # 扩张窗口上限轮数（agent 复杂任务需要长上下文；缓存命中后成本可控）
+  session_gap_minutes: 15 # session 间隔阈值（分钟），超过则重置窗口
+  summary_attach_count: 1 # 摘要附着条数上限
+  summary_attach_max_days: 3 # 摘要附着时间窗口（天）
+  summary_relevance_threshold: 0.5 # 摘要相关性余弦相似度阈值
+  summary_relevance_history_n: 5 # 相关性检查的历史消息窗口大小
+  summary_dedup_threshold: 0.85 # 摘要附着去重阈值（相邻摘要更相似则丢弃较旧者）
+  tool_excludes: [mailbox] # 对 LLM 隐藏的工具名（控 token 成本，使用频率低的冷门工具）
 
 share:
   default_valid_days: 7
 
 webfetch:
-  enabled: false          # 默认关闭（token 消耗大）；启用后仅 subAgent 可见
+  enabled: false # 默认关闭（token 消耗大）；启用后仅 subAgent 可见
   timeout_seconds: 15
   max_bytes: 51200
 
 subagent:
-  explore_max_iterations: 10    # 防死循环兜底（timeout 才是真实预算）；调太多轮转不完
+  explore_max_iterations: 10 # 防死循环兜底（timeout 才是真实预算）；调太多轮转不完
   explore_timeout_seconds: 600
 
 retrieval:
-  freshness_decay: 0.02           # 时间衰减系数，作为默认值
+  freshness_decay: 0.02 # 时间衰减系数，作为默认值
   memory:
     freshness_decay: 0.01
     threshold: 0.5
@@ -101,16 +113,16 @@ retrieval:
   # 公共资源区：历史消息不再重放检索注入，资源收敛到最新消息（phase-10 任务 B）
   resource_zone:
     enabled: true
-    budget_chars: 4500        # 总预算帽（UTF-8 字符数，中文 1 字=1 ≈ 5500-7000 tokens）
-    budget_profile: 1600      # profile 预算（稳定画像层）
-    budget_summary: 500       # summary 预算
-    budget_memory: 300        # memory 预算
-    budget_note: 1000         # note 预算（note 价值最高给最多）
-    budget_topic: 200         # topic 预算
-    quota_summary: 1          # 摘要配额
-    quota_memory: 3           # 记忆配额
-    quota_note: 5            # 笔记配额
-    quota_topic: 3            # 主题配额（只收 matched）
+    budget_chars: 4500 # 总预算帽（UTF-8 字符数，中文 1 字=1 ≈ 5500-7000 tokens）
+    budget_profile: 1600 # profile 预算（稳定画像层）
+    budget_summary: 500 # summary 预算
+    budget_memory: 300 # memory 预算
+    budget_note: 1000 # note 预算（note 价值最高给最多）
+    budget_topic: 200 # topic 预算
+    quota_summary: 1 # 摘要配额
+    quota_memory: 3 # 记忆配额
+    quota_note: 5 # 笔记配额
+    quota_topic: 3 # 主题配额（只收 matched）
 
 global_default_role:
   system_prompt: |
@@ -129,4 +141,3 @@ global_default_role:
     - 不用修辞手法包装观点（比喻、排比、夸张等），陈述事实即可
     - 不替用户脑补其未提供的信息
     - 不过度结构化（不列清单分要点，除非需要用于拆解逻辑）
-

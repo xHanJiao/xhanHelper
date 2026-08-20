@@ -63,18 +63,18 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 
 	// --- Mission 子系统 ---
 	missionEmbedder := tools.MissionEmbedder
-	missionDiscoverer := agent.NewMissionDiscoverer(llmClients.Strong, agent.NewThemeStore(repos.ThemeState), repos.Mission, missionEmbedder)
+	missionDiscoverer := agent.NewMissionDiscoverer(llmClients.BgFlash, agent.NewThemeStore(repos.ThemeState), repos.Mission, missionEmbedder)
 
 	// MissionRunner 的检索工具集
 	missionRetrievalTools := map[string]tool.Tool{
 		"unified_search": unifiedSearch,
 		"get_bill_stats": tool.NewGetBillStatsTool(repos.Bill),
 	}
-	missionRunner := agent.NewMissionRunner(llmClients.Flash, repos.Mission, repos.Mailbox, missionRetrievalTools, repos.Trace)
+	missionRunner := agent.NewMissionRunner(llmClients.BgFlash, repos.Mission, repos.Mailbox, missionRetrievalTools, repos.Trace)
 
 	// --- ReflectionOrchestrator + CronRunner (先于 orch 创建) ---
 	reflectionOrch := agent.NewReflectionOrchestrator(&agent.ReflectionOrchestratorConfig{
-		FlashClient:        llmClients.Flash,
+		FlashClient:        llmClients.BgFlash,
 		ReflectionReg:      tools.ReflectionReg,
 		TraceRepo:          repos.Trace,
 		ThemeStore:         agent.NewThemeStore(repos.ThemeState),
@@ -93,12 +93,12 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		"get_bill_stats":   tool.NewGetBillStatsTool(repos.Bill),
 		"unified_search":   unifiedSearch,
 	}
-	stateUpdater := agent.NewStateUpdater(llmClients.Flash, repos.Message, repos.Conversation,
+	stateUpdater := agent.NewStateUpdater(llmClients.BgFlash, repos.Message, repos.Conversation,
 		agent.NewThemeStore(repos.ThemeState), repos.PendingFinding, infra.VectorStore, tools.ConceptEmbedService, chunkBuilder,
 		retrievalTools, repos.Trace)
 	// --- Summary 子系统 ---
 	summaryWorker := agent.NewSummaryWorker(&agent.SummaryWorkerConfig{
-		FlashClient:   llmClients.Flash,
+		FlashClient:   llmClients.BgFlash,
 		SummaryRepo:   repos.ConversationSummary,
 		Embedder:      infra.Embedder,
 		ChunkBuilder:  chunkBuilder,
@@ -109,8 +109,8 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 
 	// --- 对话后处理组（session_end）：摘要 + 记忆提取 + 主题状态更新 + 用户画像 ---
 	profileWorker := agent.NewUserProfileWorker(&agent.UserProfileWorkerConfig{
-		FlashClient:  llmClients.Flash,
-		StrongClient: llmClients.Strong,
+		FlashClient:  llmClients.BgFlash,
+		StrongClient: llmClients.BgFlash,
 		Registry:     tools.Registry,
 		ProfileRepo:  repos.UserProfile,
 		FactRepo:     repos.UserProfileFact,

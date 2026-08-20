@@ -16,7 +16,6 @@ import (
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/controller"
-	"xhan-helper/internal/llm"
 	"xhan-helper/internal/mcp"
 	"xhan-helper/internal/middleware"
 	"xhan-helper/internal/monitor"
@@ -38,11 +37,11 @@ func RegisterMonitorSnapshots(vs *agent.VectorStore, mcpManager *mcp.Manager, co
 }
 
 // InitRouter 创建路由、注册所有 handler
-func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients llm.LLMClient, agents *AgentBundle, tools *ToolsBundle, mcpManager *mcp.Manager, vs *agent.VectorStore) *gin.Engine {
+func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, agents *AgentBundle, tools *ToolsBundle, mcpManager *mcp.Manager, vs *agent.VectorStore) *gin.Engine {
 	billHandler := controller.NewBillHandler(repos.Bill)
 	noteHandler := controller.NewNoteHandler(repos.Note)
 	memHandler := controller.NewMemoryHandler(repos.Mem, infra.VectorStore)
-	agentHandler := controller.NewAgentHandler(repos.Agent, llmClients)
+	agentHandler := controller.NewAgentHandler(repos.Agent, llmClients.BgFlash)
 	toolHandler := controller.NewToolHandler(repos.Tool)
 	promptHandler := controller.NewPromptHandler(repos.Prompt)
 	docHandler := controller.NewDocumentHandler(repos.Document)
@@ -99,7 +98,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		AdminMiddleware:        monitor.AdminOnly(cfg.Server.AdminUsers),
 	})
 
-	evalAdminHandler := controller.NewEvalAdminHandler("data/eval", llmClients, infra.Embedder)
+	evalAdminHandler := controller.NewEvalAdminHandler("data/eval", llmClients.Flash, infra.Embedder)
 	evalRunHandler := controller.NewEvalRunHandler("data/eval")
 	controller.RegisterEvalRoutes(controller.EvalRoutesConfig{
 		R:               router,

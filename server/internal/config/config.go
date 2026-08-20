@@ -24,6 +24,7 @@ type Config struct {
 	Server            ServerConfig            `yaml:"server"`
 	DB                DBConfig                `yaml:"db"`
 	LLM               LLMConfig               `yaml:"llm"`
+	LLMBg             LLMConfig               `yaml:"llm_bg"` // 后台任务专用 LLM（可选；model 为空则回退主 LLM）
 	Embedding         EmbeddingConfig         `yaml:"embedding"`
 	Reflection        ReflectionConfig        `yaml:"reflection"`
 	Retrieval         RetrievalConfig         `yaml:"retrieval"`
@@ -367,6 +368,27 @@ func merge(dst, src *Config) {
 		dst.LLM.DebugPersistJSON = src.LLM.DebugPersistJSON
 	}
 	mergeDebugJSON(&dst.LLM.DebugJSON, &src.LLM.DebugJSON)
+	if src.LLMBg.Provider != "" {
+		dst.LLMBg.Provider = src.LLMBg.Provider
+	}
+	if src.LLMBg.APIKey != "" {
+		dst.LLMBg.APIKey = src.LLMBg.APIKey
+	}
+	if src.LLMBg.Model != "" {
+		dst.LLMBg.Model = src.LLMBg.Model
+	}
+	if src.LLMBg.StrongModel != "" {
+		dst.LLMBg.StrongModel = src.LLMBg.StrongModel
+	}
+	if src.LLMBg.BaseURL != "" {
+		dst.LLMBg.BaseURL = src.LLMBg.BaseURL
+	}
+	if src.LLMBg.HTTPTimeoutSecs != 0 {
+		dst.LLMBg.HTTPTimeoutSecs = src.LLMBg.HTTPTimeoutSecs
+	}
+	if src.LLMBg.StrongHTTPTimeoutSecs != 0 {
+		dst.LLMBg.StrongHTTPTimeoutSecs = src.LLMBg.StrongHTTPTimeoutSecs
+	}
 	if src.Embedding.APIKey != "" {
 		dst.Embedding.APIKey = src.Embedding.APIKey
 	}
@@ -510,6 +532,7 @@ func setSourceWeightsDefault(w *SourceWeights, decay, threshold float64, limit i
 func resolveEnvVars(cfg *Config) {
 	cfg.DB.Password = os.ExpandEnv(cfg.DB.Password)
 	cfg.LLM.APIKey = os.ExpandEnv(cfg.LLM.APIKey)
+	cfg.LLMBg.APIKey = os.ExpandEnv(cfg.LLMBg.APIKey)
 	cfg.Embedding.APIKey = os.ExpandEnv(cfg.Embedding.APIKey)
 }
 
@@ -607,6 +630,14 @@ func validate(cfg *Config) error {
 	}
 	if cfg.LLM.StrongHTTPTimeoutSecs == 0 {
 		cfg.LLM.StrongHTTPTimeoutSecs = 600
+	}
+	if cfg.LLMBg.Model != "" {
+		if cfg.LLMBg.HTTPTimeoutSecs == 0 {
+			cfg.LLMBg.HTTPTimeoutSecs = 120
+		}
+		if cfg.LLMBg.StrongHTTPTimeoutSecs == 0 {
+			cfg.LLMBg.StrongHTTPTimeoutSecs = 600
+		}
 	}
 	if cfg.LLM.ExtractMsgLimit == 0 {
 		cfg.LLM.ExtractMsgLimit = 50

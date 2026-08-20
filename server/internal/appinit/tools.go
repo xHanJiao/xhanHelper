@@ -73,14 +73,15 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	themeStore := agent.NewThemeStore(repos.ThemeState)
 	reflectionReg := tool.NewRegistry()
 	reflectionReg.Register(tool.NewLoggingWrapper(
-		agent.NewThemeAnalyst(llmClients.Strong, retrievalTools, themeStore, repos.Trace, cfg.Reflection.AnalystMaxIterations, chunkBuilder), log.Default()))
+		agent.NewThemeAnalyst(llmClients.BgFlash, retrievalTools, themeStore, repos.Trace, cfg.Reflection.AnalystMaxIterations, chunkBuilder), log.Default()))
 	reflectionReg.Register(tool.NewLoggingWrapper(
-		agent.NewScorer(llmClients.Flash, repos.Trace), log.Default()))
+		agent.NewScorer(llmClients.BgFlash, repos.Trace), log.Default()))
 	reflectionReg.Register(tool.NewLoggingWrapper(
-		agent.NewSecretary(llmClients.Flash, repos.Trace), log.Default()))
+		agent.NewSecretary(llmClients.BgFlash, repos.Trace), log.Default()))
 
 	themeEmbedder := agent.NewThemeEmbedder(infra, repos.ConceptEmbed, repos.Embedding)
-	themeDiscoverer := agent.NewThemeDiscoverer(llmClients, infra, retrievalTools, themeStore, themeEmbedder, conceptEmbedService, repos.Trace,
+	bgClients := &app.LLMClients{Flash: llmClients.BgFlash, Strong: llmClients.BgFlash}
+	themeDiscoverer := agent.NewThemeDiscoverer(bgClients, infra, retrievalTools, themeStore, themeEmbedder, conceptEmbedService, repos.Trace,
 		cfg.Reflection.DiscoverMaxIterations, cfg.Reflection.ClusterThreshold)
 	reflectionReg.Register(tool.NewLoggingWrapper(themeDiscoverer, log.Default()))
 
@@ -92,7 +93,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 
 	// --- 内存提取器 ---
 	memExtractor := agent.NewMemoryExtractor(&agent.MemoryExtractorConfig{
-		LLMClient:     llmClients.Flash,
+		LLMClient:     llmClients.BgFlash,
 		MemRepo:       repos.Mem,
 		VectorStore:   infra.VectorStore,
 		Embedder:      infra.Embedder,
@@ -114,7 +115,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	missionEmbedder := agent.NewMissionEmbedder(infra, repos.Embedding)
 
 	reg.Register(tool.NewLoggingWrapper(
-		tool.NewReminderTool(repos.Reminder, llmClients.Flash), log.Default()))
+		tool.NewReminderTool(repos.Reminder, llmClients.BgFlash), log.Default()))
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewPlanTool(repos.ConversationPlan), log.Default()))
 

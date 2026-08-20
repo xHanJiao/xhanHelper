@@ -129,6 +129,12 @@ func TestInitLLM(t *testing.T) {
 	if clients.Strong == nil {
 		t.Error("LLMClients.Strong is nil")
 	}
+	if clients.BgFlash != clients.Flash {
+		t.Error("BgFlash should fall back to Flash when llm_bg is unset")
+	}
+	if clients.BgStrong != clients.Strong {
+		t.Error("BgStrong should fall back to Strong when llm_bg is unset")
+	}
 }
 
 func TestInitLLM_NoStrongModel(t *testing.T) {
@@ -149,6 +155,36 @@ func TestInitLLM_NoStrongModel(t *testing.T) {
 	}
 	if clients.Strong != nil {
 		t.Error("LLMClients.Strong should be nil when strong factory returns nil")
+	}
+}
+
+func TestInitLLM_BgConfigured(t *testing.T) {
+	cfg := &config.Config{
+		LLMBg: config.LLMConfig{Model: "bg-flash", StrongModel: "bg-pro"},
+	}
+	mockFlash := &mockLLMClient{modelName: "flash-mock"}
+	mockStrong := &mockLLMClient{modelName: "strong-mock"}
+
+	factory := func(cfg config.LLMConfig) (llm.LLMClient, error) {
+		return mockFlash, nil
+	}
+	strongFactory := func(cfg config.LLMConfig) (llm.LLMClient, error) {
+		return mockStrong, nil
+	}
+
+	clients := InitLLM(cfg, factory, strongFactory, nil)
+
+	if clients.BgFlash == nil {
+		t.Error("LLMClients.BgFlash is nil")
+	}
+	if clients.BgFlash == clients.Flash {
+		t.Error("BgFlash should be a separate wrapped client when llm_bg.model is set")
+	}
+	if clients.BgStrong == nil {
+		t.Error("LLMClients.BgStrong is nil")
+	}
+	if clients.BgStrong == clients.Strong {
+		t.Error("BgStrong should be a separate wrapped client when llm_bg.strong_model is set")
 	}
 }
 

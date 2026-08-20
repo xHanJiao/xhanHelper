@@ -54,6 +54,8 @@ func main() {
 	llmClients := app.InitLLM(cfg, llm.NewClient, llm.NewStrongClient, costRecorder)
 	llmClients.Flash = llmcost.WrapIOAudit(llmClients.Flash, repos.LLMCallIO)
 	llmClients.Strong = llmcost.WrapIOAudit(llmClients.Strong, repos.LLMCallIO)
+	llmClients.BgFlash = llmcost.WrapIOAudit(llmClients.BgFlash, repos.LLMCallIO)
+	llmClients.BgStrong = llmcost.WrapIOAudit(llmClients.BgStrong, repos.LLMCallIO)
 
 	// --- 工具 & Agent 系统 ---
 	tools := appinit.InitTools(cfg, repos, infra, llmClients)
@@ -82,6 +84,6 @@ func main() {
 	tools.MCPManager.StartIdleReaper(agents.BGCtx)
 
 	// --- 路由 & 服务 ---
-	router := appinit.InitRouter(cfg, repos, infra, llmClients.Flash, agents, tools, tools.MCPManager, vs)
+	router := appinit.InitRouter(cfg, repos, infra, llmClients, agents, tools, tools.MCPManager, vs)
 	appinit.Serve(cfg, router, agents.BGCancel, tools.MCPManager, agents.BGCtx)
 }

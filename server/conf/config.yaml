@@ -76,7 +76,7 @@ chat:
   recent_user_msgs: 3 # 新窗口注入 system prompt 的最近用户消息条数（不重放完整轮）
   max_summary_rounds: 5 # 单次摘要最多覆盖的 user message 条数，N/2, 目前无用
   max_window_rounds: 800 # 扩张窗口上限轮数（agent 复杂任务需要长上下文；缓存命中后成本可控）
-  session_gap_minutes: 15 # session 间隔阈值（分钟），超过则重置窗口
+  session_gap_minutes: 30 # session 间隔阈值（分钟），超过则重置窗口
   summary_attach_count: 1 # 摘要附着条数上限
   summary_attach_max_days: 3 # 摘要附着时间窗口（天）
   summary_relevance_threshold: 0.5 # 摘要相关性余弦相似度阈值

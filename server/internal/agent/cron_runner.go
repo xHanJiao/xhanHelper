@@ -38,7 +38,6 @@ type CronRunner struct {
 	sessionEndGroup   *PostChatWorkerGroup // 对话后处理组（摘要/记忆/主题）
 	sessionGapMinutes int                  // session 间隔阈值（分钟）
 	minActiveDays     int                  // 反思门控：最近 N 天内有聊天的用户才跑；<0 不过滤
-	busyConfig        *BusyPeriodConfig
 
 	// 钩子状态追踪
 	mu                sync.Mutex
@@ -85,7 +84,6 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		sessionEndGroup:   cfg.SessionEndGroup,
 		sessionGapMinutes: cfg.SessionGapMinutes,
 		minActiveDays:     cfg.MinActiveDays,
-		busyConfig:        NewDefaultBusyPeriodConfig(), // TODO 以后可以挪到cfg里
 	}
 }
 
@@ -171,8 +169,7 @@ func (cr *CronRunner) debounceSessionEndTask(t *model.DelayedTask, convID, userM
 	gapDuration := time.Duration(cr.sessionGapMinutes) * time.Minute
 
 	now := time.Now().In(config.BJ) // 统一使用北京时间
-	processAt := now.Add(gapDuration)
-	newTime := cr.busyConfig.Adjust(processAt) // 忙时规避
+	newTime := now.Add(gapDuration)
 
 	newMeta, err := json.Marshal(model.DelayedTaskMeta{ConvID: convID, LastMsgID: userMsgID})
 	if err != nil {
@@ -192,7 +189,6 @@ func (cr *CronRunner) createSessionEndTask(userID, convID, userMsgID string) {
 	gapDuration := time.Duration(cr.sessionGapMinutes) * time.Minute
 	now := time.Now().In(config.BJ) // 统一使用北京时间
 	processAt := now.Add(gapDuration)
-	processAt = cr.busyConfig.Adjust(processAt) // 忙时规避
 	job := &model.DelayedTask{
 		ID:        uuid.New().String(),
 		UserID:    userID,

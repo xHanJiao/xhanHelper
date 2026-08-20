@@ -1024,12 +1024,12 @@ func TestBuildReminderPackets_DeadlineInBJ(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	repo := service.NewReminderRepo(db)
-	bj := time.Date(2026, 8, 20, 10, 30, 0, 0, config.BJ)
+	deadline := time.Now().Add(2 * time.Hour)
 	seed := &model.Reminder{
 		ID:             "r1",
 		UserID:         "u1",
 		Content:        "开会",
-		Deadline:       bj,
+		Deadline:       deadline,
 		Status:         model.ReminderStatusPending,
 		AcknowledgedAt: model.ReminderZeroTime,
 		MentionedAt:    model.ReminderZeroTime,
@@ -1042,8 +1042,9 @@ func TestBuildReminderPackets_DeadlineInBJ(t *testing.T) {
 	if len(pkts) != 1 {
 		t.Fatalf("expected 1 packet, got %d", len(pkts))
 	}
-	if !strings.Contains(pkts[0].Text, "08-20 10:30") {
-		t.Errorf("deadline 应按北京时间注入, got %q", pkts[0].Text)
+	want := deadline.In(config.BJ).Format("01-02 15:04")
+	if !strings.Contains(pkts[0].Text, want) {
+		t.Errorf("deadline 应按北京时间注入, got %q want %q", pkts[0].Text, want)
 	}
 }
 

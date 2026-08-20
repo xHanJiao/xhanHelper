@@ -31,19 +31,10 @@ func setupTestDelayedTaskRepo(t *testing.T) (*service.DelayedTaskRepo, func()) {
 	return repo, cleanup
 }
 
-// NewEmptyBusyPeriodConfig 返回一个没有忙时段、使用 UTC 时区的配置，便于测试
-func NewEmptyBusyPeriodConfig() *BusyPeriodConfig {
-	return &BusyPeriodConfig{
-		Periods: nil, // 或空切片
-		Loc:     time.UTC,
-	}
-}
-
 func newTestCronRunner(repo *service.DelayedTaskRepo) *CronRunner {
 	return &CronRunner{
 		delayedTaskRepo:   repo,
 		sessionGapMinutes: 15,
-		busyConfig:        NewEmptyBusyPeriodConfig(),
 	}
 }
 

@@ -63,6 +63,11 @@ func queryUserIDs(c *gin.Context) []string {
 	return out
 }
 
+// queryModels 解析多选模型参数（?model=a&model=b）
+func queryModels(c *gin.Context) []string {
+	return c.QueryArray("model")
+}
+
 // Stats GET /api/admin/cost/stats — 聚合查询（图表数据源）
 func (h *CostHandler) Stats(c *gin.Context) {
 	groupBy := c.Query("group_by")
@@ -76,6 +81,7 @@ func (h *CostHandler) Stats(c *gin.Context) {
 		End:      c.Query("end"),
 		UserIDs:  queryUserIDs(c),
 		Category: c.Query("category"),
+		Models:   queryModels(c),
 		GroupBy:  groupBy,
 	})
 	if err != nil {
@@ -90,24 +96,25 @@ func (h *CostHandler) Stats(c *gin.Context) {
 func (h *CostHandler) Summary(c *gin.Context) {
 	userIDs := queryUserIDs(c)
 	category := c.Query("category")
+	models := queryModels(c)
 	ctx := c.Request.Context()
 	today := time.Now().Format("2006-01-02")
 	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
 	firstOfMonth := time.Now().AddDate(0, 0, -time.Now().Day()+1).Format("2006-01-02")
 
-	todayTotal, err := h.repo.Summary(ctx, today, today, userIDs, category)
+	todayTotal, err := h.repo.Summary(ctx, today, today, userIDs, models, category)
 	if err != nil {
 		log.Printf("[cost] summary today error: %v", err)
 		view.JSONError(c, 500, "query cost summary failed")
 		return
 	}
-	yesterdayTotal, err := h.repo.Summary(ctx, yesterday, yesterday, userIDs, category)
+	yesterdayTotal, err := h.repo.Summary(ctx, yesterday, yesterday, userIDs, models, category)
 	if err != nil {
 		log.Printf("[cost] summary yesterday error: %v", err)
 		view.JSONError(c, 500, "query cost summary failed")
 		return
 	}
-	monthTotal, err := h.repo.Summary(ctx, firstOfMonth, today, userIDs, category)
+	monthTotal, err := h.repo.Summary(ctx, firstOfMonth, today, userIDs, models, category)
 	if err != nil {
 		log.Printf("[cost] summary month error: %v", err)
 		view.JSONError(c, 500, "query cost summary failed")
@@ -131,6 +138,7 @@ func (h *CostHandler) Details(c *gin.Context) {
 		End:      c.Query("end"),
 		UserIDs:  queryUserIDs(c),
 		Category: c.Query("category"),
+		Models:   queryModels(c),
 		Date:     c.Query("date"),
 	}, page, pageSize)
 	if err != nil {
@@ -190,6 +198,7 @@ func (h *CostHandler) Expense(c *gin.Context) {
 		End:      c.Query("end"),
 		UserIDs:  queryUserIDs(c),
 		Category: c.Query("category"),
+		Models:   queryModels(c),
 	}, prices)
 	if err != nil {
 		log.Printf("[cost] expense error: %v", err)
@@ -215,6 +224,7 @@ func (h *CostHandler) Hourly(c *gin.Context) {
 	res, err := h.repo.HourlyQuery(c.Request.Context(), date, service.QueryParams{
 		UserIDs:  queryUserIDs(c),
 		Category: c.Query("category"),
+		Models:   queryModels(c),
 	}, prices)
 	if err != nil {
 		log.Printf("[cost] hourly error: %v", err)

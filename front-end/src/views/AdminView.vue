@@ -173,7 +173,7 @@ watch(activeTab, (tab) => {
   if (tab === 'pending-findings' && findings.value.length === 0) fetchFindings()
   if (tab === 'cost' && !costLoaded.value) {
     costLoaded.value = true
-    fetchCostCategories(); fetchCostUsers(); fetchCostPrices(); refreshCost()
+    fetchCostCategories(); fetchCostUsers(); fetchCostModels(); fetchCostPrices(); refreshCost()
   }
 })
 onUnmounted(() => { clearInterval(timer); destroyCharts(); destroyCostCharts() })
@@ -301,9 +301,11 @@ function latSummary(s) {
 // ── Token 消耗 Tab ──
 const costRangeDays = ref(30)
 const costCategory = ref(null)
+const costModel = ref([])
 const costUsers = ref([])
 const costUserOptions = ref([])
 const costCategoryOptions = ref([])
+const costModelOptions = ref([])
 const costSummary = ref(null)
 const costLoading = ref(false)
 const costLoaded = ref(false)
@@ -414,12 +416,20 @@ async function fetchCostUsers() {
   } catch (_) {}
 }
 
+async function fetchCostModels() {
+  try {
+    const models = await api.get('/api/admin/cost/models') || []
+    costModelOptions.value = models.map(m => ({ label: m, value: m }))
+  } catch (_) {}
+}
+
 async function fetchCostSummary() {
   try {
     const ids = costUsers.value
     const params = []
     if (ids.length) params.push(...ids.map(id => `user_id=${id}`))
     if (costCategory.value) params.push(`category=${costCategory.value}`)
+    if (costModel.value.length) params.push(...costModel.value.map(m => `model=${m}`))
     const qs = params.length ? '?' + params.join('&') : ''
     costSummary.value = await api.get('/api/admin/cost/summary' + qs)
   } catch (_) {}
@@ -429,6 +439,7 @@ async function fetchCostStats(groupBy) {
   const { start, end } = effectiveRange()
   const params = [`start=${start}`, `end=${end}`, `group_by=${groupBy}`]
   if (costCategory.value) params.push(`category=${costCategory.value}`)
+  if (costModel.value.length) params.push(...costModel.value.map(m => `model=${m}`))
   if (costUsers.value.length) params.push(...costUsers.value.map(id => `user_id=${id}`))
   const res = await api.get('/api/admin/cost/stats?' + params.join('&'))
   return res || { total: {}, groups: [] }
@@ -555,6 +566,7 @@ async function fetchCostExpense() {
   const { start, end } = effectiveRange()
   const params = [`start=${start}`, `end=${end}`]
   if (costCategory.value) params.push(`category=${costCategory.value}`)
+  if (costModel.value.length) params.push(...costModel.value.map(m => `model=${m}`))
   if (costUsers.value.length) params.push(...costUsers.value.map(id => `user_id=${id}`))
   const res = await api.get('/api/admin/cost/expense?' + params.join('&'))
   const cur = effectiveRange()
@@ -569,6 +581,7 @@ async function fetchCostHourly() {
   if (!date) return
   const params = [`date=${date}`]
   if (costCategory.value) params.push(`category=${costCategory.value}`)
+  if (costModel.value.length) params.push(...costModel.value.map(m => `model=${m}`))
   if (costUsers.value.length) params.push(...costUsers.value.map(id => `user_id=${id}`))
   const res = await api.get('/api/admin/cost/hourly?' + params.join('&'))
   if (costSelectedDate.value !== date) return // 已切到别的日期/退出分时，丢弃陈旧响应
@@ -700,7 +713,7 @@ function hitRate(t) {
 
 // 筛选变化时刷新图表。时间范围变化时退出分时（选中日可能不在新范围）；分类/用户/维度变化保留分时。
 // 必须放在所有 cost 声明之后（const 不提升，提前引用会 TDZ 报错）
-watch([costRangeDays, costCategory, costUsers, costBarStack], ([newR], [oldR]) => {
+watch([costRangeDays, costCategory, costModel, costUsers, costBarStack], ([newR], [oldR]) => {
   if (newR !== oldR && costSelectedDate.value) costSelectedDate.value = null
   if (activeTab.value === 'cost') refreshCost()
 }, { deep: true })
@@ -1032,6 +1045,7 @@ onUnmounted(() => {
         <NSelect v-model:value="costRangeDays" :options="costRanges" size="small" style="width: 110px;" />
         <NSelect v-model:value="costUsers" :options="costUserOptions" size="small" multiple clearable style="min-width: 200px;" placeholder="全部用户" />
         <NSelect v-model:value="costCategory" :options="costCategoryOptions" size="small" clearable style="min-width: 130px;" placeholder="全部分类" />
+        <NSelect v-model:value="costModel" :options="costModelOptions" size="small" multiple clearable style="min-width: 200px;" placeholder="全部模型" />
         <div style="display: flex; gap: var(--space-sm); align-items: center; margin-left: auto;">
           <span style="font-size: 12px; color: var(--color-text-muted);">堆叠:</span>
           <NCheckbox :checked="costBarStack.hit" @update:checked="toggleBarStack('hit')">命中</NCheckbox>

@@ -170,7 +170,7 @@ func TestSummary_And_ListUsers(t *testing.T) {
 	seedCostRows(t, db)
 	repo := NewLlmCostRepo(db)
 
-	sum, err := repo.Summary(context.Background(), "2026-08-10", "2026-08-11", nil, "")
+	sum, err := repo.Summary(context.Background(), "2026-08-10", "2026-08-11", nil, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

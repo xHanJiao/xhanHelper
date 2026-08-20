@@ -42,6 +42,7 @@ type QueryParams struct {
 	End      string   // 结束日期 YYYY-MM-DD（含）
 	UserIDs  []string // 可选，多选用户；为空 = 所有用户
 	Category string   // 可选，按大类筛选
+	Models   []string // 可选，多选模型；为空 = 所有模型
 	GroupBy  string   // 分组字段：date / category / model / user_id / sub_category
 }
 
@@ -132,6 +133,9 @@ func (r *LlmCostRepo) Query(ctx context.Context, params QueryParams) (*QueryResu
 	if params.Category != "" {
 		q = q.Where("category = ?", params.Category)
 	}
+	if len(params.Models) > 0 {
+		q = q.Where("model IN ?", params.Models)
+	}
 
 	// --- 总额 ---
 	var total TokenTotal
@@ -189,6 +193,7 @@ type ListParams struct {
 	End      string
 	UserIDs  []string
 	Category string
+	Models   []string
 	Date     string // 精确日期筛选
 }
 
@@ -213,6 +218,9 @@ func (r *LlmCostRepo) ListDetails(ctx context.Context, params ListParams, page, 
 	}
 	if params.Category != "" {
 		q = q.Where("category = ?", params.Category)
+	}
+	if len(params.Models) > 0 {
+		q = q.Where("model IN ?", params.Models)
 	}
 	if params.Date != "" {
 		q = q.Where("date = ?", params.Date)
@@ -344,6 +352,9 @@ func (r *LlmCostRepo) ExpenseQuery(ctx context.Context, params QueryParams, pric
 	}
 	if params.Category != "" {
 		q = q.Where("category = ?", params.Category)
+	}
+	if len(params.Models) > 0 {
+		q = q.Where("model IN ?", params.Models)
 	}
 
 	var rows []ExpenseRow
@@ -492,6 +503,9 @@ func (r *LlmCostRepo) HourlyQuery(ctx context.Context, date string, params Query
 	if params.Category != "" {
 		q = q.Where("category = ?", params.Category)
 	}
+	if len(params.Models) > 0 {
+		q = q.Where("model IN ?", params.Models)
+	}
 
 	var rows []ExpenseRow
 	if err := q.Select("date, model, category, created_at," +
@@ -599,7 +613,7 @@ func (r *LlmCostRepo) ListUsers(ctx context.Context, start, end string) ([]UserC
 }
 
 // Summary 返回时间段内的汇总（不含分组）
-func (r *LlmCostRepo) Summary(ctx context.Context, start, end string, userIDs []string, category string) (*TokenTotal, error) {
+func (r *LlmCostRepo) Summary(ctx context.Context, start, end string, userIDs, models []string, category string) (*TokenTotal, error) {
 	q := r.db.WithContext(ctx).Model(&model.LlmCostDetail{})
 	if start != "" {
 		q = q.Where("date >= ?", start)
@@ -612,6 +626,9 @@ func (r *LlmCostRepo) Summary(ctx context.Context, start, end string, userIDs []
 	}
 	if category != "" {
 		q = q.Where("category = ?", category)
+	}
+	if len(models) > 0 {
+		q = q.Where("model IN ?", models)
 	}
 	var total TokenTotal
 	if err := q.Select(tokenSelectCols).Scan(&total).Error; err != nil {

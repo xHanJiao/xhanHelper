@@ -143,7 +143,7 @@ func (c *baseClient) callStreamAPI(ctx context.Context, req *ChatRequest, model 
 		if err != nil {
 			return nil, fmt.Errorf("stream status %d (failed to read body: %v)", resp.StatusCode, err)
 		}
-		return nil, fmt.Errorf("stream status %d: %s", resp.StatusCode, string(body[:min(1000, len(body))]))
+		return nil, &StatusError{Code: resp.StatusCode, Body: string(body[:min(1000, len(body))])}
 	}
 
 	events := make(chan *StreamEvent, 512)
@@ -401,7 +401,7 @@ func (c *baseClient) callSyncAPI(ctx context.Context, req *ChatRequest, model st
 		return Message{}, fmt.Errorf("sync read body: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		return Message{}, fmt.Errorf("sync status %d: %s", resp.StatusCode, string(body[:min(1000, len(body))]))
+		return Message{}, &StatusError{Code: resp.StatusCode, Body: string(body[:min(1000, len(body))])}
 	}
 
 	respJSONStr := string(body)
@@ -492,7 +492,7 @@ func (c *baseClient) chatWithRawJSON(ctx context.Context, requestBody json.RawMe
 		return Message{}, fmt.Errorf("raw read body: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		return Message{}, fmt.Errorf("raw status %d: %s", resp.StatusCode, string(body[:min(1000, len(body))]))
+		return Message{}, &StatusError{Code: resp.StatusCode, Body: string(body[:min(1000, len(body))])}
 	}
 
 	respStr := string(body)

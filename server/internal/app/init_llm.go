@@ -39,10 +39,12 @@ func InitLLM(cfg *config.Config, newClient, newStrongClient LLMClientFactory, co
 		}
 		bgFlash = monitor.WrapLLMClient(bgClient, "background/flash")
 		bgFlash = llmcost.WrapLLMClient(bgFlash, costRecorder)
+		bgFlash = llm.WrapRetry(bgFlash)
 
 		if bgStrongClient, _ := newStrongClient(cfg.LLMBg); bgStrongClient != nil {
 			bgStrong = monitor.WrapLLMClient(bgStrongClient, "background/pro")
 			bgStrong = llmcost.WrapLLMClient(bgStrong, costRecorder)
+			bgStrong = llm.WrapRetry(bgStrong)
 		}
 	}
 

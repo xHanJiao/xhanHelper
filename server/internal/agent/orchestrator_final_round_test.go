@@ -220,10 +220,29 @@ func TestMkLlmChatReq_PlanMode_NoTools(t *testing.T) {
 	msgs := []llm.Message{{Role: "user", Content: "hi"}}
 	clientTools := []ClientTool{{ServerName: "browser", Name: "navigate"}}
 
-	// work 模式：常驻 expose_tools + 客户端工具都下发
+	// work 模式：常驻 expose_tools；客户端工具不再无条件下发（需先 expose_tools.enable）
 	work := o.mkLlmChatReq(&RunRequest{UserID: "u1", Mode: model.ConvModeWork, ClientTools: clientTools}, "sys", &reactState{msgs: msgs})
 	if len(work.Tools) == 0 {
 		t.Error("work 模式应下发工具定义")
+	}
+	for _, d := range work.Tools {
+		if d.Name == "browser" {
+			t.Error("browser 未暴露时不应下发")
+		}
+	}
+	// 暴露 browser.navigate 后：browser def 只含 navigate
+	exposed := o.mkLlmChatReq(&RunRequest{UserID: "u1", Mode: model.ConvModeWork, ClientTools: clientTools}, "sys",
+		&reactState{msgs: msgs, exposedTools: map[string]bool{"browser.navigate": true}})
+	var browser *llm.ToolDefinition
+	for i := range exposed.Tools {
+		if exposed.Tools[i].Name == "browser" {
+			browser = &exposed.Tools[i]
+		}
+	}
+	if browser == nil {
+		t.Error("暴露后应下发 browser def")
+	} else if len(browser.Functions) != 1 || browser.Functions[0].Name != "navigate" {
+		t.Errorf("browser 应只含 navigate, got %+v", browser.Functions)
 	}
 	// plan 模式：工具全隐藏（服务端 + 客户端都不下发）
 	plan := o.mkLlmChatReq(&RunRequest{UserID: "u1", Mode: model.ConvModePlan, ClientTools: clientTools}, "sys", &reactState{msgs: msgs})

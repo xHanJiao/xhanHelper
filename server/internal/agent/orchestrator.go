@@ -332,15 +332,23 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 		historyEmbeddings = o.embedHistoryUserMessages(req.Messages, 10)
 	}
 
-	log.Printf("[orch] run start: model=%s, msgs=%d", o.pickClient(req).ModelName(), len(req.Messages))
+	log.Printf("[orch] run start: model=%s, msgs=%d, client_tools=%d", o.pickClient(req).ModelName(), len(req.Messages), len(req.ClientTools))
 
 	// 1. 静态 system prompt + 稳定上下文（画像+摘要，会话内字节稳定）
+	// 客户端工具目录：native FC 且非 plan 模式时生成（客户端工具经 expose_tools 渐进暴露，
+	// 不再无条件下发；目录并入「工具使用」段，是 LLM 发现客户端工具的唯一渠道）。
+	// prompt-eng 模式本就不支持客户端工具，目录留空。
+	clientCatalog := ""
+	if o.useNativeFC && req.Mode != model.ConvModePlan {
+		clientCatalog = clientToolCatalog(req.ClientTools, o.registry)
+	}
 	stableXML := o.buildStableContextXML(ctx, req)
 	result, err := o.systemPromptBuilder.Build(ctx, promptbuilder.BuildOptions{
-		UserID:           req.UserID,
-		AgentPrompt:      req.AgentSystemPrompt,
-		Mode:             req.Mode,
-		StableContextXML: stableXML,
+		UserID:            req.UserID,
+		AgentPrompt:       req.AgentSystemPrompt,
+		Mode:              req.Mode,
+		StableContextXML:  stableXML,
+		ClientToolCatalog: clientCatalog,
 	})
 	if err != nil {
 		log.Printf("[orch] prompt build error: %v", err)
@@ -1032,8 +1040,8 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state 
 		tools = append(tools, o.exposeToolsDefinition())
 		exposedDefs := o.registry.GetLLMToolsFiltered(exposedFuncTools(exposed))
 		tools = append(tools, filterExposedFuncDefs(exposedDefs, exposed)...)
+		tools = append(tools, filterExposedFuncDefs(buildClientToolDefs(req.ClientTools, o.registry), exposed)...)
 		tools = filterToolDefs(tools, o.toolExcludes)
-		tools = append(tools, buildClientToolDefs(req.ClientTools, o.registry)...)
 	} else if len(req.ClientTools) > 0 && !state.finalRound {
 		log.Printf("[orch] client_tools ignored: use_native_fc=false")
 	}
@@ -1630,17 +1638,22 @@ type toolExecResult struct {
 	result *tool.Result
 }
 
-// makeExposeFn 构造 expose_tools 的回调：组级校验（存在/未隐藏/未排除/非 expose_tools 自身）+
-// 函数级校验（函数名存在于该组 Functions()），合法函数写入 state.exposedTools（并发安全）。
+// makeExposeFn 构造 expose_tools 的回调：组级校验（存在/未隐藏/未排除/非 expose_tools 自身，
+// 客户端工具组按上报的 server_name 识别）+ 函数级校验（函数名存在于该组 Functions()），
+// 合法函数写入 state.exposedTools（并发安全）。
 // 组级失败以组名入 Rejected，函数级失败以 "组名.函数名" 入 Rejected。返回结果含可用组全集，供 LLM 纠正。
-func (o *Orchestrator) makeExposeFn(state *reactState) func(specs []tool.ExposeSpec) *tool.ExposeResult {
+func (o *Orchestrator) makeExposeFn(state *reactState, clientGroups map[string]map[string]bool) func(specs []tool.ExposeSpec) *tool.ExposeResult {
 	excluded := make(map[string]bool, len(o.toolExcludes))
 	for _, n := range o.toolExcludes {
 		excluded[n] = true
 	}
-	available := o.registry.VisibleToolNames()
+	available := append([]string{}, o.registry.VisibleToolNames()...)
+	for g := range clientGroups {
+		available = append(available, g)
+	}
+	sort.Strings(available)
 	return func(specs []tool.ExposeSpec) *tool.ExposeResult {
-		res := &tool.ExposeResult{Available: available}
+		res := &tool.ExposeResult{Enabled: []string{}, Rejected: []string{}, Available: available}
 		state.expMutex.Lock()
 		defer state.expMutex.Unlock()
 		for _, spec := range specs {
@@ -1648,29 +1661,42 @@ func (o *Orchestrator) makeExposeFn(state *reactState) func(specs []tool.ExposeS
 			switch {
 			case g == "expose_tools":
 				res.Rejected = append(res.Rejected, g)
-			case !o.registry.Has(g):
-				res.Rejected = append(res.Rejected, g)
-			case o.registry.IsHidden(g):
-				res.Rejected = append(res.Rejected, g)
 			case excluded[g]:
 				res.Rejected = append(res.Rejected, g)
-			default:
-				defined := make(map[string]bool)
-				for _, f := range o.registry.Get(g).Functions() {
-					defined[f.Name] = true
-				}
+			case o.registry.Has(g) && !o.registry.IsHidden(g):
+				o.exposeServerGroup(res, state, spec, g)
+			case clientGroups[g] != nil:
 				for _, fn := range spec.Functions {
 					key := g + "." + fn
-					if !defined[fn] {
+					if !clientGroups[g][fn] {
 						res.Rejected = append(res.Rejected, key)
 						continue
 					}
 					state.exposedTools[key] = true
 					res.Enabled = append(res.Enabled, key)
 				}
+			default:
+				res.Rejected = append(res.Rejected, g)
 			}
 		}
 		return res
+	}
+}
+
+// exposeServerGroup 校验并暴露一个服务端注册表工具组的函数。
+func (o *Orchestrator) exposeServerGroup(res *tool.ExposeResult, state *reactState, spec tool.ExposeSpec, g string) {
+	defined := make(map[string]bool)
+	for _, f := range o.registry.Get(g).Functions() {
+		defined[f.Name] = true
+	}
+	for _, fn := range spec.Functions {
+		key := g + "." + fn
+		if !defined[fn] {
+			res.Rejected = append(res.Rejected, key)
+			continue
+		}
+		state.exposedTools[key] = true
+		res.Enabled = append(res.Enabled, key)
 	}
 }
 
@@ -1694,6 +1720,8 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 	results := make([]toolExecResult, len(toolCalls))
 
 	var clientCallIdxs []int // 客户端工具下标，串行执行（见设计文档第五节）
+
+	clientGroups := clientToolGroupMap(clientTools)
 
 	for i, tc := range toolCalls {
 		if clientIdx[tc.Tool] {
@@ -1721,7 +1749,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 						r = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
 					}
 				}()
-				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, Mode: mode, Events: events, ClientTools: clientTools, Expose: o.makeExposeFn(state)}
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, Mode: mode, Events: events, ClientTools: clientTools, Expose: o.makeExposeFn(state, clientGroups)}
 				r = registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
 			}()
 

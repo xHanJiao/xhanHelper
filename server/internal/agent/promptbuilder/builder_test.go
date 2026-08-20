@@ -213,3 +213,58 @@ func TestBuild_StableContextInjected(t *testing.T) {
 		t.Error("StableContextXML 为空时不应出现稳定上下文段")
 	}
 }
+
+func TestBuild_ClientToolCatalogInjected(t *testing.T) {
+	reg := tool.NewRegistry()
+	b := NewPromptBuilder("base", reg, nil, true)
+	catalog := "客户端工具组（Mac 客户端在线时可用，同样按需启用：先调用 expose_tools.enable）：\n- browser: Mac 客户端本地工具（browser）\n  函数: agent_browser_open, agent_browser_click"
+
+	// work 模式：目录并入「工具使用」段
+	work, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork, ClientToolCatalog: catalog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sectionIdx := strings.Index(work.Prompt, "## 工具使用")
+	catalogIdx := strings.Index(work.Prompt, "客户端工具组")
+	stableIdx := strings.Index(work.Prompt, "## 稳定上下文")
+	if sectionIdx < 0 || catalogIdx < 0 {
+		t.Fatal("work 模式应包含工具使用段与客户端目录")
+	}
+	if catalogIdx < sectionIdx {
+		t.Error("客户端目录应位于工具使用段之内")
+	}
+	if stableIdx >= 0 && catalogIdx > stableIdx {
+		t.Error("客户端目录应位于稳定上下文段之前（在工具使用段内）")
+	}
+	if !strings.Contains(work.Prompt, "agent_browser_open") {
+		t.Error("客户端目录应包含函数名")
+	}
+
+	// 目录为空 → 不注入
+	empty, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(empty.Prompt, "客户端工具组") {
+		t.Error("ClientToolCatalog 为空时不应出现客户端目录")
+	}
+
+	// plan 模式：目录不注入（无工具声明替换）
+	plan, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModePlan, ClientToolCatalog: catalog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plan.Prompt, "客户端工具组") || strings.Contains(plan.Prompt, "agent_browser_open") {
+		t.Error("plan 模式不应注入客户端目录")
+	}
+
+	// prompt-eng 模式：目录不注入（无 tool_catalog provider）
+	b3 := NewPromptBuilder("base", reg, nil, false)
+	pe, err := b3.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork, ClientToolCatalog: catalog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(pe.Prompt, "客户端工具组") {
+		t.Error("prompt-eng 模式不应注入客户端目录")
+	}
+}

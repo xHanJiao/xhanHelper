@@ -154,6 +154,29 @@ func TestBuildClientToolDefs_Sorted(t *testing.T) {
 	}
 }
 
+func TestClientToolCatalog(t *testing.T) {
+	reg := tool.NewRegistry()
+	if got := clientToolCatalog(nil, reg); got != "" {
+		t.Errorf("nil client tools should give empty catalog, got %q", got)
+	}
+	ct := []ClientTool{
+		{ServerName: "browser", Name: "navigate", Description: "nav"},
+		{ServerName: "browser", Name: "click", Description: "click"},
+	}
+	got := clientToolCatalog(ct, reg)
+	if !strings.Contains(got, "browser") || !strings.Contains(got, "navigate") || !strings.Contains(got, "click") {
+		t.Errorf("catalog should list group and function names, got %q", got)
+	}
+	if got2 := clientToolCatalog(ct, reg); got != got2 {
+		t.Error("catalog 两次调用应字节一致")
+	}
+	// 与 registry 冲突的客户端组被 buildClientToolDefs 跳过，目录为空
+	reg.Register(&fakeTool{name: "browser"})
+	if got := clientToolCatalog(ct, reg); got != "" {
+		t.Errorf("conflicting client group should not appear in catalog, got %q", got)
+	}
+}
+
 func TestNormalizeClientToolData(t *testing.T) {
 	// 合法 JSON 原样透传
 	valid := json.RawMessage(`{"ok":1}`)

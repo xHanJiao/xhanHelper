@@ -185,7 +185,7 @@ func TestExposure_MakeExposeFn_Validates(t *testing.T) {
 		toolExcludes: []string{"bookkeeping"},
 	}
 	state := &reactState{exposedTools: map[string]bool{}}
-	fn := o.makeExposeFn(state)
+	fn := o.makeExposeFn(state, nil)
 
 	res := fn([]tool.ExposeSpec{
 		{Tool: "note", Functions: []string{"record_note"}},
@@ -219,7 +219,7 @@ func TestExposure_MakeExposeFn_RejectsUnknownFunc(t *testing.T) {
 	reg.Register(&mockExposeTool{}) // note: record_note
 	o := &Orchestrator{registry: reg, useNativeFC: true}
 	state := &reactState{exposedTools: map[string]bool{}}
-	fn := o.makeExposeFn(state)
+	fn := o.makeExposeFn(state, nil)
 
 	res := fn([]tool.ExposeSpec{{Tool: "note", Functions: []string{"record_note", "bogus"}}})
 	if len(res.Enabled) != 1 || res.Enabled[0] != "note.record_note" {
@@ -239,6 +239,109 @@ func TestExposure_MakeExposeFn_RejectsUnknownFunc(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected note.bogus rejected, got %v", res.Rejected)
+	}
+}
+
+func TestExposure_MakeExposeFn_ClientTools(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&mockExposeTool{}) // note: record_note
+	o := &Orchestrator{registry: reg, useNativeFC: true}
+	state := &reactState{exposedTools: map[string]bool{}}
+	clientGroups := map[string]map[string]bool{
+		"browser": {"navigate": true, "click": true},
+	}
+	fn := o.makeExposeFn(state, clientGroups)
+
+	res := fn([]tool.ExposeSpec{
+		{Tool: "browser", Functions: []string{"navigate", "bogus"}},
+	})
+	if len(res.Enabled) != 1 || res.Enabled[0] != "browser.navigate" {
+		t.Errorf("Enabled: want [browser.navigate], got %v", res.Enabled)
+	}
+	if !state.exposedTools["browser.navigate"] || state.exposedTools["browser.bogus"] {
+		t.Error("browser.navigate should be exposed, browser.bogus must not")
+	}
+	found := false
+	for _, r := range res.Rejected {
+		if r == "browser.bogus" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected browser.bogus rejected, got %v", res.Rejected)
+	}
+	found = false
+	for _, a := range res.Available {
+		if a == "browser" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected browser in Available, got %v", res.Available)
+	}
+}
+
+func TestExposure_MakeExposeFn_ClientToolsExcluded(t *testing.T) {
+	reg := tool.NewRegistry()
+	o := &Orchestrator{registry: reg, toolExcludes: []string{"browser"}, useNativeFC: true}
+	state := &reactState{exposedTools: map[string]bool{}}
+	clientGroups := map[string]map[string]bool{"browser": {"navigate": true}}
+	fn := o.makeExposeFn(state, clientGroups)
+
+	res := fn([]tool.ExposeSpec{{Tool: "browser", Functions: []string{"navigate"}}})
+	if len(res.Enabled) != 0 {
+		t.Errorf("excluded client group must not be enabled, got %v", res.Enabled)
+	}
+	if state.exposedTools["browser.navigate"] {
+		t.Error("excluded client group must not be exposed")
+	}
+	rejected := false
+	for _, r := range res.Rejected {
+		if r == "browser" {
+			rejected = true
+		}
+	}
+	if !rejected {
+		t.Errorf("expected browser rejected, got %v", res.Rejected)
+	}
+}
+
+func TestExposure_MkLlmChatReq_ClientToolsExposed(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&mockExposeTool{}) // note: record_note
+	o := &Orchestrator{
+		contextFormatter: &mockFormatter{},
+		registry:         reg,
+		useNativeFC:      true,
+	}
+	clientTools := []ClientTool{
+		{ServerName: "browser", Name: "navigate", Description: "nav"},
+		{ServerName: "browser", Name: "click", Description: "click"},
+	}
+	req := &RunRequest{UserID: "u1", ClientTools: clientTools}
+
+	// 未暴露：无客户端 def
+	cr := o.mkLlmChatReq(req, "sys", &reactState{msgs: []llm.Message{}})
+	for _, d := range cr.Tools {
+		if d.Name == "browser" {
+			t.Error("browser must not be injected before exposure")
+		}
+	}
+
+	// 只暴露 navigate：browser def 只含 navigate
+	state := &reactState{msgs: []llm.Message{}, exposedTools: map[string]bool{"browser.navigate": true}}
+	cr = o.mkLlmChatReq(req, "sys", state)
+	var browser *llm.ToolDefinition
+	for i := range cr.Tools {
+		if cr.Tools[i].Name == "browser" {
+			browser = &cr.Tools[i]
+		}
+	}
+	if browser == nil {
+		t.Fatalf("browser def should be injected after exposure, tools: %v", toolNames(cr.Tools))
+	}
+	if len(browser.Functions) != 1 || browser.Functions[0].Name != "navigate" {
+		t.Errorf("browser should expose only navigate, got %+v", browser.Functions)
 	}
 }
 

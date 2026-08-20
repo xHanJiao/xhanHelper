@@ -80,6 +80,11 @@ func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildRes
 			continue
 		case plan && sp.Name() == "tool_catalog":
 			section = planModeNoToolsNotice
+		case sp.Name() == "tool_catalog":
+			section = sp.Render(ctx)
+			if opts.ClientToolCatalog != "" {
+				section += "\n" + opts.ClientToolCatalog
+			}
 		default:
 			section = sp.Render(ctx)
 		}

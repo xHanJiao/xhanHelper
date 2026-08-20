@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -128,6 +129,47 @@ func clientToolIndex(clientTools []ClientTool, registry *tool.Registry) map[stri
 		idx[d.Name] = true
 	}
 	return idx
+}
+
+// clientToolGroupMap 构建 server_name → 函数名集合 索引（makeExposeFn 校验用）。
+// 用原始上报数据即可：buildClientToolDefs 会拒绝的非法条目（__ 分隔符/与 registry 冲突），
+// 即使被暴露，filterExposedFuncDefs 也匹配不到定义，自然不注入——无害发散，不额外校验。
+func clientToolGroupMap(infos []tool.ClientToolInfo) map[string]map[string]bool {
+	if len(infos) == 0 {
+		return nil
+	}
+	m := make(map[string]map[string]bool)
+	for _, ct := range infos {
+		if ct.ServerName == "" || ct.Name == "" {
+			continue
+		}
+		if m[ct.ServerName] == nil {
+			m[ct.ServerName] = make(map[string]bool)
+		}
+		m[ct.ServerName][ct.Name] = true
+	}
+	return m
+}
+
+// clientToolCatalog 生成客户端工具目录文本（组名+描述+函数名，无 schema）。
+// 复用 buildClientToolDefs 的校验/排序，保证目录与可注入定义一致、字节稳定。
+// 客户端工具不再无条件下发后，这是 LLM 发现客户端工具的唯一渠道。defs 为空返回 ""。
+func clientToolCatalog(clientTools []ClientTool, registry *tool.Registry) string {
+	defs := buildClientToolDefs(clientTools, registry)
+	if len(defs) == 0 {
+		return ""
+	}
+	var buf bytes.Buffer
+	buf.WriteString("客户端工具组（Mac 客户端在线时可用，同样按需启用：先调用 expose_tools.enable，启用后下一轮即可直接调用）：\n")
+	for _, d := range defs {
+		buf.WriteString(fmt.Sprintf("- %s: %s\n", d.Name, d.Description))
+		names := make([]string, len(d.Functions))
+		for i, f := range d.Functions {
+			names[i] = f.Name
+		}
+		buf.WriteString(fmt.Sprintf("  函数: %s\n", strings.Join(names, ", ")))
+	}
+	return buf.String()
 }
 
 // buildAskUserDef 构造 ui server 的 ask_user 工具定义（子循环注入用）。

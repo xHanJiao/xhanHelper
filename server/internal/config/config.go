@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -637,6 +638,9 @@ func validate(cfg *Config) error {
 		}
 		if cfg.LLMBg.StrongHTTPTimeoutSecs == 0 {
 			cfg.LLMBg.StrongHTTPTimeoutSecs = 600
+		}
+		if cfg.LLMBg.APIKey == "" || strings.Contains(cfg.LLMBg.APIKey, "${") {
+			return fmt.Errorf("llm_bg.model 已配置但 LLM_BG_API_KEY 缺失或未展开（环境变量未设置）")
 		}
 	}
 	if cfg.LLM.ExtractMsgLimit == 0 {

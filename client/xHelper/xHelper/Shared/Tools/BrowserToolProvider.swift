@@ -154,12 +154,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             LocalToolSchema(name: "agent_browser_close_tab",        description: "关闭指定的单个标签页，释放内存。tabId 从 list_tabs 获取；不用的页面请及时关闭", inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_list_tabs",        description: "列出当前所有打开的标签页（id/url/title）",      inputSchema: objProps([:]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_switch_tab",       description: "切换到指定标签页",                        inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_read",             description: "读取页面文本。分层用法：article=正文抽取（推荐，文章页用：Readability 只取正文剔除导航/评论/侧栏，含标题，抽取失败自动回退整页并标注 fallback）；outline=标题树（长文导航，省 token）；filter=按关键词返回匹配章节；full=整页文本（含全部噪声，最后手段）。article/full 支持 offset 分页通读长文：返回含 total/truncated/offset，未完时按返回的 offset 继续调用 read(mode, offset=...) 逐段读完。建议先 snapshot → read(outline) 定位 → read(filter)/get_text(@eN) 读取 → 文章页需通读用 read(article)。tabId 可指定后台 tab 静默读取（不切走当前页），不传则读当前激活页", inputSchema: objProps([
-                "mode": strProp("article（推荐，正文抽取）| full（默认，整页文本）| outline（h1-h6 标题树）| filter（按关键词返回匹配章节）"),
-                "query": strProp("filter 模式的关键词"),
+            LocalToolSchema(name: "agent_browser_read",             description: "读取页面文本。分层用法：article=正文抽取（推荐，文章页用：Readability 只取正文剔除导航/评论/侧栏，含标题，抽取失败自动回退整页并标注 fallback）；below=按标题或元素读下方内容（列表页/信息流/评论区：给标题文本用 query，或用 ref 精确指向元素，读该元素下方/容器内的摘要或已展开全文，返回 matched_title 供核对，无需打开链接）；outline=标题树（长文导航，省 token）；filter=按关键词返回匹配章节；full=整页文本（含全部噪声，最后手段）。article/full/below 支持 offset 分页通读长文：返回含 total/truncated/offset，未完时按返回的 offset 继续调用 read(mode, offset=...) 逐段读完。建议先 snapshot 定位 → 列表页读条目用 read(below, query=标题) 或 read(below, ref=@eN) → 文章页通读用 read(article)。tabId 可指定后台 tab 静默读取（不切走当前页），不传则读当前激活页", inputSchema: objProps([
+                "mode": strProp("article（推荐，正文抽取）| full（默认，整页文本）| below（按标题/元素读下方内容）| outline（h1-h6 标题树）| filter（按关键词返回匹配章节）"),
+                "query": strProp("filter 模式的关键词 / below 模式的标题文本（用 snapshot 里看到的标题原文，被截断的前缀也可以）"),
+                "ref": strProp("（below）元素编号如 @e5（先 snapshot 获取），读该元素下方/容器内的内容，比 query 文本匹配更精确；评论、卡片等非标题结构用 ref。与 query 二选一，ref 优先"),
                 "max_items": numProp("outline 标题数上限，默认 50"),
-                "max_chars": numProp("filter 每块截断 / article·full 每段截断字符数，默认 filter 2000 / article·full 10000"),
-                "offset": numProp("（article/full）续读偏移，默认 0；上次返回的 offset 字段即下次应传值"),
+                "max_chars": numProp("filter 每块截断 / article·full·below 每段截断字符数，默认 filter 2000 / 其余 10000"),
+                "offset": numProp("（article/full/below）续读偏移，默认 0；上次返回的 offset 字段即下次应传值"),
                 "tabId": strProp("（可选）目标标签页ID，从 list_tabs 获取；传了则读该后台 tab，不切走当前页")
             ]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_snapshot",         description: "获取页面可访问性快照（紧凑元素树，元素带 @eN 稳定句柄用于 ref 交互；DOM 变化后句柄仍有效，元素销毁才需重新快照）。默认 document 范围列整页可交互元素（扁平分页：每页 ≤limit 个，用 offset 翻页，页脚会提示第几页/共几个/是否还有更多），无需滚动；已折叠被动容器、无名称图标按钮与重复元素等噪声；如需只看当前屏幕内（含下方 1000px）用 scope=viewport。链接均带 href，打开链接直接取 href 用 agent_browser_open。tabId 可指定后台 tab 静默读取（不切走当前页），不传则读当前激活页", inputSchema: objProps([
@@ -850,14 +851,52 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 return makeReadResult(mode: "article", raw: fullText ?? "", offset: offset, maxChars: maxChars, fallback: true)
             }
             return makeReadResult(mode: "article", title: title, raw: raw, offset: offset, maxChars: maxChars)
+        case "below":
+            guard !query.isEmpty || (!(arguments["ref"] as? String ?? "").isEmpty) else {
+                return .init(serverResult: nil, serverError: "below 模式需要 query 标题文本或 ref 元素编号", clientAction: nil)
+            }
+            let rawText: String
+            let matchedTitle: String
+            let beyondCap: Bool
+            if let refStr = arguments["ref"] as? String, !refStr.isEmpty, let handle = refHandle(refStr) {
+                guard let result = await session.jsJSON(belowRefJS(handle, session: session)) as? [String: Any],
+                      let found = result["found"] as? Bool else {
+                    return .init(serverResult: nil, serverError: "below 读取失败：JS 异常", clientAction: nil)
+                }
+                if !found {
+                    return .init(serverResult: nil, serverError: result["err"] as? String ?? "ref 不存在，请重新 snapshot", clientAction: nil)
+                }
+                rawText = (result["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                matchedTitle = result["matched"] as? String ?? refStr
+                beyondCap = (result["beyond_cap"] as? Bool) ?? false
+            } else {
+                guard let result = await session.jsJSON(belowJS(query)) as? [String: Any],
+                      let found = result["found"] as? Bool else {
+                    return .init(serverResult: nil, serverError: "below 读取失败：JS 异常", clientAction: nil)
+                }
+                if !found {
+                    return .init(serverResult: nil, serverError: "未找到标题「\(query.prefix(60))」，请先 snapshot 获取准确标题文本后重试", clientAction: nil)
+                }
+                rawText = (result["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                matchedTitle = result["matched"] as? String ?? query
+                beyondCap = (result["beyond_cap"] as? Bool) ?? false
+            }
+            if rawText.isEmpty {
+                return .init(serverResult: nil, serverError: "标题/元素「\(matchedTitle.prefix(60))」下方没有正文内容（可能未展开全文，或需 open 链接）", clientAction: nil)
+            }
+            var extra: [String: Any] = ["matched_title": matchedTitle]
+            if beyondCap { extra["beyond_cap"] = true }
+            return makeReadResult(mode: "below", title: matchedTitle, raw: rawText, offset: offset, maxChars: maxChars,
+                                  extra: extra,
+                                  note: beyondCap ? "下方内容过长（>50000 字符已封顶），建议改用 read(mode=article) 或 open 链接通读" : "")
         default:
             let (text, _) = await session.jsResult("document.body?.innerText ?? ''")
             return makeReadResult(mode: "full", raw: text ?? "", offset: offset, maxChars: maxChars)
         }
     }
 
-    /// article/full 共用的分段读取：按 offset 切片，截断时给出续读提示并标记 truncated。
-    private func makeReadResult(mode: String, title: String = "", raw: String, offset: Int, maxChars: Int, fallback: Bool = false) -> LocalToolResult {
+    /// article/full/below 共用的分段读取：按 offset 切片，截断时给出续读提示并标记 truncated。
+    private func makeReadResult(mode: String, title: String = "", raw: String, offset: Int, maxChars: Int, fallback: Bool = false, extra: [String: Any] = [:], note: String = "") -> LocalToolResult {
         let total = raw.count
         let start = min(max(0, offset), total)
         let end = min(start + maxChars, total)
@@ -865,8 +904,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         var out: [String: Any] = ["mode": mode, "offset": end, "total": total, "truncated": end < total]
         if !title.isEmpty { out["title"] = title }
         if fallback { out["fallback"] = true }
+        for (k, v) in extra { out[k] = v }
         var header = Self.pageContentDisclaimer
         if fallback { header += "\n[文章正文抽取失败，以下为整页文本，含导航/评论噪声]" }
+        if !note.isEmpty { header += "\n[\(note)]" }
         if !title.isEmpty { header += "\n标题：\(title)" }
         if end < total {
             slice += "\n\n[内容未完：已读 \(start)..\(end)/\(total) 字符。继续调用 read(mode=\(mode), offset=\(end)) 读取剩余]"
@@ -3186,6 +3227,74 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
           return JSON.stringify({text:hit.join('\\n\\n'),truncated:truncated});
         })()
         """
+    }
+
+    /// below 模式：按标题文本定位元素，向上爬找内容容器，返回容器文本。
+    /// 匹配：精确（空白折叠+剥零宽字符）→ 前缀（snapshot 标题按 60 UTF-16 码元截断，可能劈代理对）→ div 兜底；
+    /// 多命中选文本最短候选（最具体元素，避开整卡容器）。
+    /// 容器：跳过纯标题包装（文本==标题），取首个文本 > 标题×2+50 的祖先。
+    /// ponytail: 阈值启发式，个别站点元信息容器先越阈值会带少量作者/点赞噪声，可接受；前缀匹配可能命中同名短导航项，matched_title 供 LLM 核对。
+    /// 上限 50k 字符，超出置 beyond_cap 由 Swift 提示改走 article/full。
+    private func belowJS(_ query: String) -> String {
+        """
+        (function(){
+          var norm=function(s){return (s||'').replace(/[\\u200b\\u200c\\u200d\\ufeff]/g,'').replace(/\\s+/g,' ').trim();};
+          var q=norm('\(esc(query))');
+          while(q.length>1){var c=q.charCodeAt(q.length-1);if(c>=0xD800&&c<=0xDBFF){q=q.slice(0,-1);}else{break;}}
+          if(!q)return JSON.stringify({found:false});
+          var cands=[];
+          var hs=document.querySelectorAll('h1,h2,h3,h4,h5,h6,a');
+          for(var i=0;i<hs.length;i++)cands.push(hs[i]);
+          var best=null;
+          for(var i=0;i<cands.length;i++){var t=norm(cands[i].textContent);if(t===q&&(!best||t.length<best.t.length))best={el:cands[i],t:t};}
+          if(!best){for(var i=0;i<cands.length;i++){var t2=norm(cands[i].textContent);if(t2.indexOf(q)===0&&(!best||t2.length<best.t.length))best={el:cands[i],t:t2};}}
+          if(!best){var dv=document.querySelectorAll('div');for(var i=0;i<dv.length;i++){var t3=norm(dv[i].textContent);if(t3===q&&(!best||t3.length<best.t.length))best={el:dv[i],t:t3};}}
+          if(!best)return JSON.stringify({found:false});
+          var el=best.el,container=null,fallbackEl=null;
+          for(var p=el.parentElement;p&&p!==document.body;p=p.parentElement){
+            var pt=norm(p.textContent);
+            if(pt===best.t)continue;
+            if(!fallbackEl)fallbackEl=p;
+            if(pt.length>best.t.length*2+50){container=p;break;}
+          }
+          if(!container)container=fallbackEl||el.parentElement||el;
+          var full=(container.innerText||container.textContent||'');
+          if(full.indexOf(best.t)===0)full=full.slice(best.t.length).trim();
+          var CAP=50000,beyond=full.length>CAP;
+          if(beyond)full=full.slice(0,CAP);
+          return JSON.stringify({found:true,matched:best.t.slice(0,100),text:full,total:full.length,beyond_cap:beyond});
+        })()
+        """
+    }
+
+    /// below 模式（ref 定位）：按 @eN 稳定句柄定位锚元素，读该元素下方/容器内的内容。
+    /// 语义："读这个元素下面的内容"——锚是容器（有子元素）→ 返回自身 innerText；锚是叶子（标题类）→ 与 query 模式相同的容器上爬。
+    /// collectEls 上限放宽到 1000 降低大页面卡片列表 ref 失效率；
+    /// ponytail: 仍受限于"snapshot 只给语义/可点击元素发 ref"且候选收集有上限，超大页面尾部元素 ref 会失败（报错引导重新 snapshot），届时改直接遍历 __allEls 比对 a11y.id。
+    private func belowRefJS(_ handle: Int, session: TabSession) -> String {
+        return "(function(){\(collectEls(1000))\(locateElJS(handle, session: session))" +
+            """
+            var norm=function(s){return (s||'').replace(/[\\u200b\\u200c\\u200d\\ufeff]/g,'').replace(/\\s+/g,' ').trim();};
+            if(!e)return JSON.stringify({found:false,err:_locErr});
+            var anchor=norm(e.innerText||e.textContent||'');
+            var container=e;
+            if(!e.children||e.children.length===0){
+              container=null;var fallbackEl=null;
+              for(var p=e.parentElement;p&&p!==document.body;p=p.parentElement){
+                var pt=norm(p.textContent);
+                if(pt===anchor)continue;
+                if(!fallbackEl)fallbackEl=p;
+                if(pt.length>anchor.length*2+50){container=p;break;}
+              }
+              if(!container)container=fallbackEl||e.parentElement||e;
+            }
+            var full=(container.innerText||container.textContent||'');
+            if(container!==e&&full.indexOf(anchor)===0)full=full.slice(anchor.length).trim();
+            var CAP=50000,beyond=full.length>CAP;
+            if(beyond)full=full.slice(0,CAP);
+            return JSON.stringify({found:true,matched:anchor.slice(0,100),text:full,total:full.length,beyond_cap:beyond});
+            })()
+            """
     }
 
     /// 元素可见文本（ref 路径，按稳定句柄定位）

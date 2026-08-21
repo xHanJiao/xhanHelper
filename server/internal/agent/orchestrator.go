@@ -1212,6 +1212,7 @@ func newAssistantMessage(streamContent string, streamReasoning string, se *llm.S
 		Role:             "assistant",
 		Content:          streamContent,
 		ReasoningContent: streamReasoning,
+		EncryptedContent: se.EncryptedContent,
 		ToolCalls:        se.ToolCalls,
 		RequestJSON:      se.RequestJSON,
 		ResponseJSON:     se.ResponseJSON,
@@ -1552,6 +1553,10 @@ func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, us
 	if msg.ReasoningContent != "" {
 		rc := msg.ReasoningContent
 		modelMsg.ReasoningContent = &rc
+	}
+	if msg.EncryptedContent != "" {
+		ec := msg.EncryptedContent
+		modelMsg.EncryptedContent = &ec
 	}
 	if tcJSON := extractToolCallsJSON(msg.Content); tcJSON != nil {
 		modelMsg.ToolCallsJSON = tcJSON
@@ -1957,6 +1962,10 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int, useN
 			// （DeepSeek 文档：工具调用轮的 reasoning_content 必须回传；纯文本轮回传会被忽略，无害）
 			if m.ReasoningContent != nil {
 				msg.ReasoningContent = *m.ReasoningContent
+			}
+			// 方舟思考模型要求回传 encrypted_content（加密思考原文），同理随消息恢复
+			if m.EncryptedContent != nil {
+				msg.EncryptedContent = *m.EncryptedContent
 			}
 			if useNativeFC && m.ToolCallsJSON != nil {
 				var tcs []llm.ToolCall

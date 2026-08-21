@@ -18,6 +18,7 @@ type Message struct {
 	OriginalContent  *string   `gorm:"type:text;column:original_content" json:"original_content,omitempty"`
 	XMLContext       *string   `gorm:"type:mediumtext;column:xml_context" json:"xml_context,omitempty"`
 	ReasoningContent *string   `gorm:"type:text;column:reasoning_content" json:"reasoning_content,omitempty"`
+	EncryptedContent *string   `gorm:"type:text;column:encrypted_content" json:"-"` // 方舟思考加密原文，仅服务器回传用，不暴露前端
 	ToolCallsJSON    *string   `gorm:"type:mediumtext;column:tool_calls_json" json:"tool_calls_json,omitempty"`
 	ToolCallID       *string   `gorm:"size:36;column:tool_call_id" json:"tool_call_id,omitempty"`
 	MemoryIDs        *string   `gorm:"type:mediumtext;column:memory_ids" json:"memory_ids,omitempty"`

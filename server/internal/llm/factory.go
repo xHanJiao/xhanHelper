@@ -13,6 +13,8 @@ func NewClient(cfg config.LLMConfig) (LLMClient, error) {
 		return NewDoubao(cfg), nil
 	case "deepseek":
 		return NewFlashClient(cfg), nil
+	case "ark":
+		return NewArkClient(cfg, cfg.Model), nil
 	case "claude":
 		return NewClaude(cfg), nil
 	default:
@@ -30,6 +32,12 @@ func NewStrongClient(cfg config.LLMConfig) (LLMClient, error) {
 			model = cfg.Model // fallback
 		}
 		return NewProClient(cfg, model), nil
+	case "ark":
+		model := cfg.StrongModel
+		if model == "" {
+			model = cfg.Model // fallback
+		}
+		return NewArkClient(cfg, model), nil
 	case "doubao":
 		return nil, nil // 豆包不支持思考模式
 	default:

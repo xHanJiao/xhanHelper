@@ -259,6 +259,10 @@ func (s *subAgentMsgSink) SaveAssistantMsg(msg llm.Message) {
 		rc := msg.ReasoningContent
 		m.ReasoningContent = &rc
 	}
+	if msg.EncryptedContent != "" {
+		ec := msg.EncryptedContent
+		m.EncryptedContent = &ec
+	}
 	s.create(m)
 }
 

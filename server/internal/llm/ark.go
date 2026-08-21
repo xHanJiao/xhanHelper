@@ -157,6 +157,43 @@ func (c *ArkClient) buildSyncBody(req *ChatRequest) ([]byte, io.Reader) {
 
 // ——— 流式 ———
 
+// arkUsageDetails — 方舟 usage 结构（OpenAI 风格，缓存命中在 prompt_tokens_details.cached_tokens）。
+type arkUsageDetails struct {
+	PromptTokensDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+	PromptTokens          int `json:"prompt_tokens"`
+	CompletionTokens      int `json:"completion_tokens"`
+	TotalTokens           int `json:"total_tokens"`
+	PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`
+	PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"`
+}
+
+// toArkUsage 映射方舟 usage 到 llm.Usage。方舟不返回顶层缓存字段，
+// 命中来自 prompt_tokens_details.cached_tokens，未命中 = prompt - 命中。
+func toArkUsage(u *arkUsageDetails) *Usage {
+	if u == nil {
+		return nil
+	}
+	usage := &Usage{
+		PromptTokens:          u.PromptTokens,
+		CompletionTokens:      u.CompletionTokens,
+		TotalTokens:           u.TotalTokens,
+		PromptCacheHitTokens:  u.PromptCacheHitTokens,
+		PromptCacheMissTokens: u.PromptCacheMissTokens,
+	}
+	if usage.PromptCacheHitTokens == 0 && u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > 0 {
+		usage.PromptCacheHitTokens = u.PromptTokensDetails.CachedTokens
+	}
+	if usage.PromptCacheMissTokens == 0 {
+		usage.PromptCacheMissTokens = usage.PromptTokens - usage.PromptCacheHitTokens
+		if usage.PromptCacheMissTokens < 0 {
+			usage.PromptCacheMissTokens = 0
+		}
+	}
+	return usage
+}
+
 // arkStreamChunk — 方舟 SSE 单个 chunk（delta 含 encrypted_content）。
 type arkStreamChunk struct {
 	Choices []struct {
@@ -177,13 +214,7 @@ type arkStreamChunk struct {
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
-	Usage *struct {
-		PromptTokens          int `json:"prompt_tokens"`
-		CompletionTokens      int `json:"completion_tokens"`
-		TotalTokens           int `json:"total_tokens"`
-		PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`
-		PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"`
-	} `json:"usage"`
+	Usage *arkUsageDetails `json:"usage"`
 }
 
 func (c *ArkClient) Chat(ctx context.Context, req *ChatRequest) (<-chan *StreamEvent, error) {
@@ -264,13 +295,7 @@ func (c *ArkClient) readSSEStream(ctx context.Context, body io.ReadCloser, event
 		}
 
 		if chunk.Usage != nil {
-			usage = &Usage{
-				PromptTokens:          chunk.Usage.PromptTokens,
-				CompletionTokens:      chunk.Usage.CompletionTokens,
-				TotalTokens:           chunk.Usage.TotalTokens,
-				PromptCacheHitTokens:  chunk.Usage.PromptCacheHitTokens,
-				PromptCacheMissTokens: chunk.Usage.PromptCacheMissTokens,
-			}
+			usage = toArkUsage(chunk.Usage)
 		}
 
 		for _, choice := range chunk.Choices {
@@ -368,13 +393,7 @@ func (c *ArkClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, er
 				} `json:"tool_calls"`
 			} `json:"message"`
 		} `json:"choices"`
-		Usage struct {
-			PromptTokens          int `json:"prompt_tokens"`
-			CompletionTokens      int `json:"completion_tokens"`
-			TotalTokens           int `json:"total_tokens"`
-			PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`
-			PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"`
-		} `json:"usage"`
+		Usage *arkUsageDetails `json:"usage"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return Message{}, fmt.Errorf("ark sync parse: %w", err)
@@ -384,13 +403,7 @@ func (c *ArkClient) ChatSync(ctx context.Context, req *ChatRequest) (Message, er
 		Role:         "assistant",
 		RequestJSON:  &reqJSONStr,
 		ResponseJSON: &respJSONStr,
-		Usage: &Usage{
-			PromptTokens:          result.Usage.PromptTokens,
-			CompletionTokens:      result.Usage.CompletionTokens,
-			TotalTokens:           result.Usage.TotalTokens,
-			PromptCacheHitTokens:  result.Usage.PromptCacheHitTokens,
-			PromptCacheMissTokens: result.Usage.PromptCacheMissTokens,
-		},
+		Usage:        toArkUsage(result.Usage),
 	}
 	if len(result.Choices) > 0 {
 		msg.Content = result.Choices[0].Message.Content

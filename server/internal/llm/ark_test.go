@@ -46,7 +46,7 @@ func TestArkStream_EncryptedContentAndUsage(t *testing.T) {
 		`{"choices":[{"delta":{"content":"回复"},"index":0}]}`,
 		`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"a__b","arguments":""}}]},"index":0}]}`,
 		`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"x\":1}"}}]},"index":0}]}`,
-		`{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`,
+		`{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":7}}}`,
 		`[DONE]`,
 	}
 
@@ -90,6 +90,10 @@ func TestArkStream_EncryptedContentAndUsage(t *testing.T) {
 	}
 	if done.Usage == nil || done.Usage.TotalTokens != 15 || done.Usage.PromptTokens != 10 {
 		t.Errorf("usage expected total=15 prompt=10, got %+v", done.Usage)
+	}
+	if done.Usage.PromptCacheHitTokens != 7 || done.Usage.PromptCacheMissTokens != 3 {
+		t.Errorf("cache hit expected 7 miss 3 (cached_tokens from prompt_tokens_details), got hit=%d miss=%d",
+			done.Usage.PromptCacheHitTokens, done.Usage.PromptCacheMissTokens)
 	}
 	if len(done.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call, got %d", len(done.ToolCalls))

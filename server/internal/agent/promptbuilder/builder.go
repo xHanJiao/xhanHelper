@@ -24,7 +24,12 @@ func NewPromptBuilder(
 	registry *tool.Registry,
 	promptResolver PromptResolver,
 	useNativeFC bool,
+	enableUserContextTrigger bool,
 ) *PromptBuilder {
+	preRoleStatic := []StaticProvider{&corePrinciplesProvider{}}
+	if enableUserContextTrigger {
+		preRoleStatic = append(preRoleStatic, &userContextTriggerProvider{})
+	}
 	postRoleStatic := []StaticProvider{}
 	if useNativeFC {
 		postRoleStatic = append([]StaticProvider{&toolCatalogProvider{registry: registry}}, postRoleStatic...)
@@ -34,9 +39,7 @@ func NewPromptBuilder(
 	return &PromptBuilder{
 		basePrompt:     basePrompt,
 		promptResolver: promptResolver,
-		preRoleStatic: []StaticProvider{
-			&corePrinciplesProvider{},
-		},
+		preRoleStatic:  preRoleStatic,
 		postRoleStatic: postRoleStatic,
 		contextProviders: []ContextProvider{
 			&stableContextProvider{},

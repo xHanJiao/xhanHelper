@@ -400,6 +400,16 @@ func TestBuildSubAgentSystemPrompt(t *testing.T) {
 	if !strings.Contains(file, "最多执行 19 轮工具调用") {
 		t.Errorf("file_explore system prompt 应含预算: %s", file)
 	}
+	uc := buildSubAgentSystemPrompt(subagentSpecs["user_context"], 20, 600)
+	if !strings.Contains(uc, "用户信息检索专家") {
+		t.Errorf("user_context system prompt 应含检索角色: %s", uc)
+	}
+	if !strings.Contains(uc, "user_context_result") {
+		t.Errorf("user_context system prompt 应含输出结构: %s", uc)
+	}
+	if !strings.Contains(uc, "最多执行 19 轮工具调用") {
+		t.Errorf("user_context system prompt 应含预算: %s", uc)
+	}
 }
 
 func TestFilterClientToolsByFuncWhitelist(t *testing.T) {
@@ -444,8 +454,8 @@ func TestFilterClientToolsByFuncWhitelist(t *testing.T) {
 }
 
 func TestSubAgentSpecs_DispatchTable(t *testing.T) {
-	if len(subagentSpecs) != 2 {
-		t.Fatalf("应有 2 种子 agent 类型: %+v", subagentSpecs)
+	if len(subagentSpecs) != 3 {
+		t.Fatalf("应有 3 种子 agent 类型: %+v", subagentSpecs)
 	}
 	web := subagentSpecs["web_explore"]
 	if !web.requiresClient || web.maxToolResult <= 0 {
@@ -474,6 +484,33 @@ func TestSubAgentSpecs_DispatchTable(t *testing.T) {
 		if n == "webfetch" || n == "search_notes_v2" || n == "unified_search" {
 			t.Errorf("file_explore 服务端白名单不应含 %s", n)
 		}
+	}
+	// user_context：纯服务端，不依赖客户端，检索是主力
+	uc := subagentSpecs["user_context"]
+	if uc.requiresClient {
+		t.Error("user_context 不应 requiresClient（纯服务端）")
+	}
+	if uc.clientWhitelist != nil {
+		t.Errorf("user_context 不应有客户端白名单: %+v", uc.clientWhitelist)
+	}
+	if uc.maxToolResult <= 2000 {
+		t.Errorf("user_context 预算应大于 2000（检索是主力，2000 会截断）: %d", uc.maxToolResult)
+	}
+	hasProfile := false
+	hasUnified := false
+	for _, n := range uc.serverWhitelist {
+		if n == "profile" {
+			hasProfile = true
+		}
+		if n == "unified_search" {
+			hasUnified = true
+		}
+	}
+	if !hasProfile || !hasUnified {
+		t.Errorf("user_context 服务端白名单应含 profile + unified_search: %v", uc.serverWhitelist)
+	}
+	if strings.Contains(uc.prompt, "task") {
+		t.Error("user_context prompt 不应提及 task（禁止套娃）")
 	}
 }
 
@@ -532,6 +569,31 @@ func TestRunSubAgent_RequiresClient(t *testing.T) {
 	convRepo.DB().Model(&model.Conversation{}).Where("parent_id = ?", "main-1").Count(&count)
 	if count != 0 {
 		t.Errorf("离线失败不应创建子会话, got %d", count)
+	}
+}
+
+// TestRunSubAgent_UserContext_NoClientRequired — user_context 纯服务端，无客户端工具也能跑
+// （对比 web/file 的离线失败用例）。无 ClientTools、bridge 为 nil 均不阻塞。
+func TestRunSubAgent_UserContext_NoClientRequired(t *testing.T) {
+	convRepo, msgRepo, _, cleanup := setupSubAgentRepos(t)
+	defer cleanup()
+	ctx := context.Background()
+	if err := convRepo.Create(ctx, &model.Conversation{ID: "main-1", UserID: "u1"}); err != nil {
+		t.Fatal(err)
+	}
+	orch := newSubAgentOrchestrator(&syncMockLLM{responses: []llm.Message{{Content: `<user_context_result>结论</user_context_result>`}}}, convRepo, msgRepo)
+	orch.clientBridge = nil // user_context 不依赖客户端桥
+	res := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
+		SubAgentType: "user_context", Description: "查我上次说的计划", Prompt: "p", ParentConvID: "main-1",
+	})
+	if !res.Success {
+		t.Fatalf("无客户端工具也应成功: %+v", res)
+	}
+	if res.State != "completed" || res.ConvID == "" {
+		t.Errorf("state/convID 错误: %+v", res)
+	}
+	if !strings.Contains(res.Text, "user_context_result") {
+		t.Errorf("Text 应为子 agent 最终回复: %s", res.Text)
 	}
 }
 

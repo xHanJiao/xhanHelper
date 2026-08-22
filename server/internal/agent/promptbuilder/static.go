@@ -27,6 +27,21 @@ func (p *corePrinciplesProvider) Render(ctx context.Context) string {
 	return corePrinciples
 }
 
+// userContextTriggerProvider — user_context 子任务触发规则。
+// 受 subagent.user_context_enabled 开关控制（config），关闭时不注册本 provider（保险丝）。
+// 无 SectionTitle：紧随行为准则追加，不另起章节。
+const userContextTriggerRule = `9. 用户信息深挖：当用户询问自身信息（"我之前说的…""我上次…""我什么时候…"）、回忆过去经历，
+且当前注入的上下文不足以完整回答时，可派 task 子任务（subagent_type=user_context，纯服务端无需客户端）多轮深挖
+画像/记忆/笔记/摘要/主题/历史后综合回答。**克制原则：主上下文已能回答、问题与用户历史无关、或普通日常对话 → 禁止派；**`
+
+type userContextTriggerProvider struct{}
+
+func (p *userContextTriggerProvider) Name() string         { return "user_context_trigger" }
+func (p *userContextTriggerProvider) SectionTitle() string { return "" }
+func (p *userContextTriggerProvider) Render(ctx context.Context) string {
+	return userContextTriggerRule
+}
+
 // toolDefinitionsProvider — 注入全部工具完整定义（prompt engineering 模式，直接调用无需检索）。
 // 委托 registry.GeneratePrompt() 生成。
 type toolDefinitionsProvider struct {

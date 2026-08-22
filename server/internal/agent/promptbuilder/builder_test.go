@@ -23,6 +23,31 @@ func TestCorePrinciplesProvider(t *testing.T) {
 	}
 }
 
+// TestUserContextTriggerToggle — user_context 触发规则由开关控制注入。
+func TestUserContextTriggerToggle(t *testing.T) {
+	reg := tool.NewRegistry()
+
+	// 关闭：不注入触发规则
+	off := NewPromptBuilder("base", reg, nil, true, false)
+	out, err := off.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.Prompt, "user_context") {
+		t.Error("开关关闭时不应注入 user_context 触发规则")
+	}
+
+	// 开启：注入触发规则
+	on := NewPromptBuilder("base", reg, nil, true, true)
+	out2, err := on.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out2.Prompt, "9. 用户信息深挖") || !strings.Contains(out2.Prompt, "user_context") {
+		t.Error("开关开启时应注入 user_context 触发规则")
+	}
+}
+
 // ==================== Layer 2 — Role Resolution ====================
 
 type mockPromptResolver struct {
@@ -142,7 +167,7 @@ func TestBuild_PlanModeHidesToolDefinitions(t *testing.T) {
 	reg.Register(&planBuildFakeTool{name: "fake_tool"})
 
 	// prompt-eng 模式
-	b := NewPromptBuilder("base", reg, nil, false)
+	b := NewPromptBuilder("base", reg, nil, false, false)
 
 	work, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork})
 	if err != nil {
@@ -161,7 +186,7 @@ func TestBuild_PlanModeHidesToolDefinitions(t *testing.T) {
 	}
 
 	// native FC 模式
-	b2 := NewPromptBuilder("base", reg, nil, true)
+	b2 := NewPromptBuilder("base", reg, nil, true, false)
 	work2, err := b2.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork})
 	if err != nil {
 		t.Fatal(err)
@@ -183,7 +208,7 @@ func TestBuild_PlanModeHidesToolDefinitions(t *testing.T) {
 
 func TestBuild_StableContextInjected(t *testing.T) {
 	reg := tool.NewRegistry()
-	b := NewPromptBuilder("base", reg, nil, true)
+	b := NewPromptBuilder("base", reg, nil, true, false)
 	stableXML := "<profile description=\"画像\">\n  <field key=\"工作\">后端工程师</field>\n</profile>"
 
 	// work 模式注入
@@ -216,7 +241,7 @@ func TestBuild_StableContextInjected(t *testing.T) {
 
 func TestBuild_ClientToolCatalogInjected(t *testing.T) {
 	reg := tool.NewRegistry()
-	b := NewPromptBuilder("base", reg, nil, true)
+	b := NewPromptBuilder("base", reg, nil, true, false)
 	catalog := "客户端工具组（Mac 客户端在线时可用，同样按需启用：先调用 expose_tools.enable）：\n- browser: Mac 客户端本地工具（browser）\n  函数: agent_browser_open, agent_browser_click"
 
 	// work 模式：目录并入「工具使用」段
@@ -259,7 +284,7 @@ func TestBuild_ClientToolCatalogInjected(t *testing.T) {
 	}
 
 	// prompt-eng 模式：目录不注入（无 tool_catalog provider）
-	b3 := NewPromptBuilder("base", reg, nil, false)
+	b3 := NewPromptBuilder("base", reg, nil, false, false)
 	pe, err := b3.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork, ClientToolCatalog: catalog})
 	if err != nil {
 		t.Fatal(err)

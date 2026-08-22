@@ -67,8 +67,9 @@ type WebFetchConfig struct {
 
 // SubAgentConfig — 子 agent（task 工具）配置
 type SubAgentConfig struct {
-	ExploreMaxIterations  int `yaml:"explore_max_iterations"`  // explore 子 agent 最大轮次（含强制收敛轮），默认 20（防死循环兜底，timeout 才是真实预算）
-	ExploreTimeoutSeconds int `yaml:"explore_timeout_seconds"` // explore 子 agent 执行超时秒数，默认 600
+	ExploreMaxIterations  int  `yaml:"explore_max_iterations"`  // explore 子 agent 最大轮次（含强制收敛轮），默认 20（防死循环兜底，timeout 才是真实预算）
+	ExploreTimeoutSeconds int  `yaml:"explore_timeout_seconds"` // explore 子 agent 执行超时秒数，默认 600
+	UserContextEnabled    bool `yaml:"user_context_enabled"`    // 是否向主 LLM 注入 user_context 触发规则（纯 prompt 引导的保险丝），默认 false
 }
 
 // MCPServerCfg — 单个 MCP server 配置
@@ -180,10 +181,9 @@ type DebugJSONConfig struct {
 
 // EmbeddingConfig — 向量化配置
 type EmbeddingConfig struct {
-	APIKey              string `yaml:"api_key"`
-	BaseURL             string `yaml:"base_url"`              // 默认 https://ark.cn-beijing.volces.com
-	Model               string `yaml:"model"`                 // 默认 doubao-embedding
-	EnableHistorySearch bool   `yaml:"enable_history_search"` // 是否检索历史对话
+	APIKey  string `yaml:"api_key"`
+	BaseURL string `yaml:"base_url"` // 默认 https://ark.cn-beijing.volces.com
+	Model   string `yaml:"model"`    // 默认 doubao-embedding
 }
 
 // SourceWeights — 单个检索源的配置
@@ -473,6 +473,13 @@ func merge(dst, src *Config) {
 	if src.Chat.ToolExcludes != nil {
 		dst.Chat.ToolExcludes = src.Chat.ToolExcludes
 	}
+	if src.SubAgent.ExploreMaxIterations != 0 {
+		dst.SubAgent.ExploreMaxIterations = src.SubAgent.ExploreMaxIterations
+	}
+	if src.SubAgent.ExploreTimeoutSeconds != 0 {
+		dst.SubAgent.ExploreTimeoutSeconds = src.SubAgent.ExploreTimeoutSeconds
+	}
+	dst.SubAgent.UserContextEnabled = src.SubAgent.UserContextEnabled
 }
 
 // mergeSourceWeights 按字段合并检索源配置，非零值覆盖

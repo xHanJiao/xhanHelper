@@ -94,7 +94,7 @@ webfetch:
 subagent:
   explore_max_iterations: 10 # 防死循环兜底（timeout 才是真实预算）；调太多轮转不完
   explore_timeout_seconds: 600
-  user_context_enabled: false # 向主 LLM 注入 user_context 子任务触发规则（纯 prompt 引导的成本保险丝）；默认关闭
+  user_context_enabled: true # 向主 LLM 注入 user_context 子任务触发规则（纯 prompt 引导的成本保险丝）；默认关闭
 
 retrieval:
   freshness_decay: 0.02 # 时间衰减系数，作为默认值

@@ -147,6 +147,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		agent.BaseSystemPrompt,
 		tools.Registry,
 		repos.Prompt, cfg.LLM.UseNativeFC,
+		cfg.SubAgent.UserContextEnabled,
 	)
 
 	// ContextRetriever

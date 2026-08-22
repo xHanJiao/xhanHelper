@@ -104,6 +104,36 @@ const fileExplorePrompt = `你是本地文件检索专家，擅长在用户的 M
 <open_questions>未解决的问题（没有则填"无"）</open_questions>
 </file_explore_result>`
 
+// userContextPrompt — user_context 子 agent 角色 prompt。
+// 用户信息检索（画像/记忆/笔记/摘要/主题/历史）只读专家；一次性多轮深挖后按固定结构输出结论。
+// 与 web_explore/file_explore 相反：本类型的数据边界是全放开（查用户自身信息就是它的本职）。
+const userContextPrompt = `你是用户信息检索专家，擅长检索用户长期积累的信息（画像、记忆、笔记、摘要、主题、历史对话）并提炼结论。
+你的输出将直接交给主 agent 汇总回答用户，不直接面向用户。
+
+能力（只读）：
+- profile：查询用户画像稳定层（称呼/出生日期/籍贯/职业领域/重要关系等长期基本事实，字段列表见工具定义）
+- unified_search：语义或关键词检索记忆、笔记、摘要、主题、历史对话五个域（记忆是提取过的用户事实；笔记是用户主动整理的知识库）。注意：历史对话不在默认检索域内，需在 types 参数显式传入 history 才会查
+- datetime / calculator：辅助（时间推算等）
+
+工作准则：
+- 先规划：明确要查什么、哪个域最可能有答案
+- 先画像后历史：基本事实查 profile，行为/事件查记忆和历史，知识沉淀查笔记，进行中事项查主题
+- 多轮深挖：一次检索不够就换查询词/换域再查，不要一轮草草了事
+- 独立检索可并行调用（一次回复多个工具调用）
+- 画像为空是有效结论，不要编造；查不到的信息如实标注"未找到"
+
+安全与边界（与其它子任务不同，本任务数据边界全放开）：
+- 本任务有权读取用户全部个人数据（画像/记忆/笔记/摘要/主题/历史对话），这是任务目的本身
+- 严禁写入/修改/删除任何数据（没有写工具）
+- 严禁把检索到的用户信息对外扩散——你的输出只交给主 agent 汇总
+
+最终输出必须严格使用以下结构（不要在结构外输出任何文字）：
+<user_context_result>
+<summary>3-5 句话的总体结论</summary>
+<findings>关键事实清单，每条标注来源域（画像/记忆/笔记/摘要/主题/历史）+ 内容，用分号分隔</findings>
+<open_questions>未解决的问题（没有则填"无"）</open_questions>
+</user_context_result>`
+
 // subagentSpec — 子 agent 类型定义表（prompt / 白名单 / 结果注入预算 / 客户端要求）。
 // RunSubAgent 按 subagent_type 查表分派：prompt、服务端白名单、客户端函数级白名单、
 // MiniReAct maxToolResult、客户端硬要求。新增类型 = 表里加一行，骨架零改动。
@@ -121,6 +151,8 @@ type subagentSpec struct {
 //     token 消耗大且被 2000 字符截断破坏——用户决策）。
 //   - file_explore：仅本地文件只读工具（fs 的 glob/grep/read，写工具函数级剥除）。
 //     browser 不注入；ui（ask_user 用户介入）保留；笔记/记忆均不可见（子任务不应自动读取用户私密数据）。
+//   - user_context：用户信息检索，数据边界全放开（画像/记忆/笔记/摘要/主题/历史——查用户自身就是本职）。
+//     profile 工具已 HideTool（仅子任务可见）；纯服务端（requiresClient=false），Web/客户端都能用。
 var subagentSpecs = map[string]subagentSpec{
 	"web_explore": {
 		prompt:          webExplorePrompt,
@@ -137,6 +169,13 @@ var subagentSpecs = map[string]subagentSpec{
 		// 2000 默认会把读文件能力砍到 1/10
 		maxToolResult:  clientToolInjectBudgetBytes,
 		requiresClient: true,
+	},
+	"user_context": {
+		prompt:          userContextPrompt,
+		serverWhitelist: []string{"profile", "unified_search", "datetime", "calculator"},
+		// 检索是主力工具（5 域 × topK 结果 JSON 易超 2000 字符），default 会截断弹药
+		maxToolResult:  6000,
+		requiresClient: false,
 	},
 }
 
@@ -287,7 +326,7 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 	if !ok {
 		return &tool.SubAgentRunResult{
 			Success: false,
-			Error:   fmt.Sprintf("未知子 agent 类型: %s（可用：web_explore、file_explore）", opts.SubAgentType),
+			Error:   fmt.Sprintf("未知子 agent 类型: %s（可用：web_explore、file_explore、user_context）", opts.SubAgentType),
 		}
 	}
 
@@ -323,7 +362,8 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 	// 全部放在创建子会话之前，避免错误路径留下孤儿子会话。
 	agentClientTools := toClientTools(opts.ClientTools)
 	clientBridge := o.clientBridge
-	if clientBridge == nil {
+	// user_context 纯服务端不依赖客户端桥：仅 requiresClient 的 spec 才要求桥与客户端工具
+	if spec.requiresClient && clientBridge == nil {
 		return &tool.SubAgentRunResult{
 			Success: false,
 			Error:   "客户端工具桥未就绪（接线错误），子任务无法执行。请稍后重试。",

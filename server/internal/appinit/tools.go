@@ -26,6 +26,10 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		reg.Register(tool.NewLoggingWrapper(tool.NewWebFetchTool(cfg.WebFetch.TimeoutSeconds, cfg.WebFetch.MaxBytes), log.Default()))
 		reg.HideTool("webfetch")
 	}
+	// profile：仅 subAgent（user_context）可见，对主循环隐藏（HideTool 模式，同 webfetch）。
+	// 画像已由 resource zone 每轮注入主循环，暴露查询给主循环是冗余且膨胀 catalog。
+	reg.Register(tool.NewLoggingWrapper(tool.NewProfileTool(repos.UserProfileFact), log.Default()))
+	reg.HideTool("profile")
 	reg.Register(tool.NewLoggingWrapper(tool.NewDocumentTool(repos.Document, repos.Version), log.Default()))
 
 	// 种子内置工具到 tool_registries 表（幂等）

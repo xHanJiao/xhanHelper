@@ -39,7 +39,7 @@ CDN 媒体 URL 本身是带签名自包含地址，配合现有 `runDownload` �
 | ① 站点 state 直读 | `__INITIAL_STATE__.note.noteDetailMap[id].note.video.media.stream.h264[0].masterUrl`（原图/原画直链） | RENDER_DATA 里的 play_addr（新版页面多已不存在，保留一行成本） |
 | ② perf 层（通用） | `performance.getEntriesByType('resource')` 里已加载的 `.mp4` 直链——播放器预加载也会命中，不依赖 DOM/state 结构和水合时序；**显式排除抖音 DASH 分轨**（`douyinvod`/`media-video-`/`media-audio-`，纯视频或纯音频，下载了没法看） | 同左 |
 | ③ DOM 层（通用兜底） | `<video>` currentSrc / `<img>` src，过滤 blob:/data: | 同左 |
-| ④ 抖音 detail API 原生重放 | — | 仅当①②③无可用视频时：同步 JS 从 perf entries 定位当前 aweme_id 的 `/aweme/v1/web/aweme/detail/?...` URL（签名参数内嵌），Swift 原生 URLSession 重放（页面真实 UA——a_bogus 签名混入 UA 必须一致、Referer、域匹配 Cookie，不受 CORS 约束），解析响应取 `play_addr.url_list[0]`（失败降级 bit_rate 最高码率项） |
+| ④ 抖音数据接口泛化重放 | — | 仅当①②③无可用视频时：同步 JS 收集 perf 里所有 `/aweme/` 数据接口候选（detail/tab-feed/搜索通吃，排除 emoji/comment 等噪声，新→旧最多 5 条），Swift 原生 URLSession 逐条重放（最多 3 条，页面真实 UA——a_bogus 签名混入 UA 必须一致、Referer、域匹配 Cookie，不受 CORS 约束），在响应 JSON 里**递归深查**带 `video.play_addr.url_list` 的 aweme 对象（`aweme_id`/`group_id` 匹配 modal_id 目标优先，否则第一个可用项） |
 
 配套：
 - 面板扫描后视频为空且是已知站点 → 静默等 1.5s 自动补扫一轮（治 SPA 水合竞态，只补一轮）
@@ -48,8 +48,9 @@ CDN 媒体 URL 本身是带签名自包含地址，配合现有 `runDownload` �
 ### 实测校准（2026-08）
 
 - 小红书分享链（带 xsec_token）进入的视频笔记页：state 路径验证正确，`masterUrl` 为 `http://sns-video-v2.xhscdn.com/....mp4?sign=...`（ATS 已放开可直下）；未播放时 `<video>` 只有 blob:。首次扫描偶发空 → 水合竞态，自动补扫覆盖。✅ 已实测通过
-- 抖音视频页：无 `__INITIAL_STATE__`；douyinvod 直链是 DASH 分轨（video-avc1 / audio-mp4a），MSE blob 拼流播放，分轨不可直接交付；detail API 响应含合成 mp4 的 play_addr。
-- **教训**：WKWebView `evaluateJavaScript` 不解析 Promise（async JS 报 WKErrorJavaScriptResultTypeIsUnsupported「执行JavaScript返回结果的类型不受支持」），注入 JS 必须同步返回；需要异步能力时用同步 JS 取参数 + Swift 原生请求完成（顺带免 CORS、UA 可精确对齐签名输入）。
+- 抖音视频页：无 `__INITIAL_STATE__`；douyinvod 直链是 DASH 分轨（video-avc1 / audio-mp4a），MSE blob 拼流播放，分轨不可直接交付；数据接口（detail/tab-feed）响应含合成 mp4 的 play_addr。信息流页（jingxuan?modal_id=...）走批量 feed 接口，URL 里没有 aweme_id 参数 → 必须泛化收集 + 递归深查，不能只认 detail 接口。
+- **教训 1**：WKWebView `evaluateJavaScript` 不解析 Promise（async JS 报 WKErrorJavaScriptResultTypeIsUnsupported「执行JavaScript返回结果的类型不受支持」），注入 JS 必须同步返回；需要异步能力时用同步 JS 取参数 + Swift 原生请求完成（顺带免 CORS、UA 可精确对齐签名输入）。
+- **教训 2**：BrowserTabView 的 `\.url` KVO 观察器曾被 `!urlFocused` 整体拦截——新标签页 onAppear 自动聚焦地址栏，首次导航的 URL 更新被吞 → `currentURL` 永 nil → 媒体按钮/收藏永远不可用。修复：`currentURL` 无条件跟随，仅地址栏文本受聚焦保护。
 
 ## 关键实现点
 

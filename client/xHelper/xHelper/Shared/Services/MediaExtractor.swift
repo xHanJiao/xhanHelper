@@ -6,9 +6,10 @@ import WebKit
 /// 1. 站点 state 直读：小红书 `__INITIAL_STATE__` 的 masterUrl；抖音 RENDER_DATA 的 play_addr
 /// 2. perf 层：performance resource entries 里已加载的 .mp4 直链（排除抖音 DASH 分轨）
 /// 3. DOM 层：<video>/<img> currentSrc（blob:/data: 等不可直下的协议过滤）
-/// 4. 抖音专属兜底：同步 JS 定位 /aweme/v1/web/aweme/detail/ API URL（签名参数内嵌），
-///    Swift 原生 URLSession 重放（页面真实 UA——a_bogus 签名混入 UA 必须一致、Referer、
-///    域匹配 Cookie；不受 CORS 约束），取响应里的 play_addr —— 治 MSE 分轨拼流拿不到整段直链的问题。
+/// 4. 抖音专属兜底：同步 JS 收集 perf 里的 /aweme/ 数据接口候选（detail/feed/搜索通吃），
+///    Swift 原生 URLSession 逐条重放（页面真实 UA——a_bogus 签名混入 UA 必须一致、Referer、
+///    域匹配 Cookie；不受 CORS 约束），在响应 JSON 里递归深查 play_addr —— 治 MSE 分轨拼流
+///    拿不到整段直链的问题。
 /// 注意：evaluateJavaScript 不解析 Promise（async JS 会报 WKErrorJavaScriptResultTypeIsUnsupported），
 /// 所有注入 JS 必须同步返回受支持的结果类型（字符串/数字等）。
 enum MediaExtractor {
@@ -49,14 +50,14 @@ enum MediaExtractor {
         // 第 2 步：抖音 API 原生重放（仅当基础扫描没有可用直链时；DASH 分轨页必然触发）。
         // 注意：不能用 evaluateJavaScript 执行 async JS——它不解析 Promise
         // （WKErrorJavaScriptResultTypeIsUnsupported「执行JavaScript返回结果的类型不受支持」），
-        // 所以拆成：同步 JS 定位 API URL → Swift 原生 URLSession 重放（免 CORS，签名参数内嵌在 URL 里）。
+        // 所以拆成：同步 JS 定位候选数据接口 URL → Swift 原生 URLSession 重放（免 CORS，签名参数内嵌在 URL 里）。
         let host = URL(string: pageURL)?.host?.lowercased() ?? ""
         if host.contains("douyin."), result.videos.isEmpty {
             if let item = await replayDouyinDetailAPI(webView: webView) {
-                diagLog("douyin detail API 原生重放成功")
+                diagLog("douyin 数据接口原生重放成功")
                 result.videos.append(item)
             } else {
-                diagLog("douyin detail API 原生重放未取得直链 page=\(pageURL)")
+                diagLog("douyin 数据接口原生重放未取得直链 page=\(pageURL)")
             }
         }
 
@@ -119,11 +120,13 @@ enum MediaExtractor {
         )
     }
 
-    // MARK: - 第 2 步：抖音 detail API 原生重放
+    // MARK: - 第 2 步：抖音数据接口泛化重放
 
+    /// 泛化重放：perf 里的 /aweme/ 数据接口可能是 detail（详情页）、tab/feed（信息流）、
+    /// search（搜索）等任意形态，逐条重放并在响应 JSON 里递归深查 play_addr，命中即停。
     @MainActor
     private static func replayDouyinDetailAPI(webView: WKWebView) async -> Item? {
-        // 2a. 同步 JS 定位 detail API URL（字符串结果是 evaluateJavaScript 支持的类型）
+        // 2a. 同步 JS 定位候选接口 URL + 目标视频 id（字符串结果是 evaluateJavaScript 支持的类型）
         let raw: Any?
         do {
             raw = try await webView.evaluateJavaScript(douyinApiLocateJS)
@@ -141,48 +144,77 @@ enum MediaExtractor {
             diagLog("douyin 重放诊断(定位): \(diag)")
             return nil
         }
-        guard let apiUrlStr = obj["apiUrl"] as? String else {
-            diagLog("douyin locate 无 apiUrl 字段: \(obj)")
+        // 无 modal_id 的纯 feed 页 targetId 为 null → nil，深查退化为取第一个可用视频
+        let targetId = obj["targetId"] as? String
+        guard let apiUrls = obj["apiUrls"] as? [String], !apiUrls.isEmpty else {
+            diagLog("douyin 重放诊断(api_not_in_perf id=\(targetId ?? "-"))")
             return nil
         }
 
-        // 2b. 原生 URLSession 重放（页面真实 UA/Referer/域匹配 Cookie，不受 CORS 约束）
-        let (respData, status, err) = await BrowserToolProvider.shared
-            .fetchPageResourceJSON(urlString: apiUrlStr, sourceWebView: webView)
-        if let err {
-            diagLog("douyin 重放诊断(native_fetch_error): \(err)")
-            return nil
+        // 2b. 逐条原生重放（最多 3 条），命中即停
+        for (idx, apiUrl) in apiUrls.prefix(3).enumerated() {
+            let hint = URL(string: apiUrl).map { String($0.path.suffix(80)) } ?? apiUrl
+            let (respData, status, err) = await BrowserToolProvider.shared
+                .fetchPageResourceJSON(urlString: apiUrl, sourceWebView: webView)
+            if let err {
+                diagLog("douyin 重放#\(idx + 1) native_fetch_error: \(err) [\(hint)]")
+                continue
+            }
+            guard let respData, (200...299).contains(status) else {
+                diagLog("douyin 重放#\(idx + 1) http_\(status) [\(hint)]")
+                continue
+            }
+            if let item = findAwemeVideoInJSON(respData, targetId: targetId) {
+                diagLog("douyin 重放#\(idx + 1) 命中 [\(hint)]")
+                return item
+            }
+            diagLog("douyin 重放#\(idx + 1) 响应无可用 play_addr [\(hint)]")
         }
-        guard let respData, (200...299).contains(status) else {
-            diagLog("douyin 重放诊断(http_\(status))")
-            return nil
-        }
-
-        // 2c. Swift 解析响应，取 play_addr 直链
-        return parseDouyinDetail(respData)
+        return nil
     }
 
-    /// 解析 detail API 响应：aweme_detail.video.play_addr.url_list[0]（失败降级 bit_rate 最高码率项）。
-    private static func parseDouyinDetail(_ data: Data) -> Item? {
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+    /// 在任意 JSON 结构里递归找「带 video.play_addr.url_list 的 aweme 对象」。
+    /// aweme_id/group_id 匹配 targetId 的优先返回；否则返回遇到的第一个可用项。
+    private static func findAwemeVideoInJSON(_ data: Data, targetId: String?) -> Item? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) else {
             diagLog("douyin 重放诊断(non_json)")
             return nil
         }
-        var detail = obj["aweme_detail"] as? [String: Any]
-        if detail == nil, let list = obj["item_list"] as? [[String: Any]] {
-            detail = list.first
+        var fallback: Item?
+        if let hit = walkAweme(node: root, targetId: targetId, fallback: &fallback) { return hit }
+        return fallback
+    }
+
+    private static func walkAweme(node: Any, targetId: String?, fallback: inout Item?) -> Item? {
+        if let dict = node as? [String: Any] {
+            if let video = dict["video"] as? [String: Any],
+               let item = itemFromAweme(dict, video) {
+                if let tid = targetId, !tid.isEmpty, awemeMatches(dict, tid) {
+                    return item
+                }
+                if fallback == nil { fallback = item }
+            }
+            for (_, value) in dict {
+                if let hit = walkAweme(node: value, targetId: targetId, fallback: &fallback) { return hit }
+            }
+        } else if let arr = node as? [Any] {
+            for value in arr {
+                if let hit = walkAweme(node: value, targetId: targetId, fallback: &fallback) { return hit }
+            }
         }
-        guard let d = detail else {
-            let keys = obj.keys.prefix(8).joined(separator: ",")
-            let code = (obj["status_code"] as? NSNumber)?.stringValue ?? "-"
-            diagLog("douyin 重放诊断(no_aweme_detail keys=[\(keys)] code=\(code))")
-            return nil
+        return nil
+    }
+
+    private static func awemeMatches(_ dict: [String: Any], _ tid: String) -> Bool {
+        for key in ["aweme_id", "group_id"] {
+            if let v = dict[key] as? String, v == tid { return true }
+            if let n = dict[key] as? NSNumber, n.stringValue == tid { return true }
         }
-        guard let video = d["video"] as? [String: Any] else {
-            let keys = d.keys.prefix(12).joined(separator: ",")
-            diagLog("douyin 重放诊断(no_video_field keys=[\(keys)])")
-            return nil
-        }
+        return false
+    }
+
+    /// 从单个 aweme 对象取直链：play_addr.url_list[0]（失败降级 bit_rate 最高码率项）。
+    private static func itemFromAweme(_ dict: [String: Any], _ video: [String: Any]) -> Item? {
         func pickURL(_ playAddr: Any?) -> URL? {
             guard let pa = playAddr as? [String: Any],
                   let urls = pa["url_list"] as? [String] else { return nil }
@@ -195,13 +227,16 @@ enum MediaExtractor {
         if outURL == nil, let rates = video["bit_rate"] as? [[String: Any]], let best = rates.last {
             outURL = pickURL(best["play_addr"])
         }
-        guard let url = outURL else {
-            diagLog("douyin 重放诊断(no_play_url hasPlayAddr=\(video["play_addr"] != nil))")
-            return nil
+        guard let url = outURL else { return nil }
+        // duration 单位 ms（aweme 层优先）；个别场景可能已是秒，按量级换算
+        var durationSec: Int?
+        for holder in [dict, video] {
+            if let n = holder["duration"] as? NSNumber, n.doubleValue > 0 {
+                durationSec = Int(n.doubleValue / (n.doubleValue > 1000 ? 1000 : 1))
+                break
+            }
         }
-        // 抖音 duration 单位 ms → 秒
-        let durationSec = (d["duration"] as? NSNumber).map { Int($0.doubleValue / 1000) }
-        let title = ((d["desc"] as? String) ?? "").prefix(60)
+        let title = ((dict["desc"] as? String) ?? "").prefix(60)
         return Item(kind: .video, url: url, poster: nil,
                     duration: durationSec, width: nil, height: nil,
                     title: String(title), playing: false)
@@ -298,25 +333,30 @@ enum MediaExtractor {
     })()
     """
 
-    // MARK: - 抖音 detail API 定位 JS（同步，返回受支持的结果类型）
+    // MARK: - 抖音数据接口定位 JS（同步，返回受支持的结果类型）
 
-    /// 从 performance entries 里找当前 aweme_id 的 detail API URL（签名参数内嵌）。
+    /// 收集 perf 里所有 /aweme/ 数据接口候选 URL（新→旧最多 5 条，排除 emoji/comment 等非数据接口），
+    /// 附带目标视频 id（/video/{id} 或 modal_id=，纯 feed 页为 null）。
     /// 只负责定位；重放由 Swift 原生 URLSession 完成（evaluateJavaScript 不支持 async/Promise 结果）。
     private static let douyinApiLocateJS = """
     (function(){
       var D = function(o) { try { return JSON.stringify(o); } catch (e) { return null; } };
       try {
         var m = location.pathname.match(/\\/video\\/(\\d+)/) || location.search.match(/modal_id=(\\d+)/);
-        if (!m) return D({diag:{step:'no_aweme_id', path:location.pathname.slice(0, 80), search:location.search.slice(0, 80)}});
-        var id = m[1];
+        var targetId = m ? m[1] : null;
+        var urls = [];
+        var seen = {};
         var entries = performance.getEntriesByType('resource');
-        for (var i = entries.length - 1; i >= 0; i--) {
+        for (var i = entries.length - 1; i >= 0 && urls.length < 5; i--) {
           var u = entries[i].name;
-          if (u.indexOf('/aweme/v1/web/aweme/detail/') >= 0 && u.indexOf('aweme_id=' + id) >= 0) {
-            return D({apiUrl: u});
-          }
+          if (!/^https?:\\/\\//.test(u)) continue;
+          if (u.indexOf('/aweme/') < 0) continue;
+          if (/emoji|dashboard|qrcode|passport|comment|reply|notice|log|report|config|constants|category/.test(u)) continue;
+          if (seen[u]) continue;
+          seen[u] = 1;
+          urls.push(u);
         }
-        return D({diag:{step:'api_not_in_perf', id:id}});
+        return D({targetId: targetId, apiUrls: urls});
       } catch (e) {
         return D({diag:{step:'exception', err:String((e && e.message) || e).slice(0, 80)}});
       }

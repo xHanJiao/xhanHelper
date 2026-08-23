@@ -33,7 +33,8 @@ struct BookmarkReorderModifier: ViewModifier {
                    let idx = store.bookmarks.firstIndex(where: { $0.id == bookmark.id }) {
                     let along = axis == .horizontal ? location.x : location.y
                     let target = along < size / 2 ? idx : idx + 1
-                    Task { @MainActor in store.move(id: dragged, toIndex: target) }
+                    // 子项落到顶层条目 = 拖出文件夹并定位（面板空白处/文件夹行由各自的 dropDestination 处理）
+                    Task { @MainActor in store.moveToTopLevel(id: dragged, toIndex: target) }
                 }
                 return true
             } isTargeted: { isDropTarget = $0 }

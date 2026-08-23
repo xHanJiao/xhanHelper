@@ -2,6 +2,7 @@ import Foundation
 import Combine
 
 /// 浏览器收藏夹（持久化）：扁平列表，支持 Netscape HTML 书签导入/导出（Chrome/Safari 通用）。
+/// 文件夹：url 为空的条目即文件夹，成员关系靠 folderID（仅一级嵌套，需要多级时给 folderID 加 parentID）。
 @MainActor
 final class BookmarkStore: ObservableObject {
     static let shared = BookmarkStore()
@@ -12,6 +13,10 @@ final class BookmarkStore: ObservableObject {
         var url: String
         var host: String
         var createdAt: Date
+        var folderID: UUID? // nil = 顶层；可选字段，旧 bookmarks.json 缺 key 解码为 nil，天然兼容
+
+        /// 文件夹判别：add() 校验过书签必有 http(s) URL，空 url 只可能是文件夹。
+        var isFolder: Bool { url.isEmpty }
     }
 
     @Published private(set) var bookmarks: [Bookmark] = []
@@ -69,8 +74,50 @@ final class BookmarkStore: ObservableObject {
     }
 
     func remove(id: UUID) {
+        // 目标是文件夹时级联删除内容（Chrome 语义），所有调用点统一安全
+        if let f = bookmarks.first(where: { $0.id == id }), f.isFolder {
+            deleteFolder(id: id)
+            return
+        }
         bookmarks.removeAll { $0.id == id }
         scheduleSave()
+    }
+
+    /// 新建文件夹（默认名「新建文件夹」），返回新文件夹 id。
+    @discardableResult
+    func createFolder(title: String = "新建文件夹") -> UUID {
+        let id = UUID()
+        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        bookmarks.insert(Bookmark(id: id, title: t.isEmpty ? "新建文件夹" : t, url: "", host: "", createdAt: Date(), folderID: nil), at: 0)
+        scheduleSave()
+        return id
+    }
+
+    /// 文件夹内的收藏（保持数组顺序）。
+    func children(of folderID: UUID) -> [Bookmark] {
+        bookmarks.filter { $0.folderID == folderID }
+    }
+
+    /// 删除文件夹及其全部内容（对标 Chrome）。
+    func deleteFolder(id: UUID) {
+        bookmarks.removeAll { $0.id == id || $0.folderID == id }
+        scheduleSave()
+    }
+
+    /// 移动收藏进/出文件夹。仅一级：文件夹不可入文件夹。
+    func moveToFolder(id: UUID, folderID: UUID?) {
+        guard let i = bookmarks.firstIndex(where: { $0.id == id }), !bookmarks[i].isFolder else { return }
+        if let target = folderID,
+           !bookmarks.contains(where: { $0.id == target && $0.isFolder }) { return }
+        bookmarks[i].folderID = folderID
+        scheduleSave()
+    }
+
+    /// 拖出文件夹到指定位置：归入顶层后重排（落到顶层条目上时用）。
+    func moveToTopLevel(id: UUID, toIndex target: Int) {
+        guard let i = bookmarks.firstIndex(where: { $0.id == id }), !bookmarks[i].isFolder else { return }
+        bookmarks[i].folderID = nil
+        move(id: id, toIndex: target)
     }
 
     /// 重命名收藏（允许清空：空名称 = 无名字，展示时只显示图标）。
@@ -101,14 +148,6 @@ final class BookmarkStore: ObservableObject {
             remove(url: url)
         } else {
             add(title: title, url: url)
-        }
-    }
-
-    func search(_ query: String) -> [Bookmark] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return bookmarks }
-        return bookmarks.filter {
-            $0.title.lowercased().contains(q) || $0.url.lowercased().contains(q)
         }
     }
 
@@ -166,7 +205,7 @@ final class BookmarkStore: ObservableObject {
         <DL><p>
 
         """
-        for b in bookmarks {
+        for b in bookmarks where !b.isFolder {
             let safeURL = b.url.replacingOccurrences(of: "&", with: "&amp;")
                 .replacingOccurrences(of: "\"", with: "&quot;")
             let safeTitle = b.title.replacingOccurrences(of: "&", with: "&amp;")
@@ -178,7 +217,12 @@ final class BookmarkStore: ObservableObject {
     }
 
     private func trim() {
-        guard bookmarks.count > maxBookmarks else { return }
-        bookmarks.removeLast(bookmarks.count - maxBookmarks)
+        // 超限从尾部裁剪；裁到文件夹时级联删除其子项，避免孤儿数据（ponytail: 最坏 O(n²)，500 上限下无所谓）
+        while bookmarks.count > maxBookmarks {
+            let b = bookmarks.removeLast()
+            if b.isFolder {
+                bookmarks.removeAll { $0.folderID == b.id }
+            }
+        }
     }
 }

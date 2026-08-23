@@ -32,18 +32,36 @@ CDN 媒体 URL 本身是带签名自包含地址，配合现有 `runDownload` �
 
 ## 提取策略
 
-分层提取，优先级从高到低，URL 去重保留高优先级（实测数据驱动的设计，见下方「实测校准」）：
+分层提取，优先级从高到低，URL 去重保留高优先级。①层由站点策略提供（可空），②③④为通用引擎：
 
-| 层 | 小红书 | 抖音 |
+| 层 | 归属 | 内容 |
 |---|---|---|
-| ① 站点 state 直读 | `__INITIAL_STATE__.note.noteDetailMap[id].note.video.media.stream.h264[0].masterUrl`（原图/原画直链） | RENDER_DATA 里的 play_addr（新版页面多已不存在，保留一行成本） |
-| ② perf 层（通用） | `performance.getEntriesByType('resource')` 里已加载的 `.mp4` 直链——播放器预加载也会命中，不依赖 DOM/state 结构和水合时序；**显式排除抖音 DASH 分轨**（`douyinvod`/`media-video-`/`media-audio-`，纯视频或纯音频，下载了没法看） | 同左 |
-| ③ DOM 层（通用兜底） | `<video>` currentSrc / `<img>` src，过滤 blob:/data: | 同左 |
-| ④ 抖音数据接口泛化重放 | — | 仅当①②③无可用视频时：同步 JS 收集 perf 里所有 `/aweme/` 数据接口候选（detail/tab-feed/搜索通吃，排除 emoji/comment 等噪声，新→旧最多 5 条），Swift 原生 URLSession 逐条重放（最多 3 条，页面真实 UA——a_bogus 签名混入 UA 必须一致、Referer、域匹配 Cookie，不受 CORS 约束），在响应 JSON 里**递归深查**带 `video.play_addr.url_list` 的 aweme 对象（`aweme_id`/`group_id` 匹配 modal_id 目标优先，否则第一个可用项） |
+| ① 站点捷径 | 策略 | 小红书：`__INITIAL_STATE__` 的 `masterUrl`（原画直链）；抖音：RENDER_DATA 的 play_addr（旧版页面才有，保留一行成本） |
+| ② perf 层 | 通用 | `performance.getEntriesByType('resource')` 里已加载的 `.mp4` 直链——播放器预加载也命中，不依赖 DOM/state 结构和水合时序；排除 HLS/DASH 特征 |
+| ③ DOM 层 | 通用 | `<video>` currentSrc / `<img>` src（过滤 blob:/data:） |
+| ④ 接口重放挖掘 | 通用兜底（所有站点触发） | perf 收集数据接口候选（噪声黑名单 + 扩展名过滤 + 信号词分级，≤8 条）→ Swift 原生 URLSession 逐条重放（≤4 条、>8MB 跳过、命中即停）→ 响应 JSON **递归深挖**视频直链：结构化捷径（`url_list` 数组 / url·src·play 键名）+ 通用形态（`.mp4/.webm/.mov` 结尾或 `/play`/`/stream`/`media-video` 特征），排除 m3u8/mpd/media-audio-；目标 id 关联的子树优先 |
 
 配套：
 - 面板扫描后视频为空且是已知站点 → 静默等 1.5s 自动补扫一轮（治 SPA 水合竞态，只补一轮）
-- 扫描输出带各层命中统计，视频为空打 LogBuffer 日志（失效可从日志定位，不用开 Inspector）
+- 每次重放尝试打诊断日志（接口 path + 结果）；无视频时输出各层统计
+
+## 架构：策略模式
+
+```
+MediaExtractor（通用引擎，持有全部通用逻辑）
+        │ strategies.first { $0.matches(host) }   可空 → 纯通用路径
+        ▼
+MediaSiteStrategy 协议（MediaSiteStrategies.swift）
+├── matches(host:)                 是否适用
+├── stateReadJS: String?           ①层捷径 JS（输出归一化 {videos:[],images:[]}，引擎共用解析器）
+├── replaySignalWords              ④层候选排序信号词（默认词表可覆盖）
+└── targetId(in:)                  页面目标对象 id（深挖结果关联优先）
+```
+
+- 内置策略：`XiaohongshuMediaStrategy`、`DouyinMediaStrategy`，注册于 `MediaSiteStrategies.all`
+- **新增站点支持 = 一个 struct（通常只需一段 stateReadJS）+ 一行注册**；无需碰引擎代码
+- 设计约束：策略只出同步 JS 与参数，不做解析器（归一化输出形状由引擎统一解析）；
+  所有注入 JS 必须同步返回受支持的结果类型（见下方教训 1）
 
 ### 实测校准（2026-08）
 
@@ -68,11 +86,12 @@ CDN 媒体 URL 本身是带签名自包含地址，配合现有 `runDownload` �
 
 | 文件 | 改动 |
 |---|---|
-| `Shared/Services/MediaExtractor.swift`（新增） | 扫描 JS（通用+两站点增强）、ScanResult/Item 模型、evaluateJavaScript 包装 |
+| `Shared/Services/MediaExtractor.swift` | 通用引擎：分层编排、base 扫描 JS、重放挖掘（候选收集/原生重放/递归深挖）、诊断日志 |
+| `Shared/Services/MediaSiteStrategies.swift`（新增） | MediaSiteStrategy 协议 + 小红书/抖音策略 + 注册表 |
 | `Shared/Views/MediaPickerPanelView.swift`（新增） | 面板 UI：列表/勾选/顺序下载/进度状态 |
-| `Shared/Tools/BrowserToolProvider.swift` | runDownload 加 session 参数；新增 downloadMedia 入口 |
+| `Shared/Tools/BrowserToolProvider.swift` | runDownload 加 session 参数；新增 downloadMedia 入口；fetchPageResourceJSON 原生重放 |
 | `Shared/Views/RightSidebarManager.swift` | mediaTabID 加入 specialTabIDs；openMediaPanel(sourceWebView:) |
-| `Shared/Views/BrowserTabView.swift` | 地址栏加媒体按钮 |
+| `Shared/Views/BrowserTabView.swift` | 地址栏加媒体按钮；修复 URL 观察器被地址栏聚焦拦截的 bug |
 
 ## 已知取舍
 

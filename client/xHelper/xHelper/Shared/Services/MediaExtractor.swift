@@ -339,7 +339,7 @@ enum MediaExtractor {
 
         func emit(_ item: Item?, toPreferred: Bool) {
             guard let item, emitted.insert(item.url.absoluteString).inserted else { return }
-            (toPreferred ? &preferred : &others).append(item)
+            if toPreferred { preferred.append(item) } else { others.append(item) }
         }
 
         func idMatches(_ dict: [String: Any]) -> Bool {
@@ -355,12 +355,12 @@ enum MediaExtractor {
             if let dict = node as? [String: Any] {
                 let isTarget = inTarget || idMatches(dict)
                 structuredEmit(dict, toPreferred: isTarget, emit: emit)
-                for value in dict.values { walk(value, isTarget) }
+                for value in dict.values { walk(value, inTarget: isTarget) }
             } else if let arr = node as? [Any] {
-                for value in arr { walk(value, inTarget) }
+                for value in arr { walk(value, inTarget: inTarget) }
             }
         }
-        walk(root, false)
+        walk(root, inTarget: false)
 
         // 通用兜底：结构化没覆盖到的直链字符串
         var strings: [String] = []

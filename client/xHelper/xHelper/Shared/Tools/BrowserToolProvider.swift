@@ -1080,6 +1080,50 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                                  delay: false, enforceMedia: true, session: session)
     }
 
+    /// 原生重放页面已请求过的 API URL（用户媒体面板用，通用非站点耦合）：
+    /// 请求特征与 runDownload 同款——页面真实 UA（a_bogus 等签名混入 UA，必须一致）、
+    /// Referer、RFC6265 域匹配 Cookie；原生请求不受 CORS 约束。
+    /// 返回响应体 + HTTP 状态 + 传输层错误描述。
+    func fetchPageResourceJSON(urlString: String, sourceWebView: WKWebView?) async -> (data: Data?, status: Int, error: String?) {
+        guard let url = URL(string: urlString),
+              url.scheme == "http" || url.scheme == "https",
+              let host = url.host, !host.isEmpty else {
+            return (nil, 0, "无效的 URL")
+        }
+        let srcSession = sourceWebView.flatMap { wv in tabs.first(where: { $0.value.webView === wv })?.value }
+        var ua = Self.defaultBrowserUA
+        var referer = ""
+        var cookieHeader = ""
+        if let session = srcSession {
+            ua = (await session.jsResult("navigator.userAgent")).text ?? ua
+            referer = session.webView.url?.absoluteString ?? ""
+            let allCookies = await session.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+            let matched = Self.matchingCookies(allCookies, for: url)
+            if !matched.isEmpty {
+                cookieHeader = matched.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+            }
+        }
+
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 20
+        req.setValue(ua, forHTTPHeaderField: "User-Agent")
+        if !referer.isEmpty { req.setValue(referer, forHTTPHeaderField: "Referer") }
+        req.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+        if !cookieHeader.isEmpty { req.setValue(cookieHeader, forHTTPHeaderField: "Cookie") }
+
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 20
+        let dlSession = URLSession(configuration: cfg)
+        do {
+            let (data, resp) = try await dlSession.data(for: req)
+            dlSession.finishTasksAndInvalidate()
+            return (data, (resp as? HTTPURLResponse)?.statusCode ?? 0, nil)
+        } catch {
+            dlSession.finishTasksAndInvalidate()
+            return (nil, 0, error.localizedDescription)
+        }
+    }
+
     /// 下载核心（task 版）：可实时进度 + 可取消 + 写入下载历史。
     /// - session：请求特征（UA/Referer/Cookie）来源页，nil 用当前激活 tab（agent/retry 路径）；
     ///   用户媒体面板路径显式传入来源页（面板激活时 activeSession 可能已漂移）。

@@ -110,7 +110,7 @@ struct MediaPickerPanelView: View {
                         .padding(.top, 24)
                 } else if let result {
                     if result.isEmpty {
-                        Text("未发现可下载的媒体资源。视频类页面若需先播放才有直链，可播放后点「重新扫描」")
+                        Text("未发现可下载的媒体资源。视频若需先播放才有直链，可播放后点「重新扫描」；抖音请在视频详情页使用")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
                             .frame(maxWidth: .infinity)

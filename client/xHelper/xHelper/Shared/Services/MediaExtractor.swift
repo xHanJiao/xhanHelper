@@ -6,9 +6,11 @@ import WebKit
 /// 1. 站点 state 直读：小红书 `__INITIAL_STATE__` 的 masterUrl；抖音 RENDER_DATA 的 play_addr
 /// 2. perf 层：performance resource entries 里已加载的 .mp4 直链（排除抖音 DASH 分轨）
 /// 3. DOM 层：<video>/<img> currentSrc（blob:/data: 等不可直下的协议过滤）
-/// 4. 抖音专属兜底：页面上下文 fetch 重放 /aweme/v1/web/aweme/detail/（签名参数内嵌在 URL，
-///    credentials 自动带 cookie），取响应里的 play_addr —— 治 MSE 分轨拼流拿不到整段直链的问题。
-/// 全部在真实登录态页面上下文里读现成数据，不构造新的签名请求 → 不触碰风控体系。
+/// 4. 抖音专属兜底：同步 JS 定位 /aweme/v1/web/aweme/detail/ API URL（签名参数内嵌），
+///    Swift 原生 URLSession 重放（页面真实 UA——a_bogus 签名混入 UA 必须一致、Referer、
+///    域匹配 Cookie；不受 CORS 约束），取响应里的 play_addr —— 治 MSE 分轨拼流拿不到整段直链的问题。
+/// 注意：evaluateJavaScript 不解析 Promise（async JS 会报 WKErrorJavaScriptResultTypeIsUnsupported），
+/// 所有注入 JS 必须同步返回受支持的结果类型（字符串/数字等）。
 enum MediaExtractor {
 
     struct Item: Identifiable, Equatable {
@@ -44,14 +46,17 @@ enum MediaExtractor {
         // 第 1 步：基础扫描（state + perf + DOM）
         guard var result = await scanBase(webView: webView, pageURL: pageURL) else { return nil }
 
-        // 第 2 步：抖音 API 重放（仅当基础扫描没有可用直链时；DASH 分轨页必然触发）
+        // 第 2 步：抖音 API 原生重放（仅当基础扫描没有可用直链时；DASH 分轨页必然触发）。
+        // 注意：不能用 evaluateJavaScript 执行 async JS——它不解析 Promise
+        // （WKErrorJavaScriptResultTypeIsUnsupported「执行JavaScript返回结果的类型不受支持」），
+        // 所以拆成：同步 JS 定位 API URL → Swift 原生 URLSession 重放（免 CORS，签名参数内嵌在 URL 里）。
         let host = URL(string: pageURL)?.host?.lowercased() ?? ""
         if host.contains("douyin."), result.videos.isEmpty {
             if let item = await replayDouyinDetailAPI(webView: webView) {
-                diagLog("douyin detail API 重放成功")
+                diagLog("douyin detail API 原生重放成功")
                 result.videos.append(item)
             } else {
-                diagLog("douyin detail API 重放未取得直链 page=\(pageURL)")
+                diagLog("douyin detail API 原生重放未取得直链 page=\(pageURL)")
             }
         }
 
@@ -114,44 +119,92 @@ enum MediaExtractor {
         )
     }
 
-    // MARK: - 第 2 步：抖音 detail API 重放
+    // MARK: - 第 2 步：抖音 detail API 原生重放
 
     @MainActor
     private static func replayDouyinDetailAPI(webView: WKWebView) async -> Item? {
+        // 2a. 同步 JS 定位 detail API URL（字符串结果是 evaluateJavaScript 支持的类型）
         let raw: Any?
         do {
-            raw = try await webView.evaluateJavaScript(douyinReplayJS)
+            raw = try await webView.evaluateJavaScript(douyinApiLocateJS)
         } catch {
-            diagLog("douyin replay JS error: \(error.localizedDescription)")
+            diagLog("douyin locate JS error: \(error.localizedDescription)")
             return nil
         }
         guard let json = raw as? String,
               let data = json.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            diagLog("douyin replay 返回非预期（raw=\(raw.map { "\($0)" } ?? "nil")）")
+            diagLog("douyin locate 返回非预期（raw=\(raw.map { "\($0)" } ?? "nil")）")
             return nil
         }
-        // 逐级诊断：失败时 JS 返回 {diag:{step:...}}，打印后可精确定位死在哪一步
         if let diag = obj["diag"] {
-            diagLog("douyin 重放诊断: \(diag)")
+            diagLog("douyin 重放诊断(定位): \(diag)")
             return nil
         }
-        guard let urlStr = obj["url"] as? String,
-              let url = URL(string: urlStr),
-              url.scheme == "http" || url.scheme == "https" else {
-            diagLog("douyin replay 无有效 url 字段: \(obj)")
+        guard let apiUrlStr = obj["apiUrl"] as? String else {
+            diagLog("douyin locate 无 apiUrl 字段: \(obj)")
             return nil
         }
-        return Item(
-            kind: .video,
-            url: url,
-            poster: nil,
-            duration: obj["duration"] as? Int,
-            width: nil,
-            height: nil,
-            title: (obj["title"] as? String) ?? "",
-            playing: false
-        )
+
+        // 2b. 原生 URLSession 重放（页面真实 UA/Referer/域匹配 Cookie，不受 CORS 约束）
+        let (respData, status, err) = await BrowserToolProvider.shared
+            .fetchPageResourceJSON(urlString: apiUrlStr, sourceWebView: webView)
+        if let err {
+            diagLog("douyin 重放诊断(native_fetch_error): \(err)")
+            return nil
+        }
+        guard let respData, (200...299).contains(status) else {
+            diagLog("douyin 重放诊断(http_\(status))")
+            return nil
+        }
+
+        // 2c. Swift 解析响应，取 play_addr 直链
+        return parseDouyinDetail(respData)
+    }
+
+    /// 解析 detail API 响应：aweme_detail.video.play_addr.url_list[0]（失败降级 bit_rate 最高码率项）。
+    private static func parseDouyinDetail(_ data: Data) -> Item? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            diagLog("douyin 重放诊断(non_json)")
+            return nil
+        }
+        var detail = obj["aweme_detail"] as? [String: Any]
+        if detail == nil, let list = obj["item_list"] as? [[String: Any]] {
+            detail = list.first
+        }
+        guard let d = detail else {
+            let keys = obj.keys.prefix(8).joined(separator: ",")
+            let code = (obj["status_code"] as? NSNumber)?.stringValue ?? "-"
+            diagLog("douyin 重放诊断(no_aweme_detail keys=[\(keys)] code=\(code))")
+            return nil
+        }
+        guard let video = d["video"] as? [String: Any] else {
+            let keys = d.keys.prefix(12).joined(separator: ",")
+            diagLog("douyin 重放诊断(no_video_field keys=[\(keys)])")
+            return nil
+        }
+        func pickURL(_ playAddr: Any?) -> URL? {
+            guard let pa = playAddr as? [String: Any],
+                  let urls = pa["url_list"] as? [String] else { return nil }
+            for u in urls {
+                if let url = URL(string: u), url.scheme == "http" || url.scheme == "https" { return url }
+            }
+            return nil
+        }
+        var outURL = pickURL(video["play_addr"])
+        if outURL == nil, let rates = video["bit_rate"] as? [[String: Any]], let best = rates.last {
+            outURL = pickURL(best["play_addr"])
+        }
+        guard let url = outURL else {
+            diagLog("douyin 重放诊断(no_play_url hasPlayAddr=\(video["play_addr"] != nil))")
+            return nil
+        }
+        // 抖音 duration 单位 ms → 秒
+        let durationSec = (d["duration"] as? NSNumber).map { Int($0.doubleValue / 1000) }
+        let title = ((d["desc"] as? String) ?? "").prefix(60)
+        return Item(kind: .video, url: url, poster: nil,
+                    duration: durationSec, width: nil, height: nil,
+                    title: String(title), playing: false)
     }
 
     // MARK: - 基础扫描 JS
@@ -245,55 +298,25 @@ enum MediaExtractor {
     })()
     """
 
-    // MARK: - 抖音 detail API 重放 JS
+    // MARK: - 抖音 detail API 定位 JS（同步，返回受支持的结果类型）
 
-    /// 从 performance entries 里找当前 aweme_id 的 detail API URL（签名参数内嵌），
-    /// 页面上下文 fetch 重放，取 play_addr 直链。async IIFE 由 evaluateJavaScript 自动解包 Promise。
-    /// 每个失败分支都返回 {diag:{step,...}} 供日志定位。
-    private static let douyinReplayJS = """
-    (async function(){
+    /// 从 performance entries 里找当前 aweme_id 的 detail API URL（签名参数内嵌）。
+    /// 只负责定位；重放由 Swift 原生 URLSession 完成（evaluateJavaScript 不支持 async/Promise 结果）。
+    private static let douyinApiLocateJS = """
+    (function(){
       var D = function(o) { try { return JSON.stringify(o); } catch (e) { return null; } };
       try {
         var m = location.pathname.match(/\\/video\\/(\\d+)/) || location.search.match(/modal_id=(\\d+)/);
         if (!m) return D({diag:{step:'no_aweme_id', path:location.pathname.slice(0, 80), search:location.search.slice(0, 80)}});
         var id = m[1];
-        var api = null;
         var entries = performance.getEntriesByType('resource');
         for (var i = entries.length - 1; i >= 0; i--) {
           var u = entries[i].name;
-          if (u.indexOf('/aweme/v1/web/aweme/detail/') >= 0 && u.indexOf('aweme_id=' + id) >= 0) { api = u; break; }
-        }
-        if (!api) return D({diag:{step:'api_not_in_perf', id:id}});
-        var r;
-        try {
-          r = await fetch(api, {credentials: 'include'});
-        } catch (e1) {
-          // 捕获的 API 可能在非常规子域（www-hj 等），跨域被拦时换主域重放一次
-          try {
-            r = await fetch(api.replace('//www-hj.douyin.com', '//www.douyin.com'), {credentials: 'include'});
-          } catch (e2) {
-            return D({diag:{step:'fetch_throw', err:String((e1 && e1.message) || e1).slice(0, 80)}});
+          if (u.indexOf('/aweme/v1/web/aweme/detail/') >= 0 && u.indexOf('aweme_id=' + id) >= 0) {
+            return D({apiUrl: u});
           }
         }
-        if (!r.ok) return D({diag:{step:'http_' + r.status}});
-        var text = await r.text();
-        var j = null;
-        try { j = JSON.parse(text); } catch (e3) {}
-        if (!j) return D({diag:{step:'non_json', head:text.slice(0, 60)}});
-        var d = j.aweme_detail || (j.item_list && j.item_list[0]) || null;
-        if (!d) return D({diag:{step:'no_aweme_detail', keys:Object.keys(j).slice(0, 8).join(','), code:(j.status_code === undefined ? '' : j.status_code)}});
-        var v = d.video;
-        if (!v) return D({diag:{step:'no_video_field', keys:Object.keys(d).slice(0, 12).join(',')}});
-        var pick = function(pa) {
-          if (!pa || !pa.url_list) return null;
-          for (var k = 0; k < pa.url_list.length; k++) if (/^https?:\\/\\//.test(pa.url_list[k])) return pa.url_list[k];
-          return null;
-        };
-        var out = pick(v.play_addr);
-        if (!out && v.bit_rate && v.bit_rate.length) out = pick(v.bit_rate[v.bit_rate.length - 1].play_addr);
-        if (!out) return D({diag:{step:'no_play_url', hasPlayAddr:!!v.play_addr, bitRateLen:(v.bit_rate || []).length}});
-        return D({url: out, duration: isFinite(d.duration) && d.duration > 0 ? Math.round(d.duration / 1000) : null,
-                  title: ((d.desc || document.title || '') + '').slice(0, 60)});
+        return D({diag:{step:'api_not_in_perf', id:id}});
       } catch (e) {
         return D({diag:{step:'exception', err:String((e && e.message) || e).slice(0, 80)}});
       }

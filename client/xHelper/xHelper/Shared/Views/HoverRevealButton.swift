@@ -16,6 +16,8 @@ struct HoverRevealButton: View {
     let action: () -> Void
     /// 热区沿朝向的厚度（横向=宽度，纵向=高度）。
     var zoneWidth: CGFloat = 48
+    /// 热区长轴长度：限制热区只覆盖边缘中间一段，避免劫持该区域之外的内容点击。
+    var extent: CGFloat = 120
     var buttonSize: CGFloat = 32
     /// 热区铺开方向：`.horizontal` 贴左/右边缘，`.vertical` 贴上/下边缘。
     var axis: Axis = .horizontal
@@ -28,6 +30,8 @@ struct HoverRevealButton: View {
             Color.clear
                 .frame(width: axis == .horizontal ? zoneWidth : nil)
                 .frame(height: axis == .vertical ? zoneWidth : nil)
+                .frame(maxWidth: axis == .vertical ? extent : nil,
+                       maxHeight: axis == .horizontal ? extent : nil)
                 .contentShape(Rectangle())
                 .onHover { isHovered = $0 }
                 .onTapGesture { action() }
@@ -45,8 +49,6 @@ struct HoverRevealButton: View {
                 .scaleEffect(isHovered ? 1 : 0.8)
                 .allowsHitTesting(false)
         }
-        .frame(maxWidth: axis == .vertical ? .infinity : nil,
-               maxHeight: axis == .horizontal ? .infinity : nil)
         .animation(.easeOut(duration: 0.15), value: isHovered)
     }
 }

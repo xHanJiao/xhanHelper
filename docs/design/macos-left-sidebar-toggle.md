@@ -110,6 +110,7 @@ struct HoverRevealButton: View {
     let tooltip: String
     let action: () -> Void
     var zoneWidth: CGFloat = 48
+    var extent: CGFloat = 120
     var buttonSize: CGFloat = 32
     var axis: Axis = .horizontal
 
@@ -120,6 +121,8 @@ struct HoverRevealButton: View {
             Color.clear
                 .frame(width: axis == .horizontal ? zoneWidth : nil)
                 .frame(height: axis == .vertical ? zoneWidth : nil)
+                .frame(maxWidth: axis == .vertical ? extent : nil,
+                       maxHeight: axis == .horizontal ? extent : nil)
                 .contentShape(Rectangle())
                 .onHover { isHovered = $0 }
                 .onTapGesture { action() }
@@ -136,12 +139,12 @@ struct HoverRevealButton: View {
                 .scaleEffect(isHovered ? 1 : 0.8)
                 .allowsHitTesting(false)
         }
-        .frame(maxWidth: axis == .vertical ? .infinity : nil,
-               maxHeight: axis == .horizontal ? .infinity : nil)
         .animation(.easeOut(duration: 0.15), value: isHovered)
     }
 }
 ```
+
+> `extent` 限制热区长轴长度（默认 120），热区只覆盖边缘中间一段并垂直居中，避免整条左缘被透明命中条劫持（如顶部收藏夹的点击）。
 
 ## 禁止事项
 
@@ -160,7 +163,7 @@ struct HoverRevealButton: View {
 - 隐藏/展开无动画；热区按钮仅 hover 出现（无常驻边缘指示）。
 - 隐藏态不持久化（重启恢复展开）。
 - 窄窗下点展开无反馈（clamp 回 38，保持隐藏）。
-- 热区 48px 条会拦截其覆盖区域（中栏卡片左侧内边距）的点击，仅隐藏态存在，可接受。
+- 热区 48px × 120px（垂直居中）会拦截其覆盖区域（中栏卡片左侧中间段）的点击，仅隐藏态存在，可接受；顶部收藏夹区域不再被劫持。
 
 ## 自检（只读）
 

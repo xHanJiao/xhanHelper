@@ -65,6 +65,12 @@ struct ContentView: View {
 
     private var allowExpand: Bool { windowWidth >= 600 }
 
+    /// 侧栏完全隐藏判定：仅收起动作（sidebarWidth 落到最小宽 38）触发；
+    /// 手动拖拽到 38~120 之间仍显示窄轨，不隐藏。
+    private var isSidebarHidden: Bool {
+        sidebarWidth <= Layout.sidebarMinWidth
+    }
+
     /// 中间区跨度：PiP 时聊天区消失，只剩一个 seam（布局让位给右栏浏览器）。
     private var middleSpan: Double {
         rightSidebar.isPipChat
@@ -401,7 +407,7 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     TopBarView(
                         rightSidebar: rightSidebar,
-                        navLeadingOffset: sidebarWidth + Layout.navToolbarContentOffset
+                        navLeadingOffset: 0
                     )
                     .zIndex(1)
 
@@ -415,22 +421,24 @@ struct ContentView: View {
                         HStack(alignment: .top, spacing: 0) {
                             HSpace(Layout.cardGap)
 
-                            SidebarView(
-                                selectedTab: sidebarTabBinding,
-                                sidebarWidth: $sidebarWidth,
-                                chatTabManager: chatTabManager,
-                                conversationListVM: conversationListVM,
-                                defaultConversationID: deviceManager.defaultConversation?.id
-                            )
-                            .frame(minWidth: Layout.sidebarMinWidth)
-                            .padding(.horizontal, Layout.sidebarHPadding)
-                            .modifier(CardBackgroundModifier(isLifted: sidebarHovered))
-                            .layoutPriority(3)
-                            .onHover { sidebarHovered = $0 }
+                            if !isSidebarHidden {
+                                SidebarView(
+                                    selectedTab: sidebarTabBinding,
+                                    sidebarWidth: $sidebarWidth,
+                                    chatTabManager: chatTabManager,
+                                    conversationListVM: conversationListVM,
+                                    defaultConversationID: deviceManager.defaultConversation?.id
+                                )
+                                .frame(minWidth: Layout.sidebarMinWidth)
+                                .padding(.horizontal, Layout.sidebarHPadding)
+                                .modifier(CardBackgroundModifier(isLifted: sidebarHovered))
+                                .layoutPriority(3)
+                                .onHover { sidebarHovered = $0 }
 
-                            HSpace(Layout.seamHalfGap)
-                            SeamMarker(x: $leftSeamX)
-                            HSpace(Layout.seamHalfGap)
+                                HSpace(Layout.seamHalfGap)
+                                SeamMarker(x: $leftSeamX)
+                                HSpace(Layout.seamHalfGap)
+                            }
 
                             if !rightSidebar.isPipChat {
                                 macOSContentArea
@@ -461,10 +469,18 @@ struct ContentView: View {
                             HSpace(Layout.cardGap)
                         }
                         .coordinateSpace(name: ResizeDividerSpace.name)
+                        .overlay(alignment: .leading) {
+                            // 左栏完全隐藏时，左缘 hover 热区：悬停显示圆形展开按钮
+                            if isSidebarHidden {
+                                HoverRevealButton(systemName: "chevron.right",
+                                                  tooltip: "展开左侧栏 (⌘B)",
+                                                  action: { toggleLeftSidebar() })
+                            }
+                        }
                         .overlay(alignment: .topLeading) {
                             ZStack(alignment: .topLeading) {
                                 // 左手柄：浮在左分隔线（seam）上方，不占布局空间
-                                if allowExpand {
+                                if allowExpand && !isSidebarHidden {
                                     ResizableDivider(
                                         id: "left",
                                         width: Binding(

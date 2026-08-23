@@ -64,11 +64,6 @@ enum Layout {
     static let contentOverheadRightSidebarOpen: CGFloat =
         rightSidebarOpenMinContentWidth - sidebarMinWidth
 
-    /// 顶栏导航胶囊左缘对齐中部内容卡片左缘的偏移。
-    /// 构成: cardGap + sidebarHPadding×2 + cardGap（第二项 cardGap 即缝线区 seamHalfGap×2+seamWidth）。
-    static let navToolbarContentOffset: CGFloat =
-        cardGap * 2 + sidebarHPadding * 2
-
     // MARK: - 聊天画中画面板（PiP）
 
     /// 面板默认尺寸（首次进入/未持久化时），可调。

@@ -1,99 +1,38 @@
-# 顶栏左侧栏切换按钮 + 收起时完全隐藏（macOS）
+# 左侧栏完全隐藏 + 左缘 hover 热区展开（macOS）
 
 ## 目标
 
-在 macOS 客户端顶栏最左侧加一个按钮，控制左侧栏展开/收起；并让左栏「收起」时**完全不可见**（侧栏卡片、内边距、与中栏的缝隙、缝线全部消失，中间栏左移撑满）。
+左栏「收起」时**完全不可见**（侧栏卡片、内边距、与中栏的缝隙、缝线全部消失，中间栏左移撑满），收起状态下**顶栏无按钮**；在窗口左缘提供 hover 热区，悬停时出现圆形 `>` 按钮点击展开侧栏。
 
 ## 已确认的设计决策（勿改）
 
-1. **按钮位置**：对齐中间栏左缘（展开/窄轨态）。隐藏态因与 macOS 红绿灯按钮冲突，改用**固定安全偏移 `topBarTrafficClearance = 56`**（按钮左缘落在 x≈72）。
-2. **隐藏判定**：仅收起动作（`sidebarWidth == 38`）触发完全隐藏；手动拖拽到 38~120 仍显示窄轨。
-3. **窗口最小宽计算保持不变**：`baseMinWidth` / `pipMinContentWidth` / `rightSidebarMaxAvailable` 均不动。
-4. **无动画**、隐藏态**不持久化**（重启恢复展开）、窄窗下点展开无反馈（沿用现状）。
+1. **收起交互**：拖缝隙/⌘B 把 `sidebarWidth` 收至最小宽 38 → 完全隐藏（无任何残留宽度）。窄轨（38~120）仅在手动拖拽到该区间时显示。
+2. **隐藏态无顶栏按钮**：顶栏左槽不注册任何按钮。
+3. **展开入口**：隐藏时窗口左缘 28px 透明热区，悬停显示圆形 `>` 按钮（内容区垂直居中），点击恢复记忆宽度；Cmd+B 也可展开。移出热区按钮消失。
+4. **窗口最小宽计算保持不变**：`baseMinWidth` / `pipMinContentWidth` / `rightSidebarMaxAvailable` 均不动。
+5. **无动画**（热区按钮的淡入缩放过渡除外）、隐藏态**不持久化**（重启恢复展开）、窄窗下展开无反馈（沿用现状）。
 
 ## 背景
 
-- 左栏宽度 = `ContentView.sidebarWidth`（@State）。收起时被设为 `Layout.sidebarMinWidth = 38`；展开时恢复 `storedSidebarWidth`（记忆宽度）。
-- Cmd+B 已通过 AppDelegate 的 NSEvent monitor → `AppShortcutBridge.shared.onToggleLeftSidebar` 闭包 → `ContentView.toggleLeftSidebar()` 工作。按钮直接复用该闭包，**toggle 逻辑零改动**。
-- 顶栏 `TopBarView` 用 `TopBarRegistry` 左/中/右三槽位。左槽（`.left`）当前没有任何默认组，本次在其中注册一个按钮组。
-- 顶栏最左侧 `Spacer().frame(width: navLeadingOffset)` 决定左槽按钮的 x 位置；`navLeadingOffset = sidebarWidth + Layout.navToolbarContentOffset(24)` 恰好对齐中间栏左缘。隐藏态中间栏左缘在 x=6，但按钮放那里会压在 macOS 红绿灯（x≈7-66）上，故隐藏态用固定偏移。
+- 左栏宽度 = `ContentView.sidebarWidth`（@State）。收起时被设为 `Layout.sidebarMinWidth = 38`；展开时 `toggleLeftSidebar()` 恢复 `storedSidebarWidth`（记忆宽度）。
+- Cmd+B 由 AppDelegate NSEvent monitor → `AppShortcutBridge.shared.onToggleLeftSidebar` → `ContentView.toggleLeftSidebar()`（ContentView.swift:302），toggle 逻辑零改动。
 - 布局结构（ContentView macOS 分支，GeometryReader 内 HStack）：
   `HSpace(cardGap)` → `SidebarView`（+内边距+卡片背景） → `HSpace(seamHalfGap)` + `SeamMarker` + `HSpace(seamHalfGap)` → 中间栏。
   侧栏与缝线部分包进条件渲染，**第一行的 `HSpace(Layout.cardGap)`（窗口左侧 6px 边距）必须留在条件外**。
+- 热区挂在 HStack 的 `.overlay(alignment: .leading)` 上，仅在 `isSidebarHidden` 时渲染。
 
 ## 改动清单
 
 | # | 文件 | 位置 | 改动 |
 |---|------|------|------|
-| 1 | `client/xHelper/xHelper/Shared/Views/LayoutConstants.swift` | `sidebarDefaultWidth` 之后 | 新增常量 `topBarTrafficClearance = 56` |
-| 2 | `client/xHelper/xHelper/Shared/Views/TopBarView.swift` | `registerDefaultGroups()` 末尾 | 注册 `default-left` 左槽按钮组 |
-| 3 | `client/xHelper/xHelper/Shared/Views/ContentView.swift` | 共 3 处 | 新增 `isSidebarHidden`；`navLeadingOffset` 按状态切换；侧栏块条件渲染；左拖拽手柄加隐藏条件 |
+| 1 | `client/xHelper/xHelper/Shared/Views/ContentView.swift` | 共 4 处 | 新增 `isSidebarHidden`；侧栏块条件渲染；左拖拽手柄加隐藏条件；新增左缘热区 overlay + `LeftEdgeExpandZone` |
+| 2 | `docs/design/macos-left-sidebar-toggle.md` | 本文件 | 交互方案迭代（顶栏按钮 → 左缘热区） |
 
-### 编辑 1：LayoutConstants.swift
+> 迭代说明：初版为「顶栏左侧切换按钮」（`Layout.topBarTrafficClearance` + `default-left` 槽位），随后用户反馈按钮孤悬突兀，改为「隐藏时无按钮 + 左缘 hover 热区」。相关常量/注册已回退删除。
 
-锚点：
-```swift
-    static let sidebarDefaultWidth: CGFloat = 200
+### ContentView.swift
 
-    static let toolbarHorizontalPadding: CGFloat = 16
-```
-
-在 `sidebarDefaultWidth` 行之后插入：
-```swift
-    /// 顶栏左槽按钮在侧栏隐藏态下的起始偏移：避开窗口左上角 macOS 红绿灯按钮
-    /// （红绿灯约占 x 7~66，加上顶栏水平内边距 16，偏移 56 时按钮左缘在 x≈72）。
-    static let topBarTrafficClearance: CGFloat = 56
-```
-
-### 编辑 2：TopBarView.swift
-
-锚点（`registerDefaultGroups()` 结尾）：
-```swift
-                TopBarButton(id: "settings", icon: { "gear" },
-                             enabled: { true },
-                             action: { openSettings() },
-                             help: { "设置" }),
-            ]
-        ))
-        #endif
-    }
-```
-
-替换为：
-```swift
-                TopBarButton(id: "settings", icon: { "gear" },
-                             enabled: { true },
-                             action: { openSettings() },
-                             help: { "设置" }),
-            ]
-        ))
-        #endif
-
-        #if os(macOS)
-        TopBarRegistry.shared.register(TopBarGroup(
-            id: "default-left",
-            slot: .left,
-            priority: 5,
-            buttons: [
-                TopBarButton(id: "toggle-left-sidebar",
-                             icon: { "sidebar.leading" },
-                             enabled: { true },
-                             action: { AppShortcutBridge.shared.onToggleLeftSidebar?() },
-                             help: { "切换左侧栏 (⌘B)" })
-            ]
-        ))
-        #endif
-    }
-```
-
-注意：
-- 不给按钮加 `keyEquivalent`（Cmd+B 已被 NSEvent monitor 消费）。
-- 不给按钮加 `visible:` 参数（默认恒显示）。
-- 新块必须包在 `#if os(macOS)` 内。
-
-### 编辑 3：ContentView.swift
-
-**3a. 新增 `isSidebarHidden`**（锚点 `private var allowExpand: Bool { windowWidth >= 600 }` 之后）：
+**A. 新增 `isSidebarHidden`**（锚点 `private var allowExpand: Bool { windowWidth >= 600 }` 之后）：
 ```swift
     /// 侧栏完全隐藏判定：仅收起动作（sidebarWidth 落到最小宽 38）触发；
     /// 手动拖拽到 38~120 之间仍显示窄轨，不隐藏。
@@ -102,22 +41,7 @@
     }
 ```
 
-**3b. `navLeadingOffset`**（锚点）：
-```swift
-                    TopBarView(
-                        rightSidebar: rightSidebar,
-                        navLeadingOffset: sidebarWidth + Layout.navToolbarContentOffset
-                    )
-```
-替换为：
-```swift
-                    TopBarView(
-                        rightSidebar: rightSidebar,
-                        navLeadingOffset: (isSidebarHidden ? Layout.topBarTrafficClearance : sidebarWidth + Layout.navToolbarContentOffset)
-                    )
-```
-
-**3c. 侧栏块条件渲染**（`HSpace(Layout.cardGap)` 留在 if 外，其余包进 `if !isSidebarHidden` 并整体右移 4 空格）：
+**B. 侧栏块条件渲染**（`HSpace(Layout.cardGap)` 留在 if 外，其余包进 `if !isSidebarHidden` 并整体右移 4 空格）：
 ```swift
                             HSpace(Layout.cardGap)
 
@@ -142,20 +66,84 @@
 ```
 紧随其后的 `if !rightSidebar.isPipChat {`（中间栏）不动。
 
-**3d. 左拖拽手柄**（`if allowExpand {` → `if allowExpand && !isSidebarHidden {`）：
+**C. 左拖拽手柄**（`if allowExpand {` → `if allowExpand && !isSidebarHidden {`）：
 ```swift
                                 if allowExpand && !isSidebarHidden {
                                     ResizableDivider(
                                         id: "left",
 ```
 
+**D. `navLeadingOffset` 置 0**（无左槽按钮后偏移无意义）：
+```swift
+                    TopBarView(
+                        rightSidebar: rightSidebar,
+                        navLeadingOffset: 0
+                    )
+```
+
+**E. 左缘热区 overlay**（HStack 闭合 `}` 之后、`.coordinateSpace(name:)` 之后）：
+```swift
+                        .overlay(alignment: .leading) {
+                            // 左栏完全隐藏时，左缘 hover 热区：悬停显示圆形展开按钮
+                            if isSidebarHidden {
+                                HoverRevealButton(systemName: "chevron.right",
+                                                  tooltip: "展开左侧栏 (⌘B)",
+                                                  action: { toggleLeftSidebar() })
+                            }
+                        }
+```
+
+**F/G. 公共组件**：新增 `Shared/Views/HoverRevealButton.swift`（分离命中层与视觉层，思路沿用早期左侧栏收起手柄 82b9d30；替代最初的内联 `LeftEdgeExpandZone`）：
+```swift
+import SwiftUI
+
+/// 边缘悬停热区 + 浮现按钮（分离命中层与视觉层）。
+///
+/// - 命中层：底部透明热区条（宽 `zoneWidth`，整条可命中），负责 hover 检测与点击。
+/// - 视觉层：圆形按钮 `.allowsHitTesting(false)`，只镜像 hover 状态，不参与命中。
+///   因此悬停热区 → 按钮浮现；指针移向按钮不会让按钮消失（按钮不拦截命中）。
+struct HoverRevealButton: View {
+    let systemName: String
+    let tooltip: String
+    let action: () -> Void
+    var zoneWidth: CGFloat = 48
+    var buttonSize: CGFloat = 32
+
+    @State private var isHovered = false
+
+    var body: some View {
+        ZStack(alignment: .center) {
+            Color.clear
+                .frame(width: zoneWidth)
+                .contentShape(Rectangle())
+                .onHover { isHovered = $0 }
+                .onTapGesture { action() }
+                .help(tooltip)
+
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: buttonSize, height: buttonSize)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+                .opacity(isHovered ? 1 : 0)
+                .scaleEffect(isHovered ? 1 : 0.8)
+                .allowsHitTesting(false)
+        }
+        .frame(maxHeight: .infinity)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+    }
+}
+```
+
 ## 禁止事项
 
-1. 不改 `toggleLeftSidebar()`——收起设 38 已能触发隐藏。
+1. 不改 `toggleLeftSidebar()`（ContentView.swift:302）——收起设 38 已能触发隐藏。
 2. 不改 `SidebarView.swift`——窄轨渲染逻辑保留，拖拽到 38~120 时仍要用。
-3. 不改 `AppShortcutBridge.swift`、`App.swift`（AppDelegate）、`TopBarRegistry.swift`、`ResizableDivider.swift`。
+3. 不改 `AppShortcutBridge.swift`、`App.swift`（AppDelegate）、`TopBarRegistry.swift`、`ResizableDivider.swift`、`TopBarView.swift`。
 4. 不动 `baseMinWidth` / `pipMinContentWidth` / `rightSidebarMaxAvailable`。
-5. 不加动画 / `.transition` / `withAnimation`；不加 `keyEquivalent`。
+5. 不加 `withAnimation`/系统动画（热区按钮自带的 `.transition` 除外）；不加 `keyEquivalent`。
 6. 不动 `#if os(iOS)` 分支及 iOS 代码；新增代码必须在 `#if os(macOS)` 内或 macOS 分支内。
 7. 不重排/格式化未涉及代码。
 8. 不运行 `xcodebuild`/`swift build`（客户端由用户 Xcode 验证）。
@@ -163,27 +151,26 @@
 ## 已知接受的简化
 
 - 窗口最小宽/右栏最大宽不感知隐藏（预留 38+24，略保守）。
-- 隐藏/展开无动画。
+- 隐藏/展开无动画；热区按钮仅 hover 出现（无常驻边缘指示）。
 - 隐藏态不持久化（重启恢复展开）。
 - 窄窗下点展开无反馈（clamp 回 38，保持隐藏）。
-- 浏览器/文档模式下，切换按钮旁可能出现一根孤立的 1px 细分隔线（仅外观）。
+- 热区 48px 条会拦截其覆盖区域（中栏卡片左侧内边距）的点击，仅隐藏态存在，可接受。
 
 ## 自检（只读）
 
 ```bash
-grep -n "topBarTrafficClearance" Shared/Views/LayoutConstants.swift Shared/Views/ContentView.swift   # 1 + 1
-grep -n "default-left" Shared/Views/TopBarView.swift                                                   # 1
-grep -c "isSidebarHidden" Shared/Views/ContentView.swift                                               # 4
-git diff --stat                                                                                        # 仅 3 文件
+grep -n "isSidebarHidden" Shared/Views/ContentView.swift          # 4（定义+布局+手柄+热区）
+grep -rn "LeftEdgeExpandZone" Shared/Views/                       # 0（已移除，改用公共组件）
+grep -n "HoverRevealButton" Shared/Views/HoverRevealButton.swift  # 定义
+git diff --stat                                                   # ContentView.swift + HoverRevealButton.swift + 本 doc
 ```
 
 ## 人工验收清单
 
-1. 展开态：顶栏左侧出现 `sidebar.leading` 按钮，位于中间栏左缘；hover 提示「切换左侧栏 (⌘B)」。
-2. 点按钮 → 侧栏卡片、内边距、缝线、缝隙全部消失，中间栏左移撑满；按钮左移到红绿灯右侧（x≈72）。
-3. 再点 → 侧栏恢复记忆宽度，按钮回到中间栏左缘。
-4. Cmd+B 行为与按钮一致。
+1. 拖缝隙到最窄 / ⌘B → 侧栏卡片、内边距、缝线、缝隙全部消失，中间栏左移撑满；顶栏无任何按钮。
+2. 隐藏后悬停窗口左缘（内容区任意高度）→ 垂直居中位置出现圆形 `>` 按钮，有 tooltip「展开左侧栏 (⌘B)」；点击 → 侧栏恢复记忆宽度。
+3. 移出左缘 → 按钮淡出消失。
+4. Cmd+B 隐藏/展开行为一致。
 5. 窗口缩窄自动收起 → 完全隐藏；拉宽 → 自动恢复。
-6. 拖拽左分隔线到 38~120 → 窄轨显示不隐藏；拖到 38 → 隐藏，手柄消失，仅按钮/Cmd+B 可恢复。
-7. 右侧栏打开、PiP 模式下收起/展开正常；双击顶栏空白缩放窗口正常。
-8. 浏览器/文档模式下顶栏无布局错乱。
+6. 手动拖拽左分隔线到 38~120 → 窄轨显示，不隐藏、不出热区；拖到 38 → 隐藏，热区出现。
+7. 右侧栏打开、PiP 模式下收起/展开正常。

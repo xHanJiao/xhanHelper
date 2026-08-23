@@ -407,7 +407,7 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     TopBarView(
                         rightSidebar: rightSidebar,
-                        navLeadingOffset: (isSidebarHidden ? Layout.topBarTrafficClearance : sidebarWidth + Layout.navToolbarContentOffset)
+                        navLeadingOffset: 0
                     )
                     .zIndex(1)
 
@@ -469,6 +469,14 @@ struct ContentView: View {
                             HSpace(Layout.cardGap)
                         }
                         .coordinateSpace(name: ResizeDividerSpace.name)
+                        .overlay(alignment: .leading) {
+                            // 左栏完全隐藏时，左缘 hover 热区：悬停显示圆形展开按钮
+                            if isSidebarHidden {
+                                HoverRevealButton(systemName: "chevron.right",
+                                                  tooltip: "展开左侧栏 (⌘B)",
+                                                  action: { toggleLeftSidebar() })
+                            }
+                        }
                         .overlay(alignment: .topLeading) {
                             ZStack(alignment: .topLeading) {
                                 // 左手柄：浮在左分隔线（seam）上方，不占布局空间

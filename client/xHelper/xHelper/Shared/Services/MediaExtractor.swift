@@ -48,18 +48,24 @@ enum MediaExtractor {
         let host = URL(string: pageURL)?.host?.lowercased() ?? ""
         if host.contains("douyin."), result.videos.isEmpty {
             if let item = await replayDouyinDetailAPI(webView: webView) {
-                LogBuffer.shared.info("[MediaExtractor] douyin detail API 重放成功")
+                diagLog("douyin detail API 重放成功")
                 result.videos.append(item)
             } else {
-                LogBuffer.shared.info("[MediaExtractor] douyin detail API 重放未取得直链 page=\(pageURL)")
+                diagLog("douyin detail API 重放未取得直链 page=\(pageURL)")
             }
         }
 
         // 可观测性：视频为空时打一条带统计的日志，失效时可定位是哪层没拿到
         if result.videos.isEmpty {
-            LogBuffer.shared.info("[MediaExtractor] 扫描结果无视频 page=\(pageURL) \(result.statsNote)")
+            diagLog("扫描结果无视频 page=\(pageURL) \(result.statsNote)")
         }
         return result
+    }
+
+    /// 诊断日志：LogBuffer（应用内日志页可见，恒编译）+ print（Xcode 控制台可见）
+    private static func diagLog(_ msg: String) {
+        LogBuffer.shared.diag(msg)
+        print("[MediaExtractor] \(msg)")
     }
 
     // MARK: - 第 1 步：基础扫描
@@ -70,13 +76,13 @@ enum MediaExtractor {
         do {
             raw = try await webView.evaluateJavaScript(baseScanJS)
         } catch {
-            LogBuffer.shared.error("[MediaExtractor] base scan JS error: \(error.localizedDescription)")
+            diagLog("base scan JS error: \(error.localizedDescription)")
             return nil
         }
         guard let json = raw as? String,
               let data = json.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            LogBuffer.shared.error("[MediaExtractor] base scan 返回非预期结果（页面可能未加载完成）")
+            diagLog("base scan 返回非预期结果（页面可能未加载完成）")
             return nil
         }
 
@@ -116,15 +122,26 @@ enum MediaExtractor {
         do {
             raw = try await webView.evaluateJavaScript(douyinReplayJS)
         } catch {
-            LogBuffer.shared.error("[MediaExtractor] douyin replay JS error: \(error.localizedDescription)")
+            diagLog("douyin replay JS error: \(error.localizedDescription)")
             return nil
         }
         guard let json = raw as? String,
               let data = json.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let urlStr = obj["url"] as? String,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            diagLog("douyin replay 返回非预期（raw=\(raw.map { "\($0)" } ?? "nil")）")
+            return nil
+        }
+        // 逐级诊断：失败时 JS 返回 {diag:{step:...}}，打印后可精确定位死在哪一步
+        if let diag = obj["diag"] {
+            diagLog("douyin 重放诊断: \(diag)")
+            return nil
+        }
+        guard let urlStr = obj["url"] as? String,
               let url = URL(string: urlStr),
-              url.scheme == "http" || url.scheme == "https" else { return nil }
+              url.scheme == "http" || url.scheme == "https" else {
+            diagLog("douyin replay 无有效 url 字段: \(obj)")
+            return nil
+        }
         return Item(
             kind: .video,
             url: url,
@@ -232,31 +249,41 @@ enum MediaExtractor {
 
     /// 从 performance entries 里找当前 aweme_id 的 detail API URL（签名参数内嵌），
     /// 页面上下文 fetch 重放，取 play_addr 直链。async IIFE 由 evaluateJavaScript 自动解包 Promise。
+    /// 每个失败分支都返回 {diag:{step,...}} 供日志定位。
     private static let douyinReplayJS = """
     (async function(){
+      var D = function(o) { try { return JSON.stringify(o); } catch (e) { return null; } };
       try {
         var m = location.pathname.match(/\\/video\\/(\\d+)/) || location.search.match(/modal_id=(\\d+)/);
-        var id = m ? m[1] : null;
-        if (!id) return null;
+        if (!m) return D({diag:{step:'no_aweme_id', path:location.pathname.slice(0, 80), search:location.search.slice(0, 80)}});
+        var id = m[1];
         var api = null;
         var entries = performance.getEntriesByType('resource');
         for (var i = entries.length - 1; i >= 0; i--) {
           var u = entries[i].name;
           if (u.indexOf('/aweme/v1/web/aweme/detail/') >= 0 && u.indexOf('aweme_id=' + id) >= 0) { api = u; break; }
         }
-        if (!api) return null;
+        if (!api) return D({diag:{step:'api_not_in_perf', id:id}});
         var r;
         try {
           r = await fetch(api, {credentials: 'include'});
         } catch (e1) {
           // 捕获的 API 可能在非常规子域（www-hj 等），跨域被拦时换主域重放一次
-          r = await fetch(api.replace('//www-hj.douyin.com', '//www.douyin.com'), {credentials: 'include'});
+          try {
+            r = await fetch(api.replace('//www-hj.douyin.com', '//www.douyin.com'), {credentials: 'include'});
+          } catch (e2) {
+            return D({diag:{step:'fetch_throw', err:String((e1 && e1.message) || e1).slice(0, 80)}});
+          }
         }
-        if (!r.ok) return null;
-        var j = await r.json();
+        if (!r.ok) return D({diag:{step:'http_' + r.status}});
+        var text = await r.text();
+        var j = null;
+        try { j = JSON.parse(text); } catch (e3) {}
+        if (!j) return D({diag:{step:'non_json', head:text.slice(0, 60)}});
         var d = j.aweme_detail || (j.item_list && j.item_list[0]) || null;
-        var v = d && d.video;
-        if (!v) return null;
+        if (!d) return D({diag:{step:'no_aweme_detail', keys:Object.keys(j).slice(0, 8).join(','), code:(j.status_code === undefined ? '' : j.status_code)}});
+        var v = d.video;
+        if (!v) return D({diag:{step:'no_video_field', keys:Object.keys(d).slice(0, 12).join(',')}});
         var pick = function(pa) {
           if (!pa || !pa.url_list) return null;
           for (var k = 0; k < pa.url_list.length; k++) if (/^https?:\\/\\//.test(pa.url_list[k])) return pa.url_list[k];
@@ -264,10 +291,12 @@ enum MediaExtractor {
         };
         var out = pick(v.play_addr);
         if (!out && v.bit_rate && v.bit_rate.length) out = pick(v.bit_rate[v.bit_rate.length - 1].play_addr);
-        if (!out) return null;
-        return JSON.stringify({url: out, duration: isFinite(d.duration) && d.duration > 0 ? Math.round(d.duration / 1000) : null,
-                               title: (d.desc || document.title || '').slice(0, 60)});
-      } catch (e) { return null; }
+        if (!out) return D({diag:{step:'no_play_url', hasPlayAddr:!!v.play_addr, bitRateLen:(v.bit_rate || []).length}});
+        return D({url: out, duration: isFinite(d.duration) && d.duration > 0 ? Math.round(d.duration / 1000) : null,
+                  title: ((d.desc || document.title || '') + '').slice(0, 60)});
+      } catch (e) {
+        return D({diag:{step:'exception', err:String((e && e.message) || e).slice(0, 80)}});
+      }
     })()
     """
 }

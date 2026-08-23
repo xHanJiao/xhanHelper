@@ -279,11 +279,12 @@ enum MediaExtractor {
         return """
         (function(){
           var D = function(o) { try { return JSON.stringify(o); } catch (e) { return null; } };
-          // 媒体文件归第②层；HLS/DASH 分轨不可直下（douyinvod 整族都是分轨或签名播放端点）
+          // 媒体文件归第②层；HLS/DASH 分轨不可直下（douyinvod 整族、bilibili .m4s 分段都是
+          // 分轨或签名播放端点——重放它们只会白下载大文件）
           function isMediaTrack(x) {
             var l = x.toLowerCase();
             return l.indexOf('m3u8') >= 0 || l.indexOf('.mpd') >= 0 || l.indexOf('douyinvod') >= 0
-                || l.indexOf('media-audio-') >= 0 || l.indexOf('media-video-') >= 0;
+                || l.indexOf('media-audio-') >= 0 || l.indexOf('media-video-') >= 0 || l.indexOf('.m4s') >= 0;
           }
           try {
             // 黑名单只作用于 path（?之前）：数据接口的查询参数里必然带
@@ -467,11 +468,11 @@ enum MediaExtractor {
         guard let url = URL(string: s),
               url.scheme == "http" || url.scheme == "https" else { return nil }
         let lower = s.lowercased()
-        // 明确排除：HLS/DASH（魔数校验也过不了）、分轨路径特征。
+        // 明确排除：HLS/DASH（魔数校验也过不了）、分轨路径特征、bilibili .m4s 分段。
         // 注意：douyinvod 域名本身不排除——play_addr.url_list 指向的合成 mp4 也可能在该域名；
         // 分轨的可靠特征是路径里的 media-video-/media-audio- 标记。
         if lower.contains(".m3u8") || lower.contains(".mpd") || lower.contains("media-audio-")
-            || lower.contains("media-video-") { return nil }
+            || lower.contains("media-video-") || lower.contains(".m4s") { return nil }
         let path = url.path.lowercased()
         let strong = path.hasSuffix(".mp4") || path.hasSuffix(".webm") || path.hasSuffix(".mov")
         let weakSignals = ["play", "stream", "videoplay"]

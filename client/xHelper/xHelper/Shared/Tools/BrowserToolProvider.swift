@@ -1105,14 +1105,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
 
         var req = URLRequest(url: url)
-        req.timeoutInterval = 20
+        req.timeoutInterval = 10
         req.setValue(ua, forHTTPHeaderField: "User-Agent")
         if !referer.isEmpty { req.setValue(referer, forHTTPHeaderField: "Referer") }
         req.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
         if !cookieHeader.isEmpty { req.setValue(cookieHeader, forHTTPHeaderField: "Cookie") }
 
         let cfg = URLSessionConfiguration.ephemeral
-        cfg.timeoutIntervalForRequest = 20
+        cfg.timeoutIntervalForRequest = 10
         let dlSession = URLSession(configuration: cfg)
         do {
             let (data, resp) = try await dlSession.data(for: req)
@@ -2471,6 +2471,17 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 forMainFrameOnly: true
             )
             configuration.userContentController.addUserScript(a11yScript)
+
+            // 扩大 performance 资源清单缓冲区（documentStart）：
+            // 媒体提取靠 perf entries 定位页面的数据接口；WebKit 默认 ~250 条环形缓冲，
+            // 页面长驻时早期的 detail/feed 调用记录会被海量静态资源挤出 → 重放层失去候选。
+            // 一行标准 API，不碰请求与站点代码。
+            let perfBufferScript = WKUserScript(
+                source: #"try { performance.setResourceTimingBufferSize(2000); } catch (e) {}"#,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+            configuration.userContentController.addUserScript(perfBufferScript)
 
             // G3：内容拦截（仅用户自定义域名，默认不拦截任何站点）
             if let ruleList = ContentBlocker.ruleList {

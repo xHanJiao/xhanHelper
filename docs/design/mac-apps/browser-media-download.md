@@ -69,6 +69,7 @@ MediaSiteStrategy 协议（MediaSiteStrategies.swift）
 - 抖音视频页：无 `__INITIAL_STATE__`；douyinvod 直链是 DASH 分轨（video-avc1 / audio-mp4a），MSE blob 拼流播放，分轨不可直接交付；数据接口（detail/tab-feed）响应含合成 mp4 的 play_addr。信息流页（jingxuan?modal_id=...）走批量 feed 接口，URL 里没有 aweme_id 参数 → 必须泛化收集 + 递归深查，不能只认 detail 接口。
 - **教训 1**：WKWebView `evaluateJavaScript` 不解析 Promise（async JS 报 WKErrorJavaScriptResultTypeIsUnsupported「执行JavaScript返回结果的类型不受支持」），注入 JS 必须同步返回；需要异步能力时用同步 JS 取参数 + Swift 原生请求完成（顺带免 CORS、UA 可精确对齐签名输入）。
 - **教训 2**：BrowserTabView 的 `\.url` KVO 观察器曾被 `!urlFocused` 整体拦截——新标签页 onAppear 自动聚焦地址栏，首次导航的 URL 更新被吞 → `currentURL` 永 nil → 媒体按钮/收藏永远不可用。修复：`currentURL` 无条件跟随，仅地址栏文本受聚焦保护。
+- **教训 3**：perf 清单是 ~250 条的环形缓冲，页面长驻时早期调用的数据接口记录会被海量静态资源挤出 → 重放层失去候选，表现为"有时能扫到有时不能"。修复：documentStart 注入一行标准 API `performance.setResourceTimingBufferSize(2000)` 扩容（TabSession.makeWebView 统一收口），配合面板两轮自动补扫（1.5s/4s）覆盖水合竞态。
 
 ## 关键实现点
 
@@ -95,8 +96,9 @@ MediaSiteStrategy 协议（MediaSiteStrategies.swift）
 
 ## 已知取舍
 
+- **信息流页（抖音 jingxuan?modal_id=...）不保证成功**：批量 feed 接口同样依赖 perf 清单，长驻页面仍可能被驱逐；用户已明确接受该场景失败，详情页（小红书/抖音）为必须成功的硬性目标。若未来要保信息流，升级路径是 documentStart 注入 fetch/XHR 响应缓存钩子（缓存原始响应体，免疫签名与驱逐）
 - 小红书笔记页若同时存在 state 直链与 perf 预加载直链（`_259` vs `_108` 分辨率变体）会显示两条，默认取排序靠前的高清版
-- 抖音 API 重放偶发可能被风控拒（时间戳/nonce 校验），届时该层拿不到直链；若实测频繁失效，再考虑 documentStart 注入 hook XHR 缓存响应的重型方案
+- 重放需要额外 header token 的站点会静默失败（best-effort）；挖出的广告视频等噪声由用户勾选剔除
 - 直播流（m3u8）不支持（魔数校验也会拒绝）
 - Live Photo、无水印原片等需求明确出现再加
 

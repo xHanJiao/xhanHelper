@@ -16,8 +16,8 @@ struct MediaPickerPanelView: View {
     @State private var selected = Set<String>()
     @State private var showImages = false
     @State private var downloading = false
-    /// 水合竞态自动补扫只做一轮（防死循环）
-    @State private var didAutoRetry = false
+    /// 水合竞态自动补扫最多两轮（1.5s / 累计 4s），防死循环
+    @State private var autoRetryCount = 0
     @ObservedObject private var dlStore = DownloadHistoryStore.shared
 
     /// 勾选池始终含全部条目（图片区折叠时已勾选的图片仍会参与下载）
@@ -172,9 +172,9 @@ struct MediaPickerPanelView: View {
 
     // MARK: - Actions
 
-    /// 手动入口：重置自动补扫标记后扫描
+    /// 手动入口：重置自动补扫计数后扫描
     private func rescan() async {
-        didAutoRetry = false
+        autoRetryCount = 0
         await scanOnce()
     }
 
@@ -189,10 +189,10 @@ struct MediaPickerPanelView: View {
             return
         }
         result = r
-        // 水合竞态兜底：视频为空且是已知站点时，静默等 1.5s 补扫一轮（SPA 首扫可能跑在 state 就绪之前）
-        if r.videos.isEmpty, !didAutoRetry, isKnownMediaSite(r.pageURL) {
-            didAutoRetry = true
-            try? await Task.sleep(for: .seconds(1.5))
+        // 水合竞态兜底：视频为空且是已知站点时，静默补扫（1.5s / 累计 4s 两轮，SPA 首扫可能跑在数据请求就绪之前）
+        if r.videos.isEmpty, autoRetryCount < 2, isKnownMediaSite(r.pageURL) {
+            autoRetryCount += 1
+            try? await Task.sleep(for: .seconds(autoRetryCount == 1 ? 1.5 : 2.5))
             if !downloading { await scanOnce() }
         }
     }

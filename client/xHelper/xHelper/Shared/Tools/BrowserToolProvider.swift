@@ -1912,6 +1912,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         _ = handleCloseTab(["tabId": id], owner: session.owner)
     }
 
+    /// UI（tab 条右键菜单）重新加载指定 tab；特殊 tab（下载/收藏/历史/配置）无 webView，静默忽略
+    func reloadTab(_ id: String) {
+        tabs[id]?.webView.reload()
+    }
+
     /// UI（tab 条 X 按钮）关闭指定 tab：与工具 close_tab 同路径（含 closedStack 记录），可被 Cmd+Shift+T 恢复。
     func closeTab(_ id: String) {
         guard let session = tabs[id] else {

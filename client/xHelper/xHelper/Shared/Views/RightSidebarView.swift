@@ -166,6 +166,25 @@ struct RightSidebarView: View {
             manager.activeTabId = tab.id
             BrowserToolProvider.shared.selectTab(tab.id)
         }
+        .contextMenu {
+            if !RightSidebarManager.specialTabIDs.contains(tab.id) {
+                Button("重新加载") { BrowserToolProvider.shared.reloadTab(tab.id) }
+            }
+            Button("关闭") { BrowserToolProvider.shared.closeTab(tab.id) }
+                .disabled(downloadLocked)
+            Button("关闭其他标签页") {
+                for id in manager.tabs.map(\.id) where id != tab.id {
+                    BrowserToolProvider.shared.closeTab(id)
+                }
+            }
+            Button("关闭右侧标签页") {
+                let ids = manager.tabs.map(\.id)
+                guard let i = ids.firstIndex(of: tab.id) else { return }
+                for id in ids[(i + 1)...] {
+                    BrowserToolProvider.shared.closeTab(id)
+                }
+            }
+        }
     }
 
     /// tab 图标：优先显示网站 favicon，否则回退系统符号

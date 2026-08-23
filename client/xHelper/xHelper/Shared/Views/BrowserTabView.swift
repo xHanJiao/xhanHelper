@@ -519,10 +519,16 @@ struct BrowserTabView: View {
             webView.observe(\.url, options: [.new]) { _, change in
                 DispatchQueue.main.async {
                     guard let url = change.newValue as? URL?,
-                          let u = url, !urlFocused else { return }
+                          let u = url else { return }
+                    // currentURL 无条件跟随（媒体按钮/收藏等内部判断依赖它）。
+                    // 此前整段被 !urlFocused 拦截：新标签页 onAppear 自动聚焦地址栏，
+                    // 首次导航的 URL 更新被吞 → currentURL 永 nil → 按钮/收藏永远不可用。
                     currentURL = u
-                    // 新标签页默认页（about:blank）不显示在地址栏
-                    urlText = u.absoluteString == "about:blank" ? "" : u.absoluteString
+                    // 地址栏文本仅在未聚焦时同步（聚焦 = 用户可能正在输入，别覆盖）
+                    if !urlFocused {
+                        // 新标签页默认页（about:blank）不显示在地址栏
+                        urlText = u.absoluteString == "about:blank" ? "" : u.absoluteString
+                    }
                 }
             },
             webView.observe(\.isLoading, options: [.new]) { _, change in

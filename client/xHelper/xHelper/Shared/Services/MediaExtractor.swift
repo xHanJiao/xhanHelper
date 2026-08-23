@@ -187,12 +187,12 @@ enum MediaExtractor {
         images.push({src: src, title: ctx(im, 60) || im.alt || '',
                      width: im.naturalWidth || null, height: im.naturalHeight || null});
       });
-      // perf 层：已加载的 .mp4 直链；排除 HLS/DASH 特征（不可直下或分轨）
+      // perf 层：已加载的 .mp4 直链；排除 HLS/DASH 分轨（douyinvod 整族不可直下）
       var seenP = {};
       Array.prototype.forEach.call(performance.getEntriesByType('resource'), function(en) {
         var u = en.name;
         if (!ok(u) || !/\\.mp4([?#]|$)/.test(u)) return;
-        if (/m3u8|media-audio-|\\.mpd/.test(u)) return;
+        if (/m3u8|\\.mpd|douyinvod|media-audio-|media-video-/.test(u)) return;
         if (seenP[u]) return;
         seenP[u] = 1;
         perfVideos.push({src: u, playing: false, poster: '', duration: null, width: null, height: null, title: ''});
@@ -271,18 +271,26 @@ enum MediaExtractor {
         return """
         (function(){
           var D = function(o) { try { return JSON.stringify(o); } catch (e) { return null; } };
-          function m3u8OrDash(x) { return x.indexOf('m3u8') >= 0 || x.indexOf('.mpd') >= 0 || x.indexOf('media-audio-') >= 0; }
+          // 媒体文件归第②层；HLS/DASH 分轨不可直下（douyinvod 整族都是分轨或签名播放端点）
+          function isMediaTrack(x) {
+            var l = x.toLowerCase();
+            return l.indexOf('m3u8') >= 0 || l.indexOf('.mpd') >= 0 || l.indexOf('douyinvod') >= 0
+                || l.indexOf('media-audio-') >= 0 || l.indexOf('media-video-') >= 0;
+          }
           try {
+            // 黑名单只作用于 path（?之前）：数据接口的查询参数里必然带
+            // device_platform/verifyFp 等，对全 URL 匹配会把真接口全部误杀
             var deny = /emoji|dashboard|qrcode|passport|comment|reply|notice|log|report|track|collect|analytics|monitor|beat|config|constants|category|query\\/|account|settings|custom\\/|user\\/|sug|abtest|experiment|switch|policy|webid|register|verify|device|captcha|risk|security|check/;
             var pri = [], rest = [], seen = {};
             var entries = performance.getEntriesByType('resource');
             for (var i = entries.length - 1; i >= 0 && pri.length + rest.length < 8; i--) {
               var u = entries[i].name;
               if (!/^https?:\\/\\//.test(u)) continue;
-              if (deny.test(u)) continue;
-              if (/\\.(css|js|mjs|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|eot)([?#]|$)/i.test(u)) continue;
-              // 媒体文件归第②层；HLS/DASH 特征不可直下
-              if (/\\.mp4([?#]|$)/.test(u) || m3u8OrDash(u)) continue;
+              var qi = u.indexOf('?');
+              var p = qi >= 0 ? u.slice(0, qi) : u;
+              if (deny.test(p)) continue;
+              if (/\\.(css|js|mjs|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|eot)$/i.test(p)) continue;
+              if (/\\.mp4([?#]|$)/.test(u) || isMediaTrack(u)) continue;
               if (seen[u]) continue;
               seen[u] = 1;
               if (\(signalTest)) pri.push(u); else rest.push(u);
@@ -368,11 +376,14 @@ enum MediaExtractor {
         guard let url = URL(string: s),
               url.scheme == "http" || url.scheme == "https" else { return nil }
         let lower = s.lowercased()
-        // 明确排除：HLS/DASH（魔数校验也过不了）、纯音轨分轨
-        if lower.contains(".m3u8") || lower.contains(".mpd") || lower.contains("media-audio-") { return nil }
+        // 明确排除：HLS/DASH（魔数校验也过不了）、分轨路径特征。
+        // 注意：douyinvod 域名本身不排除——play_addr.url_list 指向的合成 mp4 也可能在该域名；
+        // 分轨的可靠特征是路径里的 media-video-/media-audio- 标记。
+        if lower.contains(".m3u8") || lower.contains(".mpd") || lower.contains("media-audio-")
+            || lower.contains("media-video-") { return nil }
         let path = url.path.lowercased()
         let strong = path.hasSuffix(".mp4") || path.hasSuffix(".webm") || path.hasSuffix(".mov")
-        let weakSignals = ["play", "stream", "media-video", "videoplay", "/video/tos"]
+        let weakSignals = ["play", "stream", "videoplay"]
         let weak = weakSignals.contains { lower.contains($0) }
         guard strong || weak else { return nil }
         return Item(kind: .video, url: url, poster: nil, duration: nil,

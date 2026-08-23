@@ -70,6 +70,7 @@ MediaSiteStrategy 协议（MediaSiteStrategies.swift）
 - **教训 1**：WKWebView `evaluateJavaScript` 不解析 Promise（async JS 报 WKErrorJavaScriptResultTypeIsUnsupported「执行JavaScript返回结果的类型不受支持」），注入 JS 必须同步返回；需要异步能力时用同步 JS 取参数 + Swift 原生请求完成（顺带免 CORS、UA 可精确对齐签名输入）。
 - **教训 2**：BrowserTabView 的 `\.url` KVO 观察器曾被 `!urlFocused` 整体拦截——新标签页 onAppear 自动聚焦地址栏，首次导航的 URL 更新被吞 → `currentURL` 永 nil → 媒体按钮/收藏永远不可用。修复：`currentURL` 无条件跟随，仅地址栏文本受聚焦保护。
 - **教训 3**：perf 清单是 ~250 条的环形缓冲，页面长驻时早期调用的数据接口记录会被海量静态资源挤出 → 重放层失去候选，表现为"有时能扫到有时不能"。修复：documentStart 注入一行标准 API `performance.setResourceTimingBufferSize(2000)` 扩容（TabSession.makeWebView 统一收口），配合面板两轮自动补扫（1.5s/4s）覆盖水合竞态。
+- **教训 4**：`aweme/related`（相关推荐）接口的查询参数里也带目标 `aweme_id`，曾凭"URL 含目标 id"进最高优先桶并因命中即停抢在 detail 前面——挖出来全是推荐视频。修复：含目标 id 但路径属引用类（related/recommend/danmaku/rank/live）降入 ref 桶（hit → pri → ref → rest）。另：站内跳转进入详情页时路由缓存可能不发 detail 请求，perf 清单无候选——兜底为刷新来源页一次重扫（仅路径型详情页触发，信息流不触发；用户已接受信息流可失败）。
 
 ## 关键实现点
 

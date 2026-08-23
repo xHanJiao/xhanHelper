@@ -18,6 +18,9 @@ struct MediaPickerPanelView: View {
     @State private var downloading = false
     /// 水合竞态自动补扫最多两轮（1.5s / 累计 4s），防死循环
     @State private var autoRetryCount = 0
+    /// 自愈重载只做一次：详情页经站内跳转进入时，路由缓存可能不发数据请求，
+    /// perf 清单里根本没有候选——刷新来源页强制重新请求
+    @State private var didReload = false
     @ObservedObject private var dlStore = DownloadHistoryStore.shared
 
     /// 勾选池始终含全部条目（图片区折叠时已勾选的图片仍会参与下载）
@@ -175,6 +178,7 @@ struct MediaPickerPanelView: View {
     /// 手动入口：重置自动补扫计数后扫描
     private func rescan() async {
         autoRetryCount = 0
+        didReload = false
         await scanOnce()
     }
 
@@ -189,17 +193,43 @@ struct MediaPickerPanelView: View {
             return
         }
         result = r
-        // 水合竞态兜底：视频为空且是已知站点时，静默补扫（1.5s / 累计 4s 两轮，SPA 首扫可能跑在数据请求就绪之前）
-        if r.videos.isEmpty, autoRetryCount < 2, isKnownMediaSite(r.pageURL) {
+        guard r.videos.isEmpty, isKnownMediaSite(r.pageURL) else { return }
+
+        // 兜底一：水合竞态——静默补扫两轮（1.5s / 累计 4s）
+        if autoRetryCount < 2 {
             autoRetryCount += 1
             try? await Task.sleep(for: .seconds(autoRetryCount == 1 ? 1.5 : 2.5))
             if !downloading { await scanOnce() }
+            return
+        }
+
+        // 兜底二：详情页形态（策略能解析出目标 id）且从未重载过 → 刷新来源页强制重新请求数据接口。
+        // 场景：站内跳转进入详情页时路由缓存可能不发 detail/state 请求，perf 清单里没有候选。
+        if !didReload, hasDetailShape(r.pageURL), !downloading {
+            didReload = true
+            print("[MediaPanel] 两轮补扫无视频，刷新来源页重扫 \(r.pageURL)")
+            sourceWebView.reload()
+            try? await Task.sleep(for: .seconds(3))
+            await scanOnce()
         }
     }
 
     private func isKnownMediaSite(_ urlStr: String) -> Bool {
         guard let host = URL(string: urlStr)?.host?.lowercased() else { return false }
         return host.contains("xiaohongshu.") || host.contains("douyin.")
+    }
+
+    /// 详情页形态：策略能从【去掉查询参数后的】URL 解析出目标对象 id。
+    /// 抖音 /video/{id} 命中、?modal_id= 命中——后者是信息流页，剥掉 query 即排除，
+    /// 避免信息流每次扫描都触发重载（用户已接受信息流可失败）。
+    private func hasDetailShape(_ urlStr: String) -> Bool {
+        guard let url = URL(string: urlStr),
+              let host = url.host?.lowercased(),
+              let strategy = MediaSiteStrategies.strategy(forHost: host) else { return false }
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.query = nil
+        let pathOnlyURL = components?.url ?? url
+        return strategy.targetId(in: pathOnlyURL) != nil
     }
 
     private func downloadSelected() async {

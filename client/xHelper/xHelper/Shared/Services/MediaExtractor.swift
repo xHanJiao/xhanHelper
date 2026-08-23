@@ -261,9 +261,14 @@ enum MediaExtractor {
     }
 
     /// 重放候选收集 JS：全量扫描 perf 资源条目（不设收集中断——真数据接口往往在加载早期，
-    /// 从新往旧扫几百条才到），按路径去重（忽略查询参数，保留最新一次调用），
-    /// 三桶优先级：hit（URL 含目标视频 id）→ pri（信号词）→ rest，最终截断 10 条。
-    /// 信号词/目标 id 由策略注入（compile-time 常量，无注入风险）。
+    /// 从新往旧扫几百条才到），按路径去重（忽略查询参数，保留最新一次调用）。
+    /// 四桶优先级：
+    /// - hit：URL 含目标视频 id，且路径非"引用类"（描述型接口，如 aweme/detail）
+    /// - pri：信号词
+    /// - ref：URL 含目标 id 但路径是引用类（related/recommend 等——它们只是"基于该视频推荐"，
+    ///   挖出来的是推荐视频而非主视频；实测踩坑后从 hit 降级）
+    /// - rest：其余
+    /// 最终截断 10 条。信号词/目标 id 由策略注入（compile-time 常量，无注入风险）。
     private static func replayLocateJS(signalWords: [String], targetId: String?) -> String {
         let signalTest = signalWords.map { "u.indexOf('\($0)') >= 0" }.joined(separator: " || ")
         // 目标 id 只保留字母数字，防拼接破坏 JS 字符串
@@ -282,7 +287,9 @@ enum MediaExtractor {
             // device_platform/verifyFp 等，对全 URL 匹配会把真接口全部误杀
             var deny = /emoji|dashboard|qrcode|passport|comment|reply|notice|log|report|track|collect|analytics|monitor|beat|config|constants|category|query\\/|account|settings|custom\\/|user\\/|sug|abtest|experiment|switch|policy|webid|register|verify|device|captcha|risk|security|check/;
             var TID = '\(tid)';
-            var hit = [], pri = [], rest = [];
+            // 引用类接口：查询参数带目标 id 但只描述"围绕它的周边内容"
+            var refPath = /related|recommend|comment|danmaku|rank|live/;
+            var hit = [], pri = [], ref = [], rest = [];
             var seen = {};
             var entries = performance.getEntriesByType('resource');
             for (var i = entries.length - 1; i >= 0; i--) {
@@ -297,11 +304,13 @@ enum MediaExtractor {
               var key = p.replace(/^https?:\\/\\//, '');
               if (seen[key]) continue;
               seen[key] = 1;
-              if (TID && u.indexOf(TID) >= 0) hit.push(u);
+              if (TID && u.indexOf(TID) >= 0) {
+                if (refPath.test(p)) ref.push(u); else hit.push(u);
+              }
               else if (\(signalTest)) pri.push(u);
               else rest.push(u);
             }
-            return D({apiUrls: hit.concat(pri).concat(rest).slice(0, 10)});
+            return D({apiUrls: hit.concat(pri).concat(ref).concat(rest).slice(0, 10)});
           } catch (e) {
             return D({diag:{step:'exception', err:String((e && e.message) || e).slice(0, 80)}});
           }

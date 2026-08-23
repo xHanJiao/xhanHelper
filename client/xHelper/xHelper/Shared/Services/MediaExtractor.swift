@@ -213,7 +213,7 @@ enum MediaExtractor {
         // 4a. 同步 JS 收集候选接口 URL（字符串结果是 evaluateJavaScript 支持的类型）
         let raw: Any?
         do {
-            raw = try await webView.evaluateJavaScript(replayLocateJS(signalWords: signalWords))
+            raw = try await webView.evaluateJavaScript(replayLocateJS(signalWords: signalWords, targetId: targetId))
         } catch {
             diagLog("replay locate JS error: \(error.localizedDescription)")
             return []
@@ -230,10 +230,6 @@ enum MediaExtractor {
         }
         guard let apiUrls = obj["apiUrls"] as? [String] else {
             diagLog("replay locate 无 apiUrls 字段")
-            return []
-        }
-        if apiUrls.isEmpty {
-            diagLog("replay 定位无候选数据接口 targetId=\(targetId ?? "-")")
             return []
         }
 
@@ -264,10 +260,14 @@ enum MediaExtractor {
         return []
     }
 
-    /// 重放候选收集 JS：数据接口 URL（噪声黑名单 + 扩展名过滤 + 信号词分级排序，最多 8 条）。
-    /// 信号词由策略注入（compile-time 常量，无注入风险）。
-    private static func replayLocateJS(signalWords: [String]) -> String {
+    /// 重放候选收集 JS：全量扫描 perf 资源条目（不设收集中断——真数据接口往往在加载早期，
+    /// 从新往旧扫几百条才到），按路径去重（忽略查询参数，保留最新一次调用），
+    /// 三桶优先级：hit（URL 含目标视频 id）→ pri（信号词）→ rest，最终截断 10 条。
+    /// 信号词/目标 id 由策略注入（compile-time 常量，无注入风险）。
+    private static func replayLocateJS(signalWords: [String], targetId: String?) -> String {
         let signalTest = signalWords.map { "u.indexOf('\($0)') >= 0" }.joined(separator: " || ")
+        // 目标 id 只保留字母数字，防拼接破坏 JS 字符串
+        let tid = (targetId ?? "").filter { $0.isNumber || $0.isLetter }
         return """
         (function(){
           var D = function(o) { try { return JSON.stringify(o); } catch (e) { return null; } };
@@ -281,9 +281,11 @@ enum MediaExtractor {
             // 黑名单只作用于 path（?之前）：数据接口的查询参数里必然带
             // device_platform/verifyFp 等，对全 URL 匹配会把真接口全部误杀
             var deny = /emoji|dashboard|qrcode|passport|comment|reply|notice|log|report|track|collect|analytics|monitor|beat|config|constants|category|query\\/|account|settings|custom\\/|user\\/|sug|abtest|experiment|switch|policy|webid|register|verify|device|captcha|risk|security|check/;
-            var pri = [], rest = [], seen = {};
+            var TID = '\(tid)';
+            var hit = [], pri = [], rest = [];
+            var seen = {};
             var entries = performance.getEntriesByType('resource');
-            for (var i = entries.length - 1; i >= 0 && pri.length + rest.length < 8; i--) {
+            for (var i = entries.length - 1; i >= 0; i--) {
               var u = entries[i].name;
               if (!/^https?:\\/\\//.test(u)) continue;
               var qi = u.indexOf('?');
@@ -291,11 +293,15 @@ enum MediaExtractor {
               if (deny.test(p)) continue;
               if (/\\.(css|js|mjs|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|eot)$/i.test(p)) continue;
               if (/\\.mp4([?#]|$)/.test(u) || isMediaTrack(u)) continue;
-              if (seen[u]) continue;
-              seen[u] = 1;
-              if (\(signalTest)) pri.push(u); else rest.push(u);
+              // 按来源+路径去重：同接口不同签名参数的多次调用只留最新一次
+              var key = p.replace(/^https?:\\/\\//, '');
+              if (seen[key]) continue;
+              seen[key] = 1;
+              if (TID && u.indexOf(TID) >= 0) hit.push(u);
+              else if (\(signalTest)) pri.push(u);
+              else rest.push(u);
             }
-            return D({apiUrls: pri.concat(rest)});
+            return D({apiUrls: hit.concat(pri).concat(rest).slice(0, 10)});
           } catch (e) {
             return D({diag:{step:'exception', err:String((e && e.message) || e).slice(0, 80)}});
           }

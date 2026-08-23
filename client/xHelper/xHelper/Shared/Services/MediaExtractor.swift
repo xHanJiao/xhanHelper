@@ -357,9 +357,9 @@ enum MediaExtractor {
                     break
                 }
             }
-            for value in dict.values { findTargetDicts(value, tid, out) }
+            for value in dict.values { findTargetDicts(value, tid, &out) }
         } else if let arr = node as? [Any] {
-            for value in arr { findTargetDicts(value, tid, out) }
+            for value in arr { findTargetDicts(value, tid, &out) }
         }
     }
 

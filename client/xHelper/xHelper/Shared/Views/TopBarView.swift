@@ -72,22 +72,26 @@ struct TopBarView: View {
                          action: {
                              BrowserToolProvider.shared.enterBrowser()
                          },
-                         help: { "一键进入浏览器" }),
+                         help: { "一键进入浏览器" },
+                         keyEquivalent: ("4", .command)),
         ]
         #if os(macOS)
         buttons.insert(contentsOf: [
             TopBarButton(id: "open-documents", icon: { "doc.text" },
                          enabled: { true },
                          action: { openBrowsePanel(.documents) },
-                         help: { "打开文档" }),
+                         help: { "打开文档" },
+                         keyEquivalent: ("1", .command)),
             TopBarButton(id: "open-bills", icon: { "yensign.circle" },
                          enabled: { true },
                          action: { openBrowsePanel(.bills) },
-                         help: { "打开账单" }),
+                         help: { "打开账单" },
+                         keyEquivalent: ("2", .command)),
             TopBarButton(id: "open-monitor", icon: { "chart.bar.xaxis" },
                          enabled: { true },
                          action: { openBrowsePanel(.dashboard) },
-                         help: { "打开监控" }),
+                         help: { "打开监控" },
+                         keyEquivalent: ("3", .command)),
         ], at: 0)
         #endif
         TopBarRegistry.shared.register(TopBarGroup(

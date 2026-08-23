@@ -2,6 +2,7 @@ package controller
 
 import (
 	"log"
+	"math/rand"
 	"strconv"
 	"time"
 
@@ -30,6 +31,20 @@ func createUserByAdmin(userRepo *service.UserRepo) gin.HandlerFunc {
 			return
 		}
 		view.JSONOK(c, gin.H{"user_id": user.ID, "username": user.Username, "token": token})
+	}
+}
+
+// resetUserPassword POST /api/admin/users/:id/reset-password — 管理员重置用户密码为随机7位数字
+func resetUserPassword(userRepo *service.UserRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.Param("id")
+		newPassword := strconv.Itoa(1000000 + rand.Intn(9000000))
+		if err := userRepo.ResetPassword(c.Request.Context(), userID, newPassword); err != nil {
+			log.Printf("[admin] reset password error user=%s: %v", userID, err)
+			view.JSONError(c, 404, "重置失败：用户不存在")
+			return
+		}
+		view.JSONOK(c, gin.H{"user_id": userID, "new_password": newPassword})
 	}
 }
 

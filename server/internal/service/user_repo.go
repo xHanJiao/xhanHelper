@@ -103,6 +103,19 @@ func (r *UserRepo) ChangePassword(ctx context.Context, userID, oldPassword, newP
 	return r.db.WithContext(ctx).Model(&user).Update("password_hash", string(hash)).Error
 }
 
+// ResetPassword 管理员重置密码（不做旧密码校验）。不失效已有 token。
+func (r *UserRepo) ResetPassword(ctx context.Context, userID, newPassword string) error {
+	var user model.User
+	if err := r.db.WithContext(ctx).Where("id = ?", userID).First(&user).Error; err != nil {
+		return err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Model(&user).Update("password_hash", string(hash)).Error
+}
+
 func (r *UserRepo) Logout(ctx context.Context, token string) error {
 	return r.db.WithContext(ctx).Where("token = ?", token).Delete(&model.UserToken{}).Error
 }

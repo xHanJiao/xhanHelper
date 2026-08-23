@@ -1,6 +1,6 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { NButton, NInput, NForm, NFormItem, NDataTable, NPagination, NCard, NSelect, useMessage } from 'naive-ui'
+import { ref, computed, onMounted, h } from 'vue'
+import { NButton, NInput, NForm, NFormItem, NDataTable, NPagination, NCard, NSelect, NPopconfirm, NModal, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
 import PageTopBar from '@/components/PageTopBar.vue'
 
@@ -19,6 +19,9 @@ const page = ref(1)
 const pageSize = 20
 const loading = ref(false)
 const statsDays = ref(3)
+const resetingId = ref('')
+const newPassword = ref('')
+const showPasswordModal = ref(false)
 const statsDaysOptions = [
   { label: '近1天', value: 1 },
   { label: '近3天', value: 3 },
@@ -64,6 +67,25 @@ async function fetchUsers() {
   }
 }
 
+async function handleResetPassword(row) {
+  resetingId.value = row.id
+  try {
+    const res = await api.post(`/api/admin/users/${row.id}/reset-password`)
+    newPassword.value = res.new_password
+    showPasswordModal.value = true
+  } catch (e) {
+    message.error(e?.message || '重置失败')
+  } finally {
+    resetingId.value = ''
+  }
+}
+
+function handlePasswordModalClose() {
+  showPasswordModal.value = false
+  newPassword.value = ''
+  fetchUsers()
+}
+
 function handlePageChange(p) {
   page.value = p
   fetchUsers()
@@ -80,7 +102,25 @@ const columns = computed(() => [
   { title: `近${statsDays.value}天消息`, key: 'recent_message_count', width: 100, render: (row) => row.recent_message_count ?? 0 },
   { title: `近${statsDays.value}天笔记`, key: 'recent_note_count', width: 100, render: (row) => row.recent_note_count ?? 0 },
   { title: `近${statsDays.value}天记忆`, key: 'recent_memory_count', width: 100, render: (row) => row.recent_memory_count ?? 0 },
-  { title: `近${statsDays.value}天文档`, key: 'recent_doc_count', width: 100, render: (row) => row.recent_doc_count ?? 0 }
+  { title: `近${statsDays.value}天文档`, key: 'recent_doc_count', width: 100, render: (row) => row.recent_doc_count ?? 0 },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 100,
+    render: (row) => h(NPopconfirm, {
+      positiveText: '重置',
+      negativeText: '取消',
+      onPositiveClick: () => handleResetPassword(row)
+    }, {
+      trigger: () => h(NButton, {
+        size: 'small',
+        type: 'warning',
+        secondary: true,
+        loading: resetingId.value === row.id
+      }, { default: () => '重置密码' }),
+      default: () => '将生成一个新的7位数字密码，确定重置吗？'
+    })
+  }
 ])
 </script>
 
@@ -157,6 +197,18 @@ const columns = computed(() => [
         </div>
       </NCard>
     </div>
+
+    <NModal
+      v-model:show="showPasswordModal"
+      preset="card"
+      title="密码已重置"
+      style="width: 420px;"
+      @update:show="handlePasswordModalClose"
+    >
+      <p style="margin-bottom: var(--space-sm);">新密码（仅显示一次，请立即告知用户）：</p>
+      <div class="new-password-box">{{ newPassword }}</div>
+      <p style="margin-top: var(--space-sm); opacity: 0.6; font-size: 12px;">用户可用此密码登录，登录后可自行修改。</p>
+    </NModal>
   </div>
 </template>
 
@@ -189,5 +241,16 @@ const columns = computed(() => [
 .collapse-hint {
   font-size: 12px;
   opacity: 0.5;
+}
+.new-password-box {
+  background: var(--color-primary-soft);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  text-align: center;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 4px;
+  user-select: all;
 }
 </style>

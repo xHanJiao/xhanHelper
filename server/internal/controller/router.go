@@ -125,6 +125,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	admin.GET("/health", monitor.HealthHandlerGlobal())
 	admin.POST("/users", createUserByAdmin(rc.UserRepo))
 	admin.GET("/users", listUsers(rc.UserRepo))
+	admin.POST("/users/:id/reset-password", resetUserPassword(rc.UserRepo))
 
 	return r
 }

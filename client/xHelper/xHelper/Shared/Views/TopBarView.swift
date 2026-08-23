@@ -131,6 +131,21 @@ struct TopBarView: View {
             ]
         ))
         #endif
+
+        #if os(macOS)
+        TopBarRegistry.shared.register(TopBarGroup(
+            id: "default-left",
+            slot: .left,
+            priority: 5,
+            buttons: [
+                TopBarButton(id: "toggle-left-sidebar",
+                             icon: { "sidebar.leading" },
+                             enabled: { true },
+                             action: { AppShortcutBridge.shared.onToggleLeftSidebar?() },
+                             help: { "切换左侧栏 (⌘B)" })
+            ]
+        ))
+        #endif
     }
 
     /// 打开右侧栏浏览面板（文档/账单/监控），复用浏览面板态

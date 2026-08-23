@@ -7,6 +7,10 @@ enum Layout {
     static let sidebarSnapThreshold: CGFloat = 120
     static let sidebarDefaultWidth: CGFloat = 200
 
+    /// 顶栏左槽按钮在侧栏隐藏态下的起始偏移：避开窗口左上角 macOS 红绿灯按钮
+    /// （红绿灯约占 x 7~66，加上顶栏水平内边距 16，偏移 56 时按钮左缘在 x≈72）。
+    static let topBarTrafficClearance: CGFloat = 56
+
     static let toolbarHorizontalPadding: CGFloat = 16
 
     // MARK: - 顶栏胶囊（icon 边长 + 组内边距，高度为派生值，改动自动跟随）

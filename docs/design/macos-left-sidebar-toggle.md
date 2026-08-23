@@ -99,22 +99,27 @@ import SwiftUI
 
 /// 边缘悬停热区 + 浮现按钮（分离命中层与视觉层）。
 ///
-/// - 命中层：底部透明热区条（宽 `zoneWidth`，整条可命中），负责 hover 检测与点击。
+/// - 命中层：底部透明热区条（沿 `axis` 方向铺开，宽/高 `zoneWidth`，整条可命中），负责 hover 检测与点击。
 /// - 视觉层：圆形按钮 `.allowsHitTesting(false)`，只镜像 hover 状态，不参与命中。
 ///   因此悬停热区 → 按钮浮现；指针移向按钮不会让按钮消失（按钮不拦截命中）。
+///
+/// `axis` 决定热区朝向：`.horizontal` 为竖直条（贴左/右边缘），`.vertical` 为水平条（贴上/下边缘）；
+/// 图标方向由 `systemName` 决定（如 chevron.left/right/up/down），与热区朝向相互独立。
 struct HoverRevealButton: View {
     let systemName: String
     let tooltip: String
     let action: () -> Void
     var zoneWidth: CGFloat = 48
     var buttonSize: CGFloat = 32
+    var axis: Axis = .horizontal
 
     @State private var isHovered = false
 
     var body: some View {
         ZStack(alignment: .center) {
             Color.clear
-                .frame(width: zoneWidth)
+                .frame(width: axis == .horizontal ? zoneWidth : nil)
+                .frame(height: axis == .vertical ? zoneWidth : nil)
                 .contentShape(Rectangle())
                 .onHover { isHovered = $0 }
                 .onTapGesture { action() }
@@ -131,7 +136,8 @@ struct HoverRevealButton: View {
                 .scaleEffect(isHovered ? 1 : 0.8)
                 .allowsHitTesting(false)
         }
-        .frame(maxHeight: .infinity)
+        .frame(maxWidth: axis == .vertical ? .infinity : nil,
+               maxHeight: axis == .horizontal ? .infinity : nil)
         .animation(.easeOut(duration: 0.15), value: isHovered)
     }
 }

@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import WebKit
 
 struct RightSidebarTab: Identifiable {
     let id: String
@@ -106,7 +107,7 @@ final class RightSidebarManager: ObservableObject {
     }
 
     /// 特殊 tab（浏览器内工具页），固定最右、不可拖拽重排
-    static let specialTabIDs = [downloadTabID, bookmarkTabID, historyTabID, configTabID]
+    static let specialTabIDs = [downloadTabID, bookmarkTabID, historyTabID, configTabID, mediaTabID]
 
     /// 网页 tab 之间拖拽重排（特殊 tab 不参与）
     func moveTab(from id: String, to targetID: String) {
@@ -208,9 +209,24 @@ final class RightSidebarManager: ObservableObject {
         }
     }
 
+    /// 打开「本页资源」tab：每次从地址栏按钮进入都重新绑定来源页并触发重扫。
+    /// sourceWebView 在此刻捕获——面板激活后 provider 的 activeSession 可能漂移，
+    /// 扫描与下载都必须锚定打开面板那一刻的来源页。
+    func openMediaPanel(sourceWebView: WKWebView) {
+        let content = AnyView(MediaPickerPanelView(sourceWebView: sourceWebView))
+        if tabs.contains(where: { $0.id == Self.mediaTabID }) {
+            replaceTabContent(id: Self.mediaTabID, content: content)
+            activeTabId = Self.mediaTabID
+        } else {
+            openTab(id: Self.mediaTabID, title: "本页资源", icon: "photo.on.rectangle.angled",
+                    content: content)
+        }
+    }
+
     static let bookmarkTabID = "bookmarks"
     static let historyTabID = "history"
     static let configTabID = "config-browser"
+    static let mediaTabID = "media"
 
     private static func bookmarkTabContent() -> AnyView {
         #if os(macOS)

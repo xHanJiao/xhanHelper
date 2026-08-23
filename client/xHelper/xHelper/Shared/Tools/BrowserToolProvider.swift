@@ -1058,21 +1058,47 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return await runDownload(url: url, preferredName: preferredName, delay: false, enforceMedia: enforceMedia)
     }
 
+    /// 用户媒体面板下载（MediaPickerPanelView）：显式指定来源页 webView。
+    /// 面板是侧栏特殊 tab，激活它之后 activeSession 可能漂移/被 deselect，
+    /// 所以 Cookie/Referer/UA 必须取自打开面板那一刻的来源页，不能依赖 activeSession。
+    func downloadMedia(url: URL, preferredName: String?, sourceWebView: WKWebView?) async -> LocalToolResult {
+        guard url.scheme == "http" || url.scheme == "https",
+              let host = url.host, !host.isEmpty else {
+            return .init(serverResult: nil, serverError: "无效的下载 URL（仅支持 http/https）", clientAction: nil)
+        }
+        let urlExt = url.pathExtension.lowercased()
+        if Self.dangerousExtensions.contains(urlExt) {
+            return .init(serverResult: nil, serverError: "拒绝下载危险文件类型（.\(urlExt)）", clientAction: nil)
+        }
+        // 安全：用户指定文件名也过黑名单
+        if let customName = preferredName?.trimmingCharacters(in: .whitespaces), !customName.isEmpty,
+           Self.dangerousExtensions.contains((customName as NSString).pathExtension.lowercased()) {
+            return .init(serverResult: nil, serverError: "拒绝下载危险文件类型（\(customName)）", clientAction: nil)
+        }
+        let session = sourceWebView.flatMap { wv in tabs.first(where: { $0.value.webView === wv })?.value }
+        return await runDownload(url: url, preferredName: preferredName?.trimmingCharacters(in: .whitespaces),
+                                 delay: false, enforceMedia: true, session: session)
+    }
+
     /// 下载核心（task 版）：可实时进度 + 可取消 + 写入下载历史。
+    /// - session：请求特征（UA/Referer/Cookie）来源页，nil 用当前激活 tab（agent/retry 路径）；
+    ///   用户媒体面板路径显式传入来源页（面板激活时 activeSession 可能已漂移）。
     /// - 安全链路在 `consumeDownload`：HTTP 状态 →（enforceMedia）魔数校验 → moveItem；
     ///   取消/失败时临时文件由 URLSession 清理，绝不会进入目标路径。
     /// - 临时文件必须在 completion 内消费（返回后 URLSession 删除）。
-    private func runDownload(url: URL, preferredName: String?, delay: Bool, enforceMedia: Bool) async -> LocalToolResult {
-        // 拟人化：随机延迟 1-3s（仅 agent 驱动；retry 不走）
+    private func runDownload(url: URL, preferredName: String?, delay: Bool, enforceMedia: Bool,
+                             session: TabSession? = nil) async -> LocalToolResult {
+        // 拟人化：随机延迟 1-3s（仅 agent 驱动；retry/用户面板不走）
         if delay {
             try? await Task.sleep(for: .milliseconds(Int.random(in: 1000...3000)))
         }
 
         // 真实浏览器请求特征：UA（页面 JS 读取，无会话回退默认）、Referer（当前页）、Cookie（WebView 会话）
-        let ua = (await activeSession?.jsResult("navigator.userAgent"))?.text ?? Self.defaultBrowserUA
-        let referer = activeSession?.webView.url?.absoluteString ?? ""
+        let srcSession = session ?? activeSession
+        let ua = (await srcSession?.jsResult("navigator.userAgent"))?.text ?? Self.defaultBrowserUA
+        let referer = srcSession?.webView.url?.absoluteString ?? ""
         var cookieHeader = ""
-        if let session = activeSession {
+        if let session = srcSession {
             let allCookies = await session.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
             if !allCookies.isEmpty {
                 // 安全：只发送匹配目标域名的 cookie（RFC 6265 domain-match），杜绝跨站 cookie 泄露

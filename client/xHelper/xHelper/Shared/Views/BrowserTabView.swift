@@ -196,10 +196,29 @@ struct BrowserTabView: View {
                 .onKeyPress(.tab, phases: .down) { _ in acceptSuggestionFromKeyboard() }
                 .onKeyPress(.escape, phases: .down) { _ in handleEscapeKey() }
 
+            mediaPanelButton
             bookmarkButton
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+    }
+
+    /// 本页资源（媒体下载面板）：捕获当前页 webView 打开侧栏「本页资源」tab。
+    /// 仅 http(s) 页面可用；每次点击都重新绑定来源页并重扫。
+    private var mediaPanelButton: some View {
+        Button {
+            BrowserToolProvider.shared.rightSidebar?.openMediaPanel(sourceWebView: webView)
+        } label: {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(currentPageURL() == nil)
+        .opacity(currentPageURL() == nil ? 0.3 : 1)
+        .help("本页媒体资源（视频/图片下载）")
     }
 
     // MARK: - 地址栏建议（历史 + 收藏，前缀匹配，兼容有无协议头）

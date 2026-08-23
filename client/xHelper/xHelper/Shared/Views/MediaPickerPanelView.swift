@@ -334,6 +334,7 @@ private struct MediaRow: View {
     private var metaText: String {
         var parts: [String] = []
         if item.kind == .video && item.playing { parts.append("▶ 播放中") }
+        if !item.note.isEmpty { parts.append(item.note) }
         if let d = item.duration {
             parts.append(String(format: "%02d:%02d", d / 60, d % 60))
         }
@@ -355,6 +356,15 @@ private struct MediaRow: View {
                 Text("\(Int((record?.progress ?? 0) * 100))%")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
+                Button {
+                    if let id = record?.id { DownloadHistoryStore.shared.cancel(id: id) }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary.opacity(0.7))
+                }
+                .buttonStyle(.plain)
+                .help("取消下载")
             }
         case .done:
             Label(record?.filename ?? "已完成", systemImage: "checkmark.circle.fill")

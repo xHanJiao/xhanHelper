@@ -40,7 +40,8 @@ struct XiaohongshuMediaStrategy: MediaSiteStrategy {
     func matches(host: String) -> Bool { host.contains("xiaohongshu.") }
 
     /// 笔记视频直链在 SSR 状态里：noteDetailMap[noteId].note.video.media.stream.h264[0].masterUrl
-    /// （实测验证过；未播放时 <video> 只有 blob:，此捷径是唯一高清来源）
+    /// （实测验证过；未播放时 <video> 只有 blob:，此捷径是唯一高清来源）。
+    /// 同时取封面（video.image / imageList[0]）供面板缩略图展示。
     var stateReadJS: String? {
         """
         (function(){
@@ -57,8 +58,14 @@ struct XiaohongshuMediaStrategy: MediaSiteStrategy {
               var stream = media.stream || {};
               var first = function(a) { return a && a[0] && a[0].masterUrl; };
               var u = first(stream.h264) || first(stream.h265) || (media.legacy && media.legacy.videoUrl);
-              if (ok(u)) videos.push({src: u, duration: null,
-                                      title: ((note.title || note.desc || '') + '').slice(0, 60)});
+              if (ok(u)) {
+                var vi = (note.video && note.video.image) || {};
+                var il = (note.imageList && note.imageList[0]) || {};
+                var poster = vi.urlDefault || vi.url_default || il.urlDefault || il.urlPre || '';
+                videos.push({src: u, duration: null,
+                             title: ((note.title || note.desc || '') + '').slice(0, 60),
+                             poster: ok(poster) ? poster : ''});
+              }
             }
           } catch (e) {}
           return JSON.stringify({videos: videos, images: []});

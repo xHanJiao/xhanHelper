@@ -44,6 +44,9 @@ CDN 媒体 URL 本身是带签名自包含地址，配合现有 `runDownload` �
 配套：
 - 面板扫描后视频为空且是已知站点 → 静默等 1.5s 自动补扫一轮（治 SPA 水合竞态，只补一轮）
 - 每次重放尝试打诊断日志（接口 path + 结果）；无视频时输出各层统计
+- 深挖器结构化通道：识别「视频描述对象」（play_addr.url_list），输出主直链 + bit_rate 清晰度变体
+  （gear_name/bit_rate/data_size 标注为 "1080p · 12.3MB" 样式，体积降序）+ cover 封面 → 面板行可辨识可选；
+  面板下载中行内 ✕ 取消（复用 DownloadHistoryStore.cancel）
 
 ## 架构：策略模式
 

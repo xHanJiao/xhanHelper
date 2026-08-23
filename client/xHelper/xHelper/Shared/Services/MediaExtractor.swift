@@ -25,6 +25,8 @@ enum MediaExtractor {
         let width: Int?
         let height: Int?
         let title: String
+        /// 清晰度/大小标注（如 "1080p · 12.3MB"），空 = 无
+        let note: String
         let playing: Bool
         var id: String { "\(kind.rawValue)|\(url.absoluteString)" }
     }
@@ -128,6 +130,7 @@ enum MediaExtractor {
                 width: d["width"] as? Int,
                 height: d["height"] as? Int,
                 title: (d["title"] as? String) ?? "",
+                note: (d["note"] as? String) ?? "",
                 playing: (d["playing"] as? Bool) ?? false
             )
         }
@@ -318,75 +321,148 @@ enum MediaExtractor {
         """
     }
 
-    /// 在响应 JSON 里递归深挖视频直链（不绑定站点数据形态）：
-    /// - 结构化捷径：dict 的 url_list 数组（抖音 play_addr 形态）、键名含 url/src/play/link 且值为媒体字符串
-    /// - 通用形态：任何字符串值匹配强特征（路径 .mp4/.webm/.mov 结尾）或弱特征（含 /play、/stream、media-video 等）
-    /// - 排除 HLS/DASH（m3u8/mpd/media-audio-）
-    /// - targetId：dict 的 id 类字段匹配时该子树挖到的链接排前
-    /// - 只挖视频；图片仍走 DOM 层（避免把全页头像缩略图都挖出来）
-    private static func mineVideoLinks(_ data: Data, targetId: String?, limit: Int = 5) -> [Item] {
+    /// 在响应 JSON 里深挖视频直链：
+    /// - 结构化通道：递归找「视频描述对象」（含 play_addr.url_list 的 dict），提取主直链 +
+    ///   bit_rate 清晰度变体（gear_name/bit_rate/data_size 标注，按体积降序）+ cover 封面；
+    ///   目标 id 匹配的子树结果排前
+    /// - 通用兜底：递归收集一切像视频直链的字符串值（不绑定站点形态，保证普适性）
+    /// - 排除 HLS/DASH；只挖视频，图片仍走 DOM 层（避免全页头像缩略图涌入）
+    private static func mineVideoLinks(_ data: Data, targetId: String?, limit: Int = 6) -> [Item] {
         guard let root = try? JSONSerialization.jsonObject(with: data) else {
             diagLog("replay 响应非 JSON，跳过")
             return []
         }
 
-        var preferred: [String] = []
-        var others: [String] = []
+        var preferred: [Item] = []
+        var others: [Item] = []
+        var emitted = Set<String>()
 
-        func collectStrings(_ node: Any, into bucket: inout [String]) {
-            switch node {
-            case let s as String: bucket.append(s)
-            case let dict as [String: Any]:
-                for value in dict.values { collectStrings(value, into: &bucket) }
-            case let arr as [Any]:
-                for value in arr { collectStrings(value, into: &bucket) }
-            default: break
-            }
+        func emit(_ item: Item?, toPreferred: Bool) {
+            guard let item, emitted.insert(item.url.absoluteString).inserted else { return }
+            (toPreferred ? &preferred : &others).append(item)
         }
 
-        // 目标对象子树优先收集
-        if let tid = targetId {
-            var matchedDicts: [[String: Any]] = []
-            findTargetDicts(root, tid, &matchedDicts)
-            for dict in matchedDicts.prefix(3) {
-                collectStrings(dict, into: &preferred)
-            }
-        }
-        collectStrings(root, into: &others)
-
-        var seen = Set<String>()
-        var items: [Item] = []
-        for s in preferred + others where items.count < limit {
-            guard let item = classifyMediaLink(s) else { continue }
-            let key = item.url.absoluteString
-            guard !seen.contains(key) else { continue }
-            seen.insert(key)
-            items.append(item)
-        }
-        return items
-    }
-
-    /// 深度优先找 id 字段匹配 targetId 的 dict（最多记录若干个）
-    private static func findTargetDicts(_ node: Any, _ tid: String, _ out: inout [[String: Any]]) {
-        guard out.count < 3 else { return }
-        if let dict = node as? [String: Any] {
+        func idMatches(_ dict: [String: Any]) -> Bool {
+            guard let tid = targetId, !tid.isEmpty else { return false }
             for key in ["aweme_id", "group_id", "note_id", "item_id", "object_id", "id", "video_id"] {
-                if let v = dict[key] as? String, v == tid {
-                    out.append(dict)
-                    break
-                }
-                if let n = dict[key] as? NSNumber, n.stringValue == tid {
-                    out.append(dict)
-                    break
-                }
+                if let v = dict[key] as? String, v == tid { return true }
+                if let n = dict[key] as? NSNumber, n.stringValue == tid { return true }
             }
-            for value in dict.values { findTargetDicts(value, tid, &out) }
-        } else if let arr = node as? [Any] {
-            for value in arr { findTargetDicts(value, tid, &out) }
+            return false
+        }
+
+        func walk(_ node: Any, inTarget: Bool) {
+            if let dict = node as? [String: Any] {
+                let isTarget = inTarget || idMatches(dict)
+                structuredEmit(dict, toPreferred: isTarget, emit: emit)
+                for value in dict.values { walk(value, isTarget) }
+            } else if let arr = node as? [Any] {
+                for value in arr { walk(value, inTarget) }
+            }
+        }
+        walk(root, false)
+
+        // 通用兜底：结构化没覆盖到的直链字符串
+        var strings: [String] = []
+        collectStrings(root, into: &strings)
+        for s in strings {
+            guard preferred.count + others.count < limit else { break }
+            guard let item = classifyMediaLink(s) else { continue }
+            emit(item, toPreferred: false)
+        }
+
+        return preferred + others
+    }
+
+    /// 通用字符串收集（结构化通道的兜底输入）
+    private static func collectStrings(_ node: Any, into bucket: inout [String]) {
+        switch node {
+        case let s as String: bucket.append(s)
+        case let dict as [String: Any]:
+            for value in dict.values { collectStrings(value, into: &bucket) }
+        case let arr as [Any]:
+            for value in arr { collectStrings(value, into: &bucket) }
+        default: break
         }
     }
 
-    /// 判断一个字符串是否为可下载的视频直链
+    /// 结构化提取：dict 含 play_addr.url_list 时视为「视频描述对象」。
+    /// 主直链 + bit_rate 变体（标注清晰度/大小，体积降序）+ cover 封面。
+    private static func structuredEmit(_ dict: [String: Any], toPreferred: Bool,
+                                       emit: (Item?, Bool) -> Void) {
+        guard let pa = dict["play_addr"] as? [String: Any],
+              let urls = pa["url_list"] as? [String] else { return }
+        let poster = coverURL(in: dict)
+        let duration = durationSec(dict)
+
+        // 主直链
+        for u in urls {
+            guard let url = URL(string: u), url.scheme == "http" || url.scheme == "https" else { continue }
+            emit(Item(kind: .video, url: url, poster: poster, duration: duration,
+                      width: nil, height: nil, title: "",
+                      note: qualityNote(gear: pa["gear_name"] as? String,
+                                        bitrate: pa["bit_rate"] as? NSNumber,
+                                        bytes: pa["data_size"] as? NSNumber),
+                      playing: false), toPreferred)
+            break
+        }
+
+        // 清晰度变体（bit_rate 数组），按体积降序
+        guard let rates = dict["bit_rate"] as? [[String: Any]] else { return }
+        var variants: [(item: Item, size: Double)] = []
+        for r in rates {
+            guard let rp = r["play_addr"] as? [String: Any],
+                  let rurls = rp["url_list"] as? [String] else { continue }
+            guard let su = rurls.first(where: { u in
+                URL(string: u)?.scheme == "http" || URL(string: u)?.scheme == "https"
+            }), let url = URL(string: su) else { continue }
+            let bytes = (rp["data_size"] as? NSNumber ?? r["data_size"] as? NSNumber)?.doubleValue ?? 0
+            variants.append((Item(
+                kind: .video, url: url, poster: poster, duration: duration,
+                width: nil, height: nil, title: "",
+                note: qualityNote(gear: r["gear_name"] as? String,
+                                  bitrate: r["bit_rate"] as? NSNumber,
+                                  bytes: (r["data_size"] as? NSNumber) ?? (rp["data_size"] as? NSNumber)),
+                playing: false
+            ), bytes))
+        }
+        for (item, _) in variants.sorted(by: { $0.size > $1.size }) {
+            emit(item, toPreferred)
+        }
+    }
+
+    /// 从「视频描述对象」里取封面（cover / origin_cover / image，支持 url_list 数组或直接字符串）
+    private static func coverURL(in dict: [String: Any]) -> URL? {
+        for key in ["cover", "origin_cover", "image"] {
+            if let c = dict[key] as? [String: Any], let urls = c["url_list"] as? [String] {
+                for u in urls {
+                    if let url = URL(string: u), url.scheme == "http" || url.scheme == "https" { return url }
+                }
+            }
+            if let s = dict[key] as? String, let url = URL(string: s),
+               url.scheme == "http" || url.scheme == "https" { return url }
+        }
+        return nil
+    }
+
+    /// duration 兼容 ms/秒两种量级
+    private static func durationSec(_ holder: [String: Any]) -> Int? {
+        guard let n = holder["duration"] as? NSNumber, n.doubleValue > 0 else { return nil }
+        return Int(n.doubleValue / (n.doubleValue > 1000 ? 1000 : 1))
+    }
+
+    /// 拼装清晰度标注："gear_name · 2400kbps · 12.3MB"，无有效字段返回空串
+    private static func qualityNote(gear: String?, bitrate: NSNumber?, bytes: NSNumber?) -> String {
+        var parts: [String] = []
+        if let g = gear, !g.isEmpty { parts.append(g) }
+        if let b = bitrate, b.intValue > 0 { parts.append("\(b.intValue)kbps") }
+        if let by = bytes, by.doubleValue > 50_000 {
+            parts.append(String(format: "%.1fMB", by.doubleValue / 1_048_576))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// 判断一个字符串是否为可下载的视频直链（通用兜底通道用）
     private static func classifyMediaLink(_ s: String) -> Item? {
         guard let url = URL(string: s),
               url.scheme == "http" || url.scheme == "https" else { return nil }
@@ -402,7 +478,7 @@ enum MediaExtractor {
         let weak = weakSignals.contains { lower.contains($0) }
         guard strong || weak else { return nil }
         return Item(kind: .video, url: url, poster: nil, duration: nil,
-                    width: nil, height: nil, title: "", playing: false)
+                    width: nil, height: nil, title: "", note: "", playing: false)
     }
 
     // MARK: - 工具

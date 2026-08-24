@@ -416,6 +416,7 @@ struct xhanHelperMacApp: App {
             .environmentObject(FontSizeManager.shared)
             .preferredColorScheme(colorSchemeManager.selectedScheme.colorScheme)
             .toast()
+            .browserDiagnostics()
             .glassWindow()
             .task {
                 await LocalToolRegistry.shared.register(BrowserToolProvider.shared)

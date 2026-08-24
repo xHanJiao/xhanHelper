@@ -2624,6 +2624,37 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             }
         }
 
+        /// 构建并上报浏览器诊断事件（弹窗 + LogBuffer 持久化兜底），供长期真实使用中捕获长尾异常。
+        private func captureDiagnostics(
+            type: BrowserDiagnosticsCenter.EventType,
+            errorCode: Int? = nil,
+            errorDescription: String? = nil
+        ) {
+            var provCommitMs: Int?
+            var sinceCommitMs: Int?
+            if let start = lastNavStartAt {
+                let nowMs = Int(Date().timeIntervalSince(start) * 1000)
+                if let commit = lastNavCommitAt {
+                    provCommitMs = Int(commit.timeIntervalSince(start) * 1000)
+                    sinceCommitMs = max(nowMs - provCommitMs!, 0)
+                }
+            }
+            let tabId = BrowserToolProvider.shared.tabs.first(where: { $0.value === self })?.key
+            BrowserDiagnosticsCenter.shared.capture(.init(
+                type: type,
+                timestamp: Date(),
+                appVersion: BrowserDiagnosticsCenter.appVersion(),
+                host: webView.url?.host,
+                url: webView.url?.absoluteString,
+                tabId: tabId,
+                isAgentTab: isAgentTab,
+                provCommitMs: provCommitMs,
+                sinceCommitMs: sinceCommitMs,
+                errorCode: errorCode,
+                errorDescription: errorDescription
+            ))
+        }
+
         // MARK: - WKUIDelegate
 
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
@@ -2717,10 +2748,11 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                         }
                     }
                 }
-                loadTimeout = Task {
+                loadTimeout = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(timeoutMs))
                     guard !Task.isCancelled else { return }
                     print("[Browser] loadWait resolved: waitForLoadTimeout(\(timeoutMs)ms)")
+                    self.captureDiagnostics(type: .loadTimeout, errorDescription: "等待页面加载超时(\(timeoutMs)ms)")
                     cont.resume(returning: "timeout")
                     loadContinuation = nil
                     readyPollTask?.cancel()
@@ -2806,6 +2838,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         nonisolated func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
             Task { @MainActor in
+                captureDiagnostics(type: .processTerminated, errorDescription: "WebContent 进程被系统回收，WKWebView 将自动重载")
                 print("[BrowserDiag] ⚠️ WebContent 进程被系统回收 url=\(webView.url?.absoluteString ?? "nil") —— 切回将触发自动 reload，滚动位置丢失")
             }
         }
@@ -2936,6 +2969,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 let msg = error.localizedDescription
                 resumeLoad((error as NSError).code == NSURLErrorCancelled ? nil : msg, reason: "didFail")
                 if (error as NSError).code != NSURLErrorCancelled {
+                    captureDiagnostics(type: .navigationFailed, errorCode: (error as NSError).code, errorDescription: msg)
                     onNavigationError?(msg)
                 }
             }
@@ -2947,6 +2981,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 let msg = error.localizedDescription
                 resumeLoad(code == NSURLErrorCancelled ? nil : "加载失败: \(msg)", reason: "didFailProvisional")
                 if code != NSURLErrorCancelled {
+                    captureDiagnostics(type: .navigationFailed, errorCode: code, errorDescription: msg)
                     onNavigationError?("加载失败: \(msg)")
                 }
             }

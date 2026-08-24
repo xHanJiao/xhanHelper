@@ -2018,6 +2018,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 // agent 标签不保活：直接暂停（原有节能逻辑）
                 prevSession.webView.pauseAllMediaPlayback()
             } else {
+                saveScrollPosition(prevSession)
                 // 先乐观加入保活（确保视图层级不摘除），JS 检测完成后决定去留
                 rightSidebar?.keptAliveTabIds.insert(prev)
                 prevSession.webView.evaluateJavaScript(Self.mediaCheckScript) { [weak self] result, error in
@@ -2035,12 +2036,71 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 }
             }
         }
-        if let id, let session = tabs[id] {
+        if let id, id != activeTabId, let session = tabs[id] {
             session.lastAccessedAt = Date()
             rightSidebar?.keptAliveTabIds.remove(id)
+            if !session.isAgentTab {
+                scheduleScrollRestore(session)
+            }
         }
         activeTabId = id
     }
+
+    /// 摘除层级前保存滚动位置与 marker（marker 在 reload 后消失，用于防止把恢复值打到新页面上）。
+    private func saveScrollPosition(_ session: TabSession) {
+        session.webView.evaluateJavaScript(Self.scrollStateScript) { result, error in
+            if let error {
+                print("[BrowserDiag] saveScroll JS error url=\(session.webView.url?.absoluteString ?? "nil") err=\(error.localizedDescription)")
+                return
+            }
+            guard let s = result as? String,
+                  let data = s.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let y = obj["y"] as? Double, y > 0,
+                  let m = obj["m"] as? Double else {
+                session.savedScrollY = nil
+                return
+            }
+            session.savedScrollY = y
+            session.savedScrollMarker = m
+        }
+    }
+
+    /// 切回后恢复滚动位置：重挂载初期 frame 可能短暂为零尺寸（内容高度塌缩会钳制 scrollTop），
+    /// 故每 120ms 轮询一次，等视口/内容高度恢复正常再 scrollTo；最多 15 次。
+    private func scheduleScrollRestore(_ session: TabSession, attempt: Int = 0) {
+        guard attempt < 15 else {
+            print("[BrowserDiag] restore gave up (layout never ready) url=\(session.webView.url?.absoluteString ?? "nil")")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self, weak session] in
+            guard let self, let session else { return }
+            guard let y = session.savedScrollY, y > 0, let m = session.savedScrollMarker else { return }
+            let script = """
+            (function(){if(window.__xhDiag!==\(Int(m)))return'reloaded';
+            if(window.innerHeight<50||document.documentElement.scrollHeight<100)return'wait';
+            window.scrollTo(0,\(Int(y)));return'ok:'+window.scrollY;})()
+            """
+            session.webView.evaluateJavaScript(script) { result, error in
+                if error == nil, let s = result as? String {
+                    if s.hasPrefix("ok") {
+                        // 正常恢复成功，不打日志
+                    } else if s == "reloaded" {
+                        print("[BrowserDiag] restore skipped (page reloaded) url=\(session.webView.url?.absoluteString ?? "nil")")
+                    } else {
+                        self.scheduleScrollRestore(session, attempt: attempt + 1)
+                    }
+                } else {
+                    self.scheduleScrollRestore(session, attempt: attempt + 1)
+                }
+            }
+        }
+    }
+
+    private static let scrollStateScript = """
+    (function(){window.__xhDiag=window.__xhDiag||Date.now();
+    return JSON.stringify({y:window.scrollY,m:window.__xhDiag});})()
+    """
 
     /// 页面内活跃媒体检测脚本：任一未暂停/未结束的 video/audio 即视为有媒体播放。
     private static let mediaCheckScript = """
@@ -2367,6 +2427,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         var lastNavStartAt: Date?
         /// 最近一次导航 commit 时间（didCommit），与 lastNavStartAt 计算 prov→commit 耗时
         var lastNavCommitAt: Date?
+        /// 摘除层级前保存的滚动位置与页面标记：WKWebView 重挂载时 AppKit 先给零尺寸 frame
+        /// 再恢复，窗口期内内容高度塌缩、scrollTop 被内核钳制归零（虚拟列表站点必丢）
+        var savedScrollY: Double?
+        var savedScrollMarker: Double?
         /// 最近一次 snapshot 时各 @eN 元素的特征签名（ref 校验基准；导航时清空）
         var lastSnapshotItems: [[String: Any]]?
         /// 页面标题变化回调（tab 标题跟随）
@@ -2699,6 +2763,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         nonisolated func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
             Task { @MainActor in
                 lastNavCommitAt = Date()
+            }
+        }
+
+        nonisolated func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            Task { @MainActor in
+                print("[BrowserDiag] ⚠️ WebContent 进程被系统回收 url=\(webView.url?.absoluteString ?? "nil") —— 切回将触发自动 reload，滚动位置丢失")
             }
         }
 

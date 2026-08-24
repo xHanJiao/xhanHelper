@@ -14,9 +14,10 @@ struct BrowserTabView: View {
     @State private var observations: [NSKeyValueObservation] = []
     @State private var loadError: String?
     @State private var suggestions: [URLSuggestion] = []
-    @State private var selectedSuggestion = 0
+    @State private var selectedSuggestion = -1
     @State private var showSuggestions = false
     @State private var suppressSuggestions = false
+    @State private var didNavigateSelection = false
     @FocusState private var urlFocused: Bool
     @FocusState private var findFocused: Bool
     @ObservedObject private var findCoordinator = BrowserFindCoordinator.shared
@@ -191,7 +192,7 @@ struct BrowserTabView: View {
                         return .ignored
                     }
                     #endif
-                    return acceptSuggestionFromKeyboard()
+                    return showSuggestions && didNavigateSelection ? acceptSuggestionFromKeyboard() : .ignored
                 }
                 .onKeyPress(.tab, phases: .down) { _ in acceptSuggestionFromKeyboard() }
                 .onKeyPress(.escape, phases: .down) { _ in handleEscapeKey() }
@@ -273,7 +274,12 @@ struct BrowserTabView: View {
 
     private func moveSuggestionSelection(_ delta: Int) -> KeyPress.Result {
         guard showSuggestions, !suggestions.isEmpty else { return .ignored }
-        selectedSuggestion = (selectedSuggestion + delta + suggestions.count) % suggestions.count
+        if selectedSuggestion < 0 {
+            selectedSuggestion = delta > 0 ? 0 : suggestions.count - 1
+        } else {
+            selectedSuggestion = (selectedSuggestion + delta + suggestions.count) % suggestions.count
+        }
+        didNavigateSelection = true
         return .handled
     }
 
@@ -298,6 +304,7 @@ struct BrowserTabView: View {
     private func updateSuggestions(for text: String) {
         let suppressed = suppressSuggestions
         suppressSuggestions = false
+        didNavigateSelection = false
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2, urlFocused, !suppressed else {
             hideSuggestions()
@@ -323,7 +330,7 @@ struct BrowserTabView: View {
         for b in bookmarkStore.suggest(query: text, maxResults: 6) { appendBookmark(b) }
         suggestions = merged
         showSuggestions = !merged.isEmpty
-        if selectedSuggestion >= merged.count { selectedSuggestion = 0 }
+        if selectedSuggestion >= merged.count { selectedSuggestion = -1 }
     }
 
     /// 收藏当前页（原顶栏收藏按钮移至地址栏最右）

@@ -2,7 +2,9 @@ package tool
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -66,14 +68,17 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		{
 			Name:        "update_document",
 			Display:     "修改文档",
-			Description: "修改已有文档。修改前请先用 get_document 读取完整内容，在其基础上修改后传入。仅更新传入的非空字段。",
+			Description: "修改已有文档。局部小改动优先用 old_text/new_text 指定替换片段（无需传全文，省 token 且不会误覆盖其他内容）；只有重写全文时才传 content。old_text 必须与文档当前内容精确匹配且唯一。仅更新传入的非空字段。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"id":      map[string]interface{}{"type": "string", "description": "文档 ID"},
-					"title":   map[string]interface{}{"type": "string", "description": "新的文档标题（可选）"},
-					"content": map[string]interface{}{"type": "string", "description": "新的 Markdown 正文（可选）"},
-					"tags":    map[string]interface{}{"type": "string", "description": "新的标签（可选）"},
+					"id":       map[string]interface{}{"type": "string", "description": "文档 ID"},
+					"title":    map[string]interface{}{"type": "string", "description": "新的文档标题（可选）"},
+					"content":  map[string]interface{}{"type": "string", "deprecated": true, "description": "（已废弃）新的 Markdown 正文，全量覆盖。优先用 old_text/new_text 局部替换，仅整篇重写时才传此参数"},
+					"tags":     map[string]interface{}{"type": "string", "description": "新的标签（可选）"},
+					"old_text": map[string]interface{}{"type": "string", "description": "要被替换的原文片段，需精确匹配且在文档中唯一（与 content 互斥）"},
+					"new_text": map[string]interface{}{"type": "string", "description": "替换后的新文本（可为空字符串表示删除片段），须与 old_text 搭配传入"},
+					"count":    map[string]interface{}{"type": "integer", "description": "要替换的匹配数量（可选）。不传时要求 old_text 唯一匹配并只替换 1 处；传入时替换前 count 处，不能超过实际匹配数"},
 				},
 				"required": []string{"id"},
 			},
@@ -302,10 +307,13 @@ func (t *DocumentTool) getDocumentVersions(ec *ExecuteContext, args json.RawMess
 
 func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) *Result {
 	var req struct {
-		ID      string `json:"id"`
-		Title   string `json:"title"`
-		Content string `json:"content"`
-		Tags    string `json:"tags"`
+		ID      string  `json:"id"`
+		Title   string  `json:"title"`
+		Content string  `json:"content"`
+		Tags    string  `json:"tags"`
+		OldText string  `json:"old_text"`
+		NewText *string `json:"new_text"`
+		Count   *int    `json:"count"`
 	}
 	if err := json.Unmarshal(args, &req); err != nil {
 		return &Result{Success: false, Error: "invalid args: " + err.Error()}
@@ -313,32 +321,59 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 	if req.ID == "" {
 		return &Result{Success: false, Error: "id required"}
 	}
+	if req.OldText != "" && req.Content != "" {
+		return &Result{Success: false, Error: "old_text 与 content 互斥，局部替换用 old_text，全量重写才用 content"}
+	}
+	if req.OldText != "" && req.NewText == nil {
+		return &Result{Success: false, Error: "old_text 需要搭配 new_text 使用"}
+	}
 
 	// 更新前先创建版本快照
 	current, err := t.docRepo.GetByID(ec.Ctx, req.ID, ec.UserID)
 	if err != nil {
 		return &Result{Success: false, Error: "document not found: " + err.Error()}
 	}
-	if err := t.versionRepo.CreateSnapshot(ec.Ctx, "document", req.ID, map[string]interface{}{
-		"title":   current.Title,
-		"content": current.Content,
-		"tags":    current.Tags,
-	}); err != nil {
-		log.Printf("[document] create snapshot before update %s: %v", req.ID, err)
-	}
 
 	updates := map[string]interface{}{}
+	if req.OldText != "" {
+		n := strings.Count(current.Content, req.OldText)
+		limit := 1
+		if req.Count != nil {
+			if *req.Count <= 0 {
+				return &Result{Success: false, Error: "count 必须为正整数"}
+			}
+			if *req.Count > n {
+				return &Result{Success: false, Error: fmt.Sprintf("old_text 在文档中仅匹配 %d 处，无法替换 %d 处", n, *req.Count)}
+			}
+			limit = *req.Count
+		} else {
+			if n == 0 {
+				return &Result{Success: false, Error: "old_text 未在文档中找到，请先用 get_document 核对原文（注意精确匹配）"}
+			}
+			if n > 1 {
+				return &Result{Success: false, Error: fmt.Sprintf("old_text 在文档中匹配 %d 处，请加长片段使其唯一，或用 count 指定替换数量", n)}
+			}
+		}
+		updates["content"] = strings.Replace(current.Content, req.OldText, *req.NewText, limit)
+	} else if req.Content != "" {
+		updates["content"] = req.Content
+	}
 	if req.Title != "" {
 		updates["title"] = req.Title
-	}
-	if req.Content != "" {
-		updates["content"] = req.Content
 	}
 	if req.Tags != "" {
 		updates["tags"] = req.Tags
 	}
 	if len(updates) == 0 {
 		return &Result{Success: true, Data: []byte(`{"message":"nothing to update"}`)}
+	}
+
+	if err := t.versionRepo.CreateSnapshot(ec.Ctx, "document", req.ID, map[string]interface{}{
+		"title":   current.Title,
+		"content": current.Content,
+		"tags":    current.Tags,
+	}); err != nil {
+		log.Printf("[document] create snapshot before update %s: %v", req.ID, err)
 	}
 
 	if err := t.docRepo.Update(ec.Ctx, req.ID, ec.UserID, updates); err != nil {

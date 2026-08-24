@@ -95,6 +95,134 @@ func TestDocumentGetAndUpdate(t *testing.T) {
 	}
 }
 
+func TestDocumentUpdateReplace(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ctx := context.Background()
+	ec := &ExecuteContext{Ctx: ctx, UserID: "user-1"}
+
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{
+		"title": "T", "content": "first line\nsecond line\nthird line", "tags": "",
+	}))
+	var created map[string]interface{}
+	json.Unmarshal(res.Data, &created)
+	docID := created["id"].(string)
+
+	t.Run("replace success", func(t *testing.T) {
+		res := tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
+			"id": docID, "old_text": "second line", "new_text": "SECOND",
+		}))
+		if !res.Success {
+			t.Fatalf("replace failed: %s", res.Error)
+		}
+		res = tool.Execute(ec, "get_document", mustMarshal(t, map[string]string{"id": docID}))
+		var got map[string]interface{}
+		json.Unmarshal(res.Data, &got)
+		want := "first line\nSECOND\nthird line"
+		if got["content"] != want {
+			t.Errorf("expected %q, got %q", want, got["content"])
+		}
+	})
+
+	t.Run("replace to empty deletes fragment", func(t *testing.T) {
+		res := tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{
+			"id": docID, "old_text": "\nthird line", "new_text": "",
+		}))
+		if !res.Success {
+			t.Fatalf("delete-fragment failed: %s", res.Error)
+		}
+		res = tool.Execute(ec, "get_document", mustMarshal(t, map[string]string{"id": docID}))
+		var got map[string]interface{}
+		json.Unmarshal(res.Data, &got)
+		want := "first line\nSECOND"
+		if got["content"] != want {
+			t.Errorf("expected %q, got %q", want, got["content"])
+		}
+	})
+
+	t.Run("old_text not found", func(t *testing.T) {
+		res := tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
+			"id": docID, "old_text": "no such text", "new_text": "x",
+		}))
+		if res.Success {
+			t.Error("expected failure for missing old_text")
+		}
+	})
+
+	t.Run("old_text ambiguous", func(t *testing.T) {
+		res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{
+			"title": "Dup", "content": "dup text here and dup there",
+		}))
+		var created map[string]interface{}
+		json.Unmarshal(res.Data, &created)
+		res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
+			"id": created["id"].(string), "old_text": "dup", "new_text": "x",
+		}))
+		if res.Success {
+			t.Error("expected failure for multi-match old_text")
+		}
+	})
+
+	t.Run("replace multiple with count", func(t *testing.T) {
+		res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{
+			"title": "Cnt", "content": "a-b-a-b-a",
+		}))
+		var created map[string]interface{}
+		json.Unmarshal(res.Data, &created)
+		id := created["id"].(string)
+		res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{
+			"id": id, "old_text": "a", "new_text": "X", "count": 3,
+		}))
+		if !res.Success {
+			t.Fatalf("count replace failed: %s", res.Error)
+		}
+		res = tool.Execute(ec, "get_document", mustMarshal(t, map[string]string{"id": id}))
+		var got map[string]interface{}
+		json.Unmarshal(res.Data, &got)
+		if got["content"] != "X-b-X-b-X" {
+			t.Errorf("expected 'X-b-X-b-X', got %q", got["content"])
+		}
+	})
+
+	t.Run("count exceeds matches", func(t *testing.T) {
+		res := tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{
+			"id": docID, "old_text": "SECOND", "new_text": "x", "count": 5,
+		}))
+		if res.Success {
+			t.Error("expected failure when count exceeds matches")
+		}
+	})
+
+	t.Run("count zero or negative", func(t *testing.T) {
+		for _, c := range []int{0, -1} {
+			res := tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{
+				"id": docID, "old_text": "SECOND", "new_text": "x", "count": c,
+			}))
+			if res.Success {
+				t.Errorf("expected failure for count=%d", c)
+			}
+		}
+	})
+
+	t.Run("old_text conflicts with content", func(t *testing.T) {
+		res := tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
+			"id": docID, "old_text": "a", "new_text": "b", "content": "c",
+		}))
+		if res.Success {
+			t.Error("expected failure for old_text + content")
+		}
+	})
+
+	t.Run("old_text without new_text", func(t *testing.T) {
+		res := tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
+			"id": docID, "old_text": "a",
+		}))
+		if res.Success {
+			t.Error("expected failure for missing new_text")
+		}
+	})
+}
+
 func TestDocumentRollback(t *testing.T) {
 	tool, cleanup := setupDocumentTool(t)
 	defer cleanup()

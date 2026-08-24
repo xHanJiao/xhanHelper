@@ -2893,7 +2893,6 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 resumeLoad(nil, reason: "didFinish")
                 if let url = webView.url { onURLChanged?(url) }
                 await self.logPerf(url: webView.url)
-                await self.logFingerprint(url: webView.url)
             }
         }
 
@@ -2930,60 +2929,6 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 return
             }
             LogBuffer.shared.diag("[BrowserPerf] host=\(host)\(native) \(t)")
-        }
-
-        /// 指纹探针：页面加载完成后一次性 dump 浏览器 JS 指纹（与真实 Safari 基线对比，排查验证码）。
-        /// 输出 [BrowserFP] 日志行（含 host + JSON），配合 docs/design/mac-apps/browser-captcha-fingerprint.md 逐项核对。
-        @MainActor
-        private func logFingerprint(url: URL?) async {
-            guard let url, url.scheme == "http" || url.scheme == "https" else { return }
-            let host = url.host ?? ""
-            let js = """
-            (function(){
-              var mse = (typeof MediaSource !== 'undefined') ? MediaSource : null;
-              var gl = null;
-              try { var c = document.createElement('canvas'); gl = c.getContext('webgl') || c.getContext('experimental-webgl'); } catch(e){}
-              var p0 = performance.now(); for(var i=0;i<100;i++){ performance.now(); } var p100 = performance.now() - p0;
-              var r = {
-                ua: navigator.userAgent,
-                platform: navigator.platform,
-                vendor: navigator.vendor,
-                webdriverValue: String(navigator.webdriver),
-                webdriverInNavigator: ('webdriver' in navigator),
-                plugins: Array.from(navigator.plugins).map(function(p){return p.name;}).join('|'),
-                pluginsLen: navigator.plugins.length,
-                mimeTypesLen: navigator.mimeTypes.length,
-                mediaDevicesType: typeof navigator.mediaDevices,
-                mediaSourceType: typeof MediaSource,
-                mseAudioMpeg: mse ? mse.isTypeSupported('audio/mpeg') : 'n/a',
-                mseH264: mse ? mse.isTypeSupported('video/mp4; codecs="avc1.42E01E"') : 'n/a',
-                safariType: typeof window.safari,
-                safariMembers: (typeof window.safari === 'object') ? Object.keys(window.safari).join('|') : '',
-                notificationType: typeof Notification,
-                permissionsType: typeof navigator.permissions,
-                hardwareConcurrency: navigator.hardwareConcurrency,
-                deviceMemory: navigator.deviceMemory,
-                maxTouchPoints: navigator.maxTouchPoints,
-                languages: navigator.languages ? navigator.languages.join(',') : '',
-                screen: screen.width + 'x' + screen.height + ' dpr=' + (window.devicePixelRatio || 1) + ' depth=' + screen.colorDepth,
-                webglRenderer: gl ? String(gl.getParameter(gl.RENDERER)) : 'no-webgl',
-                webglVendor: gl ? String(gl.getParameter(gl.VENDOR)) : '',
-                perf100Now: Math.round(p100 * 100) / 100,
-                appVersion: navigator.appVersion
-              };
-              return JSON.stringify(r);
-            })()
-            """
-            let (text, _) = await jsResult(js)
-            guard let t = text, !t.isEmpty else {
-                let line = "[BrowserFP] host=\(host) js=n/a"
-                print(line)
-                LogBuffer.shared.diag(line)
-                return
-            }
-            let line = "[BrowserFP] host=\(host) \(t)"
-            print(line)
-            LogBuffer.shared.diag(line)
         }
 
         nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

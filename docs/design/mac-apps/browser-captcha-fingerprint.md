@@ -32,6 +32,8 @@
 
 **验证方式**：用户在 Xcode 跑 App，手动打开 google.com + baidu.com，把 `[BrowserFP]` 日志行贴回。逐项比对结论由 agent 依据内置 Safari 基线给出，用户仅需贴日志。
 
+**验证结果**：实测全绿（webdriver 删除后 `in===false`、mediaDevices object、plugins 为 Safari 形态），谷歌/百度验证码消失。探针（`logFingerprint` + `[BrowserFP]` print）为一次性诊断，验证闭环后已从 `didFinish` 移除。
+
 ## 三、第二步（核对后按结论实施）：指纹修复
 
 探针实测（baidu.com）命中项与结论：

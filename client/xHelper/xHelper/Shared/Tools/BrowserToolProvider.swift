@@ -2512,19 +2512,57 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 configuration.preferences.isFraudulentWebsiteWarningEnabled = true
             }
 
-            // Safari 伪装（WKWebView 与 Safari.app 仅存的两处 JS 差异）：
-            // 1. webdriver：WKWebView 恒为 true → 原型层覆盖为 false（不残留实例 own property，与 Safari 一致）
-            // 2. window.safari：Safari.app 才有该全局对象 → 注入最小壳子（UA 声称 Safari 但该对象缺失会被一眼识破）
+            // Safari 伪装（WKWebView 与 Safari.app 的 JS 差异，documentStart 全 frame 注入：
+            // reCAPTCHA 校验跑在跨域 iframe 里，forMainFrameOnly=true 会漏掉）。
+            // 1. webdriver：WKWebView 恒为 true 且 in===true；Safari 中该属性不存在（in===false）→ 彻底 delete，删除失败再兜底为 undefined
+            // 2. mediaDevices：权限拒绝场景下 WKWebView 为 undefined，Safari 恒为 object → 补最小壳
+            // 3. plugins/mimeTypes：WKWebView 原生暴露 Chrome/Edge PDF 插件名，与 Safari UA 矛盾 → 覆盖为 Safari 形态（QuickTime + WebKit PDF）
+            // 4. window.safari：Safari.app 才有该全局对象 → 注入最小壳子
             let safariSpoof = WKUserScript(
                 source: """
                 (function(){
-                  try{Object.defineProperty(Navigator.prototype,'webdriver',{get:function(){return false;},configurable:true});}
-                  catch(e){try{Object.defineProperty(navigator,'webdriver',{get:function(){return false;}});}catch(e2){}}
-                  try{if(!window.safari){window.safari={pushNotification:function(){}};}}catch(e){}
+                  try{ delete Navigator.prototype.webdriver; }catch(e){}
+                  try{ delete navigator.webdriver; }catch(e){}
+                  try{ if(('webdriver' in navigator) && navigator.webdriver !== undefined){ Object.defineProperty(Navigator.prototype,'webdriver',{get:function(){return undefined;},configurable:true}); } }catch(e){}
+
+                  if(typeof navigator.mediaDevices === 'undefined'){
+                    var _md = {
+                      getUserMedia:function(){ return Promise.reject(new Error('NotAllowedError')); },
+                      getDisplayMedia:function(){ return Promise.reject(new Error('NotAllowedError')); },
+                      enumerateDevices:function(){ return Promise.resolve([]); }
+                    };
+                    try{ Object.defineProperty(Navigator.prototype,'mediaDevices',{get:function(){return _md;},configurable:true}); }
+                    catch(e){ try{ Object.defineProperty(navigator,'mediaDevices',{get:function(){return _md;},configurable:true}); }catch(e2){} }
+                  }
+
+                  function mkPlugin(name, file, desc){ return {name:name, filename:file, description:desc}; }
+                  var _plist = [
+                    mkPlugin('QuickTime Plug-in 7.7.3','QuickTime Plugin.plugin','The QuickTime Plugin allows you to view a wide variety of multimedia content in Web pages.'),
+                    mkPlugin('WebKit built-in PDF','WebKit PDF Plugin','Portable Document Format')
+                  ];
+                  var _mlist = [
+                    {type:'application/pdf', suffixes:'pdf', description:'Portable Document Format', enabledPlugin:_plist[1]},
+                    {type:'text/pdf', suffixes:'pdf', description:'Portable Document Format', enabledPlugin:_plist[1]}
+                  ];
+                  function mkArrayLike(list, hasRefresh){
+                    var o = {length:list.length,
+                      item:function(i){return list[i]||null;},
+                      namedItem:function(n){for(var i=0;i<list.length;i++){if(list[i].name===n){return list[i];}}return null;}};
+                    for(var i=0;i<list.length;i++){ o[i]=list[i]; }
+                    o[Symbol.iterator]=function(){ var i=0; return {next:function(){ return {value:list[i], done:i++>=list.length}; }}; };
+                    if(hasRefresh){ o.refresh=function(){}; }
+                    return o;
+                  }
+                  var _plugins = mkArrayLike(_plist, true);
+                  var _mimes = mkArrayLike(_mlist, false);
+                  try{ Object.defineProperty(Navigator.prototype,'plugins',{get:function(){return _plugins;},configurable:true}); }catch(e){}
+                  try{ Object.defineProperty(Navigator.prototype,'mimeTypes',{get:function(){return _mimes;},configurable:true}); }catch(e){}
+
+                  try{ if(!window.safari){ window.safari={pushNotification:function(){}}; } }catch(e){}
                 })()
                 """,
                 injectionTime: .atDocumentStart,
-                forMainFrameOnly: true
+                forMainFrameOnly: false
             )
             configuration.userContentController.addUserScript(safariSpoof)
 
@@ -2855,6 +2893,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 resumeLoad(nil, reason: "didFinish")
                 if let url = webView.url { onURLChanged?(url) }
                 await self.logPerf(url: webView.url)
+                await self.logFingerprint(url: webView.url)
             }
         }
 
@@ -2891,6 +2930,60 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 return
             }
             LogBuffer.shared.diag("[BrowserPerf] host=\(host)\(native) \(t)")
+        }
+
+        /// 指纹探针：页面加载完成后一次性 dump 浏览器 JS 指纹（与真实 Safari 基线对比，排查验证码）。
+        /// 输出 [BrowserFP] 日志行（含 host + JSON），配合 docs/design/mac-apps/browser-captcha-fingerprint.md 逐项核对。
+        @MainActor
+        private func logFingerprint(url: URL?) async {
+            guard let url, url.scheme == "http" || url.scheme == "https" else { return }
+            let host = url.host ?? ""
+            let js = """
+            (function(){
+              var mse = (typeof MediaSource !== 'undefined') ? MediaSource : null;
+              var gl = null;
+              try { var c = document.createElement('canvas'); gl = c.getContext('webgl') || c.getContext('experimental-webgl'); } catch(e){}
+              var p0 = performance.now(); for(var i=0;i<100;i++){ performance.now(); } var p100 = performance.now() - p0;
+              var r = {
+                ua: navigator.userAgent,
+                platform: navigator.platform,
+                vendor: navigator.vendor,
+                webdriverValue: String(navigator.webdriver),
+                webdriverInNavigator: ('webdriver' in navigator),
+                plugins: Array.from(navigator.plugins).map(function(p){return p.name;}).join('|'),
+                pluginsLen: navigator.plugins.length,
+                mimeTypesLen: navigator.mimeTypes.length,
+                mediaDevicesType: typeof navigator.mediaDevices,
+                mediaSourceType: typeof MediaSource,
+                mseAudioMpeg: mse ? mse.isTypeSupported('audio/mpeg') : 'n/a',
+                mseH264: mse ? mse.isTypeSupported('video/mp4; codecs="avc1.42E01E"') : 'n/a',
+                safariType: typeof window.safari,
+                safariMembers: (typeof window.safari === 'object') ? Object.keys(window.safari).join('|') : '',
+                notificationType: typeof Notification,
+                permissionsType: typeof navigator.permissions,
+                hardwareConcurrency: navigator.hardwareConcurrency,
+                deviceMemory: navigator.deviceMemory,
+                maxTouchPoints: navigator.maxTouchPoints,
+                languages: navigator.languages ? navigator.languages.join(',') : '',
+                screen: screen.width + 'x' + screen.height + ' dpr=' + (window.devicePixelRatio || 1) + ' depth=' + screen.colorDepth,
+                webglRenderer: gl ? String(gl.getParameter(gl.RENDERER)) : 'no-webgl',
+                webglVendor: gl ? String(gl.getParameter(gl.VENDOR)) : '',
+                perf100Now: Math.round(p100 * 100) / 100,
+                appVersion: navigator.appVersion
+              };
+              return JSON.stringify(r);
+            })()
+            """
+            let (text, _) = await jsResult(js)
+            guard let t = text, !t.isEmpty else {
+                let line = "[BrowserFP] host=\(host) js=n/a"
+                print(line)
+                LogBuffer.shared.diag(line)
+                return
+            }
+            let line = "[BrowserFP] host=\(host) \(t)"
+            print(line)
+            LogBuffer.shared.diag(line)
         }
 
         nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

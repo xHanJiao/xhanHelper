@@ -3,6 +3,7 @@
 > 日期：2026-08-10
 > 分支：feat/browser-safari-ua
 > 前提：WKWebView 内核 = Safari（WebKit + JSC + Apple GPU），不做 Chrome 伪装，比伪装更多破绽更少
+> **后续修正（2026-08-24，见 `browser-captcha-fingerprint.md`）**：本文"仅存两处 JS 差异（webdriver + window.safari）"的前提不成立。实测 WKWebView 在 `navigator.plugins`（原生暴露 Chrome/Edge PDF 插件名）、`navigator.mediaDevices`（权限拒绝时 undefined）等仍与 Safari 不一致，且 webdriver 应彻底删除而非覆盖为 false。修复见 `browser-captcha-fingerprint.md`。
 
 ## 一、动机
 

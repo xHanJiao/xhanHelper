@@ -23,7 +23,7 @@ db:
 llm:
   api_key: ${LLM_API_KEY}
   provider: ark # deepseek | ark | doubao；切官方只需改回 deepseek + base_url
-  model: doubao-seed-2-0-mini-260428
+  model: deepseek-v4-flash-260425
   strong_model: deepseek-v4-flash-260425
   base_url: https://ark.cn-beijing.volces.com/api/v3
   default_temperature: 1.0

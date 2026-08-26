@@ -17,6 +17,10 @@ final class RightSidebarManager: ObservableObject {
     @Published var tabs: [RightSidebarTab] = []
     /// nil = 浏览面板态；浏览器 tab id = 浏览器态
     @Published var activeTabId: String?
+    /// 分屏右窗格 tab。nil = 全屏态；非 nil = 分屏（左=activeTabId，右=splitTabId）。
+    @Published var splitTabId: String?
+    /// 分屏左窗格宽度（ResizableDivider 绑定），进入分屏时默认 width/2，不持久化。
+    @Published var splitPaneWidth: Double = 0
     /// 浏览面板当前打开的浏览页（跨面板切换保留）
     @Published var browsePanelSelection: BrowsePanel?
     @Published var isOpen = false
@@ -87,6 +91,25 @@ final class RightSidebarManager: ObservableObject {
         activeTabId == nil || tabs.isEmpty
     }
 
+    /// 是否分屏态（左右两窗格各展示一个网页 tab）
+    var isSplit: Bool {
+        splitTabId != nil && splitTabId != activeTabId
+    }
+
+    /// 进入分屏：把指定网页 tab 放到右窗格（左窗格保持当前 activeTabId）。
+    func setSplit(id: String) {
+        guard id != activeTabId,
+              !Self.specialTabIDs.contains(id),
+              tabs.contains(where: { $0.id == id }) else { return }
+        if splitPaneWidth <= 0 { splitPaneWidth = width / 2 }
+        splitTabId = id
+    }
+
+    /// 退出分屏（回到全屏态）
+    func clearSplit() {
+        splitTabId = nil
+    }
+
     func openTab(id: String, title: String, icon: String, content: AnyView, activate: Bool = true, isAgentTab: Bool = false) {
         if tabs.contains(where: { $0.id == id }) {
             if activate { activeTabId = id }
@@ -125,6 +148,8 @@ final class RightSidebarManager: ObservableObject {
         let currentIndex = tabs.firstIndex { $0.id == activeTabId } ?? 0
         let nextIndex = (currentIndex + delta + tabs.count) % tabs.count
         let next = tabs[nextIndex]
+        // 点哪进哪：键盘切到右窗格 tab 时退出分屏并全屏激活
+        if next.id == splitTabId { splitTabId = nil }
         activeTabId = next.id
         if Self.specialTabIDs.contains(next.id) {
             BrowserToolProvider.shared.deselectTab()
@@ -143,6 +168,7 @@ final class RightSidebarManager: ObservableObject {
         }
         tabs.removeAll { $0.id == id }
         if activeTabId == id { activeTabId = tabs.last?.id }
+        if splitTabId == id { splitTabId = nil }
         // 关掉所有浏览器 tab：有活跃下载时自动开下载 tab 保活浏览器，否则回到浏览面板（不收起侧栏）
         if tabs.isEmpty {
             if DownloadHistoryStore.shared.hasActiveDownloads {
@@ -254,6 +280,7 @@ final class RightSidebarManager: ObservableObject {
 
     /// 切回浏览面板（浏览器态 → 面板态）
     func showBrowsePanel() {
+        splitTabId = nil
         activeTabId = nil
         BrowserToolProvider.shared.deselectTab()
     }

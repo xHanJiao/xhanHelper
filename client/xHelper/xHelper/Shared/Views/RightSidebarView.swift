@@ -163,12 +163,20 @@ struct RightSidebarView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
+            // 点哪进哪：点右窗格 tab 退出分屏并全屏激活；点左窗格/其他 tab 切换左窗格
+            if tab.id == manager.splitTabId { manager.clearSplit() }
             manager.activeTabId = tab.id
             BrowserToolProvider.shared.selectTab(tab.id)
         }
         .contextMenu {
             if !RightSidebarManager.specialTabIDs.contains(tab.id) {
                 Button("重新加载") { BrowserToolProvider.shared.reloadTab(tab.id) }
+                if tab.id == manager.splitTabId {
+                    Button("退出分屏") { manager.clearSplit() }
+                } else {
+                    Button("分屏显示") { manager.setSplit(id: tab.id) }
+                        .disabled(tab.id == manager.activeTabId)
+                }
             }
             Button("关闭") { BrowserToolProvider.shared.closeTab(tab.id) }
                 .disabled(downloadLocked)
@@ -206,8 +214,50 @@ struct RightSidebarView: View {
 
     // MARK: - Content
 
+    #if os(macOS)
+    @StateObject private var splitGhost = ResizeGhostState()
+    @State private var splitSeamX: CGFloat = 0
+    #endif
+
     @ViewBuilder
     private var contentArea: some View {
+        #if os(macOS)
+        if manager.isSplit {
+            // 分屏：左右两窗格各展示一个网页 tab，中间可调宽分隔线。
+            // ponytail: 不限制窗格最小宽（过窄时右键「退出分屏」即可）；升级路径为每窗格独立 tab 条。
+            let minPane: Double = 200
+            HStack(spacing: 0) {
+                tabPane(active: manager.activeTabId)
+                    .frame(minWidth: minPane)
+                SeamMarker(x: $splitSeamX)
+                tabPane(active: manager.splitTabId)
+                    .frame(minWidth: minPane)
+            }
+            .overlay(alignment: .topLeading) {
+                ResizableDivider(
+                    id: "browser-split",
+                    width: Binding(
+                        get: { manager.splitPaneWidth },
+                        set: { manager.splitPaneWidth = $0 }
+                    ),
+                    minWidth: minPane,
+                    maxWidth: max(minPane, manager.width - minPane),
+                    ghost: splitGhost,
+                    seamX: $splitSeamX
+                )
+            }
+        } else {
+            tabPane(active: manager.isBrowseActive ? nil : manager.activeTabId)
+        }
+        #else
+        tabPane(active: manager.isBrowseActive ? nil : manager.activeTabId)
+        #endif
+    }
+
+    /// 单个窗格：浏览面板（仅左窗格全屏态）+ 该窗格激活 tab + 后台媒体保活 tab。
+    /// 保活过滤排除 splitTabId：右窗格已挂载它，防同一 NSView 挂两个 superview 崩溃。
+    @ViewBuilder
+    private func tabPane(active: String?) -> some View {
         ZStack {
             if manager.isBrowseActive {
                 BrowsePanelView(
@@ -222,7 +272,7 @@ struct RightSidebarView: View {
                     token: token
                 )
             }
-            // 节能：只渲染激活 tab + 有媒体在播的后台保活 tab（keptAliveTabIds）。
+            // 节能：只渲染窗格激活 tab + 有媒体在播的后台保活 tab（keptAliveTabIds）。
             // 激活 tab 正常显示；保活 tab 以 opacity(0) 留在视图层级（WKWebView 不被摘除，
             // 媒体继续播放，切回浏览面板也续播），但不响应事件；其余 tab 摘除视图层级
             // （不参与合成渲染），实例保留在 BrowserToolProvider.tabs，切回时同 NSView
@@ -230,9 +280,9 @@ struct RightSidebarView: View {
             // .id() 必须：content 是同类型 AnyView(BrowserTabView)，不加 id 切 tab 时
             // SwiftUI 会判定"同位置同类型→原地更新"，旧 webView 不卸、新 webView 不挂。
             ForEach(manager.tabs.filter { tab in
-                tab.id == manager.activeTabId || manager.keptAliveTabIds.contains(tab.id)
+                tab.id == active || (manager.keptAliveTabIds.contains(tab.id) && tab.id != manager.splitTabId)
             }) { tab in
-                let isActive = !manager.isBrowseActive && tab.id == manager.activeTabId
+                let isActive = tab.id == active
                 tab.content
                     .opacity(isActive ? 1 : 0)
                     .allowsHitTesting(isActive)

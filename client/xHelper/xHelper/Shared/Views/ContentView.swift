@@ -199,7 +199,7 @@ struct ContentView: View {
     /// 进入 PiP 副作用（由 onChange(of: isPipChat) 驱动，幂等）。
     private func enterPipEffects() {
         guard rightSidebar.isPipChat else { return }
-        rightSidebar.pipCollapsed = false
+        rightSidebar.pipCollapsed = true
         // 非聊天 tab 时进入 PiP 会隐藏该页面，先切到聊天，让悬浮面板承载对话
         if router.currentTab != .chat {
             router.navigateTo(.chat)

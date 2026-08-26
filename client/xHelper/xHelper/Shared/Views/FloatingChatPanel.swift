@@ -21,6 +21,10 @@ struct FloatingChatPanel: View {
 
     @StateObject private var compactFont = FontSizeManager.compact()
     @State private var isInitialized = false
+    /// 收起圆点入场弹跳（进 PiP 时提醒用户面板落在哪）。
+    @State private var popIn = false
+    /// 入场涟漪圈（定位提示，动画结束即停）。
+    @State private var ping = false
     /// 实时渲染位置/尺寸（仅交互端点变化，拖动帧不变）。
     @State private var pos: CGPoint = .zero
     @State private var size: CGSize = CGSize(width: Layout.floatingPanelDefaultWidth,
@@ -91,6 +95,8 @@ struct FloatingChatPanel: View {
         manager.persistPipPosition()
         manager.pipSize = size
         manager.persistPipSize()
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.42)) { popIn = true }
+        withAnimation(.easeOut(duration: 0.8).repeatCount(2, autoreverses: false)) { ping = true }
         pipLog("panel appear: container=\(Int(containerSize.width))x\(Int(containerSize.height)) pos=(\(Int(pos.x)),\(Int(pos.y))) size=\(Int(size.width))x\(Int(size.height)) collapsed=\(manager.pipCollapsed)")
     }
 
@@ -309,6 +315,14 @@ struct FloatingChatPanel: View {
 
     private var collapsedDot: some View {
         ZStack {
+            if ping {
+                Circle()
+                    .stroke(Color("appAccent").opacity(0.6), lineWidth: 2)
+                    .frame(width: Layout.floatingPanelCollapsedDotSize, height: Layout.floatingPanelCollapsedDotSize)
+                    .scaleEffect(ping ? 2.2 : 0.9)
+                    .opacity(ping ? 0 : 0.6)
+                    .allowsHitTesting(false)
+            }
             Circle()
                 .fill(.regularMaterial)
                 .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 0.5))
@@ -332,6 +346,8 @@ struct FloatingChatPanel: View {
             }
         }
         .frame(width: Layout.floatingPanelCollapsedDotSize, height: Layout.floatingPanelCollapsedDotSize)
+        .scaleEffect(popIn ? 1 : 0.1)
+        .opacity(popIn ? 1 : 0)
         .contentShape(Rectangle())
         .gesture(dragGesture)
         .simultaneousGesture(TapGesture().onEnded { toggleCollapse() })

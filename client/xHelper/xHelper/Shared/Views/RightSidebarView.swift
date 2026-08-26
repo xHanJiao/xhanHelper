@@ -240,13 +240,21 @@ struct RightSidebarView: View {
     /// ponytail: 不限制窗格最小宽（过窄时右键「退出分屏」即可）。
     private var splitContentArea: some View {
         let minPane: Double = 200
+        // 左窗格实际宽 = 钳制后的 splitPaneWidth（拖拽手柄写它，布局必须显式挂宽才生效）
+        let leftW = max(minPane, min(manager.splitPaneWidth, manager.width - minPane))
         return HStack(spacing: 0) {
             splitPane(tabs: manager.leftGroupTabs, active: manager.leftDisplayTabId, side: .left)
-                .frame(minWidth: minPane)
+                .frame(width: leftW)
             SeamMarker(x: $splitSeamX)
+                .padding(.horizontal, 1)   // 中缝总宽 3pt（1+1+1），视觉略宽、更易拖拽
             splitPane(tabs: manager.rightGroupTabs, active: manager.rightDisplayTabId, side: .right)
                 .frame(minWidth: minPane)
         }
+        // 关键：本 HStack 建立同名局部坐标系，shadow 掉外层 ContentView 的坐标系，
+        // 使 SeamMarker 上报的 seamX 是「分屏 HStack 内部坐标」（≈左窗格宽），
+        // ResizableDivider 的 offset(seamX-7.5) 才能把手柄/幽灵线放在真实中缝上。
+        // 否则 seamX 是右栏在整窗的绝对 x，手柄被错位整整一个右栏左缘，拖拽失效。
+        .coordinateSpace(name: ResizeDividerSpace.name)
         .overlay(alignment: .topLeading) {
             ResizableDivider(
                 id: "browser-split",

@@ -1823,7 +1823,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         switchActiveTab(to: nil)
     }
 
-    func openBlankTab() {
+    func openBlankTab(intoRight: Bool = false) {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
         let session = TabSession()
@@ -1836,7 +1836,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                               content: AnyView(BrowserTabView(webView: session.webView,
                                                               onSetupErrorBinding: { [weak session] onError in
                                                                   session?.onNavigationError = onError
-                                                              })))
+                                                              })),
+                              intoRightPane: intoRight)
         bindSessionTitle(session: session, tabId: tabId)
         bindSessionUI(session: session)
     }

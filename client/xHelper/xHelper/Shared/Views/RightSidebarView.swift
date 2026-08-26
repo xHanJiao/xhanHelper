@@ -24,12 +24,17 @@ struct RightSidebarView: View {
     #endif
 
     var body: some View {
-        VStack(spacing: 0) {
-            if !manager.isBrowseActive {
-                browserTabBar
-                Divider()
+        Group {
+            #if os(macOS)
+            if !manager.isBrowseActive && manager.isSplit {
+                // 分屏态：双窗格（各带 tab 条 + 内容），无外层单栏
+                splitContentArea
+            } else {
+                singleContentArea
             }
-            contentArea
+            #else
+            singleContentArea
+            #endif
         }
         .frame(minWidth: Layout.rightSidebarMinWidth, idealWidth: manager.width, maxWidth: .infinity)
         .modifier(CardBackgroundModifier(isLifted: isHovered))
@@ -65,38 +70,8 @@ struct RightSidebarView: View {
 
     private var browserTabBar: some View {
         HStack(spacing: 0) {
-            // 返回浏览面板入口
-            Button {
-                manager.showBrowsePanel()
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
-                    Text("返回").font(.system(size: 11))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .help("返回浏览面板")
-
-            // 退出浏览器：关闭所有标签、彻底退出（区别于「返回」保留标签）。确认后执行。
-            Button {
-                confirmExitBrowser()
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "rectangle.portrait.and.arrow.right")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("退出").font(.system(size: 11))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .help("退出浏览器，关闭所有标签")
+            backButton
+            exitBrowserButton
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
@@ -109,6 +84,43 @@ struct RightSidebarView: View {
             // 原固定按钮（PiP/清数据/+/下载/⭐/书签/🕐）已移到顶栏中槽位（TopBarRegistry）
         }
         .padding(.leading, 6)
+    }
+
+    /// 返回浏览面板入口
+    private var backButton: some View {
+        Button {
+            manager.showBrowsePanel()
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
+                Text("返回").font(.system(size: 11))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(.secondary)
+        .help("返回浏览面板")
+    }
+
+    /// 退出浏览器：关闭所有标签、彻底退出（区别于「返回」保留标签）。确认后执行。
+    private var exitBrowserButton: some View {
+        Button {
+            confirmExitBrowser()
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "rectangle.portrait.and.arrow.right")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("退出").font(.system(size: 11))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(.secondary)
+        .help("退出浏览器，关闭所有标签")
     }
 
     /// tab 按钮：网页 tab 可拖拽重排；特殊 tab（下载/收藏/历史）固定不可拖
@@ -163,20 +175,13 @@ struct RightSidebarView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
-            // 点哪进哪：点右窗格 tab 退出分屏并全屏激活；点左窗格/其他 tab 切换左窗格
-            if tab.id == manager.splitTabId { manager.clearSplit() }
             manager.activeTabId = tab.id
             BrowserToolProvider.shared.selectTab(tab.id)
         }
         .contextMenu {
             if !RightSidebarManager.specialTabIDs.contains(tab.id) {
                 Button("重新加载") { BrowserToolProvider.shared.reloadTab(tab.id) }
-                if tab.id == manager.splitTabId {
-                    Button("退出分屏") { manager.clearSplit() }
-                } else {
-                    Button("分屏显示") { manager.setSplit(id: tab.id) }
-                        .disabled(tab.id == manager.activeTabId)
-                }
+                Button("移到右窗格") { manager.moveTabToRight(id: tab.id) }
             }
             Button("关闭") { BrowserToolProvider.shared.closeTab(tab.id) }
                 .disabled(downloadLocked)
@@ -219,43 +224,171 @@ struct RightSidebarView: View {
     @State private var splitSeamX: CGFloat = 0
     #endif
 
-    @ViewBuilder
-    private var contentArea: some View {
-        #if os(macOS)
-        if manager.isSplit {
-            // 分屏：左右两窗格各展示一个网页 tab，中间可调宽分隔线。
-            // ponytail: 不限制窗格最小宽（过窄时右键「退出分屏」即可）；升级路径为每窗格独立 tab 条。
-            let minPane: Double = 200
-            HStack(spacing: 0) {
-                tabPane(active: manager.activeTabId)
-                    .frame(minWidth: minPane)
-                SeamMarker(x: $splitSeamX)
-                tabPane(active: manager.splitTabId)
-                    .frame(minWidth: minPane)
+    /// 全屏态（含浏览面板）：单 tab 条 + 内容
+    private var singleContentArea: some View {
+        VStack(spacing: 0) {
+            if !manager.isBrowseActive {
+                browserTabBar
+                Divider()
             }
-            .overlay(alignment: .topLeading) {
-                ResizableDivider(
-                    id: "browser-split",
-                    width: Binding(
-                        get: { manager.splitPaneWidth },
-                        set: { manager.splitPaneWidth = $0 }
-                    ),
-                    minWidth: minPane,
-                    maxWidth: max(minPane, manager.width - minPane),
-                    ghost: splitGhost,
-                    seamX: $splitSeamX
-                )
-            }
-        } else {
             tabPane(active: manager.isBrowseActive ? nil : manager.activeTabId)
         }
-        #else
-        tabPane(active: manager.isBrowseActive ? nil : manager.activeTabId)
-        #endif
     }
 
-    /// 单个窗格：浏览面板（仅左窗格全屏态）+ 该窗格激活 tab + 后台媒体保活 tab。
-    /// 保活过滤排除 splitTabId：右窗格已挂载它，防同一 NSView 挂两个 superview 崩溃。
+    #if os(macOS)
+    /// 分屏态完整内容：左右两窗格各带独立 tab 条 + 内容，中间可调宽分隔线。
+    /// ponytail: 不限制窗格最小宽（过窄时右键「退出分屏」即可）。
+    private var splitContentArea: some View {
+        let minPane: Double = 200
+        return HStack(spacing: 0) {
+            splitPane(tabs: manager.leftGroupTabs, active: manager.leftDisplayTabId, side: .left)
+                .frame(minWidth: minPane)
+            SeamMarker(x: $splitSeamX)
+            splitPane(tabs: manager.rightGroupTabs, active: manager.rightDisplayTabId, side: .right)
+                .frame(minWidth: minPane)
+        }
+        .overlay(alignment: .topLeading) {
+            ResizableDivider(
+                id: "browser-split",
+                width: Binding(
+                    get: { manager.splitPaneWidth },
+                    set: { manager.splitPaneWidth = $0 }
+                ),
+                minWidth: minPane,
+                maxWidth: max(minPane, manager.width - minPane),
+                ghost: splitGhost,
+                seamX: $splitSeamX
+            )
+        }
+    }
+
+    private enum SplitSide {
+        case left, right
+    }
+
+    /// 单个分屏窗格：独立 tab 条 + 内容
+    private func splitPane(tabs: [RightSidebarTab], active: String?, side: SplitSide) -> some View {
+        VStack(spacing: 0) {
+            splitTabBar(tabs: tabs, side: side)
+            Divider()
+            tabPane(active: active)
+        }
+    }
+
+    /// 窗格内 tab 条：左窗格含 返回/退出；右窗格含 退出分屏/+ 新标签页
+    private func splitTabBar(tabs: [RightSidebarTab], side: SplitSide) -> some View {
+        HStack(spacing: 0) {
+            if side == .left {
+                backButton
+                exitBrowserButton
+            } else {
+                Button {
+                    manager.clearSplit()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "rectangle.split.2x1").font(.system(size: 10, weight: .semibold))
+                        Text("退出分屏").font(.system(size: 11))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+                .help("退出分屏，回到全屏单栏")
+                Button {
+                    BrowserToolProvider.shared.openBlankTab(intoRight: true)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+                .help("右窗格新标签页")
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 0) {
+                    ForEach(tabs) { tab in
+                        splitTabButton(tab, side: side)
+                    }
+                }
+                .frame(height: 32)
+            }
+        }
+        .padding(.leading, 6)
+    }
+
+    /// 分屏窗格内 tab 按钮：点击激活该窗格；右键移到另一窗格；窗格内拖拽重排
+    private func splitTabButton(_ tab: RightSidebarTab, side: SplitSide) -> some View {
+        let isActive = (side == .left ? manager.leftDisplayTabId : manager.rightDisplayTabId) == tab.id
+        return HStack(spacing: 4) {
+            faviconView(tab)
+            Text(tab.title)
+                .font(.system(size: 11))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 120)
+            Button { BrowserToolProvider.shared.closeTab(tab.id) } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .buttonStyle(.plain)
+            .help("关闭")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            isActive
+                ? AnyShapeStyle(.regularMaterial)
+                : (tab.isAgentTab
+                    ? AnyShapeStyle(Color.blue.opacity(0.18))
+                    : AnyShapeStyle(.clear)),
+            in: UnevenRoundedRectangle(
+                topLeadingRadius: 6, bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0, topTrailingRadius: 6
+            )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            manager.activateTab(id: tab.id, inRightPane: side == .right)
+            BrowserToolProvider.shared.selectTab(tab.id)
+        }
+        .contextMenu {
+            if !RightSidebarManager.specialTabIDs.contains(tab.id) {
+                Button("重新加载") { BrowserToolProvider.shared.reloadTab(tab.id) }
+                if side == .left {
+                    Button("移到右窗格") { manager.moveTabToRight(id: tab.id) }
+                } else {
+                    Button("移到左窗格") { manager.moveTabToLeft(id: tab.id) }
+                    Button("退出分屏") { manager.clearSplit() }
+                }
+            }
+            Button("关闭") { BrowserToolProvider.shared.closeTab(tab.id) }
+            if !RightSidebarManager.specialTabIDs.contains(tab.id) {
+                Button("关闭窗格内其他标签页") {
+                    let group = side == .left ? manager.leftGroupTabs : manager.rightGroupTabs
+                    for t in group where t.id != tab.id { manager.closeTab(t.id) }
+                }
+            }
+        }
+        .draggable(tab.id)
+        .dropDestination(for: String.self) { items, _ in
+            guard let dragged = items.first else { return false }
+            if side == .right {
+                manager.moveTabInRightPane(from: dragged, to: tab.id)
+            } else {
+                manager.moveTab(from: dragged, to: tab.id)
+            }
+            return true
+        }
+    }
+    #endif
+
+    /// 单个窗格：浏览面板（仅全屏态）+ 该窗格激活 tab + 后台媒体保活 tab。
+    /// 保活过滤排除左右两窗格显示 tab：跨窗格已挂载它，防同一 NSView 挂两个 superview 崩溃。
     @ViewBuilder
     private func tabPane(active: String?) -> some View {
         ZStack {
@@ -280,7 +413,8 @@ struct RightSidebarView: View {
             // .id() 必须：content 是同类型 AnyView(BrowserTabView)，不加 id 切 tab 时
             // SwiftUI 会判定"同位置同类型→原地更新"，旧 webView 不卸、新 webView 不挂。
             ForEach(manager.tabs.filter { tab in
-                tab.id == active || (manager.keptAliveTabIds.contains(tab.id) && tab.id != manager.splitTabId)
+                tab.id == active || (manager.keptAliveTabIds.contains(tab.id)
+                    && tab.id != manager.leftDisplayTabId && tab.id != manager.rightDisplayTabId)
             }) { tab in
                 let isActive = tab.id == active
                 tab.content

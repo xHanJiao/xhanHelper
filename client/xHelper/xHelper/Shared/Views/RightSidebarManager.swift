@@ -17,8 +17,12 @@ final class RightSidebarManager: ObservableObject {
     @Published var tabs: [RightSidebarTab] = []
     /// nil = 浏览面板态；浏览器 tab id = 浏览器态
     @Published var activeTabId: String?
-    /// 分屏右窗格 tab。nil = 全屏态；非 nil = 分屏（左=activeTabId，右=splitTabId）。
-    @Published var splitTabId: String?
+    /// 分屏右窗格 tab 分区（有序 id）。空 = 全屏态；非空 = 分屏（左=池减右分区，右=本分区）。
+    @Published var splitTabIds: [String] = []
+    /// 分屏左窗格显示规则用的回退 tab（引擎 activeTabId 落入右分区时左窗格仍保持此 tab）。
+    @Published var leftActiveTabId: String?
+    /// 分屏右窗格显示的 tab。
+    @Published var rightActiveTabId: String?
     /// 分屏左窗格宽度（ResizableDivider 绑定），进入分屏时默认 width/2，不持久化。
     @Published var splitPaneWidth: Double = 0
     /// 浏览面板当前打开的浏览页（跨面板切换保留）
@@ -91,26 +95,92 @@ final class RightSidebarManager: ObservableObject {
         activeTabId == nil || tabs.isEmpty
     }
 
-    /// 是否分屏态（左右两窗格各展示一个网页 tab）
-    var isSplit: Bool {
-        splitTabId != nil && splitTabId != activeTabId
+    /// 是否分屏态（右窗格非空）
+    var isSplit: Bool { !splitTabIds.isEmpty }
+
+    /// 左窗格 tab 组（池减右分区，按池序，含特殊 tab）
+    var leftGroupTabs: [RightSidebarTab] {
+        tabs.filter { !splitTabIds.contains($0.id) }
     }
 
-    /// 进入分屏：把指定网页 tab 放到右窗格（左窗格保持当前 activeTabId）。
-    func setSplit(id: String) {
-        guard id != activeTabId,
-              !Self.specialTabIDs.contains(id),
-              tabs.contains(where: { $0.id == id }) else { return }
-        if splitPaneWidth <= 0 { splitPaneWidth = width / 2 }
-        splitTabId = id
+    /// 右窗格 tab 组（按 splitTabIds 序，仅网页 tab）
+    var rightGroupTabs: [RightSidebarTab] {
+        splitTabIds.compactMap { id in tabs.first { $0.id == id } }
     }
 
-    /// 退出分屏（回到全屏态）
+    /// 左窗格显示规则：引擎 active 在左组就跟随，否则保持左窗格最近 tab
+    var leftDisplayTabId: String? {
+        if let id = activeTabId, !splitTabIds.contains(id) { return id }
+        return leftActiveTabId
+    }
+
+    /// 右窗格显示规则：引擎 active 在右组就跟随，否则保持右窗格最近 tab
+    var rightDisplayTabId: String? {
+        if let id = activeTabId, splitTabIds.contains(id) { return id }
+        return rightActiveTabId
+    }
+
+    /// 移到右窗格：右分区空 → 进入分屏；已有 → 追加。守卫：网页 tab、左组移走前仍 ≥1。
+    func moveTabToRight(id: String) {
+        guard !Self.specialTabIDs.contains(id),
+              splitTabIds.firstIndex(of: id) == nil,
+              tabs.contains(where: { $0.id == id }),
+              tabs.count - splitTabIds.count >= 2 else { return }
+        if splitTabIds.isEmpty {
+            splitPaneWidth = splitPaneWidth > 0 ? splitPaneWidth : width / 2
+        }
+        splitTabIds.append(id)
+        rightActiveTabId = id
+        // 移走的是左窗格显示/引擎 active 时，左窗格取下一个左组 tab
+        if leftActiveTabId == id || activeTabId == id {
+            let nextLeft = leftGroupTabs.first
+            leftActiveTabId = nextLeft?.id
+            if activeTabId == id, let nextLeft {
+                activeTabId = nextLeft.id
+                BrowserToolProvider.shared.selectTab(nextLeft.id)
+            }
+        }
+    }
+
+    /// 移到左窗格：从右分区移除并成为左窗格/引擎 active；右分区空 → 自动退出分屏。
+    func moveTabToLeft(id: String) {
+        guard let idx = splitTabIds.firstIndex(of: id) else { return }
+        splitTabIds.remove(at: idx)
+        if rightActiveTabId == id { rightActiveTabId = splitTabIds.last }
+        leftActiveTabId = id
+        activeTabId = id
+        BrowserToolProvider.shared.selectTab(id)
+    }
+
+    /// 窗格内激活 tab：激活前把另一窗格当前显示记住（引擎 active 跳窗格时它不丢）。
+    func activateTab(id: String, inRightPane: Bool) {
+        guard tabs.contains(where: { $0.id == id }) else { return }
+        if inRightPane {
+            leftActiveTabId = leftDisplayTabId
+            rightActiveTabId = id
+        } else {
+            rightActiveTabId = rightDisplayTabId
+            leftActiveTabId = id
+        }
+        activeTabId = id
+    }
+
+    /// 右窗格内拖拽重排（右分区自己的顺序）
+    func moveTabInRightPane(from id: String, to targetID: String) {
+        guard id != targetID,
+              let fromIdx = splitTabIds.firstIndex(of: id),
+              let toIdx = splitTabIds.firstIndex(of: targetID) else { return }
+        splitTabIds.remove(at: fromIdx)
+        splitTabIds.insert(id, at: toIdx)
+    }
+
+    /// 退出分屏（右分区 tab 全部回到左组，回全屏单栏）
     func clearSplit() {
-        splitTabId = nil
+        splitTabIds = []
+        rightActiveTabId = nil
     }
 
-    func openTab(id: String, title: String, icon: String, content: AnyView, activate: Bool = true, isAgentTab: Bool = false) {
+    func openTab(id: String, title: String, icon: String, content: AnyView, activate: Bool = true, isAgentTab: Bool = false, intoRightPane: Bool = false) {
         if tabs.contains(where: { $0.id == id }) {
             if activate { activeTabId = id }
         } else {
@@ -126,6 +196,7 @@ final class RightSidebarManager: ObservableObject {
             }
             if activate { activeTabId = id }
         }
+        if intoRightPane { moveTabToRight(id: id) }
         isOpen = true
     }
 
@@ -142,15 +213,21 @@ final class RightSidebarManager: ObservableObject {
         tabs.insert(tab, at: toIdx)
     }
 
-    /// Cmd+Shift+[ / Cmd+Shift+]：切换上一个/下一个 tab（含特殊 tab，环绕）
+    /// Cmd+Shift+[ / Cmd+Shift+]：在 activeTabId 所属窗格内切换上一个/下一个 tab（环绕）
     func switchTab(delta: Int) {
         guard !tabs.isEmpty else { return }
-        let currentIndex = tabs.firstIndex { $0.id == activeTabId } ?? 0
-        let nextIndex = (currentIndex + delta + tabs.count) % tabs.count
-        let next = tabs[nextIndex]
-        // 点哪进哪：键盘切到右窗格 tab 时退出分屏并全屏激活
-        if next.id == splitTabId { splitTabId = nil }
+        let inRightPane = isSplit && activeTabId.map { splitTabIds.contains($0) } ?? false
+        let group = inRightPane ? rightGroupTabs : leftGroupTabs
+        guard !group.isEmpty else { return }
+        let currentActive = inRightPane ? activeTabId : leftDisplayTabId
+        let currentIndex = group.firstIndex { $0.id == currentActive } ?? 0
+        let next = group[(currentIndex + delta + group.count) % group.count]
         activeTabId = next.id
+        if inRightPane {
+            rightActiveTabId = next.id
+        } else {
+            leftActiveTabId = next.id
+        }
         if Self.specialTabIDs.contains(next.id) {
             BrowserToolProvider.shared.deselectTab()
         } else {
@@ -167,8 +244,17 @@ final class RightSidebarManager: ObservableObject {
             return
         }
         tabs.removeAll { $0.id == id }
-        if activeTabId == id { activeTabId = tabs.last?.id }
-        if splitTabId == id { splitTabId = nil }
+        // 分屏状态维护：被关 tab 属右分区 → 修右窗格 active，右分区空自动退分屏；
+        // 属左分区/全屏 → 修左窗格与引擎 active（取下一个左组 tab）。
+        if splitTabIds.contains(id) {
+            if let idx = splitTabIds.firstIndex(of: id) { splitTabIds.remove(at: idx) }
+            if rightActiveTabId == id { rightActiveTabId = splitTabIds.last }
+            if activeTabId == id { activeTabId = rightActiveTabId ?? leftGroupTabs.last?.id }
+            if splitTabIds.isEmpty { rightActiveTabId = nil }
+        } else {
+            if leftActiveTabId == id { leftActiveTabId = leftGroupTabs.last?.id }
+            if activeTabId == id { activeTabId = leftGroupTabs.last?.id ?? tabs.last?.id }
+        }
         // 关掉所有浏览器 tab：有活跃下载时自动开下载 tab 保活浏览器，否则回到浏览面板（不收起侧栏）
         if tabs.isEmpty {
             if DownloadHistoryStore.shared.hasActiveDownloads {
@@ -280,7 +366,9 @@ final class RightSidebarManager: ObservableObject {
 
     /// 切回浏览面板（浏览器态 → 面板态）
     func showBrowsePanel() {
-        splitTabId = nil
+        splitTabIds = []
+        rightActiveTabId = nil
+        leftActiveTabId = nil
         activeTabId = nil
         BrowserToolProvider.shared.deselectTab()
     }

@@ -22,10 +22,10 @@ db:
 
 llm:
   api_key: ${LLM_API_KEY}
-  provider: ark # deepseek | ark | doubao；切官方只需改回 deepseek + base_url
-  model: deepseek-v4-flash-260425
-  strong_model: deepseek-v4-flash-260425
-  base_url: https://ark.cn-beijing.volces.com/api/v3
+  provider: deepseek # deepseek | ark | doubao
+  model: deepseek-v4-flash
+  strong_model: deepseek-v4-pro
+  base_url: https://api.deepseek.com
   default_temperature: 1.0
   default_max_tokens: 30000
   max_iterations: 80

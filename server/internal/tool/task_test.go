@@ -147,6 +147,20 @@ func TestTaskTool_BadArgs(t *testing.T) {
 	}
 }
 
+func TestTaskTool_TaskIDPropagated(t *testing.T) {
+	r := &mockSubAgentRunner{result: &SubAgentRunResult{Success: true, Text: "x", ConvID: "sub-5"}}
+	tool := newTaskTestTool(r)
+	runTask(t, tool, &ExecuteContext{ConvID: "main-1"}, map[string]interface{}{
+		"description": "d", "subagent_type": "web_explore", "prompt": "p", "task_id": "sub-5",
+	})
+	if r.gotOpts.TaskID != "sub-5" {
+		t.Errorf("task_id 应透传: %+v", r.gotOpts)
+	}
+	if !strings.Contains(tool.Description(), "task_id") {
+		t.Errorf("描述应含续跑(task_id)说明: %s", tool.Description())
+	}
+}
+
 func TestTaskTool_DescriptionContainsBudget(t *testing.T) {
 	tool := NewTaskTool(nil, 20, 600)
 	desc := tool.Description()

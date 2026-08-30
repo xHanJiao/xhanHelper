@@ -474,3 +474,41 @@ func evtTypes(evts []*llm.StreamEvent) []string {
 	}
 	return out
 }
+
+// TestMiniReAct_InitialMessages — 续跑种子历史：拼进请求、不重复落库
+func TestMiniReAct_InitialMessages(t *testing.T) {
+	sink := &recordingMsgSink{}
+	llmClient := &syncMockLLM{responses: []llm.Message{{Content: "续跑结果"}}}
+	m := NewMiniReAct(&MiniReActConfig{
+		Client:        llmClient,
+		ToolRegistry:  noopRegistry(),
+		SystemPrompt:  "sys",
+		UserID:        "u1",
+		MaxIterations: 3,
+		Caller:        "test",
+		InitialMessages: []llm.Message{
+			{Role: "user", Content: "历史1"},
+			{Role: "assistant", Content: "历史回复"},
+		},
+		SubAgent: SubAgentExt{MsgSink: sink},
+	})
+	result, err := m.Run(context.Background(), "新问题")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.FinalContent != "续跑结果" {
+		t.Errorf("final: %s", result.FinalContent)
+	}
+	// 请求 messages = 历史 + 新 user
+	if len(llmClient.reqs) == 0 {
+		t.Fatal("应发起请求")
+	}
+	req := llmClient.reqs[0].Messages
+	if len(req) != 3 || req[0].Content != "历史1" || req[1].Content != "历史回复" || req[2].Content != "新问题" {
+		t.Errorf("历史+新消息组装错误: %+v", req)
+	}
+	// 初始消息不重复落库：只落新 user + assistant
+	if len(sink.users) != 1 || sink.users[0] != "新问题" {
+		t.Errorf("初始消息不应重新落库: %+v", sink.users)
+	}
+}

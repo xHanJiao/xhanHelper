@@ -9,7 +9,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -238,6 +240,14 @@ func clientToolGroupNames(wl map[string][]string) string {
 	return strings.Join(names, ", ")
 }
 
+// subAgentFinalRoundPrompt — 子 agent 专用强制收敛轮指令。
+// 相比通用版多出"列出未完成事项"，供主任务据此决定是否带 task_id 续跑。
+const subAgentFinalRoundPrompt = `[系统] 本轮已达任务的最大步数限制。请不要再调用任何工具，直接输出最终结果。
+你必须同时列出：
+- 已完成的工作
+- 尚未完成/需继续的事项（供主任务决定是否续跑）
+如信息已充分，正常给出最终回答即可，不必提及内部限制。`
+
 // buildSubAgentSystemPrompt 构建子 agent 的简化 system prompt（时间 + 类型角色 + 固定预算）。
 // 工具定义不进 prompt：原生 FC 下经 MiniReActConfig.Tools 传入。
 // 预算文案固定不变（不随轮次更新），system prompt 跨轮保持一致 → 不破坏 LLM 前缀缓存；
@@ -383,18 +393,53 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 		}
 	}
 
-	// 步骤 4 — 创建子 Conversation（列表不可见：ListByUser 已过滤 parent_id IS NULL）
-	extraJSON, _ := json.Marshal(&model.ConversationExtra{SubAgentType: opts.SubAgentType})
-	subConv := &model.Conversation{
-		ID:       uuid.New().String(),
-		UserID:   userID,
-		Title:    fmt.Sprintf("%s (%s)", opts.Description, opts.SubAgentType),
-		ParentID: &opts.ParentConvID,
-		Extra:    string(extraJSON),
-		Mode:     model.ConvModeWork,
+	// 步骤 4 — 复用子会话（task_id 续跑）或新建子 Conversation。
+	// 列表不可见：ListByUser 已过滤 parent_id IS NULL。
+	// 校验失败（不存在/跨用户/跨主会话/类型不符）→ 报错，不静默新建：
+	// 静默新建会让"看似续跑实则重启"的误用无声发生，报错让主 LLM 去掉 task_id 重试。
+	// 绝不加载他人会话数据，无泄漏面。
+	var subConv *model.Conversation
+	reused := false
+	if opts.TaskID != "" {
+		if sub, err := o.subConvRepo.FindByID(ctx, opts.TaskID); err == nil && sub != nil {
+			extra, _ := o.subConvRepo.GetExtra(ctx, sub.ID)
+			if sub.UserID == userID && sub.ParentID != nil && *sub.ParentID == opts.ParentConvID &&
+				extra != nil && extra.SubAgentType == opts.SubAgentType {
+				subConv = sub
+				reused = true
+			}
+		}
+		if subConv == nil {
+			log.Printf("[subagent] task_id=%q 不可复用（不存在/越权/类型不符），报错返回", opts.TaskID)
+			return &tool.SubAgentRunResult{
+				Success: false,
+				Error:   fmt.Sprintf("task_id=%q 不可复用（不存在、不属于当前会话，或类型不符），请去掉 task_id 重新发起新任务", opts.TaskID),
+			}
+		}
 	}
-	if err := o.subConvRepo.Create(ctx, subConv); err != nil {
-		return &tool.SubAgentRunResult{Success: false, Error: fmt.Sprintf("创建子会话失败: %v", err)}
+	if subConv == nil {
+		extraJSON, _ := json.Marshal(&model.ConversationExtra{SubAgentType: opts.SubAgentType})
+		subConv = &model.Conversation{
+			ID:       uuid.New().String(),
+			UserID:   userID,
+			Title:    fmt.Sprintf("%s (%s)", opts.Description, opts.SubAgentType),
+			ParentID: &opts.ParentConvID,
+			Extra:    string(extraJSON),
+			Mode:     model.ConvModeWork,
+		}
+		if err := o.subConvRepo.Create(ctx, subConv); err != nil {
+			return &tool.SubAgentRunResult{Success: false, Error: fmt.Sprintf("创建子会话失败: %v", err)}
+		}
+	}
+
+	// 同子会话串行执行：并发续跑同一 task_id 时互斥（防消息乱序/重复）。
+	defer o.lockSubAgent(subConv.ID)()
+
+	// 续跑时加载子会话历史作为 MiniReAct 初始消息（budget 截断见 loadSubAgentHistory）
+	var initialMsgs []llm.Message
+	if reused {
+		initialMsgs = loadSubAgentHistory(ctx, o.subMsgRepo, subConv.ID)
+		log.Printf("[subagent] resume sub-conversation %s (history=%d msgs)", subConv.ID, len(initialMsgs))
 	}
 
 	// 步骤 5 — 构建工具定义（服务端 + 客户端分别按白名单过滤，客户端按函数粒度）
@@ -415,15 +460,17 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 		timeout = 600 * time.Second
 	}
 	react := NewMiniReAct(&MiniReActConfig{
-		Client:        o.flashClient, // 子 agent 固定 Flash
-		Tools:         tools,
-		ToolRegistry:  o.registry,
-		SystemPrompt:  buildSubAgentSystemPrompt(spec, maxIter, int(timeout.Seconds())),
-		UserID:        userID,
-		ConvID:        subConv.ID,
-		MaxIterations: maxIter, // 主循环 maxIter-1 轮 + 1 轮强制收敛（MiniReAct 内置）
-		MaxToolResult: spec.maxToolResult,
-		Caller:        "subagent:" + opts.SubAgentType,
+		Client:           o.flashClient, // 子 agent 固定 Flash
+		Tools:            tools,
+		ToolRegistry:     o.registry,
+		SystemPrompt:     buildSubAgentSystemPrompt(spec, maxIter, int(timeout.Seconds())),
+		UserID:           userID,
+		ConvID:           subConv.ID,
+		MaxIterations:    maxIter, // 主循环 maxIter-1 轮 + 1 轮强制收敛（MiniReAct 内置）
+		MaxToolResult:    spec.maxToolResult,
+		Caller:           "subagent:" + opts.SubAgentType,
+		FinalRoundPrompt: subAgentFinalRoundPrompt, // 子 agent 专用：列出未完成事项供续跑判断
+		InitialMessages:  initialMsgs,              // 续跑种子历史（空 = 全新任务）
 		SubAgent: SubAgentExt{
 			ClientTools:       agentClientTools,
 			ClientBridge:      clientBridge,
@@ -494,6 +541,64 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 		Text:    summarizeToolCallLog(result.ToolCallLog),
 		ConvID:  subConv.ID,
 	}
+}
+
+// subagentHistoryBudgetChars — 续跑历史总字符预算（rune）。超限从最旧开始丢，
+// 且保留下界必须是 user 消息（避免 tool 结果/assistant tool_calls 被拆成孤儿、破坏原生 FC 回放）。
+// ponytail: 固定 40000 rune 启发式上限；续跑多轮后历史若挤占系统/工具定义空间，
+// 升级路径是 token 级预算或压缩（对齐 opencode compaction），本期不做。
+const (
+	subagentHistoryBudgetChars = 40000
+	subagentHistoryMsgLimit    = 100
+)
+
+// loadSubAgentHistory 从 DB 加载子会话最近消息转为 llm.Message（续跑种子，时间正序）。
+// 按字符预算从最旧丢弃，保留下界为用户消息。
+func loadSubAgentHistory(ctx context.Context, msgRepo *service.MessageRepo, convID string) []llm.Message {
+	msgs, err := msgRepo.ListByConversationRecent(ctx, convID, subagentHistoryMsgLimit)
+	if err != nil || len(msgs) == 0 {
+		return nil
+	}
+	total := 0
+	for i := range msgs {
+		total += utf8.RuneCountInString(msgs[i].Content)
+	}
+	start := 0
+	for start < len(msgs) && (total > subagentHistoryBudgetChars || msgs[start].Role != "user") {
+		total -= utf8.RuneCountInString(msgs[start].Content)
+		start++
+	}
+	out := make([]llm.Message, 0, len(msgs)-start)
+	for _, m := range msgs[start:] {
+		lm := llm.Message{ID: m.ID, Role: m.Role, Content: m.Content}
+		if m.ReasoningContent != nil {
+			lm.ReasoningContent = *m.ReasoningContent
+		}
+		if m.EncryptedContent != nil {
+			lm.EncryptedContent = *m.EncryptedContent
+		}
+		if m.ToolCallID != nil {
+			lm.ToolCallID = *m.ToolCallID
+		}
+		if m.ToolCallsJSON != nil {
+			var tcs []llm.ToolCall
+			if err := json.Unmarshal([]byte(*m.ToolCallsJSON), &tcs); err == nil {
+				lm.ToolCalls = tcs
+			}
+		}
+		out = append(out, lm)
+	}
+	return out
+}
+
+// lockSubAgent 获取指定子会话的执行互斥锁并返回解锁函数。
+// ponytail: 进程内存锁，条目随子会话数增长（量级小）；需跨进程/实例时
+// 升级路径是 DB 行锁或子会话状态机，本期不做。
+func (o *Orchestrator) lockSubAgent(convID string) func() {
+	actual, _ := o.subAgentLocks.LoadOrStore(convID, &sync.Mutex{})
+	m := actual.(*sync.Mutex)
+	m.Lock()
+	return m.Unlock
 }
 
 // toClientTools 将 tool.ClientToolInfo 转换为 agent.ClientTool。

@@ -31,6 +31,10 @@ embedding:
 chat:
   session_gap_minutes: 3       # dev 环境缩短 session 间隔，方便测试
 
+subagent:
+  explore_max_iterations: 3 # dev 测试：调小轮数便于触发预算耗尽/超时，验证 task_id 续跑
+  user_context_enabled: true # 保持与 base config.yaml 一致（merge 对该字段无条件覆盖）
+
 reflection:
   launch_max_iterations: 8
   analyst_max_iterations: 6

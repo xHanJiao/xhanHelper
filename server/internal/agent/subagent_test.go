@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -620,6 +621,142 @@ func TestRunSubAgent_FileExplore_ClientWithoutFs(t *testing.T) {
 	convRepo.DB().Model(&model.Conversation{}).Where("parent_id = ?", "main-1").Count(&count)
 	if count != 0 {
 		t.Errorf("缺少工具失败不应创建子会话, got %d", count)
+	}
+}
+
+// TestRunSubAgent_Resume — 续跑复用同一子会话：不新建、历史装载、预算重置
+func TestRunSubAgent_Resume(t *testing.T) {
+	convRepo, msgRepo, db, cleanup := setupSubAgentRepos(t)
+	defer cleanup()
+	ctx := context.Background()
+	if err := convRepo.Create(ctx, &model.Conversation{ID: "main-1", UserID: "u1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 首跑：完成
+	orch := newSubAgentOrchestrator(&syncMockLLM{responses: []llm.Message{{Content: "结果A"}}}, convRepo, msgRepo)
+	res := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
+		SubAgentType: "web_explore", Description: "调研", Prompt: "首跑任务", ParentConvID: "main-1", ClientTools: testClientToolOpts(),
+	})
+	if !res.Success {
+		t.Fatalf("首跑应成功: %+v", res)
+	}
+
+	// 续跑：带 task_id 复用同一子会话，历史装载进 LLM 上下文
+	llm2 := &syncMockLLM{responses: []llm.Message{{Content: "结果B"}}}
+	orch2 := newSubAgentOrchestrator(llm2, convRepo, msgRepo)
+	res2 := orch2.RunSubAgent(ctx, &tool.SubAgentRunOptions{
+		SubAgentType: "web_explore", Description: "调研", Prompt: "继续调研", ParentConvID: "main-1",
+		ClientTools: testClientToolOpts(), TaskID: res.ConvID,
+	})
+	if !res2.Success {
+		t.Fatalf("续跑应成功: %+v", res2)
+	}
+	if res2.ConvID != res.ConvID {
+		t.Errorf("续跑应复用同一子会话: %s != %s", res2.ConvID, res.ConvID)
+	}
+
+	// 只创建 1 个子会话
+	var convCount int64
+	db.Model(&model.Conversation{}).Where("parent_id = ?", "main-1").Count(&convCount)
+	if convCount != 1 {
+		t.Errorf("应只有 1 个子会话, got %d", convCount)
+	}
+
+	// 续跑请求 messages = 历史（首跑 user 消息）+ 新 user 消息
+	if len(llm2.reqs) == 0 || len(llm2.reqs[0].Messages) < 3 {
+		t.Fatalf("续跑请求应含历史+新消息: %+v", llm2.reqs)
+	}
+	req := llm2.reqs[0].Messages
+	if req[0].Role != "user" || !strings.Contains(req[0].Content, "首跑任务") {
+		t.Errorf("历史首条应为首跑 user 消息: %+v", req[0])
+	}
+	if req[len(req)-1].Role != "user" || !strings.Contains(req[len(req)-1].Content, "继续调研") {
+		t.Errorf("末条应为新 user 消息: %+v", req[len(req)-1])
+	}
+
+	// 落库：2 轮 × (user+assistant) = 4 条
+	var msgCount int64
+	db.Model(&model.Message{}).Where("conversation_id = ?", res.ConvID).Count(&msgCount)
+	if msgCount != 4 {
+		t.Errorf("子会话应落库 4 条消息, got %d", msgCount)
+	}
+}
+
+// TestRunSubAgent_ResumeInvalidTaskID_Errors — task_id 不可复用 → 报错，不静默新建
+func TestRunSubAgent_ResumeInvalidTaskID_Errors(t *testing.T) {
+	convRepo, msgRepo, db, cleanup := setupSubAgentRepos(t)
+	defer cleanup()
+	ctx := context.Background()
+	if err := convRepo.Create(ctx, &model.Conversation{ID: "main-1", UserID: "u1"}); err != nil {
+		t.Fatal(err)
+	}
+	extraJSON, _ := json.Marshal(&model.ConversationExtra{SubAgentType: "web_explore"})
+	mainID := "main-1"
+	// 跨用户
+	if err := convRepo.Create(ctx, &model.Conversation{ID: "other-sub", UserID: "u2", ParentID: &mainID, Extra: string(extraJSON)}); err != nil {
+		t.Fatal(err)
+	}
+	// 跨主会话（同用户挂别的父会话）
+	otherMain := "other-main"
+	if err := convRepo.Create(ctx, &model.Conversation{ID: "other-parent-sub", UserID: "u1", ParentID: &otherMain, Extra: string(extraJSON)}); err != nil {
+		t.Fatal(err)
+	}
+	// 类型不符（user_context 会话按 web_explore 续跑）
+	ucExtra, _ := json.Marshal(&model.ConversationExtra{SubAgentType: "user_context"})
+	if err := convRepo.Create(ctx, &model.Conversation{ID: "uc-sub", UserID: "u1", ParentID: &mainID, Extra: string(ucExtra)}); err != nil {
+		t.Fatal(err)
+	}
+
+	orch := newSubAgentOrchestrator(&syncMockLLM{responses: []llm.Message{{Content: "结果"}}}, convRepo, msgRepo)
+	for _, tid := range []string{"nonexistent", "other-sub", "other-parent-sub", "uc-sub"} {
+		res := orch.RunSubAgent(ctx, &tool.SubAgentRunOptions{
+			SubAgentType: "web_explore", Description: "调研", Prompt: "p", ParentConvID: "main-1", ClientTools: testClientToolOpts(), TaskID: tid,
+		})
+		if res.Success {
+			t.Fatalf("task_id=%s 应报错而非静默新建: %+v", tid, res)
+		}
+		if !strings.Contains(res.Error, "不可复用") {
+			t.Errorf("task_id=%s 错误应提示不可复用: %s", tid, res.Error)
+		}
+	}
+	// main-1 下子会话 = other-sub + uc-sub = 2（无效 task_id 不新建）
+	var count int64
+	db.Model(&model.Conversation{}).Where("parent_id = ?", "main-1").Count(&count)
+	if count != 2 {
+		t.Errorf("无效 task_id 不应新建子会话, 应 2 个, got %d", count)
+	}
+}
+
+// TestLoadSubAgentHistory_BudgetAndUserPrefix — 超预算丢最旧 + 保留下界为 user 消息
+func TestLoadSubAgentHistory_BudgetAndUserPrefix(t *testing.T) {
+	_, msgRepo, _, cleanup := setupSubAgentRepos(t)
+	defer cleanup()
+	ctx := context.Background()
+	convID := "sub-budget"
+	// 60 条 × ~1k = 60k > 40k，强制触发截断
+	for i := 0; i < 60; i++ {
+		role, content := "assistant", strings.Repeat("x", 1000)
+		if i%2 == 0 {
+			role, content = "user", "任务"+strings.Repeat("y", 900)
+		}
+		if err := msgRepo.Create(ctx, &model.Message{ID: fmt.Sprintf("m%d", i), ConversationID: convID, Role: role, Content: content}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hist := loadSubAgentHistory(ctx, msgRepo, convID)
+	if len(hist) == 0 {
+		t.Fatal("应加载到历史")
+	}
+	if hist[0].Role != "user" {
+		t.Errorf("历史首条应为 user（保留下界）: %s", hist[0].Role)
+	}
+	total := 0
+	for _, m := range hist {
+		total += utf8.RuneCountInString(m.Content)
+	}
+	if total > subagentHistoryBudgetChars {
+		t.Errorf("历史总长应≤预算 %d, got %d", subagentHistoryBudgetChars, total)
 	}
 }
 

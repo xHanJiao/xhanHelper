@@ -20,6 +20,7 @@ type SubAgentRunOptions struct {
 	SubAgentType string                  // 子 agent 类型："web_explore" / "file_explore"
 	Description  string                  // 3-5 词任务描述
 	Prompt       string                  // 任务全文
+	TaskID       string                  // 续跑的子会话 ID（复用上下文，保留此前全部消息），空 = 新建
 	ParentConvID string                  // 主会话 ID
 	ClientTools  []ClientToolInfo        // 透传客户端工具定义（子任务依赖 macOS 客户端）
 	MainEvents   chan<- *llm.StreamEvent // 主 SSE events 通道（子循环需转发 client_tool_call 给客户端）

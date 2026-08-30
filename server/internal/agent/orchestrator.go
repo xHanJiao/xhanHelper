@@ -165,6 +165,7 @@ type Orchestrator struct {
 	subAgentMaxIterations  int
 	subAgentTimeout        time.Duration
 	subAgentCleanupTimeout time.Duration // 子任务结束标签清理单 tab 超时，默认 10s
+	subAgentLocks          sync.Map      // 子会话执行互斥（按 convID，续跑串行化防并发写乱序）
 	summaryRepo            *service.ConversationSummaryRepo
 	contextRetriever       *ctxflow.ContextRetriever // 上下文检索
 	contextFormatter       ctxflow.ContextFormatter  // 上下文格式化（接口）

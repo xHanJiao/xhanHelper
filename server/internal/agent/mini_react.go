@@ -31,7 +31,8 @@ type MiniReAct struct {
 	tools            []llm.ToolDefinition // 原生 FC 工具定义；为空则无工具
 	toolRegistry     *tool.Registry
 	systemPrompt     string
-	finalRoundPrompt string // 强制收敛轮指令（主循环耗尽后追加，禁止再调工具）
+	finalRoundPrompt string        // 强制收敛轮指令（主循环耗尽后追加，禁止再调工具）
+	initialMessages  []llm.Message // 续跑种子历史（时间正序），空 = 全新任务；不重复落库
 	userID           string
 	convID           string // 注入 ExecuteContext（工具按会话上下文工作），空=无
 	maxIterations    int
@@ -77,7 +78,8 @@ type MiniReActConfig struct {
 	Tools            []llm.ToolDefinition // 原生 FC 工具定义（nil 表示无工具，纯文本对话）
 	ToolRegistry     *tool.Registry
 	SystemPrompt     string
-	FinalRoundPrompt string // 强制收敛轮指令（主循环耗尽后追加，禁止再调工具），默认 genericFinalRoundPrompt
+	FinalRoundPrompt string        // 强制收敛轮指令（主循环耗尽后追加，禁止再调工具），默认 genericFinalRoundPrompt
+	InitialMessages  []llm.Message // 续跑种子历史（时间正序，含完整原生 FC 三态），空 = 全新任务；不重复落库
 	UserID           string
 	ConvID           string                      // 注入 ExecuteContext，空=无
 	MaxIterations    int                         // 总轮数上限（含强制收敛轮），默认 10
@@ -137,6 +139,7 @@ func NewMiniReAct(cfg *MiniReActConfig) *MiniReAct {
 		toolRegistry:     cfg.ToolRegistry,
 		systemPrompt:     cfg.SystemPrompt,
 		finalRoundPrompt: finalPrompt,
+		initialMessages:  cfg.InitialMessages,
 		userID:           cfg.UserID,
 		convID:           cfg.ConvID,
 		maxIterations:    maxIter,
@@ -175,7 +178,9 @@ type MiniReActResult struct {
 // 追加 FinalRoundPrompt 并以空工具集调用，强制 LLM 产出最终内容，避免空手结束。
 // 事件序列：status（每轮） → [thought] → [tool_call + tool_result]×N → done | error。
 func (m *MiniReAct) Run(ctx context.Context, userMessage string) (*MiniReActResult, error) {
-	msgs := []llm.Message{{Role: "user", Content: userMessage}}
+	msgs := make([]llm.Message, 0, len(m.initialMessages)+1)
+	msgs = append(msgs, m.initialMessages...)
+	msgs = append(msgs, llm.Message{Role: "user", Content: userMessage})
 	result := &MiniReActResult{}
 	m.toolCallLog = nil
 	m.clientIdx = clientToolIndex(m.subAgent.ClientTools, m.toolRegistry)

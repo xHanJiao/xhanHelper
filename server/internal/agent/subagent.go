@@ -267,16 +267,20 @@ func buildSubAgentSystemPrompt(spec subagentSpec, maxIter, timeoutSecs int) stri
 
 // subAgentMsgSink — MiniReAct MsgSink 实现：子循环消息完整落库到子会话（可观测/可调试）。
 type subAgentMsgSink struct {
-	msgRepo *service.MessageRepo
-	convID  string
-	userID  string
+	msgRepo          *service.MessageRepo
+	convID           string
+	userID           string
+	debugPersistJSON bool          // debug_persist_json 开启时才异步刷 request_json
+	debugSink        DebugJSONSink // request_json 异步落库 sink（NoopDebugJSONSink 兜底）
 }
 
-func (s *subAgentMsgSink) create(m *model.Message) {
+func (s *subAgentMsgSink) create(m *model.Message) error {
 	m.IsSubAgent = true // 子会话消息标记：按用户扫描的后台统计/检索聚合统一排除（见 message_repo.go subConversationExclusion）
 	if err := s.msgRepo.Create(context.Background(), m); err != nil {
 		log.Printf("[subagent] save msg error (conv=%s): %v", s.convID[:8], err)
+		return err
 	}
+	return nil
 }
 
 func (s *subAgentMsgSink) SaveUserMsg(content string) {
@@ -312,7 +316,18 @@ func (s *subAgentMsgSink) SaveAssistantMsg(msg llm.Message) {
 		ec := msg.EncryptedContent
 		m.EncryptedContent = &ec
 	}
-	s.create(m)
+	// token 用量进 Extra（msgDebug「Token 用量」条），request_json 留给异步 sink 刷盘
+	if msg.Usage != nil {
+		SetUsage(m, msg.Usage)
+	}
+	m.RequestJSON = msg.RequestJSON
+	if err := s.create(m); err != nil {
+		return
+	}
+	// 消息落库成功后才异步刷 request_json（避免对不存在的行做无效 UPDATE），镜像主聊天 saveAssistantMsgWithFlags
+	if s.debugPersistJSON && m.RequestJSON != nil {
+		s.debugSink.Submit(m.ID, m.RequestJSON)
+	}
 }
 
 func (s *subAgentMsgSink) SaveToolMsg(toolCallID, content string) {
@@ -476,7 +491,7 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 			ClientBridge:      clientBridge,
 			ClientToolTimeout: o.clientToolTimeout,
 			AllowedTools:      buildAllowedTools(spec),
-			MsgSink:           &subAgentMsgSink{msgRepo: o.subMsgRepo, convID: subConv.ID, userID: userID},
+			MsgSink:           &subAgentMsgSink{msgRepo: o.subMsgRepo, convID: subConv.ID, userID: userID, debugPersistJSON: o.debugPersistJSON, debugSink: o.debugJSONSink},
 		},
 		OnEvent: o.makeSubAgentForwarder(opts.MainEvents, subConv.ID, opts.Description),
 	})
@@ -502,7 +517,8 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 	})
 
 	// 子任务结束（completed/timeout/failed 三态）：
-	// 1) 发 end 事件给活动面板；2) 关闭本次循环打开的全部浏览器标签（只清自己的）。
+	// 1) 发 end 事件给活动面板；2) 关闭本次循环打开的全部浏览器标签（只清自己的）；
+	// 3) 执行结果写回子会话 Extra（Admin 子任务列表展示「执行的怎么样」）。
 	var result *MiniReActResult
 	endState := "completed"
 	endSummary := ""
@@ -512,6 +528,16 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 		}
 		if o.clientBridge != nil && result != nil && len(result.ToolCallLog) > 0 {
 			o.cleanupSubAgentTabs(opts.MainEvents, userID, subConv.ID, result.ToolCallLog)
+		}
+		var errMsg string
+		if err != nil {
+			errMsg = err.Error()
+		}
+		state := endState
+		if uerr := o.subConvRepo.UpdateExtraField(ctx, subConv.ID, func(extra *model.ConversationExtra) {
+			extra.SubAgentResult = &model.SubAgentResult{State: state, Error: errMsg, EndedAt: time.Now()}
+		}); uerr != nil {
+			log.Printf("[subagent] persist result state error (conv=%s): %v", subConv.ID[:8], uerr)
 		}
 	}()
 

@@ -123,6 +123,15 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		Repo:            repos.LLMCallIO,
 	})
 
+	controller.RegisterSubAgentAdminRoutes(controller.SubAgentAdminRoutesConfig{
+		R:               router,
+		AuthMiddleware:  middleware.Auth(repos.User),
+		AdminMiddleware: monitor.AdminOnly(cfg.Server.AdminUsers),
+		ConvRepo:        repos.Conversation,
+		MsgRepo:         repos.Message,
+		CostRepo:        repos.LlmCost,
+	})
+
 	return router
 }
 

@@ -256,3 +256,34 @@ func (r *ConversationRepo) GetUsedToolIDs(ctx context.Context, convID string) ([
 	}
 	return extra.UsedToolIDs, nil
 }
+
+// SubConversationRow — 子会话列表行（含消息数）。
+// msg_count 来自 SQL 子查询，非模型字段。
+type SubConversationRow struct {
+	model.Conversation
+	MsgCount int64 `gorm:"column:msg_count"`
+}
+
+// ListSubConversations 分页列出子会话（parent_id IS NOT NULL），按创建时间倒序。
+// 返回 (rows, hasMore)。消息数用一条子查询聚合，避免 N+1。
+func (r *ConversationRepo) ListSubConversations(ctx context.Context, limit, offset int) ([]SubConversationRow, bool, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	var rows []SubConversationRow
+	err := r.db.WithContext(ctx).
+		Table("conversations").
+		Select("conversations.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = conversations.id AND m.status = ?) AS msg_count", model.MsgStatusNormal).
+		Where("parent_id IS NOT NULL AND is_deleted = ?", false).
+		Order("created_at DESC").
+		Limit(limit + 1).Offset(offset).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, false, err
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	return rows, hasMore, nil
+}

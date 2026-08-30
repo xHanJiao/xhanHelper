@@ -234,7 +234,7 @@ func (m *MiniReAct) Run(ctx context.Context, userMessage string) (*MiniReActResu
 		}
 
 		if m.subAgent.MsgSink != nil {
-			m.subAgent.MsgSink.SaveAssistantMsg(llm.Message{Role: "assistant", Content: resp.Content, ToolCalls: resp.ToolCalls})
+			m.subAgent.MsgSink.SaveAssistantMsg(llm.Message{Role: "assistant", Content: resp.Content, ReasoningContent: resp.ReasoningContent, ToolCalls: resp.ToolCalls, Usage: resp.Usage, RequestJSON: resp.RequestJSON})
 		}
 
 		if len(resp.ToolCalls) > 0 {
@@ -278,7 +278,7 @@ func (m *MiniReAct) Run(ctx context.Context, userMessage string) (*MiniReActResu
 		return result, fmt.Errorf("mini_react[%s] final round: %w", m.caller, err)
 	}
 	if m.subAgent.MsgSink != nil {
-		m.subAgent.MsgSink.SaveAssistantMsg(llm.Message{Role: "assistant", Content: resp.Content})
+		m.subAgent.MsgSink.SaveAssistantMsg(llm.Message{Role: "assistant", Content: resp.Content, ReasoningContent: resp.ReasoningContent, Usage: resp.Usage, RequestJSON: resp.RequestJSON})
 	}
 
 	result.FinalContent = resp.Content

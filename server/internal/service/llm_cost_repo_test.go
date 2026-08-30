@@ -48,6 +48,43 @@ func seedCostRows(t *testing.T, db *gorm.DB) {
 	}
 }
 
+func TestTotalsByConversations(t *testing.T) {
+	db := newCostTestDB(t)
+	rows := []model.LlmCostDetail{
+		{Date: "2026-08-10", UserID: "u1", Category: "main_chat", SubCategory: "sub_agent_run", ConvID: "conv-a", Model: "flash",
+			PromptTokens: 100, PromptCacheHitTokens: 60, PromptCacheMissTokens: 40, CompletionTokens: 20, TotalTokens: 120},
+		{Date: "2026-08-11", UserID: "u1", Category: "main_chat", SubCategory: "sub_agent_run", ConvID: "conv-a", Model: "flash",
+			PromptTokens: 200, PromptCacheHitTokens: 0, PromptCacheMissTokens: 200, CompletionTokens: 30, TotalTokens: 230},
+		{Date: "2026-08-11", UserID: "u2", Category: "main_chat", SubCategory: "sub_agent_run", ConvID: "conv-b", Model: "flash",
+			PromptTokens: 300, PromptCacheHitTokens: 150, PromptCacheMissTokens: 150, CompletionTokens: 40, TotalTokens: 340},
+		{Date: "2026-08-11", UserID: "u2", Category: "reflection", SubCategory: "mission_run", ConvID: "conv-a", Model: "flash",
+			PromptTokens: 1, PromptCacheHitTokens: 1, PromptCacheMissTokens: 0, CompletionTokens: 1, TotalTokens: 2},
+	}
+	for _, r := range rows {
+		if err := db.Create(&r).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo := NewLlmCostRepo(db)
+	totals, err := repo.TotalsByConversations(context.Background(), []string{"conv-a", "conv-b", "conv-none"})
+	if err != nil {
+		t.Fatalf("TotalsByConversations error: %v", err)
+	}
+	a, ok := totals["conv-a"]
+	if !ok {
+		t.Fatal("conv-a missing from totals")
+	}
+	if a.CallCount != 3 || a.TotalTokens != 352 {
+		t.Fatalf("conv-a unexpected totals: %+v", a)
+	}
+	if _, ok := totals["conv-none"]; ok {
+		t.Fatal("conv-none should be absent")
+	}
+	if len(totals) != 2 {
+		t.Fatalf("expected 2 convs, got %d", len(totals))
+	}
+}
+
 func TestQuery_GroupByDate_CacheSplit(t *testing.T) {
 	db := newCostTestDB(t)
 	seedCostRows(t, db)

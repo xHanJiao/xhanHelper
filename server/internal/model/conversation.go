@@ -32,10 +32,18 @@ type Conversation struct {
 
 // ConversationExtra — Conversation.Extra 的结构化数据
 type ConversationExtra struct {
-	UsedToolIDs  []string         `json:"used_tool_ids"`
-	Context      *ConversationCtx `json:"context,omitempty"`       // 信箱跳转带上的主题上下文
-	SubAgentType string           `json:"subagent_type,omitempty"` // 子会话类型（"web_explore"/"file_explore"），空=普通会话
-	ToolExposure *ToolExposure    `json:"tool_exposure,omitempty"` // 渐进式工具暴露注册表（窗口级，key=SessionStartMsgID）
+	UsedToolIDs    []string         `json:"used_tool_ids"`
+	Context        *ConversationCtx `json:"context,omitempty"`          // 信箱跳转带上的主题上下文
+	SubAgentType   string           `json:"subagent_type,omitempty"`    // 子会话类型（"web_explore"/"file_explore"），空=普通会话
+	SubAgentResult *SubAgentResult  `json:"sub_agent_result,omitempty"` // 子任务最近一次执行结果（Admin 子任务列表展示），空=未记录（改动前旧数据）
+	ToolExposure   *ToolExposure    `json:"tool_exposure,omitempty"`    // 渐进式工具暴露注册表（窗口级，key=SessionStartMsgID）
+}
+
+// SubAgentResult — 子任务单次执行结果（RunSubAgent 结束时写回）。
+type SubAgentResult struct {
+	State   string    `json:"state"` // completed | timeout | failed
+	Error   string    `json:"error,omitempty"`
+	EndedAt time.Time `json:"ended_at"`
 }
 
 // ToolExposure — 渐进式工具暴露注册表（窗口级，函数粒度）。

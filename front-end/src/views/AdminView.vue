@@ -5,6 +5,7 @@ import { NCard, NTag, NSpin, NSelect, NTabs, NTabPane, NEmpty, NAlert, NButton, 
 import { Chart, registerables } from 'chart.js'
 import PageTopBar from '@/components/PageTopBar.vue'
 import LLMIOAuditTab from '@/components/LLMIOAuditTab.vue'
+import SubAgentTab from '@/components/SubAgentTab.vue'
 import { isMacEmbedded } from '@/utils/embed'
 
 Chart.register(...registerables)
@@ -764,6 +765,7 @@ onUnmounted(() => {
       <NTabPane name="pending-findings" tab="主题发现" /> -->
       <NTabPane name="cost" tab="成本中心" />
       <NTabPane name="llm-io" tab="后处理审计" />
+      <NTabPane name="subagent" tab="子任务" />
     </NTabs>
     <div style="flex: 1; overflow-y: auto; padding: var(--space-lg);">
 
@@ -1037,6 +1039,10 @@ onUnmounted(() => {
     <!-- ========== LLM 审计 Tab ========== -->
     <div v-if="activeTab === 'llm-io'" style="padding-top: var(--space-sm);">
       <LLMIOAuditTab />
+    </div>
+    <!-- ========== 子任务 Tab ========== -->
+    <div v-if="activeTab === 'subagent'" style="padding-top: var(--space-sm);">
+      <SubAgentTab />
     </div>
     <!-- ========== Token 消耗 Tab ========== -->
     <div v-if="activeTab === 'cost'" style="padding-top: var(--space-sm);">

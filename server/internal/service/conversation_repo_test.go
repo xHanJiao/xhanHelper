@@ -217,3 +217,67 @@ func TestUpdateExtraField_NonexistentConversation(t *testing.T) {
 		t.Error("expected error for nonexistent conversation")
 	}
 }
+
+func TestListSubConversations(t *testing.T) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.Conversation{}, &model.Message{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	defer func() {
+		sqlDB, _ := db.DB()
+		sqlDB.Close()
+		os.RemoveAll(tmpDir)
+	}()
+	repo := NewConversationRepo(db)
+	ctx := context.Background()
+
+	parentID := "main-conv"
+	for i := 1; i <= 3; i++ {
+		if err := repo.Create(ctx, &model.Conversation{ID: "sub-" + string(rune('0'+i)), UserID: "u1", Title: "调研", ParentID: &parentID}); err != nil {
+			t.Fatalf("create sub: %v", err)
+		}
+	}
+	// 普通会话（不应出现）
+	if err := repo.Create(ctx, &model.Conversation{ID: "normal", UserID: "u1"}); err != nil {
+		t.Fatalf("create normal: %v", err)
+	}
+	// sub-1 带 2 条消息
+	for _, c := range []string{"m1", "m2"} {
+		if err := db.Create(&model.Message{ID: c, ConversationID: "sub-1", UserID: "u1", Role: "user", Content: "x"}).Error; err != nil {
+			t.Fatalf("create msg: %v", err)
+		}
+	}
+
+	// 第一页 limit=2 → hasMore=true，倒序：sub-3, sub-2
+	rows, hasMore, err := repo.ListSubConversations(ctx, 2, 0)
+	if err != nil {
+		t.Fatalf("ListSubConversations: %v", err)
+	}
+	if !hasMore || len(rows) != 2 {
+		t.Fatalf("page1: want hasMore=true, 2 rows; got hasMore=%v rows=%d", hasMore, len(rows))
+	}
+	if rows[0].ID != "sub-3" || rows[1].ID != "sub-2" {
+		t.Fatalf("page1 order wrong: %s, %s", rows[0].ID, rows[1].ID)
+	}
+	if rows[1].MsgCount != 0 {
+		t.Fatalf("sub-2 msg_count should be 0, got %d", rows[1].MsgCount)
+	}
+
+	// 第二页 offset=2 → 剩余 1 条，hasMore=false
+	rows, hasMore, err = repo.ListSubConversations(ctx, 2, 2)
+	if err != nil {
+		t.Fatalf("ListSubConversations page2: %v", err)
+	}
+	if hasMore || len(rows) != 1 {
+		t.Fatalf("page2: want hasMore=false, 1 row; got hasMore=%v rows=%d", hasMore, len(rows))
+	}
+	if rows[0].ID != "sub-1" || rows[0].MsgCount != 2 {
+		t.Fatalf("sub-1 wrong: id=%s msg_count=%d", rows[0].ID, rows[0].MsgCount)
+	}
+}

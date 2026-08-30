@@ -50,6 +50,22 @@ func (s *recordingMsgSink) SaveToolMsg(toolCallID, content string) {
 	s.tools = append(s.tools, toolCallID+"|"+content)
 }
 
+// recordingDebugSink — 记录 DebugJSONSink.Submit 调用
+type recordingDebugSink struct {
+	submits []struct {
+		id  string
+		req *string
+	}
+}
+
+func (s *recordingDebugSink) Submit(id string, req *string) bool {
+	s.submits = append(s.submits, struct {
+		id  string
+		req *string
+	}{id, req})
+	return true
+}
+
 // setupSubAgentRepos 创建 sqlite 的 Conversation/Message repo
 func setupSubAgentRepos(t *testing.T) (*service.ConversationRepo, *service.MessageRepo, *gorm.DB, func()) {
 	t.Helper()
@@ -240,6 +256,7 @@ func TestSubAgent_EventForwarding(t *testing.T) {
 	noop(&llm.StreamEvent{Type: "client_tool_call", Content: "x"})
 }
 
+// TestSubAgent_MsgSinkPersists — 子循环消息完整落库（可观测/可调试）
 func TestSubAgent_MsgSinkPersists(t *testing.T) {
 	sink := &recordingMsgSink{}
 	llmClient := &syncMockLLM{responses: []llm.Message{
@@ -1009,5 +1026,60 @@ func TestTruncateStringKeepHeadTail_NoUTF8Split(t *testing.T) {
 	// 短字符串不动
 	if got := truncateStringKeepHeadTail("short", 100); got != "short" {
 		t.Errorf("短字符串不应截断: %s", got)
+	}
+}
+
+// TestSubAgentMsgSink_PersistsRequestJSONAndUsage — 子消息落库后 request_json 入异步 sink、
+// token 用量进 Extra（msgDebug 各 tab 对齐主聊天）。
+func TestSubAgentMsgSink_PersistsRequestJSONAndUsage(t *testing.T) {
+	_, msgRepo, _, cleanup := setupSubAgentRepos(t)
+	defer cleanup()
+	req := `{"model":"deepseek-v4-flash","messages":[{"role":"system","content":"sys"}]}`
+	sink := &recordingDebugSink{}
+	s := &subAgentMsgSink{msgRepo: msgRepo, convID: "sub-1", userID: "u1", debugPersistJSON: true, debugSink: sink}
+
+	s.SaveAssistantMsg(llm.Message{
+		Content:     "回复",
+		Usage:       &llm.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
+		RequestJSON: &req,
+	})
+
+	if len(sink.submits) != 1 {
+		t.Fatalf("request_json 应提交 1 次, got %d", len(sink.submits))
+	}
+	if *sink.submits[0].req != req {
+		t.Errorf("提交的 request_json 不符: %s", *sink.submits[0].req)
+	}
+
+	m, err := msgRepo.GetByID(context.Background(), sink.submits[0].id)
+	if err != nil || m == nil {
+		t.Fatalf("消息应落库: %v", err)
+	}
+	if m.RequestJSON == nil || *m.RequestJSON != req {
+		t.Errorf("消息 request_json 未落库: %v", m.RequestJSON)
+	}
+	if m.Extra == nil {
+		t.Fatal("Extra 应写入 usage")
+	}
+	var extra MsgExtra
+	if err := json.Unmarshal([]byte(*m.Extra), &extra); err != nil {
+		t.Fatalf("Extra 解析失败: %v", err)
+	}
+	if extra.Usage == nil || extra.Usage.TotalTokens != 15 {
+		t.Errorf("Extra.Usage 错误: %+v", extra.Usage)
+	}
+}
+
+// TestSubAgentMsgSink_DebugPersistOff_NoSubmit — debug_persist_json 关闭时不提交 request_json
+func TestSubAgentMsgSink_DebugPersistOff_NoSubmit(t *testing.T) {
+	_, msgRepo, _, cleanup := setupSubAgentRepos(t)
+	defer cleanup()
+	req := `{"messages":[]}`
+	sink := &recordingDebugSink{}
+	s := &subAgentMsgSink{msgRepo: msgRepo, convID: "sub-1", userID: "u1", debugPersistJSON: false, debugSink: sink}
+
+	s.SaveAssistantMsg(llm.Message{Content: "回复", RequestJSON: &req})
+	if len(sink.submits) != 0 {
+		t.Fatalf("开关关闭不应提交, got %d", len(sink.submits))
 	}
 }

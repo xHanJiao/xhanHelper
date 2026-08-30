@@ -166,6 +166,28 @@ func (r *LlmCostRepo) Query(ctx context.Context, params QueryParams) (*QueryResu
 	return &QueryResult{Total: total, Groups: groupRows}, nil
 }
 
+// TotalsByConversations 按 conv_id 聚合一批会话的 token 汇总（GROUP BY conv_id）。
+// 返回 map[convID]TokenTotal；不区分 sub_category（子任务列表直接展示该子会话全部消耗）。
+func (r *LlmCostRepo) TotalsByConversations(ctx context.Context, convIDs []string) (map[string]TokenTotal, error) {
+	out := make(map[string]TokenTotal)
+	if len(convIDs) == 0 {
+		return out, nil
+	}
+	var rows []GroupRow
+	if err := r.db.WithContext(ctx).Model(&model.LlmCostDetail{}).
+		Select("conv_id as `key`,"+tokenSelectCols).
+		Where("conv_id IN ?", convIDs).
+		Group("conv_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		rows[i].CacheHitRate = cacheHitRate(rows[i].PromptCacheHit, rows[i].PromptCacheMiss)
+		out[rows[i].Key] = rows[i].TokenTotal
+	}
+	return out, nil
+}
+
 // normalizeDateKey SQLite 驱动可能把 date 列读回 RFC3339（"2026-08-11T00:00:00Z"），
 // MySQL 返回纯日期串（"2026-08-11"）。统一截取日期部分。
 func normalizeDateKey(s string) string {

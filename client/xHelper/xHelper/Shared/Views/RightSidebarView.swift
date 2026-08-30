@@ -147,6 +147,11 @@ struct RightSidebarView: View {
         let downloadLocked = isDownloadTab && downloadStore.hasActiveDownloads && !hasOtherTabs
         return HStack(spacing: 4) {
             faviconView(tab)
+            if tab.needsUserAttention {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9))
+                    .foregroundColor(.orange)
+            }
             Text(tab.title)
                 .font(.system(size: 11))
                 .lineLimit(1)
@@ -224,7 +229,7 @@ struct RightSidebarView: View {
     @State private var splitSeamX: CGFloat = 0
     #endif
 
-    /// 全屏态（含浏览面板）：单 tab 条 + 内容
+    /// 全屏态（含浏览面板）：单 tab 条 + 内容 + 底部 Agent 工作区条
     private var singleContentArea: some View {
         VStack(spacing: 0) {
             if !manager.isBrowseActive {
@@ -232,7 +237,77 @@ struct RightSidebarView: View {
                 Divider()
             }
             tabPane(active: manager.isBrowseActive ? nil : manager.activeTabId)
+            if !manager.isBrowseActive, !manager.agentTabs.isEmpty {
+                agentWorkspaceStrip
+            }
         }
+    }
+
+    @State private var agentWorkspaceExpanded = false
+
+    /// Agent 工作区条（浏览器态底部）：agent 打开的标签折叠展示，点击翻牌进主栏。
+    /// 空则整条隐藏；展开态显示 host favicon + 标题 + 关闭。
+    private var agentWorkspaceStrip: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 6) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { agentWorkspaceExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: agentWorkspaceExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 8))
+                        Image(systemName: "sparkles").font(.system(size: 9))
+                        Text("Agent 工作区").font(.system(size: 10, weight: .medium))
+                        Text("\(manager.agentTabs.count)")
+                            .font(.system(size: 9))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.2), in: Capsule())
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            if agentWorkspaceExpanded {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(manager.agentTabs) { tab in
+                            agentWorkspaceTabButton(tab)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 5)
+                }
+            }
+        }
+        .background(.ultraThinMaterial)
+    }
+
+    /// 工作区单个 agent 标签：点击翻牌进主栏；X 关闭（回收）
+    private func agentWorkspaceTabButton(_ tab: RightSidebarTab) -> some View {
+        HStack(spacing: 4) {
+            faviconView(tab)
+            Text(tab.title)
+                .font(.system(size: 10))
+                .lineLimit(1)
+                .frame(maxWidth: 120)
+            Button { BrowserToolProvider.shared.closeTab(tab.id) } label: {
+                Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+            }
+            .buttonStyle(.plain)
+            .help("关闭并回收")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.blue.opacity(0.18), in: Capsule())
+        .contentShape(Capsule())
+        .onTapGesture {
+            BrowserToolProvider.shared.promoteAgentTab(tab.id, activate: true)
+        }
+        .help("点击翻牌进主栏查看")
     }
 
     #if os(macOS)

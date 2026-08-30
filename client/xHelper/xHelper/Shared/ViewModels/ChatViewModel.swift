@@ -39,6 +39,9 @@ struct ToolConfirmation: Identifiable {
 struct UserRequest: Identifiable {
     let id: String // call_id
     let message: String
+    let owner: String?
+    /// 该 owner 有待人工处理的手递手标签（AskUserBar 显示 [前往处理] 按钮）
+    let hasHandoffTab: Bool
     let continuation: CheckedContinuation<String?, Never> // nil=跳过/超时；""=已处理无文本；非空=用户回答
 }
 
@@ -445,10 +448,11 @@ class ChatViewModel: ObservableObject {
     /// 子任务请求用户介入（ask_user）：弹 AskUserBar + 系统通知（仅队列首个发，避免轰炸）。
     /// 等待用户：可仅点"已处理"（返回空字符串），也可输入回答文本（返回文本），
     /// 或"跳过"（返回 nil）；超时（下发 timeout_secs×0.9，至少 10s）视为跳过。
-    func awaitUserRequest(callID: String, message: String, timeoutSecs: Double?) async -> String? {
+    func awaitUserRequest(callID: String, message: String, timeoutSecs: Double?, owner: String?) async -> String? {
         let timeout = max(10, (timeoutSecs ?? 120) * 0.9)
         return await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
-            pendingUserRequests.append(UserRequest(id: callID, message: message, continuation: cont))
+            let hasHandoff = owner.map { BrowserToolProvider.shared.handoffTabId(forOwner: $0) != nil } ?? false
+            pendingUserRequests.append(UserRequest(id: callID, message: message, owner: owner, hasHandoffTab: hasHandoff, continuation: cont))
             if pendingUserRequests.count == 1 {
                 playAskUserNotification(message)
             }

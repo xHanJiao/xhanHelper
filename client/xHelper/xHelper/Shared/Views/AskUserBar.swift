@@ -47,6 +47,16 @@ struct AskUserBar: View {
                     .foregroundColor(.primary)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if req.hasHandoffTab {
+                    Button("前往处理") {
+                        if let owner = req.owner {
+                            BrowserToolProvider.shared.activateHandoffTab(owner)
+                        }
+                    }
+                    .font(.caption)
+                    .buttonStyle(.borderedProminent)
+                    .help("切到待处理的浏览器页面")
+                }
                 if requests.count > 1 {
                     Button(expanded ? "收起" : "+\(requests.count - 1) 待处理") {
                         withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }

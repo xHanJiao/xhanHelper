@@ -75,6 +75,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private var tabs: [String: TabSession] = [:]
     private var activeTabId: String?
     private var tabCounter = 0
+    /// 每个 agent owner 最近触摸的标签（无 tabId 读工具的隐式目标；与 UI 激活页解耦，用户视图不受影响）
+    private var lastAgentTabByOwner: [String: String] = [:]
+    /// 用户授权 agent 操作其用户标签的 owner 集合（"subagent:<convID>"，任务级天然隔离，无需清理）
+    private var userTabGrants: Set<String> = []
+    /// 待人工处理的手递手标签：owner -> tabId（验证码/登录墙，检测驱动）
+    private var pendingHandoff: [String: String] = [:]
     /// 最近关闭的 tab（Cmd+Shift+T 恢复）
     private var closedStack: [(url: URL?, title: String)] = []
     /// 后台管家定时器（agent 标签空闲清理）
@@ -149,10 +155,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     func toolSchemas() async -> [LocalToolSchema] {
         var schemas: [LocalToolSchema] = [
-            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。默认规则：除非用户明确要求前台打开/查看该页、或需立即对其 click/fill 交互，否则一律用 background:true 后台打开（不切走当前页，用户无感知）。打开新页面后，不再需要的旧页面请及时调用 close_tab 关闭（调研场景会开很多页面，避免标签页堆积占用内存）。配额：agent 打开的标签上限 \(Self.agentTabQuotaLimit) 个，每次成功打开的返回值含 remainingAgentTabQuota（剩余配额）；配额已满时本工具报错（报错中含 agent 标签的 tabId 列表），此时请先用 close_tab 关闭报错列出的 tab 腾出配额再重试（只能关闭 agent 打开的标签，用户自己的标签不受配额限制、系统也不会替你关闭任何标签）。background 参数：true（默认）后台加载不切走当前页，配合 snapshot/read/get_text 等工具的 tabId 参数可全程静默（流程：open(url, background:true) 拿 tabId → snapshot/read(tabId:...) 静默抓取 → close_tab(tabId:...) 清理，用户页面不闪不切）；false 前台打开并激活，切走当前页，仅用于用户明确要求查看页面或需立即交互（click/fill）时。若页面需用户在登录后手动操作，再切回前台", inputSchema: objProps(["url": strProp("要打开的网址"), "background": boolProp("是否后台打开（不切走当前标签页），默认 true")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_close",            description: "关闭所有浏览器标签页",                       inputSchema: objProps([:]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_close_tab",        description: "关闭指定的单个标签页，释放内存。tabId 从 list_tabs 获取；不用的页面请及时关闭", inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_list_tabs",        description: "列出当前所有打开的标签页（id/url/title）",      inputSchema: objProps([:]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。默认 background:true 静默打开：标签进入「Agent 工作区」（底部折叠条），不切走当前页、不打扰用户浏览；配合 snapshot/read/get_text 等工具的 tabId 全程静默（流程：open(url) 拿 tabId → read/snapshot(tabId:...) 静默抓取 → close_tab(tabId:...) 清理）。background:false 仅用于用户明确要求查看该页：标签升入主栏并激活给用户看。配额：agent 打开的标签上限 \(Self.agentTabQuotaLimit) 个，返回值含 remainingAgentTabQuota；配额满时报错（含 agent 标签 tabId 列表），先 close_tab 腾出配额再打开。验证码/登录墙：若页面需要人工处理（登录/验证码/2FA），open 返回 needsUserIntervention:true（页面已升入主栏并标注），此时必须立即调用 ui__ask_user 请用户处理，用户处理后继续，跳过则换源。写/交互工具（click/fill 等）必须显式 tabId", inputSchema: objProps(["url": strProp("要打开的网址"), "background": boolProp("是否后台打开（不切走当前标签页），默认 true")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_close",            description: "关闭本任务打开的全部标签页（只关 agent 标签，用户自己的标签不受影响）", inputSchema: objProps([:]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_close_tab",        description: "关闭指定的单个标签页，释放内存。tabId 从 list_tabs 获取；不用的页面请及时关闭。只能关闭本任务（owner 相同）的标签；用户自己的标签需用户授权", inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_list_tabs",        description: "列出当前所有打开的标签页（id/url/title/owner）。每项带 owner 标注：subagent:xxx=自己任务的标签，user=用户自己的标签（读取免费，写入需用户授权确认）。只操作标注为自己的标签", inputSchema: objProps([:]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_switch_tab",       description: "切换到指定标签页",                        inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_read",             description: "读取页面文本。分层用法：article=正文抽取（推荐，文章页用：Readability 只取正文剔除导航/评论/侧栏，含标题，抽取失败自动回退整页并标注 fallback）；below=按标题或元素读下方内容（列表页/信息流/评论区：给标题文本用 query，或用 ref 精确指向元素，读该元素下方/容器内的摘要或已展开全文，返回 matched_title 供核对，无需打开链接）；outline=标题树（长文导航，省 token）；filter=按关键词返回匹配章节；full=整页文本（含全部噪声，最后手段）。article/full/below 支持 offset 分页通读长文：返回含 total/truncated/offset，未完时按返回的 offset 继续调用 read(mode, offset=...) 逐段读完。建议先 snapshot 定位 → 列表页读条目用 read(below, query=标题) 或 read(below, ref=@eN) → 文章页通读用 read(article)。tabId 可指定后台 tab 静默读取（不切走当前页），不传则读当前激活页", inputSchema: objProps([
                 "mode": strProp("article（推荐，正文抽取）| full（默认，整页文本）| below（按标题/元素读下方内容）| outline（h1-h6 标题树）| filter（按关键词返回匹配章节）"),
@@ -190,22 +196,22 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             LocalToolSchema(name: "agent_browser_get_title",        description: "获取当前页面标题。tabId 可指定后台 tab 静默读取（不切走当前页），不传则读当前激活页", inputSchema: objProps([
                 "tabId": strProp("（可选）目标标签页ID，从 list_tabs 获取；传了则读该后台 tab，不切走当前页")
             ]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_click",            description: "点击元素。ref（@eN 稳定句柄，须先 snapshot 获取，DOM 变化后仍有效）优先；selector 仅用于 snapshot 无法捕获的元素（自定义/动态组件）。密码等敏感字段禁止用 selector 定位。注意：target=\"_blank\" 的链接（新闻热榜/外链等）合成点击无效，工具会报错并返回目标 URL，此时请改用 agent_browser_open 直接打开该 URL（快照中已含各链接 href）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_click_text",       description: "按文本点击元素（模糊匹配 snapshot 中元素的文本/占位符，多个匹配用 index 指定）。target=\"_blank\" 链接同 click 的注意项：合成点击无效，请用 agent_browser_open 打开返回的 URL", inputSchema: objProps(["text": strProp("要点击的文本或关键词"), "index": numProp("多个匹配时指定第几个，默认 0")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_cgclick",         description: "真实系统级点击（兜底）：仅当 click/click_text 对目标无效（页面校验真实输入事件）时使用。ref（@eN 稳定句柄，须先 snapshot 获取）优先。执行时会前置激活 xhanHelper 窗口（可能打断用户当前操作），且需要辅助功能权限（未授权会弹窗引导）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "x": numProp("直接指定 viewport 坐标 x（调试用，与 ref 二选一）"), "y": numProp("直接指定 viewport 坐标 y（调试用，与 ref 二选一）")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_drag",            description: "真实拖拽（地图/滑块/画布，系统级事件，需辅助功能权限）：从起点按下拖动到终点。起点可用 ref（@eN 稳定句柄，须先 snapshot 获取）或 x/y", inputSchema: objProps(["ref": strProp("起点元素编号，如 @e12（地图 canvas），与 x/y 二选一"), "x": numProp("起点 viewport x（无 ref 时使用）"), "y": numProp("起点 viewport y（无 ref 时使用）"), "dx": numProp("水平位移量（viewport 像素）"), "dy": numProp("垂直位移量（viewport 像素）"), "steps": numProp("拖动步数，默认 10")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_fill",             description: "填充表单字段。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。密码等敏感字段禁止用 selector 定位（必须用 ref）", inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "value": strProp("填充值")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_type",             description: "在元素中逐字符输入文本（追加语义，如需覆盖请先用 fill 清空）。ref（@eN 稳定句柄，须先 snapshot 获取）优先；密码等敏感字段禁止用 selector 定位（必须用 ref）", inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "text": strProp("输入文本")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_press",            description: "按下键盘按键",                         inputSchema: objProps(["key": strProp("按键名称")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_select",           description: "选择下拉选项。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素", inputSchema: objProps(["ref": strProp("元素编号，如 @e6"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "value": strProp("选项值")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_check",            description: "勾选复选框。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素", inputSchema: objProps(["ref": strProp("元素编号，如 @e5"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_uncheck",          description: "取消勾选复选框。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素", inputSchema: objProps(["ref": strProp("元素编号，如 @e5"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_scroll",           description: "滚动页面（x/y 像素）",                   inputSchema: objProps(["x": intProp, "y": intProp]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_wait_for_load",    description: "等待页面加载完成",                       inputSchema: objProps(["timeout_ms": numProp("超时毫秒，默认10000")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_wait_for_selector", description: "等待指定选择器出现",                   inputSchema: objProps(["selector": strProp("CSS选择器"), "timeout_ms": numProp("超时毫秒，默认5000")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_go_back",          description: "浏览器后退到上一页",                         inputSchema: objProps([:]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_go_forward",       description: "浏览器前进到下一页（有页面可前进时生效）",          inputSchema: objProps([:]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_get_media_sources", description: "获取页面中的视频/图片资源列表（分页，实时抓取）。页面为动态内容（广告自动播放、懒加载）会导致资源随时变化，下载失败或列表疑似过期时重新调用本函数获取最新列表。videos 的 playing 字段标识当前播放中的视频（自动播放的广告可能稍后消失，要下载需趁早）", inputSchema: objProps(["page": numProp("页码，从 1 开始，默认 1"), "limit": numProp("每页数量，默认 15（视频和图片共用）")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_click",            description: "点击元素。ref（@eN 稳定句柄，须先 snapshot 获取，DOM 变化后仍有效）优先；selector 仅用于 snapshot 无法捕获的元素（自定义/动态组件）。密码等敏感字段禁止用 selector 定位。注意：target=\"_blank\" 的链接（新闻热榜/外链等）合成点击无效，工具会报错并返回目标 URL，此时请改用 agent_browser_open 直接打开该 URL（快照中已含各链接 href）。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_click_text",       description: "按文本点击元素（模糊匹配 snapshot 中元素的文本/占位符，多个匹配用 index 指定）。target=\"_blank\" 链接同 click 的注意项：合成点击无效，请用 agent_browser_open 打开返回的 URL。agent 调用必须显式 tabId", inputSchema: objProps(["text": strProp("要点击的文本或关键词"), "index": numProp("多个匹配时指定第几个，默认 0"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_cgclick",         description: "真实系统级点击（兜底）：仅当 click/click_text 对目标无效（页面校验真实输入事件）时使用。ref（@eN 稳定句柄，须先 snapshot 获取）优先。执行时会前置激活 xhanHelper 窗口（可能打断用户当前操作），且需要辅助功能权限（未授权会弹窗引导）。仅对屏幕可见的标签生效（agent 需 background:false 打开或用户正在查看该页）", inputSchema: objProps(["ref": strProp("元素编号，如 @e5，从 snapshot 获取"), "x": numProp("直接指定 viewport 坐标 x（调试用，与 ref 二选一）"), "y": numProp("直接指定 viewport 坐标 y（调试用，与 ref 二选一）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_drag",            description: "真实拖拽（地图/滑块/画布，系统级事件，需辅助功能权限）：从起点按下拖动到终点。起点可用 ref（@eN 稳定句柄，须先 snapshot 获取）或 x/y。仅对屏幕可见的标签生效", inputSchema: objProps(["ref": strProp("起点元素编号，如 @e12（地图 canvas），与 x/y 二选一"), "x": numProp("起点 viewport x（无 ref 时使用）"), "y": numProp("起点 viewport y（无 ref 时使用）"), "dx": numProp("水平位移量（viewport 像素）"), "dy": numProp("垂直位移量（viewport 像素）"), "steps": numProp("拖动步数，默认 10"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_fill",             description: "填充表单字段。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。密码等敏感字段禁止用 selector 定位（必须用 ref）。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "value": strProp("填充值"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_type",             description: "在元素中逐字符输入文本（追加语义，如需覆盖请先用 fill 清空）。ref（@eN 稳定句柄，须先 snapshot 获取）优先；密码等敏感字段禁止用 selector 定位（必须用 ref）。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e3"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "text": strProp("输入文本"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_press",            description: "按下键盘按键。agent 调用必须显式 tabId；真实按键（Enter 等）仅对屏幕可见标签生效", inputSchema: objProps(["key": strProp("按键名称"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_select",           description: "选择下拉选项。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e6"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "value": strProp("选项值"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_check",            description: "勾选复选框。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e5"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_uncheck",          description: "取消勾选复选框。ref（@eN 稳定句柄，须先 snapshot 获取）优先；selector 仅用于 snapshot 无法捕获的元素。agent 调用必须显式 tabId", inputSchema: objProps(["ref": strProp("元素编号，如 @e5"), "selector": strProp("CSS选择器（仅 snapshot 无法捕获时使用）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_scroll",           description: "滚动页面（x/y 像素）。agent 调用必须显式 tabId",     inputSchema: objProps(["x": intProp, "y": intProp, "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_wait_for_load",    description: "等待页面加载完成。agent 调用必须显式 tabId",      inputSchema: objProps(["timeout_ms": numProp("超时毫秒，默认10000"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_wait_for_selector", description: "等待指定选择器出现。agent 调用必须显式 tabId",    inputSchema: objProps(["selector": strProp("CSS选择器"), "timeout_ms": numProp("超时毫秒，默认5000"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_go_back",          description: "浏览器后退到上一页。agent 调用必须显式 tabId",      inputSchema: objProps(["tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_go_forward",       description: "浏览器前进到下一页（有页面可前进时生效）。agent 调用必须显式 tabId", inputSchema: objProps(["tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_get_media_sources", description: "获取页面中的视频/图片资源列表（分页，实时抓取）。页面为动态内容（广告自动播放、懒加载）会导致资源随时变化，下载失败或列表疑似过期时重新调用本函数获取最新列表。videos 的 playing 字段标识当前播放中的视频（自动播放的广告可能稍后消失，要下载需趁早）。agent 调用必须显式 tabId", inputSchema: objProps(["page": numProp("页码，从 1 开始，默认 1"), "limit": numProp("每页数量，默认 15（视频和图片共用）"), "tabId": strProp("（必填）目标标签页ID，从 list_tabs 获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_download",          description: "下载指定 URL 到本地（~/Downloads/xhanHelper/）。使用真实浏览器请求特征（UA/Referer/Cookie），需用户确认（L3）。仅允许媒体文件（视频/图片/音频），危险类型（可执行/压缩/脚本）会被拒绝。下载前建议先 get_media_sources 确认地址；失败（404/403）时资源可能已失效，请重新 get_media_sources 获取最新地址。调用时尽量传 filename（带扩展名），让用户确认条能看到文件名和类型", inputSchema: objProps(["url": strProp("要下载的资源 URL（http/https）"), "filename": strProp("可选：自定义文件名（含扩展名），默认从响应或 URL 推断")]), isReadOnly: true),
         ]
         return schemas
@@ -232,19 +238,46 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         case "agent_browser_open":
             return await handleOpen(arguments, owner: context.owner)
         case "agent_browser_close":
-            return handleClose()
+            return handleClose(owner: context.owner)
         case "agent_browser_close_tab":
             return handleCloseTab(arguments, owner: context.owner)
         case "agent_browser_list_tabs":
             return handleListTabs()
         case "agent_browser_switch_tab":
-            return handleSwitchTab(arguments)
+            return handleSwitchTab(arguments, owner: context.owner)
         default:
             // 只读工具支持 tabId 读取后台 tab（静默，不切激活页）；其余工具仅能操作激活 tab
-            let session = Self.readToolsWithTabId.contains(tool) ? sessionFor(arguments) : activeSession
+            // agent 沙箱：读工具无 tabId → 该 owner 最近标签（绝不到用户激活页）；
+            // 写/交互工具必须显式 tabId（防并发子任务共享 activeSession 互踩）。
+            let session: TabSession?
+            if let owner = context.owner {
+                if Self.readToolsWithTabId.contains(tool) {
+                    session = sessionForAgent(arguments, owner: owner)
+                } else {
+                    guard let tabId = arguments["tabId"] as? String, !tabId.isEmpty else {
+                        return .init(serverResult: nil, serverError: "agent 调用写/交互工具必须显式指定 tabId（从 list_tabs 获取），避免误操作其它标签页", clientAction: nil)
+                    }
+                    session = tabs[tabId]
+                }
+            } else {
+                session = Self.readToolsWithTabId.contains(tool) ? sessionFor(arguments) : activeSession
+            }
             guard let session = session else {
                 let hadTabId = (arguments["tabId"] as? String).map { !$0.isEmpty } ?? false
                 return .init(serverResult: nil, serverError: hadTabId ? "指定的 tabId 不存在，请先 list_tabs 获取有效 tabId" : "没有打开的页面", clientAction: nil)
+            }
+            // 用户标签写入授权（双保险：ChatViewModel 确认条是 UX 入口，此处是执行兜底）
+            if let owner = context.owner,
+               session.owner == nil,
+               Self.userTabWriteTools.contains(tool),
+               !userTabGrants.contains(owner) {
+                return .init(serverResult: nil, serverError: "该标签是用户自己的标签，agent 操作用户标签需用户授权（确认条允许后本任务内可继续）", clientAction: nil)
+            }
+            // 真实系统事件工具（CGEvent）需页面在屏幕可见：工作区/后台 agent 标签不可见时拒绝
+            if let owner = context.owner,
+               (tool == "agent_browser_cgclick" || tool == "agent_browser_drag" || tool == "agent_browser_press"),
+               tabs[activeTabId ?? ""] !== session {
+                return .init(serverResult: nil, serverError: "\(tool) 需要页面在屏幕可见（真实系统事件），当前标签在后台/工作区不可见。请用 background:false 打开让用户看到该页，或改用 agent_browser_click 等 JS 交互", clientAction: nil)
             }
             switch tool {
             case "agent_browser_get_url":
@@ -1451,11 +1484,56 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return session
     }
 
-    /// 只读工具（支持 tabId 后台读取）；交互/导航工具仍只能操作激活 tab。
+    /// agent 调用解析目标 session：tabId → 任意标签（用户/agent 标签都可读）；无 tabId → 该 owner 最近标签。
+    /// 绝不落到用户激活页。命中任意目标都刷新 lastAccessedAt（GC 保护）并更新隐式目标指针。
+    private func sessionForAgent(_ args: [String: Any], owner: String) -> TabSession? {
+        if let tabId = args["tabId"] as? String, !tabId.isEmpty {
+            guard let session = tabs[tabId] else { return nil }
+            touchAgentTab(owner: owner, tabId: tabId)
+            return session
+        }
+        guard let tabId = lastAgentTabByOwner[owner], let session = tabs[tabId] else { return nil }
+        return session
+    }
+
+    /// 记录 owner 最近触摸的标签（隐式目标）+ 刷新 GC 访问时间
+    private func touchAgentTab(owner: String, tabId: String) {
+        lastAgentTabByOwner[owner] = tabId
+        tabs[tabId]?.lastAccessedAt = Date()
+    }
+
+    /// 只读工具（支持 tabId 后台读取）；交互/导航工具仍只能操作激活 tab
     private static let readToolsWithTabId: Set<String> = [
         "agent_browser_snapshot", "agent_browser_read", "agent_browser_get_text",
         "agent_browser_get_value", "agent_browser_get_url", "agent_browser_get_title",
     ]
+
+    /// 写/交互工具（agent 操作用户标签需授权；agent 调用必须显式 tabId）。scroll 无害，不入列。
+    static let userTabWriteTools: Set<String> = [
+        "agent_browser_click", "agent_browser_click_text", "agent_browser_fill",
+        "agent_browser_type", "agent_browser_select", "agent_browser_check",
+        "agent_browser_uncheck", "agent_browser_press", "agent_browser_cgclick",
+        "agent_browser_drag", "agent_browser_go_back", "agent_browser_go_forward",
+        "agent_browser_close_tab", "agent_browser_download",
+    ]
+
+    // MARK: - 用户标签写入授权（agent 操作用户标签需用户确认，按 owner 任务级缓存）
+
+    func grantUserTabOps(owner: String) { userTabGrants.insert(owner) }
+
+    func tabIsUserOwned(_ tabId: String?) -> Bool {
+        guard let tabId, let session = tabs[tabId] else { return false }
+        return session.owner == nil
+    }
+
+    /// ChatViewModel 确认条前判定：agent 写工具命中用户标签且该 owner 未授权 → 需弹确认
+    func needsUserTabGrant(tool: String, arguments: [String: Any], owner: String?) -> Bool {
+        guard let owner, !owner.isEmpty else { return false }
+        let flat = tool.components(separatedBy: "__").last ?? tool
+        guard Self.userTabWriteTools.contains(flat) else { return false }
+        guard tabIsUserOwned(arguments["tabId"] as? String) else { return false }
+        return !userTabGrants.contains(owner)
+    }
 
     var activeURL: URL? { activeSession?.webView.url }
 
@@ -1484,14 +1562,21 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     }
 
     /// 交互工具在敏感上下文（高敏域 / http 明文页）下需升到 L3（用户确认）。
-    func shouldElevateToL3(flatName: String) -> Bool {
+    /// 目标 URL 判定：传了 tabId 用该标签的页面（agent 后台/工作区交互），否则用当前激活页。
+    func shouldElevateToL3(flatName: String, arguments: [String: Any] = [:]) -> Bool {
         let tool = flatName.components(separatedBy: "__").last ?? flatName
         guard Self.interactionTools.contains(tool) else {
             pipLog("elevate: \(tool) not interaction, skip")
             return false
         }
-        guard let url = activeURL, let host = url.host else {
-            pipLog("elevate: \(tool) no active url, skip")
+        let targetURL: URL?
+        if let tabId = arguments["tabId"] as? String, !tabId.isEmpty, let s = tabs[tabId] {
+            targetURL = s.webView.url
+        } else {
+            targetURL = activeURL
+        }
+        guard let url = targetURL, let host = url.host else {
+            pipLog("elevate: \(tool) no target url, skip")
             return false
         }
         // G6：明文 http 页可被中间人注入，交互一律确认
@@ -1556,12 +1641,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
+        let isAgent = owner != nil
         let session = TabSession()
-        session.isAgentTab = true
+        session.isAgentTab = isAgent
         session.owner = owner
         tabs[tabId] = session
         // 首个 tab 必须激活展示（无可保留的前台页），否则后台打开会得到不显示的 tab
-        let activate = !background || tabs.count == 1
+        // agent 标签恒不抢 UI 激活（进工作区，用户视图不闪）
+        let activate = !isAgent && (!background || tabs.count == 1)
         if activate {
             switchActiveTab(to: tabId)
         }
@@ -1587,22 +1674,41 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     Task { @MainActor in
                         await self?.retryOpen(session: session, tabId: tabId, url: url)
                     }
-                })), activate: activate, isAgentTab: true)
+                })), activate: activate, isAgentTab: isAgent)
             // P0-1 失败传播：加载失败/超时必须是硬失败（serverError），
             // 否则 LLM 看到 success=true 会误判成功并无效重试。
             return .init(serverResult: nil, serverError: "打开失败: \(msg)（tabId: \(tabId)）。页面未加载成功，请换源或先 close_tab 关闭该页", clientAction: nil)
         }
 
         let title = session.webView.title ?? url.host ?? urlStr
-        // P0-2 拦截页识别：加载"成功"但命中 Cloudflare 人机验证/403 等反爬墙特征 → 硬失败止损，防止 LLM 不死心反复重试
+        // P0-2 拦截页识别：bot 墙（Cloudflare/403 等反爬墙）→ 硬失败止损，人解也无用，防止反复打断/重试
         if isBlockedPageTitle(title) {
             return .init(serverResult: nil, serverError: "页面被拦截（标题：\(title)）：该站存在人机验证/反爬墙，无法读取内容，请换源，不要再重试此站", clientAction: nil)
         }
-        rightSidebar?.openTab(id: tabId, title: title, icon: "globe",
-                              content: AnyView(BrowserTabView(webView: session.webView,
-                                                              onSetupErrorBinding: { [weak session] onError in
-                                                                  session?.onNavigationError = onError
-                                                              })), activate: activate, isAgentTab: true)
+        let content: AnyView = AnyView(BrowserTabView(webView: session.webView,
+                                                      onSetupErrorBinding: { [weak session] onError in
+                                                          session?.onNavigationError = onError
+                                                      }))
+        if let agentOwner = owner {
+            // agent 标签默认进工作区（不抢视图）；检测到人可解墙 → 自动手递手升主栏；
+            // background:false（用户明确要求查看）→ 升主栏并激活。
+            let reason = await wallReason(session: session)
+            rightSidebar?.openTab(id: tabId, title: title, icon: "globe", content: content, activate: false, isAgentTab: true)
+            if let reason {
+                pendingHandoff[agentOwner] = tabId
+                rightSidebar?.setTabNeedsAttention(id: tabId, needs: true)
+                // 升主栏并激活展示：手递手就是"需要你现在处理"，页面直接露出来（不抢键盘焦点）
+                promoteAgentTab(tabId, activate: true)
+                return .init(serverResult: Self.jsonDict(["url": urlStr, "title": title, "tabId": tabId,
+                    "needsUserIntervention": true, "reason": reason,
+                    "message": "该页需要人工处理（\(reason)），已切到前台并标注。请立即调用 ask_user 请求用户处理，message 指明站点与原因"]), serverError: nil, clientAction: nil)
+            }
+            if !background {
+                promoteAgentTab(tabId, activate: true)
+            }
+        } else {
+            rightSidebar?.openTab(id: tabId, title: title, icon: "globe", content: content, activate: activate, isAgentTab: false)
+        }
         return .init(serverResult: Self.jsonDict(["url": urlStr, "title": title, "tabId": tabId, "background": background,
                                                   "remainingAgentTabQuota": quotaLeft - 1]), serverError: nil, clientAction: nil)
     }
@@ -1611,6 +1717,32 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private func isBlockedPageTitle(_ title: String) -> Bool {
         let t = title.lowercased()
         return t.contains("attention required") || t.contains("cloudflare") || t.contains("403 forbidden")
+    }
+
+    /// 人可解墙探测（验证码/登录墙）：密码框或已知验证码 iframe 为强信号；标题+URL 关键词为弱兜底。
+    /// 返回 reason 字符串（login/captcha/verify），非墙返回 nil。仅用于 agent 标签，不打断用户浏览。
+    private static let wallProbeJS = """
+    (function(){
+      try{
+        if(document.querySelector('input[type="password"]'))return 'login';
+        var f=document.querySelectorAll('iframe');
+        for(var i=0;i<f.length;i++){var s=(f[i].src||'').toLowerCase();
+          if(s.indexOf('recaptcha')>=0||s.indexOf('geetest')>=0||s.indexOf('yidun')>=0||s.indexOf('captcha')>=0||s.indexOf('/verify')>=0)return 'captcha';}
+      }catch(e){}
+      return '';
+    })()
+    """
+    private func wallReason(session: TabSession) async -> String? {
+        guard let url = session.webView.url else { return nil }
+        let js = (await session.jsResult(Self.wallProbeJS)).text ?? ""
+        if !js.isEmpty { return js }
+        let t = (session.webView.title ?? "").lowercased()
+        let host = (url.host ?? "").lowercased()
+        let path = (url.path + (url.query ?? "")).lowercased()
+        let strongTitle = ["验证码", "人机验证", "安全验证", "captcha"].contains { t.contains($0) }
+        let strongPath = ["login", "verify", "captcha", "passport", "signin", "2fa", "auth"].contains { host.contains($0) || path.contains($0) }
+        if strongTitle && strongPath { return "verify" }
+        return nil
     }
 
     private func retryOpen(session: TabSession, tabId: String, url: URL) async {
@@ -1644,23 +1776,31 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
     }
 
-    private func handleClose() -> LocalToolResult {
-        let count = tabs.count
+    /// 关闭标签页（agent 上下文只关自己的标签——原实现无归属过滤会清光用户标签，补洞）。
+    private func handleClose(owner: String?) -> LocalToolResult {
+        let ids = owner != nil
+            ? Array(tabs.filter { $0.value.owner == owner }.keys)
+            : Array(tabs.keys)
+        let count = ids.count
         #if os(macOS)
-        let downloading = tabs.values.filter { $0.hasActiveDownloads }.count
+        let downloading = ids.filter { tabs[$0]?.hasActiveDownloads == true }.count
         if downloading > 0 {
             presentCloseConfirmation(
-                title: "关闭全部标签页",
+                title: "关闭标签页",
                 message: "有 \(downloading) 个下载进行中，关闭页面将取消这些下载。确认关闭？"
             ) { [weak self] allow in
                 guard allow else { return }
-                self?.performCloseAll()
+                self?.performCloseScoped(ids)
             }
             return .init(serverResult: Self.jsonDict(["closed": false, "count": count, "pendingConfirmation": true]),
                          serverError: nil, clientAction: nil)
         }
         #endif
-        performCloseAll()
+        if owner != nil {
+            performCloseScoped(ids)
+        } else {
+            performCloseAll()
+        }
         return .init(serverResult: Self.jsonDict(["closed": true, "count": count]), serverError: nil, clientAction: nil)
     }
 
@@ -1673,9 +1813,41 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             rightSidebar?.closeTab(id)
         }
         tabs.removeAll()
+        pendingHandoff.removeAll()
+        lastAgentTabByOwner.removeAll()
         closedStack.removeAll()
         activeTabId = nil
         refreshBrowserGroup()
+    }
+
+    /// agent 上下文关闭部分标签（自己的标签集合），收尾与单标签关闭一致（关激活页后自动切最近 tab）。
+    private func performCloseScoped(_ ids: [String]) {
+        for id in ids {
+            guard let session = tabs[id] else { continue }
+            session.cancelLoadWait()
+            session.forceCancelDownloads()
+            tearDownWebView(session)
+            rightSidebar?.closeTab(id)
+            rightSidebar?.keptAliveTabIds.remove(id)
+        }
+        for id in ids {
+            tabs.removeValue(forKey: id)
+            pendingHandoff = pendingHandoff.filter { $0.value != id }
+            lastAgentTabByOwner = lastAgentTabByOwner.filter { $0.value != id }
+        }
+        refreshBrowserGroup()
+        if let cur = activeTabId, tabs[cur] == nil {
+            let next = tabs.keys
+                .compactMap { id -> (String, Int)? in
+                    guard id.hasPrefix("browser-"), let n = Int(id.dropFirst(8)) else { return nil }
+                    return (id, n)
+                }
+                .max(by: { $0.1 < $1.1 })?.0
+            switchActiveTab(to: next)
+            if let rs = rightSidebar, let rid = next {
+                rs.activeTabId = rid
+            }
+        }
     }
 
     /// 关闭单个标签页：cancelLoadWait + 侧栏关闭 + 移除 + 若关的是激活页则置空。
@@ -1686,9 +1858,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             return .init(serverResult: nil, serverError: "tabId 不存在: \(tabId)，请先 list_tabs 获取有效 tabId", clientAction: nil)
         }
         // 标签归属保护：并发子任务共享同一浏览器实例，close 会互相踩踏（实测：并行任务
-        // 关掉了其他任务的标签导致数据丢失）。只允许关闭自己的标签（owner 相同）或用户标签。
+        // 关掉了其他任务的标签导致数据丢失）。只允许关闭自己的标签（owner 相同）。
         if let tabOwner = session.owner, tabOwner != owner {
             return .init(serverResult: nil, serverError: "该标签（\(tabId)）属于其他并发任务（\(tabOwner)），不可关闭。list_tabs 中标注了每个标签的归属，只操作标注为你自己的标签", clientAction: nil)
+        }
+        // 用户标签关闭需授权（agent 默认不能动用户自己的标签）
+        if let owner, session.owner == nil, !userTabGrants.contains(owner) {
+            return .init(serverResult: nil, serverError: "该标签（\(tabId)）是用户自己的标签，agent 关闭用户标签需用户授权（确认条允许后本任务内可继续）", clientAction: nil)
         }
         if session.hasActiveDownloads {
             #if os(macOS)
@@ -1795,10 +1971,15 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return .init(serverResult: Self.jsonDict(["tabs": tabInfoList(), "activeTabId": activeTabId ?? ""]), serverError: nil, clientAction: nil)
     }
 
-    private func handleSwitchTab(_ args: [String: Any]) -> LocalToolResult {
+    private func handleSwitchTab(_ args: [String: Any], owner: String?) -> LocalToolResult {
         let tabId = args["tabId"] as? String ?? ""
         guard !tabId.isEmpty, tabs[tabId] != nil else {
             return .init(serverResult: nil, serverError: "tabId 不存在: \(tabId)", clientAction: nil)
+        }
+        if let owner {
+            // agent：只更新该 owner 的隐式目标指针，不改用户视图（用户不闪不切）
+            touchAgentTab(owner: owner, tabId: tabId)
+            return .init(serverResult: Self.jsonDict(["switched": tabId]), serverError: nil, clientAction: nil)
         }
         switchActiveTab(to: tabId)
         if let rs = rightSidebar {
@@ -1822,6 +2003,60 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     func deselectTab() {
         switchActiveTab(to: nil)
     }
+
+    // MARK: - Agent 工作区：翻牌进主栏 / 交还工作区 / 手递手
+
+    /// 把 agent 标签升入用户主栏（用户点击工作区标签 / background:false / 手递手）。
+    /// activate:false 时不切走用户当前视图（手递手场景，页面以 ⚠ 角标提示）。
+    func promoteAgentTab(_ id: String, activate: Bool = true) {
+        guard let session = tabs[id], session.isAgentTab else { return }
+        session.isAgentTab = false
+        rightSidebar?.promoteAgentTab(id)
+        if activate {
+            switchActiveTab(to: id)
+            rightSidebar?.activeTabId = id
+        }
+        refreshBrowserGroup()
+    }
+
+    /// 手递手收尾：标签交还 agent 工作区（完成/跳过/超时统一 demote）。
+    func demoteAgentTab(_ id: String) {
+        guard let session = tabs[id], !session.isAgentTab else { return }
+        session.isAgentTab = true
+        rightSidebar?.demoteAgentTab(id)
+        if activeTabId == id {
+            let next = tabs.keys
+                .compactMap { id -> (String, Int)? in
+                    guard id.hasPrefix("browser-"), let n = Int(id.dropFirst(8)) else { return nil }
+                    return (id, n)
+                }
+                .max(by: { $0.1 < $1.1 })?.0
+            switchActiveTab(to: next)
+            if let rs = rightSidebar, let rid = next {
+                rs.activeTabId = rid
+            }
+        }
+        refreshBrowserGroup()
+    }
+
+    func handoffTabId(forOwner owner: String) -> String? { pendingHandoff[owner] }
+
+    /// AskUserBar [前往处理]：激活手递手标签（不自动切走由调用方控制——按钮点击即切）
+    @discardableResult
+    func activateHandoffTab(_ owner: String) -> Bool {
+        guard let tabId = pendingHandoff[owner], tabs[tabId] != nil else { return false }
+        switchActiveTab(to: tabId)
+        rightSidebar?.activeTabId = tabId
+        return true
+    }
+
+    /// ask_user resolve 后交还（清角标 + demote 回工作区）
+    func resolveHandoff(owner: String) {
+        guard let tabId = pendingHandoff.removeValue(forKey: owner) else { return }
+        rightSidebar?.setTabNeedsAttention(id: tabId, needs: false)
+        demoteAgentTab(tabId)
+    }
+
 
     func openBlankTab(intoRight: Bool = false) {
         let tabId = "browser-\(tabCounter)"
@@ -1927,7 +2162,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 退出浏览器：关闭全部标签、释放 WebView（等价 agent_browser_close 工具），回到浏览面板。
     /// 顶栏「退出」按钮调用；区别于「返回」（仅切浏览面板、保留标签与页面状态）。
     func exitBrowser() {
-        _ = handleClose()
+        _ = handleClose(owner: nil)
     }
 
     /// 清除浏览数据（顶栏/浏览器清数据按钮共用；sheet 确认，非阻塞）
@@ -2111,19 +2346,16 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     return false;})()
     """
 
-    /// 扫描 agent 打开的标签，空闲超时（DEBUG=1min / RELEASE=10min）且无下载时自动关闭，释放内存。
+    /// 扫描 agent 打开的标签，空闲超时且无下载时自动关闭，释放内存。
+    /// 工作区标签不可见、无打扰，故 TTL 比主栏用户标签激进得多。
+    /// 手递手中（pendingHandoff）的 owner 的标签豁免——用户思考期间不回收，处理完还能继续用。
     private func cleanupIdleAgentTabs() {
         let now = Date()
-        let idleThreshold: TimeInterval = {
-            #if DEBUG
-            return 60
-            #else
-            return 600
-            #endif
-        }()
+        let idleThreshold: TimeInterval = 600
         let toClose = tabs.filter { id, session in
             session.isAgentTab
             && !session.hasActiveDownloads
+            && !(session.owner.map { pendingHandoff[$0] != nil } ?? false)
             && now.timeIntervalSince(session.lastAccessedAt) > idleThreshold
         }
         for (id, _) in toClose {
@@ -2191,13 +2423,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
             // 用户点击 <a target=_blank> → 直接放行（百度搜索结果等场景）
             if navigationAction.navigationType == .linkActivated {
-                return self.openPopupTab(configuration: configuration, targetURL: targetURL, isAgentTab: session.isAgentTab)
+                return self.openPopupTab(configuration: configuration, targetURL: targetURL, isAgentTab: session.isAgentTab, owner: session.owner)
             }
 
             // window.open / form target=_blank：http/https 直接放行开新 tab（对齐 Chrome，不再弹窗）；
             // 非 http 协议（javascript:/data:/file: 等）仍弹确认，防止被诱导执行本地/危险操作
             if let url = targetURL, url.scheme == "http" || url.scheme == "https" {
-                return self.openPopupTab(configuration: configuration, targetURL: targetURL, isAgentTab: session.isAgentTab)
+                return self.openPopupTab(configuration: configuration, targetURL: targetURL, isAgentTab: session.isAgentTab, owner: session.owner)
             }
 
             // window.open / form target=_blank → 弹确认
@@ -2214,17 +2446,26 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 onDone: { [weak self, weak session] confirmed in
                     guard let self, confirmed else { return }
                     let agentTab = session?.isAgentTab ?? false
+                    let agentOwner = session?.owner
                     Task { @MainActor in
-                        _ = self.openPopupTab(configuration: configuration, targetURL: targetURL, isAgentTab: agentTab)
+                        _ = self.openPopupTab(configuration: configuration, targetURL: targetURL, isAgentTab: agentTab, owner: agentOwner)
                     }
                 }
             )
             #endif
             return nil
         }
-        // R2：noopener target=_blank 等无目标 frame 导航 → 宿主开新 tab（对齐 Chrome）
-        session.onNoTargetNavigation = { [weak self] url in
-            self?.openURL(url)
+        // R2：noopener target=_blank 等无目标 frame 导航 → 宿主开新 tab（对齐 Chrome）。
+        // agent 页面的 noopener 跳转进工作区（不切用户视图），用户页面走 openURL。
+        session.onNoTargetNavigation = { [weak self, weak session] url in
+            guard let self else { return }
+            if let session, session.isAgentTab, let owner = session.owner {
+                Task { @MainActor in
+                    _ = await self.handleOpen(["url": url.absoluteString, "background": true], owner: owner)
+                }
+            } else {
+                self.openURL(url)
+            }
         }
         // JS 弹窗：用 beginSheetModal（非阻塞 sheet）而非 runModal——runModal 会在主线程开嵌套
         // run loop，页面连续弹窗 / 加载中弹窗时容易重入崩溃（mach_msg2_trap + SIGABRT）。
@@ -2290,13 +2531,17 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     #endif
 
     @MainActor
-    private func openPopupTab(configuration: WKWebViewConfiguration, targetURL: URL?, isAgentTab: Bool = false) -> WKWebView? {
+    private func openPopupTab(configuration: WKWebViewConfiguration, targetURL: URL?, isAgentTab: Bool = false, owner: String? = nil) -> WKWebView? {
         let tabId = "browser-\(tabCounter)"
         tabCounter += 1
         let newSession = TabSession(configuration: configuration)
         newSession.isAgentTab = isAgentTab
+        newSession.owner = owner
         tabs[tabId] = newSession
-        switchActiveTab(to: tabId)
+        // agent 弹窗进工作区，不切走用户视图；用户弹窗才激活
+        if !isAgentTab {
+            switchActiveTab(to: tabId)
+        }
         refreshBrowserGroup()
         bindSessionTitle(session: newSession, tabId: tabId)
         // R1：弹窗 tab 必须接 UI 回调（onNewWindowRequest/onNoTargetNavigation/JS 弹窗），

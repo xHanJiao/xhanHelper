@@ -11,10 +11,14 @@ struct RightSidebarTab: Identifiable {
     var host: String?
     /// agent 打开的标签（淡蓝底色区分；用户点击翻牌后置 false）
     var isAgentTab: Bool = false
+    /// 手递手标签：agent 检测到验证码/登录墙升入主栏，需用户处理（⚠ 角标）
+    var needsUserAttention: Bool = false
 }
 
 final class RightSidebarManager: ObservableObject {
     @Published var tabs: [RightSidebarTab] = []
+    /// Agent 工作区标签（agent 打开的标签，独立于用户主栏；可折叠条展示）
+    @Published var agentTabs: [RightSidebarTab] = []
     /// nil = 浏览面板态；浏览器 tab id = 浏览器态
     @Published var activeTabId: String?
     /// 分屏右窗格 tab 分区（有序 id）。空 = 全屏态；非空 = 分屏（左=池减右分区，右=本分区）。
@@ -181,6 +185,14 @@ final class RightSidebarManager: ObservableObject {
     }
 
     func openTab(id: String, title: String, icon: String, content: AnyView, activate: Bool = true, isAgentTab: Bool = false, intoRightPane: Bool = false) {
+        if isAgentTab {
+            // agent 标签进工作区（不参与主栏/分屏/特殊 tab 逻辑），激活忽略（工作区恒不抢视图）
+            if !agentTabs.contains(where: { $0.id == id }) {
+                agentTabs.append(RightSidebarTab(id: id, title: title, icon: icon, content: content, isAgentTab: true))
+            }
+            isOpen = true
+            return
+        }
         if tabs.contains(where: { $0.id == id }) {
             if activate { activeTabId = id }
         } else {
@@ -198,6 +210,49 @@ final class RightSidebarManager: ObservableObject {
         }
         if intoRightPane { moveTabToRight(id: id) }
         isOpen = true
+    }
+
+    // MARK: - Agent 工作区：翻牌进主栏 / 交还工作区 / 手递手角标
+
+    /// agent 工作区标签 → 用户主栏（翻牌语义：isAgentTab 置 false）
+    func promoteAgentTab(_ id: String) {
+        guard let i = agentTabs.firstIndex(where: { $0.id == id }) else { return }
+        var tab = agentTabs.remove(at: i)
+        tab.isAgentTab = false
+        if Self.specialTabIDs.contains(id) {
+            tabs.append(tab)
+        } else if let firstSpecial = tabs.firstIndex(where: { Self.specialTabIDs.contains($0.id) }) {
+            tabs.insert(tab, at: firstSpecial)
+        } else {
+            tabs.append(tab)
+        }
+    }
+
+    /// 主栏标签 → 交还 agent 工作区（手递手收尾）。UI 激活 tab 的切换由 provider 处理（switchActiveTab）。
+    func demoteAgentTab(_ id: String) {
+        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
+        var tab = tabs.remove(at: i)
+        tab.isAgentTab = true
+        tab.needsUserAttention = false
+        agentTabs.append(tab)
+        // 分屏维护：被交还 tab 若在右分区，修正右窗格 active
+        if let idx = splitTabIds.firstIndex(of: id) { splitTabIds.remove(at: idx) }
+        if rightActiveTabId == id { rightActiveTabId = splitTabIds.last }
+        if splitTabIds.isEmpty { rightActiveTabId = nil }
+    }
+
+    /// 手递手 ⚠ 角标开关（升级进主栏时 true，resolve 后 false）
+    func setTabNeedsAttention(id: String, needs: Bool) {
+        if let i = tabs.firstIndex(where: { $0.id == id }) {
+            var t = tabs[i]
+            t.needsUserAttention = needs
+            tabs[i] = t
+        }
+        if let i = agentTabs.firstIndex(where: { $0.id == id }) {
+            var t = agentTabs[i]
+            t.needsUserAttention = needs
+            agentTabs[i] = t
+        }
     }
 
     /// 特殊 tab（浏览器内工具页），固定最右、不可拖拽重排
@@ -236,6 +291,11 @@ final class RightSidebarManager: ObservableObject {
     }
 
     func closeTab(_ id: String) {
+        // agent 工作区标签：直接从工作区移除（主栏逻辑不参与）
+        if agentTabs.contains(where: { $0.id == id }) {
+            agentTabs.removeAll { $0.id == id }
+            return
+        }
         // 下载 tab：仅当它是唯一 tab 且还有活跃下载时禁关（保持浏览器不收起）；
         // 有其它网页 tab 时允许关闭（下载在 store 独立跟踪，关面板不影响）。
         if id == Self.downloadTabID,
@@ -376,31 +436,56 @@ final class RightSidebarManager: ObservableObject {
     func toggle() { isOpen.toggle() }
 
     func updateTabTitle(id: String, title: String) {
-        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
-        var updated = tabs[i]
-        updated.title = title
-        tabs[i] = updated
+        if let i = tabs.firstIndex(where: { $0.id == id }) {
+            var updated = tabs[i]
+            updated.title = title
+            tabs[i] = updated
+        }
+        if let i = agentTabs.firstIndex(where: { $0.id == id }) {
+            var updated = agentTabs[i]
+            updated.title = title
+            agentTabs[i] = updated
+        }
     }
 
     func updateTabHost(id: String, host: String) {
-        guard !host.isEmpty, let i = tabs.firstIndex(where: { $0.id == id }) else { return }
-        var updated = tabs[i]
-        updated.host = host
-        tabs[i] = updated
+        guard !host.isEmpty else { return }
+        if let i = tabs.firstIndex(where: { $0.id == id }) {
+            var updated = tabs[i]
+            updated.host = host
+            tabs[i] = updated
+        }
+        if let i = agentTabs.firstIndex(where: { $0.id == id }) {
+            var updated = agentTabs[i]
+            updated.host = host
+            agentTabs[i] = updated
+        }
     }
 
     /// 更新 tab 的 agent 属性（用户点击翻牌后 agent tab → 用户 tab，底色随之切换）
     func updateTabAgentState(id: String, isAgentTab: Bool) {
-        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
-        var updated = tabs[i]
-        updated.isAgentTab = isAgentTab
-        tabs[i] = updated
+        if let i = tabs.firstIndex(where: { $0.id == id }) {
+            var updated = tabs[i]
+            updated.isAgentTab = isAgentTab
+            tabs[i] = updated
+        }
+        if let i = agentTabs.firstIndex(where: { $0.id == id }) {
+            var updated = agentTabs[i]
+            updated.isAgentTab = isAgentTab
+            agentTabs[i] = updated
+        }
     }
 
     func replaceTabContent(id: String, content: AnyView) {
-        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
-        var updated = tabs[i]
-        updated.content = content
-        tabs[i] = updated
+        if let i = tabs.firstIndex(where: { $0.id == id }) {
+            var updated = tabs[i]
+            updated.content = content
+            tabs[i] = updated
+        }
+        if let i = agentTabs.firstIndex(where: { $0.id == id }) {
+            var updated = agentTabs[i]
+            updated.content = content
+            agentTabs[i] = updated
+        }
     }
 }

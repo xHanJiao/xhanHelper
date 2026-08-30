@@ -43,7 +43,9 @@ extension ChatViewModel {
                 if toolName == "ui__ask_user" {
                     let message = (args["message"] as? String) ?? "子任务需要你的帮助"
                     LogBuffer.shared.info("askUser: \(message.prefix(120))")
-                    let reply = await self.awaitUserRequest(callID: callID, message: message, timeoutSecs: timeoutSecs)
+                    let reply = await self.awaitUserRequest(callID: callID, message: message, timeoutSecs: timeoutSecs, owner: owner)
+                    // 手递手收尾：无论完成/跳过/超时，交还标签给 agent 工作区
+                    if let owner { BrowserToolProvider.shared.resolveHandoff(owner: owner) }
                     if let reply {
                         var payload: [String: Any] = ["answered": true]
                         if !reply.isEmpty { payload["reply"] = reply }
@@ -68,14 +70,27 @@ extension ChatViewModel {
                 // forcedL3 标记"敏感上下文升的级"，信任模式也不跳过。
                 var level = LocalToolRegistry.shared.riskLevel(for: toolName, arguments: args)
                 var forcedL3 = false
-                if level < 3, isBrowser, BrowserToolProvider.shared.shouldElevateToL3(flatName: toolName) {
+                if level < 3, isBrowser, BrowserToolProvider.shared.shouldElevateToL3(flatName: toolName, arguments: args) {
                     level = 3
                     forcedL3 = true
                     LogBuffer.shared.warning("clientToolCall: \(toolName) elevated to L3 (sensitive/plaintext context)")
                 }
 
+                // 用户标签写入授权：agent 写工具命中用户自己的标签且该任务未授权 → 升 L3 弹确认，
+                // 允许后记入该任务（owner）的授权集合（任务级缓存），后续免重复确认。
+                let needsUserTabGrant = isBrowser
+                    && BrowserToolProvider.shared.needsUserTabGrant(tool: toolName, arguments: args, owner: owner)
+                if needsUserTabGrant {
+                    level = 3
+                    forcedL3 = true
+                    LogBuffer.shared.warning("clientToolCall: \(toolName) needs user-tab grant (owner=\(owner ?? "nil"))")
+                }
+
                 // S6：跨域下载在确认信息里标注来源，防下载来源伪装
                 var confirmArgs = args
+                if needsUserTabGrant {
+                    confirmArgs["__user_tab_grant"] = true
+                }
                 if toolName == "browser__agent_browser_download",
                    let urlStr = args["url"] as? String, let url = URL(string: urlStr),
                    let dlHost = url.host, dlHost != BrowserToolProvider.shared.activeURL?.host {
@@ -126,6 +141,11 @@ extension ChatViewModel {
                         LogBuffer.shared.warning("clientToolCall: \(toolName) rejected by user")
                         try await api.submitToolResult(callId: callID, resultJSON: nil, error: "用户拒绝执行")
                         return
+                    }
+                    // 用户标签授权允许 → 记入该任务（owner）授权集合
+                    if needsUserTabGrant, let owner {
+                        BrowserToolProvider.shared.grantUserTabOps(owner: owner)
+                        LogBuffer.shared.info("clientToolCall: user-tab ops granted for owner=\(owner)")
                     }
                 }
 

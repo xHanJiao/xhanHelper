@@ -245,8 +245,13 @@ final class BrowserActivityCenter: ObservableObject {
             }
         }
 
+        // 用户标签写入授权标注（agent 操作你自己的标签，需明确允许本任务继续）
+        if (arguments["__user_tab_grant"] as? Bool) == true {
+            lines.append("⚠ 作用于你自己的标签页，允许后本任务内继续操作无需再确认")
+        }
+
         // 敏感/明文页升级的 L3 标注（解释"为什么这次要确认"）
-        if BrowserToolProvider.shared.shouldElevateToL3(flatName: toolName) {
+        if BrowserToolProvider.shared.shouldElevateToL3(flatName: toolName, arguments: arguments) {
             lines.append("⚠ 当前为敏感/明文页，操作需人工确认")
         }
         return lines.joined(separator: "\n")

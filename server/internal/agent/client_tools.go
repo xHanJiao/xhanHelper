@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -129,6 +130,38 @@ func clientToolIndex(clientTools []ClientTool, registry *tool.Registry) map[stri
 		idx[d.Name] = true
 	}
 	return idx
+}
+
+// filterSubAgentOnlyClientTools 剔除仅 subAgent 可用的客户端工具组（主循环视角）。
+// 主循环对 LLM 隐藏这些组（目录/defs/分发索引/expose 校验均剔除）；
+// 子循环经 task 工具透传的 ec.ClientTools 保持完整，不受影响。groups 为空 = 不限制。
+func filterSubAgentOnlyClientTools(cs []ClientTool, groups []string) []ClientTool {
+	if len(cs) == 0 || len(groups) == 0 {
+		return cs
+	}
+	out := make([]ClientTool, 0, len(cs))
+	for _, c := range cs {
+		if slices.Contains(groups, c.ServerName) {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// filterSubAgentOnlyClientToolInfos 同上的 tool.ClientToolInfo 版本（clientGroups 构建用）。
+func filterSubAgentOnlyClientToolInfos(cs []tool.ClientToolInfo, groups []string) []tool.ClientToolInfo {
+	if len(cs) == 0 || len(groups) == 0 {
+		return cs
+	}
+	out := make([]tool.ClientToolInfo, 0, len(cs))
+	for _, c := range cs {
+		if slices.Contains(groups, c.ServerName) {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // clientToolGroupMap 构建 server_name → 函数名集合 索引（makeExposeFn 校验用）。

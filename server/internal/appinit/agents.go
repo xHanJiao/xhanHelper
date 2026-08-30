@@ -193,6 +193,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		VerifyModel:               cfg.LLM.Verification.Model,
 		UseNativeFC:               cfg.LLM.UseNativeFC,
 		ToolExcludes:              cfg.Chat.ToolExcludes,
+		SubAgentOnlyClientTools:   cfg.Chat.SubAgentOnlyClientTools,
 		DebugPersistJSON:          cfg.LLM.DebugPersist(),
 		DebugJSONSink:             debugJSONSink,
 		ClientBridge:              clientBridge,

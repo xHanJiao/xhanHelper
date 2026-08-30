@@ -209,6 +209,33 @@ func TestMkLlmChatReq_FinalRound_NoTools(t *testing.T) {
 
 // —— mkLlmChatReq plan 模式隐藏全部工具（native FC）——
 
+func TestMkLlmChatReq_SubAgentOnlyClientTools_NotExposed(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "note"})
+	o := &Orchestrator{
+		contextFormatter:        &mockFormatter{},
+		registry:                reg,
+		useNativeFC:             true,
+		subAgentOnlyClientTools: []string{"browser", "fs"},
+	}
+	msgs := []llm.Message{{Role: "user", Content: "hi"}}
+	req := &RunRequest{UserID: "u1", Mode: model.ConvModeWork, ClientTools: []ClientTool{
+		{ServerName: "browser", Name: "navigate"},
+		{ServerName: "fs", Name: "read"},
+	}}
+	// 即使 exposedTools 里有 browser/fs 函数，主循环也绝不下发定义
+	state := &reactState{msgs: msgs, exposedTools: map[string]bool{
+		"browser.navigate": true,
+		"fs.read":          true,
+	}}
+	out := o.mkLlmChatReq(req, "sys", state)
+	for _, d := range out.Tools {
+		if d.Name == "browser" || d.Name == "fs" {
+			t.Errorf("subagent-only client tool leaked in main loop: %s", d.Name)
+		}
+	}
+}
+
 func TestMkLlmChatReq_PlanMode_NoTools(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Register(&fakeTool{name: "note"})

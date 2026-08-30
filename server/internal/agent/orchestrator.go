@@ -136,41 +136,42 @@ type promptBuilder interface {
 
 // Orchestrator — ReAct 循环编排器
 type Orchestrator struct {
-	flashClient            llm.LLMClient
-	proClient              llm.LLMClient
-	registry               *tool.Registry
-	systemPromptBuilder    promptBuilder
-	msgRepo                msgCreator
-	convRepo               convToucher
-	subMsgRepo             *service.MessageRepo      // 具体类型（subAgent 落库用），与 msgRepo 同源
-	subConvRepo            *service.ConversationRepo // 具体类型（subAgent 建子会话用），与 convRepo 同源
-	embedder               *llm.Embedder
-	vectorStore            *VectorStore
-	embeddingRepo          *service.EmbeddingRepo
-	maxIterations          int
-	defaultTemperature     *float64
-	defaultMaxTokens       *int
-	maxToolResultChars     int
-	maxConcurrency         int
-	onChatEnd              func(userID, convID, userMsgID string)
-	verifyEnabled          bool
-	verifyMaxRetries       int
-	verifyModel            string // "flash" | "pro"
-	useNativeFC            bool
-	toolExcludes           []string // 对 LLM 隐藏的工具名（控 token 成本）
-	debugPersistJSON       bool
-	debugJSONSink          DebugJSONSink // request_json 异步落库 sink（开关开启时必须注入）
-	clientBridge           *ClientToolBridge
-	clientToolTimeout      time.Duration
-	subAgentMaxIterations  int
-	subAgentTimeout        time.Duration
-	subAgentCleanupTimeout time.Duration // 子任务结束标签清理单 tab 超时，默认 10s
-	subAgentLocks          sync.Map      // 子会话执行互斥（按 convID，续跑串行化防并发写乱序）
-	summaryRepo            *service.ConversationSummaryRepo
-	contextRetriever       *ctxflow.ContextRetriever // 上下文检索
-	contextFormatter       ctxflow.ContextFormatter  // 上下文格式化（接口）
-	reminderRepo           *service.ReminderRepo
-	profileFactRepo        profileFactGetter
+	flashClient             llm.LLMClient
+	proClient               llm.LLMClient
+	registry                *tool.Registry
+	systemPromptBuilder     promptBuilder
+	msgRepo                 msgCreator
+	convRepo                convToucher
+	subMsgRepo              *service.MessageRepo      // 具体类型（subAgent 落库用），与 msgRepo 同源
+	subConvRepo             *service.ConversationRepo // 具体类型（subAgent 建子会话用），与 convRepo 同源
+	embedder                *llm.Embedder
+	vectorStore             *VectorStore
+	embeddingRepo           *service.EmbeddingRepo
+	maxIterations           int
+	defaultTemperature      *float64
+	defaultMaxTokens        *int
+	maxToolResultChars      int
+	maxConcurrency          int
+	onChatEnd               func(userID, convID, userMsgID string)
+	verifyEnabled           bool
+	verifyMaxRetries        int
+	verifyModel             string // "flash" | "pro"
+	useNativeFC             bool
+	toolExcludes            []string // 对 LLM 隐藏的工具名（控 token 成本）
+	subAgentOnlyClientTools []string // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏）
+	debugPersistJSON        bool
+	debugJSONSink           DebugJSONSink // request_json 异步落库 sink（开关开启时必须注入）
+	clientBridge            *ClientToolBridge
+	clientToolTimeout       time.Duration
+	subAgentMaxIterations   int
+	subAgentTimeout         time.Duration
+	subAgentCleanupTimeout  time.Duration // 子任务结束标签清理单 tab 超时，默认 10s
+	subAgentLocks           sync.Map      // 子会话执行互斥（按 convID，续跑串行化防并发写乱序）
+	summaryRepo             *service.ConversationSummaryRepo
+	contextRetriever        *ctxflow.ContextRetriever // 上下文检索
+	contextFormatter        ctxflow.ContextFormatter  // 上下文格式化（接口）
+	reminderRepo            *service.ReminderRepo
+	profileFactRepo         profileFactGetter
 
 	// 摘要附着控制
 	summaryAttachCount        int
@@ -208,6 +209,7 @@ type OrchestratorConfig struct {
 	VerifyModel               string            // "flash" | "pro"，默认 flash
 	UseNativeFC               bool              // 是否使用原生 function calling
 	ToolExcludes              []string          // 对 LLM 隐藏的工具名列表（控 token 成本）
+	SubAgentOnlyClientTools   []string          // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏），默认 ["browser","fs"]
 	DebugPersistJSON          bool              // 是否持久化完整 LLM 请求 JSON（异步限频写入，配 debug_json 控制频率与保留）
 	DebugJSONSink             DebugJSONSink     // request_json 异步落库 sink，DebugPersistJSON 开启时必填
 	ClientBridge              *ClientToolBridge // 客户端工具桥（客户端工具调用的 pending 路由）
@@ -279,6 +281,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		verifyModel:               cfg.VerifyModel,
 		useNativeFC:               cfg.UseNativeFC,
 		toolExcludes:              cfg.ToolExcludes,
+		subAgentOnlyClientTools:   cfg.SubAgentOnlyClientTools,
 		debugPersistJSON:          cfg.DebugPersistJSON,
 		debugJSONSink:             cfg.DebugJSONSink,
 		clientBridge:              cfg.ClientBridge,
@@ -341,7 +344,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	// prompt-eng 模式本就不支持客户端工具，目录留空。
 	clientCatalog := ""
 	if o.useNativeFC && req.Mode != model.ConvModePlan {
-		clientCatalog = clientToolCatalog(req.ClientTools, o.registry)
+		clientCatalog = clientToolCatalog(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry)
 	}
 	stableXML := o.buildStableContextXML(ctx, req)
 	result, err := o.systemPromptBuilder.Build(ctx, promptbuilder.BuildOptions{
@@ -1041,7 +1044,7 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state 
 		tools = append(tools, o.exposeToolsDefinition())
 		exposedDefs := o.registry.GetLLMToolsFiltered(exposedFuncTools(exposed))
 		tools = append(tools, filterExposedFuncDefs(exposedDefs, exposed)...)
-		tools = append(tools, filterExposedFuncDefs(buildClientToolDefs(req.ClientTools, o.registry), exposed)...)
+		tools = append(tools, filterExposedFuncDefs(buildClientToolDefs(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry), exposed)...)
 		tools = filterToolDefs(tools, o.toolExcludes)
 	} else if len(req.ClientTools) > 0 && !state.finalRound {
 		log.Printf("[orch] client_tools ignored: use_native_fc=false")
@@ -1240,7 +1243,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
 		state.msgs = append(state.msgs, msg)
 		state.allToolCalls = append(state.allToolCalls, internalTCs...)
-		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, internalTCs, clientToolIndex(req.ClientTools, o.registry), state, req.Mode, clientToolReadOnlyIndex(req.ClientTools), toToolClientInfos(req.ClientTools))
+		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, internalTCs, clientToolIndex(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry), state, req.Mode, clientToolReadOnlyIndex(req.ClientTools), toToolClientInfos(req.ClientTools))
 		state.msgs = o.collectToolResultsNative(ctx, internalTCs, msg.ToolCalls, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
 		return false
 	}
@@ -1447,7 +1450,7 @@ func (o *Orchestrator) executePromptEngTools(
 	// use_native_fc=false 时不参与分发，避免 LLM 幻觉出未告知的工具名被路由到客户端
 	var clientIdx map[string]bool
 	if o.useNativeFC {
-		clientIdx = clientToolIndex(req.ClientTools, o.registry)
+		clientIdx = clientToolIndex(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry)
 	}
 	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, parsed.ToolCalls, clientIdx, state, req.Mode, clientToolReadOnlyIndex(req.ClientTools), toToolClientInfos(req.ClientTools))
 	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
@@ -1727,7 +1730,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 
 	var clientCallIdxs []int // 客户端工具下标，串行执行（见设计文档第五节）
 
-	clientGroups := clientToolGroupMap(clientTools)
+	clientGroups := clientToolGroupMap(filterSubAgentOnlyClientToolInfos(clientTools, o.subAgentOnlyClientTools))
 
 	for i, tc := range toolCalls {
 		if clientIdx[tc.Tool] {

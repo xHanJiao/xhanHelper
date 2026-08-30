@@ -82,6 +82,7 @@ chat:
   summary_relevance_history_n: 5 # 相关性检查的历史消息窗口大小
   summary_dedup_threshold: 0.85 # 摘要附着去重阈值（相邻摘要更相似则丢弃较旧者）
   tool_excludes: [mailbox] # 对 LLM 隐藏的工具名（控 token 成本，使用频率低的冷门工具）
+  subagent_only_client_tools: [browser, fs] # 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏，如浏览器/本地文件访问）
 
 share:
   default_valid_days: 7

@@ -91,6 +91,31 @@ func TestClientToolIndex(t *testing.T) {
 	}
 }
 
+func TestFilterSubAgentOnlyClientTools(t *testing.T) {
+	groups := []string{"browser", "fs"}
+	cs := []ClientTool{
+		{ServerName: "browser", Name: "navigate"},
+		{ServerName: "fs", Name: "read"},
+		{ServerName: "calendar", Name: "list"},
+	}
+	got := filterSubAgentOnlyClientTools(cs, groups)
+	if len(got) != 1 || got[0].ServerName != "calendar" {
+		t.Errorf("expected only calendar kept, got %+v", got)
+	}
+	if out := filterSubAgentOnlyClientTools(cs, nil); len(out) != len(cs) {
+		t.Errorf("nil groups should passthrough, got %d", len(out))
+	}
+	infos := []tool.ClientToolInfo{
+		{ServerName: "browser", Name: "navigate"},
+		{ServerName: "fs", Name: "read"},
+		{ServerName: "calendar", Name: "list"},
+	}
+	gi := filterSubAgentOnlyClientToolInfos(infos, groups)
+	if len(gi) != 1 || gi[0].ServerName != "calendar" {
+		t.Errorf("infos filter wrong: %+v", gi)
+	}
+}
+
 func TestBuildClientToolDefs_DedupDuplicateName(t *testing.T) {
 	reg := tool.NewRegistry()
 	defs := buildClientToolDefs([]ClientTool{

@@ -39,6 +39,37 @@ func seedTestBills(t *testing.T, repo *BillRepo, userID string) {
 	}
 }
 
+func TestBillStats(t *testing.T) {
+	repo, cleanup := setupBillRepo(t)
+	defer cleanup()
+	seedTestBills(t, repo, "u1")
+
+	count, sum, err := repo.Stats(context.Background(), "u1", BillFilter{})
+	if err != nil {
+		t.Fatalf("Stats failed: %v", err)
+	}
+	// b1~b5 normal = 50+30+10+80+40=210，b6 作废不计
+	if count != 5 || sum != 210 {
+		t.Errorf("expected count=5 sum=210, got count=%d sum=%v", count, sum)
+	}
+
+	count, sum, err = repo.Stats(context.Background(), "u1", BillFilter{Category1List: []string{"餐饮"}})
+	if err != nil {
+		t.Fatalf("Stats failed: %v", err)
+	}
+	if count != 4 || sum != 200 {
+		t.Errorf("expected count=4 sum=200 for 餐饮, got count=%d sum=%v", count, sum)
+	}
+
+	count, sum, err = repo.Stats(context.Background(), "u1", BillFilter{Keyword: "不存在"})
+	if err != nil {
+		t.Fatalf("Stats failed: %v", err)
+	}
+	if count != 0 || sum != 0 {
+		t.Errorf("expected count=0 sum=0 on empty result, got count=%d sum=%v", count, sum)
+	}
+}
+
 func TestListFilteredCategory1List(t *testing.T) {
 	repo, cleanup := setupBillRepo(t)
 	defer cleanup()

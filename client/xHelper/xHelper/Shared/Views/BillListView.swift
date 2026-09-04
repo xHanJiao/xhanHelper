@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum FilterType { case date, category, owner }
+enum FilterType { case date, category, owner, stats }
 
 struct BillListView: View {
     @StateObject var viewModel: BillViewModel
@@ -18,6 +18,17 @@ struct BillListView: View {
             || !viewModel.filterCategoryList.isEmpty
             || !viewModel.filterOwner.isEmpty
             || !viewModel.keyword.isEmpty
+    }
+
+    /// 统计面板的刷新指纹：筛选/关键词变化时自动重拉（面板开着也保持准确）。
+    private var statsKey: String {
+        [
+            viewModel.filterStartDate,
+            viewModel.filterEndDate,
+            viewModel.filterCategoryList.joined(separator: ","),
+            viewModel.filterOwner,
+            viewModel.keyword,
+        ].joined(separator: "|")
     }
 
     /// 筛选后无结果时的覆盖提示：保留表头筛选入口（可继续调整），并提供一键清除。
@@ -142,7 +153,19 @@ struct BillListView: View {
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
-                        tableColumn("金额", width: .fixed(90), alignment: .trailing) { (b: Bill) in
+                        tableColumn("金额", width: .fixed(90), headerAccessory: { _ in
+                            AnyView(
+                                Button {
+                                    activeFilter = (activeFilter == .stats) ? nil : .stats
+                                } label: {
+                                    Image(systemName: "sum")
+                                        .font(.system(size: 10).weight(.medium))
+                                        .foregroundColor(activeFilter == .stats ? Color("appAccent") : .secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("金额统计")
+                            )
+                        }) { (b: Bill) in
                             Text(String(format: "%.2f", b.amount))
                                 .monospacedDigit()
                         }
@@ -167,6 +190,8 @@ struct BillListView: View {
                 categoryPanel
             } else if activeFilter == .owner {
                 ownerPanel
+            } else if activeFilter == .stats {
+                statsPanel
             }
         }
     }
@@ -337,6 +362,48 @@ struct BillListView: View {
             }
         }
         .buttonStyle(.plain)
+    }
+
+    private var statsPanel: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 20) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("笔数")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("\(viewModel.billStats?.count ?? 0)")
+                        .font(.system(size: 18, weight: .medium))
+                        .monospacedDigit()
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("合计")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(String(format: "¥%.2f", viewModel.billStats?.sum ?? 0))
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(Color("appAccent"))
+                        .monospacedDigit()
+                }
+                Spacer()
+                if viewModel.isLoadingStats {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("统计当前筛选全集（含未加载页）")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
+        .task(id: statsKey) {
+            await viewModel.loadStats()
+        }
     }
 
     private func dateFromString(_ str: String) -> Date {

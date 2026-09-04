@@ -179,6 +179,20 @@ func (r *BillRepo) ListFiltered(ctx context.Context, userID string, f BillFilter
 	return list, total, err
 }
 
+// Stats 按当前筛选条件聚合金额（无分页，覆盖全部匹配记录）
+func (r *BillRepo) Stats(ctx context.Context, userID string, f BillFilter) (count int64, sum float64, err error) {
+	q := applyFilter(r.db.WithContext(ctx).Model(&model.Bill{}).
+		Where("user_id = ? AND status = ?", userID, model.BillStatusNormal), f)
+	var row struct {
+		Count int64
+		Sum   float64
+	}
+	if err := q.Select("COUNT(*) AS count, COALESCE(SUM(amount), 0) AS sum").Scan(&row).Error; err != nil {
+		return 0, 0, err
+	}
+	return row.Count, row.Sum, nil
+}
+
 // CategoryStats 按一级分类汇总金额和数量（MySQL/SQLite GROUP BY）
 func (r *BillRepo) CategoryStats(ctx context.Context, userID, startDate, endDate, owner string) ([]CatStatRow, error) {
 	q := r.db.WithContext(ctx).Model(&model.Bill{}).

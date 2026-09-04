@@ -80,15 +80,25 @@ class APIClient {
     // MARK: Bills (P3 使用)
 
     func getBills(limit: Int = 50, offset: Int = 0, categorys: [String] = [], startDate: String = "", endDate: String = "", keyword: String = "", owner: String = "") async throws -> BillListResponse {
-        var path = "/api/bills?limit=\(limit)&offset=\(offset)"
+        let q = billFilterQuery(categorys: categorys, startDate: startDate, endDate: endDate, keyword: keyword, owner: owner)
+        return try await get("/api/bills?limit=\(limit)&offset=\(offset)" + (q.isEmpty ? "" : "&" + q))
+    }
+
+    func fetchBillStats(categorys: [String] = [], startDate: String = "", endDate: String = "", keyword: String = "", owner: String = "") async throws -> BillStats {
+        let q = billFilterQuery(categorys: categorys, startDate: startDate, endDate: endDate, keyword: keyword, owner: owner)
+        return try await get("/api/bills/stats" + (q.isEmpty ? "" : "?" + q))
+    }
+
+    private func billFilterQuery(categorys: [String] = [], startDate: String = "", endDate: String = "", keyword: String = "", owner: String = "") -> String {
+        var parts: [String] = []
         for category in categorys {
-            path += "&category=\(category.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? category)"
+            parts.append("category=\(category.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? category)")
         }
-        if !startDate.isEmpty { path += "&start_date=\(startDate)" }
-        if !endDate.isEmpty { path += "&end_date=\(endDate)" }
-        if !keyword.isEmpty { path += "&keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)" }
-        if !owner.isEmpty { path += "&owner=\(owner.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? owner)" }
-        return try await get(path)
+        if !startDate.isEmpty { parts.append("start_date=\(startDate)") }
+        if !endDate.isEmpty { parts.append("end_date=\(endDate)") }
+        if !keyword.isEmpty { parts.append("keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)") }
+        if !owner.isEmpty { parts.append("owner=\(owner.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? owner)") }
+        return parts.joined(separator: "&")
     }
 
     func fetchBillOwners() async throws -> [String] {
@@ -112,10 +122,8 @@ class APIClient {
     }
 
     func exportBillsCSV(startDate: String, endDate: String, categorys: [String] = [], keyword: String = "", owner: String = "") async throws -> String {
-		var path = "/api/bills/export?start_date=\(startDate)&end_date=\(endDate)"
-		for category in categorys { path += "&category=\(category.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? category)" }
-		if !keyword.isEmpty { path += "&keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)" }
-		if !owner.isEmpty { path += "&owner=\(owner.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? owner)" }
+		let q = billFilterQuery(categorys: categorys, keyword: keyword, owner: owner)
+		let path = "/api/bills/export?start_date=\(startDate)&end_date=\(endDate)" + (q.isEmpty ? "" : "&" + q)
 		var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
 		req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 		let (data, _) = try await URLSession.shared.data(for: req)
@@ -397,6 +405,11 @@ struct ConversationListResponse: Codable {
 struct BillListResponse: Codable {
     let bills: [Bill]
     let total: Int
+}
+
+struct BillStats: Codable {
+    let count: Int
+    let sum: Double
 }
 
 struct OwnersResponse: Codable {

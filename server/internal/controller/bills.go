@@ -28,30 +28,43 @@ func NewBillHandler(billRepo *service.BillRepo) *BillHandler {
 	return &BillHandler{billRepo: billRepo}
 }
 
+// billFilterFromQuery 从 query 解析账单筛选条件（列表/导出/统计共用）
+func billFilterFromQuery(c *gin.Context) service.BillFilter {
+	return service.BillFilter{
+		StartDate:     c.Query("start_date"),
+		EndDate:       c.Query("end_date"),
+		Category1List: c.QueryArray("category"),
+		Keyword:       c.Query("keyword"),
+		Owner:         c.Query("owner"),
+	}
+}
+
 // ListBills GET /api/bills?limit=50&offset=0
 func (h *BillHandler) ListBills(c *gin.Context) {
 	userID := c.GetString("user_id")
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	startDate := c.Query("start_date")
-	endDate := c.Query("end_date")
-	category := c.QueryArray("category")
-	keyword := c.Query("keyword")
-	owner := c.Query("owner")
 
-	bills, total, err := h.billRepo.ListFiltered(c.Request.Context(), userID, service.BillFilter{
-		StartDate:     startDate,
-		EndDate:       endDate,
-		Category1List: category,
-		Keyword:       keyword,
-		Owner:         owner,
-	}, limit, offset)
+	bills, total, err := h.billRepo.ListFiltered(c.Request.Context(), userID, billFilterFromQuery(c), limit, offset)
 	if err != nil {
 		log.Printf("[bills] List error: %v", err)
 		view.JSONError(c, 500, "query bills failed")
 		return
 	}
 	view.JSONOK(c, gin.H{"bills": bills, "total": total})
+}
+
+// StatsBills GET /api/bills/stats — 按当前筛选对全部匹配记录聚合金额
+func (h *BillHandler) StatsBills(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	count, sum, err := h.billRepo.Stats(c.Request.Context(), userID, billFilterFromQuery(c))
+	if err != nil {
+		log.Printf("[bills] Stats error: %v", err)
+		view.JSONError(c, 500, "query bill stats failed")
+		return
+	}
+	view.JSONOK(c, gin.H{"count": count, "sum": sum})
 }
 
 // OwnersBills GET /api/bills/owners — 当前用户全部归属人（去重，用户隔离）
@@ -184,25 +197,15 @@ func (h *BillHandler) ImportBills(c *gin.Context) {
 func (h *BillHandler) ExportBills(c *gin.Context) {
 	userID := c.GetString("user_id")
 
-	startDate := c.Query("start_date")
-	endDate := c.Query("end_date")
-	category := c.QueryArray("category")
-	keyword := c.Query("keyword")
-	owner := c.Query("owner")
+	f := billFilterFromQuery(c)
 
 	// 默认最近7天
-	if startDate == "" && endDate == "" {
-		endDate = time.Now().In(config.BJ).Format("2006-01-02")
-		startDate = time.Now().In(config.BJ).AddDate(0, 0, -7).Format("2006-01-02")
+	if f.StartDate == "" && f.EndDate == "" {
+		f.EndDate = time.Now().In(config.BJ).Format("2006-01-02")
+		f.StartDate = time.Now().In(config.BJ).AddDate(0, 0, -7).Format("2006-01-02")
 	}
 
-	bills, _, err := h.billRepo.ListFiltered(c.Request.Context(), userID, service.BillFilter{
-		StartDate:     startDate,
-		EndDate:       endDate,
-		Category1List: category,
-		Keyword:       keyword,
-		Owner:         owner,
-	}, 10000, 0)
+	bills, _, err := h.billRepo.ListFiltered(c.Request.Context(), userID, f, 10000, 0)
 	if err != nil {
 		log.Printf("[bills] Export error: %v", err)
 		view.JSONError(c, 500, "query bills failed")

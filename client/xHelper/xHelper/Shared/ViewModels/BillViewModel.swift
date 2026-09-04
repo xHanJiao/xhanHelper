@@ -15,6 +15,8 @@ class BillViewModel: ObservableObject {
     @Published var filterOwner = ""
     @Published var ownerOptions: [String] = []
     @Published var categoryOptions: [String] = []
+    @Published var billStats: BillStats?
+    @Published var isLoadingStats = false
 
     private let apiClient: APIClient
     private var offset = 0
@@ -50,6 +52,23 @@ class BillViewModel: ObservableObject {
             filterCategoryList.remove(at: idx)
         } else {
             filterCategoryList.append(cat)
+        }
+    }
+
+    func loadStats() async {
+        isLoadingStats = true
+        defer { isLoadingStats = false }
+        do {
+            billStats = try await apiClient.fetchBillStats(
+                categorys: filterCategoryList,
+                startDate: filterStartDate,
+                endDate: filterEndDate,
+                keyword: keyword,
+                owner: filterOwner
+            )
+        } catch {
+            LogBuffer.shared.error("BillViewModel.loadStats: \(error)")
+            billStats = nil
         }
     }
 

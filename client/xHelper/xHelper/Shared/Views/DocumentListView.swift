@@ -2,13 +2,12 @@ import SwiftUI
 import MarkdownUI
 
 struct DocumentListView: View {
-    @StateObject var viewModel: DocumentViewModel
-    @State private var selectedDocument: Document?
+    @ObservedObject var viewModel: DocumentViewModel
 
     var body: some View {
         Group {
-            if let doc = selectedDocument {
-                DocumentFullView(document: doc, onBack: { selectedDocument = nil })
+            if let doc = viewModel.openDocument {
+                DocumentFullView(document: doc, onBack: { viewModel.openDocument = nil })
             } else {
                 PageContainer(
                     title: "文档",
@@ -30,7 +29,7 @@ struct DocumentListView: View {
                             subtitle: doc.content,
                             tags: parseTags(doc.tags),
                             style: .document,
-                            onTap: { selectedDocument = doc }
+                            onTap: { viewModel.openDocument = doc }
                         )
                     }
                 }
@@ -38,7 +37,7 @@ struct DocumentListView: View {
             }
         }
         // 同步选中态到顶栏文档按钮组（显隐由 Coordinator visible 闭包决定）
-        .onChange(of: selectedDocument) { _, doc in
+        .onChange(of: viewModel.openDocument) { _, doc in
             if let doc {
                 DocumentSelectionCoordinator.shared.select(doc)
             } else {

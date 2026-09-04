@@ -9,6 +9,8 @@ class DocumentViewModel: ObservableObject {
     @Published var isLoadingMore = false
     @Published var errorMessage: String?
     @Published var keyword = ""
+    @Published var openDocument: Document?
+    @Published var isDetailLoading = false
 
     private let apiClient: APIClient
     private var offset = 0
@@ -37,6 +39,25 @@ class DocumentViewModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    /// 刷新当前打开的详情文档（仅当详情页在前台时调用，见 BrowsePanelView）。
+    func reloadOpenDocument() async {
+        guard let id = openDocument?.id else { return }
+        isDetailLoading = true
+        defer { isDetailLoading = false }
+        do {
+            openDocument = try await apiClient.getDocument(id: id)
+        } catch {
+            LogBuffer.shared.error("DocumentViewModel.reloadOpenDocument: \(error)")
+            guard (error as NSError).code == 404 else {
+                ToastCenter.shared.show("刷新失败：\(error.localizedDescription)")
+                return
+            }
+            ToastCenter.shared.show("文档不存在或已删除")
+            openDocument = nil
+            await load()
+        }
     }
 
     func loadMore() async {

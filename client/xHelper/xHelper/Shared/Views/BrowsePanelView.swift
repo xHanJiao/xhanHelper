@@ -304,6 +304,16 @@ struct BrowsePanelView: View {
 
             Spacer()
 
+            Button {
+                Task { await refresh(panel) }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12))
+                    .foregroundColor(isLoading(panel) ? Color("appAccent") : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("刷新")
+
             if panel == .bills {
                 Button {
                     exportCSV()
@@ -341,6 +351,40 @@ struct BrowsePanelView: View {
         }
         .buttonStyle(.plain)
         .help(help)
+    }
+
+    /// 当前面板是否在加载：详情页在前台时文档面板按详情加载态计。
+    private func isLoading(_ panel: BrowsePanel) -> Bool {
+        switch panel {
+        case .bills:     return billVM.isLoading
+        case .memories:  return memoryVM.isLoading
+        case .notes:     return noteVM.isLoading
+        case .documents: return documentVM.openDocument != nil ? documentVM.isDetailLoading : documentVM.isLoading
+        case .themes:    return themeVM.isLoading
+        case .agents:    return agentVM.isLoading
+        case .dashboard: return false
+        }
+    }
+
+    /// 刷新当前正在看的内容：文档详情在前台时刷新单篇，否则刷新列表。
+    private func refresh(_ panel: BrowsePanel) async {
+        if panel == .documents && documentVM.openDocument != nil {
+            await documentVM.reloadOpenDocument()
+        } else {
+            await reload(panel)
+        }
+    }
+
+    private func reload(_ panel: BrowsePanel) async {
+        switch panel {
+        case .bills:     await billVM.load()
+        case .memories:  await memoryVM.load()
+        case .notes:     await noteVM.load()
+        case .documents: await documentVM.load()
+        case .themes:    await themeVM.load()
+        case .agents:    await agentVM.load()
+        case .dashboard: break
+        }
     }
 
     @ViewBuilder

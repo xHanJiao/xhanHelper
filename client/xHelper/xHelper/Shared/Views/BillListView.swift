@@ -94,6 +94,12 @@ struct BillListView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
+                        tableColumn("备注", tooltip: { $0.remark?.isEmpty == false ? $0.remark! : "/" }) { (b: Bill) in
+                            Text(b.remark?.isEmpty == false ? b.remark! : "/")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
                         tableColumn("金额", width: .fixed(90), alignment: .trailing) { (b: Bill) in
                             Text(String(format: "%.2f", b.amount))
                                 .monospacedDigit()

@@ -11,19 +11,20 @@ import (
 
 // BillFilter — 账单筛选条件
 type BillFilter struct {
-	StartDate   string
-	EndDate     string
-	Category1   string
-	Category2   string
-	Keyword     string
-	Owner       string
-	OwnerEmpty  bool
-	AmountMin   float64
-	AmountMax   float64
-	ConsumeType string
-	PayType     string
-	SortBy      string // "amount" | "date"，空则默认 date
-	SortOrder   string // "asc" | "desc"，空则默认 desc
+	StartDate     string
+	EndDate       string
+	Category1     string
+	Category1List []string
+	Category2     string
+	Keyword       string
+	Owner         string
+	OwnerEmpty    bool
+	AmountMin     float64
+	AmountMax     float64
+	ConsumeType   string
+	PayType       string
+	SortBy        string // "amount" | "date"，空则默认 date
+	SortOrder     string // "asc" | "desc"，空则默认 desc
 }
 
 func (f BillFilter) orderClause() string {
@@ -126,7 +127,9 @@ func applyFilter(q *gorm.DB, f BillFilter) *gorm.DB {
 	if f.EndDate != "" {
 		q = q.Where("date <= ?", f.EndDate)
 	}
-	if f.Category1 != "" {
+	if len(f.Category1List) > 0 {
+		q = q.Where("category1 IN ?", f.Category1List)
+	} else if f.Category1 != "" {
 		q = q.Where("category1 = ?", f.Category1)
 	}
 	if f.Category2 != "" {

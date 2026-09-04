@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum FilterType { case date, category }
+enum FilterType { case date, category, owner }
 
 struct BillListView: View {
     @StateObject var viewModel: BillViewModel
@@ -12,15 +12,11 @@ struct BillListView: View {
     @State private var draftStart = Date()
     @State private var draftEnd = Date()
 
-    private var distinctCategories: [String] {
-        let cats = Set(viewModel.bills.map { $0.category1 }).filter { !$0.isEmpty }
-        return Array(cats).sorted()
-    }
-
     private var hasActiveFilter: Bool {
         !viewModel.filterStartDate.isEmpty
             || !viewModel.filterEndDate.isEmpty
-            || !viewModel.filterCategory.isEmpty
+            || !viewModel.filterCategoryList.isEmpty
+            || !viewModel.filterOwner.isEmpty
             || !viewModel.keyword.isEmpty
     }
 
@@ -47,7 +43,8 @@ struct BillListView: View {
     private func clearAllFilters() {
         viewModel.filterStartDate = ""
         viewModel.filterEndDate = ""
-        viewModel.filterCategory = ""
+        viewModel.filterCategoryList = []
+        viewModel.filterOwner = ""
         viewModel.keyword = ""
         activeFilter = nil
         Task { await viewModel.load() }
@@ -113,7 +110,7 @@ struct BillListView: View {
                                 } label: {
                                     Image(systemName: "line.3.horizontal.decrease.circle")
                                         .font(.system(size: 10).weight(.medium))
-                                        .foregroundColor(viewModel.filterCategory.isEmpty ? .secondary : Color("appAccent"))
+                                        .foregroundColor(viewModel.filterCategoryList.isEmpty ? .secondary : Color("appAccent"))
                                 }
                                 .buttonStyle(.plain)
                                 .help("分类筛选")
@@ -122,7 +119,19 @@ struct BillListView: View {
                             Text(b.category2.isEmpty ? b.category1 : "\(b.category1)/\(b.category2)")
                                 .font(.caption).foregroundColor(.secondary)
                         }
-                        tableColumn("归属人", width: .fixed(80), tooltip: { ($0.owner?.isEmpty == false ? $0.owner! : "/") }) { (b: Bill) in
+                        tableColumn("归属人", width: .fixed(100), tooltip: { ($0.owner?.isEmpty == false ? $0.owner! : "/") }, headerAccessory: { _ in
+                            AnyView(
+                                Button {
+                                    activeFilter = (activeFilter == .owner) ? nil : .owner
+                                } label: {
+                                    Image(systemName: "line.3.horizontal.decrease.circle")
+                                        .font(.system(size: 10).weight(.medium))
+                                        .foregroundColor(viewModel.filterOwner.isEmpty ? .secondary : Color("appAccent"))
+                                }
+                                .buttonStyle(.plain)
+                                .help("归属人筛选")
+                            )
+                        }) { (b: Bill) in
                             Text(b.owner?.isEmpty == false ? b.owner! : "/")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -156,6 +165,8 @@ struct BillListView: View {
                 datePanel
             } else if activeFilter == .category {
                 categoryPanel
+            } else if activeFilter == .owner {
+                ownerPanel
             }
         }
     }
@@ -206,14 +217,21 @@ struct BillListView: View {
 
     private var categoryPanel: some View {
         VStack(spacing: 12) {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], alignment: .leading, spacing: 8) {
-                radioRow("全部分类", isSelected: viewModel.filterCategory.isEmpty) {
-                    viewModel.filterCategory = ""
-                }
+            if viewModel.categoryOptions.isEmpty {
+                Text("暂无分类数据")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 8)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], alignment: .leading, spacing: 8) {
+                    checkRow("全部分类", isChecked: viewModel.filterCategoryList.isEmpty) {
+                        viewModel.filterCategoryList = []
+                    }
 
-                ForEach(distinctCategories, id: \.self) { cat in
-                    radioRow(cat, isSelected: viewModel.filterCategory == cat) {
-                        viewModel.filterCategory = cat
+                    ForEach(viewModel.categoryOptions, id: \.self) { cat in
+                        checkRow(cat, isChecked: viewModel.filterCategoryList.contains(cat)) {
+                            viewModel.toggleCategory(cat)
+                        }
                     }
                 }
             }
@@ -222,7 +240,7 @@ struct BillListView: View {
 
             HStack(spacing: 12) {
                 Button("清除筛选") {
-                    viewModel.filterCategory = ""
+                    viewModel.filterCategoryList = []
                     Task { await viewModel.load() }
                     activeFilter = nil
                 }
@@ -241,6 +259,69 @@ struct BillListView: View {
         .frame(maxWidth: .infinity)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
+        .task { await viewModel.loadCategories() }
+    }
+
+    private var ownerPanel: some View {
+        VStack(spacing: 12) {
+            if viewModel.ownerOptions.isEmpty {
+                Text("暂无归属人数据")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 8)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], alignment: .leading, spacing: 8) {
+                    radioRow("全部人员", isSelected: viewModel.filterOwner.isEmpty) {
+                        viewModel.filterOwner = ""
+                    }
+
+                    ForEach(viewModel.ownerOptions, id: \.self) { owner in
+                        radioRow(owner, isSelected: viewModel.filterOwner == owner) {
+                            viewModel.filterOwner = owner
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Button("清除筛选") {
+                    viewModel.filterOwner = ""
+                    Task { await viewModel.load() }
+                    activeFilter = nil
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(.secondary)
+                Button("应用") {
+                    Task { await viewModel.load() }
+                    activeFilter = nil
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color("appAccent"))
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
+        .task { await viewModel.loadOwners() }
+    }
+
+    private func checkRow(_ label: String, isChecked: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: isChecked ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 11).weight(.medium))
+                    .foregroundColor(isChecked ? Color("appAccent") : .secondary)
+                Text(label)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .foregroundColor(.primary)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private func radioRow(_ label: String, isSelected: Bool, action: @escaping () -> Void) -> some View {

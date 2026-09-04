@@ -85,6 +85,8 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.DELETE("/conversations/:id", deleteConversation(rc.ConvRepo))
 		auth.POST("/conversations/:id/share-messages", rc.MessageShareHandler.CreateMessageShare)
 		auth.GET("/bills", rc.BillHandler.ListBills)
+		auth.GET("/bills/owners", rc.BillHandler.OwnersBills)
+		auth.GET("/bills/categories", rc.BillHandler.CategoriesBills)
 		auth.GET("/bills/export", rc.BillHandler.ExportBills)
 		auth.POST("/bills/import", rc.BillHandler.ImportBills)
 		auth.GET("/summaries", rc.SummaryHandler.ListSummaries)

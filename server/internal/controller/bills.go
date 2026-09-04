@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -34,14 +35,16 @@ func (h *BillHandler) ListBills(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
-	category := c.Query("category")
+	category := c.QueryArray("category")
 	keyword := c.Query("keyword")
+	owner := c.Query("owner")
 
 	bills, total, err := h.billRepo.ListFiltered(c.Request.Context(), userID, service.BillFilter{
-		StartDate: startDate,
-		EndDate:   endDate,
-		Category1: category,
-		Keyword:   keyword,
+		StartDate:     startDate,
+		EndDate:       endDate,
+		Category1List: category,
+		Keyword:       keyword,
+		Owner:         owner,
 	}, limit, offset)
 	if err != nil {
 		log.Printf("[bills] List error: %v", err)
@@ -49,6 +52,33 @@ func (h *BillHandler) ListBills(c *gin.Context) {
 		return
 	}
 	view.JSONOK(c, gin.H{"bills": bills, "total": total})
+}
+
+// OwnersBills GET /api/bills/owners — 当前用户全部归属人（去重，用户隔离）
+func (h *BillHandler) OwnersBills(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	owners, err := h.billRepo.DistinctOwners(c.Request.Context(), userID)
+	if err != nil {
+		log.Printf("[bills] DistinctOwners error: %v", err)
+		view.JSONError(c, 500, "query bill owners failed")
+		return
+	}
+	view.JSONOK(c, gin.H{"owners": owners})
+}
+
+// CategoriesBills GET /api/bills/categories — 当前用户实际用到的全部分类（去重，用户隔离）
+func (h *BillHandler) CategoriesBills(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	cats, err := h.billRepo.CategoryOptions(c.Request.Context(), userID)
+	if err != nil {
+		log.Printf("[bills] CategoryOptions error: %v", err)
+		view.JSONError(c, 500, "query bill categories failed")
+		return
+	}
+	sort.Strings(cats.Category1List)
+	view.JSONOK(c, gin.H{"category1_list": cats.Category1List})
 }
 
 // ImportBills POST /api/bills/import
@@ -156,8 +186,9 @@ func (h *BillHandler) ExportBills(c *gin.Context) {
 
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
-	category := c.Query("category")
+	category := c.QueryArray("category")
 	keyword := c.Query("keyword")
+	owner := c.Query("owner")
 
 	// 默认最近7天
 	if startDate == "" && endDate == "" {
@@ -166,10 +197,11 @@ func (h *BillHandler) ExportBills(c *gin.Context) {
 	}
 
 	bills, _, err := h.billRepo.ListFiltered(c.Request.Context(), userID, service.BillFilter{
-		StartDate: startDate,
-		EndDate:   endDate,
-		Category1: category,
-		Keyword:   keyword,
+		StartDate:     startDate,
+		EndDate:       endDate,
+		Category1List: category,
+		Keyword:       keyword,
+		Owner:         owner,
 	}, 10000, 0)
 	if err != nil {
 		log.Printf("[bills] Export error: %v", err)

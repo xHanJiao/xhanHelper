@@ -79,13 +79,26 @@ class APIClient {
 
     // MARK: Bills (P3 使用)
 
-    func getBills(limit: Int = 50, offset: Int = 0, category: String = "", startDate: String = "", endDate: String = "", keyword: String = "") async throws -> BillListResponse {
+    func getBills(limit: Int = 50, offset: Int = 0, categorys: [String] = [], startDate: String = "", endDate: String = "", keyword: String = "", owner: String = "") async throws -> BillListResponse {
         var path = "/api/bills?limit=\(limit)&offset=\(offset)"
-        if !category.isEmpty { path += "&category=\(category.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? category)" }
+        for category in categorys {
+            path += "&category=\(category.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? category)"
+        }
         if !startDate.isEmpty { path += "&start_date=\(startDate)" }
         if !endDate.isEmpty { path += "&end_date=\(endDate)" }
         if !keyword.isEmpty { path += "&keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)" }
+        if !owner.isEmpty { path += "&owner=\(owner.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? owner)" }
         return try await get(path)
+    }
+
+    func fetchBillOwners() async throws -> [String] {
+        let resp: OwnersResponse = try await get("/api/bills/owners")
+        return resp.owners
+    }
+
+    func fetchBillCategories() async throws -> [String] {
+        let resp: CategoriesResponse = try await get("/api/bills/categories")
+        return resp.category1List
     }
 
     func uploadBillsCSV(_ csvText: String) async throws -> ImportResult {
@@ -98,10 +111,11 @@ class APIClient {
         return try await doRequest(req)
     }
 
-    func exportBillsCSV(startDate: String, endDate: String, category: String = "", keyword: String = "") async throws -> String {
+    func exportBillsCSV(startDate: String, endDate: String, categorys: [String] = [], keyword: String = "", owner: String = "") async throws -> String {
 		var path = "/api/bills/export?start_date=\(startDate)&end_date=\(endDate)"
-		if !category.isEmpty { path += "&category=\(category)" }
+		for category in categorys { path += "&category=\(category.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? category)" }
 		if !keyword.isEmpty { path += "&keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)" }
+		if !owner.isEmpty { path += "&owner=\(owner.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? owner)" }
 		var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
 		req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 		let (data, _) = try await URLSession.shared.data(for: req)
@@ -383,6 +397,18 @@ struct ConversationListResponse: Codable {
 struct BillListResponse: Codable {
     let bills: [Bill]
     let total: Int
+}
+
+struct OwnersResponse: Codable {
+    let owners: [String]
+}
+
+struct CategoriesResponse: Codable {
+    let category1List: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case category1List = "category1_list"
+    }
 }
 
 struct NoteListResponse: Codable {

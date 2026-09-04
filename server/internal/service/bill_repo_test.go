@@ -39,6 +39,25 @@ func seedTestBills(t *testing.T, repo *BillRepo, userID string) {
 	}
 }
 
+func TestListFilteredCategory1List(t *testing.T) {
+	repo, cleanup := setupBillRepo(t)
+	defer cleanup()
+	seedTestBills(t, repo, "u1")
+
+	bills, total, err := repo.ListFiltered(context.Background(), "u1", BillFilter{Category1List: []string{"餐饮", "交通"}}, 50, 0)
+	if err != nil {
+		t.Fatalf("ListFiltered failed: %v", err)
+	}
+	if total != 5 {
+		t.Errorf("expected 5 bills in 餐饮+交通, got %d", total)
+	}
+	for _, b := range bills {
+		if b.Category1 != "餐饮" && b.Category1 != "交通" {
+			t.Errorf("unexpected category1: %s", b.Category1)
+		}
+	}
+}
+
 func TestListFilteredCategory2(t *testing.T) {
 	repo, cleanup := setupBillRepo(t)
 	defer cleanup()

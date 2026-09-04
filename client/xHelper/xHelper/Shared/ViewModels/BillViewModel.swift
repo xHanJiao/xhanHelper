@@ -8,10 +8,13 @@ class BillViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var isLoadingMore = false
     @Published var errorMessage: String?
-    @Published var filterCategory = ""
+    @Published var filterCategoryList: [String] = []
     @Published var filterStartDate = ""
     @Published var filterEndDate = ""
     @Published var keyword = ""
+    @Published var filterOwner = ""
+    @Published var ownerOptions: [String] = []
+    @Published var categoryOptions: [String] = []
 
     private let apiClient: APIClient
     private var offset = 0
@@ -26,6 +29,30 @@ class BillViewModel: ObservableObject {
         await load()
     }
 
+    func loadOwners() async {
+        do {
+            ownerOptions = try await apiClient.fetchBillOwners().filter { !$0.isEmpty }
+        } catch {
+            LogBuffer.shared.error("BillViewModel.loadOwners: \(error)")
+        }
+    }
+
+    func loadCategories() async {
+        do {
+            categoryOptions = try await apiClient.fetchBillCategories().filter { !$0.isEmpty }.sorted()
+        } catch {
+            LogBuffer.shared.error("BillViewModel.loadCategories: \(error)")
+        }
+    }
+
+    func toggleCategory(_ cat: String) {
+        if let idx = filterCategoryList.firstIndex(of: cat) {
+            filterCategoryList.remove(at: idx)
+        } else {
+            filterCategoryList.append(cat)
+        }
+    }
+
     func load() async {
         isLoading = true
         errorMessage = nil
@@ -33,10 +60,11 @@ class BillViewModel: ObservableObject {
         hasMore = true
         do {
             let resp = try await apiClient.getBills(
-                category: filterCategory,
+                categorys: filterCategoryList,
                 startDate: filterStartDate,
                 endDate: filterEndDate,
-                keyword: keyword
+                keyword: keyword,
+                owner: filterOwner
             )
             bills = resp.bills
             hasMore = resp.bills.count >= 50
@@ -54,10 +82,11 @@ class BillViewModel: ObservableObject {
         do {
             let resp = try await apiClient.getBills(
                 offset: offset,
-                category: filterCategory,
+                categorys: filterCategoryList,
                 startDate: filterStartDate,
                 endDate: filterEndDate,
-                keyword: keyword
+                keyword: keyword,
+                owner: filterOwner
             )
             bills.append(contentsOf: resp.bills)
             hasMore = resp.bills.count >= 50
@@ -74,8 +103,9 @@ class BillViewModel: ObservableObject {
             return try await api.exportBillsCSV(
                 startDate: filterStartDate,
                 endDate: filterEndDate,
-                category: filterCategory,
-                keyword: keyword
+                categorys: filterCategoryList,
+                keyword: keyword,
+                owner: filterOwner
             )
         } catch {
             LogBuffer.shared.error("BillViewModel.exportCSV: \(error)")

@@ -8,6 +8,7 @@ class DocumentViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var isLoadingMore = false
     @Published var errorMessage: String?
+    @Published var keyword = ""
 
     private let apiClient: APIClient
     private var offset = 0
@@ -17,12 +18,18 @@ class DocumentViewModel: ObservableObject {
         self.apiClient = apiClient
     }
 
+    func search(_ kw: String) async {
+        keyword = kw
+        await load()
+    }
+
     func load() async {
         isLoading = true
+        errorMessage = nil
         offset = 0
         hasMore = true
         do {
-            let resp = try await apiClient.listDocuments()
+            let resp = try await apiClient.listDocuments(keyword: keyword.isEmpty ? nil : keyword)
             documents = resp.documents
             hasMore = resp.documents.count >= 24
         } catch {
@@ -37,7 +44,7 @@ class DocumentViewModel: ObservableObject {
         isLoadingMore = true
         offset += 24
         do {
-            let resp = try await apiClient.listDocuments(offset: offset)
+            let resp = try await apiClient.listDocuments(keyword: keyword.isEmpty ? nil : keyword, offset: offset)
             documents.append(contentsOf: resp.documents)
             hasMore = resp.documents.count >= 24
         } catch {

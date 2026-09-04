@@ -11,6 +11,7 @@ class BillViewModel: ObservableObject {
     @Published var filterCategory = ""
     @Published var filterStartDate = ""
     @Published var filterEndDate = ""
+    @Published var keyword = ""
 
     private let apiClient: APIClient
     private var offset = 0
@@ -20,15 +21,22 @@ class BillViewModel: ObservableObject {
         self.apiClient = apiClient
     }
 
+    func search(_ kw: String) async {
+        keyword = kw
+        await load()
+    }
+
     func load() async {
         isLoading = true
+        errorMessage = nil
         offset = 0
         hasMore = true
         do {
             let resp = try await apiClient.getBills(
                 category: filterCategory,
                 startDate: filterStartDate,
-                endDate: filterEndDate
+                endDate: filterEndDate,
+                keyword: keyword
             )
             bills = resp.bills
             hasMore = resp.bills.count >= 50
@@ -48,7 +56,8 @@ class BillViewModel: ObservableObject {
                 offset: offset,
                 category: filterCategory,
                 startDate: filterStartDate,
-                endDate: filterEndDate
+                endDate: filterEndDate,
+                keyword: keyword
             )
             bills.append(contentsOf: resp.bills)
             hasMore = resp.bills.count >= 50
@@ -65,7 +74,8 @@ class BillViewModel: ObservableObject {
             return try await api.exportBillsCSV(
                 startDate: filterStartDate,
                 endDate: filterEndDate,
-                category: filterCategory
+                category: filterCategory,
+                keyword: keyword
             )
         } catch {
             LogBuffer.shared.error("BillViewModel.exportCSV: \(error)")

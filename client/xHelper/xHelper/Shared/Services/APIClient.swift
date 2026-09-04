@@ -79,11 +79,12 @@ class APIClient {
 
     // MARK: Bills (P3 使用)
 
-    func getBills(limit: Int = 50, offset: Int = 0, category: String = "", startDate: String = "", endDate: String = "") async throws -> BillListResponse {
+    func getBills(limit: Int = 50, offset: Int = 0, category: String = "", startDate: String = "", endDate: String = "", keyword: String = "") async throws -> BillListResponse {
         var path = "/api/bills?limit=\(limit)&offset=\(offset)"
         if !category.isEmpty { path += "&category=\(category.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? category)" }
         if !startDate.isEmpty { path += "&start_date=\(startDate)" }
         if !endDate.isEmpty { path += "&end_date=\(endDate)" }
+        if !keyword.isEmpty { path += "&keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)" }
         return try await get(path)
     }
 
@@ -97,9 +98,10 @@ class APIClient {
         return try await doRequest(req)
     }
 
-    func exportBillsCSV(startDate: String, endDate: String, category: String = "") async throws -> String {
+    func exportBillsCSV(startDate: String, endDate: String, category: String = "", keyword: String = "") async throws -> String {
 		var path = "/api/bills/export?start_date=\(startDate)&end_date=\(endDate)"
 		if !category.isEmpty { path += "&category=\(category)" }
+		if !keyword.isEmpty { path += "&keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)" }
 		var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
 		req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 		let (data, _) = try await URLSession.shared.data(for: req)

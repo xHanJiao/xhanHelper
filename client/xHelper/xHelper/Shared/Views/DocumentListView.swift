@@ -16,7 +16,7 @@ struct DocumentListView: View {
                     isLoading: viewModel.isLoading,
                     errorMessage: viewModel.errorMessage,
                     isEmpty: viewModel.documents.isEmpty && !viewModel.isLoading,
-                    emptyMessage: "还没有文档",
+                    emptyMessage: viewModel.keyword.isEmpty ? "还没有文档" : "未找到匹配的文档",
                     onRetry: { Task { await viewModel.load() } }
                 ) {
                     CardGridView(

@@ -35,11 +35,13 @@ func (h *BillHandler) ListBills(c *gin.Context) {
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
 	category := c.Query("category")
+	keyword := c.Query("keyword")
 
 	bills, total, err := h.billRepo.ListFiltered(c.Request.Context(), userID, service.BillFilter{
 		StartDate: startDate,
 		EndDate:   endDate,
 		Category1: category,
+		Keyword:   keyword,
 	}, limit, offset)
 	if err != nil {
 		log.Printf("[bills] List error: %v", err)
@@ -155,6 +157,7 @@ func (h *BillHandler) ExportBills(c *gin.Context) {
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
 	category := c.Query("category")
+	keyword := c.Query("keyword")
 
 	// 默认最近7天
 	if startDate == "" && endDate == "" {
@@ -166,6 +169,7 @@ func (h *BillHandler) ExportBills(c *gin.Context) {
 		StartDate: startDate,
 		EndDate:   endDate,
 		Category1: category,
+		Keyword:   keyword,
 	}, 10000, 0)
 	if err != nil {
 		log.Printf("[bills] Export error: %v", err)

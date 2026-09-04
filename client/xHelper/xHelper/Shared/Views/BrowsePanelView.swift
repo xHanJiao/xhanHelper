@@ -62,6 +62,12 @@ struct BrowsePanelView: View {
     /// 只有换 URL 才能绕过。
     @State private var dashboardBust = Int(Date().timeIntervalSince1970)
 
+    /// 文档/账单页头搜索图标展开态 + 搜索框草稿（切页复位，同一时刻至多开一个）。
+    @State private var docSearchOpen = false
+    @State private var billSearchOpen = false
+    @State private var docSearchDraft = ""
+    @State private var billSearchDraft = ""
+
     /// 监控看板前端地址：DEBUG 用 Vite dev server，RELEASE 用同源后端（nginx 已 serve）
     private var dashboardURL: URL? {
         let suffix = "?t=\(dashboardBust)"
@@ -152,11 +158,76 @@ struct BrowsePanelView: View {
                 } else {
                     panelHeader(panel)
                     Divider()
+                    transientSearchPanel(panel)
                     panelContent(panel)
                 }
             } else {
                 grid
             }
+        }
+        .onChange(of: manager.browsePanelSelection) { _, newValue in
+            if newValue == nil {
+                docSearchOpen = false
+                billSearchOpen = false
+            }
+        }
+    }
+
+    // MARK: - 页头搜索（文档/账单瞬时功能区）
+
+    private func toggleDocSearch() {
+        guard !docSearchOpen else { docSearchOpen = false; return }
+        billSearchOpen = false
+        docSearchDraft = documentVM.keyword
+        docSearchOpen = true
+    }
+
+    private func toggleBillSearch() {
+        guard !billSearchOpen else { billSearchOpen = false; return }
+        docSearchOpen = false
+        billSearchDraft = billVM.keyword
+        billSearchOpen = true
+    }
+
+    @ViewBuilder
+    private func transientSearchPanel(_ panel: BrowsePanel) -> some View {
+        switch panel {
+        case .documents where docSearchOpen:
+            TransientSearchPanel(
+                placeholder: "搜索标题或内容",
+                caption: "按标题/正文检索",
+                draft: $docSearchDraft,
+                onSearch: { kw in
+                    Task { await documentVM.search(kw) }
+                    docSearchOpen = false
+                },
+                onClear: {
+                    docSearchDraft = ""
+                    Task { await documentVM.search("") }
+                    docSearchOpen = false
+                }
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        case .bills where billSearchOpen:
+            TransientSearchPanel(
+                placeholder: "搜索项目或备注",
+                caption: "按项目/备注检索，与日期/分类筛选叠加生效",
+                draft: $billSearchDraft,
+                onSearch: { kw in
+                    Task { await billVM.search(kw) }
+                    billSearchOpen = false
+                },
+                onClear: {
+                    billSearchDraft = ""
+                    Task { await billVM.search("") }
+                    billSearchOpen = false
+                }
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        default:
+            EmptyView()
         }
     }
 
@@ -244,9 +315,32 @@ struct BrowsePanelView: View {
                 .buttonStyle(.plain)
                 .help("导出 CSV")
             }
+
+            if panel == .documents {
+                headerSearchToggle(
+                    active: docSearchOpen || !documentVM.keyword.isEmpty,
+                    help: "搜索文档"
+                ) { toggleDocSearch() }
+            } else if panel == .bills {
+                headerSearchToggle(
+                    active: billSearchOpen || !billVM.keyword.isEmpty,
+                    help: "搜索账单"
+                ) { toggleBillSearch() }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// 页头搜索图标：面板展开或有关键词生效时 accent 高亮（对齐账单筛选激活态）。
+    private func headerSearchToggle(active: Bool, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundColor(active ? Color("appAccent") : .secondary)
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     @ViewBuilder
@@ -308,5 +402,71 @@ struct BrowsePanelView: View {
             }
         }
         #endif
+    }
+}
+
+/// 文档/账单共用的瞬时搜索功能区（页头🔍点开，操作后收起；不构成常驻工具条）。
+private struct TransientSearchPanel: View {
+    let placeholder: String
+    let caption: String?
+    @Binding var draft: String
+    let onSearch: (String) -> Void
+    let onClear: () -> Void
+
+    private var trimmed: String {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+
+                TextField(placeholder, text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12))
+                    .onSubmit(runSearch)
+
+                if !trimmed.isEmpty {
+                    Button {
+                        onClear()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("清空搜索")
+                }
+
+                Button {
+                    runSearch()
+                } label: {
+                    Text("搜索")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color("appAccent"))
+                .controlSize(.small)
+                .disabled(trimmed.isEmpty)
+            }
+
+            if let caption {
+                Text(caption)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func runSearch() {
+        let kw = trimmed
+        guard !kw.isEmpty else { return }
+        onSearch(kw)
     }
 }

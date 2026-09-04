@@ -17,44 +17,77 @@ struct BillListView: View {
         return Array(cats).sorted()
     }
 
+    private var hasActiveFilter: Bool {
+        !viewModel.filterStartDate.isEmpty
+            || !viewModel.filterEndDate.isEmpty
+            || !viewModel.filterCategory.isEmpty
+            || !viewModel.keyword.isEmpty
+    }
+
+    /// 筛选后无结果时的覆盖提示：保留表头筛选入口（可继续调整），并提供一键清除。
+    private var filteredEmptyOverlay: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.system(size: 22))
+                .foregroundColor(.secondary.opacity(0.6))
+            Text("没有符合条件的账单")
+                .font(.system(size: 13, weight: .medium))
+            Text("点上方表头图标调整日期/分类，或在页头🔍更换关键词")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            Button("清除筛选") { clearAllFilters() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .multilineTextAlignment(.center)
+        .padding(20)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func clearAllFilters() {
+        viewModel.filterStartDate = ""
+        viewModel.filterEndDate = ""
+        viewModel.filterCategory = ""
+        viewModel.keyword = ""
+        activeFilter = nil
+        Task { await viewModel.load() }
+    }
+
     var body: some View {
         PageContainer(
             title: "账单",
             icon: "yensign.circle",
             isLoading: viewModel.isLoading,
             errorMessage: viewModel.errorMessage,
-            isEmpty: viewModel.bills.isEmpty && !viewModel.isLoading,
+            isEmpty: viewModel.bills.isEmpty && !viewModel.isLoading && !hasActiveFilter,
             emptyMessage: "还没有账单记录",
             onRetry: { Task { await viewModel.load() } }
         ) {
             VStack(spacing: 0) {
-                if viewModel.bills.isEmpty && !viewModel.isLoading {
-                    EmptyView()
-                } else {
-                    DataTable(
-                        items: viewModel.bills,
-                        hasMore: viewModel.hasMore,
-                        onLoadMore: { await viewModel.loadMore() },
-                        filterContent: activeFilter != nil ? {
-                            AnyView(
-                                ZStack(alignment: .topTrailing) {
-                                    filterPanel
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 8)
+                DataTable(
+                    items: viewModel.bills,
+                    hasMore: viewModel.hasMore,
+                    onLoadMore: { await viewModel.loadMore() },
+                    filterContent: activeFilter != nil ? {
+                        AnyView(
+                            ZStack(alignment: .topTrailing) {
+                                filterPanel
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
 
-                                    Button { activeFilter = nil } label: {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .font(.system(size: 13))
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .padding(14)
+                                Button { activeFilter = nil } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.secondary)
                                 }
-                                .frame(maxWidth: .infinity)
-                                .fixedSize(horizontal: false, vertical: true)
-                            )
-                        } : nil
-                    ) {
+                                .buttonStyle(.plain)
+                                .padding(14)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .fixedSize(horizontal: false, vertical: true)
+                        )
+                    } : nil
+                ) {
                         tableColumn("日期", width: .fixed(90), headerAccessory: { _ in
                             AnyView(
                                 Button {
@@ -105,9 +138,13 @@ struct BillListView: View {
                                 .monospacedDigit()
                         }
                     }
+                    .overlay {
+                        if viewModel.bills.isEmpty && !viewModel.isLoading && activeFilter == nil {
+                            filteredEmptyOverlay
+                        }
+                    }
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 12)
-                }
             }
         }
         .task { await viewModel.load() }

@@ -53,11 +53,11 @@ llm:
 # model 留空 = 未启用，自动复用上方 llm 配置（行为与以前完全一致）。
 # 启用后：在线聊天仍走 llm，所有后台 LLM 调用走此供应商。
 llm_bg:
-  api_key: ${LLM_BG_API_KEY}
-  provider: deepseek # 填 deepseek（OpenAI 兼容协议族，硅基流动走此分支）
-  model: "deepseek-ai/DeepSeek-V4-Flash"
-  strong_model: "deepseek-ai/DeepSeek-V4-Pro"
-  base_url: https://api.siliconflow.cn/v1
+  api_key: ${LLM_API_KEY} # 复用主 key；如需后台独立额度/计费，可改用 ${LLM_BG_API_KEY} 并在环境变量注入
+  provider: deepseek # 原厂 DeepSeek，OpenAI 兼容协议
+  model: deepseek-v4-flash
+  strong_model: deepseek-v4-pro
+  base_url: https://api.deepseek.com
   http_timeout_secs: 120
   strong_http_timeout_secs: 600
 

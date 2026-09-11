@@ -77,7 +77,7 @@ extension FileSystemToolProvider {
                     collect.truncated = true
                     return false
                 }
-                collect.files.append(absPath)
+                collect.files.append("\(absPath)\t\(self.fileSize(absPath))")
                 return true
             }
             if capped && !collect.truncated {
@@ -112,13 +112,18 @@ extension FileSystemToolProvider {
                 collect.truncated = true
                 return false
             }
-            collect.files.append(absPath)
+            collect.files.append("\(absPath)\t\(self.fileSize(absPath))")
             return true
         }
         if capped && !collect.truncated {
             collect.budgetCapped = true
         }
         return collect
+    }
+
+    /// 文件字节数；stat 失败记 0。
+    private func fileSize(_ path: String) -> UInt64 {
+        (try? FileManager.default.attributesOfItem(atPath: path)[.size]) as? UInt64 ?? 0
     }
 
     func findRgBinary() -> String? {

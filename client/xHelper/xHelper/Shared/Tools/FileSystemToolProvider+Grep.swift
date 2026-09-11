@@ -30,8 +30,62 @@ extension FileSystemToolProvider {
         // 输出预算只裁文案（formatGrepOutput 按字节增量构建），收集走安全网预算
         let outputBudget = budgetCap(context.budgetBytes)
 
+        if Self.isPDFFile(path: resolvedPath) {
+            return runPDFGrep(
+                pattern: pattern, path: resolvedPath, skip: skip,
+                maxLineChars: maxLineChars, outputBudget: outputBudget)
+        }
+
         let collector = await runGrep(
             pattern: pattern, path: resolvedPath, include: include, skip: skip)
+        let formatted = GrepParser.formatGrepOutput(
+            matches: collector.matches,
+            omittedSensitive: collector.omittedSensitive,
+            stop: collector.stop,
+            pageSkip: skip,
+            maxBytes: outputBudget)
+        let sanitized = OutputSanitizer.sanitize(formatted.text)
+        return LocalToolResult(serverResult: sanitized.data(using: .utf8), serverError: nil, clientAction: nil)
+    }
+
+    /// 是否为 PDF 文件（扩展名或魔数 %PDF）。仅单文件命中，目录仍走 rg。
+    static func isPDFFile(path: String) -> Bool {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue else {
+            return false
+        }
+        if (path as NSString).pathExtension.lowercased() == "pdf" { return true }
+
+        guard let fh = FileHandle(forReadingAtPath: path) else { return false }
+        defer { try? fh.close() }
+        guard let head = try? fh.read(upToCount: 4) else { return false }
+        return head == Data([0x25, 0x50, 0x44, 0x46]) // %PDF
+    }
+
+    /// PDF 检索：提取文本层 → 按行正则匹配 → 复用 grep 输出协议（Page N + skip 翻页）。
+    private func runPDFGrep(
+        pattern: String, path: String, skip: Int, maxLineChars: Int, outputBudget: Int
+    ) -> LocalToolResult {
+        let pages: [String]
+        do {
+            pages = try PDFTextExtractor.pageTexts(path: path)
+        } catch let e as PDFExtractError {
+            return LocalToolResult(serverResult: nil, serverError: e.errorDescription, clientAction: nil)
+        } catch {
+            return LocalToolResult(serverResult: nil, serverError: "PDF 提取失败: \(error.localizedDescription)", clientAction: nil)
+        }
+
+        let collector: GrepCollectResult
+        do {
+            collector = try PDFGrepMatcher.search(
+                pageTexts: pages, pattern: pattern, file: path,
+                maxLineChars: maxLineChars, maxResults: maxResults, skip: skip)
+        } catch PDFGrepError.invalidPattern {
+            return LocalToolResult(serverResult: nil, serverError: "无效正则表达式: \(pattern)", clientAction: nil)
+        } catch {
+            return LocalToolResult(serverResult: nil, serverError: "PDF 检索失败: \(error.localizedDescription)", clientAction: nil)
+        }
+
         let formatted = GrepParser.formatGrepOutput(
             matches: collector.matches,
             omittedSensitive: collector.omittedSensitive,

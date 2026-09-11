@@ -144,7 +144,7 @@ extension FileSystemToolProvider: LocalToolProvider {
                 description: """
                 快速文件模式匹配工具。
                 - 支持 glob 模式如 "**/*.go" 或 "src/**/*.ts"
-                - 返回匹配的文件绝对路径列表，最多 100 条
+                - 返回匹配的文件列表，每行 "绝对路径\\t字节数"，最多 100 条
                 - 自动尊重 .gitignore
                 - 当你需要按文件名模式查找文件时使用本工具
                 - 你不确定文件确切路径时，先用 glob 找到文件，再用 read 读取
@@ -178,6 +178,7 @@ extension FileSystemToolProvider: LocalToolProvider {
                 - 敏感文件（.env、.git 内部等）的匹配会自动省略，省略数会标注
                 - 当你需要在文件中定位特定内容时使用本工具——先用 grep 找到位置，再用 read 读上下文
                 - 对于大文件或长行的文件，用 grep 定位比直接 read 更高效
+                - 对 PDF（有文本层）按页提取文本做正则搜索，命中返回 Page N, line M（页内行号）；再用 read(filePath, page_offset=N) 读上下文。扫描件（无文本层）无法搜索。
                 首次访问某个目录时会请求用户授权，授权后一小时内无需重复确认。
                 """,
                 inputSchema: [
@@ -297,7 +298,11 @@ extension FileSystemToolProvider: LocalToolProvider {
                 - HTML 文件（.html/.htm）会剥离 <script>/<style> 内容（替换为占位标记），行号保持不变。
                 - 非 UTF-8 编码（GBK/GB18030/UTF-16）自动解码。
                 - 图片（JPEG/PNG/GIF/WebP）以 base64 返回。
-                - PDF 提取纯文本（按页），page_offset/page_limit 分页续读；扫描件（无文本层）无法提取。
+                - PDF 提取纯文本（按页），page_offset/page_limit 分页续读；页内被截断时按 page_char_offset（页内字符偏移）继续；扫描件（无文本层）无法提取。
+                - PDF 页眉/页脚与页码会自动清洗，输出为纯页文本（不注入页码标记）；raw=true 可返回未清洗的原始文本（诊断用）。
+                - 页码基准：PDF 物理页、从 1 起、含封面；打印页码可能与之不同。
+                - 注意：PDF 表格按文本流提取，行列关系会丢失、跨行数字可能被切断，表格数值不可直接解析；财务数据请用版面感知工具或 XBRL。
+                - 文件末尾会标注字节大小（size）。
                 首次访问某个目录时会请求用户授权，授权后一小时内无需重复确认。
                 """,
                 inputSchema: [
@@ -322,6 +327,14 @@ extension FileSystemToolProvider: LocalToolProvider {
                         "page_limit": [
                             "type": "integer",
                             "description": "PDF 最大页数，默认 10",
+                        ],
+                        "page_char_offset": [
+                            "type": "integer",
+                            "description": "PDF 起始页内的字符偏移（仅作用于起始页，续读用，默认 0）",
+                        ],
+                        "raw": [
+                            "type": "boolean",
+                            "description": "诊断用：返回未清洗的原始 PDF 文本（含页眉/页脚/页码），默认 false",
                         ],
                     ],
                     "required": ["filePath"],

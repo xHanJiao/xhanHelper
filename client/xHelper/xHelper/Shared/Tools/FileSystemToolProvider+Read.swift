@@ -1,7 +1,6 @@
 #if os(macOS)
 import Foundation
 import AppKit
-import PDFKit
 
 extension FileSystemToolProvider {
 
@@ -141,7 +140,7 @@ extension FileSystemToolProvider {
 
         if isImageOrPDF(path: path, ext: ext) {
             if ext == "pdf" {
-                return readPDFText(path, arguments: arguments, budgetBytes: budgetBytes)
+                return readPDFText(path, arguments: arguments, fileSize: fileSize, budgetBytes: budgetBytes)
             }
             return readMediaFile(path, ext: ext, fileSize: fileSize)
         }
@@ -175,7 +174,7 @@ extension FileSystemToolProvider {
 
         switch encoding {
         case .utf8:
-            return readUTF8Text(path, fileHandle: fh, offset: offset, limit: limit, isHTML: isHTML, budget: budget)
+            return readUTF8Text(path, fileHandle: fh, offset: offset, limit: limit, fileSize: fileSize, isHTML: isHTML, budget: budget)
         case .nonUTF8:
             // 非 UTF-8（GB18030 等）：全量解码，需整文件读入
             if fileSize > UInt64(maxDecodeBytes) {
@@ -187,7 +186,7 @@ extension FileSystemToolProvider {
             guard let decoded = FileSystemToolProvider.decodeNonUTF8(data) else {
                 return LocalToolResult(serverResult: nil, serverError: "无法识别文件编码（非 UTF-8 且非 GB18030/UTF-16）: \(path)", clientAction: nil)
             }
-            return windowText(decoded.text, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: decoded.label)
+            return windowText(decoded.text, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: decoded.label, fileSize: fileSize)
         case .utf16LE, .utf16BE:
             if fileSize > UInt64(maxDecodeBytes) {
                 return LocalToolResult(serverResult: nil, serverError: "文件为 UTF-16 编码且大于 \(maxDecodeBytes / 1024 / 1024)MB，无法解码。请转换为 UTF-8 后再读。", clientAction: nil)
@@ -199,7 +198,7 @@ extension FileSystemToolProvider {
             guard let text = String(data: data, encoding: enc) else {
                 return LocalToolResult(serverResult: nil, serverError: "UTF-16 解码失败: \(path)", clientAction: nil)
             }
-            return windowText(text, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: "UTF-16")
+            return windowText(text, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: "UTF-16", fileSize: fileSize)
         }
     }
 
@@ -270,7 +269,7 @@ extension FileSystemToolProvider {
     }
 
     /// 全量解码后的文本按行窗口输出。
-    private func windowText(_ text: String, offset: Int, limit: Int, isHTML: Bool, budget: Int, encodingLabel: String) -> LocalToolResult {
+    private func windowText(_ text: String, offset: Int, limit: Int, isHTML: Bool, budget: Int, encodingLabel: String, fileSize: UInt64) -> LocalToolResult {
         var lines: [String] = []
         var inBlock = false
         var byteCount = 0
@@ -314,11 +313,11 @@ extension FileSystemToolProvider {
             lines.append(line)
         }
 
-        return renderWindow(lines: lines, offset: offset, lineCount: lineCount, cut: cut, more: more, budget: budget, encodingLabel: encodingLabel)
+        return renderWindow(lines: lines, offset: offset, lineCount: lineCount, cut: cut, more: more, budget: budget, encodingLabel: encodingLabel, fileSize: fileSize)
     }
 
     /// UTF-8 流式读取（兼容大文件）。
-    private func readUTF8Text(_ path: String, fileHandle fh: FileHandle, offset: Int, limit: Int, isHTML: Bool, budget: Int) -> LocalToolResult {
+    private func readUTF8Text(_ path: String, fileHandle fh: FileHandle, offset: Int, limit: Int, fileSize: UInt64, isHTML: Bool, budget: Int) -> LocalToolResult {
         var lines: [String] = []
         var lineCount = 0
         var totalBytes = 0
@@ -435,7 +434,7 @@ extension FileSystemToolProvider {
         if lines.isEmpty, lineCount == 0, offset == 1 {
             var output = ""
             output += "1: \n"
-            output += "(End of file - total 1 lines)"
+            output += "(End of file - total 1 lines, size: \(fileSize) bytes)"
             return LocalToolResult(serverResult: OutputSanitizer.sanitize(output).data(using: .utf8), serverError: nil, clientAction: nil)
         }
 
@@ -443,10 +442,10 @@ extension FileSystemToolProvider {
             return LocalToolResult(serverResult: nil, serverError: "Offset \(offset) is out of range for this file (\(lineCount) lines)", clientAction: nil)
         }
 
-        return renderWindow(lines: lines, offset: offset, lineCount: lineCount, cut: cut, more: more, budget: budget, encodingLabel: "UTF-8")
+        return renderWindow(lines: lines, offset: offset, lineCount: lineCount, cut: cut, more: more, budget: budget, encodingLabel: "UTF-8", fileSize: fileSize)
     }
 
-    private func renderWindow(lines: [String], offset: Int, lineCount: Int, cut: Bool, more: Bool, budget: Int, encodingLabel: String) -> LocalToolResult {
+    private func renderWindow(lines: [String], offset: Int, lineCount: Int, cut: Bool, more: Bool, budget: Int, encodingLabel: String, fileSize: UInt64) -> LocalToolResult {
         var output = ""
         for (i, line) in lines.enumerated() {
             output += "\(offset + i): \(line)\n"
@@ -461,7 +460,7 @@ extension FileSystemToolProvider {
             let nextOffset = offset + lines.count
             output += "(Showing lines \(offset)-\(lastLine) of \(lineCount). Use offset=\(nextOffset) to continue.)"
         } else {
-            output += "(End of file - total \(lineCount) lines)"
+            output += "(End of file - total \(lineCount) lines, size: \(fileSize) bytes)"
         }
         output += " (encoding: \(encodingLabel))"
 
@@ -569,17 +568,21 @@ extension FileSystemToolProvider {
         )
     }
 
-    private func readPDFText(_ path: String, arguments: [String: Any], budgetBytes: Int?) -> LocalToolResult {
-        guard let doc = PDFDocument(url: URL(fileURLWithPath: path)) else {
-            return LocalToolResult(serverResult: nil, serverError: "无法打开 PDF: \(path)", clientAction: nil)
-        }
-        if doc.isLocked {
-            return LocalToolResult(serverResult: nil, serverError: "PDF 已加密，无法提取文本: \(path)", clientAction: nil)
+    private func readPDFText(_ path: String, arguments: [String: Any], fileSize: UInt64, budgetBytes: Int?) -> LocalToolResult {
+        let raw = (arguments["raw"] as? Bool) ?? false
+        let pages: [String]
+        do {
+            pages = try PDFTextExtractor.pageTexts(path: path, raw: raw)
+        } catch let e as PDFExtractError {
+            return LocalToolResult(serverResult: nil, serverError: e.errorDescription, clientAction: nil)
+        } catch {
+            return LocalToolResult(serverResult: nil, serverError: "PDF 提取失败: \(error.localizedDescription)", clientAction: nil)
         }
 
-        let totalPages = doc.pageCount
+        let totalPages = pages.count
         let pageOffset = (arguments["page_offset"] as? Int) ?? 1
         let pageLimit = (arguments["page_limit"] as? Int) ?? 10
+        let charOffset = (arguments["page_char_offset"] as? Int) ?? 0
 
         guard pageOffset >= 1 else {
             return LocalToolResult(serverResult: nil, serverError: "page_offset 必须 >= 1", clientAction: nil)
@@ -587,51 +590,34 @@ extension FileSystemToolProvider {
         guard pageLimit >= 1 else {
             return LocalToolResult(serverResult: nil, serverError: "page_limit 必须 >= 1", clientAction: nil)
         }
+        guard charOffset >= 0 else {
+            return LocalToolResult(serverResult: nil, serverError: "page_char_offset 必须 >= 0", clientAction: nil)
+        }
+        guard pageOffset <= totalPages else {
+            return LocalToolResult(serverResult: nil, serverError: "page_offset \(pageOffset) out of range (total \(totalPages) pages)", clientAction: nil)
+        }
 
-        let start = pageOffset
-        let end = min(start + pageLimit - 1, totalPages)
         let budget = budgetCap(budgetBytes)
+        let win = PDFPageWindower.window(
+            pages: pages, startPage: pageOffset, charOffset: charOffset,
+            pageLimit: pageLimit, budgetBytes: budget)
 
-        var output = ""
-        var byteCount = 0
-        var emptyPages = 0
-        var cut = false
-
-        if start > totalPages {
-            return LocalToolResult(serverResult: nil, serverError: "page_offset \(start) out of range (total \(totalPages) pages)", clientAction: nil)
-        }
-
-        for page in start...end {
-            let header = "[Page \(page) of \(totalPages)]"
-            var pageText = doc.page(at: page - 1)?.string ?? ""
-            if pageText.isEmpty { emptyPages += 1 }
-            pageText = pageText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            let block = header + "\n" + pageText + "\n"
-            if byteCount + block.utf8.count > budget {
-                cut = true
-                break
+        var output = win.text
+        let sep = output.isEmpty ? "" : "\n"
+        if let np = win.nextPage {
+            if win.truncated {
+                let hint = win.nextCharOffset > 0
+                    ? "Use page_offset=\(np), page_char_offset=\(win.nextCharOffset) to continue."
+                    : "Use page_offset=\(np) to continue."
+                output += "\(sep)(Output capped at \((budget + 1023) / 1024) KB. \(hint))"
+            } else {
+                output += "\(sep)(Showing pages \(pageOffset)-\(np - 1) of \(totalPages). Use page_offset=\(np) to continue.)"
             }
-            byteCount += block.utf8.count
-            output += block
-        }
-
-        var suffix = ""
-        if cut {
-            let nextPage = end + 1
-            suffix = "(Output capped at \((budget + 1023) / 1024) KB. Use page_offset=\(nextPage) to continue.)"
-        } else if end < totalPages {
-            suffix = "(Showing pages \(start)-\(end) of \(totalPages). Use page_offset=\(end + 1) to continue.)"
         } else {
-            suffix = "(End of PDF - total \(totalPages) pages)"
-        }
-        output += suffix
-
-        if emptyPages * 2 >= (end - start + 1) {
-            return LocalToolResult(serverResult: nil, serverError: "PDF 无文本层（可能是扫描件），无法提取文本: \(path)", clientAction: nil)
+            output += "\(sep)(End of PDF - total \(totalPages) pages, size: \(fileSize) bytes)"
         }
 
-        return LocalToolResult(serverResult: output.data(using: .utf8), serverError: nil, clientAction: nil)
+        return LocalToolResult(serverResult: OutputSanitizer.sanitize(output).data(using: .utf8), serverError: nil, clientAction: nil)
     }
 
     private func isImageOrPDF(path: String, ext: String) -> Bool {

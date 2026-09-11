@@ -292,3 +292,264 @@ final class SensitiveFileBlockerTests: XCTestCase {
         XCTAssertEqual(SensitiveFileBlocker.exemptPaths.count, 1)
     }
 }
+
+final class PDFGrepMatcherTests: XCTestCase {
+
+    private func search(_ pages: [String], _ pattern: String, maxLineChars: Int = 2000, maxResults: Int = 100, skip: Int = 0) throws -> GrepCollectResult {
+        try PDFGrepMatcher.search(
+            pageTexts: pages, pattern: pattern, file: "/a/doc.pdf",
+            maxLineChars: maxLineChars, maxResults: maxResults, skip: skip)
+    }
+
+    func testSinglePage_PageAndLine() throws {
+        let r = try search(["第一行\n第二行 keyword\n第三行"], "keyword")
+        XCTAssertEqual(r.matches.count, 1)
+        XCTAssertEqual(r.matches[0].page, 1)
+        XCTAssertEqual(r.matches[0].line, 2)
+        XCTAssertEqual(r.matches[0].text, "第二行 keyword")
+        XCTAssertEqual(r.matches[0].file, "/a/doc.pdf")
+    }
+
+    func testCrossPage_PageIncrements() throws {
+        let r = try search(["foo\nbar", "baz\nfoo"], "foo")
+        XCTAssertEqual(r.matches.map(\.page), [1, 2])
+        XCTAssertEqual(r.matches.map(\.line), [1, 2])
+    }
+
+    func testSkipAndMaxResults() throws {
+        let r = try search(["a\nb\nc\nd\ne"], "[a-e]", maxResults: 2, skip: 1)
+        XCTAssertEqual(r.matches.map(\.text), ["b", "c"])
+        XCTAssertEqual(r.stop, .moreAvailable)
+    }
+
+    func testNoMatch() throws {
+        let r = try search(["hello"], "world")
+        XCTAssertTrue(r.matches.isEmpty)
+        XCTAssertEqual(r.stop, .none)
+    }
+
+    func testInvalidPatternThrows() {
+        XCTAssertThrowsError(try search(["x"], "[")) { err in
+            XCTAssertEqual(err as? PDFGrepError, .invalidPattern("["))
+        }
+    }
+
+    func testMaxLineCharsTruncation() throws {
+        let line = String(repeating: "x", count: 100) + "hit"
+        let r = try search([line], "hit", maxLineChars: 10)
+        XCTAssertEqual(r.matches[0].text.count, 13) // 10 + "..."
+        XCTAssertTrue(r.matches[0].text.hasSuffix("..."))
+    }
+
+    // MARK: - formatGrepOutput 页码标签
+
+    func testFormat_PageLabel() {
+        let matches = [GrepMatch(file: "/a/doc.pdf", line: 3, text: "hit", page: 7)]
+        let out = GrepParser.formatGrepOutput(matches: matches, omittedSensitive: 0, stop: .none, pageSkip: 0, maxBytes: 1_000_000)
+        XCTAssertTrue(out.text.contains("Page 7, line 3: hit"))
+        XCTAssertFalse(out.text.contains("Line 3"))
+    }
+
+    func testFormat_LineLabelRegression() {
+        let matches = [GrepMatch(file: "/a/b.go", line: 3, text: "hit")]
+        let out = GrepParser.formatGrepOutput(matches: matches, omittedSensitive: 0, stop: .none, pageSkip: 0, maxBytes: 1_000_000)
+        XCTAssertTrue(out.text.contains("Line 3: hit"))
+    }
+}
+
+final class PDFPageCleanerTests: XCTestCase {
+
+    // MARK: - 行尾页码
+
+    func testStripsTrailingPageNumberGluedToText() {
+        var pages = (1...69).map { "第\($0)页" }
+        pages[68] = "其他应付款69"
+        let out = PDFPageCleaner.stripTrailingPageNumbers(pages: pages)
+        XCTAssertEqual(out[68], "其他应付款")
+    }
+
+    func testStripsTrailingPageNumberAfterSpace() {
+        var pages = (1...72).map { "第\($0)页" }
+        pages[71] = "负债和所有者权益总计 72"
+        let out = PDFPageCleaner.stripTrailingPageNumbers(pages: pages)
+        XCTAssertEqual(out[71], "负债和所有者权益总计")
+    }
+
+    func testStripsStandalonePageNumberLine() {
+        var pages = (1...69).map { "第\($0)页" }
+        pages[68] = "69"
+        let out = PDFPageCleaner.stripTrailingPageNumbers(pages: pages)
+        XCTAssertEqual(out[68], "")
+    }
+
+    func testKeepsTrailingNumberNotEqualPage() {
+        var pages = (1...69).map { "第\($0)页" }
+        pages[68] = "其他应付款70"
+        let out = PDFPageCleaner.stripTrailingPageNumbers(pages: pages)
+        XCTAssertEqual(out[68], "其他应付款70")
+    }
+
+    func testKeepsDecimalAndThousandsNumbers() {
+        var pages = (1...69).map { "第\($0)页" }
+        pages[68] = "金额1.69"
+        var pages2 = (1...69).map { "第\($0)页" }
+        pages2[68] = "金额1,069"
+        XCTAssertEqual(PDFPageCleaner.stripTrailingPageNumbers(pages: pages)[68], "金额1.69")
+        XCTAssertEqual(PDFPageCleaner.stripTrailingPageNumbers(pages: pages2)[68], "金额1,069")
+    }
+
+    // MARK: - 跨页重复行（位置无关）
+
+    func testStripsRepeatedHeaderAnyPosition() {
+        let header = "北京值得买科技股份有限公司2026年半年度报告全文"
+        var pages = (0..<5).map { "正文\($0)\n\(header)\n数据\($0)" }
+        pages[3] = "正文3\n数据3"
+        let out = PDFPageCleaner.stripRepeatedLines(pages: pages)
+        XCTAssertFalse(out[0].contains(header))
+        XCTAssertEqual(out[0], "正文0\n数据0")
+        XCTAssertEqual(out[3], "正文3\n数据3")
+    }
+
+    func testStripsRepeatedHeaderWithInconsistentSpacing() {
+        let pages = [
+            "北京值得买科技股份有限公司 2026年半年度报告全文\n正文0",
+            "北京值得买科技股份有限公司2026年半年度报告全文\n正文1",
+            "北京值得买科技股份有限公司2026 年半年度报告全文\n正文2",
+            "北京值得买科技股份有限公司2026年半年度报告全文\n正文3",
+            "正文4",
+        ]
+        let out = PDFPageCleaner.stripRepeatedLines(pages: pages)
+        XCTAssertEqual(out[0], "正文0")
+        XCTAssertEqual(out[2], "正文2")
+    }
+
+    func testKeepsRepeatedBelowThreshold() {
+        let header = "北京值得买科技股份有限公司2026年半年度报告全文"
+        let pages = ["\(header)\nA", "\(header)\nB", "\(header)\nC", "D", "E"]
+        let out = PDFPageCleaner.stripRepeatedLines(pages: pages)
+        XCTAssertTrue(out[0].contains(header))
+    }
+
+    func testKeepsShortRepeatedLine() {
+        let pages = (0..<5).map { "单位：元\n正文\($0)" }
+        let out = PDFPageCleaner.stripRepeatedLines(pages: pages)
+        XCTAssertEqual(out[0], "单位：元\n正文0")
+    }
+
+    func testKeepsPureNumberRepeatedLine() {
+        let pages = (0..<5).map { "12345678\n正文\($0)" }
+        let out = PDFPageCleaner.stripRepeatedLines(pages: pages)
+        XCTAssertEqual(out[0], "12345678\n正文0")
+    }
+
+    func testKeepsRepeatedBelowMinPages() {
+        let header = "北京值得买科技股份有限公司2026年半年度报告全文"
+        let pages = ["\(header)\nA", "\(header)\nB"]
+        let out = PDFPageCleaner.stripRepeatedLines(pages: pages)
+        XCTAssertEqual(out, pages)
+    }
+
+    // MARK: - 行内内嵌页眉（拼进正文行尾/行中）
+
+    func testStripsInlineHeaderAtLineEnd() {
+        let header = "北京值得买科技股份有限公司2026年半年度报告全文"
+        var pages = (0..<5).map { "\(header)\n正文\($0)" }
+        pages[4] = "311.08 289.33 312.51 447.92 \(header)"
+        let out = PDFPageCleaner.stripRepeatedLines(pages: pages)
+        XCTAssertEqual(out[4], "311.08 289.33 312.51 447.92")
+    }
+
+    func testStripsInlineHeaderWithInconsistentSpacing() {
+        let header = "北京值得买科技股份有限公司2026年半年度报告全文"
+        var pages = (0..<5).map { "\(header)\n正文\($0)" }
+        pages[4] = "数据 北京值得买科技股份有限公司 2026年半年度报告全文"
+        let out = PDFPageCleaner.stripRepeatedLines(pages: pages)
+        XCTAssertEqual(out[4], "数据")
+    }
+
+    func testStripsInlineHeaderInMiddle() {
+        let header = "北京值得买科技股份有限公司2026年半年度报告全文"
+        var pages = (0..<5).map { "\(header)\n正文\($0)" }
+        pages[4] = "前段 \(header) 后段"
+        let out = PDFPageCleaner.stripRepeatedLines(pages: pages)
+        XCTAssertEqual(out[4], "前段  后段")
+    }
+
+    func testKeepsLineWithoutHeaderUnchanged() {
+        let header = "北京值得买科技股份有限公司2026年半年度报告全文"
+        var pages = (0..<5).map { "\(header)\n正文\($0)" }
+        pages[4] = "  这是一行没有页眉的较长正文  "
+        let out = PDFPageCleaner.stripRepeatedLines(pages: pages)
+        XCTAssertEqual(out[4], "  这是一行没有页眉的较长正文  ")
+    }
+
+    // MARK: - clean 端到端
+
+    func testCleanRemovesHeaderAndTrailingPageNumbers() {
+        let header = "北京值得买科技股份有限公司2026年半年度报告全文"
+        let pages = (1...3).map { "\(header)\n其他应付款\($0)" }
+        let out = PDFPageCleaner.clean(pages: pages)
+        XCTAssertEqual(out[0], "其他应付款")
+        XCTAssertEqual(out[1], "其他应付款")
+        XCTAssertEqual(out[2], "其他应付款")
+    }
+}
+
+final class PDFPageWindowerTests: XCTestCase {
+
+    func testAllPagesFit() {
+        let pages = ["a\nb", "c\nd"]
+        let w = PDFPageWindower.window(pages: pages, startPage: 1, charOffset: 0, pageLimit: 10, budgetBytes: 10_000)
+        XCTAssertEqual(w.text, "a\nb\nc\nd")
+        XCTAssertFalse(w.truncated)
+        XCTAssertNil(w.nextPage)
+    }
+
+    func testPageLimitBoundaryHasNext() {
+        let pages = ["a", "b", "c"]
+        let w = PDFPageWindower.window(pages: pages, startPage: 1, charOffset: 0, pageLimit: 2, budgetBytes: 10_000)
+        XCTAssertEqual(w.text, "a\nb")
+        XCTAssertFalse(w.truncated)
+        XCTAssertEqual(w.nextPage, 3)
+        XCTAssertEqual(w.nextCharOffset, 0)
+    }
+
+    func testPageBoundaryTruncation() {
+        let pages = ["aaaa", "bbbb", "cccc"]
+        let w = PDFPageWindower.window(pages: pages, startPage: 1, charOffset: 0, pageLimit: 10, budgetBytes: 9)
+        XCTAssertTrue(w.truncated)
+        XCTAssertEqual(w.nextPage, 3)
+        XCTAssertEqual(w.nextCharOffset, 0)
+        XCTAssertEqual(w.text, "aaaa\nbbbb")
+    }
+
+    func testWithinPageTruncation() {
+        let long = String(repeating: "x", count: 100)
+        let w = PDFPageWindower.window(pages: [long], startPage: 1, charOffset: 0, pageLimit: 10, budgetBytes: 24)
+        XCTAssertTrue(w.truncated)
+        XCTAssertEqual(w.nextPage, 1)
+        XCTAssertEqual(w.nextCharOffset, 24)
+        XCTAssertEqual(w.text, String(repeating: "x", count: 24))
+    }
+
+    func testResumeWithinPage() {
+        let long = String(repeating: "x", count: 100)
+        let w = PDFPageWindower.window(pages: [long], startPage: 1, charOffset: 90, pageLimit: 10, budgetBytes: 6)
+        XCTAssertTrue(w.truncated)
+        XCTAssertEqual(w.nextPage, 1)
+        XCTAssertEqual(w.nextCharOffset, 96)
+    }
+
+    func testMultibyteNotSplit() {
+        let pages = [String(repeating: "中", count: 10)]
+        let w = PDFPageWindower.window(pages: pages, startPage: 1, charOffset: 0, pageLimit: 10, budgetBytes: 20)
+        XCTAssertEqual(w.nextCharOffset, 6)
+        XCTAssertTrue(w.text.hasSuffix("中中"))
+    }
+
+    func testOutOfRangePage() {
+        let w = PDFPageWindower.window(pages: ["a"], startPage: 5, charOffset: 0, pageLimit: 10, budgetBytes: 100)
+        XCTAssertTrue(w.text.isEmpty)
+        XCTAssertNil(w.nextPage)
+    }
+}

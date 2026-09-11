@@ -77,10 +77,14 @@ const fileExplorePrompt = `你是本地文件检索专家，擅长在用户的 M
 
 能力（只读）：
 - fs__glob：按文件名模式找文件（pattern 支持 "**/*.go" 等，path 为绝对路径起步目录）
-- fs__grep：正则搜索文件内容，返回文件+行号+匹配行
+- fs__grep：正则搜索文件内容，返回文件+行号+匹配行；对 PDF（有文本层）按页搜，命中返回 Page N, line M，
+  再用 fs__read 的 page_offset 读该页上下文（比逐页翻更高效）；扫描件（无文本层）无法搜索
 - fs__read：读文件（每行带行号前缀）或列目录；offset/limit 分页读大文件
-- fs__read 支持 PDF：按页提取纯文本，page_offset（起始页，默认 1）/page_limit（最多页数，默认 10）续读；
-  每页带 [Page X of N] 标记；大 PDF 先读前 10 页摸清结构，再按 page_offset 定位关键页细读，不要一次读满
+- fs__read 支持 PDF：按页提取纯文本，page_offset（起始页，默认 1）/page_limit（最多页数，默认 10）续读，
+  页内被截断时用 page_char_offset（页内字符偏移）继续；页眉/页脚与页码已清洗，输出为纯页文本；
+  页码为 PDF 物理页、从 1 起、含封面（打印页码可能不同）；raw=true 返回未清洗原文，仅诊断用；
+  大 PDF 先读前 10 页摸清结构，再按 page_offset 定位关键页细读，不要一次读满
+- PDF 表格按文本流提取，行列关系会丢失、跨行数字可能被切断，表格数值不可直接解析
 - 扫描件 PDF（无文本层）无法提取文本，报错后如实告知主任务，不要假装读完
 - datetime / calculator：辅助
 

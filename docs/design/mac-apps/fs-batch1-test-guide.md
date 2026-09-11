@@ -50,7 +50,7 @@
 
 | 项 | 操作 | 预期 |
 |----|------|------|
-| resume.pdf | 读 | 输出 `[Page 1 of 2]` + 文本（含"张三 - 个人简历"），末尾 `(Showing pages 1-2 of 2...)`；**不得出现 base64** |
+| resume.pdf | 读 | 输出纯页文本（含"张三 - 个人简历"，无 `[Page N of N]` 标记），末尾 `(End of PDF - total 2 pages, size: ... bytes)`；**不得出现 base64** |
 | resume.pdf 续读 | 读时带 `page_offset=2` | 从第 2 页开始 |
 | scanned.pdf | 读 | 报错"PDF 无文本层（可能是扫描件）" |
 
@@ -106,7 +106,7 @@
 
 1. 读 `resume.html` → script 剥、行号连续（用例 3）
 2. 读 `gbk.txt` → GB18030 标注（用例 2）
-3. 读 `resume.pdf` → `[Page 1 of 2]` 文本、无 base64（用例 4）
+3. 读 `resume.pdf` → 纯页文本、无 `[Page N of N]` 标记、无 base64（用例 4）
 4. 读 `big.txt` → 19KB 截断 + 续读 offset（用例 5）
 5. 读 `symlink-out.txt` → 拒绝（用例 9）
 6. 读 `sensitive/test.env` → BLOCKED（用例 8）

@@ -1,10 +1,19 @@
 import Foundation
 
 /// GrepMatch — grep 单条匹配结果。
+/// page 非 nil 表示 PDF 命中：line 为页内行号，展示为 "Page N"。
 struct GrepMatch {
     let file: String
     let line: Int
     let text: String
+    let page: Int?
+
+    init(file: String, line: Int, text: String, page: Int? = nil) {
+        self.file = file
+        self.line = line
+        self.text = text
+        self.page = page
+    }
 }
 
 /// GrepStop — 收集停止原因（影响输出提示语）。
@@ -127,7 +136,8 @@ enum GrepParser {
             let header = "\n\(file):\n"
             segments.append((header, header.utf8.count))
             for m in grouped[file] ?? [] {
-                let line = "  Line \(m.line): \(m.text)\n"
+                let label = m.page.map { "Page \($0), line \(m.line)" } ?? "Line \(m.line)"
+                let line = "  \(label): \(m.text)\n"
                 segments.append((line, line.utf8.count))
             }
         }
@@ -164,4 +174,48 @@ enum GrepParser {
         }
         return (out, shown, truncated)
     }
+}
+
+/// PDFGrepMatcher — 对已提取的 PDF 页文本做按行正则匹配（纯逻辑、进程无关）。
+enum PDFGrepMatcher {
+    /// 逐页逐行匹配 pattern；命中项 page=页码(1-indexed)、line=页内行号。
+    /// - pattern 非法时抛 PDFGrepError.invalidPattern。
+    /// - 复用 GrepCollector：skip 翻页 + 收满 maxResults 停止，语义与文本 grep 一致。
+    static func search(
+        pageTexts: [String],
+        pattern: String,
+        file: String,
+        maxLineChars: Int,
+        maxResults: Int = 100,
+        skip: Int = 0
+    ) throws -> GrepCollectResult {
+        let regex: NSRegularExpression
+        do {
+            regex = try NSRegularExpression(pattern: pattern)
+        } catch {
+            throw PDFGrepError.invalidPattern(pattern)
+        }
+
+        var collector = GrepCollector(maxResults: maxResults, skip: skip)
+        for (idx, pageText) in pageTexts.enumerated() {
+            let page = idx + 1
+            for (lineIdx, sub) in pageText.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+                let raw = String(sub)
+                if raw.isEmpty { continue }
+                let range = NSRange(raw.startIndex..<raw.endIndex, in: raw)
+                guard regex.firstMatch(in: raw, options: [], range: range) != nil else { continue }
+                let display = raw.count > maxLineChars ? String(raw.prefix(maxLineChars)) + "..." : raw
+                let match = GrepMatch(file: file, line: lineIdx + 1, text: display, page: page)
+                if !collector.ingest(match) {
+                    return collector.result
+                }
+            }
+        }
+        return collector.result
+    }
+}
+
+/// PDFGrepError — PDF 检索的纯逻辑错误。
+enum PDFGrepError: Error, Equatable {
+    case invalidPattern(String)
 }

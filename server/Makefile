@@ -25,6 +25,7 @@ help:
 	@echo "  make deploy-only    - 仅上传已编译的二进制和conf（不重新编译）"
 	@echo "  make test           - API 自动化测试 (34项)"
 	@echo "  make db-pull        - 导出线上数据库并拉到本地 data/ 目录"
+	@echo "  make db-import      - 仅导入本地最新 dump（不联网，用于下载后导入失败重跑）"
 	@echo "  make logs           - 实时查看远程服务器日志 (tail -f)"
 	@echo "  make clean          - 清理编译产物"
 
@@ -127,6 +128,13 @@ db-pull:
 	echo ""; \
 	echo "2/2 拉取最新 dump 到本地..."; \
 	bash ../../mysh/pull-mysqldump.sh
+
+# 仅导入本地最新 dump（不联网）
+db-import:
+	@echo "========================================"
+	@echo "       仅导入本地最新 dump（不联网）"
+	@echo "========================================"
+	@LOCAL_ONLY=1 bash ../../mysh/pull-mysqldump.sh
 
 # 编译生产二进制
 build:

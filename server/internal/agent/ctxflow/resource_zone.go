@@ -166,6 +166,7 @@ func ParseResourceZone(xmlText string) []retrieval.ContextPacket {
 				Text: it.Content,
 				Meta: retrieval.RecentMeta{
 					Content:   it.Content,
+					Role:      it.Role,
 					CreatedAt: parseZoneDateTime(it.Date),
 				},
 			})

@@ -197,15 +197,17 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			history = append(history, agent.FlattenRound(round)...)
 		}
 		// 新窗口（SkipHistory）不重放完整轮（含 tool 调用，token 贵），
-		// 单独取最近几条用户消息注入 system prompt，让 LLM 知道用户之前最后说了什么。
+		// 取最近几轮的 user + 非 tool call 的 assistant 最终回复注入资源区，
+		// 让 LLM 知道用户之前说了什么、自己回了什么。
 		var recentUserMsgs []model.Message
 		if wr.SkipHistory && cfg.Chat.RecentUserMsgs > 0 {
-			recentUserMsgs, err = msgRepo.ListRecentUserMessages(c.Request.Context(), conv.ID, cfg.Chat.RecentUserMsgs)
-			if err != nil {
-				log.Printf("[chat] ListRecentUserMessages error: %v", err)
+			recentRounds, rerr := msgRepo.ListRecentRounds(c.Request.Context(), conv.ID, cfg.Chat.RecentUserMsgs)
+			if rerr != nil {
+				log.Printf("[chat] ListRecentRounds (recent) error: %v", rerr)
 				view.JSONError(c, 500, "加载历史消息失败")
 				return
 			}
+			recentUserMsgs = agent.ReduceRecentRounds(recentRounds)
 		}
 
 		w := c.Writer

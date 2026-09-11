@@ -27,9 +27,10 @@ type MessageMeta struct {
 
 func (MessageMeta) isPacketMeta() {}
 
-// RecentMeta 新窗口注入的最近用户消息元数据（资源区 recent 段）。
+// RecentMeta 新窗口注入的最近对话元数据（资源区 recent 段）。
 type RecentMeta struct {
 	Content   string
+	Role      string // user / assistant
 	CreatedAt time.Time
 }
 

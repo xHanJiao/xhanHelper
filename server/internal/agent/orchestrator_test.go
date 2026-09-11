@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"xhan-helper/internal/agent/ctxflow"
+	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -21,21 +22,59 @@ import (
 func TestBuildRecentUserPackets_OrderAndTruncate(t *testing.T) {
 	long := strings.Repeat("长", 600)
 	msgs := []model.Message{
-		{ID: "m1", CreatedAt: time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC), Content: "第一条"},
-		{ID: "m2", CreatedAt: time.Date(2026, 8, 18, 10, 5, 0, 0, time.UTC), Content: long},
+		{ID: "m1", Role: "user", CreatedAt: time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC), Content: "第一条"},
+		{ID: "a1", Role: "assistant", CreatedAt: time.Date(2026, 8, 18, 10, 1, 0, 0, time.UTC), Content: "回复一"},
+		{ID: "m2", Role: "user", CreatedAt: time.Date(2026, 8, 18, 10, 5, 0, 0, time.UTC), Content: long},
 	}
 	pkts := buildRecentUserPackets(msgs)
-	if len(pkts) != 2 {
-		t.Fatalf("应 2 个 packet, got %d", len(pkts))
+	if len(pkts) != 3 {
+		t.Fatalf("应 3 个 packet, got %d", len(pkts))
 	}
 	if pkts[0].ID != "m1" || pkts[0].Text != "第一条" || pkts[0].Type != "recent" {
 		t.Errorf("首条应为 m1/第一条, got %+v", pkts[0])
 	}
-	if pkts[1].ID != "m2" || !strings.HasSuffix(pkts[1].Text, "…") || len([]rune(pkts[1].Text)) > 510 {
-		t.Errorf("第二条应截断到 500 字, len=%d, got: %.80s…", len([]rune(pkts[1].Text)), pkts[1].Text)
+	if rm, ok := pkts[1].Meta.(retrieval.RecentMeta); !ok || rm.Role != "assistant" || pkts[1].Text != "回复一" {
+		t.Errorf("第二条应为 assistant 回复, got %+v", pkts[1])
+	}
+	if pkts[2].ID != "m2" || !strings.HasSuffix(pkts[2].Text, "…") || len([]rune(pkts[2].Text)) > 510 {
+		t.Errorf("第三条应截断到 500 字, len=%d, got: %.80s…", len([]rune(pkts[2].Text)), pkts[2].Text)
 	}
 	if buildRecentUserPackets(nil) != nil {
 		t.Error("空输入应返回 nil")
+	}
+}
+
+func TestReduceRecentRounds(t *testing.T) {
+	tc := `[{"id":"1","function":{"name":"x"}}]`
+	rounds := [][]model.Message{
+		// 完整轮：user → assistant(tool call) → tool → assistant(final)
+		{
+			{ID: "u1", Role: "user", Content: "查一下"},
+			{ID: "a1", Role: "assistant", Content: `{"reply":"","tool_calls":[...]}`, ToolCallsJSON: &tc},
+			{ID: "t1", Role: "tool", Content: "结果"},
+			{ID: "a2", Role: "assistant", Content: "查到了"},
+		},
+		// 无最终回复轮：工具调用中途中断，只剩 user
+		{
+			{ID: "u2", Role: "user", Content: "再查"},
+			{ID: "a3", Role: "assistant", Content: `{"reply":"","tool_calls":[...]}`, ToolCallsJSON: &tc},
+			{ID: "t2", Role: "tool", Content: "结果2"},
+		},
+		// verify 内部草稿应被跳过，只剩 user
+		{
+			{ID: "u3", Role: "user", Content: "第三"},
+			{ID: "a4", Role: "assistant", Content: "草稿", IsInternal: true},
+		},
+	}
+	got := ReduceRecentRounds(rounds)
+	want := []string{"u1", "a2", "u2", "u3"}
+	if len(got) != len(want) {
+		t.Fatalf("应 %d 条, got %d: %+v", len(want), len(got), got)
+	}
+	for i, id := range want {
+		if got[i].ID != id {
+			t.Errorf("第 %d 条应 %s, got %s", i, id, got[i].ID)
+		}
 	}
 }
 

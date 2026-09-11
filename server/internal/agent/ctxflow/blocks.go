@@ -160,11 +160,13 @@ type noticeBlock struct {
 func (*noticeBlock) TypeKey() string { return TypeNotice }
 
 // --- recent ---
-// recentBlock 新窗口注入的最近用户消息：上个窗口用户最后说的内容（仅用户原文 + 时间，无 AI 回复/tool）。
+// recentBlock 新窗口注入的最近对话：上个窗口的用户消息与 AI 最终文本回复
+// （不含工具调用过程），按时间正序分 role 渲染。
 // 注入资源区后随窗口增量携带，新窗口重置。
 type recentMsg struct {
 	ID      string `xml:"id,attr,omitempty" json:"id,omitempty"`
 	Date    string `xml:"date,attr,omitempty" json:"date,omitempty"`
+	Role    string `xml:"role,attr,omitempty" json:"role,omitempty"`
 	Content string `xml:",chardata" json:"content"`
 }
 type recentBlock struct {
@@ -362,19 +364,22 @@ func buildNoticeBlock(items []retrieval.ContextPacket) Block {
 	return &noticeBlock{Content: items[0].Text}
 }
 
-// buildRecentBlock 构建最近用户消息块。items 为空返回 nil（不注入空块）。
+// buildRecentBlock 构建最近对话块。items 为空返回 nil（不注入空块）。
 func buildRecentBlock(items []retrieval.ContextPacket) Block {
 	if len(items) == 0 {
 		return nil
 	}
 	b := recentBlock{
-		Description: "上个窗口用户最后说的消息（仅用户原文，时间正序，供了解背景）",
+		Description: "上个窗口最近的对话（用户消息与 AI 最终回复，时间正序，供了解背景）",
 	}
 	for _, pkt := range items {
-		it := recentMsg{ID: pkt.ID, Content: pkt.Text}
+		it := recentMsg{ID: pkt.ID, Role: "user", Content: pkt.Text}
 		if meta, ok := pkt.Meta.(retrieval.RecentMeta); ok {
 			if meta.Content != "" {
 				it.Content = meta.Content
+			}
+			if meta.Role != "" {
+				it.Role = meta.Role
 			}
 			if !meta.CreatedAt.IsZero() {
 				it.Date = meta.CreatedAt.In(config.BJ).Format("2006-01-02 15:04")
@@ -435,13 +440,16 @@ func NoticePacket(text string) retrieval.ContextPacket {
 	return retrieval.ContextPacket{Type: TypeNotice, Text: text}
 }
 
-// RecentPacket 生成 recent 类型的 ContextPacket（新窗口注入的最近用户消息）。
-func RecentPacket(id string, createdAt time.Time, content string) retrieval.ContextPacket {
+// RecentPacket 生成 recent 类型的 ContextPacket（新窗口注入的最近对话，role=user/assistant）。
+func RecentPacket(id string, createdAt time.Time, role, content string) retrieval.ContextPacket {
+	if role == "" {
+		role = "user"
+	}
 	return retrieval.ContextPacket{
 		ID:   id,
 		Type: TypeRecent,
 		Text: content,
-		Meta: retrieval.RecentMeta{Content: content, CreatedAt: createdAt},
+		Meta: retrieval.RecentMeta{Content: content, Role: role, CreatedAt: createdAt},
 	}
 }
 

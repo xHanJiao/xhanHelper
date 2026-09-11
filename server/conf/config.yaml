@@ -72,7 +72,7 @@ snowflake:
 
 chat:
   history_rounds: 10
-  recent_user_msgs: 3 # 新窗口注入 system prompt 的最近用户消息条数（不重放完整轮）
+  recent_user_msgs: 3 # 新窗口注入资源区的最近轮数（user + 非 tool call 的 AI 最终回复，不重放完整轮）
   max_summary_rounds: 5 # 单次摘要最多覆盖的 user message 条数，N/2, 目前无用
   max_window_rounds: 800 # 扩张窗口上限轮数（agent 复杂任务需要长上下文；缓存命中后成本可控）
   session_gap_minutes: 30 # session 间隔阈值（分钟），超过则重置窗口

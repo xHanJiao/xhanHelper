@@ -41,7 +41,7 @@ type Config struct {
 // ChatConfig — 对话配置
 type ChatConfig struct {
 	HistoryRounds             int      `yaml:"history_rounds"`              // 加载历史消息轮数，默认 10
-	RecentUserMsgs            int      `yaml:"recent_user_msgs"`            // 新窗口注入 system prompt 的最近用户消息条数，默认 3
+	RecentUserMsgs            int      `yaml:"recent_user_msgs"`            // 新窗口注入资源区的最近轮数（user + AI 最终回复），默认 3
 	MaxWindowRounds           int      `yaml:"max_window_rounds"`           // 扩张窗口上限，默认 100
 	MaxSummaryRounds          int      `yaml:"max_summary_rounds"`          // 单次摘要覆盖上限，0=等于 history_rounds
 	SessionGapMinutes         int      `yaml:"session_gap_minutes"`         // session 间隔阈值（分钟），默认 30

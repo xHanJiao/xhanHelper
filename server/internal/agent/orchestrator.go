@@ -77,8 +77,9 @@ type RunRequest struct {
 	// 历史消息不再重放完整 XML；注入资源收敛到当前消息的公共资源区。
 	PreviousUserXMLContext string
 
-	// RecentUserMessages 新窗口（SkipHistory）时单独加载的最近用户消息，
-	// 渲染后注入 system prompt，供 LLM 知晓用户之前最后说了什么（不重放完整轮）。
+	// RecentUserMessages 新窗口（SkipHistory）时由 ReduceRecentRounds 压缩的最近对话，
+	// 时间正序的 user / assistant 交替序列（assistant 仅最终文本回复，不含 tool call）。
+	// 渲染后注入资源区 recent 段，供 LLM 知晓上个窗口用户说了什么、自己回了什么。
 	RecentUserMessages []model.Message
 
 	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
@@ -706,7 +707,7 @@ func (o *Orchestrator) buildUserMessage(
 				}
 			}
 		}
-		// 新窗口首条注入最近用户消息到资源区，随后随增量携带、新窗口重置
+		// 新窗口首条注入最近对话（用户 + AI 最终回复）到资源区，随后随增量携带、新窗口重置
 		if req.Window.IsNewSession {
 			zoneFresh = append(zoneFresh, buildRecentUserPackets(req.RecentUserMessages)...)
 		}
@@ -1874,27 +1875,68 @@ func SimpleUserContent(m *model.Message) string {
 	return fmt.Sprintf("[%s] %s", m.CreatedAt.In(config.BJ).Format("01-02 15:04"), text)
 }
 
+// ReduceRecentRounds 将新窗口加载的最近几轮压缩为「user + 非 tool call 的 assistant 最终回复」
+// 的时间正序扁平序列（供 recent 资源区注入）。跳过 system、verify 内部草稿、工具调用中间
+// assistant 及 tool 结果；某轮没有最终文本回复时只保留该轮 user。
+func ReduceRecentRounds(rounds [][]model.Message) []model.Message {
+	var out []model.Message
+	for _, round := range rounds {
+		flat := FlattenRound(round)
+		var user *model.Message
+		for i := range flat {
+			if flat[i].Role == "user" {
+				user = &flat[i]
+				break
+			}
+		}
+		if user == nil {
+			continue
+		}
+		out = append(out, *user)
+		// 逆序取该轮最后一条「非 tool call」assistant 作为最终回复
+		for i := len(flat) - 1; i >= 0; i-- {
+			m := flat[i]
+			tc := m.ToolCallsJSON != nil && *m.ToolCallsJSON != ""
+			content := strings.TrimSpace(m.Content)
+			if m.Role != "assistant" || tc || content == "" || strings.HasPrefix(content, "{") {
+				continue
+			}
+			out = append(out, m)
+			break
+		}
+	}
+	return out
+}
+
 // buildRecentUserPackets 构建新窗口注入的 recent 资源区段 packets。
-// 只含用户原文（无 XMLContext/tool），按时间正序；单条截断 500 字防超长粘贴。
+// 输入为 ReduceRecentRounds 产出的时间正序 user/assistant 序列，每条消息一个 packet，
+// 按 role 分块渲染（不含工具调用过程）。单条截断 500 字防超长粘贴。
 // ponytail: 单条 500 字硬编码，需要更细粒度时提配置。
 func buildRecentUserPackets(msgs []model.Message) []retrieval.ContextPacket {
 	if len(msgs) == 0 {
 		return nil
 	}
-	sorted := append([]model.Message(nil), msgs...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].CreatedAt.Before(sorted[j].CreatedAt) })
-	pkts := make([]retrieval.ContextPacket, 0, len(sorted))
-	for _, m := range sorted {
-		text := m.Content
-		if m.OriginalContent != nil && *m.OriginalContent != "" {
-			text = *m.OriginalContent
+	pkts := make([]retrieval.ContextPacket, 0, len(msgs))
+	for _, m := range msgs {
+		role := m.Role
+		if role == "" {
+			role = "user"
 		}
-		if r := []rune(text); len(r) > 500 {
-			text = string(r[:500]) + "…"
-		}
-		pkts = append(pkts, ctxflow.RecentPacket(m.ID, m.CreatedAt, text))
+		pkts = append(pkts, ctxflow.RecentPacket(m.ID, m.CreatedAt, role, recentText(m)))
 	}
 	return pkts
+}
+
+// recentText 取消息原文（优先 OriginalContent），单条截断 500 字。
+func recentText(m model.Message) string {
+	text := m.Content
+	if m.OriginalContent != nil && *m.OriginalContent != "" {
+		text = *m.OriginalContent
+	}
+	if r := []rune(text); len(r) > 500 {
+		text = string(r[:500]) + "…"
+	}
+	return text
 }
 
 // FlattenRound 裁剪一轮消息为 LLM 上下文格式。

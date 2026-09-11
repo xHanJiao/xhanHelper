@@ -360,28 +360,32 @@ func TestBudgetResourceZone_ProfileTrimmedLast(t *testing.T) {
 func TestRecentBlock_RoundtripAndCarry(t *testing.T) {
 	// 构建 packets → Format → Parse 往返保真
 	pkts := []retrieval.ContextPacket{
-		RecentPacket("m1", time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC), "记录一下今天买了咖啡"),
-		RecentPacket("m2", time.Date(2026, 8, 18, 10, 5, 0, 0, time.UTC), "把昨天的账也记上"),
+		RecentPacket("m1", time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC), "user", "记录一下今天买了咖啡"),
+		RecentPacket("m2", time.Date(2026, 8, 18, 10, 0, 30, 0, time.UTC), "assistant", "好的，已记下"),
+		RecentPacket("m3", time.Date(2026, 8, 18, 10, 5, 0, 0, time.UTC), "user", "把昨天的账也记上"),
 	}
 	xml := FormatResourceZone(pkts)
 	if !strings.Contains(xml, "<recent") || !strings.Contains(xml, "记录一下今天买了咖啡") {
 		t.Fatalf("recent 块未渲染:\n%s", xml)
 	}
 	parsed := ParseResourceZone(xml)
-	if len(parsed) != 2 {
-		t.Fatalf("expected 2 recent packets, got %d", len(parsed))
+	if len(parsed) != 3 {
+		t.Fatalf("expected 3 recent packets, got %d", len(parsed))
 	}
 	if parsed[0].Type != TypeRecent || parsed[0].ID != "m1" || parsed[0].Text != "记录一下今天买了咖啡" {
 		t.Errorf("recent roundtrip wrong: %+v", parsed[0])
 	}
 	rm, ok := parsed[0].Meta.(retrieval.RecentMeta)
-	if !ok || rm.Content != "记录一下今天买了咖啡" || rm.CreatedAt.IsZero() {
+	if !ok || rm.Content != "记录一下今天买了咖啡" || rm.Role != "user" || rm.CreatedAt.IsZero() {
 		t.Errorf("recent meta wrong: %+v", parsed[0].Meta)
+	}
+	if am, ok := parsed[1].Meta.(retrieval.RecentMeta); !ok || am.Role != "assistant" || am.Content != "好的，已记下" {
+		t.Errorf("assistant recent meta wrong: %+v", parsed[1].Meta)
 	}
 
 	// 携带：窗口内下一条 merge(prev 含 recent, fresh 空) 应保留 recent（quota 豁免）
 	carried := MergeResourceZone(parsed, nil, DefaultZoneQuotas())
-	if len(carried) != 2 || carried[0].ID != "m1" {
+	if len(carried) != 3 || carried[0].ID != "m1" {
 		t.Fatalf("recent 应随窗口携带, got %+v", carried)
 	}
 

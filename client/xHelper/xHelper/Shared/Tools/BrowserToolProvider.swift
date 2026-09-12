@@ -1822,6 +1822,18 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         refreshBrowserGroup()
     }
 
+    /// 关/降级当前 tab 后应切到的下一个 tab：只挑用户主栏可见的 tab（排除 agent 工作区标签），
+    /// 取 browser-N 最大者（最近打开）。agent 标签不在主栏，若被选中会导致主内容区空白。
+    private func nextVisibleTabId() -> String? {
+        tabs.filter { !$0.value.isAgentTab }
+            .keys
+            .compactMap { id -> (String, Int)? in
+                guard id.hasPrefix("browser-"), let n = Int(id.dropFirst(8)) else { return nil }
+                return (id, n)
+            }
+            .max(by: { $0.1 < $1.1 })?.0
+    }
+
     /// agent 上下文关闭部分标签（自己的标签集合），收尾与单标签关闭一致（关激活页后自动切最近 tab）。
     private func performCloseScoped(_ ids: [String]) {
         for id in ids {
@@ -1839,12 +1851,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
         refreshBrowserGroup()
         if let cur = activeTabId, tabs[cur] == nil {
-            let next = tabs.keys
-                .compactMap { id -> (String, Int)? in
-                    guard id.hasPrefix("browser-"), let n = Int(id.dropFirst(8)) else { return nil }
-                    return (id, n)
-                }
-                .max(by: { $0.1 < $1.1 })?.0
+            let next = nextVisibleTabId()
             switchActiveTab(to: next)
             if let rs = rightSidebar, let rid = next {
                 rs.activeTabId = rid
@@ -1908,12 +1915,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             // Bad Case 17 修复：关掉激活页后自动切到"最近打开的"剩余 tab（tabId 为递增 browser-N，
             // 数字最大 = 最近打开），并同步右侧栏 —— 否则后续操作（get_url/snapshot 等依赖
             // activeSession）会报"没有打开的页面"，需手动 switch_tab 才能恢复。
-            let next = tabs.keys
-                .compactMap { id -> (String, Int)? in
-                    guard id.hasPrefix("browser-"), let n = Int(id.dropFirst(8)) else { return nil }
-                    return (id, n)
-                }
-                .max(by: { $0.1 < $1.1 })?.0
+            let next = nextVisibleTabId()
             switchActiveTab(to: next)
             if let rs = rightSidebar, let rid = next {
                 rs.activeTabId = rid
@@ -2027,12 +2029,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         session.isAgentTab = true
         rightSidebar?.demoteAgentTab(id)
         if activeTabId == id {
-            let next = tabs.keys
-                .compactMap { id -> (String, Int)? in
-                    guard id.hasPrefix("browser-"), let n = Int(id.dropFirst(8)) else { return nil }
-                    return (id, n)
-                }
-                .max(by: { $0.1 < $1.1 })?.0
+            let next = nextVisibleTabId()
             switchActiveTab(to: next)
             if let rs = rightSidebar, let rid = next {
                 rs.activeTabId = rid

@@ -763,7 +763,7 @@ func (o *Orchestrator) buildReminderPackets(ctx context.Context, userID string) 
 		return nil
 	}
 	now := time.Now()
-	upcoming, _ := o.reminderRepo.ListUpcoming(ctx, userID, now, 5)
+	upcoming, _ := o.reminderRepo.ListUpcoming(ctx, userID, now, reminderUpcomingWindow, 5)
 	expired, _ := o.reminderRepo.ListExpiredUnmentioned(ctx, userID, now, 3)
 
 	var packets []retrieval.ContextPacket
@@ -799,6 +799,9 @@ const (
 	reminderInjectedHead = 100
 	reminderInjectedTail = 20
 )
+
+// reminderUpcomingWindow 只注入未来 2 天内的 pending 提醒，更远的留给 search_reminders。
+const reminderUpcomingWindow = 48 * time.Hour
 
 // buildProfilePackets 加载用户画像稳定层（facts 表 active 事实），按字段聚合后生成 ContextPacket。
 // 画像为空时不注入任何块。字段按名字母序排序，保证块内顺序确定，缓存友好。

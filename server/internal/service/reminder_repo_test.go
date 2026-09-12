@@ -214,8 +214,9 @@ func TestReminderRepo_ListUpcoming(t *testing.T) {
 	seedReminder(t, repo, "user1", "将来2", now.Add(3*time.Hour), model.ReminderStatusPending)
 	seedReminder(t, repo, "user1", "将来3", now.Add(2*time.Hour), model.ReminderStatusPending)
 	seedReminder(t, repo, "user1", "过期", now.Add(-1*time.Hour), model.ReminderStatusPending)
+	seedReminder(t, repo, "user1", "太远", now.Add(10*24*time.Hour), model.ReminderStatusPending)
 
-	list, err := repo.ListUpcoming(context.Background(), "user1", now, 10)
+	list, err := repo.ListUpcoming(context.Background(), "user1", now, 48*time.Hour, 10)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

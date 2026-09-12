@@ -206,6 +206,7 @@ struct ContentView: View {
         }
         prePipSidebarWidth = rightSidebar.width
         pipExitReason = "userExit"
+        sidebarWidth = Layout.sidebarMinWidth
         rightSidebar.width = rightSidebarMaxAvailable
         updateWindowMinWidth()
         guard let window = NSApp.keyWindow else { return }

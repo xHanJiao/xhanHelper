@@ -93,7 +93,7 @@ struct FloatingChatPanel: View {
         pos = clampPosition(p, container: containerSize, panel: size)
         manager.pipPosition = pos
         manager.persistPipPosition()
-        manager.pipSize = size
+        manager.pipSize = clampSize(manager.pipSize, container: containerSize, collapsed: false)
         manager.persistPipSize()
         withAnimation(.spring(response: 0.5, dampingFraction: 0.42)) { popIn = true }
         withAnimation(.easeOut(duration: 0.8).repeatCount(2, autoreverses: false)) { ping = true }

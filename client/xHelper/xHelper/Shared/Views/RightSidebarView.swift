@@ -167,17 +167,16 @@ struct RightSidebarView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(
-            isActive
-                ? AnyShapeStyle(.regularMaterial)
-                : (tab.isAgentTab
-                    ? AnyShapeStyle(Color.blue.opacity(0.18))
-                    : AnyShapeStyle(.clear)),
-            in: UnevenRoundedRectangle(
+        .background {
+            ZStack {
+                if isActive { Rectangle().fill(.regularMaterial) }
+                if tab.agentOwner != nil { Color.blue.opacity(0.18) }
+            }
+            .clipShape(UnevenRoundedRectangle(
                 topLeadingRadius: 6, bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0, topTrailingRadius: 6
-            )
-        )
+                bottomTrailingRadius: 0, topTrailingRadius: 6))
+        }
+        .help(agentOwnerHelp(tab) ?? "")
         .contentShape(Rectangle())
         .onTapGesture {
             manager.activeTabId = tab.id
@@ -203,6 +202,16 @@ struct RightSidebarView: View {
                 }
             }
         }
+    }
+
+    /// agent 来源 tab 的悬停提示：展示 owner（main / subagent:<convID>）；用户 tab 返回 nil
+    private func agentOwnerHelp(_ tab: RightSidebarTab) -> String? {
+        guard let owner = tab.agentOwner else { return nil }
+        if owner == "main" { return "由主 Agent 打开" }
+        if owner.hasPrefix("subagent:") {
+            return "由子 Agent 打开（\(owner.dropFirst("subagent:".count))）"
+        }
+        return "由 Agent 打开（\(owner)）"
     }
 
     /// tab 图标：优先显示网站 favicon，否则回退系统符号
@@ -312,7 +321,7 @@ struct RightSidebarView: View {
         .onTapGesture {
             BrowserToolProvider.shared.promoteAgentTab(tab.id, activate: true)
         }
-        .help("点击翻牌进主栏查看")
+        .help((agentOwnerHelp(tab) ?? "Agent 标签") + " · 点击翻牌进主栏查看")
     }
 
     #if os(macOS)
@@ -428,17 +437,16 @@ struct RightSidebarView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(
-            isActive
-                ? AnyShapeStyle(.regularMaterial)
-                : (tab.isAgentTab
-                    ? AnyShapeStyle(Color.blue.opacity(0.18))
-                    : AnyShapeStyle(.clear)),
-            in: UnevenRoundedRectangle(
+        .background {
+            ZStack {
+                if isActive { Rectangle().fill(.regularMaterial) }
+                if tab.agentOwner != nil { Color.blue.opacity(0.18) }
+            }
+            .clipShape(UnevenRoundedRectangle(
                 topLeadingRadius: 6, bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0, topTrailingRadius: 6
-            )
-        )
+                bottomTrailingRadius: 0, topTrailingRadius: 6))
+        }
+        .help(agentOwnerHelp(tab) ?? "")
         .contentShape(Rectangle())
         .onTapGesture {
             manager.activateTab(id: tab.id, inRightPane: side == .right)

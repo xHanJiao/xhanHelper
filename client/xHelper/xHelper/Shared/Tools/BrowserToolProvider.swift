@@ -1674,7 +1674,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                     Task { @MainActor in
                         await self?.retryOpen(session: session, tabId: tabId, url: url)
                     }
-                })), activate: activate, isAgentTab: isAgent)
+                })), activate: activate, isAgentTab: isAgent, agentOwner: owner)
             // P0-1 失败传播：加载失败/超时必须是硬失败（serverError），
             // 否则 LLM 看到 success=true 会误判成功并无效重试。
             return .init(serverResult: nil, serverError: "打开失败: \(msg)（tabId: \(tabId)）。页面未加载成功，请换源或先 close_tab 关闭该页", clientAction: nil)
@@ -1693,7 +1693,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             // agent 标签默认进工作区（不抢视图）；检测到人可解墙 → 自动手递手升主栏；
             // background:false（用户明确要求查看）→ 升主栏并激活。
             let reason = await wallReason(session: session)
-            rightSidebar?.openTab(id: tabId, title: title, icon: "globe", content: content, activate: false, isAgentTab: true)
+            rightSidebar?.openTab(id: tabId, title: title, icon: "globe", content: content, activate: false, isAgentTab: true, agentOwner: agentOwner)
             if let reason {
                 pendingHandoff[agentOwner] = tabId
                 rightSidebar?.setTabNeedsAttention(id: tabId, needs: true)
@@ -2570,7 +2570,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                               content: AnyView(BrowserTabView(webView: newSession.webView,
                                                               onSetupErrorBinding: { [weak newSession] onError in
                                                                   newSession?.onNavigationError = onError
-                                                              })), isAgentTab: isAgentTab)
+                                                              })), isAgentTab: isAgentTab, agentOwner: owner)
         if let targetURL {
             newSession.webView.load(URLRequest(url: targetURL, timeoutInterval: 15))
         }

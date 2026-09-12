@@ -11,6 +11,8 @@ struct RightSidebarTab: Identifiable {
     var host: String?
     /// agent 打开的标签（淡蓝底色区分；用户点击翻牌后置 false）
     var isAgentTab: Bool = false
+    /// agent 来源 owner（"main" / "subagent:<convID>"）。翻牌/交还均保留，仅用于归属展示
+    var agentOwner: String? = nil
     /// 手递手标签：agent 检测到验证码/登录墙升入主栏，需用户处理（⚠ 角标）
     var needsUserAttention: Bool = false
 }
@@ -184,11 +186,11 @@ final class RightSidebarManager: ObservableObject {
         rightActiveTabId = nil
     }
 
-    func openTab(id: String, title: String, icon: String, content: AnyView, activate: Bool = true, isAgentTab: Bool = false, intoRightPane: Bool = false) {
+    func openTab(id: String, title: String, icon: String, content: AnyView, activate: Bool = true, isAgentTab: Bool = false, agentOwner: String? = nil, intoRightPane: Bool = false) {
         if isAgentTab {
             // agent 标签进工作区（不参与主栏/分屏/特殊 tab 逻辑），激活忽略（工作区恒不抢视图）
             if !agentTabs.contains(where: { $0.id == id }) {
-                agentTabs.append(RightSidebarTab(id: id, title: title, icon: icon, content: content, isAgentTab: true))
+                agentTabs.append(RightSidebarTab(id: id, title: title, icon: icon, content: content, isAgentTab: true, agentOwner: agentOwner))
             }
             // agent/subagent 后台开标签不自动展开右栏，只由用户或手递手展开
             return
@@ -196,7 +198,7 @@ final class RightSidebarManager: ObservableObject {
         if tabs.contains(where: { $0.id == id }) {
             if activate { activeTabId = id }
         } else {
-            let tab = RightSidebarTab(id: id, title: title, icon: icon, content: content, isAgentTab: isAgentTab)
+            let tab = RightSidebarTab(id: id, title: title, icon: icon, content: content, isAgentTab: isAgentTab, agentOwner: agentOwner)
             if Self.specialTabIDs.contains(id) {
                 // 特殊 tab（下载/收藏/历史）固定最右：追加到末尾
                 tabs.append(tab)

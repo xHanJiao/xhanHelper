@@ -21,7 +21,7 @@ type Conversation struct {
 	LastExtractedMsgID *string `gorm:"size:36" json:"last_extracted_msg_id,omitempty"`
 	// Deprecated: 同 LastExtractedMsgID，不再维护。
 	LastExtractedAt *time.Time `json:"last_extracted_at,omitempty"`
-	AgentID         *string    `gorm:"size:36" json:"agent_id,omitempty"`
+	AgentID         *string    `gorm:"size:36;index" json:"agent_id,omitempty"`
 	ParentID        *string    `gorm:"size:36" json:"parent_id,omitempty"` // 子会话（subAgent）的父会话 ID，nil=普通会话
 	Mode            string     `gorm:"size:10;default:work" json:"mode"`   // 会话模式：work（默认）| plan（只读讨论）
 	Extra           string     `gorm:"type:text;not null" json:"extra"`    // JSON: {"used_tool_ids": ["..."]}

@@ -5,9 +5,21 @@ import (
 	"errors"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"xhan-helper/internal/model"
 )
+
+// agentUsageOrder 按使用频率（绑定的有效会话数）倒序，其次按创建时间倒序。
+// 相关子查询对每个 agent 计数一次，依赖 conversations.agent_id 索引。
+func agentUsageOrder(userID string) clause.OrderBy {
+	return clause.OrderBy{Expression: clause.Expr{
+		SQL: `(SELECT COUNT(*) FROM conversations c
+			WHERE c.agent_id = agents.id AND c.user_id = ? AND c.is_deleted = ?
+				AND c.parent_id IS NULL) DESC, agents.created_at DESC`,
+		Vars: []interface{}{userID, false},
+	}}
+}
 
 // AgentRepo — 智能体数据访问
 type AgentRepo struct {
@@ -54,7 +66,7 @@ func (r *AgentRepo) ListByUser(ctx context.Context, userID string, limit, offset
 	}
 
 	var list []model.Agent
-	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&list).Error
+	err := q.Order(agentUsageOrder(userID)).Limit(limit).Offset(offset).Find(&list).Error
 	return list, total, err
 }
 
@@ -94,7 +106,7 @@ func (r *AgentRepo) ListByCursor(ctx context.Context, userID string, cursor int)
 	var agents []model.Agent
 	err := r.db.WithContext(ctx).
 		Where("user_id = ?", userID).
-		Order("created_at DESC").
+		Order(agentUsageOrder(userID)).
 		Limit(InputBarPageSize).
 		Offset(cursor).
 		Find(&agents).Error
@@ -148,7 +160,7 @@ func (r *AgentRepo) ListByCursorWithActiveSetTop(ctx context.Context, userID, ac
 	}
 	var agents []model.Agent
 	err := q.
-		Order("created_at DESC").
+		Order(agentUsageOrder(userID)).
 		Limit(InputBarPageSize).
 		Offset(cursor).
 		Find(&agents).Error

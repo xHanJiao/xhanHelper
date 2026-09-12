@@ -190,7 +190,7 @@ final class RightSidebarManager: ObservableObject {
             if !agentTabs.contains(where: { $0.id == id }) {
                 agentTabs.append(RightSidebarTab(id: id, title: title, icon: icon, content: content, isAgentTab: true))
             }
-            isOpen = true
+            // agent/subagent 后台开标签不自动展开右栏，只由用户或手递手展开
             return
         }
         if tabs.contains(where: { $0.id == id }) {

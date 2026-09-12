@@ -1699,6 +1699,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 rightSidebar?.setTabNeedsAttention(id: tabId, needs: true)
                 // 升主栏并激活展示：手递手就是"需要你现在处理"，页面直接露出来（不抢键盘焦点）
                 promoteAgentTab(tabId, activate: true)
+                // 手递手是唯一允许 agent 自动展开右栏的场景（AskUserBar 需要用户看到待处理页）
+                rightSidebar?.isOpen = true
                 return .init(serverResult: Self.jsonDict(["url": urlStr, "title": title, "tabId": tabId,
                     "needsUserIntervention": true, "reason": reason,
                     "message": "该页需要人工处理（\(reason)），已切到前台并标注。请立即调用 ask_user 请求用户处理，message 指明站点与原因"]), serverError: nil, clientAction: nil)
@@ -2047,6 +2049,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         guard let tabId = pendingHandoff[owner], tabs[tabId] != nil else { return false }
         switchActiveTab(to: tabId)
         rightSidebar?.activeTabId = tabId
+        rightSidebar?.isOpen = true
         return true
     }
 

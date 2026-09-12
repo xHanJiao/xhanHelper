@@ -268,6 +268,11 @@ struct RightSidebarView: View {
                 }
                 .buttonStyle(.plain)
                 Spacer()
+                Button { BrowserToolProvider.shared.closeAllAgentTabs() } label: {
+                    Image(systemName: "xmark.circle").font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .help("关闭全部 Agent 标签")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)

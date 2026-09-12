@@ -2235,6 +2235,25 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         _ = handleCloseTab(["tabId": id], owner: session.owner)
     }
 
+    /// UI（Agent 工作区「全部关闭」）一键关闭所有 agent 标签，不触碰用户主栏标签。
+    /// 无下载直接关；有下载时弹确认条（与单标签关闭一致）。
+    func closeAllAgentTabs() {
+        let ids = tabs.filter { $0.value.isAgentTab }.map(\.key)
+        guard !ids.isEmpty else { return }
+        let downloading = ids.filter { tabs[$0]?.hasActiveDownloads == true }
+        if downloading.isEmpty {
+            performCloseScoped(ids)
+        } else {
+            presentCloseConfirmation(
+                title: "关闭 Agent 标签",
+                message: "有 \(downloading.count) 个下载进行中，关闭将取消下载。确认关闭？"
+            ) { [weak self] allow in
+                guard allow else { return }
+                self?.performCloseScoped(ids)
+            }
+        }
+    }
+
     /// Cmd+Shift+T：恢复最近关闭的 tab（复用 open 流程开新 tab 并加载原 URL）。
     /// 用户主动恢复：owner=nil（视为用户标签，不参与并发任务归属保护）。
     func restoreLastClosedTab() {

@@ -179,6 +179,9 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
         let scaledSize = fontSizeManager.scaledSize
         let font = NSFont.systemFont(ofSize: scaledSize)
         let lineHeight = font.ascender + abs(font.descender) + font.leading
+        let textWidth = max(barWidth - 12, 1)
+        let contentHeight = measuredHeight(text, width: textWidth, font: font)
+        let editorHeight = min(max(contentHeight, lineHeight), lineHeight * 8)
         return TextEditor(text: $text)
             .offset(x: shakeOffset)
             .focused($isFocused)
@@ -229,13 +232,28 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
             }
             .scrollContentBackground(.hidden)
             .font(.system(size: scaledSize))
-            .frame(minHeight: lineHeight, maxHeight: lineHeight * 8)
-            .fixedSize(horizontal: false, vertical: true)
+            .frame(height: editorHeight)
             .background(InputBarScrollHider(reapplyToken: barWidth))
             .padding(.leading, 6)
             .padding(.trailing, 6)
             .padding(.vertical, 6)
             .disabled(isStreaming)
+    }
+
+    /// 用独立 TextKit 栈按宽度算折行高度，不依赖 TextEditor 内部视图（其 ideal
+    /// height 会被 SwiftUI 缓存，宽度变化后不重算）。
+    private func measuredHeight(_ text: String, width: CGFloat, font: NSFont) -> CGFloat {
+        let storage = NSTextStorage(attributedString: NSAttributedString(
+            string: text.isEmpty ? " " : text,
+            attributes: [.font: font]
+        ))
+        let container = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        let manager = NSLayoutManager()
+        manager.addTextContainer(container)
+        storage.addLayoutManager(manager)
+        manager.ensureLayout(for: container)
+        return ceil(manager.usedRect(for: container).height)
     }
 #endif
 

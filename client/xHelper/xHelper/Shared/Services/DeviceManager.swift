@@ -9,10 +9,13 @@ class DeviceManager: ObservableObject {
     @Published var isLoggedIn = false
     @Published var isVerifying = false
     @Published var defaultConversation: ConversationData?
+    @Published var knownUsernames: [String] = []
 
     private let tokenKey = "xhan_user_token"
     private let userIdKey = "xhan_user_id"
     private let usernameKey = "xhan_username"
+    private let knownUsernamesKey = "xhan_known_usernames"
+    private let maxKnownUsernames = 10
     private let defaultConvKey = "xhan_default_conversation_id"
     private var refreshTimer: Timer?
     private let refreshInterval: TimeInterval = 3600
@@ -54,6 +57,10 @@ class DeviceManager: ObservableObject {
         self.token = UserDefaults.standard.string(forKey: tokenKey)
         self.userId = UserDefaults.standard.string(forKey: userIdKey)
         self.username = UserDefaults.standard.string(forKey: usernameKey)
+        self.knownUsernames = UserDefaults.standard.stringArray(forKey: knownUsernamesKey) ?? []
+        if let current = self.username, !self.knownUsernames.contains(current) {
+            self.knownUsernames.insert(current, at: 0)
+        }
         self.isLoggedIn = token != nil
         LogBuffer.shared.info("app launched, hasToken=\(self.isLoggedIn ? "yes" : "no")")
         if self.isLoggedIn {
@@ -160,6 +167,18 @@ class DeviceManager: ObservableObject {
         UserDefaults.standard.set(result.token, forKey: tokenKey)
         UserDefaults.standard.set(result.userId, forKey: userIdKey)
         UserDefaults.standard.set(username, forKey: usernameKey)
+        rememberUsername(username)
+    }
+
+    private func rememberUsername(_ name: String) {
+        guard !name.isEmpty else { return }
+        var list = knownUsernames.filter { $0 != name }
+        list.insert(name, at: 0)
+        if list.count > maxKnownUsernames {
+            list = Array(list.prefix(maxKnownUsernames))
+        }
+        knownUsernames = list
+        UserDefaults.standard.set(list, forKey: knownUsernamesKey)
     }
     
     private func getDefaultConversationInfo() async throws {

@@ -704,6 +704,67 @@ struct LoginMacView: View {
     @State private var password = ""
     @State private var isRegisterMode = false
     @State private var isLoading = false
+    @State private var highlightedIndex = 0
+    @FocusState private var focusedField: Field?
+
+    private enum Field { case username, password }
+
+    private var usernameSuggestions: [String] {
+        let typed = username.trimmingCharacters(in: .whitespaces)
+        guard !typed.isEmpty else { return [] }
+        return deviceManager.knownUsernames.filter {
+            $0 != typed && $0.lowercased().hasPrefix(typed.lowercased())
+        }
+    }
+
+    private func moveHighlight(_ delta: Int) {
+        let count = usernameSuggestions.count
+        guard count > 0 else { return }
+        highlightedIndex = min(max(highlightedIndex + delta, 0), count - 1)
+    }
+
+    private func applyHighlightedSuggestion() {
+        guard !usernameSuggestions.isEmpty else { return }
+        username = usernameSuggestions[min(highlightedIndex, usernameSuggestions.count - 1)]
+        focusedField = .password
+    }
+
+    private var suggestionList: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(usernameSuggestions.enumerated()), id: \.element) { index, name in
+                Button {
+                    username = name
+                    focusedField = .password
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "person.circle")
+                            .foregroundStyle(.secondary)
+                        Text(name)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        highlightedIndex == index
+                            ? Color.accentColor.opacity(0.2)
+                            : Color.clear
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    if hovering { highlightedIndex = index }
+                }
+            }
+        }
+        .frame(width: 260)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+        )
+        .shadow(radius: 6, y: 2)
+    }
 
     var body: some View {
         VStack(spacing: 24) {
@@ -721,12 +782,37 @@ struct LoginMacView: View {
                 TextField("用户名", text: $username)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 260)
+                    .focused($focusedField, equals: .username)
+                    .onChange(of: username) { _, _ in highlightedIndex = 0 }
+                    .onKeyPress(.downArrow) {
+                        guard !usernameSuggestions.isEmpty else { return .ignored }
+                        moveHighlight(1)
+                        return .handled
+                    }
+                    .onKeyPress(.upArrow) {
+                        guard !usernameSuggestions.isEmpty else { return .ignored }
+                        moveHighlight(-1)
+                        return .handled
+                    }
+                    .overlay(alignment: .top) {
+                        if focusedField == .username && !usernameSuggestions.isEmpty {
+                            suggestionList.offset(y: 30)
+                        }
+                    }
+                    .zIndex(1)
 
                 SecureField("密码", text: $password)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 260)
+                    .focused($focusedField, equals: .password)
             }
-            .onSubmit { Task { await performAuth() } }
+            .onSubmit {
+                if focusedField == .username && !usernameSuggestions.isEmpty {
+                    applyHighlightedSuggestion()
+                } else {
+                    Task { await performAuth() }
+                }
+            }
 
             if isLoading {
                 ProgressView()

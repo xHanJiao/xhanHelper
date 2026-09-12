@@ -179,10 +179,6 @@ struct ChatView: View {
                     ModelPill(context: ctx, isDeep: viewModel.deepMode) {
                         viewModel.toggleDeepMode()
                     }
-                    // 响应校验开关（每轮多一次 LLM 检查）
-                    VerifyPill(context: ctx, isOn: viewModel.verifyEnabled) {
-                        viewModel.toggleVerify()
-                    }
                 }
                 #endif
             } trailingActions: { ctx in

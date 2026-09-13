@@ -828,25 +828,29 @@ func TestRunSubAgent_CostScenario(t *testing.T) {
 
 // ---- 标签清理 ----
 
-func TestCollectTabIDsFromLog(t *testing.T) {
+func TestSubAgentOpenedBrowserTabs(t *testing.T) {
 	logs := []ToolCallLog{
 		{Tool: "browser", Function: "agent_browser_open", Result: &tool.Result{Success: true, Data: json.RawMessage(`{"tabId":"browser-1"}`)}},
-		{Tool: "browser", Function: "agent_browser_open", Result: &tool.Result{Success: true, Data: json.RawMessage(`{"tabId":"browser-2"}`)}},
-		{Tool: "browser", Function: "agent_browser_open", Result: &tool.Result{Success: true, Data: json.RawMessage(`{"tabId":"browser-1"}`)}},     // 重复去重
-		{Tool: "browser", Function: "agent_browser_open", Result: &tool.Result{Success: false, Error: "打开失败"}},                                     // 失败跳过
-		{Tool: "browser", Function: "agent_browser_snapshot", Result: &tool.Result{Success: true, Data: json.RawMessage(`{"tabId":"browser-9"}`)}}, // 非 open 跳过
-		{Tool: "unified_search", Function: "semantic_search", Result: &tool.Result{Success: true}},                                                 // 非 browser 跳过
+		{Tool: "browser", Function: "agent_browser_snapshot", Result: &tool.Result{Success: true}},
+		{Tool: "unified_search", Function: "semantic_search", Result: &tool.Result{Success: true}},
 	}
-	ids := collectTabIDsFromLog(logs)
-	if len(ids) != 2 || ids[0] != "browser-1" || ids[1] != "browser-2" {
-		t.Errorf("应收集 2 个去重 tabId: %v", ids)
+	if !subAgentOpenedBrowserTabs(logs) {
+		t.Error("含 agent_browser_open 应返回 true")
 	}
-	if got := collectTabIDsFromLog(nil); len(got) != 0 {
-		t.Errorf("空日志应返回空: %v", got)
+	// 失败/被拦截的 open 也应算（标签已入池，必须清理）
+	failed := []ToolCallLog{{Tool: "browser", Function: "agent_browser_open", Result: &tool.Result{Success: false, Error: "打开失败"}}}
+	if !subAgentOpenedBrowserTabs(failed) {
+		t.Error("失败的 open 也应返回 true")
+	}
+	if subAgentOpenedBrowserTabs(nil) {
+		t.Error("空日志应返回 false")
+	}
+	if subAgentOpenedBrowserTabs([]ToolCallLog{{Tool: "browser", Function: "agent_browser_snapshot"}}) {
+		t.Error("未 open 应返回 false")
 	}
 }
 
-// TestRunSubAgent_ClosesTabsOnEnd — 子任务结束后对本次打开的全部标签发 close_tab 清理
+// TestRunSubAgent_ClosesTabsOnEnd — 子任务结束后按 owner 批量发 agent_browser_close 清理
 func TestRunSubAgent_ClosesTabsOnEnd(t *testing.T) {
 	convRepo, msgRepo, _, cleanup := setupSubAgentRepos(t)
 	defer cleanup()
@@ -867,8 +871,9 @@ func TestRunSubAgent_ClosesTabsOnEnd(t *testing.T) {
 		{Content: "调研完成"},
 	}}
 
-	// 模拟客户端：消费 client_tool_call，open 回传 tabId，close_tab 回传成功
-	closed := make(chan string, 4)
+	// 模拟客户端：消费 client_tool_call，open 回传 tabId，agent_browser_close 回传成功
+	type closeEvt struct{ owner string }
+	closed := make(chan closeEvt, 4)
 	go func() {
 		for evt := range mainEvents {
 			if evt.Type != "client_tool_call" {
@@ -878,6 +883,7 @@ func TestRunSubAgent_ClosesTabsOnEnd(t *testing.T) {
 				CallID   string                 `json:"call_id"`
 				ToolName string                 `json:"tool_name"`
 				Args     map[string]interface{} `json:"arguments"`
+				Owner    string                 `json:"owner"`
 			}
 			if json.Unmarshal([]byte(evt.Content), &payload) != nil {
 				continue
@@ -885,9 +891,9 @@ func TestRunSubAgent_ClosesTabsOnEnd(t *testing.T) {
 			if payload.ToolName == "browser__agent_browser_open" {
 				res := ClientToolResult{Result: json.RawMessage(`{"tabId":"browser-1","title":"Example"}`)}
 				_ = bridge.OnResult(payload.CallID, "u1", res)
-			} else if payload.ToolName == "browser__agent_browser_close_tab" {
-				closed <- (payload.Args["tabId"]).(string)
-				_ = bridge.OnResult(payload.CallID, "u1", ClientToolResult{Result: json.RawMessage(`{"closed":true}`)})
+			} else if payload.ToolName == "browser__agent_browser_close" {
+				closed <- closeEvt{owner: payload.Owner}
+				_ = bridge.OnResult(payload.CallID, "u1", ClientToolResult{Result: json.RawMessage(`{"closed":true,"count":1}`)})
 			}
 		}
 	}()
@@ -900,16 +906,16 @@ func TestRunSubAgent_ClosesTabsOnEnd(t *testing.T) {
 		t.Fatalf("RunSubAgent: %+v", res)
 	}
 	select {
-	case tabID := <-closed:
-		if tabID != "browser-1" {
-			t.Errorf("应关闭 browser-1, got %s", tabID)
+	case evt := <-closed:
+		if !strings.HasPrefix(evt.owner, "subagent:") {
+			t.Errorf("清理必须带子任务 owner（否则客户端归属保护会拒绝），got %q", evt.owner)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("未收到 close_tab 清理事件")
+		t.Fatal("未收到 agent_browser_close 清理事件")
 	}
 	select {
-	case tabID := <-closed:
-		t.Errorf("不应重复关闭 tab: %s", tabID)
+	case evt := <-closed:
+		t.Errorf("不应重复关闭: owner=%s", evt.owner)
 	default:
 	}
 }

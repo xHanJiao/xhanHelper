@@ -78,4 +78,17 @@ class NotificationManager: ObservableObject {
             }
         }
     }
+
+    /// 立即发一条系统通知（子任务需要用户介入：ask_user / 浏览器手递手）。
+    /// 与定时提醒无关，故用静态方法、不依赖实例；identifier 随机避免互相覆盖。
+    static func notifyUserIntervention(message: String) {
+        #if os(macOS)
+        let content = UNMutableNotificationContent()
+        content.title = "子任务需要你"
+        content.body = message
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: "ask_user_\(UUID().uuidString)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { _ in }
+        #endif
+    }
 }

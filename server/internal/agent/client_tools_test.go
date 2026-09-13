@@ -278,6 +278,40 @@ func TestExecuteClientTool_ResultDelivered(t *testing.T) {
 	}
 }
 
+// executeClientTool 必须透传 owner（标签归属）：子任务清理传 "subagent:<convID>"，
+// 若被写成 "main" 客户端归属保护会拒绝关闭。
+func TestExecuteClientTool_ForwardsOwner(t *testing.T) {
+	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 2 * time.Second}
+	events := make(chan *llm.StreamEvent, 16)
+
+	go func() {
+		for evt := range events {
+			if evt.Type != "client_tool_call" {
+				continue
+			}
+			var p struct {
+				CallID string `json:"call_id"`
+				Owner  string `json:"owner"`
+			}
+			if err := json.Unmarshal([]byte(evt.Content), &p); err != nil {
+				t.Errorf("bad payload: %v", err)
+				return
+			}
+			if p.Owner != "subagent:sub-9" {
+				t.Errorf("owner 应透传 subagent:sub-9, got %q", p.Owner)
+			}
+			_ = o.clientBridge.OnResult(p.CallID, "u1", ClientToolResult{Result: json.RawMessage(`{"closed":true}`)})
+			return
+		}
+	}()
+
+	r, unavailable := o.executeClientTool(context.Background(), events, "u1",
+		tool.ToolCall{Tool: "browser", Function: "agent_browser_close"}, "", "subagent:sub-9")
+	if !r.Success || unavailable {
+		t.Fatalf("expected success, got %+v unavailable=%v", r, unavailable)
+	}
+}
+
 // 执行超时不置位 unavailable（可重试）：两个调用都真实执行并各自超时
 func TestExecuteConcurrently_TimeoutDoesNotSetUnavailable(t *testing.T) {
 	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 30 * time.Millisecond}

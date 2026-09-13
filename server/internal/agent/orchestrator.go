@@ -1832,7 +1832,7 @@ func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm
 			}
 		},
 		func(evt *llm.StreamEvent) { o.sendEvent(events, evt) },
-		userID, call, mode, "main") // 主循环标签归属：main
+		userID, call, mode, owner) // 标签归属：主循环 "main"，子任务 "subagent:<convID>"
 }
 
 // —— DB 保存 ——

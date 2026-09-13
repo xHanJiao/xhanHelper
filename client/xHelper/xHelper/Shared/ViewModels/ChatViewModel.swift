@@ -558,14 +558,7 @@ class ChatViewModel: ObservableObject {
 
     /// ask_user 到达时发 macOS 系统通知（仅队列首个），让用户知道子任务需要他
     private func playAskUserNotification(_ message: String) {
-        #if os(macOS)
-        let content = UNMutableNotificationContent()
-        content.title = "子任务需要你"
-        content.body = message
-        content.sound = .default
-        let request = UNNotificationRequest(identifier: "ask_user_\(UUID().uuidString)", content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request) { _ in }
-        #endif
+        NotificationManager.notifyUserIntervention(message: message)
     }
 
     /// L3 确认出现时播放提示音（macOS：Glass 系统音，设置可关；iOS 静默）。

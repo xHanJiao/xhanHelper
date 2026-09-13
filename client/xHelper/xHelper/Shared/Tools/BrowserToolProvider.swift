@@ -79,8 +79,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private var lastAgentTabByOwner: [String: String] = [:]
     /// 用户授权 agent 操作其用户标签的 owner 集合（"subagent:<convID>"，任务级天然隔离，无需清理）
     private var userTabGrants: Set<String> = []
-    /// 待人工处理的手递手标签：owner -> tabId（验证码/登录墙，检测驱动）
-    private var pendingHandoff: [String: String] = [:]
+    /// 待人工处理的手递手标签：owner -> (tabId, 升级时间)（验证码/登录墙，检测驱动）。
+    /// 带时间戳是为了超时兜底：子任务一死、无人 resolve 时，过期后自动放开回收豁免。
+    private var pendingHandoff: [String: (tabId: String, at: Date)] = [:]
     /// 最近关闭的 tab（Cmd+Shift+T 恢复）
     private var closedStack: [(url: URL?, title: String)] = []
     /// 后台管家定时器（agent 标签空闲清理）
@@ -103,11 +104,21 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         return src
     }()
 
-    /// agent 打开的标签页配额上限。满时不自动关闭任何标签，返回报错让 LLM 自行 close_tab。
+    /// agent 打开的标签页配额上限。满时先回收空闲标签腾位（见 reclaimAgentTabQuota），
+    /// 仍不足才返回报错让 LLM 自行 close_tab。
     /// 用户手动打开的标签不受此配额限制；agent 标签被用户点击翻牌后自动转为用户标签，不占配额。
     /// 20 而非 10：子任务结束时服务端会清理本次循环打开的全部标签（见 RunSubAgent cleanup），
     /// 配额放开不会跨任务积累。
     static let agentTabQuotaLimit = 20
+
+    /// agent 标签空闲回收 TTL（housekeeping 与配额腾位共用）。
+    static let agentTabIdleTTL: TimeInterval = 600
+
+    /// 配额满时优先回收本 owner 空闲超此时长的标签腾位（自己的标签，安全）。
+    static let agentTabOwnIdleReclaim: TimeInterval = 60
+
+    /// 手递手豁免的最长时间：超过后视为子任务已死、无人处理，放开回收豁免。
+    static let handoffTimeout: TimeInterval = 600
 
     init(maxResultChars: Int = 10_000) {
         self.maxResultChars = maxResultChars
@@ -117,16 +128,40 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     private func startHousekeepingTimer() {
         guard housekeepingTimer == nil else { return }
-        housekeepingTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+        // .common mode：主线程处于菜单跟踪/滚动拖拽等 modal mode 时，默认 mode 的 tick 会被推迟，
+        // 心跳不准时 → 回收延迟。加入 common 保证这些交互期间也照常触发。
+        let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.housekeepingTick()
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        housekeepingTimer = timer
     }
 
     private func housekeepingTick() {
+        pruneExpiredHandoffs()
         cleanupIdleAgentTabs()
         verifyKeptAliveTabs()
+        // 池快照（diag 不受 #if DEBUG 门控，Release 也可见）：让「没触发 / 被拦 / 关成功」可区分。
+        let agentTabs = tabs.filter { $0.value.owner != nil }
+        guard !agentTabs.isEmpty else { return }
+        let now = Date()
+        let detail = agentTabs
+            .map { "\($0.key)(owner=\($0.value.owner ?? "?") idle=\(Int(now.timeIntervalSince($0.value.lastAccessedAt)))s)" }
+            .joined(separator: " ")
+        LogBuffer.shared.diag("[Browser] housekeeping: agentTabs=\(agentTabs.count) [\(detail)]")
+    }
+
+    /// 手递手超时兜底：过期未 resolve 的 owner 放开豁免（回收链路由 housekeeping 正常处理），
+    /// 并摘掉其 ⚠ 角标。防止子任务死亡后该 owner 名下所有标签被永久豁免。
+    private func pruneExpiredHandoffs() {
+        let now = Date()
+        for (owner, h) in pendingHandoff where now.timeIntervalSince(h.at) > Self.handoffTimeout {
+            pendingHandoff.removeValue(forKey: owner)
+            rightSidebar?.setTabNeedsAttention(id: h.tabId, needs: false)
+            LogBuffer.shared.diag("[Browser] handoff expired, reclaim exemption lifted: owner=\(owner) tab=\(h.tabId)")
+        }
     }
 
     /// 定期复查后台保活 tab（有媒体在播、留在视图层级）：媒体已停止的摘除保活并暂停，
@@ -155,7 +190,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     func toolSchemas() async -> [LocalToolSchema] {
         var schemas: [LocalToolSchema] = [
-            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。默认 background:true 静默打开：标签进入「Agent 工作区」（底部折叠条），不切走当前页、不打扰用户浏览；配合 snapshot/read/get_text 等工具的 tabId 全程静默（流程：open(url) 拿 tabId → read/snapshot(tabId:...) 静默抓取 → close_tab(tabId:...) 清理）。background:false 仅用于用户明确要求查看该页：标签升入主栏并激活给用户看。配额：agent 打开的标签上限 \(Self.agentTabQuotaLimit) 个，返回值含 remainingAgentTabQuota；配额满时报错（含 agent 标签 tabId 列表），先 close_tab 腾出配额再打开。验证码/登录墙：若页面需要人工处理（登录/验证码/2FA），open 返回 needsUserIntervention:true（页面已升入主栏并标注），此时必须立即调用 ui__ask_user 请用户处理，用户处理后继续，跳过则换源。写/交互工具（click/fill 等）必须显式 tabId", inputSchema: objProps(["url": strProp("要打开的网址"), "background": boolProp("是否后台打开（不切走当前标签页），默认 true")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。默认 background:true 静默打开：标签进入「Agent 工作区」（底部折叠条），不切走当前页、不打扰用户浏览；配合 snapshot/read/get_text 等工具的 tabId 全程静默（流程：open(url) 拿 tabId → read/snapshot(tabId:...) 静默抓取 → close_tab(tabId:...) 清理）。background:false 仅用于用户明确要求查看该页：标签升入主栏并激活给用户看。配额：agent 打开的标签上限 \(Self.agentTabQuotaLimit) 个，返回值含 remainingAgentTabQuota；配额满时会自动回收空闲标签腾位，仍不足才报错（含 agent 标签 tabId 列表），此时先 close_tab 关闭不需要的页面再打开。验证码/登录墙：若页面需要人工处理（登录/验证码/2FA），open 返回 needsUserIntervention:true（页面已升入主栏并标注），此时必须立即调用 ui__ask_user 请用户处理，用户处理后继续，跳过则换源。写/交互工具（click/fill 等）必须显式 tabId", inputSchema: objProps(["url": strProp("要打开的网址"), "background": boolProp("是否后台打开（不切走当前标签页），默认 true")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_close",            description: "关闭本任务打开的全部标签页（只关 agent 标签，用户自己的标签不受影响）", inputSchema: objProps([:]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_close_tab",        description: "关闭指定的单个标签页，释放内存。tabId 从 list_tabs 获取；不用的页面请及时关闭。只能关闭本任务（owner 相同）的标签；用户自己的标签需用户授权", inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_list_tabs",        description: "列出当前所有打开的标签页（id/url/title/owner）。每项带 owner 标注：subagent:xxx=自己任务的标签，user=用户自己的标签（读取免费，写入需用户授权确认）。只操作标注为自己的标签", inputSchema: objProps([:]), isReadOnly: true),
@@ -1626,9 +1661,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         guard let host = url.host, !host.isEmpty else {
             return .init(serverResult: nil, serverError: "无效的 URL（缺少主机名）", clientAction: nil)
         }
-        // agent 标签配额：上限 agentTabQuotaLimit，满时不主动关闭任何 tab（用户开的或 agent 开的都不动），
-        // 返回报错让 LLM 自行先 close_tab 腾出配额。
-        let agentTabs = tabs.filter { $0.value.isAgentTab }
+        // agent 标签配额：上限 agentTabQuotaLimit。满时先回收空闲标签腾位（三级降级，
+        // 见 reclaimAgentTabQuota），仍不足才报错让 LLM 自行 close_tab。
+        // 归属判定用 owner != nil（而非 isAgentTab）：自动升级/手递手后 isAgentTab=false 但 owner 仍在，
+        // 仍应计入配额并参与回收；用户翻牌会清 owner，成为真正的用户标签，不计不回收。
+        if tabs.filter({ $0.value.owner != nil }).count >= Self.agentTabQuotaLimit {
+            reclaimAgentTabQuota(owner: owner)
+        }
+        let agentTabs = tabs.filter { $0.value.owner != nil }
         let quotaLeft = Self.agentTabQuotaLimit - agentTabs.count
         if quotaLeft <= 0 {
             let openList = agentTabs.map { id, session in
@@ -1695,12 +1735,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             let reason = await wallReason(session: session)
             rightSidebar?.openTab(id: tabId, title: title, icon: "globe", content: content, activate: false, isAgentTab: true, agentOwner: agentOwner)
             if let reason {
-                pendingHandoff[agentOwner] = tabId
+                pendingHandoff[agentOwner] = (tabId: tabId, at: Date())
                 rightSidebar?.setTabNeedsAttention(id: tabId, needs: true)
                 // 升主栏并激活展示：手递手就是"需要你现在处理"，页面直接露出来（不抢键盘焦点）
                 promoteAgentTab(tabId, activate: true)
                 // 手递手是唯一允许 agent 自动展开右栏的场景（AskUserBar 需要用户看到待处理页）
                 rightSidebar?.isOpen = true
+                // 独立系统通知：不依赖 LLM 后续是否调用 ask_user（模型可能漏调 → 用户毫无感知）
+                NotificationManager.notifyUserIntervention(message: "网页需要人工处理（\(reason)）：\(title)")
                 return .init(serverResult: Self.jsonDict(["url": urlStr, "title": title, "tabId": tabId,
                     "needsUserIntervention": true, "reason": reason,
                     "message": "该页需要人工处理（\(reason)），已切到前台并标注。请立即调用 ask_user 请求用户处理，message 指明站点与原因"]), serverError: nil, clientAction: nil)
@@ -1846,7 +1888,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
         for id in ids {
             tabs.removeValue(forKey: id)
-            pendingHandoff = pendingHandoff.filter { $0.value != id }
+            pendingHandoff = pendingHandoff.filter { $0.value.tabId != id }
             lastAgentTabByOwner = lastAgentTabByOwner.filter { $0.value != id }
         }
         refreshBrowserGroup()
@@ -2012,9 +2054,15 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// 把 agent 标签升入用户主栏（用户点击工作区标签 / background:false / 手递手）。
     /// activate:false 时不切走用户当前视图（手递手场景，页面以 ⚠ 角标提示）。
-    func promoteAgentTab(_ id: String, activate: Bool = true) {
+    /// byUser=true（用户主动翻牌）：清 owner，标签彻底转为用户标签——不再计配额、不被回收、子任务收尾也不清。
+    /// byUser=false（自动升级/手递手/background:false）：保留 owner，仍可被 TTL/配额/子任务收尾回收。
+    func promoteAgentTab(_ id: String, activate: Bool = true, byUser: Bool = false) {
         guard let session = tabs[id], session.isAgentTab else { return }
         session.isAgentTab = false
+        if byUser {
+            session.owner = nil
+            lastAgentTabByOwner = lastAgentTabByOwner.filter { $0.value != id }
+        }
         rightSidebar?.promoteAgentTab(id)
         if activate {
             switchActiveTab(to: id)
@@ -2038,12 +2086,12 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         refreshBrowserGroup()
     }
 
-    func handoffTabId(forOwner owner: String) -> String? { pendingHandoff[owner] }
+    func handoffTabId(forOwner owner: String) -> String? { pendingHandoff[owner]?.tabId }
 
     /// AskUserBar [前往处理]：激活手递手标签（不自动切走由调用方控制——按钮点击即切）
     @discardableResult
     func activateHandoffTab(_ owner: String) -> Bool {
-        guard let tabId = pendingHandoff[owner], tabs[tabId] != nil else { return false }
+        guard let tabId = pendingHandoff[owner]?.tabId, tabs[tabId] != nil else { return false }
         switchActiveTab(to: tabId)
         rightSidebar?.activeTabId = tabId
         rightSidebar?.isOpen = true
@@ -2052,9 +2100,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// ask_user resolve 后交还（清角标 + demote 回工作区）
     func resolveHandoff(owner: String) {
-        guard let tabId = pendingHandoff.removeValue(forKey: owner) else { return }
-        rightSidebar?.setTabNeedsAttention(id: tabId, needs: false)
-        demoteAgentTab(tabId)
+        guard let h = pendingHandoff.removeValue(forKey: owner) else { return }
+        rightSidebar?.setTabNeedsAttention(id: h.tabId, needs: false)
+        demoteAgentTab(h.tabId)
     }
 
 
@@ -2365,23 +2413,45 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     return false;})()
     """
 
-    /// 扫描 agent 打开的标签，空闲超时且无下载时自动关闭，释放内存。
+    /// 配额满时回收空闲 agent 标签腾位（三级降级）：
+    /// 1) 本 owner 空闲超 agentTabOwnIdleReclaim（60s）的标签——自己的，安全；
+    /// 2) 仍满 → 他人 agent 标签空闲超 agentTabIdleTTL（600s，与 housekeeping 同源，不误伤活跃页）；
+    /// 3) 仍满 → 由调用方报错。
+    /// 手递手中（pendingHandoff，未超时）与有下载的标签始终豁免；用户标签 owner=nil 天然不在候选。
+    private func reclaimAgentTabQuota(owner: String?) {
+        closeIdleAgentTabs(idleAgentTabIds(idle: Self.agentTabOwnIdleReclaim) { $0 == owner })
+        guard tabs.filter({ $0.value.owner != nil }).count >= Self.agentTabQuotaLimit else { return }
+        closeIdleAgentTabs(idleAgentTabIds(idle: Self.agentTabIdleTTL) { $0 != owner })
+    }
+
+    /// 空闲 agent 标签候选 id：无下载、非手递手中、lastAccessedAt 超 idle，且 owner 满足 ownerMatch。
+    /// 归属判定用 owner != nil（而非 isAgentTab）：自动升级/手递手后 isAgentTab=false 但 owner 仍在，
+    /// 仍是 agent 产生的标签，应参与回收；用户翻牌已清 owner，不会被回收。
+    private func idleAgentTabIds(idle: TimeInterval, ownerMatch: (String?) -> Bool) -> [String] {
+        let now = Date()
+        return tabs.filter { _, session in
+            guard session.owner != nil, !session.hasActiveDownloads else { return false }
+            if let o = session.owner, let h = pendingHandoff[o], now.timeIntervalSince(h.at) < Self.handoffTimeout { return false }
+            guard ownerMatch(session.owner) else { return false }
+            return now.timeIntervalSince(session.lastAccessedAt) > idle
+        }.map(\.key)
+    }
+
+    /// 逐个关闭标签（按标签自身 owner 自关，绕过归属保护），并记录结果（diag 不受 #if DEBUG 门控）。
+    private func closeIdleAgentTabs(_ ids: [String]) {
+        for id in ids where tabs[id] != nil {
+            let owner = tabs[id]?.owner
+            LogBuffer.shared.diag("[Browser] reclaim idle agent tab: \(id) owner=\(owner ?? "nil")")
+            _ = handleCloseTab(["tabId": id], owner: owner)
+            LogBuffer.shared.diag("[Browser] reclaim result: \(id) closed=\(tabs[id] == nil) pool=\(tabs.count)")
+        }
+    }
+
+    /// 扫描 agent 打开的标签，空闲超 TTL 且无下载时自动关闭，释放内存。
     /// 工作区标签不可见、无打扰，故 TTL 比主栏用户标签激进得多。
     /// 手递手中（pendingHandoff）的 owner 的标签豁免——用户思考期间不回收，处理完还能继续用。
     private func cleanupIdleAgentTabs() {
-        let now = Date()
-        let idleThreshold: TimeInterval = 600
-        let toClose = tabs.filter { id, session in
-            session.isAgentTab
-            && !session.hasActiveDownloads
-            && !(session.owner.map { pendingHandoff[$0] != nil } ?? false)
-            && now.timeIntervalSince(session.lastAccessedAt) > idleThreshold
-        }
-        for (id, _) in toClose {
-            LogBuffer.shared.info("[Browser] auto-closing idle agent tab: \(id)")
-            // housekeeping 按标签自身 owner self-close（不能传 nil：agent 标签带归属，nil 会被归属保护拦住）
-            _ = handleCloseTab(["tabId": id], owner: tabs[id]?.owner)
-        }
+        closeIdleAgentTabs(idleAgentTabIds(idle: Self.agentTabIdleTTL) { _ in true })
     }
 
     /// tab 标题跟随页面标题

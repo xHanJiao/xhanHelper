@@ -729,37 +729,24 @@ func summarizeToolCallLog(logs []ToolCallLog) string {
 	return truncateToolResult(buf.String(), totalBudget)
 }
 
-// collectTabIDsFromLog 从子循环工具调用日志收集浏览器 open 成功结果的 tabId（去重）。
-func collectTabIDsFromLog(logs []ToolCallLog) []string {
-	seen := make(map[string]bool)
-	var ids []string
+// subAgentOpenedBrowserTabs 判断子循环是否调用过浏览器 open（无论成功与否）。
+// 不能用「open 成功结果里的 tabId」判断：加载失败/被拦截页的结果是 error、无 tabId，
+// 但标签已经入池，必须一并清理。
+func subAgentOpenedBrowserTabs(logs []ToolCallLog) bool {
 	for _, tc := range logs {
-		if tc.Tool != "browser" || tc.Function != "agent_browser_open" {
-			continue
-		}
-		if tc.Result == nil || !tc.Result.Success {
-			continue
-		}
-		var m struct {
-			TabID string `json:"tabId"`
-		}
-		if err := json.Unmarshal(tc.Result.Data, &m); err != nil || m.TabID == "" {
-			continue
-		}
-		if !seen[m.TabID] {
-			seen[m.TabID] = true
-			ids = append(ids, m.TabID)
+		if tc.Tool == "browser" && tc.Function == "agent_browser_open" {
+			return true
 		}
 	}
-	return ids
+	return false
 }
 
-// cleanupSubAgentTabs 子任务结束时逐个关闭本次循环打开的浏览器标签。
-// 复用客户端工具协议（close_tab），独立短超时 ctx（单 tab 上限由 subAgentCleanupTimeout
-// 控制，不占子循环预算）；失败（tab 已关/客户端断连）忽略，客户端 housekeeping 兜底。
+// cleanupSubAgentTabs 子任务结束时按 owner 批量关闭本次循环打开的浏览器标签。
+// 复用客户端工具协议（agent_browser_close 的 owner 语义），一次调用覆盖全部——含加载失败/
+// 被拦截页（其结果无 tabId，逐个关闭会漏）。失败（tab 已关/客户端断连）忽略，客户端
+// housekeeping 兜底。owner 必须透传（executeClientTool 会写入 payload）。
 func (o *Orchestrator) cleanupSubAgentTabs(mainEvents chan<- *llm.StreamEvent, userID string, convID string, logs []ToolCallLog) {
-	tabIDs := collectTabIDsFromLog(logs)
-	if len(tabIDs) == 0 {
+	if !subAgentOpenedBrowserTabs(logs) {
 		return
 	}
 	timeout := o.subAgentCleanupTimeout
@@ -768,10 +755,8 @@ func (o *Orchestrator) cleanupSubAgentTabs(mainEvents chan<- *llm.StreamEvent, u
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	log.Printf("[subagent] cleanup: closing %d tabs", len(tabIDs))
-	for _, tabID := range tabIDs {
-		args, _ := json.Marshal(map[string]string{"tabId": tabID})
-		_, _ = o.executeClientTool(ctx, mainEvents, userID,
-			tool.ToolCall{Tool: "browser", Function: "agent_browser_close_tab", Args: args}, model.ConvModeWork, "subagent:"+convID)
-	}
+	log.Printf("[subagent] cleanup: closing tabs by owner subagent:%s", convID)
+	args, _ := json.Marshal(map[string]string{})
+	_, _ = o.executeClientTool(ctx, mainEvents, userID,
+		tool.ToolCall{Tool: "browser", Function: "agent_browser_close", Args: args}, model.ConvModeWork, "subagent:"+convID)
 }

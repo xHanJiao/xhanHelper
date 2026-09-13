@@ -319,7 +319,7 @@ struct RightSidebarView: View {
         .background(Color.blue.opacity(0.18), in: Capsule())
         .contentShape(Capsule())
         .onTapGesture {
-            BrowserToolProvider.shared.promoteAgentTab(tab.id, activate: true)
+            BrowserToolProvider.shared.promoteAgentTab(tab.id, activate: true, byUser: true)
         }
         .help((agentOwnerHelp(tab) ?? "Agent 标签") + " · 点击翻牌进主栏查看")
     }

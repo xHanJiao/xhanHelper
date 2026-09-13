@@ -802,11 +802,13 @@ class ChatViewModel: ObservableObject {
                 if nsError.domain == NSURLErrorDomain,
                    nsError.code == NSURLErrorNetworkConnectionLost || nsError.code == NSURLErrorCancelled {
                     self?.finishStreaming()
+                    self?.detachStreamingMessage()
                     return
                 }
                 LogBuffer.shared.error("ChatViewModel.sse onError: \(error)")
                 ToastCenter.shared.show(ToastCenter.friendlyErrorText(nsError, action: "发送"))
                 self?.finishStreaming()
+                self?.detachStreamingMessage()
             }
         }
         // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）
@@ -821,6 +823,7 @@ class ChatViewModel: ObservableObject {
         let cid = conversationId
         sseClient.disconnect()
         finishStreaming()
+        detachStreamingMessage()
         Task {
             if let cid, !cid.isEmpty {
                 do {
@@ -984,6 +987,7 @@ class ChatViewModel: ObservableObject {
             LogBuffer.shared.error("ChatViewModel.sse error event: \(event.data)")
             ToastCenter.shared.show("服务出错：\(event.data)")
             finishStreaming()
+            detachStreamingMessage()
         default:
             break
         }
@@ -1013,6 +1017,24 @@ class ChatViewModel: ObservableObject {
         #if os(iOS)
         endBackgroundTask()
         #endif
+    }
+
+    /// 终止/出错后给残留的流式消息挂唯一本地 ID。
+    /// 服务端取消时不持久化部分回复（readSSEStream 直接 return，不发 done），
+    /// 该消息拿不到真实 ID；若继续占用哨兵 `__streaming__`，会与下一次发送的新占位
+    /// 在 ForEach 里撞 ID（SwiftUI 复用视图），导致被终止内容先闪现在新消息位置。
+    /// 只在非 done 收尾路径调用——done 路径由 replaceStreamingMessageID 换真实 ID。
+    private func detachStreamingMessage() {
+        guard let idx = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
+        let m = messages[idx]
+        messages[idx] = Message(
+            id: "local_" + UUID().uuidString,
+            conversationId: m.conversationId,
+            role: m.role,
+            content: m.content,
+            toolCallsJSON: nil,
+            createdAt: m.createdAt
+        )
     }
 
     #if os(iOS)

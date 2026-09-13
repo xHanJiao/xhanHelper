@@ -1,4 +1,5 @@
 import SwiftUI
+import MarkdownUI
 
 // MARK: - SubagentPanel — 子任务活动面板
 //
@@ -25,6 +26,16 @@ struct SubagentPanel: View {
 struct SubagentSessionRow: View {
     let session: SubagentSession
     let onToggle: () -> Void
+    @EnvironmentObject var fontSizeManager: FontSizeManager
+
+    // 子会话最后一条能解析出结构化结果的 assistant 消息（子任务完成后的 XML 结论）。
+    // 命中则展开区只渲染渲染后的结果，隐藏过程消息；否则回退原始消息列表。
+    private var finalResult: SubagentResult? {
+        for msg in session.messages.reversed() where msg.role == "assistant" {
+            if let r = SubagentResultParser.parse(msg.content) { return r }
+        }
+        return nil
+    }
 
     private var stateIcon: String {
         switch session.state {
@@ -63,7 +74,7 @@ struct SubagentSessionRow: View {
                         .lineLimit(1)
                 }
                 if let summary = session.summary, session.state != "started" {
-                    Text(summary)
+                    Text(SubagentResultParser.cleanSummary(summary))
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -82,8 +93,16 @@ struct SubagentSessionRow: View {
             if session.expanded {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
-                        ForEach(session.messages) { msg in
-                            SubagentMessageRow(msg: msg)
+                        if let result = finalResult {
+                            Markdown(result.markdown)
+                                .markdownTheme(.subagentResult(fontSize: fontSizeManager.scaledSize))
+                                .markdownCodeSyntaxHighlighter(.plainText)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .macosTextSelection()
+                        } else {
+                            ForEach(session.messages) { msg in
+                                SubagentMessageRow(msg: msg)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -130,5 +149,26 @@ struct SubagentMessageRow: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+// MARK: - 子任务结果主题
+// 与主对话 chatBubble 主题区分：正文更小、次要灰；小节标题用主题橙独立成行。
+private extension Theme {
+    static func subagentResult(fontSize: CGFloat) -> Theme {
+        Theme.gitHub
+            .text {
+                ForegroundColor(.secondary)
+                FontSize(fontSize * 0.85)
+            }
+            .heading3 { configuration in
+                configuration.label
+                    .markdownMargin(top: 0, bottom: 6)
+                    .markdownTextStyle {
+                        ForegroundColor(Color("appAccent"))
+                        FontWeight(.semibold)
+                        FontSize(fontSize * 0.8)
+                    }
+            }
     }
 }

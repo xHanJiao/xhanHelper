@@ -624,6 +624,63 @@ func TestHourlyQuery_FilterAndUnpriced(t *testing.T) {
 	}
 }
 
+func TestConversationCost_WindowSplit(t *testing.T) {
+	db := newCostTestDB(t)
+	if err := db.AutoMigrate(&model.LlmModelPrice{}); err != nil {
+		t.Fatal(err)
+	}
+	windowStart := time.Date(2026, 8, 10, 12, 0, 0, 0, config.BJ)
+	rows := []model.LlmCostDetail{
+		// 另一会话，不应计入
+		{Date: "2026-08-10", UserID: "u1", Category: "main_chat", Model: "flash", ConvID: "other",
+			CreatedAt:            time.Date(2026, 8, 10, 10, 0, 0, 0, config.BJ),
+			PromptCacheHitTokens: 1_000_000},
+		// 本会话窗口前
+		{Date: "2026-08-10", UserID: "u1", Category: "main_chat", Model: "flash", ConvID: "c1",
+			CreatedAt:            time.Date(2026, 8, 10, 11, 0, 0, 0, config.BJ),
+			PromptCacheHitTokens: 1_000_000},
+		// 本会话窗口内
+		{Date: "2026-08-10", UserID: "u1", Category: "main_chat", Model: "flash", ConvID: "c1",
+			CreatedAt:            time.Date(2026, 8, 10, 13, 0, 0, 0, config.BJ),
+			PromptCacheHitTokens: 2_000_000},
+	}
+	for _, r := range rows {
+		if err := db.Create(&r).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo := NewLlmCostRepo(db)
+	segs, _ := NormalizePeakSegments("09:00-11:00")
+	prices := []model.LlmModelPrice{
+		{Model: "flash", EffectiveDate: "2026-08-01", PeakSegments: segs,
+			PriceHit: 1, PriceMiss: 1, PriceOutput: 1, PriceHitOff: 1, PriceMissOff: 1, PriceOutputOff: 1},
+	}
+
+	total, window, latestModel, err := repo.ConversationCost(context.Background(), "c1", windowStart, prices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 本会话 1M(窗口前) + 2M(窗口内)，单价 1 元/1M
+	if absFloat(total-3) > 1e-9 {
+		t.Errorf("total want 3 got %v", total)
+	}
+	if absFloat(window-2) > 1e-9 {
+		t.Errorf("window want 2 got %v", window)
+	}
+	if latestModel != "flash" {
+		t.Errorf("latestModel want flash got %s", latestModel)
+	}
+
+	// 零值 windowStart → 窗口 = 总
+	total2, window2, _, err := repo.ConversationCost(context.Background(), "c1", time.Time{}, prices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if absFloat(total2-3) > 1e-9 || absFloat(window2-3) > 1e-9 {
+		t.Errorf("zero windowStart want total=window=3 got %v/%v", total2, window2)
+	}
+}
+
 func absFloat(f float64) float64 {
 	if f < 0 {
 		return -f

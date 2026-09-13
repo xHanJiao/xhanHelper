@@ -5,11 +5,13 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
@@ -226,6 +228,96 @@ func getMessagesCursor(msgRepo *service.MessageRepo, convRepo *service.Conversat
 		}
 		result.Messages = cleanMessages(result.Messages)
 		view.JSONOK(c, result)
+	}
+}
+
+// getConversationUsage 返回会话的上下文 token 用量与消耗金额。
+// GET /api/conversations/:id/usage
+func getConversationUsage(
+	convRepo *service.ConversationRepo,
+	msgRepo *service.MessageRepo,
+	costRepo *service.LlmCostRepo,
+	priceRepo *service.LlmPriceRepo,
+	cfg *config.Config,
+) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		convID := c.Param("id")
+		if !requireConversationOwner(c, convRepo, convID) {
+			return
+		}
+		ctx := c.Request.Context()
+
+		// 上下文 token：最新 assistant 消息的 prompt_tokens（主循环最大上下文）。
+		contextTokens := 0
+		if msgs, err := msgRepo.ListByConversationRecent(ctx, convID, 10); err != nil {
+			log.Printf("[conv] usage ListByConversationRecent error: %v", err)
+		} else {
+			for i := len(msgs) - 1; i >= 0; i-- {
+				if msgs[i].Role != "assistant" || msgs[i].Extra == nil {
+					continue
+				}
+				var extra agent.MsgExtra
+				if err := json.Unmarshal([]byte(*msgs[i].Extra), &extra); err == nil && extra.Usage != nil {
+					contextTokens = extra.Usage.PromptTokens
+				}
+				break
+			}
+		}
+
+		// 窗口起点：最新 user 消息的 session_start_msg_id 对应消息时间；缺失回退到该 user 消息自身。
+		var windowStart time.Time
+		if users, err := msgRepo.ListRecentUserMessages(ctx, convID, 1); err != nil {
+			log.Printf("[conv] usage ListRecentUserMessages error: %v", err)
+		} else if len(users) > 0 {
+			windowStart = users[0].CreatedAt
+			if startID := agent.GetSessionStart(&users[0]); startID != "" {
+				if startMsg, err := msgRepo.GetByIDCols(ctx, startID, "id", "created_at"); err != nil {
+					log.Printf("[conv] usage GetByIDCols error: %v", err)
+				} else if startMsg != nil {
+					windowStart = startMsg.CreatedAt
+				}
+			}
+		}
+
+		prices, err := priceRepo.List(ctx)
+		if err != nil {
+			log.Printf("[conv] usage prices error: %v", err)
+			view.JSONError(c, 500, "query model prices failed")
+			return
+		}
+		total, window, latestModel, err := costRepo.ConversationCost(ctx, convID, windowStart, prices)
+		if err != nil {
+			log.Printf("[conv] usage cost error: %v", err)
+			view.JSONError(c, 500, "query conversation cost failed")
+			return
+		}
+
+		contextWindow := 0
+		if cfg != nil {
+			contextWindow = cfg.LLM.ContextWindowFor(latestModel)
+		}
+
+		// 子智能体（subAgent）：按「父会话 → 子会话」关系汇总（无窗口概念，全部累计）。
+		subIDs, err := convRepo.ListSubConversationIDs(ctx, convID)
+		if err != nil {
+			log.Printf("[conv] usage ListSubConversationIDs error: %v", err)
+			subIDs = nil
+		}
+		subagentCost, err := costRepo.SumCostByConvIDs(ctx, subIDs, prices)
+		if err != nil {
+			log.Printf("[conv] usage subagent cost error: %v", err)
+			subagentCost = 0
+		}
+
+		view.JSONOK(c, gin.H{
+			"context_tokens":    contextTokens,
+			"context_window":    contextWindow,
+			"window_cost":       window,
+			"conversation_cost": total,
+			"subagent_cost":     subagentCost,
+			"subagent_count":    len(subIDs),
+			"total_cost":        total + subagentCost,
+		})
 	}
 }
 

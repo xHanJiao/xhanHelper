@@ -101,6 +101,7 @@ type reactState struct {
 	jsonBuffered           bool // 原生 FC 下文本首字符为 { 暂缓推送，防 JSON 泄露
 	clientToolsUnavailable bool // 客户端断连/超时后置位，本次 Run 内后续客户端工具调用快速失败
 	finalRound             bool // 达到 max_iterations 后的收尾轮：禁用工具，强制输出总结
+	maxPromptTokens        int  // 本次 Run 内主循环各轮 prompt_tokens 最大值（即当前上下文大小）
 
 	// 渐进式工具暴露：本会话窗口内已启用的函数（仅 native FC 主循环使用）。
 	// key = "组名.函数名"（如 "note.search"）。
@@ -151,6 +152,8 @@ type Orchestrator struct {
 	maxIterations           int
 	defaultTemperature      *float64
 	defaultMaxTokens        *int
+	contextWindow           int // 弱模型上下文窗口 token 上限
+	strongContextWindow     int // 强模型上下文窗口 token 上限
 	maxToolResultChars      int
 	maxConcurrency          int
 	onChatEnd               func(userID, convID, userMsgID string)
@@ -202,6 +205,8 @@ type OrchestratorConfig struct {
 	MaxIterations             int
 	Temperature               *float64
 	MaxTokens                 *int
+	ContextWindow             int // 弱模型上下文窗口 token 上限（UI 展示用，0=未配置）
+	StrongContextWindow       int // 强模型上下文窗口 token 上限
 	MaxToolResultChars        int
 	ToolMaxConcurrency        int
 	OnChatEnd                 func(userID, convID, userMsgID string)
@@ -274,6 +279,8 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		maxIterations:             cfg.MaxIterations,
 		defaultTemperature:        cfg.Temperature,
 		defaultMaxTokens:          cfg.MaxTokens,
+		contextWindow:             cfg.ContextWindow,
+		strongContextWindow:       cfg.StrongContextWindow,
 		maxToolResultChars:        cfg.MaxToolResultChars,
 		maxConcurrency:            cfg.ToolMaxConcurrency,
 		onChatEnd:                 cfg.OnChatEnd,
@@ -505,7 +512,7 @@ func (o *Orchestrator) runFinalRound(
 	if !done {
 		// 兜底：收尾轮仍未结束（如 prompt-eng 模式 LLM 仍返回工具调用），保留硬错误行为
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrMaxIterations)})
-		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "max iterations reached", idsByTypeFromResult(retrieveResult))
+		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "max iterations reached", idsByTypeFromResult(retrieveResult), state.maxPromptTokens, o.contextWindowFor(req.DeepMode && o.proClient != nil))
 	}
 }
 
@@ -1008,6 +1015,9 @@ func (o *Orchestrator) runOneRound(
 		case "done":
 			elapsedMs := time.Since(llmStart).Milliseconds()
 			recordLLMCall(req.DeepMode && o.proClient != nil, elapsedMs, se.Usage)
+			if se.Usage != nil && se.Usage.PromptTokens > state.maxPromptTokens {
+				state.maxPromptTokens = se.Usage.PromptTokens
+			}
 			log.Printf("[orch] round %d response: content=%d, reasoning=%d, tool_calls=%d",
 				round+1, streamContent.Len(), streamReasoning.Len(), len(se.ToolCalls))
 			return o.finalizeRound(ctx, events, se, streamContent.String(), streamReasoning.String(), req, systemPrompt, retrieveResult, state)
@@ -1210,7 +1220,7 @@ func (o *Orchestrator) finalizeRound(
 		} else if (state.nativeFCTextDeferred || state.jsonBuffered) && streamContent != "" {
 			o.streamTextChunks(ctx, events, streamContent)
 		}
-		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "", idsByTypeFromResult(retrieveResult))
+		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "", idsByTypeFromResult(retrieveResult), state.maxPromptTokens, o.contextWindowFor(req.DeepMode && o.proClient != nil))
 	}
 	return done
 }
@@ -2174,7 +2184,7 @@ func (o *Orchestrator) streamTextChunks(ctx context.Context, events chan<- *llm.
 	}
 }
 
-func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, assistantMsgID, userMsgID, errStr string, resourceIDs map[string][]string) {
+func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, assistantMsgID, userMsgID, errStr string, resourceIDs map[string][]string, contextTokens, contextWindow int) {
 	parts := make([]string, 0)
 	if convID != "" {
 		parts = append(parts, fmt.Sprintf(`"conversation_id":"%s"`, convID))
@@ -2184,6 +2194,12 @@ func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, assistan
 	}
 	if userMsgID != "" {
 		parts = append(parts, fmt.Sprintf(`"user_message_id":"%s"`, userMsgID))
+	}
+	if contextTokens > 0 {
+		parts = append(parts, fmt.Sprintf(`"context_tokens":%d`, contextTokens))
+	}
+	if contextWindow > 0 {
+		parts = append(parts, fmt.Sprintf(`"context_window":%d`, contextWindow))
 	}
 	for _, typ := range []string{"memory", "note"} {
 		if ids := resourceIDs[typ]; len(ids) > 0 {
@@ -2195,6 +2211,15 @@ func (o *Orchestrator) emitDone(events chan<- *llm.StreamEvent, convID, assistan
 		parts = append(parts, fmt.Sprintf(`"error":"%s"`, errStr))
 	}
 	o.sendEvent(events, &llm.StreamEvent{Type: "done", Content: "{" + strings.Join(parts, ",") + "}"})
+}
+
+// contextWindowFor 返回当前档位的上下文窗口上限。
+// isStrong 与 pickClient 判定一致（req.DeepMode && proClient != nil）。
+func (o *Orchestrator) contextWindowFor(isStrong bool) int {
+	if isStrong && o.proClient != nil && o.strongContextWindow > 0 {
+		return o.strongContextWindow
+	}
+	return o.contextWindow
 }
 
 // —— 工具函数 ——

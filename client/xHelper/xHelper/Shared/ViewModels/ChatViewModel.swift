@@ -109,6 +109,13 @@ class ChatViewModel: ObservableObject {
     @Published var maxTokens: Int? = nil
     @Published var draftText = ""
 
+    /// 当前上下文 token 数（即时，随 done 事件更新）
+    @Published var contextTokens = 0
+    /// 上下文窗口上限（按模型档位，0=未配置）
+    @Published var contextWindow = 0
+    /// 会话消耗金额（慢更新，来自 usage 接口）
+    @Published var usage: ConversationUsage?
+
     /// 响应检验（verify）开关，会话级：默认关。开=强制开启，关=强制关闭（后端全局配置作兜底）
     @Published var verifyEnabled = false
     /// 当前流的工具调用展示队列（tool_call 入队，tool_result 更新状态）
@@ -658,6 +665,21 @@ class ChatViewModel: ObservableObject {
             LogBuffer.shared.error("ChatViewModel.loadConversation: \(error)")
             errorMessage = "加载消息失败"
         }
+        await refreshUsage()
+    }
+
+    /// 拉取会话消耗金额（慢更新）。上下文 token 由 done 事件即时提供，这里主要补金额。
+    func refreshUsage() async {
+        guard let cid = conversationId, !cid.isEmpty else { return }
+        do {
+            let u = try await apiClient.getConversationUsage(conversationId: cid)
+            usage = u
+            // 加载时用接口值初始化；done 后接口值与 SSE 一致，覆盖无害
+            if u.contextTokens > 0 { contextTokens = u.contextTokens }
+            if u.contextWindow > 0 { contextWindow = u.contextWindow }
+        } catch {
+            LogBuffer.shared.warning("ChatViewModel.refreshUsage: \(error)")
+        }
     }
 
     func loadMore(direction: String = "before") async {
@@ -715,6 +737,9 @@ class ChatViewModel: ObservableObject {
         conversationId = ""
         conversationTitle = nil
         isEditing = false
+        contextTokens = 0
+        contextWindow = 0
+        usage = nil
         planNodes = []
         isPlanModalVisible = false
         isPlanMinimized = false
@@ -935,6 +960,16 @@ class ChatViewModel: ObservableObject {
             if let userMsgID = parseUserMessageIdFromDone(event.data) {
                 replaceUserMessageID(with: userMsgID)
             }
+            // 上下文用量即时更新（来自 done 事件，零请求）
+            if let ctx = parseContextFromDone(event.data) {
+                if ctx.tokens > 0 { contextTokens = ctx.tokens }
+                if ctx.window > 0 { contextWindow = ctx.window }
+            }
+            // 金额慢更新：成本异步落库有延迟，稍后再拉一次
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                await self.refreshUsage()
+            }
             // 对话结束刷新执行计划（todo 可能被 plan.save 更新）
             Task { await self.loadPlanTodo() }
             NotificationCenter.default.post(name: .conversationListNeedsRefresh, object: nil)
@@ -1119,6 +1154,17 @@ class ChatViewModel: ObservableObject {
               let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
         else { return nil }
         return obj["user_message_id"] as? String
+    }
+
+    /// 解析 done 事件中的上下文用量（context_tokens / context_window）。
+    private func parseContextFromDone(_ data: String) -> (tokens: Int, window: Int)? {
+        guard let jsonData = data.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+        else { return nil }
+        let tokens = obj["context_tokens"] as? Int ?? 0
+        let window = obj["context_window"] as? Int ?? 0
+        if tokens == 0 && window == 0 { return nil }
+        return (tokens, window)
     }
 
     private func parseMemoryIDsFromDone(_ data: String) -> [String]? {

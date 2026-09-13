@@ -59,3 +59,32 @@ func TestValidate_LLMBgAPIKey(t *testing.T) {
 		})
 	}
 }
+
+func TestContextWindowFor(t *testing.T) {
+	cfg := LLMConfig{
+		Model:               "deepseek-v4-flash",
+		StrongModel:         "deepseek-v4-pro",
+		ContextWindow:       1000000,
+		StrongContextWindow: 2000000,
+	}
+	cases := []struct {
+		model string
+		want  int
+	}{
+		{"deepseek-v4-pro", 2000000},   // 强档
+		{"deepseek-v4-flash", 1000000}, // 弱档
+		{"other-vendor-model", 1000000},
+		{"", 1000000},
+	}
+	for _, c := range cases {
+		if got := cfg.ContextWindowFor(c.model); got != c.want {
+			t.Errorf("ContextWindowFor(%q) = %d, want %d", c.model, got, c.want)
+		}
+	}
+
+	// 强档上限未配置（0）→ 回退弱档
+	cfg.StrongContextWindow = 0
+	if got := cfg.ContextWindowFor("deepseek-v4-pro"); got != 1000000 {
+		t.Errorf("strong fallback = %d, want 1000000", got)
+	}
+}

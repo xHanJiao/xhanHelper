@@ -229,6 +229,15 @@ struct ChatView: View {
                     .animation(.easeOut(duration: 0.25), value: viewModel.planState)
                     .animation(.easeOut(duration: 0.25), value: viewModel.planDismissed)
                 }
+            } bottomLeading: { _ in
+                #if os(macOS)
+                // 上下文占用圆环：底部左侧，hover 出自定义浮层（token + 金额）。
+                ContextRingBadge(
+                    contextTokens: viewModel.contextTokens,
+                    contextWindow: viewModel.contextWindow,
+                    usage: viewModel.usage
+                )
+                #endif
             }
             .layoutPriority(1)
             .animation(.easeOut(duration: 0.2), value: viewModel.planExpanded)

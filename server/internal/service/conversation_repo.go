@@ -264,6 +264,19 @@ type SubConversationRow struct {
 	MsgCount int64 `gorm:"column:msg_count"`
 }
 
+// ListSubConversationIDs 返回某父会话下全部子会话 ID（未删除）。
+func (r *ConversationRepo) ListSubConversationIDs(ctx context.Context, parentID string) ([]string, error) {
+	if parentID == "" {
+		return nil, nil
+	}
+	var ids []string
+	err := r.db.WithContext(ctx).
+		Model(&model.Conversation{}).
+		Where("parent_id = ? AND is_deleted = ?", parentID, false).
+		Pluck("id", &ids).Error
+	return ids, err
+}
+
 // ListSubConversations 分页列出子会话（parent_id IS NOT NULL），按创建时间倒序。
 // 返回 (rows, hasMore)。消息数用一条子查询聚合，避免 N+1。
 func (r *ConversationRepo) ListSubConversations(ctx context.Context, limit, offset int) ([]SubConversationRow, bool, error) {

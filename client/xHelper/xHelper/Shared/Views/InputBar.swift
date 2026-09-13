@@ -10,7 +10,7 @@ import AppKit
 /// @ViewBuilder 闭包从外部（ChatView）注入，各自带 ButtonVisibility 决定
 /// 在收起态/展开态是否出现；上缘便签面板通过第三个闭包注入（锚定胶囊右上缘，
 /// 不注入时为空视图）。增删按钮不改本文件。
-struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
+struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLeading: View>: View {
     @Binding var text: String
     @Binding var isEditing: Bool
     let isStreaming: Bool
@@ -25,6 +25,8 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
     let trailingActions: (InputBarContext) -> TrailingActions
     /// 上缘便签面板（可选注入，锚定 720 胶囊右上缘；不注入时为空视图）。
     let topTrailingNote: (InputBarContext) -> TopNote
+    /// 底部左侧槽（上下文圆环等；不注入时为空视图）。
+    let bottomLeading: (InputBarContext) -> BottomLeading
 
     @EnvironmentObject var fontSizeManager: FontSizeManager
     @State private var shakeOffset: CGFloat = 0
@@ -46,7 +48,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
         onStop: @escaping () -> Void,
         @ViewBuilder statusRow: @escaping (InputBarContext) -> StatusRow,
         @ViewBuilder trailingActions: @escaping (InputBarContext) -> TrailingActions
-    ) where TopNote == EmptyView {
+    ) where TopNote == EmptyView, BottomLeading == EmptyView {
         self.init(
             text: text,
             isEditing: isEditing,
@@ -57,11 +59,12 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
             onStop: onStop,
             statusRow: statusRow,
             trailingActions: trailingActions,
-            topTrailingNote: { _ in EmptyView() }
+            topTrailingNote: { _ in EmptyView() },
+            bottomLeading: { _ in EmptyView() }
         )
     }
 
-    /// 完整 init（可注入上缘便签面板）。
+    /// 完整 init（可注入上缘便签面板与底部左侧槽）。
     init(
         text: Binding<String>,
         isEditing: Binding<Bool>,
@@ -72,7 +75,8 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
         onStop: @escaping () -> Void,
         @ViewBuilder statusRow: @escaping (InputBarContext) -> StatusRow,
         @ViewBuilder trailingActions: @escaping (InputBarContext) -> TrailingActions,
-        @ViewBuilder topTrailingNote: @escaping (InputBarContext) -> TopNote
+        @ViewBuilder topTrailingNote: @escaping (InputBarContext) -> TopNote,
+        @ViewBuilder bottomLeading: @escaping (InputBarContext) -> BottomLeading
     ) {
         self._text = text
         self._isEditing = isEditing
@@ -84,6 +88,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
         self.statusRow = statusRow
         self.trailingActions = trailingActions
         self.topTrailingNote = topTrailingNote
+        self.bottomLeading = bottomLeading
     }
 
     var body: some View {
@@ -168,6 +173,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View>: View {
         VStack(spacing: 6) {
             editor
             HStack(spacing: 4) {
+                bottomLeading(context)
                 Spacer(minLength: 0)
                 statusRow(context)
                 trailingActions(context)

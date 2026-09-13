@@ -153,6 +153,8 @@ type LLMConfig struct {
 	MaxIterations         int                `yaml:"max_iterations"`           // ReAct 最大迭代次数（默认 8）
 	DefaultTemperature    *float64           `yaml:"default_temperature"`      // 默认采样温度，nil 则用 LLM 自身默认
 	DefaultMaxTokens      *int               `yaml:"default_max_tokens"`       // 默认最大输出 token，nil 则用 LLM 自身默认
+	ContextWindow         int                `yaml:"context_window"`           // 弱模型（model）上下文窗口 token 上限，用于 UI 展示占用比
+	StrongContextWindow   int                `yaml:"strong_context_window"`    // 强模型（strong_model）上下文窗口 token 上限
 	MaxToolResultChars    int                `yaml:"max_tool_result_chars"`    // 工具结果传入 LLM 的最大字符数，超出截断，默认 2000
 	ToolMaxConcurrency    int                `yaml:"tool_max_concurrency"`     // 工具并发执行上限，0=不限制，默认 0
 	Verification          VerificationConfig `yaml:"verification"`             // 响应检验配置
@@ -166,6 +168,16 @@ type LLMConfig struct {
 // DebugPersist 返回 debug_persist_json 是否开启（nil=未显式配置时按 base 值生效）
 func (l *LLMConfig) DebugPersist() bool {
 	return l.DebugPersistJSON != nil && *l.DebugPersistJSON
+}
+
+// ContextWindowFor 返回指定模型的上下文窗口 token 上限。
+// 按档位匹配：model == StrongModel 用强档上限，其余用弱档上限（0 表示未配置）。
+// 比较配置里的模型名而非硬编码，换厂家只需改 model/strong_model。
+func (l *LLMConfig) ContextWindowFor(model string) int {
+	if model != "" && model == l.StrongModel && l.StrongContextWindow > 0 {
+		return l.StrongContextWindow
+	}
+	return l.ContextWindow
 }
 
 // DebugJSONConfig — 调试 JSON 异步持久化配置
@@ -353,6 +365,12 @@ func merge(dst, src *Config) {
 	}
 	if src.LLM.DefaultMaxTokens != nil {
 		dst.LLM.DefaultMaxTokens = src.LLM.DefaultMaxTokens
+	}
+	if src.LLM.ContextWindow != 0 {
+		dst.LLM.ContextWindow = src.LLM.ContextWindow
+	}
+	if src.LLM.StrongContextWindow != 0 {
+		dst.LLM.StrongContextWindow = src.LLM.StrongContextWindow
 	}
 	if src.LLM.MaxToolResultChars != 0 {
 		dst.LLM.MaxToolResultChars = src.LLM.MaxToolResultChars

@@ -56,6 +56,11 @@ class APIClient {
         try await get("/api/conversations/\(conversationId)/plans")
     }
 
+    /// 获取会话的上下文 token 用量与消耗金额（上下文圆环 + hover 浮层用）
+    func getConversationUsage(conversationId: String) async throws -> ConversationUsage {
+        try await get("/api/conversations/\(conversationId)/usage")
+    }
+
     func deleteConversation(id: String) async throws {
         try await delete("/api/conversations/\(id)")
     }
@@ -646,6 +651,34 @@ struct CursorMessages: Codable {
         case hasMoreAfter = "has_more_after"
         case oldestCursor = "oldest_cursor"
         case newestCursor = "newest_cursor"
+    }
+}
+
+/// 会话上下文用量与消耗金额 —— 服务端 GET /api/conversations/:id/usage
+struct ConversationUsage: Codable {
+    /// 当前上下文 token 数（最新一轮 prompt_tokens）
+    let contextTokens: Int
+    /// 上下文窗口上限（按模型档位，0=未配置）
+    let contextWindow: Int
+    /// 当前窗口消耗（元，主对话当前 session 部分）
+    let windowCost: Double
+    /// 会话消耗（元，主对话+后处理，不含子智能体）
+    let conversationCost: Double
+    /// 子智能体消耗（元，全会话累计）
+    let subagentCost: Double
+    /// 子智能体任务数
+    let subagentCount: Int
+    /// 会话合计 = conversationCost + subagentCost
+    let totalCost: Double
+
+    enum CodingKeys: String, CodingKey {
+        case contextTokens = "context_tokens"
+        case contextWindow = "context_window"
+        case windowCost = "window_cost"
+        case conversationCost = "conversation_cost"
+        case subagentCost = "subagent_cost"
+        case subagentCount = "subagent_count"
+        case totalCost = "total_cost"
     }
 }
 

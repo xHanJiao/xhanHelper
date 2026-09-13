@@ -188,6 +188,89 @@ func (r *LlmCostRepo) TotalsByConversations(ctx context.Context, convIDs []strin
 	return out, nil
 }
 
+// ConversationCost 计算会话总消耗，以及 windowStart 之后的窗口消耗（元）。
+// windowStart 为零值表示不区分窗口（窗口=总）。同时返回最近一条明细的模型名，
+// 供 UI 按档位查上下文窗口上限。
+func (r *LlmCostRepo) ConversationCost(ctx context.Context, convID string, windowStart time.Time, prices []model.LlmModelPrice) (total, window float64, latestModel string, err error) {
+	if convID == "" {
+		return 0, 0, "", nil
+	}
+	return r.costByConvIDs(ctx, []string{convID}, windowStart, prices)
+}
+
+// SumCostByConvIDs 汇总一批会话的消耗金额（元，不分窗口）。convIDs 为空返回 0。
+// 用于把子会话（subAgent）成本并入父会话合计。
+func (r *LlmCostRepo) SumCostByConvIDs(ctx context.Context, convIDs []string, prices []model.LlmModelPrice) (float64, error) {
+	if len(convIDs) == 0 {
+		return 0, nil
+	}
+	total, _, _, err := r.costByConvIDs(ctx, convIDs, time.Time{}, prices)
+	return total, err
+}
+
+// costByConvIDs 汇总一批会话的消耗。windowStart 非零时额外返回其后的窗口消耗。
+// 与 ExpenseQuery 同口径：先按 (date, model, 北京时分, 是否在窗口内) 分桶，
+// 再逐桶匹配价格，避免逐行解析峰谷 JSON。
+func (r *LlmCostRepo) costByConvIDs(ctx context.Context, convIDs []string, windowStart time.Time, prices []model.LlmModelPrice) (total, window float64, latestModel string, err error) {
+	byModel := make(map[string][]model.LlmModelPrice)
+	for _, p := range prices {
+		byModel[p.Model] = append(byModel[p.Model], p)
+	}
+	for m := range byModel {
+		sort.Slice(byModel[m], func(i, j int) bool {
+			return byModel[m][i].EffectiveDate < byModel[m][j].EffectiveDate
+		})
+	}
+
+	var rows []ExpenseRow
+	if err := r.db.WithContext(ctx).Model(&model.LlmCostDetail{}).
+		Select("date, model, category, created_at,"+
+			"prompt_cache_hit_tokens as hit,"+
+			"prompt_cache_miss_tokens as miss,"+
+			"completion_tokens as output").
+		Where("conv_id IN ?", convIDs).
+		Scan(&rows).Error; err != nil {
+		return 0, 0, "", fmt.Errorf("query conversation cost rows: %w", err)
+	}
+
+	type aggKey struct {
+		date, model, hm string
+		inWindow        bool
+	}
+	type agg struct{ hit, miss, output int64 }
+	buckets := make(map[aggKey]*agg)
+	var latestTime time.Time
+	for _, row := range rows {
+		if row.CreatedAt.After(latestTime) {
+			latestTime = row.CreatedAt
+			latestModel = row.Model
+		}
+		inWindow := windowStart.IsZero() || !row.CreatedAt.Before(windowStart)
+		key := aggKey{normalizeDateKey(row.Date), row.Model, row.CreatedAt.In(config.BJ).Format("15:04"), inWindow}
+		b := buckets[key]
+		if b == nil {
+			b = &agg{}
+			buckets[key] = b
+		}
+		b.hit += row.Hit
+		b.miss += row.Miss
+		b.output += row.Output
+	}
+
+	for key, b := range buckets {
+		ps, _, ok := priceAt(byModel[key.model], key.date, key.hm)
+		if !ok {
+			continue // 未定价模型不计入
+		}
+		cost := float64(b.hit)/1e6*ps.hit + float64(b.miss)/1e6*ps.miss + float64(b.output)/1e6*ps.output
+		total += cost
+		if key.inWindow {
+			window += cost
+		}
+	}
+	return total, window, latestModel, nil
+}
+
 // normalizeDateKey SQLite 驱动可能把 date 列读回 RFC3339（"2026-08-11T00:00:00Z"），
 // MySQL 返回纯日期串（"2026-08-11"）。统一截取日期部分。
 func normalizeDateKey(s string) string {

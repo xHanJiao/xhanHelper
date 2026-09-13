@@ -168,20 +168,22 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	debugJSONSink := InitDebugJSON(cfg, repos.Message, bgCtx)
 
 	orch := agent.New(&agent.OrchestratorConfig{
-		FlashClient:        llmClients.Flash,
-		Registry:           tools.Registry,
-		ProClient:          llmClients.Strong,
-		PromptBuilder:      pb,
-		MsgRepo:            repos.Message,
-		ConvRepo:           repos.Conversation,
-		Embedder:           infra.Embedder,
-		VectorStore:        vs,
-		EmbeddingRepo:      repos.Embedding,
-		MaxIterations:      cfg.LLM.MaxIterations,
-		Temperature:        cfg.LLM.DefaultTemperature,
-		MaxTokens:          cfg.LLM.DefaultMaxTokens,
-		MaxToolResultChars: cfg.LLM.MaxToolResultChars,
-		ToolMaxConcurrency: cfg.LLM.ToolMaxConcurrency,
+		FlashClient:         llmClients.Flash,
+		Registry:            tools.Registry,
+		ProClient:           llmClients.Strong,
+		PromptBuilder:       pb,
+		MsgRepo:             repos.Message,
+		ConvRepo:            repos.Conversation,
+		Embedder:            infra.Embedder,
+		VectorStore:         vs,
+		EmbeddingRepo:       repos.Embedding,
+		MaxIterations:       cfg.LLM.MaxIterations,
+		Temperature:         cfg.LLM.DefaultTemperature,
+		MaxTokens:           cfg.LLM.DefaultMaxTokens,
+		ContextWindow:       cfg.LLM.ContextWindow,
+		StrongContextWindow: cfg.LLM.StrongContextWindow,
+		MaxToolResultChars:  cfg.LLM.MaxToolResultChars,
+		ToolMaxConcurrency:  cfg.LLM.ToolMaxConcurrency,
 		OnChatEnd: func(userID, convID, userMsgID string) {
 			if cfg.Server.DisableBackgroundTasks {
 				return

@@ -552,3 +552,73 @@ func TestRun_PromptBuildError(t *testing.T) {
 		t.Errorf("expected 'theme state query failed', got '%s'", err.Error())
 	}
 }
+
+func TestRunReActLoop_DoneCarriesContextWindow(t *testing.T) {
+	msgRepo := &mockMsgRepo{}
+	convRepo := &mockConvRepo{}
+	o := newTestOrchestrator(msgRepo, convRepo)
+	o.contextWindow = 1_000_000
+	o.strongContextWindow = 2_000_000
+
+	client := &mockLLMClient{
+		responses: []mockLLMResponse{{
+			events: append(makeTextDeltas(`{"reply":"hi"}`), makeDone()),
+		}},
+	}
+	o.flashClient = client
+	o.proClient = client
+
+	ctx := context.Background()
+	events := make(chan *llm.StreamEvent, 256)
+	req := &RunRequest{
+		ConversationID:     "conv-1",
+		UserID:             "user-1",
+		UserMessageContent: "hi",
+	}
+	go o.runReActLoop(ctx, events, "test prompt", nil, nil, req)
+
+	var done *llm.StreamEvent
+	for evt := range events {
+		if evt.Type == "done" {
+			done = evt
+		}
+	}
+	if done == nil {
+		t.Fatal("expected done event")
+	}
+	// makeDone 的 PromptTokens=10，弱档上限 1_000_000
+	if !strings.Contains(done.Content, `"context_tokens":10`) {
+		t.Errorf("done missing context_tokens: %s", done.Content)
+	}
+	if !strings.Contains(done.Content, `"context_window":1000000`) {
+		t.Errorf("done missing weak context_window: %s", done.Content)
+	}
+
+	// DeepMode → 强档上限
+	client2 := &mockLLMClient{
+		responses: []mockLLMResponse{{
+			events: append(makeTextDeltas(`{"reply":"hi"}`), makeDone()),
+		}},
+	}
+	o.proClient = client2
+	events2 := make(chan *llm.StreamEvent, 256)
+	req2 := &RunRequest{
+		ConversationID:     "conv-2",
+		UserID:             "user-1",
+		UserMessageContent: "hi",
+		DeepMode:           true,
+	}
+	go o.runReActLoop(ctx, events2, "test prompt", nil, nil, req2)
+	var done2 *llm.StreamEvent
+	for evt := range events2 {
+		if evt.Type == "done" {
+			done2 = evt
+		}
+	}
+	if done2 == nil {
+		t.Fatal("expected done event (deep mode)")
+	}
+	if !strings.Contains(done2.Content, `"context_window":2000000`) {
+		t.Errorf("done missing strong context_window: %s", done2.Content)
+	}
+}

@@ -394,6 +394,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 @main
 struct xhanHelperMacApp: App {
+    init() {
+        NotificationDelegateRegistrar.register()
+    }
+
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var deviceManager = DeviceManager()
     @StateObject private var colorSchemeManager = ColorSchemeManager()

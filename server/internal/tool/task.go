@@ -52,7 +52,7 @@ func (t *TaskTool) Description() string {
 用法：
 - 子任务的内部思考与最终回复不展示给用户（用户仅看到工具调用过程），你必须用自然语言总结转发给用户
 - prompt 要写详细：单一目标、明确要调研什么、返回什么格式
-- 续跑：任务因预算耗尽/超时只返回部分结果时（返回里带 <task id state>），携带其中 id 作为 task_id 参数再次调用即可续跑同一子任务——此前全部调研上下文与已开标签保留，预算重新计算`, maxIter-1, maxIter, timeout)
+- 续跑：任务因预算耗尽/超时只返回部分结果时（返回里带 <task id state>），携带其中 id 作为 task_id 参数再次调用即可续跑同一子任务——复用此前全部调研上下文（注意：上一轮结束时浏览器标签已被自动关闭，需重新打开），预算重新计算`, maxIter-1, maxIter, timeout)
 }
 
 func (t *TaskTool) Catalog() (CatalogEntry, bool) {
@@ -96,7 +96,7 @@ web_explore / file_explore 需要 macOS 客户端在线；客户端离线时这�
 				},
 				"task_id": map[string]interface{}{
 					"type":        "string",
-					"description": "可选。继续之前返回的 <task id='...'> 中的任务 ID，复用同一子会话（保留此前全部调研上下文与已开标签）继续工作；不传则新建子任务。",
+					"description": "可选。继续之前返回的 <task id='...'> 中的任务 ID，复用同一子会话上下文继续工作（注意：上一轮结束时浏览器标签已被自动关闭，续跑需重新打开）；不传则新建子任务。",
 				},
 			},
 			"required": []interface{}{"description", "subagent_type", "prompt"},

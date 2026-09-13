@@ -308,6 +308,7 @@ const costUserOptions = ref([])
 const costCategoryOptions = ref([])
 const costModelOptions = ref([])
 const costSummary = ref(null)
+const costSpend = ref(null)
 const costLoading = ref(false)
 const costLoaded = ref(false)
 const costBarStack = ref({ hit: true, miss: true, completion: true })
@@ -388,18 +389,19 @@ const costRanges = [
   { label: '30 天', value: 30 }
 ]
 
+// 本地日期格式化（toISOString 是 UTC，凌晨会差一天）
+function localDay(d) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 function costDateRange() {
   const end = new Date()
   const start = new Date()
   start.setDate(start.getDate() - (costRangeDays.value - 1))
-  // 本地日期格式化（toISOString 是 UTC，凌晨会差一天）
-  const fmt = d => {
-    const y = d.getFullYear()
-    const m = String(d.getMonth() + 1).padStart(2, '0')
-    const day = String(d.getDate()).padStart(2, '0')
-    return `${y}-${m}-${day}`
-  }
-  return { start: fmt(start), end: fmt(end) }
+  return { start: localDay(start), end: localDay(end) }
 }
 
 async function fetchCostCategories() {
@@ -434,6 +436,30 @@ async function fetchCostSummary() {
     const qs = params.length ? '?' + params.join('&') : ''
     costSummary.value = await api.get('/api/admin/cost/summary' + qs)
   } catch (_) {}
+}
+
+// 消费卡片：固定取近 7 天花销，前端按日累加出今日/近3日/近7日
+async function fetchCostSpend() {
+  const end = new Date()
+  const start = new Date()
+  start.setDate(start.getDate() - 6)
+  const params = [`start=${localDay(start)}`, `end=${localDay(end)}`]
+  if (costCategory.value) params.push(`category=${costCategory.value}`)
+  if (costModel.value.length) params.push(...costModel.value.map(m => `model=${m}`))
+  if (costUsers.value.length) params.push(...costUsers.value.map(id => `user_id=${id}`))
+  try {
+    costSpend.value = await api.get('/api/admin/cost/expense?' + params.join('&'))
+  } catch (_) {}
+}
+
+// 近 n 日消费合计（含今日）
+function spendWindow(n) {
+  const start = new Date()
+  start.setDate(start.getDate() - (n - 1))
+  const s = localDay(start)
+  return (costSpend.value?.days || [])
+    .filter(d => d.date >= s)
+    .reduce((sum, d) => sum + (d.cost || 0), 0)
 }
 
 async function fetchCostStats(groupBy) {
@@ -527,6 +553,7 @@ async function refreshCost() {
   try {
     await Promise.all([
       fetchCostSummary(),
+      fetchCostSpend(),
       renderCostCharts(),
       costSelectedDate.value ? fetchCostHourly() : fetchCostExpense()
     ])
@@ -1078,6 +1105,10 @@ onUnmounted(() => {
         <NCard size="small" title="本月缓存">
           <div style="font-size: 22px; font-weight: 600;">命中 {{ hitRate(costSummary?.this_month) }}%</div>
           <div style="font-size: 12px; color: var(--color-text-muted);">命中 {{ fmtTokens(costSummary?.this_month?.prompt_cache_hit) }} · 未命中 {{ fmtTokens(costSummary?.this_month?.prompt_cache_miss) }}</div>
+        </NCard>
+        <NCard size="small" title="今日消费">
+          <div style="font-size: 22px; font-weight: 600;">{{ fmtMoney(spendWindow(1)) }}</div>
+          <div style="font-size: 12px; color: var(--color-text-muted);">近3日 {{ fmtMoney(spendWindow(3)) }} · 近7日 {{ fmtMoney(spendWindow(7)) }}</div>
         </NCard>
       </div>
 

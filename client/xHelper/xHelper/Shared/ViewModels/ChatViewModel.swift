@@ -293,6 +293,9 @@ class ChatViewModel: ObservableObject {
     /// 子任务活动面板（SubagentPanel）：按 conv_id 归集，独立于消息流。
     @Published var subagentSessions: [SubagentSession] = []
 
+    /// 子任务面板整体展开态：折叠时只留一行状态条，展开时浮层覆盖消息区。
+    @Published var subagentPanelExpanded = false
+
     /// 信任模式（会话级本地状态）：开启后跳过 L3 工具确认，直接执行。
     /// 适合固定流程/重复操作；只影响客户端确认弹窗，服务端零感知。
     /// 换会话（loadConversation）自动关闭，安全默认。
@@ -547,6 +550,11 @@ class ChatViewModel: ObservableObject {
         }
     }
 
+    /// 切换子任务面板整体展开态（折叠=一行状态条，展开=覆盖消息区的浮层）
+    func toggleSubagentPanel() {
+        subagentPanelExpanded.toggle()
+    }
+
     /// 从 MiniReAct 状态文本解析轮次（"第 N/M 轮"）
     private func parseSubagentRound(_ content: String) -> Int? {
         let pattern = #"第 (\d+)/"#
@@ -625,6 +633,7 @@ class ChatViewModel: ObservableObject {
             thoughtDone = false
             // 子任务活动面板同款：仅切会话时清空
             subagentSessions = []
+            subagentPanelExpanded = false
         }
         // 记录重置前计划指纹与折叠态：同会话重载（scene 激活/刷新/重试）时保持收起状态，
         // 真·新计划（指纹变化/切换会话）仍默认展开。捕获必须在清空之前。
@@ -725,6 +734,7 @@ class ChatViewModel: ObservableObject {
         thoughtMessage = nil
         thoughtDone = false
         subagentSessions = []
+        subagentPanelExpanded = false
         statusMessage = nil
         errorMessage = nil
         conversationId = ""
@@ -767,6 +777,7 @@ class ChatViewModel: ObservableObject {
         thoughtMessage = nil
         thoughtDone = false
         subagentSessions = []
+        subagentPanelExpanded = false
         statusMessage = nil
         errorMessage = nil
         planNodes = []

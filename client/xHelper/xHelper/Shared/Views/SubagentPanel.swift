@@ -1,25 +1,122 @@
 import SwiftUI
 import MarkdownUI
 
-// MARK: - SubagentPanel — 子任务活动面板
+// MARK: - 子任务活动 UI（SubagentPanel）
 //
-// 输入栏上方（AskUserBar 之下），展示每个运行/已完成子任务的状态行：
-// 状态图标 + 描述 + 轮次 + 最新动作；点击展开为整宽卡片，内部渲染子会话消息
-// 列表（DB 拉取，轻量行），限高滚动。多任务垂直堆叠。
-// 数据来源：subagent SSE 事件（状态行）+ GET messages（展开详情）。
+// 折叠态：输入栏上方一行状态条（SubagentStatusBar）——聚合图标 + 计数 + 最近动作 + 展开按钮。
+// 展开态：由 ChatView 以浮层形式覆盖在消息列表上（SubagentDetailPanel），点收起/遮罩收回。
+// 详情数据来源：subagent SSE 事件（状态行）+ GET messages（展开详情）。
 
-struct SubagentPanel: View {
+// MARK: - SubagentStatusBar — 折叠态一行状态条
+struct SubagentStatusBar: View {
     let sessions: [SubagentSession]
-    let onToggle: (String) -> Void
+    let expanded: Bool
+    let onToggle: () -> Void
+
+    private var running: Int { sessions.filter { $0.state == "started" }.count }
+    private var completed: Int { sessions.filter { $0.state == "completed" }.count }
+    private var failed: Int { sessions.filter { $0.state == "timeout" || $0.state == "failed" }.count }
+
+    private var icon: String {
+        if failed > 0 { return "exclamationmark.triangle.fill" }
+        if running > 0 { return "gearshape" }
+        return "checkmark.circle.fill"
+    }
+
+    private var color: Color {
+        if failed > 0 { return .orange }
+        if running > 0 { return .accentColor }
+        return .green
+    }
+
+    private var summary: String {
+        var parts: [String] = []
+        if running > 0 { parts.append("\(running) 个子任务运行中") }
+        if completed > 0 { parts.append("\(completed) 完成") }
+        if failed > 0 { parts.append("\(failed) 失败") }
+        return parts.isEmpty ? "子任务" : parts.joined(separator: " · ")
+    }
+
+    private var latestAction: String? {
+        sessions.last(where: { $0.state == "started" })?.latestAction
+    }
 
     var body: some View {
-        VStack(spacing: 6) {
-            ForEach(sessions) { session in
-                SubagentSessionRow(session: session) {
-                    onToggle(session.convID)
+        Button {
+            onToggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.caption)
+                    .foregroundColor(color)
+                Text(summary)
+                    .font(.caption).bold()
+                if let action = latestAction {
+                    Text(action)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
+                Spacer(minLength: 4)
+                Text(expanded ? "收起" : "展开")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - SubagentDetailPanel — 展开态浮层（覆盖消息区）
+// 标题栏 + 单个外层滚动区；每个子任务行内不再单独滚动，展开详情由外层滚动承载。
+struct SubagentDetailPanel: View {
+    let sessions: [SubagentSession]
+    let onToggleSession: (String) -> Void
+    let onCollapse: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // 整条标题栏可点：点击任意位置收起浮层
+            Button {
+                onCollapse()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "gearshape.2")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("子任务 (\(sessions.count))")
+                        .font(.caption).bold()
+                    Spacer(minLength: 4)
+                    Text("收起").font(.caption2).foregroundColor(.secondary)
+                    Image(systemName: "chevron.down").font(.caption2).foregroundColor(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(sessions) { session in
+                        SubagentSessionRow(session: session) {
+                            onToggleSession(session.convID)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .padding(10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
     }
 }
 
@@ -55,59 +152,58 @@ struct SubagentSessionRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: stateIcon)
-                    .font(.caption)
-                    .foregroundColor(stateColor)
-                Text(session.description)
-                    .font(.caption).bold()
-                    .lineLimit(1)
-                if let round = session.round {
-                    Text("第 \(round) 轮")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                if let action = session.latestAction, session.state == "started" {
-                    Text(action)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+            // 整条 header 可点：点击切换该子任务详情展开/收起
+            Button {
+                onToggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: stateIcon)
+                        .font(.caption)
+                        .foregroundColor(stateColor)
+                    Text(session.description)
+                        .font(.caption).bold()
                         .lineLimit(1)
-                }
-                if let summary = session.summary, session.state != "started" {
-                    Text(SubagentResultParser.cleanSummary(summary))
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                Button {
-                    onToggle()
-                } label: {
+                    if let round = session.round {
+                        Text("第 \(round) 轮")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    if let action = session.latestAction, session.state == "started" {
+                        Text(action)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    if let summary = session.summary, session.state != "started" {
+                        Text(SubagentResultParser.cleanSummary(summary))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 4)
                     Image(systemName: session.expanded ? "chevron.down" : "chevron.right")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
-                .buttonStyle(.plain)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
 
             if session.expanded {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
-                        if let result = finalResult {
-                            Markdown(result.markdown)
-                                .markdownTheme(.subagentResult(fontSize: fontSizeManager.scaledSize))
-                                .markdownCodeSyntaxHighlighter(.plainText)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .macosTextSelection()
-                        } else {
-                            ForEach(session.messages) { msg in
-                                SubagentMessageRow(msg: msg)
-                            }
+                VStack(alignment: .leading, spacing: 4) {
+                    if let result = finalResult {
+                        Markdown(result.markdown)
+                            .markdownTheme(.subagentResult(fontSize: fontSizeManager.scaledSize))
+                            .markdownCodeSyntaxHighlighter(.plainText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .macosTextSelection()
+                    } else {
+                        ForEach(session.messages) { msg in
+                            SubagentMessageRow(msg: msg)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 300)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)

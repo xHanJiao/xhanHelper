@@ -83,6 +83,9 @@ struct ChatView: View {
                     .transition(.scale.combined(with: .opacity))
                     .padding(.bottom, 12)
                 }
+
+                // 子任务详情浮层：覆盖在消息列表上（不改变消息区高度），点遮罩/收起收回。
+                subagentOverlay
             }
 
             // 错误提示改为全局 Toast（ToastCenter），此处不再内嵌红字
@@ -100,12 +103,17 @@ struct ChatView: View {
                 .padding(.bottom, 8)
             }
 
-            // 子任务活动面板：运行/已完成子任务状态行 + 展开消息列表（上推聊天区布局，不遮挡）。
+            // 子任务活动面板（折叠态）：输入栏上方一行状态条，点击展开为覆盖消息区的浮层。
+            // 展开态由浮层承载，状态条隐藏；收起后重新出现。
             // 宽度约束与 InputBar 完全一致（maxWidth 720 + trailing + chatHorizontalPadding），保证同宽。
-            if !viewModel.subagentSessions.isEmpty {
-                SubagentPanel(sessions: viewModel.subagentSessions) { convID in
-                    viewModel.toggleSubagentExpand(convID)
-                }
+            if !viewModel.subagentSessions.isEmpty && !viewModel.subagentPanelExpanded {
+                SubagentStatusBar(
+                    sessions: viewModel.subagentSessions,
+                    expanded: viewModel.subagentPanelExpanded,
+                    onToggle: {
+                        withAnimation(.easeOut(duration: 0.25)) { viewModel.toggleSubagentPanel() }
+                    }
+                )
                 .frame(maxWidth: 720, alignment: .trailing)
                 .padding(.horizontal, Layout.chatHorizontalPadding)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -264,6 +272,35 @@ struct ChatView: View {
             Task { await reloadAgentPicker() }
 #endif
         }
+    }
+
+    /// 子任务详情浮层：仅展开且存在会话时渲染，覆盖消息列表（不改变消息区高度）。
+    @ViewBuilder
+    private var subagentOverlay: some View {
+        if viewModel.subagentPanelExpanded && !viewModel.subagentSessions.isEmpty {
+            GeometryReader { geo in
+                VStack(spacing: 0) {
+                    // 轻遮罩：点空白处收起
+                    Color.black.opacity(0.10)
+                        .contentShape(Rectangle())
+                        .onTapGesture { collapseSubagentPanel() }
+                    SubagentDetailPanel(
+                        sessions: viewModel.subagentSessions,
+                        onToggleSession: { viewModel.toggleSubagentExpand($0) },
+                        onCollapse: { collapseSubagentPanel() }
+                    )
+                    .frame(maxHeight: geo.size.height * 0.78)
+                    .padding(.horizontal, Layout.chatHorizontalPadding)
+                    .padding(.bottom, 6)
+                }
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .zIndex(1)
+        }
+    }
+
+    private func collapseSubagentPanel() {
+        withAnimation(.easeOut(duration: 0.25)) { viewModel.subagentPanelExpanded = false }
     }
 
     /// 输入栏容器描边/光晕色：计划模式橙、信任模式金、其余默认强调色。

@@ -6,7 +6,7 @@ server:
   max_tokens_per_user: 4 # 同一用户最多同时存在的 token 数，超出踢最老的
   memory_auto_extract: false
   profile_startup_migration: false # 启动时异步迁移旧画像（facts 空才迁；迁移完成后可关）
-  disable_background_tasks: false # 禁用所有后台任务（记忆提取/摘要/主题分析/反思等）
+  disable_background_tasks: true # 禁用所有后台任务（记忆提取/摘要/主题分析/反思等）
   sidecar_url: http://127.0.0.1:9090
   allowed_users:
     - ${ALLOWED_USER}

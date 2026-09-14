@@ -351,13 +351,10 @@ struct InputBarScrollHider: NSViewRepresentable {
             onSend: {},
             onStop: {}
         ) { ctx in
-            CollapsibleModeControls(
-                context: ctx,
-                isPlanMode: false,
-                trustedMode: false,
-                onToggleMode: {},
-                onToggleTrusted: {}
-            )
+            HStack(spacing: 4) {
+                ModePill(context: ctx, isPlanMode: false) {}
+                TrustedPill(context: ctx, trusted: false) {}
+            }
         } trailingActions: { ctx in
             SendStopButton(context: ctx, isStreaming: false, canSend: ctx.canSend, onSend: {}, onStop: {})
         }
@@ -379,13 +376,10 @@ struct InputBarScrollHider: NSViewRepresentable {
             onSend: {},
             onStop: {}
         ) { ctx in
-            CollapsibleModeControls(
-                context: ctx,
-                isPlanMode: true,
-                trustedMode: true,
-                onToggleMode: {},
-                onToggleTrusted: {}
-            )
+            HStack(spacing: 4) {
+                ModePill(context: ctx, isPlanMode: true) {}
+                TrustedPill(context: ctx, trusted: true) {}
+            }
         } trailingActions: { ctx in
             SendStopButton(context: ctx, isStreaming: true, canSend: true, onSend: {}, onStop: {})
         }
@@ -408,13 +402,8 @@ struct InputBarScrollHider: NSViewRepresentable {
             onStop: {}
         ) { ctx in
             HStack(spacing: 4) {
-                CollapsibleModeControls(
-                    context: ctx,
-                    isPlanMode: false,
-                    trustedMode: false,
-                    onToggleMode: {},
-                    onToggleTrusted: {}
-                )
+                ModePill(context: ctx, isPlanMode: false) {}
+                TrustedPill(context: ctx, trusted: false) {}
                 AgentPickerButton(
                     context: ctx,
                     activeAgentID: "agent-active",

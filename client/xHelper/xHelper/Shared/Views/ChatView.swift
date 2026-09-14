@@ -152,18 +152,14 @@ struct ChatView: View {
             ) { ctx in
                 #if os(macOS)
                 HStack(spacing: 4) {
-                    CollapsibleModeControls(
-                        context: ctx,
-                        isPlanMode: viewModel.isPlanMode,
-                        trustedMode: viewModel.trustedMode,
-                        onToggleMode: {
-                            Task { await viewModel.toggleMode() }
-                        },
-                        onToggleTrusted: {
-                            viewModel.toggleTrustedMode()
-                        }
-                    )
-                    // 智能体选择器：展开按钮与模型切换之间，cpu 图标与侧边栏一致。
+                    // 计划/信任模式常驻按钮（原先折叠在 chevron 后，计划模式高频使用故内联）。
+                    ModePill(context: ctx, isPlanMode: viewModel.isPlanMode) {
+                        Task { await viewModel.toggleMode() }
+                    }
+                    TrustedPill(context: ctx, trusted: viewModel.trustedMode) {
+                        viewModel.toggleTrustedMode()
+                    }
+                    // 智能体选择器：模式按钮与模型切换之间，cpu 图标与侧边栏一致。
                     // 仅当已确认用户存在智能体时才展示（无智能体时隐藏，避免无意义按钮）。
                     if hasLoadedAgents && !pickerAgents.isEmpty {
                         AgentPickerButton(
@@ -183,7 +179,7 @@ struct ChatView: View {
                             }
                         )
                     }
-                    // 常驻模型切换（chevron 与发送按钮之间）：deep（pro+thinking）↔ flash
+                    // 常驻模型切换（模式按钮与发送按钮之间）：deep（pro+thinking）↔ flash
                     ModelPill(context: ctx, isDeep: viewModel.deepMode) {
                         viewModel.toggleDeepMode()
                     }

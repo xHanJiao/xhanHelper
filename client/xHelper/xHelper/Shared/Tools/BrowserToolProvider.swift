@@ -3299,14 +3299,25 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             LogBuffer.shared.diag("[BrowserPerf] host=\(host)\(native) \(t)")
         }
 
+        /// 良性导航中断：主动取消（NSURLErrorCancelled）与「导航转下载」
+        /// （WebKitErrorFrameLoadInterruptedByPolicyChange，WebKitErrorDomain 102）。
+        /// 后者在点击下载链接时 WebKit 必然回报，不是真实失败，应静默忽略。
+        private func isBenignNavigationError(_ error: Error) -> Bool {
+            let ns = error as NSError
+            return ns.code == NSURLErrorCancelled
+                || (ns.domain == "WebKitErrorDomain" && ns.code == 102)
+        }
+
         nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             Task { @MainActor in
                 let msg = error.localizedDescription
-                resumeLoad((error as NSError).code == NSURLErrorCancelled ? nil : msg, reason: "didFail")
-                if (error as NSError).code != NSURLErrorCancelled {
-                    captureDiagnostics(type: .navigationFailed, errorCode: (error as NSError).code, errorDescription: msg)
-                    onNavigationError?(msg)
+                guard !isBenignNavigationError(error) else {
+                    resumeLoad(nil, reason: "didFail-benign")
+                    return
                 }
+                resumeLoad(msg, reason: "didFail")
+                captureDiagnostics(type: .navigationFailed, errorCode: (error as NSError).code, errorDescription: msg)
+                onNavigationError?(msg)
             }
         }
 
@@ -3314,11 +3325,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             Task { @MainActor in
                 let code = (error as NSError).code
                 let msg = error.localizedDescription
-                resumeLoad(code == NSURLErrorCancelled ? nil : "加载失败: \(msg)", reason: "didFailProvisional")
-                if code != NSURLErrorCancelled {
-                    captureDiagnostics(type: .navigationFailed, errorCode: code, errorDescription: msg)
-                    onNavigationError?("加载失败: \(msg)")
+                guard !isBenignNavigationError(error) else {
+                    resumeLoad(nil, reason: "didFailProvisional-benign")
+                    return
                 }
+                resumeLoad("加载失败: \(msg)", reason: "didFailProvisional")
+                captureDiagnostics(type: .navigationFailed, errorCode: code, errorDescription: msg)
+                onNavigationError?("加载失败: \(msg)")
             }
         }
 

@@ -1862,19 +1862,11 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCall
 	log.Printf("[orch] saved tool message: id=%s tool_call_id=%s", msgID, toolCallID)
 }
 
-// truncateToolResult 截断过长的工具结果，保留头尾，中间标注截断量
+// truncateToolResult 截断过长的工具结果，保留头尾，中间标注截断量。
+// 按 rune 截断（复用 truncateStringKeepHeadTail）：早期按字节切片会在中文等多字节字符
+// 中间劈开，产出非法 UTF-8，经 JSON 序列化后变成 �（子任务摘要、注入 LLM 的工具结果都中招）。
 func truncateToolResult(content string, maxLen int) string {
-	if maxLen <= 0 || len(content) <= maxLen {
-		return content
-	}
-	head := maxLen * 7 / 10
-	tail := maxLen * 2 / 10
-	if head+tail > maxLen {
-		head = maxLen * 7 / 10
-		tail = maxLen - head
-	}
-	truncated := len(content) - head - tail
-	return content[:head] + fmt.Sprintf("\n…[已截断 %d 字符]…\n", truncated) + content[len(content)-tail:]
+	return truncateStringKeepHeadTail(content, maxLen)
 }
 
 // SimpleUserContent 生成历史 user 消息的简化内容：原文 + 时间戳（资源区方案）。

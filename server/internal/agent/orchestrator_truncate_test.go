@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
@@ -78,6 +79,22 @@ func TestTruncateToolResult_ChineseChars(t *testing.T) {
 	}
 	if !strings.Contains(result, "结尾内容") {
 		t.Error("expected tail with Chinese chars preserved")
+	}
+}
+
+func TestTruncateToolResult_ChineseMidRuneCut(t *testing.T) {
+	// 纯中文、预算 200：旧实现按字节切在 140 字节处（非 3 的倍数）→ 非法 UTF-8
+	content := strings.Repeat("中文测试内容", 300)
+	result := truncateToolResult(content, 200)
+
+	if !utf8.ValidString(result) {
+		t.Fatalf("truncated result must be valid UTF-8, got %q", result)
+	}
+	if strings.ContainsRune(result, utf8.RuneError) {
+		t.Fatal("truncated result must not contain U+FFFD replacement chars")
+	}
+	if !strings.Contains(result, "已截断") {
+		t.Error("expected truncation notice")
 	}
 }
 

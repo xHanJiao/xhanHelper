@@ -17,11 +17,12 @@ import (
 
 // HookStatus — 系统钩子状态快照
 type HookStatus struct {
-	PendingDelayedTasks int64  `json:"pending_delayed_tasks"`
-	NextDelayedTaskAt   string `json:"next_delayed_task_at"`
-	DeliverRemaining    string `json:"deliver_remaining"`
-	DiscoverRemaining   string `json:"discover_remaining"`
-	MissionRemaining    string `json:"mission_remaining"`
+	PendingDelayedTasks int64                          `json:"pending_delayed_tasks"`
+	NextDelayedTaskAt   string                         `json:"next_delayed_task_at"`
+	TaskQueues          []service.DelayedTaskQueueStat `json:"task_queues"` // 按 task_type 聚合，新类型自动出现
+	DeliverRemaining    string                         `json:"deliver_remaining"`
+	DiscoverRemaining   string                         `json:"discover_remaining"`
+	MissionRemaining    string                         `json:"mission_remaining"`
 }
 
 // CronRunner — 反思循环调度器
@@ -36,6 +37,7 @@ type CronRunner struct {
 	missionRunner     *MissionRunner
 	missionRepo       *service.MissionRepo
 	sessionEndGroup   *PostChatWorkerGroup // 对话后处理组（摘要/记忆/主题）
+	ephemeralPurger   EphemeralPurger      // 无痕会话物理销毁器（Stage B）
 	sessionGapMinutes int                  // session 间隔阈值（分钟）
 	minActiveDays     int                  // 反思门控：最近 N 天内有聊天的用户才跑；<0 不过滤
 
@@ -55,6 +57,7 @@ type CronRunnerConfig struct {
 	MissionRunner     *MissionRunner
 	MissionRepo       *service.MissionRepo
 	SessionEndGroup   *PostChatWorkerGroup
+	EphemeralPurger   EphemeralPurger
 	SessionGapMinutes int // session 间隔阈值（分钟），用于 session_end 任务延迟
 	DiscoverSchedules []string
 	DeliverInterval   time.Duration
@@ -82,6 +85,7 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		missionInterval:   cfg.MissionInterval,
 		runTimeout:        cfg.RunTimeout,
 		sessionEndGroup:   cfg.SessionEndGroup,
+		ephemeralPurger:   cfg.EphemeralPurger,
 		sessionGapMinutes: cfg.SessionGapMinutes,
 		minActiveDays:     cfg.MinActiveDays,
 	}
@@ -112,6 +116,9 @@ func (cr *CronRunner) GetHookStatus() HookStatus {
 		}
 		if earliest, err := cr.delayedTaskRepo.EarliestPending(context.Background()); err == nil && !earliest.IsZero() {
 			s.NextDelayedTaskAt = earliest.In(config.BJ).Format("15:04:05")
+		}
+		if stats, err := cr.delayedTaskRepo.StatsByType(context.Background()); err == nil {
+			s.TaskQueues = stats
 		}
 	}
 	s.DeliverRemaining = remainingLabel(cr.deliverNext, now)
@@ -274,6 +281,7 @@ func (cr *CronRunner) Start(ctx context.Context) {
 			cr.mu.Unlock()
 			go func() {
 				cr.processSessionEndTasks(ctx)
+				cr.processPurgeTasks(ctx)
 				cr.mu.Lock()
 				cr.sessionEndRunning = false
 				cr.mu.Unlock()
@@ -366,6 +374,51 @@ func (cr *CronRunner) processSessionEndTasks(ctx context.Context) {
 		}
 		if err := cr.delayedTaskRepo.MarkDone(ctx, t.ID); err != nil {
 			log.Printf("[cron] MarkDone session_end error: %v", err)
+		}
+	}
+}
+
+// processPurgeTasks 扫延迟任务表中到期的 ephemeral_purge 任务并执行 Stage B。
+// 失败时保持 pending 并退避重试（≤3 次），成功后 MarkDone。
+func (cr *CronRunner) processPurgeTasks(ctx context.Context) {
+	if cr.delayedTaskRepo == nil || cr.ephemeralPurger == nil {
+		return
+	}
+	tasks, err := cr.delayedTaskRepo.ListDue(ctx, TaskTypeEphemeralPurge, 20)
+	if err != nil {
+		log.Printf("[cron] ListDue ephemeral_purge error: %v", err)
+		return
+	}
+	seen := map[string]bool{}
+	for _, t := range tasks {
+		meta, err := t.ParseMeta()
+		if err != nil || meta.ConvID == "" {
+			log.Printf("[cron] bad ephemeral_purge task meta for %s, marking done", t.ID[:8])
+			cr.delayedTaskRepo.MarkDone(ctx, t.ID)
+			continue
+		}
+		key := t.UserID + "|" + meta.ConvID
+		if seen[key] {
+			log.Printf("[cron] ephemeral_purge duplicate skipped: conv=%s task=%s", meta.ConvID[:8], t.ID[:8])
+			cr.delayedTaskRepo.MarkDone(ctx, t.ID)
+			continue
+		}
+		seen[key] = true
+
+		pctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		err = cr.ephemeralPurger.RunPurge(pctx, meta.ConvID)
+		cancel()
+		if err != nil {
+			log.Printf("[cron] ephemeral_purge error: conv=%s err=%v", meta.ConvID[:8], err)
+			if t.RetryCount < 3 {
+				cr.delayedTaskRepo.ScheduleRetry(ctx, t.ID, t.RetryCount, 2*time.Minute)
+			} else {
+				cr.delayedTaskRepo.MarkFailed(ctx, t.ID, t.RetryCount)
+			}
+			continue
+		}
+		if err := cr.delayedTaskRepo.MarkDone(ctx, t.ID); err != nil {
+			log.Printf("[cron] MarkDone ephemeral_purge error: %v", err)
 		}
 	}
 }

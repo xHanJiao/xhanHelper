@@ -27,6 +27,49 @@ class ConversationListViewModel: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+
+        // 单个会话在服务端消失（如无痕销毁）：本地移除，保留分页
+        NotificationCenter.default.publisher(for: .conversationRemoved)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] note in
+                guard let id = note.userInfo?["id"] as? String, !id.isEmpty else { return }
+                Task { @MainActor in
+                    self?.removeLocal(id: id)
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    /// 本地移除指定会话（服务端已销毁时用；保留分页与其余条目）。
+    func removeLocal(id: String) {
+        conversations.removeAll { $0.id == id }
+    }
+
+    // MARK: - 前台周期刷新
+
+    /// 前台自动刷新间隔：销毁窗口是 30 分钟，60s 延迟无感。
+    static let autoRefreshInterval: TimeInterval = 60
+    private var autoRefreshTask: Task<Void, Never>?
+
+    /// 应用激活时启动：周期全量重载列表，清掉服务端已销毁（如无痕）的会话。
+    /// 重复调用无副作用（已有任务时直接返回）。
+    func startAutoRefresh() {
+        guard autoRefreshTask == nil else { return }
+        autoRefreshTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(Self.autoRefreshInterval * 1_000_000_000))
+                if Task.isCancelled { break }
+                guard let self else { return }
+                if self.isUnauthorized { continue }
+                await self.reload()
+            }
+        }
+    }
+
+    /// 应用离开激活态时停止，避免后台空转。
+    func stopAutoRefresh() {
+        autoRefreshTask?.cancel()
+        autoRefreshTask = nil
     }
 
     func load() async {
@@ -34,10 +77,19 @@ class ConversationListViewModel: ObservableObject {
         defer { isLoading = false }
         do {
             let resp = try await apiClient.listConversations(limit: pageSize, offset: 0)
+            let liveIDs = Set(resp.conversations.map { $0.id })
+            // 无痕会话只会被服务端销毁：本地曾见、现不在首页 → 已销毁。
+            // 只判无痕：load 只拉第 1 页，用全量差集会把已翻页的条目误判为已删。
+            let gone = conversations
+                .filter { $0.ephemeral == true && !liveIDs.contains($0.id) }
+                .map { $0.id }
             conversations = resp.conversations
             offset = resp.conversations.count
             hasMore = offset < resp.total
             hasLoadedOnce = true
+            if !gone.isEmpty {
+                NotificationCenter.default.post(name: .conversationsGone, object: nil, userInfo: ["ids": gone])
+            }
         } catch {
             let nsErr = error as NSError
             if nsErr.code == 401 {
@@ -77,6 +129,7 @@ class ConversationListViewModel: ObservableObject {
                     agentId: old.agentId,
                     agentName: old.agentName,
                     mode: old.mode,
+                    ephemeral: old.ephemeral,
                     createdAt: old.createdAt,
                     updatedAt: old.updatedAt
                 )

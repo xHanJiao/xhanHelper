@@ -161,10 +161,17 @@ struct SidebarView: View {
                 Task { await chatTabManager.openConversation(id: conv.id, title: conv.title, pushHistory: true, mode: conv.mode) }
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(conv.title.isEmpty ? "新对话" : conv.title)
-                        .font(.subheadline)
-                        .lineLimit(1)
-                        .foregroundColor(isCurrent ? Color("appAccent") : .primary)
+                    HStack(spacing: 4) {
+                        if conv.ephemeral == true {
+                            Image(systemName: "theatermasks.fill")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        Text(conv.title.isEmpty ? "新对话" : conv.title)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                            .foregroundColor(isCurrent ? Color("appAccent") : .primary)
+                    }
                     Text(formatConversationDate(conv.updatedAt))
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -279,6 +286,14 @@ struct SidebarView: View {
         }
         .buttonStyle(.plain)
         .help(tab.rawValue)
+        .contextMenu {
+            if tab == .chat {
+                Button("新建无痕会话") {
+                    selectedTab = .chat
+                    Task { await chatTabManager.newEphemeralChat() }
+                }
+            }
+        }
     }
 
     private func collapsedNavItem(_ tab: SidebarTab) -> some View {
@@ -301,5 +316,13 @@ struct SidebarView: View {
                 .help(tab.rawValue)
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if tab == .chat {
+                Button("新建无痕会话") {
+                    selectedTab = .chat
+                    Task { await chatTabManager.newEphemeralChat() }
+                }
+            }
+        }
     }
 }

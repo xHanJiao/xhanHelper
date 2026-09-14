@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,31 @@ import (
 
 	"xhan-helper/internal/model"
 )
+
+// setupPurgeRepo 建一个包含无痕销毁所需全部表的临时库。
+func setupPurgeRepo(t *testing.T) (*ConversationRepo, *gorm.DB, func()) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "purge.db")
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(
+		&model.Conversation{}, &model.Message{}, &model.Embedding{},
+		&model.ConversationSummary{}, &model.ConversationPlan{}, &model.MessageShare{},
+	); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	cleanup := func() {
+		sqlDB, _ := db.DB()
+		if sqlDB != nil {
+			sqlDB.Close()
+		}
+		os.RemoveAll(tmpDir)
+	}
+	return NewConversationRepo(db), db, cleanup
+}
 
 func setupConversationRepo(t *testing.T) (*ConversationRepo, func()) {
 	t.Helper()
@@ -279,5 +305,153 @@ func TestListSubConversations(t *testing.T) {
 	}
 	if rows[0].ID != "sub-1" || rows[0].MsgCount != 2 {
 		t.Fatalf("sub-1 wrong: id=%s msg_count=%d", rows[0].ID, rows[0].MsgCount)
+	}
+}
+
+// ---- 无痕会话销毁 ----
+
+func TestIsEphemeral(t *testing.T) {
+	repo, db, cleanup := setupPurgeRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	extra, _ := json.Marshal(&model.ConversationExtra{Ephemeral: true})
+	db.Create(&model.Conversation{ID: "c-eph", UserID: "u1", Extra: string(extra)})
+	db.Create(&model.Conversation{ID: "c-normal", UserID: "u1"})
+
+	if got, err := repo.IsEphemeral(ctx, "c-eph"); err != nil || !got {
+		t.Fatalf("expected ephemeral=true, got %v err=%v", got, err)
+	}
+	if got, err := repo.IsEphemeral(ctx, "c-normal"); err != nil || got {
+		t.Fatalf("expected ephemeral=false, got %v err=%v", got, err)
+	}
+	if got, err := repo.IsEphemeral(ctx, "missing"); err != nil || got {
+		t.Fatalf("expected false for missing conv, got %v err=%v", got, err)
+	}
+}
+
+func TestBeginPurge_HidesAndCleansSideTables(t *testing.T) {
+	repo, db, cleanup := setupPurgeRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	parent := "conv-main"
+	db.Create(&model.Conversation{ID: "conv-main", UserID: "u1"})
+	db.Create(&model.Conversation{ID: "conv-sub", UserID: "u1", ParentID: &parent})
+	db.Create(&model.Conversation{ID: "conv-other", UserID: "u1"})
+
+	db.Create(&model.Message{ID: "m1", ConversationID: "conv-main", UserID: "u1", Role: "user", Content: "a", Status: 1})
+	db.Create(&model.Message{ID: "m2", ConversationID: "conv-sub", UserID: "u1", Role: "user", Content: "b", Status: 1})
+	db.Create(&model.Message{ID: "m3", ConversationID: "conv-other", UserID: "u1", Role: "user", Content: "c", Status: 1})
+
+	db.Create(&model.ConversationSummary{ID: "s1", ConversationID: "conv-main", UserID: "u1", SummaryText: "x", Status: "active"})
+	db.Create(&model.ConversationPlan{ID: "p1", UserID: "u1", ConversationID: "conv-main", Goal: "g"})
+	db.Create(&model.MessageShare{ID: "sh1", Token: "t1", ConversationID: "conv-main", MessageIDs: "[]", CreatedBy: "u1"})
+
+	scope, found, err := repo.BeginPurge(ctx, "conv-main")
+	if err != nil || !found {
+		t.Fatalf("BeginPurge: found=%v err=%v", found, err)
+	}
+	if len(scope) != 2 {
+		t.Fatalf("expected scope of 2 (main+sub), got %v", scope)
+	}
+
+	var conv model.Conversation
+	db.First(&conv, "id = ?", "conv-main")
+	if !conv.IsDeleted {
+		t.Error("main conv should be soft-deleted")
+	}
+	var m model.Message
+	db.First(&m, "id = ?", "m1")
+	if m.Status != model.MsgStatusDeleted {
+		t.Errorf("m1 should be status=2, got %d", m.Status)
+	}
+
+	var n int64
+	db.Model(&model.ConversationSummary{}).Where("conversation_id = ?", "conv-main").Count(&n)
+	if n != 0 {
+		t.Error("summary not deleted")
+	}
+	db.Model(&model.ConversationPlan{}).Where("conversation_id = ?", "conv-main").Count(&n)
+	if n != 0 {
+		t.Error("plan not deleted")
+	}
+	db.Model(&model.MessageShare{}).Where("conversation_id = ?", "conv-main").Count(&n)
+	if n != 0 {
+		t.Error("share not deleted")
+	}
+
+	// 无关会话不受影响
+	var otherConv model.Conversation
+	db.Where("id = ?", "conv-other").First(&otherConv)
+	if otherConv.IsDeleted {
+		t.Error("unrelated conv should not be deleted")
+	}
+	var otherMsg model.Message
+	db.Where("id = ?", "m3").First(&otherMsg)
+	if otherMsg.Status != 1 {
+		t.Error("unrelated msg should not be touched")
+	}
+}
+
+func TestBeginPurge_Nonexistent_NoOp(t *testing.T) {
+	repo, _, cleanup := setupPurgeRepo(t)
+	defer cleanup()
+	scope, found, err := repo.BeginPurge(context.Background(), "nope")
+	if err != nil || found || scope != nil {
+		t.Fatalf("expected no-op, got scope=%v found=%v err=%v", scope, found, err)
+	}
+}
+
+func TestPurgeMessageBatch_BatchedAndIdempotent(t *testing.T) {
+	repo, db, cleanup := setupPurgeRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	db.Create(&model.Conversation{ID: "conv-main", UserID: "u1"})
+	for i := 1; i <= 5; i++ {
+		id := fmt.Sprintf("m%d", i)
+		db.Create(&model.Message{ID: id, ConversationID: "conv-main", UserID: "u1", Role: "user", Content: "x", Status: model.MsgStatusDeleted})
+		db.Create(&model.Embedding{ID: id, EntityType: model.EntityTypeMessage, EntityID: id, UserID: "u1", Model: "test"})
+	}
+
+	scope := []string{"conv-main"}
+	total := 0
+	for {
+		n, err := repo.PurgeMessageBatch(ctx, scope, 2)
+		if err != nil {
+			t.Fatalf("batch err: %v", err)
+		}
+		total += n
+		if n == 0 {
+			break
+		}
+	}
+	if total != 5 {
+		t.Fatalf("expected 5 messages deleted, got %d", total)
+	}
+	var n int64
+	db.Model(&model.Message{}).Where("conversation_id = ?", "conv-main").Count(&n)
+	if n != 0 {
+		t.Errorf("messages remain: %d", n)
+	}
+	db.Model(&model.Embedding{}).Where("entity_type = ?", model.EntityTypeMessage).Count(&n)
+	if n != 0 {
+		t.Errorf("embeddings remain: %d", n)
+	}
+}
+
+func TestFinishPurge_HardDeletesConversation(t *testing.T) {
+	repo, db, cleanup := setupPurgeRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	db.Create(&model.Conversation{ID: "conv-main", UserID: "u1"})
+
+	if err := repo.FinishPurge(ctx, []string{"conv-main"}); err != nil {
+		t.Fatalf("FinishPurge: %v", err)
+	}
+	var n int64
+	db.Model(&model.Conversation{}).Where("id = ?", "conv-main").Count(&n)
+	if n != 0 {
+		t.Errorf("conversation should be hard-deleted, count=%d", n)
 	}
 }

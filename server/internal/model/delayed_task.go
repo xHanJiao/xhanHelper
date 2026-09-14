@@ -9,7 +9,7 @@ import (
 type DelayedTask struct {
 	ID         string    `gorm:"primaryKey;size:36" json:"id"`
 	UserID     string    `gorm:"size:36;not null;index" json:"user_id"`
-	TaskType   string    `gorm:"size:50;not null;index;index:idx_delayed_tasks_type_status_at,priority:1" json:"task_type"`        // post_chat | ...
+	TaskType   string    `gorm:"size:50;not null;index;index:idx_delayed_tasks_type_status_at,priority:1" json:"task_type"`        // session_end | ephemeral_purge | ...
 	TaskMeta   string    `gorm:"type:json;not null" json:"task_meta"`                                                              // DelayedTaskMeta 序列化
 	Status     string    `gorm:"size:20;not null;default:pending;index:idx_delayed_tasks_type_status_at,priority:2" json:"status"` // pending | done | failed
 	RetryCount int       `gorm:"default:0" json:"retry_count"`

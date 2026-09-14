@@ -34,9 +34,11 @@ class APIClient {
     }
 
     /// 创建新会话（空白 tab 点击智能体绑定时用），agentID 可选绑定。
-    func createConversation(agentID: String? = nil) async throws -> Conversation {
+    /// ephemeral=true 创建无痕会话（窗口结束后硬销毁）。
+    func createConversation(agentID: String? = nil, ephemeral: Bool = false) async throws -> Conversation {
         var body: [String: Any] = [:]
         if let aid = agentID { body["agent_id"] = aid }
+        if ephemeral { body["ephemeral"] = true }
         return try await post("/api/conversations", body: body)
     }
 

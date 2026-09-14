@@ -170,6 +170,10 @@ func (vs *VectorStore) Size() int {
 func (vs *VectorStore) Delete(id string) {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
+	vs.deleteLocked(id)
+}
+
+func (vs *VectorStore) deleteLocked(id string) {
 	idx, ok := vs.byID[id]
 	if !ok {
 		return
@@ -181,6 +185,23 @@ func (vs *VectorStore) Delete(id string) {
 	}
 	vs.vectors = vs.vectors[:last]
 	delete(vs.byID, id)
+}
+
+// DeleteByMetadata 删除所有 metadata[key] == value 的向量，返回删除数量。
+// 先收集待删 ID 再逐个移除（不能边遍历边 swap-remove，索引会错位）。
+func (vs *VectorStore) DeleteByMetadata(key, value string) int {
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	var ids []string
+	for _, e := range vs.vectors {
+		if e.Metadata[key] == value {
+			ids = append(ids, e.ID)
+		}
+	}
+	for _, id := range ids {
+		vs.deleteLocked(id)
+	}
+	return len(ids)
 }
 
 func cosineSimilarity(a, b []float64) float64 {

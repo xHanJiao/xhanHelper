@@ -881,9 +881,12 @@ onUnmounted(() => {
           <div style="display: grid; gap: 4px; font-size: 13px;">
             <div>待处理延迟任务: <strong :style="{ color: hooks.pending_delayed_tasks > 0 ? 'var(--color-warning)' : 'var(--color-text-muted)' }">{{ hooks.pending_delayed_tasks }}</strong></div>
             <div v-if="hooks.next_delayed_task_at">最近到期: <strong>{{ hooks.next_delayed_task_at }}</strong></div>
-            <div>提醒定时器: <strong>{{ hooks.commitment_timers }}</strong></div>
+            <div v-for="q in (hooks.task_queues || [])" :key="q.task_type" style="padding-left: 8px; color: var(--color-text-muted);">
+              · {{ q.task_type }}: <strong style="color: var(--color-text);">{{ q.pending }}</strong>
+            </div>
             <div>投递窗口剩余: <strong>{{ hooks.deliver_remaining }}</strong></div>
             <div>主题发现剩余: <strong>{{ hooks.discover_remaining }}</strong></div>
+            <div>Mission 检查剩余: <strong>{{ hooks.mission_remaining }}</strong></div>
           </div>
         </NCard>
       </div>

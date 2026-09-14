@@ -28,6 +28,7 @@ type AgentBundle struct {
 	MissionDiscoverer *agent.MissionDiscoverer
 	ReplayRunner      *replay.Runner
 	ClientBridge      *agent.ClientToolBridge
+	Destroyer         *agent.EphemeralDestroyer
 	BGCtx             context.Context
 	BGCancel          context.CancelFunc
 }

@@ -340,6 +340,9 @@ struct ContentView: View {
         AppShortcutBridge.shared.onNewChat = {
             self.chatTabManager.newChat()
         }
+        AppShortcutBridge.shared.onNewEphemeralChat = {
+            Task { await self.chatTabManager.newEphemeralChat() }
+        }
         AppShortcutBridge.shared.onSwitchConversation = { delta in
             Task { await self.switchConversation(delta: delta) }
         }
@@ -375,7 +378,17 @@ struct ContentView: View {
     init(deviceManager: DeviceManager) {
         self.deviceManager = deviceManager
         let api = APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
-        _chatViewModel = StateObject(wrappedValue: ChatViewModel(apiClient: api))
+        let vm = ChatViewModel(apiClient: api)
+        vm.onConversationGone = { [weak vm] cid in
+            NotificationCenter.default.post(name: .conversationRemoved, object: nil, userInfo: ["id": cid])
+            ToastCenter.shared.show("会话不存在或已被销毁")
+            if let def = deviceManager.defaultConversation {
+                Task { @MainActor in
+                    await vm?.loadConversation(id: def.id, title: def.title, mode: def.mode)
+                }
+            }
+        }
+        _chatViewModel = StateObject(wrappedValue: vm)
     }
     #endif
 
@@ -668,6 +681,11 @@ struct ContentView: View {
 #endif
             }
             .onChange(of: scenePhase) { _, newPhase in
+                #if os(macOS)
+                // 前台周期刷新会话列表；离开激活态停止，避免后台空转
+                if newPhase == .active { conversationListVM.startAutoRefresh() }
+                else { conversationListVM.stopAutoRefresh() }
+                #endif
                 guard newPhase == .active else { return }
                 guard !(activeChatViewModel?.isStreaming ?? false) else { return }
                 let now = Date()
@@ -677,9 +695,14 @@ struct ContentView: View {
                 Task { await syncActiveChat() }
 
                 Task { await syncReminders() }
+                #if os(macOS)
+                // 回到前台时刷新会话列表，清掉服务端已销毁（如无痕）的幽灵条目
+                Task { await conversationListVM.reload() }
+                #endif
             }
 #if os(macOS)
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                conversationListVM.startAutoRefresh()
                 guard !(activeChatViewModel?.isStreaming ?? false) else { return }
                 let now = Date()
                 guard now.timeIntervalSince(lastSyncAt) >= 3 else { return }
@@ -688,6 +711,8 @@ struct ContentView: View {
                 Task { await syncActiveChat() }
 
                 Task { await syncReminders() }
+
+                Task { await conversationListVM.reload() }
             }
 #endif
             .task(id: deviceManager.defaultConversation?.id) {

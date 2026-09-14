@@ -117,3 +117,22 @@ func (r *DelayedTaskRepo) CountPending(ctx context.Context) (int64, error) {
 		Where("status = ?", "pending").Count(&count).Error
 	return count, err
 }
+
+// DelayedTaskQueueStat — 按 task_type 聚合的延迟任务队列统计（HookStatus 看板用，非表模型）。
+type DelayedTaskQueueStat struct {
+	TaskType string    `json:"task_type"`
+	Pending  int64     `json:"pending"`
+	NextAt   time.Time `json:"next_at,omitempty"`
+}
+
+// StatsByType 按 task_type 聚合 pending 任务数与该类型最早到期时间。
+// 新增 task_type 无需改代码，自动出现在结果里。
+func (r *DelayedTaskRepo) StatsByType(ctx context.Context) ([]DelayedTaskQueueStat, error) {
+	var stats []DelayedTaskQueueStat
+	err := r.db.WithContext(ctx).Model(&model.DelayedTask{}).
+		Select("task_type, COUNT(*) AS pending, MIN(process_at) AS next_at").
+		Where("status = ?", "pending").
+		Group("task_type").
+		Scan(&stats).Error
+	return stats, err
+}

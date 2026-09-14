@@ -4,6 +4,12 @@ import Foundation
 extension Notification.Name {
     /// 新会话在后端创建成功（空 tab 转正）后发出，会话列表应刷新置顶
     static let conversationListNeedsRefresh = Notification.Name("conversationListNeedsRefresh")
+    /// 单个会话在服务端已消失（如无痕会话被销毁），列表应本地移除该条（保留分页）。
+    /// userInfo["id"] = conversationId
+    static let conversationRemoved = Notification.Name("conversationRemoved")
+    /// 刷新发现一批会话已在服务端消失（无痕销毁），应关闭对应 tab。
+    /// userInfo["ids"] = [conversationId]
+    static let conversationsGone = Notification.Name("conversationsGone")
 }
 
 // MARK: - ChatTab
@@ -47,9 +53,18 @@ final class ChatTabManager: ObservableObject {
     let maxCachedTabs = 5
 
     private let makeViewModel: () -> ChatViewModel
+    private var cancellables: Set<AnyCancellable> = []
 
     init(makeViewModel: @escaping () -> ChatViewModel) {
         self.makeViewModel = makeViewModel
+        // 刷新发现无痕会话已在服务端销毁：关闭其 tab，让消息列表联动
+        NotificationCenter.default.publisher(for: .conversationsGone)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] note in
+                guard let ids = note.userInfo?["ids"] as? [String] else { return }
+                Task { @MainActor in self?.handleConversationsGone(ids) }
+            }
+            .store(in: &cancellables)
     }
 
     var currentTab: ChatTab? {
@@ -80,9 +95,25 @@ final class ChatTabManager: ObservableObject {
         vm.onConversationCreated = { [weak self] cid, title in
             self?.handleConversationCreated(cid: cid, title: title)
         }
+        vm.onConversationGone = { [weak self] cid in
+            self?.handleConversationGone(cid)
+        }
         tabs.append(tab)
         activate(tab)
         resetBlank(tab)
+    }
+
+    /// 新建无痕会话：无痕标记必须在后端创建会话时落库，故先创建再打开。
+    /// 与 newChat 不同——空 tab 无法携带无痕标记（首条消息才建会话）。
+    func newEphemeralChat() async {
+        do {
+            let conv = try await makeViewModel().apiClient.createConversation(ephemeral: true)
+            await openConversation(id: conv.id, title: conv.title, pushHistory: true)
+            NotificationCenter.default.post(name: .conversationListNeedsRefresh, object: nil)
+        } catch {
+            LogBuffer.shared.error("ChatTabManager.newEphemeralChat: \(error)")
+            ToastCenter.shared.show("创建无痕会话失败：\(error.localizedDescription)")
+        }
     }
 
     /// 打开会话：缓存命中则切换恢复；未命中则新建 tab 并加载。切换时会销毁空 tab。
@@ -97,6 +128,9 @@ final class ChatTabManager: ObservableObject {
         let vm = makeViewModel()
         vm.onConversationCreated = { [weak self] cid, title in
             self?.handleConversationCreated(cid: cid, title: title)
+        }
+        vm.onConversationGone = { [weak self] cid in
+            self?.handleConversationGone(cid)
         }
         let tab = ChatTab(id: id, conversationId: id, title: title, viewModel: vm)
         tabs.append(tab)
@@ -191,6 +225,28 @@ final class ChatTabManager: ObservableObject {
             tab.title = t
         }
         NotificationCenter.default.post(name: .conversationListNeedsRefresh, object: nil)
+    }
+
+    /// 会话在服务端已消失（如无痕会话被销毁）：关闭对应 tab（复用 close 的自动切换逻辑）、
+    /// 通知会话列表本地移除该条、提示用户。
+    private func handleConversationGone(_ cid: String) {
+        guard !cid.isEmpty else { return }
+        LogBuffer.shared.warning("ChatTabManager: conversation gone, closing tab cid=\(cid)")
+        close(conversationId: cid)
+        NotificationCenter.default.post(name: .conversationRemoved, object: nil, userInfo: ["id": cid])
+        ToastCenter.shared.show("会话不存在或已被销毁")
+    }
+
+    /// 批量：刷新发现无痕会话已销毁。仅关闭仍开着的 tab（已被 404 路径关掉的静默跳过，避免重复提示）。
+    private func handleConversationsGone(_ ids: [String]) {
+        let open = Set(tabs.compactMap { $0.conversationId })
+        let hits = ids.filter { open.contains($0) }
+        guard !hits.isEmpty else { return }
+        LogBuffer.shared.warning("ChatTabManager: conversations gone, closing tabs: \(hits)")
+        for id in hits {
+            close(conversationId: id)
+        }
+        ToastCenter.shared.show("会话不存在或已被销毁")
     }
 
     private func enforceCacheLimit() {

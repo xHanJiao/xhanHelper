@@ -7,6 +7,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private var session: URLSession!
     private var task: URLSessionDataTask?
     private var lineBuffer = ""
+    private var httpStatusCode: Int?
     private let lock = NSLock()
 
     var onEvent: ((StreamEvent) -> Void)?
@@ -42,6 +43,10 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
             Self.log.error("failed to serialize request body")
         }
 
+        lock.withLock {
+            httpStatusCode = nil
+            lineBuffer = ""
+        }
         task = session.dataTask(with: req)
         task?.resume()
     }
@@ -54,7 +59,18 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
     // MARK: URLSessionDataDelegate
 
+    nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        if let http = response as? HTTPURLResponse {
+            lock.withLock { httpStatusCode = http.statusCode }
+        }
+        completionHandler(.allow)
+    }
+
     nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        // 非 2xx（如 404/500 的 JSON 错误体）不是 SSE 流，不喂给行解析器
+        if let status = lock.withLock({ httpStatusCode }), !(200...299).contains(status) {
+            return
+        }
         guard let text = String(data: data, encoding: .utf8) else { return }
         lock.withLock { lineBuffer += text }
         processLines()
@@ -67,6 +83,12 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
                 return
             }
             onError?(error)
+            return
+        }
+        // 传输成功但 HTTP 非 2xx（无 error）：显式上报状态码，避免静默吞掉
+        if let status = lock.withLock({ httpStatusCode }), !(200...299).contains(status) {
+            let nsError = NSError(domain: "XHANHTTP", code: status, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status)"])
+            onError?(nsError)
         }
     }
 

@@ -152,6 +152,106 @@ func (r *ConversationRepo) SoftDelete(ctx context.Context, id string) error {
 		Where("id = ?", id).Update("is_deleted", true).Error
 }
 
+// IsEphemeral 读取会话的无痕标记。会话不存在时返回 (false, nil)。
+func (r *ConversationRepo) IsEphemeral(ctx context.Context, convID string) (bool, error) {
+	extra, err := r.GetExtra(ctx, convID)
+	if err != nil || extra == nil {
+		return false, err
+	}
+	return extra.Ephemeral, nil
+}
+
+// ListScopeIDs 返回会话及其 parent_id 子会话的 ID（不过滤 is_deleted：
+// 无痕销毁 Stage A 会先软删，Stage B 仍需重新推导范围）。
+func (r *ConversationRepo) ListScopeIDs(ctx context.Context, convID string) ([]string, error) {
+	var subs []string
+	if err := r.db.WithContext(ctx).Model(&model.Conversation{}).
+		Where("parent_id = ?", convID).Pluck("id", &subs).Error; err != nil {
+		return nil, err
+	}
+	return append([]string{convID}, subs...), nil
+}
+
+// BeginPurge 无痕销毁 Stage A：立即隐藏会话及其消息，并清理会话域副表。
+// 单事务。found=false 表示会话不存在（幂等 no-op）。
+// 返回被纳入销毁的会话 ID（自身+子会话），供调用方清理内存向量。
+func (r *ConversationRepo) BeginPurge(ctx context.Context, convID string) (scope []string, found bool, err error) {
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var c model.Conversation
+		if e := tx.Where("id = ?", convID).First(&c).Error; e != nil {
+			if errors.Is(e, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return e
+		}
+		found = true
+		var subs []string
+		if e := tx.Model(&model.Conversation{}).Where("parent_id = ?", convID).Pluck("id", &subs).Error; e != nil {
+			return e
+		}
+		scope = append([]string{convID}, subs...)
+		if e := tx.Model(&model.Conversation{}).Where("id IN ?", scope).
+			Update("is_deleted", true).Error; e != nil {
+			return e
+		}
+		if e := tx.Model(&model.Message{}).Where("conversation_id IN ?", scope).
+			Update("status", model.MsgStatusDeleted).Error; e != nil {
+			return e
+		}
+		if e := tx.Where("conversation_id IN ?", scope).Delete(&model.ConversationSummary{}).Error; e != nil {
+			return e
+		}
+		if e := tx.Where("conversation_id IN ?", scope).Delete(&model.ConversationPlan{}).Error; e != nil {
+			return e
+		}
+		if e := tx.Where("conversation_id IN ?", scope).Delete(&model.MessageShare{}).Error; e != nil {
+			return e
+		}
+		return nil
+	})
+	return
+}
+
+// PurgeMessageBatch 无痕销毁 Stage B：删除一批消息及其向量，返回本批行数。
+// 每批独立事务（非全局原子），靠 WHERE 谓词幂等续跑。
+func (r *ConversationRepo) PurgeMessageBatch(ctx context.Context, scope []string, limit int) (int, error) {
+	if len(scope) == 0 {
+		return 0, nil
+	}
+	if limit <= 0 {
+		limit = 300
+	}
+	var count int
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var ids []string
+		if e := tx.Model(&model.Message{}).Where("conversation_id IN ?", scope).
+			Order("created_at ASC").Limit(limit).Pluck("id", &ids).Error; e != nil {
+			return e
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		if e := tx.Where("entity_type = ? AND entity_id IN ?", model.EntityTypeMessage, ids).
+			Delete(&model.Embedding{}).Error; e != nil {
+			return e
+		}
+		if e := tx.Where("id IN ?", ids).Delete(&model.Message{}).Error; e != nil {
+			return e
+		}
+		count = len(ids)
+		return nil
+	})
+	return count, err
+}
+
+// FinishPurge 无痕销毁 Stage B 收尾：硬删会话行（最后一步，保证可恢复）。
+func (r *ConversationRepo) FinishPurge(ctx context.Context, scope []string) error {
+	if len(scope) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Where("id IN ?", scope).Delete(&model.Conversation{}).Error
+}
+
 // GetExtra — 读取会话的 extra 数据
 func (r *ConversationRepo) GetExtra(ctx context.Context, convID string) (*model.ConversationExtra, error) {
 	var c model.Conversation

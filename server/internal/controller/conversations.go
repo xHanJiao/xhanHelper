@@ -65,7 +65,8 @@ func createConversation(convRepo *service.ConversationRepo, agentRepo *service.A
 		userID := c.GetString("user_id")
 
 		var req struct {
-			AgentID string `json:"agent_id"`
+			AgentID   string `json:"agent_id"`
+			Ephemeral bool   `json:"ephemeral"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			// 允许空 body，不传 agent_id 也可以
@@ -76,6 +77,10 @@ func createConversation(convRepo *service.ConversationRepo, agentRepo *service.A
 			ID:        uuid.New().String(),
 			UserID:    userID,
 			IsDefault: false,
+		}
+		if req.Ephemeral {
+			b, _ := json.Marshal(&model.ConversationExtra{Ephemeral: true})
+			conv.Extra = string(b)
 		}
 
 		if req.AgentID != "" {
@@ -101,6 +106,7 @@ func createConversation(convRepo *service.ConversationRepo, agentRepo *service.A
 			"user_id":    conv.UserID,
 			"title":      conv.Title,
 			"is_default": conv.IsDefault,
+			"ephemeral":  req.Ephemeral,
 			"agent_id":   conv.AgentID,
 			"created_at": conv.CreatedAt,
 			"updated_at": conv.UpdatedAt,
@@ -164,11 +170,14 @@ func listConversations(convRepo *service.ConversationRepo, agentRepo *service.Ag
 			if conv.AgentID != nil && *conv.AgentID != "" {
 				m["agent_name"] = agentNames[*conv.AgentID]
 			}
-			// 解析主题上下文
+			// 解析主题上下文 / 无痕标记
 			if conv.Extra != "" {
 				var extra model.ConversationExtra
-				if json.Unmarshal([]byte(conv.Extra), &extra) == nil && extra.Context != nil && extra.Context.Title != "" {
-					m["theme_title"] = extra.Context.Title
+				if json.Unmarshal([]byte(conv.Extra), &extra) == nil {
+					m["ephemeral"] = extra.Ephemeral
+					if extra.Context != nil && extra.Context.Title != "" {
+						m["theme_title"] = extra.Context.Title
+					}
 				}
 			}
 			result[i] = m
@@ -608,7 +617,7 @@ func stopChat(convRepo *service.ConversationRepo) gin.HandlerFunc {
 	}
 }
 
-func deleteConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
+func deleteConversation(convRepo *service.ConversationRepo, destroyer *agent.EphemeralDestroyer) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
 		if !requireConversationOwner(c, convRepo, convID) {
@@ -625,6 +634,25 @@ func deleteConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 			view.JSONError(c, 400, "默认会话不可删除")
 			return
 		}
+
+		// 无痕会话：硬销毁（Stage A 同步隐藏 + 入队 Stage B 物理删除），不做软删
+		ephemeral, err := destroyer.IsEphemeral(c.Request.Context(), convID)
+		if err != nil {
+			log.Printf("[conv] IsEphemeral error: id=%s err=%v", convID, err)
+			view.JSONError(c, 500, "query conversation failed")
+			return
+		}
+		if ephemeral {
+			if err := destroyer.BeginDestroy(c.Request.Context(), convID, c.GetString("user_id")); err != nil {
+				log.Printf("[conv] ephemeral destroy error: id=%s err=%v", convID, err)
+				view.JSONError(c, 500, "destroy failed")
+				return
+			}
+			log.Printf("[conv] ephemeral conversation destroyed: id=%s", convID)
+			view.JSONOK(c, gin.H{"status": "purge_scheduled"})
+			return
+		}
+
 		if err := convRepo.SoftDelete(c.Request.Context(), convID); err != nil {
 			log.Printf("[conv] Delete error: %v", err)
 			view.JSONError(c, 500, "delete failed")

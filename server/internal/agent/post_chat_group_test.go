@@ -37,6 +37,27 @@ type mockErr struct{ msg string }
 
 func (e *mockErr) Error() string { return e.msg }
 
+// fakeEphemeralPurge — 记录 BeginDestroy 调用，供 PostChatWorkerGroup 测试注入。
+type fakeEphemeralPurge struct {
+	ephemeral  bool
+	beginCalls int
+	lastConvID string
+	lastUserID string
+}
+
+func (f *fakeEphemeralPurge) IsEphemeral(_ context.Context, _ string) (bool, error) {
+	return f.ephemeral, nil
+}
+
+func (f *fakeEphemeralPurge) BeginDestroy(_ context.Context, convID, userID string) error {
+	f.beginCalls++
+	f.lastConvID = convID
+	f.lastUserID = userID
+	return nil
+}
+
+func (f *fakeEphemeralPurge) RunPurge(_ context.Context, _ string) error { return nil }
+
 // ---- helpers ----
 
 func setupTestMsgRepo(t *testing.T) (*service.MessageRepo, func()) {
@@ -90,7 +111,7 @@ func TestPostChatGroup_NoSessionStart_Skip(t *testing.T) {
 	insertTestMsg(t, repo, "msg-0002", "conv-0001", "user", "hi", now, "")
 
 	w1 := &mockPostChatWorker{name: "w1"}
-	group := NewPostChatWorkerGroup([]PostChatWorker{w1}, repo)
+	group := NewPostChatWorkerGroup([]PostChatWorker{w1}, repo, &fakeEphemeralPurge{})
 
 	err := group.Process(context.Background(), "conv-0001", "user-0001", "msg-0002")
 	if err != nil {
@@ -113,7 +134,7 @@ func TestPostChatGroup_FetchesCorrectWindow(t *testing.T) {
 	insertTestMsg(t, repo, "msg-0004", "conv-0001", "user", "end", now, "msg-0001")
 
 	w1 := &mockPostChatWorker{name: "w1"}
-	group := NewPostChatWorkerGroup([]PostChatWorker{w1}, repo)
+	group := NewPostChatWorkerGroup([]PostChatWorker{w1}, repo, &fakeEphemeralPurge{})
 
 	err := group.Process(context.Background(), "conv-0001", "user-0001", "msg-0004")
 	if err != nil {
@@ -142,7 +163,7 @@ func TestPostChatGroup_PartialWorkerFailure_Continues(t *testing.T) {
 
 	w1 := &mockPostChatWorker{name: "w1", fail: true}
 	w2 := &mockPostChatWorker{name: "w2"}
-	group := NewPostChatWorkerGroup([]PostChatWorker{w1, w2}, repo)
+	group := NewPostChatWorkerGroup([]PostChatWorker{w1, w2}, repo, &fakeEphemeralPurge{})
 
 	err := group.Process(context.Background(), "conv-0001", "user-0001", "msg-0004")
 	// worker 失败不回滚，group 不返回 error（仅消息拉取失败才返回 error）
@@ -168,7 +189,7 @@ func TestPostChatGroup_AllWorkersCalled(t *testing.T) {
 	w1 := &mockPostChatWorker{name: "summary"}
 	w2 := &mockPostChatWorker{name: "memory"}
 	w3 := &mockPostChatWorker{name: "state"}
-	group := NewPostChatWorkerGroup([]PostChatWorker{w1, w2, w3}, repo)
+	group := NewPostChatWorkerGroup([]PostChatWorker{w1, w2, w3}, repo, &fakeEphemeralPurge{})
 
 	if err := group.Process(context.Background(), "conv-0001", "user-0001", "msg-0004"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -183,7 +204,7 @@ func TestPostChatGroup_LastMsgNotFound(t *testing.T) {
 	defer cleanup()
 
 	w1 := &mockPostChatWorker{name: "w1"}
-	group := NewPostChatWorkerGroup([]PostChatWorker{w1}, repo)
+	group := NewPostChatWorkerGroup([]PostChatWorker{w1}, repo, &fakeEphemeralPurge{})
 
 	err := group.Process(context.Background(), "conv-0001", "user-0001", "nonexistent-id")
 	if err != nil {
@@ -191,6 +212,32 @@ func TestPostChatGroup_LastMsgNotFound(t *testing.T) {
 	}
 	if w1.calls != 0 {
 		t.Errorf("expected 0 worker calls, got %d", w1.calls)
+	}
+}
+
+func TestPostChatGroup_Ephemeral_DestroysInsteadOfWorkers(t *testing.T) {
+	repo, cleanup := setupTestMsgRepo(t)
+	defer cleanup()
+
+	now := time.Now()
+	insertTestMsg(t, repo, "msg-0001", "conv-0001", "user", "start", now.Add(-10*time.Minute), "msg-0001")
+	insertTestMsg(t, repo, "msg-0004", "conv-0001", "user", "end", now, "msg-0001")
+
+	w1 := &mockPostChatWorker{name: "summary"}
+	purge := &fakeEphemeralPurge{ephemeral: true}
+	group := NewPostChatWorkerGroup([]PostChatWorker{w1}, repo, purge)
+
+	if err := group.Process(context.Background(), "conv-0001", "user-0001", "msg-0004"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if purge.beginCalls != 1 {
+		t.Errorf("expected BeginDestroy called once, got %d", purge.beginCalls)
+	}
+	if purge.lastConvID != "conv-0001" || purge.lastUserID != "user-0001" {
+		t.Errorf("unexpected BeginDestroy args: conv=%s user=%s", purge.lastConvID, purge.lastUserID)
+	}
+	if w1.calls != 0 {
+		t.Errorf("expected 0 worker calls for ephemeral conv, got %d", w1.calls)
 	}
 }
 

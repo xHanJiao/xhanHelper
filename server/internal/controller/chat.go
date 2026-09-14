@@ -86,11 +86,17 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 
 		// 创建或加载会话
 		var conv *model.Conversation
-		if req.ConversationID != nil && *req.ConversationID != "" {
+		explicitID := req.ConversationID != nil && *req.ConversationID != ""
+		if explicitID {
 			var err error
 			conv, err = convRepo.FindByID(c.Request.Context(), *req.ConversationID)
 			if err != nil {
 				log.Printf("[chat] FindByID error: %v", err)
+			}
+			// 指定的会话不存在（如无痕会话已被销毁）→ 直接报错，不静默新建
+			if conv == nil {
+				view.JSONError(c, 404, "conversation not found")
+				return
 			}
 		} else if req.ConversationID == nil {
 			// 新入口：查找默认会话，不存在则创建

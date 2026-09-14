@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"xhan-helper/internal/model"
@@ -26,6 +27,13 @@ type PostChatWorker interface {
 	Process(ctx context.Context, sess *SessionSnapshot) error
 }
 
+// EphemeralPurger — 无痕会话销毁能力。由 EphemeralDestroyer 实现，测试可注入 fake。
+type EphemeralPurger interface {
+	IsEphemeral(ctx context.Context, convID string) (bool, error)
+	BeginDestroy(ctx context.Context, convID, userID string) error // Stage A + 入队 Stage B
+	RunPurge(ctx context.Context, convID string) error             // Stage B（cron 调用）
+}
+
 // PostChatWorkerGroup — 对话后处理协调器。
 // 取代原 post_chat（记忆+主题）与 summary_generation（摘要）两条独立定时任务路径：
 // 统一读取 session 窗口内 user 消息，构建共享文本，然后分发给各 worker。
@@ -33,13 +41,15 @@ type PostChatWorker interface {
 type PostChatWorkerGroup struct {
 	workers []PostChatWorker
 	msgRepo *service.MessageRepo
+	purge   EphemeralPurger
 }
 
 // NewPostChatWorkerGroup 创建后处理组。workers 按注册顺序依次执行。
-func NewPostChatWorkerGroup(workers []PostChatWorker, msgRepo *service.MessageRepo) *PostChatWorkerGroup {
+func NewPostChatWorkerGroup(workers []PostChatWorker, msgRepo *service.MessageRepo, purge EphemeralPurger) *PostChatWorkerGroup {
 	return &PostChatWorkerGroup{
 		workers: workers,
 		msgRepo: msgRepo,
+		purge:   purge,
 	}
 }
 
@@ -53,6 +63,18 @@ func NewPostChatWorkerGroup(workers []PostChatWorker, msgRepo *service.MessageRe
 func (g *PostChatWorkerGroup) Process(ctx context.Context, convID, userID, lastMsgID string) error {
 	if g.msgRepo == nil {
 		panic("post_chat_group: msgRepo is nil (wiring bug)")
+	}
+	if g.purge == nil {
+		panic("post_chat_group: purge is nil (wiring bug)")
+	}
+
+	// 无痕会话：窗口结束后不跑任何后处理（否则记忆/摘要/画像会留下痕迹），
+	// 改为执行 Stage A（隐藏 + 入队 Stage B 物理销毁）。
+	if ephemeral, err := g.purge.IsEphemeral(ctx, convID); err != nil {
+		return fmt.Errorf("check ephemeral: %w", err)
+	} else if ephemeral {
+		log.Printf("[post_chat_group] ephemeral conv=%s → destroy (skip all workers)", convID[:8])
+		return g.purge.BeginDestroy(ctx, convID, userID)
 	}
 
 	lastMsg, err := g.msgRepo.GetByID(ctx, lastMsgID)

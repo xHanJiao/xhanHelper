@@ -32,6 +32,7 @@ type RouterConfig struct {
 	SummaryHandler       *SummaryHandler
 	ReminderHandler      *ReminderHandler
 	ClientBridge         *agent.ClientToolBridge
+	Destroyer            *agent.EphemeralDestroyer
 	LlmCostRepo          *service.LlmCostRepo
 	LlmPriceRepo         *service.LlmPriceRepo
 	ExtraMiddleware      []gin.HandlerFunc
@@ -85,7 +86,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.PATCH("/conversations/:id/mode", updateConversationMode(rc.ConvRepo))
 		auth.GET("/conversations/:id/plans", getConversationPlan(rc.ConvRepo, rc.PlanRepo))
 		auth.GET("/conversations/:id/usage", getConversationUsage(rc.ConvRepo, rc.MsgRepo, rc.LlmCostRepo, rc.LlmPriceRepo, rc.Cfg))
-		auth.DELETE("/conversations/:id", deleteConversation(rc.ConvRepo))
+		auth.DELETE("/conversations/:id", deleteConversation(rc.ConvRepo, rc.Destroyer))
 		auth.POST("/conversations/:id/share-messages", rc.MessageShareHandler.CreateMessageShare)
 		auth.GET("/bills", rc.BillHandler.ListBills)
 		auth.GET("/bills/stats", rc.BillHandler.StatsBills)

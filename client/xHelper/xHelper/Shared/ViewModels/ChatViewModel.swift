@@ -134,6 +134,10 @@ class ChatViewModel: ObservableObject {
     /// 新建会话成功（空 tab 转正）时回调：(conversationId, title)
     var onConversationCreated: ((String, String?) -> Void)?
 
+    /// 会话在服务端已不存在（如无痕会话被销毁）时回调：(conversationId)。
+    /// 由 ChatTabManager / ContentView 接线，用于关闭 tab、清理列表、提示用户。
+    var onConversationGone: ((String) -> Void)?
+
     private var lastHapticTime: Date = .distantPast
 
     @AppStorage("llm_temperature") static var cachedTemperature: Double = 1.0
@@ -665,6 +669,11 @@ class ChatViewModel: ObservableObject {
             hasMoreAfter = result.hasMoreAfter
         } catch {
             LogBuffer.shared.error("ChatViewModel.loadConversation: \(error)")
+            // 会话不存在（如无痕会话已销毁）→ 通知上层关闭 tab，不再显示"加载失败"
+            if (error as NSError).code == 404 {
+                onConversationGone?(id)
+                return
+            }
             errorMessage = "加载消息失败"
         }
         await refreshUsage()
@@ -810,6 +819,16 @@ class ChatViewModel: ObservableObject {
         sseClient.onError = { [weak self] error in
             Task { @MainActor in
                 let nsError = error as NSError
+                // 会话不存在（如无痕会话已销毁）：SSEClient 以 HTTP 状态码上报
+                if nsError.domain == "XHANHTTP", nsError.code == 404 {
+                    LogBuffer.shared.warning("ChatViewModel.sse: conversation gone (404)")
+                    self?.finishStreaming()
+                    self?.detachStreamingMessage()
+                    if let cid = self?.conversationId, !cid.isEmpty {
+                        self?.onConversationGone?(cid)
+                    }
+                    return
+                }
                 if nsError.domain == NSURLErrorDomain,
                    nsError.code == NSURLErrorNetworkConnectionLost || nsError.code == NSURLErrorCancelled {
                     self?.finishStreaming()

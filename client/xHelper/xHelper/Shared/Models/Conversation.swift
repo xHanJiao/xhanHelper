@@ -10,6 +10,9 @@ struct Conversation: Identifiable, Codable {
     let lastExtractedAt: String? = nil
     /// 会话模式："work"（默认）| "plan"（只读讨论状态）；旧数据可能缺失
     let mode: String?
+    /// 无痕会话标记；普通会话服务端不返回该字段，故可选。
+    /// 注意用 var：let 带默认值不会被 synthesized Decodable 解码，会恒为 nil
+    var ephemeral: Bool? = nil
     let createdAt: String
     let updatedAt: String
 
@@ -22,6 +25,7 @@ struct Conversation: Identifiable, Codable {
         case lastExtractedMsgId = "last_extracted_msg_id"
         case lastExtractedAt = "last_extracted_at"
         case mode
+        case ephemeral
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }

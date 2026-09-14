@@ -128,3 +128,70 @@ func TestSessionEndTask_ListDueAndMarkDone(t *testing.T) {
 		t.Errorf("expected 0 due tasks after MarkDone, got %d", len(due2))
 	}
 }
+
+// ---- ephemeral_purge 任务处理 ----
+
+type fakePurger struct {
+	purgeCalls int
+	fail       bool
+}
+
+func (f *fakePurger) IsEphemeral(_ context.Context, _ string) (bool, error) { return true, nil }
+func (f *fakePurger) BeginDestroy(_ context.Context, _, _ string) error     { return nil }
+func (f *fakePurger) RunPurge(_ context.Context, _ string) error {
+	if f.fail {
+		return &mockErr{msg: "purge failed"}
+	}
+	f.purgeCalls++
+	return nil
+}
+
+func insertPurgeTask(t *testing.T, repo *service.DelayedTaskRepo, id, userID, convID string) {
+	t.Helper()
+	job := &model.DelayedTask{
+		ID: id, UserID: userID, TaskType: TaskTypeEphemeralPurge,
+		Status: "pending", ProcessAt: time.Now().Add(-time.Minute),
+	}
+	if err := job.SetMeta(model.DelayedTaskMeta{ConvID: convID}); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
+	if err := repo.Create(context.Background(), job); err != nil {
+		t.Fatalf("create purge task: %v", err)
+	}
+}
+
+func TestProcessPurgeTasks_SuccessMarksDone(t *testing.T) {
+	repo, cleanup := setupTestDelayedTaskRepo(t)
+	defer cleanup()
+	insertPurgeTask(t, repo, "task-purge-0001", "user-0001", "conv-0001")
+
+	fp := &fakePurger{}
+	cr := &CronRunner{delayedTaskRepo: repo, ephemeralPurger: fp}
+	cr.processPurgeTasks(context.Background())
+
+	if fp.purgeCalls != 1 {
+		t.Fatalf("expected 1 purge call, got %d", fp.purgeCalls)
+	}
+	due, _ := repo.ListDue(context.Background(), TaskTypeEphemeralPurge, 20)
+	if len(due) != 0 {
+		t.Errorf("task should be marked done, still %d due", len(due))
+	}
+}
+
+func TestProcessPurgeTasks_FailureSchedulesRetry(t *testing.T) {
+	repo, cleanup := setupTestDelayedTaskRepo(t)
+	defer cleanup()
+	insertPurgeTask(t, repo, "task-purge-0002", "user-0001", "conv-0002")
+
+	fp := &fakePurger{fail: true}
+	cr := &CronRunner{delayedTaskRepo: repo, ephemeralPurger: fp}
+	cr.processPurgeTasks(context.Background())
+
+	tasks, _ := repo.FindPendingByUserAndType(context.Background(), "user-0001", TaskTypeEphemeralPurge)
+	if len(tasks) != 1 {
+		t.Fatalf("task should remain pending for retry, got %d", len(tasks))
+	}
+	if tasks[0].RetryCount != 1 {
+		t.Errorf("expected retry_count=1, got %d", tasks[0].RetryCount)
+	}
+}

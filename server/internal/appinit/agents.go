@@ -116,6 +116,8 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		FactRepo:     repos.UserProfileFact,
 		UserRepo:     repos.User,
 	})
+	// 无痕会话销毁器：Stage A 由后处理/在线删除触发，Stage B 由 cron 轮询执行
+	ephemeralDestroyer := agent.NewEphemeralDestroyer(repos.Conversation, vs, repos.DelayedTask)
 	sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
 		summaryWorker,
 		agent.NewMemoryWorker(&agent.MemoryWorkerConfig{
@@ -126,7 +128,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 			Updater: stateUpdater,
 		}),
 		profileWorker,
-	}, repos.Message)
+	}, repos.Message, ephemeralDestroyer)
 
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{
 		Orch:              reflectionOrch,
@@ -135,6 +137,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MissionRunner:     missionRunner,
 		MissionRepo:       repos.Mission,
 		SessionEndGroup:   sessionEndGroup,
+		EphemeralPurger:   ephemeralDestroyer,
 		SessionGapMinutes: cfg.Chat.SessionGapMinutes,
 		DiscoverSchedules: cfg.Reflection.DailySchedules,
 		DeliverInterval:   time.Duration(cfg.Reflection.DeliverIntervalMinutes) * time.Minute,
@@ -269,6 +272,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MissionDiscoverer: missionDiscoverer,
 		ReplayRunner:      replayRunner,
 		ClientBridge:      clientBridge,
+		Destroyer:         ephemeralDestroyer,
 		BGCtx:             bgCtx,
 		BGCancel:          bgCancel,
 	}

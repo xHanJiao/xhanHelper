@@ -20,6 +20,9 @@ final class AppShortcutBridge {
     /// 新建对话（由 ContentView 注册，走 chatTabManager.newChat）
     var onNewChat: (() -> Void)?
 
+    /// 新建无痕会话（由 ContentView 注册，走 chatTabManager.newEphemeralChat）
+    var onNewEphemeralChat: (() -> Void)?
+
     /// 会话列表上/下切换（由 ContentView 注册，delta：-1 上移，+1 下移）
     var onSwitchConversation: ((Int) -> Void)?
 

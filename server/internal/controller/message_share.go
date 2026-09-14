@@ -16,13 +16,17 @@ import (
 
 // MessageShareHandler 消息分享 handler
 type MessageShareHandler struct {
-	repo *service.MessageShareRepo
-	cfg  *config.Config
+	repo     *service.MessageShareRepo
+	cfg      *config.Config
+	convRepo *service.ConversationRepo
 }
 
 // NewMessageShareHandler 创建消息分享 handler
-func NewMessageShareHandler(repo *service.MessageShareRepo, cfg *config.Config) *MessageShareHandler {
-	return &MessageShareHandler{repo: repo, cfg: cfg}
+func NewMessageShareHandler(repo *service.MessageShareRepo, cfg *config.Config, convRepo *service.ConversationRepo) *MessageShareHandler {
+	if convRepo == nil {
+		panic("message_share: convRepo is nil (wiring bug)")
+	}
+	return &MessageShareHandler{repo: repo, cfg: cfg, convRepo: convRepo}
 }
 
 // createShareReq 创建分享请求体
@@ -34,6 +38,16 @@ type createShareReq struct {
 func (h *MessageShareHandler) CreateMessageShare(c *gin.Context) {
 	convID := c.Param("id")
 	userID := c.GetString("user_id")
+
+	// 无痕会话不支持分享（公开链接与"阅后即焚"矛盾）
+	if ephemeral, err := h.convRepo.IsEphemeral(c.Request.Context(), convID); err != nil {
+		log.Printf("[share] IsEphemeral error: convID=%s err=%v", convID, err)
+		view.JSONError(c, http.StatusInternalServerError, "创建分享失败")
+		return
+	} else if ephemeral {
+		view.JSONError(c, http.StatusForbidden, "无痕会话不支持分享")
+		return
+	}
 
 	var req createShareReq
 	if err := c.ShouldBindJSON(&req); err != nil {

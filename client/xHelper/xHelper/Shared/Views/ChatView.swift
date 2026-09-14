@@ -276,8 +276,8 @@ struct ChatView: View {
         if viewModel.subagentPanelExpanded && !viewModel.subagentSessions.isEmpty {
             GeometryReader { geo in
                 VStack(spacing: 0) {
-                    // 轻遮罩：点空白处收起
-                    Color.black.opacity(0.10)
+                    // 透明点击层：点空白处收起（不渲染深色遮罩，避免列表上方出现深色盖板）
+                    Color.clear
                         .contentShape(Rectangle())
                         .onTapGesture { collapseSubagentPanel() }
                     SubagentDetailPanel(

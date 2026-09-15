@@ -37,10 +37,6 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
     @State private var idleTask: Task<Void, Never>?
     /// 流式呼吸光晕相位（0…1），用 CGFloat 使阴影平滑呼吸。
     @State private var streamingGlow: CGFloat = 0
-    /// 上一次单击 Return 的时刻；用于判定「双击 Return 发送」。
-    @State private var lastReturnAt: Date?
-    /// 首次 Return 前的文本；双击发送时用于回退那一枚刚插入的换行。
-    @State private var textBeforeReturn: String?
 #endif
 
     /// 便捷 init（无便签面板，TopNote 为 EmptyView）。
@@ -218,30 +214,13 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
                     isEditing = false
                 }
             }
-            // Return：单击换行（放行给 TextEditor），双击发送。
-            // 双击阈值跟随系统「双击间隔」设置（NSEvent.doubleClickInterval）。
+            // Return：单独按换行（放行给 TextEditor）；Shift+Return 发送。
             .onKeyPress(.return, phases: .down) { keyPress in
-                if keyPress.modifiers.contains(.shift) {
-                    return .ignored
-                }
+                guard keyPress.modifiers.contains(.shift) else { return .ignored }
+                // IME 组合态下交给输入法确认。
                 if (NSApp.keyWindow?.firstResponder?.value(forKey: "hasMarkedText") as? Bool) == true {
                     return .ignored
                 }
-                let isDoubleReturn = lastReturnAt.map {
-                    Date().timeIntervalSince($0) < NSEvent.doubleClickInterval
-                } ?? false
-                // 第一次：放行换行，并记录判定双击所需的现场。
-                guard isDoubleReturn else {
-                    lastReturnAt = Date()
-                    textBeforeReturn = text
-                    return .ignored
-                }
-                lastReturnAt = nil
-                // 回退第一次按下的那枚换行（仅当中间没敲别的字），避免发送内容多一个空行。
-                if let before = textBeforeReturn, text == before + "\n" {
-                    text = before
-                }
-                textBeforeReturn = nil
                 if isStreaming {
                     Task {
                         for _ in 0..<3 {

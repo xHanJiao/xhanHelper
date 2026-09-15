@@ -1045,8 +1045,10 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state 
 		thinking = &t
 	}
 	var tools []llm.ToolDefinition
-	// plan 模式：工具全部隐藏（LLM 看不到任何工具定义，配合执行级拦截双保险）
-	if !state.finalRound && o.useNativeFC && req.Mode != model.ConvModePlan {
+	// plan 模式：仅注入只读工具定义（写操作执行级仍被拦截）；work 模式：渐进式暴露。
+	if !state.finalRound && o.useNativeFC && req.Mode == model.ConvModePlan {
+		tools = filterToolDefs(o.registry.ReadOnlyToolDefinitions(), o.toolExcludes)
+	} else if !state.finalRound && o.useNativeFC {
 		// 渐进式暴露：常驻 expose_tools + 已暴露函数（函数粒度）的完整定义 + 客户端工具。
 		state.expMutex.Lock()
 		exposed := make([]string, 0, len(state.exposedTools))

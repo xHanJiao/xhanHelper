@@ -19,8 +19,10 @@ func NewTaskTool(runner SubAgentRunner, maxIterations, timeoutSecs int) *TaskToo
 	return &TaskTool{runner: runner, maxIterations: maxIterations, timeoutSecs: timeoutSecs}
 }
 
-func (t *TaskTool) Name() string                   { return "task" }
-func (t *TaskTool) ReadOnlyFuncs() map[string]bool { return AllReadOnly(t) }
+func (t *TaskTool) Name() string { return "task" }
+
+// ReadOnlyFuncs — task 触发子 agent 执行（可能间接产生写操作），非只读：返回 nil 使其在 plan 模式被拦截。
+func (t *TaskTool) ReadOnlyFuncs() map[string]bool { return nil }
 
 func (t *TaskTool) Description() string {
 	maxIter := t.maxIterations

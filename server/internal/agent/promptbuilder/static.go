@@ -68,6 +68,7 @@ func (p *toolCatalogProvider) Render(ctx context.Context) string {
 回复时直接输出纯文本即可，**严禁在文本中输出 JSON 格式内容**。如需调用工具，必须使用函数调用接口。`
 }
 
-// planModeNoToolsNotice — plan 模式下替代工具目录的声明：
-// 本模式不注入任何工具定义，LLM 不应发起任何函数调用（执行级拦截仍为最终兜底）。
-const planModeNoToolsNotice = "当前处于计划模式：本模式不提供任何工具调用能力（服务端已强制禁用），请勿调用任何工具，仅基于已有上下文进行方案讨论。回复使用纯文本即可。"
+// planModeReadOnlyNotice — plan 模式下替代工具目录的短提示。
+// 可用的只读函数定义已随 native FC 请求体 tools 字段下发，此处无需再列函数名。
+// 写操作在服务端执行级硬拦截，本提示只是引导。
+const planModeReadOnlyNotice = "当前处于计划模式：本模式仅提供只读工具（检索/查询类函数定义见请求体 tools，可直接调用），禁止任何写操作。请用只读工具收集信息并基于已有上下文进行方案讨论。"

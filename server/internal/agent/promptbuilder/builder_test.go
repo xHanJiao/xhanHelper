@@ -149,20 +149,23 @@ func TestBuildLayer1Order(t *testing.T) {
 
 // ==================== plan 模式工具隐藏 ====================
 
-// planBuildFakeTool — 最小工具实现，验证工具定义段是否注入
+// planBuildFakeTool — 最小工具实现，验证工具定义段是否注入（含一读一写函数）
 type planBuildFakeTool struct{ name string }
 
 func (f *planBuildFakeTool) Name() string        { return f.name }
 func (f *planBuildFakeTool) Description() string { return "fake tool desc" }
 func (f *planBuildFakeTool) Functions() []tool.FuncSchema {
-	return []tool.FuncSchema{{Name: "do", Description: "do sth"}}
+	return []tool.FuncSchema{
+		{Name: "read_fn", Description: "read sth"},
+		{Name: "write_fn", Description: "write sth"},
+	}
 }
-func (f *planBuildFakeTool) ReadOnlyFuncs() map[string]bool { return map[string]bool{"do": true} }
+func (f *planBuildFakeTool) ReadOnlyFuncs() map[string]bool { return map[string]bool{"read_fn": true} }
 func (f *planBuildFakeTool) Execute(_ *tool.ExecuteContext, _ string, _ json.RawMessage) *tool.Result {
 	return &tool.Result{Success: true}
 }
 
-func TestBuild_PlanModeHidesToolDefinitions(t *testing.T) {
+func TestBuild_PlanModeOnlyReadOnlyTools(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Register(&planBuildFakeTool{name: "fake_tool"})
 
@@ -173,16 +176,19 @@ func TestBuild_PlanModeHidesToolDefinitions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(work.Prompt, "## 工具使用") || !strings.Contains(work.Prompt, "fake_tool") {
-		t.Error("work 模式应包含工具定义段")
+	if !strings.Contains(work.Prompt, "## 工具使用") || !strings.Contains(work.Prompt, "read_fn") || !strings.Contains(work.Prompt, "write_fn") {
+		t.Error("work 模式应包含全部工具函数定义")
 	}
 
 	plan, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModePlan})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(plan.Prompt, "## 工具使用") || strings.Contains(plan.Prompt, "fake_tool") || strings.Contains(plan.Prompt, "你可以使用以下工具") {
-		t.Error("plan 模式不应包含任何工具定义")
+	if !strings.Contains(plan.Prompt, "## 工具使用") || !strings.Contains(plan.Prompt, "read_fn") {
+		t.Error("plan 模式应包含只读工具定义")
+	}
+	if strings.Contains(plan.Prompt, "write_fn") {
+		t.Error("plan 模式不应包含写函数定义")
 	}
 
 	// native FC 模式
@@ -198,11 +204,11 @@ func TestBuild_PlanModeHidesToolDefinitions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan2.Prompt, "不提供任何工具调用能力") {
-		t.Error("plan 模式 native FC 通知应声明无工具可用")
+	if !strings.Contains(plan2.Prompt, "仅提供只读工具") {
+		t.Error("plan 模式 native FC 通知应声明仅提供只读工具")
 	}
 	if strings.Contains(plan2.Prompt, "函数调用接口") {
-		t.Error("plan 模式不应提示使用函数调用接口")
+		t.Error("plan 模式不应提示使用 expose_tools 函数调用接口")
 	}
 }
 

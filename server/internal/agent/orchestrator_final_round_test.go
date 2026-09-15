@@ -236,9 +236,26 @@ func TestMkLlmChatReq_SubAgentOnlyClientTools_NotExposed(t *testing.T) {
 	}
 }
 
-func TestMkLlmChatReq_PlanMode_NoTools(t *testing.T) {
+// roFakeTool — 含一读一写函数的测试工具（plan 模式只读下发用）
+type roFakeTool struct{}
+
+func (roFakeTool) Name() string        { return "mixed" }
+func (roFakeTool) Description() string { return "mixed" }
+func (roFakeTool) Functions() []tool.FuncSchema {
+	return []tool.FuncSchema{
+		{Name: "read_fn"},
+		{Name: "write_fn"},
+	}
+}
+func (roFakeTool) ReadOnlyFuncs() map[string]bool { return map[string]bool{"read_fn": true} }
+func (roFakeTool) Execute(_ *tool.ExecuteContext, _ string, _ json.RawMessage) *tool.Result {
+	return &tool.Result{Success: true}
+}
+
+func TestMkLlmChatReq_PlanMode_OnlyReadOnlyTools(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Register(&fakeTool{name: "note"})
+	reg.Register(roFakeTool{})
 	o := &Orchestrator{
 		contextFormatter: &mockFormatter{},
 		registry:         reg,
@@ -271,10 +288,22 @@ func TestMkLlmChatReq_PlanMode_NoTools(t *testing.T) {
 	} else if len(browser.Functions) != 1 || browser.Functions[0].Name != "navigate" {
 		t.Errorf("browser 应只含 navigate, got %+v", browser.Functions)
 	}
-	// plan 模式：工具全隐藏（服务端 + 客户端都不下发）
+	// plan 模式：只下发只读函数定义，写函数与客户端工具都不下发，也不注入 expose_tools
 	plan := o.mkLlmChatReq(&RunRequest{UserID: "u1", Mode: model.ConvModePlan, ClientTools: clientTools}, "sys", &reactState{msgs: msgs})
-	if plan.Tools != nil && len(plan.Tools) != 0 {
-		t.Errorf("plan 模式 tools 应为空, got %d 个", len(plan.Tools))
+	var mixed *llm.ToolDefinition
+	for i := range plan.Tools {
+		switch plan.Tools[i].Name {
+		case "mixed":
+			mixed = &plan.Tools[i]
+		case "expose_tools", "browser":
+			t.Errorf("plan 模式不应下发 %s", plan.Tools[i].Name)
+		}
+	}
+	if mixed == nil {
+		t.Fatal("plan 模式应下发含只读函数的工具定义")
+	}
+	if len(mixed.Functions) != 1 || mixed.Functions[0].Name != "read_fn" {
+		t.Errorf("plan 模式 mixed 应只含 read_fn, got %+v", mixed.Functions)
 	}
 }
 

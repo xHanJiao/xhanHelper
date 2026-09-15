@@ -190,6 +190,39 @@ func (r *Registry) GetNativeFCTools() []llm.ToolDefinition {
 	return defs
 }
 
+// ReadOnlyToolDefinitions 导出只读函数的工具定义（供 plan 模式 native FC 请求体）。
+// 仅保留 ReadOnlyFuncs() 声明的函数；无只读函数的工具（含 task/expose_tools）整体跳过。
+// 输出按工具名排序，保证字节稳定（前缀缓存友好）。
+func (r *Registry) ReadOnlyToolDefinitions() []llm.ToolDefinition {
+	defs := make([]llm.ToolDefinition, 0)
+	for _, name := range r.sortedVisibleToolNames() {
+		t := r.tools[name]
+		ro := t.ReadOnlyFuncs()
+		if len(ro) == 0 {
+			continue
+		}
+		funcs := make([]llm.FuncDef, 0, len(ro))
+		for _, f := range t.Functions() {
+			if ro[f.Name] {
+				funcs = append(funcs, llm.FuncDef{
+					Name:        f.Name,
+					Description: f.Description,
+					Parameters:  f.Parameters,
+				})
+			}
+		}
+		if len(funcs) == 0 {
+			continue
+		}
+		defs = append(defs, llm.ToolDefinition{
+			Name:        name,
+			Description: t.Description(),
+			Functions:   funcs,
+		})
+	}
+	return defs
+}
+
 // GetLLMTools 导出所有工具定义（供 LLM native function calling）。
 // 输出按工具名排序，保证字节稳定。
 func (r *Registry) GetLLMTools() []llm.ToolDefinition {
@@ -273,22 +306,50 @@ func (r *Registry) writePromptFooter(buf *bytes.Buffer) {
 
 // GeneratePrompt 生成工具定义文本，追加到 system prompt 中
 func (r *Registry) GeneratePrompt() string {
+	return r.generatePrompt(nil)
+}
+
+// GenerateReadOnlyPrompt 只渲染只读函数定义（plan 模式 prompt-eng 路径）。
+// readOnly 返回每个工具允许渲染的函数集合；无可用函数的工具整体跳过。
+func (r *Registry) GenerateReadOnlyPrompt() string {
+	return r.generatePrompt(func(t Tool) map[string]bool { return t.ReadOnlyFuncs() })
+}
+
+// generatePrompt 渲染工具定义文本。readOnly 为 nil 时渲染全部函数；
+// 非 nil 时仅渲染其返回集合内的函数（集合为空/无匹配函数的工具跳过）。
+func (r *Registry) generatePrompt(readOnly func(Tool) map[string]bool) string {
 	var buf bytes.Buffer
 	buf.WriteString("你可以使用以下工具来完成用户的请求。\n")
 	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
 
 	for _, name := range r.sortedVisibleToolNames() {
 		t := r.tools[name]
+		var allowed map[string]bool
+		if readOnly != nil {
+			allowed = readOnly(t)
+			if len(allowed) == 0 {
+				continue
+			}
+		}
+		funcs := make([]FuncSchema, 0, len(t.Functions()))
+		for _, fn := range t.Functions() {
+			if allowed == nil || allowed[fn.Name] {
+				funcs = append(funcs, fn)
+			}
+		}
+		if len(funcs) == 0 {
+			continue
+		}
 		buf.WriteString(fmt.Sprintf("## 工具: %s\n", t.Name()))
 		buf.WriteString(fmt.Sprintf("描述: %s\n\n", t.Description()))
 		buf.WriteString("函数:\n")
-		for _, fn := range t.Functions() {
+		for _, fn := range funcs {
 			buf.WriteString(fmt.Sprintf("  - %s: %s\n", fn.Name, fn.Description))
 			if props, ok := fn.Parameters["properties"].(map[string]interface{}); ok {
 				required := make(map[string]bool)
 				if reqs, ok := fn.Parameters["required"].([]interface{}); ok {
-					for _, r := range reqs {
-						if s, ok := r.(string); ok {
+					for _, req := range reqs {
+						if s, ok := req.(string); ok {
 							required[s] = true
 						}
 					}
@@ -314,8 +375,6 @@ func (r *Registry) GeneratePrompt() string {
 						buf.WriteString(fmt.Sprintf("      可选值: %s\n", strings.Join(vals, "/")))
 					}
 				}
-				// 显示 required 汇总（已在上面的循环标识，这里省略）
-				// buf.WriteString(fmt.Sprintf("    必填字段: %s\n", ...))
 			}
 			buf.WriteString("\n")
 		}
@@ -521,12 +580,12 @@ func (r *Registry) ExecuteByName(ec *ExecuteContext, toolName, funcName string, 
 			"未找到工具 '%s'。请核对工具名后重试。", toolName)}
 	}
 
-	// —— Plan 模式工具全部禁用（集中式，所有工具一视同仁）——
-	// plan 模式为纯讨论状态：不区分只读/写，任何工具调用一律拦截（2026-08-14 激进收紧）。
-	// 工具仍保留 ReadOnlyFuncs 声明，仅为未来可能的"只读浏览模式"预留，当前拦截不再使用。
-	if ec.Mode == model.ConvModePlan {
+	// —— Plan 模式：只读放行，写操作拦截 ——
+	// plan 模式仅允许 ReadOnlyFuncs() 声明的只读函数执行（检索/查询），其余一律拦截。
+	// ReadOnlyFuncs() 返回 nil/空 map 的工具（含 task、expose_tools、theme、mailbox）全拦。
+	if ec.Mode == model.ConvModePlan && !t.ReadOnlyFuncs()[funcName] {
 		return &Result{Success: false, Error: fmt.Sprintf(
-			"当前处于计划模式（只读讨论状态），本模式下已禁用全部工具调用，禁止执行 %s.%s。请仅进行方案讨论；如需执行操作，请让用户切换到工作模式。",
+			"当前处于计划模式（只读讨论状态），本模式仅允许只读操作，禁止执行写操作 %s.%s。如需执行写操作，请让用户切换到工作模式。",
 			toolName, funcName)}
 	}
 

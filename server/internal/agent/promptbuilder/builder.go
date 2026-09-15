@@ -74,15 +74,19 @@ func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildRes
 	}
 
 	// Layer 3: 输出规范 + 工具定义
-	// plan 模式：工具全隐藏——prompt-eng 跳过工具定义段；native FC 的目录替换为"无工具"声明
+	// plan 模式只读化：只注入只读函数定义/提示，写工具对 LLM 不可见（执行级仍为最终兜底）
 	plan := opts.Mode == model.ConvModePlan
 	for _, sp := range b.postRoleStatic {
 		var section string
 		switch {
 		case plan && sp.Name() == "tool_definitions":
-			continue
+			// prompt-eng 路径：仅渲染只读函数定义
+			if p, ok := sp.(*toolDefinitionsProvider); ok {
+				section = p.registry.GenerateReadOnlyPrompt()
+			}
 		case plan && sp.Name() == "tool_catalog":
-			section = planModeNoToolsNotice
+			// native FC 路径：只读函数定义已随请求体 tools 下发，此处仅给只读提示
+			section = planModeReadOnlyNotice
 		case sp.Name() == "tool_catalog":
 			section = sp.Render(ctx)
 			if opts.ClientToolCatalog != "" {

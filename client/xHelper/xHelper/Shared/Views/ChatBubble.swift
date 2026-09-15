@@ -184,6 +184,7 @@ struct ChatBubble: View {
                 Text(formatCreatedAt(time))
                     .font(.caption2)
                     .foregroundColor(.secondary)
+                    .padding(.horizontal, 14)
                     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
             }
         }

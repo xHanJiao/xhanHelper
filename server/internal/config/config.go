@@ -33,6 +33,7 @@ type Config struct {
 	SubAgent          SubAgentConfig          `yaml:"subagent"`
 	Chat              ChatConfig              `yaml:"chat"`
 	Share             ShareConfig             `yaml:"share"`
+	Archive           ArchiveConfig           `yaml:"archive"`
 	Snowflake         SnowflakeConfig         `yaml:"snowflake"`
 	MCP               MCPConfig               `yaml:"mcp"`
 	GlobalDefaultRole GlobalDefaultRoleConfig `yaml:"global_default_role"`
@@ -57,6 +58,12 @@ type ChatConfig struct {
 // ShareConfig — 分享配置
 type ShareConfig struct {
 	DefaultValidDays int `yaml:"default_valid_days"` // 分享链接默认有效天数，默认 7
+}
+
+// ArchiveConfig — 会话自动归档配置
+type ArchiveConfig struct {
+	AfterDays       int `yaml:"after_days"`       // 无活动天数超过则自动归档；<=0 关闭
+	IntervalMinutes int `yaml:"interval_minutes"` // 归档扫描间隔（分钟），<=0 默认 1440（每日一次）
 }
 
 // WebFetchConfig — webfetch 工具配置
@@ -502,6 +509,12 @@ func merge(dst, src *Config) {
 		dst.SubAgent.ExploreTimeoutSeconds = src.SubAgent.ExploreTimeoutSeconds
 	}
 	dst.SubAgent.UserContextEnabled = src.SubAgent.UserContextEnabled
+	if src.Archive.AfterDays != 0 {
+		dst.Archive.AfterDays = src.Archive.AfterDays
+	}
+	if src.Archive.IntervalMinutes != 0 {
+		dst.Archive.IntervalMinutes = src.Archive.IntervalMinutes
+	}
 }
 
 // mergeSourceWeights 按字段合并检索源配置，非零值覆盖

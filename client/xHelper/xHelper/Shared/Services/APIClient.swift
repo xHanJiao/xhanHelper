@@ -11,8 +11,10 @@ class APIClient {
 
     // MARK: Conversations
 
-    func listConversations(limit: Int = 50, offset: Int = 0) async throws -> ConversationListResponse {
-        return try await get("/api/conversations?limit=\(limit)&offset=\(offset)")
+    func listConversations(limit: Int = 50, offset: Int = 0, archived: Bool = false) async throws -> ConversationListResponse {
+        var path = "/api/conversations?limit=\(limit)&offset=\(offset)"
+        if archived { path += "&archived=true" }
+        return try await get(path)
     }
 
     func getMessages(conversationId: String) async throws -> [Message] {
@@ -70,6 +72,11 @@ class APIClient {
 
     func deleteConversation(id: String) async throws {
         try await delete("/api/conversations/\(id)")
+    }
+
+    /// 恢复已归档会话。
+    func restoreConversation(id: String) async throws {
+        try await post("/api/conversations/\(id)/restore", body: [:])
     }
 
     /// 显式终止运行中的 chat（ReAct 循环），返回是否找到运行中的会话
@@ -330,6 +337,16 @@ class APIClient {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         return try await doRequest(req)
+    }
+
+    /// POST 但只校验统一包装，不解析 data 结构。
+    private func post(_ path: String, body: [String: Any]) async throws {
+        var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        try await doRequestStatusOnly(req)
     }
 
     private func patch<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {

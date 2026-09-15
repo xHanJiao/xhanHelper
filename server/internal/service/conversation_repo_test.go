@@ -524,3 +524,77 @@ func TestFinishPurge_HardDeletesConversation(t *testing.T) {
 		t.Errorf("conversation should be hard-deleted, count=%d", n)
 	}
 }
+
+func TestArchiveStale_OnlyStaleNonDefaultNonPinned(t *testing.T) {
+	repo, cleanup := setupConversationRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now()
+	old := now.Add(-30 * 24 * time.Hour)
+
+	pinOld := now.Add(-time.Hour)
+	mk := func(id string, updated time.Time, isDefault bool, pinned *time.Time) {
+		t.Helper()
+		if err := repo.Create(ctx, &model.Conversation{ID: id, UserID: "u1", IsDefault: isDefault, PinnedAt: pinned}); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+		if err := repo.DB().Model(&model.Conversation{}).Where("id = ?", id).
+			UpdateColumn("updated_at", updated).Error; err != nil {
+			t.Fatalf("set updated_at %s: %v", id, err)
+		}
+	}
+	mk("stale", old, false, nil)
+	mk("fresh", now, false, nil)
+	mk("default-old", old, true, nil)
+	mk("pinned-old", old, false, &pinOld)
+
+	cutoff := now.AddDate(0, 0, -14)
+	n, err := repo.ArchiveStale(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("ArchiveStale: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 archived, got %d", n)
+	}
+	for _, id := range []string{"stale"} {
+		c, _ := repo.FindByID(ctx, id)
+		if c == nil || !c.IsDeleted {
+			t.Errorf("%s should be archived", id)
+		}
+	}
+	for _, id := range []string{"fresh", "default-old", "pinned-old"} {
+		c, _ := repo.FindByID(ctx, id)
+		if c == nil || c.IsDeleted {
+			t.Errorf("%s should NOT be archived", id)
+		}
+	}
+}
+
+func TestRestore_ReappearsInActiveList(t *testing.T) {
+	repo, cleanup := setupConversationRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	if err := repo.Create(ctx, &model.Conversation{ID: "c1", UserID: "u1"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := repo.SoftDelete(ctx, "c1"); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+
+	archived, _, err := repo.ListArchivedByUser(ctx, "u1", 10, 0)
+	if err != nil || len(archived) != 1 {
+		t.Fatalf("expected 1 archived, got %d err=%v", len(archived), err)
+	}
+
+	if err := repo.Restore(ctx, "c1"); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	active, _, err := repo.ListByUser(ctx, "u1", 10, 0)
+	if err != nil || len(active) != 1 || active[0].ID != "c1" {
+		t.Fatalf("restored conv should be active, got %+v err=%v", active, err)
+	}
+	archived, _, err = repo.ListArchivedByUser(ctx, "u1", 10, 0)
+	if err != nil || len(archived) != 0 {
+		t.Fatalf("archived list should be empty after restore, got %d err=%v", len(archived), err)
+	}
+}

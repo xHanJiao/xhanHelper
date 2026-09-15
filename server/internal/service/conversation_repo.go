@@ -73,10 +73,19 @@ func (r *ConversationRepo) FindDefaultByUser(ctx context.Context, userID string)
 // 排除子会话（subAgent，parent_id 非空）——子会话不进用户会话列表。
 // 注：MySQL/SQLite 均视 NULL 为最小值，故 pinned_at DESC 天然把已 pin 排在前、未 pin（NULL）排在后。
 func (r *ConversationRepo) ListByUser(ctx context.Context, userID string, limit, offset int) ([]model.Conversation, int64, error) {
+	return r.listByUser(ctx, userID, limit, offset, false)
+}
+
+// ListArchivedByUser 获取用户已归档（is_deleted=true）的会话列表，排序同 ListByUser。
+func (r *ConversationRepo) ListArchivedByUser(ctx context.Context, userID string, limit, offset int) ([]model.Conversation, int64, error) {
+	return r.listByUser(ctx, userID, limit, offset, true)
+}
+
+func (r *ConversationRepo) listByUser(ctx context.Context, userID string, limit, offset int, archived bool) ([]model.Conversation, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	q := r.db.WithContext(ctx).Where("user_id = ? AND is_deleted = ? AND parent_id IS NULL", userID, false)
+	q := r.db.WithContext(ctx).Where("user_id = ? AND is_deleted = ? AND parent_id IS NULL", userID, archived)
 	var total int64
 	if err := q.Model(&model.Conversation{}).Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -153,6 +162,22 @@ func (r *ConversationRepo) Touch(ctx context.Context, id string) error {
 func (r *ConversationRepo) SoftDelete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).
 		Where("id = ?", id).Update("is_deleted", true).Error
+}
+
+// Restore 恢复已归档（软删）的会话。
+func (r *ConversationRepo) Restore(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Model(&model.Conversation{}).
+		Where("id = ?", id).Update("is_deleted", false).Error
+}
+
+// ArchiveStale 将无活动超过 cutoff 的会话批量归档（is_deleted=true）。
+// 排除默认会话（客户端需保留可发消息的默认会话）与已置顶会话（用户显式保留）。
+// 单条 UPDATE，无逐行循环。返回受影响行数。
+func (r *ConversationRepo) ArchiveStale(ctx context.Context, cutoff time.Time) (int64, error) {
+	res := r.db.WithContext(ctx).Model(&model.Conversation{}).
+		Where("is_deleted = ? AND is_default = ? AND pinned_at IS NULL AND updated_at < ?", false, false, cutoff).
+		Update("is_deleted", true)
+	return res.RowsAffected, res.Error
 }
 
 // IsEphemeral 读取会话的无痕标记。会话不存在时返回 (false, nil)。

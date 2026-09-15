@@ -89,6 +89,10 @@ chat:
 share:
   default_valid_days: 7
 
+archive:
+  after_days: 14 # 会话无活动超过 N 天自动归档（is_deleted=true，可从设置页找回）；<=0 关闭
+  interval_minutes: 1440 # 归档扫描间隔（分钟），默认每日一次
+
 webfetch:
   enabled: false # 默认关闭（token 消耗大）；启用后仅 subAgent 可见
   timeout_seconds: 15

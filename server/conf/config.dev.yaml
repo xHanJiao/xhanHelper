@@ -1,7 +1,7 @@
 server:
   mode: debug
   registration_enabled: true
-  disable_background_tasks: true # dev 环境开启后台任务（后处理/post_chat 需要）
+  disable_background_tasks: false # 开启后台任务（会话后处理/归档/反思等）
   memory_auto_extract: true
   max_tokens_per_user: 4
   admin_users:

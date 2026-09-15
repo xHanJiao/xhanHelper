@@ -154,6 +154,7 @@ struct SidebarView: View {
         let isCurrent = chatTabManager.currentConversationId == conv.id
         let isHovered = hoveredConversationID == conv.id
         let isPinned = conv.pinned == true
+        let isEphemeral = conv.ephemeral == true
         return HStack(spacing: 2) {
             Button {
                 selectedTab = .chat
@@ -202,13 +203,13 @@ struct SidebarView: View {
                         chatTabManager.close(conversationId: conv.id)
                     }
                 } label: {
-                    Image(systemName: "trash")
+                    Image(systemName: isEphemeral ? "trash" : "archivebox")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .frame(width: 20, height: 20)
                 }
                 .buttonStyle(.plain)
-                .help("删除")
+                .help(isEphemeral ? "销毁" : "归档")
             }
 
             // 置顶按钮固定在最右：hover 时重命名/删除出现在其左侧，不再把它挤到左边。

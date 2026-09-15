@@ -143,6 +143,9 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		DeliverInterval:   time.Duration(cfg.Reflection.DeliverIntervalMinutes) * time.Minute,
 		MissionInterval:   time.Duration(cfg.Reflection.MissionCheckIntervalMinutes) * time.Minute,
 		MinActiveDays:     cfg.Reflection.MinActiveDays,
+		ConvRepo:          repos.Conversation,
+		ArchiveAfterDays:  cfg.Archive.AfterDays,
+		ArchiveInterval:   time.Duration(cfg.Archive.IntervalMinutes) * time.Minute,
 	})
 
 	// --- Orchestrator ---

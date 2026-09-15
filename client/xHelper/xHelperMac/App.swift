@@ -638,6 +638,7 @@ struct MacSettingsView: View {
                     baseURL: deviceManager.baseURL,
                     token: deviceManager.token ?? ""
                 ))
+                BrowseRow("已归档会话", icon: "archivebox", destination: ArchivedConversationListView(apiClient: apiClient))
                 BrowseRow("诊断日志", icon: "exclamationmark.bubble", destination: LogDiagnosticView())
             }
 

@@ -129,7 +129,14 @@ func listConversations(convRepo *service.ConversationRepo, agentRepo *service.Ag
 		userID := c.GetString("user_id")
 		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-		list, total, err := convRepo.ListByUser(c.Request.Context(), userID, limit, offset)
+		var list []model.Conversation
+		var total int64
+		var err error
+		if c.Query("archived") == "true" {
+			list, total, err = convRepo.ListArchivedByUser(c.Request.Context(), userID, limit, offset)
+		} else {
+			list, total, err = convRepo.ListByUser(c.Request.Context(), userID, limit, offset)
+		}
 		if err != nil {
 			log.Printf("[conv] List error: %v", err)
 			view.JSONError(c, 500, "query conversations failed")
@@ -661,6 +668,22 @@ func deleteConversation(convRepo *service.ConversationRepo, destroyer *agent.Eph
 			return
 		}
 		view.JSONOK(c, gin.H{"status": "deleted"})
+	}
+}
+
+// restoreConversation — 恢复已归档（软删）的会话。
+func restoreConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		convID := c.Param("id")
+		if !requireConversationOwner(c, convRepo, convID) {
+			return
+		}
+		if err := convRepo.Restore(c.Request.Context(), convID); err != nil {
+			log.Printf("[conv] Restore error: id=%s err=%v", convID, err)
+			view.JSONError(c, 500, "restore failed")
+			return
+		}
+		view.JSONOK(c, gin.H{"status": "restored"})
 	}
 }
 

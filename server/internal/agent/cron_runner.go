@@ -23,6 +23,7 @@ type HookStatus struct {
 	DeliverRemaining    string                         `json:"deliver_remaining"`
 	DiscoverRemaining   string                         `json:"discover_remaining"`
 	MissionRemaining    string                         `json:"mission_remaining"`
+	ArchiveRemaining    string                         `json:"archive_remaining"`
 }
 
 // CronRunner — 反思循环调度器
@@ -36,16 +37,20 @@ type CronRunner struct {
 	delayedTaskRepo   *service.DelayedTaskRepo
 	missionRunner     *MissionRunner
 	missionRepo       *service.MissionRepo
-	sessionEndGroup   *PostChatWorkerGroup // 对话后处理组（摘要/记忆/主题）
-	ephemeralPurger   EphemeralPurger      // 无痕会话物理销毁器（Stage B）
-	sessionGapMinutes int                  // session 间隔阈值（分钟）
-	minActiveDays     int                  // 反思门控：最近 N 天内有聊天的用户才跑；<0 不过滤
+	sessionEndGroup   *PostChatWorkerGroup      // 对话后处理组（摘要/记忆/主题）
+	ephemeralPurger   EphemeralPurger           // 无痕会话物理销毁器（Stage B）
+	sessionGapMinutes int                       // session 间隔阈值（分钟）
+	minActiveDays     int                       // 反思门控：最近 N 天内有聊天的用户才跑；<0 不过滤
+	convRepo          *service.ConversationRepo // 会话自动归档
+	archiveAfterDays  int                       // 无活动天数超过则自动归档；<=0 关闭
+	archiveInterval   time.Duration             // 归档扫描间隔
 
 	// 钩子状态追踪
 	mu                sync.Mutex
 	deliverNext       time.Time
 	discoverNext      time.Time
 	missionNext       time.Time
+	archiveNext       time.Time
 	sessionEndRunning bool
 }
 
@@ -64,6 +69,9 @@ type CronRunnerConfig struct {
 	MissionInterval   time.Duration
 	RunTimeout        time.Duration
 	MinActiveDays     int // 反思门控：最近 N 天内有聊天的用户才跑；<0 不过滤
+	ConvRepo          *service.ConversationRepo
+	ArchiveAfterDays  int           // 无活动天数超过则自动归档；<=0 关闭
+	ArchiveInterval   time.Duration // 归档扫描间隔；<=0 默认 24h
 }
 
 // NewCronRunner 创建调度器
@@ -73,6 +81,9 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 	}
 	if cfg.RunTimeout <= 0 {
 		cfg.RunTimeout = 30 * time.Minute
+	}
+	if cfg.ArchiveInterval <= 0 {
+		cfg.ArchiveInterval = 24 * time.Hour
 	}
 	return &CronRunner{
 		orch:              cfg.Orch,
@@ -88,6 +99,9 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		ephemeralPurger:   cfg.EphemeralPurger,
 		sessionGapMinutes: cfg.SessionGapMinutes,
 		minActiveDays:     cfg.MinActiveDays,
+		convRepo:          cfg.ConvRepo,
+		archiveAfterDays:  cfg.ArchiveAfterDays,
+		archiveInterval:   cfg.ArchiveInterval,
 	}
 }
 
@@ -100,6 +114,12 @@ func (cr *CronRunner) setDeliverNext(t time.Time) {
 func (cr *CronRunner) setDiscoverNext(t time.Time) {
 	cr.mu.Lock()
 	cr.discoverNext = t
+	cr.mu.Unlock()
+}
+
+func (cr *CronRunner) setArchiveNext(t time.Time) {
+	cr.mu.Lock()
+	cr.archiveNext = t
 	cr.mu.Unlock()
 }
 
@@ -124,6 +144,7 @@ func (cr *CronRunner) GetHookStatus() HookStatus {
 	s.DeliverRemaining = remainingLabel(cr.deliverNext, now)
 	s.DiscoverRemaining = remainingLabel(cr.discoverNext, now)
 	s.MissionRemaining = remainingLabel(cr.missionNext, now)
+	s.ArchiveRemaining = remainingLabel(cr.archiveNext, now)
 
 	return s
 }
@@ -247,6 +268,16 @@ func (cr *CronRunner) Start(ctx context.Context) {
 		cr.missionNext = time.Time{}
 	}
 
+	var archiveChan <-chan time.Time
+	if cr.archiveAfterDays > 0 {
+		archiveTicker := time.NewTicker(cr.archiveInterval)
+		defer archiveTicker.Stop()
+		archiveChan = archiveTicker.C
+		cr.setArchiveNext(time.Now().Add(cr.archiveInterval))
+	} else {
+		cr.setArchiveNext(time.Time{})
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -291,6 +322,11 @@ func (cr *CronRunner) Start(ctx context.Context) {
 			log.Printf("[cron] mission check trigger")
 			go cr.processMissions(ctx)
 			cr.missionNext = time.Now().Add(cr.missionInterval)
+
+		case <-archiveChan:
+			log.Printf("[cron] archive trigger")
+			cr.archiveStale(ctx)
+			cr.setArchiveNext(time.Now().Add(cr.archiveInterval))
 		}
 	}
 }
@@ -323,6 +359,26 @@ func (cr *CronRunner) IsUserActive(ctx context.Context, userID string) bool {
 		return true
 	}
 	return active
+}
+
+// archiveStale 自动归档无活动超过 archiveAfterDays 天的会话（全局，不分用户）。
+// archiveAfterDays <= 0 关闭。单条 UPDATE，失败仅记日志不打断调度。
+func (cr *CronRunner) archiveStale(ctx context.Context) {
+	if cr.archiveAfterDays <= 0 {
+		return
+	}
+	if cr.convRepo == nil {
+		panic("cron: convRepo is nil (wiring bug)")
+	}
+	cutoff := time.Now().AddDate(0, 0, -cr.archiveAfterDays)
+	n, err := cr.convRepo.ArchiveStale(ctx, cutoff)
+	if err != nil {
+		log.Printf("[cron] archiveStale error: %v", err)
+		return
+	}
+	if n > 0 {
+		log.Printf("[cron] archiveStale: archived=%d (after_days=%d)", n, cr.archiveAfterDays)
+	}
 }
 
 // processSessionEndTasks 扫延迟任务表中到期的 session_end 任务并执行。

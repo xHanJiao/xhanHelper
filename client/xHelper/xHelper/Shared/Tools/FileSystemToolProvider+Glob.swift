@@ -22,7 +22,7 @@ extension FileSystemToolProvider {
         }
 
         // symlink 复检：真实路径须在授权目录内
-        if !DirectoryAuthorizationManager.shared.isAuthorized(resolvedPath) {
+        if !DirectoryAuthorizationManager.shared.isReadAuthorized(resolvedPath) {
             return LocalToolResult(serverResult: nil, serverError: "路径不在已授权目录内（或 symlink 指向授权目录外）: \(resolvedPath)", clientAction: nil)
         }
 
@@ -43,6 +43,10 @@ extension FileSystemToolProvider {
             result += "\n(\(collect.omittedSensitive) 个敏感文件条目已省略。如需访问请在客户端设置中添加豁免。)"
         }
         let capped = cappedOutput(result, budget: budget, continueHint: "考虑缩小 glob 范围")
+        if capped.truncated,
+           let overflow = FileSystemToolProvider.overflowResult(fullText: result, preview: capped.text, budget: budget) {
+            return overflow
+        }
         return LocalToolResult(serverResult: OutputSanitizer.sanitize(capped.text).data(using: .utf8), serverError: nil, clientAction: nil)
     }
 

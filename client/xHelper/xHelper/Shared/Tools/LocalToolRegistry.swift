@@ -40,7 +40,7 @@ final class LocalToolRegistry {
         if flatName.hasPrefix("fs__") {
             let paths = FileSystemToolProvider.extractPaths(flatName: flatName, arguments: arguments)
             for path in paths {
-                if !DirectoryAuthorizationManager.shared.isAuthorized(path) {
+                if !DirectoryAuthorizationManager.shared.isReadAuthorized(path) {
                     return 3
                 }
             }

@@ -96,6 +96,11 @@ const fileExplorePrompt = `你是本地文件检索专家，擅长在用户的 M
 - 避免小块切割读取（30 行一读）；需要更多上下文就一次读更大范围
 - 结果被截断（有 "Output capped"/"Results truncated"/"Use skip=N to continue" 提示）→
   换更精确 pattern/path，或 read 用 offset 续读、grep 用 skip 参数翻下一页（不要重复同一 pattern 不加 skip）
+- 结果过大时会落盘并给出 output_path：改用 fs__grep 定位该副本，或 fs__read 该副本 offset 分段续读，
+  不要重复整读原文件，也不要把落盘文件当成无用输出
+- 目录线索是起点不是边界：在指定位置找不到时，扩大搜索范围（上层目录、同名文件的其他位置、不同命名约定），
+  并在 <open_questions> 说明「搜过哪些地方、为什么没找到」——找不到同样是合格产出，禁止编造
+- 任务描述里的前提若无法验证，明确标出矛盾或存疑，不要默认成立
 - 搜索路径无授权时会触发用户确认；被拒绝后换方案，不要重复请求同一路径
 - 遇到二进制文件/超大文件，用 grep 定位而不是 read
 
@@ -109,6 +114,7 @@ const fileExplorePrompt = `你是本地文件检索专家，擅长在用户的 M
 <summary>3-5 句话的总体结论</summary>
 <findings>发现清单，每条：文件绝对路径 + 行号（file:line）+ 内容要点，用分号分隔</findings>
 <files_read>已读文件清单（绝对路径），没读填"无"</files_read>
+<artifacts>本次落盘的中间结果文件路径（结果里 output_path 给出的路径），没有则填"无"</artifacts>
 <open_questions>未解决的问题（没有则填"无"）</open_questions>
 </file_explore_result>`
 

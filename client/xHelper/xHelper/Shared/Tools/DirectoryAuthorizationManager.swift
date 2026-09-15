@@ -38,6 +38,23 @@ final class DirectoryAuthorizationManager {
         return false
     }
 
+    /// 只读授权：常规授权目录之外，额外隐式放行 App 自有目录（如工具结果溢出目录
+    /// `tool_output/`），仅供 fs__read/fs__grep/fs__glob 读取，**不放行写**。
+    /// 按路径组件匹配（避免 `/a/proj` 误放行 `/a/project`）。
+    func isReadAuthorized(_ path: String) -> Bool {
+        if isAuthorized(path) { return true }
+        #if os(macOS)
+        let resolved = resolvePath(path).lowercased()
+        for dir in ToolOutputStore.implicitReadOnlyRoots {
+            let root = resolvePath(dir).lowercased()
+            if resolved == root || resolved.hasPrefix(root + "/") {
+                return true
+            }
+        }
+        #endif
+        return false
+    }
+
     func authorize(_ path: String, permanent: Bool) {
         let resolved = resolvePath(path)
         if permanent {

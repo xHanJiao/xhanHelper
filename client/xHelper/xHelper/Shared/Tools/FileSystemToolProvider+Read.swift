@@ -4,6 +4,40 @@ import AppKit
 
 extension FileSystemToolProvider {
 
+    /// 溢出落盘的源文件大小上限：超过则不整体复制（保持 offset 分页 + footer 提示）。
+    static let maxOverflowSourceBytes = 4 * 1024 * 1024
+
+    /// 构造溢出结果：全文落盘 → 返回预览 + output_path。落盘失败返回 nil（调用方降级为有损截断）。
+    /// 预览按字节裁到 budget 之内（预留信封 + JSON 转义余量），保证序列化后不超注入预算。
+    static func overflowResult(fullText: String, preview: String, budget: Int) -> LocalToolResult? {
+        guard let url = ToolOutputStore.shared.save(fullText) else { return nil }
+        // 预览会进 LLM：与常规读路径一致做敏感信息脱敏（落盘副本只在本机，读回时仍会脱敏）
+        let safePreview = truncateUTF8(OutputSanitizer.sanitize(preview), maxBytes: max(0, budget - 512))
+        let obj: [String: Any] = [
+            "truncated": true,
+            "output_path": url.path,
+            "total_bytes": fullText.utf8.count,
+            "preview": safePreview,
+            "note": "结果过大，完整内容已存到 output_path。请用 fs__grep(pattern, path=output_path) 定位，或 fs__read(output_path, offset/char_offset=...) 分段读；不要重复整读原文件。",
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return nil }
+        return LocalToolResult(serverResult: data, serverError: nil, clientAction: nil)
+    }
+
+    /// 按 UTF-8 字节安全截断（不劈多字节字符），超限追加截断标记。
+    static func truncateUTF8(_ s: String, maxBytes: Int) -> String {
+        if s.utf8.count <= maxBytes { return s }
+        var bytes = 0
+        var out = ""
+        for ch in s {
+            let n = String(ch).utf8.count
+            if bytes + n > maxBytes { break }
+            bytes += n
+            out.append(ch)
+        }
+        return out + "\n…[preview 截断，完整内容见 output_path]…"
+    }
+
     // MARK: - 入口
 
     func handleRead(arguments: [String: Any], context: ExecuteContext) async throws -> LocalToolResult {
@@ -18,7 +52,7 @@ extension FileSystemToolProvider {
         }
 
         // symlink 复检：解析后真实路径可能逃逸授权目录（原始路径已在 L3 确认过，这里双保险）
-        if !DirectoryAuthorizationManager.shared.isAuthorized(resolvedPath) {
+        if !DirectoryAuthorizationManager.shared.isReadAuthorized(resolvedPath) {
             return LocalToolResult(serverResult: nil, serverError: "路径不在已授权目录内（或 symlink 指向授权目录外）: \(resolvedPath)", clientAction: nil)
         }
 
@@ -145,11 +179,66 @@ extension FileSystemToolProvider {
             return readMediaFile(path, ext: ext, fileSize: fileSize)
         }
 
+        // 字符窗口模式（长行/无换行文件；与行分页互斥）
+        if let charOffset = arguments["char_offset"] as? Int {
+            return readCharacterWindow(path, charOffset: charOffset,
+                                       charLimit: (arguments["char_limit"] as? Int) ?? 4000,
+                                       fileSize: fileSize, budgetBytes: budgetBytes)
+        }
+
         let offset = (arguments["offset"] as? Int) ?? 1
         let limit = (arguments["limit"] as? Int) ?? defaultReadLimit
         let isHTML = ext == "html" || ext == "htm"
 
         return readTextFile(path, offset: offset, limit: limit, fileSize: fileSize, isHTML: isHTML, budgetBytes: budgetBytes)
+    }
+
+    /// 字符窗口读取（char_offset/char_limit）：不解码行，直接按字符切片，供长行/无换行文件使用。
+    /// 超预算时溢掉落盘（output_path）；> maxOverflowSourceBytes 的文件拒绝（请用 grep）。
+    private func readCharacterWindow(_ path: String, charOffset: Int, charLimit: Int, fileSize: UInt64, budgetBytes: Int?) -> LocalToolResult {
+        guard charOffset >= 0 else {
+            return LocalToolResult(serverResult: nil, serverError: "char_offset 必须 >= 0", clientAction: nil)
+        }
+        guard charLimit >= 1 else {
+            return LocalToolResult(serverResult: nil, serverError: "char_limit 必须 >= 1", clientAction: nil)
+        }
+        guard fileSize <= UInt64(Self.maxOverflowSourceBytes) else {
+            return LocalToolResult(
+                serverResult: nil,
+                serverError: "文件过大（\(fileSize / 1024 / 1024)MB > \(Self.maxOverflowSourceBytes / 1024 / 1024)MB），char_offset 模式不可用；请用 fs__grep 定位",
+                clientAction: nil)
+        }
+        guard let text = FileSystemToolProvider.readFullText(path) else {
+            return LocalToolResult(serverResult: nil, serverError: "无法读取文件: \(path)", clientAction: nil)
+        }
+
+        let total = text.count
+        guard charOffset <= total else {
+            return LocalToolResult(serverResult: nil, serverError: "char_offset \(charOffset) 越界（共 \(total) 字符）", clientAction: nil)
+        }
+        let start = text.index(text.startIndex, offsetBy: charOffset)
+        let end = text.index(start, offsetBy: min(charLimit, total - charOffset))
+        let window = String(text[start..<end])
+
+        let budget = budgetCap(budgetBytes)
+        if window.utf8.count > budget {
+            let preview = cappedOutput(window, budget: budget, continueHint: "Use char_offset=\(charOffset + window.count) to continue.").text
+            if let overflow = FileSystemToolProvider.overflowResult(
+                fullText: text,
+                preview: preview,
+                budget: budget) {
+                return overflow
+            }
+        }
+
+        let next = charOffset + window.count
+        var output = window
+        if next < total {
+            output += "\n\n(Showing chars \(charOffset)-\(next - 1) of \(total). Use char_offset=\(next) to continue.)"
+        } else {
+            output += "\n\n(End of file - total \(total) chars, size: \(fileSize) bytes)"
+        }
+        return LocalToolResult(serverResult: OutputSanitizer.sanitize(output).data(using: .utf8), serverError: nil, clientAction: nil)
     }
 
     // MARK: - 文本（UTF-8 流式 / 非 UTF-8 全量解码）
@@ -186,7 +275,7 @@ extension FileSystemToolProvider {
             guard let decoded = FileSystemToolProvider.decodeNonUTF8(data) else {
                 return LocalToolResult(serverResult: nil, serverError: "无法识别文件编码（非 UTF-8 且非 GB18030/UTF-16）: \(path)", clientAction: nil)
             }
-            return windowText(decoded.text, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: decoded.label, fileSize: fileSize)
+            return windowText(decoded.text, path: path, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: decoded.label, fileSize: fileSize)
         case .utf16LE, .utf16BE:
             if fileSize > UInt64(maxDecodeBytes) {
                 return LocalToolResult(serverResult: nil, serverError: "文件为 UTF-16 编码且大于 \(maxDecodeBytes / 1024 / 1024)MB，无法解码。请转换为 UTF-8 后再读。", clientAction: nil)
@@ -198,7 +287,7 @@ extension FileSystemToolProvider {
             guard let text = String(data: data, encoding: enc) else {
                 return LocalToolResult(serverResult: nil, serverError: "UTF-16 解码失败: \(path)", clientAction: nil)
             }
-            return windowText(text, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: "UTF-16", fileSize: fileSize)
+            return windowText(text, path: path, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: "UTF-16", fileSize: fileSize)
         }
     }
 
@@ -269,7 +358,7 @@ extension FileSystemToolProvider {
     }
 
     /// 全量解码后的文本按行窗口输出。
-    private func windowText(_ text: String, offset: Int, limit: Int, isHTML: Bool, budget: Int, encodingLabel: String, fileSize: UInt64) -> LocalToolResult {
+    private func windowText(_ text: String, path: String, offset: Int, limit: Int, isHTML: Bool, budget: Int, encodingLabel: String, fileSize: UInt64) -> LocalToolResult {
         var lines: [String] = []
         var inBlock = false
         var byteCount = 0
@@ -313,7 +402,7 @@ extension FileSystemToolProvider {
             lines.append(line)
         }
 
-        return renderWindow(lines: lines, offset: offset, lineCount: lineCount, cut: cut, more: more, budget: budget, encodingLabel: encodingLabel, fileSize: fileSize)
+        return renderWindow(lines: lines, path: path, offset: offset, lineCount: lineCount, cut: cut, more: more, budget: budget, encodingLabel: encodingLabel, fileSize: fileSize)
     }
 
     /// UTF-8 流式读取（兼容大文件）。
@@ -442,10 +531,10 @@ extension FileSystemToolProvider {
             return LocalToolResult(serverResult: nil, serverError: "Offset \(offset) is out of range for this file (\(lineCount) lines)", clientAction: nil)
         }
 
-        return renderWindow(lines: lines, offset: offset, lineCount: lineCount, cut: cut, more: more, budget: budget, encodingLabel: "UTF-8", fileSize: fileSize)
+        return renderWindow(lines: lines, path: path, offset: offset, lineCount: lineCount, cut: cut, more: more, budget: budget, encodingLabel: "UTF-8", fileSize: fileSize)
     }
 
-    private func renderWindow(lines: [String], offset: Int, lineCount: Int, cut: Bool, more: Bool, budget: Int, encodingLabel: String, fileSize: UInt64) -> LocalToolResult {
+    private func renderWindow(lines: [String], path: String, offset: Int, lineCount: Int, cut: Bool, more: Bool, budget: Int, encodingLabel: String, fileSize: UInt64) -> LocalToolResult {
         var output = ""
         for (i, line) in lines.enumerated() {
             output += "\(offset + i): \(line)\n"
@@ -463,6 +552,13 @@ extension FileSystemToolProvider {
             output += "(End of file - total \(lineCount) lines, size: \(fileSize) bytes)"
         }
         output += " (encoding: \(encodingLabel))"
+
+        // 结果被截断：把全文溢掉落盘，返回 output_path 供后续 grep/read（内容不再丢失）。
+        if (cut || more), fileSize <= UInt64(Self.maxOverflowSourceBytes),
+           let full = FileSystemToolProvider.readFullText(path),
+           let overflow = FileSystemToolProvider.overflowResult(fullText: full, preview: output, budget: budget) {
+            return overflow
+        }
 
         return LocalToolResult(serverResult: OutputSanitizer.sanitize(output).data(using: .utf8), serverError: nil, clientAction: nil)
     }

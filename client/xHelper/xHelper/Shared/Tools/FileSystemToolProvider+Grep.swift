@@ -3,6 +3,9 @@ import Foundation
 
 extension FileSystemToolProvider {
 
+    /// grep 溢出时的全量格式化预算（收集本身受 maxResults=100 限制，此处仅防失控）。
+    static let grepOverflowBudget = 4 * 1024 * 1024
+
     func handleGrep(arguments: [String: Any], context: ExecuteContext) async throws -> LocalToolResult {
         guard let pattern = arguments["pattern"] as? String, !pattern.isEmpty else {
             return LocalToolResult(serverResult: nil, serverError: "缺少 pattern 参数", clientAction: nil)
@@ -21,7 +24,7 @@ extension FileSystemToolProvider {
         }
 
         // symlink 复检：真实路径须在授权目录内
-        if !DirectoryAuthorizationManager.shared.isAuthorized(resolvedPath) {
+        if !DirectoryAuthorizationManager.shared.isReadAuthorized(resolvedPath) {
             return LocalToolResult(serverResult: nil, serverError: "路径不在已授权目录内（或 symlink 指向授权目录外）: \(resolvedPath)", clientAction: nil)
         }
 
@@ -44,6 +47,18 @@ extension FileSystemToolProvider {
             stop: collector.stop,
             pageSkip: skip,
             maxBytes: outputBudget)
+        if formatted.truncated {
+            let full = GrepParser.formatGrepOutput(
+                matches: collector.matches,
+                omittedSensitive: collector.omittedSensitive,
+                stop: collector.stop,
+                pageSkip: skip,
+                maxBytes: Self.grepOverflowBudget).text
+            if let overflow = FileSystemToolProvider.overflowResult(
+                fullText: full, preview: OutputSanitizer.sanitize(formatted.text), budget: outputBudget) {
+                return overflow
+            }
+        }
         let sanitized = OutputSanitizer.sanitize(formatted.text)
         return LocalToolResult(serverResult: sanitized.data(using: .utf8), serverError: nil, clientAction: nil)
     }
@@ -92,6 +107,18 @@ extension FileSystemToolProvider {
             stop: collector.stop,
             pageSkip: skip,
             maxBytes: outputBudget)
+        if formatted.truncated {
+            let full = GrepParser.formatGrepOutput(
+                matches: collector.matches,
+                omittedSensitive: collector.omittedSensitive,
+                stop: collector.stop,
+                pageSkip: skip,
+                maxBytes: Self.grepOverflowBudget).text
+            if let overflow = FileSystemToolProvider.overflowResult(
+                fullText: full, preview: OutputSanitizer.sanitize(formatted.text), budget: outputBudget) {
+                return overflow
+            }
+        }
         let sanitized = OutputSanitizer.sanitize(formatted.text)
         return LocalToolResult(serverResult: sanitized.data(using: .utf8), serverError: nil, clientAction: nil)
     }

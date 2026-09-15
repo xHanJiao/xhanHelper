@@ -449,6 +449,7 @@ struct xhanHelperMacApp: App {
                 }
                 LocalToolRegistry.shared.register(ChartTool())
                 LocalToolRegistry.shared.register(FileSystemToolProvider())
+                ToolOutputStore.shared.startHousekeeping()
             }
             .onReceive(NotificationCenter.default.publisher(for: .holdToQuitChanged)) { notification in
                 if let active = notification.userInfo?["isActive"] as? Bool {
@@ -669,9 +670,10 @@ struct MacSettingsView: View {
                 Button("取消", role: .cancel) {}
                 Button("清除", role: .destructive) {
                     Task { await LocalToolResultStore.shared.clearAll() }
+                    ToolOutputStore.shared.clearAll()
                 }
             } message: {
-                Text("将清除所有本地缓存数据（图表等），下次打开会话时需重新生成。")
+                Text("将清除所有本地缓存数据（图表等）及子任务中间结果文件，下次打开会话时需重新生成。")
             }
 
             Section {

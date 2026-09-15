@@ -41,6 +41,20 @@ final class SubagentResultParserTests: XCTestCase {
         XCTAssertFalse(md.contains("未解决问题"))
     }
 
+    func testParseFileExploreArtifacts() {
+        let xml = """
+        <file_explore_result>
+        <summary>中间结果已落盘。</summary>
+        <findings>/a/x.go:12 foo</findings>
+        <artifacts>/Users/me/Library/Application Support/xhanHelper/tool_output/tool_abc123</artifacts>
+        <open_questions>无</open_questions>
+        </file_explore_result>
+        """
+        let md = SubagentResultParser.parse(xml)?.markdown ?? ""
+        XCTAssertTrue(md.contains("### 中间结果"))
+        XCTAssertTrue(md.contains("tool_abc123"))
+    }
+
     func testParseUserContextResult() {
         let xml = """
         <user_context_result>

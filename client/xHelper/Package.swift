@@ -11,7 +11,7 @@ let package = Package(
         .target(
             name: "FsCore",
             path: "xHelper/Shared/Tools",
-            sources: ["GrepParser.swift", "SensitiveFileBlocker.swift", "PDFTextCore.swift", "SubagentResultParser.swift"]
+            sources: ["GrepParser.swift", "SensitiveFileBlocker.swift", "PDFTextCore.swift", "SubagentResultParser.swift", "ToolOutputStore.swift"]
         ),
         .testTarget(
             name: "FsCoreTests",

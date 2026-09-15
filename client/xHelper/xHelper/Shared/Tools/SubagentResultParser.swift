@@ -26,6 +26,7 @@ enum SubagentResultParser {
         ("findings", "发现", true),
         ("sources", "来源", true),
         ("files_read", "已读文件", true),
+        ("artifacts", "中间结果", true),
         ("failed_attempts", "失败尝试", true),
         ("open_questions", "未解决问题", true),
     ]

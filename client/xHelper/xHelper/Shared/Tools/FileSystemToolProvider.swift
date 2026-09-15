@@ -293,6 +293,9 @@ extension FileSystemToolProvider: LocalToolProvider {
                 - 文件内容返回格式：每行前加行号，如 "1: package main\\n2:\\n3: import (\\n"
                 - 目录返回格式：每行一条条目（无行号），目录名末尾带 /
                 - 单行超过 2000 字符会被截断。
+                - 长行文件（如压缩 JSON、单行 CSV）改用 char_offset/char_limit 按字符窗口读取。
+                - 结果超过注入预算时会自动落盘并给出 output_path（truncated=true）：改用 fs__grep 定位该副本，
+                  或 fs__read(output_path, offset/char_offset) 续读，不要重复整读原文件。
                 - 可以同时读取多个文件（并行调用）。
                 - 避免小块切割读取（30 行一读）；需要更多上下文时就一次读更大的范围。
                 - HTML 文件（.html/.htm）会剥离 <script>/<style> 内容（替换为占位标记），行号保持不变。
@@ -319,6 +322,14 @@ extension FileSystemToolProvider: LocalToolProvider {
                         "limit": [
                             "type": "integer",
                             "description": "最大行数，默认 2000",
+                        ],
+                        "char_offset": [
+                            "type": "integer",
+                            "description": "字符偏移（0-indexed，长行/无换行文件按字符定位；提供后忽略 offset/limit，按字符窗口返回）",
+                        ],
+                        "char_limit": [
+                            "type": "integer",
+                            "description": "char_offset 模式的字符数上限，默认 4000",
                         ],
                         "page_offset": [
                             "type": "integer",

@@ -21,6 +21,8 @@ struct SidebarView: View {
     @State private var hoveredConversationID: String?
     @State private var renameTarget: Conversation?
     @State private var renameText = ""
+    /// 首次加载完成后再启用重排动画，避免初次填充时列表淡入。
+    @State private var animateReorders = false
 
     private static let topPadding: CGFloat = 20
 
@@ -134,11 +136,16 @@ struct SidebarView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 8)
+                .animation(
+                    animateReorders ? .easeInOut(duration: 0.28) : nil,
+                    value: conversationListVM.conversations.map(\.id)
+                )
             }
             .task {
                 if !conversationListVM.hasLoadedOnce {
                     await conversationListVM.load()
                 }
+                animateReorders = true
             }
             // 快捷键/外部跳转切到某个会话时，把它滚动到可视区（侧栏点击本身已可见，滚动无副作用）
             .onChange(of: chatTabManager.currentConversationId) { _, newID in

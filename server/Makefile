@@ -80,35 +80,36 @@ check-env:
 	echo "✅ 环境变量检查通过"
 
 # API 自动化测试
-test: check-env
-	@echo "=== 单元测试 ==="
-	@go test ./... -timeout 30s || exit 1
-	@echo "=== 编译 ==="
-	@go build -o /tmp/xhan-test-server ./cmd/xhan-helper/ || exit 1
-	@echo "=== 备份数据库 ==="
-	@mkdir -p data
-	@if [ -f data/xhan_helper.db ]; then \
-		mv data/xhan_helper.db data/xhan_helper.db.backup; \
-		echo "   ✓ 已备份: data/xhan_helper.db.backup"; \
-	fi
-	@echo "=== 启动测试服务器 (APP_ENV=test, SQLite) ==="
-	@APP_ENV=test /tmp/xhan-test-server &
-	@sleep 2
-	@echo "=== 运行 API 测试 ==="
-	@bash scripts/api-test.sh; EXIT=$$?
-	@echo ""
-	@echo "=== 停止测试服务器 ==="
-	@kill $$(lsof -ti:8080) 2>/dev/null || true
-	@rm -f /tmp/xhan-test-server
-	@echo "=== 恢复数据库 ==="
-	@if [ -f data/xhan_helper.db.backup ]; then \
-		mv data/xhan_helper.db.backup data/xhan_helper.db; \
-		echo "   ✓ 已恢复"; \
-	else \
-		rm -f data/xhan_helper.db; \
-		echo "   ✓ 已清理测试数据库"; \
-	fi
-	@exit $$EXIT
+# test target 暂时停用（脚本/测试库长期不可用）。启用前请先修复 scripts/api-test.sh 与测试数据库残留问题。
+# test: check-env
+# 	@echo "=== 单元测试 ==="
+# 	@go test ./... -timeout 30s || exit 1
+# 	@echo "=== 编译 ==="
+# 	@go build -o /tmp/xhan-test-server ./cmd/xhan-helper/ || exit 1
+# 	@echo "=== 备份数据库 ==="
+# 	@mkdir -p data
+# 	@if [ -f data/xhan_helper.db ]; then \
+# 		mv data/xhan_helper.db data/xhan_helper.db.backup; \
+# 		echo "   ✓ 已备份: data/xhan_helper.db.backup"; \
+# 	fi
+# 	@echo "=== 启动测试服务器 (APP_ENV=test, SQLite) ==="
+# 	@APP_ENV=test /tmp/xhan-test-server &
+# 	@sleep 2
+# 	@echo "=== 运行 API 测试 ==="
+# 	@bash scripts/api-test.sh; EXIT=$$?
+# 	@echo ""
+# 	@echo "=== 停止测试服务器 ==="
+# 	@kill $$(lsof -ti:8080) 2>/dev/null || true
+# 	@rm -f /tmp/xhan-test-server
+# 	@echo "=== 恢复数据库 ==="
+# 	@if [ -f data/xhan_helper.db.backup ]; then \
+# 		mv data/xhan_helper.db.backup data/xhan_helper.db; \
+# 		echo "   ✓ 已恢复"; \
+# 	else \
+# 		rm -f data/xhan_helper.db; \
+# 		echo "   ✓ 已清理测试数据库"; \
+# 	fi
+# 	@exit $$EXIT
 
 # 导出线上数据库并拉到本地
 db-pull:

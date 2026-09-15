@@ -10,7 +10,7 @@ struct ModePill: View {
         IconButton(
             visibility: .always,
             context: context,
-            symbol: isPlanMode ? "eye.slash" : "bubble.left",
+            symbol: "checklist",
             tint: isPlanMode ? .orange : Color("appAccent"),
             tooltip: isPlanMode
                 ? "计划模式 · 只读，点击切换聊天"

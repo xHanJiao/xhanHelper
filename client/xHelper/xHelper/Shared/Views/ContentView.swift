@@ -440,8 +440,7 @@ struct ContentView: View {
                                     selectedTab: sidebarTabBinding,
                                     sidebarWidth: $sidebarWidth,
                                     chatTabManager: chatTabManager,
-                                    conversationListVM: conversationListVM,
-                                    defaultConversationID: deviceManager.defaultConversation?.id
+                                    conversationListVM: conversationListVM
                                 )
                                 .frame(minWidth: Layout.sidebarMinWidth)
                                 .padding(.horizontal, Layout.sidebarHPadding)
@@ -670,7 +669,6 @@ struct ContentView: View {
                     DocumentSelectionCoordinator.shared.rightSidebar = rightSidebar
                     DocumentSelectionCoordinator.shared.configure(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
                     DocumentSelectionCoordinator.shared.ensureRegisteredGroup()
-                    conversationListVM.defaultConversationID = deviceManager.defaultConversation?.id
                     registerAppShortcutBridge()
                 }
                 .onChange(of: sidebarWidth) { _, new in
@@ -715,21 +713,21 @@ struct ContentView: View {
                 Task { await conversationListVM.reload() }
             }
 #endif
+#if os(macOS)
+            // 启动开新对话（空白 tab，发首条消息才落库），不再自动打开默认会话
+            .task {
+                chatTabManager.newChat()
+            }
+#else
             .task(id: deviceManager.defaultConversation?.id) {
                 guard let conv = deviceManager.defaultConversation else {
-                    #if os(macOS)
-                    #else
                     chatViewModel.isInitialLoading = false
-                    #endif
                     return
                 }
                 LogBuffer.shared.debug("loading conversation \(conv.id)")
-                #if os(macOS)
-                await chatTabManager.openConversation(id: conv.id, title: conv.title, mode: conv.mode)
-                #else
                 await chatViewModel.loadConversation(id: conv.id, title: conv.title, mode: conv.mode)
-                #endif
             }
+#endif
             .onReceive(NotificationCenter.default.publisher(for: .reminderTapped)) { notification in
                 guard let reminderId = notification.userInfo?["reminder_id"] as? String, !reminderId.isEmpty else { return }
                 LogBuffer.shared.info("[Reminder] tap: processing reminder_id=\(reminderId)")

@@ -14,8 +14,6 @@ class ConversationListViewModel: ObservableObject {
     private var offset = 0
     private let pageSize = 20
     private var cancellables: Set<AnyCancellable> = []
-    /// 默认会话不可删除，由 ContentView 注入
-    var defaultConversationID: String?
 
     init(apiClient: APIClient) {
         self.apiClient = apiClient
@@ -130,6 +128,7 @@ class ConversationListViewModel: ObservableObject {
                     agentName: old.agentName,
                     mode: old.mode,
                     ephemeral: old.ephemeral,
+                    pinned: old.pinned,
                     createdAt: old.createdAt,
                     updatedAt: old.updatedAt
                 )
@@ -139,11 +138,17 @@ class ConversationListViewModel: ObservableObject {
         }
     }
 
-    func delete(id: String) async {
-        guard id != defaultConversationID else {
-            LogBuffer.shared.warning("ConversationListViewModel.delete: default conversation is protected, id=\(id)")
-            return
+    /// 置顶/取消置顶。服务端按 pinned_at 排序，成功后整页重载以对齐顺序。
+    func setPinned(id: String, pinned: Bool) async {
+        do {
+            try await apiClient.setConversationPinned(id: id, pinned: pinned)
+            await reload()
+        } catch {
+            LogBuffer.shared.error("ConversationListViewModel.setPinned: \(error)")
         }
+    }
+
+    func delete(id: String) async {
         do {
             try await apiClient.deleteConversation(id: id)
             conversations.removeAll { $0.id == id }

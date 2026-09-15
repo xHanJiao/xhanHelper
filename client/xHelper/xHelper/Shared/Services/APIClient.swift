@@ -33,6 +33,11 @@ class APIClient {
         try await patch("/api/conversations/\(id)", body: ["title": title])
     }
 
+    /// 置顶/取消置顶会话（复用 PATCH /api/conversations/:id 的 pinned 字段）。
+    func setConversationPinned(id: String, pinned: Bool) async throws {
+        try await patch("/api/conversations/\(id)", body: ["pinned": pinned])
+    }
+
     /// 创建新会话（空白 tab 点击智能体绑定时用），agentID 可选绑定。
     /// ephemeral=true 创建无痕会话（窗口结束后硬销毁）。
     func createConversation(agentID: String? = nil, ephemeral: Bool = false) async throws -> Conversation {
@@ -315,7 +320,7 @@ class APIClient {
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        _ = try await doRequest(req) as [String: String]
+        try await doRequestStatusOnly(req)
     }
 
     private func post<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {

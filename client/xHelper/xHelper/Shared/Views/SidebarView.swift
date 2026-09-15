@@ -17,8 +17,6 @@ struct SidebarView: View {
     @Binding var sidebarWidth: CGFloat
     @ObservedObject var chatTabManager: ChatTabManager
     @ObservedObject var conversationListVM: ConversationListViewModel
-    /// 默认会话不可删除，由 ContentView 注入（deviceManager.defaultConversation?.id）
-    let defaultConversationID: String?
 
     @State private var hoveredConversationID: String?
     @State private var renameTarget: Conversation?
@@ -155,6 +153,7 @@ struct SidebarView: View {
     private func conversationRow(_ conv: Conversation) -> some View {
         let isCurrent = chatTabManager.currentConversationId == conv.id
         let isHovered = hoveredConversationID == conv.id
+        let isPinned = conv.pinned == true
         return HStack(spacing: 2) {
             Button {
                 selectedTab = .chat
@@ -197,21 +196,34 @@ struct SidebarView: View {
                 .buttonStyle(.plain)
                 .help("重命名")
 
-                if conv.id != defaultConversationID {
-                    Button {
-                        Task {
-                            await conversationListVM.delete(id: conv.id)
-                            chatTabManager.close(conversationId: conv.id)
-                        }
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .frame(width: 20, height: 20)
+                Button {
+                    Task {
+                        await conversationListVM.delete(id: conv.id)
+                        chatTabManager.close(conversationId: conv.id)
                     }
-                    .buttonStyle(.plain)
-                    .help("删除")
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(width: 20, height: 20)
                 }
+                .buttonStyle(.plain)
+                .help("删除")
+            }
+
+            // 置顶按钮固定在最右：hover 时重命名/删除出现在其左侧，不再把它挤到左边。
+            // 已置顶常显（强调色），未置顶仅 hover 时显示。
+            if isHovered || isPinned {
+                Button {
+                    Task { await conversationListVM.setPinned(id: conv.id, pinned: !isPinned) }
+                } label: {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                        .font(.caption)
+                        .foregroundColor(isPinned ? Color("appAccent") : .secondary)
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .help(isPinned ? "取消置顶" : "置顶")
             }
         }
         .padding(.trailing, 6)

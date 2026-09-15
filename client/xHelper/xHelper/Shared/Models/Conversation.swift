@@ -13,6 +13,8 @@ struct Conversation: Identifiable, Codable {
     /// 无痕会话标记；普通会话服务端不返回该字段，故可选。
     /// 注意用 var：let 带默认值不会被 synthesized Decodable 解码，会恒为 nil
     var ephemeral: Bool? = nil
+    /// 是否置顶（服务端 pinned_at 非空）。列表已按置顶优先返回。
+    var pinned: Bool? = nil
     let createdAt: String
     let updatedAt: String
 
@@ -26,6 +28,7 @@ struct Conversation: Identifiable, Codable {
         case lastExtractedAt = "last_extracted_at"
         case mode
         case ephemeral
+        case pinned
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }

@@ -24,14 +24,14 @@ struct ExecuteContext: Sendable {
 
 // MARK: - ClientAction
 
-struct ClientAction: Sendable {
+nonisolated struct ClientAction: Sendable {
     let type: String
     let payload: Data
 }
 
 // MARK: - LocalToolResult
 
-struct LocalToolResult: Sendable {
+nonisolated struct LocalToolResult: Sendable {
     let serverResult: Data?
     let serverError: String?
     let clientAction: ClientAction?

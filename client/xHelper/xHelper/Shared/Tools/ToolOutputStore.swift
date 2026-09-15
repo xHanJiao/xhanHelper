@@ -11,7 +11,10 @@ import os
 ///
 /// 文件名 = `tool_<sha256>`（内容寻址），同内容天然去重，无需扫描比对。
 /// 清理：7 天 TTL + 200MB 容量 LRU + 手动清空。
-final class ToolOutputStore: @unchecked Sendable {
+///
+/// `nonisolated`：全部状态由 NSLock 保护、无 MainActor 依赖；允许从后台任务
+/// （fs 溢出收尾的 Task.detached）直接读写，避免整文件哈希/写盘堵主线程。
+nonisolated final class ToolOutputStore: @unchecked Sendable {
     static let shared = ToolOutputStore()
 
     /// 溢出文件名前缀（清理筛选用）。

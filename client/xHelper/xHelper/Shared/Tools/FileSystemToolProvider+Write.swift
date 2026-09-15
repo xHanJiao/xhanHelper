@@ -183,7 +183,7 @@ extension FileSystemToolProvider {
     }
 
     /// 全量读取文件文本（按检测编码解码，剥 BOM）。失败返回 nil。
-    static func readFullText(_ path: String) -> String? {
+    nonisolated static func readFullText(_ path: String) -> String? {
         guard let fh = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? fh.close() }
         let probe = (try? fh.read(upToCount: 64 * 1024)) ?? Data()

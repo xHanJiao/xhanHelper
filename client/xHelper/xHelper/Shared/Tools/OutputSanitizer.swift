@@ -1,6 +1,7 @@
 import Foundation
 
-enum OutputSanitizer {
+/// `nonisolated`：纯函数 + 不可变正则缓存，可从后台任务（溢出落盘）调用。
+nonisolated enum OutputSanitizer {
     private static let patterns: [(NSRegularExpression, String)] = {
         let defs: [(String, String)] = [
             (#"sk-[a-zA-Z0-9]{20,}"#, "sk-***REDACTED***"),

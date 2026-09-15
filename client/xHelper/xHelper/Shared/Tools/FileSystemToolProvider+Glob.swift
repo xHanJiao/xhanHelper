@@ -27,14 +27,25 @@ extension FileSystemToolProvider {
         }
 
         let budget = budgetCap(context.budgetBytes)
-        let collect = await runGlob(pattern: pattern, cwd: resolvedPath)
+        let timeout = effectiveProcessTimeout(context)
+        let started = Date()
+        let collect = await runGlob(pattern: pattern, cwd: resolvedPath, timeout: timeout)
+        let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+
         if collect.files.isEmpty && collect.omittedSensitive == 0 {
+            if collect.timedOut {
+                let note = "glob 超时（\(Int(timeout))s），未找到匹配。请缩小 path 或简化 pattern。"
+                fsToolLog("fs__glob TIMEOUT path=\(resolvedPath) pattern=\(pattern) elapsed=\(elapsedMs)ms")
+                return LocalToolResult(serverResult: nil, serverError: note, clientAction: nil)
+            }
             let encoded = try? JSONSerialization.data(withJSONObject: ["files": [], "count": 0, "pattern": pattern])
             return LocalToolResult(serverResult: OutputSanitizer.sanitize(String(data: encoded ?? Data(), encoding: .utf8) ?? "").data(using: .utf8), serverError: nil, clientAction: nil)
         }
 
         var result = collect.files.joined(separator: "\n")
-        if collect.truncated {
+        if collect.timedOut {
+            result += "\n\n(glob 超时（\(Int(timeout))s），仅返回前 \(collect.files.count) 条；请缩小 path 或简化 pattern。) "
+        } else if collect.truncated {
             result += "\n\n(Results truncated: showing first \(collect.files.count). Use a more specific pattern, or narrow the path.)"
         } else if collect.budgetCapped {
             result += "\n\n(Output budget reached at \(collect.files.count) entries. Narrow the glob pattern or path.)"
@@ -42,10 +53,14 @@ extension FileSystemToolProvider {
         if collect.omittedSensitive > 0 {
             result += "\n(\(collect.omittedSensitive) 个敏感文件条目已省略。如需访问请在客户端设置中添加豁免。)"
         }
+        fsToolLog("fs__glob path=\(resolvedPath) pattern=\(pattern) elapsed=\(elapsedMs)ms files=\(collect.files.count) timedOut=\(collect.timedOut)")
+
         let capped = cappedOutput(result, budget: budget, continueHint: "考虑缩小 glob 范围")
-        if capped.truncated,
-           let overflow = FileSystemToolProvider.overflowResult(fullText: result, preview: capped.text, budget: budget) {
-            return overflow
+        if capped.truncated {
+            if let overflow = await FileSystemToolProvider.makeOverflow(
+                fullTextProvider: { result }, preview: capped.text, budget: budget) {
+                return overflow
+            }
         }
         return LocalToolResult(serverResult: OutputSanitizer.sanitize(capped.text).data(using: .utf8), serverError: nil, clientAction: nil)
     }
@@ -55,18 +70,22 @@ extension FileSystemToolProvider {
         var omittedSensitive = 0
         var truncated = false   // 收满 maxResults
         var budgetCapped = false // 预算安全网掐断（未收满）
+        var timedOut = false     // 超时中止
     }
 
-    private func runGlob(pattern: String, cwd: String) async -> GlobCollect {
+    private func runGlob(pattern: String, cwd: String, timeout: TimeInterval) async -> GlobCollect {
         if let rgPath = findRgBinary() {
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: rgPath)
             // -j1 单线程：输出顺序确定（与 grep 同要求），预算为纯安全网
-            proc.arguments = ["--no-config", "--files", "-j1", "--glob=\(pattern)", "--glob=!**/.git/**", "."]
+            proc.arguments = ["--no-config", "--files", "-j1",
+                              "--max-filesize", "10M",
+                              "--glob=\(pattern)",
+                              "--glob=!**/.git/**", "--glob=!**/node_modules/**", "."]
             proc.currentDirectoryURL = URL(fileURLWithPath: cwd)
 
             var collect = GlobCollect()
-            let capped = await runCapturedProcessLines(proc, budget: collectionSafetyBudget) { line in
+            let capture = await runCapturedProcessLines(proc, budget: collectionSafetyBudget, timeout: timeout) { line in
                 let cleaned = line
                     .trimmingCharacters(in: .whitespaces)
                     .replacingOccurrences(of: #"^\.\/+"#, with: "", options: NSString.CompareOptions.regularExpression)
@@ -84,16 +103,17 @@ extension FileSystemToolProvider {
                 collect.files.append("\(absPath)\t\(self.fileSize(absPath))")
                 return true
             }
-            if capped && !collect.truncated {
+            if capture.capped && !collect.truncated {
                 collect.budgetCapped = true
             }
+            collect.timedOut = capture.timedOut
             return collect
         }
 
-        return await runFindGlob(pattern: pattern, cwd: cwd)
+        return await runFindGlob(pattern: pattern, cwd: cwd, timeout: timeout)
     }
 
-    private func runFindGlob(pattern: String, cwd: String) async -> GlobCollect {
+    private func runFindGlob(pattern: String, cwd: String, timeout: TimeInterval) async -> GlobCollect {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/find")
         proc.arguments = [
@@ -105,7 +125,7 @@ extension FileSystemToolProvider {
         ]
 
         var collect = GlobCollect()
-        let capped = await runCapturedProcessLines(proc, budget: collectionSafetyBudget) { line in
+        let capture = await runCapturedProcessLines(proc, budget: collectionSafetyBudget, timeout: timeout) { line in
             let absPath = line.trimmingCharacters(in: .whitespaces)
             guard !absPath.isEmpty else { return true }
             if SensitiveFileBlocker.check(absPath) != nil {
@@ -119,9 +139,10 @@ extension FileSystemToolProvider {
             collect.files.append("\(absPath)\t\(self.fileSize(absPath))")
             return true
         }
-        if capped && !collect.truncated {
+        if capture.capped && !collect.truncated {
             collect.budgetCapped = true
         }
+        collect.timedOut = capture.timedOut
         return collect
     }
 

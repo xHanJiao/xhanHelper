@@ -9,7 +9,7 @@ extension FileSystemToolProvider {
 
     /// 构造溢出结果：全文落盘 → 返回预览 + output_path。落盘失败返回 nil（调用方降级为有损截断）。
     /// 预览按字节裁到 budget 之内（预留信封 + JSON 转义余量），保证序列化后不超注入预算。
-    static func overflowResult(fullText: String, preview: String, budget: Int) -> LocalToolResult? {
+    nonisolated static func overflowResult(fullText: String, preview: String, budget: Int, note: String? = nil) -> LocalToolResult? {
         guard let url = ToolOutputStore.shared.save(fullText) else { return nil }
         // 预览会进 LLM：与常规读路径一致做敏感信息脱敏（落盘副本只在本机，读回时仍会脱敏）
         let safePreview = truncateUTF8(OutputSanitizer.sanitize(preview), maxBytes: max(0, budget - 512))
@@ -18,14 +18,27 @@ extension FileSystemToolProvider {
             "output_path": url.path,
             "total_bytes": fullText.utf8.count,
             "preview": safePreview,
-            "note": "结果过大，完整内容已存到 output_path。请用 fs__grep(pattern, path=output_path) 定位，或 fs__read(output_path, offset/char_offset=...) 分段读；不要重复整读原文件。",
+            "note": note ?? "结果过大，完整内容已存到 output_path。请用 fs__grep(pattern, path=output_path) 定位，或 fs__read(output_path, offset/char_offset=...) 分段读；不要重复整读原文件。",
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return nil }
         return LocalToolResult(serverResult: data, serverError: nil, clientAction: nil)
     }
 
+    /// 在后台任务里读全文 + 落盘，避免整文件哈希/写盘堵主线程。
+    nonisolated static func makeOverflow(
+        fullTextProvider: @escaping @Sendable () -> String?,
+        preview: String,
+        budget: Int,
+        note: String? = nil
+    ) async -> LocalToolResult? {
+        await Task.detached(priority: .utility) {
+            guard let full = fullTextProvider() else { return nil }
+            return overflowResult(fullText: full, preview: preview, budget: budget, note: note)
+        }.value
+    }
+
     /// 按 UTF-8 字节安全截断（不劈多字节字符），超限追加截断标记。
-    static func truncateUTF8(_ s: String, maxBytes: Int) -> String {
+    nonisolated static func truncateUTF8(_ s: String, maxBytes: Int) -> String {
         if s.utf8.count <= maxBytes { return s }
         var bytes = 0
         var out = ""
@@ -72,7 +85,7 @@ extension FileSystemToolProvider {
             return result
         }
 
-        let result = readFile(resolvedPath, arguments: arguments, budgetBytes: context.budgetBytes)
+        let result = await readFile(resolvedPath, arguments: arguments, budgetBytes: context.budgetBytes)
         if result.serverError == nil { markRead(resolvedPath) }
         return result
     }
@@ -161,7 +174,7 @@ extension FileSystemToolProvider {
 
     // MARK: - 文件分发
 
-    private func readFile(_ path: String, arguments: [String: Any], budgetBytes: Int?) -> LocalToolResult {
+    private func readFile(_ path: String, arguments: [String: Any], budgetBytes: Int?) async -> LocalToolResult {
         let ext = (path as NSString).pathExtension.lowercased()
 
         if isBinaryExtension(ext) {
@@ -181,21 +194,21 @@ extension FileSystemToolProvider {
 
         // 字符窗口模式（长行/无换行文件；与行分页互斥）
         if let charOffset = arguments["char_offset"] as? Int {
-            return readCharacterWindow(path, charOffset: charOffset,
-                                       charLimit: (arguments["char_limit"] as? Int) ?? 4000,
-                                       fileSize: fileSize, budgetBytes: budgetBytes)
+            return await readCharacterWindow(path, charOffset: charOffset,
+                                             charLimit: (arguments["char_limit"] as? Int) ?? 4000,
+                                             fileSize: fileSize, budgetBytes: budgetBytes)
         }
 
         let offset = (arguments["offset"] as? Int) ?? 1
         let limit = (arguments["limit"] as? Int) ?? defaultReadLimit
         let isHTML = ext == "html" || ext == "htm"
 
-        return readTextFile(path, offset: offset, limit: limit, fileSize: fileSize, isHTML: isHTML, budgetBytes: budgetBytes)
+        return await readTextFile(path, offset: offset, limit: limit, fileSize: fileSize, isHTML: isHTML, budgetBytes: budgetBytes)
     }
 
     /// 字符窗口读取（char_offset/char_limit）：不解码行，直接按字符切片，供长行/无换行文件使用。
     /// 超预算时溢掉落盘（output_path）；> maxOverflowSourceBytes 的文件拒绝（请用 grep）。
-    private func readCharacterWindow(_ path: String, charOffset: Int, charLimit: Int, fileSize: UInt64, budgetBytes: Int?) -> LocalToolResult {
+    private func readCharacterWindow(_ path: String, charOffset: Int, charLimit: Int, fileSize: UInt64, budgetBytes: Int?) async -> LocalToolResult {
         guard charOffset >= 0 else {
             return LocalToolResult(serverResult: nil, serverError: "char_offset 必须 >= 0", clientAction: nil)
         }
@@ -223,8 +236,8 @@ extension FileSystemToolProvider {
         let budget = budgetCap(budgetBytes)
         if window.utf8.count > budget {
             let preview = cappedOutput(window, budget: budget, continueHint: "Use char_offset=\(charOffset + window.count) to continue.").text
-            if let overflow = FileSystemToolProvider.overflowResult(
-                fullText: text,
+            if let overflow = await FileSystemToolProvider.makeOverflow(
+                fullTextProvider: { text },
                 preview: preview,
                 budget: budget) {
                 return overflow
@@ -243,7 +256,7 @@ extension FileSystemToolProvider {
 
     // MARK: - 文本（UTF-8 流式 / 非 UTF-8 全量解码）
 
-    private func readTextFile(_ path: String, offset: Int, limit: Int, fileSize: UInt64, isHTML: Bool, budgetBytes: Int?) -> LocalToolResult {
+    private func readTextFile(_ path: String, offset: Int, limit: Int, fileSize: UInt64, isHTML: Bool, budgetBytes: Int?) async -> LocalToolResult {
         guard offset >= 1 else {
             return LocalToolResult(serverResult: nil, serverError: "offset 必须 >= 1", clientAction: nil)
         }
@@ -263,7 +276,7 @@ extension FileSystemToolProvider {
 
         switch encoding {
         case .utf8:
-            return readUTF8Text(path, fileHandle: fh, offset: offset, limit: limit, fileSize: fileSize, isHTML: isHTML, budget: budget)
+            return await readUTF8Text(path, fileHandle: fh, offset: offset, limit: limit, fileSize: fileSize, isHTML: isHTML, budget: budget)
         case .nonUTF8:
             // 非 UTF-8（GB18030 等）：全量解码，需整文件读入
             if fileSize > UInt64(maxDecodeBytes) {
@@ -275,7 +288,7 @@ extension FileSystemToolProvider {
             guard let decoded = FileSystemToolProvider.decodeNonUTF8(data) else {
                 return LocalToolResult(serverResult: nil, serverError: "无法识别文件编码（非 UTF-8 且非 GB18030/UTF-16）: \(path)", clientAction: nil)
             }
-            return windowText(decoded.text, path: path, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: decoded.label, fileSize: fileSize)
+            return await windowText(decoded.text, path: path, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: decoded.label, fileSize: fileSize)
         case .utf16LE, .utf16BE:
             if fileSize > UInt64(maxDecodeBytes) {
                 return LocalToolResult(serverResult: nil, serverError: "文件为 UTF-16 编码且大于 \(maxDecodeBytes / 1024 / 1024)MB，无法解码。请转换为 UTF-8 后再读。", clientAction: nil)
@@ -287,18 +300,18 @@ extension FileSystemToolProvider {
             guard let text = String(data: data, encoding: enc) else {
                 return LocalToolResult(serverResult: nil, serverError: "UTF-16 解码失败: \(path)", clientAction: nil)
             }
-            return windowText(text, path: path, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: "UTF-16", fileSize: fileSize)
+            return await windowText(text, path: path, offset: offset, limit: limit, isHTML: isHTML, budget: budget, encodingLabel: "UTF-16", fileSize: fileSize)
         }
     }
 
-    enum DetectedEncoding {
+    nonisolated enum DetectedEncoding {
         case utf8
         case nonUTF8
         case utf16LE
         case utf16BE
     }
 
-    static func detectEncoding(_ probe: Data) -> DetectedEncoding {
+    nonisolated static func detectEncoding(_ probe: Data) -> DetectedEncoding {
         if probe.isEmpty { return .utf8 }
 
         let bytes = [UInt8](probe.prefix(4))
@@ -340,7 +353,7 @@ extension FileSystemToolProvider {
         return .nonUTF8
     }
 
-    static func decodeNonUTF8(_ data: Data) -> (text: String, label: String)? {
+    nonisolated static func decodeNonUTF8(_ data: Data) -> (text: String, label: String)? {
         // GB18030（含 GBK 超集）
         let gb18030 = CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
         let nsEncoding = CFStringConvertEncodingToNSStringEncoding(gb18030)
@@ -358,7 +371,7 @@ extension FileSystemToolProvider {
     }
 
     /// 全量解码后的文本按行窗口输出。
-    private func windowText(_ text: String, path: String, offset: Int, limit: Int, isHTML: Bool, budget: Int, encodingLabel: String, fileSize: UInt64) -> LocalToolResult {
+    private func windowText(_ text: String, path: String, offset: Int, limit: Int, isHTML: Bool, budget: Int, encodingLabel: String, fileSize: UInt64) async -> LocalToolResult {
         var lines: [String] = []
         var inBlock = false
         var byteCount = 0
@@ -402,11 +415,11 @@ extension FileSystemToolProvider {
             lines.append(line)
         }
 
-        return renderWindow(lines: lines, path: path, offset: offset, lineCount: lineCount, cut: cut, more: more, budget: budget, encodingLabel: encodingLabel, fileSize: fileSize)
+        return await renderWindow(lines: lines, path: path, offset: offset, lineCount: lineCount, cut: cut, more: more, budget: budget, encodingLabel: encodingLabel, fileSize: fileSize)
     }
 
     /// UTF-8 流式读取（兼容大文件）。
-    private func readUTF8Text(_ path: String, fileHandle fh: FileHandle, offset: Int, limit: Int, fileSize: UInt64, isHTML: Bool, budget: Int) -> LocalToolResult {
+    private func readUTF8Text(_ path: String, fileHandle fh: FileHandle, offset: Int, limit: Int, fileSize: UInt64, isHTML: Bool, budget: Int) async -> LocalToolResult {
         var lines: [String] = []
         var lineCount = 0
         var totalBytes = 0
@@ -531,10 +544,10 @@ extension FileSystemToolProvider {
             return LocalToolResult(serverResult: nil, serverError: "Offset \(offset) is out of range for this file (\(lineCount) lines)", clientAction: nil)
         }
 
-        return renderWindow(lines: lines, path: path, offset: offset, lineCount: lineCount, cut: cut, more: more, budget: budget, encodingLabel: "UTF-8", fileSize: fileSize)
+        return await renderWindow(lines: lines, path: path, offset: offset, lineCount: lineCount, cut: cut, more: more, budget: budget, encodingLabel: "UTF-8", fileSize: fileSize)
     }
 
-    private func renderWindow(lines: [String], path: String, offset: Int, lineCount: Int, cut: Bool, more: Bool, budget: Int, encodingLabel: String, fileSize: UInt64) -> LocalToolResult {
+    private func renderWindow(lines: [String], path: String, offset: Int, lineCount: Int, cut: Bool, more: Bool, budget: Int, encodingLabel: String, fileSize: UInt64) async -> LocalToolResult {
         var output = ""
         for (i, line) in lines.enumerated() {
             output += "\(offset + i): \(line)\n"
@@ -554,10 +567,13 @@ extension FileSystemToolProvider {
         output += " (encoding: \(encodingLabel))"
 
         // 结果被截断：把全文溢掉落盘，返回 output_path 供后续 grep/read（内容不再丢失）。
-        if (cut || more), fileSize <= UInt64(Self.maxOverflowSourceBytes),
-           let full = FileSystemToolProvider.readFullText(path),
-           let overflow = FileSystemToolProvider.overflowResult(fullText: full, preview: output, budget: budget) {
-            return overflow
+        if (cut || more), fileSize <= UInt64(Self.maxOverflowSourceBytes) {
+            if let overflow = await FileSystemToolProvider.makeOverflow(
+                fullTextProvider: { FileSystemToolProvider.readFullText(path) },
+                preview: output,
+                budget: budget) {
+                return overflow
+            }
         }
 
         return LocalToolResult(serverResult: OutputSanitizer.sanitize(output).data(using: .utf8), serverError: nil, clientAction: nil)

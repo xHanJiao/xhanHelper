@@ -1,5 +1,47 @@
 #if os(macOS)
 import Foundation
+import Dispatch
+import Darwin
+
+/// 进程抓取结果（供 grep/glob 判定是否预算截断/超时）。
+nonisolated struct ProcessCaptureResult: Sendable {
+    let capped: Bool
+    let timedOut: Bool
+    let stderrTail: String
+}
+
+/// 线程安全的布尔标志（看门狗 ↔ 读取循环）。
+nonisolated private final class CaptureFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    func set() { lock.withLock { value = true } }
+    var isSet: Bool { lock.withLock { value } }
+}
+
+/// fs 工具诊断日志：nonisolated 跳主线程写入 LogBuffer（诊断页可查），镜像 MCPLog 模式。
+nonisolated func fsToolLog(_ message: String) {
+    Task { @MainActor in LogBuffer.shared.diag(message) }
+}
+
+/// 后台排空子进程 stderr 并保留末尾片段（诊断用），避免 64KB 管道缓冲写满导致子进程阻塞。
+nonisolated private final class StderrTail: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+    private let cap = 4096
+
+    func drain(_ fh: FileHandle) {
+        while true {
+            let chunk = fh.readData(ofLength: 4096)
+            if chunk.isEmpty { break }
+            lock.withLock {
+                data.append(chunk)
+                if data.count > cap { data.removeFirst(data.count - cap) }
+            }
+        }
+    }
+
+    var tail: String { lock.withLock { String(data: data, encoding: .utf8) ?? "" } }
+}
 
 final class FileSystemToolProvider: @unchecked Sendable {
     let namespace = "fs"
@@ -9,12 +51,20 @@ final class FileSystemToolProvider: @unchecked Sendable {
     let maxLineChars = 2000
     let defaultReadLimit = 2000
 
+    /// grep/glob 子进程的客户端硬超时（必须小于服务端 client_tool_timeout_secs=120）。
+    static let processTimeout: TimeInterval = 30
+
     /// 收集循环的纯安全网预算（grep/glob 的 walk 停止由"第 maxResults+1 条"决定，
     /// 预算只防失控输出撑爆内存；正常流程永不触发，保证结果确定性）。
     let collectionSafetyBudget = 8 * 1024 * 1024
 
     /// 解码全量文件（GB18030 等非 UTF-8 编码）的大小上限。
     let maxDecodeBytes = 5 * 1024 * 1024
+
+    /// 单次进程调用的有效超时：取客户端下发截止时间与本地硬上限的较小值。
+    func effectiveProcessTimeout(_ ctx: ExecuteContext) -> TimeInterval {
+        min(ctx.deadlineSecs ?? Self.processTimeout, Self.processTimeout)
+    }
 
     /// 会话级"已读"追踪：path(real) → mtime。
     /// write/edit 覆盖已有文件前必须 read 过（防盲写），mtime 变化视为外部改动未读。
@@ -71,25 +121,57 @@ final class FileSystemToolProvider: @unchecked Sendable {
     /// 流式读取进程输出：按行回调，onLine 返回 false 即 terminate（收集器收满时提前停，
     /// 不再靠预算硬掐——预算改为纯安全网）。超预算 terminate 并返回 capped=true。
     /// 行缓冲处理 chunk 边界断行；数据只累积到预算即截断，避免大输出死锁。
+    ///
+    /// 超时看门狗：到 `timeout` 秒仍运行 → terminate()，宽限 2s 后 SIGKILL 兜底。
+    /// stderr 由后台任务排空（保留末尾供诊断），避免 64KB 管道缓冲写满导致子进程阻塞。
+    nonisolated static func drainToEOF(_ fh: FileHandle) {
+        while true {
+            if fh.readData(ofLength: 8192).isEmpty { break }
+        }
+    }
+
     func runCapturedProcessLines(
         _ proc: Process,
         budget: Int,
+        timeout: TimeInterval = FileSystemToolProvider.processTimeout,
         onLine: @escaping (String) -> Bool
-    ) async -> Bool {
-        await withCheckedContinuation { continuation in
+    ) async -> ProcessCaptureResult {
+        await withCheckedContinuation { (continuation: CheckedContinuation<ProcessCaptureResult, Never>) in
             Task.detached(priority: .userInitiated) {
                 let pipe = Pipe()
+                let errPipe = Pipe()
                 proc.standardOutput = pipe
-                proc.standardError = Pipe()
+                proc.standardError = errPipe
                 let fh = pipe.fileHandleForReading
+
+                let errTail = StderrTail()
+                let errDrain = Task.detached(priority: .utility) {
+                    errTail.drain(errPipe.fileHandleForReading)
+                }
 
                 do {
                     try proc.run()
                 } catch {
                     try? fh.close()
-                    continuation.resume(returning: false)
+                    errDrain.cancel()
+                    continuation.resume(returning: ProcessCaptureResult(capped: false, timedOut: false, stderrTail: errTail.tail))
                     return
                 }
+
+                // 看门狗：到点 terminate；宽限 2s 仍在跑则 SIGKILL（防忽略 SIGTERM）
+                let timedOutFlag = CaptureFlag()
+                let watchdog = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+                watchdog.schedule(deadline: .now() + timeout)
+                watchdog.setEventHandler {
+                    if !proc.isRunning { return }
+                    timedOutFlag.set()
+                    proc.terminate()
+                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+                        if proc.isRunning { kill(proc.processIdentifier, SIGKILL) }
+                    }
+                }
+                watchdog.resume()
+                defer { watchdog.cancel() }
 
                 var data = Data()
                 var lineBuffer = ""
@@ -101,35 +183,29 @@ final class FileSystemToolProvider: @unchecked Sendable {
                     // 先处理行（收集器可能在收满时提前停）——让 match 上限优先于预算掐断，
                     // 保证翻页语义稳定（~100 条/页），预算只作安全网
                     lineBuffer += String(data: chunk, encoding: .utf8) ?? ""
+                    var stop = false
                     while let newline = lineBuffer.firstIndex(of: "\n") {
                         let line = String(lineBuffer[..<newline])
                         lineBuffer.removeSubrange(...newline)
-                        if !onLine(line) {
-                            proc.terminate()
-                            // 排空剩余避免死锁，然后退出
-                            while true {
-                                let rest = fh.readData(ofLength: 8192)
-                                if rest.isEmpty { break }
-                            }
-                            continuation.resume(returning: capped)
-                            try? fh.close()
-                            return
-                        }
+                        if !onLine(line) { stop = true; break }
+                    }
+                    if stop {
+                        proc.terminate()
+                        FileSystemToolProvider.drainToEOF(fh)
+                        break
                     }
                     if data.count > budget {
                         capped = true
                         proc.terminate()
-                        // 排空剩余避免死锁，然后退出
-                        while true {
-                            let rest = fh.readData(ofLength: 8192)
-                            if rest.isEmpty { break }
-                        }
+                        FileSystemToolProvider.drainToEOF(fh)
                         break
                     }
                 }
                 proc.waitUntilExit()
                 try? fh.close()
-                continuation.resume(returning: capped)
+                errDrain.cancel()
+                continuation.resume(returning: ProcessCaptureResult(
+                    capped: capped, timedOut: timedOutFlag.isSet, stderrTail: errTail.tail))
             }
         }
     }

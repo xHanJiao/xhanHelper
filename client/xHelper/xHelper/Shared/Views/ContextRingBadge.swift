@@ -55,7 +55,7 @@ struct ContextRingBadge: View {
             Text("会话合计   \(fmtCost(usage?.totalCost))")
             Text("窗口消耗   \(fmtCost(usage?.windowCost))")
             if let usage = usage, usage.subagentCount > 0 {
-                Text("子智能体   \(usage.subagentCount) 个 · \(fmtCost(usage.subagentCost))")
+                Text("子智能体   \(usage.subagentCount) 个 · \(fmtCost(usage.subagentCost))（本窗口 \(fmtCost(usage.subagentWindowCost))）")
             }
         }
         .font(.caption)

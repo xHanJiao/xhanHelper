@@ -198,14 +198,15 @@ func (r *LlmCostRepo) ConversationCost(ctx context.Context, convID string, windo
 	return r.costByConvIDs(ctx, []string{convID}, windowStart, prices)
 }
 
-// SumCostByConvIDs 汇总一批会话的消耗金额（元，不分窗口）。convIDs 为空返回 0。
+// SumCostByConvIDs 汇总一批会话的消耗金额（元），并额外返回 windowStart 之后的窗口消耗。
+// windowStart 为零值表示不区分窗口（窗口=总）。convIDs 为空返回 0。
 // 用于把子会话（subAgent）成本并入父会话合计。
-func (r *LlmCostRepo) SumCostByConvIDs(ctx context.Context, convIDs []string, prices []model.LlmModelPrice) (float64, error) {
+func (r *LlmCostRepo) SumCostByConvIDs(ctx context.Context, convIDs []string, windowStart time.Time, prices []model.LlmModelPrice) (total, window float64, err error) {
 	if len(convIDs) == 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
-	total, _, _, err := r.costByConvIDs(ctx, convIDs, time.Time{}, prices)
-	return total, err
+	total, window, _, err = r.costByConvIDs(ctx, convIDs, windowStart, prices)
+	return total, window, err
 }
 
 // costByConvIDs 汇总一批会话的消耗。windowStart 非零时额外返回其后的窗口消耗。

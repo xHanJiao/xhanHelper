@@ -690,6 +690,8 @@ struct ConversationUsage: Codable {
     let conversationCost: Double
     /// 子智能体消耗（元，全会话累计）
     let subagentCost: Double
+    /// 子智能体消耗（元，当前窗口内）
+    let subagentWindowCost: Double
     /// 子智能体任务数
     let subagentCount: Int
     /// 会话合计 = conversationCost + subagentCost
@@ -701,6 +703,7 @@ struct ConversationUsage: Codable {
         case windowCost = "window_cost"
         case conversationCost = "conversation_cost"
         case subagentCost = "subagent_cost"
+        case subagentWindowCost = "subagent_window_cost"
         case subagentCount = "subagent_count"
         case totalCost = "total_cost"
     }

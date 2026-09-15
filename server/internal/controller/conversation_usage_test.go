@@ -64,7 +64,9 @@ func TestGetConversationUsage(t *testing.T) {
 			CreatedAt: startAt.Add(-time.Hour), PromptCacheHitTokens: 1_000_000},
 		{Date: "2026-08-10", UserID: "u1", Category: "main_chat", Model: "flash", ConvID: "c1",
 			CreatedAt: startAt.Add(time.Hour), PromptCacheHitTokens: 2_000_000},
-		// 子会话成本 0.5 元
+		// 子会话成本：窗口前 0.5 + 窗口内 0.5，窗口内 0.5 元
+		{Date: "2026-08-10", UserID: "u1", Category: "main_chat", Model: "flash", ConvID: "sub1",
+			CreatedAt: startAt.Add(-30 * time.Minute), PromptCacheHitTokens: 500_000},
 		{Date: "2026-08-10", UserID: "u1", Category: "main_chat", Model: "flash", ConvID: "sub1",
 			CreatedAt: startAt.Add(3 * time.Minute), PromptCacheHitTokens: 500_000},
 	}
@@ -101,13 +103,14 @@ func TestGetConversationUsage(t *testing.T) {
 
 	var resp struct {
 		Data struct {
-			ContextTokens    int     `json:"context_tokens"`
-			ContextWindow    int     `json:"context_window"`
-			WindowCost       float64 `json:"window_cost"`
-			ConversationCost float64 `json:"conversation_cost"`
-			SubagentCost     float64 `json:"subagent_cost"`
-			SubagentCount    int     `json:"subagent_count"`
-			TotalCost        float64 `json:"total_cost"`
+			ContextTokens      int     `json:"context_tokens"`
+			ContextWindow      int     `json:"context_window"`
+			WindowCost         float64 `json:"window_cost"`
+			ConversationCost   float64 `json:"conversation_cost"`
+			SubagentCost       float64 `json:"subagent_cost"`
+			SubagentWindowCost float64 `json:"subagent_window_cost"`
+			SubagentCount      int     `json:"subagent_count"`
+			TotalCost          float64 `json:"total_cost"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
@@ -128,10 +131,13 @@ func TestGetConversationUsage(t *testing.T) {
 	if resp.Data.SubagentCount != 1 {
 		t.Errorf("subagent_count want 1 got %d", resp.Data.SubagentCount)
 	}
-	if resp.Data.SubagentCost < 0.49 || resp.Data.SubagentCost > 0.51 {
-		t.Errorf("subagent_cost want ~0.5 got %v", resp.Data.SubagentCost)
+	if resp.Data.SubagentCost < 0.99 || resp.Data.SubagentCost > 1.01 {
+		t.Errorf("subagent_cost want ~1.0 got %v", resp.Data.SubagentCost)
 	}
-	if resp.Data.TotalCost < 3.49 || resp.Data.TotalCost > 3.51 {
-		t.Errorf("total_cost want ~3.5 got %v", resp.Data.TotalCost)
+	if resp.Data.SubagentWindowCost < 0.49 || resp.Data.SubagentWindowCost > 0.51 {
+		t.Errorf("subagent_window_cost want ~0.5 got %v", resp.Data.SubagentWindowCost)
+	}
+	if resp.Data.TotalCost < 3.99 || resp.Data.TotalCost > 4.01 {
+		t.Errorf("total_cost want ~4.0 got %v", resp.Data.TotalCost)
 	}
 }

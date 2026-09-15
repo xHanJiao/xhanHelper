@@ -314,26 +314,27 @@ func getConversationUsage(
 			contextWindow = cfg.LLM.ContextWindowFor(latestModel)
 		}
 
-		// 子智能体（subAgent）：按「父会话 → 子会话」关系汇总（无窗口概念，全部累计）。
+		// 子智能体（subAgent）：按「父会话 → 子会话」关系汇总，同时给出当前窗口内的消耗。
 		subIDs, err := convRepo.ListSubConversationIDs(ctx, convID)
 		if err != nil {
 			log.Printf("[conv] usage ListSubConversationIDs error: %v", err)
 			subIDs = nil
 		}
-		subagentCost, err := costRepo.SumCostByConvIDs(ctx, subIDs, prices)
+		subagentCost, subagentWindowCost, err := costRepo.SumCostByConvIDs(ctx, subIDs, windowStart, prices)
 		if err != nil {
 			log.Printf("[conv] usage subagent cost error: %v", err)
-			subagentCost = 0
+			subagentCost, subagentWindowCost = 0, 0
 		}
 
 		view.JSONOK(c, gin.H{
-			"context_tokens":    contextTokens,
-			"context_window":    contextWindow,
-			"window_cost":       window,
-			"conversation_cost": total,
-			"subagent_cost":     subagentCost,
-			"subagent_count":    len(subIDs),
-			"total_cost":        total + subagentCost,
+			"context_tokens":       contextTokens,
+			"context_window":       contextWindow,
+			"window_cost":          window,
+			"conversation_cost":    total,
+			"subagent_cost":        subagentCost,
+			"subagent_window_cost": subagentWindowCost,
+			"subagent_count":       len(subIDs),
+			"total_cost":           total + subagentCost,
 		})
 	}
 }

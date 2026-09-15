@@ -25,6 +25,7 @@ type Conversation struct {
 	ParentID        *string    `gorm:"size:36" json:"parent_id,omitempty"` // 子会话（subAgent）的父会话 ID，nil=普通会话
 	Mode            string     `gorm:"size:10;default:work" json:"mode"`   // 会话模式：work（默认）| plan（只读讨论）
 	Extra           string     `gorm:"type:text;not null" json:"extra"`    // JSON: {"used_tool_ids": ["..."]}
+	PinnedAt        *time.Time `json:"pinned_at,omitempty"`                // 置顶时间，非空=已 pin；列表排序用（pin 时间倒排）
 	CreatedAt       time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt       time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 	Messages        []Message  `gorm:"foreignKey:ConversationID" json:"-"`

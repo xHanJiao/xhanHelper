@@ -3,11 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -61,7 +61,7 @@ func setupConversationRepo(t *testing.T) (*ConversationRepo, func()) {
 	return NewConversationRepo(db), cleanup
 }
 
-func TestSoftDelete_RejectsDefaultConversation(t *testing.T) {
+func TestSoftDelete_AllowsDefaultConversation(t *testing.T) {
 	repo, cleanup := setupConversationRepo(t)
 	defer cleanup()
 
@@ -70,18 +70,17 @@ func TestSoftDelete_RejectsDefaultConversation(t *testing.T) {
 		t.Fatalf("create default: %v", err)
 	}
 
-	err := repo.SoftDelete(ctx, "conv-default")
-	if !errors.Is(err, ErrDefaultConversation) {
-		t.Fatalf("expected ErrDefaultConversation, got %v", err)
+	if err := repo.SoftDelete(ctx, "conv-default"); err != nil {
+		t.Fatalf("SoftDelete default: %v", err)
 	}
 
-	// 默认会话应仍然可用（未被软删）
+	// 默认会话不再有特殊保护，应可被软删
 	conv, err := repo.FindByID(ctx, "conv-default")
 	if err != nil {
 		t.Fatalf("FindByID error: %v", err)
 	}
-	if conv == nil || conv.IsDeleted {
-		t.Fatalf("default conversation should not be deleted, got %+v", conv)
+	if conv == nil || !conv.IsDeleted {
+		t.Fatalf("default conversation should be deletable, got %+v", conv)
 	}
 }
 
@@ -107,48 +106,118 @@ func TestSoftDelete_NormalConversation(t *testing.T) {
 	}
 }
 
-func TestListByUser_DefaultFirst(t *testing.T) {
+func TestListByUser_PinnedFirst(t *testing.T) {
 	repo, cleanup := setupConversationRepo(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	// 先建默认会话（updated_at 最早），再建 3 个普通会话
-	if err := repo.Create(ctx, &model.Conversation{ID: "conv-default", UserID: "u1", IsDefault: true}); err != nil {
+	now := time.Now()
+	pinOld := now.Add(-time.Hour)
+	pinNew := now
+
+	// 已 pin：conv-a（较早 pin） / conv-default（较晚 pin，应排最前）
+	if err := repo.Create(ctx, &model.Conversation{ID: "conv-a", UserID: "u1", PinnedAt: &pinOld}); err != nil {
+		t.Fatalf("create a: %v", err)
+	}
+	if err := repo.Create(ctx, &model.Conversation{ID: "conv-default", UserID: "u1", IsDefault: true, PinnedAt: &pinNew}); err != nil {
 		t.Fatalf("create default: %v", err)
 	}
-	for _, id := range []string{"conv-a", "conv-b", "conv-c"} {
-		if err := repo.Create(ctx, &model.Conversation{ID: id, UserID: "u1", IsDefault: false}); err != nil {
-			t.Fatalf("create %s: %v", id, err)
-		}
+	// 未 pin：conv-b（较新） / conv-c（较旧）
+	if err := repo.Create(ctx, &model.Conversation{ID: "conv-b", UserID: "u1"}); err != nil {
+		t.Fatalf("create b: %v", err)
+	}
+	if err := repo.Create(ctx, &model.Conversation{ID: "conv-c", UserID: "u1"}); err != nil {
+		t.Fatalf("create c: %v", err)
+	}
+	if err := repo.DB().Model(&model.Conversation{}).Where("id = ?", "conv-b").
+		UpdateColumn("updated_at", now.Add(-2*time.Hour)).Error; err != nil {
+		t.Fatalf("set updated_at b: %v", err)
+	}
+	if err := repo.DB().Model(&model.Conversation{}).Where("id = ?", "conv-c").
+		UpdateColumn("updated_at", now.Add(-3*time.Hour)).Error; err != nil {
+		t.Fatalf("set updated_at c: %v", err)
 	}
 
 	list, total, err := repo.ListByUser(ctx, "u1", 10, 0)
 	if err != nil {
 		t.Fatalf("ListByUser error: %v", err)
 	}
-	if total != 4 {
-		t.Fatalf("expected total 4, got %d", total)
+	if total != 4 || len(list) != 4 {
+		t.Fatalf("expected 4, got total=%d len=%d", total, len(list))
 	}
-	if len(list) != 4 {
-		t.Fatalf("expected 4 conversations, got %d", len(list))
-	}
-	// 默认会话必须置顶
-	if list[0].ID != "conv-default" {
-		t.Fatalf("expected default conversation first, got %s", list[0].ID)
-	}
-	if !list[0].IsDefault {
-		t.Fatalf("expected list[0] IsDefault=true, got false")
-	}
-	// 其余按 created_at（即 updated_at 顺序）倒序（从第 2 个普通会话开始比较，
-	// list[0] 是默认会话必然最早，与它比较无意义）
-	for i := 2; i < len(list); i++ {
-		if list[i].IsDefault {
-			t.Errorf("only first item should be default, got index %d", i)
+	got := []string{list[0].ID, list[1].ID, list[2].ID, list[3].ID}
+	want := []string{"conv-default", "conv-a", "conv-b", "conv-c"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order mismatch: got %v want %v", got, want)
 		}
-		if list[i].CreatedAt.After(list[i-1].CreatedAt) {
-			t.Errorf("expected DESC order, got[%d]=%v after got[%d]=%v",
-				i, list[i].CreatedAt, i-1, list[i-1].CreatedAt)
-		}
+	}
+}
+
+// 默认会话不再被特殊提升：未 pin 时按 updated_at 正常排序。
+func TestListByUser_DefaultNotBoosted(t *testing.T) {
+	repo, cleanup := setupConversationRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := repo.Create(ctx, &model.Conversation{ID: "conv-default", UserID: "u1", IsDefault: true}); err != nil {
+		t.Fatalf("create default: %v", err)
+	}
+	if err := repo.Create(ctx, &model.Conversation{ID: "conv-new", UserID: "u1"}); err != nil {
+		t.Fatalf("create new: %v", err)
+	}
+	now := time.Now()
+	if err := repo.DB().Model(&model.Conversation{}).Where("id = ?", "conv-default").
+		UpdateColumn("updated_at", now.Add(-2*time.Hour)).Error; err != nil {
+		t.Fatalf("set updated_at default: %v", err)
+	}
+	if err := repo.DB().Model(&model.Conversation{}).Where("id = ?", "conv-new").
+		UpdateColumn("updated_at", now.Add(-time.Hour)).Error; err != nil {
+		t.Fatalf("set updated_at new: %v", err)
+	}
+
+	list, _, err := repo.ListByUser(ctx, "u1", 10, 0)
+	if err != nil {
+		t.Fatalf("ListByUser error: %v", err)
+	}
+	if len(list) != 2 || list[0].ID != "conv-new" || list[1].ID != "conv-default" {
+		t.Fatalf("default should not be boosted, got order %+v", list)
+	}
+}
+
+func TestSetPinned_TogglesWithoutTouchingUpdatedAt(t *testing.T) {
+	repo, cleanup := setupConversationRepo(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := repo.Create(ctx, &model.Conversation{ID: "conv-1", UserID: "u1"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	before, err := repo.FindByID(ctx, "conv-1")
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+
+	if err := repo.SetPinned(ctx, "conv-1", true); err != nil {
+		t.Fatalf("SetPinned(true): %v", err)
+	}
+	pinned, _ := repo.FindByID(ctx, "conv-1")
+	if pinned.PinnedAt == nil {
+		t.Fatal("expected pinned_at set after pin")
+	}
+	if !pinned.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatalf("pin should not touch updated_at: before=%v after=%v", before.UpdatedAt, pinned.UpdatedAt)
+	}
+
+	if err := repo.SetPinned(ctx, "conv-1", false); err != nil {
+		t.Fatalf("SetPinned(false): %v", err)
+	}
+	unpinned, _ := repo.FindByID(ctx, "conv-1")
+	if unpinned.PinnedAt != nil {
+		t.Fatal("expected pinned_at cleared after unpin")
+	}
+	if !unpinned.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatalf("unpin should not touch updated_at: before=%v after=%v", before.UpdatedAt, unpinned.UpdatedAt)
 	}
 }
 

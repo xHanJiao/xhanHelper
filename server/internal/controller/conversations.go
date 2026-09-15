@@ -164,6 +164,7 @@ func listConversations(convRepo *service.ConversationRepo, agentRepo *service.Ag
 				"user_id":    conv.UserID,
 				"title":      conv.Title,
 				"agent_id":   conv.AgentID,
+				"pinned":     conv.PinnedAt != nil,
 				"created_at": conv.CreatedAt,
 				"updated_at": conv.UpdatedAt,
 			}
@@ -523,6 +524,7 @@ func renameConversation(convRepo *service.ConversationRepo, agentRepo *service.A
 		var req struct {
 			Title   string          `json:"title"`
 			AgentID json.RawMessage `json:"agent_id,omitempty"`
+			Pinned  *bool           `json:"pinned,omitempty"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			view.JSONError(c, 400, "invalid request")
@@ -532,6 +534,17 @@ func renameConversation(convRepo *service.ConversationRepo, agentRepo *service.A
 		userID := c.GetString("user_id")
 		resp := gin.H{"id": convID}
 		updated := false
+
+		// 处理 pinned
+		if req.Pinned != nil {
+			if err := convRepo.SetPinned(c.Request.Context(), convID, *req.Pinned); err != nil {
+				log.Printf("[conv] SetPinned error: %v", err)
+				view.JSONError(c, 500, "update pinned failed")
+				return
+			}
+			resp["pinned"] = *req.Pinned
+			updated = true
+		}
 
 		// 处理 agent_id
 		if len(req.AgentID) > 0 {
@@ -621,17 +634,6 @@ func deleteConversation(convRepo *service.ConversationRepo, destroyer *agent.Eph
 	return func(c *gin.Context) {
 		convID := c.Param("id")
 		if !requireConversationOwner(c, convRepo, convID) {
-			return
-		}
-		conv, err := convRepo.FindByID(c.Request.Context(), convID)
-		if err != nil {
-			log.Printf("[conv] FindByID error: %v", err)
-			view.JSONError(c, 500, "query conversation failed")
-			return
-		}
-		if conv != nil && conv.IsDefault {
-			log.Printf("[conv] reject delete default conversation: id=%s", convID)
-			view.JSONError(c, 400, "默认会话不可删除")
 			return
 		}
 

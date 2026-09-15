@@ -15,9 +15,6 @@ type ConversationRepo struct {
 	db *gorm.DB
 }
 
-// ErrDefaultConversation 默认会话不可删除
-var ErrDefaultConversation = errors.New("default conversation cannot be deleted")
-
 // NewConversationRepo 创建 ConversationRepo
 func NewConversationRepo(db *gorm.DB) *ConversationRepo {
 	return &ConversationRepo{db: db}
@@ -72,8 +69,9 @@ func (r *ConversationRepo) FindDefaultByUser(ctx context.Context, userID string)
 	return &c, err
 }
 
-// ListByUser 获取用户未删除的会话列表（默认会话恒置顶，其余按更新时间倒序）。
+// ListByUser 获取用户未删除的会话列表（已 pin 置顶并按 pin 时间倒序，其余按更新时间倒序）。
 // 排除子会话（subAgent，parent_id 非空）——子会话不进用户会话列表。
+// 注：MySQL/SQLite 均视 NULL 为最小值，故 pinned_at DESC 天然把已 pin 排在前、未 pin（NULL）排在后。
 func (r *ConversationRepo) ListByUser(ctx context.Context, userID string, limit, offset int) ([]model.Conversation, int64, error) {
 	if limit <= 0 {
 		limit = 50
@@ -84,7 +82,7 @@ func (r *ConversationRepo) ListByUser(ctx context.Context, userID string, limit,
 		return nil, 0, err
 	}
 	var list []model.Conversation
-	err := q.Order("is_default DESC, updated_at DESC").Limit(limit).Offset(offset).Find(&list).Error
+	err := q.Order("pinned_at DESC, updated_at DESC").Limit(limit).Offset(offset).Find(&list).Error
 	return list, total, err
 }
 
@@ -92,6 +90,18 @@ func (r *ConversationRepo) ListByUser(ctx context.Context, userID string, limit,
 func (r *ConversationRepo) Rename(ctx context.Context, id, title string) error {
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).
 		Where("id = ?", id).Update("title", title).Error
+}
+
+// SetPinned 设置/取消会话置顶。pinned=true 记当前时间为 pin 时间，false 清空。
+// 用 UpdateColumn 避免 GORM 自动刷新 updated_at（取消置顶后应回到原更新时间的位置）。
+func (r *ConversationRepo) SetPinned(ctx context.Context, id string, pinned bool) error {
+	var pinnedAt *time.Time
+	if pinned {
+		now := time.Now()
+		pinnedAt = &now
+	}
+	return r.db.WithContext(ctx).Model(&model.Conversation{}).
+		Where("id = ?", id).UpdateColumn("pinned_at", pinnedAt).Error
 }
 
 // Update 更新会话字段（仅写非零值字段，避免 Save 归零 IsDeleted 等）
@@ -139,15 +149,8 @@ func (r *ConversationRepo) Touch(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).Where("id = ?", id).Update("updated_at", time.Now()).Error
 }
 
-// SoftDelete 软删除会话。默认会话不可删除，返回 ErrDefaultConversation。
+// SoftDelete 软删除会话。
 func (r *ConversationRepo) SoftDelete(ctx context.Context, id string) error {
-	var c model.Conversation
-	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&c).Error; err != nil {
-		return err
-	}
-	if c.IsDefault {
-		return ErrDefaultConversation
-	}
 	return r.db.WithContext(ctx).Model(&model.Conversation{}).
 		Where("id = ?", id).Update("is_deleted", true).Error
 }

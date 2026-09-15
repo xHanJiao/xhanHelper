@@ -307,6 +307,7 @@ make clean        # 清理
 - 提交代码前必须征得用户同意
 - 遇到相似功能，抽取公共组件
 - **客户端（client/）代码不由 agent 编译验证**：agent 只改代码，不执行 xcodebuild，编译和运行验证由用户在 Xcode 中完成（避免与 Xcode 并发构建导致 build database 锁冲突）
+- **macOS 设置页子页面风格统一**：卡片式分组用 `SettingsCard` + `KeycapView`（`client/xHelper/xHelperMac/SettingsStyle.swift`），规范见 `docs/design/mac-apps/settings-sheet-style.md`
 - **禁止对必要依赖做 nil 检查后静默返回**：所有通过依赖注入传入的必需组件（repo、client、worker 等），如果为 nil 意味着启动阶段的接线 bug。不要写 `if x == nil { return }` 让它无声失败——让它 panic，炸在明处。可选依赖（如回调函数）可以用 nil 检查
 
 ## 后端错误处理规范

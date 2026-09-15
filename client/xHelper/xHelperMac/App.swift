@@ -472,6 +472,7 @@ struct xhanHelperMacApp: App {
             MacSettingsView(deviceManager: deviceManager)
                 .environmentObject(colorSchemeManager)
                 .environmentObject(FontSizeManager.shared)
+                .preferredColorScheme(colorSchemeManager.selectedScheme.colorScheme)
         }
     }
 
@@ -651,6 +652,10 @@ struct MacSettingsView: View {
                 BrowseRow("诊断日志", icon: "exclamationmark.bubble", destination: LogDiagnosticView())
             }
 
+            Section("帮助") {
+                BrowseRow("快捷键", icon: "keyboard", destination: ShortcutGuideView(), sheetSize: CGSize(width: 560, height: 640))
+            }
+
             Section("缓存") {
                 Button {
                     showClearCacheAlert = true
@@ -690,12 +695,14 @@ struct BrowseRow<Destination: View>: View {
     let title: String
     let icon: String
     let destination: Destination
+    let sheetSize: CGSize?
     @State private var showDetail = false
 
-    init(_ title: String, icon: String, destination: Destination) {
+    init(_ title: String, icon: String, destination: Destination, sheetSize: CGSize? = nil) {
         self.title = title
         self.icon = icon
         self.destination = destination
+        self.sheetSize = sheetSize
     }
 
     var body: some View {
@@ -713,7 +720,12 @@ struct BrowseRow<Destination: View>: View {
                         Button("关闭") { showDetail = false }
                     }
                 }
-                .frame(minWidth: 500, minHeight: 400)
+                .frame(
+                    minWidth: sheetSize?.width ?? 500,
+                    maxWidth: sheetSize?.width,
+                    minHeight: sheetSize?.height ?? 400,
+                    maxHeight: sheetSize?.height
+                )
         }
     }
 }

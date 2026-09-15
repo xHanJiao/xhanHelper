@@ -119,6 +119,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.POST("/prompts/:id/rollback", rc.PromptHandler.RollbackPrompt)
 		auth.DELETE("/prompts/:id", rc.PromptHandler.DeletePrompt)
 		auth.GET("/documents", rc.DocumentHandler.ListDocuments)
+		auth.GET("/documents/tags", rc.DocumentHandler.ListDocumentTags)
 		auth.GET("/documents/:id", rc.DocumentHandler.GetDocument)
 		auth.DELETE("/documents/:id", rc.DocumentHandler.DeleteDocument)
 		auth.POST("/documents/:id/share", rc.DocumentShareHandler.CreateShare)

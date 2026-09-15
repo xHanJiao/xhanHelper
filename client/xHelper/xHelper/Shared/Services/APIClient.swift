@@ -174,6 +174,11 @@ class APIClient {
 		return try await get("/api/documents/\(id)")
 	}
 
+	func listDocumentTags() async throws -> [DocumentTag] {
+		let resp: DocumentTagListResponse = try await get("/api/documents/tags")
+		return resp.tags
+	}
+
 	func deleteDocument(id: String) async throws {
 		try await delete("/api/documents/\(id)")
 	}
@@ -625,6 +630,17 @@ struct Document: Identifiable, Codable, Equatable {
 struct DocumentListResponse: Codable {
     let documents: [Document]
     let total: Int
+}
+
+struct DocumentTag: Identifiable, Codable, Equatable {
+    let name: String
+    let count: Int
+
+    var id: String { name }
+}
+
+struct DocumentTagListResponse: Codable {
+    let tags: [DocumentTag]
 }
 
 struct Agent: Identifiable, Codable {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"gorm.io/gorm"
@@ -56,6 +57,15 @@ func (r *DocumentRepo) Delete(ctx context.Context, id, userID string) error {
 	return r.db.WithContext(ctx).Delete(&model.Document{}, "id = ? AND user_id = ?", id, userID).Error
 }
 
+// tagMatchClause 按逗号边界匹配单个标签，避免子串误伤（"Go" 不该命中 "Golang"）。
+// 用 REPLACE 去掉逗号旁空格，兼容历史数据里的 "a, b" 写法；tag 已在调用方去空格。
+func tagMatchClause(q *gorm.DB, tag string) *gorm.DB {
+	return q.Where(
+		"REPLACE(tags, ' ', '') = ? OR REPLACE(tags, ' ', '') LIKE ? OR REPLACE(tags, ' ', '') LIKE ? OR REPLACE(tags, ' ', '') LIKE ?",
+		tag, tag+",%", "%,"+tag, "%,"+tag+",%",
+	)
+}
+
 // List 按条件分页查询，limit<=0 时默认 50
 func (r *DocumentRepo) List(ctx context.Context, userID, tag, keyword string, limit, offset int) ([]model.Document, int64, error) {
 	if limit <= 0 {
@@ -63,7 +73,7 @@ func (r *DocumentRepo) List(ctx context.Context, userID, tag, keyword string, li
 	}
 	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
 	if tag != "" {
-		q = q.Where("tags LIKE ?", "%"+tag+"%")
+		q = tagMatchClause(q, strings.ReplaceAll(tag, " ", ""))
 	}
 	if keyword != "" {
 		like := "%" + keyword + "%"
@@ -80,27 +90,55 @@ func (r *DocumentRepo) List(ctx context.Context, userID, tag, keyword string, li
 	return list, total, err
 }
 
-// ListTags 获取用户所有文档的去重标签列表
-func (r *DocumentRepo) ListTags(ctx context.Context, userID string) ([]string, error) {
-	var tags []string
+// TagCount 标签及其出现次数（用于词云）
+type TagCount struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+// ListTagCounts 统计用户所有文档的标签出现次数，按次数降序、名称升序
+func (r *DocumentRepo) ListTagCounts(ctx context.Context, userID string) ([]TagCount, error) {
+	var raw []string
 	err := r.db.WithContext(ctx).
 		Model(&model.Document{}).
 		Where("user_id = ? AND tags != ''", userID).
-		Pluck("tags", &tags).Error
+		Pluck("tags", &raw).Error
 	if err != nil {
 		return nil, err
 	}
 
-	seen := make(map[string]bool)
-	var result []string
-	for _, t := range tags {
+	counts := make(map[string]int)
+	for _, t := range raw {
 		for _, part := range strings.Split(t, ",") {
 			part = strings.TrimSpace(part)
-			if part != "" && !seen[part] {
-				seen[part] = true
-				result = append(result, part)
+			if part != "" {
+				counts[part]++
 			}
 		}
+	}
+
+	result := make([]TagCount, 0, len(counts))
+	for name, count := range counts {
+		result = append(result, TagCount{Name: name, Count: count})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Count != result[j].Count {
+			return result[i].Count > result[j].Count
+		}
+		return result[i].Name < result[j].Name
+	})
+	return result, nil
+}
+
+// ListTags 获取用户所有文档的去重标签列表（按出现次数降序）
+func (r *DocumentRepo) ListTags(ctx context.Context, userID string) ([]string, error) {
+	counts, err := r.ListTagCounts(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, 0, len(counts))
+	for _, tc := range counts {
+		result = append(result, tc.Name)
 	}
 	return result, nil
 }

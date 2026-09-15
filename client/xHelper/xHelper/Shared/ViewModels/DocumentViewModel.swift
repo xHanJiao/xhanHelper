@@ -2,13 +2,22 @@ import Combine
 import Foundation
 import SwiftUI
 
+enum DocumentBrowseMode: Hashable {
+    case list
+    case cloud
+}
+
 @MainActor
 class DocumentViewModel: ObservableObject {
     @Published var documents: [Document] = []
+    @Published var tags: [DocumentTag] = []
     @Published var isLoading = false
     @Published var isLoadingMore = false
     @Published var errorMessage: String?
     @Published var keyword = ""
+    @Published var selectedTag: String?
+    @Published var mode: DocumentBrowseMode = .list
+    @Published var minTagCount = 1
     @Published var openDocument: Document?
     @Published var isDetailLoading = false
 
@@ -25,15 +34,32 @@ class DocumentViewModel: ObservableObject {
         await load()
     }
 
+    func selectTag(_ tag: String) async {
+        selectedTag = tag
+        mode = .list
+        await load()
+    }
+
+    func clearTag() async {
+        selectedTag = nil
+        mode = .cloud
+        await load()
+    }
+
     func load() async {
         isLoading = true
         errorMessage = nil
         offset = 0
         hasMore = true
         do {
-            let resp = try await apiClient.listDocuments(keyword: keyword.isEmpty ? nil : keyword)
+            let resp = try await apiClient.listDocuments(
+                tag: selectedTag,
+                keyword: keyword.isEmpty ? nil : keyword
+            )
             documents = resp.documents
             hasMore = resp.documents.count >= 24
+            tags = try await apiClient.listDocumentTags()
+            minTagCount = min(minTagCount, max(1, tags.first?.count ?? 1))
         } catch {
             LogBuffer.shared.error("DocumentViewModel.load: \(error)")
             errorMessage = error.localizedDescription
@@ -65,7 +91,11 @@ class DocumentViewModel: ObservableObject {
         isLoadingMore = true
         offset += 24
         do {
-            let resp = try await apiClient.listDocuments(keyword: keyword.isEmpty ? nil : keyword, offset: offset)
+            let resp = try await apiClient.listDocuments(
+                tag: selectedTag,
+                keyword: keyword.isEmpty ? nil : keyword,
+                offset: offset
+            )
             documents.append(contentsOf: resp.documents)
             hasMore = resp.documents.count >= 24
         } catch {

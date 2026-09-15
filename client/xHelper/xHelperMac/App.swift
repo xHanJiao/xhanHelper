@@ -77,6 +77,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil
             }
 
+            // Cmd+Shift+E：展开/收起 PiP 聊天悬浮球（仅 PiP 生效；未进 PiP 时静默不生效）。
+            if event.keyCode == 14,                                    // 14 = E
+               event.modifierFlags.contains(.shift),
+               NSApp.modalWindow == nil,
+               BrowserToolProvider.shared.rightSidebar?.isPipChat == true {
+                BrowserToolProvider.shared.rightSidebar?.pipCollapsed.toggle()
+                return nil
+            }
+
             // Cmd+B：切换左侧栏（焦点无关，无模态时生效）
             if event.keyCode == 11,
                NSApp.modalWindow == nil {

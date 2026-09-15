@@ -351,7 +351,7 @@ struct FloatingChatPanel: View {
         .contentShape(Rectangle())
         .gesture(dragGesture)
         .simultaneousGesture(TapGesture().onEnded { toggleCollapse() })
-        .help("单击展开 / 拖动移动")
+        .help("单击展开 / 拖动移动 · ⌘⇧E")
     }
 }
 

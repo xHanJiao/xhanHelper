@@ -13,14 +13,10 @@ struct DocumentListView: View {
                 DocumentFullView(document: doc, onBack: { viewModel.openDocument = nil })
             } else {
                 #if os(macOS)
-                VStack(spacing: 0) {
-                    modeToggle
-                    Divider()
-                    if viewModel.mode == .cloud {
-                        cloudContent
-                    } else {
-                        listContent
-                    }
+                if viewModel.mode == .cloud {
+                    cloudContent
+                } else {
+                    listContent
                 }
                 #else
                 listContent
@@ -98,36 +94,6 @@ struct DocumentListView: View {
     }
 
     #if os(macOS)
-    private var modeToggle: some View {
-        HStack(spacing: 12) {
-            Picker("", selection: $viewModel.mode) {
-                Text("列表").tag(DocumentBrowseMode.list)
-                Text("词云").tag(DocumentBrowseMode.cloud)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 140)
-
-            if viewModel.mode == .cloud {
-                Stepper(value: $viewModel.minTagCount, in: 1...maxTagCount) {
-                    Text("最少 \(viewModel.minTagCount) 篇")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-                .controlSize(.small)
-                .fixedSize()
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
-
-    private var maxTagCount: Int {
-        max(1, viewModel.tags.first?.count ?? 1)
-    }
-
     @ViewBuilder
     private var cloudContent: some View {
         let visible = viewModel.tags.filter { $0.count >= viewModel.minTagCount }

@@ -304,6 +304,27 @@ struct BrowsePanelView: View {
 
             Spacer()
 
+            if panel == .documents && documentVM.openDocument == nil {
+                Picker("", selection: $documentVM.mode) {
+                    Text("列表").tag(DocumentBrowseMode.list)
+                    Text("词云").tag(DocumentBrowseMode.cloud)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(width: 120)
+
+                if documentVM.mode == .cloud {
+                    Stepper(value: $documentVM.minTagCount, in: 1...maxTagCount) {
+                        Text("≥ \(documentVM.minTagCount) 篇")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .controlSize(.small)
+                    .fixedSize()
+                }
+            }
+
             Button {
                 Task { await refresh(panel) }
             } label: {
@@ -340,6 +361,11 @@ struct BrowsePanelView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// 文档词云的最少篇数上限（标签已按频次降序）
+    private var maxTagCount: Int {
+        max(1, documentVM.tags.first?.count ?? 1)
     }
 
     /// 页头搜索图标：面板展开或有关键词生效时 accent 高亮（对齐账单筛选激活态）。

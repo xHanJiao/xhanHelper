@@ -19,6 +19,8 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
     var containerTint: Color
     let onSend: () -> Void
     let onStop: () -> Void
+    /// Tab（仅输入框聚焦时）：切换计划/聊天模式。
+    let onToggleMode: () -> Void
     /// 状态行胶囊（收起态与展开态都渲染，显示与否由各按钮自声明）。
     let statusRow: (InputBarContext) -> StatusRow
     /// 尾部动作按钮（🎤/发送/停止等，位置随态变化）。
@@ -46,6 +48,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
         containerTint: Color = Color("appAccent"),
         onSend: @escaping () -> Void,
         onStop: @escaping () -> Void,
+        onToggleMode: @escaping () -> Void = {},
         @ViewBuilder statusRow: @escaping (InputBarContext) -> StatusRow,
         @ViewBuilder trailingActions: @escaping (InputBarContext) -> TrailingActions
     ) where TopNote == EmptyView, BottomLeading == EmptyView {
@@ -57,6 +60,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
             containerTint: containerTint,
             onSend: onSend,
             onStop: onStop,
+            onToggleMode: onToggleMode,
             statusRow: statusRow,
             trailingActions: trailingActions,
             topTrailingNote: { _ in EmptyView() },
@@ -73,6 +77,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
         containerTint: Color = Color("appAccent"),
         onSend: @escaping () -> Void,
         onStop: @escaping () -> Void,
+        onToggleMode: @escaping () -> Void = {},
         @ViewBuilder statusRow: @escaping (InputBarContext) -> StatusRow,
         @ViewBuilder trailingActions: @escaping (InputBarContext) -> TrailingActions,
         @ViewBuilder topTrailingNote: @escaping (InputBarContext) -> TopNote,
@@ -85,6 +90,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
         self.containerTint = containerTint
         self.onSend = onSend
         self.onStop = onStop
+        self.onToggleMode = onToggleMode
         self.statusRow = statusRow
         self.trailingActions = trailingActions
         self.topTrailingNote = topTrailingNote
@@ -234,6 +240,11 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
                 DispatchQueue.main.async {
                     onSend()
                 }
+                return .handled
+            }
+            // Tab（仅输入框聚焦时）：切换计划/聊天模式。焦点不在聊天输入框时（PiP 收起/浏览器/地址栏）不会触发。
+            .onKeyPress(.tab, phases: .down) { _ in
+                onToggleMode()
                 return .handled
             }
             .scrollContentBackground(.hidden)

@@ -305,12 +305,14 @@ class ChatViewModel: ObservableObject {
     /// 换会话（loadConversation）自动关闭，安全默认。
     @Published var trustedMode = false
 
-    /// 切换计划模式（work ↔ plan）。仅用户可触发（胶囊条点击）。
+    /// 切换计划模式（work ↔ plan）。仅用户可触发（胶囊条点击 / 输入框聚焦时 Tab）。
     /// 已有会话：PATCH 落库，失败回滚；空 tab（无会话）：只改本地，第一条消息经 init_mode 落库。
     func toggleMode() async {
         let next = isPlanMode ? "work" : "plan"
+        let toast = next == "plan" ? "已进入计划模式（只读讨论）" : "已退出计划模式"
         guard let cid = conversationId, !cid.isEmpty else {
             mode = next // 空 tab：会话尚未创建，模式暂存本地，待首条消息 init_mode 落库
+            ToastCenter.shared.show(toast)
             return
         }
         let previous = mode
@@ -318,9 +320,11 @@ class ChatViewModel: ObservableObject {
         do {
             try await apiClient.updateConversationMode(id: cid, mode: next)
             LogBuffer.shared.info("ChatViewModel.toggleMode: conv=\(cid) -> \(next)")
+            ToastCenter.shared.show(toast)
         } catch {
             LogBuffer.shared.warning("ChatViewModel.toggleMode failed: \(error)")
             mode = previous // 回滚
+            ToastCenter.shared.show("切换模式失败，请重试")
         }
     }
 

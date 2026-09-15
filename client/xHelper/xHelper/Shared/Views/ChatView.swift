@@ -148,6 +148,9 @@ struct ChatView: View {
                 onSend: sendDraft,
                 onStop: {
                     viewModel.stopStreaming()
+                },
+                onToggleMode: {
+                    Task { await viewModel.toggleMode() }
                 }
             ) { ctx in
                 #if os(macOS)

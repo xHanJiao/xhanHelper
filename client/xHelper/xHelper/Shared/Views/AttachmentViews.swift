@@ -285,7 +285,7 @@ struct MessageAttachmentStrip: View {
     }
 }
 
-/// 单张消息缩略图：命中缓存直接显示，否则异步拉取；拉不到显示占位（图已被清理）。
+/// 单张消息缩略图：图存在共享存储里（视图重建不丢），缓存未命中才异步拉；拉不到显示占位（图已被清理）。
 struct MessageAttachmentThumb: View {
     let imageId: String
     let baseURL: String
@@ -294,12 +294,11 @@ struct MessageAttachmentThumb: View {
     let size: CGFloat
     let onTap: (PlatformImage) -> Void
 
-    @State private var image: PlatformImage?
-    @State private var failed = false
+    @ObservedObject private var loader = AttachmentImageLoader.shared
 
     var body: some View {
         Group {
-            if let img = image ?? localImage {
+            if let img = loader.images[imageId] ?? localImage {
                 Button {
                     onTap(img)
                 } label: {
@@ -319,10 +318,10 @@ struct MessageAttachmentThumb: View {
                     .fill(Color.secondary.opacity(0.12))
                     .frame(width: size, height: size)
                     .overlay {
-                        if failed {
+                        if loader.failed.contains(imageId) {
                             Image(systemName: "photo.badge.exclamationmark")
                                 .foregroundStyle(.secondary)
-                                .help("图片已被清理")
+                                .help("图片加载失败（可能已被清理）")
                         } else {
                             ProgressView().controlSize(.small)
                         }
@@ -330,17 +329,8 @@ struct MessageAttachmentThumb: View {
             }
         }
         .task(id: imageId) {
-            guard image == nil, localImage == nil else { return }
-            if let hit = AttachmentImageLoader.cached(imageId) {
-                image = hit
-                return
-            }
-            if !baseURL.isEmpty, !token.isEmpty,
-               let loaded = await AttachmentImageLoader.load(id: imageId, baseURL: baseURL, token: token) {
-                image = loaded
-            } else {
-                failed = true
-            }
+            guard localImage == nil else { return }
+            loader.load(id: imageId, baseURL: baseURL, token: token)
         }
     }
 }

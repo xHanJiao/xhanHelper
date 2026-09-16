@@ -5,12 +5,12 @@ import AppKit
 
 /// 双态「驾驶舱」输入栏（macOS）。
 ///
-/// InputBar 只负责：区域摆放（状态行/编辑器/尾部动作）、收起↔展开动画、
-/// 玻璃容器样式、聚焦/Return/打字空闲等编辑逻辑。具体按钮通过两个
+/// InputBar 只负责：区域摆放（状态行/展开行/编辑器/尾部动作）、收起↔展开动画、
+/// 玻璃容器样式、聚焦/Return/打字空闲等编辑逻辑。具体按钮通过多个
 /// @ViewBuilder 闭包从外部（ChatView）注入，各自带 ButtonVisibility 决定
 /// 在收起态/展开态是否出现；上缘便签面板通过第三个闭包注入（锚定胶囊右上缘，
 /// 不注入时为空视图）。增删按钮不改本文件。
-struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLeading: View, AttachmentTraySlot: View>: View {
+struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, TopNote: View, BottomLeading: View, AttachmentTraySlot: View>: View {
     @Binding var text: String
     @Binding var isEditing: Bool
     let isStreaming: Bool
@@ -28,6 +28,8 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
     let onToggleMode: () -> Void
     /// 状态行胶囊（收起态与展开态都渲染，显示与否由各按钮自声明）。
     let statusRow: (InputBarContext) -> StatusRow
+    /// 状态行上方多出的一行（折叠的更多操作；不注入时为空视图，不占空间）。
+    let statusRowExtras: (InputBarContext) -> StatusRowExtras
     /// 尾部动作按钮（🎤/发送/停止等，位置随态变化）。
     let trailingActions: (InputBarContext) -> TrailingActions
     /// 上缘便签面板（可选注入，锚定 720 胶囊右上缘；不注入时为空视图）。
@@ -58,7 +60,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
         onToggleMode: @escaping () -> Void = {},
         @ViewBuilder         statusRow: @escaping (InputBarContext) -> StatusRow,
         @ViewBuilder trailingActions: @escaping (InputBarContext) -> TrailingActions
-    ) where TopNote == EmptyView, BottomLeading == EmptyView, AttachmentTraySlot == EmptyView {
+    ) where TopNote == EmptyView, BottomLeading == EmptyView, AttachmentTraySlot == EmptyView, StatusRowExtras == EmptyView {
         self.init(
             text: text,
             isEditing: isEditing,
@@ -69,6 +71,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
             onStop: onStop,
             onToggleMode: onToggleMode,
             statusRow: statusRow,
+            statusRowExtras: { _ in EmptyView() },
             trailingActions: trailingActions,
             topTrailingNote: { _ in EmptyView() },
             bottomLeading: { _ in EmptyView() },
@@ -76,7 +79,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
         )
     }
 
-    /// 完整 init（可注入上缘便签面板、底部左侧槽、附件托盘）。
+    /// 完整 init（可注入展开行、上缘便签面板、底部左侧槽、附件托盘）。
     init(
         text: Binding<String>,
         isEditing: Binding<Bool>,
@@ -89,6 +92,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
         onStop: @escaping () -> Void,
         onToggleMode: @escaping () -> Void = {},
         @ViewBuilder statusRow: @escaping (InputBarContext) -> StatusRow,
+        @ViewBuilder statusRowExtras: @escaping (InputBarContext) -> StatusRowExtras,
         @ViewBuilder trailingActions: @escaping (InputBarContext) -> TrailingActions,
         @ViewBuilder topTrailingNote: @escaping (InputBarContext) -> TopNote,
         @ViewBuilder bottomLeading: @escaping (InputBarContext) -> BottomLeading,
@@ -105,6 +109,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
         self.onStop = onStop
         self.onToggleMode = onToggleMode
         self.statusRow = statusRow
+        self.statusRowExtras = statusRowExtras
         self.trailingActions = trailingActions
         self.topTrailingNote = topTrailingNote
         self.bottomLeading = bottomLeading
@@ -193,10 +198,13 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
     }
 
     /// 两行布局：编辑器全宽在上，附件托盘居中，模式/发送按钮右对齐在下。
+    /// 折叠的更多操作（statusRowExtras）展开时插在按钮行上方，同一胶囊内，
+    /// 宽度受胶囊约束——窄窗也不会戳出框。
     private var twoRowLayout: some View {
         VStack(spacing: 6) {
             editor
             attachmentTray(context)
+            statusRowExtras(context)
             HStack(spacing: 4) {
                 bottomLeading(context)
                 Spacer(minLength: 0)

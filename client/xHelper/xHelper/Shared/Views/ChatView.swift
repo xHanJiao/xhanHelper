@@ -30,6 +30,11 @@ struct ChatView: View {
     /// 本视图输入框是否聚焦（⌘V 粘贴定位收件 ChatView 用，见 viewModel.pastedImages）
     @State private var inputFocused = false
 
+    // MARK: 输入栏折叠的更多操作（信任/模型/接力/附件）
+    /// 展开态：在按钮行上方多出一行（同一胶囊内）。12s 无操作自动收起。
+    @State private var inputBarExtrasExpanded = false
+    @State private var extrasCollapseTask: Task<Void, Never>?
+
     let baseURL: String
     let token: String
 
@@ -312,6 +317,7 @@ struct ChatView: View {
                 Task { await viewModel.toggleMode() }
             },
             statusRow: inputBarStatusRow,
+            statusRowExtras: inputBarExtrasRow,
             trailingActions: inputBarTrailingActions,
             topTrailingNote: inputBarTopNote,
             bottomLeading: inputBarBottomLeading,
@@ -319,22 +325,20 @@ struct ChatView: View {
         )
         .layoutPriority(1)
         .animation(.easeOut(duration: 0.2), value: viewModel.planExpanded)
+        .animation(.easeOut(duration: 0.18), value: inputBarExtrasExpanded)
     }
 
-    /// InputBar 状态行（模式/信任/智能体/模型/接力）。独立成方法而不是内联闭包：
-    /// 整个 InputBar 调用表达式已顶到类型检查预算上限（会报 "unable to type-check in reasonable time"）。
+    /// InputBar 状态行（计划/智能体/更多操作）。信任/模型/接力/附件收进 chevron 后的展开行。
+    /// 独立成方法而不是内联闭包：整个 InputBar 调用表达式已顶到类型检查预算上限。
     @ViewBuilder
     private func inputBarStatusRow(_ ctx: InputBarContext) -> some View {
         #if os(macOS)
         HStack(spacing: 4) {
-            // 计划/信任模式常驻按钮（原先折叠在 chevron 后，计划模式高频使用故内联）。
+            // 计划模式：高频使用，常驻。
             ModePill(context: ctx, isPlanMode: viewModel.isPlanMode) {
                 Task { await viewModel.toggleMode() }
             }
-            TrustedPill(context: ctx, trusted: viewModel.trustedMode) {
-                viewModel.toggleTrustedMode()
-            }
-            // 智能体选择器：模式按钮与模型切换之间，cpu 图标与侧边栏一致。
+            // 智能体选择器：cpu 图标与侧边栏一致。
             // 仅当已确认用户存在智能体时才展示（无智能体时隐藏，避免无意义按钮）。
             if hasLoadedAgents && !pickerAgents.isEmpty {
                 AgentPickerButton(
@@ -354,23 +358,76 @@ struct ChatView: View {
                     }
                 )
             }
-            // 常驻模型切换（模式按钮与发送按钮之间）：deep（pro+thinking）↔ flash
-            ModelPill(context: ctx, isDeep: viewModel.deepMode) {
-                viewModel.toggleDeepMode()
-            }
-            // 会话接力：整理成文档并开新会话续接。计划模式只读、接力要写文档，
-            // 故 plan 模式下置灰（tooltip 说明原因），非流式、非空会话才可用。
-            HandoffPill(
-                context: ctx,
-                isEnabled: !viewModel.isStreaming
-                    && !(viewModel.conversationId ?? "").isEmpty
-                    && !viewModel.isPlanMode,
-                isPlanMode: viewModel.isPlanMode
-            ) {
-                viewModel.beginHandoff(baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
+            // 更多操作：展开后在按钮行上方多出一行（信任/模型/接力/附件）。
+            ExpandPill(context: ctx, isExpanded: inputBarExtrasExpanded) {
+                toggleInputBarExtras()
             }
         }
         #endif
+    }
+
+    /// InputBar 折叠的更多操作行（信任/模型/接力/附件）：展开时出现在按钮行上方，
+    /// 同胶囊内右对齐——参与布局，宽度受胶囊约束，窄窗不会戳出框。
+    @ViewBuilder
+    private func inputBarExtrasRow(_ ctx: InputBarContext) -> some View {
+        #if os(macOS)
+        if inputBarExtrasExpanded {
+            HStack(spacing: 4) {
+                Spacer(minLength: 0)
+                TrustedPill(context: ctx, trusted: viewModel.trustedMode) {
+                    viewModel.toggleTrustedMode()
+                    resetExtrasAutoCollapse()
+                }
+                ModelPill(context: ctx, isDeep: viewModel.deepMode) {
+                    viewModel.toggleDeepMode()
+                    resetExtrasAutoCollapse()
+                }
+                // 会话接力：整理成文档并开新会话续接。计划模式只读、接力要写文档，
+                // 故 plan 模式下置灰（tooltip 说明原因），非流式、非空会话才可用。
+                HandoffPill(
+                    context: ctx,
+                    isEnabled: !viewModel.isStreaming
+                        && !(viewModel.conversationId ?? "").isEmpty
+                        && !viewModel.isPlanMode,
+                    isPlanMode: viewModel.isPlanMode
+                ) {
+                    viewModel.beginHandoff(baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
+                }
+                // 附件：选本地图片（发送时随消息一起上传）
+                IconButton(
+                    visibility: .always,
+                    context: ctx,
+                    symbol: "paperclip",
+                    tint: draftAttachments.isEmpty ? .secondary : Color("appAccent"),
+                    isEnabled: !viewModel.isStreaming && !isUploadingAttachments,
+                    tooltip: "添加图片",
+                    action: { showFileImporter = true }
+                )
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+        #endif
+    }
+
+    /// 展开/收起折叠的更多操作；展开时启动 12s 无操作自动收起。
+    private func toggleInputBarExtras() {
+        inputBarExtrasExpanded.toggle()
+        if inputBarExtrasExpanded {
+            resetExtrasAutoCollapse()
+        } else {
+            extrasCollapseTask?.cancel()
+        }
+    }
+
+    /// 重置自动收起计时（点胶囊后重新计时）。
+    private func resetExtrasAutoCollapse() {
+        extrasCollapseTask?.cancel()
+        guard inputBarExtrasExpanded else { return }
+        extrasCollapseTask = Task {
+            try? await Task.sleep(for: .seconds(12))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.18)) { inputBarExtrasExpanded = false }
+        }
     }
 
     /// InputBar 上缘便签（执行计划）。独立成方法：同上，InputBar 调用表达式已在类型检查预算边缘。
@@ -431,27 +488,16 @@ struct ChatView: View {
     @ViewBuilder
     private func inputBarTrailingActions(_ ctx: InputBarContext) -> some View {
         #if os(macOS)
-        HStack(spacing: 4) {
-            // 附件：选本地图片（发送时随消息一起上传）
-            IconButton(
-                visibility: .always,
-                context: ctx,
-                symbol: "paperclip",
-                tint: draftAttachments.isEmpty ? .secondary : Color("appAccent"),
-                isEnabled: !viewModel.isStreaming && !isUploadingAttachments,
-                tooltip: "添加图片",
-                action: { showFileImporter = true }
-            )
-            SendStopButton(
-                context: ctx,
-                isStreaming: viewModel.isStreaming,
-                canSend: ctx.canSend && !isUploadingAttachments,
-                onSend: sendDraft,
-                onStop: {
-                    viewModel.stopStreaming()
-                }
-            )
-        }
+        // 仅发送/停止常驻；附件已收进「更多操作」展开行。
+        SendStopButton(
+            context: ctx,
+            isStreaming: viewModel.isStreaming,
+            canSend: ctx.canSend && !isUploadingAttachments,
+            onSend: sendDraft,
+            onStop: {
+                viewModel.stopStreaming()
+            }
+        )
         #else
         if ctx.isStreaming {
             IconButton(

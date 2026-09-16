@@ -93,6 +93,25 @@ struct HandoffPill: View {
     }
 }
 
+/// 更多操作展开/收起按钮：折叠的图标（信任/模型/接力/附件）收在它后面，
+/// 展开时在按钮行上方多出一行，始终落在胶囊宽度内（不再 overlay 左偏出框）。
+struct ExpandPill: View {
+    let context: InputBarContext
+    let isExpanded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        IconButton(
+            visibility: .always,
+            context: context,
+            symbol: isExpanded ? "chevron.down" : "chevron.up",
+            tint: .secondary,
+            tooltip: isExpanded ? "收起更多操作" : "展开更多操作",
+            action: action
+        )
+    }
+}
+
 /// 发送/停止按钮：仅展开态显示。流式时 morph 为红色停止，否则为发送箭头。
 struct SendStopButton: View {
     let context: InputBarContext

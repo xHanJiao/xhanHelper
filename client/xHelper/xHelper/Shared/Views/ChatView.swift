@@ -287,6 +287,7 @@ struct ChatView: View {
                             draftAttachments.removeAll { $0.id == item.id }
                         },
                         onAdd: { showFileImporter = true },
+                        onClearAll: { draftAttachments.removeAll() },
                         onPreview: { item in previewImage = item.image }
                     )
                 }
@@ -427,7 +428,8 @@ struct ChatView: View {
 
     /// 读取用户选中的图片文件（macOS 原生文件选择器）
     private func handlePickedFiles(_ urls: [URL]) {
-        var skipped = 0
+        var duplicated = 0
+        var overCap = 0
         for url in urls {
             guard let data = try? Data(contentsOf: url),
                   let image = PlatformImage(data: data) else {
@@ -437,16 +439,21 @@ struct ChatView: View {
             // 同一张图重复选只留一份：服务端会按内容去重返回同一个 image_id，
             // 重复 id 会让模型把同一张图看两遍
             guard !draftAttachments.contains(where: { $0.data == data }) else {
-                skipped += 1
+                duplicated += 1
+                continue
+            }
+            guard draftAttachments.count < Layout.maxDraftImages else {
+                overCap += 1
                 continue
             }
             draftAttachments.append(DraftAttachment(data: data, image: image, filename: url.lastPathComponent))
         }
         // 跳过必须说出来：静默忽略会让人以为选图没生效，反复重选
-        if skipped == 1 {
-            ToastCenter.shared.show("这张图已经在待发送列表里")
-        } else if skipped > 1 {
-            ToastCenter.shared.show("已忽略 \(skipped) 张重复的图")
+        var reasons: [String] = []
+        if duplicated > 0 { reasons.append("\(duplicated) 张重复") }
+        if overCap > 0 { reasons.append("\(overCap) 张超出 \(Layout.maxDraftImages) 张上限") }
+        if !reasons.isEmpty {
+            ToastCenter.shared.show("已忽略 " + reasons.joined(separator: "、"))
         }
     }
 

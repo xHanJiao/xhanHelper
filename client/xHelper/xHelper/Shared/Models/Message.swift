@@ -1,11 +1,14 @@
 import Foundation
 
 struct Message: Identifiable, Codable {
-    let id: String
+    // id / content / toolCallsJSON 必须是 var：调用方要能对消息做"原地改"。
+    // 不要用 memberwise init 手工重建消息——新增字段会被静默丢掉，附件图
+    // （imageIdsJSON/localImages）就是这样在流结束后消失过。
+    var id: String
     let conversationId: String
     let role: String         // user | assistant | tool
-    let content: String
-    let toolCallsJSON: String?
+    var content: String
+    var toolCallsJSON: String?
     let reasoningContent: String? = nil
     let memoryIds: [String]? = nil
     let toolCallId: String? = nil
@@ -70,17 +73,8 @@ struct Message: Identifiable, Codable {
 
     /// 返回清除 tool_calls_json 后的消息，不展开为独立 tool 消息
     func withoutToolCalls() -> [Message] {
-        var msg = Message(
-            id: id,
-            conversationId: conversationId,
-            role: role,
-            content: content,
-            toolCallsJSON: nil,
-            createdAt: createdAt
-        )
-        // 附件必须一起带上，否则加载/重放时被静默丢弃
-        msg.imageIdsJSON = imageIdsJSON
-        msg.localImages = localImages
+        var msg = self
+        msg.toolCallsJSON = nil
         return [msg]
     }
 }

@@ -248,7 +248,7 @@ struct ChatView: View {
                         context: ctx,
                         symbol: "arrow.up.circle.fill",
                         tint: ctx.canSend ? Color("appAccent") : .gray,
-                        isEnabled: ctx.canSend,
+                        isEnabled: ctx.canSend && !isUploadingAttachments,
                         tooltip: "发送",
                         action: sendDraft
                     )
@@ -374,6 +374,7 @@ struct ChatView: View {
     }
 
     /// 发送草稿：校验非空 → 清输入 → 发消息 → 滚到底部。
+    /// 带图时刻意让托盘留到上传成功后再清——托盘转圈就是上传期间的占位。
     private func sendDraft() {
         let text = viewModel.draftText
         let attachments = draftAttachments
@@ -382,17 +383,17 @@ struct ChatView: View {
 
         dismissKeyboardToken = UUID()
         viewModel.draftText = ""
-        draftAttachments = []
         withAnimation(.easeOut(duration: 0.3)) {
             scrollPosition.scrollTo(edge: .top)
         }
 
         guard !attachments.isEmpty else {
+            draftAttachments = []
             viewModel.sendMessage(text, baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
             return
         }
 
-        // 带图：先上传拿 image_id（截图约 1-2 秒，托盘显示进度），再发送
+        // 带图：先上传拿 image_id，再发送
         isUploadingAttachments = true
         Task { @MainActor in
             defer { isUploadingAttachments = false }
@@ -407,7 +408,12 @@ struct ChatView: View {
                     ToastCenter.shared.show("图片上传失败：\((error as NSError).localizedDescription)")
                 }
             }
-            guard !ids.isEmpty else { return }
+            guard !ids.isEmpty else {
+                // 全失败：文字还给用户、托盘留着，别让打好的字白丢
+                viewModel.draftText = text
+                return
+            }
+            draftAttachments = []
             viewModel.sendMessage(
                 text,
                 baseURL: baseURL,
@@ -421,13 +427,26 @@ struct ChatView: View {
 
     /// 读取用户选中的图片文件（macOS 原生文件选择器）
     private func handlePickedFiles(_ urls: [URL]) {
+        var skipped = 0
         for url in urls {
             guard let data = try? Data(contentsOf: url),
                   let image = PlatformImage(data: data) else {
                 LogBuffer.shared.warning("ChatView: 无法读取图片 \(url.lastPathComponent)")
                 continue
             }
+            // 同一张图重复选只留一份：服务端会按内容去重返回同一个 image_id，
+            // 重复 id 会让模型把同一张图看两遍
+            guard !draftAttachments.contains(where: { $0.data == data }) else {
+                skipped += 1
+                continue
+            }
             draftAttachments.append(DraftAttachment(data: data, image: image, filename: url.lastPathComponent))
+        }
+        // 跳过必须说出来：静默忽略会让人以为选图没生效，反复重选
+        if skipped == 1 {
+            ToastCenter.shared.show("这张图已经在待发送列表里")
+        } else if skipped > 1 {
+            ToastCenter.shared.show("已忽略 \(skipped) 张重复的图")
         }
     }
 

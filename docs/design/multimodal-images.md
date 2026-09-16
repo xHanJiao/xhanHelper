@@ -132,13 +132,14 @@ DB 记录、DeepSeek Files API 上传、消息引用关系、两级自动清理�
   用户选图                    │  POST /api/images/upload                 │
    ┌──────────┐  multipart   │    ├─ 魔数校验 / sha256 去重              │
    │ macOS    │─────────────▶│    ├─ 落盘 data/images/<uuid>.<ext>       │
-   │ 客户端    │              │    ├─ 写 ImageAsset(visibility=private)   │
-   └──────────┘              │    └─ 上传 DeepSeek Files API → file_id   │
-        │  ① 先上传拿 image_id │                 （失败留空，用时懒补）     │
+   │ 客户端    │              │    └─ 写 ImageAsset(visibility=private)   │
+   └──────────┘              │       （不在这里传 DeepSeek：外网往返     │
+        │  ① 先上传拿 image_id │        0.5-1.4s 会卡住交互式发送）        │
         │                     │                                          │
         │  ② POST /api/chat   │  Orchestrator                            │
         └────────────────────▶│    ├─ 组装 user 消息 content blocks       │
           attachments:[id…]   │    │   [{text}, {image: file_id}]         │
+                              │    ├─ 首次用时懒补 file_id 并回填落库      │
                               │    └─ 重放历史时按窗口回填                 │
                               │                                          │
   agent 发现图（本地/网页）    │                                          │

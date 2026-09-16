@@ -30,6 +30,7 @@ struct AttachmentTray: View {
                             )
                     }
                     .buttonStyle(.plain)
+                    .help(item.filename)
 
                     Button {
                         onRemove(item)
@@ -54,6 +55,8 @@ struct AttachmentTray: View {
                     )
             }
             .buttonStyle(.plain)
+            // 上传中加进来的图不会被本次上传带上，只会残留在托盘里
+            .disabled(isUploading)
             .help("再加一张图")
 
             if isUploading {

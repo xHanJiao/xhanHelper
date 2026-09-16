@@ -62,10 +62,12 @@ func (r *ImageAssetRepo) FindBySHA(ctx context.Context, userID, sha string) (*mo
 	return &a, nil
 }
 
-// SetDeepSeekFileID 回填 Files API 的 file_id
+// SetDeepSeekFileID 回填 Files API 的 file_id。
+// 用字段名而非列名：列名由 GORM 命名策略决定（DeepSeekFileID → deep_seek_file_id），
+// 手写列名一旦和策略不一致，这里会静默地每次都失败（图片反复重复上传）。
 func (r *ImageAssetRepo) SetDeepSeekFileID(ctx context.Context, id, fileID string) error {
 	return r.db.WithContext(ctx).Model(&model.ImageAsset{}).
-		Where("id = ?", id).Update("deepseek_file_id", fileID).Error
+		Where("id = ?", id).Update("DeepSeekFileID", fileID).Error
 }
 
 // MarkReferenced 批量标记为"已被消息引用"，刷新 last_used_at（清理任务的保留期基准）

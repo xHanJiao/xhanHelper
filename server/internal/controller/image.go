@@ -43,6 +43,10 @@ const uploadMaxMemory = 8 << 20
 // Upload POST /api/images/upload（鉴权）
 // 请求：multipart/form-data，字段 file；或裸字节（Content-Type 为图片类型时按裸字节处理）
 // 返回：{image_id, url, mime, bytes}
+//
+// 这里只落盘 + 入库，不做 LLM 侧上传：那次上传要打外网（实测 0.5-1.4s），
+// 会卡住交互式发送，让输入框清空后有一段时间什么都没有。file_id 由对话时
+// resolveAttachments / AttachReplayImages 懒补，结果同样回填落库。
 func (h *ImageHandler) Upload(c *gin.Context) {
 	userID := c.GetString("user_id")
 
@@ -63,11 +67,6 @@ func (h *ImageHandler) Upload(c *gin.Context) {
 		log.Printf("[image] upload failed (user=%s, %d bytes): %v", userID, len(data), err)
 		view.JSONError(c, 500, "图片保存失败")
 		return
-	}
-
-	// 立刻上传到 LLM 侧（best-effort）：失败也不影响入库，对话时懒补
-	if _, err := h.store.EnsureFileID(c.Request.Context(), asset); err != nil {
-		log.Printf("[image] pre-upload to llm skipped (id=%s): %v", asset.ID[:8], err)
 	}
 
 	view.JSONOK(c, gin.H{

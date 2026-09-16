@@ -131,6 +131,19 @@ func TestImageStoreEnsureFileID(t *testing.T) {
 	if err != nil || got != "file-api-abc" {
 		t.Errorf("expected cached file id, got %q err=%v", got, err)
 	}
+
+	// 回填 file_id 必须真正落到列上（列名由 GORM 命名策略决定，
+	// 手写列名对不上会每次都静默失败 → 图片反复重复上传）
+	if err := store.Repo().SetDeepSeekFileID(ctx, asset.ID, "file-api-xyz"); err != nil {
+		t.Fatalf("set file id: %v", err)
+	}
+	reloaded, err := store.Repo().GetByID(ctx, asset.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.DeepSeekFileID != "file-api-xyz" {
+		t.Errorf("file id not persisted: %q", reloaded.DeepSeekFileID)
+	}
 }
 
 func TestImageStoreCleanupTwoTier(t *testing.T) {

@@ -1168,15 +1168,8 @@ class ChatViewModel: ObservableObject {
     /// 只在非 done 收尾路径调用——done 路径由 replaceStreamingMessageID 换真实 ID。
     private func detachStreamingMessage() {
         guard let idx = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
-        let m = messages[idx]
-        messages[idx] = Message(
-            id: "local_" + UUID().uuidString,
-            conversationId: m.conversationId,
-            role: m.role,
-            content: m.content,
-            toolCallsJSON: nil,
-            createdAt: m.createdAt
-        )
+        messages[idx].id = "local_" + UUID().uuidString
+        messages[idx].toolCallsJSON = nil
     }
 
     #if os(iOS)
@@ -1216,43 +1209,21 @@ class ChatViewModel: ObservableObject {
 
     private func replaceStreamingMessageID(with msgID: String) {
         guard let index = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
-        var msg = messages[index]
-        messages.remove(at: index)
-        msg = Message(
-            id: msgID,
-            conversationId: msg.conversationId,
-            role: msg.role,
-            content: msg.content,
-            toolCallsJSON: nil,
-            createdAt: msg.createdAt
-        )
-        messages.insert(msg, at: index)
+        messages[index].id = msgID
+        messages[index].toolCallsJSON = nil
     }
 
+    // 原地改 id，不重建消息：重建会把 imageIdsJSON / localImages 一起丢掉，
+    // 附件图会在 done 事件到达时当场消失。
     private func replaceUserMessageID(with msgID: String) {
         guard let index = messages.lastIndex(where: { $0.role == "user" }) else { return }
-        let msg = messages[index]
-        messages[index] = Message(
-            id: msgID,
-            conversationId: msg.conversationId,
-            role: "user",
-            content: msg.content,
-            toolCallsJSON: nil,
-            createdAt: msg.createdAt
-        )
+        messages[index].id = msgID
     }
 
     private func updateLastAssistantMessage(_ content: String) {
         guard let idx = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
-        let last = messages[idx]
-        messages[idx] = Message(
-            id: "__streaming__",
-            conversationId: last.conversationId,
-            role: "assistant",
-            content: content,
-            toolCallsJSON: nil,
-            createdAt: last.createdAt
-        )
+        messages[idx].content = content
+        messages[idx].toolCallsJSON = nil
     }
 
     private func throttleFlush() {

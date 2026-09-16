@@ -18,7 +18,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
 
-    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, memoryThreshold: Double = 0.5, memoryLimit: Int = 8, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil) {
+    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, memoryThreshold: Double = 0.5, memoryLimit: Int = 8, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil, hiddenRound: Bool = false) {
         let url = URL(string: "\(baseURL)/api/chat")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -38,6 +38,8 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         // 空 tab（无会话）场景：客户端已切换的模式经 init_mode 传给服务端，新建会话时落库
         if let im = initMode { body["init_mode"] = im }
         if let ve = verifyEnabled { body["verify_enabled"] = ve }
+        // 隐藏轮（接力等控制轮）：本轮消息落库为隐藏状态，不进对话记录/LLM 上下文/检索/后处理
+        if hiddenRound { body["hidden_round"] = true }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         if req.httpBody == nil {
             Self.log.error("failed to serialize request body")

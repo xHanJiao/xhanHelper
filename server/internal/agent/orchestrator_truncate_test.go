@@ -437,7 +437,7 @@ func TestCollectToolResults_ShortResult_NotTruncated(t *testing.T) {
 	}}
 	events := make(chan *llm.StreamEvent, 16)
 
-	msgs := o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil)
+	msgs := o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil, false)
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 msg, got %d", len(msgs))
@@ -465,7 +465,7 @@ func TestCollectToolResults_LongResult_NotTruncated(t *testing.T) {
 	}}
 	events := make(chan *llm.StreamEvent, 16)
 
-	msgs := o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil)
+	msgs := o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil, false)
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 msg, got %d", len(msgs))
@@ -492,7 +492,7 @@ func TestCollectToolResults_MultipleResults(t *testing.T) {
 	}
 	events := make(chan *llm.StreamEvent, 16)
 
-	msgs := o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil)
+	msgs := o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil, false)
 
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 msgs, got %d", len(msgs))
@@ -519,7 +519,7 @@ func TestCollectToolResults_AppendsToExistingMsgs(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 16)
 	existing := []llm.Message{{Role: "user", Content: "hi"}}
 
-	msgs := o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", existing)
+	msgs := o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", existing, false)
 
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 msgs (existing + tool result), got %d", len(msgs))
@@ -542,7 +542,7 @@ func TestCollectToolResults_MarshalError(t *testing.T) {
 	}}
 	events := make(chan *llm.StreamEvent, 16)
 
-	msgs := o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil)
+	msgs := o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil, false)
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 msg, got %d", len(msgs))
@@ -566,7 +566,7 @@ func TestCollectToolResults_EventsSent(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 16)
 
 	go func() {
-		o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil)
+		o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil, false)
 		close(events)
 	}()
 
@@ -601,7 +601,7 @@ func TestCollectToolResults_LongResult_EventHasFullContent(t *testing.T) {
 
 	var msgs []llm.Message
 	go func() {
-		msgs = o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil)
+		msgs = o.collectToolResults(context.Background(), parsed, results, events, "c1", "u1", nil, false)
 		close(events)
 	}()
 
@@ -638,7 +638,7 @@ func TestCollectToolResultsNative_RoleIsTool(t *testing.T) {
 	}}
 	events := make(chan *llm.StreamEvent, 16)
 
-	msgs := o.collectToolResultsNative(context.Background(), internalTCs, nativeTCs, results, events, "c1", "u1", nil)
+	msgs := o.collectToolResultsNative(context.Background(), internalTCs, nativeTCs, results, events, "c1", "u1", nil, false)
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 msg, got %d", len(msgs))
@@ -668,7 +668,7 @@ func TestCollectToolResultsNative_EventsSent(t *testing.T) {
 	events := make(chan *llm.StreamEvent, 16)
 
 	go func() {
-		o.collectToolResultsNative(context.Background(), internalTCs, nativeTCs, results, events, "c1", "u1", nil)
+		o.collectToolResultsNative(context.Background(), internalTCs, nativeTCs, results, events, "c1", "u1", nil, false)
 		close(events)
 	}()
 

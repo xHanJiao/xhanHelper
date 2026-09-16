@@ -70,6 +70,25 @@ struct ModelPill: View {
     }
 }
 
+/// 会话接力图标按钮：把当前会话整理成接力文档并新开会话续接。仅图标，hover 看 tooltip。
+struct HandoffPill: View {
+    let context: InputBarContext
+    let isEnabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        IconButton(
+            visibility: .always,
+            context: context,
+            symbol: "arrow.uturn.right.circle",
+            tint: Color("appAccent"),
+            isEnabled: isEnabled,
+            tooltip: "整理结论并开始新会话（接力）",
+            action: action
+        )
+    }
+}
+
 /// 发送/停止按钮：仅展开态显示。流式时 morph 为红色停止，否则为发送箭头。
 struct SendStopButton: View {
     let context: InputBarContext

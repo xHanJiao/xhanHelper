@@ -98,9 +98,19 @@ final class ChatTabManager: ObservableObject {
         vm.onConversationGone = { [weak self] cid in
             self?.handleConversationGone(cid)
         }
+        vm.onHandoffReady = { [weak self] title, id, baseURL, token in
+            self?.startHandoffConversation(docTitle: title, docID: id, baseURL: baseURL, token: token)
+        }
         tabs.append(tab)
         activate(tab)
         resetBlank(tab)
+    }
+
+    /// 会话接力：新建会话并把「接力文档」作为首条消息发出，UI 切到新会话。
+    func startHandoffConversation(docTitle: String, docID: String, baseURL: String, token: String) {
+        newChat()
+        guard let vm = currentTab?.viewModel else { return }
+        vm.sendMessage(ChatViewModel.handoffTrigger(title: docTitle, id: docID), baseURL: baseURL, token: token)
     }
 
     /// 新建无痕会话：无痕标记必须在后端创建会话时落库，故先创建再打开。
@@ -131,6 +141,9 @@ final class ChatTabManager: ObservableObject {
         }
         vm.onConversationGone = { [weak self] cid in
             self?.handleConversationGone(cid)
+        }
+        vm.onHandoffReady = { [weak self] title, id, baseURL, token in
+            self?.startHandoffConversation(docTitle: title, docID: id, baseURL: baseURL, token: token)
         }
         let tab = ChatTab(id: id, conversationId: id, title: title, viewModel: vm)
         tabs.append(tab)

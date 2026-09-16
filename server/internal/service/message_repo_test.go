@@ -1105,3 +1105,28 @@ func TestClearDebugJSONBefore(t *testing.T) {
 		t.Errorf("无 request_json 的行不应被改动")
 	}
 }
+
+// 隐藏消息不参与游标 hasMore 边界判断（隐藏轮不进对话记录）。
+func TestExistsBeforeAfter_IgnoresHidden(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	const conv = "conv-hidden"
+
+	base := time.Now()
+	visible := &model.Message{ID: "v1", ConversationID: conv, UserID: "u1", Role: "user", Content: "可见", Status: model.MsgStatusNormal, CreatedAt: base}
+	hidden := &model.Message{ID: "h1", ConversationID: conv, UserID: "u1", Role: "user", Content: "隐藏", Status: model.MsgStatusHidden, CreatedAt: base.Add(time.Second)}
+	for _, m := range []*model.Message{visible, hidden} {
+		if err := repo.Create(ctx, m); err != nil {
+			t.Fatalf("create %s: %v", m.ID, err)
+		}
+	}
+
+	if !repo.existsBefore(ctx, conv, base.Add(2*time.Second)) {
+		t.Error("存在可见消息，hasBefore 应为 true")
+	}
+	// 可见消息之后只有隐藏消息 → 不应认为还有更多
+	if repo.existsAfter(ctx, conv, base.Add(500*time.Millisecond)) {
+		t.Error("可见消息之后仅有隐藏消息，hasAfter 应为 false")
+	}
+}

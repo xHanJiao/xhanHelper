@@ -208,6 +208,10 @@ func (t *DocumentTool) createDocument(ec *ExecuteContext, args json.RawMessage) 
 		Content: req.Content,
 		Tags:    req.Tags,
 	}
+	if ec.ConvID != "" {
+		convID := ec.ConvID
+		doc.ConversationID = &convID
+	}
 
 	if err := t.docRepo.Create(ec.Ctx, doc); err != nil {
 		return &Result{Success: false, Error: "create document: " + err.Error()}

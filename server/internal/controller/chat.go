@@ -73,6 +73,8 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			ClientTools []agent.ClientTool `json:"client_tools"`
 			// 响应检验（verify）开关：nil=跟随服务端全局配置，true/false=强制覆盖
 			VerifyEnabled *bool `json:"verify_enabled"`
+			// 隐藏轮：本轮消息落库为隐藏状态，不进对话记录/LLM 上下文/检索/后处理（接力等控制轮用）
+			HiddenRound bool `json:"hidden_round"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.Message == "" {
 			view.JSONError(c, 400, "invalid request")
@@ -262,6 +264,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			Mode:               convMode,
 			ModeNotice:         modeNotice,
 			VerifyEnabled:      req.VerifyEnabled,
+			HiddenRound:        req.HiddenRound,
 		})
 		if err != nil {
 			log.Printf("[chat] orch run error: %v", err)
@@ -282,7 +285,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 				// 继续消费 events 直到 ReAct 完成（消息完整入库），但不再写 SSE。
 				// done 事件的标题合并用背景 ctx（Request.Context 已取消，DB 操作会失败）
 				if evt.Type == "done" {
-					mergeTitle(context.Background(), orch, convRepo, conv, req.Message, evt.Content)
+					mergeTitle(context.Background(), orch, convRepo, conv, req.Message, evt.Content, req.HiddenRound)
 				}
 				continue
 			}
@@ -310,7 +313,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			case "verify":
 				view.WriteSSE(w, flusher, "verify", evt.Content)
 			case "done":
-				doneJSON := mergeTitle(c.Request.Context(), orch, convRepo, conv, req.Message, evt.Content)
+				doneJSON := mergeTitle(c.Request.Context(), orch, convRepo, conv, req.Message, evt.Content, req.HiddenRound)
 				view.WriteSSE(w, flusher, "done", doneJSON)
 			case "error":
 				view.WriteSSE(w, flusher, "error", evt.Error)
@@ -363,8 +366,8 @@ func chatToolResult(bridge *agent.ClientToolBridge) gin.HandlerFunc {
 	}
 }
 
-func mergeTitle(ctx context.Context, orch *agent.Orchestrator, convRepo *service.ConversationRepo, conv *model.Conversation, userMsg, doneContent string) string {
-	if conv.Title != "新对话" || userMsg == "" {
+func mergeTitle(ctx context.Context, orch *agent.Orchestrator, convRepo *service.ConversationRepo, conv *model.Conversation, userMsg, doneContent string, hidden bool) string {
+	if conv.Title != "新对话" || userMsg == "" || hidden {
 		return doneContent
 	}
 	ctx = llmcost.WithScenario(ctx, llmcost.Scenario{

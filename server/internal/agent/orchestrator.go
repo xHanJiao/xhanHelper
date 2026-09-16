@@ -88,6 +88,10 @@ type RunRequest struct {
 	History retrieval.SourceConfig
 	Theme   retrieval.SourceConfig
 	Summary retrieval.SourceConfig
+
+	// HiddenRound 隐藏轮：本轮所有消息（user/assistant/tool）落库为隐藏状态，
+	// 不进对话记录/LLM 上下文/检索/后处理。接力等控制轮用。
+	HiddenRound bool
 }
 
 // reactState — runReActLoop 循环过程中的可变状态
@@ -463,10 +467,14 @@ func (o *Orchestrator) runReActLoop(
 		return
 	}
 	util.SafeGo(func() { o.convRepo.Touch(ctx, req.ConversationID) })
-	util.SafeGo(func() { o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID) })
+	// 隐藏轮不落用户消息向量：避免接力提示词污染历史检索/记忆
+	if !req.HiddenRound {
+		util.SafeGo(func() { o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID) })
+	}
 
-	// 在整个 ReAct 循环结束后通知外部（用于入队延迟任务：post_chat + summary）
-	if o.onChatEnd != nil {
+	// 在整个 ReAct 循环结束后通知外部（用于入队延迟任务：post_chat + summary）。
+	// 隐藏轮跳过：其消息不进对话记录，后处理无内容可做。
+	if o.onChatEnd != nil && !req.HiddenRound {
 		defer o.onChatEnd(req.UserID, req.ConversationID, userMsg.ID)
 	}
 
@@ -1165,12 +1173,21 @@ func mkUserMsg(req *RunRequest) *model.Message {
 		UserID:         req.UserID,
 		Role:           "user",
 		Content:        req.UserMessageContent,
+		Status:         msgStatusFor(req.HiddenRound),
 	}
 	if req.RawUserMessage != "" && req.RawUserMessage != req.UserMessageContent {
 		raw := req.RawUserMessage
 		m.OriginalContent = &raw
 	}
 	return m
+}
+
+// msgStatusFor 正常落库用 MsgStatusNormal，隐藏轮用 MsgStatusHidden。
+func msgStatusFor(hidden bool) int {
+	if hidden {
+		return model.MsgStatusHidden
+	}
+	return model.MsgStatusNormal
 }
 
 // sendEvent — 非阻塞发送事件，避免客户端断连后 goroutine 卡住
@@ -1256,11 +1273,11 @@ func (o *Orchestrator) handleOneRoundResponse(
 	// 原生 FC 路径：tool_calls 已由 API 在 done 事件中解析好
 	if o.useNativeFC && len(msg.ToolCalls) > 0 {
 		internalTCs := nativeToolCallsToInternal(msg.ToolCalls)
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
 		state.msgs = append(state.msgs, msg)
 		state.allToolCalls = append(state.allToolCalls, internalTCs...)
 		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, internalTCs, clientToolIndex(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry), state, req.Mode, clientToolReadOnlyIndex(req.ClientTools), toToolClientInfos(req.ClientTools))
-		state.msgs = o.collectToolResultsNative(ctx, internalTCs, msg.ToolCalls, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
+		state.msgs = o.collectToolResultsNative(ctx, internalTCs, msg.ToolCalls, toolCallResults, events, req.ConversationID, req.UserID, state.msgs, req.HiddenRound)
 		return false
 	}
 
@@ -1281,7 +1298,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		if o.shouldVerify(req, state) {
 			return o.verifyAndMaybeRetry(ctx, events, msg, req, systemPrompt, retrieveResult, state)
 		}
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
 		return true
 	}
 
@@ -1289,7 +1306,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 
 	if parseErr != nil {
 		log.Printf("[orch] round parse error: %v, saving raw and retrying", parseErr)
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, nil)
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, nil, req.HiddenRound)
 		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "响应格式异常，正在重试…"})
 		state.msgs = append(state.msgs, llm.Message{
 			Role:    "user",
@@ -1304,7 +1321,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		if o.shouldVerify(req, state) {
 			return o.verifyAndMaybeRetry(ctx, events, msg, req, systemPrompt, retrieveResult, state)
 		}
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
 		return true
 	}
 
@@ -1317,7 +1334,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		if o.shouldVerify(req, state) {
 			return o.verifyAndMaybeRetry(ctx, events, msg, req, systemPrompt, retrieveResult, state)
 		}
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
 		return true
 	}
 
@@ -1351,7 +1368,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 ) bool {
 	if state.verifyRetries >= o.verifyMaxRetries {
 		log.Printf("[verify] max retries reached (%d/%d), accepting draft", state.verifyRetries, o.verifyMaxRetries)
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
 		return true
 	}
 
@@ -1401,7 +1418,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 	if err != nil {
 		log.Printf("[verify] LLM call error: %v", err)
 		o.sendVerifyEvent(events, "done", state.verifyRetries, "")
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
 		return true
 	}
 
@@ -1409,7 +1426,7 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 	if err := json.Unmarshal([]byte(verifyMsg.Content), &vr); err != nil {
 		log.Printf("[verify] parse result error: %v, raw=%s", err, verifyMsg.Content)
 		o.sendVerifyEvent(events, "done", state.verifyRetries, "")
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
 		return true
 	}
 
@@ -1417,20 +1434,20 @@ func (o *Orchestrator) verifyAndMaybeRetry(
 
 	// 通过：无幻觉且完成
 	if vr.Complete && len(vr.Hallucinations) == 0 {
-		o.saveVerifyFeedback(ctx, req.ConversationID, req.UserID, "检验通过：无幻觉，回复完整", systemPrompt, verifyInstructions+"\n\n"+verifyPrompt)
+		o.saveVerifyFeedback(ctx, req.ConversationID, req.UserID, "检验通过：无幻觉，回复完整", systemPrompt, verifyInstructions+"\n\n"+verifyPrompt, req.HiddenRound)
 		log.Printf("[verify] round %d passed", state.verifyRetries)
 		o.sendVerifyEvent(events, "done", state.verifyRetries, "")
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
+		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
 		return true
 	}
 
 	// 不通过：存档草稿（IsInternal），注入反馈，继续
 	log.Printf("[verify] round %d failed: complete=%v hallucinations=%d missing=%d", state.verifyRetries, vr.Complete, len(vr.Hallucinations), len(vr.MissingAspects))
 	o.sendVerifyEvent(events, "retry", state.verifyRetries, vr.Suggestion)
-	o.saveAssistantMsgInternal(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
+	o.saveAssistantMsgInternal(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
 
 	feedback := o.buildVerifyFeedback(vr)
-	o.saveVerifyFeedback(ctx, req.ConversationID, req.UserID, feedback, systemPrompt, verifyInstructions+"\n\n"+verifyPrompt)
+	o.saveVerifyFeedback(ctx, req.ConversationID, req.UserID, feedback, systemPrompt, verifyInstructions+"\n\n"+verifyPrompt, req.HiddenRound)
 	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	state.msgs = append(state.msgs, llm.Message{
 		Role:    "user",
@@ -1459,7 +1476,7 @@ func (o *Orchestrator) executePromptEngTools(
 	parsed *LLMResponse,
 ) bool {
 	msg.ToolCalls = nil
-	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult))
+	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
 	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
 	state.allToolCalls = append(state.allToolCalls, parsed.ToolCalls...)
 	// 客户端工具只在原生 FC 模式下发给 LLM（mkLlmChatReq），
@@ -1469,7 +1486,7 @@ func (o *Orchestrator) executePromptEngTools(
 		clientIdx = clientToolIndex(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry)
 	}
 	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, parsed.ToolCalls, clientIdx, state, req.Mode, clientToolReadOnlyIndex(req.ClientTools), toToolClientInfos(req.ClientTools))
-	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs)
+	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs, req.HiddenRound)
 	return false
 }
 
@@ -1501,8 +1518,8 @@ func (o *Orchestrator) sendVerifyEvent(events chan<- *llm.StreamEvent, status st
 }
 
 // saveAssistantMsgInternal 以 IsInternal=true 保存草稿，仅存档不展示
-func (o *Orchestrator) saveAssistantMsgInternal(ctx context.Context, convID, userID string, msg llm.Message, trace *ctxflow.RetrieveTrace) string {
-	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, true)
+func (o *Orchestrator) saveAssistantMsgInternal(ctx context.Context, convID, userID string, msg llm.Message, trace *ctxflow.RetrieveTrace, hidden bool) string {
+	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, true, hidden)
 }
 
 // DebugJSONSink — 调试 JSON 异步持久化接口：消息落库后把 request_json 交给后台限频写入。
@@ -1516,7 +1533,7 @@ type NoopDebugJSONSink struct{}
 func (NoopDebugJSONSink) Submit(string, *string) bool { return false }
 
 // saveVerifyFeedback 将检验反馈存为内部系统消息（含检验请求 request_json），调试页可见
-func (o *Orchestrator) saveVerifyFeedback(ctx context.Context, convID, userID, feedback, systemPrompt, userPrompt string) {
+func (o *Orchestrator) saveVerifyFeedback(ctx context.Context, convID, userID, feedback, systemPrompt, userPrompt string, hidden bool) {
 	if o.msgRepo == nil || convID == "" {
 		return
 	}
@@ -1538,6 +1555,7 @@ func (o *Orchestrator) saveVerifyFeedback(ctx context.Context, convID, userID, f
 		Role:           "system",
 		Content:        feedback,
 		IsInternal:     true,
+		Status:         msgStatusFor(hidden),
 	}
 	if err := o.msgRepo.Create(ctx, msg); err != nil {
 		log.Printf("[verify] save feedback error: %v", err)
@@ -1549,7 +1567,7 @@ func (o *Orchestrator) saveVerifyFeedback(ctx context.Context, convID, userID, f
 	}
 }
 
-func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, userID string, msg llm.Message, trace *ctxflow.RetrieveTrace, isInternal bool) string {
+func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, userID string, msg llm.Message, trace *ctxflow.RetrieveTrace, isInternal bool, hidden bool) string {
 	if o.msgRepo == nil || convID == "" {
 		return ""
 	}
@@ -1561,6 +1579,7 @@ func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, us
 		Role:           "assistant",
 		Content:        msg.Content,
 		IsInternal:     isInternal,
+		Status:         msgStatusFor(hidden),
 	}
 	mergeMsgExtra(modelMsg, func(extra *MsgExtra) {
 		if msg.Usage != nil {
@@ -1618,7 +1637,7 @@ func idsByTypeFromResult(r *ctxflow.RetrieveResult) map[string][]string {
 	return ids
 }
 
-func (o *Orchestrator) collectToolResults(ctx context.Context, parsed *LLMResponse, toolCallResults []toolExecResult, events chan<- *llm.StreamEvent, convID string, userID string, msgs []llm.Message) []llm.Message {
+func (o *Orchestrator) collectToolResults(ctx context.Context, parsed *LLMResponse, toolCallResults []toolExecResult, events chan<- *llm.StreamEvent, convID string, userID string, msgs []llm.Message, hidden bool) []llm.Message {
 	for i := range parsed.ToolCalls {
 		res := toolCallResults[i].result
 		resJSON, err := json.Marshal(res)
@@ -1627,7 +1646,7 @@ func (o *Orchestrator) collectToolResults(ctx context.Context, parsed *LLMRespon
 			resJSON = []byte(fmt.Sprintf(`{"success":false,"error":"marshal failed: %s"}`, res.Error))
 		}
 		o.sendEvent(events, &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)})
-		o.saveToolMsg(ctx, convID, userID, idgen.Next(), string(resJSON))
+		o.saveToolMsg(ctx, convID, userID, idgen.Next(), string(resJSON), hidden)
 		msgs = append(msgs, llm.Message{
 			Role:    "user",
 			Content: string(resJSON),
@@ -1637,7 +1656,7 @@ func (o *Orchestrator) collectToolResults(ctx context.Context, parsed *LLMRespon
 }
 
 // collectToolResultsNative 原生 FC 路径：工具结果以 role=tool 保存，关联真实 tool_call_id。
-func (o *Orchestrator) collectToolResultsNative(ctx context.Context, internalTCs []tool.ToolCall, nativeTCs []llm.ToolCall, toolCallResults []toolExecResult, events chan<- *llm.StreamEvent, convID string, userID string, msgs []llm.Message) []llm.Message {
+func (o *Orchestrator) collectToolResultsNative(ctx context.Context, internalTCs []tool.ToolCall, nativeTCs []llm.ToolCall, toolCallResults []toolExecResult, events chan<- *llm.StreamEvent, convID string, userID string, msgs []llm.Message, hidden bool) []llm.Message {
 	for i := range internalTCs {
 		res := toolCallResults[i].result
 		resJSON, err := json.Marshal(res)
@@ -1646,7 +1665,7 @@ func (o *Orchestrator) collectToolResultsNative(ctx context.Context, internalTCs
 			resJSON = []byte(fmt.Sprintf(`{"success":false,"error":"marshal failed: %s"}`, res.Error))
 		}
 		o.sendEvent(events, &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)})
-		o.saveToolMsg(ctx, convID, userID, nativeTCs[i].ID, string(resJSON))
+		o.saveToolMsg(ctx, convID, userID, nativeTCs[i].ID, string(resJSON), hidden)
 		msgs = append(msgs, llm.Message{
 			Role:       "tool",
 			Content:    string(resJSON),
@@ -1839,11 +1858,11 @@ func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm
 
 // —— DB 保存 ——
 
-func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message, trace *ctxflow.RetrieveTrace) string {
-	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, false)
+func (o *Orchestrator) saveAssistantMsg(ctx context.Context, convID, userID string, msg llm.Message, trace *ctxflow.RetrieveTrace, hidden bool) string {
+	return o.saveAssistantMsgWithFlags(ctx, convID, userID, msg, trace, false, hidden)
 }
 
-func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCallID string, content string) {
+func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCallID string, content string, hidden bool) {
 	if o.msgRepo == nil || convID == "" {
 		return
 	}
@@ -1857,6 +1876,7 @@ func (o *Orchestrator) saveToolMsg(ctx context.Context, convID, userID, toolCall
 		Content:        content,
 		ToolCallID:     &tcid,
 		IsInternal:     true,
+		Status:         msgStatusFor(hidden),
 	}); err != nil {
 		log.Printf("[orch] save tool msg error: %v", err)
 		return

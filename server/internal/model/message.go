@@ -6,6 +6,10 @@ import "time"
 const (
 	MsgStatusNormal  = 1 // 正常
 	MsgStatusDeleted = 2 // 已删除
+	// MsgStatusHidden = 3 隐藏：接力等控制轮。落库留档，但不进对话记录——
+	// 不展示、不参与 LLM 上下文/检索/搜索/分享，也不参与任何后台后处理（摘要/记忆/主题/反思/画像）。
+	// 所有消息读取路径均带 status = MsgStatusNormal，故置为 3 即自动隔离。
+	MsgStatusHidden = 3
 )
 
 // Message — 对话消息

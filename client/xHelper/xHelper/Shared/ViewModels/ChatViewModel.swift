@@ -122,8 +122,13 @@ class ChatViewModel: ObservableObject {
     @Published var verifyEnabled = false
     /// 当前流的工具调用展示队列（tool_call 入队，tool_result 更新状态）
     @Published var toolQueue: [ToolCallDisplay] = []
-    /// 待展示工具名 FIFO：tool_call 暂存 display，tool_result 到后取出构造完结 pill（不展示 running）
-    private var pendingToolDisplays: [String] = []
+    /// 待展示工具调用 FIFO：tool_call 暂存，tool_result 到后取出构造完结 pill（不展示 running）
+    private struct PendingToolCall {
+        let display: String
+        let tool: String
+        let function: String
+    }
+    private var pendingToolCalls: [PendingToolCall] = []
     /// 响应检验事件状态（verify:checking|done|retry）
     @Published var verifyStatus: VerifyStatus?
 
@@ -139,6 +144,17 @@ class ChatViewModel: ObservableObject {
     /// 会话在服务端已不存在（如无痕会话被销毁）时回调：(conversationId)。
     /// 由 ChatTabManager / ContentView 接线，用于关闭 tab、清理列表、提示用户。
     var onConversationGone: ((String) -> Void)?
+
+    // MARK: 会话接力
+
+    /// 正在生成接力文档（把本会话整理成文档，完成后开新会话续接）
+    @Published private(set) var handoffActive = false
+    /// 接力文档生成完成时回调：(文档标题, 文档 id, baseURL, token)
+    var onHandoffReady: ((String, String, String, String) -> Void)?
+
+    private var capturedHandoffDoc: (title: String, id: String)?
+    private var handoffBaseURL = ""
+    private var handoffToken = ""
 
     private var lastHapticTime: Date = .distantPast
 
@@ -641,7 +657,7 @@ class ChatViewModel: ObservableObject {
         // 响应检验开关会话级恢复：无记录默认关
         verifyEnabled = UserDefaults.standard.bool(forKey: "xhan_conv_verify_enabled_\(id)")
         toolQueue = []
-        pendingToolDisplays = []
+        pendingToolCalls = []
         verifyStatus = nil
         if !preserveTrustedMode {
             trustedMode = false // 信任模式会话级：换会话自动关闭（安全默认）
@@ -751,6 +767,8 @@ class ChatViewModel: ObservableObject {
     /// 使 SSE 携带 conversation_id="" 由后端创建非默认新会话）
     func resetForNewChat() {
         stopStreaming()
+        handoffActive = false
+        capturedHandoffDoc = nil
         messages = []
         isStreaming = false
         thoughtMessage = nil
@@ -790,7 +808,7 @@ class ChatViewModel: ObservableObject {
 
     // MARK: Send
 
-    func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil) {
+    func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil, hiddenRound: Bool = false) {
         let userMsg = Message.localUser(text: text, conversationId: conversationId ?? "")
         messages.append(userMsg)
 
@@ -808,21 +826,80 @@ class ChatViewModel: ObservableObject {
         lastMemoryIDs = nil
         lastNoteIDs = nil
         toolQueue = []
-        pendingToolDisplays = []
+        pendingToolCalls = []
         verifyStatus = nil
 
         messages.append(.streamingAssistant(conversationId: conversationId ?? ""))
 
         Task { @MainActor in
             let clientTools = await Self.collectClientTools()
-            setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId, clientTools: clientTools)
+            setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId, clientTools: clientTools, hiddenRound: hiddenRound)
         }
         #if os(iOS)
         beginBackgroundTask()
         #endif
     }
 
-    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil, clientTools: [[String: Any]]? = nil) {
+    // MARK: 会话接力
+
+    /// 触发接力：把本会话整理成一篇带「接力」tag 的文档，完成后由 onHandoffReady 开新会话续接。
+    func beginHandoff(baseURL: String, token: String, agentId: String? = nil) {
+        guard !isStreaming, !isPlanMode, let cid = conversationId, !cid.isEmpty else { return }
+        handoffActive = true
+        capturedHandoffDoc = nil
+        handoffBaseURL = baseURL
+        handoffToken = token
+        sendMessage(Self.handoffPrompt, baseURL: baseURL, token: token, agentId: agentId, hiddenRound: true)
+    }
+
+    /// 接力文档生成提示词（借 opencode compaction 的 anchored summary 模板 + 规则）
+    static let handoffPrompt = """
+    把本次会话到目前为止的讨论整理成一篇"接力文档"，供另一个会话接手继续。
+
+    要求：
+    - 必须调用 document.create_document 创建，标题自拟、能概括主题。
+    - tags 参数必须固定包含「接力」；如有其他合适标签，用逗号追加在其后。
+    - 正文严格使用下列 Markdown 结构，章节与顺序不变，每节都保留（为空填「(无)」）。
+
+    ## 目标
+    - 用户想达成什么（一两句）
+
+    ## 重要细节
+    - 约束与偏好、已确定的决策及原因、重要事实与假设、继续所需的确切上下文
+
+    ## 工作状态
+    ### 已完成
+    - 已得出的结论、已完成的工作、已产出的文档/笔记
+
+    ### 进行中
+    - 当前正在讨论或处理的内容、未完成的探索
+
+    ### 阻塞
+    - 卡点、未决问题、未知项
+
+    ## 下一步
+    1. 紧接着要做的具体动作
+    2. 已知的后续动作
+
+    ## 相关文档 / 笔记
+    - 文档或笔记的标题、id：为什么相关
+
+    规则：
+    - 用简短要点，不写散文长句。
+    - 保留精确的文件路径、符号名、命令、错误串、URL、ID。
+    - 不要提及"整理/压缩/摘要"这个动作本身。
+    - 只做整理，不要继续讨论；创建完成后只回复我文档标题。
+    """
+
+    /// 新会话首条消息：指向接力文档，请新会话先读取再续接
+    static func handoffTrigger(title: String, id: String) -> String {
+        """
+        【接力会话】上一个会话已整理为接力文档《\(title)》(id=\(id))。
+        请先调用 document.get_document 读取它，然后基于它继续；有下一步就直接继续，不确定就先问我。
+        """
+    }
+
+    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil, clientTools: [[String: Any]]? = nil, hiddenRound: Bool = false) {
         sseClient.disconnect()
         sseClient.onEvent = { [weak self] event in
             Task { @MainActor in
@@ -856,12 +933,14 @@ class ChatViewModel: ObservableObject {
         }
         // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）
         let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, hiddenRound: hiddenRound)
     }
 
     func stopStreaming() {
         // 先立即断开 SSE + UI 收尾（思考框消失），再后台通知服务端显式终止 ReAct。
         // 顺序保证：UI 即时响应，stopChat 失败/慢速不影响停止体验。
+        handoffActive = false
+        capturedHandoffDoc = nil
         let api = apiClient
         let cid = conversationId
         sseClient.disconnect()
@@ -915,7 +994,7 @@ class ChatViewModel: ObservableObject {
             // 文本开始推送：清「正在分析/等待」提示 + 工具/校验 pill（内容才是主角，对齐前端行为）
             statusMessage = nil
             toolQueue = []
-            pendingToolDisplays = []
+            pendingToolCalls = []
             verifyStatus = nil
             if let delta = parseMessageDelta(event.data) {
                 streamingContent += delta
@@ -935,14 +1014,20 @@ class ChatViewModel: ObservableObject {
         case .toolCall:
             if let tc = parseToolCall(event.data) {
                 // 新一轮工具执行（上一轮 pending 已清空）：清掉旧完结 pill
-                if pendingToolDisplays.isEmpty { toolQueue = [] }
-                pendingToolDisplays.append(tc.display)
+                if pendingToolCalls.isEmpty { toolQueue = [] }
+                pendingToolCalls.append(PendingToolCall(display: tc.display, tool: tc.tool, function: tc.function))
             }
 
         case .toolResult:
-            if let tr = parseToolResult(event.data), !pendingToolDisplays.isEmpty {
+            if let tr = parseToolResult(event.data), !pendingToolCalls.isEmpty {
                 // 只在成功/失败时展示 pill（不展示 running）
-                let display = pendingToolDisplays.removeFirst()
+                let pending = pendingToolCalls.removeFirst()
+                let display = pending.display
+                // 会话接力：捕获本轮生成的接力文档（document.create_document 结果里的 id/title）
+                if handoffActive, pending.tool == "document", pending.function == "create_document",
+                   tr.success, let id = tr.data?["id"] as? String {
+                    capturedHandoffDoc = (title: tr.data?["title"] as? String ?? "接力文档", id: id)
+                }
                 let summary = tr.success ? "✅ \(display) 已完成" : "❌ \(display): \(tr.error ?? "失败")"
                 let tc = ToolCallDisplay(display: display, status: tr.success ? .done : .failed, summary: summary)
                 toolQueue.append(tc)
@@ -963,7 +1048,7 @@ class ChatViewModel: ObservableObject {
             if let vs = parseVerify(event.data) {
                 // verify 只在全部工具结束后发生：清空工具 pill，让位校验 pill
                 toolQueue = []
-                pendingToolDisplays = []
+                pendingToolCalls = []
                 verifyStatus = VerifyStatus(status: vs.status, retry: vs.retry, reason: vs.reason ?? "")
             }
 
@@ -981,7 +1066,7 @@ class ChatViewModel: ObservableObject {
             finishStreaming()
             statusMessage = nil
             toolQueue = []
-            pendingToolDisplays = []
+            pendingToolCalls = []
             verifyStatus = nil
             if let err = parseDoneError(event.data) {
                 ToastCenter.shared.show("服务提示：\(err)")
@@ -1029,6 +1114,16 @@ class ChatViewModel: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in
                 planNodes = []
             }
+            // 会话接力：文档生成结束，通知开新会话续接；未捕获到文档则取消并提示
+            if handoffActive {
+                handoffActive = false
+                if let doc = capturedHandoffDoc {
+                    capturedHandoffDoc = nil
+                    onHandoffReady?(doc.title, doc.id, handoffBaseURL, handoffToken)
+                } else {
+                    ToastCenter.shared.show("未检测到新文档，已取消接力")
+                }
+            }
 
         case .error:
             LogBuffer.shared.error("ChatViewModel.sse error event: \(event.data)")
@@ -1059,7 +1154,7 @@ class ChatViewModel: ObservableObject {
         // 停止/出错时清校验状态，防 pill 残留
         // 注意：不清 toolQueue——工具 pill 由各自自动退场 timer 清理，
         // done 路径由 .done handler 清（此处清了 timer 永远没机会跑）
-        pendingToolDisplays = []
+        pendingToolCalls = []
         verifyStatus = nil
         #if os(iOS)
         endBackgroundTask()
@@ -1249,6 +1344,8 @@ class ChatViewModel: ObservableObject {
 
     private struct ParsedToolCall {
         let display: String
+        let tool: String
+        let function: String
     }
 
     private func parseToolCall(_ data: String) -> ParsedToolCall? {
@@ -1256,12 +1353,17 @@ class ChatViewModel: ObservableObject {
               let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
         else { return nil }
         let display = obj["display"] as? String ?? obj["function"] as? String ?? "工具"
-        return ParsedToolCall(display: display)
+        return ParsedToolCall(
+            display: display,
+            tool: obj["tool"] as? String ?? "",
+            function: obj["function"] as? String ?? ""
+        )
     }
 
     private struct ParsedToolResult {
         let success: Bool
         let error: String?
+        let data: [String: Any]?
     }
 
     private func parseToolResult(_ data: String) -> ParsedToolResult? {
@@ -1269,7 +1371,7 @@ class ChatViewModel: ObservableObject {
               let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
               let success = obj["success"] as? Bool
         else { return nil }
-        return ParsedToolResult(success: success, error: obj["error"] as? String)
+        return ParsedToolResult(success: success, error: obj["error"] as? String, data: obj["data"] as? [String: Any])
     }
 
     private struct ParsedVerify {

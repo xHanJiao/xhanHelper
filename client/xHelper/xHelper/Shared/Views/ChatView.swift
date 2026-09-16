@@ -186,6 +186,15 @@ struct ChatView: View {
                     ModelPill(context: ctx, isDeep: viewModel.deepMode) {
                         viewModel.toggleDeepMode()
                     }
+                    // 会话接力：整理成文档并开新会话续接（非流式、非空会话、非计划模式可用）
+                    HandoffPill(
+                        context: ctx,
+                        isEnabled: !viewModel.isStreaming
+                            && !(viewModel.conversationId ?? "").isEmpty
+                            && !viewModel.isPlanMode
+                    ) {
+                        viewModel.beginHandoff(baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
+                    }
                 }
                 #endif
             } trailingActions: { ctx in

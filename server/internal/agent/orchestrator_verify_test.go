@@ -282,7 +282,7 @@ func TestSaveAssistantMsg_Internal(t *testing.T) {
 	}
 	trace := &ctxflow.RetrieveTrace{}
 
-	mid := orch.saveAssistantMsgInternal(context.Background(), "c1", "u1", msg, trace)
+	mid := orch.saveAssistantMsgInternal(context.Background(), "c1", "u1", msg, trace, false)
 	if mid == "" {
 		t.Fatal("应返回 message ID")
 	}
@@ -306,7 +306,7 @@ func TestSaveAssistantMsg_Normal(t *testing.T) {
 	defer cleanup()
 
 	msg := llm.Message{Content: `{"reply":"正常回复"}`}
-	mid := orch.saveAssistantMsg(context.Background(), "c1", "u1", msg, nil)
+	mid := orch.saveAssistantMsg(context.Background(), "c1", "u1", msg, nil, false)
 	if mid == "" {
 		t.Fatal("应返回 message ID")
 	}
@@ -346,7 +346,7 @@ func TestVerifyAndMaybeRetry_MaxRetries(t *testing.T) {
 // 用例：msgRepo 为 nil 时 saveAssistantMsg 安全返回空
 func TestSaveAssistantMsg_NilRepo(t *testing.T) {
 	orch := &Orchestrator{} // msgRepo 为 nil
-	mid := orch.saveAssistantMsgWithFlags(context.Background(), "c1", "u1", llm.Message{Content: "test"}, nil, false)
+	mid := orch.saveAssistantMsgWithFlags(context.Background(), "c1", "u1", llm.Message{Content: "test"}, nil, false, false)
 	if mid != "" {
 		t.Error("msgRepo=nil 时应返回空 ID")
 	}
@@ -457,7 +457,7 @@ func TestSaveVerifyFeedback_StoresRequestJSON(t *testing.T) {
 	orch.saveVerifyFeedback(context.Background(), "c1", "u1",
 		"[系统] 内部检验发现幻觉：编造了红酒账单",
 		"你是一个检验助手",
-		"【用户问题】\n今天喝酒了吗\n\n【模型回复】\n喝了2次")
+		"【用户问题】\n今天喝酒了吗\n\n【模型回复】\n喝了2次", false)
 
 	// 读回验证
 	msgs, _ := msgRepo.GetMessagesSince(context.Background(), "c1", time.Now().Add(-time.Minute), 5)

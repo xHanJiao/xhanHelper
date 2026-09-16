@@ -236,7 +236,7 @@ func (r *MessageRepo) loadAfter(ctx context.Context, convID string, anchor time.
 func (r *MessageRepo) existsBefore(ctx context.Context, convID string, t time.Time) bool {
 	var count int64
 	r.db.WithContext(ctx).Model(&model.Message{}).
-		Where("conversation_id = ? AND created_at < ?", convID, t).
+		Where("conversation_id = ? AND created_at < ? AND status = ?", convID, t, model.MsgStatusNormal).
 		Count(&count)
 	return count > 0
 }
@@ -244,7 +244,7 @@ func (r *MessageRepo) existsBefore(ctx context.Context, convID string, t time.Ti
 func (r *MessageRepo) existsAfter(ctx context.Context, convID string, t time.Time) bool {
 	var count int64
 	r.db.WithContext(ctx).Model(&model.Message{}).
-		Where("conversation_id = ? AND created_at > ?", convID, t).
+		Where("conversation_id = ? AND created_at > ? AND status = ?", convID, t, model.MsgStatusNormal).
 		Count(&count)
 	return count > 0
 }

@@ -100,6 +100,41 @@ final class ThumbRowLayoutTests: XCTestCase {
                         + CGFloat(min(rows, 3) - 1) * spacing
                     XCTAssertEqual(expanded, expected, "\(config.name) 展开高度与行数不符：rows=\(rows)")
                     XCTAssertGreaterThanOrEqual(expanded, config.thumb, "\(config.name) 展开后不应比折叠更矮")
+
+                    // maxRows: nil = 不封顶（消息图片条），展开就该是全高、不套滚动
+                    let unbounded = ThumbRowLayout.height(
+                        available: available, thumb: config.thumb, spacing: spacing,
+                        trailingCells: config.trailingCells, maxRows: nil, count: count, expanded: true
+                    )
+                    XCTAssertEqual(
+                        unbounded, CGFloat(rows) * config.thumb + CGFloat(rows - 1) * spacing,
+                        "\(config.name) 不封顶时展开高度应等于全部行数：rows=\(rows)"
+                    )
+                    XCTAssertGreaterThanOrEqual(unbounded, expanded)
+                }
+            }
+        }
+    }
+
+    /// 展开成一行时，视图会改走 HStack（网格吃满整宽、靠右会失效）。HStack 按内容定宽、
+    /// 不像网格会裁剪，所以这里必须真的塞得进 —— 若 `expandedPerRow` 将来算多一格就会溢出
+    func testSingleRowExpandedFitsWidth() {
+        for config in configs {
+            for available in stride(from: CGFloat(0), through: 760, by: 1) {
+                for count in 1...20 {
+                    let rows = ThumbRowLayout.expandedRows(
+                        available: available, thumb: config.thumb, spacing: spacing,
+                        trailingCells: config.trailingCells, count: count
+                    )
+                    guard rows == 1 else { continue }
+                    let cells = ThumbRowLayout.expandedCellCount(
+                        count: count, trailingCells: config.trailingCells
+                    )
+                    let width = CGFloat(cells) * config.thumb + CGFloat(cells - 1) * spacing
+                    XCTAssertLessThanOrEqual(
+                        width, available + 0.001,
+                        "\(config.name) 单行展开溢出：count=\(count) available=\(available) 占宽=\(width)"
+                    )
                 }
             }
         }

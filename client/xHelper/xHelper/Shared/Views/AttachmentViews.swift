@@ -7,7 +7,9 @@ struct CollapsibleThumbRow<Thumb: View, Trailing: View>: View {
     let thumbSize: CGFloat
     var spacing: CGFloat = 8
     var cornerRadius: CGFloat = 8
-    var maxExpandedRows: Int = 3
+    /// 展开态最多几行（超出靠内部滚动）；nil = 不封顶（消息图片条：上限就 20 张，展开就全露出来，
+    /// 封 3 行会留个滚动条反而更丑）。托盘必须有封顶，不然 20 张能把输入框顶掉大半
+    var maxExpandedRows: Int? = 3
     /// 行尾附加格数（「+」「清空」＝2，消息图片条＝0）。宽度按缩略图边长推，不单独传
     var trailingCells: Int = 0
     /// 折叠态最多露几张（固定上限，不随窗口变宽而增多）；nil = 纯按宽度折叠
@@ -63,42 +65,54 @@ struct CollapsibleThumbRow<Thumb: View, Trailing: View>: View {
     }
 
     private var row: some View {
-        let layout = collapsedRow
-        return HStack(spacing: spacing) {
+        horizontalRow(visible: collapsedRow.visible, overflow: collapsedRow.overflow)
+    }
+
+    /// 一行 HStack：按内容定宽（多出来的空档由 Spacer 吃掉），左右交给外层 `frame(alignment:)`。
+    /// 网格做不到这一点（见 `grid`），所以单行展开态也走这里。
+    private func horizontalRow(visible: Int, overflow: Bool, collapse: Bool = false) -> some View {
+        HStack(spacing: spacing) {
             if alignTrailing { Spacer(minLength: 0) }
-            ForEach(0..<layout.visible, id: \.self) { index in
+            ForEach(0..<visible, id: \.self) { index in
                 thumb(index)
             }
-            if layout.overflow { overflowCell }
+            if overflow { overflowCell }
+            if collapse { collapseCell }
             trailing()
             if !alignTrailing { Spacer(minLength: 0) }
         }
     }
 
+    @ViewBuilder
     private var grid: some View {
         let rows = ThumbRowLayout.expandedRows(
             available: available, thumb: thumbSize, spacing: spacing,
             trailingCells: trailingCells, count: count
         )
-        let content = LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: thumbSize, maximum: thumbSize), spacing: spacing)],
-            alignment: alignTrailing ? .trailing : .leading,
-            spacing: spacing
-        ) {
-            ForEach(0..<count, id: \.self) { index in
-                thumb(index)
+        // 一行装得下时不走网格：LazyVGrid 会吃满父级提议宽度、列从前缘起排，多出的空档留在
+        // 网格内部尾部 —— 外层 `frame(alignment: .trailing)` 于是成了空操作，展开后整排跑到左边
+        // （它自带的 alignment 只管"格子在列内"，不管"列整体靠哪边"）。`rows == 1` 意味着所有格子
+        // 一行装得下，HStack 不会溢出
+        if rows <= 1 {
+            horizontalRow(visible: count, overflow: false, collapse: true)
+        } else {
+            let content = LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: thumbSize, maximum: thumbSize), spacing: spacing)],
+                alignment: alignTrailing ? .trailing : .leading,
+                spacing: spacing
+            ) {
+                ForEach(0..<count, id: \.self) { index in
+                    thumb(index)
+                }
+                collapseCell
+                trailing()
             }
-            collapseCell
-            trailing()
-        }
-        .frame(maxWidth: .infinity, alignment: alignTrailing ? .trailing : .leading)
+            .frame(maxWidth: .infinity, alignment: alignTrailing ? .trailing : .leading)
 
-        return Group {
-            if rows > maxExpandedRows {
+            if let cap = maxExpandedRows, rows > cap {
                 ScrollView(.vertical) { content }
                     .frame(
-                        height: thumbSize * CGFloat(maxExpandedRows)
-                            + spacing * CGFloat(maxExpandedRows - 1)
+                        height: thumbSize * CGFloat(cap) + spacing * CGFloat(cap - 1)
                     )
             } else {
                 content
@@ -270,6 +284,7 @@ struct MessageAttachmentStrip: View {
             count: imageIds.count,
             thumbSize: thumbSize,
             cornerRadius: 10,
+            maxExpandedRows: nil,
             maxCollapsedThumbs: 3,
             alignTrailing: true,
             expanded: $expanded

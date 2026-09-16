@@ -94,22 +94,22 @@ enum ThumbRowLayout {
     }
 
     /// 整行的高度：折叠 1 行；展开按行数算、封顶 `maxRows`（超出靠内部滚动）。
+    /// `maxRows` 传 nil = 不封顶（消息图片条：上限就是 20 张，展开就是全部）。
     /// GeometryReader 纵向也是贪婪的，视图必须用这个值把高度钉住。
     static func height(
         available: CGFloat,
         thumb: CGFloat,
         spacing: CGFloat,
         trailingCells: Int,
-        maxRows: Int,
+        maxRows: Int?,
         count: Int,
         expanded: Bool
     ) -> CGFloat {
-        let rows = expanded
-            ? min(expandedRows(
-                available: available, thumb: thumb, spacing: spacing,
-                trailingCells: trailingCells, count: count
-            ), maxRows)
-            : 1
+        let allRows = expandedRows(
+            available: available, thumb: thumb, spacing: spacing,
+            trailingCells: trailingCells, count: count
+        )
+        let rows = expanded ? (maxRows.map { min(allRows, $0) } ?? allRows) : 1
         return CGFloat(rows) * thumb + CGFloat(rows - 1) * spacing
     }
 }

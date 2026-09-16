@@ -79,3 +79,13 @@ struct ThemePage: View {
             .task { await viewModel.load() }
     }
 }
+
+struct ImagePage: View {
+    @ObservedObject var viewModel: ImageViewModel
+    let baseURL: String
+    let token: String
+
+    var body: some View {
+        ImageListView(viewModel: viewModel, baseURL: baseURL, token: token)
+    }
+}

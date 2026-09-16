@@ -43,6 +43,14 @@ final class AttachmentImageLoader: ObservableObject {
         failed.remove(id)
     }
 
+    /// 遗忘一张图（管理页删除后调用）：否则消息里还会从内存缓存显示已删的图
+    func forget(id: String) {
+        inflight[id]?.cancel()
+        inflight[id] = nil
+        images.removeValue(forKey: id)
+        failed.remove(id)
+    }
+
     /// 拉取并缓存。视图消失不打断（任务归存储所有，不随视图生命周期取消）
     func load(id: String, baseURL: String, token: String) {
         guard images[id] == nil, !failed.contains(id), inflight[id] == nil else { return }

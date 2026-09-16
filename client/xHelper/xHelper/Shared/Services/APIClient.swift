@@ -351,6 +351,16 @@ class APIClient {
         return data
     }
 
+    /// 图片库列表（管理页）：本人全部图，服务端按 created_at 倒序
+    func listImages(limit: Int = 50, offset: Int = 0) async throws -> ImageListResponse {
+        return try await get("/api/images?limit=\(limit)&offset=\(offset)")
+    }
+
+    /// 删除一张图（服务端删记录 + 文件；已被消息引用的图删后对话里会显示占位）
+    func deleteImage(id: String) async throws {
+        try await delete("/api/images/\(id)")
+    }
+
     private func get<T: Decodable>(_ path: String) async throws -> T {
         var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -812,6 +822,34 @@ struct UploadedImage: Codable {
         case imageId = "image_id"
         case url, mime, bytes
     }
+}
+
+/// 图片库条目（`GET /api/images` 的 items 元素）
+struct ImageAssetSummary: Identifiable, Codable {
+    let id: String
+    let url: String
+    let mime: String
+    let bytes: Int64
+    /// chat | doc | local | web（聊天选图 / 文档配图 / agent 本地发现 / agent 网页发现）
+    let source: String
+    /// 是否曾被消息引用过：决定保留期（15 天 / 3 天），也决定删除会不会让对话裂图
+    let referenced: Bool
+    /// 是否已上传 DeepSeek Files（多模态输入用；本地副本始终保留）
+    let hasFileId: Bool
+    let lastUsedAt: String?
+    let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, url, mime, bytes, source, referenced
+        case hasFileId = "has_file_id"
+        case lastUsedAt = "last_used_at"
+        case createdAt = "created_at"
+    }
+}
+
+struct ImageListResponse: Codable {
+    let items: [ImageAssetSummary]
+    let total: Int
 }
 
 // MARK: - Reminders

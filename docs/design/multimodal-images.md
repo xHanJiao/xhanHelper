@@ -1,9 +1,9 @@
 # 多模态图片输入 — 技术方案
 
-> 状态：**P0 + P1 + P3-1 已实现**（2026-09-16）；P1 的验收已过（选图发送/历史可见/15 天与 3 天清理任务日志已实测）。
+> 状态：**P0 + P1 + P3-1 + P3-2 已实现**（2026-09-16）；P1 的验收已过（选图发送/历史可见/15 天与 3 天清理任务日志已实测）。
 > P0 = 模型切到 V4.1-Flash；P1 = 用户显式给图（选图 → 压缩 → 上传 → 模型看图 → 历史可见 + 自动清理）；
-> P3-1 = `⌘V` 粘贴图片进待发托盘。
-> 未做：P2（agent 发现的图 + L3 审批预览，已决定暂不实现，见 §十一）、P3-2（图片管理页，待做）。
+> P3-1 = `⌘V` 粘贴图片进待发托盘；P3-2 = 右侧栏「图片」管理页（预览 / 删除）。
+> 未做：P2（agent 发现的图 + L3 审批预览，已决定暂不实现，见 §十一）。
 > 范围：server（Go）+ macOS 客户端（SwiftUI）。iOS 已弃用，仅保持可编译、不做新功能。
 > 关联：与 `document-images.md`（文档图床，已定稿未实现）共用存储层，本文不另建一套
 
@@ -234,14 +234,25 @@ DB 记录、DeepSeek Files API 上传、消息引用关系、两级自动清理�
 
 ## 八、图片管理
 
-**入口**：macOS 右侧浏览面板新增「图片」格子（与账单/记忆/笔记/文档/主题同级）。
+**入口**：macOS 右侧浏览面板新增「图片」格子（与账单/记忆/笔记/文档/主题同级）。加了这一格后
+入口网格从 4×2 改成 **3×3**（`BrowsePanelView.adaptiveColumns` 宽态 3 列；窄态仍 2 列）。
 
-**列表**：缩略图网格 + 分页加载，每项显示大小、来源（用户上传 / 本地 / 网页）、时间。
+**列表**：缩略图网格 + 分页加载（50/页，滚到末位自动拉下一页），每项显示来源（聊天/文档/本地/网页）
+与体积，`referenced` 的额外挂「使用中」角标；时间/mime/是否已传 DeepSeek 放在悬停提示里。
 
-**详情**：原图预览 + 元信息 + 是否已上传 DeepSeek（`file_id`）。
+**详情**：点缩略图开大图浮层（复用 `LightboxCenter` + `AttachmentPreviewView`，不做单独详情页）。
+大图走 `AttachmentImageLoader` 按需拉，只有点开过的图才进内存。
 
-**删除**：清理本地文件 + DB 记录。DeepSeek Files API **没有删除接口**，删不了，如实说明。
-被删除的图仍出现在历史消息里时显示占位（不做"反向查找哪些消息用了它"，YAGNI）。
+**删除**：格子右上角「X」。**只有"删了会裂图"的才弹确认**（`referenced == true` 或 `source != chat`），
+聊天里从没用过的孤儿图直接删。DeepSeek Files API **没有删除接口**，删不了，如实说明`has_file_id`。
+被删除的图仍出现在历史消息里时显示占位（不做"反向查找哪些消息用了它"，YAGNI）——为此
+删除成功后会调 `AttachmentImageLoader.forget(id:)` 清共享缓存，否则消息里还会拿内存里的旧图继续显示。
+
+**缩略图不复用 `AttachmentImageLoader`**：那边存全尺寸解码图、会话内不回收（它服务的是消息里几张图和
+点开的大图），一页 50 张 2048px 解码就是几百 MB。图片库单独按 id 拉字节 → `ImageCompressor.thumbnail(_:maxPixel:)`
+（复用 `shrink` 的同一套 ImageIO 参数，含 EXIF 转正）降到 256px 再存，条数上限 300 按插入序淘汰。
+
+服务端零改动：`GET /api/images?limit=&offset=`（`image.go:126`）、`DELETE /api/images/:id`（`:160`）已够用。
 
 ---
 
@@ -328,9 +339,17 @@ DB 记录、DeepSeek Files API 上传、消息引用关系、两级自动清理�
   会同时收到 `onChange`，故各实例用 `inputFocused`（InputBar 上报）判"是不是我在输入"，只有一个收下
 - 已知取舍：从网页"复制图片"若带纯文本则按文本粘贴；拖拽文件入窗不在本期（有自己的通路）
 
-**P3-2 管理页（待做）**：Mac 右侧浏览面板新增「图片」页（照账单/记忆/笔记的 `BrowsePanel` 模式）。
-服务端无需改动：`GET /api/images?limit=&offset=`（`image.go:125`）与 `DELETE /api/images/:id`（`:159`）
-已在，字段够用（`bytes` / `source` / `referenced` / `has_file_id` / `last_used_at` / `created_at`）。
+**P3-2 管理页（已完成）**：Mac 右侧浏览面板新增「图片」页（照账单/记忆/笔记的 `BrowsePanel` 模式）。
+- 落点：`BrowsePanel` 加 `.images`（+ `isLoading`/`reload`/`panelContent` 三个 switch 分支）→
+  `ImagePage`（`PageHolders.swift`）→ `ImageListView` + `ImageViewModel`（新文件）+
+  `APIClient.listImages/deleteImage`；`imageVM` 由 `ContentView` 建好一路透传
+  （`RightSidebarView` → `BrowsePanelView`）
+- 入口网格 4×2 → **3×3**（`adaptiveColumns` 宽态改 3 列，格子仍 110pt；窄态 2 列不变）
+- 删除确认只在"可能裂图"时弹：`referenced == true`（对话裂图）或 `source != chat`（文档/网页/本地）；
+  聊天里从没用过的孤儿图直接删
+- 不做批量选择删除：`MemoryViewModel` 那套 `isEditMode`/`selectedIDs` 在视图里从未接出来，不复杂化
+- 服务端无需改动：`GET /api/images?limit=&offset=`（`image.go:126`）与 `DELETE /api/images/:id`（`:160`）
+  已在，字段够用（`bytes` / `source` / `referenced` / `has_file_id` / `last_used_at` / `created_at`）
 
 ### 附：缩略图溢出折叠（P1 验收后补）
 

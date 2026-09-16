@@ -36,7 +36,7 @@ enum ImageCompressor {
         // 服务端只认 png/jpg/gif/webp：HEIC 之类必须换格式，哪怕压完更大也得换
         let mustReencode = !(isJPEG || isPNG || type == UTType.webP.identifier as CFString)
 
-        guard let cg = downsample(source) else { return nil }
+        guard let cg = downsample(source, maxPixel: maxPixel) else { return nil }
         guard let out = encode(cg, as: wantsAlpha(source, cg: cg, isPNG: isPNG) ? .png : .jpeg) else {
             return nil
         }
@@ -67,7 +67,7 @@ enum ImageCompressor {
         return CGSize(width: w, height: h)
     }
 
-    nonisolated private static func downsample(_ source: CGImageSource) -> CGImage? {
+    nonisolated private static func downsample(_ source: CGImageSource, maxPixel: Int) -> CGImage? {
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true, // 按 EXIF 方向转正
@@ -75,6 +75,13 @@ enum ImageCompressor {
             kCGImageSourceShouldCacheImmediately: true,
         ]
         return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    /// 降采样成缩略图（图片库网格用）：解码阶段就按目标尺寸解，不把全尺寸图读进内存。
+    /// 复用 `shrink` 的同一套 ImageIO 参数（含 EXIF 转正）。
+    nonisolated static func thumbnail(_ data: Data, maxPixel: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return downsample(source, maxPixel: maxPixel)
     }
 
     nonisolated private static func encode(_ image: CGImage, as type: UTType) -> Data? {

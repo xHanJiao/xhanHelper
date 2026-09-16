@@ -361,6 +361,9 @@ struct MessageListView: View {
                             AttachmentPreviewView(image: image) { LightboxCenter.shared.dismiss() }
                         }
                     }
+                    // 与气泡正文右缘对齐：气泡用的是 chatHorizontalPadding(24) + 正文内边距 14，
+                    // 图片条原来只做 trailing 对齐（贴到 0），比文字多探出 38pt
+                    .padding(.horizontal, Layout.chatHorizontalPadding + 14)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 }
                 #if os(macOS)

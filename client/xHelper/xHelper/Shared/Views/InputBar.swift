@@ -19,6 +19,9 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
     var containerTint: Color
     /// 已挂附件（草稿区缩略图）。仅用于计算 canSend——只发图不写字也要能发。
     var hasAttachments: Bool = false
+    /// 输入框聚焦变化回调：⌘V 粘贴要在共享同一 VM 的主视图/PiP 两个 ChatView 之间
+    /// 认出"是谁在输入"，所以焦点态除了全局标记还要往上传一份。
+    var onFocusChange: ((Bool) -> Void)? = nil
     let onSend: () -> Void
     let onStop: () -> Void
     /// Tab（仅输入框聚焦时）：切换计划/聊天模式。
@@ -81,6 +84,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
         dismissKeyboardToken: UUID? = nil,
         containerTint: Color = Color("appAccent"),
         hasAttachments: Bool = false,
+        onFocusChange: ((Bool) -> Void)? = nil,
         onSend: @escaping () -> Void,
         onStop: @escaping () -> Void,
         onToggleMode: @escaping () -> Void = {},
@@ -96,6 +100,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
         self.dismissKeyboardToken = dismissKeyboardToken
         self.containerTint = containerTint
         self.hasAttachments = hasAttachments
+        self.onFocusChange = onFocusChange
         self.onSend = onSend
         self.onStop = onStop
         self.onToggleMode = onToggleMode
@@ -223,10 +228,17 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
                 }
             }
             .onChange(of: isFocused) { _, new in
+                // 供 ⌘V 粘贴判定（macOS 的 NSEvent monitor 拿不到 SwiftUI 的焦点态）
+                ChatInputFocus.isFocused = new
+                onFocusChange?(new)
                 if !new {
                     idleTask?.cancel()
                     isEditing = false
                 }
+            }
+            .onDisappear {
+                // 输入框被移除（切页/收起）时焦点态不会自己变，留着会误判 ⌘V 该接管
+                ChatInputFocus.isFocused = false
             }
             // Return：单独按换行（放行给 TextEditor）；Shift+Return 发送。
             .onKeyPress(.return, phases: .down) { keyPress in

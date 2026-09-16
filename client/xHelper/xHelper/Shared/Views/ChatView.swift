@@ -27,6 +27,8 @@ struct ChatView: View {
     @State private var draftAttachments: [DraftAttachment] = []
     @State private var isUploadingAttachments = false
     @State private var showFileImporter = false
+    /// 本视图输入框是否聚焦（⌘V 粘贴定位收件 ChatView 用，见 viewModel.pastedImages）
+    @State private var inputFocused = false
 
     let baseURL: String
     let token: String
@@ -147,156 +149,7 @@ struct ChatView: View {
             // }
 
             // 输入栏（驾驶舱）：按钮通过 builder 注入，收起/展开双态
-            InputBar(
-                text: $viewModel.draftText,
-                isEditing: $isEditing,
-                isStreaming: viewModel.isStreaming,
-                dismissKeyboardToken: dismissKeyboardToken,
-                containerTint: inputBarTint,
-                hasAttachments: !draftAttachments.isEmpty,
-                onSend: sendDraft,
-                onStop: {
-                    viewModel.stopStreaming()
-                },
-                onToggleMode: {
-                    Task { await viewModel.toggleMode() }
-                }
-            ) { ctx in
-                #if os(macOS)
-                HStack(spacing: 4) {
-                    // 计划/信任模式常驻按钮（原先折叠在 chevron 后，计划模式高频使用故内联）。
-                    ModePill(context: ctx, isPlanMode: viewModel.isPlanMode) {
-                        Task { await viewModel.toggleMode() }
-                    }
-                    TrustedPill(context: ctx, trusted: viewModel.trustedMode) {
-                        viewModel.toggleTrustedMode()
-                    }
-                    // 智能体选择器：模式按钮与模型切换之间，cpu 图标与侧边栏一致。
-                    // 仅当已确认用户存在智能体时才展示（无智能体时隐藏，避免无意义按钮）。
-                    if hasLoadedAgents && !pickerAgents.isEmpty {
-                        AgentPickerButton(
-                            context: ctx,
-                            activeAgentID: selectedAgentID,
-                            activeAgentName: selectedAgentID.flatMap { selID in
-                                pickerAgents.first(where: { $0.id == selID })?.name
-                            },
-                            agents: displayAgents,
-                            hasMore: pickerHasMore,
-                            isLoadingMore: isLoadingPicker,
-                            onSelect: { agent in
-                                Task { await switchAgent(agent) }
-                            },
-                            onLoadMore: {
-                                Task { await loadAgentPickerPage(cursor: pickerCursor) }
-                            }
-                        )
-                    }
-                    // 常驻模型切换（模式按钮与发送按钮之间）：deep（pro+thinking）↔ flash
-                    ModelPill(context: ctx, isDeep: viewModel.deepMode) {
-                        viewModel.toggleDeepMode()
-                    }
-                    // 会话接力：整理成文档并开新会话续接。计划模式只读、接力要写文档，
-                    // 故 plan 模式下置灰（tooltip 说明原因），非流式、非空会话才可用。
-                    HandoffPill(
-                        context: ctx,
-                        isEnabled: !viewModel.isStreaming
-                            && !(viewModel.conversationId ?? "").isEmpty
-                            && !viewModel.isPlanMode,
-                        isPlanMode: viewModel.isPlanMode
-                    ) {
-                        viewModel.beginHandoff(baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
-                    }
-                }
-                #endif
-            } trailingActions: { ctx in
-                #if os(macOS)
-                HStack(spacing: 4) {
-                    // 附件：选本地图片（发送时随消息一起上传）
-                    IconButton(
-                        visibility: .always,
-                        context: ctx,
-                        symbol: "paperclip",
-                        tint: draftAttachments.isEmpty ? .secondary : Color("appAccent"),
-                        isEnabled: !viewModel.isStreaming && !isUploadingAttachments,
-                        tooltip: "添加图片",
-                        action: { showFileImporter = true }
-                    )
-                    SendStopButton(
-                        context: ctx,
-                        isStreaming: viewModel.isStreaming,
-                        canSend: ctx.canSend && !isUploadingAttachments,
-                        onSend: sendDraft,
-                        onStop: {
-                            viewModel.stopStreaming()
-                        }
-                    )
-                }
-                #else
-                if ctx.isStreaming {
-                    IconButton(
-                        visibility: .always,
-                        context: ctx,
-                        symbol: "stop.circle.fill",
-                        tint: .red,
-                        tooltip: "停止生成",
-                        action: { viewModel.stopStreaming() }
-                    )
-                } else {
-                    IconButton(
-                        visibility: .always,
-                        context: ctx,
-                        symbol: "arrow.up.circle.fill",
-                        tint: ctx.canSend ? Color("appAccent") : .gray,
-                        isEnabled: ctx.canSend && !isUploadingAttachments,
-                        tooltip: "发送",
-                        action: sendDraft
-                    )
-                }
-                #endif
-            } topTrailingNote: { ctx in
-                // 执行计划便签：经 InputBar 注入，窄幅右停在驾驶舱上缘。
-                // 完成/取消后 state 变为非 active → 扩散消失。
-                if viewModel.planState == .active && !viewModel.planDismissed {
-                    PlanNoteView(
-                        goal: viewModel.planGoal,
-                        steps: viewModel.planTodo,
-                        expanded: viewModel.planExpanded,
-                        onToggle: { viewModel.togglePlanExpand() },
-                        onDismiss: { viewModel.dismissPlanTodo() }
-                    )
-                    .transition(Self.planDismissTransition)
-                    .animation(.easeOut(duration: 0.25), value: viewModel.planState)
-                    .animation(.easeOut(duration: 0.25), value: viewModel.planDismissed)
-                }
-            } bottomLeading: { _ in
-                #if os(macOS)
-                // 上下文占用圆环：底部左侧，hover 出自定义浮层（token + 金额）。
-                ContextRingBadge(
-                    contextTokens: viewModel.contextTokens,
-                    contextWindow: viewModel.contextWindow,
-                    usage: viewModel.usage
-                )
-                #endif
-            } attachmentTray: { _ in
-                if !draftAttachments.isEmpty {
-                    AttachmentTray(
-                        attachments: draftAttachments,
-                        isUploading: isUploadingAttachments,
-                        onRemove: { item in
-                            draftAttachments.removeAll { $0.id == item.id }
-                        },
-                        onAdd: { showFileImporter = true },
-                        onClearAll: { draftAttachments.removeAll() },
-                        onPreview: { item in
-                            LightboxCenter.shared.present {
-                                AttachmentPreviewView(image: item.image) { LightboxCenter.shared.dismiss() }
-                            }
-                        }
-                    )
-                }
-            }
-            .layoutPriority(1)
-            .animation(.easeOut(duration: 0.2), value: viewModel.planExpanded)
+            inputBar
         }
         .onChange(of: viewModel.scrollToBottomRequested) { _, requested in
             guard requested else { return }
@@ -307,6 +160,15 @@ struct ChatView: View {
         }
         .onChange(of: isEditing) { _, new in
             viewModel.isEditing = new
+        }
+        // ⌘V 粘贴的图（剪贴板在 AppDelegate 读，经 VM 转手）：只由"正在输入的那个"
+        // ChatView 收下（PiP 与主视图共用同一个 VM，会同时收到 onChange）
+        .onChange(of: viewModel.pastedImages) { _, datas in
+            guard inputFocused, !datas.isEmpty else { return }
+            viewModel.pastedImages = []
+            Task {
+                await appendPickedItems(datas.map { (filename: "粘贴的图片", data: $0) })
+            }
         }
         // 智能体选择器：页面出现/回到会话（如从智能体页切回，此时可能刚创建第一个
         // 智能体）时拉取列表；会话切换（含空 tab 转正）时重新拉取激活项。
@@ -401,6 +263,8 @@ struct ChatView: View {
                 do {
                     let uploaded = try await api.uploadImage(item.data, filename: item.filename)
                     ids.append(uploaded.imageId)
+                    // 手上就有解码好的图，直接进共享缓存：消息重载后不用再拉一次
+                    AttachmentImageLoader.shared.seed(id: uploaded.imageId, image: item.image)
                 } catch {
                     LogBuffer.shared.error("ChatView.uploadImage failed: \(error)")
                     ToastCenter.shared.show("图片上传失败：\((error as NSError).localizedDescription)")
@@ -423,44 +287,242 @@ struct ChatView: View {
         }
     }
 
+    /// 输入框焦点变化（InputBar 上报）：用于判断 ⌘V 粘贴该由哪个 ChatView 收下
+    private func setInputFocused(_ focused: Bool) {
+        inputFocused = focused
+    }
+
+    /// 输入栏（驾驶舱）：按钮通过 builder 注入，收起/展开双态。
+    /// 独立成属性：整个调用表达式很大，内联进 content 会让类型检查超时
+    /// （"unable to type-check this expression in reasonable time"）。
+    private var inputBar: some View {
+        InputBar(
+            text: $viewModel.draftText,
+            isEditing: $isEditing,
+            isStreaming: viewModel.isStreaming,
+            dismissKeyboardToken: dismissKeyboardToken,
+            containerTint: inputBarTint,
+            hasAttachments: !draftAttachments.isEmpty,
+            onFocusChange: setInputFocused,
+            onSend: sendDraft,
+            onStop: {
+                viewModel.stopStreaming()
+            },
+            onToggleMode: {
+                Task { await viewModel.toggleMode() }
+            },
+            statusRow: inputBarStatusRow,
+            trailingActions: inputBarTrailingActions,
+            topTrailingNote: inputBarTopNote,
+            bottomLeading: inputBarBottomLeading,
+            attachmentTray: inputBarAttachmentTray
+        )
+        .layoutPriority(1)
+        .animation(.easeOut(duration: 0.2), value: viewModel.planExpanded)
+    }
+
+    /// InputBar 状态行（模式/信任/智能体/模型/接力）。独立成方法而不是内联闭包：
+    /// 整个 InputBar 调用表达式已顶到类型检查预算上限（会报 "unable to type-check in reasonable time"）。
+    @ViewBuilder
+    private func inputBarStatusRow(_ ctx: InputBarContext) -> some View {
+        #if os(macOS)
+        HStack(spacing: 4) {
+            // 计划/信任模式常驻按钮（原先折叠在 chevron 后，计划模式高频使用故内联）。
+            ModePill(context: ctx, isPlanMode: viewModel.isPlanMode) {
+                Task { await viewModel.toggleMode() }
+            }
+            TrustedPill(context: ctx, trusted: viewModel.trustedMode) {
+                viewModel.toggleTrustedMode()
+            }
+            // 智能体选择器：模式按钮与模型切换之间，cpu 图标与侧边栏一致。
+            // 仅当已确认用户存在智能体时才展示（无智能体时隐藏，避免无意义按钮）。
+            if hasLoadedAgents && !pickerAgents.isEmpty {
+                AgentPickerButton(
+                    context: ctx,
+                    activeAgentID: selectedAgentID,
+                    activeAgentName: selectedAgentID.flatMap { selID in
+                        pickerAgents.first(where: { $0.id == selID })?.name
+                    },
+                    agents: displayAgents,
+                    hasMore: pickerHasMore,
+                    isLoadingMore: isLoadingPicker,
+                    onSelect: { agent in
+                        Task { await switchAgent(agent) }
+                    },
+                    onLoadMore: {
+                        Task { await loadAgentPickerPage(cursor: pickerCursor) }
+                    }
+                )
+            }
+            // 常驻模型切换（模式按钮与发送按钮之间）：deep（pro+thinking）↔ flash
+            ModelPill(context: ctx, isDeep: viewModel.deepMode) {
+                viewModel.toggleDeepMode()
+            }
+            // 会话接力：整理成文档并开新会话续接。计划模式只读、接力要写文档，
+            // 故 plan 模式下置灰（tooltip 说明原因），非流式、非空会话才可用。
+            HandoffPill(
+                context: ctx,
+                isEnabled: !viewModel.isStreaming
+                    && !(viewModel.conversationId ?? "").isEmpty
+                    && !viewModel.isPlanMode,
+                isPlanMode: viewModel.isPlanMode
+            ) {
+                viewModel.beginHandoff(baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
+            }
+        }
+        #endif
+    }
+
+    /// InputBar 上缘便签（执行计划）。独立成方法：同上，InputBar 调用表达式已在类型检查预算边缘。
+    @ViewBuilder
+    private func inputBarTopNote(_ ctx: InputBarContext) -> some View {
+        // 执行计划便签：经 InputBar 注入，窄幅右停在驾驶舱上缘。
+        // 完成/取消后 state 变为非 active → 扩散消失。
+        if viewModel.planState == .active && !viewModel.planDismissed {
+            PlanNoteView(
+                goal: viewModel.planGoal,
+                steps: viewModel.planTodo,
+                expanded: viewModel.planExpanded,
+                onToggle: { viewModel.togglePlanExpand() },
+                onDismiss: { viewModel.dismissPlanTodo() }
+            )
+            .transition(Self.planDismissTransition)
+            .animation(.easeOut(duration: 0.25), value: viewModel.planState)
+            .animation(.easeOut(duration: 0.25), value: viewModel.planDismissed)
+        }
+    }
+
+    /// InputBar 底部左侧槽（上下文占用圆环）
+    @ViewBuilder
+    private func inputBarBottomLeading(_ ctx: InputBarContext) -> some View {
+        #if os(macOS)
+        // 上下文占用圆环：底部左侧，hover 出自定义浮层（token + 金额）。
+        ContextRingBadge(
+            contextTokens: viewModel.contextTokens,
+            contextWindow: viewModel.contextWindow,
+            usage: viewModel.usage
+        )
+        #endif
+    }
+
+    /// InputBar 附件托盘（已选待发缩略图）
+    @ViewBuilder
+    private func inputBarAttachmentTray(_ ctx: InputBarContext) -> some View {
+        if !draftAttachments.isEmpty {
+            AttachmentTray(
+                attachments: draftAttachments,
+                isUploading: isUploadingAttachments,
+                onRemove: { item in
+                    draftAttachments.removeAll { $0.id == item.id }
+                },
+                onAdd: { showFileImporter = true },
+                onClearAll: { draftAttachments.removeAll() },
+                onPreview: { item in
+                    LightboxCenter.shared.present {
+                        AttachmentPreviewView(image: item.image) { LightboxCenter.shared.dismiss() }
+                    }
+                }
+            )
+        }
+    }
+
+    /// InputBar 尾部动作。独立成方法而不是内联闭包：整个 InputBar 调用表达式已经
+    /// 顶到类型检查预算上限（再加一个参数就报 "unable to type-check in reasonable time"）。
+    @ViewBuilder
+    private func inputBarTrailingActions(_ ctx: InputBarContext) -> some View {
+        #if os(macOS)
+        HStack(spacing: 4) {
+            // 附件：选本地图片（发送时随消息一起上传）
+            IconButton(
+                visibility: .always,
+                context: ctx,
+                symbol: "paperclip",
+                tint: draftAttachments.isEmpty ? .secondary : Color("appAccent"),
+                isEnabled: !viewModel.isStreaming && !isUploadingAttachments,
+                tooltip: "添加图片",
+                action: { showFileImporter = true }
+            )
+            SendStopButton(
+                context: ctx,
+                isStreaming: viewModel.isStreaming,
+                canSend: ctx.canSend && !isUploadingAttachments,
+                onSend: sendDraft,
+                onStop: {
+                    viewModel.stopStreaming()
+                }
+            )
+        }
+        #else
+        if ctx.isStreaming {
+            IconButton(
+                visibility: .always,
+                context: ctx,
+                symbol: "stop.circle.fill",
+                tint: .red,
+                tooltip: "停止生成",
+                action: { viewModel.stopStreaming() }
+            )
+        } else {
+            IconButton(
+                visibility: .always,
+                context: ctx,
+                symbol: "arrow.up.circle.fill",
+                tint: ctx.canSend ? Color("appAccent") : .gray,
+                isEnabled: ctx.canSend && !isUploadingAttachments,
+                tooltip: "发送",
+                action: sendDraft
+            )
+        }
+        #endif
+    }
+
     /// 读取用户选中的图片文件（macOS 原生文件选择器）
     private func handlePickedFiles(_ urls: [URL]) {
         Task {
-            var duplicated = 0
-            var overCap = 0
+            var items: [(filename: String, data: Data)] = []
             for url in urls {
                 guard let raw = try? Data(contentsOf: url) else {
                     LogBuffer.shared.warning("ChatView: 无法读取图片 \(url.lastPathComponent)")
                     continue
                 }
-                // 读盘后的缩放/重编码放后台：十几兆的照片在主线程解码 + 编码要几百毫秒，
-                // 一次选二十张就是十几秒卡顿。字节是 Sendable，回主线程再解码显示
-                let upload = await Task.detached { ImageCompressor.shrink(raw) ?? raw }.value
-                guard let image = PlatformImage(data: upload) else {
-                    LogBuffer.shared.warning("ChatView: 无法解码图片 \(url.lastPathComponent)")
-                    continue
-                }
-                // 同一张图重复选只留一份：服务端会按内容去重返回同一个 image_id，
-                // 重复 id 会让模型把同一张图看两遍
-                guard !draftAttachments.contains(where: { $0.data == upload }) else {
-                    duplicated += 1
-                    continue
-                }
-                guard draftAttachments.count < Layout.maxDraftImages else {
-                    overCap += 1
-                    continue
-                }
-                draftAttachments.append(
-                    DraftAttachment(data: upload, image: image, filename: url.lastPathComponent)
-                )
+                items.append((url.lastPathComponent, raw))
             }
-            // 跳过必须说出来：静默忽略会让人以为选图没生效，反复重选
-            var reasons: [String] = []
-            if duplicated > 0 { reasons.append("\(duplicated) 张重复") }
-            if overCap > 0 { reasons.append("\(overCap) 张超出 \(Layout.maxDraftImages) 张上限") }
-            if !reasons.isEmpty {
-                ToastCenter.shared.show("已忽略 " + reasons.joined(separator: "、"))
+            await appendPickedItems(items)
+        }
+    }
+
+    /// 追加待发图片：文件选择器与 ⌘V 粘贴共用（压缩 → 去重 → 上限 → 追加）
+    private func appendPickedItems(_ items: [(filename: String, data: Data)]) async {
+        var duplicated = 0
+        var overCap = 0
+        for item in items {
+            // 缩放/重编码放后台：十几兆的照片在主线程解码 + 编码要几百毫秒，
+            // 一次二十张就是十几秒卡顿。字节是 Sendable，回主线程再解码显示
+            let upload = await Task.detached { ImageCompressor.shrink(item.data) ?? item.data }.value
+            guard let image = PlatformImage(data: upload) else {
+                LogBuffer.shared.warning("ChatView: 无法解码图片 \(item.filename)")
+                continue
             }
+            // 同一张图重复选只留一份：服务端会按内容去重返回同一个 image_id，
+            // 重复 id 会让模型把同一张图看两遍
+            guard !draftAttachments.contains(where: { $0.data == upload }) else {
+                duplicated += 1
+                continue
+            }
+            guard draftAttachments.count < Layout.maxDraftImages else {
+                overCap += 1
+                continue
+            }
+            draftAttachments.append(
+                DraftAttachment(data: upload, image: image, filename: item.filename)
+            )
+        }
+        // 跳过必须说出来：静默忽略会让人以为选图没生效，反复重选
+        var reasons: [String] = []
+        if duplicated > 0 { reasons.append("\(duplicated) 张重复") }
+        if overCap > 0 { reasons.append("\(overCap) 张超出 \(Layout.maxDraftImages) 张上限") }
+        if !reasons.isEmpty {
+            ToastCenter.shared.show("已忽略 " + reasons.joined(separator: "、"))
         }
     }
 

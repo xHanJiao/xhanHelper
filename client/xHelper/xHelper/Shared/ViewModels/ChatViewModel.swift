@@ -111,6 +111,16 @@ class ChatViewModel: ObservableObject {
     @Published var maxTokens: Int? = nil
     @Published var draftText = ""
 
+    /// ⌘V 粘贴进来的图片字节（一次性投递箱）：剪贴板在 AppDelegate 里读，而待发附件
+    /// draftAttachments 是 ChatView 的 @State，中间没有通路，只能经 VM 转手。
+    /// ChatView 消费后清空。
+    @Published var pastedImages: [Data] = []
+
+    func enqueuePastedImages(_ datas: [Data]) {
+        guard !datas.isEmpty else { return }
+        pastedImages.append(contentsOf: datas)
+    }
+
     /// 当前上下文 token 数（即时，随 done 事件更新）
     @Published var contextTokens = 0
     /// 上下文窗口上限（按模型档位，0=未配置）

@@ -1,8 +1,9 @@
 # 多模态图片输入 — 技术方案
 
-> 状态：**P0 + P1 已实现**（2026-09-16）；P1 的验收已过（选图发送/历史可见/15 天与 3 天清理任务日志已实测）。
-> P0 = 模型切到 V4.1-Flash；P1 = 用户显式给图（选图 → 压缩 → 上传 → 模型看图 → 历史可见 + 自动清理）。
-> 未做：P2（agent 发现的图 + L3 审批预览）、P3（管理页 + 粘贴）。
+> 状态：**P0 + P1 + P3-1 已实现**（2026-09-16）；P1 的验收已过（选图发送/历史可见/15 天与 3 天清理任务日志已实测）。
+> P0 = 模型切到 V4.1-Flash；P1 = 用户显式给图（选图 → 压缩 → 上传 → 模型看图 → 历史可见 + 自动清理）；
+> P3-1 = `⌘V` 粘贴图片进待发托盘。
+> 未做：P2（agent 发现的图 + L3 审批预览，已决定暂不实现，见 §十一）、P3-2（图片管理页，待做）。
 > 范围：server（Go）+ macOS 客户端（SwiftUI）。iOS 已弃用，仅保持可编译、不做新功能。
 > 关联：与 `document-images.md`（文档图床，已定稿未实现）共用存储层，本文不另建一套
 
@@ -23,8 +24,9 @@
 3. 发送 → 模型看图回答
 4. 消息气泡里能看到自己发的图，点开可放大
 
-> **粘贴推到 P3**。`TextEditor` 会吞掉 `⌘V`，拦粘贴是个独立的硬骨头（可能要换成自绘 `NSTextView`）。
-> 先用系统自带的文件选择器把整条链路跑通，再回头啃粘贴。截图仍走"存文件再选"，不专门做截屏工具。
+> **粘贴已在 P3-1 做掉**（`⌘V`）。原判断"`TextEditor` 会吞掉 `⌘V`、可能要换自绘 `NSTextView`"只对了一半：
+> `TextEditor` 确实自己处理粘贴，但不必换编辑器 —— 在已有的 `NSEvent keyDown` 监听里拦 Cmd+V 即可
+> （见 §十一 P3-1）。截图现在可以直接 ⌘V 进来。
 
 ### 路径 B：agent 发现的图（本地 + 网页）
 让它读一个含设计稿/截图的目录，或浏览一个小红书图文页。工具把图片抓回来后**不直接喂给模型**，
@@ -203,7 +205,7 @@ DB 记录、DeepSeek Files API 上传、消息引用关系、两级自动清理�
 ### 7.1 路径 A：用户选图
 
 **输入框**
-- 回形针按钮 → SwiftUI 原生 `.fileImporter(allowsMultipleSelection: true)`；额外支持拖拽入框（原生 `.onDrop`，几乎零成本）
+- 回形针按钮 → SwiftUI 原生 `.fileImporter(allowsMultipleSelection: true)`；`⌘V` 粘贴（截图/Finder 里的图片文件，见 §十一 P3-1）；拖拽入框未做
 - 草稿区缩略图 tray：可单个删除、可继续追加
 - 允许"只发图不写字"（服务端放宽 `message == ""` 校验，改为"文字与附件至少要有一个"）
 
@@ -292,13 +294,43 @@ DB 记录、DeepSeek Files API 上传、消息引用关系、两级自动清理�
 
 **验收**：选一张图发送 → 模型描述出图里内容；重开会话图仍可见；15/3 天清理任务日志正常。
 
-### P2 — agent 发现的图
+### P2 — agent 发现的图（**暂不实现**）
 本地工具返图 / 网页图 → 强制 L3 审批 + 缩略图预览 → 上传 → 服务端合成 user 消息；Prompt 引导。
 
-**验收**：让它读一个含图片的目录，弹出预览，拒绝时它只拿到文字继续；允许时能描述图片内容。
+**为什么暂不做**：P1 的多选（20 张）已覆盖绝大多数真实需求，手动选图也更可控；而代价落在最贵的
+链路上 —— 要在 tool 消息后插一条合成的 user 消息，牵动历史重放的角色顺序 / `tool_call_id` /
+`hidden` 轮语义（`orchestrator.go` 的 `collectToolResults*`）；本地工具侧与网页图侧（下载 + 临时
+文件 + 清理）都要新建，还打开一条 prompt injection 通道。推迟的成本为零（上传 / 鉴权读 / 权限 /
+清理都已在 P1 就位）。
+
+**触发条件**：批量自主读图成为重复劳动（例如反复"把这个目录的图都看一下"）。
+**零成本替代**：prompt 里让它不要读图、直接报路径，由用户拖进来。
+
+（原验收标准留档：让它读一个含图片的目录，弹出预览，拒绝时它只拿到文字继续；允许时能描述图片内容。）
 
 ### P3 — 管理页 + 粘贴
-图片管理页（列表 / 详情 / 删除）；`⌘V` 直接粘贴（可能要换自绘 `NSTextView`）。
+图片管理页（列表 / 详情 / 删除）；`⌘V` 直接粘贴。
+
+**P3-1 `⌘V` 粘贴（已完成）**
+- 落点：`xHelperMac/App.swift` 里已有的 `NSEvent` `keyDown` 监听（与 Cmd+W / Cmd+D 同一处）加
+  `keyCode 9` 分支，不改 `TextEditor`（自绘 `NSTextView` 方案作废：`InputBar` 的 IME 组合态、
+  TextKit 折行高度、`InputBarScrollHider` 都挂在现有 `TextEditor` 上，换掉风险远大于收益）
+- 接管条件：**聊天输入框聚焦**（`ChatInputFocus.isFocused`，由 InputBar 的 `@FocusState` 上报，
+  做法同 `BrowserFocus.isUrlFieldFocused`）+ 剪贴板里有图 + 无模态窗口 + 恰好 Cmd（不劫持 ⌘⇧V）。
+  其余一律 `return event` 放行给 `TextEditor` —— 普通粘字、PiP 小窗的粘贴都不受影响
+- 取图顺序：Finder 复制的图片文件（后缀白名单，含 HEIC/TIFF，压缩阶段换格式）→ 剪贴板位图
+  （优先 `public.png`，其次 `public.tiff`，截图给的就是 TIFF）→ 都没有则不接管。
+  **剪贴板同时带普通文本时不接管**（从网页复制图片会带上链接/文字），让用户拿到文本
+- 传递：`AppShortcutBridge.onPasteImages`（App 级快捷键桥，照 `onSwitchConversation` 的接线）
+  → 激活 tab 的 `ChatViewModel.pastedImages`（一次性投递箱）→ ChatView 取走后走
+  `appendPickedItems`（与文件选择器同一条路：压缩 → 去重 → 20 张上限 → 托盘 → 提示）
+- **收件人判定**：PiP 与主视图共用同一个 VM（`chatTabManager.currentTab.viewModel`），两个 ChatView
+  会同时收到 `onChange`，故各实例用 `inputFocused`（InputBar 上报）判"是不是我在输入"，只有一个收下
+- 已知取舍：从网页"复制图片"若带纯文本则按文本粘贴；拖拽文件入窗不在本期（有自己的通路）
+
+**P3-2 管理页（待做）**：Mac 右侧浏览面板新增「图片」页（照账单/记忆/笔记的 `BrowsePanel` 模式）。
+服务端无需改动：`GET /api/images?limit=&offset=`（`image.go:125`）与 `DELETE /api/images/:id`（`:159`）
+已在，字段够用（`bytes` / `source` / `referenced` / `has_file_id` / `last_used_at` / `created_at`）。
 
 ### 附：缩略图溢出折叠（P1 验收后补）
 

@@ -95,8 +95,13 @@ struct ResizableDivider: View {
     }
 }
 
+#endif
+
 /// 不可拖拽分隔线：与 ResizableDivider 同款视觉（1pt 渐变竖线，常显淡色），
 /// 但不响应拖拽、不绑定坐标。用于顶栏等「需要视觉分隔但不调宽」的场景。
+///
+/// 放在 `#if os(macOS)` 之外：TopBarView（Shared，iOS 也会编译）无条件用它，
+/// 留在守卫里会让整个 iOS 目标编译不过（纯 SwiftUI，本来就不需要分平台）。
 struct UnresizableDivider: View {
     var height: CGFloat
     init(height: CGFloat = Layout.topBarCapsuleHeight) { self.height = height }
@@ -122,4 +127,3 @@ struct UnresizableDivider: View {
             }
     }
 }
-#endif

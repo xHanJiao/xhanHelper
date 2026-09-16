@@ -149,6 +149,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil
             }
 
+            // Cmd+V：聊天输入框聚焦且剪贴板里有图时接管（图进待发附件，不落成文本）。
+            // 其余情况一律放行给 TextEditor —— 普通粘字、PiP 小窗粘贴都走原路。
+            if event.keyCode == 9,
+               event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+               ChatInputFocus.isFocused,
+               NSApp.modalWindow == nil,
+               let datas = Self.pasteboardImages() {
+                AppShortcutBridge.shared.onPasteImages?(datas)
+                return nil
+            }
+
             // 浏览器聚焦时拦截浏览器快捷键（事件不下发 → 工具栏 keyboardShortcut/默认菜单不触发）
             if BrowserFocus.isFocused() {
                 switch event.keyCode {
@@ -232,6 +243,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
               scheme == "http" || scheme == "https" else { return }
         BookmarkStore.shared.toggle(title: wv.title ?? url.host ?? "", url: url.absoluteString)
     }
+
+    /// 读剪贴板里的图片字节：Finder 复制的图片文件 → 位图（截图/网页复制）→ 都没有则 nil。
+    ///
+    /// 剪贴板同时带普通文本时不接管（从网页复制图片会带上链接/文字）：让用户拿到文本，
+    /// 符合系统预期，也比默默替他决定"要图不要字"好。缩略/重编码由 ChatView 统一做。
+    private static func pasteboardImages() -> [Data]? {
+        let pb = NSPasteboard.general
+
+        // Finder 复制的图片文件：剪贴板带的是文件路径文本，那不是"要粘的文字"
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            let datas = urls
+                .filter { $0.isFileURL && imageExtensions.contains($0.pathExtension.lowercased()) }
+                .compactMap { try? Data(contentsOf: $0) }
+            if !datas.isEmpty { return datas }
+        }
+
+        if let text = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !text.isEmpty,
+           !text.hasPrefix("/"),
+           !text.hasPrefix("file://") {
+            return nil
+        }
+
+        // 截图给的是 TIFF；网页复制的图常带 PNG。TIFF 由 ImageCompressor 转成 JPEG/PNG
+        if let png = pb.data(forType: .png) { return [png] }
+        if let tiff = pb.data(forType: .tiff) { return [tiff] }
+        return nil
+    }
+
+    /// 剪贴板/文件选择允许的图片后缀（HEIC/TIFF/BMP 会在 ChatView 里换格式，服务端只认 png/jpg/gif/webp）
+    private static let imageExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tiff", "tif", "bmp",
+    ]
 
     /// 浏览器快捷键键码集合（诊断用：命中但被焦点路由跳过时打日志）
     private static func isBrowserShortcutKey(_ keyCode: UInt16) -> Bool {

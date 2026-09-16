@@ -26,6 +26,9 @@ final class AppShortcutBridge {
     /// 会话列表上/下切换（由 ContentView 注册，delta：-1 上移，+1 下移）
     var onSwitchConversation: ((Int) -> Void)?
 
+    /// ⌘V 粘贴的图片字节（由 ContentView 注册，投递给激活 tab 的 ChatViewModel）
+    var onPasteImages: (([Data]) -> Void)?
+
     /// 当前是否有待处理的 L3 工具确认（由 ContentView 注册，查激活 tab 的 ChatViewModel）
     var confirmationPending: (() -> Bool)?
 

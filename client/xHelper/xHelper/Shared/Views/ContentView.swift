@@ -346,6 +346,9 @@ struct ContentView: View {
         AppShortcutBridge.shared.onSwitchConversation = { delta in
             Task { await self.switchConversation(delta: delta) }
         }
+        AppShortcutBridge.shared.onPasteImages = { datas in
+            self.activeChatViewModel?.enqueuePastedImages(datas)
+        }
         AppShortcutBridge.shared.confirmationPending = {
             self.activeChatViewModel?.pendingToolConfirmation != nil
         }

@@ -333,7 +333,14 @@ struct MessageAttachmentThumb: View {
         }
         .task(id: imageId) {
             guard localImage == nil else { return }
-            loader.load(id: imageId, baseURL: baseURL, token: token)
+            // 拉不到就一直重试：网络类失败不记终局，而 .task 只跑一次、也没别的状态变化会
+            // 触发重渲染 → 切屏回来时被掐断的请求会让缩略图永远转圈。成功或 404 即退出；
+            // 视图消失时本任务被取消，自动停。
+            while !Task.isCancelled {
+                loader.load(id: imageId, baseURL: baseURL, token: token)
+                if loader.images[imageId] != nil || loader.failed.contains(imageId) { return }
+                try? await Task.sleep(for: .seconds(2))
+            }
         }
     }
 }

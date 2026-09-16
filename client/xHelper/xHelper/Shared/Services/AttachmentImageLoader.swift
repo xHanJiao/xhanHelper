@@ -35,6 +35,14 @@ final class AttachmentImageLoader: ObservableObject {
     /// 同步读（渲染前先看，避免闪一下占位）
     func cached(_ id: String) -> PlatformImage? { images[id] }
 
+    /// 已经有图时直接种进缓存（上传成功后调用）：刚发出去的图在会话重载后
+    /// 不必再走网络，省一次往返，也不会因为重拉失败停在转圈
+    func seed(id: String, image: PlatformImage) {
+        guard images[id] == nil else { return }
+        images[id] = image
+        failed.remove(id)
+    }
+
     /// 拉取并缓存。视图消失不打断（任务归存储所有，不随视图生命周期取消）
     func load(id: String, baseURL: String, token: String) {
         guard images[id] == nil, !failed.contains(id), inflight[id] == nil else { return }

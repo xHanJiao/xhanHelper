@@ -48,8 +48,6 @@ struct MessageListView: View {
 
     // MARK: 调试面板
     @State private var debugTarget: MessageDebugTarget? = nil
-    /// 图片大图预览
-    @State private var previewImage: PlatformImage? = nil
 
     var body: some View {
         Group {
@@ -67,12 +65,6 @@ struct MessageListView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-        }
-        .sheet(item: Binding(
-            get: { previewImage.map(PreviewImageItem.init) },
-            set: { if $0 == nil { previewImage = nil } }
-        )) { item in
-            AttachmentPreviewView(image: item.image) { previewImage = nil }
         }
         .background(
             GeometryReader { geo in
@@ -365,7 +357,9 @@ struct MessageListView: View {
                         token: token,
                         localImage: msg.localImages.first
                     ) { image in
-                        previewImage = image
+                        LightboxCenter.shared.present {
+                            AttachmentPreviewView(image: image) { LightboxCenter.shared.dismiss() }
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 }

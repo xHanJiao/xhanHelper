@@ -27,7 +27,6 @@ struct ChatView: View {
     @State private var draftAttachments: [DraftAttachment] = []
     @State private var isUploadingAttachments = false
     @State private var showFileImporter = false
-    @State private var previewImage: PlatformImage?
 
     let baseURL: String
     let token: String
@@ -288,7 +287,11 @@ struct ChatView: View {
                         },
                         onAdd: { showFileImporter = true },
                         onClearAll: { draftAttachments.removeAll() },
-                        onPreview: { item in previewImage = item.image }
+                        onPreview: { item in
+                            LightboxCenter.shared.present {
+                                AttachmentPreviewView(image: item.image) { LightboxCenter.shared.dismiss() }
+                            }
+                        }
                     )
                 }
             }
@@ -328,12 +331,6 @@ struct ChatView: View {
             case .success(let urls): handlePickedFiles(urls)
             case .failure(let error): LogBuffer.shared.warning("ChatView.fileImporter: \(error)")
             }
-        }
-        .sheet(item: Binding(
-            get: { previewImage.map(PreviewImageItem.init) },
-            set: { if $0 == nil { previewImage = nil } }
-        )) { item in
-            AttachmentPreviewView(image: item.image) { previewImage = nil }
         }
 #endif
     }
@@ -647,10 +644,4 @@ struct ChatView: View {
             .first?.statusBarManager?.statusBarFrame.height) ?? 20
     }
 #endif
-}
-
-/// sheet(item:) 需要 Identifiable；用 UUID 包一层避免给 NSImage 加协议
-struct PreviewImageItem: Identifiable {
-    let id = UUID()
-    let image: PlatformImage
 }

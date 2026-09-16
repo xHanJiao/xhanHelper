@@ -24,6 +24,7 @@ struct xhanHelperApp: App {
             .environmentObject(FontSizeManager.shared)
             .preferredColorScheme(colorSchemeManager.selectedScheme.colorScheme)
             .toast()
+            .lightbox()
         }
     }
 }

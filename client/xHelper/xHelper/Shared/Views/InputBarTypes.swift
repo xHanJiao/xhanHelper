@@ -10,6 +10,21 @@ struct InputBarContext {
     var canSend: Bool
 }
 
+/// 输入栏可折叠按钮的身份。allCases 顺序即规范展示顺序；
+/// 每个 id 可被用户设为「常驻」（底部行）或「收起」（更多操作行），
+/// 配置持久化在 InputBarLayoutState。发送/停止不在此列（位置固定）。
+enum InputBarButtonID: String, CaseIterable {
+    case mode
+    case agent
+    case trusted
+    case model
+    case handoff
+    case attach
+
+    /// 首次运行（无持久化配置）时的收起集合，等价于旧硬编码布局。
+    static let defaultCollapsed: Set<InputBarButtonID> = [.trusted, .model, .handoff, .attach]
+}
+
 /// 按钮可见性声明。每个按钮自己决定何时出现/隐藏，
 /// 由 InputBar 统一在渲染时过滤（不可见即不占布局）。
 enum ButtonVisibility {

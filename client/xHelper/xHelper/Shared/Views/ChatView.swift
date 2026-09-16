@@ -30,10 +30,12 @@ struct ChatView: View {
     /// 本视图输入框是否聚焦（⌘V 粘贴定位收件 ChatView 用，见 viewModel.pastedImages）
     @State private var inputFocused = false
 
-    // MARK: 输入栏折叠的更多操作（信任/模型/接力/附件）
+    // MARK: 输入栏折叠的更多操作
     /// 展开态：在按钮行上方多出一行（同一胶囊内）。12s 无操作自动收起。
     @State private var inputBarExtrasExpanded = false
     @State private var extrasCollapseTask: Task<Void, Never>?
+    /// 每个按钮常驻/收起的配置（右键菜单切换，持久化，主/PiP 实例共享）。
+    @ObservedObject private var inputBarLayout = InputBarLayoutState.shared
 
     let baseURL: String
     let token: String
@@ -332,16 +334,63 @@ struct ChatView: View {
         .animation(.easeOut(duration: 0.18), value: inputBarExtrasExpanded)
     }
 
-    /// InputBar 状态行（计划/智能体/更多操作）。信任/模型/接力/附件收进 chevron 后的展开行。
+    /// InputBar 状态行：常驻按钮 + 更多操作 chevron。哪些按钮常驻由折叠配置决定。
     /// 独立成方法而不是内联闭包：整个 InputBar 调用表达式已顶到类型检查预算上限。
     @ViewBuilder
     private func inputBarStatusRow(_ ctx: InputBarContext) -> some View {
         #if os(macOS)
         HStack(spacing: 4) {
-            // 计划模式：高频使用，常驻。
+            ForEach(InputBarButtonID.allCases.filter { !inputBarLayout.isCollapsed($0) }, id: \.self) { id in
+                inputBarButton(id, ctx: ctx)
+            }
+            // 更多操作：有按钮被收起时才提供 chevron（否则全常驻，无展开行）。
+            if !inputBarLayout.collapsed.isEmpty {
+                ExpandPill(context: ctx, isExpanded: inputBarExtrasExpanded) {
+                    toggleInputBarExtras()
+                }
+            }
+        }
+        #endif
+    }
+
+    /// InputBar 折叠的更多操作行：展开时出现在按钮行上方，同胶囊内右对齐——
+    /// 参与布局，宽度受胶囊约束，窄窗不会戳出框。
+    @ViewBuilder
+    private func inputBarExtrasRow(_ ctx: InputBarContext) -> some View {
+        #if os(macOS)
+        if inputBarExtrasExpanded && !inputBarLayout.collapsed.isEmpty {
+            HStack(spacing: 4) {
+                Spacer(minLength: 0)
+                ForEach(InputBarButtonID.allCases.filter { inputBarLayout.isCollapsed($0) }, id: \.self) { id in
+                    inputBarButton(id, ctx: ctx)
+                }
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+        #endif
+    }
+
+    /// 单个输入栏按钮：按 id 构造对应控件，并挂右键菜单切换常驻/收起。
+    @ViewBuilder
+    private func inputBarButton(_ id: InputBarButtonID, ctx: InputBarContext) -> some View {
+        inputBarButtonContent(id, ctx: ctx)
+            .contextMenu {
+                Button(inputBarLayout.isCollapsed(id) ? "常驻" : "收起") {
+                    withAnimation(.easeOut(duration: 0.18)) { inputBarLayout.toggle(id) }
+                }
+            }
+    }
+
+    /// 按钮本体（不含右键菜单）。
+    @ViewBuilder
+    private func inputBarButtonContent(_ id: InputBarButtonID, ctx: InputBarContext) -> some View {
+        switch id {
+        case .mode:
+            // 计划模式：高频使用。
             ModePill(context: ctx, isPlanMode: viewModel.isPlanMode) {
                 Task { await viewModel.toggleMode() }
             }
+        case .agent:
             // 智能体选择器：cpu 图标与侧边栏一致。
             // 仅当已确认用户存在智能体时才展示（无智能体时隐藏，避免无意义按钮）。
             if hasLoadedAgents && !pickerAgents.isEmpty {
@@ -362,55 +411,40 @@ struct ChatView: View {
                     }
                 )
             }
-            // 更多操作：展开后在按钮行上方多出一行（信任/模型/接力/附件）。
-            ExpandPill(context: ctx, isExpanded: inputBarExtrasExpanded) {
-                toggleInputBarExtras()
+        case .trusted:
+            TrustedPill(context: ctx, trusted: viewModel.trustedMode) {
+                viewModel.toggleTrustedMode()
+                resetExtrasAutoCollapse()
             }
-        }
-        #endif
-    }
-
-    /// InputBar 折叠的更多操作行（信任/模型/接力/附件）：展开时出现在按钮行上方，
-    /// 同胶囊内右对齐——参与布局，宽度受胶囊约束，窄窗不会戳出框。
-    @ViewBuilder
-    private func inputBarExtrasRow(_ ctx: InputBarContext) -> some View {
-        #if os(macOS)
-        if inputBarExtrasExpanded {
-            HStack(spacing: 4) {
-                Spacer(minLength: 0)
-                TrustedPill(context: ctx, trusted: viewModel.trustedMode) {
-                    viewModel.toggleTrustedMode()
-                    resetExtrasAutoCollapse()
-                }
-                ModelPill(context: ctx, isDeep: viewModel.deepMode) {
-                    viewModel.toggleDeepMode()
-                    resetExtrasAutoCollapse()
-                }
-                // 会话接力：整理成文档并开新会话续接。计划模式只读、接力要写文档，
-                // 故 plan 模式下置灰（tooltip 说明原因），非流式、非空会话才可用。
-                HandoffPill(
-                    context: ctx,
-                    isEnabled: !viewModel.isStreaming
-                        && !(viewModel.conversationId ?? "").isEmpty
-                        && !viewModel.isPlanMode,
-                    isPlanMode: viewModel.isPlanMode
-                ) {
-                    viewModel.beginHandoff(baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
-                }
-                // 附件：选本地图片（发送时随消息一起上传）
-                IconButton(
-                    visibility: .always,
-                    context: ctx,
-                    symbol: "paperclip",
-                    tint: draftAttachments.isEmpty ? .secondary : Color("appAccent"),
-                    isEnabled: !viewModel.isStreaming && !isUploadingAttachments,
-                    tooltip: "添加图片",
-                    action: { showFileImporter = true }
-                )
+        case .model:
+            ModelPill(context: ctx, isDeep: viewModel.deepMode) {
+                viewModel.toggleDeepMode()
+                resetExtrasAutoCollapse()
             }
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+        case .handoff:
+            // 会话接力：整理成文档并开新会话续接。计划模式只读、接力要写文档，
+            // 故 plan 模式下置灰（tooltip 说明原因），非流式、非空会话才可用。
+            HandoffPill(
+                context: ctx,
+                isEnabled: !viewModel.isStreaming
+                    && !(viewModel.conversationId ?? "").isEmpty
+                    && !viewModel.isPlanMode,
+                isPlanMode: viewModel.isPlanMode
+            ) {
+                viewModel.beginHandoff(baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
+            }
+        case .attach:
+            // 附件：选本地图片（发送时随消息一起上传）
+            IconButton(
+                visibility: .always,
+                context: ctx,
+                symbol: "paperclip",
+                tint: Color("appAccent"),
+                isEnabled: !viewModel.isStreaming && !isUploadingAttachments,
+                tooltip: "添加图片",
+                action: { showFileImporter = true }
+            )
         }
-        #endif
     }
 
     /// 展开/收起折叠的更多操作；展开时启动 12s 无操作自动收起。

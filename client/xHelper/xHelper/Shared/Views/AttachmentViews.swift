@@ -203,7 +203,8 @@ struct AttachmentTray: View {
                     .foregroundStyle(.white, .black.opacity(0.6))
             }
             .buttonStyle(.plain)
-            .offset(x: 5, y: -5)
+            // 收在格子内，不能跨在角上：跨角会向上溢出，展开态的 ScrollView 会把徽标上缘裁掉
+            .offset(x: -2, y: 2)
         }
     }
 

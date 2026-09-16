@@ -279,6 +279,48 @@ final class SensitiveFileBlockerTests: XCTestCase {
         XCTAssertNotNil(SensitiveFileBlocker.check("/Users/t/proj/.git-credentials"))
     }
 
+    // MARK: - 硬性拦截层（不可豁免）
+
+    func testHardBlockedHomeSecrets() {
+        let home = NSHomeDirectory()
+        XCTAssertNotNil(SensitiveFileBlocker.check("\(home)/.zshrc"))
+        XCTAssertNotNil(SensitiveFileBlocker.check("\(home)/.zshenv"))
+        XCTAssertNotNil(SensitiveFileBlocker.check("\(home)/.bash_history"))
+        XCTAssertNotNil(SensitiveFileBlocker.check("\(home)/.ssh"))
+        XCTAssertNotNil(SensitiveFileBlocker.check("\(home)/.ssh/config"))
+        XCTAssertNotNil(SensitiveFileBlocker.check("\(home)/.aws/credentials"))
+        XCTAssertNotNil(SensitiveFileBlocker.check("\(home)/Library/Keychains/login.keychain-db"))
+        XCTAssertNotNil(SensitiveFileBlocker.check("/etc/sudoers"))
+        XCTAssertNotNil(SensitiveFileBlocker.check("/etc/passwd"))
+    }
+
+    func testHardBlockedNotExemptible() {
+        let home = NSHomeDirectory()
+        // 即使把整个 home 加进豁免，硬层依然拦住
+        SensitiveFileBlocker.addExemption(home)
+        XCTAssertTrue(SensitiveFileBlocker.exemptPaths.contains(home))
+        XCTAssertNotNil(SensitiveFileBlocker.check("\(home)/.zshrc"))
+        XCTAssertNotNil(SensitiveFileBlocker.check("\(home)/.ssh/id_ed25519"))
+    }
+
+    func testHardBlockedDoesNotLeakToSiblingPrefix() {
+        let home = NSHomeDirectory()
+        // 组件前缀匹配：.sshfoo / .zshrc.bak 不是高危路径
+        XCTAssertNil(SensitiveFileBlocker.check("\(home)/.sshfoo"))
+        XCTAssertNil(SensitiveFileBlocker.check("\(home)/.zshrc.bak"))
+    }
+
+    func testIsAncestorOfHardPath() {
+        let home = NSHomeDirectory()
+        XCTAssertTrue(SensitiveFileBlocker.isAncestorOfHardPath(home))
+        XCTAssertTrue(SensitiveFileBlocker.isAncestorOfHardPath("\(home)/.ssh"))
+        XCTAssertTrue(SensitiveFileBlocker.isAncestorOfHardPath("/"))
+        XCTAssertFalse(SensitiveFileBlocker.isAncestorOfHardPath("\(home)/proj"))
+        XCTAssertFalse(SensitiveFileBlocker.isAncestorOfHardPath("/tmp"))
+        // 后代不是祖先
+        XCTAssertFalse(SensitiveFileBlocker.isAncestorOfHardPath("\(home)/.ssh/config"))
+    }
+
     func testExemptionAddRemove() {
         SensitiveFileBlocker.addExemption("/Users/t/proj/.git")
         XCTAssertEqual(SensitiveFileBlocker.exemptPaths.count, 1)

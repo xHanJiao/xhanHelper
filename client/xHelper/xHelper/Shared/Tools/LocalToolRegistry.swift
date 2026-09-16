@@ -37,6 +37,12 @@ final class LocalToolRegistry {
 
     #if os(macOS)
     func riskLevel(for flatName: String, arguments: [String: Any]) -> Int {
+        if flatName.hasPrefix("shell__") {
+            // shell 默认 L4（红色、信任模式不可跳）；命令完全落在 Agent 工作区内 → L3
+            //（常规确认、信任模式可跳）。工作区外一切维持 L4。
+            // 未命中白名单的命令已由 shellBlockedReason 前置拒绝。
+            return ShellToolProvider.isWorkspaceScoped(arguments: arguments) ? 3 : 4
+        }
         if flatName.hasPrefix("fs__") {
             let paths = FileSystemToolProvider.extractPaths(flatName: flatName, arguments: arguments)
             for path in paths {
@@ -57,6 +63,12 @@ final class LocalToolRegistry {
             }
         }
         return nil
+    }
+
+    /// shell__run 硬阻断（命令缺失 / workdir 未授权 / 语法不支持 / 未命中白名单）。
+    /// 返回 nil 表示可继续（allow 自动执行，l4 走人工确认）。
+    func shellBlockedReason(arguments: [String: Any]) -> String? {
+        ShellToolProvider.blockedReason(arguments: arguments)
     }
     #endif
 
@@ -100,6 +112,8 @@ final class LocalToolRegistry {
         "fs__read": "读取文件",
         "fs__write": "写入文件",
         "fs__edit": "编辑文件",
+        // shell
+        "shell__run": "执行命令",
     ]
 
     /// 用户可读的工具展示名：优先用简短名，其次 schema 的中文 description（截断），未命中兜底 flatName

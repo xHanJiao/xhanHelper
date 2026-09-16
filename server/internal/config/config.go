@@ -52,7 +52,7 @@ type ChatConfig struct {
 	SummaryRelevanceHistoryN  int      `yaml:"summary_relevance_history_n"` // 相关性检查的历史消息窗口大小，默认 5
 	SummaryDedupThreshold     float64  `yaml:"summary_dedup_threshold"`     // 摘要附着去重余弦相似度阈值（相邻摘要更相似则丢弃较旧者），默认 0.85
 	ToolExcludes              []string `yaml:"tool_excludes"`               // 对 LLM 隐藏的工具名列表（控 token 成本），默认空
-	SubAgentOnlyClientTools   []string `yaml:"subagent_only_client_tools"`  // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏），默认 ["browser","fs"]
+	SubAgentOnlyClientTools   []string `yaml:"subagent_only_client_tools"`  // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏），默认 ["browser","fs","shell"]
 }
 
 // ShareConfig — 分享配置
@@ -716,7 +716,7 @@ func validate(cfg *Config) error {
 		cfg.Chat.SummaryDedupThreshold = 0.85
 	}
 	if cfg.Chat.SubAgentOnlyClientTools == nil {
-		cfg.Chat.SubAgentOnlyClientTools = []string{"browser", "fs"}
+		cfg.Chat.SubAgentOnlyClientTools = []string{"browser", "fs", "shell"}
 	}
 	if cfg.Share.DefaultValidDays == 0 {
 		cfg.Share.DefaultValidDays = 7

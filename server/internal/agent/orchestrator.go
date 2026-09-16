@@ -215,7 +215,7 @@ type OrchestratorConfig struct {
 	VerifyModel               string            // "flash" | "pro"，默认 flash
 	UseNativeFC               bool              // 是否使用原生 function calling
 	ToolExcludes              []string          // 对 LLM 隐藏的工具名列表（控 token 成本）
-	SubAgentOnlyClientTools   []string          // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏），默认 ["browser","fs"]
+	SubAgentOnlyClientTools   []string          // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏），默认 ["browser","fs","shell"]
 	DebugPersistJSON          bool              // 是否持久化完整 LLM 请求 JSON（异步限频写入，配 debug_json 控制频率与保留）
 	DebugJSONSink             DebugJSONSink     // request_json 异步落库 sink，DebugPersistJSON 开启时必填
 	ClientBridge              *ClientToolBridge // 客户端工具桥（客户端工具调用的 pending 路由）

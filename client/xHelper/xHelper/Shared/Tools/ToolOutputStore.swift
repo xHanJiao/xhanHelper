@@ -63,6 +63,10 @@ nonisolated final class ToolOutputStore: @unchecked Sendable {
             try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
             if !FileManager.default.fileExists(atPath: url.path) {
                 try data.write(to: url, options: .atomic)
+            } else {
+                // 内容寻址去重：同内容复用已有文件。刷新 mtime，让 LRU 反映"最近又产生过"，
+                // 避免刚用到的副本因旧 mtime 被提前清掉。
+                try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
             }
             return url
         } catch {

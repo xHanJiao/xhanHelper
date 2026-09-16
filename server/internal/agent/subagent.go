@@ -72,8 +72,8 @@ const webExplorePrompt = `你是联网调研专家，擅长通过浏览器访问
 </research_result>`
 
 // fileExplorePrompt — file_explore 子 agent 角色 prompt。
-// 本地文件检索（fs__glob/grep/read）只读专家；一次性完成检索后按固定结构输出结论。
-const fileExplorePrompt = `你是本地文件检索专家，擅长在用户的 Mac 文件系统上快速定位文件、搜索内容并提炼结论。
+// 本地文件检索（fs__glob/grep/read）+ 只读命令执行（shell__run）专家；一次性完成检索后按固定结构输出结论。
+const fileExplorePrompt = `你是本地文件与只读命令探索专家，擅长在用户的 Mac 文件系统上快速定位文件、搜索内容、查看仓库状态并提炼结论。
 你的输出将直接交给主 agent 汇总回答用户，不直接面向用户。
 
 能力（只读）：
@@ -87,6 +87,13 @@ const fileExplorePrompt = `你是本地文件检索专家，擅长在用户的 M
   大 PDF 先读前 10 页摸清结构，再按 page_offset 定位关键页细读，不要一次读满
 - PDF 表格按文本流提取，行列关系会丢失、跨行数字可能被切断，表格数值不可直接解析
 - 扫描件 PDF（无文本层）无法提取文本，报错后如实告知主任务，不要假装读完
+- shell__run：执行只读终端命令（需要 git 状态/历史、目录概览、统计行数等 fs 工具做不到的事时用）
+  - 支持 | && || ; 串联，**不支持重定向 / cd / 后台 &**；切换目录用 workdir 参数，不要写 cd
+  - 允许的命令：ls pwd head tail wc file stat du df tree diff cmp md5 shasum echo grep rg
+    date whoami hostname uname id sw_vers arch which type basename dirname realpath
+  - git 只读：status log diff show blame rev-parse ls-files shortlog describe（branch/remote/tag/stash 仅只读形式）
+  - 路径参数必须在已授权目录或 Agent 工作区内；每条命令执行前都会请用户确认——被拒就换方案，不要重复请求同一条
+  - **读文件/搜内容仍优先 fs__glob/grep/read**；shell 只用于命令类探索，不要用 cat 读文件
 - datetime / calculator：辅助
 
 工作准则：
@@ -165,8 +172,9 @@ type subagentSpec struct {
 //   - web_explore：浏览器（browser）+ 笔记检索（unified_search——用户主动整理的知识库）。
 //     记忆/历史对话/摘要对子任务不可见。webfetch 已移除（单页 5 万字符全量进上下文、
 //     token 消耗大且被 2000 字符截断破坏——用户决策）。
-//   - file_explore：仅本地文件只读工具（fs 的 glob/grep/read，写工具函数级剥除）。
-//     browser 不注入；ui（ask_user 用户介入）保留；笔记/记忆均不可见（子任务不应自动读取用户私密数据）。
+//   - file_explore：本地文件只读工具（fs 的 glob/grep/read，写工具函数级剥除）+ 只读命令（shell 的 run，
+//     命令侧白名单只放行只读命令，写/网络/进程类直接拒绝）。browser 不注入；
+//     ui（ask_user 用户介入）保留；笔记/记忆均不可见（子任务不应自动读取用户私密数据）。
 //   - user_context：用户信息检索，数据边界全放开（画像/记忆/笔记/摘要/主题/历史——查用户自身就是本职）。
 //     profile 工具已 HideTool（仅子任务可见）；纯服务端（requiresClient=false），Web/客户端都能用。
 var subagentSpecs = map[string]subagentSpec{
@@ -180,7 +188,7 @@ var subagentSpecs = map[string]subagentSpec{
 	"file_explore": {
 		prompt:          fileExplorePrompt,
 		serverWhitelist: []string{"datetime", "calculator"},
-		clientWhitelist: map[string][]string{"fs": {"glob", "grep", "read"}, "ui": nil},
+		clientWhitelist: map[string][]string{"fs": {"glob", "grep", "read"}, "shell": {"run"}, "ui": nil},
 		// 对齐客户端注入预算（clientToolInjectBudgetBytes）：fs_read 单页 ≈19KB，
 		// 2000 默认会把读文件能力砍到 1/10
 		maxToolResult:  clientToolInjectBudgetBytes,

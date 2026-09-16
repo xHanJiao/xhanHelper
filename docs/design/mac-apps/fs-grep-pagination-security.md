@@ -45,8 +45,18 @@
 - `SensitiveFileBlocker` 新增 `/.git/` 规则（路径组件含 .git 即拦）——read/grep/glob 三扇门统一，幽灵文件消失。
 - 新增豁免机制（**独立于授权目录，只解敏感锁，不动授权锁**）：
   - UserDefaults key `fs_sensitive_exempt_paths`，前缀匹配（大小写不敏感，与授权管理一致）。
-  - `check()` 开头豁免短路。
+  - `check()` 中豁免短路（**位于硬层之后**，见下）。
   - 设置页（MacSettingsView）新增 Section「敏感文件豁免」：与「文件访问授权」同款 UI（ForEach + 删除 + AddDirView 添加）。
+
+### 2.3.1 硬性拦截层（后续追加，2026-09）
+
+在豁免之前再加一层**不可豁免**的硬性拦截，防 shell 启动文件被写（任意代码执行）与凭证泄露。`check()` 顺序：**硬层 → 豁免 → 软层**。
+
+- 高危目录（路径组件前缀）：`$HOME/.ssh`、`.gnupg`、`.aws`、`.kube`、`.docker`、`$HOME/Library/Keychains`、`/etc/sudoers.d`。
+- 高危文件（精确，`$HOME` 锚定 + 系统）：`.zshrc/.zshenv/.zprofile/.zlogin/.zlogout/.zsh_history`、`.bashrc/.bash_profile/.bash_login/.bash_history`、`.profile/.inputrc`、`.netrc/.npmrc/.pypirc/.git-credentials/.wgetrc/.curlrc`、`.config/fish/config.fish`、`.config/gh/hosts.yml`、`/etc/passwd|shadow|master.passwd|sudoers`。
+- 读写都拦；豁免 / 授权目录 / 信任模式一律无效（`addExemption` 对硬路径直接忽略，设置页弹提示）。
+- `isAncestorOfHardPath` 供 shell 递归命令（`grep -r`、`rg`）判定根目录。
+- 收口不变：fs read/write/edit/glob/grep 走 `check`，shell 走 `pathBlockedReason`，均无"确认放行"通道。
 
 ### 2.4 SPM 单测（C 方案）
 

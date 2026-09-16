@@ -34,7 +34,7 @@ final class SubagentResultParserTests: XCTestCase {
         </file_explore_result>
         """
         let r = SubagentResultParser.parse(xml)
-        XCTAssertEqual(r?.title, "文件检索")
+        XCTAssertEqual(r?.title, "本地探索")
         let md = r?.markdown ?? ""
         XCTAssertTrue(md.contains("### 发现\n\n- /a/x.go:12 调用 foo\n- /a/y.go:30 调用 bar"))
         XCTAssertTrue(md.contains("### 已读文件\n\n- /a/x.go\n- /a/y.go"))

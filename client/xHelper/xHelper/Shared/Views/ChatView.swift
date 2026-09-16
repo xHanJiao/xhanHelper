@@ -448,23 +448,32 @@ struct ChatView: View {
             .padding(.vertical, 6)
             .frame(maxWidth: 720, alignment: .center)
         } else {
+            let accent: Color = conf.hardened ? .red : .orange
             HStack(spacing: 8) {
-                Image(systemName: "shield.lefthalf.filled")
+                Image(systemName: conf.hardened ? "exclamationmark.shield.fill" : "shield.lefthalf.filled")
                     .font(.caption)
-                    .foregroundColor(.orange)
-                Text("请求执行工具：「\(conf.displayName)」：\(conf.argsSummary)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(3)
+                    .foregroundColor(accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(conf.hardened
+                         ? "请求执行高危命令：「\(conf.displayName)」（不可跳过，信任模式无效）"
+                         : "请求执行工具：「\(conf.displayName)」")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(conf.argsSummary)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(conf.hardened ? .red : .primary)
+                        .lineLimit(6)
+                        .textSelection(.enabled)
+                }
                 Button("允许") { viewModel.resolveToolConfirmation(allow: true) }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .tint(.orange)
+                    .tint(accent)
                     .padding(.leading, 12)
                 Button("拒绝") { viewModel.resolveToolConfirmation(allow: false) }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .tint(.orange)
+                    .tint(accent)
             }
             .padding(.horizontal, Layout.chatHorizontalPadding)
             .padding(.vertical, 4)

@@ -27,6 +27,19 @@ final class ToolOutputStoreTests: XCTestCase {
         XCTAssertEqual(files.count, 1, "同内容不应新增文件")
     }
 
+    func testSaveRefreshesMtimeOnDedup() throws {
+        let store = ToolOutputStore(baseURL: dir, retention: 3600, maxTotalBytes: 1024 * 1024)
+        let url = try XCTUnwrap(store.save("same content"))
+        let stale = Date().addingTimeInterval(-1000)
+        try FileManager.default.setAttributes([.modificationDate: stale], ofItemAtPath: url.path)
+
+        _ = try XCTUnwrap(store.save("same content"), "同内容应复用同一文件")
+
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        let mtime = try XCTUnwrap(attrs[.modificationDate] as? Date)
+        XCTAssertGreaterThan(mtime, stale, "去重命中时应刷新 mtime，让 LRU 反映最近使用")
+    }
+
     func testSaveDifferentContentDifferentFiles() throws {
         let store = ToolOutputStore(baseURL: dir, retention: 3600, maxTotalBytes: 1024 * 1024)
         _ = try XCTUnwrap(store.save("a"))

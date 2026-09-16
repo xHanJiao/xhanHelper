@@ -14,7 +14,7 @@ const expandedId = ref(null)
 const expandedMsgs = ref({})
 const msgLoading = ref(false)
 
-const typeLabel = { web_explore: '联网调研', file_explore: '文件检索', user_context: '用户信息' }
+const typeLabel = { web_explore: '联网调研', file_explore: '本地探索', user_context: '用户信息' }
 const typeColor = { web_explore: 'info', file_explore: 'warning', user_context: 'primary' }
 const stateLabel = { completed: '已完成', timeout: '超时', failed: '失败' }
 const stateColor = { completed: 'success', timeout: 'warning', failed: 'error' }

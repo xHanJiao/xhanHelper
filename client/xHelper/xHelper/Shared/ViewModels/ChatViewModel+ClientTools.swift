@@ -65,6 +65,16 @@ extension ChatViewModel {
                     }
                 }
 
+                // shell：未命中白名单 / workdir 未授权 / 语法不支持 → 直接拒绝（不弹确认）
+                let isShell = toolName.hasPrefix("shell__")
+                if isShell {
+                    if let blocked = LocalToolRegistry.shared.shellBlockedReason(arguments: args) {
+                        LogBuffer.shared.warning("clientToolCall: \(toolName) blocked: \(blocked)")
+                        try await api.submitToolResult(callId: callID, resultJSON: nil, error: blocked)
+                        return
+                    }
+                }
+
                 // 工具分级：L3（高风险写）执行前需用户确认（60s 超时视为拒绝）
                 // S2/G6：交互工具在高敏域或 http 明文页上动态升 L3（防注入诱导自动操作账户）。
                 // forcedL3 标记"敏感上下文升的级"，信任模式也不跳过。
@@ -98,6 +108,8 @@ extension ChatViewModel {
                 }
 
                 if level >= 3 {
+                    // shell L4：命令级高危，红色确认条 + 信任模式不跳过
+                    let shellHardened = isShell && level >= 4
                     // fs 写/编辑工具：确认前预演 diff（不落盘），确认条展示。大文件全量读放后台执行。
                     var diffText: String?
                     var additions: Int?
@@ -130,7 +142,8 @@ extension ChatViewModel {
                     let confirmed = await self.awaitToolConfirmation(
                         toolName: toolName,
                         arguments: confirmArgs,
-                        force: forcedL3,
+                        force: forcedL3 || shellHardened,
+                        hardened: shellHardened,
                         bridgeToBrowser: isBrowser,
                         diffText: diffText,
                         additions: additions,

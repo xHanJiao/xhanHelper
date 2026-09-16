@@ -7,7 +7,7 @@ import Foundation
 // 纯逻辑（无 SwiftUI），与 app 共享源文件，由 FsCore 包单测自验。
 
 struct SubagentResult {
-    let title: String    // 结果类型标题（网页调研/文件检索/用户信息检索）
+    let title: String    // 结果类型标题（网页调研/本地探索/用户信息检索）
     let markdown: String // 渲染用 Markdown
 }
 
@@ -15,7 +15,7 @@ enum SubagentResultParser {
     // 根标签 → 标题
     private static let roots: [(tag: String, title: String)] = [
         ("research_result", "网页调研"),
-        ("file_explore_result", "文件检索"),
+        ("file_explore_result", "本地探索"),
         ("user_context_result", "用户信息检索"),
     ]
 

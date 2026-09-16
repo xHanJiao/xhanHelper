@@ -1,6 +1,7 @@
 import Foundation
 
-final class DirectoryAuthorizationManager {
+/// `nonisolated`：状态由并发队列 + UserDefaults 保护，无 UI 依赖；允许从后台任务（shell 解析）调用。
+nonisolated final class DirectoryAuthorizationManager: @unchecked Sendable {
     static let shared = DirectoryAuthorizationManager()
 
     private let permanentKey = "fs_permanent_authorized_dirs"
@@ -21,8 +22,24 @@ final class DirectoryAuthorizationManager {
 
     var temporaryExpirySecs: TimeInterval { defaultExpirySecs }
 
+    /// 路径是否落在 Agent 隐式工作区内（App 自有目录，按路径组件匹配）。
+    func isWithinAgentWorkspace(_ path: String) -> Bool {
+        let resolved = resolvePath(path).lowercased()
+        for dir in AgentWorkspace.implicitReadWriteRoots {
+            let root = resolvePath(dir).lowercased()
+            if resolved == root || resolved.hasPrefix(root + "/") {
+                return true
+            }
+        }
+        return false
+    }
+
     func isAuthorized(_ path: String) -> Bool {
         let resolved = resolvePath(path)
+        // 隐式读写根（Agent 默认工作区）：App 自有，无需手动授权。
+        if isWithinAgentWorkspace(resolved) {
+            return true
+        }
         for dir in permanentDirs {
             if resolved.lowercased().hasPrefix(resolvePath(dir).lowercased()) {
                 return true

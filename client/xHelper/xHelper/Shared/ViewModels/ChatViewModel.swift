@@ -31,6 +31,8 @@ struct ToolConfirmation: Identifiable {
     let additions: Int?
     let deletions: Int?
     let filePath: String?
+    /// L4 高危（如 shell 危险命令）：红色 UI + 信任模式也不跳过
+    let hardened: Bool
     let continuation: CheckedContinuation<Bool, Never>
 }
 
@@ -381,6 +383,7 @@ class ChatViewModel: ObservableObject {
         toolName: String,
         arguments: [String: Any],
         force: Bool = false,
+        hardened: Bool = false,
         bridgeToBrowser: Bool = false,
         diffText: String? = nil,
         additions: Int? = nil,
@@ -393,19 +396,24 @@ class ChatViewModel: ObservableObject {
         }
         // 浏览器工具走人话摘要（ref→元素文本、密码脱敏、来源等），其余保留原始参数
         let argsSummary: String
-        #if os(macOS)
-        if bridgeToBrowser {
-            argsSummary = BrowserActivityCenter.shared.confirmationBody(toolName: toolName, arguments: arguments)
+        if toolName.hasPrefix("shell__") {
+            // shell 危险命令必须完整展示，不复用 prefix(80) 截断
+            argsSummary = (arguments["command"] as? String) ?? "(无命令)"
         } else {
+            #if os(macOS)
+            if bridgeToBrowser {
+                argsSummary = BrowserActivityCenter.shared.confirmationBody(toolName: toolName, arguments: arguments)
+            } else {
+                argsSummary = arguments.isEmpty
+                    ? "(无参数)"
+                    : String(arguments.map { "\($0.key)=\($0.value)" }.joined(separator: ", ").prefix(80))
+            }
+            #else
             argsSummary = arguments.isEmpty
                 ? "(无参数)"
                 : String(arguments.map { "\($0.key)=\($0.value)" }.joined(separator: ", ").prefix(80))
+            #endif
         }
-        #else
-        argsSummary = arguments.isEmpty
-            ? "(无参数)"
-            : String(arguments.map { "\($0.key)=\($0.value)" }.joined(separator: ", ").prefix(80))
-        #endif
         confirmationResolved = false
         let myID = UUID() // per-confirmation 标识：超时任务只处理"当前 pending 还是自己"的确认，杜绝双重 resume
         let displayName = LocalToolRegistry.shared.displayName(for: toolName)
@@ -431,6 +439,7 @@ class ChatViewModel: ObservableObject {
                 additions: additions,
                 deletions: deletions,
                 filePath: filePath,
+                hardened: hardened,
                 continuation: cont
             )
             playConfirmationAlert()
@@ -856,6 +865,10 @@ class ChatViewModel: ObservableObject {
         let api = apiClient
         let cid = conversationId
         sseClient.disconnect()
+        #if os(macOS)
+        // 杀掉本地 shell 进程组（stopStreaming 原本只断 SSE + 通知服务端，杀不掉本地命令）
+        ShellProcessRegistry.shared.killAll()
+        #endif
         finishStreaming()
         detachStreamingMessage()
         Task {

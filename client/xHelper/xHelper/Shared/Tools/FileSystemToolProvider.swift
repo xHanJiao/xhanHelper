@@ -89,14 +89,7 @@ final class FileSystemToolProvider: @unchecked Sendable {
     /// 解析路径：展开 ~、标准化（.. / 重复斜杠），并解析 symlink 到真实路径。
     /// 存在性由调用方确认（不存在时保持标准化路径，供错误提示使用）。
     static func resolvePath(_ path: String) -> String {
-        var resolved = (path as NSString).expandingTildeInPath
-        resolved = (resolved as NSString).standardizingPath
-        let url = URL(fileURLWithPath: resolved).resolvingSymlinksInPath()
-        let real = url.path
-        if FileManager.default.fileExists(atPath: real) {
-            return real
-        }
-        return resolved
+        FsPath.resolve(path)
     }
 
     /// 输出预算上限：client 下发预算（20KB）− 256B 余量（JSON 信封）；

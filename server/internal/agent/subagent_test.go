@@ -412,8 +412,11 @@ func TestBuildSubAgentSystemPrompt(t *testing.T) {
 		t.Errorf("web_explore system prompt 应含固定预算: %s", web)
 	}
 	file := buildSubAgentSystemPrompt(subagentSpecs["file_explore"], 20, 600)
-	if !strings.Contains(file, "本地文件检索专家") {
-		t.Errorf("file_explore system prompt 应含本地检索角色: %s", file)
+	if !strings.Contains(file, "本地文件与只读命令探索专家") {
+		t.Errorf("file_explore system prompt 应含本地探索角色: %s", file)
+	}
+	if !strings.Contains(file, "shell__run") {
+		t.Errorf("file_explore system prompt 应含 shell__run 能力: %s", file)
 	}
 	if !strings.Contains(file, "最多执行 19 轮工具调用") {
 		t.Errorf("file_explore system prompt 应含预算: %s", file)
@@ -489,10 +492,14 @@ func TestSubAgentSpecs_DispatchTable(t *testing.T) {
 	if !file.requiresClient || file.maxToolResult <= web.maxToolResult {
 		t.Errorf("file_explore 应 requiresClient + 预算大于 web_explore: %+v", file)
 	}
-	// file_explore 客户端白名单：fs 只读三函数 + ui
+	// file_explore 客户端白名单：fs 只读三函数 + shell 只读命令 + ui
 	fsFuncs := file.clientWhitelist["fs"]
 	if fsFuncs == nil || strings.Join(fsFuncs, ",") != "glob,grep,read" {
 		t.Errorf("file_explore fs 白名单应只含 glob/grep/read: %v", fsFuncs)
+	}
+	shellFuncs := file.clientWhitelist["shell"]
+	if shellFuncs == nil || strings.Join(shellFuncs, ",") != "run" {
+		t.Errorf("file_explore shell 白名单应只含 run: %v", shellFuncs)
 	}
 	if _, ok := file.clientWhitelist["ui"]; !ok {
 		t.Error("file_explore 应含 ui（ask_user）")

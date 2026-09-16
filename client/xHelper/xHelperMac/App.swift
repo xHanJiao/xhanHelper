@@ -449,6 +449,8 @@ struct xhanHelperMacApp: App {
                 }
                 LocalToolRegistry.shared.register(ChartTool())
                 LocalToolRegistry.shared.register(FileSystemToolProvider())
+                LocalToolRegistry.shared.register(ShellToolProvider())
+                AgentWorkspace.ensureExists()
                 ToolOutputStore.shared.startHousekeeping()
             }
             .onReceive(NotificationCenter.default.publisher(for: .holdToQuitChanged)) { notification in
@@ -521,6 +523,8 @@ struct MacSettingsView: View {
     @State private var showAddExemptSheet = false
     @State private var authorizedDirs: [String] = DirectoryAuthorizationManager.shared.permanentDirs
     @State private var exemptPaths: [String] = SensitiveFileBlocker.exemptPaths
+    @State private var showHardBlockedAlert = false
+    @State private var hardBlockedPath = ""
 
     private var apiClient: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
@@ -579,6 +583,45 @@ struct MacSettingsView: View {
                 }
                 .buttonStyle(.borderless)
                 .padding(.top, 4)
+
+                Divider()
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Agent 工作区（隐式授权，可读写）")
+                            .font(.system(.body, design: .monospaced))
+                        Text(AgentWorkspace.rootPath)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    Button("在访达中打开") {
+                        AgentWorkspace.ensureExists()
+                        NSWorkspace.shared.open(URL(fileURLWithPath: AgentWorkspace.rootPath))
+                    }
+                    .buttonStyle(.borderless)
+                }
+
+                Divider()
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("工具输出溢出目录（只读，仅 fs 工具可读）")
+                            .font(.system(.body, design: .monospaced))
+                        Text(ToolOutputStore.shared.rootPath)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    Button("在访达中打开") {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: ToolOutputStore.shared.rootPath))
+                    }
+                    .buttonStyle(.borderless)
+                }
             }
             .sheet(isPresented: $showAddDirSheet) {
                 AddDirView { dir in
@@ -625,9 +668,19 @@ struct MacSettingsView: View {
                     allowFiles: true,
                     chooseMessage: "选择要豁免的文件或目录"
                 ) { path in
-                    SensitiveFileBlocker.addExemption(path)
-                    exemptPaths = SensitiveFileBlocker.exemptPaths
+                    if SensitiveFileBlocker.isHardBlocked(path) {
+                        hardBlockedPath = path
+                        showHardBlockedAlert = true
+                    } else {
+                        SensitiveFileBlocker.addExemption(path)
+                        exemptPaths = SensitiveFileBlocker.exemptPaths
+                    }
                 }
+            }
+            .alert("该路径硬性拦截，不可豁免", isPresented: $showHardBlockedAlert) {
+                Button("知道了", role: .cancel) {}
+            } message: {
+                Text("\(hardBlockedPath)\n\n属于高危路径（如 shell 启动文件、.ssh、系统凭证等），为防止任意代码执行与凭证泄露，agent 与用户都无法放行。")
             }
 
 #if DEBUG

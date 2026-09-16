@@ -307,6 +307,11 @@ struct MessageListView: View {
 
     // MARK: Message row
 
+    /// 只发图不写字时 content 为空：此时不渲染空气泡，只显示缩略图条。
+    private func hasVisibleContent(_ msg: Message) -> Bool {
+        !msg.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     @ViewBuilder
     private func messageRow(_ msg: Message) -> some View {
         Group {
@@ -344,15 +349,36 @@ struct MessageListView: View {
             if let cd = msg.chartData {
                 ChartBubble(chartData: cd)
             } else if msg.role == "user" {
+                // 附件图片：气泡上方，点开看大图
+                if !msg.imageIds.isEmpty {
+                    MessageAttachmentStrip(
+                        imageIds: msg.imageIds,
+                        baseURL: baseURL,
+                        token: token,
+                        localImage: msg.localImages.first
+                    ) { image in
+                        LightboxCenter.shared.present {
+                            AttachmentPreviewView(image: image) { LightboxCenter.shared.dismiss() }
+                        }
+                    }
+                    // 与气泡正文右缘对齐：气泡用的是 chatHorizontalPadding(24) + 正文内边距 14，
+                    // 图片条原来只做 trailing 对齐（贴到 0），比文字多探出 38pt
+                    .padding(.horizontal, Layout.chatHorizontalPadding + 14)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
                 #if os(macOS)
-                ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
-                           showTime: true)
-                    .allowsHitTesting(!isShareSelectMode)
+                if hasVisibleContent(msg) {
+                    ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
+                               showTime: true)
+                        .allowsHitTesting(!isShareSelectMode)
+                }
                 #else
-                ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
-                           showTime: activeTimeBubbleId == msg.id,
-                           onTapToShowTime: { toggleTimeBubble(msg.id) })
-                    .allowsHitTesting(!isShareSelectMode)
+                if hasVisibleContent(msg) {
+                    ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
+                               showTime: activeTimeBubbleId == msg.id,
+                               onTapToShowTime: { toggleTimeBubble(msg.id) })
+                        .allowsHitTesting(!isShareSelectMode)
+                }
                 #endif
             } else {
                 #if os(macOS)
@@ -370,7 +396,6 @@ struct MessageListView: View {
     }
 
     // MARK: Share select indicator
-
     @ViewBuilder
     private func shareSelectIndicator(for msg: Message) -> some View {
         let isUnshareable = msg.chartData != nil || msg.localToolResult != nil || msg.id == "__streaming__"

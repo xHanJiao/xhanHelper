@@ -17,13 +17,14 @@ import (
 
 // HookStatus — 系统钩子状态快照
 type HookStatus struct {
-	PendingDelayedTasks int64                          `json:"pending_delayed_tasks"`
-	NextDelayedTaskAt   string                         `json:"next_delayed_task_at"`
-	TaskQueues          []service.DelayedTaskQueueStat `json:"task_queues"` // 按 task_type 聚合，新类型自动出现
-	DeliverRemaining    string                         `json:"deliver_remaining"`
-	DiscoverRemaining   string                         `json:"discover_remaining"`
-	MissionRemaining    string                         `json:"mission_remaining"`
-	ArchiveRemaining    string                         `json:"archive_remaining"`
+	PendingDelayedTasks   int64                          `json:"pending_delayed_tasks"`
+	NextDelayedTaskAt     string                         `json:"next_delayed_task_at"`
+	TaskQueues            []service.DelayedTaskQueueStat `json:"task_queues"` // 按 task_type 聚合，新类型自动出现
+	DeliverRemaining      string                         `json:"deliver_remaining"`
+	DiscoverRemaining     string                         `json:"discover_remaining"`
+	MissionRemaining      string                         `json:"mission_remaining"`
+	ArchiveRemaining      string                         `json:"archive_remaining"`
+	ImageCleanupRemaining string                         `json:"image_cleanup_remaining"`
 }
 
 // CronRunner — 反思循环调度器
@@ -44,6 +45,10 @@ type CronRunner struct {
 	convRepo          *service.ConversationRepo // 会话自动归档
 	archiveAfterDays  int                       // 无活动天数超过则自动归档；<=0 关闭
 	archiveInterval   time.Duration             // 归档扫描间隔
+	imageStore        *service.ImageStore       // 图床（按保留期清理过期图片）
+	imageTTLDays      int                       // 被引用过的图保留天数；<0 关闭
+	imageOrphanDays   int                       // 孤儿图保留天数；<0 关闭
+	imageCleanupEvery time.Duration             // 图片清理扫描间隔
 
 	// 钩子状态追踪
 	mu                sync.Mutex
@@ -51,6 +56,7 @@ type CronRunner struct {
 	discoverNext      time.Time
 	missionNext       time.Time
 	archiveNext       time.Time
+	imageCleanupNext  time.Time
 	sessionEndRunning bool
 }
 
@@ -72,6 +78,10 @@ type CronRunnerConfig struct {
 	ConvRepo          *service.ConversationRepo
 	ArchiveAfterDays  int           // 无活动天数超过则自动归档；<=0 关闭
 	ArchiveInterval   time.Duration // 归档扫描间隔；<=0 默认 24h
+	ImageStore        *service.ImageStore
+	ImageTTLDays      int           // 被引用过的图保留天数；<0 关闭
+	ImageOrphanDays   int           // 孤儿图保留天数；<0 关闭
+	ImageCleanupEvery time.Duration // 图片清理扫描间隔；<=0 默认 12h
 }
 
 // NewCronRunner 创建调度器
@@ -84,6 +94,9 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 	}
 	if cfg.ArchiveInterval <= 0 {
 		cfg.ArchiveInterval = 24 * time.Hour
+	}
+	if cfg.ImageCleanupEvery <= 0 {
+		cfg.ImageCleanupEvery = 12 * time.Hour
 	}
 	return &CronRunner{
 		orch:              cfg.Orch,
@@ -102,6 +115,10 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		convRepo:          cfg.ConvRepo,
 		archiveAfterDays:  cfg.ArchiveAfterDays,
 		archiveInterval:   cfg.ArchiveInterval,
+		imageStore:        cfg.ImageStore,
+		imageTTLDays:      cfg.ImageTTLDays,
+		imageOrphanDays:   cfg.ImageOrphanDays,
+		imageCleanupEvery: cfg.ImageCleanupEvery,
 	}
 }
 
@@ -117,9 +134,17 @@ func (cr *CronRunner) setDiscoverNext(t time.Time) {
 	cr.mu.Unlock()
 }
 
+// setArchiveNext 更新归档扫描下次触发时间
 func (cr *CronRunner) setArchiveNext(t time.Time) {
 	cr.mu.Lock()
 	cr.archiveNext = t
+	cr.mu.Unlock()
+}
+
+// setImageCleanupNext 更新图片清理下次触发时间
+func (cr *CronRunner) setImageCleanupNext(t time.Time) {
+	cr.mu.Lock()
+	cr.imageCleanupNext = t
 	cr.mu.Unlock()
 }
 
@@ -145,6 +170,7 @@ func (cr *CronRunner) GetHookStatus() HookStatus {
 	s.DiscoverRemaining = remainingLabel(cr.discoverNext, now)
 	s.MissionRemaining = remainingLabel(cr.missionNext, now)
 	s.ArchiveRemaining = remainingLabel(cr.archiveNext, now)
+	s.ImageCleanupRemaining = remainingLabel(cr.imageCleanupNext, now)
 
 	return s
 }
@@ -278,6 +304,17 @@ func (cr *CronRunner) Start(ctx context.Context) {
 		cr.setArchiveNext(time.Time{})
 	}
 
+	// 图片清理：只在图床可用且 TTL 未全部关闭时启用
+	var imageChan <-chan time.Time
+	if cr.imageStore != nil && (cr.imageTTLDays >= 0 || cr.imageOrphanDays >= 0) {
+		imageTicker := time.NewTicker(cr.imageCleanupEvery)
+		defer imageTicker.Stop()
+		imageChan = imageTicker.C
+		cr.setImageCleanupNext(time.Now().Add(cr.imageCleanupEvery))
+	} else {
+		cr.setImageCleanupNext(time.Time{})
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -327,6 +364,11 @@ func (cr *CronRunner) Start(ctx context.Context) {
 			log.Printf("[cron] archive trigger")
 			cr.archiveStale(ctx)
 			cr.setArchiveNext(time.Now().Add(cr.archiveInterval))
+
+		case <-imageChan:
+			log.Printf("[cron] image cleanup trigger")
+			cr.cleanupImages(ctx)
+			cr.setImageCleanupNext(time.Now().Add(cr.imageCleanupEvery))
 		}
 	}
 }
@@ -359,6 +401,22 @@ func (cr *CronRunner) IsUserActive(ctx context.Context, userID string) bool {
 		return true
 	}
 	return active
+}
+
+// cleanupImages 按保留期清理过期图片（全局，不分用户）：被引用过的走长保留期，孤儿走短保留期。
+// 两类都关闭时该循环不会启动。失败仅记日志，不打断调度。
+func (cr *CronRunner) cleanupImages(ctx context.Context) {
+	if cr.imageStore == nil {
+		return
+	}
+	stats, err := cr.imageStore.Cleanup(ctx, cr.imageTTLDays, cr.imageOrphanDays)
+	if err != nil {
+		log.Printf("[cron] cleanupImages error: %v", err)
+	}
+	if stats.Referenced > 0 || stats.Orphans > 0 {
+		log.Printf("[cron] cleanupImages: removed %d referenced (ttl=%dd) + %d orphan (ttl=%dd)",
+			stats.Referenced, cr.imageTTLDays, stats.Orphans, cr.imageOrphanDays)
+	}
 }
 
 // archiveStale 自动归档无活动超过 archiveAfterDays 天的会话（全局，不分用户）。

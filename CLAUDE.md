@@ -197,7 +197,7 @@ type Tool interface {
 
 ```yaml
 server:
-  port: 8088
+  port: 8080 # dev/base；prod 是 8088（见 conf/config.prod.yaml）
   mode: debug
   registration_enabled: true
   allowed_users: []
@@ -307,6 +307,18 @@ make clean        # 清理
 - 提交代码前必须征得用户同意
 - 遇到相似功能，抽取公共组件
 - **客户端（client/）代码不由 agent 编译验证**：agent 只改代码，不执行 xcodebuild，编译和运行验证由用户在 Xcode 中完成（避免与 Xcode 并发构建导致 build database 锁冲突）
+- **但 agent 可用 `swiftc -typecheck` 自检**（不碰 Xcode 的 build database）：一个目标一批编译，**必须带上项目真实设置**（`-default-isolation MainActor`、部署目标 macOS 26.3 / iOS 26.0），漏了会假绿：
+  ```bash
+  cd client/xHelper/xHelper/Shared
+  xcrun swiftc -typecheck -sdk "$(xcrun --show-sdk-path --sdk macosx)" \
+    -target arm64-apple-macos26.3 -default-isolation MainActor \
+    -I <DerivedData>/Build/Products/Debug $(cat /tmp/shared.txt) ../../xHelperMac/*.swift
+  # iOS：sdk 换 iphonesimulator，target 换 arm64-apple-ios26.0-simulator，
+  #      -I 用 <DerivedData>/Index.noindex/Build/Products/Debug-iphonesimulator
+  ```
+  `/tmp/shared.txt` 是 `Shared/` 的文件清单（新增文件要补一行）；Mac 目标的完整源集 = `Shared/**` + `xHelperMac/*.swift`
+- **client 有两个 `@main`，入口修饰链各写各的**：`xHelper/App.swift`（iOS）和 `xHelperMac/App.swift`（macOS，用户实际在用的那个）。`swiftc` 一批编译最多含一个 `@main` → **入口文件天生在 typecheck 盲区**。在入口挂的全局 modifier（`.toast()` / `.lightbox()` 等）必须**两个入口都挂**，改完用 grep 确认（如 `rg -n "\.lightbox\(\)" client/xHelper/xHelper/App.swift client/xHelper/xHelperMac/App.swift`），否则症状是"改了但完全没生效"
+- **声明 `ObservableObject` / `@Published` 的文件必须显式 `import Combine`**（只 `import SwiftUI` 在 Xcode 里不够：报 `does not conform to protocol 'ObservableObject'` + `missing import of defining module 'Combine'`，并让**引用它的其它文件**连带报 `Cannot find 'X' in scope`，极易误判成 target 成员问题；项目里 25 个这样的文件全是显式 import）。**`swiftc -typecheck` 复现不了这条**（加 `-swift-version 5` / `-enable-batch-mode` 都漏），所以这类改动必须真机重编才算验过
 - **macOS 设置页子页面风格统一**：卡片式分组用 `SettingsCard` + `KeycapView`（`client/xHelper/xHelperMac/SettingsStyle.swift`），规范见 `docs/design/mac-apps/settings-sheet-style.md`
 - **禁止对必要依赖做 nil 检查后静默返回**：所有通过依赖注入传入的必需组件（repo、client、worker 等），如果为 nil 意味着启动阶段的接线 bug。不要写 `if x == nil { return }` 让它无声失败——让它 panic，炸在明处。可选依赖（如回调函数）可以用 nil 检查
 

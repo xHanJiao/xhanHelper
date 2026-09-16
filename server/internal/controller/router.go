@@ -31,6 +31,7 @@ type RouterConfig struct {
 	MessageShareHandler  *MessageShareHandler
 	SummaryHandler       *SummaryHandler
 	ReminderHandler      *ReminderHandler
+	ImageHandler         *ImageHandler
 	ClientBridge         *agent.ClientToolBridge
 	Destroyer            *agent.EphemeralDestroyer
 	LlmCostRepo          *service.LlmCostRepo
@@ -65,6 +66,8 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	// 公开分享
 	r.GET("/api/share/messages/:token", rc.MessageShareHandler.ViewSharedMessages)
 	r.GET("/api/share/:token", rc.DocumentShareHandler.ViewSharedDocument)
+	// 图床公开读：仅服务 Visibility=public 的图（文档配图/分享页/PDF 导出；<img> 带不了请求头）
+	r.GET("/images/:file", rc.ImageHandler.ServePublic)
 	// 需要认证
 	auth := r.Group("/api")
 	auth.Use(middleware.Auth(rc.UserRepo))
@@ -72,7 +75,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.POST("/auth/refresh", refreshToken(rc.UserRepo))
 		auth.POST("/auth/logout", logoutUser(rc.UserRepo))
 		auth.POST("/auth/change-password", changePassword(rc.UserRepo))
-		auth.POST("/chat", chat(rc.Orch, rc.Cfg, rc.ConvRepo, rc.MsgRepo, rc.AgentRepo))
+		auth.POST("/chat", chat(rc.Orch, rc.Cfg, rc.ConvRepo, rc.MsgRepo, rc.AgentRepo, rc.ImageHandler.Store()))
 		auth.POST("/chat/tool-result", chatToolResult(rc.ClientBridge))
 		auth.POST("/chat/stop", stopChat(rc.ConvRepo))
 		auth.GET("/llm-config", llmConfig(rc.Cfg, rc.AgentRepo))
@@ -127,6 +130,11 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.GET("/reminders", rc.ReminderHandler.ListReminders)
 		auth.POST("/reminders/:id/ack", rc.ReminderHandler.AckReminder)
 		auth.POST("/reminders/:id/cancel", rc.ReminderHandler.CancelReminder)
+		// 图床：上传 + 管理 + 私有读（鉴权 + owner）
+		auth.POST("/images/upload", rc.ImageHandler.Upload)
+		auth.GET("/images", rc.ImageHandler.List)
+		auth.GET("/images/:id/file", rc.ImageHandler.ServePrivate)
+		auth.DELETE("/images/:id", rc.ImageHandler.Delete)
 	}
 
 	// 管理员路由

@@ -218,10 +218,12 @@ struct XHWebViewRepresentable: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let model: XHWebViewModel
+        let allowedOrigins: [XHWebViewOrigin]
         weak var webView: WKWebView?
 
-        init(model: XHWebViewModel) {
+        init(model: XHWebViewModel, allowedOrigins: [XHWebViewOrigin]) {
             self.model = model
+            self.allowedOrigins = allowedOrigins
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {

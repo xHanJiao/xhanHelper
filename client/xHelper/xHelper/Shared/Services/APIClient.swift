@@ -320,6 +320,47 @@ class APIClient {
 
 	// MARK: Internal
 
+    /// 上传一张图片到图床，返回服务端分配的 image_id（发送时作为 attachments 传回）。
+    func uploadImage(_ data: Data, filename: String) async throws -> UploadedImage {
+        let boundary = "----xhanBoundary\(UUID().uuidString)"
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: application/octet-stream\r\n\r\n".data(using: .utf8)!)
+        body.append(data)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+
+        var req = URLRequest(url: URL(string: "\(baseURL)/api/images/upload")!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+        return try await doRequest(req)
+    }
+
+    /// 拉取私有图字节（需 Bearer 鉴权；私有图不能走 AsyncImage）
+    func fetchImageData(id: String) async throws -> Data {
+        var req = URLRequest(url: URL(string: "\(baseURL)/api/images/\(id)/file")!)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 500
+        guard statusCode == 200 else {
+            throw NSError(domain: "APIClient", code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "load image failed (status \(statusCode))"])
+        }
+        return data
+    }
+
+    /// 图片库列表（管理页）：本人全部图，服务端按 created_at 倒序
+    func listImages(limit: Int = 50, offset: Int = 0) async throws -> ImageListResponse {
+        return try await get("/api/images?limit=\(limit)&offset=\(offset)")
+    }
+
+    /// 删除一张图（服务端删记录 + 文件；已被消息引用的图删后对话里会显示占位）
+    func deleteImage(id: String) async throws {
+        try await delete("/api/images/\(id)")
+    }
+
     private func get<T: Decodable>(_ path: String) async throws -> T {
         var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -767,6 +808,48 @@ struct DocumentShareResult: Codable {
         case url
         case expiresAt = "expires_at"
     }
+}
+
+// MARK: - 图床
+
+struct UploadedImage: Codable {
+    let imageId: String
+    let url: String
+    let mime: String
+    let bytes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case imageId = "image_id"
+        case url, mime, bytes
+    }
+}
+
+/// 图片库条目（`GET /api/images` 的 items 元素）
+struct ImageAssetSummary: Identifiable, Codable {
+    let id: String
+    let url: String
+    let mime: String
+    let bytes: Int64
+    /// chat | doc | local | web（聊天选图 / 文档配图 / agent 本地发现 / agent 网页发现）
+    let source: String
+    /// 是否曾被消息引用过：决定保留期（15 天 / 3 天），也决定删除会不会让对话裂图
+    let referenced: Bool
+    /// 是否已上传 DeepSeek Files（多模态输入用；本地副本始终保留）
+    let hasFileId: Bool
+    let lastUsedAt: String?
+    let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, url, mime, bytes, source, referenced
+        case hasFileId = "has_file_id"
+        case lastUsedAt = "last_used_at"
+        case createdAt = "created_at"
+    }
+}
+
+struct ImageListResponse: Codable {
+    let items: [ImageAssetSummary]
+    let total: Int
 }
 
 // MARK: - Reminders

@@ -39,11 +39,14 @@ func buildMessages(req *ChatRequest) []map[string]interface{} {
 	}
 
 	for _, m := range req.Messages {
-		if m.Content == "" && len(m.ToolCalls) == 0 && m.ToolCallID == "" {
+		if m.Content == "" && len(m.ToolCalls) == 0 && m.ToolCallID == "" && len(m.Images) == 0 {
 			continue
 		}
 		msg := map[string]interface{}{"role": m.Role}
-		if m.Content != "" {
+		if len(m.Images) > 0 {
+			// 带图消息：content 必须是 content block 数组（图片只能出现在 user 消息）
+			msg["content"] = buildContentBlocks(m.Content, m.Images)
+		} else if m.Content != "" {
 			msg["content"] = m.Content
 		}
 		if m.ReasoningContent != "" {
@@ -69,6 +72,24 @@ func buildMessages(req *ChatRequest) []map[string]interface{} {
 		messages = append(messages, msg)
 	}
 	return messages
+}
+
+// buildContentBlocks 组装带图消息的 content 数组。
+// 形式：[{type:text,text:...}, {type:file,file_id:file-api-xxx}]
+// 图片用 `file` 块承载（不是 image_url）——官方文档：Files API 的 file_id 走 file 块，
+// 且此时 detail 字段被忽略。文本为空时不产出空的 text block。
+func buildContentBlocks(text string, images []ImageRef) []map[string]interface{} {
+	blocks := make([]map[string]interface{}, 0, len(images)+1)
+	if text != "" {
+		blocks = append(blocks, map[string]interface{}{"type": "text", "text": text})
+	}
+	for _, img := range images {
+		if img.FileID == "" {
+			continue
+		}
+		blocks = append(blocks, map[string]interface{}{"type": "file", "file_id": img.FileID})
+	}
+	return blocks
 }
 
 // streamChunk — SSE 流式响应的单个 chunk

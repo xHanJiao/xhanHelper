@@ -82,6 +82,11 @@ type RunRequest struct {
 	// 渲染后注入资源区 recent 段，供 LLM 知晓上个窗口用户说了什么、自己回了什么。
 	RecentUserMessages []model.Message
 
+	// UserImages — 本轮用户消息携带的图片（已解析为 Files API file_id）
+	UserImages []llm.ImageRef
+	// UserImageIDs — 本轮图片的图床记录 id（用于消息落库 + 标记引用，顺带驱动清理保留期）
+	UserImageIDs []string
+
 	// 检索参数覆盖（0 值表示使用 PromptConfig 默认值）
 	Memory  retrieval.SourceConfig
 	Note    retrieval.SourceConfig
@@ -180,6 +185,7 @@ type Orchestrator struct {
 	contextFormatter        ctxflow.ContextFormatter  // 上下文格式化（接口）
 	reminderRepo            *service.ReminderRepo
 	profileFactRepo         profileFactGetter
+	imageStore              *service.ImageStore // 图床（懒补 file_id / 标记引用）
 
 	// 摘要附着控制
 	summaryAttachCount        int
@@ -240,6 +246,7 @@ type OrchestratorConfig struct {
 	ResourceZoneQuotas        ctxflow.ZoneQuotas        // 资源区每类型配额
 	ReminderRepo              *service.ReminderRepo
 	ProfileFactRepo           *service.UserProfileFactRepo
+	ImageStore                *service.ImageStore // 图床（图片输入：懒补 file_id、标记引用）
 }
 
 // New 创建 Orchestrator
@@ -315,6 +322,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		resourceZoneQuotas:        cfg.ResourceZoneQuotas,
 		reminderRepo:              cfg.ReminderRepo,
 		profileFactRepo:           cfg.ProfileFactRepo,
+		imageStore:                cfg.ImageStore,
 	}
 }
 
@@ -472,6 +480,13 @@ func (o *Orchestrator) runReActLoop(
 		util.SafeGo(func() { o.saveUserMsgEmbedding(userMsg.ID, queryVec, req.UserID, req.ConversationID) })
 	}
 
+	// 图片已挂到消息上 → 标记为"被引用"，驱动清理保留期（未被引用的孤儿图短窗口就删）
+	if o.imageStore != nil && len(req.UserImageIDs) > 0 {
+		if err := o.imageStore.Repo().MarkReferenced(ctx, req.UserImageIDs, req.UserID); err != nil {
+			log.Printf("[orch] mark images referenced error: %v", err)
+		}
+	}
+
 	// 在整个 ReAct 循环结束后通知外部（用于入队延迟任务：post_chat + summary）。
 	// 隐藏轮跳过：其消息不进对话记录，后处理无内容可做。
 	if o.onChatEnd != nil && !req.HiddenRound {
@@ -479,7 +494,7 @@ func (o *Orchestrator) runReActLoop(
 	}
 
 	state := &reactState{
-		msgs:      append(req.Messages, llm.Message{Role: "user", Content: *userMsg.XMLContext}),
+		msgs:      append(req.Messages, llm.Message{Role: "user", Content: *userMsg.XMLContext, Images: req.UserImages}),
 		userMsgID: userMsg.ID,
 	}
 	o.loadExposure(ctx, req, userMsg, state)
@@ -1179,6 +1194,7 @@ func mkUserMsg(req *RunRequest) *model.Message {
 		raw := req.RawUserMessage
 		m.OriginalContent = &raw
 	}
+	SetImageIDs(m, req.UserImageIDs)
 	return m
 }
 
@@ -2027,6 +2043,10 @@ func BuildMessagesForFlash(history []model.Message, maxToolResultChars int, useN
 				content = SimpleUserContent(&m)
 			}
 			msg := llm.Message{ID: m.ID, Role: m.Role, Content: content}
+			if m.Role == "user" {
+				// 只带引用 id，具体 file_id 由 AttachReplayImages 按重放窗口解析（需 I/O + 懒上传）
+				msg.ImageIDs = GetImageIDs(&m)
+			}
 			if m.ToolCallID != nil {
 				msg.ToolCallID = *m.ToolCallID
 			}

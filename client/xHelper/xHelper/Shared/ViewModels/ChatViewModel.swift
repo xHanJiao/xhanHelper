@@ -111,6 +111,16 @@ class ChatViewModel: ObservableObject {
     @Published var maxTokens: Int? = nil
     @Published var draftText = ""
 
+    /// ⌘V 粘贴进来的图片字节（一次性投递箱）：剪贴板在 AppDelegate 里读，而待发附件
+    /// draftAttachments 是 ChatView 的 @State，中间没有通路，只能经 VM 转手。
+    /// ChatView 消费后清空。
+    @Published var pastedImages: [Data] = []
+
+    func enqueuePastedImages(_ datas: [Data]) {
+        guard !datas.isEmpty else { return }
+        pastedImages.append(contentsOf: datas)
+    }
+
     /// 当前上下文 token 数（即时，随 done 事件更新）
     @Published var contextTokens = 0
     /// 上下文窗口上限（按模型档位，0=未配置）
@@ -808,8 +818,8 @@ class ChatViewModel: ObservableObject {
 
     // MARK: Send
 
-    func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil, hiddenRound: Bool = false) {
-        let userMsg = Message.localUser(text: text, conversationId: conversationId ?? "")
+    func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], localImages: [PlatformImage] = []) {
+        let userMsg = Message.localUser(text: text, conversationId: conversationId ?? "", imageIds: attachmentIds, localImages: localImages)
         messages.append(userMsg)
 
         isStreaming = true
@@ -833,7 +843,7 @@ class ChatViewModel: ObservableObject {
 
         Task { @MainActor in
             let clientTools = await Self.collectClientTools()
-            setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId, clientTools: clientTools, hiddenRound: hiddenRound)
+            setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId, clientTools: clientTools, hiddenRound: hiddenRound, attachmentIds: attachmentIds)
         }
         #if os(iOS)
         beginBackgroundTask()
@@ -899,7 +909,7 @@ class ChatViewModel: ObservableObject {
         """
     }
 
-    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil, clientTools: [[String: Any]]? = nil, hiddenRound: Bool = false) {
+    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil, clientTools: [[String: Any]]? = nil, hiddenRound: Bool = false, attachmentIds: [String] = []) {
         sseClient.disconnect()
         sseClient.onEvent = { [weak self] event in
             Task { @MainActor in
@@ -933,7 +943,7 @@ class ChatViewModel: ObservableObject {
         }
         // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）
         let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, hiddenRound: hiddenRound)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, hiddenRound: hiddenRound, attachments: attachmentIds)
     }
 
     func stopStreaming() {
@@ -1168,15 +1178,8 @@ class ChatViewModel: ObservableObject {
     /// 只在非 done 收尾路径调用——done 路径由 replaceStreamingMessageID 换真实 ID。
     private func detachStreamingMessage() {
         guard let idx = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
-        let m = messages[idx]
-        messages[idx] = Message(
-            id: "local_" + UUID().uuidString,
-            conversationId: m.conversationId,
-            role: m.role,
-            content: m.content,
-            toolCallsJSON: nil,
-            createdAt: m.createdAt
-        )
+        messages[idx].id = "local_" + UUID().uuidString
+        messages[idx].toolCallsJSON = nil
     }
 
     #if os(iOS)
@@ -1216,43 +1219,21 @@ class ChatViewModel: ObservableObject {
 
     private func replaceStreamingMessageID(with msgID: String) {
         guard let index = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
-        var msg = messages[index]
-        messages.remove(at: index)
-        msg = Message(
-            id: msgID,
-            conversationId: msg.conversationId,
-            role: msg.role,
-            content: msg.content,
-            toolCallsJSON: nil,
-            createdAt: msg.createdAt
-        )
-        messages.insert(msg, at: index)
+        messages[index].id = msgID
+        messages[index].toolCallsJSON = nil
     }
 
+    // 原地改 id，不重建消息：重建会把 imageIdsJSON / localImages 一起丢掉，
+    // 附件图会在 done 事件到达时当场消失。
     private func replaceUserMessageID(with msgID: String) {
         guard let index = messages.lastIndex(where: { $0.role == "user" }) else { return }
-        let msg = messages[index]
-        messages[index] = Message(
-            id: msgID,
-            conversationId: msg.conversationId,
-            role: "user",
-            content: msg.content,
-            toolCallsJSON: nil,
-            createdAt: msg.createdAt
-        )
+        messages[index].id = msgID
     }
 
     private func updateLastAssistantMessage(_ content: String) {
         guard let idx = messages.lastIndex(where: { $0.id == "__streaming__" }) else { return }
-        let last = messages[idx]
-        messages[idx] = Message(
-            id: "__streaming__",
-            conversationId: last.conversationId,
-            role: "assistant",
-            content: content,
-            toolCallsJSON: nil,
-            createdAt: last.createdAt
-        )
+        messages[idx].content = content
+        messages[idx].toolCallsJSON = nil
     }
 
     private func throttleFlush() {

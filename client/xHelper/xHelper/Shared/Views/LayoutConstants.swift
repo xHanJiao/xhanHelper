@@ -2,6 +2,10 @@ import Foundation
 
 enum Layout {
     static let chatHorizontalPadding: CGFloat = 24
+
+    /// 单条消息最多带几张图（客户端护栏：防手滑全选整个文件夹）。
+    /// 服务端/DeepSeek 的上限远高于此（单请求 600 张），这里只挡误操作。
+    static let maxDraftImages: Int = 20
     static let sidebarMinWidth: CGFloat = 38
     static let sidebarMaxWidth: CGFloat = 276
     static let sidebarSnapThreshold: CGFloat = 120

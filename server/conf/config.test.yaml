@@ -13,7 +13,7 @@ db:
 
 llm:
   provider: deepseek
-  model: deepseek-v4-flash
+  model: deepseek-flash
   strong_model: deepseek-v4-pro
   api_key: ${LLM_API_KEY}
   base_url: https://api.deepseek.com
@@ -28,6 +28,11 @@ embedding:
 
 chat:
   session_gap_minutes: 3
+
+storage:
+  image_dir: data/images
+  image_ttl_days: 1
+  image_orphan_ttl_days: 1
 
 reflection:
   launch_max_iterations: 8

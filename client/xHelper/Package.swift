@@ -18,5 +18,15 @@ let package = Package(
             dependencies: ["FsCore"],
             path: "Tests/FsCoreTests"
         ),
+        .target(
+            name: "ThumbRowLayout",
+            path: "xHelper/Shared/Views",
+            sources: ["ThumbRowLayout.swift"]
+        ),
+        .testTarget(
+            name: "ThumbRowLayoutTests",
+            dependencies: ["ThumbRowLayout"],
+            path: "Tests/ThumbRowLayoutTests"
+        ),
     ]
 )

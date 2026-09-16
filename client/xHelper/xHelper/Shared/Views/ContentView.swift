@@ -49,6 +49,7 @@ struct ContentView: View {
     @StateObject private var noteVM: NoteViewModel
     @StateObject private var documentVM: DocumentViewModel
     @StateObject private var themeVM: ThemeViewModel
+    @StateObject private var imageVM: ImageViewModel
     @StateObject private var chatTabManager: ChatTabManager
     @StateObject private var conversationListVM: ConversationListViewModel
 
@@ -346,6 +347,9 @@ struct ContentView: View {
         AppShortcutBridge.shared.onSwitchConversation = { delta in
             Task { await self.switchConversation(delta: delta) }
         }
+        AppShortcutBridge.shared.onPasteImages = { datas in
+            self.activeChatViewModel?.enqueuePastedImages(datas)
+        }
         AppShortcutBridge.shared.confirmationPending = {
             self.activeChatViewModel?.pendingToolConfirmation != nil
         }
@@ -367,6 +371,7 @@ struct ContentView: View {
         _noteVM = StateObject(wrappedValue: NoteViewModel(apiClient: api))
         _documentVM = StateObject(wrappedValue: DocumentViewModel(apiClient: api))
         _themeVM = StateObject(wrappedValue: ThemeViewModel(apiClient: api))
+        _imageVM = StateObject(wrappedValue: ImageViewModel(apiClient: api))
         _chatTabManager = StateObject(wrappedValue: ChatTabManager {
             ChatViewModel(apiClient: APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? ""))
         })
@@ -472,6 +477,7 @@ struct ContentView: View {
                                     documentVM: documentVM,
                                     themeVM: themeVM,
                                     agentVM: agentVM,
+                                    imageVM: imageVM,
                                     baseURL: deviceManager.baseURL,
                                     token: deviceManager.token ?? ""
                                 )

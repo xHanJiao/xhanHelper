@@ -146,6 +146,10 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		ConvRepo:          repos.Conversation,
 		ArchiveAfterDays:  cfg.Archive.AfterDays,
 		ArchiveInterval:   time.Duration(cfg.Archive.IntervalMinutes) * time.Minute,
+		ImageStore:        infra.ImageStore,
+		ImageTTLDays:      cfg.Storage.ImageTTLDays,
+		ImageOrphanDays:   cfg.Storage.ImageOrphanTTLDays,
+		ImageCleanupEvery: time.Duration(cfg.Storage.ImageCleanupIntervalMin) * time.Minute,
 	})
 
 	// --- Orchestrator ---
@@ -233,6 +237,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		},
 		ReminderRepo:    repos.Reminder,
 		ProfileFactRepo: repos.UserProfileFact,
+		ImageStore:      infra.ImageStore,
 	})
 
 	if !cfg.Server.DisableBackgroundTasks {

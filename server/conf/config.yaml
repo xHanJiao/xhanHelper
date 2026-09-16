@@ -23,8 +23,8 @@ db:
 llm:
   api_key: ${LLM_API_KEY}
   provider: deepseek # deepseek | ark | doubao
-  model: deepseek-v4-flash
-  strong_model: deepseek-v4-pro
+  model: deepseek-flash # V4.1-Flash（原生多模态）；旧名 deepseek-v4-flash 已退役
+  strong_model: deepseek-v4-pro # 保持不动：已被上游路由到 V4.1-Flash
   base_url: https://api.deepseek.com
   default_temperature: 1.0
   default_max_tokens: 30000
@@ -57,8 +57,8 @@ llm:
 llm_bg:
   api_key: ${LLM_API_KEY} # 复用主 key；如需后台独立额度/计费，可改用 ${LLM_BG_API_KEY} 并在环境变量注入
   provider: deepseek # 原厂 DeepSeek，OpenAI 兼容协议
-  model: deepseek-v4-flash
-  strong_model: deepseek-v4-pro
+  model: deepseek-flash # V4.1-Flash（原生多模态）；旧名 deepseek-v4-flash 已退役
+  strong_model: deepseek-v4-pro # 保持不动：已被上游路由到 V4.1-Flash
   base_url: https://api.deepseek.com
   http_timeout_secs: 120
   strong_http_timeout_secs: 600
@@ -85,6 +85,7 @@ chat:
   summary_dedup_threshold: 0.85 # 摘要附着去重阈值（相邻摘要更相似则丢弃较旧者）
   tool_excludes: [mailbox] # 对 LLM 隐藏的工具名（控 token 成本，使用频率低的冷门工具）
   subagent_only_client_tools: [browser, fs, shell] # 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏，如浏览器/本地文件访问/本地命令）
+  image_replay_rounds: 10 # 历史消息重放图片的最近轮数（图片 token 不复用文本缓存，全量重放每轮都烧钱）
 
 share:
   default_valid_days: 7
@@ -92,6 +93,13 @@ share:
 archive:
   after_days: 14 # 会话无活动超过 N 天自动归档（is_deleted=true，可从设置页找回）；<=0 关闭
   interval_minutes: 1440 # 归档扫描间隔（分钟），默认每日一次
+
+storage:
+  image_dir: data/images # 图床根目录（文档配图 + 聊天图片输入共用）
+  max_image_bytes: 33554432 # 单图大小上限 32 MiB（对齐 DeepSeek 单图上限）
+  image_ttl_days: 15 # 被消息引用过的图保留天数；<0 关闭清理
+  image_orphan_ttl_days: 3 # 从未被引用的图保留天数；<0 关闭清理
+  image_cleanup_interval_minutes: 720 # 清理扫描间隔（分钟），默认 12 小时
 
 webfetch:
   enabled: false # 默认关闭（token 消耗大）；启用后仅 subAgent 可见

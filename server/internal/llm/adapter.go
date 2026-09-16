@@ -38,6 +38,16 @@ type Message struct {
 	RequestJSON      *string    `json:"request_json,omitempty"`
 	ResponseJSON     *string    `json:"response_json,omitempty"`
 	Usage            *Usage     `json:"usage,omitempty"`
+	// Images — 随本条 user 消息一起送出的图片（Files API file_id）。
+	// 非空时 content 会以 content block 数组形式序列化（图片只能出现在 user 消息）。
+	Images []ImageRef `json:"images,omitempty"`
+	// ImageIDs — 图床记录 id（ImageAsset.ID），仅供服务端解析图片用，不进请求体。
+	ImageIDs []string `json:"-"`
+}
+
+// ImageRef — 一张送进模型的图片（Files API 的 file_id）
+type ImageRef struct {
+	FileID string `json:"file_id"`
 }
 
 // ToolCall — 原生 function calling 的工具调用

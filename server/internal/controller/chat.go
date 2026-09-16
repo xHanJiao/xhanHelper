@@ -24,6 +24,51 @@ import (
 	"xhan-helper/internal/view"
 )
 
+// resolveAttachments 校验附件归属并解析为可送模型的图片引用。
+// 顺序按客户端传来的 attachments 保序（用户看到的缩略图顺序 = 模型看到的顺序）。
+// 任一附件不存在或不属于该用户 → 返回 ok=false 并已写出错误响应（防越权引用他人图片）。
+func resolveAttachments(c *gin.Context, store *service.ImageStore, userID string, ids []string) ([]llm.ImageRef, []string, bool) {
+	if len(ids) == 0 {
+		return nil, nil, true
+	}
+	if store == nil {
+		log.Printf("[chat] attachments provided but image store unavailable (user=%s)", userID)
+		view.JSONError(c, 500, "服务端未启用图片存储")
+		return nil, nil, false
+	}
+
+	assets, err := store.Repo().GetByIDsAndUser(c.Request.Context(), ids, userID)
+	if err != nil {
+		log.Printf("[chat] load attachments error (user=%s, %d ids): %v", userID, len(ids), err)
+		view.JSONError(c, 500, "加载附件失败")
+		return nil, nil, false
+	}
+	byID := make(map[string]*model.ImageAsset, len(assets))
+	for i := range assets {
+		byID[assets[i].ID] = &assets[i]
+	}
+
+	refs := make([]llm.ImageRef, 0, len(ids))
+	ordered := make([]string, 0, len(ids))
+	for _, id := range ids {
+		a := byID[id]
+		if a == nil {
+			log.Printf("[chat] attachment not found or not owned (user=%s, id=%s)", userID, id)
+			view.JSONError(c, 400, "附件不存在")
+			return nil, nil, false
+		}
+		fileID, err := store.EnsureFileID(c.Request.Context(), a)
+		if err != nil {
+			// 单张图送不出去不该阻断整轮对话：跳过并继续
+			log.Printf("[chat] ensure file_id for %s failed: %v", id, err)
+			continue
+		}
+		refs = append(refs, llm.ImageRef{FileID: fileID})
+		ordered = append(ordered, id)
+	}
+	return refs, ordered, true
+}
+
 // planModeNotice — plan 模式每轮注入的提示（notice 块，仅 LLM 可见，用户不可见）。
 // 动态内容绝不放 system prompt（会破坏前缀缓存），全部注入当前 user 消息的 XMLContext。
 // 注意：首句必须保留 "当前处于计划模式（只读讨论状态）" 前缀（planNoticeMarker 依赖它做退出提示检测）。
@@ -57,7 +102,7 @@ const (
 )
 
 func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.ConversationRepo,
-	msgRepo *service.MessageRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
+	msgRepo *service.MessageRepo, agentRepo *service.AgentRepo, imageStore *service.ImageStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			ConversationID *string                `json:"conversation_id"`
@@ -66,6 +111,9 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			AgentID        *string                `json:"agent_id"`
 			Memory         retrieval.SourceConfig `json:"memory"`
 			InitMode       string                 `json:"init_mode"` // 可选：仅新建会话时应用的初始模式（work/plan）；已有会话忽略
+
+			// Attachments — 附件图片的图床 id 列表（先经 POST /api/images/upload 上传拿到）
+			Attachments []string `json:"attachments"`
 
 			Temperature *float64           `json:"temperature"`
 			MaxTokens   *int               `json:"max_tokens"`
@@ -76,7 +124,8 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			// 隐藏轮：本轮消息落库为隐藏状态，不进对话记录/LLM 上下文/检索/后处理（接力等控制轮用）
 			HiddenRound bool `json:"hidden_round"`
 		}
-		if err := c.ShouldBindJSON(&req); err != nil || req.Message == "" {
+		// 允许只发图不写字：文字与附件至少要有一个
+		if err := c.ShouldBindJSON(&req); err != nil || (req.Message == "" && len(req.Attachments) == 0) {
 			view.JSONError(c, 400, "invalid request")
 			return
 		}
@@ -231,6 +280,14 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 
 		var messages []llm.Message
 		messages = agent.BuildMessagesForFlash(history, cfg.LLM.MaxToolResultChars, cfg.LLM.UseNativeFC)
+		// 历史重放只挂最近 N 轮的图（图片 token 不复用文本缓存，全量重放每轮都烧钱）
+		agent.AttachReplayImages(c.Request.Context(), imageStore, messages, userID, cfg.Chat.ImageReplayRounds)
+
+		// 本轮附件：校验归属 + 解析为 Files API file_id
+		userImages, userImageIDs, ok := resolveAttachments(c, imageStore, userID, req.Attachments)
+		if !ok {
+			return
+		}
 
 		// 注册终止信号：显式停止接口（/api/chat/stop）通过关闭 channel 取消 ReAct 循环。
 		// 使用独立于 Request.Context 的运行 ctx——网络波动（SSE 断开）不会误终止正常执行。
@@ -265,6 +322,8 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			ModeNotice:         modeNotice,
 			VerifyEnabled:      req.VerifyEnabled,
 			HiddenRound:        req.HiddenRound,
+			UserImages:         userImages,
+			UserImageIDs:       userImageIDs,
 		})
 		if err != nil {
 			log.Printf("[chat] orch run error: %v", err)

@@ -57,6 +57,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	messageTraceHandler := controller.NewMessageTraceHandler(repos.Message)
 	messageDebugHandler := controller.NewMessageDebugHandler(repos.Message, repos.Mem, repos.Note, repos.ThemeState)
 	replayHandler := controller.NewReplayHandler(repos.Message, agents.ReplayRunner, infra.Embedder)
+	imageHandler := controller.NewImageHandler(infra.ImageStore)
 
 	router := controller.NewRouter(&controller.RouterConfig{
 		Cfg:                  cfg,
@@ -77,6 +78,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MessageShareHandler:  messageShareHandler,
 		SummaryHandler:       summaryHandler,
 		ReminderHandler:      reminderHandler,
+		ImageHandler:         imageHandler,
 		ClientBridge:         agents.ClientBridge,
 		Destroyer:            agents.Destroyer,
 		LlmCostRepo:          repos.LlmCost,

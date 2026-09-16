@@ -1,6 +1,9 @@
 import SwiftUI
+import UniformTypeIdentifiers
 #if os(iOS)
 import UIKit
+#else
+import AppKit
 #endif
 
 struct ChatView: View {
@@ -19,6 +22,12 @@ struct ChatView: View {
     @State private var isLoadingPicker = false
     /// 首次列表加载是否完成（完成前不展示按钮，避免空列表闪烁；用户无智能体时保持隐藏）
     @State private var hasLoadedAgents = false
+
+    // MARK: 输入框附件（选图 → 上传 → 发送）
+    @State private var draftAttachments: [DraftAttachment] = []
+    @State private var isUploadingAttachments = false
+    @State private var showFileImporter = false
+    @State private var previewImage: PlatformImage?
 
     let baseURL: String
     let token: String
@@ -145,6 +154,7 @@ struct ChatView: View {
                 isStreaming: viewModel.isStreaming,
                 dismissKeyboardToken: dismissKeyboardToken,
                 containerTint: inputBarTint,
+                hasAttachments: !draftAttachments.isEmpty,
                 onSend: sendDraft,
                 onStop: {
                     viewModel.stopStreaming()
@@ -201,15 +211,27 @@ struct ChatView: View {
                 #endif
             } trailingActions: { ctx in
                 #if os(macOS)
-                SendStopButton(
-                    context: ctx,
-                    isStreaming: viewModel.isStreaming,
-                    canSend: ctx.canSend,
-                    onSend: sendDraft,
-                    onStop: {
-                        viewModel.stopStreaming()
-                    }
-                )
+                HStack(spacing: 4) {
+                    // 附件：选本地图片（发送时随消息一起上传）
+                    IconButton(
+                        visibility: .always,
+                        context: ctx,
+                        symbol: "paperclip",
+                        tint: draftAttachments.isEmpty ? .secondary : Color("appAccent"),
+                        isEnabled: !viewModel.isStreaming && !isUploadingAttachments,
+                        tooltip: "添加图片",
+                        action: { showFileImporter = true }
+                    )
+                    SendStopButton(
+                        context: ctx,
+                        isStreaming: viewModel.isStreaming,
+                        canSend: ctx.canSend && !isUploadingAttachments,
+                        onSend: sendDraft,
+                        onStop: {
+                            viewModel.stopStreaming()
+                        }
+                    )
+                }
                 #else
                 if ctx.isStreaming {
                     IconButton(
@@ -256,6 +278,18 @@ struct ChatView: View {
                     usage: viewModel.usage
                 )
                 #endif
+            } attachmentTray: { _ in
+                if !draftAttachments.isEmpty {
+                    AttachmentTray(
+                        attachments: draftAttachments,
+                        isUploading: isUploadingAttachments,
+                        onRemove: { item in
+                            draftAttachments.removeAll { $0.id == item.id }
+                        },
+                        onAdd: { showFileImporter = true },
+                        onPreview: { item in previewImage = item.image }
+                    )
+                }
             }
             .layoutPriority(1)
             .animation(.easeOut(duration: 0.2), value: viewModel.planExpanded)
@@ -282,6 +316,25 @@ struct ChatView: View {
             Task { await reloadAgentPicker() }
 #endif
         }
+#if os(macOS)
+        // 选图：PNG/JPEG/WebP/GIF（服务端还会做一次魔数校验）
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.png, .jpeg, .webP, .gif],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls): handlePickedFiles(urls)
+            case .failure(let error): LogBuffer.shared.warning("ChatView.fileImporter: \(error)")
+            }
+        }
+        .sheet(item: Binding(
+            get: { previewImage.map(PreviewImageItem.init) },
+            set: { if $0 == nil { previewImage = nil } }
+        )) { item in
+            AttachmentPreviewView(image: item.image) { previewImage = nil }
+        }
+#endif
     }
 
     /// 子任务详情浮层：仅展开且存在会话时渲染，覆盖消息列表（不改变消息区高度）。
@@ -322,12 +375,59 @@ struct ChatView: View {
 
     /// 发送草稿：校验非空 → 清输入 → 发消息 → 滚到底部。
     private func sendDraft() {
-        guard !viewModel.draftText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let text = viewModel.draftText
+        let attachments = draftAttachments
+        let hasText = !text.trimmingCharacters(in: .whitespaces).isEmpty
+        guard hasText || !attachments.isEmpty else { return }
+
         dismissKeyboardToken = UUID()
-        viewModel.sendMessage(viewModel.draftText, baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
         viewModel.draftText = ""
+        draftAttachments = []
         withAnimation(.easeOut(duration: 0.3)) {
             scrollPosition.scrollTo(edge: .top)
+        }
+
+        guard !attachments.isEmpty else {
+            viewModel.sendMessage(text, baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
+            return
+        }
+
+        // 带图：先上传拿 image_id（截图约 1-2 秒，托盘显示进度），再发送
+        isUploadingAttachments = true
+        Task { @MainActor in
+            defer { isUploadingAttachments = false }
+            let api = viewModel.apiClient
+            var ids: [String] = []
+            for item in attachments {
+                do {
+                    let uploaded = try await api.uploadImage(item.data, filename: item.filename)
+                    ids.append(uploaded.imageId)
+                } catch {
+                    LogBuffer.shared.error("ChatView.uploadImage failed: \(error)")
+                    ToastCenter.shared.show("图片上传失败：\((error as NSError).localizedDescription)")
+                }
+            }
+            guard !ids.isEmpty else { return }
+            viewModel.sendMessage(
+                text,
+                baseURL: baseURL,
+                token: token,
+                agentId: selectedAgentID ?? agentId,
+                attachmentIds: ids,
+                localImages: attachments.map(\.image)
+            )
+        }
+    }
+
+    /// 读取用户选中的图片文件（macOS 原生文件选择器）
+    private func handlePickedFiles(_ urls: [URL]) {
+        for url in urls {
+            guard let data = try? Data(contentsOf: url),
+                  let image = PlatformImage(data: data) else {
+                LogBuffer.shared.warning("ChatView: 无法读取图片 \(url.lastPathComponent)")
+                continue
+            }
+            draftAttachments.append(DraftAttachment(data: data, image: image, filename: url.lastPathComponent))
         }
     }
 
@@ -521,4 +621,10 @@ struct ChatView: View {
             .first?.statusBarManager?.statusBarFrame.height) ?? 20
     }
 #endif
+}
+
+/// sheet(item:) 需要 Identifiable；用 UUID 包一层避免给 NSImage 加协议
+struct PreviewImageItem: Identifiable {
+    let id = UUID()
+    let image: PlatformImage
 }

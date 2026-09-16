@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"bytes"
 	"io"
 	"log"
 	"strings"
@@ -9,18 +10,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// logBodyLimit — 请求体记入日志的字节上限
+const logBodyLimit = 2000
+
 // RequestLogger — HTTP/SSE 请求日志中间件
 func RequestLogger(toolLogger *log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 
-		bodyBytes, _ := io.ReadAll(c.Request.Body)
-		c.Request.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
-
-		reqBody := string(bodyBytes)
-		if len(reqBody) > 2000 {
-			reqBody = reqBody[:2000]
-		}
+		reqBody := peekBody(c)
 
 		c.Next()
 
@@ -35,4 +33,35 @@ func RequestLogger(toolLogger *log.Logger) gin.HandlerFunc {
 				c.Request.Method, c.Request.URL.Path, status, duration, c.Request.URL.RawQuery, reqBody)
 		}
 	}
+}
+
+// peekBody 取请求体开头用于日志，并把已读部分放回请求体（handler 照常读到完整内容）。
+// 只有文本请求才记内容：图片上传这类二进制体会把整行日志刷成几 KB 乱码，
+// 把紧随其后的真实错误日志顶出视野（曾经因此误判"没有日志"）。
+func peekBody(c *gin.Context) string {
+	ct := c.Request.Header.Get("Content-Type")
+	if ct == "" {
+		return ""
+	}
+	if !isTextualContentType(ct) {
+		return "<" + ct + ">"
+	}
+	head, _ := io.ReadAll(io.LimitReader(c.Request.Body, logBodyLimit))
+	c.Request.Body = io.NopCloser(io.MultiReader(bytes.NewReader(head), c.Request.Body))
+	return string(head)
+}
+
+// isTextualContentType 判断请求体是否值得记入日志
+func isTextualContentType(ct string) bool {
+	for _, prefix := range []string{
+		"application/json",
+		"application/xml",
+		"application/x-www-form-urlencoded",
+		"text/",
+	} {
+		if strings.HasPrefix(ct, prefix) {
+			return true
+		}
+	}
+	return false
 }

@@ -4,6 +4,7 @@ package app
 
 import (
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/service"
 
 	"gorm.io/gorm"
 )
@@ -13,4 +14,6 @@ type Infra struct {
 	DB          *gorm.DB
 	Embedder    *llm.Embedder
 	VectorStore VectorStore
+	// ImageStore — 图床（文档配图 + 聊天图片输入共用）。控制器负责读写，编排器负责懒补 file_id。
+	ImageStore *service.ImageStore
 }

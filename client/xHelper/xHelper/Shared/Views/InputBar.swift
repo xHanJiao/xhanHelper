@@ -10,13 +10,15 @@ import AppKit
 /// @ViewBuilder 闭包从外部（ChatView）注入，各自带 ButtonVisibility 决定
 /// 在收起态/展开态是否出现；上缘便签面板通过第三个闭包注入（锚定胶囊右上缘，
 /// 不注入时为空视图）。增删按钮不改本文件。
-struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLeading: View>: View {
+struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLeading: View, AttachmentTraySlot: View>: View {
     @Binding var text: String
     @Binding var isEditing: Bool
     let isStreaming: Bool
     var dismissKeyboardToken: UUID?
     /// 容器描边/光晕色（随会话模式由外部计算传入）。
     var containerTint: Color
+    /// 已挂附件（草稿区缩略图）。仅用于计算 canSend——只发图不写字也要能发。
+    var hasAttachments: Bool = false
     let onSend: () -> Void
     let onStop: () -> Void
     /// Tab（仅输入框聚焦时）：切换计划/聊天模式。
@@ -29,6 +31,8 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
     let topTrailingNote: (InputBarContext) -> TopNote
     /// 底部左侧槽（上下文圆环等；不注入时为空视图）。
     let bottomLeading: (InputBarContext) -> BottomLeading
+    /// 编辑器下方的附件缩略图托盘（不注入时为空视图）。
+    let attachmentTray: (InputBarContext) -> AttachmentTraySlot
 
     @EnvironmentObject var fontSizeManager: FontSizeManager
     @State private var shakeOffset: CGFloat = 0
@@ -49,9 +53,9 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
         onSend: @escaping () -> Void,
         onStop: @escaping () -> Void,
         onToggleMode: @escaping () -> Void = {},
-        @ViewBuilder statusRow: @escaping (InputBarContext) -> StatusRow,
+        @ViewBuilder         statusRow: @escaping (InputBarContext) -> StatusRow,
         @ViewBuilder trailingActions: @escaping (InputBarContext) -> TrailingActions
-    ) where TopNote == EmptyView, BottomLeading == EmptyView {
+    ) where TopNote == EmptyView, BottomLeading == EmptyView, AttachmentTraySlot == EmptyView {
         self.init(
             text: text,
             isEditing: isEditing,
@@ -64,30 +68,34 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
             statusRow: statusRow,
             trailingActions: trailingActions,
             topTrailingNote: { _ in EmptyView() },
-            bottomLeading: { _ in EmptyView() }
+            bottomLeading: { _ in EmptyView() },
+            attachmentTray: { _ in EmptyView() }
         )
     }
 
-    /// 完整 init（可注入上缘便签面板与底部左侧槽）。
+    /// 完整 init（可注入上缘便签面板、底部左侧槽、附件托盘）。
     init(
         text: Binding<String>,
         isEditing: Binding<Bool>,
         isStreaming: Bool,
         dismissKeyboardToken: UUID? = nil,
         containerTint: Color = Color("appAccent"),
+        hasAttachments: Bool = false,
         onSend: @escaping () -> Void,
         onStop: @escaping () -> Void,
         onToggleMode: @escaping () -> Void = {},
         @ViewBuilder statusRow: @escaping (InputBarContext) -> StatusRow,
         @ViewBuilder trailingActions: @escaping (InputBarContext) -> TrailingActions,
         @ViewBuilder topTrailingNote: @escaping (InputBarContext) -> TopNote,
-        @ViewBuilder bottomLeading: @escaping (InputBarContext) -> BottomLeading
+        @ViewBuilder bottomLeading: @escaping (InputBarContext) -> BottomLeading,
+        @ViewBuilder attachmentTray: @escaping (InputBarContext) -> AttachmentTraySlot
     ) {
         self._text = text
         self._isEditing = isEditing
         self.isStreaming = isStreaming
         self.dismissKeyboardToken = dismissKeyboardToken
         self.containerTint = containerTint
+        self.hasAttachments = hasAttachments
         self.onSend = onSend
         self.onStop = onStop
         self.onToggleMode = onToggleMode
@@ -95,6 +103,7 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
         self.trailingActions = trailingActions
         self.topTrailingNote = topTrailingNote
         self.bottomLeading = bottomLeading
+        self.attachmentTray = attachmentTray
     }
 
     var body: some View {
@@ -111,10 +120,14 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
         !text.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    private var canSendNow: Bool {
+        hasText || hasAttachments
+    }
+
     private var context: InputBarContext {
         InputBarContext(
             isStreaming: isStreaming,
-            canSend: hasText
+            canSend: canSendNow
         )
     }
 
@@ -174,10 +187,11 @@ struct InputBar<StatusRow: View, TrailingActions: View, TopNote: View, BottomLea
         }
     }
 
-    /// 两行布局：编辑器全宽在上，模式/发送按钮右对齐在下。
+    /// 两行布局：编辑器全宽在上，附件托盘居中，模式/发送按钮右对齐在下。
     private var twoRowLayout: some View {
         VStack(spacing: 6) {
             editor
+            attachmentTray(context)
             HStack(spacing: 4) {
                 bottomLeading(context)
                 Spacer(minLength: 0)

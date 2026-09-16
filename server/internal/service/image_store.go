@@ -1,0 +1,224 @@
+package service
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/google/uuid"
+
+	"xhan-helper/internal/model"
+)
+
+// 图片魔数白名单：mime → 扩展名。只认这四种，svg/可执行/HTML 一律拒绝（防脚本注入）。
+var imageExtByMime = map[string]string{
+	"image/png":  "png",
+	"image/jpeg": "jpg",
+	"image/gif":  "gif",
+	"image/webp": "webp",
+}
+
+var (
+	// ErrImageTooLarge 超出单图大小上限
+	ErrImageTooLarge = errors.New("图片超出大小上限")
+	// ErrImageUnsupported 不是受支持的图片类型（魔数校验失败）
+	ErrImageUnsupported = errors.New("不支持的图片类型（仅 png/jpeg/webp/gif）")
+)
+
+// FileUploader — 把图片字节上传到 LLM 侧，返回其文件 ID（DeepSeek Files API 的 file_id）。
+// 抽象成接口是为了让 service 不依赖具体 LLM 厂商，也便于测试。
+type FileUploader interface {
+	Upload(ctx context.Context, filename string, data []byte) (string, error)
+}
+
+// ImageStore — 图床：磁盘文件 + ImageAsset 记录的唯一入口。
+// 文档配图与聊天图片输入共用；读取策略由 ImageAsset.Visibility 决定。
+type ImageStore struct {
+	dir      string
+	maxBytes int64
+	repo     *ImageAssetRepo
+	uploader FileUploader // 可为 nil：未配置时图片无法送模型，但不影响存取
+}
+
+// NewImageStore 创建图床。repo 为 nil 时 panic（接线 bug 炸在明处）。
+func NewImageStore(dir string, maxBytes int64, repo *ImageAssetRepo, uploader FileUploader) *ImageStore {
+	if repo == nil {
+		panic("image_store: nil repo (wiring bug)")
+	}
+	if dir == "" {
+		panic("image_store: empty image_dir")
+	}
+	return &ImageStore{dir: dir, maxBytes: maxBytes, repo: repo, uploader: uploader}
+}
+
+// Dir 返回图片根目录（启动时创建 + 打日志用）
+func (s *ImageStore) Dir() string { return s.dir }
+
+// Repo 暴露底层 repo，供控制器做查询/鉴权校验
+func (s *ImageStore) Repo() *ImageAssetRepo { return s.repo }
+
+// FilePath 返回记录的磁盘绝对/相对路径。id 来自 DB，不含用户输入，天然免疫目录穿越。
+func (s *ImageStore) FilePath(a *model.ImageAsset) string {
+	return filepath.Join(s.dir, a.ID+"."+a.Ext)
+}
+
+// Upload 落盘 + 建记录。同用户内容相同则直接复用已有记录（去重）。
+func (s *ImageStore) Upload(ctx context.Context, userID, source, visibility string, data []byte) (*model.ImageAsset, error) {
+	if int64(len(data)) > s.maxBytes {
+		return nil, fmt.Errorf("%w: %d > %d", ErrImageTooLarge, len(data), s.maxBytes)
+	}
+	mime := http.DetectContentType(data)
+	ext, ok := imageExtByMime[mime]
+	if !ok {
+		return nil, fmt.Errorf("%w: detected %s", ErrImageUnsupported, mime)
+	}
+
+	sum := sha256.Sum256(data)
+	digest := hex.EncodeToString(sum[:])
+	if existing, err := s.repo.FindBySHA(ctx, userID, digest); err == nil && existing != nil {
+		return existing, nil
+	}
+
+	id := uuid.NewString()
+	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+		return nil, fmt.Errorf("create image dir: %w", err)
+	}
+	// 直接写即可：文件只在 DB 记录建立之后才可达，读者不会看到半截文件
+	if err := os.WriteFile(filepath.Join(s.dir, id+"."+ext), data, 0o644); err != nil {
+		return nil, fmt.Errorf("write image file: %w", err)
+	}
+
+	asset := &model.ImageAsset{
+		ID:         id,
+		UserID:     userID,
+		Ext:        ext,
+		Mime:       mime,
+		Bytes:      int64(len(data)),
+		SHA256:     digest,
+		Visibility: visibility,
+		Source:     source,
+	}
+	if err := s.repo.Create(ctx, asset); err != nil {
+		_ = os.Remove(filepath.Join(s.dir, id+"."+ext)) // 记录失败则回滚文件，避免孤儿
+		return nil, fmt.Errorf("create image record: %w", err)
+	}
+	return asset, nil
+}
+
+// Open 打开图片文件（供私有/公开读取）
+func (s *ImageStore) Open(a *model.ImageAsset) (*os.File, error) {
+	return os.Open(s.FilePath(a))
+}
+
+// EnsureFileID 确保图片在 LLM 侧有 file_id（缺失则懒上传并回填）。
+// 上传过或上传成功都返回可用的 file_id；不可用时返回 error，调用方应跳过该图而非整体失败。
+func (s *ImageStore) EnsureFileID(ctx context.Context, a *model.ImageAsset) (string, error) {
+	if a.DeepSeekFileID != "" {
+		return a.DeepSeekFileID, nil
+	}
+	if s.uploader == nil {
+		return "", errors.New("未配置图片上传能力（LLM provider 不支持）")
+	}
+	data, err := os.ReadFile(s.FilePath(a))
+	if err != nil {
+		return "", fmt.Errorf("read image file: %w", err)
+	}
+	fileID, err := s.uploader.Upload(ctx, a.ID+"."+a.Ext, data)
+	if err != nil {
+		return "", fmt.Errorf("upload to llm: %w", err)
+	}
+	if err := s.repo.SetDeepSeekFileID(ctx, a.ID, fileID); err != nil {
+		// 回填失败不影响本次使用，只是下次会重复上传
+		log.Printf("[image] backfill file_id for %s failed: %v", a.ID[:8], err)
+	}
+	a.DeepSeekFileID = fileID
+	return fileID, nil
+}
+
+// Delete 删除磁盘文件 + 记录。文件不存在不算错（幂等）。
+func (s *ImageStore) Delete(ctx context.Context, a *model.ImageAsset) error {
+	if err := os.Remove(s.FilePath(a)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove image file: %w", err)
+	}
+	return s.repo.Delete(ctx, a.ID, a.UserID)
+}
+
+// ImageCleanupStats — 一次清理的结果
+type ImageCleanupStats struct {
+	Referenced int
+	Orphans    int
+}
+
+// Cleanup 按保留期清理过期图片：
+//   - 被消息引用过的：last_used_at 早于 ttlDays 天
+//   - 从未被引用的孤儿：created_at 早于 orphanDays 天
+//
+// ttlDays/orphanDays < 0 表示该类关闭。分批处理，失败只记日志不中断。
+func (s *ImageStore) Cleanup(ctx context.Context, ttlDays, orphanDays int) (ImageCleanupStats, error) {
+	var stats ImageCleanupStats
+	now := time.Now()
+
+	if orphanDays >= 0 {
+		cutoff := now.AddDate(0, 0, -orphanDays)
+		n, err := s.purge(ctx, cutoff, s.repo.ListStaleOrphans)
+		stats.Orphans = n
+		if err != nil {
+			return stats, err
+		}
+	}
+	if ttlDays >= 0 {
+		cutoff := now.AddDate(0, 0, -ttlDays)
+		n, err := s.purge(ctx, cutoff, s.repo.ListStaleReferenced)
+		stats.Referenced = n
+		if err != nil {
+			return stats, err
+		}
+	}
+	return stats, nil
+}
+
+type staleLister func(ctx context.Context, cutoff time.Time, limit int) ([]model.ImageAsset, error)
+
+// purge 分批拉取 + 删除，避免长事务与一次性大查询
+func (s *ImageStore) purge(ctx context.Context, cutoff time.Time, list staleLister) (int, error) {
+	const batch = 200
+	total := 0
+	for {
+		if ctx.Err() != nil {
+			return total, ctx.Err()
+		}
+		rows, err := list(ctx, cutoff, batch)
+		if err != nil {
+			return total, fmt.Errorf("list stale images: %w", err)
+		}
+		if len(rows) == 0 {
+			return total, nil
+		}
+		ids := make([]string, 0, len(rows))
+		for i := range rows {
+			a := &rows[i]
+			if err := os.Remove(s.FilePath(a)); err != nil && !os.IsNotExist(err) {
+				// 文件删不掉不阻断记录清理：留着记录只会反复重试，反而更糟
+				log.Printf("[image_cleanup] remove file %s failed: %v", a.ID[:8], err)
+			}
+			ids = append(ids, a.ID)
+		}
+		n, err := s.repo.DeleteBatch(ctx, ids)
+		if err != nil {
+			return total, fmt.Errorf("delete image records: %w", err)
+		}
+		total += int(n)
+		// 删除没生效时必须退出，否则下一轮会取到同一批（死循环）
+		if int(n) < len(ids) {
+			log.Printf("[image_cleanup] delete affected %d of %d rows, stopping to avoid a loop", n, len(ids))
+			return total, nil
+		}
+	}
+}

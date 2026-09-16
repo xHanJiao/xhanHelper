@@ -808,8 +808,8 @@ class ChatViewModel: ObservableObject {
 
     // MARK: Send
 
-    func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil, hiddenRound: Bool = false) {
-        let userMsg = Message.localUser(text: text, conversationId: conversationId ?? "")
+    func sendMessage(_ text: String, baseURL: String, token: String, agentId: String? = nil, hiddenRound: Bool = false, attachmentIds: [String] = [], localImages: [PlatformImage] = []) {
+        let userMsg = Message.localUser(text: text, conversationId: conversationId ?? "", imageIds: attachmentIds, localImages: localImages)
         messages.append(userMsg)
 
         isStreaming = true
@@ -833,7 +833,7 @@ class ChatViewModel: ObservableObject {
 
         Task { @MainActor in
             let clientTools = await Self.collectClientTools()
-            setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId, clientTools: clientTools, hiddenRound: hiddenRound)
+            setupSSE(baseURL: baseURL, token: token, text: text, agentId: agentId, clientTools: clientTools, hiddenRound: hiddenRound, attachmentIds: attachmentIds)
         }
         #if os(iOS)
         beginBackgroundTask()
@@ -899,7 +899,7 @@ class ChatViewModel: ObservableObject {
         """
     }
 
-    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil, clientTools: [[String: Any]]? = nil, hiddenRound: Bool = false) {
+    private func setupSSE(baseURL: String, token: String, text: String, agentId: String? = nil, clientTools: [[String: Any]]? = nil, hiddenRound: Bool = false, attachmentIds: [String] = []) {
         sseClient.disconnect()
         sseClient.onEvent = { [weak self] event in
             Task { @MainActor in
@@ -933,7 +933,7 @@ class ChatViewModel: ObservableObject {
         }
         // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）
         let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, hiddenRound: hiddenRound)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, hiddenRound: hiddenRound, attachments: attachmentIds)
     }
 
     func stopStreaming() {

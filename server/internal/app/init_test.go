@@ -194,6 +194,10 @@ func TestInitInfra(t *testing.T) {
 			Driver:   "sqlite",
 			Database: ":memory:",
 		},
+		Storage: config.StorageConfig{
+			ImageDir:      t.TempDir(),
+			MaxImageBytes: 1 << 20,
+		},
 	}
 
 	db := InitDB(cfg)

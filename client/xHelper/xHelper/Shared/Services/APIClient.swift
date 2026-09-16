@@ -320,6 +320,37 @@ class APIClient {
 
 	// MARK: Internal
 
+    /// 上传一张图片到图床，返回服务端分配的 image_id（发送时作为 attachments 传回）。
+    func uploadImage(_ data: Data, filename: String) async throws -> UploadedImage {
+        let boundary = "----xhanBoundary\(UUID().uuidString)"
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: application/octet-stream\r\n\r\n".data(using: .utf8)!)
+        body.append(data)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+
+        var req = URLRequest(url: URL(string: "\(baseURL)/api/images/upload")!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+        return try await doRequest(req)
+    }
+
+    /// 拉取私有图字节（需 Bearer 鉴权；私有图不能走 AsyncImage）
+    func fetchImageData(id: String) async throws -> Data {
+        var req = URLRequest(url: URL(string: "\(baseURL)/api/images/\(id)/file")!)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let statusCode = (resp as? HTTPURLResponse)?.statusCode ?? 500
+        guard statusCode == 200 else {
+            throw NSError(domain: "APIClient", code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "load image failed (status \(statusCode))"])
+        }
+        return data
+    }
+
     private func get<T: Decodable>(_ path: String) async throws -> T {
         var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -766,6 +797,20 @@ struct DocumentShareResult: Codable {
         case token
         case url
         case expiresAt = "expires_at"
+    }
+}
+
+// MARK: - 图床
+
+struct UploadedImage: Codable {
+    let imageId: String
+    let url: String
+    let mime: String
+    let bytes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case imageId = "image_id"
+        case url, mime, bytes
     }
 }
 

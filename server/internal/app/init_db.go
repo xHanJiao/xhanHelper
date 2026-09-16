@@ -61,6 +61,7 @@ func InitDB(cfg *config.Config) *gorm.DB {
 		&model.LLMCallIO{},
 		&model.LlmCostDetail{},
 		&model.LlmModelPrice{},
+		&model.ImageAsset{},
 	); err != nil {
 		log.Printf("[db] AutoMigrate error: %v", err)
 	}

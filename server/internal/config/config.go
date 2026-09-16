@@ -34,6 +34,7 @@ type Config struct {
 	Chat              ChatConfig              `yaml:"chat"`
 	Share             ShareConfig             `yaml:"share"`
 	Archive           ArchiveConfig           `yaml:"archive"`
+	Storage           StorageConfig           `yaml:"storage"`
 	Snowflake         SnowflakeConfig         `yaml:"snowflake"`
 	MCP               MCPConfig               `yaml:"mcp"`
 	GlobalDefaultRole GlobalDefaultRoleConfig `yaml:"global_default_role"`
@@ -53,6 +54,7 @@ type ChatConfig struct {
 	SummaryDedupThreshold     float64  `yaml:"summary_dedup_threshold"`     // 摘要附着去重余弦相似度阈值（相邻摘要更相似则丢弃较旧者），默认 0.85
 	ToolExcludes              []string `yaml:"tool_excludes"`               // 对 LLM 隐藏的工具名列表（控 token 成本），默认空
 	SubAgentOnlyClientTools   []string `yaml:"subagent_only_client_tools"`  // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏），默认 ["browser","fs","shell"]
+	ImageReplayRounds         int      `yaml:"image_replay_rounds"`         // 历史消息重放图片的最近轮数，默认 10（图片 token 烧钱，不随文本缓存复用）
 }
 
 // ShareConfig — 分享配置
@@ -64,6 +66,15 @@ type ShareConfig struct {
 type ArchiveConfig struct {
 	AfterDays       int `yaml:"after_days"`       // 无活动天数超过则自动归档；<=0 关闭
 	IntervalMinutes int `yaml:"interval_minutes"` // 归档扫描间隔（分钟），<=0 默认 1440（每日一次）
+}
+
+// StorageConfig — 图片存储配置（图床：文档配图 + 聊天图片输入共用）
+type StorageConfig struct {
+	ImageDir                string `yaml:"image_dir"`                      // 图片根目录（相对 server 运行目录），默认 data/images
+	MaxImageBytes           int64  `yaml:"max_image_bytes"`                // 单图大小上限，默认 32 MiB（对齐 DeepSeek 单图上限）
+	ImageTTLDays            int    `yaml:"image_ttl_days"`                 // 被消息引用过的图保留天数；0=默认 15，<0=关闭清理
+	ImageOrphanTTLDays      int    `yaml:"image_orphan_ttl_days"`          // 从未被引用的图保留天数；0=默认 3，<0=关闭清理
+	ImageCleanupIntervalMin int    `yaml:"image_cleanup_interval_minutes"` // 清理扫描间隔（分钟），<=0 默认 720（12 小时）
 }
 
 // WebFetchConfig — webfetch 工具配置
@@ -502,6 +513,9 @@ func merge(dst, src *Config) {
 	if src.Chat.SubAgentOnlyClientTools != nil {
 		dst.Chat.SubAgentOnlyClientTools = src.Chat.SubAgentOnlyClientTools
 	}
+	if src.Chat.ImageReplayRounds != 0 {
+		dst.Chat.ImageReplayRounds = src.Chat.ImageReplayRounds
+	}
 	if src.SubAgent.ExploreMaxIterations != 0 {
 		dst.SubAgent.ExploreMaxIterations = src.SubAgent.ExploreMaxIterations
 	}
@@ -514,6 +528,21 @@ func merge(dst, src *Config) {
 	}
 	if src.Archive.IntervalMinutes != 0 {
 		dst.Archive.IntervalMinutes = src.Archive.IntervalMinutes
+	}
+	if src.Storage.ImageDir != "" {
+		dst.Storage.ImageDir = src.Storage.ImageDir
+	}
+	if src.Storage.MaxImageBytes != 0 {
+		dst.Storage.MaxImageBytes = src.Storage.MaxImageBytes
+	}
+	if src.Storage.ImageTTLDays != 0 {
+		dst.Storage.ImageTTLDays = src.Storage.ImageTTLDays
+	}
+	if src.Storage.ImageOrphanTTLDays != 0 {
+		dst.Storage.ImageOrphanTTLDays = src.Storage.ImageOrphanTTLDays
+	}
+	if src.Storage.ImageCleanupIntervalMin != 0 {
+		dst.Storage.ImageCleanupIntervalMin = src.Storage.ImageCleanupIntervalMin
 	}
 }
 
@@ -718,8 +747,27 @@ func validate(cfg *Config) error {
 	if cfg.Chat.SubAgentOnlyClientTools == nil {
 		cfg.Chat.SubAgentOnlyClientTools = []string{"browser", "fs", "shell"}
 	}
+	if cfg.Chat.ImageReplayRounds == 0 {
+		cfg.Chat.ImageReplayRounds = 10
+	}
 	if cfg.Share.DefaultValidDays == 0 {
 		cfg.Share.DefaultValidDays = 7
+	}
+	// 图片存储默认值
+	if cfg.Storage.ImageDir == "" {
+		cfg.Storage.ImageDir = "data/images"
+	}
+	if cfg.Storage.MaxImageBytes == 0 {
+		cfg.Storage.MaxImageBytes = 32 << 20
+	}
+	if cfg.Storage.ImageTTLDays == 0 {
+		cfg.Storage.ImageTTLDays = 15
+	}
+	if cfg.Storage.ImageOrphanTTLDays == 0 {
+		cfg.Storage.ImageOrphanTTLDays = 3
+	}
+	if cfg.Storage.ImageCleanupIntervalMin == 0 {
+		cfg.Storage.ImageCleanupIntervalMin = 720
 	}
 	if cfg.WebFetch.TimeoutSeconds == 0 {
 		cfg.WebFetch.TimeoutSeconds = 15

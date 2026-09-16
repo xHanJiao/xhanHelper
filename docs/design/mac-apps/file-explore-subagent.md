@@ -234,6 +234,10 @@ if m.maxToolResult > 0 && len(resJSON) > m.maxToolResult {
 - tool/subagent.go:20 注释同步
 - 各测试中的 "explore" 字符串 → "web_explore"
 
+### 5.10 后续追加：可访问目录写进工具 description（2026-09-16）
+
+子任务原来只能从 description 的「已授权目录」含糊表述猜测可访问范围。现在客户端把**具体目录清单 + 硬性禁访高危路径**追加到 `fs__glob/grep/read/write/edit` 与 `shell__run` 的 description 末尾（`DirectoryAuthorizationManager.accessDescriptionBlock()`），随 `client_tools` 每条消息重建、服务端原样透传——改授权后下一条消息生效。详见 `shell-tool.md`「可访问目录下发给 LLM」。**服务端无需改动**（子任务的 tool defs 复用同一份 description）。
+
 ## 六、测试计划
 
 ### 单测（go test ./internal/agent/... ./internal/tool/...）

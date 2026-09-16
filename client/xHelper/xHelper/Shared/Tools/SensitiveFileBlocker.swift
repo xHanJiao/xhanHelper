@@ -51,6 +51,20 @@ nonisolated enum SensitiveFileBlocker {
         ]
     }()
 
+    /// 硬性拦截路径的展示名（目录 + 文件，HOME 缩写为 `~`）。供提示文案用。
+    static var hardBlockedDisplayPaths: [String] {
+        (hardBlockedDirs + hardBlockedFiles).map(abbreviateHome)
+    }
+
+    /// `NSHomeDirectory()` 前缀替换为 `~`（仅展示用，`/` 根特判）。
+    static func abbreviateHome(_ path: String) -> String {
+        let home = (NSHomeDirectory() as NSString).standardizingPath
+        let resolved = (path as NSString).standardizingPath
+        if resolved == home { return "~" }
+        if resolved.hasPrefix(home + "/") { return "~" + resolved.dropFirst(home.count) }
+        return resolved
+    }
+
     private static func normalized(_ path: String) -> String {
         trimTrailingSlash((path as NSString).standardizingPath).lowercased()
     }

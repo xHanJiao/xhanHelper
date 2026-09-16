@@ -595,3 +595,60 @@ final class PDFPageWindowerTests: XCTestCase {
         XCTAssertNil(w.nextPage)
     }
 }
+
+final class ToolAccessSummaryTests: XCTestCase {
+
+    private var savedDirs: [String] = []
+
+    override func setUp() {
+        super.setUp()
+        savedDirs = DirectoryAuthorizationManager.shared.permanentDirs
+    }
+
+    override func tearDown() {
+        DirectoryAuthorizationManager.shared.permanentDirs = savedDirs
+        super.tearDown()
+    }
+
+    func testAccessSummaryIncludesWorkspaceAndReadOnlyDir() {
+        DirectoryAuthorizationManager.shared.permanentDirs = []
+        let s = DirectoryAuthorizationManager.shared.accessSummary()
+        XCTAssertTrue(s.contains(AgentWorkspace.rootPath), "应含 Agent 工作区")
+        XCTAssertTrue(s.contains(ToolOutputStore.shared.rootPath), "应含只读溢出目录")
+        XCTAssertTrue(s.contains("无（用户尚未添加"), "无授权目录时应给空态文案")
+    }
+
+    func testAccessSummaryIncludesAuthorizedDirs() {
+        DirectoryAuthorizationManager.shared.permanentDirs = ["/Users/t/proj", "/Users/t/docs"]
+        let s = DirectoryAuthorizationManager.shared.accessSummary()
+        XCTAssertTrue(s.contains("/Users/t/proj"))
+        XCTAssertTrue(s.contains("/Users/t/docs"))
+        XCTAssertFalse(s.contains("无（用户尚未添加"))
+    }
+
+    func testAccessDescriptionBlockHasAllowedAndHardBlocked() {
+        DirectoryAuthorizationManager.shared.permanentDirs = []
+        let b = DirectoryAuthorizationManager.accessDescriptionBlock()
+        XCTAssertTrue(b.contains("可访问目录"))
+        XCTAssertTrue(b.contains(AgentWorkspace.rootPath))
+        XCTAssertTrue(b.contains("硬性拦截"))
+        XCTAssertTrue(b.contains("~/.ssh"))
+        XCTAssertTrue(b.contains("~/.zshrc"))
+        XCTAssertTrue(b.contains("/etc/sudoers"))
+    }
+
+    func testAbbreviateHome() {
+        let home = NSHomeDirectory()
+        XCTAssertEqual(SensitiveFileBlocker.abbreviateHome(home), "~")
+        XCTAssertEqual(SensitiveFileBlocker.abbreviateHome(home + "/proj/x.go"), "~/proj/x.go")
+        XCTAssertEqual(SensitiveFileBlocker.abbreviateHome("/etc/passwd"), "/etc/passwd")
+    }
+
+    func testHardBlockedDisplayPathsUseTilde() {
+        let paths = SensitiveFileBlocker.hardBlockedDisplayPaths
+        XCTAssertTrue(paths.contains("~/.ssh"))
+        XCTAssertTrue(paths.contains("~/.config/gh/hosts.yml"))
+        XCTAssertTrue(paths.contains("/etc/sudoers"))
+        XCTAssertFalse(paths.contains { $0.hasPrefix(NSHomeDirectory()) }, "home 下路径应缩写为 ~")
+    }
+}

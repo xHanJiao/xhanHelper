@@ -34,6 +34,31 @@ nonisolated final class DirectoryAuthorizationManager: @unchecked Sendable {
         return false
     }
 
+    /// 供 LLM 的可访问目录摘要（工作区 + 已授权目录 + 只读溢出目录）。
+    func accessSummary() -> String {
+        var lines: [String] = ["- Agent 工作区（可读写）：\(AgentWorkspace.rootPath)"]
+        if permanentDirs.isEmpty {
+            lines.append("- 已授权目录（可读写）：无（用户尚未添加；需要其它目录时用户会在「设置 → 文件访问授权」添加）")
+        } else {
+            lines.append("- 已授权目录（可读写）：\(permanentDirs.joined(separator: "、"))")
+        }
+        #if os(macOS)
+        lines.append("- 工具输出溢出目录（只读，仅 fs 可读）：\(ToolOutputStore.shared.rootPath)")
+        #endif
+        return lines.joined(separator: "\n")
+    }
+
+    /// 工具 description 的目录说明块：可访问目录 + 硬性禁访高危路径。随 client_tools 每条消息下发。
+    static func accessDescriptionBlock() -> String {
+        let blocked = SensitiveFileBlocker.hardBlockedDisplayPaths.joined(separator: "、")
+        return """
+        可访问目录（工具参数用绝对路径）：
+        \(shared.accessSummary())
+        以下高危路径为硬性拦截（读写皆拒、不可豁免），不要尝试：
+        \(blocked)
+        """
+    }
+
     func isAuthorized(_ path: String) -> Bool {
         let resolved = resolvePath(path)
         // 隐式读写根（Agent 默认工作区）：App 自有，无需手动授权。

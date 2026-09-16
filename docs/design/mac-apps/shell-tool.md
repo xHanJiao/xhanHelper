@@ -223,6 +223,17 @@ allow 档命令（`head` / `tail` / `grep` / `rg` / `wc` / `diff` …）的参�
 
 只对"存在"的路径做授权目录校验，避免把含 `/` 的正则（如 `grep '/api/v1' .`）当路径误杀（不存在的参数交给命令自己报错，读不到东西）。
 
+### 可访问目录下发给 LLM（2026-09-16）
+
+子任务原来只能从 description 的「工作区 + 其它已授权目录」猜测能碰哪里，常盲试未授权路径被拒。现在把**具体路径清单**写进工具描述：
+
+- `DirectoryAuthorizationManager.accessSummary()`：Agent 工作区（读写）+ `permanentDirs`（读写，无则给空态文案）+ `tool_output`（只读，仅 fs）。
+- `SensitiveFileBlocker.hardBlockedDisplayPaths`：硬性拦截的高危路径（`~` 缩写），一并告知"不要尝试"。
+- 二者由 `DirectoryAuthorizationManager.accessDescriptionBlock()` 拼成一块，追加到 `fs__glob/grep/read/write/edit` 与 `shell__run` 的 description 末尾。
+- **动态**：description 在 `provider.toolSchemas()` 里拼，`clientToolsPayload()` **每条消息重建**（`ChatViewModel.swift:817`），服务端 `buildClientToolDefs` 原样透传、无缓存 → 用户改授权后下一条消息生效。
+- **只进子任务**：fs/shell 属 `subagent_only_client_tools`，主循环看不到这些 def，prompt 不膨胀。
+- **隐私**：目录绝对路径随 `client_tools` 发往 LLM provider（工具调用的 `path` 参数本来也会带）；临时授权目录（1h TTL）刻意不列，保 tool defs 字节稳定。
+
 ### 聚合规则
 
 一条命令含多个操作数时，取最高档：**任一操作数未命中 → 整条拒绝**；否则**任一 L4 → 整条 L4**（确认时展示完整原始命令）；全 allow → 自动执行。

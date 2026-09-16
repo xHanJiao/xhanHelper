@@ -485,16 +485,17 @@ extension ShellToolProvider: LocalToolProvider {
                 要读/写/编辑文件请用 fs__ 系列（fs__read / fs__write / fs__edit），联网请用浏览器工具。
 
                 用法：
-                - **每条命令执行前都会弹出红色确认（不可跳过，信任模式无效）**；用户拒绝则不执行。
+                - **每条命令执行前都会弹出确认**：完全落在 Agent 工作区内为常规确认（信任模式可跳过），
+                  工作区外为红色强制确认（不可跳过、信任模式无效）；用户拒绝则不执行。
                 - 只支持只读白名单命令；写文件、移动/删除、安装、运行脚本、ssh/scp、curl/wget 等一律拒绝。
                 - 支持的 git 仅只读：status / log / show / diff / blame / rev-parse / ls-files /
                   shortlog / describe，以及 branch/remote/tag/stash 的只读查看形式；不代操作 git（add/commit/push 等会被拒）。
                 - 支持管道与串联：|  &&  ||  ;
                 - 不支持：变量展开（$VAR）、通配符（* ? ~）、重定向（> <）、cd、后台（&）。
                   需要切换目录用 workdir 参数；需要找文件用 fs__glob。
-                - 工作目录（workdir）默认是 Agent 工作区：\(AgentWorkspace.rootPath)（App 自有、隐式授权，可直接读写）。
-                  也可传其它已授权目录（「设置 → 文件访问授权」手动添加）。命令里引用的文件路径同样必须在这些目录内，
-                  否则会被拒绝（例如 /etc/hosts）。
+                - 工作目录（workdir）默认是 Agent 工作区；命令里引用的文件路径同样必须在可访问目录内，否则会被拒绝（例如 /etc/hosts）。
+
+                \(DirectoryAuthorizationManager.accessDescriptionBlock())
                 - 输出**硬上限 2MB**：命令产生超过 2MB 输出时，超出的字节会被**丢弃且无法恢复**。
                   输出可能很大时务必在源头收窄：| head -50、| tail -100、git log --max-count=20 --oneline、按范围分页。
                 - 注入上下文约 20KB：超过的部分自动落盘并返回 output_path（output 字段只是尾部预览）。

@@ -207,7 +207,10 @@ final class FileSystemToolProvider: @unchecked Sendable {
 extension FileSystemToolProvider: LocalToolProvider {
 
     func toolSchemas() -> [LocalToolSchema] {
-        [
+        // 每个 fs 工具的 description 末尾统一附上"当前可访问目录 + 高危禁访路径"
+        // （随 client_tools 每条消息重建，用户改授权后下一条消息即生效）
+        let access = DirectoryAuthorizationManager.accessDescriptionBlock()
+        return [
             LocalToolSchema(
                 name: "glob",
                 description: """
@@ -421,7 +424,14 @@ extension FileSystemToolProvider: LocalToolProvider {
                 ],
                 isReadOnly: true
             ),
-        ]
+        ].map {
+            LocalToolSchema(
+                name: $0.name,
+                description: $0.description + "\n\n" + access,
+                inputSchema: $0.inputSchema,
+                isReadOnly: $0.isReadOnly
+            )
+        }
     }
 
     static func extractPaths(flatName: String, arguments: [String: Any]) -> [String] {

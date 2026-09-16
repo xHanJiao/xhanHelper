@@ -71,9 +71,11 @@ struct ModelPill: View {
 }
 
 /// 会话接力图标按钮：把当前会话整理成接力文档并新开会话续接。仅图标，hover 看 tooltip。
+/// 计划模式只读、接力要写文档，故置灰并用 tooltip 说明原因（而非「暂时不可点」）。
 struct HandoffPill: View {
     let context: InputBarContext
     let isEnabled: Bool
+    let isPlanMode: Bool
     let action: () -> Void
 
     var body: some View {
@@ -83,7 +85,9 @@ struct HandoffPill: View {
             symbol: "arrow.uturn.right.circle",
             tint: Color("appAccent"),
             isEnabled: isEnabled,
-            tooltip: "整理结论并开始新会话（接力）",
+            tooltip: isPlanMode
+                ? "计划模式只读，先切回聊天模式再接力"
+                : "整理结论并开始新会话（接力）",
             action: action
         )
     }

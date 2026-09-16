@@ -186,12 +186,14 @@ struct ChatView: View {
                     ModelPill(context: ctx, isDeep: viewModel.deepMode) {
                         viewModel.toggleDeepMode()
                     }
-                    // 会话接力：整理成文档并开新会话续接（非流式、非空会话、非计划模式可用）
+                    // 会话接力：整理成文档并开新会话续接。计划模式只读、接力要写文档，
+                    // 故 plan 模式下置灰（tooltip 说明原因），非流式、非空会话才可用。
                     HandoffPill(
                         context: ctx,
                         isEnabled: !viewModel.isStreaming
                             && !(viewModel.conversationId ?? "").isEmpty
-                            && !viewModel.isPlanMode
+                            && !viewModel.isPlanMode,
+                        isPlanMode: viewModel.isPlanMode
                     ) {
                         viewModel.beginHandoff(baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
                     }

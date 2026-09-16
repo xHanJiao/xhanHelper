@@ -29,21 +29,27 @@ enum ThumbRowLayout {
     }
 
     /// 折叠态每行实际怎么排：露出几张、末尾要不要放「+N」。
+    ///
+    /// `maxVisible` 是可选的固定上限（消息图片条固定露 3 张）：即使一行塞得下更多也提前折叠。
+    /// 它是上限不是承诺——窄到让不出「+N」那一格时只能少露几张，排布绝不能溢出。
+    /// 传 nil 就是纯按宽度折叠（草稿托盘）。
     static func collapsed(
         available: CGFloat,
         thumb: CGFloat,
         spacing: CGFloat,
         trailingCells: Int,
-        count: Int
+        count: Int,
+        maxVisible: Int? = nil
     ) -> (visible: Int, overflow: Bool) {
         // 宽度还没测出来时先不折叠，免得用兜底值算出个假「+N」再跳一下
         guard available > 0 else { return (count, false) }
         let per = maxPerRow(
             available: available, thumb: thumb, spacing: spacing, trailingCells: trailingCells
         )
-        guard count > per else { return (count, false) }
-        // 溢出了要让出一格给「+N」
-        return (max(0, per - 1), true)
+        // 溢出要让出一格给「+N」，所以露出的张数先砍到 per-1，再套上限
+        let cap = min(maxVisible ?? Int.max, max(0, per - 1))
+        guard count > per || count > (maxVisible ?? Int.max) else { return (count, false) }
+        return (cap, true)
     }
 
     /// 折叠态一行占多宽（测试用它断言"塞得进可用宽"，也就是界面不溢出）
@@ -52,11 +58,12 @@ enum ThumbRowLayout {
         thumb: CGFloat,
         spacing: CGFloat,
         trailingCells: Int,
-        count: Int
+        count: Int,
+        maxVisible: Int? = nil
     ) -> CGFloat {
         let (visible, overflow) = collapsed(
             available: available, thumb: thumb, spacing: spacing,
-            trailingCells: trailingCells, count: count
+            trailingCells: trailingCells, count: count, maxVisible: maxVisible
         )
         let cells = visible + (overflow ? 1 : 0)
         var width = CGFloat(cells) * thumb

@@ -198,4 +198,59 @@ final class ThumbRowLayoutTests: XCTestCase {
         )
         XCTAssertEqual(wideRows, 3)
     }
+
+    // MARK: - 消息图片条的固定上限（最多露 3 张）
+
+    private func stripLayout(available: CGFloat, count: Int) -> (visible: Int, overflow: Bool) {
+        ThumbRowLayout.collapsed(
+            available: available, thumb: 88, spacing: 8, trailingCells: 0,
+            count: count, maxVisible: 3
+        )
+    }
+
+    /// 宽窗口（一行放得下 7 格）也不多露：第 4 张起就收成「+N」
+    func testStripCapsCollapsedThumbsAtThree() {
+        XCTAssertEqual(stripLayout(available: 700, count: 10).visible, 3)
+        XCTAssertTrue(stripLayout(available: 700, count: 10).overflow)
+        XCTAssertEqual(stripLayout(available: 700, count: 4).visible, 3)
+        XCTAssertTrue(stripLayout(available: 700, count: 4).overflow)
+        // 3 张以内照旧全露、不出「+N」
+        XCTAssertEqual(stripLayout(available: 700, count: 3).visible, 3)
+        XCTAssertFalse(stripLayout(available: 700, count: 3).overflow)
+        XCTAssertEqual(stripLayout(available: 700, count: 1).visible, 1)
+        XCTAssertFalse(stripLayout(available: 700, count: 1).overflow)
+    }
+
+    /// 上限是上限不是承诺：窗口窄到让不出「+N」那格时只能少露，绝不能溢出
+    func testStripCapNeverOverflows() {
+        for available in stride(from: CGFloat(88), through: 760, by: 1) {
+            let width = ThumbRowLayout.collapsedWidth(
+                available: available, thumb: 88, spacing: 8, trailingCells: 0,
+                count: 20, maxVisible: 3
+            )
+            XCTAssertLessThanOrEqual(
+                width, available + 0.001, "available=\(available) 占宽=\(width)"
+            )
+            XCTAssertLessThanOrEqual(
+                stripLayout(available: available, count: 20).visible, 3,
+                "available=\(available) 超过了固定上限"
+            )
+        }
+        // 一行能放 4 格（376pt）起，始终正好 3 张 + 「+N」
+        for available in stride(from: CGFloat(376), through: 760, by: 1) {
+            XCTAssertEqual(stripLayout(available: available, count: 20).visible, 3)
+            XCTAssertTrue(stripLayout(available: available, count: 20).overflow)
+        }
+        // 300pt：一行 3 格（3×88 + 2×8 = 280 ≤ 300，4 格要 376）→ 2 张 + 「+18」
+        let narrow = stripLayout(available: 300, count: 20)
+        XCTAssertEqual(narrow.visible, 2)
+        XCTAssertTrue(narrow.overflow)
+    }
+
+    /// 宽度还没测出来时不折叠，上限也一样（否则首帧会闪一个假「+N」）
+    func testCapDoesNotCollapseBeforeWidthIsMeasured() {
+        let layout = stripLayout(available: 0, count: 20)
+        XCTAssertEqual(layout.visible, 20)
+        XCTAssertFalse(layout.overflow)
+    }
 }

@@ -425,32 +425,42 @@ struct ChatView: View {
 
     /// 读取用户选中的图片文件（macOS 原生文件选择器）
     private func handlePickedFiles(_ urls: [URL]) {
-        var duplicated = 0
-        var overCap = 0
-        for url in urls {
-            guard let data = try? Data(contentsOf: url),
-                  let image = PlatformImage(data: data) else {
-                LogBuffer.shared.warning("ChatView: 无法读取图片 \(url.lastPathComponent)")
-                continue
+        Task {
+            var duplicated = 0
+            var overCap = 0
+            for url in urls {
+                guard let raw = try? Data(contentsOf: url) else {
+                    LogBuffer.shared.warning("ChatView: 无法读取图片 \(url.lastPathComponent)")
+                    continue
+                }
+                // 读盘后的缩放/重编码放后台：十几兆的照片在主线程解码 + 编码要几百毫秒，
+                // 一次选二十张就是十几秒卡顿。字节是 Sendable，回主线程再解码显示
+                let upload = await Task.detached { ImageCompressor.shrink(raw) ?? raw }.value
+                guard let image = PlatformImage(data: upload) else {
+                    LogBuffer.shared.warning("ChatView: 无法解码图片 \(url.lastPathComponent)")
+                    continue
+                }
+                // 同一张图重复选只留一份：服务端会按内容去重返回同一个 image_id，
+                // 重复 id 会让模型把同一张图看两遍
+                guard !draftAttachments.contains(where: { $0.data == upload }) else {
+                    duplicated += 1
+                    continue
+                }
+                guard draftAttachments.count < Layout.maxDraftImages else {
+                    overCap += 1
+                    continue
+                }
+                draftAttachments.append(
+                    DraftAttachment(data: upload, image: image, filename: url.lastPathComponent)
+                )
             }
-            // 同一张图重复选只留一份：服务端会按内容去重返回同一个 image_id，
-            // 重复 id 会让模型把同一张图看两遍
-            guard !draftAttachments.contains(where: { $0.data == data }) else {
-                duplicated += 1
-                continue
+            // 跳过必须说出来：静默忽略会让人以为选图没生效，反复重选
+            var reasons: [String] = []
+            if duplicated > 0 { reasons.append("\(duplicated) 张重复") }
+            if overCap > 0 { reasons.append("\(overCap) 张超出 \(Layout.maxDraftImages) 张上限") }
+            if !reasons.isEmpty {
+                ToastCenter.shared.show("已忽略 " + reasons.joined(separator: "、"))
             }
-            guard draftAttachments.count < Layout.maxDraftImages else {
-                overCap += 1
-                continue
-            }
-            draftAttachments.append(DraftAttachment(data: data, image: image, filename: url.lastPathComponent))
-        }
-        // 跳过必须说出来：静默忽略会让人以为选图没生效，反复重选
-        var reasons: [String] = []
-        if duplicated > 0 { reasons.append("\(duplicated) 张重复") }
-        if overCap > 0 { reasons.append("\(overCap) 张超出 \(Layout.maxDraftImages) 张上限") }
-        if !reasons.isEmpty {
-            ToastCenter.shared.show("已忽略 " + reasons.joined(separator: "、"))
         }
     }
 

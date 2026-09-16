@@ -10,6 +10,8 @@ struct CollapsibleThumbRow<Thumb: View, Trailing: View>: View {
     var maxExpandedRows: Int = 3
     /// 行尾附加格数（「+」「清空」＝2，消息图片条＝0）。宽度按缩略图边长推，不单独传
     var trailingCells: Int = 0
+    /// 折叠态最多露几张（固定上限，不随窗口变宽而增多）；nil = 纯按宽度折叠
+    var maxCollapsedThumbs: Int? = nil
     /// 内容整体靠右（消息图片条）还是靠左（输入框托盘）
     var alignTrailing = false
     @Binding var expanded: Bool
@@ -22,7 +24,7 @@ struct CollapsibleThumbRow<Thumb: View, Trailing: View>: View {
     private var collapsedRow: (visible: Int, overflow: Bool) {
         ThumbRowLayout.collapsed(
             available: available, thumb: thumbSize, spacing: spacing,
-            trailingCells: trailingCells, count: count
+            trailingCells: trailingCells, count: count, maxVisible: maxCollapsedThumbs
         )
     }
     private var overflows: Bool { collapsedRow.overflow }
@@ -268,6 +270,7 @@ struct MessageAttachmentStrip: View {
             count: imageIds.count,
             thumbSize: thumbSize,
             cornerRadius: 10,
+            maxCollapsedThumbs: 3,
             alignTrailing: true,
             expanded: $expanded
         ) { index in

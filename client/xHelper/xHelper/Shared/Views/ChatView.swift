@@ -309,6 +309,10 @@ struct ChatView: View {
             containerTint: inputBarTint,
             hasAttachments: !draftAttachments.isEmpty,
             onFocusChange: setInputFocused,
+            onClearAll: {
+                viewModel.draftText = ""
+                draftAttachments.removeAll()
+            },
             onSend: sendDraft,
             onStop: {
                 viewModel.stopStreaming()

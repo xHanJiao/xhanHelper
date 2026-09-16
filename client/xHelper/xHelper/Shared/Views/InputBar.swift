@@ -22,6 +22,8 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
     /// 输入框聚焦变化回调：⌘V 粘贴要在共享同一 VM 的主视图/PiP 两个 ChatView 之间
     /// 认出"是谁在输入"，所以焦点态除了全局标记还要往上传一份。
     var onFocusChange: ((Bool) -> Void)? = nil
+    /// ⌃C（输入框聚焦时）：清空草稿（文字由 text 绑定自理，图片由外部一并清）。
+    var onClearAll: (() -> Void)? = nil
     let onSend: () -> Void
     let onStop: () -> Void
     /// Tab（仅输入框聚焦时）：切换计划/聊天模式。
@@ -88,6 +90,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
         containerTint: Color = Color("appAccent"),
         hasAttachments: Bool = false,
         onFocusChange: ((Bool) -> Void)? = nil,
+        onClearAll: (() -> Void)? = nil,
         onSend: @escaping () -> Void,
         onStop: @escaping () -> Void,
         onToggleMode: @escaping () -> Void = {},
@@ -105,6 +108,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
         self.containerTint = containerTint
         self.hasAttachments = hasAttachments
         self.onFocusChange = onFocusChange
+        self.onClearAll = onClearAll
         self.onSend = onSend
         self.onStop = onStop
         self.onToggleMode = onToggleMode
@@ -279,6 +283,12 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
             // Tab（仅输入框聚焦时）：切换计划/聊天模式。焦点不在聊天输入框时（PiP 收起/浏览器/地址栏）不会触发。
             .onKeyPress(.tab, phases: .down) { _ in
                 onToggleMode()
+                return .handled
+            }
+            // ⌃C（仅输入框聚焦时）：清空草稿（文字与待发图片）。⌘C（复制）不受影响。
+            .onKeyPress(KeyEquivalent("c"), phases: .down) { keyPress in
+                guard keyPress.modifiers.contains(.control) else { return .ignored }
+                onClearAll?()
                 return .handled
             }
             .scrollContentBackground(.hidden)

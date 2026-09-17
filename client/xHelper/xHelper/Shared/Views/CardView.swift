@@ -5,6 +5,7 @@ struct CardView: View {
     let subtitle: String?
     let headerBadge: TagBadge?
     let tags: [TagBadge]
+    let footerText: String?
     let style: CardStyle
     let titleColorOverride: Color?
     let actions: [CardAction]
@@ -15,6 +16,7 @@ struct CardView: View {
         subtitle: String? = nil,
         headerBadge: TagBadge? = nil,
         tags: [TagBadge] = [],
+        footerText: String? = nil,
         style: CardStyle,
         titleColorOverride: Color? = nil,
         actions: [CardAction] = [],
@@ -24,6 +26,7 @@ struct CardView: View {
         self.subtitle = subtitle
         self.headerBadge = headerBadge
         self.tags = tags
+        self.footerText = footerText
         self.style = style
         self.titleColorOverride = titleColorOverride
         self.actions = actions
@@ -35,6 +38,7 @@ struct CardView: View {
         self.subtitle = config.subtitle
         self.headerBadge = config.headerBadge
         self.tags = config.tags
+        self.footerText = config.footerText
         self.style = config.style
         self.titleColorOverride = config.titleColorOverride
         self.actions = config.actions
@@ -64,10 +68,17 @@ struct CardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if !tags.isEmpty {
+            if !tags.isEmpty || footerText != nil {
                 HStack(spacing: 4) {
                     ForEach(tags) { tag in
                         tagPill(tag)
+                    }
+                    Spacer(minLength: 8)
+                    if let footerText {
+                        Text(footerText)
+                            .font(.caption)
+                            .foregroundColor(style.subtitleColor)
+                            .lineLimit(1)
                     }
                 }
             }

@@ -24,6 +24,7 @@ struct CardConfig {
     let subtitle: String?
     let headerBadge: TagBadge?
     let tags: [TagBadge]
+    let footerText: String?
     let style: CardStyle
     let titleColorOverride: Color?
     let actions: [CardAction]
@@ -34,6 +35,7 @@ struct CardConfig {
         subtitle: String? = nil,
         headerBadge: TagBadge? = nil,
         tags: [TagBadge] = [],
+        footerText: String? = nil,
         style: CardStyle,
         titleColorOverride: Color? = nil,
         actions: [CardAction] = [],
@@ -43,6 +45,7 @@ struct CardConfig {
         self.subtitle = subtitle
         self.headerBadge = headerBadge
         self.tags = tags
+        self.footerText = footerText
         self.style = style
         self.titleColorOverride = titleColorOverride
         self.actions = actions

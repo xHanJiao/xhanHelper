@@ -64,6 +64,7 @@ struct DocumentListView: View {
                     title: doc.title,
                     subtitle: doc.content,
                     tags: parseTags(doc.tags),
+                    footerText: formatConversationDate(doc.updatedAt),
                     style: .document,
                     onTap: { viewModel.openDocument = doc }
                 )

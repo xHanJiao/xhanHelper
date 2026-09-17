@@ -14,11 +14,12 @@ import (
 
 // DocumentHandler — 文档 API handler
 type DocumentHandler struct {
-	docRepo *service.DocumentRepo
+	docRepo  *service.DocumentRepo
+	annoRepo *service.DocumentAnnotationRepo
 }
 
-func NewDocumentHandler(docRepo *service.DocumentRepo) *DocumentHandler {
-	return &DocumentHandler{docRepo: docRepo}
+func NewDocumentHandler(docRepo *service.DocumentRepo, annoRepo *service.DocumentAnnotationRepo) *DocumentHandler {
+	return &DocumentHandler{docRepo: docRepo, annoRepo: annoRepo}
 }
 
 // ListDocuments GET /api/documents?tag=&keyword=&limit=&offset=
@@ -90,6 +91,11 @@ func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 	if rows == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "document not found"})
 		return
+	}
+
+	// 批注跟着文档走，没有独立生命周期；删不干净只会留孤儿行，所以失败也记日志继续
+	if _, err := h.annoRepo.DeleteByDocument(c.Request.Context(), id, userID); err != nil {
+		log.Printf("DeleteDocument: delete annotations of doc=%s user=%s: %v", id, userID, err)
 	}
 
 	view.JSONOK(c, gin.H{"deleted": true})

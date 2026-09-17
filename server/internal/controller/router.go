@@ -27,6 +27,7 @@ type RouterConfig struct {
 	ToolHandler          *ToolHandler
 	PromptHandler        *PromptHandler
 	DocumentHandler      *DocumentHandler
+	AnnotationHandler    *AnnotationHandler
 	DocumentShareHandler *DocumentShareHandler
 	MessageShareHandler  *MessageShareHandler
 	SummaryHandler       *SummaryHandler
@@ -127,6 +128,12 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.DELETE("/documents/:id", rc.DocumentHandler.DeleteDocument)
 		auth.POST("/documents/:id/share", rc.DocumentShareHandler.CreateShare)
 		auth.GET("/documents/:id/share", rc.DocumentShareHandler.GetShare)
+		// 文档划线批注：列表/新建挂在文档下，改/删/重挂挂在批注下
+		auth.GET("/documents/:id/annotations", rc.AnnotationHandler.ListAnnotations)
+		auth.POST("/documents/:id/annotations", rc.AnnotationHandler.CreateAnnotation)
+		auth.PATCH("/annotations/:id", rc.AnnotationHandler.UpdateAnnotation)
+		auth.DELETE("/annotations/:id", rc.AnnotationHandler.DeleteAnnotation)
+		auth.POST("/annotations/:id/relocate", rc.AnnotationHandler.RelocateAnnotation)
 		auth.GET("/reminders", rc.ReminderHandler.ListReminders)
 		auth.POST("/reminders/:id/ack", rc.ReminderHandler.AckReminder)
 		auth.POST("/reminders/:id/cancel", rc.ReminderHandler.CancelReminder)

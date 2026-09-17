@@ -20,11 +20,12 @@ func setupDocumentTool(t *testing.T) (*DocumentTool, func()) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Document{}, &model.ContentVersion{}); err != nil {
+	if err := db.AutoMigrate(&model.Document{}, &model.ContentVersion{}, &model.DocumentAnnotation{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	docRepo := service.NewDocumentRepo(db)
-	return NewDocumentTool(docRepo), func() {}
+	annoRepo := service.NewDocumentAnnotationRepo(db)
+	return NewDocumentTool(docRepo, annoRepo), func() {}
 }
 
 func TestDocumentGetAndUpdate(t *testing.T) {
@@ -880,4 +881,103 @@ func mustMarshal(t *testing.T, v interface{}) json.RawMessage {
 		t.Fatalf("marshal: %v", err)
 	}
 	return b
+}
+
+// 改正文 → 划线失活 → list_annotations 能看见 → 改回来 → 自动恢复
+func TestDocumentAnnotationsSurviveUpdate(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ctx := context.Background()
+	ec := &ExecuteContext{Ctx: ctx, UserID: "user-1"}
+
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{
+		"title": "T", "content": "第一段。\n\n重点句在这里。\n\n第三段。",
+	}))
+	if !res.Success {
+		t.Fatalf("create: %s", res.Error)
+	}
+	var created map[string]interface{}
+	if err := json.Unmarshal(res.Data, &created); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	docID := created["id"].(string)
+
+	const seedContent = "第一段。\n\n重点句在这里。\n\n第三段。"
+	seedAx := service.NewAnchorer(seedContent)
+	anchor, ok := seedAx.Locate("重点句在这里", "", "")
+	if !ok {
+		t.Fatal("定位失败")
+	}
+	pfx, sfx := seedAx.Context(anchor)
+	if err := tool.annoRepo.Create(ctx, &model.DocumentAnnotation{
+		ID: "anno-1", UserID: "user-1", DocumentID: docID,
+		Quote: anchor.Quote, Prefix: pfx, Suffix: sfx,
+		StartOffset: anchor.Start, EndOffset: anchor.End,
+	}); err != nil {
+		t.Fatalf("seed anno: %v", err)
+	}
+
+	// 改写划线所在句子 → 应报失活
+	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
+		"id": docID, "old_text": "重点句在这里。", "new_text": "整句被换掉了。",
+	}))
+	if !res.Success {
+		t.Fatalf("update: %s", res.Error)
+	}
+	var upd map[string]interface{}
+	if err := json.Unmarshal(res.Data, &upd); err != nil {
+		t.Fatalf("unmarshal update: %v", err)
+	}
+	if upd["annotations_orphaned"] != float64(1) {
+		t.Fatalf("应报 1 条失活，got %v", upd)
+	}
+
+	// list_annotations 能看到它，且带 orphaned 标记
+	res = tool.Execute(ec, "list_annotations", mustMarshal(t, map[string]string{"document_id": docID}))
+	if !res.Success {
+		t.Fatalf("list_annotations: %s", res.Error)
+	}
+	var listed struct {
+		Annotations []struct {
+			Quote    string `json:"quote"`
+			Orphaned bool   `json:"orphaned"`
+		} `json:"annotations"`
+		Total int64 `json:"total"`
+	}
+	if err := json.Unmarshal(res.Data, &listed); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if listed.Total != 1 || len(listed.Annotations) != 1 || !listed.Annotations[0].Orphaned {
+		t.Fatalf("list 结果不符：%+v", listed)
+	}
+
+	// 改回原文 → 恢复
+	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
+		"id": docID, "old_text": "整句被换掉了。", "new_text": "重点句在这里。",
+	}))
+	if !res.Success {
+		t.Fatalf("update back: %s", res.Error)
+	}
+	var back map[string]interface{}
+	if err := json.Unmarshal(res.Data, &back); err != nil {
+		t.Fatalf("unmarshal back: %v", err)
+	}
+	if back["annotations_orphaned"] != float64(0) {
+		t.Fatalf("恢复后不该有失活，got %v", back)
+	}
+	a, err := tool.annoRepo.GetByID(ctx, "anno-1", "user-1")
+	if err != nil || a.Orphaned {
+		t.Fatalf("应已恢复：err=%v orphaned=%v", err, a.Orphaned)
+	}
+}
+
+// 注册表启动校验：Catalog/ReadOnlyFuncs 里引用的函数名必须真实存在，否则服务起不来
+func TestDocumentToolRegistryValidation(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	reg := NewRegistry()
+	reg.Register(tool)
+	reg.ValidateNativeFC()
+	reg.ValidateReadOnlyFuncs()
+	reg.ValidateCatalog()
 }

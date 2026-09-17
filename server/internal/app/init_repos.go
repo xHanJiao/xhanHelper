@@ -28,6 +28,7 @@ type Repos struct {
 	Reminder            *service.ReminderRepo
 	DelayedTask         *service.DelayedTaskRepo
 	Document            *service.DocumentRepo
+	DocumentAnnotation  *service.DocumentAnnotationRepo
 	DocumentShare       *service.DocumentShareRepo
 	MessageShare        *service.MessageShareRepo
 	Version             *service.VersionRepo
@@ -65,6 +66,7 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		Reminder:            service.NewReminderRepo(db),
 		DelayedTask:         service.NewDelayedTaskRepo(db),
 		Document:            docRepo,
+		DocumentAnnotation:  service.NewDocumentAnnotationRepo(db),
 		DocumentShare:       service.NewDocumentShareRepo(db, docRepo),
 		MessageShare:        service.NewMessageShareRepo(db, msgRepo),
 		Version:             service.NewVersionRepo(db),

@@ -98,6 +98,8 @@ POST /api/chat
 
 - 接口 `llm/adapter.go`：`Chat`（流式）、`ChatSync`、`ChatWithRawJSON`、`BuildSystemPrompt`、`ModelName`
 - 双模型：Flash（日常）+ strong_model Pro（深度推理/思考模式）；`llm_bg` 供后台任务复用（为空则回退主 LLM）
+- **服务端是 LLM 参数的唯一事实来源**：`/api/chat` 请求体里的 `temperature` / `max_tokens` / `thinking` 会被解析但**有意不传进 `RunRequest`**（`controller/chat.go`），一律用服务端配置默认。客户端 UI 上那几个旋钮当前不生效 —— 这是设计，不是 bug，别去"修"
+- 同理：全链路**没有 `finish_reason == "length"` 处理**，`max_tokens` 触顶是静默硬截断。要限制回答长度请用 prompt（如 `brief_answer` 注入 system prompt 的输出约束），不要靠调 `max_tokens`
 - 装饰器链：`llmcost.CostTracker`（token 记账）+ `IOAuditWrapper`（ChatSync I/O 审计，保留 7 天）
 - 两条工具调用路径：**原生 function calling**（`llm.use_native_fc`，当前开启）与 **prompt engineering**（工具定义注入 system prompt → 解析文本 JSON）
 
@@ -214,6 +216,36 @@ make db-pull / db-import / logs / clean
 - 遇到相似功能，抽取公共组件
 - **禁止对必要依赖做 nil 检查后静默返回**：通过依赖注入传入的必需组件（repo、client、worker 等）为 nil 意味着接线 bug，让它 panic，炸在明处。可选依赖（如回调）才用 nil 检查
 
+## UI 预览与设计 token
+
+讨论 UI 时**默认产出可交互 HTML 预览**，不要只给文字描述。
+
+- 位置 `docs/design/<feature>/mockup.html`；单文件自包含（不引 CDN，离线可开）；配色只用下面的 token
+- 必须带一个演示控制条（页面底部，挂 `.ui` 类以免干扰选区）：主题、字号，以及**我拿不准的取值做成可切换项**（如配色候选），让用户挑而不是我替他定
+- 自查：改完先 headless 截图确认，再 `open` 给用户
+  ```bash
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --disable-gpu \
+    --hide-scrollbars --screenshot=/tmp/x.png --window-size=1340,940 \
+    --virtual-time-budget=2200 "file://$PWD/docs/design/<feature>/mockup.html"
+  ```
+  要截交互态：把源码复制到 `/tmp` 并注入 `setTimeout` 脚本合成 `MouseEvent`/`click` 再截。事件必须派发到**具体元素**上——派发到 `document` 会让 `e.target.closest` 抛错
+
+**设计 token**（唯一来源 `client/xHelper/xHelperMac/Assets.xcassets/*.colorset`）
+
+| token | 浅 | 深 | | token | 浅 | 深 |
+|---|---|---|---|---|---|---|
+| appAccent | `#2F7D63` | `#92C8B4` | | chatBackground | `#F7EEDD` | `#1C1C1E` |
+| accentSecondary | `#41C9E2` | 同（单色） | | chatBackgroundDeep | `#EFE2C8` | `#141416` |
+| assistantText | `#3B2E1F` | `#FFFFFF` | | surfaceInput（=bubbleReply） | `#F2F7F3` | `#2C2E2D` |
+| userText | `#2A7F58` | `#90D4A8` | | bubbleTool | `#E8E4EF` | `#2E2B36` |
+
+- **不要自造色相**：淡色/描边一律 `color-mix(in srgb, assistantText N%, transparent)`，能落 token 就别写新 hex
+- **表面语言**：窗口底 `.ultraThinMaterial`（`xHelperMac/App.swift:486`）；内容区/侧栏是 `.regularMaterial` 卡片（`CardBackground.swift`，r12，卡片间距 `cardGap=6`）；深色卡片靠**白阴影 + 白 0.5pt 描边**浮起，不是黑阴影
+- 暖色渐变 + 光晕（`GlassBackground.swift`）**只有 ChatView / SettingsView 用**。文档页活在右侧栏卡片里（`RightSidebarView.swift:41` 的 `CardBackgroundModifier`），底色是**中性 material**，**不要拿暖米色 `chatBackground` 当页面底**（否则整页发黄）
+- 正文基线：`FontSizeManager.baseSize=17`，正文 `scaledSize × 1.18`；字体栈 `-apple-system, "PingFang SC"`；列宽 728px
+- **正文换 WKWebView 时必须全透明**（`isOpaque=false` + `backgroundColor=.clear` + HTML body 不铺不透明底色），否则糊掉卡片材质
+- CSS 坑：带 `var()` 的派生变量在**声明它的元素**上求值 → 主题 class 必须挂 `html`（`:root`）；挂 `body` 会让 `:root { --bg: var(--chat-bg) }` 永远停在浅色
+
 ## 客户端（client/）约定
 
 - **agent 不执行 `xcodebuild`**（避免与 Xcode 并发构建争 build database 锁），编译与运行验证由用户在 Xcode 完成
@@ -243,7 +275,7 @@ make db-pull / db-import / logs / clean
 
 ## 文档地图
 
-- `docs/design/` — 设计文档主战场，`phase-1` ~ `phase-18` 按阶段归档；`mac-apps/` 是 macOS 客户端专项
+- `docs/design/` — 设计文档主战场，`phase-1` ~ `phase-18` 按阶段归档；`mac-apps/` 是 macOS 客户端专项；每个设计目录下可放 `mockup.html` 交互预览（规范见「UI 预览与设计 token」）
 - 常读：`progressive-tool-disclosure.md`、`post-chat-worker-group.md`、`plan-mode-readonly.md`、`phase-18-subagent-explore.md`、`retrieval` 相关、`mac-apps/settings-sheet-style.md`、`mac-apps/swift6-concurrency-fix.md`
 - `docs/bugs/` — 按编号记录（到 014）；`docs/front-end/plan.md` — 前端架构与 nginx 部署
 - `docs/learning/` `docs/research/` `docs/security/` `docs/todo/` — 学习笔记 / 调研 / 红队测试 / 待办

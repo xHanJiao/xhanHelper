@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>文档「问 AI」用 PiP 承载 · 样式稿</title>
+<style>
+/* 配色与表面语言同 mockup.html：两层面是 macOS material 的近似，
+   文档页活在右栏卡片里（RightSidebarView.swift:41）→ 中性材质。
+   PiP 面板本体是 .regularMaterial 卡片；暖色渐变只属于 ChatView/SettingsView。 */
+:root {
+  --text:        #3B2E1F;
+  --accent:      #2F7D63;
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --on-accent:   #FFFFFF;
+
+  --bg-2:      #E6E6E8;
+  --bg:        #F7F7F7;
+  --surface:   #FCFCFC;
+  --surface-2: color-mix(in srgb, var(--text) 7%, transparent);
+
+  --muted:       color-mix(in srgb, var(--text) 55%, transparent);
+  --faint:       color-mix(in srgb, var(--text) 38%, transparent);
+  --border:      color-mix(in srgb, var(--text) 14%, transparent);
+  --border-soft: color-mix(in srgb, var(--text) 7%, transparent);
+
+  --card-shadow: 0 1px 3px rgba(0,0,0,.07);
+  --hairline:    inset 0 0 0 .5px rgba(0,0,0,.05);
+  --shadow:      0 12px 34px rgba(0,0,0,.16), 0 2px 8px rgba(0,0,0,.08);
+  --shadow-sm:   0 4px 14px rgba(0,0,0,.12);
+
+  --hl:           rgba(240,186,60,.38);
+  --hl-hover:     rgba(240,186,60,.58);
+  --sel:          color-mix(in srgb, var(--accent) 26%, transparent);
+
+  /* 聊天气泡（对齐 ChatBubble.swift 的对话内观感） */
+  --bubble-user:  color-mix(in srgb, var(--accent) 10%, transparent);
+  --bubble-ai:    color-mix(in srgb, var(--text) 5%, transparent);
+  --bubble-tool:  color-mix(in srgb, var(--text) 8%, transparent);
+
+  --danger:     #FF3B30;
+  --win-chrome: rgba(250,250,250,.72);
+}
+.dark {
+  --text:      #FFFFFF;
+  --accent:    #92C8B4;
+  --on-accent: #141416;
+
+  --bg-2:    #141416;
+  --bg:      #1C1C1E;
+  --surface: #2C2E2D;
+
+  --card-shadow: 0 1px 3px rgba(255,255,255,.07);
+  --hairline:    inset 0 0 0 .5px rgba(255,255,255,.12);
+  --shadow:      0 16px 40px rgba(0,0,0,.55), 0 2px 10px rgba(0,0,0,.4);
+  --shadow-sm:   0 6px 18px rgba(0,0,0,.45);
+  --win-chrome:  rgba(40,40,42,.72);
+
+  --hl:           rgba(146,200,180,.26);
+  --hl-hover:     rgba(146,200,180,.40);
+  --sel:          color-mix(in srgb, var(--accent) 30%, transparent);
+  --bubble-ai:    color-mix(in srgb, var(--text) 7%, transparent);
+  --bubble-tool:  color-mix(in srgb, var(--text) 11%, transparent);
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  font-family: -apple-system, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+body {
+  background: #D6D6D8;
+  display: flex; align-items: center; justify-content: center;
+  padding: 26px 26px 74px;
+  transition: background .25s;
+}
+body.dark { background: #0B0B0C; }
+
+.ui, .ui * { user-select: none; -webkit-user-select: none; }
+
+/* ============ 窗口 ============ */
+.window {
+  position: relative;
+  width: min(1180px, 100%);
+  height: min(860px, calc(100vh - 100px));
+  background: var(--bg-2);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  transition: background .25s;
+}
+.titlebar { height: 38px; flex: 0 0 38px; display: flex; align-items: center; gap: 8px; padding: 0 14px; }
+.traffic { display: flex; gap: 8px; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.traffic i:nth-child(1) { background: #FF5F57; }
+.traffic i:nth-child(2) { background: #FEBC2E; }
+.traffic i:nth-child(3) { background: #28C840; }
+.titlebar .win-title { flex: 1; text-align: center; font-size: 12.5px; font-weight: 600; color: var(--muted); letter-spacing: .2px; }
+
+.topbar { flex: 0 0 46px; display: flex; align-items: center; gap: 8px; padding: 0 16px; }
+.btn-back { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-size: 13.5px; font-weight: 500; background: none; border: 0; padding: 5px 6px; border-radius: 6px; cursor: pointer; font-family: inherit; }
+.btn-back:hover { background: var(--accent-soft); }
+.topbar .spacer { flex: 1; }
+.icon-btn { width: 30px; height: 30px; border-radius: 7px; border: 0; background: none; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: background .15s, color .15s; }
+.icon-btn:hover { background: var(--border-soft); color: var(--text); }
+.icon-btn.on { background: var(--accent-soft); color: var(--accent); }
+
+.body-row { flex: 1; display: flex; min-height: 0; gap: 6px; padding: 6px; }
+.doc-card { flex: 1; min-width: 0; display: flex; overflow: hidden; background: var(--bg); border-radius: 12px; box-shadow: var(--card-shadow), var(--hairline); transition: background .25s; }
+
+/* 目录栏（宽 220，与 app 一致） */
+.toc { width: 220px; flex: 0 0 220px; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border-soft); }
+.toc-head { display: flex; align-items: center; gap: 4px; padding: 7px 8px 7px 16px; }
+.toc-head .t { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.toc-head .spacer { flex: 1; }
+.toc-rule { border: 0; border-top: 1px solid var(--border-soft); margin: 0; opacity: .6; }
+.toc-list { flex: 1; overflow-y: auto; padding: 8px 0; }
+.toc-item { display: block; width: 100%; text-align: left; border: 0; background: none; font-family: inherit; font-size: 11.5px; line-height: 1.4; color: var(--muted); padding: 3px 16px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toc-item.l1 { font-size: 12px; font-weight: 500; color: var(--text); }
+.toc-item.l2 { padding-left: 28px; }
+.toc-item:hover { color: var(--text); }
+.toc-item.active { color: var(--accent); font-weight: 600; }
+.toc-foot { display: flex; justify-content: center; gap: 14px; padding: 6px 0; }
+.toc-foot button { display: inline-flex; align-items: center; gap: 4px; border: 0; background: none; padding: 3px 5px; border-radius: 5px; font-family: inherit; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.toc-foot button:hover { color: var(--text); }
+.toc-toggle { width: 26px; height: 26px; border-radius: 6px; border: 0; background: none; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.toc-toggle:hover { background: var(--border-soft); color: var(--text); }
+
+.reader { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; }
+.reader::-webkit-scrollbar { width: 10px; }
+.reader::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 3px solid transparent; background-clip: padding-box; }
+.page { max-width: 728px; margin: 0 auto; padding: 34px 40px 120px; }
+.doc-title { font-size: 26px; font-weight: 700; line-height: 1.32; color: var(--text); letter-spacing: -.2px; }
+.doc-tags { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+.doc-tags span { font-size: 11px; color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: 20px; font-weight: 500; }
+.doc-rule { border: 0; border-top: 1px solid var(--border); margin: 20px 0 26px; }
+#content { color: var(--text); font-size: 17px; line-height: 1.78; }
+#content h2 { font-size: 21px; font-weight: 650; margin: 28px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border-soft); }
+#content h3 { font-size: 19px; font-weight: 650; margin: 24px 0 10px; }
+#content p { margin: 11px 0; }
+#content ul { margin: 11px 0; padding-left: 22px; }
+#content li { margin: 5px 0; }
+#content code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .86em; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+#content blockquote { margin: 14px 0; padding: 2px 0 2px 14px; border-left: 3px solid var(--border); color: var(--muted); }
+
+/* 划线 + 选区 */
+mark.hl { background: var(--hl); color: inherit; border-radius: 2px; padding: 1.5px 0; cursor: pointer; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+mark.hl:hover { background: var(--hl-hover); }
+mark.sel { background: var(--sel); border-radius: 2px; padding: 1.5px 0; }
+mark.hl.sel { background: var(--accent); color: var(--on-accent); }
+
+/* ============ 选区工具条 ============ */
+.floating {
+  position: absolute; z-index: 40;
+  display: none; align-items: center; gap: 1px;
+  padding: 4px; border-radius: 9px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm), var(--hairline);
+  border: .5px solid var(--border-soft);
+}
+.floating.open { display: flex; }
+.floating button {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 0; background: none; border-radius: 6px;
+  padding: 5px 8px; font-family: inherit; font-size: 12.5px;
+  color: var(--text); cursor: pointer; white-space: nowrap;
+}
+.floating button:hover { background: var(--accent-soft); color: var(--accent); }
+.floating button.hot { background: var(--accent); color: var(--on-accent); }
+.floating button svg { width: 15px; height: 15px; }
+.floating .sep { width: 1px; align-self: stretch; background: var(--border-soft); margin: 5px 3px; }
+
+/* ============ PiP 聊天浮层 ============ */
+.pip-ghost {                       /* 拖动中的幽灵外框（app 里拖动时只动外框不重渲染内容） */
+  position: absolute; z-index: 60;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .15s;
+}
+.pip {
+  position: absolute; z-index: 61;
+  display: flex; flex-direction: column;
+  width: 372px; height: 520px;
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: var(--shadow), var(--hairline);
+  border: .5px solid var(--border-soft);
+  overflow: hidden;
+  transition: background .25s;
+}
+.pip.pos-br { right: 14px; bottom: 14px; }
+.pip.pos-bl { left: 14px; bottom: 14px; }
+.pip.pos-anchor { left: 118px; top: 172px; }   /* 贴着选区那一侧起手 */
+
+.pip-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px 6px 10px;
+  background: var(--win-chrome);
+  border-bottom: .5px solid var(--border-soft);
+  cursor: grab;
+}
+.pip-head .ttl { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
+.pip-head .spacer { flex: 1; }
+.pip-head .ibtn { width: 20px; height: 20px; border: 0; background: none; border-radius: 5px; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.pip-head .ibtn:hover { background: var(--border-soft); color: var(--text); }
+
+/* 流式呼吸灯（对齐 app 里的 streamingOpacity 呼吸） */
+.pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: breathe 1.5s ease-in-out infinite; }
+@keyframes breathe { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+
+.pip-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px 6px; display: flex; flex-direction: column; gap: 12px; }
+.pip-body::-webkit-scrollbar { width: 9px; }
+.pip-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 3px solid transparent; background-clip: padding-box; }
+
+.row { display: flex; flex-direction: column; gap: 5px; max-width: 100%; }
+.row.me { align-items: flex-end; }
+.bubble { font-size: 13px; line-height: 1.62; color: var(--text); border-radius: 11px; padding: 8px 11px; max-width: 92%; }
+.row.me .bubble { background: var(--bubble-user); border-bottom-right-radius: 4px; }
+.row.ai .bubble { background: var(--bubble-ai); border-bottom-left-radius: 4px; }
+.bubble p { margin: 0 0 7px; }
+.bubble p:last-child { margin-bottom: 0; }
+.bubble code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .88em; background: var(--surface-2); padding: 1px 4px; border-radius: 4px; }
+.caret { display: inline-block; width: 2px; height: 13px; background: var(--accent); vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* 空会话态 */
+.empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 26px 14px; color: var(--faint); }
+.empty .t { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.empty .h { font-size: 11.5px; line-height: 1.55; max-width: 240px; }
+.empty .chips { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; margin-top: 8px; }
+.empty .chips button { border: .5px solid var(--border); background: none; border-radius: 20px; padding: 4px 10px; font-family: inherit; font-size: 11px; color: var(--muted); cursor: pointer; }
+.empty .chips button:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+/* 引用条：用户消息上方的"引自某文档某段" */
+.qref {
+  display: flex; gap: 7px; max-width: 92%;
+  padding: 6px 9px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 8px 8px 0;
+  cursor: pointer;
+}
+.qref .qbody { min-width: 0; }
+.qref .qsrc { font-size: 10.5px; font-weight: 600; color: var(--accent); margin-bottom: 2px; display: flex; align-items: center; gap: 4px; }
+.qref .qtxt { font-size: 12px; line-height: 1.45; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.qref:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+
+/* 工具调用气泡（PiP 里空间小 → 折成一行，点开看细节） */
+.tool {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--muted);
+  background: var(--bubble-tool);
+  border-radius: 8px; padding: 5px 9px; max-width: 92%;
+  cursor: pointer;
+}
+.tool svg { width: 13px; height: 13px; color: var(--accent); flex: 0 0 auto; }
+.tool .nm { color: var(--text); font-weight: 500; }
+.tool .st { margin-left: auto; font-size: 10.5px; color: var(--accent); }
+.tool .st.run { color: var(--muted); }
+
+/* 底部窄条：文档问答轮的专属动作。放面板底部而不是改助手气泡（气泡刻意无右键菜单） */
+.pip-strip {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  border-top: .5px solid var(--border-soft);
+  background: var(--accent-soft);
+  font-size: 11.5px; color: var(--text);
+}
+.pip-strip .src { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pip-strip .spacer { flex: 1; }
+.pip-strip button {
+  border: 0; background: none; border-radius: 6px; padding: 3px 7px;
+  font-family: inherit; font-size: 11.5px; cursor: pointer; color: var(--muted); white-space: nowrap;
+}
+.pip-strip button:hover { background: var(--border-soft); color: var(--text); }
+.pip-strip button.primary { color: var(--accent); font-weight: 600; }
+.pip-strip button.primary:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+
+.pip-foot { flex: 0 0 auto; border-top: .5px solid var(--border-soft); padding: 8px 10px 9px; }
+
+/* 输入栏图标按钮（对齐 app 的 IconButton：纯图标 + hover tooltip） */
+.ipill {
+  width: 28px; height: 28px; flex: 0 0 28px;
+  border: 0; border-radius: 8px; background: none;
+  color: var(--muted); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .13s, color .13s, transform .13s;
+}
+.ipill svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.ipill:hover { background: var(--border-soft); transform: scale(1.08); }
+.ipill.on { color: var(--accent); }          /* 选中态：appAccent（同 mode-work） */
+.ipill.on.warn { color: #E08A2B; }           /* 备选：orange（同 plan / 信任） */
+.ipill.on.cool { color: #6B5CF2; }           /* 备选：蓝紫（同 深度模型） */
+
+/* 更多操作行：默认收起，展开器点了才出现（app 里 12s 无操作自动收起） */
+.extras {
+  display: none; align-items: center; gap: 2px;
+  padding: 5px 2px 0;
+  border-top: .5px solid var(--border-soft);
+  margin-top: 7px;
+}
+.extras.open { display: flex; }
+
+.btnrow { display: flex; align-items: center; gap: 2px; margin-top: 7px; }
+.btnrow .spacer { flex: 1; }
+.btnrow .hint { font-size: 10.5px; color: var(--faint); }
+
+/* 引用胶囊：发送前贴在输入栏上方（点「问 AI」直接进 PiP 时暂存的那段） */
+.qchip {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 7px; padding: 5px 6px 5px 8px;
+  border-left: 2.5px solid var(--accent);
+  background: var(--accent-soft); border-radius: 0 7px 7px 0;
+  font-size: 11.5px; color: var(--text);
+}
+.qchip .txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.qchip .x { width: 17px; height: 17px; border: 0; background: none; border-radius: 4px; color: var(--faint); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.qchip .x:hover { background: var(--border); color: var(--text); }
+
+.composer { display: flex; align-items: flex-end; gap: 6px; }
+.composer textarea {
+  flex: 1; min-height: 34px; max-height: 96px; resize: none;
+  border: .5px solid var(--border); border-radius: 9px;
+  background: var(--surface-2); color: var(--text);
+  font-family: inherit; font-size: 13px; line-height: 1.5;
+  padding: 8px 10px; outline: none;
+}
+.composer textarea::placeholder { color: var(--faint); }
+.composer textarea:focus { border-color: var(--accent); }
+.send { width: 32px; height: 32px; flex: 0 0 32px; border: 0; border-radius: 9px; background: var(--accent); color: var(--on-accent); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+
+.resize { position: absolute; right: 4px; bottom: 4px; width: 16px; height: 16px; color: var(--faint); cursor: nwse-resize; display: flex; align-items: center; justify-content: center; }
+
+/* 收起态小圆点 */
+.pip-dot {
+  position: absolute; z-index: 61; right: 20px; bottom: 20px;
+  width: 44px; height: 44px; border-radius: 50%;
+  background: var(--surface); box-shadow: var(--shadow-sm), var(--hairline);
+  border: .5px solid var(--border-soft);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent); cursor: pointer;
+}
+.pip-dot .ring { position: absolute; inset: -5px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); animation: ping 1.8s ease-out infinite; }
+@keyframes ping { 0% { transform: scale(.85); opacity: .6; } 100% { transform: scale(1.35); opacity: 0; } }
+
+/* ============ 批注编辑浮层（预填 AI 回答） ============ */
+.note-editor {
+  position: absolute; z-index: 70; width: 430px;
+  display: none; flex-direction: column; gap: 8px;
+  padding: 12px; border-radius: 11px;
+  background: var(--surface); box-shadow: var(--shadow), var(--hairline);
+  border: .5px solid var(--border-soft);
+}
+.note-editor.open { display: flex; }
+.note-editor .ne-src { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--accent); font-weight: 600; }
+.note-editor .quote { font-size: 12px; line-height: 1.45; color: var(--muted); padding-left: 9px; border-left: 2.5px solid var(--accent); max-height: 52px; overflow: hidden; }
+.note-editor textarea {
+  min-height: 132px; resize: vertical; border: .5px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); color: var(--text);
+  font-family: inherit; font-size: 12.5px; line-height: 1.6; padding: 8px 10px; outline: none;
+}
+.note-editor textarea:focus { border-color: var(--accent); }
+.note-editor .ne-foot { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--faint); }
+.note-editor .ne-foot .spacer { flex: 1; }
+.note-editor .ne-foot button { border: 0; background: none; border-radius: 6px; padding: 4px 9px; font-family: inherit; font-size: 12px; cursor: pointer; color: var(--muted); }
+.note-editor .ne-foot button:hover { background: var(--border-soft); color: var(--text); }
+.note-editor .ne-foot button.primary { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+.note-editor .ne-foot button.primary:hover { filter: brightness(1.06); }
+
+/* 提示 toast */
+.toast {
+  position: absolute; z-index: 80; left: 50%; bottom: 66px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px 13px; border-radius: 9px;
+  background: var(--surface); box-shadow: var(--shadow-sm), var(--hairline);
+  font-size: 12.5px; color: var(--text);
+  opacity: 0; transition: opacity .2s;
+}
+.toast.show { opacity: 1; }
+.toast code { font-family: ui-monospace, Menlo, monospace; font-size: .9em; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
+/* 状态标注（只在 mockup 里出现，帮助看图） */
+.callout {
+  position: absolute; z-index: 55;
+  max-width: 232px; padding: 7px 10px; border-radius: 8px;
+  background: var(--accent); color: var(--on-accent);
+  font-size: 11px; line-height: 1.5; font-weight: 500;
+  box-shadow: var(--shadow-sm);
+}
+.callout::after {
+  content: ''; position: absolute; width: 0; height: 0;
+  border: 5px solid transparent;
+}
+.callout.tip-l::after { left: -9px; top: 13px; border-right-color: var(--accent); }
+.callout.tip-r::after { right: -9px; top: 13px; border-left-color: var(--accent); }
+
+/* ============ 演示控制台 ============ */
+.devcbar {
+  position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%);
+  z-index: 200;
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: center;
+  max-width: min(1140px, calc(100vw - 24px));
+  padding: 6px 10px; border-radius: 11px;
+  background: rgba(28,28,30,.92);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 8px 26px rgba(0,0,0,.35);
+  color: #EDEDED; font-size: 11.5px;
+}
+.devcbar .lab { color: #9A9A9E; padding: 0 3px; }
+.devcbar button {
+  background: rgba(255,255,255,.08);
+  border: 1px solid transparent; border-radius: 6px;
+  color: #EDEDED; font-family: inherit; font-size: 11.5px;
+  padding: 4px 8px; cursor: pointer; white-space: nowrap;
+}
+.devcbar button:hover { background: rgba(255,255,255,.15); }
+.devcbar button.on { background: #2F7D63; border-color: #2F7D63; color: #fff; }
+.devcbar .sep { width: 1px; height: 18px; background: rgba(255,255,255,.14); margin: 0 4px; }
+</style>
+</head>
+<body class="s-select">
+
+<div class="window">
+  <div class="titlebar ui">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="win-title">文档</div>
+  </div>
+
+  <div class="topbar ui">
+    <button class="btn-back">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      返回文档列表
+    </button>
+    <div class="spacer"></div>
+    <button class="icon-btn" title="在文档中查找（⌘F）">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+    </button>
+    <button class="icon-btn" title="划线批注列表">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+    </button>
+    <button class="icon-btn" id="btn-pip" title="聊天画中画（⌘⇧M）">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a7 7 0 0 1-7 7H9l-4.2 2.6L6 17.5A7 7 0 1 1 20 12z"/></svg>
+    </button>
+  </div>
+
+  <div class="body-row">
+    <div class="doc-card">
+      <nav class="toc ui">
+        <div class="toc-head">
+          <span class="t">目录</span><span class="spacer"></span>
+          <button class="toc-toggle" title="收起目录">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+        </div>
+        <hr class="toc-rule">
+        <div class="toc-list">
+          <button class="toc-item l1 active">一、结论先行</button>
+          <button class="toc-item l1">二、与 xhanHelper 的对照</button>
+          <button class="toc-item l2">2.1 迁移评估</button>
+          <button class="toc-item l2">2.2 关键片段</button>
+        </div>
+        <hr class="toc-rule">
+        <div class="toc-foot ui">
+          <button>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+            上一篇
+          </button>
+          <button>
+            下一篇
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+          </button>
+        </div>
+      </nav>
+
+      <div class="reader" id="reader">
+        <div class="page">
+          <div class="doc-title">N.E.K.O 记忆系统切面调研</div>
+          <div class="doc-tags"><span>调研</span><span>记忆系统</span><span>Phase-18</span></div>
+          <hr class="doc-rule">
+          <div id="content">
+            <h2>一、结论先行</h2>
+            <p>N.E.K.O 的记忆系统并不存在一个独立的「记忆模块」，而是<mark class="hl" id="anchor-hl">散落在 persona 渲染、pending/confirmed 反思与向量召回三处的隐式拼接</mark>。这一点直接决定了我们无法照搬它的抽象层。</p>
+            <p>所有长期记忆最终都汇入同一个 persona header，由 <code>routes.py</code> 在请求期动态渲染，没有独立的持久化层。</p>
+            <blockquote>证据级别：【已读代码确认】——见 <code>routes.py:3879</code> 与 <code>memory_manager.py</code> 的写入路径。</blockquote>
+
+            <h2>二、与 xhanHelper 的对照</h2>
+            <p>我们的做法是在对话结束后由后台 worker 异步提取，写入独立的 <code>user_memories</code> 表并做向量去重；N.E.K.O 则是<span id="target-sent">在渲染期把反思结果直接拼进 persona</span>。两者的差异不只是实现，而是<strong>写入时机</strong>与<strong>去重责任方</strong>的根本不同。</p>
+            <h3>2.1 迁移评估</h3>
+            <ul>
+              <li><strong>可借鉴</strong>：反思结果的 pending → confirmed 两阶段确认，避免脏记忆直接生效。</li>
+              <li><strong>不可照搬</strong>：persona 渲染期拼接，会让前缀缓存完全失效。</li>
+              <li><strong>待确认</strong>：它的节流参数是否与我们的 <code>retrieval</code> 预算对齐。</li>
+            </ul>
+            <h3>2.2 关键片段</h3>
+            <p>注意它把反思结果直接拼进渲染路径——这正是我们 chunk 切分逻辑无法复用的原因。<strong>这一点务必记在迁移清单里</strong>。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 选区工具条（4 个动作；此稿聚焦「问 AI」） -->
+  <div class="floating open ui" id="toolbar" style="left:266px; top:408px;">
+    <button>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="M14.5 4.5l5 5L11 18H6v-5z"/></svg>
+      划线
+    </button>
+    <button>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a7 7 0 0 1-7 7H9l-4.2 2.6L6 17.5A7 7 0 1 1 20 12z"/></svg>
+      批注
+    </button>
+    <div class="sep"></div>
+    <button>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+      复制
+    </button>
+    <button class="hot" id="btn-ask">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 4.4 4.4 1.7-4.4 1.7L12 15.7l-1.7-4.4L5.9 9.6l4.4-1.7z"/><path d="M18.6 15.4l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z"/></svg>
+      问 AI
+    </button>
+  </div>
+
+  <!-- ============ PiP 聊天浮层 ============ -->
+  <div class="pip pos-br" id="pip" data-when="pending stream tools done followup error save">
+    <div class="pip-head ui">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent)"><path d="M20 12a7 7 0 0 1-7 7H9l-4.2 2.6L6 17.5A7 7 0 1 1 20 12z"/></svg>
+      <span class="ttl" id="pip-title">对话</span>
+      <span class="pulse" data-when="stream tools"></span>
+      <span class="spacer"></span>
+      <button class="ibtn" title="收起（⌘⇧E）">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg>
+      </button>
+      <button class="ibtn" title="退出画中画">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <div class="pip-body" id="pip-body">
+      <!-- 空会话态：引用已暂存，等用户提问 -->
+      <div class="empty ui" data-when="pending">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a7 7 0 0 1-7 7H9l-4.2 2.6L6 17.5A7 7 0 1 1 20 12z"/></svg>
+        <div class="t">已引用下面这段</div>
+        <div class="h">问点什么吧。这轮会带上文档标题和上下文，能检索你的记忆与笔记。</div>
+        <div class="chips">
+          <button>解释这段</button>
+          <button>和我之前的笔记冲突吗</button>
+          <button>给我一个反例</button>
+        </div>
+      </div>
+
+      <!-- 第一轮：带文档选区引用 -->
+      <div class="row me" data-when="stream tools done save">
+        <div class="qref ui" title="点回文档里的那段">
+          <div class="qbody">
+            <div class="qsrc">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-1.5z"/><path d="M8 7h7M8 11h7"/></svg>
+              引自《N.E.K.O 记忆系统切面调研》
+            </div>
+            <div class="qtxt">在渲染期把反思结果直接拼进 persona</div>
+          </div>
+        </div>
+        <div class="bubble">这个论断和我们现在的记忆系统设计冲突吗？</div>
+      </div>
+
+      <!-- 工具调用（PiP 空间小 → 折成一行） -->
+      <div class="row ai" data-when="tools done save">
+        <div class="tool ui" data-st="done-1">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+          <span class="nm">unified_search</span>
+          <span class="st">命中 4 条记忆 · 2 篇笔记</span>
+        </div>
+        <div class="tool ui" data-st="done-2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 8h14M6 3h12l1 5H5z"/></svg>
+          <span class="nm">get_summary</span>
+          <span class="st">读取 2 条摘要</span>
+        </div>
+      </div>
+      <div class="row ai" data-when="tools">
+        <div class="tool ui">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+          <span class="nm">unified_search</span>
+          <span class="st run">检索中…</span>
+        </div>
+      </div>
+
+      <!-- AI 回答：流式中 -->
+      <div class="row ai" data-when="stream">
+        <div class="bubble">不冲突，但要分清「谁在拼」。<br><br>N.E.K.O 是<b>在请求期用 persona 模板拼</b>，没有持久层；我们是<span class="caret"></span></div>
+      </div>
+
+      <!-- AI 回答：完成 -->
+      <div class="row ai" data-when="tools done save">
+        <div class="bubble">
+          <p>不冲突，但要分清「谁在拼」。</p>
+          <p>N.E.K.O 是<b>在请求期用 persona 模板拼</b>，反思结果只是拼装素材，没有持久层、没有去重；我们是在<b>对话结束后异步提取</b>，写进 <code>user_memories</code> 再做向量去重。</p>
+          <p>差异不在「拼不拼」，而在<b>写入时机</b>与<b>去重责任方</b>。</p>
+        </div>
+      </div>
+
+      <!-- 追问第二轮 -->
+      <div class="row me" data-when="followup">
+        <div class="bubble">那它的 pending → confirmed 两阶段值得抄吗？</div>
+      </div>
+      <div class="row ai" data-when="followup">
+        <div class="bubble">
+          <p>值得，而且成本很低。</p>
+          <p>它是把「不确定的记忆」先放 pending，确认后才进 persona。我们的 <code>_provisional</code> 语义基本就是它，只差一个显式的确认流。</p>
+        </div>
+      </div>
+
+      <!-- 出错 -->
+      <div class="row ai" data-when="error">
+        <div class="bubble" style="color:var(--danger)">请求失败：连接中断。已保留你的问题和引用，可以直接重发。</div>
+      </div>
+    </div>
+
+    <!-- 底部窄条：只在文档问答轮出现 -->
+    <div class="pip-strip ui" data-when="done save">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent)"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-1.5z"/><path d="M8 7h7M8 11h7"/></svg>
+      <span class="src">本轮基于《N.E.K.O 记忆系统切面调研》的划线</span>
+      <span class="spacer"></span>
+      <button>忽略</button>
+      <button class="primary" id="btn-save-note">存为批注</button>
+    </div>
+    <div class="pip-strip ui" data-when="followup">
+      <span class="src" style="color:var(--faint)">已存为批注 · 可在文档里编辑</span>
+      <span class="spacer"></span>
+      <button>撤销</button>
+    </div>
+
+    <div class="pip-foot">
+      <!-- 引用胶囊：发送前暂存的那段。点「问 AI」直接进 PiP，问题在这里敲 -->
+      <div class="qchip ui" data-when="pending">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent)"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-1.5z"/><path d="M8 7h7M8 11h7"/></svg>
+        <span class="txt">在渲染期把反思结果直接拼进 persona</span>
+        <button class="x" title="移除引用">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="composer">
+        <textarea id="pip-input" placeholder="就这段文字问点什么…" data-when="pending">这个论断和我们现在的记忆系统设计冲突吗？</textarea>
+        <textarea placeholder="继续追问…" data-when="done followup error"></textarea>
+        <button class="send" title="发送">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+        </button>
+      </div>
+
+      <!-- 更多操作行：默认收起（与 深度模型/信任/接力/附件 同族），点按钮行的展开器才出现 -->
+      <div class="extras ui" id="extras">
+        <button class="ipill" data-icon="shield" title="安全模式，点击切换信任">
+          <svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.3-2.9 7.9-7 9-4.1-1.1-7-4.7-7-9V6z"/></svg>
+        </button>
+        <button class="ipill" data-icon="bolt" title="快速模型，点击切换深度">
+          <svg viewBox="0 0 24 24"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10H13z"/></svg>
+        </button>
+        <!-- 精炼回答：会话级开关，开=服务端往 system prompt 注入「≤500 字」约束 -->
+        <button class="ipill" id="brief-pill" data-icon="text.alignleft" title="常规长度，点击切换精炼回答（≤500 字）">
+          <svg viewBox="0 0 24 24"><path d="M4 6h16M4 11h11M4 16h14"/></svg>
+        </button>
+        <button class="ipill" data-icon="handoff" title="会话接力：整理成文档并新开会话">
+          <svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 8-8h4"/><path d="M13 1l3 3-3 3"/><path d="M20 12a8 8 0 0 1-8 8H8"/><path d="M11 23l-3-3 3-3"/></svg>
+        </button>
+        <button class="ipill" data-icon="paperclip" title="添加图片">
+          <svg viewBox="0 0 24 24"><path d="M20 11l-8.5 8.5a5 5 0 0 1-7-7L13 4a3.5 3.5 0 0 1 5 5l-8 8a2 2 0 0 1-3-3l7.5-7.5"/></svg>
+        </button>
+      </div>
+
+      <!-- 按钮行（常驻）：会话模式 / 智能体 / 展开更多操作 -->
+      <div class="btnrow ui">
+        <button class="ipill on" data-icon="checklist" title="聊天模式，点击切换计划">
+          <svg viewBox="0 0 24 24"><path d="M4 7l2 2 3-3"/><path d="M4 16l2 2 3-3"/><path d="M13 8h7M13 17h7"/></svg>
+        </button>
+        <button class="ipill" data-icon="cpu" title="选择智能体">
+          <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
+        </button>
+        <button class="ipill" id="extras-toggle" data-icon="chevron.up" title="更多操作">
+          <svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>
+        </button>
+        <span class="spacer"></span>
+        <span class="hint" id="brief-hint"></span>
+      </div>
+    </div>
+
+    <div class="resize ui">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3L9 15M21 10l-6 5M10 21l5-6"/></svg>
+    </div>
+  </div>
+
+  <!-- 收起态小圆点 -->
+  <div class="pip-dot ui" id="pipdot" data-when="collapsed">
+    <span class="ring"></span>
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a7 7 0 0 1-7 7H9l-4.2 2.6L6 17.5A7 7 0 1 1 20 12z"/></svg>
+  </div>
+
+  <!-- 批注编辑浮层：预填 AI 回答 -->
+  <div class="note-editor ui" id="note-editor" data-when="save" style="left:300px; top:400px;">
+    <div class="ne-src">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 4.4 4.4 1.7-4.4 1.7L12 15.7l-1.7-4.4L5.9 9.6l4.4-1.7z"/></svg>
+      AI 回答已填入 · 可改完再存
+    </div>
+    <div class="quote">在渲染期把反思结果直接拼进 persona</div>
+    <textarea id="ne-text">不冲突，但要分清「谁在拼」。
+
+N.E.K.O 是在请求期用 persona 模板拼，反思结果只是拼装素材，没有持久层、没有去重；我们是在对话结束后异步提取，写进 user_memories 再做向量去重。
+
+差异不在「拼不拼」，而在写入时机与去重责任方。</textarea>
+    <div class="ne-foot">
+      <span id="ne-count">142 / 2000</span>
+      <span class="spacer"></span>
+      <button id="ne-cancel">取消</button>
+      <button class="primary">保存批注</button>
+    </div>
+  </div>
+
+  <!-- 标注 -->
+  <div class="callout tip-l ui" data-when="select" style="left:92px; top:452px;">
+    点「问 AI」→ 直接开 PiP，不再弹中间对话框。<br>引用先暂存成输入栏上方的胶囊。
+  </div>
+  <div class="callout tip-r ui" data-when="pending" style="left:92px; top:452px;">
+    PiP 起手在右下角，可拖走。<br><b>轻量进入</b>：不跳左栏、不缩左栏、不改窗口宽度。
+  </div>
+  <div class="callout tip-l ui" data-when="done" style="left:92px; top:452px;">
+    本轮基于文档划线 → 面板底部出现专属窄条。<br>不动助手气泡（气泡刻意无右键菜单）。
+  </div>
+  <div class="callout tip-l ui" data-when="save" style="left:92px; top:452px;">
+    存为批注 → 文档滚到该段 + 批注浮层预填 AI 回答。<br>这段还没划过线，所以保存时才建。
+  </div>
+  <div class="callout tip-l ui" data-when="collapsed" style="left:92px; top:452px;">
+    收起态：小圆点，流式时呼吸。<br>⌘⇧E 收起/展开。
+  </div>
+
+  <div class="toast ui" id="toast"><span id="toast-text"></span></div>
+</div>
+
+<!-- 演示控制台 -->
+<div class="devcbar ui">
+  <span class="lab">状态</span>
+  <button data-state="select">① 选中出工具条</button>
+  <button data-state="pending">② 进 PiP·引用胶囊</button>
+  <button data-state="stream">③ 流式回答</button>
+  <button data-state="tools">④ 调工具</button>
+  <button data-state="done">⑤ 完成·存为批注</button>
+  <button data-state="followup">⑥ 追问第二轮</button>
+  <button data-state="error">⑦ 出错</button>
+  <button data-state="save">⑧ 预填批注浮层</button>
+  <button data-state="collapsed">⑨ 收起态</button>
+  <div class="sep"></div>
+  <span class="lab">主题</span>
+  <button id="dev-theme">深色</button>
+  <span class="lab">PiP 位置</span>
+  <button id="dev-pos">右下</button>
+  <span class="lab">字号</span>
+  <button id="dev-fs-minus">A−</button>
+  <button id="dev-fs-plus">A+</button>
+  <div class="sep"></div>
+  <span class="lab">精炼图标</span>
+  <button id="dev-bicon">text.alignleft</button>
+  <span class="lab">选中色</span>
+  <button id="dev-bcolor">appAccent</button>
+  <button id="dev-reset">重置</button>
+</div>
+
+<script>
+(function () {
+  const pip     = document.getElementById('pip');
+  const reader  = document.getElementById('reader');
+  const toast   = document.getElementById('toast');
+  const toastTx = document.getElementById('toast-text');
+  const neText  = document.getElementById('ne-text');
+  const neCount = document.getElementById('ne-count');
+
+  const STATES = ['select','pending','stream','tools','done','followup','error','save','collapsed'];
+  let state = 'select';
+  let posIdx = 0;
+  const POS = [
+    { cls: 'pos-br',     label: '右下' },
+    { cls: 'pos-bl',     label: '左下' },
+    { cls: 'pos-anchor', label: '贴选区' },
+  ];
+
+  // data-when="a b c"：只有当前 state 在列表里才显示
+  function render() {
+    document.body.className = document.body.classList.contains('dark')
+      ? 'dark s-' + state : 's-' + state;
+
+    document.querySelectorAll('[data-when]').forEach(el => {
+      const list = (el.dataset.when || '').split(/\s+/).filter(Boolean);
+      el.style.display = list.includes(state) ? '' : 'none';
+    });
+    // .floating / .pip / .note-editor / .pip-dot 的 display 由 CSS 类控制，
+    // 上面的内联 display 会盖掉它，所以这里把需要的类补回去
+    const toolbar = document.getElementById('toolbar');
+    toolbar.style.display = state === 'select' ? 'flex' : 'none';
+    pip.style.display = ['pending','stream','tools','done','followup','error','save'].includes(state) ? 'flex' : 'none';
+    document.getElementById('note-editor').style.display = state === 'save' ? 'flex' : 'none';
+
+    document.querySelectorAll('.devcbar [data-state]').forEach(b => {
+      b.classList.toggle('on', b.dataset.state === state);
+    });
+
+    // 流式态：面板标题回落到会话名
+    document.getElementById('pip-title').textContent =
+      state === 'select' ? '对话' : 'N.E.K.O 调研 · 问答';
+
+    // 进对话态时把消息滚到底
+    if (['stream','tools'].includes(state)) {
+      const body = document.getElementById('pip-body');
+      body.scrollTop = body.scrollHeight;
+    }
+    // 存为批注态：回到顶部，让被引用的那句留在原位（浮层就贴在它下方）
+    if (state === 'save') {
+      reader.scrollTop = 0;
+    }
+  }
+
+  function setState(s) { state = s; render(); }
+
+  function toastMsg(m, ms) {
+    toastTx.innerHTML = m;
+    toast.classList.add('show');
+    clearTimeout(toastMsg._t);
+    toastMsg._t = setTimeout(() => toast.classList.remove('show'), ms || 2600);
+  }
+
+  document.querySelectorAll('.devcbar [data-state]').forEach(b => {
+    b.addEventListener('click', () => setState(b.dataset.state));
+  });
+
+  document.getElementById('btn-ask').addEventListener('click', () => {
+    setState('pending');
+    toastMsg('已引用选中文字 · 在 PiP 里敲问题', 2400);
+  });
+  document.getElementById('btn-pip').addEventListener('click', () => {
+    setState(state === 'collapsed' ? 'pending' : 'collapsed');
+  });
+  document.getElementById('pipdot').addEventListener('click', () => setState('done'));
+
+  document.getElementById('btn-save-note').addEventListener('click', () => setState('save'));
+  document.getElementById('ne-cancel').addEventListener('click', () => setState('done'));
+  document.querySelector('#note-editor .primary').addEventListener('click', () => {
+    setState('followup');
+    toastMsg('已存为批注（演示）');
+  });
+
+  // 字数统计
+  function countChars() {
+    neCount.textContent = neText.value.length + ' / 2000';
+  }
+  neText.addEventListener('input', countChars);
+  countChars();
+
+  // 主题
+  const themeBtn = document.getElementById('dev-theme');
+  themeBtn.addEventListener('click', () => {
+    const dark = !document.body.classList.contains('dark');
+    document.body.classList.toggle('dark', dark);
+    document.documentElement.classList.toggle('dark', dark);
+    themeBtn.textContent = dark ? '浅色' : '深色';
+    themeBtn.classList.toggle('on', dark);
+    render();
+  });
+
+  // PiP 位置
+  const posBtn = document.getElementById('dev-pos');
+  posBtn.addEventListener('click', () => {
+    posIdx = (posIdx + 1) % POS.length;
+    pip.className = 'pip ' + POS[posIdx].cls;
+    posBtn.textContent = POS[posIdx].label;
+    posBtn.classList.toggle('on', posIdx !== 0);
+  });
+
+  // 字号
+  let fs = 17;
+  const applyFs = () => { document.getElementById('content').style.fontSize = fs + 'px'; };
+  document.getElementById('dev-fs-plus').addEventListener('click', () => { fs = Math.min(fs + 1, 23); applyFs(); });
+  document.getElementById('dev-fs-minus').addEventListener('click', () => { fs = Math.max(fs - 1, 14); applyFs(); });
+
+  // —— 精炼回答：输入栏里的一颗 icon pill（会话级开关）——
+  const briefPill = document.getElementById('brief-pill');
+  const briefHint  = document.getElementById('brief-hint');
+
+  // 三个图标候选（对应 SF Symbols：text.alignleft / text.badge.minus / arrow.down.forward.and.arrow.up.backward）
+  const B_ICONS = [
+    { name: 'text.alignleft', svg: '<path d="M4 6h16M4 11h11M4 16h14"/>' },
+    { name: 'text.badge.minus', svg: '<path d="M4 6h16M4 12h9M4 18h16"/><circle cx="18" cy="12" r="4"/><path d="M16 12h4"/>' },
+    { name: 'compress', svg: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><path d="M9 9l-5-5M15 9l5-5M9 15l-5 5M15 15l5 5"/>' },
+  ];
+  // 三个选中色候选
+  const B_COLORS = [
+    { cls: '',     name: 'appAccent' },
+    { cls: 'warn', name: 'orange' },
+    { cls: 'cool', name: '蓝紫' },
+  ];
+  let bIcon = 0, bColor = 0;
+
+  function applyBrief() {
+    const ic = B_ICONS[bIcon];
+    briefPill.dataset.icon = ic.name;
+    briefPill.querySelector('svg').innerHTML = ic.svg;
+    document.getElementById('dev-bicon').textContent = ic.name;
+    document.getElementById('dev-bcolor').textContent = B_COLORS[bColor].name;
+    const on = briefPill.classList.contains('on');
+    briefPill.title = on ? '精炼回答 · ≤500 字，点击关闭' : '常规长度，点击切换精炼回答（≤500 字）';
+    briefHint.textContent = on ? '精炼回答：≤500 字（注入 system prompt）' : '';
+    briefHint.style.color = on ? 'var(--muted)' : 'var(--faint)';
+  }
+  document.getElementById('dev-bicon').addEventListener('click', () => {
+    bIcon = (bIcon + 1) % B_ICONS.length; applyBrief();
+  });
+  document.getElementById('dev-bcolor').addEventListener('click', () => {
+    bColor = (bColor + 1) % B_COLORS.length;
+    briefPill.classList.remove('warn', 'cool');
+    if (B_COLORS[bColor].cls) briefPill.classList.add(B_COLORS[bColor].cls);
+    applyBrief();
+  });
+  briefPill.addEventListener('click', () => {
+    briefPill.classList.toggle('on');
+    applyBrief();
+    toastMsg(briefPill.classList.contains('on')
+      ? '已开启：精炼回答（≤500 字）· 会话级，跟着会话走'
+      : '已关闭：精炼回答');
+  });
+  applyBrief();
+
+  // 展开器：切换「更多操作行」（app 里点别处/12s 无操作自动收起，这里只做手动）
+  const extras = document.getElementById('extras');
+  document.getElementById('extras-toggle').addEventListener('click', () => {
+    extras.classList.toggle('open');
+  });
+  // 点 extras 里的 pill：给个演示反馈
+  extras.querySelectorAll('.ipill:not(#brief-pill)').forEach(b => {
+    b.addEventListener('click', () => toastMsg('（演示）' + (b.title || '')));
+  });
+  // 简单高亮：点一下辅助按钮显示选中态
+  document.getElementById('extras-toggle').addEventListener('click', function () {
+    this.classList.toggle('on', extras.classList.contains('open'));
+  });
+
+  document.getElementById('dev-reset').addEventListener('click', () => {
+    fs = 17; applyFs(); posIdx = 0; pip.className = 'pip pos-br';
+    extras.classList.remove('open'); bIcon = 0; bColor = 0;
+    briefPill.className = 'ipill'; applyBrief();
+    posBtn.textContent = POS[0].label; posBtn.classList.remove('on');
+    if (document.body.classList.contains('dark')) themeBtn.click();
+    setState('select');
+  });
+
+  // 工具行点击：展开/折叠说明（这里只弹提示，标注这是可交互点）
+  document.querySelectorAll('.tool').forEach(t => {
+    t.addEventListener('click', () => toastMsg('点开可看工具入参与返回（细节折叠，避免挤占窄面板）'));
+  });
+
+  window.__setState = setState;   // 便于 headless 截图注入
+  render();
+})();
+</script>
+</body>
+</html>

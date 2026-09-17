@@ -30,7 +30,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	// 画像已由 resource zone 每轮注入主循环，暴露查询给主循环是冗余且膨胀 catalog。
 	reg.Register(tool.NewLoggingWrapper(tool.NewProfileTool(repos.UserProfileFact), log.Default()))
 	reg.HideTool("profile")
-	reg.Register(tool.NewLoggingWrapper(tool.NewDocumentTool(repos.Document), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewDocumentTool(repos.Document, repos.DocumentAnnotation), log.Default()))
 
 	// 种子内置工具到 tool_registries 表（幂等）
 	if err := tool.SeedBuiltinTools(context.Background(), repos.Tool, infra.Embedder, repos.Embedding); err != nil {

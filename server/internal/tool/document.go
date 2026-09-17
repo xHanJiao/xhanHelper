@@ -3,6 +3,7 @@ package tool
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"unicode/utf8"
 
@@ -53,11 +54,12 @@ const docWindowHint = "文档较长，仅返回部分内容。继续读请传 ch
 
 // DocumentTool — 文档管理工具。仅在用户明确要求时使用，不要主动创建。
 type DocumentTool struct {
-	docRepo *service.DocumentRepo
+	docRepo  *service.DocumentRepo
+	annoRepo *service.DocumentAnnotationRepo
 }
 
-func NewDocumentTool(docRepo *service.DocumentRepo) *DocumentTool {
-	return &DocumentTool{docRepo: docRepo}
+func NewDocumentTool(docRepo *service.DocumentRepo, annoRepo *service.DocumentAnnotationRepo) *DocumentTool {
+	return &DocumentTool{docRepo: docRepo, annoRepo: annoRepo}
 }
 
 func (t *DocumentTool) Name() string { return "document" }
@@ -68,8 +70,8 @@ func (t *DocumentTool) Description() string {
 
 func (t *DocumentTool) Catalog() (CatalogEntry, bool) {
 	return CatalogEntry{
-		ShortDesc: "文档。写/查/改/删 Markdown 文档。用户明确要求才用。",
-		Funcs:     []string{"create_document", "get_document", "update_document", "query_documents"},
+		ShortDesc: "文档。写/查/改/删 Markdown 文档，看用户划的线和批注。用户明确要求才用。",
+		Funcs:     []string{"get_document", "update_document", "list_annotations", "create_document"},
 		Others:    "删除、文档列表、标签 等",
 	}, true
 }
@@ -102,6 +104,20 @@ func (t *DocumentTool) Functions() []FuncSchema {
 					"char_limit":  map[string]interface{}{"type": "integer", "description": fmt.Sprintf("本次返回的最大字符数，默认 %d，上限 %d", defaultDocWindowLen, maxDocWindowLen)},
 				},
 				"required": []string{"id"},
+			},
+		},
+		{
+			Name:        "list_annotations",
+			Display:     "查看划线批注",
+			Description: "查看用户在文档正文上划的线和写的批注。修改文档前先看一眼，能避开用户标出来的段落，改完也不容易把划线弄失活。note 为空表示用户只划了线没写批注。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"document_id": map[string]interface{}{"type": "string", "description": "文档 ID"},
+					"limit":       map[string]interface{}{"type": "integer", "description": fmt.Sprintf("每页条数，默认 %d；传 0 只取总数返回空列表", defaultDocPageSize)},
+					"offset":      map[string]interface{}{"type": "integer", "description": "偏移量，默认 0，不能为负"},
+				},
+				"required": []string{"document_id"},
 			},
 		},
 		{
@@ -171,10 +187,11 @@ func (t *DocumentTool) Functions() []FuncSchema {
 // ReadOnlyFuncs — 查看/查询/标签类只读，增删改为写（plan 模式拦截）
 func (t *DocumentTool) ReadOnlyFuncs() map[string]bool {
 	return map[string]bool{
-		"get_document":    true,
-		"query_documents": true,
-		"list_documents":  true,
-		"list_tags":       true,
+		"get_document":     true,
+		"list_annotations": true,
+		"query_documents":  true,
+		"list_documents":   true,
+		"list_tags":        true,
 	}
 }
 
@@ -184,6 +201,8 @@ func (t *DocumentTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 		return t.createDocument(ec, args)
 	case "get_document":
 		return t.getDocument(ec, args)
+	case "list_annotations":
+		return t.listAnnotations(ec, args)
 	case "update_document":
 		return t.updateDocument(ec, args)
 	case "query_documents":
@@ -413,9 +432,71 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 		return &Result{Success: false, Error: "update document: " + err.Error()}
 	}
 
-	data, _ := json.Marshal(map[string]interface{}{
+	out := map[string]interface{}{
 		"id":      req.ID,
 		"message": "文档已更新",
+	}
+	// 正文变了就重算用户划线批注的锚点，把失活情况如实报回去
+	if newContent, ok := updates["content"].(string); ok {
+		affected, orphaned, err := t.annoRepo.RelocateAll(ec.Ctx, req.ID, ec.UserID, newContent)
+		if err != nil {
+			// 不影响正文已更新的结果，就地记日志
+			log.Printf("[document] RelocateAll doc=%s user=%s: %v", req.ID, ec.UserID, err)
+		} else if affected > 0 {
+			out["annotations_affected"] = affected
+			out["annotations_orphaned"] = orphaned
+			if orphaned > 0 {
+				out["message"] = fmt.Sprintf("文档已更新；本次改动使 %d 条用户划线批注失效，可在文档批注列表里看到", orphaned)
+			}
+		}
+	}
+
+	data, _ := json.Marshal(out)
+	return &Result{Success: true, Data: data}
+}
+
+func (t *DocumentTool) listAnnotations(ec *ExecuteContext, args json.RawMessage) *Result {
+	var req struct {
+		DocumentID string `json:"document_id"`
+		Limit      *int   `json:"limit"`
+		Offset     *int   `json:"offset"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil {
+		return &Result{Success: false, Error: "invalid args: " + err.Error()}
+	}
+	if req.DocumentID == "" {
+		return &Result{Success: false, Error: "document_id required"}
+	}
+	limit, offset, errMsg := resolvePaging(req.Limit, req.Offset)
+	if errMsg != "" {
+		return &Result{Success: false, Error: errMsg}
+	}
+
+	list, total, err := t.annoRepo.List(ec.Ctx, req.DocumentID, ec.UserID, limit, offset)
+	if err != nil {
+		return &Result{Success: false, Error: "list annotations: " + err.Error()}
+	}
+
+	type item struct {
+		Quote    string `json:"quote"`
+		Note     string `json:"note"`
+		Orphaned bool   `json:"orphaned"`
+		Created  string `json:"created_at"`
+	}
+	items := make([]item, 0, len(list))
+	for _, a := range list {
+		items = append(items, item{
+			Quote:    a.Quote,
+			Note:     a.Note,
+			Orphaned: a.Orphaned,
+			Created:  a.CreatedAt.Format("2006-01-02 15:04"),
+		})
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"annotations": items,
+		"total":       total,
+		"hint":        "note 为空表示用户只划了线没写批注；orphaned 为 true 表示原文已被改写、这条划线已失活",
 	})
 	return &Result{Success: true, Data: data}
 }

@@ -75,6 +75,19 @@ type SummaryMeta struct {
 
 func (SummaryMeta) isPacketMeta() {}
 
+// DocQuoteMeta 文档划线引用（客户端「问 AI」携带，会话级：引用还在就每轮都带）。
+// Quote 是渲染后 DOM 的纯文本（空白已折叠、无 markdown 标记），Prefix/Suffix 是靠近选区的
+// 原始前后文（各 ≤60 字，仅供 LLM 理解语境，不参与锚定）。字段带 json tag，可直接绑定请求体。
+type DocQuoteMeta struct {
+	DocumentID string `json:"document_id"`
+	Title      string `json:"title"`
+	Quote      string `json:"quote"`
+	Prefix     string `json:"prefix"`
+	Suffix     string `json:"suffix"`
+}
+
+func (DocQuoteMeta) isPacketMeta() {}
+
 // ProfileMeta 用户画像稳定层的元数据。
 type ProfileMeta struct {
 	Key       string    // 字段名（籍贯/伴侣/...）

@@ -373,3 +373,65 @@ func TestFormatUserMessage_ProfileItemsSorted(t *testing.T) {
 		t.Errorf("profile items should be sorted alphabetically (伴侣 before 籍贯): %s", out)
 	}
 }
+
+func TestDocumentQuoteBlock_RendersInUserMessage(t *testing.T) {
+	f := NewXMLFormatter()
+	q := retrieval.DocQuoteMeta{
+		DocumentID: "doc-1",
+		Title:      "记忆系统切面调研",
+		Quote:      "在渲染期把反思结果直接拼进 persona",
+		Prefix:     "前文提示",
+		Suffix:     "后文提示",
+	}
+	packets := map[string][]retrieval.ContextPacket{
+		TypeNotice:        {NoticePacket("[计划模式] 只读讨论")},
+		TypeDocumentQuote: {DocumentQuotePacket(q)},
+	}
+	out := f.FormatUserMessage(packets, "那它的两阶段值得抄吗？")
+
+	// 渲染顺序：notice → document_quote → user_query（引用紧挨用户问题）
+	iNotice := strings.Index(out, "<notice>")
+	iQuote := strings.Index(out, "<document_quote")
+	iQuery := strings.Index(out, "<user_query>")
+	if iNotice < 0 || iQuote < 0 || iQuery < 0 {
+		t.Fatalf("缺少块: %s", out)
+	}
+	if !(iNotice < iQuote && iQuote < iQuery) {
+		t.Errorf("块顺序应为 notice < document_quote < user_query: %s", out)
+	}
+	for _, want := range []string{
+		`title="记忆系统切面调研"`,
+		`document_id="doc-1"`,
+		"<quote>在渲染期把反思结果直接拼进 persona</quote>",
+		"<prefix>前文提示</prefix>",
+		"<suffix>后文提示</suffix>",
+		"<usage>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("缺少 %q: %s", want, out)
+		}
+	}
+	if !strings.Contains(out, "与文档源文不完全一致") {
+		t.Errorf("usage 应提醒 quote 是渲染后纯文本（与源文不一致）: %s", out)
+	}
+}
+
+func TestDocumentQuoteBlock_OptionalFieldsOmitted(t *testing.T) {
+	out := marshalBlock(t, buildBlock(TypeDocumentQuote, []retrieval.ContextPacket{
+		DocumentQuotePacket(retrieval.DocQuoteMeta{DocumentID: "doc-2", Quote: "只有引用"}),
+	}))
+	if strings.Contains(out, "prefix") || strings.Contains(out, "suffix") || strings.Contains(out, "title") {
+		t.Errorf("空的可选字段不应渲染: %s", out)
+	}
+	if !strings.Contains(out, "<quote>只有引用</quote>") {
+		t.Errorf("quote 应渲染: %s", out)
+	}
+}
+
+func TestDocumentQuoteBlock_EmptyQuoteNoBlock(t *testing.T) {
+	if got := buildBlock(TypeDocumentQuote, []retrieval.ContextPacket{
+		DocumentQuotePacket(retrieval.DocQuoteMeta{DocumentID: "doc-3"}),
+	}); got != nil {
+		t.Errorf("quote 为空不应产出块: %v", got)
+	}
+}

@@ -44,6 +44,7 @@ func getDefaultConversation(convRepo *service.ConversationRepo, agentRepo *servi
 			"title":      conv.Title,
 			"is_default": conv.IsDefault,
 			"agent_id":   conv.AgentID,
+			"mode":       convModeOrDefault(conv.Mode),
 			"created_at": conv.CreatedAt,
 			"updated_at": conv.UpdatedAt,
 		}
@@ -172,6 +173,7 @@ func listConversations(convRepo *service.ConversationRepo, agentRepo *service.Ag
 				"title":      conv.Title,
 				"agent_id":   conv.AgentID,
 				"pinned":     conv.PinnedAt != nil,
+				"mode":       convModeOrDefault(conv.Mode),
 				"created_at": conv.CreatedAt,
 				"updated_at": conv.UpdatedAt,
 			}
@@ -740,4 +742,14 @@ func getConversationPlan(convRepo *service.ConversationRepo, planRepo *service.C
 			"steps": service.ParsePlanSteps(plan),
 		})
 	}
+}
+
+// convModeOrDefault 会话模式归一化：空值按 work 返回。
+// 列表/默认会话接口必须带上 mode —— 客户端 Conversation.mode 依赖它做权威值，
+// 缺失会让 UI 恒显示 work，而服务端仍按库里的 plan 强制只读（静默失配）。
+func convModeOrDefault(mode string) string {
+	if mode == "" {
+		return model.ConvModeWork
+	}
+	return mode
 }

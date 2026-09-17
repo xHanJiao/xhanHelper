@@ -405,8 +405,19 @@ type priceSet struct {
 	hit, miss, output float64
 }
 
+// isWeekend 判断北京日期串（YYYY-MM-DD）是否为周六/周日。解析失败按非周末处理。
+func isWeekend(date string) bool {
+	d, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return false
+	}
+	wd := d.Weekday()
+	return wd == time.Saturday || wd == time.Sunday
+}
+
 // priceAt 返回某模型在指定日期+北京时刻的有效价格。
 // 生效规则：effective_date <= date 的最新一条；峰段内用峰价，其余用谷价。
+// WeekendAllOff 为 true 时周六/周日恒为谷价（峰段只作用于工作日）。
 // 第二返回值表示该时刻是否峰价；false 表示该模型在 date 无有效价格记录。
 func priceAt(schedule []model.LlmModelPrice, date, hm string) (priceSet, bool, bool) {
 	// schedule 已按 effective_date 升序；倒序找第一条 <= date 的即可
@@ -426,6 +437,9 @@ func priceAt(schedule []model.LlmModelPrice, date, hm string) (priceSet, bool, b
 		segs = nil
 	}
 	peak := isPeak(hm, segs)
+	if cur.WeekendAllOff && isWeekend(date) {
+		peak = false
+	}
 	if peak {
 		return priceSet{cur.PriceHit, cur.PriceMiss, cur.PriceOutput}, true, true
 	}

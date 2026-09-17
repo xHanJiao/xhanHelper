@@ -53,6 +53,7 @@ func (r *LlmPriceRepo) Save(ctx context.Context, p *model.LlmModelPrice) error {
 		existing.PriceMissOff = p.PriceMissOff
 		existing.PriceOutputOff = p.PriceOutputOff
 		existing.PeakSegments = p.PeakSegments
+		existing.WeekendAllOff = p.WeekendAllOff
 		// 用用户输入的干净日期覆盖读回的 RFC3339 值，保证 DB 与响应都是 YYYY-MM-DD
 		existing.EffectiveDate = p.EffectiveDate
 		*p = existing

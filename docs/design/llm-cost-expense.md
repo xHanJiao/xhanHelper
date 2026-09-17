@@ -50,6 +50,7 @@ type LlmModelPrice struct {
     PriceMissOff   float64   `gorm:"not null" json:"price_miss_off"`   // 谷：缓存未命中
     PriceOutputOff float64   `gorm:"not null" json:"price_output_off"` // 谷：生成
     PeakSegments   string    `gorm:"type:text" json:"peak_segments"`   // 峰时段 JSON：[["08:30","12:00"],["14:00","17:00"]]；空串 = 全天谷
+    WeekendAllOff  bool      `gorm:"not null;default:false" json:"weekend_all_off"` // true = 周六/周日全天谷价
     CreatedAt      time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
 ```
@@ -63,12 +64,14 @@ type LlmModelPrice struct {
 | PriceHit/Miss/Output | 峰价 | 元 / 1M tokens |
 | PriceHitOff/MissOff/OutputOff | 谷价 | 元 / 1M tokens |
 | PeakSegments | 峰时段 | 存储 compact JSON `[["HH:MM","HH:MM"],...]`，由前端文本 `08:30-12:00,14:00-17:00` 规范化而来；空串 = 全天谷价 |
+| WeekendAllOff | 周末全天谷 | true 时周六/周日恒按谷价，PeakSegments 仅作用于周一~周五；默认 false（周末沿用同一峰段），存量记录行为不变 |
 
 ### 峰谷语义
 
 - 同一模型可有多条价格记录（按 effective_date 分段），某天取「effective_date ≤ 当天」的最新一条
 - 该行自己的 PeakSegments 决定当天几点是峰：时间落在任一峰段内（开始含、结束不含）用峰价，否则用谷价
 - 一天可配置多段峰；峰以外全部是谷
+- `WeekendAllOff` 勾选后，周六/周日的峰段判定被跳过，全天按谷价（对应供应商「周末全天谷」规则）；周末类型由北京时间日期串 `date` 推出，不依赖 `created_at` 换算。节假日不在支持范围内
 - **无兼容逻辑**：这是全新功能，价格表无历史数据，不做任何回退/默认规则（谷价必须显式填写，可为 0）
 
 ### 时段与时区

@@ -507,6 +507,33 @@ func TestPeakSegments_ParseAndMatch(t *testing.T) {
 	}
 }
 
+func TestPriceAt_WeekendAllOff(t *testing.T) {
+	segs, _ := NormalizePeakSegments("09:00-11:00")
+	on := []model.LlmModelPrice{{
+		Model: "flash", EffectiveDate: "2026-08-01", PeakSegments: segs, WeekendAllOff: true,
+		PriceHit: 2, PriceMiss: 2, PriceOutput: 2, PriceHitOff: 1, PriceMissOff: 1, PriceOutputOff: 1,
+	}}
+	// 2026-08-15 周六、08-16 周日 → 峰段内也应判谷
+	for _, sat := range []string{"2026-08-15", "2026-08-16"} {
+		ps, peak, ok := priceAt(on, sat, "10:00")
+		if !ok || peak || ps.hit != 1 {
+			t.Errorf("%s want off-price, got peak=%v ps=%+v ok=%v", sat, peak, ps, ok)
+		}
+	}
+	// 2026-08-17 周一 → 峰段内判峰
+	if ps, peak, ok := priceAt(on, "2026-08-17", "10:00"); !ok || !peak || ps.hit != 2 {
+		t.Errorf("monday want peak-price, got peak=%v ps=%+v ok=%v", peak, ps, ok)
+	}
+	// 开关关闭时周末行为不变（向后兼容）
+	off := []model.LlmModelPrice{{
+		Model: "flash", EffectiveDate: "2026-08-01", PeakSegments: segs, WeekendAllOff: false,
+		PriceHit: 2, PriceMiss: 2, PriceOutput: 2, PriceHitOff: 1, PriceMissOff: 1, PriceOutputOff: 1,
+	}}
+	if _, peak, _ := priceAt(off, "2026-08-15", "10:00"); !peak {
+		t.Error("weekend without WeekendAllOff should stay peak")
+	}
+}
+
 func TestHourlyQuery_BucketsAndPeakOff(t *testing.T) {
 	db := newCostTestDB(t)
 	if err := db.AutoMigrate(&model.LlmModelPrice{}); err != nil {

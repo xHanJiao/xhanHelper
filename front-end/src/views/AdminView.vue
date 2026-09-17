@@ -319,7 +319,7 @@ const costExpense = ref(null)
 const costSelectedDate = ref(null)
 const costHourly = ref(null)
 const priceRows = ref([])
-const priceForm = ref({ model: '', effective_date: '', price_hit: 0, price_miss: 0, price_output: 0, price_hit_off: 0, price_miss_off: 0, price_output_off: 0, peak_segments: '' })
+const priceForm = ref({ model: '', effective_date: '', price_hit: 0, price_miss: 0, price_output: 0, price_hit_off: 0, price_miss_off: 0, price_output_off: 0, weekend_all_off: false, peak_segments: '' })
 const priceSaving = ref(false)
 const priceModelOptions = ref([])
 const priceEditingId = ref(null)
@@ -686,7 +686,7 @@ async function savePrice() {
   try {
     await api.post('/api/admin/cost/prices', f)
     message.success(priceEditingId.value ? '已更新' : '已保存')
-    priceForm.value = { model: '', effective_date: '', price_hit: 0, price_miss: 0, price_output: 0, price_hit_off: 0, price_miss_off: 0, price_output_off: 0, peak_segments: '' }
+    priceForm.value = { model: '', effective_date: '', price_hit: 0, price_miss: 0, price_output: 0, price_hit_off: 0, price_miss_off: 0, price_output_off: 0, weekend_all_off: false, peak_segments: '' }
     priceEditingId.value = null
     await Promise.all([fetchCostPrices(), fetchCostExpense()])
   } catch (e) {
@@ -708,6 +708,7 @@ function editPrice(p) {
     price_hit_off: p.price_hit_off,
     price_miss_off: p.price_miss_off,
     price_output_off: p.price_output_off,
+    weekend_all_off: !!p.weekend_all_off,
     peak_segments: fmtPeakSegments(p.peak_segments) === '全天谷' ? '' : fmtPeakSegments(p.peak_segments),
   }
   message.info('已填入表单，修改后点保存（同模型+日期覆盖原记录）')
@@ -715,7 +716,7 @@ function editPrice(p) {
 
 function cancelEditPrice() {
   priceEditingId.value = null
-  priceForm.value = { model: '', effective_date: '', price_hit: 0, price_miss: 0, price_output: 0, price_hit_off: 0, price_miss_off: 0, price_output_off: 0, peak_segments: '' }
+  priceForm.value = { model: '', effective_date: '', price_hit: 0, price_miss: 0, price_output: 0, price_hit_off: 0, price_miss_off: 0, price_output_off: 0, weekend_all_off: false, peak_segments: '' }
 }
 
 async function deletePrice(id) {
@@ -1198,11 +1199,15 @@ onUnmounted(() => {
               <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">峰时段</div>
               <NInput v-model:value="priceForm.peak_segments" placeholder="08:30-12:00,14:00-17:00 留空=全天谷" size="small" style="width: 230px;" />
             </div>
+            <div>
+              <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">周末</div>
+              <NCheckbox v-model:checked="priceForm.weekend_all_off" size="small">周末全天谷</NCheckbox>
+            </div>
             <NButton size="small" type="primary" :loading="priceSaving" @click="savePrice">{{ priceEditingId ? '更新' : '保存' }}</NButton>
             <NButton v-if="priceEditingId" size="small" @click="cancelEditPrice">取消</NButton>
           </div>
           <div style="font-size: 11px; color: var(--color-text-muted); margin-bottom: var(--space-sm);">
-            峰时段格式：HH:MM-HH:MM，多段用英文逗号分隔；峰段内用峰价，其余用谷价（段开始含、结束不含）；全部按北京时间判定。
+            峰时段格式：HH:MM-HH:MM，多段用英文逗号分隔；峰段内用峰价，其余用谷价（段开始含、结束不含）；全部按北京时间判定。勾选「周末全天谷」后周六/周日恒按谷价，峰时段仅作用于周一~周五。
           </div>
           <div v-if="priceRows.length" style="display: flex; flex-direction: column; gap: 4px;">
             <div v-for="p in priceRows" :key="p.id" style="display: flex; align-items: center; gap: var(--space-sm); font-size: 13px; padding: 4px 0; border-top: 1px solid var(--color-border);">
@@ -1211,6 +1216,7 @@ onUnmounted(() => {
               <span style="color: var(--color-text-secondary);">峰 {{ p.price_hit }}/{{ p.price_miss }}/{{ p.price_output }}</span>
               <span style="color: var(--color-text-secondary);">谷 {{ p.price_hit_off }}/{{ p.price_miss_off }}/{{ p.price_output_off }}</span>
               <span style="color: var(--color-text-secondary);">{{ fmtPeakSegments(p.peak_segments) }}</span>
+              <NTag v-if="p.weekend_all_off" size="tiny" type="success">周末全天谷</NTag>
               <NButton size="tiny" quaternary style="margin-left: auto;" @click="editPrice(p)">编辑</NButton>
               <NButton size="tiny" quaternary type="error" @click="deletePrice(p.id)">删除</NButton>
             </div>

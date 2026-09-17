@@ -32,7 +32,7 @@ type Bill struct {
 	Date        string    `gorm:"size:20;not null" json:"date"`         // YYYY-MM-DD
 	PayType     string    `gorm:"size:20;not null" json:"pay_type"`     // 现金/公积金
 	Owner       string    `gorm:"size:50;not null" json:"owner"`
-	Remark      string    `gorm:"size:200" json:"remark"`
+	Remark      string    `gorm:"type:text" json:"remark"`
 	Status      int       `gorm:"default:1" json:"status"` // 1=正常 2=已作废
 	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`

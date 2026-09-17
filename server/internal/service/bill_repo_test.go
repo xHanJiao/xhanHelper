@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -574,5 +575,28 @@ func TestBatchUpdateOwnerEmpty(t *testing.T) {
 	b, _ := repo.GetBill(context.Background(), "u1", "b7")
 	if b.Owner != "补全" {
 		t.Errorf("expected owner=补全 after batch update, got %s", b.Owner)
+	}
+}
+
+func TestBillRemarkLongText(t *testing.T) {
+	repo, cleanup := setupBillRepo(t)
+	defer cleanup()
+
+	remark := strings.Repeat("超市小票明细", 100)
+	bill := model.Bill{
+		ID: "b-long", UserID: "u1", Item: "超市采购", Amount: 321.5,
+		Category1: "日用", Category2: "生活用品", Date: "2026-09-01",
+		Remark: remark, Status: model.BillStatusNormal,
+	}
+	if err := repo.Create(context.Background(), &bill); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	got, err := repo.GetBill(context.Background(), "u1", "b-long")
+	if err != nil {
+		t.Fatalf("GetBill failed: %v", err)
+	}
+	if got == nil || got.Remark != remark {
+		t.Fatalf("long remark round-trip failed: got %d chars, want %d", len(got.Remark), len(remark))
 	}
 }

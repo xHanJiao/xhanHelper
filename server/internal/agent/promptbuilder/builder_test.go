@@ -299,3 +299,92 @@ func TestBuild_ClientToolCatalogInjected(t *testing.T) {
 		t.Error("prompt-eng 模式不应注入客户端目录")
 	}
 }
+
+// TestBriefAnswerToggle — brief_answer 轮才注入长度约束；不注入时 prompt 逐字节不变。
+func TestBriefAnswerToggle(t *testing.T) {
+	reg := tool.NewRegistry()
+	b := NewPromptBuilder("base", reg, nil, true, true)
+	ctx := context.Background()
+
+	base, err := b.Build(ctx, BuildOptions{Mode: model.ConvModeWork})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(base.Prompt, "回答长度") || strings.Contains(base.Prompt, "500 字") {
+		t.Error("默认（非 brief_answer）不应注入长度约束")
+	}
+
+	brief, err := b.Build(ctx, BuildOptions{Mode: model.ConvModeWork, BriefAnswer: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(brief.Prompt, "## 回答长度") || !strings.Contains(brief.Prompt, "500 字") {
+		t.Error("brief_answer 轮应注入长度约束章节")
+	}
+	// 追加，不是替换：行为准则与角色定义都还在
+	for _, want := range []string{"## 行为准则", "## 角色定义", "9. 用户信息深挖"} {
+		if !strings.Contains(brief.Prompt, want) {
+			t.Errorf("brief_answer 轮丢了 %q", want)
+		}
+	}
+	// 长度约束不能插在行为准则编号列表中间（会把 9 截断）
+	if strings.Index(brief.Prompt, "9. 用户信息深挖") > strings.Index(brief.Prompt, "## 回答长度") {
+		t.Error("回答长度章节插到了行为准则编号列表中间")
+	}
+	// 开与不开只差插入的那一块，其余逐字节相同
+	want := strings.Replace(base.Prompt, "\n## 角色定义",
+		"## 回答长度\n\n"+answerLengthNotice+"\n\n## 角色定义", 1)
+	if brief.Prompt != want {
+		t.Errorf("brief_answer 轮应等于默认输出插入长度章节\n--- got ---\n%s\n--- want ---\n%s", brief.Prompt, want)
+	}
+}
+
+// TestBriefAnswerOffIsByteIdentical — 关掉时与"没有这个 provider"完全一致（保前缀缓存）
+func TestBriefAnswerOffIsByteIdentical(t *testing.T) {
+	reg := tool.NewRegistry()
+	b := NewPromptBuilder("base", reg, nil, true, true)
+	ctx := context.Background()
+
+	a, err := b.Build(ctx, BuildOptions{Mode: model.ConvModeWork})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bb, err := b.Build(ctx, BuildOptions{Mode: model.ConvModeWork, BriefAnswer: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Prompt != bb.Prompt {
+		t.Fatal("BriefAnswer=false 时输出应与默认完全一致")
+	}
+}
+
+// TestBriefAnswerOffKeepsPrefixCache — 关掉时输出逐字节等于"从未有过这个 provider"。
+// 用反射去掉 answerLengthProvider 再构建，与 BriefAnswer=false 的输出比对，
+// 确保跳过逻辑没有留下任何空白/换行残留。
+func TestBriefAnswerOffKeepsPrefixCache(t *testing.T) {
+	reg := tool.NewRegistry()
+	ctx := context.Background()
+
+	full := NewPromptBuilder("base", reg, nil, true, true)
+	off, err := full.Build(ctx, BuildOptions{Mode: model.ConvModeWork})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 模拟"没有这个 provider"：直接把 preRoleStatic 里的它摘掉
+	stripped := *full
+	stripped.preRoleStatic = nil
+	for _, sp := range full.preRoleStatic {
+		if sp.Name() != "answer_length" {
+			stripped.preRoleStatic = append(stripped.preRoleStatic, sp)
+		}
+	}
+	noProvider, err := stripped.Build(ctx, BuildOptions{Mode: model.ConvModeWork})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if off.Prompt != noProvider.Prompt {
+		t.Fatalf("跳过 answer_length 后与没有它不一致\n--- got ---\n%q\n--- want ---\n%q", off.Prompt, noProvider.Prompt)
+	}
+}

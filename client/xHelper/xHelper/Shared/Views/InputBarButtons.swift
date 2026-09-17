@@ -70,6 +70,28 @@ struct ModelPill: View {
     }
 }
 
+/// 精炼回答图标按钮：普通（appAccent）/ 精炼（橙），点击切换。仅图标，hover 看 tooltip。
+/// 开=服务端往 system prompt 注入「≤500 字」输出约束，让回答短到能整段存进文档批注。
+/// 走 prompt 约束而不是 max_tokens —— 后者是静默硬截断，且截断后系统无感知。
+struct BriefPill: View {
+    let context: InputBarContext
+    let isBrief: Bool
+    let action: () -> Void
+
+    var body: some View {
+        IconButton(
+            visibility: .always,
+            context: context,
+            symbol: isBrief ? "text.badge.minus" : "text.alignleft",
+            tint: isBrief ? .orange : Color("appAccent"),
+            tooltip: isBrief
+                ? "精炼回答 · ≤500 字，点击关闭"
+                : "常规长度，点击切换精炼回答（≤500 字）",
+            action: action
+        )
+    }
+}
+
 /// 会话接力图标按钮：把当前会话整理成接力文档并新开会话续接。仅图标，hover 看 tooltip。
 /// 计划模式只读、接力要写文档，故置灰并用 tooltip 说明原因（而非「暂时不可点」）。
 struct HandoffPill: View {

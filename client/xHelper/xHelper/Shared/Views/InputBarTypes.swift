@@ -18,11 +18,13 @@ enum InputBarButtonID: String, CaseIterable {
     case agent
     case trusted
     case model
+    case brief
     case handoff
     case attach
 
     /// 首次运行（无持久化配置）时的收起集合，等价于旧硬编码布局。
-    static let defaultCollapsed: Set<InputBarButtonID> = [.trusted, .model, .handoff, .attach]
+    /// brief（精炼回答）是低频开关，与 model/trusted 同族，默认收起。
+    static let defaultCollapsed: Set<InputBarButtonID> = [.trusted, .model, .brief, .handoff, .attach]
 }
 
 /// 按钮可见性声明。每个按钮自己决定何时出现/隐藏，

@@ -30,6 +30,9 @@ func NewPromptBuilder(
 	if enableUserContextTrigger {
 		preRoleStatic = append(preRoleStatic, &userContextTriggerProvider{})
 	}
+	// answer_length 排在最后：上层那条 "9. 用户信息深挖" 是行为准则编号列表的续写，
+	// 中间插一个带标题的章节会把它截断
+	preRoleStatic = append(preRoleStatic, &answerLengthProvider{})
 	postRoleStatic := []StaticProvider{}
 	if useNativeFC {
 		postRoleStatic = append([]StaticProvider{&toolCatalogProvider{registry: registry}}, postRoleStatic...)
@@ -48,11 +51,21 @@ func NewPromptBuilder(
 }
 
 // Build 构建静态 system prompt（行为准则 + 角色定义 + 工具定义）。
+//
+// 前缀缓存说明：本函数输出是 system prompt，会话内字节稳定才命中 DeepSeek 前缀缓存。
+// 现有两处按请求变化的判断（plan / ClientToolCatalog）与新增的 BriefAnswer 都属于
+// 「刻意为之的逐请求变化」：带 brief_answer 的那一轮及其后一轮会丢失消息历史的缓存复用
+// （system prompt 在 |S| 处分叉）。低频动作（用户主动点「问 AI」）可接受，
+// 高频路径不要往这里加条件。
 func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
 	var sb strings.Builder
 
 	// Layer 1: 行为准则
 	for _, sp := range b.preRoleStatic {
+		// 回答长度约束只在 brief_answer 轮注入；不注入时整段跳过，prompt 与平时逐字节相同
+		if sp.Name() == "answer_length" && !opts.BriefAnswer {
+			continue
+		}
 		if s := sp.Render(ctx); s != "" {
 			if title := sp.SectionTitle(); title != "" {
 				sb.WriteString("## ")

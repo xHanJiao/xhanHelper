@@ -421,6 +421,11 @@ struct ChatView: View {
                 viewModel.toggleDeepMode()
                 resetExtrasAutoCollapse()
             }
+        case .brief:
+            BriefPill(context: ctx, isBrief: viewModel.briefAnswer) {
+                viewModel.toggleBriefAnswer()
+                resetExtrasAutoCollapse()
+            }
         case .handoff:
             // 会话接力：整理成文档并开新会话续接。计划模式只读、接力要写文档，
             // 故 plan 模式下置灰（tooltip 说明原因），非流式、非空会话才可用。

@@ -42,6 +42,26 @@ func (p *userContextTriggerProvider) Render(ctx context.Context) string {
 	return userContextTriggerRule
 }
 
+// answerLengthNotice — brief_answer 轮的输出长度约束（文档划线问答等场景）。
+// 目的是让回答能整段存进文档批注（批注上限 2000 字），而不是靠 max_tokens 硬截断。
+const answerLengthNotice = `本轮要求精简回答：正文控制在 500 字以内。
+1. 先给结论与判断，再给必要的依据；能一句说清就不写三句
+2. 需要列举时用短要点，不要展开成段落文章
+3. 不要复述用户引用的原文`
+
+// answerLengthProvider — 按请求参数条件注入的长度约束。
+// 注册顺序必须排在 userContextTriggerProvider 之后：后者的 "9. 用户信息深挖"
+// 是 corePrinciples 编号列表的续写，不能被本节的标题截断。
+// 由 Build 按 opts.BriefAnswer 决定是否渲染 —— Render 签名不带 opts，条件只能写在 Build 里
+// （同 Layer 3 里 plan / ClientToolCatalog 的既有写法）。不注入时整段跳过，system prompt 与平时逐字节相同。
+type answerLengthProvider struct{}
+
+func (p *answerLengthProvider) Name() string         { return "answer_length" }
+func (p *answerLengthProvider) SectionTitle() string { return "回答长度" }
+func (p *answerLengthProvider) Render(ctx context.Context) string {
+	return answerLengthNotice
+}
+
 // toolDefinitionsProvider — 注入全部工具完整定义（prompt engineering 模式，直接调用无需检索）。
 // 委托 registry.GeneratePrompt() 生成。
 type toolDefinitionsProvider struct {

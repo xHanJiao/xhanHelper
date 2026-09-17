@@ -18,7 +18,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
 
-    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, memoryThreshold: Double = 0.5, memoryLimit: Int = 8, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil, hiddenRound: Bool = false, attachments: [String] = []) {
+    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, memoryThreshold: Double = 0.5, memoryLimit: Int = 8, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil, briefAnswer: Bool = false, hiddenRound: Bool = false, attachments: [String] = []) {
         let url = URL(string: "\(baseURL)/api/chat")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -38,6 +38,9 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         // 空 tab（无会话）场景：客户端已切换的模式经 init_mode 传给服务端，新建会话时落库
         if let im = initMode { body["init_mode"] = im }
         if let ve = verifyEnabled { body["verify_enabled"] = ve }
+        // 精炼回答：开则服务端往 system prompt 注入「≤500 字」的输出约束（不走 max_tokens 硬截断）。
+        // 会话级开关、每轮随请求发，与 verify_enabled 同族。
+        if briefAnswer { body["brief_answer"] = true }
         // 隐藏轮（接力等控制轮）：本轮消息落库为隐藏状态，不进对话记录/LLM 上下文/检索/后处理
         if hiddenRound { body["hidden_round"] = true }
         // 附件图片：先经 POST /api/images/upload 上传拿到 image_id，这里只传 id 列表

@@ -18,7 +18,13 @@ final class InputBarLayoutState: ObservableObject {
             collapsed = InputBarButtonID.defaultCollapsed
             return
         }
-        collapsed = Set(stored.compactMap(InputBarButtonID.init(rawValue:)))
+        var restored = Set(stored.compactMap(InputBarButtonID.init(rawValue:)))
+        // 新增按钮要补进 collapsed：老用户存下来的集合里没这个 id，Set(stored) 会让它落在
+        // "未收起"→ 显示在常驻行，与 defaultCollapsed 的意图相反。新 id 不可能被用户主动
+        // 展开过，所以"缺失即补入"安全；补进去后用户再展开会被存下来，不会重复补。
+        // 以后再加按钮，这里跟着补一行。
+        if !stored.contains(InputBarButtonID.brief.rawValue) { restored.insert(.brief) }
+        collapsed = restored
     }
 
     func isCollapsed(_ id: InputBarButtonID) -> Bool {

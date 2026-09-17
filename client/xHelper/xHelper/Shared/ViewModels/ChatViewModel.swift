@@ -130,6 +130,9 @@ class ChatViewModel: ObservableObject {
 
     /// 响应检验（verify）开关，会话级：默认关。开=强制开启，关=强制关闭（后端全局配置作兜底）
     @Published var verifyEnabled = false
+    /// 精炼回答开关，会话级：默认关。开=服务端往 system prompt 注入「≤500 字」输出约束，
+    /// 用于让回答短到能整段存进文档批注。不走 max_tokens（那是静默硬截断）。
+    @Published var briefAnswer = false
     /// 当前流的工具调用展示队列（tool_call 入队，tool_result 更新状态）
     @Published var toolQueue: [ToolCallDisplay] = []
     /// 待展示工具调用 FIFO：tool_call 暂存，tool_result 到后取出构造完结 pill（不展示 running）
@@ -401,6 +404,19 @@ class ChatViewModel: ObservableObject {
         ToastCenter.shared.show(verifyEnabled ? "已开启：回复校验（每轮多一次检查）" : "已关闭：回复校验")
     }
 
+    private var briefAnswerDefaultsKey: String {
+        guard let cid = conversationId, !cid.isEmpty else { return "xhan_conv_brief_answer_pending" }
+        return "xhan_conv_brief_answer_\(cid)"
+    }
+
+    /// 切换精炼回答：开=本轮回答控制在 500 字内（便于存成批注）。
+    /// 仅客户端本地状态，随每次请求经 brief_answer 传给服务端。
+    func toggleBriefAnswer() {
+        briefAnswer.toggle()
+        UserDefaults.standard.set(briefAnswer, forKey: briefAnswerDefaultsKey)
+        ToastCenter.shared.show(briefAnswer ? "已开启：精炼回答（≤500 字）" : "已关闭：精炼回答")
+    }
+
     /// 挂起等待用户确认 L3 工具执行；60s 超时视为拒绝。
     /// force=true 时信任模式不跳过（用于敏感域/明文页等注入高风险场景——信任模式本身就不可信）。
     /// bridgeToBrowser=true 时把确认同步发布到 BrowserActivityCenter，浏览器内也显示确认条（与聊天条同步出现）。
@@ -666,6 +682,8 @@ class ChatViewModel: ObservableObject {
         }
         // 响应检验开关会话级恢复：无记录默认关
         verifyEnabled = UserDefaults.standard.bool(forKey: "xhan_conv_verify_enabled_\(id)")
+        // 精炼回答开关会话级恢复：无记录默认关
+        briefAnswer = UserDefaults.standard.bool(forKey: "xhan_conv_brief_answer_\(id)")
         toolQueue = []
         pendingToolCalls = []
         verifyStatus = nil
@@ -943,7 +961,7 @@ class ChatViewModel: ObservableObject {
         }
         // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）
         let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, hiddenRound: hiddenRound, attachments: attachmentIds)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, hiddenRound: hiddenRound, attachments: attachmentIds)
     }
 
     func stopStreaming() {
@@ -1088,6 +1106,8 @@ class ChatViewModel: ObservableObject {
                 UserDefaults.standard.set(deepMode, forKey: "xhan_conv_deep_mode_\(cid)")
                 // 同上：响应检验开关预存
                 UserDefaults.standard.set(verifyEnabled, forKey: "xhan_conv_verify_enabled_\(cid)")
+                // 同上：精炼回答开关预存
+                UserDefaults.standard.set(briefAnswer, forKey: "xhan_conv_brief_answer_\(cid)")
             }
             if let t = parseTitleFromDone(event.data) {
                 conversationTitle = t

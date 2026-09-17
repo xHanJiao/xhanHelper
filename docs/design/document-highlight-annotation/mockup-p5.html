@@ -1,8 +1,17 @@
 <!DOCTYPE html>
+<!--
+  注意：这份样式稿**没有跟着实现同步**，只用来回看 P5 讨论过的形态。
+  它与最终实现的差异（以实现为准，见 ../document-highlight-annotation/design.md §12 / §13）：
+    1. 引用胶囊：稿里只活在「发送前」那一态；实现是会话级常驻（可删）
+    2. 落点：稿里画「直接进 PiP」；实现按当前是否已是 PiP 二选一（不做「轻量进 PiP」）
+    3. 稿里助手回答上方那条引用条、窄条上的「撤销」：实现都不做
+    4. 长批注的 hover 浮层：实现封顶 min(62vh, 520px) 内滚、不显示滚动条
+    5. 引用胶囊/窄条：实现落在 ChatView（输入栏上/下），稿里画在 PiP 面板里
+-->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>文档「问 AI」用 PiP 承载 · 样式稿</title>
+<title>文档「问 AI」用 PiP 承载 · 样式稿（与实现不一致，见 design.md §12）</title>
 <style>
 /* 配色与表面语言同 mockup.html：两层面是 macOS material 的近似，
    文档页活在右栏卡片里（RightSidebarView.swift:41）→ 中性材质。
@@ -71,7 +80,7 @@ html, body {
 body {
   background: #D6D6D8;
   display: flex; align-items: center; justify-content: center;
-  padding: 26px 26px 74px;
+  padding: 56px 26px 74px;   /* 顶部多出的 30px 留给「与实现不一致」提示条 */
   transition: background .25s;
 }
 body.dark { background: #0B0B0C; }
@@ -82,7 +91,7 @@ body.dark { background: #0B0B0C; }
 .window {
   position: relative;
   width: min(1180px, 100%);
-  height: min(860px, calc(100vh - 100px));
+  height: min(860px, calc(100vh - 130px));
   background: var(--bg-2);
   border-radius: 12px;
   box-shadow: var(--shadow);
@@ -397,6 +406,17 @@ mark.hl.sel { background: var(--accent); color: var(--on-accent); }
 .callout.tip-l::after { left: -9px; top: 13px; border-right-color: var(--accent); }
 .callout.tip-r::after { right: -9px; top: 13px; border-left-color: var(--accent); }
 
+/* ============ 「与实现不一致」提示条 ============ */
+.devnotice {
+  position: fixed; left: 0; right: 0; top: 0; height: 30px;
+  z-index: 300; pointer-events: none;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  background: rgba(120, 53, 15, .92); color: #FFF7ED;
+  font-size: 11.5px; letter-spacing: .2px;
+}
+.devnotice b { font-weight: 600; }
+.devnotice code { font-size: 11px; background: rgba(255,255,255,.14); padding: 1px 5px; border-radius: 4px; }
+
 /* ============ 演示控制台 ============ */
 .devcbar {
   position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%);
@@ -422,6 +442,11 @@ mark.hl.sel { background: var(--accent); color: var(--on-accent); }
 </style>
 </head>
 <body class="s-select">
+
+<div class="devnotice ui">
+  <b>这份预览没有跟着实现同步</b>
+  <span>胶囊会话级常驻 / 不做「轻量进 PiP」/ 无引用条·无撤销 / 浮层内滚且无滚动条 —— 以 <code>design.md §12</code> 与代码为准</span>
+</div>
 
 <div class="window">
   <div class="titlebar ui">

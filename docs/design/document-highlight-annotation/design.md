@@ -354,7 +354,7 @@ JS → Swift（`WKScriptMessageHandler`，沿用 `XHWebViewBridge` 的命名与�
 | `annotationCreate` | `{quote, note}` | 新建划线/批注（锚点由服务端算，返回值带回） |
 | `annotationUpdate` | `{id, note}` | 编辑批注 |
 | `annotationDelete` | `{id}` | 删除 |
-| `annotationAskAI` | `{quote}` | 「问 AI」（P3 先 toast；落点见 §12） |
+| `annotationAskAI` | `{quote, prefix, suffix}` | 「问 AI」（P5 已接真聊天：工具条与「点击菜单」两个入口都发这条；落点见 §12） |
 | `relocate` | `{id, quote, prefix, suffix}` | P4「重新定位」选完新位置（服务端重挂锚点并清 `orphaned`） |
 | `relocateCancel` | — | 重定位模式被 Esc / 取消按钮终止 |
 | `contentHeightChanged` | `{h}` | WebView 自适应高度（滚动交给外层 SwiftUI ScrollView？否 —— 见下） |
@@ -458,7 +458,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 | **P2 WebView 阅读器** ✅ | `DocumentReaderView` 替换 `readingContent`；目录跳转改走 JS；查找改走 JS；主题/字号联动 | 见下「P2 完成情况」；真机验收待用户 |
 | **P3 划线批注交互** ✅ | 选区工具条 / 绘制 / hover / 点击菜单 / 批注浮层 / 创建-编辑-删除回传 | 见下「P3 完成情况」；真机验收待用户 |
 | **P4 抽屉 + orphan** ✅ | SwiftUI 抽屉（第三列，三 tab）+ 滚动定位 + orphan 灰态 + 重新定位流程 | 见下「P4 完成情况」；真机验收待用户 |
-| **P5 问 AI** | 复用现有聊天（PiP 或普通聊天栏）承载文档问答：会话级引用（`doc_quote` 每轮注入）/ `brief_answer` 长度约束 / 引用胶囊 / 底部「存为批注」窄条 + 批注浮层预填 | 见 §十二。**服务端 + 客户端 `brief_answer` 开关已完成**，其余待实现 |
+| **P5 问 AI** ✅ | 复用现有聊天（PiP 或普通聊天栏）承载文档问答：会话级引用（`doc_quote` 每轮注入）/ `brief_answer` 长度约束 / 引用胶囊 / 底部「存为批注」窄条 + 批注浮层预填 / 已有划线直接问 AI | 见 §十二 + 「P5 完成情况」；真机验收待用户 |
 
 依赖：P2 与 P1 无依赖，可并行。P3/P4 依赖 P1+P2。**P5 依赖 P2（WebView 才拿得到选区）+ P3（浮层技法、批注编辑浮层）**，所以顺序是 P2 → P3 → P5，不提前。
 
@@ -563,8 +563,8 @@ JS 里维护 `id → [{mark}]`。定位流程：
 4. **重叠 = 嵌套 mark**。两条划线交叠时，跨过外层边界的那个 range 会带出外层 mark 的**克隆片段**（`extractContents` 对「部分包含的祖先」就是这么处理的），于是两层 mark 互相嵌套 —— 方向取决于哪条跨了边界，所以别断言方向。hover 用 `elementsFromPoint` 聚合该点所有 `mark`/气泡的 `data-id`，>1 条打「重叠划线」标签（§8.3）。
 5. **重画走「全擦全画」**（`unwrapAll()` + 逐条 `locate()`），不做增量修补：跨块 + 重叠时增量状态机很难对，而全擦全画只依赖服务端那一份，成本是几十 KB 正文重挂几十个 `<mark>`（可忽略）。
 6. **剪贴板交给原生**（JS 发 `{type:'copy', text}` → `NSPasteboard`）：`navigator.clipboard` 在 `loadHTMLString` 出来的页面里不是安全上下文，能不能用全看运气。
-7. **用户提示统一走 Swift 的 `ToastCenter`**（成功不弹、失败必弹；orphan 与「问 AI 占位」各弹一条），模板里不再做一套 HTML toast。
-8. **「问 AI」暂时只 toast** —— P5 才接真聊天（§12）。
+7. **用户提示统一走 Swift 的 `ToastCenter`**（成功不弹、失败必弹；orphan 一条），模板里不再做一套 HTML toast。
+8. ~~**「问 AI」暂时只 toast**~~ —— **P5 已接真聊天**（§12），占位 toast 已删。
 9. **抽屉（§8.6）没做** —— 归 P4；`reader.scrollToAnnotation(id)` + `.flash` 已经留好（P4 点击抽屉行直接调）。
 10. **真机第一划就抓到一个真 bug：`wrapRange()` 搬 DOM 把块结构搬坏了**（详见下面「真机 bug」一段）。修法是把包 mark 改成**逐文本节点切**，并补上两条以前缺的硬断言。
 
@@ -627,6 +627,26 @@ JS 里维护 `id → [{mark}]`。定位流程：
 - `swiftc -typecheck` macOS / iOS 均 0 error。
 - mockup 侧记一条坑（已进 `AGENTS.md`）：**整个 `<script>` 是一个 IIFE，新增 `const`/`let` 与已有变量重名就是静默 SyntaxError** —— 所有交互全死、headless 也不报错，症状只是「控件不生效」。这次栽在 `q` 与 `wIdx` 上，靠 `--dump-dom` 看 `<html>`/`<body>` 的 class 才定位到。
 
+### P5 完成情况（已完成，真机验收待用户）
+
+改动清单见 §12.6（服务端 5 层 + 客户端 8 个文件），这里只记状态、自查与偏离。
+
+**自查**
+
+- 服务端 `go build ./... && go test ./...` 全绿（新增 7 个测试：`ctxflow` 块渲染 3 条 `TestDocumentQuoteBlock_*`、`normalizeDocQuote` 2 条、`buildUserMessage` 2 条 —— 后者钉「进的是 `XMLContext` 而不是 `Content`」）
+- `check-reader-html.sh`：**157 条断言**（P5 加了 28 条）—— 工具条「问 AI」发 `quote + 前后文` / 点击菜单里的「问 AI」发的是**这条线自己存的四元组**且点完闪一下那段、纯划线同样有该入口 / 窄条条件（`quoteAnswerText`）/ `openNoteFromAI` 新增与追加两条路 / 定位不到返回 false / 临时闪烁层不弹菜单 / 长批注浮层封顶内滚、无滚动条、内滚不被当成页面滚动关掉（这一组做过变异验证：改回旧行为立刻红）
+- `snapshot-reader.sh`：**11 个 job**（新增 `marks-longnote` 与 `marks-longnote-scroll`）—— 真引擎里浮层 `高 508 / 可滚 2576 / client 506 / 视口 820`，内滚 200px 后 `innerScroll=open scrollTop=200`（改前这一步是 `closed scrollTop=0`，就是用户看到的「一滚浮层就没了」）、`卡内滚动条口=2`（只有描边）
+- `swiftc -typecheck` macOS / iOS 均 0 error
+- 真机（用户在 Xcode）跑出来的两个 bug 已修并各自钉住，记录见 `docs/bugs/016`
+
+**与本文档的偏离（3 条）**
+
+1. 引用胶囊与窄条落在 **`ChatView`**（输入栏上/下各一行），没给 `InputBar` 加第七个泛型槽 —— `ChatPage` 里那层就是 `ChatView`，PiP 与普通聊天自动共用，diff 小得多
+2. 引用类型是 **`retrieval.DocQuoteMeta`**（不是 `agent.DocQuote`）—— `ContextPacket.Meta` 只收 `retrieval` 包内定义的类型（`PacketMeta` 是包内标记接口），放这儿省一层转换：请求体直接绑它、`RunRequest` 直接放它、块构建器直接读它
+3. 前后文超长是**截断**不是 400（它只是消歧提示，报错会把整轮提问打断）；标题同理截到 200
+
+**顺带更正 §12.4 的一句**：原稿写「切会话/关 tab 引用自然消失，**不需要额外的清理代码**」；实现时发现 `ChatViewModel` 是跨会话复用的（切会话走 `loadConversation`），所以是显式清 —— §12.4 已就地改掉。其余（不落 UserDefaults、不消费、隐藏轮不带）与文档一致。
+
 ---
 
 ## 十一、验收
@@ -654,13 +674,20 @@ JS 里维护 `id → [{mark}]`。定位流程：
    - **P4**：失活行点「重新定位」→ 抽屉那行变成「请在正文中重新选中」，正文里选一段 → 行恢复常态、划线出现在新位置；Esc 能取消（行退回两个按钮）
    - **P4**：失活行点「删除」→ 行消失，且服务端也删了（重进文档不复现）
    - **P4**：抽屉开着的时候把侧栏拉窄 —— 正文被压到很难读时按设计应自动收目录栏；确认不会出现「抽屉消失/正文 0 宽」这类布局崩坏
+   - **P5**：选中一段 → 工具条「问 AI」→ 聊天栏出现引用胶囊（已是 PiP 就展开 PiP，否则切回聊天 tab；布局不变）；胶囊里点引用文字能跳回文档那段
+   - **P5**：点一条**已有批注的划线** → 菜单「问 AI」→ 那段闪一下 + 聊天出现同一条引用（不用重新手动选中）
+   - **P5**：问一句 → 回答完成后输入栏下方出现窄条「存为批注 / 忽略」；「忽略」清引用、胶囊与窄条一起消失
+   - **P5**：文档开着时点「存为批注」→ 滚到那段 + 批注浮层预填 AI 回答，改完保存，窄条即刻消失；**对同一段再问一次再存** → 追加到已有批注（原批注 + 空行 + 回答），不新建重复划线
+   - **P5**：文档没开着（或开着的是另一篇）时点「存为批注」→ 直接落库 + toast「已存为批注」，刷新文档能看到
+   - **P5**：hover 一条上千字的长批注 → 浮层封顶在视口内、**卡片里没有滚动条**、滚轮滚的是卡片内容而不是文档，且滚完卡片还在（不消失）
+   - **P5**：切换会话 → 引用清掉（胶囊与窄条都不在）；接力那种自动轮不带引用
 4. `./server/scripts/api-test-annotations.sh` 全绿（26 项，独立 SQLite 实例，不碰 dev 库）
 
 ---
 
 ## 十二、P5「问 AI」复用聊天
 
-> UI 稿：`docs/design/document-highlight-annotation/mockup-p5.html`（九种状态可切）
+> UI 稿：`docs/design/document-highlight-annotation/mockup-p5.html`（九种状态可切）—— ⚠️ **这份稿没有跟着实现同步**（文件顶部有醒目提示），P5 一律以下文与代码为准，差异清单见 §13
 >
 > 实现上的两处偏离（见 §12.5、§十三）：**不做「轻量进 PiP」**（按当前是不是 PiP 二选一，见 §12.5）、**不做气泡上方的引用条**（引用改成会话级常驻后，胶囊已经把话说清了）。
 
@@ -714,7 +741,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 | 窄条（存为批注 / 忽略） | `ChatView` 输入栏下方一行 | PiP 与普通聊天都是同一个 `ChatView`（`ChatPage` 里那层），**一处实现两处生效**。书到用时才出现：引用之后又出过一轮回答且在流式中则不显示（`quoteAnswerText`） |
 | 桥 | `DocumentAIBridge.shared` | 两个方向各一个口子（见下） |
 
-**不落 UserDefaults**（与 `briefAnswer` 不同）：引用是临时上下文，重启后还挂着反而危险（文档可能已被改写），而它只有几百字，重新问一次成本极低。vm 的生命周期 = 会话/tab，所以切会话、关 tab、无痕会话销毁，引用自然消失，**不需要额外的清理代码**。
+**不落 UserDefaults**（与 `briefAnswer` 不同）：引用是临时上下文，重启后还挂着反而危险（文档可能已被改写），而它只有几百字，重新问一次成本极低。关 tab、无痕会话销毁时引用随之消失；**切会话要显式清**（`loadConversation` 里 `docQuote = nil`）—— `ChatViewModel` 是跨会话复用的那一个，不是每个会话一个实例（原稿写「不需要额外的清理代码」，实现时更正）。
 
 **点「问 AI」那一刻**
 
@@ -937,3 +964,4 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 - mockup P5 里引用胶囊只活在"发送前"那一态，实现改成**会话级常驻**（可删）—— 追问才带得到原文，见 §12.4
 - mockup P5 画的是「直接进 PiP」，实现按当前是否已是 PiP 二选一（**不做轻量进 PiP**），原因见 §12.5
 - mockup P5 里助手回答上方那条引用条、以及窄条上的「撤销」，实现都不做（见上「不做」）
+- **`mockup-p5.html` 没有再按实现同步**（文件顶部挂了一条醒目提示）：它画的是"发送前胶囊 + 直接进 PiP + 有引用条/撤销"那一版，实现是"会话级常驻胶囊 + 按现状二选一 + 都没有 + 长批注浮层内滚"。**对 P5 一律以本文与代码为准**；这份预览只用来回看当时讨论过的形态。

@@ -187,6 +187,10 @@ rung 3  投影空间前后文夹逼 —— 覆盖"LLM 在划线 span 内部插�
 
 投影（rung 2/3 的 haystack）只做**字符级剔除**，不解析链接目标 `(url)`、不处理图片 alt：多留几个字符只会让评分多一点噪声，不会让定位错位（每个投影字符都映射回真实源文下标），而且图片在现有 106 篇里是 0 篇。
 
+**不变量：`project()`（Go）与 `fold()`（JS）对同一份正文必须给出同一条纯文本流** —— 投影是两边唯一的公共空间，任一边多剥或少剥一个字符，症状都是「划线保存成功、但正文里画不出来」（抽屉正常、点行 toast 定位不到；见 `docs/bugs/015-nested-list-marker-in-projection.md`）。必须对齐的三项：连续空白折叠、行内标记 `*_`~|[]`、**行首块标记（含缩进后的：`  - ` / `  12. ` / `  > `）**。
+
+最后一条踩过坑：缩进的两个空格曾把「行首」状态抹掉，于是 `  - ` 的 `-` 被当成正文留在投影里（`点评： - 信息论角度`），而 DOM 那边 marked 早已渲染成 `<ul>`，压根没有 `-` 这个字符 —— 选区一旦跨过嵌套列表项就 rung 1、rung 2 双输，掉进 rung 3 把用户 quote 改写成带 `- ` 的文本，客户端再也定位不到。
+
 ### 4.4 客户端为什么还要再实现一次
 
 服务端算的是 **markdown 源文**里的偏移；客户端要画的是 **marked 渲染后的 DOM**。两者字符流不同，源的偏移在 DOM 上无意义。
@@ -338,6 +342,9 @@ Swift → JS（`evaluateJavaScript`）：
 | `reader.scrollToAnnotation(id)` | 抽屉点击 → 滚到对应划线并闪烁 |
 | `reader.scrollToHeading(index)` | 目录点击（替代原来的 `scrollToAnchor`） |
 | `reader.find(query)` / `findNext()` / `findPrev()` / `clearFind()` | 查找栏 |
+| `reader.beginRelocate(id)` / `cancelRelocate()` | P4 抽屉「重新定位」：进入/退出重选模式（模式里选区当新锚点，不弹工具条） |
+
+> 实现里 JS→Swift 的消息名比下表短（`ready` / `create` / `update` / `delete` / `copy` / `ask` / `findResult` / `relocate` / `relocateCancel`），以 P3 / P4 完成情况为准。
 
 JS → Swift（`WKScriptMessageHandler`，沿用 `XHWebViewBridge` 的命名与错误处理模式）：
 
@@ -348,6 +355,8 @@ JS → Swift（`WKScriptMessageHandler`，沿用 `XHWebViewBridge` 的命名与�
 | `annotationUpdate` | `{id, note}` | 编辑批注 |
 | `annotationDelete` | `{id}` | 删除 |
 | `annotationAskAI` | `{quote}` | 「问 AI」（落点待定 → v1 先 toast） |
+| `relocate` | `{id, quote, prefix, suffix}` | P4「重新定位」选完新位置（服务端重挂锚点并清 `orphaned`） |
+| `relocateCancel` | — | 重定位模式被 Esc / 取消按钮终止 |
 | `contentHeightChanged` | `{h}` | WebView 自适应高度（滚动交给外层 SwiftUI ScrollView？否 —— 见下） |
 
 **滚动归属**：正文滚 **WebView 自己**（`reader` 的 `overflow-y: auto`），不外包给 SwiftUI `ScrollView`。理由：跨块选区的 `getClientRects` 在自身滚动容器里才准；外包后 mousemove 期间要不停回传高度，抖动且贵。
@@ -413,11 +422,15 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 ### 8.6 划线列表抽屉
 
-- 三个 tab：**全部 N** / **仅批注 N** / **已失活 N**
-- 每行：`quote`（2 行截断）+ `note`（1 行截断）+ 相对时间
-- 点击行 → 关闭抽屉 + `scrollToAnnotation(id)` + 闪烁 2 次
-- orphan 行：整个灰掉 + quote 加删除线 + 右侧两个动作「重新定位」「删除」
-- 「重新定位」→ 进入重选模式（正文里提示"请重新选中一段文字"）→ 选中后 `POST /api/annotations/:id/relocate`
+> 形态选型：`mockup.html` 控制条的「抽屉形态」两个候选（A 第三列 / B 覆盖右侧）× 「画布宽」（1180 / 840）四种组合都截了图对比，**用户选 A 第三列**。
+
+- 位置：正文右侧的第三列（宽 300），和目录栏同级；**开抽屉时自动收起目录栏**（用户还能手动展开）。选 A 的理由：和目录栏交互一致、不遮挡正文；代价是 840 的侧栏里正文只剩 ~150px，实际使用时要把侧栏拉宽（或收起目录栏）。
+- 三个 tab：**全部 N** / **仅批注 N**（note 非空，含失活的）/ **已失活 N**（`orphaned`）
+- 每行：`quote`（2 行截断）+ `note`（1 行截断，左侧 `appAccent` 竖条）+ 相对时间（今天 `HH:mm`、更早 `yyyy/MM/dd HH:mm`）
+- 点击行 → `scrollToAnnotation(id)` + 闪烁 2 次，**抽屉不关**（偏离原设计：连续看几条 / 重挂时不必反复开关；JS 定位不到就 toast 一声）
+- orphan 行：整行灰 + quote 加删除线 + 「已失活」徽标 + 右侧「重新定位」「删除」两个按钮（**常显**，不做 hover 才出现 —— 真机鼠标不在行上时那两个动作等于不存在）
+- 「重新定位」→ 进入重选模式（**提示文案在抽屉那一行**：「请在正文中重新选中一段文字」+「取消」，不在正文里加横幅 → 少一份 HTML/CSS）→ 选中后 `POST /api/annotations/:id/relocate`。Esc 或选中一次即退出模式。
+- 数据全部来自 `DocumentReaderController.annotations`，抽屉自己不拉取、不缓存；**正文被改写后**（`document.content` 变）重拉一次，失活状态由服务端重算
 
 ---
 
@@ -443,7 +456,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 | **P1 服务端** ✅ | 模型 + migration + 5 个 API + `list_annotations` + `update_document` 影响报告 + 重定位算法单测 | 见下「P1 完成情况」 |
 | **P2 WebView 阅读器** ✅ | `DocumentReaderView` 替换 `readingContent`；目录跳转改走 JS；查找改走 JS；主题/字号联动 | 见下「P2 完成情况」；真机验收待用户 |
 | **P3 划线批注交互** ✅ | 选区工具条 / 绘制 / hover / 点击菜单 / 批注浮层 / 创建-编辑-删除回传 | 见下「P3 完成情况」；真机验收待用户 |
-| **P4 抽屉 + orphan** | SwiftUI 抽屉三 tab + 滚动定位 + 重新定位流程 | 真机：改标题制造 orphan，灰态可见可重挂 |
+| **P4 抽屉 + orphan** ✅ | SwiftUI 抽屉（第三列，三 tab）+ 滚动定位 + orphan 灰态 + 重新定位流程 | 见下「P4 完成情况」；真机验收待用户 |
 | **P5 问 AI** | 复用 PiP 承载文档问答：轻量进 PiP / `doc_quote` 注入 / `brief_answer` 长度约束 / 引用条 / 底部「存为批注」窄条 | 见 §十二。**服务端 + 客户端 `brief_answer` 开关已完成**，其余待 P2/P3 |
 
 依赖：P2 与 P1 无依赖，可并行。P3/P4 依赖 P1+P2。**P5 依赖 P2（WebView 才拿得到选区）+ P3（浮层技法、批注编辑浮层）**，所以顺序是 P2 → P3 → P5，不提前。
@@ -464,7 +477,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 | 层 | 文件 | 管什么 |
 |---|---|---|
-| 定位算法单测 | `document_anchor_test.go` | 7 类定位形态（普通/跨粗体/表格/行内代码/列表/引用/换行折叠）、抗平移、消歧、orphan、投影映射、LCS |
+| 定位算法单测 | `document_anchor_test.go` | 7 类定位形态（普通/跨粗体/表格/行内代码/列表/引用/换行折叠）、抗平移、消歧、orphan、投影映射、缩进块标记、跨嵌套列表项不掉夹逼、LCS |
 | **不变量测试** | 同上 `TestRelocateInvariants*` | 不预设实现，只断言"不许发生什么"：① 成功时命中文本与原 quote 相似度 ≥ 0.5（不许指向无关处）② 失败必须是 ok=false ③ 撤销编辑必须回到原偏移 ④ 锚点周围文本指纹逐字不变 |
 | 失败导向 case | 同上 | 多命中+前后文不符必须失活（A）／带 DOM 提示必须锚到第 3 处（B）／内部插字必须长大且 Fuzzy（C）／整句替换必须失活／重复前后文不许乱配 |
 | 仓库层 | `document_annotation_repo_test.go` | 抗平移不失活、失活可恢复、快照刷新、`QuoteRewritten` 置位、幂等不写、空 note 退化、级联删、越权隔离 |
@@ -589,7 +602,29 @@ JS 里维护 `id → [{mark}]`。定位流程：
   - 顺带踩到：**画完之后再滚，截图会带上「滚走那块」的陈旧像素**（DOM 探针显示那里根本没有背景），所以 `__marks` 改成先滚到目标位置再画。
 - `swiftc -typecheck` macOS / iOS 均 0 error。
 
----
+### P4 完成情况（已完成，真机验收待用户）
+新增：
+
+- `Shared/Views/AnnotationDrawer.swift`（`#if os(macOS)`）—— 头（标题 + 总数 + 收起）/ 三 tab（全部 / 仅批注 / 已失活，都带计数）/ 行（quote 2 行 + note 1 行 + 时间）/ orphan 灰态 + 「重新定位」「删除」/ 空态三文案。**没有任何自己的数据源**：读 `DocumentReaderController.annotations`，动作也全走 controller。
+
+改动：
+
+- `APIClient.swift` —— `relocateAnnotation(id:quote:prefix:suffix:)`（`POST /api/annotations/:id/relocate`，返回更新后的整条）。服务端 P1 就已就绪，**P4 零 Go 改动**。
+- `DocumentReaderController` —— `@Published relocatingID`；对外 `scrollToAnnotation`（新增 `evaluateBool` 拿 JS 返回值，未命中 toast）/ `refreshAnnotations` / `deleteAnnotation` / `beginRelocate` / `cancelRelocate` / `relocate`；`apply` 收 `relocate` 与 `relocateCancel`。
+- 模板 JS —— `relocateId` 状态 + `beginRelocate`/`cancelRelocate`/`relocateFromSelection`；重定位模式下 `mouseup` 不弹工具条、直接把选区当新锚点 `post({type:'relocate'})`；`Esc` 退出模式并回 `relocateCancel`。**不加横幅、不动 CSS**。
+- `DocumentListView.swift` —— 顶栏「查找」旁加抽屉开关（macOS only）；抽屉进 `HStack` 第三列，开时顺手收目录栏；`.onChange(of: document.content)` → `refreshAnnotations()`。
+
+两个必须知道的点：
+
+- **「正文改写后重拉」这条不加，P4 的验收根本过不了**。`loadAnnotations` 原来只在首次 `ready` 拉一次（`hasLoadedAnnotations` 一置位就短路），正文被 LLM 改写后客户端手里还是旧列表，`orphaned` 全为 false —— 抽屉里看不到任何失活条目。现在 `document.content` 一变就重拉（也顺带覆盖「改回原文恢复」）。
+- **失活行的两个动作常显**，不做 hover 才出现。原设计的 hover 方案在真机上等于「鼠标不在行上就没有这个功能」。
+
+**自查**
+
+- `check-reader-html.sh`：**129 条断言**（P4 加了 8 条）—— 失活的不画 / 重定位模式下选中发 `relocate` 且带 id 与选区四元组 / 此时工具条不弹 / 此时不误发 `create` / `Esc` 回 `relocateCancel` / `Esc` 后模式退出（选中回到工具条）/ `Esc` 后不再发 `relocate`。
+- `snapshot-reader.sh` 三个 job 重跑仍 `marks=11 bubbles=1 textLen=407=不变`（P4 只动了选区路由，没碰画线路径）。
+- `swiftc -typecheck` macOS / iOS 均 0 error。
+- mockup 侧记一条坑（已进 `AGENTS.md`）：**整个 `<script>` 是一个 IIFE，新增 `const`/`let` 与已有变量重名就是静默 SyntaxError** —— 所有交互全死、headless 也不报错，症状只是「控件不生效」。这次栽在 `q` 与 `wIdx` 上，靠 `--dump-dom` 看 `<html>`/`<body>` 的 class 才定位到。
 
 ---
 
@@ -613,6 +648,11 @@ JS 里维护 `id → [{mark}]`。定位流程：
    - **P3**：两条线交叠 → 悬停时 popover 同时列出两条并标「重叠划线」
    - **P3**：加批注 → 句尾小圆点出现；点圆点改批注（⌘↵ 保存 / Esc 取消）；清空批注保存 = 退化成纯划线；删除后气泡一起消失
    - **P3**：撤销/重连都不会让划线错位（每次增删改都按服务端那一份重画）
+   - **P4**：顶栏开关出抽屉 → 三个 tab 计数对；点行滚到该划线并闪烁（抽屉不关）
+   - **P4**：让 LLM 改写某条划线所在句子 → 抽屉「已失活」里出现它（灰 + 删除线 + 「已失活」徽标）
+   - **P4**：失活行点「重新定位」→ 抽屉那行变成「请在正文中重新选中」，正文里选一段 → 行恢复常态、划线出现在新位置；Esc 能取消（行退回两个按钮）
+   - **P4**：失活行点「删除」→ 行消失，且服务端也删了（重进文档不复现）
+   - **P4**：抽屉开着的时候把侧栏拉窄 —— 正文被压到很难读时按设计应自动收目录栏；确认不会出现「抽屉消失/正文 0 宽」这类布局崩坏
 4. `./server/scripts/api-test-annotations.sh` 全绿（26 项，独立 SQLite 实例，不碰 dev 库）
 
 ---

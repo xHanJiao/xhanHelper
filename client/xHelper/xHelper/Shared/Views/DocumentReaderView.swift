@@ -19,6 +19,8 @@ final class DocumentReaderController: ObservableObject {
     @Published private(set) var matchIndex = -1
     /// 本文件的划线与批注（P4 抽屉也用这份；正文里画什么由 `reader.setAnnotations` 决定）
     @Published private(set) var annotations: [DocumentAnnotation] = []
+    /// 正在「重新定位」的那条（P4 抽屉里那一行显示「请在正文中重新选中」；nil = 不在该模式）
+    @Published private(set) var relocatingID: String?
 
     /// 已装载内容的签名。变了才重载 —— 否则 `updateNSView` 每次都重新渲染
     /// markdown + mermaid（mermaid 是原生渲染，很贵）。
@@ -64,6 +66,12 @@ final class DocumentReaderController: ObservableObject {
         webView.evaluateJavaScript(js) { _, error in
             if let error { print("[DocumentReader] JS 执行失败: \(error) ← \(js.prefix(160))") }
         }
+    }
+
+    /// 需要 JS 返回值时用这个（`evaluate` 的返回被丢掉了，比如没命中滚动目标）
+    fileprivate func evaluateBool(_ js: String, _ done: @escaping (Bool) -> Void) {
+        guard let webView else { return done(false) }
+        webView.evaluateJavaScript(js) { value, _ in done((value as? NSNumber)?.boolValue ?? false) }
     }
 
     // MARK: - 划线与批注（服务端为准）
@@ -125,10 +133,55 @@ final class DocumentReaderController: ObservableObject {
         do {
             try await api.deleteAnnotation(id: id)
             annotations.removeAll { $0.id == id }
+            if relocatingID == id { cancelRelocate() }
             pushAnnotations()
         } catch {
             LogBuffer.shared.error("DocumentReader 删除划线批注失败: \(error)")
             ToastCenter.shared.show("删除失败：\(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - 抽屉（P4）用的对外动作
+
+    /// 滚到某条划线并闪烁。JS 在当前 DOM 里定位不到（失活的、或排版对不上）就提示一声。
+    func scrollToAnnotation(id: String) {
+        evaluateBool("reader.scrollToAnnotation(\(MarkdownWebUtils.jsString(id)))") { hit in
+            if !hit { ToastCenter.shared.show("这条划线在当前正文里定位不到") }
+        }
+    }
+
+    /// 正文被改写后重拉：失活与否由服务端重算，客户端不自己猜。
+    func refreshAnnotations() {
+        Task { await loadAnnotations() }
+    }
+
+    /// 抽屉里失活行的「删除」
+    func deleteAnnotation(id: String) {
+        Task { await remove(id: id) }
+    }
+
+    /// 抽屉「重新定位」：进入重选模式，用户在正文里选中新的一段后由 JS 回传。
+    func beginRelocate(id: String) {
+        relocatingID = id
+        evaluate("reader.beginRelocate(\(MarkdownWebUtils.jsString(id)))")
+    }
+
+    func cancelRelocate() {
+        relocatingID = nil
+        evaluate("reader.cancelRelocate()")
+    }
+
+    private func relocate(id: String, quote: String, prefix: String, suffix: String) async {
+        do {
+            let a = try await api.relocateAnnotation(id: id, quote: quote, prefix: prefix, suffix: suffix)
+            if let i = annotations.firstIndex(where: { $0.id == a.id }) { annotations[i] = a }
+            annotations.sort(by: Self.order)
+            pushAnnotations()
+            ToastCenter.shared.show("已重新定位")
+            scrollToAnnotation(id: a.id)
+        } catch {
+            LogBuffer.shared.error("DocumentReader 重新定位失败: \(error)")
+            ToastCenter.shared.show("重新定位失败：\(error.localizedDescription)")
         }
     }
 
@@ -178,6 +231,22 @@ final class DocumentReaderController: ObservableObject {
         case "delete":
             guard let id = message["id"] as? String else { return }
             Task { await remove(id: id) }
+
+        case "relocate":
+            // 重定位模式下用户选完了一段：模式已在 JS 侧退出，这里只管落库
+            guard let id = message["id"] as? String else { return }
+            relocatingID = nil
+            Task {
+                await relocate(
+                    id: id,
+                    quote: message["quote"] as? String ?? "",
+                    prefix: message["prefix"] as? String ?? "",
+                    suffix: message["suffix"] as? String ?? ""
+                )
+            }
+
+        case "relocateCancel":
+            relocatingID = nil
 
         case "ask":
             // P5：复用 PiP 浮层承载文档问答。落点还没接，先别静默吞掉点击
@@ -987,6 +1056,8 @@ var reader = (function () {
   var pendingRange = null;
   var editingId = null;
   var ctxTargetId = null;
+  /* 非空 = 正在重新定位这一条（下一次选区当作新锚点） */
+  var relocateId = null;
   var hideTimer = null;
   var hoverKey = '';
 
@@ -1033,9 +1104,41 @@ var reader = (function () {
       var range = sel.getRangeAt(0);
       if (!content.contains(range.commonAncestorContainer)) { hideToolbar(); return; }
       if (!sel.toString().trim()) { hideToolbar(); return; }
+      /* 重定位模式：选中的这段就是要重挂的新位置，不弹工具条 */
+      if (relocateId) { relocateFromSelection(range); return; }
       pendingRange = range.cloneRange();
       showToolbar(range);
     }, 0);
+  });
+
+  /* ---------- 重新定位模式（抽屉里的「重新定位」） ----------
+     只负责「这次选中是重挂，不是新建」这一件事：提示文案在 SwiftUI 抽屉那边，
+     这里不弹横幅、不改样式。Esc 或选中一次即退出。 */
+  function beginRelocate(id) {
+    relocateId = id;
+    hideAll();
+    hidePopover();
+    pendingRange = null;
+    clearSel();
+  }
+
+  function cancelRelocate() { relocateId = null; }
+
+  function relocateFromSelection(range) {
+    if (!relocateId) return;
+    var id = relocateId;
+    relocateId = null;
+    var info = selectionInfo(range);
+    clearSel(); hideAll();
+    if (!info.quote) { post({ type: 'relocateCancel' }); return; }
+    post({ type: 'relocate', id: id, quote: info.quote, prefix: info.prefix, suffix: info.suffix });
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || !relocateId) return;
+    cancelRelocate();
+    clearSel();
+    post({ type: 'relocateCancel' });
   });
 
   document.addEventListener('mousedown', function (e) {
@@ -1358,7 +1461,9 @@ var reader = (function () {
     setFontSize: setFontSize,
     restoreScrollY: restoreScrollY,
     setAnnotations: setAnnotations,
-    scrollToAnnotation: scrollToAnnotation
+    scrollToAnnotation: scrollToAnnotation,
+    beginRelocate: beginRelocate,
+    cancelRelocate: cancelRelocate
   };
 })();
 </script>

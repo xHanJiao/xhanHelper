@@ -228,7 +228,9 @@ make db-pull / db-import / logs / clean
     --hide-scrollbars --screenshot=/tmp/x.png --window-size=1340,940 \
     --virtual-time-budget=2200 "file://$PWD/docs/design/<feature>/mockup.html"
   ```
-  要截交互态：把源码复制到 `/tmp` 并注入 `setTimeout` 脚本合成 `MouseEvent`/`click` 再截。事件必须派发到**具体元素**上——派发到 `document` 会让 `e.target.closest` 抛错
+  要截交互态：把源码复制到 `/tmp` 并注入 `setTimeout` 脚本合成 `MouseEvent`/`click` 再截。事件必须派发到**具体元素**上——派发到 `document` 会让 `e.target.closest` 抛错。
+  要对比多个形态：把候选做成控制条开关 + 支持 `?form=b&w=840&drawer=1` 这类 URL 预设，截图就不用注入点击（也就躲开了「过渡起始帧」那个坑）
+- **mockup 里加 JS 前先 `rg` 同名变量**：整个 `<script>` 是一个 IIFE、同一作用域，重名 `const`/`let` 直接 SyntaxError，**整个脚本静默不执行**（headless 不看控制台的话，症状只是「控件全都不生效、样式类没加上」）。诊断用 `--dump-dom` 看 `<html>`/`<body>` 的 class 有没有加上
 
 **设计 token**（唯一来源 `client/xHelper/xHelperMac/Assets.xcassets/*.colorset`）
 

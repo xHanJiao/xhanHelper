@@ -93,6 +93,8 @@ body.dark, .dark body { background: #0B0B0C; }
   overflow: hidden;
   transition: background .25s;
 }
+/* 画布宽：app 右侧栏默认 840（文档页真实可用宽度）/ 铺满 1180 */
+.window.narrow { width: min(840px, 100%); }
 
 /* 标题栏 */
 .titlebar {
@@ -431,6 +433,12 @@ html.ann-tone span.ann-bubble { display: none; }
   display: none; flex-direction: column; min-height: 0;
 }
 .drawer.open { display: flex; }
+/* 形态 B：抽屉浮在正文右缘（宽 312 不挤正文，窄栏也能用；形态 A 是 flex 第三列） */
+body.drawer-overlay .body-row { position: relative; }
+body.drawer-overlay .drawer {
+  position: absolute; top: 6px; right: 6px; bottom: 6px; z-index: 70;
+  border: 1px solid var(--border); box-shadow: var(--shadow);
+}
 .drawer-head {
   height: 46px; flex: 0 0 46px; display: flex; align-items: center; gap: 7px;
   padding: 0 12px 0 16px; border-bottom: 1px solid var(--border-soft);
@@ -755,6 +763,12 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
   <span class="lab">批注标记</span>
   <button id="dev-ann">小圆点</button>
   <div class="sep"></div>
+  <span class="lab">抽屉形态</span>
+  <button id="dev-drawer-form">A 第三列</button>
+  <div class="sep"></div>
+  <span class="lab">画布宽</span>
+  <button id="dev-canvas">1180</button>
+  <div class="sep"></div>
   <button id="dev-drawer">划线列表</button>
   <button id="dev-reset">重置</button>
 </div>
@@ -788,8 +802,10 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
       b.onclick = () => h.scrollIntoView({ block: 'start', behavior: 'smooth' });
       tocList.appendChild(b);
     });
-    document.getElementById('toc-collapse').onclick = () => { toc.hidden = true; tocStrip.hidden = false; };
-    document.getElementById('toc-expand').onclick   = () => { toc.hidden = false; tocStrip.hidden = true; };
+    window.collapseTOC = () => { toc.hidden = true; tocStrip.hidden = false; };
+    window.expandTOC   = () => { toc.hidden = false; tocStrip.hidden = true; };
+    document.getElementById('toc-collapse').onclick = window.collapseTOC;
+    document.getElementById('toc-expand').onclick   = window.expandTOC;
     document.getElementById('nav-prev').onclick = () => toast('演示：切到上一篇文档');
     document.getElementById('nav-next').onclick = () => toast('演示：切到下一篇文档');
   })();
@@ -1177,6 +1193,8 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
     drawer.classList.toggle('open', open);
     btnDrawer.classList.toggle('on', open);
     document.getElementById('dev-drawer').classList.toggle('on', open);
+    // 形态 A（第三列）会挤正文，开抽屉时顺手收目录；形态 B 是浮层，不用动目录
+    if (open && formIdx === 0 && window.collapseTOC) window.collapseTOC();
   }
   btnDrawer.onclick = () => toggleDrawer();
   document.getElementById('drawer-close').onclick = () => toggleDrawer(false);
@@ -1270,13 +1288,40 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
     const legacy = document.documentElement.classList.toggle('hl-legacy');
     devStyle.textContent = legacy ? '底色高亮(旧)' : '波浪线';
   };
+
+  /* ---------- 抽屉形态 / 画布宽（P4 选型用，可用 ?form=b&w=840&drawer=1 预设） ---------- */
+  const FORMS = ['A 第三列', 'B 覆盖右侧'];
+  const WIDTHS = [1180, 840];
+  const devForm = document.getElementById('dev-drawer-form');
+  const devCanvas = document.getElementById('dev-canvas');
+  function applyForm() {
+    document.body.classList.toggle('drawer-overlay', formIdx === 1);
+    devForm.textContent = FORMS[formIdx];
+    document.getElementById('btn-drawer').title =
+      formIdx === 0 ? '划线批注列表（第三列，挤正文）' : '划线批注列表（浮层，不挤正文）';
+    if (formIdx === 0 && drawer.classList.contains('open') && window.collapseTOC) window.collapseTOC();
+  }
+  function applyCanvas() {
+    document.getElementById('win').classList.toggle('narrow', WIDTHS[canvasIdx] === 840);
+    devCanvas.textContent = WIDTHS[canvasIdx];
+  }
+  devForm.onclick   = () => { formIdx = (formIdx + 1) % FORMS.length; applyForm(); };
+  devCanvas.onclick = () => { canvasIdx = (canvasIdx + 1) % WIDTHS.length; applyCanvas(); };
+
+  const qParams = new URLSearchParams(location.search);
+  let formIdx = qParams.get('form') === 'b' ? 1 : 0;
+  let canvasIdx = qParams.get('w') === '840' ? 1 : 0;
   document.getElementById('dev-reset').onclick = () => location.reload();
 
   /* ---------- 启动 ---------- */
   content.style.setProperty('--fs', fs + 'px');
   initBubbles();
   applyAnnStyle();
+  applyCanvas();
   renderDrawer();
+  // 先切形态再开抽屉（形态 A 开抽屉要收目录，顺序反了就白收）
+  applyForm();
+  if (qParams.get('drawer') === '1') toggleDrawer(true);
   setTimeout(() => document.getElementById('hint').classList.add('hide'), 9000);
 })();
 </script>

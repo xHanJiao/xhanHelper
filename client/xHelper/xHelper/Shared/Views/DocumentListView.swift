@@ -476,6 +476,16 @@ private struct DocumentFullView: View {
 
                 Spacer()
 
+                #if os(macOS)
+                Button { toggleAnnotationDrawer() } label: {
+                    Image(systemName: "list.bullet.rectangle")
+                        .font(.system(size: 12))
+                        .foregroundColor(showAnnotationDrawer ? Color("appAccent") : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("划线与批注列表")
+                #endif
+
                 Button { toggleFind() } label: {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 12))
@@ -518,6 +528,15 @@ private struct DocumentFullView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .onChange(of: findQuery) { _, query in reader.find(query) }
+                // 正文被改写后划线的失活状态要重算：服务端为准，客户端不自己猜
+                .onChange(of: document.content) { _, _ in reader.refreshAnnotations() }
+
+                if showAnnotationDrawer {
+                    Divider().opacity(0.3)
+                    AnnotationDrawer(reader: reader) {
+                        withAnimation { showAnnotationDrawer = false }
+                    }
+                }
                 #else
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -595,6 +614,7 @@ private struct DocumentFullView: View {
     #endif
 
     @State private var isTocCollapsed = false
+    @State private var showAnnotationDrawer = false
     @State private var showFindBar = false
     @State private var findQuery = ""
     @State private var currentMatch = 0
@@ -901,6 +921,16 @@ private struct DocumentFullView: View {
     private func toggleFind() {
         if showFindBar { closeFind() } else { showFindBar = true }
     }
+
+    #if os(macOS)
+    /// 抽屉是第三列，会占正文宽度 —— 开的时候顺手收起目录栏（用户还能手动再展开）。
+    private func toggleAnnotationDrawer() {
+        withAnimation {
+            showAnnotationDrawer.toggle()
+            if showAnnotationDrawer { isTocCollapsed = true }
+        }
+    }
+    #endif
 
     private func closeFind() {
         showFindBar = false

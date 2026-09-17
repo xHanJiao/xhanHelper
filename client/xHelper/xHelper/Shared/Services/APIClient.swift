@@ -204,6 +204,12 @@ class APIClient {
         try await delete("/api/annotations/\(id)")
     }
 
+    /// 抽屉「重新定位」：把一条失活批注重挂到用户新选的一段文字上（返回更新后的整条）。
+    func relocateAnnotation(id: String, quote: String, prefix: String, suffix: String) async throws -> DocumentAnnotation {
+        return try await post("/api/annotations/\(id)/relocate",
+                              body: ["quote": quote, "prefix": prefix, "suffix": suffix])
+    }
+
 	// MARK: Memories (P3)
 
 	func listMemories(limit: Int = 50, offset: Int = 0, keyword: String = "", source: String = "") async throws -> MemoryListResponse {

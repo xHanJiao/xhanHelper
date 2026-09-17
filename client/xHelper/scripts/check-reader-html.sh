@@ -53,6 +53,9 @@ x = 1
 
 第二个小结段落，同名标题的序号要靠 occurrence 区分。
 
+- 清单第一项，用来测跨列表项
+- 清单第二项，后半截
+
 ZZMDIMG0X
 MD
 
@@ -79,7 +82,8 @@ html = html.replace('<meta charset="utf-8">', '<meta charset="utf-8">\n' + probe
 tests = """<script>
 var fails = [];
 try {
-function ok(name, cond, extra) { if (!cond) fails.push(name + (extra ? ' [' + extra + ']' : '')); }
+var okCount = 0;
+function ok(name, cond, extra) { okCount++; if (!cond) fails.push(name + (extra ? ' [' + extra + ']' : '')); }
 function last(type) { for (var i = window.__msgs.length - 1; i >= 0; i--) if (window.__msgs[i].type === type) return window.__msgs[i]; }
 var c = document.getElementById('content');
 
@@ -136,52 +140,263 @@ ok('setFontSize 改的是 --fs', getComputedStyle(document.documentElement).getP
   fails.push('抛出异常: ' + (e && e.message ? e.message : e));
 }
 
-// 选区自己画：selectionchange 是异步派发的，所以这块要等一拍
+// ---- 异步部分：选区 / 工具条 / 浮层 / 划线批注，逐拍推进 ----
 function writeResult() {
   var el = document.createElement('div');
   el.id = 'result';
   el.textContent = fails.length ? ('FAIL ' + fails.join(' | ')) : 'PASS';
   document.body.appendChild(el);
+  var st = document.createElement('div');
+  st.id = 'stats';
+  st.textContent = okCount + ' 条断言';
+  document.body.appendChild(st);
 }
-try {
+function mk(id, quote, note, prefix, suffix, orphaned) {
+  return { id: id, quote: quote, note: note || '', prefix: prefix || '', suffix: suffix || '',
+           orphaned: !!orphaned, created_at: '2026-09-17T21:04:00+08:00' };
+}
+function put(list) { reader.setAnnotations(JSON.stringify(list)); }
+
+function selectionChecks() {
   var rng = document.createRange();
   rng.selectNodeContents(c.querySelector('p'));
   var sel = window.getSelection();
   sel.removeAllRanges();
   sel.addRange(rng);
-  setTimeout(function () {
-    try {
-      // 选区由引擎自己画（自绘的两个毛病见 CSS 里那段注释），所以这里只钉两件事：
-      // 我们别再自注册 sel 高亮；原生选区本身可用（复制粘贴不受影响）
-      ok('选区不再自绘（引擎画）', !CSS.highlights.has('sel'));
-      ok('原生选区可用（String(sel) 有内容）', String(sel).length > 0);
-      // ::selection 的 background 必须是 transparent：铺了底 WebKit 就会画跨块大矩形
-      var selRules = [];
-      function collect(rules) {
-        for (var i = 0; i < rules.length; i++) {
-          var r = rules[i];
-          if (r.selectorText && r.selectorText.indexOf('::selection') >= 0) selRules.push(r);
-          if (r.cssRules) collect(r.cssRules);
-        }
-      }
-      collect(document.styleSheets[0].cssRules);
-      ok('有 ::selection 规则', selRules.length >= 2, '找到 ' + selRules.length);
-      var bgBad = selRules.filter(function (r) { return r.style.backgroundColor !== 'transparent'; });
-      ok('::selection 不铺底色', bgBad.length === 0, bgBad.length + ' 条铺了');
-      var varBad = selRules.filter(function (r) { return r.style.color.indexOf('var(') >= 0; });
-      ok('::selection 的 color 没用 var()（WebKit 解析不出来）', varBad.length === 0,
-         varBad.length + ' 条用了 var()');
-      sel.removeAllRanges();
-      writeResult();
-    } catch (e) {
-      fails.push('选区断言异常: ' + (e && e.message ? e.message : e));
-      writeResult();
+  // 选区由引擎自己画（自绘的两个毛病见 CSS 里那段注释），所以这里只钉两件事：
+  // 我们别再自注册 sel 高亮；原生选区本身可用（复制粘贴不受影响）
+  ok('选区不再自绘（引擎画）', !CSS.highlights.has('sel'));
+  ok('原生选区可用（String(sel) 有内容）', String(sel).length > 0);
+  // ::selection 的 background 必须是 transparent：铺了底 WebKit 就会画跨块大矩形
+  var selRules = [];
+  function collect(rules) {
+    for (var i = 0; i < rules.length; i++) {
+      var r = rules[i];
+      if (r.selectorText && r.selectorText.indexOf('::selection') >= 0) selRules.push(r);
+      if (r.cssRules) collect(r.cssRules);
     }
-  }, 0);
-} catch (e) {
-  fails.push('选区构造异常: ' + (e && e.message ? e.message : e));
-  writeResult();
+  }
+  collect(document.styleSheets[0].cssRules);
+  ok('有 ::selection 规则', selRules.length >= 2, '找到 ' + selRules.length);
+  var bgBad = selRules.filter(function (r) { return r.style.backgroundColor !== 'transparent'; });
+  ok('::selection 不铺底色', bgBad.length === 0, bgBad.length + ' 条铺了');
+  var varBad = selRules.filter(function (r) { return r.style.color.indexOf('var(') >= 0; });
+  ok('::selection 的 color 没用 var()（WebKit 解析不出来）', varBad.length === 0,
+     varBad.length + ' 条用了 var()');
+  sel.removeAllRanges();
 }
+
+/* 造一个真实选区 + 派发 mouseup（工具条的入口），等一拍再断言 */
+function armSelectionAndMouseUp() {
+  var p = c.querySelector('p');                       // 第一段：记忆系统的第一处提及…
+  var rng = document.createRange();
+  rng.setStart(p.firstChild, 0);
+  rng.setEnd(p.firstChild, 10);                       // 「记忆系统的第一处提及」(10 字)
+  var sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(rng);
+  p.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+}
+
+function toolbarChecks() {
+  ok('mouseup 浮出工具条', document.getElementById('toolbar').classList.contains('open'));
+  ok('工具条 4 个动作', document.querySelectorAll('#toolbar button[data-act]').length === 4);
+
+  document.querySelector('#toolbar button[data-act="note"]').click();
+  var editor = document.getElementById('note-editor');
+  var neSave = document.getElementById('ne-save');
+  var neText = document.getElementById('ne-text');
+  ok('点「批注」出输入浮层', editor.classList.contains('open'));
+  ok('quote 预览已填', document.getElementById('ne-quote').textContent.indexOf('记忆系统的第一处提及') === 0);
+  ok('空批注文案=保存为纯划线', neSave.textContent === '保存为纯划线');
+
+  neText.value = '这是批注';
+  neText.dispatchEvent(new Event('input'));
+  ok('有文字文案=保存批注', neSave.textContent === '保存批注');
+
+  neSave.click();
+  var msg = last('create');
+  ok('保存发出 create（quote/前缀/后缀/note 齐全）',
+     !!msg && msg.quote === '记忆系统的第一处提及' && msg.note === '这是批注'
+       && msg.prefix.length > 0 && msg.suffix.length > 0, JSON.stringify(msg));
+  ok('保存后浮层收起、选区清空',
+     !editor.classList.contains('open') && window.getSelection().isCollapsed);
+  ok('create 没有原地包 mark（等 Swift 回推）', c.querySelectorAll('mark.hl').length === 0);
+}
+
+function annotationChecks() {
+  var text0 = c.textContent;                 // 画任何线之前的正文文本
+  var blocks0 = c.querySelectorAll('#content p, #content h2, #content h3, #content li, #content td').length;
+
+  function norm(s) { return String(s || '').replace(/[*_`~|\[\]]/g, '').replace(/\s+/g, ''); }
+  function markText(id) {
+    var out = '';
+    [].slice.call(c.querySelectorAll('mark.hl[data-id="' + id + '"]')).forEach(function (m) { out += m.textContent; });
+    return out;
+  }
+  /* 每画一条都钉三件事：正文文本一字不少、块结构没被搬动、mark 里的字就是命中的那段 */
+  function draw(list, expectMarks, id, expectQuote) {
+    put(list);
+    ok('画线不改正文文本' + (id ? '（' + id + '）' : ''),
+       c.textContent === text0, '画前 ' + text0.length + ' 字 → 画后 ' + c.textContent.length + ' 字');
+    ok('画线不搬块结构' + (id ? '（' + id + '）' : ''),
+       c.querySelectorAll('#content p, #content h2, #content h3, #content li, #content td').length === blocks0
+         && c.querySelectorAll('mark p, mark div, mark h1, mark h2, mark h3, mark ul, mark ol, mark li, mark table, mark pre, mark blockquote, h2 h2, h2 ul, h2 li, h2 p').length === 0);
+    if (expectMarks !== null && expectMarks !== undefined) {
+      ok('mark 段数 = ' + expectMarks + (id ? '（' + id + '）' : ''),
+         c.querySelectorAll('mark.hl[data-id="' + id + '"]').length === expectMarks,
+         '实际 ' + c.querySelectorAll('mark.hl[data-id="' + id + '"]').length);
+    }
+    if (id) {
+      ok('mark 里就是命中的字（' + id + '）', norm(markText(id)) === norm(expectQuote),
+         'mark[' + norm(markText(id)).slice(0, 40) + '] quote[' + norm(expectQuote).slice(0, 40) + ']');
+    }
+  }
+
+  // 1) 段中（单文本节点）
+  draw([mk('a1', '第一个小结段落')], 1, 'a1', '第一个小结段落');
+
+  // 2) 整段
+  draw([mk('a2', '第一个小结段落。')], 1, 'a2', '第一个小结段落。');
+
+  // 3) 跨块（p → h3）：一个 id 多个 mark
+  draw([mk('a3', '第一个小结段落。 2.1 子节')], 2, 'a3', '第一个小结段落。2.1 子节');
+
+  // 4) 标题打头跨块 —— 真机踩过的形状：起点在 h2 里，块级克隆曾被插进标题
+  draw([mk('a4', '一、结论先行 记忆系统的第一处提及')], 2, 'a4', '一、结论先行记忆系统的第一处提及');
+  ok('标题仍在外层', c.querySelector('#content > h2').textContent === '一、结论先行');
+  ok('段落仍是 h2 的兄弟', c.querySelectorAll('#content > p')[0].textContent.indexOf('记忆系统的第一处提及') === 0);
+
+  // 5) 跨列表项
+  draw([mk('a5', '清单第一项，用来测跨列表项 清单第二项')], 2, 'a5', '清单第一项，用来测跨列表项清单第二项');
+
+  // 6) 跨表格行（thead/tbody 不在 BLOCK_TAGS 里，正是以前最容易被塞进 mark 的形状）
+  draw([mk('a6', '写入时机 请求期 对话后')], 3, 'a6', '写入时机请求期对话后');
+
+  // 7) 行内标记内（<strong> / <code>）与代码块内
+  draw([mk('a7', '粗体')], 1, 'a7', '粗体');
+  draw([mk('a8', '记忆系统 第三处')], 1, 'a8', '记忆系统第三处');
+
+  // 8) 有 note 挂气泡，且贴在最后一段 mark 的同一块里
+  draw([mk('a9', '第一个小结段落。 2.1 子节', '这是批注')], 2, 'a9', '第一个小结段落。2.1 子节');
+  var bub = c.querySelectorAll('span.ann-bubble[data-for="a9"]');
+  var lastMark = c.querySelectorAll('mark.hl[data-id="a9"]')[1];
+  ok('有 note 挂气泡', bub.length === 1);
+  ok('气泡贴在最后一段 mark 的同一块里', !!bub[0] && bub[0].parentElement === lastMark.parentElement);
+  draw([mk('a10', '第一个小结段落')], 1, 'a10', '第一个小结段落');
+  ok('纯划线没气泡', c.querySelectorAll('span.ann-bubble').length === 0);
+
+  // 9) 多处命中：靠前后文消歧挑对那一处
+  draw([mk('d1', '记忆系统', '', '二、对照', '的第二处')], 1, 'd1', '记忆系统');
+  var dm = c.querySelector('mark.hl[data-id="d1"]');
+  ok('多命中按前后文挑对位置', !!dm && dm.closest('p').textContent.indexOf('第二处') >= 0);
+  draw([mk('d2', '记忆系统', '', 'zzz', 'zzz')], 0);
+  ok('前后文对不上就不猜（不画）', c.querySelectorAll('mark.hl').length === 0);
+
+  // 10) 失活的不画
+  draw([mk('o1', '记忆系统', '', '', '', true)], 0);
+  ok('失活的正文里不画', c.querySelectorAll('mark.hl').length === 0);
+
+  // 11) 重叠 = 嵌套 mark（外层先画，内层后画）
+  put([mk('p1', '记忆系统的第一处', ''), mk('p2', '第一处提及', '')]);
+  ok('重叠划线 = 嵌套 mark', c.querySelectorAll('mark.hl mark.hl').length >= 1
+       && c.querySelectorAll('mark.hl[data-id="p1"] mark.hl[data-id="p2"], mark.hl[data-id="p2"] mark.hl[data-id="p1"]').length >= 1);
+  ok('重叠也不改正文文本', c.textContent === text0);
+
+  // 12) 悬停交叠处 → popover 同时列出两条，并打「重叠划线」标签
+  put([mk('p1', '记忆系统的第一处', '外批注'), mk('p2', '第一处提及', '内批注')]);
+  var nr = c.querySelector('mark.hl[data-id="p2"]').getBoundingClientRect();
+  c.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
+    clientX: nr.left + 1, clientY: nr.top + nr.height / 2 }));
+  var pv = document.getElementById('popover');
+  ok('交叠处 hover 列出全部两条 + 重叠标签',
+     pv.classList.contains('open') && pv.textContent.indexOf('外批注') >= 0
+       && pv.textContent.indexOf('内批注') >= 0 && pv.textContent.indexOf('重叠划线') >= 0);
+
+  // 13) 点击划线 → 菜单：编辑 / 复制 / 删除
+  c.querySelector('mark.hl[data-id="p1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  ok('点划线出菜单', document.getElementById('ctxmenu').classList.contains('open'));
+
+  // 14) hover 有 note 的划线 → popover 列出批注内容
+  put([mk('h1', '记忆系统的第一处', '悬停看看')]);
+  var hr = c.querySelector('mark.hl[data-id="h1"]').getBoundingClientRect();
+  c.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
+    clientX: hr.left + 2, clientY: hr.top + hr.height / 2 }));
+  ok('hover 出 popover（带 note）',
+     document.getElementById('popover').classList.contains('open')
+       && document.getElementById('popover').textContent.indexOf('悬停看看') >= 0);
+
+  // 15) 抽屉要用：滚到划线 + 闪烁；找不到不抛异常
+  window.__scrolled = [];
+  ok('scrollToAnnotation 命中并闪烁',
+     reader.scrollToAnnotation('h1') === true
+       && c.querySelector('mark.hl[data-id="h1"]').classList.contains('flash')
+       && window.__scrolled.length >= 1);
+  ok('scrollToAnnotation 未命中返回 false', reader.scrollToAnnotation('不存在') === false);
+
+  // 16) 菜单动作回传
+  c.querySelector('mark.hl[data-id="h1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  document.querySelector('#ctxmenu button[data-cact="copy"]').click();
+  ok('菜单「复制原文」回传 copy', !!last('copy') && last('copy').text.indexOf('记忆系统的第一处') >= 0);
+  c.querySelector('mark.hl[data-id="h1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  document.querySelector('#ctxmenu button[data-cact="del"]').click();
+  ok('菜单「删除」回传 delete', !!last('delete') && last('delete').id === 'h1');
+
+  // 17) 编辑批注：带上原 note、保存发 update
+  put([mk('e1', '记忆系统的第一处', '旧批注')]);
+  c.querySelector('mark.hl[data-id="e1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  document.querySelector('#ctxmenu button[data-cact="edit"]').click();
+  ok('点「编辑批注」带出原 note',
+     document.getElementById('note-editor').classList.contains('open')
+       && document.getElementById('ne-text').value === '旧批注');
+  document.getElementById('ne-text').value = '新批注';
+  document.getElementById('ne-save').click();
+  var up = last('update');
+  ok('保存发 update', !!up && up.id === 'e1' && up.note === '新批注', JSON.stringify(up));
+
+  // 18) 反复重画（抽屉/增删改都会走这条）不能把结构画坏
+  for (var i = 0; i < 3; i++) {
+    draw([mk('r1', '一、结论先行 记忆系统的第一处提及', '批注'), mk('r2', '清单第二项')], null, null, null);
+  }
+  ok('反复重画后正文文本依旧', c.textContent === text0);
+  ok('反复重画后块结构依旧',
+     c.querySelectorAll('#content p, #content h2, #content h3, #content li, #content td').length === blocks0);
+
+  // 19) 划线样式：文字底部波浪线，不铺底色
+  //     （曾经是底色高亮；mark 的 UA 默认底色是黄的，改成划线后必须显式清掉）
+  put([mk('s1', '记忆系统的第一处', '')]);
+  var sm = c.querySelector('mark.hl[data-id="s1"]');
+  var cs = getComputedStyle(sm);
+  ok('划线是下划线 + 波浪', cs.textDecorationLine.indexOf('underline') >= 0 && cs.textDecorationStyle === 'wavy');
+  ok('划线不铺底色', cs.backgroundColor === 'rgba(0, 0, 0, 0)', '实际 ' + cs.backgroundColor);
+  var probe = document.createElement('div');
+  probe.style.cssText = 'display:none;color:var(--hl)';
+  document.body.appendChild(probe);
+  var hlColor = getComputedStyle(probe).color;
+  document.body.removeChild(probe);
+  ok('线色用的是 --hl（不是 currentColor）', cs.textDecorationColor === hlColor,
+     '线 ' + cs.textDecorationColor + ' vs --hl ' + hlColor);
+  var rootCs = getComputedStyle(document.documentElement);
+  var hlBase = rootCs.getPropertyValue('--hl').trim(), hlHov = rootCs.getPropertyValue('--hl-hover').trim();
+  ok('hover 线色比常态更实', hlBase && hlHov && hlBase !== hlHov, hlBase + ' → ' + hlHov);
+  ok('popover 里没有「点击编辑」文案', document.getElementById('popover').textContent.indexOf('点击编辑') < 0);
+}
+setTimeout(function () {
+  try {
+    selectionChecks();
+    armSelectionAndMouseUp();
+    setTimeout(function () {
+      try { toolbarChecks(); } catch (e) { fails.push('工具条断言异常: ' + (e && e.message ? e.message : e)); }
+      setTimeout(function () {
+        try { annotationChecks(); } catch (e) { fails.push('划线断言异常: ' + (e && e.message ? e.message : e)); }
+        writeResult();
+      }, 0);
+    }, 0);
+  } catch (e) {
+    fails.push('选区断言异常: ' + (e && e.message ? e.message : e));
+    writeResult();
+  }
+}, 0);
 </script>
 """
 html = html.replace('</body>', tests + '</body>', 1)
@@ -189,8 +404,14 @@ open(p, 'w', encoding='utf-8').write(html)
 print('html 已生成: ' + p)
 PY
 
-DOM="$("$CHROME" --headless=new --disable-gpu --virtual-time-budget=3000 --dump-dom "file://$OUT" 2>/dev/null \
-  | python3 -c 'import sys,re; m=re.search(r"<div id=\"result\">(.*?)</div>", sys.stdin.read(), re.S); print(m.group(1) if m else "FAIL 没有拿到断言结果")')"
+read -r DOM STATS <<<"$("$CHROME" --headless=new --disable-gpu --virtual-time-budget=3000 --dump-dom "file://$OUT" 2>/dev/null \
+  | python3 -c '
+import sys, re
+h = sys.stdin.read()
+def pick(i):
+    m = re.search(r"<div id=\"" + i + r"\">(.*?)</div>", h, re.S)
+    return m.group(1) if m else ("FAIL 没有拿到断言结果" if i == "result" else "")
+print(pick("result"), pick("stats"))')"
 
-echo "结果: $DOM"
+echo "结果: ${DOM}${STATS:+（${STATS}）}"
 case "$DOM" in PASS) exit 0 ;; *) exit 1 ;; esac

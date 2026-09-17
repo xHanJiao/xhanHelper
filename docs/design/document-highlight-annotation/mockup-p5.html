@@ -28,8 +28,8 @@
   --shadow:      0 12px 34px rgba(0,0,0,.16), 0 2px 8px rgba(0,0,0,.08);
   --shadow-sm:   0 4px 14px rgba(0,0,0,.12);
 
-  --hl:           rgba(240,186,60,.38);
-  --hl-hover:     rgba(240,186,60,.58);
+  --hl:           rgba(240,186,60,.85);   /* 波浪线线色（不是底色） */
+  --hl-hover:     rgba(240,186,60,1);
   --sel:          color-mix(in srgb, var(--accent) 26%, transparent);
 
   /* 聊天气泡（对齐 ChatBubble.swift 的对话内观感） */
@@ -55,8 +55,8 @@
   --shadow-sm:   0 6px 18px rgba(0,0,0,.45);
   --win-chrome:  rgba(40,40,42,.72);
 
-  --hl:           rgba(146,200,180,.26);
-  --hl-hover:     rgba(146,200,180,.40);
+  --hl:           rgba(146,200,180,.90);
+  --hl-hover:     rgba(146,200,180,1);
   --sel:          color-mix(in srgb, var(--accent) 30%, transparent);
   --bubble-ai:    color-mix(in srgb, var(--text) 7%, transparent);
   --bubble-tool:  color-mix(in srgb, var(--text) 11%, transparent);
@@ -145,8 +145,8 @@ body.dark { background: #0B0B0C; }
 #content blockquote { margin: 14px 0; padding: 2px 0 2px 14px; border-left: 3px solid var(--border); color: var(--muted); }
 
 /* 划线 + 选区 */
-mark.hl { background: var(--hl); color: inherit; border-radius: 2px; padding: 1.5px 0; cursor: pointer; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
-mark.hl:hover { background: var(--hl-hover); }
+mark.hl { color: inherit; background: transparent; cursor: pointer; text-decoration: underline; text-decoration-style: wavy; text-decoration-color: var(--hl); text-decoration-thickness: 1.5px; text-underline-offset: 3px; text-decoration-skip-ink: none; transition: text-decoration-color .13s; }
+mark.hl:hover { text-decoration-color: var(--hl-hover); }
 mark.sel { background: var(--sel); border-radius: 2px; padding: 1.5px 0; }
 mark.hl.sel { background: var(--accent); color: var(--on-accent); }
 

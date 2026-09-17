@@ -21,7 +21,7 @@ class DocumentViewModel: ObservableObject {
     @Published var openDocument: Document?
     @Published var isDetailLoading = false
 
-    private let apiClient: APIClient
+    let apiClient: APIClient
     private var offset = 0
     private var hasMore = true
 

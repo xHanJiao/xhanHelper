@@ -30,13 +30,17 @@
   --shadow:      0 12px 34px rgba(0,0,0,.16), 0 2px 8px rgba(0,0,0,.08);
   --shadow-sm:   0 4px 14px rgba(0,0,0,.12);
 
-  --hl-light:       rgba(240,186,60,.38);
-  --hl-light-hover: rgba(240,186,60,.58);
-  --hl-dark:        rgba(146,200,180,.26);
-  --hl-dark-hover:  rgba(146,200,180,.40);
-  --hl-line:        transparent;   /* 仅"金线"变体用 */
+  /* 划线 = 文字底部波浪线（原生 text-decoration，逐行片段自动画） */
+  --hl-light:       rgba(240,186,60,.85);
+  --hl-light-hover: rgba(240,186,60,1);
+  --hl-dark:        rgba(146,200,180,.90);
+  --hl-dark-hover:  rgba(146,200,180,1);
   --hl:       var(--hl-light);
   --hl-hover: var(--hl-light-hover);
+  --wave-w:    1.5px;   /* 线粗 */
+  --wave-off:  3px;     /* 下划线偏移 */
+  --wave-skip: none;    /* auto = 遇到 g/y 等降部会断开，none = 连续 */
+  --hl-legacy: rgba(240,186,60,.38);   /* 旧的底色高亮，仅"对比"开关用 */
 
   --danger:     #FF3B30;
   --win-chrome: rgba(250,250,250,.72);
@@ -58,6 +62,7 @@
 
   --hl:       var(--hl-dark);
   --hl-hover: var(--hl-dark-hover);
+  --hl-legacy: rgba(146,200,180,.26);
 }
 
 * { box-sizing: border-box; }
@@ -242,25 +247,38 @@ body.dark, .dark body { background: #0B0B0C; }
 #content tr:nth-child(even) td { background: var(--border-soft); }
 #content hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
 
-/* ============ 划线 ============ */
+/* ============ 划线 ============
+   只画文字底部的波浪线，不铺底色：铺了底色就变成"高亮"而不是"划线"，
+   且底色跨行时会糊成一大块矩形。波浪线由引擎逐行片段绘制，跨段/跨列表天然正确。 */
 mark.hl {
-  background: var(--hl);
   color: inherit;
-  border-radius: 2px;
-  padding: 1.5px 0;
+  /* mark 的 UA 默认底色是黄色，必须显式清掉，否则"划线"底下会透出一块黄底 */
+  background: transparent;
   cursor: pointer;
-  transition: background .13s;
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
-  /* 仅"金线"变体有值：靠下划线补足深色下的划线信号，不影响排版 */
-  box-shadow: inset 0 -1.5px 0 var(--hl-line);
+  text-decoration: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--hl);
+  text-decoration-thickness: var(--wave-w);
+  text-underline-offset: var(--wave-off);
+  text-decoration-skip-ink: var(--wave-skip);
+  transition: text-decoration-color .13s;
 }
-mark.hl:hover { background: var(--hl-hover); }
+mark.hl:hover { text-decoration-color: var(--hl-hover); }
 mark.hl.flash { animation: flash 1.05s ease-out; }
 @keyframes flash {
-  0%, 30% { background: var(--accent); }
-  100% { background: var(--hl); }
+  0%, 30% { text-decoration-color: var(--accent); text-decoration-thickness: 3px; }
+  100% { text-decoration-color: var(--hl); text-decoration-thickness: var(--wave-w); }
 }
+/* 对比用：旧的底色高亮（切回来只能看观感，flash 仍是线色） */
+html.hl-legacy mark.hl {
+  text-decoration: none;
+  background: var(--hl-legacy);
+  border-radius: 2px;
+  padding: 1.5px 0;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+html.hl-legacy mark.hl:hover { background: color-mix(in srgb, var(--hl-legacy) 75%, var(--hl)); }
 
 /* 查找高亮（CSS Custom Highlight API，由 JS 驱动） */
 ::highlight(find) { background-color: rgba(255,196,0,.55); }
@@ -690,8 +708,20 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
   <button id="dev-fs-minus">A−</button>
   <button id="dev-fs-plus">A+</button>
   <div class="sep"></div>
-  <span class="lab">划线色</span>
-  <button id="dev-hl" class="on">琥珀/薄荷</button>
+  <span class="lab">样式</span>
+  <button id="dev-hl-style">波浪线</button>
+  <div class="sep"></div>
+  <span class="lab">线色</span>
+  <button id="dev-hl">琥珀/薄荷</button>
+  <div class="sep"></div>
+  <span class="lab">线粗</span>
+  <button id="dev-hl-w">1.5px</button>
+  <div class="sep"></div>
+  <span class="lab">偏移</span>
+  <button id="dev-hl-off">3px</button>
+  <div class="sep"></div>
+  <span class="lab">降部</span>
+  <button id="dev-hl-skip">不断开</button>
   <div class="sep"></div>
   <button id="dev-drawer">划线列表</button>
   <button id="dev-reset">重置</button>
@@ -993,7 +1023,7 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
       <div class="p-item">
         <div class="p-quote">${esc(a.quote)}</div>
         <div class="p-note">${esc(a.note)}</div>
-        <div class="p-foot">${multi ? '<span class="p-tag">重叠划线</span>' : ''}<span>${a.time}</span><div class="spacer"></div><span>点击编辑</span></div>
+        <div class="p-foot">${multi ? '<span class="p-tag">重叠划线</span>' : ''}<span>${a.time}</span></div>
       </div>`).join('');
     popover.classList.add('open');
     const w = popover.offsetWidth, h = popover.offsetHeight;
@@ -1130,16 +1160,16 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
   let fs = 17;
   document.getElementById('dev-fs-plus').onclick = () => { fs = Math.min(23, fs + 1); content.style.setProperty('--fs', fs + 'px'); };
   document.getElementById('dev-fs-minus').onclick = () => { fs = Math.max(13, fs - 1); content.style.setProperty('--fs', fs + 'px'); };
-  /* 划线色候选：浅色 2 种 × 深色 3 种，默认「琥珀/薄荷」 */
+  /* 划线线色候选：浅色 / 深色成对，默认「琥珀/薄荷」 */
   const HL_VARIANTS = [
-    { name: '琥珀/薄荷', light: 'rgba(240,186,60,.38)', lightHover: 'rgba(240,186,60,.58)',
-      dark:  'rgba(146,200,180,.26)', darkHover: 'rgba(146,200,180,.40)', line: 'transparent' },
-    { name: '薄荷/薄荷', light: 'rgba(47,125,99,.20)',  lightHover: 'rgba(47,125,99,.34)',
-      dark:  'rgba(146,200,180,.26)', darkHover: 'rgba(146,200,180,.40)', line: 'transparent' },
-    { name: '琥珀/金线', light: 'rgba(240,186,60,.38)', lightHover: 'rgba(240,186,60,.58)',
-      dark:  'rgba(250,190,60,.40)', darkHover: 'rgba(250,190,60,.52)', line: 'rgba(250,190,60,.85)' },
-    { name: '琥珀/暖砂', light: 'rgba(240,186,60,.38)', lightHover: 'rgba(240,186,60,.58)',
-      dark:  'rgba(214,178,120,.30)', darkHover: 'rgba(214,178,120,.44)', line: 'transparent' },
+    { name: '琥珀/薄荷', light: 'rgba(240,186,60,.85)', lightHover: 'rgba(240,186,60,1)',
+      dark:  'rgba(146,200,180,.90)', darkHover: 'rgba(146,200,180,1)' },
+    { name: '金棕/暖砂', light: 'rgba(217,154,24,.90)', lightHover: 'rgba(217,154,24,1)',
+      dark:  'rgba(214,178,120,.85)', darkHover: 'rgba(214,178,120,1)' },
+    { name: '薄荷/薄荷', light: 'rgba(47,125,99,.55)',  lightHover: 'rgba(47,125,99,.75)',
+      dark:  'rgba(146,200,180,.90)', darkHover: 'rgba(146,200,180,1)' },
+    { name: '琥珀/琥珀', light: 'rgba(240,186,60,.85)', lightHover: 'rgba(240,186,60,1)',
+      dark:  'rgba(240,186,60,.85)',  darkHover: 'rgba(240,186,60,1)' },
   ];
   const devHl = document.getElementById('dev-hl');
   let hlIdx = 0;
@@ -1149,11 +1179,37 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
     s.setProperty('--hl-light-hover', v.lightHover);
     s.setProperty('--hl-dark', v.dark);
     s.setProperty('--hl-dark-hover', v.darkHover);
-    s.setProperty('--hl-line', v.line);
     devHl.textContent = v.name;
   }
   devHl.onclick = () => { hlIdx = (hlIdx + 1) % HL_VARIANTS.length; applyHlVariant(); };
   applyHlVariant();
+
+  /* 波浪线参数：线粗 / 下划线偏移 / 降部是否断开 */
+  const WAVES = ['1px', '1.5px', '2px'], OFFS = ['2px', '3px', '4px', '5px'];
+  const devHlW = document.getElementById('dev-hl-w');
+  const devHlOff = document.getElementById('dev-hl-off');
+  const devHlSkip = document.getElementById('dev-hl-skip');
+  let wIdx = 1, offIdx = 1, skip = 'none';
+  function applyWave() {
+    const s = document.documentElement.style;
+    s.setProperty('--wave-w', WAVES[wIdx]);
+    s.setProperty('--wave-off', OFFS[offIdx]);
+    s.setProperty('--wave-skip', skip);
+    devHlW.textContent = WAVES[wIdx];
+    devHlOff.textContent = OFFS[offIdx];
+    devHlSkip.textContent = skip === 'none' ? '不断开' : '断开';
+  }
+  devHlW.onclick = () => { wIdx = (wIdx + 1) % WAVES.length; applyWave(); };
+  devHlOff.onclick = () => { offIdx = (offIdx + 1) % OFFS.length; applyWave(); };
+  devHlSkip.onclick = () => { skip = skip === 'none' ? 'auto' : 'none'; applyWave(); };
+  applyWave();
+
+  /* 与旧的底色高亮并排对比 */
+  const devStyle = document.getElementById('dev-hl-style');
+  devStyle.onclick = () => {
+    const legacy = document.documentElement.classList.toggle('hl-legacy');
+    devStyle.textContent = legacy ? '底色高亮(旧)' : '波浪线';
+  };
   document.getElementById('dev-reset').onclick = () => location.reload();
 
   /* ---------- 启动 ---------- */

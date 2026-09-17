@@ -7,7 +7,8 @@ import AppKit
 import WebKit
 import BeautifulMermaid
 
-/// 文档正文阅读器状态：Swift 侧的把手，负责往 WebView 里灌 JS 指令、收回 JS 的回话。
+/// 文档正文阅读器状态：Swift 侧的把手，负责往 WebView 里灌 JS 指令、收回 JS 的回话，
+/// 并持有服务端的划线与批注（DOM 只负责渲染，落库以服务端为准）。
 /// 由 `DocumentFullView` 持有（`@StateObject`），生命周期跟文档详情页一致。
 @MainActor
 final class DocumentReaderController: ObservableObject {
@@ -16,11 +17,23 @@ final class DocumentReaderController: ObservableObject {
     @Published private(set) var matchCount = 0
     /// 当前命中下标（0-based；-1 = 无命中）
     @Published private(set) var matchIndex = -1
+    /// 本文件的划线与批注（P4 抽屉也用这份；正文里画什么由 `reader.setAnnotations` 决定）
+    @Published private(set) var annotations: [DocumentAnnotation] = []
 
     /// 已装载内容的签名。变了才重载 —— 否则 `updateNSView` 每次都重新渲染
     /// markdown + mermaid（mermaid 是原生渲染，很贵）。
     fileprivate var loadedSignature = ""
     fileprivate weak var webView: WKWebView?
+
+    private let documentID: String
+    private let api: APIClient
+    private var hasLoadedAnnotations = false
+    private var isLoadingAnnotations = false
+
+    init(documentID: String, api: APIClient) {
+        self.documentID = documentID
+        self.api = api
+    }
 
     // MARK: - Swift → JS
 
@@ -53,18 +66,133 @@ final class DocumentReaderController: ObservableObject {
         }
     }
 
+    // MARK: - 划线与批注（服务端为准）
+
+    /// 全量重推给 JS 重画。任何增删改成功后都走这里 —— JS 不做乐观更新，
+    /// 也就没有「回滚对账」这回事：画出来的永远是服务端那一份。
+    private func pushAnnotations() {
+        guard let data = try? JSONEncoder().encode(annotations),
+              let json = String(data: data, encoding: .utf8) else { return }
+        evaluate("reader.setAnnotations(\(MarkdownWebUtils.jsString(json)))")
+    }
+
+    private func loadAnnotations() async {
+        guard !isLoadingAnnotations else { return }
+        isLoadingAnnotations = true
+        defer { isLoadingAnnotations = false }
+        do {
+            let resp = try await api.listAnnotations(documentId: documentID)
+            annotations = resp.annotations.sorted(by: Self.order)
+            hasLoadedAnnotations = true
+            pushAnnotations()
+        } catch {
+            LogBuffer.shared.error("DocumentReader 载入划线批注失败: \(error)")
+            ToastCenter.shared.show("划线批注载入失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func create(quote: String, prefix: String, suffix: String, note: String) async {
+        do {
+            let a = try await api.createAnnotation(
+                documentId: documentID, quote: quote, note: note, prefix: prefix, suffix: suffix
+            )
+            annotations.append(a)
+            annotations.sort(by: Self.order)
+            pushAnnotations()
+            if a.orphaned {
+                ToastCenter.shared.show("这段文字已不在正文里，记为「已失活」")
+            }
+        } catch {
+            LogBuffer.shared.error("DocumentReader 创建划线批注失败: \(error)")
+            ToastCenter.shared.show("添加失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func update(id: String, note: String) async {
+        do {
+            let updated = try await api.updateAnnotation(id: id, note: note)
+            if let i = annotations.firstIndex(where: { $0.id == updated.id }) {
+                annotations[i].note = updated.note
+            }
+            pushAnnotations()
+        } catch {
+            LogBuffer.shared.error("DocumentReader 更新批注失败: \(error)")
+            ToastCenter.shared.show("保存失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func remove(id: String) async {
+        do {
+            try await api.deleteAnnotation(id: id)
+            annotations.removeAll { $0.id == id }
+            pushAnnotations()
+        } catch {
+            LogBuffer.shared.error("DocumentReader 删除划线批注失败: \(error)")
+            ToastCenter.shared.show("删除失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 与服务端 `List` 的排序一致（start_offset ASC, id ASC），画线顺序才稳定
+    private static func order(_ a: DocumentAnnotation, _ b: DocumentAnnotation) -> Bool {
+        a.startOffset != b.startOffset ? a.startOffset < b.startOffset : a.id < b.id
+    }
+
+    // MARK: - JS → Swift
+
     fileprivate func apply(message: [String: Any]) {
         guard let type = message["type"] as? String else { return }
         switch type {
         case "findResult":
             matchCount = message["count"] as? Int ?? 0
             matchIndex = message["index"] as? Int ?? -1
+
         case "ready":
             // 重载前的滚动位置在这里补回去（内容被改写后重载，别把读者甩回顶部）
             if let y = pendingScrollY {
                 pendingScrollY = nil
                 evaluate("reader.restoreScrollY(\(Int(y)))")
             }
+            // 划线批注只在首次 ready 时拉一次；此后 ready（HTML 重载）直接重画进新 DOM
+            if hasLoadedAnnotations {
+                pushAnnotations()
+            } else {
+                Task { await loadAnnotations() }
+            }
+
+        case "create":
+            let quote = message["quote"] as? String ?? ""
+            guard !quote.isEmpty else { return }
+            Task {
+                await create(
+                    quote: quote,
+                    prefix: message["prefix"] as? String ?? "",
+                    suffix: message["suffix"] as? String ?? "",
+                    note: message["note"] as? String ?? ""
+                )
+            }
+
+        case "update":
+            guard let id = message["id"] as? String else { return }
+            Task { await update(id: id, note: message["note"] as? String ?? "") }
+
+        case "delete":
+            guard let id = message["id"] as? String else { return }
+            Task { await remove(id: id) }
+
+        case "ask":
+            // P5：复用 PiP 浮层承载文档问答。落点还没接，先别静默吞掉点击
+            ToastCenter.shared.show("「问 AI」将在 P5 接入")
+
+        case "copy":
+            // 剪贴板交给原生：`navigator.clipboard` 在 loadHTMLString 出来的页面里不是安全上下文，
+            // 能不能用全看运气
+            let text = message["text"] as? String ?? ""
+            guard !text.isEmpty else { return }
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(text, forType: .string)
+            ToastCenter.shared.show("已复制")
+
         default:
             print("[DocumentReader] 未知消息: \(type)")
         }
@@ -376,6 +504,160 @@ html, body {
 @media (prefers-color-scheme: dark) {
   ::selection { color: #92C8B4; background-color: transparent; }
 }
+
+/* ============ 划线批注（P3） ============
+   浮层配色沿用 mockup 被确认过的那套：--surface / --win-chrome 是中性浮层色
+   （Assets 里没有对应 colorset），其余仍从 --text / --accent 派生。 */
+:root {
+  --faint: color-mix(in srgb, var(--text) 38%, transparent);
+  --danger: #FF3B30;
+  --on-accent: #FFFFFF;
+  --surface: #FCFCFC;
+  --win-chrome: rgba(250, 250, 250, .72);
+  /* 划线 = 文字底部波浪线（原生 text-decoration，引擎逐行片段画）：
+     --hl/--hl-hover 是"线的颜色"，不是底色。想要底色高亮得另加背景。
+     线色比底色要实得多 —— 半透明线在暖米底上几乎看不见。 */
+  --hl: rgba(240, 186, 60, .85);
+  --hl-hover: rgba(240, 186, 60, 1);
+  --wave-w: 1.5px;    /* 线粗 */
+  --wave-off: 3px;    /* 下划线偏移 */
+  --wave-skip: none;  /* auto = 遇到 g/y 等降部断开，none = 连续 */
+  --shadow: 0 12px 34px rgba(0,0,0,.16), 0 2px 8px rgba(0,0,0,.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --on-accent: #141416;
+    --surface: #2C2E2D;          /* surfaceInput dark */
+    --win-chrome: rgba(40, 40, 42, .72);
+    --hl: rgba(146, 200, 180, .90);
+    --hl-hover: rgba(146, 200, 180, 1);
+    --shadow: 0 16px 40px rgba(0,0,0,.55), 0 2px 10px rgba(0,0,0,.4);
+  }
+}
+
+mark.hl {
+  color: inherit;
+  /* mark 的 UA 默认底色是黄色，必须显式清掉，否则"划线"底下会透出一块黄底 */
+  background: transparent;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--hl);
+  text-decoration-thickness: var(--wave-w);
+  text-underline-offset: var(--wave-off);
+  text-decoration-skip-ink: var(--wave-skip);
+  transition: text-decoration-color .13s;
+}
+mark.hl:hover { text-decoration-color: var(--hl-hover); }
+mark.hl.flash { animation: flash 1.05s ease-out; }
+@keyframes flash {
+  0%, 30% { text-decoration-color: var(--accent); text-decoration-thickness: 3px; }
+  100% { text-decoration-color: var(--hl); text-decoration-thickness: var(--wave-w); }
+}
+
+/* 批注气泡：只挂在一条批注的最后一段 mark 之后 */
+span.ann-bubble {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; margin-left: 3px; margin-right: 1px;
+  border-radius: 50%; background: var(--accent); color: var(--on-accent);
+  vertical-align: -2px; cursor: pointer;
+  transition: transform .13s, box-shadow .13s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.16);
+}
+span.ann-bubble svg { width: 10px; height: 10px; display: block; }
+span.ann-bubble:hover { transform: scale(1.16); }
+
+/* 浮动工具条 / 菜单 / 浮层 */
+.floating {
+  position: fixed; z-index: 60; display: none;
+  background: var(--win-chrome);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  box-shadow: var(--shadow);
+  padding: 5px;
+  gap: 2px;
+}
+.floating.open { display: flex; }
+.floating button {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  min-width: 50px; padding: 6px 8px 5px;
+  border: 0; border-radius: 8px; background: none; cursor: pointer;
+  color: var(--text); font-family: inherit; font-size: 10.5px;
+  transition: background .13s;
+}
+.floating button:hover { background: var(--accent-soft); color: var(--accent); }
+.floating button svg { width: 16px; height: 16px; }
+.floating .sep { width: 1px; background: var(--border-soft); margin: 5px 3px; }
+
+.note-editor {
+  position: fixed; z-index: 70; display: none; width: 306px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: var(--shadow);
+  padding: 12px;
+}
+.note-editor.open { display: block; }
+.note-editor .quote {
+  font-size: 11.5px; line-height: 1.55; color: var(--muted);
+  border-left: 2.5px solid var(--hl-hover);
+  padding: 1px 0 1px 9px; margin-bottom: 9px;
+  max-height: 62px; overflow: hidden;
+}
+.note-editor textarea {
+  width: 100%; height: 84px; resize: none;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); color: var(--text);
+  padding: 8px 10px; font-size: 12.5px; line-height: 1.6;
+  font-family: inherit; outline: none;
+}
+.note-editor textarea:focus { border-color: var(--accent); background: var(--surface); }
+.note-editor .foot { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+.note-editor .foot .spacer { flex: 1; }
+.note-editor .hint { font-size: 10.5px; color: var(--faint); }
+.btn {
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  font-family: inherit; font-size: 12px; padding: 5px 12px; border-radius: 7px; cursor: pointer;
+  transition: background .13s;
+}
+.btn:hover { background: var(--border-soft); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 500; }
+.btn.primary:hover { filter: brightness(1.08); }
+
+.popover {
+  position: fixed; z-index: 65; display: none; max-width: 340px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 11px; box-shadow: var(--shadow); padding: 11px 13px;
+}
+.popover.open { display: block; }
+.popover .p-quote {
+  font-size: 11.5px; line-height: 1.55; color: var(--muted);
+  border-left: 2.5px solid var(--hl-hover); padding-left: 9px; margin-bottom: 8px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.popover .p-note { font-size: 13px; line-height: 1.68; color: var(--text); white-space: pre-wrap; }
+.popover .p-foot { margin-top: 9px; font-size: 10.5px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+.popover .p-item + .p-item { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
+.popover .p-tag { font-size: 10px; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 20px; }
+
+.ctxmenu {
+  position: fixed; z-index: 72; display: none; min-width: 158px;
+  background: var(--win-chrome);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: var(--shadow); padding: 5px;
+}
+.ctxmenu.open { display: block; }
+.ctxmenu button {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  border: 0; background: none; font-family: inherit; font-size: 12.5px;
+  color: var(--text); padding: 6px 9px; border-radius: 6px; cursor: pointer; text-align: left;
+}
+.ctxmenu button:hover { background: var(--accent-soft); color: var(--accent); }
+.ctxmenu button svg { width: 14px; height: 14px; opacity: .8; }
+.ctxmenu button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.ctxmenu hr { border: 0; border-top: 1px solid var(--border-soft); margin: 4px 6px; }
 </style>
 </head>
 <body>
@@ -384,6 +666,57 @@ html, body {
   <div class="doc-tags">__TAGS_HTML__</div>
   <hr class="doc-rule">
   <div id="content"></div>
+</div>
+
+<!-- 选区工具条 / 批注浮层 / hover popover / 点击菜单：都在 HTML 里，
+     跟着选区坐标走（`.ui` 类用来把「点浮层」和「点正文」区分开） -->
+<div class="floating ui" id="toolbar">
+  <button data-act="hl">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="M14.5 4.5l5 5L11 18H6v-5z"/></svg>
+    划线
+  </button>
+  <button data-act="note">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a7 7 0 0 1-7 7H9l-4.2 2.6L6 17.5A7 7 0 1 1 20 12z"/></svg>
+    批注
+  </button>
+  <div class="sep"></div>
+  <button data-act="copy">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+    复制
+  </button>
+  <button data-act="ask">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 4.4 4.4 1.7-4.4 1.7L12 15.7l-1.7-4.4L5.9 9.6l4.4-1.7z"/><path d="M18.6 15.4l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z"/></svg>
+    问 AI
+  </button>
+</div>
+
+<div class="note-editor ui" id="note-editor">
+  <div class="quote" id="ne-quote"></div>
+  <textarea id="ne-text" placeholder="写点什么…"></textarea>
+  <div class="foot">
+    <span class="hint">⌘↵ 保存</span>
+    <div class="spacer"></div>
+    <button class="btn" id="ne-cancel">取消</button>
+    <button class="btn primary" id="ne-save">保存为纯划线</button>
+  </div>
+</div>
+
+<div class="popover ui" id="popover"></div>
+
+<div class="ctxmenu ui" id="ctxmenu">
+  <button data-cact="edit">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+    <span id="cact-edit-label">编辑批注</span>
+  </button>
+  <button data-cact="copy">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+    复制原文
+  </button>
+  <hr>
+  <button data-cact="del" class="danger">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>
+    删除划线
+  </button>
 </div>
 <script>
 __MARKED_JS__
@@ -398,16 +731,38 @@ var reader = (function () {
     try { window.webkit.messageHandlers.reader.postMessage(payload); } catch (e) {}
   }
 
+  var BLOCK_TAGS = { P: 1, DIV: 1, H1: 1, H2: 1, H3: 1, H4: 1, H5: 1, H6: 1,
+                     UL: 1, OL: 1, LI: 1, BLOCKQUOTE: 1, PRE: 1, TABLE: 1,
+                     TR: 1, TD: 1, TH: 1, FIGURE: 1, HR: 1 };
+
+  /* 文本节点所属的最近块级祖先（到 #content 为止）。 */
+  function blockOf(node) {
+    var el = node.nodeType === 1 ? node : node.parentNode;
+    while (el && el !== content) {
+      if (el.nodeType === 1 && BLOCK_TAGS[el.tagName]) return el;
+      el = el.parentNode;
+    }
+    return content;
+  }
+
   /* 把 #content 拍平成一条字符串 + 文本节点的偏移索引。
-     查找与划线都靠它做「字符串下标 → DOM Range」的换算。 */
+     查找与划线都靠它做「字符串下标 → DOM Range」的换算。
+
+     块边界补一个 '\n'：marked 渲染出的 `<p>a</p><p>b</p>` 拍平后是 "ab"，
+     而跨段选区的 quote 在服务端是 "a b"（空白折叠成单空格）—— 不补分隔符，
+     跨段划线在 DOM 里根本搜不到。补上后两边投影到同一空间。 */
   function flatten() {
     var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null);
     var nodes = [];
     var text = '';
+    var lastBlock = null;
     var n;
     while ((n = walker.nextNode())) {
+      var block = blockOf(n);
+      if (lastBlock && block !== lastBlock) text += '\n';
       nodes.push({ node: n, start: text.length });
       text += n.nodeValue;
+      lastBlock = block;
     }
     return { nodes: nodes, text: text };
   }
@@ -441,6 +796,470 @@ var reader = (function () {
   }
 
   /* 选区不着色：交给引擎（原因见 CSS 里 ::selection 那段），所以这里没有 selectionchange 监听 */
+
+  /* ============ 划线与批注 ============
+     服务端是唯一事实：Swift 每次增删改成功后全量重推列表，这里只按
+     quote + 前后文重新定位并包 <mark>。所以既没有乐观更新，也没有回滚对账。 */
+  var annotations = [];
+  var BUBBLE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a7 7 0 0 1-7 7H9l-4.2 2.6L6 17.5A7 7 0 1 1 20 12z"/></svg>';
+  var MD_MARKERS = /[*_`~|\[\]]/g;
+
+  /* 文本投影，与服务端 project 对齐：丢 Markdown 行内标记与行首块标记，空白折叠成单空格。
+     客户端的 haystack 是 DOM 文本（本来没有标记），但 quote / prefix / suffix 可能是
+     服务端从源文截的快照（带标记），两边要能对上就得投到同一空间。 */
+  function fold(s) {
+    return String(s || '')
+      .replace(/^[ \t]*[#>\-+*]+[ \t]+/gm, '')
+      .replace(/^[ \t]*[0-9]+[.)][ \t]+/gm, '')
+      .replace(MD_MARKERS, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /* DOM 文本的投影版 + 「投影下标 → 拍平下标」映射 */
+  function normalized() {
+    var flat = flatten();
+    var out = '';
+    var map = [];
+    var prevSpace = true;
+    for (var i = 0; i < flat.text.length; i++) {
+      var ch = flat.text.charAt(i);
+      if (ch === ' ' || ch === '\n' || ch === '\t' || ch === '\r' || ch === '\u3000') {
+        if (!prevSpace) { out += ' '; map.push(i); prevSpace = true; }
+        continue;
+      }
+      out += ch; map.push(i); prevSpace = false;
+    }
+    return { text: out, toFlat: map, flat: flat };
+  }
+
+  function commonTail(a, b) {
+    var n = 0;
+    while (n < a.length && n < b.length && a.charAt(a.length - 1 - n) === b.charAt(b.length - 1 - n)) n++;
+    return n;
+  }
+
+  function commonHead(a, b) {
+    var n = 0;
+    while (n < a.length && n < b.length && a.charAt(n) === b.charAt(n)) n++;
+    return n;
+  }
+
+  /* 客户端定位：只复刻服务端 rung 1 + rung 2（design §4.4）。
+     rung 3 的夹逼不做 —— 服务端夹逼成功时已经把 quote 刷成新文本，整段查找即可命中。
+     分不出时返回 null：不画、也不改任何状态（orphan 由服务端唯一裁定）。 */
+  function locate(quote, prefix, suffix) {
+    var needle = fold(quote);
+    if (!needle) return null;
+    var norm = normalized();
+    var hay = norm.text;
+    var hits = [];
+    var at = hay.indexOf(needle);
+    while (at !== -1) {
+      hits.push(at);
+      if (hits.length > 64) return null;   /* 复读机文档：服务端也放弃消歧，这里不猜 */
+      at = hay.indexOf(needle, at + needle.length);
+    }
+    if (!hits.length) return null;
+
+    var pre = fold(prefix);
+    var suf = fold(suffix);
+    var best = hits[0];
+    if (hits.length > 1 && (pre.length || suf.length)) {
+      var need = Math.floor((pre.length + suf.length) * 0.5);
+      var bestScore = -1;
+      for (var i = 0; i < hits.length; i++) {
+        var h = hits[i];
+        var score = 2 * commonTail(pre, hay.slice(0, h)) + 2 * commonHead(suf, hay.slice(h + needle.length));
+        if (score > bestScore) { bestScore = score; best = h; }
+      }
+      if (bestScore < need) return null;
+    }
+    /* 返回拍平文本上的区间（不是 Range）：画的时候要逐文本节点切，
+       拍平下标里本来就有「哪个节点、从第几个字」的信息，省掉一轮 Range 反解。 */
+    return { flat: norm.flat, start: norm.toFlat[best], end: norm.toFlat[best + needle.length - 1] + 1 };
+  }
+
+  function annotationById(id) {
+    for (var i = 0; i < annotations.length; i++) if (annotations[i].id === id) return annotations[i];
+    return null;
+  }
+
+  /* 擦掉全部划线：气泡先删，再把每个 mark 拆回成它的子节点，最后归一化文本节点。
+     重画走「全擦全画」而不是增量修补 —— 一条批注跨几个块、与别的批注重叠时，
+     增量修补的状态机很难对，全擦全画只依赖服务端那一份。 */
+  function unwrapAll() {
+    var bubbles = content.querySelectorAll('span.ann-bubble');
+    for (var i = 0; i < bubbles.length; i++) {
+      if (bubbles[i].parentNode) bubbles[i].parentNode.removeChild(bubbles[i]);
+    }
+    var marks = content.querySelectorAll('mark.hl');
+    for (var j = 0; j < marks.length; j++) {
+      var m = marks[j];
+      var parent = m.parentNode;
+      if (!parent) continue;
+      while (m.firstChild) parent.insertBefore(m.firstChild, m);
+      parent.removeChild(m);
+    }
+    content.normalize();
+  }
+
+  /* 把命中的区间包成 mark：**逐文本节点切，一点块结构都不动**。
+     一个 id 可以落在多个 mark 上（跨块），重叠时后画的 mark 自然嵌在前一个里面。
+
+     别改回 `range.extractContents()` + `insertNode()` 那套（mockup 里的写法，在 Chrome 下
+     看着正常）：跨块时它会给被部分包含的块级元素造克隆，再把克隆插到 range 起点 ——
+     起点若在 `<h2>` 里就变成「标题里套列表」，表格行更是被整段塞进 `<mark>`，都是非法
+     内容模型，WebKit 于是少画几个字或把整段行重组（真机踩过：划完字消失、bullet 被拆成
+     两条、气泡另起一行）。而且那坨克隆不是 mark，`unwrapAll()` 擦不掉，坏结构会一直留着。
+     逐文本节点包是唯一不碰结构的路子，标题/列表/表格/pre 全部天然安全。 */
+  function wrapSpan(flat, start, end, ann) {
+    var marks = [];
+    for (var i = 0; i < flat.nodes.length; i++) {
+      var item = flat.nodes[i];
+      var len = item.node.nodeValue.length;
+      var from = Math.max(0, start - item.start);
+      var to = Math.min(len, end - item.start);
+      if (to <= from) continue;            /* 不相交（含首尾擦边） */
+      /* 块之间的换行是独立文本节点：包一层 mark 只是徒增段数，还会把气泡顶到空行上 */
+      if (!item.node.nodeValue.slice(from, to).trim()) continue;
+
+      var target = item.node;
+      /* splitText 把后半截留给新节点：先切尾、再切头，偏移才不会互相影响 */
+      if (to < len) target.splitText(to);
+      if (from > 0) target = target.splitText(from);
+
+      var m = document.createElement('mark');
+      m.className = 'hl';
+      m.dataset.id = ann.id;
+      target.parentNode.insertBefore(m, target);
+      m.appendChild(target);
+      marks.push(m);
+    }
+
+    /* 气泡只挂在最后一段，避免每段都挂一个 */
+    if (ann.note && marks.length) {
+      var b = document.createElement('span');
+      b.className = 'ann-bubble ui';
+      b.dataset.for = ann.id;
+      b.title = '查看批注';
+      b.innerHTML = BUBBLE_SVG;
+      marks[marks.length - 1].after(b);
+    }
+    return marks;
+  }
+
+  function redrawAnnotations() {
+    unwrapAll();
+    for (var i = 0; i < annotations.length; i++) {
+      var a = annotations[i];
+      if (a.orphaned) continue;      /* 失活的不画（P4 抽屉里可见、可重挂） */
+      var hit = locate(a.quote, a.prefix, a.suffix);
+      if (!hit) continue;            /* 客户端找不到就不画：不报错，也不动服务端状态 */
+      wrapSpan(hit.flat, hit.start, hit.end, a);
+    }
+  }
+
+  /* Swift 每次增删改成功后调用（全量替换） */
+  function setAnnotations(json) {
+    try { annotations = JSON.parse(json) || []; } catch (e) { annotations = []; }
+    redrawAnnotations();
+  }
+
+  function scrollToAnnotation(id) {
+    var marks = content.querySelectorAll('mark.hl[data-id="' + id + '"]');
+    if (!marks.length) return false;
+    marks[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    for (var i = 0; i < marks.length; i++) {
+      marks[i].classList.remove('flash');
+      void marks[i].offsetWidth;
+      marks[i].classList.add('flash');
+    }
+    return true;
+  }
+
+  /* ---------- 选区 → 工具条 ---------- */
+  var toolbar = document.getElementById('toolbar');
+  var editor = document.getElementById('note-editor');
+  var neQuote = document.getElementById('ne-quote');
+  var neText = document.getElementById('ne-text');
+  var neSave = document.getElementById('ne-save');
+  var popover = document.getElementById('popover');
+  var ctxmenu = document.getElementById('ctxmenu');
+  var pendingRange = null;
+  var editingId = null;
+  var ctxTargetId = null;
+  var hideTimer = null;
+  var hoverKey = '';
+
+  /* DOM 位置 → 拍平文本下标。选区的 start/endContainer 通常是文本节点；
+     整块被选中时才是元素容器 —— 那时取「容器内 child 之前的最后一个文本节点」。 */
+  function flatOffset(flat, container, offset) {
+    for (var i = 0; i < flat.nodes.length; i++) {
+      if (flat.nodes[i].node === container) return flat.nodes[i].start + offset;
+    }
+    var child = container.childNodes ? (container.childNodes[offset] || null) : null;
+    var best = null;
+    for (var j = 0; j < flat.nodes.length; j++) {
+      var item = flat.nodes[j];
+      if (!container.contains(item.node)) continue;
+      if (child && (child.compareDocumentPosition(item.node) & Node.DOCUMENT_POSITION_FOLLOWING)) break;
+      best = item;
+    }
+    if (best) return best.start + best.node.nodeValue.length;
+    for (var k = 0; k < flat.nodes.length; k++) {
+      if (container.contains(flat.nodes[k].node)) return flat.nodes[k].start;
+    }
+    return 0;
+  }
+
+  /* 选区 → 服务端要的四元组。prefix/suffix 只当消歧提示（服务端优先用它而非快照），
+     所以直接取拍平文本里紧邻选区的各 60 字。 */
+  function selectionInfo(range) {
+    var flat = flatten();
+    var start = flatOffset(flat, range.startContainer, range.startOffset);
+    var end = flatOffset(flat, range.endContainer, range.endOffset);
+    if (end < start) { var t = start; start = end; end = t; }
+    return {
+      quote: fold(flat.text.slice(start, end)),
+      prefix: flat.text.slice(Math.max(0, start - 60), start),
+      suffix: flat.text.slice(end, end + 60)
+    };
+  }
+
+  document.addEventListener('mouseup', function (e) {
+    if (e.target.closest && e.target.closest('.ui')) return;
+    setTimeout(function () {
+      var sel = window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount) { hideToolbar(); return; }
+      var range = sel.getRangeAt(0);
+      if (!content.contains(range.commonAncestorContainer)) { hideToolbar(); return; }
+      if (!sel.toString().trim()) { hideToolbar(); return; }
+      pendingRange = range.cloneRange();
+      showToolbar(range);
+    }, 0);
+  });
+
+  document.addEventListener('mousedown', function (e) {
+    if (e.target.closest && e.target.closest('.ui')) return;
+    hidePopover();
+    if (!(e.target.closest && e.target.closest('mark.hl, .ann-bubble'))) hideCtx();
+  });
+
+  window.addEventListener('scroll', function () { hideAll(); hidePopover(); }, true);
+
+  toolbar.addEventListener('mousedown', function (e) { e.preventDefault(); });
+
+  function showToolbar(range) {
+    var rects = range.getClientRects();
+    var r = rects.length ? rects[rects.length - 1] : range.getBoundingClientRect();
+    toolbar.classList.add('open');
+    var tw = toolbar.offsetWidth, th = toolbar.offsetHeight;
+    var left = r.right - tw;
+    var top = r.top - th - 9;
+    if (top < 8) top = r.bottom + 9;
+    left = Math.max(10, Math.min(left, window.innerWidth - tw - 10));
+    toolbar.style.left = left + 'px';
+    toolbar.style.top = top + 'px';
+  }
+
+  toolbar.addEventListener('click', function (e) {
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    var act = btn.dataset.act;
+    if (act === 'hl') { createFromSelection(''); return; }
+    if (act === 'note') { openEditor(null); return; }
+    if (act === 'copy') {
+      if (pendingRange) post({ type: 'copy', text: pendingRange.toString() });
+      clearSel(); hideAll();
+      return;
+    }
+    if (act === 'ask') {
+      if (pendingRange) post({ type: 'ask', quote: fold(pendingRange.toString()) });
+      clearSel(); hideAll();
+    }
+  });
+
+  /* 服务端锚定成功后会回推整份列表，划线由 redrawAnnotations 定位画出 —— 
+     这里只负责把选区告诉 Swift（不在原地包 mark，免得客户端与服务端各画一份）。 */
+  function createFromSelection(note) {
+    if (!pendingRange) return;
+    var info = selectionInfo(pendingRange);
+    if (!info.quote) return;
+    post({ type: 'create', quote: info.quote, prefix: info.prefix, suffix: info.suffix, note: note });
+    clearSel(); hideAll();
+  }
+
+  /* ---------- 批注输入浮层 ---------- */
+  function updateSaveLabel() {
+    neSave.textContent = neText.value.trim() ? '保存批注' : '保存为纯划线';
+  }
+
+  function anchorRect(id) {
+    if (id) {
+      var m = content.querySelector('mark.hl[data-id="' + id + '"]');
+      if (m) return m.getBoundingClientRect();
+    }
+    if (pendingRange) {
+      var rects = pendingRange.getClientRects();
+      return rects.length ? rects[rects.length - 1] : pendingRange.getBoundingClientRect();
+    }
+    return null;
+  }
+
+  function openEditor(id) {
+    editingId = id;
+    var a = id ? annotationById(id) : null;
+    if (id) {
+      neQuote.textContent = a ? a.quote : '';
+      neText.value = a ? a.note : '';
+    } else {
+      neQuote.textContent = pendingRange ? fold(pendingRange.toString()).slice(0, 160) : '';
+      neText.value = '';
+    }
+    updateSaveLabel();
+
+    editor.classList.add('open');
+    var anchor = anchorRect(id);
+    var w = editor.offsetWidth, h = editor.offsetHeight;
+    var left = anchor ? anchor.left : 40;
+    var top = anchor ? anchor.bottom + 10 : 140;
+    left = Math.max(12, Math.min(left, window.innerWidth - w - 12));
+    if (top + h > window.innerHeight - 16) top = Math.max(12, (anchor ? anchor.top : 200) - h - 10);
+    editor.style.left = left + 'px';
+    editor.style.top = top + 'px';
+    neText.focus();
+  }
+
+  neSave.addEventListener('click', function () {
+    var v = neText.value.trim();
+    editor.classList.remove('open');
+    if (editingId) {
+      post({ type: 'update', id: editingId, note: v });
+      editingId = null;
+    } else {
+      createFromSelection(v);
+    }
+    clearSel(); hideAll();
+  });
+
+  document.getElementById('ne-cancel').addEventListener('click', function () {
+    editor.classList.remove('open');
+    editingId = null;
+    clearSel(); hideAll();
+  });
+
+  neText.addEventListener('input', updateSaveLabel);
+  neText.addEventListener('keydown', function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); neSave.click(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); document.getElementById('ne-cancel').click(); }
+  });
+
+  /* ---------- hover：划线 / 气泡 → popover（重叠时列出全部） ---------- */
+  content.addEventListener('mousemove', function (e) {
+    var els = document.elementsFromPoint(e.clientX, e.clientY);
+    var ids = [];
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (!el.matches || !(el.matches('mark.hl') || el.matches('.ann-bubble'))) continue;
+      var id = el.dataset.id || el.dataset.for;
+      if (id && ids.indexOf(id) === -1) ids.push(id);
+    }
+    var items = [];
+    for (var j = 0; j < ids.length; j++) {
+      var a = annotationById(ids[j]);
+      if (a && a.note) items.push(a);
+    }
+    var key = items.map(function (a) { return a.id; }).join(',');
+    if (key === hoverKey) return;
+    hoverKey = key;
+    if (!items.length) { scheduleHidePopover(); return; }
+    showPopover(items, e.clientX, e.clientY);
+  });
+
+  content.addEventListener('mouseleave', function () { hoverKey = ''; scheduleHidePopover(); });
+  popover.addEventListener('mouseenter', function () { clearTimeout(hideTimer); });
+  popover.addEventListener('mouseleave', function () { scheduleHidePopover(); });
+
+  function scheduleHidePopover() {
+    hoverKey = '';
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(function () { hidePopover(); }, 140);
+  }
+
+  function hidePopover() { popover.classList.remove('open'); }
+
+  function esc(s) {
+    return String(s || '').replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function timeStr(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    var p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  function showPopover(items, x, y) {
+    clearTimeout(hideTimer);
+    var multi = items.length > 1;
+    var html = '';
+    for (var i = 0; i < items.length; i++) {
+      var a = items[i];
+      html += '<div class="p-item">'
+        + '<div class="p-quote">' + esc(a.quote) + '</div>'
+        + '<div class="p-note">' + esc(a.note) + '</div>'
+        + '<div class="p-foot">' + (multi ? '<span class="p-tag">重叠划线</span>' : '')
+        + '<span>' + timeStr(a.created_at) + '</span></div>'
+        + '</div>';
+    }
+    popover.innerHTML = html;
+    popover.classList.add('open');
+    var w = popover.offsetWidth, h = popover.offsetHeight;
+    var left = Math.max(10, Math.min(x + 14, window.innerWidth - w - 10));
+    var top = y + 18;
+    if (top + h > window.innerHeight - 16) top = Math.max(10, y - h - 14);
+    popover.style.left = left + 'px';
+    popover.style.top = top + 'px';
+  }
+
+  /* ---------- 点击划线 → 菜单 ---------- */
+  content.addEventListener('click', function (e) {
+    var sel = window.getSelection();
+    if (sel && !sel.isCollapsed && sel.toString().trim()) return;   /* 正在选词 */
+    var t = e.target.closest ? e.target.closest('mark.hl, .ann-bubble') : null;
+    if (!t) { hideCtx(); return; }
+    ctxTargetId = t.dataset.id || t.dataset.for;
+    var a = annotationById(ctxTargetId);
+    document.getElementById('cact-edit-label').textContent = (a && a.note) ? '编辑批注' : '添加批注';
+    ctxmenu.classList.add('open');
+    var w = ctxmenu.offsetWidth, h = ctxmenu.offsetHeight;
+    var left = Math.max(10, Math.min(e.clientX, window.innerWidth - w - 10));
+    var top = e.clientY + 6;
+    if (top + h > window.innerHeight - 16) top = Math.max(10, e.clientY - h - 6);
+    ctxmenu.style.left = left + 'px';
+    ctxmenu.style.top = top + 'px';
+    hidePopover();
+  });
+
+  ctxmenu.addEventListener('click', function (e) {
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    var act = btn.dataset.cact;
+    var id = ctxTargetId;
+    var a = annotationById(id);
+    hideCtx();
+    if (act === 'edit') { openEditor(id); return; }
+    if (act === 'copy') { post({ type: 'copy', text: a ? a.quote : '' }); return; }
+    if (act === 'del') { post({ type: 'delete', id: id }); }
+  });
+
+  function hideCtx() { ctxmenu.classList.remove('open'); }
+  function clearSel() { var s = window.getSelection(); if (s) s.removeAllRanges(); }
+  function hideToolbar() { toolbar.classList.remove('open'); }
+  function hideAll() { hideToolbar(); hideCtx(); }
 
   function scrollToCurrent() {
     if (findIdx < 0 || findIdx >= findRanges.length) return;
@@ -539,7 +1358,9 @@ var reader = (function () {
     clearFind: clearFind,
     scrollToHeading: scrollToHeading,
     setFontSize: setFontSize,
-    restoreScrollY: restoreScrollY
+    restoreScrollY: restoreScrollY,
+    setAnnotations: setAnnotations,
+    scrollToAnnotation: scrollToAnnotation
   };
 })();
 </script>

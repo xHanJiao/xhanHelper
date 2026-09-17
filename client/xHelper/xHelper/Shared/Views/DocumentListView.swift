@@ -12,6 +12,7 @@ struct DocumentListView: View {
             if let doc = viewModel.openDocument {
                 DocumentFullView(
                     document: doc,
+                    apiClient: viewModel.apiClient,
                     canGoPrevious: viewModel.canGoPrevious,
                     canGoNext: viewModel.canGoNext,
                     isLoadingNeighbor: viewModel.isLoadingMore,
@@ -427,12 +428,33 @@ private func extractHeadings(_ markdown: String) -> [TOCItem] {
 
 private struct DocumentFullView: View {
     let document: Document
+    let apiClient: APIClient
     let canGoPrevious: Bool
     let canGoNext: Bool
     let isLoadingNeighbor: Bool
     /// offset：-1 上一篇 / +1 下一篇
     let onNavigate: (Int) -> Void
     let onBack: () -> Void
+
+    init(document: Document,
+         apiClient: APIClient,
+         canGoPrevious: Bool,
+         canGoNext: Bool,
+         isLoadingNeighbor: Bool,
+         onNavigate: @escaping (Int) -> Void,
+         onBack: @escaping () -> Void) {
+        self.document = document
+        self.apiClient = apiClient
+        self.canGoPrevious = canGoPrevious
+        self.canGoNext = canGoNext
+        self.isLoadingNeighbor = isLoadingNeighbor
+        self.onNavigate = onNavigate
+        self.onBack = onBack
+        #if os(macOS)
+        // 阅读器把手跟着文档走（外层 `.id(doc.id)` 保证换篇就重建）
+        _reader = StateObject(wrappedValue: DocumentReaderController(documentID: document.id, api: apiClient))
+        #endif
+    }
 
     private var tocItems: [TOCItem] {
         extractHeadings(document.content)
@@ -560,8 +582,8 @@ private struct DocumentFullView: View {
     }
 
     #if os(macOS)
-    /// WebView 阅读器把手
-    @StateObject private var reader = DocumentReaderController()
+    /// WebView 阅读器把手（在 `init` 里按文档构造）
+    @StateObject private var reader: DocumentReaderController
     /// 正文字号跟随全局字号设置。scaledSize 是计算属性，靠 @Published scale 触发重算。
     @ObservedObject private var fontManager = FontSizeManager.shared
 

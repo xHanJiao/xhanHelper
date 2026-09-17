@@ -374,7 +374,7 @@ JS → Swift（`WKScriptMessageHandler`，沿用 `XHWebViewBridge` 的命名与�
 
 - `mouseup` 出工具条，光标离开选区且不 hover 工具条则收起（需要 `hideToolbar` / `hideAll` 两层，别用一个 —— 一轮里踩过 mouseup/click 竞态）
 - 工具条 4 个动作：**划线** / **批注** / **复制** / **问 AI**
-- 跨块选区：对 `range.extractContents()` 后的每个块分别包 `mark`，**共享同一个 `data-id`**（一个批注 = 多个 `<mark>`）
+- 跨块选区：对 `range.extractContents()` 后的每个块分别包 `mark`，**共享同一个 `data-id`**（一个批注 = 多个 `<mark>`）。注意 P3 实现里包的是**重新定位得到**的 range，不是用户那个活选区（见「P3 完成情况」第 1 条）
 - 跨表格 / 跨代码围栏：不支持，工具条降级为只有「复制」
 
 ### 8.2 绘制划线
@@ -385,9 +385,11 @@ JS 里维护 `id → [{mark}]`。定位流程：
 1) 把 #content 的文本节点拍平成一条字符串 + 节点偏移索引（一次，缓存）
 2) 精确 indexOf(quote) → 失败则投影后 indexOf（与 §4.3 同样两条 rung）；
    多处 → prefix/suffix 打分（前后文取服务端回传的字段）
-3) 命中区间 → 按文本节点边界切成 N 段，每段 wrap 一个 <mark class="hl" data-id>
+3) 命中区间 → 按文本节点边界切成 N 段，每段 wrap 一个 `<mark class="hl" data-id>`
 4) 未命中 → 不画，不报错
 ```
+
+**第 3 步只能逐文本节点包，不许用 `range.extractContents()` + `insertNode()` 搬 DOM**（mockup 里就是那么写的，Chrome 下看着正常）。真机踩过：跨块时 `extractContents` 会给被部分包含的块级元素造**克隆**，再把克隆插到 range 起点 —— 起点在 `<h2>` 里就变成「标题里套列表」，表格行（`thead`/`tbody` 不在 `BLOCK_TAGS` 里）更是被整段塞进 `<mark>`，都是非法内容模型，WebKit 于是少画几个字或把整段行重组（用户报的「划完字消失了一部分」「bullet 被拆成两条、气泡另起一行」）。那坨克隆不是 mark，`unwrapAll()` 也擦不掉。逐文本节点包（`splitText` + 各自 `insertBefore`）结构一点不动，标题/列表/表格/`pre` 全都天然安全。
 
 批注气泡：只挂在**最后一段** `mark` 之后（`::after` 或内联 `<span class="hl-bubble">`），避免每段都挂一个。
 
@@ -440,7 +442,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 |---|---|---|
 | **P1 服务端** ✅ | 模型 + migration + 5 个 API + `list_annotations` + `update_document` 影响报告 + 重定位算法单测 | 见下「P1 完成情况」 |
 | **P2 WebView 阅读器** ✅ | `DocumentReaderView` 替换 `readingContent`；目录跳转改走 JS；查找改走 JS；主题/字号联动 | 见下「P2 完成情况」；真机验收待用户 |
-| **P3 划线批注交互** | 选区工具条 / 绘制 / hover / 点击菜单 / 批注浮层 / 创建-编辑-删除回传 | 真机：跨段落划线、重叠划线、批注增删改 |
+| **P3 划线批注交互** ✅ | 选区工具条 / 绘制 / hover / 点击菜单 / 批注浮层 / 创建-编辑-删除回传 | 见下「P3 完成情况」；真机验收待用户 |
 | **P4 抽屉 + orphan** | SwiftUI 抽屉三 tab + 滚动定位 + 重新定位流程 | 真机：改标题制造 orphan，灰态可见可重挂 |
 | **P5 问 AI** | 复用 PiP 承载文档问答：轻量进 PiP / `doc_quote` 注入 / `brief_answer` 长度约束 / 引用条 / 底部「存为批注」窄条 | 见 §十二。**服务端 + 客户端 `brief_answer` 开关已完成**，其余待 P2/P3 |
 
@@ -521,7 +523,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
   2. **偶发地不消失**（用户报「点别处不取消，再等等又没了」）：探针显示**我们的簿记是对的**（折叠后 `hasSel=false`、折叠后的截图也确实干净），所以不是逻辑错，而是 **JS 没有「选区此刻是否可见」这个查询** —— 引擎把选区标成不可见（例如失焦）而 `getSelection()` 仍返回那个非折叠 range 时，自绘的色带就只能赖在那儿，等某次重绘才掉。
 - **结论：把选区交回引擎，只改字形颜色**（`::selection { color: #2F7D63 }`，深色 `#92C8B4`，`background-color: transparent` 必须留）。两个问题一起消失：引擎自己知道选区可不可见；跨块大矩形只在填底时才出现，不填底就没有。代价是失去色带、只剩字形变色 —— 用户看过浅/深截图后拍的这个取舍。**自绘那套（`paintSelection` + `::highlight(sel)`）已删除，别再往回加**；要往回加，先跑 `snapshot-reader.sh` 看 `nested` 和 `after-collapse*` 这两张。 这也**反证了 P3 的划线要用真 DOM `<mark>`**（§7 原计划就是这么定的）：`<mark>` 是元素背景，不走引擎那套 range 矩形/失效机制，这两个坑都碰不到 —— 别为了「不改 DOM」把 P3 优化成 `::highlight(annotation)`。
 
-**自查脚本 `check-reader-html.sh`**：模板与 JS 是嵌在 Swift 源码里的一大块字符串，`swiftc -typecheck` 只能证明它是个合法字符串，证明不了里面的 JS 能跑。脚本用正则把模板**从 Swift 源文件里抠出来**（所以不存在副本漂移），灌进 headless Chrome，断言 29 条：渲染（标题/表格/代码块/行内代码/mermaid 占位替换成 data URI/透明底/`--fs` 生效）、查找（计数、`CSS.highlights` 大小、next/prev 回绕、无命中、清空）、选区（不自绘 / 原生选区可用 / `::selection` 不铺底且 color 不写 `var()`）、目录跳转（同名标题靠 occurrence 区分、按级别匹配）、`setFontSize`。JS→Swift 的 `postMessage` 在 harness 里被换成一个收集器，`scrollIntoView` 被换成一个记录器，于是这两件本来异步的事都变成同步可断言。
+**自查脚本 `check-reader-html.sh`**：模板与 JS 是嵌在 Swift 源码里的一大块字符串，`swiftc -typecheck` 只能证明它是个合法字符串，证明不了里面的 JS 能跑。脚本用正则把模板**从 Swift 源文件里抠出来**（所以不存在副本漂移），灌进 headless Chrome，断言分五组（条数随用例增长，脚本每次会把条数打出来）：渲染（标题/表格/代码块/行内代码/mermaid 占位替换成 data URI/透明底/`--fs` 生效）、查找（计数、`CSS.highlights` 大小、next/prev 回绕、无命中、清空）、选区（不自绘 / 原生选区可用 / `::selection` 不铺底且 color 不写 `var()`）、目录跳转（同名标题靠 occurrence 区分、按级别匹配）、`setFontSize`。P3 之后又加了划线批注一整组（画/擦/定位/形状矩阵，见「P3 完成情况」）。JS→Swift 的 `postMessage` 在 harness 里被换成一个收集器，`scrollIntoView` 被换成一个记录器，于是这两件本来异步的事都变成同步可断言。
 
 **真引擎自查脚本 `snapshot-reader.sh`（+ `snapshot-reader.swift` + `reader-template.py`）**：把阅读版模板加载进真正的 WKWebView，按 `jobs` 逐步合成选区 / 折叠，每步截一张 PNG 并打印探针（选区长、`hasSel`、以及选区覆盖到的每个文本节点各有几个矩形）。**选区绘制、真实渲染这类问题只能在这儿看** —— Chrome 测不准（上面那条）。当前 jobs 就是上面那两个钉子的显影液：`nested`（容器 li 文本有没有被画上）、`collapse` 后紧跟的那张（折叠后有没有残留像素），外加探针保证「簿记 vs 像素」能分开判。工具本身也踩了几个坑，都修了：外观必须显式定（跟随系统时同一份代码午后截出浅色、入夜截出深色，看图的人会以为代码变了）；截图是透明的，得把宿主底色合成进去，否则在看图器里被衬成白色（深色下就成了「白底白字」，看着像坏了）；输出目录不存在时 `try?` 会静默吞掉写入失败，所以要主动建目录并把失败报出来。
 
@@ -532,8 +534,60 @@ JS 里维护 `id → [{mark}]`。定位流程：
 验证结果：
 
 - `swiftc -typecheck` macOS / iOS 两个 target 均 0 error（按约定不做 `xcodebuild`，真机编译由用户完成）
-- `client/xHelper/scripts/check-reader-html.sh` → PASS（含「选区不再自绘」「::selection 不铺底、color 不写 var()」等 29 条断言）
+- `client/xHelper/scripts/check-reader-html.sh` → PASS（含「选区不再自绘」「::selection 不铺底、color 不写 var()」等断言；P2 收尾时 29 条，P3 + 搬 DOM 那个 bug 修完是 115 条，改成波浪线后 120 条）
 - 截图确认（浅/深）：标题 / 标签 / 标题层级 / 表格 / 代码块 / 行内代码渲染正常
+
+### P3 完成情况（已完成，真机验收待用户）
+
+新增 `client/xHelper/xHelper/Shared/Models/DocumentAnnotation.swift`；改 `APIClient.swift`（4 个方法）、`DocumentViewModel.swift`（暴露 `apiClient`）、`DocumentListView.swift`（`DocumentFullView` 收 `apiClient`、`reader` 改按文档构造）、`DocumentReaderView.swift`（控制器 + 模板一整套）。
+
+**与计划的偏差 / 计划里没写明的决定**
+
+1. **不在原地包选区，改「服务端回推 + 重新定位画」**。原计划（§8.1）是拿 `extractContents()` 直接包用户那个选区；实现改成：JS 只把 `{quote, prefix, suffix, note}` 发给 Swift，落库成功后 Swift **全量重推**列表，JS 按 `quote + 前后文` **重新定位**再包 mark（`locate()`，即 §4.4）。好处是「服务端为准」不需要对账：既没有乐观更新要回滚，也不会出现「DOM 画在一处、库里记在另一处」。代价是划线在往返（几十~几百 ms）之后才出现。**服务端判 orphan 时不画并 toast**，客户端 `locate()` 失败则**静默不画**（§4.4 原定）。
+2. **`flatten()` 必须在块边界补一个 `\n`**（P2 遗留的必要修正）。marked 渲染出的 `<p>a</p><p>b</p>` 拍平后是 `"ab"`，而跨段选区的 quote 在服务端被折叠成 `"a b"` —— 不补分隔符，**跨段划线在 DOM 里根本搜不到**。补上后两边投影到同一空间。
+3. **客户端定位复刻的是服务端 rung 1 + rung 2**（§4.4 原计划）：投影（丢 `*_`~|[]` 行内标记与行首块标记、空白折叠成单空格）→ 精确 indexOf → 多命中按前后文打分（阈值 `0.5`、无前后文取第一处、命中 > 64 个不猜）。rung 3 的夹逼不做 —— 服务端夹逼成功时已把 `quote` 刷成新文本，整段查找即可命中。
+4. **重叠 = 嵌套 mark**。两条划线交叠时，跨过外层边界的那个 range 会带出外层 mark 的**克隆片段**（`extractContents` 对「部分包含的祖先」就是这么处理的），于是两层 mark 互相嵌套 —— 方向取决于哪条跨了边界，所以别断言方向。hover 用 `elementsFromPoint` 聚合该点所有 `mark`/气泡的 `data-id`，>1 条打「重叠划线」标签（§8.3）。
+5. **重画走「全擦全画」**（`unwrapAll()` + 逐条 `locate()`），不做增量修补：跨块 + 重叠时增量状态机很难对，而全擦全画只依赖服务端那一份，成本是几十 KB 正文重挂几十个 `<mark>`（可忽略）。
+6. **剪贴板交给原生**（JS 发 `{type:'copy', text}` → `NSPasteboard`）：`navigator.clipboard` 在 `loadHTMLString` 出来的页面里不是安全上下文，能不能用全看运气。
+7. **用户提示统一走 Swift 的 `ToastCenter`**（成功不弹、失败必弹；orphan 与「问 AI 占位」各弹一条），模板里不再做一套 HTML toast。
+8. **「问 AI」暂时只 toast** —— P5 才接 PiP。
+9. **抽屉（§8.6）没做** —— 归 P4；`reader.scrollToAnnotation(id)` + `.flash` 已经留好（P4 点击抽屉行直接调）。
+10. **真机第一划就抓到一个真 bug：`wrapRange()` 搬 DOM 把块结构搬坏了**（详见下面「真机 bug」一段）。修法是把包 mark 改成**逐文本节点切**，并补上两条以前缺的硬断言。
+
+**真机 bug：第一次划线，划到的字消失了一部分（已修）**
+
+用户第一次划线（选区从 `## 目标` 这个标题里起手、跨过列表、收在 `## 重要细节` 的 bullet 中途）后，正文里**一部分字不见了**；重开文档字回来了，但**排版被打乱**：标题下挂了两个多缩进的 bullet、`## 重要细节` 后面跟了一个 bullet、气泡独占一行、bullet 被拆成两条。
+
+根因就是上一段那条禁令：`wrapRange()` 照 mockup 用 `extractContents()` + `insertNode()`，起点在 `<h2>` 文本里 → 块级克隆被插进标题（`<h2><h2>目标</h2><ul>…`），`<ul>` 也跟着进了 `<h2>`；`<li>` 被克隆后一分为二。WebKit 对这种非法嵌套的重排就是少字/挪行，而 Chrome（mockup 的演示环境）容忍它。判断依据：查 dev 库里那条批注（quote 65 字、源文偏移 3–78）拿到的正是「标题打头 + 列表 + 中途截断」这个形状。
+
+修法与验证：
+
+- `wrapSpan(flat, start, end, ann)`：遍历拍平索引里的文本节点，`splitText` 切边界、各包一个 mark；跳过纯空白节点（块之间的换行是独立文本节点，包了只会徒增段数、把气泡顶到空行）。`locate()` 相应改成返回 `{flat, start, end}` 而不是 Range。
+- 补两条**以前完全缺**的断言，它们才是能拦住这类 bug 的：① 每条批注画完 `#content.textContent` **逐字符不变**（丢字/挪位当场变红）；② 同一 `data-id` 的 mark 文本拼起来（投影折叠后）== 命中区间文本。再加一条结构断言：`mark` 里不许出现块级标签、标题里不许套 `p/ul/li`，且 `p/h2/h3/li/td` 数量不变。
+- 形状矩阵：段中 / 整段 / 跨段 / **标题打头跨块** / 跨列表项 / 跨表格行 / `<strong>` 内 / `<pre>` 内 / 带批注 / 重叠 / 反复重画（3 轮）。
+- 真引擎加三个 job：`marks`（滚到「三、它们之间怎么说话」，正是出事那个形状）、`marks-table`（跨表格行）、`marks-overlap`（两条重叠的线）。
+
+**P3 收尾：划线从「底色高亮」改成「文字底部波浪线」**
+
+用户看完真机截图后提了两条：① hover 浮层里的「点击编辑」四个字去掉；② 要的是**划线**、做成了高亮 —— 改成文字底部的**波浪线**。
+
+- **实现走原生 `text-decoration`**：`underline` + `wavy` + `text-decoration-color/thickness` + `text-underline-offset`，引擎逐行片段绘制，跨段/跨列表/跨表格天然正确，零额外资源。代价是**波幅与周期不可调**（只能调粗细与颜色）；若以后嫌波形不对，退路是 `background-image` 一条 repeat-x 的波浪 SVG（浅/深各一条写死颜色的 data-URI，`var()` 进不了 background-image）。
+- **`mark` 的 UA 默认底色是黄色**，`mark.hl` 里必须显式 `background: transparent` —— 去掉原来那行 `background: var(--hl)` 之后，黄底会从波浪线底下透出来（mockup 第一次截图就是这么露出来的）。这条已进自查断言。
+- `--hl` / `--hl-hover` 语义从「底色」变成「线色」，值也从半透明（`.38`/`.26`）改成实色（`.85`~/`.90`~1）—— 半透明的线在暖米底上几乎看不见。`.p-quote` / `.note-editor .quote` 的左边条引用的就是 `--hl-hover`，跟着变成一条实色短线。
+- **重叠不错开**（用户选）：两条线落在同一处就是一条，重叠只靠 hover 浮层的「重叠划线」标签提示。所以**没有**加 `mark.hl mark.hl { text-underline-offset }` 那条规则 —— 真机上两条是否都画也就不必验。
+- **标题照画**（用户选）：h2 自带一条 `border-bottom` 浅色分隔线，波浪线压在它上方 3px，二者不打架。
+- `flash` 动画（P4 抽屉跳转要用）原来动 `background`，去掉底色后会变得不可见 → 改成动 `text-decoration-color` + `text-decoration-thickness`。
+- 取值（线色 / 线粗 / 偏移 / 降部是否断开）做成 `mockup.html` 底部控制条的切换项，选定的默认值：**琥珀 `rgba(240,186,60,.85)`（深色薄荷 `rgba(146,200,180,.90)`）/ 1.5px / 偏移 3px / `text-decoration-skip-ink: none`（降部不断开）**。要改就是模板里那四个变量。
+- 「点击编辑」直接从 `showPopover()` 的 HTML 里删掉（连同 `.p-foot .spacer` 规则），点击划线出菜单的行为不变。
+
+**自查**
+
+- `check-reader-html.sh`：**120 条断言**（脚本现在会把条数一起打出来）。新增划线一整套：单处命中 / 跨块多 mark / 气泡只在有 note 时挂 / quote 带 markdown 标记也能命中 / 多命中按前后文挑对位置 / 前后文对不上就不画 / 失活不画 / 重叠嵌套 / 交叠处 hover 列出全部 + 「重叠划线」标签 / `scrollToAnnotation` 闪烁与未命中 / 点击菜单 / 工具条 4 动作 / 浮层保存发 `create` 且文案随内容变 / 编辑带出原 note 并发 `update`）。收尾时补的 5 条钉在划线样式上：`underline` + `wavy` / **底色透明**（防 UA 黄底或回退成高亮）/ 线色确实取 `--hl`（不是 `currentColor`）/ hover 线色比常态实 / popover 里没有「点击编辑」。
+- `snapshot-reader.sh`：三个 job —— `marks`（跨块 / 带批注 / li 内 / **标题打头跨块**，滚到出事的那个形状）、`marks-table`（跨表格行）、`marks-overlap`（`k7` 与 `k2` 重叠在同一句上），浅/深各一张；探针报 `marks=11 bubbles=1 textLen=407=不变` + 逐 id 段数（`k1=2 k2=1 k3=1 k4=2 k5=2 k6=2 k7=1`），**`=不变` 就是「一字不少」的现场证据**。波浪线只在真引擎里看才算数（Blink 的画法不作依据）。
+  - 顺带踩到：**画完之后再滚，截图会带上「滚走那块」的陈旧像素**（DOM 探针显示那里根本没有背景），所以 `__marks` 改成先滚到目标位置再画。
+- `swiftc -typecheck` macOS / iOS 均 0 error。
+
+---
 
 ---
 
@@ -550,6 +604,13 @@ JS 里维护 `id → [{mark}]`。定位流程：
    - 浅色 / 深色各看一遍，正文底下是卡片材质（不是暖米色、不是白块）
    - 找一句话，查找高亮与已有划线**共存**不互相破坏
    - 目录点任意一条能跳到对应标题（同名标题要跳到各自那一个）—— 这条以前是坏的
+   - **P3**：划线是**文字底部的波浪线**（不是底色高亮），跨段/跨列表/跨表格行都连续、一字不少、排版不移位
+   - **P3**：划一条跨段落的线（一次划过去，两段都带波浪线，中间没有大色块、也没有连线）
+   - **P3**：hover 浮层里**没有**「点击编辑」文案（点划线仍出菜单）
+   - **P3**：同一句话在文中出现两次，划**第二处** → 划线落在第二处（消歧靠 DOM 前后文）
+   - **P3**：两条线交叠 → 悬停时 popover 同时列出两条并标「重叠划线」
+   - **P3**：加批注 → 气泡出现；点气泡改批注（⌘↵ 保存 / Esc 取消）；清空批注保存 = 退化成纯划线；删除后气泡一起消失
+   - **P3**：撤销/重连都不会让划线错位（每次增删改都按服务端那一份重画）
 4. `./server/scripts/api-test-annotations.sh` 全绿（26 项，独立 SQLite 实例，不碰 dev 库）
 
 ---
@@ -716,3 +777,5 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 - mockup 顶栏把「窗口顶栏的分享/导出/下载」和「文档详情页顶栏的返回/查找」画在了同一行 —— 实现按 D20 分成两处
 - mockup 里的 `marked` 渲染是**手写的静态 HTML**（不是真跑 marked.js），所以排版细节（尤其表格边框、行内代码底色）以实现出来的为准，配色 token 以 mockup 为准
+- mockup 画划线用的是 `extractContents()` + `insertNode()` 搬 DOM（Chrome 下正常），**实现里必须改成逐文本节点包** —— 见 §8.2 那条禁令，真机因此丢过字
+- mockup 的划线样式可以切「波浪线 / 底色高亮(旧)」，**实现里只有波浪线**（底色高亮是被用户否掉的那版）

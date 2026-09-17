@@ -179,9 +179,30 @@ class APIClient {
 		return resp.tags
 	}
 
-	func deleteDocument(id: String) async throws {
-		try await delete("/api/documents/\(id)")
-	}
+    func deleteDocument(id: String) async throws {
+        try await delete("/api/documents/\(id)")
+    }
+
+    // MARK: Annotations（文档划线批注）
+
+    func listAnnotations(documentId: String, limit: Int = 200, offset: Int = 0) async throws -> DocumentAnnotationListResponse {
+        return try await get("/api/documents/\(documentId)/annotations?limit=\(limit)&offset=\(offset)")
+    }
+
+    /// `quote` 是 DOM 选中文本，`prefix` / `suffix` 是选区前后的 DOM 纯文本（各 ≤60 字），
+    /// 只在文中同一句出现多次时用于消歧 —— 服务端锚到第几处靠它。
+    func createAnnotation(documentId: String, quote: String, note: String, prefix: String, suffix: String) async throws -> DocumentAnnotation {
+        return try await post("/api/documents/\(documentId)/annotations",
+                              body: ["quote": quote, "note": note, "prefix": prefix, "suffix": suffix])
+    }
+
+    func updateAnnotation(id: String, note: String) async throws -> AnnotationNoteUpdate {
+        return try await patch("/api/annotations/\(id)", body: ["note": note])
+    }
+
+    func deleteAnnotation(id: String) async throws {
+        try await delete("/api/annotations/\(id)")
+    }
 
 	// MARK: Memories (P3)
 

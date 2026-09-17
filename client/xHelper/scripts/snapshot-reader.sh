@@ -1,5 +1,5 @@
 #!/bin/bash
-# 在真引擎（WKWebView）里加载阅读版模板、合成三种选区并截图到输出目录。
+# 在真引擎（WKWebView）里加载阅读版模板、合成选区 / 画划线并截图到输出目录。
 #
 # 用途：验证「真实渲染 / 选区长什么样」。选区的绘制是引擎行为，Blink 与 WebKit 差别很大，
 # WebKit 会把跨段整块选中画成一整块大矩形 —— 所以 Chrome（check-reader-html.sh）测不了这类
@@ -51,6 +51,13 @@ cat > "$MD" <<'MD'
 - 已产出素材共 4 条，均附逻辑点评：
   - 信息论角度：无意义对话信息熵更高，更难被压缩
   - 「所有男人必定都当过孙子，但只有一部分男人才能成为爷爷」
+
+## 七、一张表
+
+| 维度 | 取值 |
+|---|---|
+| 写入时机 | 请求期 |
+| 存储位置 | 向量库 |
 MD
 
 python3 "$HERE/reader-template.py" "$MARKED" 'N.E.K.O 记忆系统切面调研' \
@@ -63,6 +70,9 @@ p = sys.argv[1]
 hook = """<script>
 window.__step = function (name) {
   if (name === 'collapse') { window.getSelection().removeAllRanges(); return 'collapsed'; }
+  if (name === 'marks') { return window.__marks('容器 li 里的一段'); }
+  if (name === 'marks-table') { return window.__marks('写入时机'); }
+  if (name === 'marks-overlap') { return window.__marks('各管一段'); }
   var r = window.__applySel(name);
   /* 选区在视口外就滚过去（只对选中、不折叠：折叠那张要在同一视口比残留像素） */
   var s = window.getSelection();
@@ -71,6 +81,40 @@ window.__step = function (name) {
     window.scrollTo(0, window.scrollY + rect.top - 220);
   }
   return r;
+};
+/* 划线批注（用假数据，别把真实文档内容放进仓库）：
+   跨块 / 带批注（出气泡）/ 落在 li 里 / 标题打头跨块 / **标题 + 紧跟列表**（真机丢字那个形状）/ 跨表格行。
+   锚点文字决定滚到哪一段，保证那一类缺陷落在视口里 */
+window.__marks = function (anchorText) {
+  window.getSelection().removeAllRanges();
+  /* 先滚到目标位置再画：画完之后再滚，截图会带上「滚走那块」的陈旧像素
+     （DOM 探针显示那里根本没有背景，纯粹是渲染层的缓存） */
+  var anchor = null;
+  [].slice.call(document.querySelectorAll('#content p, #content h2, #content td')).forEach(function (el) {
+    if (!anchor && el.textContent.indexOf(anchorText) >= 0) anchor = el;
+  });
+  if (anchor) window.scrollTo(0, window.scrollY + anchor.getBoundingClientRect().top - 60);
+  /* 真机上「划完字少了」就是在这儿丢的：正文文本必须一字不差 */
+  var before = document.getElementById('content').textContent;
+  reader.setAnnotations(JSON.stringify([
+    { id: 'k1', quote: '这套东西在《插件与 MCP》那篇里讲过。 短段落。', note: '', prefix: '', suffix: '', orphaned: false },
+    { id: 'k2', quote: '各管一段', note: '这句是重点，回头写进总结。', prefix: '', suffix: '', orphaned: false },
+    { id: 'k3', quote: '已产出素材共 4 条', note: '', prefix: '', suffix: '', orphaned: false },
+    { id: 'k4', quote: '三、它们之间怎么说话 它同时用了四种', note: '', prefix: '', suffix: '', orphaned: false },
+    { id: 'k5', quote: '写入时机 请求期', note: '', prefix: '', suffix: '', orphaned: false },
+    { id: 'k6', quote: '五、容器 li 里的一段 会话性质为测试', note: '', prefix: '', suffix: '', orphaned: false },
+    /* k7 与 k2 重叠：两条拟合成同一处的波浪线（真机上应该只看见一条，hover 才提示重叠） */
+    { id: 'k7', quote: '管一段', note: '', prefix: '', suffix: '', orphaned: false }
+  ]));
+  var byId = [];
+  ['k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7'].forEach(function (id) {
+    byId.push(id + '=' + document.querySelectorAll('mark.hl[data-id="' + id + '"]').length);
+  });
+  var after = document.getElementById('content').textContent;
+  return 'marks=' + document.querySelectorAll('mark.hl').length
+       + ' bubbles=' + document.querySelectorAll('span.ann-bubble').length
+       + ' textLen=' + before.length + (before === after ? '=不变' : '→' + after.length + '!!丢字')
+       + ' ' + byId.join(' ');
 };
 window.__applySel = function (kind) {
   var ps = document.querySelectorAll('#content p'), hs = document.querySelectorAll('#content h2');

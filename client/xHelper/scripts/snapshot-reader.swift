@@ -23,6 +23,9 @@ final class Driver: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         ("collapse", "after-collapse-nested.png"),
         ("toend", "selection-toend.png"),
         ("partial", "selection-partial.png"),
+        ("marks", "annotations.png"),
+        ("marks-table", "annotations-table.png"),
+        ("marks-overlap", "annotations-overlap.png"),
     ]
     private var i = 0
     private var failed = false

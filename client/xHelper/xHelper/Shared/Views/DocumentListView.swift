@@ -404,6 +404,7 @@ private struct DocumentFullView: View {
                         VStack(alignment: .leading, spacing: 14) {
                             Text(document.title)
                                 .font(.system(size: FontSizeManager.shared.scaledSize * 1.65, weight: .semibold))
+                                .macosTextSelection()
 
                             if let tags = document.tags, !tags.isEmpty {
                                 HStack(spacing: 6) {

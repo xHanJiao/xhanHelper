@@ -264,6 +264,10 @@ make db-pull / db-import / logs / clean
 - `Message` / `Conversation` 等模型：可变字段用 `var`（`let` 带默认值不会被合成的 `Codable` 解码）；**不要用 memberwise init 重建已有消息**（静默丢新字段）
 - **macOS 设置页子页面风格统一**：卡片分组用 `SettingsCard` + `KeycapView`（`client/xHelper/xHelperMac/SettingsStyle.swift`），规范见 `docs/design/mac-apps/settings-sheet-style.md`
 - 纯逻辑文件在 `client/xHelper/Package.swift` 里镜像成 SwiftPM target，可用 `swift test` 跑（不碰 Xcode）
+- **阅读器（文档正文 WKWebView）有两个自查脚本**，模板都从 Swift 源码现抠（`scripts/reader-template.py`，不会漂移），改了模板必须两个都跑：
+  - `scripts/check-reader-html.sh` —— headless Chrome 里跑模板/JS（渲染、查找、目录跳转、`::selection` 规则），快。**测不了选区的绘制**：Blink 与 WebKit 差别很大（WebKit 会把跨段整块选中画成横跨视图的大矩形，Chrome 不画），拿它判选区长短会得出错误结论。
+  - `scripts/snapshot-reader.sh [输出目录] [light|dark]` —— 真引擎 WKWebView 离屏加载 + 合成选区/折叠 + 截图 + 探针（选区长、`hasSel`、每个被覆盖文本节点有几个矩形）。**选区绘制、真实渲染这类问题只看这个**。外观必须显式传（默认 light，跟随系统会截出说不清的图）
+- **选区不要自绘**（踩过两次，见 `docs/design/document-highlight-annotation/design.md` 的 P2 段）：用 `::selection { color: <写死的 token 值>; background-color: transparent }` 交给引擎画。自绘（`::highlight(sel)` + `selectionchange`）修不掉两件事 —— ①「自己带文本 + 后跟子列表」的容器 `li`，它的直接文本节点永远不着色（range 覆盖了、`getClientRects()` 有矩形，WebKit 就是不画）；② JS 查不到「选区此刻是否可见」，引擎标成不可见但 `getSelection()` 仍返回非折叠 range 时，色带会赖着不走。`var()` 在 `::selection` 里解析不出来，颜色只能写死
 
 ## 后端错误处理规范
 

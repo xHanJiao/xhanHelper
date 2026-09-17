@@ -36,7 +36,9 @@ enum DocumentPDFExporter {
 
     /// 组装导出 HTML：mermaid 段渲染为 data URI，markdown 段拼接后交给 marked 运行时转 HTML。
     private static func buildHTML(title: String, tags: String, markdown: String) throws -> String {
-        let markedJS = try Self.markedJS()
+        guard let markedJS = MarkdownWebUtils.markedJS() else {
+            throw DocumentExportError.markedResourceNotFound
+        }
         var mdParts: [String] = []
         var diagramURIs: [String] = []
 
@@ -54,10 +56,10 @@ enum DocumentPDFExporter {
             }
         }
 
-        let titleHTML = escapeHTML(title)
-        let tagsHTML = escapeHTML(tags)
-        let mdLiteral = try jsString(mdParts.joined(separator: "\n\n"))
-        let imagesLiteral = "[" + (try diagramURIs.map(jsString).joined(separator: ",")) + "]"
+        let titleHTML = MarkdownWebUtils.escapeHTML(title)
+        let tagsHTML = MarkdownWebUtils.escapeHTML(tags)
+        let mdLiteral = MarkdownWebUtils.jsString(mdParts.joined(separator: "\n\n"))
+        let imagesLiteral = "[" + diagramURIs.map(MarkdownWebUtils.jsString).joined(separator: ",") + "]"
 
         return template
             .replacingOccurrences(of: "__MARKED_JS__", with: markedJS)
@@ -69,14 +71,6 @@ enum DocumentPDFExporter {
 
     /// mermaid 占位 token（纯字母数字，规避 GFM 强调/链接误判）
     private static func MD(for index: Int) -> String { "ZZMDIMG\(index)X" }
-
-    private static func markedJS() throws -> String {
-        guard let url = Bundle.main.url(forResource: "marked.min", withExtension: "js") else {
-            print("[PDFExport] marked.min.js not found in bundle; resources: \(Bundle.main.resourceURL?.path ?? "?")")
-            throw DocumentExportError.markedResourceNotFound
-        }
-        return try String(contentsOf: url, encoding: .utf8)
-    }
 
     /// 渲染 mermaid 为翻转后用 PNG base64 data URI（同 FullScreenMermaidView.saveImage 的 flip 处理）
     private static func mermaidDataURI(code: String) -> String? {
@@ -219,23 +213,6 @@ enum DocumentPDFExporter {
         surface: BMColor(hex: "#FFFFFF"),
         border: BMColor(hex: "#D0C8B0")
     )
-
-    private static func escapeHTML(_ s: String) -> String {
-        s.replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
-            .replacingOccurrences(of: "'", with: "&#39;")
-    }
-
-    /// JS 字符串字面量：JSONEncoder 默认转义 `/`（保障 `</script>` 安全）+ 转义 U+2028/29。
-    private static func jsString(_ s: String) throws -> String {
-        let data = try JSONEncoder().encode(s)
-        var encoded = String(decoding: data, as: UTF8.self)
-        encoded = encoded.replacingOccurrences(of: "\u{2028}", with: "\\u2028")
-            .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
-        return encoded
-    }
 }
 
 enum DocumentExportError: LocalizedError {

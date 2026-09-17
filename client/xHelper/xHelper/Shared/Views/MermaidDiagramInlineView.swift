@@ -1,7 +1,9 @@
 import SwiftUI
 import BeautifulMermaid
 
-private func mermaidTheme(for colorScheme: ColorScheme) -> DiagramTheme {
+/// mermaid 主题（浅/深）。`DocumentReaderView` 把图预渲染成 PNG 时也要用同一套色，
+/// 所以是 internal 而不是 fileprivate。
+func mermaidTheme(for colorScheme: ColorScheme) -> DiagramTheme {
     if colorScheme == .dark {
         DiagramTheme(
             background: BMColor(hex: "#2C2E2D"),

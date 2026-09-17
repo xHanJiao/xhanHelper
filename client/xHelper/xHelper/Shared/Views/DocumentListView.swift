@@ -486,6 +486,17 @@ private struct DocumentFullView: View {
                     Divider()
                 }
 
+                #if os(macOS)
+                // 正文整块交给 WebView（标题 + 标签 + 正文都在 HTML 里）。
+                // 目录栏 / 返回 / 查找栏外壳留在 SwiftUI 侧。
+                DocumentReaderView(
+                    document: document,
+                    controller: reader,
+                    fontSize: readingFontSize
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onChange(of: findQuery) { _, query in reader.find(query) }
+                #else
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
@@ -540,6 +551,7 @@ private struct DocumentFullView: View {
                         recomputeMatches()
                     }
                 }
+                #endif
             }
         }
         #if os(macOS)
@@ -547,8 +559,19 @@ private struct DocumentFullView: View {
         #endif
     }
 
+    #if os(macOS)
+    /// WebView 阅读器把手
+    @StateObject private var reader = DocumentReaderController()
+    /// 正文字号跟随全局字号设置。scaledSize 是计算属性，靠 @Published scale 触发重算。
+    @ObservedObject private var fontManager = FontSizeManager.shared
+
+    /// 正文基准字号：与旧 MarkdownUI 正文一致（scaledSize × 1.18）
+    private var readingFontSize: CGFloat { fontManager.scaledSize * 1.18 }
+    #else
+    /// iOS 仍走原来的 MarkdownUI 正文，目录跳转用 ScrollViewReader 的锚点
     @State private var scrollToAnchor: String = ""
-    /// 目录栏收起态（仅 macOS；不持久化，每次进文档默认展开）
+    #endif
+
     @State private var isTocCollapsed = false
     @State private var showFindBar = false
     @State private var findQuery = ""
@@ -586,22 +609,28 @@ private struct DocumentFullView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(tocItems) { item in
+                    ForEach(Array(tocItems.enumerated()), id: \.element.id) { pair in
                         Button {
-                            withAnimation {
-                                scrollToAnchor = item.anchor
-                            }
+                            #if os(macOS)
+                            reader.scrollToHeading(
+                                level: pair.element.level,
+                                text: pair.element.text,
+                                occurrence: headingOccurrence(at: pair.offset)
+                            )
+                            #else
+                            withAnimation { scrollToAnchor = pair.element.anchor }
+                            #endif
                         } label: {
-                            Text(item.text)
-                                .font(item.level <= 2 ? .caption : .caption2)
-                                .foregroundColor(item.level == 1 ? .primary : .secondary)
+                            Text(pair.element.text)
+                                .font(pair.element.level <= 2 ? .caption : .caption2)
+                                .foregroundColor(pair.element.level == 1 ? .primary : .secondary)
                                 .lineLimit(2)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(.plain)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 3)
-                        .padding(.leading, CGFloat(item.level - 1) * 12)
+                        .padding(.leading, CGFloat(pair.element.level - 1) * 12)
                     }
                 }
                 .padding(.vertical, 8)
@@ -670,6 +699,13 @@ private struct DocumentFullView: View {
         }
     }
 
+    /// 第 `index` 个目录项在「同级同文字」里是第几个。DOM 侧标题只能按文字找，
+    /// 靠这个序号区分同名标题（否则重复的「小结」永远跳到第一个）。
+    private func headingOccurrence(at index: Int) -> Int {
+        let item = tocItems[index]
+        return tocItems[..<index].filter { $0.level == item.level && $0.text == item.text }.count
+    }
+
     // MARK: - 文档内查找
 
     private var docBlocks: [DocBlock] {
@@ -690,11 +726,23 @@ private struct DocumentFullView: View {
         return result
     }
 
-    private var totalMatches: Int { matchCounts.reduce(0, +) }
+    private var totalMatches: Int {
+        #if os(macOS)
+        // macOS 的命中所属权在 JS（CSS Custom Highlight API 不改 DOM），Swift 只收计数
+        return reader.matchCount
+        #else
+        return matchCounts.reduce(0, +)
+        #endif
+    }
 
     private var matchLabel: String {
         if findQuery.isEmpty { return "" }
+        #if os(macOS)
+        let index = reader.matchIndex
+        return (totalMatches == 0 || index < 0) ? "无匹配" : "\(index + 1)/\(totalMatches)"
+        #else
         return totalMatches == 0 ? "无匹配" : "\(currentMatch + 1)/\(totalMatches)"
+        #endif
     }
 
     private var findBar: some View {
@@ -820,8 +868,12 @@ private struct DocumentFullView: View {
     }
 
     private func gotoMatch(_ delta: Int) {
+        #if os(macOS)
+        if delta > 0 { reader.findNext() } else { reader.findPrev() }
+        #else
         guard totalMatches > 0 else { return }
         currentMatch = (currentMatch + delta + totalMatches) % totalMatches
+        #endif
     }
 
     private func toggleFind() {

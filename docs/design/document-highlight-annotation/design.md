@@ -439,7 +439,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 | 阶段 | 内容 | 验收方式 |
 |---|---|---|
 | **P1 服务端** ✅ | 模型 + migration + 5 个 API + `list_annotations` + `update_document` 影响报告 + 重定位算法单测 | 见下「P1 完成情况」 |
-| **P2 WebView 阅读器** | `DocumentReaderView` 替换 `readingContent`；目录跳转改走 JS；查找改走 JS；主题/字号联动 | 真机读 5 篇真实文档（含表格/代码块/Mermaid），视觉与旧版无回归 |
+| **P2 WebView 阅读器** ✅ | `DocumentReaderView` 替换 `readingContent`；目录跳转改走 JS；查找改走 JS；主题/字号联动 | 见下「P2 完成情况」；真机验收待用户 |
 | **P3 划线批注交互** | 选区工具条 / 绘制 / hover / 点击菜单 / 批注浮层 / 创建-编辑-删除回传 | 真机：跨段落划线、重叠划线、批注增删改 |
 | **P4 抽屉 + orphan** | SwiftUI 抽屉三 tab + 滚动定位 + 重新定位流程 | 真机：改标题制造 orphan，灰态可见可重挂 |
 | **P5 问 AI** | 复用 PiP 承载文档问答：轻量进 PiP / `doc_quote` 注入 / `brief_answer` 长度约束 / 引用条 / 底部「存为批注」窄条 | 见 §十二。**服务端 + 客户端 `brief_answer` 开关已完成**，其余待 P2/P3 |
@@ -487,6 +487,54 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 一个写脚本时踩到的坑记在这里：`go run` 只杀掉父进程，编译出的子进程会留在端口上 —— 下次跑就会静默测到旧实例。脚本改成先 `go build` 再直接跑二进制，并在启动前断言端口空闲。
 
+### P2 完成情况（已完成）
+
+新增：
+
+- `client/.../Shared/Views/DocumentReaderView.swift` — `DocumentReaderView` + `ReaderWebView`（NSViewRepresentable）+ `DocumentReaderController`（Swift↔JS 把手）+ 阅读版 HTML 模板与 JS
+- `client/.../Shared/Services/MarkdownWebUtils.swift` — 抽出来的公共零件：`escapeHTML` / `jsString` / `markedJS`（原本这三段在 `DocumentPDFExporter` 里是 private，两边都要用）
+- `client/xHelper/scripts/check-reader-html.sh` — 阅读器 JS 的可跑自查（见下）
+
+改动：
+
+- `DocumentListView.swift`——`DocumentFullView` 的正文区在 macOS 上换成 `DocumentReaderView`；目录点击改走 `reader.scrollToHeading`；查找改走 `reader.find`，计数来自 JS 回话；新增 `headingOccurrence(at:)`
+- `DocumentPDFExporter.swift`——改用 `MarkdownWebUtils`，删掉三个私有副本
+- `MermaidDiagramInlineView.swift`——`mermaidTheme(for:)` 由 private 提为 internal，阅读器预渲染 mermaid PNG 时复用同一套色
+
+**与原计划的偏差**（都是实现时才暴露的）：
+
+1. **透明不能照抄 iOS 的写法**。计划里写的是 `isOpaque=false` + `backgroundColor=.clear`——那是 iOS 的 API，macOS 上 `isOpaque` 只读、`backgroundColor` 根本不存在。macOS 得用 KVC 关 `drawsBackground`，再加公开的 `underPageBackgroundColor = .clear`，两条都要。
+2. **主题不给 Swift 推，走 CSS 媒体查询**。计划里桥接协议有 `reader.setTheme()`；实际不需要：WKWebView 跟随窗口 appearance，`prefers-color-scheme` 在 CSS 里自动生效 —— 于是切主题零桥接、不重载、不丢滚动位置。代价是 mermaid 图（PNG，颜色烤死在图里）**浅深各渲一张**，靠媒体查询切显隐，`ponytail:` 注释标了双倍渲染这个天花板。
+3. **`breaks: false`**。PDF 导出用的是 `breaks: true`，阅读器跟旧的 MarkdownUI 阅读器对齐（CommonMark：单个换行按空格接续），否则软换行的文档会平白多出一堆硬换行 —— P2 的验收标准是"视觉与旧版无回归"。
+4. **iOS 保持 MarkdownUI 正文**。D1 是"仅 macOS"，所以 `DocumentFullView` 里正文区按平台分叉，iOS 的 MermaidUI/分块查找那套原样留着（`#if os(macOS)` 分叉）。避免动一个用户不会去验的平台。
+5. **目录跳转传「文字 + 序号」而不是下标**。TOC 来自 markdown 源码、标题来自渲染后的 DOM，传下标在两边错位时会静默跳到别处；传 `(level, text, occurrence)` 至少错得可见。顺带发现**原来的目录跳转是坏的** —— `scrollTo(anchor)` 里 anchor 是 slug 字符串，而块 `.id` 是 Int，从来没匹配上过。
+6. **查找用 CSS Custom Highlight API**（`::highlight(find)`）而不是包 `<mark>`：不改 DOM，所以和 P3 要画的划线 `mark` 结构互不干扰（计划里就是这么定的，这里记一笔因为它决定了查找不能复用地画 `<mark>` 的路径）。
+
+**选区：先自绘，退回引擎画（P2 期间用户实测发现的两个问题，结论都指向「别自绘」）**
+
+起因：用户先在正文里划词，发现「跨段选中时整段两侧的空白都被填上了色」，而且有一行**画不上**（从第一个 bullet 拖到子 bullet，「已产出素材共 4 条…」那一行始终没有高亮；Cmd+C 剪贴板里**有**这行 → 选区本身是好的，纯粹是绘制）。
+
+- 第一个坑是 **WebKit 自己的选区绘制**：选中范围把整块包住时，它画的是一个横跨整个视图的大矩形（段间空隙、两侧留白一起填），比正文列还宽。CSS 关不掉：`inline-block` 照旧填块，改 `display:inline` 更糟（拖出一整条横跨视图的大十字）。Blink（Chrome）真实拖拽逐行贴字，只在合成的块边界 Range 下才填块 —— 所以**拿 Chrome 判断选区绘制是错的**，一开始的复现就是被这一点骗了。
+- 于是第一版改成**自绘**：`::selection { color:#3B2E1F; background-color: transparent }` + Custom Highlight API（`::highlight(sel)`），`selectionchange` 时把 `getSelection()` 的 range 塞进 `CSS.highlights['sel']`、折叠时删掉。原生选区本身还在，复制粘贴/拖拽不变，只是不着色。`color` 必须写死 —— 不写会被涂成引擎自己的高亮前景色（白），而 `color: var(--text)` 在 `::selection` 里**解析不出来**（实测写死 `red` 生效）。
+- 自绘之后冒出两个新问题，**都是自绘这条路修不掉的**：
+  1. **容器 li 的文本永远画不上**（就是开头那行）：`snapshot-reader` 的 `nested` job + 探针量得清清楚楚 —— range 覆盖了那个文本节点、`getClientRects()` 也返回 1 个矩形，**WebKit 的高亮绘制就是跳过它**（该节点是「自己带文本 + 后面跟子列表」的 `li` 的直接文本）。用户侧看到的就是跨段选区中间空一行。
+  2. **偶发地不消失**（用户报「点别处不取消，再等等又没了」）：探针显示**我们的簿记是对的**（折叠后 `hasSel=false`、折叠后的截图也确实干净），所以不是逻辑错，而是 **JS 没有「选区此刻是否可见」这个查询** —— 引擎把选区标成不可见（例如失焦）而 `getSelection()` 仍返回那个非折叠 range 时，自绘的色带就只能赖在那儿，等某次重绘才掉。
+- **结论：把选区交回引擎，只改字形颜色**（`::selection { color: #2F7D63 }`，深色 `#92C8B4`，`background-color: transparent` 必须留）。两个问题一起消失：引擎自己知道选区可不可见；跨块大矩形只在填底时才出现，不填底就没有。代价是失去色带、只剩字形变色 —— 用户看过浅/深截图后拍的这个取舍。**自绘那套（`paintSelection` + `::highlight(sel)`）已删除，别再往回加**；要往回加，先跑 `snapshot-reader.sh` 看 `nested` 和 `after-collapse*` 这两张。 这也**反证了 P3 的划线要用真 DOM `<mark>`**（§7 原计划就是这么定的）：`<mark>` 是元素背景，不走引擎那套 range 矩形/失效机制，这两个坑都碰不到 —— 别为了「不改 DOM」把 P3 优化成 `::highlight(annotation)`。
+
+**自查脚本 `check-reader-html.sh`**：模板与 JS 是嵌在 Swift 源码里的一大块字符串，`swiftc -typecheck` 只能证明它是个合法字符串，证明不了里面的 JS 能跑。脚本用正则把模板**从 Swift 源文件里抠出来**（所以不存在副本漂移），灌进 headless Chrome，断言 29 条：渲染（标题/表格/代码块/行内代码/mermaid 占位替换成 data URI/透明底/`--fs` 生效）、查找（计数、`CSS.highlights` 大小、next/prev 回绕、无命中、清空）、选区（不自绘 / 原生选区可用 / `::selection` 不铺底且 color 不写 `var()`）、目录跳转（同名标题靠 occurrence 区分、按级别匹配）、`setFontSize`。JS→Swift 的 `postMessage` 在 harness 里被换成一个收集器，`scrollIntoView` 被换成一个记录器，于是这两件本来异步的事都变成同步可断言。
+
+**真引擎自查脚本 `snapshot-reader.sh`（+ `snapshot-reader.swift` + `reader-template.py`）**：把阅读版模板加载进真正的 WKWebView，按 `jobs` 逐步合成选区 / 折叠，每步截一张 PNG 并打印探针（选区长、`hasSel`、以及选区覆盖到的每个文本节点各有几个矩形）。**选区绘制、真实渲染这类问题只能在这儿看** —— Chrome 测不准（上面那条）。当前 jobs 就是上面那两个钉子的显影液：`nested`（容器 li 文本有没有被画上）、`collapse` 后紧跟的那张（折叠后有没有残留像素），外加探针保证「簿记 vs 像素」能分开判。工具本身也踩了几个坑，都修了：外观必须显式定（跟随系统时同一份代码午后截出浅色、入夜截出深色，看图的人会以为代码变了）；截图是透明的，得把宿主底色合成进去，否则在看图器里被衬成白色（深色下就成了「白底白字」，看着像坏了）；输出目录不存在时 `try?` 会静默吞掉写入失败，所以要主动建目录并把失败报出来。
+
+模板的**抠取**现在只在 `reader-template.py` 里做一次，两个脚本共用（`check-reader-html.sh` 与 `snapshot-reader.sh`），避免副本漂移。
+
+**这个脚本立刻抓到一个真 bug**：`new Highlight.apply(null, findRanges)` 会被解析成 `new (Highlight.apply)(...)` → `Highlight.apply is not a constructor`，也就是一查找就抛异常、连一个高亮都画不出来。改成 `new Highlight(...findRanges)` 后全绿。
+
+验证结果：
+
+- `swiftc -typecheck` macOS / iOS 两个 target 均 0 error（按约定不做 `xcodebuild`，真机编译由用户完成）
+- `client/xHelper/scripts/check-reader-html.sh` → PASS（含「选区不再自绘」「::selection 不铺底、color 不写 var()」等 29 条断言）
+- 截图确认（浅/深）：标题 / 标签 / 标题层级 / 表格 / 代码块 / 行内代码渲染正常
+
 ---
 
 ## 十一、验收
@@ -501,6 +549,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
    - 让 LLM 改写该划线所在句子 → 重进，抽屉「已失活」里能看到它
    - 浅色 / 深色各看一遍，正文底下是卡片材质（不是暖米色、不是白块）
    - 找一句话，查找高亮与已有划线**共存**不互相破坏
+   - 目录点任意一条能跳到对应标题（同名标题要跳到各自那一个）—— 这条以前是坏的
 4. `./server/scripts/api-test-annotations.sh` 全绿（26 项，独立 SQLite 实例，不碰 dev 库）
 
 ---

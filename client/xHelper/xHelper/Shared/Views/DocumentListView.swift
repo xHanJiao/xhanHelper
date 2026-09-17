@@ -495,9 +495,14 @@ private struct DocumentFullView: View {
 
                             Divider()
 
-                            VStack(alignment: .leading, spacing: 0) {
-                                ForEach(Array(docBlocks.enumerated()), id: \.element.id) { pair in
-                                    blockView(index: pair.offset, block: pair.element)
+                            if findQuery.isEmpty {
+                                readingContent
+                            } else {
+                                // 查找态按块渲染：逐块 .id 供 scrollTo 定位
+                                VStack(alignment: .leading, spacing: 14) {
+                                    ForEach(Array(docBlocks.enumerated()), id: \.element.id) { pair in
+                                        blockView(index: pair.offset, block: pair.element)
+                                    }
                                 }
                             }
                         }
@@ -511,7 +516,8 @@ private struct DocumentFullView: View {
                     .onChange(of: findQuery) { _, _ in
                         recomputeMatches()
                         currentMatch = 0
-                        scrollToCurrent(proxy)
+                        // 首次输入时视图刚从单 Markdown 切成带 id 的块，延后一帧再滚
+                        DispatchQueue.main.async { scrollToCurrent(proxy) }
                     }
                     .onChange(of: currentMatch) { _, _ in
                         scrollToCurrent(proxy)
@@ -721,6 +727,26 @@ private struct DocumentFullView: View {
             .markdownTheme(.chatBubble(fontSize: FontSizeManager.shared.scaledSize * 1.18))
             .markdownCodeSyntaxHighlighter(.plainText)
             .macosTextSelection()
+    }
+
+    /// 阅读态：整段交给一个 Markdown 视图，块间距/列表编号由 MarkdownUI 主题统一处理。
+    @ViewBuilder
+    private var readingContent: some View {
+        let segments = MermaidUtility.splitContent(document.content)
+        if segments.isEmpty {
+            markdownView(document.content)
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(segments) { segment in
+                    switch segment.type {
+                    case .markdown:
+                        markdownView(segment.content)
+                    case .mermaid:
+                        MermaidDiagramInlineView(code: segment.content)
+                    }
+                }
+            }
+        }
     }
 
     private func recomputeMatches() {

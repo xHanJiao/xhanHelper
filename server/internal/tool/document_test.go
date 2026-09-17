@@ -3,7 +3,9 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -22,8 +24,7 @@ func setupDocumentTool(t *testing.T) (*DocumentTool, func()) {
 		t.Fatalf("migrate: %v", err)
 	}
 	docRepo := service.NewDocumentRepo(db)
-	versionRepo := service.NewVersionRepo(db)
-	return NewDocumentTool(docRepo, versionRepo), func() {}
+	return NewDocumentTool(docRepo), func() {}
 }
 
 func TestDocumentGetAndUpdate(t *testing.T) {
@@ -56,7 +57,7 @@ func TestDocumentGetAndUpdate(t *testing.T) {
 		t.Errorf("expected content 'Hello World', got %v", got["content"])
 	}
 
-	// update: 更新后应创建快照
+	// update
 	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
 		"id": docID, "content": "Updated Content",
 	}))
@@ -64,34 +65,14 @@ func TestDocumentGetAndUpdate(t *testing.T) {
 		t.Fatalf("update failed: %s", res.Error)
 	}
 
-	// 验证快照已创建
-	res = tool.Execute(ec, "get_document_versions", mustMarshal(t, map[string]string{"id": docID}))
+	// 更新后内容生效
+	res = tool.Execute(ec, "get_document", mustMarshal(t, map[string]string{"id": docID}))
 	if !res.Success {
-		t.Fatalf("get versions failed: %s", res.Error)
+		t.Fatalf("get after update failed: %s", res.Error)
 	}
-	var versResp map[string]interface{}
-	json.Unmarshal(res.Data, &versResp)
-	versions := versResp["versions"].([]interface{})
-	if len(versions) != 1 {
-		t.Fatalf("expected 1 version, got %d", len(versions))
-	}
-	v1 := versions[0].(map[string]interface{})
-	if v1["version"].(float64) != 1 {
-		t.Errorf("expected version 1, got %v", v1["version"])
-	}
-
-	// 再更新一次，应该有2个版本
-	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
-		"id": docID, "title": "New Title",
-	}))
-	if !res.Success {
-		t.Fatalf("second update failed: %s", res.Error)
-	}
-	res = tool.Execute(ec, "get_document_versions", mustMarshal(t, map[string]string{"id": docID}))
-	json.Unmarshal(res.Data, &versResp)
-	versions = versResp["versions"].([]interface{})
-	if len(versions) != 2 {
-		t.Fatalf("expected 2 versions, got %d", len(versions))
+	json.Unmarshal(res.Data, &got)
+	if got["content"] != "Updated Content" {
+		t.Errorf("expected updated content, got %v", got["content"])
 	}
 }
 
@@ -223,43 +204,20 @@ func TestDocumentUpdateReplace(t *testing.T) {
 	})
 }
 
-func TestDocumentRollback(t *testing.T) {
+// TestDocumentRemovedFuncs 版本/回滚能力已下掉（实测 0 调用），调用应返回 unknown function
+func TestDocumentRemovedFuncs(t *testing.T) {
 	tool, cleanup := setupDocumentTool(t)
 	defer cleanup()
-	ctx := context.Background()
-	userID := "user-1"
-	ec := &ExecuteContext{Ctx: ctx, UserID: userID}
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
 
-	// create
-	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{
-		"title": "v1", "content": "content v1", "tags": "a",
-	}))
-	var created map[string]interface{}
-	json.Unmarshal(res.Data, &created)
-	docID := created["id"].(string)
-
-	// update → 创建 v1 快照（内容是 content v1）
-	tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
-		"id": docID, "content": "content v2", "tags": "b",
-	}))
-
-	// rollback 到 version 1
-	res = tool.Execute(ec, "rollback_document", mustMarshal(t, map[string]interface{}{
-		"id": docID, "version": 1,
-	}))
-	if !res.Success {
-		t.Fatalf("rollback failed: %s", res.Error)
-	}
-
-	// 验证内容已恢复
-	res = tool.Execute(ec, "get_document", mustMarshal(t, map[string]string{"id": docID}))
-	var got map[string]interface{}
-	json.Unmarshal(res.Data, &got)
-	if got["content"] != "content v1" {
-		t.Errorf("expected content 'content v1', got %v", got["content"])
-	}
-	if got["tags"] != "a" {
-		t.Errorf("expected tags 'a', got %v", got["tags"])
+	for _, fn := range []string{"get_document_versions", "rollback_document"} {
+		res := tool.Execute(ec, fn, mustMarshal(t, map[string]interface{}{"id": "x", "version": 1}))
+		if res.Success {
+			t.Errorf("%s should be removed, got success", fn)
+		}
+		if !strings.Contains(res.Error, "unknown function") {
+			t.Errorf("%s: expected unknown function error, got %q", fn, res.Error)
+		}
 	}
 }
 
@@ -274,11 +232,6 @@ func TestDocumentNotFound(t *testing.T) {
 	}
 
 	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{"id": "nonexistent", "content": "x"}))
-	if res.Success {
-		t.Error("expected failure for nonexistent document")
-	}
-
-	res = tool.Execute(ec, "rollback_document", mustMarshal(t, map[string]interface{}{"id": "nonexistent", "version": 1}))
 	if res.Success {
 		t.Error("expected failure for nonexistent document")
 	}
@@ -299,6 +252,311 @@ func TestDocumentCreateValidation(t *testing.T) {
 	res = tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{"title": "t"}))
 	if res.Success {
 		t.Error("expected failure without content")
+	}
+}
+
+// createDocForTest 建一篇文档并返回 id
+func createDocForTest(t *testing.T, tool *DocumentTool, ec *ExecuteContext, title, content string) string {
+	t.Helper()
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{
+		"title": title, "content": content,
+	}))
+	if !res.Success {
+		t.Fatalf("create document failed: %s", res.Error)
+	}
+	var created map[string]interface{}
+	json.Unmarshal(res.Data, &created)
+	return created["id"].(string)
+}
+
+// getDocForTest 调用 get_document 并解析成 map
+func getDocForTest(t *testing.T, tool *DocumentTool, ec *ExecuteContext, args map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	res := tool.Execute(ec, "get_document", mustMarshal(t, args))
+	if !res.Success {
+		t.Fatalf("get_document failed: %s", res.Error)
+	}
+	var got map[string]interface{}
+	json.Unmarshal(res.Data, &got)
+	return got
+}
+
+func TestDocumentGetWindowSmallDocUnchanged(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	content := "短文档内容"
+	id := createDocForTest(t, tool, ec, "小文档", content)
+	got := getDocForTest(t, tool, ec, map[string]interface{}{"id": id})
+
+	if got["content"] != content {
+		t.Errorf("small doc should be returned in full, got %q", got["content"])
+	}
+	if got["truncated"] != false {
+		t.Errorf("expected truncated=false, got %v", got["truncated"])
+	}
+	if _, ok := got["next_char_offset"]; ok {
+		t.Error("next_char_offset should be absent when not truncated")
+	}
+	if _, ok := got["outline"]; ok {
+		t.Error("outline should be absent when not truncated")
+	}
+	if got["total_chars"].(float64) != float64(len([]rune(content))) {
+		t.Errorf("expected total_chars=%d, got %v", len([]rune(content)), got["total_chars"])
+	}
+}
+
+func TestDocumentGetWindowBoundary(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	t.Run("exactly window size is not truncated", func(t *testing.T) {
+		content := strings.Repeat("字", defaultDocWindowLen)
+		id := createDocForTest(t, tool, ec, "恰好", content)
+		got := getDocForTest(t, tool, ec, map[string]interface{}{"id": id})
+		if got["truncated"] != false {
+			t.Errorf("exactly %d chars should not be truncated", defaultDocWindowLen)
+		}
+		if got["content"] != content {
+			t.Error("content mismatch at exact boundary")
+		}
+	})
+
+	t.Run("window+1 is truncated by 1", func(t *testing.T) {
+		content := strings.Repeat("字", defaultDocWindowLen+1)
+		id := createDocForTest(t, tool, ec, "超一", content)
+		got := getDocForTest(t, tool, ec, map[string]interface{}{"id": id})
+		if got["truncated"] != true {
+			t.Fatal("expected truncated=true")
+		}
+		if n := got["next_char_offset"].(float64); n != float64(defaultDocWindowLen) {
+			t.Errorf("expected next_char_offset=%d, got %v", defaultDocWindowLen, n)
+		}
+		if len([]rune(got["content"].(string))) != defaultDocWindowLen {
+			t.Errorf("expected window of %d chars", defaultDocWindowLen)
+		}
+	})
+}
+
+func TestDocumentGetWindowContinue(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	// 构造 2.5 个窗口，含多字节与 emoji，验证续读拼接能还原全文且不劈字
+	content := strings.Repeat("文档内容abc😀", 1500)
+	id := createDocForTest(t, tool, ec, "长文档", content)
+
+	var sb strings.Builder
+	offset := 0
+	for i := 0; i < 10; i++ {
+		got := getDocForTest(t, tool, ec, map[string]interface{}{"id": id, "char_offset": offset})
+		chunk := got["content"].(string)
+		if !utf8.ValidString(chunk) {
+			t.Fatal("window content is not valid UTF-8")
+		}
+		sb.WriteString(chunk)
+		if got["truncated"] != true {
+			break
+		}
+		next := int(got["next_char_offset"].(float64))
+		if next <= offset {
+			t.Fatalf("next_char_offset did not advance: %d -> %d", offset, next)
+		}
+		offset = next
+	}
+
+	if sb.String() != content {
+		t.Errorf("concatenated windows do not reconstruct the document (got %d runes, want %d)",
+			len([]rune(sb.String())), len([]rune(content)))
+	}
+}
+
+func TestDocumentGetWindowClamp(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	content := strings.Repeat("x", maxDocWindowLen+1000)
+	id := createDocForTest(t, tool, ec, "clamp", content)
+
+	t.Run("char_limit over max is clamped", func(t *testing.T) {
+		got := getDocForTest(t, tool, ec, map[string]interface{}{"id": id, "char_limit": maxDocWindowLen + 99999})
+		if got["char_limit"].(float64) != float64(maxDocWindowLen) {
+			t.Errorf("expected char_limit=%d, got %v", maxDocWindowLen, got["char_limit"])
+		}
+	})
+
+	t.Run("non-positive char_limit falls back to default", func(t *testing.T) {
+		for _, l := range []int{0, -5} {
+			got := getDocForTest(t, tool, ec, map[string]interface{}{"id": id, "char_limit": l})
+			if got["char_limit"].(float64) != float64(defaultDocWindowLen) {
+				t.Errorf("char_limit=%d: expected default %d, got %v", l, defaultDocWindowLen, got["char_limit"])
+			}
+		}
+	})
+
+	t.Run("negative offset clamps to zero", func(t *testing.T) {
+		got := getDocForTest(t, tool, ec, map[string]interface{}{"id": id, "char_offset": -10})
+		if got["char_offset"].(float64) != 0 {
+			t.Errorf("expected char_offset=0, got %v", got["char_offset"])
+		}
+		if !strings.HasPrefix(got["content"].(string), "x") {
+			t.Error("expected content from the beginning")
+		}
+	})
+}
+
+func TestDocumentGetWindowOffsetOverflow(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	id := createDocForTest(t, tool, ec, "overflow", "短内容")
+	got := getDocForTest(t, tool, ec, map[string]interface{}{"id": id, "char_offset": 9999})
+
+	if got["content"] != "" {
+		t.Errorf("expected empty content past the end, got %q", got["content"])
+	}
+	if got["truncated"] != false {
+		t.Errorf("past-the-end read should not be truncated, got %v", got["truncated"])
+	}
+}
+
+func TestDocumentOutline(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	t.Run("headings with rune offsets", func(t *testing.T) {
+		content := "# 一级标题\n正文\n## 二级标题\n更多正文"
+		// 补足到超窗口，触发 outline
+		content += "\n" + strings.Repeat("填充", defaultDocWindowLen)
+		id := createDocForTest(t, tool, ec, "outline", content)
+		got := getDocForTest(t, tool, ec, map[string]interface{}{"id": id})
+
+		outline, _ := got["outline"].(string)
+		if !strings.Contains(outline, "0: # 一级标题") {
+			t.Errorf("outline missing first heading with offset 0: %q", outline)
+		}
+		// "# 一级标题\n正文\n" = 6+1+2+1 = 10 runes 后是 "## 二级标题"
+		if !strings.Contains(outline, "10: ## 二级标题") {
+			t.Errorf("outline missing second heading with offset 10: %q", outline)
+		}
+	})
+
+	t.Run("capped entries and truncated titles", func(t *testing.T) {
+		longTitle := strings.Repeat("标", maxDocOutlineTitleLen+20)
+		var sb strings.Builder
+		for i := 0; i < maxDocOutlineEntries+5; i++ {
+			sb.WriteString("## ")
+			sb.WriteString(longTitle)
+			sb.WriteString("\n")
+		}
+		sb.WriteString(strings.Repeat("填充", defaultDocWindowLen))
+		id := createDocForTest(t, tool, ec, "many", sb.String())
+		got := getDocForTest(t, tool, ec, map[string]interface{}{"id": id})
+
+		outline, _ := got["outline"].(string)
+		lines := strings.Split(outline, "\n")
+		if len(lines) != maxDocOutlineEntries {
+			t.Errorf("expected %d outline entries, got %d", maxDocOutlineEntries, len(lines))
+		}
+		for _, line := range lines {
+			idx := strings.Index(line, ": ")
+			if idx < 0 {
+				t.Errorf("outline line missing offset separator: %q", line)
+				continue
+			}
+			title := strings.TrimLeft(line[idx+2:], "# ")
+			if len([]rune(title)) > maxDocOutlineTitleLen+3 { // +3 为截断省略号
+				t.Errorf("outline title not truncated: %q", title)
+			}
+		}
+	})
+}
+
+func TestDocumentTitleTooLong(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	longTitle := strings.Repeat("题", maxDocumentTitleLen+1)
+
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
+		"title": longTitle, "content": "c",
+	}))
+	if res.Success || !strings.Contains(res.Error, "标题超长") {
+		t.Fatalf("expected create to reject long title, got success=%v err=%q", res.Success, res.Error)
+	}
+
+	// 边界：恰好 50 字通过
+	okTitle := strings.Repeat("题", maxDocumentTitleLen)
+	res = tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
+		"title": okTitle, "content": "c",
+	}))
+	if !res.Success {
+		t.Fatalf("at-limit title should pass, got: %s", res.Error)
+	}
+	var created map[string]interface{}
+	json.Unmarshal(res.Data, &created)
+	id := created["id"].(string)
+
+	// update 传超长 title 被拒
+	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
+		"id": id, "title": longTitle,
+	}))
+	if res.Success || !strings.Contains(res.Error, "标题超长") {
+		t.Fatalf("expected update to reject long title, got success=%v err=%q", res.Success, res.Error)
+	}
+
+	// update 不传 title 时不受影响
+	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
+		"id": id, "content": "new content",
+	}))
+	if !res.Success {
+		t.Fatalf("update without title should pass, got: %s", res.Error)
+	}
+}
+
+func TestDocumentQueryPaging(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	for i := 0; i < 5; i++ {
+		createDocForTest(t, tool, ec, "page-"+string(rune('a'+i)), "共享关键词内容")
+	}
+
+	res := tool.Execute(ec, "query_documents", mustMarshal(t, map[string]interface{}{
+		"keyword": "共享关键词", "limit": 2, "offset": 0,
+	}))
+	var page struct {
+		Documents []map[string]interface{} `json:"documents"`
+		Total     int                      `json:"total"`
+	}
+	json.Unmarshal(res.Data, &page)
+	if page.Total != 5 {
+		t.Errorf("expected total 5, got %d", page.Total)
+	}
+	if len(page.Documents) != 2 {
+		t.Errorf("expected 2 docs on first page, got %d", len(page.Documents))
+	}
+
+	res = tool.Execute(ec, "query_documents", mustMarshal(t, map[string]interface{}{
+		"keyword": "共享关键词", "limit": 2, "offset": 2,
+	}))
+	var page2 struct {
+		Documents []map[string]interface{} `json:"documents"`
+	}
+	json.Unmarshal(res.Data, &page2)
+	if len(page2.Documents) != 2 {
+		t.Fatalf("expected 2 docs on second page, got %d", len(page2.Documents))
+	}
+	if page.Documents[0]["id"] == page2.Documents[0]["id"] {
+		t.Error("second page should not repeat the first page's documents")
 	}
 }
 
@@ -465,10 +723,88 @@ func TestDocumentDelete(t *testing.T) {
 		t.Error("expected failure after delete")
 	}
 
-	// delete 不存在的也应正常
+	// delete 不存在的应明确报错（否则调用方无法区分"真删了"和"本来就没有"）
 	res = tool.Execute(ec, "delete_document", mustMarshal(t, map[string]string{"id": "nonexistent"}))
+	if res.Success {
+		t.Error("expected failure for deleting nonexistent doc")
+	}
+}
+
+func TestDocumentTagsNormalizeAndClear(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	// 全角逗号 + 空格 + 末尾空项 + 重复项 → 归一为半角、去重
+	id := createDocForTest(t, tool, ec, "标签", "正文")
+	res := tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{
+		"id": id, "tags": "a， a , b,",
+	}))
 	if !res.Success {
-		t.Errorf("expected success for deleting nonexistent doc, got: %s", res.Error)
+		t.Fatalf("update tags failed: %s", res.Error)
+	}
+	if got := getDocForTest(t, tool, ec, map[string]interface{}{"id": id})["tags"]; got != "a,b" {
+		t.Errorf("tags should be normalized to %q, got %v", "a,b", got)
+	}
+
+	// tags 传空字符串 = 清空
+	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{"id": id, "tags": ""}))
+	if !res.Success {
+		t.Fatalf("clear tags failed: %s", res.Error)
+	}
+	if got := getDocForTest(t, tool, ec, map[string]interface{}{"id": id})["tags"]; got != "" {
+		t.Errorf("tags should be cleared, got %v", got)
+	}
+
+	// 不传 tags = 不动
+	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{"id": id, "tags": "x，y"}))
+	if !res.Success {
+		t.Fatalf("update tags failed: %s", res.Error)
+	}
+	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{"id": id, "title": "改名"}))
+	if !res.Success {
+		t.Fatalf("update title failed: %s", res.Error)
+	}
+	if got := getDocForTest(t, tool, ec, map[string]interface{}{"id": id})["tags"]; got != "x,y" {
+		t.Errorf("tags should survive title-only update, got %v", got)
+	}
+}
+
+func TestDocumentPagingStrict(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	for _, title := range []string{"p1", "p2", "p3"} {
+		createDocForTest(t, tool, ec, title, "c")
+	}
+
+	// limit=0：返回空列表但 total 照常
+	for _, fn := range []string{"list_documents", "query_documents"} {
+		res := tool.Execute(ec, fn, mustMarshal(t, map[string]interface{}{"limit": 0}))
+		if !res.Success {
+			t.Fatalf("%s limit=0 failed: %s", fn, res.Error)
+		}
+		var got struct {
+			Documents []interface{} `json:"documents"`
+			Total     int64         `json:"total"`
+		}
+		json.Unmarshal(res.Data, &got)
+		if len(got.Documents) != 0 {
+			t.Errorf("%s limit=0 should return no docs, got %d", fn, len(got.Documents))
+		}
+		if got.Total != 3 {
+			t.Errorf("%s limit=0 should still report total=3, got %d", fn, got.Total)
+		}
+	}
+
+	// 负数：明确报错，不静默落默认值
+	for _, fn := range []string{"list_documents", "query_documents"} {
+		for _, args := range []map[string]interface{}{{"limit": -1}, {"offset": -1}} {
+			if res := tool.Execute(ec, fn, mustMarshal(t, args)); res.Success {
+				t.Errorf("%s %v should fail", fn, args)
+			}
+		}
 	}
 }
 
@@ -480,6 +816,60 @@ func TestDocumentUnknownFunction(t *testing.T) {
 	res := tool.Execute(ec, "nonexistent_func", mustMarshal(t, map[string]interface{}{}))
 	if res.Success {
 		t.Error("expected failure for unknown function")
+	}
+}
+
+func TestDocumentContentTooLong(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+	tooLong := strings.Repeat("字", maxDocumentContentLen+1)
+
+	// create 超长应被友好拒绝
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
+		"title": "过长", "content": tooLong,
+	}))
+	if res.Success {
+		t.Fatal("expected create to fail for over-limit content")
+	}
+	if !strings.Contains(res.Error, "超长") {
+		t.Errorf("expected friendly over-limit error, got: %s", res.Error)
+	}
+
+	// 建一篇正常文档，供 update 场景使用
+	res = tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
+		"title": "正常", "content": "短内容",
+	}))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	var created map[string]interface{}
+	json.Unmarshal(res.Data, &created)
+	docID := created["id"].(string)
+
+	// 全量重写超长
+	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
+		"id": docID, "content": tooLong,
+	}))
+	if res.Success || !strings.Contains(res.Error, "超长") {
+		t.Fatalf("expected update to fail for over-limit content, got success=%v err=%s", res.Success, res.Error)
+	}
+
+	// old_text/new_text 替换后撑爆也应被拒绝
+	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
+		"id": docID, "old_text": "短内容", "new_text": tooLong,
+	}))
+	if res.Success || !strings.Contains(res.Error, "超长") {
+		t.Fatalf("expected replacement-induced over-limit to fail, got success=%v err=%s", res.Success, res.Error)
+	}
+
+	// 边界：恰好等于上限应放行
+	atLimit := strings.Repeat("字", maxDocumentContentLen)
+	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
+		"id": docID, "content": atLimit,
+	}))
+	if !res.Success {
+		t.Fatalf("expected at-limit content to succeed, got: %s", res.Error)
 	}
 }
 

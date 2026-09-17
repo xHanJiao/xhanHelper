@@ -189,3 +189,88 @@ DeepSeek 前缀缓存是连续前缀匹配。资源区无论放哪（历史前/�
 
 价格假设：deepseek-chat 公开价（hit $0.07/M, miss $0.27/M, out $1.10/M），
 v4 实际价目以 `llm_cost_details` 真实用量数据为准，比值结构（hit ≈ miss 的 1/4）不变。
+
+## 五、任务 D：文档工具读写 token 治理（2026-09-17）
+
+背景：文档（`document` 工具）的读写没有上下文保护——`get_document` 无条件返回全文，
+`get_document_versions` 返回每个历史版本的完整快照；而本地文件侧早就有
+「分页 + 20KB 注入预算 + 溢出转 output_path」的双层保护。
+
+### 数据（dev 库 = prod 副本，成本窗口 8-12 ~ 9-17）
+
+调用统计（`messages.tool_calls_json`，实际调用而非 schema 出现次数）：
+
+| 工具 | 调用 |
+|------|------|
+| `get_document` | 223 |
+| `update_document` | 305（含 `old_text` 102） |
+| `create_document` | 127 |
+| `query_documents` | 149 |
+| **`get_document_versions`** | **0** |
+| **`rollback_document`** | **0** |
+
+文档规模：106 篇，总 51.6 万字，max 38,313 字，**44 篇（42%）> 3000 字**。
+
+花费构成（5 周，8,306 次调用，¥119.5）：
+cache hit 192.9M tok（83.1%，¥7.7）/ cache miss 39.3M tok（¥78.6）/
+completion 8.29M tok（¥33.2）。
+
+- 回放倍率实测 ≈ **10×**（语料单份 24.46M 字 × 0.69 tok/字 = 17.1M tok，
+  命中 token 扣固定开销 ~25M 后除以 17.1M）。
+- 文档工具自身 ≈ **¥2.76 / 5 周 = 总花费 2.3%**（读 miss ¥0.80 + 读回放 ¥0.16
+  + 写输出 ¥1.63，其中全量重写 ¥0.78 + 写参数回放 ¥0.17）。
+- 结论：**金额收益约 2%**，真正的动机是上下文占用与防增长——50 万字上限下单次整读
+  ≈ 35 万 tokens，单请求即可吞掉 30% 上下文。
+
+### 落地改动
+
+1. `get_document` 窗口读：`char_offset`/`char_limit`（默认 3000，上限 20000），
+   ≤窗口时行为与全文读完全一致（零回归）；超窗返回窗口 + `total_chars/total_lines/
+   next_char_offset/truncated` + `outline`（标题+偏移，最多 12 条）+ `hint`。
+   小文档一次读完，大文档先看目录再按 `char_offset` 取片段。
+2. 删除 `get_document_versions`、`rollback_document`（实测 0 调用）与文档版本快照写入
+   （`VersionRepo` 保留给 note/agent）。
+3. 文档标题上限 50 字（原先只有 DB `size:500`，无应用层校验），存量 106 篇中仅 1 篇超限。
+4. `query_documents` 暴露 `limit`/`offset`（原硬编码 20/0）。
+5. `llm.max_tool_result_chars`：`-1` → `20000`（历史回放安全网）。
+
+### 阈值决策：为什么是 20000 而不是 5000
+
+`max_tool_result_chars` 只作用于**历史回放**（`BuildMessagesForFlash`，当前轮不截）。
+>5000 字的结果里，量最大的是 `fs__read`（554 条，5.19M 字，avg 9,376）与
+`fs__grep`（296 条，2.67M 字，avg 9,021）——客户端文件工具**故意按 20KB 预算**
+（`clientToolInjectBudgetBytes`）设计。截到 5000 会把文件读取的有效内容砍到 1/4，
+伤多轮文件/编码跟进；实测削减量 5000→8.79M 字、10000→3.08M 字、**20000→0.49M 字
+（仅 63 条病态结果，fs 系仅 1 条超 2 万）**。5000 与 20000 的钱差 ≈ ¥0.5/月，
+不值得换来质量风险。
+
+### 验收
+
+`server/internal/tool/document_test.go`：窗口边界（恰好/超一）、`char_offset` 续读
+拼接还原全文（含 emoji 多字节不劈字）、`char_limit` 收敛与非法值、offset 越界、
+outline 偏移/条数/标题截断、标题 50 字边界与 update 不传 title 放行、
+已删函数返回 unknown function、`query_documents` 分页。
+
+### 语义约定与复测修正（2026-09-17）
+
+复测确认的**有意行为**（不要当 bug 修）：
+
+- `char_offset` 负数静默归零 —— 返回体里 `char_offset` 回显生效值，调用方对比即可发现。
+- 空正文被拒（`title and content required`）：空文档无意义；要「先建空壳后追加」再放开。
+- `outline` 仅在 `truncated=true` 时返回：小文档已返回全文，outline 是纯冗余。
+- `limit`/`offset` 不传时用默认值（20 / 0）。
+
+复测后修正的四个问题：
+
+1. **删除不存在的 id 报成功** → `DocumentRepo.Delete` 改为返回 `RowsAffected`（对齐
+   `bill_repo.go` / `image_asset_repo.go` 做法），工具返回 `document not found`，
+   HTTP 侧 404（原先错误分支还没有日志）。
+2. **排序不稳定** → `List` 的 `ORDER BY updated_at DESC` 补唯一 tie-break
+   `id DESC`。缺它时同 `updated_at` 的文档顺序由执行计划决定，不同 `limit` 会给出
+   不同顺序，翻页重复/漏项（正是 `list_documents` 与 `query_documents` 顺序不一致的根因）。
+3. **tags 无法归一化/清空** → 新增 `NormalizeTags`（按半角+全角逗号切分、去空格、
+   保序去重、半角 join），写入路径统一走它；`update_document` 的 `tags` 改指针语义，
+   传 `""` 表示清空、不传表示不动。读取侧 `ListTagCounts` 也按双分隔符切分，兼容存量。
+   存量 dev 库实测 0 行全角（102 行半角），故 `tagMatchClause` 的 SQL 不动。
+4. **`limit=0` 与不传无法区分** → `limit` 改指针语义：不传 = 默认 20，`0` = 只取总数
+   返回空列表（GORM `Limit(0)` 等于不加 LIMIT，repo 里需显式早返回），负数 = 明确报错。

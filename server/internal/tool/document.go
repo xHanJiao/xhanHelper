@@ -3,8 +3,8 @@ package tool
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -13,14 +13,51 @@ import (
 	"xhan-helper/internal/util"
 )
 
-// DocumentTool — 文档管理工具。仅在用户明确要求时使用，不要主动创建。
-type DocumentTool struct {
-	docRepo     *service.DocumentRepo
-	versionRepo *service.VersionRepo
+const (
+	// maxDocumentContentLen 单篇文档正文上限（字）。超长会被拒绝，请拆分成多篇文档。
+	maxDocumentContentLen = 500000
+	// maxDocumentTitleLen 文档标题上限（字）。超出会被拒绝。
+	maxDocumentTitleLen = 50
+	// defaultDocWindowLen get_document 默认返回的窗口大小（字）。
+	defaultDocWindowLen = 3000
+	// maxDocWindowLen get_document 单次窗口上限（字），对齐客户端工具注入预算。
+	maxDocWindowLen = 20000
+	// maxDocOutlineEntries outline 最多返回的标题条数。
+	maxDocOutlineEntries = 12
+	// maxDocOutlineTitleLen outline 单条标题截断长度（字）。
+	maxDocOutlineTitleLen = 30
+	// defaultDocPageSize 列表/查询类函数的默认每页条数。
+	defaultDocPageSize = 20
+)
+
+// resolvePaging 解析列表类函数的 limit/offset：不传用默认值，负数报错（传 0 表示只取总数、返回空列表）。
+func resolvePaging(limit, offset *int) (int, int, string) {
+	l, o := defaultDocPageSize, 0
+	if limit != nil {
+		if *limit < 0 {
+			return 0, 0, "limit 不能为负数"
+		}
+		l = *limit
+	}
+	if offset != nil {
+		if *offset < 0 {
+			return 0, 0, "offset 不能为负数"
+		}
+		o = *offset
+	}
+	return l, o, ""
 }
 
-func NewDocumentTool(docRepo *service.DocumentRepo, versionRepo *service.VersionRepo) *DocumentTool {
-	return &DocumentTool{docRepo: docRepo, versionRepo: versionRepo}
+// docWindowHint 大文档窗口读的固定提示，防止整读整写浪费 token。
+const docWindowHint = "文档较长，仅返回部分内容。继续读请传 char_offset；修改请用 old_text/new_text 局部替换，不要整读整写。"
+
+// DocumentTool — 文档管理工具。仅在用户明确要求时使用，不要主动创建。
+type DocumentTool struct {
+	docRepo *service.DocumentRepo
+}
+
+func NewDocumentTool(docRepo *service.DocumentRepo) *DocumentTool {
+	return &DocumentTool{docRepo: docRepo}
 }
 
 func (t *DocumentTool) Name() string { return "document" }
@@ -31,9 +68,9 @@ func (t *DocumentTool) Description() string {
 
 func (t *DocumentTool) Catalog() (CatalogEntry, bool) {
 	return CatalogEntry{
-		ShortDesc: "文档。写/查/改/删 Markdown 文档，版本回滚。用户明确要求才用。",
+		ShortDesc: "文档。写/查/改/删 Markdown 文档。用户明确要求才用。",
 		Funcs:     []string{"create_document", "get_document", "update_document", "query_documents"},
-		Others:    "删除、版本回滚、版本列表、标签 等",
+		Others:    "删除、文档列表、标签 等",
 	}, true
 }
 
@@ -46,9 +83,9 @@ func (t *DocumentTool) Functions() []FuncSchema {
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"title":   map[string]interface{}{"type": "string", "description": "文档标题"},
-					"content": map[string]interface{}{"type": "string", "description": "Markdown 格式的文档正文"},
-					"tags":    map[string]interface{}{"type": "string", "description": "逗号分隔的标签，用于分类检索，如 技术,Go,后端"},
+					"title":   map[string]interface{}{"type": "string", "description": fmt.Sprintf("文档标题，≤%d 字，超长会被拒绝", maxDocumentTitleLen)},
+					"content": map[string]interface{}{"type": "string", "description": fmt.Sprintf("Markdown 格式的文档正文，≤%d 字，超长会被拒绝（请拆分成多篇）", maxDocumentContentLen)},
+					"tags":    map[string]interface{}{"type": "string", "description": "逗号分隔的标签（半角逗号），用于分类检索，如 技术,Go,后端；自动去重"},
 				},
 				"required": []string{"title", "content"},
 			},
@@ -56,11 +93,13 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		{
 			Name:        "get_document",
 			Display:     "获取文档",
-			Description: "获取文档完整内容（含版本列表）。修改文档前必须先调用此函数读取当前内容。",
+			Description: fmt.Sprintf("获取文档内容（按窗口返回，默认前 %d 字）。长文档会附带 outline（标题+偏移）并提示续读方式：先看 outline 定位，再用 char_offset 读需要的片段，不要反复整读。修改文档前只需读相关片段即可。", defaultDocWindowLen),
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"id": map[string]interface{}{"type": "string", "description": "文档 ID"},
+					"id":          map[string]interface{}{"type": "string", "description": "文档 ID"},
+					"char_offset": map[string]interface{}{"type": "integer", "description": "从第几个字符开始读（0 起，默认 0）"},
+					"char_limit":  map[string]interface{}{"type": "integer", "description": fmt.Sprintf("本次返回的最大字符数，默认 %d，上限 %d", defaultDocWindowLen, maxDocWindowLen)},
 				},
 				"required": []string{"id"},
 			},
@@ -73,37 +112,12 @@ func (t *DocumentTool) Functions() []FuncSchema {
 				"type": "object",
 				"properties": map[string]interface{}{
 					"id":       map[string]interface{}{"type": "string", "description": "文档 ID"},
-					"title":    map[string]interface{}{"type": "string", "description": "新的文档标题（可选）"},
-					"content":  map[string]interface{}{"type": "string", "deprecated": true, "description": "（已废弃）新的 Markdown 正文，全量覆盖。优先用 old_text/new_text 局部替换，仅整篇重写时才传此参数"},
-					"tags":     map[string]interface{}{"type": "string", "description": "新的标签（可选）"},
+					"title":    map[string]interface{}{"type": "string", "description": fmt.Sprintf("新的文档标题（可选），≤%d 字，超长会被拒绝", maxDocumentTitleLen)},
+					"content":  map[string]interface{}{"type": "string", "deprecated": true, "description": fmt.Sprintf("（已废弃）新的 Markdown 正文，全量覆盖，≤%d 字。优先用 old_text/new_text 局部替换，仅整篇重写时才传此参数", maxDocumentContentLen)},
+					"tags":     map[string]interface{}{"type": "string", "description": "新的标签（可选，半角逗号分隔、自动去重）。传空字符串表示清空标签"},
 					"old_text": map[string]interface{}{"type": "string", "description": "要被替换的原文片段，需精确匹配且在文档中唯一（与 content 互斥）"},
 					"new_text": map[string]interface{}{"type": "string", "description": "替换后的新文本（可为空字符串表示删除片段），须与 old_text 搭配传入"},
 					"count":    map[string]interface{}{"type": "integer", "description": "要替换的匹配数量（可选）。不传时要求 old_text 唯一匹配并只替换 1 处；传入时替换前 count 处，不能超过实际匹配数"},
-				},
-				"required": []string{"id"},
-			},
-		},
-		{
-			Name:        "rollback_document",
-			Display:     "回滚文档",
-			Description: "将文档回滚到指定历史版本。版本号从 get_document_versions 获取。",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"id":      map[string]interface{}{"type": "string", "description": "文档 ID"},
-					"version": map[string]interface{}{"type": "integer", "description": "要回滚到的版本号"},
-				},
-				"required": []string{"id", "version"},
-			},
-		},
-		{
-			Name:        "get_document_versions",
-			Display:     "版本列表",
-			Description: "获取文档的所有历史版本列表。",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"id": map[string]interface{}{"type": "string", "description": "文档 ID"},
 				},
 				"required": []string{"id"},
 			},
@@ -117,6 +131,8 @@ func (t *DocumentTool) Functions() []FuncSchema {
 				"properties": map[string]interface{}{
 					"tag":     map[string]interface{}{"type": "string", "description": "按标签筛选（可选）"},
 					"keyword": map[string]interface{}{"type": "string", "description": "按标题和内容搜索关键词（可选）"},
+					"limit":   map[string]interface{}{"type": "integer", "description": fmt.Sprintf("每页条数，默认 %d；传 0 只取总数返回空列表", defaultDocPageSize)},
+					"offset":  map[string]interface{}{"type": "integer", "description": "偏移量，默认 0，不能为负"},
 				},
 			},
 		},
@@ -127,8 +143,8 @@ func (t *DocumentTool) Functions() []FuncSchema {
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"limit":  map[string]interface{}{"type": "integer", "description": "每页条数，默认 20"},
-					"offset": map[string]interface{}{"type": "integer", "description": "偏移量，默认 0"},
+					"limit":  map[string]interface{}{"type": "integer", "description": fmt.Sprintf("每页条数，默认 %d；传 0 只取总数返回空列表", defaultDocPageSize)},
+					"offset": map[string]interface{}{"type": "integer", "description": "偏移量，默认 0，不能为负"},
 				},
 			},
 		},
@@ -152,14 +168,13 @@ func (t *DocumentTool) Functions() []FuncSchema {
 	}
 }
 
-// ReadOnlyFuncs — 查看/查询/版本/标签类只读，增删改/回滚为写（plan 模式拦截）
+// ReadOnlyFuncs — 查看/查询/标签类只读，增删改为写（plan 模式拦截）
 func (t *DocumentTool) ReadOnlyFuncs() map[string]bool {
 	return map[string]bool{
-		"get_document":          true,
-		"get_document_versions": true,
-		"query_documents":       true,
-		"list_documents":        true,
-		"list_tags":             true,
+		"get_document":    true,
+		"query_documents": true,
+		"list_documents":  true,
+		"list_tags":       true,
 	}
 }
 
@@ -171,8 +186,6 @@ func (t *DocumentTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 		return t.getDocument(ec, args)
 	case "update_document":
 		return t.updateDocument(ec, args)
-	case "rollback_document":
-		return t.rollbackDocument(ec, args)
 	case "query_documents":
 		return t.queryDocuments(ec, args)
 	case "delete_document":
@@ -181,8 +194,6 @@ func (t *DocumentTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 		return t.listDocuments(ec, args)
 	case "list_tags":
 		return t.listTags(ec)
-	case "get_document_versions":
-		return t.getDocumentVersions(ec, args)
 	default:
 		return &Result{Success: false, Error: "unknown function: " + funcName}
 	}
@@ -200,13 +211,19 @@ func (t *DocumentTool) createDocument(ec *ExecuteContext, args json.RawMessage) 
 	if req.Title == "" || req.Content == "" {
 		return &Result{Success: false, Error: "title and content required"}
 	}
+	if utf8.RuneCountInString(req.Content) > maxDocumentContentLen {
+		return &Result{Success: false, Error: fmt.Sprintf("文档正文超长（≤%d 字），请拆分成多篇文档", maxDocumentContentLen)}
+	}
+	if utf8.RuneCountInString(req.Title) > maxDocumentTitleLen {
+		return &Result{Success: false, Error: fmt.Sprintf("文档标题超长（≤%d 字），请精简", maxDocumentTitleLen)}
+	}
 
 	doc := &model.Document{
 		ID:      uuid.New().String(),
 		UserID:  ec.UserID,
 		Title:   req.Title,
 		Content: req.Content,
-		Tags:    req.Tags,
+		Tags:    service.NormalizeTags(req.Tags),
 	}
 	if ec.ConvID != "" {
 		convID := ec.ConvID
@@ -227,13 +244,24 @@ func (t *DocumentTool) createDocument(ec *ExecuteContext, args json.RawMessage) 
 
 func (t *DocumentTool) getDocument(ec *ExecuteContext, args json.RawMessage) *Result {
 	var req struct {
-		ID string `json:"id"`
+		ID         string `json:"id"`
+		CharOffset int    `json:"char_offset"`
+		CharLimit  int    `json:"char_limit"`
 	}
 	if err := json.Unmarshal(args, &req); err != nil {
 		return &Result{Success: false, Error: "invalid args: " + err.Error()}
 	}
 	if req.ID == "" {
 		return &Result{Success: false, Error: "id required"}
+	}
+	if req.CharOffset < 0 {
+		req.CharOffset = 0
+	}
+	if req.CharLimit <= 0 {
+		req.CharLimit = defaultDocWindowLen
+	}
+	if req.CharLimit > maxDocWindowLen {
+		req.CharLimit = maxDocWindowLen
 	}
 
 	doc, err := t.docRepo.GetByID(ec.Ctx, req.ID, ec.UserID)
@@ -241,72 +269,75 @@ func (t *DocumentTool) getDocument(ec *ExecuteContext, args json.RawMessage) *Re
 		return &Result{Success: false, Error: "document not found: " + err.Error()}
 	}
 
+	runes := []rune(doc.Content)
+	total := len(runes)
+	if req.CharOffset > total {
+		req.CharOffset = total
+	}
+	end := req.CharOffset + req.CharLimit
+	if end > total {
+		end = total
+	}
+	truncated := end < total
+
 	result := map[string]interface{}{
-		"id":         doc.ID,
-		"title":      doc.Title,
-		"content":    doc.Content,
-		"tags":       doc.Tags,
-		"created_at": doc.CreatedAt,
-		"updated_at": doc.UpdatedAt,
+		"id":          doc.ID,
+		"title":       doc.Title,
+		"content":     string(runes[req.CharOffset:end]),
+		"tags":        doc.Tags,
+		"created_at":  doc.CreatedAt,
+		"updated_at":  doc.UpdatedAt,
+		"char_offset": req.CharOffset,
+		"char_limit":  req.CharLimit,
+		"total_chars": total,
+		"total_lines": strings.Count(doc.Content, "\n") + 1,
+		"truncated":   truncated,
+	}
+	if truncated {
+		result["next_char_offset"] = end
+		result["outline"] = docOutline(doc.Content)
+		result["hint"] = docWindowHint
 	}
 	if doc.ConversationID != nil {
 		result["conversation_id"] = *doc.ConversationID
-	}
-
-	// 附带版本历史列表
-	versions, err := t.versionRepo.GetVersions(ec.Ctx, "document", req.ID)
-	if err != nil {
-		log.Printf("[document] get versions for get_document: %v", err)
-	}
-	if len(versions) > 0 {
-		vlist := make([]map[string]interface{}, len(versions))
-		for i, v := range versions {
-			vlist[i] = map[string]interface{}{
-				"version":    v.Version,
-				"created_at": v.CreatedAt,
-			}
-		}
-		result["versions"] = vlist
 	}
 
 	data, _ := json.Marshal(result)
 	return &Result{Success: true, Data: data}
 }
 
-func (t *DocumentTool) getDocumentVersions(ec *ExecuteContext, args json.RawMessage) *Result {
-	var req struct {
-		ID string `json:"id"`
+// docOutline 提取 Markdown 标题行，返回紧凑目录串 "rune偏移: 标题"，供模型定位后按 char_offset 续读。
+func docOutline(content string) string {
+	var sb strings.Builder
+	count := 0
+	offset := 0
+	for _, line := range strings.Split(content, "\n") {
+		if count >= maxDocOutlineEntries {
+			break
+		}
+		if title, ok := markdownHeading(line); ok {
+			if count > 0 {
+				sb.WriteString("\n")
+			}
+			fmt.Fprintf(&sb, "%d: %s", offset, util.TruncateContent(title, maxDocOutlineTitleLen))
+			count++
+		}
+		offset += utf8.RuneCountInString(line) + 1
 	}
-	if err := json.Unmarshal(args, &req); err != nil {
-		return &Result{Success: false, Error: "invalid args: " + err.Error()}
-	}
-	if req.ID == "" {
-		return &Result{Success: false, Error: "id required"}
-	}
+	return sb.String()
+}
 
-	// 先确认文档存在
-	if _, err := t.docRepo.GetByID(ec.Ctx, req.ID, ec.UserID); err != nil {
-		return &Result{Success: false, Error: "document not found: " + err.Error()}
+// markdownHeading 判断是否为 Markdown 标题行（#~###### + 空格），返回含标记的标题行（如 "## 小节"）。
+func markdownHeading(line string) (string, bool) {
+	if !strings.HasPrefix(line, "#") {
+		return "", false
 	}
-
-	versions, err := t.versionRepo.GetVersions(ec.Ctx, "document", req.ID)
-	if err != nil {
-		return &Result{Success: false, Error: "get versions: " + err.Error()}
+	trimmed := strings.TrimLeft(line, "#")
+	level := len(line) - len(trimmed)
+	if level > 6 || !strings.HasPrefix(trimmed, " ") {
+		return "", false
 	}
-
-	vlist := make([]map[string]interface{}, 0, len(versions))
-	for _, v := range versions {
-		vlist = append(vlist, map[string]interface{}{
-			"version":    v.Version,
-			"snapshot":   v.Snapshot,
-			"created_at": v.CreatedAt,
-		})
-	}
-
-	data, _ := json.Marshal(map[string]interface{}{
-		"versions": vlist,
-	})
-	return &Result{Success: true, Data: data}
+	return strings.TrimRight(line, " \t"), true
 }
 
 func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) *Result {
@@ -314,7 +345,7 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 		ID      string  `json:"id"`
 		Title   string  `json:"title"`
 		Content string  `json:"content"`
-		Tags    string  `json:"tags"`
+		Tags    *string `json:"tags"`
 		OldText string  `json:"old_text"`
 		NewText *string `json:"new_text"`
 		Count   *int    `json:"count"`
@@ -332,7 +363,7 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 		return &Result{Success: false, Error: "old_text 需要搭配 new_text 使用"}
 	}
 
-	// 更新前先创建版本快照
+	// 局部替换需要读当前内容做匹配
 	current, err := t.docRepo.GetByID(ec.Ctx, req.ID, ec.UserID)
 	if err != nil {
 		return &Result{Success: false, Error: "document not found: " + err.Error()}
@@ -362,22 +393,20 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 	} else if req.Content != "" {
 		updates["content"] = req.Content
 	}
+	if c, ok := updates["content"].(string); ok && utf8.RuneCountInString(c) > maxDocumentContentLen {
+		return &Result{Success: false, Error: fmt.Sprintf("文档正文超长（≤%d 字），请拆分成多篇文档", maxDocumentContentLen)}
+	}
 	if req.Title != "" {
+		if utf8.RuneCountInString(req.Title) > maxDocumentTitleLen {
+			return &Result{Success: false, Error: fmt.Sprintf("文档标题超长（≤%d 字），请精简", maxDocumentTitleLen)}
+		}
 		updates["title"] = req.Title
 	}
-	if req.Tags != "" {
-		updates["tags"] = req.Tags
+	if req.Tags != nil {
+		updates["tags"] = service.NormalizeTags(*req.Tags)
 	}
 	if len(updates) == 0 {
 		return &Result{Success: true, Data: []byte(`{"message":"nothing to update"}`)}
-	}
-
-	if err := t.versionRepo.CreateSnapshot(ec.Ctx, "document", req.ID, map[string]interface{}{
-		"title":   current.Title,
-		"content": current.Content,
-		"tags":    current.Tags,
-	}); err != nil {
-		log.Printf("[document] create snapshot before update %s: %v", req.ID, err)
 	}
 
 	if err := t.docRepo.Update(ec.Ctx, req.ID, ec.UserID, updates); err != nil {
@@ -391,73 +420,20 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 	return &Result{Success: true, Data: data}
 }
 
-func (t *DocumentTool) rollbackDocument(ec *ExecuteContext, args json.RawMessage) *Result {
-	var req struct {
-		ID      string `json:"id"`
-		Version int    `json:"version"`
-	}
-	if err := json.Unmarshal(args, &req); err != nil {
-		return &Result{Success: false, Error: "invalid args: " + err.Error()}
-	}
-	if req.ID == "" || req.Version <= 0 {
-		return &Result{Success: false, Error: "id and version required"}
-	}
-
-	// 确保文档存在
-	current, err := t.docRepo.GetByID(ec.Ctx, req.ID, ec.UserID)
-	if err != nil {
-		return &Result{Success: false, Error: "document not found: " + err.Error()}
-	}
-
-	// 先创建当前版本快照
-	if err := t.versionRepo.CreateSnapshot(ec.Ctx, "document", req.ID, map[string]interface{}{
-		"title":   current.Title,
-		"content": current.Content,
-		"tags":    current.Tags,
-	}); err != nil {
-		log.Printf("[document] create snapshot before rollback %s: %v", req.ID, err)
-	}
-
-	// 获取目标版本快照
-	snap, err := t.versionRepo.GetSnapshot(ec.Ctx, "document", req.ID, req.Version)
-	if err != nil {
-		return &Result{Success: false, Error: "version not found: " + err.Error()}
-	}
-
-	var snapData struct {
-		Title   string `json:"title"`
-		Content string `json:"content"`
-		Tags    string `json:"tags"`
-	}
-	if err := json.Unmarshal([]byte(snap.Snapshot), &snapData); err != nil {
-		return &Result{Success: false, Error: "parse snapshot: " + err.Error()}
-	}
-
-	updates := map[string]interface{}{
-		"title":   snapData.Title,
-		"content": snapData.Content,
-		"tags":    snapData.Tags,
-	}
-	if err := t.docRepo.Update(ec.Ctx, req.ID, ec.UserID, updates); err != nil {
-		return &Result{Success: false, Error: "rollback document: " + err.Error()}
-	}
-
-	data, _ := json.Marshal(map[string]interface{}{
-		"id":      req.ID,
-		"version": req.Version,
-		"message": "文档已回滚",
-	})
-	return &Result{Success: true, Data: data}
-}
-
 func (t *DocumentTool) queryDocuments(ec *ExecuteContext, args json.RawMessage) *Result {
 	var req struct {
 		Tag     string `json:"tag"`
 		Keyword string `json:"keyword"`
+		Limit   *int   `json:"limit"`
+		Offset  *int   `json:"offset"`
 	}
 	json.Unmarshal(args, &req)
+	limit, offset, errMsg := resolvePaging(req.Limit, req.Offset)
+	if errMsg != "" {
+		return &Result{Success: false, Error: errMsg}
+	}
 
-	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, req.Tag, req.Keyword, 20, 0)
+	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, req.Tag, req.Keyword, limit, offset)
 	if err != nil {
 		return &Result{Success: false, Error: "query documents: " + err.Error()}
 	}
@@ -496,8 +472,12 @@ func (t *DocumentTool) deleteDocument(ec *ExecuteContext, args json.RawMessage) 
 		return &Result{Success: false, Error: "id required"}
 	}
 
-	if err := t.docRepo.Delete(ec.Ctx, req.ID, ec.UserID); err != nil {
+	rows, err := t.docRepo.Delete(ec.Ctx, req.ID, ec.UserID)
+	if err != nil {
 		return &Result{Success: false, Error: "delete document: " + err.Error()}
+	}
+	if rows == 0 {
+		return &Result{Success: false, Error: "document not found"}
 	}
 
 	data, _ := json.Marshal(map[string]interface{}{"id": req.ID, "message": "文档已删除"})
@@ -506,15 +486,16 @@ func (t *DocumentTool) deleteDocument(ec *ExecuteContext, args json.RawMessage) 
 
 func (t *DocumentTool) listDocuments(ec *ExecuteContext, args json.RawMessage) *Result {
 	var req struct {
-		Limit  int `json:"limit"`
-		Offset int `json:"offset"`
+		Limit  *int `json:"limit"`
+		Offset *int `json:"offset"`
 	}
 	json.Unmarshal(args, &req)
-	if req.Limit <= 0 {
-		req.Limit = 20
+	limit, offset, errMsg := resolvePaging(req.Limit, req.Offset)
+	if errMsg != "" {
+		return &Result{Success: false, Error: errMsg}
 	}
 
-	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, "", "", req.Limit, req.Offset)
+	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, "", "", limit, offset)
 	if err != nil {
 		return &Result{Success: false, Error: "list documents: " + err.Error()}
 	}

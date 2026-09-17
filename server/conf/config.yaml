@@ -31,7 +31,7 @@ llm:
   context_window: 1000000 # 弱模型（model）上下文窗口 token 上限，用于 UI 展示上下文占用比
   strong_context_window: 1000000 # 强模型（strong_model）上下文窗口 token 上限
   max_iterations: 80
-  max_tool_result_chars: -1
+  max_tool_result_chars: 20000 # 历史回放时工具结果的截断阈值（字符）；仅作用于历史重放，当前轮不截。20000 与客户端注入预算 clientToolInjectBudgetBytes 对齐，只兜住病态超大结果
   tool_max_concurrency: 2 # 工具并发执行上限，0=不限制
   extract_msg_limit: 50 # 记忆提取每次最多取的消息数
   use_native_fc: true # 是否使用原生 function calling（默认 true）

@@ -26,7 +26,7 @@ func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 	userID := c.GetString("user_id")
 	tag := c.Query("tag")
 	keyword := c.Query("keyword")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "24"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	list, total, err := h.docRepo.List(c.Request.Context(), userID, tag, keyword, limit, offset)
@@ -81,8 +81,14 @@ func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 	userID := c.GetString("user_id")
 	id := c.Param("id")
 
-	if err := h.docRepo.Delete(c.Request.Context(), id, userID); err != nil {
+	rows, err := h.docRepo.Delete(c.Request.Context(), id, userID)
+	if err != nil {
+		log.Printf("DeleteDocument: delete id=%s user=%s: %v", id, userID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if rows == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "document not found"})
 		return
 	}
 

@@ -36,7 +36,7 @@ var builtinToolSeeds = []builtinToolSeed{
 	{Name: "datetime", Description: "获取当前日期时间信息", Category: "utility"},
 	{Name: "calculator", Description: "安全的数学表达式计算器，支持加减乘除和括号", Category: "utility"},
 	{Name: "note", Description: "自由笔记工具，记录/查询/更新/回滚笔记，获取主题列表", Category: "note"},
-	{Name: "document", Description: "文档管理工具，创建/查看/更新/删除文档，支持版本回滚和标签检索", Category: "document"},
+	{Name: "document", Description: "文档管理工具，创建/查看(窗口读)/更新/删除文档，支持标签检索", Category: "document"},
 	{Name: "agent", Description: "管理智能体：创建、查看、删除自定义 AI 助手", Category: "agent"},
 	{Name: "unified_search", Description: "统一检索：长期记忆/笔记/对话摘要/主题/历史消息，支持语义与关键词两种模式", Category: "search"},
 	{Name: "message_search", Description: "查询历史消息：时间范围/ID 范围/按 ID 获取/数量统计", Category: "search"},

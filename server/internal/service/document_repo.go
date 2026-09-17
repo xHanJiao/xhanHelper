@@ -52,9 +52,41 @@ func (r *DocumentRepo) GetByIDPublic(ctx context.Context, id string) (*model.Doc
 	return &doc, nil
 }
 
-// Delete 删除文档
-func (r *DocumentRepo) Delete(ctx context.Context, id, userID string) error {
-	return r.db.WithContext(ctx).Delete(&model.Document{}, "id = ? AND user_id = ?", id, userID).Error
+// Delete 删除文档，返回删除行数（0 表示文档不存在或不属于该用户）
+func (r *DocumentRepo) Delete(ctx context.Context, id, userID string) (int64, error) {
+	result := r.db.WithContext(ctx).Delete(&model.Document{}, "id = ? AND user_id = ?", id, userID)
+	return result.RowsAffected, result.Error
+}
+
+// NormalizeTags 归一化标签串：按半角/全角逗号切分，去空格、去空项、保序去重，再用半角逗号 join。
+// 写入路径（create/update）必须走这里，否则中文输入法下的全角逗号会被当成标签内容，
+// 导致 list_tags/词云/tag 筛选整体错位。
+func NormalizeTags(tags string) string {
+	parts := splitTags(tags)
+	if len(parts) == 0 {
+		return ""
+	}
+	seen := make(map[string]bool, len(parts))
+	uniq := parts[:0]
+	for _, p := range parts {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		uniq = append(uniq, p)
+	}
+	return strings.Join(uniq, ",")
+}
+
+// splitTags 按半角/全角逗号切分并去空格，跳过空项
+func splitTags(tags string) []string {
+	out := make([]string, 0, 4)
+	for _, part := range strings.FieldsFunc(tags, func(r rune) bool { return r == ',' || r == '，' }) {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // tagMatchClause 按逗号边界匹配单个标签，避免子串误伤（"Go" 不该命中 "Golang"）。
@@ -66,9 +98,10 @@ func tagMatchClause(q *gorm.DB, tag string) *gorm.DB {
 	)
 }
 
-// List 按条件分页查询，limit<=0 时默认 50
+// List 按条件分页查询。limit < 0 视为默认 50；limit == 0 表示只取总数、返回空列表。
+// 排序必须带唯一 tie-break（id），否则同 updated_at 的文档在不同 limit 下顺序可能不同，翻页会重复/漏项。
 func (r *DocumentRepo) List(ctx context.Context, userID, tag, keyword string, limit, offset int) ([]model.Document, int64, error) {
-	if limit <= 0 {
+	if limit < 0 {
 		limit = 50
 	}
 	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
@@ -84,9 +117,12 @@ func (r *DocumentRepo) List(ctx context.Context, userID, tag, keyword string, li
 	if err := q.Model(&model.Document{}).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
+	if limit == 0 { // GORM Limit(0) = 不加 LIMIT，必须显式早返回
+		return []model.Document{}, total, nil
+	}
 
 	var list []model.Document
-	err := q.Order("updated_at DESC").Limit(limit).Offset(offset).Find(&list).Error
+	err := q.Order("updated_at DESC, id DESC").Limit(limit).Offset(offset).Find(&list).Error
 	return list, total, err
 }
 
@@ -109,11 +145,8 @@ func (r *DocumentRepo) ListTagCounts(ctx context.Context, userID string) ([]TagC
 
 	counts := make(map[string]int)
 	for _, t := range raw {
-		for _, part := range strings.Split(t, ",") {
-			part = strings.TrimSpace(part)
-			if part != "" {
-				counts[part]++
-			}
+		for _, part := range splitTags(t) {
+			counts[part]++
 		}
 	}
 

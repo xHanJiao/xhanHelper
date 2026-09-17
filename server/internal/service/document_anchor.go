@@ -306,7 +306,12 @@ func project(src []rune) projection {
 				push(' ', i)
 				prevSpace = true
 			}
-			lineStart = r == '\n'
+			// 只有换行能开新行：缩进空格不能把 lineStart 抹掉，否则缩进的
+			// 块标记（`  - ` / `  12. ` / `  > `）会被当成正文留在投影里，
+			// 而 DOM 那边（marked 已渲染成 <ul>/<ol>）根本没有这些字符。
+			if r == '\n' {
+				lineStart = true
+			}
 			continue
 
 		case mdInlineMarkers[r]:

@@ -120,6 +120,8 @@ func (h *AnnotationHandler) CreateAnnotation(c *gin.Context) {
 		a.Quote = sp.Quote
 		a.StartOffset, a.EndOffset = sp.Start, sp.End
 		a.Prefix, a.Suffix = ax.Context(sp)
+		// 夹逼会把 quote 改写成投影文本（动了用户数据），必须留痕
+		a.QuoteRewritten = sp.Fuzzy
 	}
 
 	if err := h.annoRepo.Create(c.Request.Context(), a); err != nil {
@@ -241,7 +243,7 @@ func (h *AnnotationHandler) RelocateAnnotation(c *gin.Context) {
 
 	a.Quote, a.Prefix, a.Suffix = sp.Quote, pfx, sfx
 	a.StartOffset, a.EndOffset, a.Orphaned = sp.Start, sp.End, false
-	a.QuoteRewritten = false
+	a.QuoteRewritten = sp.Fuzzy
 	view.JSONOK(c, a)
 }
 

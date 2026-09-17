@@ -436,6 +436,56 @@ func TestProjectMapsBackToSource(t *testing.T) {
 	}
 }
 
+// 缩进的块标记必须和列 0 的形式一样被剥掉：客户端那边 marked 早已把它渲染成
+// <ul>/<ol>/<blockquote>，DOM 文本里根本没有 `-` / `1.` / `>` 这些字符。
+// 投影里留一个 `-`，跨嵌套列表项的选区就永远锚不上（rung 2 找不到、掉进夹逼）。
+func TestProjectStripsIndentedBlockMarkers(t *testing.T) {
+	src := "- 父项：\n" +
+		"  - 子项一\n" +
+		"  - 子项二\n" +
+		"    1. 孙项\n" +
+		"  > 缩进引用\n" +
+		"  正文里的 3 - 2 要留着"
+	got := string(project([]rune(src)).text)
+	want := "父项： 子项一 子项二 孙项 缩进引用 正文里的 3 - 2 要留着"
+	if got != want {
+		t.Fatalf("project = %q，期望 %q", got, want)
+	}
+}
+
+// 跨嵌套列表项的选区：原文是 `\n  - `，DOM 文本是单个空格。
+// 必须走 rung 2（投影整段匹配、quote 原样保留），不能掉进 rung 3 夹逼 ——
+// 夹逼会把 quote 改写成带 `- ` 的投影文本，客户端拿它去 DOM 里搜永远搜不到，
+// 症状是「划线保存成功但正文里画不出来」。
+func TestLocateAcrossNestedListItems(t *testing.T) {
+	doc := "- 已产出素材共 4 条，均附逻辑点评：\n" +
+		"  - 信息论角度：无意义对话信息熵更高，更难被压缩\n" +
+		"  - 「所有男人必定都当过孙子」——双关硬撑：「孙子」为骂人语\n" +
+		"  - 「一个人能走多远」——把「距离」偷换为「意愿」\n" +
+		"- 点评格式约定：先复述素材，再指出其逻辑漏洞或荒诞点\n"
+	// 客户端 fold 出来的 quote：块边界的换行折成单空格，不含任何列表标记
+	quote := "硬撑：「孙子」为骂人语 「一个人能走多远」——把「距离」偷换为「意愿」"
+
+	ax := NewAnchorer(doc)
+	sp, ok := ax.Locate(quote, "「所有男人必定都当过孙子」——双关", "\n- 点评格式约定：先复述素材，再指出其逻辑漏洞或荒诞点")
+	if !ok {
+		t.Fatal("跨嵌套列表项的选区未命中")
+	}
+	if sp.Fuzzy {
+		t.Fatalf("走了夹逼：quote 被改写成 %q", sp.Quote)
+	}
+	if sp.Quote != quote {
+		t.Fatalf("quote 被改写：%q", sp.Quote)
+	}
+	src := string([]rune(doc)[sp.Start:sp.End])
+	if !strings.Contains(src, "\n  - ") {
+		t.Fatalf("落点没有跨过列表项边界：%q", src)
+	}
+	if strings.Contains(sp.Quote, "-") {
+		t.Fatalf("返回的 quote 里带 `-`，客户端在 DOM 里定位不到：%q", sp.Quote)
+	}
+}
+
 func TestLCSLen(t *testing.T) {
 	cases := []struct {
 		a, b string

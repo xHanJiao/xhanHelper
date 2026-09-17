@@ -102,7 +102,7 @@ struct SidebarView: View {
 
     private var conversationListSection: some View {
         ScrollViewReader { proxy in
-            ScrollView {
+            ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 2) {
                     ForEach(conversationListVM.conversations) { conv in
                         conversationRow(conv)

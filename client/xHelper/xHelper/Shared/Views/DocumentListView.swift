@@ -452,7 +452,7 @@ private struct DocumentFullView: View {
         self.onBack = onBack
         #if os(macOS)
         // 阅读器把手跟着文档走（外层 `.id(doc.id)` 保证换篇就重建）
-        _reader = StateObject(wrappedValue: DocumentReaderController(documentID: document.id, api: apiClient))
+        _reader = StateObject(wrappedValue: DocumentReaderController(documentID: document.id, title: document.title, api: apiClient))
         #endif
     }
 
@@ -530,6 +530,12 @@ private struct DocumentFullView: View {
                 .onChange(of: findQuery) { _, query in reader.find(query) }
                 // 正文被改写后划线的失活状态要重算：服务端为准，客户端不自己猜
                 .onChange(of: document.content) { _, _ in reader.refreshAnnotations() }
+                // 「问 AI」回程用（存为批注 → 预填浮层 / 点胶囊 → 跳回这段）：
+                // 只在文档详情页在屏时注册，离开时注销（换篇会先出现新页 onAppear）
+                .onAppear { DocumentAIBridge.shared.reader = reader }
+                .onDisappear {
+                    if DocumentAIBridge.shared.reader === reader { DocumentAIBridge.shared.reader = nil }
+                }
 
                 if showAnnotationDrawer {
                     Divider().opacity(0.3)

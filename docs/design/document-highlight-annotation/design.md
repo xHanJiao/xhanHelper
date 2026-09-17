@@ -53,14 +53,14 @@
 | D6 | 批注输入 | ✅ HTML 浮层（quote 预览 + textarea + ⌘↵ 保存） |
 | D7 | 跨块选择 | ✅ 允许（跨段落 / 跨列表项）；**跨表格、跨代码围栏除外**（不支持，选中时工具条只给"复制"） |
 | D8 | 重叠 | ✅ 允许重叠；hover 时 popover 列出该位置**全部**批注，>1 条打「重叠划线」标签 |
-| D9 | 点击划线 | ✅ 菜单：编辑批注 / 复制原文 / 删除划线 |
+| D9 | 点击划线 | ✅ 菜单：编辑批注 / 复制原文 / **问 AI** / 删除划线（带批注的线也能直接再问，不用重新选中那段） |
 | D10 | 重定位 | ✅ 三级降级：① quote 精确匹配（唯一命中走快路径）→ ② Markdown 纯文本投影后匹配（带 prefix/suffix 消歧）→ ③ 前后文夹逼（覆盖"span 内部被插字/局部改写"，带相似度门槛）。全失败标 `orphaned`。多命中而消歧不达标时**判失活而不是猜第一处** —— 静默挪位比失活更糟。v1 提供划线列表抽屉，orphan 灰态可见，可「重新定位 / 删除」 |
 | D10b | 创建时的消歧 | ✅ 客户端额外回传 DOM 选区的前后文（`prefix`/`suffix`，纯文本 ≤60 字）。没有它，`结论` 这类短句在文中重复时只能锚到第一处，且返回的快照也是按第一处算的 → 客户端会在错的地方画线且无提示 |
 | D10c | 快照与 quote 刷新 | ✅ 每次成功定位都刷新 `Prefix`/`Suffix`，夹逼改写时同时刷新 `Quote` 并置 `QuoteRewritten`。让锚点始终描述当前正文，且"服务端改了用户划的原文"这件事可见 |
 | D11 | 重定位职责 | ✅ **服务端权威**（在 markdown 源文上算），客户端只在渲染后的 DOM 上做同样的文本查找用于绘制。两处逻辑一致但分别实现，见 §4.4 |
 | D12 | LLM 暴露 | ✅ 只给 `list_annotations(document_id)`（只读）。`update_document` 改完正文触发重定位，返回里报「影响 N 条批注」 |
 | D13 | 流水线隔离 | ✅ 批注**不进**记忆 / 画像 / 摘要流水线（它是读者笔记，不是用户事实） |
-| D14 | 「问 AI」 | ✅ v1 就做。落点已定：**复用 PiP 聊天浮层**，走**真实会话**（用户在 PiP 输入框里敲问题，不再弹中间对话框）。完整 orchestrator 能力（能调工具）。详见 §十二 |
+| D14 | 「问 AI」 | ✅ v1 就做。落点：**复用现有聊天** —— 已经是 PiP 就在 PiP 里续，否则用普通聊天栏；走**真实会话**（不弹中间对话框，问题在输入栏里敲）。引用是**会话级状态**（每轮携带、可删）。完整 orchestrator 能力（能调工具）。详见 §十二 |
 | D15 | 批注内容 | ✅ 纯文本（不做富文本 / @ 引用 / 图片） |
 | D16 | PDF 导出 | ✅ 不带划线与批注（导出的是文档本身） |
 | D17 | 配额 | ✅ 单条 quote ≤ 500 字符、批注 ≤ 2000 字符、单文档 ≤ 500 条 |
@@ -354,7 +354,7 @@ JS → Swift（`WKScriptMessageHandler`，沿用 `XHWebViewBridge` 的命名与�
 | `annotationCreate` | `{quote, note}` | 新建划线/批注（锚点由服务端算，返回值带回） |
 | `annotationUpdate` | `{id, note}` | 编辑批注 |
 | `annotationDelete` | `{id}` | 删除 |
-| `annotationAskAI` | `{quote}` | 「问 AI」（落点待定 → v1 先 toast） |
+| `annotationAskAI` | `{quote}` | 「问 AI」（P3 先 toast；落点见 §12） |
 | `relocate` | `{id, quote, prefix, suffix}` | P4「重新定位」选完新位置（服务端重挂锚点并清 `orphaned`） |
 | `relocateCancel` | — | 重定位模式被 Esc / 取消按钮终止 |
 | `contentHeightChanged` | `{h}` | WebView 自适应高度（滚动交给外层 SwiftUI ScrollView？否 —— 见下） |
@@ -405,7 +405,8 @@ JS 里维护 `id → [{mark}]`。定位流程：
 ### 8.3 hover / 点击
 
 - hover 划线段 → popover：`elementsFromPoint` 聚合该位置所有 `mark` 的 `data-id`，逐条渲染 `quote + note`；>1 条打「重叠划线」标签
-- 点击划线段或气泡 → 菜单：**编辑批注** / **复制原文** / **删除划线**
+- hover 浮层（只有带 note 的划线出）封顶 `min(62vh, 520px)` 内滚，见 §12「长批注的 hover 浮层」
+- 点击划线段或气泡 → 菜单：**编辑批注** / **复制原文** / **问 AI**（P5 补；载荷取这条线自己存的四元组，点完闪一下那段） / **删除划线**
 - 「编辑批注」打开 §8.4 的浮层，`⌘↵` 保存
 - 批注留空保存 = 该实体退化成纯划线（不发 `annotationDelete`）
 
@@ -457,7 +458,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 | **P2 WebView 阅读器** ✅ | `DocumentReaderView` 替换 `readingContent`；目录跳转改走 JS；查找改走 JS；主题/字号联动 | 见下「P2 完成情况」；真机验收待用户 |
 | **P3 划线批注交互** ✅ | 选区工具条 / 绘制 / hover / 点击菜单 / 批注浮层 / 创建-编辑-删除回传 | 见下「P3 完成情况」；真机验收待用户 |
 | **P4 抽屉 + orphan** ✅ | SwiftUI 抽屉（第三列，三 tab）+ 滚动定位 + orphan 灰态 + 重新定位流程 | 见下「P4 完成情况」；真机验收待用户 |
-| **P5 问 AI** | 复用 PiP 承载文档问答：轻量进 PiP / `doc_quote` 注入 / `brief_answer` 长度约束 / 引用条 / 底部「存为批注」窄条 | 见 §十二。**服务端 + 客户端 `brief_answer` 开关已完成**，其余待 P2/P3 |
+| **P5 问 AI** | 复用现有聊天（PiP 或普通聊天栏）承载文档问答：会话级引用（`doc_quote` 每轮注入）/ `brief_answer` 长度约束 / 引用胶囊 / 底部「存为批注」窄条 + 批注浮层预填 | 见 §十二。**服务端 + 客户端 `brief_answer` 开关已完成**，其余待实现 |
 
 依赖：P2 与 P1 无依赖，可并行。P3/P4 依赖 P1+P2。**P5 依赖 P2（WebView 才拿得到选区）+ P3（浮层技法、批注编辑浮层）**，所以顺序是 P2 → P3 → P5，不提前。
 
@@ -563,7 +564,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 5. **重画走「全擦全画」**（`unwrapAll()` + 逐条 `locate()`），不做增量修补：跨块 + 重叠时增量状态机很难对，而全擦全画只依赖服务端那一份，成本是几十 KB 正文重挂几十个 `<mark>`（可忽略）。
 6. **剪贴板交给原生**（JS 发 `{type:'copy', text}` → `NSPasteboard`）：`navigator.clipboard` 在 `loadHTMLString` 出来的页面里不是安全上下文，能不能用全看运气。
 7. **用户提示统一走 Swift 的 `ToastCenter`**（成功不弹、失败必弹；orphan 与「问 AI 占位」各弹一条），模板里不再做一套 HTML toast。
-8. **「问 AI」暂时只 toast** —— P5 才接 PiP。
+8. **「问 AI」暂时只 toast** —— P5 才接真聊天（§12）。
 9. **抽屉（§8.6）没做** —— 归 P4；`reader.scrollToAnnotation(id)` + `.flash` 已经留好（P4 点击抽屉行直接调）。
 10. **真机第一划就抓到一个真 bug：`wrapRange()` 搬 DOM 把块结构搬坏了**（详见下面「真机 bug」一段）。修法是把包 mark 改成**逐文本节点切**，并补上两条以前缺的硬断言。
 
@@ -657,34 +658,39 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 ---
 
-## 十二、P5「问 AI」用 PiP 承载
+## 十二、P5「问 AI」复用聊天
 
 > UI 稿：`docs/design/document-highlight-annotation/mockup-p5.html`（九种状态可切）
+>
+> 实现上的两处偏离（见 §12.5、§十三）：**不做「轻量进 PiP」**（按当前是不是 PiP 二选一，见 §12.5）、**不做气泡上方的引用条**（引用改成会话级常驻后，胶囊已经把话说清了）。
 
 ### 12.1 决策
 
 | 编号 | 决策 | 结论 |
 |---|---|---|
-| P5-1 | 落点 | ✅ **复用 PiP 聊天浮层**（`FloatingChatPanel`）。不新画浮层、不动右栏布局 |
-| P5-2 | 会话归属 | ✅ **真实会话**。点「问 AI」**直接进 PiP**，问题在 PiP 输入框里敲；不弹中间对话框 |
+| P5-1 | 落点 | ✅ **复用现有聊天**。已经是 PiP（`FloatingChatPanel`）就在 PiP 里续；不是就用普通聊天栏（必要时把中间栏切回聊天）。不新画浮层、**不动任何窗口/栏布局** |
+| P5-2 | 会话归属 | ✅ **真实会话**（当前 tab 的会话）。点「问 AI」不弹中间对话框：引用先暂存，问题在输入栏里敲 |
 | P5-3 | 智能程度 | ✅ **完整 orchestrator** —— 能调工具（检索记忆/笔记/其他文档）。回答里会有工具气泡 |
 | P5-4 | 回答→批注 | ✅ 可以。走文档侧的批注编辑浮层，**预填 AI 回答、可改完再存** |
-| P5-5 | 长度控制 | ✅ **不用 `max_tokens`**（那是硬截断，且全链路无 `finish_reason` 感知，截断了系统不知道）。改为往 system prompt 注入一段**输出长度约束**（≤500 字），靠 prompt 管而不是靠截断管。接口是 `brief_answer` 布尔参数，见 §12.7 |
+| P5-5 | 长度控制 | ✅ **不用 `max_tokens`**（那是硬截断，且全链路无 `finish_reason` 感知，截断了系统不知道）。改为往 system prompt 注入一段**输出长度约束**（≤500 字），靠 prompt 管而不是靠截断管。接口是 `brief_answer` 布尔参数，见 §12.7。**不自动开**：沿用用户自己那个会话级开关 |
 | P5-6 | 没划线就问 | ✅ 不自动建划线。点「存为批注」时才建（复用 `POST /api/documents/:id/annotations`） |
+| P5-7 | 引用生命周期 | ✅ **会话级**（挂在 `ChatViewModel` 上），不是逐轮参数：只要引用还在，**每一轮都带** `doc_quote`。否则追问轮 LLM 手里就没有原文了（历史重放不带 XMLContext，§12.4 有完整论证）。点胶囊 × / 窄条「忽略」/ 切会话即消失 |
 
 ### 12.2 链路
 
 ```
 文档页选中文字 → 工具条「问 AI」
-  → 客户端暂存选区（quote + DOM 前后文），轻量进 PiP（展开态）
-  → 用户在 PiP 输入框敲问题（输入栏上方一条可删的「引用胶囊」）
-  → POST /api/chat 带 doc_quote{document_id, title, quote, prefix?, suffix?}
+  → 客户端组引用（quote + DOM 前后文 + 文档 id/标题），交给当前聊天
+  → 已是 PiP → 展开它；否则把中间栏切回聊天（文档在右栏，不受影响）
+  → 输入栏上方出现可删的「引用胶囊」；用户在胶囊下敲问题
+  → 每轮 POST /api/chat 都带 doc_quote{document_id, title, quote, prefix?, suffix?}
   → 服务端把它做成 context packet 注入本轮 XMLContext（**仅 LLM 可见**）
   → 完整 orchestrator：检索 / 工具 / 计划 / L3 确认全在
-  → 回答流式出现在 PiP
-  → PiP 底部窄条（仅文档问答轮）：「来自《标题》· 存为批注 / 忽略」
+  → 回答流式出现；回答完成且引用还在 → 底部窄条「存为批注 / 忽略」
+
+另一种进法（已有划线/批注，不想重新选中那段）：点那条线 → 菜单「问 AI」→ 载荷就是它存着的四元组，点完那段闪一下当回执 → 后续同上（回答完成 → 窄条 → 存批注时同 quote 则追加）
   → 存为批注 → 文档滚到该段 + 批注编辑浮层预填 AI 回答（可编辑）
-              → 保存时该划线还不存在就先建
+              → 保存时该划线还不存在就先建；已有同 quote 的批注则追加
 ```
 
 ### 12.3 为什么用 XMLContext 那条通道，而不是拼进用户消息
@@ -693,53 +699,157 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 `ModeNotice` 就是走这条路的先例（`chat.go:197-202` → `orchestrator.go:718-720`）。所以文档引用可以**不污染用户消息正文** —— 用户敲的问题就是他的问题，引用作为 packet 只喂 LLM。这比会话接力那套「拼进正文」（`ChatViewModel.swift:866-902`）干净，也符合 AGENTS.md「动态内容注入当前 user 消息」的既有约定。
 
-用户能看到引用，靠的是**气泡上方的引用条**（客户端 transient 渲染，不落库）：
+用户能看到引用，靠的是**输入栏上方的引用胶囊**（可删，见 §12.5）。**不做气泡上方的引用条** —— 见 §13 的差异说明。
+
+### 12.4 引用挂在哪儿：一条数据的一生
+
+核心思想：**引用不是"一次请求的参数"，而是聊天会话里的一个状态**（与草稿、精炼开关同级）。只要它还在，每轮请求都自动带上；它不进文档侧的状态，也不落任何新表。
+
+**客户端：挂在 `ChatViewModel` 上**
+
+| 东西 | 放哪 | 说明 |
+|---|---|---|
+| `docQuote: DocQuote?` | `ChatViewModel` 的 `@Published` | `DocQuote = {documentID, title, quote, prefix?, suffix?}`，新模型文件（约 10 行 Codable） |
+| 引用胶囊（可删） | `ChatView` 输入栏上方一行 | 读 vm 上的 `docQuote`；点 × → `vm.docQuote = nil`；点引用文字 → 跳回文档那段 |
+| 窄条（存为批注 / 忽略） | `ChatView` 输入栏下方一行 | PiP 与普通聊天都是同一个 `ChatView`（`ChatPage` 里那层），**一处实现两处生效**。书到用时才出现：引用之后又出过一轮回答且在流式中则不显示（`quoteAnswerText`） |
+| 桥 | `DocumentAIBridge.shared` | 两个方向各一个口子（见下） |
+
+**不落 UserDefaults**（与 `briefAnswer` 不同）：引用是临时上下文，重启后还挂着反而危险（文档可能已被改写），而它只有几百字，重新问一次成本极低。vm 的生命周期 = 会话/tab，所以切会话、关 tab、无痕会话销毁，引用自然消失，**不需要额外的清理代码**。
+
+**点「问 AI」那一刻**
 
 ```
-引自《N.E.K.O 记忆系统切面调研》
-在渲染期把反思结果直接拼进 persona
+JS(工具条 ask) → 只发 {quote, prefix, suffix}          // DOM 折叠文本 + 60 字前后文
+DocumentReaderController.apply("ask")                   // 它有 documentID，init 再补一个 title
+  → 组 DocQuote
+  → DocumentAIBridge.shared.onAsk?(payload)             // ContentView 注册的闭包
+      → vm.docQuote = payload
+      → 已是 PiP：pipCollapsed = false（展开让用户看见胶囊）
+        否则：router.navigateTo(.chat)（保证输入栏可见；文档在右栏不受影响）
 ```
 
-### 12.4 必须新增的「轻量进 PiP」
+文档侧**不保留任何引用副本** —— 它只负责"递出去"和"被叫回来"。
 
-`enterPipEffects`（`ContentView.swift:201-221`）现在做四件事：`pipCollapsed = true`、`router.navigateTo(.chat)`、左栏缩到最小、**窗口动画变宽**。
+**每轮发送**
 
-文档页在右栏、PiP 是盖在右栏之上的 overlay（`ContentView.swift:538`），所以文档不会消失 —— 但窗口变形 + 左栏跳走 + 面板还收起，从阅读中途点一下「问 AI」变成这样是不能接受的。
+`ChatViewModel.setupSSE`（`:964`）现在从 vm 读 `briefAnswer`，同位置读 `docQuote` 传给 `SSEClient.connect(..., docQuote:)` → body 里 `if let q { body["doc_quote"] = [...] }`。
 
-所以要加一个「轻量进入」路径：只置 `isPipChat = true` + `pipCollapsed = false`，**跳过**跳左栏 / 缩左栏 / 改窗口宽度。这不是可选项，不加等于每次提问都打断阅读。
+- **不消费**：发完不清空，所以追问轮照样带原文 —— 这是 P5-7 的全部理由。反过来，**把它编码进 `<user_query>` 是没用的**：历史重放整块 XMLContext 都会被丢掉（`BuildMessagesForFlash` 对历史 user 消息只发 `SimpleUserContent()` = `[时间] 原文`，`orchestrator.go:1915`），`<user_query>` 和 `<document_quote>` 在这件事上没有任何区别
+- **对缓存的影响**：
+  - system prompt 一个字不变 → 前缀缓存不受影响（与 `brief_answer` 那种改 system prompt 的情况本质不同）
+  - 历史轮重放走 `SimpleUserContent()`，**过去那些轮的引用不会被重复发送** → 不会 N 倍放大 token
+  - 唯一成本：本轮 user 消息多 ~600 字
+- **隐藏轮不带**：接力那种 `hidden_round` 是系统自动发起的，带上引用没意义 → `setupSSE` 里 `hiddenRound ? nil : docQuote` 一行判断
 
-### 12.5 落点在哪
+**服务端：请求 → XMLContext**
+
+| 层 | 改动 | 坐标 |
+|---|---|---|
+| 请求体 | `DocQuote *retrieval.DocQuoteMeta \`json:"doc_quote"\``，校验走 `normalizeDocQuote`：quote 非空 ≤500（复用批注常量），prefix/suffix 截断到 60（不报错）、title 截断到 200 | `chat.go:107-131` |
+| RunRequest | `DocQuote *retrieval.DocQuoteMeta`，与 `ModeNotice` 同级 | `orchestrator.go:56-100` |
+| 组装 | `DocQuote: req.DocQuote` | `chat.go:307-327` |
+| 注入 | `extraPackets = append(extraPackets, ctxflow.DocQuotePacket(*req.DocQuote))`，就在 ModeNotice 那两行旁边 | `orchestrator.go:718-720` |
+| 块定义 | `docQuoteBlock` + `DocQuotePacket()` + `blockBuilders` 注册 + `typeOrder` 里加一项（排在 notice 附近） | `ctxflow/blocks.go:27 / 209 / 439` |
+
+**不做 document_id 的归属校验**：它只是喂给 LLM 的一段引用文本，不是权限操作（LLM 真要读文档会走 `document` 工具，那条路有自己的用户校验），省一次 DB 读。
+
+LLM 最终看到（在 `FormatUserMessage` 里排在 `<user_query>` 之前）：
+
+```xml
+<document_quote title="N.E.K.O 记忆系统切面调研" document_id="...">
+  <quote>在渲染期把反思结果直接拼进 persona</quote>
+  <prefix>...</prefix><suffix>...</suffix>
+</document_quote>
+<user_query>那它的 pending → confirmed 两阶段值得抄吗？</user_query>
+```
+
+**落库：进了哪个字段、没进哪个字段**
+
+- `buildUserMessage` 最后 `userMsg.XMLContext = &userContent`（`orchestrator.go:787`）→ 存进 `messages.xml_context`（mediumtext）。**引用原文随那一轮消息持久化**，可审计、可 replay
+- **不动 `Content`、不动 `OriginalContent`** → 用户气泡显示的还是他敲的那句话；检索/向量/记忆/摘要这些流水线读的是原文，绝不会把"引用原文"当成用户说的话收进记忆
+- **不加表、不加列、不改 migration**
+
+**什么时候消失**
+
+| 触发 | 结果 |
+|---|---|
+| 胶囊 × / 窄条「忽略」 | `vm.docQuote = nil` |
+| 切会话 / 关 tab / 无痕销毁 | vm 重建 → 自然没了 |
+| 文档被删、划线被删 | **不联动**（引用只是一段文本，不是外键）。故意不做：LLM 真去查发现文档不在了会自己说，不引入失效状态机 |
+
+**存为批注那一侧怎么拿到东西**
+
+窄条手上只有 `vm.docQuote`（四元组 + 文档 id/标题）和最后一条 assistant 文本，两个都是客户端现成的：
+
+```
+DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、onDisappear 注销（weak）
+  且 reader.documentID == payload.documentID     // 防"拿着 A 的引用、人在 B 文档"
+  → reader.beginNoteFromAI(quote, prefix, suffix, note: 回答截断到 2000)
+      → JS: locate() → 打开预填的批注浮层 → 保存走已有的 create/update 消息
+  → 否则兜底：直接 POST /api/documents/:id/annotations + toast「已存为批注」
+     （省掉"自动打开那篇文档再跳过去"的接线）
+```
+
+「已有同 quote 的划线」就在 `beginNoteFromAI` 里判：命中已有批注 → 预填「原批注 + 空行 + AI 回答」，保存走 `update`（**追加**，不覆盖用户写过的字、不新建重复划线）。
+
+**两个要写进 packet 的提醒（真会咬人）**
+
+1. **quote 是 DOM 纯文本，不是 markdown 源文**：没有 `**`、没有 `- ` 列表标记，空白是折叠过的。块里必须说清，否则 LLM 拿它去 `document` 工具里搜会搜不到
+2. **只给了这一段 + 前后 60 字**：要让 LLM 需要全文时自己用 `document` 工具按窗口读（工具已支持 `char_offset`），所以块里要带上 `document_id`
+
+### 12.5 落在哪里
+
+**哪个聊天栏**（用户定的：不折腾布局）
+
+- 已经是 PiP → 就在 PiP 里续（`pipCollapsed = false` 展开它）
+- 不是 → 用普通聊天栏。必要时 `router.navigateTo(.chat)` 把中间栏切回聊天；左栏宽度、右栏宽度、窗口宽度**一律不动**，文档一直待在右栏
+
+**各元素的位置**
 
 | 事情 | 放在哪 | 为什么 |
 |---|---|---|
-| 提问输入 | **PiP 的输入栏** | 用户定的：直接进 PiP，省一层对话框 |
-| 引用胶囊（发送前） | PiP 输入栏上方 | 可见、可删；发送后变成气泡上方的引用条 |
-| 引用条（发送后） | 用户消息气泡上方 | 滚动回看时这一轮自解释 |
-| 「存为批注」 | **PiP 底部窄条** | 助手气泡刻意无右键菜单（`MessageListView.swift:207-232`），不改它；窄条只在文档问答轮出现 |
+| 提问输入 | 当前聊天的输入栏 | 用户定的：不弹中间对话框，省一层 |
+| 引用胶囊（可删） | **`ChatView` 输入栏上方一行**（不是 InputBar 加槽） | PiP 与普通聊天共用同一个 `ChatView` → 用同一个 vm 状态，**一处实现两处生效**，且不动 InputBar 那六个泛型槽 |
+| 引用条（气泡上方） | ❌ 不做 | 引用会话级常驻后胶囊已经把话说清了；它还需要 per-message 映射，v1 不值得 |
+| 「存为批注」 | **`ChatView` 输入栏下方窄条**（两种宿主共用） | 助手气泡刻意无右键菜单（`MessageListView.swift:207-232`），不改它；窄条只在「引用还在、引用之后又出过一轮回答、不在流式中」时出现 |
 | 批注编辑 | **文档侧浮层**（P3 已有） | 批注属于文档；预填 AI 回答让用户能改 |
 | 工具调用细节 | PiP 里折成一行 | 窄面板放不下完整工具卡片；点开才展开 |
 
 ### 12.6 改动清单
 
-**服务端**（比 P1 小）
+**服务端**（比 P1 小，全部集中在 §12.4 那张表）
 
 | 文件 | 改动 |
 |---|---|
-| `controller/chat.go` | 请求体加 `doc_quote`（`chat.go:107-126`） |
+| `controller/chat.go` | 请求体加 `doc_quote` + 限额校验（`chat.go:107-131`） |
 | `agent/orchestrator.go` | `RunRequest` 加同名字段（`:56-100`）；`buildUserMessage` 注入 packet（`:718-720` 旁边） |
-| `agent/ctxflow/blocks.go` | 加一个 block 类型（仿 `NoticePacket`，`blocks.go:152-160`） |
+| `agent/ctxflow/blocks.go` | 加一个 block 类型（仿 `NoticePacket`）+ 注册进 `typeOrder` / `blockBuilders` |
 
 **客户端**
 
 | 文件 | 改动 |
 |---|---|
-| `ContentView.swift` | 轻量进 PiP 分支（`:201-221`）+ 一个「轻量进入」标志 |
-| `ChatViewModel.swift` | 本轮载荷 `docQuote` + 发起函数（仿 `beginHandoff` 的「标志位 + 载荷暂存 + `.done` 消费」，但**不用** `hiddenRound` —— 那是整轮剔除，粒度太粗） |
-| `SSEClient.swift` | `connect` 加 `doc_quote` 参数 |
-| `FloatingChatPanel.swift` | 底部「存为批注」窄条；空会话态提示 |
-| 文档页（P3 的 WebView 侧） | 引用胶囊、气泡上方引用条、「存为批注」→ 批注浮层预填 |
+| `Models/DocQuote.swift`（新） | `DocQuote` Codable（documentID / title / quote / prefix / suffix） |
+| `ChatViewModel.swift` | `@Published var docQuote: DocQuote?` + `attachDocQuote` + `quoteAnswerText`（窄条条件：引用之后又出过一轮回答）；`setupSSE` 里读它（隐藏轮除外）；会话切换时清 |
+| `SSEClient.swift` | `connect` 加 `docQuote` 参数，body 里拼 `doc_quote` |
+| `ChatView.swift` | 输入栏上方：引用胶囊（点引用文字跳回文档、点 × 清）；输入栏下方：窄条「存为批注 / 忽略」+ `storeQuoteAsNote`（同一份代码覆盖 PiP 与普通聊天）；**存完即清引用**（窄条随之消失，交浮层那一支也一样：回答已经进了编辑框） |
+| `DocumentReaderView.swift` | `ask` case 从 toast 改成组载荷走桥；控制器 `init` 多收标题、`documentID` 对外可读；新增 `revealQuote` / `beginNoteFromAI`；JS 加 `revealQuote()`、`openNoteFromAI()`、临时闪烁层 `__ai_flash`（复用现成的 `rangeAt` 做「拍平下标 → Range」）、点击菜单里多一项「问 AI」（`data-cact="ask"`，载荷用注解自己的四元组 + 调 `revealQuote` 闪一下） |
+| `DocumentAIBridge.swift`（新，`#if os(macOS)`） | `onAsk`（ContentView 注册）+ `weak reader`（文档页 onAppear 注册 / onDisappear 注销）；存为批注 → 预填浮层，文档不在则直接 POST |
+| `ContentView.swift` | 只加注册 `onAsk` 的那几行（**不再需要**「轻量进 PiP」那套） |
+| `DocumentListView.swift` | `DocumentFullView` 构造 reader 时多传标题；正文那层挂 `onAppear/onDisappear` 注册、注销 reader |
+| `Tools/webfetch`… 无 | — |
 
-**不改**：`FloatingChatPanel` 的数据来源。它现在取 `chatTabManager.currentTab`（`ContentView.swift:540`）—— 两种去向都落在 currentTab，所以不用改。
+**不改**：`FloatingChatPanel` 的数据来源。它取 `chatTabManager.currentTab`（`ContentView.swift:540`）—— 两种去向都落在 currentTab。
+
+**已实现（与本文档的两处偏差）**
+
+1. **胶囊与窄条落在 `ChatView`，没给 `InputBar` 加第七个泛型槽**：`ChatPage`（两种宿主共用）里那层就是 `ChatView`，把两行 UI 放它上/下，PiP 与普通聊天自动都有 —— 比改 InputBar 那六个槽 + 两个 init 的 diff 小得多。
+2. **引用类型放在 `retrieval`（`DocQuoteMeta`），不是 `agent.DocQuote`**：`ContextPacket.Meta` 只收 `retrieval` 包内定义的类型（`PacketMeta` 是包内标记接口），所以类型定义在那儿最省一层转换 —— 请求体直接绑它、RunRequest 直接放它、块构建器直接读它。
+3. 细节：前后文超长是**截断**不是 400（它只是消歧提示，报错会把整轮提问打断）；点回文档靠**点胶囊里的引用文字**（不是"引用条"）；闪一下用临时 `mark`（1.1s 后 `unwrapAll + redrawAnnotations` 拆掉），临时层没有对应批注，右键菜单会跳过它。
+
+**长批注的 hover 浮层（P5 之后才暴露）**：AI 的长回答存成批注后，hover 浮层动辄上千字。浮层是 `position: fixed` 且原本没有 `max-height` —— 超出视口那截永远拿不到，滚轮还会冒泡去滚正文。现在封顶 `min(62vh, 520px)` + 内滚 + `overscroll-behavior: contain`（防连滚），宽度放宽到 `min(420px, 88vw)`（少滚），`.p-note` 加 `overflow-wrap: anywhere`（长 URL 不横向溢出）。`showPopover()` 的上下翻转逻辑没动（高度被 cap 之后本来就够用）。
+
+**还有个坑（真机复现）**：`window` 上那个 capture 阶段的 scroll 监听（`hideAll(); hidePopover()`）**连后代元素的滚动都收得到**（`scroll` 不冒泡，但 capture 会命中，`e.target` 就是被滚的元素）。浮层自己是滚动容器 → 一滚浮层就被它关掉，紧接着滚轮落到正文上，用户看到的是「浮层滚不动、只有文档在滚、长批注还是读不完」。现在监听里加一句 `if (popover.contains(e.target)) return;`（浮层内滚不算页面滚动；页面滚动照旧关浮层，P3 语义不变），并把 `hoverKey` 的复位收进 `hidePopover()` —— 否则任何一条隐藏路径都可能留下卡住的 `hoverKey`，让同一处再也 hover 不出浮层。`overscroll-behavior: contain` 在这里才真正派上用场：滚到浮层底部不把滚动串给正文，也就不会触发页面 scroll 把浮层关掉。 另外按用户要求**卡片里不显示滚动条**（`scrollbar-width: none` + `.popover::-webkit-scrollbar { width: 0 }`；内容照样能滚，与 macOS 覆盖式滚动条的观感一致）。
 
 ### 12.7 `brief_answer`：参数与注入实现（服务端已完成）
 
@@ -774,6 +884,8 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 **副产品**：`brief_answer` 既然会话级稳定，它就和其他「会话级稳定态放 system prompt」的东西同级了 —— plan 只读提示敢放 system prompt 也是同一个理由（`Mode` 会话级稳定）。原先那段「要不要降级成 XMLContext notice」的纠结作废，**保持 system prompt 注入**。
 
+**与 `doc_quote` 的区别（别看串了）**：两者都是"会话级、每轮随请求发"，但理由和位置都不同 —— `brief_answer` 是因为**放 system prompt** 才必须会话级稳定（否则前缀缓存来回丢）；`doc_quote` 是因为**追问也要带得到原文**（历史重放不带 XMLContext），而它在 user 消息里，本来就不影响前缀缓存。所以 `doc_quote` 不需要按会话存 UserDefaults，重新问一次的成本只是几百字。
+
 **客户端 UI（已实现）**：
 
 输入栏里一颗 icon pill，与「深度模型 / 信任 / 接力」同族，**默认收在「更多操作」行**（`InputBarButtonID.defaultCollapsed`）。未选中 `text.alignleft` + appAccent，选中 `text.badge.minus` + orange。mockup 里那三个「醒目程度」候选（不显示 / 一行小字 / 可点 chip）**已弃用** —— 直接做成按钮更符合输入栏既有的语言，也不用新造视觉。
@@ -784,9 +896,9 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 ### 12.8 还没定的
 
-- **「新建会话 / 在当前会话继续」去哪了**：用户后来说「直接出 PiP 省点事儿」，所以中间对话框砍掉了，**默认在当前会话继续**。想要新会话的用户走 PiP 自己的入口（会话列表切/新建）。mockup 里没画这条分支 —— 如果实际用起来发现"我想对同一段文字另起炉灶"是常见诉求，再加
-- 引用条要不要持久化（见 §十三 待定）
-- PiP 轻量进入的边界（见 §十三 待定）
+- **「新建会话 / 在当前会话继续」去哪了**：用户后来拍了「直接聊，省点事儿」，所以中间对话框砍掉了，**默认在当前会话继续**。想要新会话就走会话列表自己切/建。mockup 里没画这条分支 —— 如果实际用起来发现"我想对同一段文字另起炉灶"是常见诉求，再加
+- ~~引用条要不要持久化~~ —— **作废**：引用条不做了（§13 不做）
+- ~~PiP 轻量进入的边界~~ —— **作废**：不引入「轻量进 PiP」这个概念，改为按现状二选一（§12.5）
 - ~~「精炼」标记的醒目程度~~ / ~~要不要可点~~ —— **已定**：做成输入栏 icon pill，会话级可切，见 §12.7
 
 ---
@@ -805,15 +917,16 @@ JS 里维护 `id → [{mark}]`。定位流程：
 - ❌ 正文自动刷新（LLM 改写时正在阅读不打断）
 - ❌ 跨表格 / 跨代码围栏选区
 - ❌ 批注软删 + 回收站
+- ❌ **气泡上方的引用条**（P5）—— 引用改成会话级常驻后，输入栏上方的胶囊已经把"在聊哪一段"说清了；引用条还要额外做 per-message 映射，v1 不值当
+- ❌ **「存为批注」的撤销**（P5）—— mockup ⑥ 有，但只有"新建"那一支能干净回滚（"追加到已有批注"要还原原 note），v1 只 toast「已存为批注」
 
 ### 待定
 
-- ⏳ **引用条刷新后消失** —— 现在用客户端 transient 状态渲染（不新增持久化字段），重进文档后本轮引用条不再显示。要不要持久化，等真机看过再说
-- ⏳ **PiP 轻量进入的边界** —— 文档问答进 PiP 时不跳左栏/不缩左栏/不改窗口宽度；用户主动 ⌘⇧M 进 PiP 时是否也该这样，还是保留现状
 - ⏳ 重定位阈值（`0.5` / `×3` / `+200`）是否要暴露成配置 —— 现在写死，等真的误挂或误失活再说
 - ⏳ 目录栏是否也搬进 WebView（现在保留原生，若以后要做"滚动时跟随高亮当前小节"，原生侧需要 WebView 回传 scroll 位置）
 - ⏳ `quote_rewritten` 在抽屉里怎么表现（挂"原文已改写"徽标？还是只做排序/筛选用）
 - ⏳ 「快照刷新会不会让界面闪」—— 已按"服务端刷新 + D19 不自动刷新"实现，视觉零闪；等真机跑完看现象再定要不要调
+- ⏳ P5 引用跨重启要不要留（现在不落 UserDefaults，重启即失）—— 等真机用起来看是不是"一天内会重复问同一段"
 
 ### 已知的预览与实现差异
 
@@ -821,3 +934,6 @@ JS 里维护 `id → [{mark}]`。定位流程：
 - mockup 里的 `marked` 渲染是**手写的静态 HTML**（不是真跑 marked.js），所以排版细节（尤其表格边框、行内代码底色）以实现出来的为准，配色 token 以 mockup 为准
 - mockup 画划线用的是 `extractContents()` + `insertNode()` 搬 DOM（Chrome 下正常），**实现里必须改成逐文本节点包** —— 见 §8.2 那条禁令，真机因此丢过字
 - mockup 的划线样式可以切「波浪线 / 底色高亮(旧)」，**实现里只有波浪线**（底色高亮是被用户否掉的那版）
+- mockup P5 里引用胶囊只活在"发送前"那一态，实现改成**会话级常驻**（可删）—— 追问才带得到原文，见 §12.4
+- mockup P5 画的是「直接进 PiP」，实现按当前是否已是 PiP 二选一（**不做轻量进 PiP**），原因见 §12.5
+- mockup P5 里助手回答上方那条引用条、以及窄条上的「撤销」，实现都不做（见上「不做」）

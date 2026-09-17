@@ -382,6 +382,45 @@ function annotationChecks() {
   var hlBase = rootCs.getPropertyValue('--hl').trim(), hlHov = rootCs.getPropertyValue('--hl-hover').trim();
   ok('hover 线色比常态更实', hlBase && hlHov && hlBase !== hlHov, hlBase + ' → ' + hlHov);
   ok('popover 里没有「点击编辑」文案', document.getElementById('popover').textContent.indexOf('点击编辑') < 0);
+
+  // 20) 长批注（P5 把 AI 长回答存进来之后的常态）：浮层自己封顶内滚。
+  //     以前没有 max-height：fixed 浮层超出视口那截永远拿不到，滚轮还会冒泡去滚正文
+  var longNote = '';
+  for (var li = 0; li < 40; li++) {
+    longNote += '第' + li + '行：一段很长的批注内容，用来把浮层撑高。https://example.com/a/' + li + '\\n';
+  }
+  put([mk('l1', '记忆系统的第一处', longNote)]);
+  var lr = c.querySelector('mark.hl[data-id="l1"]').getBoundingClientRect();
+  c.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
+    clientX: lr.left + 2, clientY: lr.top + lr.height / 2 }));
+  var lp = document.getElementById('popover');
+  var lcs = getComputedStyle(lp);
+  ok('长批注浮层封顶在视口内', lp.classList.contains('open') && lp.offsetHeight <= window.innerHeight,
+     lp.offsetHeight + ' vs ' + window.innerHeight);
+  ok('浮层长内容自己内滚', lp.scrollHeight > lp.clientHeight, lp.scrollHeight + ' vs ' + lp.clientHeight);
+  ok('浮层 overflow-y: auto', lcs.overflowY === 'auto', lcs.overflowY);
+  ok('浮层不把滚动串给正文', lcs.overscrollBehavior.indexOf('contain') >= 0, lcs.overscrollBehavior);
+  ok('长 URL 不横向溢出', lp.scrollWidth <= lp.clientWidth + 1, lp.scrollWidth + ' vs ' + lp.clientWidth);
+  // 卡片里不要滚动条：滚动条会把内容挤压 15px 左右（headless Chrome 是非覆盖式的，正好量得出来）
+  ok('卡片里没有滚动条', lp.offsetWidth - lp.clientWidth <= 2 + 1,
+     'offset ' + lp.offsetWidth + ' client ' + lp.clientWidth);
+  ok('卡片隐藏滚动条（scrollbar-width: none）', lcs.scrollbarWidth === 'none', lcs.scrollbarWidth);
+  // 内滚时浏览器会派发 scroll（capture 阶段的 window 监听连后代滚动也收得到）：
+  // 不能把它当成「页面滚动」把浮层关掉 —— 真机症状是「一滚浮层就消失，滚轮落到正文上」
+  lp.scrollTop = 200;
+  lp.dispatchEvent(new Event('scroll'));
+  ok('浮层内滚不关卡片', lp.classList.contains('open') && lp.scrollTop === 200,
+     'open=' + lp.classList.contains('open') + ' scrollTop=' + lp.scrollTop);
+  // 页面滚动仍然要关（P3 的既有语义不变）
+  document.dispatchEvent(new Event('scroll'));
+  ok('页面滚动仍然关掉浮层', !lp.classList.contains('open'));
+  // hidePopover 复位了 hoverKey：光标还在正文里，再 hover 同一处也必须能再开
+  c.querySelector('mark.hl[data-id="l1"]').dispatchEvent(new MouseEvent('mousemove', {
+    bubbles: true, clientX: lr.left + 2, clientY: lr.top + lr.height / 2 }));
+  ok('关掉后再 hover 同一处还能开', lp.classList.contains('open'));
+
+  c.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+  put([]);
 }
 
 /* ---------- 重新定位模式（P4 抽屉的「重新定位」） ---------- */
@@ -411,6 +450,91 @@ function relocateChecks() {
   armSelectionAndMouseUp();
 }
 
+/* ---------- P5「问 AI」：引用回传 / 回答存为批注 / 跳回那段 ---------- */
+function aiArm() {
+  armSelectionAndMouseUp();
+}
+
+function aiChecks() {
+  // 「问 AI」递出去的必须是 DOM 折叠文本 + 前后文（聊天侧拿它当引用，服务端直接喂 LLM）
+  document.querySelector('#toolbar button[data-act="ask"]').click();
+  var a = last('ask');
+  ok('「问 AI」回传 quote + 前后文', !!a && a.quote === '记忆系统的第一处提及'
+     && a.prefix.length > 0 && a.suffix.length > 0, JSON.stringify(a));
+  ok('「问 AI」后工具条收起、选区清掉',
+     !document.getElementById('toolbar').classList.contains('open') && window.getSelection().isCollapsed);
+
+  // 没有同 quote 的批注 → 打开预填浮层，保存发 create（四元组 + 回答）
+  put([]);
+  var editor = document.getElementById('note-editor');
+  ok('openNoteFromAI 打开预填浮层（新增这条划线）',
+     reader.openNoteFromAI('清单第二项', '清单第一项', '', 'AI 的回答') === true
+       && editor.classList.contains('open')
+       && document.getElementById('ne-text').value === 'AI 的回答'
+       && document.getElementById('ne-quote').textContent.indexOf('清单第二项') >= 0);
+  document.getElementById('ne-save').click();
+  var cr = last('create');
+  ok('预填浮层保存发 create（quote/前缀/后缀/note 齐全）',
+     !!cr && cr.quote === '清单第二项' && cr.note === 'AI 的回答' && cr.prefix.length > 0,
+     JSON.stringify(cr));
+  ok('保存后浮层收起', !editor.classList.contains('open'));
+
+  // 已有同 quote 的批注 → 追加（原批注 + 空行 + 回答），保存走 update 不新建
+  put([mk('q1', '清单第二项', '我原来的批注')]);
+  ok('openNoteFromAI 同 quote → 打开已有批注并预填追加',
+     reader.openNoteFromAI('清单第二项', '', '', 'AI 的回答') === true
+       && document.getElementById('ne-text').value === '我原来的批注\\n\\nAI 的回答');
+  document.getElementById('ne-save').click();
+  var up = last('update');
+  ok('追加保存发 update（不新建重复划线）', !!up && up.id === 'q1'
+     && up.note === '我原来的批注\\n\\nAI 的回答', JSON.stringify(up));
+
+  // 正文里定位不到 → 返回 false（Swift 兜底直接 POST，服务端自己锚定）
+  put([]);
+  ok('openNoteFromAI 定位不到返回 false',
+     reader.openNoteFromAI('zzz正文里没有这段zzz', '', '', 'x') === false);
+
+  // 已有划线（带批注或不带）不用重新手动选中那段 —— 点它，菜单里就有「问 AI」
+  function flashText() {
+    var m = c.querySelector('mark.hl[data-id="__ai_flash"]');
+    return m ? m.textContent : '';
+  }
+  function menuAsk(quote, note) {
+    put([mk('x1', quote, note || '', '清单第一项', '后半截')]);
+    c.querySelector('mark.hl[data-id="x1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    var btn = document.querySelector('#ctxmenu button[data-cact="ask"]');
+    var before = countType('create');
+    if (btn) btn.click();
+    return { btn: btn, before: before, inCtx: !!btn && !document.getElementById('ctxmenu').classList.contains('open') };
+  }
+  var m1 = menuAsk('清单第二项', '老批注');
+  ok('点已有批注的划线 → 菜单里有「问 AI」', !!m1.btn && m1.btn.textContent.trim() === '问 AI');
+  var m1ask = last('ask');
+  ok('菜单「问 AI」发的是这条划线自己的四元组', m1.inCtx
+     && !!m1ask && m1ask.quote === '清单第二项' && m1ask.prefix === '清单第一项' && m1ask.suffix === '后半截',
+     JSON.stringify(m1ask));
+  ok('菜单「问 AI」闪一下那段当回执', flashText() === '清单第二项');
+  ok('菜单「问 AI」没错发 create', countType('create') === m1.before);
+
+  var m2 = menuAsk('清单第一项', '');
+  ok('纯划线（无批注）同样能问 AI', !!m2.btn && m2.btn.textContent.trim() === '问 AI'
+     && flashText() === '清单第一项');
+
+  // 点引用胶囊跳回那段：滚过去 + 临时闪烁层（临时层不是批注）
+  put([]);                                   // 清掉上面菜单那两次闪的残留，闪的是谁才不含糊
+  window.__scrolled = [];
+  var textBefore = c.textContent;
+  ok('revealQuote 命中即滚动', reader.revealQuote('记忆系统的第一处', '', '') === true
+     && window.__scrolled.length >= 1);
+  var flash = c.querySelector('mark.hl[data-id="__ai_flash"]');
+  ok('revealQuote 包了临时闪烁层（闪的正是那段）', !!flash && flashText().indexOf('记忆系统的第一处') === 0,
+     flashText());
+  ok('临时闪烁层不改正文文本', c.textContent === textBefore);
+  flash.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  ok('临时闪烁层不弹右键菜单', !document.getElementById('ctxmenu').classList.contains('open'));
+  ok('revealQuote 未命中返回 false', reader.revealQuote('zzz正文里没有这段zzz', '', '') === false);
+}
+
 function relocateCancelChecks() {
   ok('Esc 回传 relocateCancel', !!last('relocateCancel'));
   ok('Esc 后模式已退出（选中回到工具条）',
@@ -430,7 +554,11 @@ setTimeout(function () {
           try { relocateChecks(); } catch (e) { fails.push('重定位断言异常: ' + (e && e.message ? e.message : e)); }
           setTimeout(function () {
             try { relocateCancelChecks(); } catch (e) { fails.push('重定位取消断言异常: ' + (e && e.message ? e.message : e)); }
-            writeResult();
+            try { aiArm(); } catch (e) { fails.push('P5 选区异常: ' + (e && e.message ? e.message : e)); }
+            setTimeout(function () {
+              try { aiChecks(); } catch (e) { fails.push('P5 断言异常: ' + (e && e.message ? e.message : e)); }
+              writeResult();
+            }, 0);
           }, 0);
         }, 0);
       }, 0);

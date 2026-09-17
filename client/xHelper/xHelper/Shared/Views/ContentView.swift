@@ -357,6 +357,20 @@ struct ContentView: View {
             self.activeChatViewModel?.resolveToolConfirmation(allow: allow)
         }
     }
+
+    /// 注册文档「问 AI」桥：正文里点「问 AI」→ 把引用挂到当前 tab 的聊天上。
+    /// 落点不折腾布局：已经是 PiP 就展开它续聊；否则用普通聊天栏（必要时把中间栏切回聊天）。
+    private func registerDocumentAIBridge() {
+        DocumentAIBridge.shared.onAsk = { quote in
+            guard let vm = self.activeChatViewModel else { return }
+            vm.attachDocQuote(quote)
+            if self.rightSidebar.isPipChat {
+                withAnimation(.easeOut(duration: 0.2)) { self.rightSidebar.pipCollapsed = false }
+            } else if self.router.currentTab != .chat {
+                self.router.navigateTo(.chat)
+            }
+        }
+    }
 #endif
 
     #if os(macOS)
@@ -676,6 +690,7 @@ struct ContentView: View {
                     DocumentSelectionCoordinator.shared.configure(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
                     DocumentSelectionCoordinator.shared.ensureRegisteredGroup()
                     registerAppShortcutBridge()
+                    registerDocumentAIBridge()
                 }
                 .onChange(of: sidebarWidth) { _, new in
                     if new > Layout.sidebarSnapThreshold {

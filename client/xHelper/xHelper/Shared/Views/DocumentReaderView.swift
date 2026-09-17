@@ -27,13 +27,17 @@ final class DocumentReaderController: ObservableObject {
     fileprivate var loadedSignature = ""
     fileprivate weak var webView: WKWebView?
 
-    private let documentID: String
+    /// 文档 id（「问 AI」时用来判断"引用说的就是当前这篇吗"）
+    let documentID: String
+    /// 文档标题：只用于「问 AI」时给引用带上语境（服务端渲染进 `document_quote` 的 title 属性）
+    private let documentTitle: String
     private let api: APIClient
     private var hasLoadedAnnotations = false
     private var isLoadingAnnotations = false
 
-    init(documentID: String, api: APIClient) {
+    init(documentID: String, title: String, api: APIClient) {
         self.documentID = documentID
+        self.documentTitle = title
         self.api = api
     }
 
@@ -55,6 +59,23 @@ final class DocumentReaderController: ObservableObject {
     func findPrev() { evaluate("reader.findPrev()") }
 
     func clearFind() { evaluate("reader.clearFind()") }
+
+    /// 「问 AI」：点引用胶囊跳回正文里那一段（滚过去 + 闪一下）。找不到就返回 false。
+    func revealQuote(_ quote: DocQuote) {
+        evaluateBool("reader.revealQuote(\(MarkdownWebUtils.jsString(quote.quote)), \(MarkdownWebUtils.jsString(quote.prefix)), \(MarkdownWebUtils.jsString(quote.suffix)))") { ok in
+            if !ok { ToastCenter.shared.show("这段文字已经不在正文里了") }
+        }
+    }
+
+    /// AI 回答存为批注：定位到引用那段 → 打开预填的批注浮层（用户可改再存，保存走既有 create/update）。
+    /// 正文里定位不到（或那段不是划线）时兜底：直接 POST，由服务端自己锚定。
+    func beginNoteFromAI(quote: DocQuote, note: String) {
+        let js = "reader.openNoteFromAI(\(MarkdownWebUtils.jsString(quote.quote)), \(MarkdownWebUtils.jsString(quote.prefix)), \(MarkdownWebUtils.jsString(quote.suffix)), \(MarkdownWebUtils.jsString(note)))"
+        evaluateBool(js) { [weak self] ok in
+            guard let self, !ok else { return }
+            Task { await self.create(quote: quote.quote, prefix: quote.prefix, suffix: quote.suffix, note: note) }
+        }
+    }
 
     /// 字号变化不重载 HTML（重载会丢滚动位置），改 CSS 变量。
     func setFontSize(_ px: CGFloat) {
@@ -249,8 +270,22 @@ final class DocumentReaderController: ObservableObject {
             relocatingID = nil
 
         case "ask":
-            // P5：复用 PiP 浮层承载文档问答。落点还没接，先别静默吞掉点击
-            ToastCenter.shared.show("「问 AI」将在 P5 接入")
+            // 「问 AI」：把引用交给聊天（ContentView 注册的 onAsk → 当前 tab 的 ChatViewModel）。
+            // 问题由用户在聊天输入栏里敲，这里只递引用。
+            let quote = message["quote"] as? String ?? ""
+            guard !quote.isEmpty else { return }
+            let payload = DocQuote(
+                documentID: documentID,
+                title: documentTitle,
+                quote: quote,
+                prefix: message["prefix"] as? String ?? "",
+                suffix: message["suffix"] as? String ?? ""
+            )
+            if let onAsk = DocumentAIBridge.shared.onAsk {
+                onAsk(payload)
+            } else {
+                ToastCenter.shared.show("聊天栏不可用，先打开聊天再问")
+            }
 
         case "copy":
             // 剪贴板交给原生：`navigator.clipboard` 在 loadHTMLString 出来的页面里不是安全上下文，
@@ -694,17 +729,25 @@ span.ann-bubble:hover { transform: scale(1.6); }
 .btn.primary:hover { filter: brightness(1.08); }
 
 .popover {
-  position: fixed; z-index: 65; display: none; max-width: 340px;
+  position: fixed; z-index: 65; display: none;
+  /* 长批注（P5 把 AI 回答存进来之后常态）：卡片自己封顶内滚。
+     不封顶的话它是 fixed 的，超出视口那截永远拿不到；滚轮也会冒泡去滚正文。
+     contain 防「滚到底连滚正文」；宽度放宽是为了少滚（340 会让长回答拉成一根带） */
+  max-width: min(420px, 88vw); max-height: min(62vh, 520px);
+  overflow-y: auto; overscroll-behavior: contain;
+  /* 卡片里不要滚动条（内容照样滚，与 macOS 覆盖式滚动条一致的观感） */
+  scrollbar-width: none;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 11px; box-shadow: var(--shadow); padding: 11px 13px;
 }
+.popover::-webkit-scrollbar { width: 0; height: 0; }
 .popover.open { display: block; }
 .popover .p-quote {
   font-size: 11.5px; line-height: 1.55; color: var(--muted);
   border-left: 2.5px solid var(--hl-hover); padding-left: 9px; margin-bottom: 8px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.popover .p-note { font-size: 13px; line-height: 1.68; color: var(--text); white-space: pre-wrap; }
+.popover .p-note { font-size: 13px; line-height: 1.68; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .popover .p-foot { margin-top: 9px; font-size: 10.5px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
 .popover .p-item + .p-item { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
 .popover .p-tag { font-size: 10px; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 20px; }
@@ -780,6 +823,10 @@ span.ann-bubble:hover { transform: scale(1.6); }
   <button data-cact="copy">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
     复制原文
+  </button>
+  <button data-cact="ask">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 4.4 4.4 1.7-4.4 1.7L12 15.7l-1.7-4.4L5.9 9.6l4.4-1.7z"/><path d="M18.6 15.4l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z"/></svg>
+    问 AI
   </button>
   <hr>
   <button data-cact="del" class="danger">
@@ -1045,6 +1092,53 @@ var reader = (function () {
     return true;
   }
 
+  /* 「问 AI」：点引用胶囊跳回这段（滚过去 + 闪一下）。
+     闪烁靠临时包一层 mark（1 秒后拆掉，拆法跟重画一致；它没有对应的批注，
+     所以点它不会弹菜单 —— 见下面 click 处理里的 annotationById 守卫）。
+     返回 false = 这段已经不在正文里（Swift 侧提示一句）。 */
+  function revealQuote(quote, prefix, suffix) {
+    var hit = locate(quote, prefix, suffix);
+    if (!hit) return false;
+    var range = rangeAt(hit.flat, hit.start, hit.end);
+    if (!range) return false;
+    var marks = wrapSpan(hit.flat, hit.start, hit.end, { id: FLASH_ID, note: '' });
+    if (!marks.length) return false;
+    marks[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    for (var i = 0; i < marks.length; i++) {
+      marks[i].classList.add('flash');
+      void marks[i].offsetWidth;
+    }
+    window.setTimeout(function () { unwrapAll(); redrawAnnotations(); }, 1100);
+    return true;
+  }
+
+  /* 「问 AI」的回答存为批注：定位到引用那段 → 打开预填的批注浮层。
+     已有同 quote 的批注 → 追加（原批注 + 空行 + 回答），保存走 update，不新建重复划线。
+     定位不到返回 false：Swift 兜底直接 POST（服务端自己锚定）。
+     保存后 JS 不做任何乐观更新 —— Swift 落库成功会全量重推列表。 */
+  function openNoteFromAI(quote, prefix, suffix, note) {
+    var same = null;
+    for (var i = 0; i < annotations.length; i++) {
+      if (annotations[i].quote === quote) { same = annotations[i]; break; }
+    }
+    if (same) {
+      openEditor(same.id);
+      var merged = note ? (same.note ? same.note + '\n\n' + note : note) : same.note;
+      neText.value = merged;
+      updateSaveLabel();
+      return true;
+    }
+    var hit = locate(quote, prefix, suffix);
+    if (!hit) return false;
+    var range = rangeAt(hit.flat, hit.start, hit.end);
+    if (!range) return false;
+    pendingRange = range;
+    openEditor(null);
+    neText.value = note;
+    updateSaveLabel();
+    return true;
+  }
+
   /* ---------- 选区 → 工具条 ---------- */
   var toolbar = document.getElementById('toolbar');
   var editor = document.getElementById('note-editor');
@@ -1055,6 +1149,8 @@ var reader = (function () {
   var ctxmenu = document.getElementById('ctxmenu');
   var pendingRange = null;
   var editingId = null;
+  /* 引用跳回来时那层临时 mark 的 id（不是批注，只为了闪一下） */
+  var FLASH_ID = '__ai_flash';
   var ctxTargetId = null;
   /* 非空 = 正在重新定位这一条（下一次选区当作新锚点） */
   var relocateId = null;
@@ -1147,7 +1243,13 @@ var reader = (function () {
     if (!(e.target.closest && e.target.closest('mark.hl, .ann-bubble'))) hideCtx();
   });
 
-  window.addEventListener('scroll', function () { hideAll(); hidePopover(); }, true);
+  /* capture 阶段的 scroll 监听连**后代元素**的滚动也收得到（scroll 不冒泡，但 capture 会命中）。
+     长批注的 hover 浮层自己是滚动容器，它内滚时 e.target 就是浮层 —— 那种不算「页面滚动」，
+     不然用户一滚浮层就被关掉，紧接着滚轮落到正文上，看着像「浮层滚不动、只有文档在滚」 */
+  window.addEventListener('scroll', function (e) {
+    if (popover.contains(e.target)) return;
+    hideAll(); hidePopover();
+  }, true);
 
   toolbar.addEventListener('mousedown', function (e) { e.preventDefault(); });
 
@@ -1176,7 +1278,10 @@ var reader = (function () {
       return;
     }
     if (act === 'ask') {
-      if (pendingRange) post({ type: 'ask', quote: fold(pendingRange.toString()) });
+      if (pendingRange) {
+        var info = selectionInfo(pendingRange);
+        post({ type: 'ask', quote: info.quote, prefix: info.prefix, suffix: info.suffix });
+      }
       clearSel(); hideAll();
     }
   });
@@ -1283,12 +1388,13 @@ var reader = (function () {
   popover.addEventListener('mouseleave', function () { scheduleHidePopover(); });
 
   function scheduleHidePopover() {
-    hoverKey = '';
     clearTimeout(hideTimer);
     hideTimer = setTimeout(function () { hidePopover(); }, 140);
   }
 
-  function hidePopover() { popover.classList.remove('open'); }
+  /* 任何隐藏路径都要复位 hoverKey：漏了的话，光标还在正文里时再 hover 同一处会走
+     `key === hoverKey` 的提前返回，浮层再也开不出来（曾因页面 scroll 把浮层关掉而卡住） */
+  function hidePopover() { hoverKey = ''; popover.classList.remove('open'); }
 
   function esc(s) {
     return String(s || '').replace(/[&<>"]/g, function (c) {
@@ -1334,6 +1440,7 @@ var reader = (function () {
     if (!t) { hideCtx(); return; }
     ctxTargetId = t.dataset.id || t.dataset.for;
     var a = annotationById(ctxTargetId);
+    if (!a) { hideCtx(); return; }   /* 临时闪烁层没有对应批注，别弹菜单 */
     document.getElementById('cact-edit-label').textContent = (a && a.note) ? '编辑批注' : '添加批注';
     ctxmenu.classList.add('open');
     var w = ctxmenu.offsetWidth, h = ctxmenu.offsetHeight;
@@ -1354,6 +1461,14 @@ var reader = (function () {
     hideCtx();
     if (act === 'edit') { openEditor(id); return; }
     if (act === 'copy') { post({ type: 'copy', text: a ? a.quote : '' }); return; }
+    if (act === 'ask') {
+      /* 已有这条线（批注可能就是这么来的）再问 AI：用注解自己存的四元组，
+         跟工具条那条路同一个载荷；闪一下确认问的就是这一段（定位不到就只发引用）。 */
+      if (!a) return;
+      post({ type: 'ask', quote: a.quote, prefix: a.prefix, suffix: a.suffix });
+      revealQuote(a.quote, a.prefix, a.suffix);
+      return;
+    }
     if (act === 'del') { post({ type: 'delete', id: id }); }
   });
 
@@ -1453,6 +1568,8 @@ var reader = (function () {
   post({ type: 'ready' });
 
   return {
+    revealQuote: revealQuote,
+    openNoteFromAI: openNoteFromAI,
     find: find,
     findNext: function () { step(1); },
     findPrev: function () { step(-1); },

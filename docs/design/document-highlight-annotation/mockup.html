@@ -1162,14 +1162,16 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
   document.getElementById('dev-fs-minus').onclick = () => { fs = Math.max(13, fs - 1); content.style.setProperty('--fs', fs + 'px'); };
   /* 划线线色候选：浅色 / 深色成对，默认「琥珀/薄荷」 */
   const HL_VARIANTS = [
-    { name: '琥珀/薄荷', light: 'rgba(240,186,60,.85)', lightHover: 'rgba(240,186,60,1)',
+    { name: '琥珀深/薄荷', light: 'rgba(217,151,27,1)', lightHover: 'rgba(186,125,10,1)',
       dark:  'rgba(146,200,180,.90)', darkHover: 'rgba(146,200,180,1)' },
-    { name: '金棕/暖砂', light: 'rgba(217,154,24,.90)', lightHover: 'rgba(217,154,24,1)',
-      dark:  'rgba(214,178,120,.85)', darkHover: 'rgba(214,178,120,1)' },
+    { name: '赭金/薄荷', light: 'rgba(184,128,26,1)', lightHover: 'rgba(150,101,12,1)',
+      dark:  'rgba(146,200,180,.90)', darkHover: 'rgba(146,200,180,1)' },
+    { name: '橙金/薄荷', light: 'rgba(226,129,26,1)', lightHover: 'rgba(198,105,10,1)',
+      dark:  'rgba(146,200,180,.90)', darkHover: 'rgba(146,200,180,1)' },
+    { name: '琥珀(浅)/薄荷', light: 'rgba(240,186,60,.85)', lightHover: 'rgba(240,186,60,1)',
+      dark:  'rgba(146,200,180,.90)', darkHover: 'rgba(146,200,180,1)' },
     { name: '薄荷/薄荷', light: 'rgba(47,125,99,.55)',  lightHover: 'rgba(47,125,99,.75)',
       dark:  'rgba(146,200,180,.90)', darkHover: 'rgba(146,200,180,1)' },
-    { name: '琥珀/琥珀', light: 'rgba(240,186,60,.85)', lightHover: 'rgba(240,186,60,1)',
-      dark:  'rgba(240,186,60,.85)',  darkHover: 'rgba(240,186,60,1)' },
   ];
   const devHl = document.getElementById('dev-hl');
   let hlIdx = 0;

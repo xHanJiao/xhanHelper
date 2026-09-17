@@ -573,11 +573,11 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 - **实现走原生 `text-decoration`**：`underline` + `wavy` + `text-decoration-color/thickness` + `text-underline-offset`，引擎逐行片段绘制，跨段/跨列表/跨表格天然正确，零额外资源。代价是**波幅与周期不可调**（只能调粗细与颜色）；若以后嫌波形不对，退路是 `background-image` 一条 repeat-x 的波浪 SVG（浅/深各一条写死颜色的 data-URI，`var()` 进不了 background-image）。
 - **`mark` 的 UA 默认底色是黄色**，`mark.hl` 里必须显式 `background: transparent` —— 去掉原来那行 `background: var(--hl)` 之后，黄底会从波浪线底下透出来（mockup 第一次截图就是这么露出来的）。这条已进自查断言。
-- `--hl` / `--hl-hover` 语义从「底色」变成「线色」，值也从半透明（`.38`/`.26`）改成实色（`.85`~/`.90`~1）—— 半透明的线在暖米底上几乎看不见。`.p-quote` / `.note-editor .quote` 的左边条引用的就是 `--hl-hover`，跟着变成一条实色短线。
+- `--hl` / `--hl-hover` 语义从「底色」变成「线色」，值也从半透明（`.38`/`.26`）改成实色 —— 半透明的线在暖米底上几乎看不见。浅色最终落在**赭金 `rgba(217,151,27,1)`**（hover `rgba(186,125,10,1)`）、深色薄荷 `rgba(146,200,180,.90)`/1：第一版线色是琥珀 `rgba(240,186,60,.85)`，真机看下来**浅色下太浅不显眼**（用户反馈），压深一档后清楚多了。`.p-quote` / `.note-editor .quote` 的左边条引用的就是 `--hl-hover`，跟着变成一条实色短线。
 - **重叠不错开**（用户选）：两条线落在同一处就是一条，重叠只靠 hover 浮层的「重叠划线」标签提示。所以**没有**加 `mark.hl mark.hl { text-underline-offset }` 那条规则 —— 真机上两条是否都画也就不必验。
 - **标题照画**（用户选）：h2 自带一条 `border-bottom` 浅色分隔线，波浪线压在它上方 3px，二者不打架。
 - `flash` 动画（P4 抽屉跳转要用）原来动 `background`，去掉底色后会变得不可见 → 改成动 `text-decoration-color` + `text-decoration-thickness`。
-- 取值（线色 / 线粗 / 偏移 / 降部是否断开）做成 `mockup.html` 底部控制条的切换项，选定的默认值：**琥珀 `rgba(240,186,60,.85)`（深色薄荷 `rgba(146,200,180,.90)`）/ 1.5px / 偏移 3px / `text-decoration-skip-ink: none`（降部不断开）**。要改就是模板里那四个变量。
+- 取值（线色 / 线粗 / 偏移 / 降部是否断开）做成 `mockup.html` 底部控制条的切换项，选定的默认值：**浅色赭金 `rgba(217,151,27,1)`（深色薄荷 `rgba(146,200,180,.90)`）/ 1.5px / 偏移 3px / `text-decoration-skip-ink: none`（降部不断开）**。要改就是模板里那四个变量。
 - 「点击编辑」直接从 `showPopover()` 的 HTML 里删掉（连同 `.p-foot .spacer` 规则），点击划线出菜单的行为不变。
 
 **自查**

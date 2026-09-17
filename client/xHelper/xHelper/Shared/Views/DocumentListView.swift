@@ -340,6 +340,66 @@ private struct TOCItem: Identifiable {
     let anchor: String
 }
 
+/// 详情页正文的可定位渲染单元：每块独立渲染并挂 `.id`，供查找跳转 `scrollTo`。
+private enum DocBlock: Identifiable {
+    case markdown(id: Int, text: String)
+    case mermaid(id: Int, code: String)
+
+    var id: Int {
+        switch self {
+        case .markdown(let id, _), .mermaid(let id, _): return id
+        }
+    }
+}
+
+/// 按顶层块（空行分隔）切分 markdown，围栏代码块内的空行不切。
+/// ponytail: 空行分隔的列表会被拆开（有序列表可能重新编号），真被咬到再换正规 block parser。
+private func splitMarkdownBlocks(_ text: String) -> [String] {
+    var blocks: [String] = []
+    var current: [String] = []
+    var fence: String?
+    func flush() {
+        let joined = current.joined(separator: "\n")
+        if !joined.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { blocks.append(joined) }
+        current.removeAll()
+    }
+    for line in text.components(separatedBy: "\n") {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if let open = fence {
+            current.append(line)
+            if trimmed.hasPrefix(open) { fence = nil }
+        } else if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+            fence = String(trimmed.prefix(3))
+            current.append(line)
+        } else if trimmed.isEmpty {
+            flush()
+        } else {
+            current.append(line)
+        }
+    }
+    flush()
+    return blocks
+}
+
+private func attributedMarkdown(_ text: String) -> AttributedString {
+    (try? AttributedString(
+        markdown: text,
+        options: .init(interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
+    )) ?? AttributedString(text)
+}
+
+private func matchRanges(in text: AttributedString, query: String) -> [Range<AttributedString.Index>] {
+    guard !query.isEmpty else { return [] }
+    var ranges: [Range<AttributedString.Index>] = []
+    var start = text.startIndex
+    while start < text.endIndex,
+          let r = text[start...].range(of: query, options: .caseInsensitive) {
+        ranges.append(r)
+        start = r.upperBound
+    }
+    return ranges
+}
+
 private func extractHeadings(_ markdown: String) -> [TOCItem] {
     let pattern = try! NSRegularExpression(pattern: #"^(#{1,6})\s+(.+)$"#, options: .anchorsMatchLines)
     let range = NSRange(markdown.startIndex..., in: markdown)
@@ -379,9 +439,22 @@ private struct DocumentFullView: View {
                 .buttonStyle(.plain)
 
                 Spacer()
+
+                Button { toggleFind() } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12))
+                        .foregroundColor(showFindBar ? Color("appAccent") : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("在文档中查找（⌘F）")
+                .keyboardShortcut("f", modifiers: .command)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
+
+            if showFindBar {
+                findBar
+            }
 
             Divider()
 
@@ -422,25 +495,9 @@ private struct DocumentFullView: View {
 
                             Divider()
 
-                            let segments = MermaidUtility.splitContent(document.content)
-                            if segments.isEmpty {
-                                Markdown(document.content)
-                                    .markdownTheme(.chatBubble(fontSize: FontSizeManager.shared.scaledSize * 1.18))
-                                    .markdownCodeSyntaxHighlighter(.plainText)
-                                    .macosTextSelection()
-                            } else {
-                                VStack(alignment: .leading, spacing: 0) {
-                                    ForEach(segments) { segment in
-                                        switch segment.type {
-                                        case .markdown:
-                                            Markdown(segment.content)
-                                                .markdownTheme(.chatBubble(fontSize: FontSizeManager.shared.scaledSize * 1.18))
-                                                .markdownCodeSyntaxHighlighter(.plainText)
-                                                .macosTextSelection()
-                                        case .mermaid:
-                                            MermaidDiagramInlineView(code: segment.content)
-                                        }
-                                    }
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(Array(docBlocks.enumerated()), id: \.element.id) { pair in
+                                    blockView(index: pair.offset, block: pair.element)
                                 }
                             }
                         }
@@ -451,6 +508,17 @@ private struct DocumentFullView: View {
                         guard !anchor.isEmpty else { return }
                         proxy.scrollTo(anchor, anchor: .top)
                     }
+                    .onChange(of: findQuery) { _, _ in
+                        recomputeMatches()
+                        currentMatch = 0
+                        scrollToCurrent(proxy)
+                    }
+                    .onChange(of: currentMatch) { _, _ in
+                        scrollToCurrent(proxy)
+                    }
+                    .onChange(of: document.content) { _, _ in
+                        recomputeMatches()
+                    }
                 }
             }
         }
@@ -459,6 +527,12 @@ private struct DocumentFullView: View {
     @State private var scrollToAnchor: String = ""
     /// 目录栏收起态（仅 macOS；不持久化，每次进文档默认展开）
     @State private var isTocCollapsed = false
+    @State private var showFindBar = false
+    @State private var findQuery = ""
+    @State private var currentMatch = 0
+    /// 与 docBlocks 等长，逐块命中数（mermaid 块恒为 0）
+    @State private var matchCounts: [Int] = []
+    @FocusState private var findFieldFocused: Bool
 
     /// 展开态目录栏：标题行（右侧收起按钮）+ 标题大纲。
     private var tocSidebar: some View {
@@ -540,5 +614,150 @@ private struct DocumentFullView: View {
         return tags.split(separator: ",").map {
             TagBadge(text: String($0).trimmingCharacters(in: .whitespaces), color: Color("appAccent"))
         }
+    }
+
+    // MARK: - 文档内查找
+
+    private var docBlocks: [DocBlock] {
+        var result: [DocBlock] = []
+        var idx = 0
+        for segment in MermaidUtility.splitContent(document.content) {
+            switch segment.type {
+            case .mermaid:
+                result.append(.mermaid(id: idx, code: segment.content))
+                idx += 1
+            case .markdown:
+                for block in splitMarkdownBlocks(segment.content) {
+                    result.append(.markdown(id: idx, text: block))
+                    idx += 1
+                }
+            }
+        }
+        return result
+    }
+
+    private var totalMatches: Int { matchCounts.reduce(0, +) }
+
+    private var matchLabel: String {
+        if findQuery.isEmpty { return "" }
+        return totalMatches == 0 ? "无匹配" : "\(currentMatch + 1)/\(totalMatches)"
+    }
+
+    private var findBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            TextField("在文档中查找", text: $findQuery)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .focused($findFieldFocused)
+                .onAppear { findFieldFocused = true }
+                .onSubmit { gotoMatch(1) }
+                .onKeyPress(.escape, phases: .down) { _ in
+                    closeFind()
+                    return .handled
+                }
+            Text(matchLabel)
+                .font(.system(size: 11))
+                .monospacedDigit()
+                .fixedSize()
+            Button { gotoMatch(-1) } label: {
+                Image(systemName: "chevron.up").font(.system(size: 11))
+            }
+            .buttonStyle(.plain)
+            .disabled(totalMatches == 0)
+            .help("上一个匹配")
+            Button { gotoMatch(1) } label: {
+                Image(systemName: "chevron.down").font(.system(size: 11))
+            }
+            .buttonStyle(.plain)
+            .disabled(totalMatches == 0)
+            .help("下一个匹配")
+            Button { closeFind() } label: {
+                Image(systemName: "xmark").font(.system(size: 11))
+            }
+            .buttonStyle(.plain)
+            .help("关闭查找")
+        }
+        .foregroundColor(.secondary)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color("surfaceInput").opacity(0.5))
+    }
+
+    @ViewBuilder
+    private func blockView(index: Int, block: DocBlock) -> some View {
+        switch block {
+        case .mermaid(let id, let code):
+            MermaidDiagramInlineView(code: code).id(id)
+        case .markdown(let id, let text):
+            if findQuery.isEmpty || matchRanges(in: attributedMarkdown(text), query: findQuery).isEmpty {
+                markdownView(text).id(id)
+            } else {
+                Text(highlightedBlock(text, index: index))
+                    .font(.system(size: FontSizeManager.shared.scaledSize * 1.18))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .macosTextSelection()
+                    .id(id)
+            }
+        }
+    }
+
+    /// 命中块渲染：AttributedString 上给命中子串加底色，当前项加深。
+    private func highlightedBlock(_ text: String, index: Int) -> AttributedString {
+        var attr = attributedMarkdown(text)
+        let offset = index < matchCounts.count ? matchCounts.prefix(index).reduce(0, +) : 0
+        for (k, r) in matchRanges(in: attr, query: findQuery).enumerated() {
+            attr[r].backgroundColor = offset + k == currentMatch
+                ? Color.orange.opacity(0.55)
+                : Color.yellow.opacity(0.4)
+        }
+        return attr
+    }
+
+    private func markdownView(_ text: String) -> some View {
+        Markdown(text)
+            .markdownTheme(.chatBubble(fontSize: FontSizeManager.shared.scaledSize * 1.18))
+            .markdownCodeSyntaxHighlighter(.plainText)
+            .macosTextSelection()
+    }
+
+    private func recomputeMatches() {
+        guard !findQuery.isEmpty else { matchCounts = []; return }
+        matchCounts = docBlocks.map { block in
+            guard case .markdown(_, let text) = block else { return 0 }
+            return matchRanges(in: attributedMarkdown(text), query: findQuery).count
+        }
+    }
+
+    private func blockID(forMatch n: Int) -> Int? {
+        var remaining = n
+        for (i, count) in matchCounts.enumerated() where count > 0 {
+            if remaining < count { return docBlocks[i].id }
+            remaining -= count
+        }
+        return nil
+    }
+
+    private func scrollToCurrent(_ proxy: ScrollViewProxy) {
+        guard totalMatches > 0, let id = blockID(forMatch: currentMatch) else { return }
+        withAnimation { proxy.scrollTo(id, anchor: .top) }
+    }
+
+    private func gotoMatch(_ delta: Int) {
+        guard totalMatches > 0 else { return }
+        currentMatch = (currentMatch + delta + totalMatches) % totalMatches
+    }
+
+    private func toggleFind() {
+        if showFindBar { closeFind() } else { showFindBar = true }
+    }
+
+    private func closeFind() {
+        showFindBar = false
+        findQuery = ""
+        currentMatch = 0
+        matchCounts = []
     }
 }

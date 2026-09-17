@@ -351,7 +351,7 @@ struct BrowsePanelView: View {
                 .help("导出 CSV")
             }
 
-            if panel == .documents {
+            if panel == .documents && documentVM.openDocument == nil {
                 headerSearchToggle(
                     active: docSearchOpen || !documentVM.keyword.isEmpty,
                     help: "搜索文档"

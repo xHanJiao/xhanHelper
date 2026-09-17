@@ -281,10 +281,12 @@ function annotationChecks() {
   draw([mk('a9', '第一个小结段落。 2.1 子节', '这是批注')], 2, 'a9', '第一个小结段落。2.1 子节');
   var bub = c.querySelectorAll('span.ann-bubble[data-for="a9"]');
   var lastMark = c.querySelectorAll('mark.hl[data-id="a9"]')[1];
-  ok('有 note 挂气泡', bub.length === 1);
-  ok('气泡贴在最后一段 mark 的同一块里', !!bub[0] && bub[0].parentElement === lastMark.parentElement);
+  ok('有 note 挂标记', bub.length === 1);
+  ok('标记贴在最后一段 mark 的同一块里', !!bub[0] && bub[0].parentElement === lastMark.parentElement);
+  // 标记是「线色小圆点」，不是图标：没有 svg、没有绿底、尺寸就是个点
+  ok('批注标记是小圆点不是图标', !!bub[0] && !bub[0].querySelector('svg') && bub[0].offsetWidth <= 8 && bub[0].offsetHeight <= 8);
   draw([mk('a10', '第一个小结段落')], 1, 'a10', '第一个小结段落');
-  ok('纯划线没气泡', c.querySelectorAll('span.ann-bubble').length === 0);
+  ok('纯划线没标记', c.querySelectorAll('span.ann-bubble').length === 0);
 
   // 9) 多处命中：靠前后文消歧挑对那一处
   draw([mk('d1', '记忆系统', '', '二、对照', '的第二处')], 1, 'd1', '记忆系统');

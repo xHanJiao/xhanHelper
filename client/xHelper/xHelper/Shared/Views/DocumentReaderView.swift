@@ -556,17 +556,16 @@ mark.hl.flash { animation: flash 1.05s ease-out; }
   100% { text-decoration-color: var(--hl); text-decoration-thickness: var(--wave-w); }
 }
 
-/* 批注气泡：只挂在一条批注的最后一段 mark 之后 */
+/* 批注标记：句尾一个小圆点，只用线色 —— 没有图标、没有底色。
+   原来是个绿色圆底 + 气泡图标，真机上太抢眼（用户："有点丑，而且很突兀"）。
+   候选对比见 docs/design/document-highlight-annotation/mockup.html 控制条的「批注标记」。 */
 span.ann-bubble {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 17px; height: 17px; margin-left: 3px; margin-right: 1px;
-  border-radius: 50%; background: var(--accent); color: var(--on-accent);
-  vertical-align: -2px; cursor: pointer;
-  transition: transform .13s, box-shadow .13s;
-  box-shadow: 0 1px 3px rgba(0,0,0,.16);
+  display: inline-block; width: 5px; height: 5px; margin: 0 2px 0 3px;
+  border-radius: 50%; background: var(--hl-hover);
+  vertical-align: 1px; cursor: pointer;
+  transition: transform .13s;
 }
-span.ann-bubble svg { width: 10px; height: 10px; display: block; }
-span.ann-bubble:hover { transform: scale(1.16); }
+span.ann-bubble:hover { transform: scale(1.6); }
 
 /* 浮动工具条 / 菜单 / 浮层 */
 .floating {
@@ -802,7 +801,6 @@ var reader = (function () {
      服务端是唯一事实：Swift 每次增删改成功后全量重推列表，这里只按
      quote + 前后文重新定位并包 <mark>。所以既没有乐观更新，也没有回滚对账。 */
   var annotations = [];
-  var BUBBLE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a7 7 0 0 1-7 7H9l-4.2 2.6L6 17.5A7 7 0 1 1 20 12z"/></svg>';
   var MD_MARKERS = /[*_`~|\[\]]/g;
 
   /* 文本投影，与服务端 project 对齐：丢 Markdown 行内标记与行首块标记，空白折叠成单空格。
@@ -938,13 +936,12 @@ var reader = (function () {
       marks.push(m);
     }
 
-    /* 气泡只挂在最后一段，避免每段都挂一个 */
+    /* 小圆点只挂在最后一段，避免每段都挂一个 */
     if (ann.note && marks.length) {
       var b = document.createElement('span');
       b.className = 'ann-bubble ui';
       b.dataset.for = ann.id;
       b.title = '查看批注';
-      b.innerHTML = BUBBLE_SVG;
       marks[marks.length - 1].after(b);
     }
     return marks;

@@ -48,7 +48,7 @@
 | D1 | 平台范围 | ✅ 仅 macOS 客户端。iOS / Web / 分享页不渲染划线 |
 | D2 | 正文渲染 | ✅ **直接替换**为 WKWebView（marked.js + HTML 模板），**不保留** MarkdownUI 阅读器；不做两套并存 |
 | D3 | 划线实体 | ✅ 单一实体两种表现：`note` 为空 = 纯划线；非空 = 划线 + 批注。**不分表** |
-| D4 | 视觉区分 | ✅ 单色划线 + **行尾小气泡图标**区分有无批注；颜色语义留给 v2 |
+| D4 | 视觉区分 | ✅ 波浪线 + **行尾线色小圆点**区分有无批注（原方案是绿色圆底 + 气泡图标，真机太抢眼，已换）；颜色语义留给 v2 |
 | D5 | 选区工具条 | ✅ HTML 浮动工具条，4 个动作：划线 / 批注 / 复制 / 问 AI |
 | D6 | 批注输入 | ✅ HTML 浮层（quote 预览 + textarea + ⌘↵ 保存） |
 | D7 | 跨块选择 | ✅ 允许（跨段落 / 跨列表项）；**跨表格、跨代码围栏除外**（不支持，选中时工具条只给"复制"） |
@@ -391,7 +391,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 **第 3 步只能逐文本节点包，不许用 `range.extractContents()` + `insertNode()` 搬 DOM**（mockup 里就是那么写的，Chrome 下看着正常）。真机踩过：跨块时 `extractContents` 会给被部分包含的块级元素造**克隆**，再把克隆插到 range 起点 —— 起点在 `<h2>` 里就变成「标题里套列表」，表格行（`thead`/`tbody` 不在 `BLOCK_TAGS` 里）更是被整段塞进 `<mark>`，都是非法内容模型，WebKit 于是少画几个字或把整段行重组（用户报的「划完字消失了一部分」「bullet 被拆成两条、气泡另起一行」）。那坨克隆不是 mark，`unwrapAll()` 也擦不掉。逐文本节点包（`splitText` + 各自 `insertBefore`）结构一点不动，标题/列表/表格/`pre` 全都天然安全。
 
-批注气泡：只挂在**最后一段** `mark` 之后（`::after` 或内联 `<span class="hl-bubble">`），避免每段都挂一个。
+批注标记：只挂在**最后一段** `mark` 之后（内联 `<span class="ann-bubble">`），避免每段都挂一个。**就是一个 5px 线色小圆点**（没有图标、没有底色），见 §「P3 收尾」。
 
 ### 8.3 hover / 点击
 
@@ -534,7 +534,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 验证结果：
 
 - `swiftc -typecheck` macOS / iOS 两个 target 均 0 error（按约定不做 `xcodebuild`，真机编译由用户完成）
-- `client/xHelper/scripts/check-reader-html.sh` → PASS（含「选区不再自绘」「::selection 不铺底、color 不写 var()」等断言；P2 收尾时 29 条，P3 + 搬 DOM 那个 bug 修完是 115 条，改成波浪线后 120 条）
+- `client/xHelper/scripts/check-reader-html.sh` → PASS（含「选区不再自绘」「::selection 不铺底、color 不写 var()」等断言；P2 收尾时 29 条，P3 + 搬 DOM 那个 bug 修完是 115 条，改成波浪线后 120 条，换小圆点标记后 121 条）
 - 截图确认（浅/深）：标题 / 标签 / 标题层级 / 表格 / 代码块 / 行内代码渲染正常
 
 ### P3 完成情况（已完成，真机验收待用户）
@@ -579,10 +579,12 @@ JS 里维护 `id → [{mark}]`。定位流程：
 - `flash` 动画（P4 抽屉跳转要用）原来动 `background`，去掉底色后会变得不可见 → 改成动 `text-decoration-color` + `text-decoration-thickness`。
 - 取值（线色 / 线粗 / 偏移 / 降部是否断开）做成 `mockup.html` 底部控制条的切换项，选定的默认值：**浅色赭金 `rgba(217,151,27,1)`（深色薄荷 `rgba(146,200,180,.90)`）/ 1.5px / 偏移 3px / `text-decoration-skip-ink: none`（降部不断开）**。要改就是模板里那四个变量。
 - 「点击编辑」直接从 `showPopover()` 的 HTML 里删掉（连同 `.p-foot .spacer` 规则），点击划线出菜单的行为不变。
+- **批注标记也从「绿色圆底 + 气泡图标」换成句尾 5px 线色小圆点**（用户：「有点丑，而且很突兀」）。候选做进 mockup 底部控制条的「批注标记」共 5 个：A 小圆点（**选中**）/ B 上标序号 `¹²³` / C 完全不标 / D 一个标记都不加、纯划线赭金而带批注的线转薄荷绿 / E 现状绿圆图标对照。`span.ann-bubble` 变成 `display:inline-block; width/height:5px; border-radius:50%; background: var(--hl-hover)`，`BUBBLE_SVG` 变量整个删掉（不再需要图标）。hover 放大到 1.6 倍、`title="查看批注"` 不变；hover 浮层与点击菜单的命中逻辑用的是 `data-for`/`data-id`，跟标记长什么样无关。
+  - 踩坑：**headless 截图会冻在 `text-decoration-color` 那个 130ms 过渡的起始帧**（`transition` 只在有帧推进时才跑，虚拟时间下不保证），第一次截 D 方案是琥珀色、看着像「CSS 没生效」；`getComputedStyle` 紧接点击后读也是旧值。加 `transition:none` 重截才是真实观感。
 
 **自查**
 
-- `check-reader-html.sh`：**120 条断言**（脚本现在会把条数一起打出来）。新增划线一整套：单处命中 / 跨块多 mark / 气泡只在有 note 时挂 / quote 带 markdown 标记也能命中 / 多命中按前后文挑对位置 / 前后文对不上就不画 / 失活不画 / 重叠嵌套 / 交叠处 hover 列出全部 + 「重叠划线」标签 / `scrollToAnnotation` 闪烁与未命中 / 点击菜单 / 工具条 4 动作 / 浮层保存发 `create` 且文案随内容变 / 编辑带出原 note 并发 `update`）。收尾时补的 5 条钉在划线样式上：`underline` + `wavy` / **底色透明**（防 UA 黄底或回退成高亮）/ 线色确实取 `--hl`（不是 `currentColor`）/ hover 线色比常态实 / popover 里没有「点击编辑」。
+- `check-reader-html.sh`：**121 条断言**（脚本现在会把条数一起打出来）。新增划线一整套：单处命中 / 跨块多 mark / 标记只在有 note 时挂 / quote 带 markdown 标记也能命中 / 多命中按前后文挑对位置 / 前后文对不上就不画 / 失活不画 / 重叠嵌套 / 交叠处 hover 列出全部 + 「重叠划线」标签 / `scrollToAnnotation` 闪烁与未命中 / 点击菜单 / 工具条 4 动作 / 浮层保存发 `create` 且文案随内容变 / 编辑带出原 note 并发 `update`）。收尾时补的 5 条钉在划线样式上：`underline` + `wavy` / **底色透明**（防 UA 黄底或回退成高亮）/ 线色确实取 `--hl`（不是 `currentColor`）/ hover 线色比常态实 / popover 里没有「点击编辑」/ **标记是 5px 小圆点而不是 svg 图标**（盯住这次换掉的绿圆图标别回来）。
 - `snapshot-reader.sh`：三个 job —— `marks`（跨块 / 带批注 / li 内 / **标题打头跨块**，滚到出事的那个形状）、`marks-table`（跨表格行）、`marks-overlap`（`k7` 与 `k2` 重叠在同一句上），浅/深各一张；探针报 `marks=11 bubbles=1 textLen=407=不变` + 逐 id 段数（`k1=2 k2=1 k3=1 k4=2 k5=2 k6=2 k7=1`），**`=不变` 就是「一字不少」的现场证据**。波浪线只在真引擎里看才算数（Blink 的画法不作依据）。
   - 顺带踩到：**画完之后再滚，截图会带上「滚走那块」的陈旧像素**（DOM 探针显示那里根本没有背景），所以 `__marks` 改成先滚到目标位置再画。
 - `swiftc -typecheck` macOS / iOS 均 0 error。
@@ -609,7 +611,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
    - **P3**：hover 浮层里**没有**「点击编辑」文案（点划线仍出菜单）
    - **P3**：同一句话在文中出现两次，划**第二处** → 划线落在第二处（消歧靠 DOM 前后文）
    - **P3**：两条线交叠 → 悬停时 popover 同时列出两条并标「重叠划线」
-   - **P3**：加批注 → 气泡出现；点气泡改批注（⌘↵ 保存 / Esc 取消）；清空批注保存 = 退化成纯划线；删除后气泡一起消失
+   - **P3**：加批注 → 句尾小圆点出现；点圆点改批注（⌘↵ 保存 / Esc 取消）；清空批注保存 = 退化成纯划线；删除后气泡一起消失
    - **P3**：撤销/重连都不会让划线错位（每次增删改都按服务端那一份重画）
 4. `./server/scripts/api-test-annotations.sh` 全绿（26 项，独立 SQLite 实例，不碰 dev 库）
 

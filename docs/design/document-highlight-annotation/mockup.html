@@ -298,6 +298,33 @@ span.ann-bubble {
 span.ann-bubble svg { width: 10px; height: 10px; display: block; }
 span.ann-bubble:hover { transform: scale(1.16); }
 
+/* 批注标记候选（演示控制台用 html.ann-* 切换；真机只留选中的那套） */
+/* A 小圆点：只有线色，没有图标没有底 —— 最不起眼，仍能一眼数出有几条批注 */
+html.ann-dot span.ann-bubble {
+  width: 5px; height: 5px; margin: 0 2px 0 3px; border-radius: 50%;
+  background: var(--hl-hover); color: transparent; box-shadow: none;
+  vertical-align: 1px;
+}
+html.ann-dot span.ann-bubble svg { display: none; }
+html.ann-dot span.ann-bubble:hover { transform: scale(1.6); }
+/* B 上标序号：脚注式（¹ ² ³），纯文字串在句尾，无底色无图标 */
+html.ann-sup span.ann-bubble {
+  width: auto; height: auto; margin: 0 1px 0 2px; border-radius: 0;
+  background: none; box-shadow: none; color: var(--hl-hover);
+  vertical-align: super; font-size: .6em; font-weight: 600; line-height: 1;
+}
+html.ann-sup span.ann-bubble svg { display: none; }
+html.ann-sup span.ann-bubble::before { content: attr(data-num); }
+/* C 完全不标：正文里只有波浪线，批注靠 hover 发现 */
+html.ann-none span.ann-bubble { display: none; }
+/* D 不标图标，改用「线色 + 线粗」区分：有批注的线是薄荷实线，纯划线是赭金 */
+html.ann-tone mark.hl[data-note] {
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: calc(var(--wave-w) + .5px);
+}
+html.ann-tone span.ann-bubble { display: none; }
+/* E 现有方案：绿圆 + 气泡图标（对照） */
+
 /* ============ 浮动工具条 ============ */
 .floating {
   position: fixed; z-index: 60; display: none;
@@ -476,12 +503,14 @@ span.ann-bubble:hover { transform: scale(1.16); }
 .devcbar {
   position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
   z-index: 200; display: flex; align-items: center; gap: 6px;
+  flex-wrap: nowrap; white-space: nowrap; max-width: calc(100vw - 24px); overflow-x: auto;
   background: rgba(28,28,30,.86);
   backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255,255,255,.14); border-radius: 12px;
   padding: 7px 9px; box-shadow: 0 14px 40px rgba(0,0,0,.4);
   font-size: 11.5px; color: #EDEDED;
 }
+.devcbar .lab, .devcbar button, .devcbar .sep { flex: 0 0 auto; }
 .devcbar .lab { color: #9A9A9E; padding: 0 3px; }
 .devcbar button {
   border: 1px solid rgba(255,255,255,.13); background: rgba(255,255,255,.06);
@@ -722,6 +751,9 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
   <div class="sep"></div>
   <span class="lab">降部</span>
   <button id="dev-hl-skip">不断开</button>
+  <div class="sep"></div>
+  <span class="lab">批注标记</span>
+  <button id="dev-ann">小圆点</button>
   <div class="sep"></div>
   <button id="dev-drawer">划线列表</button>
   <button id="dev-reset">重置</button>
@@ -1206,6 +1238,32 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
   devHlSkip.onclick = () => { skip = skip === 'none' ? 'auto' : 'none'; applyWave(); };
   applyWave();
 
+  /* 批注标记候选（对应 CSS 里的 html.ann-*） */
+  const ANN_STYLES = [
+    { key: 'dot',  name: '小圆点' },
+    { key: 'sup',  name: '上标序号' },
+    { key: 'none', name: '不标' },
+    { key: 'tone', name: '线色区分' },
+    { key: 'bubble', name: '绿圆图标(现)' },
+  ];
+  const devAnn = document.getElementById('dev-ann');
+  let annIdx = 0;
+  /* 上标序号按正文出现顺序编号：一条批注只数挂气泡的那一个 mark */
+  function numberBubbles() {
+    let n = 0;
+    content.querySelectorAll('span.ann-bubble').forEach(b => {
+      const prev = b.previousElementSibling;
+      if (prev && prev.matches('mark.hl')) b.dataset.num = ++n;
+    });
+  }
+  function applyAnnStyle() {
+    const cur = ANN_STYLES[annIdx];
+    ANN_STYLES.forEach(v => document.documentElement.classList.toggle('ann-' + v.key, v.key === cur.key));
+    devAnn.textContent = cur.name;
+    numberBubbles();
+  }
+  devAnn.onclick = () => { annIdx = (annIdx + 1) % ANN_STYLES.length; applyAnnStyle(); };
+
   /* 与旧的底色高亮并排对比 */
   const devStyle = document.getElementById('dev-hl-style');
   devStyle.onclick = () => {
@@ -1217,6 +1275,7 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
   /* ---------- 启动 ---------- */
   content.style.setProperty('--fs', fs + 'px');
   initBubbles();
+  applyAnnStyle();
   renderDrawer();
   setTimeout(() => document.getElementById('hint').classList.add('hide'), 9000);
 })();

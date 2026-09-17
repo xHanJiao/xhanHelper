@@ -10,7 +10,16 @@ struct DocumentListView: View {
     var body: some View {
         Group {
             if let doc = viewModel.openDocument {
-                DocumentFullView(document: doc, onBack: { viewModel.openDocument = nil })
+                DocumentFullView(
+                    document: doc,
+                    canGoPrevious: viewModel.canGoPrevious,
+                    canGoNext: viewModel.canGoNext,
+                    isLoadingNeighbor: viewModel.isLoadingMore,
+                    onNavigate: { offset in Task { await viewModel.openNeighbor(offset) } },
+                    onBack: { viewModel.openDocument = nil }
+                )
+                // 换篇重建：滚动位置 / 查找栏 / 目录展开态归零
+                .id(doc.id)
             } else {
                 #if os(macOS)
                 if viewModel.mode == .cloud {
@@ -418,6 +427,11 @@ private func extractHeadings(_ markdown: String) -> [TOCItem] {
 
 private struct DocumentFullView: View {
     let document: Document
+    let canGoPrevious: Bool
+    let canGoNext: Bool
+    let isLoadingNeighbor: Bool
+    /// offset：-1 上一篇 / +1 下一篇
+    let onNavigate: (Int) -> Void
     let onBack: () -> Void
 
     private var tocItems: [TOCItem] {
@@ -528,6 +542,9 @@ private struct DocumentFullView: View {
                 }
             }
         }
+        #if os(macOS)
+        .background { shortcutCarrier }
+        #endif
     }
 
     @State private var scrollToAnchor: String = ""
@@ -540,7 +557,7 @@ private struct DocumentFullView: View {
     @State private var matchCounts: [Int] = []
     @FocusState private var findFieldFocused: Bool
 
-    /// 展开态目录栏：标题行（右侧收起按钮）+ 标题大纲。
+    /// 展开态目录栏：标题行（右侧收起按钮）+ 标题大纲 + 页脚方向行。
     private var tocSidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 4) {
@@ -589,6 +606,22 @@ private struct DocumentFullView: View {
                 }
                 .padding(.vertical, 8)
             }
+
+            #if os(macOS)
+            Divider().opacity(0.3)
+            HStack(spacing: 14) {
+                TOCNavRow(
+                    title: "上一篇", icon: "chevron.left", leadsIcon: true,
+                    enabled: canGoPrevious && !isLoadingNeighbor, isLoading: false
+                ) { onNavigate(-1) }
+                TOCNavRow(
+                    title: "下一篇", icon: "chevron.right", leadsIcon: false,
+                    enabled: canGoNext && !isLoadingNeighbor, isLoading: isLoadingNeighbor
+                ) { onNavigate(1) }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            #endif
         }
         .frame(width: 220)
     }
@@ -612,6 +645,21 @@ private struct DocumentFullView: View {
             Spacer()
         }
         .frame(width: 32)
+    }
+
+    /// ⌘←/⌘→ 快捷键载体：目录栏只在有标题时渲染，快捷键不依赖它，故挂在最外层。
+    /// 尺寸归零 + 透明，只提供键位；查找栏打开时禁用，把 ⌘←/⌘→ 还给文本框移动光标。
+    private var shortcutCarrier: some View {
+        Group {
+            Button("") { onNavigate(-1) }
+                .keyboardShortcut(.leftArrow, modifiers: .command)
+                .disabled(!canGoPrevious || showFindBar)
+            Button("") { onNavigate(1) }
+                .keyboardShortcut(.rightArrow, modifiers: .command)
+                .disabled(!canGoNext || showFindBar)
+        }
+        .frame(width: 0, height: 0)
+        .opacity(0)
     }
     #endif
 
@@ -787,3 +835,45 @@ private struct DocumentFullView: View {
         matchCounts = []
     }
 }
+
+#if os(macOS)
+/// 目录栏页脚的方向行：平时纯文字（与目录条目同族），hover 只把文字由 secondary 提到 primary，
+/// 不加底块/阴影/位移。两条居中排列，间距由调用方给定。
+private struct TOCNavRow: View {
+    let title: String
+    let icon: String
+    /// 图标在文字外侧（上一篇在左、下一篇在右）。
+    let leadsIcon: Bool
+    let enabled: Bool
+    let isLoading: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if leadsIcon { iconView }
+                Text(title).font(.caption)
+                if !leadsIcon { iconView }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(isHovered && enabled ? .primary : .secondary)
+        .opacity(enabled ? 1 : 0.35)
+        .onHover { isHovered = $0 }
+        .disabled(!enabled)
+        .help("\(title)（⌘\(leadsIcon ? "←" : "→")）")
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        if isLoading {
+            ProgressView().controlSize(.mini)
+        } else {
+            Image(systemName: icon).font(.caption2.weight(.semibold))
+        }
+    }
+}
+#endif

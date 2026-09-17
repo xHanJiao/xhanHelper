@@ -11,7 +11,7 @@ FRONTEND_DIR=../front-end
 # 默认：显示帮助
 help:
 	@echo "可用的 make 命令："
-	@echo "  make dev            - 本地开发模式启动（dev环境，使用SQLite）"
+	@echo "  make dev            - 本地开发模式启动（dev环境，使用MySQL）"
 	@echo "  make dev-full       - 同时启动前后端开发服务器"
 	@echo "  make build          - 本地编译（当前系统）"
 	@echo "  make build-topic-fix - 编译+上传 topic 修复工具（修复 memory 中含 / 或 , 的脏 topic）"
@@ -23,7 +23,6 @@ help:
 	@echo "  make deploy-backend - 仅部署后端（编译 + 上传 + 重启）"
 	@echo "  make deploy-frontend- 仅部署前端（构建 + 上传）"
 	@echo "  make deploy-only    - 仅上传已编译的二进制和conf（不重新编译）"
-	@echo "  make test           - API 自动化测试 (34项)"
 	@echo "  make db-pull        - 导出线上数据库并拉到本地 data/ 目录"
 	@echo "  make db-import      - 仅导入本地最新 dump（不联网，用于下载后导入失败重跑）"
 	@echo "  make logs           - 实时查看远程服务器日志 (tail -f)"
@@ -31,15 +30,17 @@ help:
 
 # 启动开发服务器
 dev: check-env
-	@echo "=== 启动 xhanHelper 开发服务器 (SQLite) ==="
+	@echo "=== 启动 xhanHelper 开发服务器 (dev → MySQL) ==="
 	@mkdir -p logs
-	@go run ./cmd/xhan-helper/ 2>&1 | tee logs/dev-$$(date +%Y-%m-%d).log
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	go run ./cmd/xhan-helper/ 2>&1 | tee logs/dev-$$(date +%Y-%m-%d).log
 
 # 同时启动前后端开发服务器
 dev-full: check-env
 	@echo "=== 启动前后端开发环境 ==="
 	@mkdir -p logs
-	@LOG="logs/dev-$$(date +%Y-%m-%d).log"; \
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	LOG="logs/dev-$$(date +%Y-%m-%d).log"; \
 	echo "  日志文件: $$LOG"; \
 	go run ./cmd/xhan-helper/ >> "$$LOG" 2>&1 & \
 	BPID=$$!; \
@@ -54,15 +55,16 @@ dev-full: check-env
 
 # 检查必要的环境变量
 check-env:
-	@ok=true; \
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	ok=true; \
 	if [ -z "$$LLM_API_KEY" ]; then \
 		echo "❌ LLM_API_KEY 未设置"; \
 		echo "   export LLM_API_KEY=\"your-doubao-api-key\""; \
 		ok=false; \
 	fi; \
-	if [ "$$APP_ENV" = "prod" ] && [ -z "$$DB_PASSWORD" ]; then \
-		echo "❌ DB_PASSWORD 未设置 (prod 环境需要)"; \
-		echo "   export DB_PASSWORD=\"your-mysql-password\""; \
+	if [ "$$APP_ENV" = "prod" ] && [ -z "$$XHAN_HELPER_DB_PASSWORD" ]; then \
+		echo "❌ XHAN_HELPER_DB_PASSWORD 未设置 (prod 环境需要)"; \
+		echo "   在 server/.env 或环境变量里设置"; \
 		ok=false; \
 	fi; \
 	if [ -z "$$EMBEDDING_API_KEY" ]; then \
@@ -71,7 +73,7 @@ check-env:
 	fi; \
 	if ! $$ok; then \
 		echo ""; \
-		echo "dev 环境只需 LLM_API_KEY，prod 环境还需 DB_PASSWORD"; \
+		echo "环境变量检查未通过，请补齐后重试"; \
 		exit 1; \
 	fi; \
 	if [ -z "$$APP_ENV" ]; then \

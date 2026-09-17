@@ -33,14 +33,13 @@ import UniformTypeIdentifiers
 import UIKit
 #endif
 
-// MARK: - Inline view (message bubble)
+// MARK: - Inline view (message bubble / document)
 
 struct MermaidDiagramInlineView: View {
     let code: String
     @Environment(\.colorScheme) var colorScheme
     @State private var renderedImage: BMImage? = nil
     @State private var renderError: String? = nil
-    @State private var showFullScreen = false
 
     private var theme: DiagramTheme {
         mermaidTheme(for: colorScheme)
@@ -57,9 +56,10 @@ struct MermaidDiagramInlineView: View {
         .padding(.vertical, 8)
         .padding(.horizontal, 8)
         .contentShape(Rectangle())
-        .onTapGesture { showFullScreen = true }
-        .sheet(isPresented: $showFullScreen) {
-            FullScreenMermaidView(code: code, theme: theme)
+        .onTapGesture {
+            LightboxCenter.shared.present {
+                MermaidLightboxView(code: code, theme: theme)
+            }
         }
         .task(id: colorScheme) {
             do {
@@ -87,18 +87,14 @@ struct MermaidDiagramInlineView: View {
             .frame(maxWidth: .infinity)
             .frame(height: 250)
         } else if let img = renderedImage {
-#if os(macOS)
-            Image(nsImage: img)
+            Image(platformImage: img)
                 .resizable()
+                .interpolation(.high)
                 .aspectRatio(contentMode: .fit)
-                .frame(maxHeight: 250)
+                #if os(macOS)
                 .scaleEffect(y: -1)
-#else
-            Image(uiImage: img)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxHeight: 250)
-#endif
+                #endif
+                .frame(maxHeight: 420)
         } else {
             ProgressView()
                 .frame(maxWidth: .infinity)
@@ -107,63 +103,105 @@ struct MermaidDiagramInlineView: View {
     }
 }
 
-// MARK: - Full-screen view with zoom & save
+// MARK: - 浮层大图：默认适配窗口，可捏合放大，点 X / Esc 关闭
 
-#if os(macOS)
-struct FullScreenMermaidView: View {
+struct MermaidLightboxView: View {
     let code: String
     let theme: DiagramTheme
 
-    @State private var renderedImage: NSImage? = nil
-    @State private var currentScale: CGFloat = 1.0
-    @State private var lastScale: CGFloat = 1.0
+    @State private var renderedImage: BMImage? = nil
+    /// 相对「适配窗口」的倍数：1.0 = 铺满可用空间
+    @State private var zoom: CGFloat = 1.0
+    @State private var lastZoom: CGFloat = 1.0
+    #if os(iOS)
+    @State private var showShareSheet = false
+    #endif
 
     private let renderScale: CGFloat = 3.0
+    private let margin: CGFloat = 24
 
     var body: some View {
-        ScrollView([.horizontal, .vertical], showsIndicators: true) {
-            if let img = renderedImage {
-                Image(nsImage: img)
-                    .resizable()
-                    .scaleEffect(y: -1)
-                    .frame(
-                        width: img.size.width / renderScale * currentScale,
-                        height: img.size.height / renderScale * currentScale
-                    )
-                    .gesture(
-                        MagnificationGesture()
-                            .onChanged { value in
-                                let delta = value / lastScale
-                                lastScale = value
-                                currentScale = min(max(currentScale * delta, 0.3), 5.0)
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                Button {
+                    LightboxCenter.shared.dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help("关闭")
+            }
+            .padding(10)
+
+            GeometryReader { geo in
+                ScrollView([.horizontal, .vertical], showsIndicators: true) {
+                    if let img = renderedImage {
+                        // 渲染图的 size 已是自然点尺寸、像素是 3 倍，所以上限取 renderScale：
+                        // 小图放到最大也只是 1:1 像素（清晰），且 fit ≤ 宽高比必然铺得下
+                        let fit = min(
+                            renderScale,
+                            (geo.size.width - margin * 2) / img.size.width,
+                            (geo.size.height - margin * 2) / img.size.height
+                        )
+                        Image(platformImage: img)
+                            .resizable()
+                            .interpolation(.high)
+                            #if os(macOS)
+                            .scaleEffect(y: -1)
+                            #endif
+                            .frame(width: img.size.width * fit * zoom,
+                                   height: img.size.height * fit * zoom)
+                            .padding(margin)
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                #if os(macOS)
+                                Button("保存图片...") { saveImage() }
+                                #endif
                             }
-                            .onEnded { _ in lastScale = 1.0 }
-                    )
-                    .onTapGesture(count: 2) {
-                        withAnimation(.easeInOut) { currentScale = 1.0 }
+                            .gesture(
+                                MagnificationGesture()
+                                    .onChanged { value in
+                                        let delta = value / lastZoom
+                                        lastZoom = value
+                                        zoom = min(max(zoom * delta, 0.3), 5.0)
+                                    }
+                                    .onEnded { _ in lastZoom = 1.0 }
+                            )
+                            #if os(iOS)
+                            .onLongPressGesture { showShareSheet = true }
+                            #endif
+                            .frame(minWidth: geo.size.width, minHeight: geo.size.height)
+                    } else {
+                        ProgressView()
+                            .frame(width: geo.size.width, height: geo.size.height)
                     }
-                    .contextMenu {
-                        Button("保存图片...") { saveImage() }
-                    }
-                    .padding(40)
-            } else {
-                ProgressView()
-                    .frame(width: 700, height: 400)
+                }
             }
         }
-        .frame(minWidth: 700, idealWidth: 900, minHeight: 400)
+        .contentShape(Rectangle())
+        // 点浮层任意位置退出（含图片外的留白），和聊天图片预览一致；图片本身没有单击手势，
+        // 单击会冒泡到这里，捏合缩放/右键保存不受影响
+        .onTapGesture { LightboxCenter.shared.dismiss() }
+        .frame(minWidth: 480, minHeight: 360)
         .task(id: theme) { renderImage() }
+        #if os(iOS)
+        .sheet(isPresented: $showShareSheet) {
+            if let data = try? renderPNGData(), let image = BMImage(data: data) {
+                ShareSheet(activityItems: [image])
+            }
+        }
+        #endif
     }
 
     private func renderImage() {
-        let renderer = MermaidImageRenderer()
-        renderer.theme = theme
-        renderer.scale = renderScale
-        if let data = try? renderer.renderPNG(from: code) {
-            renderedImage = NSImage(data: data)
-        }
+        renderedImage = try? MermaidImageRenderer.render(code, theme: theme, scale: renderScale)
     }
 
+    #if os(macOS)
     private func saveImage() {
         guard let img = renderedImage else { return }
 
@@ -189,93 +227,24 @@ struct FullScreenMermaidView: View {
             }
         }
     }
-}
+    #endif
 
-#endif
-
-#if os(iOS)
-struct FullScreenMermaidView: View {
-    let code: String
-    let theme: DiagramTheme
-
-    @State private var renderedImage: UIImage? = nil
-    @State private var currentScale: CGFloat = 1.0
-    @State private var lastScale: CGFloat = 1.0
-    @State private var showShareSheet = false
-    @Environment(\.dismiss) private var dismiss
-
-    private let renderScale: CGFloat = 3.0
-
-    var body: some View {
-        ScrollView([.horizontal, .vertical], showsIndicators: true) {
-            if let img = renderedImage {
-                Image(uiImage: img)
-                    .resizable()
-                    .frame(
-                        width: img.size.width / renderScale * currentScale,
-                        height: img.size.height / renderScale * currentScale
-                    )
-                    .gesture(
-                        MagnificationGesture()
-                            .onChanged { value in
-                                let delta = value / lastScale
-                                lastScale = value
-                                currentScale = min(max(currentScale * delta, 0.3), 5.0)
-                            }
-                            .onEnded { _ in lastScale = 1.0 }
-                    )
-                    .onTapGesture(count: 2) {
-                        withAnimation(.easeInOut) { currentScale = 1.0 }
-                    }
-                    .onLongPressGesture { showShareSheet = true }
-                    .padding(40)
-            } else {
-                ProgressView()
-            }
-        }
-        .task(id: theme) { renderImage() }
-        .overlay(alignment: .topTrailing) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title2)
-                    .foregroundColor(.secondary)
-                    .background(.ultraThinMaterial, in: Circle())
-            }
-            .padding(12)
-        }
-        .sheet(isPresented: $showShareSheet) {
-            if let data = try? renderPNGData(), let uiImage = UIImage(data: data) {
-                ShareSheet(activityItems: [uiImage])
-            }
-        }
-    }
-
-    private func renderImage() {
-        let renderer = MermaidImageRenderer()
-        renderer.theme = theme
-        renderer.scale = renderScale
-        if let data = try? renderer.renderPNG(from: code) {
-            renderedImage = UIImage(data: data)
-        }
-    }
-
+    #if os(iOS)
     private func renderPNGData() throws -> Data? {
         let renderer = MermaidImageRenderer()
         renderer.theme = theme
         renderer.scale = 2.0
         return try renderer.renderPNG(from: code)
     }
-}
 
-struct ShareSheet: UIViewControllerRepresentable {
-    let activityItems: [Any]
+    struct ShareSheet: UIViewControllerRepresentable {
+        let activityItems: [Any]
 
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        func makeUIViewController(context: Context) -> UIActivityViewController {
+            UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        }
+
+        func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
     }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+    #endif
 }
-#endif

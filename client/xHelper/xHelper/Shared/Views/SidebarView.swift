@@ -177,7 +177,7 @@ struct SidebarView: View {
                         Text(conv.title.isEmpty ? "新对话" : conv.title)
                             .font(.subheadline)
                             .lineLimit(1)
-                            .foregroundColor(isCurrent ? Color("appAccent") : .primary)
+                            .foregroundColor(.primary)
                     }
                     Text(formatConversationDate(conv.updatedAt))
                         .font(.caption2)
@@ -186,7 +186,7 @@ struct SidebarView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(isCurrent ? Color("appAccent").opacity(0.12) : (isHovered ? Color.primary.opacity(0.06) : .clear))
+                .background(isCurrent ? Color("appAccent").opacity(0.18) : (isHovered ? Color.primary.opacity(0.06) : .clear))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)

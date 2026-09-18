@@ -403,7 +403,8 @@ private struct ReaderWebView: NSViewRepresentable {
 // MARK: - HTML 组装
 
 /// 屏幕阅读版 HTML：与 `DocumentPDFExporter` 同一套骨架（marked.min.js + 图表占位替换），
-/// 但 CSS 换成阅读版 —— 不加 A4 的 `595px` / `12pt` 打印尺寸，改 728px 列宽 + 可调字号，
+/// 但 CSS 换成阅读版 —— 不加 A4 的 `595px` / `12pt` 打印尺寸，改自适应列宽
+/// （`clamp(728px, 68vw, 1100px)`：窄栏维持 728，宽窗按 68% 视口长到 1100 封顶）+ 可调字号，
 /// 并且不铺任何底色（外层是卡片 material）。
 private enum ReaderHTML {
 
@@ -526,7 +527,7 @@ html, body {
   font-family: -apple-system, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
-.page { max-width: 728px; margin: 0 auto; padding: 34px 40px 120px; }
+.page { max-width: clamp(728px, 68vw, 1100px); margin: 0 auto; padding: 34px 40px 120px; }
 
 .doc-title { font-size: calc(var(--fs) * 1.55); font-weight: 700; line-height: 1.32; color: var(--text); letter-spacing: -.2px; }
 .doc-tags { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }

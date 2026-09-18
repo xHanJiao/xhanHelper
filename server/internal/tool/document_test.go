@@ -3,7 +3,9 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -22,6 +24,10 @@ func setupDocumentTool(t *testing.T) (*DocumentTool, func()) {
 	}
 	if err := db.AutoMigrate(&model.Document{}, &model.ContentVersion{}, &model.DocumentAnnotation{}); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	// :memory: 每个连接一个独立库，限制单连接让并发测试共用同一内存库
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
 	}
 	docRepo := service.NewDocumentRepo(db)
 	annoRepo := service.NewDocumentAnnotationRepo(db)
@@ -980,4 +986,57 @@ func TestDocumentToolRegistryValidation(t *testing.T) {
 	reg.ValidateNativeFC()
 	reg.ValidateReadOnlyFuncs()
 	reg.ValidateCatalog()
+}
+
+// 并发局部替换不同片段：无锁时后写者用旧快照整列覆盖会丢改动，有锁则全部保留
+func TestDocumentConcurrentUpdateNoLostUpdate(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ctx := context.Background()
+	userID := "user-1"
+	ec := &ExecuteContext{Ctx: ctx, UserID: userID}
+
+	const n = 8
+	markers := make([]string, n)
+	var sb strings.Builder
+	for i := range markers {
+		markers[i] = fmt.Sprintf("MARK%d", i)
+		sb.WriteString(markers[i])
+		sb.WriteString("\n")
+	}
+
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
+		"title": "并发", "content": sb.String(),
+	}))
+	if !res.Success {
+		t.Fatalf("create failed: %s", res.Error)
+	}
+	var created map[string]interface{}
+	json.Unmarshal(res.Data, &created)
+	docID := created["id"].(string)
+
+	var wg sync.WaitGroup
+	for i := range markers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r := tool.Execute(ec, "update_document", mustMarshal(t, map[string]string{
+				"id": docID, "old_text": markers[i], "new_text": markers[i] + "_done",
+			}))
+			if !r.Success {
+				t.Errorf("update %d failed: %s", i, r.Error)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	res = tool.Execute(ec, "get_document", mustMarshal(t, map[string]string{"id": docID}))
+	var got map[string]interface{}
+	json.Unmarshal(res.Data, &got)
+	final := got["content"].(string)
+	for i, m := range markers {
+		if !strings.Contains(final, m+"_done") {
+			t.Errorf("marker %d 的改动被覆盖：%s", i, final)
+		}
+	}
 }

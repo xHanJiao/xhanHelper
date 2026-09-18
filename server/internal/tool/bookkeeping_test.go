@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -22,6 +23,10 @@ func setupBookkeepingTool(t *testing.T) (*BookkeepingTool, func()) {
 	}
 	if err := db.AutoMigrate(&model.Bill{}); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	// :memory: 每个连接一个独立库，限制单连接让并发测试共用同一内存库
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
 	}
 	billRepo := service.NewBillRepo(db)
 	return NewBookkeepingTool(billRepo), func() {}
@@ -574,5 +579,43 @@ func TestBatchUpdateOwnerEmptyTool(t *testing.T) {
 	json.Unmarshal(res.Data, &data)
 	if data["total"].(float64) != 0 {
 		t.Error("expected 0 empty-owner bills after batch update")
+	}
+}
+
+// 并发改同一账单的不同字段：整条写回时后写者会把先改字段覆盖回旧值
+func TestUpdateBillConcurrentDistinctFieldsNoLostUpdate(t *testing.T) {
+	tool, cleanup := setupBookkeepingTool(t)
+	defer cleanup()
+	seedBookkeepingBills(t, tool, "u1")
+	ctx := context.Background()
+	ec := &ExecuteContext{Ctx: ctx, UserID: "u1"}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 9; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			args := map[string]interface{}{"id": "b1"}
+			switch i % 3 {
+			case 0:
+				args["owner"] = "并发归属"
+			case 1:
+				args["remark"] = "并发备注"
+			case 2:
+				args["category2"] = "并发分类"
+			}
+			if r := tool.Execute(ec, "update_bill", mustMarshal(t, args)); !r.Success {
+				t.Errorf("update_bill %d failed: %s", i, r.Error)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	b, err := tool.billRepo.FindByID(ctx, "b1")
+	if err != nil || b == nil {
+		t.Fatalf("find bill: %v", err)
+	}
+	if b.Owner != "并发归属" || b.Remark != "并发备注" || b.Category2 != "并发分类" {
+		t.Fatalf("并发改不同字段互相覆盖：owner=%q remark=%q category2=%q", b.Owner, b.Remark, b.Category2)
 	}
 }

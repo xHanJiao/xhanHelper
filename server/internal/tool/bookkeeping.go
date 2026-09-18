@@ -337,39 +337,49 @@ func (t *BookkeepingTool) updateBill(ec *ExecuteContext, args json.RawMessage) *
 		return &Result{Success: false, Error: "access denied"}
 	}
 
-	// 只更新传入的非零值字段
+	// 只更新传入的非零值字段：组 map 按列更新，避免整条写回覆盖并发改动的其他字段。
+	updates := map[string]interface{}{}
 	if a.Item != "" {
 		existing.Item = a.Item
+		updates["item"] = a.Item
 	}
 	if a.Amount != 0 {
 		existing.Amount = a.Amount
+		updates["amount"] = a.Amount
 	}
 	if a.Category1 != "" {
 		existing.Category1 = a.Category1
+		updates["category1"] = a.Category1
 	}
 	if a.Category2 != "" {
 		existing.Category2 = a.Category2
+		updates["category2"] = a.Category2
 	}
 	if a.ConsumeType != "" {
 		existing.ConsumeType = a.ConsumeType
+		updates["consume_type"] = a.ConsumeType
 	}
 	if a.Date != "" {
 		if _, err := time.Parse("2006-01-02", a.Date); err != nil {
 			return &Result{Success: false, Error: "日期格式错误，请使用 YYYY-MM-DD 格式，例如 2026-05-28"}
 		}
 		existing.Date = a.Date
+		updates["date"] = a.Date
 	}
 	if a.PayType != "" {
 		existing.PayType = a.PayType
+		updates["pay_type"] = a.PayType
 	}
 	if a.Owner != "" {
 		existing.Owner = a.Owner
+		updates["owner"] = a.Owner
 	}
 	if a.Remark != "" {
 		existing.Remark = a.Remark
+		updates["remark"] = a.Remark
 	}
 
-	if err := t.billRepo.Update(ec.Ctx, existing); err != nil {
+	if err := t.billRepo.UpdateFields(ec.Ctx, a.ID, ec.UserID, updates); err != nil {
 		return &Result{Success: false, Error: "update bill failed: " + err.Error()}
 	}
 

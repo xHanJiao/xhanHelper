@@ -17,6 +17,8 @@ import (
 type ThemeTool struct {
 	themeRepo   *service.ThemeStateRepo
 	embedWriter app.ThemeVectorWriter
+	// mu 按主题 ID 串行化 state_text 的「读→追加→整字段写回」，避免并发追加丢条目。
+	mu keyedMutex
 }
 
 func NewThemeTool(repo *service.ThemeStateRepo, embedWriter app.ThemeVectorWriter) *ThemeTool {
@@ -197,7 +199,13 @@ func (t *ThemeTool) updateTheme(ec *ExecuteContext, args json.RawMessage) *Resul
 	}
 
 	if a.StateText != "" {
-		if err := t.themeRepo.AppendStateText(ec.Ctx, existing.ID, ec.UserID, a.StateText); err != nil {
+		// 追加是读全文→尾部拼接→整列写回，并发追加必须串行，否则后写者用旧快照覆盖前一条。
+		err := func() error {
+			unlock := t.mu.lock(existing.ID)
+			defer unlock()
+			return t.themeRepo.AppendStateText(ec.Ctx, existing.ID, ec.UserID, a.StateText)
+		}()
+		if err != nil {
 			log.Printf("[theme] AppendStateText error: %v", err)
 			return &Result{Success: false, Error: fmt.Sprintf("追加状态失败: %v", err)}
 		}

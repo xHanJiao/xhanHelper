@@ -3,9 +3,24 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"xhan-helper/internal/llm"
 )
+
+// keyedMutex 按字符串键串行化临界区，供「读→改→写」类工具避免并发丢更新。
+// ponytail: 单进程有效，键不回收（记录数有界）；多实例部署需换 DB 行锁/乐观锁。
+type keyedMutex struct {
+	mu sync.Map // key -> *sync.Mutex
+}
+
+// lock 锁定键并返回解锁函数，调用方 defer 之即可。
+func (k *keyedMutex) lock(key string) func() {
+	v, _ := k.mu.LoadOrStore(key, &sync.Mutex{})
+	m := v.(*sync.Mutex)
+	m.Lock()
+	return m.Unlock
+}
 
 // AllReadOnly 返回工具全部函数的只读声明（供全只读工具实现 ReadOnlyFuncs 用）。
 // 基于 Functions() 自动生成，保证与函数定义一致、不会拼写错误。

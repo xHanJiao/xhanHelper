@@ -56,6 +56,8 @@ const docWindowHint = "文档较长，仅返回部分内容。继续读请传 ch
 type DocumentTool struct {
 	docRepo  *service.DocumentRepo
 	annoRepo *service.DocumentAnnotationRepo
+	// mu 按文档 ID 串行化「读快照→局部替换→整列写回」，避免并发 update 互相覆盖。
+	mu keyedMutex
 }
 
 func NewDocumentTool(docRepo *service.DocumentRepo, annoRepo *service.DocumentAnnotationRepo) *DocumentTool {
@@ -375,6 +377,9 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 	if req.ID == "" {
 		return &Result{Success: false, Error: "id required"}
 	}
+	// 同一文档的并发局部替换必须串行，否则后写者用旧快照整列覆盖前一次改动。
+	unlock := t.mu.lock(req.ID)
+	defer unlock()
 	if req.OldText != "" && req.Content != "" {
 		return &Result{Success: false, Error: "old_text 与 content 互斥，局部替换用 old_text，全量重写才用 content"}
 	}

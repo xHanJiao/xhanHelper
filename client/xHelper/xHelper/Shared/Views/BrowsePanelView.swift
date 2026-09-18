@@ -175,6 +175,12 @@ struct BrowsePanelView: View {
                 billSearchOpen = false
             }
         }
+        .onChange(of: documentVM.mode) { _, _ in
+            // 切模式即收起文档搜索框；离开词云顺手清掉本地高亮词，避免切回来还留着
+            docSearchOpen = false
+            docSearchDraft = ""
+            documentVM.cloudQuery = ""
+        }
     }
 
     // MARK: - 页头搜索（文档/账单瞬时功能区）

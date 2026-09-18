@@ -216,6 +216,13 @@ make db-pull / db-import / logs / clean
 - 遇到相似功能，抽取公共组件
 - **禁止对必要依赖做 nil 检查后静默返回**：通过依赖注入传入的必需组件（repo、client、worker 等）为 nil 意味着接线 bug，让它 panic，炸在明处。可选依赖（如回调）才用 nil 检查
 
+## 排期与估时
+
+- 开工前先给估算：**N 面 / M 缝（K 条需先建探针）/ R 次真机往返 / D 个待拍决定**；模型与口径见 `docs/learning/ai-era-cost-estimation.md`
+- 真机第一跑之后必须重估一次（「代码完成」不等于完成）
+- 收官：跑 `python3 docs/learning/tools/estimate.py --since ... --until ... --record`（自动字段），补全面/缝/往返/决定（人工字段），账本 `docs/learning/estimation-log.jsonl`
+- 收官时出一份 **≤5 条风险清单**（只给结论，不要求用户读 diff）；不强制人工 review
+
 ## UI 预览与设计 token
 
 讨论 UI 时**默认产出可交互 HTML 预览**，不要只给文字描述。

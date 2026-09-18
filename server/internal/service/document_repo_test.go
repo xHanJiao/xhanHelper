@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -78,7 +80,7 @@ func TestDocumentRepo_List_TagBoundary(t *testing.T) {
 	seedDoc(t, repo, "d3", "u1", "Django")
 	seedDoc(t, repo, "d4", "u1", "a, 后端, b")
 
-	list, total, err := repo.List(context.Background(), "u1", "Go", "", 10, 0)
+	list, total, err := repo.List(context.Background(), "u1", "Go", "", nil, 10, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -86,15 +88,58 @@ func TestDocumentRepo_List_TagBoundary(t *testing.T) {
 		t.Errorf("Go should match only d1, got total=%d ids=%v", total, ids(list))
 	}
 
-	list, total, _ = repo.List(context.Background(), "u1", "后端", "", 10, 0)
+	list, total, _ = repo.List(context.Background(), "u1", "后端", "", nil, 10, 0)
 	if total != 1 || len(list) != 1 || list[0].ID != "d4" {
 		t.Errorf("spaced tag should match d4, got total=%d ids=%v", total, ids(list))
 	}
 
 	for _, tag := range []string{"Golang", "Django"} {
-		_, total, _ := repo.List(context.Background(), "u1", tag, "", 10, 0)
+		_, total, _ := repo.List(context.Background(), "u1", tag, "", nil, 10, 0)
 		if total != 1 {
 			t.Errorf("%s: got total=%d, want 1", tag, total)
+		}
+	}
+}
+
+func TestDocumentRepo_ListKeywordFields(t *testing.T) {
+	repo, _, cleanup := setupDocumentRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	seed := func(id, title, content, tags string) {
+		t.Helper()
+		if err := repo.Create(ctx, &model.Document{ID: id, UserID: "u1", Title: title, Content: content, Tags: tags}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	seed("t1", "alpha", "plain", "")
+	seed("c1", "plain", "alpha", "")
+	seed("g1", "plain", "plain", "Go")
+	seed("g2", "plain", "plain", "Golang")
+	seed("x1", "Go", "plain", "")
+
+	cases := []struct {
+		name    string
+		keyword string
+		fields  []string
+		want    []string
+	}{
+		{"title only", "alpha", []string{"title"}, []string{"t1"}},
+		{"content only", "alpha", []string{"content"}, []string{"c1"}},
+		{"tag exact boundary", "Go", []string{"tag"}, []string{"g1"}},
+		{"title+tag", "Go", []string{"title", "tag"}, []string{"g1", "x1"}},
+		{"empty fields default title+content", "alpha", nil, []string{"t1", "c1"}},
+	}
+	for _, tc := range cases {
+		list, total, err := repo.List(ctx, "u1", "", tc.keyword, tc.fields, 10, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		got, want := ids(list), append([]string(nil), tc.want...)
+		sort.Strings(got)
+		sort.Strings(want)
+		if int(total) != len(want) || strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: got total=%d ids=%v, want %v", tc.name, total, got, want)
 		}
 	}
 }
@@ -135,7 +180,7 @@ func TestDocumentRepo_ListLimitZero(t *testing.T) {
 	seedDoc(t, repo, "d1", "u1", "")
 	seedDoc(t, repo, "d2", "u1", "")
 
-	list, total, err := repo.List(context.Background(), "u1", "", "", 0, 0)
+	list, total, err := repo.List(context.Background(), "u1", "", "", nil, 0, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -159,7 +204,7 @@ func TestDocumentRepo_ListStableOrderOnTie(t *testing.T) {
 		t.Fatalf("force tie: %v", err)
 	}
 
-	full, total, err := repo.List(context.Background(), "u1", "", "", 10, 0)
+	full, total, err := repo.List(context.Background(), "u1", "", "", nil, 10, 0)
 	if err != nil || total != 3 {
 		t.Fatalf("full list: total=%d err=%v", total, err)
 	}
@@ -169,9 +214,9 @@ func TestDocumentRepo_ListStableOrderOnTie(t *testing.T) {
 	}
 
 	// 分页拼接必须与整表顺序一致（不同 limit 不能改变并列项顺序）
-	page1, _, _ := repo.List(context.Background(), "u1", "", "", 2, 0)
-	page2, _, _ := repo.List(context.Background(), "u1", "", "", 2, 2)
-	one, _, _ := repo.List(context.Background(), "u1", "", "", 1, 0)
+	page1, _, _ := repo.List(context.Background(), "u1", "", "", nil, 2, 0)
+	page2, _, _ := repo.List(context.Background(), "u1", "", "", nil, 2, 2)
+	one, _, _ := repo.List(context.Background(), "u1", "", "", nil, 1, 0)
 	if got := append(ids(page1), ids(page2)...); len(got) != 3 || got[0] != "0003" || got[1] != "0002" || got[2] != "0001" {
 		t.Errorf("paged ids should match full order, got %v (page1=%v page2=%v)", got, ids(page1), ids(page2))
 	}

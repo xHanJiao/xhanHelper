@@ -199,6 +199,14 @@ struct BrowsePanelView: View {
         return documentVM.mode == .cloud ? !documentVM.cloudQuery.isEmpty : !documentVM.keyword.isEmpty
     }
 
+    /// 文档搜索说明：随所选检索字段变化。
+    private var docSearchCaption: String {
+        let names = DocumentSearchField.allCases
+            .filter { documentVM.searchFields.contains($0) }
+            .map(\.label)
+        return "按 \(names.joined(separator: " / ")) 检索，点输入框内按钮切换字段"
+    }
+
     private func toggleBillSearch() {
         guard !billSearchOpen else { billSearchOpen = false; return }
         docSearchOpen = false
@@ -226,9 +234,10 @@ struct BrowsePanelView: View {
             .padding(.vertical, 8)
         case .documents where docSearchOpen:
             TransientSearchPanel(
-                placeholder: "搜索标题或内容",
-                caption: "按标题/正文检索",
+                placeholder: "搜索标题/标签/正文",
+                caption: docSearchCaption,
                 draft: $docSearchDraft,
+                fields: $documentVM.searchFields,
                 onSearch: { kw in
                     Task { await documentVM.search(kw) }
                     docSearchOpen = false
@@ -518,6 +527,8 @@ private struct TransientSearchPanel: View {
     @Binding var draft: String
     /// 实时模式：不显示「搜索」按钮，输入即回调（词云本地高亮用）。是否收起由调用方决定。
     var live: Bool = false
+    /// 检索目标多选（文档用）；nil 时不渲染三按钮（账单复用本组件）。
+    var fields: Binding<Set<DocumentSearchField>>? = nil
     let onSearch: (String) -> Void
     let onClear: () -> Void
 
@@ -528,14 +539,34 @@ private struct TransientSearchPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                if let fields {
+                    // 自绘字段容器：SwiftUI TextField 不能内嵌 trailing，只能仿 .roundedBorder 外观
+                    HStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
 
-                TextField(placeholder, text: $draft)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12))
-                    .onSubmit(runSearch)
+                        TextField(placeholder, text: $draft)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12))
+                            .onSubmit(runSearch)
+
+                        fieldToggles(fields)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.08)))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.25)))
+                } else {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+
+                    TextField(placeholder, text: $draft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12))
+                        .onSubmit(runSearch)
+                }
 
                 if !trimmed.isEmpty {
                     Button {
@@ -575,6 +606,40 @@ private struct TransientSearchPanel: View {
         .onChange(of: draft) { _, _ in
             if live { onSearch(trimmed) }
         }
+    }
+
+    /// 输入框内右对齐的三个字段开关（title / tag / content）。
+    private func fieldToggles(_ fields: Binding<Set<DocumentSearchField>>) -> some View {
+        HStack(spacing: 2) {
+            ForEach(DocumentSearchField.allCases, id: \.self) { field in
+                let on = fields.wrappedValue.contains(field)
+                Button {
+                    toggle(field, in: fields)
+                } label: {
+                    Text(field.label)
+                        .font(.system(size: 9, weight: .medium))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(on ? Color("appAccent").opacity(0.20) : Color.secondary.opacity(0.10)))
+                        .foregroundColor(on ? Color("appAccent") : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("检索字段：\(field.label)（可多选，至少保留一个）")
+            }
+        }
+        .fixedSize()
+    }
+
+    /// 至少保留一个字段：关掉最后一个亮着的按钮是 no-op。
+    private func toggle(_ field: DocumentSearchField, in fields: Binding<Set<DocumentSearchField>>) {
+        var set = fields.wrappedValue
+        if set.contains(field) {
+            guard set.count > 1 else { return }
+            set.remove(field)
+        } else {
+            set.insert(field)
+        }
+        fields.wrappedValue = set
     }
 
     private func runSearch() {

@@ -514,7 +514,7 @@ func (t *DocumentTool) queryDocuments(ec *ExecuteContext, args json.RawMessage) 
 		return &Result{Success: false, Error: errMsg}
 	}
 
-	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, req.Tag, req.Keyword, limit, offset)
+	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, req.Tag, req.Keyword, nil, limit, offset)
 	if err != nil {
 		return &Result{Success: false, Error: "query documents: " + err.Error()}
 	}
@@ -576,7 +576,7 @@ func (t *DocumentTool) listDocuments(ec *ExecuteContext, args json.RawMessage) *
 		return &Result{Success: false, Error: errMsg}
 	}
 
-	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, "", "", limit, offset)
+	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, "", "", nil, limit, offset)
 	if err != nil {
 		return &Result{Success: false, Error: "list documents: " + err.Error()}
 	}

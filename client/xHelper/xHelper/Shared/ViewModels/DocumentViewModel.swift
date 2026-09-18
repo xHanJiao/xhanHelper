@@ -7,6 +7,16 @@ enum DocumentBrowseMode: Hashable {
     case cloud
 }
 
+/// 文档检索目标字段（输入框内多选；至少保留一个）。
+/// tag 走精确边界匹配，title/content 走子串匹配（与后端 fields 参数一一对应）。
+enum DocumentSearchField: String, CaseIterable, Hashable {
+    case title
+    case tag
+    case content
+
+    var label: String { rawValue }
+}
+
 @MainActor
 class DocumentViewModel: ObservableObject {
     @Published var documents: [Document] = []
@@ -15,6 +25,8 @@ class DocumentViewModel: ObservableObject {
     @Published var isLoadingMore = false
     @Published var errorMessage: String?
     @Published var keyword = ""
+    /// 检索目标字段，默认标题+正文（等价于历史行为）。
+    @Published var searchFields: Set<DocumentSearchField> = [.title, .content]
     @Published var selectedTag: String?
     @Published var mode: DocumentBrowseMode = .list
     @Published var minTagCount = 1
@@ -56,7 +68,8 @@ class DocumentViewModel: ObservableObject {
         do {
             let resp = try await apiClient.listDocuments(
                 tag: selectedTag,
-                keyword: keyword.isEmpty ? nil : keyword
+                keyword: keyword.isEmpty ? nil : keyword,
+                fields: searchFields
             )
             documents = resp.documents
             hasMore = resp.documents.count >= 24
@@ -119,6 +132,7 @@ class DocumentViewModel: ObservableObject {
             let resp = try await apiClient.listDocuments(
                 tag: selectedTag,
                 keyword: keyword.isEmpty ? nil : keyword,
+                fields: searchFields,
                 offset: offset
             )
             documents.append(contentsOf: resp.documents)

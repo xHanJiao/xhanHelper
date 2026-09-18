@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -22,17 +23,18 @@ func NewDocumentHandler(docRepo *service.DocumentRepo, annoRepo *service.Documen
 	return &DocumentHandler{docRepo: docRepo, annoRepo: annoRepo}
 }
 
-// ListDocuments GET /api/documents?tag=&keyword=&limit=&offset=
+// ListDocuments GET /api/documents?tag=&keyword=&fields=title,tag,content&limit=&offset=
 func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 	userID := c.GetString("user_id")
 	tag := c.Query("tag")
 	keyword := c.Query("keyword")
+	fields := parseDocFields(c.Query("fields"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	list, total, err := h.docRepo.List(c.Request.Context(), userID, tag, keyword, limit, offset)
+	list, total, err := h.docRepo.List(c.Request.Context(), userID, tag, keyword, fields, limit, offset)
 	if err != nil {
-		log.Printf("ListDocuments: list user=%s tag=%q keyword=%q: %v", userID, tag, keyword, err)
+		log.Printf("ListDocuments: list user=%s tag=%q keyword=%q fields=%v: %v", userID, tag, keyword, fields, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -44,6 +46,18 @@ func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 		"documents": list,
 		"total":     total,
 	})
+}
+
+// parseDocFields 解析 fields=title,tag,content，忽略未知项；空/非法返回 nil（repo 回退 title+content）。
+func parseDocFields(raw string) []string {
+	var out []string
+	for _, f := range strings.Split(raw, ",") {
+		switch f = strings.TrimSpace(f); f {
+		case "title", "tag", "content":
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // ListDocumentTags GET /api/documents/tags — 词云用的标签及出现次数

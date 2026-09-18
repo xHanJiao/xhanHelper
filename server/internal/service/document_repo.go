@@ -89,18 +89,54 @@ func splitTags(tags string) []string {
 	return out
 }
 
-// tagMatchClause 按逗号边界匹配单个标签，避免子串误伤（"Go" 不该命中 "Golang"）。
-// 用 REPLACE 去掉逗号旁空格，兼容历史数据里的 "a, b" 写法；tag 已在调用方去空格。
+// tagBoundaryClause 返回「按逗号边界匹配单个完整标签」的 SQL 片段与参数，避免子串误伤
+// （"Go" 不该命中 "Golang"）。用 REPLACE 去掉逗号旁空格，兼容历史数据里的 "a, b" 写法；
+// tag 已在调用方去空格。返回片段而非直接 Where，以便与多字段检索的 OR 组合复用。
+func tagBoundaryClause(tag string) (string, []any) {
+	return "REPLACE(tags, ' ', '') = ? OR REPLACE(tags, ' ', '') LIKE ? OR REPLACE(tags, ' ', '') LIKE ? OR REPLACE(tags, ' ', '') LIKE ?",
+		[]any{tag, tag + ",%", "%," + tag, "%," + tag + ",%"}
+}
+
+// tagMatchClause 按逗号边界匹配单个标签（精确筛选）。
 func tagMatchClause(q *gorm.DB, tag string) *gorm.DB {
-	return q.Where(
-		"REPLACE(tags, ' ', '') = ? OR REPLACE(tags, ' ', '') LIKE ? OR REPLACE(tags, ' ', '') LIKE ? OR REPLACE(tags, ' ', '') LIKE ?",
-		tag, tag+",%", "%,"+tag, "%,"+tag+",%",
-	)
+	clause, args := tagBoundaryClause(tag)
+	return q.Where(clause, args...)
+}
+
+// keywordClause 组合多字段 OR 检索条件。fields 取 title/tag/content，空集回退 title+content。
+// title/content 走 LIKE 子串，tag 走精确边界匹配（与原 tag 筛选同语义）。
+func keywordClause(keyword string, fields []string) (string, []any) {
+	like := "%" + keyword + "%"
+	want := map[string]bool{}
+	for _, f := range fields {
+		want[f] = true
+	}
+	if len(want) == 0 {
+		want["title"], want["content"] = true, true
+	}
+	var conds []string
+	var args []any
+	if want["title"] {
+		conds = append(conds, "title LIKE ?")
+		args = append(args, like)
+	}
+	if want["content"] {
+		conds = append(conds, "content LIKE ?")
+		args = append(args, like)
+	}
+	if want["tag"] {
+		clause, tagArgs := tagBoundaryClause(strings.ReplaceAll(keyword, " ", ""))
+		conds = append(conds, "("+clause+")")
+		args = append(args, tagArgs...)
+	}
+	return strings.Join(conds, " OR "), args
 }
 
 // List 按条件分页查询。limit < 0 视为默认 50；limit == 0 表示只取总数、返回空列表。
+// keyword 非空时按 fields 组合 OR 检索：title / tag（精确边界）/ content；
+// fields 为空视为 [title, content]，保持旧行为。
 // 排序必须带唯一 tie-break（id），否则同 updated_at 的文档在不同 limit 下顺序可能不同，翻页会重复/漏项。
-func (r *DocumentRepo) List(ctx context.Context, userID, tag, keyword string, limit, offset int) ([]model.Document, int64, error) {
+func (r *DocumentRepo) List(ctx context.Context, userID, tag, keyword string, fields []string, limit, offset int) ([]model.Document, int64, error) {
 	if limit < 0 {
 		limit = 50
 	}
@@ -109,8 +145,8 @@ func (r *DocumentRepo) List(ctx context.Context, userID, tag, keyword string, li
 		q = tagMatchClause(q, strings.ReplaceAll(tag, " ", ""))
 	}
 	if keyword != "" {
-		like := "%" + keyword + "%"
-		q = q.Where("title LIKE ? OR content LIKE ?", like, like)
+		clause, args := keywordClause(keyword, fields)
+		q = q.Where(clause, args...)
 	}
 
 	var total int64

@@ -163,10 +163,15 @@ class APIClient {
 
 	// MARK: Documents
 
-	func listDocuments(tag: String? = nil, keyword: String? = nil, limit: Int = 24, offset: Int = 0) async throws -> DocumentListResponse {
+	func listDocuments(tag: String? = nil, keyword: String? = nil, fields: Set<DocumentSearchField> = [], limit: Int = 24, offset: Int = 0) async throws -> DocumentListResponse {
 		var path = "/api/documents?limit=\(limit)&offset=\(offset)"
 		if let t = tag, !t.isEmpty { path += "&tag=\(t.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? t)" }
-		if let k = keyword, !k.isEmpty { path += "&keyword=\(k.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? k)" }
+		if let k = keyword, !k.isEmpty {
+			path += "&keyword=\(k.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? k)"
+			if !fields.isEmpty {
+				path += "&fields=\(fields.map(\.rawValue).sorted().joined(separator: ","))"
+			}
+		}
 		return try await get(path)
 	}
 

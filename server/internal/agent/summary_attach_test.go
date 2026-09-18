@@ -103,8 +103,13 @@ func TestGetOrEmbedSummary_CacheHit(t *testing.T) {
 	if len(vec) != 3 {
 		t.Fatalf("expected 3-d vector, got %d", len(vec))
 	}
-	if vec[0] != 0.1 || vec[1] != 0.2 || vec[2] != 0.3 {
-		t.Errorf("expected [0.1, 0.2, 0.3], got %v", vec)
+	// VectorStore 内部以 float32 存储，读回有 ~1e-7 精度误差
+	want := []float64{0.1, 0.2, 0.3}
+	for i := range want {
+		if diff := vec[i] - want[i]; diff > 1e-6 || diff < -1e-6 {
+			t.Errorf("expected %v, got %v", want, vec)
+			break
+		}
 	}
 }
 

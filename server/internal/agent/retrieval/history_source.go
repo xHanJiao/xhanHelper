@@ -6,6 +6,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"time"
 
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
@@ -18,10 +19,11 @@ type HistorySource struct {
 	msgRepo       *service.MessageRepo
 	embeddingRepo *service.EmbeddingRepo
 	decayer       *TimeDecay
+	retentionDays int
 }
 
-func NewHistorySource(vs VectorStore, msgRepo *service.MessageRepo, embeddingRepo *service.EmbeddingRepo, decayer *TimeDecay) *HistorySource {
-	return &HistorySource{vectorStore: vs, msgRepo: msgRepo, embeddingRepo: embeddingRepo, decayer: decayer}
+func NewHistorySource(vs VectorStore, msgRepo *service.MessageRepo, embeddingRepo *service.EmbeddingRepo, decayer *TimeDecay, retentionDays int) *HistorySource {
+	return &HistorySource{vectorStore: vs, msgRepo: msgRepo, embeddingRepo: embeddingRepo, decayer: decayer, retentionDays: retentionDays}
 }
 
 func (s *HistorySource) Name() string { return "history" }
@@ -30,13 +32,23 @@ func (s *HistorySource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 	if s.vectorStore == nil || s.embeddingRepo == nil {
 		panic("[vector] history warmup: skipped (no config)")
 	}
-	log.Printf("[vector] history warmup: loading persisted message embeddings...")
+	log.Printf("[vector] history warmup: loading persisted message embeddings (retention_days=%d)...", s.retentionDays)
 
 	const pageSize = 100
 	loaded := 0
+	var since time.Time
+	if s.retentionDays > 0 {
+		since = time.Now().AddDate(0, 0, -s.retentionDays)
+	}
 
 	for offset := 0; ; offset += pageSize {
-		embeddings, err := s.embeddingRepo.ListByType(ctx, model.EntityTypeMessage, pageSize, offset)
+		var embeddings []model.Embedding
+		var err error
+		if since.IsZero() {
+			embeddings, err = s.embeddingRepo.ListByType(ctx, model.EntityTypeMessage, pageSize, offset)
+		} else {
+			embeddings, err = s.embeddingRepo.ListByTypeSince(ctx, model.EntityTypeMessage, since, pageSize, offset)
+		}
 		if err != nil {
 			log.Fatalf("[vector] history warmup: list embeddings error: %v", err)
 		}

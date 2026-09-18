@@ -7,9 +7,9 @@ import (
 	"log"
 	"strings"
 
-	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/util"
 )
@@ -20,13 +20,12 @@ type GetTopicStatsTool struct {
 	noteRepo         *service.NoteRepo
 	memRepo          *service.UserMemoryRepo
 	embedder         *llm.Embedder
-	vectorStore      app.VectorStore
-	topicEmbedder    app.ConceptEmbedder
+	embeddingRepo    *service.EmbeddingRepo
 	clusterThreshold float64
 }
 
-func NewGetTopicStatsTool(conceptRepo *service.ConceptEmbeddingRepo, noteRepo *service.NoteRepo, memRepo *service.UserMemoryRepo, embedder *llm.Embedder, vs app.VectorStore, topicEmbedder app.ConceptEmbedder, clusterThreshold float64) *GetTopicStatsTool {
-	return &GetTopicStatsTool{conceptRepo: conceptRepo, noteRepo: noteRepo, memRepo: memRepo, embedder: embedder, vectorStore: vs, topicEmbedder: topicEmbedder, clusterThreshold: clusterThreshold}
+func NewGetTopicStatsTool(conceptRepo *service.ConceptEmbeddingRepo, noteRepo *service.NoteRepo, memRepo *service.UserMemoryRepo, embedder *llm.Embedder, embeddingRepo *service.EmbeddingRepo, clusterThreshold float64) *GetTopicStatsTool {
+	return &GetTopicStatsTool{conceptRepo: conceptRepo, noteRepo: noteRepo, memRepo: memRepo, embedder: embedder, embeddingRepo: embeddingRepo, clusterThreshold: clusterThreshold}
 }
 
 func (t *GetTopicStatsTool) Name() string { return "get_topic_stats" }
@@ -56,26 +55,47 @@ func (t *GetTopicStatsTool) Execute(ec *ExecuteContext, funcName string, args js
 		return &Result{Success: false, Error: fmt.Sprintf("读取概念失败: %v", err)}
 	}
 
-	// 2. 从向量库取缓存的 topic 向量
-	topicVecs := make(map[string][]float64)
+	// 2. 批量从 DB 取缓存的 topic 向量（不再常驻内存向量库）
+	topicConcepts := make(map[string]string) // value -> conceptID
+	ids := make([]string, 0, len(concepts))
 	for _, c := range concepts {
 		if c.Type != "topic" {
 			continue
 		}
-		vec, ok := t.vectorStore.GetVector("concept:" + c.ID)
-		if ok {
-			topicVecs[c.Value] = vec
+		topicConcepts[c.Value] = c.ID
+		ids = append(ids, c.ID)
+	}
+
+	embeddings, err := t.embeddingRepo.ListByEntities(ec.Ctx, model.EntityTypeConcept, ids)
+	if err != nil {
+		log.Printf("[get_topic_stats] list embeddings error: %v", err)
+		return &Result{Success: false, Error: fmt.Sprintf("读取向量失败: %v", err)}
+	}
+	vecByConceptID := make(map[string][]float64, len(embeddings))
+	for _, emb := range embeddings {
+		if emb.Embedding == nil {
 			continue
 		}
-		// 兜底：走统一嵌入入口（写 concept 表 + embeddings 表 + vectorStore）
-		if t.topicEmbedder != nil {
-			t.topicEmbedder.EnsureTopicEmbedded(ec.Ctx, ec.UserID, c.Value, "stats", "fallback")
+		vec, err := llm.StringToEmbedding(*emb.Embedding)
+		if err != nil || len(vec) == 0 {
+			continue
 		}
-		// 重新从 vectorStore 读取
-		vec, ok = t.vectorStore.GetVector("concept:" + c.ID)
-		if ok {
-			topicVecs[c.Value] = vec
+		vecByConceptID[emb.EntityID] = vec
+	}
+
+	topicVecs := make(map[string][]float64, len(topicConcepts))
+	for value, cid := range topicConcepts {
+		if vec, ok := vecByConceptID[cid]; ok {
+			topicVecs[value] = vec
+			continue
 		}
+		// 兜底：embedding 缺失时即时嵌入（不落库，仅本次聚类用）
+		vec, err := t.embedder.Embed(ec.Ctx, value)
+		if err != nil {
+			log.Printf("[get_topic_stats] embed missing topic %q error: %v", value, err)
+			continue
+		}
+		topicVecs[value] = vec
 	}
 
 	// 3. 聚类合并

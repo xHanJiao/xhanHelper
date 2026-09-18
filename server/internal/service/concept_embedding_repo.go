@@ -69,3 +69,20 @@ func (r *ConceptEmbeddingRepo) ListAllByUser(ctx context.Context, userID string)
 		Find(&list).Error
 	return list, err
 }
+
+// DeleteByType 删除某类概念并返回被删 ID（供同步清理对应 embedding 行）
+func (r *ConceptEmbeddingRepo) DeleteByType(ctx context.Context, conceptType string) ([]string, error) {
+	var ids []string
+	if err := r.db.WithContext(ctx).Model(&model.ConceptEmbedding{}).
+		Where("type = ?", conceptType).Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if err := r.db.WithContext(ctx).Where("type = ?", conceptType).
+		Delete(&model.ConceptEmbedding{}).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}

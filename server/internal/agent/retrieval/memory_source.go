@@ -2,6 +2,7 @@ package retrieval
 
 import (
 	"context"
+	"time"
 
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/model"
@@ -26,7 +27,7 @@ func NewMemorySource(
 			AfterFetch: func(ctx context.Context, ids []string) {
 				_ = memRepo.BatchUpdateConfirm(ctx, ids)
 			},
-			ListAll: func(ctx context.Context, limit, offset int) ([]model.UserMemory, error) {
+			ListAll: func(ctx context.Context, _ time.Time, limit, offset int) ([]model.UserMemory, error) {
 				return memRepo.ListAllUsersMemoriesPaginated(ctx, limit, offset)
 			},
 		},

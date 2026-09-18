@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/idgen"
@@ -18,7 +17,6 @@ type ConceptEmbedService struct {
 	conceptRepo   *service.ConceptEmbeddingRepo
 	embeddingRepo *service.EmbeddingRepo
 	embedder      *llm.Embedder
-	vectorStore   app.VectorStore
 }
 
 func NewConceptEmbedService(infra *app.Infra, conceptRepo *service.ConceptEmbeddingRepo, embeddingRepo *service.EmbeddingRepo) *ConceptEmbedService {
@@ -26,7 +24,6 @@ func NewConceptEmbedService(infra *app.Infra, conceptRepo *service.ConceptEmbedd
 		conceptRepo:   conceptRepo,
 		embeddingRepo: embeddingRepo,
 		embedder:      infra.Embedder,
-		vectorStore:   infra.VectorStore,
 	}
 }
 
@@ -35,15 +32,9 @@ func (s *ConceptEmbedService) EnsureTopicEmbedded(ctx context.Context, userID, t
 	s.ensureEmbedded(ctx, "topic", topic, userID, parentType, parentID)
 }
 
-// EnsureTagsEmbedded 确保 tags 已嵌入（逗号分隔，不存在则异步创建）
+// EnsureTagsEmbedded 已废弃：tag 的向量不再被任何检索消费（tag 已以逗号字符串存在 note/memory 上），
+// 保留空实现以兼容接口，避免继续产生无用 concept/embedding 行。
 func (s *ConceptEmbedService) EnsureTagsEmbedded(ctx context.Context, userID, tags, parentType, parentID string) {
-	for _, tag := range strings.Split(tags, ",") {
-		tag = strings.TrimSpace(tag)
-		if tag == "" {
-			continue
-		}
-		s.ensureEmbedded(ctx, "tag", tag, userID, parentType, parentID)
-	}
 }
 
 // GetOrEmbed 获取 concept 的嵌入向量，优先读缓存，缓存未命中则嵌入并写缓存。
@@ -81,13 +72,6 @@ func (s *ConceptEmbedService) GetOrEmbed(ctx context.Context, conceptType, value
 	if err := s.conceptRepo.Create(ctx, concept); err != nil {
 		return nil, fmt.Errorf("create concept: %w", err)
 	}
-
-	s.vectorStore.Upsert("concept:"+concept.ID, vec, map[string]string{
-		"type":          "concept",
-		"concept_type":  conceptType,
-		"concept_value": value,
-		"user_id":       userID,
-	})
 
 	embStr := llm.EmbeddingToString(vec)
 	if err := s.embeddingRepo.Upsert(ctx, &model.Embedding{
@@ -136,13 +120,6 @@ func (s *ConceptEmbedService) ensureEmbedded(ctx context.Context, conceptType, v
 		log.Printf("[concept] embed %s/%s error: %v", conceptType, value, err)
 		return
 	}
-
-	s.vectorStore.Upsert("concept:"+concept.ID, vec, map[string]string{
-		"type":          "concept",
-		"concept_type":  conceptType,
-		"concept_value": value,
-		"user_id":       userID,
-	})
 
 	embStr := llm.EmbeddingToString(vec)
 	if err := s.embeddingRepo.Upsert(ctx, &model.Embedding{

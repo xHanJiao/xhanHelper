@@ -37,7 +37,17 @@ type Config struct {
 	Storage           StorageConfig           `yaml:"storage"`
 	Snowflake         SnowflakeConfig         `yaml:"snowflake"`
 	MCP               MCPConfig               `yaml:"mcp"`
+	Vector            VectorConfig            `yaml:"vector"`
 	GlobalDefaultRole GlobalDefaultRoleConfig `yaml:"global_default_role"`
+}
+
+// VectorConfig — 向量内存治理配置
+type VectorConfig struct {
+	MessageRetentionDays int      `yaml:"message_retention_days"` // message 向量保留天数，<=0 关闭
+	SummaryRetentionDays int      `yaml:"summary_retention_days"` // summary 向量保留天数，<=0 关闭
+	EvictIntervalHours   int      `yaml:"evict_interval_hours"`   // 逐出扫描间隔（小时），<=0 默认 24
+	ChunkDisabledParents []string `yaml:"chunk_disabled_parents"` // 不再建 chunk 的父类型（短文本由 full 向量覆盖）
+	PurgeMissionsOnce    bool     `yaml:"purge_missions_once"`    // 一次性清空 mission 数据（清完改回 false）
 }
 
 // ChatConfig — 对话配置
@@ -447,6 +457,19 @@ func merge(dst, src *Config) {
 	mergeSourceWeights(&dst.Retrieval.History, &src.Retrieval.History)
 	mergeSourceWeights(&dst.Retrieval.Theme, &src.Retrieval.Theme)
 	mergeSourceWeights(&dst.Retrieval.Summary, &src.Retrieval.Summary)
+	if src.Vector.MessageRetentionDays != 0 {
+		dst.Vector.MessageRetentionDays = src.Vector.MessageRetentionDays
+	}
+	if src.Vector.SummaryRetentionDays != 0 {
+		dst.Vector.SummaryRetentionDays = src.Vector.SummaryRetentionDays
+	}
+	if src.Vector.EvictIntervalHours != 0 {
+		dst.Vector.EvictIntervalHours = src.Vector.EvictIntervalHours
+	}
+	if src.Vector.ChunkDisabledParents != nil {
+		dst.Vector.ChunkDisabledParents = src.Vector.ChunkDisabledParents
+	}
+	dst.Vector.PurgeMissionsOnce = dst.Vector.PurgeMissionsOnce || src.Vector.PurgeMissionsOnce
 	if src.Reflection.LaunchMaxIterations != 0 {
 		dst.Reflection.LaunchMaxIterations = src.Reflection.LaunchMaxIterations
 	}
@@ -635,6 +658,19 @@ func validate(cfg *Config) error {
 	setSourceWeightsDefault(&cfg.Retrieval.History, 0.005, 0.5, 5)
 	setSourceWeightsDefault(&cfg.Retrieval.Theme, 0, 0.6, 10)
 	setSourceWeightsDefault(&cfg.Retrieval.Summary, 0.02, 1.0, 0)
+	// Vector 默认值
+	if cfg.Vector.MessageRetentionDays == 0 {
+		cfg.Vector.MessageRetentionDays = 14
+	}
+	if cfg.Vector.SummaryRetentionDays == 0 {
+		cfg.Vector.SummaryRetentionDays = 30
+	}
+	if cfg.Vector.EvictIntervalHours == 0 {
+		cfg.Vector.EvictIntervalHours = 24
+	}
+	if cfg.Vector.ChunkDisabledParents == nil {
+		cfg.Vector.ChunkDisabledParents = []string{"memory", "note", "summary"}
+	}
 	if cfg.Retrieval.ResourceZone.BudgetChars == 0 {
 		cfg.Retrieval.ResourceZone.BudgetChars = 7000
 	}

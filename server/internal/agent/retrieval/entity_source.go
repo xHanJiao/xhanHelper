@@ -6,6 +6,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"time"
 
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/llm"
@@ -21,12 +22,13 @@ type chunkRepo[T model.ChunkEntity] interface {
 
 // EntityConfig holds the per-entity-type configuration for EntitySource.
 type EntityConfig[T model.ChunkEntity] struct {
-	EntityType   string                                       // model.EntityTypeMemory / EntityTypeNote
-	FullType     string                                       // "mem" / "note" (vector store metadata type for full-embedding entries)
-	IDPrefix     string                                       // "mem:" / "note:"
-	ConfigPicker func(SearchOptions) SourceConfig             // opts.Memory / opts.Note
-	AfterFetch   func(context.Context, []string)              // side effect after Fetch (e.g. BatchUpdateConfirm)
-	ListAll      func(context.Context, int, int) ([]T, error) // for Warmup
+	EntityType   string                                                  // model.EntityTypeMemory / EntityTypeNote
+	FullType     string                                                  // "mem" / "note" (vector store metadata type for full-embedding entries)
+	IDPrefix     string                                                  // "mem:" / "note:"
+	ConfigPicker func(SearchOptions) SourceConfig                        // opts.Memory / opts.Note
+	AfterFetch   func(context.Context, []string)                         // side effect after Fetch (e.g. BatchUpdateConfirm)
+	ListAll      func(context.Context, time.Time, int, int) ([]T, error) // for Warmup (since=zero 表示不过滤)
+	SinceDays    int                                                     // >0 时 warmup 只加载最近 N 天
 }
 
 // EntitySource is a generic chunk+full-embedding retrieval source.
@@ -44,7 +46,8 @@ type EntitySource[T model.ChunkEntity] struct {
 	chunkBuilder  app.ChunkEmbedder
 	configPicker  func(SearchOptions) SourceConfig
 	afterFetch    func(context.Context, []string)
-	listAll       func(context.Context, int, int) ([]T, error)
+	listAll       func(context.Context, time.Time, int, int) ([]T, error)
+	sinceDays     int
 }
 
 // NewEntitySource creates a generic chunk+full-embedding retrieval source.
@@ -75,6 +78,7 @@ func NewEntitySource[T model.ChunkEntity](
 		configPicker:  cfg.ConfigPicker,
 		afterFetch:    cfg.AfterFetch,
 		listAll:       cfg.ListAll,
+		sinceDays:     cfg.SinceDays,
 	}
 }
 
@@ -243,10 +247,20 @@ func (s *EntitySource[T]) Warmup(ctx context.Context, embedder *llm.Embedder) {
 
 	const pageSize = 100
 	loaded, embedded, chunked := 0, 0, 0
+	var since time.Time
+	if s.sinceDays > 0 {
+		since = time.Now().AddDate(0, 0, -s.sinceDays)
+	}
 
 	// 加载持久化的全量嵌入
 	for offset := 0; ; offset += pageSize {
-		embeddings, err := s.embeddingRepo.ListByType(ctx, s.entityType, pageSize, offset)
+		var embeddings []model.Embedding
+		var err error
+		if since.IsZero() {
+			embeddings, err = s.embeddingRepo.ListByType(ctx, s.entityType, pageSize, offset)
+		} else {
+			embeddings, err = s.embeddingRepo.ListByTypeSince(ctx, s.entityType, since, pageSize, offset)
+		}
 		if err != nil {
 			log.Printf("[vector] %s warmup: list embeddings error: %v", s.name, err)
 			break
@@ -269,7 +283,7 @@ func (s *EntitySource[T]) Warmup(ctx context.Context, embedder *llm.Embedder) {
 
 	// 补建全量嵌入 + chunk
 	for offset := 0; ; offset += pageSize {
-		entities, err := s.listAll(ctx, pageSize, offset)
+		entities, err := s.listAll(ctx, since, pageSize, offset)
 		if err != nil {
 			log.Printf("[vector] %s warmup: list error: %v", s.name, err)
 			break

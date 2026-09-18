@@ -94,6 +94,13 @@ archive:
   after_days: 14 # 会话无活动超过 N 天自动归档（is_deleted=true，可从设置页找回）；<=0 关闭
   interval_minutes: 1440 # 归档扫描间隔（分钟），默认每日一次
 
+vector:
+  message_retention_days: 14 # 内存只加载最近 N 天的 message 向量，超出逐出（DB 行保留）；<=0 关闭
+  summary_retention_days: 30 # 内存只加载最近 N 天的 summary 向量；<=0 关闭
+  evict_interval_hours: 24 # 逐出扫描间隔（小时）
+  chunk_disabled_parents: [memory, note, summary] # 短文本只用 full 向量，不建 chunk（theme/文档仍建）
+  purge_missions_once: true # 一次性清空 mission 数据（清完改回 false）
+
 storage:
   image_dir: data/images # 图床根目录（文档配图 + 聊天图片输入共用）
   max_image_bytes: 33554432 # 单图大小上限 32 MiB（对齐 DeepSeek 单图上限）

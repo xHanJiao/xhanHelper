@@ -25,6 +25,7 @@ type HookStatus struct {
 	MissionRemaining      string                         `json:"mission_remaining"`
 	ArchiveRemaining      string                         `json:"archive_remaining"`
 	ImageCleanupRemaining string                         `json:"image_cleanup_remaining"`
+	VectorEvictRemaining  string                         `json:"vector_evict_remaining"`
 }
 
 // CronRunner — 反思循环调度器
@@ -49,6 +50,11 @@ type CronRunner struct {
 	imageTTLDays      int                       // 被引用过的图保留天数；<0 关闭
 	imageOrphanDays   int                       // 孤儿图保留天数；<0 关闭
 	imageCleanupEvery time.Duration             // 图片清理扫描间隔
+	embeddingRepo     *service.EmbeddingRepo    // 向量逐出（按保留窗移除内存中的旧向量）
+	vectorStore       *VectorStore
+	msgRetentionDays  int           // message 向量保留天数；<=0 关闭
+	sumRetentionDays  int           // summary 向量保留天数；<=0 关闭
+	evictInterval     time.Duration // 向量逐出扫描间隔
 
 	// 钩子状态追踪
 	mu                sync.Mutex
@@ -57,6 +63,7 @@ type CronRunner struct {
 	missionNext       time.Time
 	archiveNext       time.Time
 	imageCleanupNext  time.Time
+	evictNext         time.Time
 	sessionEndRunning bool
 }
 
@@ -82,6 +89,11 @@ type CronRunnerConfig struct {
 	ImageTTLDays      int           // 被引用过的图保留天数；<0 关闭
 	ImageOrphanDays   int           // 孤儿图保留天数；<0 关闭
 	ImageCleanupEvery time.Duration // 图片清理扫描间隔；<=0 默认 12h
+	EmbeddingRepo     *service.EmbeddingRepo
+	VectorStore       *VectorStore
+	MsgRetentionDays  int           // message 向量保留天数；<=0 关闭
+	SumRetentionDays  int           // summary 向量保留天数；<=0 关闭
+	EvictInterval     time.Duration // 向量逐出扫描间隔；<=0 默认 24h
 }
 
 // NewCronRunner 创建调度器
@@ -97,6 +109,9 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 	}
 	if cfg.ImageCleanupEvery <= 0 {
 		cfg.ImageCleanupEvery = 12 * time.Hour
+	}
+	if cfg.EvictInterval <= 0 {
+		cfg.EvictInterval = 24 * time.Hour
 	}
 	return &CronRunner{
 		orch:              cfg.Orch,
@@ -119,6 +134,11 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		imageTTLDays:      cfg.ImageTTLDays,
 		imageOrphanDays:   cfg.ImageOrphanDays,
 		imageCleanupEvery: cfg.ImageCleanupEvery,
+		embeddingRepo:     cfg.EmbeddingRepo,
+		vectorStore:       cfg.VectorStore,
+		msgRetentionDays:  cfg.MsgRetentionDays,
+		sumRetentionDays:  cfg.SumRetentionDays,
+		evictInterval:     cfg.EvictInterval,
 	}
 }
 
@@ -148,6 +168,13 @@ func (cr *CronRunner) setImageCleanupNext(t time.Time) {
 	cr.mu.Unlock()
 }
 
+// setEvictNext 更新向量逐出下次触发时间
+func (cr *CronRunner) setEvictNext(t time.Time) {
+	cr.mu.Lock()
+	cr.evictNext = t
+	cr.mu.Unlock()
+}
+
 // GetHookStatus 返回当前钩子状态快照
 func (cr *CronRunner) GetHookStatus() HookStatus {
 	cr.mu.Lock()
@@ -171,6 +198,7 @@ func (cr *CronRunner) GetHookStatus() HookStatus {
 	s.MissionRemaining = remainingLabel(cr.missionNext, now)
 	s.ArchiveRemaining = remainingLabel(cr.archiveNext, now)
 	s.ImageCleanupRemaining = remainingLabel(cr.imageCleanupNext, now)
+	s.VectorEvictRemaining = remainingLabel(cr.evictNext, now)
 
 	return s
 }
@@ -315,6 +343,17 @@ func (cr *CronRunner) Start(ctx context.Context) {
 		cr.setImageCleanupNext(time.Time{})
 	}
 
+	// 向量逐出：按保留窗移除内存中的旧 message/summary 向量（DB 行保留）
+	var evictChan <-chan time.Time
+	if cr.vectorStore != nil && cr.embeddingRepo != nil && (cr.msgRetentionDays > 0 || cr.sumRetentionDays > 0) {
+		evictTicker := time.NewTicker(cr.evictInterval)
+		defer evictTicker.Stop()
+		evictChan = evictTicker.C
+		cr.setEvictNext(time.Now().Add(cr.evictInterval))
+	} else {
+		cr.setEvictNext(time.Time{})
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -369,6 +408,11 @@ func (cr *CronRunner) Start(ctx context.Context) {
 			log.Printf("[cron] image cleanup trigger")
 			cr.cleanupImages(ctx)
 			cr.setImageCleanupNext(time.Now().Add(cr.imageCleanupEvery))
+
+		case <-evictChan:
+			log.Printf("[cron] vector evict trigger")
+			cr.evictStaleVectors(ctx)
+			cr.setEvictNext(time.Now().Add(cr.evictInterval))
 		}
 	}
 }
@@ -437,6 +481,38 @@ func (cr *CronRunner) archiveStale(ctx context.Context) {
 	if n > 0 {
 		log.Printf("[cron] archiveStale: archived=%d (after_days=%d)", n, cr.archiveAfterDays)
 	}
+}
+
+// evictStaleVectors 按保留窗从内存 VectorStore 移除旧的 message/summary 向量。
+// 只删内存，DB embedding 行保留（重启 warmup 也会按同一时间窗过滤，不会回灌）。
+func (cr *CronRunner) evictStaleVectors(ctx context.Context) {
+	if cr.vectorStore == nil || cr.embeddingRepo == nil {
+		return
+	}
+	if cr.msgRetentionDays > 0 {
+		cr.evictType(ctx, model.EntityTypeMessage, "msg:", cr.msgRetentionDays)
+	}
+	if cr.sumRetentionDays > 0 {
+		cr.evictType(ctx, model.EntityTypeSummary, "summary:", cr.sumRetentionDays)
+	}
+}
+
+func (cr *CronRunner) evictType(ctx context.Context, entityType, keyPrefix string, retentionDays int) {
+	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	ids, err := cr.embeddingRepo.ListEntityIDsByTypeBefore(ctx, entityType, cutoff)
+	if err != nil {
+		log.Printf("[cron] evict vectors list %s error: %v", entityType, err)
+		return
+	}
+	if len(ids) == 0 {
+		return
+	}
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = keyPrefix + id
+	}
+	cr.vectorStore.DeleteByIDs(keys)
+	log.Printf("[cron] evict vectors: %s removed %d from memory (retention_days=%d)", entityType, len(keys), retentionDays)
 }
 
 // processSessionEndTasks 扫延迟任务表中到期的 session_end 任务并执行。

@@ -2,6 +2,7 @@ package retrieval
 
 import (
 	"context"
+	"time"
 
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/model"
@@ -24,7 +25,7 @@ func NewNoteSource(
 			IDPrefix:     "note:",
 			ConfigPicker: func(o SearchOptions) SourceConfig { return o.Note },
 			AfterFetch:   nil,
-			ListAll: func(ctx context.Context, limit, offset int) ([]model.Note, error) {
+			ListAll: func(ctx context.Context, _ time.Time, limit, offset int) ([]model.Note, error) {
 				return noteRepo.ListAllPaginated(ctx, limit, offset)
 			},
 		},

@@ -15,20 +15,18 @@ type ToolsBundle struct {
 	ReflectionReg       *tool.Registry
 	MCPManager          *mcp.Manager
 	MemExtractor        *agent.MemoryExtractor
-	MissionEmbedder     *agent.MissionEmbedder
 	ConceptEmbedService *agent.ConceptEmbedService
 }
 
 // AgentBundle Agent 层初始化的产物
 type AgentBundle struct {
-	Orch              *agent.Orchestrator
-	CronRunner        *agent.CronRunner
-	ReflectionOrch    *agent.ReflectionOrchestrator
-	MissionRunner     *agent.MissionRunner
-	MissionDiscoverer *agent.MissionDiscoverer
-	ReplayRunner      *replay.Runner
-	ClientBridge      *agent.ClientToolBridge
-	Destroyer         *agent.EphemeralDestroyer
-	BGCtx             context.Context
-	BGCancel          context.CancelFunc
+	Orch           *agent.Orchestrator
+	CronRunner     *agent.CronRunner
+	ReflectionOrch *agent.ReflectionOrchestrator
+	MissionRunner  *agent.MissionRunner
+	ReplayRunner   *replay.Runner
+	ClientBridge   *agent.ClientToolBridge
+	Destroyer      *agent.EphemeralDestroyer
+	BGCtx          context.Context
+	BGCancel       context.CancelFunc
 }

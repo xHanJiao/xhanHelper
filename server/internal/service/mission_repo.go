@@ -97,3 +97,9 @@ func (r *MissionRepo) UpdateStatus(ctx context.Context, id, userID, status strin
 		Where("id = ? AND user_id = ?", id, userID).
 		Update("status", status).Error
 }
+
+// DeleteAll 清空所有 Mission（一次性迁移：功能废弃后清理旧数据）
+func (r *MissionRepo) DeleteAll(ctx context.Context) (int64, error) {
+	res := r.db.WithContext(ctx).Where("1 = 1").Delete(&model.Mission{})
+	return res.RowsAffected, res.Error
+}

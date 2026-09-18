@@ -12,12 +12,10 @@ import (
 )
 
 // WarmupAll 启动时将 embedding 表中各类型向量加载到内存 VectorStore
-func WarmupAll(ctx context.Context, vs app.VectorStore, embeddingRepo *service.EmbeddingRepo, conceptEmbedRepo *service.ConceptEmbeddingRepo, themeStateRepo *service.ThemeStateRepo) {
+func WarmupAll(ctx context.Context, vs app.VectorStore, embeddingRepo *service.EmbeddingRepo, conceptEmbedRepo *service.ConceptEmbeddingRepo, themeStateRepo *service.ThemeStateRepo, chunkDisabledParents []string) {
 	warmupThemeEmbeddings(ctx, embeddingRepo, vs, conceptEmbedRepo, themeStateRepo)
-	warmupChunkEmbeddings(ctx, embeddingRepo, vs)
-	warmupConceptEmbeddings(ctx, embeddingRepo, vs)
+	warmupChunkEmbeddings(ctx, embeddingRepo, vs, chunkDisabledParents)
 	warmupToolEmbeddings(ctx, embeddingRepo, vs)
-	warmupMissionEmbeddings(ctx, embeddingRepo, vs)
 }
 
 func warmupThemeEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore app.VectorStore, conceptEmbedRepo *service.ConceptEmbeddingRepo, themeStateRepo *service.ThemeStateRepo) {
@@ -106,42 +104,13 @@ func warmupThemeEmbeddings(ctx context.Context, embeddingRepo *service.Embedding
 	log.Printf("[warmup] theme embeddings: %d loaded into vector store", loaded)
 }
 
-func warmupConceptEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore app.VectorStore) {
+func warmupChunkEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore app.VectorStore, disabledParents []string) {
 	const pageSize = 200
-	loaded := 0
-	for offset := 0; ; offset += pageSize {
-		embeddings, err := embeddingRepo.ListByType(ctx, model.EntityTypeConcept, pageSize, offset)
-		if err != nil {
-			log.Printf("[warmup] concept embeddings ListByType error: %v", err)
-			break
-		}
-		if len(embeddings) == 0 {
-			break
-		}
-		for _, emb := range embeddings {
-			if emb.Embedding == nil {
-				continue
-			}
-			vec, err := llm.StringToEmbedding(*emb.Embedding)
-			if err != nil || len(vec) == 0 {
-				continue
-			}
-			vectorStore.Upsert("concept:"+emb.EntityID, vec, map[string]string{
-				"type":    "concept",
-				"user_id": emb.UserID,
-			})
-			loaded++
-		}
-		if len(embeddings) < pageSize {
-			break
-		}
+	loaded, skipped := 0, 0
+	disabled := make(map[string]bool, len(disabledParents))
+	for _, p := range disabledParents {
+		disabled[p] = true
 	}
-	log.Printf("[warmup] concept embeddings: %d loaded into vector store", loaded)
-}
-
-func warmupChunkEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore app.VectorStore) {
-	const pageSize = 200
-	loaded := 0
 	for offset := 0; ; offset += pageSize {
 		embeddings, err := embeddingRepo.ListByType(ctx, "chunk", pageSize, offset)
 		if err != nil {
@@ -155,11 +124,15 @@ func warmupChunkEmbeddings(ctx context.Context, embeddingRepo *service.Embedding
 			if emb.Embedding == nil {
 				continue
 			}
+			parentType, parentID := parseChunkEntityID(emb.EntityID)
+			if disabled[parentType] {
+				skipped++
+				continue
+			}
 			vec, err := llm.StringToEmbedding(*emb.Embedding)
 			if err != nil || len(vec) == 0 {
 				continue
 			}
-			parentType, parentID := parseChunkEntityID(emb.EntityID)
 			vectorStore.Upsert(emb.EntityID, vec, map[string]string{
 				"type":        "chunk",
 				"parent_type": parentType,
@@ -172,7 +145,7 @@ func warmupChunkEmbeddings(ctx context.Context, embeddingRepo *service.Embedding
 			break
 		}
 	}
-	log.Printf("[warmup] chunk embeddings: %d loaded into vector store", loaded)
+	log.Printf("[warmup] chunk embeddings: %d loaded into vector store (skipped %d disabled parents)", loaded, skipped)
 }
 
 func warmupToolEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore app.VectorStore) {
@@ -223,38 +196,4 @@ func parseChunkEntityID(entityID string) (parentType, parentID string) {
 		parentID = rest[:idx]
 	}
 	return
-}
-
-func warmupMissionEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingRepo, vectorStore app.VectorStore) {
-	const pageSize = 100
-	loaded := 0
-	for offset := 0; ; offset += pageSize {
-		embeddings, err := embeddingRepo.ListByType(ctx, "mission", pageSize, offset)
-		if err != nil {
-			log.Printf("[warmup] mission embeddings ListByType error: %v", err)
-			break
-		}
-		if len(embeddings) == 0 {
-			break
-		}
-		for _, emb := range embeddings {
-			if emb.Embedding == nil {
-				continue
-			}
-			vec, err := llm.StringToEmbedding(*emb.Embedding)
-			if err != nil || len(vec) == 0 {
-				continue
-			}
-			vectorStore.Upsert("mission:"+emb.EntityID, vec, map[string]string{
-				"type":       "mission",
-				"user_id":    emb.UserID,
-				"mission_id": emb.EntityID,
-			})
-			loaded++
-		}
-		if len(embeddings) < pageSize {
-			break
-		}
-	}
-	log.Printf("[warmup] mission embeddings: %d loaded into vector store", loaded)
 }

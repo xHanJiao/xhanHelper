@@ -202,3 +202,20 @@ func TestDiffAndBuildChunks_SentenceRemoved(t *testing.T) {
 		t.Error("deleted vec should contain removed sentence")
 	}
 }
+
+// TestBuildChunks_DisabledParent：禁用父类型直接短路，不嵌入、不写库、不写向量库。
+func TestBuildChunks_DisabledParent(t *testing.T) {
+	fx := setupChunkBuilder(t)
+	fx.builder.disabledParents = map[string]bool{"memory": true}
+
+	n, err := fx.builder.BuildChunks(context.Background(), "u0000001", "memory", "m0000001", "第一句。第二句。", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expected 0 chunks for disabled parent, got %d", n)
+	}
+	if len(fx.vs.upserted) != 0 {
+		t.Fatalf("expected no vector upserts, got %d", len(fx.vs.upserted))
+	}
+}

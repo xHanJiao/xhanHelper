@@ -76,12 +76,14 @@ func (r *ConversationSummaryRepo) GetByIDsForUser(ctx context.Context, ids []str
 	return summaries, err
 }
 
-// ListAll 分页列出所有活跃摘要（供 EntitySource.Warmup 使用）。
-func (r *ConversationSummaryRepo) ListAll(ctx context.Context, limit, offset int) ([]model.ConversationSummary, error) {
+// ListAll 分页列出所有活跃摘要（供 EntitySource.Warmup 使用）。since 非零时只返回 created_at >= since。
+func (r *ConversationSummaryRepo) ListAll(ctx context.Context, since time.Time, limit, offset int) ([]model.ConversationSummary, error) {
 	var summaries []model.ConversationSummary
-	err := r.db.WithContext(ctx).
-		Where("status = ?", "active").
-		Order("created_at DESC").
+	q := r.db.WithContext(ctx).Where("status = ?", "active")
+	if !since.IsZero() {
+		q = q.Where("created_at >= ?", since)
+	}
+	err := q.Order("created_at DESC").
 		Limit(limit).Offset(offset).
 		Find(&summaries).Error
 	return summaries, err

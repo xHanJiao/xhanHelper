@@ -12,6 +12,7 @@ import (
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/tool"
 )
 
@@ -23,16 +24,19 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	historyDecayer := retrieval.NewTimeDecay(cfg.Retrieval.History.FreshnessDecay)
 	summaryDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Summary.FreshnessDecay)
 
-	chunkBuilder := agent.NewChunkBuilder(infra, repos.Chunk, repos.Embedding)
+	chunkBuilder := agent.NewChunkBuilder(infra, repos.Chunk, repos.Embedding, cfg.Vector.ChunkDisabledParents)
 
 	memSource := retrieval.NewMemorySource(vs, repos.Mem, repos.Embedding, repos.Chunk, chunkBuilder, memDecayer)
 	noteSource := retrieval.NewNoteSource(vs, repos.Note, repos.Embedding, repos.Chunk, chunkBuilder, noteDecayer)
-	historySource := retrieval.NewHistorySource(vs, repos.Message, repos.Embedding, historyDecayer)
+	historySource := retrieval.NewHistorySource(vs, repos.Message, repos.Embedding, historyDecayer, cfg.Vector.MessageRetentionDays)
 	simpleHistorySource := retrieval.NewSimpleHistorySource(vs, repos.Message)
 	themeSource := retrieval.NewThemeSource(repos.ThemeState, vs)
-	summarySource := retrieval.NewSummarySource(vs, repos.ConversationSummary, repos.Embedding, repos.Chunk, chunkBuilder, summaryDecayer)
+	summarySource := retrieval.NewSummarySource(vs, repos.ConversationSummary, repos.Embedding, repos.Chunk, chunkBuilder, summaryDecayer, cfg.Vector.SummaryRetentionDays)
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
+
+	// 清理废弃向量（chunk 幂等 + mission 一次性），必须在 warmup 之前
+	runVectorStartupCleanup(bgCtx, cfg, repos)
 
 	memSource.Warmup(bgCtx, infra.Embedder)
 	noteSource.Warmup(bgCtx, infra.Embedder)
@@ -40,7 +44,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	summarySource.Warmup(bgCtx, infra.Embedder)
 
 	// 从 embedding 表加载向量到内存 store
-	agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState)
+	agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState, cfg.Vector.ChunkDisabledParents)
 
 	// 统一搜索工具（语义搜索走 ContextSource，关键词搜索走 repo）。
 	// 检索统一入口：主对话 + 内部子系统（MissionRunner/StateUpdater/ThemeAnalyst）共用。
@@ -61,11 +65,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	)
 	tools.Registry.Register(tool.NewLoggingWrapper(unifiedSearch, log.Default()))
 
-	// --- Mission 子系统 ---
-	missionEmbedder := tools.MissionEmbedder
-	missionDiscoverer := agent.NewMissionDiscoverer(llmClients.BgFlash, agent.NewThemeStore(repos.ThemeState), repos.Mission, missionEmbedder)
-
-	// MissionRunner 的检索工具集
+	// --- Mission 子系统：发现器已废弃（从未被调度调用）；仅保留 MissionRunner 供手动检查 ---
 	missionRetrievalTools := map[string]tool.Tool{
 		"unified_search": unifiedSearch,
 		"get_bill_stats": tool.NewGetBillStatsTool(repos.Bill),
@@ -150,6 +150,11 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		ImageTTLDays:      cfg.Storage.ImageTTLDays,
 		ImageOrphanDays:   cfg.Storage.ImageOrphanTTLDays,
 		ImageCleanupEvery: time.Duration(cfg.Storage.ImageCleanupIntervalMin) * time.Minute,
+		EmbeddingRepo:     repos.Embedding,
+		VectorStore:       vs,
+		MsgRetentionDays:  cfg.Vector.MessageRetentionDays,
+		SumRetentionDays:  cfg.Vector.SummaryRetentionDays,
+		EvictInterval:     time.Duration(cfg.Vector.EvictIntervalHours) * time.Hour,
 	})
 
 	// --- Orchestrator ---
@@ -273,16 +278,54 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	})
 
 	return &AgentBundle{
-		Orch:              orch,
-		CronRunner:        cronRunner,
-		ReflectionOrch:    reflectionOrch,
-		MissionRunner:     missionRunner,
-		MissionDiscoverer: missionDiscoverer,
-		ReplayRunner:      replayRunner,
-		ClientBridge:      clientBridge,
-		Destroyer:         ephemeralDestroyer,
-		BGCtx:             bgCtx,
-		BGCancel:          bgCancel,
+		Orch:           orch,
+		CronRunner:     cronRunner,
+		ReflectionOrch: reflectionOrch,
+		MissionRunner:  missionRunner,
+		ReplayRunner:   replayRunner,
+		ClientBridge:   clientBridge,
+		Destroyer:      ephemeralDestroyer,
+		BGCtx:          bgCtx,
+		BGCancel:       bgCancel,
+	}
+}
+
+// runVectorStartupCleanup 启动时清理废弃向量：短文本 chunk（幂等，每次启动）+ mission 数据（一次性）。
+// 必须在 warmup 之前执行，避免旧数据被加载进内存。
+func runVectorStartupCleanup(ctx context.Context, cfg *config.Config, repos *app.Repos) {
+	for _, parent := range cfg.Vector.ChunkDisabledParents {
+		if n, err := repos.Chunk.DeleteAllByType(ctx, parent); err != nil {
+			log.Printf("[vector-cleanup] delete %s chunks error: %v", parent, err)
+		} else if n > 0 {
+			log.Printf("[vector-cleanup] deleted %d %s chunk rows", n, parent)
+		}
+		if n, err := repos.Embedding.DeleteChunksByParentType(ctx, parent); err != nil {
+			log.Printf("[vector-cleanup] delete %s chunk embeddings error: %v", parent, err)
+		} else if n > 0 {
+			log.Printf("[vector-cleanup] deleted %d %s chunk embedding rows", n, parent)
+		}
+	}
+	if cfg.Vector.PurgeMissionsOnce {
+		if n, err := repos.Embedding.DeleteByType(ctx, "mission"); err != nil {
+			log.Printf("[vector-cleanup] delete mission embeddings error: %v", err)
+		} else {
+			log.Printf("[vector-cleanup] deleted %d mission embedding rows", n)
+		}
+		if n, err := repos.Mission.DeleteAll(ctx); err != nil {
+			log.Printf("[vector-cleanup] delete missions error: %v", err)
+		} else {
+			log.Printf("[vector-cleanup] deleted %d mission rows", n)
+		}
+	}
+	// tag 的 concept/embedding 已无消费者，一次性（幂等）清掉
+	if ids, err := repos.ConceptEmbed.DeleteByType(ctx, "tag"); err != nil {
+		log.Printf("[vector-cleanup] delete tag concepts error: %v", err)
+	} else if len(ids) > 0 {
+		if n, err := repos.Embedding.DeleteByEntities(ctx, model.EntityTypeConcept, ids); err != nil {
+			log.Printf("[vector-cleanup] delete tag concept embeddings error: %v", err)
+		} else {
+			log.Printf("[vector-cleanup] deleted %d tag concepts + %d embeddings", len(ids), n)
+		}
 	}
 }
 

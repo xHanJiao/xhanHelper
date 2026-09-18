@@ -27,14 +27,25 @@ type ChunkBuilder struct {
 	chunkRepo     *service.EmbeddingChunkRepo
 	embeddingRepo *service.EmbeddingRepo
 	vectorStore   app.VectorStore
+	// disabledParents 为不再建 chunk 的父类型（短文本由 full 向量覆盖）。
+	// nil = 全部允许（保持既有测试/调用语义）。
+	disabledParents map[string]bool
 }
 
-func NewChunkBuilder(infra *app.Infra, chunkRepo *service.EmbeddingChunkRepo, embeddingRepo *service.EmbeddingRepo) *ChunkBuilder {
+func NewChunkBuilder(infra *app.Infra, chunkRepo *service.EmbeddingChunkRepo, embeddingRepo *service.EmbeddingRepo, disabledParents []string) *ChunkBuilder {
+	var disabled map[string]bool
+	if len(disabledParents) > 0 {
+		disabled = make(map[string]bool, len(disabledParents))
+		for _, p := range disabledParents {
+			disabled[p] = true
+		}
+	}
 	return &ChunkBuilder{
-		embedder:      infra.Embedder,
-		chunkRepo:     chunkRepo,
-		embeddingRepo: embeddingRepo,
-		vectorStore:   infra.VectorStore,
+		embedder:        infra.Embedder,
+		chunkRepo:       chunkRepo,
+		embeddingRepo:   embeddingRepo,
+		vectorStore:     infra.VectorStore,
+		disabledParents: disabled,
 	}
 }
 
@@ -76,6 +87,9 @@ func buildChunkMeta(parentType, parentID, userID string, extra map[string]string
 // BuildChunks 将文本拆分为句子并嵌入，写入 chunk 表 + embedding 表 + 向量库
 // 返回创建的 chunk 数量
 func (b *ChunkBuilder) BuildChunks(ctx context.Context, userID, parentType, parentID, text string, meta map[string]string) (int, error) {
+	if b.disabledParents[parentType] {
+		return 0, nil
+	}
 	sentences := splitSentences(text)
 	if len(sentences) == 0 {
 		return 0, nil
@@ -131,6 +145,9 @@ func (b *ChunkBuilder) BuildChunks(ctx context.Context, userID, parentType, pare
 // DiffAndBuildChunks 对比新旧文本，仅对变化的句子重新嵌入。
 // 保留文本完全相同的旧 chunk，只嵌入新增和修改的句子。
 func (b *ChunkBuilder) DiffAndBuildChunks(ctx context.Context, userID, parentType, parentID, newText string, meta map[string]string) (int, int, error) {
+	if b.disabledParents[parentType] {
+		return 0, 0, nil
+	}
 	sentences := splitSentences(newText)
 	if len(sentences) == 0 {
 		return 0, 0, nil

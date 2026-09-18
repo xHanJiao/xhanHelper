@@ -8,9 +8,10 @@ import (
 )
 
 // vectorEntry — 向量存储条目
+// Vec 以 float32 存储，内存占用为 float64 的一半（1024 维：4KB vs 8KB），精度损失可忽略。
 type vectorEntry struct {
 	ID       string
-	Vec      []float64
+	Vec      []float32
 	Score    float64
 	Metadata map[string]string
 }
@@ -36,8 +37,9 @@ func NewVectorStore() *VectorStore {
 func (vs *VectorStore) Upsert(id string, vec []float64, metadata map[string]string) {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
+	f32 := toFloat32(vec)
 	if idx, ok := vs.byID[id]; ok {
-		vs.vectors[idx].Vec = vec
+		vs.vectors[idx].Vec = f32
 		if metadata != nil {
 			vs.vectors[idx].Metadata = metadata
 		}
@@ -47,7 +49,30 @@ func (vs *VectorStore) Upsert(id string, vec []float64, metadata map[string]stri
 		metadata = map[string]string{}
 	}
 	vs.byID[id] = len(vs.vectors)
-	vs.vectors = append(vs.vectors, vectorEntry{ID: id, Vec: vec, Metadata: metadata})
+	vs.vectors = append(vs.vectors, vectorEntry{ID: id, Vec: f32, Metadata: metadata})
+}
+
+// toFloat32 拷贝为 float32 切片，避免调用方复用底层数组
+func toFloat32(v []float64) []float32 {
+	if len(v) == 0 {
+		return nil
+	}
+	out := make([]float32, len(v))
+	for i, x := range v {
+		out[i] = float32(x)
+	}
+	return out
+}
+
+func toFloat64(v []float32) []float64 {
+	if len(v) == 0 {
+		return nil
+	}
+	out := make([]float64, len(v))
+	for i, x := range v {
+		out[i] = float64(x)
+	}
+	return out
 }
 
 // Search 余弦相似度检索
@@ -58,15 +83,17 @@ func (vs *VectorStore) Search(query []float64, topK int, filter func(retrieval.E
 	if len(vs.vectors) == 0 {
 		return nil
 	}
+	q := toFloat32(query)
 
 	var eligible []candidate
 	for _, e := range vs.vectors {
-		if filter != nil && !filter(retrieval.Entry{ID: e.ID, Vec: e.Vec, Metadata: e.Metadata}) {
+		// ponytail: Entry.Vec 传 nil——当前所有 filter 只读 ID/Metadata，避免每候选分配 float64
+		if filter != nil && !filter(retrieval.Entry{ID: e.ID, Metadata: e.Metadata}) {
 			continue
 		}
 		eligible = append(eligible, candidate{
 			id:       e.ID,
-			score:    cosineSimilarity(query, e.Vec),
+			score:    cosineSimilarity32(q, e.Vec),
 			metadata: e.Metadata,
 		})
 	}
@@ -155,10 +182,7 @@ func (vs *VectorStore) GetVector(id string) ([]float64, bool) {
 	if !ok {
 		return nil, false
 	}
-	e := vs.vectors[idx]
-	vec := make([]float64, len(e.Vec))
-	copy(vec, e.Vec)
-	return vec, true
+	return toFloat64(vs.vectors[idx].Vec), true
 }
 
 func (vs *VectorStore) Size() int {
@@ -187,6 +211,18 @@ func (vs *VectorStore) deleteLocked(id string) {
 	delete(vs.byID, id)
 }
 
+// DeleteByIDs 批量删除，单次加锁（逐出过期向量用，避免逐条 lock/unlock）
+func (vs *VectorStore) DeleteByIDs(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	for _, id := range ids {
+		vs.deleteLocked(id)
+	}
+}
+
 // DeleteByMetadata 删除所有 metadata[key] == value 的向量，返回删除数量。
 // 先收集待删 ID 再逐个移除（不能边遍历边 swap-remove，索引会错位）。
 func (vs *VectorStore) DeleteByMetadata(key, value string) int {
@@ -204,6 +240,7 @@ func (vs *VectorStore) DeleteByMetadata(key, value string) int {
 	return len(ids)
 }
 
+// cosineSimilarity 供 orchestrator 的摘要相关性计算使用（float64 输入）
 func cosineSimilarity(a, b []float64) float64 {
 	if len(a) != len(b) {
 		return 0
@@ -213,6 +250,23 @@ func cosineSimilarity(a, b []float64) float64 {
 		dot += a[i] * b[i]
 		normA += a[i] * a[i]
 		normB += b[i] * b[i]
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
+}
+
+func cosineSimilarity32(a, b []float32) float64 {
+	if len(a) != len(b) {
+		return 0
+	}
+	var dot, normA, normB float64
+	for i := range a {
+		x, y := float64(a[i]), float64(b[i])
+		dot += x * y
+		normA += x * x
+		normB += y * y
 	}
 	if normA == 0 || normB == 0 {
 		return 0
@@ -232,7 +286,7 @@ func (vs *VectorStore) Stats() map[string]interface{} {
 			t = "unknown"
 		}
 		byType[t]++
-		totalBytes += len(e.Vec) * 8
+		totalBytes += len(e.Vec) * 4
 	}
 
 	return map[string]interface{}{

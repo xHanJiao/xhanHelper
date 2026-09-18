@@ -888,6 +888,7 @@ onUnmounted(() => {
             <div>投递窗口剩余: <strong>{{ hooks.deliver_remaining }}</strong></div>
             <div>主题发现剩余: <strong>{{ hooks.discover_remaining }}</strong></div>
             <div>Mission 检查剩余: <strong>{{ hooks.mission_remaining }}</strong></div>
+            <div>会话归档剩余: <strong>{{ hooks.archive_remaining }}</strong></div>
           </div>
         </NCard>
       </div>

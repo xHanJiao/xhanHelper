@@ -328,6 +328,8 @@ func (cr *CronRunner) Start(ctx context.Context) {
 		defer archiveTicker.Stop()
 		archiveChan = archiveTicker.C
 		cr.setArchiveNext(time.Now().Add(cr.archiveInterval))
+		// 启动即扫一次：ticker 首次触发在 +interval，进程频繁重启会让归档永远等不到
+		go cr.archiveStale(ctx)
 	} else {
 		cr.setArchiveNext(time.Time{})
 	}

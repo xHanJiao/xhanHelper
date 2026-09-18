@@ -218,7 +218,7 @@ func getMessages(convRepo *service.ConversationRepo,
 		if !requireConversationOwner(c, convRepo, convID) {
 			return
 		}
-		msgs, err := msgRepo.ListByConversation(c.Request.Context(), convID, 100)
+		msgs, err := msgRepo.ListByConversationRecent(c.Request.Context(), convID, 100)
 		if err != nil {
 			log.Printf("[conv] GetMessages error: %v", err)
 			view.JSONError(c, 500, "query messages failed")
@@ -361,12 +361,8 @@ func cleanMessages(msgs []model.Message) []model.Message {
 		if m.Role == "user" && m.OriginalContent != nil && *m.OriginalContent != "" {
 			m.Content = *m.OriginalContent
 		}
-		if m.Role == "assistant" {
-			if reply := extractFlashReply(m.Content); reply != "" {
-				m.Content = reply
-			} else if isFlashJSON(m.Content) {
-				m.Content = ""
-			}
+		if m.Role == "assistant" && isFlashEnvelope(m.Content) {
+			m.Content = extractFlashReply(m.Content)
 		}
 		out = append(out, m)
 	}
@@ -496,16 +492,31 @@ func extractFlashReply(content string) string {
 	return parsed.Reply
 }
 
-// isFlashJSON 判断 content 是否为合法的 Flash JSON（以 { 开头且含有 reply 字段）
-func isFlashJSON(content string) bool {
-	trimmed := strings.TrimSpace(content)
-	if !strings.HasPrefix(trimmed, "{") {
+// isFlashEnvelope 判断 content 是否为 Flash LLM 的 JSON 信封（含 reply 或 tool_calls 字段，
+// 且 JSON 对象之后没有正文）。普通 markdown 正文里嵌的 JSON（代码块/示例/内联 `{}`）不算信封，
+// 避免 extractFlashReply 把正文截断到第一个 '{' 之前。
+func isFlashEnvelope(content string) bool {
+	cleaned := strings.TrimSpace(content)
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+
+	start := strings.Index(cleaned, "{")
+	if start < 0 {
 		return false
 	}
-	var parsed struct {
-		Reply string `json:"reply"`
+	dec := json.NewDecoder(strings.NewReader(cleaned[start:]))
+	var raw map[string]json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		return false
 	}
-	return json.Unmarshal([]byte(trimmed), &parsed) == nil
+	_, hasReply := raw["reply"]
+	_, hasTC := raw["tool_calls"]
+	if !hasReply && !hasTC {
+		return false
+	}
+	rest := strings.TrimSpace(cleaned[start+int(dec.InputOffset()):])
+	return rest == "" || rest == "```"
 }
 
 func deleteMessage(msgRepo *service.MessageRepo, convRepo *service.ConversationRepo) gin.HandlerFunc {

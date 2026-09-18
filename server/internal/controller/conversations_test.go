@@ -34,6 +34,69 @@ func TestExtractFlashReply(t *testing.T) {
 
 func ptrStr(s string) *string { return &s }
 
+// TestCleanMessages_KeepsMarkdownWithInlineJSON 回归：正文里嵌的 JSON（内联代码、代码块、
+// 示例）不能把 assistant 正文截断到第一个 '{' 之前。
+func TestCleanMessages_KeepsMarkdownWithInlineJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "inline empty json code span",
+			content: "1. `extra` 统一名字，TEXT 存 JSON，默认 `'{}'`\n\n后面还有很长的正文。",
+			want:    "1. `extra` 统一名字，TEXT 存 JSON，默认 `'{}'`\n\n后面还有很长的正文。",
+		},
+		{
+			name:    "fenced json block with trailing prose",
+			content: "配置如下：\n\n```json\n{\"a\":1}\n```\n\n以上。",
+			want:    "配置如下：\n\n```json\n{\"a\":1}\n```\n\n以上。",
+		},
+		{
+			name:    "json example without reply key",
+			content: "示例：{\"foo\":\"bar\"} 结束。",
+			want:    "示例：{\"foo\":\"bar\"} 结束。",
+		},
+		{
+			name:    "real envelope with reply",
+			content: `{"reply":"hello","tool_calls":[]}`,
+			want:    "hello",
+		},
+		{
+			name:    "prefix plus envelope",
+			content: "ok\n\n{\"reply\":\"test\"}",
+			want:    "ok\n\ntest",
+		},
+		{
+			name:    "pure tool envelope blanked",
+			content: `{"reply":"","tool_calls":[{"tool":"x"}]}`,
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msgs := []model.Message{
+				{Role: "user", Content: "hi"},
+				{Role: "assistant", Content: tt.content},
+			}
+			result := cleanMessages(msgs)
+			if tt.want == "" {
+				if len(result) != 1 {
+					t.Fatalf("expected empty assistant to be filtered, got %d messages", len(result))
+				}
+				return
+			}
+			if len(result) != 2 {
+				t.Fatalf("expected 2 messages, got %d", len(result))
+			}
+			if result[1].Content != tt.want {
+				t.Errorf("cleanMessages content = %q, want %q", result[1].Content, tt.want)
+			}
+		})
+	}
+}
+
 func TestMergeConsecutiveAssistant_SingleMsg(t *testing.T) {
 	msgs := []model.Message{
 		{Role: "user", Content: "hi"},

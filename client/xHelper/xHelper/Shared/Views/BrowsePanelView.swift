@@ -182,8 +182,15 @@ struct BrowsePanelView: View {
     private func toggleDocSearch() {
         guard !docSearchOpen else { docSearchOpen = false; return }
         billSearchOpen = false
-        docSearchDraft = documentVM.keyword
+        // 词云模式草稿来自本地高亮词，列表模式来自后端关键词
+        docSearchDraft = documentVM.mode == .cloud ? documentVM.cloudQuery : documentVM.keyword
         docSearchOpen = true
+    }
+
+    /// 文档页头搜索激活态：词云模式看 cloudQuery，列表模式看后端 keyword。
+    private var docSearchActive: Bool {
+        guard !docSearchOpen else { return true }
+        return documentVM.mode == .cloud ? !documentVM.cloudQuery.isEmpty : !documentVM.keyword.isEmpty
     }
 
     private func toggleBillSearch() {
@@ -196,6 +203,21 @@ struct BrowsePanelView: View {
     @ViewBuilder
     private func transientSearchPanel(_ panel: BrowsePanel) -> some View {
         switch panel {
+        case .documents where docSearchOpen && documentVM.mode == .cloud:
+            // 词云：本地实时高亮，面板不收起
+            TransientSearchPanel(
+                placeholder: "搜索标签并高亮",
+                caption: "在词云中高亮匹配的标签（纯本地）",
+                draft: $docSearchDraft,
+                live: true,
+                onSearch: { documentVM.cloudQuery = $0 },
+                onClear: {
+                    docSearchDraft = ""
+                    documentVM.cloudQuery = ""
+                }
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         case .documents where docSearchOpen:
             TransientSearchPanel(
                 placeholder: "搜索标题或内容",
@@ -353,8 +375,8 @@ struct BrowsePanelView: View {
 
             if panel == .documents && documentVM.openDocument == nil {
                 headerSearchToggle(
-                    active: docSearchOpen || !documentVM.keyword.isEmpty,
-                    help: "搜索文档"
+                    active: docSearchActive,
+                    help: documentVM.mode == .cloud ? "搜索并高亮标签" : "搜索文档"
                 ) { toggleDocSearch() }
             } else if panel == .bills {
                 headerSearchToggle(
@@ -488,6 +510,8 @@ private struct TransientSearchPanel: View {
     let placeholder: String
     let caption: String?
     @Binding var draft: String
+    /// 实时模式：不显示「搜索」按钮，输入即回调（词云本地高亮用）。是否收起由调用方决定。
+    var live: Bool = false
     let onSearch: (String) -> Void
     let onClear: () -> Void
 
@@ -519,16 +543,18 @@ private struct TransientSearchPanel: View {
                     .help("清空搜索")
                 }
 
-                Button {
-                    runSearch()
-                } label: {
-                    Text("搜索")
-                        .font(.system(size: 11))
+                if !live {
+                    Button {
+                        runSearch()
+                    } label: {
+                        Text("搜索")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color("appAccent"))
+                    .controlSize(.small)
+                    .disabled(trimmed.isEmpty)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Color("appAccent"))
-                .controlSize(.small)
-                .disabled(trimmed.isEmpty)
             }
 
             if let caption {
@@ -540,6 +566,9 @@ private struct TransientSearchPanel: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .onChange(of: draft) { _, _ in
+            if live { onSearch(trimmed) }
+        }
     }
 
     private func runSearch() {

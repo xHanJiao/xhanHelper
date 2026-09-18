@@ -18,6 +18,8 @@ class DocumentViewModel: ObservableObject {
     @Published var selectedTag: String?
     @Published var mode: DocumentBrowseMode = .list
     @Published var minTagCount = 1
+    /// 词云本地高亮的搜索词（纯 UI 状态，不参与后端检索）。
+    @Published var cloudQuery = ""
     @Published var openDocument: Document?
     @Published var isDetailLoading = false
 

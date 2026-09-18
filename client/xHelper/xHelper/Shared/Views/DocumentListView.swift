@@ -117,7 +117,7 @@ struct DocumentListView: View {
             emptyMessage: viewModel.tags.isEmpty ? "还没有标签" : "没有达到 \(viewModel.minTagCount) 篇的标签",
             onRetry: { Task { await viewModel.load() } }
         ) {
-            TagCloudView(tags: visible) { tag in
+            TagCloudView(tags: visible, query: viewModel.cloudQuery) { tag in
                 Task { await viewModel.selectTag(tag) }
             }
         }
@@ -136,6 +136,8 @@ struct DocumentListView: View {
 /// 标签词云：圆盘内分行排布，频次越高字号越大且越靠中心；一屏缩放贴合，不滚动。
 private struct TagCloudView: View {
     let tags: [DocumentTag]
+    /// 本地高亮搜索词：命中词 accent 强调，其余词变淡；不改布局。
+    let query: String
     let onTap: (String) -> Void
 
     @State private var placed: [PlacedTag] = []
@@ -144,12 +146,14 @@ private struct TagCloudView: View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 ForEach(placed) { item in
+                    let hit = matchState(item.tag.name)
                     Button {
                         onTap(item.tag.name)
                     } label: {
                         Text(item.tag.name)
                             .font(.system(size: item.fontSize, weight: item.weight))
-                            .foregroundColor(Color.primary.opacity(item.opacity))
+                            .foregroundColor(hit == true ? Color("appAccent") : Color.primary.opacity(item.opacity))
+                            .opacity(hit == false ? 0.2 : 1)
                             .fixedSize()
                             .contentShape(Rectangle())
                     }
@@ -163,6 +167,13 @@ private struct TagCloudView: View {
             .onChange(of: geo.size) { _, size in rebuild(in: size) }
             .onChange(of: tags) { _, _ in rebuild(in: geo.size) }
         }
+    }
+
+    /// nil = 无查询（常态）；true = 命中；false = 未命中。
+    private func matchState(_ name: String) -> Bool? {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return nil }
+        return name.localizedCaseInsensitiveContains(q)
     }
 
     private func rebuild(in size: CGSize) {

@@ -650,15 +650,11 @@ struct ContentView: View {
                                 autoExitPip(reason: "tabChanged")
                             }
                         }
-                        .onChange(of: rightSidebar.tabs.count) { _, count in
-                            if count == 0 {
-                                autoExitPip(reason: "browserEmpty")
-                            }
-                        }
                         .onChange(of: rightSidebar.activeTabId) { _, id in
                             if id == nil {
+                                // 切到浏览面板（文档/账单/监控等）只退出浏览器聚焦，不退出 PiP：
+                                // PiP 是「右栏最大化」的层级状态，与右栏装什么内容解耦。
                                 rightSidebar.middleMinimized = false
-                                autoExitPip(reason: "browsePanel")
                             }
                             BrowserToolProvider.shared.refreshBrowserGroup()
                         }

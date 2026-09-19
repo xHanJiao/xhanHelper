@@ -2129,7 +2129,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     func enterBrowser() {
         guard let rs = rightSidebar else { return }
         rs.isOpen = true
-        rs.middleMinimized = true
+        // PiP 已让中间栏让位，不再置浏览器聚焦态（否则退出 PiP 后残留中栏最小化）
+        if !rs.isPipChat { rs.middleMinimized = true }
         if rs.hasTabs {
             let target = rs.activeTabId
                 ?? rs.tabs.first(where: { !RightSidebarManager.specialTabIDs.contains($0.id) })?.id

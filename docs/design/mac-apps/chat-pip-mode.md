@@ -45,10 +45,10 @@ V2+（本期只做设计预留，不实现）：
 
 - 按钮：`RightSidebarView` 浏览器 tab 条最右侧（`+` 新标签页按钮左侧）PiP 图标，`!isBrowseActive` 时显示，激活高亮，点击 `manager.isPipChat.toggle()`。
 - 面板头部提供退出按钮（`✕`）。
-- **自动退出**三个触发器（`ContentView` onChange）：
+- **自动退出**两个触发器（`ContentView` onChange）：
   1. 右栏关闭（`rightSidebar.isOpen → false`）→ `reason=sidebarClosed`
   2. 左侧导航切到非 chat tab（`router.currentTab`）→ `reason=tabChanged`
-  3. 浏览器 tab 全部关闭 → `reason=browserEmpty`
+- PiP 是「右栏最大化」的层级状态，**与右栏内容解耦**：切到浏览面板（Cmd+1/2/3 文档/账单/监控）、Cmd+4 进浏览器、关光浏览器标签，都不退出 PiP。
 
 ## 四、布局联动（ContentView）
 

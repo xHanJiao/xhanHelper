@@ -281,7 +281,9 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
                 return .handled
             }
             // Tab（仅输入框聚焦时）：切换计划/聊天模式。焦点不在聊天输入框时（PiP 收起/浏览器/地址栏）不会触发。
+            // 流式进行中不响应，避免回合中途误切模式（胶囊点击不受影响）。
             .onKeyPress(.tab, phases: .down) { _ in
+                guard !isStreaming else { return .handled }
                 onToggleMode()
                 return .handled
             }

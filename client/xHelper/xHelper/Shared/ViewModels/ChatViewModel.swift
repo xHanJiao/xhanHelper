@@ -92,6 +92,28 @@ enum PlanState: Equatable {
     case cancelled   // 已取消（全部 cancelled）
 }
 
+/// 会话模式三档（与服务端 mode 字符串一一对应）：
+///   - off    关闭：工具全量可用
+///   - normal 普通：仅只读工具（检索/查询）
+///   - strict 严格：无任何工具
+enum ChatMode: String {
+    case off = "work"
+    case normal = "plan"
+    case strict = "strict"
+
+    /// 循环下一档：关 → 普通 → 严格 → 关
+    var next: ChatMode {
+        switch self {
+        case .off: return .normal
+        case .normal: return .strict
+        case .strict: return .off
+        }
+    }
+
+    /// 是否处于计划模式（普通或严格）——两者都禁写、都禁客户端本地工具。
+    var isPlanLike: Bool { self != .off }
+}
+
 // MARK: - ChatViewModel
 
 @MainActor
@@ -166,11 +188,11 @@ class ChatViewModel: ObservableObject {
     /// 响应检验事件状态（verify:checking|done|retry）
     @Published var verifyStatus: VerifyStatus?
 
-    /// 会话模式："work"（默认）| "plan"（只读讨论）。只能由用户切换（Tab 快捷键/胶囊条）。
-    /// TODO: 会话重新加载时从服务端同步真实 mode（当前先重置为 work，需会话详情 API 完善）
+    /// 会话模式："work"（默认）| "plan"（只读）| "strict"（无工具）。只能由用户切换（Tab 快捷键/胶囊条）。
+    /// 服务端权威：由 loadConversation 带入；未知值归一到 off。
     @Published var mode: String = "work"
-    /// plan 模式展示名（只读讨论状态）
-    var isPlanMode: Bool { mode == "plan" }
+    /// 当前模式（由服务端 mode 字符串派生）
+    var chatMode: ChatMode { ChatMode(rawValue: mode) ?? .off }
 
     /// 新建会话成功（空 tab 转正）时回调：(conversationId, title)
     var onConversationCreated: ((String, String?) -> Void)?
@@ -357,24 +379,29 @@ class ChatViewModel: ObservableObject {
     /// 换会话（loadConversation）自动关闭，安全默认。
     @Published var trustedMode = false
 
-    /// 切换计划模式（work ↔ plan）。仅用户可触发（胶囊条点击 / 输入框聚焦时 Tab）。
+    /// 循环切换会话模式（关 → 普通 → 严格 → 关）。仅用户可触发（胶囊条点击 / 输入框聚焦时 Tab）。
     /// 已有会话：PATCH 落库，失败回滚；空 tab（无会话）：只改本地，第一条消息经 init_mode 落库。
-    func toggleMode() async {
-        let next = isPlanMode ? "work" : "plan"
-        let toast = next == "plan" ? "已进入计划模式（只读讨论）" : "已退出计划模式"
+    func cycleMode() async {
+        let next = chatMode.next
+        let toast: String
+        switch next {
+        case .off: toast = "已退出计划模式"
+        case .normal: toast = "已进入计划模式 · 普通（仅只读工具）"
+        case .strict: toast = "已进入计划模式 · 严格（无工具）"
+        }
         guard let cid = conversationId, !cid.isEmpty else {
-            mode = next // 空 tab：会话尚未创建，模式暂存本地，待首条消息 init_mode 落库
+            mode = next.rawValue // 空 tab：会话尚未创建，模式暂存本地，待首条消息 init_mode 落库
             ToastCenter.shared.show(toast)
             return
         }
         let previous = mode
-        mode = next
+        mode = next.rawValue
         do {
-            try await apiClient.updateConversationMode(id: cid, mode: next)
-            LogBuffer.shared.info("ChatViewModel.toggleMode: conv=\(cid) -> \(next)")
+            try await apiClient.updateConversationMode(id: cid, mode: next.rawValue)
+            LogBuffer.shared.info("ChatViewModel.cycleMode: conv=\(cid) -> \(next.rawValue)")
             ToastCenter.shared.show(toast)
         } catch {
-            LogBuffer.shared.warning("ChatViewModel.toggleMode failed: \(error)")
+            LogBuffer.shared.warning("ChatViewModel.cycleMode failed: \(error)")
             mode = previous // 回滚
             ToastCenter.shared.show("切换模式失败，请重试")
         }
@@ -895,7 +922,7 @@ class ChatViewModel: ObservableObject {
 
     /// 触发接力：把本会话整理成一篇带「接力」tag 的文档，完成后由 onHandoffReady 开新会话续接。
     func beginHandoff(baseURL: String, token: String, agentId: String? = nil) {
-        guard !isStreaming, !isPlanMode, let cid = conversationId, !cid.isEmpty else { return }
+        guard !isStreaming, !chatMode.isPlanLike, let cid = conversationId, !cid.isEmpty else { return }
         handoffActive = true
         capturedHandoffDoc = nil
         handoffBaseURL = baseURL
@@ -982,7 +1009,7 @@ class ChatViewModel: ObservableObject {
                 self?.detachStreamingMessage()
             }
         }
-        // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）
+        // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan/strict）
         let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
         sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, hiddenRound: hiddenRound, attachments: attachmentIds, docQuote: hiddenRound ? nil : docQuote)
     }

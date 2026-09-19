@@ -212,6 +212,37 @@ func TestBuild_PlanModeOnlyReadOnlyTools(t *testing.T) {
 	}
 }
 
+func TestBuild_StrictModeNoTools(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&planBuildFakeTool{name: "fake_tool"})
+
+	// prompt-eng 模式：无任何函数定义
+	b := NewPromptBuilder("base", reg, nil, false, false)
+	strict, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModeStrict})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strict.Prompt, "read_fn") || strings.Contains(strict.Prompt, "write_fn") {
+		t.Error("strict 模式不应包含任何函数定义")
+	}
+	if !strings.Contains(strict.Prompt, "严格计划模式") {
+		t.Error("strict 模式应含无工具提示")
+	}
+
+	// native FC 模式：同样只有提示，没有函数调用接口引导
+	b2 := NewPromptBuilder("base", reg, nil, true, false)
+	strict2, err := b2.Build(context.Background(), BuildOptions{Mode: model.ConvModeStrict})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strict2.Prompt, "严格计划模式") {
+		t.Error("strict native FC 应含无工具提示")
+	}
+	if strings.Contains(strict2.Prompt, "函数调用接口") || strings.Contains(strict2.Prompt, "read_fn") {
+		t.Error("strict native FC 不应提示调用工具")
+	}
+}
+
 func TestBuild_StableContextInjected(t *testing.T) {
 	reg := tool.NewRegistry()
 	b := NewPromptBuilder("base", reg, nil, true, false)

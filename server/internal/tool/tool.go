@@ -70,7 +70,7 @@ type ExecuteContext struct {
 	Ctx    context.Context
 	UserID string
 	ConvID string // 当前会话 ID，绑定/解绑 agent 用
-	Mode   string // 会话模式：model.ConvModeWork / model.ConvModePlan（plan 模式拦截写函数）
+	Mode   string // 会话模式：model.ConvModeWork / ConvModePlan（只拦写）/ ConvModeStrict（全拦）
 
 	// Events — SSE 事件通道，工具可以通过此通道向客户端推送自定义事件。
 	// 重要：必须在工具 Execute() 方法返回前发送，不可在异步 goroutine 中使用 channel。

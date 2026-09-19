@@ -243,11 +243,15 @@ struct ChatView: View {
         withAnimation(.easeOut(duration: 0.25)) { viewModel.subagentPanelExpanded = false }
     }
 
-    /// 输入栏容器描边/光晕色：计划模式橙、信任模式金、其余默认强调色。
+    /// 输入栏容器描边/光晕色：计划·普通橙、计划·严格红、信任模式金、其余默认强调色。
     private var inputBarTint: Color {
-        if viewModel.isPlanMode { return .orange }
-        if viewModel.trustedMode { return Color(red: 0.85, green: 0.6, blue: 0.0) }
-        return Color("appAccent")
+        switch viewModel.chatMode {
+        case .normal: return .orange
+        case .strict: return .red
+        case .off:
+            if viewModel.trustedMode { return Color(red: 0.85, green: 0.6, blue: 0.0) }
+            return Color("appAccent")
+        }
     }
 
     /// 发送草稿：校验非空 → 清输入 → 发消息 → 滚到底部。
@@ -434,7 +438,7 @@ struct ChatView: View {
                 viewModel.stopStreaming()
             },
             onToggleMode: {
-                Task { await viewModel.toggleMode() }
+                Task { await viewModel.cycleMode() }
             },
             statusRow: inputBarStatusRow,
             statusRowExtras: inputBarExtrasRow,
@@ -500,9 +504,9 @@ struct ChatView: View {
     private func inputBarButtonContent(_ id: InputBarButtonID, ctx: InputBarContext) -> some View {
         switch id {
         case .mode:
-            // 计划模式：高频使用。
-            ModePill(context: ctx, isPlanMode: viewModel.isPlanMode) {
-                Task { await viewModel.toggleMode() }
+            // 计划模式：高频使用。三档循环（关 → 普通 → 严格）。
+            ModePill(context: ctx, mode: viewModel.chatMode) {
+                Task { await viewModel.cycleMode() }
             }
         case .agent:
             // 智能体选择器：cpu 图标与侧边栏一致。
@@ -541,14 +545,14 @@ struct ChatView: View {
                 resetExtrasAutoCollapse()
             }
         case .handoff:
-            // 会话接力：整理成文档并开新会话续接。计划模式只读、接力要写文档，
-            // 故 plan 模式下置灰（tooltip 说明原因），非流式、非空会话才可用。
+            // 会话接力：整理成文档并开新会话续接。计划模式不能写文档，
+            // 故 plan/严格档下置灰（tooltip 说明原因），非流式、非空会话才可用。
             HandoffPill(
                 context: ctx,
                 isEnabled: !viewModel.isStreaming
                     && !(viewModel.conversationId ?? "").isEmpty
-                    && !viewModel.isPlanMode,
-                isPlanMode: viewModel.isPlanMode
+                    && !viewModel.chatMode.isPlanLike,
+                isPlanLike: viewModel.chatMode.isPlanLike
             ) {
                 viewModel.beginHandoff(baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
             }

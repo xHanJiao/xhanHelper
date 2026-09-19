@@ -69,7 +69,7 @@ type RunRequest struct {
 	Thinking           *bool    // 思考模式：nil=不传，true=开启，false=关闭
 	Window             WindowResult
 	ClientTools        []ClientTool // 客户端（Mac App）上报的本地 MCP 工具，可为空
-	Mode               string       // 会话模式：model.ConvModeWork（默认）| model.ConvModePlan（全部工具被禁用）
+	Mode               string       // 会话模式：ConvModeWork（默认）| ConvModePlan（只读）| ConvModeStrict（无工具）
 	ModeNotice         string       // 模式提示（注入当前 user 消息 XMLContext 的 notice 块，仅 LLM 可见，用户不可见）
 	BriefAnswer        bool         // 本轮要求精简回答（注入 system prompt 的输出长度约束，≤500 字）
 	// DocQuote 文档划线引用（客户端「问 AI」）：会话级状态——引用还在客户端就每轮都带，
@@ -367,7 +367,7 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	// 不再无条件下发；目录并入「工具使用」段，是 LLM 发现客户端工具的唯一渠道）。
 	// prompt-eng 模式本就不支持客户端工具，目录留空。
 	clientCatalog := ""
-	if o.useNativeFC && req.Mode != model.ConvModePlan {
+	if o.useNativeFC && !model.ModeRestrictsTools(req.Mode) {
 		clientCatalog = clientToolCatalog(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry)
 	}
 	stableXML := o.buildStableContextXML(ctx, req)
@@ -571,7 +571,7 @@ func exposureWindowKey(req *RunRequest, userMsg *model.Message) string {
 // 兼容旧格式：裸组名条目（无 "."）展开为该组全部函数。
 func (o *Orchestrator) loadExposure(ctx context.Context, req *RunRequest, userMsg *model.Message, state *reactState) {
 	state.exposedTools = map[string]bool{}
-	if !o.useNativeFC || req.Mode == model.ConvModePlan {
+	if !o.useNativeFC || model.ModeRestrictsTools(req.Mode) {
 		return
 	}
 	extra, err := o.convRepo.GetExtra(ctx, req.ConversationID)
@@ -603,7 +603,7 @@ func (o *Orchestrator) loadExposure(ctx context.Context, req *RunRequest, userMs
 // （used_tool_ids / subagent_type 等）。空集不写（避免无意义 DB 写）。
 // 持久化失败降级为日志（下次 run 重新暴露，无副作用）。
 func (o *Orchestrator) persistExposure(ctx context.Context, req *RunRequest, userMsg *model.Message, state *reactState) {
-	if !o.useNativeFC || req.Mode == model.ConvModePlan || len(state.exposedTools) == 0 {
+	if !o.useNativeFC || model.ModeRestrictsTools(req.Mode) || len(state.exposedTools) == 0 {
 		return
 	}
 	state.expMutex.Lock()
@@ -1078,8 +1078,10 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state 
 		thinking = &t
 	}
 	var tools []llm.ToolDefinition
-	// plan 模式：仅注入只读工具定义（写操作执行级仍被拦截）；work 模式：渐进式暴露。
-	if !state.finalRound && o.useNativeFC && req.Mode == model.ConvModePlan {
+	// strict：不下发任何工具；plan：仅注入只读工具定义（写操作执行级仍被拦截）；work：渐进式暴露。
+	if req.Mode == model.ConvModeStrict {
+		// 保持 tools 为 nil —— 连 expose_tools 都不给，LLM 无任何函数可调
+	} else if !state.finalRound && o.useNativeFC && req.Mode == model.ConvModePlan {
 		tools = filterToolDefs(o.registry.ReadOnlyToolDefinitions(), o.toolExcludes)
 	} else if !state.finalRound && o.useNativeFC {
 		// 渐进式暴露：常驻 expose_tools + 已暴露函数（函数粒度）的完整定义 + 客户端工具。
@@ -1836,12 +1838,12 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 				Error: "客户端本地工具不可用（本轮对话中已发生断连或超时），已跳过 " + tc.Tool + "." + tc.Function + "。请不要再调用客户端本地工具，直接告知用户即可。"}}
 			continue
 		}
-		// —— Plan 模式拦截：plan 模式下客户端工具全部禁用（2026-08-14 激进收紧，
-		// 不再依据 IsReadOnly 放行——只读机制保留仅为未来"只读浏览模式"备用）。
+		// —— 计划模式拦截：plan（只读）/ strict（无工具）下客户端工具全部禁用
+		// （不再依据 IsReadOnly 放行——只读机制保留仅为未来"只读浏览模式"备用）。
 		// 执行在客户端，服务端在此拦断——
-		if mode == model.ConvModePlan {
+		if model.ModeRestrictsTools(mode) {
 			results[idx] = toolExecResult{tc: tc, result: &tool.Result{Success: false,
-				Error: fmt.Sprintf("当前处于计划模式（只读讨论状态），本模式下已禁用全部客户端工具，禁止执行 %s.%s。请仅进行方案讨论；如需执行操作，请让用户切换到工作模式。", tc.Tool, tc.Function)}}
+				Error: fmt.Sprintf("当前处于计划模式，本模式下已禁用全部客户端工具，禁止执行 %s.%s。请仅进行方案讨论；如需执行操作，请让用户退出计划模式。", tc.Tool, tc.Function)}}
 			continue
 		}
 		r, unavailable := o.executeClientTool(ctx, events, userID, tc, mode, "main")

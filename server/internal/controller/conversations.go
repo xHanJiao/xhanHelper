@@ -701,8 +701,8 @@ func restoreConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 	}
 }
 
-// updateConversationMode — 切换会话模式（work/plan）。
-// 模式只能由用户/客户端显式切换（客户端 Tab 快捷键 / 手动调用），LLM 无任何控制权。
+// updateConversationMode — 切换会话模式（work/plan/strict）。
+// 模式只能由用户/客户端显式切换（客户端循环胶囊 / Tab 快捷键），LLM 无任何控制权。
 func updateConversationMode(convRepo *service.ConversationRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
@@ -716,8 +716,8 @@ func updateConversationMode(convRepo *service.ConversationRepo) gin.HandlerFunc 
 			view.JSONError(c, 400, "invalid request")
 			return
 		}
-		if req.Mode != model.ConvModeWork && req.Mode != model.ConvModePlan {
-			view.JSONError(c, 400, "mode must be work or plan")
+		if req.Mode != model.ConvModeWork && req.Mode != model.ConvModePlan && req.Mode != model.ConvModeStrict {
+			view.JSONError(c, 400, "mode must be work or plan or strict")
 			return
 		}
 		if err := convRepo.SetMode(c.Request.Context(), convID, req.Mode); err != nil {

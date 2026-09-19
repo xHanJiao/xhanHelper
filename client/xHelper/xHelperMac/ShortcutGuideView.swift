@@ -64,7 +64,7 @@ struct ShortcutGuideView: View {
         ShortcutSection(icon: "text.bubble", title: "聊天输入", hint: "输入框聚焦时", items: [
             ShortcutItem(keys: ["⏎"], desc: "换行"),
             ShortcutItem(keys: ["⇧", "⏎"], desc: "发送消息"),
-            ShortcutItem(keys: ["Tab"], desc: "切换计划 / 聊天模式"),
+            ShortcutItem(keys: ["Tab"], desc: "循环计划模式（关/普通/严格）"),
             ShortcutItem(keys: ["⌃", "C"], desc: "清空输入（文字与图片）"),
         ]),
         ShortcutSection(icon: "checkmark.shield", title: "工具确认", hint: "AI 请求工具授权时", items: [

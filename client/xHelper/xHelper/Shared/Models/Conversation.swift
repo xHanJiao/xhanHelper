@@ -8,7 +8,7 @@ struct Conversation: Identifiable, Codable {
     let agentName: String?
     let lastExtractedMsgId: String? = nil
     let lastExtractedAt: String? = nil
-    /// 会话模式："work"（默认）| "plan"（只读讨论状态）；旧数据可能缺失
+    /// 会话模式："work"（默认）| "plan"（只读）| "strict"（无工具）；旧数据可能缺失
     let mode: String?
     /// 无痕会话标记；普通会话服务端不返回该字段，故可选。
     /// 注意用 var：let 带默认值不会被 synthesized Decodable 解码，会恒为 nil

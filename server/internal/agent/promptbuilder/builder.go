@@ -87,11 +87,17 @@ func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildRes
 	}
 
 	// Layer 3: 输出规范 + 工具定义
-	// plan 模式只读化：只注入只读函数定义/提示，写工具对 LLM 不可见（执行级仍为最终兜底）
+	//   plan（普通计划模式）：只注入只读函数定义/提示，写工具对 LLM 不可见
+	//   strict（严格计划模式）：不注入任何工具定义/目录，仅给"无工具"提示
+	// 两者执行级均为最终兜底。
 	plan := opts.Mode == model.ConvModePlan
+	strict := opts.Mode == model.ConvModeStrict
 	for _, sp := range b.postRoleStatic {
 		var section string
 		switch {
+		case strict && (sp.Name() == "tool_definitions" || sp.Name() == "tool_catalog"):
+			// 严格档：两套工具段都换成"无工具"提示（请求体亦不下发 tools）
+			section = strictModeNotice
 		case plan && sp.Name() == "tool_definitions":
 			// prompt-eng 路径：仅渲染只读函数定义
 			if p, ok := sp.(*toolDefinitionsProvider); ok {

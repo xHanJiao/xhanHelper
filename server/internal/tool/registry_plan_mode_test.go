@@ -67,6 +67,34 @@ func TestExecuteByName_PlanModeAllowsRead(t *testing.T) {
 	}
 }
 
+func TestExecuteByName_StrictModeBlocksReadAndWrite(t *testing.T) {
+	// strict 档：无任何工具，只读函数也一并拦截
+	r := newPlanMockRegistry()
+	ec := &ExecuteContext{Ctx: context.Background(), Mode: model.ConvModeStrict}
+	res := r.ExecuteByName(ec, "mock_mixed", "query", json.RawMessage(`{}`))
+	if res.Success {
+		t.Fatal("strict 模式应拦截只读函数")
+	}
+	if !strings.Contains(res.Error, "严格计划模式") {
+		t.Errorf("拦截错误应说明严格计划模式, got: %s", res.Error)
+	}
+	if res := r.ExecuteByName(ec, "mock_mixed", "write", json.RawMessage(`{}`)); res.Success {
+		t.Error("strict 模式应拦截写函数")
+	}
+	if res := r.ExecuteByName(ec, "mock_write_all", "do", json.RawMessage(`{}`)); res.Success {
+		t.Error("strict 模式应拦截 ReadOnlyFuncs=nil 的工具")
+	}
+}
+
+func TestModeRestrictsTools(t *testing.T) {
+	if model.ModeRestrictsTools(model.ConvModeWork) {
+		t.Error("work 不应受限")
+	}
+	if !model.ModeRestrictsTools(model.ConvModePlan) || !model.ModeRestrictsTools(model.ConvModeStrict) {
+		t.Error("plan/strict 应受限")
+	}
+}
+
 func TestTaskTool_ReadOnlyFuncsNil(t *testing.T) {
 	// task 触发子 agent，可能间接写：声明为 nil，plan 模式全拦
 	if ro := NewTaskTool(nil, 0, 0).ReadOnlyFuncs(); len(ro) != 0 {

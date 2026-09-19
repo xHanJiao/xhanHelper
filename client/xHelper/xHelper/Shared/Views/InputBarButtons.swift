@@ -1,20 +1,39 @@
 import SwiftUI
 
-/// 会话模式图标按钮：聊天（青绿）/ 计划（橙），点击切换。仅图标，hover 看 tooltip。
+/// 会话模式图标按钮：关闭（青绿·工具全开）/ 普通（橙·只读）/ 严格（红·无工具），点击循环切换。
+/// 仅图标，hover 看 tooltip。
 struct ModePill: View {
     let context: InputBarContext
-    let isPlanMode: Bool
+    let mode: ChatMode
     let action: () -> Void
+
+    private var symbol: String {
+        mode == .strict ? "lock.fill" : "checklist"
+    }
+
+    private var tint: Color {
+        switch mode {
+        case .off: return Color("appAccent")
+        case .normal: return .orange
+        case .strict: return .red
+        }
+    }
+
+    private var tooltip: String {
+        switch mode {
+        case .off: return "聊天模式（工具全开），点击进入计划·普通（只读）"
+        case .normal: return "计划模式 · 普通（仅只读工具），点击切换到严格（无工具）"
+        case .strict: return "计划模式 · 严格（无工具），点击退出计划模式"
+        }
+    }
 
     var body: some View {
         IconButton(
             visibility: .always,
             context: context,
-            symbol: "checklist",
-            tint: isPlanMode ? .orange : Color("appAccent"),
-            tooltip: isPlanMode
-                ? "计划模式 · 只读，点击切换聊天"
-                : "聊天模式，点击切换计划",
+            symbol: symbol,
+            tint: tint,
+            tooltip: tooltip,
             action: action
         )
     }
@@ -93,11 +112,11 @@ struct BriefPill: View {
 }
 
 /// 会话接力图标按钮：把当前会话整理成接力文档并新开会话续接。仅图标，hover 看 tooltip。
-/// 计划模式只读、接力要写文档，故置灰并用 tooltip 说明原因（而非「暂时不可点」）。
+/// 计划模式不能写文档，故置灰并用 tooltip 说明原因（而非「暂时不可点」）。
 struct HandoffPill: View {
     let context: InputBarContext
     let isEnabled: Bool
-    let isPlanMode: Bool
+    let isPlanLike: Bool
     let action: () -> Void
 
     var body: some View {
@@ -107,8 +126,8 @@ struct HandoffPill: View {
             symbol: "arrow.uturn.right.circle",
             tint: Color("appAccent"),
             isEnabled: isEnabled,
-            tooltip: isPlanMode
-                ? "计划模式只读，先切回聊天模式再接力"
+            tooltip: isPlanLike
+                ? "计划模式不能写文档，先退出计划模式再接力"
                 : "整理结论并开始新会话（接力）",
             action: action
         )

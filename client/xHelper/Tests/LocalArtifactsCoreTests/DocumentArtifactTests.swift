@@ -43,6 +43,41 @@ final class DocumentArtifactTests: XCTestCase {
         XCTAssertEqual(patch?.tags, ["回归"])
     }
 
+    func testUpdatePrefersAuthoritativeDataFields() {
+        let patch = DocumentArtifactProducer.patch(
+            function: "update_document",
+            args: ["id": "doc-3", "title": "入参标题", "tags": "入参", "content": "入参正文"],
+            data: [
+                "id": "doc-3",
+                "title": "写后标题",
+                "tags": "写后, 标签",
+                "preview": "写后正文摘要",
+            ]
+        )
+        XCTAssertEqual(patch?.title, "写后标题", "服务端回填的权威标题优先于入参")
+        XCTAssertEqual(patch?.tags, ["写后", "标签"], "服务端回填的权威标签优先于入参")
+        XCTAssertEqual(patch?.preview, "写后正文摘要", "服务端回填的摘要优先于入参 content")
+    }
+
+    func testUpdateTitleFromDataWhenArgsOmitIt() {
+        let patch = DocumentArtifactProducer.patch(
+            function: "update_document",
+            args: ["id": "doc-3", "content": "改正文"],
+            data: ["id": "doc-3", "title": "原标题", "tags": "检索", "preview": "改正文"]
+        )
+        XCTAssertEqual(patch?.title, "原标题", "模型没传 title 时也要拿到真标题（不再退化成占位）")
+        XCTAssertNotNil(patch?.tags)
+    }
+
+    func testUpdateAuthoritativeEmptyTagsMeansClear() {
+        let patch = DocumentArtifactProducer.patch(
+            function: "update_document",
+            args: ["id": "doc-3"],
+            data: ["id": "doc-3", "title": "标题", "tags": "", "preview": "正文"]
+        )
+        XCTAssertEqual(patch?.tags, [], "服务端回填空 tags = 当前无标签")
+    }
+
     func testUpdateTagsAbsentMeansNil() {
         let patch = DocumentArtifactProducer.patch(
             function: "update_document",
@@ -92,9 +127,15 @@ final class DocumentArtifactTests: XCTestCase {
         }
     }
 
-    func testPreviewTruncatedToMaxLen() {
-        let long = String(repeating: "字", count: 200)
-        XCTAssertEqual(DocumentArtifactProducer.makePreview(long)?.count, DocumentArtifactProducer.previewMaxLen)
+    func testPreviewTruncatedToMaxLenWithEllipsis() {
+        let long = String(repeating: "字", count: DocumentArtifactProducer.previewMaxLen + 50)
+        let preview = DocumentArtifactProducer.makePreview(long)
+        XCTAssertEqual(preview?.count, DocumentArtifactProducer.previewMaxLen + 3, "截断后补 ...")
+        XCTAssertTrue(preview?.hasSuffix("...") == true)
+    }
+
+    func testPreviewShortHasNoEllipsis() {
+        XCTAssertFalse(DocumentArtifactProducer.makePreview("短摘要")?.hasSuffix("...") ?? true)
     }
 
     func testPreviewNilForBlankContent() {

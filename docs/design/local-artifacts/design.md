@@ -1,7 +1,8 @@
 # 本地产物管线（LocalArtifact）
 
 > 日期：2026-09-19
-> 状态：✅ 已实现（客户端纯逻辑 `swift test` 绿；macOS/iOS `swiftc -typecheck` 0 error；集成由 Xcode 真机验证）
+> 状态：✅ 已实现（客户端纯逻辑 `swift test` 绿；macOS/iOS `swiftc -typecheck` 0 error；服务端 `go test` 绿；集成由 Xcode 真机验证）
+> 追加（同日）：卡片观感修复——服务端 `update_document` 回填权威 `title`/`tags`/`preview`（消除占位「文档」）；卡片按 `card-mockup.html` 定稿重排（**只留标题 + 摘要(≤3 行)**、整卡可点、无外框、行距 6；图标/标签/按钮已裁掉）；本地产物（chart + 文档卡片）**移到回复的思考 + 正文上方**
 > 来源：文档内链需求（聊天里的「打开文档」卡片）倒逼出的一次通用化
 > 前身：`chart` 客户端工具的本地产物落盘（`LocalToolResultStore` / `insertChartMessage`）
 
@@ -31,13 +32,13 @@
 
 SSE 流式期间 assistant 占位消息 id 是哨兵 `__streaming__`，工具结果（`tool_result` 事件）**先于**真实消息 id 到达，`.done` 才把 id 换成服务端真实 id。
 
-所以**绝对不能把本地产物按 assistant 消息 id 绑定**——绑定时刻的 id 与之后的 id 不是同一个。chart 当年的解法是：本地产物**自成一个稳定 id 的本地消息** + `createdAt`，持久化后按时间重放、按「其后最近一条 assistant」重定位。本管线沿用这个解法，并把它抽成纯函数以便单测。
+所以**绝对不能把本地产物按 assistant 消息 id 绑定**——绑定时刻的 id 与之后的 id 不是同一个。chart 当年的解法是：本地产物**自成一个稳定 id 的本地消息** + `createdAt`，持久化后按时间重放、按「最近 assistant（位置距离）」重定位。本管线沿用这个解法，并把它抽成纯函数以便单测。
 
 ## 二、目标 / 非目标
 
 **目标**
 - 统一的「工具结果 → 特殊展示 + 本地缓存」管线；新增类型只写「enum case + 载荷 Codable + 渲染视图 + producer 分支」。
-- 本地产物按会话持久化，切屏/重载后仍在，且**挨在产生它的那条回复下方**（不浮在最新消息下）。
+- 本地产物按会话持久化，切屏/重载后仍在，且**落在产生它的那条回复的思考 + 正文上方**（不浮在最新消息下）。
 - 管线纯逻辑可单测（`swift test`）。
 - chart 迁移到同一管线，不保留双轨。
 
@@ -82,7 +83,7 @@ func insertLocalArtifact(_ artifact: LocalArtifact) {
     // 1) artifact.payload() 编码（失败 → 记录并跳过）
     // 2) 建 role=local_tool_result 消息：本地稳定 id "local_<uuid>" + createdAt=now
     // 3) 设 localToolResult（持久化壳）与 localArtifact（解码值）
-    // 4) append 到 messages；异步 upsert 落盘
+    // 4) 插到当前 __streaming__ assistant 之前（找不到才 append）；异步 upsert 落盘
 }
 ```
 
@@ -92,7 +93,7 @@ chart 与文档卡片共用它，不再各写一份。
 
 `Shared/LocalArtifacts/DocumentArtifactProducer.swift`——纯函数 `patch(function:args:data:) -> DocumentRefPatch?`。
 
-**为什么只认 `create_document` / `update_document`，不认 `get_document`**：卡片是「agent 操作过的文档」入口。若把读也算进来，同轮「先 get（读到改前旧值）→ 再 update（改后新值）」会让卡片刻在**过期快照**上（第一版 bug）。去掉 get 后，每次写都带出它当时的权威新状态（title/tags 在入参里）。只读场景的导航靠模型正文内链 + 右栏文档面板。`query`/`list` 是列表，逐条出卡片太吵，也不做。
+**为什么只认 `create_document` / `update_document`，不认 `get_document`**：卡片是「agent 操作过的文档」入口。若把读也算进来，同轮「先 get（读到改前旧值）→ 再 update（改后新值）」会让卡片刻在**过期快照**上（第一版 bug）。去掉 get 后，每次写都带出它当时的权威新状态（create 用入参；update 用**服务端写后回填**的 title/tags/preview，见 3.4.1）。只读场景的导航靠模型正文内链 + 右栏文档面板。`query`/`list` 是列表，逐条出卡片太吵，也不做。
 
 返回的是**增量 patch**，字段用 Optional 区分「未提供 vs 显式清空」：
 
@@ -107,10 +108,21 @@ struct DocumentRefPatch {
 
 规则：
 - `create_document`：`title = data.title ?? args.title`；`tags = parseTags(args.tags)`（新建无参数即空）；`preview = makePreview(args.content)`（全文）。
-- `update_document`：`title = args.title`（可选）；`tags = args 出现 ? parseTags : nil`；`preview = makePreview(args.content)` —— **只用全文重写的 `content`**，`old_text/new_text` 是片段，不作摘要（否则会冲掉旧摘要）。
-- `parseTags`：半角/全角逗号切分、去空格、去重（对齐服务端 `service.NormalizeTags`）。`makePreview`：折叠空白 + 截 60 字 + 空 → nil。
+- `update_document`：**data 优先、args 兜底**——`title = data.title ?? args.title`；`tags = data.tags.map(parseTags) ?? (args 出现 ? parseTags : nil)`；`preview = makePreview(data.preview) ?? makePreview(args.content)`。服务端回填的是写后权威值（见 3.4.1），故 data 优先；旧服务端无这些字段时回落到 args 的旧行为。
+- `parseTags`：半角/全角逗号切分、去空格、去重（对齐服务端 `service.NormalizeTags`）。`makePreview`：折叠空白 + 安全上限 200 字（真触发才补 `...`，正常不触发）+ 空 → nil；**展示截断交给卡片 `lineLimit(3)`**（按实际宽度截并补 `…`），数据层不按固定字数砍（服务端 100 字预览原样透传）。
 
 未来同类需求（tool_result JSON → 特殊展示）在这里加一个 producer 函数即可。
+
+#### 3.4.1 服务端回填权威 title / tags / preview（2026-09-19 补）
+
+**问题**：update-only 轮（模型只改正文/只调标签、没传 `title`）时，producer 从入参取不到 title → `DocumentRef.make` 兜底成占位「文档」，卡片显示不出真标题；preview 也无从取（只有片段 `new_text`，不能当摘要）。
+
+**做法**：`server/internal/tool/document.go::updateDocument` 在结果里回填写后权威值（该函数本就 `GetByID` 拿到 `current`，零额外查询）：
+- `title = updates["title"] ?? current.Title`
+- `tags = updates["tags"] ?? current.Tags`（`Document.Tags` 是逗号串）
+- `preview = util.TruncateContent(updates["content"] ?? current.Content, docPreviewLen=100)`
+
+`nothing to update` 早退路径保持原样（no-op 不出卡片）。这改的是**工具结果内容**、不是工具定义，不破坏 DeepSeek 前缀缓存（动态内容本就不进请求体模板）。`document_test.go` 的 `TestDocumentUpdateReturnsAuthoritativeFields` 钉住。
 
 ### 3.5 按轮合并：`DocumentRef.make/merged`（纯）
 
@@ -133,7 +145,9 @@ func merged(with patch:) -> DocumentRef         // 再触达：patch 非 nil 覆
 static func reposition<T>(_ items: [T], isLocal: (T) -> Bool, isAssistant: (T) -> Bool) -> [T]
 ```
 
-按 `createdAt` 排序后，把每条 `local_tool_result` 移到「其后最近一条 assistant」之后；其后没有 assistant 则保持原位。用泛型 + 谓词保持纯、可单测（不必依赖 `Message`）。
+按创建时间排序后，把每条 `local_tool_result` 移到**与其位置距离最近的 assistant 之前**（等距取更靠前者）；列表里没有 assistant 则保持原位。这样卡片落在产生它的那条回复的**思考 + 正文上方**（chart 与 docRefs 统一）。用泛型 + 谓词保持纯、可单测（不必依赖 `Message`）。
+
+「最近」用**位置距离**而非时间比较：本地 `createdAt` 与服务端时间串格式不同（无/有小数秒），同秒 tie 时字符串排序不稳定——距离判定对「tie 排在 assistant 前/后」两种情况都稳定，也避免「有下一轮 assistant 时卡片被搬去下一轮」。
 
 ### 3.7 渲染分发
 
@@ -144,7 +158,9 @@ case .chart(let cd):   ChartBubble(chartData: cd)
 case .docRefs(let refs): DocumentRefCard（仅 macOS，iOS 无右栏文档面板）
 ```
 
-`DocumentRefCard`：图标 + 标题 + tag 胶囊 + preview 单行 + 「打开」，配色全用现有 token（`appAccent` / `surfaceInput` / `assistantText`）。
+`DocumentRefCard`（按 `card-mockup.html` 定稿）：**整卡可点**（`Button` 包住内容，`buttonStyle(.plain)`），只展示**标题 13.5 semibold + 摘要 11.5 muted（最多 3 行）**，`spacing 6`；`surfaceInput` 底、r11、无外框、maxWidth 240、内边距 12×10。图标/标签/「打开」按钮已按观感迭代裁掉（点整卡即可打开文档面板定位）。
+
+> 标签展示曾用 `ViewThatFits(in: .horizontal)` 宽度自适应收起（`+N`），现标签整体不展示，相关代码已移除；若日后要恢复，参照 `card-mockup.html` 历史或 git 记录。
 
 ## 四、一次会话的时序
 
@@ -152,14 +168,15 @@ case .docRefs(let refs): DocumentRefCard（仅 macOS，iOS 无右栏文档面板
 SSE tool_call      → parseToolCall（留存 tool/function/args）→ pendingToolCalls
 SSE tool_result    → DocumentArtifactProducer.patch(args, data) → DocumentRefPatch
                    → upsertRoundDocumentRef: roundDocRefs 合并 → 就地更新已有本地消息
-                     （或首触达 insertLocalArtifact）+ 异步 upsert 落盘   ← 卡片即刻出现
+                     （或首触达 insertLocalArtifact：插到 __streaming__ assistant 之前）
+                     + 异步 upsert 落盘   ← 卡片即刻出现在该回复的思考 + 正文上方
 SSE done           → assistant id __streaming__ → 真实 id（本地产物不受影响）
 ...
 loadConversation   → messages 全量替换
                    → mergeLocalToolResults: 按 [first.createdAt, last.createdAt] 从盘读回
                      → LocalArtifact(type:payload:) 解码 → append
                      → 按 createdAt 排序 → LocalArtifactMerge.reposition 归位
-                   ⇒ 卡片回到对应回复下方
+                   ⇒ 卡片回到对应回复的思考 + 正文上方
 ```
 
 ## 五、可测性边界
@@ -169,45 +186,50 @@ loadConversation   → messages 全量替换
 
 ## 六、测试覆盖
 
-命令：`cd client/xHelper && swift test`（LocalArtifactsCore 共 41 例）。
+命令：`cd client/xHelper && swift test`（LocalArtifactsCore 共 48 例）。
 
 | 文件 | 覆盖 |
 |---|---|
 | `LocalArtifactTests` | chart/docRefs 编解码往返；空 docRefs；Unicode/emoji/换行；坏 payload → nil；类型不符 → nil |
-| `DocumentArtifactTests` | 只认 create/update（get/query/list/delete → nil）；create 无 tags = `[]`；update 无 tags = `nil`、空串 = `[]`；`new_text` 不作 preview；title 来源；缺 id/空 id → nil；parseTags 半/全角 + 去重 + 去空；preview 折叠 + 截断 + 空 → nil |
+| `DocumentArtifactTests` | 只认 create/update（get/query/list/delete → nil）；create 无 tags = `[]`；update 无 tags = `nil`、空串 = `[]`；update **data 优先于 args**（title/tags/preview）、data 有 title 而 args 无、data 回填空 tags = `[]`；`new_text` 不作 preview；title 来源；缺 id/空 id → nil；parseTags 半/全角 + 去重 + 去空；preview 折叠 + 安全上限截断补 `...` + 空 → nil |
 | `DocumentRefMergeTests` | `make` 兜底 title「文档」/tags `[]`；`merged` nil 保留、非 nil 覆盖；`create[a,b,c]→update[a]`= `[a]`；update 无 tags 保留；update `tags=""` 清空；片段更新不冲掉旧摘要 |
 | `LocalToolResultStoreTests` | upsert→entries 往返；多会话文件隔离；同 id 覆盖不重复；范围过滤含边界；换新实例仍从盘读回；clearAll 清盘与内存 |
-| `LocalArtifactMergeTests` | local 移到其后最近 assistant；多条 local 同落一条 assistant 后；末尾无 assistant 保持；已正确顺序不变；交错场景；空/单元素 noop |
+| `LocalArtifactMergeTests` | local 移到最近 assistant **之前**；tie 排在 assistant 前/后都稳定；多条 local 注入同一 assistant 前且保序；距下一轮更近则归下一轮；不被下一轮抢走；等距取靠前者；无 assistant 保持；空/单元素 noop |
 
 ## 七、涉及文件
 
 新增：
 - `client/xHelper/xHelper/Shared/LocalArtifacts/{LocalArtifact,DocumentRef,DocumentArtifactProducer,LocalArtifactMerge}.swift`（`DocumentRef.swift` 含 `DocumentRefPatch` 与 `make/merged`）
 - `client/xHelper/Tests/LocalArtifactsCoreTests/{LocalArtifactTests,DocumentArtifactTests,DocumentRefMergeTests,LocalToolResultStoreTests,LocalArtifactMergeTests}.swift`
+- `docs/design/local-artifacts/card-mockup.html`（卡片细节交互稿）
 
 改造：
 - `Models/LocalToolResultData.swift`（+`docRefs`）、`Models/Message.swift`（`chartData`→`localArtifact`）、`Models/ChartData.swift`（+`Equatable`）
 - `Services/LocalToolResultStore.swift`（注入 baseURL + 原语 upsert + throwing）
 - `ViewModels/ChatViewModel.swift`（`insertLocalArtifact` / `upsertRoundDocumentRef` / `roundDocRefs`+`roundDocRefMessageID` / merge 重写；删 `documentRefs`）
 - `ViewModels/ChatViewModel+ClientTools.swift`（chart 走 `insertLocalArtifact(.chart)`）
-- `Views/MessageListView.swift`（`localArtifactView` + `DocumentRefCard` 加 tags/preview；删 `documentRefs` 参数）
+- `Views/MessageListView.swift`（`localArtifactView` + `DocumentRefCard`：只留标题 + 摘要（≤3 行）、整卡可点；删 `documentRefs` 参数）
 - `Views/ChatView.swift`（删 `documentRefs:` 实参）
 - `xHelperMac/App.swift`（clearAll 改 try/catch 记录）
 - `client/xHelper/Package.swift`（新增 `LocalArtifactsCore` + `LocalArtifactsCoreTests`）
 
-服务端：**零改动**（数据本就在现有 tool_call 入参 / tool_result 返回值里，不碰前缀缓存）。
+服务端（2026-09-19 补）：
+- `internal/tool/document.go`（`update_document` 结果回填权威 `title`/`tags`/`preview`）
+- `internal/tool/document_test.go`（`TestDocumentUpdateReturnsAuthoritativeFields`）
 
 ## 八、验收
 
-- `cd client/xHelper && swift test` 全绿（含 LocalArtifactsCore 41 例）。
+- `cd client/xHelper && swift test` 全绿（含 LocalArtifactsCore 44 例）。
 - `swiftc -typecheck` macOS + iOS 0 error。
-- 真机：发消息触发建/改文档 → 卡片带 tags + preview；切屏/重载回来卡片仍在，且挨在对应回复下方。
+- 服务端 `go build ./... && go test ./...` 全绿（含 `TestDocumentUpdateReturnsAuthoritativeFields`）。
+- 真机：发消息触发建/改文档 → 卡片显示真标题 + 摘要（≤3 行）、整卡可点、无外框；切屏/重载回来卡片仍在，且落在对应回复的思考 + 正文**上方**。
 
 ## 九、风险 / 已知取舍
 
-- **时间串格式**：本地 `ISO8601DateFormatter`（无小数秒）与服务端 RFC3339（`time.Time` JSON）可能不完全一致，范围过滤靠 `[first, last]` 够宽 + 重定位循环兜底；chart 一直如此运行。
+- **时间串格式**：本地 `ISO8601DateFormatter`（无小数秒）与服务端 RFC3339（`time.Time` JSON）可能不完全一致，同秒 tie 时排序不稳定；重定位改用**位置距离**判定（不比较时间串），范围过滤靠 `[first, last]` 够宽兜底。
 - **设备本地**：缓存不跨设备，新设备/重装后历史轮次的本地产物不出现。要跨设备需回头解析历史 `tool_calls_json`，是另一个量级，先不做。
 - **本地结果不可分享**：`isUnshareable` 覆盖所有 `localToolResult`，chart 同款，符合预期。
+- **update 结果多带一个 preview**：服务端每次 `update_document` 多返回 ~100 字正文摘要进模型上下文（为让 update-only 卡片有摘要）。量小、接受；若日后在意 token，把 `preview` 从结果里去掉、卡片改无摘要态即可。
 
 ## 十、后续迭代（未做）
 

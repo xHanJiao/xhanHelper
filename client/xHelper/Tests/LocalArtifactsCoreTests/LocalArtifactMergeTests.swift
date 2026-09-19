@@ -15,31 +15,32 @@ final class LocalArtifactMergeTests: XCTestCase {
         )
     }
 
-    func testLocalMovedAfterNextAssistant() {
+    func testLocalAlreadyBeforeAssistantStays() {
         let items = [Item(id: "u", role: "user"), Item(id: "l", role: "local"), Item(id: "a", role: "assistant")]
-        XCTAssertEqual(reposition(items).map(\.id), ["u", "a", "l"])
+        XCTAssertEqual(reposition(items).map(\.id), ["u", "l", "a"])
     }
 
-    func testMultipleLocalsAfterSameAssistant() {
+    func testLocalAfterAssistantMovesBeforeIt() {
+        let items = [Item(id: "u", role: "user"), Item(id: "a", role: "assistant"), Item(id: "l", role: "local")]
+        XCTAssertEqual(reposition(items).map(\.id), ["u", "l", "a"])
+    }
+
+    func testMultipleLocalsInjectedBeforeAssistantKeepingOrder() {
         let items = [
             Item(id: "a", role: "assistant"),
             Item(id: "l1", role: "local"),
             Item(id: "l2", role: "local"),
         ]
-        XCTAssertEqual(reposition(items).map(\.id), ["a", "l1", "l2"])
+        XCTAssertEqual(reposition(items).map(\.id), ["l1", "l2", "a"])
     }
 
-    func testLocalWithNoFollowingAssistantStays() {
-        let items = [Item(id: "a", role: "assistant"), Item(id: "u", role: "user"), Item(id: "l", role: "local")]
-        XCTAssertEqual(reposition(items).map(\.id), ["a", "u", "l"])
-    }
-
-    func testAlreadyCorrectOrderUnchanged() {
+    func testLocalWithTrailingUserStillMovesBeforeAssistant() {
         let items = [Item(id: "a", role: "assistant"), Item(id: "l", role: "local"), Item(id: "u", role: "user")]
-        XCTAssertEqual(reposition(items).map(\.id), ["a", "l", "u"])
+        XCTAssertEqual(reposition(items).map(\.id), ["l", "a", "u"])
     }
 
-    func testInterleavedMovesToNearestFollowingAssistant() {
+    func testLocalAnchorsToNearestAssistantAcrossTurns() {
+        // l1 距 a2 更近（1）→ 归 a2，保持在 a2 之前
         let items = [
             Item(id: "u1", role: "user"),
             Item(id: "a1", role: "assistant"),
@@ -47,7 +48,29 @@ final class LocalArtifactMergeTests: XCTestCase {
             Item(id: "l1", role: "local"),
             Item(id: "a2", role: "assistant"),
         ]
-        XCTAssertEqual(reposition(items).map(\.id), ["u1", "a1", "u2", "a2", "l1"])
+        XCTAssertEqual(reposition(items).map(\.id), ["u1", "a1", "u2", "l1", "a2"])
+    }
+
+    func testLocalAfterItsAssistantNotStolenByNextTurn() {
+        // l1 距 a1 更近（1）→ 归 a1，而不是被下一轮的 a2 抢走
+        let items = [
+            Item(id: "u1", role: "user"),
+            Item(id: "a1", role: "assistant"),
+            Item(id: "l1", role: "local"),
+            Item(id: "u2", role: "user"),
+            Item(id: "a2", role: "assistant"),
+        ]
+        XCTAssertEqual(reposition(items).map(\.id), ["u1", "l1", "a1", "u2", "a2"])
+    }
+
+    func testEquidistantTieAnchorsToEarlierAssistant() {
+        let items = [Item(id: "a1", role: "assistant"), Item(id: "l", role: "local"), Item(id: "a2", role: "assistant")]
+        XCTAssertEqual(reposition(items).map(\.id), ["l", "a1", "a2"])
+    }
+
+    func testNoAssistantKeepsOrder() {
+        let items = [Item(id: "u", role: "user"), Item(id: "l", role: "local")]
+        XCTAssertEqual(reposition(items).map(\.id), ["u", "l"])
     }
 
     func testEmptyAndSingleAreNoop() {

@@ -898,63 +898,33 @@ private struct GlassCapsuleModifier: ViewModifier {
 }
 
 #if os(macOS)
-/// 聊天里的文档入口卡片：点「打开」把右栏切到文档面板并定位。
-/// 挂在产生它的那条助手消息下方（本地产物重定位）；正文里由模型写出的内链走 openURL 另一条路。
+/// 聊天里的文档入口卡片：整卡可点，点了把右栏切到文档面板并定位。
+/// 只展示标题 + 摘要（其余元素按观感迭代裁掉）。
 private struct DocumentRefCard: View {
     let ref: DocumentRef
     let onOpen: () -> Void
 
     var body: some View {
         Button(action: onOpen) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "doc.text")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(Color("appAccent"))
-                    .frame(width: 34, height: 34)
-                    .background(Color("appAccent").opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 6) {
+                Text(ref.title)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundColor(Color("assistantText"))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(ref.title)
-                        .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundColor(Color("assistantText"))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-
-                    if !ref.tags.isEmpty {
-                        HStack(spacing: 5) {
-                            ForEach(ref.tags.prefix(3), id: \.self) { tag in
-                                Text(tag)
-                                    .font(.system(size: 10))
-                                    .foregroundColor(Color("appAccent"))
-                                    .padding(.horizontal, 7).padding(.vertical, 1)
-                                    .background(Color("appAccent").opacity(0.12), in: Capsule())
-                            }
-                        }
-                    }
-
-                    if let preview = ref.preview, !preview.isEmpty {
-                        Text(preview)
-                            .font(.system(size: 11.5))
-                            .foregroundColor(Color("assistantText").opacity(0.6))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
+                if let preview = ref.preview, !preview.isEmpty {
+                    Text(preview)
+                        .font(.system(size: 11.5))
+                        .foregroundColor(Color("assistantText").opacity(0.6))
+                        .lineLimit(3)
+                        .truncationMode(.tail)
                 }
-
-                Spacer(minLength: 8)
-
-                Text("打开")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(Color("appAccent"))
-                    .padding(.top, 2)
             }
-            .padding(.horizontal, 12).padding(.vertical, 9)
-            .frame(maxWidth: 420, alignment: .leading)
+            .frame(maxWidth: 240, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
             .background(Color("surfaceInput"), in: RoundedRectangle(cornerRadius: 11))
-            .overlay(
-                RoundedRectangle(cornerRadius: 11)
-                    .stroke(Color("appAccent").opacity(0.25), lineWidth: 1)
-            )
         }
         .buttonStyle(.plain)
         .help("在右侧栏打开《\(ref.title)》")

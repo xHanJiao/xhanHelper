@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>文档卡片形态 · 交互稿</title>
+<style>
+/* 聊天里的文档入口卡片：整卡可点，只展示标题 + 摘要（其余元素按观感迭代裁掉）。
+   token 取 client/xHelper/xHelperMac/Assets.xcassets/*.colorset。 */
+:root {
+  --text:      #3B2E1F;   /* assistantText light */
+  --accent:    #2F7D63;   /* appAccent light */
+  --user:      #2A7F58;   /* userText light */
+  --chat-bg:      #F7EEDD;
+  --chat-bg-deep: #EFE2C8;
+  --bubble-reply: #F2F7F3;   /* surfaceInput */
+  --muted:       color-mix(in srgb, var(--text) 55%, transparent);
+  --fs: 17px;
+  --card-gap: 6px;
+}
+.dark {
+  --text:      #FFFFFF;
+  --accent:    #92C8B4;
+  --user:      #90D4A8;
+  --chat-bg:      #1C1C1E;
+  --chat-bg-deep: #141416;
+  --bubble-reply: #2C2E2D;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh; font-family: -apple-system, "PingFang SC", sans-serif;
+  color: var(--text);
+  background: linear-gradient(160deg, var(--chat-bg), var(--chat-bg-deep));
+}
+.stage { max-width: 728px; margin: 0 auto; padding: 48px 24px 120px; }
+.col { display: flex; flex-direction: column; gap: 14px; }
+.msg { display: flex; }
+.msg.user { justify-content: flex-end; }
+.msg.ai { justify-content: flex-start; flex-direction: column; align-items: flex-start; gap: 8px; }
+.bubble {
+  max-width: 82%; padding: 10px 14px; border-radius: 14px;
+  font-size: calc(var(--fs) * .86); line-height: 1.55;
+}
+.bubble.user { background: var(--bubble-reply); color: var(--user); }
+.bubble.ai   { background: var(--bubble-reply); color: var(--text); }
+.think { max-width: 82%; font-size: calc(var(--fs) * .8); color: var(--muted); font-style: italic; }
+
+/* ===== 文档入口卡片：只有标题 + 摘要 ===== */
+.entry-card {
+  max-width: 240px; padding: 10px 12px;
+  background: var(--bubble-reply); border-radius: 11px; cursor: pointer;
+  display: flex; flex-direction: column; gap: var(--card-gap);
+}
+.ec-title { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ec-preview {
+  font-size: 11.5px; color: var(--muted);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* ===== 控制台 ===== */
+.ui, .ui * { user-select: none; -webkit-user-select: none; }
+.devcbar {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center;
+  max-width: calc(100vw - 32px);
+  padding: 10px 16px; border-radius: 14px;
+  background: rgba(28,28,30,.86); color: #fff;
+  box-shadow: 0 14px 40px rgba(0,0,0,.35); backdrop-filter: blur(14px);
+  font-size: 12.5px;
+}
+.devcbar .grp { display: flex; align-items: center; gap: 6px; }
+.devcbar .lbl { opacity: .6; }
+.devcbar button {
+  font-family: inherit; font-size: 12.5px; color: #fff;
+  background: rgba(255,255,255,.12); border: 0; border-radius: 8px;
+  padding: 5px 10px; cursor: pointer;
+}
+.devcbar button.on { background: var(--accent); color: #141416; }
+.devcbar .sep { width: 1px; height: 20px; background: rgba(255,255,255,.18); }
+.hint { max-width: 728px; margin: 0 auto 14px; padding: 0 24px; color: var(--muted); font-size: 12.5px; }
+</style>
+</head>
+<body>
+  <div class="hint">聊天气泡 + 文档入口卡片（只留标题 + 摘要，整卡可点；摘要最多 3 行）。卡片在该条回复的思考 + 正文**上方**。底部控制条可切行距/主题。</div>
+  <div class="stage">
+    <div class="col">
+      <div class="msg user">
+        <div class="bubble user">把「回归测试文档 v3」的标签改成 回归测试、测试C、测试D，顺便更新下正文</div>
+      </div>
+      <div id="cardSlot"></div>
+      <div class="msg ai">
+        <div class="think">思考：用户要改标签并更新正文，先 update_document…</div>
+        <div class="bubble ai">改好了，标题和正文都更新到最新版本。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="devcbar ui">
+    <div class="grp"><span class="lbl">摘要</span>
+      <button id="pv-on">有</button><button id="pv-off">无</button>
+    </div>
+    <div class="sep"></div>
+    <div class="grp"><span class="lbl">行距</span>
+      <button data-gap="4">4</button>
+      <button data-gap="6">6</button>
+      <button data-gap="8">8</button>
+    </div>
+    <div class="sep"></div>
+    <div class="grp">
+      <button id="dev-fs-minus">A-</button><button id="dev-fs-plus">A+</button>
+      <button id="dev-theme">深色</button>
+    </div>
+  </div>
+
+<script>
+(function () {
+  var state = { preview: true, gap: 6 };
+
+  function cardHTML() {
+    var pv = state.preview
+      ? '<div class="ec-preview">本文档用于回归测试，覆盖创建、更新、标签归一与局部替换等场景；改版后请重跑一遍回归用例，确认文档列表、标签检索与批注锚点都正常。</div>'
+      : '';
+    return '<div class="entry-card">'
+      + '<div class="ec-title">回归测试文档 v3</div>'
+      + pv
+      + '</div>';
+  }
+
+  function render() {
+    document.getElementById('cardSlot').innerHTML = cardHTML();
+    document.getElementById('pv-on').classList.toggle('on', state.preview);
+    document.getElementById('pv-off').classList.toggle('on', !state.preview);
+  }
+  function applyGap() {
+    document.documentElement.style.setProperty('--card-gap', state.gap + 'px');
+    document.querySelectorAll('.devcbar [data-gap]').forEach(function (b) {
+      b.classList.toggle('on', Number(b.getAttribute('data-gap')) === state.gap);
+    });
+  }
+
+  document.getElementById('pv-on').onclick  = function () { state.preview = true;  render(); };
+  document.getElementById('pv-off').onclick = function () { state.preview = false; render(); };
+  document.querySelectorAll('.devcbar [data-gap]').forEach(function (b) {
+    b.onclick = function () { state.gap = Number(b.getAttribute('data-gap')); applyGap(); };
+  });
+
+  var fs = 17;
+  document.getElementById('dev-fs-plus').onclick  = function () { fs = Math.min(23, fs + 1); document.documentElement.style.setProperty('--fs', fs + 'px'); };
+  document.getElementById('dev-fs-minus').onclick = function () { fs = Math.max(13, fs - 1); document.documentElement.style.setProperty('--fs', fs + 'px'); };
+  document.getElementById('dev-theme').onclick = function (e) {
+    var dark = document.documentElement.classList.toggle('dark');
+    e.target.textContent = dark ? '浅色' : '深色';
+  };
+
+  var q = new URLSearchParams(location.search);
+  if (q.get('pv') === '0') state.preview = false;
+  if (q.get('gap')) state.gap = Number(q.get('gap'));
+  if (q.get('dark') === '1') { document.documentElement.classList.add('dark'); document.getElementById('dev-theme').textContent = '浅色'; }
+  render(); applyGap();
+})();
+</script>
+</body>
+</html>

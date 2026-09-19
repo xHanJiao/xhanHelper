@@ -874,6 +874,73 @@ func TestDocumentTagsNormalizeAndClear(t *testing.T) {
 	}
 }
 
+// update_document 必须回填写后的权威 title/tags/preview，供客户端文档卡片使用
+func TestDocumentUpdateReturnsAuthoritativeFields(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	id := createDocForTest(t, tool, ec, "原标题", "原正文")
+
+	parse := func(res *Result) map[string]interface{} {
+		t.Helper()
+		if !res.Success {
+			t.Fatalf("update failed: %s", res.Error)
+		}
+		var out map[string]interface{}
+		if err := json.Unmarshal(res.Data, &out); err != nil {
+			t.Fatalf("unmarshal update result: %v", err)
+		}
+		return out
+	}
+
+	// 只改正文：title/tags 回填当前值，preview 用新正文
+	out := parse(tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{
+		"id": id, "content": "新正文内容",
+	})))
+	if out["title"] != "原标题" {
+		t.Errorf("title should fall back to current, got %v", out["title"])
+	}
+	if out["tags"] != "" {
+		t.Errorf("tags should fall back to current empty, got %v", out["tags"])
+	}
+	if out["preview"] != "新正文内容" {
+		t.Errorf("preview should reflect new content, got %v", out["preview"])
+	}
+
+	// 只改标签：title/preview 回填当前值，tags 用写后归一值
+	out = parse(tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{
+		"id": id, "tags": "a， a , b,",
+	})))
+	if out["tags"] != "a,b" {
+		t.Errorf("tags should be normalized write value, got %v", out["tags"])
+	}
+	if out["title"] != "原标题" {
+		t.Errorf("title should survive tag-only update, got %v", out["title"])
+	}
+	if out["preview"] != "新正文内容" {
+		t.Errorf("preview should survive tag-only update, got %v", out["preview"])
+	}
+
+	// 同时改标题+标签
+	out = parse(tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{
+		"id": id, "title": "新标题", "tags": "x",
+	})))
+	if out["title"] != "新标题" || out["tags"] != "x" {
+		t.Errorf("title/tags should reflect write values, got title=%v tags=%v", out["title"], out["tags"])
+	}
+
+	// preview 超长时按 docPreviewLen 截断
+	long := strings.Repeat("字", docPreviewLen+20)
+	out = parse(tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{
+		"id": id, "content": long,
+	})))
+	preview, _ := out["preview"].(string)
+	if runes := []rune(preview); len(runes) != docPreviewLen+3 || !strings.HasSuffix(preview, "...") {
+		t.Errorf("preview should be truncated to %d runes + ellipsis, got %d runes", docPreviewLen, len(runes))
+	}
+}
+
 func TestDocumentPagingStrict(t *testing.T) {
 	tool, cleanup := setupDocumentTool(t)
 	defer cleanup()

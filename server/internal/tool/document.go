@@ -554,9 +554,25 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 		return &Result{Success: false, Error: "update document: " + err.Error()}
 	}
 
+	// 回填写后的权威 title/tags/preview，供客户端文档卡片展示，避免模型未传 title 时卡片退化成占位标题
+	newTitle := current.Title
+	if v, ok := updates["title"].(string); ok {
+		newTitle = v
+	}
+	newTags := current.Tags
+	if v, ok := updates["tags"].(string); ok {
+		newTags = v
+	}
+	newContent := current.Content
+	if v, ok := updates["content"].(string); ok {
+		newContent = v
+	}
 	out := map[string]interface{}{
 		"id":      req.ID,
 		"message": "文档已更新",
+		"title":   newTitle,
+		"tags":    newTags,
+		"preview": util.TruncateContent(newContent, docPreviewLen),
 	}
 	// 正文变了就重算用户划线批注的锚点，把失活情况如实报回去
 	if newContent, ok := updates["content"].(string); ok {

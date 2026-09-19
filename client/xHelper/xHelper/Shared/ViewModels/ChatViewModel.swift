@@ -1501,8 +1501,8 @@ class ChatViewModel: ObservableObject {
     // MARK: Local Tool Results
 
     /// 把本地产物落成一条独立的 `local_tool_result` 消息并持久化，返回本地消息 id。
-    /// 用本地稳定 id + createdAt（不依赖会变的 assistant id），重载后由
-    /// `mergeLocalToolResults` 按时间重放并重定位到对应回复下方。
+    /// 用本地稳定 id + createdAt（不依赖会变的 assistant id）。插到当前流式 assistant **之前**，
+    /// 卡片即显示在该回复的思考 + 正文上方；重载后由 `mergeLocalToolResults` 按位置重放到同样位置。
     @discardableResult
     func insertLocalArtifact(_ artifact: LocalArtifact) -> String? {
         let payload: Data
@@ -1522,7 +1522,11 @@ class ChatViewModel: ObservableObject {
         )
         msg.localToolResult = LocalToolResultData(type: artifact.type, payload: payload)
         msg.localArtifact = artifact
-        messages.append(msg)
+        if let streamingIdx = messages.lastIndex(where: { $0.id == "__streaming__" }) {
+            messages.insert(msg, at: streamingIdx)
+        } else {
+            messages.append(msg)
+        }
 
         let id = msg.id
         let createdAt = msg.createdAt

@@ -2,6 +2,7 @@ import Foundation
 
 enum LocalToolResultType: String, Codable {
     case chart
+    case docRefs
 }
 
 struct LocalToolResultData: Codable {

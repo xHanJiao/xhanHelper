@@ -18,6 +18,7 @@ struct MessageListView: View {
     let thoughtDone: Bool
     let toolQueue: [ToolCallDisplay]  // 工具调用展示队列（最新助手气泡下方 pill）
     let verifyStatus: VerifyStatus?   // 响应检验状态（最新助手气泡下方 pill）
+    let onOpenDocument: (String) -> Void
     let hasMoreBefore: Bool
     let isLoadingMore: Bool
     let loadMoreError: String?
@@ -346,8 +347,8 @@ struct MessageListView: View {
                     .padding(.horizontal, Layout.chatHorizontalPadding)
             }
 
-            if let cd = msg.chartData {
-                ChartBubble(chartData: cd)
+            if let artifact = msg.localArtifact {
+                localArtifactView(artifact)
             } else if msg.role == "user" {
                 // 附件图片：气泡上方，点开看大图
                 if !msg.imageIds.isEmpty {
@@ -395,10 +396,32 @@ struct MessageListView: View {
         }
     }
 
+    /// 本地产物渲染分发：新增类型在这里加一个 case（编译器穷尽检查）。
+    /// 文档卡片只在 macOS 出（iOS 无右栏文档面板）。
+    @ViewBuilder
+    private func localArtifactView(_ artifact: LocalArtifact) -> some View {
+        switch artifact {
+        case .chart(let cd):
+            ChartBubble(chartData: cd)
+        case .docRefs(let refs):
+            #if os(macOS)
+            if !refs.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(refs) { ref in
+                        DocumentRefCard(ref: ref) { onOpenDocument(ref.id) }
+                    }
+                }
+                .padding(.horizontal, Layout.chatHorizontalPadding + 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            #endif
+        }
+    }
+
     // MARK: Share select indicator
     @ViewBuilder
     private func shareSelectIndicator(for msg: Message) -> some View {
-        let isUnshareable = msg.chartData != nil || msg.localToolResult != nil || msg.id == "__streaming__"
+        let isUnshareable = msg.localToolResult != nil || msg.id == "__streaming__"
 
         if isUnshareable {
             VStack(spacing: 4) {
@@ -873,3 +896,68 @@ private struct GlassCapsuleModifier: ViewModifier {
             .background(.regularMaterial, in: Capsule())
     }
 }
+
+#if os(macOS)
+/// 聊天里的文档入口卡片：点「打开」把右栏切到文档面板并定位。
+/// 挂在产生它的那条助手消息下方（本地产物重定位）；正文里由模型写出的内链走 openURL 另一条路。
+private struct DocumentRefCard: View {
+    let ref: DocumentRef
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(Color("appAccent"))
+                    .frame(width: 34, height: 34)
+                    .background(Color("appAccent").opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(ref.title)
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundColor(Color("assistantText"))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    if !ref.tags.isEmpty {
+                        HStack(spacing: 5) {
+                            ForEach(ref.tags.prefix(3), id: \.self) { tag in
+                                Text(tag)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(Color("appAccent"))
+                                    .padding(.horizontal, 7).padding(.vertical, 1)
+                                    .background(Color("appAccent").opacity(0.12), in: Capsule())
+                            }
+                        }
+                    }
+
+                    if let preview = ref.preview, !preview.isEmpty {
+                        Text(preview)
+                            .font(.system(size: 11.5))
+                            .foregroundColor(Color("assistantText").opacity(0.6))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                Text("打开")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(Color("appAccent"))
+                    .padding(.top, 2)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .frame(maxWidth: 420, alignment: .leading)
+            .background(Color("surfaceInput"), in: RoundedRectangle(cornerRadius: 11))
+            .overlay(
+                RoundedRectangle(cornerRadius: 11)
+                    .stroke(Color("appAccent").opacity(0.25), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("在右侧栏打开《\(ref.title)》")
+    }
+}
+#endif

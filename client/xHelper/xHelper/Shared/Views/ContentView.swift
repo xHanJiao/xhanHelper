@@ -679,10 +679,23 @@ struct ContentView: View {
                     .allowsHitTesting(false)
                 }
                 .ignoresSafeArea(edges: .top)
+                // 内部跳链：文档正文/聊天里由模型写出的 [标题](xhanhelper://document/<id>)。
+                // 装在最外层，聊天气泡与右栏文档正文两处 Markdown 都能被拦到；
+                // 非本 scheme 的 URL 原样交还系统（外部链接行为不变）。
+                .environment(\.openURL, OpenURLAction { url in
+                    guard url.scheme == "xhanhelper" else { return .systemAction(url) }
+                    if url.host == "document",
+                       let id = url.pathComponents.dropFirst().first, !id.isEmpty {
+                        DocumentSelectionCoordinator.shared.openDocument(id: id)
+                        return .handled
+                    }
+                    return .handled // 本 scheme 的未知路径：吞掉，不交给系统
+                })
                 .onAppear {
                     sidebarWidth = min(storedSidebarWidth, Layout.sidebarMaxWidth)
                     BrowserToolProvider.shared.rightSidebar = rightSidebar
                     DocumentSelectionCoordinator.shared.rightSidebar = rightSidebar
+                    DocumentSelectionCoordinator.shared.documentVM = documentVM
                     DocumentSelectionCoordinator.shared.configure(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
                     DocumentSelectionCoordinator.shared.ensureRegisteredGroup()
                     registerAppShortcutBridge()

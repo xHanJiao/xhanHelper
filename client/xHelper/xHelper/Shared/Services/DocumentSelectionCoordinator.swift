@@ -16,6 +16,9 @@ final class DocumentSelectionCoordinator: ObservableObject {
     /// 右侧栏管理器（弱引用，由 ContentView 注入），用于判断文档页是否恰好在右栏前台。
     weak var rightSidebar: RightSidebarManager?
 
+    /// 文档视图模型（弱引用，由 ContentView 注入）。按 id 打开文档时写入 openDocument。
+    weak var documentVM: DocumentViewModel?
+
     /// API 访问信息（ContentView 注入，分享文档用）
     private var baseURL = ""
     private var token = ""
@@ -35,6 +38,27 @@ final class DocumentSelectionCoordinator: ObservableObject {
     func deselect() {
         selectedDocument = nil
         TopBarRegistry.shared.refresh()
+    }
+
+    /// 按 id 打开文档：右栏切到文档面板 → 拉取 → 定位打开。
+    /// 入口有两个——聊天里的文档卡片、文档正文里的内链（`xhanhelper://document/<id>`）。
+    /// id 非法或已删除时就地提示，不让链接点下去无声无息。
+    func openDocument(id: String) {
+        guard let rs = rightSidebar else { return }
+        Task { @MainActor in
+            do {
+                let doc = try await APIClient(baseURL: baseURL, token: token).getDocument(id: id)
+                rs.isOpen = true
+                rs.showBrowsePanel()
+                rs.browsePanelSelection = .documents
+                documentVM?.openDocument = doc
+                // 右栏未挂载时 DocumentListView.onChange 不触发，这里直接同步顶栏按钮组
+                select(doc)
+            } catch {
+                LogBuffer.shared.error("DocumentSelectionCoordinator.openDocument: \(error)")
+                ToastCenter.shared.show("打不开文档：\(error.localizedDescription)")
+            }
+        }
     }
 
     /// 注入 API 访问信息（ContentView 设置，分享文档用）

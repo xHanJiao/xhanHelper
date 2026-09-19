@@ -101,6 +101,9 @@ final class ChatTabManager: ObservableObject {
         vm.onHandoffReady = { [weak self] title, id, baseURL, token in
             self?.startHandoffConversation(docTitle: title, docID: id, baseURL: baseURL, token: token)
         }
+        vm.onOpenDocument = { id in
+            DocumentSelectionCoordinator.shared.openDocument(id: id)
+        }
         tabs.append(tab)
         activate(tab)
         resetBlank(tab)
@@ -144,6 +147,9 @@ final class ChatTabManager: ObservableObject {
         }
         vm.onHandoffReady = { [weak self] title, id, baseURL, token in
             self?.startHandoffConversation(docTitle: title, docID: id, baseURL: baseURL, token: token)
+        }
+        vm.onOpenDocument = { id in
+            DocumentSelectionCoordinator.shared.openDocument(id: id)
         }
         let tab = ChatTab(id: id, conversationId: id, title: title, viewModel: vm)
         tabs.append(tab)

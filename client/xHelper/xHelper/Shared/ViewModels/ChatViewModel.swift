@@ -197,13 +197,21 @@ class ChatViewModel: ObservableObject {
 
     /// 当前流的工具调用展示队列（tool_call 入队，tool_result 更新状态）
     @Published var toolQueue: [ToolCallDisplay] = []
+    /// 点文档卡片时回调：(documentId)。由 ChatTabManager 接线到 DocumentSelectionCoordinator。
+    var onOpenDocument: ((String) -> Void)?
     /// 待展示工具调用 FIFO：tool_call 暂存，tool_result 到后取出构造完结 pill（不展示 running）
     private struct PendingToolCall {
         let display: String
         let tool: String
         let function: String
+        let args: [String: Any]
     }
     private var pendingToolCalls: [PendingToolCall] = []
+    /// 本轮各文档的合并后引用（docID → 最新已知状态）：同轮 create/update 多次触达同一篇只出一张卡片，
+    /// 且后写覆盖、缺省保留（见 `DocumentRef.merged`）。
+    private var roundDocRefs: [String: DocumentRef] = [:]
+    /// 本轮各文档已落成的本地消息 id（docID → local message id），用于同轮就地更新而非新增卡片。
+    private var roundDocRefMessageID: [String: String] = [:]
     /// 响应检验事件状态（verify:checking|done|retry）
     @Published var verifyStatus: VerifyStatus?
 
@@ -762,6 +770,8 @@ class ChatViewModel: ObservableObject {
         docQuote = nil
         toolQueue = []
         pendingToolCalls = []
+        roundDocRefs = [:]
+        roundDocRefMessageID = [:]
         verifyStatus = nil
         if !preserveTrustedMode {
             trustLevel = .off // 信任模式会话级：换会话自动回到安全档（安全默认）
@@ -931,6 +941,8 @@ class ChatViewModel: ObservableObject {
         lastNoteIDs = nil
         toolQueue = []
         pendingToolCalls = []
+        roundDocRefs = [:]
+        roundDocRefMessageID = [:]
         verifyStatus = nil
 
         messages.append(.streamingAssistant(conversationId: conversationId ?? ""))
@@ -1119,7 +1131,7 @@ class ChatViewModel: ObservableObject {
             if let tc = parseToolCall(event.data) {
                 // 新一轮工具执行（上一轮 pending 已清空）：清掉旧完结 pill
                 if pendingToolCalls.isEmpty { toolQueue = [] }
-                pendingToolCalls.append(PendingToolCall(display: tc.display, tool: tc.tool, function: tc.function))
+                pendingToolCalls.append(PendingToolCall(display: tc.display, tool: tc.tool, function: tc.function, args: tc.args))
             }
 
         case .toolResult:
@@ -1131,6 +1143,15 @@ class ChatViewModel: ObservableObject {
                 if handoffActive, pending.tool == "document", pending.function == "create_document",
                    tr.success, let id = tr.data?["id"] as? String {
                     capturedHandoffDoc = (title: tr.data?["title"] as? String ?? "接力文档", id: id)
+                }
+                // 聊天里的文档卡片：agent 建/改过的文档派生成本地产物，独立成一条
+                // local_tool_result 消息并落盘（切屏/重载后按时间重放）。只认 create/update，
+                // 同轮多次触达同一篇就地合并更新（后写覆盖、缺省保留）。
+                if pending.tool == "document", tr.success,
+                   let patch = DocumentArtifactProducer.patch(function: pending.function,
+                                                              args: pending.args,
+                                                              data: tr.data) {
+                    upsertRoundDocumentRef(patch)
                 }
                 let summary = tr.success ? "✅ \(display) 已完成" : "❌ \(display): \(tr.error ?? "失败")"
                 let tc = ToolCallDisplay(display: display, status: tr.success ? .done : .failed, summary: summary)
@@ -1423,6 +1444,7 @@ class ChatViewModel: ObservableObject {
         let display: String
         let tool: String
         let function: String
+        let args: [String: Any]
     }
 
     private func parseToolCall(_ data: String) -> ParsedToolCall? {
@@ -1430,10 +1452,13 @@ class ChatViewModel: ObservableObject {
               let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
         else { return nil }
         let display = obj["display"] as? String ?? obj["function"] as? String ?? "工具"
+        // 入参原样留存：工具返回值常只有 id，标题/tags/正文得从入参捞（如 update_document）。
+        let args = obj["args"] as? [String: Any] ?? [:]
         return ParsedToolCall(
             display: display,
             tool: obj["tool"] as? String ?? "",
-            function: obj["function"] as? String ?? ""
+            function: obj["function"] as? String ?? "",
+            args: args
         )
     }
 
@@ -1475,28 +1500,89 @@ class ChatViewModel: ObservableObject {
 
     // MARK: Local Tool Results
 
-    func insertChartMessage(_ cd: ChartData) {
-        let payload = (try? JSONEncoder().encode(cd)) ?? Data()
+    /// 把本地产物落成一条独立的 `local_tool_result` 消息并持久化，返回本地消息 id。
+    /// 用本地稳定 id + createdAt（不依赖会变的 assistant id），重载后由
+    /// `mergeLocalToolResults` 按时间重放并重定位到对应回复下方。
+    @discardableResult
+    func insertLocalArtifact(_ artifact: LocalArtifact) -> String? {
+        let payload: Data
+        do {
+            payload = try artifact.payload()
+        } catch {
+            LogBuffer.shared.error("insertLocalArtifact: encode \(artifact.type.rawValue) failed: \(error)")
+            return nil
+        }
         var msg = Message(
-            id: "chart_\(UUID().uuidString)",
+            id: "local_\(UUID().uuidString)",
             conversationId: conversationId ?? "",
             role: "local_tool_result",
             content: "",
             toolCallsJSON: nil,
             createdAt: ISO8601DateFormatter().string(from: Date())
         )
-        msg.localToolResult = LocalToolResultData(type: .chart, payload: payload)
-        msg.chartData = cd
+        msg.localToolResult = LocalToolResultData(type: artifact.type, payload: payload)
+        msg.localArtifact = artifact
         messages.append(msg)
 
+        let id = msg.id
+        let createdAt = msg.createdAt
+        let convID = msg.conversationId
+        let type = artifact.type
         Task {
-            await LocalToolResultStore.shared.upsert(type: .chart, payload: payload, message: msg)
+            do {
+                try await LocalToolResultStore.shared.upsert(
+                    type: type, payload: payload, id: id, createdAt: createdAt, conversationId: convID)
+            } catch {
+                LogBuffer.shared.error("insertLocalArtifact: persist \(type.rawValue) failed: \(error)")
+            }
+        }
+        return id
+    }
+
+    /// 同轮文档卡片：把 patch 合并进本轮累积状态；同轮已出过卡片就就地更新（位置不变），
+    /// 否则新落一条本地消息。见 `roundDocRefs` / `roundDocRefMessageID`。
+    private func upsertRoundDocumentRef(_ patch: DocumentRefPatch) {
+        let merged = (roundDocRefs[patch.id] ?? DocumentRef.make(from: patch)).merged(with: patch)
+        roundDocRefs[patch.id] = merged
+
+        let artifact = LocalArtifact.docRefs([merged])
+        let payload: Data
+        do {
+            payload = try artifact.payload()
+        } catch {
+            LogBuffer.shared.error("upsertRoundDocumentRef: encode failed doc=\(patch.id): \(error)")
+            return
+        }
+
+        if let localID = roundDocRefMessageID[patch.id],
+           let idx = messages.firstIndex(where: { $0.id == localID }) {
+            messages[idx].localArtifact = artifact
+            messages[idx].localToolResult = LocalToolResultData(type: .docRefs, payload: payload)
+            let createdAt = messages[idx].createdAt
+            let convID = messages[idx].conversationId
+            Task {
+                do {
+                    try await LocalToolResultStore.shared.upsert(
+                        type: .docRefs, payload: payload, id: localID, createdAt: createdAt, conversationId: convID)
+                } catch {
+                    LogBuffer.shared.error("upsertRoundDocumentRef: persist failed doc=\(patch.id): \(error)")
+                }
+            }
+        } else if let newID = insertLocalArtifact(artifact) {
+            roundDocRefMessageID[patch.id] = newID
         }
     }
 
     private func mergeLocalToolResults(from: String, to: String) async {
         let existingIDs = Set(messages.lazy.filter { $0.role == "local_tool_result" }.map { $0.id })
-        let entries = await LocalToolResultStore.shared.entries(for: conversationId ?? "", from: from, to: to)
+
+        let entries: [LocalToolResultStore.Entry]
+        do {
+            entries = try await LocalToolResultStore.shared.entries(for: conversationId ?? "", from: from, to: to)
+        } catch {
+            LogBuffer.shared.error("mergeLocalToolResults: load failed: \(error)")
+            return
+        }
 
         for entry in entries where !existingIDs.contains(entry.id) {
             var msg = Message(
@@ -1508,24 +1594,19 @@ class ChatViewModel: ObservableObject {
                 createdAt: entry.createdAt
             )
             msg.localToolResult = LocalToolResultData(type: entry.type, payload: entry.payload)
-            if entry.type == .chart, let cd = try? JSONDecoder().decode(ChartData.self, from: entry.payload) {
-                msg.chartData = cd
+            guard let artifact = LocalArtifact(type: entry.type, payload: entry.payload) else {
+                LogBuffer.shared.error("mergeLocalToolResults: decode \(entry.type.rawValue) id=\(entry.id) failed")
+                continue
             }
+            msg.localArtifact = artifact
             messages.append(msg)
         }
 
         messages.sort { $0.createdAt < $1.createdAt }
-
-        for i in stride(from: messages.count - 1, through: 0, by: -1) {
-            guard messages[i].role == "local_tool_result" else { continue }
-            for j in i + 1 ..< messages.count {
-                if messages[j].role == "assistant" {
-                    let item = messages.remove(at: i)
-                    let insertAt = j > i ? j : j + 1
-                    messages.insert(item, at: min(insertAt, messages.count))
-                    break
-                }
-            }
-        }
+        messages = LocalArtifactMerge.reposition(
+            messages,
+            isLocal: { $0.role == "local_tool_result" },
+            isAssistant: { $0.role == "assistant" }
+        )
     }
 }

@@ -69,6 +69,7 @@ struct ChatView: View {
                     thoughtDone: viewModel.thoughtDone,
                     toolQueue: viewModel.toolQueue,
                     verifyStatus: viewModel.verifyStatus,
+                    onOpenDocument: { viewModel.onOpenDocument?($0) },
                     hasMoreBefore: viewModel.hasMoreBefore,
                     isLoadingMore: viewModel.isLoadingMore,
                     loadMoreError: viewModel.loadMoreError,

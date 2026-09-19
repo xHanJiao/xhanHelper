@@ -163,6 +163,10 @@ const docPreviewHint = "未返回 preview（正文摘要）；需要时用 field
 // docWindowHint 大文档窗口读的固定提示，防止整读整写浪费 token。
 const docWindowHint = "文档较长，仅返回部分内容。继续读请传 char_offset；修改请用 old_text/new_text 局部替换，不要整读整写。"
 
+// docLinkHint 内部跳链约定：客户端拦截 xhanhelper://document/<id> 并跳到该文档。
+// id 必须真实存在（先查再写），编造的 id 点开只会报错。
+const docLinkHint = "正文中引用其他文档时，写成 [文档标题](xhanhelper://document/<文档id>)；id 必须先用 query_documents 或 list_documents 查到，禁止编造。"
+
 // DocumentTool — 文档管理工具。仅在用户明确要求时使用，不要主动创建。
 type DocumentTool struct {
 	docRepo  *service.DocumentRepo
@@ -178,7 +182,7 @@ func NewDocumentTool(docRepo *service.DocumentRepo, annoRepo *service.DocumentAn
 func (t *DocumentTool) Name() string { return "document" }
 
 func (t *DocumentTool) Description() string {
-	return "管理用户的结构化 Markdown 文档。仅在用户明确要求生成/保存/修改/查询/删除文章、报告、总结等文档时使用。不要主动创建或修改文档。日常的信息记录请用 note 工具。"
+	return "管理用户的结构化 Markdown 文档。仅在用户明确要求生成/保存/修改/查询/删除文章、报告、总结等文档时使用。不要主动创建或修改文档。日常的信息记录请用 note 工具。" + docLinkHint
 }
 
 func (t *DocumentTool) Catalog() (CatalogEntry, bool) {
@@ -194,7 +198,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		{
 			Name:        "create_document",
 			Display:     "创建文档",
-			Description: "创建一篇新的 Markdown 文档。仅当用户明确说写一篇、生成文档、保存为文档、总结成文章等时调用。不要主动调用。",
+			Description: "创建一篇新的 Markdown 文档。仅当用户明确说写一篇、生成文档、保存为文档、总结成文章等时调用。不要主动调用。" + docLinkHint,
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -236,7 +240,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		{
 			Name:        "update_document",
 			Display:     "修改文档",
-			Description: "修改已有文档。局部小改动优先用 old_text/new_text 指定替换片段（无需传全文，省 token 且不会误覆盖其他内容）；只有重写全文时才传 content。old_text 必须与文档当前内容精确匹配且唯一。仅更新传入的非空字段。",
+			Description: "修改已有文档。局部小改动优先用 old_text/new_text 指定替换片段（无需传全文，省 token 且不会误覆盖其他内容）；只有重写全文时才传 content。old_text 必须与文档当前内容精确匹配且唯一。仅更新传入的非空字段。局部替换时不要弄丢正文里已有的内部链接。" + docLinkHint,
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

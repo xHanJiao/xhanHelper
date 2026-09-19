@@ -1,17 +1,17 @@
 import Foundation
 
-enum ChartType: String, Codable {
+enum ChartType: String, Codable, Equatable {
     case line
     case bar
     case pie
 }
 
-struct ChartDataset: Codable {
+struct ChartDataset: Codable, Equatable {
     let label: String
     let data: [Double]
 }
 
-struct ChartData: Codable {
+struct ChartData: Codable, Equatable {
     let type: ChartType
     let title: String?
     let labels: [String]

@@ -17,8 +17,10 @@ struct Message: Identifiable, Codable {
     /// 注意必须是 var 带默认值：let 带初值不会被 Codable 解码。
     var imageIdsJSON: String? = nil
 
-    var chartData: ChartData? = nil
     var localToolResult: LocalToolResultData? = nil
+    /// 本地产物的解码结果（chart / docRefs…）。瞬态：持久化的是 `localToolResult.payload`，
+    /// 由 `mergeLocalToolResults` 在加载/插入时解码。
+    var localArtifact: LocalArtifact? = nil
     /// 刚发出、还没从服务端拉回时的内存缩略图（仅本地展示，不入库）
     var localImages: [PlatformImage] = []
 

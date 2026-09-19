@@ -217,7 +217,7 @@ extension ChatViewModel {
                 LogBuffer.shared.error("clientAction chart: decode failed")
                 return
             }
-            insertChartMessage(cd)
+            insertLocalArtifact(.chart(cd))
         default:
             LogBuffer.shared.warning("clientAction: unknown type \(action.type)")
         }

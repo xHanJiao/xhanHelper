@@ -767,7 +767,13 @@ struct MacSettingsView: View {
             .alert("确认清除", isPresented: $showClearCacheAlert) {
                 Button("取消", role: .cancel) {}
                 Button("清除", role: .destructive) {
-                    Task { await LocalToolResultStore.shared.clearAll() }
+                    Task {
+                        do {
+                            try await LocalToolResultStore.shared.clearAll()
+                        } catch {
+                            LogBuffer.shared.error("clearAll local tool results: \(error)")
+                        }
+                    }
                     ToolOutputStore.shared.clearAll()
                 }
             } message: {

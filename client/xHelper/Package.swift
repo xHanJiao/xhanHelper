@@ -28,5 +28,22 @@ let package = Package(
             dependencies: ["ThumbRowLayout"],
             path: "Tests/ThumbRowLayoutTests"
         ),
+        // LocalArtifactsCore — 本地产物管线（chart / 文档卡片…）的纯逻辑：
+        // artifact 编解码 + producer + 重定位 + 按会话持久化。app 与测试共享同一份源文件。
+        .target(
+            name: "LocalArtifactsCore",
+            path: "xHelper/Shared",
+            sources: [
+                "LocalArtifacts",
+                "Models/LocalToolResultData.swift",
+                "Models/ChartData.swift",
+                "Services/LocalToolResultStore.swift",
+            ]
+        ),
+        .testTarget(
+            name: "LocalArtifactsCoreTests",
+            dependencies: ["LocalArtifactsCore"],
+            path: "Tests/LocalArtifactsCoreTests"
+        ),
     ]
 )

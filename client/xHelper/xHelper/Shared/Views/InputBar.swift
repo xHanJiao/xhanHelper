@@ -410,7 +410,7 @@ struct InputBarScrollHider: NSViewRepresentable {
         ) { ctx in
             HStack(spacing: 4) {
                 ModePill(context: ctx, mode: .off) {}
-                TrustedPill(context: ctx, trusted: false) {}
+                TrustedPill(context: ctx, level: .off) {}
             }
         } trailingActions: { ctx in
             SendStopButton(context: ctx, isStreaming: false, canSend: ctx.canSend, onSend: {}, onStop: {})
@@ -435,7 +435,7 @@ struct InputBarScrollHider: NSViewRepresentable {
         ) { ctx in
             HStack(spacing: 4) {
                 ModePill(context: ctx, mode: .normal) {}
-                TrustedPill(context: ctx, trusted: true) {}
+                TrustedPill(context: ctx, level: .trusted) {}
             }
         } trailingActions: { ctx in
             SendStopButton(context: ctx, isStreaming: true, canSend: true, onSend: {}, onStop: {})
@@ -460,7 +460,7 @@ struct InputBarScrollHider: NSViewRepresentable {
         ) { ctx in
             HStack(spacing: 4) {
                 ModePill(context: ctx, mode: .strict) {}
-                TrustedPill(context: ctx, trusted: false) {}
+                TrustedPill(context: ctx, level: .off) {}
                 AgentPickerButton(
                     context: ctx,
                     activeAgentID: "agent-active",

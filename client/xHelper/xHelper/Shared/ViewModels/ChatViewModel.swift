@@ -31,7 +31,7 @@ struct ToolConfirmation: Identifiable {
     let additions: Int?
     let deletions: Int?
     let filePath: String?
-    /// L4 高危（如 shell 危险命令）：红色 UI + 信任模式也不跳过
+    /// L4 高危（如 shell 危险命令）：红色 UI + 信任档不可跳过（完全信任可跳过）
     let hardened: Bool
     let continuation: CheckedContinuation<Bool, Never>
 }
@@ -112,6 +112,25 @@ enum ChatMode: String {
 
     /// 是否处于计划模式（普通或严格）——两者都禁写、都禁客户端本地工具。
     var isPlanLike: Bool { self != .off }
+}
+
+/// 信任模式三档（会话级本地状态，服务端零感知）：
+///   - off     安全：所有客户端工具执行前确认
+///   - trusted 信任：跳过常规 L3 确认；L4 与敏感上下文升级的 L3 仍确认
+///   - full    完全信任：跳过 L3+L4；仅敏感上下文升级的 L3（防注入）仍确认
+enum TrustLevel {
+    case off
+    case trusted
+    case full
+
+    /// 循环下一档：安全 → 信任 → 完全信任 → 安全
+    var next: TrustLevel {
+        switch self {
+        case .off: return .trusted
+        case .trusted: return .full
+        case .full: return .off
+        }
+    }
 }
 
 // MARK: - ChatViewModel
@@ -374,10 +393,9 @@ class ChatViewModel: ObservableObject {
     /// 子任务面板整体展开态：折叠时只留一行状态条，展开时浮层覆盖消息区。
     @Published var subagentPanelExpanded = false
 
-    /// 信任模式（会话级本地状态）：开启后跳过 L3 工具确认，直接执行。
-    /// 适合固定流程/重复操作；只影响客户端确认弹窗，服务端零感知。
-    /// 换会话（loadConversation）自动关闭，安全默认。
-    @Published var trustedMode = false
+    /// 信任模式（会话级本地状态）：跳过客户端工具确认。三档语义见 `TrustLevel`。
+    /// 只影响客户端确认弹窗，服务端零感知。换会话（loadConversation）自动回到安全档。
+    @Published var trustLevel: TrustLevel = .off
 
     /// 循环切换会话模式（关 → 普通 → 严格 → 关）。仅用户可触发（胶囊条点击 / 输入框聚焦时 Tab）。
     /// 已有会话：PATCH 落库，失败回滚；空 tab（无会话）：只改本地，第一条消息经 init_mode 落库。
@@ -407,13 +425,14 @@ class ChatViewModel: ObservableObject {
         }
     }
 
-    /// 切换信任模式。仅用户可触发（胶囊条点击），切换时 Toast 明确反馈。
-    func toggleTrustedMode() {
-        trustedMode.toggle()
-        if trustedMode {
-            ToastCenter.shared.show("已进入信任模式：高风险工具不再确认")
-        } else {
-            ToastCenter.shared.show("已退出信任模式")
+    /// 循环切换信任模式（安全 → 信任 → 完全信任 → 安全）。仅用户可触发（胶囊条点击）。
+    /// 进入「完全信任」的二次确认由 UI 层负责，本方法只负责落档。
+    func cycleTrustMode() {
+        trustLevel = trustLevel.next
+        switch trustLevel {
+        case .off: ToastCenter.shared.show("已回到安全模式：工具执行前确认")
+        case .trusted: ToastCenter.shared.show("已进入信任模式：常规工具免确认")
+        case .full: ToastCenter.shared.show("已进入完全信任：含高危命令在内全部免确认")
         }
     }
 
@@ -465,14 +484,15 @@ class ChatViewModel: ObservableObject {
         ToastCenter.shared.show(briefAnswer ? "已开启：精炼回答（≤500 字）" : "已关闭：精炼回答")
     }
 
-    /// 挂起等待用户确认 L3 工具执行；60s 超时视为拒绝。
-    /// force=true 时信任模式不跳过（用于敏感域/明文页等注入高风险场景——信任模式本身就不可信）。
+    /// 挂起等待用户确认工具执行；60s 超时视为拒绝。
+    /// elevated=true：敏感上下文升级的 L3（高敏域/明文页/用户标签授权），任何信任档都不跳过（防注入）。
+    /// hardened=true：L4（shell 等高危命令），信任档不跳过，完全信任可跳过。
     /// bridgeToBrowser=true 时把确认同步发布到 BrowserActivityCenter，浏览器内也显示确认条（与聊天条同步出现）。
     /// diffText/additions/deletions/filePath：fs 写工具传 diff 预览，确认条展示 diff 卡片。
     func awaitToolConfirmation(
         toolName: String,
         arguments: [String: Any],
-        force: Bool = false,
+        elevated: Bool = false,
         hardened: Bool = false,
         bridgeToBrowser: Bool = false,
         diffText: String? = nil,
@@ -480,9 +500,15 @@ class ChatViewModel: ObservableObject {
         deletions: Int? = nil,
         filePath: String? = nil
     ) async -> Bool {
-        // 信任模式：跳过确认直接放行（force 时不跳过）
-        if trustedMode && !force {
-            return true
+        // 信任模式决定本次是否跳过确认（三档语义见 TrustLevel）：
+        //   安全 → 都确认；信任 → 只跳常规 L3；完全信任 → 跳 L3+L4，仅 elevated 仍确认。
+        switch trustLevel {
+        case .off:
+            break
+        case .trusted:
+            if !(elevated || hardened) { return true }
+        case .full:
+            if !elevated { return true }
         }
         // 浏览器工具走人话摘要（ref→元素文本、密码脱敏、来源等），其余保留原始参数
         let argsSummary: String
@@ -715,7 +741,7 @@ class ChatViewModel: ObservableObject {
 
     // MARK: Load
 
-    /// 加载会话。mode 从会话数据带入（服务端权威）；trustedMode 仅"切换会话"时重置，
+    /// 加载会话。mode 从会话数据带入（服务端权威）；trustLevel 仅"切换会话"时重置，
     /// 同一会话刷新（scene 激活/重试/手动刷新）传 preserveTrustedMode=true 保持。
     func loadConversation(id: String, title: String, mode: String? = nil, preserveTrustedMode: Bool = false) async {
         sseClient.disconnect()
@@ -738,7 +764,7 @@ class ChatViewModel: ObservableObject {
         pendingToolCalls = []
         verifyStatus = nil
         if !preserveTrustedMode {
-            trustedMode = false // 信任模式会话级：换会话自动关闭（安全默认）
+            trustLevel = .off // 信任模式会话级：换会话自动回到安全档（安全默认）
             // 思考内容会话级：仅切会话时清空（同会话刷新/scene 激活保留折叠态）
             thoughtMessage = nil
             thoughtDone = false

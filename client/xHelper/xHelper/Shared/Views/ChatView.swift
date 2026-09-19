@@ -12,6 +12,8 @@ struct ChatView: View {
     @State private var dismissKeyboardToken: UUID?
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var showScrollToBottom = false
+    /// 进入「完全信任」的二次确认（防连点误入最危险档）
+    @State private var showFullTrustConfirm = false
     let agentId: String?
 
     /// 输入栏智能体选择器状态：当前选中 / 分页列表 / 加载进度
@@ -212,6 +214,18 @@ struct ChatView: View {
             }
         }
 #endif
+        // 进入「完全信任」的二次确认（防连点误入最危险档）。挂在稳定的 content 上，
+        // 而非会随输入栏收起而消失的胶囊上，避免弹窗期间视图被回收。
+        .confirmationDialog(
+            "进入完全信任？",
+            isPresented: $showFullTrustConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("进入完全信任", role: .destructive) { viewModel.cycleTrustMode() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将跳过包括高危 shell 命令在内的全部确认；仅敏感页面（银行/登录等）的防注入确认仍会弹出。")
+        }
     }
 
     /// 子任务详情浮层：仅展开且存在会话时渲染，覆盖消息列表（不改变消息区高度）。
@@ -243,14 +257,17 @@ struct ChatView: View {
         withAnimation(.easeOut(duration: 0.25)) { viewModel.subagentPanelExpanded = false }
     }
 
-    /// 输入栏容器描边/光晕色：计划·普通橙、计划·严格红、信任模式金、其余默认强调色。
+    /// 输入栏容器描边/光晕色：计划·普通橙、计划·严格红、信任金、完全信任红、其余默认强调色。
     private var inputBarTint: Color {
         switch viewModel.chatMode {
         case .normal: return .orange
         case .strict: return .red
         case .off:
-            if viewModel.trustedMode { return Color(red: 0.85, green: 0.6, blue: 0.0) }
-            return Color("appAccent")
+            switch viewModel.trustLevel {
+            case .off: return Color("appAccent")
+            case .trusted: return Color(red: 0.85, green: 0.6, blue: 0.0)
+            case .full: return .red
+            }
         }
     }
 
@@ -530,8 +547,14 @@ struct ChatView: View {
                 )
             }
         case .trusted:
-            TrustedPill(context: ctx, trusted: viewModel.trustedMode) {
-                viewModel.toggleTrustedMode()
+            // 信任模式三档循环（安全 → 信任 → 完全信任）：进入最危险档前由 content 上的
+            // confirmationDialog 二次确认，这里只负责发起。
+            TrustedPill(context: ctx, level: viewModel.trustLevel) {
+                if viewModel.trustLevel.next == .full {
+                    showFullTrustConfirm = true
+                } else {
+                    viewModel.cycleTrustMode()
+                }
                 resetExtrasAutoCollapse()
             }
         case .model:
@@ -868,7 +891,7 @@ struct ChatView: View {
                     .foregroundColor(accent)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(conf.hardened
-                         ? "请求执行高危命令：「\(conf.displayName)」（不可跳过，信任模式无效）"
+                         ? "请求执行高危命令：「\(conf.displayName)」（信任模式不可跳过）"
                          : "请求执行工具：「\(conf.displayName)」")
                         .font(.caption)
                         .foregroundColor(.secondary)

@@ -77,7 +77,7 @@ extension ChatViewModel {
 
                 // 工具分级：L3（高风险写）执行前需用户确认（60s 超时视为拒绝）
                 // S2/G6：交互工具在高敏域或 http 明文页上动态升 L3（防注入诱导自动操作账户）。
-                // forcedL3 标记"敏感上下文升的级"，信任模式也不跳过。
+                // forcedL3 标记"敏感上下文升的级"，任何信任档都不跳过（防注入最后一道）。
                 var level = LocalToolRegistry.shared.riskLevel(for: toolName, arguments: args)
                 var forcedL3 = false
                 if level < 3, isBrowser, BrowserToolProvider.shared.shouldElevateToL3(flatName: toolName, arguments: args) {
@@ -108,7 +108,7 @@ extension ChatViewModel {
                 }
 
                 if level >= 3 {
-                    // shell L4：命令级高危，红色确认条 + 信任模式不跳过
+                    // shell L4：命令级高危，红色确认条 + 信任档不跳过（完全信任可跳过）
                     let shellHardened = isShell && level >= 4
                     // fs 写/编辑工具：确认前预演 diff（不落盘），确认条展示。大文件全量读放后台执行。
                     var diffText: String?
@@ -142,7 +142,7 @@ extension ChatViewModel {
                     let confirmed = await self.awaitToolConfirmation(
                         toolName: toolName,
                         arguments: confirmArgs,
-                        force: forcedL3 || shellHardened,
+                        elevated: forcedL3,
                         hardened: shellHardened,
                         bridgeToBrowser: isBrowser,
                         diffText: diffText,

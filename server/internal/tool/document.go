@@ -1,9 +1,11 @@
 package tool
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -29,14 +31,21 @@ const (
 	maxDocOutlineTitleLen = 30
 	// defaultDocPageSize 列表/查询类函数的默认每页条数。
 	defaultDocPageSize = 20
+	// maxDocPageSize 列表/查询类函数的每页条数上限，超限报错；压制单次大输出。
+	maxDocPageSize = 50
+	// docPreviewLen list/query 的 preview（正文摘要）截断长度（字）。
+	docPreviewLen = 100
 )
 
-// resolvePaging 解析列表类函数的 limit/offset：不传用默认值，负数报错（传 0 表示只取总数、返回空列表）。
+// resolvePaging 解析列表类函数的 limit/offset：不传用默认值，负数或超上限报错（传 0 表示只取总数、返回空列表）。
 func resolvePaging(limit, offset *int) (int, int, string) {
 	l, o := defaultDocPageSize, 0
 	if limit != nil {
 		if *limit < 0 {
 			return 0, 0, "limit 不能为负数"
+		}
+		if *limit > maxDocPageSize {
+			return 0, 0, fmt.Sprintf("limit 上限 %d", maxDocPageSize)
 		}
 		l = *limit
 	}
@@ -48,6 +57,108 @@ func resolvePaging(limit, offset *int) (int, int, string) {
 	}
 	return l, o, ""
 }
+
+// docListFields 列表/查询类函数可选的返回字段白名单。
+var docListFields = map[string]bool{
+	"id": true, "title": true, "tags": true, "preview": true,
+	"created_at": true, "updated_at": true, "conversation_id": true,
+}
+
+// docDefaultFields list/query 共用的默认返回字段（不含 preview，避免默认就堆大输出）。
+var docDefaultFields = []string{"id", "title", "tags", "created_at", "updated_at", "conversation_id"}
+
+// errFieldsShape fields 类型/形态不合法时的统一提示。
+const errFieldsShape = "fields 需为逗号分隔字符串或字符串数组"
+
+// parseFields 解析 fields 字符串：逗号分隔、去空格、白名单校验。
+// 未指定（空串）时 explicit=false，由调用方套用默认字段集。
+func parseFields(s string, allowed map[string]bool) (sel map[string]bool, explicit bool, err error) {
+	for _, f := range strings.Split(s, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if !allowed[f] {
+			// 字段名里出现 JSON 标点，多半是把整个数组/对象当字段名传了，给形态提示而非"未知字段"
+			if strings.ContainsAny(f, `[]{}"`) {
+				return nil, false, fmt.Errorf("%s", errFieldsShape)
+			}
+			names := make([]string, 0, len(allowed))
+			for n := range allowed {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			return nil, false, fmt.Errorf("未知字段 %q，可选：%s", f, strings.Join(names, ","))
+		}
+		if sel == nil {
+			sel = map[string]bool{}
+		}
+		sel[f] = true
+	}
+	return sel, len(sel) > 0, nil
+}
+
+// parseFieldsRaw 解析 fields 原始 JSON：接受字符串（逗号分隔）或字符串数组，其余类型报错。
+// 空/null 表示未指定（explicit=false）。
+func parseFieldsRaw(raw json.RawMessage, allowed map[string]bool) (sel map[string]bool, explicit bool, err error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, false, nil
+	}
+	switch trimmed[0] {
+	case '"':
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return nil, false, fmt.Errorf("%s: %w", errFieldsShape, err)
+		}
+		return parseFieldsString(s, allowed)
+	case '[':
+		var arr []string
+		if err := json.Unmarshal(trimmed, &arr); err != nil {
+			return nil, false, fmt.Errorf("%s: %w", errFieldsShape, err)
+		}
+		return parseFields(strings.Join(arr, ","), allowed)
+	default:
+		return nil, false, fmt.Errorf("%s", errFieldsShape)
+	}
+}
+
+// parseFieldsString 解析「字符串形态」的 fields；容忍字符串里嵌了 JSON 数组字面量（模型偶发二次编码），
+// 直接归一化，省一次纠错往返。
+func parseFieldsString(s string, allowed map[string]bool) (map[string]bool, bool, error) {
+	ts := strings.TrimSpace(s)
+	if strings.HasPrefix(ts, "[") {
+		var arr []string
+		if err := json.Unmarshal([]byte(ts), &arr); err != nil {
+			return nil, false, fmt.Errorf("%s: %w", errFieldsShape, err)
+		}
+		return parseFields(strings.Join(arr, ","), allowed)
+	}
+	return parseFields(s, allowed)
+}
+
+// fieldSet 把默认字段名列表转成集合，供 projectFields 使用。
+func fieldSet(names ...string) map[string]bool {
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
+	}
+	return m
+}
+
+// projectFields 只保留 sel 中选中的字段。
+func projectFields(full map[string]interface{}, sel map[string]bool) map[string]interface{} {
+	out := make(map[string]interface{}, len(sel))
+	for k := range sel {
+		if v, ok := full[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// docPreviewHint list/query 默认不返回 preview 时随结果下发的提醒。
+const docPreviewHint = "未返回 preview（正文摘要）；需要时用 fields=preview 重新调用。"
 
 // docWindowHint 大文档窗口读的固定提示，防止整读整写浪费 token。
 const docWindowHint = "文档较长，仅返回部分内容。继续读请传 char_offset；修改请用 old_text/new_text 局部替换，不要整读整写。"
@@ -116,7 +227,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 				"type": "object",
 				"properties": map[string]interface{}{
 					"document_id": map[string]interface{}{"type": "string", "description": "文档 ID"},
-					"limit":       map[string]interface{}{"type": "integer", "description": fmt.Sprintf("每页条数，默认 %d；传 0 只取总数返回空列表", defaultDocPageSize)},
+					"limit":       map[string]interface{}{"type": "integer", "description": fmt.Sprintf("每页条数，默认 %d，上限 %d；传 0 只取总数返回空列表", defaultDocPageSize, maxDocPageSize)},
 					"offset":      map[string]interface{}{"type": "integer", "description": "偏移量，默认 0，不能为负"},
 				},
 				"required": []string{"document_id"},
@@ -143,13 +254,14 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		{
 			Name:        "query_documents",
 			Display:     "查询文档",
-			Description: "查询文档列表，可按标签或关键词筛选。",
+			Description: fmt.Sprintf("查询文档列表，可按标签或关键词筛选；total 为符合筛选的文档数。默认只回 id/title/tags/时间，不含正文摘要 preview；需要正文前 %d 字判断相关性时传 fields=preview，只要目录信息可传 fields=id,title,tags。", docPreviewLen),
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"tag":     map[string]interface{}{"type": "string", "description": "按标签筛选（可选）"},
 					"keyword": map[string]interface{}{"type": "string", "description": "按标题和内容搜索关键词（可选）"},
-					"limit":   map[string]interface{}{"type": "integer", "description": fmt.Sprintf("每页条数，默认 %d；传 0 只取总数返回空列表", defaultDocPageSize)},
+					"fields":  map[string]interface{}{"type": "string", "description": "返回字段（可选），逗号分隔字符串或字符串数组，可选 id,title,tags,preview,created_at,updated_at,conversation_id。默认不含 preview（正文摘要），需要时加上 preview"},
+					"limit":   map[string]interface{}{"type": "integer", "description": fmt.Sprintf("每页条数，默认 %d，上限 %d；传 0 只取总数返回空列表", defaultDocPageSize, maxDocPageSize)},
 					"offset":  map[string]interface{}{"type": "integer", "description": "偏移量，默认 0，不能为负"},
 				},
 			},
@@ -157,11 +269,12 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		{
 			Name:        "list_documents",
 			Display:     "文档列表",
-			Description: "获取文档列表（按更新时间倒序）。返回 title、tags、preview（正文前50字），不含全文。",
+			Description: fmt.Sprintf("获取文档列表（按更新时间倒序），不支持筛选（按标签/关键词筛请用 query_documents）；total 为全部文档数。默认只回 id/title/tags/时间，不含正文摘要 preview；需要正文前 %d 字判断相关性时传 fields=preview，只要目录信息可传 fields=id,title,tags。", docPreviewLen),
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"limit":  map[string]interface{}{"type": "integer", "description": fmt.Sprintf("每页条数，默认 %d；传 0 只取总数返回空列表", defaultDocPageSize)},
+					"fields": map[string]interface{}{"type": "string", "description": "返回字段（可选），逗号分隔字符串或字符串数组，可选 id,title,tags,preview,created_at,updated_at,conversation_id。默认不含 preview（正文摘要），需要时加上 preview"},
+					"limit":  map[string]interface{}{"type": "integer", "description": fmt.Sprintf("每页条数，默认 %d，上限 %d；传 0 只取总数返回空列表", defaultDocPageSize, maxDocPageSize)},
 					"offset": map[string]interface{}{"type": "integer", "description": "偏移量，默认 0，不能为负"},
 				},
 			},
@@ -214,7 +327,7 @@ func (t *DocumentTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 	case "list_documents":
 		return t.listDocuments(ec, args)
 	case "list_tags":
-		return t.listTags(ec)
+		return t.listTags(ec, args)
 	default:
 		return &Result{Success: false, Error: "unknown function: " + funcName}
 	}
@@ -226,8 +339,8 @@ func (t *DocumentTool) createDocument(ec *ExecuteContext, args json.RawMessage) 
 		Content string `json:"content"`
 		Tags    string `json:"tags"`
 	}
-	if err := json.Unmarshal(args, &req); err != nil {
-		return &Result{Success: false, Error: "invalid args: " + err.Error()}
+	if err := decodeArgs(args, &req); err != nil {
+		return &Result{Success: false, Error: err.Error()}
 	}
 	if req.Title == "" || req.Content == "" {
 		return &Result{Success: false, Error: "title and content required"}
@@ -269,8 +382,8 @@ func (t *DocumentTool) getDocument(ec *ExecuteContext, args json.RawMessage) *Re
 		CharOffset int    `json:"char_offset"`
 		CharLimit  int    `json:"char_limit"`
 	}
-	if err := json.Unmarshal(args, &req); err != nil {
-		return &Result{Success: false, Error: "invalid args: " + err.Error()}
+	if err := decodeArgs(args, &req); err != nil {
+		return &Result{Success: false, Error: err.Error()}
 	}
 	if req.ID == "" {
 		return &Result{Success: false, Error: "id required"}
@@ -371,8 +484,8 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 		NewText *string `json:"new_text"`
 		Count   *int    `json:"count"`
 	}
-	if err := json.Unmarshal(args, &req); err != nil {
-		return &Result{Success: false, Error: "invalid args: " + err.Error()}
+	if err := decodeArgs(args, &req); err != nil {
+		return &Result{Success: false, Error: err.Error()}
 	}
 	if req.ID == "" {
 		return &Result{Success: false, Error: "id required"}
@@ -466,8 +579,8 @@ func (t *DocumentTool) listAnnotations(ec *ExecuteContext, args json.RawMessage)
 		Limit      *int   `json:"limit"`
 		Offset     *int   `json:"offset"`
 	}
-	if err := json.Unmarshal(args, &req); err != nil {
-		return &Result{Success: false, Error: "invalid args: " + err.Error()}
+	if err := decodeArgs(args, &req); err != nil {
+		return &Result{Success: false, Error: err.Error()}
 	}
 	if req.DocumentID == "" {
 		return &Result{Success: false, Error: "document_id required"}
@@ -508,15 +621,25 @@ func (t *DocumentTool) listAnnotations(ec *ExecuteContext, args json.RawMessage)
 
 func (t *DocumentTool) queryDocuments(ec *ExecuteContext, args json.RawMessage) *Result {
 	var req struct {
-		Tag     string `json:"tag"`
-		Keyword string `json:"keyword"`
-		Limit   *int   `json:"limit"`
-		Offset  *int   `json:"offset"`
+		Tag     string          `json:"tag"`
+		Keyword string          `json:"keyword"`
+		Fields  json.RawMessage `json:"fields"`
+		Limit   *int            `json:"limit"`
+		Offset  *int            `json:"offset"`
 	}
-	json.Unmarshal(args, &req)
+	if err := decodeArgs(args, &req); err != nil {
+		return &Result{Success: false, Error: err.Error()}
+	}
 	limit, offset, errMsg := resolvePaging(req.Limit, req.Offset)
 	if errMsg != "" {
 		return &Result{Success: false, Error: errMsg}
+	}
+	sel, explicit, err := parseFieldsRaw(req.Fields, docListFields)
+	if err != nil {
+		return &Result{Success: false, Error: err.Error()}
+	}
+	if !explicit {
+		sel = fieldSet(docDefaultFields...)
 	}
 
 	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, req.Tag, req.Keyword, nil, limit, offset)
@@ -526,24 +649,28 @@ func (t *DocumentTool) queryDocuments(ec *ExecuteContext, args json.RawMessage) 
 
 	result := make([]map[string]interface{}, 0, len(list))
 	for _, d := range list {
-		item := map[string]interface{}{
+		full := map[string]interface{}{
 			"id":         d.ID,
 			"title":      d.Title,
 			"tags":       d.Tags,
 			"created_at": d.CreatedAt,
 			"updated_at": d.UpdatedAt,
-			"preview":    util.TruncateContent(d.Content, 200),
+			"preview":    util.TruncateContent(d.Content, docPreviewLen),
 		}
 		if d.ConversationID != nil {
-			item["conversation_id"] = *d.ConversationID
+			full["conversation_id"] = *d.ConversationID
 		}
-		result = append(result, item)
+		result = append(result, projectFields(full, sel))
 	}
 
-	data, _ := json.Marshal(map[string]interface{}{
+	out := map[string]interface{}{
 		"documents": result,
 		"total":     total,
-	})
+	}
+	if !explicit && len(result) > 0 {
+		out["hint"] = docPreviewHint
+	}
+	data, _ := json.Marshal(out)
 	return &Result{Success: true, Data: data}
 }
 
@@ -551,8 +678,8 @@ func (t *DocumentTool) deleteDocument(ec *ExecuteContext, args json.RawMessage) 
 	var req struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(args, &req); err != nil {
-		return &Result{Success: false, Error: "invalid args: " + err.Error()}
+	if err := decodeArgs(args, &req); err != nil {
+		return &Result{Success: false, Error: err.Error()}
 	}
 	if req.ID == "" {
 		return &Result{Success: false, Error: "id required"}
@@ -572,13 +699,26 @@ func (t *DocumentTool) deleteDocument(ec *ExecuteContext, args json.RawMessage) 
 
 func (t *DocumentTool) listDocuments(ec *ExecuteContext, args json.RawMessage) *Result {
 	var req struct {
-		Limit  *int `json:"limit"`
-		Offset *int `json:"offset"`
+		Fields json.RawMessage `json:"fields"`
+		Limit  *int            `json:"limit"`
+		Offset *int            `json:"offset"`
 	}
-	json.Unmarshal(args, &req)
+	if err := decodeArgs(args, &req); err != nil {
+		if strings.Contains(err.Error(), `unknown field "tag"`) || strings.Contains(err.Error(), `unknown field "keyword"`) {
+			return &Result{Success: false, Error: "list_documents 不支持筛选（tag/keyword），请改用 query_documents"}
+		}
+		return &Result{Success: false, Error: err.Error()}
+	}
 	limit, offset, errMsg := resolvePaging(req.Limit, req.Offset)
 	if errMsg != "" {
 		return &Result{Success: false, Error: errMsg}
+	}
+	sel, explicit, err := parseFieldsRaw(req.Fields, docListFields)
+	if err != nil {
+		return &Result{Success: false, Error: err.Error()}
+	}
+	if !explicit {
+		sel = fieldSet(docDefaultFields...)
 	}
 
 	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, "", "", nil, limit, offset)
@@ -588,24 +728,35 @@ func (t *DocumentTool) listDocuments(ec *ExecuteContext, args json.RawMessage) *
 
 	result := make([]map[string]interface{}, 0, len(list))
 	for _, d := range list {
-		result = append(result, map[string]interface{}{
+		full := map[string]interface{}{
 			"id":         d.ID,
 			"title":      d.Title,
 			"tags":       d.Tags,
-			"preview":    util.TruncateContent(d.Content, 50),
 			"created_at": d.CreatedAt,
 			"updated_at": d.UpdatedAt,
-		})
+			"preview":    util.TruncateContent(d.Content, docPreviewLen),
+		}
+		if d.ConversationID != nil {
+			full["conversation_id"] = *d.ConversationID
+		}
+		result = append(result, projectFields(full, sel))
 	}
 
-	data, _ := json.Marshal(map[string]interface{}{
+	out := map[string]interface{}{
 		"documents": result,
 		"total":     total,
-	})
+	}
+	if !explicit && len(result) > 0 {
+		out["hint"] = docPreviewHint
+	}
+	data, _ := json.Marshal(out)
 	return &Result{Success: true, Data: data}
 }
 
-func (t *DocumentTool) listTags(ec *ExecuteContext) *Result {
+func (t *DocumentTool) listTags(ec *ExecuteContext, args json.RawMessage) *Result {
+	if err := decodeArgs(args, &struct{}{}); err != nil {
+		return &Result{Success: false, Error: err.Error()}
+	}
 	tags, err := t.docRepo.ListTags(ec.Ctx, ec.UserID)
 	if err != nil {
 		return &Result{Success: false, Error: "list tags: " + err.Error()}

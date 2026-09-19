@@ -1,8 +1,10 @@
 package tool
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 
 	"xhan-helper/internal/llm"
@@ -37,6 +39,21 @@ type Result struct {
 	Success bool            `json:"success"`
 	Data    json.RawMessage `json:"data,omitempty"`
 	Error   string          `json:"error,omitempty"`
+}
+
+// decodeArgs 严格解析工具入参：拒绝未知字段（避免调用方误传参数被静默忽略）。
+// 空/null 视为 {}；解析失败一律返回错误，禁止吞掉后继续用零值。
+func decodeArgs(args json.RawMessage, dst any) error {
+	trimmed := bytes.TrimSpace(args)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return fmt.Errorf("invalid args: %w", err)
+	}
+	return nil
 }
 
 // FuncSchema — 一个工具函数的定义，包含 JSON Schema 参数

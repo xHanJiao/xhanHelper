@@ -586,20 +586,15 @@ func TestDocumentListAndQuery(t *testing.T) {
 		}
 	}
 
-	t.Run("list_documents", func(t *testing.T) {
+	t.Run("list_documents_default_no_preview", func(t *testing.T) {
 		res := tool.Execute(ec, "list_documents", mustMarshal(t, map[string]interface{}{}))
 		if !res.Success {
 			t.Fatalf("list_documents failed: %s", res.Error)
 		}
 		var resp struct {
-			Documents []struct {
-				ID      string `json:"id"`
-				Title   string `json:"title"`
-				Tags    string `json:"tags"`
-				Preview string `json:"preview"`
-				Total   int    `json:"-"`
-			} `json:"documents"`
-			Total int `json:"total"`
+			Documents []map[string]interface{} `json:"documents"`
+			Total     int                      `json:"total"`
+			Hint      string                   `json:"hint"`
 		}
 		json.Unmarshal(res.Data, &resp)
 		if resp.Total != 3 {
@@ -608,9 +603,73 @@ func TestDocumentListAndQuery(t *testing.T) {
 		if len(resp.Documents) != 3 {
 			t.Fatalf("expected 3 documents, got %d", len(resp.Documents))
 		}
+		for _, d := range resp.Documents {
+			if _, ok := d["preview"]; ok {
+				t.Errorf("默认不应返回 preview，got %v", d)
+			}
+		}
+		if resp.Hint == "" {
+			t.Error("默认应附带 preview 提醒 hint")
+		}
+	})
+
+	t.Run("list_documents_fields_projection", func(t *testing.T) {
+		res := tool.Execute(ec, "list_documents", mustMarshal(t, map[string]interface{}{
+			"fields": "id,title,tags",
+		}))
+		if !res.Success {
+			t.Fatalf("list_documents fields failed: %s", res.Error)
+		}
+		var resp struct {
+			Documents []map[string]interface{} `json:"documents"`
+			Hint      string                   `json:"hint"`
+		}
+		json.Unmarshal(res.Data, &resp)
+		if len(resp.Documents) != 3 {
+			t.Fatalf("expected 3 documents, got %d", len(resp.Documents))
+		}
+		for _, d := range resp.Documents {
+			if len(d) != 3 {
+				t.Errorf("fields=id,title,tags 应只回 3 个键，got %v", d)
+			}
+			for _, k := range []string{"id", "title", "tags"} {
+				if _, ok := d[k]; !ok {
+					t.Errorf("缺少字段 %s: %v", k, d)
+				}
+			}
+		}
+		if resp.Hint != "" {
+			t.Errorf("显式传 fields 时不应带 hint，got %q", resp.Hint)
+		}
+	})
+
+	t.Run("list_documents_with_preview", func(t *testing.T) {
+		res := tool.Execute(ec, "list_documents", mustMarshal(t, map[string]interface{}{
+			"fields": "id,title,tags,preview",
+		}))
+		var resp struct {
+			Documents []map[string]interface{} `json:"documents"`
+		}
+		json.Unmarshal(res.Data, &resp)
+		if len(resp.Documents) == 0 {
+			t.Fatal("expected documents")
+		}
 		// preview 应截断在 50 字以内
-		if len([]rune(resp.Documents[0].Preview)) > 50 {
-			t.Errorf("preview too long: %d chars", len([]rune(resp.Documents[0].Preview)))
+		preview, _ := resp.Documents[0]["preview"].(string)
+		if preview == "" {
+			t.Fatalf("显式请求 preview 应返回，got %v", resp.Documents[0])
+		}
+		if len([]rune(preview)) > docPreviewLen {
+			t.Errorf("preview too long: %d chars", len([]rune(preview)))
+		}
+	})
+
+	t.Run("unknown_field_errors", func(t *testing.T) {
+		res := tool.Execute(ec, "list_documents", mustMarshal(t, map[string]interface{}{
+			"fields": "id,body",
+		}))
+		if res.Success {
+			t.Error("未知字段应报错")
 		}
 	})
 
@@ -664,6 +723,44 @@ func TestDocumentListAndQuery(t *testing.T) {
 		json.Unmarshal(res.Data, &resp)
 		if resp.Total != 0 {
 			t.Errorf("expected 0 matches, got %d", resp.Total)
+		}
+	})
+
+	t.Run("query_default_no_preview", func(t *testing.T) {
+		res := tool.Execute(ec, "query_documents", mustMarshal(t, map[string]interface{}{}))
+		var resp struct {
+			Documents []map[string]interface{} `json:"documents"`
+			Hint      string                   `json:"hint"`
+		}
+		json.Unmarshal(res.Data, &resp)
+		if len(resp.Documents) == 0 {
+			t.Fatal("expected documents")
+		}
+		for _, d := range resp.Documents {
+			if _, ok := d["preview"]; ok {
+				t.Errorf("默认不应返回 preview，got %v", d)
+			}
+		}
+		if resp.Hint == "" {
+			t.Error("默认应附带 preview 提醒 hint")
+		}
+	})
+
+	t.Run("query_fields_projection", func(t *testing.T) {
+		res := tool.Execute(ec, "query_documents", mustMarshal(t, map[string]interface{}{
+			"fields": "id,title,preview",
+		}))
+		var resp struct {
+			Documents []map[string]interface{} `json:"documents"`
+		}
+		json.Unmarshal(res.Data, &resp)
+		if len(resp.Documents) == 0 {
+			t.Fatal("expected documents")
+		}
+		for _, d := range resp.Documents {
+			if len(d) != 3 {
+				t.Errorf("fields=id,title,preview 应只回 3 个键，got %v", d)
+			}
 		}
 	})
 }
@@ -786,7 +883,7 @@ func TestDocumentPagingStrict(t *testing.T) {
 		createDocForTest(t, tool, ec, title, "c")
 	}
 
-	// limit=0：返回空列表但 total 照常
+	// limit=0：返回空列表但 total 照常，且空结果不带 hint
 	for _, fn := range []string{"list_documents", "query_documents"} {
 		res := tool.Execute(ec, fn, mustMarshal(t, map[string]interface{}{"limit": 0}))
 		if !res.Success {
@@ -795,6 +892,7 @@ func TestDocumentPagingStrict(t *testing.T) {
 		var got struct {
 			Documents []interface{} `json:"documents"`
 			Total     int64         `json:"total"`
+			Hint      string        `json:"hint"`
 		}
 		json.Unmarshal(res.Data, &got)
 		if len(got.Documents) != 0 {
@@ -802,6 +900,9 @@ func TestDocumentPagingStrict(t *testing.T) {
 		}
 		if got.Total != 3 {
 			t.Errorf("%s limit=0 should still report total=3, got %d", fn, got.Total)
+		}
+		if got.Hint != "" {
+			t.Errorf("%s limit=0 空结果不应带 hint，got %q", fn, got.Hint)
 		}
 	}
 
@@ -811,6 +912,154 @@ func TestDocumentPagingStrict(t *testing.T) {
 			if res := tool.Execute(ec, fn, mustMarshal(t, args)); res.Success {
 				t.Errorf("%s %v should fail", fn, args)
 			}
+		}
+	}
+
+	// 超上限：报错，不静默钳制到上限
+	for _, fn := range []string{"list_documents", "query_documents"} {
+		res := tool.Execute(ec, fn, mustMarshal(t, map[string]interface{}{"limit": maxDocPageSize + 1}))
+		if res.Success {
+			t.Errorf("%s limit=%d 应报错", fn, maxDocPageSize+1)
+		}
+		if res := tool.Execute(ec, fn, mustMarshal(t, map[string]interface{}{"limit": maxDocPageSize})); !res.Success {
+			t.Errorf("%s limit=%d 应成功: %s", fn, maxDocPageSize, res.Error)
+		}
+	}
+}
+
+func TestDocumentFieldsParamType(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+	createDocForTest(t, tool, ec, "T", "正文内容")
+
+	// 字符串数组归一化
+	res := tool.Execute(ec, "list_documents", mustMarshal(t, map[string]interface{}{
+		"fields": []string{"id", "title"},
+	}))
+	if !res.Success {
+		t.Fatalf("数组 fields 应被接受: %s", res.Error)
+	}
+	var got struct {
+		Documents []map[string]interface{} `json:"documents"`
+		Hint      string                   `json:"hint"`
+	}
+	json.Unmarshal(res.Data, &got)
+	if len(got.Documents) != 1 || len(got.Documents[0]) != 2 {
+		t.Fatalf("数组 fields 应只回 2 个键: %+v", got.Documents)
+	}
+	if _, ok := got.Documents[0]["id"]; !ok {
+		t.Errorf("缺少 id: %+v", got.Documents[0])
+	}
+	if got.Hint != "" {
+		t.Errorf("显式传 fields 不应带 hint")
+	}
+
+	// 非字符串/数组类型一律报错（不静默走默认）
+	for _, bad := range []interface{}{123, true, map[string]interface{}{"a": 1}} {
+		res := tool.Execute(ec, "list_documents", mustMarshal(t, map[string]interface{}{"fields": bad}))
+		if res.Success {
+			t.Errorf("fields=%v 应报错", bad)
+		}
+		if !strings.Contains(res.Error, "逗号分隔字符串") {
+			t.Errorf("fields=%v 报错应含形态提示，got %q", bad, res.Error)
+		}
+	}
+
+	// 字符串里嵌 JSON 数组字面量（模型偶发二次编码）→ 归一化成功，不再报"未知字段 [..]"
+	res = tool.Execute(ec, "list_documents", mustMarshal(t, map[string]interface{}{
+		"fields": `["id","title"]`,
+	}))
+	if !res.Success {
+		t.Fatalf("二次编码的数组字符串应被归一化: %s", res.Error)
+	}
+	got = struct {
+		Documents []map[string]interface{} `json:"documents"`
+		Hint      string                   `json:"hint"`
+	}{}
+	json.Unmarshal(res.Data, &got)
+	if len(got.Documents) != 1 || len(got.Documents[0]) != 2 {
+		t.Fatalf("归一化后应只回 2 个键: %+v", got.Documents)
+	}
+
+	// 数组里混入非字符串 → 形态提示，而非把 JSON 串当字段名
+	res = tool.Execute(ec, "list_documents", mustMarshal(t, map[string]interface{}{
+		"fields": []interface{}{"id", 123},
+	}))
+	if res.Success || !strings.Contains(res.Error, "逗号分隔字符串") {
+		t.Errorf("非法数组元素应给形态提示，got success=%v err=%q", res.Success, res.Error)
+	}
+}
+
+func TestDocumentStrictArgs(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+	id := createDocForTest(t, tool, ec, "T", "c")
+
+	// 未知参数一律报错，不再静默忽略
+	cases := []struct {
+		fn   string
+		args map[string]interface{}
+	}{
+		{"list_documents", map[string]interface{}{"nonexistent_param": 1}},
+		{"query_documents", map[string]interface{}{"nonexistent_param": 1}},
+		{"get_document", map[string]interface{}{"id": id, "nonexistent_param": 1}},
+		{"update_document", map[string]interface{}{"id": id, "nonexistent_param": 1}},
+		{"list_annotations", map[string]interface{}{"document_id": id, "nonexistent_param": 1}},
+		{"delete_document", map[string]interface{}{"id": id, "nonexistent_param": 1}},
+		{"create_document", map[string]interface{}{"title": "t", "content": "c", "nonexistent_param": 1}},
+	}
+	for _, c := range cases {
+		if res := tool.Execute(ec, c.fn, mustMarshal(t, c.args)); res.Success {
+			t.Errorf("%s 传未知参数应报错", c.fn)
+		}
+	}
+
+	// list_documents 不支持筛选，报错并指向 query_documents
+	for _, key := range []string{"tag", "keyword"} {
+		res := tool.Execute(ec, "list_documents", mustMarshal(t, map[string]interface{}{key: "x"}))
+		if res.Success {
+			t.Fatalf("list_documents 传 %s 应报错", key)
+		}
+		if !strings.Contains(res.Error, "query_documents") {
+			t.Errorf("报错应指向 query_documents，got %q", res.Error)
+		}
+	}
+
+	// list_tags 无参数，传任何参数都报错；无参数正常
+	if res := tool.Execute(ec, "list_tags", mustMarshal(t, map[string]interface{}{"limit": 1})); res.Success {
+		t.Error("list_tags 传参数应报错")
+	}
+	if res := tool.Execute(ec, "list_tags", mustMarshal(t, map[string]interface{}{})); !res.Success {
+		t.Errorf("list_tags 无参数应成功: %s", res.Error)
+	}
+}
+
+func TestDocumentDefaultFieldsUnified(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1", ConvID: "conv-1"}
+	createDocForTest(t, tool, ec, "T", "正文")
+
+	for _, fn := range []string{"list_documents", "query_documents"} {
+		res := tool.Execute(ec, fn, mustMarshal(t, map[string]interface{}{}))
+		if !res.Success {
+			t.Fatalf("%s: %s", fn, res.Error)
+		}
+		var got struct {
+			Documents []map[string]interface{} `json:"documents"`
+		}
+		json.Unmarshal(res.Data, &got)
+		if len(got.Documents) != 1 {
+			t.Fatalf("%s expected 1 doc, got %d", fn, len(got.Documents))
+		}
+		d := got.Documents[0]
+		if _, ok := d["preview"]; ok {
+			t.Errorf("%s 默认不应含 preview", fn)
+		}
+		if _, ok := d["conversation_id"]; !ok {
+			t.Errorf("%s 默认应含 conversation_id: %+v", fn, d)
 		}
 	}
 }

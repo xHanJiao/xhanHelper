@@ -97,12 +97,6 @@ func tagBoundaryClause(tag string) (string, []any) {
 		[]any{tag, tag + ",%", "%," + tag, "%," + tag + ",%"}
 }
 
-// tagMatchClause 按逗号边界匹配单个标签（精确筛选）。
-func tagMatchClause(q *gorm.DB, tag string) *gorm.DB {
-	clause, args := tagBoundaryClause(tag)
-	return q.Where(clause, args...)
-}
-
 // keywordClause 组合多字段 OR 检索条件。fields 取 title/tag/content，空集回退 title+content。
 // title/content 走 LIKE 子串，tag 走精确边界匹配（与原 tag 筛选同语义）。
 func keywordClause(keyword string, fields []string) (string, []any) {
@@ -132,17 +126,37 @@ func keywordClause(keyword string, fields []string) (string, []any) {
 	return strings.Join(conds, " OR "), args
 }
 
-// List 按条件分页查询。limit < 0 视为默认 50；limit == 0 表示只取总数、返回空列表。
+// List 单标签筛选（保留旧签名，供工具与测试使用），等价于 ListByAllTags 传一个标签。
+func (r *DocumentRepo) List(ctx context.Context, userID, tag, keyword string, fields []string, limit, offset int) ([]model.Document, int64, error) {
+	var tags []string
+	if tag != "" {
+		tags = []string{tag}
+	}
+	return r.ListByAllTags(ctx, userID, tags, keyword, fields, limit, offset)
+}
+
+// ListByAllTags 按多标签**交集**分页查询（文档必须同时命中全部所选标签，越选越少）。
+// limit < 0 视为默认 50；limit == 0 表示只取总数、返回空列表。
 // keyword 非空时按 fields 组合 OR 检索：title / tag（精确边界）/ content；
 // fields 为空视为 [title, content]，保持旧行为。
 // 排序必须带唯一 tie-break（id），否则同 updated_at 的文档在不同 limit 下顺序可能不同，翻页会重复/漏项。
-func (r *DocumentRepo) List(ctx context.Context, userID, tag, keyword string, fields []string, limit, offset int) ([]model.Document, int64, error) {
+//
+// ponytail: tags 是逗号串列、无索引，筛选走 user_id 定位 + 逐行 REPLACE/LIKE 全扫（前导通配用不上 B-tree）。
+// 实测 ~9µs/行：千篇 ~9ms、万篇 ~90ms。到万篇量级再规范化 document_tags + (user_id, tag) 复合索引，不要提前建。
+func (r *DocumentRepo) ListByAllTags(ctx context.Context, userID string, tags []string, keyword string, fields []string, limit, offset int) ([]model.Document, int64, error) {
 	if limit < 0 {
 		limit = 50
 	}
 	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
-	if tag != "" {
-		q = tagMatchClause(q, strings.ReplaceAll(tag, " ", ""))
+	if len(tags) > 0 {
+		conds := make([]string, 0, len(tags))
+		args := make([]any, 0, len(tags)*4)
+		for _, tag := range tags {
+			clause, tagArgs := tagBoundaryClause(strings.ReplaceAll(tag, " ", ""))
+			conds = append(conds, "("+clause+")")
+			args = append(args, tagArgs...)
+		}
+		q = q.Where(strings.Join(conds, " AND "), args...)
 	}
 	if keyword != "" {
 		clause, args := keywordClause(keyword, fields)
@@ -168,21 +182,59 @@ type TagCount struct {
 	Count int    `json:"count"`
 }
 
+// TagEdge 两个标签的共现关系（同一篇文档里同时出现），供词云多选联动高亮建图。
+type TagEdge struct {
+	A     string `json:"a"`
+	B     string `json:"b"`
+	Count int    `json:"count"`
+}
+
 // ListTagCounts 统计用户所有文档的标签出现次数，按次数降序、名称升序
 func (r *DocumentRepo) ListTagCounts(ctx context.Context, userID string) ([]TagCount, error) {
+	counts, _, err := r.tagGraph(ctx, userID)
+	return counts, err
+}
+
+// TagGraph 返回标签频次 + 共现边（一次全扫同时算出，不额外查库）。
+func (r *DocumentRepo) TagGraph(ctx context.Context, userID string) ([]TagCount, []TagEdge, error) {
+	return r.tagGraph(ctx, userID)
+}
+
+// tagGraph 一次 Pluck 出该用户所有 tags 串，在内存里同时统计频次与两两共现。
+// 每篇文档先按逗号切分并去重，再对去重后的标签做两两计数（k 通常 2~8，k² 可忽略）。
+func (r *DocumentRepo) tagGraph(ctx context.Context, userID string) ([]TagCount, []TagEdge, error) {
 	var raw []string
 	err := r.db.WithContext(ctx).
 		Model(&model.Document{}).
 		Where("user_id = ? AND tags != ''", userID).
 		Pluck("tags", &raw).Error
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
+	type pair struct{ a, b string }
 	counts := make(map[string]int)
+	edges := make(map[pair]int)
 	for _, t := range raw {
-		for _, part := range splitTags(t) {
-			counts[part]++
+		parts := splitTags(t)
+		seen := make(map[string]bool, len(parts))
+		uniq := make([]string, 0, len(parts))
+		for _, part := range parts {
+			counts[part]++ // 保持旧语义：按出现次数计（历史数据可能同篇重复）
+			if seen[part] {
+				continue
+			}
+			seen[part] = true
+			uniq = append(uniq, part)
+		}
+		for i := 0; i < len(uniq); i++ {
+			for j := i + 1; j < len(uniq); j++ {
+				a, b := uniq[i], uniq[j]
+				if a > b {
+					a, b = b, a
+				}
+				edges[pair{a, b}]++
+			}
 		}
 	}
 
@@ -196,7 +248,18 @@ func (r *DocumentRepo) ListTagCounts(ctx context.Context, userID string) ([]TagC
 		}
 		return result[i].Name < result[j].Name
 	})
-	return result, nil
+
+	edgeList := make([]TagEdge, 0, len(edges))
+	for p, count := range edges {
+		edgeList = append(edgeList, TagEdge{A: p.a, B: p.b, Count: count})
+	}
+	sort.Slice(edgeList, func(i, j int) bool {
+		if edgeList[i].A != edgeList[j].A {
+			return edgeList[i].A < edgeList[j].A
+		}
+		return edgeList[i].B < edgeList[j].B
+	})
+	return result, edgeList, nil
 }
 
 // ListTags 获取用户所有文档的去重标签列表（按出现次数降序）

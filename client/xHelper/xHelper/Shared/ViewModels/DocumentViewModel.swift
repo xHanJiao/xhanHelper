@@ -27,17 +27,25 @@ class DocumentViewModel: ObservableObject {
     @Published var keyword = ""
     /// 检索目标字段，默认标题+正文（等价于历史行为）。
     @Published var searchFields: Set<DocumentSearchField> = [.title, .content]
-    @Published var selectedTag: String?
+    /// 列表模式的后端交集筛选标签（空=不过滤）。
+    @Published var activeTags: [String] = []
     @Published var mode: DocumentBrowseMode = .list
     @Published var minTagCount = 1
     /// 词云本地高亮的搜索词（纯 UI 状态，不参与后端检索）。
     @Published var cloudQuery = ""
+    /// 词云 ⌘ 多选的标签集合（纯 UI 状态）。
+    @Published var selectedTags: Set<String> = []
+    /// 标签共现邻接表：tag → (邻标签 → 共现次数)，来自 /documents/tags 的 edges。
+    @Published var cooccurrence: [String: [String: Int]] = [:]
+    /// 当前多选交集命中的文档数（服务端 limit=0 只出 total）。
+    @Published var resultCount: Int?
     @Published var openDocument: Document?
     @Published var isDetailLoading = false
 
     let apiClient: APIClient
     private var offset = 0
     private var hasMore = true
+    private var countTask: Task<Void, Never>?
 
     init(apiClient: APIClient) {
         self.apiClient = apiClient
@@ -48,16 +56,86 @@ class DocumentViewModel: ObservableObject {
         await load()
     }
 
+    /// 单击标签：按该标签筛选 → 切列表（清掉词云多选）。
     func selectTag(_ tag: String) async {
-        selectedTag = tag
+        clearSelection()
+        activeTags = [tag]
         mode = .list
         await load()
     }
 
-    func clearTag() async {
-        selectedTag = nil
+    /// ⌘ 点击标签：切换多选（留在词云），并刷新交集篇数。
+    func toggleSelect(_ tag: String) {
+        if selectedTags.contains(tag) {
+            selectedTags.remove(tag)
+        } else {
+            selectedTags.insert(tag)
+        }
+        scheduleResultCount()
+    }
+
+    /// 清空词云多选（不动列表筛选）。
+    func clearSelection() {
+        countTask?.cancel()
+        selectedTags.removeAll()
+        resultCount = nil
+    }
+
+    /// 查看多选交集：切列表模式按所选标签交集筛选。
+    func filterBySelection() async {
+        guard !selectedTags.isEmpty else { return }
+        activeTags = selectedTags.sorted()
+        mode = .list
+        await load()
+    }
+
+    /// 清除列表标签筛选：回词云并清空多选。
+    func clearFilter() async {
+        clearSelection()
+        activeTags = []
         mode = .cloud
         await load()
+    }
+
+    /// 直接共现邻居（1 跳）**交集**：与**全部**已选标签都同篇出现过的标签，剔除已选项。
+    /// 与筛选的「越选越少」一致——每个候选再选下去都还能继续收敛。
+    /// ponytail: 邻接交集是成对共现的近似（两两共现 ≠ 同篇全共现），作候选提示够用，真实篇数以服务端交集查询为准。
+    func neighbors(of selected: Set<String>) -> Set<String> {
+        guard let first = selected.first else { return [] }
+        var out = Set((cooccurrence[first] ?? [:]).keys)
+        for tag in selected.dropFirst() {
+            out.formIntersection((cooccurrence[tag] ?? [:]).keys)
+        }
+        out.subtract(selected)
+        return out
+    }
+
+    private func scheduleResultCount() {
+        countTask?.cancel()
+        guard !selectedTags.isEmpty else {
+            resultCount = nil
+            return
+        }
+        let tags = selectedTags.sorted()
+        countTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let n = try await self.apiClient.documentCount(tags: tags)
+                if !Task.isCancelled { self.resultCount = n }
+            } catch {
+                LogBuffer.shared.error("DocumentViewModel.resultCount: \(error)")
+                if !Task.isCancelled { self.resultCount = nil }
+            }
+        }
+    }
+
+    private func buildGraph(_ edges: [TagEdge]) {
+        var adj: [String: [String: Int]] = [:]
+        for e in edges {
+            adj[e.a, default: [:]][e.b] = e.count
+            adj[e.b, default: [:]][e.a] = e.count
+        }
+        cooccurrence = adj
     }
 
     func load() async {
@@ -67,13 +145,15 @@ class DocumentViewModel: ObservableObject {
         hasMore = true
         do {
             let resp = try await apiClient.listDocuments(
-                tag: selectedTag,
+                tags: activeTags,
                 keyword: keyword.isEmpty ? nil : keyword,
                 fields: searchFields
             )
             documents = resp.documents
             hasMore = resp.documents.count >= 24
-            tags = try await apiClient.listDocumentTags()
+            let tagResp = try await apiClient.listDocumentTags()
+            tags = tagResp.tags
+            buildGraph(tagResp.edges)
             minTagCount = min(minTagCount, max(1, tags.first?.count ?? 1))
         } catch {
             LogBuffer.shared.error("DocumentViewModel.load: \(error)")
@@ -130,7 +210,7 @@ class DocumentViewModel: ObservableObject {
         offset += 24
         do {
             let resp = try await apiClient.listDocuments(
-                tag: selectedTag,
+                tags: activeTags,
                 keyword: keyword.isEmpty ? nil : keyword,
                 fields: searchFields,
                 offset: offset

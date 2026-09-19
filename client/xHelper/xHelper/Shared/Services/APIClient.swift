@@ -163,9 +163,13 @@ class APIClient {
 
 	// MARK: Documents
 
-	func listDocuments(tag: String? = nil, keyword: String? = nil, fields: Set<DocumentSearchField> = [], limit: Int = 24, offset: Int = 0) async throws -> DocumentListResponse {
+	/// tags 为多标签**交集**筛选（文档须同时含全部标签，空数组=不过滤）；keyword 非空时 fields 决定检索字段。
+	func listDocuments(tags: [String] = [], keyword: String? = nil, fields: Set<DocumentSearchField> = [], limit: Int = 24, offset: Int = 0) async throws -> DocumentListResponse {
 		var path = "/api/documents?limit=\(limit)&offset=\(offset)"
-		if let t = tag, !t.isEmpty { path += "&tag=\(t.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? t)" }
+		if !tags.isEmpty {
+			let joined = tags.joined(separator: ",")
+			path += "&tags=\(joined.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? joined)"
+		}
 		if let k = keyword, !k.isEmpty {
 			path += "&keyword=\(k.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? k)"
 			if !fields.isEmpty {
@@ -175,13 +179,18 @@ class APIClient {
 		return try await get(path)
 	}
 
+	/// 交集篇数：limit=0 让服务端只出 total，不拉列表。
+	func documentCount(tags: [String]) async throws -> Int {
+		let resp = try await listDocuments(tags: tags, limit: 0)
+		return resp.total
+	}
+
 	func getDocument(id: String) async throws -> Document {
 		return try await get("/api/documents/\(id)")
 	}
 
-	func listDocumentTags() async throws -> [DocumentTag] {
-		let resp: DocumentTagListResponse = try await get("/api/documents/tags")
-		return resp.tags
+	func listDocumentTags() async throws -> DocumentTagListResponse {
+		return try await get("/api/documents/tags")
 	}
 
     func deleteDocument(id: String) async throws {
@@ -712,8 +721,16 @@ struct DocumentTag: Identifiable, Codable, Equatable {
     var id: String { name }
 }
 
+/// 两标签在同一篇文档里共现（词云多选联动高亮用）。
+struct TagEdge: Codable, Equatable {
+    let a: String
+    let b: String
+    let count: Int
+}
+
 struct DocumentTagListResponse: Codable {
     let tags: [DocumentTag]
+    let edges: [TagEdge]
 }
 
 struct Agent: Identifiable, Codable {

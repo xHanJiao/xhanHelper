@@ -101,6 +101,76 @@ func TestDocumentRepo_List_TagBoundary(t *testing.T) {
 	}
 }
 
+func TestDocumentRepo_ListByAllTagsIntersection(t *testing.T) {
+	repo, _, cleanup := setupDocumentRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	seedDoc(t, repo, "d1", "u1", "A,B,C")
+	seedDoc(t, repo, "d2", "u1", "A,C")
+	seedDoc(t, repo, "d3", "u1", "A,B")
+	seedDoc(t, repo, "d4", "u1", "A,D")
+	seedDoc(t, repo, "d5", "u1", "E")
+
+	// 交集：越选越少。{A}→d1..d4；{A,C}→d1,d2；{A,B,C}→d1；{A,C,D}→0
+	for _, tc := range []struct {
+		tags  []string
+		total int64
+		want  string
+	}{
+		{[]string{"A"}, 4, "d1,d2,d3,d4"},
+		{[]string{"A", "C"}, 2, "d1,d2"},
+		{[]string{"A", "B", "C"}, 1, "d1"},
+		{[]string{"A", "C", "D"}, 0, ""},
+	} {
+		list, total, err := repo.ListByAllTags(ctx, "u1", tc.tags, "", nil, 10, 0)
+		if err != nil {
+			t.Fatalf("list %v: %v", tc.tags, err)
+		}
+		if total != tc.total {
+			t.Errorf("tags=%v total: got %d, want %d", tc.tags, total, tc.total)
+		}
+		got := ids(list)
+		sort.Strings(got)
+		if strings.Join(got, ",") != tc.want {
+			t.Errorf("tags=%v ids: got %v, want %q", tc.tags, got, tc.want)
+		}
+	}
+
+	// 空 tags 等价于不过滤
+	if _, total, _ := repo.ListByAllTags(ctx, "u1", nil, "", nil, 10, 0); total != 5 {
+		t.Errorf("no tags total: got %d, want 5", total)
+	}
+}
+
+func TestDocumentRepo_TagGraphEdges(t *testing.T) {
+	repo, _, cleanup := setupDocumentRepo(t)
+	defer cleanup()
+
+	// 需求原例：A/B/C、A/C、A/B、A/D
+	seedDoc(t, repo, "d1", "u1", "A,B,C")
+	seedDoc(t, repo, "d2", "u1", "A,C")
+	seedDoc(t, repo, "d3", "u1", "A,B")
+	seedDoc(t, repo, "d4", "u1", "A,D")
+
+	_, edges, err := repo.TagGraph(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("graph: %v", err)
+	}
+	got := map[string]int{}
+	for _, e := range edges {
+		got[e.A+","+e.B] = e.Count
+	}
+	for k, want := range map[string]int{"A,B": 2, "A,C": 2, "A,D": 1, "B,C": 1} {
+		if got[k] != want {
+			t.Errorf("edge %s: got %d, want %d", k, got[k], want)
+		}
+	}
+	if len(edges) != 4 {
+		t.Errorf("edge count: got %d, want 4 (%v)", len(edges), edges)
+	}
+}
+
 func TestDocumentRepo_ListKeywordFields(t *testing.T) {
 	repo, _, cleanup := setupDocumentRepo(t)
 	defer cleanup()

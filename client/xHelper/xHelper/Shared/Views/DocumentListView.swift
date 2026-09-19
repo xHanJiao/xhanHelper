@@ -47,8 +47,8 @@ struct DocumentListView: View {
     @ViewBuilder
     private var listContent: some View {
         VStack(spacing: 0) {
-            if let tag = viewModel.selectedTag {
-                activeTagBar(tag)
+            if !viewModel.activeTags.isEmpty {
+                activeTagBar
             }
             listPage
         }
@@ -82,14 +82,20 @@ struct DocumentListView: View {
         }
     }
 
-    private func activeTagBar(_ tag: String) -> some View {
+    /// 列表模式的标签筛选条：交集可能多标签，逐 chip 展示。
+    private var activeTagBar: some View {
         HStack(spacing: 6) {
             Image(systemName: "tag.fill")
                 .font(.system(size: 11))
-            Text(tag)
-                .font(.system(size: 12, weight: .medium))
+            ForEach(viewModel.activeTags, id: \.self) { tag in
+                Text(tag)
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color("appAccent").opacity(0.16)))
+            }
             Button {
-                Task { await viewModel.clearTag() }
+                Task { await viewModel.clearFilter() }
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 12))
@@ -108,6 +114,7 @@ struct DocumentListView: View {
     @ViewBuilder
     private var cloudContent: some View {
         let visible = viewModel.tags.filter { $0.count >= viewModel.minTagCount }
+        let neighbors = viewModel.neighbors(of: viewModel.selectedTags)
         PageContainer(
             title: "标签词云",
             icon: "tag",
@@ -117,10 +124,76 @@ struct DocumentListView: View {
             emptyMessage: viewModel.tags.isEmpty ? "还没有标签" : "没有达到 \(viewModel.minTagCount) 篇的标签",
             onRetry: { Task { await viewModel.load() } }
         ) {
-            TagCloudView(tags: visible, query: viewModel.cloudQuery) { tag in
-                Task { await viewModel.selectTag(tag) }
+            ZStack(alignment: .bottom) {
+                TagCloudView(
+                    tags: visible,
+                    query: viewModel.cloudQuery,
+                    selected: viewModel.selectedTags,
+                    neighbors: neighbors,
+                    onTap: { tag in Task { await viewModel.selectTag(tag) } },
+                    onCmdTap: { tag in viewModel.toggleSelect(tag) }
+                )
+                VStack(spacing: 6) {
+                    if !viewModel.selectedTags.isEmpty {
+                        selectionBar
+                    }
+                    HStack {
+                        Spacer()
+                        cloudHint
+                    }
+                }
+                .padding(12)
             }
         }
+    }
+
+    /// 多选动作条：已选标签 + 交集篇数入口（点进列表模式）。
+    private var selectionBar: some View {
+        HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    ForEach(viewModel.selectedTags.sorted(), id: \.self) { tag in
+                        Text(tag)
+                            .font(.system(size: 11))
+                            .foregroundColor(Color("appAccent"))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color("appAccent").opacity(0.14)))
+                    }
+                }
+            }
+            Button {
+                Task { await viewModel.filterBySelection() }
+            } label: {
+                Text(viewModel.resultCount.map { "查看 \($0) 篇" } ?? "查看结果")
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color("appAccent"))
+            .controlSize(.small)
+            .fixedSize()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+        )
+    }
+
+    /// 右下角操作提示（不参与命中测试）。
+    private var cloudHint: some View {
+        HStack(spacing: 5) {
+            KeycapView(label: "⌘")
+            Text("+ 点击 = 多选标签")
+            Text("·").opacity(0.4)
+            Text("点击 = 筛选")
+        }
+        .font(.system(size: 10))
+        .foregroundColor(.secondary)
+        .allowsHitTesting(false)
     }
     #endif
 
@@ -138,7 +211,12 @@ private struct TagCloudView: View {
     let tags: [DocumentTag]
     /// 本地高亮搜索词：命中词 accent 强调，其余词变淡；不改布局。
     let query: String
+    /// ⌘ 多选中的标签。
+    let selected: Set<String>
+    /// 与所选标签直接共现（1 跳）的标签。
+    let neighbors: Set<String>
     let onTap: (String) -> Void
+    let onCmdTap: (String) -> Void
 
     @State private var placed: [PlacedTag] = []
 
@@ -146,20 +224,27 @@ private struct TagCloudView: View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 ForEach(placed) { item in
-                    let hit = matchState(item.tag.name)
-                    Button {
-                        onTap(item.tag.name)
-                    } label: {
-                        Text(item.tag.name)
-                            .font(.system(size: item.fontSize, weight: item.weight))
-                            .foregroundColor(hit == true ? Color("appAccent") : Color.primary.opacity(item.opacity))
-                            .opacity(hit == false ? 0.2 : 1)
-                            .fixedSize()
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("\(item.tag.count) 篇文档")
-                    .position(x: item.center.x, y: item.center.y)
+                    let style = emphasis(for: item)
+                    Text(item.tag.name)
+                        .font(.system(size: item.fontSize, weight: item.weight))
+                        .foregroundColor(style.color)
+                        .opacity(style.opacity)
+                        .padding(.horizontal, style.highlighted ? 4 : 0)
+                        .background(
+                            Capsule().fill(style.highlighted ? Color("appAccent").opacity(0.14) : .clear)
+                        )
+                        .fixedSize()
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            // 用实时修饰键状态区分单击筛选 / ⌘ 多选，避免两个手势打架
+                            if NSEvent.modifierFlags.contains(.command) {
+                                onCmdTap(item.tag.name)
+                            } else {
+                                onTap(item.tag.name)
+                            }
+                        }
+                        .help("\(item.tag.count) 篇文档")
+                        .position(x: item.center.x, y: item.center.y)
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -169,11 +254,36 @@ private struct TagCloudView: View {
         }
     }
 
+    private struct Emphasis {
+        let color: Color
+        let opacity: Double
+        let highlighted: Bool
+    }
+
     /// nil = 无查询（常态）；true = 命中；false = 未命中。
     private func matchState(_ name: String) -> Bool? {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return nil }
         return name.localizedCaseInsensitiveContains(q)
+    }
+
+    /// 高亮分层：选中 > 共现邻居 > 常态；搜索查询在每层上再压暗未命中。
+    private func emphasis(for item: PlacedTag) -> Emphasis {
+        let name = item.tag.name
+        let q = matchState(name)
+        if selected.isEmpty {
+            let color = q == true ? Color("appAccent") : Color.primary
+            var opacity = item.opacity
+            if q == false { opacity = min(opacity, 0.2) }
+            return Emphasis(color: color, opacity: opacity, highlighted: false)
+        }
+        if selected.contains(name) {
+            return Emphasis(color: Color("appAccent"), opacity: q == false ? 0.4 : 1, highlighted: true)
+        }
+        if neighbors.contains(name) {
+            return Emphasis(color: Color("accentSecondary"), opacity: q == false ? 0.4 : 1, highlighted: false)
+        }
+        return Emphasis(color: .primary, opacity: 0.18, highlighted: false)
     }
 
     private func rebuild(in size: CGSize) {

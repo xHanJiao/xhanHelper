@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文档词云多选 · 效果预览</title>
+<style>
+  :root {
+    --appAccent: #2F7D63;
+    --accentSecondary: #41C9E2;
+    --assistantText: #3B2E1F;
+    --userText: #2A7F58;
+    --chatBackground: #F7EEDD;
+    --chatBackgroundDeep: #EFE2C8;
+    --surfaceInput: #F2F7F3;
+    --bubbleTool: #E8E4EF;
+    --card: #F5F5F6;
+    --cardDeep: #ECECEE;
+    --stroke: rgba(0,0,0,0.08);
+    --shadow: 0 1px 2px rgba(0,0,0,0.06);
+    --fontScale: 1;
+  }
+  html.dark {
+    --appAccent: #92C8B4;
+    --assistantText: #FFFFFF;
+    --userText: #90D4A8;
+    --chatBackground: #1C1C1E;
+    --chatBackgroundDeep: #141416;
+    --surfaceInput: #2C2E2D;
+    --bubbleTool: #2E2B36;
+    --card: #232326;
+    --cardDeep: #1B1B1E;
+    --stroke: rgba(255,255,255,0.10);
+    --shadow: 0 0 0 0.5px rgba(255,255,255,0.35), 0 6px 18px rgba(0,0,0,0.45);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: var(--cardDeep);
+    color: var(--assistantText);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 24px 92px;
+  }
+
+  /* ---------- 右侧栏卡片 ---------- */
+  .panel {
+    width: 440px;
+    height: 700px;
+    background: var(--card);
+    border: 1px solid var(--stroke);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+  .panelHeader {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--stroke);
+    flex: none;
+  }
+  .back { font-size: 12px; color: color-mix(in srgb, var(--assistantText) 55%, transparent); display: flex; align-items: center; gap: 3px; }
+  .sep { width: 1px; height: 14px; background: var(--stroke); }
+  .title { font-size: 13px; font-weight: 600; }
+  .spacer { flex: 1; }
+  .seg {
+    display: inline-flex; background: color-mix(in srgb, var(--assistantText) 8%, transparent);
+    border-radius: 7px; padding: 1px; font-size: 11px;
+  }
+  .seg span { padding: 3px 10px; border-radius: 6px; color: color-mix(in srgb, var(--assistantText) 60%, transparent); cursor: default; }
+  .seg span.on { background: var(--card); color: var(--assistantText); font-weight: 600; box-shadow: var(--shadow); }
+  .pillbtn {
+    font-size: 11px; color: color-mix(in srgb, var(--assistantText) 70%, transparent);
+    border: 1px solid var(--stroke); border-radius: 6px; padding: 3px 8px;
+    background: transparent;
+  }
+  .icon { font-size: 13px; color: color-mix(in srgb, var(--assistantText) 60%, transparent); }
+
+  .panelBody { flex: 1; position: relative; overflow: hidden; }
+
+  /* ---------- 词云 ---------- */
+  .cloud {
+    position: absolute; inset: 0;
+    display: flex; flex-wrap: wrap;
+    align-content: center; justify-content: center;
+    gap: 6px 14px;
+    padding: 28px 26px 60px;
+    transition: opacity .15s;
+  }
+  .tag {
+    font-weight: 400;
+    color: color-mix(in srgb, var(--assistantText) 78%, transparent);
+    cursor: pointer;
+    user-select: none;
+    padding: 2px 6px;
+    border-radius: 7px;
+    line-height: 1.15;
+    transition: color .12s, background-color .12s, opacity .12s;
+    white-space: nowrap;
+  }
+  .tag:hover { background: color-mix(in srgb, var(--assistantText) 7%, transparent); }
+  .tag.sel {
+    color: var(--appAccent);
+    background: color-mix(in srgb, var(--appAccent) 14%, transparent);
+    font-weight: 600;
+  }
+  .tag.near { color: var(--accentSecondary); }
+  .tag.near-weak { color: var(--accentSecondary); opacity: .6; }
+  .tag.dim { color: color-mix(in srgb, var(--assistantText) 16%, transparent); }
+  .tag.match { text-decoration: underline; text-underline-offset: 3px; }
+
+  /* 搜索高亮（本地 cloudQuery，叠加用） */
+  .cloud.hasQuery .tag:not(.qhit) { opacity: .25; }
+  .cloud.hasQuery .tag.qhit { color: var(--appAccent); }
+  .cloud.hasQuery .tag.qhit.sel { background: color-mix(in srgb, var(--appAccent) 14%, transparent); }
+
+  /* ---------- 多选动作条 ---------- */
+  .actionBar {
+    position: absolute; left: 12px; right: 12px; bottom: 12px;
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--card) 88%, var(--assistantText) 4%);
+    border: 1px solid var(--stroke);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(8px);
+    font-size: 12px;
+  }
+  .chips { display: flex; gap: 5px; flex-wrap: wrap; flex: 1; min-width: 0; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; padding: 2px 7px; border-radius: 999px;
+    background: color-mix(in srgb, var(--appAccent) 14%, transparent);
+    color: var(--appAccent);
+  }
+  .chip b { font-weight: 600; }
+  .go {
+    flex: none;
+    font-size: 12px; padding: 5px 12px; border-radius: 7px;
+    background: var(--appAccent); color: #fff; font-weight: 600;
+    border: none; cursor: pointer;
+  }
+  html.dark .go { color: #10251d; }
+
+  /* ---------- 列表模式 ---------- */
+  .list { position: absolute; inset: 0; overflow-y: auto; padding: 12px; display: none; }
+  .filterbar {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 6px 8px; margin-bottom: 10px; border-radius: 8px;
+    background: color-mix(in srgb, var(--appAccent) 10%, transparent);
+    font-size: 12px; color: var(--appAccent);
+  }
+  .card {
+    background: color-mix(in srgb, var(--assistantText) 4%, transparent);
+    border: 1px solid var(--stroke);
+    border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;
+  }
+  .card h4 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+  .card p { margin: 0 0 6px; font-size: 11px; color: color-mix(in srgb, var(--assistantText) 55%, transparent); }
+  .card .tags { display: flex; gap: 4px; flex-wrap: wrap; }
+  .card .tags span { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--appAccent) 12%, transparent); color: var(--appAccent); }
+
+  /* ---------- 右下角键帽提示 ---------- */
+  .hint {
+    position: absolute; right: 10px; bottom: 8px;
+    display: flex; align-items: center; gap: 5px;
+    font-size: 10px; color: color-mix(in srgb, var(--assistantText) 45%, transparent);
+    pointer-events: none;
+  }
+  kbd {
+    font-family: inherit; font-size: 10px; line-height: 1;
+    padding: 3px 5px; border-radius: 4px;
+    background: color-mix(in srgb, var(--assistantText) 9%, transparent);
+    border: 0.5px solid var(--stroke);
+    color: color-mix(in srgb, var(--assistantText) 70%, transparent);
+    box-shadow: 0 1px 0 var(--stroke);
+  }
+
+  /* ---------- 演示控制条 ---------- */
+  .ui {
+    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    justify-content: center;
+    padding: 10px 16px;
+    background: rgba(20,20,22,0.92);
+    color: #eee; border-radius: 12px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.35);
+    font-size: 12px; z-index: 99; max-width: 92vw;
+  }
+  .ui .grp { display: flex; align-items: center; gap: 6px; }
+  .ui .lbl { opacity: .6; }
+  .ui button, .ui select {
+    font: inherit; font-size: 11px; color: #eee;
+    background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 6px; padding: 4px 9px; cursor: pointer;
+  }
+  .ui button.on { background: var(--appAccent); border-color: var(--appAccent); color: #fff; }
+  html.dark .ui button.on { color: #10251d; }
+  .ui input[type=range] { width: 90px; }
+  .ui .note { opacity: .5; font-size: 10px; max-width: 220px; line-height: 1.3; }
+</style>
+</head>
+<body>
+
+<div class="panel">
+  <div class="panelHeader">
+    <span class="back" id="backBtn" style="visibility:hidden">‹ 返回</span>
+    <span class="sep"></span>
+    <span class="title" id="panelTitle">标签词云</span>
+    <span class="spacer"></span>
+    <span class="seg" id="modeSeg">
+      <span id="segList">列表</span><span class="on" id="segCloud">词云</span>
+    </span>
+    <span class="pillbtn">≥ 1 篇</span>
+    <span class="icon">⟳</span>
+    <span class="icon">⌕</span>
+  </div>
+
+  <div class="panelBody">
+    <div class="cloud" id="cloud"></div>
+
+    <div class="actionBar" id="actionBar" style="display:none">
+      <div class="chips" id="chips"></div>
+      <button class="go" id="goBtn">查看 4 篇</button>
+    </div>
+
+    <div class="list" id="list"></div>
+
+    <div class="hint">
+      <kbd>⌘</kbd><span>+ 点击 = 多选标签</span>
+      <span style="opacity:.4">·</span>
+      <kbd>点击</kbd><span>= 筛选</span>
+    </div>
+  </div>
+</div>
+
+<div class="ui">
+  <div class="grp">
+    <span class="lbl">主题</span>
+    <button id="themeBtn">深色</button>
+  </div>
+  <div class="grp">
+    <span class="lbl">字号</span>
+    <input type="range" id="fontRange" min="0.8" max="1.4" step="0.05" value="1">
+  </div>
+  <div class="grp">
+    <span class="lbl">联动范围</span>
+    <button data-link="direct" class="on">① 直接共现</button>
+    <button data-link="closure">② 传递闭包</button>
+    <button data-link="graded">③ 分级</button>
+  </div>
+  <div class="grp">
+    <span class="lbl">搜索高亮</span>
+    <button id="queryBtn">开</button>
+  </div>
+  <div class="note">布局为近似（真机是圆盘分行排布）；多选=交集，越选越少。</div>
+</div>
+
+<script>
+(function () {
+  // 造数据：共现图刻意让三种模式结果不同。
+  // A 一档邻居 = B/C/D；B 连 E、C 连 G、D 连 H → 传递闭包几乎吃掉全图；I/J/K 独立。
+  const DOCS = [
+    { title: '向量检索调研笔记', tags: ['A', 'B', 'C'] },
+    { title: 'Ark Embedding 实践', tags: ['A', 'C'] },
+    { title: 'ReAct 循环拆解', tags: ['A', 'B'] },
+    { title: '上下文预算设计', tags: ['A', 'D'] },
+    { title: '原生 FC 对比', tags: ['B', 'E'] },
+    { title: '工具注册表校验', tags: ['E', 'F'] },
+    { title: '摘要增量合并', tags: ['C', 'G'] },
+    { title: '时间衰减公式', tags: ['D', 'H'] },
+    { title: '冷启动画像迁移', tags: ['I'] },
+    { title: '信箱投递机制', tags: ['J', 'K'] },
+    { title: '反思子系统设计', tags: ['I', 'J'] },
+    { title: 'WKWebView 划线', tags: ['L', 'M'] },
+    { title: '选区绘制坑', tags: ['M', 'N'] },
+    { title: 'nginx 静态托管', tags: ['L'] },
+  ];
+
+  // --- 统计 ---
+  const count = {};
+  DOCS.forEach(d => d.tags.forEach(t => { count[t] = (count[t] || 0) + 1; }));
+  const names = Object.keys(count);
+  // 无向共现权重
+  const co = {};
+  const bump = (a, b, w) => { (co[a] = co[a] || {})[b] = (co[a][b] || 0) + w; };
+  DOCS.forEach(d => {
+    const u = [...new Set(d.tags)];
+    for (let i = 0; i < u.length; i++)
+      for (let j = i + 1; j < u.length; j++) { bump(u[i], u[j], 1); bump(u[j], u[i], 1); }
+  });
+  const adj = t => Object.keys(co[t] || {});
+
+  // --- 状态 ---
+  const state = {
+    mode: 'cloud',          // cloud | list
+    link: 'direct',         // direct | closure | graded
+    selected: new Set(),
+    filter: [],             // 列表筛选标签
+    query: false,
+    fontScale: 1,
+  };
+
+  const $ = id => document.getElementById(id);
+  const cloudEl = $('cloud');
+  const listEl = $('list');
+  const actionBar = $('actionBar');
+
+  // --- 词云渲染 ---
+  const maxC = Math.max(...names.map(t => count[t]));
+  const minC = Math.min(...names.map(t => count[t]));
+  const fontOf = t => {
+    const r = maxC > minC ? (count[t] - minC) / (maxC - minC) : 1;
+    return (14 + Math.sqrt(r) * 12) * state.fontScale;
+  };
+
+  function neighborsOf() {
+    const S = state.selected;
+    if (!S.size) return { strong: new Set(), weak: new Set() };
+    if (state.link === 'direct' || state.link === 'graded') {
+      // 邻接交集：只保留与「全部」已选标签都共现的候选（越选越少）
+      const sel = [...S];
+      const common = sel.reduce((acc, s) => {
+        const a = new Set(adj(s));
+        return acc === null ? a : new Set([...acc].filter(x => a.has(x)));
+      }, null) || new Set();
+      const strong = new Set(), weak = new Set();
+      common.forEach(t => {
+        if (S.has(t)) return;
+        if (state.link === 'graded') {
+          // 分档：取与任一已选标签的最小共现次数
+          const w = Math.min(...sel.map(s => (co[s] && co[s][t]) || 0));
+          if (w < 2) weak.add(t); else strong.add(t);
+        } else {
+          strong.add(t);
+        }
+      });
+      return { strong, weak };
+    }
+    // closure：从 S 泛洪整个连通分量
+    const seen = new Set(S), q = [...S], comp = new Set();
+    while (q.length) {
+      const cur = q.pop();
+      adj(cur).forEach(n => {
+        if (seen.has(n)) return;
+        seen.add(n); comp.add(n); q.push(n);
+      });
+    }
+    return { strong: comp, weak: new Set() };
+  }
+
+  function render() {
+    const { strong, weak } = neighborsOf();
+    const active = state.selected.size > 0;
+    cloudEl.innerHTML = '';
+    cloudEl.classList.toggle('hasQuery', state.query);
+    // 稳定顺序：频次降序 + 名称，避免每次重排跳动
+    const order = [...names].sort((a, b) => count[b] - count[a] || a.localeCompare(b));
+    order.forEach(t => {
+      const el = document.createElement('span');
+      el.className = 'tag';
+      el.textContent = t;
+      el.style.fontSize = fontOf(t) + 'px';
+      const r = maxC > minC ? (count[t] - minC) / (maxC - minC) : 1;
+      el.style.fontWeight = r > 0.5 ? '600' : '400';
+      if (state.query && t.toLowerCase().includes('a')) el.classList.add('qhit');
+      if (active) {
+        if (state.selected.has(t)) el.classList.add('sel');
+        else if (strong.has(t)) el.classList.add('near');
+        else if (weak.has(t)) el.classList.add('near-weak');
+        else el.classList.add('dim');
+      }
+      el.title = count[t] + ' 篇';
+      el.addEventListener('click', e => onTagClick(t, e));
+      cloudEl.appendChild(el);
+    });
+    renderActionBar();
+  }
+
+  function renderActionBar() {
+    const show = state.mode === 'cloud' && state.selected.size > 0;
+    actionBar.style.display = show ? 'flex' : 'none';
+    // 多选条占底时把右下角提示抬上去，避免叠字
+    document.querySelector('.hint').style.bottom = show ? '64px' : '8px';
+    if (!show) return;
+    const chips = $('chips');
+    chips.innerHTML = '';
+    [...state.selected].sort().forEach(t => {
+      const c = document.createElement('span');
+      c.className = 'chip';
+      c.innerHTML = '<b></b>';
+      c.querySelector('b').textContent = t;
+      chips.appendChild(c);
+    });
+    const n = intersectDocs([...state.selected]).length;
+    $('goBtn').textContent = '查看 ' + n + ' 篇';
+  }
+
+  function intersectDocs(tags) {
+    const set = new Set(tags);
+    const want = [...set];
+    return DOCS.filter(d => want.every(t => d.tags.includes(t)));
+  }
+
+  function onTagClick(tag, e) {
+    if (e.metaKey || e.ctrlKey) {
+      // ⌘ 多选：留在词云
+      if (state.selected.has(tag)) state.selected.delete(tag); else state.selected.add(tag);
+      render();
+    } else {
+      // 单击：筛选 → 切列表
+      enterList([tag]);
+    }
+  }
+
+  // --- 列表模式 ---
+  function enterList(tags) {
+    state.mode = 'list';
+    state.filter = tags;
+    state.query = false;
+    $('backBtn').style.visibility = 'visible';
+    $('panelTitle').textContent = '文档';
+    $('segCloud').classList.remove('on');
+    $('segList').classList.add('on');
+    cloudEl.style.display = 'none';
+    actionBar.style.display = 'none';
+    listEl.style.display = 'block';
+    renderList();
+  }
+  function enterCloud() {
+    state.mode = 'cloud';
+    state.selected.clear();
+    state.filter = [];
+    $('backBtn').style.visibility = 'hidden';
+    $('panelTitle').textContent = '标签词云';
+    $('segList').classList.remove('on');
+    $('segCloud').classList.add('on');
+    listEl.style.display = 'none';
+    cloudEl.style.display = 'flex';
+    render();
+  }
+  function renderList() {
+    const docs = state.filter.length ? intersectDocs(state.filter) : DOCS;
+    const bar = document.createElement('div');
+    bar.className = 'filterbar';
+    bar.innerHTML = '<span>筛选标签：</span>';
+    state.filter.forEach(t => {
+      const s = document.createElement('span');
+      s.className = 'chip';
+      s.innerHTML = '<b></b>';
+      s.querySelector('b').textContent = t;
+      bar.appendChild(s);
+    });
+    const clear = document.createElement('span');
+    clear.textContent = '✕ 清除';
+    clear.style.cssText = 'margin-left:auto;cursor:pointer;opacity:.7';
+    clear.addEventListener('click', enterCloud);
+    bar.appendChild(clear);
+    listEl.innerHTML = '';
+    listEl.appendChild(bar);
+    docs.forEach(d => {
+      const c = document.createElement('div');
+      c.className = 'card';
+      const h = document.createElement('h4'); h.textContent = d.title;
+      const p = document.createElement('p'); p.textContent = '更新于 2026-09-19 · ' + d.tags.length + ' 个标签';
+      const tg = document.createElement('div'); tg.className = 'tags';
+      d.tags.forEach(t => { const s = document.createElement('span'); s.textContent = t; tg.appendChild(s); });
+      c.append(h, p, tg);
+      listEl.appendChild(c);
+    });
+  }
+
+  // --- 控制条接线 ---
+  $('goBtn').addEventListener('click', () => enterList([...state.selected]));
+  $('backBtn').addEventListener('click', enterCloud);
+  $('segList').addEventListener('click', () => { if (state.mode !== 'list') enterList(state.selected.size ? [...state.selected] : []); });
+  $('segCloud').addEventListener('click', enterCloud);
+
+  document.querySelectorAll('.ui [data-link]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.link = btn.dataset.link;
+      document.querySelectorAll('.ui [data-link]').forEach(b => b.classList.toggle('on', b === btn));
+      render();
+    });
+  });
+
+  const themeBtn = $('themeBtn');
+  themeBtn.addEventListener('click', () => {
+    const dark = document.documentElement.classList.toggle('dark');
+    document.documentElement.classList.toggle('light', !dark);
+    themeBtn.textContent = dark ? '浅色' : '深色';
+  });
+
+  $('fontRange').addEventListener('input', e => { state.fontScale = parseFloat(e.target.value); render(); });
+
+  const queryBtn = $('queryBtn');
+  queryBtn.addEventListener('click', () => {
+    state.query = !state.query;
+    queryBtn.classList.toggle('on', state.query);
+    queryBtn.textContent = state.query ? '开' : '关';
+    render();
+  });
+
+  // URL 预设：?link=closure&dark=1&q=1
+  const params = new URLSearchParams(location.search);
+  if (params.get('link')) {
+    const l = params.get('link');
+    state.link = l;
+    document.querySelectorAll('.ui [data-link]').forEach(b => b.classList.toggle('on', b.dataset.link === l));
+  }
+  if (params.get('dark')) { document.documentElement.classList.add('dark'); document.documentElement.classList.remove('light'); themeBtn.textContent = '浅色'; }
+  if (params.get('q')) { state.query = true; queryBtn.classList.add('on'); }
+  if (params.get('sel')) {
+    params.get('sel').split(',').forEach(t => state.selected.add(t));
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>

@@ -23,18 +23,23 @@ func NewDocumentHandler(docRepo *service.DocumentRepo, annoRepo *service.Documen
 	return &DocumentHandler{docRepo: docRepo, annoRepo: annoRepo}
 }
 
-// ListDocuments GET /api/documents?tag=&keyword=&fields=title,tag,content&limit=&offset=
+// ListDocuments GET /api/documents?tag=&tags=&keyword=&fields=title,tag,content&limit=&offset=
+// tags 为逗号分隔的多标签**交集**（文档须同时含全部标签；标签名内不含逗号）；tag 为旧的单标签筛选，二者叠加。
 func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 	userID := c.GetString("user_id")
-	tag := c.Query("tag")
 	keyword := c.Query("keyword")
 	fields := parseDocFields(c.Query("fields"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	list, total, err := h.docRepo.List(c.Request.Context(), userID, tag, keyword, fields, limit, offset)
+	tags := parseDocTags(c.Query("tags"))
+	if tag := strings.TrimSpace(c.Query("tag")); tag != "" {
+		tags = append([]string{tag}, tags...)
+	}
+
+	list, total, err := h.docRepo.ListByAllTags(c.Request.Context(), userID, tags, keyword, fields, limit, offset)
 	if err != nil {
-		log.Printf("ListDocuments: list user=%s tag=%q keyword=%q fields=%v: %v", userID, tag, keyword, fields, err)
+		log.Printf("ListDocuments: list user=%s tags=%v keyword=%q fields=%v: %v", userID, tags, keyword, fields, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -46,6 +51,19 @@ func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 		"documents": list,
 		"total":     total,
 	})
+}
+
+// parseDocTags 解析 tags=A,C,D：按逗号切分、去空格、去空项、保序去重。
+func parseDocTags(raw string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, t := range strings.Split(raw, ",") {
+		if t = strings.TrimSpace(t); t != "" && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // parseDocFields 解析 fields=title,tag,content，忽略未知项；空/非法返回 nil（repo 回退 title+content）。
@@ -60,11 +78,11 @@ func parseDocFields(raw string) []string {
 	return out
 }
 
-// ListDocumentTags GET /api/documents/tags — 词云用的标签及出现次数
+// ListDocumentTags GET /api/documents/tags — 词云用的标签及出现次数 + 共现边
 func (h *DocumentHandler) ListDocumentTags(c *gin.Context) {
 	userID := c.GetString("user_id")
 
-	tags, err := h.docRepo.ListTagCounts(c.Request.Context(), userID)
+	tags, edges, err := h.docRepo.TagGraph(c.Request.Context(), userID)
 	if err != nil {
 		log.Printf("ListDocumentTags: user=%s: %v", userID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -73,8 +91,11 @@ func (h *DocumentHandler) ListDocumentTags(c *gin.Context) {
 	if tags == nil {
 		tags = []service.TagCount{}
 	}
+	if edges == nil {
+		edges = []service.TagEdge{}
+	}
 
-	view.JSONOK(c, gin.H{"tags": tags})
+	view.JSONOK(c, gin.H{"tags": tags, "edges": edges})
 }
 
 // GetDocument GET /api/documents/:id

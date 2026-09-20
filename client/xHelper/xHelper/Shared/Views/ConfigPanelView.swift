@@ -169,7 +169,8 @@ struct ConfigPanelView: View {
             Text(value)
                 .font(.system(size: 11))
                 .foregroundColor(deletable ? Color("appAccent") : .secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
             if deletable {
                 Button {
                     onDelete?()

@@ -29,6 +29,29 @@ struct MemoryDetailOverlay: View {
 
                     Divider()
 
+                    #if os(macOS)
+                    TagScrollRow {
+                        TagChip(
+                            text: memory.source,
+                            color: Color("appAccent"),
+                            font: .system(size: FontSizeManager.shared.scaledSize * 0.76),
+                            hPad: 8,
+                            vPad: 3
+                        )
+
+                        if let tags = memory.tags, !tags.isEmpty {
+                            ForEach(parseTags(tags)) { tag in
+                                TagChip(
+                                    text: tag.text,
+                                    color: tag.color,
+                                    font: .system(size: FontSizeManager.shared.scaledSize * 0.76),
+                                    hPad: 8,
+                                    vPad: 3
+                                )
+                            }
+                        }
+                    }
+                    #else
                     HStack(spacing: 6) {
                         Text(memory.source)
                             .font(.system(size: FontSizeManager.shared.scaledSize * 0.76))
@@ -50,6 +73,7 @@ struct MemoryDetailOverlay: View {
                             }
                         }
                     }
+                    #endif
                 }
             }
             .frame(minWidth: 400, maxWidth: 700)

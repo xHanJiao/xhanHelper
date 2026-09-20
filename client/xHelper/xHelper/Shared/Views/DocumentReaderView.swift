@@ -548,7 +548,7 @@ html, body {
 .doc-tags:empty { display: none; }
 .doc-tags span {
   font-size: calc(var(--fs) * 0.63); color: var(--accent); background: var(--accent-soft);
-  padding: 2px 8px; border-radius: 20px; font-weight: 500;
+  padding: 2px 8px; border-radius: 20px; font-weight: 500; white-space: nowrap;
 }
 .doc-rule { border: 0; border-top: 1px solid var(--border); margin: 18px 0 24px; }
 

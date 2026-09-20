@@ -23,8 +23,21 @@ struct NoteDetailOverlay: View {
                     if let tags = note.tags, !tags.isEmpty {
                         Divider()
 
+                        #if os(macOS)
+                        TagScrollRow {
+                            ForEach(parseTags(tags)) { tag in
+                                TagChip(
+                                    text: tag.text,
+                                    color: tag.color,
+                                    font: .system(size: FontSizeManager.shared.scaledSize * 0.76),
+                                    hPad: 8,
+                                    vPad: 3
+                                )
+                            }
+                        }
+                        #else
                         HStack(spacing: 6) {
-                            ForEach(parseTags(note.tags)) { tag in
+                            ForEach(parseTags(tags)) { tag in
                                 Text(tag.text)
                                     .font(.system(size: FontSizeManager.shared.scaledSize * 0.76))
                                     .foregroundColor(tag.color)
@@ -34,6 +47,7 @@ struct NoteDetailOverlay: View {
                                     .clipShape(Capsule())
                             }
                         }
+                        #endif
                     }
                 }
             }

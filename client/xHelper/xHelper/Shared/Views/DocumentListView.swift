@@ -87,6 +87,21 @@ struct DocumentListView: View {
         HStack(spacing: 6) {
             Image(systemName: "tag.fill")
                 .font(.system(size: 11))
+            #if os(macOS)
+            TagScrollRow {
+                ForEach(viewModel.activeTags, id: \.self) { tag in
+                    TagChip(
+                        text: tag,
+                        color: Color("appAccent"),
+                        font: .system(size: 12, weight: .medium),
+                        hPad: 7,
+                        vPad: 1,
+                        bgOpacity: 0.16
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            #else
             ForEach(viewModel.activeTags, id: \.self) { tag in
                 Text(tag)
                     .font(.system(size: 12, weight: .medium))
@@ -94,6 +109,8 @@ struct DocumentListView: View {
                     .padding(.vertical, 1)
                     .background(Capsule().fill(Color("appAccent").opacity(0.16)))
             }
+            Spacer()
+            #endif
             Button {
                 Task { await viewModel.clearFilter() }
             } label: {
@@ -102,7 +119,6 @@ struct DocumentListView: View {
             }
             .buttonStyle(.plain)
             .help("清除标签筛选")
-            Spacer()
         }
         .foregroundColor(Color("appAccent"))
         .padding(.horizontal, 16)
@@ -153,12 +169,14 @@ struct DocumentListView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 5) {
                     ForEach(viewModel.selectedTags.sorted(), id: \.self) { tag in
-                        Text(tag)
-                            .font(.system(size: 11))
-                            .foregroundColor(Color("appAccent"))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color("appAccent").opacity(0.14)))
+                        TagChip(
+                            text: tag,
+                            color: Color("appAccent"),
+                            font: .system(size: 11),
+                            hPad: 7,
+                            vPad: 2,
+                            bgOpacity: 0.14
+                        )
                     }
                 }
             }

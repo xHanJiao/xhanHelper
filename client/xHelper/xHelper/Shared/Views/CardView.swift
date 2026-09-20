@@ -69,6 +69,23 @@ struct CardView: View {
             }
 
             if !tags.isEmpty || footerText != nil {
+                #if os(macOS)
+                HStack(spacing: 8) {
+                    TagScrollRow(spacing: 4) {
+                        ForEach(tags) { tag in
+                            tagPill(tag)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if let footerText {
+                        Text(footerText)
+                            .font(.caption)
+                            .foregroundColor(style.subtitleColor)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                }
+                #else
                 HStack(spacing: 4) {
                     ForEach(tags) { tag in
                         tagPill(tag)
@@ -81,6 +98,7 @@ struct CardView: View {
                             .lineLimit(1)
                     }
                 }
+                #endif
             }
 
             if !actions.isEmpty {
@@ -119,12 +137,6 @@ struct CardView: View {
     }
 
     private func tagPill(_ badge: TagBadge) -> some View {
-        Text(badge.text)
-            .font(.caption2)
-            .foregroundColor(badge.color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(badge.color.opacity(0.12))
-            .clipShape(Capsule())
+        TagChip(text: badge.text, color: badge.color, font: .caption2, hPad: 6, vPad: 2)
     }
 }

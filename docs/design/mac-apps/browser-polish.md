@@ -108,12 +108,16 @@
   3. **最小权限**——绝不新增"读 cookie/凭据"类工具；`execute_script` 保持 DEBUG-only；`agent_browser_open` 保持 L3（外泄攻击的 URL 会暴露在确认框）。
   4. **V2 dual-LLM 隔离**——有工具的 LLM 与"读网页"的 LLM 分离。架构改动大，单列研究项。
 
-### G2 agent 操作可见性（macOS 终于接工具执行展示）
-- 本地工具执行全走 `ChatViewModel.handleClientToolCall` 咽喉点 → 挂 `BrowserActivityCenter`（ObservableObject）。
-- 浏览器内容区顶部**细条指示器**（全宽 24pt，ultraThinMaterial，左缘 2px 强调色竖条）：
-  - 运行中：`🤖 AI 正在操作浏览器 · <动作> <目标>` + 转圈。
-  - 完成：`🤖 已执行 · <动作> <目标>` + ✓，2.5s 淡出，点击可关。
-  - **L3 确认同步到浏览器内**（状态 C）：观察当前聊天 `pendingToolConfirmation`，浏览器内容区顶部显示 `[允许][拒绝]`，与聊天区确认条二选一即可确认。
+### G2 agent 操作可见性
+> 2026-09 修订：浏览器顶部活动指示条已移除——它每次操作都插入/退场，把 WebView 上下顶动，影响浏览。
+> agent 操作可见性改由**聊天栏的 tool pill** 承载（服务端 `tool_call`/`tool_result` 事件本就下发，
+> `ChatViewModel` 用 `LocalToolRegistry.displayName` 把 `browser.agent_browser_click` 换成中文短名），
+> 与其它工具调用一致；L3 确认也不再桥到浏览器，只留聊天栏确认条 + 提示音。
+> 浏览器内确认条（`BrowserAgentConfirmBar`）保留，仅服务**浏览器内部确认**：有下载进行中时关标签、
+> 用户点链接触发下载（这两类没有聊天对手，删了会 30s 自动取消）。`BrowserActivityCenter` 随之收窄为
+> 「待确认状态 + `confirmationBody` 人话摘要」。
+
+- 本地工具执行全走 `ChatViewModel.handleClientToolCall` 咽喉点。
 - 指示器文案**不展示敏感值**（fill/type 只显示目标占位符，不显示输入内容）。
 
 ### G3 内容拦截（WKContentRuleList）

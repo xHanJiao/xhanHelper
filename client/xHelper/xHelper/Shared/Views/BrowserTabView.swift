@@ -56,9 +56,9 @@ struct BrowserTabView: View {
                 findBar
                 Divider()
             }
-            // G2：地址栏下方统一放"确认条（状态 C）+ 活动条（A/B）"，两者同区、位置一致
+            // 浏览器内确认条：仅内部确认（有下载时关标签、用户点链接下载）。
+            // agent 操作可见性与 L3 工具确认均已移入聊天栏，此处不再放活动指示条（避免挤压页面）。
             BrowserAgentConfirmBar()
-            BrowserAgentActivityBar()
             if downloadStore.records.contains(where: { $0.state == .downloading }) {
                 downloadsBar
                 Divider()

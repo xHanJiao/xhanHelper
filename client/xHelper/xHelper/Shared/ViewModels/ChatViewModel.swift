@@ -495,14 +495,14 @@ class ChatViewModel: ObservableObject {
     /// 挂起等待用户确认工具执行；60s 超时视为拒绝。
     /// elevated=true：敏感上下文升级的 L3（高敏域/明文页/用户标签授权），任何信任档都不跳过（防注入）。
     /// hardened=true：L4（shell 等高危命令），信任档不跳过，完全信任可跳过。
-    /// bridgeToBrowser=true 时把确认同步发布到 BrowserActivityCenter，浏览器内也显示确认条（与聊天条同步出现）。
+    /// browserArgsSummary=true 时（浏览器工具）用 BrowserActivityCenter.confirmationBody 生成人话摘要。
     /// diffText/additions/deletions/filePath：fs 写工具传 diff 预览，确认条展示 diff 卡片。
     func awaitToolConfirmation(
         toolName: String,
         arguments: [String: Any],
         elevated: Bool = false,
         hardened: Bool = false,
-        bridgeToBrowser: Bool = false,
+        browserArgsSummary: Bool = false,
         diffText: String? = nil,
         additions: Int? = nil,
         deletions: Int? = nil,
@@ -525,7 +525,7 @@ class ChatViewModel: ObservableObject {
             argsSummary = (arguments["command"] as? String) ?? "(无命令)"
         } else {
             #if os(macOS)
-            if bridgeToBrowser {
+            if browserArgsSummary {
                 argsSummary = BrowserActivityCenter.shared.confirmationBody(toolName: toolName, arguments: arguments)
             } else {
                 argsSummary = arguments.isEmpty
@@ -541,18 +541,6 @@ class ChatViewModel: ObservableObject {
         confirmationResolved = false
         let myID = UUID() // per-confirmation 标识：超时任务只处理"当前 pending 还是自己"的确认，杜绝双重 resume
         let displayName = LocalToolRegistry.shared.displayName(for: toolName)
-        // 浏览器确认桥：与 pendingToolConfirmation 同步发布，两处确认条同时出现（macOS only）
-        #if os(macOS)
-        if bridgeToBrowser {
-            BrowserActivityCenter.shared.presentConfirmation(
-                displayName: displayName,
-                argsSummary: argsSummary,
-                onResolve: { [weak self] allow in
-                    self?.resolveToolConfirmation(allow: allow)
-                }
-            )
-        }
-        #endif
         return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
             pendingToolConfirmation = ToolConfirmation(
                 id: myID,
@@ -577,9 +565,6 @@ class ChatViewModel: ObservableObject {
                       !self.confirmationResolved else { return }
                 self.confirmationResolved = true
                 self.pendingToolConfirmation = nil
-                #if os(macOS)
-                BrowserActivityCenter.shared.dismissConfirmation()
-                #endif
                 cont.resume(returning: false)
             }
         }
@@ -590,9 +575,6 @@ class ChatViewModel: ObservableObject {
         guard let conf = pendingToolConfirmation, !confirmationResolved else { return }
         confirmationResolved = true
         pendingToolConfirmation = nil
-        #if os(macOS)
-        BrowserActivityCenter.shared.dismissConfirmation()
-        #endif
         conf.continuation.resume(returning: allow)
     }
 
@@ -1131,7 +1113,12 @@ class ChatViewModel: ObservableObject {
             if let tc = parseToolCall(event.data) {
                 // 新一轮工具执行（上一轮 pending 已清空）：清掉旧完结 pill
                 if pendingToolCalls.isEmpty { toolQueue = [] }
-                pendingToolCalls.append(PendingToolCall(display: tc.display, tool: tc.tool, function: tc.function, args: tc.args))
+                // 客户端工具（浏览器）服务端 display 是 "browser.agent_browser_click"，
+                // 换成本地中文短名，与其它工具 pill 一致
+                let display = tc.tool == "browser"
+                    ? LocalToolRegistry.shared.displayName(for: "\(tc.tool)__\(tc.function)")
+                    : tc.display
+                pendingToolCalls.append(PendingToolCall(display: display, tool: tc.tool, function: tc.function, args: tc.args))
             }
 
         case .toolResult:

@@ -144,7 +144,7 @@ extension ChatViewModel {
                         arguments: confirmArgs,
                         elevated: forcedL3,
                         hardened: shellHardened,
-                        bridgeToBrowser: isBrowser,
+                        browserArgsSummary: isBrowser,
                         diffText: diffText,
                         additions: additions,
                         deletions: deletions,
@@ -171,17 +171,12 @@ extension ChatViewModel {
                     }
                 }
 
-                // G2：浏览器工具执行可见性（执行前广播"运行中"，完成/失败消退）
-                if isBrowser { BrowserActivityCenter.shared.start(flatName: toolName, arguments: args) }
-
                 let context = ExecuteContext(budgetBytes: budgetBytes, deadlineSecs: deadline, owner: owner)
                 let result = try await LocalToolRegistry.shared.execute(
                     flatName: toolName,
                     arguments: args,
                     context: context
                 )
-
-                if isBrowser { BrowserActivityCenter.shared.finish() }
 
                 if let action = result.clientAction {
                     handleClientAction(action)
@@ -196,7 +191,6 @@ extension ChatViewModel {
                 }
                 LogBuffer.shared.info("clientToolCall: \(toolName) result submitted")
             } catch {
-                if isBrowser { BrowserActivityCenter.shared.clear() }
                 LogBuffer.shared.error("clientToolCall: \(toolName) failed: \(error.localizedDescription)")
                 do {
                     try await api.submitToolResult(callId: callID, resultJSON: nil, error: error.localizedDescription)

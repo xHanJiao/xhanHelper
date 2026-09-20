@@ -347,6 +347,7 @@ private struct ReaderWebView: NSViewRepresentable {
         webView.setValue(false, forKey: "drawsBackground")
         webView.underPageBackgroundColor = .clear
         webView.allowsBackForwardNavigationGestures = false
+        webView.navigationDelegate = context.coordinator
 
         controller.webView = webView
         context.coordinator.lastFontSize = fontSize
@@ -384,7 +385,7 @@ private struct ReaderWebView: NSViewRepresentable {
 
     private func buildHTML() -> String { ReaderHTML.build(document: document, fontSize: fontSize) }
 
-    final class Coordinator: NSObject, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         let controller: DocumentReaderController
         var loadedSignature = ""
         var lastFontSize: CGFloat?
@@ -396,6 +397,19 @@ private struct ReaderWebView: NSViewRepresentable {
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.name == "reader", let body = message.body as? [String: Any] else { return }
             Task { @MainActor in self.controller.apply(message: body) }
+        }
+
+        /// 正文里的 `[标题](xhanhelper://document/<id>)` 不能交给 WebKit（无 handler 时会被甩给
+        /// NSWorkspace，弹「未设定用来打开URL…的应用程序」）。拦下来交宿主打开，其余导航放行。
+        nonisolated func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            guard let url = navigationAction.request.url, url.scheme == "xhanhelper" else {
+                decisionHandler(.allow)
+                return
+            }
+            decisionHandler(.cancel)
+            guard let id = DocumentSelectionCoordinator.documentID(from: url) else { return }
+            Task { @MainActor in DocumentSelectionCoordinator.shared.openDocument(id: id) }
         }
     }
 }

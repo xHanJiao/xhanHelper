@@ -567,6 +567,8 @@ struct ContentView: View {
                         .onChange(of: geo.size.width, initial: true) { _, new in
                             windowWidth = new
                             lastGeoWidth = new
+                            // ponytail: 排查「点内链卡死」的临时埋点（方案 A），定位后删
+                            LogBuffer.shared.diag("[doclink] geo.width 变化 → \(new)")
                             // geo 变化 = 内容布局宽已变，旧实测底线（measuredContentMinWidth）失效，
                             // 复位待 didResize 重新实测（底线随左栏/顶栏状态变化）。
                             AppDelegate.measuredContentMinWidth = 0
@@ -589,6 +591,8 @@ struct ContentView: View {
                             }
                             clampRightSidebarWidth()
                             refillBrowserFocus() // 窗口放大后浏览器聚焦态补满（含进入时异步放大窗口的场景）
+                            // ponytail: 临时埋点（方案 A），定位后删
+                            LogBuffer.shared.diag("[doclink] geo.width 处理完成")
                         }
                         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { note in
                             guard let win = note.object as? NSWindow, win === NSApp.keyWindow else { return }
@@ -608,6 +612,8 @@ struct ContentView: View {
                             }
                         }
                         .onChange(of: rightSidebar.isOpen) { _, isOpen in
+                            // ponytail: 排查「点内链卡死」的临时埋点（方案 A），定位后删
+                            LogBuffer.shared.diag("[doclink] rightSidebar.isOpen 变化 → \(isOpen)")
                             if !isOpen {
                                 autoExitPip(reason: "sidebarClosed")
                                 // 关闭右侧栏时退出浏览器聚焦，恢复中间栏宽度
@@ -624,6 +630,8 @@ struct ContentView: View {
                             }
                             // 浏览器按钮组随侧栏可见性注册/注销（修复：侧栏收起时左槽组残留）
                             BrowserToolProvider.shared.refreshBrowserGroup()
+                            // ponytail: 临时埋点（方案 A），定位后删
+                            LogBuffer.shared.diag("[doclink] rightSidebar.isOpen 处理完成 → \(isOpen)")
                         }
                         .onChange(of: rightSidebar.middleMinimized) { _, minimized in
                             if minimized {
@@ -684,11 +692,13 @@ struct ContentView: View {
                 // 非本 scheme 的 URL 原样交还系统（外部链接行为不变）。
                 .environment(\.openURL, OpenURLAction { url in
                     guard url.scheme == "xhanhelper" else { return .systemAction(url) }
-                    if url.host == "document",
-                       let id = url.pathComponents.dropFirst().first, !id.isEmpty {
+                    // ponytail: 排查「点内链卡死」的临时埋点（方案 A），定位后删
+                    LogBuffer.shared.diag("[doclink] openURL 收到 url=\(url.absoluteString)")
+                    if let id = DocumentSelectionCoordinator.documentID(from: url) {
+                        LogBuffer.shared.diag("[doclink] 解析出 id=\(id)，转 openDocument")
                         DocumentSelectionCoordinator.shared.openDocument(id: id)
-                        return .handled
                     }
+                    LogBuffer.shared.diag("[doclink] openURL 返回 handled")
                     return .handled // 本 scheme 的未知路径：吞掉，不交给系统
                 })
                 .onAppear {

@@ -189,13 +189,15 @@ struct ChatBubble: View {
             }
         }
         .padding(.horizontal, Layout.chatHorizontalPadding)
+        // 点气泡显示时间只在 iOS 用；macOS 传的是 showTime: true、无回调，手势是空体。
+        // 但它仍会抢在 MarkdownUI 链接之前吃掉点击 —— macOS 上挂不得，否则正文内链点了没反应。
+        #if os(iOS)
         .onTapGesture {
             guard createdAt != nil else { return }
-            #if os(iOS)
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-            #endif
             onTapToShowTime?()
         }
+        #endif
     }
 
     private func formatCreatedAt(_ iso: String) -> String {

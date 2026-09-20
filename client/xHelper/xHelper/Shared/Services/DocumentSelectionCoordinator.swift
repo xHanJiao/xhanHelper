@@ -40,20 +40,39 @@ final class DocumentSelectionCoordinator: ObservableObject {
         TopBarRegistry.shared.refresh()
     }
 
+    /// 解析内部文档跳链 `xhanhelper://document/<id>`，非该形态返回 nil。
+    /// 聊天 Markdown（SwiftUI `.openURL`）与文档正文（WKWebView 导航）两条路共用，避免解析分叉。
+    nonisolated static func documentID(from url: URL) -> String? {
+        guard url.scheme == "xhanhelper", url.host == "document",
+              let id = url.pathComponents.dropFirst().first, !id.isEmpty else { return nil }
+        return id
+    }
+
     /// 按 id 打开文档：右栏切到文档面板 → 拉取 → 定位打开。
     /// 入口有两个——聊天里的文档卡片、文档正文里的内链（`xhanhelper://document/<id>`）。
     /// id 非法或已删除时就地提示，不让链接点下去无声无息。
     func openDocument(id: String) {
-        guard let rs = rightSidebar else { return }
+        // ponytail: 排查「点内链卡死」的临时埋点（方案 A），定位后删
+        LogBuffer.shared.diag("[doclink] openDocument 进入 id=\(id)")
+        guard let rs = rightSidebar else {
+            LogBuffer.shared.diag("[doclink] openDocument 提前返回：rightSidebar 未注入")
+            return
+        }
         Task { @MainActor in
+            LogBuffer.shared.diag("[doclink] Task 开始，拉取文档")
             do {
                 let doc = try await APIClient(baseURL: baseURL, token: token).getDocument(id: id)
+                LogBuffer.shared.diag("[doclink] 拉取完成，开始切右栏")
                 rs.isOpen = true
+                LogBuffer.shared.diag("[doclink] isOpen=true 完成")
                 rs.showBrowsePanel()
+                LogBuffer.shared.diag("[doclink] showBrowsePanel 完成")
                 rs.browsePanelSelection = .documents
+                LogBuffer.shared.diag("[doclink] browsePanelSelection 完成")
                 documentVM?.openDocument = doc
                 // 右栏未挂载时 DocumentListView.onChange 不触发，这里直接同步顶栏按钮组
                 select(doc)
+                LogBuffer.shared.diag("[doclink] openDocument 全部完成")
             } catch {
                 LogBuffer.shared.error("DocumentSelectionCoordinator.openDocument: \(error)")
                 ToastCenter.shared.show("打不开文档：\(error.localizedDescription)")

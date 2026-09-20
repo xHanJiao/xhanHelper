@@ -41,6 +41,9 @@ class DocumentViewModel: ObservableObject {
     @Published var resultCount: Int?
     @Published var openDocument: Document?
     @Published var isDetailLoading = false
+    /// 列表模式多选下载：进入选择态 + 已勾选文档 id（纯 UI 状态）。
+    @Published var isSelectingDocuments = false
+    @Published var selectedDocumentIDs: Set<String> = []
 
     let apiClient: APIClient
     private var offset = 0
@@ -79,6 +82,29 @@ class DocumentViewModel: ObservableObject {
         countTask?.cancel()
         selectedTags.removeAll()
         resultCount = nil
+    }
+
+    // MARK: - 列表多选下载
+
+    /// 进入多选下载态（清空上次勾选）。
+    func enterDocumentSelection() {
+        selectedDocumentIDs.removeAll()
+        isSelectingDocuments = true
+    }
+
+    /// 退出多选下载态并清空勾选。
+    func exitDocumentSelection() {
+        isSelectingDocuments = false
+        selectedDocumentIDs.removeAll()
+    }
+
+    /// 勾选 / 取消勾选一篇文档。
+    func toggleDocumentSelection(_ id: String) {
+        if selectedDocumentIDs.contains(id) {
+            selectedDocumentIDs.remove(id)
+        } else {
+            selectedDocumentIDs.insert(id)
+        }
     }
 
     /// 查看多选交集：切列表模式按所选标签交集筛选。

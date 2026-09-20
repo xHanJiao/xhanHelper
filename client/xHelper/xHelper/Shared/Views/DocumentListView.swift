@@ -70,14 +70,43 @@ struct DocumentListView: View {
                 minCardWidth: 300,
                 onLoadMore: { await viewModel.loadMore() }
             ) { doc in
-                CardConfig(
-                    title: doc.title,
-                    subtitle: doc.content,
-                    tags: parseTags(doc.tags),
-                    footerText: formatConversationDate(doc.updatedAt),
-                    style: .document,
-                    onTap: { viewModel.openDocument = doc }
-                )
+                documentCard(doc)
+            }
+        }
+    }
+
+    /// 文档卡片：多选态点击切换勾选（不再进详情），右上角勾选圈 + 选中描边。
+    private func documentCard(_ doc: Document) -> some View {
+        let selecting = viewModel.isSelectingDocuments
+        let selected = viewModel.selectedDocumentIDs.contains(doc.id)
+        return CardView(config: CardConfig(
+            title: doc.title,
+            subtitle: doc.content,
+            tags: parseTags(doc.tags),
+            footerText: formatConversationDate(doc.updatedAt),
+            style: .document,
+            onTap: {
+                if selecting {
+                    viewModel.toggleDocumentSelection(doc.id)
+                } else {
+                    viewModel.openDocument = doc
+                }
+            }
+        ))
+        .overlay(alignment: .topTrailing) {
+            if selecting {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 18))
+                    .foregroundColor(selected ? Color("appAccent") : .secondary.opacity(0.4))
+                    .padding(10)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay {
+            if selected {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color("appAccent"), lineWidth: 2)
+                    .allowsHitTesting(false)
             }
         }
     }

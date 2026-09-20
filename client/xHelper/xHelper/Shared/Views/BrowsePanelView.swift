@@ -160,7 +160,15 @@ struct BrowsePanelView: View {
                     // 监控看板自带 XHPanel header（含刷新按钮）
                     panelContent(panel)
                 } else {
+                    #if os(macOS)
+                    if isDocSelectionActive {
+                        docSelectionHeader
+                    } else {
+                        panelHeader(panel)
+                    }
+                    #else
                     panelHeader(panel)
+                    #endif
                     Divider()
                     transientSearchPanel(panel)
                     panelContent(panel)
@@ -174,6 +182,8 @@ struct BrowsePanelView: View {
                 docSearchOpen = false
                 billSearchOpen = false
             }
+            // 离开文档面板即退出多选（选择工具条只在文档列表前台时有效）
+            documentVM.exitDocumentSelection()
         }
         .onChange(of: documentVM.mode) { _, _ in
             // 切模式即收起文档搜索框；离开词云顺手清掉本地高亮词与多选，避免切回来还留着
@@ -181,6 +191,7 @@ struct BrowsePanelView: View {
             docSearchDraft = ""
             documentVM.cloudQuery = ""
             documentVM.clearSelection()
+            documentVM.exitDocumentSelection()
         }
     }
 
@@ -367,6 +378,20 @@ struct BrowsePanelView: View {
                 }
             }
 
+            #if os(macOS)
+            if panel == .documents && documentVM.openDocument == nil && documentVM.mode == .list {
+                Button {
+                    documentVM.enterDocumentSelection()
+                } label: {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("多选下载")
+            }
+            #endif
+
             Button {
                 Task { await refresh(panel) }
             } label: {
@@ -404,6 +429,108 @@ struct BrowsePanelView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
+
+    #if os(macOS)
+    /// 文档列表多选态是否生效（选择工具条取代常规页头）。
+    private var isDocSelectionActive: Bool {
+        documentVM.isSelectingDocuments && documentVM.mode == .list && documentVM.openDocument == nil
+    }
+
+    /// 多选下载工具条：取消（左）/ 已选篇数 / 下载（右）。
+    private var docSelectionHeader: some View {
+        HStack(spacing: 8) {
+            Button {
+                documentVM.exitDocumentSelection()
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("取消")
+                        .font(.system(size: 12))
+                }
+                .foregroundColor(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.escape, modifiers: [])
+            .help("退出多选（Esc）")
+
+            Divider()
+                .frame(height: 14)
+
+            Text(documentVM.selectedDocumentIDs.isEmpty
+                 ? "选择文档"
+                 : "已选 \(documentVM.selectedDocumentIDs.count) 篇")
+                .font(.system(size: 13, weight: .semibold))
+
+            Spacer()
+
+            Button {
+                downloadSelectedDocuments()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 12))
+                    Text("下载")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color("appAccent"))
+            .controlSize(.small)
+            .disabled(documentVM.selectedDocumentIDs.isEmpty)
+            .help("下载所选文档为 .md")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    /// 批量下载所选文档为 .md 到用户选择的文件夹。
+    private func downloadSelectedDocuments() {
+        let docs = documentVM.documents.filter { documentVM.selectedDocumentIDs.contains($0.id) }
+        guard !docs.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.title = "选择下载文件夹"
+        panel.prompt = "下载"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.begin { response in
+            guard response == .OK, let dir = panel.url else { return }
+            Task { @MainActor in
+                var written = 0
+                for doc in docs {
+                    let url = Self.uniqueFileURL(title: doc.title, fallback: doc.id, directory: dir)
+                    do {
+                        try doc.content.write(to: url, atomically: true, encoding: .utf8)
+                        written += 1
+                    } catch {
+                        LogBuffer.shared.error("document batch download failed (\(doc.title)): \(error.localizedDescription)")
+                    }
+                }
+                ToastCenter.shared.show(written == docs.count
+                    ? "已下载 \(written) 篇"
+                    : "已下载 \(written)/\(docs.count) 篇，其余失败")
+                documentVM.exitDocumentSelection()
+            }
+        }
+    }
+
+    /// 文件名安全化 + 目录内去重：`<标题>.md`，重名追加 ` (2)`、` (3)`…
+    private static func uniqueFileURL(title: String, fallback: String, directory: URL) -> URL {
+        let base = (title.isEmpty ? fallback : title)
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        var candidate = directory.appendingPathComponent(base + ".md")
+        var n = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = directory.appendingPathComponent("\(base) (\(n)).md")
+            n += 1
+        }
+        return candidate
+    }
+    #endif
 
     /// 文档词云的最少篇数上限（标签已按频次降序）
     private var maxTagCount: Int {

@@ -12,6 +12,10 @@ extension Theme {
                 BackgroundColor(.clear)
                 FontSize(fontSize)
             }
+            .link {
+                // 覆盖 gitHub 内置蓝，对齐文档正文链接色（--accent / appAccent）
+                ForegroundColor(Color("appAccent"))
+            }
             .code {
                 FontFamilyVariant(.monospaced)
                 FontSize(.em(0.85))

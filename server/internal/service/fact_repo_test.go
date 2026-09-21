@@ -97,7 +97,7 @@ func TestFactRepo_UpdateContent(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	if err := repo.UpdateContent(ctx, f.ID, "新内容", "hash-新内容", "新主体", model.FactKindEvent); err != nil {
+	if err := repo.UpdateContent(ctx, f.ID, "新内容", "hash-新内容", "新主体", model.FactKindEvent, nil); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	got, _ := repo.FindByID(ctx, "u1", f.ID)
@@ -106,13 +106,23 @@ func TestFactRepo_UpdateContent(t *testing.T) {
 		t.Fatalf("unexpected after update: %+v", got)
 	}
 
-	// 空 subject/kind 不改
-	if err := repo.UpdateContent(ctx, f.ID, "新内容2", "hash-新内容2", "", ""); err != nil {
+	// 空 subject/kind + nil fields 不改
+	if err := repo.UpdateContent(ctx, f.ID, "新内容2", "hash-新内容2", "", "", nil); err != nil {
 		t.Fatalf("update 2: %v", err)
 	}
 	got, _ = repo.FindByID(ctx, "u1", f.ID)
 	if got.Subject != "新主体" || got.Kind != model.FactKindEvent {
 		t.Fatalf("empty fields should not overwrite: %+v", got)
+	}
+
+	// fields 非 nil 整块覆盖
+	fields := `{"due_at":"2026-09-25"}`
+	if err := repo.UpdateContent(ctx, f.ID, "新内容2", "hash-新内容2", "", "", &fields); err != nil {
+		t.Fatalf("update 3: %v", err)
+	}
+	got, _ = repo.FindByID(ctx, "u1", f.ID)
+	if got.Fields == nil || *got.Fields != fields {
+		t.Fatalf("fields should be overwritten: %+v", got.Fields)
 	}
 }
 

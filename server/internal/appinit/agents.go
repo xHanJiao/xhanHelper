@@ -116,11 +116,15 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		FactRepo:     repos.UserProfileFact,
 		UserRepo:     repos.User,
 	})
-	// 事实系统抽取器（本阶段只抽取，判重/决策/写入见后续阶段）
+	// 事实系统：抽取器 + 决策器（抽取 → 判重/检索 → 决策 → 写入 facts）
 	factExtractor := agent.NewFactExtractor(&agent.FactExtractorConfig{
 		LLMClient:     llmClients.BgFlash,
 		MaxCandidates: cfg.Facts.MaxCandidates,
 		Temperature:   cfg.Facts.Temperature,
+	})
+	factDecider := agent.NewFactDecider(&agent.FactDeciderConfig{
+		LLMClient:   llmClients.BgFlash,
+		Temperature: cfg.Facts.Temperature,
 	})
 	// 无痕会话销毁器：Stage A 由后处理/在线删除触发，Stage B 由 cron 轮询执行
 	ephemeralDestroyer := agent.NewEphemeralDestroyer(repos.Conversation, vs, repos.DelayedTask)
@@ -135,8 +139,16 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		}),
 		profileWorker,
 		agent.NewFactWorker(&agent.FactWorkerConfig{
-			Extractor: factExtractor,
-			Enabled:   cfg.Facts.Enabled,
+			Extractor:     factExtractor,
+			Decider:       factDecider,
+			Enabled:       cfg.Facts.Enabled,
+			FactRepo:      repos.Fact,
+			ChangelogRepo: repos.FactChangelog,
+			Embedder:      infra.Embedder,
+			EmbeddingRepo: repos.Embedding,
+			VectorStore:   infra.VectorStore,
+			TopK:          cfg.Facts.TopK,
+			DupeThreshold: cfg.Facts.DupeThreshold,
 		}),
 	}, repos.Message, ephemeralDestroyer)
 

@@ -207,7 +207,7 @@ func WarmupAll(ctx context.Context, vs app.VectorStore, embeddingRepo *service.E
 
 ## 6. 配置
 
-新增顶层 `facts:`。存储层这一刀**不引入 `facts.enabled`**——还没有消费它的 `FactWorker`，等 worker 接线那一刀再加（默认 `false`）。本次只加会被存储/检索消费的三个参数：
+新增顶层 `facts:`。存储层**不引入 `facts.enabled`**——当时还没有消费它的 `FactWorker`，抽取段接线时补上（当前默认 `true`）。存储层只加会被存储/检索消费的三个参数：
 
 ```yaml
 facts:

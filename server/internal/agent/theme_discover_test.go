@@ -19,6 +19,8 @@ func (m *mockEmbedder) Embed(ctx context.Context, text string) ([]float64, error
 	return []float64{0.1, 0.2, 0.3}, nil
 }
 
+func (m *mockEmbedder) ModelName() string { return "mock" }
+
 // mockVectorStore 按预设结果返回
 type mockVectorStore struct {
 	hits []app.VectorMatch

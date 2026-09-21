@@ -59,7 +59,7 @@ func warmupFactEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingR
 			if err != nil || len(vec) == 0 {
 				continue
 			}
-			vectorStore.Upsert("fact:"+f.ID, vec, map[string]string{
+			vectorStore.Upsert(factVectorPrefix+f.ID, vec, map[string]string{
 				"type":    "fact",
 				"user_id": f.UserID,
 				"subject": f.Subject,

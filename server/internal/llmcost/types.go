@@ -31,6 +31,7 @@ const (
 	SubProfileColdStart = "profile_cold_start"
 	SubSummary          = "summary"
 	SubFactExtract      = "fact_extract"
+	SubFactDecide       = "fact_decide"
 
 	// reflection
 	SubFindingScore       = "finding_score"

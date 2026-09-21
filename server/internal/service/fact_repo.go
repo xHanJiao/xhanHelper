@@ -59,8 +59,10 @@ func (r *FactRepo) FindByContentHash(ctx context.Context, userID, contentHash st
 	return &f, nil
 }
 
-// UpdateContent 覆盖 content（及 subject/kind），用于 UPDATE 决策。空字符串表示不改该字段。
-func (r *FactRepo) UpdateContent(ctx context.Context, id, content, contentHash, subject, kind string) error {
+// UpdateContent 覆盖 content（及 subject/kind/fields），用于 UPDATE 决策。
+// subject / kind 为空字符串表示不改该字段；fields 为 nil 表示不改，非 nil 整块覆盖。
+// 只按 id 过滤不带 user_id：id 只能来自「按 user_id 过滤过的近邻集」，且是 uuid，不构成越权面。
+func (r *FactRepo) UpdateContent(ctx context.Context, id, content, contentHash, subject, kind string, fields *string) error {
 	updates := map[string]interface{}{
 		"content":      content,
 		"content_hash": contentHash,
@@ -70,6 +72,9 @@ func (r *FactRepo) UpdateContent(ctx context.Context, id, content, contentHash, 
 	}
 	if kind != "" {
 		updates["kind"] = kind
+	}
+	if fields != nil {
+		updates["fields"] = *fields
 	}
 	if err := r.db.WithContext(ctx).Model(&model.Fact{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		return fmt.Errorf("fact update content: %w", err)

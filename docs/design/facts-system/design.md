@@ -239,7 +239,7 @@ JSON，一个键 facts：
 1. `vec = Embedder.Embed(f.content)`。
 2. `results = vectorStore.Search(vec, top_k=5, filter: metadata["type"]=="fact" && metadata["user_id"]==uid)`。
 3. **不设阈值**（照 mem0），top5 全部交给决策段。
-4. 近邻格式化 `id | subject | kind | content`，`id` 去掉 `fact:` 前缀。
+4. 近邻格式化成 XML：`<fact id="..." subject="..." kind="...">正文</fact>`（`id` 去掉 `fact:` 前缀）。**相似度不渲染给模型**——判据是「同一主体 + 同一断言位」，分数不参与；近邻已按相似度降序截断，顺序隐含强弱。
 
 预算：每条候选 1 次向量查询 + 1 次 embedding。近邻的 subject／kind／content 直接从向量 metadata 取（upsert 时写入），**不回表**。
 
@@ -249,33 +249,53 @@ JSON，一个键 facts：
 
 ### 7.1 定稿提示词
 
+> 下面两段由 `fact_worker.go` 的常量自动同步（改提示词 = 改 Go 常量，再重跑同步脚本）。
+
+**system prompt**（`factDecideSystemPrompt`）：
+
 ```
-你是事实库的写入决策者。上游给你一批候选事实，以及每条候选检索到的近邻事实。
+你是一个事实库的写入决策助手。输入是一条候选事实和它在事实库里检索到的近邻事实。
+```
+
+**指令**（`factDecideInstruction`，放在 user 消息最前，候选块紧随其后）：
+
+```
+你是事实库的写入决策者。上游给你一条候选事实，以及它在事实库里检索到的近邻事实。
+你要为这条候选选一个动作：新开一条、改一条、删一条，或者什么都不做。
 
 ## 输入
 
-候选事实：subject / kind / fields / content。
-近邻事实：代码按 content 向量取 top_k=5（不设阈值），格式 `id | subject | kind | content`。
+<candidate>：待写入的候选，字段 subject / kind / fields / content。
+<neighbors>：按 content 向量相似度从事实库取回的近邻（不设阈值，可能一条都不相关）。
+每个近邻写成 <fact id="..." subject="..." kind="...">正文</fact>，id 是它的唯一标识。
 
-## 逐条决策
+## 动作
 
-- UPDATE(id)：近邻里有一条在回答同一个问题，答案变了或更全。
-- DELETE(id) ＋ ADD：候选被近邻里某条明确否定。
-- NONE：与某条归一化后同义，跳过。
-- ADD：都不沾，开新事实。
+- add_fact(subject, kind, content, fields?)：新开一条。
+- update_fact(target_id, content, subject?, kind?, fields?)：近邻里有一条在回答同一个问题，答案变了或者更全。
+- delete_fact(target_id) 加 add_fact：候选被近邻里某条明确否定。
+- 什么都不调：与某条近邻同义，跳过。
 
 ## 判据
 
-same question = 同一主体 ＋ 同一断言位。举例：库里有「本人只做技术」，新来「本人兼产品开发」——同主体、同一个断言位（他在这个项目里担任什么），答案变了 → UPDATE。
-UPDATE 还是 ADD，看是不是同一条事实的更完整版本：多了一件无关的新事 → ADD；同一件事变了 → UPDATE。
-DELETE 只用于明确否定：「我不想再管那笔债了」否定「计划为家里还债」→ DELETE；只是补充细节 → UPDATE。
-观点不许覆盖成「最新观点」。
+同一个问题 = 同一主体 ＋ 同一断言位。
+库里有「本人只做技术」，候选是「本人兼产品开发」——同主体、同一断言位（他在这个项目里担任什么），答案变了 → update_fact。
+
+update 还是 add，看是不是同一条事实的更完整版本：多了一件无关的新事 → add_fact；同一件事变了 → update_fact。
+
+delete 只用于明确否定：「我不想再管那笔债了」否定「计划为家里还债」→ delete_fact；只是补充细节 → update_fact。
+
+观点不许覆盖成「最新观点」。观点是 event，说出口就固定，只增不改。
+
+近邻可能一条都不相关，也可能内容相近但不是同一件事。以判据为准，不要因为拿到了 id 就硬找一条来改。
 
 ## 输出
 
-每条候选对应一个决策，不许返回整库新状态。
-写成 tool call：add_fact / update_fact / delete_fact；NONE 什么都不调。
-target 只能取自输入的 id，不许自造 id。
+这条候选只选一个动作（delete 加 add 算一个组合），不许返回整库新状态。
+写成 tool call。
+target_id 只能取自输入里的 id，不许自造。
+update_fact 的 content 必须写改写后的完整句子——自足成句、主体名写进句子，不是只写变化的那半句。
+候选的 fields（如 due_at）与近邻旧值不同时一并给出；没有就不传。
 ```
 
 ### 7.2 实现要点
@@ -285,13 +305,13 @@ target 只能取自输入的 id，不许自造 id。
 | 函数 | 参数 | 语义 |
 |---|---|---|
 | `add_fact` | `subject, kind, content, fields?` | 新开一条 |
-| `update_fact` | `target_id, content, subject?, kind?, fields?` | 覆盖近邻中同一条事实 |
+| `update_fact` | `target_id, content, subject?, kind?, fields?` | 覆盖近邻中同一条事实（`content` 必须写改写后的完整句子） |
 | `delete_fact` | `target_id` | 明确否定并删除近邻中某条 |
 
-- `ChatSync` 带 `Tools`；`resp.ToolCalls` 为空 = `NONE`。
+- `ChatSync` 带 `Tools`；**每条候选一次调用**（串行可见性的前提），`resp.ToolCalls` 为空 = `NONE`。
 - **`target_id` 校验**：必须落在本次近邻 id 集内，否则丢弃该 tool call 并记日志（防自造 id）。
-- 一次决策可返回多个 tool call（`DELETE(id) + ADD`）。
-- `system prompt` 用 `postChatSharedSystemPrompt`；指令（规则文本）作为 user 消息，无 few-shot。
+- 一次决策可返回多个 tool call（`DELETE(id) + ADD`）；`Arguments` 解不出、`kind`/`content` 缺失一律丢弃该 call 并记日志。
+- `system prompt` 用**专用串** `factDecideSystemPrompt`（不是 `postChatSharedSystemPrompt`——那条描述的是「用户发言的时间序对话」，与「候选 + 近邻」的输入对不上）；指令（规则文本）+ 候选块作为单条 user 消息，无 few-shot，常量前缀在前以命中 provider 缓存。
 
 ## 8. 判重（两级）
 
@@ -312,7 +332,7 @@ target 只能取自输入的 id，不许自造 id。
 | 决策 | 动作 |
 |---|---|
 | `ADD` | 插入 `facts`（status=active）；embed + `vectorStore.Upsert` + `Embedding` 行。无 changelog。 |
-| `UPDATE(id)` | 读旧值 → 更新 `content`／`content_hash`（subject/kind 若变一并更新）→ 写 `fact_changelog(UPDATE, old, new)` → 重新 embed + upsert 向量。 |
+| `UPDATE(id)` | 读旧值 → 更新 `content`／`content_hash`（subject/kind 若变一并更新；`fields` 传了就整块覆盖、没传保留旧值）→ 写 `fact_changelog(UPDATE, old, new)` → 重新 embed + upsert 向量（metadata 用新正文）。 |
 | `DELETE(id)` | 软删 `facts.status=deleted` → 写 `fact_changelog(DELETE, old, "")` → 删向量 + 删 `Embedding` 行。 |
 | `NONE` | 无动作。 |
 
@@ -467,19 +487,31 @@ factExtractor := agent.NewFactExtractor(&agent.FactExtractorConfig{
     MaxCandidates: cfg.Facts.MaxCandidates,
     Temperature:   cfg.Facts.Temperature,
 })
+factDecider := agent.NewFactDecider(&agent.FactDeciderConfig{
+    LLMClient:   llmClients.BgFlash,
+    Temperature: cfg.Facts.Temperature,
+})
 sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
     summaryWorker,
     memoryWorker,
     stateWorker,
     profileWorker,
     agent.NewFactWorker(&agent.FactWorkerConfig{
-        Extractor: factExtractor,
-        Enabled:   cfg.Facts.Enabled,
+        Extractor:     factExtractor,
+        Decider:       factDecider,
+        Enabled:       cfg.Facts.Enabled,
+        FactRepo:      repos.Fact,
+        ChangelogRepo: repos.FactChangelog,
+        Embedder:      infra.Embedder,
+        EmbeddingRepo: repos.Embedding,
+        VectorStore:   infra.VectorStore,
+        TopK:          cfg.Facts.TopK,
+        DupeThreshold: cfg.Facts.DupeThreshold,
     }),
 }, repos.Message, ephemeralDestroyer)
 ```
 
-> 决策段的依赖（embedder / vectorStore / factRepo / changelogRepo / topK / dupeThreshold）在下一刀补进 `FactWorker`，本刀 `FactWorker` 只做抽取编排。逐候选串行与四种写入的细节见 [extraction.md](./extraction.md) 与 [storage.md](./storage.md)。
+> 决策段不单开文件：`FactDecider` / 归一化 / 写入都折进 `fact_worker.go`（`FactWorker` 只做开关、场景与串行编排）。逐候选串行与四种写入的细节见 [decision.md](./decision.md)。
 
 - facts 用 `llm_bg`（`llmClients.BgFlash`），与其余后台 worker 一致。
 - ID 约定：facts 用 uuid(36)（对齐 `UserMemory`）；changelog 用 `idgen.Next()`（string，对齐 `LLMCallIO`）。
@@ -490,15 +522,16 @@ sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
 
 单测（仿 `profile_worker_test.go` 的 fake LLM + sqlite）：
 
-- `fact_normalize_test.go`：日期前缀／空白／标点剥离；空串；hash 稳定性。
+- `fact_normalize_test.go`：写法差异（标点／空白／全半角／大小写）归一到同 hash；**日期或数字不同必须不同 hash**；空串／纯标点。
 - `fact_extractor_test.go`：JSON 解析；`kind` 非法被拒；空列表；超 `max_candidates` 截断。
-- `fact_worker_test.go`（抽取段，本刀）：`enabled=false` 不消费 LLM；场景标注 `fact_extract`；渲染含 assistant turn。
-- `fact_worker_test.go`（决策段，下一刀）：
-  - 四分支（ADD／UPDATE／DELETE／NONE）各一；
-  - `top1 ≥ 0.95` 静默跳过；
-  - 精确 hash 命中跳过；
-  - **`target_id` 不在近邻集内被拒**；
-  - 串行可见性：候选 2 的检索命中候选 1 刚写入的向量。
+- `fact_worker_test.go`（抽取段）：`enabled=false` 不消费 LLM；场景标注 `fact_extract`；渲染含 assistant turn。
+- `fact_worker_test.go`（决策段）：
+  - ADD / UPDATE / DELETE / NONE 各一；
+  - 精确 hash 命中跳过（**不花 LLM 的钱**）；
+  - `top1 ≥ dupe_threshold` 静默跳过；
+  - **`target_id` 不在近邻集内被拒**；`Arguments` 是坏 JSON 被丢弃且不 panic；
+  - 单条候选的决策调用失败不拖垮后续候选；
+  - 串行可见性：候选 2 的检索请求里出现候选 1 刚写入的 id。
 
 真机验证：跑一次聊天 → 查 `facts` / `fact_changelogs` / `llm_call_io`（`fact_extract` / `fact_decide`）与日志无报错。
 

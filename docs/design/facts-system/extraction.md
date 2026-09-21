@@ -6,7 +6,7 @@
 
 存储层（两张表 + repo + 预热）已经落地。这份文档讲**抽取段**：让 session 快照带上 assistant 消息，从一段真实对话里抽出候选事实，并把它接进现有 `session_end` 管线、让调用落进 `llm_call_io`。
 
-判重、向量检索、决策（ADD/UPDATE/DELETE/NONE）、写入 facts —— **都不在这一刀**，下一刀单独出文档。
+判重、向量检索、决策（ADD/UPDATE/DELETE/NONE）、写入 facts —— **都不在抽取段**，见 [decision.md](./decision.md)。
 
 ---
 
@@ -81,7 +81,7 @@ func (s *SessionSnapshot) GetAllMessages() []model.Message
 | `memory_worker.go:45` | `sess.Messages` | `sess.GetUserMessages()` |
 | `state_worker.go:33`（两处） | `sess.Messages` | `sess.GetUserMessages()` |
 | `profile_worker.go:255,593` | `sess.Messages` | `sess.GetUserMessages()` |
-| `fact_worker.go`（本刀新增） | — | `sess.GetAllMessages()` |
+| `fact_worker.go`（抽取段新增） | — | `sess.GetAllMessages()` |
 
 上表四个 worker 拿到的仍是 user-only，**行为与旧查询等价**，只是取数路径从「SQL 过滤」变成「内存过滤」。测试里 `&SessionSnapshot{... Messages: ...}` 的字面量跟着改成 `msgs:`（同包可见）。
 
@@ -92,7 +92,7 @@ session 空闲 → CronRunner 触发 DelayedTask(session_end)
              → PostChatWorkerGroup.Process(convID, userID, lastMsgID)
              → ListChatMessagesBetween 拉取 user+assistant → SessionSnapshot
              → 依次分发 worker …（summary / memory / state / profile）
-             → FactWorker.Process(ctx, sess)        ← 本刀新增，排在 profile 之后
+             → FactWorker.Process(ctx, sess)        ← 抽取段新增，排在 profile 之后
                   ├─ 开关判断（enabled == false 直接返回，不消费 LLM）
                   ├─ 场景标注 WithScenario(fact_extract)
                   ├─ FactExtractor.Extract(ctx, sess.GetAllMessages())
@@ -221,11 +221,11 @@ log.Printf("[fact] candidates sanitized: kept=%d dropped=%d truncated=%v", len(o
 
 ### 4.6 已知天花板
 
-整个 `{facts:[...]}` 是一次性 `json.Unmarshal` 的：**单独一条候选结构异常（比如 `content` 给成数字）会让整批解析失败**。本刀接受这个代价（失败有日志、不崩）。要隔离得改成先解 `[]json.RawMessage` 再逐条解——等真机上真见过再改。
+整个 `{facts:[...]}` 是一次性 `json.Unmarshal` 的：**单独一条候选结构异常（比如 `content` 给成数字）会让整批解析失败**。抽取段接受这个代价（失败有日志、不崩）。要隔离得改成先解 `[]json.RawMessage` 再逐条解——等真机上真见过再改。
 
 ## 5. `agent/fact_worker.go`（最小版）
 
-这一刀只需要一个薄壳，后面的决策段会往它里面长。
+抽取段只需要一个薄壳；决策段后来长在同一个文件里（见 [decision.md](./decision.md)）。
 
 ```go
 type FactWorker struct {
@@ -306,7 +306,7 @@ facts:
 SubFactExtract = "fact_extract"
 ```
 
-> `SubFactDecide = "fact_decide"` 这一刀不加班——没有决策段调用点就不加常量，避免出现「有常量没人用」。
+> `SubFactDecide = "fact_decide"` 抽取段不加——没有决策段调用点就不加常量，避免出现「有常量没人用」；决策段落地时补上（见 [decision.md](./decision.md)）。
 
 `llmcost/io_audit.go` 的 `auditWhitelist[CategoryPostChat]` 加 `SubFactExtract: true`。
 
@@ -395,7 +395,7 @@ sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
 
 pure 校验逻辑（丢非法、截断、渲染）抽成 `sanitizeCandidates` / `renderDialog` 之类的纯函数单测，轻量、不必每条都过 mock LLM。
 
-真机验证：跑一次聊天（dev `session_gap_minutes=1`，等 1 分钟）→ 查 `llm_call_io` 有 `fact_extract` 行、日志有 `[fact] conv=… extracted N candidate(s)`、无报错。**此刻 `facts` 表应为空**（本刀不写库），这是预期。
+真机验证：跑一次聊天（dev `session_gap_minutes=1`，等 1 分钟）→ 查 `llm_call_io` 有 `fact_extract` 行、日志有 `[fact] conv=… extracted N candidate(s)`、无报错。**抽取段本身不写库**：`facts` 表只会被决策段写入（见 [decision.md](./decision.md)）。
 
 **验收抽取质量只看真机**：从 `llm_call_io`（`sub_category=fact_extract`）拉 `response`，逐条判 content 是否自足成句、有无相对时间词、有无抄来的括号。本地库在这一步之前永远是 0 行，别拿样例当产出证据。
 
@@ -406,7 +406,7 @@ pure 校验逻辑（丢非法、截断、渲染）抽成 `sanitizeCandidates` / 
 | 文件 | 说明 |
 |---|---|
 | `server/internal/agent/fact_extractor.go` | 提示词 + `ChatSync` + 解析 + 校验 + 渲染 |
-| `server/internal/agent/fact_worker.go` | `FactWorker`（本刀只做抽取编排与场景标注） |
+| `server/internal/agent/fact_worker.go` | `FactWorker`（抽取段只做编排与场景标注） |
 | `server/internal/agent/fact_extractor_test.go` | 解析 / 校验 / 截断 / 渲染 |
 | `server/internal/agent/fact_worker_test.go` | 开关 / 场景标注 |
 
@@ -431,8 +431,8 @@ pure 校验逻辑（丢非法、截断、渲染）抽成 `sanitizeCandidates` / 
 
 ## 9. 边界与简化
 
-- **抽取段不判重、不检索、不写库**——归口下一刀。
-- **不引入 `FactDecider`、不引入 `fact_decide` 常量**：没有调用点就不写代码，避免死代码。
+- **抽取段不判重、不检索、不写库**——归口决策段。
+- **抽取段不引入 `FactDecider` / `fact_decide`**：没有调用点就不写代码，避免死代码（决策段落地时补上）。
 - **提示词原样照抄 §5.1**，不在代码里二次改写（要改回 `design.md` 改）。
 - **`subject` 为空不校验**（`content` 自足，`subject` 只统计）。
 - **`SessionSnapshot` 字段收口为 `msgs`**：不给外部直接摸的机会，两个方法是唯一入口。

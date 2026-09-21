@@ -603,6 +603,25 @@ func (r *MessageRepo) ListUserMessagesBetween(ctx context.Context, convID string
 	return list, nil
 }
 
+// ListChatMessagesBetween 查询指定时间范围内会话的真实对话消息（user + assistant），按时间正序。
+// 排除 tool 消息（可能是巨型 longtext）与内部消息（verify 草稿 / 工具结果）。
+// after 和 before 为闭区间（含边界）。limit <= 0 表示不限制数量。
+func (r *MessageRepo) ListChatMessagesBetween(ctx context.Context, convID string, after, before time.Time, limit int) ([]model.Message, error) {
+	var list []model.Message
+	q := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND role IN ('user','assistant') AND is_internal = 0 AND created_at >= ? AND created_at <= ? AND status = ?",
+			convID, after, before, model.MsgStatusNormal).
+		Order("created_at ASC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	err := q.Find(&list).Error
+	if err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
 // buildMessageFilterQuery — 构造共享的 WHERE 过滤条件（user_id, status, role, keywords, convID, time range）。
 // subConversationExclusion — 排除子会话（subAgent）消息的 SQL 条件。
 // 子会话消息（MsgSink 落库时置 IsSubAgent=true）只服务于其任务本身，

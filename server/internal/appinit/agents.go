@@ -116,6 +116,12 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		FactRepo:     repos.UserProfileFact,
 		UserRepo:     repos.User,
 	})
+	// 事实系统抽取器（本阶段只抽取，判重/决策/写入见后续阶段）
+	factExtractor := agent.NewFactExtractor(&agent.FactExtractorConfig{
+		LLMClient:     llmClients.BgFlash,
+		MaxCandidates: cfg.Facts.MaxCandidates,
+		Temperature:   cfg.Facts.Temperature,
+	})
 	// 无痕会话销毁器：Stage A 由后处理/在线删除触发，Stage B 由 cron 轮询执行
 	ephemeralDestroyer := agent.NewEphemeralDestroyer(repos.Conversation, vs, repos.DelayedTask)
 	sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
@@ -128,6 +134,10 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 			Updater: stateUpdater,
 		}),
 		profileWorker,
+		agent.NewFactWorker(&agent.FactWorkerConfig{
+			Extractor: factExtractor,
+			Enabled:   cfg.Facts.Enabled,
+		}),
 	}, repos.Message, ephemeralDestroyer)
 
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{

@@ -77,7 +77,7 @@ func (w *SummaryWorker) Process(ctx context.Context, sess *SessionSnapshot) erro
 		prevText = prev.SummaryText
 	}
 
-	summaryText, reqJSON, respJSON, err := w.callFlash(ctx, prevText, sess.Messages)
+	summaryText, reqJSON, respJSON, err := w.callFlash(ctx, prevText, sess.GetUserMessages())
 	if err != nil {
 		return fmt.Errorf("callFlash: %w", err)
 	}
@@ -85,7 +85,7 @@ func (w *SummaryWorker) Process(ctx context.Context, sess *SessionSnapshot) erro
 		return nil
 	}
 
-	return w.saveSummary(ctx, sess.ConvID, sess.UserID, sess.Messages, prev, summaryText, reqJSON, respJSON)
+	return w.saveSummary(ctx, sess.ConvID, sess.UserID, sess.GetUserMessages(), prev, summaryText, reqJSON, respJSON)
 }
 
 // summaryInstructionXML — 摘要生成指令消息的 XML 结构。

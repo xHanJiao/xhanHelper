@@ -42,6 +42,6 @@ func (w *MemoryWorker) Process(ctx context.Context, sess *SessionSnapshot) error
 		UserID:      sess.UserID,
 		ConvID:      sess.ConvID,
 	})
-	_, err := w.extractor.ExtractFromMessages(ctx, sess.UserID, sess.Messages)
+	_, err := w.extractor.ExtractFromMessages(ctx, sess.UserID, sess.GetUserMessages())
 	return err
 }

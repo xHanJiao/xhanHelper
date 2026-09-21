@@ -10,12 +10,28 @@ import (
 )
 
 // SessionSnapshot — 一个已结束 session 的完整快照，所有 PostChatWorker 共享同一份。
-// 消息仅含 user 角色（session 窗口内），按时间升序。
+// 消息含 user + assistant（不含 tool / internal），按时间升序。
 // 不包含任何格式化产物（如 convText）——各 worker 按自己的格式需求自行构建。
 type SessionSnapshot struct {
-	ConvID   string
-	UserID   string
-	Messages []model.Message
+	ConvID string
+	UserID string
+	msgs   []model.Message // user + assistant（不含 tool / internal），时间升序
+}
+
+// GetUserMessages 返回快照中的 user 消息（记忆 / 摘要 / 状态 / 画像 worker 用）。
+func (s *SessionSnapshot) GetUserMessages() []model.Message {
+	out := make([]model.Message, 0, len(s.msgs))
+	for _, m := range s.msgs {
+		if m.Role == "user" {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// GetAllMessages 返回快照中的全部消息（user + assistant，抽取段用）。
+func (s *SessionSnapshot) GetAllMessages() []model.Message {
+	return s.msgs
 }
 
 // PostChatWorker — 对话后处理子任务。
@@ -110,7 +126,7 @@ func (g *PostChatWorkerGroup) Process(ctx context.Context, convID, userID, lastM
 		return nil
 	}
 
-	msgs, err := g.msgRepo.ListUserMessagesBetween(ctx, convID, startMsg.CreatedAt, endMsg.CreatedAt, 0)
+	msgs, err := g.msgRepo.ListChatMessagesBetween(ctx, convID, startMsg.CreatedAt, endMsg.CreatedAt, 0)
 	if err != nil {
 		return err
 	}
@@ -118,12 +134,12 @@ func (g *PostChatWorkerGroup) Process(ctx context.Context, convID, userID, lastM
 		return nil
 	}
 
-	log.Printf("[post_chat_group] session_end: conv=%s loading %d user msgs", convID[:8], len(msgs))
+	log.Printf("[post_chat_group] session_end: conv=%s loading %d chat msgs", convID[:8], len(msgs))
 
 	sess := &SessionSnapshot{
-		ConvID:   convID,
-		UserID:   userID,
-		Messages: msgs,
+		ConvID: convID,
+		UserID: userID,
+		msgs:   msgs,
 	}
 
 	for _, w := range g.workers {

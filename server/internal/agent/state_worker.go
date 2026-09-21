@@ -30,6 +30,7 @@ func (w *StateWorker) Process(ctx context.Context, sess *SessionSnapshot) error 
 	if w.updater == nil {
 		panic("state_worker: updater is nil (wiring bug)")
 	}
-	w.updater.UpdateThemesFromConversation(ctx, sess.UserID, sess.Messages, buildMsgBlock(sess.Messages))
+	userMsgs := sess.GetUserMessages()
+	w.updater.UpdateThemesFromConversation(ctx, sess.UserID, userMsgs, buildMsgBlock(userMsgs))
 	return nil
 }

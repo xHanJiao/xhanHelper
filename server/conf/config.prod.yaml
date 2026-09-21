@@ -24,3 +24,6 @@ reflection:
   min_active_days: 3
   deliver_interval_minutes: 0        # 关闭 mailbox 投递窗口（省成本），pending findings 积压待恢复后补投
   mission_check_interval_minutes: 0   # 关闭 Mission 定时检查（省成本），手动 /missions/:id/check 不受影响
+
+facts:
+  enabled: true # 显式跟随 base（merge 对 Enabled 无条件赋值，缺了会被覆盖成 false）

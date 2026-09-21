@@ -720,6 +720,86 @@ func TestListUserMessagesBetween_SwappedBounds(t *testing.T) {
 	}
 }
 
+// ==================== ListChatMessagesBetween tests ====================
+
+func TestListChatMessagesBetween_UserAssistantOnly(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+
+	base := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	internal := true
+	seed := []model.Message{
+		{ID: "c-u1", ConversationID: "conv1", UserID: "u1", Role: "user", Content: "u1", CreatedAt: base},
+		{ID: "c-a1", ConversationID: "conv1", UserID: "u1", Role: "assistant", Content: "a1", CreatedAt: base.Add(1 * time.Second)},
+		{ID: "c-t1", ConversationID: "conv1", UserID: "u1", Role: "tool", Content: "巨型工具结果", CreatedAt: base.Add(2 * time.Second)},
+		{ID: "c-a2", ConversationID: "conv1", UserID: "u1", Role: "assistant", Content: "内部草稿", IsInternal: internal, CreatedAt: base.Add(3 * time.Second)},
+		{ID: "c-s1", ConversationID: "conv1", UserID: "u1", Role: "system", Content: "verify 反馈", IsInternal: internal, CreatedAt: base.Add(4 * time.Second)},
+		{ID: "c-u2", ConversationID: "conv1", UserID: "u1", Role: "user", Content: "u2", CreatedAt: base.Add(5 * time.Second)},
+		{ID: "c-other", ConversationID: "conv2", UserID: "u1", Role: "user", Content: "别的会话", CreatedAt: base.Add(1 * time.Second)},
+	}
+	for i := range seed {
+		if err := repo.Create(context.Background(), &seed[i]); err != nil {
+			t.Fatalf("seed %s: %v", seed[i].ID, err)
+		}
+	}
+
+	msgs, err := repo.ListChatMessagesBetween(context.Background(), "conv1", base, base.Add(5*time.Second), 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := make([]string, len(msgs))
+	for i, m := range msgs {
+		got[i] = m.ID
+	}
+	want := []string{"c-u1", "c-a1", "c-u2"} // 排 tool / internal / 其它会话
+	if len(got) != len(want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	}
+}
+
+func TestListChatMessagesBetween_InclusiveBoundsAndLimit(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+
+	base := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 6; i++ {
+		m := model.Message{
+			ID:             fmt.Sprintf("cb-%02d", i),
+			ConversationID: "conv1",
+			UserID:         "u1",
+			Role:           "user",
+			Content:        "x",
+			CreatedAt:      base.Add(time.Duration(i) * time.Second),
+		}
+		if err := repo.Create(context.Background(), &m); err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+
+	// 闭区间 + limit=3 → 前 3 条（含边界 base）
+	msgs, err := repo.ListChatMessagesBetween(context.Background(), "conv1", base, base.Add(10*time.Second), 3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 3 || msgs[0].ID != "cb-00" || msgs[2].ID != "cb-02" {
+		t.Fatalf("expected cb-00..cb-02, got %d msgs", len(msgs))
+	}
+
+	// 空区间
+	empty, err := repo.ListChatMessagesBetween(context.Background(), "conv1", base.Add(-2*time.Second), base.Add(-time.Second), 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("expected 0 for empty range, got %d", len(empty))
+	}
+}
+
 // —— 巨型工具轮场景（前端分页不截断 + LLM 路径单轮完整）——
 
 // TestCursorByRounds_MassiveToolRoundsNoTruncation

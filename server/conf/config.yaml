@@ -102,9 +102,11 @@ vector:
   purge_missions_once: true # 一次性清空 mission 数据（清完改回 false）
 
 facts:
+  enabled: true # 事实系统总开关（抽取 + 后续决策）
   top_k: 5 # 决策段检索近邻数
   dupe_threshold: 0.95 # 向量 top1 静默跳过阈值
-  max_candidates: 20 # 单次抽取候选上限
+  max_candidates: 5 # 单次抽取候选上限
+  temperature: 0.2 # 抽取/决策段采样温度（格式敏感任务，压低；删掉此行则用模型默认）
 
 storage:
   image_dir: data/images # 图床根目录（文档配图 + 聊天图片输入共用）

@@ -252,7 +252,7 @@ func (w *UserProfileWorker) runColdStartReAct(ctx context.Context, userID string
 // legacy=true 时（facts 空 + 旧表有值）走延迟迁移：existing 用旧表整段值，LLM 拆分为事实列表。
 // 配额校验失败时反馈 LLM 重新生成（最多 quotaRetryMax 次），仍失败则截断兜底。
 func (w *UserProfileWorker) extractNormal(ctx context.Context, sess *SessionSnapshot, legacy bool) error {
-	if len(sess.Messages) == 0 {
+	if len(sess.GetUserMessages()) == 0 {
 		return nil
 	}
 
@@ -590,7 +590,7 @@ type profileMsgXML struct {
 func (w *UserProfileWorker) buildExtractionXML(ctx context.Context, sess *SessionSnapshot, legacy bool) (string, error) {
 	doc := profileExtractionXML{
 		Fields:       profilefield.ProfileExtractFieldTextBrief(),
-		Messages:     buildProfileMsgs(sess.Messages),
+		Messages:     buildProfileMsgs(sess.GetUserMessages()),
 		Rules:        profileRules,
 		OutputFormat: profileOutputFormat,
 	}

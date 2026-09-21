@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
@@ -25,10 +26,16 @@ type syncMockLLM struct {
 	responses []llm.Message
 	callCount int
 	reqs      []*llm.ChatRequest // 记录每次请求，便于断言
+	scenarios []llmcost.Scenario // 记录每次调用的场景标注，便于断言
 }
 
 func (m *syncMockLLM) ChatSync(ctx context.Context, req *llm.ChatRequest) (llm.Message, error) {
 	m.reqs = append(m.reqs, req)
+	if s, ok := llmcost.ScenarioFromContext(ctx); ok {
+		m.scenarios = append(m.scenarios, s)
+	} else {
+		m.scenarios = append(m.scenarios, llmcost.Scenario{})
+	}
 	if m.callCount >= len(m.responses) {
 		return llm.Message{}, errors.New("mock: no more responses")
 	}
@@ -101,9 +108,9 @@ func newTestProfileWorker(llmClient llm.LLMClient, legacyRepo *service.UserProfi
 func testSess(msgs ...string) *SessionSnapshot {
 	out := make([]model.Message, 0, len(msgs))
 	for i, c := range msgs {
-		out = append(out, model.Message{ID: string(rune('a' + i)), Content: c})
+		out = append(out, model.Message{ID: string(rune('a' + i)), Role: "user", Content: c})
 	}
-	return &SessionSnapshot{ConvID: "conv-1", UserID: "user-1", Messages: out}
+	return &SessionSnapshot{ConvID: "conv-1", UserID: "user-1", msgs: out}
 }
 
 // ---- buildExtractionXML 测试 ----
@@ -564,7 +571,7 @@ func TestProfileWorker_Process_Routing(t *testing.T) {
 	}
 	llmLagacy := &syncMockLLM{responses: []llm.Message{{Content: `{}`}}}
 	w2 := newTestProfileWorker(llmLagacy, legacyRepo, factRepo)
-	if err := w2.Process(ctx, &SessionSnapshot{ConvID: "conv-1", UserID: "user-2", Messages: []model.Message{{ID: "m1", Content: "你好"}}}); err != nil {
+	if err := w2.Process(ctx, &SessionSnapshot{ConvID: "conv-1", UserID: "user-2", msgs: []model.Message{{ID: "m1", Role: "user", Content: "你好"}}}); err != nil {
 		t.Fatalf("Process (legacy): %v", err)
 	}
 	if llmLagacy.reqs[0].SystemPrompt != postChatSharedSystemPrompt {
@@ -773,10 +780,10 @@ func TestUserProfileRepo_UpsertOverwrite(t *testing.T) {
 func TestProfileWorker_TimeInMsg(t *testing.T) {
 	_, factRepo := setupProfileRepos(t)
 	msgs := []model.Message{
-		{ID: "m1", Content: "我老家是河南焦作的", CreatedAt: time.Date(2026, 8, 8, 7, 30, 0, 0, time.UTC)},
+		{ID: "m1", Role: "user", Content: "我老家是河南焦作的", CreatedAt: time.Date(2026, 8, 8, 7, 30, 0, 0, time.UTC)},
 	}
 	w := newTestProfileWorker(nil, nil, factRepo)
-	xmlStr, err := w.buildExtractionXML(context.Background(), &SessionSnapshot{ConvID: "c", UserID: "u", Messages: msgs}, false)
+	xmlStr, err := w.buildExtractionXML(context.Background(), &SessionSnapshot{ConvID: "c", UserID: "u", msgs: msgs}, false)
 	if err != nil {
 		t.Fatalf("buildExtractionXML: %v", err)
 	}

@@ -129,14 +129,15 @@ func TestPostChatGroup_FetchesCorrectWindow(t *testing.T) {
 	now := time.Now()
 	// session 起始消息（m1 标记自己为起始）
 	insertTestMsg(t, repo, "msg-0001", "conv-0001", "user", "start", now.Add(-10*time.Minute), "msg-0001")
-	insertTestMsg(t, repo, "msg-0002", "conv-0001", "user", "middle", now.Add(-5*time.Minute), "msg-0001")
-	insertTestMsg(t, repo, "msg-0003", "conv-0001", "tool", "agent_browser_snapshot 大段HTML", now.Add(-4*time.Minute), "msg-0001")
-	insertTestMsg(t, repo, "msg-0004", "conv-0001", "user", "end", now, "msg-0001")
+	insertTestMsg(t, repo, "msg-0002", "conv-0001", "assistant", "好的", now.Add(-7*time.Minute), "msg-0001")
+	insertTestMsg(t, repo, "msg-0003", "conv-0001", "user", "middle", now.Add(-5*time.Minute), "msg-0001")
+	insertTestMsg(t, repo, "msg-0004", "conv-0001", "tool", "agent_browser_snapshot 大段HTML", now.Add(-4*time.Minute), "msg-0001")
+	insertTestMsg(t, repo, "msg-0005", "conv-0001", "user", "end", now, "msg-0001")
 
 	w1 := &mockPostChatWorker{name: "w1"}
 	group := NewPostChatWorkerGroup([]PostChatWorker{w1}, repo, &fakeEphemeralPurge{})
 
-	err := group.Process(context.Background(), "conv-0001", "user-0001", "msg-0004")
+	err := group.Process(context.Background(), "conv-0001", "user-0001", "msg-0005")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -144,12 +145,28 @@ func TestPostChatGroup_FetchesCorrectWindow(t *testing.T) {
 		t.Fatalf("expected 1 worker call, got %d", w1.calls)
 	}
 	sess := w1.sessions[0]
-	// 只含 user 消息，tool 消息被 ListUserMessagesBetween 排除
-	if len(sess.Messages) != 3 {
-		t.Errorf("expected 3 user messages, got %d", len(sess.Messages))
+	// 快照含 user + assistant；tool 消息被 ListChatMessagesBetween 在 SQL 层排除
+	all := sess.GetAllMessages()
+	if len(all) != 4 {
+		t.Fatalf("expected 4 chat messages, got %d", len(all))
 	}
-	if sess.Messages[0].ID != "msg-0001" || sess.Messages[2].ID != "msg-0004" {
-		t.Errorf("unexpected message order: first=%s last=%s", sess.Messages[0].ID, sess.Messages[2].ID)
+	for _, m := range all {
+		if m.Role == "tool" {
+			t.Errorf("tool message should be excluded, got %s", m.ID)
+		}
+	}
+	if all[0].ID != "msg-0001" || all[3].ID != "msg-0005" {
+		t.Errorf("unexpected message order: first=%s last=%s", all[0].ID, all[3].ID)
+	}
+	// GetUserMessages 只回 user，行为与旧查询等价
+	userMsgs := sess.GetUserMessages()
+	if len(userMsgs) != 3 {
+		t.Errorf("expected 3 user messages, got %d", len(userMsgs))
+	}
+	for _, m := range userMsgs {
+		if m.Role != "user" {
+			t.Errorf("GetUserMessages returned non-user role %q", m.Role)
+		}
 	}
 }
 
@@ -250,7 +267,7 @@ func TestMemoryWorker_SkipsWhenDisabled(t *testing.T) {
 		MemoryAutoExtract: false,
 	})
 	err := worker.Process(context.Background(), &SessionSnapshot{
-		ConvID: "c", UserID: "u", Messages: []model.Message{{ID: "msg-0001"}},
+		ConvID: "c", UserID: "u", msgs: []model.Message{{ID: "msg-0001", Role: "user"}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

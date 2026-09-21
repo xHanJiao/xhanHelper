@@ -213,7 +213,7 @@ func WarmupAll(ctx context.Context, vs app.VectorStore, embeddingRepo *service.E
 facts:
   top_k: 5               # 决策段检索近邻数
   dupe_threshold: 0.95   # 向量 top1 静默跳过阈值
-  max_candidates: 20     # 单次抽取候选上限
+  max_candidates: 5      # 单次抽取候选上限
 ```
 
 `config/config.go` 改动：

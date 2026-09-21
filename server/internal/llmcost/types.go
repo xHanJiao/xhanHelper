@@ -30,6 +30,7 @@ const (
 	SubProfileExtract   = "profile_extract"
 	SubProfileColdStart = "profile_cold_start"
 	SubSummary          = "summary"
+	SubFactExtract      = "fact_extract"
 
 	// reflection
 	SubFindingScore       = "finding_score"

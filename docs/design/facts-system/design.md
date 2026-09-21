@@ -106,32 +106,40 @@ session_end（会话空闲 30min）
 
 ### 5.1 定稿提示词
 
+抽取段用**专用** system prompt，不复用 `postChatSharedSystemPrompt`（那条写死了「输入的消息均为用户角色的发言」，与事实抽取喂 user＋assistant 的事实矛盾；且改共享常量会动 memory／summary／state／profile 的缓存前缀）：
+
+> 你是一个对话后处理助手。输入是一段用户与助手的对话记录，按时间顺序排列，每个 turn 带发生时间。
+
+指令消息（常量）：
+
 ````
 你是事实记录员。你的工作是从对话中抽取值得长期保留的事实。
 
-你不做摘要，不写心得，不给建议；也不判 ADD/UPDATE/DELETE/NONE——那是下一段的事。
+你不做摘要，不写心得，不给建议。
 
 ## 输入
 
-<对话>：用户与助手的对话。可能只有一轮，也可能多轮。
+<对话>：用户与助手的一段对话，按时间顺序排列，每个 turn 带发生时间。
+用户消息里的「今天（2026-09-21）」是系统补的日期标注：原词是相对说法，括号里是它的绝对日期。
 
 ## 铁律
 
 1. 只依据用户的消息。助手说的、系统说的，一律不记为事实。用户没确认的内容，不记。
 2. 抽的是事实，不是对话过程。谁问过、你答了什么、绕了几步，都不记。
 3. 一次输出多条。一段对话里可能有若干条事实，逐条输出，不许合并成一条综述。
-4. content 必须自足成句：脱离这段对话也能读懂。「她」「那个项目」「上次说的」一律换成确定的名词，主体名要写进句子。
-5. 不确定就不记。记错的事实比漏掉更难清理。
-6. 助手的话不构成事实来源，除非用户确认。助手复述用户已知内容的，更不记。
-7. 以最终陈述为准：用户改口、助手误判被纠正，只留最终版，中间态不产出多条。
-8. 段内去重：同一事实在一段对话里被提两次，只产出一条。
+4. content 必须自足成句：脱离这段对话也能读懂。主体名（说的是谁）要写进句子；「她」「那个项目」「上次说的」一律换成确定的名词。
+5. 时间只写绝对日期，格式 YYYY-MM-DD。不许出现「今天」「昨天」「下周」这类相对说法，也不许把系统标注的括号抄进 content。
+6. 不确定就不记。记错的事实比漏掉更难清理。只写对话里出现过的内容，不许补齐、不许推断。
+7. 助手的话不构成事实来源，除非用户确认。助手复述用户已知内容的，更不记。
+8. 以最终陈述为准：用户改口、助手误判被纠正，只留最终版，中间态不产出多条。
+9. 段内去重：同一事实在一段对话里被提两次，只产出一条。
 
 ## 每条事实的四个字段
 
-- subject：这条事实关于谁／什么。不一定是用户本人，也可以是项目、政策、价格、机构。
+- subject：这条事实关于谁／什么。取对话里真实出现的指称（人名、项目名、机构名），不要自造代号。
 - kind：只有两个值，state 或 event。
-- fields：可空。due_at（到期时间）、has_doc_ref（文档 ID）。
-- content：一句话，不带日期前缀。
+- fields：可空。due_at（到期时间，YYYY-MM-DD）、has_doc_ref（文档 ID）。
+- content：一句话，只放一个断言。
 
 subject 取这句话真正在说的对象。通篇是「我」在讲，主体也可能是别人——这是最常见的错。
 
@@ -139,7 +147,8 @@ kind 只看一件事：会不会被后来的事实取代。
 - state：当前状态、身份、关系、计划、对某事的当前判断。会被取代。
 - event：一次发生的事、观点。发生即固定，只增不改。观点不许覆盖成「最新观点」。
 
-fields：日期、金额、期限是字段，不是类别。计划 = state + due_at。日期不要留在 content 里。
+fields：日期、金额、期限是字段，不是类别。计划 = state + due_at。
+「到期／期限」写进 fields.due_at，content 里不再重复它；其余时间（某件事发生在哪天）用 YYYY-MM-DD 写在 content 的句子里。
 
 ## 什么该记，什么不该记
 
@@ -147,74 +156,66 @@ fields：日期、金额、期限是字段，不是类别。计划 = state + due
 不该记：逐日读数（睡眠时长、步数、体重这类时序数据，走台账）、助手的话、对话过程、寒暄、零信息量的问答。
 一段对话可能一条都不该记——那就输出空列表。
 
+## content 是什么
+
+content 是句子，不是要点列表；一条只放一个断言。
+
+❌ {"subject":"老K小程序","kind":"state","content":"本人兼产品与开发、只做前端、9/21 演示"}
+✅ {"subject":"老K小程序","kind":"state","content":"本人这次在老K的旅游案例展示小程序上兼产品与开发，原定位只做技术"}
+
 ## 样例
 
 输入统一为「一个或多个 turn 的对话」，单条样例也写成只有一个 turn 的对话，不写成「一句话」。
 
 例 1 · 多轮：跨轮拼装、以最终陈述为准
 <对话>
-  <turn role="user">老 K 那个小程序你还记得吧，旅游案例展示加签证代办。</turn>
-  <turn role="assistant">记得，你提过初稿。现在到哪步了？</turn>
-  <turn role="user">还没动。我本来只做技术，这次可能产品和开发都我来。</turn>
-  <turn role="assistant">那得先定原型？</turn>
-  <turn role="user">嗯，想用工具生成 UI 提示词。9 月 21 号跟他对需求。</turn>
-  <turn role="assistant">21 号是交付日吗？</turn>
-  <turn role="user">不是，那天他回程，就当面演示一下。后台来不及就只做前端。</turn>
+  <turn role="user" at="2026-09-18 21:30">老K那个小程序你还记得吧，旅游案例展示加签证代办。</turn>
+  <turn role="assistant" at="2026-09-18 21:30">记得，你提过初稿。现在到哪步了？</turn>
+  <turn role="user" at="2026-09-18 21:31">还没动。我本来只做技术，这次可能产品和开发都我来。</turn>
+  <turn role="assistant" at="2026-09-18 21:31">那得先定原型？</turn>
+  <turn role="user" at="2026-09-18 21:33">嗯，想用工具生成 UI 提示词。9 月 21 号跟他对需求。</turn>
+  <turn role="assistant" at="2026-09-18 21:33">21 号是交付日吗？</turn>
+  <turn role="user" at="2026-09-18 21:34">不是，那天他回程，就当面演示一下。后台来不及就只做前端。</turn>
 </对话>
 输出：
 {"facts":[
-  {"subject":"项目K","kind":"state","content":"本人兼产品与开发（原定位只做技术）"},
-  {"subject":"项目K","kind":"state","fields":{"due_at":"2026-09-21"},"content":"21 号当面演示、非交付日、后台来不及则只做前端"}
+  {"subject":"老K小程序","kind":"state","fields":{"due_at":"2026-09-21"},"content":"本人这次在老K的旅游案例展示小程序上兼产品与开发，原定位只做技术"},
+  {"subject":"老K小程序","kind":"event","content":"2026-09-21 不是交付日，本人与老K当面演示该小程序；后台来不及就只做前端"}
 ]}
 不记：开场寒暄、助手那句误判与澄清提问。第 2 条是跨三轮拼出来的——日期、性质、退路缺一轮都不完整。
 
-例 2 · 一段话产出三条
+例 2 · 主体不是本人（通篇是「我」在讲，主体也可能是别人）
 <对话>
-  <turn role="user">你还记得之前答应帮老 K 做小程序吗，旅游案例展示和签证代办。他当时是我配偶班的班长，这次可能我既是产品又是开发，原来只让我做技术。我想先做原型，9/21 跟他对需求。</turn>
+  <turn role="user" at="2026-09-20 22:10">今天和配偶吵架了。我妈在群里说买了新电动车，配偶看见就问为啥要买，我说你要是不愿意我可以说你不让，然后就吵起来了，她把家群也退了。我对她们的沟通很紧张，有点 PTSD。买房、生孩子我都不想做了，只想躺平。</turn>
 </对话>
 输出：
 {"facts":[
-  {"subject":"老K","kind":"state","content":"配偶本科时的班长（稳定身份）"},
-  {"subject":"项目K","kind":"state","content":"本人兼产品与开发（原定位只做技术）"},
-  {"subject":"项目K","kind":"state","fields":{"due_at":"2026-09-21"},"content":"9/21 对需求、先做原型"}
-]}
-不记：「你还记得吗」这类开场、助手是否记得——零信息量。
-
-例 3 · 同一段话里，主体与 kind 不同就要拆（主体不是本人的典型）
-<对话>
-  <turn role="user">今天和配偶吵架了。我妈在群里说买了新电动车，配偶看见就问为啥要买，我说你要是不愿意我可以说你不让，然后就吵起来了，我把家群也退了。我对她们的沟通很紧张，有点 PTSD。买房、生孩子我都不想做了，只想躺平。</turn>
-</对话>
-输出：
-{"facts":[
-  {"subject":"配偶","kind":"event","content":"因长辈群消息争吵、退家族群"},
-  {"subject":"本人·家庭关系","kind":"state","content":"对长辈与配偶的沟通有创伤式反应"},
-  {"subject":"本人·人生规划","kind":"state","content":"不再愿为家里还债、不想买房生育、只想躺平"}
+  {"subject":"配偶","kind":"event","content":"配偶因本人母亲在家族群聊里买新电动车一事与本人争吵，并退了家族群"},
+  {"subject":"本人","kind":"state","content":"本人对母亲与配偶之间的沟通有创伤式反应"},
+  {"subject":"本人","kind":"state","content":"本人不想买房生育了，只想躺平"}
 ]}
 
-例 4 · 不产出事实
+例 3 · 不产出事实
 <对话>
-  <turn role="user">昨天十一点半多睡的，入睡不算顺利，今天睡到八点五十，4.5 分，头还微微疼。</turn>
+  <turn role="user" at="2026-09-21 08:52">昨天十一点半多睡的，入睡不算顺利，今天睡到八点五十，4.5 分，头还微微疼。</turn>
 </对话>
 输出：{"facts":[]}
 逐日读数，单条脱离序列无意义，走台账，不进事实库。
 
-例 5 · 记结论，不记过程
-<对话>
-  <turn role="user">我下载了某个开源库，你调研一下。</turn>
-  <turn role="assistant">（跑偏去调研了别的）</turn>
-  <turn role="user">你会错意了，不是让你调研那个。</turn>
-</对话>
-输出：
-{"facts":[
-  {"subject":"本项目","kind":"state","content":"该库不是该项目本体、调用方式的特点"}
-]}
-不记：助手跑偏、白花子任务、用户来纠正。
-
 ## 输出
 
 JSON，一个键 facts：
-{"facts":[{"subject":"项目K","kind":"state","fields":{"due_at":"2026-09-21"},"content":"本人兼产品与开发，原定位只做技术"}]}
+{"facts":[{"subject":"老K小程序","kind":"state","fields":{"due_at":"2026-09-21"},"content":"本人这次在老K的旅游案例展示小程序上兼产品与开发，原定位只做技术"}]}
 ````
+
+**content 规格（09-21 定）** —— content 是嵌入／注入／比对的三重单位，必须自足成句：主体名写进句子、一条只放一个断言、不用「、」串要点。时间口径：
+
+- 「到期／期限」→ `fields.due_at`（ISO），content 不重复它；
+- 其余时间（某件事发生在哪天）→ 用 `YYYY-MM-DD` 写在 content 的句子里；
+- **禁相对时间词**（今天／昨天／下周）：它锚在说话时刻，事实库活几个月就失去意义；更危险的是归一化判重会因此**静默合并两条不同时间的事**；
+- **禁把机器标注的括号抄进 content**：user 消息落库时被管线写成「原词（日期）」（`今天（2026-09-21）`）。
+
+**输入渲染**：每个 turn 带 `at="YYYY-MM-DD HH:MM"`（北京时间，取自 `CreatedAt`）。user 消息喂**规范化后的 `Content`**——日期已被 `NormalizeDatesStep` 确定性解出，不让模型自己算相对日期；assistant 消息不经管线，靠 `at` 提供时间锚点。`Content` 为空的 turn（只发 tool call 的 assistant）跳过。
 
 ### 5.2 三条口径
 
@@ -225,9 +226,10 @@ JSON，一个键 facts：
 ### 5.3 实现要点
 
 - 指令消息（常量）放**最前**，对话紧随其后——常量前缀命中 DeepSeek 前缀缓存。
-- `SystemPrompt` 用 `postChatSharedSystemPrompt`（与记忆／摘要／画像 worker 同一固定串）。
+- `SystemPrompt` 用 `factExtractSystemPrompt`（抽取段专用，见 §5.1；不复用 `postChatSharedSystemPrompt`）。
 - `ChatSync` + `ParseFlashJSON` 解 `{facts:[...]}`。
-- 校验：`kind ∈ {state,event}`；`content` 非空且去空白后非空；条数上限 `facts.max_candidates`（默认 20），超出截断并记日志。
+- 采样温度走 `facts.temperature`（`*float64`，nil = 用模型默认；默认 0.2）——抽取是格式敏感任务，压低减少波动。
+- 校验：`kind ∈ {state,event}`；`content` 非空且去空白后非空；条数上限 `facts.max_candidates`（默认 5），超出截断并记日志。
 - 抽取产出**候选**，不落库；由决策段逐条处理。
 
 ## 6. 检索（纯代码）
@@ -299,7 +301,7 @@ target 只能取自输入的 id，不许自造 id。
 | 代码 | 向量 top1 ≥ `facts.dupe_threshold`（默认 0.95） | 静默跳过 |
 | 决策段 | 其余全部 | `top_k=5` 近邻交模型（**不设阈值**，0.85–0.95 一带照常进决策） |
 
-- **归一化** = 剥掉日期前缀、空白、标点；`content_hash = md5(normalize(content))`。
+- **归一化** = 剥空白、标点、全半角差异与大小写。**保留数字与日期**（09-21 修正：原先写的「剥掉日期前缀」会让「和老K吵架」在不同日期说两遍时 hash 相同 → 静默丢事实）；`content_hash = md5(normalize(content))`。
 - **归一化判重排在检索之前**——先把不花钱的做掉。
 - 判重与幂等落在**写入侧（代码）**，指标不依赖模型的自觉；命中即静默跳过并计数。
 
@@ -403,11 +405,12 @@ facts:
   enabled: true            # 总开关
   top_k: 5                 # 决策段近邻数
   dupe_threshold: 0.95     # 向量 top1 静默跳过阈值
-  max_candidates: 20       # 单次抽取候选上限
+  max_candidates: 5        # 单次抽取候选上限
+  temperature: 0.2         # 抽取/决策段采样温度；*float64，nil = 用模型默认
 ```
 
 - `config.Config` 加 `Facts FactsConfig \`yaml:"facts"\``。
-- 默认值在 `config.go` 默认段设置（`top_k=5`、`dupe_threshold=0.95`、`max_candidates=20`），合并逻辑按现有「非零值覆盖」。
+- 默认值在 `config.go` 默认段设置（`top_k=5`、`dupe_threshold=0.95`、`max_candidates=5`），合并逻辑按现有「非零值覆盖」；`temperature` 是指针，合并用 `if src != nil`（同 `llm.default_temperature`）。
 - 后台总开关 `server.disable_background_tasks` 关闭时，`session_end` 整条管线不跑，facts 自动继承。
 
 ## 13. 旧数据兼容
@@ -432,11 +435,12 @@ facts:
 | `server/internal/service/fact_repo.go` | facts 数据访问 |
 | `server/internal/service/fact_changelog_repo.go` | changelog 数据访问 |
 | `server/internal/agent/fact_extractor.go` | 抽取段：提示词 + `ChatSync` + 解析 |
-| `server/internal/agent/fact_decider.go` | 决策段：判重 + 检索 + 原生 FC + 写入 |
-| `server/internal/agent/fact_worker.go` | `PostChatWorker` 包装，逐候选串行 |
+| `server/internal/agent/fact_worker.go` | `PostChatWorker` 包装 + 决策段（判重 + 检索 + 原生 FC + 写入），逐候选串行 |
 | `server/internal/agent/fact_extractor_test.go` | 抽取解析／kind 校验 |
-| `server/internal/agent/fact_decider_test.go` | 四分支 + 跳过 + 自造 id 拒绝 + 串行可见性 |
+| `server/internal/agent/fact_worker_test.go` | 四分支 + 跳过 + 自造 id 拒绝 + 串行可见性 |
 | `server/internal/agent/fact_normalize_test.go` | 归一化／hash 边界 |
+
+> 决策段不单开文件：`FactWorker` 本身只做开关/场景/串行编排，很薄；把决策逻辑折进 `fact_worker.go`，与记忆模块的 `extractor.go` + `memory_worker.go` 两文件制一致。细化见 [extraction.md](./extraction.md)。
 
 ### 14.2 修改文件
 
@@ -446,25 +450,22 @@ facts:
 | `app/init_db.go` | `AutoMigrate` 加 `&model.Fact{}`、`&model.FactChangelog{}` |
 | `app/init_repos.go` | `Repos` 加 `Fact` / `FactChangelog` 字段 + 构造 |
 | `agent/warmup.go` | 加 `warmupFactEmbeddings`，`WarmupAll` 调用 |
+| `service/message_repo.go` | 新增 `ListChatMessagesBetween`（user + assistant，排 tool / internal） |
+| `agent/post_chat_group.go` | `SessionSnapshot` 携带 user+assistant，加 `GetUserMessages()` / `GetAllMessages()` |
+| `agent/summary_worker.go` / `memory_worker.go` / `state_worker.go` / `profile_worker.go` | 改用 `sess.GetUserMessages()`（行为不变） |
 | `llmcost/types.go` | 加 `SubFactExtract` / `SubFactDecide` |
 | `llmcost/io_audit.go` | 白名单加两条 |
 | `config/config.go` | 加 `FactsConfig` + 默认值 + 合并 |
 | `conf/config.yaml` / `config.dev.yaml` / `config.prod.yaml` | 加 `facts:` 段 |
-| `appinit/agents.go` | 构造 extractor/decider，`FactWorker` 追加进 `sessionEndGroup` |
+| `appinit/agents.go` | 构造 extractor/worker，`FactWorker` 追加进 `sessionEndGroup` |
 
 ### 14.3 装配（`appinit/agents.go`）
 
 ```go
-factExtractor := agent.NewFactExtractor(llmClients.BgFlash)
-factDecider := agent.NewFactDecider(&agent.FactDeciderConfig{
+factExtractor := agent.NewFactExtractor(&agent.FactExtractorConfig{
     LLMClient:     llmClients.BgFlash,
-    Embedder:      infra.Embedder,
-    VectorStore:   infra.VectorStore,
-    EmbeddingRepo: repos.Embedding,
-    FactRepo:      repos.Fact,
-    ChangelogRepo: repos.FactChangelog,
-    TopK:          cfg.Facts.TopK,
-    DupeThreshold: cfg.Facts.DupeThreshold,
+    MaxCandidates: cfg.Facts.MaxCandidates,
+    Temperature:   cfg.Facts.Temperature,
 })
 sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
     summaryWorker,
@@ -472,16 +473,16 @@ sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
     stateWorker,
     profileWorker,
     agent.NewFactWorker(&agent.FactWorkerConfig{
-        Extractor:    factExtractor,
-        Decider:      factDecider,
-        Enabled:      cfg.Facts.Enabled,
-        MaxCandidates: cfg.Facts.MaxCandidates,
+        Extractor: factExtractor,
+        Enabled:   cfg.Facts.Enabled,
     }),
 }, repos.Message, ephemeralDestroyer)
 ```
 
+> 决策段的依赖（embedder / vectorStore / factRepo / changelogRepo / topK / dupeThreshold）在下一刀补进 `FactWorker`，本刀 `FactWorker` 只做抽取编排。逐候选串行与四种写入的细节见 [extraction.md](./extraction.md) 与 [storage.md](./storage.md)。
+
 - facts 用 `llm_bg`（`llmClients.BgFlash`），与其余后台 worker 一致。
-- ID 约定：facts 用 uuid(36)（对齐 `UserMemory`）；changelog 用 `idgen.Next()` int64。
+- ID 约定：facts 用 uuid(36)（对齐 `UserMemory`）；changelog 用 `idgen.Next()`（string，对齐 `LLMCallIO`）。
 
 ## 15. 测试
 
@@ -491,13 +492,13 @@ sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
 
 - `fact_normalize_test.go`：日期前缀／空白／标点剥离；空串；hash 稳定性。
 - `fact_extractor_test.go`：JSON 解析；`kind` 非法被拒；空列表；超 `max_candidates` 截断。
-- `fact_decider_test.go`：
+- `fact_worker_test.go`（抽取段，本刀）：`enabled=false` 不消费 LLM；场景标注 `fact_extract`；渲染含 assistant turn。
+- `fact_worker_test.go`（决策段，下一刀）：
   - 四分支（ADD／UPDATE／DELETE／NONE）各一；
   - `top1 ≥ 0.95` 静默跳过；
   - 精确 hash 命中跳过；
   - **`target_id` 不在近邻集内被拒**；
   - 串行可见性：候选 2 的检索命中候选 1 刚写入的向量。
-- `fact_worker_test.go`：`enabled=false` 不消费 LLM；逐候选串行调用。
 
 真机验证：跑一次聊天 → 查 `facts` / `fact_changelogs` / `llm_call_io`（`fact_extract` / `fact_decide`）与日志无报错。
 

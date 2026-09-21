@@ -291,7 +291,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		{
 			Name:        "delete_document",
 			Display:     "删除文档",
-			Description: "删除一篇文档。",
+			Description: "把一篇文档移入回收站（7 天内可由用户在客户端恢复，超期自动物理删除）。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -609,6 +609,10 @@ func (t *DocumentTool) listAnnotations(ec *ExecuteContext, args json.RawMessage)
 	if errMsg != "" {
 		return &Result{Success: false, Error: errMsg}
 	}
+	// 文档不存在或已在回收站时不暴露批注
+	if _, err := t.docRepo.GetByID(ec.Ctx, req.DocumentID, ec.UserID); err != nil {
+		return &Result{Success: false, Error: "document not found"}
+	}
 
 	list, total, err := t.annoRepo.List(ec.Ctx, req.DocumentID, ec.UserID, limit, offset)
 	if err != nil {
@@ -713,7 +717,7 @@ func (t *DocumentTool) deleteDocument(ec *ExecuteContext, args json.RawMessage) 
 		return &Result{Success: false, Error: "document not found"}
 	}
 
-	data, _ := json.Marshal(map[string]interface{}{"id": req.ID, "message": "文档已删除"})
+	data, _ := json.Marshal(map[string]interface{}{"id": req.ID, "message": "文档已移入回收站（7 天内可恢复）"})
 	return &Result{Success: true, Data: data}
 }
 

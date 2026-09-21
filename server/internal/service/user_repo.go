@@ -301,6 +301,7 @@ func (r *UserRepo) GetUserStats(ctx context.Context, userIDs []string, since tim
 			Model(&model.Document{}).
 			Select("user_id, COUNT(*) AS count").
 			Where("user_id IN ?", userIDs).
+			Where("status = ?", model.DocumentStatusActive).
 			Where("created_at >= ?", since).
 			Group("user_id").
 			Scan(&rows).Error; err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -24,38 +25,119 @@ func (r *DocumentRepo) Create(ctx context.Context, d *model.Document) error {
 	return r.db.WithContext(ctx).Create(d).Error
 }
 
-// GetByID 按 ID + 用户 ID 查询单篇
+// GetByID 按 ID + 用户 ID 查询单篇（已删除的文档不可见）
 func (r *DocumentRepo) GetByID(ctx context.Context, id, userID string) (*model.Document, error) {
 	var doc model.Document
-	err := r.db.WithContext(ctx).Where("id = ? AND user_id = ?", id, userID).First(&doc).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND user_id = ? AND status = ?", id, userID, model.DocumentStatusActive).First(&doc).Error
 	if err != nil {
 		return nil, err
 	}
 	return &doc, nil
 }
 
-// Update 部分更新文档
+// Update 部分更新文档（只作用于未删除的文档）
 func (r *DocumentRepo) Update(ctx context.Context, id, userID string, updates map[string]interface{}) error {
 	if len(updates) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).Model(&model.Document{}).Where("id = ? AND user_id = ?", id, userID).Updates(updates).Error
+	return r.db.WithContext(ctx).Model(&model.Document{}).
+		Where("id = ? AND user_id = ? AND status = ?", id, userID, model.DocumentStatusActive).
+		Updates(updates).Error
 }
 
-// GetByIDPublic 按 ID 查询文档（无用户限制，供公开分享使用）
+// GetByIDPublic 按 ID 查询文档（无用户限制，供公开分享使用；已删除的文档不可见）
 func (r *DocumentRepo) GetByIDPublic(ctx context.Context, id string) (*model.Document, error) {
 	var doc model.Document
-	err := r.db.WithContext(ctx).Where("id = ?", id).First(&doc).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND status = ?", id, model.DocumentStatusActive).First(&doc).Error
 	if err != nil {
 		return nil, err
 	}
 	return &doc, nil
 }
 
-// Delete 删除文档，返回删除行数（0 表示文档不存在或不属于该用户）
+// Delete 软删文档（移入回收站），返回影响行数（0 表示不存在、不属于该用户或已在回收站）。
+//
+// ponytail: 复用 updated_at 当删除时间（回收站排序与 7 天清理都以它为准），不再加 deleted_at 列。
+// 已删文档不再被更新，语义成立；恢复后排序会回到顶部，可接受。
 func (r *DocumentRepo) Delete(ctx context.Context, id, userID string) (int64, error) {
-	result := r.db.WithContext(ctx).Delete(&model.Document{}, "id = ? AND user_id = ?", id, userID)
+	result := r.db.WithContext(ctx).Model(&model.Document{}).
+		Where("id = ? AND user_id = ? AND status = ?", id, userID, model.DocumentStatusActive).
+		Update("status", model.DocumentStatusDeleted)
 	return result.RowsAffected, result.Error
+}
+
+// Restore 从回收站恢复文档（status 1→0），返回影响行数
+func (r *DocumentRepo) Restore(ctx context.Context, id, userID string) (int64, error) {
+	result := r.db.WithContext(ctx).Model(&model.Document{}).
+		Where("id = ? AND user_id = ? AND status = ?", id, userID, model.DocumentStatusDeleted).
+		Update("status", model.DocumentStatusActive)
+	return result.RowsAffected, result.Error
+}
+
+// RestoreAll 恢复该用户回收站中的全部文档，返回恢复行数
+func (r *DocumentRepo) RestoreAll(ctx context.Context, userID string) (int64, error) {
+	result := r.db.WithContext(ctx).Model(&model.Document{}).
+		Where("user_id = ? AND status = ?", userID, model.DocumentStatusDeleted).
+		Update("status", model.DocumentStatusActive)
+	return result.RowsAffected, result.Error
+}
+
+// ListTrash 分页查询回收站文档（按删除时间倒序，即 updated_at）。
+// limit < 0 视为默认 50；limit == 0 表示只取总数、返回空列表。
+func (r *DocumentRepo) ListTrash(ctx context.Context, userID string, limit, offset int) ([]model.Document, int64, error) {
+	if limit < 0 {
+		limit = 50
+	}
+	q := r.db.WithContext(ctx).Model(&model.Document{}).
+		Where("user_id = ? AND status = ?", userID, model.DocumentStatusDeleted)
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if limit == 0 {
+		return []model.Document{}, total, nil
+	}
+
+	var list []model.Document
+	err := q.Order("updated_at DESC, id DESC").Limit(limit).Offset(offset).Find(&list).Error
+	return list, total, err
+}
+
+// PurgeExpired 物理删除回收站中超过保留期的文档（定时清理用）
+func (r *DocumentRepo) PurgeExpired(ctx context.Context, cutoff time.Time) (int64, error) {
+	return r.purge(ctx, "status = ? AND updated_at < ?", model.DocumentStatusDeleted, cutoff)
+}
+
+// PurgeAll 永久删除该用户回收站中的全部文档（清空回收站用）
+func (r *DocumentRepo) PurgeAll(ctx context.Context, userID string) (int64, error) {
+	return r.purge(ctx, "user_id = ? AND status = ?", userID, model.DocumentStatusDeleted)
+}
+
+// purge 物理删除满足条件的软删文档及其批注、分享链接。批量 IN，无循环查库；返回物理删除的文档数。
+func (r *DocumentRepo) purge(ctx context.Context, where string, args ...any) (int64, error) {
+	var ids []string
+	if err := r.db.WithContext(ctx).Model(&model.Document{}).
+		Where(where, args...).Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("document_id IN ?", ids).Delete(&model.DocumentAnnotation{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("document_id IN ?", ids).Delete(&model.DocumentShare{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("id IN ?", ids).Delete(&model.Document{}).Error
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(ids)), nil
 }
 
 // NormalizeTags 归一化标签串：按半角/全角逗号切分，去空格、去空项、保序去重，再用半角逗号 join。
@@ -147,7 +229,7 @@ func (r *DocumentRepo) ListByAllTags(ctx context.Context, userID string, tags []
 	if limit < 0 {
 		limit = 50
 	}
-	q := r.db.WithContext(ctx).Where("user_id = ?", userID)
+	q := r.db.WithContext(ctx).Where("user_id = ? AND status = ?", userID, model.DocumentStatusActive)
 	if len(tags) > 0 {
 		conds := make([]string, 0, len(tags))
 		args := make([]any, 0, len(tags)*4)
@@ -206,7 +288,7 @@ func (r *DocumentRepo) tagGraph(ctx context.Context, userID string) ([]TagCount,
 	var raw []string
 	err := r.db.WithContext(ctx).
 		Model(&model.Document{}).
-		Where("user_id = ? AND tags != ''", userID).
+		Where("user_id = ? AND status = ? AND tags != ''", userID, model.DocumentStatusActive).
 		Pluck("tags", &raw).Error
 	if err != nil {
 		return nil, nil, err

@@ -155,6 +155,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MsgRetentionDays:  cfg.Vector.MessageRetentionDays,
 		SumRetentionDays:  cfg.Vector.SummaryRetentionDays,
 		EvictInterval:     time.Duration(cfg.Vector.EvictIntervalHours) * time.Hour,
+		DocRepo:           repos.Document,
 	})
 
 	// --- Orchestrator ---

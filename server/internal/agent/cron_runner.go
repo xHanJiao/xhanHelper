@@ -26,7 +26,14 @@ type HookStatus struct {
 	ArchiveRemaining      string                         `json:"archive_remaining"`
 	ImageCleanupRemaining string                         `json:"image_cleanup_remaining"`
 	VectorEvictRemaining  string                         `json:"vector_evict_remaining"`
+	DocCleanupRemaining   string                         `json:"doc_cleanup_remaining"`
 }
+
+// 回收站文档保留期与清理扫描间隔（硬编码：7 天 / 每天一次）
+const (
+	documentTrashRetentionDays = 7
+	documentCleanupEvery       = 24 * time.Hour
+)
 
 // CronRunner — 反思循环调度器
 type CronRunner struct {
@@ -52,9 +59,10 @@ type CronRunner struct {
 	imageCleanupEvery time.Duration             // 图片清理扫描间隔
 	embeddingRepo     *service.EmbeddingRepo    // 向量逐出（按保留窗移除内存中的旧向量）
 	vectorStore       *VectorStore
-	msgRetentionDays  int           // message 向量保留天数；<=0 关闭
-	sumRetentionDays  int           // summary 向量保留天数；<=0 关闭
-	evictInterval     time.Duration // 向量逐出扫描间隔
+	msgRetentionDays  int                   // message 向量保留天数；<=0 关闭
+	sumRetentionDays  int                   // summary 向量保留天数；<=0 关闭
+	evictInterval     time.Duration         // 向量逐出扫描间隔
+	docRepo           *service.DocumentRepo // 回收站过期文档物理清理
 
 	// 钩子状态追踪
 	mu                sync.Mutex
@@ -64,6 +72,7 @@ type CronRunner struct {
 	archiveNext       time.Time
 	imageCleanupNext  time.Time
 	evictNext         time.Time
+	docCleanupNext    time.Time
 	sessionEndRunning bool
 }
 
@@ -91,9 +100,10 @@ type CronRunnerConfig struct {
 	ImageCleanupEvery time.Duration // 图片清理扫描间隔；<=0 默认 12h
 	EmbeddingRepo     *service.EmbeddingRepo
 	VectorStore       *VectorStore
-	MsgRetentionDays  int           // message 向量保留天数；<=0 关闭
-	SumRetentionDays  int           // summary 向量保留天数；<=0 关闭
-	EvictInterval     time.Duration // 向量逐出扫描间隔；<=0 默认 24h
+	MsgRetentionDays  int                   // message 向量保留天数；<=0 关闭
+	SumRetentionDays  int                   // summary 向量保留天数；<=0 关闭
+	EvictInterval     time.Duration         // 向量逐出扫描间隔；<=0 默认 24h
+	DocRepo           *service.DocumentRepo // 回收站过期文档物理清理
 }
 
 // NewCronRunner 创建调度器
@@ -139,6 +149,7 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		msgRetentionDays:  cfg.MsgRetentionDays,
 		sumRetentionDays:  cfg.SumRetentionDays,
 		evictInterval:     cfg.EvictInterval,
+		docRepo:           cfg.DocRepo,
 	}
 }
 
@@ -175,6 +186,13 @@ func (cr *CronRunner) setEvictNext(t time.Time) {
 	cr.mu.Unlock()
 }
 
+// setDocCleanupNext 更新回收站清理下次触发时间
+func (cr *CronRunner) setDocCleanupNext(t time.Time) {
+	cr.mu.Lock()
+	cr.docCleanupNext = t
+	cr.mu.Unlock()
+}
+
 // GetHookStatus 返回当前钩子状态快照
 func (cr *CronRunner) GetHookStatus() HookStatus {
 	cr.mu.Lock()
@@ -199,6 +217,7 @@ func (cr *CronRunner) GetHookStatus() HookStatus {
 	s.ArchiveRemaining = remainingLabel(cr.archiveNext, now)
 	s.ImageCleanupRemaining = remainingLabel(cr.imageCleanupNext, now)
 	s.VectorEvictRemaining = remainingLabel(cr.evictNext, now)
+	s.DocCleanupRemaining = remainingLabel(cr.docCleanupNext, now)
 
 	return s
 }
@@ -356,6 +375,17 @@ func (cr *CronRunner) Start(ctx context.Context) {
 		cr.setEvictNext(time.Time{})
 	}
 
+	// 回收站清理：物理删除超过保留期的软删文档
+	var docChan <-chan time.Time
+	if cr.docRepo != nil {
+		docTicker := time.NewTicker(documentCleanupEvery)
+		defer docTicker.Stop()
+		docChan = docTicker.C
+		cr.setDocCleanupNext(time.Now().Add(documentCleanupEvery))
+	} else {
+		cr.setDocCleanupNext(time.Time{})
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -415,6 +445,11 @@ func (cr *CronRunner) Start(ctx context.Context) {
 			log.Printf("[cron] vector evict trigger")
 			cr.evictStaleVectors(ctx)
 			cr.setEvictNext(time.Now().Add(cr.evictInterval))
+
+		case <-docChan:
+			log.Printf("[cron] document trash cleanup trigger")
+			cr.cleanupDeletedDocuments(ctx)
+			cr.setDocCleanupNext(time.Now().Add(documentCleanupEvery))
 		}
 	}
 }
@@ -482,6 +517,23 @@ func (cr *CronRunner) archiveStale(ctx context.Context) {
 	}
 	if n > 0 {
 		log.Printf("[cron] archiveStale: archived=%d (after_days=%d)", n, cr.archiveAfterDays)
+	}
+}
+
+// cleanupDeletedDocuments 物理删除回收站中超过保留期的文档（全局，不分用户）。
+// 失败仅记日志，不打断调度。
+func (cr *CronRunner) cleanupDeletedDocuments(ctx context.Context) {
+	if cr.docRepo == nil {
+		return
+	}
+	cutoff := time.Now().AddDate(0, 0, -documentTrashRetentionDays)
+	n, err := cr.docRepo.PurgeExpired(ctx, cutoff)
+	if err != nil {
+		log.Printf("[cron] cleanupDeletedDocuments error: %v", err)
+		return
+	}
+	if n > 0 {
+		log.Printf("[cron] cleanupDeletedDocuments: purged=%d (retention_days=%d)", n, documentTrashRetentionDays)
 	}
 }
 

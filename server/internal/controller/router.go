@@ -124,8 +124,12 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.DELETE("/prompts/:id", rc.PromptHandler.DeletePrompt)
 		auth.GET("/documents", rc.DocumentHandler.ListDocuments)
 		auth.GET("/documents/tags", rc.DocumentHandler.ListDocumentTags)
+		auth.GET("/documents/trash", rc.DocumentHandler.ListTrashDocuments)
+		auth.POST("/documents/trash/restore", rc.DocumentHandler.RestoreAllTrashDocuments)
+		auth.DELETE("/documents/trash", rc.DocumentHandler.PurgeAllTrashDocuments)
 		auth.GET("/documents/:id", rc.DocumentHandler.GetDocument)
 		auth.DELETE("/documents/:id", rc.DocumentHandler.DeleteDocument)
+		auth.POST("/documents/:id/restore", rc.DocumentHandler.RestoreDocument)
 		auth.POST("/documents/:id/share", rc.DocumentShareHandler.CreateShare)
 		auth.GET("/documents/:id/share", rc.DocumentShareHandler.GetShare)
 		// 文档划线批注：列表/新建挂在文档下，改/删/重挂挂在批注下

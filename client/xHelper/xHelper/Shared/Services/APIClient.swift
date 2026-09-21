@@ -197,6 +197,26 @@ class APIClient {
         try await delete("/api/documents/\(id)")
     }
 
+    /// 回收站列表（已软删的文档，按删除时间倒序）
+    func listTrashDocuments(limit: Int = 24, offset: Int = 0) async throws -> DocumentListResponse {
+        return try await get("/api/documents/trash?limit=\(limit)&offset=\(offset)")
+    }
+
+    /// 从回收站恢复
+    func restoreDocument(id: String) async throws {
+        try await post("/api/documents/\(id)/restore", body: [:])
+    }
+
+    /// 全部恢复回收站
+    func restoreAllTrashDocuments() async throws {
+        try await post("/api/documents/trash/restore", body: [:])
+    }
+
+    /// 清空回收站（永久删除）
+    func purgeAllTrashDocuments() async throws {
+        try await delete("/api/documents/trash")
+    }
+
     // MARK: Annotations（文档划线批注）
 
     func listAnnotations(documentId: String, limit: Int = 200, offset: Int = 0) async throws -> DocumentAnnotationListResponse {

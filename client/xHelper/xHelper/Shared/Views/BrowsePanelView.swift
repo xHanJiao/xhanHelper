@@ -45,6 +45,12 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
     }
 }
 
+/// 回收站批量操作（页头按钮 → 二次确认）
+private enum TrashBulkAction {
+    case restoreAll
+    case purgeAll
+}
+
 /// 右侧栏浏览面板：网格入口（含打开浏览器）+ 浏览页面切换
 struct BrowsePanelView: View {
     @ObservedObject var manager: RightSidebarManager
@@ -73,6 +79,8 @@ struct BrowsePanelView: View {
     @State private var billSearchDraft = ""
     /// 多选删除二次确认。
     @State private var isConfirmingBatchDelete = false
+    /// 回收站批量操作二次确认（全部恢复 / 全部删除）。
+    @State private var trashBulkAction: TrashBulkAction?
 
     /// 监控看板前端地址：DEBUG 用 Vite dev server，RELEASE 用同源后端（nginx 已 serve）
     private var dashboardURL: URL? {
@@ -187,13 +195,19 @@ struct BrowsePanelView: View {
             // 离开文档面板即退出多选（选择工具条只在文档列表前台时有效）
             documentVM.exitDocumentSelection()
         }
-        .onChange(of: documentVM.mode) { _, _ in
+        .onChange(of: documentVM.mode) { old, new in
             // 切模式即收起文档搜索框；离开词云顺手清掉本地高亮词与多选，避免切回来还留着
             docSearchOpen = false
             docSearchDraft = ""
             documentVM.cloudQuery = ""
             documentVM.clearSelection()
             documentVM.exitDocumentSelection()
+            // 进入/离开回收站时拉对应列表（selectTag/clearFilter 自带的 load 不会走到这里）
+            if new == .trash {
+                Task { await documentVM.loadTrash() }
+            } else if old == .trash {
+                Task { await documentVM.load() }
+            }
         }
         #if os(macOS)
         .confirmationDialog(
@@ -206,7 +220,7 @@ struct BrowsePanelView: View {
             }
             Button("取消", role: .cancel) { }
         } message: {
-            Text("确定删除所选 \(documentVM.selectedDocumentIDs.count) 篇？此操作不可恢复。")
+            Text("确定删除所选 \(documentVM.selectedDocumentIDs.count) 篇？可在回收站找回，7 天后自动清理。")
         }
         #endif
     }
@@ -377,11 +391,12 @@ struct BrowsePanelView: View {
                 Picker("", selection: $documentVM.mode) {
                     Text("列表").tag(DocumentBrowseMode.list)
                     Text("词云").tag(DocumentBrowseMode.cloud)
+                    Text("回收站").tag(DocumentBrowseMode.trash)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .controlSize(.small)
-                .frame(width: 120)
+                .frame(width: 180)
 
                 if documentVM.mode == .cloud {
                     Stepper(value: $documentVM.minTagCount, in: 1...maxTagCount) {
@@ -405,6 +420,30 @@ struct BrowsePanelView: View {
                 }
                 .buttonStyle(.plain)
                 .help("多选下载")
+            }
+
+            if panel == .documents && documentVM.openDocument == nil && documentVM.mode == .trash {
+                Button {
+                    trashBulkAction = .restoreAll
+                } label: {
+                    Image(systemName: "arrow.uturn.backward.circle")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("全部恢复")
+                .disabled(documentVM.trashDocuments.isEmpty)
+
+                Button {
+                    trashBulkAction = .purgeAll
+                } label: {
+                    Image(systemName: "trash.slash")
+                        .font(.system(size: 12))
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(.plain)
+                .help("全部删除（不可恢复）")
+                .disabled(documentVM.trashDocuments.isEmpty)
             }
             #endif
 
@@ -430,7 +469,7 @@ struct BrowsePanelView: View {
                 .help("导出 CSV")
             }
 
-            if panel == .documents && documentVM.openDocument == nil {
+            if panel == .documents && documentVM.openDocument == nil && documentVM.mode != .trash {
                 headerSearchToggle(
                     active: docSearchActive,
                     help: documentVM.mode == .cloud ? "搜索并高亮标签" : "搜索文档"
@@ -444,6 +483,31 @@ struct BrowsePanelView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        #if os(macOS)
+        .confirmationDialog(
+            trashBulkAction == .purgeAll ? "清空回收站" : "全部恢复",
+            isPresented: Binding(
+                get: { trashBulkAction != nil },
+                set: { if !$0 { trashBulkAction = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if trashBulkAction == .purgeAll {
+                Button("全部删除", role: .destructive) {
+                    Task { await documentVM.purgeAll() }
+                }
+            } else {
+                Button("全部恢复") {
+                    Task { await documentVM.restoreAll() }
+                }
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text(trashBulkAction == .purgeAll
+                 ? "将永久删除回收站中的全部文档，无法恢复。"
+                 : "将把回收站中的全部文档恢复到文档列表。")
+        }
+        #endif
     }
 
     #if os(macOS)
@@ -585,7 +649,9 @@ struct BrowsePanelView: View {
         case .bills:     return billVM.isLoading
         case .memories:  return memoryVM.isLoading
         case .notes:     return noteVM.isLoading
-        case .documents: return documentVM.openDocument != nil ? documentVM.isDetailLoading : documentVM.isLoading
+        case .documents:
+            if documentVM.openDocument != nil { return documentVM.isDetailLoading }
+            return documentVM.mode == .trash ? documentVM.isTrashLoading : documentVM.isLoading
         case .images:    return imageVM.isLoading
         case .themes:    return themeVM.isLoading
         case .agents:    return agentVM.isLoading
@@ -607,7 +673,7 @@ struct BrowsePanelView: View {
         case .bills:     await billVM.load()
         case .memories:  await memoryVM.load()
         case .notes:     await noteVM.load()
-        case .documents: await documentVM.load()
+        case .documents: await documentVM.loadCurrentMode()
         case .images:    await imageVM.load()
         case .themes:    await themeVM.load()
         case .agents:    await agentVM.load()

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -19,7 +20,7 @@ func setupDocumentRepo(t *testing.T) (*DocumentRepo, *gorm.DB, func()) {
 	if err != nil {
 		t.Fatalf("failed to open db: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Document{}); err != nil {
+	if err := db.AutoMigrate(&model.Document{}, &model.DocumentAnnotation{}, &model.DocumentShare{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
 	cleanup := func() {
@@ -240,6 +241,181 @@ func TestDocumentRepo_DeleteReturnsRowsAffected(t *testing.T) {
 	seedDoc(t, repo, "d2", "u1", "")
 	if rows, _ = repo.Delete(ctx, "d2", "u2"); rows != 0 {
 		t.Errorf("delete other user's doc: rows=%d, want 0", rows)
+	}
+}
+
+func TestDocumentRepo_SoftDeleteRestoreAndTrash(t *testing.T) {
+	repo, _, cleanup := setupDocumentRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	seedDoc(t, repo, "d1", "u1", "Go")
+	seedDoc(t, repo, "d2", "u1", "Go")
+
+	if rows, err := repo.Delete(ctx, "d1", "u1"); err != nil || rows != 1 {
+		t.Fatalf("soft delete: rows=%d err=%v, want 1/nil", rows, err)
+	}
+
+	// 已删文档从正常视图消失（单篇 / 列表 / 词云）
+	if _, err := repo.GetByID(ctx, "d1", "u1"); err == nil {
+		t.Error("GetByID should not see deleted doc")
+	}
+	list, total, _ := repo.List(ctx, "u1", "", "", nil, 10, 0)
+	if total != 1 || len(list) != 1 || list[0].ID != "d2" {
+		t.Errorf("active list should exclude deleted: total=%d ids=%v", total, ids(list))
+	}
+	counts, _ := repo.ListTagCounts(ctx, "u1")
+	if len(counts) != 1 || counts[0].Count != 1 {
+		t.Errorf("tag counts should exclude deleted, got %v", counts)
+	}
+
+	// 回收站可见，重复软删不再命中
+	trash, trashTotal, err := repo.ListTrash(ctx, "u1", 10, 0)
+	if err != nil || trashTotal != 1 || len(trash) != 1 || trash[0].ID != "d1" {
+		t.Errorf("trash: total=%d ids=%v err=%v", trashTotal, ids(trash), err)
+	}
+	if rows, _ := repo.Delete(ctx, "d1", "u1"); rows != 0 {
+		t.Errorf("re-delete: rows=%d, want 0", rows)
+	}
+	// 别人的回收站文档恢复不动
+	if rows, _ := repo.Restore(ctx, "d1", "u2"); rows != 0 {
+		t.Errorf("restore other user's doc: rows=%d, want 0", rows)
+	}
+
+	// 恢复后回到正常视图、离开回收站
+	if rows, err := repo.Restore(ctx, "d1", "u1"); err != nil || rows != 1 {
+		t.Fatalf("restore: rows=%d err=%v, want 1/nil", rows, err)
+	}
+	if _, err := repo.GetByID(ctx, "d1", "u1"); err != nil {
+		t.Errorf("GetByID after restore: %v", err)
+	}
+	if _, trashTotal, _ := repo.ListTrash(ctx, "u1", 10, 0); trashTotal != 0 {
+		t.Errorf("trash after restore: total=%d, want 0", trashTotal)
+	}
+
+	// 回收站按删除时间倒序：后删的在前（依赖软删 Update 刷新 updated_at）
+	if _, err := repo.Delete(ctx, "d2", "u1"); err != nil {
+		t.Fatalf("delete d2: %v", err)
+	}
+	if _, err := repo.Delete(ctx, "d1", "u1"); err != nil {
+		t.Fatalf("delete d1: %v", err)
+	}
+	trash, _, _ = repo.ListTrash(ctx, "u1", 10, 0)
+	if len(trash) != 2 || trash[0].ID != "d1" || trash[1].ID != "d2" {
+		t.Errorf("trash should be ordered by deletion time desc, got %v", ids(trash))
+	}
+}
+
+func TestDocumentRepo_RestoreAllAndPurgeAll(t *testing.T) {
+	repo, db, cleanup := setupDocumentRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	seedDoc(t, repo, "d1", "u1", "")
+	seedDoc(t, repo, "d2", "u1", "")
+	seedDoc(t, repo, "d3", "u1", "") // 未删除，不该受影响
+	seedDoc(t, repo, "x1", "u2", "") // 别人的文档
+
+	for _, id := range []string{"d1", "d2"} {
+		if _, err := repo.Delete(ctx, id, "u1"); err != nil {
+			t.Fatalf("delete %s: %v", id, err)
+		}
+	}
+	if _, err := repo.Delete(ctx, "x1", "u2"); err != nil {
+		t.Fatalf("delete x1: %v", err)
+	}
+
+	// 全部恢复：只动本用户回收站里的文档
+	n, err := repo.RestoreAll(ctx, "u1")
+	if err != nil || n != 2 {
+		t.Fatalf("restore all: n=%d err=%v, want 2/nil", n, err)
+	}
+	if _, total, _ := repo.ListTrash(ctx, "u1", 10, 0); total != 0 {
+		t.Errorf("trash after restore all: total=%d, want 0", total)
+	}
+	if _, err := repo.GetByID(ctx, "d1", "u1"); err != nil {
+		t.Errorf("d1 should be active after restore all: %v", err)
+	}
+	// 别人的文档仍在回收站
+	if _, total, _ := repo.ListTrash(ctx, "u2", 10, 0); total != 1 {
+		t.Errorf("other user's trash should be untouched, total=%d", total)
+	}
+
+	// 清空回收站：只删本用户的
+	if _, err := repo.Delete(ctx, "d1", "u1"); err != nil {
+		t.Fatalf("re-delete d1: %v", err)
+	}
+	n, err = repo.PurgeAll(ctx, "u1")
+	if err != nil || n != 1 {
+		t.Fatalf("purge all: n=%d err=%v, want 1/nil", n, err)
+	}
+	var cnt int64
+	db.Model(&model.Document{}).Where("id = ?", "d1").Count(&cnt)
+	if cnt != 0 {
+		t.Error("d1 should be physically gone after purge all")
+	}
+	db.Model(&model.Document{}).Where("id = ?", "d3").Count(&cnt)
+	if cnt != 1 {
+		t.Error("active doc d3 should survive purge all")
+	}
+	db.Model(&model.Document{}).Where("id = ?", "x1").Count(&cnt)
+	if cnt != 1 {
+		t.Error("other user's trashed doc should survive purge all")
+	}
+}
+
+func TestDocumentRepo_PurgeExpired(t *testing.T) {
+	repo, db, cleanup := setupDocumentRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	seedDoc(t, repo, "old", "u1", "")
+	seedDoc(t, repo, "fresh", "u1", "")
+	seedDoc(t, repo, "live", "u1", "")
+
+	if _, err := repo.Delete(ctx, "old", "u1"); err != nil {
+		t.Fatalf("delete old: %v", err)
+	}
+	if _, err := repo.Delete(ctx, "fresh", "u1"); err != nil {
+		t.Fatalf("delete fresh: %v", err)
+	}
+	// old 的删除时间（updated_at）推到 10 天前
+	if err := db.Exec("UPDATE documents SET updated_at = ? WHERE id = ?", time.Now().AddDate(0, 0, -10), "old").Error; err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+
+	// 批注 + 分享挂在 old 上，清理时一并物理删
+	if err := db.Create(&model.DocumentAnnotation{ID: "a1", DocumentID: "old", UserID: "u1", Quote: "q"}).Error; err != nil {
+		t.Fatalf("seed annotation: %v", err)
+	}
+	if err := db.Create(&model.DocumentShare{ID: "s1", DocumentID: "old", Token: "t1", ExpiresAt: time.Now().Add(time.Hour)}).Error; err != nil {
+		t.Fatalf("seed share: %v", err)
+	}
+
+	n, err := repo.PurgeExpired(ctx, time.Now().AddDate(0, 0, -7))
+	if err != nil || n != 1 {
+		t.Fatalf("purge: n=%d err=%v, want 1/nil", n, err)
+	}
+
+	for _, tc := range []struct {
+		model interface{}
+		where string
+		arg   string
+		want  int64
+	}{
+		{&model.Document{}, "id = ?", "old", 0},
+		{&model.Document{}, "id = ?", "fresh", 1},
+		{&model.Document{}, "id = ?", "live", 1},
+		{&model.DocumentAnnotation{}, "document_id = ?", "old", 0},
+		{&model.DocumentShare{}, "document_id = ?", "old", 0},
+	} {
+		var cnt int64
+		if err := db.Model(tc.model).Where(tc.where, tc.arg).Count(&cnt).Error; err != nil {
+			t.Fatalf("count %T %s: %v", tc.model, tc.arg, err)
+		}
+		if cnt != tc.want {
+			t.Errorf("%T where %s=%s: got %d, want %d", tc.model, tc.where, tc.arg, cnt, tc.want)
+		}
 	}
 }
 

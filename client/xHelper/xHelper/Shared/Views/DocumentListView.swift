@@ -27,6 +27,8 @@ struct DocumentListView: View {
                 #if os(macOS)
                 if viewModel.mode == .cloud {
                     cloudContent
+                } else if viewModel.mode == .trash {
+                    trashContent
                 } else {
                     listContent
                 }
@@ -35,7 +37,7 @@ struct DocumentListView: View {
                 #endif
             }
         }
-        .task { await viewModel.load() }
+        .task { await viewModel.loadCurrentMode() }
         // 同步选中态到顶栏文档按钮组（显隐由 Coordinator visible 闭包决定）
         .onChange(of: viewModel.openDocument) { _, doc in
             if let doc {
@@ -58,7 +60,7 @@ struct DocumentListView: View {
             }
             Button("取消", role: .cancel) { }
         } message: {
-            Text(pendingDelete.map { "确定删除「\($0.title)」？此操作不可恢复。" } ?? "")
+            Text(pendingDelete.map { "确定删除「\($0.title)」？可在回收站找回，7 天后自动清理。" } ?? "")
         }
         #endif
     }
@@ -93,6 +95,45 @@ struct DocumentListView: View {
             }
         }
     }
+
+    #if os(macOS)
+    /// 回收站：已软删文档，卡片右上角「恢复」；点卡片本体不进详情（已删文档详情接口 404）。
+    private var trashContent: some View {
+        PageContainer(
+            title: "回收站",
+            icon: "trash",
+            isLoading: viewModel.isTrashLoading,
+            errorMessage: viewModel.errorMessage,
+            isEmpty: viewModel.trashDocuments.isEmpty && !viewModel.isTrashLoading,
+            emptyMessage: "回收站是空的",
+            onRetry: { Task { await viewModel.loadTrash() } }
+        ) {
+            CardGridView(
+                items: viewModel.trashDocuments,
+                maxColumns: 1,
+                minCardWidth: 300,
+                onLoadMore: { await viewModel.loadMoreTrash() }
+            ) { doc in
+                trashCard(doc)
+            }
+        }
+    }
+
+    private func trashCard(_ doc: Document) -> some View {
+        CardView(config: CardConfig(
+            title: doc.title,
+            subtitle: doc.content,
+            tags: parseTags(doc.tags),
+            footerText: "删除于 " + formatConversationDate(doc.updatedAt),
+            style: .document,
+            actions: [
+                CardAction(label: "恢复", icon: "arrow.uturn.backward", role: .normal) {
+                    Task { await viewModel.restore(doc) }
+                }
+            ]
+        ))
+    }
+    #endif
 
     /// 文档卡片：多选态点击切换勾选（不再进详情），右上角勾选圈 + 选中描边。
     private func documentCard(_ doc: Document) -> some View {

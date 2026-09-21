@@ -15,12 +15,11 @@ import (
 
 // DocumentHandler — 文档 API handler
 type DocumentHandler struct {
-	docRepo  *service.DocumentRepo
-	annoRepo *service.DocumentAnnotationRepo
+	docRepo *service.DocumentRepo
 }
 
-func NewDocumentHandler(docRepo *service.DocumentRepo, annoRepo *service.DocumentAnnotationRepo) *DocumentHandler {
-	return &DocumentHandler{docRepo: docRepo, annoRepo: annoRepo}
+func NewDocumentHandler(docRepo *service.DocumentRepo) *DocumentHandler {
+	return &DocumentHandler{docRepo: docRepo}
 }
 
 // ListDocuments GET /api/documents?tag=&tags=&keyword=&fields=title,tag,content&limit=&offset=
@@ -112,7 +111,7 @@ func (h *DocumentHandler) GetDocument(c *gin.Context) {
 	view.JSONOK(c, doc)
 }
 
-// DeleteDocument DELETE /api/documents/:id
+// DeleteDocument DELETE /api/documents/:id — 软删（移入回收站，7 天内可恢复）
 func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 	userID := c.GetString("user_id")
 	id := c.Param("id")
@@ -128,10 +127,75 @@ func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 		return
 	}
 
-	// 批注跟着文档走，没有独立生命周期；删不干净只会留孤儿行，所以失败也记日志继续
-	if _, err := h.annoRepo.DeleteByDocument(c.Request.Context(), id, userID); err != nil {
-		log.Printf("DeleteDocument: delete annotations of doc=%s user=%s: %v", id, userID, err)
+	// 批注随文档一起留到恢复期结束（PurgeExpired 物理清理时一并删），此处不动
+	view.JSONOK(c, gin.H{"deleted": true})
+}
+
+// ListTrashDocuments GET /api/documents/trash?limit=&offset= — 回收站列表
+func (h *DocumentHandler) ListTrashDocuments(c *gin.Context) {
+	userID := c.GetString("user_id")
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	list, total, err := h.docRepo.ListTrash(c.Request.Context(), userID, limit, offset)
+	if err != nil {
+		log.Printf("ListTrashDocuments: user=%s: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if list == nil {
+		list = []model.Document{}
 	}
 
-	view.JSONOK(c, gin.H{"deleted": true})
+	view.JSONOK(c, gin.H{
+		"documents": list,
+		"total":     total,
+	})
+}
+
+// RestoreDocument POST /api/documents/:id/restore — 从回收站恢复
+func (h *DocumentHandler) RestoreDocument(c *gin.Context) {
+	userID := c.GetString("user_id")
+	id := c.Param("id")
+
+	rows, err := h.docRepo.Restore(c.Request.Context(), id, userID)
+	if err != nil {
+		log.Printf("RestoreDocument: restore id=%s user=%s: %v", id, userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if rows == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "document not found in trash"})
+		return
+	}
+
+	view.JSONOK(c, gin.H{"restored": true})
+}
+
+// RestoreAllTrashDocuments POST /api/documents/trash/restore — 全部恢复
+func (h *DocumentHandler) RestoreAllTrashDocuments(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	n, err := h.docRepo.RestoreAll(c.Request.Context(), userID)
+	if err != nil {
+		log.Printf("RestoreAllTrashDocuments: user=%s: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	view.JSONOK(c, gin.H{"restored": n})
+}
+
+// PurgeAllTrashDocuments DELETE /api/documents/trash — 清空回收站（永久删除）
+func (h *DocumentHandler) PurgeAllTrashDocuments(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	n, err := h.docRepo.PurgeAll(c.Request.Context(), userID)
+	if err != nil {
+		log.Printf("PurgeAllTrashDocuments: user=%s: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	view.JSONOK(c, gin.H{"purged": n})
 }

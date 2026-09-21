@@ -5,6 +5,8 @@ import SwiftUI
 enum DocumentBrowseMode: Hashable {
     case list
     case cloud
+    /// 回收站：已软删的文档，7 天内可恢复
+    case trash
 }
 
 /// 文档检索目标字段（输入框内多选；至少保留一个）。
@@ -21,8 +23,12 @@ enum DocumentSearchField: String, CaseIterable, Hashable {
 class DocumentViewModel: ObservableObject {
     @Published var documents: [Document] = []
     @Published var tags: [DocumentTag] = []
+    /// 回收站列表（.trash 模式）。
+    @Published var trashDocuments: [Document] = []
     @Published var isLoading = false
     @Published var isLoadingMore = false
+    @Published var isTrashLoading = false
+    @Published var isLoadingMoreTrash = false
     @Published var errorMessage: String?
     @Published var keyword = ""
     /// 检索目标字段，默认标题+正文（等价于历史行为）。
@@ -48,6 +54,8 @@ class DocumentViewModel: ObservableObject {
     let apiClient: APIClient
     private var offset = 0
     private var hasMore = true
+    private var trashOffset = 0
+    private var trashHasMore = true
     private var countTask: Task<Void, Never>?
 
     init(apiClient: APIClient) {
@@ -164,6 +172,85 @@ class DocumentViewModel: ObservableObject {
         cooccurrence = adj
     }
 
+    /// 按当前模式加载（进入面板 / 刷新时用）。
+    func loadCurrentMode() async {
+        if mode == .trash {
+            await loadTrash()
+        } else {
+            await load()
+        }
+    }
+
+    func loadTrash() async {
+        isTrashLoading = true
+        errorMessage = nil
+        trashOffset = 0
+        trashHasMore = true
+        do {
+            let resp = try await apiClient.listTrashDocuments()
+            trashDocuments = resp.documents
+            trashHasMore = resp.documents.count >= 24
+        } catch {
+            LogBuffer.shared.error("DocumentViewModel.loadTrash: \(error)")
+            errorMessage = error.localizedDescription
+        }
+        isTrashLoading = false
+    }
+
+    func loadMoreTrash() async {
+        guard trashHasMore, !isLoadingMoreTrash else { return }
+        isLoadingMoreTrash = true
+        trashOffset += 24
+        do {
+            let resp = try await apiClient.listTrashDocuments(offset: trashOffset)
+            trashDocuments.append(contentsOf: resp.documents)
+            trashHasMore = resp.documents.count >= 24
+        } catch {
+            LogBuffer.shared.error("DocumentViewModel.loadMoreTrash: \(error)")
+            errorMessage = error.localizedDescription
+        }
+        isLoadingMoreTrash = false
+    }
+
+    /// 从回收站恢复：成功后就地移出回收站列表。
+    func restore(_ doc: Document) async {
+        do {
+            try await apiClient.restoreDocument(id: doc.id)
+        } catch {
+            LogBuffer.shared.error("DocumentViewModel.restore: \(error)")
+            ToastCenter.shared.show("恢复失败：\(error.localizedDescription)")
+            return
+        }
+        trashDocuments.removeAll { $0.id == doc.id }
+        ToastCenter.shared.show("已恢复")
+    }
+
+    /// 全部恢复回收站文档。
+    func restoreAll() async {
+        do {
+            try await apiClient.restoreAllTrashDocuments()
+        } catch {
+            LogBuffer.shared.error("DocumentViewModel.restoreAll: \(error)")
+            ToastCenter.shared.show("全部恢复失败：\(error.localizedDescription)")
+            return
+        }
+        trashDocuments.removeAll()
+        ToastCenter.shared.show("已全部恢复")
+    }
+
+    /// 永久删除回收站全部文档（不可恢复）。
+    func purgeAll() async {
+        do {
+            try await apiClient.purgeAllTrashDocuments()
+        } catch {
+            LogBuffer.shared.error("DocumentViewModel.purgeAll: \(error)")
+            ToastCenter.shared.show("清空失败：\(error.localizedDescription)")
+            return
+        }
+        trashDocuments.removeAll()
+        ToastCenter.shared.show("回收站已清空")
+    }
+
     func load() async {
         isLoading = true
         errorMessage = nil
@@ -230,7 +317,7 @@ class DocumentViewModel: ObservableObject {
         return documents.indices.contains(j) ? documents[j] : nil
     }
 
-    /// 删除文档：硬删除（后端级联批注）。列表就地移除、不重置分页与滚动。
+    /// 删除文档：软删（后端移入回收站，7 天内可恢复）。列表就地移除、不重置分页与滚动。
     /// ponytail: 标签词云计数不就地扣减，下次 load() 时刷新。
     func delete(_ doc: Document) async {
         do {
@@ -245,11 +332,11 @@ class DocumentViewModel: ObservableObject {
         documents.removeAll { $0.id == doc.id }
         selectedDocumentIDs.remove(doc.id)
         if openDocument?.id == doc.id { openDocument = nil }
-        ToastCenter.shared.show("已删除")
+        ToastCenter.shared.show("已移入回收站")
     }
 
     /// 批量删除所选文档：循环单篇接口（个人规模够用，量大再上批量端点）。
-    /// 全成功弹一次「已删除 N 篇」，否则「已删除 x/N 篇，其余失败」。
+    /// 全成功弹一次「已移入回收站 N 篇」，否则「已移入回收站 x/N 篇，其余失败」。
     func deleteSelected() async {
         let ids = selectedDocumentIDs
         guard !ids.isEmpty else { return }
@@ -271,8 +358,8 @@ class DocumentViewModel: ObservableObject {
         selectedDocumentIDs.removeAll()
         isSelectingDocuments = false
         ToastCenter.shared.show(deleted == ids.count
-            ? "已删除 \(deleted) 篇"
-            : "已删除 \(deleted)/\(ids.count) 篇，其余失败")
+            ? "已移入回收站 \(deleted) 篇"
+            : "已移入回收站 \(deleted)/\(ids.count) 篇，其余失败")
     }
 
     func loadMore() async {

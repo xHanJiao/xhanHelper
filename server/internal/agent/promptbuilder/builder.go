@@ -30,8 +30,11 @@ func NewPromptBuilder(
 	if enableUserContextTrigger {
 		preRoleStatic = append(preRoleStatic, &userContextTriggerProvider{})
 	}
-	// answer_length 排在最后：上层那条 "9. 用户信息深挖" 是行为准则编号列表的续写，
+	// reply_form 常驻（不随请求变化，保前缀缓存稳定）
+	// 必须排在 user_context_trigger 之后：那条 "9. 用户信息深挖" 是行为准则编号列表的续写，
 	// 中间插一个带标题的章节会把它截断
+	preRoleStatic = append(preRoleStatic, &replyFormProvider{})
+	// answer_length 排在最后，仍按 opts.BriefAnswer 条件注入
 	preRoleStatic = append(preRoleStatic, &answerLengthProvider{})
 	postRoleStatic := []StaticProvider{}
 	if useNativeFC {

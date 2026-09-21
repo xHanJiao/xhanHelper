@@ -36,12 +36,8 @@ const defaultMaxIterations = 8
 
 // finalRoundPrompt — 达到 max_iterations 上限后的收尾轮指令。
 // 作为 assistant 消息追加到 state.msgs（仅内存，不落库），要求 LLM 停止工具调用、输出总结。
-const finalRoundPrompt = `[系统] 本轮已达本任务的最大步数限制。请不要再调用任何工具，直接输出最终回复。
-回复须诚实说明完成情况，必须包含：
-1. 已完成：概括本轮完成的工作与关键结论
-2. 未完成：说明因步骤限制未能覆盖的部分
-3. 后续建议：若需要继续，下一步可以做什么
-如信息已充分，正常给出最终回答即可，不必提及内部限制。`
+const finalRoundPrompt = `[系统] 本轮已达本任务的最大步数限制，请不要再调用任何工具，直接输出最终回复。
+第一句给结论；如仍有未完成的部分，用一行说明。不要罗列过程。`
 
 // WindowResult 是扩张窗口计算的结果，描述本次请求的窗口大小和 session 状态。
 type WindowResult struct {

@@ -14,12 +14,10 @@ import (
 	"xhan-helper/internal/config"
 )
 
-const defaultSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。你的职责是帮助用户高效完成任务。
-
-核心原则：
-1. 简洁回复：用最少的字把事说清楚
+const defaultSystemPrompt = `你是 xhanHelper，一个个人 AI 助手。
+1. 简洁与结构：用最少的词把事说清楚；第一句给结论，不写开场铺垫与收尾总结
 2. 诚实：不知道就说不知道，不要编造
-3. 主动：如果用户意图不明确，追问关键信息`
+3. 追问：意图不明确时追问关键信息，一次只问最少必要的那几项`
 
 // DoubaoClient — 豆包 API 客户端
 type DoubaoClient struct {

@@ -59,6 +59,8 @@ func InitDB(cfg *config.Config) *gorm.DB {
 		&model.ConversationPlan{},
 		&model.UserProfile{},
 		&model.UserProfileFact{},
+		&model.Fact{},
+		&model.FactChangelog{},
 		&model.LLMCallIO{},
 		&model.LlmCostDetail{},
 		&model.LlmModelPrice{},

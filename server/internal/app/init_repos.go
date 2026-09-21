@@ -37,6 +37,8 @@ type Repos struct {
 	ConversationPlan    *service.ConversationPlanRepo
 	UserProfile         *service.UserProfileRepo
 	UserProfileFact     *service.UserProfileFactRepo
+	Fact                *service.FactRepo
+	FactChangelog       *service.FactChangelogRepo
 	LlmCost             *service.LlmCostRepo
 	LlmPrice            *service.LlmPriceRepo
 	LLMCallIO           *service.LLMCallIORepo
@@ -75,6 +77,8 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		ConversationPlan:    service.NewConversationPlanRepo(db),
 		UserProfile:         service.NewUserProfileRepo(db),
 		UserProfileFact:     service.NewUserProfileFactRepo(db),
+		Fact:                service.NewFactRepo(db),
+		FactChangelog:       service.NewFactChangelogRepo(db),
 		LlmCost:             service.NewLlmCostRepo(db),
 		LlmPrice:            service.NewLlmPriceRepo(db),
 		LLMCallIO:           service.NewLLMCallIORepo(db),

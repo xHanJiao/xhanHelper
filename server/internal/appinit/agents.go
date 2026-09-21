@@ -44,7 +44,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	summarySource.Warmup(bgCtx, infra.Embedder)
 
 	// 从 embedding 表加载向量到内存 store
-	agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState, cfg.Vector.ChunkDisabledParents)
+	agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState, repos.Fact, cfg.Vector.ChunkDisabledParents)
 
 	// 统一搜索工具（语义搜索走 ContextSource，关键词搜索走 repo）。
 	// 检索统一入口：主对话 + 内部子系统（MissionRunner/StateUpdater/ThemeAnalyst）共用。

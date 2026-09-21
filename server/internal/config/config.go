@@ -38,7 +38,15 @@ type Config struct {
 	Snowflake         SnowflakeConfig         `yaml:"snowflake"`
 	MCP               MCPConfig               `yaml:"mcp"`
 	Vector            VectorConfig            `yaml:"vector"`
+	Facts             FactsConfig             `yaml:"facts"`
 	GlobalDefaultRole GlobalDefaultRoleConfig `yaml:"global_default_role"`
+}
+
+// FactsConfig — 事实系统配置
+type FactsConfig struct {
+	TopK          int     `yaml:"top_k"`          // 决策段检索近邻数，默认 5
+	DupeThreshold float64 `yaml:"dupe_threshold"` // 向量 top1 静默跳过阈值，默认 0.95
+	MaxCandidates int     `yaml:"max_candidates"` // 单次抽取候选上限，默认 20
 }
 
 // VectorConfig — 向量内存治理配置
@@ -470,6 +478,15 @@ func merge(dst, src *Config) {
 		dst.Vector.ChunkDisabledParents = src.Vector.ChunkDisabledParents
 	}
 	dst.Vector.PurgeMissionsOnce = dst.Vector.PurgeMissionsOnce || src.Vector.PurgeMissionsOnce
+	if src.Facts.TopK != 0 {
+		dst.Facts.TopK = src.Facts.TopK
+	}
+	if src.Facts.DupeThreshold != 0 {
+		dst.Facts.DupeThreshold = src.Facts.DupeThreshold
+	}
+	if src.Facts.MaxCandidates != 0 {
+		dst.Facts.MaxCandidates = src.Facts.MaxCandidates
+	}
 	if src.Reflection.LaunchMaxIterations != 0 {
 		dst.Reflection.LaunchMaxIterations = src.Reflection.LaunchMaxIterations
 	}
@@ -670,6 +687,16 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Vector.ChunkDisabledParents == nil {
 		cfg.Vector.ChunkDisabledParents = []string{"memory", "note", "summary"}
+	}
+	// Facts 默认值
+	if cfg.Facts.TopK == 0 {
+		cfg.Facts.TopK = 5
+	}
+	if cfg.Facts.DupeThreshold == 0 {
+		cfg.Facts.DupeThreshold = 0.95
+	}
+	if cfg.Facts.MaxCandidates == 0 {
+		cfg.Facts.MaxCandidates = 20
 	}
 	if cfg.Retrieval.ResourceZone.BudgetChars == 0 {
 		cfg.Retrieval.ResourceZone.BudgetChars = 7000

@@ -71,6 +71,8 @@ struct BrowsePanelView: View {
     @State private var billSearchOpen = false
     @State private var docSearchDraft = ""
     @State private var billSearchDraft = ""
+    /// 多选删除二次确认。
+    @State private var isConfirmingBatchDelete = false
 
     /// 监控看板前端地址：DEBUG 用 Vite dev server，RELEASE 用同源后端（nginx 已 serve）
     private var dashboardURL: URL? {
@@ -193,6 +195,20 @@ struct BrowsePanelView: View {
             documentVM.clearSelection()
             documentVM.exitDocumentSelection()
         }
+        #if os(macOS)
+        .confirmationDialog(
+            "删除文档",
+            isPresented: $isConfirmingBatchDelete,
+            titleVisibility: .visible
+        ) {
+            Button("删除", role: .destructive) {
+                Task { await documentVM.deleteSelected() }
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("确定删除所选 \(documentVM.selectedDocumentIDs.count) 篇？此操作不可恢复。")
+        }
+        #endif
     }
 
     // MARK: - 页头搜索（文档/账单瞬时功能区）
@@ -436,7 +452,7 @@ struct BrowsePanelView: View {
         documentVM.isSelectingDocuments && documentVM.mode == .list && documentVM.openDocument == nil
     }
 
-    /// 多选下载工具条：取消（左）/ 已选篇数 / 下载（右）。
+    /// 多选工具条：取消（左）/ 已选篇数 / 删除 + 下载（右）。
     private var docSelectionHeader: some View {
         HStack(spacing: 8) {
             Button {
@@ -464,6 +480,21 @@ struct BrowsePanelView: View {
                 .font(.system(size: 13, weight: .semibold))
 
             Spacer()
+
+            Button {
+                isConfirmingBatchDelete = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12))
+                    Text("删除")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundColor(.red)
+            }
+            .buttonStyle(.plain)
+            .disabled(documentVM.selectedDocumentIDs.isEmpty)
+            .help("删除所选文档")
 
             Button {
                 downloadSelectedDocuments()

@@ -248,6 +248,33 @@ class DocumentViewModel: ObservableObject {
         ToastCenter.shared.show("已删除")
     }
 
+    /// 批量删除所选文档：循环单篇接口（个人规模够用，量大再上批量端点）。
+    /// 全成功弹一次「已删除 N 篇」，否则「已删除 x/N 篇，其余失败」。
+    func deleteSelected() async {
+        let ids = selectedDocumentIDs
+        guard !ids.isEmpty else { return }
+        var deleted = 0
+        for id in ids {
+            do {
+                try await apiClient.deleteDocument(id: id)
+                deleted += 1
+            } catch {
+                guard (error as NSError).code == 404 else {
+                    LogBuffer.shared.error("DocumentViewModel.deleteSelected(\(id)): \(error)")
+                    continue
+                }
+                deleted += 1
+            }
+        }
+        documents.removeAll { ids.contains($0.id) }
+        if let openID = openDocument?.id, ids.contains(openID) { openDocument = nil }
+        selectedDocumentIDs.removeAll()
+        isSelectingDocuments = false
+        ToastCenter.shared.show(deleted == ids.count
+            ? "已删除 \(deleted) 篇"
+            : "已删除 \(deleted)/\(ids.count) 篇，其余失败")
+    }
+
     func loadMore() async {
         guard hasMore, !isLoadingMore else { return }
         isLoadingMore = true

@@ -230,6 +230,24 @@ class DocumentViewModel: ObservableObject {
         return documents.indices.contains(j) ? documents[j] : nil
     }
 
+    /// 删除文档：硬删除（后端级联批注）。列表就地移除、不重置分页与滚动。
+    /// ponytail: 标签词云计数不就地扣减，下次 load() 时刷新。
+    func delete(_ doc: Document) async {
+        do {
+            try await apiClient.deleteDocument(id: doc.id)
+        } catch {
+            guard (error as NSError).code == 404 else {
+                LogBuffer.shared.error("DocumentViewModel.delete: \(error)")
+                ToastCenter.shared.show("删除失败：\(error.localizedDescription)")
+                return
+            }
+        }
+        documents.removeAll { $0.id == doc.id }
+        selectedDocumentIDs.remove(doc.id)
+        if openDocument?.id == doc.id { openDocument = nil }
+        ToastCenter.shared.show("已删除")
+    }
+
     func loadMore() async {
         guard hasMore, !isLoadingMore else { return }
         isLoadingMore = true

@@ -6,6 +6,8 @@ import AppKit
 
 struct DocumentListView: View {
     @ObservedObject var viewModel: DocumentViewModel
+    /// 右键菜单里点了「删除」、等待二次确认的文档。
+    @State private var pendingDelete: Document?
 
     var body: some View {
         Group {
@@ -42,6 +44,23 @@ struct DocumentListView: View {
                 DocumentSelectionCoordinator.shared.deselect()
             }
         }
+        #if os(macOS)
+        .confirmationDialog(
+            "删除文档",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("删除", role: .destructive) {
+                if let doc = pendingDelete { Task { await viewModel.delete(doc) } }
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text(pendingDelete.map { "确定删除「\($0.title)」？此操作不可恢复。" } ?? "")
+        }
+        #endif
     }
 
     @ViewBuilder
@@ -109,6 +128,26 @@ struct DocumentListView: View {
                     .allowsHitTesting(false)
             }
         }
+        #if os(macOS)
+        .contextMenu {
+            Button {
+                DocumentSelectionCoordinator.shared.download(doc)
+            } label: {
+                Label("下载", systemImage: "arrow.down.circle")
+            }
+            Button {
+                DocumentSelectionCoordinator.shared.share(doc)
+            } label: {
+                Label("分享", systemImage: "square.and.arrow.up")
+            }
+            Divider()
+            Button(role: .destructive) {
+                pendingDelete = doc
+            } label: {
+                Label("删除", systemImage: "trash")
+            }
+        }
+        #endif
     }
 
     /// 列表模式的标签筛选条：交集可能多标签，逐 chip 展示。

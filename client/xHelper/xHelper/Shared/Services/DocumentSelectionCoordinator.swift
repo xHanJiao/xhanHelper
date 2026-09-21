@@ -97,7 +97,10 @@ final class DocumentSelectionCoordinator: ObservableObject {
             buttons: [
                 TopBarButton(id: "document-download", icon: { "arrow.down.circle" },
                              enabled: { true },
-                             action: { [weak self] in self?.downloadSelected() },
+                             action: { [weak self] in
+                                 guard let doc = self?.selectedDocument else { return }
+                                 self?.download(doc)
+                             },
                              help: { "下载文档 (.md)" }),
                 TopBarButton(id: "document-export-pdf", icon: { "doc.richtext" },
                              enabled: { true },
@@ -105,7 +108,10 @@ final class DocumentSelectionCoordinator: ObservableObject {
                              help: { "导出 PDF（排版）" }),
                 TopBarButton(id: "document-share", icon: { "link" },
                              enabled: { true },
-                             action: { [weak self] in self?.shareSelected() },
+                             action: { [weak self] in
+                                 guard let doc = self?.selectedDocument else { return }
+                                 self?.share(doc)
+                             },
                              help: { "分享文档" }),
             ],
             visible: { [weak self] in self?.isDocumentDetailVisible ?? false }
@@ -119,9 +125,8 @@ final class DocumentSelectionCoordinator: ObservableObject {
         return rs.isOpen && rs.activeTabId == nil && rs.browsePanelSelection == .documents
     }
 
-    /// 下载当前文档为 .md 文件（macOS NSSavePanel，与账单 CSV 导出同模式）
-    private func downloadSelected() {
-        guard let doc = selectedDocument else { return }
+    /// 下载文档为 .md 文件（macOS NSSavePanel，与账单 CSV 导出同模式）
+    func download(_ doc: Document) {
         #if os(macOS)
         let fileName = (doc.title.isEmpty ? doc.id : doc.title) + ".md"
         let panel = NSSavePanel()
@@ -165,10 +170,10 @@ final class DocumentSelectionCoordinator: ObservableObject {
         #endif
     }
 
-    /// 分享当前文档：先查已有分享链接（重复点击不重置），没有则创建；
+    /// 分享文档：先查已有分享链接（重复点击不重置），没有则创建；
     /// 把完整链接复制到剪贴板并 Toast 提示（对齐 Web 端行为，跳过弹窗）。
-    private func shareSelected() {
-        guard let doc = selectedDocument, !isCreatingShare else { return }
+    func share(_ doc: Document) {
+        guard !isCreatingShare else { return }
         #if os(macOS)
         isCreatingShare = true
         let api = APIClient(baseURL: baseURL, token: token)

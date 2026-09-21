@@ -92,7 +92,7 @@ MsgStatusHidden  = 3 // 隐藏：接力等控制轮
 
 **整理的是「当前窗口」，不是整段会话。** 接力轮走普通 `/api/chat`，历史量由 `controller/chat.go` 的 `computeWindowSize` 决定：
 
-- 距上一条 user 消息 < `session_gap_minutes`（生产 30 / dev 1 / test 3）：加载最近 `window` 轮（逐轮 +1 扩张，封顶 `max_window_rounds`，生产配 800）→ 约等于整个 session 窗口。
+- 距上一条 user 消息 < `session_gap_minutes`（生产 15 / dev 1 / test 3）：加载最近 `window` 轮（逐轮 +1 扩张，封顶 `max_window_rounds`，生产配 800）→ 约等于整个 session 窗口。
 - 间隔 ≥ 阈值（`IsNewSession`）：`SkipHistory=true` 不重放历史，仅把最近 `recent_user_msgs`（3）轮注入资源区。
 - 窗口之外依赖 system prompt 稳定区的画像 + 最多 `summary_attach_count`（1）条、`summary_attach_max_days`（3）天内的摘要。
 

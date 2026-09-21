@@ -8,7 +8,7 @@
 |------|------|
 | 创建 | `POST /api/conversations` 传 `ephemeral: true`；默认会话不可无痕；属性不可变 |
 | 存储 | `Conversation.Extra` JSON 的 `ConversationExtra.Ephemeral`（无 migration） |
-| 后处理 | 窗口结束（静默 `SessionGapMinutes`，默认 30 分钟）时**跳过全部 worker**（summary/memory/state/profile），改为销毁 |
+| 后处理 | 窗口结束（静默 `SessionGapMinutes`，默认 15 分钟）时**跳过全部 worker**（summary/memory/state/profile），改为销毁 |
 | 手动删除 | `DELETE /api/conversations/:id` 对无痕会话走销毁；普通会话仍软删 |
 | 分享 | 无痕会话禁止创建消息分享（`403`） |
 | 销毁范围 | 会话域数据：自身 + `parent_id` 子会话的 messages、消息向量、summaries、plans、shares、会话行 |

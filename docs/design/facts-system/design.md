@@ -25,7 +25,7 @@
 
 **要做**：
 
-- 何时提取：沿用现状——会话空闲 `chat.session_gap_minutes`（默认 30min）触发 `session_end`，取当前 session 窗口，不分段。
+- 何时提取：沿用现状——会话空闲 `chat.session_gap_minutes`（默认 15min）触发 `session_end`，取当前 session 窗口，不分段。
 - 怎么提取：两段 LLM（抽取、决策）＋ 中间一段纯代码检索。
 - 提取什么：四字段 `subject / kind / fields / content`。
 - 如何存储：MySQL 两张表（`facts`、`fact_changelog`）＋ `Embedding` 表 ＋ 内存向量。
@@ -85,7 +85,7 @@
 ## 4. 流水线总览
 
 ```
-session_end（会话空闲 30min）
+session_end（会话空闲 15min）
   └─ PostChatWorkerGroup.Process（现有 session_end 管线）
         └─ FactWorker.Process(sess)
               ① 抽取（LLM）：对话 → 候选事实 [{subject,kind,fields,content}]

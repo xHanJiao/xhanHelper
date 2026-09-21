@@ -1,19 +1,27 @@
 #!/usr/bin/env python3
 """
-analyze_session_gaps.py — 分析会话中相邻 user 消息的时间间隔，
-找到切分 "session burst" 的最佳阈值。
+analyze_session_gaps.py — 分析会话中相邻 user 消息的时间间隔，为 `chat.session_gap_minutes`
+（同时驱动窗口重置 + session_end 提取延迟）选阈值。
 
-用法: cd server && python3 ../docs/learning/responses/analyze_session_gaps.py [conversation_id]
+用法:
+  cd server && python3 ../docs/learning/responses/analyze_session_gaps.py            # 全量
+  cd server && python3 ../docs/learning/responses/analyze_session_gaps.py <conv_id>  # 单会话
 
 输出:
-  1. 间隔基本统计（中位数、均值）
-  2. 不同阈值下的切割结果（段数、段均消息数、最大段、段均时长）
-  3. 大段（>100 消息）的起止时间
+  1. 分位数（全量 / 纯聊两路）
+  2. 按分钟密度直方图（找分布谷底）
+  3. 累计覆盖表（各阈值覆盖多少相邻间隔）
+  4. 阈值扫描（段数 / 中位段长 / 单条段占比）
+  5. （单会话模式）大段起止时间
 
-作者: Claude（基于 xhanHelper 的缓存实验代码）
+纯聊定义：该会话 0 条 assistant tool_calls、且 user 消息 >= 8 条。
+结论见 docs/research/session-gap-threshold.md
 """
 
 import sys
+import statistics
+from collections import defaultdict, Counter
+
 import yaml
 import pymysql
 
@@ -32,86 +40,131 @@ def load_db_config():
     }
 
 
-def main():
-    conv_id = sys.argv[1] if len(sys.argv) > 1 else \
-        '3b3f6e2f-0ddb-42a4-a2dc-a140cc30838c'
+def fetch_conversations():
+    """返回 {conv_id: [(created_at, role, has_tool), ...]}，按时间升序。"""
+    conn = pymysql.connect(**load_db_config())
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT conversation_id, created_at, role, "
+            "CASE WHEN tool_calls_json IS NOT NULL AND tool_calls_json<>'' THEN 1 ELSE 0 END "
+            "FROM messages WHERE status=1 AND is_sub_agent=0 "
+            "ORDER BY conversation_id, created_at ASC"
+        )
+        conv = defaultdict(list)
+        for cid, ts, role, has_tool in cur.fetchall():
+            conv[cid].append((ts, role, has_tool))
+        return conv
+    finally:
+        conn.close()
 
-    db_cfg = load_db_config()
-    conn = pymysql.connect(**db_cfg)
-    cur = conn.cursor()
 
-    # 查询指定会话的所有 user 消息时间
-    cur.execute(
-        "SELECT created_at FROM messages "
-        "WHERE conversation_id=%s AND role='user' AND status=1 "
-        "ORDER BY created_at ASC",
-        (conv_id,)
-    )
-    times = [r[0] for r in cur.fetchall()]
-    print(f"会话: {conv_id[:8]}...")
-    print(f"user 消息总数: {len(times)}")
-    print(f"时间跨度: {times[0]} ~ {times[-1]}")
+def gaps_minutes(times):
+    return [(times[i] - times[i - 1]).total_seconds() / 60 for i in range(1, len(times))]
 
-    # ---- 间隔统计 ----
-    gaps = [(times[i] - times[i - 1]).total_seconds() / 60
-            for i in range(1, len(times))]
-    sorted_gaps = sorted(gaps)
-    print(f"间隔中位数: {sorted_gaps[len(gaps)//2]:.1f} 分钟")
-    print(f"间隔均值:   {sum(gaps)/len(gaps):.1f} 分钟")
-    print(f"间隔 P90:    {sorted_gaps[int(len(gaps)*0.9)]:.1f} 分钟")
-    print(f"间隔 P95:    {sorted_gaps[int(len(gaps)*0.95)]:.1f} 分钟")
 
-    # ---- 不同阈值切割 ----
-    thresholds = [10, 20, 30, 40, 50, 60, 120, 180, 240, 300]
-    print(f"\n{'阈值':<10} {'段数':>5} {'段均msg':>8} {'最大段':>6} {'段均时长':>10} {'>100msg段':>8}")
-    for t in thresholds:
-        # 按阈值切割: 间隔超过 t 分钟就切一段
-        segments = []
-        seg_start = 0
-        for i in range(1, len(times)):
-            gap = (times[i] - times[i - 1]).total_seconds() / 60
-            if gap > t:
-                segments.append(i - seg_start)
-                seg_start = i
-        segments.append(len(times) - seg_start)
+def pct(v, p):
+    if not v:
+        return float('nan')
+    v = sorted(v)
+    k = (len(v) - 1) * p
+    f = int(k)
+    c = min(f + 1, len(v) - 1)
+    return v[f] + (v[c] - v[f]) * (k - f)
 
-        # 段统计
-        avg_len = sum(segments) / len(segments)
-        max_len = max(segments)
-        big_seg_count = sum(1 for s in segments if s > 100)
 
-        # 段均时长
-        total_dur = 0.0
-        s = 0
-        for seg_len in segments:
-            dur = (times[s + seg_len - 1] - times[s]).total_seconds() / 3600
-            total_dur += dur
-            s += seg_len
-        avg_dur = total_dur / len(segments)
+def user_times(msgs):
+    return [ts for ts, role, _ in msgs if role == 'user']
 
-        print(f"{t:<10} {len(segments):>5} {avg_len:>8.0f} {max_len:>6} {avg_dur:>8.1f}h {big_seg_count:>8}")
 
-    # ---- 大段详情 ----
-    print(f"\n阈值=20min 的 >50msg 段:")
-    t = 20
-    segments = []
-    seg_start = 0
-    starts = [0]
+def segments(times, threshold):
+    """按阈值把 times 切成段，返回 [(start_idx, end_idx), ...]。"""
+    segs, start = [], 0
     for i in range(1, len(times)):
-        gap = (times[i] - times[i - 1]).total_seconds() / 60
-        if gap > t:
-            segments.append(i - seg_start)
-            seg_start = i
-            starts.append(seg_start)
-    segments.append(len(times) - seg_start)
-    for j in range(len(segments)):
-        if segments[j] > 50:
-            t0, t1 = times[starts[j]], times[starts[j] + segments[j] - 1]
-            dur = (t1 - t0).total_seconds() / 60
-            print(f"  {segments[j]}条 {t0} ~ {t1} ({dur:.0f}分钟)")
+        if (times[i] - times[i - 1]).total_seconds() / 60 > threshold:
+            segs.append((start, i - 1))
+            start = i
+    segs.append((start, len(times) - 1))
+    return segs
 
-    cur.close()
-    conn.close()
+
+EDGES = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 7), (7, 10), (10, 13),
+         (13, 16), (16, 20), (20, 25), (25, 30), (30, 40), (40, 60), (60, 120)]
+THRESHOLDS = [5, 10, 15, 20, 25, 30, 45, 60]
+
+
+def report_distribution(label, gaps):
+    print(f"\n=== {label}：间隔分布（n={len(gaps)}） ===")
+    if not gaps:
+        return
+    print("median %.1f  mean %.1f  p75 %.1f  p90 %.1f  p95 %.1f" % (
+        statistics.median(gaps), statistics.mean(gaps),
+        pct(gaps, .75), pct(gaps, .9), pct(gaps, .95)))
+    total = len(gaps)
+    cum = 0
+    print(f"  {'区间':>8} {'数量':>6} {'占比':>7} {'累计':>7} {'密度/min':>9}")
+    for a, b in EDGES:
+        n = sum(1 for x in gaps if a <= x < b)
+        cum += n
+        print(f"  {f'{a:g}-{b:g}':>8}m {n:>6} {n/total*100:>6.1f}% {cum/total*100:>6.1f}% {n/(b-a):>9.1f}")
+    tail = total - cum
+    print(f"  {'>120':>8}m {tail:>6} {tail/total*100:>6.1f}% {100.0:>6.1f}% {'-':>9}")
+    print("  累计覆盖:", "  ".join(
+        f"<={t}m {sum(1 for x in gaps if x <= t)/total*100:.1f}%" for t in (5, 10, 15, 20, 30)))
+
+
+def report_sweep(label, conv, min_user=2):
+    print(f"\n=== {label}：阈值扫描 ===")
+    print(f"  {'阈值':>5} {'段数':>6} {'单条段':>7} {'<=2条段':>8} {'中位段长':>9}")
+    for t in THRESHOLDS:
+        runs, single, short, durs = 0, 0, 0, []
+        for msgs in conv.values():
+            u = user_times(msgs)
+            if len(u) < min_user:
+                continue
+            for a, b in segments(u, t):
+                n = b - a + 1
+                runs += 1
+                single += n == 1
+                short += n <= 2
+                durs.append((u[b] - u[a]).total_seconds() / 60)
+        print(f"  {t:>4}m {runs:>6} {single/runs*100:>6.0f}% {short/runs*100:>6.0f}% "
+              f"{statistics.median(durs):>8.1f}m")
+
+
+def main():
+    single = len(sys.argv) > 1
+    conv = fetch_conversations()
+
+    if single:
+        cid = sys.argv[1]
+        msgs = conv.get(cid)
+        if not msgs:
+            print(f"会话不存在或无消息: {cid}")
+            return
+        ut = user_times(msgs)
+        print(f"会话 {cid[:8]}...  user 消息 {len(ut)} 条  跨度 {ut[0]} ~ {ut[-1]}")
+        report_distribution("单会话", gaps_minutes(ut))
+        for t in THRESHOLDS:
+            print(f"  阈值 {t}m -> {len(segments(ut, t))} 段")
+        print("\n阈值=20min 的 >50 条段：")
+        for a, b in segments(ut, 20):
+            if b - a + 1 > 50:
+                print(f"  {b-a+1} 条  {ut[a]} ~ {ut[b]}")
+        return
+
+    all_gaps = [g for msgs in conv.values() for g in gaps_minutes(user_times(msgs))]
+    n_conv = sum(1 for m in conv.values() if len(user_times(m)) >= 2)
+    print(f"会话数 {len(conv)}（>=2 条 user 消息的 {n_conv} 个）  user 间隔总数 {len(all_gaps)}")
+
+    pure = {cid: m for cid, m in conv.items()
+            if all(ht == 0 for _, _, ht in m) and len(user_times(m)) >= 8}
+    pure_gaps = [g for m in pure.values() for g in gaps_minutes(user_times(m))]
+
+    report_distribution("全量", all_gaps)
+    report_distribution(f"纯聊（0 工具调用、>=8 条 user，{len(pure)} 个会话）", pure_gaps)
+    report_sweep("全量", conv)
+    report_sweep("纯聊", pure, min_user=8)
 
 
 if __name__ == '__main__':

@@ -7,7 +7,7 @@
 ## 数据调研结论（MySQL 线上 dump，138 会话 / 4707 条工具调用消息）
 
 1. **工具使用整体稀疏**：47 个会话用到工具，共 3993 轮中仅 366 轮（9%）用工具。91% 的轮次零工具调用——这部分目前白背全量 schema。
-2. **窗口级（30min gap）重复使用占比**（窗口内第 2+ 次用同工具 = 窗口级暴露省下的往返）：
+2. **窗口级（15min gap）重复使用占比**（窗口内第 2+ 次用同工具 = 窗口级暴露省下的往返）：
 
    | 工具 | 用工具轮 | 窗口内重复 | 省往返% |
    |---|---|---|---|
@@ -124,7 +124,7 @@ expose_tools 自身 schema 描述：`启用工具组。传组名列表（见系�
 ## 验收
 
 - `go build ./...` + `go test ./...` 全绿；新增暴露流测试。
-- 真机验证：新窗口首轮只见 expose_tools → 说"记一笔账" → LLM 先 expose bookkeeping 再 create_bill；同窗口第二条"再记一笔"不重复 expose；30min 后新窗口重新 expose。日志无 `[post_chat_group]` 等报错。
+- 真机验证：新窗口首轮只见 expose_tools → 说"记一笔账" → LLM 先 expose bookkeeping 再 create_bill；同窗口第二条"再记一笔"不重复 expose；15min 后新窗口重新 expose。日志无 `[post_chat_group]` 等报错。
 - 回归：plan 模式无工具可见；finalRound 无工具；客户端工具照常。
 
 ## 不做（YAGNI）

@@ -51,6 +51,15 @@ struct NotePage: View {
     }
 }
 
+struct FactPage: View {
+    @ObservedObject var viewModel: FactViewModel
+
+    var body: some View {
+        FactListView(viewModel: viewModel)
+            .task { await viewModel.load() }
+    }
+}
+
 struct DocumentPage: View {
     @ObservedObject var viewModel: DocumentViewModel
 

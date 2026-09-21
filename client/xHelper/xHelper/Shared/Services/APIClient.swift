@@ -944,6 +944,39 @@ extension APIClient {
 	func listThemes(limit: Int = 50, offset: Int = 0) async throws -> AppThemeListResponse {
 		return try await get("/api/themes?limit=\(limit)&offset=\(offset)")
 	}
+
+	// MARK: Facts
+
+	func listFacts(limit: Int = 50, offset: Int = 0) async throws -> AppFactListResponse {
+		return try await get("/api/facts?limit=\(limit)&offset=\(offset)")
+	}
+}
+
+// MARK: AppFact model
+
+/// 单条长期事实（facts 表）。只读：写入由后端决策段负责。
+struct AppFact: Identifiable, Codable {
+	let id: String
+	let userId: String
+	let subject: String
+	/// "state" | "event"
+	let kind: String
+	let content: String
+	let createdAt: String
+	let updatedAt: String
+
+	enum CodingKeys: String, CodingKey {
+		case id
+		case userId = "user_id"
+		case subject, kind, content
+		case createdAt = "created_at"
+		case updatedAt = "updated_at"
+	}
+}
+
+struct AppFactListResponse: Codable {
+	let items: [AppFact]
+	let total: Int
 }
 
 // MARK: AppTheme model

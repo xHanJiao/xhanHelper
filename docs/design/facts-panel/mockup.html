@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>事实面板 · 效果预览</title>
+<style>
+  :root {
+    --appAccent: #2F7D63;
+    --accentSecondary: #41C9E2;
+    --assistantText: #3B2E1F;
+    --userText: #2A7F58;
+    --chatBackground: #F7EEDD;
+    --chatBackgroundDeep: #EFE2C8;
+    --surfaceInput: #F2F7F3;
+    --bubbleTool: #E8E4EF;
+    --card: #F5F5F6;
+    --cardDeep: #ECECEE;
+    --stroke: rgba(0,0,0,0.08);
+    --tileBg: rgba(120,120,128,0.10);
+    --shadow: 0 1px 2px rgba(0,0,0,0.06);
+    --s: 1;
+  }
+  html.dark {
+    --appAccent: #92C8B4;
+    --assistantText: #FFFFFF;
+    --userText: #90D4A8;
+    --chatBackground: #1C1C1E;
+    --chatBackgroundDeep: #141416;
+    --surfaceInput: #2C2E2D;
+    --bubbleTool: #2E2B36;
+    --card: #232326;
+    --cardDeep: #1B1B1E;
+    --stroke: rgba(255,255,255,0.10);
+    --tileBg: rgba(255,255,255,0.08);
+    --shadow: 0 0 0 0.5px rgba(255,255,255,0.35), 0 6px 18px rgba(0,0,0,0.45);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: var(--chatBackgroundDeep);
+    color: var(--assistantText);
+    overflow: hidden;
+  }
+
+  /* ── 舞台：模拟窗口（左=中间栏占位，右=右侧栏卡片） ── */
+  .stage {
+    height: 100vh;
+    padding: 22px 22px 96px;
+    display: flex;
+    gap: 6px;
+    align-items: stretch;
+  }
+  .middle {
+    flex: 1 1 auto;
+    min-width: 220px;
+    border-radius: 12px;
+    background: linear-gradient(160deg, var(--chatBackground), var(--chatBackgroundDeep));
+    padding: 18px;
+    overflow: hidden;
+    position: relative;
+  }
+  html.dark .middle { background: linear-gradient(160deg, #1C1C1E, #141416); }
+  .middle .hint {
+    font-size: 11px;
+    opacity: .45;
+    letter-spacing: .3px;
+  }
+  .bubble {
+    margin-top: 12px;
+    height: 34px;
+    border-radius: 10px;
+    background: var(--surfaceInput);
+    opacity: .55;
+  }
+  .bubble.me {
+    background: color-mix(in srgb, var(--userText) 18%, transparent);
+    width: 62%;
+    margin-left: auto;
+  }
+
+  .sidebar {
+    flex: 0 0 auto;
+    border-radius: 12px;
+    background: var(--card);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: width .12s ease-out;
+  }
+
+  /* ── 页头（返回 / 标题 / 刷新） ── */
+  .panel-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    font-size: calc(13px * var(--s));
+  }
+  .back { color: color-mix(in srgb, var(--assistantText) 55%, transparent); display: flex; align-items: center; gap: 3px; }
+  .sep { width: 1px; height: 14px; background: var(--stroke); }
+  .panel-title { font-weight: 600; }
+  .spacer { flex: 1 1 auto; }
+  .icon-btn {
+    width: 22px; height: 22px;
+    display: grid; place-items: center;
+    border: none; background: none; padding: 0; cursor: pointer;
+    color: color-mix(in srgb, var(--assistantText) 55%, transparent);
+    border-radius: 5px;
+  }
+  .icon-btn:hover { background: var(--tileBg); }
+  .divider { height: 1px; background: var(--stroke); flex: 0 0 auto; }
+
+  .panel-body { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
+
+  /* ── 网格（10 格：宽 5 列 / 窄 2 列） ── */
+  .grid {
+    display: grid;
+    justify-content: center;
+    padding: 20px 24px;
+    min-height: 100%;
+    align-content: center;
+  }
+  .tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: calc(8px * var(--s));
+    padding: calc(14px * var(--s)) 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font: inherit;
+    color: var(--assistantText);
+    border-radius: 10px;
+  }
+  .tile:hover { background: var(--tileBg); }
+  .tile-icon {
+    width: calc(52px * var(--s)); height: calc(52px * var(--s));
+    border-radius: 12px;
+    background: var(--tileBg);
+    display: grid; place-items: center;
+    color: var(--appAccent);
+  }
+  .tile-icon svg { width: calc(26px * var(--s)); height: calc(26px * var(--s)); }
+  .tile-label { font-size: calc(12px * var(--s)); font-weight: 500; white-space: nowrap; }
+  .tile.hot .tile-icon { box-shadow: 0 0 0 2px color-mix(in srgb, var(--appAccent) 45%, transparent); }
+
+  /* ── 卡片列表（复用 CardGridView / CardView） ── */
+  .card-list {
+    display: grid;
+    padding: 12px;
+    align-content: start;
+  }
+  .fact-card {
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--appAccent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--appAccent) 15%, transparent);
+    padding: calc(14px * var(--s));
+    min-height: calc(130px * var(--s));
+    display: flex;
+    flex-direction: column;
+    gap: calc(6px * var(--s));
+    cursor: pointer;
+  }
+  .card-title {
+    margin: 0;
+    font-size: calc(17px * var(--s));
+    font-weight: 600;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .card-sub {
+    margin: 0;
+    font-size: calc(13px * var(--s));
+    color: color-mix(in srgb, var(--assistantText) 62%, transparent);
+    line-height: 1.45;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .card-foot { margin-top: auto; display: flex; align-items: center; gap: 8px; }
+  .card-date { font-size: calc(11px * var(--s)); color: color-mix(in srgb, var(--assistantText) 45%, transparent); margin-left: auto; }
+  .chips { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+  .chip {
+    font-size: calc(11px * var(--s));
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--appAccent) 14%, transparent);
+    color: var(--appAccent);
+    white-space: nowrap;
+  }
+  .chip.kind { background: color-mix(in srgb, var(--accentSecondary) 18%, transparent); color: color-mix(in srgb, var(--accentSecondary) 72%, var(--assistantText)); }
+
+  /* ── 控制条 ── */
+  .ui {
+    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    justify-content: center;
+    padding: 10px 16px;
+    background: rgba(20,20,22,0.92);
+    color: #eee; border-radius: 12px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.35);
+    font-size: 12px; z-index: 99; max-width: 94vw;
+  }
+  .ui .grp { display: flex; align-items: center; gap: 6px; }
+  .ui .lbl { opacity: .6; }
+  .ui button, .ui select {
+    font: inherit; font-size: 11px; color: #eee;
+    background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 6px; padding: 4px 9px; cursor: pointer;
+  }
+  .ui button.on { background: var(--appAccent); border-color: var(--appAccent); color: #fff; }
+  html.dark .ui button.on { color: #10251d; }
+  .ui input[type=range] { width: 130px; }
+  .ui .val { opacity: .75; font-variant-numeric: tabular-nums; min-width: 34px; }
+  .ui .note { opacity: .45; font-size: 10px; max-width: 200px; line-height: 1.3; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="middle">
+    <div class="hint">中间栏（占位，仅用于衬托右栏宽度）</div>
+    <div class="bubble" style="width:48%"></div>
+    <div class="bubble me"></div>
+    <div class="bubble" style="width:72%"></div>
+    <div class="bubble me"></div>
+  </div>
+
+  <section class="sidebar" id="sidebar" style="width:840px">
+    <div class="panel-head">
+      <span class="back" id="backLabel">
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        返回
+      </span>
+      <span class="sep"></span>
+      <span class="panel-title" id="panelTitle">事实</span>
+      <span class="spacer"></span>
+      <button class="icon-btn" title="刷新">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+      </button>
+    </div>
+    <div class="divider"></div>
+    <div class="panel-body">
+      <div class="grid" id="grid"></div>
+      <div class="card-list" id="cardList" style="display:none"></div>
+    </div>
+  </section>
+</div>
+
+<div class="ui">
+  <div class="grp">
+    <span class="lbl">视图</span>
+    <button id="btnGrid" class="on">网格</button>
+    <button id="btnList">事实列表</button>
+  </div>
+  <div class="grp">
+    <span class="lbl">右栏宽</span>
+    <input type="range" id="wRange" min="340" max="840" step="10" value="840">
+    <span class="val" id="wVal">840</span>
+  </div>
+  <div class="grp">
+    <span class="lbl">卡片形态</span>
+    <button id="formA" class="on">A · content 标题</button>
+    <button id="formB">B · subject 标题</button>
+  </div>
+  <div class="grp">
+    <span class="lbl">事实图标</span>
+    <button class="iconPick on" data-icon="seal">印章</button>
+    <button class="iconPick" data-icon="list">清单</button>
+    <button class="iconPick" data-icon="quote">引述</button>
+    <button class="iconPick" data-icon="bulb">灯泡</button>
+  </div>
+  <div class="grp">
+    <span class="lbl">主题</span>
+    <button id="btnTheme">深色</button>
+  </div>
+  <div class="grp">
+    <span class="lbl">字号</span>
+    <input type="range" id="fsRange" min="13" max="18" step="1" value="17">
+    <span class="val" id="fsVal">17</span>
+  </div>
+  <div class="note">形态预览，非最终像素。网格按真实算法自适应：宽 ≥480 → 5 列，窄 → 2 列（可滚动）。</div>
+</div>
+
+<script>
+(function () {
+  var ICONS = {
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.4 4 5.6 4 9s-1.4 6.6-4 9c-2.6-2.4-4-5.6-4-9s1.4-6.6 4-9z"/>',
+    brain: '<path d="M12 5.5a3 3 0 0 0-5.7-1.3A2.8 2.8 0 0 0 4 7c0 .8.3 1.5.8 2A2.9 2.9 0 0 0 5 14a3 3 0 0 0 3 3.4V18a2 2 0 0 0 4 0V5.5z"/><path d="M12 5.5a3 3 0 0 1 5.7-1.3A2.8 2.8 0 0 1 20 7c0 .8-.3 1.5-.8 2A2.9 2.9 0 0 1 19 14a3 3 0 0 1-3 3.4V18a2 2 0 0 1-4 0"/>',
+    note: '<rect x="4.5" y="3.5" width="15" height="17" rx="2.5"/><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4"/>',
+    doc: '<path d="M6 3.5h7l5 5v12H6z"/><path d="M13 3.5v5h5"/><path d="M9 13h6M9 16.5h6"/>',
+    photo: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10.5" r="1.6"/><path d="M4.5 17.5l5-4.5 4 3.5 3-2.5 3.5 3"/>',
+    tag: '<path d="M11.2 3.5H20v8.8l-8.6 8.6a1.5 1.5 0 0 1-2.1 0L3.6 15a1.5 1.5 0 0 1 0-2.1z"/><circle cx="16.2" cy="7.8" r="1.4"/>',
+    chart: '<path d="M4 20h16"/><rect x="6" y="12" width="3.4" height="5"/><rect x="11.3" y="8" width="3.4" height="9"/><rect x="16.6" y="4.5" width="3.4" height="12.5"/>',
+    yen: '<circle cx="12" cy="12" r="9"/><path d="M9.4 7.8l2.6 3.7 2.6-3.7"/><path d="M12 11.5V16.5"/><path d="M9.6 13.2h4.8M9.6 15h4.8"/>',
+    cpu: '<rect x="7" y="7" width="10" height="10" rx="2"/><rect x="10.5" y="10.5" width="3" height="3"/><path d="M10 3.5v3.5M14 3.5v3.5M10 17v3.5M14 17v3.5M3.5 10h3.5M3.5 14h3.5M17 10h3.5M17 14h3.5"/>',
+    seal: '<path d="M12 3.2l2.3 1.7 2.8-.3 1.2 2.6 2.5 1.4-.6 2.8.6 2.8-2.5 1.4-1.2 2.6-2.8-.3L12 20.8l-2.3-1.7-2.8.3-1.2-2.6L3.2 15.4l.6-2.8-.6-2.8 2.5-1.4 1.2-2.6 2.8.3z"/><path d="M9 12.2l2.1 2.1L15.3 10"/>',
+    list: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7.5 9h.01M7.5 12h.01M7.5 15h.01"/><path d="M11 9h6M11 12h6M11 15h6"/>',
+    quote: '<path d="M9.5 6.5C6.9 7.6 5.5 9.8 5.5 13v4.5h5V12h-3c0-2 .9-3.3 2.6-4z"/><path d="M18.5 6.5c-2.6 1.1-4 3.3-4 6.5v4.5h5V12h-3c0-2 .9-3.3 2.6-4z"/>',
+    bulb: '<path d="M9 17h6"/><path d="M10 20h4"/><path d="M12 3.5a5.5 5.5 0 0 0-3.2 9.9c.5.4.7.9.7 1.6h5c0-.7.2-1.2.7-1.6A5.5 5.5 0 0 0 12 3.5z"/>'
+  };
+
+  var TILES = [
+    { id: 'browser', label: '打开浏览器', icon: 'globe' },
+    { id: 'bills', label: '账单', icon: 'yen' },
+    { id: 'memories', label: '记忆', icon: 'brain' },
+    { id: 'facts', label: '事实', icon: 'seal' },
+    { id: 'notes', label: '笔记', icon: 'note' },
+    { id: 'documents', label: '文档', icon: 'doc' },
+    { id: 'images', label: '图片', icon: 'photo' },
+    { id: 'themes', label: '主题', icon: 'tag' },
+    { id: 'dashboard', label: '监控看版', icon: 'chart' },
+    { id: 'agents', label: '智能体', icon: 'cpu' }
+  ];
+
+  var FACTS = [
+    { subject: '我', kind: '状态', content: '用户目前在日本旅行，计划停留到 2026-10-03', date: '09-21 14:32' },
+    { subject: '老K', kind: '事件', content: '2026-09-18 和老K因为项目排期吵了一架，当天已和好', date: '09-18 22:05' },
+    { subject: 'xhanHelper', kind: '状态', content: 'xhanHelper 后端用 Go 1.25 + Gin + GORM，仅 test 环境走 SQLite', date: '09-20 09:14' },
+    { subject: '我妈', kind: '状态', content: '用户母亲对花生过敏', date: '09-12 18:40' },
+    { subject: '体检', kind: '事件', content: '2026-09-10 用户完成年度体检，结论是血脂偏高', date: '09-10 11:02' },
+    { subject: '我', kind: '状态', content: '用户偏好用中文交流，回答希望简短直接', date: '09-05 08:20' }
+  ];
+
+  var state = { view: 'grid', width: 840, form: 'A', icon: 'seal', dark: false, fs: 17 };
+
+  var elSidebar = document.getElementById('sidebar');
+  var elGrid = document.getElementById('grid');
+  var elList = document.getElementById('cardList');
+  var elTitle = document.getElementById('panelTitle');
+  var elBack = document.getElementById('backLabel');
+  var elBtnGrid = document.getElementById('btnGrid');
+  var elBtnList = document.getElementById('btnList');
+  var elW = document.getElementById('wRange');
+  var elWVal = document.getElementById('wVal');
+  var elFs = document.getElementById('fsRange');
+  var elFsVal = document.getElementById('fsVal');
+  var elFormA = document.getElementById('formA');
+  var elFormB = document.getElementById('formB');
+  var elTheme = document.getElementById('btnTheme');
+
+  function svg(name) {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' + (ICONS[name] || '') + '</svg>';
+  }
+
+  // 镜像 BrowsePanelView.adaptiveColumns：宽 ≥480 → 5 列，否则 2 列
+  function gridMetrics(w) {
+    var maxTile, minTile, maxGap, minGap, cols;
+    if (w >= 480) { cols = 5; maxTile = 110; minTile = 84; maxGap = 20; minGap = 6; }
+    else { cols = 2; maxTile = 160; minTile = 90; maxGap = 20; minGap = 8; }
+    var gap = (w - cols * maxTile) / (cols - 1);
+    var tile = maxTile;
+    if (gap < minGap) {
+      gap = minGap;
+      tile = Math.max(minTile, (w - (cols - 1) * minGap) / cols);
+    } else if (gap > maxGap) {
+      gap = maxGap;
+    }
+    return { cols: cols, tile: tile, gap: gap };
+  }
+
+  function renderGrid() {
+    var inner = state.width - 48; // 与真实一致：左右各 24 padding
+    var m = gridMetrics(inner);
+    elGrid.style.gridTemplateColumns = 'repeat(' + m.cols + ', ' + m.tile.toFixed(1) + 'px)';
+    elGrid.style.gap = m.gap.toFixed(1) + 'px';
+    elGrid.innerHTML = TILES.map(function (t) {
+      var icon = t.id === 'facts' ? state.icon : t.icon;
+      return '<button class="tile' + (t.id === 'facts' ? ' hot' : '') + '">' +
+        '<span class="tile-icon">' + svg(icon) + '</span>' +
+        '<span class="tile-label">' + t.label + '</span>' +
+        '</button>';
+    }).join('');
+  }
+
+  function renderList() {
+    var inner = state.width - 24; // 列表 padding 12
+    var cols = Math.min(Math.max(Math.floor(inner / 260), 1), 3);
+    elList.style.gridTemplateColumns = 'repeat(' + cols + ', minmax(0, 1fr))';
+    elList.style.gap = '12px';
+    elList.innerHTML = FACTS.map(function (f) {
+      var chips = state.form === 'A'
+        ? '<span class="chip kind">' + f.kind + '</span><span class="chip">' + f.subject + '</span>'
+        : '<span class="chip kind">' + f.kind + '</span>';
+      var title = state.form === 'A' ? f.content : f.subject;
+      var sub = state.form === 'A' ? '' : '<p class="card-sub">' + f.content + '</p>';
+      return '<article class="fact-card">' +
+        '<h3 class="card-title">' + title + '</h3>' + sub +
+        '<div class="card-foot"><div class="chips">' + chips + '</div>' +
+        '<span class="card-date">' + f.date + '</span></div>' +
+        '</article>';
+    }).join('');
+  }
+
+  function render() {
+    elSidebar.style.width = state.width + 'px';
+    elSidebar.style.setProperty('--s', (state.fs / 17).toFixed(3));
+    elWVal.textContent = state.width;
+    elFsVal.textContent = state.fs;
+    document.documentElement.className = state.dark ? 'dark' : 'light';
+    elTheme.textContent = state.dark ? '浅色' : '深色';
+    elBtnGrid.className = state.view === 'grid' ? 'on' : '';
+    elBtnList.className = state.view === 'list' ? 'on' : '';
+    elFormA.className = state.form === 'A' ? 'on' : '';
+    elFormB.className = state.form === 'B' ? 'on' : '';
+    elBack.style.visibility = state.view === 'list' ? 'visible' : 'hidden';
+    elTitle.textContent = state.view === 'list' ? '事实' : '';
+    elGrid.style.display = state.view === 'grid' ? 'grid' : 'none';
+    elList.style.display = state.view === 'list' ? 'grid' : 'none';
+    if (state.view === 'grid') { renderGrid(); } else { renderList(); }
+  }
+
+  elBtnGrid.onclick = function () { state.view = 'grid'; render(); };
+  elBtnList.onclick = function () { state.view = 'list'; render(); };
+  elW.oninput = function () { state.width = parseInt(elW.value, 10); render(); };
+  elFs.oninput = function () { state.fs = parseInt(elFs.value, 10); render(); };
+  elFormA.onclick = function () { state.form = 'A'; render(); };
+  elFormB.onclick = function () { state.form = 'B'; render(); };
+  elTheme.onclick = function () { state.dark = !state.dark; render(); };
+
+  Array.prototype.forEach.call(document.querySelectorAll('.iconPick'), function (b) {
+    b.onclick = function () {
+      state.icon = b.getAttribute('data-icon');
+      Array.prototype.forEach.call(document.querySelectorAll('.iconPick'), function (o) {
+        o.className = 'iconPick' + (o === b ? ' on' : '');
+      });
+      render();
+    };
+  });
+
+  // URL 预设：?view=list&form=b&w=600&icon=list&theme=dark&fs=15
+  var q = new URLSearchParams(location.search);
+  if (q.get('view') === 'list') { state.view = 'list'; }
+  if ((q.get('form') || '').toUpperCase() === 'B') { state.form = 'B'; }
+  if (q.get('w')) { state.width = parseInt(q.get('w'), 10) || state.width; }
+  if (q.get('fs')) { state.fs = parseInt(q.get('fs'), 10) || state.fs; }
+  if (q.get('icon')) { state.icon = q.get('icon'); }
+  if (q.get('theme') === 'dark') { state.dark = true; }
+  elW.value = state.width;
+  elFs.value = state.fs;
+  Array.prototype.forEach.call(document.querySelectorAll('.iconPick'), function (o) {
+    o.className = 'iconPick' + (o.getAttribute('data-icon') === state.icon ? ' on' : '');
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

@@ -6,20 +6,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"xhan-helper/internal/app"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
 
 // MemoryHandler — 用户记忆 REST API
 type MemoryHandler struct {
-	memRepo     *service.UserMemoryRepo
-	vectorStore app.VectorStore
+	memRepo *service.UserMemoryRepo
+	purger  *service.EntityPurger
 }
 
 // NewMemoryHandler 创建 MemoryHandler
-func NewMemoryHandler(memRepo *service.UserMemoryRepo, vectorStore app.VectorStore) *MemoryHandler {
-	return &MemoryHandler{memRepo: memRepo, vectorStore: vectorStore}
+func NewMemoryHandler(memRepo *service.UserMemoryRepo, purger *service.EntityPurger) *MemoryHandler {
+	return &MemoryHandler{memRepo: memRepo, purger: purger}
 }
 
 // ListMemories GET /api/memories?limit=50&offset=0&keyword=
@@ -60,9 +59,9 @@ func (h *MemoryHandler) DeleteMemory(c *gin.Context) {
 		return
 	}
 
-	// 同步从向量库中删除
-	if h.vectorStore != nil {
-		h.vectorStore.Delete("mem:" + id)
+	// 清理派生数据（向量行/chunk/内存向量）。记忆已删，清理失败只记日志、不翻转结果。
+	if err := h.purger.Purge(c.Request.Context(), "memory", id); err != nil {
+		log.Printf("[memory] purge derived data for %s error: %v", id, err)
 	}
 
 	view.JSONOK(c, gin.H{"deleted": true})
@@ -86,10 +85,10 @@ func (h *MemoryHandler) BatchDeleteMemories(c *gin.Context) {
 		return
 	}
 
-	// 同步从向量库中删除
-	if h.vectorStore != nil {
-		for _, id := range req.IDs {
-			h.vectorStore.Delete("mem:" + id)
+	// 清理派生数据（逐条，幂等）。记忆已删，清理失败只记日志、不翻转结果。
+	for _, id := range req.IDs {
+		if err := h.purger.Purge(c.Request.Context(), "memory", id); err != nil {
+			log.Printf("[memory] purge derived data for %s error: %v", id, err)
 		}
 	}
 

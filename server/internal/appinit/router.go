@@ -39,8 +39,8 @@ func RegisterMonitorSnapshots(vs *agent.VectorStore, mcpManager *mcp.Manager, co
 // InitRouter 创建路由、注册所有 handler
 func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, agents *AgentBundle, tools *ToolsBundle, mcpManager *mcp.Manager, vs *agent.VectorStore) *gin.Engine {
 	billHandler := controller.NewBillHandler(repos.Bill)
-	noteHandler := controller.NewNoteHandler(repos.Note)
-	memHandler := controller.NewMemoryHandler(repos.Mem, infra.VectorStore)
+	noteHandler := controller.NewNoteHandler(repos.Note, tools.EntityPurger)
+	memHandler := controller.NewMemoryHandler(repos.Mem, tools.EntityPurger)
 	factHandler := controller.NewFactHandler(repos.Fact)
 	agentHandler := controller.NewAgentHandler(repos.Agent, llmClients.BgFlash)
 	toolHandler := controller.NewToolHandler(repos.Tool)

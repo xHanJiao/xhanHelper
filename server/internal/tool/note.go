@@ -45,15 +45,16 @@ type NoteTool struct {
 	vectorStore   app.VectorStore
 	embedder      app.Embedder
 	embeddingRepo *service.EmbeddingRepo
-	chunkRepo     *service.EmbeddingChunkRepo
 	chunkBuilder  app.ChunkEmbedder
 	conceptEmbed  app.ConceptEmbedder
+	purger        *service.EntityPurger
 }
 
 func NewNoteTool(noteRepo *service.NoteRepo, versionRepo *service.VersionRepo, vs app.VectorStore, emb app.Embedder,
-	embeddingRepo *service.EmbeddingRepo, chunkRepo *service.EmbeddingChunkRepo, chunkBuilder app.ChunkEmbedder, conceptEmbed app.ConceptEmbedder) *NoteTool {
+	embeddingRepo *service.EmbeddingRepo, chunkBuilder app.ChunkEmbedder, conceptEmbed app.ConceptEmbedder,
+	purger *service.EntityPurger) *NoteTool {
 	return &NoteTool{noteRepo: noteRepo, versionRepo: versionRepo, vectorStore: vs, embedder: emb,
-		embeddingRepo: embeddingRepo, chunkRepo: chunkRepo, chunkBuilder: chunkBuilder, conceptEmbed: conceptEmbed}
+		embeddingRepo: embeddingRepo, chunkBuilder: chunkBuilder, conceptEmbed: conceptEmbed, purger: purger}
 }
 
 func (t *NoteTool) Name() string { return "note" }
@@ -426,7 +427,10 @@ func (t *NoteTool) deleteNote(ec *ExecuteContext, args json.RawMessage) *Result 
 		return &Result{Success: false, Error: fmt.Sprintf("delete note failed: %v", err)}
 	}
 
-	t.cleanChunks(ec.Ctx, params.ID)
+	// 清理派生数据（向量行/chunk/版本快照/内存向量）。笔记已删，清理失败只记日志、不翻转结果。
+	if err := t.purger.Purge(ec.Ctx, "note", params.ID); err != nil {
+		log.Printf("[note] purge derived data for %s error: %v", params.ID, err)
+	}
 
 	data, _ := json.Marshal(map[string]string{"deleted_id": params.ID})
 	return &Result{Success: true, Data: data}
@@ -496,7 +500,9 @@ func (t *NoteTool) updateNote(ec *ExecuteContext, args json.RawMessage) *Result 
 			Tags:    tags,
 		}
 		go func() {
-			t.cleanChunks(context.Background(), params.ID)
+			if err := t.purger.PurgeChunks(context.Background(), "note", params.ID); err != nil {
+				log.Printf("[note] purge chunks for %s error: %v", params.ID, err)
+			}
 			t.embedAll(context.Background(), noteForEmbed)
 		}()
 	}
@@ -597,16 +603,6 @@ func (t *NoteTool) embedAll(ctx context.Context, note *model.Note) {
 		log.Printf("[note] chunk build error: %v", err)
 	} else {
 		log.Printf("[note] chunked note %.8s: %d sentences", note.ID, n)
-	}
-}
-
-func (t *NoteTool) cleanChunks(ctx context.Context, noteID string) {
-	chunks, _ := t.chunkRepo.ListByParent(ctx, "note", noteID)
-	for _, c := range chunks {
-		t.vectorStore.Delete(c.ID)
-	}
-	if err := t.chunkRepo.DeleteByParent(ctx, "note", noteID); err != nil {
-		log.Printf("[note] clean chunks for %s error: %v", noteID, err)
 	}
 }
 

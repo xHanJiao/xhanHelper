@@ -8,6 +8,7 @@ import (
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/mcp"
+	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
 
@@ -59,8 +60,10 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	// --- Phase 6: 检索工具 ---
 	conceptEmbedService := agent.NewConceptEmbedService(infra, repos.ConceptEmbed, repos.Embedding)
 	chunkBuilder := agent.NewChunkBuilder(infra, repos.Chunk, repos.Embedding, cfg.Vector.ChunkDisabledParents)
+	// 实体派生数据清理器：笔记/记忆删除时统一清向量行 + chunk + 版本快照（见 docs/bugs/017）
+	entityPurger := service.NewEntityPurger(repos.Embedding, repos.Chunk, repos.Version, infra.VectorStore)
 
-	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(repos.Note, repos.Version, infra.VectorStore, infra.Embedder, repos.Embedding, repos.Chunk, chunkBuilder, conceptEmbedService), log.Default()))
+	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(repos.Note, repos.Version, infra.VectorStore, infra.Embedder, repos.Embedding, chunkBuilder, conceptEmbedService, entityPurger), log.Default()))
 
 	topicStatsTool := tool.NewLoggingWrapper(tool.NewGetTopicStatsTool(repos.ConceptEmbed, repos.Note, repos.Mem, infra.Embedder, repos.Embedding, cfg.Reflection.ClusterThreshold), log.Default())
 	topicDetailTool := tool.NewLoggingWrapper(tool.NewGetTopicDetailTool(repos.Note, repos.Mem), log.Default())
@@ -126,5 +129,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		MCPManager:          mcpManager,
 		MemExtractor:        memExtractor,
 		ConceptEmbedService: conceptEmbedService,
+		EntityPurger:        entityPurger,
 	}
 }

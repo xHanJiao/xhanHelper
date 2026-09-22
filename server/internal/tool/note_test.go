@@ -31,7 +31,9 @@ func setupNoteTool(t *testing.T) (*NoteTool, func()) {
 	versionRepo := service.NewVersionRepo(db)
 	chunkRepo := service.NewEmbeddingChunkRepo(db)
 	embeddingRepo := service.NewEmbeddingRepo(db)
-	return NewNoteTool(noteRepo, versionRepo, &mockVS{}, &mockNoteEmbedder{}, embeddingRepo, chunkRepo, &mockChunkEmbedder{}, &mockConceptEmbedder{}), func() {}
+	vs := &mockVS{}
+	purger := service.NewEntityPurger(embeddingRepo, chunkRepo, versionRepo, vs)
+	return NewNoteTool(noteRepo, versionRepo, vs, &mockNoteEmbedder{}, embeddingRepo, &mockChunkEmbedder{}, &mockConceptEmbedder{}, purger), func() {}
 }
 
 func TestNoteGetAndUpdate(t *testing.T) {
@@ -313,42 +315,77 @@ func (m *mockNoteEmbedder) Embed(_ context.Context, _ string) ([]float64, error)
 }
 func (m *mockNoteEmbedder) ModelName() string { return "mock-embedder" }
 
-// 用例：软删除笔记时向量库中的 chunk 也被清掉
-func TestNoteSoftDelete_VectorStoreCleanedUp(t *testing.T) {
+// 用例：软删除笔记时，其派生数据（chunk 行、chunk 向量行、全文向量行、版本快照、内存向量）全部清掉
+func TestNoteSoftDelete_PurgesDerivedData(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Note{}, &model.EmbeddingChunk{}); err != nil {
+	if err := db.AutoMigrate(&model.Note{}, &model.EmbeddingChunk{}, &model.Embedding{}, &model.ContentVersion{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
 	noteRepo := service.NewNoteRepo(db)
 	chunkRepo := service.NewEmbeddingChunkRepo(db)
+	embeddingRepo := service.NewEmbeddingRepo(db)
+	versionRepo := service.NewVersionRepo(db)
 	vs := &mockVS{}
+	purger := service.NewEntityPurger(embeddingRepo, chunkRepo, versionRepo, vs)
 
-	tool := NewNoteTool(noteRepo, nil, vs, nil, nil, chunkRepo, nil, nil)
-	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+	tool := NewNoteTool(noteRepo, versionRepo, vs, nil, embeddingRepo, nil, nil, purger)
+	ctx := context.Background()
+	ec := &ExecuteContext{Ctx: ctx, UserID: "user-1"}
 
-	note := &model.Note{ID: "n1", UserID: "user-1", Topic: "测试", Content: "内容"}
-	noteRepo.Create(context.Background(), note)
-
-	chunkRepo.BatchCreate(context.Background(), []model.EmbeddingChunk{
-		{ID: "chunk:note:n1/0", ParentType: "note", ParentID: "n1", ChunkIndex: 0, Content: "s1"},
-		{ID: "chunk:note:n1/1", ParentType: "note", ParentID: "n1", ChunkIndex: 1, Content: "s2"},
-	})
+	if err := noteRepo.Create(ctx, &model.Note{ID: "n1", UserID: "user-1", Topic: "测试", Content: "内容"}); err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	if err := chunkRepo.BatchCreate(ctx, []model.EmbeddingChunk{
+		{ID: "c0", ParentType: "note", ParentID: "n1", ChunkIndex: 0, Content: "s1"},
+		{ID: "c1", ParentType: "note", ParentID: "n1", ChunkIndex: 1, Content: "s2"},
+	}); err != nil {
+		t.Fatalf("create chunks: %v", err)
+	}
+	emb := "[]"
+	if err := embeddingRepo.BatchUpsert(ctx, []model.Embedding{
+		{ID: "n1", EntityType: "note", EntityID: "n1", UserID: "user-1", Model: "m", Embedding: &emb},
+		{ID: "chunk:note:n1/0", EntityType: "chunk", EntityID: "chunk:note:n1/0", UserID: "user-1", Model: "m", Embedding: &emb},
+		{ID: "chunk:note:n1/1", EntityType: "chunk", EntityID: "chunk:note:n1/1", UserID: "user-1", Model: "m", Embedding: &emb},
+	}); err != nil {
+		t.Fatalf("create embeddings: %v", err)
+	}
+	if err := versionRepo.CreateSnapshot(ctx, "note", "n1", map[string]interface{}{"content": "内容"}); err != nil {
+		t.Fatalf("create snapshot: %v", err)
+	}
 
 	res := tool.Execute(ec, "delete_note", mustMarshal(t, map[string]string{"id": "n1"}))
 	if !res.Success {
 		t.Fatalf("delete_note failed: %s", res.Error)
 	}
 
-	if len(vs.deleted) != 2 {
-		t.Errorf("向量库应删除 2 个 chunk，实际 %d: %v", len(vs.deleted), vs.deleted)
+	// 内存向量：两个 chunk + 全文 note:n1
+	want := map[string]bool{"chunk:note:n1/0": true, "chunk:note:n1/1": true, "note:n1": true}
+	if len(vs.deleted) != len(want) {
+		t.Errorf("向量库应删除 %d 项，实际 %d: %v", len(want), len(vs.deleted), vs.deleted)
 	}
-	if vs.deleted[0] != "chunk:note:n1/0" || vs.deleted[1] != "chunk:note:n1/1" {
-		t.Errorf("删除的 chunk ID 不对: %v", vs.deleted)
+	for _, id := range vs.deleted {
+		if !want[id] {
+			t.Errorf("删除了预期外的向量键: %s", id)
+		}
 	}
+
+	assertCount := func(name string, model interface{}, query string, args ...interface{}) {
+		var n int64
+		if err := db.Model(model).Where(query, args...).Count(&n).Error; err != nil {
+			t.Fatalf("count %s: %v", name, err)
+		}
+		if n != 0 {
+			t.Errorf("%s 应清零，实际剩 %d 行", name, n)
+		}
+	}
+	assertCount("chunk 行", &model.EmbeddingChunk{}, "parent_id = ?", "n1")
+	assertCount("chunk 向量行", &model.Embedding{}, "entity_type = ? AND entity_id LIKE ?", "chunk", "chunk:note:n1/%")
+	assertCount("全文向量行", &model.Embedding{}, "entity_type = ? AND entity_id = ?", "note", "n1")
+	assertCount("版本快照", &model.ContentVersion{}, "entity_type = ? AND entity_id = ?", "note", "n1")
 }
 
 // seedNotes 为查询测试创建多条笔记
@@ -497,40 +534,6 @@ func TestNoteOtherUserIsolation(t *testing.T) {
 	// n6 belongs to other-user, so they should see exactly 1 note
 	if len(notes) != 1 {
 		t.Errorf("other user should see only their own note, got %d", len(notes))
-	}
-}
-
-// 用例：软删除笔记时连带删除其 chunk
-func TestNoteSoftDelete_ChunksCleanedUp(t *testing.T) {
-	tool, cleanup := setupNoteTool(t)
-	defer cleanup()
-	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
-
-	note := &model.Note{ID: "n1", UserID: "user-1", Topic: "测试", Content: "内容"}
-	tool.noteRepo.Create(context.Background(), note)
-
-	// 创建 2 个 chunk
-	tool.chunkRepo.BatchCreate(context.Background(), []model.EmbeddingChunk{
-		{ID: "chunk:note:n1/0", ParentType: "note", ParentID: "n1", ChunkIndex: 0, Content: "句子1"},
-		{ID: "chunk:note:n1/1", ParentType: "note", ParentID: "n1", ChunkIndex: 1, Content: "句子2"},
-	})
-
-	// 删除前 chunk 存在
-	chunks, _ := tool.chunkRepo.ListByParent(context.Background(), "note", "n1")
-	if len(chunks) != 2 {
-		t.Fatalf("删除前应有 2 个 chunk，实际 %d", len(chunks))
-	}
-
-	// 软删除
-	res := tool.Execute(ec, "delete_note", mustMarshal(t, map[string]string{"id": "n1"}))
-	if !res.Success {
-		t.Fatalf("delete_note failed: %s", res.Error)
-	}
-
-	// 删除后 chunk 清空
-	chunks, _ = tool.chunkRepo.ListByParent(context.Background(), "note", "n1")
-	if len(chunks) != 0 {
-		t.Errorf("删除后 chunk 应被清空，实际 %d 条", len(chunks))
 	}
 }
 

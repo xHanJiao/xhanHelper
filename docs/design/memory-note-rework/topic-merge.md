@@ -1,6 +1,6 @@
 # topic 收敛 — 设计文档
 
-> 版本：v1｜日期：2026-09-22｜状态：设计定稿，待开发
+> 版本：v1｜日期：2026-09-22｜状态：已完成（真库已执行）
 >
 > 上位：《记忆 / 笔记改造 · 设计文档》（`design.md`）§4.5
 > 估算：2 面 / 1 缝（1 需探针）/ 1 次往返（审阅合并报告）/ 0 待拍决定 · ~2–4h
@@ -41,7 +41,8 @@ topic 由 LLM 自由填，两边都没有相似度约束，结果是一个事散
 ### 4.1 第一步：出方案（默认，不写库）
 
 1. 载入 topic 概念（`ConceptEmbeddingRepo.ListByType`）+ 向量（`EmbeddingRepo` 按 `EntityTypeConcept`），对齐 `get_topic_stats.go:52-102` 的现成加载方式。
-2. leader 聚类，阈值默认 `0.70`（对齐 `reflection.cluster_threshold`）；报告里同时标出 0.60 / 0.80 下的差异供参考。
+2. leader 聚类，阈值默认 `0.80`；报告里同时标出 0.60 / 0.70 / 0.80 下的差异供参考。
+   （初稿定的是 0.70，对齐 `reflection.cluster_threshold`；实测 0.70 会误并——`生育决策` 吞了住房/生活/购物决策、`工作习惯` 吞了消费/娱乐习惯——故改 0.80。）
 3. 每簇选**代表词**：引用数（notes + memories 计数）最高者；并列取字符最短。
 4. 每个成员标注与代表词的相似度，便于人工判断边缘成员。
 5. 输出报告（Markdown + 可编辑的映射文件，如 `topic-merge-plan.tsv`）：`簇 → 成员(引用数, 相似度) → 建议代表词`。人工过一遍，可改代表词、可拆簇、可整簇跳过。
@@ -80,3 +81,49 @@ topic 由 LLM 自由填，两边都没有相似度约束，结果是一个事散
 - `go build ./...` 通过；聚类与代表词选择的纯逻辑加单测（给定向量 → 期望分簇 / 代表词）。
 - 真机/真库：dry-run 报告人工审阅通过 → `--apply` → 复查 notes/memories topic 分布、概念表无孤儿。
 - **缝**：合并结果是否符合语义（阈值合适与否）只能人工看报告判断，需一次审阅往返。若差异大，调阈值重出报告。
+
+**已验收（2026-09-22）**：全绿 + 真库执行 + 复查无孤儿，结果见 §7.2。
+
+## 7. 实现（已落地）
+
+包结构：`internal/topicmerge/{cluster.go, plan.go, run.go}` + `cmd/topic-merge/main.go`（薄入口，参照 `cmd/eval-export`）。
+DB 操作走 `service` repo（新增 `NoteRepo.RenameTopic`、`UserMemoryRepo.RenameTopic`、`ConceptEmbeddingRepo.DeleteByValues`；向量删除复用 `EmbeddingRepo.DeleteByEntities`）。
+
+```bash
+go run ./cmd/topic-merge                             # 只读：产出报告 + 映射文件
+go run ./cmd/topic-merge --user <user-id>             # 只处理某用户（支持前缀）
+go run ./cmd/topic-merge --apply                     # dry-run，打印将改动
+go run ./cmd/topic-merge --apply --dry-run=false     # 落库
+```
+
+- 输出每用户一份：`<out>/report-<short8>.md`、`<out>/plan-<short8>.tsv`（默认 `data/topic-merge/`）。已存在的 plan 不覆盖（`--force` 覆盖）。
+- 映射文件 `plan-*.tsv`：`cluster / representative / member / ref_count / similarity / action`。人工可改 `representative`、把某行 `action` 改成 `skip`、或删行。`representative` 必须是本簇已有成员（不支持造新词，避免产生无概念行）。
+
+相对设计的两点细化：
+
+1. **0 引用簇不进报告/映射**：代表词引用为 0 的簇全是历史遗留 topic（整句/复合名等），合并无意义，统一交给 apply 的孤儿 GC 清理；报告里单列「0 引用孤儿」段。
+2. **dry-run 与落库同一套事务逻辑**：dry-run 在事务内执行后回滚，因此打印的「notes 改名 / memories 改名 / 删概念 / 删孤儿」与真实落库完全一致（同一用户合并 + GC 在一个事务内）。
+
+单测（`cluster_test.go`）：leader 聚类并入、**非传递性**（A~B、B~C 但 A 不~C 时 C 不入簇）、代表词 tie-break（引用数 → 词长 → 字典序）、映射文件往返解析 / skip / 冲突 / 缺 user_id、0 引用簇不进映射。
+
+### 7.1 对远端真库执行（编译 + scp 远端跑）
+
+真库在远端，工具在**远端**执行（本地交叉编译 → scp → ssh 跑）。Makefile 新增（见 `build-topic-merge` / `topic-merge-plan` / `topic-merge-apply` / `restart`）：
+
+```bash
+make topic-merge-plan                              # 远端只读生成，报告/映射拉到本地 data/topic-merge/
+# 本地审阅 report-*.md、编辑 plan-*.tsv
+make topic-merge-apply                             # 推回映射，远端 dry-run
+make topic-merge-apply ARGS="--dry-run=false"      # 落库（自动停服 → 执行 → 起服）
+```
+
+远端执行由 `scripts/run-topic-merge.sh` 负责：source `~/.zshrc` 等（非交互 ssh 不会自动 source）、`APP_ENV=prod`；**仅当参数含 `--dry-run=false` 时**才停服/起服（dry-run 不动服务）。先 `make db-pull` 备份。
+
+> 重新生成报告/映射：远端已存在 `plan-*.tsv` 时默认跳过（防止覆盖人工编辑），需 `make topic-merge-plan ARGS="--force"`。改阈值同理 `ARGS="--threshold 0.70 --force"`。
+
+### 7.2 真库执行结果（2026-09-22，阈值 0.80）
+
+- 5 个用户；主用户 662 topic → 505 簇（多成员 91、改名 153）。
+- 全库：**notes 改名 203、memories 改名 180、删概念 160、删孤儿 131**；`concept_embeddings` type=topic **757 → 466**，孤儿 **0**。
+- 人工 `skip` 2 项：`家庭财务`（避免「窄词吞宽词」）、`生活观察`（与 `社会观察` 不同义）。
+- 0.70 对比：342 簇 / 118 多成员 / 311 改名，含明显误并；0.80 干净得多，代价是少数合理合并被拆散（可在 plan 里手工改 representative 合回）。

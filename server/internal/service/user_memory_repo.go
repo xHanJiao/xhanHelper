@@ -256,6 +256,17 @@ func (r *UserMemoryRepo) CountMemories(ctx context.Context, userID string, keywo
 	return count, nil
 }
 
+// RenameTopic 把一组旧 topic 批量改名为新 topic，返回受影响行数。
+func (r *UserMemoryRepo) RenameTopic(ctx context.Context, userID string, from []string, to string) (int64, error) {
+	if len(from) == 0 || to == "" {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Where("user_id = ? AND topic IN ?", userID, from).
+		Update("topic", to)
+	return res.RowsAffected, res.Error
+}
+
 // DistinctTopics 返回用户所有不重复 topic 及对应记忆数量，按 count 倒序。
 func (r *UserMemoryRepo) DistinctTopics(ctx context.Context, userID string) ([]TopicCount, error) {
 	var results []TopicCount

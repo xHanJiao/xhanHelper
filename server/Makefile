@@ -1,4 +1,7 @@
-.PHONY: dev dev-full check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs
+.PHONY: dev dev-full check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs db-pull db-import entity-gc build-entity-gc topic-merge-plan topic-merge-apply build-topic-merge restart
+
+# 远端 ssh 执行时 source 用户环境变量（非交互 ssh 不会自动 source）
+REMOTE_ENV = for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do source "$$f" 2>/dev/null || true; done;
 
 # 服务器配置
 SERVER_USER=${DEPLOY_USER}
@@ -25,6 +28,10 @@ help:
 	@echo "  make deploy-only    - 仅上传已编译的二进制和conf（不重新编译）"
 	@echo "  make db-pull        - 导出线上数据库并拉到本地 data/ 目录"
 	@echo "  make db-import      - 仅导入本地最新 dump（不联网，用于下载后导入失败重跑）"
+	@echo "  make entity-gc      - 远端清理孤儿派生数据（默认 dry-run；ARGS=\"--write\" 落库）"
+	@echo "  make topic-merge-plan  - 远端生成 topic 收敛报告+映射，拉到本地 data/topic-merge/"
+	@echo "  make topic-merge-apply - 推回本地映射并在远端执行（默认 dry-run；ARGS=\"--dry-run=false\" 落库，自动停服/起服）"
+	@echo "  make restart        - 重启远端服务"
 	@echo "  make logs           - 实时查看远程服务器日志 (tail -f)"
 	@echo "  make clean          - 清理编译产物"
 
@@ -138,6 +145,57 @@ db-import:
 	@echo "       仅导入本地最新 dump（不联网）"
 	@echo "========================================"
 	@LOCAL_ONLY=1 bash ../../mysh/pull-mysqldump.sh
+
+# 编译并上传 entity-gc 工具
+build-entity-gc:
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); \
+	mkdir -p $(OUTPUT_DIR); \
+	GOOS=linux GOARCH=amd64 go build -o $(OUTPUT_DIR)/entity-gc ./cmd/entity-gc/; \
+	scp $(OUTPUT_DIR)/entity-gc $$U@$$H:$$P/entity-gc.tmp; \
+	ssh $$U@$$H "cd $$P && mv entity-gc.tmp entity-gc && chmod +x entity-gc"; \
+	echo "✅ 已上传 entity-gc"
+
+# 远端清理孤儿派生数据（默认 dry-run；ARGS="--write" 落库）
+entity-gc: build-entity-gc
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	ssh $$DEPLOY_USER@$$DEPLOY_HOST '$(REMOTE_ENV) cd $(SERVER_PATH) && APP_ENV=prod ./entity-gc $(ARGS)'
+
+# 编译并上传 topic-merge 工具 + 远端执行脚本
+build-topic-merge:
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); \
+	mkdir -p $(OUTPUT_DIR); \
+	GOOS=linux GOARCH=amd64 go build -o $(OUTPUT_DIR)/topic-merge ./cmd/topic-merge/; \
+	scp $(OUTPUT_DIR)/topic-merge $$U@$$H:$$P/topic-merge.tmp; \
+	scp scripts/run-topic-merge.sh $$U@$$H:$$P/scripts/run-topic-merge.sh; \
+	ssh $$U@$$H "cd $$P && mv topic-merge.tmp topic-merge && chmod +x topic-merge scripts/run-topic-merge.sh"; \
+	echo "✅ 已上传 topic-merge"
+
+# 远端生成报告+映射（只读），拉回本地 data/topic-merge/
+topic-merge-plan: build-topic-merge
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); \
+	ssh $$U@$$H "cd $$P && bash scripts/run-topic-merge.sh $(ARGS)" && \
+	mkdir -p data/topic-merge && \
+	scp -r $$U@$$H:$$P/data/topic-merge/. ./data/topic-merge/ && \
+	echo "✅ 报告/映射已拉到 data/topic-merge/（编辑 plan-*.tsv 后跑 make topic-merge-apply）"
+
+# 推回本地编辑后的映射并在远端执行（默认 dry-run；ARGS="--dry-run=false" 落库，自动停服/起服）
+topic-merge-apply: build-topic-merge
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	ls ./data/topic-merge/*.tsv >/dev/null 2>&1 || { \
+		echo "❌ 本地没有 data/topic-merge/*.tsv"; \
+		echo "   请先跑 make topic-merge-plan，审阅 report、编辑 plan-*.tsv 后再 apply"; \
+		exit 1; }; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); \
+	scp ./data/topic-merge/*.tsv $$U@$$H:$$P/data/topic-merge/ && \
+	ssh $$U@$$H "cd $$P && bash scripts/run-topic-merge.sh --apply $(ARGS)"
+
+# 重启远端服务
+restart:
+	@if [ -f .env ]; then . ./.env; fi; \
+	ssh $$DEPLOY_USER@$$DEPLOY_HOST "cd $(SERVER_PATH) && bash scripts/control-xhan-helper.sh"
 
 # 编译生产二进制
 build:

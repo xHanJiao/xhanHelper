@@ -53,6 +53,16 @@
 - 单测 `TestNoteSoftDelete_PurgesDerivedData`（`internal/tool/note_test.go`）：删除后 chunk 行、chunk 向量行、全文向量行、版本快照均清零；内存向量删除 `chunk:note:n1/0`、`chunk:note:n1/1`、`note:n1` 三项。
 - 真机：删一条笔记、一条记忆 → 重启后检索不再命中；SQL 查 `embeddings WHERE entity_id IN (...)` 为空。
 
+## 存量残留的一次性清扫：`cmd/entity-gc`
+
+本 bug 修的是**今后**不再产生孤儿；此前用旧代码删掉的笔记/记忆，其派生数据仍在库里。补一个一次性工具清扫：
+
+- `internal/entitygc` + `cmd/entity-gc`（默认 dry-run，`--write` 落库；幂等，重跑为 0）。
+- 范围只覆盖 **note / memory**：软删笔记（`status != 0`）的 `embeddings`(note) 行与 `content_versions`(note) 行；`embeddings`(memory) 中已无对应记忆的行。
+- 用 GORM `Pluck` 把父集合与子 id 都取到 Go 里比对，**规避 SQL 跨列 collation 坑**（`utf8mb4_unicode_ci` vs `utf8mb4_0900_ai_ci`）。
+- `concept` 孤儿不在这里（见上「边界」段，由 topic-merge 的 GC 处理）；`message` 孤儿另属子系统，暂不纳入。
+- 远端执行：`make entity-gc`（dry-run）→ `make entity-gc ARGS="--write"`。
+
 ## 状态
 
-已修（分支 `feat/memory-note-rework-batch1`）：新增 `service.EntityPurger`，接入 4 个删除入口 + 笔记更新重建 chunk 路径。
+已修（分支 `feat/memory-note-rework-batch1`）：新增 `service.EntityPurger`，接入 4 个删除入口 + 笔记更新重建 chunk 路径；存量残留由 `cmd/entity-gc` 一次性清扫。

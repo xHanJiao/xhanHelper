@@ -91,6 +91,17 @@ func (r *NoteRepo) Update(ctx context.Context, id, userID, topic, content, tags 
 	return r.db.WithContext(ctx).Model(&model.Note{}).Where("id = ? AND user_id = ?", id, userID).Updates(updates).Error
 }
 
+// RenameTopic 把一组旧 topic 批量改名为新 topic，返回受影响行数（仅正常状态）。
+func (r *NoteRepo) RenameTopic(ctx context.Context, userID string, from []string, to string) (int64, error) {
+	if len(from) == 0 || to == "" {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).Model(&model.Note{}).
+		Where("user_id = ? AND status = ? AND topic IN ?", userID, model.NoteStatusNormal, from).
+		Update("topic", to)
+	return res.RowsAffected, res.Error
+}
+
 // List 按条件分页查询，limit<=0 时默认 50（仅正常状态）
 func (r *NoteRepo) List(ctx context.Context, userID, topic, keyword string, limit, offset int) ([]model.Note, int64, error) {
 	if limit <= 0 {

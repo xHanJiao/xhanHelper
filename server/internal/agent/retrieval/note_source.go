@@ -18,11 +18,11 @@ func NewNoteSource(
 	chunkBuilder app.ChunkEmbedder,
 	decayer *TimeDecay,
 ) *EntitySource[model.Note] {
-	return NewEntitySource("note", vs, noteRepo, embeddingRepo, chunkRepo, chunkBuilder, decayer,
+	return NewEntitySource(model.EntityTypeNote, vs, noteRepo, embeddingRepo, chunkRepo, chunkBuilder, decayer,
 		EntityConfig[model.Note]{
 			EntityType:   model.EntityTypeNote,
-			FullType:     "note",
-			IDPrefix:     "note:",
+			FullType:     model.VectorTypeNote,
+			IDPrefix:     model.VectorPrefixNote,
 			ConfigPicker: func(o SearchOptions) SourceConfig { return o.Note },
 			AfterFetch:   nil,
 			ListAll: func(ctx context.Context, _ time.Time, limit, offset int) ([]model.Note, error) {

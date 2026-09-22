@@ -183,15 +183,15 @@ func (s *StateUpdater) matchThemesFromMessages(msgs []model.Message, userID stri
 		if m.Role != "user" || m.ID == "" {
 			continue
 		}
-		vec, ok := s.vectorStore.GetVector("msg:" + m.ID)
+		vec, ok := s.vectorStore.GetVector(model.VectorPrefixMessage + m.ID)
 		if !ok || len(vec) == 0 {
 			continue
 		}
 		hits := s.vectorStore.Search(vec, 10, func(id string, _ []float64, meta map[string]string) bool {
-			return meta["type"] == "theme" && meta["user_id"] == userID
+			return meta["type"] == model.VectorTypeTheme && meta["user_id"] == userID
 		})
 		chunkHits := s.vectorStore.Search(vec, 10, func(id string, _ []float64, meta map[string]string) bool {
-			return meta["type"] == "chunk" && meta["parent_type"] == "theme" && meta["user_id"] == userID
+			return meta["type"] == model.VectorTypeChunk && meta["parent_type"] == model.EntityTypeTheme && meta["user_id"] == userID
 		})
 		for _, h := range hits {
 			if tid := h.Metadata["theme_id"]; tid != "" {

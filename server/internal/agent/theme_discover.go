@@ -380,7 +380,7 @@ func (td *ThemeDiscoverer) handleVecSimilar(ctx context.Context, userID, name, d
 	}
 
 	hits := td.vectorStore.Search(vec, 20, func(id string, _ []float64, metadata map[string]string) bool {
-		return metadata["type"] == "theme" && metadata["user_id"] == userID
+		return metadata["type"] == model.VectorTypeTheme && metadata["user_id"] == userID
 	})
 
 	// Phase 1: 收集需要查询 DB 的 theme ID

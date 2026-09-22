@@ -3,11 +3,13 @@ package agent
 import (
 	"context"
 	"log"
+
+	"xhan-helper/internal/model"
 )
 
 // ChunkStateText 增量嵌入主题 state_text：对比旧 chunk，只嵌入变化的句子
 func ChunkStateText(ctx context.Context, chunkBuilder *ChunkBuilder, userID, themeID, stateText string, name string) {
-	kept, added, err := chunkBuilder.DiffAndBuildChunks(ctx, userID, "theme", themeID, stateText, map[string]string{"name": name})
+	kept, added, err := chunkBuilder.DiffAndBuildChunks(ctx, userID, model.EntityTypeTheme, themeID, stateText, map[string]string{"name": name})
 	if err != nil {
 		log.Printf("[theme_chunker] DiffAndBuild error: theme=%s err=%v", themeID[:8], err)
 	} else {

@@ -2,15 +2,17 @@ package retrieval
 
 import (
 	"testing"
+
+	"xhan-helper/internal/model"
 )
 
 func TestSearchThemes(t *testing.T) {
 	vs := &mockVectorStore{
 		results: []SearchResult{
-			{ID: "t1", Score: 0.9, Metadata: map[string]string{"type": "theme", "user_id": "u1", "theme_id": "theme1"}},
-			{ID: "t2", Score: 0.7, Metadata: map[string]string{"type": "theme", "user_id": "u1", "theme_id": "theme1"}},
-			{ID: "t3", Score: 0.5, Metadata: map[string]string{"type": "theme", "user_id": "u1", "theme_id": "theme2"}},
-			{ID: "t4", Score: 0.3, Metadata: map[string]string{"type": "theme", "user_id": "u2", "theme_id": "other_user"}},
+			{ID: "t1", Score: 0.9, Metadata: map[string]string{"type": model.VectorTypeTheme, "user_id": "u1", "theme_id": "theme1"}},
+			{ID: "t2", Score: 0.7, Metadata: map[string]string{"type": model.VectorTypeTheme, "user_id": "u1", "theme_id": "theme1"}},
+			{ID: "t3", Score: 0.5, Metadata: map[string]string{"type": model.VectorTypeTheme, "user_id": "u1", "theme_id": "theme2"}},
+			{ID: "t4", Score: 0.3, Metadata: map[string]string{"type": model.VectorTypeTheme, "user_id": "u2", "theme_id": "other_user"}},
 		},
 	}
 	ts := &ThemeSource{vectorStore: vs}
@@ -30,9 +32,9 @@ func TestSearchThemes(t *testing.T) {
 func TestSearchChunks(t *testing.T) {
 	vs := &mockVectorStore{
 		results: []SearchResult{
-			{ID: "c1", Score: 0.9, Metadata: map[string]string{"type": "chunk", "parent_type": "theme", "parent_id": "theme1", "user_id": "u1"}},
-			{ID: "c2", Score: 0.8, Metadata: map[string]string{"type": "chunk", "parent_type": "theme", "parent_id": "theme1", "user_id": "u1"}},
-			{ID: "c3", Score: 0.6, Metadata: map[string]string{"type": "chunk", "parent_type": "note", "parent_id": "n1", "user_id": "u1"}},
+			{ID: "c1", Score: 0.9, Metadata: map[string]string{"type": model.VectorTypeChunk, "parent_type": model.EntityTypeTheme, "parent_id": "theme1", "user_id": "u1"}},
+			{ID: "c2", Score: 0.8, Metadata: map[string]string{"type": model.VectorTypeChunk, "parent_type": model.EntityTypeTheme, "parent_id": "theme1", "user_id": "u1"}},
+			{ID: "c3", Score: 0.6, Metadata: map[string]string{"type": model.VectorTypeChunk, "parent_type": model.EntityTypeNote, "parent_id": "n1", "user_id": "u1"}},
 		},
 	}
 	ts := &ThemeSource{vectorStore: vs}
@@ -49,9 +51,9 @@ func TestSearchChunks(t *testing.T) {
 func TestSearchAll(t *testing.T) {
 	vs := &mockVectorStore{
 		results: []SearchResult{
-			{ID: "t1", Score: 0.7, Metadata: map[string]string{"type": "theme", "user_id": "u1", "theme_id": "a"}},
-			{ID: "c1", Score: 0.9, Metadata: map[string]string{"type": "chunk", "parent_type": "theme", "parent_id": "a", "user_id": "u1"}},
-			{ID: "t2", Score: 0.4, Metadata: map[string]string{"type": "theme", "user_id": "u1", "theme_id": "b"}},
+			{ID: "t1", Score: 0.7, Metadata: map[string]string{"type": model.VectorTypeTheme, "user_id": "u1", "theme_id": "a"}},
+			{ID: "c1", Score: 0.9, Metadata: map[string]string{"type": model.VectorTypeChunk, "parent_type": model.EntityTypeTheme, "parent_id": "a", "user_id": "u1"}},
+			{ID: "t2", Score: 0.4, Metadata: map[string]string{"type": model.VectorTypeTheme, "user_id": "u1", "theme_id": "b"}},
 		},
 	}
 	ts := &ThemeSource{vectorStore: vs}

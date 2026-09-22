@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
 
@@ -33,7 +34,7 @@ func (s *SimpleHistorySource) Fetch(ctx context.Context, opts SearchOptions) ([]
 	}
 
 	results := s.vectorStore.Search(opts.Embedding, limit*2, func(e Entry) bool {
-		return e.Metadata["type"] == "msg" && e.Metadata["user_id"] == opts.UserID
+		return e.Metadata["type"] == model.VectorTypeMessage && e.Metadata["user_id"] == opts.UserID
 	})
 	if len(results) == 0 {
 		return nil, nil, nil
@@ -50,7 +51,7 @@ func (s *SimpleHistorySource) Fetch(ctx context.Context, opts SearchOptions) ([]
 			nearMiss = append(nearMiss, NearMissItem{ID: r.ID, VectorScore: r.Score, Reason: "below_threshold"})
 			continue
 		}
-		msgID := strings.TrimPrefix(r.ID, "msg:")
+		msgID := strings.TrimPrefix(r.ID, model.VectorPrefixMessage)
 		if msgID == "" || msgID == r.ID {
 			nearMiss = append(nearMiss, NearMissItem{ID: r.ID, VectorScore: r.Score, Reason: "wrong_prefix"})
 			continue

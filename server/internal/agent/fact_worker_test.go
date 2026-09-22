@@ -134,8 +134,8 @@ func seedFact(t *testing.T, deps *factTestDeps, subject, kind, content string) *
 	if err := deps.factRepo.Create(context.Background(), f); err != nil {
 		t.Fatalf("seed fact: %v", err)
 	}
-	deps.store.Upsert(factVectorPrefix+f.ID, []float64{0.1, 0.2, 0.3}, map[string]string{
-		"type": model.EntityTypeFact, "user_id": "u1",
+	deps.store.Upsert(model.VectorPrefixFact+f.ID, []float64{0.1, 0.2, 0.3}, map[string]string{
+		"type": model.VectorTypeFact, "user_id": "u1",
 		"subject": subject, "kind": kind, "content": content,
 	})
 	return f

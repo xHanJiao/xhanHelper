@@ -231,8 +231,8 @@ func (w *SummaryWorker) buildEmbeddingAndChunks(ctx context.Context, s *model.Co
 	}); err != nil {
 		log.Printf("[summary] save embedding %s error: %v", s.ID[:8], err)
 	}
-	w.vectorStore.Upsert("summary:"+s.ID, vec, map[string]string{
-		"type":       "summary",
+	w.vectorStore.Upsert(model.VectorPrefixSummary+s.ID, vec, map[string]string{
+		"type":       model.VectorTypeSummary,
 		"user_id":    s.UserID,
 		"summary_id": s.ID,
 	})

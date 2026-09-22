@@ -63,8 +63,8 @@ func (s *HistorySource) Warmup(ctx context.Context, embedder *llm.Embedder) {
 			if err != nil || len(vec) == 0 {
 				continue
 			}
-			s.vectorStore.Upsert("msg:"+emb.EntityID, vec, map[string]string{
-				"type":    "msg",
+			s.vectorStore.Upsert(model.VectorPrefixMessage+emb.EntityID, vec, map[string]string{
+				"type":    model.VectorTypeMessage,
 				"user_id": emb.UserID,
 			})
 			loaded++
@@ -88,7 +88,7 @@ func (s *HistorySource) filterHits(ctx context.Context, queryVec []float64, user
 	excludeMsgIDs map[string]bool) ([]historyHit, []NearMissItem, error) {
 
 	results := s.vectorStore.Search(queryVec, 20, func(e Entry) bool {
-		return e.Metadata["type"] == "msg" && e.Metadata["user_id"] == userID
+		return e.Metadata["type"] == model.VectorTypeMessage && e.Metadata["user_id"] == userID
 	})
 	if len(results) == 0 {
 		return nil, nil, nil
@@ -97,11 +97,11 @@ func (s *HistorySource) filterHits(ctx context.Context, queryVec []float64, user
 	var hits []historyHit
 	var nearMiss []NearMissItem
 	for _, res := range results {
-		if !strings.HasPrefix(res.ID, "msg:") {
+		if !strings.HasPrefix(res.ID, model.VectorPrefixMessage) {
 			nearMiss = append(nearMiss, NearMissItem{ID: res.ID, Text: res.ID, VectorScore: res.Score, Reason: "wrong_prefix"})
 			continue
 		}
-		msgID := strings.TrimPrefix(res.ID, "msg:")
+		msgID := strings.TrimPrefix(res.ID, model.VectorPrefixMessage)
 		if excludeMsgIDs != nil && excludeMsgIDs[msgID] {
 			nearMiss = append(nearMiss, NearMissItem{ID: msgID, Text: msgID, VectorScore: res.Score, Reason: "already_in_context"})
 			continue

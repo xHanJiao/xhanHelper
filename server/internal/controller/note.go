@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
@@ -65,7 +66,7 @@ func (h *NoteHandler) DeleteNote(c *gin.Context) {
 		return
 	}
 	// 清理派生数据（向量行/chunk/版本快照/内存向量）。笔记已删，清理失败只记日志、不翻转结果。
-	if err := h.purger.Purge(c.Request.Context(), "note", c.Param("id")); err != nil {
+	if err := h.purger.Purge(c.Request.Context(), model.EntityTypeNote, c.Param("id")); err != nil {
 		log.Printf("[note] purge derived data for %s error: %v", c.Param("id"), err)
 	}
 	view.JSONOK(c, gin.H{"deleted": true})

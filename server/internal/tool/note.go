@@ -338,7 +338,7 @@ func (t *NoteTool) getNote(ec *ExecuteContext, args json.RawMessage) *Result {
 	}
 
 	// 附带版本历史列表
-	versions, err := t.versionRepo.GetVersions(ec.Ctx, "note", params.ID)
+	versions, err := t.versionRepo.GetVersions(ec.Ctx, model.EntityTypeNote, params.ID)
 	if err != nil {
 		log.Printf("[note] get versions for get_note: %v", err)
 	}
@@ -372,7 +372,7 @@ func (t *NoteTool) getNoteVersions(ec *ExecuteContext, args json.RawMessage) *Re
 		return &Result{Success: false, Error: fmt.Sprintf("note not found: %v", err)}
 	}
 
-	versions, err := t.versionRepo.GetVersions(ec.Ctx, "note", params.ID)
+	versions, err := t.versionRepo.GetVersions(ec.Ctx, model.EntityTypeNote, params.ID)
 	if err != nil {
 		return &Result{Success: false, Error: fmt.Sprintf("get versions: %v", err)}
 	}
@@ -428,7 +428,7 @@ func (t *NoteTool) deleteNote(ec *ExecuteContext, args json.RawMessage) *Result 
 	}
 
 	// 清理派生数据（向量行/chunk/版本快照/内存向量）。笔记已删，清理失败只记日志、不翻转结果。
-	if err := t.purger.Purge(ec.Ctx, "note", params.ID); err != nil {
+	if err := t.purger.Purge(ec.Ctx, model.EntityTypeNote, params.ID); err != nil {
 		log.Printf("[note] purge derived data for %s error: %v", params.ID, err)
 	}
 
@@ -467,7 +467,7 @@ func (t *NoteTool) updateNote(ec *ExecuteContext, args json.RawMessage) *Result 
 	if current.Variables != nil {
 		snapData["variables"] = *current.Variables
 	}
-	if err := t.versionRepo.CreateSnapshot(ec.Ctx, "note", params.ID, snapData); err != nil {
+	if err := t.versionRepo.CreateSnapshot(ec.Ctx, model.EntityTypeNote, params.ID, snapData); err != nil {
 		log.Printf("[note] create snapshot before update %s: %v", params.ID, err)
 	}
 
@@ -500,7 +500,7 @@ func (t *NoteTool) updateNote(ec *ExecuteContext, args json.RawMessage) *Result 
 			Tags:    tags,
 		}
 		go func() {
-			if err := t.purger.PurgeChunks(context.Background(), "note", params.ID); err != nil {
+			if err := t.purger.PurgeChunks(context.Background(), model.EntityTypeNote, params.ID); err != nil {
 				log.Printf("[note] purge chunks for %s error: %v", params.ID, err)
 			}
 			t.embedAll(context.Background(), noteForEmbed)
@@ -535,11 +535,11 @@ func (t *NoteTool) rollbackNote(ec *ExecuteContext, args json.RawMessage) *Resul
 	if current.Variables != nil {
 		snapData["variables"] = *current.Variables
 	}
-	if err := t.versionRepo.CreateSnapshot(ec.Ctx, "note", params.ID, snapData); err != nil {
+	if err := t.versionRepo.CreateSnapshot(ec.Ctx, model.EntityTypeNote, params.ID, snapData); err != nil {
 		log.Printf("[note] create snapshot before rollback %s: %v", params.ID, err)
 	}
 
-	snap, err := t.versionRepo.GetSnapshot(ec.Ctx, "note", params.ID, params.Version)
+	snap, err := t.versionRepo.GetSnapshot(ec.Ctx, model.EntityTypeNote, params.ID, params.Version)
 	if err != nil {
 		return &Result{Success: false, Error: fmt.Sprintf("version not found: %v", err)}
 	}
@@ -571,24 +571,24 @@ func (t *NoteTool) rollbackNote(ec *ExecuteContext, args json.RawMessage) *Resul
 }
 
 func (t *NoteTool) embedAll(ctx context.Context, note *model.Note) {
-	t.conceptEmbed.EnsureTopicEmbedded(ctx, note.UserID, note.Topic, "note", note.ID)
+	t.conceptEmbed.EnsureTopicEmbedded(ctx, note.UserID, note.Topic, model.EntityTypeNote, note.ID)
 	if note.Tags != "" {
-		t.conceptEmbed.EnsureTagsEmbedded(ctx, note.UserID, note.Tags, "note", note.ID)
+		t.conceptEmbed.EnsureTagsEmbedded(ctx, note.UserID, note.Tags, model.EntityTypeNote, note.ID)
 	}
 
 	vec, err := t.embedder.Embed(ctx, note.Content)
 	if err != nil {
 		log.Printf("[note] embed full note %.8s error: %v", note.ID, err)
 	} else {
-		t.vectorStore.Upsert("note:"+note.ID, vec, map[string]string{
-			"type":    "note",
+		t.vectorStore.Upsert(model.VectorPrefixNote+note.ID, vec, map[string]string{
+			"type":    model.VectorTypeNote,
 			"user_id": note.UserID,
 			"topic":   note.Topic,
 		})
 		embStr := llm.EmbeddingToString(vec)
 		if err := t.embeddingRepo.Upsert(ctx, &model.Embedding{
 			ID:         note.ID,
-			EntityType: "note",
+			EntityType: model.EntityTypeNote,
 			EntityID:   note.ID,
 			UserID:     note.UserID,
 			Model:      t.embedder.ModelName(),
@@ -598,7 +598,7 @@ func (t *NoteTool) embedAll(ctx context.Context, note *model.Note) {
 		}
 	}
 
-	n, err := t.chunkBuilder.BuildChunks(ctx, note.UserID, "note", note.ID, note.Content, map[string]string{"topic": note.Topic})
+	n, err := t.chunkBuilder.BuildChunks(ctx, note.UserID, model.EntityTypeNote, note.ID, note.Content, map[string]string{"topic": note.Topic})
 	if err != nil {
 		log.Printf("[note] chunk build error: %v", err)
 	} else {
@@ -715,7 +715,7 @@ func (t *NoteTool) semanticSearch(ec *ExecuteContext, args json.RawMessage) *Res
 
 	// 1. 全量嵌入搜索 (type=note)
 	fullHits := t.vectorStore.Search(vec, a.TopK*2, func(id string, _ []float64, metadata map[string]string) bool {
-		if metadata["type"] != "note" || metadata["user_id"] != ec.UserID {
+		if metadata["type"] != model.VectorTypeNote || metadata["user_id"] != ec.UserID {
 			return false
 		}
 		if metaTopic, ok := metadata["topic"]; ok && metaTopic != "" && a.Topic != "" && metaTopic != a.Topic {
@@ -726,7 +726,7 @@ func (t *NoteTool) semanticSearch(ec *ExecuteContext, args json.RawMessage) *Res
 
 	// 2. chunk 搜索 (type=chunk, parent_type=note)
 	chunkHits := t.vectorStore.Search(vec, a.TopK*2, func(id string, _ []float64, metadata map[string]string) bool {
-		if metadata["type"] != "chunk" || metadata["parent_type"] != "note" || metadata["user_id"] != ec.UserID {
+		if metadata["type"] != model.VectorTypeChunk || metadata["parent_type"] != model.EntityTypeNote || metadata["user_id"] != ec.UserID {
 			return false
 		}
 		if metaTopic, ok := metadata["topic"]; ok && metaTopic != "" && a.Topic != "" && metaTopic != a.Topic {
@@ -741,14 +741,14 @@ func (t *NoteTool) semanticSearch(ec *ExecuteContext, args json.RawMessage) *Res
 	scoreMap := make(map[string]float64)
 	for _, hit := range fullHits {
 		// full-note ID 格式: "note:{noteID}"
-		id := strings.TrimPrefix(hit.ID, "note:")
+		id := strings.TrimPrefix(hit.ID, model.VectorPrefixNote)
 		if old, ok := scoreMap[id]; !ok || hit.Score > old {
 			scoreMap[id] = hit.Score
 		}
 	}
 	for _, hit := range chunkHits {
 		// chunk ID 格式: "chunk:note:{noteID}/{i}"
-		id := strings.TrimPrefix(hit.ID, "chunk:note:")
+		id := strings.TrimPrefix(hit.ID, model.ChunkVectorKeyPrefix(model.EntityTypeNote))
 		if idx := strings.Index(id, "/"); idx > 0 {
 			id = id[:idx]
 		}

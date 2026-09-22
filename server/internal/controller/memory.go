@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
@@ -60,7 +61,7 @@ func (h *MemoryHandler) DeleteMemory(c *gin.Context) {
 	}
 
 	// 清理派生数据（向量行/chunk/内存向量）。记忆已删，清理失败只记日志、不翻转结果。
-	if err := h.purger.Purge(c.Request.Context(), "memory", id); err != nil {
+	if err := h.purger.Purge(c.Request.Context(), model.EntityTypeMemory, id); err != nil {
 		log.Printf("[memory] purge derived data for %s error: %v", id, err)
 	}
 
@@ -87,7 +88,7 @@ func (h *MemoryHandler) BatchDeleteMemories(c *gin.Context) {
 
 	// 清理派生数据（逐条，幂等）。记忆已删，清理失败只记日志、不翻转结果。
 	for _, id := range req.IDs {
-		if err := h.purger.Purge(c.Request.Context(), "memory", id); err != nil {
+		if err := h.purger.Purge(c.Request.Context(), model.EntityTypeMemory, id); err != nil {
 			log.Printf("[memory] purge derived data for %s error: %v", id, err)
 		}
 	}

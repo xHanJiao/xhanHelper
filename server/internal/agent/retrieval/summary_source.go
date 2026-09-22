@@ -21,11 +21,11 @@ func NewSummarySource(
 	decayer *TimeDecay,
 	sinceDays int,
 ) *EntitySource[model.ConversationSummary] {
-	return NewEntitySource("summary", vs, summaryRepo, embeddingRepo, chunkRepo, chunkBuilder, decayer,
+	return NewEntitySource(model.EntityTypeSummary, vs, summaryRepo, embeddingRepo, chunkRepo, chunkBuilder, decayer,
 		EntityConfig[model.ConversationSummary]{
 			EntityType:   model.EntityTypeSummary,
-			FullType:     "summary",
-			IDPrefix:     "summary:",
+			FullType:     model.VectorTypeSummary,
+			IDPrefix:     model.VectorPrefixSummary,
 			SinceDays:    sinceDays,
 			ConfigPicker: func(o SearchOptions) SourceConfig { return o.Summary },
 			AfterFetch:   nil,

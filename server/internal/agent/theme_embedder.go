@@ -62,8 +62,8 @@ func (e *ThemeEmbedder) EnsureEmbedded(ctx context.Context, userID, themeID, nam
 		return
 	}
 
-	e.vectorStore.Upsert("theme:"+concept.ID, vec, map[string]string{
-		"type":     "theme",
+	e.vectorStore.Upsert(model.VectorPrefixTheme+concept.ID, vec, map[string]string{
+		"type":     model.VectorTypeTheme,
 		"user_id":  userID,
 		"theme_id": themeID,
 	})

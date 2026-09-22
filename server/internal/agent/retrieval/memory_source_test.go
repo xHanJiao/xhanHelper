@@ -33,10 +33,10 @@ func setupMemorySource(t *testing.T) *memoryFixture {
 	embeddingRepo := service.NewEmbeddingRepo(db)
 	return &memoryFixture{
 		src: &EntitySource[model.UserMemory]{
-			name:          "memory",
+			name:          model.EntityTypeMemory,
 			entityType:    model.EntityTypeMemory,
-			fullType:      "mem",
-			idPrefix:      "mem:",
+			fullType:      model.VectorTypeMemory,
+			idPrefix:      model.VectorPrefixMemory,
 			decayer:       NewTimeDecay(0),
 			repo:          memRepo,
 			embeddingRepo: embeddingRepo,
@@ -55,8 +55,8 @@ func memChunkResult(chunkID, memID string, score float64) SearchResult {
 		ID:    chunkID,
 		Score: score,
 		Metadata: map[string]string{
-			"type":        "chunk",
-			"parent_type": "memory",
+			"type":        model.VectorTypeChunk,
+			"parent_type": model.EntityTypeMemory,
 			"parent_id":   memID,
 			"user_id":     "u1",
 		},
@@ -65,10 +65,10 @@ func memChunkResult(chunkID, memID string, score float64) SearchResult {
 
 func fullMemResult(memID string, score float64) SearchResult {
 	return SearchResult{
-		ID:    "mem:" + memID,
+		ID:    model.VectorPrefixMemory + memID,
 		Score: score,
 		Metadata: map[string]string{
-			"type":    "mem",
+			"type":    model.VectorTypeMemory,
 			"user_id": "u1",
 		},
 	}
@@ -260,7 +260,7 @@ func TestMemorySource_FilterOtherUsers(t *testing.T) {
 	f.src.vs = &mockVectorStore{results: []SearchResult{
 		memChunkResult("chunk:memory:m1/0", "m1", 0.85),
 		{ID: "chunk:memory:m_other/0", Score: 0.90, Metadata: map[string]string{
-			"type": "chunk", "parent_type": "memory", "parent_id": "m_other", "user_id": "u2",
+			"type": model.VectorTypeChunk, "parent_type": model.EntityTypeMemory, "parent_id": "m_other", "user_id": "u2",
 		}},
 	}}
 

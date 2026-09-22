@@ -99,12 +99,12 @@ func (s *EntitySource[T]) Fetch(ctx context.Context, opts SearchOptions) ([]Cont
 	chunkCandidates := make(map[string]float64)
 
 	chunkResults := s.vs.Search(queryVec, limit*8, func(e Entry) bool {
-		return e.Metadata["type"] == "chunk" &&
+		return e.Metadata["type"] == model.VectorTypeChunk &&
 			e.Metadata["parent_type"] == s.name &&
 			e.Metadata["user_id"] == userID
 	})
 	for _, res := range chunkResults {
-		id := parseChunkParentID(res.ID)
+		_, id := model.ParseChunkVectorKey(res.ID)
 		if id == "" {
 			nearMiss = append(nearMiss, NearMissItem{ID: res.ID, Text: res.ID, VectorScore: res.Score, Reason: "bad_chunk_id"})
 			continue
@@ -213,7 +213,7 @@ func (s *EntitySource[T]) Fetch(ctx context.Context, opts SearchOptions) ([]Cont
 	packets := make([]ContextPacket, 0, len(scored))
 	for _, sc := range scored {
 		content := sc.ent.GetContent()
-		if s.name == "note" {
+		if s.name == model.EntityTypeNote {
 			// 长笔记注入中间截断（保留头尾），LLM 可调 get_note 获取全文；Meta.Content 保留全文
 			content = util.TruncateMiddle(content, noteInjectedHead, noteInjectedTail)
 			if content != sc.ent.GetContent() {
@@ -371,19 +371,3 @@ const (
 	noteInjectedHead = 100
 	noteInjectedTail = 50
 )
-
-// parseChunkParentID 从 chunk ID 提取 parent entity ID
-// chunk ID 格式: chunk:<parentType>:<parentID>/<index>
-func parseChunkParentID(chunkID string) string {
-	rest := chunkID
-	if idx := strings.Index(chunkID, ":"); idx > 0 {
-		rest = chunkID[idx+1:]
-	}
-	if idx := strings.Index(rest, ":"); idx > 0 {
-		rest = rest[idx+1:]
-	}
-	if idx := strings.LastIndex(rest, "/"); idx > 0 {
-		return rest[:idx]
-	}
-	return rest
-}

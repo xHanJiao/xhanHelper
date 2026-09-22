@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
 
@@ -71,7 +72,7 @@ func (t *GetTopicDetailTool) Execute(ec *ExecuteContext, funcName string, args j
 		}
 		for _, n := range notes {
 			items = append(items, map[string]interface{}{
-				"type":       "note",
+				"type":       model.EntityTypeNote,
 				"id":         n.ID,
 				"topic":      n.Topic,
 				"content":    n.Content,
@@ -91,7 +92,7 @@ func (t *GetTopicDetailTool) Execute(ec *ExecuteContext, funcName string, args j
 				continue
 			}
 			items = append(items, map[string]interface{}{
-				"type":       "memory",
+				"type":       model.EntityTypeMemory,
 				"id":         m.ID,
 				"topic":      m.Topic,
 				"content":    m.MemoryValue,

@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
 
@@ -137,7 +138,7 @@ func (s *ThemeSource) searchThemes(queryVec []float64, userID string, topK int) 
 		return res
 	}
 	results := s.vectorStore.Search(queryVec, topK, func(e Entry) bool {
-		return e.Metadata["type"] == "theme" && e.Metadata["user_id"] == userID
+		return e.Metadata["type"] == model.VectorTypeTheme && e.Metadata["user_id"] == userID
 	})
 	for _, r := range results {
 		themeID := r.Metadata["theme_id"]
@@ -158,8 +159,8 @@ func (s *ThemeSource) searchChunks(queryVec []float64, userID string, topK int) 
 		return res
 	}
 	results := s.vectorStore.Search(queryVec, topK, func(e Entry) bool {
-		return e.Metadata["type"] == "chunk" &&
-			e.Metadata["parent_type"] == "theme" &&
+		return e.Metadata["type"] == model.VectorTypeChunk &&
+			e.Metadata["parent_type"] == model.EntityTypeTheme &&
 			e.Metadata["user_id"] == userID
 	})
 	for _, r := range results {

@@ -18,11 +18,11 @@ func NewMemorySource(
 	chunkBuilder app.ChunkEmbedder,
 	decayer *TimeDecay,
 ) *EntitySource[model.UserMemory] {
-	return NewEntitySource("memory", vs, memRepo, embeddingRepo, chunkRepo, chunkBuilder, decayer,
+	return NewEntitySource(model.EntityTypeMemory, vs, memRepo, embeddingRepo, chunkRepo, chunkBuilder, decayer,
 		EntityConfig[model.UserMemory]{
 			EntityType:   model.EntityTypeMemory,
-			FullType:     "mem",
-			IDPrefix:     "mem:",
+			FullType:     model.VectorTypeMemory,
+			IDPrefix:     model.VectorPrefixMemory,
 			ConfigPicker: func(o SearchOptions) SourceConfig { return o.Memory },
 			AfterFetch: func(ctx context.Context, ids []string) {
 				_ = memRepo.BatchUpdateConfirm(ctx, ids)

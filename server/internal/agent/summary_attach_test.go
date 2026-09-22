@@ -88,10 +88,10 @@ func TestCosineSimilarity_BelowThreshold(t *testing.T) {
 func TestGetOrEmbedSummary_CacheHit(t *testing.T) {
 	vs := NewVectorStore()
 	summaryID := "test-summary-cached"
-	vsKey := "summary:" + summaryID
+	vsKey := model.VectorPrefixSummary + summaryID
 	expectedVec := []float64{0.1, 0.2, 0.3}
 	vs.Upsert(vsKey, expectedVec, map[string]string{
-		"type":       "summary",
+		"type":       model.VectorTypeSummary,
 		"summary_id": summaryID,
 	})
 

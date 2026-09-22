@@ -470,10 +470,10 @@ func (cr *CronRunner) evictStaleVectors(ctx context.Context) {
 		return
 	}
 	if cr.msgRetentionDays > 0 {
-		cr.evictType(ctx, model.EntityTypeMessage, "msg:", cr.msgRetentionDays)
+		cr.evictType(ctx, model.EntityTypeMessage, model.VectorPrefixMessage, cr.msgRetentionDays)
 	}
 	if cr.sumRetentionDays > 0 {
-		cr.evictType(ctx, model.EntityTypeSummary, "summary:", cr.sumRetentionDays)
+		cr.evictType(ctx, model.EntityTypeSummary, model.VectorPrefixSummary, cr.sumRetentionDays)
 	}
 }
 

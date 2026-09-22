@@ -21,7 +21,7 @@ func searchChunks(ctx context.Context, vs app.VectorStore, embedder *llm.Embedde
 	}
 
 	hits := vs.Search(vec, topK*3, func(id string, _ []float64, metadata map[string]string) bool {
-		return metadata["type"] == "chunk" &&
+		return metadata["type"] == model.VectorTypeChunk &&
 			metadata["parent_type"] == parentType &&
 			metadata["user_id"] == userID
 	})
@@ -34,7 +34,7 @@ func dedupParents(hits []app.VectorMatch, topK int) []string {
 	seen := make(map[string]bool)
 	ordered := make([]string, 0)
 	for _, h := range hits {
-		pid := parseChunkParentID(h.ID)
+		_, pid := model.ParseChunkVectorKey(h.ID)
 		if !seen[pid] {
 			seen[pid] = true
 			ordered = append(ordered, pid)
@@ -44,22 +44,6 @@ func dedupParents(hits []app.VectorMatch, topK int) []string {
 		}
 	}
 	return ordered
-}
-
-// parseChunkParentID 从 chunk ID 提取 parentID
-// chunk ID 格式: chunk:<parentType>:<parentID>/<index>
-func parseChunkParentID(chunkID string) string {
-	rest := chunkID
-	if idx := strings.Index(chunkID, ":"); idx > 0 {
-		rest = chunkID[idx+1:]
-	}
-	if idx := strings.Index(rest, ":"); idx > 0 {
-		rest = rest[idx+1:]
-	}
-	if idx := strings.LastIndex(rest, "/"); idx > 0 {
-		return rest[:idx]
-	}
-	return rest
 }
 
 // formatMatchedChunks 将 chunk 匹配片段附加到结果后

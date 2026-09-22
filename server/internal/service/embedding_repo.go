@@ -105,7 +105,7 @@ func (r *EmbeddingRepo) DeleteByEntities(ctx context.Context, entityType string,
 // DeleteChunksByParentType 删除某父类型的全部 chunk 向量行（entity_id 前缀 chunk:<parentType>:）
 func (r *EmbeddingRepo) DeleteChunksByParentType(ctx context.Context, parentType string) (int64, error) {
 	result := r.db.WithContext(ctx).
-		Where("entity_type = ? AND entity_id LIKE ?", "chunk", "chunk:"+parentType+":%").
+		Where("entity_type = ? AND entity_id LIKE ?", model.EntityTypeChunk, model.ChunkVectorKeyPrefix(parentType)+"%").
 		Delete(&model.Embedding{})
 	return result.RowsAffected, result.Error
 }

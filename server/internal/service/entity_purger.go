@@ -3,18 +3,13 @@ package service
 import (
 	"context"
 	"fmt"
+
+	"xhan-helper/internal/model"
 )
 
 // VectorDeleter — 从内存向量库删除条目的最小接口；app.VectorStore 天然满足。
 type VectorDeleter interface {
 	Delete(id string)
-}
-
-// fullVectorKeyPrefix — 各实体的「全文向量」在内存向量库中的键前缀。
-// 必须与写入侧一致：note 用 "note:"（tool/note.go embedAll），memory 用 "mem:"（agent/extractor.go storeMemory）。
-var fullVectorKeyPrefix = map[string]string{
-	"note":   "note:",
-	"memory": "mem:",
 }
 
 // EntityPurger — 删除笔记/记忆等实体时，统一清理其派生数据，避免留下孤儿：
@@ -37,7 +32,7 @@ func NewEntityPurger(embeddingRepo *EmbeddingRepo, chunkRepo *EmbeddingChunkRepo
 // Purge 清理单个实体的全部派生数据。entityType ∈ {note, memory}。
 // DB 行删除失败向上抛（附加语境、保留错误链）；内存向量删除不返回错误。
 func (p *EntityPurger) Purge(ctx context.Context, entityType, entityID string) error {
-	prefix, ok := fullVectorKeyPrefix[entityType]
+	prefix, ok := model.FullVectorPrefix(entityType)
 	if !ok {
 		return fmt.Errorf("entity purger: unsupported entity type %q", entityType)
 	}
@@ -68,11 +63,11 @@ func (p *EntityPurger) PurgeChunks(ctx context.Context, entityType, entityID str
 	}
 	chunkKeys := make([]string, 0, len(chunks))
 	for _, c := range chunks {
-		key := fmt.Sprintf("chunk:%s:%s/%d", entityType, entityID, c.ChunkIndex)
+		key := model.ChunkVectorKey(entityType, entityID, c.ChunkIndex)
 		chunkKeys = append(chunkKeys, key)
 		p.vectorStore.Delete(key)
 	}
-	if _, err := p.embeddingRepo.DeleteByEntities(ctx, "chunk", chunkKeys); err != nil {
+	if _, err := p.embeddingRepo.DeleteByEntities(ctx, model.EntityTypeChunk, chunkKeys); err != nil {
 		return fmt.Errorf("delete chunk embeddings %s/%s: %w", entityType, entityID, err)
 	}
 	if err := p.chunkRepo.DeleteByParent(ctx, entityType, entityID); err != nil {

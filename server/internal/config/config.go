@@ -679,6 +679,8 @@ func validate(cfg *Config) error {
 		cfg.Vector.EvictIntervalHours = 24
 	}
 	if cfg.Vector.ChunkDisabledParents == nil {
+		// 值必须与 model.EntityType* 一致（由 TestChunkDisabledParentsDefaultMatchesModel 钉住）。
+		// 这里刻意用字面量：config 是最底层，不反向依赖 model。
 		cfg.Vector.ChunkDisabledParents = []string{"memory", "note", "summary"}
 	}
 	// Facts 默认值

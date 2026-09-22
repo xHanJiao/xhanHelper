@@ -19,9 +19,6 @@ import (
 	"xhan-helper/internal/service"
 )
 
-// factVectorPrefix — 事实向量的内存 key 前缀（写入与预热必须一致）。
-const factVectorPrefix = "fact:"
-
 // FactWorker — 事实系统后处理子任务（PostChatWorker）。
 // 编排：抽取(LLM) → 逐候选串行 { 归一化判重 → 检索 → 相似度门槛 → 决策(LLM) → 写入 }。
 // 逐条处理完立即写库并同步向量：候选 N 的写入必须对候选 N+1 的检索可见，
@@ -177,7 +174,7 @@ func (w *FactWorker) retrieveNeighbors(ctx context.Context, userID, content stri
 		return nil
 	}
 	return w.vectorStore.Search(vec, w.topK, func(_ string, _ []float64, meta map[string]string) bool {
-		return meta["type"] == model.EntityTypeFact && meta["user_id"] == userID
+		return meta["type"] == model.VectorTypeFact && meta["user_id"] == userID
 	})
 }
 
@@ -263,7 +260,7 @@ func (w *FactWorker) deleteFact(ctx context.Context, userID, srcMsgID string, ac
 		return err
 	}
 	w.logChange(ctx, userID, old.ID, model.FactOpDelete, old.Content, "", srcMsgID)
-	w.vectorStore.Delete(factVectorPrefix + old.ID)
+	w.vectorStore.Delete(model.VectorPrefixFact + old.ID)
 	if err := w.embeddingRepo.DeleteByEntity(ctx, model.EntityTypeFact, old.ID); err != nil {
 		log.Printf("[fact] delete embedding %.8s error: %v", old.ID, err)
 	}
@@ -279,8 +276,8 @@ func (w *FactWorker) syncVector(ctx context.Context, f *model.Fact) {
 		log.Printf("[fact] embed fact %.8s error: %v", f.ID, err)
 		return
 	}
-	w.vectorStore.Upsert(factVectorPrefix+f.ID, vec, map[string]string{
-		"type":    model.EntityTypeFact,
+	w.vectorStore.Upsert(model.VectorPrefixFact+f.ID, vec, map[string]string{
+		"type":    model.VectorTypeFact,
 		"user_id": f.UserID,
 		"subject": f.Subject,
 		"kind":    f.Kind,
@@ -487,7 +484,7 @@ func (d *FactDecider) Decide(ctx context.Context, cand factCandidate, neighbors 
 	idSet := make(map[string]bool, len(neighbors))
 	var nb strings.Builder
 	for _, m := range neighbors {
-		id := strings.TrimPrefix(m.ID, factVectorPrefix)
+		id := strings.TrimPrefix(m.ID, model.VectorPrefixFact)
 		idSet[id] = true
 		fmt.Fprintf(&nb, "  <fact id=\"%s\" subject=\"%s\" kind=\"%s\">%s</fact>\n",
 			xmlEscape(id), xmlEscape(m.Metadata["subject"]), xmlEscape(m.Metadata["kind"]),

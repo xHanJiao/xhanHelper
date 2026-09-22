@@ -59,8 +59,8 @@ func warmupFactEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingR
 			if err != nil || len(vec) == 0 {
 				continue
 			}
-			vectorStore.Upsert(factVectorPrefix+f.ID, vec, map[string]string{
-				"type":    "fact",
+			vectorStore.Upsert(model.VectorPrefixFact+f.ID, vec, map[string]string{
+				"type":    model.VectorTypeFact,
 				"user_id": f.UserID,
 				"subject": f.Subject,
 				"kind":    f.Kind,
@@ -132,7 +132,7 @@ func warmupThemeEmbeddings(ctx context.Context, embeddingRepo *service.Embedding
 				vec, err := llm.StringToEmbedding(*emb.Embedding)
 				if err == nil && len(vec) > 0 {
 					meta := map[string]string{
-						"type":    "theme",
+						"type":    model.VectorTypeTheme,
 						"user_id": emb.UserID,
 					}
 					if conceptValue, ok := conceptIDToValue[emb.EntityID]; ok {
@@ -149,7 +149,7 @@ func warmupThemeEmbeddings(ctx context.Context, embeddingRepo *service.Embedding
 							}
 						}
 					}
-					vectorStore.Upsert("theme:"+emb.EntityID, vec, meta)
+					vectorStore.Upsert(model.VectorPrefixTheme+emb.EntityID, vec, meta)
 					loaded++
 				}
 			}
@@ -169,7 +169,7 @@ func warmupChunkEmbeddings(ctx context.Context, embeddingRepo *service.Embedding
 		disabled[p] = true
 	}
 	for offset := 0; ; offset += pageSize {
-		embeddings, err := embeddingRepo.ListByType(ctx, "chunk", pageSize, offset)
+		embeddings, err := embeddingRepo.ListByType(ctx, model.EntityTypeChunk, pageSize, offset)
 		if err != nil {
 			log.Printf("[warmup] chunk embeddings ListByType error: %v", err)
 			break
@@ -181,7 +181,7 @@ func warmupChunkEmbeddings(ctx context.Context, embeddingRepo *service.Embedding
 			if emb.Embedding == nil {
 				continue
 			}
-			parentType, parentID := parseChunkEntityID(emb.EntityID)
+			parentType, parentID := model.ParseChunkVectorKey(emb.EntityID)
 			if disabled[parentType] {
 				skipped++
 				continue
@@ -191,7 +191,7 @@ func warmupChunkEmbeddings(ctx context.Context, embeddingRepo *service.Embedding
 				continue
 			}
 			vectorStore.Upsert(emb.EntityID, vec, map[string]string{
-				"type":        "chunk",
+				"type":        model.VectorTypeChunk,
 				"parent_type": parentType,
 				"parent_id":   parentID,
 				"user_id":     emb.UserID,
@@ -225,8 +225,8 @@ func warmupToolEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingR
 			if err != nil || len(vec) == 0 {
 				continue
 			}
-			vectorStore.Upsert("tool:"+emb.EntityID, vec, map[string]string{
-				"type":    "tool",
+			vectorStore.Upsert(model.VectorPrefixTool+emb.EntityID, vec, map[string]string{
+				"type":    model.VectorTypeTool,
 				"user_id": emb.UserID,
 			})
 			loaded++
@@ -236,21 +236,4 @@ func warmupToolEmbeddings(ctx context.Context, embeddingRepo *service.EmbeddingR
 		}
 	}
 	log.Printf("[warmup] tool embeddings: %d loaded into vector store", loaded)
-}
-
-// parseChunkEntityID 解析 chunk EntityID，返回 parentType 和 parentID
-// 格式: chunk:<parentType>:<parentID>/<index>
-func parseChunkEntityID(entityID string) (parentType, parentID string) {
-	rest := entityID
-	if idx := strings.Index(rest, ":"); idx > 0 {
-		rest = rest[idx+1:]
-	}
-	if idx := strings.Index(rest, ":"); idx > 0 {
-		parentType = rest[:idx]
-		rest = rest[idx+1:]
-	}
-	if idx := strings.LastIndex(rest, "/"); idx > 0 {
-		parentID = rest[:idx]
-	}
-	return
 }

@@ -437,7 +437,7 @@ func (o *Orchestrator) embedHistoryUserMessages(messages []llm.Message, n int) [
 	var result [][]float64
 	for i := len(messages) - 1; i >= 0 && len(result) < n; i-- {
 		if messages[i].Role == "user" && messages[i].ID != "" {
-			vec, ok := o.vectorStore.GetVector("msg:" + messages[i].ID)
+			vec, ok := o.vectorStore.GetVector(model.VectorPrefixMessage + messages[i].ID)
 			if ok && len(vec) > 0 {
 				result = append(result, vec)
 			}
@@ -952,7 +952,7 @@ func (o *Orchestrator) dedupSummaries(ctx context.Context, summaries []model.Con
 
 // getOrEmbedSummary 获取摘要的 embedding（惰性 embed → VectorStore + DB 双写）。
 func (o *Orchestrator) getOrEmbedSummary(ctx context.Context, summary *model.ConversationSummary) []float64 {
-	vsKey := "summary:" + summary.ID
+	vsKey := model.VectorPrefixSummary + summary.ID
 	if vec, ok := o.vectorStore.GetVector(vsKey); ok {
 		return vec
 	}
@@ -965,7 +965,7 @@ func (o *Orchestrator) getOrEmbedSummary(ctx context.Context, summary *model.Con
 
 	// 写入内存 VectorStore
 	o.vectorStore.Upsert(vsKey, vec, map[string]string{
-		"type":       "summary",
+		"type":       model.VectorTypeSummary,
 		"summary_id": summary.ID,
 		"user_id":    summary.UserID,
 	})
@@ -2168,8 +2168,8 @@ func (o *Orchestrator) saveUserMsgEmbedding(userMsgID string, vec []float64, use
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	o.vectorStore.Upsert("msg:"+userMsgID, vec, map[string]string{
-		"type":    "msg",
+	o.vectorStore.Upsert(model.VectorPrefixMessage+userMsgID, vec, map[string]string{
+		"type":    model.VectorTypeMessage,
 		"conv_id": convID,
 		"user_id": userID,
 	})

@@ -193,7 +193,7 @@ func (e *MemoryExtractor) isDuplicate(ctx context.Context, userID, text string) 
 		return false
 	}
 	results := e.vectorStore.Search(vec, 3, func(_ string, _ []float64, metadata map[string]string) bool {
-		return metadata["type"] == "mem" && metadata["user_id"] == userID
+		return metadata["type"] == model.VectorTypeMemory && metadata["user_id"] == userID
 	})
 	for _, r := range results {
 		if r.Score > e.dupeThreshold {
@@ -211,24 +211,24 @@ func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
 	// 同步嵌入，确保 StateWorker 在后续步骤中能搜到该记忆的向量
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
-	e.conceptEmbed.EnsureTopicEmbedded(ctx, memory.UserID, memory.Topic, "memory", memory.ID)
+	e.conceptEmbed.EnsureTopicEmbedded(ctx, memory.UserID, memory.Topic, model.EntityTypeMemory, memory.ID)
 	if memory.Tags != "" {
-		e.conceptEmbed.EnsureTagsEmbedded(ctx, memory.UserID, memory.Tags, "memory", memory.ID)
+		e.conceptEmbed.EnsureTagsEmbedded(ctx, memory.UserID, memory.Tags, model.EntityTypeMemory, memory.ID)
 	}
 	// 全文嵌入
 	vec, err := e.embedder.Embed(ctx, memory.MemoryValue)
 	if err != nil {
 		log.Printf("[memory] embed full mem %.8s error: %v", memory.ID, err)
 	} else {
-		e.vectorStore.Upsert("mem:"+memory.ID, vec, map[string]string{
-			"type":    "mem",
+		e.vectorStore.Upsert(model.VectorPrefixMemory+memory.ID, vec, map[string]string{
+			"type":    model.VectorTypeMemory,
 			"user_id": memory.UserID,
 			"topic":   memory.Topic,
 		})
 		embStr := llm.EmbeddingToString(vec)
 		if err := e.embeddingRepo.Upsert(ctx, &model.Embedding{
 			ID:         memory.ID,
-			EntityType: "memory",
+			EntityType: model.EntityTypeMemory,
 			EntityID:   memory.ID,
 			UserID:     memory.UserID,
 			Model:      e.embedder.ModelName(),
@@ -238,7 +238,7 @@ func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
 		}
 	}
 
-	n, err := e.chunkBuilder.BuildChunks(ctx, memory.UserID, "memory", memory.ID, memory.MemoryValue, map[string]string{"topic": memory.Topic})
+	n, err := e.chunkBuilder.BuildChunks(ctx, memory.UserID, model.EntityTypeMemory, memory.ID, memory.MemoryValue, map[string]string{"topic": memory.Topic})
 	if err != nil {
 		log.Printf("[memory] chunk build error: %v", err)
 	} else {

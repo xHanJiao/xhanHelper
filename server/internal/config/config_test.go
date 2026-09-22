@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"xhan-helper/internal/model"
 )
 
 func TestValidate_LLMBgAPIKey(t *testing.T) {
@@ -86,5 +88,26 @@ func TestContextWindowFor(t *testing.T) {
 	cfg.StrongContextWindow = 0
 	if got := cfg.ContextWindowFor("deepseek-v4-pro"); got != 1000000 {
 		t.Errorf("strong fallback = %d, want 1000000", got)
+	}
+}
+
+// config 用字面量而非 model 常量（保持最底层不反向依赖 model），这里钉住两者一致。
+func TestChunkDisabledParentsDefaultMatchesModel(t *testing.T) {
+	cfg := &Config{
+		DB:  DBConfig{Driver: "sqlite", Database: "test.db"},
+		LLM: LLMConfig{APIKey: "sk-test"},
+	}
+	if err := validate(cfg); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	want := []string{model.EntityTypeMemory, model.EntityTypeNote, model.EntityTypeSummary}
+	got := cfg.Vector.ChunkDisabledParents
+	if len(got) != len(want) {
+		t.Fatalf("ChunkDisabledParents = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("ChunkDisabledParents[%d] = %q, want %q", i, got[i], want[i])
+		}
 	}
 }

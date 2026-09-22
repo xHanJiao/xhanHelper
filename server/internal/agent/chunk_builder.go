@@ -70,7 +70,7 @@ var chunkMetaBaseKeys = map[string]bool{
 
 func buildChunkMeta(parentType, parentID, userID string, extra map[string]string) map[string]string {
 	md := map[string]string{
-		"type":        "chunk",
+		"type":        model.VectorTypeChunk,
 		"parent_type": parentType,
 		"parent_id":   parentID,
 		"user_id":     userID,
@@ -99,7 +99,7 @@ func (b *ChunkBuilder) BuildChunks(ctx context.Context, userID, parentType, pare
 	embeddings := make([]model.Embedding, 0, len(sentences))
 
 	for i, s := range sentences {
-		chunkID := fmt.Sprintf("chunk:%s:%s/%d", parentType, parentID, i)
+		chunkID := model.ChunkVectorKey(parentType, parentID, i)
 		vec, err := b.embedder.Embed(ctx, s)
 		if err != nil {
 			log.Printf("[chunk] embed %s/%s[%d] error: %v", parentType, parentID[:8], i, err)
@@ -118,7 +118,7 @@ func (b *ChunkBuilder) BuildChunks(ctx context.Context, userID, parentType, pare
 		embStr := llm.EmbeddingToString(vec)
 		embeddings = append(embeddings, model.Embedding{
 			ID:         chunkID,
-			EntityType: "chunk", // 不使用旧 entity_type
+			EntityType: model.EntityTypeChunk, // 不使用旧 entity_type
 			EntityID:   chunkID,
 			UserID:     userID,
 			Model:      b.embedder.ModelName(),
@@ -181,7 +181,7 @@ func (b *ChunkBuilder) DiffAndBuildChunks(ctx context.Context, userID, parentTyp
 		if old, ok := oldByContent[s]; ok && !keptContent[s] {
 			toKeep = append(toKeep, keepItem{
 				chunk: *old,
-				embID: fmt.Sprintf("chunk:%s:%s/%d", parentType, parentID, old.ChunkIndex),
+				embID: model.ChunkVectorKey(parentType, parentID, old.ChunkIndex),
 			})
 			keptContent[s] = true
 		} else if !keptContent[s] {
@@ -213,7 +213,7 @@ func (b *ChunkBuilder) DiffAndBuildChunks(ctx context.Context, userID, parentTyp
 			log.Printf("[chunk] embed %s/%s[%d] error: %v", parentType, parentID[:8], e.idx, err)
 			continue
 		}
-		chunkID := fmt.Sprintf("chunk:%s:%s/%d", parentType, parentID, e.idx)
+		chunkID := model.ChunkVectorKey(parentType, parentID, e.idx)
 		newChunks = append(newChunks, model.EmbeddingChunk{
 			ID:         uuid.New().String(),
 			ParentType: parentType,
@@ -225,7 +225,7 @@ func (b *ChunkBuilder) DiffAndBuildChunks(ctx context.Context, userID, parentTyp
 		embStr := llm.EmbeddingToString(vec)
 		newEmbeddings = append(newEmbeddings, model.Embedding{
 			ID:         chunkID,
-			EntityType: "chunk",
+			EntityType: model.EntityTypeChunk,
 			EntityID:   chunkID,
 			UserID:     userID,
 			Model:      b.embedder.ModelName(),

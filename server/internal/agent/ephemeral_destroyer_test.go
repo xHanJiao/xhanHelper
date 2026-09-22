@@ -51,7 +51,7 @@ func TestBeginDestroy_SchedulesPurgeAndClearsVectors(t *testing.T) {
 	extra, _ := json.Marshal(&model.ConversationExtra{Ephemeral: true})
 	db.Create(&model.Conversation{ID: "conv-0001", UserID: "user-0001", Extra: string(extra)})
 	db.Create(&model.Message{ID: "msg-0001", ConversationID: "conv-0001", UserID: "user-0001", Role: "user", Status: 1})
-	d.vectorStore.Upsert("msg:msg-0001", []float64{1, 0}, map[string]string{"type": "msg", "conv_id": "conv-0001"})
+	d.vectorStore.Upsert(model.VectorPrefixMessage+"msg-0001", []float64{1, 0}, map[string]string{"type": model.VectorTypeMessage, "conv_id": "conv-0001"})
 
 	if err := d.BeginDestroy(ctx, "conv-0001", "user-0001"); err != nil {
 		t.Fatalf("BeginDestroy: %v", err)

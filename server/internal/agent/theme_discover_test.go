@@ -222,10 +222,10 @@ func TestDedup_NameReactivateThenVecActive(t *testing.T) {
 		embedder:   &mockEmbedder{},
 		vectorStore: &mockVectorStore{hits: []app.VectorMatch{
 			{ID: "v1", Score: 0.9, Metadata: map[string]string{
-				"type": "theme", "user_id": "u1", "theme_id": "编程项目-id",
+				"type": model.VectorTypeTheme, "user_id": "u1", "theme_id": "编程项目-id",
 			}},
 			{ID: "v2", Score: 0.85, Metadata: map[string]string{
-				"type": "theme", "user_id": "u1", "theme_id": "Rust学习-id",
+				"type": model.VectorTypeTheme, "user_id": "u1", "theme_id": "Rust学习-id",
 			}},
 		}},
 		dedupThreshold: 0.5,

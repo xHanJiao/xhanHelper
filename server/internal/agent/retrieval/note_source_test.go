@@ -65,10 +65,10 @@ func setupNoteSource(t *testing.T) *noteFixture {
 	embeddingRepo := service.NewEmbeddingRepo(db)
 	return &noteFixture{
 		src: &EntitySource[model.Note]{
-			name:          "note",
+			name:          model.EntityTypeNote,
 			entityType:    model.EntityTypeNote,
-			fullType:      "note",
-			idPrefix:      "note:",
+			fullType:      model.VectorTypeNote,
+			idPrefix:      model.VectorPrefixNote,
 			decayer:       NewTimeDecay(0),
 			repo:          noteRepo,
 			embeddingRepo: embeddingRepo,
@@ -87,8 +87,8 @@ func chunkResult(chunkID, noteID string, score float64) SearchResult {
 		ID:    chunkID,
 		Score: score,
 		Metadata: map[string]string{
-			"type":        "chunk",
-			"parent_type": "note",
+			"type":        model.VectorTypeChunk,
+			"parent_type": model.EntityTypeNote,
 			"parent_id":   noteID,
 			"user_id":     "u1",
 		},
@@ -97,10 +97,10 @@ func chunkResult(chunkID, noteID string, score float64) SearchResult {
 
 func fullNoteResult(noteID string, score float64) SearchResult {
 	return SearchResult{
-		ID:    "note:" + noteID,
+		ID:    model.VectorPrefixNote + noteID,
 		Score: score,
 		Metadata: map[string]string{
-			"type":    "note",
+			"type":    model.VectorTypeNote,
 			"user_id": "u1",
 		},
 	}
@@ -290,7 +290,7 @@ func TestNoteSource_FilterOtherUsers(t *testing.T) {
 	f.src.vs = &mockVectorStore{results: []SearchResult{
 		chunkResult("chunk:note:n1/0", "n1", 0.85),
 		{ID: "chunk:note:n_other/0", Score: 0.90, Metadata: map[string]string{
-			"type": "chunk", "parent_type": "note", "parent_id": "n_other", "user_id": "u2",
+			"type": model.VectorTypeChunk, "parent_type": model.EntityTypeNote, "parent_id": "n_other", "user_id": "u2",
 		}},
 	}}
 

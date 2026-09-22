@@ -26,6 +26,8 @@ struct ToolConfirmation: Identifiable {
     let toolName: String
     let displayName: String
     let argsSummary: String
+    /// shell 命令的中文解释（人话）：确认条主展示，用户不必读原始命令。nil = 无
+    let explain: String?
     /// diff 预览（fs 写工具）：unified patch 文本 + 增减统计 + 目标路径。nil = 无 diff 展示
     let diffText: String?
     let additions: Int?
@@ -506,7 +508,8 @@ class ChatViewModel: ObservableObject {
         diffText: String? = nil,
         additions: Int? = nil,
         deletions: Int? = nil,
-        filePath: String? = nil
+        filePath: String? = nil,
+        explanation: String? = nil
     ) async -> Bool {
         // 信任模式决定本次是否跳过确认（三档语义见 TrustLevel）：
         //   安全 → 都确认；信任 → 只跳常规 L3；完全信任 → 跳 L3+L4，仅 elevated 仍确认。
@@ -547,6 +550,7 @@ class ChatViewModel: ObservableObject {
                 toolName: toolName,
                 displayName: displayName,
                 argsSummary: argsSummary,
+                explain: explanation,
                 diffText: diffText,
                 additions: additions,
                 deletions: deletions,

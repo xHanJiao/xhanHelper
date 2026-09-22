@@ -110,6 +110,13 @@ extension ChatViewModel {
                 if level >= 3 {
                     // shell L4：命令级高危，红色确认条 + 信任档不跳过（完全信任可跳过）
                     let shellHardened = isShell && level >= 4
+                    // shell：生成人话解释（用户不读原始命令，只看这句判断意图）
+                    var shellExplain: String?
+                    if isShell, let cmd = args["command"] as? String {
+                        let wd = ShellToolProvider.resolveWorkdir(args["workdir"] as? String)
+                        let stages = ShellCommandParser.evaluate(command: cmd, workdir: wd).stages
+                        if !stages.isEmpty { shellExplain = ShellCommandDescriber.describe(stages: stages) }
+                    }
                     // fs 写/编辑工具：确认前预演 diff（不落盘），确认条展示。大文件全量读放后台执行。
                     var diffText: String?
                     var additions: Int?
@@ -148,7 +155,8 @@ extension ChatViewModel {
                         diffText: diffText,
                         additions: additions,
                         deletions: deletions,
-                        filePath: fsPath
+                        filePath: fsPath,
+                        explanation: shellExplain
                     )
                     guard confirmed else {
                         LogBuffer.shared.warning("clientToolCall: \(toolName) rejected by user")

@@ -1,7 +1,9 @@
-# 计划：macOS 本地 Shell 命令执行工具（shell__run + L4 强制审批）
+# 计划：macOS 本地 Shell 命令执行工具（shell__run）
 
 > 日期：2026-09-16
-> 状态：待确认（设计阶段，未开发）
+> 状态：已开发；**2026-09-22 降档**——工作区内 L2（免确认）/ 区外 L3（常规确认、信任模式可跳）
+> **2026-09-22 扩容**：放开一批只读文本处理 / 文件写删 / git 写命令（写/执行类恒 L4）+ 严格参数守卫，
+> 见同目录 [`command-expansion.md`](./command-expansion.md)。本文的「v1 冻结」白名单已经是历史值。
 > 架构：纯 macOS 客户端工具（与 `fs__` / `browser__` 同链路），服务端零改动
 > 分支：`feature/shell-tool`
 
@@ -9,7 +11,7 @@
 
 Agent 目前只能在 Mac 上做结构化文件操作（`fs__glob/grep/read/write/edit`），无法执行终端命令（典型场景：`git status` 查看仓库状态、`ls | head` 快速探查目录）。
 
-本计划新增一个客户端 Shell 工具，让 Agent 能跑终端命令，同时通过**命令白名单 + L4 人工审批**把风险控制在本人手里。
+本计划新增一个客户端 Shell 工具，让 Agent 能跑终端命令，同时通过**命令白名单 + 人工审批**把风险控制在本人手里。
 
 **硬约束**：命令在用户 Mac 本地执行；服务端仅转发 schema 与结果，严格禁止在服务器上执行任何命令。
 
@@ -27,19 +29,19 @@ opencode 有两份实现：`packages/core/src/tool/bash.ts`（V2 精简内核）
 | 命令解析 | tree-sitter-bash/PowerShell 解析 AST，枚举所有命令节点（含 `$( )`、管道、子 shell） | **偏离**：no-shell 执行器自行切分（见四） |
 | 权限 | 每条命令 `ctx.ask(permission:"bash", patterns, always)`；BashArity 生成 `"<前缀> *"` 白名单 | 借 arity 思路做代码内置三档白名单 |
 | 目录 | 文件类命令解析路径参数，项目根外 → `external_directory` 许可 | 复用 `DirectoryAuthorizationManager` 授权目录 |
-| 审批 | 交互式权限弹窗（每次询问/永远允许），无限等待 | 复用现有 L3 确认条，新增 L4 不可跳档；**偏离**：L4 60s 自动拒绝 |
+| 审批 | 交互式权限弹窗（每次询问/永远允许），无限等待 | 复用现有确认条；工作区内 L2 免确认、区外 L3（信任模式可跳）；**偏离**：确认 60s 自动拒绝 |
 
 ## 三、目标 / 非目标
 
 **目标**：
 - `shell__run`：执行一条命令，支持 `|` / `&&` / `||` / `;` 管道与串联。
-- 解析层二档：`allow`（只读白名单，可执行）/ 未命中（拒绝）；**执行层默认 L4**——每条命令执行前都弹红色人工确认（信任模式不可跳）；**命令完全落在 Agent 工作区内时降为 L3**（常规确认、信任模式可跳）。
+- 解析层两档（v2）：`allow`（只读 → 工作区 L2 免确认 / 区外 L3 常规确认）/ `l4`（写·执行 → 恒 L4 红色确认）/ 未命中（拒绝）。
 - workdir / 路径参数限定在已授权目录内（复用 `DirectoryAuthorizationManager`），另有 Agent 工作区作为默认隐式读写根。
 - 超时看门狗、进程组清理、输出预算与落盘分页。
 
 **非目标**：
 - 不走 `/bin/zsh -c`，不支持变量展开（`$VAR`）、通配符（`*?~`）、重定向（`>` `<`）、`cd`、后台（`&`）。
-- **不代做任何"能执行代码/写文件/连网络"的操作**（v1 安全优先，只放只读）。以下整类**不进白名单**（未命中即拒）：
+- **v1 安全优先，只放只读**；v2 已放开一部分（写/执行类恒 L4），见 `command-expansion.md`。以下为 v1 整类不进的清单：
   - 解释器 / 构建链（实际执行内容藏在文件里、确认框看不到）：`node` `python3` `go` `npm` `npx` `pnpm` `yarn` `pip` `pip3` `brew` `swift` `xcodebuild` `make` `cargo` `gradle` `mvn`。
   - 可执行子命令的文本工具：`sed` `awk` `perl` `xargs` `find`。
   - 文件写/删/权限/归档：`rm` `mv` `cp` `mkdir` `rmdir` `touch` `chmod` `chown` `ln` `tee` `truncate` `rsync` `tar` `zip` `unzip` `gzip`（写文件用 `fs__write` / `fs__edit`）。
@@ -179,30 +181,34 @@ isReadOnly: false
 
 运行中的 shell 进程组登记到 `ShellProcessRegistry`；`ChatViewModel.stopStreaming()`（`ChatViewModel.swift:853`）除断 SSE + 通知服务端外，还调用 registry 按组杀，否则命令会一直跑到自己的超时。
 
-## 七、白名单（v1 冻结）
+## 七、白名单（v1 冻结；**v2 已扩容，见 `command-expansion.md`**）
 
 判定按 `argv[0]` 的 basename 精确匹配（先解析到受信 PATH 目录内的绝对路径）；`git` 另按子命令/参数判定。
 
-### allow（自动执行，只读，29 个）
+### allow（自动执行，只读，v1 共 29 个）
 
 `ls pwd head tail wc file stat which type du df tree basename dirname realpath cmp diff md5 shasum echo grep rg date whoami hostname uname id sw_vers arch`
 
 - **`cat` 不在列**：读文件走 `fs__read`，避免绕过敏感文件拦截。
 - 版本查询：命令已在白名单中且参数仅 `--version` / `-V` → allow（不做 `* --version` 通配）。
+- **v2 追加**：`sort uniq cut tr nl column jq`（其中 `sort -o` 会写文件，已单独拦截）。
 
-### l4（人工确认，信任模式不可跳）
+### l4（v1 为空集；v2 已填实）
 
-**空集**。shell 默认在 `LocalToolRegistry` 定级为 L4——每条命令执行前都弹红色确认（信任模式不可跳）；**命令完全落在 Agent 工作区内时降为 L3**（常规确认、信任模式可跳），判定见 `ShellCommandParser.isScopedToAgentWorkspace`（workdir + 所有实际存在的显式路径参数都在 workspace 内；工作区外一切维持 L4）。解析层只区分"只读白名单（可执行）"与"未命中（拒绝）"。`l4Commands` 保留为空集合，作为将来加 L4 命令的扩展点。
+v1 时 `l4Commands` 为空集：shell 整体在 `LocalToolRegistry` 定级——工作区内 L3（后降为 L2）、区外 L4，解析层只区分「只读白名单（可执行）/ 未命中（拒绝）」。
 
-### git（只读）
+**v2 起 `l4Commands` 填实**（写 / 执行类，恒 L4，工作区内也 L4）：`find sed awk rm mv cp mkdir rmdir touch ln chmod chown tee truncate`，另有 `find/sed/awk` 的形式守卫与写路径校验。详见 `command-expansion.md` 四、五。
+
+### git（v1 只读；v2 起放开明确写子命令）
 
 - 任意参数：`git status / log / show / diff / blame / rev-parse / ls-files / shortlog / describe`
 - 仅只读形式：`branch`（`-l/--list/-a/-r/-v/-vv/--contains/--merged/--points-at/--sort=*/--format=*`…）、`remote`（`-v/--verbose/show/get-url`）、`tag`（`-l/-n/--contains/--points-at/--sort=*/--format=*`…）、`stash`（`list/show`）
-- 其余任何 git 子命令或"像写操作"的参数（`add commit push config clean reset branch new tag v1 remote add`…）→ **拒绝**，确认框也不给（不代操作 git）。
+- **v2 起写子命令 → L4**（不再一律拒绝）：`add commit checkout switch restore reset clean merge rebase cherry-pick revert`、`stash push/pop/apply/drop`、`tag -a/-d/-m`、`branch <name>/-d/-m`、`remote add/remove/set-url`。仍拒绝：`push/fetch/pull/clone/config/init`。
+- 其余未列出的 git 子命令 → **拒绝**。
 
 ### 未命中 → 拒绝（无需单独 deny 列表）
 
-`sudo` / `shutdown` / `launchctl` / `diskutil`，以及"非目标"列出的全部解释器/构建链（`node python3 go npm pip brew make xcodebuild …`）、`sed awk perl xargs find`、文件写类（`rm mv cp chmod ln rsync tar zip …`）、网络/进程类（`wget ssh scp sftp nc kill open osascript docker kubectl gh`）——天然被拒。
+`sudo` / `shutdown` / `launchctl` / `diskutil`，以及"非目标"列出的全部解释器/构建链（`node python3 go npm pip brew make xcodebuild …`）、`perl xargs`、归档类（`rsync tar zip unzip gzip`）、网络/进程类（`wget ssh scp sftp nc kill open osascript docker kubectl gh`）——天然被拒。（v2 起 `sed awk find` 与 `rm mv cp chmod ln` 等已放出，见上。）
 
 ### git 全局选项
 
@@ -246,7 +252,7 @@ L4 改四处：
 
 1. `LocalToolRegistry`：
    - 新增 `shellBlockedReason(arguments:) -> String?`（镜像 `fsBlockedPaths`）：未命中白名单时返回拒绝原因；`handleClientToolCall` 在确认前调用，直接回传错误。
-   - `riskLevel(for:arguments:)` 加 shell 分支：`ShellToolProvider.isWorkspaceScoped(arguments:) ? 3 : 4`（工作区内 L3，其余 L4）。
+   - `riskLevel(for:arguments:)` 加 shell 分支：**v2 起**调用 `ShellToolProvider.shellLevel(arguments:)`（`.l4`→4；`.allow`→ 工作区 2 / 区外 3）。
    - `shortNames` 加 `shell__run: "执行命令"`。
 2. `ChatViewModel+ClientTools.swift`：shell 拒绝前置；确认 force 条件改为 `forcedL3 || level >= 4`。
 3. `ChatViewModel.swift`：`awaitToolConfirmation(hardened:)` 增加参数；`ToolConfirmation` 增 `hardened: Bool`。

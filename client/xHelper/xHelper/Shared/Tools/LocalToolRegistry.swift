@@ -7,6 +7,7 @@ final class LocalToolRegistry {
     /// 工具风险等级表（flatName: namespace__tool）。
     /// 未登记的工具默认 L2（低风险写）。L3（高风险写，执行前需用户确认）仅留给
     /// 基础语义有破坏性的工具（如未来终端的 rm/mv）；agent_browser 全部 ≤L2。
+    /// shell 例外：工作区内 L2（免确认），区外 L3（常规确认、信任模式可跳），见下方 `shell__` 分支。
     /// 等级仅供客户端执行控制，不随 schema 下发给 LLM。
     private let riskLevels: [String: Int] = [
         // L1 只读
@@ -38,10 +39,9 @@ final class LocalToolRegistry {
     #if os(macOS)
     func riskLevel(for flatName: String, arguments: [String: Any]) -> Int {
         if flatName.hasPrefix("shell__") {
-            // shell 默认 L4（红色、信任模式不可跳）；命令完全落在 Agent 工作区内 → L3
-            //（常规确认、信任模式可跳）。工作区外一切维持 L4。
-            // 未命中白名单的命令已由 shellBlockedReason 前置拒绝。
-            return ShellToolProvider.isWorkspaceScoped(arguments: arguments) ? 3 : 4
+            // 只读命令：工作区内 L2（免确认）/ 区外 L3（常规确认、信任模式可跳）。
+            // 写/执行命令：恒 L4（红色确认、工作区内也 L4）。未命中白名单已由 shellBlockedReason 前置拒绝。
+            return ShellToolProvider.shellLevel(arguments: arguments)
         }
         if flatName.hasPrefix("fs__") {
             let paths = FileSystemToolProvider.extractPaths(flatName: flatName, arguments: arguments)

@@ -137,7 +137,7 @@ final class ShellCommandParserTests: XCTestCase {
         XCTAssertEqual(risk("head \"\(url.path)\""), "deny")
     }
 
-    // MARK: - l4 集合为空：shell 整体由 registry 定级 L4，解析层只区分 allow/deny
+    // MARK: - deny：未收命令
 
     func testCurlIsDenied() {
         // curl 已移出白名单（联网交给浏览器），解析层直接拒绝
@@ -170,19 +170,94 @@ final class ShellCommandParserTests: XCTestCase {
         XCTAssertEqual(risk("git diff"), "allow")
     }
 
-    // MARK: - deny：写操作 / git 写 / 脚本语言 / 构建链 / 未命中
+    // MARK: - 只读文本工具（v2 allow）
 
-    func testDenyWriteCommands() {
+    func testAllowReadOnlyTextTools() {
+        for command in ["sort -n a", "uniq -c a", "cut -d, -f1 a", "tr a b",
+                        "nl a", "column -t a", "jq '.a' f"] {
+            XCTAssertEqual(risk(command), "allow", "expected allow: \(command)")
+        }
+    }
+
+    func testSortOutputFlagDenied() {
+        XCTAssertEqual(risk("sort -o out a"), "deny")
+        XCTAssertEqual(risk("sort -oout a"), "deny")
+        XCTAssertEqual(risk("sort --output=out a"), "deny")
+        XCTAssertEqual(risk("sort -rn a"), "allow")
+    }
+
+    // MARK: - l4：写/执行类（v2 放开，恒 L4）
+
+    func testL4WriteCommands() {
         for command in ["rm -rf x", "mv a b", "cp a b", "mkdir d", "rmdir d", "touch f",
-                        "tee f", "truncate -s 0 f", "chmod +x f", "chown u f", "ln -s a b",
-                        "rsync -a a/ b/", "tar czf a.tgz d", "zip a.zip f", "unzip a.zip", "gzip f"] {
+                        "tee f", "truncate -s 0 f", "chmod +x f", "chown u f", "ln -s a b"] {
+            XCTAssertEqual(risk(command), "l4", "expected l4: \(command)")
+        }
+    }
+
+    func testL4WriteOutsideAuthorizedDenied() {
+        XCTAssertEqual(risk("rm /etc/hosts"), "deny")
+        XCTAssertEqual(risk("rm -rf /"), "deny")
+        XCTAssertEqual(risk("rm ~/.ssh/id_rsa"), "deny")
+        XCTAssertEqual(risk("mkdir /etc/x"), "deny", "父目录未授权")
+        XCTAssertEqual(risk("touch /etc/x"), "deny")
+        XCTAssertEqual(risk("cp a /etc/x"), "deny")
+    }
+
+    func testL4FindSedAwk() {
+        XCTAssertEqual(risk("find . -name x"), "l4")
+        XCTAssertEqual(risk("awk '' f"), "l4")
+        XCTAssertEqual(risk("sed -n 1,10p f"), "l4")
+    }
+
+    func testFindExecFormsDenied() {
+        XCTAssertEqual(risk("find . -exec rm {} \\;"), "deny")
+        XCTAssertEqual(risk("find . -delete"), "deny")
+        XCTAssertEqual(risk("find . -ok rm {} \\;"), "deny")
+        XCTAssertEqual(risk("find . -fprint out.txt"), "deny")
+    }
+
+    func testSedGuards() {
+        XCTAssertEqual(risk("sed -i s/a/b/ f"), "deny")
+        XCTAssertEqual(risk("sed -i.bak s/a/b/ f"), "deny")
+        XCTAssertEqual(risk("sed 's/a/b/e' f"), "deny")
+        XCTAssertEqual(risk("sed 'w out.txt' f"), "deny")
+        XCTAssertEqual(risk("sed -f script.sed f"), "deny")
+        XCTAssertEqual(risk("sed -n 1,10p f"), "l4")
+    }
+
+    func testAwkGuards() {
+        XCTAssertEqual(risk("awk 'BEGIN{system(\"id\")}' f"), "deny")
+        XCTAssertEqual(risk("awk '{print $1 > \"out\"}' f"), "deny")
+        XCTAssertEqual(risk("awk -f prog.awk f"), "deny")
+        XCTAssertEqual(risk("awk '$1 > 2 {print}' f"), "l4", "比较符 > 不应误杀")
+    }
+
+    func testArchiveCommandsStillDenied() {
+        for command in ["rsync -a a/ b/", "tar czf a.tgz d", "zip a.zip f", "unzip a.zip", "gzip f"] {
             XCTAssertEqual(risk(command), "deny", "expected deny: \(command)")
         }
     }
 
+    // MARK: - 人话解释（确认条）
+
+    func testDescriber() {
+        func d(_ c: String) -> String {
+            ShellCommandDescriber.describe(stages: ShellCommandParser.evaluate(command: c, workdir: workdir).stages)
+        }
+        XCTAssertTrue(d("rm -rf build").contains("递归强制删除"))
+        XCTAssertTrue(d("rm -rf build").contains("build"))
+        XCTAssertTrue(d("mv a.txt docs/").contains("移动"))
+        XCTAssertTrue(d("git commit -m fix").contains("提交"))
+        XCTAssertTrue(d("git commit -m fix").contains("fix"))
+        XCTAssertTrue(d("ls | head").contains("|"))
+    }
+
+    // MARK: - deny：脚本语言 / 构建链 / 未命中
+
     func testDenyScriptAndBuildChains() {
-        for command in ["sed -i s/a/b/ f", "awk '' f", "perl -e 1", "xargs rm",
-                        "find . -name x", "node -e 1", "python3 x.py", "go run .",
+        for command in ["sed -i s/a/b/ f", "perl -e 1", "xargs rm",
+                        "node -e 1", "python3 x.py", "go run .",
                         "npm install", "npx foo", "brew install x", "make", "cargo build",
                         "xcodebuild", "sudo ls", "cat file.txt"] {
             XCTAssertEqual(risk(command), "deny", "expected deny: \(command)")
@@ -198,12 +273,20 @@ final class ShellCommandParserTests: XCTestCase {
         }
     }
 
-    func testGitWriteIsDenied() {
-        for command in ["git commit -m x", "git push", "git pull", "git add .",
-                        "git config user.name x", "git clean -fd", "git reset --hard",
-                        "git branch new", "git branch -d old", "git remote add x y",
-                        "git tag v1", "git stash push", "git stash"] {
+    func testGitNetworkAndConfigStillDenied() {
+        for command in ["git push", "git pull", "git fetch", "git clone x y",
+                        "git config user.name x", "git stash", "git stash bogus"] {
             XCTAssertEqual(risk(command), "deny", "expected deny: \(command)")
+        }
+    }
+
+    func testGitWriteIsL4() {
+        for command in ["git commit -m x", "git add .", "git checkout main", "git switch -c x",
+                        "git restore f", "git reset --hard", "git clean -fd", "git merge x",
+                        "git rebase main", "git cherry-pick abc", "git revert abc",
+                        "git branch new", "git branch -d old", "git remote add x y",
+                        "git tag v1", "git stash push"] {
+            XCTAssertEqual(risk(command), "l4", "expected l4: \(command)")
         }
     }
 

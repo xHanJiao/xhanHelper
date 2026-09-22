@@ -6,7 +6,7 @@ import Darwin
 ///
 /// 分级与确认在 `LocalToolRegistry` / `ChatViewModel+ClientTools` 层完成，本类只负责
 /// **执行已获准的命令**：no-shell 管道执行器 + posix_spawn 进程组 + 超时看门狗 + 输出预算。
-/// 设计见 docs/design/mac-apps/shell-tool.md。
+/// 设计见 docs/design/shell-tool/。
 final class ShellToolProvider: @unchecked Sendable {
     let namespace = "shell"
 
@@ -23,6 +23,19 @@ final class ShellToolProvider: @unchecked Sendable {
         guard let command = arguments["command"] as? String else { return false }
         let workdir = resolveWorkdir(arguments["workdir"] as? String)
         return ShellCommandParser.isScopedToAgentWorkspace(command: command, workdir: workdir)
+    }
+
+    /// 风险等级（供 `LocalToolRegistry`）：`.l4`（写/执行）→ 4（恒 L4，工作区内也 L4）；
+    /// `.allow`（只读）→ 工作区 2（免确认）/ 区外 3（常规确认、信任模式可跳）。
+    static func shellLevel(arguments: [String: Any]) -> Int {
+        guard let command = (arguments["command"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !command.isEmpty else { return 4 }
+        let workdir = resolveWorkdir(arguments["workdir"] as? String)
+        switch ShellCommandParser.evaluate(command: command, workdir: workdir).risk {
+        case .l4: return 4
+        case .allow: return isWorkspaceScoped(arguments: arguments) ? 2 : 3
+        case .deny: return 4 // 正常已被 shellBlockedReason 前置拒绝，兜底
+        }
     }
 
     /// 硬阻断原因：命令缺失 / workdir 不存在或未授权 / 语法不支持 / 未命中白名单。
@@ -481,19 +494,21 @@ extension ShellToolProvider: LocalToolProvider {
             LocalToolSchema(
                 name: "run",
                 description: """
-                在用户 Mac 上执行一条**只读**终端命令，用于了解项目/环境现状（如 git status、ls、grep）。
-                要读/写/编辑文件请用 fs__ 系列（fs__read / fs__write / fs__edit），联网请用浏览器工具。
+                在用户 Mac 上执行一条终端命令，用于了解项目/环境现状（git status、ls、grep），
+                以及做只读文本处理（sort/uniq/cut/jq）、文件增删改（rm/mv/cp/mkdir/touch）、git 写操作（add/commit/checkout）。
 
                 用法：
-                - **每条命令执行前都会弹出确认**：完全落在 Agent 工作区内为常规确认（信任模式可跳过），
-                  工作区外为红色强制确认（不可跳过、信任模式无效）；用户拒绝则不执行。
-                - 只支持只读白名单命令；写文件、移动/删除、安装、运行脚本、ssh/scp、curl/wget 等一律拒绝。
-                - 支持的 git 仅只读：status / log / show / diff / blame / rev-parse / ls-files /
-                  shortlog / describe，以及 branch/remote/tag/stash 的只读查看形式；不代操作 git（add/commit/push 等会被拒）。
+                - **按风险分级执行**：只读命令在工作区内免确认、工作区外常规确认；写/删/移动、git 写操作等为红色强制确认
+                  （工作区内也需确认）。用户拒绝则不执行。
+                - 只读命令：ls/rg/grep/head/sort/uniq/cut/tr/nl/column/jq 等，以及 git 只读（status/log/show/diff/branch -l/…）。
+                - 受限命令：find（禁 -exec/-delete 等）、sed（禁 -i/-f 与 e/w/r）、awk（禁 -f 与 system/getline/输出重定向）。
+                - git 只做只读与明确写（add/commit/checkout/switch/restore/reset/clean/merge/rebase/cherry-pick/revert/stash/tag/branch/remote）。
+                - **不支持**：解释器/构建链（node/python3/go/npm/make…）、perl/xargs、网络（curl/wget/ssh/scp、git push/fetch/pull）、
+                  系统类（sudo/open/osascript/kill…）。读/写文件优先用 fs__read / fs__write / fs__edit；联网用浏览器。
                 - 支持管道与串联：|  &&  ||  ;
                 - 不支持：变量展开（$VAR）、通配符（* ? ~）、重定向（> <）、cd、后台（&）。
-                  需要切换目录用 workdir 参数；需要找文件用 fs__glob。
-                - 工作目录（workdir）默认是 Agent 工作区；命令里引用的文件路径同样必须在可访问目录内，否则会被拒绝（例如 /etc/hosts）。
+                  需要切换目录用 workdir 参数；需要找文件可以用 fs__glob。
+                - 工作目录（workdir）默认是 Agent 工作区；命令里引用的文件路径同样必须在可访问目录内，否则会被拒绝。
 
                 \(DirectoryAuthorizationManager.accessDescriptionBlock())
                 - 输出**硬上限 2MB**：命令产生超过 2MB 输出时，超出的字节会被**丢弃且无法恢复**。
@@ -509,7 +524,7 @@ extension ShellToolProvider: LocalToolProvider {
                     "properties": [
                         "command": [
                             "type": "string",
-                            "description": "要执行的只读命令，如 git status 或 ls -la | head -20",
+                            "description": "要执行的命令，如 git status 或 ls -la | head -20",
                         ],
                         "workdir": [
                             "type": "string",

@@ -905,11 +905,24 @@ struct ChatView: View {
                          : "请求执行工具：「\(conf.displayName)」")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text(conf.argsSummary)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundColor(conf.hardened ? .red : .primary)
-                        .lineLimit(6)
-                        .textSelection(.enabled)
+                    if let explain = conf.explain {
+                        // shell：人话解释为主（用户不读原始命令）；原始命令以等宽小字附在下方
+                        Text(explain)
+                            .font(.callout)
+                            .foregroundColor(conf.hardened ? .red : .primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(conf.argsSummary)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(6)
+                            .textSelection(.enabled)
+                    } else {
+                        Text(conf.argsSummary)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(conf.hardened ? .red : .primary)
+                            .lineLimit(6)
+                            .textSelection(.enabled)
+                    }
                 }
                 Button("允许") { viewModel.resolveToolConfirmation(allow: true) }
                     .buttonStyle(.bordered)

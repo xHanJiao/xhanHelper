@@ -3,7 +3,7 @@ import Foundation
 
 /// Shell 命令的解析与白名单判定（纯逻辑，不做任何执行）。
 ///
-/// 安全模型（见 docs/design/mac-apps/shell-tool.md 四、七）：命令字符串**永不交给 shell**。
+/// 安全模型（见 docs/design/shell-tool/design.md 四、七）：命令字符串**永不交给 shell**。
 /// 本文件只做 quote-aware 切分 / tokenize / 分级，任何未命中白名单或含不支持语法的输入都直接拒绝。
 /// 因为没有解释器，`$( )` / 反引号 / `;` 注入都会被当普通字面量，不构成绕过。
 nonisolated enum ShellRisk: Sendable {
@@ -48,18 +48,33 @@ nonisolated enum ShellCommandParser {
 
     // MARK: - 白名单
 
-    /// allow：只读 / 无副作用，自动执行。
+    /// allow：只读 / 无副作用，自动执行。工作区 L2 / 区外 L3。
     static let allowCommands: Set<String> = [
         "ls", "pwd", "head", "tail", "wc", "file", "stat", "which", "type",
         "du", "df", "tree", "basename", "dirname", "realpath", "md5", "shasum",
         "cmp", "diff", "echo", "grep", "rg",
         "date", "whoami", "hostname", "uname", "id", "sw_vers", "arch",
+        // v2 只读文本处理（写口由 allowFormBlockedReason 单独堵）
+        "sort", "uniq", "cut", "tr", "nl", "column", "jq",
     ]
 
-    /// l4 命令集：**空**。shell 的风险等级由 `LocalToolRegistry` 定：默认 L4（人工确认、信任模式不可跳），
-    /// 但命令**完全落在 Agent 工作区内**时降为 L3（默认仍确认、信任模式可跳，见 `isScopedToAgentWorkspace`）。
-    /// 这里只需区分"白名单只读（可执行）"与"未命中（拒绝）"。文件写请用 fs__write/fs__edit；联网用浏览器。
-    static let l4Commands: Set<String> = []
+    /// l4 命令集：写 / 执行类，恒 L4（红色确认、仅完全信任可跳，**工作区内也 L4**）。
+    /// 危险藏在参数里的命令（find/sed/awk）另有形式守卫（`l4FormBlockedReason`）。
+    static let l4Commands: Set<String> = [
+        "find", "sed", "awk",
+        "rm", "mv", "cp", "mkdir", "rmdir", "touch", "ln",
+        "chmod", "chown", "tee", "truncate",
+    ]
+
+    /// l4 中"只读语义"的命令：路径参数按读校验；其余 l4 按写校验（目标不存在查父目录）。
+    static let l4ReadOnly: Set<String> = ["find", "sed", "awk"]
+
+    /// l4 命令需要硬拒的参数形式（命令执行 / 任意写口）。
+    static let l4DeniedFlags: [String: Set<String>] = [
+        "find": ["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fls", "-fprint", "-fprint0", "-fprintf"],
+        "sed": ["-i", "--in-place", "-f", "--file"],
+        "awk": ["-f", "--file"],
+    ]
 
     static let gitReadOnly: Set<String> = [
         "status", "log", "show", "diff", "blame", "rev-parse", "ls-files", "shortlog", "describe",
@@ -67,6 +82,12 @@ nonisolated enum ShellCommandParser {
 
     /// git 只支持"了解仓库在干啥"（只读）；写操作不交给 agent（用 git 写请走人工终端）。
     static let gitArgLevel: Set<String> = ["branch", "remote", "tag", "stash"]
+
+    /// git 写子命令（v2）：明确的写操作走 L4 确认（不再一律拒绝）。
+    static let gitWrite: Set<String> = [
+        "add", "commit", "checkout", "switch", "restore", "reset",
+        "clean", "merge", "rebase", "cherry-pick", "revert",
+    ]
 
     // MARK: - 入口
 
@@ -267,12 +288,22 @@ nonisolated enum ShellCommandParser {
             return classifyGit(Array(argv.dropFirst()))
         }
         if allowCommands.contains(base) {
+            if let reason = allowFormBlockedReason(base: base, argv: argv) {
+                return .deny(reason)
+            }
             if let reason = pathBlockedReason(argv: argv, workdir: workdir) {
                 return .deny(reason)
             }
             return .allow
         }
         if l4Commands.contains(base) {
+            if let reason = l4FormBlockedReason(base: base, argv: argv) {
+                return .deny(reason)
+            }
+            let forWrite = !l4ReadOnly.contains(base)
+            if let reason = pathBlockedReason(argv: argv, workdir: workdir, forWrite: forWrite) {
+                return .deny(reason)
+            }
             return .l4
         }
         return .deny("命令未在白名单内：\(base)")
@@ -304,6 +335,119 @@ nonisolated enum ShellCommandParser {
         return nil
     }
 
+    // MARK: - 参数形式守卫
+
+    /// allow 命令的写口拦截。当前只有 `sort -o/--output` 能写文件。
+    private static func allowFormBlockedReason(base: String, argv: [String]) -> String? {
+        if base == "sort" {
+            for a in argv.dropFirst() {
+                if a == "--output" || a.hasPrefix("--output=") { return "sort -o/--output 会写文件，已拒绝" }
+                if a.hasPrefix("-"), !a.hasPrefix("--"), a.dropFirst().contains("o") {
+                    return "sort -o/--output 会写文件，已拒绝"
+                }
+            }
+        }
+        return nil
+    }
+
+    /// l4 命令的形式守卫：硬拒参数在禁止表里，或 sed/awk 脚本含执行/写口。
+    private static func l4FormBlockedReason(base: String, argv: [String]) -> String? {
+        let args = Array(argv.dropFirst())
+        if let denied = l4DeniedFlags[base], let hit = args.first(where: { denied.contains($0) }) {
+            return "命令参数被拒绝（\(base) \(hit)）"
+        }
+        if base == "sed" {
+            for a in args {
+                if a == "-i" || a.hasPrefix("-i.") || a == "--in-place" || a.hasPrefix("--in-place=") {
+                    return "sed 就地修改（-i）会写文件，已拒绝"
+                }
+                if a == "--file" || a.hasPrefix("--file=") { return "sed -f 从文件读脚本，已拒绝" }
+            }
+            if let r = sedScriptReason(sedScripts(args)) { return r }
+        }
+        if base == "awk", let r = awkScriptReason(awkScripts(args)) {
+            return r
+        }
+        return nil
+    }
+
+    /// 取出 sed 的脚本文本：所有 `-e` 值；无 `-e` 时取第一个位置参数。
+    private static func sedScripts(_ args: [String]) -> [String] {
+        var scripts: [String] = []
+        var sawDashE = false
+        var tookPositional = false
+        var i = 0
+        while i < args.count {
+            let a = args[i]
+            if a == "-e" || a == "--expression" {
+                if i + 1 < args.count { scripts.append(args[i + 1]); sawDashE = true }
+                i += 2
+                continue
+            }
+            if a.hasPrefix("--expression=") {
+                scripts.append(String(a.dropFirst("--expression=".count))); sawDashE = true
+            } else if a.hasPrefix("-e"), a.count > 2 {
+                scripts.append(String(a.dropFirst(2))); sawDashE = true
+            } else if !a.hasPrefix("-"), !sawDashE, !tookPositional {
+                scripts.append(a); tookPositional = true
+            }
+            i += 1
+        }
+        return scripts
+    }
+
+    /// 取出 awk 的程序文本：第一个位置参数（`-F`/`-v` 的值先跳过）。
+    private static func awkScripts(_ args: [String]) -> [String] {
+        var i = 0
+        while i < args.count {
+            let a = args[i]
+            if a == "-F" || a == "-v" || a == "--assign" || a == "--field-separator" {
+                i += 2
+                continue
+            }
+            if a.hasPrefix("-F") || a.hasPrefix("-v") || a.hasPrefix("--assign=") || a.hasPrefix("--field-separator=") {
+                i += 1
+                continue
+            }
+            if a.hasPrefix("-") { i += 1; continue }
+            return [a]
+        }
+        return []
+    }
+
+    /// sed 脚本守卫。
+    /// ponytail: 子串 / 正则级 best-effort，不是解析器——已知有漏报上限；要更严得上 sed 语法解析。
+    /// 因 sed 恒 L4，确认条会显示人话解释兜底。
+    private static func sedScriptReason(_ scripts: [String]) -> String? {
+        for s in scripts {
+            // 命令位的 e / w / r / W / R（可带地址前缀）
+            if s.range(of: #"(^|[;{}\n])[ \t]*(?:[0-9]+(?:,[0-9]*)?|\$)?[ \t]*[ewrWR](?:[ \t;}]|$|[0-9])"#,
+                       options: .regularExpression) != nil {
+                return "sed 脚本含执行/读写命令（e/w/r），已拒绝"
+            }
+            // s/// 的 e / w 标志
+            if s.range(of: #"s([^\\\nA-Za-z0-9])(?:\\.|[^\\])*?\1(?:\\.|[^\\])*?\1[0-9gipm]*[ew]"#,
+                       options: .regularExpression) != nil {
+                return "sed 替换命令带 e/w 标志（执行/写文件），已拒绝"
+            }
+        }
+        return nil
+    }
+
+    /// awk 程序守卫。
+    /// ponytail: 子串 / 正则级 best-effort，不是解析器——已知有漏报上限；要更严得上 awk 语法解析。
+    private static func awkScriptReason(_ scripts: [String]) -> String? {
+        for s in scripts {
+            if s.contains("system") || s.contains("getline") || s.contains("ENVIRON") || s.contains("close(") {
+                return "awk 程序含 system/getline/ENVIRON，已拒绝"
+            }
+            if s.range(of: #"printf?[^;\n}]*[>|]"#, options: .regularExpression) != nil {
+                return "awk 程序含输出重定向/管道，已拒绝"
+            }
+        }
+        return nil
+    }
+
     // MARK: - git
 
     private static func classifyGit(_ args: [String]) -> ShellRisk {
@@ -318,15 +462,19 @@ nonisolated enum ShellCommandParser {
         if gitReadOnly.contains(sub) {
             return .allow
         }
+        if gitWrite.contains(sub) {
+            return .l4
+        }
         if gitArgLevel.contains(sub) {
             return classifyGitArgLevel(sub, rest)
         }
-        return .deny("git 仅支持只读子命令，不代操作 git：\(sub)")
+        return .deny("git 仅支持只读或明确写子命令：\(sub)")
     }
 
     private static func classifyGitArgLevel(_ sub: String, _ args: [String]) -> ShellRisk {
         switch sub {
         case "branch":
+            if gitBranchIsWrite(args) { return .l4 }
             let allowed: Set<String> = [
                 "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "-l", "--list",
                 "--contains", "--merged", "--no-merged", "--points-at",
@@ -337,6 +485,7 @@ nonisolated enum ShellCommandParser {
             return readOnlyFlags(args, allowed: allowed, prefixed: prefixed)
 
         case "tag":
+            if gitTagIsWrite(args) { return .l4 }
             let allowed: Set<String> = [
                 "-l", "--list", "-n", "--contains", "--points-at", "--merged", "--no-merged",
                 "-h", "--help", "--color", "--no-color", "-i", "--ignore-case", "--omit-empty",
@@ -351,18 +500,50 @@ nonisolated enum ShellCommandParser {
             return .allow
 
         case "remote":
+            if let first = args.first,
+               ["add", "remove", "rm", "rename", "set-url", "set-branches"].contains(first) {
+                return .l4
+            }
             if args.isEmpty { return .allow }
             if args.allSatisfy({ ["-v", "--verbose"].contains($0) }) { return .allow }
             if let first = args.first, ["show", "get-url"].contains(first) { return .allow }
-            return .deny("git remote 仅支持只读查看（-v/show/get-url）")
+            return .deny("git remote 仅支持只读查看（-v/show/get-url）或写操作（add/remove/set-url）")
 
         case "stash":
-            guard let first = args.first else { return .deny("git stash 需显式只读子命令（list/show）") }
-            return (first == "list" || first == "show") ? .allow : .deny("git stash 仅支持只读 list/show")
+            guard let first = args.first else {
+                return .deny("git stash 需显式子命令（list/show/push/pop/apply/drop）")
+            }
+            if first == "list" || first == "show" { return .allow }
+            if ["push", "pop", "apply", "drop", "clear", "save", "branch"].contains(first) { return .l4 }
+            return .deny("git stash 仅支持只读 list/show 或写操作 push/pop/apply/drop")
 
         default:
             return .deny("git 仅支持只读子命令：\(sub)")
         }
+    }
+
+    /// git branch 的写形式：写 flag 或位置参数（创建/重命名目标）。
+    private static func gitBranchIsWrite(_ args: [String]) -> Bool {
+        let writeFlags: Set<String> = [
+            "-d", "-D", "-m", "-M", "-c", "-C", "-f", "-t", "-u",
+            "--delete", "--move", "--copy", "--force", "--track",
+            "--set-upstream-to", "--unset-upstream", "--edit-description",
+        ]
+        return args.contains { writeFlags.contains($0) || $0.hasPrefix("--set-upstream-to=") } || hasPositional(args)
+    }
+
+    /// git tag 的写形式：创建/删除/签名 flag，或位置参数（tag 名）。
+    private static func gitTagIsWrite(_ args: [String]) -> Bool {
+        let writeFlags: Set<String> = [
+            "-d", "--delete", "-a", "--annotate", "-s", "--sign",
+            "-m", "--message", "-f", "--force", "-e", "--edit",
+        ]
+        return args.contains { writeFlags.contains($0) || $0.hasPrefix("--message=") } || hasPositional(args)
+    }
+
+    /// 是否存在位置参数（非 flag）——区分 git 的读/写形式。
+    private static func hasPositional(_ args: [String]) -> Bool {
+        args.contains { !$0.hasPrefix("-") }
     }
 
     private static func readOnlyFlags(_ args: [String], allowed: Set<String>, prefixed: [String]) -> ShellRisk {
@@ -376,14 +557,16 @@ nonisolated enum ShellCommandParser {
 
     // MARK: - 路径拦截（敏感文件 + 授权目录）
 
-    /// allow 档命令（head/tail/grep/rg/...）的参数里凡是"像路径"的值：
+    /// 命令参数里凡是"像路径"的值：
     /// 1) realpath 后过 `SensitiveFileBlocker`（挡 `head ~/.ssh/id_rsa` 这类私钥泄露）；
     /// 2) 确实存在的路径必须 `isAuthorized`（已授权目录 + Agent 工作区隐式读写根），否则拒绝。
     ///    —— 这里用严格 `isAuthorized`，不用 `isReadAuthorized`：`tool_output/` 溢出落盘目录
     ///    只对 fs 工具开只读例外（fs 读回时会脱敏），shell 不得读取。
+    /// 3) `forWrite=true`（写/删除类命令）：目标不存在时校验**父目录** `isAuthorized`（覆盖
+    ///    `mkdir` / `touch` / `cp`/`mv` 目标等尚未存在的路径）。
     /// 只对"存在"的路径做授权目录校验，避免把含 `/` 的正则（如 `grep '/api/v1' .`）当路径误杀。
-    static func pathBlockedReason(argv: [String], workdir: String) -> String? {
-        let recursive = isRecursiveInvocation(argv)
+    static func pathBlockedReason(argv: [String], workdir: String, forWrite: Bool = false) -> String? {
+        let recursive = !forWrite && isRecursiveInvocation(argv)
         var sawPathArg = false
         for arg in argv.dropFirst() {
             guard let path = pathCandidate(arg, workdir: workdir) else { continue }
@@ -396,9 +579,15 @@ nonisolated enum ShellCommandParser {
             if recursive, SensitiveFileBlocker.isAncestorOfHardPath(resolved) {
                 return "递归命令的根目录包含高危路径，已拒绝：\(resolved)"
             }
-            if FileManager.default.fileExists(atPath: resolved),
-               !DirectoryAuthorizationManager.shared.isAuthorized(resolved) {
-                return "路径不在已授权目录内：\(resolved)（如需访问请先在「设置 → 文件访问授权」添加该目录）"
+            if FileManager.default.fileExists(atPath: resolved) {
+                if !DirectoryAuthorizationManager.shared.isAuthorized(resolved) {
+                    return "路径不在已授权目录内：\(resolved)（如需访问请先在「设置 → 文件访问授权」添加该目录）"
+                }
+            } else if forWrite {
+                let parent = (resolved as NSString).deletingLastPathComponent
+                if !DirectoryAuthorizationManager.shared.isAuthorized(parent) {
+                    return "写入目标所在目录未授权：\(parent)（目标：\(resolved)）"
+                }
             }
         }
         // 递归命令且无显式路径参数 → 根为 workdir

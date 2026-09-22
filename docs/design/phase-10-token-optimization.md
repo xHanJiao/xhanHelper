@@ -1,5 +1,8 @@
 # Phase-10 Token 优化：调研结论与方案
 
+> 后续对标：opencode 的 prune / compaction 与「子任务隔离」的对比结论见
+> `docs/design/agent-tooling-research/opencode-context-management.md`（2026-09-22）。
+
 ## 背景
 
 对话上下文（历史 + 检索注入）占 LLM 输入 token 的大头。本 phase 基于线上数据 dump

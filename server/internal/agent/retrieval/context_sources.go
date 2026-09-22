@@ -53,14 +53,6 @@ type ThemeMeta struct {
 
 func (ThemeMeta) isPacketMeta() {}
 
-// MissionMeta 任务的元数据（预留，暂无实现）。
-type MissionMeta struct {
-	Goal        string
-	LastSummary string
-}
-
-func (MissionMeta) isPacketMeta() {}
-
 // SummaryMeta 对话摘要的元数据。
 type SummaryMeta struct {
 	SummaryID       string    // 摘要自身的 ID

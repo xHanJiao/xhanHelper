@@ -51,10 +51,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	messageShareHandler := controller.NewMessageShareHandler(repos.MessageShare, cfg, repos.Conversation)
 	summaryHandler := controller.NewSummaryHandler(repos.ConversationSummary, repos.Message)
 	reminderHandler := controller.NewReminderHandler(repos.Reminder, repos.Conversation, repos.Message)
-	mailboxService := service.NewMailboxService(repos.Mailbox, repos.ThemeState)
-	mailboxHandler := controller.NewMailboxHandler(mailboxService, repos.Mailbox, repos.Conversation, repos.ThemeState, repos.Message)
 	themeHandler := controller.NewThemeHandler(repos.ThemeState)
-	missionHandler := controller.NewMissionHandler(repos.Mission, agents.MissionRunner)
 	reflectionAdminHandler := controller.NewReflectionAdminHandler(repos.Trace)
 	messageTraceHandler := controller.NewMessageTraceHandler(repos.Message)
 	messageDebugHandler := controller.NewMessageDebugHandler(repos.Message, repos.Mem, repos.Note, repos.ThemeState)
@@ -93,15 +90,12 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	controller.RegisterReflectionRoutes(&controller.ReflectionRoutesConfig{
 		R:                      router,
 		UserRepo:               repos.User,
-		MailboxHandler:         mailboxHandler,
 		ThemeHandler:           themeHandler,
-		MissionHandler:         missionHandler,
 		ReflectionAdminHandler: reflectionAdminHandler,
 		MessageTraceHandler:    messageTraceHandler,
 		MessageDebugHandler:    messageDebugHandler,
 		ReplayHandler:          replayHandler,
 		EnableReplay:           true, // admin 路由已有 AdminMiddleware 保护，生产环境开放
-		PendingFindingRepo:     repos.PendingFinding,
 		CronRunner:             agents.CronRunner,
 		AuthMiddleware:         middleware.Auth(repos.User),
 		AdminMiddleware:        monitor.AdminOnly(cfg.Server.AdminUsers),

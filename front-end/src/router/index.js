@@ -72,18 +72,6 @@ const routes = [
     meta: { backToChat: true }
   },
   {
-    path: '/missions',
-    name: 'Missions',
-    component: () => import('@/views/MissionsView.vue'),
-    meta: { backToChat: true }
-  },
-  {
-    path: '/mailbox',
-    name: 'Mailbox',
-    component: () => import('@/views/MailboxView.vue'),
-    meta: { backToChat: true }
-  },
-  {
     path: '/documents',
     name: 'Documents',
     component: () => import('@/views/DocumentsView.vue'),

@@ -12,7 +12,6 @@ import (
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
-	"xhan-helper/internal/util"
 )
 
 // HookStatus — 系统钩子状态快照
@@ -20,9 +19,7 @@ type HookStatus struct {
 	PendingDelayedTasks   int64                          `json:"pending_delayed_tasks"`
 	NextDelayedTaskAt     string                         `json:"next_delayed_task_at"`
 	TaskQueues            []service.DelayedTaskQueueStat `json:"task_queues"` // 按 task_type 聚合，新类型自动出现
-	DeliverRemaining      string                         `json:"deliver_remaining"`
 	DiscoverRemaining     string                         `json:"discover_remaining"`
-	MissionRemaining      string                         `json:"mission_remaining"`
 	ArchiveRemaining      string                         `json:"archive_remaining"`
 	ImageCleanupRemaining string                         `json:"image_cleanup_remaining"`
 	VectorEvictRemaining  string                         `json:"vector_evict_remaining"`
@@ -40,12 +37,8 @@ type CronRunner struct {
 	orch              *ReflectionOrchestrator
 	userRepo          *service.UserRepo
 	discoverTimes     []string      // 发现候选主题定时列表
-	deliverInterval   time.Duration // 投递窗口间隔，默认 1 小时；<=0 关闭投递
-	missionInterval   time.Duration // Mission 检查间隔，默认 30 分钟；<=0 关闭
 	runTimeout        time.Duration // 单次反思超时，默认 30 分钟
 	delayedTaskRepo   *service.DelayedTaskRepo
-	missionRunner     *MissionRunner
-	missionRepo       *service.MissionRepo
 	sessionEndGroup   *PostChatWorkerGroup      // 对话后处理组（摘要/记忆/主题）
 	ephemeralPurger   EphemeralPurger           // 无痕会话物理销毁器（Stage B）
 	sessionGapMinutes int                       // session 间隔阈值（分钟）
@@ -66,9 +59,7 @@ type CronRunner struct {
 
 	// 钩子状态追踪
 	mu                sync.Mutex
-	deliverNext       time.Time
 	discoverNext      time.Time
-	missionNext       time.Time
 	archiveNext       time.Time
 	imageCleanupNext  time.Time
 	evictNext         time.Time
@@ -81,14 +72,10 @@ type CronRunnerConfig struct {
 	Orch              *ReflectionOrchestrator
 	UserRepo          *service.UserRepo
 	DelayedTaskRepo   *service.DelayedTaskRepo
-	MissionRunner     *MissionRunner
-	MissionRepo       *service.MissionRepo
 	SessionEndGroup   *PostChatWorkerGroup
 	EphemeralPurger   EphemeralPurger
 	SessionGapMinutes int // session 间隔阈值（分钟），用于 session_end 任务延迟
 	DiscoverSchedules []string
-	DeliverInterval   time.Duration
-	MissionInterval   time.Duration
 	RunTimeout        time.Duration
 	MinActiveDays     int // 反思门控：最近 N 天内有聊天的用户才跑；<0 不过滤
 	ConvRepo          *service.ConversationRepo
@@ -127,11 +114,7 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		orch:              cfg.Orch,
 		userRepo:          cfg.UserRepo,
 		delayedTaskRepo:   cfg.DelayedTaskRepo,
-		missionRunner:     cfg.MissionRunner,
-		missionRepo:       cfg.MissionRepo,
 		discoverTimes:     cfg.DiscoverSchedules,
-		deliverInterval:   cfg.DeliverInterval,
-		missionInterval:   cfg.MissionInterval,
 		runTimeout:        cfg.RunTimeout,
 		sessionEndGroup:   cfg.SessionEndGroup,
 		ephemeralPurger:   cfg.EphemeralPurger,
@@ -151,12 +134,6 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		evictInterval:     cfg.EvictInterval,
 		docRepo:           cfg.DocRepo,
 	}
-}
-
-func (cr *CronRunner) setDeliverNext(t time.Time) {
-	cr.mu.Lock()
-	cr.deliverNext = t
-	cr.mu.Unlock()
 }
 
 func (cr *CronRunner) setDiscoverNext(t time.Time) {
@@ -211,9 +188,7 @@ func (cr *CronRunner) GetHookStatus() HookStatus {
 			s.TaskQueues = stats
 		}
 	}
-	s.DeliverRemaining = remainingLabel(cr.deliverNext, now)
 	s.DiscoverRemaining = remainingLabel(cr.discoverNext, now)
-	s.MissionRemaining = remainingLabel(cr.missionNext, now)
 	s.ArchiveRemaining = remainingLabel(cr.archiveNext, now)
 	s.ImageCleanupRemaining = remainingLabel(cr.imageCleanupNext, now)
 	s.VectorEvictRemaining = remainingLabel(cr.evictNext, now)
@@ -311,35 +286,14 @@ func (cr *CronRunner) createSessionEndTask(userID, convID, userMsgID string) {
 
 // Start 启动调度循环（阻塞，用 goroutine 调用）
 func (cr *CronRunner) Start(ctx context.Context) {
-	log.Printf("[cron] started, discover_times=%v deliver_interval=%v mission_interval=%v",
-		cr.discoverTimes, intervalLabel(cr.deliverInterval), intervalLabel(cr.missionInterval))
+	log.Printf("[cron] started, discover_times=%v", cr.discoverTimes)
 
-	var deliverChan <-chan time.Time
-	var deliverTimer *time.Timer
-	if cr.deliverInterval > 0 {
-		deliverTimer = time.NewTimer(cr.deliverInterval)
-		defer deliverTimer.Stop()
-		deliverChan = deliverTimer.C
-		cr.setDeliverNext(time.Now().Add(cr.deliverInterval))
-	} else {
-		cr.setDeliverNext(time.Time{})
-	}
 	discoverTimer := time.NewTimer(nextDailyDelay(cr.discoverTimes))
 	cr.setDiscoverNext(time.Now().Add(nextDailyDelay(cr.discoverTimes)))
 	defer discoverTimer.Stop()
 
 	sessionEndTicker := time.NewTicker(30 * time.Second)
 	defer sessionEndTicker.Stop()
-
-	var missionChan <-chan time.Time
-	if cr.missionRunner != nil && cr.missionInterval > 0 {
-		missionTicker := time.NewTicker(cr.missionInterval)
-		defer missionTicker.Stop()
-		missionChan = missionTicker.C
-		cr.missionNext = time.Now().Add(cr.missionInterval)
-	} else {
-		cr.missionNext = time.Time{}
-	}
 
 	var archiveChan <-chan time.Time
 	if cr.archiveAfterDays > 0 {
@@ -392,15 +346,6 @@ func (cr *CronRunner) Start(ctx context.Context) {
 			log.Printf("[cron] stopped")
 			return
 
-		case <-deliverChan:
-			log.Printf("[cron] deliver window trigger")
-			users, _ := cr.activeUsers(context.Background())
-			for _, u := range users {
-				cr.deliverOnce(ctx, u.ID)
-			}
-			deliverTimer.Reset(cr.deliverInterval)
-			cr.setDeliverNext(time.Now().Add(cr.deliverInterval))
-
 		case <-discoverTimer.C:
 			log.Printf("[cron] discover trigger")
 			users, _ := cr.activeUsers(context.Background())
@@ -425,11 +370,6 @@ func (cr *CronRunner) Start(ctx context.Context) {
 				cr.sessionEndRunning = false
 				cr.mu.Unlock()
 			}()
-
-		case <-missionChan:
-			log.Printf("[cron] mission check trigger")
-			go cr.processMissions(ctx)
-			cr.missionNext = time.Now().Add(cr.missionInterval)
 
 		case <-archiveChan:
 			log.Printf("[cron] archive trigger")
@@ -468,20 +408,6 @@ func (cr *CronRunner) activeUsers(ctx context.Context) ([]model.User, error) {
 	}
 	log.Printf("[cron] active users=%d (min_active_days=%d)", len(users), cr.minActiveDays)
 	return users, nil
-}
-
-// IsUserActive 判断用户最近是否活跃（用于手动触发门控）。查询失败时放行，不阻塞手动操作。
-func (cr *CronRunner) IsUserActive(ctx context.Context, userID string) bool {
-	if cr.minActiveDays < 0 {
-		return true
-	}
-	since := time.Now().AddDate(0, 0, -cr.minActiveDays)
-	active, err := cr.userRepo.IsActiveSince(ctx, userID, since)
-	if err != nil {
-		log.Printf("[cron] IsActiveSince error: %v", err)
-		return true
-	}
-	return active
 }
 
 // cleanupImages 按保留期清理过期图片（全局，不分用户）：被引用过的走长保留期，孤儿走短保留期。
@@ -688,14 +614,6 @@ func nextDailyDelay(times []string) time.Duration {
 	return minDelay
 }
 
-func (cr *CronRunner) deliverOnce(ctx context.Context, userID string) {
-	runCtx, cancel := context.WithTimeout(ctx, cr.runTimeout)
-	defer cancel()
-	if _, err := cr.orch.DeliverPendingFindings(runCtx, userID); err != nil {
-		log.Printf("[cron] deliver error: %v", err)
-	}
-}
-
 func (cr *CronRunner) discoverOnce(ctx context.Context, userID string) {
 	runCtx, cancel := context.WithTimeout(ctx, cr.runTimeout)
 	defer cancel()
@@ -709,37 +627,5 @@ func (cr *CronRunner) discoverOnce(ctx context.Context, userID string) {
 		if _, err := cr.orch.EveningReview(runCtx, userID); err != nil {
 			log.Printf("[cron] evening review error: %v", err)
 		}
-	}
-}
-
-// processMissions 扫到期的 active Mission 并执行检查
-func (cr *CronRunner) processMissions(parentCtx context.Context) {
-	if cr.missionRunner == nil || cr.missionRepo == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(parentCtx, cr.runTimeout)
-	defer cancel()
-
-	missions, err := cr.missionRepo.ListDueForCheck(ctx, 20)
-	if err != nil {
-		log.Printf("[cron] ListDueForCheck error: %v", err)
-		return
-	}
-	if len(missions) == 0 {
-		return
-	}
-	log.Printf("[cron] processing %d missions", len(missions))
-	tasks := make([]func(context.Context) (struct{}, error), len(missions))
-	for i := range missions {
-		m := &missions[i]
-		tasks[i] = func(ctx context.Context) (struct{}, error) {
-			if err := cr.missionRunner.Run(ctx, m); err != nil {
-				log.Printf("[cron] mission run error: %v", err)
-			}
-			return struct{}{}, nil
-		}
-	}
-	if _, err := util.LoadConcurrent(ctx, 3, tasks); err != nil {
-		log.Printf("[cron] LoadConcurrent error: %v", err)
 	}
 }

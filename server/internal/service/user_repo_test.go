@@ -79,35 +79,3 @@ func TestUserRepo_ListActiveSince(t *testing.T) {
 		t.Fatalf("expected 2 active users with 30d window, got %d", len(users))
 	}
 }
-
-func TestUserRepo_IsActiveSince(t *testing.T) {
-	db := newUserRepoTestDB(t)
-	seedActiveGateRows(t, db)
-	repo := NewUserRepo(db, 5, 4)
-	ctx := context.Background()
-	since := time.Now().Add(-3 * 24 * time.Hour)
-
-	active, err := repo.IsActiveSince(ctx, "u_active", since)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !active {
-		t.Fatal("u_active should be active")
-	}
-
-	active, err = repo.IsActiveSince(ctx, "u_stale", since)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if active {
-		t.Fatal("u_stale should be inactive")
-	}
-
-	active, err = repo.IsActiveSince(ctx, "u_empty", since)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if active {
-		t.Fatal("u_empty should be inactive")
-	}
-}

@@ -56,44 +56,6 @@ function traceStatusLabel(s) {
   return map[s] || s
 }
 
-// ── 主题发现 Tab ──
-const findings = ref([])
-const findingsTotal = ref(0)
-const findingsLoading = ref(false)
-const findingsPage = ref(0)
-const findingsStatus = ref('')
-
-async function fetchFindings() {
-  findingsLoading.value = true
-  try {
-    const pageSize = 20
-    const offset = findingsPage.value * pageSize
-    const res = await api.get(`/api/admin/pending-findings?limit=${pageSize}&offset=${offset}&status=${findingsStatus.value}`)
-    findings.value = res.items || []
-    findingsTotal.value = res.total || 0
-  } catch (_) {
-  } finally {
-    findingsLoading.value = false
-  }
-}
-
-function findingsPageLabel() {
-  const pageSize = 20
-  const start = findingsPage.value * pageSize + 1
-  const end = Math.min((findingsPage.value + 1) * pageSize, findingsTotal.value)
-  return `${start}-${end} / ${findingsTotal.value}`
-}
-
-function statusColor(s) {
-  const map = { pending: 'warning', delivered: 'success', failed: 'error' }
-  return map[s] || 'default'
-}
-
-function statusLabel(s) {
-  const map = { pending: '待投递', delivered: '已投递', failed: '失败' }
-  return map[s] || s
-}
-
 // ── 消息 Trace Tab ──
 const msgTraces = ref([])
 const msgTracesTotal = ref(0)
@@ -171,7 +133,6 @@ async function fetchHooks() {
 onMounted(() => { fetchHealth(); fetchHooks(); restartTimer(); fetchTraces() })
 watch(activeTab, (tab) => {
   if (tab === 'msg-trace' && msgTraces.value.length === 0) fetchMsgTraces()
-  if (tab === 'pending-findings' && findings.value.length === 0) fetchFindings()
   if (tab === 'cost' && !costLoaded.value) {
     costLoaded.value = true
     fetchCostCategories(); fetchCostUsers(); fetchCostModels(); fetchCostPrices(); refreshCost()
@@ -783,14 +744,13 @@ onUnmounted(() => {
     <PageTopBar v-if="!isMacEmbedded()" title="系统监控" :visible="true">
       <template #right>
         <NSelect v-if="activeTab === 'overview'" v-model:value="refreshInterval" :options="refreshOptions" size="small" style="width: 100px;" />
-        <span v-else style="font-size: 12px; color: var(--color-text-muted);">共 {{ activeTab === 'pending-findings' ? findingsTotal : tracesTotal }} 条记录</span>
+        <span v-else style="font-size: 12px; color: var(--color-text-muted);">共 {{ tracesTotal }} 条记录</span>
       </template>
     </PageTopBar>
     <NTabs v-model:value="activeTab" type="line" style="padding: 0 var(--space-lg); background: var(--color-surface); flex-shrink: 0;">
       <NTabPane name="overview" tab="概览" />
       <!-- <NTabPane name="reflection" tab="反思" /> -->
-      <!-- <NTabPane name="msg-trace" tab="消息Trace" />
-      <NTabPane name="pending-findings" tab="主题发现" /> -->
+      <!-- <NTabPane name="msg-trace" tab="消息Trace" /> -->
       <NTabPane name="cost" tab="成本中心" />
       <NTabPane name="llm-io" tab="后处理审计" />
       <NTabPane name="subagent" tab="子任务" />
@@ -885,9 +845,7 @@ onUnmounted(() => {
             <div v-for="q in (hooks.task_queues || [])" :key="q.task_type" style="padding-left: 8px; color: var(--color-text-muted);">
               · {{ q.task_type }}: <strong style="color: var(--color-text);">{{ q.pending }}</strong>
             </div>
-            <div>投递窗口剩余: <strong>{{ hooks.deliver_remaining }}</strong></div>
             <div>主题发现剩余: <strong>{{ hooks.discover_remaining }}</strong></div>
-            <div>Mission 检查剩余: <strong>{{ hooks.mission_remaining }}</strong></div>
             <div>会话归档剩余: <strong>{{ hooks.archive_remaining }}</strong></div>
           </div>
         </NCard>
@@ -1027,47 +985,6 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- ========== 主题发现 Tab ========== -->
-    <div v-if="activeTab === 'pending-findings'" style="padding-top: var(--space-sm);">
-      <NSpin v-if="findingsLoading && findings.length === 0" />
-      <NEmpty v-else-if="findings.length === 0" description="暂无主题发现记录" style="margin-top: 80px;" />
-
-      <div v-else style="display: flex; flex-direction: column; gap: var(--space-sm);">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-sm);">
-          <div style="display: flex; gap: var(--space-sm); align-items: center;">
-            <NButton size="small" @click="fetchFindings()" :loading="findingsLoading">刷新</NButton>
-            <NSelect v-model:value="findingsStatus" :options="[{ label:'待投递', value:'pending' },{ label:'已投递', value:'delivered' },{ label:'失败', value:'failed' },{ label:'全部', value:'' }]" size="small" style="width: 110px;" @update:value="findingsPage = 0; fetchFindings()" />
-          </div>
-          <div style="display: flex; gap: var(--space-sm); align-items: center;">
-            <span style="font-size: 12px; color: var(--color-text-muted);">{{ findingsPageLabel() }}</span>
-            <NButton size="tiny" :disabled="findingsPage === 0" @click="findingsPage--; fetchFindings()">上一页</NButton>
-            <NButton size="tiny" :disabled="(findingsPage + 1) * 20 >= findingsTotal" @click="findingsPage++; fetchFindings()">下一页</NButton>
-          </div>
-        </div>
-
-        <NCard v-for="f in findings" :key="f.id" size="small">
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-md);">
-            <div style="flex: 1;">
-              <div style="display: flex; gap: var(--space-xs); align-items: center; margin-bottom: 4px;">
-                <span style="font-weight: 600; font-size: 14px;">{{ f.title }}</span>
-                <NTag size="tiny" :type="statusColor(f.status)">{{ statusLabel(f.status) }}</NTag>
-                <NTag v-if="f.urgency" size="tiny" :type="f.urgency === 'high' ? 'error' : f.urgency === 'medium' ? 'warning' : 'default'">{{ f.urgency }}</NTag>
-              </div>
-              <div v-if="f.theme_name" style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 4px;">
-                主题: {{ f.theme_name }}
-                <span v-if="f.theme_id" style="margin-left: var(--space-sm); font-size: 11px;">({{ f.theme_id.substring(0, 8) }}...)</span>
-              </div>
-              <div style="font-size: 13px; color: var(--color-text); white-space: pre-wrap; margin-bottom: 4px;">{{ f.content }}</div>
-              <div v-if="f.source_conv_id" style="font-size: 11px; color: var(--color-text-muted);">
-                来源: {{ f.source_conv_id.substring(0, 8) }}...
-                <span style="margin-left: var(--space-sm);">重试: {{ f.retry_count }}</span>
-              </div>
-            </div>
-            <span style="font-size: 11px; color: var(--color-text-muted); flex-shrink: 0;">{{ formatTime(f.created_at) }}</span>
-          </div>
-        </NCard>
-      </div>
-    </div>
     <!-- ========== LLM 审计 Tab ========== -->
     <div v-if="activeTab === 'llm-io'" style="padding-top: var(--space-sm);">
       <LLMIOAuditTab />

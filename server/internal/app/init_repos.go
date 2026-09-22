@@ -19,12 +19,10 @@ type Repos struct {
 	Prompt              *service.UserPromptRepo
 	Tool                *service.ToolRepo
 	Embedding           *service.EmbeddingRepo
-	Mailbox             *service.MailboxRepo
 	ThemeState          *service.ThemeStateRepo
 	Trace               *service.ReflectionTraceRepo
 	Chunk               *service.EmbeddingChunkRepo
 	ConceptEmbed        *service.ConceptEmbeddingRepo
-	PendingFinding      *service.PendingFindingRepo
 	Reminder            *service.ReminderRepo
 	DelayedTask         *service.DelayedTaskRepo
 	Document            *service.DocumentRepo
@@ -32,7 +30,6 @@ type Repos struct {
 	DocumentShare       *service.DocumentShareRepo
 	MessageShare        *service.MessageShareRepo
 	Version             *service.VersionRepo
-	Mission             *service.MissionRepo
 	ConversationSummary *service.ConversationSummaryRepo
 	ConversationPlan    *service.ConversationPlanRepo
 	UserProfile         *service.UserProfileRepo
@@ -59,12 +56,10 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		Prompt:              service.NewUserPromptRepo(db),
 		Tool:                service.NewToolRepo(db),
 		Embedding:           service.NewEmbeddingRepo(db),
-		Mailbox:             service.NewMailboxRepo(db),
 		ThemeState:          service.NewThemeStateRepo(db),
 		Trace:               service.NewReflectionTraceRepo(db, cfg.LLM.DebugPersist()),
 		Chunk:               service.NewEmbeddingChunkRepo(db),
 		ConceptEmbed:        service.NewConceptEmbeddingRepo(db),
-		PendingFinding:      service.NewPendingFindingRepo(db),
 		Reminder:            service.NewReminderRepo(db),
 		DelayedTask:         service.NewDelayedTaskRepo(db),
 		Document:            docRepo,
@@ -72,7 +67,6 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 		DocumentShare:       service.NewDocumentShareRepo(db, docRepo),
 		MessageShare:        service.NewMessageShareRepo(db, msgRepo),
 		Version:             service.NewVersionRepo(db),
-		Mission:             service.NewMissionRepo(db),
 		ConversationSummary: service.NewConversationSummaryRepo(db),
 		ConversationPlan:    service.NewConversationPlanRepo(db),
 		UserProfile:         service.NewUserProfileRepo(db),

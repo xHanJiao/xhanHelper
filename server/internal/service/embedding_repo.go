@@ -91,12 +91,6 @@ func (r *EmbeddingRepo) ListByEntities(ctx context.Context, entityType string, e
 	return list, err
 }
 
-// DeleteByType 删除某类型全部向量行（一次性清理 mission 等）
-func (r *EmbeddingRepo) DeleteByType(ctx context.Context, entityType string) (int64, error) {
-	result := r.db.WithContext(ctx).Where("entity_type = ?", entityType).Delete(&model.Embedding{})
-	return result.RowsAffected, result.Error
-}
-
 // DeleteByEntities 按类型 + 一组 entityID 批量删除向量行
 func (r *EmbeddingRepo) DeleteByEntities(ctx context.Context, entityType string, entityIDs []string) (int64, error) {
 	if len(entityIDs) == 0 {

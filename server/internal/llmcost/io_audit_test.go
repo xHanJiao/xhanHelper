@@ -99,7 +99,7 @@ func TestShouldAudit(t *testing.T) {
 		{CategoryPostChat, SubProfileColdStart, true},
 		{CategoryAdmin, SubAgentSummary, true},
 		{CategoryTool, SubReminderGen, true},
-		{CategoryReflection, SubFindingScore, false}, // 反思已有追溯，跳过
+		{CategoryReflection, SubThemeAnalyze, false}, // 反思已有追溯，跳过
 		{CategoryMainChat, SubReActLoop, false},      // 主聊天已有 request_json
 		{CategoryPostChat, SubReActLoop, false},      // 白名单外的子类
 		{"", "", true},                               // 未标注 → uncategorized 兜底
@@ -156,7 +156,7 @@ func TestIOAuditWrapper_WritesFullContent(t *testing.T) {
 
 func TestIOAuditWrapper_SkipsWhitelistExcluded(t *testing.T) {
 	repo := setupAuditRepo(t)
-	runAuditedChatSync(t, repo, Scenario{Category: CategoryReflection, SubCategory: SubFindingScore}, false)
+	runAuditedChatSync(t, repo, Scenario{Category: CategoryReflection, SubCategory: SubThemeAnalyze}, false)
 	runAuditedChatSync(t, repo, Scenario{Category: CategoryMainChat, SubCategory: SubReActLoop}, false)
 	time.Sleep(50 * time.Millisecond)
 	rows, total, err := repo.List(context.Background(), service.LLMIOListParams{Limit: 100})

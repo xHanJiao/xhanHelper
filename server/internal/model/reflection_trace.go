@@ -19,7 +19,7 @@ type ReflectionTrace struct {
 type ReflectionLLMCall struct {
 	ID               string    `gorm:"primaryKey;size:36" json:"id"`
 	TraceID          string    `gorm:"size:36;not null;index" json:"trace_id"`
-	Caller           string    `gorm:"size:50;not null" json:"caller"`          // ThemeAnalyst | Scorer | ThemeDiscoverer | LaunchAgent
+	Caller           string    `gorm:"size:50;not null" json:"caller"`          // ThemeAnalyst | ThemeDiscoverer | StateUpdater | LaunchAgent
 	CallerDetail     string    `gorm:"size:100" json:"caller_detail,omitempty"` // 如 "ThemeAnalyst:职业规划"
 	RequestJSON      *string   `gorm:"type:longtext" json:"request_json,omitempty"`
 	ResponseJSON     *string   `gorm:"type:longtext" json:"response_json,omitempty"`

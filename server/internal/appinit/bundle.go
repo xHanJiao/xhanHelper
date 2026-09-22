@@ -23,7 +23,6 @@ type AgentBundle struct {
 	Orch           *agent.Orchestrator
 	CronRunner     *agent.CronRunner
 	ReflectionOrch *agent.ReflectionOrchestrator
-	MissionRunner  *agent.MissionRunner
 	ReplayRunner   *replay.Runner
 	ClientBridge   *agent.ClientToolBridge
 	Destroyer      *agent.EphemeralDestroyer

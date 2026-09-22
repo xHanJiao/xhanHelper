@@ -19,10 +19,6 @@ func TestThemeMetaSatisfiesPacketMeta(t *testing.T) {
 	var _ PacketMeta = ThemeMeta{}
 }
 
-func TestMissionMetaSatisfiesPacketMeta(t *testing.T) {
-	var _ PacketMeta = MissionMeta{}
-}
-
 func TestEntityMetaFields(t *testing.T) {
 	m := EntityMeta{
 		Content:   "昨夜睡得好",

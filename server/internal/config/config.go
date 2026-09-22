@@ -58,7 +58,6 @@ type VectorConfig struct {
 	SummaryRetentionDays int      `yaml:"summary_retention_days"` // summary 向量保留天数，<=0 关闭
 	EvictIntervalHours   int      `yaml:"evict_interval_hours"`   // 逐出扫描间隔（小时），<=0 默认 24
 	ChunkDisabledParents []string `yaml:"chunk_disabled_parents"` // 不再建 chunk 的父类型（短文本由 full 向量覆盖）
-	PurgeMissionsOnce    bool     `yaml:"purge_missions_once"`    // 一次性清空 mission 数据（清完改回 false）
 }
 
 // ChatConfig — 对话配置
@@ -273,16 +272,13 @@ type ResourceZoneConfig struct {
 
 // ReflectionConfig — 反思系统配置
 type ReflectionConfig struct {
-	LaunchMaxIterations         int            `yaml:"launch_max_iterations"`          // 启动 Agent 最大轮次，默认 8
-	AnalystMaxIterations        int            `yaml:"analyst_max_iterations"`         // ThemeAnalyst 内部最大轮次，默认 3
-	DiscoverMaxIterations       int            `yaml:"discover_max_iterations"`        // ThemeDiscoverer 内部最大轮次，默认 3
-	ClusterThreshold            float64        `yaml:"cluster_threshold"`              // topic 聚类余弦相似度阈值，默认 0.70
-	DailySchedules              []string       `yaml:"daily_schedules"`                // 主题发现定时触发时间列表，默认 ["03:00"]（每天一次）
-	DeliverIntervalMinutes      int            `yaml:"deliver_interval_minutes"`       // 投递窗口间隔分钟，默认 60；<=0 关闭投递（pending findings 会积压，恢复后补投）
-	MaxDeliveryRetries          int            `yaml:"max_delivery_retries"`           // 投递重试上限，默认 3
-	ActiveDurationDays          map[string]int `yaml:"active_duration_days"`           // active 各 duration 的衰减天数，默认 long:90 medium:30 short:14 ephemeral:7
-	MissionCheckIntervalMinutes int            `yaml:"mission_check_interval_minutes"` // Mission 检查间隔，默认 30 分钟；<=0 表示关闭定时检查
-	MinActiveDays               int            `yaml:"min_active_days"`                // 反思门控：用户最近 N 天内有聊天才跑，默认 3；<0 表示不过滤
+	LaunchMaxIterations   int            `yaml:"launch_max_iterations"`   // 启动 Agent 最大轮次，默认 8
+	AnalystMaxIterations  int            `yaml:"analyst_max_iterations"`  // ThemeAnalyst 内部最大轮次，默认 3
+	DiscoverMaxIterations int            `yaml:"discover_max_iterations"` // ThemeDiscoverer 内部最大轮次，默认 3
+	ClusterThreshold      float64        `yaml:"cluster_threshold"`       // topic 聚类余弦相似度阈值，默认 0.70
+	DailySchedules        []string       `yaml:"daily_schedules"`         // 主题发现定时触发时间列表，默认 ["03:00"]（每天一次）
+	ActiveDurationDays    map[string]int `yaml:"active_duration_days"`    // active 各 duration 的衰减天数，默认 long:90 medium:30 short:14 ephemeral:7
+	MinActiveDays         int            `yaml:"min_active_days"`         // 反思门控：用户最近 N 天内有聊天才跑，默认 3；<0 表示不过滤
 }
 
 // Load 加载配置：base YAML + env YAML 合并 → 环境变量替换
@@ -480,7 +476,6 @@ func merge(dst, src *Config) {
 	if src.Vector.ChunkDisabledParents != nil {
 		dst.Vector.ChunkDisabledParents = src.Vector.ChunkDisabledParents
 	}
-	dst.Vector.PurgeMissionsOnce = dst.Vector.PurgeMissionsOnce || src.Vector.PurgeMissionsOnce
 	dst.Facts.Enabled = src.Facts.Enabled
 	if src.Facts.TopK != 0 {
 		dst.Facts.TopK = src.Facts.TopK
@@ -509,17 +504,8 @@ func merge(dst, src *Config) {
 	if len(src.Reflection.DailySchedules) > 0 {
 		dst.Reflection.DailySchedules = src.Reflection.DailySchedules
 	}
-	if src.Reflection.DeliverIntervalMinutes != 0 {
-		dst.Reflection.DeliverIntervalMinutes = src.Reflection.DeliverIntervalMinutes
-	}
-	if src.Reflection.MaxDeliveryRetries != 0 {
-		dst.Reflection.MaxDeliveryRetries = src.Reflection.MaxDeliveryRetries
-	}
 	if len(src.Reflection.ActiveDurationDays) > 0 {
 		dst.Reflection.ActiveDurationDays = src.Reflection.ActiveDurationDays
-	}
-	if src.Reflection.MissionCheckIntervalMinutes != 0 {
-		dst.Reflection.MissionCheckIntervalMinutes = src.Reflection.MissionCheckIntervalMinutes
 	}
 	if src.Reflection.MinActiveDays != 0 {
 		dst.Reflection.MinActiveDays = src.Reflection.MinActiveDays
@@ -749,12 +735,6 @@ func validate(cfg *Config) error {
 	}
 	if len(cfg.Reflection.DailySchedules) == 0 {
 		cfg.Reflection.DailySchedules = []string{"09:00", "20:00"}
-	}
-	if cfg.Reflection.DeliverIntervalMinutes < 0 {
-		cfg.Reflection.DeliverIntervalMinutes = 60
-	}
-	if cfg.Reflection.MaxDeliveryRetries == 0 {
-		cfg.Reflection.MaxDeliveryRetries = 3
 	}
 	if len(cfg.Reflection.ActiveDurationDays) == 0 {
 		cfg.Reflection.ActiveDurationDays = map[string]int{

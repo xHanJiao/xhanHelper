@@ -180,14 +180,11 @@ func listConversations(convRepo *service.ConversationRepo, agentRepo *service.Ag
 			if conv.AgentID != nil && *conv.AgentID != "" {
 				m["agent_name"] = agentNames[*conv.AgentID]
 			}
-			// 解析主题上下文 / 无痕标记
+			// 解析无痕标记
 			if conv.Extra != "" {
 				var extra model.ConversationExtra
 				if json.Unmarshal([]byte(conv.Extra), &extra) == nil {
 					m["ephemeral"] = extra.Ephemeral
-					if extra.Context != nil && extra.Context.Title != "" {
-						m["theme_title"] = extra.Context.Title
-					}
 				}
 			}
 			result[i] = m

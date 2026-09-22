@@ -44,12 +44,11 @@ type Conversation struct {
 
 // ConversationExtra — Conversation.Extra 的结构化数据
 type ConversationExtra struct {
-	UsedToolIDs    []string         `json:"used_tool_ids"`
-	Ephemeral      bool             `json:"ephemeral,omitempty"`        // 无痕会话：窗口结束后硬销毁（Stage A 隐藏 + Stage B 物理删除）
-	Context        *ConversationCtx `json:"context,omitempty"`          // 信箱跳转带上的主题上下文
-	SubAgentType   string           `json:"subagent_type,omitempty"`    // 子会话类型（"web_explore"/"file_explore"），空=普通会话
-	SubAgentResult *SubAgentResult  `json:"sub_agent_result,omitempty"` // 子任务最近一次执行结果（Admin 子任务列表展示），空=未记录（改动前旧数据）
-	ToolExposure   *ToolExposure    `json:"tool_exposure,omitempty"`    // 渐进式工具暴露注册表（窗口级，key=SessionStartMsgID）
+	UsedToolIDs    []string        `json:"used_tool_ids"`
+	Ephemeral      bool            `json:"ephemeral,omitempty"`        // 无痕会话：窗口结束后硬销毁（Stage A 隐藏 + Stage B 物理删除）
+	SubAgentType   string          `json:"subagent_type,omitempty"`    // 子会话类型（"web_explore"/"file_explore"），空=普通会话
+	SubAgentResult *SubAgentResult `json:"sub_agent_result,omitempty"` // 子任务最近一次执行结果（Admin 子任务列表展示），空=未记录（改动前旧数据）
+	ToolExposure   *ToolExposure   `json:"tool_exposure,omitempty"`    // 渐进式工具暴露注册表（窗口级，key=SessionStartMsgID）
 }
 
 // SubAgentResult — 子任务单次执行结果（RunSubAgent 结束时写回）。
@@ -64,14 +63,4 @@ type SubAgentResult struct {
 type ToolExposure struct {
 	SessionStartMsgID string   `json:"session_start_msg_id"`
 	Tools             []string `json:"tools"` // 已暴露的函数条目："组名.函数名"（排序，字节稳定）。旧格式裸组名加载时展开为全部函数
-}
-
-// ConversationCtx — 会话上下文（从 mailbox 跳转带入）
-type ConversationCtx struct {
-	ThemeID          string `json:"theme_id"`
-	EntityType       string `json:"entity_type"`
-	EntityID         string `json:"entity_id"`
-	MailboxItemID    string `json:"mailbox_item_id"`
-	Title            string `json:"title"`
-	ThemeStateCursor string `json:"theme_state_cursor,omitempty"` // 主题状态更新的 cursor（上次更新到的 messageID）
 }

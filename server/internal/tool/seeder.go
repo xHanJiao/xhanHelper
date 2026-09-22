@@ -47,7 +47,6 @@ var builtinToolSeeds = []builtinToolSeed{
 // （动态工具每 30s 从 DB 加载，残留会导致工具仍对 LLM 可见）——seed 时统一置为 inactive。
 var retiredBuiltinTools = map[string]bool{
 	"search_memories_v2": true, // 30天 0 次调用，被 unified_search 取代
-	"mission":            true, // 30天 6 次调用，价值低
 	"search_memories":    true, // 死代码，从未注册
 	"search_notes":       true, // 死代码，从未注册
 	"memory_search":      true, // 检索被 unified_search 覆盖（30天 61 次 → 统一入口）

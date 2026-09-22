@@ -78,19 +78,12 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reflectionReg := tool.NewRegistry()
 	reflectionReg.Register(tool.NewLoggingWrapper(
 		agent.NewThemeAnalyst(llmClients.BgFlash, retrievalTools, themeStore, repos.Trace, cfg.Reflection.AnalystMaxIterations, chunkBuilder), log.Default()))
-	reflectionReg.Register(tool.NewLoggingWrapper(
-		agent.NewScorer(llmClients.BgFlash, repos.Trace), log.Default()))
-	reflectionReg.Register(tool.NewLoggingWrapper(
-		agent.NewSecretary(llmClients.BgFlash, repos.Trace), log.Default()))
 
 	themeEmbedder := agent.NewThemeEmbedder(infra, repos.ConceptEmbed, repos.Embedding)
 	bgClients := &app.LLMClients{Flash: llmClients.BgFlash, Strong: llmClients.BgFlash}
 	themeDiscoverer := agent.NewThemeDiscoverer(bgClients, infra, retrievalTools, themeStore, themeEmbedder, conceptEmbedService, repos.Trace,
 		cfg.Reflection.DiscoverMaxIterations, cfg.Reflection.ClusterThreshold)
 	reflectionReg.Register(tool.NewLoggingWrapper(themeDiscoverer, log.Default()))
-
-	mailboxTool := tool.NewMailboxTool(repos.Mailbox)
-	reflectionReg.Register(tool.NewLoggingWrapper(mailboxTool, log.Default()))
 
 	themeMgmtTool := tool.NewThemeTool(repos.ThemeState, themeEmbedder)
 	reflectionReg.Register(tool.NewLoggingWrapper(themeMgmtTool, log.Default()))

@@ -144,19 +144,6 @@ func (r *UserRepo) ListActiveSince(ctx context.Context, since time.Time) ([]mode
 	return users, err
 }
 
-// IsActiveSince 判断单用户最近 since 以来是否有正常用户消息，供手动触发场景门控。
-func (r *UserRepo) IsActiveSince(ctx context.Context, userID string, since time.Time) (bool, error) {
-	var count int64
-	err := r.db.WithContext(ctx).
-		Model(&model.Message{}).
-		Where("user_id = ?", userID).
-		Where("created_at >= ?", since).
-		Where("status = ?", model.MsgStatusNormal).
-		Where("is_sub_agent = ?", false).
-		Count(&count).Error
-	return count > 0, err
-}
-
 // ListResult — 用户列表分页结果
 type ListResult struct {
 	Users      []model.User `json:"users"`

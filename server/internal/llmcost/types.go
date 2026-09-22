@@ -34,16 +34,11 @@ const (
 	SubFactDecide       = "fact_decide"
 
 	// reflection
-	SubFindingScore       = "finding_score"
-	SubFindingHumanize    = "finding_humanize"
 	SubThemeDiscoverConv  = "theme_discover_conv"
 	SubThemeDiscoverStats = "theme_discover_stats"
 	SubThemeAnalyze       = "theme_analyze"
 	SubStateVerify        = "state_verify"
 	SubStateUpdate        = "state_update"
-	SubMissionDiscover    = "mission_discover"
-	SubMissionRank        = "mission_rank"
-	SubMissionRun         = "mission_run"
 
 	// tool
 	SubReminderGen = "reminder_gen"

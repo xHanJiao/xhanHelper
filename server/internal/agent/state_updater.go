@@ -64,30 +64,28 @@ var stateUpdaterTaskPrefix = `你是 xhanHelper 的主题状态维护员。基�
 
 // StateUpdater — 增量更新主题状态页（Phase 15: ReAct + 6 工具 + 检验）
 type StateUpdater struct {
-	flashClient        llm.LLMClient
-	msgRepo            *service.MessageRepo
-	convRepo           *service.ConversationRepo
-	themeStore         *ThemeStore
-	pendingFindingRepo *service.PendingFindingRepo
-	vectorStore        app.VectorStore
-	conceptEmbed       *ConceptEmbedService
-	chunkBuilder       *ChunkBuilder
-	retrievalTools     map[string]tool.Tool
-	traceRepo          *service.ReflectionTraceRepo
+	flashClient    llm.LLMClient
+	msgRepo        *service.MessageRepo
+	convRepo       *service.ConversationRepo
+	themeStore     *ThemeStore
+	vectorStore    app.VectorStore
+	conceptEmbed   *ConceptEmbedService
+	chunkBuilder   *ChunkBuilder
+	retrievalTools map[string]tool.Tool
+	traceRepo      *service.ReflectionTraceRepo
 }
 
-func NewStateUpdater(flashClient llm.LLMClient, msgRepo *service.MessageRepo, convRepo *service.ConversationRepo, themeStore *ThemeStore, pendingFindingRepo *service.PendingFindingRepo, vectorStore app.VectorStore, conceptEmbed *ConceptEmbedService, chunkBuilder *ChunkBuilder, retrievalTools map[string]tool.Tool, traceRepo *service.ReflectionTraceRepo) *StateUpdater {
+func NewStateUpdater(flashClient llm.LLMClient, msgRepo *service.MessageRepo, convRepo *service.ConversationRepo, themeStore *ThemeStore, vectorStore app.VectorStore, conceptEmbed *ConceptEmbedService, chunkBuilder *ChunkBuilder, retrievalTools map[string]tool.Tool, traceRepo *service.ReflectionTraceRepo) *StateUpdater {
 	return &StateUpdater{
-		flashClient:        flashClient,
-		msgRepo:            msgRepo,
-		convRepo:           convRepo,
-		themeStore:         themeStore,
-		pendingFindingRepo: pendingFindingRepo,
-		vectorStore:        vectorStore,
-		conceptEmbed:       conceptEmbed,
-		chunkBuilder:       chunkBuilder,
-		retrievalTools:     retrievalTools,
-		traceRepo:          traceRepo,
+		flashClient:    flashClient,
+		msgRepo:        msgRepo,
+		convRepo:       convRepo,
+		themeStore:     themeStore,
+		vectorStore:    vectorStore,
+		conceptEmbed:   conceptEmbed,
+		chunkBuilder:   chunkBuilder,
+		retrievalTools: retrievalTools,
+		traceRepo:      traceRepo,
 	}
 }
 

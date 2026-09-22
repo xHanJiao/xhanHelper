@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useConversationsStore } from '@/stores/conversations'
 import { useChatStore } from '@/stores/chat'
@@ -20,29 +20,6 @@ const hoveredId = ref(null)
 const confirmingId = ref(null)
 
 const auth = useAuthStore()
-
-// const unreadCount = ref(0)
-// let unreadTimer = null
-
-// async function fetchUnreadCount() {
-//   try {
-//     const res = await api.get('/api/mailbox/unread-count')
-//     unreadCount.value = res.count || 0
-//   } catch (_) {}
-// }
-
-// watch(() => route.path, () => {
-//   fetchUnreadCount()
-// })
-
-// onMounted(() => {
-//   fetchUnreadCount()
-//   unreadTimer = setInterval(fetchUnreadCount, 30000)
-// })
-
-// onUnmounted(() => {
-//   if (unreadTimer) clearInterval(unreadTimer)
-// })
 
 const activeId = computed(() => route.params.id)
 
@@ -80,9 +57,7 @@ const confirmPassword = ref('')
 const pwdLoading = ref(false)
 
 const navItems = [
-  // { label: '任务', path: '/missions' },
   { label: '智能体', path: '/agents' },
-  // { label: '信箱', path: '/mailbox' },
   { label: '文档', path: '/documents' }
 ]
 
@@ -237,23 +212,6 @@ function handleSelect(conv) {
           @mouseout="e => { if (!isNavActive(item.path)) e.currentTarget.style.background = 'transparent' }"
         >
           {{ item.label }}
-          <!-- <span
-            v-if="item.path === '/mailbox' && unreadCount > 0"
-            :style="{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              minWidth: '18px',
-              height: '18px',
-              padding: '0 5px',
-              borderRadius: '9px',
-              background: 'var(--color-danger)',
-              color: '#fff',
-              fontSize: '11px',
-              fontWeight: '600',
-              marginLeft: 'auto',
-            }"
-          >{{ unreadCount > 99 ? '99+' : unreadCount }}</span> -->
         </div>
       </template>
     </div>

@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-card="input" data-scrim="5" data-band="06" data-lines="barln" data-font="mono" data-accent="green" data-size="15" data-anno="on">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>diff 预览：内联卡 + 放大浮层（浅色重做）</title>
+<style>
+/* ============ token（唯一来源：Assets.xcassets/*.colorset） ============ */
+:root{
+  --app-accent:#2F7D63;      --accent-secondary:#41C9E2;
+  --assistant-text:#3B2E1F;  --user-text:#2A7F58;
+  --chat-bg:#F7EEDD;         --chat-bg-deep:#EFE2C8;
+  --surface-input:#F2F7F3;   --bubble-tool:#E8E4EF;
+
+  --line-add:#2F7D63;        /* 加行：直接借 appAccent 绿 */
+  --line-del:#C1543C;        /* 删行：暖砖红（唯一为 diff 语义新增，见文末说明） */
+
+  --base:15px;
+  --font-ui:-apple-system,"PingFang SC",system-ui,sans-serif;
+  --font-code:ui-monospace,SFMono-Regular,Menlo,monospace;
+  --diff-font:var(--font-code);
+  --btn-ink:#fff;
+  --scrim-alpha:.5;
+  --band-add:color-mix(in srgb, var(--line-add) 6%, transparent);
+  --band-del:color-mix(in srgb, var(--line-del) 6%, transparent);
+
+  /* 派生：一律 color-mix 落 token，不自造 hex */
+  --ink-soft:color-mix(in srgb, var(--assistant-text) 60%, transparent);
+  --hairline:color-mix(in srgb, var(--assistant-text) 14%, transparent);
+  --card-bg:var(--surface-input);
+  --card-shadow:0 18px 48px rgba(59,46,31,.18);
+}
+html[data-theme="dark"]{
+  --app-accent:#92C8B4;      --assistant-text:#FFFFFF;
+  --user-text:#90D4A8;       --chat-bg:#1C1C1E;
+  --chat-bg-deep:#141416;    --surface-input:#2C2E2D;
+  --bubble-tool:#2E2B36;
+  --line-add:#7FC9A8;        --line-del:#E0917F;
+  --btn-ink:#10201a;
+  --hairline:rgba(255,255,255,.14);
+  --card-shadow:0 18px 48px rgba(0,0,0,.55);
+}
+
+/* ============ 开关矩阵（只挂在 html 上，避免 ::root 派生变量停在浅色） ============ */
+html[data-card="input"]  { --card-bg:var(--surface-input); }
+html[data-card="paper"]  { --card-bg:color-mix(in srgb, var(--chat-bg) 92%, var(--surface-input)); }
+html[data-card="material"]{ --card-bg:color-mix(in srgb, var(--surface-input) 58%, transparent); }
+html[data-card="material"] .card{ backdrop-filter:blur(22px) saturate(1.6); }
+
+html[data-scrim="5"] { --scrim-alpha:.5; }
+html[data-scrim="3"] { --scrim-alpha:.3; }
+html[data-scrim="15"]{ --scrim-alpha:.15; }
+
+html[data-band="22"]{ --band-add:color-mix(in srgb,var(--line-add) 22%,transparent); --band-del:color-mix(in srgb,var(--line-del) 22%,transparent); }
+html[data-band="10"]{ --band-add:color-mix(in srgb,var(--line-add) 10%,transparent); --band-del:color-mix(in srgb,var(--line-del) 10%,transparent); }
+html[data-band="06"]{ --band-add:color-mix(in srgb,var(--line-add) 6%,transparent);  --band-del:color-mix(in srgb,var(--line-del) 6%,transparent); }
+
+html[data-font="system"]{ --diff-font:var(--font-ui); }
+html[data-size="13"]{ --base:13px; }
+html[data-size="17"]{ --base:17px; }
+
+html[data-accent="green"] { --btn-accent:var(--app-accent); }
+html[data-accent="blue"]  { --btn-accent:#3B7DD8; }
+html[data-accent="orange"]{ --btn-accent:#E08A2E; }
+
+/* ============ 骨架 ============ */
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  font-family:var(--font-ui);
+  background:#2b2b2e;
+  color:var(--assistant-text);
+  padding:18px 18px 96px;
+  display:flex;justify-content:center;align-items:flex-start;
+}
+.stage{position:relative;width:1200px;height:772px;border-radius:14px;overflow:hidden;
+  background:linear-gradient(160deg,var(--chat-bg) 0%,var(--chat-bg) 55%,var(--chat-bg-deep) 100%);
+  border:1px solid var(--hairline);box-shadow:0 24px 60px rgba(0,0,0,.45)}
+.topbar{height:44px;display:flex;align-items:center;gap:10px;padding:0 16px;
+  border-bottom:1px solid var(--hairline);
+  background:color-mix(in srgb,var(--chat-bg) 70%,transparent);backdrop-filter:blur(10px)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ink-soft);opacity:.5}
+.topbar .t{font-size:calc(var(--base)*.82);color:var(--ink-soft)}
+.topbar .sp{flex:1}
+
+.chat{position:absolute;inset:44px 0 0 0;padding:18px 28px 0;display:flex;flex-direction:column;gap:10px}
+.bub{max-width:56%;padding:9px 13px;border-radius:12px;font-size:calc(var(--base)*.95);line-height:1.5;
+  border:1px solid var(--hairline)}
+.bub.ai{background:var(--surface-input);align-self:flex-start}
+.bub.me{background:color-mix(in srgb,var(--user-text) 14%,transparent);color:var(--user-text);align-self:flex-end}
+.bub.tool{background:var(--bubble-tool);align-self:flex-start;font-family:var(--font-code);font-size:calc(var(--base)*.82);color:var(--ink-soft)}
+
+.dock{margin-top:auto;padding-bottom:14px}
+
+/* ============ 卡片 ============ */
+.card{background:var(--card-bg);border:1px solid var(--hairline);border-radius:12px;
+  box-shadow:var(--card-shadow);overflow:hidden}
+html[data-theme="dark"] .card{box-shadow:0 14px 34px rgba(0,0,0,.5);border-color:rgba(255,255,255,.16)}
+
+.chead{display:flex;align-items:center;gap:9px;padding:11px 13px 9px}
+.opico{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;flex:0 0 auto;
+  background:color-mix(in srgb,#E08A2E 16%,transparent);color:#B96E12;
+  font-size:calc(var(--base)*.72);font-weight:700}
+html[data-theme="dark"] .opico{background:color-mix(in srgb,#E08A2E 24%,transparent);color:#F0B267}
+.op{font-weight:600;font-size:calc(var(--base)*.95);white-space:nowrap}
+.pathchip{font-family:var(--font-code);font-size:calc(var(--base)*.76);color:var(--ink-soft);
+  background:color-mix(in srgb,var(--assistant-text) 6%,transparent);
+  border-radius:6px;padding:2px 7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:52%}
+.sp{flex:1}
+.pill{font-size:calc(var(--base)*.76);font-variant-numeric:tabular-nums;border-radius:6px;padding:1px 6px;white-space:nowrap}
+.pill.add{background:color-mix(in srgb,var(--line-add) 15%,transparent);color:color-mix(in srgb,var(--line-add) 78%,var(--assistant-text))}
+.pill.del{background:color-mix(in srgb,var(--line-del) 15%,transparent);color:color-mix(in srgb,var(--line-del) 78%,var(--assistant-text))}
+.icobtn{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;flex:0 0 auto;
+  border:1px solid var(--hairline);background:transparent;color:var(--ink-soft);cursor:default}
+svg{display:block}
+
+/* ============ diff 行 ============ */
+.diff{--lh:1.5;padding:6px 0;overflow:auto;background:transparent;
+  font-family:var(--diff-font);font-size:var(--base);line-height:var(--lh)}
+.diff .row{display:flex;align-items:baseline;padding:0 10px;min-height:calc(var(--base)*var(--lh))}
+.diff .g{flex:0 0 1.1ch;text-align:center;color:var(--ink-soft);user-select:none}
+.diff .ln{flex:0 0 3.4ch;text-align:right;margin-right:11px;color:var(--ink-soft);opacity:.72;
+  user-select:none;font-variant-numeric:tabular-nums}
+.diff .code{white-space:pre;overflow:visible}
+.diff .row.meta .code{color:var(--ink-soft)}
+.diff .row.add .g{color:var(--line-add)}
+.diff .row.del .g{color:var(--line-del)}
+.diff .row.add .code,.diff .row.del .code{color:var(--assistant-text)}
+
+/* 现状：满幅色带（无行号；+/- 靠行内前缀） */
+html[data-lines="band"] .diff .row.add{background:var(--band-add)}
+html[data-lines="band"] .diff .row.del{background:var(--band-del)}
+html[data-lines="band"] .diff .ln{display:none}
+/* 左色条 + 极淡整行底 */
+html[data-lines="bar"] .diff .row.add{background:var(--band-add);box-shadow:inset 3px 0 0 var(--line-add)}
+html[data-lines="bar"] .diff .row.del{background:var(--band-del);box-shadow:inset 3px 0 0 var(--line-del)}
+html[data-lines="bar"] .diff .ln{display:none}
+/* 左色条 + 行号列 */
+html[data-lines="barln"] .diff .row.add{background:var(--band-add);box-shadow:inset 3px 0 0 var(--line-add)}
+html[data-lines="barln"] .diff .row.del{background:var(--band-del);box-shadow:inset 3px 0 0 var(--line-del)}
+
+.inline .diff{max-height:196px;border-top:1px solid var(--hairline)}
+
+/* ============ 内联确认条 ============ */
+.confirm-inline{max-width:720px;margin:0 auto 8px}
+.actions{display:flex;align-items:center;gap:8px;padding:8px 2px 0;font-size:calc(var(--base)*.76);color:var(--ink-soft)}
+.shield{color:#E08A2E}
+.btn{border-radius:8px;padding:5px 14px;font-size:calc(var(--base)*.82);font-family:inherit;cursor:pointer;
+  border:1px solid transparent}
+.btn.primary{background:var(--btn-accent);color:var(--btn-ink);font-weight:600}
+.btn.ghost{background:transparent;border-color:var(--hairline);color:var(--ink-soft)}
+
+.inputbar{margin:0 auto;width:100%;height:46px;border-radius:12px;
+  background:var(--surface-input);border:1px solid var(--hairline);
+  display:flex;align-items:center;padding:0 14px;color:var(--ink-soft);font-size:calc(var(--base)*.86)}
+
+/* ============ 遮罩 + 放大浮层 ============ */
+.scrim{position:absolute;inset:0;background:rgba(0,0,0,var(--scrim-alpha))}
+.overlay{position:absolute;inset:0;display:grid;place-items:center;padding:74px 130px}
+.expanded{width:100%;height:100%;max-width:900px;max-height:556px;display:flex;flex-direction:column}
+.expanded .diff{flex:1;border-top:1px solid var(--hairline)}
+.efoot{display:flex;align-items:center;gap:8px;padding:10px 13px;font-size:calc(var(--base)*.78);
+  color:var(--ink-soft);border-top:1px solid var(--hairline)}
+.efoot .btn{padding:6px 16px}
+
+/* ============ 标注 ============ */
+.anno{position:absolute;font-size:11px;font-family:var(--font-ui);color:#fff;background:rgba(0,0,0,.72);
+  border-radius:6px;padding:3px 8px;pointer-events:none;white-space:nowrap}
+html[data-anno="off"] .anno{display:none}
+
+/* ============ 控制条（.ui：不干扰选区/截图内容） ============ */
+.ui{position:fixed;left:0;right:0;bottom:0;z-index:9;background:#17171a;color:#e7e7ea;
+  font-family:var(--font-ui);font-size:12px;padding:9px 14px;display:flex;flex-wrap:wrap;gap:6px 14px;
+  align-items:center;border-top:1px solid #2c2c31}
+.ui .grp{display:flex;align-items:center;gap:5px}
+.ui .lbl{opacity:.6;margin-right:2px}
+.ui button{font-family:inherit;font-size:12px;padding:3px 9px;border-radius:6px;cursor:pointer;
+  background:#26262b;color:#d8d8dd;border:1px solid #38383f}
+.ui button[aria-pressed="true"]{background:#3B8A6B;border-color:#4AA383;color:#fff}
+.ui .sep{width:1px;height:18px;background:#33333a}
+.ui .warn{display:none;color:#F0B267;font-size:11px}
+html[data-font="system"] .ui .warn{display:inline}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="topbar">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span class="t" style="margin-left:6px">xHelper — 会话</span><span class="sp"></span>
+    <span class="t">浅色 / 深色 · 字号 <span id="ui-size-tag">15</span></span>
+  </div>
+
+  <div class="chat">
+    <div class="bub me">把 diff 预览的浅色样式调得不那么像代码编辑器</div>
+    <div class="bub ai">好，先出稿给你挑。改动会落在内联卡和放大浮层两处。</div>
+    <div class="bub tool">fs__edit → client/xHelper/…/DiffPreviewView.swift</div>
+
+    <div class="dock">
+      <!-- ① 内联确认条 -->
+      <div class="confirm-inline">
+        <div class="card inline">
+          <div class="chead">
+            <span class="opico">±</span>
+            <span class="op">覆盖文件</span>
+            <span class="pathchip">client/xHelper/xHelper/Shared/Views/DiffPreviewView.swift</span>
+            <span class="sp"></span>
+            <span class="pill add">+5</span><span class="pill del">-3</span>
+            <span class="icobtn" title="点击放大">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                <path d="M6 2H2v4M10 14h4v-4"/><path d="M14 6V2h-4M2 10v4h4"/>
+              </svg>
+            </span>
+          </div>
+          <div class="diff diff-slot"></div>
+        </div>
+        <div class="actions">
+          <svg class="shield" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l6 2v5c0 3.5-2.5 6-6 7-3.5-1-6-3.5-6-7V3l6-2z" opacity=".85"/></svg>
+          <span>60s 未处理自动拒绝</span>
+          <span class="sp" style="flex:1"></span>
+          <button class="btn primary">允许</button>
+          <button class="btn ghost">拒绝</button>
+        </div>
+      </div>
+      <div class="inputbar">输入消息，或 ⌘K 打开命令面板…</div>
+    </div>
+  </div>
+
+  <div class="scrim"></div>
+
+  <div class="overlay">
+    <!-- ② 放大浮层 -->
+    <div class="card expanded">
+      <div class="chead">
+        <span class="opico">±</span>
+        <span class="op">覆盖文件</span>
+        <span class="pathchip">client/xHelper/xHelper/Shared/Views/DiffPreviewView.swift</span>
+        <span class="sp"></span>
+        <span class="pill add">+5</span><span class="pill del">-3</span>
+        <span class="icobtn">
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+            <path d="M4 4l8 8M12 4l-8 8"/>
+          </svg>
+        </span>
+      </div>
+      <div class="diff diff-slot"></div>
+      <div class="efoot">
+        <svg class="shield" width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l6 2v5c0 3.5-2.5 6-6 7-3.5-1-6-3.5-6-7V3l6-2z" opacity=".85"/></svg>
+        <span>60s 未处理自动拒绝 · 点预览区或按 Esc 收起</span>
+        <span class="sp" style="flex:1"></span>
+        <button class="btn primary">允许</button>
+        <button class="btn ghost">拒绝</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="anno" style="left:16px;top:360px">① 内联确认条（被遮罩压暗）</div>
+  <div class="anno" style="right:140px;top:92px">② 放大浮层</div>
+</div>
+
+<div class="ui">
+  <div class="grp"><span class="lbl">预设</span>
+    <button data-preset="before">现状</button>
+    <button data-preset="a">A 清透·色条+行号</button>
+    <button data-preset="b">B 暖纸·淡色带</button>
+  </div>
+  <span class="sep"></span>
+  <div class="grp"><span class="lbl">卡片底色</span>
+    <button data-k="card" data-v="input">清透</button>
+    <button data-k="card" data-v="paper">暖纸</button>
+    <button data-k="card" data-v="material">材质(现状)</button>
+  </div>
+  <div class="grp"><span class="lbl">遮罩</span>
+    <button data-k="scrim" data-v="5">0.5(现状)</button>
+    <button data-k="scrim" data-v="3">0.3</button>
+    <button data-k="scrim" data-v="15">0.15</button>
+  </div>
+  <div class="grp"><span class="lbl">色带强度</span>
+    <button data-k="band" data-v="22">0.22(现状)</button>
+    <button data-k="band" data-v="10">0.10</button>
+    <button data-k="band" data-v="06">0.06</button>
+  </div>
+  <div class="grp"><span class="lbl">行渲染</span>
+    <button data-k="lines" data-v="band">满幅色带(现状)</button>
+    <button data-k="lines" data-v="bar">左色条</button>
+    <button data-k="lines" data-v="barln">色条+行号</button>
+  </div>
+  <span class="sep"></span>
+  <div class="grp"><span class="lbl">字体</span>
+    <button data-k="font" data-v="mono">等宽</button>
+    <button data-k="font" data-v="system">系统</button>
+    <span class="warn">比例字体：diff 缩进对齐会错位</span>
+  </div>
+  <div class="grp"><span class="lbl">主按钮</span>
+    <button data-k="accent" data-v="green">绿 accent</button>
+    <button data-k="accent" data-v="blue">蓝</button>
+    <button data-k="accent" data-v="orange">橙(现状)</button>
+  </div>
+  <span class="sep"></span>
+  <div class="grp"><span class="lbl">字号</span>
+    <button data-k="size" data-v="13">13</button>
+    <button data-k="size" data-v="15">15</button>
+    <button data-k="size" data-v="17">17</button>
+  </div>
+  <div class="grp"><span class="lbl">主题</span>
+    <button data-k="theme" data-v="light">浅</button>
+    <button data-k="theme" data-v="dark">深</button>
+  </div>
+  <div class="grp"><span class="lbl">标注</span>
+    <button data-k="anno" data-v="on">开</button>
+    <button data-k="anno" data-v="off">关</button>
+  </div>
+</div>
+
+<template id="tpl-diff">
+  <div class="row meta"><span class="g"></span><span class="ln"></span><span class="code">@@ -134,11 +134,13 @@ struct ExpandedDiffPreviewView: View {</span></div>
+  <div class="row ctx"><span class="g"></span><span class="ln">134</span><span class="code">        }</span></div>
+  <div class="row ctx"><span class="g"></span><span class="ln">135</span><span class="code">        .padding(16)</span></div>
+  <div class="row ctx"><span class="g"></span><span class="ln">136</span><span class="code">        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)</span></div>
+  <div class="row del"><span class="g">-</span><span class="ln">137</span><span class="code">        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))</span></div>
+  <div class="row del"><span class="g">-</span><span class="ln">138</span><span class="code">        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.25)))</span></div>
+  <div class="row add"><span class="g">+</span><span class="ln">137</span><span class="code">        .background(Color("surfaceInput"), in: RoundedRectangle(cornerRadius: 12))</span></div>
+  <div class="row add"><span class="g">+</span><span class="ln">138</span><span class="code">        .overlay(</span></div>
+  <div class="row add"><span class="g">+</span><span class="ln">139</span><span class="code">            RoundedRectangle(cornerRadius: 12)</span></div>
+  <div class="row add"><span class="g">+</span><span class="ln">140</span><span class="code">                .stroke(Color("assistantText").opacity(0.12))</span></div>
+  <div class="row add"><span class="g">+</span><span class="ln">141</span><span class="code">        )</span></div>
+  <div class="row ctx"><span class="g"></span><span class="ln">139</span><span class="code">        .padding(24)</span></div>
+  <div class="row del"><span class="g">-</span><span class="ln">140</span><span class="code">        // 确认在别处被解决：浮层别留着失效内容</span></div>
+  <div class="row ctx"><span class="g"></span><span class="ln">141</span><span class="code">        .onChange(of: viewModel.pendingToolConfirmation?.id) { _, newID in</span></div>
+  <div class="row ctx"><span class="g"></span><span class="ln">142</span><span class="code">            if newID != conf.id { onClose() }</span></div>
+  <div class="row ctx"><span class="g"></span><span class="ln">143</span><span class="code">        }</span></div>
+  <div class="row ctx"><span class="g"></span><span class="ln">144</span><span class="code">    }</span></div>
+</template>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var tpl = document.getElementById('tpl-diff');
+  var slots = document.querySelectorAll('.diff-slot');
+  for (var i = 0; i < slots.length; i++) {
+    slots[i].appendChild(tpl.content.cloneNode(true));
+  }
+
+  var sizeTag = document.getElementById('ui-size-tag');
+  var bar = document.querySelector('.ui');
+
+  function sync() {
+    var btns = bar.querySelectorAll('button[data-k]');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      b.setAttribute('aria-pressed', root.dataset[b.dataset.k] === b.dataset.v ? 'true' : 'false');
+    }
+    sizeTag.textContent = root.dataset.size;
+  }
+
+  var presets = {
+    before: { theme:'light', card:'material', scrim:'5',  band:'22', lines:'band',  font:'mono', accent:'orange', size:'15', anno:'on' },
+    a:      { theme:'light', card:'input',    scrim:'5',  band:'06', lines:'barln', font:'mono', accent:'green',  size:'15', anno:'on' },
+    b:      { theme:'light', card:'paper',    scrim:'3',  band:'10', lines:'bar',   font:'mono', accent:'green',  size:'15', anno:'on' }
+  };
+
+  function apply(obj) {
+    for (var k in obj) { if (Object.prototype.hasOwnProperty.call(obj, k)) root.dataset[k] = obj[k]; }
+    sync();
+  }
+
+  bar.addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.preset) { apply(presets[b.dataset.preset]); return; }
+    root.dataset[b.dataset.k] = b.dataset.v;
+    sync();
+  });
+
+  var q = new URLSearchParams(location.search);
+  var preset = q.get('preset') || 'a';
+  var init = {};
+  for (var k in presets[preset]) { if (Object.prototype.hasOwnProperty.call(presets[preset], k)) init[k] = presets[preset][k]; }
+  ['theme', 'card', 'scrim', 'band', 'lines', 'font', 'accent', 'size', 'anno'].forEach(function (k) {
+    if (q.has(k)) init[k] = q.get(k);
+  });
+  apply(init);
+})();
+</script>
+</body>
+</html>

@@ -883,11 +883,11 @@ struct ChatView: View {
                     Button("允许") { viewModel.resolveToolConfirmation(allow: true) }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .tint(.orange)
+                        .tint(Color("appAccent"))
                     Button("拒绝") { viewModel.resolveToolConfirmation(allow: false) }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .tint(.orange)
+                        .tint(.secondary)
                 }
             }
             .padding(.horizontal, Layout.chatHorizontalPadding)

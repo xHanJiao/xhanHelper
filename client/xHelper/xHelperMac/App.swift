@@ -34,6 +34,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // 浮层（diff 放大预览 / 大图）打开时，Esc 先收起浮层，不落到下面的「Esc=拒绝」
+            if event.keyCode == 53, LightboxCenter.shared.content != nil {
+                LightboxCenter.shared.dismiss()
+                return nil
+            }
+
             // L3 工具确认：Tab=允许，Esc=拒绝（无需 Command，优先级最高）。
             // resolveToolConfirmation 有 confirmationResolved 防重入守卫，连按安全。
             if AppShortcutBridge.shared.confirmationPending?() == true {

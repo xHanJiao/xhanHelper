@@ -1,5 +1,72 @@
-#if os(macOS)
 import Foundation
+
+/// unified diff 文本 → 带行号的逐行结构（视图只做排版，不在 View 里解析文本）。
+/// 行号单列口径：加行/上下文行取新文件行号，删行取旧文件行号（git 单列显示同款）。
+enum DiffLineParser {
+    struct Line {
+        enum Kind {
+            case meta, added, removed, context
+        }
+        let kind: Kind
+        let number: Int?
+        /// 已剥掉 `+` / `-` / 空格 前缀
+        let text: String
+    }
+
+    /// 丢弃 `---`/`+++` 文件头与空行（卡片 header 已展示路径）。
+    static func parse(_ diff: String) -> [Line] {
+        var out: [Line] = []
+        var oldNo = 1
+        var newNo = 1
+
+        for raw in diff.components(separatedBy: "\n") {
+            if raw.isEmpty || raw.hasPrefix("--- ") || raw.hasPrefix("+++ ") { continue }
+            if raw.hasPrefix("@@") {
+                if let start = hunkStart(raw) { oldNo = start.old; newNo = start.new }
+                out.append(Line(kind: .meta, number: nil, text: raw))
+                continue
+            }
+            if raw.hasPrefix("\\") { // "\ No newline at end of file"
+                out.append(Line(kind: .meta, number: nil, text: raw))
+                continue
+            }
+            if raw.hasPrefix("-") {
+                out.append(Line(kind: .removed, number: oldNo, text: String(raw.dropFirst())))
+                oldNo += 1
+                continue
+            }
+            if raw.hasPrefix("+") {
+                out.append(Line(kind: .added, number: newNo, text: String(raw.dropFirst())))
+                newNo += 1
+                continue
+            }
+            if raw.hasPrefix(" ") {
+                out.append(Line(kind: .context, number: newNo, text: String(raw.dropFirst())))
+                oldNo += 1
+                newNo += 1
+                continue
+            }
+            // 非 unified 文本（degraded 摘要 / 纯文本 fallback）：按普通行编号
+            out.append(Line(kind: .context, number: oldNo, text: raw))
+            oldNo += 1
+            newNo += 1
+        }
+        return out
+    }
+
+    /// `@@ -134,11 +134,13 @@` → (old: 134, new: 134)
+    private static func hunkStart(_ line: String) -> (old: Int, new: Int)? {
+        let parts = line.split(separator: " ")
+        guard parts.count >= 3, parts[1].hasPrefix("-"), parts[2].hasPrefix("+") else { return nil }
+        func number(_ token: Substring) -> Int? {
+            Int(token.dropFirst().split(separator: ",")[0])
+        }
+        guard let old = number(parts[1]), let new = number(parts[2]) else { return nil }
+        return (old, new)
+    }
+}
+
+#if os(macOS)
 
 /// 行级 diff 渲染：CollectionDifference → unified patch 文本 + 增减统计。
 /// 供 fs 写工具 L3 确认条预览使用（只走 UI，不上传服务端）。

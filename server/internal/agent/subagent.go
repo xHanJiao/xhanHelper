@@ -127,6 +127,45 @@ const fileExplorePrompt = `你是本地文件与只读命令探索专家，擅�
 <open_questions>未解决的问题（没有则填"无"）</open_questions>
 </file_explore_result>`
 
+// fileEditPrompt — file_edit 子 agent 角色 prompt。
+// 本地文件就地编辑专家（fs 读 + 写/编辑）+ 逐次用户确认；一次性完成改动后按固定结构回传「改了什么」。
+// 与 file_explore 的区别：这里是「改」，每次写都会弹 L3 确认，被拒不得重试。
+const fileEditPrompt = `你是本地文件编辑专家，擅长在用户的 Mac 文件系统上定位文件、精确修改内容并汇报改动。
+你的输出将直接交给主 agent 汇总回答用户，不直接面向用户。
+
+能力：
+- fs__glob：按文件名模式找文件；fs__grep：正则搜索内容定位行号；fs__read：读文件（每行带行号）或列目录
+- fs__write：新建 / 覆盖 / 追加文件（新建或整体替换用；覆盖/追加已有文件前必须先 read 过）
+- fs__edit：文件内精确字符串替换（渐进修改的主力工具）
+- datetime / calculator：辅助
+
+工作准则：
+- 先规划：明确要改哪个文件、改成什么，再动手
+- 定位顺序：glob 找文件 → grep 定位 → read 读上下文；不要上来就整读大文件
+- 修改已有文件优先用 fs__edit 渐进小改（old_string 必须与文件内容精确一致且唯一匹配）；
+  新建文件或整体重写才用 fs__write
+- 每次只改一个小片段，多次调用渐进完成，不要一次写超大内容
+- 不要中途汇报进度，一次性完成全部改动后输出结论
+
+写操作的用户确认（重要）：
+- 每次 fs__write / fs__edit 都会弹给用户确认（高风险写，展示 diff）；用户可能拒绝
+- 被拒绝 → 换方案（缩小范围、换写法）或就此打住，**禁止原样重试同一处改动**
+- 等待用户确认会占用任务时长预算，改动多时优先保证最重要的几处
+- 敏感文件（.env、密钥、证书等）会被客户端拦截，属预期，不要试图绕过；路径未授权时会提示，被拒就换方案
+
+安全与边界：
+- 只修改任务明确要求的文件，不要顺手改动无关文件；多个并行任务时不要碰别人的文件
+- 数据边界：用户的记忆、历史对话、摘要对子任务不可见（没有对应工具）
+- 汇报只给「改了什么」，不要把文件原文大段抄回来
+
+最终输出必须严格使用以下结构（不要在结构外输出任何文字）：
+<file_edit_result>
+<summary>3-5 句话说明做了哪些改动、结果如何</summary>
+<changes>改动清单，每条：文件绝对路径 + 行号（file:line）+ 一句话说明改了什么，用分号分隔；没有则填"无"</changes>
+<rejected>被用户拒绝或失败的改动清单（含原因），没有则填"无"</rejected>
+<open_questions>未完成/需继续的事项（供主任务决定是否续跑），没有则填"无"</open_questions>
+</file_edit_result>`
+
 // userContextPrompt — user_context 子 agent 角色 prompt。
 // 用户信息检索（画像/记忆/笔记/摘要/主题/历史）只读专家；一次性多轮深挖后按固定结构输出结论。
 // 与 web_explore/file_explore 相反：本类型的数据边界是全放开（查用户自身信息就是它的本职）。
@@ -175,6 +214,9 @@ type subagentSpec struct {
 //   - file_explore：本地文件只读工具（fs 的 glob/grep/read，写工具函数级剥除）+ 只读命令（shell 的 run，
 //     命令侧白名单只放行只读命令，写/网络/进程类直接拒绝）。browser 不注入；
 //     ui（ask_user 用户介入）保留；笔记/记忆均不可见（子任务不应自动读取用户私密数据）。
+//   - file_edit：本地文件就地编辑（fs 的 glob/grep/read + write/edit）。写能力**只在这里**开放，
+//     主循环与 file_explore 都不含写函数；每次写走客户端 L3 确认（diff 审批）。
+//     预算同 file_explore（要读全文才能精确 edit）。
 //   - user_context：用户信息检索，数据边界全放开（画像/记忆/笔记/摘要/主题/历史——查用户自身就是本职）。
 //     profile 工具已 HideTool（仅子任务可见）；纯服务端（requiresClient=false），Web/客户端都能用。
 var subagentSpecs = map[string]subagentSpec{
@@ -191,6 +233,14 @@ var subagentSpecs = map[string]subagentSpec{
 		clientWhitelist: map[string][]string{"fs": {"glob", "grep", "read"}, "shell": {"run"}, "ui": nil},
 		// 对齐客户端注入预算（clientToolInjectBudgetBytes）：fs_read 单页 ≈19KB，
 		// 2000 默认会把读文件能力砍到 1/10
+		maxToolResult:  clientToolInjectBudgetBytes,
+		requiresClient: true,
+	},
+	"file_edit": {
+		prompt:          fileEditPrompt,
+		serverWhitelist: []string{"datetime", "calculator"},
+		clientWhitelist: map[string][]string{"fs": {"glob", "grep", "read", "write", "edit"}, "ui": nil},
+		// 要读全文才能凑出精确 old_string，预算对齐 fs_read 单页（同 file_explore）
 		maxToolResult:  clientToolInjectBudgetBytes,
 		requiresClient: true,
 	},
@@ -373,7 +423,7 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 	if !ok {
 		return &tool.SubAgentRunResult{
 			Success: false,
-			Error:   fmt.Sprintf("未知子 agent 类型: %s（可用：web_explore、file_explore、user_context）", opts.SubAgentType),
+			Error:   fmt.Sprintf("未知子 agent 类型: %s（可用：web_explore、file_explore、file_edit、user_context）", opts.SubAgentType),
 		}
 	}
 

@@ -243,3 +243,12 @@ macOS 客户端 handleClientToolCall:
 9. 敏感文件（.env、~/.ssh）：读/写都拒
 10. 授权目录外写：L3 确认通过后仍拒绝（realpath 复检）
 11. plan 模式：fs 工具全禁用（服务端既有机制）
+
+## 十、后续：归属接线（2026-09-21）
+
+Batch 4 的「服务端零改动」当时只到「工具就绪」，但编排层从未把写能力放出去
+（fs 组被 `subagent_only_client_tools` 对主循环隐藏，`file_explore` 白名单又只留只读三函数）——
+即 `fs__write` / `fs__edit` 一度**任何 agent 都够不着**。
+
+补齐方式：新增 `file_edit` 子 agent 类型，唯一开放 fs 写函数，经 task 工具派发。
+详见 `docs/design/mac-apps/fs-write-subagent.md`。客户端零改动。

@@ -93,4 +93,7 @@ func TestExploreWhitelist_ContainsUI(t *testing.T) {
 	if _, ok := subagentSpecs["file_explore"].clientWhitelist["ui"]; !ok {
 		t.Error("file_explore 客户端白名单应含 ui（ask_user 运行时 guard 放行）")
 	}
+	if _, ok := subagentSpecs["file_edit"].clientWhitelist["ui"]; !ok {
+		t.Error("file_edit 客户端白名单应含 ui（ask_user 运行时 guard 放行）")
+	}
 }

@@ -42,6 +42,7 @@ func (t *TaskTool) Description() string {
 何时使用：
 - 需要联网调研多步信息（搜索 → 浏览网页 → 提炼结论）→ web_explore
 - 需要在用户本地文件系统上搜索/阅读多个文件（代码、文档、配置等），或执行只读命令查看仓库/目录状态（如 git status、git log、ls）→ file_explore
+- 需要就地修改用户 Mac 上的文件（改文档/代码/配置：读→改→汇报）→ file_edit（每次写需用户确认，被拒就换方案）
 - 需要检索用户自身长期积累的信息（画像/记忆/笔记/摘要/主题/历史对话）做多轮深挖 → user_context（纯服务端，无需 Mac 客户端）
 - 多个独立子任务可并行（利用并行加速）
 - 任务量大、需要独立上下文避免污染当前对话
@@ -65,7 +66,7 @@ func (t *TaskTool) Description() string {
 
 func (t *TaskTool) Catalog() (CatalogEntry, bool) {
 	return CatalogEntry{
-		ShortDesc: "子任务。派子 agent 独立干活：联网调研 web_explore、本地文件/只读命令 file_explore、用户信息检索 user_context。",
+		ShortDesc: "子任务。派子 agent 独立干活：联网调研 web_explore、本地文件/只读命令 file_explore、本地文件编辑 file_edit、用户信息检索 user_context。",
 		Funcs:     []string{"run"},
 	}, true
 }
@@ -87,8 +88,9 @@ func (t *TaskTool) Functions() []FuncSchema {
 					"description": `子 agent 类型：
 - web_explore：联网调研（基于 Mac 浏览器，只读）
 - file_explore：本地文件与只读命令探索（搜索/阅读用户 Mac 上的文件、执行只读命令如 git status，只读）
+- file_edit：本地文件编辑（搜索/阅读并就地修改用户 Mac 上的文件；每次写都会请用户确认，被拒就换方案）
 - user_context：用户信息检索（画像/记忆/笔记/摘要/主题/历史，只读，纯服务端无需客户端）
-web_explore / file_explore 需要 macOS 客户端在线；客户端离线时这两个子任务无法执行。user_context 不依赖客户端。`,
+web_explore / file_explore / file_edit 需要 macOS 客户端在线；客户端离线时这三个子任务无法执行。user_context 不依赖客户端。`,
 				},
 				"prompt": map[string]interface{}{
 					"type": "string",

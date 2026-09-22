@@ -421,6 +421,13 @@ func TestBuildSubAgentSystemPrompt(t *testing.T) {
 	if !strings.Contains(file, "最多执行 19 轮工具调用") {
 		t.Errorf("file_explore system prompt 应含预算: %s", file)
 	}
+	edit := buildSubAgentSystemPrompt(subagentSpecs["file_edit"], 20, 600)
+	if !strings.Contains(edit, "本地文件编辑专家") {
+		t.Errorf("file_edit system prompt 应含编辑角色: %s", edit)
+	}
+	if !strings.Contains(edit, "file_edit_result") {
+		t.Errorf("file_edit system prompt 应含输出结构: %s", edit)
+	}
 	uc := buildSubAgentSystemPrompt(subagentSpecs["user_context"], 20, 600)
 	if !strings.Contains(uc, "用户信息检索专家") {
 		t.Errorf("user_context system prompt 应含检索角色: %s", uc)
@@ -475,8 +482,8 @@ func TestFilterClientToolsByFuncWhitelist(t *testing.T) {
 }
 
 func TestSubAgentSpecs_DispatchTable(t *testing.T) {
-	if len(subagentSpecs) != 3 {
-		t.Fatalf("应有 3 种子 agent 类型: %+v", subagentSpecs)
+	if len(subagentSpecs) != 4 {
+		t.Fatalf("应有 4 种子 agent 类型: %+v", subagentSpecs)
 	}
 	web := subagentSpecs["web_explore"]
 	if !web.requiresClient || web.maxToolResult <= 0 {
@@ -508,6 +515,32 @@ func TestSubAgentSpecs_DispatchTable(t *testing.T) {
 	for _, n := range file.serverWhitelist {
 		if n == "webfetch" || n == "search_notes_v2" || n == "unified_search" {
 			t.Errorf("file_explore 服务端白名单不应含 %s", n)
+		}
+	}
+	// file_edit：唯一开放 fs 写函数（write/edit）的子任务，需客户端
+	edit := subagentSpecs["file_edit"]
+	if !edit.requiresClient || edit.maxToolResult <= 0 {
+		t.Errorf("file_edit 应 requiresClient + 正数预算: %+v", edit)
+	}
+	editFsFuncs := edit.clientWhitelist["fs"]
+	if editFsFuncs == nil || strings.Join(editFsFuncs, ",") != "glob,grep,read,write,edit" {
+		t.Errorf("file_edit fs 白名单应含 glob/grep/read/write/edit: %v", editFsFuncs)
+	}
+	if _, ok := edit.clientWhitelist["ui"]; !ok {
+		t.Error("file_edit 应含 ui（ask_user）")
+	}
+	if !strings.Contains(edit.prompt, "file_edit_result") {
+		t.Error("file_edit prompt 应含输出结构 file_edit_result")
+	}
+	// 写能力只应出现在 file_edit：其它子任务不得放开 write/edit
+	for name, spec := range subagentSpecs {
+		if name == "file_edit" {
+			continue
+		}
+		for _, fn := range spec.clientWhitelist["fs"] {
+			if fn == "write" || fn == "edit" {
+				t.Errorf("%s 不应含写函数 %s", name, fn)
+			}
 		}
 	}
 	// user_context：纯服务端，不依赖客户端，检索是主力

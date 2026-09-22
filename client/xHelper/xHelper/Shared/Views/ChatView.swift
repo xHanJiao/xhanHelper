@@ -863,6 +863,15 @@ struct ChatView: View {
                     op: conf.displayName,
                     filePath: conf.filePath ?? ""
                 )
+                .contentShape(Rectangle())
+                // 点卡片任意处（含 diff 滚动区）→ 放大浮层；simultaneousGesture 避免被 ScrollView 吞掉
+                .simultaneousGesture(TapGesture().onEnded {
+                    LightboxCenter.shared.present {
+                        ExpandedDiffPreviewView(viewModel: viewModel, conf: conf) {
+                            LightboxCenter.shared.dismiss()
+                        }
+                    }
+                })
                 HStack(spacing: 8) {
                     Image(systemName: "shield.lefthalf.filled")
                         .font(.caption)

@@ -8,6 +8,7 @@
 >
 > 备注：开工粗估那行是回填的——本需求的前半程（调研 + 定方向）没有单列粗估，范围与定稿时一致，故按同一批面/缝回填，仅把当时未拍的决定数记为 5。
 > 排期：分首批 / 后续两段（见 §7）。首批另有两篇：`topic-merge.md`、`ledger-migration.md`；删除清理修复记在 `docs/bugs/017-vector-cleanup-on-delete.md`。
+> 另起一票：`tags-retirement.md`（退役 notes/memories 的 tags），不并入首批。
 > 首批估算：~8 面 / 3 缝（1 需探针）/ 2 次真机往返 / 0 待拍决定 · ~6–10h
 
 ---
@@ -61,7 +62,7 @@
 **不做**（这次明确不碰）：
 
 - **退役 facts**——不停写、不删表。`user_memories.facts` 字段**保留**，它是将来做 ADD/UPDATE/DELETE 判断的重要依据。
-- **tags**——见 §4.6，什么都不做。
+- **tags**——本批不动；退役方案见 §4.6 与 `tags-retirement.md`（**另起一票**）。
 - **存量数据梳理**——775 条记忆 + 990 条笔记的「从后往前」梳理，另起一票，不着急。
 - **theme**——继续挂起（当前 4 个 active 主题里 2 个 `state_text` 还是空的），topic 收敛后自然会好做。
 - **版本历史**——记忆和笔记都不新增版本能力。笔记现有的 `ContentVersion` 保留不动，但不再往上加东西。
@@ -160,14 +161,13 @@
 
 topic 收敛之后，「一个 topic 下挂几十条记录」会成为常态——这正是我们想要的，它让 theme 以后变成一件简单事（按 topic 聚合即可）。
 
-### 4.6 tags：不动
+### 4.6 tags：退役（另起一票）
 
-确认过，tags 现在**基本没用**，有两条证据：
+确认过，tags 现在**基本没用**：tag 概念已是空实现（`concept_embedder.go:35-38`），笔记/记忆上的 `tags` 字段只被 `get_topic_stats.splitTags` 读一次（`get_topic_stats.go:161,184`）+ 关键词检索顺带 LIKE，检索链路（`retrieval/*_source.go`）完全不碰它。
 
-1. `EnsureTagsEmbedded` 已经是个空实现（`concept_embedder.go:35-38`），tag 的向量早就不生成了。
-2. 笔记和记忆上的 `tags` 字段，**只被 `get_topic_stats.splitTags` 读了一次**（`get_topic_stats.go:161,184`），检索链路（`retrieval/*_source.go`）完全不碰它。
+topic 收敛后 topic 天然对应 theme，这唯一的弱信号也不再需要 → **退役**：停写、停读（含关键词 LIKE）、埋掉 tag 概念残骸，但**保留列与历史展示**。
 
-所以：**不恢复嵌入、不加约束、不删列**，维持现状写入。将来真要用再说。
+详见 `tags-retirement.md`。**本票另起，不并入首批。**
 
 ### 4.7 路由修正
 
@@ -227,7 +227,7 @@ topic 收敛之后，「一个 topic 下挂几十条记录」会成为常态—�
 - **退役 facts**：不停写、不删表和 Changelog。
 - **存量梳理**：逐日流水那部分已在首批（`ledger-migration.md`）处理；其余存量（非流水的重复/过时记忆）仍待「从后往前」捋一遍，另起一票。
 - **theme**：继续挂起。topic 收敛之后再做会简单很多。
-- **tags**：维持现状。
+- **tags**：另起一票退役，方案见 `tags-retirement.md`。
 
 ## 9. 风险与待观察
 

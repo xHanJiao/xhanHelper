@@ -10,7 +10,7 @@ type FactChangelog struct {
 	FactID      string    `gorm:"size:36;not null;index:idx_factlog_fact" json:"fact_id"`
 	Op          string    `gorm:"size:16;not null" json:"op"` // 见 FactOpUpdate / FactOpDelete
 	OldContent  string    `gorm:"type:text;not null" json:"old_content"`
-	NewContent  string    `gorm:"type:text;not null;default:''" json:"new_content"` // 仅 update
+	NewContent  string    `gorm:"type:text;not null" json:"new_content"` // 仅 update
 	SourceMsgID string    `gorm:"size:36;not null;default:''" json:"source_msg_id"`
 	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
 }

@@ -77,7 +77,7 @@ func (w *SummaryWorker) Process(ctx context.Context, sess *SessionSnapshot) erro
 		prevText = prev.SummaryText
 	}
 
-	summaryText, reqJSON, respJSON, err := w.callFlash(ctx, prevText, sess.GetUserMessages())
+	summaryText, reqJSON, respJSON, err := w.callFlash(ctx, prevText, sess.GetAllMessages())
 	if err != nil {
 		return fmt.Errorf("callFlash: %w", err)
 	}
@@ -85,7 +85,7 @@ func (w *SummaryWorker) Process(ctx context.Context, sess *SessionSnapshot) erro
 		return nil
 	}
 
-	return w.saveSummary(ctx, sess.ConvID, sess.UserID, sess.GetUserMessages(), prev, summaryText, reqJSON, respJSON)
+	return w.saveSummary(ctx, sess.ConvID, sess.UserID, sess.GetAllMessages(), prev, summaryText, reqJSON, respJSON)
 }
 
 // summaryInstructionXML — 摘要生成指令消息的 XML 结构。
@@ -130,18 +130,20 @@ func buildSummaryInstructionXML(prevSummary string) string {
 }
 
 // callFlash 调 Flash 生成摘要。返回文本及 request/response JSON（调试用）。
-// 缓存友好：system prompt 共享固定串；历史消息逐条展开（跨 worker 同 session 前缀命中）；
-// 指令 XML 放最后一条消息（固定前缀命中，previous_summary tail miss）。
+// 输入完整对话（user + assistant），渲染成 <对话> 块，拼在指令后作为单条 user 消息。
 func (w *SummaryWorker) callFlash(ctx context.Context, prevSummary string, msgs []model.Message) (string, *string, *string, error) {
-	chatMsgs := make([]llm.Message, 0, len(msgs)+1)
-	for _, m := range msgs {
-		chatMsgs = append(chatMsgs, llm.Message{Role: m.Role, Content: m.Content})
+	prompt := buildSummaryInstructionXML(prevSummary)
+	dialog, err := renderDialog(msgs)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("render summary dialog: %w", err)
 	}
-	chatMsgs = append(chatMsgs, llm.Message{Role: "user", Content: buildSummaryInstructionXML(prevSummary)})
+	if dialog != "" {
+		prompt = prompt + "\n\n" + dialog
+	}
 
 	resp, err := w.flashClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: postChatSharedSystemPrompt,
-		Messages:     chatMsgs,
+		SystemPrompt: postChatDialogSystemPrompt,
+		Messages:     []llm.Message{{Role: "user", Content: prompt}},
 	})
 	if err != nil {
 		return "", nil, nil, err

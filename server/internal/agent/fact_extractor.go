@@ -2,12 +2,10 @@ package agent
 
 import (
 	"context"
-	"encoding/xml"
 	"fmt"
 	"log"
 	"strings"
 
-	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 )
@@ -35,11 +33,6 @@ type factCandidate struct {
 type factExtractResult struct {
 	Facts []factCandidate `json:"facts"`
 }
-
-// factExtractSystemPrompt — 事实抽取专用 system prompt。
-// 不复用 postChatSharedSystemPrompt：那条写死了「输入均为用户角色的发言」，
-// 与事实抽取喂 user + assistant 的事实矛盾，且改共享常量会动其他后处理链路的缓存前缀。
-const factExtractSystemPrompt = `你是一个对话后处理助手。输入是一段用户与助手的对话记录，按时间顺序排列，每个 turn 带发生时间。`
 
 // factExtractInstruction — 抽取段指令消息。常量，放在 user 消息最前（对话紧随其后），
 // 以便命中 provider 的 prompt 前缀缓存。正文见 docs/design/facts-system/design.md §5.1。
@@ -169,7 +162,7 @@ func NewFactExtractor(cfg *FactExtractorConfig) *FactExtractor {
 // 缓存友好：system prompt 用固定串，指令 + 对话全部编码进单条 user 消息，常量前缀在前。
 func (e *FactExtractor) Extract(ctx context.Context, msgs []model.Message) ([]factCandidate, error) {
 	prompt := factExtractInstruction
-	dialog, err := renderFactDialog(msgs)
+	dialog, err := renderDialog(msgs)
 	if err != nil {
 		return nil, fmt.Errorf("render fact dialog: %w", err)
 	}
@@ -178,7 +171,7 @@ func (e *FactExtractor) Extract(ctx context.Context, msgs []model.Message) ([]fa
 	}
 
 	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: factExtractSystemPrompt,
+		SystemPrompt: postChatDialogSystemPrompt,
 		Messages:     []llm.Message{{Role: "user", Content: prompt}},
 		Temperature:  e.temperature,
 	})
@@ -192,47 +185,6 @@ func (e *FactExtractor) Extract(ctx context.Context, msgs []model.Message) ([]fa
 		return nil, nil
 	}
 	return sanitizeFactCandidates(res.Facts, e.maxCandidates), nil
-}
-
-// turnXML / dialogXML — fact 抽取对话块的 XML 结构（经 xml.Marshal 输出，避免手拼漏转义）。
-type turnXML struct {
-	XMLName xml.Name `xml:"turn"`
-	Role    string   `xml:"role,attr"`
-	At      string   `xml:"at,attr"`
-	Content string   `xml:",chardata"`
-}
-
-type dialogXML struct {
-	XMLName xml.Name  `xml:"对话"`
-	Turns   []turnXML `xml:"turn"`
-}
-
-// renderFactDialog 把消息渲染成 <对话> XML 块。role 取实际值（user / assistant）。
-// 每个 turn 带发生时间（北京时间）——用户消息里的相对日期由管线补成「原词（日期）」，
-// assistant 消息不经管线，靠这个属性提供时间锚点。
-// Content 为空的 turn 跳过（只发 tool call 的 assistant 消息 content 为空）。
-// 无内容返回 ""（调用方据此不追加对话块）。渲染失败向上抛。
-func renderFactDialog(msgs []model.Message) (string, error) {
-	doc := dialogXML{Turns: make([]turnXML, 0, len(msgs))}
-	for _, m := range msgs {
-		content := strings.TrimSpace(m.Content)
-		if content == "" {
-			continue
-		}
-		doc.Turns = append(doc.Turns, turnXML{
-			Role:    m.Role,
-			At:      m.CreatedAt.In(config.BJ).Format("2006-01-02 15:04"),
-			Content: content,
-		})
-	}
-	if len(doc.Turns) == 0 {
-		return "", nil
-	}
-	b, err := xml.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("marshal fact dialog xml: %w", err)
-	}
-	return string(b), nil
 }
 
 // sanitizeFactCandidates 校验候选：丢弃非法 kind 与空 content，按 max 截断。

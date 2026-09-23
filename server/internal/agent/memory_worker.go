@@ -47,7 +47,9 @@ func (w *MemoryWorker) Process(ctx context.Context, sess *SessionSnapshot) error
 		ConvID:      sess.ConvID,
 	})
 
-	cands, err := w.extractor.ExtractCandidates(ctx, sess.UserID, sess.GetUserMessages())
+	// 输入完整对话（user + assistant）：assistant 的结论/列表常是被用户确认的记忆来源，
+	// 只喂 user 会丢掉一半。role 由 renderDialog 标注，不会被当成用户的话。
+	cands, err := w.extractor.ExtractCandidates(ctx, sess.UserID, sess.GetAllMessages())
 	if err != nil {
 		return err
 	}

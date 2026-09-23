@@ -39,7 +39,7 @@ func TestFactExtractor_ParsesCandidatesAndPrompt(t *testing.T) {
 	if len(mock.reqs) != 1 {
 		t.Fatalf("expected 1 LLM call, got %d", len(mock.reqs))
 	}
-	if mock.reqs[0].SystemPrompt != factExtractSystemPrompt {
+	if mock.reqs[0].SystemPrompt != postChatDialogSystemPrompt {
 		t.Error("expected fact-specific system prompt")
 	}
 	if len(mock.reqs[0].Messages) != 1 || mock.reqs[0].Messages[0].Role != "user" {
@@ -138,7 +138,7 @@ func TestSanitizeFactCandidates_DropsInvalidAndTruncates(t *testing.T) {
 }
 
 func TestRenderFactDialog_SkipsEmptyContentAndEscapes(t *testing.T) {
-	out, err := renderFactDialog([]model.Message{
+	out, err := renderDialog([]model.Message{
 		{ID: "m1", Role: "user", Content: "a < b & c", CreatedAt: time.Date(2026, 9, 21, 14, 3, 0, 0, time.UTC)},
 		{ID: "m2", Role: "assistant", Content: "   "}, // tool-call-only assistant
 		{ID: "m3", Role: "assistant", Content: "收到"},

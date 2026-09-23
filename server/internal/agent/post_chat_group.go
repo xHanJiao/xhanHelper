@@ -18,7 +18,7 @@ type SessionSnapshot struct {
 	msgs   []model.Message // user + assistant（不含 tool / internal），时间升序
 }
 
-// GetUserMessages 返回快照中的 user 消息（记忆 / 摘要 / 状态 / 画像 worker 用）。
+// GetUserMessages 返回快照中的 user 消息（画像 / 状态 worker 用——它们只看用户发言）。
 func (s *SessionSnapshot) GetUserMessages() []model.Message {
 	out := make([]model.Message, 0, len(s.msgs))
 	for _, m := range s.msgs {

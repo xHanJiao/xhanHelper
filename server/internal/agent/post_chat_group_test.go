@@ -2,12 +2,14 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
@@ -285,6 +287,31 @@ func TestStateWorker_Name(t *testing.T) {
 func TestMemoryWorker_Name(t *testing.T) {
 	if got := (&MemoryWorker{}).Name(); got != "memory" {
 		t.Errorf("expected 'memory', got '%s'", got)
+	}
+}
+
+// 编排侧：Process 必须把完整对话（含 assistant）交给抽取器。
+func TestMemoryWorker_SendsAssistantTurnsToExtractor(t *testing.T) {
+	mock := &syncMockLLM{responses: []llm.Message{{Content: `{"extracted":false}`}}}
+	worker := NewMemoryWorker(&MemoryWorkerConfig{
+		Extractor:         NewMemoryExtractor(&MemoryExtractorConfig{LLMClient: mock}),
+		MemoryAutoExtract: true,
+	})
+	err := worker.Process(context.Background(), &SessionSnapshot{
+		ConvID: "c", UserID: "u", msgs: []model.Message{
+			{ID: "msg-0001", Role: "user", Content: "用哪个方案"},
+			{ID: "msg-0002", Role: "assistant", Content: "建议方案B"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.reqs) != 1 {
+		t.Fatalf("expected 1 LLM call, got %d", len(mock.reqs))
+	}
+	content := mock.reqs[0].Messages[0].Content
+	if !strings.Contains(content, `<turn role="assistant"`) || !strings.Contains(content, "建议方案B") {
+		t.Errorf("assistant turn must reach the extractor, got: %.400s", content)
 	}
 }
 

@@ -54,6 +54,7 @@ func buildMemoryInstructionXML(now string) string {
 	doc := memoryInstructionXML{
 		Task: fmt.Sprintf("从以下对话中提取值得长期留存的记忆，最多 %d 条（合并同类信息，不要逐条复述）。\n\n记忆的定义：\n%s\n\n不编造、不推测；信息不足时一条都不提。", memoryMaxPerSession, promptbuilder.MemoryDefinition),
 		Rules: []string{
+			"只依据用户的消息。助手说的不构成记忆来源，除非用户确认",
 			"合并同类信息，不要逐条复述。不编造、不推测",
 			"信息不足时返回 {\"extracted\":false}",
 			"将\"今天\"、\"昨天\"等相对时间转为绝对日期（如 2026-05-15）",
@@ -119,20 +120,23 @@ func NewMemoryExtractor(cfg *MemoryExtractorConfig) *MemoryExtractor {
 // 只做抽取，不做去重、不落库、不嵌入——那些是决策循环的职责（它能看到近邻，判定才准）。
 // 不做游标/进度更新（session-window 驱动，天然增量，无 LastExtractedMsgID 概念）。
 // 上限 memoryMaxPerSession 条（prompt 明示 + 解析后截断）。
-// 缓存友好：system prompt 用共享固定串，任务指令全部编码进 user message（与 profile worker 同模式）。
+// 输入是完整的 user + assistant 对话（assistant 的话必须标注 role，不能当成用户的话）。
+// 形状对齐 fact_extractor：对话渲染成 <对话> 块，拼在指令后，作为单条 user 消息发出。
 func (e *MemoryExtractor) ExtractCandidates(ctx context.Context, userID string, msgs []model.Message) ([]memoryCandidate, error) {
 	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
 	prompt := buildMemoryInstructionXML(now)
 
-	chatMsgs := make([]llm.Message, 0, len(msgs)+1)
-	for _, m := range msgs {
-		chatMsgs = append(chatMsgs, llm.Message{Role: m.Role, Content: m.Content})
+	dialog, err := renderDialog(msgs)
+	if err != nil {
+		return nil, fmt.Errorf("render memory dialog: %w", err)
 	}
-	chatMsgs = append(chatMsgs, llm.Message{Role: "user", Content: prompt})
+	if dialog != "" {
+		prompt = prompt + "\n\n" + dialog
+	}
 
 	msg, err := e.llmClient.ChatSync(ctx, &llm.ChatRequest{
-		SystemPrompt: postChatSharedSystemPrompt,
-		Messages:     chatMsgs,
+		SystemPrompt: postChatDialogSystemPrompt,
+		Messages:     []llm.Message{{Role: "user", Content: prompt}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("extract memory candidates: %w", err)

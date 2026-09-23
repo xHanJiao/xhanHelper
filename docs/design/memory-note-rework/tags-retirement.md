@@ -53,7 +53,11 @@
 
 ## 4. 详细改动清单
 
-> **前置依赖**：本清单的「停止写入」落在**旧的**提取路径（`agent/extractor.go` 的 `extractResult`）与 `tool/note.go` 的 `record_note` 上。若「记录循环」（`design.md` §4.2）先落地，`extractor.go` 的提取段会被循环取代，届时「停止写入」的落点改为循环的 `save_memory` / `save_note` 工具参数（照样不带 tags）。「停止读取」与「埋残骸」两节不受影响。
+> **前置依赖（2026-09-23 更新）**：本清单的「停止写入」原本落在**旧的**提取路径（`agent/extractor.go` 的 `extractResult`）与 `tool/note.go` 的 `record_note` 上。现在这两条路都要被取代：
+> - `extractor.go` 的提取段 → 记录循环批的 `post_chat` 链路（抽取段 + 逐候选决策循环，`design.md` §4.2）；
+> - `record_note` → **直接退役**（`note-retirement.md` 阶段 0），不再有「给笔记加参数」这回事。
+>
+> 所以本票的「停止写入」落点简化为：**循环的 `save_memory` 参数本来就不带 tags**（`record-loop-prompt.md` §3.2），`tool/note.go` 的 `recordNote` / `updateNote` 函数体随阶段 0/3 一起消失。「停止读取」（§4B）与「埋残骸」（§4C）两节不受影响，但 §4B 里 `service/note_repo.go` 的改动会随 `note-retirement.md` 阶段 3 整体退役而作废——**建议本票排在记录循环之后、笔记读侧退役之前**。
 
 ### A. 停止写入
 

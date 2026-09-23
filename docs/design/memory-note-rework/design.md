@@ -7,10 +7,14 @@
 > 估算（定稿）：10 面 / 4 缝（1 需探针）/ 2 次真机往返 / 0 个待拍决定 · ~6–10h
 >
 > 备注：开工粗估那行是回填的——本需求的前半程（调研 + 定方向）没有单列粗估，范围与定稿时一致，故按同一批面/缝回填，仅把当时未拍的决定数记为 5。
-> **2026-09-23 方案调整**：后续主体的形态由「决策闸门」改为**统一的「记录循环」（ReAct，复用 `MiniReAct`）**——提取与决策都变成模型调工具，topic 复用留在写入工具内部。总流程图见同目录 `flow.md`。**估算待重细化**（上面的定稿行是闸门形态的数）。
+> **2026-09-23 方案调整（一）**：后续主体的形态由「决策闸门」（一次 LLM 调用吐 `{op:...}`）改为**「记录循环」（ReAct，复用 `MiniReAct`）**——决策走模型调工具，topic 复用留在写入工具内部。总流程图见同目录 `flow.md`，prompt 与工具契约见 `record-loop-prompt.md`。（其中「提取也并入循环」这一半已被调整（三）作废。）
+> **2026-09-23 方案调整（二）**：收敛到**单一实体**——笔记与记忆记的是同一类东西，只有写入时机不同，故 `notes` **停写**、新写入一律落 `user_memories`（靠 `source` 区分 `inline` / `post_chat`），旧笔记留库、逐步清理。方案见 `note-retirement.md`；「记忆让位笔记」这条跨层规则随之消失。
+> **2026-09-23 方案调整（三）**：写入改回**两段式**——**抽取**（单次调用出 N 条候选）+ **逐候选决策循环**（ReAct）。原因是调整（一）把提取塞进循环后，`post_chat` 的预检索失去了 query（输入是整段原文，没有可嵌入的「一个点」）。`inline` 天然有候选，直接进决策段。详见 §4.1。
 > 排期：分首批 / 后续两段（见 §7）。首批另有两篇：`topic-merge.md`、`ledger-migration.md`；删除清理修复记在 `docs/bugs/017-vector-cleanup-on-delete.md`。
-> 另起一票：`tags-retirement.md`（退役 notes/memories 的 tags），不并入首批。
+> 另起一票：`tags-retirement.md`（退役 notes/memories 的 tags）、`note-retirement.md` 的阶段 2/3（存量消化与读侧退役），均不并入首批。
 > 首批估算：~8 面 / 3 缝（1 需探针）/ 2 次真机往返 / 0 待拍决定 · ~6–10h
+> 估算（定稿·2026-09-23 单实体两段式形态，**仅后续主体**）：13 面 / 4 缝（1 需先建探针）/ 2 次真机往返 / 0 个待拍决定 · ~8–13h
+> 　（首批已完成，其 8 面 / ~6–10h 另计；上面那行「估算（定稿）」是闸门形态的旧数，留档对比）
 
 ---
 
@@ -54,82 +58,134 @@
 
 **要做**：
 
-- 把记忆与笔记的写入**统一成一个「记录循环」（ReAct，复用 `MiniReAct`）**：循环里给模型「检索 + 写入」两类工具，模型自主决定记什么、是增是改是删。
-- 记忆从「一行/会话」变成「多条/会话」（循环内多次调 `save_memory`），每条独立嵌入，上限 5 条（**prompt 里明示**）。
-- 笔记的 `record_note` 内部跑**同一个**循环，**主 LLM 不参与判断**。
-- topic 复用：确定性逻辑（向量相似度）留在 `save_*` 工具内部，≥ 0.80 就用最相似的已有 topic。
-- 修正 prompt 路由：逐日读数（睡眠、体重等流水）该进文档，不进记忆/笔记。
+- 把写入**分成两段**：**抽取**出候选（`post_chat` 单次调用，`inline` 由主 LLM 直接给），再逐条过**决策循环**（ReAct，复用 `MiniReAct`）——循环里给模型「检索 + 写入」两类工具，模型自主决定这条候选是增是改是删。
+- **收敛到单一实体**：`notes` 停写，新写入一律落 `user_memories`（两个入口靠 `source` 区分 `inline` / `post_chat`）；记忆从「一行/会话」变成「多条/会话」（抽取段出多条候选），每条独立嵌入 summary，上限 5 条。
+- 主循环的写入工具从 `record_note` 换成 `record_memory`（走同一个循环，**主 LLM 不参与判断**）。
+- topic 复用：确定性逻辑（向量相似度）留在 `save_memory` 工具内部，≥ 0.80 就用最相似的已有 topic。
+- 修正 prompt 路由：逐日读数（睡眠、体重等流水）该进文档，不进记忆。
 
 **不做**（这次明确不碰）：
 
-- **退役 facts**——不停写、不删表。`user_memories.facts` 字段**保留**，它是将来做 ADD/UPDATE/DELETE 判断的重要依据。
+- **迁移旧笔记**——1010 条存量留在 `notes` 表，照旧可读、可检索注入；清理只靠「闸门顺带」+「存量梳理」票，**不设时间硬删**（会误杀长期结论）。见 `note-retirement.md`。
+- **退役 facts**——不停写、不删表。`user_memories.facts` 字段**保留**（落库但不嵌入），它是将来做 ADD/UPDATE/DELETE 判断的重要依据。
 - **tags**——本批不动；退役方案见 §4.5 与 `tags-retirement.md`（**另起一票**）。
-- **存量数据梳理**——775 条记忆 + 990 条笔记的「从后往前」梳理，另起一票，不着急。
+- **存量数据梳理**——旧笔记的批量消化 + 记忆的「从后往前」梳理，另起一票，不着急。
 - **theme**——继续挂起（当前 4 个 active 主题里 2 个 `state_text` 还是空的），topic 收敛后自然会好做。
-- **版本历史**——记忆和笔记都不新增版本能力。笔记现有的 `ContentVersion` 保留不动，但不再往上加东西。
+- **版本历史**——记忆不新增版本能力。笔记现有的 `ContentVersion` 原样保留，随 `note-retirement.md` 阶段 3 一起退役。
+- **笔记的读侧与展示**——`note_source` 检索注入、`NotesView.vue`、Swift 笔记视图、`/api/notes` 全部保留到数据清空（`note-retirement.md` 阶段 3）。
 
 ## 4. 设计
 
 ### 4.1 总览
 
-一句话：**把记忆与笔记的写入统一成一个「记录循环」（复用 `MiniReAct`）——循环里给模型「检索 + 写入」两类工具，提取与决策都变成模型调工具；topic 复用是确定性逻辑，留在写入工具内部。**
+一句话：**写入分两段——「抽取」出候选（单次调用），再逐条过「决策循环」（ReAct，复用 `MiniReAct`）；循环里给模型「检索 + 写入」两类工具，模型自主决定这条候选是增是改是删。** topic 复用是确定性逻辑，留在写入工具内部。
 
-入口两条，循环一个：
+只有**一个实体**（`user_memories`）、**一个循环**、**两个入口**：
 
 ```
-入口 A（记忆，会话结束/后台）: session 窗口 → ┐
-入口 B（笔记，对话中/工具内）: 单条候选     → ┴→ 记录循环（MiniReAct）
-                                                    ├ 循环前预检索一次：跨域近邻（≥ 0.5）
-                                                    ├ 工具: search_memory / search_note
-                                                    └ 工具: save_* / update_* / delete_*
-                                                          （save_* 内部做 topic 复用）
+入口 inline   : 主 LLM 调 record_memory(topic, summary, facts) → 1 条候选 ┐
+入口 post_chat: 对话原文 → MemoryExtractor（单次调用，N 条候选 ≤ 5）      ┤
+                                                                       ↓
+                                          【每条候选依次处理】
+                                   预检索（embed 候选 summary → memory + note 两域，top_k，≥ 0.5）
+                                                                       ↓
+                                   决策循环（MiniReAct，candidate + 近邻 作初始上下文）
+                                     ├ 工具: search_memory_* / search_note_*（只读）
+                                     └ 工具: save_memory / update_memory / delete_memory
+                                             + delete_note（过渡期，清旧笔记）
+                                             （save_memory 内部做 topic 复用）
+                                                                       ↓
+                                   落库 + 同步向量（候选 N 的写入对 N+1 检索可见）
 ```
 
-「提取多条」不再是单独的 LLM 调用与 JSON 结构，而是**模型多次调 `save_memory`**；「ADD/UPDATE/DELETE/NONE」不再是让模型吐一个 op 字段，而是**模型选哪个写入工具**（一个都没调 = NONE）。
+**为什么先抽取、再决策**：决策循环的第一步是「拿候选去检索近邻」，而 `post_chat` 的输入是整段对话原文——原文没有可嵌入的「一个点」，直接拿它 embed 去检索是噪声。所以 `post_chat` 必须先有一步抽取，把原文收成 N 条候选，预检索才有 query。`inline` 天然有候选（主 LLM 给的），直接进决策段。**这也是「预检索」这件事能成立的前提。**
 
-设计上有一条重要的原则：**记忆让位笔记**。笔记是「重要、当场记」，记忆是「次要、事后补」。笔记在对话中先写，记忆在会话结束后写，所以后写的记忆一旦发现笔记已经覆盖了同一件事，就应该让位（不写入，或删掉自己那条）。互斥由记忆这一侧的循环负责执行。
+**为什么决策段还要 ReAct**：预检索只给语义近邻，而语义搜索的盲区是**字面量**（人名、专有名词、日期、金额）。循环让模型能追加 `search_memory_keyword` 把这类近邻捞回来。多数候选一轮就决策完（预检索已给足上下文），循环只在需要时多跑。
 
-### 4.2 记录循环（核心）
+**「ADD / UPDATE / DELETE / NONE」不再是让模型吐一个 op 字段，而是模型选哪个写入工具**（一个都没调 = NONE）。
 
-新建 `agent/record_react.go`，复用 `agent/mini_react.go` 的 `MiniReAct`：`ChatSync` + 原生 function calling，工具结果以 `role=tool` 回传，`maxIterations` 上限 + 强制收敛轮。前身是 facts 的决策段（`fact_worker.go:483` 的 `FactDecider.Decide`——它本来就是原生 FC，见下）与 `extractor.go` 的提取段。
+**两个入口下发同一套工具**——只有一个实体，没有「只能写哪一侧」的区分；`entry` 只决定输入形态与落库的 `source`。
+
+> 原设计里那条「**记忆让位笔记**」的跨层互斥规则**已随单实体化消失**：笔记与记忆记的是同一类东西，只是写入时机不同（详见 `note-retirement.md`）。同一张表下，`inline` 刚写的记忆，`post_chat` 入口检索时自然看得到 → 判 `update` / NONE 即可。这是本次简化最大的一处。
+
+### 4.2 两段式：抽取 → 逐候选决策循环
+
+前身是 facts 的两段式（`FactWorker`：`fact_worker.go:92` 编排 → `:123` 逐候选 → `:170` 预检索 → `:483` 单发决策）——把最后的**单发决策换成 `MiniReAct` 循环**，其余骨架照搬。新建 `agent/record_react.go`；`MiniReAct` 本体**零改动**（`ChatSync` + 原生 function calling，工具结果以 `role=tool` 回传，`maxIterations` 上限 + 强制收敛轮）。
 
 **入口两条，循环一个：**
 
-| 入口 | 触发 | 输入 |
-|---|---|---|
-| 记忆 | 会话结束，后台 `PostChatWorker` | session 窗口（原始消息） |
-| 笔记 | 对话中，主 LLM 调 `record_note` | 单条候选（工具参数） |
+| 入口 | 触发 | 输入 | 抽取段 | `source` 落库 |
+|---|---|---|---|---|
+| `inline` | 对话进行中，主 LLM 调 `record_memory` | 一条候选 | 主 LLM 直接给（`record_memory` 的参数） | `inline` |
+| `post_chat` | 会话结束，后台 `PostChatWorker` | session 窗口（原始消息） | `MemoryExtractor`：单次 `ChatSync`，N 条候选（≤ 5） | `post_chat` |
 
-**循环前：预检索一次。** 跨 note + mem 两域取近邻（相似度 ≥ `memory_neighbor_threshold` = 0.5，取 top_k），格式化成 `<neighbors>` 作为初始上下文。这样省掉模型的第一轮搜索；模型若觉得不够，仍可调检索工具追加。
+**抽取段（仅 `post_chat`）**：复用现有 `MemoryExtractor`，输出结构从单条 `extractResult` 改成 `{memories: [...]}`（照 `fact_extractor.go:34` 的 `factExtractResult{Facts []factCandidate}`），上限 5。
+
+**决策段（两个入口共用）**：对每条候选依次——
+
+1. **预检索**（确定性代码，非 LLM）：embed 候选 summary → memory + note 两域取近邻（≥ `memory_neighbor_threshold` = 0.5，top_k），格式化成 `<neighbors>`。
+2. **决策循环**：候选 + 近邻作 `<candidate>` / `<neighbors>`，经 `MiniReActConfig.InitialMessages`（`mini_react.go:82`）注入，模型在循环里选工具。这样省掉模型的第一轮搜索；模型若觉得不够，仍可调检索工具追加。
+3. **落库 + 同步向量**：立即写入，保证候选 N 的写入对候选 N+1 的检索可见（照 `fact_worker.go:24` 的注释——批内互不可见会让两条相似候选都判 ADD）。
 
 **工具集：**
 
 | 类 | 工具 | 说明 |
 |---|---|---|
-| 检索 | `search_memory` / `search_note` | 只读，按需追加检索 |
+| 检索（记忆） | `search_memory_semantic` / `search_memory_keyword` | 只读，按需追加检索 |
+| 检索（旧笔记，过渡期） | `search_note_semantic` / `search_note_keyword` | 只读，用来找旧笔记 |
 | 写入（记忆） | `save_memory` / `update_memory` / `delete_memory` | 落 `user_memories` |
-| 写入（笔记） | `save_note` / `update_note` / `delete_note` | 落 `notes` |
+| 清旧笔记（过渡期） | `delete_note` | 落 `notes`（软删），**只删不写** |
+
+**入口 × 工具矩阵：两个入口完全相同。** 只有一个实体，不存在「记忆入口不该写笔记」这类区分——`notes` 侧的 `delete_note` 是过渡期的清理工具，两侧都需要。
+
+> prompt 全文、8 个函数的 schema、`target_id` 命名空间（裸 UUID + 类型匹配）、输入块格式见 `record-loop-prompt.md`。
 
 **语义：**
 
-- **「提取多条」= 模型多次调 `save_memory`**。一条 = 一个 topic + 一句 summary + facts 细节，由 `save_memory` 的参数定义；每次调用落一行，**各自嵌入 `memory_value`**（不再只有一句话能被检索到）。
-- **「决策」= 模型选哪个写入工具**：`save_*` = ADD、`update_*`（带 `target_id`）= UPDATE、`delete_*` = DELETE；**一个写入工具都没调 = NONE**。
-- **走原生 function calling**：不是让模型吐 JSON 再解析，而是给一组工具定义、读 `msg.ToolCalls`（照 `FactDecider`，`fact_worker.go:483`——注释明写「始终走原生 function calling：`use_native_fc` 只管 orchestrator 自己的工具列表」）。`target_id` 必须落在近邻集合内（`idSet` 校验，`:484`，防幻觉 id）；参数非法丢弃并记日志，**不拿零值继续写库**。
-- **NONE 的确认计数**：模型没调任何写入工具时，对预检索的 top-1 近邻调 `UpdateConfirm`（**复用已有的 `confirm_count` / `last_confirmed_at`**，`user_memory_repo.go:134`）——命中了旧记录但内容没变，确认计数 +1。笔记侧无操作。**不新增任何数据库列。**
-- **上限 5 条**：`memory_max_per_session` = 5，**必须在 prompt 里明示**「本次最多记 5 条」；循环内累计 `save_memory` 达 5 次后工具直接返回错误提示，逼模型收敛。
+- **「提取多条」= 抽取段出多条候选**（`post_chat`），或主 LLM 多次调 `record_memory`（`inline`）。每条候选各自过一遍决策循环，各自落一行，**各自嵌入 summary**（不再只有一句话能被检索到）。
+- **「决策」= 模型选哪个写入工具**：`save_memory` = ADD、`update_memory`（带 `target_id`）= UPDATE、`delete_memory` = DELETE；**一个写入工具都没调 = NONE**。
+- **走原生 function calling**：不是让模型吐 JSON 再解析，而是给一组工具定义、读 `msg.ToolCalls`（照 `FactDecider`，`fact_worker.go:483`——注释明写「始终走原生 function calling：`use_native_fc` 只管 orchestrator 自己的工具列表」）。`target_id` 必须落在近邻集合内（`idSet` 校验，`:484`，防幻觉 id）**且类型匹配**（`idType`，否则 `delete_note` 可能被喂一个 memory 的 id）；参数非法丢弃并记日志，**不拿零值继续写库**。
+- **NONE 的确认计数**：模型对这条候选一个写入工具都没调时，取**这条候选**的预检索近邻里**相似度最高的记忆**，**且该相似度 ≥ `memory_confirm_threshold` = 0.80**（近邻已按类型可辨；不达阈值或无记忆近邻则无操作），才调 `UpdateConfirm`（**复用已有的 `confirm_count` / `last_confirmed_at`**，`user_memory_repo.go:134`）。
+  - 语义：旧记忆被**再次确认**（这轮又谈到它、内容没变）→ 计数 +1。这正好复用那两个早就有、却一直没人读的字段。
+  - 为什么要卡 0.80：NONE 只说「没有新东西要写」，不代表「最高分近邻就是被重申的那条」。相似度不够就说明它只是碰巧排在最近，不是同一条记忆——不卡阈值会把 confirm 记到无关记忆头上。
+  - 边界：不额外加 `confirm_memory` 工具——NONE 已经表达了「没有新东西要写」，再开一个函数只为表达 confirm 不值当。
+  - 注意：`confirm_count` / `last_confirmed_at` 目前**只写不读**（`retrieval/memory_source.go:28` 也会在检索命中时批量 +1），没有任何排序/评分消费它。所以这个动作是**为将来攒信号**，不影响现有行为。**不新增任何数据库列。**
+- **上限 5 条**：`memory_max_per_session` = 5。`post_chat` 落在**抽取段**（prompt 明示 + 解析后截断到 5）；`inline` 由主 LLM 自行克制（每次调用天然 1 条），不设跨调用硬计数。
 
-**topic 复用留在 `save_*` 内部**（见 §4.4）：模型给的是 topic 字符串，工具内部做确定性处理——**不交给 LLM 判**，向量相似度计算不该让 LLM 复现。
+**topic 复用留在 `save_memory` 内部**（见 §4.4）：模型给的是 topic 字符串，工具内部做确定性处理——**不交给 LLM 判**，向量相似度计算不该让 LLM 复现。
 
-互斥的落点：**记忆侧循环**跨查两域，命中笔记即不写入（或删掉自己那条，记忆让位笔记）；**笔记侧循环**主要查笔记域，可选地删掉被顶替的旧记忆。这样无论谁先写，最终一致。
+**判定交给模型，确定性逻辑只管两件事**：**topic 复用**（§4.4，向量计算）与 **`target_id` 的 id/类型校验**（`record-loop-prompt.md` §5）。不在 `save_memory` 里做阈值硬拦截——会与模型的语义判断打架，且「语义重复」与「向量相似」不是一回事（0.5 太松、0.8 太严）。漏判由 §9 兜底。
 
-### 4.3 笔记接入（同循环，同步跑）
+**实现：复用 `MiniReAct`，本体零改动。**
 
-文件：`tool/note.go` 的 `record_note`。
+难点在工具：`MiniReAct` 要求 `ToolRegistry` 非 nil（`mini_react.go:111` panic），工具执行统一走 `toolRegistry.ExecuteByName`（`:359`）。而决策循环的 8 个函数（3 个 `ToolDefinition`）是**闭包**（持有 userID、repo、计数器、近邻 `idSet`），不是注册表里的全局工具。
 
-- 调用时，工具内部跑**同一个**记录循环（入口 B）——**主 LLM 完全不参与判断**。主 LLM 只负责表达「我要记这条」。
+做法：**为每次循环临时建一个 `tool.NewRegistry()`**，用薄适配器 `recordTool`（实现 `tool.Tool` 的五个方法，闭包挂在 `Execute` 上）把函数注册进去。`Register` 只是 map 插入（`registry.go:130`），`Validate*` 那套校验是启动时单独调用的，所以临时注册表不会触发 panic。`ec.Mode` 被 `MiniReAct` 硬编码成 `ConvModeWork`（`:358`），plan/strict 拦截不会误伤。
+
+四个配置点：
+
+| 配置 | 取值 | 原因 |
+|---|---|---|
+| `Tools` | 三个 `ToolDefinition`（`record-loop-prompt.md` §3.1）：`record_search`（4 个检索函数）+ `memory`（3 个写记忆）+ `legacy_note`（`delete_note`） | **两个入口下发同一套**，不按入口裁剪 |
+| `FinalRoundPrompt` | **自定义**：「已达最大步数，不要再调用工具，也不要输出说明文字」 | 默认那条是「直接输出最终结果」（`genericFinalRoundPrompt`），决策循环没有「最终结果」要给谁看。仅轮次耗尽才触发（罕见），代价是白跑一次调用 |
+| `OnEvent` | `nil`（静默） | 不往 SSE 推 `mini_react:*`；结果经 `record_memory` 返回值透传 |
+| `MsgSink` | `nil`（纯内存） | 循环消息不落库；需要观测时读 `ToolCallLog` |
+
+出口：读 `MiniReActResult.ToolCallLog`（`mini_react.go:363`）拿到「执行了哪些写入、各自结果如何」——`inline` 入口据此拼 `{action, id, summary}` 返回给主 LLM，`post_chat` 入口据此打日志与统计。
+
+轮数上限单独给一个配置 `record_loop_max_iterations`（默认 6，见 §6）——不沿用 `MiniReAct` 的默认 10，后台每候选一次 × 10 轮调用偏多；一轮可发多个 tool call，6 轮足够单个候选「检索 1~2 轮 + 决策」。
+
+### 4.3 `record_memory` 接入主循环（inline 入口，同步跑）
+
+文件：新增 `record_memory` 工具（`tool/` 下，与 `note` 工具并列），由主 LLM 在对话中调用。
+
+- 调用时，工具把这条候选（topic + summary + facts）交给**同一个决策循环**（`entry=inline`）——**主 LLM 完全不参与判断**。主 LLM 只负责表达「我要记这条」。
 - **全放**：允许自动 add / update / delete（你确认过，风险可接受）。
-- 代价是必须说清楚：`record_note` 的 description 要写明「可能与已有笔记重复，会自动新增/更新/删除」；返回值带上 `{action, id, note}`，让主 LLM 知道刚才到底发生了什么。
-- **同步跑**（Flash + 近邻不多，估计 2~4 秒）。真机测下来如果慢，再落到 `DelayedTask`（新增 `TaskType = note_decide`，`model/delayed_task.go` 的 `TaskType` 字段和 CronRunner 分发都现成），异步时工具立即返回「已记录（整理中）」。
+- 代价是必须说清楚：工具 description 要写明「可能与已有记忆重复，会自动新增/更新/删除」；返回值带上 `{action, id, summary}`，让主 LLM 知道刚才到底发生了什么。
+- **同步跑**（Flash + 近邻不多，估计 2~4 秒）。真机测下来如果慢，再落到 `DelayedTask`（新增 `TaskType = memory_decide`，`model/delayed_task.go` 的 `TaskType` 字段和 CronRunner 分发都现成），异步时工具立即返回「已记录（整理中）」。
+- **与 `note` 工具的关系**：`record_note` 退役（`note-retirement.md` 阶段 0），`record_memory` 是它在主循环里的接替者。`note` 工具只保留读 + 删。
+
+`post_chat` 入口由 `PostChatWorker` 编排（改造现在的 `MemoryWorker`，`agent/memory_worker.go`）：先跑 `MemoryExtractor`（`agent/extractor.go`，改造为输出 N 条候选），再逐候选进决策循环。无工具返回值需求。
 
 ### 4.4 topic 复用（仅 ADD）
 
@@ -139,13 +195,15 @@
 - 相似度比较和聚类也现成：`util.ClusterVectors` + `util.CosineSimilarity`（`internal/util/cluster.go`），`get_topic_stats.go:52-102` 已经在用「加载 topic 向量 → 聚类」这条路了。
 - 阈值也现成：`cluster_threshold: 0.70`。
 
-做法：新增一个 `FindSimilarTopics(userID, topic, threshold)`，**候选集只取该用户「在用 topic」**（notes ∪ memories 的 distinct topic，复用 `topicmerge/gcTx` 的引用集合逻辑：`DistinctTopicsWithCount` + `DistinctTopics`），加载这些 topic 的向量、算余弦。**只在 `save_*` 时跑**（`update_*` / `delete_*` / NONE 不碰 topic），且**不拒绝**：≥ 阈值就用最相似的已有 topic，否则用新的。笔记与记忆同一处理，没有「报错打回重选」这条路径。
+做法：新增一个 `FindSimilarTopics(userID, topic, threshold)`，**候选集只取该用户「在用 topic」**（notes ∪ memories 的 distinct topic，复用 `topicmerge/gcTx` 的引用集合逻辑：`DistinctTopicsWithCount` + `DistinctTopics`），加载这些 topic 的向量、算余弦。**只在 `save_memory` 时跑**（`update_memory` / `delete_memory` / `delete_note` / NONE 不碰 topic），且**不拒绝**：≥ 阈值就用最相似的已有 topic，否则用新的。没有「报错打回重选」这条路径。
+
+> 候选集仍是**两域**（notes ∪ memories）：旧笔记还在库里，它们用过的 topic 依然是有效的复用目标；等 `notes` 清空（`note-retirement.md` 阶段 3）后自然收敛成单域。
 
 > 为什么不用概念表全量：`concept_embeddings` 里会有「引用清零但没人回收」的孤儿行（删除入口按 bug017 的边界不清概念行），其中不少是历史遗留的复合垃圾名。若拿全量概念参与比较，新 topic 可能被复用到这种已死的词上。限定「在用 topic」即天然排除孤儿；孤儿本身无害（不进检索、不进 topic-merge 报告），隔几周手动跑一次 `make topic-merge-apply`（末尾带 GC，幂等）即可。
 
 阈值**单级**：`memory_topic_reuse_threshold` = 0.80（与存量收敛 `topic-merge` 的 0.80 一致）。原先设想的「建议线 0.5 / 拒绝线 0.70」双阈值已废弃——在无交互的常见路径上，建议线没有意义，拒绝后又要求重选也属多余。
 
-外加命名硬校验：禁止斜杠、逗号、多个主题，限制长度。
+外加命名硬校验：禁止斜杠、逗号、多个主题，topic ≤ 20 字。
 
 topic 收敛之后，「一个 topic 下挂几十条记录」会成为常态——这正是我们想要的，它让 theme 以后变成一件简单事（按 topic 聚合即可）。
 
@@ -159,15 +217,16 @@ topic 收敛后 topic 天然对应 theme，这唯一的弱信号也不再需要 
 
 ### 4.6 路由修正
 
-- **逐日读数**（睡眠、体重、饮酒、运动这类流水）→ 进 `document`，不进记忆/笔记。原因是它们单条没价值、攒起来才有意义，正确的介质是文档表格。这是**改路由**，不是丢弃。
-- **工作研讨**：重要的当场记 `note`，次要的事后补 `memory`。
+- **逐日读数**（睡眠、体重、饮酒、运动这类流水）→ 进 `document`，不进记忆。原因是它们单条没价值、攒起来才有意义，正确的介质是文档表格。这是**改路由**，不是丢弃。
+- **工作研讨**：一律记 `memory`（对话中当场写 / 会话结束后提炼）——笔记退役后不再有「当场记 note、事后补 memory」的分工（见 `note-retirement.md`）。
 
 ## 5. 数据与兼容
 
 - **不加数据库列。** 记忆侧新增一个 `Update` 方法（改内容 + 重嵌入），复用一个没用过的 `UpdateConfirm`；其余全用现有字段。
-- **不删表、不删列。** `user_memories.facts` 保留，facts 表继续写。
-- **不开版本历史。** 记忆和笔记都不加；笔记现有的 `ContentVersion` 原样保留。
-- **旧数据不动。** 存量梳理另起一票。
+- **`notes` 停写、不迁移、不删表。** 1010 条存量留在库里，照旧可读、可检索注入；清理只靠闸门顺带 + 存量梳理票，**不设时间硬删**。详见 `note-retirement.md`。
+- **`user_memories.source` 取值扩展**：`conversation` 拆成 `inline` / `post_chat`；历史行的 `conversation` 保持不动，查询侧容忍三种值。
+- **不删表、不删列。** `user_memories.facts` 保留（落库但不嵌入），facts 表继续写。
+- **不开版本历史。** 记忆不加；笔记现有的 `ContentVersion` 原样保留到 `note-retirement.md` 阶段 3。
 
 ## 6. 配置项
 
@@ -175,16 +234,20 @@ topic 收敛后 topic 天然对应 theme，这唯一的弱信号也不再需要 
 
 | 配置 | 默认 | 说明 |
 |---|---|---|
-| `record_loop_enabled` | true | 记录循环总开关，便于灰度/回退（关掉则回退到旧的单条提取 + 纯插入） |
-| `memory_max_per_session` | 5 | 单次会话最多记几条记忆（**prompt 里明示** + 工具侧计数封顶） |
+| `record_loop_enabled` | true | 记录循环总开关（抽取 + 决策），便于灰度/回退（关掉则回退到旧的单条提取 + 纯插入） |
+| `record_loop_max_iterations` | 6 | 循环轮数上限（含强制收敛轮），见 §4.2 |
+| `memory_max_per_session` | 5 | 单次会话最多新增几条记忆：`post_chat` 是**抽取段**输出上限（**prompt 里明示** + 解析后截断到 5），`inline` 每次调用天然 1 条 |
 | `memory_neighbor_threshold` | 0.5 | 预检索近邻的相似度下限（低于此不入初始上下文） |
-| `memory_topic_reuse_threshold` | 0.80 | topic 复用阈值：≥ 则用最相似的已有 topic（仅 `save_*`） |
+| `memory_topic_reuse_threshold` | 0.80 | topic 复用阈值：≥ 则用最相似的已有 topic（仅 `save_memory`） |
+| `memory_confirm_threshold` | 0.80 | NONE 时才算「再次确认」的记忆近邻相似度下限（低于此不动 `confirm_count`），见 §4.2 |
 
-> 循环的 `maxIterations` 复用 `MiniReAct` 现有配置。topic 复用阈值与存量收敛（`topic-merge`）一致取 0.80。**先跑一段时间再看**，不合再调。
+> topic 复用阈值与存量收敛（`topic-merge`）一致取 0.80。**先跑一段时间再看**，不合再调。
+> 字段级硬限制（topic ≤ 20 字 / summary ≤ 150 字 / facts ≤ 8 条 × ≤ 100 字）是**常量**，不进配置——它们是不变量，不是可调阈值。
 
 ## 7. 分期与验收
 
 > 2026-09-22 排期调整：先做**首批**（删除清理 bug + topic 收敛 + 台账挪走 + 措辞），把地基清干净；再动**后续**的记录循环。topic 的「写入侧复用」从首批挪到后续。
+> 2026-09-23：后续主体改为**单实体两段式**（抽取 + 逐候选决策循环，`notes` 停写）。
 
 **首批**（单独两篇：`topic-merge.md`、`ledger-migration.md`）：
 
@@ -195,32 +258,43 @@ topic 收敛后 topic 天然对应 theme，这唯一的弱信号也不再需要 
 
 **后续**（本 `design.md` 的正文设计）：
 
-1. **记录循环**：新建 `agent/record_react.go`（复用 `MiniReAct`），工具集 = 检索（`search_*`）+ 写入（`save_*` / `update_*` / `delete_*`）；预检索近邻（≥ 0.5）作初始上下文；记忆侧先接上（多条提取 = 多次 `save_memory`），新增 `UserMemoryRepo.Update`；NONE 走 `UpdateConfirm`。
-2. **笔记接入**：`record_note` 内跑同一个循环；先同步，慢则加 `note_decide` 延迟任务。
-3. **topic 复用**：`FindSimilarTopics` + 接在 `save_*` 内部（阈值 0.80）+ 命名校验。
-4. **路由修正**：改 prompt。
+1. **抽取段**：`MemoryExtractor` 输出结构改 `{memories: [...]}`（照 `fact_extractor.go:34`），上限 `memory_max_per_session` = 5。
+2. **决策循环**：新建 `agent/record_react.go`（复用 `MiniReAct`），工具集 = 检索（`search_memory_*` / `search_note_*`）+ 写入（`save_memory` / `update_memory` / `delete_memory` / `delete_note`）；候选 + 预检索近邻（≥ 0.5）经 `InitialMessages` 注入；新增 `UserMemoryRepo.Update`；NONE（且最高分记忆近邻 ≥ `memory_confirm_threshold` 0.80）走 `UpdateConfirm`。
+3. **两个入口接入**：`inline` = 新增 `record_memory` 工具接进主循环；`post_chat` = `MemoryWorker` 编排「抽取 → 逐候选决策循环」。先同步，慢则加 `memory_decide` 延迟任务。
+4. **笔记停写**：`record_note` / `update_note` / `rollback_note` / `get_note_versions` 从 note 工具去掉（`note-retirement.md` 阶段 0）；准则 4 措辞改 `record_memory`；`seeder.go` / Swift / 前端的展示映射同步。
+5. **topic 复用**：`FindSimilarTopics` + 接在 `save_memory` 内部（阈值 0.80）+ 命名校验。
 
 **验收**：
 
-- `go build ./... && go test ./...` 全绿，加针对性单测（循环的工具分发与 `idSet` 校验、topic 相似度、上限计数）。
+- `go build ./... && go test ./...` 全绿，加针对性单测（**抽取段 N 条解析与截断**、循环的工具分发与 `idSet`/`idType` 校验、topic 相似度、source 落库）。
 - 真机三测：
-  1. 一次多主题会话 → 记忆应该出 2~5 条，且 topic 复用已有。
-  2. 故意记一条和已有重复的笔记 → 应自动 update 或 delete。
+  1. 一次多主题会话 → **抽取段出多条候选** → 记忆出 2~5 条，且 topic 复用已有。
+  2. 对话中说一件值得记的事 → 落 `user_memories`（`source=inline`），**`notes` 表不新增**。
   3. 用一个和旧 topic 很像的新 topic（≥ 0.80）→ 应自动落到旧 topic 上。
 
-**缝（不能自测、只能真跑的部分）**：循环里 LLM 的真实行为（会不会乱删、会不会忘了 5 条上限）、工具内同步跑循环的延迟体验、topic 阈值在真实数据上的表现、记忆多条提取的质量。其中「循环行为」打算先建一个探针——拿真实 session 窗口离线重放一遍，把工具调用序列导出来人工看。
+**缝（不能自测、只能真跑的部分）**：**抽取段的质量**（N 条候选是否合理、漏没漏 / 噪不噪）、决策循环里 LLM 的真实行为（会不会乱删、会不会空转）、`inline` 入口同步跑循环的延迟体验、topic 阈值在真实数据上的表现。其中「抽取质量」与「循环行为」打算先建一个探针——拿真实 session 窗口离线重放一遍，把**抽取结果与工具调用序列**都导出来人工看。
+
+**估算明细（后续主体，13 面 / 4 缝 / 2 往返）**：
+
+- **面（13）**：① 抽取段改造（`extractor.go` → `{memories:[...]}` + cap）；② `recordTool` 适配器 + 临时 registry；③ `record_react.go` 决策循环组装（含 `InitialMessages` 注入）；④ 预检索与 `idSet`/`idType` 构建；⑤ 3 个 `ToolDefinition` schema（8 函数）；⑥ `save_memory` 落库（topic 复用接入 + `source`）；⑦ **新增** `UserMemoryRepo.Update`；⑧ `delete_memory` / `delete_note`（接 bug017 清理器）；⑨ 4 个检索函数复用 `unified_search`；⑩ `FindSimilarTopics` + 命名校验；⑪ NONE → `UpdateConfirm`（含 0.80 阈值）；⑫ 两个入口接入（`record_memory` 工具 / `MemoryWorker` 编排）；⑬ 笔记停写 + 措辞 + 展示映射（单测随各面）。
+- **缝（4）**：抽取段的质量（**需先建探针**）；决策循环里 LLM 的真实行为；`inline` 入口同步跑的延迟体感；topic 阈值 0.80 在真实数据上的表现。后三条可在探针报告里一并看。
+- **往返（2）**：探针报告人工审阅 1 次；真机三测 1 次。
+- **决定（0）**：形态、字段、阈值、入口命名均已定稿（`record-loop-prompt.md`、`note-retirement.md`、本文 §4.2/§4.4）。
 
 ## 8. 暂缓（记着，不着急）
 
 - **退役 facts**：不停写、不删表和 Changelog。
-- **存量梳理**：逐日流水那部分已在首批（`ledger-migration.md`）处理；其余存量（非流水的重复/过时记忆）仍待「从后往前」捋一遍，另起一票。
+- **存量梳理**：逐日流水那部分已在首批（`ledger-migration.md`）处理；其余存量仍待「从后往前」捋一遍，另起一票。**本票补一条范围：旧笔记的批量消化**（判断「已被覆盖 / 已过时 → 删；仍有价值 → 提炼进记忆后删」），见 `note-retirement.md` 阶段 2。
+- **笔记读侧与展示退役**：数据清空后再做（`note-retirement.md` 阶段 3）。
 - **theme**：继续挂起。topic 收敛之后再做会简单很多。
 - **tags**：另起一票退役，方案见 `tags-retirement.md`。
 
 ## 9. 风险与待观察
 
-1. **LLM 误删**：全放（含 delete）意味着主 LLM 可能不知道循环删了什么。靠 `record_note` 的 description + 返回值缓解，观察期重点看。
-2. **工具内同步跑循环的延迟**：每次记笔记多一个 2~4 秒的 LLM 循环。若超过体感阈值就转 `note_decide` 异步。
-3. **记忆多条提取的噪声**：原子化 + 循环决策能否真的压住噪声，要用真实数据看；上限 5（prompt 明示 + 工具计数）是保险丝。
+1. **LLM 误删**：全放（含 delete）意味着主 LLM 可能不知道循环删了什么。靠 `record_memory` 的 description + 返回值缓解，观察期重点看。旧笔记的删除是**软删**（`notes.status=2`），行可恢复，但派生数据会被清（`note-retirement.md` 风险 2）。
+2. **`inline` 入口同步跑循环的延迟**：每次记记忆多一个 2~4 秒的 LLM 循环。若超过体感阈值就转 `memory_decide` 异步。
+3. **记忆多条提取的噪声**：原子化 + 循环决策能否真的压住噪声，要用真实数据看；上限 5（**抽取段** prompt 明示 + 截断）是保险丝。
 4. **循环自身漏判**：跨域召回靠向量，召回不到就判不出重复。近邻取 top_k + 0.5 阈值是当前折中，观察期看漏判率。
 5. **循环不收敛 / 空转**：模型可能反复检索不写入。靠 `maxIterations` 上限兜底；记日志观察实际轮数分布。
+6. **过渡期两套并存**：旧笔记与新记忆可能同时被注入，出现重复信息。这是**有意的过渡状态**，不是 bug；随 `note-retirement.md` 阶段 2/3 收敛。
+7. **注入预算失衡**：笔记 3000 / 记忆 600，笔记清空后记忆承载全部，600 会不够——阶段 3 必须一起调。

@@ -14,12 +14,17 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 )
+
+// memoryMaxPerSession — 一次会话最多新增几条记忆（抽取段输出的硬上限）。
+// 与 config 的 memory_max_per_session 对应，循环侧不再计数（上限落在抽取段）。
+const memoryMaxPerSession = 5
 
 // extractResult — 记忆提取 LLM 输出结构
 type extractResult struct {
@@ -42,17 +47,18 @@ type memoryInstructionXML struct {
 }
 
 // buildMemoryInstructionXML 构建记忆提取 worker 的指令 user 消息。
+// task 里的「什么算记忆」用 promptbuilder.MemoryDefinition（全链路唯一定义），
+// 抽取段只负责「从对话里按这个定义捞候选」，不再另写一份定义。
 func buildMemoryInstructionXML(now string) string {
 	doc := memoryInstructionXML{
-		Task: "从以下对话中提取有长期价值的信息，包括：用户的事实/偏好/习惯/计划、用户反复讨论的话题、用户表达的观点和判断、用户分享的外部信息、用户的反思/自我剖析/复盘、用户做的重大决定及理由、用户从经历中总结的经验教训、用户偏好或价值观的变化。合并同类信息，每次最多提取3条最重要的。逐日流水（睡眠打卡、体重、饮酒、运动、时间日志等按天读数）不提取为记忆，属于文档台账。",
+		Task: fmt.Sprintf("从以下对话中提取值得长期留存的记忆，最多 %d 条（合并同类信息，不要逐条复述）。\n\n记忆的定义：\n%s\n\n不编造、不推测；信息不足时一条都不提。", memoryMaxPerSession, promptbuilder.MemoryDefinition),
 		Rules: []string{
 			"合并同类信息，不要逐条复述。不编造、不推测",
 			"信息不足时返回 {\"extracted\":false}",
 			"将\"今天\"、\"昨天\"等相对时间转为绝对日期（如 2026-05-15）",
-			"逐日读数（睡眠时长、步数、体重这类时序数据，走台账）不提取",
 		},
-		OutputFormat: `{"extracted":true,"summary":"一句话概括核心信息","facts":["支持细节1"],"topic":"一个关键主题词（如睡眠管理、职业规划、家庭关系），禁止斜杠、逗号、多个主题","tags":"关键词1,关键词2"}
-tags 是从内容中提取的逗号分隔关键词（如 褪黑素,早醒,生物钟）。没有值得提取的内容时返回 {"extracted":false}`,
+		OutputFormat: `{"extracted":true,"memories":[{"summary":"一句话概括核心信息","facts":["支持细节1"],"topic":"一个关键主题词（如睡眠管理、职业规划、家庭关系），禁止斜杠、逗号、多个主题"}]}
+一条记忆 = 一条独立的、自足的事件或结论，各占 memories 数组的一项。没有值得提取的内容时返回 {"extracted":false}`,
 		CurrentTime: now,
 	}
 

@@ -103,6 +103,7 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		Embedder:      infra.Embedder,
 		EmbeddingRepo: repos.Embedding,
 		DupeThreshold: cfg.Server.MemoryDupeThreshold,
+		MaxCandidates: cfg.Server.MemoryMaxPerSession,
 		ChunkBuilder:  chunkBuilder,
 		ConceptEmbed:  conceptEmbedService,
 	})

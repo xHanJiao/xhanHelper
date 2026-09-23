@@ -147,7 +147,6 @@ type ServerConfig struct {
 	ProfileStartupMigration bool     `yaml:"profile_startup_migration"` // 启动时异步迁移旧画像（facts 空才迁，单用户场景用）
 	MemoryDupeThreshold     float64  `yaml:"memory_dupe_threshold"`     // 记忆去重相似度阈值，默认 0.85（旧单条提取路径遗留）
 	// —— 记录循环（记忆两段式：抽取 + 逐候选决策循环）——
-	RecordLoopEnabled         bool     `yaml:"record_loop_enabled"`          // 记录循环总开关，默认 true（关掉回退旧的单条提取 + 纯插入）
 	RecordLoopMaxIterations   int      `yaml:"record_loop_max_iterations"`   // 决策循环轮数上限，默认 6
 	MemoryMaxPerSession       int      `yaml:"memory_max_per_session"`       // 单次会话最多新增几条记忆（抽取段上限），默认 5
 	MemoryNeighborTopK        int      `yaml:"memory_neighbor_top_k"`        // 预检索近邻条数（每域），默认 5
@@ -351,7 +350,6 @@ func merge(dst, src *Config) {
 	if src.Server.MemoryDupeThreshold > 0 {
 		dst.Server.MemoryDupeThreshold = src.Server.MemoryDupeThreshold
 	}
-	dst.Server.RecordLoopEnabled = src.Server.RecordLoopEnabled
 	if src.Server.RecordLoopMaxIterations > 0 {
 		dst.Server.RecordLoopMaxIterations = src.Server.RecordLoopMaxIterations
 	}

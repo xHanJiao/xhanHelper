@@ -1,14 +1,17 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
+	"xhan-helper/internal/llm"
 	"xhan-helper/internal/tool"
 )
 
-// 抽取段：解析 {memories:[...]}、跳过空 summary、按上限截断。
-func TestParseExtractResult_MultiAndTruncate(t *testing.T) {
+// 抽取段：解析 {memories:[...]}、跳过空 summary、按 MaxCandidates 截断。
+func TestExtractCandidates_MultiAndTruncate(t *testing.T) {
 	raw := `{"extracted":true,"memories":[
 		{"summary":"a","topic":"t1","facts":["f1"]},
 		{"summary":"","topic":"空"},
@@ -26,21 +29,22 @@ func TestParseExtractResult_MultiAndTruncate(t *testing.T) {
 		t.Fatalf("raw parse should keep 7, got %d", len(result.Memories))
 	}
 
-	cands := make([]memoryCandidate, 0)
-	for _, c := range result.Memories {
-		if c.Summary == "" {
-			continue
-		}
-		cands = append(cands, c)
-		if len(cands) >= memoryMaxPerSession {
-			break
-		}
+	// 走真实抽取路径：MaxCandidates=3，空 summary 跳过，截断到 3 条。
+	mock := &syncMockLLM{responses: []llm.Message{{Content: raw}}}
+	e := NewMemoryExtractor(&MemoryExtractorConfig{LLMClient: mock, MaxCandidates: 3})
+	cands, err := e.ExtractCandidates(context.Background(), "u1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cands) != memoryMaxPerSession {
-		t.Fatalf("truncate to %d, got %d", memoryMaxPerSession, len(cands))
+	if len(cands) != 3 {
+		t.Fatalf("truncate to 3, got %d", len(cands))
 	}
 	if cands[0].Topic != "t1" || cands[0].Facts[0] != "f1" {
 		t.Errorf("first candidate fields wrong: %+v", cands[0])
+	}
+	// prompt 里的上限也应反映配置值
+	if !strings.Contains(mock.reqs[0].Messages[0].Content, "最多 3 条") {
+		t.Errorf("prompt should state the configured cap, got: %.300s", mock.reqs[0].Messages[0].Content)
 	}
 }
 

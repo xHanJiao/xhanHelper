@@ -5,6 +5,13 @@ server:
   token_ttl_minutes: 2880 # token 过期时间（分钟），心跳续期保持登录态，关闭页面后快速过期
   max_tokens_per_user: 4 # 同一用户最多同时存在的 token 数，超出踢最老的
   memory_auto_extract: false
+  # --- 记录循环（记忆两段式：抽取 + 逐候选决策循环）---
+  record_loop_max_iterations: 6 # 决策循环轮数上限（含强制收敛轮）
+  memory_max_per_session: 5 # 单次会话最多新增几条记忆（抽取段上限）
+  memory_neighbor_top_k: 5 # 预检索近邻条数（每域）
+  memory_neighbor_threshold: 0.5 # 预检索近邻相似度下限
+  memory_confirm_threshold: 0.8 # NONE 时「再次确认」的近邻相似度下限
+  memory_topic_reuse_threshold: 0.8 # topic 复用阈值（与 topic-merge 一致）
   profile_startup_migration: false # 启动时异步迁移旧画像（facts 空才迁；迁移完成后可关）
   disable_background_tasks: false # 默认开。注意：merge 对 bool 是无条件覆盖，本行只在没有环境配置文件时才生效；要关就在 conf/config.<env>.yaml 里显式写 true
   sidecar_url: http://127.0.0.1:9090

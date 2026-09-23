@@ -17,10 +17,6 @@ import (
 	"xhan-helper/internal/service"
 )
 
-// memoryMaxPerSession — 一次会话最多新增几条记忆（抽取段输出的硬上限）。
-// 与 config 的 memory_max_per_session 对应，循环侧不再计数（上限落在抽取段）。
-const memoryMaxPerSession = 5
-
 // memoryCandidate — 抽取段产出的一条候选记忆。不落库，交给决策循环处理。
 type memoryCandidate struct {
 	Summary string   `json:"summary"`
@@ -50,9 +46,9 @@ type memoryInstructionXML struct {
 // buildMemoryInstructionXML 构建记忆提取 worker 的指令 user 消息。
 // task 里的「什么算记忆」用 promptbuilder.MemoryDefinition（全链路唯一定义），
 // 抽取段只负责「从对话里按这个定义捞候选」，不再另写一份定义。
-func buildMemoryInstructionXML(now string) string {
+func buildMemoryInstructionXML(now string, maxCandidates int) string {
 	doc := memoryInstructionXML{
-		Task: fmt.Sprintf("从以下对话中提取值得长期留存的记忆，最多 %d 条（合并同类信息，不要逐条复述）。\n\n记忆的定义：\n%s\n\n不编造、不推测；信息不足时一条都不提。", memoryMaxPerSession, promptbuilder.MemoryDefinition),
+		Task: fmt.Sprintf("从以下对话中提取值得长期留存的记忆，最多 %d 条（合并同类信息，不要逐条复述）。\n\n记忆的定义：\n%s\n\n不编造、不推测；信息不足时一条都不提。", maxCandidates, promptbuilder.MemoryDefinition),
 		Rules: []string{
 			"只依据用户的消息。助手说的不构成记忆来源，除非用户确认",
 			"合并同类信息，不要逐条复述。不编造、不推测",
@@ -83,6 +79,7 @@ type MemoryExtractor struct {
 	embedder      app.Embedder
 	embeddingRepo *service.EmbeddingRepo
 	dupeThreshold float64
+	maxCandidates int
 	chunkBuilder  *ChunkBuilder
 	conceptEmbed  *ConceptEmbedService
 }
@@ -95,6 +92,7 @@ type MemoryExtractorConfig struct {
 	Embedder      app.Embedder
 	EmbeddingRepo *service.EmbeddingRepo
 	DupeThreshold float64
+	MaxCandidates int // 单次会话最多新增几条记忆（抽取段上限）；0 → 默认 5
 	ChunkBuilder  *ChunkBuilder
 	ConceptEmbed  *ConceptEmbedService
 }
@@ -104,6 +102,9 @@ func NewMemoryExtractor(cfg *MemoryExtractorConfig) *MemoryExtractor {
 	if cfg.DupeThreshold <= 0 {
 		cfg.DupeThreshold = 0.85
 	}
+	if cfg.MaxCandidates <= 0 {
+		cfg.MaxCandidates = 5
+	}
 	return &MemoryExtractor{
 		llmClient:     cfg.LLMClient,
 		memRepo:       cfg.MemRepo,
@@ -111,6 +112,7 @@ func NewMemoryExtractor(cfg *MemoryExtractorConfig) *MemoryExtractor {
 		embedder:      cfg.Embedder,
 		embeddingRepo: cfg.EmbeddingRepo,
 		dupeThreshold: cfg.DupeThreshold,
+		maxCandidates: cfg.MaxCandidates,
 		chunkBuilder:  cfg.ChunkBuilder,
 		conceptEmbed:  cfg.ConceptEmbed,
 	}
@@ -119,12 +121,12 @@ func NewMemoryExtractor(cfg *MemoryExtractorConfig) *MemoryExtractor {
 // ExtractCandidates 从给定会话消息中抽取候选记忆。
 // 只做抽取，不做去重、不落库、不嵌入——那些是决策循环的职责（它能看到近邻，判定才准）。
 // 不做游标/进度更新（session-window 驱动，天然增量，无 LastExtractedMsgID 概念）。
-// 上限 memoryMaxPerSession 条（prompt 明示 + 解析后截断）。
+// 上限 e.maxCandidates 条（prompt 明示 + 解析后截断，来自 config memory_max_per_session）。
 // 输入是完整的 user + assistant 对话（assistant 的话必须标注 role，不能当成用户的话）。
 // 形状对齐 fact_extractor：对话渲染成 <对话> 块，拼在指令后，作为单条 user 消息发出。
 func (e *MemoryExtractor) ExtractCandidates(ctx context.Context, userID string, msgs []model.Message) ([]memoryCandidate, error) {
 	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
-	prompt := buildMemoryInstructionXML(now)
+	prompt := buildMemoryInstructionXML(now, e.maxCandidates)
 
 	dialog, err := renderDialog(msgs)
 	if err != nil {
@@ -156,7 +158,7 @@ func (e *MemoryExtractor) ExtractCandidates(ctx context.Context, userID string, 
 			continue
 		}
 		cands = append(cands, c)
-		if len(cands) >= memoryMaxPerSession {
+		if len(cands) >= e.maxCandidates {
 			break
 		}
 	}

@@ -2,6 +2,13 @@ package model
 
 import "time"
 
+// 记忆的写入来源（user_memories.source）。
+const (
+	MemorySourceInline     = "inline"       // 对话进行中，主 LLM 当场记录
+	MemorySourcePostChat   = "post_chat"    // 会话结束后，后台从对话提炼
+	MemorySourceConvLegacy = "conversation" // 历史值，仅存量数据使用，不再新写
+)
+
 // UserMemory — 长期记忆 K-V
 type UserMemory struct {
 	ID     string `gorm:"primaryKey;size:36" json:"id"`

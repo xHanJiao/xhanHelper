@@ -8,7 +8,7 @@ const DISPLAY_NAMES = {
   create_bill: '记账', update_bill: '修改账单', cancel_bill: '作废账单',
   delete_bill: '删除账单', query_bills: '查询账单', get_monthly_stats: '月度统计',
   get_category_stats: '分类统计', get_current_time: '获取时间', evaluate: '计算',
-  generate: '生成UUID', record_note: '记录笔记', search: '搜索笔记',
+  generate: '生成UUID', record_memory: '记录记忆', search: '搜索笔记',
   update_note: '更新笔记', delete_note: '删除笔记', list_notes: '列出笔记',
   create_agent: '创建智能体', update_agent: '更新智能体', delete_agent: '删除智能体',
   list_agents: '列出智能体'

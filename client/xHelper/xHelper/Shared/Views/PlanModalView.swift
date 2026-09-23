@@ -325,7 +325,7 @@ private func nodeFunctionDisplayName(_ name: String) -> String {
         "create_bill": "创建账单", "update_bill": "修改账单", "cancel_bill": "作废账单",
         "query_bills": "查询账单", "get_monthly_stats": "月度统计", "get_category_stats": "分类统计",
         "get_current_time": "获取时间", "evaluate": "计算", "generate": "生成 UUID",
-        "record_note": "记录笔记", "query_notes": "查询笔记",
+        "record_memory": "记录记忆", "query_notes": "查询笔记",
     ]
     return m[name] ?? name
 }

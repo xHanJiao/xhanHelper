@@ -116,12 +116,47 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		LLMClient:   llmClients.BgFlash,
 		Temperature: cfg.Facts.Temperature,
 	})
+	// 记录循环（记忆两段式的第二段）：逐候选决策循环。
+	// 检索源复用上面已建的 memSource / noteSource（与统一检索同源）。
+	recordLoop := agent.NewRecordDecisionLoop(&agent.RecordDeps{
+		FlashLLM:      llmClients.Flash,
+		LLMBG:         llmClients.BgFlash,
+		MemRepo:       repos.Mem,
+		NoteRepo:      repos.Note,
+		VectorStore:   vs,
+		Embedder:      infra.Embedder,
+		EmbeddingRepo: repos.Embedding,
+		ChunkRepo:     repos.Chunk,
+		ChunkBuilder:  chunkBuilder,
+		ConceptEmbed:  tools.ConceptEmbedService,
+		EntityPurger:  tools.EntityPurger,
+		MemSource:     memSource,
+		NoteSource:    noteSource,
+	}, agent.RecordLoopConfigFromServer(cfg), model.MemorySourcePostChat)
+	// inline 入口：把同一个决策循环回填给主循环的 record_memory 工具。
+	inlineLoop := agent.NewRecordDecisionLoop(&agent.RecordDeps{
+		FlashLLM:      llmClients.Flash,
+		LLMBG:         llmClients.BgFlash,
+		MemRepo:       repos.Mem,
+		NoteRepo:      repos.Note,
+		VectorStore:   vs,
+		Embedder:      infra.Embedder,
+		EmbeddingRepo: repos.Embedding,
+		ChunkRepo:     repos.Chunk,
+		ChunkBuilder:  chunkBuilder,
+		ConceptEmbed:  tools.ConceptEmbedService,
+		EntityPurger:  tools.EntityPurger,
+		MemSource:     memSource,
+		NoteSource:    noteSource,
+	}, agent.RecordLoopConfigFromServer(cfg), model.MemorySourceInline)
+	tools.RecordMemoryTool.SetRunner(inlineLoop)
 	// 无痕会话销毁器：Stage A 由后处理/在线删除触发，Stage B 由 cron 轮询执行
 	ephemeralDestroyer := agent.NewEphemeralDestroyer(repos.Conversation, vs, repos.DelayedTask)
 	sessionEndGroup := agent.NewPostChatWorkerGroup([]agent.PostChatWorker{
 		summaryWorker,
 		agent.NewMemoryWorker(&agent.MemoryWorkerConfig{
 			Extractor:         tools.MemExtractor,
+			Loop:              recordLoop,
 			MemoryAutoExtract: cfg.Server.MemoryAutoExtract,
 		}),
 		agent.NewStateWorker(&agent.StateWorkerConfig{

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"log"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
+	"xhan-helper/internal/util"
 )
 
 // FactWorker — 事实系统后处理子任务（PostChatWorker）。
@@ -121,7 +123,7 @@ func (w *FactWorker) Process(ctx context.Context, sess *SessionSnapshot) error {
 // applyCandidate 处理一条候选：判重 → 检索 → 相似度门槛 → 决策 → 写入。
 // 只有 DB 写失败才向上返回 error；单条候选的 LLM 失败降级为记日志并继续下一条。
 func (w *FactWorker) applyCandidate(ctx context.Context, userID, convID, srcMsgID string, idx int, cand factCandidate, st *factStats) error {
-	contentHash := hashPrompt(normalizeFactContent(cand.Content))
+	contentHash := util.MD5Hex(normalizeFactContent(cand.Content))
 
 	dup, err := w.factRepo.FindByContentHash(ctx, userID, contentHash)
 	if err != nil {
@@ -199,7 +201,7 @@ func (w *FactWorker) addFact(ctx context.Context, userID string, act factAction,
 		Subject:     act.Subject,
 		Kind:        act.Kind,
 		Content:     act.Content,
-		ContentHash: hashPrompt(normalizeFactContent(act.Content)),
+		ContentHash: util.MD5Hex(normalizeFactContent(act.Content)),
 		Fields:      act.Fields,
 		Status:      model.FactStatusActive,
 	}
@@ -223,7 +225,7 @@ func (w *FactWorker) updateFact(ctx context.Context, userID, srcMsgID string, ac
 		return nil
 	}
 	if err := w.factRepo.UpdateContent(ctx, old.ID, act.Content,
-		hashPrompt(normalizeFactContent(act.Content)), act.Subject, act.Kind, act.Fields); err != nil {
+		util.MD5Hex(normalizeFactContent(act.Content)), act.Subject, act.Kind, act.Fields); err != nil {
 		return err
 	}
 	w.logChange(ctx, userID, old.ID, model.FactOpUpdate, old.Content, act.Content, srcMsgID)
@@ -467,6 +469,41 @@ type FactDecider struct {
 	temperature *float64
 }
 
+// factCandidateXML / factNeighborXML / factNeighborsXML — 决策段输入块的 XML 结构。
+// 统一经 xml.Marshal 输出（不用手拼 xmlEscape：EscapeText 漏控制字节会拼出非良构 XML）。
+type factCandidateXML struct {
+	XMLName xml.Name `xml:"candidate"`
+	Subject string   `xml:"subject"`
+	Kind    string   `xml:"kind"`
+	Content string   `xml:"content"`
+	Fields  string   `xml:"fields,omitempty"`
+}
+
+type factNeighborXML struct {
+	ID      string `xml:"id,attr"`
+	Subject string `xml:"subject,attr"`
+	Kind    string `xml:"kind,attr"`
+	Content string `xml:",chardata"`
+}
+
+type factNeighborsXML struct {
+	XMLName xml.Name          `xml:"neighbors"`
+	Records []factNeighborXML `xml:"fact"`
+}
+
+// renderFactDecideInput 拼 `<candidate>` + `<neighbors>` 输入块。渲染失败向上抛。
+func renderFactDecideInput(cx factCandidateXML, nx factNeighborsXML) (string, error) {
+	candOut, err := xml.MarshalIndent(cx, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal fact candidate xml: %w", err)
+	}
+	nbOut, err := xml.MarshalIndent(nx, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal fact neighbors xml: %w", err)
+	}
+	return string(candOut) + "\n" + string(nbOut), nil
+}
+
 // FactDeciderConfig — 决策器依赖配置。
 type FactDeciderConfig struct {
 	LLMClient   llm.LLMClient
@@ -482,39 +519,34 @@ func NewFactDecider(cfg *FactDeciderConfig) *FactDecider {
 // 始终走原生 function calling：use_native_fc 只管 orchestrator 自己的工具列表。
 func (d *FactDecider) Decide(ctx context.Context, cand factCandidate, neighbors []app.VectorMatch) ([]factAction, error) {
 	idSet := make(map[string]bool, len(neighbors))
-	var nb strings.Builder
+	nx := factNeighborsXML{Records: make([]factNeighborXML, 0, len(neighbors))}
 	for _, m := range neighbors {
 		id := strings.TrimPrefix(m.ID, model.VectorPrefixFact)
 		idSet[id] = true
-		fmt.Fprintf(&nb, "  <fact id=\"%s\" subject=\"%s\" kind=\"%s\">%s</fact>\n",
-			xmlEscape(id), xmlEscape(m.Metadata["subject"]), xmlEscape(m.Metadata["kind"]),
-			xmlEscape(m.Metadata["content"]))
+		nx.Records = append(nx.Records, factNeighborXML{
+			ID:      id,
+			Subject: m.Metadata["subject"],
+			Kind:    m.Metadata["kind"],
+			Content: m.Metadata["content"],
+		})
 	}
 
-	var cb strings.Builder
-	cb.WriteString("<candidate>\n")
-	fmt.Fprintf(&cb, "  <subject>%s</subject>\n", xmlEscape(cand.Subject))
-	fmt.Fprintf(&cb, "  <kind>%s</kind>\n", xmlEscape(cand.Kind))
-	fmt.Fprintf(&cb, "  <content>%s</content>\n", xmlEscape(cand.Content))
+	cx := factCandidateXML{Subject: cand.Subject, Kind: cand.Kind, Content: cand.Content}
 	if len(cand.Fields) > 0 {
-		if b, err := json.Marshal(cand.Fields); err != nil {
-			log.Printf("[fact] marshal candidate fields error: %v", err)
-		} else {
-			fmt.Fprintf(&cb, "  <fields>%s</fields>\n", xmlEscape(string(b)))
+		b, err := json.Marshal(cand.Fields)
+		if err != nil {
+			return nil, fmt.Errorf("marshal fact candidate fields: %w", err)
 		}
+		cx.Fields = string(b)
 	}
-	cb.WriteString("</candidate>\n")
-	if nb.Len() == 0 {
-		cb.WriteString("<neighbors></neighbors>")
-	} else {
-		cb.WriteString("<neighbors>\n")
-		cb.WriteString(nb.String())
-		cb.WriteString("</neighbors>")
+	input, err := renderFactDecideInput(cx, nx)
+	if err != nil {
+		return nil, err
 	}
 
 	msg, err := d.llmClient.ChatSync(ctx, &llm.ChatRequest{
 		SystemPrompt: factDecideSystemPrompt,
-		Messages:     []llm.Message{{Role: "user", Content: factDecideInstruction + "\n\n" + cb.String()}},
+		Messages:     []llm.Message{{Role: "user", Content: factDecideInstruction + "\n\n" + input}},
 		Tools:        []llm.ToolDefinition{factDecideTool},
 		Temperature:  d.temperature,
 	})

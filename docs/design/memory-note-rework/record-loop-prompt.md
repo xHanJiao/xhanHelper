@@ -25,7 +25,7 @@
 | 位置 | 怎么用 | 代码 |
 |---|---|---|
 | 抽取段（`post_chat`） | 拼进 task —— 「按这个定义从对话里捞候选」 | `agent/extractor.go` `buildMemoryInstructionXML` |
-| 决策段（两入口） | 拼进 system prompt —— 「按这个定义判断候选该怎么入库」 | `agent/record_react.go` `recordLoopSystemPrompt` |
+| 决策段（两入口） | 拼进 system prompt —— 「按这个定义判断候选该怎么入库」 | `agent/record_loop*.go` `recordLoopSystemPrompt` |
 | 主循环准则 4 | `fmt.Sprintf` 嵌入 —— 「何时触发 `record_memory`」 | `promptbuilder/static.go` `corePrinciples` |
 
 > 这段历史是个反例：三处曾各写一份，于是漂移了——抽取段说「最多 3 条」、主循环只说「反思、决定、经验、观点」、决策段干脆没定义。现在**改定义只动 `MemoryDefinition` 一处**（`corePrinciples` 因嵌入它，从 `const` 改为一次 `fmt.Sprintf` 的 `var`，进程内字符串不变，前缀缓存照旧稳）。

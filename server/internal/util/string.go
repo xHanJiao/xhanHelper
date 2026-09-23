@@ -1,6 +1,16 @@
 package util
 
-import "strings"
+import (
+	"crypto/md5"
+	"encoding/hex"
+	"strings"
+)
+
+// MD5Hex 返回文本的 MD5 十六进制摘要（内容判重口径）。
+func MD5Hex(s string) string {
+	h := md5.Sum([]byte(s))
+	return hex.EncodeToString(h[:])
+}
 
 // SplitAndTrim 按逗号分割字符串并去空格去空串
 func SplitAndTrim(s string) []string {

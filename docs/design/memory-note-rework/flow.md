@@ -27,7 +27,7 @@ flowchart TD
   subgraph PERCAND["逐候选处理（每条候选各自走一遍）"]
     direction TB
     PRE["预检索（确定性，非 LLM）<br/>embed 候选 summary → memory + note 两域<br/>≥ memory_neighbor_threshold 0.5，top_k<br/>→ 格式化为 &lt;neighbors&gt;"]
-    SYS["决策循环 agent/record_react.go<br/>（复用 MiniReAct，本体零改动）<br/>system prompt 稳定，缓存友好<br/>InitialMessages = &lt;candidate&gt; + &lt;neighbors&gt;"]
+    SYS["决策循环 agent/record_loop*.go<br/>（复用 MiniReAct，本体零改动）<br/>system prompt 稳定，缓存友好<br/>InitialMessages = &lt;candidate&gt; + &lt;neighbors&gt;"]
     ROUND["ChatSync + 原生 function calling<br/>工具结果以 role=tool 回传"]
     TOOLS{"模型调了什么工具？"}
     READ["检索（只读，可多轮）<br/>search_memory_semantic / _keyword<br/>search_note_semantic / _keyword（过渡期）"]

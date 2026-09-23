@@ -3,16 +3,11 @@ package agent
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
-	"encoding/hex"
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"log"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/app"
@@ -26,13 +21,19 @@ import (
 // 与 config 的 memory_max_per_session 对应，循环侧不再计数（上限落在抽取段）。
 const memoryMaxPerSession = 5
 
-// extractResult — 记忆提取 LLM 输出结构
-type extractResult struct {
-	Extracted bool     `json:"extracted"`
-	Summary   string   `json:"summary"`
-	Facts     []string `json:"facts,omitempty"`
-	Topic     string   `json:"topic,omitempty"`
-	Tags      string   `json:"tags,omitempty"` // 逗号分隔标签
+// memoryCandidate — 抽取段产出的一条候选记忆。不落库，交给决策循环处理。
+type memoryCandidate struct {
+	Summary string   `json:"summary"`
+	Facts   []string `json:"facts,omitempty"`
+	Topic   string   `json:"topic,omitempty"`
+}
+
+// memoryExtractResult — 抽取段 LLM 的输出结构（一个键 memories，数组）。
+// 照 fact_extractor.go 的 factExtractResult{Facts []factCandidate} 形状：
+// 一次输出多条，逐条过决策循环；不再退化成「一句话 + 一串细节」。
+type memoryExtractResult struct {
+	Extracted bool              `json:"extracted"`
+	Memories  []memoryCandidate `json:"memories"`
 }
 
 // memoryInstructionXML — 记忆提取指令消息的 XML 结构。
@@ -114,14 +115,14 @@ func NewMemoryExtractor(cfg *MemoryExtractorConfig) *MemoryExtractor {
 	}
 }
 
-// ExtractFromMessages 从给定会话消息中提取记忆。
+// ExtractCandidates 从给定会话消息中抽取候选记忆。
+// 只做抽取，不做去重、不落库、不嵌入——那些是决策循环的职责（它能看到近邻，判定才准）。
 // 不做游标/进度更新（session-window 驱动，天然增量，无 LastExtractedMsgID 概念）。
-// 返回提取到的记忆（可能为 nil）。
+// 上限 memoryMaxPerSession 条（prompt 明示 + 解析后截断）。
 // 缓存友好：system prompt 用共享固定串，任务指令全部编码进 user message（与 profile worker 同模式）。
-func (e *MemoryExtractor) ExtractFromMessages(ctx context.Context, userID string, msgs []model.Message) (*model.UserMemory, error) {
+func (e *MemoryExtractor) ExtractCandidates(ctx context.Context, userID string, msgs []model.Message) ([]memoryCandidate, error) {
 	now := time.Now().In(config.BJ).Format("2006-01-02 15:04:05 Monday")
 	prompt := buildMemoryInstructionXML(now)
-	promptHash := hashPrompt(prompt)
 
 	chatMsgs := make([]llm.Message, 0, len(msgs)+1)
 	for _, m := range msgs {
@@ -134,163 +135,44 @@ func (e *MemoryExtractor) ExtractFromMessages(ctx context.Context, userID string
 		Messages:     chatMsgs,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("extract memory: %w", err)
+		return nil, fmt.Errorf("extract memory candidates: %w", err)
 	}
 
-	result := parseExtractResult(msg.Content)
-	if result == nil || isEmptyResult(result) {
+	result, err := parseExtractResult(msg.Content)
+	if err != nil {
+		return nil, err
+	}
+	if !result.Extracted {
 		return nil, nil
 	}
 
-	if e.isDuplicate(ctx, userID, result.Summary) {
-		return nil, nil
-	}
-
-	rawJSON, _ := json.Marshal(result)
-	rawStr := string(rawJSON)
-	memory := &model.UserMemory{
-		ID:              uuid.New().String(),
-		UserID:          userID,
-		MemoryKey:       formatMemoryKey(result),
-		MemoryValue:     result.Summary,
-		RawJSON:         &rawStr,
-		Source:          "conversation",
-		Topic:           result.Topic,
-		Tags:            result.Tags,
-		Facts:           factsPtr(result.Facts),
-		ConfirmCount:    1,
-		LastConfirmedAt: time.Now(),
-		ExtractPrompt:   &prompt,
-		PromptHash:      promptHash,
-		ContentHash:     hashPrompt(result.Summary),
-	}
-	e.storeMemory(memory)
-
-	log.Printf("[memory] extracted memory: %s", truncate(result.Summary, 80))
-	return memory, nil
-}
-
-// parseExtractResult 从 LLM 回复中解析 JSON
-func parseExtractResult(text string) *extractResult {
-	var result extractResult
-	_, err := ParseFlashJSON(text, &result)
-	if err != nil {
-		return nil
-	}
-	return &result
-}
-
-func (e *MemoryExtractor) isDuplicate(ctx context.Context, userID, text string) bool {
-	// 1. 先尝试用 content_hash 做精确去重
-	contentHash := hashPrompt(text)
-	existing, err := e.memRepo.FindByContentHash(ctx, userID, contentHash)
-	if err != nil {
-		log.Printf("[memory] FindByContentHash error: %v", err)
-	}
-	if existing != nil {
-		return true
-	}
-
-	// 2. 再用向量相似度做模糊去重
-	if e.vectorStore == nil || e.embedder == nil {
-		return false
-	}
-	vec, err := e.embedder.Embed(ctx, text)
-	if err != nil {
-		return false
-	}
-	results := e.vectorStore.Search(vec, 3, func(_ string, _ []float64, metadata map[string]string) bool {
-		return metadata["type"] == model.VectorTypeMemory && metadata["user_id"] == userID
-	})
-	for _, r := range results {
-		if r.Score > e.dupeThreshold {
-			return true
+	cands := make([]memoryCandidate, 0, len(result.Memories))
+	for _, c := range result.Memories {
+		if strings.TrimSpace(c.Summary) == "" {
+			continue
+		}
+		cands = append(cands, c)
+		if len(cands) >= memoryMaxPerSession {
+			break
 		}
 	}
-	return false
+	log.Printf("[memory] extracted candidates: %d", len(cands))
+	return cands, nil
 }
 
-func (e *MemoryExtractor) storeMemory(memory *model.UserMemory) {
-	if err := e.memRepo.Create(context.Background(), memory); err != nil {
-		log.Printf("[memory] create error: %v", err)
-		return
+// parseExtractResult 从 LLM 回复中解析 JSON。解析失败表示「本轮没抽到任何记忆」，
+// 必须报错让调用方感知（照 fact_extractor.go:186 处理），不能静默当成空结果。
+func parseExtractResult(text string) (*memoryExtractResult, error) {
+	// ParseFlashJSON 对「整段没有 {」的输入返回 ("", nil)，此处显式当失败：
+	// 没有 JSON 结构 = 模型没按格式输出，不能误判成「本轮无记忆」。
+	if !strings.Contains(text, "{") {
+		log.Printf("[memory] extract parse failed: no JSON object in output (raw %.120s)", text)
+		return nil, fmt.Errorf("parse memory extract result: no JSON object in output")
 	}
-	// 同步嵌入，确保 StateWorker 在后续步骤中能搜到该记忆的向量
-	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
-	defer cancel()
-	e.conceptEmbed.EnsureTopicEmbedded(ctx, memory.UserID, memory.Topic, model.EntityTypeMemory, memory.ID)
-	if memory.Tags != "" {
-		e.conceptEmbed.EnsureTagsEmbedded(ctx, memory.UserID, memory.Tags, model.EntityTypeMemory, memory.ID)
+	var result memoryExtractResult
+	if _, err := ParseFlashJSON(text, &result); err != nil {
+		log.Printf("[memory] extract parse failed: %v (raw %.120s)", err, text)
+		return nil, fmt.Errorf("parse memory extract result: %w", err)
 	}
-	// 全文嵌入
-	vec, err := e.embedder.Embed(ctx, memory.MemoryValue)
-	if err != nil {
-		log.Printf("[memory] embed full mem %.8s error: %v", memory.ID, err)
-	} else {
-		e.vectorStore.Upsert(model.VectorPrefixMemory+memory.ID, vec, map[string]string{
-			"type":    model.VectorTypeMemory,
-			"user_id": memory.UserID,
-			"topic":   memory.Topic,
-		})
-		embStr := llm.EmbeddingToString(vec)
-		if err := e.embeddingRepo.Upsert(ctx, &model.Embedding{
-			ID:         memory.ID,
-			EntityType: model.EntityTypeMemory,
-			EntityID:   memory.ID,
-			UserID:     memory.UserID,
-			Model:      e.embedder.ModelName(),
-			Embedding:  &embStr,
-		}); err != nil {
-			log.Printf("[memory] upsert full embedding %.8s error: %v", memory.ID, err)
-		}
-	}
-
-	n, err := e.chunkBuilder.BuildChunks(ctx, memory.UserID, model.EntityTypeMemory, memory.ID, memory.MemoryValue, map[string]string{"topic": memory.Topic})
-	if err != nil {
-		log.Printf("[memory] chunk build error: %v", err)
-	} else {
-		log.Printf("[memory] chunked mem %s: %d sentences", memory.ID[:8], n)
-	}
-}
-
-func hashPrompt(text string) string {
-	h := md5.Sum([]byte(text))
-	return hex.EncodeToString(h[:])
-}
-
-func formatMemoryKey(r *extractResult) string {
-	if r.Topic != "" {
-		return r.Topic
-	}
-	return truncate(r.Summary, 50)
-}
-
-func factsPtr(facts []string) *string {
-	if len(facts) == 0 {
-		return nil
-	}
-	b, _ := json.Marshal(facts)
-	s := string(b)
-	return &s
-}
-
-func isEmptyResult(r *extractResult) bool {
-	if r == nil {
-		return true
-	}
-	// 新格式：explicit flag
-	if !r.Extracted {
-		return true
-	}
-	// 兜底：旧格式或兼容不标准输出
-	s := strings.TrimSpace(r.Summary)
-	return s == "" || s == "无"
-}
-
-func truncate(s string, n int) string {
-	runes := []rune(s)
-	if len(runes) <= n {
-		return s
-	}
-	return string(runes[:n])
+	return &result, nil
 }

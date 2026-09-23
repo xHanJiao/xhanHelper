@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"xhan-helper/internal/model"
+	"xhan-helper/internal/util"
 )
 
 // UserMemoryRepo — 用户记忆数据访问
@@ -128,6 +129,20 @@ func (r *UserMemoryRepo) FindByContentHash(ctx context.Context, userID, contentH
 		return nil, nil
 	}
 	return &m, err
+}
+
+// Update 覆盖一条记忆的内容（topic / memory_value / facts）。改内容不碰 confirm 计数。
+// 派生数据（向量/chunk/概念）由调用方在写库后重建。
+func (r *UserMemoryRepo) Update(ctx context.Context, id, topic, memoryValue string, facts *string) error {
+	return r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"topic":        topic,
+			"memory_key":   topic,
+			"memory_value": memoryValue,
+			"facts":        facts,
+			"content_hash": util.MD5Hex(memoryValue),
+		}).Error
 }
 
 // UpdateConfirm 更新确认计数

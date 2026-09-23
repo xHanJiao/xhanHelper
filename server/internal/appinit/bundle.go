@@ -18,6 +18,7 @@ type ToolsBundle struct {
 	MemExtractor        *agent.MemoryExtractor
 	ConceptEmbedService *agent.ConceptEmbedService
 	EntityPurger        *service.EntityPurger
+	RecordMemoryTool    *tool.RecordMemoryTool
 }
 
 // AgentBundle Agent 层初始化的产物

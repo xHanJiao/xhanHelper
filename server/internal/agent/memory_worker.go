@@ -2,28 +2,32 @@ package agent
 
 import (
 	"context"
+	"fmt"
 
 	"xhan-helper/internal/llmcost"
 )
 
-// MemoryWorker — 记忆提取子任务（PostChatWorker）。
-// 包装 MemoryExtractor，从 session 快照的 user 消息中提取长期记忆。
+// MemoryWorker — 记忆写入子任务（PostChatWorker）。
+// 两段式：抽取（ExtractCandidates 出 N 条候选）→ 逐候选决策循环（RecordDecisionLoop）。
 // memoryAutoExtract 关闭时直接跳过（不消费 LLM）。
 type MemoryWorker struct {
 	extractor         *MemoryExtractor
+	loop              *RecordDecisionLoop
 	memoryAutoExtract bool
 }
 
 // MemoryWorkerConfig — MemoryWorker 依赖配置
 type MemoryWorkerConfig struct {
 	Extractor         *MemoryExtractor
+	Loop              *RecordDecisionLoop
 	MemoryAutoExtract bool
 }
 
-// NewMemoryWorker 创建记忆提取 worker。
+// NewMemoryWorker 创建记忆写入 worker。
 func NewMemoryWorker(cfg *MemoryWorkerConfig) *MemoryWorker {
 	return &MemoryWorker{
 		extractor:         cfg.Extractor,
+		loop:              cfg.Loop,
 		memoryAutoExtract: cfg.MemoryAutoExtract,
 	}
 }
@@ -31,7 +35,7 @@ func NewMemoryWorker(cfg *MemoryWorkerConfig) *MemoryWorker {
 // Name 实现 PostChatWorker。
 func (w *MemoryWorker) Name() string { return "memory" }
 
-// Process 从 session 快照提取记忆。关闭时跳过。
+// Process 抽取候选并逐条决策写入。关闭时跳过。
 func (w *MemoryWorker) Process(ctx context.Context, sess *SessionSnapshot) error {
 	if !w.memoryAutoExtract || w.extractor == nil {
 		return nil
@@ -42,6 +46,17 @@ func (w *MemoryWorker) Process(ctx context.Context, sess *SessionSnapshot) error
 		UserID:      sess.UserID,
 		ConvID:      sess.ConvID,
 	})
-	_, err := w.extractor.ExtractFromMessages(ctx, sess.UserID, sess.GetUserMessages())
-	return err
+
+	cands, err := w.extractor.ExtractCandidates(ctx, sess.UserID, sess.GetUserMessages())
+	if err != nil {
+		return err
+	}
+	for _, c := range cands {
+		if _, err := w.loop.Decide(ctx, sess.UserID, recordCandidate{
+			Summary: c.Summary, Facts: c.Facts, Topic: c.Topic,
+		}); err != nil {
+			return fmt.Errorf("record loop decide for candidate %.40s: %w", c.Summary, err)
+		}
+	}
+	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"xhan-helper/internal/util"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -128,7 +129,7 @@ func seedFact(t *testing.T, deps *factTestDeps, subject, kind, content string) *
 		Subject:     subject,
 		Kind:        kind,
 		Content:     content,
-		ContentHash: hashPrompt(normalizeFactContent(content)),
+		ContentHash: util.MD5Hex(normalizeFactContent(content)),
 		Status:      model.FactStatusActive,
 	}
 	if err := deps.factRepo.Create(context.Background(), f); err != nil {
@@ -181,7 +182,7 @@ func TestFactWorker_Add(t *testing.T) {
 	if f.Kind != model.FactKindState || f.Status != model.FactStatusActive {
 		t.Errorf("unexpected fact: %+v", f)
 	}
-	if f.ContentHash != hashPrompt(normalizeFactContent(f.Content)) {
+	if f.ContentHash != util.MD5Hex(normalizeFactContent(f.Content)) {
 		t.Errorf("content hash not normalized: %q", f.ContentHash)
 	}
 	if deps.store.Size() != 1 {
@@ -273,7 +274,7 @@ func TestFactWorker_Update(t *testing.T) {
 	if f.Content != "本人这次在老K的小程序上兼产品与开发" {
 		t.Errorf("content not updated: %q", f.Content)
 	}
-	if f.ContentHash != hashPrompt(normalizeFactContent(f.Content)) {
+	if f.ContentHash != util.MD5Hex(normalizeFactContent(f.Content)) {
 		t.Errorf("hash not recomputed")
 	}
 	if f.Fields == nil || *f.Fields != `{"due_at":"2026-09-25"}` {

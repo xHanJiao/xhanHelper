@@ -138,11 +138,14 @@ func TestSanitizeFactCandidates_DropsInvalidAndTruncates(t *testing.T) {
 }
 
 func TestRenderFactDialog_SkipsEmptyContentAndEscapes(t *testing.T) {
-	out := renderFactDialog([]model.Message{
+	out, err := renderFactDialog([]model.Message{
 		{ID: "m1", Role: "user", Content: "a < b & c", CreatedAt: time.Date(2026, 9, 21, 14, 3, 0, 0, time.UTC)},
 		{ID: "m2", Role: "assistant", Content: "   "}, // tool-call-only assistant
 		{ID: "m3", Role: "assistant", Content: "收到"},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if strings.Contains(out, "<turn role=\"assistant\"") && strings.Contains(out, "></turn>") {
 		t.Error("empty-content turn should be skipped")
 	}

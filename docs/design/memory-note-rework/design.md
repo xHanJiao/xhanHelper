@@ -110,7 +110,7 @@
 
 ### 4.2 两段式：抽取 → 逐候选决策循环
 
-前身是 facts 的两段式（`FactWorker`：`fact_worker.go:92` 编排 → `:123` 逐候选 → `:170` 预检索 → `:483` 单发决策）——把最后的**单发决策换成 `MiniReAct` 循环**，其余骨架照搬。新建 `agent/record_react.go`；`MiniReAct` 本体**零改动**（`ChatSync` + 原生 function calling，工具结果以 `role=tool` 回传，`maxIterations` 上限 + 强制收敛轮）。
+前身是 facts 的两段式（`FactWorker`：`fact_worker.go:92` 编排 → `:123` 逐候选 → `:170` 预检索 → `:483` 单发决策）——把最后的**单发决策换成 `MiniReAct` 循环**，其余骨架照搬。新建 `agent/record_loop*.go`；`MiniReAct` 本体**零改动**（`ChatSync` + 原生 function calling，工具结果以 `role=tool` 回传，`maxIterations` 上限 + 强制收敛轮）。
 
 **入口两条，循环一个：**
 
@@ -258,8 +258,17 @@ topic 收敛后 topic 天然对应 theme，这唯一的弱信号也不再需要 
 
 **后续**（本 `design.md` 的正文设计）：
 
+> **状态（2026-09-23）**：1–5 全部已实现并 `go build ./... && go test ./...` 通过、启动冒烟通过。代码落点：
+> `agent/record_loop*.go`（决策循环 + `recordLoopState` 闭包工具 + `reuseTopic`/`distinctTopics`）、
+> `agent/extractor.go`（`ExtractCandidates`/`memoryCandidate`/`memoryExtractResult`）、
+> `agent/memory_worker.go`（抽取→逐候选编排）、`agent/promptbuilder/memory_definition.go`（定义单一来源）、
+> `tool/record_memory.go`（inline 工具 + `RecordMemoryRunner` 窄接口）、`service/user_memory_repo.go`（`Update` + `hashMD5`）、
+> `config`（7 个记录循环字段 + 默认值）、`model/user_memory.go`（`MemorySource*` 常量）、
+> `agentinit`（tools.go 注册工具 + agents.go 回填 runner）、`tool/seeder.go` + Swift/前端展示映射。
+> 尚缺：**离线重放探针**（缝，未建）、真机三测（待跑）。
+
 1. **抽取段**：`MemoryExtractor` 输出结构改 `{memories: [...]}`（照 `fact_extractor.go:34`），上限 `memory_max_per_session` = 5。
-2. **决策循环**：新建 `agent/record_react.go`（复用 `MiniReAct`），工具集 = 检索（`search_memory_*` / `search_note_*`）+ 写入（`save_memory` / `update_memory` / `delete_memory` / `delete_note`）；候选 + 预检索近邻（≥ 0.5）经 `InitialMessages` 注入；新增 `UserMemoryRepo.Update`；NONE（且最高分记忆近邻 ≥ `memory_confirm_threshold` 0.80）走 `UpdateConfirm`。
+2. **决策循环**：新建 `agent/record_loop*.go`（复用 `MiniReAct`），工具集 = 检索（`search_memory_*` / `search_note_*`）+ 写入（`save_memory` / `update_memory` / `delete_memory` / `delete_note`）；候选 + 预检索近邻（≥ 0.5）经 `InitialMessages` 注入；新增 `UserMemoryRepo.Update`；NONE（且最高分记忆近邻 ≥ `memory_confirm_threshold` 0.80）走 `UpdateConfirm`。
 3. **两个入口接入**：`inline` = 新增 `record_memory` 工具接进主循环；`post_chat` = `MemoryWorker` 编排「抽取 → 逐候选决策循环」。先同步，慢则加 `memory_decide` 延迟任务。
 4. **笔记停写**：`record_note` / `update_note` / `rollback_note` / `get_note_versions` 从 note 工具去掉（`note-retirement.md` 阶段 0）；准则 4 措辞改 `record_memory`；`seeder.go` / Swift / 前端的展示映射同步。
 5. **topic 复用**：`FindSimilarTopics` + 接在 `save_memory` 内部（阈值 0.80）+ 命名校验。
@@ -276,7 +285,7 @@ topic 收敛后 topic 天然对应 theme，这唯一的弱信号也不再需要 
 
 **估算明细（后续主体，13 面 / 4 缝 / 2 往返）**：
 
-- **面（13）**：① 抽取段改造（`extractor.go` → `{memories:[...]}` + cap）；② `recordTool` 适配器 + 临时 registry；③ `record_react.go` 决策循环组装（含 `InitialMessages` 注入）；④ 预检索与 `idSet`/`idType` 构建；⑤ 3 个 `ToolDefinition` schema（8 函数）；⑥ `save_memory` 落库（topic 复用接入 + `source`）；⑦ **新增** `UserMemoryRepo.Update`；⑧ `delete_memory` / `delete_note`（接 bug017 清理器）；⑨ 4 个检索函数复用 `unified_search`；⑩ `FindSimilarTopics` + 命名校验；⑪ NONE → `UpdateConfirm`（含 0.80 阈值）；⑫ 两个入口接入（`record_memory` 工具 / `MemoryWorker` 编排）；⑬ 笔记停写 + 措辞 + 展示映射（单测随各面）。
+- **面（13）**：① 抽取段改造（`extractor.go` → `{memories:[...]}` + cap）；② `recordTool` 适配器 + 临时 registry；③ `record_loop*.go` 决策循环组装（含 `InitialMessages` 注入）；④ 预检索与 `idSet`/`idType` 构建；⑤ 3 个 `ToolDefinition` schema（8 函数）；⑥ `save_memory` 落库（topic 复用接入 + `source`）；⑦ **新增** `UserMemoryRepo.Update`；⑧ `delete_memory` / `delete_note`（接 bug017 清理器）；⑨ 4 个检索函数复用 `unified_search`；⑩ `FindSimilarTopics` + 命名校验；⑪ NONE → `UpdateConfirm`（含 0.80 阈值）；⑫ 两个入口接入（`record_memory` 工具 / `MemoryWorker` 编排）；⑬ 笔记停写 + 措辞 + 展示映射（单测随各面）。
 - **缝（4）**：抽取段的质量（**需先建探针**）；决策循环里 LLM 的真实行为；`inline` 入口同步跑的延迟体感；topic 阈值 0.80 在真实数据上的表现。后三条可在探针报告里一并看。
 - **往返（2）**：探针报告人工审阅 1 次；真机三测 1 次。
 - **决定（0）**：形态、字段、阈值、入口命名均已定稿（`record-loop-prompt.md`、`note-retirement.md`、本文 §4.2/§4.4）。

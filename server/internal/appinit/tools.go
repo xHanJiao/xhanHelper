@@ -65,6 +65,10 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 
 	reg.Register(tool.NewLoggingWrapper(tool.NewNoteTool(repos.Note, repos.Version, infra.VectorStore, infra.Embedder, repos.Embedding, chunkBuilder, conceptEmbedService, entityPurger), log.Default()))
 
+	// 主循环写入工具 record_memory。runner（决策循环）在 InitAgents 建好后回填。
+	recordMemoryTool := tool.NewRecordMemoryTool(nil)
+	reg.Register(tool.NewLoggingWrapper(recordMemoryTool, log.Default()))
+
 	topicStatsTool := tool.NewLoggingWrapper(tool.NewGetTopicStatsTool(repos.ConceptEmbed, repos.Note, repos.Mem, infra.Embedder, repos.Embedding, cfg.Reflection.ClusterThreshold), log.Default())
 	topicDetailTool := tool.NewLoggingWrapper(tool.NewGetTopicDetailTool(repos.Note, repos.Mem), log.Default())
 	billStatsTool := tool.NewLoggingWrapper(tool.NewGetBillStatsTool(repos.Bill), log.Default())
@@ -130,5 +134,6 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 		MemExtractor:        memExtractor,
 		ConceptEmbedService: conceptEmbedService,
 		EntityPurger:        entityPurger,
+		RecordMemoryTool:    recordMemoryTool,
 	}
 }

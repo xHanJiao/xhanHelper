@@ -4,7 +4,7 @@ package promptbuilder
 //
 // 链路上有三处 prompt 需要知道「记忆是什么」，它们全部引用/拼接本常量，不得各写一份：
 //   - 抽取段（post_chat）：agent/extractor.go 的 buildMemoryInstructionXML，按此定义从对话里捞候选
-//   - 决策段（两入口）：agent/record_react.go 的 system prompt，按此定义判断这条候选该怎么入库
+//   - 决策段（两入口）：agent/record_loop_types.go 的 system prompt，按此定义判断这条候选该怎么入库
 //   - 主循环准则 4：static.go 的 corePrinciples，按此定义判断何时触发 record_memory
 //
 // 改定义只动这里。历史上三处各写一份，出现过漂移（抽取段说「最多 3 条」、主循环只说

@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/xml"
 	"fmt"
@@ -170,7 +169,11 @@ func NewFactExtractor(cfg *FactExtractorConfig) *FactExtractor {
 // 缓存友好：system prompt 用固定串，指令 + 对话全部编码进单条 user 消息，常量前缀在前。
 func (e *FactExtractor) Extract(ctx context.Context, msgs []model.Message) ([]factCandidate, error) {
 	prompt := factExtractInstruction
-	if dialog := renderFactDialog(msgs); dialog != "" {
+	dialog, err := renderFactDialog(msgs)
+	if err != nil {
+		return nil, fmt.Errorf("render fact dialog: %w", err)
+	}
+	if dialog != "" {
 		prompt = factExtractInstruction + "\n\n" + dialog
 	}
 
@@ -191,41 +194,45 @@ func (e *FactExtractor) Extract(ctx context.Context, msgs []model.Message) ([]fa
 	return sanitizeFactCandidates(res.Facts, e.maxCandidates), nil
 }
 
+// turnXML / dialogXML — fact 抽取对话块的 XML 结构（经 xml.Marshal 输出，避免手拼漏转义）。
+type turnXML struct {
+	XMLName xml.Name `xml:"turn"`
+	Role    string   `xml:"role,attr"`
+	At      string   `xml:"at,attr"`
+	Content string   `xml:",chardata"`
+}
+
+type dialogXML struct {
+	XMLName xml.Name  `xml:"对话"`
+	Turns   []turnXML `xml:"turn"`
+}
+
 // renderFactDialog 把消息渲染成 <对话> XML 块。role 取实际值（user / assistant）。
 // 每个 turn 带发生时间（北京时间）——用户消息里的相对日期由管线补成「原词（日期）」，
 // assistant 消息不经管线，靠这个属性提供时间锚点。
 // Content 为空的 turn 跳过（只发 tool call 的 assistant 消息 content 为空）。
-func renderFactDialog(msgs []model.Message) string {
-	var buf bytes.Buffer
-	wrote := false
+// 无内容返回 ""（调用方据此不追加对话块）。渲染失败向上抛。
+func renderFactDialog(msgs []model.Message) (string, error) {
+	doc := dialogXML{Turns: make([]turnXML, 0, len(msgs))}
 	for _, m := range msgs {
 		content := strings.TrimSpace(m.Content)
 		if content == "" {
 			continue
 		}
-		buf.WriteString("  <turn role=\"")
-		buf.WriteString(xmlEscape(m.Role))
-		buf.WriteString("\" at=\"")
-		buf.WriteString(m.CreatedAt.In(config.BJ).Format("2006-01-02 15:04"))
-		buf.WriteString("\">")
-		buf.WriteString(xmlEscape(content))
-		buf.WriteString("</turn>\n")
-		wrote = true
+		doc.Turns = append(doc.Turns, turnXML{
+			Role:    m.Role,
+			At:      m.CreatedAt.In(config.BJ).Format("2006-01-02 15:04"),
+			Content: content,
+		})
 	}
-	if !wrote {
-		return ""
+	if len(doc.Turns) == 0 {
+		return "", nil
 	}
-	return "<对话>\n" + buf.String() + "</对话>"
-}
-
-// xmlEscape 转义 XML 文本内容。写入 bytes.Buffer 不会失败；真失败则降级返回原文并记日志。
-func xmlEscape(s string) string {
-	var buf bytes.Buffer
-	if err := xml.EscapeText(&buf, []byte(s)); err != nil {
-		log.Printf("[fact] escape xml text error: %v", err)
-		return s
+	b, err := xml.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal fact dialog xml: %w", err)
 	}
-	return buf.String()
+	return string(b), nil
 }
 
 // sanitizeFactCandidates 校验候选：丢弃非法 kind 与空 content，按 max 截断。

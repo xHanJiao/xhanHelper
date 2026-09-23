@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"testing"
+
+	"xhan-helper/internal/util"
+)
 
 func TestNormalizeFactContent(t *testing.T) {
 	cases := []struct {
@@ -18,7 +22,7 @@ func TestNormalizeFactContent(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := hashPrompt(normalizeFactContent(c.a)) == hashPrompt(normalizeFactContent(c.b))
+			got := util.MD5Hex(normalizeFactContent(c.a)) == util.MD5Hex(normalizeFactContent(c.b))
 			if got != c.same {
 				t.Errorf("same=%v, want %v: %q vs %q → %q / %q",
 					got, c.same, c.a, c.b, normalizeFactContent(c.a), normalizeFactContent(c.b))

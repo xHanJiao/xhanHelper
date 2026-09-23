@@ -60,12 +60,12 @@ func NewNoteTool(noteRepo *service.NoteRepo, versionRepo *service.VersionRepo, v
 func (t *NoteTool) Name() string { return "note" }
 func (t *NoteTool) Description() string {
 	// TODO 在这里可以简单介绍一下各个函数
-	return "自由笔记工具，记录值得长期追踪的信息——事实、数据、观点、事件、个人状态、人物关系等"
+	return "自由笔记工具：当场记下真正高价值、值得长期留存的内容——重要的决定、结论、洞察、事实、观点、状态、人物关系。一条一个 topic（只填主题词）。逐日流水/台账（睡眠、体重、饮酒、运动、时间日志等按天读数）不要记，走 document。"
 }
 
 func (t *NoteTool) Catalog() (CatalogEntry, bool) {
 	return CatalogEntry{
-		ShortDesc: "笔记。记录/检索长期追踪信息：事实、观点、事件、状态、关系。",
+		ShortDesc: "笔记。记录高价值信息（决定/结论/洞察/事实/关系），一条一个 topic。逐日流水/台账走 document。",
 		Funcs:     []string{"record_note", "semantic_search", "query_notes", "update_note"},
 		Others:    "计数、主题列表、版本回滚、删除 等",
 	}, true
@@ -109,7 +109,7 @@ func (t *NoteTool) Functions() []FuncSchema {
 		{
 			Name:        "record_note",
 			Display:     "记录笔记",
-			Description: fmt.Sprintf("保存一条值得长期追踪的笔记。当用户分享事实、数据、观点、事件、个人状态、人物关系时调用。日常闲聊不需要记录。正文 ≤%d 字：如果确实需要超长内容，先建文档（document 工具），笔记只存精简摘要并在 content 末尾注明 document_id", maxNoteContentLen),
+			Description: fmt.Sprintf("保存一条值得长期留存的高价值笔记。当用户分享重要的决定、结论、经验、观点、事实、状态、人物关系时调用。topic 填一个主题词（一条一个主题）。日常闲聊、逐日流水/台账（睡眠、体重、饮酒、运动、时间日志等按天读数）不记，走 document。正文 ≤%d 字：如果确实需要超长内容，先建文档（document 工具），笔记只存精简摘要并在 content 末尾注明 document_id", maxNoteContentLen),
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

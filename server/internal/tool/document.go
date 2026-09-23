@@ -182,12 +182,12 @@ func NewDocumentTool(docRepo *service.DocumentRepo, annoRepo *service.DocumentAn
 func (t *DocumentTool) Name() string { return "document" }
 
 func (t *DocumentTool) Description() string {
-	return "管理用户的结构化 Markdown 文档。仅在用户明确要求生成/保存/修改/查询/删除文章、报告、总结等文档时使用。不要主动创建或修改文档。日常的信息记录请用 note 工具。" + docLinkHint
+	return "管理用户的结构化 Markdown 文档。逐日流水/台账（睡眠、体重、饮酒、运动、时间日志等按天记的读数）归这里：先查有没有对应台账，有就追加、没有就建一篇。用户明确要求生成/保存/修改/查询/删除文章、报告、总结等时也用这里。除流水台账外，不要主动创建或修改文档。" + docLinkHint
 }
 
 func (t *DocumentTool) Catalog() (CatalogEntry, bool) {
 	return CatalogEntry{
-		ShortDesc: "文档。写/查/改/删 Markdown 文档，看用户划的线和批注。用户明确要求才用。",
+		ShortDesc: "文档。写/查/改/删 Markdown 文档，看用户划的线和批注。逐日流水/台账归这里（有就追加、没有就建）；其余用户明确要求才用。",
 		Funcs:     []string{"get_document", "update_document", "list_annotations", "create_document"},
 		Others:    "删除、文档列表、标签 等",
 	}, true
@@ -198,7 +198,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		{
 			Name:        "create_document",
 			Display:     "创建文档",
-			Description: "创建一篇新的 Markdown 文档。仅当用户明确说写一篇、生成文档、保存为文档、总结成文章等时调用。不要主动调用。" + docLinkHint,
+			Description: "创建一篇新的 Markdown 文档。仅当用户明确说写一篇、生成文档、保存为文档、总结成文章等时调用。" + docLinkHint,
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

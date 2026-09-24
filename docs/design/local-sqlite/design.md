@@ -14,6 +14,13 @@
 - 第 3 期开工：`5–6 面 / 4–5 缝（3 条需先建探针）/ 3–4 次真机往返 / 3–4 个待拍决定` → **~4–9h**
 - 第 3 期估算（定稿）：`4 面 / 3 缝（2 条需先建探针）/ 2 次真机往返 / 0 个待拍决定` → **~3–5h**
 
+第 4 期（dev/prod 双环境隔离）单独估：
+
+- 第 4 期开工：`5 面 / 4 缝（2 条需先建探针）/ 2 次真机往返 / 4 个待拍决定` → **~4–7h**
+- 第 4 期估算（定稿）：`7 面 / 5 缝（2 条需先建探针）/ 2 次真机往返 / 0 个待拍决定` → **~5–8h**
+
+> 第 4 期定稿较开工上调：砍掉「导出/导入 zip」一整块（−2 面、−1 往返、−1.5GB 磁盘），但新增用户提议的 **env 校验**机制（token 前缀 + 中间件 + 启动交叉断言）与 **Swift 侧数据根统一**（8 处硬编码），净增面数。
+
 > 定稿较粗估上调，因范围扩大：首次配置引导、启动提速与错误上报、驻留生命周期、dev/prod 双 build 隔离、本地单用户 + Touch ID 解锁、整套 UI 设计面（UI-1~UI-10）、SwiftPM 预览靶。跨语言 + 动像素，修正式结果 ×1.5。
 
 ---
@@ -96,7 +103,7 @@ flowchart TD
 - 后端跑在你 Mac 上，数据存本地 SQLite。
 - 客户端连 `127.0.0.1`（本机）。
 - **Go 要顺带托管前端**（这次目标新增的能力）。
-- **本地也分 prod / dev 两套**（见第八节）：不同 bundle id、不同数据根、不同端口，可同时开着；数据只允许 prod → dev 单向流动。
+- **本地也分 prod / dev 两套**（见第八节）：同一 app 身份、按构建分（`Debug` → dev / `Release` → prod），不同数据根 / 端口 / 日志，可同时开着；dev 是**空库**，与 prod 无数据路径。
 
 两种形态**共用同一份 Go 代码**，靠配置和环境变量切换。云端部署能力保留（iOS 客户端将来仍需要它）。
 
@@ -108,7 +115,7 @@ flowchart TD
 
 1. 你双击 `xhanHelper.app`。
 2. app 读 Keychain：**没有** LLM / Embedding 密钥 → **不启动后端**，先弹「首次配置」窗口（见改动点 8）。
-3. 你填入两个密钥（model / base_url 已预填默认值，改不改随意）；点「测试连接」验证通过后落 Keychain（共享 access group，dev / prod 两个 build 一次填两边都能用）。
+3. 你填入两个密钥（model / base_url 已预填默认值，改不改随意）；点「测试连接」验证通过后落 Keychain（**同一把钥匙串条目，dev / prod 两个 build 共用**——传统钥匙串不按 app 分区，无需 access group）。
 4. 之后走下面的「日常启动」。
 
 ### 日常启动
@@ -165,7 +172,7 @@ Mac 上，一个应用自己的数据有官方指定位置：
 | 内容 | 放哪 | 说明 |
 |------|------|------|
 | SQLite 库 | `~/Library/Application Support/xhanHelper/xhan_helper.db` | Apple 指定「应用创建、用户不直接管理」的数据 |
-| 图床 | `~/Library/Application Support/xhanHelper/images/` | 与库同目录，便于整体备份（本地 prod→dev 的 zip 会一起打包）；从云端迁移时图片**不搬**（见第七节） |
+| 图床 | `~/Library/Application Support/xhanHelper/images/` | 与库同目录，便于整体备份；从云端迁移时图片**不搬**（见第七节） |
 | 日志 | `~/Library/Logs/xhanHelper/` | Apple 约定的日志位置 |
 
 > **dev 用平行的一套**（见第八节）：根目录换成 `~/Library/Application Support/xhanHelper-dev/` 与 `~/Library/Logs/xhanHelper-dev/`，与 prod 物理分开，互不可见。
@@ -228,7 +235,7 @@ flowchart TB
         C7[7 本地 / 远程寻址]
         C8[8 密钥设置 + 首次配置引导]
         C9[9 驻留生命周期]
-        C10[10 dev/prod 双 build 隔离]
+        C10[10 dev/prod 双环境隔离]
         C11[11 本地单用户 + Touch ID 解锁]
     end
     be --> xc --> sw
@@ -336,15 +343,13 @@ flowchart TD
 - **为什么不拆进程**：SQLite 单写者，HTTP 进程与 worker 进程同写一个 `.db` 会锁竞争甚至损坏。单进程内 `CronRunner` 已能满足「关窗后继续」。
 - **改哪里**：`xHelperMac/App.swift` 的 `windowShouldClose` / `applicationShouldTerminate`。
 
-### 10. dev / prod 双 build + 数据隔离 + 单向导入导出
+### 10. dev / prod 双环境隔离（第 4 期定稿：同一 app，按构建分环境）
 
-- **为什么**：本地也要能拿真实数据做开发，但**绝不允许 dev 碰 prod 数据**。
-- **两个 build**（见第八节）：不同 bundle id、数据根、端口、`APP_ENV`。
-- **单向 zip 导出 / 导入（UI 驱动）**：
-  - prod 设置页「导出数据」→ `NSSavePanel` 选位置 → `ditto -c -k` 打包 `xhan_helper.db` + `images/` 成 zip。
-  - dev 设置页「导入数据」→ `NSOpenPanel` 选 zip → `ditto -x -k` 解进 dev 数据根 → **重启后端**（SQLite 文件被占用，先停后写）。
-  - **无反向路径**：prod 没有「导入」、dev 没有「导出到 prod」；dev 全程不直接读写 prod 数据根，只吃一份副本。
-- **改哪里**：`SettingsView`（prod/dev 各一个按钮 + 二次确认 + 进度）；Swift `Process` 调 `/usr/bin/ditto`（项目已有 shell 外部进程的先例）；导入后重启 `LocalBackendManager`；两份 config / scheme / entitlements；路径常量按 build 硬编码 + 启动断言。
+- **为什么**：开发时能随手折腾数据，但**绝不允许 dev 碰 prod 数据**。
+- **同一 app 身份，按构建配置分**：`Debug` → dev、`Release` → prod；数据根 / 端口 / 日志 / `APP_ENV` / conf 随之不同（见第八节表格）。不建第二套 bundle id / scheme / `.xcconfig`。
+- **dev 是空库**：自动建 `me`，数据自己长 —— **不做 prod→dev 的 zip 导出/导入**（原意想定已砍，用户 2026-09-24 拍）。
+- **三层拦截**（第八节 8.2）：物理隔离（两个 conf + `LocalPaths`）→ 启动交叉断言（`local_env` ↔ `APP_ENV` ↔ 数据根 ↔ token 前缀，不符致命）→ 请求层 env 校验（`Bearer <env>:<random>` 前缀不符 → 403）。
+- **改哪里**：`conf/config.local.dev.yaml`（新）+ `config.local.yaml` 加 `local_env`；Go `config.ServerConfig.LocalEnv` + `appinit` 断言 + `middleware.LocalAuth.Env`；Swift `LocalPaths`（新）+ 8 处数据根硬编码 + `LocalKeychain.Account` token 项 + `LocalAuthService` token 生成 + `LocalBackendDiagnostics.childEnvironment` + 3 处 18923 白名单；`scripts/bundle-backend.sh` 按 `$CONFIGURATION` 选 conf；`Makefile` 加 `make local-dev`。
 
 ### 11. 本地单用户 + Touch ID 解锁（取代账号密码）
 
@@ -450,10 +455,39 @@ flowchart LR
 
 ### 第 4 期 — dev/prod 双环境隔离
 
-**你会看到什么**：多出一个 dev 版 app，用独立数据根 / 端口，可与 prod 同时开着；能一键把 prod 数据**单向**复制到 dev。
+**你会看到什么**：同一个 app，**Debug 构建 = dev（沙盒）、Release 构建 = prod（真身）**；两个能同时开着、数据根 / 端口 / 日志全分开；dev 是**空库**（自动建 `me`），数据自己长，**不碰任何线上数据、也不复制 prod 数据**；dev 若被指去 prod 后端，会被 **403 踢掉**。
 
-- 改动点 10（见第八节）。
-- 验收：两个 app 同时运行互不干扰；prod「导出数据」出 zip、dev「导入数据」后 dev 有数据；dev 无法直接读写 prod 数据根（启动断言拦住）。
+**已拍决定（2026-09-24，开工前）**
+
+1. **同一 app 身份**：不建第二套 bundle id / scheme / xcconfig —— Swift 侧用现成的 `#if DEBUG`，Go 配置在 Run Script 里按 `$CONFIGURATION` 选。
+2. **`APP_ENV` 命名**：`local` = prod（现有 `config.local.yaml` 不动）、`local.dev` = dev（新增 `config.local.dev.yaml`）→ 迁移工具、`make local`、既有文档零改动。
+3. **dev 数据**：空库起步 + 自动建 `me`；**不做导出/导入 zip**（UI-8a/8b 砍掉）、不从线上 / prod 拷数据，磁盘增量≈0。
+4. **密钥共享、token 分家**：LLM / Embedding 密钥走同一钥匙串条目（两个 build 共享，省一次配置）；**本地 token 按 env 分家**（钥匙串 account `local_token_dev` / `local_token_prod`）。
+5. **env 校验（用户提议）**：本地 token 形如 `<env>:<random>`，后端校验前缀不匹配即 403 → 堵住「dev 经逃生口写 prod」这条唯一泄漏路径。
+6. **dev 视觉标识**：沿用 UI-7，并给 Debug 构建的显示名加 `dev`（Dock 里分得清）。
+
+**机制三层**
+
+| 层 | 手段 | 兜住什么 |
+|---|---|---|
+| 1. 物理隔离 | 两个 conf（18924 + `xhanHelper-dev` 根）、Swift `LocalPaths`（`#if DEBUG`）、日志根分家 | 写错配置也指不到对方 |
+| 2. 启动断言 | Go：`local_env` ↔ `APP_ENV` ↔ 数据根 ↔ token 前缀 四者配套，不符 `log.Fatalf` 退出；Swift 侧同款 assert | 配置/构建错配**炸在明处**，不静默写错库 |
+| 3. 请求校验 | 中间件比对 `Bearer` 的 env 前缀 == 后端 `local_env`，不符 403 + 日志「客户端 env=X，后端 env=Y」 | 任何客户端（含前端面板、逃生口、别的本地进程）越界都进不来 |
+
+**改动清单**
+
+- **配置**：`conf/config.local.yaml` 加 `local_env: prod`；新增 `conf/config.local.dev.yaml`（`port 18924`、`xhanHelper-dev` 根、`image_dir` 同根、`local_env: dev`、`local_token: ${XHAN_LOCAL_TOKEN}`、`session_gap_minutes: 1`）。
+- **Go**：`config.ServerConfig` 加 `local_env`（含 `applyOverrides` 非空覆盖）；`appinit` 启动断言；`middleware.LocalAuth` 加 `Env`，本地模式先校验前缀；`appinit/router_test.go` 跟随。
+- **Swift**：新增 `LocalPaths`（根 / 日志根 / 端口 / env 名，`#if DEBUG` 决定）；改 8 处硬编码数据根（`FaviconStore` / `UserConfigStore` / `HistoryStore` / `BookmarkStore` / `DownloadHistoryStore` / `LocalToolResultStore` / `ToolOutputStore` / `LocalBackendManager` 日志根）；`LocalKeychain.Account` 加 per-env token 项；`LocalAuthService` 生成带前缀 token + 用对应 account；`LocalBackendManager.port`；`LocalBackendDiagnostics.childEnvironment` 的 `APP_ENV`；3 处写死 `18923` 的白名单改用动态端口（`XHWebView` / `BrowsePanelView` / `MessageDebugPanelView`）；`LocalBackendCoreTests` 断言。
+- **打包 / 工具**：`scripts/bundle-backend.sh` 按 `$CONFIGURATION` 拷 `config.yaml` + 对应 local conf；`server/Makefile` 新增 `make local-dev`（`APP_ENV=local.dev`）。
+- **撤掉**：UI-8a / UI-8b（导出 / 导入 zip）、prod→dev 数据复制、`.xcconfig`、第二套 bundle id / scheme。
+
+**验收**
+
+1. **Debug 跑** → dev 起在 `18924`、数据根 `xhanHelper-dev`、空库自动建 `me`、聊天正常；看板 / 账单面板不白屏（白名单那条缝）。
+2. **Release 跑**（Scheme → Run → Build Configuration = Release）→ prod 起在 `18923`、数据完好（44,860 条消息、笔记 991、账单 951 都在）。
+3. 两个同时开：互不干扰；Dock 里能分清。
+4. **泄漏测试**：dev 设置页把「服务地址」填 `http://127.0.0.1:18923` 重启 → 请求被 **403** 踢，后端日志有「客户端 env=dev，后端 env=prod」。
 
 ### 第 5 期 — 分发（本次不做）
 
@@ -490,41 +524,55 @@ flowchart LR
 
 ## 八、dev / prod 双环境隔离
 
-**目标**：本地也能拿真实数据开发，但 **dev 绝不能碰 prod 数据**。
+**目标**：开发时能随手折腾本地数据，而 **dev 绝不能碰 prod 数据**。
 
-> **第 4 期开工前已定（2026-09-24，用户要求）**
->
-> - **同一份 app 身份，靠构建配置分环境：`Debug` 构建 → dev，`Release` 构建 → prod。**
->   不建第二套 bundle id / scheme —— 下面表格里 `cn.xhan.helper` / `cn.xhan.helper.dev` 是旧想定，**订正为同一个实际 bundle id `xhanx.cn.xHelperMac`**；数据根 / 端口 / `APP_ENV` / conf 由 xcconfig + Run Script 按 `$(CONFIGURATION)` 决定（Debug 拷 `config.local.dev.yaml`、Release 拷 `config.local.prod.yaml`）。
-> - **硬编码 + 启动断言照旧**：dev 二进制拿到的数据根/端口写死在 dev conf 里，配置写错也指不到 prod，启动时断言路径前缀。
-> - **同 bundle id 的连带影响（第 4 期要拍）**：UserDefaults 域与钥匙串是**共享**的 → 密钥、`xhan_touch_id_enabled`、`xhan_server_url` 逃生口在 Debug/Release 间通用（密钥共享正是想要的）；若 dev 需要独立偏好（如各自的逃生口地址），得另用一套 suite / 键名前缀 —— 待定。
-> - 第 4 期完成前**用户不再使用本地 app**（真身不再被写），做完后：日常用 Release（真身），开发用 Debug（沙盒副本）。
+> **本节 = 第 4 期定稿（2026-09-24）。** 详细清单 / 验收见阶段划分区「第 4 期」段。
 
-| | prod（真实本地） | dev（沙盒副本） |
+### 8.1 两条环境怎么分
+
+**同一个 app 身份**（bundle id 保持 `xhanx.cn.xHelperMac`），靠**构建配置**分环境：**`Debug` → dev，`Release` → prod**。不建第二套 bundle id / scheme / `.xcconfig`：Swift 侧用现成的 `#if DEBUG`，Go 侧 conf 在 `bundle-backend.sh` 里按 `$CONFIGURATION` 选。
+
+| | prod（真身） | dev（沙盒） |
 |---|---|---|
 | 构建 | **Release** | **Debug** |
 | 数据根 | `~/Library/Application Support/xhanHelper/` | `~/Library/Application Support/xhanHelper-dev/` |
 | 日志 | `~/Library/Logs/xhanHelper/` | `~/Library/Logs/xhanHelper-dev/` |
 | 端口 | `18923` | `18924` |
-| APP_ENV | `local-prod` | `local-dev` |
-| 配置 | `config.local.prod.yaml` | `config.local.dev.yaml` |
+| APP_ENV | `local` | `local.dev` |
+| 配置 | `config.local.yaml` | `config.local.dev.yaml` |
+| `local_env` | `prod` | `dev` |
+| 数据 | 线上迁来的真身（`cmd/mysql2sqlite`） | **空库**，自动建 `me`，自己长 |
+| 密钥 | 同一把钥匙串条目（**共享**） | 同上 |
+| 本地 token | 钥匙串 `local_token_prod` | 钥匙串 `local_token_dev` |
 
-- **两个 build，不是运行时开关**：dev 构建**硬编码** dev 根、prod 构建硬编码 prod 根，**即使配置写错也指不到对方**，再加启动断言。这是「绝绝对对不允许」能拿到的最强保证（非沙盒下同用户理论上仍可读对方文件，所以靠路径硬编码兜底）。
-- **可同时开着**：端口 / 数据根分开，两个 app 并行互不干扰（同 bundle id 不影响并行运行）。
+- **数据根 / 端口写死在各自的 conf 里**（不是运行时开关）→ **即使配置写错也指不到对方**；Swift 侧的数据根一律走 `LocalPaths`（`#if DEBUG` 决定），**禁止再写字面量 `"xhanHelper"`**。
+- **可同时开着**：端口 / 数据根 / 日志分开，两个 app 并行互不干扰（同 bundle id 不影响）。
 
-**数据只允许 prod → dev 单向流动：**
+### 8.2 「dev 碰不到 prod」靠三层，不靠自觉
+
+| 层 | 手段 | 兜住什么 |
+|---|---|---|
+| **1 物理隔离** | 两个 conf + `LocalPaths` + 日志根分家 | 正常路径下就是两个世界 |
+| **2 启动断言** | Go：`local_env` ↔ `APP_ENV` ↔ 数据根 ↔ token 前缀 **四者配套**，不符 `log.Fatalf`；Swift 侧同款 assert | 配置 / 构建错配**炸在明处**，不静默写错库 |
+| **3 请求校验** | 本地模式下，中间件比对 `Bearer` 的 **env 前缀** == 后端 `local_env`；不符 **403** + 日志「客户端 env=X，后端 env=Y」 | 任何客户端越界都进不来 |
+
+**关于 env 参数（三层里的第 3 层）**：环境标签**落在本地 token 里**——token 形如 `<env>:<random>`（app 生成时带前缀，按 env 存不同钥匙串 account）。这样不必在十几个请求构造点各加一个 header：**token 是每个请求天然携带**的，连面板里（Vue 前端经 bridge 拿到同一个 token）的 API 调用也自动带上。后端先比前缀（不符 → 403 人话报错），再比整串（不符 → 401，用常量时间比较防时序泄露）。
+
+这一层封住的正是唯一剩下的漏洞：**dev app 把「服务地址」逃生口填成 `http://127.0.0.1:18923`**（= prod 后端）。没有它，dev 的 UI 能连上 prod 后端并写 prod 数据；有了它，prod 后端看到 `Bearer dev:…` 直接 403。
 
 ```mermaid
 flowchart LR
-    CLOUD[("云端 MySQL")] -->|cmd/mysql2sqlite| PROD[("本地 prod<br/>xhanHelper.db")]
-    PROD -->|prod 设置页「导出数据」| ZIP{{"快照 .zip"}}
-    ZIP -->|dev 设置页「导入数据」| DEV[("本地 dev<br/>xhanHelper.db")]
-    DEV -.->|❌ 禁止| PROD
+    CLOUD[("云端 MySQL")] -->|cmd/mysql2sqlite| PROD[("本地 prod<br/>xhan_helper.db<br/>真身数据")]
+    PROD -->|"✅ Release build"| PAPP["xhanHelper（Release）"]
+    DEV[("本地 dev<br/>空库 → me")] -->|"✅ Debug build"| DAPP["xhanHelper dev（Debug）"]
+    PAPP -.->|"逃生口 → 云端"| CLOUD
+    DAPP -.->|"❌ 逃生口 → 18923（403）"| PROD
+    DEV -.->|❌ 无任何复制路径| PROD
 ```
 
-- **单向靠 UI 隔离，不靠直接读库**：prod 设置页「导出数据」把 `xhan_helper.db` + `images/` 打包成 zip（`ditto -c -k`，`NSSavePanel` 选位置）；dev 设置页「导入数据」解进 dev 数据根（`ditto -x -k`，`NSOpenPanel` 选文件）后重启后端。**dev 全程不直接读写 prod 数据根**，只吃一份副本——比直接读 `prod.db` 更安全。
-- **无反向路径**：prod 无「导入」、dev 无「导出到 prod」；路径常量按 build 硬编码 + 启动断言兜底。
-- 云端 → 本地 prod 走第七节的 `cmd/mysql2sqlite`，是另一个方向，不冲突。
+- **prod → dev 无数据路径**（不做导出/导入 zip，见决定表）：dev 要测试数据就自己造，要真身数据才用 prod。
+- **云端 → 本地 prod** 走第七节的 `cmd/mysql2sqlite`，是另一个方向，不冲突。
+- 同 bundle id 的连带影响（已接受）：UserDefaults 域共享 → `xhan_server_url` 逃生口、`xhan_touch_id_enabled` 两环境通用。前者由第 3 层兜住（403），后者无所谓（DEBUG 本来就不弹指纹）。
 
 ---
 
@@ -560,10 +608,10 @@ flowchart LR
 | **可选项被空串冲掉** | `${VAR}` 对未设置变量展开成空串，会冲掉 base_url / model 默认值 | 可选项走「非空覆盖」而非占位符（改动点 2） |
 | **秒开期检索不全** | warmup 挪后台后，最初几秒记忆/语义检索可能缺内存向量 | 已接受；`/api/health` 暴露 `starting/ready`，需确认检索侧能优雅降级 |
 | ~~**Keychain 共享**~~ | ~~两个 build 共享密钥需 `keychain-access-groups`~~ | **已消解**：传统钥匙串不按 app 分区，同机同用户两个 build 天然共享（第三轮 review）；该 entitlement 需付费账号，不做 |
-| **双 build 维护** | 两份 scheme / config / entitlements 要同步 | 共享 xcconfig，只保留必要差异 |
-| **第 4 期前没有沙盒（Debug = 真身）** | 现在只有一个数据根：Xcode 跑 Debug 构建就是本地 prod —— 聊天、改数据**直接写真实库**，没有副本可退；想试「删表 / 重跑向量 / 换 embedding 模型」这类操作只能拿真身做 | 兜底：源库（本地 MySQL 副本）是静态的，`go run ./cmd/mysql2sqlite` **18 秒**可重建，且每次迁移前旧库改名备份；根治 = 第 4 期双 build（第八节） |
-| **单向复制可被绕过** | 非沙盒下同用户理论上仍可读 prod 文件 | 路径硬编码 + 启动断言 + 只走 zip 导出/导入（dev 不直接读写 prod 数据根）（改动点 10） |
-| **导入时后端占用 DB** | dev 导入 zip 时后端在跑会锁 SQLite | 导入前停后端、写完重启（UI-8b） |
+| **双 build 维护** | 两份 scheme / config / entitlements 要同步 | **已简化**：同一 bundle id / 同一份代码，只按 `$(CONFIGURATION)` 选 conf（不再有两套 scheme） |
+| **第 4 期前没有沙盒（Debug = 真身）** | 现在只有一个数据根：Xcode 跑 Debug 构建就是本地 prod —— 聊天、改数据**直接写真实库**，没有副本可退；想试「删表 / 重跑向量 / 换 embedding 模型」这类操作只能拿真身做 | 兜底：源库（本地 MySQL 副本）是静态的，`go run ./cmd/mysql2sqlite` **18 秒**可重建，且每次迁移前旧库改名备份；根治 = 第 4 期（Debug → `xhanHelper-dev` 沙盒，第八节） |
+| **dev 经逃生口连 prod 后端** | dev 的「服务地址」若填 `127.0.0.1:18923`，UI 能连上 prod 后端写 prod 数据（非沙盒下同用户理论上也仍可读 prod 文件） | 路径硬编码 + 启动交叉断言 + **请求层 env 校验（token 前缀不符 → 403）**（第八节 8.2） |
+| **Swift 侧数据根散落** | `"xhanHelper"` 字面量散在 8 个文件里，漏改一处就 favicons / history 串味（**不易察觉**） | 统一走 `LocalPaths`；改完 grep 全仓字面量 + 真机对拍两个根 |
 | **预览靶材质失真** | `ImageRenderer` 离屏渲染材质/毛玻璃不可信 | 只信布局 / token；观感以 Xcode 真机为准（第十一节） |
 | **剪枝留孤儿** | 按 `user_id` 删非 xhan，可能漏掉无 `user_id` 的关联表留下孤儿行 | 剪枝后跑一遍孤儿清理 + 关键表对账抽查（第七节） |
 | **旧图 404** | 不迁图片，迁入的 `ImageAsset` 指向不存在的文件 | 已接受；后续 TTL 清理自然淘汰 |
@@ -607,9 +655,9 @@ sequenceDiagram
 | **UI-4** | **未配置空态** `NEW` | 用户跳过 onboarding | 主窗口空态 + 「去配置」入口 | 复用 `ErrorStateView` 风格 | 2 |
 | **UI-5** | **设置页「模型与密钥」** `改造` | 随时 | 两个 `SecureField` / model 下拉 / base_url / 清除密钥 /（测试连接）/「锁定·重新验证」 | 复用 `SettingsCard`+`KeycapView`；**Release 可见**；去掉「退出登录」 | 2 |
 | **UI-6** | **设置页「本地服务」** `NEW` | 随时 | 后端状态、端口、数据根路径、日志入口、「重启后端」 | 复用 `SettingsCard` | 2 |
-| **UI-7** | **dev 环境视觉标识** `改造` | dev build | 窗口标题后缀「(dev)」+ 顶部 accent 细条 | 一眼可辨、不刺眼 | 4 |
-| **UI-8a** | **prod 设置页「导出数据」** `NEW` | 随时 | 按钮 + `NSSavePanel` + 进度 | 复用设置卡片 | 4 |
-| **UI-8b** | **dev 设置页「导入数据」** `NEW` | 随时 | 按钮 + `NSOpenPanel` + 二次确认 + 进度 + 导入后重启提示 | 复用设置卡片 | 4 |
+| **UI-7** | **dev 环境视觉标识** `改造` | dev build | 窗口标题后缀「(dev)」+ 顶部 accent 细条 + **Dock 显示名 `xhanHelper dev`** | 一眼可辨、不刺眼 | 4 |
+| ~~**UI-8a**~~ | ~~prod「导出数据」~~ | — | **第 4 期砍掉**：dev 用空库自己造数据，不做 prod→dev 复制（见第八节 / 决定表 #10） | — | ~~4~~ |
+| ~~**UI-8b**~~ | ~~dev「导入数据」~~ | — | 同上，一并砍掉 | — | ~~4~~ |
 | **UI-9** | **驻留提示（可选）** `NEW` | 关窗后 app 仍活 | 首次关窗一句提示「仍在后台运行，⌘Q 退出」 | 可选，轻提示 | 2/4 |
 | **UI-10** | **Touch ID 解锁门** `改造` | 启动 / 回前台 / 空闲 15min | 现有 `LoginMacView` → 指纹解锁（失败可退系统密码）；DEBUG 跳过 | 复用现有登录门壳，去掉账号密码 | 2 |
 
@@ -634,10 +682,13 @@ sequenceDiagram
 | 6 | 分发方式 | 本次不做。将来走 Developer ID（非 App Store）还是 App Store（沙盒，需重设计）——**遗留，未定** |
 | 7 | 首次配置形态 | 单页（高级区折叠） |
 | 8 | 启动态 | 主窗口内联指示（非独立 splash） |
-| 9 | dev 视觉标识 | 窗口标题后缀「(dev)」+ 顶部 accent 细条 |
-| 10 | 数据复制 | UI 驱动：prod 导出 zip / dev 导入 zip（`ditto`），导入后自动重启后端 |
-| 11 | zip 方式 | shell 到 `/usr/bin/ditto`（不加依赖） |
+| 9 | dev 视觉标识 | 窗口标题后缀「(dev)」+ 顶部 accent 细条 + Dock 显示名 `xhanHelper dev`（第 4 期定稿） |
+| 10 | dev 数据来源 | **空库自造**（自动建 `me`）。~~prod 导出 zip / dev 导入 zip~~ **第 4 期砍掉**：不复制线上 / prod 数据（用户 2026-09-24 拍），磁盘增量≈0 |
+| 11 | dev / prod 怎么分 | **同一 app 身份**，按构建配置：`Debug` → dev（18924 + `xhanHelper-dev` + `local_env: dev`）、`Release` → prod（18923 + `xhanHelper` + `local_env: prod`）；不建第二套 bundle id / scheme / `.xcconfig`（第 4 期定稿） |
 | 12 | UI 预览方式 | 原生走 Xcode `#Preview` + SwiftPM `ImageRenderer` 预览靶；HTML 仅 Web 前端 |
 | 13 | 本地身份 | 单用户、**隐形**：以「库里的用户」为锚点（唯一则认领、空库建 `me`、多则报错要求剪枝）；不钉 UUID / 用户名（可分发） |
 | 14 | 访问门 | Touch ID：启动 / 回前台 / 空闲 15min；失败允许系统密码兜底；DEBUG 跳过；token 存传统钥匙串 + **app 层指纹门**（item 级生物 ACL 需付费 entitlement，第三轮 review 修订） |
 | 15 | 迁移范围 | 全量搬 + 剪掉非 xhan（28 张 `user_id` 表）；写全新 DB；**不迁图片**（旧图 404）；**分享不做** |
+| 16 | dev 密钥 / token | LLM / Embedding 密钥**共享**一把（省一次配置）；本地 token **按 env 分家**（钥匙串 `local_token_dev` / `local_token_prod`，值是 `<env>:<random>`）——env 校验的载体（第 4 期定稿） |
+| 17 | 拦越界请求 | 本地模式中间件校验 `Bearer` 的 env 前缀 == 后端 `local_env`，不符 **403**（不是加独立 header：token 天然被每个请求携带，连面板里的 Vue 调用也带） |
+| 18 | 防错配 | 启动**交叉断言**：`local_env` ↔ `APP_ENV` ↔ 数据根 ↔ token 前缀 四者配套，不符 `log.Fatalf` / Swift `assertionFailure`（第 4 期定稿） |

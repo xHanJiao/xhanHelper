@@ -93,6 +93,12 @@ struct TopBarView: View {
                          help: { "打开监控" },
                          keyEquivalent: ("3", .command)),
         ], at: 0)
+        // 记忆按钮排在浏览之后
+        buttons.append(TopBarButton(id: "open-memories", icon: { "brain.head.profile" },
+                         enabled: { true },
+                         action: { openBrowsePanel(.memories) },
+                         help: { "打开记忆" },
+                         keyEquivalent: ("5", .command)))
         #endif
         TopBarRegistry.shared.register(TopBarGroup(
             id: "default-right",

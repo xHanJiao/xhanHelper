@@ -34,6 +34,7 @@ struct ShortcutGuideView: View {
             ShortcutItem(keys: ["⌘", "2"], desc: "账单"),
             ShortcutItem(keys: ["⌘", "3"], desc: "监控面板"),
             ShortcutItem(keys: ["⌘", "4"], desc: "浏览器"),
+            ShortcutItem(keys: ["⌘", "5"], desc: "记忆"),
         ]),
         ShortcutSection(icon: "doc.text", title: "文档阅读", hint: "文档详情页打开时", items: [
             ShortcutItem(keys: ["⌘", "←"], desc: "上一篇文档"),

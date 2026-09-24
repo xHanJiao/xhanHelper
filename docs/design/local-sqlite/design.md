@@ -1,0 +1,535 @@
+# 本地部署 + SQLite
+
+> 把现在跑在阿里云上的 Go 服务，改成「跑在你 Mac 上、数据存本地」，并且用**双击 app** 的方式启动它。
+
+---
+
+## 估算
+
+- 开工粗估（范围明确后）：`9 面 / 8 缝 / 5–8 次真机往返 / 4 个待拍决定` → **20–36h**
+- 估算（定稿）：`10 面 / 8 缝（3 条需先建探针）/ 6–9 次真机往返 / 4 个待拍决定` → **22–38h**
+
+> ⚠️ 范围已扩大（新增：首次配置引导、启动提速与错误上报、驻留生命周期、dev/prod 双 build 数据隔离）。上面这行**定稿估算已过期**，待用 `/estimate-refine` 重算；暂记量级 **+8–14h**。
+
+---
+
+## 零、一句话目标
+
+**双击一个 Mac app，它自动启动你熟悉的那套 Go 后端，数据存在 Mac 本地；关掉窗口它继续在后台跑，显式退出才关掉后端。**
+
+---
+
+## 一、心智模型：app 只是「启动器」
+
+这一段是全文的地基。读懂这段，后面就没有新概念了。
+
+**你现在是这样跑后端的：**
+
+```mermaid
+flowchart LR
+    subgraph now["现在：手动启动"]
+        N1[改 Go 代码] --> N2[make dev]
+        N2 --> N3["Go 进程<br/>localhost:8080"]
+        N3 --> N4[浏览器 / 客户端访问]
+    end
+```
+
+**改造后是这样：**
+
+```mermaid
+flowchart LR
+    subgraph after["改造后：双击启动"]
+        A1[改 Go 代码] --> A2[在 Xcode 打一个 app]
+        A2 --> A3[双击 app]
+        A3 --> A4["app 替你运行同一个 Go 程序"]
+        A4 --> A5[app 窗口访问它]
+    end
+```
+
+**关键结论，请务必记住：**
+
+1. **Go 代码基本不动**，它还是那个 HTTP + SSE 服务，还是监听一个端口。
+2. **Mac app 不会把 Go 编译进 Swift**，也不会用某种奇怪的桥接去调 Go 函数。它只是像 `make dev` 一样，**帮你把这个独立的 Go 程序启动起来，关 app 时把它关掉**。
+3. app 和 Go 之间**用 HTTP 通信**——和你现在前端连后端完全一样，没有新协议、没有黑魔法。
+4. **这个 HTTP 只能本机访问，绝不能通过网络访问**（见下方安全底线）。
+
+> ⚠️ **安全底线：HTTP 只监听回环地址 `127.0.0.1`。**
+> 这是本地模式与云端模式最本质的区别：云端**必须**对外（iOS 客户端要连），本地**绝不能**对外。只要 Go 监听的是 `0.0.0.0`（或 `:port`），同一个 Wi-Fi / 局域网里的任何人就能直接打到你的后端——读聊天记录、账单、记忆，甚至触发工具。绑定回环后，只有你这台 Mac 上的进程能连，局域网看不见这个端口。
+>
+> 注意：**当前代码不满足这条**。`Serve`（`appinit/router.go:143`）用的是 `":" + port`，等于监听所有网卡；具体改法见第五节改动点 2。
+
+所以「Swift 内嵌 Go」的准确说法是：**Swift app 负责启动 / 停止那个 Go 程序**。「内嵌」指的是**打包**（把 Go 程序放进 app 这个文件夹里一起分发），不是把代码合并。
+
+---
+
+## 二、现状 vs 目标
+
+### 现状（云端）
+
+```mermaid
+flowchart TD
+    U[Swift 客户端] -->|HTTPS| N["helper.xhanx.cn"]
+    N --> NG[nginx 托管 Vue 前端]
+    N --> GO["Go 后端<br/>API + SSE"]
+    GO --> DB[("MySQL<br/>云端")]
+```
+
+- 后端跑在阿里云，数据在云端 MySQL。
+- 客户端通过一个写死的 URL（`helper.xhanx.cn`）连后端。
+- 前端由 nginx 托管，**Go 不负责托管前端**。
+
+### 目标（本地）
+
+```mermaid
+flowchart TD
+    U["双击 xhanHelper.app"] --> APP[app 启动 Go 子进程]
+    APP --> GO["Go 进程<br/>127.0.0.1:18923（prod）<br/>127.0.0.1:18924（dev）<br/>同时托管 API + 前端 + SSE"]
+    U -->|app 窗口 HTTP 访问| GO
+    GO --> DB[("SQLite<br/>~/Library/Application Support/xhanHelper[-dev]")]
+```
+
+- 后端跑在你 Mac 上，数据存本地 SQLite。
+- 客户端连 `127.0.0.1`（本机）。
+- **Go 要顺带托管前端**（这次目标新增的能力）。
+- **本地也分 prod / dev 两套**（见第八节）：不同 bundle id、不同数据根、不同端口，可同时开着；数据只允许 prod → dev 单向流动。
+
+两种形态**共用同一份 Go 代码**，靠配置和环境变量切换。云端部署能力保留（iOS 客户端将来仍需要它）。
+
+---
+
+## 三、改完之后，一次「双击」到底发生了什么
+
+### 首次安装（还没有密钥）
+
+1. 你双击 `xhanHelper.app`。
+2. app 读 Keychain：**没有** LLM / Embedding 密钥 → **不启动后端**，先弹「首次配置」窗口（见改动点 8）。
+3. 你填入两个密钥（model / base_url 已预填默认值，改不改随意）；点「测试连接」验证通过后落 Keychain（共享 access group，dev / prod 两个 build 一次填两边都能用）。
+4. 之后走下面的「日常启动」。
+
+### 日常启动
+
+1. 你双击 `xhanHelper.app`。
+2. app 从 Keychain 取密钥，确定端口（prod `18923` / dev `18924`；被占就报错，SQLite 本就是单实例）。
+3. app 启动 **Go 子进程**，告诉它三件事：
+   - 用哪个端口；
+   - 配置文件去哪读（`XHAN_CONF_DIR` = app 里打包的 `conf/`）；
+   - 密钥与可选覆盖项（LLM / Embedding key、model、base_url）——通过环境变量传进去（等同于你现在的 `server/.env`）。
+4. Go 连库 + AutoMigrate，**就绪后立刻监听 HTTP**（不等向量 warmup 跑完）。
+5. app 轮询 `GET /api/health`：先 `starting`（后端活了、warmup 还在后台跑），后 `ready`。**窗口在 `starting` 就能开**——最初几秒记忆/语义检索可能不全，随后自动补齐。
+6. app 的窗口把 API 地址设成 `http://127.0.0.1:18923`，之后所有请求都打到这里。
+7. 正常使用（聊天、工具、后台记忆/摘要……）。
+8. 你点红 X **只关窗口**：app 驻留，Go 与后台任务继续跑（见改动点 9）。
+9. 你显式退出（Cmd+Q / 右键「退出」）→ app 停掉 Go 子进程 → 后台任务停止。**下次启动时会自动补跑没做完的延迟任务**（见第十节）。
+
+```mermaid
+sequenceDiagram
+    participant U as 你
+    participant APP as Mac app
+    participant GO as Go 子进程
+    participant DB as SQLite
+
+    Note over APP: 首次无密钥 → 先弹配置窗口（略）
+    U->>APP: 双击 xhanHelper.app
+    APP->>APP: 读 Keychain 取密钥，选端口
+    APP->>GO: 启动，传入端口 / conf 目录 / 密钥
+    GO->>DB: 打开本地库 + AutoMigrate
+    GO-->>APP: 立即监听 /api（status=starting）
+    loop 轮询直到 ready
+        APP->>GO: GET /api/health
+        GO-->>APP: starting → ready（warmup 后台进行）
+    end
+    APP->>GO: 之后所有请求走 127.0.0.1:18923
+    U->>APP: 正常聊天 / 工具
+    U->>APP: 点红 X（只关窗，app 驻留，后台继续）
+    U->>APP: Cmd+Q / 右键退出
+    APP->>GO: 终止子进程
+```
+
+> **为什么要「父进程看门狗」**：如果 app 崩溃、但 Go 子进程没被正常关掉，它会变成孤儿进程赖在端口上。所以 Go 启动时记下父进程 PID，定时检查「父进程还活着吗」，不活着就自己退出。
+
+> **为什么窗口能秒开**：现在的启动是「warmup 跑完才监听」，向量越多越慢（memory/note 还是全量 + 逐条 embed）。改成「先监听、warmup 挪后台、空库直接跳过」后，HTTP 就绪时间基本只剩连库 + AutoMigrate。
+
+---
+
+## 四、数据放哪：为什么不是 `server/data/`
+
+现在后端的数据在仓库的 `server/data/`（`data/xhan_helper.db`、`data/images/`）。这是**服务器/开发环境的习惯**，不是 Mac 的习惯。
+
+Mac 上，一个应用自己的数据有官方指定位置：
+
+| 内容 | 放哪 | 说明 |
+|------|------|------|
+| SQLite 库 | `~/Library/Application Support/xhanHelper/xhan_helper.db` | Apple 指定「应用创建、用户不直接管理」的数据 |
+| 图床 | `~/Library/Application Support/xhanHelper/images/` | 图床文件必须和库**一起**搬，否则库里的图片记录会指向不存在的文件 |
+| 日志 | `~/Library/Logs/xhanHelper/` | Apple 约定的日志位置 |
+
+> **dev 用平行的一套**（见第八节）：根目录换成 `~/Library/Application Support/xhanHelper-dev/` 与 `~/Library/Logs/xhanHelper-dev/`，与 prod 物理分开，互不可见。
+
+```mermaid
+flowchart LR
+    subgraph repo["仓库（代码：可删、可重 clone）"]
+        R1["xhanHelper.app"]
+        R2["Go 源码 / 配置"]
+    end
+    subgraph lib["~/Library（数据：独立持久）"]
+        L1[("xhan_helper.db")]
+        L2["images/"]
+        L3["Logs/xhanHelper/"]
+    end
+    repo -->|运行时读写| lib
+```
+
+**为什么比 `server/data/` 好：**
+
+- 不会被 `make clean`、`git clean -xdf`、重装仓库、移动目录**误删**。
+- Time Machine 默认会备份 `~/Library/Application Support`。
+- 代码和数据彻底分开——**删掉整个仓库重新 clone，数据都还在。**
+
+**绝对不要放 `~/Library/Caches/`**：那是「可再生成数据」的位置，系统可能随时清理，而数据库不可再生。
+
+**好消息（不用改代码就能做到）：** 配置加载器在读取 YAML 时，会对**整个文件**做 `${VAR}` 展开（`config.go:325`）。所以配置里直接写：
+
+```yaml
+db:
+  driver: sqlite
+  database: ${HOME}/Library/Application Support/xhanHelper/xhan_helper.db
+storage:
+  image_dir: ${HOME}/Library/Application Support/xhanHelper/images
+```
+
+`${HOME}` 会展开成你的用户目录。**不需要任何 Go 代码改动。**
+
+**唯一要补的一小段代码：** 现在程序只会给图床目录建文件夹（`init_infra.go:37`），**不会给数据库文件建父目录**。App Support 子目录不存在时，SQLite 打不开文件。需要在 `InitDB` 里补一句 `os.MkdirAll(filepath.Dir(dbPath), 0o700)`。约 3 行。
+
+---
+
+## 五、改动点，逐个说清楚
+
+每个改动点先说「为什么需要」，再说「改哪里」。全貌：
+
+```mermaid
+flowchart TB
+    subgraph be["后端 Go"]
+        C1[1 换纯 Go SQLite 驱动]
+        C2[2 本地配置 + conf 目录 + 回环绑定]
+        C3["3 go:embed 托管前端"]
+        C4[4 健康分级 + 启动提速]
+    end
+    subgraph xc["Xcode 打包"]
+        C5[5 Run Script 打包二进制 + 前端 + conf]
+    end
+    subgraph sw["Swift 客户端"]
+        C6[6 LocalBackendManager 启动器 + 报错]
+        C7[7 本地 / 远程寻址]
+        C8[8 密钥设置 + 首次配置引导]
+        C9[9 驻留生命周期]
+        C10[10 dev/prod 双 build 隔离]
+    end
+    be --> xc --> sw
+```
+
+### 1. 换掉 SQLite 驱动（去掉 cgo）
+
+- **为什么**：现在用的驱动 `mattn/go-sqlite3` 依赖 C 编译器（cgo）。本地跑没问题，但要做成能分发的 app（同时支持 Apple 芯片和 Intel 芯片）会很麻烦。换成纯 Go 的 `glebarez/sqlite`（API 和现在的 `gorm.io/driver/sqlite` 一样，是 drop-in 替换）后，可以轻松编出双架构版本。
+- **顺带修复**：现在 `make build-linux`（`Makefile:235`）交叉编译出的 Linux 二进制里，SQLite 是**运行时不可用**的（cgo 被禁用，只剩一个会报错的桩）。换纯 Go 驱动后这个隐患一起消失。
+- **改哪里**：`go.mod` 依赖；`service/db.go:13`；以及约 30 个 `_test.go` 的 import。机械改动，靠全量 `go test ./...` 兜底。
+
+### 2. 本地配置 + conf 目录 + 回环绑定 + App Support 路径
+
+- **为什么**：需要一份「用 SQLite、指向 App Support」的配置，且不影响现有云端/开发配置；同时 app 要能告诉 Go「配置在哪、密钥是什么」。
+- **conf 目录可指定**：`loadFile("conf/config.yaml")` 现在相对**进程 CWD**，app 拉起子进程时 CWD 不确定。加一个 `XHAN_CONF_DIR` 环境变量（默认 `conf`，保持现状），`loadFile` 用它拼路径。
+- **回环绑定（安全底线，见第一节）**：`Serve`（`appinit/router.go:143`）现在用 `":" + port` 组地址，等于监听 `0.0.0.0`，所有网卡可达。给 `ServerConfig` 加 `host` 字段（`config.go:141`），`Serve` 改用 `net.JoinHostPort(host, port)`；本地配置写 `host: 127.0.0.1`。`host` 为空时保留现在的 `:port` 行为，**云端配置不受影响**。
+- **密钥走 `${VAR}`、可选项走「非空覆盖」**：`os.Expand` 对**未设置**的变量展开成空串，所以两条路分开——
+  - 密钥（`LLM_API_KEY` / `EMBEDDING_API_KEY`）继续用 `${VAR}` 占位符：没填就该报错（`validate` 已拦）。
+  - 可选项（base_url / model）**不能**用占位符（会被空串冲掉默认值），改为 YAML 里写真实默认值 + Go 里「非空才覆盖」的一等 env：`if v := os.Getenv("XHAN_LLM_BASE_URL"); v != "" { cfg.LLM.BaseURL = v }`（model 同理）。约 6 行。
+- **改哪里**：`XHAN_CONF_DIR`（`config.go` 的 `loadFile`）；`ServerConfig` 加 `host`；`Serve` 用 `net.JoinHostPort`（`appinit/router.go:143`）；`Load()` 加可选项非空覆盖；新增 `conf/config.local.yaml`（`host: 127.0.0.1` + `driver: sqlite` + `${HOME}/...` 路径）；`init_db.go` 补建库父目录；`Makefile` 加 `local-build` / `local` 目标。
+
+### 3. 让 Go 托管前端（`go:embed`）
+
+- **为什么**：本地模式下没有 nginx，前端得由 Go 自己发。生产构建的 API 基址本来就是空的（`.env.production` 里 `VITE_API_BASE=`），走相对路径，Go 托管后 `/api` 天然同源，**前端代码不用改**。
+- **改哪里**：
+  - 构建时把 `front-end/dist`（约 1.6MB）拷进 `server/internal/web/dist`（加入 `.gitignore`）。
+  - 新增一个用 `//go:embed all:dist` 把文件编进二进制的小包。
+  - `router.go` 加静态路由 + SPA fallback（找不到的路径回落到 `index.html`，否则前端路由刷新会 404）。
+- **注意**：这打破了现有「生产前端由 nginx 独立托管、Go 不 serve dist」的约定。**这是本地模式专属**，云端部署仍可用 nginx（Go 托管只是多一条路，不影响）。
+
+### 4. 健康分级 + 启动提速
+
+- **为什么**：app 要能「窗口秒开」并知道后端状态；现在启动被同步 warmup 拖慢，且唯一的健康接口需要认证（`router.go:155`）。
+- **健康分级**：新增无认证 `GET /api/health`，返回 `{status: "starting" | "ready", warmup: {...}}`。`starting` = HTTP 已就绪、warmup 还在后台跑；`ready` = warmup 完成。app 在 `starting` 就能开窗口。
+- **HTTP 先监听**：把 `WarmupAll` 与各组 warmup 从启动路径挪到 `Serve` 后的后台 goroutine。
+- **空库跳过**：本地全新库 0 行，warmup 直接跳过，秒开。
+- **顺带优化 warmup**：逐条 `GetByEntity` 改批量；各组并行；冷库缺失向量改成**懒补**（首次检索时补），不在启动时同步 embed。
+- **改哪里**：`appinit/agents.go:39-47`（warmup 调用点挪后台 + 就绪标志）；新增 `GET /api/health`（`router.go`，无认证组）；`retrieval/entity_source.go` 的 N+1 改批量。
+- **本地模式失败要致命**：`AutoMigrate` 现在**失败只打日志、照样启动**（`init_db.go:65`）。本地模式带坏库运行没意义，改为致命并报错。
+
+### 5. Xcode 工程：打包 Go 二进制 + 前端 + conf
+
+- **为什么**：app 要能带着这些东西一起分发，双击就有。
+- **改哪里**（`xHelperMac` target）：
+  - 加一个 Run Script 构建阶段：依次跑 `npm run build`（前端）→ `go build`（后端）→ 把二进制和 `conf/` 拷进 app 的 `Contents/Resources/`。
+  - **嵌套二进制签名**：macOS 要求 app 里**每一个可执行文件**都单独签名，包括这个 Go 子进程。这是本期最容易踩的坑（详见第十节）。
+
+打包完的 app 内部其实就是一个文件夹，长这样：
+
+```mermaid
+flowchart TD
+    APP["xhanHelper.app/（本质是一个文件夹）"]
+    APP --> M["Contents/MacOS/xhanHelper<br/>SwiftUI 主程序"]
+    APP --> R["Contents/Resources/"]
+    R --> RB["xhan-helper<br/>Go 后端二进制<br/>内含 go:embed 的前端 dist"]
+    R --> RC["conf/<br/>config.yaml + config.local.*.yaml"]
+    RB --> SPAWN["运行时被主程序拉起<br/>监听 127.0.0.1:18923"]
+```
+
+### 6. Swift：`LocalBackendManager`（启动器本体）
+
+- **为什么**：这是「app 只是启动器」这条心智模型的落地。
+- **改哪里**：新增一个 Swift 类，负责：
+  - 选端口 → `Process` 启动 Go 子进程（项目里 `FileSystemToolProvider+Glob.swift` 已有调用外部进程的先例，不是从零发明）；
+  - 把密钥 / 端口 / `XHAN_CONF_DIR` / 可选覆盖项通过环境变量传进去；
+  - **捕获子进程 stdout/stderr**（`Pipe`）→ 写 `~/Library/Logs/xhanHelper/`；
+  - 轮询 `/api/health`，区分 `starting` / `ready`；
+  - **监控提前退出**：健康没 ready 就 exit → 弹人类可读报错（退出码 + 最后 N 行日志），区分「端口占用 / 密钥非法 / 库打不开 / 迁移失败」，并给「重新配置」入口；
+  - app 退出时终止子进程。
+
+### 7. Swift：本地 / 远程寻址
+
+- **为什么**：现在 Release 版的地址写死云端 URL（`DeviceManager.swift:20-27`）。**macOS app 改为本地模式**，iOS 仍连云端。
+- **改哪里**：`DeviceManager` 的 `baseURL` / `webBaseURL` 在 macOS 下指向本机端口（prod `18923` / dev `18924`，随 build 决定）；放宽几个 WebView 的导航白名单（`BrowsePanelView.swift:127`、`MessageDebugPanelView.swift:57`）允许 `127.0.0.1` / `localhost`。
+- **注意**：`baseURL` 全项目被引用约 149 处，但都**集中经过 `DeviceManager`**，所以只需改这一处源头。**云端部署能力保留**（iOS 仍走 `helper.xhanx.cn`）。
+
+### 8. Swift：密钥设置 + 首次配置引导（Keychain）
+
+- **为什么**：Release 版没有 `server/.env`；且 Go 的 `validate` 缺 `LLM_API_KEY` 就 `log.Fatal`——**没有 key 后端根本起不来**，所以填 key 必须发生在拉起 Go **之前**，只能是 Swift 侧原生界面。
+- **首次配置窗口**：启动时 Keychain 无密钥 → **不拉后端**，弹配置窗口：DeepSeek LLM key + Ark Embedding key（`SecureField`）；model / base_url 预填默认值。带「测试连接」按钮（存前各发一个最小请求验证），通过才落 Keychain。配置窗口未完成就关 → 主窗口停在「未配置」空态 + 「去配置」入口。
+- **设置页**：加「模型与密钥」分区，**Release 也可见**（现有服务器地址分区是 `#if DEBUG`）。含两个 key、`model`（一个字段，deepseek 家族）、base_url（留空=默认）、「清除密钥」。
+- **Keychain 共享**：两个 build 不同 bundle id，Keychain 默认不互通；配**共享 access group**（`keychain-access-groups` entitlement），一次填两边都能用。
+- **只支持 deepseek 家族**：provider 锁死 `deepseek`；embedding 只放开 key，base_url / model 锁死（Ark + doubao-embedding）。
+- **改哪里**：新增 Keychain 封装 + 首次配置视图 + 设置分区；`Info.plist` / entitlements 加 access group。
+
+### 9. Swift：驻留生命周期（关窗不退出）
+
+- **为什么**：希望关掉窗口后后台任务（记忆/摘要/主题/延迟任务）继续跑；现在点红 X 是 `windowShouldClose → NSApp.terminate`（`xHelperMac/App.swift:311`），直接退出。
+- **做法（单进程驻留，方案 A）**：`windowShouldClose` 改为只关窗口、不终止；红 X 后 dock 留点，Cmd+Q / 右键「退出」才真退，Go 随之停止。
+- **为什么不拆进程**：SQLite 单写者，HTTP 进程与 worker 进程同写一个 `.db` 会锁竞争甚至损坏。单进程内 `CronRunner` 已能满足「关窗后继续」。
+- **改哪里**：`xHelperMac/App.swift` 的 `windowShouldClose` / `applicationShouldTerminate`。
+
+### 10. dev / prod 双 build + 数据隔离 + 单向导入导出
+
+- **为什么**：本地也要能拿真实数据做开发，但**绝不允许 dev 碰 prod 数据**。
+- **两个 build**（见第八节）：不同 bundle id、数据根、端口、`APP_ENV`。
+- **单向 zip 导出 / 导入（UI 驱动）**：
+  - prod 设置页「导出数据」→ `NSSavePanel` 选位置 → `ditto -c -k` 打包 `xhan_helper.db` + `images/` 成 zip。
+  - dev 设置页「导入数据」→ `NSOpenPanel` 选 zip → `ditto -x -k` 解进 dev 数据根 → **重启后端**（SQLite 文件被占用，先停后写）。
+  - **无反向路径**：prod 没有「导入」、dev 没有「导出到 prod」；dev 全程不直接读写 prod 数据根，只吃一份副本。
+- **改哪里**：`SettingsView`（prod/dev 各一个按钮 + 二次确认 + 进度）；Swift `Process` 调 `/usr/bin/ditto`（项目已有 shell 外部进程的先例）；导入后重启 `LocalBackendManager`；两份 config / scheme / entitlements；路径常量按 build 硬编码 + 启动断言。
+
+---
+
+## 六、分期与验收
+
+原则：**先让本地后端能独立跑起来（验证数据层），再内嵌进 app，最后才迁数据、做环境隔离。** 每期都能单独验证，避免一次性动太多。
+
+```mermaid
+flowchart LR
+    P1["第 1 期<br/>本地后端能独立跑<br/>空库"] --> P2["第 2 期<br/>内嵌进 Release app<br/>双击 UX"]
+    P2 --> P3["第 3 期<br/>迁数据<br/>MySQL → 本地 prod"]
+    P3 --> P4["第 4 期<br/>dev/prod 双环境隔离"]
+    P4 --> P5["第 5 期<br/>分发<br/>lipo + 签名 + 公证"]
+    style P5 stroke-dasharray:5 5
+```
+
+### 第 1 期 — 本地后端能独立跑（空库）
+
+**你会看到什么**：敲 `make local`，后端在本地起来（SQLite、App Support 路径、只监听 `127.0.0.1`），HTTP 秒起、warmup 后台跑；用现有的 Debug 客户端连 `localhost` 能聊天、工具能用、后台任务有日志。
+
+- 改动点 1、2、4（后端侧）。
+- 验收：`go build ./... && go test ./...` 全绿；`make local` 起服务；`lsof -iTCP -sTCP:LISTEN -P | grep <port>` 只显示 `127.0.0.1`；Debug 客户端手动连上跑一轮聊天。
+- **不包含**：前端 embed、app 内嵌、数据迁移、dev/prod 隔离。
+
+### 第 2 期 — 内嵌进 Release app（双击 UX）
+
+**你会看到什么**：在 Xcode 打个 Release app，首次双击弹配置窗口填密钥；之后双击即用，窗口秒开，数据落在 `~/Library/Application Support/xhanHelper/`；红 X 只关窗、后台继续；Cmd+Q 后 `lsof` 无残留。
+
+- 改动点 3、5、6、7、8、9。
+- 验收：首次配置 → 启动 → 聊天通；健康 `starting → ready` 可见；故意填错 key / 占端口 → 弹出人类可读报错；红 X 驻留、Cmd+Q 真退；前端面板（浏览/调试/分享）可用。
+
+### 第 3 期 — 数据迁移（MySQL → 本地 prod）
+
+**你会看到什么**：把线上 MySQL 的现有数据搬到本地 prod 的 SQLite。
+
+- 迁移工具（见第七节）。
+- 验收：关键表行数对账一致；抽样几条消息/记忆/账单在客户端显示正常；向量检索可用；warmup 提速后窗口仍秒开。
+
+### 第 4 期 — dev/prod 双环境隔离
+
+**你会看到什么**：多出一个 dev 版 app，用独立数据根 / 端口，可与 prod 同时开着；能一键把 prod 数据**单向**复制到 dev。
+
+- 改动点 10（见第八节）。
+- 验收：两个 app 同时运行互不干扰；prod「导出数据」出 zip、dev「导入数据」后 dev 有数据；dev 无法直接读写 prod 数据根（启动断言拦住）。
+
+### 第 5 期 — 分发（本次不做）
+
+纯 Go 驱动已就位 → 双架构 lipo；Developer ID 签名 + 公证（你已有 `DEVELOPMENT_TEAM = NSJD2BRH7Z`）；朋友填自己的 key。
+
+---
+
+## 七、数据迁移（MySQL → SQLite）
+
+**先空库、后迁移**（先验证链路，再搬数据）。
+
+```mermaid
+flowchart LR
+    MY[("线上 MySQL")] -->|GORM 逐表读| EX[cmd/mysql2sqlite]
+    EX -->|GORM 逐表写| SQ[("本地 SQLite")]
+    SQ --> RC[行数对账 + 关键表抽样]
+```
+
+**为什么不能直接用 mysqldump**：现在 `data/mysqldumps/` 里的 dump 是 ~800MB–1GB 的 MySQL 语法 SQL，SQLite 不认识。与其解析它，不如写个小的 Go 工具：
+
+- 新增 `cmd/mysql2sqlite`：用 GORM 从 MySQL 逐表读，用 GORM 往 SQLite 逐表写。
+- **优点**：复用 `model/` 里已有的结构体定义，不用担心字段对不上；批量插入，不需要在循环里逐条访问数据库。
+- **关注点**：时间 / 空值 / 类型在两种数据库间的差异，靠「行数对账 + 关键表抽样」验证。
+
+**关于启动**：向量预热（`agents.go:41-47`：memory / note / history / summary / theme / chunk / tool / fact）过去是**同步阻塞**在 HTTP 之前的，memory/note 还是全量 + 逐条 embed。第 1 期改动点 4 把它挪到后台后，即便迁入大表，窗口也能秒开、warmup 在后台补齐。
+
+---
+
+## 八、dev / prod 双环境隔离
+
+**目标**：本地也能拿真实数据开发，但 **dev 绝不能碰 prod 数据**。
+
+| | prod（真实本地） | dev（沙盒副本） |
+|---|---|---|
+| bundle id | `cn.xhan.helper` | `cn.xhan.helper.dev` |
+| 数据根 | `~/Library/Application Support/xhanHelper/` | `~/Library/Application Support/xhanHelper-dev/` |
+| 日志 | `~/Library/Logs/xhanHelper/` | `~/Library/Logs/xhanHelper-dev/` |
+| 端口 | `18923` | `18924` |
+| APP_ENV | `local-prod` | `local-dev` |
+| 配置 | `config.local.prod.yaml` | `config.local.dev.yaml` |
+
+- **两个 build，不是运行时开关**：dev 二进制**硬编码** dev 根、prod 二进制硬编码 prod 根，**即使配置写错也指不到对方**，再加启动断言。这是「绝绝对对不允许」能拿到的最强保证（非沙盒下同用户理论上仍可读对方文件，所以靠路径硬编码兜底）。
+- **可同时开着**：端口 / 数据根 / bundle id 全分开，两个 app 并行互不干扰。
+
+**数据只允许 prod → dev 单向流动：**
+
+```mermaid
+flowchart LR
+    CLOUD[("云端 MySQL")] -->|cmd/mysql2sqlite| PROD[("本地 prod<br/>xhanHelper.db")]
+    PROD -->|prod 设置页「导出数据」| ZIP{{"快照 .zip"}}
+    ZIP -->|dev 设置页「导入数据」| DEV[("本地 dev<br/>xhanHelper.db")]
+    DEV -.->|❌ 禁止| PROD
+```
+
+- **单向靠 UI 隔离，不靠直接读库**：prod 设置页「导出数据」把 `xhan_helper.db` + `images/` 打包成 zip（`ditto -c -k`，`NSSavePanel` 选位置）；dev 设置页「导入数据」解进 dev 数据根（`ditto -x -k`，`NSOpenPanel` 选文件）后重启后端。**dev 全程不直接读写 prod 数据根**，只吃一份副本——比直接读 `prod.db` 更安全。
+- **无反向路径**：prod 无「导入」、dev 无「导出到 prod」；路径常量按 build 硬编码 + 启动断言兜底。
+- 云端 → 本地 prod 走第七节的 `cmd/mysql2sqlite`，是另一个方向，不冲突。
+
+---
+
+## 九、小词典：给后端开发者的 Mac 概念对照
+
+| Mac 概念 | 一句话解释 | 后端类比 |
+|----------|-----------|----------|
+| **app / bundle** | `.app` 其实是个文件夹（`Contents/` 里装可执行文件和资源） | 一个自带目录结构的发布包 |
+| **子进程** | app 启动的另一个独立程序 | `make dev` 启动的那个 Go 进程 |
+| **`go:embed`** | 把静态文件编进 Go 二进制，运行时直接读 | 类似把前端 dist「烧」进可执行文件，不再依赖外部目录 |
+| **codesign（签名）** | 给可执行文件盖章，证明它没被篡改 | macOS 的强制要求：app 里每个二进制都要盖章，否则不让跑 |
+| **notarization（公证）** | 把签名后的 app 交给 Apple 审核存档 | 分发给别人时的额外一步，否则对方首次打开会被拦截 |
+| **Keychain** | 系统提供的加密存储 | 存密钥的地方，比明文写在文件里安全 |
+| **LaunchAgent / launchd** | macOS 的「开机自启/守护进程」机制 | systemd 的对应物。**本方案不用它**（你要的是双击 app） |
+| **`~/Library/Application Support`** | 放应用自己数据的标准目录 | 相当于 Linux 上 `/var/lib/<app>` 的用户级版本 |
+| **`~/Library/Logs`** | 放应用日志的标准目录 | `/var/log/<app>` 的用户级版本 |
+| **Xcode Run Script** | Xcode 构建时执行的一段 shell | 类似 Makefile 里的一个 target，构建 app 时自动跑 |
+
+---
+
+## 十、风险与盲区
+
+| 风险 | 说明 | 应对 |
+|------|------|------|
+| **嵌套二进制签名** | app 里的 Go 子进程必须单独签名，否则 Release 版公证/运行失败 | 第 2 期重点验证；用 Xcode 的 Code Sign On Copy 或单独 codesign 步骤 |
+| **后端暴露到局域网** | 若绑定 `0.0.0.0`（现状 `:port` 就是），同 Wi-Fi 下任何人可直连后端读写数据 | 本地模式强制绑定 `127.0.0.1`（改动点 2），验收时用 `lsof -i:18923` 确认只监听回环 |
+| **驱动替换面广** | 换纯 Go 驱动要动约 30 个测试文件 | 机械改动 + 全量 `go test ./...` 兜底 |
+| **前端 embed 的构建顺序** | dist 必须在 Go 编译**之前**生成 | Run Script / Makefile 固定顺序；dist 目录 gitignore |
+| **子进程生命周期** | 端口占用、app 崩溃后残留孤儿进程 | 固定端口 + 明确报错；父进程看门狗 |
+| **Xcode 编译由你完成** | 项目约定 agent 不跑 `xcodebuild` | 我只能 `swiftc -typecheck` 自检；第 2 期每个改动都要你真机往返 |
+| **App Store 的取舍** | 现在 app 没有沙盒，走 Developer ID 分发没问题；要上 App Store 则沙盒对「启动子进程」有硬约束，需重新设计 | 本期不做；分发给朋友时再决定 |
+| **首次配置 UX** | 朋友首次打开必须先填 key，否则后端根本不启动 | 引导窗口 + 「测试连接」+ 未配置空态与「去配置」入口（改动点 8） |
+| **可选项被空串冲掉** | `${VAR}` 对未设置变量展开成空串，会冲掉 base_url / model 默认值 | 可选项走「非空覆盖」而非占位符（改动点 2） |
+| **秒开期检索不全** | warmup 挪后台后，最初几秒记忆/语义检索可能缺内存向量 | 已接受；`/api/health` 暴露 `starting/ready`，需确认检索侧能优雅降级 |
+| **Keychain 共享** | 两个 build 共享密钥需一致的 `keychain-access-groups` entitlement | 第 4 期验证签名配置 |
+| **双 build 维护** | 两份 scheme / config / entitlements 要同步 | 共享 xcconfig，只保留必要差异 |
+| **单向复制可被绕过** | 非沙盒下同用户理论上仍可读 prod 文件 | 路径硬编码 + 启动断言 + 只走 zip 导出/导入（dev 不直接读写 prod 数据根）（改动点 10） |
+| **导入时后端占用 DB** | dev 导入 zip 时后端在跑会锁 SQLite | 导入前停后端、写完重启（UI-8b） |
+| **预览靶材质失真** | `ImageRenderer` 离屏渲染材质/毛玻璃不可信 | 只信布局 / token；观感以 Xcode 真机为准（第十一节） |
+| **后台任务只在 app 运行时跑** | 关窗驻留可继续，但显式退出 / 关机就停 | 已接受；下次启动自动补跑（见下） |
+
+### 关于「合盖 / 关机后补跑」
+
+**不需要额外写代码**，机制已经满足你的诉求：
+
+- 延迟任务的处理逻辑查的是「到期时间 ≤ 现在」（`delayed_task_repo.go:31`），由一个 30 秒的定时器驱动。
+- **合盖 = 睡眠**：进程还在内存里，唤醒后定时器恢复，30 秒内把积压的到期任务全部捞出处理。
+- **关机重启**：重启后同样会捞出所有到期任务。
+- （可选优化）现在重启后要等首次定时器触发（+30 秒），可以像归档任务那样在启动时立刻扫一次（`cron_runner.go:305` 已有先例）。
+
+每日凌晨 3 点的主题发现按你的决定**保留现状**：睡眠时会补触发；只有「关机恰好跨过 03:00」会漏当天。
+
+```mermaid
+sequenceDiagram
+    participant T as 30 秒定时器
+    participant R as DelayedTaskRepo
+    participant W as 后台 worker
+    Note over T: 合盖睡眠，定时器暂停
+    T->>R: 唤醒 / 重启后触发
+    R-->>T: ListDue 查出所有「到期时间 ≤ 现在」的任务
+    T->>W: 逐一处理
+```
+
+---
+
+## 十一、UI 设计面与预览方式
+
+需要设计的界面清单（`NEW` = 新增，`改造` = 在现有界面加）：
+
+| # | 界面 | 触发时机 | 关键元素 | 基调 | 期 |
+|---|------|----------|----------|------|----|
+| **UI-1** | **首次配置（Onboarding）** `NEW` | 首次启动、Keychain 无密钥 | 欢迎头 / 两个 key / 高级区(model, base_url) / 测试连接 / 继续 | Apple 设置助理级「高级感」；**单页**（高级区折叠） | 2 |
+| **UI-2** | **启动·预热态** `NEW` | 后端 `starting→ready` | 轻量指示：「正在启动服务…」「正在预热记忆检索…」 | 克制、不挡操作；**主窗口内联** | 2 |
+| **UI-3** | **后端启动失败弹窗** `NEW` | 子进程提前退出 / 健康超时 | 人话原因 + 退出码 + 日志折叠 + 「查看日志 / 重新配置 / 重试」 | 系统 Alert 或 sheet | 2 |
+| **UI-4** | **未配置空态** `NEW` | 用户跳过 onboarding | 主窗口空态 + 「去配置」入口 | 复用 `ErrorStateView` 风格 | 2 |
+| **UI-5** | **设置页「模型与密钥」** `改造` | 随时 | 两个 `SecureField` / model 下拉 / base_url / 清除密钥 /（测试连接） | 复用 `SettingsCard`+`KeycapView`；**Release 可见** | 2 |
+| **UI-6** | **设置页「本地服务」** `NEW` | 随时 | 后端状态、端口、数据根路径、日志入口、「重启后端」 | 复用 `SettingsCard` | 2 |
+| **UI-7** | **dev 环境视觉标识** `改造` | dev build | 窗口标题后缀「(dev)」+ 顶部 accent 细条 | 一眼可辨、不刺眼 | 4 |
+| **UI-8a** | **prod 设置页「导出数据」** `NEW` | 随时 | 按钮 + `NSSavePanel` + 进度 | 复用设置卡片 | 4 |
+| **UI-8b** | **dev 设置页「导入数据」** `NEW` | 随时 | 按钮 + `NSOpenPanel` + 二次确认 + 进度 + 导入后重启提示 | 复用设置卡片 | 4 |
+| **UI-9** | **驻留提示（可选）** `NEW` | 关窗后 app 仍活 | 首次关窗一句提示「仍在后台运行，⌘Q 退出」 | 可选，轻提示 | 2/4 |
+| **UI-10** | **登录门重排** `改造` | 后端起来后未登录 | 现有 `LoginMacView`，顺序在 onboarding 之后 | 现有，仅调流程 | 2 |
+
+**可复用的现成件**：`ErrorStateView` / `MinimumLoadingView` / `InlineRetryBar`（`ErrorStateView.swift`）、`SettingsCard`+`KeycapView`（`SettingsStyle.swift`）、`GlassBackground`、顶栏 `CapsuleGroup`/`CapsuleButton`、设计 token（`appAccent` 等）。
+
+**预览方式（原生 SwiftUI，不用 HTML）**：
+- 真视图 + Xcode `#Preview`（你在画布复核，零漂移）。
+- agent 自检走 SwiftPM `ImageRenderer` 预览靶（`swift run` 出 PNG）；**只信布局 / token，材质离屏不可信**。
+- 拿不准的取值做应用内「UI 画廊」调试页，你构建后截图挑，选完正式视图直接复用。
+
+---
+
+## 十二、已拍板决定与遗留项
+
+| # | 决定 | 结论 |
+|---|------|------|
+| 1 | 本地端口策略 | prod 固定 `18923`、dev `18924`；被占就报错（SQLite 单实例） |
+| 2 | 生命周期 | 单进程驻留：红 X 只关窗，Cmd+Q / 右键退出才停后端（方案 A） |
+| 3 | 密钥输入时机 | 首次启动弹配置窗口；Keychain 共享 access group，一次填两边可用 |
+| 4 | 可改配置 | provider 锁死 deepseek；放开 `model`（一个字段）+ `base_url`；embedding 只放开 key |
+| 5 | 启动补扫 | 是否加「启动即扫一次延迟任务」（可选，几行）——**遗留，未定** |
+| 6 | 分发方式 | 本次不做。将来走 Developer ID（非 App Store）还是 App Store（沙盒，需重设计）——**遗留，未定** |
+| 7 | 首次配置形态 | 单页（高级区折叠） |
+| 8 | 启动态 | 主窗口内联指示（非独立 splash） |
+| 9 | dev 视觉标识 | 窗口标题后缀「(dev)」+ 顶部 accent 细条 |
+| 10 | 数据复制 | UI 驱动：prod 导出 zip / dev 导入 zip（`ditto`），导入后自动重启后端 |
+| 11 | zip 方式 | shell 到 `/usr/bin/ditto`（不加依赖） |
+| 12 | UI 预览方式 | 原生走 Xcode `#Preview` + SwiftPM `ImageRenderer` 预览靶；HTML 仅 Web 前端 |

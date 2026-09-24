@@ -218,7 +218,11 @@ make db-pull / db-import / logs / clean
 
 ## UI 预览与设计 token
 
-讨论 UI 时**默认产出可交互 HTML 预览**，不要只给文字描述。
+**原生 SwiftUI（`client/`）与 Web 前端（`front-end/`）走不同的预览方式，别混用。**
+
+### Web 前端（Vue）
+
+默认产出可交互 HTML 预览，不要只给文字描述。
 
 - 位置 `docs/design/<feature>/mockup.html`；单文件自包含（不引 CDN，离线可开）；配色只用下面的 token
 - 必须带一个演示控制条（页面底部，挂 `.ui` 类以免干扰选区）：主题、字号，以及**我拿不准的取值做成可切换项**（如配色候选），让用户挑而不是我替他定
@@ -231,6 +235,16 @@ make db-pull / db-import / logs / clean
   要截交互态：把源码复制到 `/tmp` 并注入 `setTimeout` 脚本合成 `MouseEvent`/`click` 再截。事件必须派发到**具体元素**上——派发到 `document` 会让 `e.target.closest` 抛错。
   要对比多个形态：把候选做成控制条开关 + 支持 `?form=b&w=840&drawer=1` 这类 URL 预设，截图就不用注入点击（也就躲开了「过渡起始帧」那个坑）
 - **mockup 里加 JS 前先 `rg` 同名变量**：整个 `<script>` 是一个 IIFE、同一作用域，重名 `const`/`let` 直接 SyntaxError，**整个脚本静默不执行**（headless 不看控制台的话，症状只是「控件全都不生效、样式类没加上」）。诊断用 `--dump-dom` 看 `<html>`/`<body>` 的 class 有没有加上
+
+### 原生 SwiftUI（macOS / iOS 客户端）
+
+**不要用 HTML 预览**——那是另一个渲染引擎 + 另一套样式系统，拿它定像素必然漂移。用真实 SwiftUI：
+
+- **主循环**：把界面当**真视图**写（带 `#Preview` 覆盖各状态），用户在 Xcode 画布（⌘⌥P）复核——所见即最终实现，零漂移。agent 侧只 `swiftc -typecheck` 自检编译。
+- **agent 自检**：走 SwiftPM `ImageRenderer` 预览靶（`client/xHelper/Package.swift` 里加一个可执行 target，`swift run` 把真视图渲染成 `/tmp/*.png`）。这是 SwiftPM，**不是 xcodebuild**，符合「agent 不跑 xcodebuild」约定。
+  - 预览靶**只信布局 / token**：`.ultraThinMaterial` / `GlassBackground` 等材质离屏渲染**不可信**，最终观感以 Xcode 真机为准
+  - 视图依赖压到最小（纯展示 + 注入闭包），既便于预览靶接线，也更好测
+- 拿不准的取值（配色候选、按钮样式、留白）做成**应用内「UI 画廊」调试页**（真 SwiftUI + 切换条），用户构建后截图挑，选完正式视图直接复用
 
 **设计 token**（唯一来源 `client/xHelper/xHelperMac/Assets.xcassets/*.colorset`）
 

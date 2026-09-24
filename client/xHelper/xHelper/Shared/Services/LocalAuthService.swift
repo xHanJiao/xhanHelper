@@ -77,6 +77,14 @@ final class LocalAuthService {
         LogBuffer.shared.info("已关闭 Touch ID 并删除本地凭据")
     }
 
+    /// 用户显式打开开关时先验证一次：确认这台机器现在真能认证，避免「开了却认证不了」。
+    /// - Returns: 是否保持开启。认证失败/取消返回 `false`，调用方应把开关弹回。
+    func enableWithAuthentication(reason: String = "开启 Touch ID 解锁") async -> Bool {
+        guard await authenticate(reason: reason) else { return false }
+        isEnabled = true
+        return true
+    }
+
     /// 纯认证（启动解锁 / 回前台 / 空闲重新解锁都用它）。
     func authenticate(reason: String) async -> Bool {
         let context = LAContext()

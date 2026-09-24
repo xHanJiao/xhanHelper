@@ -235,16 +235,19 @@ struct LocalOnboardingView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("启用 Touch ID 解锁", isOn: $touchID)
                     .disabled(!LocalAuthService.shared.biometricsAvailable)
+                    .onChange(of: touchID) { _, enabled in
+                        // 打开时先过一次指纹（关掉不用，稍后保存时生效）。
+                        guard enabled else { return }
+                        Task {
+                            if !(await LocalAuthService.shared.enableWithAuthentication()) { touchID = false }
+                        }
+                    }
                 if !LocalAuthService.shared.biometricsAvailable {
                     Text("本机未检测到可用的 Touch ID（或未录入指纹）。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } else {
-                    #if DEBUG
-                    Text("Debug 构建默认跳过指纹（设计如此）；验证时用 `defaults write xhanx.cn.xHelperMac xhan_touch_id_debug -bool YES` 临时打开。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    #endif
+                    LocalTouchIDDebugHint()
                 }
             }
             .padding(14)
@@ -346,6 +349,23 @@ struct LocalNotConfiguredView: View {
     }
 }
 
+// MARK: - 共用：Debug 构建的指纹提示
+
+/// Debug 构建默认不弹指纹（`LocalAuthService.isActive`）——onboarding 与设置页共用同一句解释，
+/// 否则用户会以为「开关坏了」。
+struct LocalTouchIDDebugHint: View {
+    var body: some View {
+        #if DEBUG
+        Text("Debug 构建默认跳过指纹（设计如此）；验证时用 `defaults write xhanx.cn.xHelperMac xhan_touch_id_debug -bool YES` 临时打开。")
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        #else
+        EmptyView()
+        #endif
+    }
+}
+
 // MARK: - 设置页：模型与密钥（UI-5）
 
 /// 供 `MacSettingsView` 内联的「模型与密钥」分区。Release 也可见。
@@ -429,9 +449,17 @@ struct LocalModelKeySection: View {
             if biometricsAvailable {
                 Toggle("启用 Touch ID 解锁", isOn: $touchID)
                     .onChange(of: touchID) { _, enabled in
-                        // 只改开关：token 是普通钥匙串项，无 ACL 需要重写。
-                        LocalAuthService.shared.isEnabled = enabled
+                        // 关掉是即时的：token 是普通钥匙串项，无 ACL 需要重写。
+                        guard enabled else {
+                            LocalAuthService.shared.isEnabled = false
+                            return
+                        }
+                        // 打开时先过一次指纹：确认现在真能认证，别开了却认证不了。
+                        Task {
+                            if !(await LocalAuthService.shared.enableWithAuthentication()) { touchID = false }
+                        }
                     }
+                LocalTouchIDDebugHint()
             }
 
             if let saveError {

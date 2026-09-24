@@ -1,0 +1,17 @@
+# 本地部署（Mac + SQLite + 双击 app 启动）
+# 用法：APP_ENV=local（见 Makefile 的 `make local`）
+# app 打包后会通过 XHAN_CONF_DIR 指向 Contents/Resources/conf，密钥由 Swift 侧注入
+
+server:
+  host: 127.0.0.1 # 只监听回环，绝不暴露到局域网
+  port: 18923
+  mode: debug
+  registration_enabled: true # 本地首次启动需要注册
+  allowed_users: [xhan] # 本地单用户；改成你要注册的用户名
+
+db:
+  driver: sqlite
+  database: ${HOME}/Library/Application Support/xhanHelper/xhan_helper.db
+
+storage:
+  image_dir: ${HOME}/Library/Application Support/xhanHelper/images

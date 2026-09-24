@@ -3,6 +3,7 @@ package appinit
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -140,7 +141,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 
 // Serve 启动 HTTP 服务器并处理优雅关闭
 func Serve(cfg *config.Config, router *gin.Engine, bgCancel context.CancelFunc, mcpManager *mcp.Manager, mcpIdleCtx context.Context) {
-	addr := ":" + strconv.Itoa(cfg.Server.Port)
+	addr := net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port))
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: router,

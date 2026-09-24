@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -139,6 +140,7 @@ type SnowflakeConfig struct {
 
 // ServerConfig — HTTP 服务配置
 type ServerConfig struct {
+	Host                    string   `yaml:"host"` // 监听地址；空=所有网卡（云端），本地写 127.0.0.1
 	Port                    int      `yaml:"port"`
 	Mode                    string   `yaml:"mode"`                      // debug | release
 	RegistrationEnabled     *bool    `yaml:"registration_enabled"`      // 是否允许新用户注册
@@ -295,12 +297,12 @@ func Load() (*Config, error) {
 		env = "dev"
 	}
 
-	cfg, err := loadFile("conf/config.yaml")
+	cfg, err := loadFile("config.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("load config.yaml: %w", err)
 	}
 
-	envPath := fmt.Sprintf("conf/config.%s.yaml", env)
+	envPath := fmt.Sprintf("config.%s.yaml", env)
 	if envCfg, err := loadFile(envPath); err == nil {
 		merge(cfg, envCfg)
 	} else if !os.IsNotExist(err) {
@@ -316,9 +318,17 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// confDir 返回配置文件目录，默认 conf；app 拉起子进程时用 XHAN_CONF_DIR 指到 Contents/Resources/conf
+func confDir() string {
+	if d := os.Getenv("XHAN_CONF_DIR"); d != "" {
+		return d
+	}
+	return "conf"
+}
+
 // loadFile 读取 YAML 并展开 ${VAR} 占位符
-func loadFile(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+func loadFile(name string) (*Config, error) {
+	data, err := os.ReadFile(filepath.Join(confDir(), name))
 	if err != nil {
 		return nil, err
 	}
@@ -334,6 +344,9 @@ func loadFile(path string) (*Config, error) {
 
 // merge 将 src 中的非零值覆盖到 dst
 func merge(dst, src *Config) {
+	if src.Server.Host != "" {
+		dst.Server.Host = src.Server.Host
+	}
 	if src.Server.Port != 0 {
 		dst.Server.Port = src.Server.Port
 	}

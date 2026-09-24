@@ -1,4 +1,4 @@
-.PHONY: dev dev-full check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs db-pull db-import entity-gc build-entity-gc topic-merge-plan topic-merge-apply build-topic-merge restart
+.PHONY: dev dev-full local local-build check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs db-pull db-import entity-gc build-entity-gc topic-merge-plan topic-merge-apply build-topic-merge restart
 
 # 远端 ssh 执行时 source 用户环境变量（非交互 ssh 不会自动 source）
 REMOTE_ENV = for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do source "$$f" 2>/dev/null || true; done;
@@ -15,6 +15,8 @@ FRONTEND_DIR=../front-end
 help:
 	@echo "可用的 make 命令："
 	@echo "  make dev            - 本地开发模式启动（dev环境，使用MySQL）"
+	@echo "  make local          - 本地部署模式启动（local环境，使用SQLite）"
+	@echo "  make local-build    - 编译本地版二进制（app 打包用）"
 	@echo "  make dev-full       - 同时启动前后端开发服务器"
 	@echo "  make build          - 本地编译（当前系统）"
 	@echo "  make build-topic-fix - 编译+上传 topic 修复工具（修复 memory 中含 / 或 , 的脏 topic）"
@@ -41,6 +43,19 @@ dev: check-env
 	@mkdir -p logs
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
 	go run ./cmd/xhan-helper/ 2>&1 | tee logs/dev-$$(date +%Y-%m-%d).log
+
+# 启动本地版服务（local → SQLite @ Application Support）
+local: check-env
+	@echo "=== 启动本地服务 (local → SQLite @ ~/Library/Application Support/xhanHelper) ==="
+	@mkdir -p logs
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	APP_ENV=local go run ./cmd/xhan-helper/ 2>&1 | tee logs/local-$$(date +%Y-%m-%d).log
+
+# 编译本地版二进制（app 打包用）
+local-build:
+	@echo "=== 编译本地版二进制 ==="
+	@mkdir -p $(OUTPUT_DIR)
+	go build -o $(OUTPUT_DIR)/$(BINARY) ./cmd/xhan-helper/
 
 # 同时启动前后端开发服务器
 dev-full: check-env

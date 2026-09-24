@@ -3,6 +3,7 @@ package app
 import (
 	"log"
 	"os"
+	"path/filepath"
 
 	"gorm.io/gorm"
 
@@ -20,6 +21,14 @@ func InitDB(cfg *config.Config) *gorm.DB {
 		cfg.LLM.Provider, cfg.LLM.Model, cfg.LLM.StrongModel, cfg.LLM.APIKey[:min(8, len(cfg.LLM.APIKey))])
 	log.Printf("[config] embedding.model=%s embedding.key=%s... embedding.base_url=%s",
 		cfg.Embedding.Model, cfg.Embedding.APIKey[:min(8, len(cfg.Embedding.APIKey))], cfg.Embedding.BaseURL)
+
+	if cfg.DB.Driver == "sqlite" {
+		if dir := filepath.Dir(cfg.DB.Database); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				log.Fatalf("[db] create sqlite dir %s: %v", dir, err)
+			}
+		}
+	}
 
 	db := service.NewDB(cfg.DB)
 

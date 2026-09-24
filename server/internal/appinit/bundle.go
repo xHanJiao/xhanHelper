@@ -2,6 +2,7 @@ package appinit
 
 import (
 	"context"
+	"sync/atomic"
 
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/agent/replay"
@@ -31,4 +32,5 @@ type AgentBundle struct {
 	Destroyer      *agent.EphemeralDestroyer
 	BGCtx          context.Context
 	BGCancel       context.CancelFunc
+	Ready          *atomic.Bool // 后台向量预热是否完成（供 /api/health 分级）
 }

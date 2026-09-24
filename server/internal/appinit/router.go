@@ -86,6 +86,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		LlmCostRepo:          repos.LlmCost,
 		LlmPriceRepo:         repos.LlmPrice,
 		ExtraMiddleware:      []gin.HandlerFunc{middleware.RequestLogger(log.Default())},
+		Ready:                agents.Ready,
 	})
 
 	controller.RegisterReflectionRoutes(&controller.ReflectionRoutesConfig{

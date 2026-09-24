@@ -3,6 +3,7 @@ package appinit
 import (
 	"context"
 	"log"
+	"sync/atomic"
 	"time"
 
 	"xhan-helper/internal/agent"
@@ -35,16 +36,22 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
-	// 清理废弃向量（chunk 幂等），必须在 warmup 之前
-	runVectorStartupCleanup(bgCtx, cfg, repos)
+	// 向量预热放后台：HTTP 先就绪（窗口秒开），预热完成后再置 ready。
+	// 顺序保持：先清理废弃向量（chunk 幂等），再 warmup。
+	// 空库 / 已全量嵌入的库预热很快；ready 前的检索会缺内存向量（已接受）。
+	ready := &atomic.Bool{}
+	go func() {
+		runVectorStartupCleanup(bgCtx, cfg, repos)
 
-	memSource.Warmup(bgCtx, infra.Embedder)
-	noteSource.Warmup(bgCtx, infra.Embedder)
-	historySource.Warmup(bgCtx, infra.Embedder)
-	summarySource.Warmup(bgCtx, infra.Embedder)
+		memSource.Warmup(bgCtx, infra.Embedder)
+		noteSource.Warmup(bgCtx, infra.Embedder)
+		historySource.Warmup(bgCtx, infra.Embedder)
+		summarySource.Warmup(bgCtx, infra.Embedder)
 
-	// 从 embedding 表加载向量到内存 store
-	agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState, repos.Fact, cfg.Vector.ChunkDisabledParents)
+		// 从 embedding 表加载向量到内存 store
+		agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState, repos.Fact, cfg.Vector.ChunkDisabledParents)
+		ready.Store(true)
+	}()
 
 	// 统一搜索工具（语义搜索走 ContextSource，关键词搜索走 repo）。
 	// 检索统一入口：主对话 + 内部子系统（StateUpdater/ThemeAnalyst）共用。
@@ -330,6 +337,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		Destroyer:      ephemeralDestroyer,
 		BGCtx:          bgCtx,
 		BGCancel:       bgCancel,
+		Ready:          ready,
 	}
 }
 

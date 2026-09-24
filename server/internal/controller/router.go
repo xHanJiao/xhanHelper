@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"net/http"
+	"sync/atomic"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
@@ -39,6 +42,7 @@ type RouterConfig struct {
 	LlmCostRepo          *service.LlmCostRepo
 	LlmPriceRepo         *service.LlmPriceRepo
 	ExtraMiddleware      []gin.HandlerFunc
+	Ready                *atomic.Bool // 后台向量预热完成标志；nil 视为已就绪
 }
 
 // NewRouter 注册所有路由
@@ -70,6 +74,14 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	r.GET("/api/share/:token", rc.DocumentShareHandler.ViewSharedDocument)
 	// 图床公开读：仅服务 Visibility=public 的图（文档配图/分享页/PDF 导出；<img> 带不了请求头）
 	r.GET("/images/:file", rc.ImageHandler.ServePublic)
+	// 健康分级（无认证）：starting = HTTP 已就绪、后台向量预热中；ready = 预热完成
+	r.GET("/api/health", func(c *gin.Context) {
+		status := "ready"
+		if rc.Ready != nil && !rc.Ready.Load() {
+			status = "starting"
+		}
+		c.JSON(http.StatusOK, gin.H{"status": status})
+	})
 	// 需要认证
 	auth := r.Group("/api")
 	auth.Use(middleware.Auth(rc.UserRepo))

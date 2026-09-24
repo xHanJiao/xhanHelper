@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -72,6 +73,10 @@ func InitDB(cfg *config.Config) *gorm.DB {
 		&model.LlmModelPrice{},
 		&model.ImageAsset{},
 	); err != nil {
+		// 本地模式带坏库运行没有意义，直接致命；云端保持「打日志继续」的现状
+		if strings.HasPrefix(os.Getenv("APP_ENV"), "local") {
+			log.Fatalf("[db] AutoMigrate failed (local mode, refusing to start): %v", err)
+		}
 		log.Printf("[db] AutoMigrate error: %v", err)
 	}
 

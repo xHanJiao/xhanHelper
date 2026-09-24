@@ -11,25 +11,33 @@ import Security
 /// 传统钥匙串的普通项则完全可用。指纹门改由 app 层把守（`LocalAuthService.authenticate`）。
 ///
 /// 传统钥匙串的保护：item 的 ACL 绑定创建它的 app 签名，别的 app 读取会弹一次授权，不是静默可读。
-/// dev/prod 两个 build 同机共享密钥时，跨 bundle id 顶多弹一次授权——不需要 access group。
+/// dev/prod 两个 build 同机各存各的项（密钥 / token 都按环境分家），跨 bundle id 顶多弹一次授权——不需要 access group。
 ///
 /// 写操作**返回 OSStatus**（不再静默吞）：写失败必须让 UI 看得见，否则症状是「点了继续毫无反应」。
 nonisolated enum LocalKeychain {
 
-    /// 统一服务名（不随 bundle id 走；密钥两项刻意两环境共享，只有 token 按环境分家）。
+    /// 统一服务名（不随 bundle id 走）。
     static let service = "xhanx.cn.xHelperMac.local"
 
     enum Account: String {
-        case llmKey = "llm_api_key"
-        case embeddingKey = "embedding_api_key"
-        // 本地 token 按环境分家：dev / prod 两种构建的 token 前缀不同（后端据此 403），
+        // 旧版**两环境共享**的密钥项：只当一次性迁移源（`LocalSecretsStore.loadKey`），迁移后不再写。
+        case legacyLLMKey = "llm_api_key"
+        case legacyEmbeddingKey = "embedding_api_key"
+        // 密钥按环境分家：在 dev 里换供应商 / 换 key 不该动到 prod（`LocalSecretsStore` 负责迁移 + 读写）。
+        case llmKeyDev = "llm_api_key_dev"
+        case llmKeyProd = "llm_api_key_prod"
+        case embeddingKeyDev = "embedding_api_key_dev"
+        case embeddingKeyProd = "embedding_api_key_prod"
+        // token 也按环境分家：两种构建的 token 前缀不同（后端据此 403），
         // 共用一项的话先跑的那个会把前缀写死，另一个必然自 403。
         case tokenDev = "local_token_dev"
         case tokenProd = "local_token_prod"
     }
 
-    /// 当前构建（Debug=dev / Release=prod）对应的本地 token 项。
+    /// 当前构建（Debug=dev / Release=prod）对应的项。
     static var tokenAccount: Account { LocalPaths.isDev ? .tokenDev : .tokenProd }
+    static var llmKeyAccount: Account { LocalPaths.isDev ? .llmKeyDev : .llmKeyProd }
+    static var embeddingKeyAccount: Account { LocalPaths.isDev ? .embeddingKeyDev : .embeddingKeyProd }
 
     enum ReadResult: Sendable {
         case found(String)

@@ -115,7 +115,7 @@ flowchart TD
 
 1. 你双击 `xhanHelper.app`。
 2. app 读 Keychain：**没有** LLM / Embedding 密钥 → **不启动后端**，先弹「首次配置」窗口（见改动点 8）。
-3. 你填入两个密钥（model / base_url 已预填默认值，改不改随意）；点「测试连接」验证通过后落 Keychain（**同一把钥匙串条目，dev / prod 两个 build 共用**——传统钥匙串不按 app 分区，无需 access group）。
+3. 你填入两个密钥（model / base_url 已预填默认值，改不改随意）；点「测试连接」验证通过后落 Keychain（**按当前环境分家存**，dev / prod 各存各的项；传统钥匙串不按 app 分区，无需 access group）。
 4. 之后走下面的「日常启动」。
 
 ### 日常启动
@@ -332,9 +332,9 @@ flowchart TD
 - **首次配置窗口**：启动时 Keychain 无密钥 → **不拉后端**，弹配置窗口：DeepSeek LLM key + Ark Embedding key（`SecureField`）；model / base_url 预填默认值。带「测试连接」按钮（存前各发一个最小请求验证），通过才落 Keychain。配置窗口未完成就关 → 主窗口停在「未配置」空态 + 「去配置」入口。
 - **设置页**：加「模型与密钥」分区，**Release 也可见**（现有服务器地址分区是 `#if DEBUG`）。含两个 key、`model`（一个字段，deepseek 家族）、base_url（留空=默认）、「清除密钥」。
 - **Keychain 共享**：~~两个 build 不同 bundle id，Keychain 默认不互通；配**共享 access group**（`keychain-access-groups` entitlement），一次填两边都能用。~~
-  > **已消解（第三轮 review）**：传统登录钥匙串不按 app 分区，同机同用户两个 build 天然共享（跨 bundle id 顶多弹一次授权）→ 不需要 access group（该 entitlement 需付费账号）。
+  > **已消解（第三轮 review）**：传统登录钥匙串不按 app 分区，同机同用户两个 build 天然共享（跨 bundle id 顶多弹一次授权）→ 不需要 access group（该 entitlement 需付费账号）。**第五轮起密钥按环境分家**（dev / prod 各存各的项），仍无需 access group。
 - **只支持 deepseek 家族**：provider 锁死 `deepseek`；embedding 只放开 key，base_url / model 锁死（Ark + doubao-embedding）。
-- **改哪里**：新增 Keychain 封装 + 首次配置视图 + 设置分区；`Info.plist` / entitlements 加 access group。
+- **改哪里**：新增 Keychain 封装 + 首次配置视图 + 设置分区（不引 access group）。
 
 ### 9. Swift：驻留生命周期（关窗不退出）
 
@@ -416,7 +416,7 @@ flowchart LR
 > **决定（用户拍板，零成本路线）**：
 > ① `LocalKeychain` 去掉 DP keychain 与 ACL，回到传统登录钥匙串普通项；
 > ② 指纹门改由 **app 层**把守——`LocalBackendManager.unlock()` 先 `authenticate()` 再读/建 token，`LocalLockController` 管运行期重锁；
-> ③ **access group 不需要**：两个 build 同机同用户，传统钥匙串不按 app 分区即可共享（跨 bundle id 顶多弹一次授权），原「dev/prod 共享密钥」诉求自然满足 → 第 4 期无需为此加能力；
+> ③ **access group 不需要**：两个 build 同机同用户，传统钥匙串不按 app 分区即可共享（跨 bundle id 顶多弹一次授权），原「dev/prod 共享密钥」诉求自然满足 → 第 4 期无需为此加能力（**第五轮又改为密钥按环境分家**，见决定表 #16）；
 > ④ 写操作不再静默：`LocalKeychain.set` / `LocalSecretsStore.save` 返回 OSStatus，UI-1 / UI-5 失败时红字报出并阻止继续；
 > ⑤ UI-1 布局修：顶部留 44pt 让开红绿灯 + 窗口收窄到 588 宽。
 > 代价：token 无 item 级生物 ACL（别的本地进程读取需用户授权点击，非静默）；威胁模型（见风险表）仍可接受。
@@ -462,7 +462,7 @@ flowchart LR
 1. **同一 app 身份**：不建第二套 bundle id / scheme / xcconfig —— Swift 侧用现成的 `#if DEBUG`，Go 配置在 Run Script 里按 `$CONFIGURATION` 选。
 2. **`APP_ENV` 命名**：`local` = prod（现有 `config.local.yaml` 不动）、`local.dev` = dev（新增 `config.local.dev.yaml`）→ 迁移工具、`make local`、既有文档零改动。
 3. **dev 数据**：空库起步 + 自动建 `me`；**不做导出/导入 zip**（UI-8a/8b 砍掉）、不从线上 / prod 拷数据，磁盘增量≈0。
-4. **密钥共享、token 分家**：LLM / Embedding 密钥走同一钥匙串条目（两个 build 共享，省一次配置）；**本地 token 按 env 分家**（钥匙串 account `local_token_dev` / `local_token_prod`）。
+4. **密钥与 token 都分家**：LLM / Embedding 密钥、`model` / `base_url` 覆盖项均按环境分家（钥匙串 account `llm_api_key_dev` / `_prod`、`embedding_api_key_dev` / `_prod`；UserDefaults key 加 `_dev` / `_prod` 后缀）——在 dev 里换供应商 / key / 模型不动到 prod；本地 token 同样分家（`local_token_dev` / `local_token_prod`）。旧版共享项保留为一次性迁移源。
 5. **env 校验（用户提议）**：本地 token 形如 `<env>:<random>`，后端校验前缀不匹配即 403 → 堵住「dev 经逃生口写 prod」这条唯一泄漏路径。
 6. **dev 视觉标识**（沿用 UI-7，落地形态见第八节）：Debug 构建 **Dock 图标右下角 `dev` 角标** + **顶栏胶囊簇左侧 `DEV` 徽标** + 显示名 `xhanHelper dev`。
 
@@ -505,6 +505,7 @@ flowchart LR
 > - **两处与定稿的偏差（都是被约束逼出来的，已加断言兜住）**：
 >   ① 白名单写死 `18923` 实际只有 **1 处代码**（`XHWebView.frontendOrigins`，另 2 处是注释），已改动态端口；
 >   ② `LocalPaths` / `ToolsDataRoot` / `LocalToolResultStore.dataRootName` 是**同一个决定的三个副本**——SwiftPM 不允许同一个文件进多个 target，tools 层与 LocalArtifacts 层各自留了一份；`LocalBackendManager.init` 启动时 `assert` 三者一致（防漂移）。
+> - **第五轮（密钥分家，2026-09-25）**：原「密钥两环境共享」改为**按环境分家**（dev 换 key / 供应商会动到 prod，用户提出）。`LocalKeychain` 新增 `llmKeyDev` / `llmKeyProd` / `embeddingKeyDev` / `embeddingKeyProd`；`LocalSecretsStore` 的 `model` / `base_url` UserDefaults key 加 `_dev` / `_prod` 后缀；旧共享项（`llm_api_key` / `embedding_api_key`）当一次性迁移源——本环境缺失时复制进来并打 `xhan_key_migrated_<account>` 标记（否则「清除密钥」后下次 `load()` 又被迁回）。macOS Debug/Release、iOS `swiftc -typecheck` 干净 + `swift test` 200 绿。**待真机验**：Debug/Release 各配各的 key、互不影响。
 > - **已真机验**：Dock 分得清（dev 角标）、顶栏 `DEV` 徽标可见。**待验**：上面 4 条验收。
 > - **注意**：Release 产物若还是旧的（bundle 里 `conf/config.local.yaml` 不含 `local_env`），说明没重编 → 必须**重新 Build 一次 Release** 才算验过第 4 期。
 
@@ -561,7 +562,7 @@ flowchart LR
 | 配置 | `config.local.yaml` | `config.local.dev.yaml` |
 | `local_env` | `prod` | `dev` |
 | 数据 | 线上迁来的真身（`cmd/mysql2sqlite`） | **空库**，自动建 `me`，自己长 |
-| 密钥 | 同一把钥匙串条目（**共享**） | 同上 |
+| 密钥 | 钥匙串 `llm_api_key_prod` / `embedding_api_key_prod` | 钥匙串 `llm_api_key_dev` / `embedding_api_key_dev`（含 model / base_url 覆盖项，UserDefaults 后缀分家） |
 | 本地 token | 钥匙串 `local_token_prod` | 钥匙串 `local_token_dev` |
 
 - **数据根 / 端口写死在各自的 conf 里**（不是运行时开关）→ **即使配置写错也指不到对方**；Swift 侧的数据根一律走 `LocalPaths`（`#if DEBUG` 决定），**禁止再写字面量 `"xhanHelper"`**。
@@ -591,7 +592,7 @@ flowchart LR
 
 - **prod → dev 无数据路径**（不做导出/导入 zip，见决定表）：dev 要测试数据就自己造，要真身数据才用 prod。
 - **云端 → 本地 prod** 走第七节的 `cmd/mysql2sqlite`，是另一个方向，不冲突。
-- 同 bundle id 的连带影响（已接受）：UserDefaults 域共享 → `xhan_server_url` 逃生口、`xhan_touch_id_enabled` 两环境通用。前者由第 3 层兜住（403），后者无所谓（DEBUG 本来就不弹指纹）。
+- 同 bundle id 的连带影响（已接受）：UserDefaults 域共享 → `xhan_server_url` 逃生口、`xhan_touch_id_enabled` 两环境通用（`model` / `base_url` 覆盖项**已按环境加后缀分家**，不在此列）。前者由第 3 层兜住（403），后者无所谓（DEBUG 本来就不弹指纹）。
 
 ---
 
@@ -695,7 +696,7 @@ sequenceDiagram
 |---|------|------|
 | 1 | 本地端口策略 | prod 固定 `18923`、dev `18924`；被占就报错（SQLite 单实例） |
 | 2 | 生命周期 | 单进程驻留：红 X 只关窗，Cmd+Q / 右键退出才停后端（方案 A） |
-| 3 | 密钥输入时机 | 首次启动弹配置窗口；密钥存传统钥匙串（不按 app 分区，dev/prod 两个 build 天然共享，**不需要 access group**——第三轮 review 修订）；**只认 Keychain、不回退进程环境变量**（第四轮修订） |
+| 3 | 密钥输入时机 | 首次启动弹配置窗口；密钥存传统钥匙串（不按 app 分区，dev/prod 各存各的项，**不需要 access group**——第三轮 review 修订，第五轮改为按环境分家）；**只认 Keychain、不回退进程环境变量**（第四轮修订） |
 | 4 | 可改配置 | provider 锁死 deepseek；放开 `model`（一个字段）+ `base_url`；embedding 只放开 key |
 | 5 | 启动补扫 | 是否加「启动即扫一次延迟任务」（可选，几行）——**遗留，未定** |
 | 6 | 分发方式 | 本次不做。将来走 Developer ID（非 App Store）还是 App Store（沙盒，需重设计）——**遗留，未定** |
@@ -708,6 +709,6 @@ sequenceDiagram
 | 13 | 本地身份 | 单用户、**隐形**：以「库里的用户」为锚点（唯一则认领、空库建 `me`、多则报错要求剪枝）；不钉 UUID / 用户名（可分发） |
 | 14 | 访问门 | Touch ID：启动 / 回前台 / 空闲 15min；失败允许系统密码兜底；DEBUG 跳过；token 存传统钥匙串 + **app 层指纹门**（item 级生物 ACL 需付费 entitlement，第三轮 review 修订） |
 | 15 | 迁移范围 | 全量搬 + 剪掉非 xhan（28 张 `user_id` 表）；写全新 DB；**不迁图片**（旧图 404）；**分享不做** |
-| 16 | dev 密钥 / token | LLM / Embedding 密钥**共享**一把（省一次配置）；本地 token **按 env 分家**（钥匙串 `local_token_dev` / `local_token_prod`，值是 `<env>:<random>`）——env 校验的载体（第 4 期定稿） |
+| 16 | dev 密钥 / token | LLM / Embedding 密钥 + `model` / `base_url` 覆盖项**按 env 分家**（dev 换供应商 / key / 模型不动 prod；旧共享项一次性迁入本环境）；本地 token **按 env 分家**（钥匙串 `local_token_dev` / `local_token_prod`，值是 `<env>:<random>`）——env 校验的载体（第 4 期定稿，密钥分家为第五轮修订） |
 | 17 | 拦越界请求 | 本地模式中间件校验 `Bearer` 的 env 前缀 == 后端 `local_env`，不符 **403**（不是加独立 header：token 天然被每个请求携带，连面板里的 Vue 调用也带） |
 | 18 | 防错配 | 启动**交叉断言**：`local_env` ↔ `APP_ENV` ↔ 数据根 ↔ token 前缀 四者配套，不符 `log.Fatalf` / Swift `assertionFailure`（第 4 期定稿） |

@@ -184,7 +184,7 @@ struct LocalOnboardingView: View {
                 Text("欢迎使用 xhanHelper")
                     .font(.system(size: 22, weight: .bold))
             }
-            Text("本地服务需要一个 DeepSeek LLM 密钥和一个 Ark Embedding 密钥。\n密钥只存在本机钥匙串，不会上传。")
+            Text("本地服务需要一个 DeepSeek LLM 密钥和一个 Ark Embedding 密钥。\n密钥只存在本机钥匙串，不会上传；Debug / Release 各存一份，互不影响。")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -488,7 +488,7 @@ struct LocalModelKeySection: View {
         } header: {
             Text("模型与密钥")
         } footer: {
-            Text("密钥存本机钥匙串。模型 / Base URL 留空用默认值。「保存并重启后端」会先测试一次连接，通过才保存。")
+            Text("密钥存本机钥匙串（Debug / Release 各存一份，互不影响）。模型 / Base URL 留空用默认值。「保存并重启后端」会先测试一次连接，通过才保存。")
         }
         .alert("清除密钥", isPresented: $showClearAlert) {
             Button("取消", role: .cancel) {}

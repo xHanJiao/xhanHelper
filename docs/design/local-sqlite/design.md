@@ -553,6 +553,7 @@ flowchart LR
 | **秒开期检索不全** | warmup 挪后台后，最初几秒记忆/语义检索可能缺内存向量 | 已接受；`/api/health` 暴露 `starting/ready`，需确认检索侧能优雅降级 |
 | ~~**Keychain 共享**~~ | ~~两个 build 共享密钥需 `keychain-access-groups`~~ | **已消解**：传统钥匙串不按 app 分区，同机同用户两个 build 天然共享（第三轮 review）；该 entitlement 需付费账号，不做 |
 | **双 build 维护** | 两份 scheme / config / entitlements 要同步 | 共享 xcconfig，只保留必要差异 |
+| **第 4 期前没有沙盒（Debug = 真身）** | 现在只有一个数据根：Xcode 跑 Debug 构建就是本地 prod —— 聊天、改数据**直接写真实库**，没有副本可退；想试「删表 / 重跑向量 / 换 embedding 模型」这类操作只能拿真身做 | 兜底：源库（本地 MySQL 副本）是静态的，`go run ./cmd/mysql2sqlite` **18 秒**可重建，且每次迁移前旧库改名备份；根治 = 第 4 期双 build（第八节） |
 | **单向复制可被绕过** | 非沙盒下同用户理论上仍可读 prod 文件 | 路径硬编码 + 启动断言 + 只走 zip 导出/导入（dev 不直接读写 prod 数据根）（改动点 10） |
 | **导入时后端占用 DB** | dev 导入 zip 时后端在跑会锁 SQLite | 导入前停后端、写完重启（UI-8b） |
 | **预览靶材质失真** | `ImageRenderer` 离屏渲染材质/毛玻璃不可信 | 只信布局 / token；观感以 Xcode 真机为准（第十一节） |

@@ -15,7 +15,7 @@ import (
 const (
 	memoryTopicMaxLen   = 20
 	memorySummaryMaxLen = 150
-	memoryFactsMaxCount = 8
+	memoryFactsMaxCount = 10
 	memoryFactMaxLen    = 100
 )
 
@@ -70,6 +70,8 @@ func roundScore(s float64) float64 {
 func timeNow() time.Time { return time.Now() }
 
 // validateMemoryFields 工具侧字段校验，超限返回错误让模型改写。
+// 不含 facts 条数上限：上限只约束「模型单次传入多少」（见 validateFactCount），
+// 库里最终能存多少由 update 的合并结果决定，不逐出。
 func validateMemoryFields(topic, summary string, facts []string) error {
 	if strings.TrimSpace(summary) == "" {
 		return fmt.Errorf("summary 不能为空")
@@ -80,13 +82,19 @@ func validateMemoryFields(topic, summary string, facts []string) error {
 	if len([]rune(summary)) > memorySummaryMaxLen {
 		return fmt.Errorf("summary 超长（≤%d 字）", memorySummaryMaxLen)
 	}
-	if len(facts) > memoryFactsMaxCount {
-		return fmt.Errorf("facts 最多 %d 条", memoryFactsMaxCount)
-	}
 	for _, f := range facts {
 		if len([]rune(f)) > memoryFactMaxLen {
 			return fmt.Errorf("单条 fact 超长（≤%d 字）", memoryFactMaxLen)
 		}
+	}
+	return nil
+}
+
+// validateFactCount 约束模型单次传入的 facts 条数（防止一次灌太多）。
+// 只用于校验入参，不用于校验合并后的结果——合并结果不设上限。
+func validateFactCount(facts []string) error {
+	if len(facts) > memoryFactsMaxCount {
+		return fmt.Errorf("facts 最多 %d 条", memoryFactsMaxCount)
 	}
 	return nil
 }
@@ -103,4 +111,41 @@ func factsPtr(facts []string) *string {
 	}
 	s := string(b)
 	return &s
+}
+
+// parseFactsPtr 把库里的 facts JSON 字符串解析回 []string（factsPtr 的反向）。
+// 空/坏 JSON 记日志后返回 nil：update 时旧 facts 读不出来不应阻断写入，但必须留痕。
+func parseFactsPtr(p *string) []string {
+	if p == nil || strings.TrimSpace(*p) == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(*p), &out); err != nil {
+		log.Printf("[record_loop] parse stored facts error: %v (raw %.80s, treat as empty)", err, *p)
+		return nil
+	}
+	return out
+}
+
+// mergeFacts 把新增 facts 合并进已有（update 专用）：trim 后完全相等去重、保序。
+// 不逐出：合并结果不设条数上限，只增不减。不做模糊/子串匹配（会误吞）。
+// 纯确定性逻辑，不交给 LLM。
+func mergeFacts(oldFacts, addFacts []string) []string {
+	merged := make([]string, 0, len(oldFacts)+len(addFacts))
+	seen := make(map[string]bool, len(oldFacts)+len(addFacts))
+	appendFact := func(f string) {
+		f = strings.TrimSpace(f)
+		if f == "" || seen[f] {
+			return
+		}
+		seen[f] = true
+		merged = append(merged, f)
+	}
+	for _, f := range oldFacts {
+		appendFact(f)
+	}
+	for _, f := range addFacts {
+		appendFact(f)
+	}
+	return merged
 }

@@ -24,6 +24,9 @@ func (s *recordLoopState) saveMemory(ec *tool.ExecuteContext, args json.RawMessa
 	if err := validateMemoryFields(a.Topic, a.Summary, a.Facts); err != nil {
 		return errResult(err)
 	}
+	if err := validateFactCount(a.Facts); err != nil {
+		return errResult(err)
+	}
 	mem := s.newMemory(a.Topic, a.Summary, a.Facts)
 	if err := s.persist(ec.Ctx, mem, true); err != nil {
 		return errResult(err)
@@ -45,9 +48,6 @@ func (s *recordLoopState) updateMemory(ec *tool.ExecuteContext, args json.RawMes
 	if err := s.checkTarget(a.TargetID, model.EntityTypeMemory); err != nil {
 		return errResult(err)
 	}
-	if err := validateMemoryFields(a.Topic, a.Summary, a.Facts); err != nil {
-		return errResult(err)
-	}
 	old, err := s.deps.MemRepo.FindByID(ec.Ctx, s.userID, a.TargetID)
 	if err != nil {
 		return errResult(fmt.Errorf("find memory: %w", err))
@@ -57,7 +57,16 @@ func (s *recordLoopState) updateMemory(ec *tool.ExecuteContext, args json.RawMes
 		log.Printf("[record_loop] update target %.8s not found, skip", a.TargetID)
 		return &tool.Result{Success: false, Error: "目标记忆不存在"}
 	}
-	mem := s.newMemory(a.Topic, a.Summary, a.Facts)
+	// facts 只增不减：与旧 facts 去重合并后再校验（模型可只传新增的细节）。
+	// 条数上限只卡模型的入参（a.Facts），合并结果不逐出。
+	if err := validateFactCount(a.Facts); err != nil {
+		return errResult(err)
+	}
+	facts := mergeFacts(parseFactsPtr(old.Facts), a.Facts)
+	if err := validateMemoryFields(a.Topic, a.Summary, facts); err != nil {
+		return errResult(err)
+	}
+	mem := s.newMemory(a.Topic, a.Summary, facts)
 	mem.ID = old.ID
 	if err := s.persist(ec.Ctx, mem, false); err != nil {
 		return errResult(err)

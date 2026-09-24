@@ -18,7 +18,7 @@ final class LogFileWriter {
 
     init() {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        logDir = caches.appendingPathComponent("com.xhan.xhanHelper/logs")
+        logDir = LocalPaths.appLogDir
         do {
             try FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
         } catch {

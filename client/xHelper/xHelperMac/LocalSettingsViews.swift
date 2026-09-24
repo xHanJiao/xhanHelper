@@ -538,10 +538,7 @@ struct LocalModelKeySection: View {
 struct LocalServiceSection: View {
     @ObservedObject var backend: LocalBackendManager
 
-    private var dataRoot: String {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("xhanHelper").path
-    }
+    private var dataRoot: String { LocalPaths.dataRoot.path }
 
     private var statusText: String {
         switch backend.state {

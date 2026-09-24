@@ -33,11 +33,11 @@ nonisolated final class ToolOutputStore: @unchecked Sendable {
     /// 目录总容量上限；超出按 mtime 最旧 LRU 删除。
     let maxTotalBytes: Int
 
-    /// 默认单例：`Application Support/xhanHelper/tool_output`，7 天 / 200MB。
+    /// 默认单例：`<ToolsDataRoot.name>/tool_output`，7 天 / 200MB。
     convenience init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         self.init(
-            baseURL: appSupport.appendingPathComponent("xhanHelper/tool_output", isDirectory: true),
+            baseURL: appSupport.appendingPathComponent(ToolsDataRoot.name + "/tool_output", isDirectory: true),
             retention: 7 * 24 * 3600,
             maxTotalBytes: 200 * 1024 * 1024
         )

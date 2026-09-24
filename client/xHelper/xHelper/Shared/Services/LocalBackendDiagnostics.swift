@@ -21,12 +21,13 @@ enum LocalBackendDiagnostics {
     static func childEnvironment(
         base: [String: String],
         confDir: String,
+        appEnv: String,
         token: String,
         secrets: LocalSecrets
     ) -> [String: String] {
         let s = secrets.normalized()
         var env = base
-        env["APP_ENV"] = "local"
+        env["APP_ENV"] = appEnv
         env["XHAN_CONF_DIR"] = confDir
         env["XHAN_LOCAL_TOKEN"] = token
         env["LLM_API_KEY"] = s.llmKey

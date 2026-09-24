@@ -526,6 +526,15 @@ struct xhanHelperMacApp: App {
             .lightbox()
             .browserDiagnostics()
             .glassWindow()
+            // dev 视觉标识（UI-7）：Debug 构建顶部一条 accent 细条，一眼分辨沙盒窗口。
+            .overlay(alignment: .top) {
+                if LocalPaths.isDev {
+                    Rectangle()
+                        .fill(Color("appAccent"))
+                        .frame(height: 3)
+                        .allowsHitTesting(false)
+                }
+            }
             .background(LocalWindowReader { window in
                 windowHandle.window = window
                 applyWindowSizeForOnboarding()

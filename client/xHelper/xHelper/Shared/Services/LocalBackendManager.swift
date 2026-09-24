@@ -27,8 +27,8 @@ final class LocalBackendManager: ObservableObject {
     /// 绑定 Keychain + 环境变量回退，`start()` / `restart()` 时刷新。
     @Published private(set) var isConfigured: Bool
 
-    /// 本地后端端口（prod）。dev 端口 18924 留待第 4 期。
-    private let port = 18923
+    /// 本地后端端口：Debug=dev(18924) / Release=prod(18923)，见 `LocalPaths`。
+    private let port = LocalPaths.backendPort
 
     /// 本地访问令牌：app 生成、经 env 传给 Go；后端只比对不存储（重装换新 token 照样连）。
     /// 由 `LocalAuthService` 从 Keychain 读出/生成，解锁前为 nil。
@@ -54,11 +54,15 @@ final class LocalBackendManager: ObservableObject {
     }
 
     private init() {
+        // 防漂移自检：数据根名在三处各有一份（`LocalPaths` / `ToolsDataRoot` / `LocalToolResultStore`），
+        // 它们是同一个决定的三个副本，必须在启动时对齐（SwiftPM 跨 target 不能共享同一文件）。
+        assert(
+            LocalPaths.dataRootName == ToolsDataRoot.name && LocalPaths.dataRootName == LocalToolResultStore.dataRootName,
+            "数据根名不一致：LocalPaths=\(LocalPaths.dataRootName) ToolsDataRoot=\(ToolsDataRoot.name) LocalToolResultStore=\(LocalToolResultStore.dataRootName)"
+        )
         self.isConfigured = LocalSecretsStore.isConfigured
-        let logs = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("Logs/xhanHelper", isDirectory: true)
-        self.logDir = logs
-        self.logFile = logs.appendingPathComponent("backend.log")
+        self.logDir = LocalPaths.backendLogDir
+        self.logFile = LocalPaths.backendLogDir.appendingPathComponent("backend.log")
     }
 
     // MARK: - 生命周期
@@ -87,7 +91,7 @@ final class LocalBackendManager: ObservableObject {
             state = .failed("app 内未找到后端二进制（\(binary.path)）。\n请确认 Xcode 的「Bundle Backend」构建阶段已成功执行。")
             return
         }
-        guard FileManager.default.fileExists(atPath: confDir.appendingPathComponent("config.local.yaml").path) else {
+        guard FileManager.default.fileExists(atPath: confDir.appendingPathComponent(LocalPaths.confFileName).path) else {
             state = .failed("app 内未找到后端配置目录（\(confDir.path)）。")
             return
         }
@@ -99,7 +103,7 @@ final class LocalBackendManager: ObservableObject {
         }
 
         // Touch ID 开启时只进入锁定态**等着**——不在这里启动进程。
-        // 否则它会和用户点「解锁」触发的 unlock() 并发各起一个进程（双指纹、抢 18923 端口）。
+        // 否则它会和用户点「解锁」触发的 unlock() 并发各起一个进程（双指纹、抢同一个端口）。
         if LocalAuthService.shared.isActive {
             state = .locked
             return
@@ -216,6 +220,7 @@ final class LocalBackendManager: ObservableObject {
         proc.environment = LocalBackendDiagnostics.childEnvironment(
             base: ProcessInfo.processInfo.environment,
             confDir: confDir.path,
+            appEnv: LocalPaths.appEnv,
             token: resolved,
             secrets: secrets
         )

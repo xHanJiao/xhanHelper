@@ -49,21 +49,23 @@ final class LocalAuthService {
     }
 
     /// 读/建本地 token（**不触发指纹**——指纹由调用方先 `authenticate()`）。
-    /// - 已有非空 token → 直接用（重装换新 token 不影响：Go 侧只比对不存储）。
-    /// - 没有 → 生成并写入；写失败必须报出，否则后端拿不到 token、UI 又毫无反应。
+    /// - 已有且前缀与本环境一致 → 直接用（重装换新 token 不影响：Go 侧只比对不存储）。
+    /// - 没有 / 前缀不对（旧格式或串了环境）→ 生成新的并写入；写失败必须报出，
+    ///   否则后端拿不到 token、UI 又毫无反应。
     func loadOrCreateToken() -> TokenOutcome {
-        switch LocalKeychain.read(.token) {
-        case .found(let t) where !t.isEmpty:
+        let wantPrefix = LocalPaths.env + ":"
+        switch LocalKeychain.read(LocalKeychain.tokenAccount) {
+        case .found(let t) where t.hasPrefix(wantPrefix):
             return .ok(t)
         case .found, .notFound:
-            break // 空串当作没有
+            break // 空串 / 前缀不符一律当作没有
         case .denied:
             return .failed("读取本地凭据被拒绝（钥匙串授权）。")
         case .failed(let status):
             return .failed("读取本地凭据失败：\(LocalKeychain.describe(status))")
         }
         let token = Self.makeToken()
-        let status = LocalKeychain.set(token, for: .token)
+        let status = LocalKeychain.set(token, for: LocalKeychain.tokenAccount)
         guard status == errSecSuccess else {
             return .failed("写入本地凭据失败：\(LocalKeychain.describe(status))")
         }
@@ -73,7 +75,7 @@ final class LocalAuthService {
     /// 逃生口：凭据读不出来时关闭 Touch ID 并删掉旧项（清掉可能损坏/带旧 ACL 的残留）。
     func disableAndResetToken() {
         isEnabled = false
-        LocalKeychain.delete(.token)
+        LocalKeychain.delete(LocalKeychain.tokenAccount)
         LogBuffer.shared.info("已关闭 Touch ID 并删除本地凭据")
     }
 
@@ -100,8 +102,10 @@ final class LocalAuthService {
         }
     }
 
+    /// token 形如 `<env>:<random>`：env 前缀即「环境参数」，后端校验不符直接 403（第 4 期）。
     private static func makeToken() -> String {
-        (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "")
+        let random = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "")
+        return "\(LocalPaths.env):\(random)"
     }
 }
 #endif

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -28,10 +29,15 @@ func newAuthTestRepo(t *testing.T) *service.UserRepo {
 // runAuth 跑一次 Auth 中间件，返回响应与 handler 读到的 ctx 标记
 func runAuth(t *testing.T, local LocalAuth, bearer string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
+	return runAuthOn(t, newAuthTestRepo(t), local, bearer)
+}
+
+func runAuthOn(t *testing.T, repo *service.UserRepo, local LocalAuth, bearer string) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	seen := map[string]any{}
 	r := gin.New()
-	r.GET("/p", Auth(newAuthTestRepo(t), local), func(c *gin.Context) {
+	r.GET("/p", Auth(repo, local), func(c *gin.Context) {
 		seen["user_id"] = c.GetString("user_id")
 		seen["local_auth"] = c.GetBool("local_auth")
 		c.Status(http.StatusOK)
@@ -55,12 +61,32 @@ func TestAuth_LocalTokenPassthrough(t *testing.T) {
 	}
 }
 
-// 本地开启时，不匹配的 Bearer 必须回落到 DB 校验（这里无对应 token 行 → 401），
-// 防止以后把绕过顺序改坏（比如误把任意 bearer 都当本地用户）。
-func TestAuth_LocalEnabledWrongBearerFallsThrough(t *testing.T) {
-	w, _ := runAuth(t, LocalAuth{Enabled: true, UserID: "u1", Token: "secret"}, "nope")
+// 本地模式不再回落 user_tokens 表：库里存在有效 token 也不认（只会给越界留口子）。
+func TestAuth_LocalEnabledDoesNotFallBackToDB(t *testing.T) {
+	repo := newAuthTestRepo(t)
+	_, dbToken, err := repo.Create(context.Background(), "xhan", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, _ := runAuthOn(t, repo, LocalAuth{Enabled: true, UserID: "u1", Token: "secret"}, dbToken)
 	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong bearer must fall through to DB auth and 401, got %d", w.Code)
+		t.Fatalf("本地模式下库 token 也应被拒（401），got %d", w.Code)
+	}
+}
+
+// env 前缀不匹配 → 403（dev 的 token 打 prod 后端）
+func TestAuth_LocalEnvMismatchRejected(t *testing.T) {
+	w, _ := runAuth(t, LocalAuth{Enabled: true, UserID: "u1", Token: "prod:secret", Env: "prod"}, "dev:secret")
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("env mismatch: want 403, got %d", w.Code)
+	}
+}
+
+// env 配套 + token 一致 → 放行
+func TestAuth_LocalEnvMatchOK(t *testing.T) {
+	w, seen := runAuth(t, LocalAuth{Enabled: true, UserID: "u1", Token: "prod:secret", Env: "prod"}, "prod:secret")
+	if w.Code != http.StatusOK || seen["local_auth"] != true {
+		t.Fatalf("env match: want 200 + local_auth, got %d %+v", w.Code, seen)
 	}
 }
 

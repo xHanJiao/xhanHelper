@@ -57,8 +57,7 @@ final class DownloadHistoryStore: ObservableObject {
     private let maxRecords = 100
 
     private init() {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("xhanHelper", isDirectory: true)
+        let dir = LocalPaths.dataRoot
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         storeURL = dir.appendingPathComponent("downloads.json")
         load()

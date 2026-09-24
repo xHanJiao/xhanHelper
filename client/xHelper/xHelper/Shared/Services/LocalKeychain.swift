@@ -16,14 +16,20 @@ import Security
 /// 写操作**返回 OSStatus**（不再静默吞）：写失败必须让 UI 看得见，否则症状是「点了继续毫无反应」。
 nonisolated enum LocalKeychain {
 
-    /// 统一服务名（不随 bundle id 走）。
+    /// 统一服务名（不随 bundle id 走；密钥两项刻意两环境共享，只有 token 按环境分家）。
     static let service = "xhanx.cn.xHelperMac.local"
 
     enum Account: String {
         case llmKey = "llm_api_key"
         case embeddingKey = "embedding_api_key"
-        case token = "local_token"
+        // 本地 token 按环境分家：dev / prod 两种构建的 token 前缀不同（后端据此 403），
+        // 共用一项的话先跑的那个会把前缀写死，另一个必然自 403。
+        case tokenDev = "local_token_dev"
+        case tokenProd = "local_token_prod"
     }
+
+    /// 当前构建（Debug=dev / Release=prod）对应的本地 token 项。
+    static var tokenAccount: Account { LocalPaths.isDev ? .tokenDev : .tokenProd }
 
     enum ReadResult: Sendable {
         case found(String)

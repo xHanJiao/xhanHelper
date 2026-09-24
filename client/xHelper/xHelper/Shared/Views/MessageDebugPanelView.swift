@@ -46,7 +46,7 @@ struct MessageDebugPanelView: View {
         )
     }
 
-    /// 导航白名单：仅允许前端所在同源（含本地内嵌 127.0.0.1:18923，与监控看板一致）
+    /// 导航白名单：仅允许前端所在同源（含本地内嵌 127.0.0.1:<LocalPaths.backendPort>，与监控看板一致）
     private var allowedOrigins: [XHWebViewOrigin] {
         XHWebViewOrigin.frontendOrigins(webBaseURL: DeviceManager.webBaseURL)
     }

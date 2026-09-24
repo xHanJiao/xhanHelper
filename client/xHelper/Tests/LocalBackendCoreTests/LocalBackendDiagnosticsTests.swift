@@ -21,12 +21,13 @@ final class LocalBackendDiagnosticsTests: XCTestCase {
         let env = LocalBackendDiagnostics.childEnvironment(
             base: ["PATH": "/bin", "APP_ENV": "prod", "LLM_API_KEY": "stale"],
             confDir: "/app/conf",
-            token: "tok",
+            appEnv: "local.dev",
+            token: "dev:tok",
             secrets: LocalSecrets(llmKey: " lk ", embeddingKey: " ek ")
         )
-        XCTAssertEqual(env["APP_ENV"], "local")
+        XCTAssertEqual(env["APP_ENV"], "local.dev", "应把构建对应的 APP_ENV 传给子进程")
         XCTAssertEqual(env["XHAN_CONF_DIR"], "/app/conf")
-        XCTAssertEqual(env["XHAN_LOCAL_TOKEN"], "tok")
+        XCTAssertEqual(env["XHAN_LOCAL_TOKEN"], "dev:tok")
         XCTAssertEqual(env["LLM_API_KEY"], "lk", "应以 Keychain 密钥覆盖环境里残留的旧值，并去空白")
         XCTAssertEqual(env["EMBEDDING_API_KEY"], "ek")
         XCTAssertEqual(env["PATH"], "/bin")
@@ -38,9 +39,11 @@ final class LocalBackendDiagnosticsTests: XCTestCase {
         let env = LocalBackendDiagnostics.childEnvironment(
             base: [:],
             confDir: "/c",
-            token: "t",
+            appEnv: "local",
+            token: "prod:t",
             secrets: LocalSecrets(llmKey: "a", embeddingKey: "b", llmModel: "deepseek-v4-pro", llmBaseURL: "http://x")
         )
+        XCTAssertEqual(env["APP_ENV"], "local")
         XCTAssertEqual(env["XHAN_LLM_MODEL"], "deepseek-v4-pro")
         XCTAssertEqual(env["XHAN_LLM_BASE_URL"], "http://x")
     }

@@ -1,4 +1,4 @@
-.PHONY: dev dev-full local local-build embed-frontend check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs db-pull db-import entity-gc build-entity-gc topic-merge-plan topic-merge-apply build-topic-merge restart
+.PHONY: dev dev-full local local-dev local-build embed-frontend check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs db-pull db-import entity-gc build-entity-gc topic-merge-plan topic-merge-apply build-topic-merge restart
 
 # 远端 ssh 执行时 source 用户环境变量（非交互 ssh 不会自动 source）
 REMOTE_ENV = for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do source "$$f" 2>/dev/null || true; done;
@@ -15,7 +15,8 @@ FRONTEND_DIR=../front-end
 help:
 	@echo "可用的 make 命令："
 	@echo "  make dev            - 本地开发模式启动（dev环境，使用MySQL）"
-	@echo "  make local          - 本地部署模式启动（local环境，使用SQLite）"
+	@echo "  make local          - 本地部署模式启动（local环境，使用SQLite：xhanHelper/ :18923）"
+	@echo "  make local-dev      - 本地 dev 沙盒（xhanHelper-dev/ :18924，与 prod 隔离）"
 	@echo "  make local-build    - 编译本地版二进制（app 打包用）"
 	@echo "  make dev-full       - 同时启动前后端开发服务器"
 	@echo "  make build          - 本地编译（当前系统）"
@@ -50,9 +51,18 @@ local: check-env
 	@echo "=== 启动本地服务 (local → SQLite @ ~/Library/Application Support/xhanHelper) ==="
 	@mkdir -p logs
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
-	export XHAN_LOCAL_TOKEN="$${XHAN_LOCAL_TOKEN:-local-dev-token}"; \
+	export XHAN_LOCAL_TOKEN="$${XHAN_LOCAL_TOKEN:-prod:local-dev-token}"; \
 	echo "  local_token: $$XHAN_LOCAL_TOKEN"; \
 	APP_ENV=local go run ./cmd/xhan-helper/ 2>&1 | tee logs/local-$$(date +%Y-%m-%d).log
+
+# 启动本地 dev 沙盒（local.dev → SQLite @ xhanHelper-dev，端口 18924；与 prod 隔离）
+local-dev: check-env
+	@echo "=== 启动本地 dev 沙盒 (local.dev → SQLite @ ~/Library/Application Support/xhanHelper-dev, :18924) ==="
+	@mkdir -p logs
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	export XHAN_LOCAL_TOKEN="$${XHAN_LOCAL_TOKEN:-dev:local-dev-token}"; \
+	echo "  local_token: $$XHAN_LOCAL_TOKEN"; \
+	APP_ENV=local.dev go run ./cmd/xhan-helper/ 2>&1 | tee logs/local-dev-$$(date +%Y-%m-%d).log
 
 # 把前端构建产物拷进 Go 内嵌目录
 embed-frontend:

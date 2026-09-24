@@ -8,7 +8,7 @@ import UIKit
 
 /// 网站图标缓存：按 host 维度缓存平台图片（macOS=NSImage / iOS=UIImage），供浏览器 tab 条展示。
 /// 提取链路：页面导航后注入 JS 读 `<link rel="icon">` → 解析绝对 URL → URLSession 拉取 → 内存缓存 + 磁盘缓存。
-/// 磁盘缓存按 host 落到 Application Support/xhanHelper/favicons/<host>.png，重启后从磁盘恢复（收藏夹栏等图标不丢失）。
+/// 磁盘缓存按 host 落到 `LocalPaths.dataRoot/favicons/<host>.png`，重启后从磁盘恢复（收藏夹栏等图标不丢失）。
 #if os(macOS)
 typealias FaviconImage = NSImage
 #else
@@ -25,7 +25,7 @@ final class FaviconStore: ObservableObject {
 
     private init() {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("xhanHelper/favicons", isDirectory: true)
+            .appendingPathComponent(LocalPaths.dataRootName + "/favicons", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         cacheDir = dir
         Task { @MainActor [weak self] in

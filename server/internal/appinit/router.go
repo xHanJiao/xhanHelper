@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -38,6 +39,47 @@ func RegisterMonitorSnapshots(vs *agent.VectorStore, mcpManager *mcp.Manager, co
 	monitor.Register("themes", snapshots.Themes)
 }
 
+// AssertLocalEnv 本地模式启动断言（第 4 期）：local_env / APP_ENV / 数据根 / token 前缀
+// 四者必须配套。任何一处错配都意味着「可能正在写错库」，直接致命退出而不是静默继续。
+// 非本地模式不检查。
+func AssertLocalEnv(cfg *config.Config) error {
+	if !cfg.Server.LocalSingleUser {
+		return nil
+	}
+	env := cfg.Server.LocalEnv
+	if env != "dev" && env != "prod" {
+		return fmt.Errorf("server.local_env 必须是 dev 或 prod（当前 %q）", env)
+	}
+	wantAppEnv := "local"
+	rootName := "xhanHelper"
+	if env == "dev" {
+		wantAppEnv = "local.dev"
+		rootName = "xhanHelper-dev"
+	}
+	if got := os.Getenv("APP_ENV"); got != wantAppEnv {
+		return fmt.Errorf("local_env=%s 要求 APP_ENV=%s（当前 %q）", env, wantAppEnv, got)
+	}
+	if cfg.DB.Driver != "sqlite" {
+		return fmt.Errorf("本地模式要求 db.driver=sqlite（当前 %q）", cfg.DB.Driver)
+	}
+	// 数据根：库与图床必须都在 <HOME>/Library/Application Support/<rootName>/ 下
+	wantSuffix := "/" + rootName + "/xhan_helper.db"
+	if !strings.HasSuffix(cfg.DB.Database, wantSuffix) {
+		return fmt.Errorf("local_env=%s 要求库路径以 %s 结尾（当前 %s）", env, wantSuffix, cfg.DB.Database)
+	}
+	rootDir := strings.TrimSuffix(cfg.DB.Database, "/xhan_helper.db")
+	if !strings.HasPrefix(cfg.Storage.ImageDir, rootDir+"/") {
+		return fmt.Errorf("local_env=%s 要求 image_dir 在 %s/ 下（当前 %s）", env, rootDir, cfg.Storage.ImageDir)
+	}
+	// token 前缀：app 注入的是 "<env>:<random>"，防串了构建注入的 token
+	prefix := env + ":"
+	if !strings.HasPrefix(cfg.Server.LocalToken, prefix) {
+		return fmt.Errorf("local_env=%s 要求 local_token 以 %q 开头（app 注入形如 %s<random>）", env, prefix, prefix)
+	}
+	log.Printf("[local] env=%s app_env=%s db=%s", env, wantAppEnv, cfg.DB.Database)
+	return nil
+}
+
 // EnsureLocalUser 本地单用户模式：以「库里的用户」为身份锚点——
 // 有且仅有一个就用它（迁移进来的 xhan 原样认领）；空库才新建（默认名 me）；
 // 多于一个视为未剪枝，返回错误（由调用方致命退出）。返回 user_id，并把它加进
@@ -49,6 +91,9 @@ func EnsureLocalUser(cfg *config.Config, userRepo *service.UserRepo) (string, er
 	}
 	if cfg.Server.LocalToken == "" {
 		return "", fmt.Errorf("local_single_user 需要 local_token（经 XHAN_LOCAL_TOKEN 注入）")
+	}
+	if err := AssertLocalEnv(cfg); err != nil {
+		return "", err
 	}
 
 	ctx := context.Background()
@@ -87,6 +132,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		Enabled: cfg.Server.LocalSingleUser,
 		UserID:  localUserID,
 		Token:   cfg.Server.LocalToken,
+		Env:     cfg.Server.LocalEnv,
 	}
 	authMW := middleware.Auth(repos.User, localAuth)
 	billHandler := controller.NewBillHandler(repos.Bill)

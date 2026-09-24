@@ -164,6 +164,7 @@ type ServerConfig struct {
 	LocalSingleUser bool   `yaml:"local_single_user"` // 免账号密码：凭 local_token 直接进
 	LocalUsername   string `yaml:"local_username"`    // 本地单用户的用户名（按它解析/创建，自动 admin）
 	LocalToken      string `yaml:"local_token"`       // 本地访问令牌（app 生成，经 ${XHAN_LOCAL_TOKEN} 注入）
+	LocalEnv        string `yaml:"local_env"`         // dev | prod：本环境标签，与 APP_ENV / 数据根 / token 前缀交叉断言（第 4 期）
 }
 
 // DBConfig — 数据库配置
@@ -356,6 +357,9 @@ func merge(dst, src *Config) {
 	}
 	if src.Server.LocalToken != "" {
 		dst.Server.LocalToken = src.Server.LocalToken
+	}
+	if src.Server.LocalEnv != "" {
+		dst.Server.LocalEnv = src.Server.LocalEnv
 	}
 	if src.Server.LocalSingleUser {
 		dst.Server.LocalSingleUser = true

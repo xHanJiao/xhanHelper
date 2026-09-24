@@ -30,13 +30,13 @@ struct XHWebViewOrigin: Equatable {
         return (port ?? urlPort) == urlPort
     }
 
-    /// 前端面板通用白名单：线上 + dev Vite + 本地内嵌（127.0.0.1:18923）+ 由 `webBaseURL` 推导的同源。
-    /// 本地模式下监控看板 / 消息调试面板打开的是 `http://127.0.0.1:18923/...`，漏了会直接空白。
+    /// 前端面板通用白名单：线上 + dev Vite + 本地内嵌（127.0.0.1:`LocalPaths.backendPort`）+ 由 `webBaseURL` 推导的同源。
+    /// 本地模式下监控看板 / 消息调试面板打开的是 `http://127.0.0.1:<端口>/...`，漏了会直接空白。
     static func frontendOrigins(webBaseURL: String) -> [XHWebViewOrigin] {
         var origins: [XHWebViewOrigin] = [
             XHWebViewOrigin(scheme: "https", host: "helper.xhanx.cn", port: nil),
             XHWebViewOrigin(scheme: "http", host: "localhost", port: 5173),
-            XHWebViewOrigin(scheme: "http", host: "127.0.0.1", port: 18923),
+            XHWebViewOrigin(scheme: "http", host: "127.0.0.1", port: LocalPaths.backendPort),
         ]
         if let derived = XHWebViewOrigin(webBaseURL), !origins.contains(derived) {
             origins.append(derived)

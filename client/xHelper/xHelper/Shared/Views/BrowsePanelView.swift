@@ -87,7 +87,7 @@ struct BrowsePanelView: View {
     @State private var trashBulkAction: TrashBulkAction?
 
     /// 监控看板前端地址：统一从 `DeviceManager.webBaseURL` 推导——
-    /// 本地模式 = 内嵌 Go 托管的前端（同源 127.0.0.1:18923）；非本地 Debug = Vite 5173；
+    /// 本地模式 = 内嵌 Go 托管的前端（同源 127.0.0.1:<LocalPaths.backendPort>）；非本地 Debug = Vite 5173；
     /// 线上 Release = helper.xhanx.cn。
     private var dashboardURL: URL? {
         URL(string: DeviceManager.webBaseURL + "/admin?t=\(dashboardBust)")
@@ -117,7 +117,7 @@ struct BrowsePanelView: View {
         )
     }
 
-    /// 导航白名单：仅允许前端所在同源（含本地内嵌 127.0.0.1:18923），其余一律静默拦截
+    /// 导航白名单：仅允许前端所在同源（含本地内嵌 127.0.0.1:<LocalPaths.backendPort>），其余一律静默拦截
     private var dashboardAllowedOrigins: [XHWebViewOrigin] {
         XHWebViewOrigin.frontendOrigins(webBaseURL: DeviceManager.webBaseURL)
     }

@@ -64,10 +64,17 @@ echo "==> [bundle-backend] 构建前端 + 本地版后端（内嵌前端）"
 make -C "$SERVER_DIR" build-frontend
 make -C "$SERVER_DIR" local-build
 
+# 按构建配置选本地 conf（第 4 期）：Debug → dev（18924 + xhanHelper-dev），其余 → prod
+case "${CONFIGURATION:-Release}" in
+  Debug*) LOCAL_CONF="config.local.dev.yaml"; ENV_NAME="dev" ;;
+  *)      LOCAL_CONF="config.local.yaml";     ENV_NAME="prod" ;;
+esac
+echo "==> [bundle-backend] 构建配置 ${CONFIGURATION:-（命令行/未设）} → 本地环境 $ENV_NAME（$LOCAL_CONF）"
+
 echo "==> [bundle-backend] 拷入 $RESOURCES_DIR"
 mkdir -p "$RESOURCES_DIR/conf"
 cp -f "$SERVER_DIR/dist/xhan-helper" "$OUT"
-cp -f "$SERVER_DIR/conf/config.yaml" "$SERVER_DIR/conf/config.local.yaml" "$RESOURCES_DIR/conf/"
+cp -f "$SERVER_DIR/conf/config.yaml" "$SERVER_DIR/conf/$LOCAL_CONF" "$RESOURCES_DIR/conf/"
 chmod +x "$OUT"
 
 # 嵌套二进制必须单独签名——Xcode 不会自动签脚本拷进去的可执行文件。

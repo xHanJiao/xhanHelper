@@ -489,6 +489,23 @@ flowchart LR
 3. 两个同时开：互不干扰；Dock 里能分清。
 4. **泄漏测试**：dev 设置页把「服务地址」填 `http://127.0.0.1:18923` 重启 → 请求被 **403** 踢，后端日志有「客户端 env=dev，后端 env=prod」。
 
+> **实现状态（2026-09-24 夜：代码已落，待真机往返）**
+>
+> - **Go 侧已自验**（`go build ./... && go test ./...` 全绿）：
+>   `config.server.local_env` + `appinit.AssertLocalEnv` 四者配套断言 + `middleware.Auth` 的 env 前缀校验（403）
+>   + 本地模式**不再回落 `user_tokens` 表**（越界请求连门都进不来）。真起 dev 后端实测：
+>   dev token → `200`、prod token → `403 {"errMsg":"环境不匹配：本地服务为 dev"}`、同前缀错串 → `401`；
+>   断言冒烟：dev conf 配 prod 前缀 token → `local_env=dev 要求 local_token 以 "dev:" 开头` 直接退出。
+> - **配置 / 打包**：`conf/config.local.dev.yaml`（新增，自带全部本地项，因为 `config.local.yaml` 只在 `APP_ENV=local` 时加载）；
+>   `config.local.yaml` 加 `local_env: prod`；`bundle-backend.sh` 按 `$CONFIGURATION` 选 conf；`make local-dev`。
+> - **Swift 侧已写**（`swift test` 200 绿 + macOS/iOS `swiftc -typecheck` 干净）：
+>   新增 `LocalPaths`（根 / 日志根 / 端口 / `APP_ENV` / conf 名）；8 处数据根硬编码全改（favicons / user-config / history / bookmarks / downloads / local_results / tool_output / workspace / 后端日志根 / 设置页展示）；
+>   本地 token 按环境分家（钥匙串 `local_token_dev` / `local_token_prod`，值 `<env>:<random>`）；`childEnvironment` 的 `APP_ENV` 按构建；白名单端口动态；Debug 显示名 `xhanHelper dev` + 顶部 accent 细条。
+> - **两处与定稿的偏差（都是被约束逼出来的，已加断言兜住）**：
+>   ① 白名单写死 `18923` 实际只有 **1 处代码**（`XHWebView.frontendOrigins`，另 2 处是注释），已改动态端口；
+>   ② `LocalPaths` / `ToolsDataRoot` / `LocalToolResultStore.dataRootName` 是**同一个决定的三个副本**——SwiftPM 不允许同一个文件进多个 target，tools 层与 LocalArtifacts 层各自留了一份；`LocalBackendManager.init` 启动时 `assert` 三者一致（防漂移）。
+> - **待你真机验**：上面 4 条验收 + 顶部 accent 细条的观感（不满意就删）。
+
 ### 第 5 期 — 分发（本次不做）
 
 纯 Go 驱动已就位 → 双架构 lipo；Developer ID 签名 + 公证（你已有 `DEVELOPMENT_TEAM = NSJD2BRH7Z`）；朋友填自己的 key。

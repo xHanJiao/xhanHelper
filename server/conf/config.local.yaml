@@ -6,6 +6,7 @@ server:
   host: 127.0.0.1 # 只监听回环，绝不暴露到局域网
   port: 18923
   mode: debug
+  local_env: prod # 本环境标签：与 APP_ENV / 数据根 / token 前缀交叉断言（第 4 期）
   local_single_user: true # 免账号密码：凭 local_token 直接进
   local_token: "${XHAN_LOCAL_TOKEN}" # app 生成随机值经 env 注入；make local 缺省 local-dev-token
   # 身份锚点是「库里的用户」（迁移进来的 xhan 原样认领），不靠配置里的名字。

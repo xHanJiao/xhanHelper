@@ -29,17 +29,24 @@ func newLocalTestRepo(t *testing.T) *service.UserRepo {
 	return service.NewUserRepo(db, 60, 4)
 }
 
-func localCfg() *config.Config {
+// localCfg 造一份「配套合法」的本地 dev 配置（第 4 期断言要求四者一致）。
+func localCfg(t *testing.T) *config.Config {
+	t.Helper()
+	t.Setenv("APP_ENV", "local.dev")
 	cfg := &config.Config{}
 	cfg.Server.LocalSingleUser = true
-	cfg.Server.LocalToken = "tok"
+	cfg.Server.LocalEnv = "dev"
+	cfg.Server.LocalToken = "dev:tok"
+	cfg.DB.Driver = "sqlite"
+	cfg.DB.Database = "/tmp/xhanHelper-dev/xhan_helper.db"
+	cfg.Storage.ImageDir = "/tmp/xhanHelper-dev/images"
 	return cfg
 }
 
 // 空库 → 新建默认名 me，并自动进 AdminUsers
 func TestEnsureLocalUser_EmptyDBCreatesDefault(t *testing.T) {
 	repo := newLocalTestRepo(t)
-	cfg := localCfg()
+	cfg := localCfg(t)
 
 	id, err := EnsureLocalUser(cfg, repo)
 	if err != nil {
@@ -63,7 +70,7 @@ func TestEnsureLocalUser_EmptyDBCreatesDefault(t *testing.T) {
 // 空库时可用 local_username 覆盖默认名
 func TestEnsureLocalUser_EmptyDBHonorsLocalUsername(t *testing.T) {
 	repo := newLocalTestRepo(t)
-	cfg := localCfg()
+	cfg := localCfg(t)
 	cfg.Server.LocalUsername = "xhan"
 
 	id, err := EnsureLocalUser(cfg, repo)
@@ -84,7 +91,7 @@ func TestEnsureLocalUser_SingleExistingUserClaimed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := EnsureLocalUser(localCfg(), repo)
+	id, err := EnsureLocalUser(localCfg(t), repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +109,7 @@ func TestEnsureLocalUser_MultipleUsersErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := EnsureLocalUser(localCfg(), repo); err == nil {
+	if _, err := EnsureLocalUser(localCfg(t), repo); err == nil {
 		t.Fatal("expected error when >1 user, got nil")
 	}
 }
@@ -122,5 +129,55 @@ func TestEnsureLocalUser_NonLocalReturnsEmpty(t *testing.T) {
 	id, err := EnsureLocalUser(&config.Config{}, newLocalTestRepo(t))
 	if err != nil || id != "" {
 		t.Fatalf("non-local: want (\"\", nil), got (%q, %v)", id, err)
+	}
+}
+
+// AssertLocalEnv：四者配套才放行（第 4 期）
+func TestAssertLocalEnv(t *testing.T) {
+	prodCfg := func(t *testing.T) *config.Config {
+		t.Helper()
+		t.Setenv("APP_ENV", "local")
+		cfg := &config.Config{}
+		cfg.Server.LocalSingleUser = true
+		cfg.Server.LocalEnv = "prod"
+		cfg.Server.LocalToken = "prod:tok"
+		cfg.DB.Driver = "sqlite"
+		cfg.DB.Database = "/tmp/xhanHelper/xhan_helper.db"
+		cfg.Storage.ImageDir = "/tmp/xhanHelper/images"
+		return cfg
+	}
+
+	if err := AssertLocalEnv(localCfg(t)); err != nil {
+		t.Fatalf("dev 配套配置应通过：%v", err)
+	}
+	if err := AssertLocalEnv(prodCfg(t)); err != nil {
+		t.Fatalf("prod 配套配置应通过：%v", err)
+	}
+	// 非本地模式：完全不检查（也不要求 APP_ENV）
+	if err := AssertLocalEnv(&config.Config{}); err != nil {
+		t.Fatalf("非本地模式不该检查：%v", err)
+	}
+
+	cases := []struct {
+		name   string
+		mutate func(*config.Config)
+	}{
+		{"local_env 非法", func(c *config.Config) { c.Server.LocalEnv = "staging" }},
+		{"APP_ENV 不配套", func(c *config.Config) { t.Setenv("APP_ENV", "local") }},
+		{"数据根不配套（dev 用了 prod 根）", func(c *config.Config) {
+			c.DB.Database = "/tmp/xhanHelper/xhan_helper.db"
+			c.Storage.ImageDir = "/tmp/xhanHelper/images"
+		}},
+		{"image_dir 跑出数据根", func(c *config.Config) { c.Storage.ImageDir = "/tmp/elsewhere/images" }},
+		{"token 前缀不配套（串了 prod 的 token）", func(c *config.Config) { c.Server.LocalToken = "prod:tok" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := localCfg(t)
+			tc.mutate(cfg)
+			if err := AssertLocalEnv(cfg); err == nil {
+				t.Fatal("期望报错，实际放行")
+			}
+		})
 	}
 }

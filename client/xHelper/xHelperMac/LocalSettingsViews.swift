@@ -159,6 +159,7 @@ struct LocalOnboardingView: View {
                 advancedCard
                 touchIDCard
                 testRow
+                    .padding(.top, -9)
                 actions
             }
             .frame(width: 540)

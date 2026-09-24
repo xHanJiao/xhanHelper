@@ -205,6 +205,19 @@ make db-pull / db-import / logs / clean
 | 公开（无认证） | `router.go` | `/api/share/:token`、`/api/share/messages/:token`、`/images/:file`（仅 public） |
 | Admin | `reflection_routes.go` `eval_routes.go` `cost.go` `llm_io_admin.go` `subagent_admin.go` | health、users、message debug、resource-lookup、replay、reflection traces、message-traces、`eval/*`、`cost/*`、`llm-io`、`subagents` |
 
+## 分支约定
+
+两个长期分支，各管一个部署形态，**不要互相直接 merge**：
+
+| 分支 | 是什么 | 形态 |
+|------|--------|------|
+| `main` | 云端部署版（现状） | 阿里云 + MySQL，前端由 nginx 独立托管 |
+| `local-main` | 本地版主干 | 跑在 Mac 上 + SQLite，双击 app 启动（见 `docs/design/local-sqlite/`） |
+
+- 功能分支从对应主干切：本地版用 `local/phase-N-*`（如 `local/phase-1-backend`），云端沿用现有命名。完成后并回**自己的**主干。
+- **通用改动（两边都要）先落 `main`，再单向把 `main` 合进 `local-main`**；反向（`local-main` → `main`）只在明确要把本地版能力搬回云端时才做，且逐个确认。
+- 不要把 `main` 直接覆盖到 `local-main`——本地版有专属改动（SQLite / 回环绑定 / app 打包 / conf 目录等），冲突时以本地版为准、手工择取。
+
 ## 开发约定
 
 - 与用户交流只用中文（代码/注释/日志沿用项目既有风格）

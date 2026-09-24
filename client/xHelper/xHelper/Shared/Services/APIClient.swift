@@ -675,6 +675,12 @@ struct UserMemory: Identifiable, Codable {
     let confirmCount: Int?
     let createdAt: String
 
+    /// 细节列表（服务端下发的 JSON 数组字符串；非 JSON 遗留数据返回 nil）
+    var factsList: [String]? {
+        guard let json = facts, let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode([String].self, from: data)
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case userId = "user_id"

@@ -20,9 +20,22 @@ struct MemoryDetailOverlay: View {
                         .markdownTheme(.chatBubble(fontSize: FontSizeManager.shared.scaledSize * 1.18))
                         .markdownCodeSyntaxHighlighter(.plainText)
 
-                    if let facts = memory.facts, !facts.isEmpty {
+                    if let facts = memory.factsList, !facts.isEmpty {
                         Divider()
-                        Markdown(facts)
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(facts.enumerated()), id: \.offset) { _, fact in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text("•")
+                                        .foregroundColor(.secondary)
+                                    Text(fact)
+                                        .font(.system(size: FontSizeManager.shared.scaledSize * 0.88))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                    } else if let raw = memory.facts, !raw.isEmpty {
+                        Divider()
+                        Markdown(raw)
                             .font(.system(size: FontSizeManager.shared.scaledSize * 0.88))
                             .foregroundColor(.secondary)
                     }

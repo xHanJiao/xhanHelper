@@ -253,6 +253,8 @@ flowchart TB
   - 新增一个用 `//go:embed all:dist` 把文件编进二进制的小包。
   - `router.go` 加静态路由 + SPA fallback（找不到的路径回落到 `index.html`，否则前端路由刷新会 404）。
 - **注意**：这打破了现有「生产前端由 nginx 独立托管、Go 不 serve dist」的约定。**这是本地模式专属**，云端部署仍可用 nginx（Go 托管只是多一条路，不影响）。
+- **门控**：`registerEmbeddedFrontend` 仅在 `server.local_single_user` 为真时注册——避免云端二进制在误跑过 `embed-frontend` 后也对外 serve SPA 回落；`make clean` 会清空 `internal/web/dist`（保留 `.gitkeep`，`go:embed all:dist` 仍可编译）。
+- **回落有边界**：只对「非 API、非 `/images`、无扩展名」的 GET 路径回落 `index.html`；缺失的 JS/CSS（带扩展名）与目录请求一律 404，避免把丢资源渲染成 HTML、避免目录列表。
 
 ### 4. 健康分级 + 启动提速
 
@@ -298,6 +300,8 @@ flowchart TD
 
 - **为什么**：现在 Release 版的地址写死云端 URL（`DeviceManager.swift:20-27`）。**macOS app 改为本地模式**，iOS 仍连云端。
 - **改哪里**：`DeviceManager` 的 `baseURL` / `webBaseURL` 在 macOS 下指向本机端口（prod `18923` / dev `18924`，随 build 决定）；放宽几个 WebView 的导航白名单（`BrowsePanelView.swift:127`、`MessageDebugPanelView.swift:57`）允许 `127.0.0.1` / `localhost`。
+  - **白名单要落到 `127.0.0.1:18923`**：本地模式下监控看板 / 消息调试面板打开的是 `http://127.0.0.1:18923/...`，当前白名单只有 `localhost:5173` / `helper.xhanx.cn`，漏了本地端口面板直接空白。
+  - **token 注入**：前端已读 `window.XH_BRIDGE.token`（`front-end/src/stores/auth.js:21`），2B 必须把本地 token 塞进 `XHWebViewBridge.makeConfiguration` 的 dictionary，否则 SPA 路由守卫会跳 `/login`。浏览器直开 `127.0.0.1:18923` 没有 token 通道（暂无登录流程），本期不做。
 - **注意**：`baseURL` 全项目被引用约 149 处，但都**集中经过 `DeviceManager`**，所以只需改这一处源头。**云端部署能力保留**（iOS 仍走 `helper.xhanx.cn`）。
 
 ### 8. Swift：密钥设置 + 首次配置引导（Keychain）
@@ -329,11 +333,12 @@ flowchart TD
 ### 11. 本地单用户 + Touch ID 解锁（取代账号密码）
 
 - **为什么**：本地是单用户，再让人记用户名/密码没意义，门交给 Touch ID。但**不能删 `user_id`**——28 张表都按它归属，删了要全库重构、还砸云端/iOS 共用代码。所以做法是「**身份隐形**」：用户后台自动存在，你永远看不见它，门用指纹。
-- **本地单用户模式（Go）**：配置 `server.local_single_user: true` + `local_username: xhan`。`middleware/auth.go` 加本地分支：Bearer 等于本地 token 时，按 `local_username` **解析用户（无则创建）** 并注入 `user_id`；启动时把该用户 UUID 塞进 `admin_users`（内存里），**因此不硬编码任何 UUID**。
+- **本地单用户模式（Go）**：配置 `server.local_single_user: true` + `local_token`。**身份锚点是「库里的用户」**——DB 在数据根里（`~/Library/Application Support/xhanHelper/`，在 app bundle **之外**），跨 app 重装存活，不靠配置里的名字。`EnsureLocalUser` 启动时：库里有且仅有一个用户就用它（迁移进来的 xhan `33333333-…` 原样认领）；空库才新建（默认名 `me`）；多于一个视为未剪枝，**直接致命**要求剪枝。`middleware/auth.go` 加本地分支：Bearer 等于本地 token 时注入该 `user_id`；并把用户 UUID 塞进 `admin_users`（内存里）——**不硬编码任何 UUID / 用户名**。
+- **三个场景都自洽**：① 迁移回来 → 库里带 xhan → 认领；② 给别人装 → 空库 → 建 `me`（phase 5 换首启提示）；③ 不断更新/删除重装 → 数据根不动、DB 还在 → 同一用户。token 由 app 每次生成经 env 传、**后端只比对不存储** → 重装换了新 token 照样连。
 - **本地 token（app 生成）**：首启生成随机 `localToken` 存 Keychain，拉起 Go 时经 env `XHAN_LOCAL_TOKEN` 传入，请求带它。**全程不涉及用户名/密码**。
 - **Touch ID 门（Swift）**：token 存成「需生物识别才能读」的 Keychain 项（`SecAccessControl` + `.userPresence`）。读它（换 token）天然触发指纹——**指纹即解锁**。触发时机：启动 / 从后台回前台 / 空闲 15 分钟；指纹失败**允许退系统密码兜底**（避免把自己锁外面）；**DEBUG build 跳过**（开发时不弹）。
-- **不钉 UUID（为了能分发）**：不写死 `local_user_id`。迁移进来的是线上 `xhan`（`33333333-…`），全新库则随机生成——两者都靠「按用户名解析」自洽；朋友的机子各用各的，不会顶着别人的身份。
-- **改哪里**：`middleware/auth.go` 本地分支；`config` 加 `local_single_user` / `local_username` / `local_token`；`DeviceManager` token 存储 UserDefaults → Keychain；新增 `LocalAuthService`（LAContext）；UI-1 / UI-5 / UI-10 相应调整。
+- **本地 refresh 直通**：本地 token 不在 `user_tokens` 表、也无过期概念，`/api/auth/refresh` 见到中间件打的 `local_auth` 标记直接返回成功——否则前端 30 分钟心跳拿 401 会主动登出（`front-end/src/stores/auth.js:75-85`）。`/api/auth/change-password` 在本地模式会失败（无旧密码），无害，不处理。
+- **改哪里**：`middleware/auth.go` 本地分支；`config` 加 `local_single_user` / `local_username`（可选，仅空库新建用）/ `local_token`；`DeviceManager` token 存储 UserDefaults → Keychain；新增 `LocalAuthService`（LAContext）；UI-1 / UI-5 / UI-10 相应调整。
 
 ---
 
@@ -551,6 +556,6 @@ sequenceDiagram
 | 10 | 数据复制 | UI 驱动：prod 导出 zip / dev 导入 zip（`ditto`），导入后自动重启后端 |
 | 11 | zip 方式 | shell 到 `/usr/bin/ditto`（不加依赖） |
 | 12 | UI 预览方式 | 原生走 Xcode `#Preview` + SwiftPM `ImageRenderer` 预览靶；HTML 仅 Web 前端 |
-| 13 | 本地身份 | 单用户、**隐形**：按 `local_username: xhan` 解析（无则建）+ 自动 admin；**不钉 UUID**（可分发） |
+| 13 | 本地身份 | 单用户、**隐形**：以「库里的用户」为锚点（唯一则认领、空库建 `me`、多则报错要求剪枝）；不钉 UUID / 用户名（可分发） |
 | 14 | 访问门 | Touch ID：启动 / 回前台 / 空闲 15min；失败允许系统密码兜底；DEBUG 跳过；token 存 Keychain（生物保护） |
 | 15 | 迁移范围 | 全量搬 + 剪掉非 xhan（28 张 `user_id` 表）；写全新 DB；**不迁图片**（旧图 404）；**分享不做** |

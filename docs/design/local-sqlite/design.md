@@ -382,7 +382,7 @@ flowchart LR
 - 改动点 3、5、6、7、8、9、11。
 - 验收：首次配置 → Touch ID 解锁 → 聊天通；健康 `starting → ready` 可见；故意填错 key / 占端口 → 弹出人类可读报错；红 X 驻留、Cmd+Q 真退；前端面板（浏览/调试）可用（分享先不做）；**token 注入失败（`XHAN_LOCAL_TOKEN` 为空）时后端拒绝启动并报错，不退化成无认证**（`EnsureLocalUser` 对空 token 返回 error）。
 
-> **2B 实现状态（待用户真机验收）**：2B-1 打包链路 ✅ / 2B-2 启动器 + 寻址 + 看门狗 ✅ /
+> **2B 实现状态（已真机验收 ✅）**：2B-1 打包链路 ✅ / 2B-2 启动器 + 寻址 + 看门狗 ✅ /
 > 2B-3 Keychain + UI-1 首次配置 + UI-5 模型与密钥 ✅ / 2B-4 Touch ID（UI-10）+ 驻留（UI-9）✅ /
 > 2B-5 WebView 白名单 + token 注入 + UI-6 本地服务页 ✅。
 > 遗留（不阻塞 2B）：前端「测试连接」直连 provider（DeepSeek + Ark），未走本地后端。
@@ -408,8 +408,18 @@ flowchart LR
 > ② 指纹门改由 **app 层**把守——`LocalBackendManager.unlock()` 先 `authenticate()` 再读/建 token，`LocalLockController` 管运行期重锁；
 > ③ **access group 不需要**：两个 build 同机同用户，传统钥匙串不按 app 分区即可共享（跨 bundle id 顶多弹一次授权），原「dev/prod 共享密钥」诉求自然满足 → 第 4 期无需为此加能力；
 > ④ 写操作不再静默：`LocalKeychain.set` / `LocalSecretsStore.save` 返回 OSStatus，UI-1 / UI-5 失败时红字报出并阻止继续；
-> ⑤ UI-1 布局修：顶部留 44pt 让开红绿灯 + 内容垂直居中 + 窗口 660 → 620。
+> ⑤ UI-1 布局修：顶部留 44pt 让开红绿灯 + 窗口收窄到 588 宽。
 > 代价：token 无 item 级生物 ACL（别的本地进程读取需用户授权点击，非静默）；威胁模型（见风险表）仍可接受。
+>
+> **review 处置（第四轮，真机暴露）**：
+> ① **UI-1 布局**最终形态：`ScrollView { VStack }` **顶部对齐** + `.padding(.top, 44)`，窗口 **588×650**（第三轮那版「垂直居中 + 620 高」已废）；
+> ② **输入框提示**改 `prompt:`（框内灰字）——`TextField`/`SecureField` 首参是 label，在 `Form` + `LabeledContent` 里会被渲染成输入框右侧的行标签（像「框外挂了个值」，Base URL 还折行）；宽度 260/280 → 300；
+> ③ **移除环境变量回退**：`LocalSecretsStore.load()` 只认 Keychain。scheme / shell 里的 `LLM_API_KEY` 会把 `isConfigured` 顶成 true 而界面显示「未配置」→ 症状是「清了密钥也回不去首次配置」；顺带清掉 scheme 里残留的明文 key（键名 `LLM_API_KEY1`，本就匹配不上，是死变量）；
+> ④ **Touch ID 开关**：打开时先 `authenticate()` 过一遍指纹（`enableWithAuthentication`），失败/取消把开关弹回；设置页补 `#if DEBUG` 不弹指纹的提示（原来只有 onboarding 有）；
+> ⑤ **测试连接反馈**改「图标 + hover」：`ProbeFailure{message 人话, detail provider 原文}`，界面只出图标、hover 才展开——原来那行红字把 Form 撑高、还常跑到离按钮很远的地方（如 Touch ID 卡片下面），且原始 JSON 会被 `lineLimit` 切半截；
+> ⑥ **保存前强制测试**：设置页「保存并重启后端」与 onboarding「继续」都先测连接，通过才落盘（失败不存不重启，只亮红图标）；
+> ⑦ **删手写 `applicationShouldHandleReopen`**：SwiftUI 的 `WindowGroup` 本就会恢复窗口，那只「第二只手」会和它各拉一个 → 偶尔出现**两个主窗口**（旧 NSWindow 有时还活着、有时已释放，所以不必现）；顺带治好点 Dock 弹出设置页；
+> ⑧ **清除密钥 → 跳回首次配置**：`isConfigured` 变 false 时关掉设置等普通窗口 + 把主窗口叫到前面，否则清完 key 还杵在设置页里。
 
 ### 第 3 期 — 数据迁移（MySQL → 本地 prod）
 
@@ -563,7 +573,7 @@ sequenceDiagram
 | # | 界面 | 触发时机 | 关键元素 | 基调 | 期 |
 |---|------|----------|----------|------|----|
 | **UI-1** | **首次配置（Onboarding）** `NEW` | 首次启动、Keychain 无密钥 | 欢迎头 / 两个 key / 高级区(model, base_url) / 测试连接 / **启用 Touch ID** / 继续 | Apple 设置助理级「高级感」；**单页**（高级区折叠）；**无账号密码** | 2 |
-| **UI-2** | **启动·预热态** `NEW` | 后端 `starting→ready` | 轻量指示：「正在启动服务…」「正在预热记忆检索…」 | 克制、不挡操作；**主窗口内联** | 2 |
+| **UI-2** | **启动·预热态** `NEW` | 后端 `starting→ready`；或 ready 但会话未载入完 | 轻量指示：「正在启动本地服务…」（**不显示预热**：warmup 已后台化、不挡窗口） | 克制、不挡操作；**主窗口内联** | 2 |
 | **UI-3** | **后端启动失败弹窗** `NEW` | 子进程提前退出 / 健康超时 | 人话原因 + 退出码 + 日志折叠 + 「查看日志 / 重新配置 / 重试」 | 系统 Alert 或 sheet | 2 |
 | **UI-4** | **未配置空态** `NEW` | 用户跳过 onboarding | 主窗口空态 + 「去配置」入口 | 复用 `ErrorStateView` 风格 | 2 |
 | **UI-5** | **设置页「模型与密钥」** `改造` | 随时 | 两个 `SecureField` / model 下拉 / base_url / 清除密钥 /（测试连接）/「锁定·重新验证」 | 复用 `SettingsCard`+`KeycapView`；**Release 可见**；去掉「退出登录」 | 2 |
@@ -589,7 +599,7 @@ sequenceDiagram
 |---|------|------|
 | 1 | 本地端口策略 | prod 固定 `18923`、dev `18924`；被占就报错（SQLite 单实例） |
 | 2 | 生命周期 | 单进程驻留：红 X 只关窗，Cmd+Q / 右键退出才停后端（方案 A） |
-| 3 | 密钥输入时机 | 首次启动弹配置窗口；密钥存传统钥匙串（不按 app 分区，dev/prod 两个 build 天然共享，**不需要 access group**——第三轮 review 修订） |
+| 3 | 密钥输入时机 | 首次启动弹配置窗口；密钥存传统钥匙串（不按 app 分区，dev/prod 两个 build 天然共享，**不需要 access group**——第三轮 review 修订）；**只认 Keychain、不回退进程环境变量**（第四轮修订） |
 | 4 | 可改配置 | provider 锁死 deepseek；放开 `model`（一个字段）+ `base_url`；embedding 只放开 key |
 | 5 | 启动补扫 | 是否加「启动即扫一次延迟任务」（可选，几行）——**遗留，未定** |
 | 6 | 分发方式 | 本次不做。将来走 Developer ID（非 App Store）还是 App Store（沙盒，需重设计）——**遗留，未定** |

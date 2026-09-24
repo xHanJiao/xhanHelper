@@ -2,6 +2,7 @@ package appinit
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -37,8 +38,57 @@ func RegisterMonitorSnapshots(vs *agent.VectorStore, mcpManager *mcp.Manager, co
 	monitor.Register("themes", snapshots.Themes)
 }
 
+// EnsureLocalUser 本地单用户模式：以「库里的用户」为身份锚点——
+// 有且仅有一个就用它（迁移进来的 xhan 原样认领）；空库才新建（默认名 me）；
+// 多于一个视为未剪枝，返回错误（由调用方致命退出）。返回 user_id，并把它加进
+// admin 列表（内存）——monitor.AdminOnly 依赖 AdminUsers 非空，勿当冗余清理。
+// 非本地模式返回 ("", nil)。
+func EnsureLocalUser(cfg *config.Config, userRepo *service.UserRepo) (string, error) {
+	if !cfg.Server.LocalSingleUser {
+		return "", nil
+	}
+	if cfg.Server.LocalToken == "" {
+		return "", fmt.Errorf("local_single_user 需要 local_token（经 XHAN_LOCAL_TOKEN 注入）")
+	}
+
+	ctx := context.Background()
+	users, err := userRepo.ListAll(ctx)
+	if err != nil {
+		return "", fmt.Errorf("list users: %w", err)
+	}
+
+	var userID, username string
+	switch len(users) {
+	case 0:
+		name := cfg.Server.LocalUsername
+		if name == "" {
+			name = "me"
+		}
+		u, err := userRepo.EnsureByUsername(ctx, name)
+		if err != nil {
+			return "", fmt.Errorf("create local user %q: %w", name, err)
+		}
+		userID, username = u.ID, u.Username
+		log.Printf("[local] empty db, created local user %q", username)
+	case 1:
+		userID, username = users[0].ID, users[0].Username
+	default:
+		return "", fmt.Errorf("本地单用户模式要求库里只有一个用户，当前 %d 个；请先剪枝（见 docs/design/local-sqlite/design.md 第七节）", len(users))
+	}
+
+	cfg.Server.AdminUsers = append(cfg.Server.AdminUsers, userID)
+	log.Printf("[local] single-user mode: username=%s user_id=%s (auto admin)", username, userID)
+	return userID, nil
+}
+
 // InitRouter 创建路由、注册所有 handler
-func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, agents *AgentBundle, tools *ToolsBundle, mcpManager *mcp.Manager, vs *agent.VectorStore) *gin.Engine {
+func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, agents *AgentBundle, tools *ToolsBundle, mcpManager *mcp.Manager, vs *agent.VectorStore, localUserID string) *gin.Engine {
+	localAuth := middleware.LocalAuth{
+		Enabled: cfg.Server.LocalSingleUser,
+		UserID:  localUserID,
+		Token:   cfg.Server.LocalToken,
+	}
+	authMW := middleware.Auth(repos.User, localAuth)
 	billHandler := controller.NewBillHandler(repos.Bill)
 	noteHandler := controller.NewNoteHandler(repos.Note, tools.EntityPurger)
 	memHandler := controller.NewMemoryHandler(repos.Mem, tools.EntityPurger)
@@ -87,6 +137,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		LlmPriceRepo:         repos.LlmPrice,
 		ExtraMiddleware:      []gin.HandlerFunc{middleware.RequestLogger(log.Default())},
 		Ready:                agents.Ready,
+		AuthMiddleware:       authMW,
 	})
 
 	controller.RegisterReflectionRoutes(&controller.ReflectionRoutesConfig{
@@ -99,7 +150,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		ReplayHandler:          replayHandler,
 		EnableReplay:           true, // admin 路由已有 AdminMiddleware 保护，生产环境开放
 		CronRunner:             agents.CronRunner,
-		AuthMiddleware:         middleware.Auth(repos.User),
+		AuthMiddleware:         authMW,
 		AdminMiddleware:        monitor.AdminOnly(cfg.Server.AdminUsers),
 	})
 
@@ -107,7 +158,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	evalRunHandler := controller.NewEvalRunHandler("data/eval")
 	controller.RegisterEvalRoutes(controller.EvalRoutesConfig{
 		R:               router,
-		AuthMiddleware:  middleware.Auth(repos.User),
+		AuthMiddleware:  authMW,
 		AdminMiddleware: monitor.AdminOnly(cfg.Server.AdminUsers),
 		Handler:         evalAdminHandler,
 		RunHandler:      evalRunHandler,
@@ -115,7 +166,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 
 	controller.RegisterCostRoutes(controller.CostRoutesConfig{
 		R:               router,
-		AuthMiddleware:  middleware.Auth(repos.User),
+		AuthMiddleware:  authMW,
 		AdminMiddleware: monitor.AdminOnly(cfg.Server.AdminUsers),
 		Repo:            repos.LlmCost,
 		PriceRepo:       repos.LlmPrice,
@@ -123,14 +174,14 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 
 	controller.RegisterLLMIOAuditRoutes(controller.LLMIOAuditRoutesConfig{
 		R:               router,
-		AuthMiddleware:  middleware.Auth(repos.User),
+		AuthMiddleware:  authMW,
 		AdminMiddleware: monitor.AdminOnly(cfg.Server.AdminUsers),
 		Repo:            repos.LLMCallIO,
 	})
 
 	controller.RegisterSubAgentAdminRoutes(controller.SubAgentAdminRoutesConfig{
 		R:               router,
-		AuthMiddleware:  middleware.Auth(repos.User),
+		AuthMiddleware:  authMW,
 		AdminMiddleware: monitor.AdminOnly(cfg.Server.AdminUsers),
 		ConvRepo:        repos.Conversation,
 		MsgRepo:         repos.Message,

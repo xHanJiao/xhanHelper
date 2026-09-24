@@ -160,6 +160,10 @@ type ServerConfig struct {
 	TokenTTLMinutes           int      `yaml:"token_ttl_minutes"`            // token 过期时间（分钟），默认 5
 	MaxTokensPerUser          int      `yaml:"max_tokens_per_user"`          // 同一用户最大 token 数，默认 4
 	AdminUsers                []string `yaml:"admin_users"`                  // 管理员用户 ID 列表
+	// —— 本地单用户模式（Mac 本地部署）——
+	LocalSingleUser bool   `yaml:"local_single_user"` // 免账号密码：凭 local_token 直接进
+	LocalUsername   string `yaml:"local_username"`    // 本地单用户的用户名（按它解析/创建，自动 admin）
+	LocalToken      string `yaml:"local_token"`       // 本地访问令牌（app 生成，经 ${XHAN_LOCAL_TOKEN} 注入）
 }
 
 // DBConfig — 数据库配置
@@ -346,6 +350,15 @@ func loadFile(name string) (*Config, error) {
 func merge(dst, src *Config) {
 	if src.Server.Host != "" {
 		dst.Server.Host = src.Server.Host
+	}
+	if src.Server.LocalUsername != "" {
+		dst.Server.LocalUsername = src.Server.LocalUsername
+	}
+	if src.Server.LocalToken != "" {
+		dst.Server.LocalToken = src.Server.LocalToken
+	}
+	if src.Server.LocalSingleUser {
+		dst.Server.LocalSingleUser = true
 	}
 	if src.Server.Port != 0 {
 		dst.Server.Port = src.Server.Port
@@ -677,6 +690,7 @@ func resolveEnvVars(cfg *Config) {
 	cfg.LLM.APIKey = os.ExpandEnv(cfg.LLM.APIKey)
 	cfg.LLMBg.APIKey = os.ExpandEnv(cfg.LLMBg.APIKey)
 	cfg.Embedding.APIKey = os.ExpandEnv(cfg.Embedding.APIKey)
+	cfg.Server.LocalToken = os.ExpandEnv(cfg.Server.LocalToken)
 }
 
 func validate(cfg *Config) error {

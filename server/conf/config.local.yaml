@@ -6,12 +6,14 @@ server:
   host: 127.0.0.1 # 只监听回环，绝不暴露到局域网
   port: 18923
   mode: debug
-  registration_enabled: true # 本地首次启动需要注册
-  allowed_users: [xhan] # 本地单用户（对应线上 xhan 账号，迁移后数据可对上）
+  local_single_user: true # 免账号密码：凭 local_token 直接进
+  local_token: "${XHAN_LOCAL_TOKEN}" # app 生成随机值经 env 注入；make local 缺省 local-dev-token
+  # 身份锚点是「库里的用户」（迁移进来的 xhan 原样认领），不靠配置里的名字。
+  # local_username 可选，仅用于空库新建时的默认名（缺省 "me"）。
 
 db:
   driver: sqlite
-  database: ${HOME}/Library/Application Support/xhanHelper/xhan_helper.db
+  database: "${HOME}/Library/Application Support/xhanHelper/xhan_helper.db"
 
 storage:
-  image_dir: ${HOME}/Library/Application Support/xhanHelper/images
+  image_dir: "${HOME}/Library/Application Support/xhanHelper/images"

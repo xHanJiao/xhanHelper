@@ -1,4 +1,4 @@
-.PHONY: dev dev-full local local-build check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs db-pull db-import entity-gc build-entity-gc topic-merge-plan topic-merge-apply build-topic-merge restart
+.PHONY: dev dev-full local local-build embed-frontend check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs db-pull db-import entity-gc build-entity-gc topic-merge-plan topic-merge-apply build-topic-merge restart
 
 # 远端 ssh 执行时 source 用户环境变量（非交互 ssh 不会自动 source）
 REMOTE_ENV = for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do source "$$f" 2>/dev/null || true; done;
@@ -45,14 +45,26 @@ dev: check-env
 	go run ./cmd/xhan-helper/ 2>&1 | tee logs/dev-$$(date +%Y-%m-%d).log
 
 # 启动本地版服务（local → SQLite @ Application Support）
+# XHAN_LOCAL_TOKEN 缺省给个开发用令牌；正式由 app 生成随机值经 env 注入
 local: check-env
 	@echo "=== 启动本地服务 (local → SQLite @ ~/Library/Application Support/xhanHelper) ==="
 	@mkdir -p logs
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	export XHAN_LOCAL_TOKEN="$${XHAN_LOCAL_TOKEN:-local-dev-token}"; \
+	echo "  local_token: $$XHAN_LOCAL_TOKEN"; \
 	APP_ENV=local go run ./cmd/xhan-helper/ 2>&1 | tee logs/local-$$(date +%Y-%m-%d).log
 
-# 编译本地版二进制（app 打包用）
-local-build:
+# 把前端构建产物拷进 Go 内嵌目录
+embed-frontend:
+	@if [ ! -d $(FRONTEND_DIR)/dist ]; then echo "❌ 先跑 make build-frontend"; exit 1; fi
+	@echo "=== 拷贝前端 dist → internal/web/dist ==="
+	@rm -rf internal/web/dist
+	@mkdir -p internal/web/dist
+	@cp -R $(FRONTEND_DIR)/dist/. internal/web/dist/
+	@touch internal/web/dist/.gitkeep
+
+# 编译本地版二进制（app 打包用；依赖已嵌入的前端）
+local-build: embed-frontend
 	@echo "=== 编译本地版二进制 ==="
 	@mkdir -p $(OUTPUT_DIR)
 	go build -o $(OUTPUT_DIR)/$(BINARY) ./cmd/xhan-helper/
@@ -381,4 +393,7 @@ clean:
 	rm -f xhan-helper
 	rm -rf $(OUTPUT_DIR)
 	rm -rf $(FRONTEND_DIR)/dist
+	rm -rf internal/web/dist
+	mkdir -p internal/web/dist
+	touch internal/web/dist/.gitkeep
 	rm -f data/xhan_helper.db

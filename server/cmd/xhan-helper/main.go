@@ -49,6 +49,10 @@ func main() {
 	infra := app.InitInfra(cfg, db, func(apiKey, baseURL, model string) *llm.Embedder { return embedder }, vsAdapter)
 
 	repos := app.InitRepos(cfg, db)
+	localUserID, err := appinit.EnsureLocalUser(cfg, repos.User)
+	if err != nil {
+		log.Fatalf("[local] %v", err)
+	}
 	costRecorder := llmcost.NewDBRecorder(repos.LlmCost)
 
 	llmClients := app.InitLLM(cfg, llm.NewClient, llm.NewStrongClient, costRecorder)
@@ -84,6 +88,6 @@ func main() {
 	tools.MCPManager.StartIdleReaper(agents.BGCtx)
 
 	// --- 路由 & 服务 ---
-	router := appinit.InitRouter(cfg, repos, infra, llmClients, agents, tools, tools.MCPManager, vs)
+	router := appinit.InitRouter(cfg, repos, infra, llmClients, agents, tools, tools.MCPManager, vs, localUserID)
 	appinit.Serve(cfg, router, agents.BGCancel, tools.MCPManager, agents.BGCtx)
 }

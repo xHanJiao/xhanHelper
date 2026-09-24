@@ -11,6 +11,13 @@ class DeviceManager: ObservableObject {
     @Published var defaultConversation: ConversationData?
     @Published var knownUsernames: [String] = []
 
+    #if os(macOS)
+    /// 本地模式：后端已 ready 但载入默认会话失败时的错误（供启动门展示 + 重试）。
+    @Published var localBootstrapError: String?
+    /// 防止 `.task` 与 `.onChange` 两条路径并发重入 `onLocalBackendReady()`。
+    private var isLoadingLocalBootstrap = false
+    #endif
+
     private let tokenKey = "xhan_user_token"
     private let userIdKey = "xhan_user_id"
     private let usernameKey = "xhan_username"
@@ -27,7 +34,15 @@ class DeviceManager: ObservableObject {
     #endif
 
     var baseURL: String {
-        #if DEBUG
+        #if os(macOS)
+        // 本地模式：连 app 自拉起的内嵌后端；显式设了 xhan_server_url 则改用它（逃生口）。
+        // 注意：设置页的「服务地址」输入框当前在 #if DEBUG 内，Release 下只能靠 defaults 写入；
+        // Release 可见入口随 2B-3 / 2B-8。
+        if let override = UserDefaults.standard.string(forKey: "xhan_server_url"), !override.isEmpty {
+            return override
+        }
+        return LocalBackendManager.shared.baseURL
+        #elseif DEBUG
         let url = UserDefaults.standard.string(forKey: "xhan_server_url") ?? Self.defaultBaseURL
         return url
         #else
@@ -45,7 +60,19 @@ class DeviceManager: ObservableObject {
     #endif
 
     static var webBaseURL: String {
-        #if DEBUG
+        #if os(macOS)
+        if let override = UserDefaults.standard.string(forKey: "xhan_web_url"), !override.isEmpty {
+            return override
+        }
+        // 逃生口（服务地址指向远端/自定义后端）时前端不在本地端口上——回退默认
+        // （Debug=Vite 5173 / Release=helper.xhanx.cn）。不能跟着本地端口走，否则
+        // 分享页 / 浏览·调试面板会指到没人监听的 127.0.0.1，白屏且无提示。
+        if !LocalBackendManager.isActive {
+            return Self.defaultWebBaseURL
+        }
+        // 本地模式：前端由内嵌 Go 托管，与 API 同源。
+        return LocalBackendManager.shared.baseURL
+        #elseif DEBUG
         let url = UserDefaults.standard.string(forKey: "xhan_web_url") ?? Self.defaultWebBaseURL
         return url
         #else
@@ -54,6 +81,18 @@ class DeviceManager: ObservableObject {
     }
 
     init() {
+        #if os(macOS)
+        if LocalBackendManager.isActive {
+            // 本地模式：无登录流程，token 由 app 生成、与后端共享；等后端 ready 再载默认会话。
+            self.token = LocalBackendManager.shared.token
+            self.userId = nil
+            self.username = nil
+            self.knownUsernames = []
+            self.isLoggedIn = false
+            LogBuffer.shared.info("app launched in local backend mode")
+            return
+        }
+        #endif
         self.token = UserDefaults.standard.string(forKey: tokenKey)
         self.userId = UserDefaults.standard.string(forKey: userIdKey)
         self.username = UserDefaults.standard.string(forKey: usernameKey)
@@ -82,6 +121,32 @@ class DeviceManager: ObservableObject {
         isVerifying = false
     }
 
+    #if os(macOS)
+    /// 本地后端就绪后调用：接管本地 token 并加载默认会话（本地没有登录流程）。
+    /// 幂等：`.task` 与 `.onChange` 都可能触发，已在跑 / 已登录就直接返回。
+    func onLocalBackendReady() async {
+        guard LocalBackendManager.isActive else { return }
+        guard !isLoggedIn, !isLoadingLocalBootstrap else { return }
+        isLoadingLocalBootstrap = true
+        localBootstrapError = nil
+        token = LocalBackendManager.shared.token
+        isVerifying = true
+        defer {
+            isVerifying = false
+            isLoadingLocalBootstrap = false
+        }
+        do {
+            try await getDefaultConversationInfo()
+            isLoggedIn = true
+            LogBuffer.shared.info("local backend ready: default conversation loaded")
+        } catch {
+            // 不静默：暴露给启动门展示错误态 + 重试，别让 UI 永久停在 spinner。
+            localBootstrapError = "本地服务已就绪，但载入会话失败：\(error.localizedDescription)"
+            LogBuffer.shared.error("local: 加载默认会话失败: \(error)")
+        }
+    }
+    #endif
+
     private func clearAuthState() {
         stopTokenRefresh()
         UserDefaults.standard.removeObject(forKey: tokenKey)
@@ -96,6 +161,12 @@ class DeviceManager: ObservableObject {
     }
 
     func logout() async {
+        #if os(macOS)
+        if LocalBackendManager.isActive {
+            // 本地模式没有登出概念；访问门由 Touch ID 管（2B-4）。
+            return
+        }
+        #endif
         if let t = token {
             var req = URLRequest(url: URL(string: "\(baseURL)/api/auth/logout")!)
             req.httpMethod = "POST"

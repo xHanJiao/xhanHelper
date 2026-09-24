@@ -13,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var isQuittingByHold = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 本地模式：先把内嵌后端拉起来（窗口秒开，后端在后台初始化）。
+        LocalBackendManager.shared.start()
+
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self,
                   event.keyCode == 12,
@@ -419,6 +422,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return .terminateLater
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        // 同步停内嵌后端（最多等 2 秒，超时 SIGKILL），保证不留孤儿进程占端口。
+        LocalBackendManager.shared.stopBlocking()
+    }
+
     // MARK: 退出确认（非阻塞 sheet）
 
     /// 退出确认 sheet 是否正在展示（防重入）
@@ -467,6 +475,7 @@ struct xhanHelperMacApp: App {
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var deviceManager = DeviceManager()
+    @ObservedObject private var localBackend = LocalBackendManager.shared
     @StateObject private var colorSchemeManager = ColorSchemeManager()
     @StateObject private var resizeGhost = ResizeGhostState()
     @State private var isHoldingQuit = false
@@ -475,13 +484,7 @@ struct xhanHelperMacApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if deviceManager.isLoggedIn {
-                    ContentView(deviceManager: deviceManager, resizeGhost: resizeGhost)
-                        .frame(minWidth: 400, minHeight: 400)
-                } else {
-                    LoginMacView(deviceManager: deviceManager)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+                localBackendRoot
             }
             .environmentObject(colorSchemeManager)
             .environmentObject(FontSizeManager.shared)
@@ -491,6 +494,10 @@ struct xhanHelperMacApp: App {
             .browserDiagnostics()
             .glassWindow()
             .task {
+                // 后端可能在窗口渲染前就已 ready（空库秒起），补一次；否则交给 onChange。
+                if localBackend.state == .ready {
+                    await deviceManager.onLocalBackendReady()
+                }
                 await LocalToolRegistry.shared.register(BrowserToolProvider.shared)
                 ContentBlocker.load()
                 await MCPManager.shared.refreshToolCache()
@@ -503,6 +510,11 @@ struct xhanHelperMacApp: App {
                 LocalToolRegistry.shared.register(ShellToolProvider())
                 AgentWorkspace.ensureExists()
                 ToolOutputStore.shared.startHousekeeping()
+            }
+            .onChange(of: localBackend.state) { _, newState in
+                if newState == .ready {
+                    Task { await deviceManager.onLocalBackendReady() }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .holdToQuitChanged)) { notification in
                 if let active = notification.userInfo?["isActive"] as? Bool {
@@ -560,6 +572,77 @@ struct xhanHelperMacApp: App {
         .ignoresSafeArea()
         .animation(.easeOut(duration: 0.15), value: isHoldingQuit)
     }
+
+    // MARK: - 本地后端启动门（UI-2 / UI-3）
+
+    @ViewBuilder
+    private var localBackendRoot: some View {
+        if !LocalBackendManager.isActive {
+            // 逃生口：设置里显式填了「服务地址」，走原来的登录 / 云端寻址。
+            accountRoot
+        } else {
+            switch localBackend.state {
+            case .ready:
+                if deviceManager.isLoggedIn {
+                    ContentView(deviceManager: deviceManager, resizeGhost: resizeGhost)
+                        .frame(minWidth: 400, minHeight: 400)
+                } else if let err = deviceManager.localBootstrapError {
+                    // 后端起来了但载入会话失败：给错误态 + 重试，别让 UI 永久停在 spinner。
+                    localBackendFailed(err) { Task { await deviceManager.onLocalBackendReady() } }
+                } else {
+                    localBackendStarting
+                }
+            case .idle, .starting:
+                localBackendStarting
+            case .failed(let reason):
+                localBackendFailed(reason) { Task { await localBackend.restart() } }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var accountRoot: some View {
+        if deviceManager.isLoggedIn {
+            ContentView(deviceManager: deviceManager, resizeGhost: resizeGhost)
+                .frame(minWidth: 400, minHeight: 400)
+        } else {
+            LoginMacView(deviceManager: deviceManager)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var localBackendStarting: some View {
+        VStack(spacing: 14) {
+            ProgressView()
+            Text("正在启动本地服务…")
+                .foregroundColor(.secondary)
+            Text("首次启动需初始化数据库，稍等片刻")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func localBackendFailed(_ reason: String, retry: @escaping () -> Void) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 36))
+                .foregroundColor(.secondary)
+            Text(reason)
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .textSelection(.enabled)
+                .frame(maxWidth: 560)
+            HStack(spacing: 12) {
+                Button("查看日志") { NSWorkspace.shared.open(localBackend.logFileURL) }
+                Button("重试", action: retry)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 }
 
 // MARK: - Settings
@@ -567,7 +650,8 @@ struct xhanHelperMacApp: App {
 struct MacSettingsView: View {
     @ObservedObject var deviceManager: DeviceManager
     @EnvironmentObject var colorSchemeManager: ColorSchemeManager
-    @AppStorage("xhan_server_url") private var serverURL = DeviceManager.defaultBaseURL
+    // 空 = 使用 app 自启动的内嵌本地后端；填了 = 逃生口（连远端/自定义后端，不启动本地后端）。
+    @AppStorage("xhan_server_url") private var serverURL = ""
     @AppStorage("xhan_l3_alert_sound") private var l3AlertSound = true
     @State private var showClearCacheAlert = false
     @State private var showAddDirSheet = false
@@ -741,9 +825,13 @@ struct MacSettingsView: View {
                     .fontDesign(.monospaced)
             }
 
-            Section("服务器") {
-                TextField("服务地址", text: $serverURL)
+            Section {
+                TextField("服务地址（留空 = 使用内嵌本地后端）", text: $serverURL)
                     .textFieldStyle(.roundedBorder)
+            } header: {
+                Text("服务器")
+            } footer: {
+                Text("留空时由 app 自启动内嵌后端（127.0.0.1:18923）；填写后改连该地址，且不再启动本地后端。")
             }
 #endif
 

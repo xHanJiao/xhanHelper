@@ -208,6 +208,8 @@ func Serve(cfg *config.Config, router *gin.Engine, bgCancel context.CancelFunc, 
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	// 父进程（app）崩溃时自退，避免孤儿进程占端口（仅本地模式）。
+	WatchParent(cfg.Server.LocalSingleUser, 5*time.Second)
 	<-quit
 	log.Println("shutting down...")
 

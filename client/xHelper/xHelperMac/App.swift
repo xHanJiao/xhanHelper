@@ -13,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var isQuittingByHold = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // dev 视觉标识（UI-7）：Dock 图标右下角打一个 dev 角标（两个 .app 图标否则一模一样）。
+        applyDevIconBadgeIfNeeded()
+
         // 本地模式：先把内嵌后端拉起来（窗口秒开，后端在后台初始化）。
         // 未配密钥时不起后端——先走首次配置（UI-1），配置完成后再 start。
         if LocalBackendManager.isActive && LocalBackendManager.shared.isConfigured {
@@ -486,6 +489,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return normal.first(where: { $0.isVisible }) ?? normal.first
     }
 
+    /// dev 构建：给 Dock 图标右下角打一个 `dev` 角标。两个 .app 的图标资源是同一份，
+    /// 不加角标在 Dock / ⌘Tab 里根本分不出谁是谁（窗口内另有顶栏 DEV 徽标）。
+    private func applyDevIconBadgeIfNeeded() {
+        guard LocalPaths.isDev, let base = NSApp.applicationIconImage else { return }
+        let size = base.size
+        let label = "dev" as NSString
+        let font = NSFont.systemFont(ofSize: size.height * 0.115, weight: .bold)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+        let textSize = label.size(withAttributes: attrs)
+        let padX = textSize.height * 0.5
+        let badgeSize = CGSize(width: textSize.width + padX * 2, height: textSize.height * 1.45)
+        // 不贴死右下角：macOS 26 会给全出血图标套圆角遮罩，太靠边会被啃掉一角。
+        let badgeRect = NSRect(
+            x: size.width * 0.965 - badgeSize.width,
+            y: size.height * 0.035,
+            width: badgeSize.width,
+            height: badgeSize.height
+        )
+
+        let badged = NSImage(size: size, flipped: false) { _ in
+            base.draw(in: NSRect(origin: .zero, size: size))
+            // 黑白角标（不引色相）：蓝底图标上无论深浅模式都读得清。
+            NSColor.black.withAlphaComponent(0.75).setFill()
+            NSBezierPath(roundedRect: badgeRect, xRadius: badgeRect.height / 2, yRadius: badgeRect.height / 2).fill()
+            label.draw(
+                at: CGPoint(x: badgeRect.minX + padX, y: badgeRect.minY + (badgeRect.height - textSize.height) / 2),
+                withAttributes: attrs
+            )
+            return true
+        }
+        NSApp.applicationIconImage = badged
+    }
+
     private static func configureWindow(_ window: NSWindow) {
         guard window.isOpaque else { return }
         window.isOpaque = false
@@ -526,15 +562,6 @@ struct xhanHelperMacApp: App {
             .lightbox()
             .browserDiagnostics()
             .glassWindow()
-            // dev 视觉标识（UI-7）：Debug 构建顶部一条 accent 细条，一眼分辨沙盒窗口。
-            .overlay(alignment: .top) {
-                if LocalPaths.isDev {
-                    Rectangle()
-                        .fill(Color("appAccent"))
-                        .frame(height: 3)
-                        .allowsHitTesting(false)
-                }
-            }
             .background(LocalWindowReader { window in
                 windowHandle.window = window
                 applyWindowSizeForOnboarding()
@@ -961,7 +988,8 @@ struct MacSettingsView: View {
             } header: {
                 Text("服务器")
             } footer: {
-                Text("留空时由 app 自启动内嵌后端（127.0.0.1:18923）；填写后改连该地址，且不再启动本地后端（需重启 app 生效）。")
+                Text("留空时由 app 自启动内嵌后端（127.0.0.1:\(LocalPaths.backendPort)）；填写后改连该地址，且不再启动本地后端（需重启 app 生效）。")
+                    + (LocalPaths.isDev ? Text("\nDebug 构建连的是 dev 沙盒（连 prod 后端会被 403 拒绝）。") : Text(""))
             }
 
             Section("浏览") {

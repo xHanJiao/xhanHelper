@@ -464,7 +464,7 @@ flowchart LR
 3. **dev 数据**：空库起步 + 自动建 `me`；**不做导出/导入 zip**（UI-8a/8b 砍掉）、不从线上 / prod 拷数据，磁盘增量≈0。
 4. **密钥共享、token 分家**：LLM / Embedding 密钥走同一钥匙串条目（两个 build 共享，省一次配置）；**本地 token 按 env 分家**（钥匙串 account `local_token_dev` / `local_token_prod`）。
 5. **env 校验（用户提议）**：本地 token 形如 `<env>:<random>`，后端校验前缀不匹配即 403 → 堵住「dev 经逃生口写 prod」这条唯一泄漏路径。
-6. **dev 视觉标识**：沿用 UI-7，并给 Debug 构建的显示名加 `dev`（Dock 里分得清）。
+6. **dev 视觉标识**（沿用 UI-7，落地形态见第八节）：Debug 构建 **Dock 图标右下角 `dev` 角标** + **顶栏胶囊簇左侧 `DEV` 徽标** + 显示名 `xhanHelper dev`。
 
 **机制三层**
 
@@ -500,11 +500,13 @@ flowchart LR
 >   `config.local.yaml` 加 `local_env: prod`；`bundle-backend.sh` 按 `$CONFIGURATION` 选 conf；`make local-dev`。
 > - **Swift 侧已写**（`swift test` 200 绿 + macOS/iOS `swiftc -typecheck` 干净）：
 >   新增 `LocalPaths`（根 / 日志根 / 端口 / `APP_ENV` / conf 名）；8 处数据根硬编码全改（favicons / user-config / history / bookmarks / downloads / local_results / tool_output / workspace / 后端日志根 / 设置页展示）；
->   本地 token 按环境分家（钥匙串 `local_token_dev` / `local_token_prod`，值 `<env>:<random>`）；`childEnvironment` 的 `APP_ENV` 按构建；白名单端口动态；Debug 显示名 `xhanHelper dev` + 顶部 accent 细条。
+>   本地 token 按环境分家（钥匙串 `local_token_dev` / `local_token_prod`，值 `<env>:<random>`）；`childEnvironment` 的 `APP_ENV` 按构建；白名单端口动态；Debug 显示名 `xhanHelper dev`。
+> - **dev 视觉标识（UI-7，已真机验）**：最初做的「窗口最上缘全宽 accent 细条」落在无标题栏窗口的拖拽 chrome 带上，读起来像渲染 bug → 改为三处：**Dock 图标右下角 `dev` 角标**（运行时给 `NSApp.applicationIconImage` 打角标，`AppDelegate.applyDevIconBadgeIfNeeded`，黑白角标不引色相）+ **顶栏胶囊簇左侧 `DEV` 徽标**（`TopBarView.devChip`，与胶囊同高、`appAccent` 16% 底）+ 显示名 `xhanHelper dev`（pbxproj Debug 配置 `INFOPLIST_KEY_CFBundleDisplayName`）。
 > - **两处与定稿的偏差（都是被约束逼出来的，已加断言兜住）**：
 >   ① 白名单写死 `18923` 实际只有 **1 处代码**（`XHWebView.frontendOrigins`，另 2 处是注释），已改动态端口；
 >   ② `LocalPaths` / `ToolsDataRoot` / `LocalToolResultStore.dataRootName` 是**同一个决定的三个副本**——SwiftPM 不允许同一个文件进多个 target，tools 层与 LocalArtifacts 层各自留了一份；`LocalBackendManager.init` 启动时 `assert` 三者一致（防漂移）。
-> - **待你真机验**：上面 4 条验收 + 顶部 accent 细条的观感（不满意就删）。
+> - **已真机验**：Dock 分得清（dev 角标）、顶栏 `DEV` 徽标可见。**待验**：上面 4 条验收。
+> - **注意**：Release 产物若还是旧的（bundle 里 `conf/config.local.yaml` 不含 `local_env`），说明没重编 → 必须**重新 Build 一次 Release** 才算验过第 4 期。
 
 ### 第 5 期 — 分发（本次不做）
 
@@ -672,7 +674,7 @@ sequenceDiagram
 | **UI-4** | **未配置空态** `NEW` | 用户跳过 onboarding | 主窗口空态 + 「去配置」入口 | 复用 `ErrorStateView` 风格 | 2 |
 | **UI-5** | **设置页「模型与密钥」** `改造` | 随时 | 两个 `SecureField` / model 下拉 / base_url / 清除密钥 /（测试连接）/「锁定·重新验证」 | 复用 `SettingsCard`+`KeycapView`；**Release 可见**；去掉「退出登录」 | 2 |
 | **UI-6** | **设置页「本地服务」** `NEW` | 随时 | 后端状态、端口、数据根路径、日志入口、「重启后端」 | 复用 `SettingsCard` | 2 |
-| **UI-7** | **dev 环境视觉标识** `改造` | dev build | 窗口标题后缀「(dev)」+ 顶部 accent 细条 + **Dock 显示名 `xhanHelper dev`** | 一眼可辨、不刺眼 | 4 |
+| **UI-7** | **dev 环境视觉标识** `改造` | dev build | **Dock 图标 `dev` 角标** + **顶栏 `DEV` 徽标** + 显示名 `xhanHelper dev` | 一眼可辨、不刺眼 | 4 |
 | ~~**UI-8a**~~ | ~~prod「导出数据」~~ | — | **第 4 期砍掉**：dev 用空库自己造数据，不做 prod→dev 复制（见第八节 / 决定表 #10） | — | ~~4~~ |
 | ~~**UI-8b**~~ | ~~dev「导入数据」~~ | — | 同上，一并砍掉 | — | ~~4~~ |
 | **UI-9** | **驻留提示（可选）** `NEW` | 关窗后 app 仍活 | 首次关窗一句提示「仍在后台运行，⌘Q 退出」 | 可选，轻提示 | 2/4 |
@@ -699,7 +701,7 @@ sequenceDiagram
 | 6 | 分发方式 | 本次不做。将来走 Developer ID（非 App Store）还是 App Store（沙盒，需重设计）——**遗留，未定** |
 | 7 | 首次配置形态 | 单页（高级区折叠） |
 | 8 | 启动态 | 主窗口内联指示（非独立 splash） |
-| 9 | dev 视觉标识 | 窗口标题后缀「(dev)」+ 顶部 accent 细条 + Dock 显示名 `xhanHelper dev`（第 4 期定稿） |
+| 9 | dev 视觉标识 | Dock 图标 `dev` 角标 + 顶栏 `DEV` 徽标 + 显示名 `xhanHelper dev`（第 4 期；原「窗口最上缘全宽细条」因像 bug 被换掉，见第八节） |
 | 10 | dev 数据来源 | **空库自造**（自动建 `me`）。~~prod 导出 zip / dev 导入 zip~~ **第 4 期砍掉**：不复制线上 / prod 数据（用户 2026-09-24 拍），磁盘增量≈0 |
 | 11 | dev / prod 怎么分 | **同一 app 身份**，按构建配置：`Debug` → dev（18924 + `xhanHelper-dev` + `local_env: dev`）、`Release` → prod（18923 + `xhanHelper` + `local_env: prod`）；不建第二套 bundle id / scheme / `.xcconfig`（第 4 期定稿） |
 | 12 | UI 预览方式 | 原生走 Xcode `#Preview` + SwiftPM `ImageRenderer` 预览靶；HTML 仅 Web 前端 |

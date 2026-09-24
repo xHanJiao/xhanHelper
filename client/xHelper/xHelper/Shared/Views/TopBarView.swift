@@ -31,6 +31,12 @@ struct TopBarView: View {
 
             Spacer()
 
+            #if os(macOS)
+            // dev 视觉标识（UI-7）：Debug 构建在胶囊簇左侧挂一枚 DEV 徽标，
+            // 一眼认出沙盒窗口（Dock 图标另有 dev 角标）。
+            if LocalPaths.isDev { devChip }
+            #endif
+
             renderSlot(.center)
 
             // 中右两侧都有可见组时才显示分隔线
@@ -50,6 +56,22 @@ struct TopBarView: View {
         .ignoresSafeArea(edges: .top)
         .onAppear { registerDefaultGroups() }
     }
+
+    // MARK: - dev 徽标（UI-7）
+
+    #if os(macOS)
+    private var devChip: some View {
+        Text("DEV")
+            .font(.system(size: 10, weight: .semibold, design: .rounded))
+            .tracking(0.5)
+            .foregroundStyle(Color("appAccent"))
+            .padding(.horizontal, 8)
+            .frame(height: Layout.topBarCapsuleHeight)
+            .background(Color("appAccent").opacity(0.16), in: Capsule())
+            .help("本地开发环境（Debug 构建）")
+            .allowsHitTesting(false)
+    }
+    #endif
 
     /// 双击顶栏空白区：窗口普通缩放（放大到屏幕可用区域）↔ 还原。仅空白 Spacer 响应，按钮区域不受影响。
     private func zoomWindow() {

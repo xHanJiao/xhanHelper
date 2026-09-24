@@ -36,8 +36,7 @@ class DeviceManager: ObservableObject {
     var baseURL: String {
         #if os(macOS)
         // 本地模式：连 app 自拉起的内嵌后端；显式设了 xhan_server_url 则改用它（逃生口）。
-        // 注意：设置页的「服务地址」输入框当前在 #if DEBUG 内，Release 下只能靠 defaults 写入；
-        // Release 可见入口随 2B-3 / 2B-8。
+        // 注意：逃生口填错环境（dev 填 prod 端口）会被后端按 token 前缀 403 拒绝。
         if let override = UserDefaults.standard.string(forKey: "xhan_server_url"), !override.isEmpty {
             return override
         }

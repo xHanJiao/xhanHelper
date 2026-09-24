@@ -56,10 +56,11 @@ final class LocalBackendManager: ObservableObject {
     private init() {
         // 防漂移自检：数据根名在三处各有一份（`LocalPaths` / `ToolsDataRoot` / `LocalToolResultStore`），
         // 它们是同一个决定的三个副本，必须在启动时对齐（SwiftPM 跨 target 不能共享同一文件）。
-        assert(
-            LocalPaths.dataRootName == ToolsDataRoot.name && LocalPaths.dataRootName == LocalToolResultStore.dataRootName,
-            "数据根名不一致：LocalPaths=\(LocalPaths.dataRootName) ToolsDataRoot=\(ToolsDataRoot.name) LocalToolResultStore=\(LocalToolResultStore.dataRootName)"
-        )
+        // 用 `fatalError` 而非 `assert`：assert 在 Release 会被优化掉，漂移就静默了。
+        guard LocalPaths.dataRootName == ToolsDataRoot.name,
+              LocalPaths.dataRootName == LocalToolResultStore.dataRootName else {
+            fatalError("数据根名不一致：LocalPaths=\(LocalPaths.dataRootName) ToolsDataRoot=\(ToolsDataRoot.name) LocalToolResultStore=\(LocalToolResultStore.dataRootName)")
+        }
         self.isConfigured = LocalSecretsStore.isConfigured
         self.logDir = LocalPaths.backendLogDir
         self.logFile = LocalPaths.backendLogDir.appendingPathComponent("backend.log")

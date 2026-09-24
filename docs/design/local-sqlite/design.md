@@ -504,7 +504,7 @@ flowchart LR
 > - **dev 视觉标识（UI-7，已真机验）**：最初做的「窗口最上缘全宽 accent 细条」落在无标题栏窗口的拖拽 chrome 带上，读起来像渲染 bug → 改为三处：**Dock 图标右下角 `dev` 角标**（运行时给 `NSApp.applicationIconImage` 打角标，`AppDelegate.applyDevIconBadgeIfNeeded`，黑白角标不引色相）+ **顶栏胶囊簇左侧 `DEV` 徽标**（`TopBarView.devChip`，与胶囊同高、`appAccent` 16% 底）+ 显示名 `xhanHelper dev`（pbxproj Debug 配置 `INFOPLIST_KEY_CFBundleDisplayName`）。
 > - **两处与定稿的偏差（都是被约束逼出来的，已加断言兜住）**：
 >   ① 白名单写死 `18923` 实际只有 **1 处代码**（`XHWebView.frontendOrigins`，另 2 处是注释），已改动态端口；
->   ② `LocalPaths` / `ToolsDataRoot` / `LocalToolResultStore.dataRootName` 是**同一个决定的三个副本**——SwiftPM 不允许同一个文件进多个 target，tools 层与 LocalArtifacts 层各自留了一份；`LocalBackendManager.init` 启动时 `assert` 三者一致（防漂移）。
+>   ② `LocalPaths` / `ToolsDataRoot` / `LocalToolResultStore.dataRootName` 是**同一个决定的三个副本**——SwiftPM 不允许同一个文件进多个 target，tools 层与 LocalArtifacts 层各自留了一份；`LocalBackendManager.init` 启动时校验三者一致（`fatalError`，不用 `assert`——后者在 Release 被优化掉、漂移会静默）。
 > - **第五轮（密钥分家，2026-09-25）**：原「密钥两环境共享」改为**按环境分家**（dev 换 key / 供应商会动到 prod，用户提出）。`LocalKeychain` 新增 `llmKeyDev` / `llmKeyProd` / `embeddingKeyDev` / `embeddingKeyProd`；`LocalSecretsStore` 的 `model` / `base_url` UserDefaults key 加 `_dev` / `_prod` 后缀；旧共享项（`llm_api_key` / `embedding_api_key`）当一次性迁移源——本环境缺失时复制进来并打 `xhan_key_migrated_<account>` 标记（否则「清除密钥」后下次 `load()` 又被迁回）。macOS Debug/Release、iOS `swiftc -typecheck` 干净 + `swift test` 200 绿；真机已验（见下条）。
 > - **已真机验收完成（用户，2026-09-25）**：Dock 分得清（dev 角标）、顶栏 `DEV` 徽标可见；4 条验收（Debug dev 空库 / Release prod 数据完好 / 双开互不干扰 / 逃生口填 `127.0.0.1:18923` 收 403）已跑；密钥分家另验：Debug / Release 各存各的 key、互不影响。
 > - **注意（已处置）**：若 Release 产物还是旧的（bundle 里 `conf/config.local.yaml` 不含 `local_env`），说明没重编 → 必须重新 Build 一次 Release 才算验过第 4 期。验收时已按此重编并验过。

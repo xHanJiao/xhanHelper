@@ -549,6 +549,10 @@ struct xhanHelperMacApp: App {
     @State private var holdProgress: Double = 0
     /// 用户首次配置窗口点了「稍后配置」→ 主窗口显示未配置空态（UI-4）。
     @State private var onboardingSkipped = false
+    /// 首次配置页内容实测高度（`LocalOnboardingView.onContentHeight`）：窗口高度贴内容，无滚动条。
+    @State private var onboardingContentHeight: CGFloat = 650
+    /// 首次配置窗口是否已居中过（之后内容变化只改高度、顶部锚定，不再 center 免得窗口跳）。
+    @State private var onboardingWindowCentered = false
 
     var body: some Scene {
         WindowGroup {
@@ -568,6 +572,7 @@ struct xhanHelperMacApp: App {
             })
             .onAppear { applyWindowSizeForOnboarding() }
             .onChange(of: onboardingGateVisible) { _, _ in applyWindowSizeForOnboarding() }
+            .onChange(of: onboardingContentHeight) { _, _ in applyWindowSizeForOnboarding() }
             .onChange(of: localBackend.isConfigured) { _, configured in
                 // 密钥被清掉（设置页「清除密钥」）→ 回到首次配置。
                 if !configured { revealOnboarding() }
@@ -682,7 +687,8 @@ struct xhanHelperMacApp: App {
             // UI-1：首次配置（无密钥 → 不起后端，先填密钥）。
             LocalOnboardingView(
                 onDone: { startLocalAfterConfig() },
-                onSkip: { onboardingSkipped = true }
+                onSkip: { onboardingSkipped = true },
+                onContentHeight: { onboardingContentHeight = $0 }
             )
         } else if !localBackend.isConfigured {
             // UI-4：跳过配置后的未配置空态。
@@ -732,15 +738,30 @@ struct xhanHelperMacApp: App {
         main?.makeKeyAndOrderFront(nil)
     }
 
-    /// UI-1 按内容收窄窗口（内容 540 + 左右 24 内边距 + 顶部让开红绿灯 44）；配置完成后恢复聊天默认尺寸。
+    /// UI-1 把窗口贴到内容：高度用 `LocalOnboardingView` 实测值（本页不滚动，故不预留死区），
+    /// 宽度 = 内容 540 + 左右 24 内边距。内容变化时顶部锚定，避免展开/收起「高级」时窗口上下跳；
+    /// 配置完成后恢复聊天默认尺寸。
     private func applyWindowSizeForOnboarding() {
         guard let window = windowHandle.window else { return }
         if onboardingGateVisible {
-            window.setContentSize(NSSize(width: 588, height: 650))
-            window.center()
-        } else if (window.contentView?.frame.width ?? 0) < 700 {
-            window.setContentSize(NSSize(width: 800, height: 600))
-            window.center()
+            let maxHeight = (window.screen?.visibleFrame.height ?? 900) - 24
+            let height = min(max(onboardingContentHeight, 400), maxHeight)
+            // hiddenTitleBar 下 setContentSize 设的是「内容矩形」，窗口 frame 会再加一个标题栏高；
+            // 内容自己用负的底部留白（见 LocalOnboardingView）抵掉那个死区，这里按实测高设即可。
+            let top = window.frame.maxY
+            window.setContentSize(NSSize(width: 588, height: height))
+            // setContentSize 以左下角为锚；改完把顶边放回原处，内容变化时窗口不上下跳。
+            window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
+            if !onboardingWindowCentered {
+                onboardingWindowCentered = true
+                window.center()
+            }
+        } else {
+            onboardingWindowCentered = false
+            if (window.contentView?.frame.width ?? 0) < 700 {
+                window.setContentSize(NSSize(width: 800, height: 600))
+                window.center()
+            }
         }
     }
 

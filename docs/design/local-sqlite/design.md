@@ -492,17 +492,25 @@ flowchart LR
 
 **目标**：本地也能拿真实数据开发，但 **dev 绝不能碰 prod 数据**。
 
+> **第 4 期开工前已定（2026-09-24，用户要求）**
+>
+> - **同一份 app 身份，靠构建配置分环境：`Debug` 构建 → dev，`Release` 构建 → prod。**
+>   不建第二套 bundle id / scheme —— 下面表格里 `cn.xhan.helper` / `cn.xhan.helper.dev` 是旧想定，**订正为同一个实际 bundle id `xhanx.cn.xHelperMac`**；数据根 / 端口 / `APP_ENV` / conf 由 xcconfig + Run Script 按 `$(CONFIGURATION)` 决定（Debug 拷 `config.local.dev.yaml`、Release 拷 `config.local.prod.yaml`）。
+> - **硬编码 + 启动断言照旧**：dev 二进制拿到的数据根/端口写死在 dev conf 里，配置写错也指不到 prod，启动时断言路径前缀。
+> - **同 bundle id 的连带影响（第 4 期要拍）**：UserDefaults 域与钥匙串是**共享**的 → 密钥、`xhan_touch_id_enabled`、`xhan_server_url` 逃生口在 Debug/Release 间通用（密钥共享正是想要的）；若 dev 需要独立偏好（如各自的逃生口地址），得另用一套 suite / 键名前缀 —— 待定。
+> - 第 4 期完成前**用户不再使用本地 app**（真身不再被写），做完后：日常用 Release（真身），开发用 Debug（沙盒副本）。
+
 | | prod（真实本地） | dev（沙盒副本） |
 |---|---|---|
-| bundle id | `cn.xhan.helper` | `cn.xhan.helper.dev` |
+| 构建 | **Release** | **Debug** |
 | 数据根 | `~/Library/Application Support/xhanHelper/` | `~/Library/Application Support/xhanHelper-dev/` |
 | 日志 | `~/Library/Logs/xhanHelper/` | `~/Library/Logs/xhanHelper-dev/` |
 | 端口 | `18923` | `18924` |
 | APP_ENV | `local-prod` | `local-dev` |
 | 配置 | `config.local.prod.yaml` | `config.local.dev.yaml` |
 
-- **两个 build，不是运行时开关**：dev 二进制**硬编码** dev 根、prod 二进制硬编码 prod 根，**即使配置写错也指不到对方**，再加启动断言。这是「绝绝对对不允许」能拿到的最强保证（非沙盒下同用户理论上仍可读对方文件，所以靠路径硬编码兜底）。
-- **可同时开着**：端口 / 数据根 / bundle id 全分开，两个 app 并行互不干扰。
+- **两个 build，不是运行时开关**：dev 构建**硬编码** dev 根、prod 构建硬编码 prod 根，**即使配置写错也指不到对方**，再加启动断言。这是「绝绝对对不允许」能拿到的最强保证（非沙盒下同用户理论上仍可读对方文件，所以靠路径硬编码兜底）。
+- **可同时开着**：端口 / 数据根分开，两个 app 并行互不干扰（同 bundle id 不影响并行运行）。
 
 **数据只允许 prod → dev 单向流动：**
 

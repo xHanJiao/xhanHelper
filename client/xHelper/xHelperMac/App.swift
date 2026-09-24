@@ -553,6 +553,8 @@ struct xhanHelperMacApp: App {
     @State private var onboardingContentHeight: CGFloat = 650
     /// 首次配置窗口是否已居中过（之后内容变化只改高度、顶部锚定，不再 center 免得窗口跳）。
     @State private var onboardingWindowCentered = false
+    /// 是否已把窗口套用「主窗口默认尺寸」（一次性；老版本遗留的过小窗口借此放大到新默认）。
+    @AppStorage("xhan_main_window_default_applied") private var windowDefaultSizeApplied = false
 
     var body: some Scene {
         WindowGroup {
@@ -626,7 +628,7 @@ struct xhanHelperMacApp: App {
             }
         }
         .windowResizability(.contentMinSize)
-        .defaultSize(width: 800, height: 600)
+        .defaultSize(Self.chatDefaultContentSize)
         .windowStyle(.hiddenTitleBar)
 
         Settings {
@@ -738,6 +740,17 @@ struct xhanHelperMacApp: App {
         main?.makeKeyAndOrderFront(nil)
     }
 
+    /// 主窗口默认内容尺寸（全新安装 / 首次进主界面用；也用于把老版本遗留的过小窗口一次性放大）。
+    private static let chatDefaultContentSize = CGSize(width: 1180, height: 800)
+
+    /// 按当前屏幕可用区收一下，小外接屏不溢出（左右/上下各留 20）。
+    private static func fittedChatDefaultSize(for window: NSWindow) -> CGSize {
+        let visible = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        return CGSize(width: min(chatDefaultContentSize.width, visible.width - 40),
+                      height: min(chatDefaultContentSize.height, visible.height - 40))
+    }
+
     /// UI-1 把窗口贴到内容：高度用 `LocalOnboardingView` 实测值（本页不滚动，故不预留死区），
     /// 宽度 = 内容 540 + 左右 24 内边距。内容变化时顶部锚定，避免展开/收起「高级」时窗口上下跳；
     /// 配置完成后恢复聊天默认尺寸。
@@ -758,8 +771,12 @@ struct xhanHelperMacApp: App {
             }
         } else {
             onboardingWindowCentered = false
-            if (window.contentView?.frame.width ?? 0) < 700 {
-                window.setContentSize(NSSize(width: 800, height: 600))
+            let width = window.contentView?.frame.width ?? 0
+            // <700：刚离开首次配置页（内容宽 588）→ 恢复聊天默认尺寸
+            // !flag：老版本遗留的过小窗口（如 900×450）→ 一次性放大，之后尊重手动调整
+            if width < 700 || !windowDefaultSizeApplied {
+                windowDefaultSizeApplied = true
+                window.setContentSize(Self.fittedChatDefaultSize(for: window))
                 window.center()
             }
         }

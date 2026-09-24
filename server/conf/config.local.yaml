@@ -7,7 +7,7 @@ server:
   port: 18923
   mode: debug
   registration_enabled: true # 本地首次启动需要注册
-  allowed_users: [xhan] # 本地单用户；改成你要注册的用户名
+  allowed_users: [your-username] # 本地单用户；改成你要注册的用户名
 
 db:
   driver: sqlite

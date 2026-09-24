@@ -285,18 +285,11 @@ struct LocalOnboardingView: View {
                     .buttonStyle(.link)
                 Spacer()
                 Button("继续") {
-                    LocalAuthService.shared.isEnabled = touchID
-                    let status = LocalSecretsStore.save(secrets)
-                    guard status == errSecSuccess else {
-                        saveError = "无法写入本机钥匙串：\(LocalKeychain.describe(status))"
-                        return
-                    }
-                    saveError = nil
-                    onDone()
+                    Task { await saveAndContinue() }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(keyMissing)
+                .disabled(keyMissing || test == .testing)
                 .keyboardShortcut(.defaultAction)
             }
         }
@@ -305,6 +298,24 @@ struct LocalOnboardingView: View {
     private func runTest() async {
         test = .testing
         test = await LocalConnectionProbe.testState(secrets)
+    }
+
+    /// 与设置页一致：存之前**强制**验一次，密钥错了就别落盘、别拉后端。
+    /// 失败时不落盘，红图标 + hover 里有原因；离线用户仍可走「稍后配置」。
+    private func saveAndContinue() async {
+        test = .testing
+        let result = await LocalConnectionProbe.testState(secrets)
+        test = result
+        guard case .ok = result else { return }
+
+        LocalAuthService.shared.isEnabled = touchID
+        let status = LocalSecretsStore.save(secrets)
+        guard status == errSecSuccess else {
+            saveError = "无法写入本机钥匙串：\(LocalKeychain.describe(status))"
+            return
+        }
+        saveError = nil
+        onDone()
     }
 }
 

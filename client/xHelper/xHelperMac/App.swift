@@ -532,6 +532,10 @@ struct xhanHelperMacApp: App {
             })
             .onAppear { applyWindowSizeForOnboarding() }
             .onChange(of: onboardingGateVisible) { _, _ in applyWindowSizeForOnboarding() }
+            .onChange(of: localBackend.isConfigured) { _, configured in
+                // 密钥被清掉（设置页「清除密钥」）→ 回到首次配置。
+                if !configured { revealOnboarding() }
+            }
             .task {
                 // 后端可能在窗口渲染前就已 ready（空库秒起），补一次；否则交给 onChange。
                 if localBackend.state == .ready {
@@ -678,6 +682,18 @@ struct xhanHelperMacApp: App {
     /// 是否正处于「首次配置」门（UI-1）。
     private var onboardingGateVisible: Bool {
         LocalBackendManager.isActive && !localBackend.isConfigured && !onboardingSkipped
+    }
+
+    /// 回到首次配置（UI-1）：清掉密钥后不能还杵在设置页里。
+    /// 关掉设置等普通窗口（`canBecomeKey` 排除导出 PDF 的离屏窗口、`NSPanel` 排除驻留提示），把主窗口叫到前面。
+    private func revealOnboarding() {
+        onboardingSkipped = false
+        let main = windowHandle.window
+        for window in NSApp.windows
+        where !(window is NSPanel) && window.canBecomeKey && window !== main {
+            window.close()
+        }
+        main?.makeKeyAndOrderFront(nil)
     }
 
     /// UI-1 按内容收窄窗口（内容 540 + 左右 24 内边距 + 顶部让开红绿灯 44）；配置完成后恢复聊天默认尺寸。

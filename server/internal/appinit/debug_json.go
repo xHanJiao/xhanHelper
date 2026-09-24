@@ -56,7 +56,7 @@ func InitDebugJSON(cfg *config.Config, msgRepo *service.MessageRepo, bgCtx conte
 	monitor.Register("debug_json_queue", func() any { return queue.Stats() })
 	go queue.Start(bgCtx)
 
-	if !cfg.Server.DisableBackgroundTasks {
+	if !cfg.Server.BackgroundTasksDisabled() {
 		cleanup := func(ctx context.Context) {
 			cutoff := time.Now().Add(-time.Duration(d.RetentionDays) * 24 * time.Hour)
 			var cleared int64

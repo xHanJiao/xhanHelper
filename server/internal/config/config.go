@@ -45,7 +45,7 @@ type Config struct {
 
 // FactsConfig — 事实系统配置
 type FactsConfig struct {
-	Enabled       bool    `yaml:"enabled"`        // 事实系统总开关
+	Enabled       *bool   `yaml:"enabled"`        // 事实系统总开关；nil=未显式配置，沿用 base
 	TopK          int     `yaml:"top_k"`          // 决策段检索近邻数，默认 5
 	DupeThreshold float64 `yaml:"dupe_threshold"` // 向量 top1 静默跳过阈值，默认 0.95
 	MaxCandidates int     `yaml:"max_candidates"` // 单次抽取候选上限，默认 5
@@ -107,9 +107,29 @@ type WebFetchConfig struct {
 
 // SubAgentConfig — 子 agent（task 工具）配置
 type SubAgentConfig struct {
-	ExploreMaxIterations  int  `yaml:"explore_max_iterations"`  // explore 子 agent 最大轮次（含强制收敛轮），默认 20（防死循环兜底，timeout 才是真实预算）
-	ExploreTimeoutSeconds int  `yaml:"explore_timeout_seconds"` // explore 子 agent 执行超时秒数，默认 600
-	UserContextEnabled    bool `yaml:"user_context_enabled"`    // 是否向主 LLM 注入 user_context 触发规则（纯 prompt 引导的保险丝），默认 false
+	ExploreMaxIterations  int   `yaml:"explore_max_iterations"`  // explore 子 agent 最大轮次（含强制收敛轮），默认 20（防死循环兜底，timeout 才是真实预算）
+	ExploreTimeoutSeconds int   `yaml:"explore_timeout_seconds"` // explore 子 agent 执行超时秒数，默认 600
+	UserContextEnabled    *bool `yaml:"user_context_enabled"`    // 是否向主 LLM 注入 user_context 触发规则（纯 prompt 引导的保险丝）；nil=未显式配置，沿用 base
+}
+
+// AutoExtractMemory 是否自动提取记忆（nil=未显式配置 → false）。
+func (s *ServerConfig) AutoExtractMemory() bool {
+	return s.MemoryAutoExtract != nil && *s.MemoryAutoExtract
+}
+
+// BackgroundTasksDisabled 是否禁用全部后台任务（nil=未显式配置 → false）。
+func (s *ServerConfig) BackgroundTasksDisabled() bool {
+	return s.DisableBackgroundTasks != nil && *s.DisableBackgroundTasks
+}
+
+// IsEnabled 事实系统是否开启（nil=未显式配置 → false）。
+func (f *FactsConfig) IsEnabled() bool {
+	return f.Enabled != nil && *f.Enabled
+}
+
+// PromptUserContext 是否注入 user_context 触发规则（nil=未显式配置 → false）。
+func (s *SubAgentConfig) PromptUserContext() bool {
+	return s.UserContextEnabled != nil && *s.UserContextEnabled
 }
 
 // MCPServerCfg — 单个 MCP server 配置
@@ -145,7 +165,7 @@ type ServerConfig struct {
 	Mode                    string   `yaml:"mode"`                      // debug | release
 	RegistrationEnabled     *bool    `yaml:"registration_enabled"`      // 是否允许新用户注册
 	AllowedUsers            []string `yaml:"allowed_users"`             // 允许注册的用户名列表（空=全部允许）
-	MemoryAutoExtract       bool     `yaml:"memory_auto_extract"`       // 是否自动提取记忆
+	MemoryAutoExtract       *bool    `yaml:"memory_auto_extract"`       // 是否自动提取记忆；nil=未显式配置，沿用 base
 	ProfileStartupMigration bool     `yaml:"profile_startup_migration"` // 启动时异步迁移旧画像（facts 空才迁，单用户场景用）
 	MemoryDupeThreshold     float64  `yaml:"memory_dupe_threshold"`     // 记忆去重相似度阈值，默认 0.85（旧单条提取路径遗留）
 	// —— 记录循环（记忆两段式：抽取 + 逐候选决策循环）——
@@ -155,7 +175,7 @@ type ServerConfig struct {
 	MemoryNeighborThreshold   float64  `yaml:"memory_neighbor_threshold"`    // 预检索近邻相似度下限，默认 0.5
 	MemoryConfirmThreshold    float64  `yaml:"memory_confirm_threshold"`     // NONE 时「再次确认」的近邻相似度下限，默认 0.80
 	MemoryTopicReuseThreshold float64  `yaml:"memory_topic_reuse_threshold"` // topic 复用阈值，默认 0.80（与 topic-merge 一致）
-	DisableBackgroundTasks    bool     `yaml:"disable_background_tasks"`     // 禁用所有后台任务（记忆提取/摘要/主题分析/反思等），dev 环境建议开启
+	DisableBackgroundTasks    *bool    `yaml:"disable_background_tasks"`     // 禁用所有后台任务（记忆提取/摘要/主题分析/反思等）；nil=未显式配置，沿用 base
 	SidecarURL                string   `yaml:"sidecar_url"`                  // Python sidecar MCP HTTP 地址
 	TokenTTLMinutes           int      `yaml:"token_ttl_minutes"`            // token 过期时间（分钟），默认 5
 	MaxTokensPerUser          int      `yaml:"max_tokens_per_user"`          // 同一用户最大 token 数，默认 4
@@ -376,7 +396,9 @@ func merge(dst, src *Config) {
 	if len(src.Server.AllowedUsers) > 0 {
 		dst.Server.AllowedUsers = src.Server.AllowedUsers
 	}
-	dst.Server.MemoryAutoExtract = src.Server.MemoryAutoExtract
+	if src.Server.MemoryAutoExtract != nil {
+		dst.Server.MemoryAutoExtract = src.Server.MemoryAutoExtract
+	}
 	if src.Server.MemoryDupeThreshold > 0 {
 		dst.Server.MemoryDupeThreshold = src.Server.MemoryDupeThreshold
 	}
@@ -398,7 +420,9 @@ func merge(dst, src *Config) {
 	if src.Server.MemoryTopicReuseThreshold > 0 {
 		dst.Server.MemoryTopicReuseThreshold = src.Server.MemoryTopicReuseThreshold
 	}
-	dst.Server.DisableBackgroundTasks = src.Server.DisableBackgroundTasks
+	if src.Server.DisableBackgroundTasks != nil {
+		dst.Server.DisableBackgroundTasks = src.Server.DisableBackgroundTasks
+	}
 	if src.Server.SidecarURL != "" {
 		dst.Server.SidecarURL = src.Server.SidecarURL
 	}
@@ -531,7 +555,9 @@ func merge(dst, src *Config) {
 	if src.Vector.ChunkDisabledParents != nil {
 		dst.Vector.ChunkDisabledParents = src.Vector.ChunkDisabledParents
 	}
-	dst.Facts.Enabled = src.Facts.Enabled
+	if src.Facts.Enabled != nil {
+		dst.Facts.Enabled = src.Facts.Enabled
+	}
 	if src.Facts.TopK != 0 {
 		dst.Facts.TopK = src.Facts.TopK
 	}
@@ -610,7 +636,9 @@ func merge(dst, src *Config) {
 	if src.SubAgent.ExploreTimeoutSeconds != 0 {
 		dst.SubAgent.ExploreTimeoutSeconds = src.SubAgent.ExploreTimeoutSeconds
 	}
-	dst.SubAgent.UserContextEnabled = src.SubAgent.UserContextEnabled
+	if src.SubAgent.UserContextEnabled != nil {
+		dst.SubAgent.UserContextEnabled = src.SubAgent.UserContextEnabled
+	}
 	if src.Archive.AfterDays != 0 {
 		dst.Archive.AfterDays = src.Archive.AfterDays
 	}

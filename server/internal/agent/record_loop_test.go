@@ -99,6 +99,18 @@ func TestValidateMemoryFields(t *testing.T) {
 	}
 }
 
+// 三组名都要注册进临时 registry，否则 record_search / legacy_note 组查不到
+// （provider 拼「组名__函数名」，MiniReAct 按组名查；只注册 memory 会报「未找到工具」）。
+func TestRegisterRecordLoopTools_AllGroups(t *testing.T) {
+	reg := tool.NewRegistry()
+	registerRecordLoopTools(reg, &recordLoopState{})
+	for _, name := range []string{recordToolSearch, recordToolMemory, recordToolLegacy} {
+		if reg.Get(name) == nil {
+			t.Errorf("group %q not registered", name)
+		}
+	}
+}
+
 // 写工具识别：8 函数里哪 4 个是写入。
 func TestIsWriteFunc(t *testing.T) {
 	writes := []string{"save_memory", "update_memory", "delete_memory", "delete_note"}

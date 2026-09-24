@@ -139,6 +139,8 @@ struct LocalUnlockView: View {
 struct LocalOnboardingView: View {
     let onDone: () -> Void
     let onSkip: () -> Void
+    /// 内容实测高度：App 据此把窗口高度贴到内容（本页不滚动、不出现滚动条）。
+    var onContentHeight: (CGFloat) -> Void = { _ in }
 
     @State private var secrets = LocalSecretsStore.load()
     @State private var showAdvanced = false
@@ -152,21 +154,25 @@ struct LocalOnboardingView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                keysCard
-                advancedCard
-                touchIDCard
-                testRow
-                actions
-            }
-            .frame(width: 540)
-            .padding(.horizontal, 24)
-            // 顶部让开红绿灯（hiddenTitleBar 下安全区为 0，不主动留白会贴上去）。
-            .padding(.top, 44)
-            .padding(.bottom, 24)
+        VStack(alignment: .leading, spacing: 18) {
+            header
+            keysCard
+            advancedCard
+            touchIDCard
+            testRow
+            actions
         }
+        .frame(width: 540)
+        .padding(.horizontal, 24)
+        // 顶部让开红绿灯（hiddenTitleBar 下安全区为 0，不主动留白会贴上去）。
+        .padding(.top, 44)
+        // 首次配置窗口是 hiddenTitleBar：窗口最小高 = 内容高 + 标题栏(~32)，而 SwiftUI 可用区 = 整个
+        // frame → 内容下方恒有一个标题栏高的死区（系统会把窗口夹回 内容+32）。这里把底部留白减掉
+        // 一个标题栏高抵消它，让「稍后配置/继续」到窗口底边的实际空隙 ≈ 18pt。
+        .padding(.bottom, 18 - 32)
+        // 本页不允许滚动（也绝不出现滚动条）：把实测高度交给 App 撑窗口（见 applyWindowSizeForOnboarding）。
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { onContentHeight($0) }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(GlassBackground())
         // 改了任何配置项就让上次「连接正常」作废（它已不代表当前值）。
         .onChange(of: secrets) { _, _ in

@@ -7,6 +7,56 @@ import (
 	"xhan-helper/internal/model"
 )
 
+// merge 对 bool 必须「显式才覆盖」：env 文件没写的键保持 base，写了 false 也要能压过 base true。
+func TestMerge_BoolFieldsExplicitOnly(t *testing.T) {
+	yes, no := true, false
+
+	// env 项缺失 → base 原样保留（尤其 base 的 false 不能被刷掉）
+	base := Config{}
+	base.Server.MemoryAutoExtract = &no
+	base.Server.DisableBackgroundTasks = &no
+	base.Facts.Enabled = &yes
+	base.SubAgent.UserContextEnabled = &yes
+	merge(&base, &Config{})
+	if base.Server.AutoExtractMemory() {
+		t.Error("absent memory_auto_extract must keep base false")
+	}
+	if base.Server.BackgroundTasksDisabled() {
+		t.Error("absent disable_background_tasks must keep base false")
+	}
+	if !base.Facts.IsEnabled() {
+		t.Error("absent facts.enabled must keep base true")
+	}
+	if !base.SubAgent.PromptUserContext() {
+		t.Error("absent user_context_enabled must keep base true")
+	}
+
+	// env 显式 false 必须能压过 base true（反向：显式 true 压过 base false）
+	base2 := Config{}
+	base2.Server.MemoryAutoExtract = &no
+	base2.Server.DisableBackgroundTasks = &no
+	base2.Facts.Enabled = &yes
+	base2.SubAgent.UserContextEnabled = &yes
+	env := Config{}
+	env.Server.MemoryAutoExtract = &yes
+	env.Server.DisableBackgroundTasks = &yes
+	env.Facts.Enabled = &no
+	env.SubAgent.UserContextEnabled = &no
+	merge(&base2, &env)
+	if !base2.Server.AutoExtractMemory() {
+		t.Error("explicit true must override base false")
+	}
+	if !base2.Server.BackgroundTasksDisabled() {
+		t.Error("explicit true must override base false")
+	}
+	if base2.Facts.IsEnabled() {
+		t.Error("explicit false must override base true")
+	}
+	if base2.SubAgent.PromptUserContext() {
+		t.Error("explicit false must override base true")
+	}
+}
+
 func TestValidate_LLMBgAPIKey(t *testing.T) {
 	base := Config{DB: DBConfig{Host: "localhost", Driver: "sqlite", Database: "test.db"}, LLM: LLMConfig{APIKey: "sk-main"}}
 	cases := []struct {

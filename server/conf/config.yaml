@@ -13,7 +13,7 @@ server:
   memory_confirm_threshold: 0.8 # NONE 时「再次确认」的近邻相似度下限
   memory_topic_reuse_threshold: 0.8 # topic 复用阈值（与 topic-merge 一致）
   profile_startup_migration: false # 启动时异步迁移旧画像（facts 空才迁；迁移完成后可关）
-  disable_background_tasks: false # 默认开。注意：merge 对 bool 是无条件覆盖，本行只在没有环境配置文件时才生效；要关就在 conf/config.<env>.yaml 里显式写 true
+  disable_background_tasks: false # 默认开。env 文件未写则沿用本值；要关就在 conf/config.<env>.yaml 里显式写 true
   sidecar_url: http://127.0.0.1:9090
   allowed_users:
     - ${ALLOWED_USER}

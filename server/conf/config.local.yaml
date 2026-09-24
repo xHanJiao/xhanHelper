@@ -11,6 +11,7 @@ server:
   local_token: "${XHAN_LOCAL_TOKEN}" # app 生成随机值经 env 注入；make local 缺省 local-dev-token
   # 身份锚点是「库里的用户」（迁移进来的 xhan 原样认领），不靠配置里的名字。
   # local_username 可选，仅用于空库新建时的默认名（缺省 "me"）。
+  memory_auto_extract: true # 非本地化项，与 prod 对齐（否则后台记忆提取恒关）
 
 db:
   driver: sqlite
@@ -19,5 +20,19 @@ db:
 storage:
   image_dir: "${HOME}/Library/Application Support/xhanHelper/images"
 
+llm:
+  debug_persist_json: true # 非本地化项，与 prod 对齐
+
+reflection: # 非本地化项，与 prod 对齐
+  launch_max_iterations: 3
+  analyst_max_iterations: 3
+  discover_max_iterations: 3
+  cluster_threshold: 0.70
+  daily_schedules: ["03:00"]
+  min_active_days: 3
+
+facts:
+  enabled: false # 本地有意关闭（不随 prod 对齐）
+
 chat:
-  session_gap_minutes: 1 # 本地调试：停止聊天 1 分钟后即跑后处理（base 默认 15）
+  session_gap_minutes: 20 # 本地调优（与 prod 15 不同，故意）

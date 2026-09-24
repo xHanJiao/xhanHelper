@@ -164,7 +164,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		agent.NewMemoryWorker(&agent.MemoryWorkerConfig{
 			Extractor:         tools.MemExtractor,
 			Loop:              recordLoop,
-			MemoryAutoExtract: cfg.Server.MemoryAutoExtract,
+			MemoryAutoExtract: cfg.Server.AutoExtractMemory(),
 		}),
 		agent.NewStateWorker(&agent.StateWorkerConfig{
 			Updater: stateUpdater,
@@ -173,7 +173,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		agent.NewFactWorker(&agent.FactWorkerConfig{
 			Extractor:     factExtractor,
 			Decider:       factDecider,
-			Enabled:       cfg.Facts.Enabled,
+			Enabled:       cfg.Facts.IsEnabled(),
 			FactRepo:      repos.Fact,
 			ChangelogRepo: repos.FactChangelog,
 			Embedder:      infra.Embedder,
@@ -213,7 +213,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		agent.BaseSystemPrompt,
 		tools.Registry,
 		repos.Prompt, cfg.LLM.UseNativeFC,
-		cfg.SubAgent.UserContextEnabled,
+		cfg.SubAgent.PromptUserContext(),
 	)
 
 	// ContextRetriever
@@ -251,7 +251,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MaxToolResultChars:  cfg.LLM.MaxToolResultChars,
 		ToolMaxConcurrency:  cfg.LLM.ToolMaxConcurrency,
 		OnChatEnd: func(userID, convID, userMsgID string) {
-			if cfg.Server.DisableBackgroundTasks {
+			if cfg.Server.BackgroundTasksDisabled() {
 				return
 			}
 			cronRunner.NotifySessionEnd(userID, convID, userMsgID)
@@ -296,14 +296,14 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		ImageStore:      infra.ImageStore,
 	})
 
-	if !cfg.Server.DisableBackgroundTasks {
+	if !cfg.Server.BackgroundTasksDisabled() {
 		go cronRunner.Start(bgCtx)
 	} else {
 		log.Printf("[appinit] background tasks disabled, skip cronRunner")
 	}
 
 	// 启动时异步迁移旧画像（开关控制，facts 空才迁；迁移完成后可关）
-	if cfg.Server.ProfileStartupMigration && !cfg.Server.DisableBackgroundTasks {
+	if cfg.Server.ProfileStartupMigration && !cfg.Server.BackgroundTasksDisabled() {
 		go profileWorker.RunStartupMigration(bgCtx)
 	} else {
 		log.Printf("[appinit] profile startup migration disabled")

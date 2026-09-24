@@ -81,9 +81,10 @@ final class LocalBackendDiagnosticsTests: XCTestCase {
         let msg = await LocalConnectionProbe.test(
             LocalSecrets(llmKey: "k", embeddingKey: "e", llmBaseURL: "http://gateway.local")
         )
-        let text = try? XCTUnwrap(msg)
-        XCTAssertNotNil(text)
-        XCTAssertTrue(text?.contains("https") ?? false, "应提示必须是 https，实际：\(text ?? "nil")")
+        XCTAssertTrue(
+            msg?.message.contains("https") ?? false,
+            "应提示必须是 https，实际：\(msg?.message ?? "nil")"
+        )
     }
 
     func testHintClassification() {
@@ -99,5 +100,30 @@ final class LocalBackendDiagnosticsTests: XCTestCase {
         XCTAssertNil(LocalBackendDiagnostics.hint(
             logTail: "server starting on 127.0.0.1:18923 (mode: debug)"
         ))
+    }
+
+    func testHTTPFailureIsHumanReadableAndKeepsDetailForHover() {
+        let body = Data(#"{"error":{"message":"Authentication Fails, Your api key: ****ee72 is invalid"}}"#.utf8)
+        let f = LocalConnectionProbe.failure(status: 401, body: body, target: .llm)
+        XCTAssertTrue(f.message.contains("密钥无效"), f.message)
+        XCTAssertFalse(f.message.contains("Authentication Fails"), "人话里不该泼原始 JSON")
+        XCTAssertEqual(f.detail, "Authentication Fails, Your api key: ****ee72 is invalid")
+
+        XCTAssertTrue(
+            LocalConnectionProbe.failure(status: 404, body: Data(), target: .llm).message.contains("base_url"),
+            "404 应提示 base_url 多了路径"
+        )
+        XCTAssertNil(
+            LocalConnectionProbe.failure(status: 502, body: Data("<html>bad gateway</html>".utf8), target: .embedding).detail,
+            "非 JSON body 不硬凑原文"
+        )
+    }
+
+    func testNetworkFailureIsHumanReadable() {
+        let timeout = LocalConnectionProbe.networkFailure(
+            NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut),
+            target: .embedding
+        )
+        XCTAssertTrue(timeout.message.contains("超时"), timeout.message)
     }
 }

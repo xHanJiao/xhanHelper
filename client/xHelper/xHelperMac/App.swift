@@ -329,15 +329,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
-    /// 关窗后点 Dock 图标回来（窗口保留在 NSApp.windows 里，重新排序到前台即可）。
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag {
-            for window in sender.windows {
-                window.makeKeyAndOrderFront(nil)
-            }
-        }
-        return true
-    }
+    // 关窗后点 Dock 图标回来：交给 SwiftUI 自己处理（`WindowGroup` 的默认行为）。
+    // 别在这里手动 `makeKeyAndOrderFront`——那是多余的第二只手，会和 SwiftUI 各拉一个窗口
+    // （旧窗口有时已被释放、有时还活着，所以表现为「偶尔出现两个主窗口」）。
+    // 以前 front 所有窗口还有个副作用：连 Settings 窗口一起弹出来。
 
     /// 驻留：关掉最后一个窗口也不退出（后台任务继续跑）。
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

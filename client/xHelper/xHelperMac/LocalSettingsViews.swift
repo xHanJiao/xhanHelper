@@ -266,25 +266,9 @@ struct LocalOnboardingView: View {
                 }
             }
             .disabled(test == .testing || keyMissing)
+            .help(keyMissing ? "请先填写两个密钥" : "用当前密钥各发一个最小请求验证")
 
-            switch test {
-            case .ok:
-                Label("连接正常", systemImage: "checkmark.circle.fill")
-                    .foregroundColor(Color("appAccent"))
-                    .font(.subheadline)
-            case .failed(let message):
-                Label(message, systemImage: "xmark.octagon")
-                    .foregroundColor(.red)
-                    .font(.caption)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            case .idle where keyMissing:
-                Text("请先填写两个密钥")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            case .idle, .testing:
-                EmptyView()
-            }
+            LocalConnectionTestStatus(state: test)
         }
     }
 
@@ -346,6 +330,32 @@ struct LocalNotConfiguredView: View {
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - 共用：测试连接结果指示
+
+/// 「测试连接」的结果：**只有图标、没有文字**，细节全挂 hover（`help` 是原生 tooltip）。
+/// 以前把失败原因写成一行红字，既把 Form 撑高、又常常离触发它的按钮很远。
+/// 失败时 tooltip 里两段：人话 + provider 原文（原文对排错有用）。
+struct LocalConnectionTestStatus: View {
+    let state: ConnectionTestState
+
+    var body: some View {
+        switch state {
+        case .ok:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(Color("appAccent"))
+                .help("连接正常")
+        case .failed(let failure):
+            Image(systemName: "xmark.octagon.fill")
+                .foregroundColor(.red)
+                .help([failure.message, failure.detail]
+                    .compactMap { $0 }
+                    .joined(separator: "\n\n"))
+        case .idle, .testing:
+            EmptyView()
+        }
     }
 }
 
@@ -423,19 +433,14 @@ struct LocalModelKeySection: View {
                     }
                 }
                 .disabled(test == .testing || !secrets.isComplete)
+                .help(secrets.isComplete ? "用当前密钥各发一个最小请求验证" : "请先填写两个密钥")
+
+                LocalConnectionTestStatus(state: test)
 
                 Button("保存并重启后端") {
-                    let status = LocalSecretsStore.save(secrets)
-                    guard status == errSecSuccess else {
-                        saveError = "无法写入本机钥匙串：\(LocalKeychain.describe(status))"
-                        return
-                    }
-                    saveError = nil
-                    secrets = LocalSecretsStore.load()
-                    saved = secrets
-                    Task { await LocalBackendManager.shared.restart() }
+                    Task { await saveAndRestart() }
                 }
-                .disabled(!dirty || !secrets.isComplete)
+                .disabled(!dirty || !secrets.isComplete || test == .testing)
 
                 if LocalAuthService.shared.isActive {
                     Button("锁定") { onLock() }
@@ -469,24 +474,10 @@ struct LocalModelKeySection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            switch test {
-            case .ok:
-                Label("连接正常", systemImage: "checkmark.circle.fill")
-                    .font(.caption)
-                    .foregroundColor(Color("appAccent"))
-            case .failed(let message):
-                Label(message, systemImage: "xmark.octagon")
-                    .font(.caption)
-                    .foregroundColor(.red)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            case .idle, .testing:
-                EmptyView()
-            }
         } header: {
             Text("模型与密钥")
         } footer: {
-            Text("密钥存本机钥匙串。模型 / Base URL 留空用默认值。改动后需「保存并重启后端」才生效。")
+            Text("密钥存本机钥匙串。模型 / Base URL 留空用默认值。「保存并重启后端」会先测试一次连接，通过才保存。")
         }
         .alert("清除密钥", isPresented: $showClearAlert) {
             Button("取消", role: .cancel) {}
@@ -509,6 +500,25 @@ struct LocalModelKeySection: View {
     private func runTest() async {
         test = .testing
         test = await LocalConnectionProbe.testState(secrets)
+    }
+
+    /// 存之前**强制**验一次：密钥错了就别把后端重启进失败态（也就不会有「存了却用不了」）。
+    /// 失败时不落盘、不重启，红图标 + hover 里有原因。
+    private func saveAndRestart() async {
+        test = .testing
+        let result = await LocalConnectionProbe.testState(secrets)
+        test = result
+        guard case .ok = result else { return }
+
+        let status = LocalSecretsStore.save(secrets)
+        guard status == errSecSuccess else {
+            saveError = "无法写入本机钥匙串：\(LocalKeychain.describe(status))"
+            return
+        }
+        saveError = nil
+        secrets = LocalSecretsStore.load()
+        saved = secrets
+        await LocalBackendManager.shared.restart()
     }
 }
 

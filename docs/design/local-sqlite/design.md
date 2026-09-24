@@ -160,7 +160,7 @@ Mac 上，一个应用自己的数据有官方指定位置：
 | 内容 | 放哪 | 说明 |
 |------|------|------|
 | SQLite 库 | `~/Library/Application Support/xhanHelper/xhan_helper.db` | Apple 指定「应用创建、用户不直接管理」的数据 |
-| 图床 | `~/Library/Application Support/xhanHelper/images/` | 图床文件必须和库**一起**搬，否则库里的图片记录会指向不存在的文件 |
+| 图床 | `~/Library/Application Support/xhanHelper/images/` | 与库同目录，便于整体备份（本地 prod→dev 的 zip 会一起打包）；从云端迁移时图片**不搬**（见第七节） |
 | 日志 | `~/Library/Logs/xhanHelper/` | Apple 约定的日志位置 |
 
 > **dev 用平行的一套**（见第八节）：根目录换成 `~/Library/Application Support/xhanHelper-dev/` 与 `~/Library/Logs/xhanHelper-dev/`，与 prod 物理分开，互不可见。
@@ -224,6 +224,7 @@ flowchart TB
         C8[8 密钥设置 + 首次配置引导]
         C9[9 驻留生命周期]
         C10[10 dev/prod 双 build 隔离]
+        C11[11 本地单用户 + Touch ID 解锁]
     end
     be --> xc --> sw
 ```
@@ -325,6 +326,15 @@ flowchart TD
   - **无反向路径**：prod 没有「导入」、dev 没有「导出到 prod」；dev 全程不直接读写 prod 数据根，只吃一份副本。
 - **改哪里**：`SettingsView`（prod/dev 各一个按钮 + 二次确认 + 进度）；Swift `Process` 调 `/usr/bin/ditto`（项目已有 shell 外部进程的先例）；导入后重启 `LocalBackendManager`；两份 config / scheme / entitlements；路径常量按 build 硬编码 + 启动断言。
 
+### 11. 本地单用户 + Touch ID 解锁（取代账号密码）
+
+- **为什么**：本地是单用户，再让人记用户名/密码没意义，门交给 Touch ID。但**不能删 `user_id`**——28 张表都按它归属，删了要全库重构、还砸云端/iOS 共用代码。所以做法是「**身份隐形**」：用户后台自动存在，你永远看不见它，门用指纹。
+- **本地单用户模式（Go）**：配置 `server.local_single_user: true` + `local_username: xhan`。`middleware/auth.go` 加本地分支：Bearer 等于本地 token 时，按 `local_username` **解析用户（无则创建）** 并注入 `user_id`；启动时把该用户 UUID 塞进 `admin_users`（内存里），**因此不硬编码任何 UUID**。
+- **本地 token（app 生成）**：首启生成随机 `localToken` 存 Keychain，拉起 Go 时经 env `XHAN_LOCAL_TOKEN` 传入，请求带它。**全程不涉及用户名/密码**。
+- **Touch ID 门（Swift）**：token 存成「需生物识别才能读」的 Keychain 项（`SecAccessControl` + `.userPresence`）。读它（换 token）天然触发指纹——**指纹即解锁**。触发时机：启动 / 从后台回前台 / 空闲 15 分钟；指纹失败**允许退系统密码兜底**（避免把自己锁外面）；**DEBUG build 跳过**（开发时不弹）。
+- **不钉 UUID（为了能分发）**：不写死 `local_user_id`。迁移进来的是线上 `xhan`（`33333333-…`），全新库则随机生成——两者都靠「按用户名解析」自洽；朋友的机子各用各的，不会顶着别人的身份。
+- **改哪里**：`middleware/auth.go` 本地分支；`config` 加 `local_single_user` / `local_username` / `local_token`；`DeviceManager` token 存储 UserDefaults → Keychain；新增 `LocalAuthService`（LAContext）；UI-1 / UI-5 / UI-10 相应调整。
+
 ---
 
 ## 六、分期与验收
@@ -350,17 +360,17 @@ flowchart LR
 
 ### 第 2 期 — 内嵌进 Release app（双击 UX）
 
-**你会看到什么**：在 Xcode 打个 Release app，首次双击弹配置窗口填密钥；之后双击即用，窗口秒开，数据落在 `~/Library/Application Support/xhanHelper/`；红 X 只关窗、后台继续；Cmd+Q 后 `lsof` 无残留。
+**你会看到什么**：在 Xcode 打个 Release app，首次双击弹配置窗口填密钥 + 启用 Touch ID；之后双击即用（**指纹解锁，无账号密码**），窗口秒开，数据落在 `~/Library/Application Support/xhanHelper/`；红 X 只关窗、后台继续；Cmd+Q 后 `lsof` 无残留。
 
-- 改动点 3、5、6、7、8、9。
-- 验收：首次配置 → 启动 → 聊天通；健康 `starting → ready` 可见；故意填错 key / 占端口 → 弹出人类可读报错；红 X 驻留、Cmd+Q 真退；前端面板（浏览/调试/分享）可用。
+- 改动点 3、5、6、7、8、9、11。
+- 验收：首次配置 → Touch ID 解锁 → 聊天通；健康 `starting → ready` 可见；故意填错 key / 占端口 → 弹出人类可读报错；红 X 驻留、Cmd+Q 真退；前端面板（浏览/调试）可用（分享先不做）。
 
 ### 第 3 期 — 数据迁移（MySQL → 本地 prod）
 
-**你会看到什么**：把线上 MySQL 的现有数据搬到本地 prod 的 SQLite。
+**你会看到什么**：把线上 MySQL 里 **xhan 的数据**搬到本地 prod 的 SQLite（其余用户剪掉）。
 
-- 迁移工具（见第七节）。
-- 验收：关键表行数对账一致；抽样几条消息/记忆/账单在客户端显示正常；向量检索可用；warmup 提速后窗口仍秒开。
+- 迁移工具 + 剪枝（见第七节）。
+- 验收：xhan 的关键表行数对账一致、其余用户行数为 0；抽样几条消息/记忆/账单在客户端显示正常；向量检索可用；warmup 提速后窗口仍秒开。
 
 ### 第 4 期 — dev/prod 双环境隔离
 
@@ -377,20 +387,24 @@ flowchart LR
 
 ## 七、数据迁移（MySQL → SQLite）
 
-**先空库、后迁移**（先验证链路，再搬数据）。
+**先空库、后迁移**（先验证链路，再搬数据）。**只迁 DB，不迁图片**（旧图引用会 404，已接受）；**分享功能先不做**。
 
 ```mermaid
 flowchart LR
     MY[("线上 MySQL")] -->|GORM 逐表读| EX[cmd/mysql2sqlite]
-    EX -->|GORM 逐表写| SQ[("本地 SQLite")]
-    SQ --> RC[行数对账 + 关键表抽样]
+    EX -->|GORM 逐表写| SQ[("全新 SQLite")]
+    SQ --> PR["剪枝：非 xhan 的行全删<br/>（28 张 user_id 表 + users 表）"]
+    PR --> RC[行数对账 + 关键表抽样]
 ```
 
 **为什么不能直接用 mysqldump**：现在 `data/mysqldumps/` 里的 dump 是 ~800MB–1GB 的 MySQL 语法 SQL，SQLite 不认识。与其解析它，不如写个小的 Go 工具：
 
 - 新增 `cmd/mysql2sqlite`：用 GORM 从 MySQL 逐表读，用 GORM 往 SQLite 逐表写。
+- **写全新 DB**（drop/recreate，不做增量合并）：避免「app 先跑建了随机 UUID 的 xhan，迁移再插线上 xhan（`33333333-…`）撞 username 唯一约束」。
 - **优点**：复用 `model/` 里已有的结构体定义，不用担心字段对不上；批量插入，不需要在循环里逐条访问数据库。
+- **剪枝（只留 xhan）**：全量搬完后遍历所有表，凡有 `user_id` 列的就 `DELETE WHERE user_id != <xhan 的 UUID>`，再 `DELETE FROM users WHERE username != 'xhan'`。列名靠 `PRAGMA table_info` 运行时发现，**不用手维护 28 张表清单**；剪枝时显式 `PRAGMA foreign_keys=OFF`（SQLite 默认即 off，钉死防驱动改默认），剪完可选跑孤儿清理。不带 `user_id` 的全局配置表保留。
 - **关注点**：时间 / 空值 / 类型在两种数据库间的差异，靠「行数对账 + 关键表抽样」验证。
+- **图片**：不搬。`ImageAsset` 行会留下但文件不存在，展示时 404（已接受）；后续由 TTL 清理自然淘汰。
 
 **关于启动**：向量预热（`agents.go:41-47`：memory / note / history / summary / theme / chunk / tool / fact）过去是**同步阻塞**在 HTTP 之前的，memory/note 还是全量 + 逐条 embed。第 1 期改动点 4 把它挪到后台后，即便迁入大表，窗口也能秒开、warmup 在后台补齐。
 
@@ -464,6 +478,10 @@ flowchart LR
 | **单向复制可被绕过** | 非沙盒下同用户理论上仍可读 prod 文件 | 路径硬编码 + 启动断言 + 只走 zip 导出/导入（dev 不直接读写 prod 数据根）（改动点 10） |
 | **导入时后端占用 DB** | dev 导入 zip 时后端在跑会锁 SQLite | 导入前停后端、写完重启（UI-8b） |
 | **预览靶材质失真** | `ImageRenderer` 离屏渲染材质/毛玻璃不可信 | 只信布局 / token；观感以 Xcode 真机为准（第十一节） |
+| **剪枝留孤儿** | 按 `user_id` 删非 xhan，可能漏掉无 `user_id` 的关联表留下孤儿行 | 剪枝后跑一遍孤儿清理 + 关键表对账抽查（第七节） |
+| **旧图 404** | 不迁图片，迁入的 `ImageAsset` 指向不存在的文件 | 已接受；后续 TTL 清理自然淘汰 |
+| **Touch ID 不可用** | 无指纹硬件 / 指纹识别失败会把用户锁在外面 | 用 `.userPresence`（指纹失败可退系统密码）；DEBUG build 跳过 |
+| **本地 token 面** | 甲方案后端只认 `localToken`，任何读到它的本地进程都能调 API | token 存 Keychain 且需生物识别才能读 + 回环绑定；个人机子威胁模型可接受 |
 | **后台任务只在 app 运行时跑** | 关窗驻留可继续，但显式退出 / 关机就停 | 已接受；下次启动自动补跑（见下） |
 
 ### 关于「合盖 / 关机后补跑」
@@ -496,17 +514,17 @@ sequenceDiagram
 
 | # | 界面 | 触发时机 | 关键元素 | 基调 | 期 |
 |---|------|----------|----------|------|----|
-| **UI-1** | **首次配置（Onboarding）** `NEW` | 首次启动、Keychain 无密钥 | 欢迎头 / 两个 key / 高级区(model, base_url) / 测试连接 / 继续 | Apple 设置助理级「高级感」；**单页**（高级区折叠） | 2 |
+| **UI-1** | **首次配置（Onboarding）** `NEW` | 首次启动、Keychain 无密钥 | 欢迎头 / 两个 key / 高级区(model, base_url) / 测试连接 / **启用 Touch ID** / 继续 | Apple 设置助理级「高级感」；**单页**（高级区折叠）；**无账号密码** | 2 |
 | **UI-2** | **启动·预热态** `NEW` | 后端 `starting→ready` | 轻量指示：「正在启动服务…」「正在预热记忆检索…」 | 克制、不挡操作；**主窗口内联** | 2 |
 | **UI-3** | **后端启动失败弹窗** `NEW` | 子进程提前退出 / 健康超时 | 人话原因 + 退出码 + 日志折叠 + 「查看日志 / 重新配置 / 重试」 | 系统 Alert 或 sheet | 2 |
 | **UI-4** | **未配置空态** `NEW` | 用户跳过 onboarding | 主窗口空态 + 「去配置」入口 | 复用 `ErrorStateView` 风格 | 2 |
-| **UI-5** | **设置页「模型与密钥」** `改造` | 随时 | 两个 `SecureField` / model 下拉 / base_url / 清除密钥 /（测试连接） | 复用 `SettingsCard`+`KeycapView`；**Release 可见** | 2 |
+| **UI-5** | **设置页「模型与密钥」** `改造` | 随时 | 两个 `SecureField` / model 下拉 / base_url / 清除密钥 /（测试连接）/「锁定·重新验证」 | 复用 `SettingsCard`+`KeycapView`；**Release 可见**；去掉「退出登录」 | 2 |
 | **UI-6** | **设置页「本地服务」** `NEW` | 随时 | 后端状态、端口、数据根路径、日志入口、「重启后端」 | 复用 `SettingsCard` | 2 |
 | **UI-7** | **dev 环境视觉标识** `改造` | dev build | 窗口标题后缀「(dev)」+ 顶部 accent 细条 | 一眼可辨、不刺眼 | 4 |
 | **UI-8a** | **prod 设置页「导出数据」** `NEW` | 随时 | 按钮 + `NSSavePanel` + 进度 | 复用设置卡片 | 4 |
 | **UI-8b** | **dev 设置页「导入数据」** `NEW` | 随时 | 按钮 + `NSOpenPanel` + 二次确认 + 进度 + 导入后重启提示 | 复用设置卡片 | 4 |
 | **UI-9** | **驻留提示（可选）** `NEW` | 关窗后 app 仍活 | 首次关窗一句提示「仍在后台运行，⌘Q 退出」 | 可选，轻提示 | 2/4 |
-| **UI-10** | **登录门重排** `改造` | 后端起来后未登录 | 现有 `LoginMacView`，顺序在 onboarding 之后 | 现有，仅调流程 | 2 |
+| **UI-10** | **Touch ID 解锁门** `改造` | 启动 / 回前台 / 空闲 15min | 现有 `LoginMacView` → 指纹解锁（失败可退系统密码）；DEBUG 跳过 | 复用现有登录门壳，去掉账号密码 | 2 |
 
 **可复用的现成件**：`ErrorStateView` / `MinimumLoadingView` / `InlineRetryBar`（`ErrorStateView.swift`）、`SettingsCard`+`KeycapView`（`SettingsStyle.swift`）、`GlassBackground`、顶栏 `CapsuleGroup`/`CapsuleButton`、设计 token（`appAccent` 等）。
 
@@ -533,3 +551,6 @@ sequenceDiagram
 | 10 | 数据复制 | UI 驱动：prod 导出 zip / dev 导入 zip（`ditto`），导入后自动重启后端 |
 | 11 | zip 方式 | shell 到 `/usr/bin/ditto`（不加依赖） |
 | 12 | UI 预览方式 | 原生走 Xcode `#Preview` + SwiftPM `ImageRenderer` 预览靶；HTML 仅 Web 前端 |
+| 13 | 本地身份 | 单用户、**隐形**：按 `local_username: xhan` 解析（无则建）+ 自动 admin；**不钉 UUID**（可分发） |
+| 14 | 访问门 | Touch ID：启动 / 回前台 / 空闲 15min；失败允许系统密码兜底；DEBUG 跳过；token 存 Keychain（生物保护） |
+| 15 | 迁移范围 | 全量搬 + 剪掉非 xhan（28 张 `user_id` 表）；写全新 DB；**不迁图片**（旧图 404）；**分享不做** |

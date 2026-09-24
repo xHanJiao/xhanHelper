@@ -270,8 +270,13 @@ flowchart TB
 
 - **为什么**：app 要能带着这些东西一起分发，双击就有。
 - **改哪里**（`xHelperMac` target）：
-  - 加一个 Run Script 构建阶段：依次跑 `npm run build`（前端）→ `go build`（后端）→ 把二进制和 `conf/` 拷进 app 的 `Contents/Resources/`。
-  - **嵌套二进制签名**：macOS 要求 app 里**每一个可执行文件**都单独签名，包括这个 Go 子进程。这是本期最容易踩的坑（详见第十节）。
+  - 新增 `scripts/bundle-backend.sh`（**可脱离 Xcode 独立跑**：`scripts/bundle-backend.sh /path/to/x.x.app`，用于验证脚本本身）；Run Script 阶段只是调它。
+  - 脚本依次：`make build-frontend` → `make local-build`（Go 二进制内嵌前端）→ 把 `xhan-helper` + `conf/{config.yaml,config.local.yaml}` 拷进 `Contents/Resources/`。
+  - **关键工程设置**：**仅 `xHelperMac` target 的两个配置**设 `ENABLE_USER_SCRIPT_SANDBOXING = NO`（否则沙箱挡住脚本跑 npm/go），**项目级保持 `YES`**（不替 iOS target 放宽文件系统访问）；脚本内补 `PATH=/opt/homebrew/bin:…`（Xcode Run Script 的 PATH 很干净，找不到 brew 的 npm/go）。
+  - **增量跳过（省构建时间）**：阶段设 `alwaysOutOfDate = 1`（每次都跑，避免 Xcode 依赖分析误判「输出还在」而漏编），但**脚本内部判增量**——上次成功打包后写一个 stamp 到 `DERIVED_FILE_DIR`，下次若 `server/`、`front-end/` 下没有比 stamp 更新的源文件（排除 `node_modules`/`dist`/`logs`/`data`）就秒退。只改 Swift 时不再重编后端。
+  - **两个逃生口**（User-Defined 构建设置，**不能用 scheme 的环境变量**——那只作用于 Run 动作、不进 Build）：`SKIP_BUNDLE_BACKEND=1` 跳过打包、`FORCE_BUNDLE_BACKEND=1` 忽略增量强制重编。
+  - **依赖守卫**：`front-end/node_modules` 不存在时明确报错提示 `npm ci`，不让 npm 抛一脸错。
+  - **嵌套二进制签名**：macOS 要求 app 里**每一个可执行文件**都单独签名，包括这个 Go 子进程；脚本内用 `codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY"`，无签名身份时**打 warn 明示跳过失（有意降级）**。**第 5 期**公证前再补 `--options runtime --timestamp`。这是本期最容易踩的坑（详见第十节）。
 
 打包完的 app 内部其实就是一个文件夹，长这样：
 
@@ -281,7 +286,7 @@ flowchart TD
     APP --> M["Contents/MacOS/xhanHelper<br/>SwiftUI 主程序"]
     APP --> R["Contents/Resources/"]
     R --> RB["xhan-helper<br/>Go 后端二进制<br/>内含 go:embed 的前端 dist"]
-    R --> RC["conf/<br/>config.yaml + config.local.*.yaml"]
+    R --> RC["conf/<br/>config.yaml + config.local.yaml<br/>（第 4 期拆 .prod/.dev）"]
     RB --> SPAWN["运行时被主程序拉起<br/>监听 127.0.0.1:18923"]
 ```
 
@@ -368,7 +373,7 @@ flowchart LR
 **你会看到什么**：在 Xcode 打个 Release app，首次双击弹配置窗口填密钥 + 启用 Touch ID；之后双击即用（**指纹解锁，无账号密码**），窗口秒开，数据落在 `~/Library/Application Support/xhanHelper/`；红 X 只关窗、后台继续；Cmd+Q 后 `lsof` 无残留。
 
 - 改动点 3、5、6、7、8、9、11。
-- 验收：首次配置 → Touch ID 解锁 → 聊天通；健康 `starting → ready` 可见；故意填错 key / 占端口 → 弹出人类可读报错；红 X 驻留、Cmd+Q 真退；前端面板（浏览/调试）可用（分享先不做）。
+- 验收：首次配置 → Touch ID 解锁 → 聊天通；健康 `starting → ready` 可见；故意填错 key / 占端口 → 弹出人类可读报错；红 X 驻留、Cmd+Q 真退；前端面板（浏览/调试）可用（分享先不做）；**token 注入失败（`XHAN_LOCAL_TOKEN` 为空）时后端拒绝启动并报错，不退化成无认证**（`EnsureLocalUser` 对空 token 返回 error）。
 
 ### 第 3 期 — 数据迁移（MySQL → 本地 prod）
 
@@ -387,6 +392,8 @@ flowchart LR
 ### 第 5 期 — 分发（本次不做）
 
 纯 Go 驱动已就位 → 双架构 lipo；Developer ID 签名 + 公证（你已有 `DEVELOPMENT_TEAM = NSJD2BRH7Z`）；朋友填自己的 key。
+
+- **注意架构**：Release 的 app 是通用二进制（`ARCHS_STANDARD` = arm64 + x86_64；项目级 `ONLY_ACTIVE_ARCH` 只对 Debug 生效），而 `go build` 默认只出宿主架构 → 通用 app 里嵌的是单架构 Go 子进程。**本机/同架构机器无碍**；跨机分发前需 `GOARCH=arm64` + `GOARCH=amd64` 各编一次再 `lipo -create`。
 
 ---
 

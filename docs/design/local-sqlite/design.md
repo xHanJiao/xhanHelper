@@ -301,7 +301,8 @@ flowchart TD
   - **监控提前退出**：健康没 ready 就 exit → 弹人类可读报错（退出码 + 最后 N 行日志），区分「端口占用 / 密钥非法 / 库打不开 / 迁移失败」，并给「重新配置」入口；
   - app 退出时终止子进程。
   - **父进程看门狗（Go 侧，已实现）**：`appinit/watchdog.go` 在包初始化时记下 `os.Getppid()`；本地模式下每 5s 检查一次，app 崩溃被托孤（ppid→1）即自发 SIGTERM 走 `Serve` 的优雅关闭，避免孤儿进程赖在端口上。云端/开发模式不启用（父进程语义不同，贸然退出会误伤）。
-  - **密钥来源（2B-3 已完成）**：不再读 scheme 环境变量，改为 `LocalSecretsStore`（Keychain）；环境变量仅作回退（开发便利）。`XHAN_LLM_MODEL` / `XHAN_LLM_BASE_URL` 走「非空才覆盖」（Go 侧 `applyLLMEnvOverrides`，已在 2B-3 补齐）。
+  - **密钥来源（2B-3 已完成）**：只认 `LocalSecretsStore`（Keychain）。**不回退进程环境变量**——否则 scheme / shell 里的 `LLM_API_KEY` 会把 `isConfigured` 顶成 true，症状是「清了密钥也回不去首次配置」；且构建期注入密钥会把明文 key 留在 scheme 文件里。密钥一律设置页手填。
+  - `XHAN_LLM_MODEL` / `XHAN_LLM_BASE_URL` 是**出方向**（Swift → Go 子进程），走「非空才覆盖」（Go 侧 `applyLLMEnvOverrides`，已在 2B-3 补齐），与上面的入方向读取无关。
   - **Touch ID 门（2B-4 已完成）**：`LocalAuthService` 管 token 生命周期；启用时 `State.locked` → UI-10 解锁后才拉进程。DEBUG 默认跳过（可用 `xhan_touch_id_debug` 临时打开）。
 
 

@@ -4,18 +4,18 @@ import Security
 
 /// 本地后端密钥/可选覆盖项的读写：**密钥走 Keychain**，model / base_url 走 UserDefaults（非机密）。
 ///
-/// 读取时回退到进程环境变量——开发便利：仍习惯在 Xcode scheme 里填 key 的老流程也照常能用
-/// （Keychain 有值则以 Keychain 为准）。
+/// **刻意不读进程环境变量**：`isConfigured` 只认 Keychain。否则 scheme / shell 里的
+/// `LLM_API_KEY` 会把 key 顶上来，而界面显示「未配置」——症状是「清了密钥也回不去首次配置」。
+/// 密钥一律由用户在设置页手填（构建期注入密钥是坏味道：key 会落进 scheme 文件）。
 enum LocalSecretsStore {
     static let modelDefaultsKey = "xhan_llm_model"
     static let baseURLDefaultsKey = "xhan_llm_base_url"
 
     static func load() -> LocalSecrets {
-        let env = ProcessInfo.processInfo.environment
         let defaults = UserDefaults.standard
         return LocalSecrets(
-            llmKey: LocalKeychain.string(.llmKey) ?? env["LLM_API_KEY"] ?? "",
-            embeddingKey: LocalKeychain.string(.embeddingKey) ?? env["EMBEDDING_API_KEY"] ?? "",
+            llmKey: LocalKeychain.string(.llmKey) ?? "",
+            embeddingKey: LocalKeychain.string(.embeddingKey) ?? "",
             llmModel: defaults.string(forKey: modelDefaultsKey) ?? "",
             llmBaseURL: defaults.string(forKey: baseURLDefaultsKey) ?? ""
         )

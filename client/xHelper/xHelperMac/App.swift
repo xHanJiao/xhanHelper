@@ -14,7 +14,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 本地模式：先把内嵌后端拉起来（窗口秒开，后端在后台初始化）。
-        LocalBackendManager.shared.start()
+        // 未配密钥时不起后端——先走首次配置（UI-1），配置完成后再 start。
+        if LocalBackendManager.isActive && LocalBackendManager.shared.isConfigured {
+            LocalBackendManager.shared.start()
+        }
+
+        // 任意交互刷新空闲计时（Touch ID 空闲锁，UI-10）。
+        NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel]
+        ) { event in
+            LocalLockController.shared.noteActivity()
+            return event
+        }
 
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self,
@@ -312,22 +323,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: 红 X 关闭窗口
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        let resources = MCPManager.shared.activeExternalResources()
-        if resources.isEmpty {
-            NSApp.terminate(nil)
-            return true
-        }
+        // 驻留（改动点 9 / UI-9）：红 X 只关窗，app 与本地后端继续在后台跑；
+        // Cmd+Q（长按 / 右键退出）才真正终止。首次关窗给小浮窗提示。
+        ResidentHint.showIfNeeded()
+        return true
+    }
 
-        // 非阻塞 sheet 确认（runModal 会卡主线程 → 终止 reply 死锁 → 外部 SIGTERM）
-        confirmQuitIfNeeded(on: sender) { confirmed in
-            if confirmed {
-                Task.detached {
-                    await MCPManager.shared.shutdown(closeExternal: true)
-                    await MainActor.run { NSApp.terminate(nil) }
-                }
+    /// 关窗后点 Dock 图标回来（窗口保留在 NSApp.windows 里，重新排序到前台即可）。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            for window in sender.windows {
+                window.makeKeyAndOrderFront(nil)
             }
         }
-        return false
+        return true
+    }
+
+    /// 驻留：关掉最后一个窗口也不退出（后台任务继续跑）。
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 
     // MARK: 长按 Cmd+Q 退出
@@ -386,6 +400,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for window in NSApp.windows {
             Self.configureWindow(window)
         }
+        LocalLockController.shared.lockOnActivate()
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        LocalLockController.shared.noteResignActive()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -409,7 +428,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         // 非阻塞 sheet 确认（runModal 会卡主线程 → MainActor.run reply 死锁 → 外部 SIGTERM）
-        confirmQuitIfNeeded(on: NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first) { confirmed in
+        confirmQuitIfNeeded { confirmed in
             if confirmed {
                 Task.detached {
                     await MCPManager.shared.shutdown(closeExternal: true)
@@ -433,9 +452,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var isQuitConfirmShowing = false
 
     /// 退出确认（非阻塞 sheet）：避免 runModal 卡主线程导致终止流程死锁（→ 外部 SIGTERM）。
-    /// 已有一张确认 sheet 时不再弹；无窗口时回退 runModal（罕见）。
-    private func confirmQuitIfNeeded(on window: NSWindow?, completion: @escaping (Bool) -> Void) {
+    /// 已有一张确认 sheet 时不再弹。
+    ///
+    /// 驻留态（关窗后 Cmd+Q）可能一个可见窗口都没有：此时**把主窗口叫回来**当宿主再弹 sheet，
+    /// 而不是静默放行——否则助手拉起的外部 app 会被不打招呼地关掉。
+    private func confirmQuitIfNeeded(completion: @escaping (Bool) -> Void) {
         guard !isQuitConfirmShowing else { return }
+        let host = quitConfirmHost()
+        guard let host else {
+            LogBuffer.shared.warning("退出确认：没有可挂 sheet 的窗口，直接放行")
+            completion(true)
+            return
+        }
+        if !host.isVisible {
+            host.makeKeyAndOrderFront(nil)
+        }
         let resources = MCPManager.shared.activeExternalResources()
         let alert = NSAlert()
         alert.messageText = "退出确认"
@@ -444,17 +475,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         alert.addButton(withTitle: "确认退出")
         alert.addButton(withTitle: "取消")
 
-        guard let window else {
-            DispatchQueue.main.async {
-                completion(alert.runModal() == .alertFirstButtonReturn)
-            }
-            return
-        }
         isQuitConfirmShowing = true
-        alert.beginSheetModal(for: window) { response in
+        alert.beginSheetModal(for: host) { response in
             self.isQuitConfirmShowing = false
             completion(response == .alertFirstButtonReturn)
         }
+    }
+
+    /// 选一个能挂 sheet 的宿主窗口（排除浮动面板；都没有则回退第一个普通窗口
+    /// ——它可能只是被「关窗驻留」关掉了，叫回来即可）。
+    private func quitConfirmHost() -> NSWindow? {
+        if let key = NSApp.keyWindow, !(key is NSPanel) { return key }
+        if let main = NSApp.mainWindow, !(main is NSPanel) { return main }
+        let normal = NSApp.windows.filter { !($0 is NSPanel) && $0.canBecomeKey }
+        return normal.first(where: { $0.isVisible }) ?? normal.first
     }
 
     private static func configureWindow(_ window: NSWindow) {
@@ -476,10 +510,14 @@ struct xhanHelperMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var deviceManager = DeviceManager()
     @ObservedObject private var localBackend = LocalBackendManager.shared
+    @ObservedObject private var lockController = LocalLockController.shared
     @StateObject private var colorSchemeManager = ColorSchemeManager()
     @StateObject private var resizeGhost = ResizeGhostState()
+    @StateObject private var windowHandle = LocalWindowHandle()
     @State private var isHoldingQuit = false
     @State private var holdProgress: Double = 0
+    /// 用户首次配置窗口点了「稍后配置」→ 主窗口显示未配置空态（UI-4）。
+    @State private var onboardingSkipped = false
 
     var body: some Scene {
         WindowGroup {
@@ -493,9 +531,16 @@ struct xhanHelperMacApp: App {
             .lightbox()
             .browserDiagnostics()
             .glassWindow()
+            .background(LocalWindowReader { window in
+                windowHandle.window = window
+                applyWindowSizeForOnboarding()
+            })
+            .onAppear { applyWindowSizeForOnboarding() }
+            .onChange(of: onboardingGateVisible) { _, _ in applyWindowSizeForOnboarding() }
             .task {
                 // 后端可能在窗口渲染前就已 ready（空库秒起），补一次；否则交给 onChange。
                 if localBackend.state == .ready {
+                    LocalLockController.shared.start()
                     await deviceManager.onLocalBackendReady()
                 }
                 await LocalToolRegistry.shared.register(BrowserToolProvider.shared)
@@ -513,6 +558,7 @@ struct xhanHelperMacApp: App {
             }
             .onChange(of: localBackend.state) { _, newState in
                 if newState == .ready {
+                    LocalLockController.shared.start()
                     Task { await deviceManager.onLocalBackendReady() }
                 }
             }
@@ -529,6 +575,15 @@ struct xhanHelperMacApp: App {
                     holdToQuitOverlay
                 }
             }
+            .overlay {
+                // UI-10：运行期重新锁定（回前台 / 空闲 15 分钟）时罩住主窗口。
+                if LocalBackendManager.isActive && lockController.isLocked {
+                    LocalUnlockView {
+                        Task { await LocalLockController.shared.unlock() }
+                    }
+                    .transition(.opacity)
+                }
+            }
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 800, height: 600)
@@ -539,6 +594,14 @@ struct xhanHelperMacApp: App {
                 .environmentObject(colorSchemeManager)
                 .environmentObject(FontSizeManager.shared)
                 .preferredColorScheme(colorSchemeManager.selectedScheme.colorScheme)
+                .overlay {
+                    // 设置窗口是独立 Scene：不盖的话锁定期间照样能看明文密钥 / 点「浏览」。
+                    if LocalBackendManager.isActive && lockController.isLocked {
+                        LocalUnlockView {
+                            Task { await LocalLockController.shared.unlock() }
+                        }
+                    }
+                }
         }
     }
 
@@ -580,8 +643,20 @@ struct xhanHelperMacApp: App {
         if !LocalBackendManager.isActive {
             // 逃生口：设置里显式填了「服务地址」，走原来的登录 / 云端寻址。
             accountRoot
+        } else if !localBackend.isConfigured && !onboardingSkipped {
+            // UI-1：首次配置（无密钥 → 不起后端，先填密钥）。
+            LocalOnboardingView(
+                onDone: { startLocalAfterConfig() },
+                onSkip: { onboardingSkipped = true }
+            )
+        } else if !localBackend.isConfigured {
+            // UI-4：跳过配置后的未配置空态。
+            LocalNotConfiguredView(onConfigure: { onboardingSkipped = false })
         } else {
             switch localBackend.state {
+            case .locked:
+                // UI-10：Touch ID 解锁门（token 读取需要生物认证）。
+                LocalUnlockView { localBackend.unlock() }
             case .ready:
                 if deviceManager.isLoggedIn {
                     ContentView(deviceManager: deviceManager, resizeGhost: resizeGhost)
@@ -597,6 +672,28 @@ struct xhanHelperMacApp: App {
             case .failed(let reason):
                 localBackendFailed(reason) { Task { await localBackend.restart() } }
             }
+        }
+    }
+
+    /// UI-1 配置完成 → 起本地后端。
+    private func startLocalAfterConfig() {
+        LocalBackendManager.shared.start()
+    }
+
+    /// 是否正处于「首次配置」门（UI-1）。
+    private var onboardingGateVisible: Bool {
+        LocalBackendManager.isActive && !localBackend.isConfigured && !onboardingSkipped
+    }
+
+    /// UI-1 按内容收窄窗口（内容 540 + 左右 24 内边距 + 顶部让开红绿灯 44）；配置完成后恢复聊天默认尺寸。
+    private func applyWindowSizeForOnboarding() {
+        guard let window = windowHandle.window else { return }
+        if onboardingGateVisible {
+            window.setContentSize(NSSize(width: 588, height: 650))
+            window.center()
+        } else if (window.contentView?.frame.width ?? 0) < 700 {
+            window.setContentSize(NSSize(width: 800, height: 600))
+            window.center()
         }
     }
 
@@ -639,6 +736,10 @@ struct xhanHelperMacApp: App {
                 Button("重试", action: retry)
                     .keyboardShortcut(.defaultAction)
             }
+            // Touch ID 凭据读不出来时，「重试」只会再撞同一堵墙——给一个真正的出口。
+            if LocalAuthService.shared.isActive {
+                LocalTouchIDRecoveryLink()
+            }
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -649,6 +750,7 @@ struct xhanHelperMacApp: App {
 
 struct MacSettingsView: View {
     @ObservedObject var deviceManager: DeviceManager
+    @ObservedObject private var localBackend = LocalBackendManager.shared
     @EnvironmentObject var colorSchemeManager: ColorSchemeManager
     // 空 = 使用 app 自启动的内嵌本地后端；填了 = 逃生口（连远端/自定义后端，不启动本地后端）。
     @AppStorage("xhan_server_url") private var serverURL = ""
@@ -824,6 +926,14 @@ struct MacSettingsView: View {
                 LabeledContent("用户 ID", value: deviceManager.userId ?? "-")
                     .fontDesign(.monospaced)
             }
+#endif
+
+            if LocalBackendManager.isActive {
+                // UI-5：模型与密钥（Release 也可见）。
+                LocalModelKeySection(onLock: { LocalLockController.shared.lock() })
+                // UI-6：本地服务状态 / 端口 / 数据目录 / 日志 / 重启。
+                LocalServiceSection(backend: localBackend)
+            }
 
             Section {
                 TextField("服务地址（留空 = 使用内嵌本地后端）", text: $serverURL)
@@ -831,9 +941,8 @@ struct MacSettingsView: View {
             } header: {
                 Text("服务器")
             } footer: {
-                Text("留空时由 app 自启动内嵌后端（127.0.0.1:18923）；填写后改连该地址，且不再启动本地后端。")
+                Text("留空时由 app 自启动内嵌后端（127.0.0.1:18923）；填写后改连该地址，且不再启动本地后端（需重启 app 生效）。")
             }
-#endif
 
             Section("浏览") {
                 BrowseRow("账单记录", icon: "list.bullet.rectangle", destination: BillListView(
@@ -874,12 +983,14 @@ struct MacSettingsView: View {
                 Text("将清除所有本地缓存数据（图表等）及子任务中间结果文件，下次打开会话时需重新生成。")
             }
 
-            Section {
-                Button("退出登录") {
-                    Task { await deviceManager.logout() }
+            if !LocalBackendManager.isActive {
+                Section {
+                    Button("退出登录") {
+                        Task { await deviceManager.logout() }
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.red)
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.red)
             }
         }
         .formStyle(.grouped)

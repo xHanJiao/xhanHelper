@@ -691,6 +691,25 @@ func resolveEnvVars(cfg *Config) {
 	cfg.LLMBg.APIKey = os.ExpandEnv(cfg.LLMBg.APIKey)
 	cfg.Embedding.APIKey = os.ExpandEnv(cfg.Embedding.APIKey)
 	cfg.Server.LocalToken = os.ExpandEnv(cfg.Server.LocalToken)
+	applyLLMEnvOverrides(cfg)
+}
+
+// applyLLMEnvOverrides 应用本地 app 传入的可选覆盖项。
+// 走「非空才覆盖」——不能用 ${VAR} 占位符：os.Expand 对未设置的变量展开成空串，
+// 会把 YAML 里的默认 base_url / model 冲掉。
+//
+// 同时覆盖 llm_bg：`conf/config.yaml` 里 llm_bg 自带非空 model/base_url（不回落主 LLM），
+// 只改主 LLM 的话后台任务（记忆/摘要/主题）仍会打默认地址、用默认模型名 —— 换了供应商/网关
+// 就会 400/404。UI 只暴露一对 model/base_url，两套必须一起走。
+func applyLLMEnvOverrides(cfg *Config) {
+	if v := os.Getenv("XHAN_LLM_BASE_URL"); v != "" {
+		cfg.LLM.BaseURL = v
+		cfg.LLMBg.BaseURL = v
+	}
+	if v := os.Getenv("XHAN_LLM_MODEL"); v != "" {
+		cfg.LLM.Model = v
+		cfg.LLMBg.Model = v
+	}
 }
 
 func validate(cfg *Config) error {

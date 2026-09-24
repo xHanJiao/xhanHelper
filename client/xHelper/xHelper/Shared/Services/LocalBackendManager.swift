@@ -12,6 +12,8 @@ final class LocalBackendManager: ObservableObject {
 
     enum State: Equatable {
         case idle
+        /// 等 Touch ID 解锁（app 层门：过指纹后才读/建 token 并拉起后端）。
+        case locked
         case starting
         case ready
         case failed(String)
@@ -21,14 +23,17 @@ final class LocalBackendManager: ObservableObject {
 
     @Published private(set) var state: State = .idle
 
+    /// 密钥是否已配置（缓存；避免在 SwiftUI body 里每次都读 Keychain）。
+    /// 绑定 Keychain + 环境变量回退，`start()` / `restart()` 时刷新。
+    @Published private(set) var isConfigured: Bool
+
     /// 本地后端端口（prod）。dev 端口 18924 留待第 4 期。
     private let port = 18923
 
     /// 本地访问令牌：app 生成、经 env 传给 Go；后端只比对不存储（重装换新 token 照样连）。
-    /// 2B-3 起改存 Keychain（生物保护）；当前先用 UserDefaults。
-    let token: String
+    /// 由 `LocalAuthService` 从 Keychain 读出/生成，解锁前为 nil。
+    private(set) var token: String?
 
-    private let tokenKey = "xhan_local_token"
     private let logDir: URL
     private let logFile: URL
     private var process: Process?
@@ -36,19 +41,20 @@ final class LocalBackendManager: ObservableObject {
     private var tail: [String] = []
     private let tailLimit = 40
     private var stopping = false
+    /// 是否有 resolveTokenAndSpawn 在途（防并发双起进程）。
+    private var isResolving = false
     private var healthTask: Task<Void, Never>?
 
     var baseURL: String { "http://127.0.0.1:\(port)" }
     var logFileURL: URL { logFile }
 
-    /// 本地后端是否接管寻址：显式设了 xhan_server_url 就让他自己连
-    /// （逃生口；设置页入口当前仅 Debug 可达，Release 随 2B-3 / 2B-8）。
+    /// 本地后端是否接管寻址：显式设了 xhan_server_url 就让他自己连（逃生口）。
     static var isActive: Bool {
         (UserDefaults.standard.string(forKey: "xhan_server_url") ?? "").isEmpty
     }
 
     private init() {
-        self.token = Self.loadOrCreateToken(key: tokenKey)
+        self.isConfigured = LocalSecretsStore.isConfigured
         let logs = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
             .appendingPathComponent("Logs/xhanHelper", isDirectory: true)
         self.logDir = logs
@@ -58,10 +64,17 @@ final class LocalBackendManager: ObservableObject {
     // MARK: - 生命周期
 
     /// 启动后端。缺密钥 / 二进制缺失 / 端口占用等都在 `state` 里以人话报出。
+    /// Touch ID 开启时先进入 `.locked`，由 `unlock()`（UI-10）拿 token 后再真正拉起进程。
     func start() {
         guard state == .idle else { return }
+        isConfigured = LocalSecretsStore.isConfigured
         guard Self.isActive else {
             LogBuffer.shared.info("local backend 未启用（已设 xhan_server_url 逃生口）")
+            return
+        }
+        guard isConfigured else {
+            // 未配置密钥：不起进程，交给 UI-1 首次配置。
+            LogBuffer.shared.info("local backend 未启动：尚未配置密钥")
             return
         }
         guard let resources = Bundle.main.resourceURL else {
@@ -78,55 +91,43 @@ final class LocalBackendManager: ObservableObject {
             state = .failed("app 内未找到后端配置目录（\(confDir.path)）。")
             return
         }
-
-        let appEnv = ProcessInfo.processInfo.environment
-        let missing = LocalBackendDiagnostics.missingEnv(appEnv)
+        let secrets = LocalSecretsStore.load()
+        let missing = LocalBackendDiagnostics.missingSecrets(secrets)
         guard missing.isEmpty else {
-            state = .failed("未配置密钥：\(missing.joined(separator: "、"))。\n请在 Xcode scheme 的 Run → Environment Variables 里填写后重试。")
+            state = .failed("未配置密钥：\(missing.joined(separator: "、"))。")
             return
         }
 
-        do {
-            try FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
-        } catch {
-            // 日志目录建不出来不致命：内存 tail 仍可用于报错（有意降级）。
-            LogBuffer.shared.warning("建后端日志目录失败：\(error)")
-        }
-
-        let proc = Process()
-        proc.executableURL = binary
-        proc.environment = LocalBackendDiagnostics.childEnvironment(
-            base: appEnv, confDir: confDir.path, token: token
-        )
-        proc.standardInput = FileHandle.nullDevice
-
-        tail.removeAll()
-        logHandle = Self.openLogHandle(at: logFile)
-
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = pipe
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            Task { @MainActor [weak self] in self?.ingestLog(data) }
-        }
-        proc.terminationHandler = { [weak self] p in
-            let code = p.terminationStatus
-            Task { @MainActor [weak self] in self?.handleExit(proc: p, code: code) }
-        }
-
-        do {
-            try proc.run()
-        } catch {
-            state = .failed("启动后端进程失败：\(error.localizedDescription)")
+        // Touch ID 开启时只进入锁定态**等着**——不在这里启动进程。
+        // 否则它会和用户点「解锁」触发的 unlock() 并发各起一个进程（双指纹、抢 18923 端口）。
+        if LocalAuthService.shared.isActive {
+            state = .locked
             return
         }
-        process = proc
-        stopping = false
         state = .starting
-        LogBuffer.shared.info("local backend 已启动 pid=\(proc.processIdentifier) port=\(port)")
-        pollHealth()
+        Task { await resolveTokenAndSpawn(binary: binary, confDir: confDir, secrets: secrets) }
+    }
+
+    /// UI-10 解锁入口（`.locked` 态下点「解锁」）。
+    /// 先过指纹（app 层门），过了才读/建 token 并拉起后端；取消 → 留在锁定态可重试。
+    func unlock() {
+        guard state == .locked else { return }
+        state = .starting
+        Task {
+            guard await LocalAuthService.shared.authenticate(reason: "解锁 xhanHelper 本地服务") else {
+                state = .locked
+                return
+            }
+            guard let resources = Bundle.main.resourceURL else {
+                state = .failed("找不到 app 资源目录，无法启动本地后端。")
+                return
+            }
+            await resolveTokenAndSpawn(
+                binary: resources.appendingPathComponent("xhan-helper"),
+                confDir: resources.appendingPathComponent("conf"),
+                secrets: LocalSecretsStore.load()
+            )
+        }
     }
 
     /// 失败后重试：先停掉残留进程再重来。
@@ -134,6 +135,12 @@ final class LocalBackendManager: ObservableObject {
         await stopAndWait()
         state = .idle
         start()
+    }
+
+    /// 逃生口：Touch ID 凭据读不出来时，关掉开关 + 删掉旧凭据 + 重启后端（走无指纹路径）。
+    func disableTouchIDAndRetry() async {
+        LocalAuthService.shared.disableAndResetToken()
+        await restart()
     }
 
     /// 发 SIGTERM（不阻塞主线程）。
@@ -178,6 +185,70 @@ final class LocalBackendManager: ObservableObject {
     }
 
     // MARK: - 内部
+
+    /// 读/建 token → 拉起子进程（指纹门在调用方 `unlock()` 已过）。
+    /// - 读/写失败 → `.failed`（带逃生口）；成功 → 起进程。
+    /// 重入保护：任何路径并发进入都只放行一次（防双进程）。
+    private func resolveTokenAndSpawn(binary: URL, confDir: URL, secrets: LocalSecrets) async {
+        guard !isResolving else { return }
+        isResolving = true
+        defer { isResolving = false }
+
+        let resolved: String
+        switch LocalAuthService.shared.loadOrCreateToken() {
+        case .failed(let reason):
+            state = .failed(reason + "\n可在设置页用「关闭 Touch ID 并重置凭据」后重试。")
+            return
+        case .ok(let t):
+            resolved = t
+        }
+        token = resolved
+
+        do {
+            try FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
+        } catch {
+            // 日志目录建不出来不致命：内存 tail 仍可用于报错（有意降级）。
+            LogBuffer.shared.warning("建后端日志目录失败：\(error)")
+        }
+
+        let proc = Process()
+        proc.executableURL = binary
+        proc.environment = LocalBackendDiagnostics.childEnvironment(
+            base: ProcessInfo.processInfo.environment,
+            confDir: confDir.path,
+            token: resolved,
+            secrets: secrets
+        )
+        proc.standardInput = FileHandle.nullDevice
+
+        tail.removeAll()
+        logHandle = Self.openLogHandle(at: logFile)
+
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            Task { @MainActor [weak self] in self?.ingestLog(data) }
+        }
+        proc.terminationHandler = { [weak self] p in
+            let code = p.terminationStatus
+            Task { @MainActor [weak self] in self?.handleExit(proc: p, code: code) }
+        }
+
+        do {
+            try proc.run()
+        } catch {
+            state = .failed("启动后端进程失败：\(error.localizedDescription)")
+            return
+        }
+        process = proc
+        stopping = false
+        state = .starting
+        LogBuffer.shared.info("local backend 已启动 pid=\(proc.processIdentifier) port=\(port)")
+        pollHealth()
+    }
 
     private func ingestLog(_ data: Data) {
         logHandle?.write(data)
@@ -269,15 +340,6 @@ final class LocalBackendManager: ObservableObject {
             LogBuffer.shared.warning("打开后端日志失败（\(url.path)）：\(error)")
             return nil
         }
-    }
-
-    private static func loadOrCreateToken(key: String) -> String {
-        if let existing = UserDefaults.standard.string(forKey: key), !existing.isEmpty {
-            return existing
-        }
-        let token = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "")
-        UserDefaults.standard.set(token, forKey: key)
-        return token
     }
 
     private struct HealthResponse: Decodable { let status: String }

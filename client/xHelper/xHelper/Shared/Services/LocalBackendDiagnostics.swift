@@ -1,27 +1,38 @@
 import Foundation
 
-/// LocalBackendManager 的纯逻辑：环境变量校验/拼装 + 子进程退出原因归类。
+/// LocalBackendManager 的纯逻辑：密钥校验/环境变量拼装 + 子进程退出原因归类。
 /// 拆出来是为了能用 SwiftPM `swift test` 自验（进程/网络部分只能在 Xcode 真机验）。
 enum LocalBackendDiagnostics {
 
-    /// 启动后端必需的密钥环境变量。
-    static let requiredEnvKeys = ["LLM_API_KEY", "EMBEDDING_API_KEY"]
-
-    /// 返回缺失（或为空）的必需环境变量名。
-    static func missingEnv(_ env: [String: String]) -> [String] {
-        requiredEnvKeys.filter { (env[$0] ?? "").isEmpty }
+    /// 返回缺失（或为空）的必需密钥名（人话展示用）。
+    static func missingSecrets(_ secrets: LocalSecrets) -> [String] {
+        var missing: [String] = []
+        if secrets.llmKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            missing.append("DeepSeek LLM Key")
+        }
+        if secrets.embeddingKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            missing.append("Ark Embedding Key")
+        }
+        return missing
     }
 
-    /// 拼子进程环境变量：在 app 自身环境上追加本地模式所需的键。
+    /// 拼子进程环境变量：在 app 自身环境上追加本地模式所需的键 + 密钥 + 可选覆盖项。
+    /// 密钥来自 Keychain（经 `LocalSecrets`）；可选覆盖项为空则不传，让后端用 YAML 默认。
     static func childEnvironment(
         base: [String: String],
         confDir: String,
-        token: String
+        token: String,
+        secrets: LocalSecrets
     ) -> [String: String] {
+        let s = secrets.normalized()
         var env = base
         env["APP_ENV"] = "local"
         env["XHAN_CONF_DIR"] = confDir
         env["XHAN_LOCAL_TOKEN"] = token
+        env["LLM_API_KEY"] = s.llmKey
+        env["EMBEDDING_API_KEY"] = s.embeddingKey
+        if !s.llmModel.isEmpty { env["XHAN_LLM_MODEL"] = s.llmModel }
+        if !s.llmBaseURL.isEmpty { env["XHAN_LLM_BASE_URL"] = s.llmBaseURL }
         return env
     }
 

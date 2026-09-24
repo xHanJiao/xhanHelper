@@ -86,14 +86,11 @@ struct BrowsePanelView: View {
     /// 回收站批量操作二次确认（全部恢复 / 全部删除）。
     @State private var trashBulkAction: TrashBulkAction?
 
-    /// 监控看板前端地址：DEBUG 用 Vite dev server，RELEASE 用同源后端（nginx 已 serve）
+    /// 监控看板前端地址：统一从 `DeviceManager.webBaseURL` 推导——
+    /// 本地模式 = 内嵌 Go 托管的前端（同源 127.0.0.1:18923）；非本地 Debug = Vite 5173；
+    /// 线上 Release = helper.xhanx.cn。
     private var dashboardURL: URL? {
-        let suffix = "?t=\(dashboardBust)"
-        #if DEBUG
-        return URL(string: "http://localhost:5173/admin" + suffix)
-        #else
-        return URL(string: baseURL + "/admin" + suffix)
-        #endif
+        URL(string: DeviceManager.webBaseURL + "/admin?t=\(dashboardBust)")
     }
 
     /// 监控看板 WebView 配置：注入 XH_BRIDGE 全局对象（含 token 免登录）+ 外链转发系统浏览器
@@ -120,12 +117,9 @@ struct BrowsePanelView: View {
         )
     }
 
-    /// 导航白名单：仅允许前端所在同源，其余一律静默拦截
+    /// 导航白名单：仅允许前端所在同源（含本地内嵌 127.0.0.1:18923），其余一律静默拦截
     private var dashboardAllowedOrigins: [XHWebViewOrigin] {
-        [
-            XHWebViewOrigin(scheme: "http", host: "localhost", port: 5173),      // DEBUG Vite dev server
-            XHWebViewOrigin(scheme: "https", host: "helper.xhanx.cn", port: nil), // RELEASE 远程
-        ]
+        XHWebViewOrigin.frontendOrigins(webBaseURL: DeviceManager.webBaseURL)
     }
 
     /// 根据网格可用宽度自适应列数：宽时 5 列（10 格 2 行），窄时 2 列（10 格 5 行，靠滚动兜住）。

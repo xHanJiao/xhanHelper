@@ -45,11 +45,11 @@ let package = Package(
             dependencies: ["LocalArtifactsCore"],
             path: "Tests/LocalArtifactsCoreTests"
         ),
-        // LocalBackendCore — 本地后端启动器的纯逻辑（env 校验/拼装 + 退出原因归类）。
+        // LocalBackendCore — 本地后端启动器的纯逻辑（密钥校验/env 拼装 + 退出原因归类 + 连通性探测请求构造）。
         .target(
             name: "LocalBackendCore",
             path: "xHelper/Shared/Services",
-            sources: ["LocalBackendDiagnostics.swift"]
+            sources: ["LocalBackendDiagnostics.swift", "LocalSecrets.swift", "LocalConnectionProbe.swift"]
         ),
         .testTarget(
             name: "LocalBackendCoreTests",

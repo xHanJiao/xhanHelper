@@ -301,6 +301,9 @@ flowchart TD
   - **监控提前退出**：健康没 ready 就 exit → 弹人类可读报错（退出码 + 最后 N 行日志），区分「端口占用 / 密钥非法 / 库打不开 / 迁移失败」，并给「重新配置」入口；
   - app 退出时终止子进程。
   - **父进程看门狗（Go 侧，已实现）**：`appinit/watchdog.go` 在包初始化时记下 `os.Getppid()`；本地模式下每 5s 检查一次，app 崩溃被托孤（ppid→1）即自发 SIGTERM 走 `Serve` 的优雅关闭，避免孤儿进程赖在端口上。云端/开发模式不启用（父进程语义不同，贸然退出会误伤）。
+  - **密钥来源（2B-3 已完成）**：不再读 scheme 环境变量，改为 `LocalSecretsStore`（Keychain）；环境变量仅作回退（开发便利）。`XHAN_LLM_MODEL` / `XHAN_LLM_BASE_URL` 走「非空才覆盖」（Go 侧 `applyLLMEnvOverrides`，已在 2B-3 补齐）。
+  - **Touch ID 门（2B-4 已完成）**：`LocalAuthService` 管 token 生命周期；启用时 `State.locked` → UI-10 解锁后才拉进程。DEBUG 默认跳过（可用 `xhan_touch_id_debug` 临时打开）。
+
 
 ### 7. Swift：本地 / 远程寻址
 
@@ -315,7 +318,8 @@ flowchart TD
 - **为什么**：Release 版没有 `server/.env`；且 Go 的 `validate` 缺 `LLM_API_KEY` 就 `log.Fatal`——**没有 key 后端根本起不来**，所以填 key 必须发生在拉起 Go **之前**，只能是 Swift 侧原生界面。
 - **首次配置窗口**：启动时 Keychain 无密钥 → **不拉后端**，弹配置窗口：DeepSeek LLM key + Ark Embedding key（`SecureField`）；model / base_url 预填默认值。带「测试连接」按钮（存前各发一个最小请求验证），通过才落 Keychain。配置窗口未完成就关 → 主窗口停在「未配置」空态 + 「去配置」入口。
 - **设置页**：加「模型与密钥」分区，**Release 也可见**（现有服务器地址分区是 `#if DEBUG`）。含两个 key、`model`（一个字段，deepseek 家族）、base_url（留空=默认）、「清除密钥」。
-- **Keychain 共享**：两个 build 不同 bundle id，Keychain 默认不互通；配**共享 access group**（`keychain-access-groups` entitlement），一次填两边都能用。
+- **Keychain 共享**：~~两个 build 不同 bundle id，Keychain 默认不互通；配**共享 access group**（`keychain-access-groups` entitlement），一次填两边都能用。~~
+  > **已消解（第三轮 review）**：传统登录钥匙串不按 app 分区，同机同用户两个 build 天然共享（跨 bundle id 顶多弹一次授权）→ 不需要 access group（该 entitlement 需付费账号）。
 - **只支持 deepseek 家族**：provider 锁死 `deepseek`；embedding 只放开 key，base_url / model 锁死（Ark + doubao-embedding）。
 - **改哪里**：新增 Keychain 封装 + 首次配置视图 + 设置分区；`Info.plist` / entitlements 加 access group。
 
@@ -342,7 +346,8 @@ flowchart TD
 - **本地单用户模式（Go）**：配置 `server.local_single_user: true` + `local_token`。**身份锚点是「库里的用户」**——DB 在数据根里（`~/Library/Application Support/xhanHelper/`，在 app bundle **之外**），跨 app 重装存活，不靠配置里的名字。`EnsureLocalUser` 启动时：库里有且仅有一个用户就用它（迁移进来的 xhan `33333333-…` 原样认领）；空库才新建（默认名 `me`）；多于一个视为未剪枝，**直接致命**要求剪枝。`middleware/auth.go` 加本地分支：Bearer 等于本地 token 时注入该 `user_id`；并把用户 UUID 塞进 `admin_users`（内存里）——**不硬编码任何 UUID / 用户名**。
 - **三个场景都自洽**：① 迁移回来 → 库里带 xhan → 认领；② 给别人装 → 空库 → 建 `me`（phase 5 换首启提示）；③ 不断更新/删除重装 → 数据根不动、DB 还在 → 同一用户。token 由 app 每次生成经 env 传、**后端只比对不存储** → 重装换了新 token 照样连。
 - **本地 token（app 生成）**：首启生成随机 `localToken` 存 Keychain，拉起 Go 时经 env `XHAN_LOCAL_TOKEN` 传入，请求带它。**全程不涉及用户名/密码**。
-- **Touch ID 门（Swift）**：token 存成「需生物识别才能读」的 Keychain 项（`SecAccessControl` + `.userPresence`）。读它（换 token）天然触发指纹——**指纹即解锁**。触发时机：启动 / 从后台回前台 / 空闲 15 分钟；指纹失败**允许退系统密码兜底**（避免把自己锁外面）；**DEBUG build 跳过**（开发时不弹）。
+- **Touch ID 门（Swift）**：~~token 存成「需生物识别才能读」的 Keychain 项（`SecAccessControl` + `.userPresence`）。读它（换 token）天然触发指纹——**指纹即解锁**。~~
+  > **已变更（第三轮 review）**：item 级生物 ACL 需付费 entitlement（实测 -34018），改为**传统钥匙串普通项 + app 层指纹门**（`unlock()` 先 `authenticate()` 再读/建 token）。触发时机：启动 / 从后台回前台 / 空闲 15 分钟；指纹失败**允许退系统密码兜底**（避免把自己锁外面）；**DEBUG build 跳过**（开发时不弹）。
 - **本地 refresh 直通**：本地 token 不在 `user_tokens` 表、也无过期概念，`/api/auth/refresh` 见到中间件打的 `local_auth` 标记直接返回成功——否则前端 30 分钟心跳拿 401 会主动登出（`front-end/src/stores/auth.js:75-85`）。`/api/auth/change-password` 在本地模式会失败（无旧密码），无害，不处理。
 - **改哪里**：`middleware/auth.go` 本地分支；`config` 加 `local_single_user` / `local_username`（可选，仅空库新建用）/ `local_token`；`DeviceManager` token 存储 UserDefaults → Keychain；新增 `LocalAuthService`（LAContext）；UI-1 / UI-5 / UI-10 相应调整。
 
@@ -375,6 +380,35 @@ flowchart LR
 
 - 改动点 3、5、6、7、8、9、11。
 - 验收：首次配置 → Touch ID 解锁 → 聊天通；健康 `starting → ready` 可见；故意填错 key / 占端口 → 弹出人类可读报错；红 X 驻留、Cmd+Q 真退；前端面板（浏览/调试）可用（分享先不做）；**token 注入失败（`XHAN_LOCAL_TOKEN` 为空）时后端拒绝启动并报错，不退化成无认证**（`EnsureLocalUser` 对空 token 返回 error）。
+
+> **2B 实现状态（待用户真机验收）**：2B-1 打包链路 ✅ / 2B-2 启动器 + 寻址 + 看门狗 ✅ /
+> 2B-3 Keychain + UI-1 首次配置 + UI-5 模型与密钥 ✅ / 2B-4 Touch ID（UI-10）+ 驻留（UI-9）✅ /
+> 2B-5 WebView 白名单 + token 注入 + UI-6 本地服务页 ✅。
+> 遗留（不阻塞 2B）：前端「测试连接」直连 provider（DeepSeek + Ark），未走本地后端。
+>
+> **review 处置（第二轮）**：
+> ① 修「`.locked` 态自动起进程 × 手动解锁」双起（`start()` 只进锁定不再偷跑 + `isResolving` 重入闸）；
+> ② 锁屏补到 Settings scene，`LocalLockController.unlock()` 加 `isAuthenticating` 重入闸；
+> ③ Keychain 读**真失败**改走错误态（不再当「没解锁」）并给「关闭 Touch ID 并重置凭据」逃生口；
+> ④ `XHAN_LLM_*` 覆盖同步到 `llm_bg`（否则换供应商后后台 400/404）；
+> ⑤ 驻留态 Cmd+Q 把主窗口叫回来挂退出确认 sheet（不再静默放行）；
+> ⑥ `biometricsAvailable` 改 `.deviceOwnerAuthenticationWithBiometrics`（无指纹硬件不再开锁屏）；
+> ⑦ 设置页补 Touch ID 开关；
+> ⑧ 非 https 的 base_url 直接拒绝「测试连接」。
+> 未改：白名单里显式 `127.0.0.1:18923`（设计要点，去重已由 `contains` 兜住）；驻留无条件生效（本分支本地优先）。
+>
+> **review 处置（第三轮，真机暴露）**：首次配置点「继续」毫无反应。查 `~/Library/Caches/com.xhan.xhanHelper/logs/current.log` 定性：
+> `Keychain 写入失败 llm_api_key：OSStatus -34018`（`errSecMissingEntitlement`）→ 保存静默失败 → `isConfigured` 仍 false → `start()` 静默 return。
+> **根因**：原实现用 `kSecUseDataProtectionKeychain` + `kSecAttrAccessControl`（生物 ACL），二者都要求 app 带
+> `application-identifier` / `keychain-access-groups` entitlement；该 entitlement 只随描述文件下发 → **需要付费开发者账号**。
+> 探针实测（`/tmp` 一次性脚本，4 组 add/read）：传统钥匙串普通项 `add=0` 可用；传统钥匙串 + ACL、DP 钥匙串（±ACL）**全部 -34018**。
+> **决定（用户拍板，零成本路线）**：
+> ① `LocalKeychain` 去掉 DP keychain 与 ACL，回到传统登录钥匙串普通项；
+> ② 指纹门改由 **app 层**把守——`LocalBackendManager.unlock()` 先 `authenticate()` 再读/建 token，`LocalLockController` 管运行期重锁；
+> ③ **access group 不需要**：两个 build 同机同用户，传统钥匙串不按 app 分区即可共享（跨 bundle id 顶多弹一次授权），原「dev/prod 共享密钥」诉求自然满足 → 第 4 期无需为此加能力；
+> ④ 写操作不再静默：`LocalKeychain.set` / `LocalSecretsStore.save` 返回 OSStatus，UI-1 / UI-5 失败时红字报出并阻止继续；
+> ⑤ UI-1 布局修：顶部留 44pt 让开红绿灯 + 内容垂直居中 + 窗口 660 → 620。
+> 代价：token 无 item 级生物 ACL（别的本地进程读取需用户授权点击，非静默）；威胁模型（见风险表）仍可接受。
 
 ### 第 3 期 — 数据迁移（MySQL → 本地 prod）
 
@@ -486,15 +520,15 @@ flowchart LR
 | **首次配置 UX** | 朋友首次打开必须先填 key，否则后端根本不启动 | 引导窗口 + 「测试连接」+ 未配置空态与「去配置」入口（改动点 8） |
 | **可选项被空串冲掉** | `${VAR}` 对未设置变量展开成空串，会冲掉 base_url / model 默认值 | 可选项走「非空覆盖」而非占位符（改动点 2） |
 | **秒开期检索不全** | warmup 挪后台后，最初几秒记忆/语义检索可能缺内存向量 | 已接受；`/api/health` 暴露 `starting/ready`，需确认检索侧能优雅降级 |
-| **Keychain 共享** | 两个 build 共享密钥需一致的 `keychain-access-groups` entitlement | 第 4 期验证签名配置 |
+| ~~**Keychain 共享**~~ | ~~两个 build 共享密钥需 `keychain-access-groups`~~ | **已消解**：传统钥匙串不按 app 分区，同机同用户两个 build 天然共享（第三轮 review）；该 entitlement 需付费账号，不做 |
 | **双 build 维护** | 两份 scheme / config / entitlements 要同步 | 共享 xcconfig，只保留必要差异 |
 | **单向复制可被绕过** | 非沙盒下同用户理论上仍可读 prod 文件 | 路径硬编码 + 启动断言 + 只走 zip 导出/导入（dev 不直接读写 prod 数据根）（改动点 10） |
 | **导入时后端占用 DB** | dev 导入 zip 时后端在跑会锁 SQLite | 导入前停后端、写完重启（UI-8b） |
 | **预览靶材质失真** | `ImageRenderer` 离屏渲染材质/毛玻璃不可信 | 只信布局 / token；观感以 Xcode 真机为准（第十一节） |
 | **剪枝留孤儿** | 按 `user_id` 删非 xhan，可能漏掉无 `user_id` 的关联表留下孤儿行 | 剪枝后跑一遍孤儿清理 + 关键表对账抽查（第七节） |
 | **旧图 404** | 不迁图片，迁入的 `ImageAsset` 指向不存在的文件 | 已接受；后续 TTL 清理自然淘汰 |
-| **Touch ID 不可用** | 无指纹硬件 / 指纹识别失败会把用户锁在外面 | 用 `.userPresence`（指纹失败可退系统密码）；DEBUG build 跳过 |
-| **本地 token 面** | 甲方案后端只认 `localToken`，任何读到它的本地进程都能调 API | token 存 Keychain 且需生物识别才能读 + 回环绑定；个人机子威胁模型可接受 |
+| **Touch ID 不可用** | 无指纹硬件 / 指纹识别失败会把用户锁在外面 | app 层门用 `.deviceOwnerAuthentication`（指纹失败可退系统密码）；无生物硬件不开锁屏；DEBUG build 跳过 |
+| **本地 token 面** | 甲方案后端只认 `localToken`，任何读到它的本地进程都能调 API | token 存传统钥匙串（**无 item 级生物 ACL**：该 ACL 需付费 entitlement，见第三轮 review）→ 别的 app 读取需用户授权点击；指纹门在 app 层 + 回环绑定；个人机子威胁模型可接受 |
 | **后台任务只在 app 运行时跑** | 关窗驻留可继续，但显式退出 / 关机就停 | 已接受；下次启动自动补跑（见下） |
 
 ### 关于「合盖 / 关机后补跑」
@@ -554,7 +588,7 @@ sequenceDiagram
 |---|------|------|
 | 1 | 本地端口策略 | prod 固定 `18923`、dev `18924`；被占就报错（SQLite 单实例） |
 | 2 | 生命周期 | 单进程驻留：红 X 只关窗，Cmd+Q / 右键退出才停后端（方案 A） |
-| 3 | 密钥输入时机 | 首次启动弹配置窗口；Keychain 共享 access group，一次填两边可用 |
+| 3 | 密钥输入时机 | 首次启动弹配置窗口；密钥存传统钥匙串（不按 app 分区，dev/prod 两个 build 天然共享，**不需要 access group**——第三轮 review 修订） |
 | 4 | 可改配置 | provider 锁死 deepseek；放开 `model`（一个字段）+ `base_url`；embedding 只放开 key |
 | 5 | 启动补扫 | 是否加「启动即扫一次延迟任务」（可选，几行）——**遗留，未定** |
 | 6 | 分发方式 | 本次不做。将来走 Developer ID（非 App Store）还是 App Store（沙盒，需重设计）——**遗留，未定** |
@@ -565,5 +599,5 @@ sequenceDiagram
 | 11 | zip 方式 | shell 到 `/usr/bin/ditto`（不加依赖） |
 | 12 | UI 预览方式 | 原生走 Xcode `#Preview` + SwiftPM `ImageRenderer` 预览靶；HTML 仅 Web 前端 |
 | 13 | 本地身份 | 单用户、**隐形**：以「库里的用户」为锚点（唯一则认领、空库建 `me`、多则报错要求剪枝）；不钉 UUID / 用户名（可分发） |
-| 14 | 访问门 | Touch ID：启动 / 回前台 / 空闲 15min；失败允许系统密码兜底；DEBUG 跳过；token 存 Keychain（生物保护） |
+| 14 | 访问门 | Touch ID：启动 / 回前台 / 空闲 15min；失败允许系统密码兜底；DEBUG 跳过；token 存传统钥匙串 + **app 层指纹门**（item 级生物 ACL 需付费 entitlement，第三轮 review 修订） |
 | 15 | 迁移范围 | 全量搬 + 剪掉非 xhan（28 张 `user_id` 表）；写全新 DB；**不迁图片**（旧图 404）；**分享不做** |

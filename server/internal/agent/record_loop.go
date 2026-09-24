@@ -8,14 +8,24 @@ import (
 	"strings"
 
 	"xhan-helper/internal/agent/retrieval"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/tool"
 )
 
 // RecordInline — inline 入口：主循环 record_memory 工具调用此处。
 // 对一条候选跑决策循环，返回 `{action,id,summary}` JSON 供主 LLM 知晓发生了什么。
-func (d *RecordDecisionLoop) RecordInline(userID, topic, summary string, facts []string) ([]byte, error) {
-	ctx := context.Background()
+func (d *RecordDecisionLoop) RecordInline(ctx context.Context, userID, topic, summary string, facts []string) ([]byte, error) {
+	// 主聊天 inline 调用：补审计场景（决策循环内含 LLM 调用），保留上游 UserID/ConvID。
+	// 不这样做就会丢场景 → 审计记成空 category（前端「未标注」）。
+	sc, _ := llmcost.ScenarioFromContext(ctx)
+	sc.Category = llmcost.CategoryTool
+	sc.SubCategory = llmcost.SubRecordMemory
+	if sc.UserID == "" {
+		sc.UserID = userID
+	}
+	ctx = llmcost.WithScenario(ctx, sc)
+
 	res, err := d.Decide(ctx, userID, recordCandidate{Summary: summary, Facts: facts, Topic: topic})
 	if err != nil {
 		return nil, err
@@ -38,7 +48,7 @@ func (d *RecordDecisionLoop) Decide(ctx context.Context, userID string, cand rec
 	}
 
 	registry := tool.NewRegistry()
-	registry.Register(state)
+	registerRecordLoopTools(registry, state)
 	llmClient := d.deps.FlashLLM
 	if d.deps.LLMBG != nil {
 		llmClient = d.deps.LLMBG

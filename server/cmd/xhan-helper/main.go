@@ -66,7 +66,7 @@ func main() {
 	agents := appinit.InitAgents(cfg, repos, infra, llmClients, tools, vs)
 
 	// LLM 审计保留清理：每日删 7 天前记录
-	if !cfg.Server.DisableBackgroundTasks {
+	if !cfg.Server.BackgroundTasksDisabled() {
 		cleanup := func(ctx context.Context) {
 			cutoff := time.Now().Add(-7 * 24 * time.Hour)
 			for {

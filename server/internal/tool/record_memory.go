@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 )
@@ -9,7 +10,8 @@ import (
 // tool 包不反向依赖 agent：这里只定义窄接口，接线在 appinit 完成。
 type RecordMemoryRunner interface {
 	// RecordInline 对一条候选跑决策循环（entry=inline），返回 `{action,id,summary}` JSON。
-	RecordInline(userID, topic, summary string, facts []string) ([]byte, error)
+	// ctx 透传主聊天的场景（审计标注用），不能丢。
+	RecordInline(ctx context.Context, userID, topic, summary string, facts []string) ([]byte, error)
 }
 
 // RecordMemoryInstaller — 延迟接线：工具在 InitTools 建、决策循环在 InitAgents 建，
@@ -81,7 +83,7 @@ func (t *RecordMemoryTool) Execute(ec *ExecuteContext, funcName string, args jso
 	if a.Summary == "" {
 		return &Result{Success: false, Error: "summary 不能为空"}
 	}
-	data, err := t.runner.RecordInline(ec.UserID, a.Topic, a.Summary, a.Facts)
+	data, err := t.runner.RecordInline(ec.Ctx, ec.UserID, a.Topic, a.Summary, a.Facts)
 	if err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}

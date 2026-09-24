@@ -20,4 +20,4 @@ storage:
   image_dir: "${HOME}/Library/Application Support/xhanHelper/images"
 
 chat:
-  session_gap_minutes: 1 # 本地调试：停止聊天 1 分钟后即跑后处理（base 默认 15）
+  session_gap_minutes: 20

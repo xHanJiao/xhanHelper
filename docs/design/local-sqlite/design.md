@@ -9,6 +9,11 @@
 - 开工粗估：`9 面 / 8 缝 / 5–8 次真机往返 / 4 个待拍决定` → **20–36h**
 - 估算（定稿）：`27 面 / 10 缝（2 需先建探针）/ 9–12 次真机往返 / 2 个待拍决定` → **~28–50h**
 
+第 3 期（数据迁移）单独估：
+
+- 第 3 期开工：`5–6 面 / 4–5 缝（3 条需先建探针）/ 3–4 次真机往返 / 3–4 个待拍决定` → **~4–9h**
+- 第 3 期估算（定稿）：`4 面 / 3 缝（2 条需先建探针）/ 2 次真机往返 / 0 个待拍决定` → **~3–5h**
+
 > 定稿较粗估上调，因范围扩大：首次配置引导、启动提速与错误上报、驻留生命周期、dev/prod 双 build 隔离、本地单用户 + Touch ID 解锁、整套 UI 设计面（UI-1~UI-10）、SwiftPM 预览靶。跨语言 + 动像素，修正式结果 ×1.5。
 
 ---
@@ -425,8 +430,23 @@ flowchart LR
 
 **你会看到什么**：把线上 MySQL 里 **xhan 的数据**搬到本地 prod 的 SQLite（其余用户剪掉）。
 
-- 迁移工具 + 剪枝（见第七节）。
-- 验收：xhan 的关键表行数对账一致、其余用户行数为 0；抽样几条消息/记忆/账单在客户端显示正常；向量检索可用；warmup 提速后窗口仍秒开。
+**已拍决定（开工前）**
+
+1. **迁移源**：每次重新 `make db-pull` 拉一份最新 dump（导进本地 MySQL `xhan_helper_test`），不用旧文件；
+2. **瘦身**：**先全量搬**（`llm_call_ios` / `reflection_*` 等审计表照搬）。要瘦以后在 SQLite 上就地 `UPDATE`/`DELETE`，不必重跑 MySQL 那一趟；
+3. **落地**：**一条命令自动化**，工具直接写 app 数据根，不手动拷文件；
+4. **目标库**：现有本地 prod 库（1MB 测试数据）**丢弃**，drop/recreate（工具先把旧文件改名为备份）。
+
+**工具 `cmd/mysql2sqlite`**
+
+- 源与目标都走现成的 `config.Load()`：`APP_ENV=dev` → 源（本地 MySQL）；`APP_ENV=local` → 目标（`~/Library/Application Support/xhanHelper/xhan_helper.db`）。**不硬编码任何路径/DSN**，跟随配置漂移。工具不调 LLM，`Load()` 里 `llm.api_key` 的非空校验用假值绕过。
+- 建表复用 `app.InitDB()`（AutoMigrate 全部模型）→ schema 与 app 永远一致；源侧只 `service.NewDB()`（**只读**，不迁移源库）。
+- 逐表搬：表清单 = 源库实际表 ∩ `app.AllModels()`；按 `FindInBatches` 分页读 + 批量写，`Omit(clause.Associations)` + `SkipHooks`（拷贝要原样，不要 hook 与嵌套保存）。源库里不在 `AllModels` 的表（mailbox/mission 等已下线残留）打印后跳过。
+- 剪枝：`PRAGMA table_info` **运行时发现**带 `user_id` 的表（不手维护清单）→ `DELETE ... WHERE COALESCE(user_id,'') <> <xhan UUID>`；`users` 按 `username` 剪。
+- 对账：逐表打印「源（剪枝后应有）vs 目标」行数，不一致直接列出；再抽样关键表（messages / user_memories / notes / bills / embeddings）+ 校验 `users` 只剩 1 个（否则 app 的 `EnsureLocalUser` 会直接致命）。
+- 安全闸：目标库文件存在先改名 `*.pre-migrate-<ts>` 备份；检测 `18923` 端口有监听（app 在跑）→ 拒绝并提示先退出 app。
+
+**验收**：xhan 的关键表行数对账一致、其余用户行数为 0；抽样几条消息/记忆/账单在客户端显示正常；向量检索可用；warmup 提速后窗口仍秒开。
 
 ### 第 4 期 — dev/prod 双环境隔离
 

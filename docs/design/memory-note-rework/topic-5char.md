@@ -81,7 +81,7 @@
 
 **第二步：调 LLM 定 topic**
 - 给它的输入：这条记忆的内容 + 上面那 10 个已有 topic（带引用次数、相似度）。
-- 规则告诉它：**优先用已有的 topic**；实在没有合适的才新建，新建必须 ≤ 5 字、非空、**纯中文（不许英文/数字/标点）**。
+- 规则告诉它：**优先用已有的 topic**；实在没有合适的才新建，新建必须 ≤ 5 字、非空、**只含中文/英文/数字（不许标点、空格）**。
 - 输出：一个 topic。
 
 **第三步：0.8 强制归并（落库时，复用既有逻辑）**
@@ -89,8 +89,8 @@
 - **保持现有 `reuseTopic` 不动**（不重写为召回式）：稳定、线上用过。`topic_namer` 不再自己单独实现一套归并（否则会拿 summary 向量、`reuseTopic` 拿 topic 向量，两次不同判定）。
 - （0.8 这个阈值现在就有，配置项 `memory_topic_reuse_threshold`，不用新加。）
 
-**如果 LLM 给的不合规（超 5 字 / 空 / 含非中文）怎么办？**
-**重试 2 次**；还不行就机械截断到 5 字（只留汉字）。若截断后仍为空（原始 topic 和 summary 全为英文/数字），用固定保底 `其它`。**必须落到一个非空 topic**，因为 topic 是必填，不能因此不存这条记忆。
+**如果 LLM 给的不合规（超 5 字 / 空 / 含标点空格）怎么办？**
+**重试 2 次**；还不行就机械截断到 5 字（保留中英文数字、剥掉标点空格）。若截断后仍为空（原始 topic 和 summary 只有标点），用固定保底 `其它`。**必须落到一个非空 topic**，因为 topic 是必填，不能因此不存这条记忆。
 
 > 注意：这 2 次重试发生在 **topic 单独调用内部**（`topic_namer` 自己的小循环），**不占决策循环的轮数预算**。
 
@@ -104,10 +104,10 @@
 
 让 AI 知道新规矩，否则它不知道有 5 字限制：
 
-- 决策循环里 `save_memory` / `update_memory` 的 topic 说明改成「≤ 5 字、非空、纯中文」。
-- 记忆定义的公共文案里补一句「topic ≤ 5 字、纯中文」。
+- 决策循环里 `save_memory` / `update_memory` 的 topic 说明改成「≤ 5 字、非空、只含中英文数字」。
+- 记忆定义的公共文案里补一句「topic ≤ 5 字、只含中英文数字」。
 - inline 的 `record_memory` 工具**不加** topic 非空校验：该参数在 `Decide` 里会被 `nameTopic` 立刻覆写，工具层硬拒反而会挡住「主 LLM 不传 topic、由 namer 补名」的正常流程。非空由 `nameTopic` 保证（含固定保底）。
-- 抽取段指令消息、决策循环 system/instruction 都要带上「≤ 5 字、纯中文」（见上面第 1 节）。
+- 抽取段指令消息、决策循环 system/instruction 都要带上「≤ 5 字、只含中英文数字」（见上面第 1 节）。
 
 ### 6. ReAct 轮数预算：6 → 8
 
@@ -135,14 +135,15 @@
 
 ## 四、已经写坏的怎么办（一次性清洗）
 
-写一个小工具，把存量的空、超 5 字、含非中文的 topic 收拾干净。做法**照抄现有的 `topic-merge` 工具**（两步走：只读生成 → 人工审 → 落库）。**只在本地跑**（远端版即将下线）。
+写一个小工具，把存量的空、超 5 字、含标点空格的 topic 收拾干净。做法**照抄现有的 `topic-merge` 工具**（两步走：只读生成 → 人工审 → 落库）。**只在本地跑**（远端版即将下线）。
 
 ### 1. 清洗规则
 
 | 类型 | 怎么处理 |
 |---|---|
-| 超 5 字 / 含非中文（如 `OpenMuse竞品调研`） | 调 LLM 给一个 ≤5 字纯中文短名 |
-| 空的 | 调 LLM 看着记忆内容起一个 ≤5 字纯中文名字 |
+| 超 5 字（如 `OpenMuse竞品调研`） | 调 LLM 给一个 ≤5 字短名 |
+| 含标点/空格（如 `求职-面试`） | 调 LLM 给一个 ≤5 字短名 |
+| 空的 | 调 LLM 看着记忆内容起一个 ≤5 字名字 |
 
 - **不做机械截断**。既然都要调 LLM 了，就让 LLM 直接给个好名字，人再在表里过一眼、改一改就行。
 - LLM 失败或给的名字也不合规 → 这一行标成 `skip`，留给人手填。
@@ -185,7 +186,7 @@
 1. `cd server && go build ./... && go test ./...` 全绿（新增针对性的单测）。
 2. 清洗工具先在数据库快照上 `--dry-run`，看报告和表对不对，再真机落库。
 3. 落库后重启服务，跑一次聊天：
-   - 新产出的记忆 topic 都非空、都 ≤ 5 字、都纯中文。
+   - 新产出的记忆 topic 都非空、都 ≤ 5 字、都只含中英文数字。
    - 被清洗过的记忆在记忆页正常显示。
    - 日志没有相关报错。
 
@@ -196,7 +197,8 @@
 1. **topic 调用放在决策循环前面**——先定好 topic，决策循环里拿到的就是最终值。
 2. **LLM 给的名字不合规时**：重试 **2 次** → 还不行就截断到 5 字，仍为空则固定保底 `其它`。（第三节已按此写。）
 3. **近邻给 10 个已有 topic**（约 50 字，可接受），每个都带**引用次数 + 相似度**；**按相似度取 top-10、按引用次数展示**。
-4. **存量清洗界线 = 「空 / > 5 字 / 含非中文」**：与新写规则（非空、≤5 汉字、纯中文）**完全一致**，三类脏数据一起收拾。
+4. **存量清洗界线 = 「空 / > 5 字 / 含标点空格」**：与新写规则（非空、≤5 字、只含中英文数字）**完全一致**。
+   - 注意：不强制中文。`AI开发`、`iOS开发`、`Swift`、`2026计划` 这类中英数字混合**都合法**——早期一度收成「纯中文」，后判定太激进而放弃。
 5. **决策循环轮数 6 → 8**（见第三节第 6 点）。
 6. **修 update 抹空 bug 必须补单测**（见第三节第 2 点）。
 
@@ -205,17 +207,17 @@
 ## 七、涉及的文件（给实现时参考）
 
 **新写入（代码侧）**
-- `server/internal/util/string.go` — 新增 `IsAllHan` / `HanOnly`（纯中文判定，agent 与 topicclean 共用，避免两处分叉）
-- `server/internal/agent/record_loop_params.go` — 上限改 5、加非空校验、`keepOrReplaceTopic`；`isAllHan` 委托 `util.IsAllHan`
+- `server/internal/util/string.go` — 新增 `IsValidTopicChars` / `KeepTopicChars`（中英文数字判定，agent 与 topicclean 共用，避免两处分叉）
+- `server/internal/agent/record_loop_params.go` — 上限改 5、加非空校验、`keepOrReplaceTopic`；topic 字符校验直接调 `util.IsValidTopicChars`
 - `server/internal/agent/record_loop_write.go` — 修 update 抹空 bug（+ 单测）
 - 新文件 `server/internal/agent/topic_namer.go` — 单独调 LLM 定 topic（近邻按相似度取 10、按引用次数展示；重试 2 次 → 截断 → 固定保底 `其它`；0.8 归并交给落库时的 reuseTopic）
 - `server/internal/agent/record_loop_persist.go` — 保持 `reuseTopic` 不动，新增 `distinctTopicsWithCount` 供近邻
 - `server/internal/agent/record_loop.go` — `Decide` 里先调 `nameTopic`；`preRetrieve` 返回 summary 向量复用
 - `server/internal/agent/extractor.go` — 抽取段删掉 topic 输出
 - `server/internal/agent/memory_worker.go` — 不再传 topic
-- `server/internal/agent/record_loop_tools.go` — topic 描述改 ≤5 字、纯中文
+- `server/internal/agent/record_loop_tools.go` — topic 描述改 ≤5 字、只含中英文数字
 - `server/internal/tool/record_memory.go` — inline schema 同步
-- `server/internal/agent/promptbuilder/memory_definition.go` — 补「≤5 字、纯中文」
+- `server/internal/agent/promptbuilder/memory_definition.go` — 补「≤5 字、只含中英文数字」
 - `server/conf/config.yaml` + `server/internal/config/config.go` — 决策循环轮数 6 → 8
 
 **存量清洗**
@@ -225,6 +227,6 @@
 - `server/internal/service/{user_memory_repo,note_repo}.go` — 各加 `DistinctUserIDs`（工具枚举用户用）
 
 **测试**
-- `server/internal/agent/record_loop_test.go` — 空/超长/含英文 topic 校验、update 保留旧 topic、clipTopic 剥离非中文
-- topic_namer 的单测（重试 2 次 → 截断、validTopic 纯中文判定）
+- `server/internal/agent/record_loop_test.go` — 空/超长/含标点 topic 校验、update 保留旧 topic、clipTopic 剥标点保中英文
+- topic_namer 的单测（重试 2 次 → 截断、validTopic 字符判定）
 - `server/internal/topicclean/` — validate/findViolations/plan 往返 + Generate→Apply 端到端（SQLite）

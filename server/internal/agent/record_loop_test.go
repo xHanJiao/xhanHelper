@@ -105,11 +105,17 @@ func TestValidateMemoryFields(t *testing.T) {
 	if err := validateMemoryFields("五个汉", "ok", nil); err != nil {
 		t.Errorf("5-rune topic must pass: %v", err)
 	}
-	if err := validateMemoryFields("WKWebView", "ok", nil); err == nil {
-		t.Error("English topic must fail (topic must be pure Chinese)")
+	if err := validateMemoryFields("Swift", "ok", nil); err != nil {
+		t.Errorf("English topic must pass (中英文数字都合法): %v", err)
 	}
-	if err := validateMemoryFields("2026计划", "ok", nil); err == nil {
-		t.Error("topic with digits must fail")
+	if err := validateMemoryFields("26计划", "ok", nil); err != nil {
+		t.Errorf("topic with digits must pass: %v", err)
+	}
+	if err := validateMemoryFields("a/b", "ok", nil); err == nil {
+		t.Error("topic with punctuation must fail")
+	}
+	if err := validateMemoryFields("求职-面试", "ok", nil); err == nil {
+		t.Error("topic with dash must fail")
 	}
 	if err := validateMemoryFields("睡眠管理", "ok", nil); err != nil {
 		t.Errorf("pure Chinese multi-word topic must pass: %v", err)
@@ -254,15 +260,17 @@ func TestParseFactsPtr(t *testing.T) {
 	}
 }
 
-// clipTopic：trim + 截到 ≤5 字；空输入返回空。
+// clipTopic：保留中英文数字、剥掉标点空格、截到 ≤5 字；空输入返回空。
 func TestClipTopic(t *testing.T) {
 	cases := map[string]string{
 		"":              "",
 		"   ":           "",
 		"睡眠":            "睡眠",
-		"WKWebView性能调优": "性能调优",  // 英文被剥掉，只留汉字
-		"1234567":       "",      // 全非汉字 → 空
-		"睡眠abc管理":       "睡眠管理",  // 挖掉中间的英文
+		"WKWebView性能调优": "WKWeb", // 截到 5 字，英文保留
+		"1234567":       "12345", // 数字保留
+		"睡眠abc管理":       "睡眠abc", // 中英文都保留
+		"求职-面试":         "求职面试",  // 剥掉标点
+		"a/b c":         "abc",   // 剥掉标点空格
 		"睡眠管理计划表":       "睡眠管理计", // 截到 5 字
 	}
 	for in, want := range cases {
@@ -368,13 +376,13 @@ func TestNameTopic_RetryAndTruncate(t *testing.T) {
 		t.Errorf("must stop at 2nd, got %d calls", mock2.callCount)
 	}
 
-	// 三次都不合规 + 原始 topic/summary 全非中文 → 固定保底，绝不返回空。
+	// 三次都不合规 + 原始 topic/summary 只含标点（clip 后为空）→ 固定保底，绝不返回空。
 	mock3 := &syncMockLLM{responses: []llm.Message{
-		{Content: "OK done"}, {Content: "2026"}, {Content: "a/b"},
+		{Content: "a/b"}, {Content: "/"}, {Content: "- -"},
 	}}
 	d4 := NewRecordDecisionLoop(deps, RecordLoopConfig{}, "post_chat")
 	d4.deps.FlashLLM = mock3
-	if got := d4.nameTopic(context.Background(), "u1", "OK", "OK, done", []float64{1, 0}); got != topicFallbackName {
-		t.Errorf("all-non-Han fallback must be %q, got %q", topicFallbackName, got)
+	if got := d4.nameTopic(context.Background(), "u1", "/", "- -", []float64{1, 0}); got != topicFallbackName {
+		t.Errorf("all-invalid fallback must be %q, got %q", topicFallbackName, got)
 	}
 }

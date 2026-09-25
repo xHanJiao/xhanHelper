@@ -80,26 +80,22 @@ func keepOrReplaceTopic(incoming, old string) string {
 	return old
 }
 
-// isAllHan 判断字符串是否全部为汉字（允许空白，但空白不构成内容）。
-// topic 必须纯中文：英文/数字/标点一律拒（`WKWebView`、`2026计划`、`a/b` 都不合规）。
-// 口径见 util.IsAllHan，topicclean 存量清洗共用同一实现。
-func isAllHan(s string) bool { return util.IsAllHan(s) }
-
 // validateMemoryFields 工具侧字段校验，超限返回错误让模型改写。
 // 不含 facts 条数上限：上限只约束「模型单次传入多少」（见 validateFactCount），
 // 库里最终能存多少由 update 的合并结果决定，不逐出。
 func validateMemoryFields(topic, summary string, facts []string) error {
+	topic = strings.TrimSpace(topic) // 与 validTopic 对齐：先 trim 再校验长度/字符
 	if strings.TrimSpace(summary) == "" {
 		return fmt.Errorf("summary 不能为空")
 	}
-	if strings.TrimSpace(topic) == "" {
+	if topic == "" {
 		return fmt.Errorf("topic 不能为空")
 	}
 	if len([]rune(topic)) > memoryTopicMaxLen {
 		return fmt.Errorf("topic 超长（≤%d 字）", memoryTopicMaxLen)
 	}
-	if !isAllHan(topic) {
-		return fmt.Errorf("topic 必须全部是中文（不含英文/数字/符号）")
+	if !util.IsValidTopicChars(topic) {
+		return fmt.Errorf("topic 只能含中文/英文/数字（不含标点/空格/符号）")
 	}
 	if len([]rune(summary)) > memorySummaryMaxLen {
 		return fmt.Errorf("summary 超长（≤%d 字）", memorySummaryMaxLen)

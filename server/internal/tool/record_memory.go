@@ -53,7 +53,7 @@ func (t *RecordMemoryTool) Functions() []FuncSchema {
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"topic":   map[string]interface{}{"type": "string", "description": "主题词，非空、≤5 字、纯中文、一条一个主题（会被系统归类收敛，可放心填）"},
+				"topic":   map[string]interface{}{"type": "string", "description": "主题词，非空、≤5 字、只含中英文数字、一条一个主题（会被系统归类收敛，可放心填）"},
 				"summary": map[string]interface{}{"type": "string", "description": "一句话概括核心信息，自足成句（主体写进句子）"},
 				"facts": map[string]interface{}{
 					"type": "array", "items": map[string]interface{}{"type": "string"},

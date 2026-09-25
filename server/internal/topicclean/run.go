@@ -1,4 +1,4 @@
-// Package topicclean 提供 topic 存量清洗工具：把空 / 超 5 字的 topic 收敛到合规短名。
+// Package topicclean 提供 topic 存量清洗工具：把空 / 超 5 字 / 含标点空格的 topic 收敛到合规短名。
 //
 // 与 topicmerge 同范式，分两步：
 //   - Generate 只读：扫出违规 topic、调 LLM 给候选短名，产出报告 + 可编辑的映射文件；
@@ -204,8 +204,8 @@ func validateNewTopic(t string) error {
 	if len([]rune(t)) > MaxTopicRunes {
 		return fmt.Errorf("超过 %d 字", MaxTopicRunes)
 	}
-	if !util.IsAllHan(t) {
-		return fmt.Errorf("含非中文字符")
+	if !util.IsValidTopicChars(t) {
+		return fmt.Errorf("只能含中文/英文/数字（不含标点/空格/符号）")
 	}
 	return nil
 }
@@ -245,13 +245,13 @@ type topicRef struct {
 	Count int64
 }
 
-// findViolations 挑出不合规的 topic：空 / 超 5 字 / 含非中文。
-// 与新写规则（util.IsAllHan + MaxTopicRunes）口径一致。
+// findViolations 挑出不合规的 topic：空 / 超 5 字 / 含标点或空格等非法字符。
+// 与新写规则（util.IsValidTopicChars + MaxTopicRunes）口径一致。
 func findViolations(topics []topicRef) []Violation {
 	var out []Violation
 	for _, t := range topics {
 		r := len([]rune(t.Topic))
-		if strings.TrimSpace(t.Topic) == "" || r > MaxTopicRunes || !util.IsAllHan(t.Topic) {
+		if strings.TrimSpace(t.Topic) == "" || r > MaxTopicRunes || !util.IsValidTopicChars(t.Topic) {
 			out = append(out, Violation{OldTopic: t.Topic, Runes: r, Action: "rename"})
 		}
 	}

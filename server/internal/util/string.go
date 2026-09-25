@@ -45,15 +45,18 @@ func TruncateMiddle(s string, head, tail int) string {
 	return string(runes[:head]) + "…" + string(runes[len(runes)-tail:])
 }
 
-// IsAllHan 判定字符串是否「非空且只由汉字组成」（忽略内部空白；空白后无汉字视为空）。
-// 用于 topic 的纯中文口径，agent（校验/兜底）与 topicclean（存量清洗）共用，避免两处分叉。
-func IsAllHan(s string) bool {
+// isTopicChar 判定单个 rune 是否为合法 topic 字符：中文、英文（ASCII 字母）、数字。
+// 有意收窄到中英文数字——不收其它语种字母（西里尔/假名/谚文）、不收全角/阿拉伯-印度数字。
+func isTopicChar(r rune) bool {
+	return unicode.Is(unicode.Han, r) || unicode.Is(unicode.Latin, r) || ('0' <= r && r <= '9')
+}
+
+// IsValidTopicChars 判定 topic 字符是否合规：非空，且只含中文/英文/数字（不许标点、空格、符号）。
+// agent（校验/兜底）与 topicclean（存量清洗）共用同一口径，避免两处分叉。
+func IsValidTopicChars(s string) bool {
 	hasContent := false
 	for _, r := range s {
-		if unicode.IsSpace(r) {
-			continue
-		}
-		if !unicode.Is(unicode.Han, r) {
+		if !isTopicChar(r) {
 			return false
 		}
 		hasContent = true
@@ -61,11 +64,11 @@ func IsAllHan(s string) bool {
 	return hasContent
 }
 
-// HanOnly 只保留汉字（去掉英文/数字/标点/空白）。可能返回空串，调用方需处理。
-func HanOnly(s string) string {
+// KeepTopicChars 只保留中文/英文/数字（去掉标点、空格、符号）。可能返回空串，调用方需处理。
+func KeepTopicChars(s string) string {
 	var r []rune
 	for _, c := range strings.TrimSpace(s) {
-		if unicode.Is(unicode.Han, c) {
+		if isTopicChar(c) {
 			r = append(r, c)
 		}
 	}

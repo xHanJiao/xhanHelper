@@ -23,18 +23,18 @@ import (
 //	② 调 LLM 定 topic（优先复用已有）
 //	③ 落库时 newMemory → reuseTopic 做 0.8 强制归并（既有线上逻辑）
 //
-// 重试上限：首次 + 重试 2 次；三次都不合规（空或超 5 字）才强制截断到 5 字
+// 重试上限：首次 + 重试 2 次；三次都不合规（空 / 超 5 字 / 含标点空格）才强制截断到 5 字
 // （topic 必填，不能因不合规丢弃记忆）。
 const (
 	topicNameMaxAttempts = 3    // 首次 + 重试 2 次
 	topicNeighborTopK    = 10   // 喂给 LLM 的已有 topic 条数
 	topicRecallPreCap    = 40   // 算相似度前按引用次数粗截断的上限（省 GetOrEmbed 调用）
-	topicFallbackName    = "其它" // 三次都不合规 + summary 全非中文时的保底 topic（topic 必填）
+	topicFallbackName    = "其它" // 三次都不合规 + summary 只含标点时的保底 topic（topic 必填）
 )
 
 const topicNamerSystem = `你是记忆的主题归类助手。用户给你一条记忆和该用户已有的主题列表，你选一个最合适的主题词。
 优先复用已有主题；已有列表里确实没有合适的，才新建一个。
-新建的主题词必须：非空、5 个汉字以内、一个词，且**只能由汉字组成**——不许出现英文、数字、标点、空格。
+新建的主题词必须：非空、5 个字以内、一个词，且**只能含中文、英文、数字**——不许出现标点、空格、斜杠。
 只输出主题词本身，不要任何解释或 JSON。`
 
 // topicNeighbor — 喂给 LLM 的一条已有 topic 参考。
@@ -92,10 +92,10 @@ func (d *RecordDecisionLoop) nameTopic(ctx context.Context, userID, topic, summa
 	return named
 }
 
-// validTopic 判定 LLM 输出的 topic 是否合规：trim 后非空、≤5 字、纯中文。合规返回 trim 值。
+// validTopic 判定 LLM 输出的 topic 是否合规：trim 后非空、≤5 字、只含中英文数字。合规返回 trim 值。
 func validTopic(raw string) (string, bool) {
 	t := strings.TrimSpace(raw)
-	if t == "" || len([]rune(t)) > memoryTopicMaxLen || !isAllHan(t) {
+	if t == "" || len([]rune(t)) > memoryTopicMaxLen || !util.IsValidTopicChars(t) {
 		return "", false
 	}
 	return t, true
@@ -185,9 +185,9 @@ type topicNeighborXML struct {
 	Similarity string `xml:"similarity,attr"`
 }
 
-// clipTopic 兜底：只保留汉字、截到 ≤5 字。去掉英文/数字/标点后可能为空（调用方需处理）。
+// clipTopic 兜底：只保留中文/英文/数字、截到 ≤5 字。去掉标点/空格后可能为空（调用方需处理）。
 func clipTopic(topic string) string {
-	r := []rune(util.HanOnly(topic))
+	r := []rune(util.KeepTopicChars(topic))
 	if len(r) > memoryTopicMaxLen {
 		r = r[:memoryTopicMaxLen]
 	}

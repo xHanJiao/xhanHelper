@@ -15,13 +15,13 @@ import (
 )
 
 func TestValidateNewTopic(t *testing.T) {
-	ok := []string{"睡眠", "睡眠管理", "网页渲染", "项目管理"}
+	ok := []string{"睡眠", "睡眠管理", "网页渲染", "项目管理", "AI工具", "OK", "Swift", "26计划"}
 	for _, s := range ok {
 		if err := validateNewTopic(s); err != nil {
 			t.Errorf("%q should be valid: %v", s, err)
 		}
 	}
-	bad := []string{"", "   ", "六个汉字呀啊", "WebView", "Swift", "2026计划", "a/b", "a,b", "a b", "a、b"}
+	bad := []string{"", "   ", "六个汉字呀啊", "a/b", "a,b", "a b", "a、b", "求职-面试"}
 	for _, s := range bad {
 		if err := validateNewTopic(s); err == nil {
 			t.Errorf("%q should be invalid", s)
@@ -33,13 +33,14 @@ func TestFindViolations(t *testing.T) {
 	topics := []topicRef{
 		{Topic: "睡眠", Count: 3},
 		{Topic: "项目规划", Count: 5},
+		{Topic: "AI工具", Count: 4}, // 中英文数字混合 OK
+		{Topic: "OK", Count: 2},
 		{Topic: "", Count: 1},
-		{Topic: "WKWebView性能调优", Count: 2},
-		{Topic: "AI工具", Count: 4}, // ≤5 字但含非中文 → 违规
-		{Topic: "OK", Count: 2},   // 全非中文 → 违规
+		{Topic: "WKWebView性能调优", Count: 2}, // 超 5 字 → 违规
+		{Topic: "求职-面试", Count: 4},         // 含标点 → 违规
 	}
 	got := findViolations(topics)
-	want := map[string]bool{"": true, "WKWebView性能调优": true, "AI工具": true, "OK": true}
+	want := map[string]bool{"": true, "WKWebView性能调优": true, "求职-面试": true}
 	if len(got) != len(want) {
 		t.Fatalf("want %d violations, got %d: %+v", len(want), len(got), got)
 	}

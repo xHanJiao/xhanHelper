@@ -34,7 +34,7 @@ func main() {
 	noLLM := flag.Bool("no-llm", false, "不调 LLM 起名（candidate 留空，全部交人工）")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, `topic-clean — 记忆/笔记 topic 存量清洗（空 / 超 5 字）
+		fmt.Fprintf(os.Stderr, `topic-clean — 记忆/笔记 topic 存量清洗（空 / 超 5 字 / 含非中文）
 
 用法:
   topic-clean [flags]

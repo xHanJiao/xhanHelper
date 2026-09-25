@@ -106,7 +106,7 @@
 
 - 决策循环里 `save_memory` / `update_memory` 的 topic 说明改成「≤ 5 字、非空、纯中文」。
 - 记忆定义的公共文案里补一句「topic ≤ 5 字、纯中文」。
-- inline 的 `record_memory` 工具同步 + 加非空校验。
+- inline 的 `record_memory` 工具**不加** topic 非空校验：该参数在 `Decide` 里会被 `nameTopic` 立刻覆写，工具层硬拒反而会挡住「主 LLM 不传 topic、由 namer 补名」的正常流程。非空由 `nameTopic` 保证（含固定保底）。
 - 抽取段指令消息、决策循环 system/instruction 都要带上「≤ 5 字、纯中文」（见上面第 1 节）。
 
 ### 6. ReAct 轮数预算：6 → 8

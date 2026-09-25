@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/util"
 )
 
 // Violation — 一条违规 topic 及其处置。
@@ -28,13 +29,13 @@ type PlanRow struct {
 // 失败的条目 NewTopic 留空，交人工；本函数不阻断生成流程，由调用方决定降级。
 func proposeNames(ctx context.Context, client llm.LLMClient, userID string, violations []Violation, all []topicRef) error {
 	var b strings.Builder
-	b.WriteString("下面是一个用户的记忆主题词列表，其中有几个违规（空或超过 5 字）。\n")
-	b.WriteString("请为每个违规主题词给一个合规的替代名：非空、5 个字以内、一个词，禁止斜杠/逗号/空格。\n")
+	b.WriteString("下面是一个用户的记忆主题词列表，其中有几个违规（空、超 5 字或含非中文）。\n")
+	b.WriteString("请为每个违规主题词给一个合规的替代名：非空、5 个字以内、纯中文、一个词，禁止斜杠/逗号/空格。\n")
 	b.WriteString("优先复用列表里已有的合规主题词；确实没有合适的才新建。\n\n")
 	b.WriteString("已有（合规）主题词：")
 	existing := make([]string, 0, len(all))
 	for _, t := range all {
-		if strings.TrimSpace(t.Topic) != "" && len([]rune(t.Topic)) <= MaxTopicRunes {
+		if strings.TrimSpace(t.Topic) != "" && len([]rune(t.Topic)) <= MaxTopicRunes && util.IsAllHan(t.Topic) {
 			existing = append(existing, t.Topic)
 		}
 	}
@@ -145,7 +146,7 @@ func renderReport(userID string, all []topicRef, violations []Violation) string 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# topic 清洗报告\n\n")
 	fmt.Fprintf(&b, "- user: `%s`\n", userID)
-	fmt.Fprintf(&b, "- 全部 topic: %d 个｜违规（空/超 %d 字）: %d 个\n\n", len(all), MaxTopicRunes, len(violations))
+	fmt.Fprintf(&b, "- 全部 topic: %d 个｜违规（空/超 %d 字/含非中文）: %d 个\n\n", len(all), MaxTopicRunes, len(violations))
 	b.WriteString("## 违规 topic 及候选短名\n\n")
 	b.WriteString("| 原 topic | 字数 | LLM 候选 | 引用数 |\n|---|---|---|---|\n")
 	count := map[string]int64{}

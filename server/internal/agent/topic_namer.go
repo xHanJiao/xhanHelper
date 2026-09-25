@@ -159,7 +159,8 @@ func buildTopicNamerInput(summary string, neighbors []topicNeighbor) string {
 	}
 	b, err := xml.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		// xml.Marshal 对非法字符（控制字节）会报错：降级为只给记忆内容，不让整轮失败。
+		// 防御性兜底：encoding/xml 对控制字节通常替换成 U+FFFD 而非报错（见 record_loop_render_test.go），
+		// 所以这条分支现实中基本不可达；真报错就只给记忆内容，不让整轮失败。
 		log.Printf("[topic_namer] marshal input error: %v (drop neighbors)", err)
 		fallback := topicNamerInputXML{Memory: strings.TrimSpace(summary)}
 		b, err = xml.MarshalIndent(fallback, "", "  ")

@@ -282,6 +282,14 @@ func (r *UserMemoryRepo) RenameTopic(ctx context.Context, userID string, from []
 	return res.RowsAffected, res.Error
 }
 
+// DistinctUserIDs 返回有记忆的所有 user_id（供存量清洗工具枚举用户）。
+func (r *UserMemoryRepo) DistinctUserIDs(ctx context.Context) ([]string, error) {
+	var ids []string
+	err := r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Distinct().Pluck("user_id", &ids).Error
+	return ids, err
+}
+
 // DistinctTopics 返回用户所有不重复 topic 及对应记忆数量，按 count 倒序。
 func (r *UserMemoryRepo) DistinctTopics(ctx context.Context, userID string) ([]TopicCount, error) {
 	var results []TopicCount

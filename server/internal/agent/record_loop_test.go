@@ -3,10 +3,16 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"strings"
 	"testing"
 
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/model"
+	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
 )
 
@@ -39,7 +45,7 @@ func TestExtractCandidates_MultiAndTruncate(t *testing.T) {
 	if len(cands) != 3 {
 		t.Fatalf("truncate to 3, got %d", len(cands))
 	}
-	if cands[0].Topic != "t1" || cands[0].Facts[0] != "f1" {
+	if cands[0].Summary != "a" || cands[0].Facts[0] != "f1" {
 		t.Errorf("first candidate fields wrong: %+v", cands[0])
 	}
 	// prompt 里的上限也应反映配置值
@@ -81,17 +87,38 @@ func TestValidateMemoryFields(t *testing.T) {
 	for i := range long {
 		long[i] = "字"
 	}
-	if err := validateMemoryFields("t", "ok", nil); err != nil {
+	if err := validateMemoryFields("睡眠", "ok", nil); err != nil {
 		t.Errorf("valid fields rejected: %v", err)
 	}
-	if err := validateMemoryFields("t", "", nil); err == nil {
+	if err := validateMemoryFields("睡眠", "", nil); err == nil {
 		t.Error("empty summary must fail")
 	}
-	if err := validateMemoryFields("t", joinRunes(long), nil); err == nil {
+	if err := validateMemoryFields("", "ok", nil); err == nil {
+		t.Error("empty topic must fail")
+	}
+	if err := validateMemoryFields("   ", "ok", nil); err == nil {
+		t.Error("blank topic must fail")
+	}
+	if err := validateMemoryFields("六个汉字呀啊", "ok", nil); err == nil {
+		t.Error("topic over 5 runes must fail")
+	}
+	if err := validateMemoryFields("五个汉", "ok", nil); err != nil {
+		t.Errorf("5-rune topic must pass: %v", err)
+	}
+	if err := validateMemoryFields("WKWebView", "ok", nil); err == nil {
+		t.Error("English topic must fail (topic must be pure Chinese)")
+	}
+	if err := validateMemoryFields("2026计划", "ok", nil); err == nil {
+		t.Error("topic with digits must fail")
+	}
+	if err := validateMemoryFields("睡眠管理", "ok", nil); err != nil {
+		t.Errorf("pure Chinese multi-word topic must pass: %v", err)
+	}
+	if err := validateMemoryFields("睡眠", joinRunes(long), nil); err == nil {
 		t.Error("over-long summary must fail")
 	}
 	tooMany := make([]string, memoryFactsMaxCount+1)
-	if err := validateMemoryFields("t", "ok", tooMany); err != nil {
+	if err := validateMemoryFields("睡眠", "ok", tooMany); err != nil {
 		t.Errorf("count cap must not be enforced by validateMemoryFields (merged results are unbounded): %v", err)
 	}
 	if err := validateFactCount(tooMany); err == nil {
@@ -224,5 +251,130 @@ func TestParseFactsPtr(t *testing.T) {
 	bad := "not json"
 	if got := parseFactsPtr(&bad); got != nil {
 		t.Errorf("bad json should yield nil (logged), got %v", got)
+	}
+}
+
+// clipTopic：trim + 截到 ≤5 字；空输入返回空。
+func TestClipTopic(t *testing.T) {
+	cases := map[string]string{
+		"":              "",
+		"   ":           "",
+		"睡眠":            "睡眠",
+		"WKWebView性能调优": "性能调优",  // 英文被剥掉，只留汉字
+		"1234567":       "",      // 全非汉字 → 空
+		"睡眠abc管理":       "睡眠管理",  // 挖掉中间的英文
+		"睡眠管理计划表":       "睡眠管理计", // 截到 5 字
+	}
+	for in, want := range cases {
+		if got := clipTopic(in); got != want {
+			t.Errorf("clipTopic(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// buildTopicNamerInput：XML 良构；无近邻时省略 existing_topics；有近邻带引用数与相似度。
+func TestBuildTopicNamerInput(t *testing.T) {
+	none := buildTopicNamerInput("用户决定用方案B", nil)
+	if !strings.Contains(none, "<memory>") || strings.Contains(none, "<topic ") {
+		t.Errorf("no-neighbor input wrong: %s", none)
+	}
+
+	got := buildTopicNamerInput("用户决定用方案B", []topicNeighbor{
+		{Topic: "项目规划", RefCount: 7, Similarity: 0.91},
+	})
+	for _, want := range []string{"<memory>", "用户决定用方案B", "项目规划", `ref_count="7"`, `similarity="0.91"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("namer input missing %q: %s", want, got)
+		}
+	}
+	// 必须良构：summary 含 &<> 也要能被解析回来。
+	raw := buildTopicNamerInput(`a & b <c> "d"`, []topicNeighbor{{Topic: "主题", RefCount: 1, Similarity: 0.5}})
+	var parsed topicNamerInputXML
+	if err := xml.Unmarshal([]byte(raw), &parsed); err != nil {
+		t.Fatalf("namer input must be well-formed XML: %v\n%s", err, raw)
+	}
+	if parsed.Memory != `a & b <c> "d"` {
+		t.Errorf("memory roundtrip failed: %q", parsed.Memory)
+	}
+	if len(parsed.Topics) != 1 || parsed.Topics[0].Value != "主题" {
+		t.Errorf("topics roundtrip failed: %+v", parsed.Topics)
+	}
+}
+
+// keepOrReplaceTopic：修「update 省略 topic 时把旧 topic 抹空」的 bug。
+func TestKeepOrReplaceTopic(t *testing.T) {
+	if got := keepOrReplaceTopic("", "旧主题"); got != "旧主题" {
+		t.Errorf("empty incoming must keep old, got %q", got)
+	}
+	if got := keepOrReplaceTopic("   ", "旧主题"); got != "旧主题" {
+		t.Errorf("blank incoming must keep old, got %q", got)
+	}
+	if got := keepOrReplaceTopic(" 新主题 ", "旧主题"); got != "新主题" {
+		t.Errorf("incoming must win and be trimmed, got %q", got)
+	}
+}
+
+// validTopic：合规判定（trim 非空 + ≤5 字）。
+func TestValidTopic(t *testing.T) {
+	if _, ok := validTopic(""); ok {
+		t.Error("empty must be invalid")
+	}
+	if _, ok := validTopic("  "); ok {
+		t.Error("blank must be invalid")
+	}
+	if _, ok := validTopic("六个汉字呀啊"); ok {
+		t.Error("6 runes must be invalid")
+	}
+	if got, ok := validTopic(" 睡眠 "); !ok || got != "睡眠" {
+		t.Errorf("valid topic must be trimmed, got %q ok=%v", got, ok)
+	}
+}
+
+// nameTopic：LLM 三次都不合规 → 截断兜底；第二次合规 → 采用第二次。
+func TestNameTopic_RetryAndTruncate(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.UserMemory{}, &model.Note{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	deps := &RecordDeps{MemRepo: service.NewUserMemoryRepo(db), NoteRepo: service.NewNoteRepo(db)}
+
+	// 三次都超长 → 用 fallback（原始 topic 截断）。
+	mock := &syncMockLLM{responses: []llm.Message{
+		{Content: "这是一个特别长的主题词"}, {Content: "还是很长的主题词啊"}, {Content: "依然超长主题词"},
+	}}
+	d := NewRecordDecisionLoop(deps, RecordLoopConfig{}, "post_chat")
+	d.deps.FlashLLM = mock
+	got := d.nameTopic(context.Background(), "u1", "原始主题词超长", "summary", []float64{1, 0})
+	if got != "原始主题词" {
+		t.Errorf("all-invalid must fall back to clipped topic, got %q", got)
+	}
+	if mock.callCount != 3 {
+		t.Errorf("must try 3 times, got %d", mock.callCount)
+	}
+
+	// 第二次合规 → 采用第二次，不重试第三次。
+	mock2 := &syncMockLLM{responses: []llm.Message{
+		{Content: "超长主题词啊"}, {Content: "睡眠"},
+	}}
+	d2 := NewRecordDecisionLoop(deps, RecordLoopConfig{}, "post_chat")
+	d2.deps.FlashLLM = mock2
+	if got := d2.nameTopic(context.Background(), "u1", "", "summary", []float64{1, 0}); got != "睡眠" {
+		t.Errorf("must take 2nd valid attempt, got %q", got)
+	}
+	if mock2.callCount != 2 {
+		t.Errorf("must stop at 2nd, got %d calls", mock2.callCount)
+	}
+
+	// 三次都不合规 + 原始 topic/summary 全非中文 → 固定保底，绝不返回空。
+	mock3 := &syncMockLLM{responses: []llm.Message{
+		{Content: "OK done"}, {Content: "2026"}, {Content: "a/b"},
+	}}
+	d4 := NewRecordDecisionLoop(deps, RecordLoopConfig{}, "post_chat")
+	d4.deps.FlashLLM = mock3
+	if got := d4.nameTopic(context.Background(), "u1", "OK", "OK, done", []float64{1, 0}); got != topicFallbackName {
+		t.Errorf("all-non-Han fallback must be %q, got %q", topicFallbackName, got)
 	}
 }

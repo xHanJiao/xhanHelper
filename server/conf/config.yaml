@@ -6,7 +6,7 @@ server:
   max_tokens_per_user: 4 # 同一用户最多同时存在的 token 数，超出踢最老的
   memory_auto_extract: false
   # --- 记录循环（记忆两段式：抽取 + 逐候选决策循环）---
-  record_loop_max_iterations: 6 # 决策循环轮数上限（含强制收敛轮）
+  record_loop_max_iterations: 8 # 决策循环轮数上限（含强制收敛轮）；留给「工具打回 + 补检索」余量
   memory_max_per_session: 5 # 单次会话最多新增几条记忆（抽取段上限）
   memory_neighbor_top_k: 5 # 预检索近邻条数（每域）
   memory_neighbor_threshold: 0.5 # 预检索近邻相似度下限

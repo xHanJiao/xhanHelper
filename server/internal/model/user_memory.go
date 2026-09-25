@@ -13,7 +13,8 @@ const (
 type UserMemory struct {
 	ID     string `gorm:"primaryKey;size:36" json:"id"`
 	UserID string `gorm:"uniqueIndex:idx_user_content;size:36;not null" json:"user_id"`
-	// DEPRECATED: MemoryKey 已废弃，后续版本会移除，建议使用 ContentHash 进行去重
+	// DEPRECATED: MemoryKey 已废弃，后续版本会移除，建议使用 ContentHash 进行去重。
+	// 注意：历史写入时它等于 topic，但 topic 改名（如 topicclean 清洗）不会同步它——无消费者，勿依赖。
 	MemoryKey       string    `gorm:"size:200;not null" json:"memory_key"`
 	ContentHash     string    `gorm:"uniqueIndex:idx_user_content;size:64;not null" json:"content_hash"` // MD5(MemoryValue)
 	MemoryValue     string    `gorm:"type:text;not null" json:"memory_value"`

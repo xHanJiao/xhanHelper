@@ -229,6 +229,29 @@ topic-merge-apply: build-topic-merge
 	scp ./data/topic-merge/*.tsv $$U@$$H:$$P/data/topic-merge/ && \
 	ssh $$U@$$H "cd $$P && bash scripts/run-topic-merge.sh --apply $(ARGS)"
 
+# topic 存量清洗（本地）。默认跑 dev 沙盒库（APP_ENV=local.dev），不会碰 prod。
+# 要在 prod 上跑必须显式 APP_ENV=local；ARGS 可传 --user xxx / --force / --no-llm；
+# 落库：make topic-clean-apply APP_ENV=local ARGS="--dry-run=false"
+topic-clean-plan:
+	@mkdir -p logs
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	E=$${APP_ENV:-local.dev}; \
+	echo "=== topic-clean 生成（APP_ENV=$$E）==="; \
+	APP_ENV=$$E go run ./cmd/topic-clean/ $(ARGS) 2>&1 | tee logs/topic-clean-plan-$$(date +%Y-%m-%d).log; \
+	echo "✅ 报告/映射在 data/topic-clean/（编辑 plan-*.tsv 后跑 make topic-clean-apply）"
+
+# 读取 data/topic-clean/*.tsv 执行改名（默认 dry-run；ARGS="--dry-run=false" 落库）
+topic-clean-apply:
+	@ls ./data/topic-clean/*.tsv >/dev/null 2>&1 || { \
+		echo "❌ 本地没有 data/topic-clean/*.tsv"; \
+		echo "   请先跑 make topic-clean-plan，审阅 report、编辑 plan-*.tsv 后再 apply"; \
+		exit 1; }; \
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	E=$${APP_ENV:-local.dev}; \
+	echo "=== topic-clean 落库（APP_ENV=$$E）==="; \
+	APP_ENV=$$E go run ./cmd/topic-clean/ --apply $(ARGS); \
+	echo "⚠️  若已改库，请重启服务，内存向量里的 topic metadata 才会刷新"
+
 # 重启远端服务
 restart:
 	@if [ -f .env ]; then . ./.env; fi; \

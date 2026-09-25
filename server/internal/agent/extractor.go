@@ -18,10 +18,10 @@ import (
 )
 
 // memoryCandidate — 抽取段产出的一条候选记忆。不落库，交给决策循环处理。
+// 无 Topic 字段：topic 由决策循环前的 topic_namer 单独一次 LLM 调用定稿（见 topic_namer.go）。
 type memoryCandidate struct {
 	Summary string   `json:"summary"`
 	Facts   []string `json:"facts,omitempty"`
-	Topic   string   `json:"topic,omitempty"`
 }
 
 // memoryExtractResult — 抽取段 LLM 的输出结构（一个键 memories，数组）。
@@ -55,8 +55,9 @@ func buildMemoryInstructionXML(now string, maxCandidates int) string {
 			"信息不足时返回 {\"extracted\":false}",
 			"将\"今天\"、\"昨天\"等相对时间转为绝对日期（如 2026-05-15）",
 		},
-		OutputFormat: `{"extracted":true,"memories":[{"summary":"一句话概括核心信息","facts":["支持细节1"],"topic":"一个关键主题词（如睡眠管理、职业规划、家庭关系），禁止斜杠、逗号、多个主题"}]}
-一条记忆 = 一条独立的、自足的事件或结论，各占 memories 数组的一项。没有值得提取的内容时返回 {"extracted":false}`,
+		OutputFormat: `{"extracted":true,"memories":[{"summary":"一句话概括核心信息","facts":["支持细节1"]}]}
+一条记忆 = 一条独立的、自足的事件或结论，各占 memories 数组的一项。没有值得提取的内容时返回 {"extracted":false}
+不要输出 topic——主题词由后续步骤单独归类，你只负责把候选内容提出来。`,
 		CurrentTime: now,
 	}
 

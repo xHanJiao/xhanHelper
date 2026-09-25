@@ -55,7 +55,7 @@ func (w *MemoryWorker) Process(ctx context.Context, sess *SessionSnapshot) error
 	}
 	for _, c := range cands {
 		if _, err := w.loop.Decide(ctx, sess.UserID, recordCandidate{
-			Summary: c.Summary, Facts: c.Facts, Topic: c.Topic,
+			Summary: c.Summary, Facts: c.Facts,
 		}); err != nil {
 			return fmt.Errorf("record loop decide for candidate %.40s: %w", c.Summary, err)
 		}

@@ -50,3 +50,30 @@ func TestTruncateMiddle(t *testing.T) {
 		t.Errorf("ascii truncate = %q", got)
 	}
 }
+
+func TestIsAllHan(t *testing.T) {
+	trueCases := []string{"睡眠", "项目管理", "睡 眠", "中 文 混 空"}
+	for _, s := range trueCases {
+		if !IsAllHan(s) {
+			t.Errorf("IsAllHan(%q) = false, want true", s)
+		}
+	}
+	falseCases := []string{"", "   ", "WKWebView", "2026计划", "AI工具", "OK", "a/b", "中文abc"}
+	for _, s := range falseCases {
+		if IsAllHan(s) {
+			t.Errorf("IsAllHan(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestHanOnly(t *testing.T) {
+	if got := HanOnly("WKWebView性能调优"); got != "性能调优" {
+		t.Errorf("HanOnly = %q, want 性能调优", got)
+	}
+	if got := HanOnly("1234567"); got != "" {
+		t.Errorf("HanOnly(all-non-Han) = %q, want empty", got)
+	}
+	if got := HanOnly("睡眠abc管理"); got != "睡眠管理" {
+		t.Errorf("HanOnly = %q, want 睡眠管理", got)
+	}
+}

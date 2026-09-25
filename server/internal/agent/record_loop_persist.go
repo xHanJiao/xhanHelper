@@ -134,7 +134,26 @@ func (s *recordLoopState) reuseTopic(ctx context.Context, topic string) string {
 
 // distinctTopics 该用户在用的 topic = notes ∪ memories 的 distinct。
 func (d *RecordDeps) distinctTopics(ctx context.Context, userID string) ([]string, error) {
-	notes, err := d.NoteRepo.DistinctTopics(ctx, userID)
+	topics, err := d.distinctTopicsWithCount(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(topics))
+	for _, t := range topics {
+		out = append(out, t.Topic)
+	}
+	return out, nil
+}
+
+// topicRef 一个已有 topic 及其引用次数。
+type topicRef struct {
+	Topic string
+	Count int64
+}
+
+// distinctTopicsWithCount 该用户在用的 topic 及引用次数（notes ∪ memories），按引用次数降序。
+func (d *RecordDeps) distinctTopicsWithCount(ctx context.Context, userID string) ([]topicRef, error) {
+	notes, err := d.NoteRepo.DistinctTopicsWithCount(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("note distinct topics: %w", err)
 	}
@@ -142,19 +161,26 @@ func (d *RecordDeps) distinctTopics(ctx context.Context, userID string) ([]strin
 	if err != nil {
 		return nil, fmt.Errorf("memory distinct topics: %w", err)
 	}
-	seen := make(map[string]bool, len(notes)+len(mems))
-	out := make([]string, 0, len(notes)+len(mems))
-	for _, t := range notes {
-		if t != "" && !seen[t] {
-			seen[t] = true
-			out = append(out, t)
+	agg := make(map[string]int64, len(notes)+len(mems))
+	for _, n := range notes {
+		if n.Topic != "" {
+			agg[n.Topic] += n.Count
 		}
 	}
 	for _, m := range mems {
-		if m.Topic != "" && !seen[m.Topic] {
-			seen[m.Topic] = true
-			out = append(out, m.Topic)
+		if m.Topic != "" {
+			agg[m.Topic] += m.Count
 		}
 	}
+	out := make([]topicRef, 0, len(agg))
+	for t, c := range agg {
+		out = append(out, topicRef{Topic: t, Count: c})
+	}
+	slices.SortFunc(out, func(a, b topicRef) int {
+		if a.Count != b.Count {
+			return int(b.Count - a.Count)
+		}
+		return strings.Compare(a.Topic, b.Topic)
+	})
 	return out, nil
 }

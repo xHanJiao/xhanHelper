@@ -170,6 +170,10 @@ type Tool interface {
 
 - 加载顺序（`internal/config`）：`conf/config.yaml` → `conf/config.<APP_ENV>.yaml`（非零值覆盖）→ `${VAR}` 展开 → 校验
 - 环境 ↔ DB：**dev = MySQL**、**prod = MySQL**、**仅 test = SQLite**（`server/data/xhan_helper.db`）。`db` 配置在 base `config.yaml`，`APP_ENV` 只切换覆盖文件
+- **本地版 SQLite 数据根（危险区，务必分清）**：
+  - `~/Library/Application Support/xhanHelper/xhan_helper.db` = **prod 库**（`make local` / `APP_ENV=local`）。**这是真实数据，绝对禁止在里面测试、写脏数据、跑清洗/迁移等破坏性操作。**
+  - `~/Library/Application Support/xhanHelper-dev/xhan_helper.db` = **dev 沙盒库**（`make local-dev` / `APP_ENV=local.dev`，端口 18924）。测试、试验、清洗演练用这个。
+  - 判据：**路径里带 `-dev` 的才是 dev**。不确定时先 `sqlite3 -readonly <db> "SELECT count(*) FROM user_memories"` 只读确认，绝不写 prod。
 - 敏感变量：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`XHAN_HELPER_DB_PASSWORD`、`ALLOWED_USER`、`XHAN_HELPER_ADMIN`。本地放 `server/.env`（已 gitignore，`make dev` 会加载）
 - 顶层 key：`server`（端口/注册开关/后台任务总开关/admin_users）、`db`、`llm`（含 `verification`/`debug_json`）、`llm_bg`、`embedding`、`reflection`、`retrieval`（含 `resource_zone` 预算与配额）、`chat`（窗口/摘要/tool_excludes/image_replay）、`subagent`、`webfetch`、`storage`、`share`、`archive`、`mcp`、`snowflake`、`global_default_role`
 - 后台任务总开关 `server.disable_background_tasks`，关闭后不启 `CronRunner`、不跑 profile 迁移、`onChatEnd` 短路

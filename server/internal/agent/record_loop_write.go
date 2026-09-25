@@ -62,11 +62,13 @@ func (s *recordLoopState) updateMemory(ec *tool.ExecuteContext, args json.RawMes
 	if err := validateFactCount(a.Facts); err != nil {
 		return errResult(err)
 	}
+	// topic 未传（留空/纯空）时保留旧 topic：否则会把原来好好的 topic 覆盖成空。
+	topic := keepOrReplaceTopic(a.Topic, old.Topic)
 	facts := mergeFacts(parseFactsPtr(old.Facts), a.Facts)
-	if err := validateMemoryFields(a.Topic, a.Summary, facts); err != nil {
+	if err := validateMemoryFields(topic, a.Summary, facts); err != nil {
 		return errResult(err)
 	}
-	mem := s.newMemory(a.Topic, a.Summary, facts)
+	mem := s.newMemory(topic, a.Summary, facts)
 	mem.ID = old.ID
 	if err := s.persist(ec.Ctx, mem, false); err != nil {
 		return errResult(err)

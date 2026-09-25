@@ -26,7 +26,7 @@ func TestExtractCandidates_SendsFullDialogWithRoles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(got) != 1 || got[0].Topic != "项目规划" {
+	if len(got) != 1 || got[0].Summary != "决定用方案B" {
 		t.Fatalf("unexpected candidates: %+v", got)
 	}
 

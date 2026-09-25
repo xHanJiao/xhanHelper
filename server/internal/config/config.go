@@ -848,7 +848,7 @@ func validate(cfg *Config) error {
 	}
 	// 记录循环默认值（记忆两段式）
 	if cfg.Server.RecordLoopMaxIterations == 0 {
-		cfg.Server.RecordLoopMaxIterations = 6
+		cfg.Server.RecordLoopMaxIterations = 8
 	}
 	if cfg.Server.MemoryMaxPerSession == 0 {
 		cfg.Server.MemoryMaxPerSession = 5

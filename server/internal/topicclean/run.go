@@ -67,11 +67,29 @@ func Generate(ctx context.Context, db *gorm.DB, opts Options) error {
 			return fmt.Errorf("user %s 载入 topic: %w", short(uid), err)
 		}
 		violations := findViolations(topics)
+		// 空 topic 逐条处置（内容各异，不能按值聚合）：按内容逐条让 LLM 起名。
+		empties, err := memRepo.EmptyTopics(ctx, uid, 100)
+		if err != nil {
+			return fmt.Errorf("user %s 载入空 topic: %w", short(uid), err)
+		}
+		if len(empties) > 0 {
+			names := make([]string, len(empties))
+			if opts.LLM != nil {
+				if err := proposeEmptyNames(ctx, opts.LLM, uid, empties, topics, names); err != nil {
+					log.Printf("[topic-clean] user %s 空 topic 起名失败: %v（留空交人工）", short(uid), err)
+				}
+			}
+			for i, e := range empties {
+				violations = append(violations, Violation{
+					OldTopic: "", Runes: 0, Action: "rename", MemoryID: e.ID, Content: e.Content, NewTopic: names[i],
+				})
+			}
+		}
 		if len(violations) == 0 {
 			log.Printf("[topic-clean] user %s 无违规 topic，跳过", short(uid))
 			continue
 		}
-		// 调 LLM 批量给候选名（同用户一次调用）。
+		// 非空违规 topic 批量给候选名（同用户一次调用）。
 		if opts.LLM != nil {
 			if err := proposeNames(ctx, opts.LLM, uid, violations, topics); err != nil {
 				log.Printf("[topic-clean] user %s LLM 起名失败: %v（留空交人工）", short(uid), err)
@@ -168,11 +186,20 @@ func applyUser(ctx context.Context, db *gorm.DB, userID string, rows []PlanRow, 
 		memRepo := service.NewUserMemoryRepo(tx)
 
 		for _, row := range rows {
-			if row.Action != "rename" || row.OldTopic == "" || row.NewTopic == "" {
+			if row.Action != "rename" || row.NewTopic == "" {
 				continue
 			}
 			if err := validateNewTopic(row.NewTopic); err != nil {
 				return fmt.Errorf("新 topic %q 不合规: %w", row.NewTopic, err)
+			}
+			// 空 topic 行：按 memory_id 定位单条记忆（值匹配匹配不到 NULL）。
+			if row.MemoryID != "" {
+				m, err := memRepo.SetTopicByID(ctx, userID, row.MemoryID, row.NewTopic)
+				if err != nil {
+					return fmt.Errorf("填空 topic（id %s）→ %q: %w", row.MemoryID, row.NewTopic, err)
+				}
+				r.memories += m
+				continue
 			}
 			n, err := noteRepo.RenameTopic(ctx, userID, []string{row.OldTopic}, row.NewTopic)
 			if err != nil {

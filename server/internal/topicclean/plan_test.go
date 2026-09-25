@@ -120,7 +120,7 @@ func TestGenerateAndApply_SQLite(t *testing.T) {
 	}
 
 	// 人工把两行改成 rename + 合规新名，落库
-	fixed := strings.ReplaceAll(string(plan), "\t\tskip\n", "\t网页性能\trename\n")
+	fixed := strings.ReplaceAll(string(plan), "\t\tskip\t\n", "\t网页性能\trename\t\n")
 	if err := os.WriteFile(filepath.Join(dir, "plan-u1.tsv"), []byte(fixed), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
@@ -134,6 +134,61 @@ func TestGenerateAndApply_SQLite(t *testing.T) {
 	mem, _ := memRepo.FindByID(context.Background(), "u1", "m1")
 	if mem.Topic != "网页性能" {
 		t.Errorf("memory topic not renamed: %q", mem.Topic)
+	}
+}
+
+// 空 topic：Generate 逐条列出（带 memory_id），Apply 按 id 填名（NULL/空串都覆盖）。
+func TestGenerateAndApply_EmptyTopic(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.UserMemory{}, &model.Note{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	memRepo := service.NewUserMemoryRepo(db)
+	// 两条空 topic（一条 NULL 风格用 ""，一条纯空白）。
+	if err := memRepo.Create(context.Background(), &model.UserMemory{
+		ID: "e1", UserID: "u1", MemoryKey: "k", ContentHash: "h1", MemoryValue: "记忆一", Topic: "",
+	}); err != nil {
+		t.Fatalf("seed e1: %v", err)
+	}
+	if err := memRepo.Create(context.Background(), &model.UserMemory{
+		ID: "e2", UserID: "u1", MemoryKey: "k", ContentHash: "h2", MemoryValue: "记忆二", Topic: "   ",
+	}); err != nil {
+		t.Fatalf("seed e2: %v", err)
+	}
+
+	dir := t.TempDir()
+	if err := Generate(context.Background(), db, Options{OutDir: dir}); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	plan, err := os.ReadFile(filepath.Join(dir, "plan-u1.tsv"))
+	if err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+	// 两条空 topic 各成一行，且带 memory_id。
+	if !strings.Contains(string(plan), "\te1") || !strings.Contains(string(plan), "\te2") {
+		t.Fatalf("plan missing empty-topic rows with ids:\n%s", plan)
+	}
+
+	// 人工填名（action 从 skip 改 rename）。
+	fixed := strings.ReplaceAll(string(plan), "\t\tskip\te1", "\t财务\trename\te1")
+	fixed = strings.ReplaceAll(fixed, "\t\tskip\te2", "\t健康\trename\te2")
+	if err := os.WriteFile(filepath.Join(dir, "plan-u1.tsv"), []byte(fixed), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+	sum, err := Apply(context.Background(), db, Options{OutDir: dir, DryRun: false})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if sum.MemoriesRenamed != 2 {
+		t.Fatalf("expected 2 memories renamed, got %+v", sum)
+	}
+	e1, _ := memRepo.FindByID(context.Background(), "u1", "e1")
+	e2, _ := memRepo.FindByID(context.Background(), "u1", "e2")
+	if e1.Topic != "财务" || e2.Topic != "健康" {
+		t.Errorf("empty topics not filled: e1=%q e2=%q", e1.Topic, e2.Topic)
 	}
 }
 
@@ -165,7 +220,7 @@ func TestApplyUserFilter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", p, err)
 		}
-		fixed := strings.ReplaceAll(string(b), "\t\tskip\n", "\t网页性能\trename\n")
+		fixed := strings.ReplaceAll(string(b), "\t\tskip\t\n", "\t网页性能\trename\t\n")
 		if err := os.WriteFile(p, []byte(fixed), 0o644); err != nil {
 			t.Fatalf("write %s: %v", p, err)
 		}

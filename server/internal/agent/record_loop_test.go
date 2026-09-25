@@ -353,6 +353,27 @@ func TestKeepOrReplaceTopic(t *testing.T) {
 	}
 }
 
+// 写入路径 topic 优先级：nameTopic 定稿值(candTopic) > LLM 参数 > 旧值。
+// 对应 saveMemory / updateMemory 里 keepOrReplaceTopic 的嵌套用法。
+func TestTopicPrecedence(t *testing.T) {
+	// save：candTopic 非空 → 用它，忽略 LLM 参数（哪怕 LLM 传了别的）。
+	if got := keepOrReplaceTopic("定稿", "LLM乱填"); got != "定稿" {
+		t.Errorf("candTopic must beat LLM arg, got %q", got)
+	}
+	// save：candTopic 为空 → 退回 LLM 参数。
+	if got := keepOrReplaceTopic("", "LLM填的"); got != "LLM填的" {
+		t.Errorf("empty candTopic must fall back to LLM arg, got %q", got)
+	}
+	// update：candTopic 空、LLM 也空 → 保留旧值（不抹空）。
+	if got := keepOrReplaceTopic(keepOrReplaceTopic("", ""), "旧主题"); got != "旧主题" {
+		t.Errorf("no topic anywhere must keep old, got %q", got)
+	}
+	// update：candTopic 非空 → 覆盖旧值。
+	if got := keepOrReplaceTopic(keepOrReplaceTopic("定稿", ""), "旧主题"); got != "定稿" {
+		t.Errorf("candTopic must override old, got %q", got)
+	}
+}
+
 // validTopic：合规判定（trim 非空 + ≤5 字）。
 func TestValidTopic(t *testing.T) {
 	if _, ok := validTopic(""); ok {

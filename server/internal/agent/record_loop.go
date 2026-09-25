@@ -43,7 +43,7 @@ func (d *RecordDecisionLoop) Decide(ctx context.Context, userID string, cand rec
 	cand.Topic = d.nameTopic(ctx, userID, cand.Topic, cand.Summary, summaryVec)
 
 	state := &recordLoopState{deps: d.deps, cfg: d.cfg, userID: userID, source: d.source,
-		neighbors: neighbors, idSet: map[string]bool{}, idType: map[string]string{}}
+		candTopic: cand.Topic, neighbors: neighbors, idSet: map[string]bool{}, idType: map[string]string{}}
 	for _, n := range neighbors {
 		state.idSet[n.ID] = true
 		state.idType[n.ID] = n.Type

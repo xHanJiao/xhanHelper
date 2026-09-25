@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"xhan-helper/internal/llm"
+	"xhan-helper/internal/service"
 	"xhan-helper/internal/util"
 )
 
@@ -16,6 +17,8 @@ type Violation struct {
 	Runes    int
 	NewTopic string // LLM 候选；空表示需人工填
 	Action   string // rename | skip
+	MemoryID string // 空 topic 的逐条处置：该条记忆的 id（非空 topic 为空，走值匹配）
+	Content  string // 空 topic 的样例内容（供 LLM 起名）
 }
 
 // PlanRow — 映射文件里的一行（供人工审阅/编辑）。
@@ -23,6 +26,7 @@ type PlanRow struct {
 	OldTopic string
 	NewTopic string
 	Action   string
+	MemoryID string // 空 topic 行定位单条记忆；值匹配行为空
 }
 
 // proposeNames 调 LLM 为一批违规 topic 起 ≤5 字短名（同用户一次调用）。
@@ -46,6 +50,9 @@ func proposeNames(ctx context.Context, client llm.LLMClient, userID string, viol
 	}
 	b.WriteString("\n\n需要改的主题词：\n")
 	for _, v := range violations {
+		if strings.TrimSpace(v.OldTopic) == "" || v.MemoryID != "" {
+			continue // 空 topic 逐条处理，不在此批量里（否则全被同一个 "" 名覆盖）
+		}
 		fmt.Fprintf(&b, "- %q（%d 字）\n", v.OldTopic, v.Runes)
 	}
 	b.WriteString("\n严格按 JSON 数组输出，每项 {\"old\":\"原词\",\"new\":\"新词\"}，不要包含其他内容。")
@@ -71,6 +78,9 @@ func proposeNames(ctx context.Context, client llm.LLMClient, userID string, viol
 		byOld[strings.TrimSpace(p.Old)] = strings.TrimSpace(p.New)
 	}
 	for i := range violations {
+		if violations[i].MemoryID != "" || strings.TrimSpace(violations[i].OldTopic) == "" {
+			continue // 空 topic 已由 proposeEmptyNames 处理，别覆盖
+		}
 		named := byOld[violations[i].OldTopic]
 		if err := validateNewTopic(named); err != nil {
 			continue // 不合规 → 留空交人工
@@ -80,7 +90,65 @@ func proposeNames(ctx context.Context, client llm.LLMClient, userID string, viol
 	return nil
 }
 
-// parseJSONArray 从可能带包裹文本/代码块的输出里抠出 JSON 数组。
+// proposeEmptyNames 为空 topic 记忆逐条按内容起名（一次调用，按序号回填）。
+// names 与 mems 等长；起不出合规名的位置留空交人工。
+func proposeEmptyNames(ctx context.Context, client llm.LLMClient, userID string, mems []service.EmptyTopicMemory, all []topicRef, names []string) error {
+	var b strings.Builder
+	b.WriteString("下面是几条「没有主题词」的记忆内容，请各给一个主题词：非空、5 个字以内、一个词，只能含中文/英文/数字，禁止斜杠/逗号/空格。\n")
+	b.WriteString("优先复用已有主题词；确实没有合适的才新建。\n\n")
+	b.WriteString("已有主题词：")
+	existing := make([]string, 0, len(all))
+	for _, t := range all {
+		if strings.TrimSpace(t.Topic) != "" && len([]rune(t.Topic)) <= MaxTopicRunes && util.IsValidTopicChars(t.Topic) {
+			existing = append(existing, t.Topic)
+		}
+	}
+	if len(existing) == 0 {
+		b.WriteString("（无）")
+	} else {
+		b.WriteString(strings.Join(existing, "、"))
+	}
+	b.WriteString("\n\n需要起名的记忆：\n")
+	for i, m := range mems {
+		fmt.Fprintf(&b, "%d. %s\n", i, truncateRunes(m.Content, 80))
+	}
+	b.WriteString("\n严格按 JSON 数组输出，每项 {\"i\":序号,\"new\":\"主题词\"}，不要包含其他内容。")
+
+	msg, err := client.ChatSync(ctx, &llm.ChatRequest{
+		SystemPrompt: "你是主题词规范化助手。",
+		Messages:     []llm.Message{{Role: "user", Content: b.String()}},
+		UserID:       userID,
+	})
+	if err != nil {
+		return fmt.Errorf("chat: %w", err)
+	}
+	var pairs []struct {
+		I   int    `json:"i"`
+		New string `json:"new"`
+	}
+	if _, err := parseJSONArray(msg.Content, &pairs); err != nil {
+		return fmt.Errorf("parse llm output: %w", err)
+	}
+	for _, p := range pairs {
+		if p.I < 0 || p.I >= len(names) {
+			continue
+		}
+		if err := validateNewTopic(strings.TrimSpace(p.New)); err != nil {
+			continue
+		}
+		names[p.I] = strings.TrimSpace(p.New)
+	}
+	return nil
+}
+
+// truncateRunes 按字符截断（供 prompt 展示记忆内容）。
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
 func parseJSONArray(raw string, target any) (string, error) {
 	start := strings.Index(raw, "[")
 	end := strings.LastIndex(raw, "]")
@@ -101,13 +169,14 @@ func renderPlan(userID string, violations []Violation) string {
 	b.WriteString("# user_id: " + userID + "\n")
 	b.WriteString("# action=rename：把 old_topic 改为 new_topic；action=skip：跳过；删除整行=跳过\n")
 	b.WriteString("# new_topic 必须非空、≤5 字、不含斜杠/逗号/空格\n")
-	b.WriteString("# old_topic\tnew_topic\taction\n")
+	b.WriteString("# 空 topic 行：old_topic 为空、靠 memory_id 定位单条记忆\n")
+	b.WriteString("# old_topic\tnew_topic\taction\tmemory_id\n")
 	for _, v := range violations {
 		action := v.Action
 		if v.NewTopic == "" {
 			action = "skip" // 无候选 → 默认跳过，人工填了 new_topic 再改成 rename
 		}
-		fmt.Fprintf(&b, "%s\t%s\t%s\n", v.OldTopic, v.NewTopic, action)
+		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n", v.OldTopic, v.NewTopic, action, v.MemoryID)
 	}
 	return b.String()
 }
@@ -129,11 +198,15 @@ func parsePlan(text string) (userID string, rows []PlanRow, err error) {
 		if len(fields) < 3 {
 			return "", nil, fmt.Errorf("第 %d 行字段数不足（需 3 列，用制表符分隔）: %q", i+1, line)
 		}
-		rows = append(rows, PlanRow{
+		row := PlanRow{
 			OldTopic: strings.TrimSpace(fields[0]),
 			NewTopic: strings.TrimSpace(fields[1]),
 			Action:   strings.TrimSpace(fields[2]),
-		})
+		}
+		if len(fields) >= 4 {
+			row.MemoryID = strings.TrimSpace(fields[3])
+		}
+		rows = append(rows, row)
 	}
 	if userID == "" {
 		return "", nil, fmt.Errorf("映射文件缺少 '# user_id:' 行")

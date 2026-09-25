@@ -20,6 +20,7 @@ type recordLoopState struct {
 	cfg       RecordLoopConfig
 	userID    string
 	source    string
+	candTopic string // nameTopic 定稿的 topic（权威值，写入时优先于 LLM 的 topic 参数）
 	neighbors []recordNeighbor
 	idSet     map[string]bool
 	idType    map[string]string

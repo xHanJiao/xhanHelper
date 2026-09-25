@@ -230,3 +230,19 @@
 - `server/internal/agent/record_loop_test.go` — 空/超长/含标点 topic 校验、update 保留旧 topic、clipTopic 剥标点保中英文
 - topic_namer 的单测（重试 2 次 → 截断、validTopic 字符判定）
 - `server/internal/topicclean/` — validate/findViolations/plan 往返 + Generate→Apply 端到端（SQLite）
+
+---
+
+## 八、收官（2026-09-25）
+
+实测（opencode 会话库，窗口 `11:35:36 → 14:41:25`）：**活跃 2.87h / 63 轮 / 2.7 min·轮⁻¹**（4 会话 + 1 subagent）。本票未做开工估算（`est_open_h` / `est_spec_h` 记 null）。
+
+人工字段：8 面 / 1 缝 / 0 需探针 / 2 往返 / 6 决定，`pre_designed=yes`。账本票名 `memory-topic-tighten-5char`。
+
+### 风险清单（≤5）
+
+1. **新写入收敛未经真机验证**：namer 强复用 + 近邻 top-25 只过了单测；真机可能仍造新词或误归并 → **待 release app 重启后跑 1~2 轮确认**（这是本票那条缝，第 2 次往返仍挂在用户侧）。
+2. **prod 库已被改动且无 UI 回退**：topic 改名 484 行（notes 293 + memories 191）、硬删 189 条取消态笔记。备份在 `~/Library/Application Support/xhanHelper/xhan_helper.db.bak-topic-20260925-141605`（778MB），**观察 2~3 天无异常后再删**。
+3. **护栏依赖 `CONFIRM_PROD=yes`**：`entity-gc` / `topic-clean` 写入路径已接入 `config.GuardProdWrite`；`topic-clean` 的只读生成不受限（符合预期）。手滑风险已由护栏兜住，但需人记得加确认。
+4. **收敛效果待观察**：distinct topic 当前 310（清洗前 439），目标长期 ≤30。观察 2~3 天；若仍长尾，再启用「提高复用阈值 / 定期归并」两案（本票已否决，只留接口）。
+5. **无人工 code review**：按既定约定，AI 写的代码默认无人读过 → 本票靠单测 + 两轮 code-review skill 兜底。若有真机异常，优先怀疑「缝」而非「面」。

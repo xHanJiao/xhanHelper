@@ -20,20 +20,23 @@ import (
 //
 // 三步：① 用 summary 向量召回已有 topic（近邻，带引用数+相似度）
 //
-//	② 调 LLM 定 topic（优先复用已有）
+//	② 调 LLM 定 topic（强烈优先复用已有，抑制长尾）
 //	③ 落库时 newMemory → reuseTopic 做 0.8 强制归并（既有线上逻辑）
 //
 // 重试上限：首次 + 重试 2 次；三次都不合规（空 / 超 5 字 / 含标点空格）才强制截断到 5 字
 // （topic 必填，不能因不合规丢弃记忆）。
 const (
 	topicNameMaxAttempts = 3    // 首次 + 重试 2 次
-	topicNeighborTopK    = 10   // 喂给 LLM 的已有 topic 条数
-	topicRecallPreCap    = 40   // 算相似度前按引用次数粗截断的上限（省 GetOrEmbed 调用）
+	topicNeighborTopK    = 25   // 喂给 LLM 的已有 topic 条数（长尾多，给足候选）
+	topicRecallPreCap    = 60   // 算相似度前按引用次数粗截断的上限（省 GetOrEmbed 调用）
 	topicFallbackName    = "其它" // 三次都不合规 + summary 只含标点时的保底 topic（topic 必填）
 )
 
-const topicNamerSystem = `你是记忆的主题归类助手。用户给你一条记忆和该用户已有的主题列表，你选一个最合适的主题词。
-优先复用已有主题；已有列表里确实没有合适的，才新建一个。
+const topicNamerSystem = `你是记忆的主题归类助手。用户给你一条记忆和该用户已有的主题列表，你从中选一个主题词。
+
+**优先复用已有主题——这是最重要的规则。** 只要已有列表里存在语义上说得通的主题（同义、下位、近义、同一领域），就必须复用那一个，即使它不完美。宁可复用得略宽，也尽量不要新建——用户身上的主题应当是少量、稳定的。
+只有在已有列表里确实找不到任何相关主题时，才新建一个。
+
 新建的主题词必须：非空、5 个字以内、一个词，且**只能含中文、英文、数字**——不许出现标点、空格、斜杠。
 只输出主题词本身，不要任何解释或 JSON。`
 
@@ -116,7 +119,9 @@ func (d *RecordDecisionLoop) recallTopics(ctx context.Context, userID string, su
 		return nil
 	}
 	// 两阶段启发式：先按引用次数取前 N（refs 已按 count 降序）再算相似度。
-	// ponytail: 高频但低频兄弟 topic 会被粗截断漏掉；topic 量级到几百再考虑去掉这层。
+	// ponytail: 只被引用 1~2 次的低频 topic 会被这层粗截断漏掉（即使语义最相关），
+	// 这正是抑制长尾的副作用、可接受；若某天需要「低频也参与召回」，去掉 preCap 即可
+	// （concept 向量有缓存，多出的 GetOrEmbed 只是首次多几次 DB/API）。
 	if len(refs) > topicRecallPreCap {
 		refs = refs[:topicRecallPreCap]
 	}
@@ -131,6 +136,11 @@ func (d *RecordDecisionLoop) recallTopics(ctx context.Context, userID string, su
 		})
 	}
 	// 按相似度取最相近的 top-K（真正该被复用/归并的），再按引用次数降序展示。
+	return rankNeighbors(out)
+}
+
+// rankNeighbors 排序近邻：按相似度取 top-K，再按引用次数降序展示。纯函数，便于单测。
+func rankNeighbors(out []topicNeighbor) []topicNeighbor {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Similarity != out[j].Similarity {
 			return out[i].Similarity > out[j].Similarity

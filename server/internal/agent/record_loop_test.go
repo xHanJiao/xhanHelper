@@ -280,6 +280,37 @@ func TestClipTopic(t *testing.T) {
 	}
 }
 
+// rankNeighbors：按相似度取 top-K，再按引用次数降序展示。
+func TestRankNeighbors(t *testing.T) {
+	ns := []topicNeighbor{
+		{Topic: "a", RefCount: 100, Similarity: 0.10},
+		{Topic: "b", RefCount: 1, Similarity: 0.99},
+		{Topic: "c", RefCount: 50, Similarity: 0.90},
+	}
+	got := rankNeighbors(append([]topicNeighbor{}, ns...))
+	// 3 个都在 topK 内；展示按引用次数降序：a(100) → c(50) → b(1)。
+	if len(got) != 3 {
+		t.Fatalf("want 3, got %d", len(got))
+	}
+	if got[0].Topic != "a" || got[1].Topic != "c" || got[2].Topic != "b" {
+		t.Errorf("order wrong: %+v", got)
+	}
+
+	// 超过 topK：低相似度的被砍掉，且总数为 topK。
+	var many []topicNeighbor
+	for i := 0; i < topicNeighborTopK+5; i++ {
+		many = append(many, topicNeighbor{Topic: "t", RefCount: int64(i), Similarity: float64(i) / 100})
+	}
+	gotMany := rankNeighbors(many)
+	if len(gotMany) != topicNeighborTopK {
+		t.Fatalf("want %d, got %d", topicNeighborTopK, len(gotMany))
+	}
+	// 展示首位应是 topK 内引用数最大者。
+	if gotMany[0].RefCount != int64(topicNeighborTopK+4) {
+		t.Errorf("top display wrong: %+v", gotMany[0])
+	}
+}
+
 // buildTopicNamerInput：XML 良构；无近邻时省略 existing_topics；有近邻带引用数与相似度。
 func TestBuildTopicNamerInput(t *testing.T) {
 	none := buildTopicNamerInput("用户决定用方案B", nil)

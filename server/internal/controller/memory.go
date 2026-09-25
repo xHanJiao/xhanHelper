@@ -29,13 +29,33 @@ func (h *MemoryHandler) ListMemories(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	memories, total, err := h.memRepo.ListByUser(c.Request.Context(), userID,
-		c.Query("keyword"), c.Query("source"), limit, offset)
+		c.Query("keyword"), c.Query("source"), c.Query("topic"), limit, offset)
 	if err != nil {
 		log.Printf("[memory] List error: %v", err)
 		view.JSONError(c, 500, "query memories failed")
 		return
 	}
 	view.JSONOK(c, gin.H{"memories": memories, "total": total})
+}
+
+// ListMemoryTopics GET /api/memories/topics — 记忆词云用的 topic 及出现次数
+func (h *MemoryHandler) ListMemoryTopics(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	topics, err := h.memRepo.DistinctTopics(c.Request.Context(), userID)
+	if err != nil {
+		log.Printf("[memory] ListTopics error: %v", err)
+		view.JSONError(c, 500, "query memory topics failed")
+		return
+	}
+	if topics == nil {
+		topics = []service.TopicCount{}
+	}
+	// 聚合接口不做分页，加个上限兜底，避免异常数据下无界响应
+	if len(topics) > 500 {
+		topics = topics[:500]
+	}
+	view.JSONOK(c, gin.H{"topics": topics})
 }
 
 // DeleteMemory DELETE /api/memories/:id

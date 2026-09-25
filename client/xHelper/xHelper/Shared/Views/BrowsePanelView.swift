@@ -207,6 +207,12 @@ struct BrowsePanelView: View {
                 Task { await documentVM.load() }
             }
         }
+        .onChange(of: memoryVM.showCloudMode) { _, show in
+            // 进词云拉 topic（聚合轻量）；面板首次打开时列表分支由 listPage 的 .task 负责
+            if show {
+                Task { await memoryVM.loadTopics() }
+            }
+        }
         #if os(macOS)
         .confirmationDialog(
             "删除文档",
@@ -411,6 +417,27 @@ struct BrowsePanelView: View {
             }
 
             #if os(macOS)
+            if panel == .memories {
+                Picker("", selection: $memoryVM.showCloudMode) {
+                    Text("列表").tag(false)
+                    Text("词云").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(width: 120)
+
+                if memoryVM.showCloudMode {
+                    Stepper(value: $memoryVM.minTopicCount, in: 1...maxMemoryTopicCount) {
+                        Text("≥ \(memoryVM.minTopicCount) 条")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .controlSize(.small)
+                    .fixedSize()
+                }
+            }
+
             if panel == .documents && documentVM.openDocument == nil && documentVM.mode == .list {
                 Button {
                     documentVM.enterDocumentSelection()
@@ -631,6 +658,11 @@ struct BrowsePanelView: View {
     /// 文档词云的最少篇数上限（标签已按频次降序）
     private var maxTagCount: Int {
         max(1, documentVM.tags.first?.count ?? 1)
+    }
+
+    /// 记忆词云的最少条数上限（topic 已按频次降序；不低过当前值，避免 Stepper 范围越界）
+    private var maxMemoryTopicCount: Int {
+        max(memoryVM.minTopicCount, memoryVM.cloudTopics.first?.count ?? 1)
     }
 
     /// 页头搜索图标：面板展开或有关键词生效时 accent 高亮（对齐账单筛选激活态）。

@@ -225,7 +225,7 @@ make db-pull / db-import / logs / clean
 ## 开发约定
 
 - 与用户交流只用中文（代码/注释/日志沿用项目既有风格）
-- 新增功能先在 `docs/design/` 写计划文档，确认后开发
+- **文档往哪写**：新需求/功能的设计方案写 `docs/design/<feature>/design.md`（先写文档、确认后开发）；bug 修复记录写 `docs/bugs/NNN-<slug>.md`（按编号递增，见「文档地图」）
 - model/ 只放结构体，DB 操作放 service/；工具实现放 tool/，不要耦合到 controller 或 agent
 - 从数据库列表拉取数据时，必须做分页
 - **禁止在循环内逐个访问数据库**（N+1）：插入用 `tx.Create(&slice)` 批量，更新/删除用带 `IN` 条件的 `Updates`/`Delete`，循环里只做内存操作

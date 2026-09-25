@@ -246,11 +246,20 @@ class APIClient {
 
 	// MARK: Memories (P3)
 
-	func listMemories(limit: Int = 50, offset: Int = 0, keyword: String = "", source: String = "") async throws -> MemoryListResponse {
+	func listMemories(limit: Int = 50, offset: Int = 0, source: String = "", topic: String = "") async throws -> MemoryListResponse {
 		var path = "/api/memories?limit=\(limit)&offset=\(offset)"
-		if !keyword.isEmpty { path += "&keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)" }
 		if !source.isEmpty { path += "&source=\(source)" }
+		if !topic.isEmpty {
+			// .urlQueryAllowed 不转义 &=+；topic 含这些字符会被服务端截断/解码错，必须减掉
+			let enc = topic.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&=+"))) ?? topic
+			path += "&topic=\(enc)"
+		}
 		return try await get(path)
+	}
+
+	/// 记忆词云：所有 topic 及出现次数（按次数倒序）
+	func listMemoryTopics() async throws -> MemoryTopicListResponse {
+		return try await get("/api/memories/topics")
 	}
 
 	func deleteMemory(id: String) async throws {
@@ -596,6 +605,19 @@ struct MemoryListResponse: Codable {
     let total: Int
 }
 
+/// 记忆主题词云用的 topic 及出现次数。
+struct MemoryTopic: Identifiable, Codable, Equatable {
+    let topic: String
+    let count: Int
+
+    var id: String { topic }
+    var cloudTag: CloudTag { CloudTag(name: topic, count: count) }
+}
+
+struct MemoryTopicListResponse: Codable {
+    let topics: [MemoryTopic]
+}
+
 struct AgentListResponse: Codable {
     let agents: [Agent]
     let total: Int
@@ -766,7 +788,7 @@ struct DocumentListResponse: Codable {
     let total: Int
 }
 
-struct DocumentTag: Identifiable, Codable, Equatable {
+struct CloudTag: Identifiable, Codable, Equatable {
     let name: String
     let count: Int
 
@@ -781,7 +803,7 @@ struct TagEdge: Codable, Equatable {
 }
 
 struct DocumentTagListResponse: Codable {
-    let tags: [DocumentTag]
+    let tags: [CloudTag]
     let edges: [TagEdge]
 }
 

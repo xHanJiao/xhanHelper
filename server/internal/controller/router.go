@@ -129,6 +129,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.POST("/notes/batch", rc.NoteHandler.BatchGetNotes)
 		auth.DELETE("/notes/:id", rc.NoteHandler.DeleteNote)
 		auth.GET("/memories", rc.MemHandler.ListMemories)
+		auth.GET("/memories/topics", rc.MemHandler.ListMemoryTopics)
 		auth.DELETE("/memories/:id", rc.MemHandler.DeleteMemory)
 		auth.POST("/memories/batch", rc.MemHandler.BatchGetMemories)
 		auth.POST("/memories/batch-delete", rc.MemHandler.BatchDeleteMemories)

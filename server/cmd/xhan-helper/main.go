@@ -6,11 +6,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/appinit"
 	"xhan-helper/internal/async"
+	"xhan-helper/internal/backup"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
@@ -87,7 +89,44 @@ func main() {
 	appinit.RegisterMonitorSnapshots(vs, tools.MCPManager, repos.Conversation, repos.ThemeState)
 	tools.MCPManager.StartIdleReaper(agents.BGCtx)
 
+	// --- 本地数据备份（仅本地模式；每小时检查、到期才跑）---
+	backupSvc := setupLocalBackup(cfg, db, agents.BGCtx)
+
 	// --- 路由 & 服务 ---
-	router := appinit.InitRouter(cfg, repos, infra, llmClients, agents, tools, tools.MCPManager, vs, localUserID)
+	router := appinit.InitRouter(cfg, repos, infra, llmClients, agents, tools, tools.MCPManager, vs, localUserID, backupSvc)
 	appinit.Serve(cfg, router, agents.BGCancel, tools.MCPManager, agents.BGCtx)
+}
+
+// setupLocalBackup 本地模式下创建备份服务并按需挂调度器；非本地模式返回 nil（不注册路由）。
+func setupLocalBackup(cfg *config.Config, db *gorm.DB, bgCtx context.Context) *backup.Service {
+	if !cfg.Server.LocalSingleUser || cfg.DB.Driver != "sqlite" {
+		return nil
+	}
+	svc := backup.New(db)
+	if !cfg.Backup.Enabled {
+		log.Printf("[backup] 未启用（可在设置页开启并选择备份位置）")
+		return svc
+	}
+	opts := backup.OptionsFromConfig(cfg)
+	log.Printf("[backup] 已启用：dest=%s interval=%d天 保留=%d+%d",
+		opts.Dest, opts.IntervalDays, opts.DailyKeep, opts.WeeklyKeep)
+	fn := func(ctx context.Context) {
+		// IntervalRunner 不 recover：数据安全任务 panic 不能让它静默停摆。
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[backup] panic: %v", r)
+			}
+		}()
+		ar, err := svc.RunIfDue(ctx, opts)
+		if err != nil {
+			log.Printf("[backup] 定时备份失败：%v", err)
+			return
+		}
+		if ar != nil {
+			log.Printf("[backup] 定时备份完成：%s", ar.Name)
+		}
+	}
+	go async.NewIntervalRunner("local_backup", time.Hour, fn).RunImmediately().Start(bgCtx)
+	monitor.Register("local_backup", svc.Stats)
+	return svc
 }

@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +38,7 @@ type Config struct {
 	Share             ShareConfig             `yaml:"share"`
 	Archive           ArchiveConfig           `yaml:"archive"`
 	Storage           StorageConfig           `yaml:"storage"`
+	Backup            BackupConfig            `yaml:"backup"`
 	Snowflake         SnowflakeConfig         `yaml:"snowflake"`
 	MCP               MCPConfig               `yaml:"mcp"`
 	Vector            VectorConfig            `yaml:"vector"`
@@ -96,6 +99,15 @@ type StorageConfig struct {
 	ImageTTLDays            int    `yaml:"image_ttl_days"`                 // 被消息引用过的图保留天数；0=默认 15，<0=关闭清理
 	ImageOrphanTTLDays      int    `yaml:"image_orphan_ttl_days"`          // 从未被引用的图保留天数；0=默认 3，<0=关闭清理
 	ImageCleanupIntervalMin int    `yaml:"image_cleanup_interval_minutes"` // 清理扫描间隔（分钟），<=0 默认 720（12 小时）
+}
+
+// BackupConfig — 本地数据备份配置（仅本地模式生效；云端忽略）
+type BackupConfig struct {
+	Enabled      bool   `yaml:"enabled"`       // 总开关（默认关，由 Swift 设置页经 env 注入）
+	Dest         string `yaml:"dest"`          // 备份目标目录（可为 iCloud Drive 路径）
+	IntervalDays int    `yaml:"interval_days"` // 备份间隔天数，<=0 视为 1
+	DailyKeep    int    `yaml:"daily_keep"`    // 保留最近几次，<=0 视为 3
+	WeeklyKeep   int    `yaml:"weekly_keep"`   // 额外保留几份「≥7 天前」的，<=0 视为 1
 }
 
 // WebFetchConfig — webfetch 工具配置
@@ -660,6 +672,22 @@ func merge(dst, src *Config) {
 	if src.Storage.ImageCleanupIntervalMin != 0 {
 		dst.Storage.ImageCleanupIntervalMin = src.Storage.ImageCleanupIntervalMin
 	}
+	// backup：Enabled 只允许 env 覆盖文件「打开」（bool 零值分不清未配置）；开关真正来源是 env
+	if src.Backup.Enabled {
+		dst.Backup.Enabled = true
+	}
+	if src.Backup.Dest != "" {
+		dst.Backup.Dest = src.Backup.Dest
+	}
+	if src.Backup.IntervalDays != 0 {
+		dst.Backup.IntervalDays = src.Backup.IntervalDays
+	}
+	if src.Backup.DailyKeep != 0 {
+		dst.Backup.DailyKeep = src.Backup.DailyKeep
+	}
+	if src.Backup.WeeklyKeep != 0 {
+		dst.Backup.WeeklyKeep = src.Backup.WeeklyKeep
+	}
 }
 
 // mergeSourceWeights 按字段合并检索源配置，非零值覆盖
@@ -724,6 +752,38 @@ func resolveEnvVars(cfg *Config) {
 	cfg.Embedding.APIKey = os.ExpandEnv(cfg.Embedding.APIKey)
 	cfg.Server.LocalToken = os.ExpandEnv(cfg.Server.LocalToken)
 	applyLLMEnvOverrides(cfg)
+	applyBackupEnvOverrides(cfg)
+}
+
+// applyBackupEnvOverrides 应用 Swift 设置页传入的备份配置。
+// 走「非空才覆盖」——与 applyLLMEnvOverrides 同款：未设置时不冲掉 YAML 默认值。
+// 解析失败只记日志并跳过（Swift UI 送的是它自己的数值，正常不会走到这里）。
+func applyBackupEnvOverrides(cfg *Config) {
+	if v := os.Getenv("XHAN_BACKUP_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Backup.Enabled = b
+		} else {
+			log.Printf("[config] XHAN_BACKUP_ENABLED 解析失败（%q），沿用默认：%v", v, err)
+		}
+	}
+	if v := os.Getenv("XHAN_BACKUP_DEST"); v != "" {
+		cfg.Backup.Dest = v
+	}
+	applyBackupInt := func(key string, dst *int) {
+		v := os.Getenv(key)
+		if v == "" {
+			return
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			log.Printf("[config] %s 解析失败（%q），沿用默认：%v", key, v, err)
+			return
+		}
+		*dst = n
+	}
+	applyBackupInt("XHAN_BACKUP_INTERVAL_DAYS", &cfg.Backup.IntervalDays)
+	applyBackupInt("XHAN_BACKUP_DAILY_KEEP", &cfg.Backup.DailyKeep)
+	applyBackupInt("XHAN_BACKUP_WEEKLY_KEEP", &cfg.Backup.WeeklyKeep)
 }
 
 // applyLLMEnvOverrides 应用本地 app 传入的可选覆盖项。
@@ -942,6 +1002,16 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Storage.ImageCleanupIntervalMin == 0 {
 		cfg.Storage.ImageCleanupIntervalMin = 720
+	}
+	// 备份默认值（0 视为未配置；不允许用 0 关闭保留）
+	if cfg.Backup.IntervalDays <= 0 {
+		cfg.Backup.IntervalDays = 1
+	}
+	if cfg.Backup.DailyKeep <= 0 {
+		cfg.Backup.DailyKeep = 3
+	}
+	if cfg.Backup.WeeklyKeep <= 0 {
+		cfg.Backup.WeeklyKeep = 1
 	}
 	if cfg.WebFetch.TimeoutSeconds == 0 {
 		cfg.WebFetch.TimeoutSeconds = 15

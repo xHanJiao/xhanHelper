@@ -120,6 +120,14 @@ storage:
   image_orphan_ttl_days: 3 # 从未被引用的图保留天数；<0 关闭清理
   image_cleanup_interval_minutes: 720 # 清理扫描间隔（分钟），默认 12 小时
 
+# 本地数据备份（仅本地模式生效；dest/enabled 由 Swift 设置页经 env 注入，见 local-backup 设计）
+backup:
+  enabled: false # 总开关（默认关）
+  dest: "" # 备份目标目录（可为 iCloud Drive 路径）
+  interval_days: 1 # 备份间隔天数
+  daily_keep: 3 # 保留最近几次
+  weekly_keep: 1 # 额外保留几份「≥7 天前」的
+
 webfetch:
   enabled: false # 默认关闭（token 消耗大）；启用后仅 subAgent 可见
   timeout_seconds: 15

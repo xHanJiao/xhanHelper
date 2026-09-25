@@ -49,7 +49,7 @@ let package = Package(
         .target(
             name: "LocalBackendCore",
             path: "xHelper/Shared",
-            sources: ["Services/LocalBackendDiagnostics.swift", "Services/LocalSecrets.swift", "Services/LocalConnectionProbe.swift", "Services/LocalPaths.swift"]
+            sources: ["Services/LocalBackendDiagnostics.swift", "Services/LocalSecrets.swift", "Services/LocalConnectionProbe.swift", "Services/LocalPaths.swift", "Services/LocalBackup.swift"]
         ),
         .testTarget(
             name: "LocalBackendCoreTests",

@@ -1018,6 +1018,8 @@ struct MacSettingsView: View {
                 LocalModelKeySection(onLock: { LocalLockController.shared.lock() })
                 // UI-6：本地服务状态 / 端口 / 数据目录 / 日志 / 重启。
                 LocalServiceSection(backend: localBackend)
+                // UI-11：本地数据备份与恢复。
+                LocalBackupSection()
             }
 
             Section {

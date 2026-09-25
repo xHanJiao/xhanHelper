@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/backup"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
@@ -48,6 +49,7 @@ type RouterConfig struct {
 	ExtraMiddleware      []gin.HandlerFunc
 	Ready                *atomic.Bool    // 后台向量预热完成标志；nil 视为已就绪
 	AuthMiddleware       gin.HandlerFunc // Bearer 认证（含本地单用户直通），由装配层构造一次
+	BackupService        *backup.Service // 仅本地模式创建；nil 则不注册备份路由
 }
 
 // NewRouter 注册所有路由
@@ -91,6 +93,10 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	auth := r.Group("/api")
 	auth.Use(rc.AuthMiddleware)
 	{
+		// 本地模式：立即备份（数据根整体打包；见 docs/design/local-backup）
+		if rc.Cfg.Server.LocalSingleUser && rc.BackupService != nil {
+			auth.POST("/local/backup", localBackupTrigger(rc.Cfg, rc.BackupService))
+		}
 		auth.POST("/auth/refresh", refreshToken(rc.UserRepo))
 		auth.POST("/auth/logout", logoutUser(rc.UserRepo))
 		auth.POST("/auth/change-password", changePassword(rc.UserRepo))

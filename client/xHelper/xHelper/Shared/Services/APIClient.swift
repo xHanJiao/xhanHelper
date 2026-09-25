@@ -422,6 +422,14 @@ class APIClient {
         try await delete("/api/images/\(id)")
     }
 
+    // MARK: Local Backup（本地模式）
+
+    /// 立即触发一次本地数据备份。服务端同步执行（当前体积约 20s）。
+    func triggerLocalBackup() async throws -> LocalBackupArchive {
+        let resp: LocalBackupTriggerResponse = try await post("/api/local/backup", body: [:])
+        return resp.archive
+    }
+
     private func get<T: Decodable>(_ path: String) async throws -> T {
         var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -530,6 +538,24 @@ private struct APIResponse<T: Decodable>: Decodable {
 
 /// 用于只关心包装层校验、忽略 data 具体结构的请求
 private struct EmptyData: Decodable {}
+
+// MARK: Local Backup
+
+struct LocalBackupArchive: Codable {
+    let name: String
+    let path: String
+    let bytes: Int64
+    let createdAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name, path, bytes
+        case createdAt = "created_at"
+    }
+}
+
+private struct LocalBackupTriggerResponse: Codable {
+    let archive: LocalBackupArchive
+}
 
 // MARK: List Response models
 

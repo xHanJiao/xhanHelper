@@ -23,7 +23,8 @@ enum LocalBackendDiagnostics {
         confDir: String,
         appEnv: String,
         token: String,
-        secrets: LocalSecrets
+        secrets: LocalSecrets,
+        backup: LocalBackupSettings.Values = LocalBackupSettings.load()
     ) -> [String: String] {
         let s = secrets.normalized()
         var env = base
@@ -34,6 +35,12 @@ enum LocalBackendDiagnostics {
         env["EMBEDDING_API_KEY"] = s.embeddingKey
         if !s.llmModel.isEmpty { env["XHAN_LLM_MODEL"] = s.llmModel }
         if !s.llmBaseURL.isEmpty { env["XHAN_LLM_BASE_URL"] = s.llmBaseURL }
+        // 备份设置：改完需「保存并重启后端」才生效（Go 启动时读）
+        env["XHAN_BACKUP_ENABLED"] = backup.enabled ? "true" : "false"
+        env["XHAN_BACKUP_INTERVAL_DAYS"] = "\(backup.intervalDays)"
+        env["XHAN_BACKUP_DAILY_KEEP"] = "\(backup.dailyKeep)"
+        env["XHAN_BACKUP_WEEKLY_KEEP"] = "\(backup.weeklyKeep)"
+        if !backup.dest.isEmpty { env["XHAN_BACKUP_DEST"] = backup.dest }
         return env
     }
 

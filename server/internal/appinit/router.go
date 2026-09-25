@@ -17,6 +17,7 @@ import (
 
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/app"
+	"xhan-helper/internal/backup"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/controller"
 	"xhan-helper/internal/mcp"
@@ -127,7 +128,7 @@ func EnsureLocalUser(cfg *config.Config, userRepo *service.UserRepo) (string, er
 }
 
 // InitRouter 创建路由、注册所有 handler
-func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, agents *AgentBundle, tools *ToolsBundle, mcpManager *mcp.Manager, vs *agent.VectorStore, localUserID string) *gin.Engine {
+func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, agents *AgentBundle, tools *ToolsBundle, mcpManager *mcp.Manager, vs *agent.VectorStore, localUserID string, backupSvc *backup.Service) *gin.Engine {
 	localAuth := middleware.LocalAuth{
 		Enabled: cfg.Server.LocalSingleUser,
 		UserID:  localUserID,
@@ -184,6 +185,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		ExtraMiddleware:      []gin.HandlerFunc{middleware.RequestLogger(log.Default())},
 		Ready:                agents.Ready,
 		AuthMiddleware:       authMW,
+		BackupService:        backupSvc,
 	})
 
 	controller.RegisterReflectionRoutes(&controller.ReflectionRoutesConfig{

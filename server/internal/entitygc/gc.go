@@ -1,8 +1,10 @@
-// Package entitygc 清理历史遗留的孤儿派生数据。
+// Package entitygc 清理孤儿派生数据 / 硬删取消态笔记。
 //
-// bug 017 之前的删除路径只做 SoftDelete（笔记 status=2）/ 直接删记忆，不会清理
-// 派生数据，于是留下孤儿：笔记的全文向量行（embeddings）与版本快照（content_versions）、
-// 记忆的全文向量行。本包做一次性清扫，逻辑幂等（重跑孤儿为 0）。
+// 两类用途：
+//   - Run：清理历史遗留的孤儿派生数据（bug 017 前的删除路径只 SoftDelete，
+//     留下笔记的向量行 + 版本快照、记忆的向量行）。幂等。
+//   - PurgeCancelledNotes：把 status=取消态的笔记连根删除（行 + chunk/向量/版本），
+//     用户主动取消的笔记不再需要保留。整批一个事务，幂等。
 //
 // 只覆盖 note / memory：concept 孤儿由 topic-merge 的 GC 处理，message 孤儿另属子系统。
 package entitygc
@@ -92,6 +94,62 @@ func Run(db *gorm.DB, opts Options) (*Summary, error) {
 	log.Printf("[entity-gc] 已清理：笔记孤儿向量 %d，记忆孤儿向量 %d，笔记孤儿版本快照 %d",
 		sum.NoteEmbeddings, sum.MemoryEmbeddings, sum.NoteVersions)
 	return sum, nil
+}
+
+// PurgeCancelledNotes 硬删除所有取消态笔记，并批量清理其派生数据
+// （chunk / 全文向量 / 版本快照）。整批一个事务，失败全回滚；幂等（重跑为 0）。
+// CLI 场景无内存向量库，DB 行即事实来源（重启后重新加载）。
+func PurgeCancelledNotes(db *gorm.DB, opts Options) (int, error) {
+	ctx := context.Background()
+	ids, err := pluckIDs(ctx, db, &model.Note{}, "id", "status = ?", model.NoteStatusCancelled)
+	if err != nil {
+		return 0, fmt.Errorf("载入取消态笔记 id: %w", err)
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	if !opts.Write {
+		return len(ids), nil
+	}
+
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		embRepo := service.NewEmbeddingRepo(tx)
+		chunkRepo := service.NewEmbeddingChunkRepo(tx)
+		versionRepo := service.NewVersionRepo(tx)
+		noteRepo := service.NewNoteRepo(tx)
+
+		// chunk：先取 chunk 键（向量行以 chunk 键为 entity_id），再批量删向量行 + chunk 行。
+		chunks, err := chunkRepo.BatchGetByParentIDs(ctx, model.EntityTypeNote, ids)
+		if err != nil {
+			return fmt.Errorf("载入笔记 chunk: %w", err)
+		}
+		chunkKeys := make([]string, 0, len(chunks))
+		for _, c := range chunks {
+			chunkKeys = append(chunkKeys, model.ChunkVectorKey(model.EntityTypeNote, c.ParentID, c.ChunkIndex))
+		}
+		if _, err := embRepo.DeleteByEntities(ctx, model.EntityTypeChunk, chunkKeys); err != nil {
+			return fmt.Errorf("删笔记 chunk 向量: %w", err)
+		}
+		if _, err := chunkRepo.DeleteByParents(ctx, model.EntityTypeNote, ids); err != nil {
+			return fmt.Errorf("删笔记 chunk 行: %w", err)
+		}
+
+		// 全文向量 + 版本快照 + 笔记行。
+		if _, err := embRepo.DeleteByEntities(ctx, model.EntityTypeNote, ids); err != nil {
+			return fmt.Errorf("删笔记全文向量: %w", err)
+		}
+		if _, err := versionRepo.DeleteByEntities(ctx, model.EntityTypeNote, ids); err != nil {
+			return fmt.Errorf("删笔记版本快照: %w", err)
+		}
+		if _, err := noteRepo.DeleteByIDs(ctx, ids); err != nil {
+			return fmt.Errorf("硬删笔记行: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("清理取消态笔记（共 %d 条，事务已回滚）: %w", len(ids), err)
+	}
+	return len(ids), nil
 }
 
 // pluckIDs 用 GORM Pluck 取一列（ids 在 Go 里比对，避免 SQL 跨列 collation 坑）。

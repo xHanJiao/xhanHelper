@@ -59,6 +59,11 @@ Flags:
 
 	db := app.InitDB(cfg)
 
+	// 破坏性护栏：真正落库（apply 且非 dry-run）时回显 DB 路径，prod 库需 CONFIRM_PROD=yes。
+	if *apply && !*dryRun {
+		config.GuardProdWrite(cfg.DB.Database)
+	}
+
 	opts := topicclean.Options{
 		UserID: *user,
 		OutDir: *out,

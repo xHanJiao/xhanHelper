@@ -70,6 +70,15 @@ func (r *NoteRepo) HardDelete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Delete(&model.Note{}, "id = ?", id).Error
 }
 
+// DeleteByIDs 批量硬删除笔记（批量清理场景）。
+func (r *NoteRepo) DeleteByIDs(ctx context.Context, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).Where("id IN ?", ids).Delete(&model.Note{})
+	return res.RowsAffected, res.Error
+}
+
 // Update 更新笔记，仅更新非空字段
 func (r *NoteRepo) Update(ctx context.Context, id, userID, topic, content, tags string, variables *string) error {
 	updates := map[string]interface{}{}

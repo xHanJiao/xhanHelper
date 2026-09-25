@@ -1,4 +1,4 @@
-.PHONY: dev dev-full local local-dev local-build embed-frontend check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs db-pull db-import entity-gc build-entity-gc topic-merge-plan topic-merge-apply build-topic-merge restart
+.PHONY: dev dev-full local local-dev local-build embed-frontend check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs db-pull db-import entity-gc entity-gc-local build-entity-gc topic-merge-plan topic-merge-apply build-topic-merge restart
 
 # 远端 ssh 执行时 source 用户环境变量（非交互 ssh 不会自动 source）
 REMOTE_ENV = for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do source "$$f" 2>/dev/null || true; done;
@@ -32,6 +32,7 @@ help:
 	@echo "  make db-pull        - 导出线上数据库并拉到本地 data/ 目录"
 	@echo "  make db-import      - 仅导入本地最新 dump（不联网，用于下载后导入失败重跑）"
 	@echo "  make entity-gc      - 远端清理孤儿派生数据（默认 dry-run；ARGS=\"--write\" 落库）"
+	@echo "  make entity-gc-local - 本地清理（默认 dev 沙盒库；ARGS=\"--purge-cancelled --write\" 硬删取消态笔记）"
 	@echo "  make topic-merge-plan  - 远端生成 topic 收敛报告+映射，拉到本地 data/topic-merge/"
 	@echo "  make topic-merge-apply - 推回本地映射并在远端执行（默认 dry-run；ARGS=\"--dry-run=false\" 落库，自动停服/起服）"
 	@echo "  make restart        - 重启远端服务"
@@ -197,6 +198,16 @@ build-entity-gc:
 entity-gc: build-entity-gc
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
 	ssh $$DEPLOY_USER@$$DEPLOY_HOST '$(REMOTE_ENV) cd $(SERVER_PATH) && APP_ENV=prod ./entity-gc $(ARGS)'
+
+# 本地清理（默认 dev 沙盒库；prod 需显式 APP_ENV=local + CONFIRM_PROD=yes）
+# ARGS: --write 落库；--purge-cancelled 硬删取消态笔记。例：
+#   make entity-gc-local ARGS="--purge-cancelled"                    # dry-run（dev）
+#   make entity-gc-local APP_ENV=local CONFIRM_PROD=yes ARGS="--purge-cancelled --write"
+entity-gc-local:
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	E=$${APP_ENV:-local.dev}; \
+	echo "=== entity-gc 本地（APP_ENV=$$E）==="; \
+	APP_ENV=$$E go run ./cmd/entity-gc/ $(ARGS)
 
 # 编译并上传 topic-merge 工具 + 远端执行脚本
 build-topic-merge:

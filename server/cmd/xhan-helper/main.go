@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/appinit"
@@ -44,6 +45,15 @@ func main() {
 			sqlDB.Close()
 		}
 	}()
+
+	// --- 活动埋点 events.db（仅本机 sqlite 且开关打开）---
+	if activityDB := setupActivity(cfg); activityDB != nil {
+		defer func() {
+			if err := activityDB.Close(); err != nil {
+				log.Printf("[activity] close events.db: %v", err)
+			}
+		}()
+	}
 
 	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
 	vs := agent.NewVectorStore()
@@ -95,6 +105,27 @@ func main() {
 	// --- 路由 & 服务 ---
 	router := appinit.InitRouter(cfg, repos, infra, llmClients, agents, tools, tools.MCPManager, vs, localUserID, backupSvc)
 	appinit.Serve(cfg, router, agents.BGCancel, tools.MCPManager, agents.BGCtx)
+}
+
+// setupActivity 打开 events.db；禁用或非 sqlite 时返回 nil（不建库）。
+// 打开失败按可降级处理：埋点坏了不该拖垮主服务，就地记录后继续。
+func setupActivity(cfg *config.Config) *activity.Store {
+	if !cfg.Activity.IsEnabled() {
+		log.Printf("[activity] 未启用（activity.enabled=false）")
+		return nil
+	}
+	if cfg.DB.Driver != "sqlite" {
+		log.Printf("[activity] 跳过：events.db 仅支持 sqlite 形态（当前 driver=%s）", cfg.DB.Driver)
+		return nil
+	}
+	path := activity.DBPath(cfg.DB.Database)
+	st, err := activity.Open(path, true)
+	if err != nil {
+		log.Printf("[activity] 打开 events.db 失败，埋点停用：%v", err)
+		return nil
+	}
+	log.Printf("[activity] events.db=%s enabled=true", path)
+	return st
 }
 
 // setupLocalBackup 本地模式下创建备份服务并按需挂调度器；非本地模式返回 nil（不注册路由）。

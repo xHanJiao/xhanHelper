@@ -25,3 +25,6 @@ reflection:
 
 facts:
   enabled: true # 跟随 base（env 未写则沿用 base）
+
+activity:
+  enabled: false # 云端不采活动埋点（events.db 只在本机 sqlite 形态启用）

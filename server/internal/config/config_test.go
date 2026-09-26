@@ -161,3 +161,30 @@ func TestChunkDisabledParentsDefaultMatchesModel(t *testing.T) {
 		}
 	}
 }
+
+// activity.enabled 默认开（nil → true）；显式 false 才关。
+func TestActivityEnabledDefaultOn(t *testing.T) {
+	var c ActivityConfig
+	if !c.IsEnabled() {
+		t.Error("nil enabled must default to true")
+	}
+	no := false
+	c.Enabled = &no
+	if c.IsEnabled() {
+		t.Error("explicit false must disable")
+	}
+	yes := true
+	c.Enabled = &yes
+	if !c.IsEnabled() {
+		t.Error("explicit true must enable")
+	}
+
+	// merge：env 写了 false 能压过 base 的缺省（nil）
+	base := Config{}
+	env := Config{}
+	env.Activity.Enabled = &no
+	merge(&base, &env)
+	if base.Activity.IsEnabled() {
+		t.Error("env explicit false must override base default-on")
+	}
+}

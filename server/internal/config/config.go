@@ -43,7 +43,14 @@ type Config struct {
 	MCP               MCPConfig               `yaml:"mcp"`
 	Vector            VectorConfig            `yaml:"vector"`
 	Facts             FactsConfig             `yaml:"facts"`
+	Activity          ActivityConfig          `yaml:"activity"`
 	GlobalDefaultRole GlobalDefaultRoleConfig `yaml:"global_default_role"`
+}
+
+// ActivityConfig — 活动埋点配置。
+// events.db 只在本机 sqlite 形态启用；云端 App_ENV=prod 需在配置里显式 enabled: false。
+type ActivityConfig struct {
+	Enabled *bool `yaml:"enabled"` // nil = 未显式配置 → 默认开
 }
 
 // FactsConfig — 事实系统配置
@@ -137,6 +144,11 @@ func (s *ServerConfig) BackgroundTasksDisabled() bool {
 // IsEnabled 事实系统是否开启（nil=未显式配置 → false）。
 func (f *FactsConfig) IsEnabled() bool {
 	return f.Enabled != nil && *f.Enabled
+}
+
+// IsEnabled 活动埋点是否开启（nil=未显式配置 → 默认开）。
+func (a *ActivityConfig) IsEnabled() bool {
+	return a.Enabled == nil || *a.Enabled
 }
 
 // PromptUserContext 是否注入 user_context 触发规则（nil=未显式配置 → false）。
@@ -580,6 +592,9 @@ func merge(dst, src *Config) {
 	}
 	if src.Facts.Temperature != nil {
 		dst.Facts.Temperature = src.Facts.Temperature
+	}
+	if src.Activity.Enabled != nil {
+		dst.Activity.Enabled = src.Activity.Enabled
 	}
 	if src.Reflection.LaunchMaxIterations != 0 {
 		dst.Reflection.LaunchMaxIterations = src.Reflection.LaunchMaxIterations

@@ -115,7 +115,7 @@ func main() {
 	backupSvc := setupLocalBackup(cfg, db, agents.BGCtx)
 
 	// --- 路由 & 服务 ---
-	router := appinit.InitRouter(cfg, repos, infra, llmClients, agents, tools, tools.MCPManager, vs, localUserID, backupSvc)
+	router := appinit.InitRouter(cfg, repos, infra, llmClients, agents, tools, tools.MCPManager, vs, localUserID, backupSvc, activityStore)
 	appinit.Serve(cfg, router, agents.BGCancel, tools.MCPManager, agents.BGCtx)
 }
 
@@ -136,7 +136,8 @@ func setupActivity(cfg *config.Config) *activity.Store {
 		log.Printf("[activity] 打开 events.db 失败，埋点停用：%v", err)
 		return nil
 	}
-	log.Printf("[activity] events.db=%s enabled=true", path)
+	st.SetWatermarkMode(cfg.Activity.WatermarkModeNormalized())
+	log.Printf("[activity] events.db=%s enabled=true watermark_mode=%s", path, st.WatermarkMode())
 	return st
 }
 

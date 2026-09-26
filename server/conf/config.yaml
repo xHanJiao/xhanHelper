@@ -114,6 +114,7 @@ facts:
 
 activity:
   enabled: true # 活动埋点总开关（仅本机 sqlite 形态生效）；云端 APP_ENV=prod 必须在 config.prod.yaml 显式 false
+  watermark_mode: time # 上传接口水位口径：time=本批最大 occurred_at（默认，需两端同钟）；segment=回显 segment_id（逐段确认，端分离时切换）
 
 storage:
   image_dir: data/images # 图床根目录（文档配图 + 聊天图片输入共用）

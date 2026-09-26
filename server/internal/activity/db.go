@@ -15,8 +15,9 @@ const schemaVersion = 1
 
 // Store 是 events.db 的连接与元数据入口，同时持有唯一 emit 入口。
 type Store struct {
-	db *gorm.DB
-	em *Emitter
+	db            *gorm.DB
+	em            *Emitter
+	watermarkMode string // 上传接口水位口径：WatermarkTime（默认）/ WatermarkSegment
 }
 
 // DBPath 返回与主库同目录的 events.db 路径。
@@ -40,12 +41,30 @@ func Open(path string, enabled bool) (*Store, error) {
 		}
 	}
 
-	s := &Store{db: db}
+	s := &Store{db: db, watermarkMode: WatermarkTime}
 	if err := s.seedMeta(enabled); err != nil {
 		return nil, err
 	}
 	s.em = startEmitter(s)
 	return s, nil
+}
+
+// SetWatermarkMode 设置上传接口水位口径（仅接受 WatermarkTime / WatermarkSegment，其余忽略）。
+// 由启动装配按 activity.watermark_mode 注入一次；默认 time。
+func (s *Store) SetWatermarkMode(mode string) {
+	if mode == WatermarkSegment {
+		s.watermarkMode = WatermarkSegment
+		return
+	}
+	s.watermarkMode = WatermarkTime
+}
+
+// WatermarkMode 返回当前水位口径。
+func (s *Store) WatermarkMode() string {
+	if s == nil || s.watermarkMode == "" {
+		return WatermarkTime
+	}
+	return s.watermarkMode
 }
 
 // seedMeta 预置版本键；INSERT OR IGNORE，重复 Open 不覆盖已有值。

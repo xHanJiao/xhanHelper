@@ -51,6 +51,18 @@ type Config struct {
 // events.db 只在本机 sqlite 形态启用；云端 App_ENV=prod 需在配置里显式 enabled: false。
 type ActivityConfig struct {
 	Enabled *bool `yaml:"enabled"` // nil = 未显式配置 → 默认开
+	// WatermarkMode — 上传接口 POST /api/events/batch 的水位口径（仅服务端决定，客户端按响应 watermark_kind 自适应）：
+	//   time（默认）：watermark = 本批最大 occurred_at，客户端删「≤ 水位的本地段」；依赖两端同钟。
+	//   segment：watermark = 回显 segment_id，客户端逐段删除；不依赖客户端时钟，供服务端/客户端分离时切换。
+	WatermarkMode string `yaml:"watermark_mode"`
+}
+
+// WatermarkModeNormalized 返回归一后的水位模式（空/未配置 = time）；仅接受 time / segment。
+func (a *ActivityConfig) WatermarkModeNormalized() string {
+	if a == nil || a.WatermarkMode == "" {
+		return "time"
+	}
+	return a.WatermarkMode
 }
 
 // FactsConfig — 事实系统配置
@@ -596,6 +608,9 @@ func merge(dst, src *Config) {
 	if src.Activity.Enabled != nil {
 		dst.Activity.Enabled = src.Activity.Enabled
 	}
+	if src.Activity.WatermarkMode != "" {
+		dst.Activity.WatermarkMode = src.Activity.WatermarkMode
+	}
 	if src.Reflection.LaunchMaxIterations != 0 {
 		dst.Reflection.LaunchMaxIterations = src.Reflection.LaunchMaxIterations
 	}
@@ -830,6 +845,10 @@ func validate(cfg *Config) error {
 	}
 	if cfg.LLM.APIKey == "" {
 		return fmt.Errorf("llm.api_key is required (set LLM_API_KEY env var)")
+	}
+	// Activity（events.db）水位口径：只允许 time / segment（空 = time）
+	if m := cfg.Activity.WatermarkModeNormalized(); m != "time" && m != "segment" {
+		return fmt.Errorf("activity.watermark_mode 必须是 time 或 segment（当前 %q）", cfg.Activity.WatermarkMode)
 	}
 	// Snowflake 默认值
 	if cfg.Snowflake.NodeID == 0 {

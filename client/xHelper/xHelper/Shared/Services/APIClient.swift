@@ -365,6 +365,15 @@ class APIClient {
 		let _: [String: String] = try await post("/api/chat/tool-result", body: body)
 	}
 
+    // MARK: Activity
+
+    /// 客户端埋点整段上报（实施技术方案 5.5）。返回水位应答；4xx/网络错误由调用方 `NSError.code` 分类。
+    func uploadActivityEvents(segmentId: String, events: [ActivityEvent]) async throws -> ActivityUploadAck {
+        let encoder = JSONEncoder()
+        let items: [Any] = try events.map { try JSONSerialization.jsonObject(with: encoder.encode($0)) }
+        return try await post("/api/events/batch", body: ["segment_id": segmentId, "events": items])
+    }
+
     // MARK: Auth
 
     func refreshToken() async throws {

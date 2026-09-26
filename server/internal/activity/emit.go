@@ -38,6 +38,9 @@ const (
 	TypeToolBridgeDispatched = "tool.bridge.dispatched"
 	TypeToolBridgeReturned   = "tool.bridge.returned"
 
+	TypeTaskSpawned = "task.spawned"
+	TypeTaskEnded   = "task.ended"
+
 	TypeDocCreated          = "doc.created"
 	TypeDocUpdated          = "doc.updated"
 	TypeDocDeleted          = "doc.deleted"

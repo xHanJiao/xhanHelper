@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
@@ -597,7 +598,20 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 	var result *MiniReActResult
 	endState := "completed"
 	endSummary := ""
+	taskStartID, taskEndID := "", ""
 	defer func() {
+		// task.ended（区间终）：与 task.spawned 靠 pair_id 互指；timeout/failed 都归 outcome=failed，error_type 区分。
+		if taskStartID != "" {
+			outcome, errType := activity.OutcomeCompleted, ""
+			switch endState {
+			case "completed":
+			case "timeout":
+				outcome, errType = activity.OutcomeFailed, "timeout"
+			default:
+				outcome, errType = activity.OutcomeFailed, "subagent_error"
+			}
+			o.emitSubAgentTask(ctx, activity.TypeTaskEnded, taskEndID, taskStartID, subConv.ID, opts.ParentConvID, opts.TurnID, outcome, errType, map[string]any{"task_id": subConv.ID})
+		}
 		if opts.MainEvents != nil {
 			o.sendEvent(opts.MainEvents, &llm.StreamEvent{Type: "subagent", Content: subAgentEventJSON(subConv.ID, opts.Description, "end", endSummary, endState)})
 		}
@@ -615,6 +629,15 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 			log.Printf("[subagent] persist result state error (conv=%s): %v", subConv.ID[:8], uerr)
 		}
 	}()
+
+	// task.spawned（区间起）：父 = 那次 tool.call.started，biz_key = task_id。
+	if o.activity != nil {
+		taskStartID, taskEndID = uuid.NewString(), uuid.NewString()
+		o.emitSubAgentTask(ctx, activity.TypeTaskSpawned, taskStartID, taskEndID, subConv.ID, opts.ParentConvID, opts.TurnID, "", "", map[string]any{
+			"task_id":         subConv.ID,
+			"description_len": len(opts.Description),
+		})
+	}
 
 	result, err = react.Run(subCtx, opts.Prompt)
 	if err == nil {
@@ -642,6 +665,39 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 		Text:    summarizeToolCallLog(result.ToolCallLog),
 		ConvID:  subConv.ID,
 	}
+}
+
+// emitSubAgentTask 发 task.spawned/ended（服务端子任务区间事件，附表 A）。
+// 父 = 那次 tool.call.started（无则回到本 turn 的 chat.turn.started）；biz_key = task_id；
+// pair_id 让起止互指（两端 event_id 由调用方预先分配）。outcome/errType 空 = 区间起。
+func (o *Orchestrator) emitSubAgentTask(ctx context.Context, typ, eventID, pairID, taskID, convID, turnID, outcome, errType string, attrs map[string]any) {
+	if o.activity == nil {
+		return
+	}
+	turn, hasTurn := activity.TurnFromContext(ctx)
+	trigger := activity.TriggerBatch
+	if hasTurn || turnID != "" {
+		trigger = activity.TriggerManual
+	}
+	parent := turn.StartEventID
+	if id, ok := activity.ToolCallFromContext(ctx); ok {
+		parent = id
+	}
+	o.activity.Emit(activity.Event{
+		Type:           typ,
+		EventID:        eventID,
+		OccurredAt:     time.Now(),
+		Actor:          activity.ActorAssistant,
+		Trigger:        trigger,
+		Outcome:        outcome,
+		ErrorType:      errType,
+		ConversationID: convID,
+		TurnID:         turnID,
+		BizKey:         taskID,
+		ParentEventID:  parent,
+		PairID:         pairID,
+		Attrs:          attrs,
+	})
 }
 
 // subagentHistoryBudgetChars — 续跑历史总字符预算（rune）。超限从最旧开始丢，

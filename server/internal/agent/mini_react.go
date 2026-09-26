@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/tool"
@@ -38,6 +39,7 @@ type MiniReAct struct {
 	maxIterations    int
 	maxToolResult    int
 	caller           string
+	activity         *activity.Store                 // client 工具的 tool.bridge.* 埋点 sink；nil = 不采集
 	onEvent          func(evt *llm.StreamEvent) bool // nil = 静默执行（后台 worker 场景）。返回 false 表示事件未送达（如 client_tool_call 转发超时）
 	toolCallLog      []ToolCallLog                   // 本轮执行的完整工具调用历史
 	thinking         *bool                           // 思考模式（deep mode 用 Pro 时开启），nil 用 LLM 默认
@@ -90,6 +92,7 @@ type MiniReActConfig struct {
 	MaxToolResult    int                         // 单条工具结果注入上限字符数，默认 2000
 	Caller           string                      // 日志前缀，便于区分调用方
 	Thinking         *bool                       // 思考模式（deep mode 用 Pro 时开启），nil 用 LLM 默认
+	Activity         *activity.Store             // 活动埋点 sink（client 工具的 tool.bridge.*）；nil = 不采集
 	OnEvent          func(*llm.StreamEvent) bool // 事件回调，nil = 静默执行（后台 worker 场景）。返回 false 表示未送达
 
 	// subAgent 场景扩展（零值 = 不启用，既有调用方零变化）：
@@ -149,6 +152,7 @@ func NewMiniReAct(cfg *MiniReActConfig) *MiniReAct {
 		maxIterations:    maxIter,
 		maxToolResult:    maxResult,
 		caller:           caller,
+		activity:         cfg.Activity,
 		onEvent:          cfg.OnEvent,
 		thinking:         cfg.Thinking,
 		subAgent:         subAgent,
@@ -531,7 +535,7 @@ func (m *MiniReAct) execClientTool(ctx context.Context, tc tool.ToolCall) (*tool
 		return &tool.Result{Success: false,
 			Error: "客户端本地工具不可用（本轮已发生断连或超时），已跳过 " + tc.Tool + "." + tc.Function + "。"}, false
 	}
-	cc := &clientToolCaller{bridge: m.subAgent.ClientBridge, timeout: m.clientToolBudgetFor(ctx, tc.Tool)}
+	cc := &clientToolCaller{bridge: m.subAgent.ClientBridge, timeout: m.clientToolBudgetFor(ctx, tc.Tool), activity: m.activity}
 	r, unavailable := cc.Call(ctx,
 		// MiniReAct 无内部 channel：事件经 onEvent 回调转发（RunSubAgent 的 forwarder 提供阻塞送达语义）。
 		// emit 返回送达结果：client_tool_call 未送达（如转发 5s 超时）→ mustSend false →

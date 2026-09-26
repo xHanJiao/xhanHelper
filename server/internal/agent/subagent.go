@@ -556,6 +556,7 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 		MaxIterations:    maxIter, // 主循环 maxIter-1 轮 + 1 轮强制收敛（MiniReAct 内置）
 		MaxToolResult:    spec.maxToolResult,
 		Caller:           "subagent:" + opts.SubAgentType,
+		Activity:         o.activity,
 		FinalRoundPrompt: subAgentFinalRoundPrompt, // 子 agent 专用：列出未完成事项供续跑判断
 		InitialMessages:  initialMsgs,              // 续跑种子历史（空 = 全新任务）
 		SubAgent: SubAgentExt{

@@ -1816,7 +1816,7 @@ func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm
 		// 接线 bug：请求携带了 client_tools 却没有注入桥，炸在明处
 		panic("[orch] clientBridge is nil but client tool call dispatched")
 	}
-	cc := &clientToolCaller{bridge: o.clientBridge, timeout: o.clientToolTimeout}
+	cc := &clientToolCaller{bridge: o.clientBridge, timeout: o.clientToolTimeout, activity: o.activity}
 	return cc.Call(ctx,
 		func(evt *llm.StreamEvent) bool {
 			// 指令事件必须送达：阻塞发送 + 超时兜底。

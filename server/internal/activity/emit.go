@@ -34,6 +34,9 @@ const (
 	TypeLLMFirstToken   = "llm.first_token"
 	TypeToolCallStarted = "tool.call.started"
 	TypeToolCallEnded   = "tool.call.ended"
+
+	TypeToolBridgeDispatched = "tool.bridge.dispatched"
+	TypeToolBridgeReturned   = "tool.bridge.returned"
 )
 
 // outcome 取值（附表 A 公共字段）。

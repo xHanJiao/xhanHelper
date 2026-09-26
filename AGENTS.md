@@ -229,6 +229,7 @@ make db-pull / db-import / logs / clean
 - model/ 只放结构体，DB 操作放 service/；工具实现放 tool/，不要耦合到 controller 或 agent
 - 从数据库列表拉取数据时，必须做分页
 - **禁止在循环内逐个访问数据库**（N+1）：插入用 `tx.Create(&slice)` 批量，更新/删除用带 `IN` 条件的 `Updates`/`Delete`，循环里只做内存操作
+- **活动埋点 tracked 实体的 update/delete 必须把主键放进 `Model`/`Dest`**（`Model(&model.Document{ID: id}).Where(...)` / `Delete(&model.X{ID: id})`），**不要**把主键只写在 `Where("id = ?")` 里——系统变更事件靠 GORM 回调从模型读结构化主键，写在 WHERE 里读不到，事件会丢 `doc_id`/`memory_id` 并打警告。tracked 实体 = `Document`/`UserMemory`/`Bill`/`Reminder`（详见 `docs/design/activity-events/系统变更事件 · GORM 回调方案（人话版）.md`）
 - 修改代码前必须先说明方案，征得用户同意；提交代码前必须征得用户同意
 - 遇到相似功能，抽取公共组件
 - **禁止对必要依赖做 nil 检查后静默返回**：通过依赖注入传入的必需组件（repo、client、worker 等）为 nil 意味着接线 bug，让它 panic，炸在明处。可选依赖（如回调）才用 nil 检查

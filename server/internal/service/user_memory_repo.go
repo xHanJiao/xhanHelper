@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/util"
 )
@@ -15,12 +16,18 @@ import (
 // UserMemoryRepo — 用户记忆数据访问
 type UserMemoryRepo struct {
 	db *gorm.DB
+	// activity 仅供 BatchDelete 显式埋点（批量删除是唯一拿不到逐行 PK 的例外）；
+	// 其余变更事件由 activity.RegisterChangeCallbacks 的回调统一发。
+	activity *activity.Store
 }
 
 // NewUserMemoryRepo 创建 UserMemoryRepo
 func NewUserMemoryRepo(db *gorm.DB) *UserMemoryRepo {
 	return &UserMemoryRepo{db: db}
 }
+
+// SetActivity 注入活动埋点 sink（nil = 不采集）。
+func (r *UserMemoryRepo) SetActivity(s *activity.Store) { r.activity = s }
 
 // Create 创建新记忆
 func (r *UserMemoryRepo) Create(ctx context.Context, m *model.UserMemory) error {
@@ -78,12 +85,26 @@ func (r *UserMemoryRepo) FindByID(ctx context.Context, userID, id string) (*mode
 
 // Delete 删除记忆
 func (r *UserMemoryRepo) Delete(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Delete(&model.UserMemory{}, "id = ?", id).Error
+	return r.db.WithContext(ctx).Delete(&model.UserMemory{ID: id}).Error
 }
 
-// BatchDelete 批量删除记忆（按 ID + 用户过滤）
+// BatchDelete 批量删除记忆（按 ID + 用户过滤）。
+// 一条 SQL 删多行，变更回调拿不到逐行 PK，故显式抑制回调并自行逐条发事件。
 func (r *UserMemoryRepo) BatchDelete(ctx context.Context, ids []string, userID string) error {
-	return r.db.WithContext(ctx).Where("id IN ? AND user_id = ?", ids, userID).Delete(&model.UserMemory{}).Error
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := r.db.WithContext(activity.WithNoEvent(ctx)).
+		Where("id IN ? AND user_id = ?", ids, userID).Delete(&model.UserMemory{}).Error; err != nil {
+		return err
+	}
+	for _, id := range ids {
+		r.activity.EmitChange(ctx, activity.TypeMemoryEntityChanged, "", map[string]any{
+			"memory_id": id,
+			"op":        "delete",
+		})
+	}
+	return nil
 }
 
 // GetByIDs 按 ID 列表查询
@@ -137,8 +158,7 @@ func (r *UserMemoryRepo) FindByContentHash(ctx context.Context, userID, contentH
 // Update 覆盖一条记忆的内容（topic / memory_value / facts）。改内容不碰 confirm 计数。
 // 派生数据（向量/chunk/概念）由调用方在写库后重建。
 func (r *UserMemoryRepo) Update(ctx context.Context, id, topic, memoryValue string, facts *string) error {
-	return r.db.WithContext(ctx).Model(&model.UserMemory{}).
-		Where("id = ?", id).
+	return r.db.WithContext(ctx).Model(&model.UserMemory{ID: id}).
 		Updates(map[string]interface{}{
 			"topic":        topic,
 			"memory_key":   topic,
@@ -314,8 +334,8 @@ func (r *UserMemoryRepo) SetTopicByID(ctx context.Context, userID, id, to string
 	if to == "" {
 		return 0, nil
 	}
-	res := r.db.WithContext(ctx).Model(&model.UserMemory{}).
-		Where("user_id = ? AND id = ?", userID, id).
+	res := r.db.WithContext(ctx).Model(&model.UserMemory{ID: id}).
+		Where("user_id = ?", userID).
 		Update("topic", to)
 	return res.RowsAffected, res.Error
 }

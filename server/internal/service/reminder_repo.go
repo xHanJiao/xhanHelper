@@ -84,8 +84,8 @@ func (r *ReminderRepo) ListUpcoming(ctx context.Context, userID string, from tim
 }
 
 func (r *ReminderRepo) Ack(ctx context.Context, userID, id, msgID string) error {
-	return r.db.WithContext(ctx).Model(&model.Reminder{}).
-		Where("id = ? AND user_id = ?", id, userID).
+	return r.db.WithContext(ctx).Model(&model.Reminder{ID: id}).
+		Where("user_id = ?", userID).
 		Updates(map[string]interface{}{
 			"status":                 model.ReminderStatusAcknowledged,
 			"acknowledged_at":        time.Now(),

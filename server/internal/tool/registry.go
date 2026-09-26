@@ -590,6 +590,8 @@ func (r *Registry) ExecuteByName(ec *ExecuteContext, toolName, funcName string, 
 		return t.Execute(ec, funcName, args)
 	}
 	startID, endID := r.emitToolCallStarted(ec, toolName, funcName, args)
+	// 让工具内的仓储写入把变更事件挂在这次 tool.call.started 下（P6 doc.*/memory.*）。
+	ec.Ctx = activity.WithToolCall(ec.Ctx, startID)
 	var res *Result
 	defer func() { r.emitToolCallEnded(ec, toolName, funcName, startID, endID, res) }()
 	res = t.Execute(ec, funcName, args)

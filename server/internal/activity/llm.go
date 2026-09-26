@@ -19,6 +19,7 @@ type turnCtxKey struct{}
 type TurnCtx struct {
 	TurnID       string
 	StartEventID string // chat.turn.started 的 event_id：llm.call.* 的父
+	ConvID       string // 所属会话；供变更事件挂 conversation_id
 }
 
 // WithTurn 把 turn 上下文注入 ctx；编排层 StartTurn 后调用。

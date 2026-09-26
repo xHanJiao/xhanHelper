@@ -486,7 +486,7 @@ func (o *Orchestrator) runReActLoop(
 	// 归组键写进 ctx，供 LLM 装饰器给 llm.* 事件挂 turn。
 	turn := o.StartTurn(ctx, req.ConversationID, activity.TriggerManual, msgEventID)
 	req.TurnID = turn.ID
-	ctx = activity.WithTurn(ctx, activity.TurnCtx{TurnID: turn.ID, StartEventID: turn.StartEventID()})
+	ctx = activity.WithTurn(ctx, activity.TurnCtx{TurnID: turn.ID, StartEventID: turn.StartEventID(), ConvID: req.ConversationID})
 	outcome := activity.OutcomeCompleted
 	var state *reactState
 	defer func() {

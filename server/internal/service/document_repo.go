@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/model"
 )
 
@@ -36,12 +37,13 @@ func (r *DocumentRepo) GetByID(ctx context.Context, id, userID string) (*model.D
 }
 
 // Update 部分更新文档（只作用于未删除的文档）
+// 主键放进 Model（而非常规 Where）以便活动埋点回调读到结构化 ID —— 见 AGENTS.md。
 func (r *DocumentRepo) Update(ctx context.Context, id, userID string, updates map[string]interface{}) error {
 	if len(updates) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).Model(&model.Document{}).
-		Where("id = ? AND user_id = ? AND status = ?", id, userID, model.DocumentStatusActive).
+	return r.db.WithContext(ctx).Model(&model.Document{ID: id}).
+		Where("user_id = ? AND status = ?", userID, model.DocumentStatusActive).
 		Updates(updates).Error
 }
 
@@ -60,8 +62,8 @@ func (r *DocumentRepo) GetByIDPublic(ctx context.Context, id string) (*model.Doc
 // ponytail: 复用 updated_at 当删除时间（回收站排序与 7 天清理都以它为准），不再加 deleted_at 列。
 // 已删文档不再被更新，语义成立；恢复后排序会回到顶部，可接受。
 func (r *DocumentRepo) Delete(ctx context.Context, id, userID string) (int64, error) {
-	result := r.db.WithContext(ctx).Model(&model.Document{}).
-		Where("id = ? AND user_id = ? AND status = ?", id, userID, model.DocumentStatusActive).
+	result := r.db.WithContext(ctx).Model(&model.Document{ID: id}).
+		Where("user_id = ? AND status = ?", userID, model.DocumentStatusActive).
 		Update("status", model.DocumentStatusDeleted)
 	return result.RowsAffected, result.Error
 }
@@ -125,7 +127,7 @@ func (r *DocumentRepo) purge(ctx context.Context, where string, args ...any) (in
 		return 0, nil
 	}
 
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := r.db.WithContext(activity.WithNoEvent(ctx)).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("document_id IN ?", ids).Delete(&model.DocumentAnnotation{}).Error; err != nil {
 			return err
 		}

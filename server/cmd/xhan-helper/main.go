@@ -55,6 +55,8 @@ func main() {
 			}
 		}()
 	}
+	// 系统变更事件（doc.* / memory.* / bill.created / reminder.*）：GORM 写回调统一收口。
+	activity.RegisterChangeCallbacks(db, activityStore)
 
 	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
 	vs := agent.NewVectorStore()
@@ -79,6 +81,9 @@ func main() {
 	llmClients.Strong = activity.WrapLLMClient(llmClients.Strong, activityStore, "main_strong")
 	llmClients.BgFlash = activity.WrapLLMClient(llmClients.BgFlash, activityStore, "bg_flash")
 	llmClients.BgStrong = activity.WrapLLMClient(llmClients.BgStrong, activityStore, "bg_strong")
+
+	// BatchDelete 走显式 emit（批量删除拿不到逐行 PK，是变更回调的唯一例外）。
+	repos.Mem.SetActivity(activityStore)
 
 	// --- 工具 & Agent 系统 ---
 	tools := appinit.InitTools(cfg, repos, infra, llmClients)

@@ -37,6 +37,16 @@ const (
 
 	TypeToolBridgeDispatched = "tool.bridge.dispatched"
 	TypeToolBridgeReturned   = "tool.bridge.returned"
+
+	TypeDocCreated          = "doc.created"
+	TypeDocUpdated          = "doc.updated"
+	TypeDocDeleted          = "doc.deleted"
+	TypeMemoryEntityChanged = "memory.entity.changed"
+	TypeMemoryTopicCleaned  = "memory.topic.cleaned"
+
+	TypeBillCreated          = "bill.created"
+	TypeReminderCreated      = "reminder.created"
+	TypeReminderAcknowledged = "reminder.acknowledged"
 )
 
 // outcome 取值（附表 A 公共字段）。

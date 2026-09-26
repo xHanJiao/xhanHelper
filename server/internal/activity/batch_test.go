@@ -92,6 +92,12 @@ func TestIngestBatch_SegmentMode(t *testing.T) {
 	if _, err := s.IngestBatch("", []BatchEvent{{EventID: "e2", Type: "x"}}); !errors.Is(err, ErrInvalidBatch) {
 		t.Errorf("缺 segment_id 应报 ErrInvalidBatch, got %v", err)
 	}
+
+	// 未知非空值回落 time（记日志，不静默沿用非法模式）
+	s.SetWatermarkMode("bogus")
+	if s.WatermarkMode() != WatermarkTime {
+		t.Errorf("bogus mode 应回落 time, got %q", s.WatermarkMode())
+	}
 }
 
 func TestIngestBatch_Invalid(t *testing.T) {

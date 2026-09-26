@@ -16,6 +16,7 @@ var ErrInvalidBatch = errors.New("invalid batch event")
 const MaxBatchEvents = 500
 
 // 水位口径（activity.watermark_mode；客户端按响应 watermark_kind 自适应）。
+// 值须与 config.validate 的字面量（time/segment）同步。
 const (
 	WatermarkTime    = "time"    // watermark = 本批最大 occurred_at，客户端删「≤ 水位的本地段」
 	WatermarkSegment = "segment" // watermark = 回显 segment_id，客户端逐段删除（不依赖客户端时钟）

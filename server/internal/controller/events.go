@@ -11,15 +11,18 @@ import (
 	"xhan-helper/internal/view"
 )
 
+// maxBatchBodyBytes — 单段上报请求体上限 1 MiB（实施技术方案 5.5）。
+const maxBatchBodyBytes = 1 << 20
+
 // eventsBatch POST /api/events/batch — 客户端埋点整段上报（实施技术方案 5.5）。
-// 鉴权走外层 auth 中间件；体积上限 1 MiB、单段 ≤ MaxBatchEvents；幂等靠 event_id（INSERT OR IGNORE）。
+// 鉴权走外层 auth 中间件；体积上限 maxBatchBodyBytes、单段 ≤ MaxBatchEvents；幂等靠 event_id（INSERT OR IGNORE）。
 func eventsBatch(store *activity.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if store == nil {
 			view.JSONError(c, http.StatusServiceUnavailable, "activity disabled")
 			return
 		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBatchBodyBytes)
 		var req struct {
 			SegmentID string                `json:"segment_id"`
 			Events    []activity.BatchEvent `json:"events"`

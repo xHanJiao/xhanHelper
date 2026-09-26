@@ -2,6 +2,7 @@ package activity
 
 import (
 	"fmt"
+	"log"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -17,7 +18,7 @@ const schemaVersion = 1
 type Store struct {
 	db            *gorm.DB
 	em            *Emitter
-	watermarkMode string // 上传接口水位口径：WatermarkTime（默认）/ WatermarkSegment
+	watermarkMode string // 上传接口水位口径：WatermarkTime（默认）/ WatermarkSegment；仅启动期设置一次，运行期只读
 }
 
 // DBPath 返回与主库同目录的 events.db 路径。
@@ -49,12 +50,15 @@ func Open(path string, enabled bool) (*Store, error) {
 	return s, nil
 }
 
-// SetWatermarkMode 设置上传接口水位口径（仅接受 WatermarkTime / WatermarkSegment，其余忽略）。
-// 由启动装配按 activity.watermark_mode 注入一次；默认 time。
+// SetWatermarkMode 设置上传接口水位口径（仅接受 WatermarkTime / WatermarkSegment）。
+// 由启动装配按 activity.watermark_mode 注入一次；默认 time。未知非空值记日志后回落 time（不静默）。
 func (s *Store) SetWatermarkMode(mode string) {
 	if mode == WatermarkSegment {
 		s.watermarkMode = WatermarkSegment
 		return
+	}
+	if mode != "" && mode != WatermarkTime {
+		log.Printf("[activity] 未知 watermark_mode=%q，回落 time", mode)
 	}
 	s.watermarkMode = WatermarkTime
 }

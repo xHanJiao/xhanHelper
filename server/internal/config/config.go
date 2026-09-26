@@ -846,7 +846,8 @@ func validate(cfg *Config) error {
 	if cfg.LLM.APIKey == "" {
 		return fmt.Errorf("llm.api_key is required (set LLM_API_KEY env var)")
 	}
-	// Activity（events.db）水位口径：只允许 time / segment（空 = time）
+	// Activity（events.db）水位口径：只允许 time / segment（空 = time）。
+	// 字面量与 activity.WatermarkTime / WatermarkSegment 同步（config 是最底层，不反向依赖 activity/model）。
 	if m := cfg.Activity.WatermarkModeNormalized(); m != "time" && m != "segment" {
 		return fmt.Errorf("activity.watermark_mode 必须是 time 或 segment（当前 %q）", cfg.Activity.WatermarkMode)
 	}

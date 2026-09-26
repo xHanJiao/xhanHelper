@@ -68,7 +68,7 @@ POST /api/chat
  → agent/orchestrator.go::Run      embed「原始消息」→ promptbuilder.Build → ctxflow.Retrieve
  → agent/promptbuilder             分层拼 system prompt（行为准则 / 角色定义 / 工具目录+定义 / 稳定上下文）
  → agent/ctxflow                   各 ContextSource 并发检索 → 格式化为 XMLContext，注入「当前 user 消息」
- → llm.Chat（流式）                use_native_fc 时走原生 function calling，否则解析文本 JSON 兜底
+ → llm.Chat（流式）                主聊天只走原生 function calling（文本一律按 markdown 原文，不再解析文本 JSON）
  → 工具执行                        服务端工具并发（tool_max_concurrency）、客户端工具串行
  → 消息落库 + view.WriteSSE        断开连接不终止执行（runCtx 独立于 Request.Context）
 ```
@@ -101,7 +101,7 @@ POST /api/chat
 - **服务端是 LLM 参数的唯一事实来源**：`/api/chat` 请求体里的 `temperature` / `max_tokens` / `thinking` 会被解析但**有意不传进 `RunRequest`**（`controller/chat.go`），一律用服务端配置默认。客户端 UI 上那几个旋钮当前不生效 —— 这是设计，不是 bug，别去"修"
 - 同理：全链路**没有 `finish_reason == "length"` 处理**，`max_tokens` 触顶是静默硬截断。要限制回答长度请用 prompt（如 `brief_answer` 注入 system prompt 的输出约束），不要靠调 `max_tokens`
 - 装饰器链：`llmcost.CostTracker`（token 记账）+ `IOAuditWrapper`（ChatSync I/O 审计，保留 7 天）
-- 两条工具调用路径：**原生 function calling**（`llm.use_native_fc`，当前开启）与 **prompt engineering**（工具定义注入 system prompt → 解析文本 JSON）
+- 主聊天工具调用只走**原生 function calling**（工具定义内置在请求体 `tools`，读 `msg.ToolCalls`）。从前的 prompt engineering 路径（工具定义注入 system prompt → 解析文本 JSON）已从主链路移除；`ParseLLMResponse` 仅保留给反思子系统的 `ReactLoop`
 
 ### SSE 事件（`controller/chat.go` 分发）
 

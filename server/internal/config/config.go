@@ -243,7 +243,6 @@ type LLMConfig struct {
 	ToolMaxConcurrency    int                `yaml:"tool_max_concurrency"`     // 工具并发执行上限，0=不限制，默认 0
 	Verification          VerificationConfig `yaml:"verification"`             // 响应检验配置
 	ExtractMsgLimit       int                `yaml:"extract_msg_limit"`        // 记忆提取每次最多取的消息数，默认 50
-	UseNativeFC           bool               `yaml:"use_native_fc"`            // 是否使用原生 function calling（默认 true）
 	ClientToolTimeoutSecs int                `yaml:"client_tool_timeout_secs"` // 客户端工具执行超时秒数，默认 60
 	DebugPersistJSON      *bool              `yaml:"debug_persist_json"`       // 是否持久化完整 LLM 请求 JSON 到 DB（异步限频写入，配 debug_json 控制频率与保留）；nil=未显式配置
 	DebugJSON             DebugJSONConfig    `yaml:"debug_json"`               // 调试 JSON 异步持久化参数

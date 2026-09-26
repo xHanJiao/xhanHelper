@@ -23,7 +23,6 @@ func NewPromptBuilder(
 	basePrompt string,
 	registry *tool.Registry,
 	promptResolver PromptResolver,
-	useNativeFC bool,
 	enableUserContextTrigger bool,
 ) *PromptBuilder {
 	preRoleStatic := []StaticProvider{&corePrinciplesProvider{}}
@@ -36,12 +35,8 @@ func NewPromptBuilder(
 	preRoleStatic = append(preRoleStatic, &replyFormProvider{})
 	// answer_length 排在最后，仍按 opts.BriefAnswer 条件注入
 	preRoleStatic = append(preRoleStatic, &answerLengthProvider{})
-	postRoleStatic := []StaticProvider{}
-	if useNativeFC {
-		postRoleStatic = append([]StaticProvider{&toolCatalogProvider{registry: registry}}, postRoleStatic...)
-	} else {
-		postRoleStatic = append([]StaticProvider{&toolDefinitionsProvider{registry: registry}}, postRoleStatic...)
-	}
+	// 主聊天只走原生 FC：常驻渐进式工具目录（完整函数定义随请求体 tools 下发）
+	postRoleStatic := []StaticProvider{&toolCatalogProvider{registry: registry}}
 	return &PromptBuilder{
 		basePrompt:     basePrompt,
 		promptResolver: promptResolver,
@@ -98,24 +93,17 @@ func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildRes
 	for _, sp := range b.postRoleStatic {
 		var section string
 		switch {
-		case strict && (sp.Name() == "tool_definitions" || sp.Name() == "tool_catalog"):
-			// 严格档：两套工具段都换成"无工具"提示（请求体亦不下发 tools）
+		case strict:
+			// 严格档：工具段换成"无工具"提示（请求体亦不下发 tools）
 			section = strictModeNotice
-		case plan && sp.Name() == "tool_definitions":
-			// prompt-eng 路径：仅渲染只读函数定义
-			if p, ok := sp.(*toolDefinitionsProvider); ok {
-				section = p.registry.GenerateReadOnlyPrompt()
-			}
-		case plan && sp.Name() == "tool_catalog":
-			// native FC 路径：只读函数定义已随请求体 tools 下发，此处仅给只读提示
+		case plan:
+			// 只读函数定义已随请求体 tools 下发，此处仅给只读提示
 			section = planModeReadOnlyNotice
-		case sp.Name() == "tool_catalog":
+		default:
 			section = sp.Render(ctx)
 			if opts.ClientToolCatalog != "" {
 				section += "\n" + opts.ClientToolCatalog
 			}
-		default:
-			section = sp.Render(ctx)
 		}
 		if section == "" {
 			continue

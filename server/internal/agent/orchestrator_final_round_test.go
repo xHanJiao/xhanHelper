@@ -22,11 +22,17 @@ func (m *recordingMsgRepo) Create(ctx context.Context, msg *model.Message) error
 	return nil
 }
 
-// toolCallJSONResponse 生成 prompt-eng 格式的工具调用响应（JSON 文本 + done）。
+// nativeToolCallResponse 生成原生 function calling 的工具调用响应（done 事件携带 ToolCalls）。
 // 工具名指向不存在的工具，执行后返回错误结果但不会 panic，保证循环持续不收敛。
-func toolCallJSONResponse() mockLLMResponse {
-	content := `{"reply":"","tool_calls":[{"tool":"nonexistent","function":"nope","args":{}}]}`
-	return mockLLMResponse{events: append(makeTextDeltas(content), makeDone())}
+func nativeToolCallResponse() mockLLMResponse {
+	return mockLLMResponse{events: []*llm.StreamEvent{{
+		Type:  "done",
+		Usage: &llm.Usage{PromptTokens: 10, CompletionTokens: 5},
+		ToolCalls: []llm.ToolCall{{
+			ID:       "call_nonexistent",
+			Function: llm.ToolCallFunction{Name: "nonexistent__nope", Arguments: "{}"},
+		}},
+	}}}
 }
 
 // newFinalRoundTestOrchestrator 构造带空 registry 的测试 orchestrator
@@ -48,9 +54,9 @@ func TestRunReActLoop_FinalRound_ForcesSummary(t *testing.T) {
 	summary := `{"reply":"已完成查询，未完成部分是 X，建议下一步做 Y","tool_calls":[]}`
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{
-			toolCallJSONResponse(),                                // 轮 1：调工具
-			toolCallJSONResponse(),                                // 轮 2：调工具
-			toolCallJSONResponse(),                                // 轮 3：调工具
+			nativeToolCallResponse(),                              // 轮 1：调工具
+			nativeToolCallResponse(),                              // 轮 2：调工具
+			nativeToolCallResponse(),                              // 轮 3：调工具
 			{events: append(makeTextDeltas(summary), makeDone())}, // 收尾轮：总结
 		},
 	}
@@ -153,9 +159,9 @@ func TestRunReActLoop_FinalRound_StateMsgsCarryInstruction(t *testing.T) {
 	var captured *llm.ChatRequest
 	client := &capturingLLMClient{
 		responses: []mockLLMResponse{
-			toolCallJSONResponse(),
-			toolCallJSONResponse(),
-			toolCallJSONResponse(),
+			nativeToolCallResponse(),
+			nativeToolCallResponse(),
+			nativeToolCallResponse(),
 			{events: append(makeTextDeltas(`{"reply":"收尾总结"}`), makeDone())},
 		},
 		capture: func(req *llm.ChatRequest) { captured = req },
@@ -190,7 +196,6 @@ func TestMkLlmChatReq_FinalRound_NoTools(t *testing.T) {
 	o := &Orchestrator{
 		contextFormatter: &mockFormatter{},
 		registry:         reg,
-		useNativeFC:      true,
 	}
 	req := &RunRequest{UserID: "u1"}
 	msgs := []llm.Message{{Role: "user", Content: "hi"}}
@@ -215,7 +220,6 @@ func TestMkLlmChatReq_SubAgentOnlyClientTools_NotExposed(t *testing.T) {
 	o := &Orchestrator{
 		contextFormatter:        &mockFormatter{},
 		registry:                reg,
-		useNativeFC:             true,
 		subAgentOnlyClientTools: []string{"browser", "fs"},
 	}
 	msgs := []llm.Message{{Role: "user", Content: "hi"}}
@@ -259,7 +263,6 @@ func TestMkLlmChatReq_PlanMode_OnlyReadOnlyTools(t *testing.T) {
 	o := &Orchestrator{
 		contextFormatter: &mockFormatter{},
 		registry:         reg,
-		useNativeFC:      true,
 	}
 	msgs := []llm.Message{{Role: "user", Content: "hi"}}
 	clientTools := []ClientTool{{ServerName: "browser", Name: "navigate"}}

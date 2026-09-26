@@ -17,6 +17,7 @@ import (
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
+	"xhan-helper/internal/tool"
 )
 
 func TestBuildRecentUserPackets_OrderAndTruncate(t *testing.T) {
@@ -75,84 +76,6 @@ func TestReduceRecentRounds(t *testing.T) {
 		if got[i].ID != id {
 			t.Errorf("第 %d 条应 %s, got %s", i, id, got[i].ID)
 		}
-	}
-}
-
-func TestHandleOneRoundResponse_ParseErrorTriggersRetry(t *testing.T) {
-	// 非法 JSON → 应触发重试，不标记 done
-	o := &Orchestrator{
-		contextFormatter: &mockFormatter{}, msgRepo: nil}
-
-	ctx := context.Background()
-	events := make(chan *llm.StreamEvent, 16)
-	msg := llm.Message{
-		Role:    "assistant",
-		Content: "这不是合法的 JSON {{{ broken",
-	}
-
-	state := &reactState{}
-	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, "", (*ctxflow.RetrieveResult)(nil), state)
-
-	if done {
-		t.Error("expected done=false for parse error (should retry)")
-	}
-	if state.lastAssistantMsgID != "" {
-		t.Errorf("expected empty msgID, got '%s'", state.lastAssistantMsgID)
-	}
-
-	// 应追加一条系统重试指令
-	if len(state.msgs) != 1 {
-		t.Fatalf("expected 1 retry message appended, got %d", len(state.msgs))
-	}
-	retryMsg := state.msgs[0]
-	if retryMsg.Role != "user" {
-		t.Errorf("expected retry role='user', got '%s'", retryMsg.Role)
-	}
-	if !strings.Contains(retryMsg.Content, "[系统]") {
-		t.Errorf("expected [系统] in retry, got '%s'", retryMsg.Content)
-	}
-	if !strings.Contains(retryMsg.Content, "JSON") {
-		t.Errorf("expected JSON mention in retry, got '%s'", retryMsg.Content)
-	}
-
-	// 应有 status 事件通知前端
-	close(events)
-	var statusEvents []*llm.StreamEvent
-	for evt := range events {
-		if evt.Type == "status" {
-			statusEvents = append(statusEvents, evt)
-		}
-	}
-	if len(statusEvents) == 0 {
-		t.Error("expected status event about retry")
-	} else if !strings.Contains(statusEvents[0].Content, "重试") {
-		t.Errorf("expected 重试 in status, got '%s'", statusEvents[0].Content)
-	}
-}
-
-func TestHandleOneRoundResponse_InvalidJSON_UnescapedQuotes(t *testing.T) {
-	// LLM 常见错误：JSON 字符串里放了未转义的双引号，应触发重试
-	o := &Orchestrator{
-		contextFormatter: &mockFormatter{}, msgRepo: nil}
-
-	ctx := context.Background()
-	events := make(chan *llm.StreamEvent, 16)
-	msg := llm.Message{
-		Role:    "assistant",
-		Content: `{"reply":"他说"太断子绝孙"是错的","tool_calls":[]}`,
-	}
-
-	state := &reactState{}
-	done := o.handleOneRoundResponse(ctx, events, msg, &RunRequest{ConversationID: "test-conv-1", UserID: "test-user-1"}, "", (*ctxflow.RetrieveResult)(nil), state)
-
-	if done {
-		t.Error("expected done=false for unescaped quotes (should retry)")
-	}
-	if len(state.msgs) != 1 {
-		t.Fatalf("expected 1 retry message, got %d", len(state.msgs))
-	}
-	if !strings.Contains(state.msgs[0].Content, "[系统]") {
-		t.Error("expected retry instruction with [系统]")
 	}
 }
 
@@ -306,61 +229,29 @@ func TestFinalizeRound_NoThoughtDoneWithoutReasoning(t *testing.T) {
 	}
 }
 
-func TestFinalizeRound_CleanTextExtraction(t *testing.T) {
+func TestFinalizeRound_DeferredTextFlushedOnDone(t *testing.T) {
+	// verify 轮文本被暂缓推送，收尾时按整段补推（假流式），拼接后应与原文一致
 	o := &Orchestrator{
 		contextFormatter: &mockFormatter{}, msgRepo: nil}
 	events := make(chan *llm.StreamEvent, 16)
-	state := &reactState{}
+	state := &reactState{nativeFCTextDeferred: true}
 
+	content := "你好，世界"
 	se := &llm.StreamEvent{Type: "done"}
 	_ = o.finalizeRound(context.Background(), events, se,
-		`{"reply":"你好，世界"}`, "",
+		content, "",
 		&RunRequest{ConversationID: "cv", UserID: "u1"}, "", (*ctxflow.RetrieveResult)(nil), state,
 	)
 
 	close(events)
-	var textDeltas []string
+	var b strings.Builder
 	for evt := range events {
 		if evt.Type == "text_delta" {
-			textDeltas = append(textDeltas, evt.Content)
+			b.WriteString(evt.Content)
 		}
 	}
-	// 5 个 rune，chunkSize=3 → 2 个 chunk: "你好，" "世界"
-	if len(textDeltas) != 2 {
-		t.Fatalf("expected 2 text_delta, got %d: %v", len(textDeltas), textDeltas)
-	}
-	if textDeltas[0] != "你好，" {
-		t.Errorf("expected chunk 0 '你好，', got '%s'", textDeltas[0])
-	}
-	if textDeltas[1] != "世界" {
-		t.Errorf("expected chunk 1 '世界', got '%s'", textDeltas[1])
-	}
-}
-
-func TestFinalizeRound_ReturnsFalseOnParseError(t *testing.T) {
-	o := &Orchestrator{
-		contextFormatter: &mockFormatter{}, msgRepo: nil}
-	events := make(chan *llm.StreamEvent, 16)
-	state := &reactState{}
-
-	se := &llm.StreamEvent{Type: "done"}
-	done := o.finalizeRound(context.Background(), events, se,
-		"这不是合法的 JSON {{{ broken", "",
-		&RunRequest{ConversationID: "cv", UserID: "u1"}, "", (*ctxflow.RetrieveResult)(nil), state,
-	)
-
-	if done {
-		t.Error("expected done=false on parse error (should retry)")
-	}
-	close(events)
-	var hasStatus bool
-	for evt := range events {
-		if evt.Type == "status" {
-			hasStatus = true
-		}
-	}
-	if !hasStatus {
-		t.Error("expected status event about retry on parse error")
+	if b.String() != content {
+		t.Errorf("补推文本应为 %q, got %q", content, b.String())
 	}
 }
 
@@ -610,6 +501,7 @@ func TestMkLlmChatReq_ParameterResolution(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			o := &Orchestrator{
 				contextFormatter:   &mockFormatter{},
+				registry:           tool.NewRegistry(),
 				proClient:          tt.proClient,
 				defaultTemperature: tt.defaultTemp,
 				defaultMaxTokens:   tt.defaultMax,
@@ -653,6 +545,7 @@ func TestMkLlmChatReq_ParameterResolution(t *testing.T) {
 func TestMkLlmChatReq_PassThroughFields(t *testing.T) {
 	o := &Orchestrator{
 		contextFormatter:   &mockFormatter{},
+		registry:           tool.NewRegistry(),
 		defaultTemperature: ptr(0.5),
 		defaultMaxTokens:   ptr(2048),
 	}
@@ -666,6 +559,7 @@ func TestMkLlmChatReq_PassThroughFields(t *testing.T) {
 		UserID:      "user-42",
 		Temperature: ptr(0.9),
 		MaxTokens:   ptr(4096),
+		Mode:        model.ConvModeStrict, // strict 档不下发任何工具，便于验证字段透传
 	}
 
 	cr := o.mkLlmChatReq(req, result, &reactState{msgs: msgs})
@@ -690,7 +584,9 @@ func TestMkLlmChatReq_PassThroughFields(t *testing.T) {
 func TestMkLlmChatReq_DefaultsNilWhenNotSet(t *testing.T) {
 	// Orchestrator without defaults → Temperature/MaxTokens should stay nil
 	o := &Orchestrator{
-		contextFormatter: &mockFormatter{}}
+		contextFormatter: &mockFormatter{},
+		registry:         tool.NewRegistry(),
+	}
 	req := &RunRequest{
 		UserID:      "u1",
 		Temperature: nil,
@@ -727,6 +623,7 @@ func (m *recordingLLMClient) Chat(ctx context.Context, req *llm.ChatRequest) (<-
 func newTestOrch() *Orchestrator {
 	return &Orchestrator{
 		contextFormatter:   &mockFormatter{},
+		registry:           tool.NewRegistry(),
 		msgRepo:            nil,
 		defaultTemperature: ptr(0.5),
 		defaultMaxTokens:   ptr(2048),
@@ -849,12 +746,12 @@ func TestRunOneRound_DoneTextOnly(t *testing.T) {
 	}
 	close(events)
 	text := collectTextDeltasFromChan(events)
-	if text != "hello world" {
-		t.Errorf("expected clean text 'hello world', got '%s'", text)
+	if text != `{"reply":"hello world"}` {
+		t.Errorf("主聊天原文透传，应为完整文本, got '%s'", text)
 	}
 }
 
-func TestRunOneRound_DoneParseErrorRetry(t *testing.T) {
+func TestRunOneRound_DoneTextWithBraces_NoRetry(t *testing.T) {
 	o := newTestOrch()
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
@@ -869,26 +766,21 @@ func TestRunOneRound_DoneParseErrorRetry(t *testing.T) {
 
 	done := o.runOneRound(ctx, events, client, req, "", (*ctxflow.RetrieveResult)(nil), state, 0)
 
-	if done {
-		t.Error("expected done=false on parse error (should retry)")
+	if !done {
+		t.Error("含大括号的普通文本应正常结束（不再有 JSON 重试契约）")
 	}
 	close(events)
-	// 应有 status 事件通知前端重试
 	var hasStatus bool
 	for evt := range events {
 		if evt.Type == "status" {
 			hasStatus = true
 		}
 	}
-	if !hasStatus {
-		t.Error("expected status event about retry")
+	if hasStatus {
+		t.Error("不应有重试 status 事件")
 	}
-	// state.msgs 应被追加了重试消息
-	if len(state.msgs) != 1 {
-		t.Fatalf("expected 1 retry message in state.msgs, got %d", len(state.msgs))
-	}
-	if !strings.Contains(state.msgs[0].Content, "[系统]") {
-		t.Errorf("expected [系统] retry instruction, got '%s'", state.msgs[0].Content)
+	if len(state.msgs) != 0 {
+		t.Errorf("不应追加重试消息, got %d", len(state.msgs))
 	}
 }
 

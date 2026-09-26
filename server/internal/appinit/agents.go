@@ -212,7 +212,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	pb := promptbuilder.NewPromptBuilder(
 		agent.BaseSystemPrompt,
 		tools.Registry,
-		repos.Prompt, cfg.LLM.UseNativeFC,
+		repos.Prompt,
 		cfg.SubAgent.PromptUserContext(),
 	)
 
@@ -259,7 +259,6 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		VerifyEnabled:             cfg.LLM.Verification.Enabled,
 		VerifyMaxRetries:          cfg.LLM.Verification.MaxRetries,
 		VerifyModel:               cfg.LLM.Verification.Model,
-		UseNativeFC:               cfg.LLM.UseNativeFC,
 		ToolExcludes:              cfg.Chat.ToolExcludes,
 		SubAgentOnlyClientTools:   cfg.Chat.SubAgentOnlyClientTools,
 		DebugPersistJSON:          cfg.LLM.DebugPersist(),
@@ -325,7 +324,6 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MaxIterations:      cfg.LLM.MaxIterations,
 		MaxTokens:          cfg.LLM.DefaultMaxTokens,
 		ToolMaxConcurrency: cfg.LLM.ToolMaxConcurrency,
-		UseNativeFC:        cfg.LLM.UseNativeFC,
 	})
 
 	return &AgentBundle{

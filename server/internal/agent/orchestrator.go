@@ -16,7 +16,6 @@ import (
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/config"
-	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
@@ -106,8 +105,7 @@ type reactState struct {
 	lastAssistantMsgID     string
 	userMsgID              string
 	verifyRetries          int  // 本轮对话已重检验次数
-	nativeFCTextDeferred   bool // 原生 FC 下文本因 verify 暂缓推送
-	jsonBuffered           bool // 原生 FC 下文本首字符为 { 暂缓推送，防 JSON 泄露
+	nativeFCTextDeferred   bool // 文本因 verify 暂缓推送（检验通过后再补推）
 	clientToolsUnavailable bool // 客户端断连/超时后置位，本次 Run 内后续客户端工具调用快速失败
 	finalRound             bool // 达到 max_iterations 后的收尾轮：禁用工具，强制输出总结
 	maxPromptTokens        int  // 本次 Run 内主循环各轮 prompt_tokens 最大值（即当前上下文大小）
@@ -118,7 +116,8 @@ type reactState struct {
 	expMutex     sync.Mutex // 并发工具调用写 exposedTools 用
 }
 
-// LLMResponse — LLM 返回的结构化 JSON（文本解析用）
+// LLMResponse — prompt engineering 文本回复的结构化形态（反思链路 ReactLoop 解析用）。
+// 主聊天走原生 function calling，不使用此类型。
 type LLMResponse struct {
 	Reply     string          `json:"reply"`
 	ToolCalls []tool.ToolCall `json:"tool_calls"`
@@ -168,8 +167,7 @@ type Orchestrator struct {
 	onChatEnd               func(userID, convID, userMsgID string)
 	verifyEnabled           bool
 	verifyMaxRetries        int
-	verifyModel             string // "flash" | "pro"
-	useNativeFC             bool
+	verifyModel             string   // "flash" | "pro"
 	toolExcludes            []string // 对 LLM 隐藏的工具名（控 token 成本）
 	subAgentOnlyClientTools []string // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏）
 	debugPersistJSON        bool
@@ -223,7 +221,6 @@ type OrchestratorConfig struct {
 	VerifyEnabled             bool
 	VerifyMaxRetries          int
 	VerifyModel               string            // "flash" | "pro"，默认 flash
-	UseNativeFC               bool              // 是否使用原生 function calling
 	ToolExcludes              []string          // 对 LLM 隐藏的工具名列表（控 token 成本）
 	SubAgentOnlyClientTools   []string          // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏），默认 ["browser","fs","shell"]
 	DebugPersistJSON          bool              // 是否持久化完整 LLM 请求 JSON（异步限频写入，配 debug_json 控制频率与保留）
@@ -298,7 +295,6 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		verifyEnabled:             cfg.VerifyEnabled,
 		verifyMaxRetries:          cfg.VerifyMaxRetries,
 		verifyModel:               cfg.VerifyModel,
-		useNativeFC:               cfg.UseNativeFC,
 		toolExcludes:              cfg.ToolExcludes,
 		subAgentOnlyClientTools:   cfg.SubAgentOnlyClientTools,
 		debugPersistJSON:          cfg.DebugPersistJSON,
@@ -359,11 +355,10 @@ func (o *Orchestrator) Run(ctx context.Context, req *RunRequest) (<-chan *llm.St
 	log.Printf("[orch] run start: model=%s, msgs=%d, client_tools=%d", o.pickClient(req).ModelName(), len(req.Messages), len(req.ClientTools))
 
 	// 1. 静态 system prompt + 稳定上下文（画像+摘要，会话内字节稳定）
-	// 客户端工具目录：native FC 且非 plan 模式时生成（客户端工具经 expose_tools 渐进暴露，
+	// 客户端工具目录：非 plan 模式时生成（客户端工具经 expose_tools 渐进暴露，
 	// 不再无条件下发；目录并入「工具使用」段，是 LLM 发现客户端工具的唯一渠道）。
-	// prompt-eng 模式本就不支持客户端工具，目录留空。
 	clientCatalog := ""
-	if o.useNativeFC && !model.ModeRestrictsTools(req.Mode) {
+	if !model.ModeRestrictsTools(req.Mode) {
 		clientCatalog = clientToolCatalog(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry)
 	}
 	stableXML := o.buildStableContextXML(ctx, req)
@@ -567,7 +562,7 @@ func exposureWindowKey(req *RunRequest, userMsg *model.Message) string {
 // 兼容旧格式：裸组名条目（无 "."）展开为该组全部函数。
 func (o *Orchestrator) loadExposure(ctx context.Context, req *RunRequest, userMsg *model.Message, state *reactState) {
 	state.exposedTools = map[string]bool{}
-	if !o.useNativeFC || model.ModeRestrictsTools(req.Mode) {
+	if model.ModeRestrictsTools(req.Mode) {
 		return
 	}
 	extra, err := o.convRepo.GetExtra(ctx, req.ConversationID)
@@ -599,7 +594,7 @@ func (o *Orchestrator) loadExposure(ctx context.Context, req *RunRequest, userMs
 // （used_tool_ids / subagent_type 等）。空集不写（避免无意义 DB 写）。
 // 持久化失败降级为日志（下次 run 重新暴露，无副作用）。
 func (o *Orchestrator) persistExposure(ctx context.Context, req *RunRequest, userMsg *model.Message, state *reactState) {
-	if !o.useNativeFC || model.ModeRestrictsTools(req.Mode) || len(state.exposedTools) == 0 {
+	if model.ModeRestrictsTools(req.Mode) || len(state.exposedTools) == 0 {
 		return
 	}
 	state.expMutex.Lock()
@@ -1031,11 +1026,8 @@ func (o *Orchestrator) runOneRound(
 		switch se.Type {
 		case "text_delta":
 			streamContent.WriteString(se.Content)
-			// 首字符为 { 可能是 JSON，暂缓推送防止裸 JSON 泄露到前端
-			if o.useNativeFC && !state.jsonBuffered && len(streamContent.String()) <= 10 && strings.HasPrefix(strings.TrimSpace(streamContent.String()), "{") {
-				state.jsonBuffered = true
-			}
-			if o.useNativeFC && !state.nativeFCTextDeferred && !state.jsonBuffered {
+			// verify 轮暂缓推送，待检验通过后再补推，避免把可能被推翻的草稿实时露给用户
+			if !state.nativeFCTextDeferred {
 				o.sendEvent(events, se)
 			}
 		case "thought_delta":
@@ -1077,9 +1069,9 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state 
 	// strict：不下发任何工具；plan：仅注入只读工具定义（写操作执行级仍被拦截）；work：渐进式暴露。
 	if req.Mode == model.ConvModeStrict {
 		// 保持 tools 为 nil —— 连 expose_tools 都不给，LLM 无任何函数可调
-	} else if !state.finalRound && o.useNativeFC && req.Mode == model.ConvModePlan {
+	} else if !state.finalRound && req.Mode == model.ConvModePlan {
 		tools = filterToolDefs(o.registry.ReadOnlyToolDefinitions(), o.toolExcludes)
-	} else if !state.finalRound && o.useNativeFC {
+	} else if !state.finalRound {
 		// 渐进式暴露：常驻 expose_tools + 已暴露函数（函数粒度）的完整定义 + 客户端工具。
 		state.expMutex.Lock()
 		exposed := make([]string, 0, len(state.exposedTools))
@@ -1093,8 +1085,6 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state 
 		tools = append(tools, filterExposedFuncDefs(exposedDefs, exposed)...)
 		tools = append(tools, filterExposedFuncDefs(buildClientToolDefs(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry), exposed)...)
 		tools = filterToolDefs(tools, o.toolExcludes)
-	} else if len(req.ClientTools) > 0 && !state.finalRound {
-		log.Printf("[orch] client_tools ignored: use_native_fc=false")
 	}
 	return &llm.ChatRequest{
 		SystemPrompt: systemPrompt,
@@ -1255,12 +1245,8 @@ func (o *Orchestrator) finalizeRound(
 
 	done := o.handleOneRoundResponse(ctx, events, msg, req, systemPrompt, retrieveResult, state)
 	if done {
-		if !o.useNativeFC {
-			cleanText := extractCleanText(streamContent)
-			if cleanText != "" {
-				o.streamTextChunks(ctx, events, cleanText)
-			}
-		} else if (state.nativeFCTextDeferred || state.jsonBuffered) && streamContent != "" {
+		// verify 轮文本曾被暂缓推送，收尾时按整段补推（假流式），与实时聊天观感一致
+		if state.nativeFCTextDeferred && streamContent != "" {
 			o.streamTextChunks(ctx, events, streamContent)
 		}
 		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "", idsByTypeFromResult(retrieveResult), state.maxPromptTokens, o.contextWindowFor(req.DeepMode && o.proClient != nil))
@@ -1283,8 +1269,12 @@ func newAssistantMessage(streamContent string, streamReasoning string, se *llm.S
 
 // —— 单轮响应处理 ——
 
-// handleOneRoundResponse 解析 LLM 响应文本中的 JSON，更新 state 中的消息和工具调用状态。
+// handleOneRoundResponse 处理一轮响应，更新 state 中的消息和工具调用状态。
 // 返回 true 表示本轮对话结束。
+//
+// 主聊天只走原生 function calling：工具调用已由 API 在 done 事件中解析进 msg.ToolCalls，
+// 文本一律视为 markdown 原文。绝不再对文本做「Flash JSON 信封」解析——那会把正文里
+// 内联的 JSON（代码块、JSON-RPC 示例等）当成信封，从第一个 '{' 起截断后落库。
 func (o *Orchestrator) handleOneRoundResponse(
 	ctx context.Context,
 	events chan<- *llm.StreamEvent,
@@ -1294,8 +1284,8 @@ func (o *Orchestrator) handleOneRoundResponse(
 	retrieveResult *ctxflow.RetrieveResult,
 	state *reactState,
 ) bool {
-	// 原生 FC 路径：tool_calls 已由 API 在 done 事件中解析好
-	if o.useNativeFC && len(msg.ToolCalls) > 0 {
+	// 有工具调用：保存 assistant（含 tool_calls）→ 并发执行 → 收集结果，继续 ReAct 循环
+	if len(msg.ToolCalls) > 0 {
 		internalTCs := nativeToolCallsToInternal(msg.ToolCalls)
 		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
 		state.msgs = append(state.msgs, msg)
@@ -1305,64 +1295,12 @@ func (o *Orchestrator) handleOneRoundResponse(
 		return false
 	}
 
-	// 原生 FC 路径：无工具调用，纯文本回复（文本已在 runOneRound 中实时推送）
-	if o.useNativeFC && len(msg.ToolCalls) == 0 {
-		// 兜底：DeepSeek 偶发不走原生 FC，仍在 text 中输出 JSON
-		if parsed, parseErr := ParseLLMResponse(msg.Content); parseErr == nil && parsed != nil {
-			if len(parsed.ToolCalls) > 0 {
-				return o.executePromptEngTools(ctx, events, msg, req, retrieveResult, state, parsed)
-			}
-			// 纯 JSON（有 reply 无 tool_calls）：提取纯文本
-			msg.Content = parsed.Reply
-			if state.jsonBuffered {
-				o.sendEvent(events, &llm.StreamEvent{Type: "text_delta", Content: parsed.Reply})
-				state.jsonBuffered = false
-			}
-		}
-		if o.shouldVerify(req, state) {
-			return o.verifyAndMaybeRetry(ctx, events, msg, req, systemPrompt, retrieveResult, state)
-		}
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
-		return true
+	// 无工具调用：纯文本回复（文本已在 runOneRound 中实时/收尾推送）
+	if o.shouldVerify(req, state) {
+		return o.verifyAndMaybeRetry(ctx, events, msg, req, systemPrompt, retrieveResult, state)
 	}
-
-	parsed, parseErr := ParseLLMResponse(msg.Content)
-
-	if parseErr != nil {
-		log.Printf("[orch] round parse error: %v, saving raw and retrying", parseErr)
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, nil, req.HiddenRound)
-		o.sendEvent(events, &llm.StreamEvent{Type: "status", Content: "响应格式异常，正在重试…"})
-		state.msgs = append(state.msgs, llm.Message{
-			Role:    "user",
-			Content: "[系统] 你上一轮的回复不是有效的 JSON 格式。请严格按照 {\"reply\":\"文字回复\",\"tool_calls\":[{\"tool\":\"工具名\",\"function\":\"函数名\",\"args\":{...}}]} 格式重新生成。",
-		})
-		return false
-	}
-
-	if parsed == nil {
-		// 纯文本（无 JSON），system prompt 已要求 JSON 但容错接受
-		log.Printf("[orch] round pure text (no JSON), accepting gracefully")
-		if o.shouldVerify(req, state) {
-			return o.verifyAndMaybeRetry(ctx, events, msg, req, systemPrompt, retrieveResult, state)
-		}
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
-		return true
-	}
-
-	log.Printf("[orch] round embedded tool_calls=%d: %s",
-		len(parsed.ToolCalls), tool.ToolCallNames(parsed.ToolCalls))
-
-	// 无工具调用 → 纯文本回复
-	if len(parsed.ToolCalls) == 0 {
-		log.Printf("[orch] round text-only JSON reply, len=%d", len(msg.Content))
-		if o.shouldVerify(req, state) {
-			return o.verifyAndMaybeRetry(ctx, events, msg, req, systemPrompt, retrieveResult, state)
-		}
-		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
-		return true
-	}
-
-	return o.executePromptEngTools(ctx, events, msg, req, retrieveResult, state, parsed)
+	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
+	return true
 }
 
 // verifyResult — Flash 检验返回的结构
@@ -1487,33 +1425,6 @@ func (o *Orchestrator) buildVerifyPrompt(msg llm.Message) string {
 	return "【模型回复草稿】\n" + msg.Content
 }
 
-// executePromptEngTools 统一处理 prompt engineering 工具调用路径：
-// 保存 assistant 消息 → 注入排除 ID → 并发执行 → 收集结果。
-// 返回 false（继续 ReAct 循环）。
-func (o *Orchestrator) executePromptEngTools(
-	ctx context.Context,
-	events chan<- *llm.StreamEvent,
-	msg llm.Message,
-	req *RunRequest,
-	retrieveResult *ctxflow.RetrieveResult,
-	state *reactState,
-	parsed *LLMResponse,
-) bool {
-	msg.ToolCalls = nil
-	state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
-	state.msgs = append(state.msgs, llm.Message{Role: "assistant", Content: msg.Content})
-	state.allToolCalls = append(state.allToolCalls, parsed.ToolCalls...)
-	// 客户端工具只在原生 FC 模式下发给 LLM（mkLlmChatReq），
-	// use_native_fc=false 时不参与分发，避免 LLM 幻觉出未告知的工具名被路由到客户端
-	var clientIdx map[string]bool
-	if o.useNativeFC {
-		clientIdx = clientToolIndex(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry)
-	}
-	toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, parsed.ToolCalls, clientIdx, state, req.Mode, clientToolReadOnlyIndex(req.ClientTools), toToolClientInfos(req.ClientTools))
-	state.msgs = o.collectToolResults(ctx, parsed, toolCallResults, events, req.ConversationID, req.UserID, state.msgs, req.HiddenRound)
-	return false
-}
-
 func (o *Orchestrator) buildVerifyFeedback(vr verifyResult) string {
 	var parts []string
 	parts = append(parts, "[系统] 内部检验发现以下问题：")
@@ -1621,12 +1532,16 @@ func (o *Orchestrator) saveAssistantMsgWithFlags(ctx context.Context, convID, us
 		ec := msg.EncryptedContent
 		modelMsg.EncryptedContent = &ec
 	}
-	if tcJSON := extractToolCallsJSON(msg.Content); tcJSON != nil {
-		modelMsg.ToolCallsJSON = tcJSON
-	} else if len(msg.ToolCalls) > 0 {
-		b, _ := json.Marshal(msg.ToolCalls)
-		s := string(b)
-		modelMsg.ToolCallsJSON = &s
+	// 主聊天只走原生 FC，工具调用直接来自 msg.ToolCalls（done 事件已解析）。
+	// 不再回头从 Content 里抽 tool_calls——那会把正文内联 JSON 误当信封。
+	if len(msg.ToolCalls) > 0 {
+		b, err := json.Marshal(msg.ToolCalls)
+		if err != nil {
+			log.Printf("[orch] marshal tool_calls error: %v", err)
+		} else {
+			s := string(b)
+			modelMsg.ToolCallsJSON = &s
+		}
 	}
 	if err := o.msgRepo.Create(ctx, modelMsg); err != nil {
 		log.Printf("[orch] save assistant msg error: %v", err)
@@ -1659,24 +1574,6 @@ func idsByTypeFromResult(r *ctxflow.RetrieveResult) map[string][]string {
 		}
 	}
 	return ids
-}
-
-func (o *Orchestrator) collectToolResults(ctx context.Context, parsed *LLMResponse, toolCallResults []toolExecResult, events chan<- *llm.StreamEvent, convID string, userID string, msgs []llm.Message, hidden bool) []llm.Message {
-	for i := range parsed.ToolCalls {
-		res := toolCallResults[i].result
-		resJSON, err := json.Marshal(res)
-		if err != nil {
-			log.Printf("[orch] tool result marshal error: %v", err)
-			resJSON = []byte(fmt.Sprintf(`{"success":false,"error":"marshal failed: %s"}`, res.Error))
-		}
-		o.sendEvent(events, &llm.StreamEvent{Type: "tool_result", Content: string(resJSON)})
-		o.saveToolMsg(ctx, convID, userID, idgen.Next(), string(resJSON), hidden)
-		msgs = append(msgs, llm.Message{
-			Role:    "user",
-			Content: string(resJSON),
-		})
-	}
-	return msgs
 }
 
 // collectToolResultsNative 原生 FC 路径：工具结果以 role=tool 保存，关联真实 tool_call_id。
@@ -2304,6 +2201,9 @@ func splitToolFuncName(name string) (string, string) {
 	}
 	return name[:idx], name[idx+2:]
 }
+
+// ParseLLMResponse 解析 prompt engineering 格式的文本回复（「文字前缀 + {reply,tool_calls} 信封」）。
+// 仅供反思子系统 ReactLoop 使用；主聊天走原生 function calling，不再调用本函数。
 func ParseLLMResponse(text string) (*LLMResponse, error) {
 	var resp LLMResponse
 	prefix, err := ParseFlashJSON(text, &resp)
@@ -2327,56 +2227,4 @@ func ParseLLMResponse(text string) (*LLMResponse, error) {
 		resp.ToolCalls[i].Function = strings.TrimPrefix(tc.Function, "_")
 	}
 	return &resp, nil
-}
-
-// extractToolCallsJSON 从 Flash JSON Content 中提取 tool_calls 并序列化为 JSON。
-// 没有 tool_calls 或解析失败返回 nil。
-func extractToolCallsJSON(raw string) *string {
-	var parsed LLMResponse
-	if _, err := ParseFlashJSON(raw, &parsed); err != nil {
-		return nil
-	}
-	if len(parsed.ToolCalls) == 0 {
-		return nil
-	}
-	b, err := json.Marshal(parsed.ToolCalls)
-	if err != nil {
-		return nil
-	}
-	s := string(b)
-	return &s
-}
-
-// extractCleanText 提取 JSON 回复中的可见文本（供流式展示）
-func extractCleanText(raw string) string {
-	parsed, err := ParseLLMResponse(raw)
-	if err != nil {
-		// parse 失败（非法 JSON / 前缀违规）→ 用 extractFlashReply 兜底，
-		// 保证流式时有内容展示（handleOneRoundResponse 仍会触发重试）
-		return extractFlashReply(raw)
-	}
-	if parsed == nil {
-		return raw // 纯文本，容错接受
-	}
-	return parsed.Reply
-}
-
-// extractFlashReply 从 Flash LLM 输出中提取可见文本：prefix + reply。
-// 与 controller/extractFlashReply 逻辑相同，避免循环依赖。
-func extractFlashReply(raw string) string {
-	var parsed struct {
-		Reply string `json:"reply"`
-	}
-	prefix, err := ParseFlashJSON(raw, &parsed)
-	if err != nil {
-		return raw
-	}
-	prefix = strings.TrimSpace(prefix)
-	if prefix != "" && parsed.Reply != "" {
-		return prefix + "\n\n" + parsed.Reply
-	}
-	if parsed.Reply != "" {
-		return parsed.Reply
-	}
-	return raw
 }

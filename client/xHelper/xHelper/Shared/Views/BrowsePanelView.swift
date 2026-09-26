@@ -86,14 +86,11 @@ struct BrowsePanelView: View {
     /// 回收站批量操作二次确认（全部恢复 / 全部删除）。
     @State private var trashBulkAction: TrashBulkAction?
 
-    /// 监控看板前端地址：DEBUG 用 Vite dev server，RELEASE 用同源后端（nginx 已 serve）
+    /// 监控看板前端地址：统一从 `DeviceManager.webBaseURL` 推导——
+    /// 本地模式 = 内嵌 Go 托管的前端（同源 127.0.0.1:<LocalPaths.backendPort>）；非本地 Debug = Vite 5173；
+    /// 线上 Release = helper.xhanx.cn。
     private var dashboardURL: URL? {
-        let suffix = "?t=\(dashboardBust)"
-        #if DEBUG
-        return URL(string: "http://localhost:5173/admin" + suffix)
-        #else
-        return URL(string: baseURL + "/admin" + suffix)
-        #endif
+        URL(string: DeviceManager.webBaseURL + "/admin?t=\(dashboardBust)")
     }
 
     /// 监控看板 WebView 配置：注入 XH_BRIDGE 全局对象（含 token 免登录）+ 外链转发系统浏览器
@@ -120,12 +117,9 @@ struct BrowsePanelView: View {
         )
     }
 
-    /// 导航白名单：仅允许前端所在同源，其余一律静默拦截
+    /// 导航白名单：仅允许前端所在同源（含本地内嵌 127.0.0.1:<LocalPaths.backendPort>），其余一律静默拦截
     private var dashboardAllowedOrigins: [XHWebViewOrigin] {
-        [
-            XHWebViewOrigin(scheme: "http", host: "localhost", port: 5173),      // DEBUG Vite dev server
-            XHWebViewOrigin(scheme: "https", host: "helper.xhanx.cn", port: nil), // RELEASE 远程
-        ]
+        XHWebViewOrigin.frontendOrigins(webBaseURL: DeviceManager.webBaseURL)
     }
 
     /// 根据网格可用宽度自适应列数：宽时 5 列（10 格 2 行），窄时 2 列（10 格 5 行，靠滚动兜住）。
@@ -211,6 +205,12 @@ struct BrowsePanelView: View {
                 Task { await documentVM.loadTrash() }
             } else if old == .trash {
                 Task { await documentVM.load() }
+            }
+        }
+        .onChange(of: memoryVM.showCloudMode) { _, show in
+            // 进词云拉 topic（聚合轻量）；面板首次打开时列表分支由 listPage 的 .task 负责
+            if show {
+                Task { await memoryVM.loadTopics() }
             }
         }
         #if os(macOS)
@@ -417,6 +417,27 @@ struct BrowsePanelView: View {
             }
 
             #if os(macOS)
+            if panel == .memories {
+                Picker("", selection: $memoryVM.showCloudMode) {
+                    Text("列表").tag(false)
+                    Text("词云").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(width: 120)
+
+                if memoryVM.showCloudMode {
+                    Stepper(value: $memoryVM.minTopicCount, in: 1...maxMemoryTopicCount) {
+                        Text("≥ \(memoryVM.minTopicCount) 条")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .controlSize(.small)
+                    .fixedSize()
+                }
+            }
+
             if panel == .documents && documentVM.openDocument == nil && documentVM.mode == .list {
                 Button {
                     documentVM.enterDocumentSelection()
@@ -637,6 +658,11 @@ struct BrowsePanelView: View {
     /// 文档词云的最少篇数上限（标签已按频次降序）
     private var maxTagCount: Int {
         max(1, documentVM.tags.first?.count ?? 1)
+    }
+
+    /// 记忆词云的最少条数上限（topic 已按频次降序；不低过当前值，避免 Stepper 范围越界）
+    private var maxMemoryTopicCount: Int {
+        max(memoryVM.minTopicCount, memoryVM.cloudTopics.first?.count ?? 1)
     }
 
     /// 页头搜索图标：面板展开或有关键词生效时 accent 高亮（对齐账单筛选激活态）。

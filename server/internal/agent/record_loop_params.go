@@ -7,13 +7,15 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"xhan-helper/internal/util"
 )
 
 // ==================== 参数解析 / 字段校验 ====================
 
 // 记忆字段硬限制（不变量，不进配置，见 design.md §6）。
 const (
-	memoryTopicMaxLen   = 20
+	memoryTopicMaxLen   = 5
 	memorySummaryMaxLen = 150
 	memoryFactsMaxCount = 10
 	memoryFactMaxLen    = 100
@@ -69,15 +71,31 @@ func roundScore(s float64) float64 {
 
 func timeNow() time.Time { return time.Now() }
 
+// keepOrReplaceTopic 决定记忆更新时的 topic：入参非空（trim 后）就用入参，否则保留旧值。
+// 见「update 把 topic 抹空」的 bug：模型常只传 summary、省略 topic。
+func keepOrReplaceTopic(incoming, old string) string {
+	if t := strings.TrimSpace(incoming); t != "" {
+		return t
+	}
+	return old
+}
+
 // validateMemoryFields 工具侧字段校验，超限返回错误让模型改写。
 // 不含 facts 条数上限：上限只约束「模型单次传入多少」（见 validateFactCount），
 // 库里最终能存多少由 update 的合并结果决定，不逐出。
 func validateMemoryFields(topic, summary string, facts []string) error {
+	topic = strings.TrimSpace(topic) // 与 validTopic 对齐：先 trim 再校验长度/字符
 	if strings.TrimSpace(summary) == "" {
 		return fmt.Errorf("summary 不能为空")
 	}
+	if topic == "" {
+		return fmt.Errorf("topic 不能为空")
+	}
 	if len([]rune(topic)) > memoryTopicMaxLen {
 		return fmt.Errorf("topic 超长（≤%d 字）", memoryTopicMaxLen)
+	}
+	if !util.IsValidTopicChars(topic) {
+		return fmt.Errorf("topic 只能含中文/英文/数字（不含标点/空格/符号）")
 	}
 	if len([]rune(summary)) > memorySummaryMaxLen {
 		return fmt.Errorf("summary 超长（≤%d 字）", memorySummaryMaxLen)

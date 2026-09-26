@@ -2460,19 +2460,22 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         session.onTitleChange = { [weak self] title in
             self?.rightSidebar?.updateTabTitle(id: tabId, title: title)
         }
-        session.onURLChanged = { [weak self, weak session] url in
+        session.onURLChanged = { [weak self, weak session] url, phase in
             guard let self, let session else { return }
-            self.handleNavigation(session: session, tabId: tabId, url: url)
+            self.handleNavigation(session: session, tabId: tabId, url: url, phase: phase)
         }
     }
 
-    /// 导航变化：更新 tab host（favicon 查询键）+ 提取 favicon + 记录历史
-    private func handleNavigation(session: TabSession, tabId: String, url: URL) {
+    /// 导航变化：更新 tab host + 记录历史；仅页面就绪（didFinish / .finished）后才提取 favicon。
+    /// .provisional 来自 URL KVO，此时 DOM 可能还是上一页，提取会读到上一页的图标并写到新 host（见 docs/bugs/018）。
+    private func handleNavigation(session: TabSession, tabId: String, url: URL, phase: URLChangePhase) {
         let host = url.host ?? ""
         if !host.isEmpty {
             rightSidebar?.updateTabHost(id: tabId, host: host)
         }
-        refreshFavicon(for: tabId)
+        if phase == .finished {
+            refreshFavicon(for: tabId)
+        }
         // 浏览历史：仅 http/https（about:blank 等被 HistoryStore scheme 过滤）
         HistoryStore.shared.record(
             title: session.webView.title ?? host,
@@ -2481,12 +2484,21 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         )
     }
 
-    /// 提取当前页 favicon href 并交给 FaviconStore 缓存（host 维度幂等）
+    /// 提取当前页 favicon href 并交给 FaviconStore 缓存。host / pageURL 在 await 前一起捕获，
+    /// JS 返回后页面若已跳走则作废，避免把上一页图标写到别的 host。
     private func refreshFavicon(for tabId: String) {
-        guard let session = tabs[tabId], let host = session.webView.url?.host else { return }
+        guard let session = tabs[tabId], let pageURL = session.webView.url, let host = pageURL.host else { return }
         Task { @MainActor in
             let href = (await session.jsResult(BrowserToolProvider.faviconJS)).text ?? ""
-            guard !href.isEmpty, let pageURL = session.webView.url else { return }
+            guard !href.isEmpty else {
+                LogBuffer.shared.diag("[Favicon] \(host) 无 <link rel=icon>，跳过")
+                return
+            }
+            guard session.webView.url?.host == host else {
+                let now = session.webView.url?.host ?? "nil"
+                LogBuffer.shared.diag("[Favicon] \(host) 提取期间页面已跳走（现 host=\(now)），丢弃")
+                return
+            }
             FaviconStore.shared.loadFavicon(
                 href: href,
                 pageURL: pageURL,
@@ -2751,6 +2763,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     // MARK: - TabSession
 
+    /// URL 变化的两个语义完全不同的来源：provisional = URL KVO（DOM 可能还是上一页）；
+    /// finished = didFinish（新文档就绪，可安全提取 favicon）。
+    private enum URLChangePhase {
+        case provisional
+        case finished
+    }
+
     private final class TabSession: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         let webView: WKWebView
         var loadContinuation: CheckedContinuation<String?, Never>?
@@ -2771,8 +2790,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         var lastSnapshotItems: [[String: Any]]?
         /// 页面标题变化回调（tab 标题跟随）
         var onTitleChange: ((String) -> Void)?
-        /// URL 变化回调（导航提交/加载完成）：宿主更新 tab host + 提取 favicon
-        var onURLChanged: ((URL) -> Void)?
+        /// URL 变化回调：宿主更新 tab host + 记录历史；phase == .finished（didFinish）时才提取 favicon
+        var onURLChanged: ((URL, URLChangePhase) -> Void)?
         /// 新窗口请求回调（target=_blank / window.open）：由 BrowserToolProvider 决定开新 tab
         var onNewWindowRequest: ((WKWebViewConfiguration, WKNavigationAction) -> WKWebView?)?
         /// 无目标 frame 导航回调（noopener target=_blank 等，走 decidePolicyFor 而非 createWebViewWith）：
@@ -2953,10 +2972,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 self.onTitleChange?(t)
             }
 
-            // URL KVO：导航提交时通知宿主（更新 tab host / 提取 favicon）
+            // URL KVO：导航提交时通知宿主（更新 tab host / 历史）；.provisional，DOM 可能仍是上一页
             urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, change in
                 guard let self, let u = change.newValue as? URL?, let url = u else { return }
-                self.onURLChanged?(url)
+                self.onURLChanged?(url, .provisional)
             }
         }
 
@@ -3260,7 +3279,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             Task { @MainActor in
                 resumeLoad(nil, reason: "didFinish")
-                if let url = webView.url { onURLChanged?(url) }
+                if let url = webView.url { onURLChanged?(url, .finished) }
                 await self.logPerf(url: webView.url)
             }
         }

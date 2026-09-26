@@ -21,8 +21,7 @@ final class HistoryStore: ObservableObject {
     private let maxEntries = 1000
 
     private init() {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("xhanHelper", isDirectory: true)
+        let dir = LocalPaths.dataRoot
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         storeURL = dir.appendingPathComponent("history.json")
         load()

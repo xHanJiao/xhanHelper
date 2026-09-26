@@ -13,3 +13,7 @@ data/
 
 # 本地测试数据（含敏感内容，不提交）
 internal/agent/testdata/
+
+# 内嵌前端产物（构建时拷入，只留占位文件）
+internal/web/dist/*
+!internal/web/dist/.gitkeep

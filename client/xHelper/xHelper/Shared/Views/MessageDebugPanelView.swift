@@ -20,11 +20,7 @@ struct MessageDebugPanelView: View {
     let onClose: () -> Void
 
     private var url: URL? {
-        #if DEBUG
-        URL(string: "http://localhost:5173/admin/message-debug/\(messageID)")
-        #else
-        URL(string: baseURL + "/admin/message-debug/\(messageID)")
-        #endif
+        URL(string: DeviceManager.webBaseURL + "/admin/message-debug/\(messageID)")
     }
 
     private var configuration: WKWebViewConfiguration {
@@ -50,12 +46,9 @@ struct MessageDebugPanelView: View {
         )
     }
 
-    /// 导航白名单：仅允许前端所在同源（与监控看板一致）
+    /// 导航白名单：仅允许前端所在同源（含本地内嵌 127.0.0.1:<LocalPaths.backendPort>，与监控看板一致）
     private var allowedOrigins: [XHWebViewOrigin] {
-        [
-            XHWebViewOrigin(scheme: "http", host: "localhost", port: 5173),      // DEBUG Vite dev server
-            XHWebViewOrigin(scheme: "https", host: "helper.xhanx.cn", port: nil), // RELEASE 远程
-        ]
+        XHWebViewOrigin.frontendOrigins(webBaseURL: DeviceManager.webBaseURL)
     }
 
     var body: some View {

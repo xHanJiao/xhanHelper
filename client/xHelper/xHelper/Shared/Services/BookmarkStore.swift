@@ -26,8 +26,7 @@ final class BookmarkStore: ObservableObject {
     private let maxBookmarks = 500
 
     private init() {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("xhanHelper", isDirectory: true)
+        let dir = LocalPaths.dataRoot
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         storeURL = dir.appendingPathComponent("bookmarks.json")
         load()

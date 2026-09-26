@@ -17,12 +17,23 @@ actor LocalToolResultStore {
         let payload: Data
     }
 
+    /// 数据根目录名（dev/prod 分环境）。**为什么在这里又一份**：本文件属于 SwiftPM 的
+    /// LocalArtifactsCore target，不能再引 `LocalPaths`（跨 target 重复文件）。
+    /// app 启动时 `LocalBackendManager` 会校验三者一致（不符 `fatalError`）。
+    static var dataRootName: String {
+        #if DEBUG
+        "xhanHelper-dev"
+        #else
+        "xhanHelper"
+        #endif
+    }
+
     init(baseURL: URL? = nil) {
         if let baseURL {
             self.baseURL = baseURL
         } else {
             let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            self.baseURL = appSupport.appendingPathComponent("xhanHelper/local_results", isDirectory: true)
+            self.baseURL = appSupport.appendingPathComponent(Self.dataRootName + "/local_results", isDirectory: true)
         }
     }
 

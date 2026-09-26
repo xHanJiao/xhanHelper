@@ -5,13 +5,52 @@ struct MemoryListView: View {
     @State private var selectedMemory: UserMemory?
 
     var body: some View {
+        Group {
+            #if os(macOS)
+            if viewModel.showCloudMode {
+                cloudContent
+            } else {
+                listContent
+            }
+            #else
+            listContent
+            #endif
+        }
+        .task {
+            if viewModel.showCloudMode {
+                await viewModel.loadTopics()
+            } else {
+                await viewModel.load()
+            }
+        }
+        .onChange(of: viewModel.showCloudMode) { _, show in
+            // 进词云拉 topic（聚合轻量），回列表按当前 topic 拉记忆；避免依赖调用方各自记得加载
+            Task { show ? await viewModel.loadTopics() : await viewModel.load() }
+        }
+        .overlay {
+            if let memory = selectedMemory {
+                MemoryDetailOverlay(memory: memory, onClose: { selectedMemory = nil })
+            }
+        }
+    }
+
+    private var listContent: some View {
+        VStack(spacing: 0) {
+            if viewModel.activeTopic != nil {
+                activeTopicBar
+            }
+            listPage
+        }
+    }
+
+    private var listPage: some View {
         PageContainer(
             title: "记忆",
             icon: "brain.head.profile",
             isLoading: viewModel.isLoading,
             errorMessage: viewModel.errorMessage,
             isEmpty: viewModel.memories.isEmpty && !viewModel.isLoading,
-            emptyMessage: "还没有记忆，去聊天页面和 AI 聊聊吧",
+            emptyMessage: viewModel.activeTopic == nil ? "还没有记忆，去聊天页面和 AI 聊聊吧" : "该主题下没有记忆",
             onRetry: { Task { await viewModel.load() } }
         ) {
             CardGridView(
@@ -29,13 +68,55 @@ struct MemoryListView: View {
                 )
             }
         }
-        .task { await viewModel.load() }
-        .overlay {
-            if let memory = selectedMemory {
-                MemoryDetailOverlay(memory: memory, onClose: { selectedMemory = nil })
+    }
+
+    /// 列表模式的 topic 筛选条（点词云里的主题后出现）。
+    private var activeTopicBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "tag.fill")
+                .font(.system(size: 11))
+            Text(viewModel.activeTopic ?? "")
+                .font(.system(size: 12, weight: .medium))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(Color("appAccent").opacity(0.16)))
+            Spacer()
+            Button {
+                viewModel.clearTopic()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 12))
             }
+            .buttonStyle(.plain)
+            .help("清除主题筛选")
+        }
+        .foregroundColor(Color("appAccent"))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color("appAccent").opacity(0.1))
+    }
+
+    #if os(macOS)
+    private var cloudContent: some View {
+        let visible = viewModel.cloudTopics.filter { $0.count >= viewModel.minTopicCount }
+        return PageContainer(
+            title: "主题词云",
+            icon: "brain.head.profile",
+            isLoading: viewModel.isLoading,
+            errorMessage: viewModel.errorMessage,
+            isEmpty: visible.isEmpty && !viewModel.isLoading,
+            emptyMessage: viewModel.cloudTopics.isEmpty ? "还没有主题" : "没有达到 \(viewModel.minTopicCount) 条的主题",
+            onRetry: { Task { await viewModel.loadTopics() } }
+        ) {
+            TagCloudView(tags: visible.map(\.cloudTag), onTap: { topic in
+                viewModel.selectTopic(topic)
+            }, onCmdTap: { topic in
+                // 记忆无多选：⌘ 点击也按单击筛选，避免点了没反应
+                viewModel.selectTopic(topic)
+            }, helpLabel: "条记忆")
         }
     }
+    #endif
 
     private func parseTags(_ tags: String?) -> [TagBadge] {
         guard let tags, !tags.isEmpty else { return [] }

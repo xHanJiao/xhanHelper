@@ -37,8 +37,8 @@ struct MemoryPage: View {
     @ObservedObject var viewModel: MemoryViewModel
 
     var body: some View {
+        // 加载由 MemoryListView 自己的 .task 负责（列表/词云两分支都覆盖）
         MemoryListView(viewModel: viewModel)
-            .task { await viewModel.load() }
     }
 }
 

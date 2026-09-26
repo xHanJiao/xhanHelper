@@ -2,7 +2,10 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +38,7 @@ type Config struct {
 	Share             ShareConfig             `yaml:"share"`
 	Archive           ArchiveConfig           `yaml:"archive"`
 	Storage           StorageConfig           `yaml:"storage"`
+	Backup            BackupConfig            `yaml:"backup"`
 	Snowflake         SnowflakeConfig         `yaml:"snowflake"`
 	MCP               MCPConfig               `yaml:"mcp"`
 	Vector            VectorConfig            `yaml:"vector"`
@@ -44,7 +48,7 @@ type Config struct {
 
 // FactsConfig — 事实系统配置
 type FactsConfig struct {
-	Enabled       bool    `yaml:"enabled"`        // 事实系统总开关
+	Enabled       *bool   `yaml:"enabled"`        // 事实系统总开关；nil=未显式配置，沿用 base
 	TopK          int     `yaml:"top_k"`          // 决策段检索近邻数，默认 5
 	DupeThreshold float64 `yaml:"dupe_threshold"` // 向量 top1 静默跳过阈值，默认 0.95
 	MaxCandidates int     `yaml:"max_candidates"` // 单次抽取候选上限，默认 5
@@ -97,6 +101,15 @@ type StorageConfig struct {
 	ImageCleanupIntervalMin int    `yaml:"image_cleanup_interval_minutes"` // 清理扫描间隔（分钟），<=0 默认 720（12 小时）
 }
 
+// BackupConfig — 本地数据备份配置（仅本地模式生效；云端忽略）
+type BackupConfig struct {
+	Enabled      bool   `yaml:"enabled"`       // 总开关（默认关，由 Swift 设置页经 env 注入）
+	Dest         string `yaml:"dest"`          // 备份目标目录（可为 iCloud Drive 路径）
+	IntervalDays int    `yaml:"interval_days"` // 备份间隔天数，<=0 视为 1
+	DailyKeep    int    `yaml:"daily_keep"`    // 保留最近几次，<=0 视为 3
+	WeeklyKeep   int    `yaml:"weekly_keep"`   // 额外保留几份「≥7 天前」的，<=0 视为 1
+}
+
 // WebFetchConfig — webfetch 工具配置
 type WebFetchConfig struct {
 	Enabled        bool `yaml:"enabled"`         // 是否启用 webfetch（默认 false 关闭；启用后仅 subAgent 可见）
@@ -106,9 +119,29 @@ type WebFetchConfig struct {
 
 // SubAgentConfig — 子 agent（task 工具）配置
 type SubAgentConfig struct {
-	ExploreMaxIterations  int  `yaml:"explore_max_iterations"`  // explore 子 agent 最大轮次（含强制收敛轮），默认 20（防死循环兜底，timeout 才是真实预算）
-	ExploreTimeoutSeconds int  `yaml:"explore_timeout_seconds"` // explore 子 agent 执行超时秒数，默认 600
-	UserContextEnabled    bool `yaml:"user_context_enabled"`    // 是否向主 LLM 注入 user_context 触发规则（纯 prompt 引导的保险丝），默认 false
+	ExploreMaxIterations  int   `yaml:"explore_max_iterations"`  // explore 子 agent 最大轮次（含强制收敛轮），默认 20（防死循环兜底，timeout 才是真实预算）
+	ExploreTimeoutSeconds int   `yaml:"explore_timeout_seconds"` // explore 子 agent 执行超时秒数，默认 600
+	UserContextEnabled    *bool `yaml:"user_context_enabled"`    // 是否向主 LLM 注入 user_context 触发规则（纯 prompt 引导的保险丝）；nil=未显式配置，沿用 base
+}
+
+// AutoExtractMemory 是否自动提取记忆（nil=未显式配置 → false）。
+func (s *ServerConfig) AutoExtractMemory() bool {
+	return s.MemoryAutoExtract != nil && *s.MemoryAutoExtract
+}
+
+// BackgroundTasksDisabled 是否禁用全部后台任务（nil=未显式配置 → false）。
+func (s *ServerConfig) BackgroundTasksDisabled() bool {
+	return s.DisableBackgroundTasks != nil && *s.DisableBackgroundTasks
+}
+
+// IsEnabled 事实系统是否开启（nil=未显式配置 → false）。
+func (f *FactsConfig) IsEnabled() bool {
+	return f.Enabled != nil && *f.Enabled
+}
+
+// PromptUserContext 是否注入 user_context 触发规则（nil=未显式配置 → false）。
+func (s *SubAgentConfig) PromptUserContext() bool {
+	return s.UserContextEnabled != nil && *s.UserContextEnabled
 }
 
 // MCPServerCfg — 单个 MCP server 配置
@@ -139,11 +172,12 @@ type SnowflakeConfig struct {
 
 // ServerConfig — HTTP 服务配置
 type ServerConfig struct {
+	Host                    string   `yaml:"host"` // 监听地址；空=所有网卡（云端），本地写 127.0.0.1
 	Port                    int      `yaml:"port"`
 	Mode                    string   `yaml:"mode"`                      // debug | release
 	RegistrationEnabled     *bool    `yaml:"registration_enabled"`      // 是否允许新用户注册
 	AllowedUsers            []string `yaml:"allowed_users"`             // 允许注册的用户名列表（空=全部允许）
-	MemoryAutoExtract       bool     `yaml:"memory_auto_extract"`       // 是否自动提取记忆
+	MemoryAutoExtract       *bool    `yaml:"memory_auto_extract"`       // 是否自动提取记忆；nil=未显式配置，沿用 base
 	ProfileStartupMigration bool     `yaml:"profile_startup_migration"` // 启动时异步迁移旧画像（facts 空才迁，单用户场景用）
 	MemoryDupeThreshold     float64  `yaml:"memory_dupe_threshold"`     // 记忆去重相似度阈值，默认 0.85（旧单条提取路径遗留）
 	// —— 记录循环（记忆两段式：抽取 + 逐候选决策循环）——
@@ -153,11 +187,16 @@ type ServerConfig struct {
 	MemoryNeighborThreshold   float64  `yaml:"memory_neighbor_threshold"`    // 预检索近邻相似度下限，默认 0.5
 	MemoryConfirmThreshold    float64  `yaml:"memory_confirm_threshold"`     // NONE 时「再次确认」的近邻相似度下限，默认 0.80
 	MemoryTopicReuseThreshold float64  `yaml:"memory_topic_reuse_threshold"` // topic 复用阈值，默认 0.80（与 topic-merge 一致）
-	DisableBackgroundTasks    bool     `yaml:"disable_background_tasks"`     // 禁用所有后台任务（记忆提取/摘要/主题分析/反思等），dev 环境建议开启
+	DisableBackgroundTasks    *bool    `yaml:"disable_background_tasks"`     // 禁用所有后台任务（记忆提取/摘要/主题分析/反思等）；nil=未显式配置，沿用 base
 	SidecarURL                string   `yaml:"sidecar_url"`                  // Python sidecar MCP HTTP 地址
 	TokenTTLMinutes           int      `yaml:"token_ttl_minutes"`            // token 过期时间（分钟），默认 5
 	MaxTokensPerUser          int      `yaml:"max_tokens_per_user"`          // 同一用户最大 token 数，默认 4
 	AdminUsers                []string `yaml:"admin_users"`                  // 管理员用户 ID 列表
+	// —— 本地单用户模式（Mac 本地部署）——
+	LocalSingleUser bool   `yaml:"local_single_user"` // 免账号密码：凭 local_token 直接进
+	LocalUsername   string `yaml:"local_username"`    // 本地单用户的用户名（按它解析/创建，自动 admin）
+	LocalToken      string `yaml:"local_token"`       // 本地访问令牌（app 生成，经 ${XHAN_LOCAL_TOKEN} 注入）
+	LocalEnv        string `yaml:"local_env"`         // dev | prod：本环境标签，与 APP_ENV / 数据根 / token 前缀交叉断言（第 4 期）
 }
 
 // DBConfig — 数据库配置
@@ -204,7 +243,6 @@ type LLMConfig struct {
 	ToolMaxConcurrency    int                `yaml:"tool_max_concurrency"`     // 工具并发执行上限，0=不限制，默认 0
 	Verification          VerificationConfig `yaml:"verification"`             // 响应检验配置
 	ExtractMsgLimit       int                `yaml:"extract_msg_limit"`        // 记忆提取每次最多取的消息数，默认 50
-	UseNativeFC           bool               `yaml:"use_native_fc"`            // 是否使用原生 function calling（默认 true）
 	ClientToolTimeoutSecs int                `yaml:"client_tool_timeout_secs"` // 客户端工具执行超时秒数，默认 60
 	DebugPersistJSON      *bool              `yaml:"debug_persist_json"`       // 是否持久化完整 LLM 请求 JSON 到 DB（异步限频写入，配 debug_json 控制频率与保留）；nil=未显式配置
 	DebugJSON             DebugJSONConfig    `yaml:"debug_json"`               // 调试 JSON 异步持久化参数
@@ -295,12 +333,12 @@ func Load() (*Config, error) {
 		env = "dev"
 	}
 
-	cfg, err := loadFile("conf/config.yaml")
+	cfg, err := loadFile("config.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("load config.yaml: %w", err)
 	}
 
-	envPath := fmt.Sprintf("conf/config.%s.yaml", env)
+	envPath := fmt.Sprintf("config.%s.yaml", env)
 	if envCfg, err := loadFile(envPath); err == nil {
 		merge(cfg, envCfg)
 	} else if !os.IsNotExist(err) {
@@ -316,9 +354,17 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// confDir 返回配置文件目录，默认 conf；app 拉起子进程时用 XHAN_CONF_DIR 指到 Contents/Resources/conf
+func confDir() string {
+	if d := os.Getenv("XHAN_CONF_DIR"); d != "" {
+		return d
+	}
+	return "conf"
+}
+
 // loadFile 读取 YAML 并展开 ${VAR} 占位符
-func loadFile(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+func loadFile(name string) (*Config, error) {
+	data, err := os.ReadFile(filepath.Join(confDir(), name))
 	if err != nil {
 		return nil, err
 	}
@@ -334,6 +380,21 @@ func loadFile(path string) (*Config, error) {
 
 // merge 将 src 中的非零值覆盖到 dst
 func merge(dst, src *Config) {
+	if src.Server.Host != "" {
+		dst.Server.Host = src.Server.Host
+	}
+	if src.Server.LocalUsername != "" {
+		dst.Server.LocalUsername = src.Server.LocalUsername
+	}
+	if src.Server.LocalToken != "" {
+		dst.Server.LocalToken = src.Server.LocalToken
+	}
+	if src.Server.LocalEnv != "" {
+		dst.Server.LocalEnv = src.Server.LocalEnv
+	}
+	if src.Server.LocalSingleUser {
+		dst.Server.LocalSingleUser = true
+	}
 	if src.Server.Port != 0 {
 		dst.Server.Port = src.Server.Port
 	}
@@ -346,7 +407,9 @@ func merge(dst, src *Config) {
 	if len(src.Server.AllowedUsers) > 0 {
 		dst.Server.AllowedUsers = src.Server.AllowedUsers
 	}
-	dst.Server.MemoryAutoExtract = src.Server.MemoryAutoExtract
+	if src.Server.MemoryAutoExtract != nil {
+		dst.Server.MemoryAutoExtract = src.Server.MemoryAutoExtract
+	}
 	if src.Server.MemoryDupeThreshold > 0 {
 		dst.Server.MemoryDupeThreshold = src.Server.MemoryDupeThreshold
 	}
@@ -368,7 +431,9 @@ func merge(dst, src *Config) {
 	if src.Server.MemoryTopicReuseThreshold > 0 {
 		dst.Server.MemoryTopicReuseThreshold = src.Server.MemoryTopicReuseThreshold
 	}
-	dst.Server.DisableBackgroundTasks = src.Server.DisableBackgroundTasks
+	if src.Server.DisableBackgroundTasks != nil {
+		dst.Server.DisableBackgroundTasks = src.Server.DisableBackgroundTasks
+	}
 	if src.Server.SidecarURL != "" {
 		dst.Server.SidecarURL = src.Server.SidecarURL
 	}
@@ -501,7 +566,9 @@ func merge(dst, src *Config) {
 	if src.Vector.ChunkDisabledParents != nil {
 		dst.Vector.ChunkDisabledParents = src.Vector.ChunkDisabledParents
 	}
-	dst.Facts.Enabled = src.Facts.Enabled
+	if src.Facts.Enabled != nil {
+		dst.Facts.Enabled = src.Facts.Enabled
+	}
 	if src.Facts.TopK != 0 {
 		dst.Facts.TopK = src.Facts.TopK
 	}
@@ -580,7 +647,9 @@ func merge(dst, src *Config) {
 	if src.SubAgent.ExploreTimeoutSeconds != 0 {
 		dst.SubAgent.ExploreTimeoutSeconds = src.SubAgent.ExploreTimeoutSeconds
 	}
-	dst.SubAgent.UserContextEnabled = src.SubAgent.UserContextEnabled
+	if src.SubAgent.UserContextEnabled != nil {
+		dst.SubAgent.UserContextEnabled = src.SubAgent.UserContextEnabled
+	}
 	if src.Archive.AfterDays != 0 {
 		dst.Archive.AfterDays = src.Archive.AfterDays
 	}
@@ -601,6 +670,22 @@ func merge(dst, src *Config) {
 	}
 	if src.Storage.ImageCleanupIntervalMin != 0 {
 		dst.Storage.ImageCleanupIntervalMin = src.Storage.ImageCleanupIntervalMin
+	}
+	// backup：Enabled 只允许 env 覆盖文件「打开」（bool 零值分不清未配置）；开关真正来源是 env
+	if src.Backup.Enabled {
+		dst.Backup.Enabled = true
+	}
+	if src.Backup.Dest != "" {
+		dst.Backup.Dest = src.Backup.Dest
+	}
+	if src.Backup.IntervalDays != 0 {
+		dst.Backup.IntervalDays = src.Backup.IntervalDays
+	}
+	if src.Backup.DailyKeep != 0 {
+		dst.Backup.DailyKeep = src.Backup.DailyKeep
+	}
+	if src.Backup.WeeklyKeep != 0 {
+		dst.Backup.WeeklyKeep = src.Backup.WeeklyKeep
 	}
 }
 
@@ -664,6 +749,58 @@ func resolveEnvVars(cfg *Config) {
 	cfg.LLM.APIKey = os.ExpandEnv(cfg.LLM.APIKey)
 	cfg.LLMBg.APIKey = os.ExpandEnv(cfg.LLMBg.APIKey)
 	cfg.Embedding.APIKey = os.ExpandEnv(cfg.Embedding.APIKey)
+	cfg.Server.LocalToken = os.ExpandEnv(cfg.Server.LocalToken)
+	applyLLMEnvOverrides(cfg)
+	applyBackupEnvOverrides(cfg)
+}
+
+// applyBackupEnvOverrides 应用 Swift 设置页传入的备份配置。
+// 走「非空才覆盖」——与 applyLLMEnvOverrides 同款：未设置时不冲掉 YAML 默认值。
+// 解析失败只记日志并跳过（Swift UI 送的是它自己的数值，正常不会走到这里）。
+func applyBackupEnvOverrides(cfg *Config) {
+	if v := os.Getenv("XHAN_BACKUP_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Backup.Enabled = b
+		} else {
+			log.Printf("[config] XHAN_BACKUP_ENABLED 解析失败（%q），沿用默认：%v", v, err)
+		}
+	}
+	if v := os.Getenv("XHAN_BACKUP_DEST"); v != "" {
+		cfg.Backup.Dest = v
+	}
+	applyBackupInt := func(key string, dst *int) {
+		v := os.Getenv(key)
+		if v == "" {
+			return
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			log.Printf("[config] %s 解析失败（%q），沿用默认：%v", key, v, err)
+			return
+		}
+		*dst = n
+	}
+	applyBackupInt("XHAN_BACKUP_INTERVAL_DAYS", &cfg.Backup.IntervalDays)
+	applyBackupInt("XHAN_BACKUP_DAILY_KEEP", &cfg.Backup.DailyKeep)
+	applyBackupInt("XHAN_BACKUP_WEEKLY_KEEP", &cfg.Backup.WeeklyKeep)
+}
+
+// applyLLMEnvOverrides 应用本地 app 传入的可选覆盖项。
+// 走「非空才覆盖」——不能用 ${VAR} 占位符：os.Expand 对未设置的变量展开成空串，
+// 会把 YAML 里的默认 base_url / model 冲掉。
+//
+// 同时覆盖 llm_bg：`conf/config.yaml` 里 llm_bg 自带非空 model/base_url（不回落主 LLM），
+// 只改主 LLM 的话后台任务（记忆/摘要/主题）仍会打默认地址、用默认模型名 —— 换了供应商/网关
+// 就会 400/404。UI 只暴露一对 model/base_url，两套必须一起走。
+func applyLLMEnvOverrides(cfg *Config) {
+	if v := os.Getenv("XHAN_LLM_BASE_URL"); v != "" {
+		cfg.LLM.BaseURL = v
+		cfg.LLMBg.BaseURL = v
+	}
+	if v := os.Getenv("XHAN_LLM_MODEL"); v != "" {
+		cfg.LLM.Model = v
+		cfg.LLMBg.Model = v
+	}
 }
 
 func validate(cfg *Config) error {
@@ -710,7 +847,7 @@ func validate(cfg *Config) error {
 	}
 	// 记录循环默认值（记忆两段式）
 	if cfg.Server.RecordLoopMaxIterations == 0 {
-		cfg.Server.RecordLoopMaxIterations = 6
+		cfg.Server.RecordLoopMaxIterations = 8
 	}
 	if cfg.Server.MemoryMaxPerSession == 0 {
 		cfg.Server.MemoryMaxPerSession = 5
@@ -864,6 +1001,16 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Storage.ImageCleanupIntervalMin == 0 {
 		cfg.Storage.ImageCleanupIntervalMin = 720
+	}
+	// 备份默认值（0 视为未配置；不允许用 0 关闭保留）
+	if cfg.Backup.IntervalDays <= 0 {
+		cfg.Backup.IntervalDays = 1
+	}
+	if cfg.Backup.DailyKeep <= 0 {
+		cfg.Backup.DailyKeep = 3
+	}
+	if cfg.Backup.WeeklyKeep <= 0 {
+		cfg.Backup.WeeklyKeep = 1
 	}
 	if cfg.WebFetch.TimeoutSeconds == 0 {
 		cfg.WebFetch.TimeoutSeconds = 15

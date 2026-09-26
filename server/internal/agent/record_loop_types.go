@@ -104,7 +104,7 @@ type RecordDecisionLoop struct {
 // NewRecordDecisionLoop 创建决策循环。
 func NewRecordDecisionLoop(deps *RecordDeps, cfg RecordLoopConfig, source string) *RecordDecisionLoop {
 	if cfg.MaxIterations <= 0 {
-		cfg.MaxIterations = 6
+		cfg.MaxIterations = 8 // 与 config.yaml / config 默认值对齐（record_loop_max_iterations）
 	}
 	if cfg.NeighborTopK <= 0 {
 		cfg.NeighborTopK = 5

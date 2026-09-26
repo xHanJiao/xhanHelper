@@ -24,9 +24,10 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	write := flag.Bool("write", false, "真正删除（默认只统计）")
+	purgeCancelled := flag.Bool("purge-cancelled", false, "硬删所有取消态笔记及其派生数据（chunk/向量/版本）")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, `entity-gc — 清理孤儿派生数据（note / memory）
+		fmt.Fprintf(os.Stderr, `entity-gc — 清理孤儿派生数据 / 硬删取消态笔记
 
 用法:
   entity-gc [flags]
@@ -36,8 +37,10 @@ Flags:
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, `
 示例:
-  entity-gc            # dry-run，只统计
-  entity-gc --write    # 落库
+  entity-gc                        # dry-run，只统计孤儿
+  entity-gc --write                # 落库清理孤儿
+  entity-gc --purge-cancelled      # dry-run，统计待硬删的取消态笔记
+  entity-gc --purge-cancelled --write   # 硬删取消态笔记 + 派生数据
 `)
 	}
 	flag.Parse()
@@ -48,11 +51,30 @@ Flags:
 	}
 
 	db := app.InitDB(cfg)
+
+	// 破坏性护栏：--write 时回显解析后的 DB 路径，prod 库需显式 CONFIRM_PROD=yes。
+	if *write {
+		config.GuardProdWrite(cfg.DB.Database)
+	}
+
+	if *purgeCancelled {
+		n, err := entitygc.PurgeCancelledNotes(db, entitygc.Options{Write: *write})
+		if err != nil {
+			log.Fatalf("entity-gc purge-cancelled: %v", err)
+		}
+		mode := "dry-run（未落库）"
+		if *write {
+			mode = "已落库"
+		}
+		log.Printf("[entity-gc] %s 完成：取消态笔记 %d 条", mode, n)
+		return
+	}
+
 	sum, err := entitygc.Run(db, entitygc.Options{Write: *write})
 	if err != nil {
 		log.Fatalf("entity-gc: %v", err)
 	}
-	mode := "dry-run"
+	mode := "dry-run（未落库）"
 	if *write {
 		mode = "已落库"
 	}

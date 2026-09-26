@@ -41,7 +41,8 @@ const (
 	SubStateUpdate        = "state_update"
 
 	// tool
-	SubReminderGen = "reminder_gen"
+	SubReminderGen  = "reminder_gen"
+	SubRecordMemory = "record_memory" // 主聊天 record_memory 工具内含的记忆决策循环
 
 	// admin
 	SubAgentSummary = "agent_summary"

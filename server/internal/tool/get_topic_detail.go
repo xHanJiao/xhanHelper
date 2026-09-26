@@ -83,7 +83,7 @@ func (t *GetTopicDetailTool) Execute(ec *ExecuteContext, funcName string, args j
 	}
 
 	// 查 memories
-	memories, _, err := t.memRepo.ListByUser(ec.Ctx, ec.UserID, "", "", 500, 0)
+	memories, _, err := t.memRepo.ListByUser(ec.Ctx, ec.UserID, "", "", "", 500, 0)
 	if err != nil {
 		log.Printf("[get_topic_detail] list memories error: %v", err)
 	} else {

@@ -47,7 +47,7 @@ func TestExposure_LoadFromExtra_KeyMatch(t *testing.T) {
 	convRepo := &mockConvRepo{extra: &model.ConversationExtra{
 		ToolExposure: &model.ToolExposure{SessionStartMsgID: "window-1", Tools: []string{"note.record_note"}},
 	}}
-	o := &Orchestrator{convRepo: convRepo, useNativeFC: true}
+	o := &Orchestrator{convRepo: convRepo}
 	state := &reactState{}
 	req := &RunRequest{Window: WindowResult{SessionStartMsgID: "window-1"}}
 	o.loadExposure(context.Background(), req, &model.Message{ID: "msg-1"}, state)
@@ -61,7 +61,7 @@ func TestExposure_LoadFromExtra_KeyMismatchResets(t *testing.T) {
 	convRepo := &mockConvRepo{extra: &model.ConversationExtra{
 		ToolExposure: &model.ToolExposure{SessionStartMsgID: "old-window", Tools: []string{"note.record_note"}},
 	}}
-	o := &Orchestrator{convRepo: convRepo, useNativeFC: true}
+	o := &Orchestrator{convRepo: convRepo}
 	state := &reactState{}
 	req := &RunRequest{Window: WindowResult{SessionStartMsgID: "new-window"}}
 	o.loadExposure(context.Background(), req, &model.Message{ID: "msg-2"}, state)
@@ -77,7 +77,7 @@ func TestExposure_LoadFromExtra_LegacyBareGroupExpands(t *testing.T) {
 	convRepo := &mockConvRepo{extra: &model.ConversationExtra{
 		ToolExposure: &model.ToolExposure{SessionStartMsgID: "window-1", Tools: []string{"note"}},
 	}}
-	o := &Orchestrator{convRepo: convRepo, registry: reg, useNativeFC: true}
+	o := &Orchestrator{convRepo: convRepo, registry: reg}
 	state := &reactState{}
 	req := &RunRequest{Window: WindowResult{SessionStartMsgID: "window-1"}}
 	o.loadExposure(context.Background(), req, &model.Message{ID: "msg-1"}, state)
@@ -89,7 +89,7 @@ func TestExposure_LoadFromExtra_LegacyBareGroupExpands(t *testing.T) {
 
 func TestExposure_PersistWritesBack(t *testing.T) {
 	convRepo := &mockConvRepo{extra: &model.ConversationExtra{}}
-	o := &Orchestrator{convRepo: convRepo, useNativeFC: true}
+	o := &Orchestrator{convRepo: convRepo}
 	state := &reactState{exposedTools: map[string]bool{"note.record_note": true, "bookkeeping.create_bill": true}}
 	req := &RunRequest{Window: WindowResult{SessionStartMsgID: "window-1"}}
 	o.persistExposure(context.Background(), req, &model.Message{ID: "msg-3"}, state)
@@ -113,7 +113,7 @@ func TestExposure_PersistWritesBack(t *testing.T) {
 func TestExposure_PersistPreservesOtherFields(t *testing.T) {
 	// 并发写入的其它字段（used_tool_ids 等）不能被覆盖
 	convRepo := &mockConvRepo{extra: &model.ConversationExtra{UsedToolIDs: []string{"tool-1"}}}
-	o := &Orchestrator{convRepo: convRepo, useNativeFC: true}
+	o := &Orchestrator{convRepo: convRepo}
 	state := &reactState{exposedTools: map[string]bool{"note.record_note": true}}
 	req := &RunRequest{Window: WindowResult{SessionStartMsgID: "window-1"}}
 	o.persistExposure(context.Background(), req, &model.Message{ID: "msg-5"}, state)
@@ -125,7 +125,7 @@ func TestExposure_PersistPreservesOtherFields(t *testing.T) {
 
 func TestExposure_PersistSkipsEmpty(t *testing.T) {
 	convRepo := &mockConvRepo{extra: &model.ConversationExtra{}}
-	o := &Orchestrator{convRepo: convRepo, useNativeFC: true}
+	o := &Orchestrator{convRepo: convRepo}
 	state := &reactState{} // no exposed funcs
 	req := &RunRequest{Window: WindowResult{SessionStartMsgID: "window-1"}}
 	o.persistExposure(context.Background(), req, &model.Message{ID: "msg-4"}, state)
@@ -142,7 +142,6 @@ func TestExposure_MkLlmChatReq_OnlyExposedFuncs(t *testing.T) {
 	o := &Orchestrator{
 		contextFormatter: &mockFormatter{},
 		registry:         reg,
-		useNativeFC:      true,
 	}
 	req := &RunRequest{UserID: "u1"}
 	// note 暴露 record_note；bookkeeping 只暴露 create_bill（query_bills 未暴露）
@@ -181,7 +180,6 @@ func TestExposure_MakeExposeFn_Validates(t *testing.T) {
 	reg.HideTool("webfetch")
 	o := &Orchestrator{
 		registry:     reg,
-		useNativeFC:  true,
 		toolExcludes: []string{"bookkeeping"},
 	}
 	state := &reactState{exposedTools: map[string]bool{}}
@@ -217,7 +215,7 @@ func TestExposure_MakeExposeFn_Validates(t *testing.T) {
 func TestExposure_MakeExposeFn_RejectsUnknownFunc(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Register(&mockExposeTool{}) // note: record_note
-	o := &Orchestrator{registry: reg, useNativeFC: true}
+	o := &Orchestrator{registry: reg}
 	state := &reactState{exposedTools: map[string]bool{}}
 	fn := o.makeExposeFn(state, nil)
 
@@ -245,7 +243,7 @@ func TestExposure_MakeExposeFn_RejectsUnknownFunc(t *testing.T) {
 func TestExposure_MakeExposeFn_ClientTools(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Register(&mockExposeTool{}) // note: record_note
-	o := &Orchestrator{registry: reg, useNativeFC: true}
+	o := &Orchestrator{registry: reg}
 	state := &reactState{exposedTools: map[string]bool{}}
 	clientGroups := map[string]map[string]bool{
 		"browser": {"navigate": true, "click": true},
@@ -283,7 +281,7 @@ func TestExposure_MakeExposeFn_ClientTools(t *testing.T) {
 
 func TestExposure_MakeExposeFn_ClientToolsExcluded(t *testing.T) {
 	reg := tool.NewRegistry()
-	o := &Orchestrator{registry: reg, toolExcludes: []string{"browser"}, useNativeFC: true}
+	o := &Orchestrator{registry: reg, toolExcludes: []string{"browser"}}
 	state := &reactState{exposedTools: map[string]bool{}}
 	clientGroups := map[string]map[string]bool{"browser": {"navigate": true}}
 	fn := o.makeExposeFn(state, clientGroups)
@@ -312,7 +310,6 @@ func TestExposure_MkLlmChatReq_ClientToolsExposed(t *testing.T) {
 	o := &Orchestrator{
 		contextFormatter: &mockFormatter{},
 		registry:         reg,
-		useNativeFC:      true,
 	}
 	clientTools := []ClientTool{
 		{ServerName: "browser", Name: "navigate", Description: "nav"},

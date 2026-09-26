@@ -11,10 +11,37 @@ struct XHWebViewOrigin: Equatable {
     let host: String
     let port: Int?
 
+    init(scheme: String, host: String, port: Int?) {
+        self.scheme = scheme
+        self.host = host
+        self.port = port
+    }
+
+    /// 从 URL 字符串推导（本地模式的内嵌前端地址是动态的，不能写死）。
+    init?(_ urlString: String) {
+        guard let url = URL(string: urlString),
+              let scheme = url.scheme, let host = url.host else { return nil }
+        self.init(scheme: scheme, host: host, port: url.port)
+    }
+
     func matches(_ url: URL) -> Bool {
         guard url.scheme == scheme, url.host == host else { return false }
         let urlPort = url.port ?? (scheme == "https" ? 443 : scheme == "http" ? 80 : nil)
         return (port ?? urlPort) == urlPort
+    }
+
+    /// 前端面板通用白名单：线上 + dev Vite + 本地内嵌（127.0.0.1:`LocalPaths.backendPort`）+ 由 `webBaseURL` 推导的同源。
+    /// 本地模式下监控看板 / 消息调试面板打开的是 `http://127.0.0.1:<端口>/...`，漏了会直接空白。
+    static func frontendOrigins(webBaseURL: String) -> [XHWebViewOrigin] {
+        var origins: [XHWebViewOrigin] = [
+            XHWebViewOrigin(scheme: "https", host: "helper.xhanx.cn", port: nil),
+            XHWebViewOrigin(scheme: "http", host: "localhost", port: 5173),
+            XHWebViewOrigin(scheme: "http", host: "127.0.0.1", port: LocalPaths.backendPort),
+        ]
+        if let derived = XHWebViewOrigin(webBaseURL), !origins.contains(derived) {
+            origins.append(derived)
+        }
+        return origins
     }
 }
 

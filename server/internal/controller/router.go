@@ -1,14 +1,22 @@
 package controller
 
 import (
+	"io/fs"
+	"net/http"
+	"path"
+	"strings"
+	"sync/atomic"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
 	"xhan-helper/internal/agent"
+	"xhan-helper/internal/backup"
 	"xhan-helper/internal/config"
-	"xhan-helper/internal/middleware"
 	"xhan-helper/internal/monitor"
 	"xhan-helper/internal/service"
+	"xhan-helper/internal/view"
+	"xhan-helper/internal/web"
 )
 
 // RouterConfig — 路由注册所需的所有依赖
@@ -39,6 +47,9 @@ type RouterConfig struct {
 	LlmCostRepo          *service.LlmCostRepo
 	LlmPriceRepo         *service.LlmPriceRepo
 	ExtraMiddleware      []gin.HandlerFunc
+	Ready                *atomic.Bool    // 后台向量预热完成标志；nil 视为已就绪
+	AuthMiddleware       gin.HandlerFunc // Bearer 认证（含本地单用户直通），由装配层构造一次
+	BackupService        *backup.Service // 仅本地模式创建；nil 则不注册备份路由
 }
 
 // NewRouter 注册所有路由
@@ -70,10 +81,22 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	r.GET("/api/share/:token", rc.DocumentShareHandler.ViewSharedDocument)
 	// 图床公开读：仅服务 Visibility=public 的图（文档配图/分享页/PDF 导出；<img> 带不了请求头）
 	r.GET("/images/:file", rc.ImageHandler.ServePublic)
+	// 健康分级（无认证）：starting = HTTP 已就绪、后台向量预热中；ready = 预热完成
+	r.GET("/api/health", func(c *gin.Context) {
+		status := "ready"
+		if rc.Ready != nil && !rc.Ready.Load() {
+			status = "starting"
+		}
+		c.JSON(http.StatusOK, gin.H{"status": status})
+	})
 	// 需要认证
 	auth := r.Group("/api")
-	auth.Use(middleware.Auth(rc.UserRepo))
+	auth.Use(rc.AuthMiddleware)
 	{
+		// 本地模式：立即备份（数据根整体打包；见 docs/design/local-backup）
+		if rc.Cfg.Server.LocalSingleUser && rc.BackupService != nil {
+			auth.POST("/local/backup", localBackupTrigger(rc.Cfg, rc.BackupService))
+		}
 		auth.POST("/auth/refresh", refreshToken(rc.UserRepo))
 		auth.POST("/auth/logout", logoutUser(rc.UserRepo))
 		auth.POST("/auth/change-password", changePassword(rc.UserRepo))
@@ -106,6 +129,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.POST("/notes/batch", rc.NoteHandler.BatchGetNotes)
 		auth.DELETE("/notes/:id", rc.NoteHandler.DeleteNote)
 		auth.GET("/memories", rc.MemHandler.ListMemories)
+		auth.GET("/memories/topics", rc.MemHandler.ListMemoryTopics)
 		auth.DELETE("/memories/:id", rc.MemHandler.DeleteMemory)
 		auth.POST("/memories/batch", rc.MemHandler.BatchGetMemories)
 		auth.POST("/memories/batch-delete", rc.MemHandler.BatchDeleteMemories)
@@ -151,11 +175,56 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 	}
 
 	// 管理员路由
-	admin := r.Group("/api/admin", middleware.Auth(rc.UserRepo), monitor.AdminOnly(rc.Cfg.Server.AdminUsers))
+	admin := r.Group("/api/admin", rc.AuthMiddleware, monitor.AdminOnly(rc.Cfg.Server.AdminUsers))
 	admin.GET("/health", monitor.HealthHandlerGlobal())
 	admin.POST("/users", createUserByAdmin(rc.UserRepo))
 	admin.GET("/users", listUsers(rc.UserRepo))
 	admin.POST("/users/:id/reset-password", resetUserPassword(rc.UserRepo))
 
+	// 本地模式：Go 直接托管内嵌前端。云端由 nginx 托管且二进制里未必有 dist，
+	// 故按 local_single_user 门控，避免意外把云端也变成 serve SPA 回落。
+	if rc.Cfg.Server.LocalSingleUser {
+		registerEmbeddedFrontend(r)
+	}
+
 	return r
+}
+
+// registerEmbeddedFrontend 用内嵌的 front-end/dist 托管前端：
+// 静态文件直接命中；缺失路径仅当「无扩展名」时回落到 index.html（SPA 路由刷新不 404），
+// 缺失的带扩展名资源与目录请求一律 404（避免把丢的 JS/CSS 渲染成 HTML、避免目录列表）。
+func registerEmbeddedFrontend(r *gin.Engine) {
+	dist := web.DistFS()
+	fileServer := http.FileServer(http.FS(dist))
+	r.NoRoute(func(c *gin.Context) {
+		p := c.Request.URL.Path
+		if strings.HasPrefix(p, "/api") || strings.HasPrefix(p, "/images") {
+			view.JSONError(c, http.StatusNotFound, "not found")
+			return
+		}
+		if c.Request.Method != http.MethodGet {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		if name := strings.TrimPrefix(p, "/"); name != "" {
+			if info, err := fs.Stat(dist, strings.TrimSuffix(name, "/")); err == nil {
+				if info.IsDir() {
+					c.Status(http.StatusNotFound)
+					return
+				}
+				fileServer.ServeHTTP(c.Writer, c.Request)
+				return
+			}
+		}
+		if path.Ext(p) != "" {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		index, err := fs.ReadFile(dist, "index.html")
+		if err != nil {
+			view.JSONError(c, http.StatusNotFound, "frontend not embedded")
+			return
+		}
+		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
+	})
 }

@@ -10,8 +10,8 @@ let package = Package(
     targets: [
         .target(
             name: "FsCore",
-            path: "xHelper/Shared/Tools",
-            sources: ["GrepParser.swift", "SensitiveFileBlocker.swift", "PDFTextCore.swift", "SubagentResultParser.swift", "ToolOutputStore.swift", "FsPath.swift", "AgentWorkspace.swift", "DirectoryAuthorizationManager.swift", "ShellCommandParser.swift", "ShellCommandDescriber.swift", "DiffRenderer.swift"]
+            path: "xHelper/Shared",
+            sources: ["Tools/GrepParser.swift", "Tools/SensitiveFileBlocker.swift", "Tools/PDFTextCore.swift", "Tools/SubagentResultParser.swift", "Tools/ToolOutputStore.swift", "Tools/FsPath.swift", "Tools/AgentWorkspace.swift", "Tools/DirectoryAuthorizationManager.swift", "Tools/ShellCommandParser.swift", "Tools/ShellCommandDescriber.swift", "Tools/DiffRenderer.swift", "Tools/ToolsDataRoot.swift"]
         ),
         .testTarget(
             name: "FsCoreTests",
@@ -44,6 +44,17 @@ let package = Package(
             name: "LocalArtifactsCoreTests",
             dependencies: ["LocalArtifactsCore"],
             path: "Tests/LocalArtifactsCoreTests"
+        ),
+        // LocalBackendCore — 本地后端启动器的纯逻辑（密钥校验/env 拼装 + 退出原因归类 + 连通性探测请求构造）。
+        .target(
+            name: "LocalBackendCore",
+            path: "xHelper/Shared",
+            sources: ["Services/LocalBackendDiagnostics.swift", "Services/LocalSecrets.swift", "Services/LocalConnectionProbe.swift", "Services/LocalPaths.swift", "Services/LocalBackup.swift"]
+        ),
+        .testTarget(
+            name: "LocalBackendCoreTests",
+            dependencies: ["LocalBackendCore"],
+            path: "Tests/LocalBackendCoreTests"
         ),
     ]
 )

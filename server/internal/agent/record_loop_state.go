@@ -20,6 +20,7 @@ type recordLoopState struct {
 	cfg       RecordLoopConfig
 	userID    string
 	source    string
+	candTopic string // nameTopic 定稿的 topic（权威值，写入时优先于 LLM 的 topic 参数）
 	neighbors []recordNeighbor
 	idSet     map[string]bool
 	idType    map[string]string
@@ -90,4 +91,25 @@ func (s *recordLoopState) checkTarget(id, wantType string) error {
 		return fmt.Errorf("target_id 类型不符：期望 %s，实际 %s", wantType, got)
 	}
 	return nil
+}
+
+// recordLoopStateAlias 让同一个 state 以不同组名注册进临时 registry。
+// recordToolDefinitions() 暴露三组（record_search / memory / legacy_note），
+// provider 把函数名拼成「组名__函数名」，MiniReAct 按组名查 registry。
+// 三组共用同一份 Execute（按裸函数名分发），故别名只覆写 Name()，
+// 其余方法全部委派给内嵌的 *recordLoopState。
+type recordLoopStateAlias struct {
+	*recordLoopState
+	name string
+}
+
+func (a recordLoopStateAlias) Name() string { return a.name }
+
+// registerRecordLoopTools 把 state 按三个组名各注册一次。
+// 只注册 Name()="memory" 会导致 record_search / legacy_note 两组查不到（「未找到工具」）。
+func registerRecordLoopTools(reg *tool.Registry, state *recordLoopState) {
+	reg.Register(state)
+	for _, name := range []string{recordToolSearch, recordToolLegacy} {
+		reg.Register(recordLoopStateAlias{recordLoopState: state, name: name})
+	}
 }

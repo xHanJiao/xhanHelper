@@ -42,7 +42,7 @@ var auditWhitelist = map[string]map[string]bool{
 		SubFactDecide:       true,
 	},
 	CategoryAdmin: {SubAgentSummary: true},
-	CategoryTool:  {SubReminderGen: true},
+	CategoryTool:  {SubReminderGen: true, SubRecordMemory: true},
 }
 
 // shouldAudit 判断是否记录审计。category 为空（未标注 scenario）→ uncategorized 兜底记录。

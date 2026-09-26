@@ -70,3 +70,14 @@ func (r *VersionRepo) DeleteByEntity(ctx context.Context, entityType, entityID s
 		Where("entity_type = ? AND entity_id = ?", entityType, entityID).
 		Delete(&model.ContentVersion{}).Error
 }
+
+// DeleteByEntities 批量删除多个实体的版本快照（批量硬删场景）。
+func (r *VersionRepo) DeleteByEntities(ctx context.Context, entityType string, entityIDs []string) (int64, error) {
+	if len(entityIDs) == 0 {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).
+		Where("entity_type = ? AND entity_id IN ?", entityType, entityIDs).
+		Delete(&model.ContentVersion{})
+	return res.RowsAffected, res.Error
+}

@@ -305,7 +305,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 		defer monitor.DecSSE()
 
 		var messages []llm.Message
-		messages = agent.BuildMessagesForFlash(history, cfg.LLM.MaxToolResultChars, cfg.LLM.UseNativeFC)
+		messages = agent.BuildMessagesForFlash(history, cfg.LLM.MaxToolResultChars, true)
 		// 历史重放只挂最近 N 轮的图（图片 token 不复用文本缓存，全量重放每轮都烧钱）
 		agent.AttachReplayImages(c.Request.Context(), imageStore, messages, userID, cfg.Chat.ImageReplayRounds)
 

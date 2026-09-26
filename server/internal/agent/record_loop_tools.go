@@ -37,12 +37,12 @@ func recordToolDefinitions() []llm.ToolDefinition {
 			Description: "对候选记忆执行写入决策",
 			Functions: []llm.FuncDef{
 				{Name: "save_memory", Description: "新开一条记忆", Parameters: obj(map[string]interface{}{
-					"topic": str("一个主题词，≤20 字，禁斜杠/逗号/多主题"), "summary": str("自足成句的一句话，≤150 字"),
+					"topic": str("一个主题词，非空、≤5 字、只含中英文数字，禁斜杠/逗号/多主题"), "summary": str("自足成句的一句话，≤150 字"),
 					"facts": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "0~10 条细节，每条 ≤100 字"},
 				}, "topic", "summary")},
 				{Name: "update_memory", Description: "覆盖近邻中某条讲同一件事的记忆（facts 会自动与已有去重合并，只增不减）", Parameters: obj(map[string]interface{}{
 					"target_id": str("被覆盖的近邻 id，只能取自输入的 id"), "summary": str("改写后的完整句子"),
-					"topic": str("可选，主题变了才传"), "facts": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "新增的细节（会自动与已有去重合并，只增不减）"},
+					"topic": str("可选，主题变了才传；非空、≤5 字、只含中英文数字"), "facts": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "新增的细节（会自动与已有去重合并，只增不减）"},
 				}, "target_id", "summary")},
 				{Name: "delete_memory", Description: "删除近邻中某条被明确否定的记忆", Parameters: obj(map[string]interface{}{
 					"target_id": str("被删除的近邻 id，只能取自输入的 id"),

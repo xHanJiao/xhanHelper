@@ -8,14 +8,24 @@ import (
 	"strings"
 
 	"xhan-helper/internal/agent/retrieval"
+	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/tool"
 )
 
 // RecordInline — inline 入口：主循环 record_memory 工具调用此处。
 // 对一条候选跑决策循环，返回 `{action,id,summary}` JSON 供主 LLM 知晓发生了什么。
-func (d *RecordDecisionLoop) RecordInline(userID, topic, summary string, facts []string) ([]byte, error) {
-	ctx := context.Background()
+func (d *RecordDecisionLoop) RecordInline(ctx context.Context, userID, topic, summary string, facts []string) ([]byte, error) {
+	// 主聊天 inline 调用：补审计场景（决策循环内含 LLM 调用），保留上游 UserID/ConvID。
+	// 不这样做就会丢场景 → 审计记成空 category（前端「未标注」）。
+	sc, _ := llmcost.ScenarioFromContext(ctx)
+	sc.Category = llmcost.CategoryTool
+	sc.SubCategory = llmcost.SubRecordMemory
+	if sc.UserID == "" {
+		sc.UserID = userID
+	}
+	ctx = llmcost.WithScenario(ctx, sc)
+
 	res, err := d.Decide(ctx, userID, recordCandidate{Summary: summary, Facts: facts, Topic: topic})
 	if err != nil {
 		return nil, err
@@ -25,20 +35,22 @@ func (d *RecordDecisionLoop) RecordInline(userID, topic, summary string, facts [
 
 // Decide 对一条候选跑一遍决策循环。返回本条的实际动作。LLM 出错时上抛。
 func (d *RecordDecisionLoop) Decide(ctx context.Context, userID string, cand recordCandidate) (*recordLoopResult, error) {
-	neighbors, err := d.preRetrieve(ctx, userID, cand.Summary)
+	neighbors, summaryVec, err := d.preRetrieve(ctx, userID, cand.Summary)
 	if err != nil {
 		return nil, fmt.Errorf("record loop pre-retrieve: %w", err)
 	}
+	// topic 单独一次 LLM 调用定稿（在决策循环之前）。summaryVec 复用上面那次 embed。
+	cand.Topic = d.nameTopic(ctx, userID, cand.Topic, cand.Summary, summaryVec)
 
 	state := &recordLoopState{deps: d.deps, cfg: d.cfg, userID: userID, source: d.source,
-		neighbors: neighbors, idSet: map[string]bool{}, idType: map[string]string{}}
+		candTopic: cand.Topic, neighbors: neighbors, idSet: map[string]bool{}, idType: map[string]string{}}
 	for _, n := range neighbors {
 		state.idSet[n.ID] = true
 		state.idType[n.ID] = n.Type
 	}
 
 	registry := tool.NewRegistry()
-	registry.Register(state)
+	registerRecordLoopTools(registry, state)
 	llmClient := d.deps.FlashLLM
 	if d.deps.LLMBG != nil {
 		llmClient = d.deps.LLMBG
@@ -89,12 +101,13 @@ func (d *RecordDecisionLoop) Decide(ctx context.Context, userID string, cand rec
 }
 
 // preRetrieve 预检索：embed 候选 summary → memory + note 两域取近邻。
+// 返回的近邻用于决策；embedding 向量一并返回供 topic 命名复用（不重复 embed）。
 // 这是「ReAct 保留下来」的前提：没有它，模型得先花一轮自己搜。
-func (d *RecordDecisionLoop) preRetrieve(ctx context.Context, userID, summary string) ([]recordNeighbor, error) {
+func (d *RecordDecisionLoop) preRetrieve(ctx context.Context, userID, summary string) ([]recordNeighbor, []float64, error) {
 	// TODO: 这里的嵌入结果可以做一些复用。
 	vec, err := d.deps.Embedder.Embed(ctx, summary)
 	if err != nil {
-		return nil, fmt.Errorf("embed candidate: %w", err)
+		return nil, nil, fmt.Errorf("embed candidate: %w", err)
 	}
 	match := func(t string) func(retrieval.Entry) bool {
 		return func(e retrieval.Entry) bool {
@@ -123,7 +136,7 @@ func (d *RecordDecisionLoop) preRetrieve(ctx context.Context, userID, summary st
 			})
 		}
 	}
-	return out, nil
+	return out, vec, nil
 }
 
 // confirmTopNeighbor NONE 时取最高分记忆近邻，相似度须 ≥ ConfirmThresh。

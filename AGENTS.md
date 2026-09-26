@@ -68,7 +68,7 @@ POST /api/chat
  → agent/orchestrator.go::Run      embed「原始消息」→ promptbuilder.Build → ctxflow.Retrieve
  → agent/promptbuilder             分层拼 system prompt（行为准则 / 角色定义 / 工具目录+定义 / 稳定上下文）
  → agent/ctxflow                   各 ContextSource 并发检索 → 格式化为 XMLContext，注入「当前 user 消息」
- → llm.Chat（流式）                use_native_fc 时走原生 function calling，否则解析文本 JSON 兜底
+ → llm.Chat（流式）                主聊天只走原生 function calling（文本一律按 markdown 原文，不再解析文本 JSON）
  → 工具执行                        服务端工具并发（tool_max_concurrency）、客户端工具串行
  → 消息落库 + view.WriteSSE        断开连接不终止执行（runCtx 独立于 Request.Context）
 ```
@@ -101,7 +101,7 @@ POST /api/chat
 - **服务端是 LLM 参数的唯一事实来源**：`/api/chat` 请求体里的 `temperature` / `max_tokens` / `thinking` 会被解析但**有意不传进 `RunRequest`**（`controller/chat.go`），一律用服务端配置默认。客户端 UI 上那几个旋钮当前不生效 —— 这是设计，不是 bug，别去"修"
 - 同理：全链路**没有 `finish_reason == "length"` 处理**，`max_tokens` 触顶是静默硬截断。要限制回答长度请用 prompt（如 `brief_answer` 注入 system prompt 的输出约束），不要靠调 `max_tokens`
 - 装饰器链：`llmcost.CostTracker`（token 记账）+ `IOAuditWrapper`（ChatSync I/O 审计，保留 7 天）
-- 两条工具调用路径：**原生 function calling**（`llm.use_native_fc`，当前开启）与 **prompt engineering**（工具定义注入 system prompt → 解析文本 JSON）
+- 主聊天工具调用只走**原生 function calling**（工具定义内置在请求体 `tools`，读 `msg.ToolCalls`）。从前的 prompt engineering 路径（工具定义注入 system prompt → 解析文本 JSON）已从主链路移除；`ParseLLMResponse` 仅保留给反思子系统的 `ReactLoop`
 
 ### SSE 事件（`controller/chat.go` 分发）
 
@@ -170,6 +170,10 @@ type Tool interface {
 
 - 加载顺序（`internal/config`）：`conf/config.yaml` → `conf/config.<APP_ENV>.yaml`（非零值覆盖）→ `${VAR}` 展开 → 校验
 - 环境 ↔ DB：**dev = MySQL**、**prod = MySQL**、**仅 test = SQLite**（`server/data/xhan_helper.db`）。`db` 配置在 base `config.yaml`，`APP_ENV` 只切换覆盖文件
+- **本地版 SQLite 数据根（危险区，务必分清）**：
+  - `~/Library/Application Support/xhanHelper/xhan_helper.db` = **prod 库**（`make local` / `APP_ENV=local`）。**这是真实数据，绝对禁止在里面测试、写脏数据、跑清洗/迁移等破坏性操作。**
+  - `~/Library/Application Support/xhanHelper-dev/xhan_helper.db` = **dev 沙盒库**（`make local-dev` / `APP_ENV=local.dev`，端口 18924）。测试、试验、清洗演练用这个。
+  - 判据：**路径里带 `-dev` 的才是 dev**。不确定时先 `sqlite3 -readonly <db> "SELECT count(*) FROM user_memories"` 只读确认，绝不写 prod。
 - 敏感变量：`LLM_API_KEY`、`EMBEDDING_API_KEY`、`XHAN_HELPER_DB_PASSWORD`、`ALLOWED_USER`、`XHAN_HELPER_ADMIN`。本地放 `server/.env`（已 gitignore，`make dev` 会加载）
 - 顶层 key：`server`（端口/注册开关/后台任务总开关/admin_users）、`db`、`llm`（含 `verification`/`debug_json`）、`llm_bg`、`embedding`、`reflection`、`retrieval`（含 `resource_zone` 预算与配额）、`chat`（窗口/摘要/tool_excludes/image_replay）、`subagent`、`webfetch`、`storage`、`share`、`archive`、`mcp`、`snowflake`、`global_default_role`
 - 后台任务总开关 `server.disable_background_tasks`，关闭后不启 `CronRunner`、不跑 profile 迁移、`onChatEnd` 短路
@@ -205,10 +209,23 @@ make db-pull / db-import / logs / clean
 | 公开（无认证） | `router.go` | `/api/share/:token`、`/api/share/messages/:token`、`/images/:file`（仅 public） |
 | Admin | `reflection_routes.go` `eval_routes.go` `cost.go` `llm_io_admin.go` `subagent_admin.go` | health、users、message debug、resource-lookup、replay、reflection traces、message-traces、`eval/*`、`cost/*`、`llm-io`、`subagents` |
 
+## 分支约定
+
+两个长期分支，各管一个部署形态，**不要互相直接 merge**：
+
+| 分支 | 是什么 | 形态 |
+|------|--------|------|
+| `main` | 云端部署版（现状） | 阿里云 + MySQL，前端由 nginx 独立托管 |
+| `local-main` | 本地版主干 | 跑在 Mac 上 + SQLite，双击 app 启动（见 `docs/design/local-sqlite/`） |
+
+- 功能分支从对应主干切：本地版用 `local/phase-N-*`（如 `local/phase-1-backend`），云端沿用现有命名。完成后并回**自己的**主干。
+- **通用改动（两边都要）先落 `main`，再单向把 `main` 合进 `local-main`**；反向（`local-main` → `main`）只在明确要把本地版能力搬回云端时才做，且逐个确认。
+- 不要把 `main` 直接覆盖到 `local-main`——本地版有专属改动（SQLite / 回环绑定 / app 打包 / conf 目录等），冲突时以本地版为准、手工择取。
+
 ## 开发约定
 
 - 与用户交流只用中文（代码/注释/日志沿用项目既有风格）
-- 新增功能先在 `docs/design/` 写计划文档，确认后开发
+- **文档往哪写**：新需求/功能的设计方案写 `docs/design/<feature>/design.md`（先写文档、确认后开发）；bug 修复记录写 `docs/bugs/NNN-<slug>.md`（按编号递增，见「文档地图」）
 - model/ 只放结构体，DB 操作放 service/；工具实现放 tool/，不要耦合到 controller 或 agent
 - 从数据库列表拉取数据时，必须做分页
 - **禁止在循环内逐个访问数据库**（N+1）：插入用 `tx.Create(&slice)` 批量，更新/删除用带 `IN` 条件的 `Updates`/`Delete`，循环里只做内存操作

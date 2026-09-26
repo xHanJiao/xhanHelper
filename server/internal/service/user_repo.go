@@ -54,6 +54,27 @@ func (r *UserRepo) Create(ctx context.Context, username, password string) (*mode
 	return user, token, nil
 }
 
+// EnsureByUsername 按用户名查找用户；不存在则创建一个（本地单用户模式用；密码随机、永不使用）。
+func (r *UserRepo) EnsureByUsername(ctx context.Context, username string) (*model.User, error) {
+	var user model.User
+	err := r.db.WithContext(ctx).Where("username = ?", username).First(&user).Error
+	if err == nil {
+		return &user, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(uuid.New().String()), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	user = model.User{ID: uuid.New().String(), Username: username, PasswordHash: string(hash)}
+	if err := r.db.WithContext(ctx).Create(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 func (r *UserRepo) Login(ctx context.Context, username, password string) (*model.User, string, error) {
 	var user model.User
 	if err := r.db.WithContext(ctx).Where("username = ?", username).First(&user).Error; err != nil {

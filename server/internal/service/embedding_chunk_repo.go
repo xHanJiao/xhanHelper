@@ -61,6 +61,17 @@ func (r *EmbeddingChunkRepo) DeleteByParent(ctx context.Context, parentType, par
 		Delete(&model.EmbeddingChunk{}).Error
 }
 
+// DeleteByParents 批量删除多个 parent 的 chunk（entity 硬删等批量场景）。
+func (r *EmbeddingChunkRepo) DeleteByParents(ctx context.Context, parentType string, parentIDs []string) (int64, error) {
+	if len(parentIDs) == 0 {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).
+		Where("parent_type = ? AND parent_id IN ?", parentType, parentIDs).
+		Delete(&model.EmbeddingChunk{})
+	return res.RowsAffected, res.Error
+}
+
 // DeleteAllByType 删除某类型全部 chunk
 func (r *EmbeddingChunkRepo) DeleteAllByType(ctx context.Context, parentType string) (int64, error) {
 	result := r.db.WithContext(ctx).Where("parent_type = ?", parentType).Delete(&model.EmbeddingChunk{})

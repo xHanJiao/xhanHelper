@@ -22,7 +22,7 @@ enum DocumentSearchField: String, CaseIterable, Hashable {
 @MainActor
 class DocumentViewModel: ObservableObject {
     @Published var documents: [Document] = []
-    @Published var tags: [DocumentTag] = []
+    @Published var tags: [CloudTag] = []
     /// 回收站列表（.trash 模式）。
     @Published var trashDocuments: [Document] = []
     @Published var isLoading = false

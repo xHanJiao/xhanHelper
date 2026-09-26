@@ -167,7 +167,10 @@ func (t *GetTopicStatsTool) buildClusterStats(ctx context.Context, userID string
 	}
 
 	// 从 memories 聚合
-	memories, _, _ := t.memRepo.ListByUser(ctx, userID, "", "", 500, 0)
+	memories, _, err := t.memRepo.ListByUser(ctx, userID, "", "", "", 500, 0)
+	if err != nil {
+		log.Printf("[get_topic_stats] list memories error: %v", err)
+	}
 	var memCount int
 	for _, m := range memories {
 		if !contains(cl.Members, m.Topic) {

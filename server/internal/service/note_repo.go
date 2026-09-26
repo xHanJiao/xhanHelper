@@ -70,6 +70,15 @@ func (r *NoteRepo) HardDelete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Delete(&model.Note{}, "id = ?", id).Error
 }
 
+// DeleteByIDs 批量硬删除笔记（批量清理场景）。
+func (r *NoteRepo) DeleteByIDs(ctx context.Context, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).Where("id IN ?", ids).Delete(&model.Note{})
+	return res.RowsAffected, res.Error
+}
+
 // Update 更新笔记，仅更新非空字段
 func (r *NoteRepo) Update(ctx context.Context, id, userID, topic, content, tags string, variables *string) error {
 	updates := map[string]interface{}{}
@@ -133,6 +142,14 @@ func (r *NoteRepo) CountRecent(ctx context.Context, userID string, since time.Ti
 		Where("user_id = ? AND status = ? AND created_at >= ?", userID, model.NoteStatusNormal, since).
 		Count(&count).Error
 	return count, err
+}
+
+// DistinctUserIDs 返回有笔记的所有 user_id（供存量清洗工具枚举用户）。
+func (r *NoteRepo) DistinctUserIDs(ctx context.Context) ([]string, error) {
+	var ids []string
+	err := r.db.WithContext(ctx).Model(&model.Note{}).
+		Distinct().Pluck("user_id", &ids).Error
+	return ids, err
 }
 
 // DistinctTopics 获取用户所有不重复的笔记主题（仅正常状态）

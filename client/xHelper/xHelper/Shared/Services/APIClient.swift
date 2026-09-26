@@ -246,11 +246,20 @@ class APIClient {
 
 	// MARK: Memories (P3)
 
-	func listMemories(limit: Int = 50, offset: Int = 0, keyword: String = "", source: String = "") async throws -> MemoryListResponse {
+	func listMemories(limit: Int = 50, offset: Int = 0, source: String = "", topic: String = "") async throws -> MemoryListResponse {
 		var path = "/api/memories?limit=\(limit)&offset=\(offset)"
-		if !keyword.isEmpty { path += "&keyword=\(keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)" }
 		if !source.isEmpty { path += "&source=\(source)" }
+		if !topic.isEmpty {
+			// .urlQueryAllowed 不转义 &=+；topic 含这些字符会被服务端截断/解码错，必须减掉
+			let enc = topic.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&=+"))) ?? topic
+			path += "&topic=\(enc)"
+		}
 		return try await get(path)
+	}
+
+	/// 记忆词云：所有 topic 及出现次数（按次数倒序）
+	func listMemoryTopics() async throws -> MemoryTopicListResponse {
+		return try await get("/api/memories/topics")
 	}
 
 	func deleteMemory(id: String) async throws {
@@ -422,6 +431,14 @@ class APIClient {
         try await delete("/api/images/\(id)")
     }
 
+    // MARK: Local Backup（本地模式）
+
+    /// 立即触发一次本地数据备份。服务端同步执行（当前体积约 20s）。
+    func triggerLocalBackup() async throws -> LocalBackupArchive {
+        let resp: LocalBackupTriggerResponse = try await post("/api/local/backup", body: [:])
+        return resp.archive
+    }
+
     private func get<T: Decodable>(_ path: String) async throws -> T {
         var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -531,6 +548,24 @@ private struct APIResponse<T: Decodable>: Decodable {
 /// 用于只关心包装层校验、忽略 data 具体结构的请求
 private struct EmptyData: Decodable {}
 
+// MARK: Local Backup
+
+struct LocalBackupArchive: Codable {
+    let name: String
+    let path: String
+    let bytes: Int64
+    let createdAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name, path, bytes
+        case createdAt = "created_at"
+    }
+}
+
+private struct LocalBackupTriggerResponse: Codable {
+    let archive: LocalBackupArchive
+}
+
 // MARK: List Response models
 
 struct ConversationListResponse: Codable {
@@ -568,6 +603,19 @@ struct NoteListResponse: Codable {
 struct MemoryListResponse: Codable {
     let memories: [UserMemory]
     let total: Int
+}
+
+/// 记忆主题词云用的 topic 及出现次数。
+struct MemoryTopic: Identifiable, Codable, Equatable {
+    let topic: String
+    let count: Int
+
+    var id: String { topic }
+    var cloudTag: CloudTag { CloudTag(name: topic, count: count) }
+}
+
+struct MemoryTopicListResponse: Codable {
+    let topics: [MemoryTopic]
 }
 
 struct AgentListResponse: Codable {
@@ -740,7 +788,7 @@ struct DocumentListResponse: Codable {
     let total: Int
 }
 
-struct DocumentTag: Identifiable, Codable, Equatable {
+struct CloudTag: Identifiable, Codable, Equatable {
     let name: String
     let count: Int
 
@@ -755,7 +803,7 @@ struct TagEdge: Codable, Equatable {
 }
 
 struct DocumentTagListResponse: Codable {
-    let tags: [DocumentTag]
+    let tags: [CloudTag]
     let edges: [TagEdge]
 }
 

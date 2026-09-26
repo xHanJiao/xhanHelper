@@ -91,6 +91,12 @@ func isAdmin(userID string, adminUsers []string) bool {
 
 func refreshToken(userRepo *service.UserRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 本地单用户 token 无过期概念、也不在 user_tokens 表里 → 直接续期成功，
+		// 否则前端 30 分钟心跳拿到 401 会主动登出。
+		if c.GetBool("local_auth") {
+			view.JSONOK(c, gin.H{"ok": true})
+			return
+		}
 		token := c.GetString("bearer_token")
 		if err := userRepo.RefreshToken(c.Request.Context(), token); err != nil {
 			view.JSONError(c, 401, "token expired or invalid")

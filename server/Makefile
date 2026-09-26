@@ -1,4 +1,4 @@
-.PHONY: dev dev-full check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs db-pull db-import entity-gc build-entity-gc topic-merge-plan topic-merge-apply build-topic-merge restart
+.PHONY: dev dev-full local local-dev local-build embed-frontend check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs db-pull db-import entity-gc entity-gc-local build-entity-gc topic-merge-plan topic-merge-apply build-topic-merge restart
 
 # 远端 ssh 执行时 source 用户环境变量（非交互 ssh 不会自动 source）
 REMOTE_ENV = for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do source "$$f" 2>/dev/null || true; done;
@@ -15,6 +15,9 @@ FRONTEND_DIR=../front-end
 help:
 	@echo "可用的 make 命令："
 	@echo "  make dev            - 本地开发模式启动（dev环境，使用MySQL）"
+	@echo "  make local          - 本地部署模式启动（local环境，使用SQLite：xhanHelper/ :18923）"
+	@echo "  make local-dev      - 本地 dev 沙盒（xhanHelper-dev/ :18924，与 prod 隔离）"
+	@echo "  make local-build    - 编译本地版二进制（app 打包用）"
 	@echo "  make dev-full       - 同时启动前后端开发服务器"
 	@echo "  make build          - 本地编译（当前系统）"
 	@echo "  make build-topic-fix - 编译+上传 topic 修复工具（修复 memory 中含 / 或 , 的脏 topic）"
@@ -29,6 +32,7 @@ help:
 	@echo "  make db-pull        - 导出线上数据库并拉到本地 data/ 目录"
 	@echo "  make db-import      - 仅导入本地最新 dump（不联网，用于下载后导入失败重跑）"
 	@echo "  make entity-gc      - 远端清理孤儿派生数据（默认 dry-run；ARGS=\"--write\" 落库）"
+	@echo "  make entity-gc-local - 本地清理（默认 dev 沙盒库；ARGS=\"--purge-cancelled --write\" 硬删取消态笔记）"
 	@echo "  make topic-merge-plan  - 远端生成 topic 收敛报告+映射，拉到本地 data/topic-merge/"
 	@echo "  make topic-merge-apply - 推回本地映射并在远端执行（默认 dry-run；ARGS=\"--dry-run=false\" 落库，自动停服/起服）"
 	@echo "  make restart        - 重启远端服务"
@@ -41,6 +45,40 @@ dev: check-env
 	@mkdir -p logs
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
 	go run ./cmd/xhan-helper/ 2>&1 | tee logs/dev-$$(date +%Y-%m-%d).log
+
+# 启动本地版服务（local → SQLite @ Application Support）
+# XHAN_LOCAL_TOKEN 缺省给个开发用令牌；正式由 app 生成随机值经 env 注入
+local: check-env
+	@echo "=== 启动本地服务 (local → SQLite @ ~/Library/Application Support/xhanHelper) ==="
+	@mkdir -p logs
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	export XHAN_LOCAL_TOKEN="$${XHAN_LOCAL_TOKEN:-prod:local-dev-token}"; \
+	echo "  local_token: $$XHAN_LOCAL_TOKEN"; \
+	APP_ENV=local go run ./cmd/xhan-helper/ 2>&1 | tee logs/local-$$(date +%Y-%m-%d).log
+
+# 启动本地 dev 沙盒（local.dev → SQLite @ xhanHelper-dev，端口 18924；与 prod 隔离）
+local-dev: check-env
+	@echo "=== 启动本地 dev 沙盒 (local.dev → SQLite @ ~/Library/Application Support/xhanHelper-dev, :18924) ==="
+	@mkdir -p logs
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	export XHAN_LOCAL_TOKEN="$${XHAN_LOCAL_TOKEN:-dev:local-dev-token}"; \
+	echo "  local_token: $$XHAN_LOCAL_TOKEN"; \
+	APP_ENV=local.dev go run ./cmd/xhan-helper/ 2>&1 | tee logs/local-dev-$$(date +%Y-%m-%d).log
+
+# 把前端构建产物拷进 Go 内嵌目录
+embed-frontend:
+	@if [ ! -d $(FRONTEND_DIR)/dist ]; then echo "❌ 先跑 make build-frontend"; exit 1; fi
+	@echo "=== 拷贝前端 dist → internal/web/dist ==="
+	@rm -rf internal/web/dist
+	@mkdir -p internal/web/dist
+	@cp -R $(FRONTEND_DIR)/dist/. internal/web/dist/
+	@touch internal/web/dist/.gitkeep
+
+# 编译本地版二进制（app 打包用；依赖已嵌入的前端）
+local-build: embed-frontend
+	@echo "=== 编译本地版二进制 ==="
+	@mkdir -p $(OUTPUT_DIR)
+	go build -o $(OUTPUT_DIR)/$(BINARY) ./cmd/xhan-helper/
 
 # 同时启动前后端开发服务器
 dev-full: check-env
@@ -161,6 +199,16 @@ entity-gc: build-entity-gc
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
 	ssh $$DEPLOY_USER@$$DEPLOY_HOST '$(REMOTE_ENV) cd $(SERVER_PATH) && APP_ENV=prod ./entity-gc $(ARGS)'
 
+# 本地清理（默认 dev 沙盒库；prod 需显式 APP_ENV=local + CONFIRM_PROD=yes）
+# ARGS: --write 落库；--purge-cancelled 硬删取消态笔记。例：
+#   make entity-gc-local ARGS="--purge-cancelled"                    # dry-run（dev）
+#   make entity-gc-local APP_ENV=local CONFIRM_PROD=yes ARGS="--purge-cancelled --write"
+entity-gc-local:
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	E=$${APP_ENV:-local.dev}; \
+	echo "=== entity-gc 本地（APP_ENV=$$E）==="; \
+	APP_ENV=$$E go run ./cmd/entity-gc/ $(ARGS)
+
 # 编译并上传 topic-merge 工具 + 远端执行脚本
 build-topic-merge:
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
@@ -191,6 +239,29 @@ topic-merge-apply: build-topic-merge
 	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); \
 	scp ./data/topic-merge/*.tsv $$U@$$H:$$P/data/topic-merge/ && \
 	ssh $$U@$$H "cd $$P && bash scripts/run-topic-merge.sh --apply $(ARGS)"
+
+# topic 存量清洗（本地）。默认跑 dev 沙盒库（APP_ENV=local.dev），不会碰 prod。
+# 要在 prod 上跑必须显式 APP_ENV=local；ARGS 可传 --user xxx / --force / --no-llm；
+# 落库：make topic-clean-apply APP_ENV=local ARGS="--dry-run=false"
+topic-clean-plan:
+	@mkdir -p logs
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	E=$${APP_ENV:-local.dev}; \
+	echo "=== topic-clean 生成（APP_ENV=$$E）==="; \
+	APP_ENV=$$E go run ./cmd/topic-clean/ $(ARGS) 2>&1 | tee logs/topic-clean-plan-$$(date +%Y-%m-%d).log; \
+	echo "✅ 报告/映射在 data/topic-clean/（编辑 plan-*.tsv 后跑 make topic-clean-apply）"
+
+# 读取 data/topic-clean/*.tsv 执行改名（默认 dry-run；ARGS="--dry-run=false" 落库）
+topic-clean-apply:
+	@ls ./data/topic-clean/*.tsv >/dev/null 2>&1 || { \
+		echo "❌ 本地没有 data/topic-clean/*.tsv"; \
+		echo "   请先跑 make topic-clean-plan，审阅 report、编辑 plan-*.tsv 后再 apply"; \
+		exit 1; }; \
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	E=$${APP_ENV:-local.dev}; \
+	echo "=== topic-clean 落库（APP_ENV=$$E）==="; \
+	APP_ENV=$$E go run ./cmd/topic-clean/ --apply $(ARGS); \
+	echo "⚠️  若已改库，请重启服务，内存向量里的 topic metadata 才会刷新"
 
 # 重启远端服务
 restart:
@@ -366,4 +437,7 @@ clean:
 	rm -f xhan-helper
 	rm -rf $(OUTPUT_DIR)
 	rm -rf $(FRONTEND_DIR)/dist
+	rm -rf internal/web/dist
+	mkdir -p internal/web/dist
+	touch internal/web/dist/.gitkeep
 	rm -f data/xhan_helper.db

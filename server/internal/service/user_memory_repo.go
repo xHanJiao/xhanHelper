@@ -39,8 +39,8 @@ func (r *UserMemoryRepo) FindByKey(ctx context.Context, userID, key string) (*mo
 	return &m, err
 }
 
-// ListByUser 分页获取用户记忆，支持关键词搜索，limit<=0 时默认 50
-func (r *UserMemoryRepo) ListByUser(ctx context.Context, userID, keyword, source string, limit, offset int) ([]model.UserMemory, int64, error) {
+// ListByUser 分页获取用户记忆，支持关键词/来源/topic 过滤，limit<=0 时默认 50
+func (r *UserMemoryRepo) ListByUser(ctx context.Context, userID, keyword, source, topic string, limit, offset int) ([]model.UserMemory, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -51,6 +51,9 @@ func (r *UserMemoryRepo) ListByUser(ctx context.Context, userID, keyword, source
 	}
 	if source != "" {
 		q = q.Where("source = ?", source)
+	}
+	if topic != "" {
+		q = q.Where("topic = ?", topic)
 	}
 
 	var total int64
@@ -282,7 +285,17 @@ func (r *UserMemoryRepo) RenameTopic(ctx context.Context, userID string, from []
 	return res.RowsAffected, res.Error
 }
 
+// DistinctUserIDs 返回有记忆的所有 user_id（供存量清洗工具枚举用户）。
+func (r *UserMemoryRepo) DistinctUserIDs(ctx context.Context) ([]string, error) {
+	var ids []string
+	err := r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Distinct().Pluck("user_id", &ids).Error
+	return ids, err
+}
+
 // DistinctTopics 返回用户所有不重复 topic 及对应记忆数量，按 count 倒序。
+// 有意排除空 topic（reuseTopic 候选集不该含空值）。存量清洗要连空 topic 一起收拾，
+// 用 EmptyTopics 单独取。
 func (r *UserMemoryRepo) DistinctTopics(ctx context.Context, userID string) ([]TopicCount, error) {
 	var results []TopicCount
 	err := r.db.WithContext(ctx).Model(&model.UserMemory{}).
@@ -294,4 +307,35 @@ func (r *UserMemoryRepo) DistinctTopics(ctx context.Context, userID string) ([]T
 		return nil, err
 	}
 	return results, nil
+}
+
+// SetTopicByID 把单条记忆的 topic 设为 to（存量清洗填空 topic 用；按 id 定位）。
+func (r *UserMemoryRepo) SetTopicByID(ctx context.Context, userID, id, to string) (int64, error) {
+	if to == "" {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Where("user_id = ? AND id = ?", userID, id).
+		Update("topic", to)
+	return res.RowsAffected, res.Error
+}
+
+// EmptyTopicMemory — 一条空 topic 记忆（存量清洗逐条起名用）。
+type EmptyTopicMemory struct {
+	ID      string
+	Content string
+}
+
+// EmptyTopics 返回该用户所有空 topic 记忆的 id + 内容（供清洗逐条按内容起名）。
+func (r *UserMemoryRepo) EmptyTopics(ctx context.Context, userID string, limit int) ([]EmptyTopicMemory, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var out []EmptyTopicMemory
+	err := r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Select("id, memory_value AS content").
+		Where("user_id = ? AND (topic IS NULL OR TRIM(topic) = '')", userID).
+		Order("created_at DESC").Limit(limit).
+		Scan(&out).Error
+	return out, err
 }

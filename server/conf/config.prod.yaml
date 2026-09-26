@@ -24,4 +24,4 @@ reflection:
   min_active_days: 3
 
 facts:
-  enabled: true # 显式跟随 base（merge 对 Enabled 无条件赋值，缺了会被覆盖成 false）
+  enabled: true # 跟随 base（env 未写则沿用 base）

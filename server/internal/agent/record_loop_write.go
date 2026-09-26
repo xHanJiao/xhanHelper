@@ -21,13 +21,16 @@ func (s *recordLoopState) saveMemory(ec *tool.ExecuteContext, args json.RawMessa
 	if s.saved {
 		return &tool.Result{Success: false, Error: "一条候选只能写一条记忆"}
 	}
-	if err := validateMemoryFields(a.Topic, a.Summary, a.Facts); err != nil {
+	// topic 以 nameTopic 定稿的 s.candTopic 为准（LLM 的 topic 参数只是兜底）：
+	// 定稿发生在决策循环之前，权威值不该被循环里 LLM 随手填的值覆盖或抹空。
+	topic := keepOrReplaceTopic(s.candTopic, a.Topic)
+	if err := validateMemoryFields(topic, a.Summary, a.Facts); err != nil {
 		return errResult(err)
 	}
 	if err := validateFactCount(a.Facts); err != nil {
 		return errResult(err)
 	}
-	mem := s.newMemory(a.Topic, a.Summary, a.Facts)
+	mem := s.newMemory(topic, a.Summary, a.Facts)
 	if err := s.persist(ec.Ctx, mem, true); err != nil {
 		return errResult(err)
 	}
@@ -62,11 +65,13 @@ func (s *recordLoopState) updateMemory(ec *tool.ExecuteContext, args json.RawMes
 	if err := validateFactCount(a.Facts); err != nil {
 		return errResult(err)
 	}
+	// topic：优先用 nameTopic 定稿的权威值；其次 LLM 传的；都没有则保留旧 topic。
+	topic := keepOrReplaceTopic(keepOrReplaceTopic(s.candTopic, a.Topic), old.Topic)
 	facts := mergeFacts(parseFactsPtr(old.Facts), a.Facts)
-	if err := validateMemoryFields(a.Topic, a.Summary, facts); err != nil {
+	if err := validateMemoryFields(topic, a.Summary, facts); err != nil {
 		return errResult(err)
 	}
-	mem := s.newMemory(a.Topic, a.Summary, facts)
+	mem := s.newMemory(topic, a.Summary, facts)
 	mem.ID = old.ID
 	if err := s.persist(ec.Ctx, mem, false); err != nil {
 		return errResult(err)

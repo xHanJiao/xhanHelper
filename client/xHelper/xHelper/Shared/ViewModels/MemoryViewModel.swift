@@ -10,10 +10,18 @@ class MemoryViewModel: ObservableObject {
     @Published var isEditMode = false
     @Published var selectedIDs: Set<String> = []
 
+    /// 记忆页「列表 / 词云」开关（纯 UI 状态，仅 macOS 使用）。
+    @Published var showCloudMode = false
+    /// 词云用：所有 topic 及出现次数（按次数倒序）。
+    @Published var cloudTopics: [MemoryTopic] = []
+    /// 词云「≥ N 条」过滤阈值。
+    @Published var minTopicCount = 1
+    /// 当前按 topic 筛选（nil = 不筛）。点词云里的 topic 后切回列表生效。
+    @Published var activeTopic: String?
+
     private let apiClient: APIClient
     private var currentOffset = 0
     private var hasMore = true
-    var searchKeyword = ""
 
     init(apiClient: APIClient) {
         self.apiClient = apiClient
@@ -21,10 +29,11 @@ class MemoryViewModel: ObservableObject {
 
     func load() async {
         isLoading = true
+        errorMessage = nil
         currentOffset = 0
         hasMore = true
         do {
-            let resp = try await apiClient.listMemories(keyword: searchKeyword)
+            let resp = try await apiClient.listMemories(topic: activeTopic ?? "")
             memories = resp.memories
             hasMore = resp.total >= 50
         } catch {
@@ -39,7 +48,7 @@ class MemoryViewModel: ObservableObject {
         isLoading = true
         currentOffset += 50
         do {
-            let resp = try await apiClient.listMemories(offset: currentOffset, keyword: searchKeyword)
+            let resp = try await apiClient.listMemories(offset: currentOffset, topic: activeTopic ?? "")
             memories.append(contentsOf: resp.memories)
             hasMore = resp.total >= 50
         } catch {
@@ -47,6 +56,32 @@ class MemoryViewModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    /// 拉词云 topic 列表（进入词云模式时调用）。
+    func loadTopics() async {
+        isLoading = true
+        errorMessage = nil
+        do {
+            cloudTopics = try await apiClient.listMemoryTopics().topics
+            minTopicCount = min(minTopicCount, max(1, cloudTopics.first?.count ?? 1))
+        } catch {
+            LogBuffer.shared.error("MemoryViewModel.loadTopics: \(error)")
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    /// 点击词云里的 topic：按该 topic 筛选并切回列表（列表加载由 showCloudMode 变化的 onChange 触发）。
+    func selectTopic(_ topic: String) {
+        activeTopic = topic
+        showCloudMode = false
+    }
+
+    /// 清除 topic 筛选：回词云（同上，topic 加载由 onChange 触发）。
+    func clearTopic() {
+        activeTopic = nil
+        showCloudMode = true
     }
 
     func delete(id: String) async {

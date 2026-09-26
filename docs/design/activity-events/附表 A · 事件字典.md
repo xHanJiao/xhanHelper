@@ -102,8 +102,8 @@
 | `client.input.active` / `client.input.ended` | 区间配对；duration_ms, chars_bucket, had_delete | 根 | **要新写（2026-09-26 定要做）**：`NSEvent` 本地监听，不要任何系统权限；只统计本 app 窗口内的输入，只计数不记内容；**停 5 秒算一段结束**，下次输入开新段 |
 | `system.sleep` / `system.wake` | wake_epoch_id | 根 | **要新写**（NSWorkspace 通知中心） |
 | `system.screens.sleep` / `system.screens.wake` | 无 | 根 | **要新写**；锁屏的近似边界 |
-| `system.power.off` | 无 | 根 | **要新写** |
-| `system.boundary` | 来源（client / server） | 根 | 进程启动、唤醒时写，用于截断悬挂区间 |
+| `system.power.off` | 无 | 根 | **要新写**；**不写 boundary**——悬挂的 wake epoch 靠下次进程启动的 boundary 兜底（关机路径本就可能赶不及落盘） |
+| `system.boundary` | 来源（client / server） | 根 | 进程启动、**睡眠**、唤醒时写，用于截断悬挂区间 |
 
 这一组全部只靠 `event_id` 去重（没有业务键）。
 

@@ -60,16 +60,27 @@ actor ActivityRecorder {
 
     /// 生产者入口：补公共字段后落盘。写失败只记日志，不影响业务（fire-and-forget）。
     func record(_ event: ActivityEvent) async {
-        var e = event
-        if e.eventId.isEmpty { e.eventId = UUID().uuidString }
-        if e.occurredAt.isEmpty { e.occurredAt = ActivityIdentity.isoMillis() }
-        if e.clientInstanceId == nil { e.clientInstanceId = clientInstanceID }
-        if e.clientBuild == nil { e.clientBuild = clientBuild }
-        if e.osVersion == nil { e.osVersion = osVersion }
+        await record([event])
+    }
+
+    /// 批量入口：一次 actor 边界内按序落盘。成对/相邻事件（如 `system.sleep` + `boundary`）必须走它，
+    /// 否则各起一个非结构化 `Task` 时理论可乱序，boundary 的 `occurred_at` 可能早于它要截断的事件。
+    func record(_ events: [ActivityEvent]) async {
+        let stamped = events.map { event -> ActivityEvent in
+            var e = event
+            if e.eventId.isEmpty { e.eventId = UUID().uuidString }
+            if e.occurredAt.isEmpty { e.occurredAt = ActivityIdentity.isoMillis() }
+            if e.clientInstanceId == nil { e.clientInstanceId = clientInstanceID }
+            if e.clientBuild == nil { e.clientBuild = clientBuild }
+            if e.osVersion == nil { e.osVersion = osVersion }
+            if e.launchId == nil { e.launchId = ActivityIdentity.launchID }
+            return e
+        }
+        guard !stamped.isEmpty else { return }
         do {
-            try await store.append([e])
+            try await store.append(stamped)
         } catch {
-            await store.noteFailure("append \(e.type): \(error)")
+            await store.noteFailure("append \(stamped.map(\.type).joined(separator: "+")): \(error)")
         }
     }
 

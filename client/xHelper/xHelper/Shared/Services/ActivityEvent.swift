@@ -156,6 +156,9 @@ nonisolated enum ActivityIdentity {
     /// 同机多实例（dev 与 prod 并行）靠它区分，故进程启动生成一次。
     static let clientInstanceID = UUID().uuidString
 
+    /// L1 归属（进程存活区间）的原料，进程启动生成一次，由 recorder 盖到每条客户端事件上。
+    static let launchID = UUID().uuidString
+
     static var clientBuild: String {
         (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? ""
     }

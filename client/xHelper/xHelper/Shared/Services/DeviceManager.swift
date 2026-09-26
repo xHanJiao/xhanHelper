@@ -130,7 +130,12 @@ class DeviceManager: ObservableObject {
     private func updateActivityRecorder(token: String?) {
         guard activityCollectionActive else { return }
         guard let token, !token.isEmpty else {
-            Task { await ActivityRecorder.shared.stop() }
+            Task {
+                await ActivityRecorder.shared.stop()
+                #if os(macOS)
+                ActivityPresenceMonitor.shared.stop()
+                #endif
+            }
             return
         }
         let baseURL = self.baseURL
@@ -149,6 +154,9 @@ class DeviceManager: ObservableObject {
         Task {
             await ActivityRecorder.shared.configure(transport: transport)
             await ActivityRecorder.shared.start()
+            #if os(macOS)
+            ActivityPresenceMonitor.shared.start()
+            #endif
         }
     }
 

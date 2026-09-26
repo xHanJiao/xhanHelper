@@ -65,6 +65,7 @@ let package = Package(
                 "Services/ActivityEvent.swift",
                 "Services/ActivityStore.swift",
                 "Services/ActivityRecorder.swift",
+                "Services/ActivityPresenceState.swift",
             ]
         ),
         .testTarget(

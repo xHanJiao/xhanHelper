@@ -123,6 +123,26 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(remaining.count, 0, "ack 后删段")
     }
 
+    func testRecorderBatchPreservesOrderAndLaunchID() async throws {
+        let dir = try makeTempDir()
+        let calls = Calls()
+        let rec = ActivityRecorder(directory: dir)
+        await rec.configure(transport: { id, evs in
+            await calls.add(id, evs)
+            return ActivityUploadAck(accepted: evs.count, duplicate: 0, watermark: "w", watermarkKind: "time")
+        })
+
+        await rec.record([makeEvent("system.sleep"), makeEvent("system.boundary")])
+        await rec.uploadNow()
+
+        let sent = await calls.all()
+        let evs = try XCTUnwrap(sent.first?.1)
+        XCTAssertEqual(evs.map(\.type), ["system.sleep", "system.boundary"], "同一批按序落盘")
+        XCTAssertEqual(evs[0].launchId, ActivityIdentity.launchID, "recorder 盖 launch_id")
+        XCTAssertEqual(evs[0].launchId, evs[1].launchId)
+        XCTAssertLessThanOrEqual(evs[0].occurredAt, evs[1].occurredAt, "boundary 不早于它要截断的事件")
+    }
+
     func testRecorderKeepsSegmentOnRetryable() async throws {
         let dir = try makeTempDir()
         let rec = ActivityRecorder(directory: dir)

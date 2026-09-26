@@ -13,10 +13,10 @@ import (
 // schemaVersion 与附表 B 的 meta.schema_version 对齐；字段演进时 +1。
 const schemaVersion = 1
 
-// Store 是 events.db 的连接与元数据入口。
-// 后续期在它上面挂 emit（P2）与派生读写。
+// Store 是 events.db 的连接与元数据入口，同时持有唯一 emit 入口。
 type Store struct {
 	db *gorm.DB
+	em *Emitter
 }
 
 // DBPath 返回与主库同目录的 events.db 路径。
@@ -44,6 +44,7 @@ func Open(path string, enabled bool) (*Store, error) {
 	if err := s.seedMeta(enabled); err != nil {
 		return nil, err
 	}
+	s.em = startEmitter(s)
 	return s, nil
 }
 
@@ -99,13 +100,31 @@ func (s *Store) SetMeta(key, value string) error {
 	return nil
 }
 
-// Close 关闭底层连接。
+// Close 停止 emit 入口（刷完队列）后关闭底层连接。
 func (s *Store) Close() error {
+	if s.em != nil {
+		s.em.close()
+	}
 	sqlDB, err := s.db.DB()
 	if err != nil {
 		return err
 	}
 	return sqlDB.Close()
+}
+
+// Emit 投递一条事件（服务端唯一入口，见 emit.go）。
+func (s *Store) Emit(ev Event) {
+	if s.em == nil {
+		return
+	}
+	s.em.Emit(ev)
+}
+
+// Flush 立即刷队列，关键里程碑可调。
+func (s *Store) Flush() {
+	if s.em != nil {
+		s.em.Flush()
+	}
 }
 
 // DB 暴露底层连接，供同进程内的派生期与测试使用。

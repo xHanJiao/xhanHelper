@@ -24,6 +24,19 @@ const (
 	TriggerSchedule = "schedule"
 )
 
+// 事件 type（附表 A 事件字典契约；用到才登记一行）。
+const (
+	TypeChatTurnStarted = "chat.turn.started"
+	TypeChatTurnEnded   = "chat.turn.ended"
+)
+
+// outcome 取值（附表 A 公共字段）。
+const (
+	OutcomeCompleted = "completed"
+	OutcomeCancelled = "cancelled"
+	OutcomeFailed    = "failed"
+)
+
 // 批量与背压参数：1 秒或 100 条先到先刷，一批一个事务（设计篇 5.2/5.6）。
 const (
 	batchSize     = 100

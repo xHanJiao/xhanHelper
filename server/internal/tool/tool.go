@@ -70,6 +70,7 @@ type ExecuteContext struct {
 	Ctx    context.Context
 	UserID string
 	ConvID string // 当前会话 ID，绑定/解绑 agent 用
+	TurnID string // 本轮 turn ID（活动埋点归组用）；后台任务为空
 	Mode   string // 会话模式：model.ConvModeWork / ConvModePlan（只拦写）/ ConvModeStrict（全拦）
 
 	// Events — SSE 事件通道，工具可以通过此通道向客户端推送自定义事件。

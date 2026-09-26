@@ -336,6 +336,8 @@ func (cc *clientToolCaller) Call(
 	call tool.ToolCall,
 	mode string,
 	owner string, // 标签归属："main"（主循环）或 "subagent:<convID>"。客户端据此做标签隔离（list_tabs 标注 / close_tab 保护）
+	convID string, // 会话 id（客户端子事件归组用，见设计篇 4.8）
+	turnID string, // 本轮 turn id；后台任务为空
 ) (*tool.Result, bool) {
 	if cc.bridge == nil {
 		// 接线 bug：请求携带了 client_tools 却没有注入桥，炸在明处
@@ -360,6 +362,8 @@ func (cc *clientToolCaller) Call(
 		"timeout_secs":        int(cc.timeout.Seconds()),
 		"mode":                mode, // 会话模式，客户端可按需做二次拦截/展示
 		"owner":               owner,
+		"conversation_id":     convID,
+		"turn_id":             turnID,
 	})
 	if err != nil {
 		log.Printf("[clientToolCaller] client tool payload marshal error: %v", err)

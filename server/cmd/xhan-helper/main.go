@@ -47,9 +47,10 @@ func main() {
 	}()
 
 	// --- 活动埋点 events.db（仅本机 sqlite 且开关打开）---
-	if activityDB := setupActivity(cfg); activityDB != nil {
+	activityStore := setupActivity(cfg)
+	if activityStore != nil {
 		defer func() {
-			if err := activityDB.Close(); err != nil {
+			if err := activityStore.Close(); err != nil {
 				log.Printf("[activity] close events.db: %v", err)
 			}
 		}()
@@ -75,7 +76,7 @@ func main() {
 
 	// --- 工具 & Agent 系统 ---
 	tools := appinit.InitTools(cfg, repos, infra, llmClients)
-	agents := appinit.InitAgents(cfg, repos, infra, llmClients, tools, vs)
+	agents := appinit.InitAgents(cfg, repos, infra, llmClients, tools, vs, activityStore)
 
 	// LLM 审计保留清理：每日删 7 天前记录
 	if !cfg.Server.BackgroundTasksDisabled() {

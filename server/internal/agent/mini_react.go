@@ -55,6 +55,10 @@ type SubAgentExt struct {
 	ClientTools       []ClientTool      // 客户端工具定义（browser/fs 等）
 	ClientBridge      *ClientToolBridge // 客户端工具结果回传桥
 	ClientToolTimeout time.Duration     // 客户端工具执行超时，0 = 60s
+	// TurnConvID / TurnID — 继承父 turn 的归组键，写进下发 payload（设计篇 4.8）。
+	// subagent 不新开 turn，客户端子事件挂到父会话与父轮次；后台任务为空。
+	TurnConvID string
+	TurnID     string
 	// AllowedTools 运行时白名单 guard，nil map = 不限（既有调用方零变化）。
 	// key = server_name（含服务端工具名与客户端 server_name），value = 允许的函数名：
 	//   - value 为 nil：该 server 全部函数放行（服务端工具/浏览器整组放行）
@@ -355,7 +359,7 @@ func (m *MiniReAct) executeToolCalls(ctx context.Context, msgs []llm.Message, na
 						result = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
 					}
 				}()
-				ec := &tool.ExecuteContext{Ctx: ctx, UserID: m.userID, ConvID: m.convID, Mode: model.ConvModeWork}
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: m.userID, ConvID: m.convID, TurnID: m.subAgent.TurnID, Mode: model.ConvModeWork}
 				result = m.toolRegistry.ExecuteByName(ec, tc.Tool, tc.Function, tc.Args)
 			}()
 		}
@@ -536,7 +540,7 @@ func (m *MiniReAct) execClientTool(ctx context.Context, tc tool.ToolCall) (*tool
 			return m.emit(evt)
 		},
 		func(evt *llm.StreamEvent) { m.emit(evt) },
-		m.userID, tc, model.ConvModeWork, "subagent:"+m.convID)
+		m.userID, tc, model.ConvModeWork, "subagent:"+m.convID, m.subAgent.TurnConvID, m.subAgent.TurnID)
 	if unavailable {
 		m.clientToolsUnavailable = true
 		m.clientUnavailableAt = time.Now()

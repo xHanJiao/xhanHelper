@@ -234,7 +234,7 @@ func TestExecuteClientTool_TimeoutNotUnavailable(t *testing.T) {
 	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 50 * time.Millisecond}
 	events := make(chan *llm.StreamEvent, 16)
 
-	r, unavailable := o.executeClientTool(context.Background(), events, "u1", tool.ToolCall{Tool: "browser", Function: "navigate"}, "", "main")
+	r, unavailable := o.executeClientTool(context.Background(), events, "u1", "c1", "t1", tool.ToolCall{Tool: "browser", Function: "navigate"}, "", "main")
 	if r.Success {
 		t.Error("expected failure on timeout")
 	}
@@ -269,7 +269,7 @@ func TestExecuteClientTool_ResultDelivered(t *testing.T) {
 		}
 	}()
 
-	r, unavailable := o.executeClientTool(context.Background(), events, "u1", tool.ToolCall{Tool: "browser", Function: "navigate"}, "", "main")
+	r, unavailable := o.executeClientTool(context.Background(), events, "u1", "c1", "t1", tool.ToolCall{Tool: "browser", Function: "navigate"}, "", "main")
 	if !r.Success || unavailable {
 		t.Fatalf("expected success, got %+v unavailable=%v", r, unavailable)
 	}
@@ -305,7 +305,7 @@ func TestExecuteClientTool_ForwardsOwner(t *testing.T) {
 		}
 	}()
 
-	r, unavailable := o.executeClientTool(context.Background(), events, "u1",
+	r, unavailable := o.executeClientTool(context.Background(), events, "u1", "c1", "",
 		tool.ToolCall{Tool: "browser", Function: "agent_browser_close"}, "", "subagent:sub-9")
 	if !r.Success || unavailable {
 		t.Fatalf("expected success, got %+v unavailable=%v", r, unavailable)
@@ -322,7 +322,7 @@ func TestExecuteConcurrently_TimeoutDoesNotSetUnavailable(t *testing.T) {
 		{Tool: "browser", Function: "click"},
 	}
 
-	results := o.executeConcurrently(context.Background(), events, "u1", "c1",
+	results := o.executeConcurrently(context.Background(), events, "u1", "c1", "t1",
 		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state, "", nil, nil)
 
 	if state.clientToolsUnavailable {
@@ -356,7 +356,7 @@ func TestExecuteConcurrently_PlanModeBlocksClientWrite(t *testing.T) {
 		{ServerName: "chart", Name: "render"},
 	}
 
-	results := o.executeConcurrently(context.Background(), events, "u1", "c1",
+	results := o.executeConcurrently(context.Background(), events, "u1", "c1", "t1",
 		tool.NewRegistry(), calls, map[string]bool{"browser": true, "chart": true}, state,
 		model.ConvModePlan, clientToolReadOnlyIndex(clientTools), nil)
 
@@ -385,7 +385,7 @@ func TestExecuteConcurrently_PlanModeBlocksClientReadOnly(t *testing.T) {
 		{ServerName: "browser", Name: "agent_browser_open", IsReadOnly: true},
 	}
 
-	results := o.executeConcurrently(context.Background(), events, "u1", "c1",
+	results := o.executeConcurrently(context.Background(), events, "u1", "c1", "t1",
 		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state,
 		model.ConvModePlan, clientToolReadOnlyIndex(clientTools), nil)
 
@@ -407,7 +407,7 @@ func TestExecuteConcurrently_WorkModeAllowsClientWrite(t *testing.T) {
 	calls := []tool.ToolCall{{Tool: "browser", Function: "agent_browser_click"}}
 	clientTools := []ClientTool{{ServerName: "browser", Name: "agent_browser_click"}}
 
-	results := o.executeConcurrently(context.Background(), events, "u1", "c1",
+	results := o.executeConcurrently(context.Background(), events, "u1", "c1", "t1",
 		tool.NewRegistry(), calls, map[string]bool{"browser": true}, state,
 		model.ConvModeWork, clientToolReadOnlyIndex(clientTools), nil)
 

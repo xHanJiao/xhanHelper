@@ -562,6 +562,8 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 			ClientTools:       agentClientTools,
 			ClientBridge:      clientBridge,
 			ClientToolTimeout: o.clientToolTimeout,
+			TurnConvID:        opts.ParentConvID, // 继承父会话 + 父 turn（subagent 不新开 turn）
+			TurnID:            opts.TurnID,
 			AllowedTools:      buildAllowedTools(spec),
 			MsgSink:           &subAgentMsgSink{msgRepo: o.subMsgRepo, convID: subConv.ID, userID: userID, debugPersistJSON: o.debugPersistJSON, debugSink: o.debugJSONSink},
 		},
@@ -599,7 +601,7 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 			o.sendEvent(opts.MainEvents, &llm.StreamEvent{Type: "subagent", Content: subAgentEventJSON(subConv.ID, opts.Description, "end", endSummary, endState)})
 		}
 		if o.clientBridge != nil && result != nil && len(result.ToolCallLog) > 0 {
-			o.cleanupSubAgentTabs(opts.MainEvents, userID, subConv.ID, result.ToolCallLog)
+			o.cleanupSubAgentTabs(opts.MainEvents, userID, subConv.ID, opts.ParentConvID, opts.TurnID, result.ToolCallLog)
 		}
 		var errMsg string
 		if err != nil {
@@ -812,7 +814,7 @@ func subAgentOpenedBrowserTabs(logs []ToolCallLog) bool {
 // 复用客户端工具协议（agent_browser_close 的 owner 语义），一次调用覆盖全部——含加载失败/
 // 被拦截页（其结果无 tabId，逐个关闭会漏）。失败（tab 已关/客户端断连）忽略，客户端
 // housekeeping 兜底。owner 必须透传（executeClientTool 会写入 payload）。
-func (o *Orchestrator) cleanupSubAgentTabs(mainEvents chan<- *llm.StreamEvent, userID string, convID string, logs []ToolCallLog) {
+func (o *Orchestrator) cleanupSubAgentTabs(mainEvents chan<- *llm.StreamEvent, userID string, convID string, turnConvID string, turnID string, logs []ToolCallLog) {
 	if !subAgentOpenedBrowserTabs(logs) {
 		return
 	}
@@ -824,6 +826,6 @@ func (o *Orchestrator) cleanupSubAgentTabs(mainEvents chan<- *llm.StreamEvent, u
 	defer cancel()
 	log.Printf("[subagent] cleanup: closing tabs by owner subagent:%s", convID)
 	args, _ := json.Marshal(map[string]string{})
-	_, _ = o.executeClientTool(ctx, mainEvents, userID,
+	_, _ = o.executeClientTool(ctx, mainEvents, userID, turnConvID, turnID,
 		tool.ToolCall{Tool: "browser", Function: "agent_browser_close", Args: args}, model.ConvModeWork, "subagent:"+convID)
 }

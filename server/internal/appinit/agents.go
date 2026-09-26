@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/agent/promptbuilder"
@@ -18,7 +19,7 @@ import (
 )
 
 // InitAgents 创建 Retrieval Sources、Orchestrator、ReflectionOrchestrator、CronRunner
-func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, tools *ToolsBundle, vs *agent.VectorStore) *AgentBundle {
+func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, tools *ToolsBundle, vs *agent.VectorStore, activityStore *activity.Store) *AgentBundle {
 	// --- Retrieval Sources ---
 	memDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Memory.FreshnessDecay)
 	noteDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Note.FreshnessDecay)
@@ -293,6 +294,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		ReminderRepo:    repos.Reminder,
 		ProfileFactRepo: repos.UserProfileFact,
 		ImageStore:      infra.ImageStore,
+		Activity:        activityStore,
 	})
 
 	if !cfg.Server.BackgroundTasksDisabled() {

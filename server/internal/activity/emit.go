@@ -32,6 +32,8 @@ const (
 	TypeLLMCallStarted  = "llm.call.started"
 	TypeLLMCallEnded    = "llm.call.ended"
 	TypeLLMFirstToken   = "llm.first_token"
+	TypeToolCallStarted = "tool.call.started"
+	TypeToolCallEnded   = "tool.call.ended"
 )
 
 // outcome 取值（附表 A 公共字段）。

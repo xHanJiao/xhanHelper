@@ -1772,7 +1772,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 						r = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
 					}
 				}()
-				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, TurnID: turnID, Mode: mode, Events: events, ClientTools: clientTools, Expose: o.makeExposeFn(state, clientGroups)}
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, TurnID: turnID, ToolCallID: call.ID, Mode: mode, Events: events, ClientTools: clientTools, Expose: o.makeExposeFn(state, clientGroups)}
 				r = registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
 			}()
 
@@ -2243,6 +2243,7 @@ func nativeToolCallsToInternal(tcs []llm.ToolCall) []tool.ToolCall {
 	for i, tc := range tcs {
 		toolName, funcName := splitToolFuncName(tc.Function.Name)
 		out[i] = tool.ToolCall{
+			ID:       tc.ID,
 			Tool:     toolName,
 			Function: funcName,
 			Args:     json.RawMessage(tc.Function.Arguments),

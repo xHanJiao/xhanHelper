@@ -20,6 +20,10 @@ import (
 
 // InitAgents 创建 Retrieval Sources、Orchestrator、ReflectionOrchestrator、CronRunner
 func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, tools *ToolsBundle, vs *agent.VectorStore, activityStore *activity.Store) *AgentBundle {
+	// 活动埋点：工具调度器统一收口 tool.call.*（store 为 nil 时不采集）
+	tools.Registry.SetActivityStore(activityStore)
+	tools.ReflectionReg.SetActivityStore(activityStore)
+
 	// --- Retrieval Sources ---
 	memDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Memory.FreshnessDecay)
 	noteDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Note.FreshnessDecay)

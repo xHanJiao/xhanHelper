@@ -71,7 +71,9 @@ type ExecuteContext struct {
 	UserID string
 	ConvID string // 当前会话 ID，绑定/解绑 agent 用
 	TurnID string // 本轮 turn ID（活动埋点归组用）；后台任务为空
-	Mode   string // 会话模式：model.ConvModeWork / ConvModePlan（只拦写）/ ConvModeStrict（全拦）
+	// ToolCallID — 本次工具调用的 id（活动埋点 `tool.call.*` 的业务键）；无（文本解析的旧路径）为空。
+	ToolCallID string
+	Mode       string // 会话模式：model.ConvModeWork / ConvModePlan（只拦写）/ ConvModeStrict（全拦）
 
 	// Events — SSE 事件通道，工具可以通过此通道向客户端推送自定义事件。
 	// 重要：必须在工具 Execute() 方法返回前发送，不可在异步 goroutine 中使用 channel。

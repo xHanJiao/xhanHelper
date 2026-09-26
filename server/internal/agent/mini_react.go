@@ -359,7 +359,7 @@ func (m *MiniReAct) executeToolCalls(ctx context.Context, msgs []llm.Message, na
 						result = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
 					}
 				}()
-				ec := &tool.ExecuteContext{Ctx: ctx, UserID: m.userID, ConvID: m.convID, TurnID: m.subAgent.TurnID, Mode: model.ConvModeWork}
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: m.userID, ConvID: m.convID, TurnID: m.subAgent.TurnID, ToolCallID: tc.ID, Mode: model.ConvModeWork}
 				result = m.toolRegistry.ExecuteByName(ec, tc.Tool, tc.Function, tc.Args)
 			}()
 		}

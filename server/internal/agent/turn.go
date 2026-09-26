@@ -51,6 +51,14 @@ func (o *Orchestrator) StartTurn(ctx context.Context, convID, trigger, parentEve
 	return t
 }
 
+// StartEventID 返回 chat.turn.started 的 event_id（供 llm.* 子事件挂父）；未采集时为空。
+func (t *Turn) StartEventID() string {
+	if t == nil {
+		return ""
+	}
+	return t.startID
+}
+
 // Finish 发 chat.turn.ended（幂等）；outcome 用 activity.Outcome*。
 func (t *Turn) Finish(outcome string) {
 	if t == nil {

@@ -26,8 +26,12 @@ const (
 
 // 事件 type（附表 A 事件字典契约；用到才登记一行）。
 const (
+	TypeChatMessageSent = "chat.message.sent"
 	TypeChatTurnStarted = "chat.turn.started"
 	TypeChatTurnEnded   = "chat.turn.ended"
+	TypeLLMCallStarted  = "llm.call.started"
+	TypeLLMCallEnded    = "llm.call.ended"
+	TypeLLMFirstToken   = "llm.first_token"
 )
 
 // outcome 取值（附表 A 公共字段）。

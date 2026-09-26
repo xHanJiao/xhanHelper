@@ -74,6 +74,12 @@ func main() {
 	llmClients.BgFlash = llmcost.WrapIOAudit(llmClients.BgFlash, repos.LLMCallIO)
 	llmClients.BgStrong = llmcost.WrapIOAudit(llmClients.BgStrong, repos.LLMCallIO)
 
+	// 活动埋点：llm.call.started/ended + llm.first_token（store 为 nil 时原样返回）
+	llmClients.Flash = activity.WrapLLMClient(llmClients.Flash, activityStore, "main_flash")
+	llmClients.Strong = activity.WrapLLMClient(llmClients.Strong, activityStore, "main_strong")
+	llmClients.BgFlash = activity.WrapLLMClient(llmClients.BgFlash, activityStore, "bg_flash")
+	llmClients.BgStrong = activity.WrapLLMClient(llmClients.BgStrong, activityStore, "bg_strong")
+
 	// --- 工具 & Agent 系统 ---
 	tools := appinit.InitTools(cfg, repos, infra, llmClients)
 	agents := appinit.InitAgents(cfg, repos, infra, llmClients, tools, vs, activityStore)

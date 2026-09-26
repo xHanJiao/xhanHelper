@@ -471,10 +471,22 @@ func (o *Orchestrator) runReActLoop(
 	loopStart := time.Now()
 	defer func() { monitor.RecordRequestLatency(time.Since(loopStart).Milliseconds()) }()
 
-	// turn 生命周期（设计篇 4.8）：一次 Run = 一个 turn；结束时按 ctx/错误定 outcome。
-	// 父事件（入口那条 chat.message.sent）留空，待 P4 落消息事件后再挂。
-	turn := o.StartTurn(ctx, req.ConversationID, activity.TriggerManual, "")
+	userMsg := o.buildUserMessage(ctx, req, retrieveResult)
+
+	if err := o.msgRepo.Create(ctx, userMsg); err != nil {
+		log.Printf("[orch] save user msg error: %v", err)
+		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrInternal)})
+		return
+	}
+
+	// 用户消息事件（P4，根）：真实用户发言才落；隐藏轮是控制轮，不算用户发言。
+	msgEventID := o.emitUserMessageEvent(req, userMsg)
+
+	// turn 生命周期（设计篇 4.8）：一次 Run = 一个 turn；父 = 上面那条消息事件。
+	// 归组键写进 ctx，供 LLM 装饰器给 llm.* 事件挂 turn。
+	turn := o.StartTurn(ctx, req.ConversationID, activity.TriggerManual, msgEventID)
 	req.TurnID = turn.ID
+	ctx = activity.WithTurn(ctx, activity.TurnCtx{TurnID: turn.ID, StartEventID: turn.StartEventID()})
 	outcome := activity.OutcomeCompleted
 	var state *reactState
 	defer func() {
@@ -486,14 +498,6 @@ func (o *Orchestrator) runReActLoop(
 		turn.Finish(outcome)
 	}()
 
-	userMsg := o.buildUserMessage(ctx, req, retrieveResult)
-
-	if err := o.msgRepo.Create(ctx, userMsg); err != nil {
-		log.Printf("[orch] save user msg error: %v", err)
-		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrInternal)})
-		outcome = activity.OutcomeFailed
-		return
-	}
 	util.SafeGo(func() { o.convRepo.Touch(ctx, req.ConversationID) })
 	// 隐藏轮不落用户消息向量：避免接力提示词污染历史检索/记忆
 	if !req.HiddenRound {
@@ -811,6 +815,32 @@ func (o *Orchestrator) buildUserMessage(
 	}
 	userMsg.XMLContext = &userContent
 	return userMsg
+}
+
+// emitUserMessageEvent 落 chat.message.sent（点事件，根）；返回 event_id（供 turn 挂父）。
+// 隐藏轮是控制轮、非用户发言，不落。
+func (o *Orchestrator) emitUserMessageEvent(req *RunRequest, userMsg *model.Message) string {
+	if o.activity == nil || req.HiddenRound {
+		return ""
+	}
+	content := req.RawUserMessage
+	if content == "" {
+		content = req.UserMessageContent
+	}
+	o.activity.Emit(activity.Event{
+		Type:           activity.TypeChatMessageSent,
+		EventID:        userMsg.ID,
+		OccurredAt:     time.Now(),
+		Actor:          activity.ActorUser,
+		Trigger:        activity.TriggerManual,
+		ConversationID: req.ConversationID,
+		BizKey:         userMsg.ID,
+		Attrs: map[string]any{
+			"message_id":  userMsg.ID,
+			"content_len": len([]rune(content)),
+		},
+	})
+	return userMsg.ID
 }
 
 // buildReminderPackets 查询用户 pending 提醒，生成 ContextPacket 列表注入 user message。

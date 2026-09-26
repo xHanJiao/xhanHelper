@@ -516,7 +516,7 @@ func NewFactDecider(cfg *FactDeciderConfig) *FactDecider {
 }
 
 // Decide 为一条候选产出动作。返回 nil 表示 NONE（模型什么都没调）。LLM 出错时上抛。
-// 始终走原生 function calling：use_native_fc 只管 orchestrator 自己的工具列表。
+// 始终走原生 function calling。
 func (d *FactDecider) Decide(ctx context.Context, cand factCandidate, neighbors []app.VectorMatch) ([]factAction, error) {
 	idSet := make(map[string]bool, len(neighbors))
 	nx := factNeighborsXML{Records: make([]factNeighborXML, 0, len(neighbors))}

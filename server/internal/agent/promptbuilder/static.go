@@ -101,19 +101,7 @@ func (p *answerLengthProvider) Render(ctx context.Context) string {
 	return answerLengthNotice
 }
 
-// toolDefinitionsProvider — 注入全部工具完整定义（prompt engineering 模式，直接调用无需检索）。
-// 委托 registry.GeneratePrompt() 生成。
-type toolDefinitionsProvider struct {
-	registry *tool.Registry
-}
-
-func (p *toolDefinitionsProvider) Name() string         { return "tool_definitions" }
-func (p *toolDefinitionsProvider) SectionTitle() string { return "工具使用" }
-func (p *toolDefinitionsProvider) Render(ctx context.Context) string {
-	return p.registry.GeneratePrompt()
-}
-
-// toolCatalogProvider — 原生 FC 模式：注入渐进式工具目录（组名 + 描述 + 全部函数名）。
+// toolCatalogProvider — 注入渐进式工具目录（组名 + 描述 + 全部函数名）。
 // 初始仅 expose_tools 常驻请求体；LLM 需要调用某函数时先按函数粒度调用 expose_tools.enable 启用，
 // 启用后该函数完整定义进入后续请求体。目录由 registry.ToolCatalog() 生成（字节稳定）。
 type toolCatalogProvider struct {

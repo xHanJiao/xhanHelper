@@ -171,17 +171,3 @@ func TestReadOnlyToolDefinitions_OnlyReadOnlyFuncs(t *testing.T) {
 		}
 	}
 }
-
-func TestGenerateReadOnlyPrompt_OnlyReadOnlyFuncs(t *testing.T) {
-	r := newPlanMockRegistry()
-	p := r.GenerateReadOnlyPrompt()
-	if !strings.Contains(p, "mock_mixed") || !strings.Contains(p, "query") {
-		t.Error("只读 prompt 应含只读工具与只读函数")
-	}
-	if strings.Contains(p, "mock_write_all") {
-		t.Error("只读 prompt 不应含 ReadOnlyFuncs=nil 的工具")
-	}
-	if strings.Contains(p, "- write:") {
-		t.Error("只读 prompt 不应含写函数 write")
-	}
-}

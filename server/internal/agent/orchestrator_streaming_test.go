@@ -12,6 +12,7 @@ import (
 	"xhan-helper/internal/agent/retrieval"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
+	"xhan-helper/internal/tool"
 )
 
 // mockFormatter 简单实现 ContextFormatter 接口供测试使用
@@ -126,6 +127,7 @@ func newTestOrchestrator(msgRepo msgCreator, convRepo convToucher) *Orchestrator
 		msgRepo:          msgRepo,
 		convRepo:         convRepo,
 		profileFactRepo:  &mockUserProfileFactRepo{},
+		registry:         tool.NewRegistry(),
 		maxIterations:    3,
 	}
 }
@@ -190,57 +192,65 @@ func hasDoneEvent(events []*llm.StreamEvent) bool {
 
 // —— 测试用例 ——
 
-func TestRunReActLoop_StrictJSON_TextOnlyReply(t *testing.T) {
-	// LLM 返回 {"reply":"hello"} → clean text "hello" → done
-	msgRepo := &mockMsgRepo{}
+func TestRunReActLoop_TextContainingJSON_SavedVerbatim(t *testing.T) {
+	// 回归：主聊天只走原生 FC，正文里的 JSON（命令、JSON-RPC 示例）不再被当 Flash 信封解析，
+	// 流式输出与落库内容都必须是完整原文（修复前会从第一个 '{' 起被截断）。
+	msgRepo := &recordingMsgRepo{}
 	convRepo := &mockConvRepo{}
 	o := newTestOrchestrator(msgRepo, convRepo)
 
-	jsonContent := `{"reply":"hello"}`
+	content := "在你的终端里跑：\n\n```\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}' | opencode acp\n```\n"
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
-			events: append(makeTextDeltas(jsonContent), makeDone()),
+			events: append(makeTextDeltas(content), makeDone()),
 		}},
 	}
 
 	ctx := context.Background()
 	events := make(chan *llm.StreamEvent, 256)
-
-	result := "test prompt"
 	req := &RunRequest{
 		ConversationID:     "conv-1",
 		UserID:             "user-1",
-		UserMessageContent: "你好",
+		UserMessageContent: "怎么发？",
 	}
 
 	o.flashClient = client
-	go o.runReActLoop(ctx, events, result, nil, nil, req)
+	go o.runReActLoop(ctx, events, "test prompt", nil, nil, req)
 
 	var collected []*llm.StreamEvent
 	for evt := range events {
 		collected = append(collected, evt)
 	}
 
-	// 应提取到 "hello"
-	text := collectTextDeltas(collected)
-	if text != "hello" {
-		t.Errorf("expected text_delta='hello', got '%s'", text)
+	if text := collectTextDeltas(collected); text != content {
+		t.Errorf("流式文本被截断/改写\n got: %q\nwant: %q", text, content)
 	}
 	if !hasDoneEvent(collected) {
 		t.Error("expected done event")
 	}
+
+	var savedAssistant string
+	for _, m := range msgRepo.saved {
+		if m.Role == "assistant" {
+			savedAssistant = m.Content
+		}
+	}
+	if savedAssistant != content {
+		t.Errorf("落库内容被截断/改写\n got: %q\nwant: %q", savedAssistant, content)
+	}
 }
 
-func TestRunReActLoop_StrictJSON_ReplyWithEmptyToolCalls(t *testing.T) {
-	// LLM 返回 {"reply":"今天天气不错","tool_calls":[]} → clean text → done
-	msgRepo := &mockMsgRepo{}
+func TestRunReActLoop_JSONEnvelopeText_NotStripped(t *testing.T) {
+	// 回归：即使是 {"reply":...} 这种信封形态的文本，主聊天也不再抽取 reply，
+	// 一律按原文处理（信封解析只属于反思链路的 prompt engineering）。
+	msgRepo := &recordingMsgRepo{}
 	convRepo := &mockConvRepo{}
 	o := newTestOrchestrator(msgRepo, convRepo)
 
-	jsonContent := `{"reply":"今天天气不错","tool_calls":[]}`
+	content := `{"reply":"今天天气不错","tool_calls":[]}`
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
-			events: append(makeTextDeltas(jsonContent), makeDone()),
+			events: append(makeTextDeltas(content), makeDone()),
 		}},
 	}
 
@@ -261,9 +271,8 @@ func TestRunReActLoop_StrictJSON_ReplyWithEmptyToolCalls(t *testing.T) {
 		collected = append(collected, evt)
 	}
 
-	text := collectTextDeltas(collected)
-	if text != "今天天气不错" {
-		t.Errorf("expected text_delta='今天天气不错', got '%s'", text)
+	if text := collectTextDeltas(collected); text != content {
+		t.Errorf("expected raw envelope text streamed, got '%s'", text)
 	}
 	if !hasDoneEvent(collected) {
 		t.Error("expected done event")
@@ -315,16 +324,16 @@ func TestRunReActLoop_PureText_AcceptedGracefully(t *testing.T) {
 	}
 }
 
-func TestRunReActLoop_StrictJSON_InvalidJSONTriggersRetry(t *testing.T) {
-	// 非法 JSON → parse error → 重试
-	msgRepo := &mockMsgRepo{}
+func TestRunReActLoop_InvalidJSONText_NoRetry(t *testing.T) {
+	// 主聊天无 JSON 契约：非法 JSON 文本也只是普通 markdown，不重试、不报错，原文推送
+	msgRepo := &recordingMsgRepo{}
 	convRepo := &mockConvRepo{}
 	o := newTestOrchestrator(msgRepo, convRepo)
 
+	content := `{"reply":"broken`
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{
-			{events: append(makeTextDeltas(`{"reply":"broken`), makeDone())},
-			{events: append(makeTextDeltas(`{"reply":"fixed now"}`), makeDone())},
+			{events: append(makeTextDeltas(content), makeDone())},
 		},
 	}
 
@@ -345,21 +354,17 @@ func TestRunReActLoop_StrictJSON_InvalidJSONTriggersRetry(t *testing.T) {
 		collected = append(collected, evt)
 	}
 
-	status := findStatusEvent(collected)
-	if status == nil {
-		t.Fatal("expected status event about retry")
+	if status := findStatusEvent(collected); status != nil {
+		t.Errorf("不应有重试 status, got: '%s'", status.Content)
 	}
-	if !strings.Contains(status.Content, "重试") {
-		t.Errorf("status should mention 重试, got '%s'", status.Content)
+	if client.callCount != 1 {
+		t.Errorf("不应重试（应只调用 1 次 LLM）, got %d", client.callCount)
 	}
-
-	// 中间轮（parse error 重试）不再推送 text_delta，只展示最终轮正确 JSON 的 reply
-	text := collectTextDeltas(collected)
-	if text != "fixed now" {
-		t.Errorf("expected only final round text, got '%s'", text)
+	if text := collectTextDeltas(collected); text != content {
+		t.Errorf("expected raw text streamed, got '%s'", text)
 	}
 	if !hasDoneEvent(collected) {
-		t.Error("expected done event after retry succeeded")
+		t.Error("expected done event")
 	}
 }
 
@@ -423,9 +428,9 @@ func TestRun_EmptyConversationID(t *testing.T) {
 	}
 }
 
-func TestRunReActLoop_JSONWithPrefixText_AcceptedGracefully(t *testing.T) {
-	// 容错：前导文本 + JSON → prefix 拼入 reply，正常结束，不重试
-	msgRepo := &mockMsgRepo{}
+func TestRunReActLoop_PrefixTextWithJSON_Passthrough(t *testing.T) {
+	// 前导文本 + JSON 信封形态文本 → 一律按原文处理，不抽取 prefix/reply，不重试
+	msgRepo := &recordingMsgRepo{}
 	convRepo := &mockConvRepo{}
 	o := newTestOrchestrator(msgRepo, convRepo)
 
@@ -459,27 +464,25 @@ func TestRunReActLoop_JSONWithPrefixText_AcceptedGracefully(t *testing.T) {
 		t.Errorf("expected no retry, got status: '%s'", status.Content)
 	}
 
-	// prefix 拼入 reply，正常结束
-	text := collectTextDeltas(collected)
-	if text != "好的，我来查看\n\n正在查询..." {
-		t.Errorf("expected prefix merged into reply, got '%s'", text)
+	if text := collectTextDeltas(collected); text != content {
+		t.Errorf("expected raw text passthrough, got '%s'", text)
 	}
 	if !hasDoneEvent(collected) {
 		t.Error("expected done event")
 	}
 }
 
-func TestRunReActLoop_StreamingBuffersUntilDone(t *testing.T) {
-	// 验证：原始 JSON 碎片不推到前端，streamTextChunks 按 chunk 模拟流式
+func TestRunReActLoop_TextStreamsLive(t *testing.T) {
+	// 不再有「首字符 { 暂缓推送」：文本 delta 原样实时转发，不重排、不合并
 	msgRepo := &mockMsgRepo{}
 	convRepo := &mockConvRepo{}
 	o := newTestOrchestrator(msgRepo, convRepo)
 
-	// LLM 返回很多 JSON 碎片，前端应收到的不是原始碎片而是按 chunk 拆分后的干净文本
-	jsonContent := `{"reply":"你好，世界！"}`
+	content := `{"reply":"你好，世界！"}`
+	deltas := makeTextDeltas(content)
 	client := &mockLLMClient{
 		responses: []mockLLMResponse{{
-			events: append(makeTextDeltas(jsonContent), makeDone()),
+			events: append(deltas, makeDone()),
 		}},
 	}
 
@@ -500,22 +503,18 @@ func TestRunReActLoop_StreamingBuffersUntilDone(t *testing.T) {
 		collected = append(collected, evt)
 	}
 
-	// 6 个 rune，chunkSize=3 → 2 个 chunk: "你好，" "世界！"
-	var deltas []string
+	var forwarded []string
 	for _, e := range collected {
 		if e.Type == "text_delta" {
-			deltas = append(deltas, e.Content)
+			forwarded = append(forwarded, e.Content)
 		}
 	}
-	if len(deltas) != 2 {
-		t.Errorf("expected 2 text_delta chunks, got %d: %v", len(deltas), deltas)
+	if len(forwarded) != len(deltas) {
+		t.Fatalf("expected %d live deltas, got %d: %v", len(deltas), len(forwarded), forwarded)
 	}
-	if len(deltas) >= 2 {
-		if deltas[0] != "你好，" {
-			t.Errorf("expected chunk 0 '你好，', got '%s'", deltas[0])
-		}
-		if deltas[1] != "世界！" {
-			t.Errorf("expected chunk 1 '世界！', got '%s'", deltas[1])
+	for i := range deltas {
+		if forwarded[i] != deltas[i].Content {
+			t.Errorf("delta %d mutated: got %q want %q", i, forwarded[i], deltas[i].Content)
 		}
 	}
 }

@@ -304,39 +304,20 @@ func (r *Registry) writePromptFooter(buf *bytes.Buffer) {
 	buf.WriteString("- JSON 字符串值内的英文双引号必须用反斜杠转义（\\\"）。\n")
 }
 
-// GeneratePrompt 生成工具定义文本，追加到 system prompt 中
+// GeneratePrompt 生成工具定义文本（prompt engineering 格式，仅供反思链路 ReactLoop 使用）。
 func (r *Registry) GeneratePrompt() string {
-	return r.generatePrompt(nil)
+	return r.generatePrompt()
 }
 
-// GenerateReadOnlyPrompt 只渲染只读函数定义（plan 模式 prompt-eng 路径）。
-// readOnly 返回每个工具允许渲染的函数集合；无可用函数的工具整体跳过。
-func (r *Registry) GenerateReadOnlyPrompt() string {
-	return r.generatePrompt(func(t Tool) map[string]bool { return t.ReadOnlyFuncs() })
-}
-
-// generatePrompt 渲染工具定义文本。readOnly 为 nil 时渲染全部函数；
-// 非 nil 时仅渲染其返回集合内的函数（集合为空/无匹配函数的工具跳过）。
-func (r *Registry) generatePrompt(readOnly func(Tool) map[string]bool) string {
+// generatePrompt 渲染全部可见工具的函数定义文本。
+func (r *Registry) generatePrompt() string {
 	var buf bytes.Buffer
 	buf.WriteString("你可以使用以下工具来完成用户的请求。\n")
 	buf.WriteString("当需要执行操作时，在回复中输出 JSON 格式。\n\n")
 
 	for _, name := range r.sortedVisibleToolNames() {
 		t := r.tools[name]
-		var allowed map[string]bool
-		if readOnly != nil {
-			allowed = readOnly(t)
-			if len(allowed) == 0 {
-				continue
-			}
-		}
-		funcs := make([]FuncSchema, 0, len(t.Functions()))
-		for _, fn := range t.Functions() {
-			if allowed == nil || allowed[fn.Name] {
-				funcs = append(funcs, fn)
-			}
-		}
+		funcs := t.Functions()
 		if len(funcs) == 0 {
 			continue
 		}

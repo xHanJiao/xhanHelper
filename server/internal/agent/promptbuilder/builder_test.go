@@ -28,7 +28,7 @@ func TestUserContextTriggerToggle(t *testing.T) {
 	reg := tool.NewRegistry()
 
 	// 关闭：不注入触发规则
-	off := NewPromptBuilder("base", reg, nil, true, false)
+	off := NewPromptBuilder("base", reg, nil, false)
 	out, err := off.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork})
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func TestUserContextTriggerToggle(t *testing.T) {
 	}
 
 	// 开启：注入触发规则
-	on := NewPromptBuilder("base", reg, nil, true, true)
+	on := NewPromptBuilder("base", reg, nil, true)
 	out2, err := on.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork})
 	if err != nil {
 		t.Fatal(err)
@@ -169,45 +169,30 @@ func TestBuild_PlanModeOnlyReadOnlyTools(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Register(&planBuildFakeTool{name: "fake_tool"})
 
-	// prompt-eng 模式
-	b := NewPromptBuilder("base", reg, nil, false, false)
+	b := NewPromptBuilder("base", reg, nil, false)
 
 	work, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(work.Prompt, "## 工具使用") || !strings.Contains(work.Prompt, "read_fn") || !strings.Contains(work.Prompt, "write_fn") {
-		t.Error("work 模式应包含全部工具函数定义")
+		t.Error("work 模式目录应列出全部函数")
+	}
+	if !strings.Contains(work.Prompt, "函数调用接口") {
+		t.Error("work 模式应提示必须使用函数调用接口")
 	}
 
 	plan, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModePlan})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan.Prompt, "## 工具使用") || !strings.Contains(plan.Prompt, "read_fn") {
-		t.Error("plan 模式应包含只读工具定义")
+	if !strings.Contains(plan.Prompt, "仅提供只读工具") {
+		t.Error("plan 模式应声明仅提供只读工具")
 	}
-	if strings.Contains(plan.Prompt, "write_fn") {
-		t.Error("plan 模式不应包含写函数定义")
+	if strings.Contains(plan.Prompt, "read_fn") || strings.Contains(plan.Prompt, "write_fn") {
+		t.Error("plan 模式只给只读提示，不列函数定义")
 	}
-
-	// native FC 模式
-	b2 := NewPromptBuilder("base", reg, nil, true, false)
-	work2, err := b2.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(work2.Prompt, "函数调用接口") {
-		t.Error("work 模式 native FC 通知应说明函数调用接口")
-	}
-	plan2, err := b2.Build(context.Background(), BuildOptions{Mode: model.ConvModePlan})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(plan2.Prompt, "仅提供只读工具") {
-		t.Error("plan 模式 native FC 通知应声明仅提供只读工具")
-	}
-	if strings.Contains(plan2.Prompt, "函数调用接口") {
+	if strings.Contains(plan.Prompt, "函数调用接口") {
 		t.Error("plan 模式不应提示使用 expose_tools 函数调用接口")
 	}
 }
@@ -216,8 +201,7 @@ func TestBuild_StrictModeNoTools(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Register(&planBuildFakeTool{name: "fake_tool"})
 
-	// prompt-eng 模式：无任何函数定义
-	b := NewPromptBuilder("base", reg, nil, false, false)
+	b := NewPromptBuilder("base", reg, nil, false)
 	strict, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModeStrict})
 	if err != nil {
 		t.Fatal(err)
@@ -228,24 +212,14 @@ func TestBuild_StrictModeNoTools(t *testing.T) {
 	if !strings.Contains(strict.Prompt, "严格计划模式") {
 		t.Error("strict 模式应含无工具提示")
 	}
-
-	// native FC 模式：同样只有提示，没有函数调用接口引导
-	b2 := NewPromptBuilder("base", reg, nil, true, false)
-	strict2, err := b2.Build(context.Background(), BuildOptions{Mode: model.ConvModeStrict})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(strict2.Prompt, "严格计划模式") {
-		t.Error("strict native FC 应含无工具提示")
-	}
-	if strings.Contains(strict2.Prompt, "函数调用接口") || strings.Contains(strict2.Prompt, "read_fn") {
-		t.Error("strict native FC 不应提示调用工具")
+	if strings.Contains(strict.Prompt, "函数调用接口") {
+		t.Error("strict 模式不应提示调用工具")
 	}
 }
 
 func TestBuild_StableContextInjected(t *testing.T) {
 	reg := tool.NewRegistry()
-	b := NewPromptBuilder("base", reg, nil, true, false)
+	b := NewPromptBuilder("base", reg, nil, false)
 	stableXML := "<profile description=\"画像\">\n  <field key=\"工作\">后端工程师</field>\n</profile>"
 
 	// work 模式注入
@@ -278,7 +252,7 @@ func TestBuild_StableContextInjected(t *testing.T) {
 
 func TestBuild_ClientToolCatalogInjected(t *testing.T) {
 	reg := tool.NewRegistry()
-	b := NewPromptBuilder("base", reg, nil, true, false)
+	b := NewPromptBuilder("base", reg, nil, false)
 	catalog := "客户端工具组（Mac 客户端在线时可用，同样按需启用：先调用 expose_tools.enable）：\n- browser: Mac 客户端本地工具（browser）\n  函数: agent_browser_open, agent_browser_click"
 
 	// work 模式：目录并入「工具使用」段
@@ -319,22 +293,12 @@ func TestBuild_ClientToolCatalogInjected(t *testing.T) {
 	if strings.Contains(plan.Prompt, "客户端工具组") || strings.Contains(plan.Prompt, "agent_browser_open") {
 		t.Error("plan 模式不应注入客户端目录")
 	}
-
-	// prompt-eng 模式：目录不注入（无 tool_catalog provider）
-	b3 := NewPromptBuilder("base", reg, nil, false, false)
-	pe, err := b3.Build(context.Background(), BuildOptions{Mode: model.ConvModeWork, ClientToolCatalog: catalog})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(pe.Prompt, "客户端工具组") {
-		t.Error("prompt-eng 模式不应注入客户端目录")
-	}
 }
 
 // TestBriefAnswerToggle — brief_answer 轮才注入长度约束；不注入时 prompt 逐字节不变。
 func TestBriefAnswerToggle(t *testing.T) {
 	reg := tool.NewRegistry()
-	b := NewPromptBuilder("base", reg, nil, true, true)
+	b := NewPromptBuilder("base", reg, nil, true)
 	ctx := context.Background()
 
 	base, err := b.Build(ctx, BuildOptions{Mode: model.ConvModeWork})
@@ -373,7 +337,7 @@ func TestBriefAnswerToggle(t *testing.T) {
 // TestBriefAnswerOffIsByteIdentical — 关掉时与"没有这个 provider"完全一致（保前缀缓存）
 func TestBriefAnswerOffIsByteIdentical(t *testing.T) {
 	reg := tool.NewRegistry()
-	b := NewPromptBuilder("base", reg, nil, true, true)
+	b := NewPromptBuilder("base", reg, nil, true)
 	ctx := context.Background()
 
 	a, err := b.Build(ctx, BuildOptions{Mode: model.ConvModeWork})
@@ -396,7 +360,7 @@ func TestBriefAnswerOffKeepsPrefixCache(t *testing.T) {
 	reg := tool.NewRegistry()
 	ctx := context.Background()
 
-	full := NewPromptBuilder("base", reg, nil, true, true)
+	full := NewPromptBuilder("base", reg, nil, true)
 	off, err := full.Build(ctx, BuildOptions{Mode: model.ConvModeWork})
 	if err != nil {
 		t.Fatal(err)

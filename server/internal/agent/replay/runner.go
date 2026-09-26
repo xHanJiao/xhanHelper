@@ -50,7 +50,6 @@ type Runner struct {
 	maxIterations      int
 	maxTokens          *int
 	toolMaxConcurrency int
-	useNativeFC        bool
 }
 
 // RunnerConfig — Runner 依赖
@@ -65,7 +64,6 @@ type RunnerConfig struct {
 	MaxIterations      int
 	MaxTokens          *int
 	ToolMaxConcurrency int
-	UseNativeFC        bool
 }
 
 // NewRunner 创建重放执行器
@@ -81,7 +79,6 @@ func NewRunner(cfg *RunnerConfig) *Runner {
 		maxIterations:      cfg.MaxIterations,
 		maxTokens:          cfg.MaxTokens,
 		toolMaxConcurrency: cfg.ToolMaxConcurrency,
-		useNativeFC:        cfg.UseNativeFC,
 	}
 }
 
@@ -250,7 +247,6 @@ func (r *Runner) Run(ctx context.Context, anchorMsg *model.Message, history []mo
 		MaxToolResultChars: maxToolResultChars,
 		ToolMaxConcurrency: r.toolMaxConcurrency,
 		OnChatEnd:          nil,
-		UseNativeFC:        r.useNativeFC,
 		ContextRetriever:   r.contextRetriever,
 		ContextFormatter:   r.contextFormatter,
 	})

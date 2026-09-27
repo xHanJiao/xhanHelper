@@ -453,6 +453,70 @@ func TestProjectStripsIndentedBlockMarkers(t *testing.T) {
 	}
 }
 
+// 反斜杠转义：marked 把 `\*` 渲染成字面 `*`（DOM 里没有反斜杠），客户端 fold 再把它当标记
+// 丢掉。服务端投影必须先解析转义、再丢标记，否则 `\*` 的反斜杠会被当正文留下，两边对不上 ——
+// 症状同样是「划线保存成功却画不出来」（真机在「特殊字符测试文档」上踩到）。
+func TestProjectResolvesBackslashEscapes(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"转义星号", `转义星号：\*不该变成斜体\*`, "转义星号：不该变成斜体"},
+		{"反斜杠路径原样", `C:\Users\Test\Documents`, `C:\Users\Test\Documents`},
+		{"行尾反斜杠保留", "反斜杠：\\", "反斜杠：\\"},
+		{"连续反斜杠折成一个", `\\`, `\`},
+		{"转义有序标记", `1\. foo`, "foo"},
+		{"转义无序标记", `\- item`, "item"},
+	}
+	for _, c := range cases {
+		if got := string(project([]rune(c.in)).text); got != c.want {
+			t.Errorf("%s: project(%q) = %q，期望 %q", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+// 字面方括号不能被当 Markdown 链接标记剥掉：DOM 里 `[内容]` 是真实字符、客户端 fold 也保留，
+// 剥掉会让 `[内容]` 划不满、`[　]` 这类选区 quote 变空（真机在「特殊字符测试文档」踩到）。
+func TestProjectKeepsLiteralBrackets(t *testing.T) {
+	got := string(project([]rune("方括号： [内容] 与 [　]")).text)
+	want := "方括号： [内容] 与 [ ]"
+	if got != want {
+		t.Fatalf("project = %q，期望 %q", got, want)
+	}
+}
+
+// 只选方括号包着的内容也能锚定（quote 非空、rung 1/2 命中，不掉夹逼）。
+func TestLocateLiteralBrackets(t *testing.T) {
+	doc := "- 方括号： [内容] 与 [x]\n"
+	ax := NewAnchorer(doc)
+	sp, ok := ax.Locate("[内容]", "", "")
+	if !ok {
+		t.Fatal("[内容] 未命中")
+	}
+	if sp.Fuzzy {
+		t.Fatalf("走了夹逼：%q", sp.Quote)
+	}
+}
+
+// 真机形状：源文含转义星号，客户端 fold 出来的 quote 是投影后的文本（无 `*`、无反斜杠）。
+// 必须走 rung 2 命中、quote 原样保留，不能掉夹逼（夹逼会写回带 `\` 的 quote，客户端再也画不出）。
+func TestLocateEscapedAsterisks(t *testing.T) {
+	doc := "## 二、Markdown 语法场景\n\n" +
+		"- 斜体：*斜体内容*\n" +
+		"- 转义星号：\\*不该变成斜体\\*\n" +
+		"- 行内代码：`a*b_c/d`\n"
+	quote := "转义星号：不该变成斜体 行内代码：abc/d"
+
+	ax := NewAnchorer(doc)
+	sp, ok := ax.Locate(quote, "斜体：斜体内容", "")
+	if !ok {
+		t.Fatal("含转义星号的选区未命中")
+	}
+	if sp.Fuzzy {
+		t.Fatalf("走了夹逼：quote 被改写成 %q", sp.Quote)
+	}
+	if sp.Quote != quote {
+		t.Fatalf("quote 被改写：%q", sp.Quote)
+	}
+}
+
 // 跨嵌套列表项的选区：原文是 `\n  - `，DOM 文本是单个空格。
 // 必须走 rung 2（投影整段匹配、quote 原样保留），不能掉进 rung 3 夹逼 ——
 // 夹逼会把 quote 改写成带 `- ` 的投影文本，客户端拿它去 DOM 里搜永远搜不到，

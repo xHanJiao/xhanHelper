@@ -297,6 +297,11 @@ final class DocumentReaderController: ObservableObject {
             pb.setString(text, forType: .string)
             ToastCenter.shared.show("已复制")
 
+        case "toast":
+            // JS 侧的轻提示（如：选区没有可锚定的文字）
+            let text = message["text"] as? String ?? ""
+            if !text.isEmpty { ToastCenter.shared.show(text) }
+
         default:
             print("[DocumentReader] 未知消息: \(type)")
         }
@@ -932,7 +937,10 @@ var reader = (function () {
      服务端是唯一事实：Swift 每次增删改成功后全量重推列表，这里只按
      quote + 前后文重新定位并包 <mark>。所以既没有乐观更新，也没有回滚对账。 */
   var annotations = [];
-  var MD_MARKERS = /[*_`~|\[\]]/g;
+  /* 行内标记字符（与服务端 project 的 mdInlineMarkers 一致）。
+     不含 `[` / `]`：正文里字面的方括号在 DOM 里是真实字符，剥掉会让 `[内容]` 划不满、
+     `[　]` 这类选区 quote 变空（真机踩过）。链接目标 `(url)` 的噪声照旧。 */
+  var MD_MARKERS = /[*_`~|]/g;
   /* 行内标记字符集。从 MD_MARKERS.source 派生，杜绝两处字面量漂移；
      不能直接拿 MD_MARKERS 逐字符判断 —— 它带 g 标志，test() 的 lastIndex 有状态。 */
   var MD_MARKER_CHARS = MD_MARKERS.source.slice(1, -1).replace(/\\/g, '');
@@ -1317,7 +1325,12 @@ var reader = (function () {
   function createFromSelection(note) {
     if (!pendingRange) return;
     var info = selectionInfo(pendingRange);
-    if (!info.quote) return;
+    if (!info.quote) {
+      /* 选区折成空串（纯空白 / 纯标记）→ 没有可锚定的文字。别静默什么都不做。 */
+      post({ type: 'toast', text: '选中的内容没有可锚定的文字，连旁边的字一起选' });
+      clearSel(); hideAll();
+      return;
+    }
     post({ type: 'create', quote: info.quote, prefix: info.prefix, suffix: info.suffix, note: note });
     clearSel(); hideAll();
   }
@@ -1588,6 +1601,12 @@ var reader = (function () {
       if (!d) return '';
       return '<div class="mermaid"><img class="m-light" src="' + d.light +
              '"><img class="m-dark" src="' + d.dark + '"></div>';
+    });
+    /* 硬换行 <br>（源文「行尾两空格 + 换行」）：服务端投影里它是一个空格，而 DOM 文本里
+       没有任何字符（<br> 是元素），flatten 也不会在它两侧补分隔符 —— 跨硬换行的选区就会
+       少一个空格、永远锚不上。补一个 '\n' 文本节点（行内空白，渲染无影响），折成空格后两边对齐。 */
+    [].forEach.call(content.querySelectorAll('br'), function (br) {
+      br.parentNode.insertBefore(document.createTextNode('\n'), br.nextSibling);
     });
   }
 

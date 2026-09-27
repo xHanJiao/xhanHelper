@@ -282,14 +282,51 @@ type projection struct {
 // mdInlineMarkers 行内标记字符，投影时直接丢弃。
 // 只做字符级剔除，不解析链接目标 `(url)`：多留几个字符只会让前后文评分多一点噪声，
 // 不会让定位错位（每个投影字符都映射回真实源文下标）。
+//
+// 不含 `[` / `]`：Markdown 链接的方括号在 DOM 里根本不存在（marked 渲染成 <a> 锚文本），
+// 而正文里**字面**的方括号（如 `[内容]`）在 DOM 里是实打实的字符、客户端 fold 也会保留。
+// 把方括号当标记剥掉，会让字面方括号及其内部空白（如 `[　]`）被排除在锚点之外 ——
+// 划线画不满整段、只选 `[x]` 时 quote 甚至为空。链接目标 `(url)` 的噪声本来就在，
+// 多留方括号不构成回归（跨链接选区两边本就对不上）。
 var mdInlineMarkers = map[rune]bool{
-	'*': true, '_': true, '`': true, '~': true, '|': true, '[': true, ']': true,
+	'*': true, '_': true, '`': true, '~': true, '|': true,
+}
+
+// resolveEscapes 成对解析 CommonMark 反斜杠转义：`\X`（X 为 ASCII 标点）折成 X，反斜杠本身
+// 不出现；`\` 后跟非标点（字母 / 空白 / 换行）保留反斜杠。返回解析后的 rune 流与
+// 「解析后下标 → 源文下标」映射。
+//
+// 为什么要「先解析转义、再丢标记」：DOM 那边 marked 已把转义解析掉（`\*` → 字面 `*`），
+// 客户端 fold 再无视转义地把 `*` 当标记丢掉（它分不清字面与标记）。服务端要复现同一条流，
+// 就必须先解析转义、再套用丢标记逻辑 —— 否则 `\*` 的反斜杠会被当正文留下，两边永远对不上，
+// 服务端 rung 1/2 双输、掉进夹逼把 quote 改写成带 `\` 的文本，客户端再也画不出来。
+func resolveEscapes(src []rune) ([]rune, []int) {
+	out := make([]rune, 0, len(src))
+	orig := make([]int, 0, len(src))
+	for i := 0; i < len(src); i++ {
+		if src[i] == '\\' && i+1 < len(src) && isASCIIPunct(src[i+1]) {
+			out = append(out, src[i+1])
+			orig = append(orig, i+1)
+			i++
+			continue
+		}
+		out = append(out, src[i])
+		orig = append(orig, i)
+	}
+	return out, orig
+}
+
+// isASCIIPunct CommonMark 可转义标点集：!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~
+func isASCIIPunct(r rune) bool {
+	return (r >= '!' && r <= '/') || (r >= ':' && r <= '@') ||
+		(r >= '[' && r <= '`') || (r >= '{' && r <= '~')
 }
 
 // project 把 Markdown 源文投影为纯文本：丢弃行内标记与行首块标记，连续空白折叠为单个半角空格。
 func project(src []rune) projection {
-	out := make([]rune, 0, len(src))
-	idx := make([]int, 0, len(src))
+	res, orig := resolveEscapes(src)
+	out := make([]rune, 0, len(res))
+	idx := make([]int, 0, len(res))
 	lineStart := true
 	prevSpace := true // 起手当作已有空格，避免首字符就是折叠空格
 
@@ -298,12 +335,12 @@ func project(src []rune) projection {
 		idx = append(idx, i)
 	}
 
-	for i := 0; i < len(src); i++ {
-		r := src[i]
+	for i := 0; i < len(res); i++ {
+		r := res[i]
 		switch {
 		case unicode.IsSpace(r):
 			if !prevSpace {
-				push(' ', i)
+				push(' ', orig[i])
 				prevSpace = true
 			}
 			// 只有换行能开新行：缩进空格不能把 lineStart 抹掉，否则缩进的
@@ -319,10 +356,10 @@ func project(src []rune) projection {
 
 		case lineStart && isBlockMarker(r):
 			// 行首块标记（# > - + *），连同紧随的空格一起丢
-			for i+1 < len(src) && isBlockMarker(src[i+1]) {
+			for i+1 < len(res) && isBlockMarker(res[i+1]) {
 				i++
 			}
-			if i+1 < len(src) && src[i+1] == ' ' {
+			if i+1 < len(res) && res[i+1] == ' ' {
 				i++
 			}
 			prevSpace = true
@@ -331,17 +368,17 @@ func project(src []rune) projection {
 		case lineStart && r >= '0' && r <= '9':
 			// 有序列表标记 "12. "
 			j := i
-			for j < len(src) && src[j] >= '0' && src[j] <= '9' {
+			for j < len(res) && res[j] >= '0' && res[j] <= '9' {
 				j++
 			}
-			if j < len(src) && (src[j] == '.' || src[j] == ')') && j+1 < len(src) && src[j+1] == ' ' {
+			if j < len(res) && (res[j] == '.' || res[j] == ')') && j+1 < len(res) && res[j+1] == ' ' {
 				i = j + 1
 				prevSpace = true
 				continue
 			}
 		}
 
-		push(r, i)
+		push(r, orig[i])
 		prevSpace = false
 		lineStart = false
 	}

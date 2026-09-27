@@ -42,6 +42,16 @@ const (
 	TypeTaskSpawned = "task.spawned"
 	TypeTaskEnded   = "task.ended"
 
+	// 客户端区间事件（服务端只做归一/闭合，不发，但 type 要认）。
+	TypeClientToolExecStarted = "client.tool.exec.started"
+	TypeClientToolExecEnded   = "client.tool.exec.ended"
+	TypeBrowserNavStarted     = "browser.nav.started"
+	TypeBrowserNavEnded       = "browser.nav.ended"
+	TypeClientInputActive     = "client.input.active"
+	TypeClientInputEnded      = "client.input.ended"
+
+	TypeSystemBoundary = "system.boundary"
+
 	TypeDocCreated          = "doc.created"
 	TypeDocUpdated          = "doc.updated"
 	TypeDocDeleted          = "doc.deleted"
@@ -262,7 +272,7 @@ func (e *Emitter) build(ev Event) (eventRow, error) {
 	row := eventRow{
 		EventID:             id,
 		Type:                ev.Type,
-		OccurredAt:          occurred.Format(isoMillis),
+		OccurredAt:          occurred.UTC().Format(isoMillis),
 		ReceivedAt:          time.Now().UTC().Format(isoMillis),
 		Actor:               actor,
 		Trigger:             trigger,
@@ -309,7 +319,9 @@ func (s *Store) insertEvents(rows []eventRow) error {
 		return nil
 	}
 	preExisting := s.preExistingEventIDs(rows)
-	if err := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error; err != nil {
+	// 分块插入：eventRow ~28 列，SQLite 变量上限 32766 → 单条 INSERT 最多约 1170 行；
+	// 一批可能上万条（大文件回放/积压重投），必须分块（gorm 默认 CreateBatchSize==0 不分块）。
+	if err := s.db.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(&rows, 500).Error; err != nil {
 		return fmt.Errorf("insert %d events: %w", len(rows), err)
 	}
 	// 索引走独立事务；失败只打日志（边可重建），不影响事件已落库的事实。
@@ -323,15 +335,23 @@ func (s *Store) preExistingEventIDs(rows []eventRow) map[string]struct{} {
 	for _, r := range rows {
 		ids = append(ids, r.EventID)
 	}
-	var found []string
-	if err := s.db.Raw(`SELECT event_id FROM events WHERE event_id IN ?`, ids).Scan(&found).Error; err != nil {
-		// 查不到就当作没有重复（宁可多索引一次，也不丢边的写入；重放污染是次要风险）。
-		log.Printf("[activity] 查询已存在事件失败，按全部为新插处理: %v", err)
-		return nil
-	}
-	set := make(map[string]struct{}, len(found))
-	for _, id := range found {
-		set[id] = struct{}{}
+	set := make(map[string]struct{}, len(rows))
+	// 分块查询：单条 `IN (...)` 也受 SQLite 变量上限约束（一根 id 一个变量）。
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		end := start + chunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		var found []string
+		if err := s.db.Raw(`SELECT event_id FROM events WHERE event_id IN ?`, ids[start:end]).Scan(&found).Error; err != nil {
+			// 查不到就当作没有重复（宁可多索引一次，也不丢边的写入；重放污染是次要风险）。
+			log.Printf("[activity] 查询已存在事件失败，按全部为新插处理: %v", err)
+			return nil
+		}
+		for _, id := range found {
+			set[id] = struct{}{}
+		}
 	}
 	return set
 }

@@ -130,7 +130,9 @@ func (s *Store) IngestBatch(segmentID string, evs []BatchEvent) (IngestResult, e
 	// 事件落库一个事务（客户端要当场 ack）；资源归一在**独立事务**里做——边是纯派生、可重建，
 	// 索引失败不该让已接收的事件回滚、也不该把上传打成 500（客户端会重投，但事件其实已到）。
 	preExisting := s.preExistingEventIDs(rows)
-	res := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows)
+	// 分块插入：eventRow ~28 列，SQLite 变量上限 32766 → 单条 INSERT 最多约 1170 行；
+	// 客户端一批可能上万条，必须分块（gorm 默认 CreateBatchSize==0 不分块）。
+	res := s.db.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(&rows, 500)
 	if res.Error != nil {
 		return IngestResult{}, fmt.Errorf("insert %d client events: %w", len(rows), res.Error)
 	}

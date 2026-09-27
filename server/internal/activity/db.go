@@ -5,6 +5,7 @@ import (
 	"log"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"gorm.io/driver/sqlite"
@@ -19,6 +20,10 @@ type Store struct {
 	db            *gorm.DB
 	em            *Emitter
 	watermarkMode string // 上传接口水位口径：WatermarkTime（默认）/ WatermarkSegment；仅启动期设置一次，运行期只读
+
+	// writeMu 是 events.db 的写闸：所有写路径（emit 刷盘、客户端上报 IngestBatch）持读锁；
+	// Recompute 持写锁独占，保证重建期间没有其它写事务与之撞锁（busy_timeout 后报 database is locked）。
+	writeMu sync.RWMutex
 }
 
 // DBPath 返回与主库同目录的 events.db 路径。

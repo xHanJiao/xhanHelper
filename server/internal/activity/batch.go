@@ -61,10 +61,15 @@ type BatchEvent struct {
 // IngestBatch 整段接收客户端事件：整段一个事务、INSERT OR IGNORE（event_id 和 (type,biz_key) 幂等），
 // 按实际插入行数统计 accepted/duplicate，返回水位（口径由 watermarkMode 决定，见 WatermarkTime/Segment）。
 // 走同步写而非 emit 队列——上传要当场给客户端 ack。
+//
+// 写闸读锁：与 emit 刷盘一起被 Recompute 的写锁挡住——重算期间本方法会等待重建写事务结束，
+// 避免与全表重建撞锁（busy_timeout 后报 database is locked → 500）。等待时长 = 重建时长。
 func (s *Store) IngestBatch(segmentID string, evs []BatchEvent) (IngestResult, error) {
 	if s == nil {
 		return IngestResult{}, fmt.Errorf("events.db 未启用")
 	}
+	s.writeMu.RLock()
+	defer s.writeMu.RUnlock()
 	mode := s.WatermarkMode()
 	if mode == WatermarkSegment && segmentID == "" {
 		return IngestResult{}, fmt.Errorf("%w: segment 模式要求 segment_id", ErrInvalidBatch)

@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -151,6 +152,10 @@ type Emitter struct {
 	queue   []eventRow
 	dropped int64
 
+	// flushMu 串行化刷盘，pause 时借此等待在途批次结束；paused 时 loop 不刷（队列只在 Emit 侧堆）。
+	flushMu sync.Mutex
+	paused  atomic.Bool
+
 	wake chan struct{}
 	done chan struct{}
 	wg   sync.WaitGroup
@@ -212,6 +217,19 @@ func (e *Emitter) Emit(ev Event) {
 // Flush 立即把队列刷盘；关键里程碑（turn 结束、工具结束、写入完成）可调。
 func (e *Emitter) Flush() { e.flush() }
 
+// pause 停 ingest：置标志并等当前在途批次结束，保证后续重建持有唯一的写连接。
+func (e *Emitter) pause() {
+	e.paused.Store(true)
+	e.flushMu.Lock()
+	e.flushMu.Unlock()
+}
+
+// resume 恢复 ingest，并把重建期间积压的队列刷掉。
+func (e *Emitter) resume() {
+	e.paused.Store(false)
+	e.flush()
+}
+
 // Dropped 返回累计因队列满被丢弃的条数。
 func (e *Emitter) Dropped() int64 {
 	e.mu.Lock()
@@ -220,6 +238,13 @@ func (e *Emitter) Dropped() int64 {
 }
 
 func (e *Emitter) flush() {
+	// 串行化：pause 会拿走 flushMu 以等待在途批次结束。
+	e.flushMu.Lock()
+	defer e.flushMu.Unlock()
+	if e.paused.Load() {
+		// 重建期间不刷盘（避免与写事务撞 busy_timeout）；队列只在 Emit 侧继续堆，resume 后统一刷。
+		return
+	}
 	e.mu.Lock()
 	if len(e.queue) == 0 {
 		e.mu.Unlock()
@@ -318,6 +343,9 @@ func (s *Store) insertEvents(rows []eventRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
+	// 写闸读锁：与 IngestBatch 一起，被 Recompute 的写锁挡在外面（重建期间不写）。
+	s.writeMu.RLock()
+	defer s.writeMu.RUnlock()
 	preExisting := s.preExistingEventIDs(rows)
 	// 分块插入：eventRow ~28 列，SQLite 变量上限 32766 → 单条 INSERT 最多约 1170 行；
 	// 一批可能上万条（大文件回放/积压重投），必须分块（gorm 默认 CreateBatchSize==0 不分块）。

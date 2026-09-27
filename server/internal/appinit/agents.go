@@ -211,6 +211,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		SumRetentionDays:  cfg.Vector.SummaryRetentionDays,
 		EvictInterval:     time.Duration(cfg.Vector.EvictIntervalHours) * time.Hour,
 		DocRepo:           repos.Document,
+		Activity:          activityRecomputer(activityStore),
 	})
 
 	// --- Orchestrator ---
@@ -404,4 +405,13 @@ func applyRetrieveConfig(cfg *ctxflow.RetrieveConfig, rc config.RetrievalConfig)
 	if rc.Summary.Limit > 0 {
 		cfg.Summary.Limit = rc.Summary.Limit
 	}
+}
+
+// activityRecomputer 把 *activity.Store 转成调度器要的接口；未启用（typed nil）时返回 nil，
+// 否则 typed-nil 进接口后 != nil，"未启用"判定会失效（ticker/倒计时照跑）。
+func activityRecomputer(s *activity.Store) agent.ActivityRecomputer {
+	if s == nil {
+		return nil
+	}
+	return s
 }

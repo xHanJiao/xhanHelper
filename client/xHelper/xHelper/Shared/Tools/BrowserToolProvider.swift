@@ -1993,6 +1993,14 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// 清理 webView 所有资源：停止加载与媒体 → 失效 KVO → 移除注入脚本/规则 → 断开 delegate → 移除视图层级。
     /// 有活跃下载时由调用方先取消下载（forceCancelDownloads）后调用。
     private func tearDownWebView(_ session: TabSession) {
+        #if os(macOS)
+        // 活动埋点：关标签时收掉悬挂的 nav 与当前页 dwell
+        if var browser = session.activityBrowser {
+            let events = browser.closed()
+            session.activityBrowser = browser
+            ActivityClient.emit(events)
+        }
+        #endif
         session.cleanupObservations()
         session.webView.stopLoading()
         session.webView.evaluateJavaScript(
@@ -2457,6 +2465,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     /// tab 标题跟随页面标题
     private func bindSessionTitle(session: TabSession, tabId: String) {
+        #if os(macOS)
+        session.activityBrowser = ActivityBrowserState(tabId: tabId)
+        #endif
         session.onTitleChange = { [weak self] title in
             self?.rightSidebar?.updateTabTitle(id: tabId, title: title)
         }
@@ -2482,6 +2493,16 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             url: url.absoluteString,
             host: host
         )
+        #if os(macOS)
+        // 活动埋点：nav.started/ended 与 page.dwell（URL 脱敏在状态机里做）
+        if var browser = session.activityBrowser {
+            let events = browser.urlChanged(
+                url: url.absoluteString, host: host, owner: session.owner,
+                finished: phase == .finished)
+            session.activityBrowser = browser
+            ActivityClient.emit(events)
+        }
+        #endif
     }
 
     /// 提取当前页 favicon href 并交给 FaviconStore 缓存。host / pageURL 在 await 前一起捕获，
@@ -2827,6 +2848,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         /// 标签归属（client_tool_call owner 下发）："main" / "subagent:<convID>"，nil=用户标签。
         /// 并发子任务共享浏览器实例，close_tab 保护只允许关闭同归属标签（防互相踩踏）。
         var owner: String?
+        /// 活动埋点的浏览状态机（每个标签一个；macOS 本地模式才接线）。
+        var activityBrowser: ActivityBrowserState?
         /// 最后一次被激活/访问的时间（用于空闲超时判断）
         var lastAccessedAt = Date()
 
@@ -3338,6 +3361,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 resumeLoad(msg, reason: "didFail")
                 captureDiagnostics(type: .navigationFailed, errorCode: (error as NSError).code, errorDescription: msg)
                 onNavigationError?(msg)
+                emitNavFailed(error)
             }
         }
 
@@ -3352,7 +3376,19 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 resumeLoad("加载失败: \(msg)", reason: "didFailProvisional")
                 captureDiagnostics(type: .navigationFailed, errorCode: code, errorDescription: msg)
                 onNavigationError?("加载失败: \(msg)")
+                emitNavFailed(error)
             }
+        }
+
+        /// 活动埋点：把加载失败收成 `browser.nav.ended`（outcome=failed）。两处 didFail 共用。
+        private func emitNavFailed(_ error: Error) {
+            #if os(macOS)
+            guard var browser = activityBrowser else { return }
+            let ns = error as NSError
+            let events = browser.navFailed(errorType: "\(ns.domain)/\(ns.code)")
+            activityBrowser = browser
+            ActivityClient.emit(events)
+            #endif
         }
 
         // MARK: - WKDownloadDelegate（用户点击触发的下载）

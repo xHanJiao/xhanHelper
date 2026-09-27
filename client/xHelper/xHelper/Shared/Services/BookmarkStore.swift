@@ -69,6 +69,9 @@ final class BookmarkStore: ObservableObject {
         bookmarks.insert(Bookmark(id: UUID(), title: t.isEmpty ? host : t, url: trimmed, host: host, createdAt: Date()), at: 0)
         trim()
         scheduleSave()
+        #if os(macOS)
+        ActivityClient.emit(ActivityBrowserState.bookmarkAdded(url: trimmed, titleLength: t.count))
+        #endif
         return true
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// 上传传输：把一段事件发给服务端，返回水位应答；失败抛 `ActivityUploadError`。
 typealias ActivityTransport = @Sendable (_ segmentID: String, _ events: [ActivityEvent]) async throws -> ActivityUploadAck
@@ -26,6 +27,8 @@ actor ActivityRecorder {
 
     private var transport: ActivityTransport?
     private var loop: Task<Void, Never>?
+
+    private static let log = Logger(subsystem: "com.xhan.xhanHelper", category: "activity")
 
     /// 上传节拍（秒）。事件本地即时落盘，节拍只管什么时候把已封段搬走。
     private static let uploadIntervalSeconds = 30
@@ -77,6 +80,10 @@ actor ActivityRecorder {
             return e
         }
         guard !stamped.isEmpty else { return }
+        // 附表 A 白名单：未知 type 只告警、仍落盘（客户端事件丢了没法补，宁可让服务端看得到）。
+        for e in stamped where !ActivityEventTypes.known.contains(e.type) {
+            Self.log.warning("activity: 未登记的事件 type=\(e.type, privacy: .public)（附表 A 忘了登记？）")
+        }
         do {
             try await store.append(stamped)
         } catch {

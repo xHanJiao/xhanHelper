@@ -48,6 +48,11 @@ final class ActivityPresenceMonitor {
         idleTask = nil
     }
 
+    /// 当前 epoch 快照：供其它客户端事件（浏览/输入）盖上同一坐标（附表 A「epoch 标记」）。
+    func currentEpochs() -> (focus: String?, wake: String?) {
+        (state.focusEpochId, state.wakeEpochId)
+    }
+
     // MARK: 通知接线
 
     private func subscribe() {

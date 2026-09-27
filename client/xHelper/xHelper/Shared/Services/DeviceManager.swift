@@ -134,6 +134,7 @@ class DeviceManager: ObservableObject {
                 await ActivityRecorder.shared.stop()
                 #if os(macOS)
                 ActivityPresenceMonitor.shared.stop()
+                ActivityInputMonitor.shared.stop()
                 #endif
             }
             return
@@ -156,6 +157,7 @@ class DeviceManager: ObservableObject {
             await ActivityRecorder.shared.start()
             #if os(macOS)
             ActivityPresenceMonitor.shared.start()
+            ActivityInputMonitor.shared.start()
             #endif
         }
     }

@@ -63,9 +63,13 @@ let package = Package(
             path: "xHelper/Shared",
             sources: [
                 "Services/ActivityEvent.swift",
+                "Services/ActivityEventTypes.swift",
+                "Services/ActivityUrls.swift",
                 "Services/ActivityStore.swift",
                 "Services/ActivityRecorder.swift",
                 "Services/ActivityPresenceState.swift",
+                "Services/ActivityInputState.swift",
+                "Services/ActivityBrowserState.swift",
             ]
         ),
         .testTarget(

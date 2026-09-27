@@ -27,7 +27,7 @@ embedding:
   model: doubao-embedding-vision-251215
 
 chat:
-  session_gap_minutes: 3
+  session_gap_minutes: 30
 
 storage:
   image_dir: data/images

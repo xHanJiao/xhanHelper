@@ -35,4 +35,4 @@ facts:
   enabled: false # 本地有意关闭（不随 prod 对齐）
 
 chat:
-  session_gap_minutes: 20 # 本地调优（与 prod 15 不同，故意）
+  session_gap_minutes: 30 # session 间隔阈值（分钟）

@@ -3,6 +3,7 @@ package promptbuilder
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -20,6 +21,29 @@ func TestCorePrinciplesProvider(t *testing.T) {
 	out := p.Render(context.Background())
 	if !strings.Contains(out, "诚实") {
 		t.Error("should contain core principles")
+	}
+}
+
+// TestCorePrinciplesListStructure — 行为准则是一个连续的有序列表，每项单段。
+// 列表项里一旦夹空行，CommonMark 会把该项续段判成列表外（准则 4 内嵌含空行的 MemoryDefinition
+// 时就被劈到列表外，markdown 预览里 4 的正文飘在列表中间——见 docs/bugs/022）。
+// 渲染器在服务端之外，Go 侧只钉这条原始结构不变量。
+func TestCorePrinciplesListStructure(t *testing.T) {
+	if strings.Contains(corePrinciples, "\n\n") {
+		t.Fatal("行为准则列表里出现空行：会把某一项劈成多段、续段掉出编号列表")
+	}
+	for n := 1; n <= 8; n++ {
+		marker := fmt.Sprintf("%d. ", n)
+		if !strings.HasPrefix(corePrinciples, marker) &&
+			!strings.Contains(corePrinciples, "\n"+marker) {
+			t.Errorf("准则 %d 不在行首（编号列表被并进上一段）", n)
+		}
+	}
+	// 准则 4 的行为规则不能被掏空（定义部分已移出，只留行为）
+	for _, want := range []string{"record_memory", "不留旧数据", "内部动作"} {
+		if !strings.Contains(corePrinciples, want) {
+			t.Errorf("准则 4 缺行为规则 %q", want)
+		}
 	}
 }
 

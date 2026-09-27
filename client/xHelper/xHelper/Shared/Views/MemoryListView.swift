@@ -62,7 +62,7 @@ struct MemoryListView: View {
                 CardConfig(
                     title: memory.topic ?? memory.source,
                     subtitle: memory.memoryValue,
-                    tags: parseTags(memory.tags),
+                    tags: [sourceBadge(memory.source)] + parseTags(memory.tags),
                     style: .memory,
                     onTap: { selectedMemory = memory }
                 )
@@ -117,6 +117,10 @@ struct MemoryListView: View {
         }
     }
     #endif
+
+    private func sourceBadge(_ source: String) -> TagBadge {
+        TagBadge(text: source, color: .primary)
+    }
 
     private func parseTags(_ tags: String?) -> [TagBadge] {
         guard let tags, !tags.isEmpty else { return [] }

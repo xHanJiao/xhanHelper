@@ -214,6 +214,10 @@ function toolbarChecks() {
   ok('quote 预览已填', document.getElementById('ne-quote').textContent.indexOf('记忆系统的第一处提及') === 0);
   ok('空批注文案=保存为纯划线', neSave.textContent === '保存为纯划线');
 
+  // Esc 不再关浮层（误触会丢正在写的批注）：派发到 textarea 上，浮层必须还在
+  neText.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  ok('Esc 不关闭批注浮层', editor.classList.contains('open'));
+
   neText.value = '这是批注';
   neText.dispatchEvent(new Event('input'));
   ok('有文字文案=保存批注', neSave.textContent === '保存批注');

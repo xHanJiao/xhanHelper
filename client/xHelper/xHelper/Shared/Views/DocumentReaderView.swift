@@ -1383,8 +1383,9 @@ var reader = (function () {
 
   neText.addEventListener('input', updateSaveLabel);
   neText.addEventListener('keydown', function (e) {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); neSave.click(); return; }
-    if (e.key === 'Escape') { e.preventDefault(); document.getElementById('ne-cancel').click(); }
+    /* 去掉 Esc 关浮层：误触会丢正在写的批注。退出只剩「取消」按钮 / 保存（⌘↵）。
+       别加回来（曾经 §8.4 写死「Esc 取消」，用户明确要求去掉）。 */
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); neSave.click(); }
   });
 
   /* ---------- hover：划线 / 气泡 → popover（重叠时列出全部） ---------- */

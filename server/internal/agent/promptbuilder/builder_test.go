@@ -3,6 +3,7 @@ package promptbuilder
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -20,6 +21,24 @@ func TestCorePrinciplesProvider(t *testing.T) {
 	out := p.Render(context.Background())
 	if !strings.Contains(out, "诚实") {
 		t.Error("should contain core principles")
+	}
+}
+
+// TestCorePrinciplesListNotSwallowed — 准则 4 内嵌 MemoryDefinition（含空行）后成为多段落项；
+// 按 CommonMark，非 1 开头的有序列表项无法打断段落，所以准则 5 前必须留空行，否则 5–8 会被
+// 并进准则 4 的段落、markdown 预览里编号列表直接断掉（用户报的现象）。渲染器在服务端之外，
+// Go 侧只钉这条原始结构不变量。
+func TestCorePrinciplesListNotSwallowed(t *testing.T) {
+	if !strings.Contains(corePrinciples, "\n\n5. ") {
+		t.Fatal("准则 5 前缺空行：markdown 渲染会把 5–8 并进准则 4 的段落")
+	}
+	for n := 1; n <= 8; n++ {
+		marker := fmt.Sprintf("%d. ", n)
+		if !strings.HasPrefix(corePrinciples, marker) &&
+			!strings.Contains(corePrinciples, "\n"+marker) &&
+			!strings.Contains(corePrinciples, "\n\n"+marker) {
+			t.Errorf("准则 %d 不在行首（编号列表被并进上一段）", n)
+		}
 	}
 }
 

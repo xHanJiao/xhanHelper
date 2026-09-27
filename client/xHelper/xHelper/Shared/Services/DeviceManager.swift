@@ -114,7 +114,7 @@ class DeviceManager: ObservableObject {
     /// 仅本地模式采集（设计篇 5.4：events.db 只存在于本机实例；iOS/云端不启用）。
     private var activityCollectionActive: Bool {
         #if os(macOS)
-        return LocalBackendManager.isActive
+        return ActivityClient.isEnabled
         #else
         return false
         #endif

@@ -32,7 +32,7 @@ final class ActivityInputStateTests: XCTestCase {
         _ = state.keystroke(charCount: 60, isDelete: false, now: t0.addingTimeInterval(1))
         _ = state.keystroke(charCount: 200, isDelete: true, now: t0.addingTimeInterval(2))
         let ended = state.end(now: t0.addingTimeInterval(3))
-        XCTAssertEqual(ended?.attrs?["chars_bucket"], .string("200+"))
+        XCTAssertEqual(ended?.attrs?["chars_bucket"], .string("201+"))
         XCTAssertEqual(ended?.attrs?["had_delete"], .bool(true))
     }
 
@@ -48,8 +48,8 @@ final class ActivityInputStateTests: XCTestCase {
     func testBuckets() {
         XCTAssertEqual(ActivityInputState.bucket(0), "0-50")
         XCTAssertEqual(ActivityInputState.bucket(50), "0-50")
-        XCTAssertEqual(ActivityInputState.bucket(51), "50-200")
-        XCTAssertEqual(ActivityInputState.bucket(200), "50-200")
-        XCTAssertEqual(ActivityInputState.bucket(201), "200+")
+        XCTAssertEqual(ActivityInputState.bucket(51), "51-200")
+        XCTAssertEqual(ActivityInputState.bucket(200), "51-200")
+        XCTAssertEqual(ActivityInputState.bucket(201), "201+")
     }
 }

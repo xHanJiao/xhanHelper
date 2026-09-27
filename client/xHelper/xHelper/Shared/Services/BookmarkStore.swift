@@ -70,7 +70,8 @@ final class BookmarkStore: ObservableObject {
         trim()
         scheduleSave()
         #if os(macOS)
-        ActivityClient.emit(ActivityBrowserState.bookmarkAdded(url: trimmed, titleLength: t.count))
+        // 与落库标题一致：空标题时落的是 host，长度也按 host 算。
+        ActivityClient.emit(ActivityBrowserState.bookmarkAdded(url: trimmed, titleLength: (t.isEmpty ? host : t).count))
         #endif
         return true
     }

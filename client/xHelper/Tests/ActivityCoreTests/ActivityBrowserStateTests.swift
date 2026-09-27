@@ -9,7 +9,7 @@ final class ActivityBrowserStateTests: XCTestCase {
         let start = s.urlChanged(url: "https://a.com/x", host: "a.com", owner: nil, finished: false, now: t0)
         XCTAssertEqual(start.map(\.type), ["browser.nav.started"])
         XCTAssertEqual(start[0].actor, "user")
-        XCTAssertEqual(start[0].pairId, start[0].pairId)
+        XCTAssertNotNil(start[0].pairId)
 
         let finish = s.urlChanged(url: "https://a.com/x", host: "a.com", owner: nil, finished: true, now: t0.addingTimeInterval(1))
         XCTAssertEqual(finish.map(\.type), ["browser.nav.ended"])
@@ -28,13 +28,16 @@ final class ActivityBrowserStateTests: XCTestCase {
         XCTAssertEqual(out[0].attrs?["dwell_ms"], .number(11000))
     }
 
-    func testDuplicateFinishIgnored() {
+    func testReloadRecordsZeroDurationNav() {
         var s = ActivityBrowserState(tabId: "browser-1")
         let t0 = Date()
         _ = s.urlChanged(url: "https://a.com/x", host: "a.com", owner: nil, finished: false, now: t0)
         _ = s.urlChanged(url: "https://a.com/x", host: "a.com", owner: nil, finished: true, now: t0)
-        let again = s.urlChanged(url: "https://a.com/x", host: "a.com", owner: nil, finished: true, now: t0)
-        XCTAssertTrue(again.isEmpty, "同一页重复 didFinish 不该再发 nav.started/ended")
+        // 同 URL 无 URL 变化的重载（再一个 didFinish）：记一条零时长 nav
+        let reload = s.urlChanged(url: "https://a.com/x", host: "a.com", owner: nil, finished: true, now: t0.addingTimeInterval(5))
+        XCTAssertEqual(reload.map(\.type), ["browser.nav.started", "browser.nav.ended"])
+        XCTAssertEqual(reload[0].pairId, reload[1].pairId)
+        XCTAssertEqual(reload[1].outcome, "ok")
     }
 
     func testHangingNavClosedAsCancelledOnNextPage() {
@@ -92,6 +95,14 @@ final class ActivityBrowserStateTests: XCTestCase {
             ActivityUrls.sanitized("https://x.com/p?a=1"),
             "https://x.com/p?a=1")
         XCTAssertEqual(ActivityUrls.sanitized("https://x.com/p#only-frag"), "https://x.com/p")
+        // 补齐的凭证名
+        XCTAssertEqual(
+            ActivityUrls.sanitized("https://x.com/p?x-api-key=abc&q=1"),
+            "https://x.com/p?x-api-key=REDACTED&q=1")
+        // 嵌套：凭证藏在别的参数的值里（百分号编码）→ 整个值脱敏
+        XCTAssertEqual(
+            ActivityUrls.sanitized("https://x.com/p?redirect=https%3A%2F%2Fy%3Ftoken%3Dabc&q=1"),
+            "https://x.com/p?redirect=REDACTED&q=1")
     }
 
     func testWhitelistCoversClientProducers() {

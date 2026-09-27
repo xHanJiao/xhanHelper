@@ -1997,8 +1997,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         // 活动埋点：关标签时收掉悬挂的 nav 与当前页 dwell
         if var browser = session.activityBrowser {
             let events = browser.closed()
-            session.activityBrowser = browser
             ActivityClient.emit(events)
+            session.activityBrowser = nil // 已收尾：置空挡将来多出的 teardown 调用点双发 dwell
         }
         #endif
         session.cleanupObservations()
@@ -2466,7 +2466,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     /// tab 标题跟随页面标题
     private func bindSessionTitle(session: TabSession, tabId: String) {
         #if os(macOS)
-        session.activityBrowser = ActivityBrowserState(tabId: tabId)
+        // 只在首次绑定建一次：将来若对已有 session 二次 bind，不能把 dwell/nav 状态静默重置。
+        if session.activityBrowser == nil {
+            session.activityBrowser = ActivityBrowserState(tabId: tabId)
+        }
         #endif
         session.onTitleChange = { [weak self] title in
             self?.rightSidebar?.updateTabTitle(id: tabId, title: title)

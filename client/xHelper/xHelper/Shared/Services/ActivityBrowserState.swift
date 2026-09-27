@@ -41,19 +41,31 @@ nonisolated struct ActivityBrowserState {
             pageURL = clean
             pageSince = now
             pageActor = actor
-            out.append(ActivityEvent(
-                type: "browser.nav.started", actor: actor, trigger: "manual", pairId: pair,
-                attrs: [
-                    "url_raw": .string(clean),
-                    "host": .string(host),
-                    "owner": .string(owner == nil ? "user" : "agent"),
-                    "tab_id": .string(tabId),
-                ]))
+            out.append(navStarted(url: clean, host: host, owner: owner, actor: actor, pair: pair))
         }
         if finished, navPair != nil {
             out.append(closeNav(outcome: "ok", errorType: nil))
+        } else if finished, clean == pageURL {
+            // 同 URL 重载：没换页（无 dwell、无新 nav），但确有一次加载 → 记一条零时长 nav 补上。
+            // （重复 didFinish 会再记一条；实际主框架一个加载只回调一次，可接受。）
+            let pair = UUID().uuidString
+            navPair = pair
+            navActor = actor
+            out.append(navStarted(url: clean, host: host, owner: owner, actor: actor, pair: pair))
+            out.append(closeNav(outcome: "ok", errorType: nil))
         }
         return out
+    }
+
+    private func navStarted(url: String, host: String, owner: String?, actor: String, pair: String) -> ActivityEvent {
+        ActivityEvent(
+            type: "browser.nav.started", actor: actor, trigger: "manual", pairId: pair,
+            attrs: [
+                "url_raw": .string(url),
+                "host": .string(host),
+                "owner": .string(owner == nil ? "user" : "agent"),
+                "tab_id": .string(tabId),
+            ])
     }
 
     /// 加载失败（didFail / didFailProvisional）：收当前 nav 为 failed（页面 dwell 不收——页面可能还在）。

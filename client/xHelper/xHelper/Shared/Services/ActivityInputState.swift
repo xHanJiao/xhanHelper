@@ -47,11 +47,11 @@ nonisolated struct ActivityInputState {
         return close(since: since, until: lastInputAt ?? now)
     }
 
-    /// 字符量分档：0–50 / 50–200 / 200+。
+    /// 字符量分档：0-50 / 51-200 / 201+（标签不重叠，服务端按字符串消费时口径唯一）。
     static func bucket(_ chars: Int) -> String {
         if chars <= bucketSmallMax { return "0-50" }
-        if chars <= bucketMediumMax { return "50-200" }
-        return "200+"
+        if chars <= bucketMediumMax { return "51-200" }
+        return "201+"
     }
 
     private mutating func close(since: Date, until: Date) -> ActivityEvent {

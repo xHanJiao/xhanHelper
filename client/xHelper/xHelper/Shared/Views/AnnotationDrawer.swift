@@ -145,6 +145,7 @@ struct AnnotationDrawer: View {
         .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onTapGesture { reader.scrollToAnnotation(id: a.id) }
+        .contextMenu { rowMenu(a) }
     }
 
     /// 失活行：整行灰 + quote 删除线，右侧两个动作（点击不跳转，正文里本来就没有它）
@@ -180,6 +181,19 @@ struct AnnotationDrawer: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+        .contextMenu { rowMenu(a) }
+    }
+
+    /// 右键菜单：正文里定位不到 / 失活的批注在正文中点不到，这里是唯一入口。
+    /// 正常行也可用，省得为删一条线先去正文里找它。
+    @ViewBuilder
+    private func rowMenu(_ a: DocumentAnnotation) -> some View {
+        if a.orphaned {
+            Button("重新定位") { reader.beginRelocate(id: a.id) }
+        }
+        Button(a.note.isEmpty ? "删除划线" : "删除批注", role: .destructive) {
+            reader.deleteAnnotation(id: a.id)
+        }
     }
 
     private func rowContent(_ a: DocumentAnnotation, orphaned: Bool = false) -> some View {

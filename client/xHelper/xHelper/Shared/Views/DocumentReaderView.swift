@@ -933,6 +933,13 @@ var reader = (function () {
      quote + 前后文重新定位并包 <mark>。所以既没有乐观更新，也没有回滚对账。 */
   var annotations = [];
   var MD_MARKERS = /[*_`~|\[\]]/g;
+  /* 行内标记字符集。从 MD_MARKERS.source 派生，杜绝两处字面量漂移；
+     不能直接拿 MD_MARKERS 逐字符判断 —— 它带 g 标志，test() 的 lastIndex 有状态。 */
+  var MD_MARKER_CHARS = MD_MARKERS.source.slice(1, -1).replace(/\\/g, '');
+  /* 空白判定与服务端 project 的 unicode.IsSpace、fold() 的 \s 对齐。
+     不用硬编码白名单：NBSP(\u00a0)、\u2028/\u2029 等粘贴文本里常见，
+     漏一个就是又一条「haystack 和 needle 不在同一空间、划线静默画不出」。 */
+  var WS_CHAR = /\s/;
 
   /* 文本投影，与服务端 project 对齐：丢 Markdown 行内标记与行首块标记，空白折叠成单空格。
      客户端的 haystack 是 DOM 文本（本来没有标记），但 quote / prefix / suffix 可能是
@@ -946,7 +953,10 @@ var reader = (function () {
       .trim();
   }
 
-  /* DOM 文本的投影版 + 「投影下标 → 拍平下标」映射 */
+  /* DOM 文本的投影版 + 「投影下标 → 拍平下标」映射。
+     必须与服务端 project 剥同样多的东西：DOM 里也含字面量 `~`/`*`/`_` 等
+     （如行内代码 `~/xhanCodes` 渲染后仍带 `~`），只折叠空白不剥标记的话，
+     已投影的 quote（存库时 `~` 被 fold 掉）永远搜不到 → 划线静默画不出。 */
   function normalized() {
     var flat = flatten();
     var out = '';
@@ -954,10 +964,11 @@ var reader = (function () {
     var prevSpace = true;
     for (var i = 0; i < flat.text.length; i++) {
       var ch = flat.text.charAt(i);
-      if (ch === ' ' || ch === '\n' || ch === '\t' || ch === '\r' || ch === '\u3000') {
+      if (WS_CHAR.test(ch)) {
         if (!prevSpace) { out += ' '; map.push(i); prevSpace = true; }
         continue;
       }
+      if (MD_MARKER_CHARS.indexOf(ch) >= 0) continue;   /* 丢行内标记，不占投影下标 */
       out += ch; map.push(i); prevSpace = false;
     }
     return { text: out, toFlat: map, flat: flat };

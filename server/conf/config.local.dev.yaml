@@ -37,4 +37,4 @@ facts:
   enabled: false # 本地有意关闭（不随 prod 对齐）
 
 chat:
-  session_gap_minutes: 1 # 本地调试：停止聊天 1 分钟后即跑后处理（base 默认 15）
+  session_gap_minutes: 30 # session 间隔阈值（分钟）

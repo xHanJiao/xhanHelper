@@ -21,6 +21,8 @@ const (
 	ClosedInferred   = "inferred"
 	ClosedFallback   = "fallback"
 	ClosedSuperseded = "superseded"
+	// ClosedDaySplit 是五层 session 按本地午夜切段产生的强结束（不是 boundary 事件闭合）。
+	ClosedDaySplit = "day_split"
 )
 
 // 闭合规则常量（2026-09-27 定，改动须同时 +IntervalRuleVersion）。

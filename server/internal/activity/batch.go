@@ -127,13 +127,18 @@ func (s *Store) IngestBatch(segmentID string, evs []BatchEvent) (IngestResult, e
 		rows = append(rows, row)
 	}
 
+	// 事件落库一个事务（客户端要当场 ack）；资源归一在**独立事务**里做——边是纯派生、可重建，
+	// 索引失败不该让已接收的事件回滚、也不该把上传打成 500（客户端会重投，但事件其实已到）。
+	preExisting := s.preExistingEventIDs(rows)
 	res := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows)
 	if res.Error != nil {
 		return IngestResult{}, fmt.Errorf("insert %d client events: %w", len(rows), res.Error)
 	}
+	s.indexResourcesBestEffort(rows, preExisting)
+	inserted := res.RowsAffected
 	out := IngestResult{
-		Accepted:      int(res.RowsAffected),
-		Duplicate:     len(rows) - int(res.RowsAffected),
+		Accepted:      int(inserted),
+		Duplicate:     len(rows) - int(inserted),
 		WatermarkKind: mode,
 	}
 	switch mode {

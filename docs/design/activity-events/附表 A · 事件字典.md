@@ -120,6 +120,22 @@
 |---|---|---|---|---|
 | `read.query` | 点 | api_name, params_digest, result_count, level, caller | 根 | 记录方是 assistant；`caller` 用来区分是哪一路在取数（本机助手还是将来的其他 agent），A2A 之后要能回答"是谁在取、为哪件事取的"；来源单列一类，**默认不参与"你干了什么"的统计** |
 
+## 资源抽取（服务端归一用，P12）
+
+服务端在写入事件时从 `attrs` 抽资源、归一到规范 id 并落 `resources` / `resource_aliases` / `event_resources`（设计篇 6.1，归一在写入时做）。**只认下表这几格，其余键一律不进资源层**：
+
+| attrs 键 | resource_kind | 归一规则 |
+|---|---|---|
+| `url_raw` / `url` | `url` | RFC 3986 语法级：小写 host、去默认端口、去 fragment、删跟踪参数（`utm_*` / `fbclid` / `gclid` / `xsec_token` …）与凭证参数、参数按名排序、去末尾斜杠；**仅 http/https** |
+| `repo_path` | `repo` | 有 git remote → 归一 remote（ssh/https 同形、去 `.git`、host 与 path 小写）；无 remote → 绝对路径折叠家目录（`~/…`） |
+| `file_path`（配 `repo_path`） | `file` | 仓库内 → 仓库锚 + 仓库内相对路径；仓库外 → 绝对路径折叠家目录 |
+| `doc_id` | `doc` | 直接用系统内 id |
+| `memory_id` | `memory` | 直接用系统内 id |
+| `bill_id` | `bill` | 直接用系统内 id |
+| `reminder_id` | `reminder` | 直接用系统内 id |
+
+> 会话（conversation）不是资源锚：它本来就是事件的 `conversation_id` 列，不进 `resources`（设计篇 6.1 把它列在「直接用系统内 id」是别名式的说法，实际由列承载）。
+
 ## epoch 标记（采集时顺手生成，写进后续事件）
 
 | 标记 | 何时生成 | 用于哪一层 |

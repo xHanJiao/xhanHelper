@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -301,13 +302,46 @@ func optStr(s string) *string {
 }
 
 // insertEvents 一批一个事务；event_id 与 (type, biz_key) 冲突一律忽略（幂等，设计篇 3.3）。
+// 资源归一落主数据/边（归一遍写在写入时做，设计篇 6.1）——但**不在同一事务里**：边是纯派生、
+// RebuildResources 能补，索引失败不该把已落的事件一起回滚（事实层只增，落进去就不能收回）。
 func (s *Store) insertEvents(rows []eventRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	err := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error
-	if err != nil {
+	preExisting := s.preExistingEventIDs(rows)
+	if err := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error; err != nil {
 		return fmt.Errorf("insert %d events: %w", len(rows), err)
 	}
+	// 索引走独立事务；失败只打日志（边可重建），不影响事件已落库的事实。
+	s.indexResourcesBestEffort(rows, preExisting)
 	return nil
+}
+
+// preExistingEventIDs 返回这批里「插入前已在库」的 event_id 集合（纯重放，不该重新索引资源）。
+func (s *Store) preExistingEventIDs(rows []eventRow) map[string]struct{} {
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.EventID)
+	}
+	var found []string
+	if err := s.db.Raw(`SELECT event_id FROM events WHERE event_id IN ?`, ids).Scan(&found).Error; err != nil {
+		// 查不到就当作没有重复（宁可多索引一次，也不丢边的写入；重放污染是次要风险）。
+		log.Printf("[activity] 查询已存在事件失败，按全部为新插处理: %v", err)
+		return nil
+	}
+	set := make(map[string]struct{}, len(found))
+	for _, id := range found {
+		set[id] = struct{}{}
+	}
+	return set
+}
+
+// indexResourcesBestEffort 用独立事务索引资源；失败降级为日志（边是派生，RebuildResources 可补）。
+func (s *Store) indexResourcesBestEffort(rows []eventRow, preExisting map[string]struct{}) {
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		return s.indexResources(tx, rows, preExisting)
+	})
+	if err != nil {
+		log.Printf("[activity] 资源索引失败（事件已落库，边可经 RebuildResources 补）: %v", err)
+	}
 }

@@ -29,7 +29,7 @@ embedding:
   model: doubao-embedding-vision-251215
 
 chat:
-  session_gap_minutes: 1       # dev 环境缩短 session 间隔，方便测试
+  session_gap_minutes: 30      # session 间隔阈值（分钟）
 
 subagent:
   explore_max_iterations: 3 # dev 测试：调小轮数便于触发预算耗尽/超时，验证 task_id 续跑

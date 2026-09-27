@@ -89,7 +89,7 @@ type ChatConfig struct {
 	RecentUserMsgs            int      `yaml:"recent_user_msgs"`            // 新窗口注入资源区的最近轮数（user + AI 最终回复），默认 3
 	MaxWindowRounds           int      `yaml:"max_window_rounds"`           // 扩张窗口上限，默认 100
 	MaxSummaryRounds          int      `yaml:"max_summary_rounds"`          // 单次摘要覆盖上限，0=等于 history_rounds
-	SessionGapMinutes         int      `yaml:"session_gap_minutes"`         // session 间隔阈值（分钟），默认 15；超过则重置窗口并触发 session_end 提取
+	SessionGapMinutes         int      `yaml:"session_gap_minutes"`         // session 间隔阈值（分钟），默认 30；超过则重置窗口并触发 session_end 提取
 	SummaryAttachCount        int      `yaml:"summary_attach_count"`        // 摘要附着条数上限，默认 1
 	SummaryAttachMaxDays      int      `yaml:"summary_attach_max_days"`     // 摘要附着时间窗口（天），默认 3
 	SummaryRelevanceThreshold float64  `yaml:"summary_relevance_threshold"` // 摘要相关性余弦相似度阈值，默认 0.5
@@ -995,7 +995,7 @@ func validate(cfg *Config) error {
 		cfg.Chat.MaxWindowRounds = 100
 	}
 	if cfg.Chat.SessionGapMinutes == 0 {
-		cfg.Chat.SessionGapMinutes = 15
+		cfg.Chat.SessionGapMinutes = 30
 	}
 	if cfg.Chat.SummaryAttachCount == 0 {
 		cfg.Chat.SummaryAttachCount = 1

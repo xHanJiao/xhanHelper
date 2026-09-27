@@ -56,6 +56,15 @@ x = 1
 - 清单第一项，用来测跨列表项
 - 清单第二项，后半截
 
+路径在 `~/xhanCodes` 下面，用来测行内代码里的波浪号（服务端会把 `~` 投影掉）。
+
+宽度&nbsp;标记，用来测 NBSP 空白也要折成空格。
+
+方括号： [内容] 与 [ ]
+
+行尾两空格硬换行  
+这是下一行
+
 ZZMDIMG0X
 MD
 
@@ -210,6 +219,10 @@ function toolbarChecks() {
   ok('quote 预览已填', document.getElementById('ne-quote').textContent.indexOf('记忆系统的第一处提及') === 0);
   ok('空批注文案=保存为纯划线', neSave.textContent === '保存为纯划线');
 
+  // Esc 不再关浮层（误触会丢正在写的批注）：派发到 textarea 上，浮层必须还在
+  neText.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  ok('Esc 不关闭批注浮层', editor.classList.contains('open'));
+
   neText.value = '这是批注';
   neText.dispatchEvent(new Event('input'));
   ok('有文字文案=保存批注', neSave.textContent === '保存批注');
@@ -276,6 +289,28 @@ function annotationChecks() {
   // 7) 行内标记内（<strong> / <code>）与代码块内
   draw([mk('a7', '粗体')], 1, 'a7', '粗体');
   draw([mk('a8', '记忆系统 第三处')], 1, 'a8', '记忆系统第三处');
+
+  // 7b) DOM 里有字面量行内标记字符（`~/xhanCodes` 渲染后仍带 `~`）。
+  //     服务端存的 quote 已投影（`~` 没了），客户端 haystack 也必须剥掉同样的标记，
+  //     否则整条线静默画不出 —— 真机踩过：「划了几条之后再也批注不上」。
+  //     跨了「文本 + <code> + 文本」三个节点，所以是 3 段 mark。
+  draw([mk('tilde', '路径在 /xhanCodes 下面')], 3, 'tilde', '路径在 /xhanCodes 下面');
+
+  // 7c) NBSP（&nbsp; 渲染成 \u00a0）也要折成空格：空白判定走 /\s/，
+  //     硬编码白名单会漏掉 NBSP → haystack 保留 NBSP、needle 是空格 → 静默画不出。
+  draw([mk('nbsp', '宽度 标记，用来测 NBSP 空白也要折成空格。')], 1, 'nbsp',
+       '宽度 标记，用来测 NBSP 空白也要折成空格。');
+
+  // 7d) 字面方括号：不能当 Markdown 链接标记剥掉（DOM 里是真字符、客户端 fold 也保留）。
+  //     剥掉会让 `[内容]` 划不满、只选 `[ ]` 时 quote 变空 → 静默画不出 / 无从创建。
+  draw([mk('brk', '方括号： [内容] 与 [ ]')], 1, 'brk', '方括号： [内容] 与 [ ]');
+  // 覆盖必须到尾部 `]`：旧实现把方括号当标记剥掉，下划线只画到「与」就停了
+  ok('mark 覆盖到尾部方括号', markText('brk') === '方括号： [内容] 与 [ ]', 'markText=' + markText('brk'));
+  draw([mk('brksp', '[ ]')], 1, 'brksp', '[ ]');
+
+  // 7e) 硬换行（行尾两空格 → <br>）：服务端投影是一个空格，客户端 flatten 必须在 <br> 处补分隔符，
+  //     否则跨硬换行的选区少一个空格、永远锚不上。跨了 <br> 两侧两个文本节点 → 2 段 mark。
+  draw([mk('br', '行尾两空格硬换行 这是下一行')], 2, 'br', '行尾两空格硬换行这是下一行');
 
   // 8) 有 note 挂气泡，且贴在最后一段 mark 的同一块里
   draw([mk('a9', '第一个小结段落。 2.1 子节', '这是批注')], 2, 'a9', '第一个小结段落。2.1 子节');

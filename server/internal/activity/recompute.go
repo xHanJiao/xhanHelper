@@ -37,6 +37,9 @@ func (s *Store) Recompute() error {
 	if err := s.RebuildSessions(); err != nil {
 		return fmt.Errorf("recompute sessions: %w", err)
 	}
+	if err := s.RebuildRefs(); err != nil {
+		return fmt.Errorf("recompute refs: %w", err)
+	}
 	if err := s.RebuildDayStats(); err != nil {
 		return fmt.Errorf("recompute day stats: %w", err)
 	}
@@ -65,9 +68,10 @@ func (s *Store) NeedsRecompute() (bool, error) {
 	return got != recomputeStamp(), nil
 }
 
-// recomputeStamp 把三个派生版本拼成稳定串。
+// recomputeStamp 把派生版本拼成稳定串。
 func recomputeStamp() string {
 	return "r" + strconv.Itoa(IntervalRuleVersion) +
 		"/t" + strconv.Itoa(SessionThresholdVersion) +
-		"/n" + strconv.Itoa(NormalizeRuleVersion)
+		"/n" + strconv.Itoa(NormalizeRuleVersion) +
+		"/f" + strconv.Itoa(RefRuleVersion)
 }

@@ -492,8 +492,8 @@ func rangeDurationMs(resourceID string, r TimeRange) int64 {
 	return 0
 }
 
-// FactsByMemory 取某记忆关联的最近事件（沿 event_refs 的 memory 引用），按时间倒序，最多 limit 条。
-// event_refs 现由 P21 填充，此前为空 → 返回空集合（不是错误）。
+// FactsByMemory 取某记忆关联的最近事件（沿 event_refs 的 memory 引用，P21 落 resource 来源），
+// 按时间倒序，最多 limit 条。无引用时返回空集合（不是错误）。
 func (s *Store) FactsByMemory(memoryID string, limit int) ([]EventSummary, error) {
 	if limit <= 0 || limit > maxFactRows {
 		limit = maxFactRows

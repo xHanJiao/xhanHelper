@@ -4,6 +4,8 @@
 
 **两条口径**：一是这张库里只有 `meta`、`resources`、`resource_aliases` 三张主数据表，外加 `events`（事实）与 `event_refs(source='explicit')`（显式归属）**不可整体清空重算**，其余全部可重算（重算清 `event_refs` 时只删 `source<>'explicit'` 的行）；二是 `events` 表 **append-only、永不 UPDATE**，派生列一律不进事件表。
 
+> **explicit 现状（2026-09-28 定）**：**没有任何代码写 `event_refs(source='explicit')`**。设计里 explicit 是归属第 1 层（助手发起 → `parent_event_id`、工具调用 → `call_id`、所属对话 → `conversation_id`），但这些「写入即知」的直接关系**由 `events` 表的列承载**，不再往 `event_refs` 抄一份（因果与归属分属两套语义，附表 B 顶层口径「两套语义不混一个字段」）。故 `event_refs` 实际只有 `source='resource'` 行。`重算只删 source<>'explicit'` 的条件保留为**防御**：将来若补 explicit 生产者，天然不被重算删掉。
+
 模板：字段与索引写法照抄现有的 `llm_call_io`（审计表 + 仓储），但不与它共库；**清理写法不要照抄**（它那条 `.Limit(n)` 被 GORM 静默忽略，见下方警告框）。
 
 ## 1. 事实层

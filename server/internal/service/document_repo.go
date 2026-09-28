@@ -26,6 +26,29 @@ func (r *DocumentRepo) Create(ctx context.Context, d *model.Document) error {
 	return r.db.WithContext(ctx).Create(d).Error
 }
 
+// GetTitlesByIDs 批量取文档标题（一次 IN，无 N+1）；只取该用户、活跃的文档，返回 id→title。
+// 供活动埋点只读 tool 把 doc 资源 id 换成人可读标题。带 user_id 与 GetByID 口径一致（租户隔离）。
+func (r *DocumentRepo) GetTitlesByIDs(ctx context.Context, userID string, ids []string) (map[string]string, error) {
+	out := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var rows []struct {
+		ID    string `gorm:"column:id"`
+		Title string `gorm:"column:title"`
+	}
+	if err := r.db.WithContext(ctx).Model(&model.Document{}).
+		Select("id, title").
+		Where("user_id = ? AND id IN ? AND status = ?", userID, ids, model.DocumentStatusActive).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[r.ID] = r.Title
+	}
+	return out, nil
+}
+
 // GetByID 按 ID + 用户 ID 查询单篇（已删除的文档不可见）
 func (r *DocumentRepo) GetByID(ctx context.Context, id, userID string) (*model.Document, error) {
 	var doc model.Document

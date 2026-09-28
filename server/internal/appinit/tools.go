@@ -126,9 +126,9 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	// 用户行为日志只读 tool（骨架级）：仅在 events.db 启用时注册（云端显式关闭 → 不注册，
 	// 避免常驻目录里挂一个必然返回「未启用」的组）。
 	if activityStore != nil {
-		reg.Register(tool.NewLoggingWrapper(tool.NewUserActionLogTool(activityStore), log.Default()))
+		reg.Register(tool.NewLoggingWrapper(
+			tool.NewUserActionLogTool(activityStore, repos.Document.GetTitlesByIDs), log.Default()))
 	}
-
 	reg.ValidateNativeFC()
 	// 校验 ReadOnlyFuncs 声明与 Functions() 一致（plan 模式只读拦截依赖，拼错直接 panic）
 	reg.ValidateReadOnlyFuncs()

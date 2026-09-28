@@ -16,12 +16,12 @@ func newActionLogTool(t *testing.T) (*UserActionLogTool, *activity.Store) {
 	if err != nil {
 		t.Fatalf("open activity: %v", err)
 	}
-	return NewUserActionLogTool(s), s
+	return NewUserActionLogTool(s, nil), s
 }
 
 // TestUserActionLogReadOnly 所有函数都声明只读（plan 模式只读拦截依赖）。
 func TestUserActionLogReadOnly(t *testing.T) {
-	tl := NewUserActionLogTool(nil)
+	tl := NewUserActionLogTool(nil, nil)
 	ro := tl.ReadOnlyFuncs()
 	for _, f := range tl.Functions() {
 		if !ro[f.Name] {
@@ -106,5 +106,69 @@ func TestUserActionLogListSessions(t *testing.T) {
 	}
 	if got.Sessions[0].DurationMs != (10 * time.Minute).Milliseconds() {
 		t.Errorf("duration_ms=%d, want %d", got.Sessions[0].DurationMs, (10 * time.Minute).Milliseconds())
+	}
+}
+
+// TestUserActionLogRangeArgs 范围级函数的参数校验与 doc 标题注入。
+func TestUserActionLogRangeArgs(t *testing.T) {
+	tl, s := newActionLogTool(t)
+	defer s.Close()
+
+	bad := [][2]string{
+		{"time_ranges_by_resource", `{"resource_kind":"url","from":"2026-09-25T10:00:00","to":"2026-09-25T11:00:00"}`},
+		{"time_ranges_by_resource", `{"resource_kind":"url","resource_id":"x","from":"bad","to":"2026-09-25T11:00:00"}`},
+		{"facts_by_memory", `{}`},
+		{"list_events", `{"from":"2026-09-25T10:00:00","to":"2026-09-25T11:00:00","resource_kind":"url"}`},
+	}
+	for _, b := range bad {
+		if res := tl.Execute(&ExecuteContext{Ctx: context.Background()}, b[0], json.RawMessage(b[1])); res.Success {
+			t.Errorf("%s %s 应失败", b[0], b[1])
+		}
+	}
+
+	base := time.Date(2026, 9, 25, 10, 0, 0, 0, time.Local)
+	s.Emit(activity.Event{EventID: "d1", Type: activity.TypeDocCreated, OccurredAt: base,
+		Attrs: map[string]any{"doc_id": "doc-1"}})
+	s.Flush()
+	if err := s.RebuildResources(); err != nil {
+		t.Fatalf("RebuildResources: %v", err)
+	}
+
+	titlesCalled := false
+	tlWithTitles := NewUserActionLogTool(s, func(_ context.Context, _ string, ids []string) (map[string]string, error) {
+		titlesCalled = true
+		return map[string]string{"doc-1": "设计文档"}, nil
+	})
+	from := base.Add(-time.Hour).Format("2006-01-02T15:04:05")
+	to := base.Add(time.Hour).Format("2006-01-02T15:04:05")
+	res := tlWithTitles.Execute(&ExecuteContext{Ctx: context.Background()}, "list_events",
+		json.RawMessage(`{"from":"`+from+`","to":"`+to+`"}`))
+	if !res.Success {
+		t.Fatalf("list_events 期望成功，得到 %s", res.Error)
+	}
+	if !titlesCalled {
+		t.Error("含 doc 资源时应调用标题解析")
+	}
+	var got struct {
+		Events []struct {
+			Resources []struct {
+				Kind      string `json:"kind"`
+				Canonical string `json:"canonical"`
+			} `json:"resources"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(res.Data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	found := false
+	for _, e := range got.Events {
+		for _, r := range e.Resources {
+			if r.Kind == "doc" && r.Canonical == "设计文档" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("doc 资源应被换成标题，得到 %s", res.Data)
 	}
 }

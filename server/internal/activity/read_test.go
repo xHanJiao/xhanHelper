@@ -1,6 +1,7 @@
 package activity
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -129,5 +130,211 @@ func TestListSessionsFiltersLevel(t *testing.T) {
 	}
 	if len(l0) != 0 {
 		t.Errorf("level=0 应为空（无电源事件），得到 %d 段", len(l0))
+	}
+}
+
+// TestListEventsFiltersAndResources 端到端：过滤维度生效、资源与 tool_name 带出。
+func TestListEventsFiltersAndResources(t *testing.T) {
+	s := openTest(t)
+	defer s.Close()
+
+	s.Emit(Event{EventID: "b1", Type: TypeBrowserNavStarted, OccurredAt: at(0),
+		Attrs: map[string]any{"url_raw": "https://example.com/a?utm_source=x", "tool_name": "webfetch"}})
+	s.Emit(Event{EventID: "t1", Type: TypeToolCallStarted, PairID: "t1e", OccurredAt: at(time.Minute),
+		Attrs: map[string]any{"tool_name": "bookkeeping__create"}})
+	s.Emit(Event{EventID: "t1e", Type: TypeToolCallEnded, PairID: "t1", OccurredAt: at(2 * time.Minute)})
+	s.Flush()
+	if err := s.RebuildResources(); err != nil {
+		t.Fatalf("RebuildResources: %v", err)
+	}
+
+	from, to := at(-time.Hour), at(time.Hour)
+
+	all, err := s.ListEvents(from, to, EventFilter{}, 0)
+	if err != nil {
+		t.Fatalf("ListEvents all: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("期望 3 条事件，得到 %d", len(all))
+	}
+	// 浏览器事件应带 url 资源（canonical 已剥 utm）。
+	var b EventSummary
+	for _, e := range all {
+		if e.EventID == "b1" {
+			b = e
+		}
+	}
+	if b.ToolName != "webfetch" {
+		t.Errorf("tool_name=%q, want webfetch", b.ToolName)
+	}
+	if len(b.Resources) != 1 || b.Resources[0].Kind != ResourceKindURL {
+		t.Fatalf("b1 资源=%+v, want 一条 url", b.Resources)
+	}
+	if b.Resources[0].Canonical != "https://example.com/a" {
+		t.Errorf("canonical=%q, want 去 utm 后的 https://example.com/a", b.Resources[0].Canonical)
+	}
+
+	// source 过滤：browser 只有 1 条。
+	bs, err := s.ListEvents(from, to, EventFilter{Source: "browser"}, 0)
+	if err != nil {
+		t.Fatalf("ListEvents source=browser: %v", err)
+	}
+	if len(bs) != 1 || bs[0].EventID != "b1" {
+		t.Errorf("source=browser 期望仅 b1，得到 %+v", bs)
+	}
+
+	// type 过滤。
+	ts, err := s.ListEvents(from, to, EventFilter{Type: TypeToolCallEnded}, 0)
+	if err != nil {
+		t.Fatalf("ListEvents type: %v", err)
+	}
+	if len(ts) != 1 || ts[0].EventID != "t1e" {
+		t.Errorf("type=tool.call.ended 期望仅 t1e，得到 %+v", ts)
+	}
+
+	// 资源过滤：url 资源命中 1 条。
+	rs, err := s.ListEvents(from, to, EventFilter{ResourceKind: ResourceKindURL, ResourceID: "https://example.com/a"}, 0)
+	if err != nil {
+		t.Fatalf("ListEvents resource: %v", err)
+	}
+	if len(rs) != 1 || rs[0].EventID != "b1" {
+		t.Errorf("按 url 资源过滤期望仅 b1，得到 %+v", rs)
+	}
+}
+
+// TestListEventsEmpty 空库返回空集合、不报错。
+func TestListEventsEmpty(t *testing.T) {
+	s := openTest(t)
+	defer s.Close()
+	events, err := s.ListEvents(at(-time.Hour), at(time.Hour), EventFilter{}, 0)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("空库应为空，得到 %d", len(events))
+	}
+}
+
+// TestTimeRangesByResourceMerges 相邻事件并段、超间隔断开。
+func TestTimeRangesByResourceMerges(t *testing.T) {
+	s := openTest(t)
+	defer s.Close()
+
+	// 同一 url：0、2、4 分钟（≤5min 并一段），20 分钟后另起一段。
+	url := "https://example.com/a"
+	for i, off := range []time.Duration{0, 2 * time.Minute, 4 * time.Minute, 20 * time.Minute} {
+		s.Emit(Event{EventID: "u" + strconv.Itoa(i), Type: TypeBrowserNavStarted, OccurredAt: at(off),
+			Attrs: map[string]any{"url_raw": url}})
+	}
+	s.Flush()
+	if err := s.RebuildResources(); err != nil {
+		t.Fatalf("RebuildResources: %v", err)
+	}
+
+	ranges, err := s.TimeRangesByResource(ResourceKindURL, url, at(-time.Hour), at(time.Hour), 0)
+	if err != nil {
+		t.Fatalf("TimeRangesByResource: %v", err)
+	}
+	if len(ranges) != 2 {
+		t.Fatalf("期望并成 2 段，得到 %d: %+v", len(ranges), ranges)
+	}
+	if ranges[0].EventCnt != 3 {
+		t.Errorf("首段事件数=%d, want 3", ranges[0].EventCnt)
+	}
+	if ranges[0].DurationMs != (4 * time.Minute).Milliseconds() {
+		t.Errorf("首段时长=%d, want 4min", ranges[0].DurationMs)
+	}
+	if ranges[1].EventCnt != 1 {
+		t.Errorf("次段事件数=%d, want 1", ranges[1].EventCnt)
+	}
+}
+
+// TestFactsByMemoryEmptyRefs event_refs 未填充时返回空集合、不报错。
+func TestFactsByMemoryEmptyRefs(t *testing.T) {
+	s := openTest(t)
+	defer s.Close()
+	facts, err := s.FactsByMemory("mem-1", 0)
+	if err != nil {
+		t.Fatalf("FactsByMemory: %v", err)
+	}
+	if len(facts) != 0 {
+		t.Errorf("空 refs 应为空，得到 %d", len(facts))
+	}
+}
+
+// TestTimeRangesLimitKeepsDuration 段数超过 limit 时提前返回，每段时长仍须算好（回归 P1）。
+func TestTimeRangesLimitKeepsDuration(t *testing.T) {
+	s := openTest(t)
+	defer s.Close()
+
+	// 造 6 段：每段 2 条事件（相隔 1 分钟），段间隔 20 分钟（> 5min 断开）。
+	url := "https://example.com/hot"
+	evID := 0
+	for seg := 0; seg < 6; seg++ {
+		for k := 0; k < 2; k++ {
+			off := time.Duration(seg*20) * time.Minute
+			if k == 1 {
+				off += time.Minute
+			}
+			s.Emit(Event{EventID: "h" + strconv.Itoa(evID), Type: TypeBrowserNavStarted,
+				OccurredAt: at(off), Attrs: map[string]any{"url_raw": url}})
+			evID++
+		}
+	}
+	s.Flush()
+	if err := s.RebuildResources(); err != nil {
+		t.Fatalf("RebuildResources: %v", err)
+	}
+
+	ranges, err := s.TimeRangesByResource(ResourceKindURL, url, at(-time.Hour), at(3*time.Hour), 3)
+	if err != nil {
+		t.Fatalf("TimeRangesByResource: %v", err)
+	}
+	if len(ranges) != 3 {
+		t.Fatalf("limit=3 应返回 3 段，得到 %d", len(ranges))
+	}
+	for i, r := range ranges {
+		if r.DurationMs != time.Minute.Milliseconds() {
+			t.Errorf("第 %d 段 duration_ms=%d, want 1min（提前 return 漏算）", i, r.DurationMs)
+		}
+	}
+}
+
+// TestListEventsRejectsBadSource source 含 GLOB 元字符必须报错（不放宽匹配）。
+func TestListEventsRejectsBadSource(t *testing.T) {
+	s := openTest(t)
+	defer s.Close()
+	for _, bad := range []string{"*", "ch*t", "a[b", "Chat", "chat.x"} {
+		if _, err := s.ListEvents(at(-time.Hour), at(time.Hour), EventFilter{Source: bad}, 0); err == nil {
+			t.Errorf("source=%q 应报错", bad)
+		}
+	}
+	if _, err := s.ListEvents(at(-time.Hour), at(time.Hour), EventFilter{Source: "chat"}, 0); err != nil {
+		t.Errorf("合法 source 不应报错: %v", err)
+	}
+}
+
+// TestFactsByMemoryDedupesMultiSource 同一事件多条引用只出一次。
+func TestFactsByMemoryDedupesMultiSource(t *testing.T) {
+	s := openTest(t)
+	defer s.Close()
+
+	s.Emit(Event{EventID: "f1", Type: TypeMemoryEntityChanged, OccurredAt: at(0),
+		Attrs: map[string]any{"memory_id": "mem-1"}})
+	s.Flush()
+	// event_refs 主键含 source：同 (event, memory) 造两条不同 source 的引用。
+	for _, src := range []string{"explicit", "inferred"} {
+		if err := s.db.Exec(`INSERT INTO event_refs(event_id, ref_type, ref_id, source) VALUES (?,?,?,?)`,
+			"f1", "memory", "mem-1", src).Error; err != nil {
+			t.Fatalf("insert ref: %v", err)
+		}
+	}
+
+	facts, err := s.FactsByMemory("mem-1", 0)
+	if err != nil {
+		t.Fatalf("FactsByMemory: %v", err)
+	}
+	if len(facts) != 1 {
+		t.Errorf("同事件多 source 引用应去重为 1 条，得到 %d", len(facts))
 	}
 }

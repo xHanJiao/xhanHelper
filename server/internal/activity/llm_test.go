@@ -93,8 +93,14 @@ func TestLLMStreamEmitsCallAndFirstToken(t *testing.T) {
 	if start.ParentEventID == nil || *start.ParentEventID != "s1" {
 		t.Errorf("start.parent = %v, want s1", start.ParentEventID)
 	}
-	if start.BizKey == nil || *start.BizKey != start.EventID {
-		t.Errorf("start.biz_key = %v, want event_id %s", start.BizKey, start.EventID)
+	if start.BizKey == nil || *start.BizKey == "" {
+		t.Errorf("start.biz_key = %v, want 非空 call id", start.BizKey)
+	}
+	if start.PairID == nil || *start.PairID != end.EventID {
+		t.Errorf("start.pair_id = %v, want end.event_id %s", start.PairID, end.EventID)
+	}
+	if end.PairID == nil || *end.PairID != start.EventID {
+		t.Errorf("end.pair_id = %v, want start.event_id %s", end.PairID, start.EventID)
 	}
 	sa := attrsOf(t, start)
 	if sa["model"] != "fake-model" || sa["call_kind"] != "main_flash" {
@@ -107,8 +113,8 @@ func TestLLMStreamEmitsCallAndFirstToken(t *testing.T) {
 	if ea["prompt_tokens"] != float64(3) || ea["completion_tokens"] != float64(4) {
 		t.Errorf("end attrs = %v", ea)
 	}
-	if end.BizKey == nil || *end.BizKey != start.EventID {
-		t.Errorf("end.biz_key = %v, want start call id %s", end.BizKey, start.EventID)
+	if end.BizKey == nil || *end.BizKey != *start.BizKey {
+		t.Errorf("end.biz_key = %v, want start call id %v", end.BizKey, start.BizKey)
 	}
 	if first.ParentEventID == nil || *first.ParentEventID != start.EventID {
 		t.Errorf("first.parent = %v, want start event %s", first.ParentEventID, start.EventID)
@@ -157,5 +163,29 @@ func TestLLMCallFailed(t *testing.T) {
 	ends := readEvents(t, s, TypeLLMCallEnded)
 	if len(ends) != 1 || ends[0].Outcome == nil || *ends[0].Outcome != OutcomeFailed {
 		t.Fatalf("expected one failed end event, got %+v", ends)
+	}
+}
+
+// TestLLMIntervalsClosePaired 端到端钉住：真实 emitter 产出的 llm.call.* 经 RebuildIntervals
+// 必须判为 paired（回归 pair_id 互指；修复前 llm 区间永远配不上、走 inferred/fallback）。
+func TestLLMIntervalsClosePaired(t *testing.T) {
+	s := openTest(t)
+	defer s.Close()
+
+	c := WrapLLMClient(&fakeLLM{msg: llm.Message{Usage: &llm.Usage{PromptTokens: 1, CompletionTokens: 2}}}, s, "main_flash")
+	if _, err := c.ChatSync(context.Background(), &llm.ChatRequest{}); err != nil {
+		t.Fatalf("chatsync: %v", err)
+	}
+	s.Flush()
+	if err := s.RebuildIntervals(); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	var cb string
+	if err := s.db.Raw(`SELECT i.closed_by FROM interval_closed i JOIN events e ON e.event_id = i.start_event_id
+		WHERE e.type = ?`, TypeLLMCallStarted).Scan(&cb).Error; err != nil {
+		t.Fatalf("scan closed_by: %v", err)
+	}
+	if cb != ClosedPaired {
+		t.Errorf("llm interval closed_by = %q, want %q", cb, ClosedPaired)
 	}
 }

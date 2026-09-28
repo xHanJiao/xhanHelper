@@ -62,12 +62,13 @@ func (e *llmEmitter) ChatWithRawJSON(ctx context.Context, requestBody json.RawMe
 
 func (e *llmEmitter) Chat(ctx context.Context, req *llm.ChatRequest) (<-chan *llm.StreamEvent, error) {
 	callID := uuid.NewString()
+	startID, endID := uuid.NewString(), uuid.NewString()
 	start := time.Now()
-	e.callStarted(ctx, callID)
+	e.callStarted(ctx, callID, startID, endID)
 
 	innerCh, err := e.inner.Chat(ctx, req)
 	if err != nil {
-		e.callEnded(ctx, callID, nil, OutcomeFailed)
+		e.callEnded(ctx, callID, startID, endID, nil, OutcomeFailed)
 		return nil, err
 	}
 
@@ -87,7 +88,7 @@ func (e *llmEmitter) Chat(ctx context.Context, req *llm.ChatRequest) (<-chan *ll
 			case "text_delta", "thought_delta":
 				if !firstToken && evt.Content != "" {
 					firstToken = true
-					e.firstToken(ctx, callID, time.Since(start))
+					e.firstToken(ctx, callID, startID, time.Since(start))
 				}
 			case "done":
 				if evt.Usage != nil {
@@ -100,34 +101,37 @@ func (e *llmEmitter) Chat(ctx context.Context, req *llm.ChatRequest) (<-chan *ll
 		if ctx.Err() != nil {
 			outcome = OutcomeCancelled
 		}
-		e.callEnded(ctx, callID, usage, outcome)
+		e.callEnded(ctx, callID, startID, endID, usage, outcome)
 	}()
 	return out, nil
 }
 
 func (e *llmEmitter) ChatSync(ctx context.Context, req *llm.ChatRequest) (llm.Message, error) {
 	callID := uuid.NewString()
-	e.callStarted(ctx, callID)
+	startID, endID := uuid.NewString(), uuid.NewString()
+	e.callStarted(ctx, callID, startID, endID)
 	msg, err := e.inner.ChatSync(ctx, req)
 	if err != nil {
-		e.callEnded(ctx, callID, nil, OutcomeFailed)
+		e.callEnded(ctx, callID, startID, endID, nil, OutcomeFailed)
 		return msg, err
 	}
-	e.callEnded(ctx, callID, msg.Usage, OutcomeCompleted)
+	e.callEnded(ctx, callID, startID, endID, msg.Usage, OutcomeCompleted)
 	return msg, nil
 }
 
-func (e *llmEmitter) callStarted(ctx context.Context, callID string) {
+// callStarted 发 llm.call.started；startID/endID 预分配以便与 ended 互指 pair_id。
+func (e *llmEmitter) callStarted(ctx context.Context, callID, startID, endID string) {
 	turn, _ := TurnFromContext(ctx)
 	e.store.Emit(Event{
 		Type:          TypeLLMCallStarted,
-		EventID:       callID,
+		EventID:       startID,
 		OccurredAt:    time.Now(),
 		Actor:         ActorAssistant,
 		Trigger:       e.trigger(),
 		TurnID:        turn.TurnID,
 		BizKey:        callID,
 		ParentEventID: turn.StartEventID,
+		PairID:        endID,
 		Attrs: map[string]any{
 			"llm_call_id": callID,
 			"model":       e.inner.ModelName(),
@@ -136,7 +140,8 @@ func (e *llmEmitter) callStarted(ctx context.Context, callID string) {
 	})
 }
 
-func (e *llmEmitter) callEnded(ctx context.Context, callID string, usage *llm.Usage, outcome string) {
+// callEnded 发 llm.call.ended；pair_id 互指 started 的 event_id（按 pair_id 匹配，见 pairedEnd）。
+func (e *llmEmitter) callEnded(ctx context.Context, callID, startID, endID string, usage *llm.Usage, outcome string) {
 	turn, _ := TurnFromContext(ctx)
 	attrs := map[string]any{"llm_call_id": callID}
 	if usage != nil {
@@ -145,7 +150,7 @@ func (e *llmEmitter) callEnded(ctx context.Context, callID string, usage *llm.Us
 	}
 	e.store.Emit(Event{
 		Type:          TypeLLMCallEnded,
-		EventID:       uuid.NewString(),
+		EventID:       endID,
 		OccurredAt:    time.Now(),
 		Actor:         ActorAssistant,
 		Trigger:       e.trigger(),
@@ -153,11 +158,12 @@ func (e *llmEmitter) callEnded(ctx context.Context, callID string, usage *llm.Us
 		TurnID:        turn.TurnID,
 		BizKey:        callID,
 		ParentEventID: turn.StartEventID,
+		PairID:        startID,
 		Attrs:         attrs,
 	})
 }
 
-func (e *llmEmitter) firstToken(ctx context.Context, callID string, d time.Duration) {
+func (e *llmEmitter) firstToken(ctx context.Context, callID, startID string, d time.Duration) {
 	turn, _ := TurnFromContext(ctx)
 	e.store.Emit(Event{
 		Type:          TypeLLMFirstToken,
@@ -167,7 +173,7 @@ func (e *llmEmitter) firstToken(ctx context.Context, callID string, d time.Durat
 		Trigger:       e.trigger(),
 		TurnID:        turn.TurnID,
 		BizKey:        turn.TurnID, // 每 turn 一条（唯一索引自动去重多轮调用）
-		ParentEventID: callID,
+		ParentEventID: startID,
 		Attrs: map[string]any{
 			"llm_call_id": callID,
 			"ttft_ms":     d.Milliseconds(),

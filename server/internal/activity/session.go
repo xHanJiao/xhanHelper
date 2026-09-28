@@ -344,6 +344,7 @@ func assignParents(rows []sessionRow) {
 		end   time.Time
 	}
 	byLevel := make(map[int][]parsedSpan)
+	skipped := 0
 	for i := range rows {
 		if rows[i].EndedAt == nil {
 			continue
@@ -351,9 +352,13 @@ func assignParents(rows []sessionRow) {
 		st, err1 := time.Parse(isoMillis, rows[i].StartedAt)
 		en, err2 := time.Parse(isoMillis, *rows[i].EndedAt)
 		if err1 != nil || err2 != nil {
+			skipped++
 			continue
 		}
 		byLevel[rows[i].Level] = append(byLevel[rows[i].Level], parsedSpan{i, st, en})
+	}
+	if skipped > 0 {
+		log.Printf("[activity] assignParents: %d 条 session 时间解析失败，未参与父层匹配（parent_id 可能为空）", skipped)
 	}
 	for lv := range byLevel {
 		sort.Slice(byLevel[lv], func(a, b int) bool { return byLevel[lv][a].start.Before(byLevel[lv][b].start) })
@@ -364,6 +369,7 @@ func assignParents(rows []sessionRow) {
 		}
 		st, err := time.Parse(isoMillis, rows[i].StartedAt)
 		if err != nil {
+			log.Printf("[activity] assignParents: session %s 起始时间解析失败（%q），跳过父层匹配: %v", rows[i].SessionID, rows[i].StartedAt, err)
 			continue
 		}
 		// 最近外层 = level-1 里 start ≤ 本段 start、end ≥ 本段 start、且 start 最大者。

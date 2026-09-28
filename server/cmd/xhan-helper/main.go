@@ -86,7 +86,7 @@ func main() {
 	repos.Mem.SetActivity(activityStore)
 
 	// --- 工具 & Agent 系统 ---
-	tools := appinit.InitTools(cfg, repos, infra, llmClients)
+	tools := appinit.InitTools(cfg, repos, infra, llmClients, activityStore)
 	agents := appinit.InitAgents(cfg, repos, infra, llmClients, tools, vs, activityStore)
 
 	// LLM 审计保留清理：每日删 7 天前记录

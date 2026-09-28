@@ -60,6 +60,9 @@ const (
 	TypeBillCreated          = "bill.created"
 	TypeReminderCreated      = "reminder.created"
 	TypeReminderAcknowledged = "reminder.acknowledged"
+
+	// TypeReadQuery 是读取自记（明细级留痕，附表 A「读取自记」）：actor=assistant，默认不参与统计。
+	TypeReadQuery = "read.query"
 )
 
 // outcome 取值（附表 A 公共字段）。

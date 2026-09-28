@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,13 +20,14 @@ func newActionLogTool(t *testing.T) (*UserActionLogTool, *activity.Store) {
 	return NewUserActionLogTool(s, nil), s
 }
 
-// TestUserActionLogReadOnly 所有函数都声明只读（plan 模式只读拦截依赖）。
+// TestUserActionLogReadOnly 只读声明：除 event_detail（会写 read.query 留痕）外都应只读。
 func TestUserActionLogReadOnly(t *testing.T) {
 	tl := NewUserActionLogTool(nil, nil)
 	ro := tl.ReadOnlyFuncs()
 	for _, f := range tl.Functions() {
-		if !ro[f.Name] {
-			t.Errorf("函数 %s 未声明只读", f.Name)
+		want := f.Name != "event_detail"
+		if ro[f.Name] != want {
+			t.Errorf("函数 %s 只读=%v, want %v", f.Name, ro[f.Name], want)
 		}
 	}
 }
@@ -170,5 +172,51 @@ func TestUserActionLogRangeArgs(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("doc 资源应被换成标题，得到 %s", res.Data)
+	}
+}
+
+// TestUserActionLogEventDetailLogsRead event_detail 取明细并落一条 read.query 留痕。
+func TestUserActionLogEventDetailLogsRead(t *testing.T) {
+	tl, s := newActionLogTool(t)
+	defer s.Close()
+
+	s.Emit(activity.Event{EventID: "b1", Type: activity.TypeBrowserNavStarted, OccurredAt: time.Now(),
+		Actor: activity.ActorUser, Attrs: map[string]any{"page_title": "某页面"}})
+	s.Flush()
+
+	res := tl.Execute(&ExecuteContext{Ctx: context.Background()}, "event_detail", json.RawMessage(`{"event_ids":["b1"]}`))
+	if !res.Success {
+		t.Fatalf("event_detail 失败: %s", res.Error)
+	}
+	if !strings.Contains(string(res.Data), "某页面") {
+		t.Errorf("明细应含页面标题，得到 %s", res.Data)
+	}
+	s.Flush()
+	// 留痕：应能经 read_log 读回一条 read.query。
+	rl := tl.Execute(&ExecuteContext{Ctx: context.Background()}, "read_log",
+		json.RawMessage(`{"from":"2000-01-01T00:00:00","to":"2100-01-01T00:00:00"}`))
+	if !rl.Success {
+		t.Fatalf("read_log 失败: %s", rl.Error)
+	}
+	if !strings.Contains(string(rl.Data), activity.TypeReadQuery) {
+		t.Errorf("read_log 应含 read.query，得到 %s", rl.Data)
+	}
+}
+
+// TestUserActionLogEventDetailTooMany 超过上限显式拒绝，不静默截断。
+func TestUserActionLogEventDetailTooMany(t *testing.T) {
+	tl, s := newActionLogTool(t)
+	defer s.Close()
+
+	ids := make([]string, activity.MaxDetailIDs+1)
+	for i := range ids {
+		ids[i] = "e"
+	}
+	b, err := json.Marshal(map[string]any{"event_ids": ids})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if res := tl.Execute(&ExecuteContext{Ctx: context.Background()}, "event_detail", b); res.Success {
+		t.Error("超过 MaxDetailIDs 应失败")
 	}
 }

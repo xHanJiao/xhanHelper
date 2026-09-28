@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -559,4 +560,98 @@ func attrString(attrs *string, key string) string {
 		return v
 	}
 	return ""
+}
+
+// —— 只读查询层（明细级）——
+
+const (
+	// MaxDetailIDs 是事件 id 列表上限（导出，供 tool 层在调用前显式校验并回报，而非静默截断）。
+	MaxDetailIDs = 50
+	// maxDetailTextLen 是单条明细文本（页面标题）截断后的**字节**上限（复用 rune 安全的 truncateRunes）。
+	maxDetailTextLen = 500
+)
+
+// EventDetailItem 是明细级的一条：比 EventSummary 多带内容文本摘要。
+// 工具入参**只有摘要与长度**（原文从未进 events.db，取不回）；页面标题为全文（出口已过 sanitize）。
+type EventDetailItem struct {
+	EventID    string `json:"event_id"`
+	Type       string `json:"type"`
+	OccurredAt string `json:"occurred_at"`
+	Actor      string `json:"actor"`
+	ToolName   string `json:"tool_name,omitempty"`
+	ArgsDigest string `json:"args_digest,omitempty"`
+	ArgsLen    int    `json:"args_len,omitempty"`
+	PageTitle  string `json:"page_title,omitempty"`
+}
+
+// EventDetail 取指定事件 id 的内容文本摘要。是唯一会吐内容文本的读取入口（第三级），
+// 只在范围级结果指向明确时调用，且由调用方（tool 层）记一条 read.query 留痕。
+// 只读 events 表；doc 标题仍由 tool 层 join 主库。ids 超上限截断，空 ids 返回空。
+func (s *Store) EventDetail(ids []string) ([]EventDetailItem, error) {
+	if len(ids) == 0 {
+		return []EventDetailItem{}, nil
+	}
+	if len(ids) > MaxDetailIDs {
+		ids = ids[:MaxDetailIDs]
+	}
+	var rows []struct {
+		EventID    string  `gorm:"column:event_id"`
+		Type       string  `gorm:"column:type"`
+		OccurredAt string  `gorm:"column:occurred_at"`
+		Actor      string  `gorm:"column:actor"`
+		Attrs      *string `gorm:"column:attrs"`
+	}
+	if err := s.db.Raw(`SELECT event_id, type, occurred_at, actor, attrs FROM events
+		WHERE event_id IN ? ORDER BY occurred_at`, ids).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("query event detail: %w", err)
+	}
+	out := make([]EventDetailItem, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, EventDetailItem{
+			EventID:    r.EventID,
+			Type:       r.Type,
+			OccurredAt: r.OccurredAt,
+			Actor:      r.Actor,
+			ToolName:   attrString(r.Attrs, "tool_name"),
+			ArgsDigest: attrString(r.Attrs, "args_digest"),
+			ArgsLen:    attrInt(r.Attrs, "args_len"),
+			PageTitle:  SanitizeDetailText(attrString(r.Attrs, "page_title")),
+		})
+	}
+	return out, nil
+}
+
+// attrInt 从 attrs JSON 文本里取一个整数键；空/坏 JSON/缺键/非数字都返回 0。
+func attrInt(attrs *string, key string) int {
+	if attrs == nil || *attrs == "" {
+		return 0
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(*attrs), &m); err != nil {
+		log.Printf("[activity] attrs 解析失败，忽略 %s: %v", key, err)
+		return 0
+	}
+	if v, ok := m[key].(float64); ok {
+		return int(v)
+	}
+	return 0
+}
+
+// SanitizeDetailText 是明细级出口的脱敏：剥控制字符、按 rune 截断。
+// URL token 等敏感值在采集/归一时已剥（客户端最小脱敏 + ScrubbedURL），这里再做一道兜底，
+// 保证任何明细文本出口前都过统一检查（设计篇「脱敏在出口统一做」）。
+func SanitizeDetailText(s string) string {
+	if s == "" {
+		return ""
+	}
+	s = strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' {
+			return ' '
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+	return truncateRunes(s, maxDetailTextLen)
 }

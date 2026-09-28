@@ -2,8 +2,10 @@ package activity
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // TestDaySkeletonReadsDerived 端到端：灌事件 → Recompute → DaySkeleton 出计数/资源/体检。
@@ -336,5 +338,78 @@ func TestFactsByMemoryDedupesMultiSource(t *testing.T) {
 	}
 	if len(facts) != 1 {
 		t.Errorf("同事件多 source 引用应去重为 1 条，得到 %d", len(facts))
+	}
+}
+
+// TestEventDetailAndSanitize 明细级：取文本摘要、页标题脱敏、超上限截断。
+func TestEventDetailAndSanitize(t *testing.T) {
+	s := openTest(t)
+	defer s.Close()
+
+	s.Emit(Event{EventID: "b1", Type: TypeBrowserNavStarted, OccurredAt: at(0), Actor: ActorUser,
+		Attrs: map[string]any{"url": "https://x.com/a", "page_title": "标题\t带控制\x01符"}})
+	s.Emit(Event{EventID: "t1", Type: TypeToolCallStarted, OccurredAt: at(time.Minute), Actor: ActorAssistant,
+		Attrs: map[string]any{"tool_name": "note__create", "args_digest": "deadbeef", "args_len": 42}})
+	s.Flush()
+
+	items, err := s.EventDetail([]string{"b1", "t1"})
+	if err != nil {
+		t.Fatalf("EventDetail: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("len=%d, want 2", len(items))
+	}
+	// 按 occurred_at 升序：b1 → t1
+	if items[0].PageTitle != "标题 带控制符" {
+		t.Errorf("page_title=%q, want 脱敏后的 %q", items[0].PageTitle, "标题 带控制符")
+	}
+	if items[1].ToolName != "note__create" || items[1].ArgsDigest != "deadbeef" || items[1].ArgsLen != 42 {
+		t.Errorf("tool 明细 = %+v", items[1])
+	}
+
+	// 空 ids 返回空、不报错。
+	if got, err := s.EventDetail(nil); err != nil || len(got) != 0 {
+		t.Errorf("空 ids: got=%v err=%v", got, err)
+	}
+}
+
+// TestSanitizeDetailTextTruncates 超长按字节上限截断（rune 边界安全，复用 truncateRunes）。
+func TestSanitizeDetailTextTruncates(t *testing.T) {
+	long := strings.Repeat("a", maxDetailTextLen+50)
+	got := SanitizeDetailText(long)
+	if len(got) != maxDetailTextLen {
+		t.Errorf("len=%d, want %d", len(got), maxDetailTextLen)
+	}
+	// 多字节不应被从中间切断（结果必须仍是合法 UTF-8）。
+	multi := SanitizeDetailText(strings.Repeat("啊", maxDetailTextLen))
+	if !utf8.ValidString(multi) {
+		t.Error("截断后不是合法 UTF-8")
+	}
+}
+
+// TestReadQueryExcludedFromDayStats read.query 是元事件，不进每日分布（默认不参与统计）。
+func TestReadQueryExcludedFromDayStats(t *testing.T) {
+	s := openTest(t)
+	defer s.Close()
+
+	save := sessionDayLoc
+	sessionDayLoc = time.UTC
+	defer func() { sessionDayLoc = save }()
+
+	s.Emit(Event{EventID: "u1", Type: TypeClientAppLaunched, OccurredAt: at(0), Actor: ActorUser})
+	s.Emit(Event{EventID: "r1", Type: TypeReadQuery, OccurredAt: at(time.Minute), Actor: ActorAssistant})
+	s.Flush()
+	if err := s.Recompute(); err != nil {
+		t.Fatalf("recompute: %v", err)
+	}
+	day := at(0).In(time.UTC).Format("2006-01-02")
+	sk, err := s.DaySkeleton(day)
+	if err != nil {
+		t.Fatalf("DaySkeleton: %v", err)
+	}
+	for _, h := range sk.Hours {
+		if h.Source == "read" {
+			t.Errorf("read 来源不应进 day_stats，得到 %+v", h)
+		}
 	}
 }

@@ -153,6 +153,11 @@ func computeDayStats(intervals []closedInterval, events []presenceSource, loc *t
 		row.DurationMs += dur
 	}
 	for _, e := range events {
+		if isMetaEvent(e.Type) {
+			// read.* 是读取自记（actor=assistant），默认不参与「你干了什么」的统计（附表 A），
+			// 否则「问助手我今天干了啥」会抬高当天活动计数（自反指标）。
+			continue
+		}
 		day, hour := dayHour(e.OccurredAt, loc)
 		bump(day, hour, sourceOf(e.Type), e.Type, e.Actor, 1, 0)
 	}
@@ -199,6 +204,9 @@ func computeDayHealth(intervals []closedInterval, events []presenceSource, loc *
 	}
 	// 时钟异常：occurred_at 相对上一事件回拨的次数。
 	for _, e := range events {
+		if isMetaEvent(e.Type) {
+			continue // 读取自记不算行为事件，不参与体检（同 day_stats 口径）。
+		}
 		day, _ := dayHour(e.OccurredAt, loc)
 		a := get(day)
 		if a.hadEvent && e.OccurredAt.Before(a.lastOccurred) {
@@ -346,4 +354,10 @@ func sourceOf(typ string) string {
 		return typ[:i]
 	}
 	return typ
+}
+
+// isMetaEvent 判定「元事件」：读取自记（read.*）这类记录助手取数行为的事件，
+// 默认不参与「你干了什么」的统计（附表 A）。用 type 前缀判定，与 sourceOf 同源。
+func isMetaEvent(typ string) bool {
+	return sourceOf(typ) == "read"
 }

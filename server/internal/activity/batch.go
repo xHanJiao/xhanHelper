@@ -81,8 +81,11 @@ func (s *Store) IngestBatch(segmentID string, evs []BatchEvent) (IngestResult, e
 	rows := make([]eventRow, 0, len(evs))
 	var maxOccurred time.Time
 	for i, e := range evs {
-		if e.EventID == "" || e.Type == "" {
-			return IngestResult{}, fmt.Errorf("%w: 第 %d 条事件缺少 event_id 或 type", ErrInvalidBatch, i)
+		if e.EventID == "" {
+			return IngestResult{}, fmt.Errorf("%w: 第 %d 条事件缺少 event_id", ErrInvalidBatch, i)
+		}
+		if !validEventType(e.Type) {
+			return IngestResult{}, fmt.Errorf("%w: 第 %d 条事件 type %q 违反「域.对象.动作」契约（小写、以点分隔）", ErrInvalidBatch, i, e.Type)
 		}
 		occurred := e.OccurredAt
 		if occurred == "" {

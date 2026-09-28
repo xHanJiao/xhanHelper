@@ -93,12 +93,12 @@ func TestEventsBatchHandler_SegmentMode(t *testing.T) {
 		return w.Code, env.Data
 	}
 
-	code, m := post(`{"segment_id":"seg-42","events":[{"event_id":"e1","type":"t"}]}`)
+	code, m := post(`{"segment_id":"seg-42","events":[{"event_id":"e1","type":"client.idle.ended"}]}`)
 	if code != 200 || m["watermark"] != "seg-42" || m["watermark_kind"] != "segment" {
 		t.Errorf("segment resp = %d %v", code, m)
 	}
 	// 缺 segment_id → 400
-	if code, _ := post(`{"events":[{"event_id":"e2","type":"t"}]}`); code != 400 {
+	if code, _ := post(`{"events":[{"event_id":"e2","type":"client.idle.ended"}]}`); code != 400 {
 		t.Errorf("缺 segment_id code=%d, want 400", code)
 	}
 }
@@ -109,7 +109,7 @@ func TestEventsBatchHandler_Disabled(t *testing.T) {
 	r := gin.New()
 	r.POST("/api/events/batch", eventsBatch(nil))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/events/batch", bytes.NewBufferString(`{"events":[{"event_id":"e","type":"t"}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/events/batch", bytes.NewBufferString(`{"events":[{"event_id":"e","type":"client.idle.ended"}]}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusServiceUnavailable {

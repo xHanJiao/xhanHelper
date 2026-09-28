@@ -109,8 +109,10 @@ func TestIngestBatch_Invalid(t *testing.T) {
 
 	for _, evs := range [][]BatchEvent{
 		{},
-		{{EventID: "", Type: "x"}},
+		{{EventID: "", Type: "x.y"}},
 		{{EventID: "x", Type: ""}},
+		{{EventID: "x", Type: "nodot"}},     // 违「域.对象.动作」契约
+		{{EventID: "x", Type: "Chat.Sent"}}, // 大写不合法
 	} {
 		if _, err := s.IngestBatch("seg1", evs); err == nil {
 			t.Errorf("应报错: %+v", evs)

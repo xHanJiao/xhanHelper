@@ -103,8 +103,8 @@ func TestEmitIdempotentByEventID(t *testing.T) {
 	s := openTest(t)
 	defer s.Close()
 
-	s.Emit(Event{Type: "t", EventID: "dup"})
-	s.Emit(Event{Type: "t", EventID: "dup"})
+	s.Emit(Event{Type: "test.marker", EventID: "dup"})
+	s.Emit(Event{Type: "test.marker", EventID: "dup"})
 	s.Flush()
 
 	if n := countEvents(t, s); n != 1 {
@@ -145,7 +145,7 @@ func TestEmitAttrsJSON(t *testing.T) {
 	s := openTest(t)
 	defer s.Close()
 
-	s.Emit(Event{Type: "t", EventID: "a1", Attrs: map[string]any{"tool_name": "note", "args_len": 12}})
+	s.Emit(Event{Type: "test.marker", EventID: "a1", Attrs: map[string]any{"tool_name": "note", "args_len": 12}})
 	s.Flush()
 
 	row := firstEvent(t, s)
@@ -164,7 +164,7 @@ func TestEmitDropOldestWhenFull(t *testing.T) {
 
 	e := &Emitter{store: s, maxQueue: 3, queue: make([]eventRow, 0, 3)}
 	for i := 0; i < 5; i++ {
-		e.Emit(Event{Type: "t", EventID: fmt.Sprintf("e%d", i)})
+		e.Emit(Event{Type: "test.marker", EventID: fmt.Sprintf("e%d", i)})
 	}
 	if got := e.Dropped(); got != 2 {
 		t.Errorf("dropped = %d, want 2", got)
@@ -179,5 +179,37 @@ func TestEmitDropOldestWhenFull(t *testing.T) {
 		if e.queue[i].EventID != w {
 			t.Errorf("queue[%d] = %s, want %s", i, e.queue[i].EventID, w)
 		}
+	}
+}
+
+// validEventType 契约：必须带点、全小写、每段非空。
+func TestValidEventType(t *testing.T) {
+	valid := []string{"bill.created", "client.tool.exec.started", "system.boundary", "a.b", "a1.b2", "a.b_c"}
+	invalid := []string{"", "t", "Chat.Turn", "chat..sent", ".chat", "chat.", "chat-x.sent", "chat turn.sent", "_a.b", "a.1", "1.a", "123.456", "a._b"}
+	for _, s := range valid {
+		if !validEventType(s) {
+			t.Errorf("validEventType(%q) = false, want true", s)
+		}
+	}
+	for _, s := range invalid {
+		if validEventType(s) {
+			t.Errorf("validEventType(%q) = true, want false", s)
+		}
+	}
+}
+
+// 违契约的 type 在 emit 入口被拒绝：不落库。
+func TestEmitRejectsBadType(t *testing.T) {
+	s := openTest(t)
+	defer s.Close()
+
+	for _, bad := range []string{"", "nodot", "Chat.Turn"} {
+		s.Emit(Event{Type: bad})
+	}
+	s.Emit(Event{Type: "good.type"}) // 合法的一条用来确认通道仍工作
+	s.Flush()
+
+	if n := countEvents(t, s); n != 1 {
+		t.Errorf("count = %d, want 1（违契约的都被拒）", n)
 	}
 }

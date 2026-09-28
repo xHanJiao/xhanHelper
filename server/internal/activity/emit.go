@@ -2,10 +2,8 @@ package activity
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -194,7 +192,7 @@ func (e *Emitter) loop() {
 func (e *Emitter) Emit(ev Event) {
 	row, err := e.build(ev)
 	if err != nil {
-		log.Printf("[activity] 丢弃事件 %q：%v", ev.Type, err)
+		log.Printf("[activity] 丢弃事件：%v", err)
 		return
 	}
 	e.mu.Lock()
@@ -274,8 +272,8 @@ func (e *Emitter) close() {
 
 // build 补公共字段并转成表行。
 func (e *Emitter) build(ev Event) (eventRow, error) {
-	if strings.TrimSpace(ev.Type) == "" {
-		return eventRow{}, errors.New("type 为空")
+	if !validEventType(ev.Type) {
+		return eventRow{}, fmt.Errorf("type %q 违反「域.对象.动作」契约（小写、以点分隔）", ev.Type)
 	}
 	id := ev.EventID
 	if id == "" {
@@ -334,6 +332,39 @@ func optStr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// validEventType 校验事件类型符合附表 A 的契约：^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$。
+// 每段**首字符必须是小写字母**（不许数字/下划线），其余可为 [a-z0-9_]；段数不固定。
+// 例：bill.created（2 段）与 client.tool.exec.started（4 段）都合法。
+// 不带点会让按 type 前缀取 source 的读取端漏判，首字符放宽还会与 validSource（^[a-z_]+$）冲突，
+// 故在写入端严格拒绝（对齐文档声明的正则）。
+func validEventType(t string) bool {
+	if t == "" {
+		return false
+	}
+	dots := 0
+	segStart := true
+	for _, c := range t {
+		switch {
+		case c == '.':
+			if segStart {
+				return false // 连续点或首字符是点
+			}
+			segStart = true
+			dots++
+		case c >= 'a' && c <= 'z':
+			segStart = false
+		case (c >= '0' && c <= '9') || c == '_':
+			// 数字/下划线只在段内合法，不能做段首。
+			if segStart {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return dots > 0 && !segStart
 }
 
 // insertEvents 一批一个事务；event_id 与 (type, biz_key) 冲突一律忽略（幂等，设计篇 3.3）。

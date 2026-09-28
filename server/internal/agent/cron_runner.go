@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -78,6 +79,8 @@ type CronRunner struct {
 type ActivityRecomputer interface {
 	Recompute() error
 	NeedsRecompute() (bool, error)
+	// CleanupExpired 按保留期硬删明细（附表 B §6，90 天）；返回删除的事件数。
+	CleanupExpired(retentionDays int) (int64, error)
 }
 
 // CronRunnerConfig — 调度器依赖配置
@@ -192,7 +195,9 @@ func (cr *CronRunner) setActivityNext(t time.Time) {
 	cr.mu.Unlock()
 }
 
-// recomputeActivity 触发活动埋点派生重算：只在版本对不上（或首启）时跑，失败仅记日志不打断调度。
+// recomputeActivity 触发活动埋点派生重算与保留期清理。
+// 重算只在版本对不上（或首启）时跑；**清理每日都跑**（不跟着重算的早退走，否则版本稳定后再不清理，
+// 老明细无限增长——附表 B §6 要求 90 天硬删）。失败仅记日志不打断调度。
 func (cr *CronRunner) recomputeActivity(ctx context.Context) {
 	if cr.activity == nil {
 		return
@@ -202,12 +207,18 @@ func (cr *CronRunner) recomputeActivity(ctx context.Context) {
 		log.Printf("[cron] activity NeedsRecompute error: %v", err)
 		return
 	}
-	if !need {
-		return
+	if need {
+		log.Printf("[cron] activity recompute trigger")
+		if err := cr.activity.Recompute(); err != nil {
+			log.Printf("[cron] activity Recompute error: %v", err)
+		}
 	}
-	log.Printf("[cron] activity recompute trigger")
-	if err := cr.activity.Recompute(); err != nil {
-		log.Printf("[cron] activity Recompute error: %v", err)
+	// 清理独立于重算判定：每日节拍都执行（附表 B §6：90 天硬删）。两者都是全表级、共用写锁。
+	n, err := cr.activity.CleanupExpired(activity.EventRetentionDays)
+	if err != nil {
+		log.Printf("[cron] activity CleanupExpired error: %v", err)
+	} else if n > 0 {
+		log.Printf("[cron] activity cleanup: removed %d events (>%dd)", n, activity.EventRetentionDays)
 	}
 }
 

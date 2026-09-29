@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -65,6 +66,10 @@ func (r *DocumentRepo) Update(ctx context.Context, id, userID string, updates ma
 	if len(updates) == 0 {
 		return nil
 	}
+	// 空 id 时 GORM 丢弃 PK → 退化成该用户批量更新。挡调用方 typo（炸在明处）。
+	if id == "" {
+		return errors.New("document id 为空")
+	}
 	return r.db.WithContext(ctx).Model(&model.Document{ID: id}).
 		Where("user_id = ? AND status = ?", userID, model.DocumentStatusActive).
 		Updates(updates).Error
@@ -85,6 +90,10 @@ func (r *DocumentRepo) GetByIDPublic(ctx context.Context, id string) (*model.Doc
 // ponytail: 复用 updated_at 当删除时间（回收站排序与 7 天清理都以它为准），不再加 deleted_at 列。
 // 已删文档不再被更新，语义成立；恢复后排序会回到顶部，可接受。
 func (r *DocumentRepo) Delete(ctx context.Context, id, userID string) (int64, error) {
+	// 空 id 时 GORM 丢弃 PK → 会把该用户全部活跃文档软删。挡调用方 typo。
+	if id == "" {
+		return 0, nil
+	}
 	result := r.db.WithContext(ctx).Model(&model.Document{ID: id}).
 		Where("user_id = ? AND status = ?", userID, model.DocumentStatusActive).
 		Update("status", model.DocumentStatusDeleted)

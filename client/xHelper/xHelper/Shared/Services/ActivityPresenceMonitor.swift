@@ -63,8 +63,9 @@ final class ActivityPresenceMonitor {
         observe(nc, NSApplication.willTerminateNotification) { self.emit(self.state.quit()) }
         observe(ws, NSWorkspace.willSleepNotification) { self.emitSleep() }
         observe(ws, NSWorkspace.didWakeNotification) { self.emitWake() }
-        observe(ws, NSWorkspace.screensDidSleepNotification) { self.emit(self.state.screensSlept()) }
-        observe(ws, NSWorkspace.screensDidWakeNotification) { self.emit(self.state.screensWoke()) }
+        // 锁屏只灭屏、机器不睡，没有 system.sleep → 补一条 boundary 作 L0 的近似边界（设计篇 6.2）。
+        observe(ws, NSWorkspace.screensDidSleepNotification) { self.emit([self.state.screensSlept(), self.state.boundary()]) }
+        observe(ws, NSWorkspace.screensDidWakeNotification) { self.emit([self.state.screensWoke(), self.state.boundary()]) }
         observe(ws, NSWorkspace.willPowerOffNotification) { self.emit(self.state.powerOff()) }
     }
 
@@ -79,16 +80,18 @@ final class ActivityPresenceMonitor {
 
     // MARK: 产出
 
+    // 统一走 ActivityClient.emit：既补 focus/wake epoch，又受唯一采集开关 isEnabled 守卫
+    // （运行期关采集能立刻停采；此前直连 recorder 会绕过开关继续落盘）。
     private func emit(_ event: ActivityEvent?) {
         guard let event else { return }
-        Task { await ActivityRecorder.shared.record(event) }
+        ActivityClient.emit(event)
     }
 
-    /// 成对事件走一次 `record`（保序落盘）；单独发会各起一个 Task，理论可乱序。
+    /// 成对事件走一次 emit（保序落盘）；单独发会各起一个 Task，理论可乱序。
     private func emit(_ events: [ActivityEvent?]) {
         let batch = events.compactMap { $0 }
         guard !batch.isEmpty else { return }
-        Task { await ActivityRecorder.shared.record(batch) }
+        ActivityClient.emit(batch)
     }
 
     private func emitSleep() {

@@ -77,15 +77,25 @@ func truncateRunes(s string, max int) string {
 // 传入的 preExisting 是「插入前已在库」的 event_id 集合：这些是纯重放，不索引——
 // 否则会用新 attrs 给旧事件补边、污染只增不清的别名表。批内重复只算一次。
 func existingEvents(tx *gorm.DB, rows []eventRow, preExisting map[string]struct{}) []eventRow {
-	var found []string
 	ids := make([]string, 0, len(rows))
 	for _, r := range rows {
 		ids = append(ids, r.EventID)
 	}
-	if err := tx.Raw(`SELECT event_id FROM events WHERE event_id IN ?`, ids).Scan(&found).Error; err != nil {
-		// 查不到就当没有可索引的（决定不索引不是丢数据：边是纯派生，RebuildResources 能补）。
-		log.Printf("[activity] 归一：查询在库事件失败，本批不建资源边: %v", err)
-		return nil
+	// 分块查询：单条 `IN (...)` 受 SQLite 变量上限约束（一根 id 一个变量），与大回放/放大 batch 一致。
+	var found []string
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		end := start + chunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		var part []string
+		if err := tx.Raw(`SELECT event_id FROM events WHERE event_id IN ?`, ids[start:end]).Scan(&part).Error; err != nil {
+			// 查不到就当没有可索引的（决定不索引不是丢数据：边是纯派生，RebuildResources 能补）。
+			log.Printf("[activity] 归一：查询在库事件失败，本批不建资源边: %v", err)
+			return nil
+		}
+		found = append(found, part...)
 	}
 	// 在库且不是插入前就在的 = 本次新插进来的。
 	set := make(map[string]struct{}, len(found))

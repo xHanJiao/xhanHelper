@@ -107,9 +107,34 @@ final class ActivityBrowserStateTests: XCTestCase {
 
     func testWhitelistCoversClientProducers() {
         for t in ["browser.nav.started", "browser.nav.ended", "browser.page.dwell",
-                  "browser.bookmark.added", "client.input.active", "client.input.ended"] {
+                  "browser.bookmark.added", "client.input.active", "client.input.ended",
+                  "client.tool.exec.started", "client.tool.exec.ended"] {
             XCTAssertTrue(ActivityEventTypes.known.contains(t), "附表 A 白名单漏了 \(t)")
         }
         XCTAssertFalse(ActivityEventTypes.known.contains("nope.not.real"))
+    }
+
+    /// 明细级唯一内容文本 page_title 必须有生产者：didFinish 时 nav.ended、换页时旧页 dwell 都带上。
+    func testTitleFlowsIntoNavEndedAndDwell() {
+        var s = ActivityBrowserState(tabId: "browser-1")
+        let t0 = Date()
+        _ = s.urlChanged(url: "https://a.com/x", host: "a.com", owner: nil, finished: false, now: t0)
+        let finish = s.urlChanged(url: "https://a.com/x", host: "a.com", owner: nil, finished: true,
+                                  pageTitle: "页面标题", now: t0.addingTimeInterval(1))
+        XCTAssertEqual(finish.first { $0.type == "browser.nav.ended" }?.attrs?["page_title"], .string("页面标题"))
+        // 换页：传的是旧页标题，正好配被收掉的 dwell。
+        let out = s.urlChanged(url: "https://b.com/y", host: "b.com", owner: nil, finished: false,
+                               pageTitle: "页面标题", now: t0.addingTimeInterval(11))
+        XCTAssertEqual(out.first { $0.type == "browser.page.dwell" }?.attrs?["page_title"], .string("页面标题"))
+    }
+
+    /// 助手代开的标签：浏览事件要挂会话/轮次/父 bridge 事件（附表 A browser.nav.started）。
+    func testAgentContextStampsConversationTurnAndParent() {
+        var s = ActivityBrowserState(tabId: "browser-2")
+        s.setAgentContext(AgentActivityContext(conversationId: "conv1", turnId: "turn1", bridgeEventId: "bridge1"))
+        let out = s.urlChanged(url: "https://a.com/x", host: "a.com", owner: "main", finished: false)
+        XCTAssertEqual(out[0].conversationId, "conv1")
+        XCTAssertEqual(out[0].turnId, "turn1")
+        XCTAssertEqual(out[0].parentEventId, "bridge1")
     }
 }

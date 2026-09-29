@@ -377,9 +377,9 @@ func (s *Store) insertEvents(rows []eventRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	// 写闸读锁：与 IngestBatch 一起，被 Recompute 的写锁挡在外面（重建期间不写）。
-	s.writeMu.RLock()
-	defer s.writeMu.RUnlock()
+	// 写闸独占：SQLite 同库单写者，与 IngestBatch 串行、被 Recompute 挡在外面（重建期间不写）。
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	preExisting := s.preExistingEventIDs(rows)
 	// 分块插入：eventRow ~28 列，SQLite 变量上限 32766 → 单条 INSERT 最多约 1170 行；
 	// 一批可能上万条（大文件回放/积压重投），必须分块（gorm 默认 CreateBatchSize==0 不分块）。

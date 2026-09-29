@@ -105,6 +105,32 @@ var trackedModels = map[reflect.Type]modelSpec{
 	},
 }
 
+// eventPKAttr：这些事件按契约必须携带对应主键属性（附表 A）。update/delete 时若 resolvePK
+// 拿到空串，说明调用方没把主键放进 Model/Dest（AGENTS.md 约定），事件照发但降级为无 PK——
+// 依据回调方案文档「不做静默降级」，这里留一条警告。无 PK 的合法事件（memory.topic.cleaned）不在表内。
+var eventPKAttr = map[string]string{
+	TypeDocUpdated:           "doc_id",
+	TypeDocDeleted:           "doc_id",
+	TypeMemoryEntityChanged:  "memory_id",
+	TypeReminderAcknowledged: "reminder_id",
+}
+
+// missingPKAttr 判定「该事件按契约应带主键、却拿到空 pk」的情形，返回应修的主键属性名。
+// pk 非空、事件本无 PK（memory.topic.cleaned）、或 typ 为空（不发事件）都返回 ok=false。
+func missingPKAttr(typ, pk string) (key string, ok bool) {
+	if pk != "" {
+		return "", false
+	}
+	key, ok = eventPKAttr[typ]
+	return key, ok
+}
+
+func warnMissingPK(op, typ, pk string) {
+	if key, ok := missingPKAttr(typ, pk); ok {
+		log.Printf("[activity] 变更回调 %s：%s 事件缺主键（%s 为空），调用方未把 PK 放进 Model/Dest", op, typ, key)
+	}
+}
+
 func (h *changeHook) onCreate(db *gorm.DB) { h.handle(db, "create") }
 func (h *changeHook) onUpdate(db *gorm.DB) { h.handle(db, "update") }
 func (h *changeHook) onDelete(db *gorm.DB) { h.handle(db, "delete") }
@@ -171,13 +197,17 @@ func (h *changeHook) handle(db *gorm.DB, op string) {
 		if spec.update == nil || stmt.RowsAffected == 0 {
 			return
 		}
-		typ, attrs := spec.update(stmt, resolvePK(stmt), updateValues(stmt))
+		pk := resolvePK(stmt)
+		typ, attrs := spec.update(stmt, pk, updateValues(stmt))
+		warnMissingPK(op, typ, pk)
 		h.emit(stmt, typ, "", attrs)
 	case "delete":
 		if spec.delete == nil || stmt.RowsAffected == 0 {
 			return
 		}
-		typ, attrs := spec.delete(resolvePK(stmt))
+		pk := resolvePK(stmt)
+		typ, attrs := spec.delete(pk)
+		warnMissingPK(op, typ, pk)
 		h.emit(stmt, typ, "", attrs)
 	}
 }

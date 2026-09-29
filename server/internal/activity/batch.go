@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"gorm.io/gorm/clause"
@@ -62,14 +63,14 @@ type BatchEvent struct {
 // 按实际插入行数统计 accepted/duplicate，返回水位（口径由 watermarkMode 决定，见 WatermarkTime/Segment）。
 // 走同步写而非 emit 队列——上传要当场给客户端 ack。
 //
-// 写闸读锁：与 emit 刷盘一起被 Recompute 的写锁挡住——重算期间本方法会等待重建写事务结束，
-// 避免与全表重建撞锁（busy_timeout 后报 database is locked → 500）。等待时长 = 重建时长。
+// 写闸独占：SQLite 同库单写者，与 emit 刷盘串行，且被 Recompute/Cleanup 的写锁挡在外面——
+// 重算期间本方法会等待重建写事务结束，避免撞锁（busy_timeout 后 database is locked → 500）。
 func (s *Store) IngestBatch(segmentID string, evs []BatchEvent) (IngestResult, error) {
 	if s == nil {
 		return IngestResult{}, fmt.Errorf("events.db 未启用")
 	}
-	s.writeMu.RLock()
-	defer s.writeMu.RUnlock()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	mode := s.WatermarkMode()
 	if mode == WatermarkSegment && segmentID == "" {
 		return IngestResult{}, fmt.Errorf("%w: segment 模式要求 segment_id", ErrInvalidBatch)
@@ -90,7 +91,11 @@ func (s *Store) IngestBatch(segmentID string, evs []BatchEvent) (IngestResult, e
 		occurred := e.OccurredAt
 		if occurred == "" {
 			occurred = now
-		} else if t, perr := time.Parse(isoMillis, e.OccurredAt); perr == nil && t.After(maxOccurred) {
+		} else if t, perr := time.Parse(isoMillis, e.OccurredAt); perr != nil {
+			// 非法时间戳不静默吞：记一条日志并按 received_at 兜底（拒整批会让客户端永远重投该段）。
+			log.Printf("[activity] 第 %d 条 occurred_at=%q 非法，按 received_at 兜底: %v", i, e.OccurredAt, perr)
+			occurred = now
+		} else if t.After(maxOccurred) {
 			maxOccurred = t
 		}
 		actor, trigger := e.Actor, e.Trigger

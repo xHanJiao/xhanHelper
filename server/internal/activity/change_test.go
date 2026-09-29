@@ -54,3 +54,25 @@ func TestEmitChangeMetaResolution(t *testing.T) {
 		t.Errorf("bg row = %+v", bg)
 	}
 }
+
+// 契约要求带 PK 的事件拿到空 pk 时应告警（missingPKAttr 命中）；无 PK 的合法事件不告警。
+func TestMissingPKAttr(t *testing.T) {
+	cases := []struct {
+		typ, pk, wantKey string
+		want             bool
+	}{
+		{TypeDocUpdated, "", "doc_id", true},
+		{TypeDocDeleted, "", "doc_id", true},
+		{TypeMemoryEntityChanged, "", "memory_id", true},
+		{TypeReminderAcknowledged, "", "reminder_id", true},
+		{TypeDocUpdated, "d1", "", false},
+		{TypeMemoryTopicCleaned, "", "", false},
+		{"", "", "", false},
+	}
+	for _, c := range cases {
+		key, ok := missingPKAttr(c.typ, c.pk)
+		if ok != c.want || key != c.wantKey {
+			t.Errorf("missingPKAttr(%q,%q) = (%q,%v), want (%q,%v)", c.typ, c.pk, key, ok, c.wantKey, c.want)
+		}
+	}
+}

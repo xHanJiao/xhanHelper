@@ -32,10 +32,31 @@ extension ChatViewModel {
         let timeoutSecs = (obj["timeout_secs"] as? NSNumber)?.doubleValue
         let deadline = (timeoutSecs != nil) ? (timeoutSecs! * 0.9) : nil
         let owner = obj["owner"] as? String
+        // 服务端下发 payload 补的会话上下文（附表 A：客户端执行视角靠它们归组/挂父）。
+        let conversationID = obj["conversation_id"] as? String
+        let turnID = obj["turn_id"] as? String
+        let bridgeEventID = obj["bridge_event_id"] as? String
         let api = apiClient
 
-        print("clientToolCall: \(toolName) call_id=\(callID) owner=\(owner ?? "nil")")
+        print("clientToolCall: \(toolName) call_id=\(callID) owner=\(owner ?? "nil") conversation_id=\(conversationID ?? "nil") turn_id=\(turnID ?? "nil")")
         Task {
+            // 客户端执行视角区间：started/ended 用共享 pair_id 配对，父 = 服务端那条 tool.bridge.dispatched。
+            let execPair = UUID().uuidString
+            var execOutcome = "completed"
+            var execErrorType: String?
+            ActivityClient.emit(ActivityEvent(
+                type: "client.tool.exec.started", actor: "assistant", trigger: "manual",
+                bizKey: callID, parentEventId: bridgeEventID, pairId: execPair,
+                conversationId: conversationID, turnId: turnID, callId: callID,
+                attrs: ["tool_name": .string(toolName)]))
+            defer {
+                ActivityClient.emit(ActivityEvent(
+                    type: "client.tool.exec.ended", actor: "assistant", trigger: "manual",
+                    bizKey: callID, outcome: execOutcome, errorType: execErrorType,
+                    parentEventId: bridgeEventID, pairId: execPair,
+                    conversationId: conversationID, turnId: turnID, callId: callID,
+                    attrs: ["tool_name": .string(toolName)]))
+            }
             let isBrowser = toolName.hasPrefix("browser__")
             let isFS = toolName.hasPrefix("fs__")
             do {
@@ -60,6 +81,7 @@ extension ChatViewModel {
                 if isFS {
                     if let blocked = LocalToolRegistry.shared.fsBlockedPaths(arguments: args) {
                         LogBuffer.shared.warning("clientToolCall: \(toolName) blocked: \(blocked)")
+                        execOutcome = "failed"; execErrorType = "blocked"
                         try await api.submitToolResult(callId: callID, resultJSON: nil, error: blocked)
                         return
                     }
@@ -70,6 +92,7 @@ extension ChatViewModel {
                 if isShell {
                     if let blocked = LocalToolRegistry.shared.shellBlockedReason(arguments: args) {
                         LogBuffer.shared.warning("clientToolCall: \(toolName) blocked: \(blocked)")
+                        execOutcome = "failed"; execErrorType = "blocked"
                         try await api.submitToolResult(callId: callID, resultJSON: nil, error: blocked)
                         return
                     }
@@ -160,6 +183,7 @@ extension ChatViewModel {
                     )
                     guard confirmed else {
                         LogBuffer.shared.warning("clientToolCall: \(toolName) rejected by user")
+                        execOutcome = "cancelled"; execErrorType = "rejected"
                         try await api.submitToolResult(callId: callID, resultJSON: nil, error: "用户拒绝执行")
                         return
                     }
@@ -179,7 +203,9 @@ extension ChatViewModel {
                     }
                 }
 
-                let context = ExecuteContext(budgetBytes: budgetBytes, deadlineSecs: deadline, owner: owner)
+                let context = ExecuteContext(
+                    budgetBytes: budgetBytes, deadlineSecs: deadline, owner: owner,
+                    conversationId: conversationID, turnId: turnID, bridgeEventId: bridgeEventID)
                 let result = try await LocalToolRegistry.shared.execute(
                     flatName: toolName,
                     arguments: args,
@@ -193,12 +219,14 @@ extension ChatViewModel {
                 if let data = result.serverResult {
                     try await api.submitToolResult(callId: callID, resultJSON: data)
                 } else if let error = result.serverError {
+                    execOutcome = "failed"; execErrorType = "tool_error"
                     try await api.submitToolResult(callId: callID, resultJSON: nil, error: error)
                 } else {
                     try await api.submitToolResult(callId: callID, resultJSON: Data("{}".utf8))
                 }
                 LogBuffer.shared.info("clientToolCall: \(toolName) result submitted")
             } catch {
+                execOutcome = "failed"; execErrorType = "exception"
                 LogBuffer.shared.error("clientToolCall: \(toolName) failed: \(error.localizedDescription)")
                 do {
                     try await api.submitToolResult(callId: callID, resultJSON: nil, error: error.localizedDescription)

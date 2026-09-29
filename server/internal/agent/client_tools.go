@@ -357,7 +357,13 @@ func (cc *clientToolCaller) Call(
 	ch := cc.bridge.Register(callID, userID)
 	defer cc.bridge.Unregister(callID)
 
-	payload, err := json.Marshal(map[string]interface{}{
+	// 预分配 bridge.dispatched 的 event_id：客户端执行视角的 client.tool.exec.* 要挂它为父
+	// （附表 A「客户端执行视角、真实耗时」）。采集关闭时不带该键（没有对应事件可挂）。
+	bridgeEventID := ""
+	if cc.activity != nil {
+		bridgeEventID = uuid.NewString()
+	}
+	payloadMap := map[string]interface{}{
 		"call_id":             callID,
 		"tool_name":           flatName,
 		"arguments":           call.Args,
@@ -367,7 +373,11 @@ func (cc *clientToolCaller) Call(
 		"owner":               owner,
 		"conversation_id":     convID,
 		"turn_id":             turnID,
-	})
+	}
+	if bridgeEventID != "" {
+		payloadMap["bridge_event_id"] = bridgeEventID
+	}
+	payload, err := json.Marshal(payloadMap)
 	if err != nil {
 		log.Printf("[clientToolCaller] client tool payload marshal error: %v", err)
 		return &tool.Result{Success: false, Error: "客户端工具调用序列化失败"}, false
@@ -387,9 +397,10 @@ func (cc *clientToolCaller) Call(
 	// 未送达（上面 return）时整条链不存在，避免产生无 dispatched 的孤儿 returned。
 	bridgeOutcome := activity.OutcomeCompleted
 	if cc.activity != nil {
-		cc.emitBridge(ctx, activity.TypeToolBridgeDispatched, callID, convID, turnID, flatName, "")
+		cc.emitBridge(ctx, activity.TypeToolBridgeDispatched, bridgeEventID, callID, convID, turnID, flatName, "")
 		defer func() {
-			cc.emitBridge(ctx, activity.TypeToolBridgeReturned, callID, convID, turnID, flatName, bridgeOutcome)
+			// returned 用各自新 id（只认 dispatched 的 id 作客户端父）；biz_key 仍 = call_id。
+			cc.emitBridge(ctx, activity.TypeToolBridgeReturned, uuid.NewString(), callID, convID, turnID, flatName, bridgeOutcome)
 		}()
 	}
 
@@ -429,7 +440,8 @@ func (cc *clientToolCaller) Call(
 
 // emitBridge 发 tool.bridge.dispatched/returned（点事件，服务端视角）。
 // 父 = 本 turn 的 chat.turn.started（无 turn → 根）；biz_key = call_id；outcome 空表示派发（无终态）。
-func (cc *clientToolCaller) emitBridge(ctx context.Context, typ, callID, convID, turnID, toolName, outcome string) {
+// eventID 由调用方预分配（dispatched 的 id 会随 client_tool_call 下发，作客户端 client.tool.exec.* 的父）。
+func (cc *clientToolCaller) emitBridge(ctx context.Context, typ, eventID, callID, convID, turnID, toolName, outcome string) {
 	if cc.activity == nil {
 		return
 	}
@@ -440,7 +452,7 @@ func (cc *clientToolCaller) emitBridge(ctx context.Context, typ, callID, convID,
 	}
 	cc.activity.Emit(activity.Event{
 		Type:           typ,
-		EventID:        uuid.NewString(),
+		EventID:        eventID,
 		OccurredAt:     time.Now(),
 		Actor:          activity.ActorAssistant,
 		Trigger:        trigger,

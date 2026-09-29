@@ -79,6 +79,8 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private var lastAgentTabByOwner: [String: String] = [:]
     /// 用户授权 agent 操作其用户标签的 owner 集合（"subagent:<convID>"，任务级天然隔离，无需清理）
     private var userTabGrants: Set<String> = []
+    /// owner -> 最近一次 agent 工具调用的会话上下文：浏览事件据此挂会话/轮次/父 bridge 事件。
+    private var agentActivityContexts: [String: AgentActivityContext] = [:]
     /// 待人工处理的手递手标签：owner -> (tabId, 升级时间)（验证码/登录墙，检测驱动）。
     /// 带时间戳是为了超时兜底：子任务一死、无人 resolve 时，过期后自动放开回收豁免。
     private var pendingHandoff: [String: (tabId: String, at: Date)] = [:]
@@ -264,6 +266,13 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             executionQueue.release()
             let elapsed = Int(Date().timeIntervalSince(start) * 1000)
             print("[Browser] execute done: \(tool) elapsed=\(elapsed)ms")
+        }
+        // agent 调用：记下该 owner 的会话上下文，供后续该标签的浏览事件挂会话/轮次/父 bridge 事件。
+        if let owner = context.owner {
+            agentActivityContexts[owner] = AgentActivityContext(
+                conversationId: context.conversationId,
+                turnId: context.turnId,
+                bridgeEventId: context.bridgeEventId)
         }
         return await runExecute(tool: tool, arguments: arguments, context: context)
     }
@@ -1996,7 +2005,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         #if os(macOS)
         // 活动埋点：关标签时收掉悬挂的 nav 与当前页 dwell
         if var browser = session.activityBrowser {
-            let events = browser.closed()
+            let events = browser.closed(pageTitle: session.webView.title)
             ActivityClient.emit(events)
             session.activityBrowser = nil // 已收尾：置空挡将来多出的 teardown 调用点双发 dwell
         }
@@ -2499,9 +2508,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         #if os(macOS)
         // 活动埋点：nav.started/ended 与 page.dwell（URL 脱敏在状态机里做）
         if var browser = session.activityBrowser {
+            browser.setAgentContext(session.owner.flatMap { agentActivityContexts[$0] })
             let events = browser.urlChanged(
                 url: url.absoluteString, host: host, owner: session.owner,
-                finished: phase == .finished)
+                finished: phase == .finished, pageTitle: session.webView.title)
             session.activityBrowser = browser
             ActivityClient.emit(events)
         }
@@ -3388,7 +3398,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
             #if os(macOS)
             guard var browser = activityBrowser else { return }
             let ns = error as NSError
-            let events = browser.navFailed(errorType: "\(ns.domain)/\(ns.code)")
+            let events = browser.navFailed(errorType: "\(ns.domain)/\(ns.code)", pageTitle: webView.title)
             activityBrowser = browser
             ActivityClient.emit(events)
             #endif

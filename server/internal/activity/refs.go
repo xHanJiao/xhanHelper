@@ -162,9 +162,15 @@ func deriveDirectRefs(tx *gorm.DB) ([]eventRefRow, error) {
 		RefID   string `gorm:"column:ref_id"`
 		Kind    string `gorm:"column:resource_kind"`
 	}
-	err := tx.Raw(`SELECT event_id, resource_id AS ref_id, resource_kind FROM event_resources`).Scan(&raw).Error
+	// 与 deriveResourceRefs 同口径的读入上界（event_resources 90 天可到几十万行，防一次读爆内存）。
+	err := tx.Raw(`SELECT event_id, resource_id AS ref_id, resource_kind FROM event_resources
+		LIMIT ?`, maxRefRows+1).Scan(&raw).Error
 	if err != nil {
 		return nil, fmt.Errorf("推导 direct refs: %w", err)
+	}
+	if len(raw) > maxRefRows {
+		log.Printf("[activity] 直连 ref 推导：event_resources 超过 %d 行，截断（refs 为派生数据，可重算）", maxRefRows)
+		raw = raw[:maxRefRows]
 	}
 	out := make([]eventRefRow, 0, len(raw))
 	for _, r := range raw {

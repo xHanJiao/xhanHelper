@@ -94,11 +94,19 @@ func (r *UserMemoryRepo) BatchDelete(ctx context.Context, ids []string, userID s
 	if len(ids) == 0 {
 		return nil
 	}
+	// 先取实际命中的 id：用户可控的 req.IDs 里可能混入不存在/他人的 id，
+	// 对没删掉的 id 发事件就是幻影（回调路径靠 RowsAffected==0 防，这条自埋点路径得自己防）。
+	var hit []string
+	if err := r.db.WithContext(ctx).Model(&model.UserMemory{}).
+		Where("id IN ? AND user_id = ?", ids, userID).
+		Pluck("id", &hit).Error; err != nil {
+		return err
+	}
 	if err := r.db.WithContext(activity.WithNoEvent(ctx)).
 		Where("id IN ? AND user_id = ?", ids, userID).Delete(&model.UserMemory{}).Error; err != nil {
 		return err
 	}
-	for _, id := range ids {
+	for _, id := range hit {
 		r.activity.EmitChange(ctx, activity.TypeMemoryEntityChanged, "", map[string]any{
 			"memory_id": id,
 			"op":        "delete",
@@ -158,6 +166,10 @@ func (r *UserMemoryRepo) FindByContentHash(ctx context.Context, userID, contentH
 // Update 覆盖一条记忆的内容（topic / memory_value / facts）。改内容不碰 confirm 计数。
 // 派生数据（向量/chunk/概念）由调用方在写库后重建。
 func (r *UserMemoryRepo) Update(ctx context.Context, id, topic, memoryValue string, facts *string) error {
+	// 空 id 时 GORM 会丢弃 PK 条件 → 退化成全表更新（且本方法无 user_id 余件）。挡住 typo。
+	if id == "" {
+		return errors.New("memory id 为空")
+	}
 	return r.db.WithContext(ctx).Model(&model.UserMemory{ID: id}).
 		Updates(map[string]interface{}{
 			"topic":        topic,
@@ -332,6 +344,10 @@ func (r *UserMemoryRepo) DistinctTopics(ctx context.Context, userID string) ([]T
 // SetTopicByID 把单条记忆的 topic 设为 to（存量清洗填空 topic 用；按 id 定位）。
 func (r *UserMemoryRepo) SetTopicByID(ctx context.Context, userID, id, to string) (int64, error) {
 	if to == "" {
+		return 0, nil
+	}
+	// 空 id 时 Model(&T{ID:""}) 丢 PK → 退化成该用户批量改 topic。挡 typo。
+	if id == "" {
 		return 0, nil
 	}
 	res := r.db.WithContext(ctx).Model(&model.UserMemory{ID: id}).

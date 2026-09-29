@@ -61,12 +61,11 @@ func TestDayHealthInferredRatioAndClock(t *testing.T) {
 		{StartAt: at(2 * time.Minute), EndAt: at(2*time.Minute + time.Second), Duration: time.Second, Type: TypeToolCallStarted, ClosedBy: ClosedFallback},
 		{StartAt: at(3 * time.Minute), EndAt: at(3*time.Minute + time.Second), Duration: time.Second, Type: TypeToolCallStarted, ClosedBy: ClosedPaired},
 	}
-	// 事件里放一条时钟回拨（后一条早于前一条）。
+	// 事件仅用于离机缺口；时钟异常由 scanClockAnomalies 单独算出后传入。
 	events := []presenceSource{
 		{EventID: "e1", Type: TypeToolCallStarted, OccurredAt: at(10 * time.Minute)},
-		{EventID: "e2", Type: TypeToolCallStarted, OccurredAt: at(5 * time.Minute)}, // 回拨
 	}
-	rows := computeDayHealth(iv, events, loc)
+	rows := computeDayHealth(iv, events, map[string]int64{day: 1}, loc)
 	if len(rows) != 1 {
 		t.Fatalf("health rows = %d, want 1", len(rows))
 	}
@@ -107,6 +106,24 @@ func TestDayHealthOfflineGapOnlyWhenL0Present(t *testing.T) {
 	}
 }
 
+// 只有点事件、没有闭合区间的日子也要有 day_health 行（否则 DaySkeleton.Health 为 nil、离机缺口被丢）。
+func TestDayHealthIncludesPointEventOnlyDays(t *testing.T) {
+	loc := time.UTC
+	day := at(0).In(loc).Format("2006-01-02")
+	events := []presenceSource{
+		{EventID: "e1", Type: TypeDocCreated, OccurredAt: at(5 * time.Minute)},
+	}
+	rows := computeDayHealth(nil, events, nil, loc)
+	if len(rows) != 1 || rows[0].Day != day {
+		t.Fatalf("health rows = %+v, want 1 row for %s", rows, day)
+	}
+	// 纯 read.* 元事件不产生体检行。
+	meta := []presenceSource{{EventID: "m", Type: "read.tool", OccurredAt: at(5 * time.Minute)}}
+	if rows := computeDayHealth(nil, meta, nil, loc); len(rows) != 0 {
+		t.Errorf("meta-only day should have no health row, got %+v", rows)
+	}
+}
+
 func TestRebuildDayStatsWritesRows(t *testing.T) {
 	save := sessionDayLoc
 	defer func() { sessionDayLoc = save }()
@@ -127,5 +144,30 @@ func TestRebuildDayStatsWritesRows(t *testing.T) {
 	}
 	if n := count(t, s, `SELECT count(*) FROM day_health`); n != 1 {
 		t.Errorf("day_health rows = %d, want 1", n)
+	}
+}
+
+// 端到端验 scanClockAnomalies：同一批（received_at 相同）内 occurred_at 回拨记 1 次。
+// 修的是「事件表按 occurred_at 升序读入 → 逐条比大小恒为 false，clock_anomalies 永远是 0」。
+func TestScanClockAnomaliesDetectsBatchRollback(t *testing.T) {
+	save := sessionDayLoc
+	defer func() { sessionDayLoc = save }()
+	sessionDayLoc = time.UTC
+
+	s := openTest(t)
+	_, err := s.IngestBatch("seg1", []BatchEvent{
+		{EventID: "ca1", Type: TypeToolCallStarted, OccurredAt: at(10 * time.Minute).UTC().Format(isoMillis)},
+		{EventID: "ca2", Type: TypeToolCallStarted, OccurredAt: at(5 * time.Minute).UTC().Format(isoMillis)},
+	})
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	clock, err := scanClockAnomalies(s.db, time.UTC)
+	if err != nil {
+		t.Fatalf("scanClockAnomalies: %v", err)
+	}
+	day := at(0).In(time.UTC).Format("2006-01-02")
+	if clock[day] != 1 {
+		t.Errorf("clock anomalies = %d, want 1 (%v)", clock[day], clock)
 	}
 }

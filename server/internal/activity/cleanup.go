@@ -142,6 +142,12 @@ func (s *Store) CleanupResource(kind, id string) (int64, error) {
 	if kind == "" || id == "" {
 		return 0, fmt.Errorf("resource_kind 与 resource_id 不能为空")
 	}
+	// 与 Recompute/CleanupBefore 一致：先停 ingest（避免持写锁期间 emit 刷盘空转把队列撑满），
+	// 再持写锁独占，跑完恢复并补刷。顺序不能反——先 Lock 会让在途 flush 卡在锁上、pause 又等它，死锁。
+	if s.em != nil {
+		s.em.pause()
+		defer s.em.resume()
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	var edges int64

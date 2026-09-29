@@ -3,6 +3,7 @@ package activity
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -58,8 +59,12 @@ func (s *Store) closeDayStats(tx *gorm.DB) error {
 	if err != nil {
 		return err
 	}
+	clock, err := scanClockAnomalies(tx, sessionDayLoc)
+	if err != nil {
+		return err
+	}
 	stats := computeDayStats(intervals, events, sessionDayLoc)
-	health := computeDayHealth(intervals, events, sessionDayLoc)
+	health := computeDayHealth(intervals, events, clock, sessionDayLoc)
 	if len(stats) > 0 {
 		if err := tx.CreateInBatches(&stats, 500).Error; err != nil {
 			return fmt.Errorf("insert %d day_stats: %w", len(stats), err)
@@ -173,13 +178,49 @@ func computeDayStats(intervals []closedInterval, events []presenceSource, loc *t
 	return out
 }
 
+// scanClockAnomalies 按「到达顺序」检测客户端 occurred_at 回拨：同一条 received_at（= 客户端同一
+// 批上报）内，若 occurred_at 比批内前一条小，即客户端时钟在这批内回拨。
+//
+// 为什么不能用事件表既有的 occurred_at 排序判：scanPresenceEvents 已按 occurred_at 升序读入，
+// 再逐条比大小恒为 false（历史 bug：clock_anomalies 永远是 0）。
+// 局限（有意）：跨批乱序（离线补投、网络重排）不算——那更像到达延迟而非时钟回拨，宁缺毋滥。
+// received_at 是服务端落库时刻，批内共享；rowid 是插入序，批内保持客户端上报顺序。
+func scanClockAnomalies(tx *gorm.DB, loc *time.Location) (map[string]int64, error) {
+	var raw []struct {
+		OccurredAt string `gorm:"column:occurred_at"`
+		ReceivedAt string `gorm:"column:received_at"`
+	}
+	if err := tx.Raw(`SELECT occurred_at, received_at FROM events ORDER BY received_at, rowid`).Scan(&raw).Error; err != nil {
+		return nil, fmt.Errorf("扫描时钟异常: %w", err)
+	}
+	out := make(map[string]int64)
+	var prevReceived string
+	var prevOccurred time.Time
+	hasPrev := false
+	for _, r := range raw {
+		occ, err := time.Parse(isoMillis, r.OccurredAt)
+		if err != nil {
+			log.Printf("[activity] 时钟异常：解析 occurred_at 失败，跳过: %v", err)
+			continue
+		}
+		if r.ReceivedAt != prevReceived {
+			prevReceived = r.ReceivedAt
+			hasPrev = false
+		}
+		if hasPrev && occ.Before(prevOccurred) {
+			day, _ := dayHour(occ, loc)
+			out[day]++
+		}
+		prevOccurred = occ
+		hasPrev = true
+	}
+	return out, nil
+}
+
 // computeDayHealth 逐日体检：推断闭合占比、fallback 计数、离机/采集断流缺口、时钟异常。
-func computeDayHealth(intervals []closedInterval, events []presenceSource, loc *time.Location) []dayHealthRow {
+func computeDayHealth(intervals []closedInterval, events []presenceSource, clock map[string]int64, loc *time.Location) []dayHealthRow {
 	type acc struct {
 		total, inferred, fallback int64
-		lastOccurred              time.Time
-		clock                     int64
-		hadEvent                  bool
 	}
 	days := make(map[string]*acc)
 	get := func(day string) *acc {
@@ -202,20 +243,14 @@ func computeDayHealth(intervals []closedInterval, events []presenceSource, loc *
 			a.fallback++
 		}
 	}
-	// 时钟异常：occurred_at 相对上一事件回拨的次数。
+	// 只有点事件、没有闭合区间的日子也要有体检行：否则该天 day_stats 有、day_health 无，
+	// DaySkeleton.Health 为 nil，且当天算出的离机缺口会被丢掉。
 	for _, e := range events {
 		if isMetaEvent(e.Type) {
-			continue // 读取自记不算行为事件，不参与体检（同 day_stats 口径）。
+			continue
 		}
 		day, _ := dayHour(e.OccurredAt, loc)
-		a := get(day)
-		if a.hadEvent && e.OccurredAt.Before(a.lastOccurred) {
-			a.clock++
-		}
-		if e.OccurredAt.After(a.lastOccurred) {
-			a.lastOccurred = e.OccurredAt
-		}
-		a.hadEvent = true
+		get(day)
 	}
 	// L0 缺口（离机）：机器醒着的区间之外、当天有事件覆盖的时间轴。
 	offline := computeOfflineGaps(events, loc)
@@ -236,7 +271,7 @@ func computeDayHealth(intervals []closedInterval, events []presenceSource, loc *
 		}
 		out = append(out, dayHealthRow{
 			Day: day, InferredRatio: ratio, FallbackCount: a.fallback,
-			OfflineGaps: string(gj), CollectionGaps: "[]", ClockAnomalies: a.clock,
+			OfflineGaps: string(gj), CollectionGaps: "[]", ClockAnomalies: clock[day],
 			ThresholdVersion: dayStatsVersion, ComputedAt: now,
 		})
 	}

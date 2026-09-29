@@ -21,8 +21,10 @@ type Store struct {
 	em            *Emitter
 	watermarkMode string // 上传接口水位口径：WatermarkTime（默认）/ WatermarkSegment；仅启动期设置一次，运行期只读
 
-	// writeMu 是 events.db 的写闸：所有写路径（emit 刷盘、客户端上报 IngestBatch）持读锁；
-	// Recompute 持写锁独占，保证重建期间没有其它写事务与之撞锁（busy_timeout 后报 database is locked）。
+	// writeMu 是 events.db 的写闸。SQLite 同库同时只允许一个写事务，故所有写路径
+	// （emit 刷盘、客户端上报 IngestBatch、重建/清理）一律持**写锁**串行化——不再用读锁：
+	// 读锁会让 emit flush 与 IngestBatch 并发写，靠 busy_timeout=5000 兜底重试，高频时偶发丢批。
+	// Recompute/Cleanup 另加 em.pause()（见各自实现），避免它们持锁期间 flush 空转把队列撑满。
 	writeMu sync.RWMutex
 }
 

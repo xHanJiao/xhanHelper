@@ -55,7 +55,7 @@ func TestVectorVocabInvariants(t *testing.T) {
 	}
 	prefixes := map[string]string{
 		"note": VectorPrefixNote, "memory": VectorPrefixMemory, "chunk": VectorPrefixChunk,
-		"message": VectorPrefixMessage, "fact": VectorPrefixFact, "summary": VectorPrefixSummary,
+		"message": VectorPrefixMessage, "summary": VectorPrefixSummary,
 		"theme": VectorPrefixTheme, "tool": VectorPrefixTool,
 	}
 	for name, p := range prefixes {

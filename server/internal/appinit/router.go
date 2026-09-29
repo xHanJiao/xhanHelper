@@ -140,7 +140,6 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	billHandler := controller.NewBillHandler(repos.Bill)
 	noteHandler := controller.NewNoteHandler(repos.Note, tools.EntityPurger)
 	memHandler := controller.NewMemoryHandler(repos.Mem, tools.EntityPurger)
-	factHandler := controller.NewFactHandler(repos.Fact)
 	agentHandler := controller.NewAgentHandler(repos.Agent, llmClients.BgFlash)
 	toolHandler := controller.NewToolHandler(repos.Tool)
 	promptHandler := controller.NewPromptHandler(repos.Prompt)
@@ -168,7 +167,6 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		BillHandler:          billHandler,
 		NoteHandler:          noteHandler,
 		MemHandler:           memHandler,
-		FactHandler:          factHandler,
 		AgentHandler:         agentHandler,
 		ToolHandler:          toolHandler,
 		PromptHandler:        promptHandler,

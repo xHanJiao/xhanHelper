@@ -9,7 +9,6 @@ import UniformTypeIdentifiers
 enum BrowsePanel: String, Identifiable, CaseIterable {
     case bills = "账单"
     case memories = "记忆"
-    case facts = "事实"
     case notes = "笔记"
     case documents = "文档"
     case images = "图片"
@@ -23,7 +22,6 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
         switch self {
         case .bills:     return "yensign.circle"
         case .memories:  return "brain.head.profile"
-        case .facts:     return "lightbulb"
         case .notes:     return "note.text"
         case .documents: return "doc.text"
         case .images:    return "photo.on.rectangle.angled"
@@ -37,7 +35,6 @@ enum BrowsePanel: String, Identifiable, CaseIterable {
         switch self {
         case .bills:     return "查看账单记录与统计"
         case .memories:  return "长期记忆与语义搜索"
-        case .facts:     return "长期事实（后台自动积累，只读）"
         case .notes:     return "笔记与标签检索"
         case .documents: return "Markdown 文档与版本"
         case .images:    return "图片库：预览与清理已上传的图"
@@ -59,7 +56,6 @@ struct BrowsePanelView: View {
     @ObservedObject var manager: RightSidebarManager
     @ObservedObject var billVM: BillViewModel
     @ObservedObject var memoryVM: MemoryViewModel
-    @ObservedObject var factVM: FactViewModel
     @ObservedObject var noteVM: NoteViewModel
     @ObservedObject var documentVM: DocumentViewModel
     @ObservedObject var themeVM: ThemeViewModel
@@ -122,7 +118,7 @@ struct BrowsePanelView: View {
         XHWebViewOrigin.frontendOrigins(webBaseURL: DeviceManager.webBaseURL)
     }
 
-    /// 根据网格可用宽度自适应列数：宽时 5 列（10 格 2 行），窄时 2 列（10 格 5 行，靠滚动兜住）。
+    /// 根据网格可用宽度自适应列数：宽时 3 列（9 格 3 行），窄时 2 列（9 格 5 行，靠滚动兜住）。
     /// 宽态：先维持 110 的格子宽、把剩余空间给间距；空间不足时间距压到最小、格子随之收缩；
     /// 空间富余时间距封顶、格子保持 110。
     private func adaptiveColumns(width: CGFloat) -> (columns: [GridItem], spacing: CGFloat) {
@@ -132,15 +128,15 @@ struct BrowsePanelView: View {
             let maxSpacing: CGFloat = 20
             let minSpacing: CGFloat = 6
 
-            var spacing = (width - 5 * maxTile) / 4
+            var spacing = (width - 3 * maxTile) / 2
             var tile = maxTile
             if spacing < minSpacing {
                 spacing = minSpacing
-                tile = max(minTile, (width - 4 * minSpacing) / 5)
+                tile = max(minTile, (width - 2 * minSpacing) / 3)
             } else if spacing > maxSpacing {
                 spacing = maxSpacing
             }
-            let columns = Array(repeating: GridItem(.fixed(tile), spacing: spacing), count: 5)
+            let columns = Array(repeating: GridItem(.fixed(tile), spacing: spacing), count: 3)
             return (columns, spacing)
         } else {
             let maxTile: CGFloat = 160
@@ -681,7 +677,6 @@ struct BrowsePanelView: View {
         switch panel {
         case .bills:     return billVM.isLoading
         case .memories:  return memoryVM.isLoading
-        case .facts:     return factVM.isLoading
         case .notes:     return noteVM.isLoading
         case .documents:
             if documentVM.openDocument != nil { return documentVM.isDetailLoading }
@@ -706,7 +701,6 @@ struct BrowsePanelView: View {
         switch panel {
         case .bills:     await billVM.load()
         case .memories:  await memoryVM.load()
-        case .facts:     await factVM.load()
         case .notes:     await noteVM.load()
         case .documents: await documentVM.loadCurrentMode()
         case .images:    await imageVM.load()
@@ -723,8 +717,6 @@ struct BrowsePanelView: View {
             BillPage(viewModel: billVM, baseURL: baseURL, token: token)
         case .memories:
             MemoryPage(viewModel: memoryVM)
-        case .facts:
-            FactPage(viewModel: factVM)
         case .notes:
             NotePage(viewModel: noteVM)
         case .documents:

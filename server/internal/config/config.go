@@ -42,7 +42,6 @@ type Config struct {
 	Snowflake         SnowflakeConfig         `yaml:"snowflake"`
 	MCP               MCPConfig               `yaml:"mcp"`
 	Vector            VectorConfig            `yaml:"vector"`
-	Facts             FactsConfig             `yaml:"facts"`
 	Activity          ActivityConfig          `yaml:"activity"`
 	GlobalDefaultRole GlobalDefaultRoleConfig `yaml:"global_default_role"`
 }
@@ -63,16 +62,6 @@ func (a *ActivityConfig) WatermarkModeNormalized() string {
 		return "time"
 	}
 	return a.WatermarkMode
-}
-
-// FactsConfig — 事实系统配置
-type FactsConfig struct {
-	Enabled       *bool   `yaml:"enabled"`        // 事实系统总开关；nil=未显式配置，沿用 base
-	TopK          int     `yaml:"top_k"`          // 决策段检索近邻数，默认 5
-	DupeThreshold float64 `yaml:"dupe_threshold"` // 向量 top1 静默跳过阈值，默认 0.95
-	MaxCandidates int     `yaml:"max_candidates"` // 单次抽取候选上限，默认 5
-	// 抽取/决策段的采样温度。抽取是格式敏感任务，用低温度；nil 则用 LLM 自身默认。
-	Temperature *float64 `yaml:"temperature"`
 }
 
 // VectorConfig — 向量内存治理配置
@@ -151,11 +140,6 @@ func (s *ServerConfig) AutoExtractMemory() bool {
 // BackgroundTasksDisabled 是否禁用全部后台任务（nil=未显式配置 → false）。
 func (s *ServerConfig) BackgroundTasksDisabled() bool {
 	return s.DisableBackgroundTasks != nil && *s.DisableBackgroundTasks
-}
-
-// IsEnabled 事实系统是否开启（nil=未显式配置 → false）。
-func (f *FactsConfig) IsEnabled() bool {
-	return f.Enabled != nil && *f.Enabled
 }
 
 // IsEnabled 活动埋点是否开启（nil=未显式配置 → 默认开）。
@@ -590,21 +574,6 @@ func merge(dst, src *Config) {
 	if src.Vector.ChunkDisabledParents != nil {
 		dst.Vector.ChunkDisabledParents = src.Vector.ChunkDisabledParents
 	}
-	if src.Facts.Enabled != nil {
-		dst.Facts.Enabled = src.Facts.Enabled
-	}
-	if src.Facts.TopK != 0 {
-		dst.Facts.TopK = src.Facts.TopK
-	}
-	if src.Facts.DupeThreshold != 0 {
-		dst.Facts.DupeThreshold = src.Facts.DupeThreshold
-	}
-	if src.Facts.MaxCandidates != 0 {
-		dst.Facts.MaxCandidates = src.Facts.MaxCandidates
-	}
-	if src.Facts.Temperature != nil {
-		dst.Facts.Temperature = src.Facts.Temperature
-	}
 	if src.Activity.Enabled != nil {
 		dst.Activity.Enabled = src.Activity.Enabled
 	}
@@ -898,16 +867,6 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Server.MemoryTopicReuseThreshold == 0 {
 		cfg.Server.MemoryTopicReuseThreshold = 0.80
-	}
-	// Facts 默认值
-	if cfg.Facts.TopK == 0 {
-		cfg.Facts.TopK = 5
-	}
-	if cfg.Facts.DupeThreshold == 0 {
-		cfg.Facts.DupeThreshold = 0.95
-	}
-	if cfg.Facts.MaxCandidates == 0 {
-		cfg.Facts.MaxCandidates = 5
 	}
 	if cfg.Retrieval.ResourceZone.BudgetChars == 0 {
 		cfg.Retrieval.ResourceZone.BudgetChars = 7000

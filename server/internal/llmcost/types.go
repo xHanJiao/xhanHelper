@@ -30,8 +30,6 @@ const (
 	SubProfileExtract   = "profile_extract"
 	SubProfileColdStart = "profile_cold_start"
 	SubSummary          = "summary"
-	SubFactExtract      = "fact_extract"
-	SubFactDecide       = "fact_decide"
 
 	// reflection
 	SubThemeDiscoverConv  = "theme_discover_conv"

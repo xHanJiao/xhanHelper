@@ -15,7 +15,6 @@ const (
 	EntityTypeTheme   = "theme"
 	EntityTypeConcept = "concept"
 	EntityTypeSummary = "summary"
-	EntityTypeFact    = "fact"
 	EntityTypeChunk   = "chunk"
 )
 
@@ -27,7 +26,6 @@ const (
 	VectorTypeMemory  = "mem"
 	VectorTypeChunk   = "chunk"
 	VectorTypeMessage = "msg"
-	VectorTypeFact    = "fact"
 	VectorTypeSummary = "summary"
 	VectorTypeTheme   = "theme"
 	VectorTypeTool    = "tool"
@@ -40,7 +38,6 @@ const (
 	VectorPrefixMemory  = VectorTypeMemory + ":"
 	VectorPrefixChunk   = VectorTypeChunk + ":"
 	VectorPrefixMessage = VectorTypeMessage + ":"
-	VectorPrefixFact    = VectorTypeFact + ":"
 	VectorPrefixSummary = VectorTypeSummary + ":"
 	VectorPrefixTheme   = VectorTypeTheme + ":"
 	VectorPrefixTool    = VectorTypeTool + ":"

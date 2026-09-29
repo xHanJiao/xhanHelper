@@ -15,7 +15,6 @@ func TestMerge_BoolFieldsExplicitOnly(t *testing.T) {
 	base := Config{}
 	base.Server.MemoryAutoExtract = &no
 	base.Server.DisableBackgroundTasks = &no
-	base.Facts.Enabled = &yes
 	base.SubAgent.UserContextEnabled = &yes
 	merge(&base, &Config{})
 	if base.Server.AutoExtractMemory() {
@@ -23,9 +22,6 @@ func TestMerge_BoolFieldsExplicitOnly(t *testing.T) {
 	}
 	if base.Server.BackgroundTasksDisabled() {
 		t.Error("absent disable_background_tasks must keep base false")
-	}
-	if !base.Facts.IsEnabled() {
-		t.Error("absent facts.enabled must keep base true")
 	}
 	if !base.SubAgent.PromptUserContext() {
 		t.Error("absent user_context_enabled must keep base true")
@@ -35,12 +31,10 @@ func TestMerge_BoolFieldsExplicitOnly(t *testing.T) {
 	base2 := Config{}
 	base2.Server.MemoryAutoExtract = &no
 	base2.Server.DisableBackgroundTasks = &no
-	base2.Facts.Enabled = &yes
 	base2.SubAgent.UserContextEnabled = &yes
 	env := Config{}
 	env.Server.MemoryAutoExtract = &yes
 	env.Server.DisableBackgroundTasks = &yes
-	env.Facts.Enabled = &no
 	env.SubAgent.UserContextEnabled = &no
 	merge(&base2, &env)
 	if !base2.Server.AutoExtractMemory() {
@@ -48,9 +42,6 @@ func TestMerge_BoolFieldsExplicitOnly(t *testing.T) {
 	}
 	if !base2.Server.BackgroundTasksDisabled() {
 		t.Error("explicit true must override base false")
-	}
-	if base2.Facts.IsEnabled() {
-		t.Error("explicit false must override base true")
 	}
 	if base2.SubAgent.PromptUserContext() {
 		t.Error("explicit false must override base true")

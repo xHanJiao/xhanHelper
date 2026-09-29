@@ -102,6 +102,7 @@ struct CardView: View {
             }
 
             if !actions.isEmpty {
+                Spacer(minLength: 6)
                 HStack(spacing: 8) {
                     Spacer()
                     ForEach(actions) { action in
@@ -128,6 +129,9 @@ struct CardView: View {
         }
         .padding(style.padding)
         .frame(minHeight: style.minHeight)
+        // 撑满网格行高：LazyVGrid 只给 minHeight 的卡片不会接受更高的行高建议 → 同行卡片参差；
+        // maxHeight:.infinity 接受行高 + top 对齐让内容仍顶对齐（非网格场景无多余高度，退化为按内容）。
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(style.backgroundColor, in: RoundedRectangle(cornerRadius: style.cornerRadius))
         .overlay(
             RoundedRectangle(cornerRadius: style.cornerRadius)

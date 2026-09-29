@@ -78,7 +78,6 @@ type CronRunner struct {
 // ActivityRecomputer 是 activity.Store 暴露给调度器的重算口子（避免直接依赖，便于测试替身）。
 type ActivityRecomputer interface {
 	Recompute() error
-	NeedsRecompute() (bool, error)
 	// CleanupExpired 按保留期硬删明细（附表 B §6，90 天）；返回删除的事件数。
 	CleanupExpired(retentionDays int) (int64, error)
 }
@@ -196,24 +195,17 @@ func (cr *CronRunner) setActivityNext(t time.Time) {
 }
 
 // recomputeActivity 触发活动埋点派生重算与保留期清理。
-// 重算只在版本对不上（或首启）时跑；**清理每日都跑**（不跟着重算的早退走，否则版本稳定后再不清理，
-// 老明细无限增长——附表 B §6 要求 90 天硬删）。失败仅记日志不打断调度。
+// 每个节拍（启动一次 + 每晚一次）都全量重算：派生层「清空 + 重建」，幂等、有界（events 90 天保留）。
+// 旧实现用「规则版本变了才跑」的闸门，导致版本稳定后派生层永远不产出（详见施工进度「补 · 重算触发修正」）。
+// 失败仅记日志不打断调度。
 func (cr *CronRunner) recomputeActivity(ctx context.Context) {
 	if cr.activity == nil {
 		return
 	}
-	need, err := cr.activity.NeedsRecompute()
-	if err != nil {
-		log.Printf("[cron] activity NeedsRecompute error: %v", err)
-		return
+	if err := cr.activity.Recompute(); err != nil {
+		log.Printf("[cron] activity Recompute error: %v", err)
 	}
-	if need {
-		log.Printf("[cron] activity recompute trigger")
-		if err := cr.activity.Recompute(); err != nil {
-			log.Printf("[cron] activity Recompute error: %v", err)
-		}
-	}
-	// 清理独立于重算判定：每日节拍都执行（附表 B §6：90 天硬删）。两者都是全表级、共用写锁。
+	// 清理与重算同节拍都跑（附表 B §6：90 天硬删）。两者都是全表级、共用写锁。
 	n, err := cr.activity.CleanupExpired(activity.EventRetentionDays)
 	if err != nil {
 		log.Printf("[cron] activity CleanupExpired error: %v", err)

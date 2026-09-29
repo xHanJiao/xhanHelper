@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// RecomputeStamp 是重算节的汇总版本键：所有派生规则版本拼成一串。
-// 只要有一个版本被 bump，NeedsRecompute 就会为真，下次节拍带上（设计篇 5.2）。
+// recomputeMetaKey 记「当前派生层是用哪版规则算出来的」汇总版本键（可观测，供查库/调试）。
+// 注意：它不再用于触发判定——重算由调度器每节拍无条件触发（见 cron_runner.recomputeActivity）。
 const recomputeMetaKey = "recompute_stamp"
 
 // Recompute 全量重跑所有派生层：区间闭合 → 资源归一 → 五层在场 → 每日分布/体检。
@@ -54,18 +54,6 @@ func (s *Store) Recompute() error {
 	}
 	log.Printf("[activity] 重算完成：stamp=%s 耗时=%s", stamp, time.Since(start).Round(time.Millisecond))
 	return nil
-}
-
-// NeedsRecompute 比较落库的 recompute_stamp 与当前规则版本；不一致（或从未算过）则为真。
-func (s *Store) NeedsRecompute() (bool, error) {
-	if s == nil {
-		return false, nil
-	}
-	got, _, err := s.GetMeta(recomputeMetaKey)
-	if err != nil {
-		return false, err
-	}
-	return got != recomputeStamp(), nil
 }
 
 // recomputeStamp 把派生版本拼成稳定串。

@@ -5,17 +5,13 @@ import (
 	"time"
 )
 
-func TestRecomputeStampAndNeeds(t *testing.T) {
+func TestRecomputeWritesObservabilityMeta(t *testing.T) {
 	s := openTest(t)
-	// 首启：从未算过 → 需要重算。
-	if need, err := s.NeedsRecompute(); err != nil || !need {
-		t.Fatalf("fresh store NeedsRecompute = %v,%v want true", need, err)
-	}
 	if err := s.Recompute(); err != nil {
 		t.Fatalf("recompute: %v", err)
 	}
-	if need, err := s.NeedsRecompute(); err != nil || need {
-		t.Fatalf("after recompute NeedsRecompute = %v,%v want false", need, err)
+	if v, ok, err := s.GetMeta(recomputeMetaKey); err != nil || !ok || v != recomputeStamp() {
+		t.Errorf("recompute_stamp = %q ok=%v err=%v want %q", v, ok, err, recomputeStamp())
 	}
 	if v, ok, err := s.GetMeta("last_recompute_at"); err != nil || !ok || v == "" {
 		t.Errorf("last_recompute_at = %q ok=%v err=%v", v, ok, err)

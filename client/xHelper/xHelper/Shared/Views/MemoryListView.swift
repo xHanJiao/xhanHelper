@@ -143,7 +143,7 @@ struct MemoryListView: View {
     }
 
     private func sourceBadge(_ source: String) -> TagBadge {
-        TagBadge(text: source, color: .primary)
+        TagBadge(text: source, color: Color("appAccent"))
     }
 
     private func parseTags(_ tags: String?) -> [TagBadge] {

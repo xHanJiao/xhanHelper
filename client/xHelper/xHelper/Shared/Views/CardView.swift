@@ -68,15 +68,28 @@ struct CardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if !tags.isEmpty || footerText != nil {
-                #if os(macOS)
+            // 页脚一行：标签在左、日期与按钮在右，整行随 Spacer 贴卡片底。
+            if !tags.isEmpty || footerText != nil || !actions.isEmpty {
+                Spacer(minLength: 6)
                 HStack(spacing: 8) {
-                    TagScrollRow(spacing: 4) {
-                        ForEach(tags) { tag in
-                            tagPill(tag)
+                    if !tags.isEmpty {
+                        #if os(macOS)
+                        TagScrollRow(spacing: 4) {
+                            ForEach(tags) { tag in
+                                tagPill(tag)
+                            }
                         }
+                        #else
+                        HStack(spacing: 4) {
+                            ForEach(tags) { tag in
+                                tagPill(tag)
+                            }
+                        }
+                        #endif
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Spacer(minLength: 8)
+
                     if let footerText {
                         Text(footerText)
                             .font(.caption)
@@ -84,27 +97,7 @@ struct CardView: View {
                             .lineLimit(1)
                             .fixedSize()
                     }
-                }
-                #else
-                HStack(spacing: 4) {
-                    ForEach(tags) { tag in
-                        tagPill(tag)
-                    }
-                    Spacer(minLength: 8)
-                    if let footerText {
-                        Text(footerText)
-                            .font(.caption)
-                            .foregroundColor(style.subtitleColor)
-                            .lineLimit(1)
-                    }
-                }
-                #endif
-            }
 
-            if !actions.isEmpty {
-                Spacer(minLength: 6)
-                HStack(spacing: 8) {
-                    Spacer()
                     ForEach(actions) { action in
                         let base = action.role == .destructive ? Color.red : style.accentColor
                         Button {

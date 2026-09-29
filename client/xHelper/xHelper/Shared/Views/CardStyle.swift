@@ -74,7 +74,8 @@ struct CardStyle {
     let subtitleColor: Color
     let cornerRadius: CGFloat
     let padding: EdgeInsets
-    let minHeight: CGFloat = 130
+    /// 卡片最小高度（`var`：真实默认值 130 要让各样式能覆盖，`let` 带默认值不进 memberwise init）。
+    var minHeight: CGFloat = 130
     let subtitleLineLimit: Int?
 
     static let agent = CardStyle(
@@ -94,6 +95,7 @@ struct CardStyle {
         subtitleColor: .secondary,
         cornerRadius: 12,
         padding: EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14),
+        minHeight: 150,
         subtitleLineLimit: 3
     )
 

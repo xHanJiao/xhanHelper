@@ -31,8 +31,5 @@ reflection: # 非本地化项，与 prod 对齐
   daily_schedules: ["03:00"]
   min_active_days: 3
 
-facts:
-  enabled: false # 本地有意关闭（不随 prod 对齐）
-
 chat:
   session_gap_minutes: 30 # session 间隔阈值（分钟）

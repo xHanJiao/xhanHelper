@@ -105,13 +105,6 @@ vector:
   evict_interval_hours: 24 # 逐出扫描间隔（小时）
   chunk_disabled_parents: [memory, note, summary] # 短文本只用 full 向量，不建 chunk（theme/文档仍建）
 
-facts:
-  enabled: true # 事实系统总开关（抽取 + 后续决策）
-  top_k: 5 # 决策段检索近邻数
-  dupe_threshold: 0.95 # 向量 top1 静默跳过阈值
-  max_candidates: 5 # 单次抽取候选上限
-  temperature: 0.2 # 抽取/决策段采样温度（格式敏感任务，压低；删掉此行则用模型默认）
-
 activity:
   enabled: true # 活动埋点总开关（仅本机 sqlite 形态生效）；云端 APP_ENV=prod 必须在 config.prod.yaml 显式 false
   watermark_mode: time # 上传接口水位口径：time=本批最大 occurred_at（默认，需两端同钟）；segment=回显 segment_id（逐段确认，端分离时切换）

@@ -13,7 +13,7 @@ import (
 // 本文件实现「两段式」里的第二段：逐候选的**决策循环**。
 // 抽取段（ExtractCandidates）产出 N 条候选，每条候选在这里跑一遍 ReAct 循环，
 // 循环里模型可追加检索、并选一个写入工具（save / update / delete / delete_note）。
-// 骨架照 facts 的 FactWorker（fact_worker.go:92/123/170/483），把单发决定换成 MiniReAct。
+// 骨架照两段式记忆的决策段（把单发决定换成 MiniReAct）。
 
 const (
 	recordToolSearch = "record_search"

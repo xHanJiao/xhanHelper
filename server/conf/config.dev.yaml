@@ -42,6 +42,3 @@ reflection:
   cluster_threshold: 0.70
   daily_schedules: ["03:00"]
   min_active_days: 3
-
-facts:
-  enabled: true # 显式跟随 base（merge 对 Enabled 无条件赋值，缺了会被覆盖成 false）

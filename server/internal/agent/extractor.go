@@ -25,7 +25,6 @@ type memoryCandidate struct {
 }
 
 // memoryExtractResult — 抽取段 LLM 的输出结构（一个键 memories，数组）。
-// 照 fact_extractor.go 的 factExtractResult{Facts []factCandidate} 形状：
 // 一次输出多条，逐条过决策循环；不再退化成「一句话 + 一串细节」。
 type memoryExtractResult struct {
 	Extracted bool              `json:"extracted"`

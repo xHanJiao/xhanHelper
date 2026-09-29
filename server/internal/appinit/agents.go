@@ -54,7 +54,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		summarySource.Warmup(bgCtx, infra.Embedder)
 
 		// 从 embedding 表加载向量到内存 store
-		agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState, repos.Fact, cfg.Vector.ChunkDisabledParents)
+		agent.WarmupAll(bgCtx, infra.VectorStore, repos.Embedding, repos.ConceptEmbed, repos.ThemeState, cfg.Vector.ChunkDisabledParents)
 		ready.Store(true)
 	}()
 
@@ -118,16 +118,6 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		FactRepo:     repos.UserProfileFact,
 		UserRepo:     repos.User,
 	})
-	// 事实系统：抽取器 + 决策器（抽取 → 判重/检索 → 决策 → 写入 facts）
-	factExtractor := agent.NewFactExtractor(&agent.FactExtractorConfig{
-		LLMClient:     llmClients.BgFlash,
-		MaxCandidates: cfg.Facts.MaxCandidates,
-		Temperature:   cfg.Facts.Temperature,
-	})
-	factDecider := agent.NewFactDecider(&agent.FactDeciderConfig{
-		LLMClient:   llmClients.BgFlash,
-		Temperature: cfg.Facts.Temperature,
-	})
 	// 记录循环（记忆两段式的第二段）：逐候选决策循环。
 	// 检索源复用上面已建的 memSource / noteSource（与统一检索同源）。
 	recordLoop := agent.NewRecordDecisionLoop(&agent.RecordDeps{
@@ -175,18 +165,6 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 			Updater: stateUpdater,
 		}),
 		profileWorker,
-		agent.NewFactWorker(&agent.FactWorkerConfig{
-			Extractor:     factExtractor,
-			Decider:       factDecider,
-			Enabled:       cfg.Facts.IsEnabled(),
-			FactRepo:      repos.Fact,
-			ChangelogRepo: repos.FactChangelog,
-			Embedder:      infra.Embedder,
-			EmbeddingRepo: repos.Embedding,
-			VectorStore:   infra.VectorStore,
-			TopK:          cfg.Facts.TopK,
-			DupeThreshold: cfg.Facts.DupeThreshold,
-		}),
 	}, repos.Message, ephemeralDestroyer)
 
 	cronRunner := agent.NewCronRunner(&agent.CronRunnerConfig{

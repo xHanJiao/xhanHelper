@@ -274,6 +274,11 @@ class APIClient {
 		let _: [String: Int] = try await post("/api/memories/batch-delete", body: ["ids": ids])
 	}
 
+	/// 用户反馈：0 未评 / 1 有用 / -1 没用
+	func setMemoryRating(id: String, rating: Int) async throws {
+		try await patch("/api/memories/\(id)/rating", body: ["rating": rating])
+	}
+
 	// MARK: Agents (P3)
 
 	func listAgents(limit: Int = 50) async throws -> AgentListResponse {
@@ -730,6 +735,8 @@ struct UserMemory: Identifiable, Codable {
     let facts: String?
     let source: String
     let confirmCount: Int?
+    /// 用户反馈：0 未评 / 1 有用 / -1 没用（可变，供客户端乐观更新）
+    var rating: Int?
     let createdAt: String
 
     /// 细节列表（服务端下发的 JSON 数组字符串；非 JSON 遗留数据返回 nil）
@@ -744,6 +751,7 @@ struct UserMemory: Identifiable, Codable {
         case memoryValue = "memory_value"
         case topic, tags, facts, source
         case confirmCount = "confirm_count"
+        case rating
         case createdAt = "created_at"
     }
 }

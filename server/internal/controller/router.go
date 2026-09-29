@@ -136,6 +136,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.DELETE("/memories/:id", rc.MemHandler.DeleteMemory)
 		auth.POST("/memories/batch", rc.MemHandler.BatchGetMemories)
 		auth.POST("/memories/batch-delete", rc.MemHandler.BatchDeleteMemories)
+		auth.PATCH("/memories/:id/rating", rc.MemHandler.SetMemoryRating)
 		auth.GET("/facts", rc.FactHandler.ListFacts)
 		auth.POST("/agents", rc.AgentHandler.CreateAgent)
 		auth.GET("/agents", rc.AgentHandler.ListAgents)

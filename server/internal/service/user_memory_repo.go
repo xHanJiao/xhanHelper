@@ -193,6 +193,16 @@ func (r *UserMemoryRepo) BatchUpdateConfirm(ctx context.Context, ids []string) e
 		}).Error
 }
 
+// SetRating 设置用户对某条记忆的反馈（0 未评 / 1 有用 / -1 没用）。按 user 归属更新，主键进 Model。
+func (r *UserMemoryRepo) SetRating(ctx context.Context, userID, id string, rating int) error {
+	if id == "" {
+		return errors.New("memory id 为空")
+	}
+	return r.db.WithContext(ctx).Model(&model.UserMemory{ID: id}).
+		Where("user_id = ?", userID).
+		Update("rating", rating).Error
+}
+
 // CountRecent 统计用户最近的记忆数
 func (r *UserMemoryRepo) CountRecent(ctx context.Context, userID string, since time.Time) (int64, error) {
 	var count int64

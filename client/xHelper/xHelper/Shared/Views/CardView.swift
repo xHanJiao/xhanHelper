@@ -105,6 +105,7 @@ struct CardView: View {
                 HStack(spacing: 8) {
                     Spacer()
                     ForEach(actions) { action in
+                        let base = action.role == .destructive ? Color.red : style.accentColor
                         Button {
                             action.action()
                         } label: {
@@ -114,10 +115,10 @@ struct CardView: View {
                                 Text(action.label)
                                     .font(.caption)
                             }
-                            .foregroundColor(action.role == .destructive ? .red : style.accentColor)
+                            .foregroundColor(base)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(action.role == .destructive ? Color.red.opacity(0.08) : style.accentColor.opacity(0.1))
+                            .background(base.opacity(action.isActive ? 0.22 : 0.1))
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
                         .buttonStyle(.plain)

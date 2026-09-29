@@ -64,6 +64,7 @@ struct MemoryListView: View {
                     subtitle: memory.memoryValue,
                     tags: [sourceBadge(memory.source)] + parseTags(memory.tags),
                     style: .memory,
+                    actions: feedbackActions(memory),
                     onTap: { selectedMemory = memory }
                 )
             }
@@ -117,6 +118,29 @@ struct MemoryListView: View {
         }
     }
     #endif
+
+    /// 卡片反馈按钮：👍/👎 互斥，再点一次取消（回到未评）。
+    private func feedbackActions(_ memory: UserMemory) -> [CardAction] {
+        let rating = memory.rating ?? 0
+        return [
+            CardAction(
+                label: "",
+                icon: rating == 1 ? "hand.thumbsup.fill" : "hand.thumbsup",
+                role: .normal,
+                isActive: rating == 1
+            ) { rate(memory, to: rating == 1 ? 0 : 1) },
+            CardAction(
+                label: "",
+                icon: rating == -1 ? "hand.thumbsdown.fill" : "hand.thumbsdown",
+                role: rating == -1 ? .destructive : .normal,
+                isActive: rating == -1
+            ) { rate(memory, to: rating == -1 ? 0 : -1) },
+        ]
+    }
+
+    private func rate(_ memory: UserMemory, to rating: Int) {
+        Task { await viewModel.setRating(id: memory.id, rating: rating) }
+    }
 
     private func sourceBadge(_ source: String) -> TagBadge {
         TagBadge(text: source, color: .primary)

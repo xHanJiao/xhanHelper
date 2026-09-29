@@ -11,7 +11,17 @@ struct CardAction: Identifiable {
     let label: String
     let icon: String
     let role: CardActionRole
+    /// 选中态（如反馈按钮已赞/已踩）：底色加重，图标由调用方传 `.fill` 版。
+    let isActive: Bool
     let action: () -> Void
+
+    init(label: String, icon: String, role: CardActionRole, isActive: Bool = false, action: @escaping () -> Void) {
+        self.label = label
+        self.icon = icon
+        self.role = role
+        self.isActive = isActive
+        self.action = action
+    }
 }
 
 enum CardActionRole {

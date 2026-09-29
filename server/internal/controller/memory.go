@@ -136,3 +136,43 @@ func (h *MemoryHandler) BatchGetMemories(c *gin.Context) {
 	}
 	view.JSONOK(c, memories)
 }
+
+// SetMemoryRating PATCH /api/memories/:id/rating — 用户反馈：0 未评 / 1 有用 / -1 没用
+func (h *MemoryHandler) SetMemoryRating(c *gin.Context) {
+	userID := c.GetString("user_id")
+	id := c.Param("id")
+
+	var req struct {
+		Rating int `json:"rating"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		view.JSONError(c, 400, "invalid body")
+		return
+	}
+	if req.Rating < -1 || req.Rating > 1 {
+		view.JSONError(c, 400, "rating must be -1, 0 or 1")
+		return
+	}
+
+	// ponytail: 先查后写非原子——两步之间记忆被删则 Update 影响 0 行、此处仍返 200（幻影成功）。
+	// 无害：DB 是事实，下次列表 load 自纠。不用 RowsAffected==0 判 404——本库 DSN 无 clientFoundRows，
+	// MySQL 对 no-op 更新（值未变）返回 0 行，会把「取消赞」误判成 404。
+	m, err := h.memRepo.FindByID(c.Request.Context(), userID, id)
+	if err != nil {
+		log.Printf("[memory] Get error: %v", err)
+		view.JSONError(c, 500, "query memory failed")
+		return
+	}
+	if m == nil {
+		view.JSONError(c, 404, "memory not found")
+		return
+	}
+
+	if err := h.memRepo.SetRating(c.Request.Context(), userID, id, req.Rating); err != nil {
+		log.Printf("[memory] SetRating error: %v", err)
+		view.JSONError(c, 500, "set rating failed")
+		return
+	}
+
+	view.JSONOK(c, gin.H{"rating": req.Rating})
+}

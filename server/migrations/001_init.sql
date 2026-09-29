@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS user_memories (
     prompt_hash       VARCHAR(64)  NOT NULL DEFAULT '',
     source            VARCHAR(20)  NOT NULL DEFAULT 'conversation',
     confirm_count     INT          NOT NULL DEFAULT 0,
+    rating            INT          NOT NULL DEFAULT 0,
     last_confirmed_at DATETIME     NULL,
     raw_json         TEXT         NULL,
     embedding         TEXT         NULL,

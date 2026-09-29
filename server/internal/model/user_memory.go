@@ -26,6 +26,7 @@ type UserMemory struct {
 	Source          string    `gorm:"size:20;default:conversation" json:"source"`             // conversation / csv_import
 	RawJSON         *string   `gorm:"type:json;column:raw_json" json:"raw_json,omitempty"`    // LLM 原始输出 JSON
 	ConfirmCount    int       `gorm:"default:0" json:"confirm_count"`                         // 被当轮新召回且注入最终上下文的次数（口径 B，见 docs/design/memory-audit）
+	Rating          int       `gorm:"not null;default:0" json:"rating"`                       // 用户反馈：0 未评 / 1 有用 / -1 没用（docs/design/memory-rating）
 	LastConfirmedAt time.Time `json:"last_confirmed_at"`
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt       time.Time `gorm:"autoUpdateTime" json:"updated_at"`

@@ -71,3 +71,62 @@ func TestMemoryTopics(t *testing.T) {
 		t.Fatalf("topics[1]=%+v, want {Python 2}", topics[1])
 	}
 }
+
+// TestSetMemoryRating 覆盖卡片反馈：数值落库 + 取消 + 跨用户不越权 + 空 id 拒绝。
+func TestSetMemoryRating(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open in-memory db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.UserMemory{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := NewUserMemoryRepo(db)
+	ctx := context.Background()
+
+	m := &model.UserMemory{
+		ID:          uuid.New().String(),
+		UserID:      "u1",
+		MemoryKey:   "t",
+		ContentHash: uuid.New().String(),
+		MemoryValue: "v",
+		Topic:       "t",
+	}
+	if err := repo.Create(ctx, m); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	rating := func() int {
+		got, err := repo.FindByID(ctx, "u1", m.ID)
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		return got.Rating
+	}
+
+	if err := repo.SetRating(ctx, "u1", m.ID, 1); err != nil {
+		t.Fatalf("set 1: %v", err)
+	}
+	if r := rating(); r != 1 {
+		t.Fatalf("rating=%d, want 1", r)
+	}
+
+	if err := repo.SetRating(ctx, "u1", m.ID, 0); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if r := rating(); r != 0 {
+		t.Fatalf("after cancel rating=%d, want 0", r)
+	}
+
+	// 跨用户：别人的 userID 改不动（no-op，不报错）
+	if err := repo.SetRating(ctx, "u2", m.ID, -1); err != nil {
+		t.Fatalf("cross-user set: %v", err)
+	}
+	if r := rating(); r != 0 {
+		t.Fatalf("cross-user leaked, rating=%d, want 0", r)
+	}
+
+	if err := repo.SetRating(ctx, "u1", "", 1); err == nil {
+		t.Fatal("empty id should error")
+	}
+}

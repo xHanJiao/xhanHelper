@@ -84,6 +84,25 @@ class MemoryViewModel: ObservableObject {
         showCloudMode = true
     }
 
+    /// 赞/踩互斥、再点取消（最终值由调用方算好）：乐观更新，失败回滚。
+    func setRating(id: String, rating: Int) async {
+        guard let idx = memories.firstIndex(where: { $0.id == id }) else { return }
+        let old = memories[idx].rating
+        guard old != rating else { return }
+        withAnimation { memories[idx].rating = rating }
+        do {
+            try await apiClient.setMemoryRating(id: id, rating: rating)
+        } catch {
+            LogBuffer.shared.error("MemoryViewModel.setRating: \(error)")
+            // ponytail: 同一卡片连点会起多个 Task，PATCH 响应可能乱序；仅当值仍是本任务写入的才回滚，
+            // 避免用过期旧值覆盖新状态（单用户低概率）。要严格串行需按 id 维护 in-flight 表。
+            if let i = memories.firstIndex(where: { $0.id == id }), memories[i].rating == rating {
+                withAnimation { memories[i].rating = old }
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func delete(id: String) async {
         guard let removed = memories.first(where: { $0.id == id }) else { return }
         withAnimation { memories.removeAll { $0.id == id } }

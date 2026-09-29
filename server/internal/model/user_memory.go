@@ -25,7 +25,7 @@ type UserMemory struct {
 	PromptHash      string    `gorm:"size:64;index" json:"prompt_hash"`                       // prompt 的 MD5 哈希，用于输入去重
 	Source          string    `gorm:"size:20;default:conversation" json:"source"`             // conversation / csv_import
 	RawJSON         *string   `gorm:"type:json;column:raw_json" json:"raw_json,omitempty"`    // LLM 原始输出 JSON
-	ConfirmCount    int       `gorm:"default:1" json:"confirm_count"`
+	ConfirmCount    int       `gorm:"default:0" json:"confirm_count"`                         // 被当轮新召回且注入最终上下文的次数（口径 B，见 docs/design/memory-audit）
 	LastConfirmedAt time.Time `json:"last_confirmed_at"`
 	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt       time.Time `gorm:"autoUpdateTime" json:"updated_at"`

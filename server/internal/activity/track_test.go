@@ -122,7 +122,7 @@ func TestCallbackMemoryFlow(t *testing.T) {
 		t.Fatalf("retopic: %v", err)
 	}
 	// confirm 计数：不该发
-	if err := repo.UpdateConfirm(ctx, "m1"); err != nil {
+	if err := repo.BatchUpdateConfirm(ctx, []string{"m1"}); err != nil {
 		t.Fatalf("confirm: %v", err)
 	}
 	// 后台批量改名 → topic.cleaned

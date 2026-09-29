@@ -161,12 +161,12 @@ retrieval:
     budget_chars: 4500 # 总预算帽（UTF-8 字符数，中文 1 字=1 ≈ 5500-7000 tokens）
     budget_profile: 1600 # profile 预算（稳定画像层）
     budget_summary: 500 # summary 预算
-    budget_memory: 300 # memory 预算
-    budget_note: 1000 # note 预算（note 价值最高给最多）
+    budget_memory: 600 # memory 预算（记忆已是主资源，p75≈62 字，约容 6 条）
+    budget_note: 700 # note 预算（笔记基本停写，只留最相关的几条）
     budget_topic: 200 # topic 预算
     quota_summary: 1 # 摘要配额
-    quota_memory: 3 # 记忆配额
-    quota_note: 5 # 笔记配额
+    quota_memory: 6 # 记忆配额
+    quota_note: 3 # 笔记配额
     quota_topic: 3 # 主题配额（只收 matched）
 
 global_default_role:

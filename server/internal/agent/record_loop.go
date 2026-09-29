@@ -90,7 +90,7 @@ func (d *RecordDecisionLoop) Decide(ctx context.Context, userID string, cand rec
 	}
 	// 一个写入工具都没调 → NONE：对最高分记忆近邻做「再次确认」（须过阈值）。
 	if out.Action == "none" {
-		if id := d.confirmTopNeighbor(ctx, userID, neighbors); id != "" {
+		if id := d.confirmTopNeighbor(neighbors); id != "" {
 			out.Action = "confirm"
 			out.ID = id
 		}
@@ -141,7 +141,9 @@ func (d *RecordDecisionLoop) preRetrieve(ctx context.Context, userID, summary st
 
 // confirmTopNeighbor NONE 时取最高分记忆近邻，相似度须 ≥ ConfirmThresh。
 // 卡阈值的原因：NONE 只说「没有新东西要写」，不代表最高分近邻就是被重申的那条。
-func (d *RecordDecisionLoop) confirmTopNeighbor(ctx context.Context, userID string, neighbors []recordNeighbor) string {
+// 只负责选出 id（action=confirm 的展示）；计数不在这里做——`confirm_count` 统一由
+// 注入路径统计「被当轮新召回且进入最终上下文」的次数（口径 B，见 docs/design/memory-audit）。
+func (d *RecordDecisionLoop) confirmTopNeighbor(neighbors []recordNeighbor) string {
 	var best *recordNeighbor
 	for i := range neighbors {
 		n := &neighbors[i]
@@ -153,10 +155,6 @@ func (d *RecordDecisionLoop) confirmTopNeighbor(ctx context.Context, userID stri
 		}
 	}
 	if best == nil {
-		return ""
-	}
-	if err := d.deps.MemRepo.UpdateConfirm(ctx, best.ID); err != nil {
-		log.Printf("[record_loop] confirm %.8s error: %v", best.ID, err)
 		return ""
 	}
 	return best.ID

@@ -184,6 +184,7 @@ type Orchestrator struct {
 	subAgentCleanupTimeout  time.Duration // 子任务结束标签清理单 tab 超时，默认 10s
 	subAgentLocks           sync.Map      // 子会话执行互斥（按 convID，续跑串行化防并发写乱序）
 	summaryRepo             *service.ConversationSummaryRepo
+	memRepo                 *service.UserMemoryRepo   // 记忆 confirm_count 计数（口径 B，见 buildUserMessage）
 	contextRetriever        *ctxflow.ContextRetriever // 上下文检索
 	contextFormatter        ctxflow.ContextFormatter  // 上下文格式化（接口）
 	reminderRepo            *service.ReminderRepo
@@ -236,6 +237,7 @@ type OrchestratorConfig struct {
 	SubAgentMaxIterations     int               // 子 agent 最大轮次（含强制收敛轮），默认 20（防死循环兜底）
 	SubAgentTimeoutSecs       int               // 子 agent 执行超时秒数，默认 600（真实预算）
 	SummaryRepo               *service.ConversationSummaryRepo
+	MemRepo                   *service.UserMemoryRepo   // 记忆 confirm_count 计数（可选；nil = 不计数）
 	ContextRetriever          *ctxflow.ContextRetriever // 上下文检索
 	ContextFormatter          ctxflow.ContextFormatter  // 上下文格式化
 	SummaryAttachCount        int                       // 摘要附着条数上限，默认 10
@@ -312,6 +314,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		subAgentTimeout:           time.Duration(cfg.SubAgentTimeoutSecs) * time.Second,
 		subAgentCleanupTimeout:    10 * time.Second,
 		summaryRepo:               cfg.SummaryRepo,
+		memRepo:                   cfg.MemRepo,
 		contextRetriever:          cfg.ContextRetriever,
 		contextFormatter:          cfg.ContextFormatter,
 		summaryAttachCount:        cfg.SummaryAttachCount,
@@ -758,6 +761,7 @@ func (o *Orchestrator) buildUserMessage(
 	// 历史消息重放不再携带注入资源（BuildMessagesForFlash 已简化）。
 	// profile/summary 已移入 system prompt 稳定上下文，不再进资源区。
 	var zoneXML string
+	var zonePkts []retrieval.ContextPacket
 	if o.resourceZoneEnabled {
 		var zoneFresh []retrieval.ContextPacket
 		if retrieveResult != nil {
@@ -772,7 +776,7 @@ func (o *Orchestrator) buildUserMessage(
 		if req.Window.IsNewSession {
 			zoneFresh = append(zoneFresh, buildRecentUserPackets(req.RecentUserMessages)...)
 		}
-		zonePkts := ctxflow.MergeResourceZone(
+		zonePkts = ctxflow.MergeResourceZone(
 			ctxflow.ParseResourceZone(req.PreviousUserXMLContext),
 			zoneFresh,
 			o.resourceZoneQuotas,
@@ -814,7 +818,68 @@ func (o *Orchestrator) buildUserMessage(
 		userContent = zoneXML + "\n" + userContent
 	}
 	userMsg.XMLContext = &userContent
+
+	// 记忆 confirm_count（口径 B）：本轮 fresh 命中且进入最终注入上下文的，各 +1
+	o.recordInjectedMemories(zoneXML, zonePkts, retrieveResult, packets)
 	return userMsg
+}
+
+// recordInjectedMemories 统计「被当轮新召回且进入最终注入上下文」的记忆并异步 +1。
+// 口径 B：只算本轮 fresh 检索命中、且确实出现在最终注入里的（资源区 budget 之后，或常规合并之后）；
+// 跨轮携带、被 quota/budget 裁掉的一律不计。见 docs/design/memory-audit。
+func (o *Orchestrator) recordInjectedMemories(
+	zoneXML string,
+	zonePkts []retrieval.ContextPacket,
+	retrieveResult *ctxflow.RetrieveResult,
+	packets map[string][]retrieval.ContextPacket,
+) {
+	if o.memRepo == nil {
+		return
+	}
+	fresh := make(map[string]bool)
+	if retrieveResult != nil {
+		for _, p := range retrieveResult.Packets[ctxflow.TypeMemory] {
+			fresh[p.ID] = true
+		}
+	}
+	ids := selectInjectedMemoryIDs(zoneXML, zonePkts, fresh, packets)
+	if len(ids) == 0 {
+		return
+	}
+	go func() {
+		if err := o.memRepo.BatchUpdateConfirm(context.Background(), ids); err != nil {
+			log.Printf("[orch] record injected memories error: %v", err)
+		}
+	}()
+}
+
+// selectInjectedMemoryIDs 选出「本轮 fresh 命中且进入最终注入上下文」的记忆 id（口径 B）。
+// zone 路径：最终资源区里的 memory ∩ fresh；非 zone 路径：常规合并后的 memory 全部（均来自本轮 fresh）。
+func selectInjectedMemoryIDs(
+	zoneXML string,
+	zonePkts []retrieval.ContextPacket,
+	fresh map[string]bool,
+	packets map[string][]retrieval.ContextPacket,
+) []string {
+	var ids []string
+	seen := make(map[string]bool)
+	if zoneXML != "" {
+		for _, p := range zonePkts {
+			if p.Type == ctxflow.TypeMemory && fresh[p.ID] && !seen[p.ID] {
+				seen[p.ID] = true
+				ids = append(ids, p.ID)
+			}
+		}
+		return ids
+	}
+	// 未启用资源区 / 资源区为空：记忆经常规格式化注入，全部为本轮 fresh
+	for _, p := range packets[ctxflow.TypeMemory] {
+		if !seen[p.ID] {
+			seen[p.ID] = true
+			ids = append(ids, p.ID)
+		}
+	}
+	return ids
 }
 
 // emitUserMessageEvent 落 chat.message.sent（点事件，根）；返回 event_id（供 turn 挂父）。

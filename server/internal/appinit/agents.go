@@ -274,6 +274,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		SubAgentMaxIterations:     cfg.SubAgent.ExploreMaxIterations,
 		SubAgentTimeoutSecs:       cfg.SubAgent.ExploreTimeoutSeconds,
 		SummaryRepo:               repos.ConversationSummary,
+		MemRepo:                   repos.Mem,
 		ContextRetriever:          retriever,
 		ContextFormatter:          formatter,
 		SummaryAttachCount:        cfg.Chat.SummaryAttachCount,

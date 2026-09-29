@@ -24,9 +24,6 @@ func NewMemorySource(
 			FullType:     model.VectorTypeMemory,
 			IDPrefix:     model.VectorPrefixMemory,
 			ConfigPicker: func(o SearchOptions) SourceConfig { return o.Memory },
-			AfterFetch: func(ctx context.Context, ids []string) {
-				_ = memRepo.BatchUpdateConfirm(ctx, ids)
-			},
 			ListAll: func(ctx context.Context, _ time.Time, limit, offset int) ([]model.UserMemory, error) {
 				return memRepo.ListAllUsersMemoriesPaginated(ctx, limit, offset)
 			},

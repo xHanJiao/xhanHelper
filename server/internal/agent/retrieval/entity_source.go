@@ -26,7 +26,6 @@ type EntityConfig[T model.ChunkEntity] struct {
 	FullType     string                                                  // "mem" / "note" (vector store metadata type for full-embedding entries)
 	IDPrefix     string                                                  // "mem:" / "note:"
 	ConfigPicker func(SearchOptions) SourceConfig                        // opts.Memory / opts.Note
-	AfterFetch   func(context.Context, []string)                         // side effect after Fetch (e.g. BatchUpdateConfirm)
 	ListAll      func(context.Context, time.Time, int, int) ([]T, error) // for Warmup (since=zero 表示不过滤)
 	SinceDays    int                                                     // >0 时 warmup 只加载最近 N 天
 }
@@ -45,7 +44,6 @@ type EntitySource[T model.ChunkEntity] struct {
 	chunkRepo     *service.EmbeddingChunkRepo
 	chunkBuilder  app.ChunkEmbedder
 	configPicker  func(SearchOptions) SourceConfig
-	afterFetch    func(context.Context, []string)
 	listAll       func(context.Context, time.Time, int, int) ([]T, error)
 	sinceDays     int
 }
@@ -76,7 +74,6 @@ func NewEntitySource[T model.ChunkEntity](
 		chunkRepo:     chunkRepo,
 		chunkBuilder:  chunkBuilder,
 		configPicker:  cfg.ConfigPicker,
-		afterFetch:    cfg.AfterFetch,
 		listAll:       cfg.ListAll,
 		sinceDays:     cfg.SinceDays,
 	}
@@ -161,10 +158,6 @@ func (s *EntitySource[T]) Fetch(ctx context.Context, opts SearchOptions) ([]Cont
 	}
 	if len(entities) == 0 {
 		return nil, nil, fmt.Errorf("all hit %s ids not found, ids: %v", s.name, ids)
-	}
-
-	if s.afterFetch != nil {
-		go s.afterFetch(context.Background(), ids)
 	}
 
 	// 5. 新鲜度过滤：V×F >= threshold，分组记分

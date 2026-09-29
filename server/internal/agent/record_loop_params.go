@@ -6,7 +6,6 @@ import (
 	"log"
 	"math"
 	"strings"
-	"time"
 
 	"xhan-helper/internal/util"
 )
@@ -68,8 +67,6 @@ func clampTopK(k int) int {
 func roundScore(s float64) float64 {
 	return math.Round(s*1000) / 1000
 }
-
-func timeNow() time.Time { return time.Now() }
 
 // keepOrReplaceTopic 决定记忆更新时的 topic：入参非空（trim 后）就用入参，否则保留旧值。
 // 见「update 把 topic 抹空」的 bug：模型常只传 summary、省略 topic。

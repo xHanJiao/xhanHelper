@@ -1,4 +1,4 @@
-.PHONY: dev dev-full local local-dev local-build embed-frontend check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs db-pull db-import entity-gc entity-gc-local build-entity-gc topic-merge-plan topic-merge-apply build-topic-merge restart
+.PHONY: dev dev-full local local-dev local-build embed-frontend check-env build clean test build-linux build-frontend deploy deploy-backend deploy-frontend deploy-only help logs db-pull db-import entity-gc entity-gc-local build-entity-gc topic-merge-plan topic-merge-apply memory-reset-confirm restart
 
 # 远端 ssh 执行时 source 用户环境变量（非交互 ssh 不会自动 source）
 REMOTE_ENV = for f in ~/.zshrc ~/.zprofile ~/.bashrc ~/.bash_profile; do source "$$f" 2>/dev/null || true; done;
@@ -35,6 +35,7 @@ help:
 	@echo "  make entity-gc-local - 本地清理（默认 dev 沙盒库；ARGS=\"--purge-cancelled --write\" 硬删取消态笔记）"
 	@echo "  make topic-merge-plan  - 远端生成 topic 收敛报告+映射，拉到本地 data/topic-merge/"
 	@echo "  make topic-merge-apply - 推回本地映射并在远端执行（默认 dry-run；ARGS=\"--dry-run=false\" 落库，自动停服/起服）"
+	@echo "  make memory-reset-confirm - 清零存量 confirm_count（默认 dev 沙盒库；prod 需 APP_ENV=local）"
 	@echo "  make restart        - 重启远端服务"
 	@echo "  make logs           - 实时查看远程服务器日志 (tail -f)"
 	@echo "  make clean          - 清理编译产物"
@@ -262,6 +263,14 @@ topic-clean-apply:
 	echo "=== topic-clean 落库（APP_ENV=$$E）==="; \
 	APP_ENV=$$E go run ./cmd/topic-clean/ --apply $(ARGS); \
 	echo "⚠️  若已改库，请重启服务，内存向量里的 topic metadata 才会刷新"
+
+# 记忆 confirm_count 存量清零（本地）。默认跑 dev 沙盒库（APP_ENV=local.dev），不会碰 prod。
+# prod：make memory-reset-confirm APP_ENV=local CONFIRM_PROD=yes   （默认 dry-run，加 --apply 落库）
+memory-reset-confirm:
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	E=$${APP_ENV:-local.dev}; \
+	echo "=== memory-reset-confirm (APP_ENV=$$E) ==="; \
+	APP_ENV=$$E go run ./cmd/memory-reset-confirm/ $(ARGS)
 
 # 重启远端服务
 restart:

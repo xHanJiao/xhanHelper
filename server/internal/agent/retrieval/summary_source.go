@@ -28,7 +28,6 @@ func NewSummarySource(
 			IDPrefix:     model.VectorPrefixSummary,
 			SinceDays:    sinceDays,
 			ConfigPicker: func(o SearchOptions) SourceConfig { return o.Summary },
-			AfterFetch:   nil,
 			ListAll: func(ctx context.Context, since time.Time, limit, offset int) ([]model.ConversationSummary, error) {
 				return summaryRepo.ListAll(ctx, since, limit, offset)
 			},

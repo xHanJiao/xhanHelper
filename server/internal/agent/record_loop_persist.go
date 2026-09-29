@@ -20,16 +20,14 @@ import (
 func (s *recordLoopState) newMemory(topic, summary string, facts []string) *model.UserMemory {
 	topic = s.reuseTopic(context.Background(), topic)
 	return &model.UserMemory{
-		ID:              uuid.New().String(),
-		UserID:          s.userID,
-		MemoryKey:       topic,
-		MemoryValue:     summary,
-		Topic:           topic,
-		Facts:           factsPtr(facts),
-		Source:          s.source,
-		ConfirmCount:    1,
-		LastConfirmedAt: timeNow(),
-		ContentHash:     util.MD5Hex(summary),
+		ID:          uuid.New().String(),
+		UserID:      s.userID,
+		MemoryKey:   topic,
+		MemoryValue: summary,
+		Topic:       topic,
+		Facts:       factsPtr(facts),
+		Source:      s.source,
+		ContentHash: util.MD5Hex(summary),
 	}
 }
 

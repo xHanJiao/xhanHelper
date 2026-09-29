@@ -143,6 +143,7 @@ func (t *TaskTool) Execute(ec *ExecuteContext, funcName string, args json.RawMes
 		Prompt:       params.Prompt,
 		TaskID:       params.TaskID,
 		ParentConvID: ec.ConvID,
+		TurnID:       ec.TurnID,
 		ClientTools:  ec.ClientTools,
 		MainEvents:   ec.Events,
 	}

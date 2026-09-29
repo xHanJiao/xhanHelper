@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/config"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -24,6 +25,7 @@ type HookStatus struct {
 	ImageCleanupRemaining string                         `json:"image_cleanup_remaining"`
 	VectorEvictRemaining  string                         `json:"vector_evict_remaining"`
 	DocCleanupRemaining   string                         `json:"doc_cleanup_remaining"`
+	ActivityRemaining     string                         `json:"activity_recompute_remaining"`
 }
 
 // 回收站文档保留期与清理扫描间隔（硬编码：7 天 / 每天一次）
@@ -31,6 +33,9 @@ const (
 	documentTrashRetentionDays = 7
 	documentCleanupEvery       = 24 * time.Hour
 )
+
+// activityRecomputeEvery — 活动埋点派生重算间隔（每晚一次）。
+const activityRecomputeEvery = 24 * time.Hour
 
 // CronRunner — 反思循环调度器
 type CronRunner struct {
@@ -56,6 +61,7 @@ type CronRunner struct {
 	sumRetentionDays  int                   // summary 向量保留天数；<=0 关闭
 	evictInterval     time.Duration         // 向量逐出扫描间隔
 	docRepo           *service.DocumentRepo // 回收站过期文档物理清理
+	activity          ActivityRecomputer    // 活动埋点派生重算（events.db；nil = 未启用）
 
 	// 钩子状态追踪
 	mu                sync.Mutex
@@ -64,7 +70,16 @@ type CronRunner struct {
 	imageCleanupNext  time.Time
 	evictNext         time.Time
 	docCleanupNext    time.Time
+	activityNext      time.Time
 	sessionEndRunning bool
+	activityRunning   bool
+}
+
+// ActivityRecomputer 是 activity.Store 暴露给调度器的重算口子（避免直接依赖，便于测试替身）。
+type ActivityRecomputer interface {
+	Recompute() error
+	// CleanupExpired 按保留期硬删明细（附表 B §6，90 天）；返回删除的事件数。
+	CleanupExpired(retentionDays int) (int64, error)
 }
 
 // CronRunnerConfig — 调度器依赖配置
@@ -91,6 +106,7 @@ type CronRunnerConfig struct {
 	SumRetentionDays  int                   // summary 向量保留天数；<=0 关闭
 	EvictInterval     time.Duration         // 向量逐出扫描间隔；<=0 默认 24h
 	DocRepo           *service.DocumentRepo // 回收站过期文档物理清理
+	Activity          ActivityRecomputer    // 活动埋点派生重算；nil = 未启用
 }
 
 // NewCronRunner 创建调度器
@@ -133,6 +149,7 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		sumRetentionDays:  cfg.SumRetentionDays,
 		evictInterval:     cfg.EvictInterval,
 		docRepo:           cfg.DocRepo,
+		activity:          cfg.Activity,
 	}
 }
 
@@ -170,6 +187,33 @@ func (cr *CronRunner) setDocCleanupNext(t time.Time) {
 	cr.mu.Unlock()
 }
 
+// setActivityNext 更新活动埋点重算下次触发时间
+func (cr *CronRunner) setActivityNext(t time.Time) {
+	cr.mu.Lock()
+	cr.activityNext = t
+	cr.mu.Unlock()
+}
+
+// recomputeActivity 触发活动埋点派生重算与保留期清理。
+// 每个节拍（启动一次 + 每晚一次）都全量重算：派生层「清空 + 重建」，幂等、有界（events 90 天保留）。
+// 旧实现用「规则版本变了才跑」的闸门，导致版本稳定后派生层永远不产出（详见施工进度「补 · 重算触发修正」）。
+// 失败仅记日志不打断调度。
+func (cr *CronRunner) recomputeActivity(ctx context.Context) {
+	if cr.activity == nil {
+		return
+	}
+	if err := cr.activity.Recompute(); err != nil {
+		log.Printf("[cron] activity Recompute error: %v", err)
+	}
+	// 清理与重算同节拍都跑（附表 B §6：90 天硬删）。两者都是全表级、共用写锁。
+	n, err := cr.activity.CleanupExpired(activity.EventRetentionDays)
+	if err != nil {
+		log.Printf("[cron] activity CleanupExpired error: %v", err)
+	} else if n > 0 {
+		log.Printf("[cron] activity cleanup: removed %d events (>%dd)", n, activity.EventRetentionDays)
+	}
+}
+
 // GetHookStatus 返回当前钩子状态快照
 func (cr *CronRunner) GetHookStatus() HookStatus {
 	cr.mu.Lock()
@@ -193,6 +237,9 @@ func (cr *CronRunner) GetHookStatus() HookStatus {
 	s.ImageCleanupRemaining = remainingLabel(cr.imageCleanupNext, now)
 	s.VectorEvictRemaining = remainingLabel(cr.evictNext, now)
 	s.DocCleanupRemaining = remainingLabel(cr.docCleanupNext, now)
+	if cr.activity != nil {
+		s.ActivityRemaining = remainingLabel(cr.activityNext, now)
+	}
 
 	return s
 }
@@ -340,6 +387,27 @@ func (cr *CronRunner) Start(ctx context.Context) {
 		cr.setDocCleanupNext(time.Time{})
 	}
 
+	// 活动埋点重算：每晚一次；启用即先跑一次（版本变更/首启都能立刻出派生结果）。
+	var activityChan <-chan time.Time
+	if cr.activity != nil {
+		activityTicker := time.NewTicker(activityRecomputeEvery)
+		defer activityTicker.Stop()
+		activityChan = activityTicker.C
+		cr.setActivityNext(time.Now().Add(activityRecomputeEvery))
+		// 启动即跑一次：版本变更/首启都能立刻出派生结果。
+		cr.mu.Lock()
+		cr.activityRunning = true
+		cr.mu.Unlock()
+		go func() {
+			cr.recomputeActivity(ctx)
+			cr.mu.Lock()
+			cr.activityRunning = false
+			cr.mu.Unlock()
+		}()
+	} else {
+		cr.setActivityNext(time.Time{})
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -390,6 +458,23 @@ func (cr *CronRunner) Start(ctx context.Context) {
 			log.Printf("[cron] document trash cleanup trigger")
 			cr.cleanupDeletedDocuments(ctx)
 			cr.setDocCleanupNext(time.Now().Add(documentCleanupEvery))
+
+		case <-activityChan:
+			// 重算是全表级、可能数分钟；放后台跑，别堵住 sessionEndTicker(30s) 等其它钩子。
+			cr.mu.Lock()
+			if cr.activityRunning {
+				cr.mu.Unlock()
+				continue
+			}
+			cr.activityRunning = true
+			cr.mu.Unlock()
+			go func() {
+				cr.recomputeActivity(ctx)
+				cr.mu.Lock()
+				cr.activityRunning = false
+				cr.mu.Unlock()
+			}()
+			cr.setActivityNext(time.Now().Add(activityRecomputeEvery))
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/appinit"
@@ -45,6 +46,18 @@ func main() {
 		}
 	}()
 
+	// --- 活动埋点 events.db（仅本机 sqlite 且开关打开）---
+	activityStore := setupActivity(cfg)
+	if activityStore != nil {
+		defer func() {
+			if err := activityStore.Close(); err != nil {
+				log.Printf("[activity] close events.db: %v", err)
+			}
+		}()
+	}
+	// 系统变更事件（doc.* / memory.* / bill.created / reminder.*）：GORM 写回调统一收口。
+	activity.RegisterChangeCallbacks(db, activityStore)
+
 	embedder := llm.NewEmbedder(cfg.Embedding.APIKey, cfg.Embedding.BaseURL, cfg.Embedding.Model)
 	vs := agent.NewVectorStore()
 	vsAdapter := agent.NewVectorSearchAdapter(vs)
@@ -63,9 +76,18 @@ func main() {
 	llmClients.BgFlash = llmcost.WrapIOAudit(llmClients.BgFlash, repos.LLMCallIO)
 	llmClients.BgStrong = llmcost.WrapIOAudit(llmClients.BgStrong, repos.LLMCallIO)
 
+	// 活动埋点：llm.call.started/ended + llm.first_token（store 为 nil 时原样返回）
+	llmClients.Flash = activity.WrapLLMClient(llmClients.Flash, activityStore, "main_flash")
+	llmClients.Strong = activity.WrapLLMClient(llmClients.Strong, activityStore, "main_strong")
+	llmClients.BgFlash = activity.WrapLLMClient(llmClients.BgFlash, activityStore, "bg_flash")
+	llmClients.BgStrong = activity.WrapLLMClient(llmClients.BgStrong, activityStore, "bg_strong")
+
+	// BatchDelete 走显式 emit（批量删除拿不到逐行 PK，是变更回调的唯一例外）。
+	repos.Mem.SetActivity(activityStore)
+
 	// --- 工具 & Agent 系统 ---
-	tools := appinit.InitTools(cfg, repos, infra, llmClients)
-	agents := appinit.InitAgents(cfg, repos, infra, llmClients, tools, vs)
+	tools := appinit.InitTools(cfg, repos, infra, llmClients, activityStore)
+	agents := appinit.InitAgents(cfg, repos, infra, llmClients, tools, vs, activityStore)
 
 	// LLM 审计保留清理：每日删 7 天前记录
 	if !cfg.Server.BackgroundTasksDisabled() {
@@ -93,8 +115,30 @@ func main() {
 	backupSvc := setupLocalBackup(cfg, db, agents.BGCtx)
 
 	// --- 路由 & 服务 ---
-	router := appinit.InitRouter(cfg, repos, infra, llmClients, agents, tools, tools.MCPManager, vs, localUserID, backupSvc)
+	router := appinit.InitRouter(cfg, repos, infra, llmClients, agents, tools, tools.MCPManager, vs, localUserID, backupSvc, activityStore)
 	appinit.Serve(cfg, router, agents.BGCancel, tools.MCPManager, agents.BGCtx)
+}
+
+// setupActivity 打开 events.db；禁用或非 sqlite 时返回 nil（不建库）。
+// 打开失败按可降级处理：埋点坏了不该拖垮主服务，就地记录后继续。
+func setupActivity(cfg *config.Config) *activity.Store {
+	if !cfg.Activity.IsEnabled() {
+		log.Printf("[activity] 未启用（activity.enabled=false）")
+		return nil
+	}
+	if cfg.DB.Driver != "sqlite" {
+		log.Printf("[activity] 跳过：events.db 仅支持 sqlite 形态（当前 driver=%s）", cfg.DB.Driver)
+		return nil
+	}
+	path := activity.DBPath(cfg.DB.Database)
+	st, err := activity.Open(path, true)
+	if err != nil {
+		log.Printf("[activity] 打开 events.db 失败，埋点停用：%v", err)
+		return nil
+	}
+	st.SetWatermarkMode(cfg.Activity.WatermarkModeNormalized())
+	log.Printf("[activity] events.db=%s enabled=true watermark_mode=%s", path, st.WatermarkMode())
+	return st
 }
 
 // setupLocalBackup 本地模式下创建备份服务并按需挂调度器；非本地模式返回 nil（不注册路由）。

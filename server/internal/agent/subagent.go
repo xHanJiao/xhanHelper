@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/llmcost"
 	"xhan-helper/internal/model"
@@ -556,12 +557,15 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 		MaxIterations:    maxIter, // 主循环 maxIter-1 轮 + 1 轮强制收敛（MiniReAct 内置）
 		MaxToolResult:    spec.maxToolResult,
 		Caller:           "subagent:" + opts.SubAgentType,
+		Activity:         o.activity,
 		FinalRoundPrompt: subAgentFinalRoundPrompt, // 子 agent 专用：列出未完成事项供续跑判断
 		InitialMessages:  initialMsgs,              // 续跑种子历史（空 = 全新任务）
 		SubAgent: SubAgentExt{
 			ClientTools:       agentClientTools,
 			ClientBridge:      clientBridge,
 			ClientToolTimeout: o.clientToolTimeout,
+			TurnConvID:        opts.ParentConvID, // 继承父会话 + 父 turn（subagent 不新开 turn）
+			TurnID:            opts.TurnID,
 			AllowedTools:      buildAllowedTools(spec),
 			MsgSink:           &subAgentMsgSink{msgRepo: o.subMsgRepo, convID: subConv.ID, userID: userID, debugPersistJSON: o.debugPersistJSON, debugSink: o.debugJSONSink},
 		},
@@ -594,12 +598,25 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 	var result *MiniReActResult
 	endState := "completed"
 	endSummary := ""
+	taskStartID, taskEndID := "", ""
 	defer func() {
+		// task.ended（区间终）：与 task.spawned 靠 pair_id 互指；timeout/failed 都归 outcome=failed，error_type 区分。
+		if taskStartID != "" {
+			outcome, errType := activity.OutcomeCompleted, ""
+			switch endState {
+			case "completed":
+			case "timeout":
+				outcome, errType = activity.OutcomeFailed, "timeout"
+			default:
+				outcome, errType = activity.OutcomeFailed, "subagent_error"
+			}
+			o.emitSubAgentTask(ctx, activity.TypeTaskEnded, taskEndID, taskStartID, subConv.ID, opts.ParentConvID, opts.TurnID, outcome, errType, map[string]any{"task_id": subConv.ID})
+		}
 		if opts.MainEvents != nil {
 			o.sendEvent(opts.MainEvents, &llm.StreamEvent{Type: "subagent", Content: subAgentEventJSON(subConv.ID, opts.Description, "end", endSummary, endState)})
 		}
 		if o.clientBridge != nil && result != nil && len(result.ToolCallLog) > 0 {
-			o.cleanupSubAgentTabs(opts.MainEvents, userID, subConv.ID, result.ToolCallLog)
+			o.cleanupSubAgentTabs(opts.MainEvents, userID, subConv.ID, opts.ParentConvID, opts.TurnID, result.ToolCallLog)
 		}
 		var errMsg string
 		if err != nil {
@@ -612,6 +629,15 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 			log.Printf("[subagent] persist result state error (conv=%s): %v", subConv.ID[:8], uerr)
 		}
 	}()
+
+	// task.spawned（区间起）：父 = 那次 tool.call.started，biz_key = task_id。
+	if o.activity != nil {
+		taskStartID, taskEndID = uuid.NewString(), uuid.NewString()
+		o.emitSubAgentTask(ctx, activity.TypeTaskSpawned, taskStartID, taskEndID, subConv.ID, opts.ParentConvID, opts.TurnID, "", "", map[string]any{
+			"task_id":         subConv.ID,
+			"description_len": len(opts.Description),
+		})
+	}
 
 	result, err = react.Run(subCtx, opts.Prompt)
 	if err == nil {
@@ -639,6 +665,39 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, opts *tool.SubAgentRunOp
 		Text:    summarizeToolCallLog(result.ToolCallLog),
 		ConvID:  subConv.ID,
 	}
+}
+
+// emitSubAgentTask 发 task.spawned/ended（服务端子任务区间事件，附表 A）。
+// 父 = 那次 tool.call.started（无则回到本 turn 的 chat.turn.started）；biz_key = task_id；
+// pair_id 让起止互指（两端 event_id 由调用方预先分配）。outcome/errType 空 = 区间起。
+func (o *Orchestrator) emitSubAgentTask(ctx context.Context, typ, eventID, pairID, taskID, convID, turnID, outcome, errType string, attrs map[string]any) {
+	if o.activity == nil {
+		return
+	}
+	turn, hasTurn := activity.TurnFromContext(ctx)
+	trigger := activity.TriggerBatch
+	if hasTurn || turnID != "" {
+		trigger = activity.TriggerManual
+	}
+	parent := turn.StartEventID
+	if id, ok := activity.ToolCallFromContext(ctx); ok {
+		parent = id
+	}
+	o.activity.Emit(activity.Event{
+		Type:           typ,
+		EventID:        eventID,
+		OccurredAt:     time.Now(),
+		Actor:          activity.ActorAssistant,
+		Trigger:        trigger,
+		Outcome:        outcome,
+		ErrorType:      errType,
+		ConversationID: convID,
+		TurnID:         turnID,
+		BizKey:         taskID,
+		ParentEventID:  parent,
+		PairID:         pairID,
+		Attrs:          attrs,
+	})
 }
 
 // subagentHistoryBudgetChars — 续跑历史总字符预算（rune）。超限从最旧开始丢，
@@ -812,7 +871,7 @@ func subAgentOpenedBrowserTabs(logs []ToolCallLog) bool {
 // 复用客户端工具协议（agent_browser_close 的 owner 语义），一次调用覆盖全部——含加载失败/
 // 被拦截页（其结果无 tabId，逐个关闭会漏）。失败（tab 已关/客户端断连）忽略，客户端
 // housekeeping 兜底。owner 必须透传（executeClientTool 会写入 payload）。
-func (o *Orchestrator) cleanupSubAgentTabs(mainEvents chan<- *llm.StreamEvent, userID string, convID string, logs []ToolCallLog) {
+func (o *Orchestrator) cleanupSubAgentTabs(mainEvents chan<- *llm.StreamEvent, userID string, convID string, turnConvID string, turnID string, logs []ToolCallLog) {
 	if !subAgentOpenedBrowserTabs(logs) {
 		return
 	}
@@ -824,6 +883,6 @@ func (o *Orchestrator) cleanupSubAgentTabs(mainEvents chan<- *llm.StreamEvent, u
 	defer cancel()
 	log.Printf("[subagent] cleanup: closing tabs by owner subagent:%s", convID)
 	args, _ := json.Marshal(map[string]string{})
-	_, _ = o.executeClientTool(ctx, mainEvents, userID,
+	_, _ = o.executeClientTool(ctx, mainEvents, userID, turnConvID, turnID,
 		tool.ToolCall{Tool: "browser", Function: "agent_browser_close", Args: args}, model.ConvModeWork, "subagent:"+convID)
 }

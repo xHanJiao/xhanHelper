@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/backup"
@@ -128,7 +129,7 @@ func EnsureLocalUser(cfg *config.Config, userRepo *service.UserRepo) (string, er
 }
 
 // InitRouter 创建路由、注册所有 handler
-func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, agents *AgentBundle, tools *ToolsBundle, mcpManager *mcp.Manager, vs *agent.VectorStore, localUserID string, backupSvc *backup.Service) *gin.Engine {
+func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, agents *AgentBundle, tools *ToolsBundle, mcpManager *mcp.Manager, vs *agent.VectorStore, localUserID string, backupSvc *backup.Service, activityStore *activity.Store) *gin.Engine {
 	localAuth := middleware.LocalAuth{
 		Enabled: cfg.Server.LocalSingleUser,
 		UserID:  localUserID,
@@ -186,6 +187,7 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		Ready:                agents.Ready,
 		AuthMiddleware:       authMW,
 		BackupService:        backupSvc,
+		Activity:             activityStore,
 	})
 
 	controller.RegisterReflectionRoutes(&controller.ReflectionRoutesConfig{

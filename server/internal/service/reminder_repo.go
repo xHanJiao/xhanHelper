@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -84,8 +85,12 @@ func (r *ReminderRepo) ListUpcoming(ctx context.Context, userID string, from tim
 }
 
 func (r *ReminderRepo) Ack(ctx context.Context, userID, id, msgID string) error {
-	return r.db.WithContext(ctx).Model(&model.Reminder{}).
-		Where("id = ? AND user_id = ?", id, userID).
+	// 空 id 时 GORM 丢弃 PK → 退化成该用户全部提醒置为已确认。挡调用方 typo。
+	if id == "" {
+		return errors.New("reminder id 为空")
+	}
+	return r.db.WithContext(ctx).Model(&model.Reminder{ID: id}).
+		Where("user_id = ?", userID).
 		Updates(map[string]interface{}{
 			"status":                 model.ReminderStatusAcknowledged,
 			"acknowledged_at":        time.Now(),

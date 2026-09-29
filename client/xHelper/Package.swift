@@ -56,5 +56,26 @@ let package = Package(
             dependencies: ["LocalBackendCore"],
             path: "Tests/LocalBackendCoreTests"
         ),
+        // ActivityCore — 客户端活动埋点的纯逻辑：事件 DTO + JSONL 分段落盘 + 按段搬运编排。
+        // 上传传输用闭包注入，故测试不碰网络；app 目标共享同一份源文件。
+        .target(
+            name: "ActivityCore",
+            path: "xHelper/Shared",
+            sources: [
+                "Services/ActivityEvent.swift",
+                "Services/ActivityEventTypes.swift",
+                "Services/ActivityUrls.swift",
+                "Services/ActivityStore.swift",
+                "Services/ActivityRecorder.swift",
+                "Services/ActivityPresenceState.swift",
+                "Services/ActivityInputState.swift",
+                "Services/ActivityBrowserState.swift",
+            ]
+        ),
+        .testTarget(
+            name: "ActivityCoreTests",
+            dependencies: ["ActivityCore"],
+            path: "Tests/ActivityCoreTests"
+        ),
     ]
 )

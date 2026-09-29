@@ -112,6 +112,10 @@ facts:
   max_candidates: 5 # 单次抽取候选上限
   temperature: 0.2 # 抽取/决策段采样温度（格式敏感任务，压低；删掉此行则用模型默认）
 
+activity:
+  enabled: true # 活动埋点总开关（仅本机 sqlite 形态生效）；云端 APP_ENV=prod 必须在 config.prod.yaml 显式 false
+  watermark_mode: time # 上传接口水位口径：time=本批最大 occurred_at（默认，需两端同钟）；segment=回显 segment_id（逐段确认，端分离时切换）
+
 storage:
   image_dir: data/images # 图床根目录（文档配图 + 聊天图片输入共用）
   max_image_bytes: 33554432 # 单图大小上限 32 MiB（对齐 DeepSeek 单图上限）

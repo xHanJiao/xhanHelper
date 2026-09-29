@@ -490,6 +490,45 @@ func TestDocumentRepo_ListTagCountsFullwidthComma(t *testing.T) {
 	}
 }
 
+func TestDocumentRepo_GetTitlesByIDs(t *testing.T) {
+	repo, _, cleanup := setupDocumentRepo(t)
+	defer cleanup()
+
+	seedDoc(t, repo, "d1", "u1", "")
+	seedDoc(t, repo, "d2", "u1", "")
+	// 软删的文档不应出现在标题映射里。
+	if err := repo.Update(context.Background(), "d2", "u1", map[string]interface{}{"status": model.DocumentStatusDeleted}); err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+
+	got, err := repo.GetTitlesByIDs(context.Background(), "u1", []string{"d1", "d2", "missing"})
+	if err != nil {
+		t.Fatalf("GetTitlesByIDs: %v", err)
+	}
+	if len(got) != 1 || got["d1"] != "d1" {
+		t.Errorf("期望仅返回活跃 d1，得到 %v", got)
+	}
+	if _, ok := got["d2"]; ok {
+		t.Error("软删文档不应返回")
+	}
+	// 别用户不可见。
+	other, err := repo.GetTitlesByIDs(context.Background(), "u2", []string{"d1"})
+	if err != nil {
+		t.Fatalf("GetTitlesByIDs(u2): %v", err)
+	}
+	if len(other) != 0 {
+		t.Errorf("换用户不应看到 d1，得到 %v", other)
+	}
+
+	empty, err := repo.GetTitlesByIDs(context.Background(), "u1", nil)
+	if err != nil {
+		t.Fatalf("空入参: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("空入参应返回空 map，得到 %v", empty)
+	}
+}
+
 func TestNormalizeTags(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"", ""},

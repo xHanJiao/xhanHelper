@@ -161,3 +161,54 @@ func TestChunkDisabledParentsDefaultMatchesModel(t *testing.T) {
 		}
 	}
 }
+
+// activity.enabled 默认开（nil → true）；显式 false 才关。
+func TestActivityEnabledDefaultOn(t *testing.T) {
+	var c ActivityConfig
+	if !c.IsEnabled() {
+		t.Error("nil enabled must default to true")
+	}
+	no := false
+	c.Enabled = &no
+	if c.IsEnabled() {
+		t.Error("explicit false must disable")
+	}
+	yes := true
+	c.Enabled = &yes
+	if !c.IsEnabled() {
+		t.Error("explicit true must enable")
+	}
+
+	// merge：env 写了 false 能压过 base 的缺省（nil）
+	base := Config{}
+	env := Config{}
+	env.Activity.Enabled = &no
+	merge(&base, &env)
+	if base.Activity.IsEnabled() {
+		t.Error("env explicit false must override base default-on")
+	}
+}
+
+// activity.watermark_mode：空 = time；merge 只在非空时覆盖。
+func TestActivityWatermarkMode(t *testing.T) {
+	var c ActivityConfig
+	if got := c.WatermarkModeNormalized(); got != "time" {
+		t.Errorf("空值应归一为 time, got %q", got)
+	}
+	c.WatermarkMode = "segment"
+	if got := c.WatermarkModeNormalized(); got != "segment" {
+		t.Errorf("got %q", got)
+	}
+
+	base := Config{Activity: ActivityConfig{WatermarkMode: "segment"}}
+	env := Config{}
+	merge(&base, &env)
+	if base.Activity.WatermarkMode != "segment" {
+		t.Errorf("env 空值不应覆盖 base, got %q", base.Activity.WatermarkMode)
+	}
+	env2 := Config{Activity: ActivityConfig{WatermarkMode: "time"}}
+	merge(&base, &env2)
+	if base.Activity.WatermarkMode != "time" {
+		t.Errorf("env 非空应覆盖, got %q", base.Activity.WatermarkMode)
+	}
+}

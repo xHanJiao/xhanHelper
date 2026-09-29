@@ -20,6 +20,20 @@ struct ExecuteContext: Sendable {
     /// 标签归属（client_tool_call payload 下发）："main"=主循环，"subagent:<convID>"=子任务。
     /// 浏览器工具据此做标签隔离：open 记录归属、list_tabs 标注、close_tab 保护其他归属的标签。
     let owner: String?
+    /// 会话上下文（client_tool_call payload 下发）：浏览器事件挂会话/轮次/父 bridge 事件用。
+    let conversationId: String?
+    let turnId: String?
+    let bridgeEventId: String?
+
+    init(budgetBytes: Int?, deadlineSecs: TimeInterval?, owner: String?,
+         conversationId: String? = nil, turnId: String? = nil, bridgeEventId: String? = nil) {
+        self.budgetBytes = budgetBytes
+        self.deadlineSecs = deadlineSecs
+        self.owner = owner
+        self.conversationId = conversationId
+        self.turnId = turnId
+        self.bridgeEventId = bridgeEventId
+    }
 }
 
 // MARK: - ClientAction

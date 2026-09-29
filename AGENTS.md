@@ -229,9 +229,29 @@ make db-pull / db-import / logs / clean
 - model/ 只放结构体，DB 操作放 service/；工具实现放 tool/，不要耦合到 controller 或 agent
 - 从数据库列表拉取数据时，必须做分页
 - **禁止在循环内逐个访问数据库**（N+1）：插入用 `tx.Create(&slice)` 批量，更新/删除用带 `IN` 条件的 `Updates`/`Delete`，循环里只做内存操作
+- **活动埋点 tracked 实体的 update/delete 必须把主键放进 `Model`/`Dest`**（`Model(&model.Document{ID: id}).Where(...)` / `Delete(&model.X{ID: id})`），**不要**把主键只写在 `Where("id = ?")` 里——系统变更事件靠 GORM 回调从模型读结构化主键，写在 WHERE 里读不到，事件会丢 `doc_id`/`memory_id` 并打警告。tracked 实体 = `Document`/`UserMemory`/`Bill`/`Reminder`（详见 `docs/design/activity-events/系统变更事件 · GORM 回调方案（人话版）.md`）
 - 修改代码前必须先说明方案，征得用户同意；提交代码前必须征得用户同意
 - 遇到相似功能，抽取公共组件
 - **禁止对必要依赖做 nil 检查后静默返回**：通过依赖注入传入的必需组件（repo、client、worker 等）为 nil 意味着接线 bug，让它 panic，炸在明处。可选依赖（如回调）才用 nil 检查
+
+## 活动埋点纪律（`events.db`）
+
+详见 `docs/design/activity-events/`（实施技术方案第九节是唯一版本）。改活动埋点相关代码前必读，硬规则：
+
+1. 事件只能经唯一 emit 入口投递（`activity.Store.Emit`），**禁止直接写事件表、禁止自己拼 JSON**。
+2. 公共字段由入口补，调用方不得覆盖。
+3. 事件不进业务事务；**埋点失败不得影响业务功能**（可降级记日志）。
+4. 敏感信息禁止进事件（URL 的 token、剪贴板、输入内容）。
+5. 新增事件必须**先进 `附表 A · 事件字典`登记**；三步：先问能否复用 type、命名按 `域.对象.动作`（写入端强制校验：全小写、带点、每段首字符为小写字母）、定形态与幂等键与要筛选的字段。
+6. **事件表不得添加派生列**（时长、闭合方式、session 归属一律不进）。
+7. **读取代码只能调用读取接口，不得直接访问 `events.db`**（`activity` 读取层/只读 tool；文档正文与明细级设卡）。
+8. 跨进程、跨语言调用必须携带 `call_id` 之类上下文透传。
+
+补充约定：
+- 派生层（`interval_closed`/`sessions`/`event_session`/`day_stats`/`day_health`/`event_refs`(source≠explicit)/`event_resources`）**只清重建、不做增量补丁**；`Recompute()` 全量跑。
+- `event_refs` 只产 `source='resource'`（explicit 不落 refs，直接关系由 `events` 列承载；time_window/semantic 不启用）。
+- `type` 契约写入端强制（`validEventType`）：违契约的事件 `Emit` 丢弃、上传接口 400。
+- 明细保留 90 天硬删（`CleanupBefore`/`CleanupExpired`，每日节拍**独立于重算判定**执行）；按资源手动清走 `CleanupResource`（只清资源映射、不动事实层；**下次 `Recompute` 会从事件重建，非永久遗忘**）。
 
 ## UI 预览与设计 token
 

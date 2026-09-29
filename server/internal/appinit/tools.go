@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
@@ -13,7 +14,7 @@ import (
 )
 
 // InitTools 创建工具注册表、注册内置工具、MCP 代理、Phase 6 检索/反思工具
-func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients) *ToolsBundle {
+func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, activityStore *activity.Store) *ToolsBundle {
 	// --- 主 Registry + 内置工具 ---
 	reg := tool.NewRegistry()
 	// 渐进式暴露元工具（唯一常驻请求体）：注册必须在最前，GetNativeFCTools/目录生成会跳过它
@@ -122,6 +123,12 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reg.Register(tool.NewLoggingWrapper(
 		tool.NewPlanTool(repos.ConversationPlan), log.Default()))
 
+	// 用户行为日志只读 tool（骨架级）：仅在 events.db 启用时注册（云端显式关闭 → 不注册，
+	// 避免常驻目录里挂一个必然返回「未启用」的组）。
+	if activityStore != nil {
+		reg.Register(tool.NewLoggingWrapper(
+			tool.NewUserActionLogTool(activityStore, repos.Document.GetTitlesByIDs), log.Default()))
+	}
 	reg.ValidateNativeFC()
 	// 校验 ReadOnlyFuncs 声明与 Functions() 一致（plan 模式只读拦截依赖，拼错直接 panic）
 	reg.ValidateReadOnlyFuncs()

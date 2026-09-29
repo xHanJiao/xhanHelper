@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/agent/promptbuilder"
 	"xhan-helper/internal/agent/retrieval"
@@ -96,6 +97,9 @@ type RunRequest struct {
 	// HiddenRound 隐藏轮：本轮所有消息（user/assistant/tool）落库为隐藏状态，
 	// 不进对话记录/LLM 上下文/检索/后处理。接力等控制轮用。
 	HiddenRound bool
+
+	// TurnID 本轮 turn 的 id（agent 层 StartTurn 生成后回填），供客户端工具 payload 归组。
+	TurnID string
 }
 
 // reactState — runReActLoop 循环过程中的可变状态
@@ -104,11 +108,12 @@ type reactState struct {
 	allToolCalls           []tool.ToolCall
 	lastAssistantMsgID     string
 	userMsgID              string
-	verifyRetries          int  // 本轮对话已重检验次数
-	nativeFCTextDeferred   bool // 文本因 verify 暂缓推送（检验通过后再补推）
-	clientToolsUnavailable bool // 客户端断连/超时后置位，本次 Run 内后续客户端工具调用快速失败
-	finalRound             bool // 达到 max_iterations 后的收尾轮：禁用工具，强制输出总结
-	maxPromptTokens        int  // 本次 Run 内主循环各轮 prompt_tokens 最大值（即当前上下文大小）
+	verifyRetries          int    // 本轮对话已重检验次数
+	nativeFCTextDeferred   bool   // 文本因 verify 暂缓推送（检验通过后再补推）
+	clientToolsUnavailable bool   // 客户端断连/超时后置位，本次 Run 内后续客户端工具调用快速失败
+	finalRound             bool   // 达到 max_iterations 后的收尾轮：禁用工具，强制输出总结
+	maxPromptTokens        int    // 本次 Run 内主循环各轮 prompt_tokens 最大值（即当前上下文大小）
+	outcome                string // 本轮 turn 的 outcome（activity.Outcome*），供 chat.turn.ended
 
 	// 渐进式工具暴露：本会话窗口内已启用的函数（仅 native FC 主循环使用）。
 	// key = "组名.函数名"（如 "note.search"）。
@@ -184,6 +189,7 @@ type Orchestrator struct {
 	reminderRepo            *service.ReminderRepo
 	profileFactRepo         profileFactGetter
 	imageStore              *service.ImageStore // 图床（懒补 file_id / 标记引用）
+	activity                *activity.Store     // 活动埋点 events.db；nil = 采集关闭
 
 	// 摘要附着控制
 	summaryAttachCount        int
@@ -244,6 +250,7 @@ type OrchestratorConfig struct {
 	ReminderRepo              *service.ReminderRepo
 	ProfileFactRepo           *service.UserProfileFactRepo
 	ImageStore                *service.ImageStore // 图床（图片输入：懒补 file_id、标记引用）
+	Activity                  *activity.Store     // 活动埋点 events.db；nil = 采集关闭
 }
 
 // New 创建 Orchestrator
@@ -319,6 +326,7 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		reminderRepo:              cfg.ReminderRepo,
 		profileFactRepo:           cfg.ProfileFactRepo,
 		imageStore:                cfg.ImageStore,
+		activity:                  cfg.Activity,
 	}
 }
 
@@ -470,6 +478,26 @@ func (o *Orchestrator) runReActLoop(
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrInternal)})
 		return
 	}
+
+	// 用户消息事件（P4，根）：真实用户发言才落；隐藏轮是控制轮，不算用户发言。
+	msgEventID := o.emitUserMessageEvent(req, userMsg)
+
+	// turn 生命周期（设计篇 4.8）：一次 Run = 一个 turn；父 = 上面那条消息事件。
+	// 归组键写进 ctx，供 LLM 装饰器给 llm.* 事件挂 turn。
+	turn := o.StartTurn(ctx, req.ConversationID, activity.TriggerManual, msgEventID)
+	req.TurnID = turn.ID
+	ctx = activity.WithTurn(ctx, activity.TurnCtx{TurnID: turn.ID, StartEventID: turn.StartEventID(), ConvID: req.ConversationID})
+	outcome := activity.OutcomeCompleted
+	var state *reactState
+	defer func() {
+		if ctx.Err() != nil {
+			outcome = activity.OutcomeCancelled // 用户停止（runCtx 取消）；断线不在此列
+		} else if state != nil && state.outcome == activity.OutcomeFailed {
+			outcome = activity.OutcomeFailed
+		}
+		turn.Finish(outcome)
+	}()
+
 	util.SafeGo(func() { o.convRepo.Touch(ctx, req.ConversationID) })
 	// 隐藏轮不落用户消息向量：避免接力提示词污染历史检索/记忆
 	if !req.HiddenRound {
@@ -489,9 +517,10 @@ func (o *Orchestrator) runReActLoop(
 		defer o.onChatEnd(req.UserID, req.ConversationID, userMsg.ID)
 	}
 
-	state := &reactState{
+	state = &reactState{
 		msgs:      append(req.Messages, llm.Message{Role: "user", Content: *userMsg.XMLContext, Images: req.UserImages}),
 		userMsgID: userMsg.ID,
+		outcome:   activity.OutcomeCompleted,
 	}
 	o.loadExposure(ctx, req, userMsg, state)
 	defer o.persistExposure(ctx, req, userMsg, state)
@@ -531,6 +560,7 @@ func (o *Orchestrator) runFinalRound(
 	if !done {
 		// 兜底：收尾轮仍未结束（如 prompt-eng 模式 LLM 仍返回工具调用），保留硬错误行为
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrMaxIterations)})
+		state.outcome = activity.OutcomeFailed
 		o.emitDone(events, req.ConversationID, state.lastAssistantMsgID, state.userMsgID, "max iterations reached", idsByTypeFromResult(retrieveResult), state.maxPromptTokens, o.contextWindowFor(req.DeepMode && o.proClient != nil))
 	}
 }
@@ -787,6 +817,32 @@ func (o *Orchestrator) buildUserMessage(
 	return userMsg
 }
 
+// emitUserMessageEvent 落 chat.message.sent（点事件，根）；返回 event_id（供 turn 挂父）。
+// 隐藏轮是控制轮、非用户发言，不落。
+func (o *Orchestrator) emitUserMessageEvent(req *RunRequest, userMsg *model.Message) string {
+	if o.activity == nil || req.HiddenRound {
+		return ""
+	}
+	content := req.RawUserMessage
+	if content == "" {
+		content = req.UserMessageContent
+	}
+	o.activity.Emit(activity.Event{
+		Type:           activity.TypeChatMessageSent,
+		EventID:        userMsg.ID,
+		OccurredAt:     time.Now(),
+		Actor:          activity.ActorUser,
+		Trigger:        activity.TriggerManual,
+		ConversationID: req.ConversationID,
+		BizKey:         userMsg.ID,
+		Attrs: map[string]any{
+			"message_id":  userMsg.ID,
+			"content_len": len([]rune(content)),
+		},
+	})
+	return userMsg.ID
+}
+
 // buildReminderPackets 查询用户 pending 提醒，生成 ContextPacket 列表注入 user message。
 // 长提醒（>120 字）中间截断，保留 deadline（尾部），LLM 可调 search_reminders 查看全文。
 func (o *Orchestrator) buildReminderPackets(ctx context.Context, userID string) []retrieval.ContextPacket {
@@ -1018,6 +1074,7 @@ func (o *Orchestrator) runOneRound(
 			return true
 		}
 		o.sendEvent(events, &llm.StreamEvent{Type: "error", Error: UserErrorMessage(ErrLLMApi)})
+		state.outcome = activity.OutcomeFailed
 		return true
 	}
 
@@ -1043,6 +1100,7 @@ func (o *Orchestrator) runOneRound(
 				round+1, streamContent.Len(), streamReasoning.Len(), len(se.ToolCalls))
 			return o.finalizeRound(ctx, events, se, streamContent.String(), streamReasoning.String(), req, systemPrompt, retrieveResult, state)
 		case "error":
+			state.outcome = activity.OutcomeFailed
 			o.sendEvent(events, se)
 			return true
 		}
@@ -1290,7 +1348,7 @@ func (o *Orchestrator) handleOneRoundResponse(
 		state.lastAssistantMsgID = o.saveAssistantMsg(ctx, req.ConversationID, req.UserID, msg, traceFromResult(retrieveResult), req.HiddenRound)
 		state.msgs = append(state.msgs, msg)
 		state.allToolCalls = append(state.allToolCalls, internalTCs...)
-		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, o.registry, internalTCs, clientToolIndex(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry), state, req.Mode, clientToolReadOnlyIndex(req.ClientTools), toToolClientInfos(req.ClientTools))
+		toolCallResults := o.executeConcurrently(ctx, events, req.UserID, req.ConversationID, req.TurnID, o.registry, internalTCs, clientToolIndex(filterSubAgentOnlyClientTools(req.ClientTools, o.subAgentOnlyClientTools), o.registry), state, req.Mode, clientToolReadOnlyIndex(req.ClientTools), toToolClientInfos(req.ClientTools))
 		state.msgs = o.collectToolResultsNative(ctx, internalTCs, msg.ToolCalls, toolCallResults, events, req.ConversationID, req.UserID, state.msgs, req.HiddenRound)
 		return false
 	}
@@ -1666,7 +1724,7 @@ func (o *Orchestrator) exposeServerGroup(res *tool.ExposeResult, state *reactSta
 }
 
 // injectExcludeIDs 将 exclude_ids（已注入的记忆 ID）注入到 memory_search 工具的 args 中
-func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID, convID string,
+func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *llm.StreamEvent, userID, convID, turnID string,
 	registry *tool.Registry, toolCalls []tool.ToolCall, clientIdx map[string]bool, state *reactState,
 	mode string, clientReadOnly map[string]bool, clientTools []tool.ClientToolInfo) []toolExecResult {
 	// clientReadOnly 已不再参与 plan 拦截（2026-08-14 起 plan 模式全量禁用客户端工具），
@@ -1714,7 +1772,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 						r = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
 					}
 				}()
-				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, Mode: mode, Events: events, ClientTools: clientTools, Expose: o.makeExposeFn(state, clientGroups)}
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: userID, ConvID: convID, TurnID: turnID, ToolCallID: call.ID, Mode: mode, Events: events, ClientTools: clientTools, Expose: o.makeExposeFn(state, clientGroups)}
 				r = registry.ExecuteByName(ec, call.Tool, call.Function, call.Args)
 			}()
 
@@ -1739,7 +1797,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 				Error: fmt.Sprintf("当前处于计划模式，本模式下已禁用全部客户端工具，禁止执行 %s.%s。请仅进行方案讨论；如需执行操作，请让用户退出计划模式。", tc.Tool, tc.Function)}}
 			continue
 		}
-		r, unavailable := o.executeClientTool(ctx, events, userID, tc, mode, "main")
+		r, unavailable := o.executeClientTool(ctx, events, userID, convID, turnID, tc, mode, "main")
 		if unavailable {
 			state.clientToolsUnavailable = true
 		}
@@ -1753,12 +1811,12 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 // executeClientTool 将工具调用经桥中转到客户端执行，阻塞等待 HTTP 回传。
 // 第二个返回值表示客户端不可用（断连/超时），调用方据此对本次 Run 内后续客户端工具快速失败。
 // 实现委托共享的 clientToolCaller（orchestrator / MiniReAct 共用，见 client_tools.go）。
-func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm.StreamEvent, userID string, call tool.ToolCall, mode string, owner string) (*tool.Result, bool) {
+func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm.StreamEvent, userID, convID, turnID string, call tool.ToolCall, mode string, owner string) (*tool.Result, bool) {
 	if o.clientBridge == nil {
 		// 接线 bug：请求携带了 client_tools 却没有注入桥，炸在明处
 		panic("[orch] clientBridge is nil but client tool call dispatched")
 	}
-	cc := &clientToolCaller{bridge: o.clientBridge, timeout: o.clientToolTimeout}
+	cc := &clientToolCaller{bridge: o.clientBridge, timeout: o.clientToolTimeout, activity: o.activity}
 	return cc.Call(ctx,
 		func(evt *llm.StreamEvent) bool {
 			// 指令事件必须送达：阻塞发送 + 超时兜底。
@@ -1774,7 +1832,7 @@ func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm
 			}
 		},
 		func(evt *llm.StreamEvent) { o.sendEvent(events, evt) },
-		userID, call, mode, owner) // 标签归属：主循环 "main"，子任务 "subagent:<convID>"
+		userID, call, mode, owner, convID, turnID) // 标签归属：主循环 "main"，子任务 "subagent:<convID>"
 }
 
 // —— DB 保存 ——
@@ -2185,6 +2243,7 @@ func nativeToolCallsToInternal(tcs []llm.ToolCall) []tool.ToolCall {
 	for i, tc := range tcs {
 		toolName, funcName := splitToolFuncName(tc.Function.Name)
 		out[i] = tool.ToolCall{
+			ID:       tc.ID,
 			Tool:     toolName,
 			Function: funcName,
 			Args:     json.RawMessage(tc.Function.Arguments),

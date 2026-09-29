@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/tool"
@@ -38,6 +39,7 @@ type MiniReAct struct {
 	maxIterations    int
 	maxToolResult    int
 	caller           string
+	activity         *activity.Store                 // client 工具的 tool.bridge.* 埋点 sink；nil = 不采集
 	onEvent          func(evt *llm.StreamEvent) bool // nil = 静默执行（后台 worker 场景）。返回 false 表示事件未送达（如 client_tool_call 转发超时）
 	toolCallLog      []ToolCallLog                   // 本轮执行的完整工具调用历史
 	thinking         *bool                           // 思考模式（deep mode 用 Pro 时开启），nil 用 LLM 默认
@@ -55,6 +57,10 @@ type SubAgentExt struct {
 	ClientTools       []ClientTool      // 客户端工具定义（browser/fs 等）
 	ClientBridge      *ClientToolBridge // 客户端工具结果回传桥
 	ClientToolTimeout time.Duration     // 客户端工具执行超时，0 = 60s
+	// TurnConvID / TurnID — 继承父 turn 的归组键，写进下发 payload（设计篇 4.8）。
+	// subagent 不新开 turn，客户端子事件挂到父会话与父轮次；后台任务为空。
+	TurnConvID string
+	TurnID     string
 	// AllowedTools 运行时白名单 guard，nil map = 不限（既有调用方零变化）。
 	// key = server_name（含服务端工具名与客户端 server_name），value = 允许的函数名：
 	//   - value 为 nil：该 server 全部函数放行（服务端工具/浏览器整组放行）
@@ -86,6 +92,7 @@ type MiniReActConfig struct {
 	MaxToolResult    int                         // 单条工具结果注入上限字符数，默认 2000
 	Caller           string                      // 日志前缀，便于区分调用方
 	Thinking         *bool                       // 思考模式（deep mode 用 Pro 时开启），nil 用 LLM 默认
+	Activity         *activity.Store             // 活动埋点 sink（client 工具的 tool.bridge.*）；nil = 不采集
 	OnEvent          func(*llm.StreamEvent) bool // 事件回调，nil = 静默执行（后台 worker 场景）。返回 false 表示未送达
 
 	// subAgent 场景扩展（零值 = 不启用，既有调用方零变化）：
@@ -145,6 +152,7 @@ func NewMiniReAct(cfg *MiniReActConfig) *MiniReAct {
 		maxIterations:    maxIter,
 		maxToolResult:    maxResult,
 		caller:           caller,
+		activity:         cfg.Activity,
 		onEvent:          cfg.OnEvent,
 		thinking:         cfg.Thinking,
 		subAgent:         subAgent,
@@ -355,7 +363,7 @@ func (m *MiniReAct) executeToolCalls(ctx context.Context, msgs []llm.Message, na
 						result = &tool.Result{Success: false, Error: fmt.Sprintf("工具执行异常: %v", p)}
 					}
 				}()
-				ec := &tool.ExecuteContext{Ctx: ctx, UserID: m.userID, ConvID: m.convID, Mode: model.ConvModeWork}
+				ec := &tool.ExecuteContext{Ctx: ctx, UserID: m.userID, ConvID: m.convID, TurnID: m.subAgent.TurnID, ToolCallID: tc.ID, Mode: model.ConvModeWork}
 				result = m.toolRegistry.ExecuteByName(ec, tc.Tool, tc.Function, tc.Args)
 			}()
 		}
@@ -527,7 +535,7 @@ func (m *MiniReAct) execClientTool(ctx context.Context, tc tool.ToolCall) (*tool
 		return &tool.Result{Success: false,
 			Error: "客户端本地工具不可用（本轮已发生断连或超时），已跳过 " + tc.Tool + "." + tc.Function + "。"}, false
 	}
-	cc := &clientToolCaller{bridge: m.subAgent.ClientBridge, timeout: m.clientToolBudgetFor(ctx, tc.Tool)}
+	cc := &clientToolCaller{bridge: m.subAgent.ClientBridge, timeout: m.clientToolBudgetFor(ctx, tc.Tool), activity: m.activity}
 	r, unavailable := cc.Call(ctx,
 		// MiniReAct 无内部 channel：事件经 onEvent 回调转发（RunSubAgent 的 forwarder 提供阻塞送达语义）。
 		// emit 返回送达结果：client_tool_call 未送达（如转发 5s 超时）→ mustSend false →
@@ -536,7 +544,7 @@ func (m *MiniReAct) execClientTool(ctx context.Context, tc tool.ToolCall) (*tool
 			return m.emit(evt)
 		},
 		func(evt *llm.StreamEvent) { m.emit(evt) },
-		m.userID, tc, model.ConvModeWork, "subagent:"+m.convID)
+		m.userID, tc, model.ConvModeWork, "subagent:"+m.convID, m.subAgent.TurnConvID, m.subAgent.TurnID)
 	if unavailable {
 		m.clientToolsUnavailable = true
 		m.clientUnavailableAt = time.Now()

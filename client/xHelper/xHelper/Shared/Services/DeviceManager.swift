@@ -89,6 +89,7 @@ class DeviceManager: ObservableObject {
             self.knownUsernames = []
             self.isLoggedIn = false
             LogBuffer.shared.info("app launched in local backend mode")
+            updateActivityRecorder(token: self.token)
             return
         }
         #endif
@@ -101,9 +102,63 @@ class DeviceManager: ObservableObject {
         }
         self.isLoggedIn = token != nil
         LogBuffer.shared.info("app launched, hasToken=\(self.isLoggedIn ? "yes" : "no")")
+        updateActivityRecorder(token: self.token)
         if self.isLoggedIn {
             self.isVerifying = true
             Task { await verifyToken() }
+        }
+    }
+
+    // MARK: Activity（活动埋点）
+
+    /// 仅本地模式采集（设计篇 5.4：events.db 只存在于本机实例；iOS/云端不启用）。
+    private var activityCollectionActive: Bool {
+        #if os(macOS)
+        return ActivityClient.isEnabled
+        #else
+        return false
+        #endif
+    }
+
+    /// token 就绪 → 注入传输并启动周期搬运；token 清空 → 停止。
+    /// 后端未就绪时空转（P9 尚无事件生产者；P10 起由在场/电源事件填充）。
+    ///
+    /// transport 快照了当时的 token/baseURL：本地模式 token 固定、`onLocalBackendReady` 不启 refresh
+    /// （`startTokenRefresh` 只在 verifyToken/login/register 调），故快照安全；**若将来本地也要轮换 token，
+    /// 必须在这里重新 configure**，否则旧 token 会一直 401。
+    /// configure/start 与 stop 各走独立的非结构化 `Task`，理论可乱序；本地无登出/轮换路径，暂不可达。
+    private func updateActivityRecorder(token: String?) {
+        guard activityCollectionActive else { return }
+        guard let token, !token.isEmpty else {
+            Task {
+                await ActivityRecorder.shared.stop()
+                #if os(macOS)
+                ActivityPresenceMonitor.shared.stop()
+                ActivityInputMonitor.shared.stop()
+                #endif
+            }
+            return
+        }
+        let baseURL = self.baseURL
+        let transport: ActivityTransport = { segmentID, events in
+            let api = APIClient(baseURL: baseURL, token: token)
+            do {
+                return try await api.uploadActivityEvents(segmentId: segmentID, events: events)
+            } catch let error as NSError {
+                // 401（token 过期）当可重试：刷新后自然成功；400/413 等段本身有问题 → 隔离。
+                if error.domain == "APIClient", (400..<500).contains(error.code), error.code != 401 {
+                    throw ActivityUploadError.client(error)
+                }
+                throw ActivityUploadError.retryable(error)
+            }
+        }
+        Task {
+            await ActivityRecorder.shared.configure(transport: transport)
+            await ActivityRecorder.shared.start()
+            #if os(macOS)
+            ActivityPresenceMonitor.shared.start()
+            ActivityInputMonitor.shared.start()
+            #endif
         }
     }
 
@@ -129,6 +184,7 @@ class DeviceManager: ObservableObject {
         isLoadingLocalBootstrap = true
         localBootstrapError = nil
         token = LocalBackendManager.shared.token
+        updateActivityRecorder(token: token)
         isVerifying = true
         defer {
             isVerifying = false
@@ -157,6 +213,7 @@ class DeviceManager: ObservableObject {
         username = nil
         isLoggedIn = false
         defaultConversation = nil
+        updateActivityRecorder(token: nil)
     }
 
     func logout() async {
@@ -234,6 +291,7 @@ class DeviceManager: ObservableObject {
         self.userId = result.userId
         self.username = username
         self.isLoggedIn = true
+        updateActivityRecorder(token: result.token)
         UserDefaults.standard.set(result.token, forKey: tokenKey)
         UserDefaults.standard.set(result.userId, forKey: userIdKey)
         UserDefaults.standard.set(username, forKey: usernameKey)

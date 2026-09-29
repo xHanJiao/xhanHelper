@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/tool"
 )
@@ -317,8 +318,9 @@ func normalizeClientToolData(data json.RawMessage) json.RawMessage {
 
 // clientToolCaller — 客户端工具执行器（orchestrator / MiniReAct 共用，消除重复实现）。
 type clientToolCaller struct {
-	bridge  *ClientToolBridge
-	timeout time.Duration
+	bridge   *ClientToolBridge
+	timeout  time.Duration
+	activity *activity.Store // 活动埋点 sink；nil = 不采集（tool.bridge.* 不发）
 }
 
 // Call 分派一次客户端工具调用，阻塞等待客户端回传。
@@ -336,12 +338,15 @@ func (cc *clientToolCaller) Call(
 	call tool.ToolCall,
 	mode string,
 	owner string, // 标签归属："main"（主循环）或 "subagent:<convID>"。客户端据此做标签隔离（list_tabs 标注 / close_tab 保护）
+	convID string, // 会话 id（客户端子事件归组用，见设计篇 4.8）
+	turnID string, // 本轮 turn id；后台任务为空
 ) (*tool.Result, bool) {
 	if cc.bridge == nil {
 		// 接线 bug：请求携带了 client_tools 却没有注入桥，炸在明处
 		panic("[clientToolCaller] bridge is nil but client tool call dispatched")
 	}
 	display := call.Tool + "." + call.Function
+	flatName := call.Tool + "__" + call.Function
 
 	// UI 展示事件（非阻塞，丢失只影响展示）
 	call.Display = display
@@ -352,15 +357,27 @@ func (cc *clientToolCaller) Call(
 	ch := cc.bridge.Register(callID, userID)
 	defer cc.bridge.Unregister(callID)
 
-	payload, err := json.Marshal(map[string]interface{}{
+	// 预分配 bridge.dispatched 的 event_id：客户端执行视角的 client.tool.exec.* 要挂它为父
+	// （附表 A「客户端执行视角、真实耗时」）。采集关闭时不带该键（没有对应事件可挂）。
+	bridgeEventID := ""
+	if cc.activity != nil {
+		bridgeEventID = uuid.NewString()
+	}
+	payloadMap := map[string]interface{}{
 		"call_id":             callID,
-		"tool_name":           call.Tool + "__" + call.Function,
+		"tool_name":           flatName,
 		"arguments":           call.Args,
 		"result_budget_bytes": clientToolInjectBudgetBytes,
 		"timeout_secs":        int(cc.timeout.Seconds()),
 		"mode":                mode, // 会话模式，客户端可按需做二次拦截/展示
 		"owner":               owner,
-	})
+		"conversation_id":     convID,
+		"turn_id":             turnID,
+	}
+	if bridgeEventID != "" {
+		payloadMap["bridge_event_id"] = bridgeEventID
+	}
+	payload, err := json.Marshal(payloadMap)
 	if err != nil {
 		log.Printf("[clientToolCaller] client tool payload marshal error: %v", err)
 		return &tool.Result{Success: false, Error: "客户端工具调用序列化失败"}, false
@@ -376,6 +393,17 @@ func (cc *clientToolCaller) Call(
 		return &tool.Result{Success: false, Error: "客户端未连接，无法执行本地工具 " + display + "。请不要再调用客户端本地工具，直接告知用户即可。"}, true
 	}
 
+	// 服务端桥接视角（附表 A `tool.bridge.*`）：派发成功才落 dispatched，returned 覆盖全部终态。
+	// 未送达（上面 return）时整条链不存在，避免产生无 dispatched 的孤儿 returned。
+	bridgeOutcome := activity.OutcomeCompleted
+	if cc.activity != nil {
+		cc.emitBridge(ctx, activity.TypeToolBridgeDispatched, bridgeEventID, callID, convID, turnID, flatName, "")
+		defer func() {
+			// returned 用各自新 id（只认 dispatched 的 id 作客户端父）；biz_key 仍 = call_id。
+			cc.emitBridge(ctx, activity.TypeToolBridgeReturned, uuid.NewString(), callID, convID, turnID, flatName, bridgeOutcome)
+		}()
+	}
+
 	// 等待客户端回传：期间定期发心跳，防止 SSE 长时间静默被代理/客户端掐断
 	timeout := time.NewTimer(cc.timeout)
 	defer timeout.Stop()
@@ -385,6 +413,7 @@ func (cc *clientToolCaller) Call(
 		select {
 		case r := <-ch:
 			if r.Error != "" {
+				bridgeOutcome = activity.OutcomeFailed
 				errMsg := r.Error
 				if len(errMsg) > maxClientToolErrorChars {
 					errMsg = truncateToolResult(errMsg, maxClientToolErrorChars)
@@ -397,12 +426,42 @@ func (cc *clientToolCaller) Call(
 		case <-heartbeat.C:
 			bestEffort(&llm.StreamEvent{Type: "status", Content: "正在等待客户端执行 " + display + "…"})
 		case <-timeout.C:
+			bridgeOutcome = activity.OutcomeFailed
 			log.Printf("[clientToolCaller] client tool timeout after %v: %s", cc.timeout, display)
 			// 执行超时 ≠ 客户端断连（事件已送达、客户端可能只是慢/排队）：不置位 unavailable，
 			// 仅本次调用失败，LLM 可重试或换方案——避免一次慢调用锁死整个子任务。
 			return &tool.Result{Success: false, Error: fmt.Sprintf("客户端工具执行超时（%v）：%s。可稍后重试或换方案。", cc.timeout, display)}, false
 		case <-ctx.Done():
+			bridgeOutcome = activity.OutcomeCancelled
 			return &tool.Result{Success: false, Error: "请求已取消"}, false
 		}
 	}
+}
+
+// emitBridge 发 tool.bridge.dispatched/returned（点事件，服务端视角）。
+// 父 = 本 turn 的 chat.turn.started（无 turn → 根）；biz_key = call_id；outcome 空表示派发（无终态）。
+// eventID 由调用方预分配（dispatched 的 id 会随 client_tool_call 下发，作客户端 client.tool.exec.* 的父）。
+func (cc *clientToolCaller) emitBridge(ctx context.Context, typ, eventID, callID, convID, turnID, toolName, outcome string) {
+	if cc.activity == nil {
+		return
+	}
+	turn, hasTurn := activity.TurnFromContext(ctx)
+	trigger := activity.TriggerBatch
+	if hasTurn || turnID != "" {
+		trigger = activity.TriggerManual
+	}
+	cc.activity.Emit(activity.Event{
+		Type:           typ,
+		EventID:        eventID,
+		OccurredAt:     time.Now(),
+		Actor:          activity.ActorAssistant,
+		Trigger:        trigger,
+		Outcome:        outcome,
+		ConversationID: convID,
+		TurnID:         turnID,
+		CallID:         callID,
+		BizKey:         callID,
+		ParentEventID:  turn.StartEventID,
+		Attrs:          map[string]any{"tool_name": toolName},
+	})
 }

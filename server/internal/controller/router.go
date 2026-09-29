@@ -10,6 +10,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/backup"
 	"xhan-helper/internal/config"
@@ -50,6 +51,7 @@ type RouterConfig struct {
 	Ready                *atomic.Bool    // 后台向量预热完成标志；nil 视为已就绪
 	AuthMiddleware       gin.HandlerFunc // Bearer 认证（含本地单用户直通），由装配层构造一次
 	BackupService        *backup.Service // 仅本地模式创建；nil 则不注册备份路由
+	Activity             *activity.Store // 客户端埋点上报落点；nil（采集关闭）时该路由返回 503
 }
 
 // NewRouter 注册所有路由
@@ -103,6 +105,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.POST("/chat", chat(rc.Orch, rc.Cfg, rc.ConvRepo, rc.MsgRepo, rc.AgentRepo, rc.ImageHandler.Store()))
 		auth.POST("/chat/tool-result", chatToolResult(rc.ClientBridge))
 		auth.POST("/chat/stop", stopChat(rc.ConvRepo))
+		auth.POST("/events/batch", eventsBatch(rc.Activity))
 		auth.GET("/llm-config", llmConfig(rc.Cfg, rc.AgentRepo))
 		auth.POST("/conversations", createConversation(rc.ConvRepo, rc.AgentRepo))
 		auth.GET("/conversations", listConversations(rc.ConvRepo, rc.AgentRepo))

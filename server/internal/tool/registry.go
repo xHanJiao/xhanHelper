@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 )
@@ -16,6 +17,7 @@ import (
 type Registry struct {
 	tools       map[string]Tool
 	hiddenNames map[string]bool
+	activity    *activity.Store // 活动埋点 sink；nil = 不采集（tool.call.* 不发）
 }
 
 // NewRegistry 创建空的注册表
@@ -25,6 +27,9 @@ func NewRegistry() *Registry {
 		hiddenNames: make(map[string]bool),
 	}
 }
+
+// SetActivityStore 注入活动埋点 sink；由启动装配调用一次。nil = 关闭采集。
+func (r *Registry) SetActivityStore(s *activity.Store) { r.activity = s }
 
 // ValidateReadOnlyFuncs 校验所有工具的 ReadOnlyFuncs 声明：函数名必须存在于 Functions()。
 // 在 Register 完成后调用，发现拼写错误直接 panic（防止只读声明失效导致 plan 模式漏拦）。
@@ -493,6 +498,7 @@ func (r *Registry) GeneratePromptFor(names []string) string {
 
 // ToolCall — 解析出的工具调用
 type ToolCall struct {
+	ID        string            `json:"id,omitempty"` // LLM 提供的调用 id（活动埋点业务键）；旧文本路径为空
 	Tool      string            `json:"tool"`
 	Function  string            `json:"function"`
 	Args      json.RawMessage   `json:"args"`
@@ -578,5 +584,16 @@ func (r *Registry) ExecuteByName(ec *ExecuteContext, toolName, funcName string, 
 			toolName, funcName)}
 	}
 
-	return t.Execute(ec, funcName, args)
+	// 活动埋点：服务端工具调度器统一收口（设计篇 6.3.3 / 附表 A `tool.call.*`）。
+	// 采集关闭时零开销透传。defer 保证 panic 时也补上 ended。
+	if r.activity == nil {
+		return t.Execute(ec, funcName, args)
+	}
+	startID, endID := r.emitToolCallStarted(ec, toolName, funcName, args)
+	// 让工具内的仓储写入把变更事件挂在这次 tool.call.started 下（P6 doc.*/memory.*）。
+	ec.Ctx = activity.WithToolCall(ec.Ctx, startID)
+	var res *Result
+	defer func() { r.emitToolCallEnded(ec, toolName, funcName, startID, endID, res) }()
+	res = t.Execute(ec, funcName, args)
+	return res
 }

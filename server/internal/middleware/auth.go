@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
@@ -51,6 +52,7 @@ func Auth(userRepo *service.UserRepo, local LocalAuth) gin.HandlerFunc {
 			c.Set("user_id", local.UserID)
 			c.Set("bearer_token", token)
 			c.Set("local_auth", true)
+			markUserActor(c)
 			c.Next()
 			return
 		}
@@ -70,6 +72,13 @@ func Auth(userRepo *service.UserRepo, local LocalAuth) gin.HandlerFunc {
 		}
 		c.Set("user_id", user.ID)
 		c.Set("bearer_token", token)
+		markUserActor(c)
 		c.Next()
 	}
+}
+
+// markUserActor 把请求 ctx 标成「用户亲手发起」，供仓储层发系统变更事件时区分 actor=user。
+// 仅用于同步 REST 写路径：这是请求的 ctx，别派生给后台 goroutine 复用，否则后台写入会被错记成 actor=user。
+func markUserActor(c *gin.Context) {
+	c.Request = c.Request.WithContext(activity.WithUserActor(c.Request.Context()))
 }

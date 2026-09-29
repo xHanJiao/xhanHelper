@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"xhan-helper/internal/activity"
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/agent/ctxflow"
 	"xhan-helper/internal/agent/promptbuilder"
@@ -18,7 +19,11 @@ import (
 )
 
 // InitAgents 创建 Retrieval Sources、Orchestrator、ReflectionOrchestrator、CronRunner
-func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, tools *ToolsBundle, vs *agent.VectorStore) *AgentBundle {
+func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClients *app.LLMClients, tools *ToolsBundle, vs *agent.VectorStore, activityStore *activity.Store) *AgentBundle {
+	// 活动埋点：工具调度器统一收口 tool.call.*（store 为 nil 时不采集）
+	tools.Registry.SetActivityStore(activityStore)
+	tools.ReflectionReg.SetActivityStore(activityStore)
+
 	// --- Retrieval Sources ---
 	memDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Memory.FreshnessDecay)
 	noteDecayer := retrieval.NewTimeDecay(cfg.Retrieval.Note.FreshnessDecay)
@@ -206,6 +211,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		SumRetentionDays:  cfg.Vector.SummaryRetentionDays,
 		EvictInterval:     time.Duration(cfg.Vector.EvictIntervalHours) * time.Hour,
 		DocRepo:           repos.Document,
+		Activity:          activityRecomputer(activityStore),
 	})
 
 	// --- Orchestrator ---
@@ -293,6 +299,7 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		ReminderRepo:    repos.Reminder,
 		ProfileFactRepo: repos.UserProfileFact,
 		ImageStore:      infra.ImageStore,
+		Activity:        activityStore,
 	})
 
 	if !cfg.Server.BackgroundTasksDisabled() {
@@ -398,4 +405,13 @@ func applyRetrieveConfig(cfg *ctxflow.RetrieveConfig, rc config.RetrievalConfig)
 	if rc.Summary.Limit > 0 {
 		cfg.Summary.Limit = rc.Summary.Limit
 	}
+}
+
+// activityRecomputer 把 *activity.Store 转成调度器要的接口；未启用（typed nil）时返回 nil，
+// 否则 typed-nil 进接口后 != nil，"未启用"判定会失效（ticker/倒计时照跑）。
+func activityRecomputer(s *activity.Store) agent.ActivityRecomputer {
+	if s == nil {
+		return nil
+	}
+	return s
 }

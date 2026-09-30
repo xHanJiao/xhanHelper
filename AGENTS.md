@@ -211,16 +211,11 @@ make db-pull / db-import / logs / clean
 
 ## 分支约定
 
-两个长期分支，各管一个部署形态，**不要互相直接 merge**：
+**唯一长期主干 `main`**，本地版与云端同处一条主干：
 
-| 分支 | 是什么 | 形态 |
-|------|--------|------|
-| `main` | 云端部署版（现状） | 阿里云 + MySQL，前端由 nginx 独立托管 |
-| `local-main` | 本地版主干 | 跑在 Mac 上 + SQLite，双击 app 启动（见 `docs/design/local-sqlite/`） |
-
-- 功能分支从对应主干切：本地版用 `local/phase-N-*`（如 `local/phase-1-backend`），云端沿用现有命名。完成后并回**自己的**主干。
-- **通用改动（两边都要）先落 `main`，再单向把 `main` 合进 `local-main`**；反向（`local-main` → `main`）只在明确要把本地版能力搬回云端时才做，且逐个确认。
-- 不要把 `main` 直接覆盖到 `local-main`——本地版有专属改动（SQLite / 回环绑定 / app 打包 / conf 目录等），冲突时以本地版为准、手工择取。
+- 本地版（Mac + SQLite，双击 app 启动）与云端（阿里云 + MySQL，前端由 nginx 独立托管）由 `APP_ENV` + `conf/` 区分，**同一条 `main` 同时服务两种形态**；云端靠 `config.prod.yaml` 显式关掉本机专属能力（如 `activity.enabled: false`）。本地部署见 `docs/design/local-sqlite/`。
+- **`local-main` 已取消**（历史分支归档为 tag `archive/local-main`）。
+- 功能分支从 `main` 切，命名 `feat/*` / `fix/*` / `refactor/*`（不再用 `local/` 前缀）；完成后并回 `main`。
 
 ## 开发约定
 

@@ -24,6 +24,10 @@ struct DocumentAnnotation: Identifiable, Codable, Equatable {
     let quoteRewritten: Bool
     let createdAt: String
     let updatedAt: String
+    /// 该批注下的回复总数（列表接口附带）。可选：老服务端不带此字段时不致整条解码失败。
+    var replyCount: Int?
+    /// 最后一条回复（折叠摘要用）。可选，同上。
+    var lastReply: AnnotationReply?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -35,12 +39,55 @@ struct DocumentAnnotation: Identifiable, Codable, Equatable {
         case quoteRewritten = "quote_rewritten"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case replyCount = "reply_count"
+        case lastReply = "last_reply"
     }
+
+    /// 该批注当前展示的回复条数（服务端计数优先，回退到本地已知条数由调用方补充）
+    var totalReplies: Int { replyCount ?? 0 }
 }
 
 struct DocumentAnnotationListResponse: Codable {
     let annotations: [DocumentAnnotation]
     let total: Int
+}
+
+/// 批注下的一条讨论回复（服务端 `model.DocumentAnnotationReply` 的镜像）。
+/// 根批注是 `DocumentAnnotation.note`，这张表只放其下的往复（user 追问 / assistant 回复）。
+struct AnnotationReply: Identifiable, Codable, Equatable {
+    let id: String
+    let annotationId: String
+    /// "user" | "assistant"
+    let role: String
+    let content: String
+    /// "button" | "followup" | "chat"（生成来源，仅排查/展示用）
+    let source: String
+    let createdAt: String
+
+    var isAssistant: Bool { role == "assistant" }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case annotationId = "annotation_id"
+        case role, content, source
+        case createdAt = "created_at"
+    }
+}
+
+struct AnnotationReplyListResponse: Codable {
+    let replies: [AnnotationReply]
+    let total: Int
+}
+
+/// `POST /api/annotations/:id/reply` 的响应：本次新增的回复（含可选追问）+ 最新总数。
+struct AnnotationReplyCreateResponse: Codable {
+    let added: [AnnotationReply]
+    let replyCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case added
+        case replyCount = "reply_count"
+    }
 }
 
 /// `PATCH /api/annotations/:id` 的响应（服务端只回 id + note，不是整条）

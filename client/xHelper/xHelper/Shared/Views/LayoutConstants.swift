@@ -68,6 +68,20 @@ enum Layout {
     static let contentOverheadRightSidebarOpen: CGFloat =
         rightSidebarOpenMinContentWidth - sidebarMinWidth
 
+    // MARK: - 文档阅读器内三栏（目录 / 正文 / 批注）
+
+    /// 批注面板展开宽 / 收起窄条宽。
+    static let docAnnotPanelWidth: CGFloat = 300
+    static let docPanelStripWidth: CGFloat = 32
+    /// 目录栏展开宽。
+    static let docTocExpandedWidth: CGFloat = 220
+    /// 正文可读最小宽（收放判定的基准）。
+    static let docReaderMinWidth: CGFloat = 260
+    /// 批注面板兜底收起阈值：低于它，正文已被压到最小。
+    static let docAnnotHardFloor: CGFloat = docReaderMinWidth + docAnnotPanelWidth
+    /// 目录兜底收起阈值：比批注更高 → 窄时「先收目录、再收批注」。
+    static let docTocHardFloor: CGFloat = docReaderMinWidth + docAnnotPanelWidth + docTocExpandedWidth
+
     // MARK: - 聊天画中画面板（PiP）
 
     /// 面板默认尺寸（首次进入/未持久化时），可调。

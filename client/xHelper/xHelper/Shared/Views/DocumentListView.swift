@@ -468,13 +468,13 @@ private struct DocumentFullView: View {
                 Spacer()
 
                 #if os(macOS)
-                Button { toggleAnnotationDrawer() } label: {
+                Button { toggleAnnotationPanel() } label: {
                     Image(systemName: "list.bullet.rectangle")
                         .font(.system(size: 12))
-                        .foregroundColor(showAnnotationDrawer ? Color("appAccent") : .secondary)
+                        .foregroundColor(annotOpen ? Color("appAccent") : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help("划线与批注列表")
+                .help("划线与批注面板")
                 #endif
 
                 Button { toggleFind() } label: {
@@ -498,10 +498,10 @@ private struct DocumentFullView: View {
             HStack(alignment: .top, spacing: 0) {
                 if !tocItems.isEmpty {
                     #if os(macOS)
-                    if isTocCollapsed {
-                        tocCollapsedStrip
-                    } else {
+                    if tocExpanded {
                         tocSidebar
+                    } else {
+                        tocCollapsedStrip
                     }
                     #else
                     tocSidebar
@@ -518,6 +518,7 @@ private struct DocumentFullView: View {
                     fontSize: readingFontSize
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { readerFrame = $0 }
                 .onChange(of: findQuery) { _, query in reader.find(query) }
                 // 正文被改写后划线的失活状态要重算：服务端为准，客户端不自己猜
                 .onChange(of: document.content) { _, _ in reader.refreshAnnotations() }
@@ -528,11 +529,13 @@ private struct DocumentFullView: View {
                     if DocumentAIBridge.shared.reader === reader { DocumentAIBridge.shared.reader = nil }
                 }
 
-                if showAnnotationDrawer {
+                // 批注面板常驻：展开 300，空间不够/手动收起 → 窄条
+                if annotExpanded {
                     Divider().opacity(0.3)
-                    AnnotationDrawer(reader: reader) {
-                        withAnimation { showAnnotationDrawer = false }
-                    }
+                    annotationPanel
+                } else if !reader.annotations.isEmpty {
+                    Divider().opacity(0.3)
+                    annotationStrip
                 }
                 #else
                 ScrollViewReader { proxy in
@@ -591,6 +594,13 @@ private struct DocumentFullView: View {
                 }
                 #endif
             }
+            // 量文档 tab 内容宽，供「先收目录、再收批注」的兜底收放判定
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { docWidth = $0 }
+            // 悬停卡片时的「卡片 → 划线」连线（覆盖正文与批注面板）
+            .overlay { AnnotationConnectorLayer(start: connectorStart, end: connectorEnd) }
+            // 面板因窗口变窄被硬地板自动收起时，卡片随面板消失、收不到 onHover(false)，
+            // 这里补一刀清掉悬停态，避免残留一条指向旧位置的连线。
+            .onChange(of: annotExpanded) { _, expanded in if !expanded { clearConnector() } }
         }
         #if os(macOS)
         .background { shortcutCarrier }
@@ -612,14 +622,119 @@ private struct DocumentFullView: View {
     @State private var scrollToAnchor: String = ""
     #endif
 
-    @State private var isTocCollapsed = false
-    @State private var showAnnotationDrawer = false
+    /// 批注面板常驻/收起、视图模式、目录收放——全局记忆（跨文档、跨启动）。
+    /// 收放是简单兜底（c2）：手动优先，只在窗口窄到触发硬地板时强制收起。
+    @AppStorage("xhan_doc_annot_open") private var annotOpen = true
+    @AppStorage("xhan_doc_annot_mode") private var annotModeRaw = AnnotationPanelMode.thread.rawValue
+    @AppStorage("xhan_doc_toc_collapsed") private var tocCollapsed = true
     @State private var showFindBar = false
     @State private var findQuery = ""
     @State private var currentMatch = 0
     /// 与 docBlocks 等长，逐块命中数（mermaid 块恒为 0）
     @State private var matchCounts: [Int] = []
     @FocusState private var findFieldFocused: Bool
+    /// 文档 tab 内容宽（`onGeometryChange` 写入），用于收放兜底判定
+    @State private var docWidth: CGFloat = 0
+    /// 阅读器（WebView）在 `.global` 的 frame —— 连线把 DOM 视口坐标换算成 global 用
+    @State private var readerFrame: CGRect = .zero
+    /// 悬停中的批注卡片（画「卡片 → 划线」连线用）
+    @State private var connectorID: String?
+    @State private var connectorCardFrame: CGRect?
+
+    /// 连线起点 = 卡片左缘中点（global）
+    private var connectorStart: CGPoint? {
+        #if os(macOS)
+        guard connectorID != nil, let f = connectorCardFrame else { return nil }
+        return CGPoint(x: f.minX, y: f.midY)
+        #else
+        return nil
+        #endif
+    }
+
+    /// 连线终点 = 划线右缘中点（DOM 视口坐标 + 阅读器原点 → global）；滚出视口则不画
+    private var connectorEnd: CGPoint? {
+        #if os(macOS)
+        guard connectorID != nil, readerFrame != .zero, let r = reader.connectorRect else { return nil }
+        let g = CGRect(x: readerFrame.minX + r.minX, y: readerFrame.minY + r.minY,
+                       width: r.width, height: r.height)
+        guard g.maxY > readerFrame.minY, g.minY < readerFrame.maxY else { return nil }
+        return CGPoint(x: g.maxX, y: g.midY)
+        #else
+        return nil
+        #endif
+    }
+
+    /// 清掉悬停连线（卡片移出/面板收起/窗口收窄均走这里）。
+    private func clearConnector() {
+        connectorID = nil
+        connectorCardFrame = nil
+        #if os(macOS)
+        reader.endConnectorTracking()
+        #endif
+    }
+
+    /// 有效可用宽：首次布局前按「很宽」算，避免开场闪一下收窄
+    private var layoutWidth: CGFloat { docWidth <= 0 ? .greatestFiniteMagnitude : docWidth }
+    /// 目录展开：手动优先，窗口窄过硬地板则强制收起（先收目录）
+    private var tocExpanded: Bool { !tocCollapsed && layoutWidth >= Layout.docTocHardFloor }
+    /// 批注面板展开：手动优先，窗口窄过硬地板则强制收起（后收批注）
+    private var annotExpanded: Bool { annotOpen && layoutWidth >= Layout.docAnnotHardFloor }
+
+    #if os(macOS)
+    /// 常驻批注面板：数据/动作全部来自 reader，视图本身纯展示。
+    private var annotationPanel: some View {
+        AnnotationPanel(
+            annotations: reader.annotations,
+            replies: reader.repliesByAnnotation,
+            expandedIDs: reader.expandedAnnotationIDs,
+            loadingIDs: reader.loadingReplyIDs,
+            busyIDs: reader.busyReplyIDs,
+            mode: Binding(
+                get: { AnnotationPanelMode(rawValue: annotModeRaw) ?? .thread },
+                set: { annotModeRaw = $0.rawValue }
+            ),
+            relocatingID: reader.relocatingID,
+            onToggle: { reader.toggleThread(id: $0) },
+            onJump: { reader.scrollToAnnotation(id: $0) },
+            onReply: { id, content in Task { await reader.reply(annotationId: id, content: content) } },
+            onDelete: { reader.deleteAnnotation(id: $0) },
+            onRelocate: { reader.beginRelocate(id: $0) },
+            onCancelRelocate: { reader.cancelRelocate() },
+            onCollapse: { clearConnector(); withAnimation { annotOpen = false } },
+            onHoverCard: { id, inside, frame in
+                if inside {
+                    connectorID = id
+                    connectorCardFrame = frame
+                    reader.beginConnectorTracking(id: id)
+                } else if connectorID == id {
+                    clearConnector()
+                }
+            }
+        )
+    }
+
+    /// 收起的窄条：一个 chevron + 批注数，点开还原（空间仍不够时会留在窄条，即硬地板）。
+    private var annotationStrip: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            Button { withAnimation { annotOpen = true } } label: {
+                VStack(spacing: 3) {
+                    Image(systemName: "chevron.left")
+                        .font(.caption.weight(.semibold))
+                    Text("\(reader.annotations.count)")
+                        .font(.system(size: 9))
+                }
+                .foregroundColor(.secondary)
+                .frame(width: 28, height: 48)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("展开划线与批注")
+            Spacer()
+        }
+        .frame(width: Layout.docPanelStripWidth)
+    }
+    #endif
 
     /// 展开态目录栏：标题行（右侧收起按钮）+ 标题大纲 + 页脚方向行。
     private var tocSidebar: some View {
@@ -631,7 +746,7 @@ private struct DocumentFullView: View {
                 Spacer()
                 #if os(macOS)
                 Button {
-                    withAnimation { isTocCollapsed = true }
+                    withAnimation { tocCollapsed = true }
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.caption.weight(.semibold))
@@ -702,7 +817,7 @@ private struct DocumentFullView: View {
         VStack(spacing: 0) {
             Spacer()
             Button {
-                withAnimation { isTocCollapsed = false }
+                withAnimation { tocCollapsed = false }
             } label: {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
@@ -923,12 +1038,9 @@ private struct DocumentFullView: View {
     }
 
     #if os(macOS)
-    /// 抽屉是第三列，会占正文宽度 —— 开的时候顺手收起目录栏（用户还能手动再展开）。
-    private func toggleAnnotationDrawer() {
-        withAnimation {
-            showAnnotationDrawer.toggle()
-            if showAnnotationDrawer { isTocCollapsed = true }
-        }
+    /// 顶栏按钮：开/合常驻批注面板（全局记忆。空间不够时仍会留在窄条）。
+    private func toggleAnnotationPanel() {
+        withAnimation { annotOpen.toggle() }
     }
     #endif
 

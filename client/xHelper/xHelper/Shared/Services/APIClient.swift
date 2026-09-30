@@ -244,6 +244,19 @@ class APIClient {
                               body: ["quote": quote, "prefix": prefix, "suffix": suffix])
     }
 
+    /// 拉一条批注的完整讨论线程（按时间正序）。
+    func listAnnotationReplies(annotationId: String, limit: Int = 100, offset: Int = 0) async throws -> AnnotationReplyListResponse {
+        return try await get("/api/annotations/\(annotationId)/replies?limit=\(limit)&offset=\(offset)")
+    }
+
+    /// 让 AI 针对该批注回复；`content` 非空时先作为一条用户追问入线程再生成。
+    /// 生成是同步长任务（服务端超时 120s），单独放宽请求超时到 130s，避免 60s 默认值先断。
+    func replyToAnnotation(id: String, content: String?) async throws -> AnnotationReplyCreateResponse {
+        var body: [String: Any] = [:]
+        if let content, !content.isEmpty { body["content"] = content }
+        return try await post("/api/annotations/\(id)/reply", body: body, timeout: 130)
+    }
+
 	// MARK: Memories (P3)
 
 	func listMemories(limit: Int = 50, offset: Int = 0, source: String = "", topic: String = "") async throws -> MemoryListResponse {
@@ -468,12 +481,14 @@ class APIClient {
         try await doRequestStatusOnly(req)
     }
 
-    private func post<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {
+    private func post<T: Decodable>(_ path: String, body: [String: Any], timeout: TimeInterval? = nil) async throws -> T {
         var req = URLRequest(url: URL(string: "\(baseURL)\(path)")!)
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        // 覆盖 URLSession.shared 默认 60s 请求超时（长任务：批注生成服务端预算 120s）
+        if let timeout { req.timeoutInterval = timeout }
         return try await doRequest(req)
     }
 

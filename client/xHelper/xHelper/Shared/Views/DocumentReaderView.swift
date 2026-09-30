@@ -22,6 +22,22 @@ final class DocumentReaderController: ObservableObject {
     /// 正在「重新定位」的那条（P4 抽屉里那一行显示「请在正文中重新选中」；nil = 不在该模式）
     @Published private(set) var relocatingID: String?
 
+    // MARK: 讨论线程（批注下挂的 AI 回复 / 追问）
+    /// 已加载的线程缓存（key = 批注 id）。未加载过的键不存在 = 需要拉取。
+    @Published private(set) var repliesByAnnotation: [String: [AnnotationReply]] = [:]
+    /// 展开了线程的批注
+    @Published private(set) var expandedAnnotationIDs: Set<String> = []
+    /// 正在拉取线程
+    @Published private(set) var loadingReplyIDs: Set<String> = []
+    /// 正在生成回复（spinner）
+    @Published private(set) var busyReplyIDs: Set<String> = []
+
+    // MARK: 连线（批注卡片 → 正文划线）
+    /// 正在追踪的批注 id（鼠标悬停/操作卡片时设置）
+    @Published private(set) var connectorID: String?
+    /// 该划线在**阅读器内**的矩形（viewport 坐标，左上原点；nil = 未画出/失活）
+    @Published private(set) var connectorRect: CGRect?
+
     /// 已装载内容的签名。变了才重载 —— 否则 `updateNSView` 每次都重新渲染
     /// markdown + mermaid（mermaid 是原生渲染，很贵）。
     fileprivate var loadedSignature = ""
@@ -103,6 +119,8 @@ final class DocumentReaderController: ObservableObject {
         guard let data = try? JSONEncoder().encode(annotations),
               let json = String(data: data, encoding: .utf8) else { return }
         evaluate("reader.setAnnotations(\(MarkdownWebUtils.jsString(json)))")
+        // 重画后 mark 是新的一批，正在连线的矩形要重取
+        if let id = connectorID { measureConnector(id: id) }
     }
 
     private func loadAnnotations() async {
@@ -112,6 +130,10 @@ final class DocumentReaderController: ObservableObject {
         do {
             let resp = try await api.listAnnotations(documentId: documentID)
             annotations = resp.annotations.sorted(by: Self.order)
+            // 服务端那份为准：清掉已不存在的批注残留的线程缓存/展开态
+            let live = Set(annotations.map(\.id))
+            for id in repliesByAnnotation.keys where !live.contains(id) { forgetThread(id: id) }
+            expandedAnnotationIDs.formIntersection(live)
             hasLoadedAnnotations = true
             pushAnnotations()
         } catch {
@@ -154,11 +176,100 @@ final class DocumentReaderController: ObservableObject {
         do {
             try await api.deleteAnnotation(id: id)
             annotations.removeAll { $0.id == id }
+            forgetThread(id: id)
             if relocatingID == id { cancelRelocate() }
             pushAnnotations()
         } catch {
             LogBuffer.shared.error("DocumentReader 删除划线批注失败: \(error)")
             ToastCenter.shared.show("删除失败：\(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - 讨论线程动作
+
+    /// 展开/折叠一条批注的线程；首次展开时拉取。
+    func toggleThread(id: String) {
+        if expandedAnnotationIDs.contains(id) {
+            expandedAnnotationIDs.remove(id)
+        } else {
+            expandedAnnotationIDs.insert(id)
+            if repliesByAnnotation[id] == nil, !loadingReplyIDs.contains(id) {
+                Task { await loadReplies(annotationId: id) }
+            }
+        }
+    }
+
+    private func loadReplies(annotationId: String) async {
+        loadingReplyIDs.insert(annotationId)
+        defer { loadingReplyIDs.remove(annotationId) }
+        do {
+            let resp = try await api.listAnnotationReplies(annotationId: annotationId)
+            repliesByAnnotation[annotationId] = resp.replies
+        } catch {
+            LogBuffer.shared.error("DocumentReader 载入批注讨论失败: \(error)")
+            ToastCenter.shared.show("讨论载入失败：\(error.localizedDescription)")
+            expandedAnnotationIDs.remove(annotationId)
+        }
+    }
+
+    /// 让 AI 回复 / 追问。`content` 非空 = 用户追问。成功后把新增回复并入线程。
+    func reply(annotationId: String, content: String?) async {
+        guard !busyReplyIDs.contains(annotationId) else { return }
+        busyReplyIDs.insert(annotationId)
+        defer { busyReplyIDs.remove(annotationId) }
+        expandedAnnotationIDs.insert(annotationId)
+        do {
+            let resp = try await api.replyToAnnotation(id: annotationId, content: content)
+            var thread = repliesByAnnotation[annotationId] ?? []
+            thread.append(contentsOf: resp.added)
+            repliesByAnnotation[annotationId] = thread
+            if let i = annotations.firstIndex(where: { $0.id == annotationId }) {
+                annotations[i].replyCount = resp.replyCount
+                annotations[i].lastReply = resp.added.last ?? annotations[i].lastReply
+            }
+        } catch {
+            LogBuffer.shared.error("DocumentReader 生成批注回复失败: \(error)")
+            ToastCenter.shared.show("生成回复失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 丢掉某条批注的线程缓存与展开态
+    private func forgetThread(id: String) {
+        repliesByAnnotation.removeValue(forKey: id)
+        expandedAnnotationIDs.remove(id)
+        loadingReplyIDs.remove(id)
+        busyReplyIDs.remove(id)
+    }
+
+    // MARK: - 连线追踪
+
+    /// 开始追踪某条批注的划线位置（卡片悬停时调）
+    func beginConnectorTracking(id: String) {
+        connectorID = id
+        measureConnector(id: id)
+    }
+
+    func endConnectorTracking() {
+        connectorID = nil
+        connectorRect = nil
+    }
+
+    /// 让 JS 量一次划线矩形；异步回来，期间若已换目标就丢弃。
+    private func measureConnector(id: String) {
+        guard let webView else { connectorRect = nil; return }
+        webView.evaluateJavaScript("reader.annotationRect(\(MarkdownWebUtils.jsString(id)))") { [weak self] value, _ in
+            Task { @MainActor in
+                guard let self, self.connectorID == id else { return }
+                guard let d = value as? [String: Any],
+                      let x = (d["x"] as? NSNumber)?.doubleValue,
+                      let y = (d["y"] as? NSNumber)?.doubleValue,
+                      let w = (d["w"] as? NSNumber)?.doubleValue,
+                      let h = (d["h"] as? NSNumber)?.doubleValue else {
+                    self.connectorRect = nil
+                    return
+                }
+                self.connectorRect = CGRect(x: x, y: y, width: w, height: h)
+            }
         }
     }
 
@@ -268,6 +379,10 @@ final class DocumentReaderController: ObservableObject {
 
         case "relocateCancel":
             relocatingID = nil
+
+        case "scroll":
+            // 正文滚动后划线位置变了，正在连线就重取一次
+            if let id = connectorID { measureConnector(id: id) }
 
         case "ask":
             // 「问 AI」：把引用交给聊天（ContentView 注册的 onAsk → 当前 tab 的 ChatViewModel）。
@@ -1126,6 +1241,17 @@ var reader = (function () {
     return true;
   }
 
+  /* 连线用：某条划线第一段的视口矩形（viewport 坐标，左上原点）。
+     取第一个 mark 的**首个行盒** —— 跨行划线连到最上面一行即可。
+     找不到（失活/未画出）返回 null，Swift 侧就不画连线。 */
+  function annotationRect(id) {
+    var marks = content.querySelectorAll('mark.hl[data-id="' + id + '"]');
+    if (!marks.length) return null;
+    var rects = marks[0].getClientRects();
+    var r = rects.length ? rects[0] : marks[0].getBoundingClientRect();
+    return { x: r.left, y: r.top, w: r.width, h: r.height };
+  }
+
   /* 「问 AI」：点引用胶囊跳回这段（滚过去 + 闪一下）。
      闪烁靠临时包一层 mark（1 秒后拆掉，拆法跟重画一致；它没有对应的批注，
      所以点它不会弹菜单 —— 见下面 click 处理里的 annotationById 守卫）。
@@ -1283,6 +1409,7 @@ var reader = (function () {
   window.addEventListener('scroll', function (e) {
     if (popover.contains(e.target)) return;
     hideAll(); hidePopover();
+    post({ type: 'scroll' });
   }, true);
 
   toolbar.addEventListener('mousedown', function (e) { e.preventDefault(); });
@@ -1625,6 +1752,7 @@ var reader = (function () {
     restoreScrollY: restoreScrollY,
     setAnnotations: setAnnotations,
     scrollToAnnotation: scrollToAnnotation,
+    annotationRect: annotationRect,
     beginRelocate: beginRelocate,
     cancelRelocate: cancelRelocate
   };

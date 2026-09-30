@@ -2,9 +2,9 @@ import Foundation
 import Combine
 import SwiftUI
 
-/// 顶栏槽位：左/中/右
+/// 顶栏槽位：中/右（左区为顶栏 leading View，不走槽位系统）
 enum TopBarSlot: Hashable {
-    case left, center, right
+    case center, right
 }
 
 /// 顶栏按钮定义（closure 动态求值：每次渲染取最新状态）

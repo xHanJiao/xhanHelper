@@ -23,6 +23,15 @@ enum InputBarButtonID: String, CaseIterable {
     case handoff
     case attach
 
+    /// 展示顺序。无痕只有 macOS 有入口（iOS 客户端无无痕功能），故 iOS 上不出现。
+    static var allCases: [InputBarButtonID] {
+        #if os(macOS)
+        return [.mode, .agent, .trusted, .model, .brief, .ephemeral, .handoff, .attach]
+        #else
+        return [.mode, .agent, .trusted, .model, .brief, .handoff, .attach]
+        #endif
+    }
+
     /// 首次运行（无持久化配置）时的收起集合，等价于旧硬编码布局。
     /// brief（精炼回答）与 ephemeral（无痕）是低频开关，默认收起。
     static let defaultCollapsed: Set<InputBarButtonID> = [.trusted, .model, .brief, .ephemeral, .handoff, .attach]

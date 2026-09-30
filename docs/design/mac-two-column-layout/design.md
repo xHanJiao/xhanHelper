@@ -302,5 +302,5 @@ PiP：     cardGap*2 + rightSidebarMinWidth（中栏让位，右栏铺满）    
 
 - 客户端：`ContentView.swift`、`TopBarView.swift`、`LayoutConstants.swift`、`ChatView.swift`、`InputBarTypes.swift`、`InputBarLayoutState.swift`、`ChatTabManager.swift`、`xHelperMac/App.swift`、`ShortcutGuideView.swift`；**删除** `SidebarView.swift`、`NavigationRouter.swift`、`HoverRevealButton.swift`（删调用后成孤儿）。
 - 后端：`controller/chat.go`、`conversations.go`、`router.go`、`appinit/router.go`、`agent/cron_runner.go`（nil-safe 日志）。
-- 文档同步：`docs/design/ephemeral-conversation.md`（破「不可变」约定）、`macos-left-sidebar-toggle.md`（过时）、`mac-apps/topbar-slot-system.md`（浏览器槽位写错）。
+- 文档同步：`docs/design/ephemeral-conversation.md`（破「不可变」约定）、`docs/design/archive/macos-left-sidebar-toggle.md`（已废弃归档）、`mac-apps/topbar-slot-system.md`（槽位现状修正）。
 - UI 预览：`xHelperMac/TwoColumnLayoutPreview.swift`（真 token + 生产卡片材质 + `#Preview` 四形态，Xcode 画布 ⌘⌥P 看）。

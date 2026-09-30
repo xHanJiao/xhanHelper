@@ -6,9 +6,12 @@
 
 | 维度 | 定义 |
 |------|------|
-| 创建 | `POST /api/conversations` 传 `ephemeral: true`；默认会话不可无痕；属性不可变 |
+| 创建 | `POST /api/conversations` 传 `ephemeral: true`；默认会话不可无痕；属性**可切换**（见下） |
+| 切换 | `PATCH /api/conversations/:id/ephemeral`（body `{"ephemeral":bool}`）；默认会话置 true 返回 `400`；置 true 时补挂 `session_end` 销毁任务 |
+| 入口 | 输入栏 `theatermasks` pill（默认收起、右键可常驻；空白会话只改本地意图，首条消息落库时生效）。**仅 macOS**（iOS 无此入口） |
 | 存储 | `Conversation.Extra` JSON 的 `ConversationExtra.Ephemeral`（无 migration） |
-| 后处理 | 窗口结束（静默 `SessionGapMinutes`，默认 15 分钟）时**跳过全部 worker**（summary/memory/state/profile），改为销毁 |
+| 下发 | `GET /conversations/:id/messages-v2` 响应含 `ephemeral` 字段，客户端各加载路径统一据此 seed 状态 |
+| 后处理 | 窗口结束（静默 `SessionGapMinutes`，默认 30 分钟）时**跳过全部 worker**（summary/memory/state/profile），改为销毁 |
 | 手动删除 | `DELETE /api/conversations/:id` 对无痕会话走销毁；普通会话仍软删 |
 | 分享 | 无痕会话禁止创建消息分享（`403`） |
 | 销毁范围 | 会话域数据：自身 + `parent_id` 子会话的 messages、消息向量、summaries、plans、shares、会话行 |
@@ -72,9 +75,9 @@ CronRunner `ScheduleRetry`（≤3 次，2 分钟退避）→ 重入 `RunPurge`�
    `onError(NSError(domain:"XHANHTTP", code:))` 上报；`ChatViewModel` 对 404 调
    `onConversationGone(cid)`。`loadConversation`（messages-v2 404）与 `sendMessage`（chat 404）都覆盖。
 2. **关闭与清理**：`ChatTabManager.handleConversationGone` 关闭 tab（复用自动切换）、
-   发 `.conversationRemoved` 通知 → `ConversationListViewModel.removeLocal`（保留分页）、Toast 提示。
+   发 `.conversationRemoved` 通知 → `ConversationListViewModel.removeLocal`（保留分页）。**静默**，不弹提示（D10）。
 3. **激活刷新**：`ContentView` 回到前台（scenePhase / didBecomeActive）时
-   `conversationListVM.reload()`，清除侧栏中已销毁的幽灵条目（当前 tab 由 `syncActiveChat` 经路径 1/2 自愈）。
+   `conversationListVM.reload()`，清除会话下拉中已销毁的幽灵条目（当前 tab 由 `syncActiveChat` 经路径 1/2 自愈）。
 4. **前台周期刷新**：应用保持激活时 `ConversationListViewModel.startAutoRefresh()`
    每 60s `reload()` 一次（`stopAutoRefresh` 在离开激活态时停），覆盖"一直不切 app"的场景。
    每次 `load()` 会用「旧列表中的无痕会话 − 新首页」算出已销毁的 id，发 `.conversationsGone`；

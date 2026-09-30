@@ -35,9 +35,11 @@ enum Layout {
     static let cardBottomGap: CGFloat = 6
 
     /// 中间聊天区最小宽。
-    static let middleMinWidth: CGFloat = 340
+    static let middleMinWidth: CGFloat = 380
     /// 右栏最小宽。
-    static let rightSidebarMinWidth: CGFloat = 340
+    static let rightSidebarMinWidth: CGFloat = 380
+    /// 窗口最小内容宽下限（底栏公式之外的兜底；实测 <750 观感变差）。
+    static let minWindowContentWidth: CGFloat = 750
     /// 分隔线（SeamMarker）宽度。
     static let seamWidth: CGFloat = 1
 

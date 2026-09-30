@@ -26,9 +26,10 @@ struct ContentView: View {
     /// 右面板分隔线（seam）的 x 坐标（content 坐标系），由 SeamMarker 上报。
     @State private var rightSeamX: CGFloat = 0
     @State private var windowWidth: CGFloat = 800
-    /// 最近一次 geo.size.width（SwiftUI 内容布局宽）。窗口缩到内容底线后该值冻结在底线
-    /// （如 813），didResize 检测到它大于窗口实际内容宽即确认溢出，写入内容实测底线。
-    @State private var lastGeoWidth: CGFloat = 0
+    /// 顶栏内在最小宽（由 TopBarView 隐藏探针经 `TopBarMinWidthKey` 上报）。
+    /// 顶栏是 VStack 最宽子项，窗口最小宽必须 ≥ 它，否则窗口缩到比顶栏还窄 → 顶栏溢出居中
+    /// → 红绿灯压住下拉框、中/右栏被裁。
+    @State private var topBarMinWidth: CGFloat = 0
     /// 进入 PiP 前右栏宽度，退出时恢复。
     @State private var prePipSidebarWidth: Double?
     /// 进入浏览器聚焦（middleMinimized）前右栏宽度，退出时恢复。
@@ -81,13 +82,27 @@ struct ContentView: View {
     /// 窗口最小内容宽唯一派生入口：由 (isOpen, isPipChat) 实时推导，幂等设置，
     /// 消除"进入保存/退出恢复"的竞态。
     private func updateWindowMinWidth() {
-        let minContent: CGFloat
+        let bottomRowMin: CGFloat
         if rightSidebar.isOpen {
-            minContent = rightSidebar.isPipChat ? pipMinContentWidth : Self.rightSidebarOpenMinWidth
+            bottomRowMin = rightSidebar.isPipChat ? pipMinContentWidth : Self.rightSidebarOpenMinWidth
         } else {
-            minContent = baseMinWidth
+            bottomRowMin = baseMinWidth
         }
+        // 取「底栏推导值 / 顶栏内在宽 / 全局下限」的较大者：顶栏装不下的窗口宽会让内容溢出居中、被裁。
+        let minContent = max(bottomRowMin, topBarMinWidth, Layout.minWindowContentWidth)
         AppDelegate.requiredMinContentWidth = minContent
+
+        // 内容真实最小宽变大时（如从「新对话」切到长标题会话，顶栏变宽），已缩窄的窗口必须
+        // 主动放大——windowWillResize 只在用户拖拽时生效，管不到这种情况，否则内容溢出、被裁。
+        // 用 mainWindow：切换会话走 popover，此刻 keyWindow 可能是 popover 而非主窗口。
+        guard let window = NSApp.mainWindow ?? NSApp.keyWindow else { return }
+        let contentW = window.contentView?.frame.width ?? window.frame.width
+        let deficit = minContent - contentW
+        if deficit > 0.5 {
+            var frame = window.frame
+            frame.size.width += deficit
+            window.setFrame(frame, display: true, animate: false)
+        }
     }
 
     /// 把右侧栏宽度钳制到可用范围，保证窄窗口下不溢出、内容可见。
@@ -341,6 +356,11 @@ struct ContentView: View {
                         conversationListVM: conversationListVM
                     )
                     .zIndex(1)
+                    .onPreferenceChange(TopBarMinWidthKey.self) { width in
+                        guard width > 0, abs(width - topBarMinWidth) > 0.5 else { return }
+                        topBarMinWidth = width
+                        updateWindowMinWidth()
+                    }
 
                     GeometryReader { geo in
                         let rightMax: Double = max(Double(Layout.rightSidebarMinWidth),
@@ -423,26 +443,12 @@ struct ContentView: View {
                         .animation(.easeInOut(duration: 0.2), value: rightSidebar.isOpen)
                         .onChange(of: geo.size.width, initial: true) { _, new in
                             windowWidth = new
-                            lastGeoWidth = new
                             // ponytail: 排查「点内链卡死」的临时埋点（方案 A），定位后删
                             LogBuffer.shared.diag("[doclink] geo.width 变化 → \(new)")
-                            // geo 变化 = 内容布局宽已变，旧实测底线（measuredContentMinWidth）失效，
-                            // 复位待 didResize 重新实测。
-                            AppDelegate.measuredContentMinWidth = 0
                             clampRightSidebarWidth()
                             refillBrowserFocus() // 窗口放大后浏览器聚焦态补满（含进入时异步放大窗口的场景）
                             // ponytail: 临时埋点（方案 A），定位后删
                             LogBuffer.shared.diag("[doclink] geo.width 处理完成")
-                        }
-                        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { note in
-                            guard let win = note.object as? NSWindow, win === NSApp.keyWindow else { return }
-                            guard lastGeoWidth > 0 else { return }
-                            let contentW = win.contentView?.frame.width ?? 0
-                            // ① 溢出检测：geo 冻结值 > 窗口实际内容宽 → lastGeoWidth 即内容真实底线。
-                            // windowWillResize 用 max(requiredMin, measured) 钳制，窗口物理停在此处。
-                            if lastGeoWidth > contentW + 1 {
-                                AppDelegate.measuredContentMinWidth = lastGeoWidth
-                            }
                         }
                         .onChange(of: rightSidebar.isOpen) { _, isOpen in
                             // ponytail: 排查「点内链卡死」的临时埋点（方案 A），定位后删
@@ -452,8 +458,7 @@ struct ContentView: View {
                                 // 关闭右侧栏时退出浏览器聚焦，恢复中间栏宽度
                                 rightSidebar.middleMinimized = false
                             }
-                            // 浏览器按钮组随侧栏开/关注册/注销，内容底线变化 → 旧实测值失效
-                            AppDelegate.measuredContentMinWidth = 0
+                            // 浏览器按钮组随侧栏开/关注册/注销，内容底线变化
                             if isOpen {
                                 updateWindowForRightSidebarOpen()
                                 clampRightSidebarWidth()
@@ -480,8 +485,7 @@ struct ContentView: View {
                             } else {
                                 exitPipEffects(reason: pipExitReason)
                             }
-                            // 顶栏按钮组随 PiP 注册/注销，内容底线变化 → 旧实测值失效
-                            AppDelegate.measuredContentMinWidth = 0
+                            // 顶栏按钮组随 PiP 注册/注销，内容底线变化
                             clampRightSidebarWidth()
                         }
                         .onChange(of: rightSidebar.activeTabId) { _, id in
@@ -518,6 +522,8 @@ struct ContentView: View {
                     return .handled // 本 scheme 的未知路径：吞掉，不交给系统
                 })
                 .onAppear {
+                    // 启动即按当前状态确立窗口最小宽（此前只在状态变化时才更新，冷启动停在默认值）。
+                    updateWindowMinWidth()
                     BrowserToolProvider.shared.rightSidebar = rightSidebar
                     DocumentSelectionCoordinator.shared.rightSidebar = rightSidebar
                     DocumentSelectionCoordinator.shared.documentVM = documentVM

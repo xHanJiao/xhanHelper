@@ -227,12 +227,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// 当前要求的最小内容宽（右栏打开时 730，否则 400）。由 ContentView 更新。
+    /// 当前要求的最小内容宽（右栏打开时 ≈778，否则 750；再取顶栏内在宽的较大者）。由 ContentView 更新。
     static var requiredMinContentWidth: CGFloat = 400
-    /// SwiftUI 内容真实最小宽：由 ContentView 在窗口缩到内容底线（geo 冻结）时实测写入。
-    /// 可能大于 requiredMinContentWidth（顶栏内在 min 比底栏 HStack 宽，如 813 > 661），
-    /// 是窗口缩放的真实底线。窗口守卫取两者较大值，防止缩窗时内容溢出居中、左栏出窗口。
-    static var measuredContentMinWidth: CGFloat = 0
 
     /// 浏览器页面缩放（Cmd+±，钳制 0.5x–2.5x）
     private static func zoomWebView(by delta: CGFloat) {
@@ -294,14 +290,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// 拦截窗口缩放：宽度不得低于要求的最小内容宽（+ 窗口 chrome）。
     /// 用 delegate 而不是 minSize——SwiftUI 会在布局时用内容 min 覆盖 minSize。
-    /// 守卫取 max(理论 min, 内容实测 min)：理论值基于底栏 HStack 推导，但顶栏内在最小宽
-    /// 可能更大（同一 VStack 内宽度取最宽子视图），漏算会在缩窗时内容溢出居中、左栏出窗口。
-    /// 内容实测 min 由 ContentView 检测 geo 冻结后写入 measuredContentMinWidth。
+    /// `requiredMinContentWidth` 已由 ContentView 取「底栏推导值 / 顶栏内在宽」的较大者：
+    /// 顶栏是 VStack 最宽子项，漏算会让窗口缩到比顶栏还窄 → 顶栏溢出居中、红绿灯压住下拉框。
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
         let contentWidth = sender.contentView?.frame.width ?? sender.frame.width
         let chrome = sender.frame.width - contentWidth
-        let realMin = max(Self.requiredMinContentWidth, Self.measuredContentMinWidth)
-        let minFrameWidth = realMin + chrome
+        let minFrameWidth = Self.requiredMinContentWidth + chrome
         return NSSize(width: max(frameSize.width, minFrameWidth), height: frameSize.height)
     }
 

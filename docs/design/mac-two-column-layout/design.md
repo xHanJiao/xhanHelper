@@ -94,7 +94,7 @@ sidebarWidth ─┬─→ baseMinWidth / pipMinContentWidth   (ContentView.swift
               └─→ 持久化 @AppStorage("xhan_sidebar_width") :32 / 读 :691 / 写 :699-703
 ```
 
-- `AppDelegate.windowWillResize`（`App.swift:313-324`）= `max(requiredMinContentWidth, measuredContentMinWidth) + chrome` 钳制宽度。
+- `AppDelegate.windowWillResize` = `requiredMinContentWidth + chrome` 钳制宽度（`requiredMinContentWidth` 已由 ContentView 取「底栏 / 顶栏内在宽 / 750」的较大者，见 §4.1.3）。
 - 前身 bug：`docs/bugs/014-pip-shrink-sidebar-overflow.md` —— PiP 缩窗溢出就是靠"先收左栏"缓解的。
 
 ### 2.7 导航层（近死，见 §4.1.4 证据）
@@ -142,16 +142,19 @@ sidebarWidth ─┬─→ baseMinWidth / pipMinContentWidth   (ContentView.swift
 
 #### 4.1.3 固化「隐藏态」+ 窗口最小宽收敛（D7）
 
-窗口最小宽公式收敛为（`updateWindowMinWidth` 唯一派生入口简化）：
+窗口最小宽公式收敛为（`updateWindowMinWidth` 唯一派生入口）：
 
 ```
-无右栏：  cardGap*2 + middleMinWidth                                 ≈ 352
-右栏开：  cardGap*2 + middleMinWidth + seam(6) + rightSidebarMinWidth ≈ 698
-PiP：     cardGap*2 + rightSidebarMinWidth（中栏让位，右栏铺满）      ≈ 352
+无右栏：  max(cardGap*2 + middleMinWidth, minWindowContentWidth)          ≈ 750
+右栏开：  cardGap*2 + middleMinWidth + seam(6) + rightSidebarMinWidth     ≈ 778
+PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 750
 ```
 
+数值（实测）：`middleMinWidth = rightSidebarMinWidth = 380`，`minWindowContentWidth = 750`。
+
+- **顶栏兜底**：窗口最小宽再取 `max(…, 顶栏内在宽)`——顶栏是 VStack 最宽子项，短于它就会溢出居中、红绿灯压住下拉框（`TopBarView.intrinsicWidthProbe` 经 `TopBarMinWidthKey` 上报，`updateWindowMinWidth` 主动放大窗口）。
 - 删除所有「靠收窄左栏降底线」的分支：自动收窄/恢复（`:571-577`）、PiP 缩窗收窄（`:594-598`）、开右栏收左栏腾位（`:176-178`）、`pipExpandedFloor`（`App.swift:251-253` 及其读写）。
-- 保留 `measuredContentMinWidth`（被动实测底线，仍有用）。
+- **删 `measuredContentMinWidth`**（geo 冻结实测机制：条件 `lastGeoWidth > contentW` 在每次收缩都成立 → 窗口被弹回上一宽度造成跳动），改由上面的显式探针提供顶栏最小宽。
 - ⚠️ **真机验收点**：必须重跑 PiP 缩窗场景（bug 014 场景）确认无溢出回潮 —— 这是本次唯一强制的真机往返。
 
 #### 4.1.4 导航层与死码清理（D6）
@@ -265,8 +268,8 @@ PiP：     cardGap*2 + rightSidebarMinWidth（中栏让位，右栏铺满）    
 
 | 风险 | 说明 | 缓解 |
 |------|------|------|
-| **PiP 缩窗溢出回潮** | 原靠"先收左栏降底线"，现删除该机制 | §4.1.3 收敛后**真机重跑 bug 014 场景**；`windowWillResize` + `measuredContentMinWidth` 仍在 |
-| 顶栏 trigger 顶高窗口最小宽 | `VStack` 宽度取子项最大（bug 014 机制） | trigger `maxWidth:240` + 截断（D5） |
+| **PiP 缩窗溢出回潮** | 原靠"先收左栏降底线"，现删除该机制 | §4.1.3 收敛后真机重跑 bug 014 场景（**已验收通过**）；`windowWillResize` + 顶栏内在宽探针兜底 |
+| 顶栏内在宽反噬窗口最小宽 | `VStack` 宽度取子项最大（bug 014 机制） | trigger `maxWidth:240` + 截断（D5）；隐藏探针量测顶栏内在宽，窗口最小宽取其较大者，变宽时主动放大窗口 |
 | 删除范围超预期 | 左 seam/派生常量/导航层牵连广 | 按 §4.1.1–4.1.4 分步，每步 `swiftc -typecheck` |
 | 老会话转无痕启动销毁倒计时 | 停聊约 30 分钟后 Stage A 不可逆 | pill 可再点取消；hover 明示；默认会话禁用；不弹确认（D4 知情） |
 | 空会话标了不销毁 | 无 session_end 任务 | B3 补挂任务 |

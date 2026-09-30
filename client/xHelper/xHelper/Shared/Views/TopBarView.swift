@@ -21,16 +21,35 @@ struct TopBarView: View {
     #endif
 
     var body: some View {
+        topBarHStack(flexible: true, interactive: true)
+            // 双击顶栏空白区缩放窗口：contentShape 让空白区可命中，按钮区域由按钮自身
+            // 手势优先消费（SwiftUI 子视图手势优先），双击按钮不会触发缩放。
+            .contentShape(Rectangle())
+            #if os(macOS)
+            .onTapGesture(count: 2) { zoomWindow() }
+            #endif
+            .padding(.horizontal, Layout.toolbarHorizontalPadding)
+            .padding(.vertical, Layout.toolbarVGap)
+            .ignoresSafeArea(edges: .top)
+            .background(intrinsicWidthProbe)
+            .onAppear { registerDefaultGroups() }
+    }
+
+    /// 顶栏内容。`flexible`：真实栏含弹性 `Spacer()` 撑满可用宽；探针副本把它换成 0 宽
+    /// （否则内在宽 = ∞）。`interactive`：探针副本渲染静态图标，不挂 Button/快捷键/popover，
+    /// 几何与真实按钮一致但不产生重复快捷键、不共享 `@State`。
+    @ViewBuilder
+    private func topBarHStack(flexible: Bool, interactive: Bool) -> some View {
         HStack(spacing: 8) {
             // 红绿灯让位（顶栏铺到标题栏，左区内容需避开窗口按钮）
             Spacer().frame(width: Layout.topBarTrafficClearance)
 
             // 左侧：当前会话下拉（不走 registry 的 leading View，PiP 时不显示）
             if !rightSidebar.isPipChat {
-                conversationSwitcher
+                conversationSwitcher(interactive: interactive)
             }
 
-            Spacer()
+            if flexible { Spacer(minLength: 0) } else { Spacer().frame(width: 0) }
 
             #if os(macOS)
             // dev 视觉标识（UI-7）：Debug 构建在胶囊簇左侧挂一枚 DEV 徽标，
@@ -38,24 +57,27 @@ struct TopBarView: View {
             if LocalPaths.isDev { devChip }
             #endif
 
-            renderSlot(.center)
+            renderSlot(.center, interactive: interactive)
 
             // 中右两侧都有可见组时才显示分隔线
             if !visibleGroups(for: .center).isEmpty && !visibleGroups(for: .right).isEmpty {
                 UnresizableDivider()
             }
-            renderSlot(.right)
+            renderSlot(.right, interactive: interactive)
         }
-        // 双击顶栏空白区缩放窗口：contentShape 让空白区可命中，按钮区域由按钮自身
-        // 手势优先消费（SwiftUI 子视图手势优先），双击按钮不会触发缩放。
-        .contentShape(Rectangle())
-        #if os(macOS)
-        .onTapGesture(count: 2) { zoomWindow() }
-        #endif
-        .padding(.horizontal, Layout.toolbarHorizontalPadding)
-        .padding(.vertical, Layout.toolbarVGap)
-        .ignoresSafeArea(edges: .top)
-        .onAppear { registerDefaultGroups() }
+    }
+
+    /// 隐藏探针：按内在宽（fixedSize）量测顶栏，经 `TopBarMinWidthKey` 回传。
+    /// 用于把窗口最小宽抬到「顶栏装得下」，否则窗口能缩到比顶栏还窄 → 顶栏溢出居中
+    /// → 红绿灯压住下拉框、中/右栏被裁。
+    private var intrinsicWidthProbe: some View {
+        topBarHStack(flexible: false, interactive: false)
+            .padding(.horizontal, Layout.toolbarHorizontalPadding)
+            .fixedSize()
+            .hidden()
+            .background(GeometryReader { g in
+                Color.clear.preference(key: TopBarMinWidthKey.self, value: g.size.width)
+            })
     }
 
     // MARK: - 会话切换（顶栏左侧 leading View）
@@ -70,60 +92,78 @@ struct TopBarView: View {
     }
 
     /// 当前会话下拉 trigger + 新建（普通新建；无痕走输入栏 pill）。
-    private var conversationSwitcher: some View {
-        HStack(spacing: 6) {
-            Button {
-                showConversationMenu.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    if currentIsEphemeral {
-                        Image(systemName: "theatermasks.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color("appAccent"))
-                    }
-                    Text(currentConversationTitle)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.primary.opacity(0.85))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: 240, alignment: .leading)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.secondary)
+    /// `interactive == false`：探针副本，只渲染同尺寸的静态标签，不挂 Button/popover。
+    @ViewBuilder
+    private func conversationSwitcher(interactive: Bool) -> some View {
+        let switcher = HStack(spacing: 6) {
+            if interactive {
+                Button {
+                    showConversationMenu.toggle()
+                } label: {
+                    conversationSwitcherLabel
                 }
-                .padding(.horizontal, 12)
-                .frame(height: Layout.topBarCapsuleHeight)
-                .fixedSize(horizontal: true, vertical: false)
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
-            .help("切换会话")
-            .popover(isPresented: $showConversationMenu, arrowEdge: .bottom) {
-                conversationMenu
-            }
+                .buttonStyle(.plain)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
+                .help("切换会话")
+                .popover(isPresented: $showConversationMenu, arrowEdge: .bottom) {
+                    conversationMenu
+                }
 
-            Button {
-                chatTabManager.newChat()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(.primary.opacity(0.7))
-                    .frame(width: Layout.topBarCapsuleHeight, height: Layout.topBarCapsuleHeight)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .background(.ultraThinMaterial, in: Circle())
-            .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 0.5))
-            .help("新会话")
-        }
-        .task {
-            // 会话列表首次加载：原挂在侧栏 .task 上，删栏后由此触发
-            if !conversationListVM.hasLoadedOnce {
-                await conversationListVM.load()
+                Button {
+                    chatTabManager.newChat()
+                } label: {
+                    plusButtonLabel
+                }
+                .buttonStyle(.plain)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 0.5))
+                .help("新会话")
+            } else {
+                conversationSwitcherLabel
+                plusButtonLabel
             }
         }
+        if interactive {
+            switcher.task {
+                // 会话列表首次加载：原挂在侧栏 .task 上，删栏后由此触发
+                if !conversationListVM.hasLoadedOnce {
+                    await conversationListVM.load()
+                }
+            }
+        } else {
+            switcher
+        }
+    }
+
+    private var conversationSwitcherLabel: some View {
+        HStack(spacing: 4) {
+            if currentIsEphemeral {
+                Image(systemName: "theatermasks.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color("appAccent"))
+            }
+            Text(currentConversationTitle)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.primary.opacity(0.85))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 240, alignment: .leading)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: Layout.topBarCapsuleHeight)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var plusButtonLabel: some View {
+        Image(systemName: "plus")
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(.primary.opacity(0.7))
+            .frame(width: Layout.topBarCapsuleHeight, height: Layout.topBarCapsuleHeight)
+            .contentShape(Circle())
     }
 
     private var conversationMenu: some View {
@@ -369,7 +409,7 @@ struct TopBarView: View {
     }
 
     @ViewBuilder
-    private func renderSlot(_ slot: TopBarSlot) -> some View {
+    private func renderSlot(_ slot: TopBarSlot, interactive: Bool) -> some View {
         let groups = visibleGroups(for: slot)
         if !groups.isEmpty {
             HStack(spacing: 0) {
@@ -378,7 +418,7 @@ struct TopBarView: View {
                         Divider().frame(height: 14).padding(.horizontal, 4)
                     }
                     CapsuleGroup {
-                        buttonRow(group)
+                        buttonRow(group, interactive: interactive)
                     }
                 }
             }
@@ -386,20 +426,24 @@ struct TopBarView: View {
     }
 
     @ViewBuilder
-    private func buttonRow(_ group: TopBarGroup) -> some View {
+    private func buttonRow(_ group: TopBarGroup, interactive: Bool) -> some View {
         // 先按 visible() 过滤，再基于可见按钮计算分隔线（避免隐藏按钮导致多/少 Divider）
         let visibleButtons = group.buttons.filter { $0.visible() }
         ForEach(Array(visibleButtons.enumerated()), id: \.element.id) { index, button in
             if index > 0 {
                 Divider().frame(height: 14)
             }
-            renderButton(button)
+            renderButton(button, interactive: interactive)
         }
     }
 
     @ViewBuilder
-    private func renderButton(_ button: TopBarButton) -> some View {
-        if button.isRefresh {
+    private func renderButton(_ button: TopBarButton, interactive: Bool) -> some View {
+        if !interactive {
+            // 探针副本：与 CapsuleButton/CapsuleRefreshButton 同尺寸（CapsuleIcon 26pt），
+            // 但不挂 Button/快捷键/悬浮，避免重复注册快捷键与共享状态。
+            CapsuleIcon(systemName: button.icon(), showBackground: false)
+        } else if button.isRefresh {
             CapsuleRefreshButton(disabled: !button.enabled(), disabledMessage: button.help()) {
                 button.action()
             }
@@ -410,6 +454,14 @@ struct TopBarView: View {
             }
             .keyboardShortcutIfNeeded(button)
         }
+    }
+}
+
+/// 顶栏内在最小宽（隐藏探针量测）→ 用作窗口最小宽下限。
+struct TopBarMinWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 

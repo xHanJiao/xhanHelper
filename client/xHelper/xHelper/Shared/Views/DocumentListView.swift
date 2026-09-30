@@ -645,14 +645,16 @@ private struct DocumentFullView: View {
         #endif
     }
 
-    /// 连线终点 = 划线右缘中点（DOM 视口坐标 + 阅读器原点 → global）；滚出视口则不画
+    /// 连线终点 = 划线矩形离卡片**最近**的那条竖缘中点（DOM 视口坐标 + 阅读器原点 → global）；
+    /// 滚出视口则不画。卡片在划线右侧取右缘、否则取左缘（当前面板恒在右 → 仍是右缘，行为不变）。
     private var connectorEnd: CGPoint? {
         #if os(macOS)
         guard connectorID != nil, readerFrame != .zero, let r = reader.connectorRect else { return nil }
         let g = CGRect(x: readerFrame.minX + r.minX, y: readerFrame.minY + r.minY,
                        width: r.width, height: r.height)
         guard g.maxY > readerFrame.minY, g.minY < readerFrame.maxY else { return nil }
-        return CGPoint(x: g.maxX, y: g.midY)
+        let cardX = connectorCardFrame?.minX ?? g.maxX
+        return CGPoint(x: cardX >= g.midX ? g.maxX : g.minX, y: g.midY)
         #else
         return nil
         #endif

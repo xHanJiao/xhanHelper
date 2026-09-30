@@ -34,8 +34,8 @@ enum AnnotationHighlightColor {
 }
 
 /// Word 式连线：从批注卡片左缘连到正文划线（起点/终点都在 `.global`，本视图自己换算到本地）。
-/// 只画一条直线（不做 Word 的折线/环绕），细、圆头，色号同划线高亮。`allowsHitTesting(false)`。
-/// 跨平台定义：iOS 不用（端点恒 nil），但共享文件必须能编。
+/// 画一条**水平出入的贝塞尔曲线**（两端切线水平，中间斜连），细、圆头，色号同划线高亮。
+/// `allowsHitTesting(false)`。跨平台定义：iOS 不用（端点恒 nil），但共享文件必须能编。
 struct AnnotationConnectorLayer: View {
     let start: CGPoint?
     let end: CGPoint?
@@ -47,8 +47,18 @@ struct AnnotationConnectorLayer: View {
             let origin = geo.frame(in: .global).origin
             if let s = start, let e = end {
                 Path { path in
-                    path.move(to: CGPoint(x: s.x - origin.x, y: s.y - origin.y))
-                    path.addLine(to: CGPoint(x: e.x - origin.x, y: e.y - origin.y))
+                    let from = CGPoint(x: s.x - origin.x, y: s.y - origin.y)
+                    let to = CGPoint(x: e.x - origin.x, y: e.y - origin.y)
+                    // 终点在起点左侧 → 起点向左出、终点从右入；反之镜像。
+                    // bend 保底 28，两点很靠近时曲线也不塌成直线。
+                    let dir: CGFloat = to.x >= from.x ? 1 : -1
+                    let bend = max(28, abs(to.x - from.x) * 0.45)
+                    path.move(to: from)
+                    path.addCurve(
+                        to: to,
+                        control1: CGPoint(x: from.x + dir * bend, y: from.y),
+                        control2: CGPoint(x: to.x - dir * bend, y: to.y)
+                    )
                 }
                 .stroke(AnnotationHighlightColor.value(colorScheme),
                         style: StrokeStyle(lineWidth: 1, lineCap: .round))

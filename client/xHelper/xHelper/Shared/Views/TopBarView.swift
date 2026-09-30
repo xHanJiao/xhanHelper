@@ -66,8 +66,7 @@ struct TopBarView: View {
     }
 
     private var currentIsEphemeral: Bool {
-        guard let cid = chatTabManager.currentConversationId, !cid.isEmpty else { return false }
-        return conversationListVM.conversations.first { $0.id == cid }?.ephemeral == true
+        chatTabManager.currentTab?.isEphemeral == true
     }
 
     /// 当前会话下拉 trigger + 新建（普通新建；无痕走输入栏 pill）。
@@ -172,7 +171,8 @@ struct TopBarView: View {
                 showConversationMenu = false
                 Task {
                     await chatTabManager.openConversation(
-                        id: conv.id, title: conv.title, pushHistory: true, mode: conv.mode
+                        id: conv.id, title: conv.title, pushHistory: true, mode: conv.mode,
+                        ephemeral: conv.ephemeral == true
                     )
                 }
             } label: {

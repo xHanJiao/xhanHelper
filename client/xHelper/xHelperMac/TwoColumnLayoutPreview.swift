@@ -1,6 +1,6 @@
 import SwiftUI
 
-#if os(macOS)
+#if os(macOS) && DEBUG
 
 /// 双栏布局改造的 SwiftUI 设计预览（放 Xcode 画布看，⌘⌥P）。
 /// 只用真 token + 生产卡片材质（GlassBackground / CardBackgroundModifier），

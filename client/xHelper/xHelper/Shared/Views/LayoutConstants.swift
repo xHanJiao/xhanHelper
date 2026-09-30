@@ -44,9 +44,10 @@ enum Layout {
     /// 右栏卡片整体水平外扩（两侧 cardGap）。
     static let rightSidebarOuterPadding: CGFloat =
         cardGap * 2
-    /// 右栏打开时所需的内容最小宽（中栏 + 右 seam + 右栏 + 外扩）。
+    /// 右栏打开时所需的内容最小宽（中栏 + 左 cardGap + seam 区 + 右栏 + 右 cardGap）。
+    /// seam 区 = seamHalfGap*2 + seamWidth；两侧 cardGap 由 rightSidebarOuterPadding 承担。
     static let rightSidebarOpenMinContentWidth: CGFloat =
-        middleMinWidth + seamWidth + rightSidebarMinWidth + rightSidebarOuterPadding
+        middleMinWidth + seamHalfGap * 2 + seamWidth + rightSidebarMinWidth + rightSidebarOuterPadding
 
     // MARK: - 文档阅读器内三栏（目录 / 正文 / 批注）
 

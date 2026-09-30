@@ -247,7 +247,7 @@ struct ContentView: View {
             target = conversations[0]
         }
 
-        await chatTabManager.openConversation(id: target.id, title: target.title, pushHistory: true, mode: target.mode)
+        await chatTabManager.openConversation(id: target.id, title: target.title, pushHistory: true, mode: target.mode, ephemeral: target.ephemeral == true)
     }
 
     /// 注册 App 级快捷键桥（macOS：Cmd+B / Tab·Esc L3 确认）。

@@ -109,22 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil
             }
 
-            // Cmd+B：切换左侧栏（焦点无关，无模态时生效）
-            if event.keyCode == 11,
-               NSApp.modalWindow == nil {
-                AppShortcutBridge.shared.onToggleLeftSidebar?()
-                return nil
-            }
-
-            // Cmd+Shift+N：新建无痕会话（焦点无关，无模态时生效）
-            if event.keyCode == 45,
-               event.modifierFlags.contains(.shift),
-               NSApp.modalWindow == nil {
-                AppShortcutBridge.shared.onNewEphemeralChat?()
-                return nil
-            }
-
-            // Cmd+N：新建对话（焦点无关，无模态时生效；排除 Cmd+Shift+N）
+            // Cmd+N：新建对话（焦点无关，无模态时生效）
             if event.keyCode == 45,
                !event.modifierFlags.contains(.shift),
                NSApp.modalWindow == nil {

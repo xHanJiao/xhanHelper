@@ -19,16 +19,19 @@ final class ChatTab: Identifiable, ObservableObject {
     let id: String
     var conversationId: String?
     @Published var title: String
+    /// 会话级无痕标记（不依赖分页列表查找：当前会话可能不在已加载页）。
+    @Published var isEphemeral: Bool
     let viewModel: ChatViewModel
     var lastAccessedAt: Date
 
     /// 未产生任何对话的空 tab（conversationId 为空）
     var isBlank: Bool { conversationId == nil }
 
-    init(id: String, conversationId: String?, title: String, viewModel: ChatViewModel) {
+    init(id: String, conversationId: String?, title: String, viewModel: ChatViewModel, isEphemeral: Bool = false) {
         self.id = id
         self.conversationId = conversationId
         self.title = title
+        self.isEphemeral = isEphemeral
         self.viewModel = viewModel
         self.lastAccessedAt = Date()
         if conversationId == nil {
@@ -121,7 +124,7 @@ final class ChatTabManager: ObservableObject {
     func newEphemeralChat() async {
         do {
             let conv = try await makeViewModel().apiClient.createConversation(ephemeral: true)
-            await openConversation(id: conv.id, title: conv.title, pushHistory: true)
+            await openConversation(id: conv.id, title: conv.title, pushHistory: true, ephemeral: true)
             NotificationCenter.default.post(name: .conversationListNeedsRefresh, object: nil)
         } catch {
             LogBuffer.shared.error("ChatTabManager.newEphemeralChat: \(error)")
@@ -131,8 +134,9 @@ final class ChatTabManager: ObservableObject {
 
     /// 打开会话：缓存命中则切换恢复；未命中则新建 tab 并加载。切换时会销毁空 tab。
     /// pushHistory=true 表示用户主动切换，写入会话历史（< > 导航）；程序性切换（启动/提醒/回退驱动）传 false。
-    func openConversation(id: String, title: String, pushHistory: Bool = false, mode: String? = nil) async {
+    func openConversation(id: String, title: String, pushHistory: Bool = false, mode: String? = nil, ephemeral: Bool? = nil) async {
         if let existing = tabs.first(where: { $0.conversationId == id }) {
+            if let ephemeral { existing.isEphemeral = ephemeral }
             activate(existing)
             if pushHistory { pushHistoryEntry(id) }
             return
@@ -151,7 +155,7 @@ final class ChatTabManager: ObservableObject {
         vm.onOpenDocument = { id in
             DocumentSelectionCoordinator.shared.openDocument(id: id)
         }
-        let tab = ChatTab(id: id, conversationId: id, title: title, viewModel: vm)
+        let tab = ChatTab(id: id, conversationId: id, title: title, viewModel: vm, isEphemeral: ephemeral ?? false)
         tabs.append(tab)
         activate(tab)
         if pushHistory { pushHistoryEntry(id) }

@@ -298,7 +298,6 @@ struct ContentView: View {
         let vm = ChatViewModel(apiClient: api)
         vm.onConversationGone = { [weak vm] cid in
             NotificationCenter.default.post(name: .conversationRemoved, object: nil, userInfo: ["id": cid])
-            ToastCenter.shared.show("会话不存在或已被销毁")
             if let def = deviceManager.defaultConversation {
                 Task { @MainActor in
                     await vm?.loadConversation(id: def.id, title: def.title, mode: def.mode)

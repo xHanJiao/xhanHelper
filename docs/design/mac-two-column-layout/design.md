@@ -204,15 +204,22 @@ PiP：     cardGap*2 + rightSidebarMinWidth（中栏让位，右栏铺满）    
 | 生效中 | **已有会话**、已开 | accent + 圆点 | → 取消（未进 Stage A 前） |
 | 已销毁 | Stage A 已执行 | 置灰禁点 | 不可点 |
 
+> **实现修正**：pill 位于 `ChatView`（只拿到 VM，macOS 经 `ChatPage(chatViewModel: currentTab.viewModel)`），
+> 故状态落在 **`ChatViewModel`**（`ephemeralIntent` / `conversationEphemeral` / `isEphemeral`），
+> `ChatTab.isEphemeral` 仅作顶栏数据源，由 `vm.onEphemeralChanged` 镜像。
+> 外观上无「圆点」（`IconButton` 是纯图标）：开=`theatermasks.fill` + accent，关=`theatermasks` + 次要色。
+> 「已销毁」态不可达：销毁后会话消失、tab 直接被关闭（见下「销毁静默」），无需禁用态。
+
 **两类会话的不同处理（关键）**：
 
-- **空白新会话**：点击只改 `ChatTab.ephemeralIntent`（**不建会话**，避免"点一下多一条空会话"）；首次发送时 `/chat` 带 `ephemeral=true`，创建即无痕。取消 = 改回 false，零副作用。
+- **空白新会话**：点击只改 `viewModel.ephemeralIntent`（**不建会话**，避免"点一下多一条空会话"）；首次发送时 `/chat` 带 `ephemeral=true`，创建即无痕（`done` 事件里 `promoteEphemeralIntent()` 转成服务端标记）。取消 = 改回 false，零副作用。
 - **已有会话**：点击调新增的 `PATCH /conversations/:id/ephemeral`，把 `Extra.Ephemeral` 置 true；再点置 false。
   - **必须补挂 session_end 任务**：否则已无 pending 任务的闲置老会话会出现"标了却不销毁"空窗（`ephemeral-conversation.md:94`）。置 true 时经 B3 排一个 `now + SessionGapMinutes` 的 session_end 任务，让现有 debounce/销毁链路接管。
-  - **默认会话禁止无痕**（`ephemeral-conversation.md:9`），pill 对默认会话禁用并给 help。
-- **老会话转无痕不弹二次确认**（D4）：靠 pill 高亮 + 可撤销 + hover help 明示「Stage A 后不可逆」。
+  - **默认会话禁止无痕**（`ephemeral-conversation.md:9`）：客户端 `Conversation` 模型无 `isDefault`，不做预判，**由服务端 B2 返回 400 兜底**，客户端 toast 提示。
+- **老会话转无痕不弹二次确认**（D4）：靠 pill 高亮 + 可撤销 + hover tooltip 明示「Stage A 后不可逆」。
+- **销毁静默（D10）**：会话在服务端消失（无痕销毁 / 归档 / 他端删除）时，客户端**不弹任何提示**，静默关 tab + 从列表移除（删 `ChatTabManager.handleConversationGone/handleConversationsGone` 与 iOS `ContentView` 三处 toast）。
 
-**文案**：`⚠️ 无痕：最后一轮对话约 30 分钟后自动销毁，可撤销`；hover help 补「Stage A 后不可逆」。
+**文案**（pill tooltip）：关=`开启无痕：会话结束后自动销毁（不可恢复）`；空白待生效=`无痕已开（待发送）：首条消息后生效，约 30 分钟后自动销毁，点击取消`；生效中=`无痕生效中：最后一轮对话约 30 分钟后自动销毁，可撤销（进入销毁后不可逆）`。
 
 ```
 普通：  [🎭 无痕] [模式] [模型] [Brief]                     [发送]
@@ -225,19 +232,26 @@ PiP：     cardGap*2 + rightSidebarMinWidth（中栏让位，右栏铺满）    
 **两条易漏的接线**：
 
 - **`InputBarLayoutState.swift:26` 的「新按钮补丁」必须同步**：老用户持久化集合里没有 `.ephemeral`，要加一行 `if !stored.contains(.ephemeral.rawValue) { restored.insert(.ephemeral) }`，否则新 pill 会落到"常驻行"，与 D2 正好相反。（该文件已为 `brief` 写过同样的补丁。）
-- **`ChatTab` 新增 `ephemeralIntent: Bool` 字段**（`ChatTabManager.swift:18-39`），且 `resetForNewChat()`（`:224-228`）要一并把它重置为 `false`，否则新建会话残留上一次的无痕意图。
+- **无痕状态放 `ChatViewModel` 而非 `ChatTab`**：pill 在 `ChatView` 里，而 `ChatView` 只拿到 VM。VM 持 `ephemeralIntent` / `conversationEphemeral` / `onEphemeralChanged`；`resetForNewChat()` 一并清零；`ChatTabManager` 建 tab 时挂 `vm.onEphemeralChanged = { tab.isEphemeral = $0 }`，`openConversation` 经 `vm.seedEphemeral(ephemeral ?? false)` 灌入服务端标记。
+- `D8` 删掉 `newEphemeralChat()` 后，`APIClient.createConversation(ephemeral:)` 变死码 → **已一并删掉 `ephemeral` 参数**（pill 空白流程改走 `/chat {ephemeral:true}`）。
 
 ### 4.4 后端改动
 
 | # | 文件 | 改动 | 量 |
 |---|------|------|-----|
 | B1 | `controller/chat.go` | `/chat` 请求体新增 `ephemeral bool`，仅在新建会话分支生效（现有 `IsDefault/AgentID/init_mode` 旁） | ~5 行 |
-| B2 | `controller/router.go` + `controller/conversations.go` | 新增 `PATCH /api/conversations/:id/ephemeral`，对齐现有 `PATCH /:id/mode`（`conversations.go:703`）；请求 `{ephemeral: bool}`；`requireConversationOwner` → `convRepo.UpdateExtraField`（`conversation_repo.go:350`）写 `Extra.Ephemeral`；返回 `{id, ephemeral}` | ~20 行 |
-| B3 | `controller/conversations.go` + `controller/router.go` + `appinit/router.go` + `agent/cron_runner.go` | B2 置 true 时补挂 session_end 任务。**注意接线**：`RouterConfig`（`router.go:24-54`）**没有 CronRunner**，需加一个 `NotifySessionEnd func(userID, convID, userMsgID string)` 字段并在 `appinit/router.go:168` 注入（搬 `appinit/agents.go:241-246` 同款 `BackgroundTasksDisabled()` 守卫）。另**必须把 `cron_runner.go:315/339` 的 `userMsgID[:8]` 日志改为 nil-safe**（`truncate(userMsgID)`）——转无痕时无新消息，传空串会 panic。默认会话拒绝（400） | ~15 行 |
+| B2 | `controller/router.go` + `controller/conversations.go` | 新增 `PATCH /api/conversations/:id/ephemeral`，对齐现有 `PATCH /:id/mode`（`conversations.go:703`）；请求 `{ephemeral: bool}`；`requireConversationOwner` → 再 `FindByID` 取 conv 判 `IsDefault`（默认会话置 true → 400 `默认会话不能设为无痕`）→ `convRepo.UpdateExtraField`（`conversation_repo.go:350`）写 `Extra.Ephemeral`；返回 `{id, ephemeral}` | ~35 行 |
+| B3 | `controller/conversations.go` + `controller/router.go` + `appinit/router.go` + `agent/cron_runner.go` | B2 置 true 时补挂 session_end 任务。**注意接线**：`RouterConfig`（`router.go:24-54`）**没有 CronRunner**，加 `NotifySessionEnd func(userID, convID, userMsgID string)` 字段并在 `appinit/router.go` 注入（`agents.CronRunner` + `cfg.Server.BackgroundTasksDisabled()` 守卫，同 `appinit/agents.go:241-246`）。另**必须把 `cron_runner.go` 的 `userMsgID[:8]` 日志改为 nil-safe**（`shortID(userMsgID)`）——转无痕时无新消息，传空串会 panic；`debounceSessionEndTask` 在 `userMsgID==""` 时保留原 `LastMsgID`（取消无痕后后处理仍需锚点消息） | ~20 行 |
 
 不改：创建端点、销毁器、列表响应（`listConversations` 已返回 ephemeral，注意 `Extra==""` 时该 key 缺失，客户端按 false 处理）。销毁判定不依赖 `userMsgID`：`post_chat_group.go:89-94` 命中 `IsEphemeral` 直接 `BeginDestroy`，`lastMsgID` 只走非无痕分支。
 
-备注：D8 删掉 `newEphemeralChat()` 后，`APIClient.createConversation(ephemeral:)` 可能变死码（pill 空白流程改走 `/chat {ephemeral:true}`）；实现时确认，是则一并清。
+**B3 已知边界（有意接受）**：`notifySessionEnd(userID, convID, "")` 补挂任务时无新消息——
+- 若该会话**已有** pending session_end（用户刚聊过）：`debounceSessionEndTask` 检测 `userMsgID==""` 时保留原 `LastMsgID`，取消无痕后后处理照常。
+- 若**没有** pending（闲置老会话）：走 `createSessionEndTask`，`LastMsgID` 落空串。此时该会话的上一 session 早已处理完（否则不会有 pending 被消化），后续取消无痕 → 到期 `GetByID("")` 返回 nil、后处理静默跳过，属**无副作用**（没有新内容可处理）。故不额外回查锚点。
+
+**无痕标记的下发路径（P1 修正）**：`GET /conversations/:id/messages-v2` 的响应新增 `ephemeral` 字段（服务端从 `conv.Extra` 解析）。客户端 `loadConversation` 统一 `seedEphemeral(result.ephemeral ?? false)`，覆盖 openConversation / iOS 直连 / 历史回退全部加载路径，避免只在 `openConversation` 注入造成 pill 状态与服务端不一致。
+
+备注：D8 删掉 `newEphemeralChat()` 后，`APIClient.createConversation(ephemeral:)` 变死码 → **已一并清掉该参数**（pill 空白流程改走 `/chat {ephemeral:true}`）。
 
 ### 4.5 旧入口 / 快捷键清理
 
@@ -272,6 +286,7 @@ PiP：     cardGap*2 + rightSidebarMinWidth（中栏让位，右栏铺满）    
 - **D7**：接受放弃"自动收窄左栏"，窗口最小宽按 §4.1.3 收敛。
 - **D8**：**删 ⌘⇧N**（`onNewEphemeralChat`）；`newEphemeralChat()` 一并删。
 - **D9**：顶栏左区 **ⓑ 单开 leading View**（不动 registry / `TopBarButton` 模型）。
+- **D10**：无痕/会话在服务端消失时**静默销毁**——不弹提示，静默关 tab + 移除列表项（范围＝一切「会话消失」，含他端删除）。
 
 ## 7. 估算（开工前）
 

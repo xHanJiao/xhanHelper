@@ -268,6 +268,15 @@ func intervalLabel(d time.Duration) string {
 	return d.String()
 }
 
+// shortID 取前 8 字符用于日志。转无痕补挂 session_end 时无新消息，userMsgID 可能为空，
+// 直接 [:8] 会越界 panic。
+func shortID(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
+}
+
 // NotifySessionEnd 对话结束时入队 session_end 后处理任务。
 // 每次 chat 结束都调——enqueue 内部的去重 + 延迟重置保证不重复处理。
 func (cr *CronRunner) NotifySessionEnd(userID, convID, userMsgID string) {
@@ -302,7 +311,16 @@ func (cr *CronRunner) debounceSessionEndTask(t *model.DelayedTask, convID, userM
 	now := time.Now().In(config.BJ) // 统一使用北京时间
 	newTime := now.Add(gapDuration)
 
-	newMeta, err := json.Marshal(model.DelayedTaskMeta{ConvID: convID, LastMsgID: userMsgID})
+	// 转无痕补挂任务没有新消息（userMsgID 为空）：保留原 LastMsgID，
+	// 否则用户随后取消无痕时，后处理拿不到锚点消息。
+	lastMsgID := userMsgID
+	if userMsgID == "" {
+		if meta, err := t.ParseMeta(); err == nil {
+			lastMsgID = meta.LastMsgID
+		}
+	}
+
+	newMeta, err := json.Marshal(model.DelayedTaskMeta{ConvID: convID, LastMsgID: lastMsgID})
 	if err != nil {
 		log.Printf("[cron] debounceSessionEndTask marshal error: %v", err)
 		return
@@ -312,7 +330,7 @@ func (cr *CronRunner) debounceSessionEndTask(t *model.DelayedTask, convID, userM
 		return
 	}
 	log.Printf("[cron] session_end task debounced: id=%s new_process_at=%s last_msg=%s",
-		t.ID[:8], newTime.In(config.BJ).Format("15:04:05"), userMsgID[:8])
+		t.ID[:8], newTime.In(config.BJ).Format("15:04:05"), shortID(userMsgID))
 }
 
 // createSessionEndTask 新建一条 session_end 延迟任务。
@@ -336,7 +354,7 @@ func (cr *CronRunner) createSessionEndTask(userID, convID, userMsgID string) {
 		return
 	}
 	log.Printf("[cron] session_end task created: id=%s conv=%s process_at=%s last_msg=%s",
-		job.ID[:8], convID[:8], job.ProcessAt.In(config.BJ).Format("15:04:05"), userMsgID[:8])
+		job.ID[:8], convID[:8], job.ProcessAt.In(config.BJ).Format("15:04:05"), shortID(userMsgID))
 }
 
 // Start 启动调度循环（阻塞，用 goroutine 调用）

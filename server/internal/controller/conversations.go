@@ -193,26 +193,27 @@ func listConversations(convRepo *service.ConversationRepo, agentRepo *service.Ag
 	}
 }
 
-// requireConversationOwner 校验会话归属，非 owner 返回 403，未找到返回 404
-func requireConversationOwner(c *gin.Context, convRepo *service.ConversationRepo, convID string) bool {
+// requireConversationOwner 校验会话归属，非 owner 返回 403，未找到返回 404。
+// 返回会话对象供调用方复用（避免同一请求二次查询）。
+func requireConversationOwner(c *gin.Context, convRepo *service.ConversationRepo, convID string) (*model.Conversation, bool) {
 	conv, err := convRepo.FindByID(c.Request.Context(), convID)
 	if err != nil || conv == nil {
 		view.JSONError(c, 404, "conversation not found")
-		return false
+		return nil, false
 	}
 	userID := c.GetString("user_id")
 	if conv.UserID != userID {
 		view.JSONError(c, 403, "access denied")
-		return false
+		return nil, false
 	}
-	return true
+	return conv, true
 }
 
 func getMessages(convRepo *service.ConversationRepo,
 	msgRepo *service.MessageRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
-		if !requireConversationOwner(c, convRepo, convID) {
+		if _, ok := requireConversationOwner(c, convRepo, convID); !ok {
 			return
 		}
 		msgs, err := msgRepo.ListByConversationRecent(c.Request.Context(), convID, 100)
@@ -229,7 +230,8 @@ func getMessages(convRepo *service.ConversationRepo,
 func getMessagesCursor(msgRepo *service.MessageRepo, convRepo *service.ConversationRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
-		if !requireConversationOwner(c, convRepo, convID) {
+		conv, ok := requireConversationOwner(c, convRepo, convID)
+		if !ok {
 			return
 		}
 		limit, _ := strconv.Atoi(c.DefaultQuery("limit", strconv.Itoa(service.DefaultCursorRounds)))
@@ -243,8 +245,30 @@ func getMessagesCursor(msgRepo *service.MessageRepo, convRepo *service.Conversat
 			return
 		}
 		result.Messages = cleanMessages(result.Messages)
-		view.JSONOK(c, result)
+		// 带上无痕标记：客户端各加载路径（openConversation / iOS 直连 / 历史回退）统一从此灌入 VM，
+		// 避免只在 openConversation 注入导致 pill 状态与服务端不一致。
+		view.JSONOK(c, gin.H{
+			"messages":        result.Messages,
+			"has_more_before": result.HasMoreBefore,
+			"has_more_after":  result.HasMoreAfter,
+			"oldest_cursor":   result.OldestCursor,
+			"newest_cursor":   result.NewestCursor,
+			"ephemeral":       convExtraEphemeral(conv),
+		})
 	}
+}
+
+// convExtraEphemeral 从会话 Extra JSON 读无痕标记（缺省/空 extra 视为 false）。
+func convExtraEphemeral(conv *model.Conversation) bool {
+	if conv == nil || conv.Extra == "" || conv.Extra == "{}" {
+		return false
+	}
+	var extra model.ConversationExtra
+	if err := json.Unmarshal([]byte(conv.Extra), &extra); err != nil {
+		log.Printf("[conv] parse extra error: id=%s err=%v", conv.ID, err)
+		return false
+	}
+	return extra.Ephemeral
 }
 
 // getConversationUsage 返回会话的上下文 token 用量与消耗金额。
@@ -258,7 +282,7 @@ func getConversationUsage(
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
-		if !requireConversationOwner(c, convRepo, convID) {
+		if _, ok := requireConversationOwner(c, convRepo, convID); !ok {
 			return
 		}
 		ctx := c.Request.Context()
@@ -520,7 +544,7 @@ func deleteMessage(msgRepo *service.MessageRepo, convRepo *service.ConversationR
 	return func(c *gin.Context) {
 		convID := c.Param("id")
 		msgID := c.Param("msgId")
-		if !requireConversationOwner(c, convRepo, convID) {
+		if _, ok := requireConversationOwner(c, convRepo, convID); !ok {
 			return
 		}
 		userID := c.GetString("user_id")
@@ -536,7 +560,7 @@ func deleteMessage(msgRepo *service.MessageRepo, convRepo *service.ConversationR
 func renameConversation(convRepo *service.ConversationRepo, agentRepo *service.AgentRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
-		if !requireConversationOwner(c, convRepo, convID) {
+		if _, ok := requireConversationOwner(c, convRepo, convID); !ok {
 			return
 		}
 		var req struct {
@@ -636,7 +660,7 @@ func stopChat(convRepo *service.ConversationRepo) gin.HandlerFunc {
 			view.JSONError(c, 400, "conversation_id is required")
 			return
 		}
-		if !requireConversationOwner(c, convRepo, req.ConversationID) {
+		if _, ok := requireConversationOwner(c, convRepo, req.ConversationID); !ok {
 			return
 		}
 		if chatStops.Stop(req.ConversationID) {
@@ -651,7 +675,7 @@ func stopChat(convRepo *service.ConversationRepo) gin.HandlerFunc {
 func deleteConversation(convRepo *service.ConversationRepo, destroyer *agent.EphemeralDestroyer) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
-		if !requireConversationOwner(c, convRepo, convID) {
+		if _, ok := requireConversationOwner(c, convRepo, convID); !ok {
 			return
 		}
 
@@ -686,7 +710,7 @@ func deleteConversation(convRepo *service.ConversationRepo, destroyer *agent.Eph
 func restoreConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
-		if !requireConversationOwner(c, convRepo, convID) {
+		if _, ok := requireConversationOwner(c, convRepo, convID); !ok {
 			return
 		}
 		if err := convRepo.Restore(c.Request.Context(), convID); err != nil {
@@ -703,7 +727,7 @@ func restoreConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 func updateConversationMode(convRepo *service.ConversationRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
-		if !requireConversationOwner(c, convRepo, convID) {
+		if _, ok := requireConversationOwner(c, convRepo, convID); !ok {
 			return
 		}
 		var req struct {
@@ -727,11 +751,49 @@ func updateConversationMode(convRepo *service.ConversationRepo) gin.HandlerFunc 
 	}
 }
 
+// updateConversationEphemeral — 切换已有会话的无痕标记。
+// 置 true 时经 notifySessionEnd 补挂 session_end 销毁任务（否则闲置老会话会「标了却不销毁」，
+// 现有 debounce/销毁链路靠该任务接管）；默认会话禁止无痕（400，避免默认会话被自动销毁）。
+func updateConversationEphemeral(convRepo *service.ConversationRepo,
+	notifySessionEnd func(userID, convID, userMsgID string)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		convID := c.Param("id")
+		conv, ok := requireConversationOwner(c, convRepo, convID)
+		if !ok {
+			return
+		}
+		var req struct {
+			Ephemeral bool `json:"ephemeral"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			view.JSONError(c, 400, "invalid request")
+			return
+		}
+		userID := c.GetString("user_id")
+		if req.Ephemeral && conv.IsDefault {
+			view.JSONError(c, 400, "默认会话不能设为无痕")
+			return
+		}
+		if err := convRepo.UpdateExtraField(c.Request.Context(), convID, func(extra *model.ConversationExtra) {
+			extra.Ephemeral = req.Ephemeral
+		}); err != nil {
+			log.Printf("[conv] SetEphemeral error: id=%s err=%v", convID, err)
+			view.JSONError(c, 500, "update ephemeral failed")
+			return
+		}
+		if req.Ephemeral {
+			notifySessionEnd(userID, convID, "")
+		}
+		log.Printf("[conv] ephemeral switched: conv=%s ephemeral=%v (user=%s)", convID, req.Ephemeral, userID)
+		view.JSONOK(c, gin.H{"id": convID, "ephemeral": req.Ephemeral})
+	}
+}
+
 // getConversationPlan — 获取当前会话的执行计划（todo，前端展示用）。
 func getConversationPlan(convRepo *service.ConversationRepo, planRepo *service.ConversationPlanRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		convID := c.Param("id")
-		if !requireConversationOwner(c, convRepo, convID) {
+		if _, ok := requireConversationOwner(c, convRepo, convID); !ok {
 			return
 		}
 		userID := c.GetString("user_id")

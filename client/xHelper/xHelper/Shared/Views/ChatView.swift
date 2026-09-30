@@ -454,6 +454,18 @@ struct ChatView: View {
                 viewModel.toggleBriefAnswer()
                 resetExtrasAutoCollapse()
             }
+        case .ephemeral:
+            // 无痕：空白 tab 只改本地意图（首条消息落库）；已有会话 PATCH 落库。
+            // 默认会话禁止无痕（服务端 400 兜底 + toast），此处不预判。
+            EphemeralPill(
+                context: ctx,
+                isOn: viewModel.isEphemeral,
+                isBlank: (viewModel.conversationId ?? "").isEmpty,
+                isEnabled: !viewModel.isTogglingEphemeral
+            ) {
+                viewModel.toggleEphemeral()
+                resetExtrasAutoCollapse()
+            }
         case .handoff:
             // 会话接力：整理成文档并开新会话续接。计划模式不能写文档，
             // 故 plan/严格档下置灰（tooltip 说明原因），非流式、非空会话才可用。

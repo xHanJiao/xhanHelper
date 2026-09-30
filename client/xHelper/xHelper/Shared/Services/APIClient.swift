@@ -41,11 +41,9 @@ class APIClient {
     }
 
     /// 创建新会话（空白 tab 点击智能体绑定时用），agentID 可选绑定。
-    /// ephemeral=true 创建无痕会话（窗口结束后硬销毁）。
-    func createConversation(agentID: String? = nil, ephemeral: Bool = false) async throws -> Conversation {
+    func createConversation(agentID: String? = nil) async throws -> Conversation {
         var body: [String: Any] = [:]
         if let aid = agentID { body["agent_id"] = aid }
-        if ephemeral { body["ephemeral"] = true }
         return try await post("/api/conversations", body: body)
     }
 
@@ -58,6 +56,12 @@ class APIClient {
     /// 切换会话模式（"work" | "plan" | "strict"）。模式只能由用户/客户端切换，LLM 无控制权。
     func updateConversationMode(id: String, mode: String) async throws {
         try await patch("/api/conversations/\(id)/mode", body: ["mode": mode])
+    }
+
+    /// 切换已有会话的无痕标记。服务端置 true 时会补挂 session_end 销毁任务；
+    /// 默认会话禁止无痕（服务端 400）。
+    func setConversationEphemeral(id: String, ephemeral: Bool) async throws {
+        try await patch("/api/conversations/\(id)/ephemeral", body: ["ephemeral": ephemeral])
     }
 
     /// 获取当前会话的执行计划（todo，丑版展示用）
@@ -880,6 +884,8 @@ struct CursorMessages: Codable {
     let hasMoreAfter: Bool
     let oldestCursor: String
     let newestCursor: String
+    /// 会话无痕标记（缺省=false）。各加载路径统一从此灌入 ChatViewModel。
+    let ephemeral: Bool?
 
     enum CodingKeys: String, CodingKey {
         case messages
@@ -887,6 +893,7 @@ struct CursorMessages: Codable {
         case hasMoreAfter = "has_more_after"
         case oldestCursor = "oldest_cursor"
         case newestCursor = "newest_cursor"
+        case ephemeral
     }
 }
 

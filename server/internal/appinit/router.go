@@ -195,6 +195,12 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		AuthMiddleware:       authMW,
 		BackupService:        backupSvc,
 		Activity:             activityStore,
+		NotifySessionEnd: func(userID, convID, userMsgID string) {
+			if cfg.Server.BackgroundTasksDisabled() {
+				return
+			}
+			agents.CronRunner.NotifySessionEnd(userID, convID, userMsgID)
+		},
 	})
 
 	controller.RegisterReflectionRoutes(&controller.ReflectionRoutesConfig{

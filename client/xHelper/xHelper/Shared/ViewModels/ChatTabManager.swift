@@ -95,6 +95,7 @@ final class ChatTabManager: ObservableObject {
         }
         let vm = makeViewModel()
         let tab = ChatTab(id: UUID().uuidString, conversationId: nil, title: "新对话", viewModel: vm)
+        vm.onEphemeralChanged = { [weak tab] in tab?.isEphemeral = $0 }
         vm.onConversationCreated = { [weak self] cid, title in
             self?.handleConversationCreated(cid: cid, title: title)
         }
@@ -119,24 +120,11 @@ final class ChatTabManager: ObservableObject {
         vm.sendMessage(ChatViewModel.handoffTrigger(title: docTitle, id: docID), baseURL: baseURL, token: token)
     }
 
-    /// 新建无痕会话：无痕标记必须在后端创建会话时落库，故先创建再打开。
-    /// 与 newChat 不同——空 tab 无法携带无痕标记（首条消息才建会话）。
-    func newEphemeralChat() async {
-        do {
-            let conv = try await makeViewModel().apiClient.createConversation(ephemeral: true)
-            await openConversation(id: conv.id, title: conv.title, pushHistory: true, ephemeral: true)
-            NotificationCenter.default.post(name: .conversationListNeedsRefresh, object: nil)
-        } catch {
-            LogBuffer.shared.error("ChatTabManager.newEphemeralChat: \(error)")
-            ToastCenter.shared.show("创建无痕会话失败：\(error.localizedDescription)")
-        }
-    }
-
     /// 打开会话：缓存命中则切换恢复；未命中则新建 tab 并加载。切换时会销毁空 tab。
     /// pushHistory=true 表示用户主动切换，写入会话历史（< > 导航）；程序性切换（启动/提醒/回退驱动）传 false。
     func openConversation(id: String, title: String, pushHistory: Bool = false, mode: String? = nil, ephemeral: Bool? = nil) async {
         if let existing = tabs.first(where: { $0.conversationId == id }) {
-            if let ephemeral { existing.isEphemeral = ephemeral }
+            if let ephemeral { existing.viewModel.seedEphemeral(ephemeral) }
             activate(existing)
             if pushHistory { pushHistoryEntry(id) }
             return
@@ -156,9 +144,11 @@ final class ChatTabManager: ObservableObject {
             DocumentSelectionCoordinator.shared.openDocument(id: id)
         }
         let tab = ChatTab(id: id, conversationId: id, title: title, viewModel: vm, isEphemeral: ephemeral ?? false)
+        vm.onEphemeralChanged = { [weak tab] in tab?.isEphemeral = $0 }
         tabs.append(tab)
         activate(tab)
         if pushHistory { pushHistoryEntry(id) }
+        vm.seedEphemeral(ephemeral ?? false)
         await vm.loadConversation(id: id, title: title, mode: mode)
         enforceCacheLimit()
     }
@@ -250,17 +240,16 @@ final class ChatTabManager: ObservableObject {
         NotificationCenter.default.post(name: .conversationListNeedsRefresh, object: nil)
     }
 
-    /// 会话在服务端已消失（如无痕会话被销毁）：关闭对应 tab（复用 close 的自动切换逻辑）、
-    /// 通知会话列表本地移除该条、提示用户。
+    /// 会话在服务端已消失（如无痕会话被销毁）：静默关闭对应 tab（复用 close 的自动切换逻辑）、
+    /// 通知会话列表本地移除该条。不弹提示（销毁是预期行为）。
     private func handleConversationGone(_ cid: String) {
         guard !cid.isEmpty else { return }
         LogBuffer.shared.warning("ChatTabManager: conversation gone, closing tab cid=\(cid)")
         close(conversationId: cid)
         NotificationCenter.default.post(name: .conversationRemoved, object: nil, userInfo: ["id": cid])
-        ToastCenter.shared.show("会话不存在或已被销毁")
     }
 
-    /// 批量：刷新发现无痕会话已销毁。仅关闭仍开着的 tab（已被 404 路径关掉的静默跳过，避免重复提示）。
+    /// 批量：刷新发现无痕会话已销毁。只关闭仍开着的 tab（已被 404 路径关掉的静默跳过）。
     private func handleConversationsGone(_ ids: [String]) {
         let open = Set(tabs.compactMap { $0.conversationId })
         let hits = ids.filter { open.contains($0) }
@@ -269,7 +258,6 @@ final class ChatTabManager: ObservableObject {
         for id in hits {
             close(conversationId: id)
         }
-        ToastCenter.shared.show("会话不存在或已被销毁")
     }
 
     private func enforceCacheLimit() {

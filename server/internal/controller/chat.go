@@ -123,6 +123,8 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			AgentID        *string                `json:"agent_id"`
 			Memory         retrieval.SourceConfig `json:"memory"`
 			InitMode       string                 `json:"init_mode"` // 可选：仅新建会话时应用的初始模式（work/plan/strict）；已有会话忽略
+			// 无痕：仅新建会话时生效（空 tab 开了无痕意图 → 首条消息建会话即标记）。默认会话忽略。
+			Ephemeral bool `json:"ephemeral"`
 
 			// Attachments — 附件图片的图床 id 列表（先经 POST /api/images/upload 上传拿到）
 			Attachments []string `json:"attachments"`
@@ -178,6 +180,14 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			// （仅 plan/strict 有意义，非法值忽略，兼容旧客户端）
 			if model.ModeRestrictsTools(req.InitMode) {
 				conv.Mode = req.InitMode
+			}
+			// 无痕：仅新建非默认会话时落库（默认会话禁止无痕，静默忽略）。
+			if req.Ephemeral && !conv.IsDefault {
+				if b, err := json.Marshal(model.ConversationExtra{Ephemeral: true}); err != nil {
+					log.Printf("[chat] marshal ephemeral extra error: %v", err)
+				} else {
+					conv.Extra = string(b)
+				}
 			}
 			if err := convRepo.Create(c.Request.Context(), conv); err != nil {
 				log.Printf("[chat] CreateConversation error: %v", err)

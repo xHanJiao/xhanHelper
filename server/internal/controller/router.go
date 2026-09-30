@@ -51,6 +51,9 @@ type RouterConfig struct {
 	AuthMiddleware       gin.HandlerFunc // Bearer 认证（含本地单用户直通），由装配层构造一次
 	BackupService        *backup.Service // 仅本地模式创建；nil 则不注册备份路由
 	Activity             *activity.Store // 客户端埋点上报落点；nil（采集关闭）时该路由返回 503
+	// NotifySessionEnd 补挂 session_end 后处理任务（会话转无痕时用，令现有销毁链路接管）。
+	// 由装配层注入，含后台任务开关守卫（关闭后台任务时短路）。
+	NotifySessionEnd func(userID, convID, userMsgID string)
 }
 
 // NewRouter 注册所有路由
@@ -114,6 +117,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.DELETE("/conversations/:id/messages/:msgId", deleteMessage(rc.MsgRepo, rc.ConvRepo))
 		auth.PATCH("/conversations/:id", renameConversation(rc.ConvRepo, rc.AgentRepo))
 		auth.PATCH("/conversations/:id/mode", updateConversationMode(rc.ConvRepo))
+		auth.PATCH("/conversations/:id/ephemeral", updateConversationEphemeral(rc.ConvRepo, rc.NotifySessionEnd))
 		auth.GET("/conversations/:id/plans", getConversationPlan(rc.ConvRepo, rc.PlanRepo))
 		auth.GET("/conversations/:id/usage", getConversationUsage(rc.ConvRepo, rc.MsgRepo, rc.LlmCostRepo, rc.LlmPriceRepo, rc.Cfg))
 		auth.DELETE("/conversations/:id", deleteConversation(rc.ConvRepo, rc.Destroyer))

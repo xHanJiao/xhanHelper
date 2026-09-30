@@ -20,7 +20,7 @@ func setupDocumentRepo(t *testing.T) (*DocumentRepo, *gorm.DB, func()) {
 	if err != nil {
 		t.Fatalf("failed to open db: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Document{}, &model.DocumentAnnotation{}, &model.DocumentShare{}); err != nil {
+	if err := db.AutoMigrate(&model.Document{}, &model.DocumentAnnotation{}, &model.DocumentAnnotationReply{}, &model.DocumentShare{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
 	cleanup := func() {

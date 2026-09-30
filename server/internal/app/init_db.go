@@ -41,6 +41,7 @@ func AllModels() []any {
 		&model.DelayedTask{},
 		&model.Document{},
 		&model.DocumentAnnotation{},
+		&model.DocumentAnnotationReply{},
 		&model.DocumentShare{},
 		&model.MessageShare{},
 		&model.ContentVersion{},

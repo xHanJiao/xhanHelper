@@ -148,7 +148,7 @@ func (r *DocumentRepo) PurgeAll(ctx context.Context, userID string) (int64, erro
 	return r.purge(ctx, "user_id = ? AND status = ?", userID, model.DocumentStatusDeleted)
 }
 
-// purge 物理删除满足条件的软删文档及其批注、分享链接。批量 IN，无循环查库；返回物理删除的文档数。
+// purge 物理删除满足条件的软删文档及其批注回复/批注、分享链接。批量 IN，无循环查库；返回物理删除的文档数。
 func (r *DocumentRepo) purge(ctx context.Context, where string, args ...any) (int64, error) {
 	var ids []string
 	if err := r.db.WithContext(ctx).Model(&model.Document{}).
@@ -160,6 +160,9 @@ func (r *DocumentRepo) purge(ctx context.Context, where string, args ...any) (in
 	}
 
 	err := r.db.WithContext(activity.WithNoEvent(ctx)).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("document_id IN ?", ids).Delete(&model.DocumentAnnotationReply{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("document_id IN ?", ids).Delete(&model.DocumentAnnotation{}).Error; err != nil {
 			return err
 		}

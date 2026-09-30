@@ -22,7 +22,7 @@ func setupDocumentTool(t *testing.T) (*DocumentTool, func()) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Document{}, &model.ContentVersion{}, &model.DocumentAnnotation{}); err != nil {
+	if err := db.AutoMigrate(&model.Document{}, &model.ContentVersion{}, &model.DocumentAnnotation{}, &model.DocumentAnnotationReply{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	// :memory: 每个连接一个独立库，限制单连接让并发测试共用同一内存库
@@ -31,7 +31,8 @@ func setupDocumentTool(t *testing.T) (*DocumentTool, func()) {
 	}
 	docRepo := service.NewDocumentRepo(db)
 	annoRepo := service.NewDocumentAnnotationRepo(db)
-	return NewDocumentTool(docRepo, annoRepo), func() {}
+	replyRepo := service.NewDocumentAnnotationReplyRepo(db)
+	return NewDocumentTool(docRepo, annoRepo, replyRepo), func() {}
 }
 
 func TestDocumentGetAndUpdate(t *testing.T) {
@@ -1354,5 +1355,79 @@ func TestDocumentConcurrentUpdateNoLostUpdate(t *testing.T) {
 		if !strings.Contains(final, m+"_done") {
 			t.Errorf("marker %d 的改动被覆盖：%s", i, final)
 		}
+	}
+}
+
+func setupDocumentToolWithRepos(t *testing.T) (*DocumentTool, *service.DocumentAnnotationRepo, func()) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.Document{}, &model.DocumentAnnotation{}, &model.DocumentAnnotationReply{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
+	docRepo := service.NewDocumentRepo(db)
+	annoRepo := service.NewDocumentAnnotationRepo(db)
+	replyRepo := service.NewDocumentAnnotationReplyRepo(db)
+	return NewDocumentTool(docRepo, annoRepo, replyRepo), annoRepo, func() {}
+}
+
+func TestDocumentAnnotationReplyAndList(t *testing.T) {
+	tool, annoRepo, cleanup := setupDocumentToolWithRepos(t)
+	defer cleanup()
+	ctx := context.Background()
+	ec := &ExecuteContext{Ctx: ctx, UserID: "u1"}
+
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "t", "content": "hello world"}))
+	if !res.Success {
+		t.Fatalf("create doc: %s", res.Error)
+	}
+	var created map[string]interface{}
+	if err := json.Unmarshal(res.Data, &created); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	docID := created["id"].(string)
+
+	if err := annoRepo.Create(ctx, &model.DocumentAnnotation{ID: "a1", UserID: "u1", DocumentID: docID, Quote: "hello", Note: "why"}); err != nil {
+		t.Fatalf("seed annotation: %v", err)
+	}
+
+	// 空 content 应被拒
+	res = tool.Execute(ec, "reply_annotation", mustMarshal(t, map[string]string{"annotation_id": "a1", "content": "  "}))
+	if res.Success {
+		t.Fatal("空 content 应失败")
+	}
+
+	res = tool.Execute(ec, "reply_annotation", mustMarshal(t, map[string]string{"annotation_id": "a1", "content": "because"}))
+	if !res.Success {
+		t.Fatalf("reply_annotation: %s", res.Error)
+	}
+
+	res = tool.Execute(ec, "list_annotations", mustMarshal(t, map[string]string{"document_id": docID}))
+	if !res.Success {
+		t.Fatalf("list_annotations: %s", res.Error)
+	}
+	var out struct {
+		Annotations []struct {
+			ReplyCount int `json:"reply_count"`
+			Replies    []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"replies"`
+		} `json:"annotations"`
+	}
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if len(out.Annotations) != 1 || out.Annotations[0].ReplyCount != 1 {
+		t.Fatalf("list_annotations=%+v", out.Annotations)
+	}
+	r := out.Annotations[0].Replies
+	if len(r) != 1 || r[0].Role != "assistant" || r[0].Content != "because" {
+		t.Fatalf("replies=%+v", r)
 	}
 }

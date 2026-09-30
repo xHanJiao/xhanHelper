@@ -144,7 +144,16 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 	toolHandler := controller.NewToolHandler(repos.Tool)
 	promptHandler := controller.NewPromptHandler(repos.Prompt)
 	docHandler := controller.NewDocumentHandler(repos.Document)
-	annotationHandler := controller.NewAnnotationHandler(repos.DocumentAnnotation, repos.Document)
+	annotationReplier := agent.NewAnnotationReplier(&agent.AnnotationReplierConfig{
+		AnnoRepo:    repos.DocumentAnnotation,
+		DocRepo:     repos.Document,
+		ReplyRepo:   repos.DocumentAnnotationReply,
+		MsgRepo:     repos.Message,
+		SummaryRepo: repos.ConversationSummary,
+		Client:      llmClients.Flash, // 批注回复固定 Flash（与主聊天同源）
+		Registry:    tools.Registry,
+	})
+	annotationHandler := controller.NewAnnotationHandler(repos.DocumentAnnotation, repos.Document, repos.DocumentAnnotationReply, annotationReplier)
 	documentShareHandler := controller.NewDocumentShareHandler(repos.DocumentShare, cfg)
 	messageShareHandler := controller.NewMessageShareHandler(repos.MessageShare, cfg, repos.Conversation)
 	summaryHandler := controller.NewSummaryHandler(repos.ConversationSummary, repos.Message)

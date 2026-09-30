@@ -1,14 +1,17 @@
 package controller
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/agent"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
@@ -23,16 +26,29 @@ const (
 	maxAnnotationsPerDoc = 500
 	// maxAnchorHintLen 客户端传来的消歧前后文单侧上限（字），与 service.anchorContext 对齐
 	maxAnchorHintLen = 60
+	// maxAnnotationReplyLen 单条回复 / 追问上限（字）
+	maxAnnotationReplyLen = 4000
+	// maxRepliesPageSize 线程接口单页上限
+	maxRepliesPageSize = 200
 )
 
 // AnnotationHandler — 文档划线批注 API handler
 type AnnotationHandler struct {
-	annoRepo *service.DocumentAnnotationRepo
-	docRepo  *service.DocumentRepo
+	annoRepo  *service.DocumentAnnotationRepo
+	docRepo   *service.DocumentRepo
+	replyRepo *service.DocumentAnnotationReplyRepo
+	replier   *agent.AnnotationReplier
 }
 
-func NewAnnotationHandler(annoRepo *service.DocumentAnnotationRepo, docRepo *service.DocumentRepo) *AnnotationHandler {
-	return &AnnotationHandler{annoRepo: annoRepo, docRepo: docRepo}
+func NewAnnotationHandler(annoRepo *service.DocumentAnnotationRepo, docRepo *service.DocumentRepo, replyRepo *service.DocumentAnnotationReplyRepo, replier *agent.AnnotationReplier) *AnnotationHandler {
+	return &AnnotationHandler{annoRepo: annoRepo, docRepo: docRepo, replyRepo: replyRepo, replier: replier}
+}
+
+// annotationItem — 列表接口在批注对象上追加回复摘要（reply_count + last_reply）。
+type annotationItem struct {
+	model.DocumentAnnotation
+	ReplyCount int                            `json:"reply_count"`
+	LastReply  *model.DocumentAnnotationReply `json:"last_reply"`
 }
 
 // ListAnnotations GET /api/documents/:id/annotations?limit=&offset=
@@ -51,7 +67,104 @@ func (h *AnnotationHandler) ListAnnotations(c *gin.Context) {
 	if list == nil {
 		list = []model.DocumentAnnotation{}
 	}
-	view.JSONOK(c, gin.H{"annotations": list, "total": total})
+
+	// 回复摘要：两次批量查算 reply_count / last_reply，无 N+1（见设计 §5.1）
+	ids := make([]string, 0, len(list))
+	for _, a := range list {
+		ids = append(ids, a.ID)
+	}
+	counts, err := h.replyRepo.CountsByAnnotationIDs(c.Request.Context(), ids, userID)
+	if err != nil {
+		log.Printf("ListAnnotations: count replies doc=%s user=%s: %v", docID, userID, err)
+		view.JSONError(c, http.StatusInternalServerError, "查询划线与批注失败")
+		return
+	}
+	latest, err := h.replyRepo.LatestByAnnotationIDs(c.Request.Context(), ids, userID)
+	if err != nil {
+		log.Printf("ListAnnotations: latest replies doc=%s user=%s: %v", docID, userID, err)
+		view.JSONError(c, http.StatusInternalServerError, "查询划线与批注失败")
+		return
+	}
+	items := make([]annotationItem, 0, len(list))
+	for _, a := range list {
+		item := annotationItem{DocumentAnnotation: a, ReplyCount: int(counts[a.ID])}
+		if last, ok := latest[a.ID]; ok {
+			item.LastReply = &last
+		}
+		items = append(items, item)
+	}
+	view.JSONOK(c, gin.H{"annotations": items, "total": total})
+}
+
+// ListReplies GET /api/annotations/:id/replies?limit=&offset= — 拉完整线程（不含根批注）
+func (h *AnnotationHandler) ListReplies(c *gin.Context) {
+	userID := c.GetString("user_id")
+	id := c.Param("id")
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > maxRepliesPageSize {
+		limit = maxRepliesPageSize
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	if _, err := h.annoRepo.GetByID(c.Request.Context(), id, userID); err != nil {
+		view.JSONError(c, http.StatusNotFound, "划线与批注不存在")
+		return
+	}
+	list, total, err := h.replyRepo.ListByAnnotationID(c.Request.Context(), id, userID, limit, offset)
+	if err != nil {
+		log.Printf("ListReplies: list annotation=%s user=%s: %v", id, userID, err)
+		view.JSONError(c, http.StatusInternalServerError, "查询回复失败")
+		return
+	}
+	if list == nil {
+		list = []model.DocumentAnnotationReply{}
+	}
+	view.JSONOK(c, gin.H{"replies": list, "total": total})
+}
+
+// ReplyAnnotation POST /api/annotations/:id/reply — 生成一条 AI 回复（可选带追问），同步。
+func (h *AnnotationHandler) ReplyAnnotation(c *gin.Context) {
+	userID := c.GetString("user_id")
+	id := c.Param("id")
+
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		view.JSONError(c, http.StatusBadRequest, "参数格式错误")
+		return
+	}
+	req.Content = strings.TrimSpace(req.Content)
+	if utf8.RuneCountInString(req.Content) > maxAnnotationReplyLen {
+		view.JSONError(c, http.StatusBadRequest, "追问过长")
+		return
+	}
+
+	out, err := h.replier.Generate(c.Request.Context(), userID, id, req.Content)
+	if err != nil {
+		switch {
+		case errors.Is(err, agent.ErrAnnotationReplyBusy):
+			view.JSONError(c, http.StatusConflict, "该批注正在生成回复，请稍候")
+		case errors.Is(err, agent.ErrAnnotationReplyNotFound):
+			view.JSONError(c, http.StatusNotFound, "划线与批注不存在")
+		case errors.Is(err, agent.ErrAnnotationReplyLimit):
+			view.JSONError(c, http.StatusBadRequest, "该批注回复数量已达上限")
+		case errors.Is(err, agent.ErrAnnotationReplySave):
+			log.Printf("ReplyAnnotation: save annotation=%s user=%s: %v", id, userID, err)
+			view.JSONError(c, http.StatusInternalServerError, "保存回复失败")
+		default:
+			log.Printf("ReplyAnnotation: generate annotation=%s user=%s: %v", id, userID, err)
+			view.JSONError(c, http.StatusBadGateway, "生成回复失败")
+		}
+		return
+	}
+	view.JSONOK(c, gin.H{"added": out.Added, "reply_count": out.ReplyCount})
 }
 
 // CreateAnnotation POST /api/documents/:id/annotations
@@ -180,6 +293,11 @@ func (h *AnnotationHandler) DeleteAnnotation(c *gin.Context) {
 	if rows == 0 {
 		view.JSONError(c, http.StatusNotFound, "划线与批注不存在")
 		return
+	}
+
+	// 级联删该批注的回复线程。降级：回复残留不影响删除语义，失败只记日志。
+	if _, err := h.replyRepo.DeleteByAnnotation(c.Request.Context(), id, userID); err != nil {
+		log.Printf("DeleteAnnotation: delete replies annotation=%s user=%s: %v", id, userID, err)
 	}
 	view.JSONOK(c, gin.H{"deleted": true})
 }

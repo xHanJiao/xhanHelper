@@ -35,6 +35,12 @@ const (
 	maxDocPageSize = 50
 	// docPreviewLen list/query 的 preview（正文摘要）截断长度（字）。
 	docPreviewLen = 100
+	// maxAnnotationReplyLen 单条批注回复上限（字），与 controller 侧一致。
+	maxAnnotationReplyLen = 4000
+	// maxRepliesPerAnnotation 单条批注回复条数上限。
+	maxRepliesPerAnnotation = 100
+	// annotationRepliesPreview list_annotations 每条批注回带回复的条数上限。
+	annotationRepliesPreview = 20
 )
 
 // resolvePaging 解析列表类函数的 limit/offset：不传用默认值，负数或超上限报错（传 0 表示只取总数、返回空列表）。
@@ -169,14 +175,15 @@ const docLinkHint = "正文中引用其他文档时，写成 [文档标题](xhan
 
 // DocumentTool — 文档管理工具。仅在用户明确要求时使用，不要主动创建。
 type DocumentTool struct {
-	docRepo  *service.DocumentRepo
-	annoRepo *service.DocumentAnnotationRepo
+	docRepo   *service.DocumentRepo
+	annoRepo  *service.DocumentAnnotationRepo
+	replyRepo *service.DocumentAnnotationReplyRepo
 	// mu 按文档 ID 串行化「读快照→局部替换→整列写回」，避免并发 update 互相覆盖。
 	mu keyedMutex
 }
 
-func NewDocumentTool(docRepo *service.DocumentRepo, annoRepo *service.DocumentAnnotationRepo) *DocumentTool {
-	return &DocumentTool{docRepo: docRepo, annoRepo: annoRepo}
+func NewDocumentTool(docRepo *service.DocumentRepo, annoRepo *service.DocumentAnnotationRepo, replyRepo *service.DocumentAnnotationReplyRepo) *DocumentTool {
+	return &DocumentTool{docRepo: docRepo, annoRepo: annoRepo, replyRepo: replyRepo}
 }
 
 func (t *DocumentTool) Name() string { return "document" }
@@ -235,6 +242,19 @@ func (t *DocumentTool) Functions() []FuncSchema {
 					"offset":      map[string]interface{}{"type": "integer", "description": "偏移量，默认 0，不能为负"},
 				},
 				"required": []string{"document_id"},
+			},
+		},
+		{
+			Name:        "reply_annotation",
+			Display:     "回复批注",
+			Description: "针对用户在文档里划的某条线/写的批注，写一条 AI 回复进它的讨论线程。仅当用户要求你逐条回复批注时调用；annotation_id 从 list_annotations 里取。",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"annotation_id": map[string]interface{}{"type": "string", "description": "批注 ID（来自 list_annotations）"},
+					"content":       map[string]interface{}{"type": "string", "description": fmt.Sprintf("你要对这条批注说的话，≤%d 字", maxAnnotationReplyLen)},
+				},
+				"required": []string{"annotation_id", "content"},
 			},
 		},
 		{
@@ -322,6 +342,8 @@ func (t *DocumentTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 		return t.getDocument(ec, args)
 	case "list_annotations":
 		return t.listAnnotations(ec, args)
+	case "reply_annotation":
+		return t.replyAnnotation(ec, args)
 	case "update_document":
 		return t.updateDocument(ec, args)
 	case "query_documents":
@@ -619,26 +641,111 @@ func (t *DocumentTool) listAnnotations(ec *ExecuteContext, args json.RawMessage)
 		return &Result{Success: false, Error: "list annotations: " + err.Error()}
 	}
 
+	// 回复摘要 + 每条批注最近若干条回复（一次批量查，无 N+1）
+	ids := make([]string, 0, len(list))
+	for _, a := range list {
+		ids = append(ids, a.ID)
+	}
+	counts, err := t.replyRepo.CountsByAnnotationIDs(ec.Ctx, ids, ec.UserID)
+	if err != nil {
+		return &Result{Success: false, Error: "list annotation replies: " + err.Error()}
+	}
+	recent, err := t.replyRepo.ListRecentByAnnotationIDs(ec.Ctx, ids, ec.UserID, annotationRepliesPreview)
+	if err != nil {
+		return &Result{Success: false, Error: "list annotation replies: " + err.Error()}
+	}
+
+	type replyItem struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+		Created string `json:"created_at"`
+	}
 	type item struct {
-		Quote    string `json:"quote"`
-		Note     string `json:"note"`
-		Orphaned bool   `json:"orphaned"`
-		Created  string `json:"created_at"`
+		Quote            string      `json:"quote"`
+		Note             string      `json:"note"`
+		Orphaned         bool        `json:"orphaned"`
+		Created          string      `json:"created_at"`
+		ReplyCount       int64       `json:"reply_count"`
+		Replies          []replyItem `json:"replies"`
+		RepliesTruncated bool        `json:"replies_truncated"`
 	}
 	items := make([]item, 0, len(list))
 	for _, a := range list {
+		reps := recent[a.ID]
+		replyItems := make([]replyItem, 0, len(reps))
+		for _, rep := range reps {
+			replyItems = append(replyItems, replyItem{
+				Role:    rep.Role,
+				Content: rep.Content,
+				Created: rep.CreatedAt.Format("2006-01-02 15:04"),
+			})
+		}
 		items = append(items, item{
-			Quote:    a.Quote,
-			Note:     a.Note,
-			Orphaned: a.Orphaned,
-			Created:  a.CreatedAt.Format("2006-01-02 15:04"),
+			Quote:            a.Quote,
+			Note:             a.Note,
+			Orphaned:         a.Orphaned,
+			Created:          a.CreatedAt.Format("2006-01-02 15:04"),
+			ReplyCount:       counts[a.ID],
+			Replies:          replyItems,
+			RepliesTruncated: counts[a.ID] > int64(len(replyItems)),
 		})
 	}
 
 	data, _ := json.Marshal(map[string]interface{}{
 		"annotations": items,
 		"total":       total,
-		"hint":        "note 为空表示用户只划了线没写批注；orphaned 为 true 表示原文已被改写、这条划线已失活",
+		"hint":        "note 为空表示用户只划了线没写批注；orphaned 为 true 表示原文已被改写、这条划线已失活；replies 是该批注下已有的讨论",
+	})
+	return &Result{Success: true, Data: data}
+}
+
+// replyAnnotation — 向某条批注写入一条 AI 回复（指令/批量路径，Source=chat）。
+// 校验批注归属 / content 长度 / 回复数上限（与按钮路径同一套配额）。
+func (t *DocumentTool) replyAnnotation(ec *ExecuteContext, args json.RawMessage) *Result {
+	var req struct {
+		AnnotationID string `json:"annotation_id"`
+		Content      string `json:"content"`
+	}
+	if err := decodeArgs(args, &req); err != nil {
+		return &Result{Success: false, Error: err.Error()}
+	}
+	req.Content = strings.TrimSpace(req.Content)
+	if req.AnnotationID == "" || req.Content == "" {
+		return &Result{Success: false, Error: "annotation_id and content required"}
+	}
+	if utf8.RuneCountInString(req.Content) > maxAnnotationReplyLen {
+		return &Result{Success: false, Error: fmt.Sprintf("回复超长（≤%d 字）", maxAnnotationReplyLen)}
+	}
+
+	anno, err := t.annoRepo.GetByID(ec.Ctx, req.AnnotationID, ec.UserID)
+	if err != nil {
+		return &Result{Success: false, Error: "annotation not found"}
+	}
+	n, err := t.replyRepo.CountByAnnotation(ec.Ctx, req.AnnotationID, ec.UserID)
+	if err != nil {
+		return &Result{Success: false, Error: "count replies: " + err.Error()}
+	}
+	if n >= maxRepliesPerAnnotation {
+		return &Result{Success: false, Error: "该批注回复数量已达上限"}
+	}
+
+	rep := model.DocumentAnnotationReply{
+		ID:           uuid.New().String(),
+		AnnotationID: req.AnnotationID,
+		DocumentID:   anno.DocumentID,
+		UserID:       ec.UserID,
+		Role:         "assistant",
+		Content:      req.Content,
+		Source:       "chat",
+	}
+	if err := t.replyRepo.CreateBatch(ec.Ctx, []model.DocumentAnnotationReply{rep}); err != nil {
+		return &Result{Success: false, Error: "save reply: " + err.Error()}
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"id":            rep.ID,
+		"annotation_id": rep.AnnotationID,
+		"created_at":    rep.CreatedAt.Format("2006-01-02 15:04:05"),
 	})
 	return &Result{Success: true, Data: data}
 }

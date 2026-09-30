@@ -30,7 +30,7 @@ func setup(t *testing.T) (*gorm.DB, *activity.Store) {
 	if err != nil {
 		t.Fatalf("open main db: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Document{}, &model.DocumentAnnotation{}, &model.DocumentShare{}, &model.UserMemory{}, &model.Bill{}, &model.Reminder{}); err != nil {
+	if err := db.AutoMigrate(&model.Document{}, &model.DocumentAnnotation{}, &model.DocumentAnnotationReply{}, &model.DocumentShare{}, &model.UserMemory{}, &model.Bill{}, &model.Reminder{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	store, err := activity.Open(filepath.Join(t.TempDir(), "events.db"), true)

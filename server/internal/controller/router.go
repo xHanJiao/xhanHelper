@@ -166,6 +166,8 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		auth.PATCH("/annotations/:id", rc.AnnotationHandler.UpdateAnnotation)
 		auth.DELETE("/annotations/:id", rc.AnnotationHandler.DeleteAnnotation)
 		auth.POST("/annotations/:id/relocate", rc.AnnotationHandler.RelocateAnnotation)
+		auth.GET("/annotations/:id/replies", rc.AnnotationHandler.ListReplies)
+		auth.POST("/annotations/:id/reply", rc.AnnotationHandler.ReplyAnnotation)
 		auth.GET("/reminders", rc.ReminderHandler.ListReminders)
 		auth.POST("/reminders/:id/ack", rc.ReminderHandler.AckReminder)
 		auth.POST("/reminders/:id/cancel", rc.ReminderHandler.CancelReminder)

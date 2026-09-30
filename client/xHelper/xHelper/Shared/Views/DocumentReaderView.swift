@@ -43,17 +43,14 @@ final class DocumentReaderController: ObservableObject {
     fileprivate var loadedSignature = ""
     fileprivate weak var webView: WKWebView?
 
-    /// 文档 id（「问 AI」时用来判断"引用说的就是当前这篇吗"）
+    /// 文档 id（批注 / 划线接口用）
     let documentID: String
-    /// 文档标题：只用于「问 AI」时给引用带上语境（服务端渲染进 `document_quote` 的 title 属性）
-    private let documentTitle: String
     private let api: APIClient
     private var hasLoadedAnnotations = false
     private var isLoadingAnnotations = false
 
-    init(documentID: String, title: String, api: APIClient) {
+    init(documentID: String, api: APIClient) {
         self.documentID = documentID
-        self.documentTitle = title
         self.api = api
     }
 
@@ -75,23 +72,6 @@ final class DocumentReaderController: ObservableObject {
     func findPrev() { evaluate("reader.findPrev()") }
 
     func clearFind() { evaluate("reader.clearFind()") }
-
-    /// 「问 AI」：点引用胶囊跳回正文里那一段（滚过去 + 闪一下）。找不到就返回 false。
-    func revealQuote(_ quote: DocQuote) {
-        evaluateBool("reader.revealQuote(\(MarkdownWebUtils.jsString(quote.quote)), \(MarkdownWebUtils.jsString(quote.prefix)), \(MarkdownWebUtils.jsString(quote.suffix)))") { ok in
-            if !ok { ToastCenter.shared.show("这段文字已经不在正文里了") }
-        }
-    }
-
-    /// AI 回答存为批注：定位到引用那段 → 打开预填的批注浮层（用户可改再存，保存走既有 create/update）。
-    /// 正文里定位不到（或那段不是划线）时兜底：直接 POST，由服务端自己锚定。
-    func beginNoteFromAI(quote: DocQuote, note: String) {
-        let js = "reader.openNoteFromAI(\(MarkdownWebUtils.jsString(quote.quote)), \(MarkdownWebUtils.jsString(quote.prefix)), \(MarkdownWebUtils.jsString(quote.suffix)), \(MarkdownWebUtils.jsString(note)))"
-        evaluateBool(js) { [weak self] ok in
-            guard let self, !ok else { return }
-            Task { await self.create(quote: quote.quote, prefix: quote.prefix, suffix: quote.suffix, note: note) }
-        }
-    }
 
     /// 字号变化不重载 HTML（重载会丢滚动位置），改 CSS 变量。
     func setFontSize(_ px: CGFloat) {
@@ -383,24 +363,6 @@ final class DocumentReaderController: ObservableObject {
         case "scroll":
             // 正文滚动后划线位置变了，正在连线就重取一次
             if let id = connectorID { measureConnector(id: id) }
-
-        case "ask":
-            // 「问 AI」：把引用交给聊天（ContentView 注册的 onAsk → 当前 tab 的 ChatViewModel）。
-            // 问题由用户在聊天输入栏里敲，这里只递引用。
-            let quote = message["quote"] as? String ?? ""
-            guard !quote.isEmpty else { return }
-            let payload = DocQuote(
-                documentID: documentID,
-                title: documentTitle,
-                quote: quote,
-                prefix: message["prefix"] as? String ?? "",
-                suffix: message["suffix"] as? String ?? ""
-            )
-            if let onAsk = DocumentAIBridge.shared.onAsk {
-                onAsk(payload)
-            } else {
-                ToastCenter.shared.show("聊天栏不可用，先打开聊天再问")
-            }
 
         case "copy":
             // 剪贴板交给原生：`navigator.clipboard` 在 loadHTMLString 出来的页面里不是安全上下文，
@@ -931,10 +893,6 @@ span.ann-bubble:hover { transform: scale(1.6); }
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
     复制
   </button>
-  <button data-act="ask">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 4.4 4.4 1.7-4.4 1.7L12 15.7l-1.7-4.4L5.9 9.6l4.4-1.7z"/><path d="M18.6 15.4l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z"/></svg>
-    问 AI
-  </button>
 </div>
 
 <div class="note-editor ui" id="note-editor">
@@ -958,10 +916,6 @@ span.ann-bubble:hover { transform: scale(1.6); }
   <button data-cact="copy">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
     复制原文
-  </button>
-  <button data-cact="ask">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 4.4 4.4 1.7-4.4 1.7L12 15.7l-1.7-4.4L5.9 9.6l4.4-1.7z"/><path d="M18.6 15.4l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z"/></svg>
-    问 AI
   </button>
   <hr>
   <button data-cact="del" class="danger">
@@ -1252,53 +1206,6 @@ var reader = (function () {
     return { x: r.left, y: r.top, w: r.width, h: r.height };
   }
 
-  /* 「问 AI」：点引用胶囊跳回这段（滚过去 + 闪一下）。
-     闪烁靠临时包一层 mark（1 秒后拆掉，拆法跟重画一致；它没有对应的批注，
-     所以点它不会弹菜单 —— 见下面 click 处理里的 annotationById 守卫）。
-     返回 false = 这段已经不在正文里（Swift 侧提示一句）。 */
-  function revealQuote(quote, prefix, suffix) {
-    var hit = locate(quote, prefix, suffix);
-    if (!hit) return false;
-    var range = rangeAt(hit.flat, hit.start, hit.end);
-    if (!range) return false;
-    var marks = wrapSpan(hit.flat, hit.start, hit.end, { id: FLASH_ID, note: '' });
-    if (!marks.length) return false;
-    marks[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
-    for (var i = 0; i < marks.length; i++) {
-      marks[i].classList.add('flash');
-      void marks[i].offsetWidth;
-    }
-    window.setTimeout(function () { unwrapAll(); redrawAnnotations(); }, 1100);
-    return true;
-  }
-
-  /* 「问 AI」的回答存为批注：定位到引用那段 → 打开预填的批注浮层。
-     已有同 quote 的批注 → 追加（原批注 + 空行 + 回答），保存走 update，不新建重复划线。
-     定位不到返回 false：Swift 兜底直接 POST（服务端自己锚定）。
-     保存后 JS 不做任何乐观更新 —— Swift 落库成功会全量重推列表。 */
-  function openNoteFromAI(quote, prefix, suffix, note) {
-    var same = null;
-    for (var i = 0; i < annotations.length; i++) {
-      if (annotations[i].quote === quote) { same = annotations[i]; break; }
-    }
-    if (same) {
-      openEditor(same.id);
-      var merged = note ? (same.note ? same.note + '\n\n' + note : note) : same.note;
-      neText.value = merged;
-      updateSaveLabel();
-      return true;
-    }
-    var hit = locate(quote, prefix, suffix);
-    if (!hit) return false;
-    var range = rangeAt(hit.flat, hit.start, hit.end);
-    if (!range) return false;
-    pendingRange = range;
-    openEditor(null);
-    neText.value = note;
-    updateSaveLabel();
-    return true;
-  }
-
   /* ---------- 选区 → 工具条 ---------- */
   var toolbar = document.getElementById('toolbar');
   var editor = document.getElementById('note-editor');
@@ -1309,8 +1216,6 @@ var reader = (function () {
   var ctxmenu = document.getElementById('ctxmenu');
   var pendingRange = null;
   var editingId = null;
-  /* 引用跳回来时那层临时 mark 的 id（不是批注，只为了闪一下） */
-  var FLASH_ID = '__ai_flash';
   var ctxTargetId = null;
   /* 非空 = 正在重新定位这一条（下一次选区当作新锚点） */
   var relocateId = null;
@@ -1437,13 +1342,6 @@ var reader = (function () {
       if (pendingRange) post({ type: 'copy', text: pendingRange.toString() });
       clearSel(); hideAll();
       return;
-    }
-    if (act === 'ask') {
-      if (pendingRange) {
-        var info = selectionInfo(pendingRange);
-        post({ type: 'ask', quote: info.quote, prefix: info.prefix, suffix: info.suffix });
-      }
-      clearSel(); hideAll();
     }
   });
 
@@ -1628,14 +1526,6 @@ var reader = (function () {
     hideCtx();
     if (act === 'edit') { openEditor(id); return; }
     if (act === 'copy') { post({ type: 'copy', text: a ? a.quote : '' }); return; }
-    if (act === 'ask') {
-      /* 已有这条线（批注可能就是这么来的）再问 AI：用注解自己存的四元组，
-         跟工具条那条路同一个载荷；闪一下确认问的就是这一段（定位不到就只发引用）。 */
-      if (!a) return;
-      post({ type: 'ask', quote: a.quote, prefix: a.prefix, suffix: a.suffix });
-      revealQuote(a.quote, a.prefix, a.suffix);
-      return;
-    }
     if (act === 'del') { post({ type: 'delete', id: id }); }
   });
 
@@ -1741,8 +1631,6 @@ var reader = (function () {
   post({ type: 'ready' });
 
   return {
-    revealQuote: revealQuote,
-    openNoteFromAI: openNoteFromAI,
     find: find,
     findNext: function () { step(1); },
     findPrev: function () { step(-1); },

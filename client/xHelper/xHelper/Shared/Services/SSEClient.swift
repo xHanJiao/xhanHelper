@@ -18,7 +18,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
 
-    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, memoryThreshold: Double = 0.5, memoryLimit: Int = 8, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil, briefAnswer: Bool = false, hiddenRound: Bool = false, attachments: [String] = [], docQuote: DocQuote? = nil) {
+    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, memoryThreshold: Double = 0.5, memoryLimit: Int = 8, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil, briefAnswer: Bool = false, hiddenRound: Bool = false, attachments: [String] = []) {
         let url = URL(string: "\(baseURL)/api/chat")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -45,11 +45,6 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         if hiddenRound { body["hidden_round"] = true }
         // 附件图片：先经 POST /api/images/upload 上传拿到 image_id，这里只传 id 列表
         if !attachments.isEmpty { body["attachments"] = attachments }
-        // 文档划线引用（「问 AI」）：会话级，引用还在就每轮带。只进 LLM 上下文（document_quote 块）
-        if let q = docQuote, let data = try? JSONEncoder().encode(q),
-           let obj = try? JSONSerialization.jsonObject(with: data) {
-            body["doc_quote"] = obj
-        }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         if req.httpBody == nil {
             Self.log.error("failed to serialize request body")

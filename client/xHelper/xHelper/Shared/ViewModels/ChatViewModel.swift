@@ -176,26 +176,6 @@ class ChatViewModel: ObservableObject {
     /// 精炼回答开关，会话级：默认关。开=服务端往 system prompt 注入「≤500 字」输出约束，
     /// 用于让回答短到能整段存进文档批注。不走 max_tokens（那是静默硬截断）。
     @Published var briefAnswer = false
-    /// 文档划线引用（「问 AI」）：会话级状态，引用还在就每轮随请求发（`doc_quote`）。
-    /// 不落 UserDefaults —— 切会话/关 tab 自然清掉（vm 生命周期即会话）。
-    @Published var docQuote: DocQuote?
-    /// 挂上引用那一刻最后一条消息的 id：窄条只在「引用之后又出过回答」时出现，
-    /// 免得刚点完「问 AI」就把上一轮的回答端上来让人存成批注。
-    private var quotedAtMessageID: String?
-
-    /// 挂上文档引用（「问 AI」）：由 ContentView 在正文工具条点击后调用。
-    func attachDocQuote(_ quote: DocQuote) {
-        docQuote = quote
-        quotedAtMessageID = messages.last?.id
-    }
-
-    /// 「存为批注」窄条的显示条件：引用还在、引用之后出过一轮 AI 回答、且不在流式中。
-    var quoteAnswerText: String? {
-        guard docQuote != nil, !isStreaming,
-              let last = messages.last, last.role == "assistant",
-              last.id != quotedAtMessageID, !last.content.isEmpty else { return nil }
-        return last.content
-    }
 
     /// 当前流的工具调用展示队列（tool_call 入队，tool_result 更新状态）
     @Published var toolQueue: [ToolCallDisplay] = []
@@ -777,8 +757,6 @@ class ChatViewModel: ObservableObject {
         verifyEnabled = UserDefaults.standard.bool(forKey: "xhan_conv_verify_enabled_\(id)")
         // 精炼回答开关会话级恢复：无记录默认关
         briefAnswer = UserDefaults.standard.bool(forKey: "xhan_conv_brief_answer_\(id)")
-        // 文档引用不持久化：换会话即失效（引用指向的文档可能已被改写）
-        docQuote = nil
         toolQueue = []
         pendingToolCalls = []
         roundDocRefs = [:]
@@ -1061,7 +1039,7 @@ class ChatViewModel: ObservableObject {
         }
         // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan/strict）
         let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, hiddenRound: hiddenRound, attachments: attachmentIds, docQuote: hiddenRound ? nil : docQuote)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, hiddenRound: hiddenRound, attachments: attachmentIds)
     }
 
     func stopStreaming() {

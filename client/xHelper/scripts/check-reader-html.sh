@@ -209,7 +209,7 @@ function armSelectionAndMouseUp() {
 
 function toolbarChecks() {
   ok('mouseup 浮出工具条', document.getElementById('toolbar').classList.contains('open'));
-  ok('工具条 4 个动作', document.querySelectorAll('#toolbar button[data-act]').length === 4);
+  ok('工具条 3 个动作', document.querySelectorAll('#toolbar button[data-act]').length === 3);
 
   document.querySelector('#toolbar button[data-act="note"]').click();
   var editor = document.getElementById('note-editor');
@@ -485,91 +485,6 @@ function relocateChecks() {
   armSelectionAndMouseUp();
 }
 
-/* ---------- P5「问 AI」：引用回传 / 回答存为批注 / 跳回那段 ---------- */
-function aiArm() {
-  armSelectionAndMouseUp();
-}
-
-function aiChecks() {
-  // 「问 AI」递出去的必须是 DOM 折叠文本 + 前后文（聊天侧拿它当引用，服务端直接喂 LLM）
-  document.querySelector('#toolbar button[data-act="ask"]').click();
-  var a = last('ask');
-  ok('「问 AI」回传 quote + 前后文', !!a && a.quote === '记忆系统的第一处提及'
-     && a.prefix.length > 0 && a.suffix.length > 0, JSON.stringify(a));
-  ok('「问 AI」后工具条收起、选区清掉',
-     !document.getElementById('toolbar').classList.contains('open') && window.getSelection().isCollapsed);
-
-  // 没有同 quote 的批注 → 打开预填浮层，保存发 create（四元组 + 回答）
-  put([]);
-  var editor = document.getElementById('note-editor');
-  ok('openNoteFromAI 打开预填浮层（新增这条划线）',
-     reader.openNoteFromAI('清单第二项', '清单第一项', '', 'AI 的回答') === true
-       && editor.classList.contains('open')
-       && document.getElementById('ne-text').value === 'AI 的回答'
-       && document.getElementById('ne-quote').textContent.indexOf('清单第二项') >= 0);
-  document.getElementById('ne-save').click();
-  var cr = last('create');
-  ok('预填浮层保存发 create（quote/前缀/后缀/note 齐全）',
-     !!cr && cr.quote === '清单第二项' && cr.note === 'AI 的回答' && cr.prefix.length > 0,
-     JSON.stringify(cr));
-  ok('保存后浮层收起', !editor.classList.contains('open'));
-
-  // 已有同 quote 的批注 → 追加（原批注 + 空行 + 回答），保存走 update 不新建
-  put([mk('q1', '清单第二项', '我原来的批注')]);
-  ok('openNoteFromAI 同 quote → 打开已有批注并预填追加',
-     reader.openNoteFromAI('清单第二项', '', '', 'AI 的回答') === true
-       && document.getElementById('ne-text').value === '我原来的批注\\n\\nAI 的回答');
-  document.getElementById('ne-save').click();
-  var up = last('update');
-  ok('追加保存发 update（不新建重复划线）', !!up && up.id === 'q1'
-     && up.note === '我原来的批注\\n\\nAI 的回答', JSON.stringify(up));
-
-  // 正文里定位不到 → 返回 false（Swift 兜底直接 POST，服务端自己锚定）
-  put([]);
-  ok('openNoteFromAI 定位不到返回 false',
-     reader.openNoteFromAI('zzz正文里没有这段zzz', '', '', 'x') === false);
-
-  // 已有划线（带批注或不带）不用重新手动选中那段 —— 点它，菜单里就有「问 AI」
-  function flashText() {
-    var m = c.querySelector('mark.hl[data-id="__ai_flash"]');
-    return m ? m.textContent : '';
-  }
-  function menuAsk(quote, note) {
-    put([mk('x1', quote, note || '', '清单第一项', '后半截')]);
-    c.querySelector('mark.hl[data-id="x1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    var btn = document.querySelector('#ctxmenu button[data-cact="ask"]');
-    var before = countType('create');
-    if (btn) btn.click();
-    return { btn: btn, before: before, inCtx: !!btn && !document.getElementById('ctxmenu').classList.contains('open') };
-  }
-  var m1 = menuAsk('清单第二项', '老批注');
-  ok('点已有批注的划线 → 菜单里有「问 AI」', !!m1.btn && m1.btn.textContent.trim() === '问 AI');
-  var m1ask = last('ask');
-  ok('菜单「问 AI」发的是这条划线自己的四元组', m1.inCtx
-     && !!m1ask && m1ask.quote === '清单第二项' && m1ask.prefix === '清单第一项' && m1ask.suffix === '后半截',
-     JSON.stringify(m1ask));
-  ok('菜单「问 AI」闪一下那段当回执', flashText() === '清单第二项');
-  ok('菜单「问 AI」没错发 create', countType('create') === m1.before);
-
-  var m2 = menuAsk('清单第一项', '');
-  ok('纯划线（无批注）同样能问 AI', !!m2.btn && m2.btn.textContent.trim() === '问 AI'
-     && flashText() === '清单第一项');
-
-  // 点引用胶囊跳回那段：滚过去 + 临时闪烁层（临时层不是批注）
-  put([]);                                   // 清掉上面菜单那两次闪的残留，闪的是谁才不含糊
-  window.__scrolled = [];
-  var textBefore = c.textContent;
-  ok('revealQuote 命中即滚动', reader.revealQuote('记忆系统的第一处', '', '') === true
-     && window.__scrolled.length >= 1);
-  var flash = c.querySelector('mark.hl[data-id="__ai_flash"]');
-  ok('revealQuote 包了临时闪烁层（闪的正是那段）', !!flash && flashText().indexOf('记忆系统的第一处') === 0,
-     flashText());
-  ok('临时闪烁层不改正文文本', c.textContent === textBefore);
-  flash.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-  ok('临时闪烁层不弹右键菜单', !document.getElementById('ctxmenu').classList.contains('open'));
-  ok('revealQuote 未命中返回 false', reader.revealQuote('zzz正文里没有这段zzz', '', '') === false);
-}
-
 function relocateCancelChecks() {
   ok('Esc 回传 relocateCancel', !!last('relocateCancel'));
   ok('Esc 后模式已退出（选中回到工具条）',
@@ -589,11 +504,7 @@ setTimeout(function () {
           try { relocateChecks(); } catch (e) { fails.push('重定位断言异常: ' + (e && e.message ? e.message : e)); }
           setTimeout(function () {
             try { relocateCancelChecks(); } catch (e) { fails.push('重定位取消断言异常: ' + (e && e.message ? e.message : e)); }
-            try { aiArm(); } catch (e) { fails.push('P5 选区异常: ' + (e && e.message ? e.message : e)); }
-            setTimeout(function () {
-              try { aiChecks(); } catch (e) { fails.push('P5 断言异常: ' + (e && e.message ? e.message : e)); }
-              writeResult();
-            }, 0);
+            writeResult();
           }, 0);
         }, 0);
       }, 0);

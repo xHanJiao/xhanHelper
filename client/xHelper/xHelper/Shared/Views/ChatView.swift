@@ -158,18 +158,8 @@ struct ChatView: View {
             //         .padding(.horizontal, 4)
             // }
 
-            // 文档引用胶囊（「问 AI」）：会话级状态，引用还在就在输入栏上方常驻
-            if let quote = viewModel.docQuote {
-                quoteChipBar(quote)
-            }
-
             // 输入栏（驾驶舱）：按钮通过 builder 注入，收起/展开双态
             inputBar
-
-            // 「问 AI」的回答落成批注：引用还在 + 引用之后已经出过一轮回答 → 输入栏下方一行
-            if let quote = viewModel.docQuote, let answer = viewModel.quoteAnswerText {
-                quoteNoteBar(quote: quote, answer: answer)
-            }
         }
         .onChange(of: viewModel.scrollToBottomRequested) { _, requested in
             guard requested else { return }
@@ -329,110 +319,6 @@ struct ChatView: View {
     /// 输入框焦点变化（InputBar 上报）：用于判断 ⌘V 粘贴该由哪个 ChatView 收下
     private func setInputFocused(_ focused: Bool) {
         inputFocused = focused
-    }
-
-    /// 文档引用胶囊：告诉用户「正拿着文档里这一段在问」，点引用文字跳回正文那段，点 × 清掉。
-    /// 宽度约束与 InputBar 一致（maxWidth 720 + 同一份水平内边距），两种宿主（PiP/普通聊天）同款。
-    @ViewBuilder
-    private func quoteChipBar(_ quote: DocQuote) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "text.quote")
-                .font(.caption)
-                .foregroundColor(Color("appAccent"))
-            if !quote.title.isEmpty {
-                Text(quote.title)
-                    .font(.caption).bold()
-                    .lineLimit(1)
-            }
-            Button {
-                revealInDocument(quote)
-            } label: {
-                Text(quote.quote)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            }
-            .buttonStyle(.plain)
-            .help("回到文档里这一段")
-            Button {
-                viewModel.docQuote = nil
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("去掉这段引用")
-        }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .frame(maxWidth: 720, alignment: .leading)
-        .padding(.horizontal, Layout.chatHorizontalPadding)
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.bottom, 6)
-    }
-
-    /// 引用之后那轮 AI 回答 → 存成这条引用上的批注（用户还能改）。
-    /// 文档没开着（或开着的是另一篇）→ 直接落库，服务端自己锚定这段文字。
-    @ViewBuilder
-    private func quoteNoteBar(quote: DocQuote, answer: String) -> some View {
-        HStack(spacing: 8) {
-            Text("把这段回答存为批注？")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-            Button("存为批注") { storeQuoteAsNote(quote, answer: answer) }
-                .buttonStyle(.plain)
-                .font(.caption2.bold())
-                .foregroundColor(Color("appAccent"))
-            Button("忽略") { viewModel.docQuote = nil }
-                .buttonStyle(.plain)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .frame(maxWidth: 720, alignment: .leading)
-        .padding(.horizontal, Layout.chatHorizontalPadding)
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.top, 6)
-    }
-
-    /// 跳回文档里那段（文档没开着、或开着的是另一篇 → 提示一句，不做"自动打开那篇文档"）。
-    private func revealInDocument(_ quote: DocQuote) {
-        #if os(macOS)
-        guard let reader = DocumentAIBridge.shared.reader, reader.documentID == quote.documentID else {
-            ToastCenter.shared.show("打开这篇文档才能跳过去")
-            return
-        }
-        reader.revealQuote(quote)
-        #endif
-    }
-
-    /// 存为批注：文档开着且就是这篇 → 走文档侧预填浮层（用户能改再存）；
-    /// 否则直接落库（服务端自己定位这段文字）。
-    /// 两条路都清掉引用（窄条随之消失）：交给浮层后回答已经在编辑框里，留着这条只会重复存。
-    private func storeQuoteAsNote(_ quote: DocQuote, answer: String) {
-        #if os(macOS)
-        if let reader = DocumentAIBridge.shared.reader, reader.documentID == quote.documentID {
-            reader.beginNoteFromAI(quote: quote, note: answer)
-            viewModel.docQuote = nil
-            return
-        }
-        #endif
-        Task { @MainActor in
-            do {
-                _ = try await viewModel.apiClient.createAnnotation(
-                    documentId: quote.documentID, quote: quote.quote, note: answer,
-                    prefix: quote.prefix, suffix: quote.suffix
-                )
-                viewModel.docQuote = nil
-                ToastCenter.shared.show("已存为批注")
-            } catch {
-                LogBuffer.shared.error("ChatView.createAnnotation(AI 回答) failed: \(error)")
-                ToastCenter.shared.show("存为批注失败：\((error as NSError).localizedDescription)")
-            }
-        }
     }
 
     /// 输入栏（驾驶舱）：按钮通过 builder 注入，收起/展开双态。

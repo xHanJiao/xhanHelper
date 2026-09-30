@@ -1020,6 +1020,10 @@ struct MacSettingsView: View {
                 LocalServiceSection(backend: localBackend)
                 // UI-11：本地数据备份与恢复。
                 LocalBackupSection()
+                // dev 专属：导入任意备份（含 prod）/ 清除 dev 数据。
+                if LocalPaths.isDev {
+                    LocalDevDataSection()
+                }
             }
 
             Section {

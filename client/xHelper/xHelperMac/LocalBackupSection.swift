@@ -2,6 +2,26 @@
 import SwiftUI
 import AppKit
 
+extension Notification.Name {
+    /// 恢复 / 导入 / 清除 / 删除改变了数据根或备份目录后广播，供展示列表的视图刷新。
+    static let localBackupDidChange = Notification.Name("xhan_local_backup_did_change")
+}
+
+/// 停后端 → 跑文件操作 → 重启后端的公共编排（备份/恢复/清除三处共用）。
+@MainActor
+enum LocalDataOps {
+    /// - Parameter op: 在无写入者时执行的文件操作。
+    /// - Returns: 出错时的描述（nil = 成功）。
+    static func withBackendStopped(_ backend: LocalBackendManager, _ op: () throws -> Void) async -> String? {
+        await backend.stopAndWait()
+        var failure: String?
+        do { try op() } catch { failure = error.localizedDescription }
+        await backend.restart()
+        NotificationCenter.default.post(name: .localBackupDidChange, object: nil)
+        return failure
+    }
+}
+
 /// UI-11：本地数据备份与恢复。
 ///
 /// 备份引擎在 Go（每小时检查、到期才跑）；本视图只负责设置、列表、立即备份、恢复。
@@ -114,21 +134,33 @@ struct LocalBackupSection: View {
                     .foregroundColor(.secondary)
             } else {
                 ForEach(files) { file in
+                    // 非本环境归档（如 dev 看到 prod）只许「导入」，绝不给「删除」。
+                    let foreign = file.env != LocalBackup.env
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(file.name)
-                                .font(.system(.caption, design: .monospaced))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                            HStack(spacing: 4) {
+                                Text(file.name)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                if let env = file.env, foreign {
+                                    Text(env)
+                                        .font(.caption2)
+                                        .foregroundColor(.orange)
+                                }
+                            }
                             Text("\(byteText(file.bytes)) · \(dateText(file.date))")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                         Spacer()
-                        Button("恢复", role: .destructive) { activeAlert = .restoreArchive(file) }
+                        Button(foreign ? "导入到 dev" : "恢复", role: .destructive) { activeAlert = .restoreArchive(file) }
                             .buttonStyle(.borderless)
-                        Button("删除", role: .destructive) { activeAlert = .deleteArchive(file) }
-                            .buttonStyle(.borderless)
+                            .help(foreign ? "解包进 dev 数据根，不改动「\(file.env ?? "?")」环境" : "")
+                        if !foreign {
+                            Button("删除", role: .destructive) { activeAlert = .deleteArchive(file) }
+                                .buttonStyle(.borderless)
+                        }
                     }
                     .disabled(busy)
                 }
@@ -164,6 +196,7 @@ struct LocalBackupSection: View {
             Text("每 N 天自动把整个数据根打包到所选目录（可为 iCloud Drive），保留最近几次 + 额外一份 ≥7 天前的。只在 app 运行时备份；睡眠/退出后下次启动补跑。改设置后点「保存并重启后端」生效。")
         }
         .onAppear { reload() }
+        .onReceive(NotificationCenter.default.publisher(for: .localBackupDidChange)) { _ in reload() }
         .onChange(of: enabled) { _, _ in dirty = true }
         .onChange(of: dest) { _, _ in dirty = true }
         .onChange(of: intervalDays) { _, _ in dirty = true }
@@ -217,7 +250,8 @@ struct LocalBackupSection: View {
     // MARK: - 动作
 
     private func reload() {
-        files = LocalBackup.list(dest: dest)
+        // dev 下不过滤环境，能列出 prod 归档；prod 仍只看本环境。
+        files = LocalBackup.list(dest: dest, allEnvs: LocalPaths.isDev)
         safetyCopies = LocalBackup.listSafety(dataRoot: LocalPaths.dataRoot)
     }
 
@@ -230,10 +264,12 @@ struct LocalBackupSection: View {
         panel.prompt = "选择"
         panel.message = "选择备份存放目录（可放入 iCloud Drive）"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let rootPath = LocalPaths.dataRoot.path
-        if url.path == rootPath || url.path.hasPrefix(rootPath + "/") {
-            errorText = "备份位置不能选在数据根（\(rootPath)）内"
-            return
+        // 两个环境的数据根都不许选（避免把本环境归档写进另一个环境的目录）。
+        for root in LocalPaths.allDataRoots {
+            if url.path == root.path || url.path.hasPrefix(root.path + "/") {
+                errorText = "备份位置不能选在数据根（\(root.path)）内"
+                return
+            }
         }
         dest = url.path
         errorText = nil
@@ -269,15 +305,15 @@ struct LocalBackupSection: View {
         busy = true
         errorText = nil
         infoText = nil
-        await backend.stopAndWait()
-        do {
+        let failure = await LocalDataOps.withBackendStopped(backend) {
             try LocalBackup.restore(archive: file.url, dataRoot: LocalPaths.dataRoot)
+        }
+        if let failure {
+            errorText = "恢复失败（已尝试回滚）：\(failure)"
+        } else {
             infoText = "恢复完成。当前数据已另存为安全副本（见下方列表），确认数据正常后可删除。"
-        } catch {
-            errorText = "恢复失败（已尝试回滚）：\(error.localizedDescription)"
         }
         busy = false
-        await backend.restart()
         reload()
     }
 
@@ -285,15 +321,15 @@ struct LocalBackupSection: View {
         busy = true
         errorText = nil
         infoText = nil
-        await backend.stopAndWait()
-        do {
+        let failure = await LocalDataOps.withBackendStopped(backend) {
             try LocalBackup.restoreFromSafety(safety: safety.url, dataRoot: LocalPaths.dataRoot)
+        }
+        if let failure {
+            errorText = "从安全副本恢复失败（已尝试回滚）：\(failure)"
+        } else {
             infoText = "已从安全副本恢复。当前数据已另存为新的安全副本（见下方列表）。"
-        } catch {
-            errorText = "从安全副本恢复失败（已尝试回滚）：\(error.localizedDescription)"
         }
         busy = false
-        await backend.restart()
         reload()
     }
 

@@ -31,8 +31,15 @@ enum LocalPaths {
     /// 本地后端端口。
     static var backendPort: Int { isDev ? 18924 : 18923 }
 
+    /// 两个环境的数据根目录名（单一来源；「禁止再写字面量 `xhanHelper`」）。
+    static let devDataRootName = "xhanHelper-dev"
+    static let prodDataRootName = "xhanHelper"
+
     /// 数据根目录名（`~/Library/Application Support/<name>/`）。
-    static var dataRootName: String { isDev ? "xhanHelper-dev" : "xhanHelper" }
+    static var dataRootName: String { isDev ? devDataRootName : prodDataRootName }
+
+    /// 所有环境的数据根名（护栏用：如「备份位置不得选进任一环境数据根」）。
+    static var allDataRootNames: [String] { [devDataRootName, prodDataRootName] }
 
     /// 日志目录名（`~/Library/Logs/<name>/`）。
     static var logRootName: String { isDev ? "xhanHelper-dev" : "xhanHelper" }
@@ -48,6 +55,11 @@ enum LocalPaths {
     /// 数据根（库 / images / favicons / *.json / tool_output / local_results 都在它下面）。
     static var dataRoot: URL {
         appSupportDir.appendingPathComponent(dataRootName, isDirectory: true)
+    }
+
+    /// 两个环境的数据根（护栏用，顺序同 `allDataRootNames`）。
+    static var allDataRoots: [URL] {
+        allDataRootNames.map { appSupportDir.appendingPathComponent($0, isDirectory: true) }
     }
 
     /// 后端（Go 子进程）日志目录。

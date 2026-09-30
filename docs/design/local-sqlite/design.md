@@ -587,10 +587,12 @@ flowchart LR
     DEV[("本地 dev<br/>空库 → me")] -->|"✅ Debug build"| DAPP["xhanHelper dev（Debug）"]
     PAPP -.->|"逃生口 → 云端"| CLOUD
     DAPP -.->|"❌ 逃生口 → 18923（403）"| PROD
-    DEV -.->|❌ 无任何复制路径| PROD
+    PROD -.->|"dev 手动单向导入备份（解包进 dev 根 + 安全副本）"| DEV
 ```
 
-- **prod → dev 无数据路径**（不做导出/导入 zip，见决定表）：dev 要测试数据就自己造，要真身数据才用 prod。
+- **dev → prod 无数据路径**（不做 dev 导出）：dev 要测试数据就自己造，要真身数据才用 prod。
+- **prod → dev 只读单向导入**（2026-09-30 解禁）：dev 可从文件选任意备份包（含 prod 归档），解包进 **dev 自己的数据根**并留安全副本；不触碰 prod 数据根。入口见 UI-8b。
+- **dev 永远不能删 prod**：`LocalBackup.delete` / `deleteSafety` 按 env 硬拦（非本环境直接抛错，UI 也不显示「删除」按钮）；跨 env 前缀互不包含由 `LocalBackupIsolationTests` 钉住。
 - **云端 → 本地 prod** 走第七节的 `cmd/mysql2sqlite`，是另一个方向，不冲突。
 - 同 bundle id 的连带影响（已接受）：UserDefaults 域共享 → `xhan_server_url` 逃生口、`xhan_touch_id_enabled` 两环境通用（`model` / `base_url` 覆盖项**已按环境加后缀分家**，不在此列）。前者由第 3 层兜住（403），后者无所谓（DEBUG 本来就不弹指纹）。
 
@@ -676,8 +678,8 @@ sequenceDiagram
 | **UI-5** | **设置页「模型与密钥」** `改造` | 随时 | 两个 `SecureField` / model 下拉 / base_url / 清除密钥 /（测试连接）/「锁定·重新验证」 | 复用 `SettingsCard`+`KeycapView`；**Release 可见**；去掉「退出登录」 | 2 |
 | **UI-6** | **设置页「本地服务」** `NEW` | 随时 | 后端状态、端口、数据根路径、日志入口、「重启后端」 | 复用 `SettingsCard` | 2 |
 | **UI-7** | **dev 环境视觉标识** `改造` | dev build | **Dock 图标 `dev` 角标** + **顶栏 `DEV` 徽标** + 显示名 `xhanHelper dev` | 一眼可辨、不刺眼 | 4 |
-| ~~**UI-8a**~~ | ~~prod「导出数据」~~ | — | **第 4 期砍掉**：dev 用空库自己造数据，不做 prod→dev 复制（见第八节 / 决定表 #10） | — | ~~4~~ |
-| ~~**UI-8b**~~ | ~~dev「导入数据」~~ | — | 同上，一并砍掉 | — | ~~4~~ |
+| ~~**UI-8a**~~ | ~~prod「导出数据」~~ | — | **仍不做**：无 dev→prod 导出（见第八节 / 决定表 #10） | — | ~~4~~ |
+| **UI-8b** | **dev「开发者数据」** `NEW` | 随时（仅 Debug） | 从文件导入备份（含 prod）/ 清除 dev 数据；导入解包进 dev 数据根 + 安全副本 | 复用 `SettingsCard`；仅 `LocalPaths.isDev` 可见 | 4 |
 | **UI-9** | **驻留提示（可选）** `NEW` | 关窗后 app 仍活 | 首次关窗一句提示「仍在后台运行，⌘Q 退出」 | 可选，轻提示 | 2/4 |
 | **UI-10** | **Touch ID 解锁门** `改造` | 启动 / 回前台 / 空闲 15min | 现有 `LoginMacView` → 指纹解锁（失败可退系统密码）；DEBUG 跳过 | 复用现有登录门壳，去掉账号密码 | 2 |
 
@@ -703,7 +705,7 @@ sequenceDiagram
 | 7 | 首次配置形态 | 单页（高级区折叠） |
 | 8 | 启动态 | 主窗口内联指示（非独立 splash） |
 | 9 | dev 视觉标识 | Dock 图标 `dev` 角标 + 顶栏 `DEV` 徽标 + 显示名 `xhanHelper dev`（第 4 期；原「窗口最上缘全宽细条」因像 bug 被换掉，见第八节） |
-| 10 | dev 数据来源 | **空库自造**（自动建 `me`）。~~prod 导出 zip / dev 导入 zip~~ **第 4 期砍掉**：不复制线上 / prod 数据（用户 2026-09-24 拍），磁盘增量≈0 |
+| 10 | dev 数据来源 | **空库自造**（自动建 `me`）为主。**dev 可选从文件导入备份**（含 prod 归档，2026-09-30 解禁）：解包进 dev 自己的数据根 + 安全副本，单向、不触碰 prod 数据；**仍无 dev→prod 导出** |
 | 11 | dev / prod 怎么分 | **同一 app 身份**，按构建配置：`Debug` → dev（18924 + `xhanHelper-dev` + `local_env: dev`）、`Release` → prod（18923 + `xhanHelper` + `local_env: prod`）；不建第二套 bundle id / scheme / `.xcconfig`（第 4 期定稿） |
 | 12 | UI 预览方式 | 原生走 Xcode `#Preview` + SwiftPM `ImageRenderer` 预览靶；HTML 仅 Web 前端 |
 | 13 | 本地身份 | 单用户、**隐形**：以「库里的用户」为锚点（唯一则认领、空库建 `me`、多则报错要求剪枝）；不钉 UUID / 用户名（可分发） |

@@ -46,6 +46,9 @@ struct LocalBackupFile: Identifiable, Hashable {
     let date: Date
 
     var id: String { url.path }
+
+    /// 归档来自哪个环境（`xhanHelper-<env>-…`）；解析不出返回 nil。
+    var env: String? { LocalBackup.envOf(name: name) }
 }
 
 /// 一份「安全副本」：恢复前把原数据根整体改名保存下来的目录。
@@ -56,6 +59,22 @@ struct LocalBackupSafety: Identifiable, Hashable {
 
     var name: String { url.lastPathComponent }
     var id: String { url.path }
+}
+
+enum LocalBackupError: LocalizedError {
+    /// 试图删除非本环境的归档（如 dev 删 prod 备份）。
+    case foreignEnvDelete(String?)
+    /// 试图删除非本环境的安全副本。
+    case foreignEnvSafety(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .foreignEnvDelete(let env):
+            return "拒绝删除非本环境（\(env ?? "未知")）的备份：\(LocalBackup.env) 只能删除自己环境的备份。"
+        case .foreignEnvSafety(let name):
+            return "拒绝删除非本环境的安全副本「\(name)」：\(LocalBackup.env) 只能删除自己环境的数据。"
+        }
+    }
 }
 
 enum LocalBackup {
@@ -84,12 +103,23 @@ enum LocalBackup {
         return stampFormatter.date(from: stamp)
     }
 
-    /// 读目标目录里本环境的归档，按时间倒序。
-    static func list(dest: String) -> [LocalBackupFile] {
+    /// 从 `xhanHelper-<env>-…` 解析环境名（dev / prod）；失败返回 nil。
+    static func envOf(name: String) -> String? {
+        guard name.hasPrefix(archivePrefixBase + "-"), name.hasSuffix(".tar.gz") else { return nil }
+        let base = name.replacingOccurrences(of: ".tar.gz", with: "")
+        let parts = base.split(separator: "-")
+        // 至少 `xhanHelper` + env + 两段时间戳
+        guard parts.count >= 4 else { return nil }
+        return String(parts[1])
+    }
+
+    /// 读目标目录里的归档，按时间倒序。
+    /// - Parameter allEnvs: true 时不过滤环境（dev 用，能列出 prod 归档）；false 只列本环境。
+    static func list(dest: String, allEnvs: Bool = false) -> [LocalBackupFile] {
         guard !dest.isEmpty else { return [] }
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: dest) else { return [] }
-        let prefix = archivePrefix()
+        let prefix = allEnvs ? "\(archivePrefixBase)-" : archivePrefix()
         var out: [LocalBackupFile] = []
         for name in names where name.hasPrefix(prefix) && name.hasSuffix(".tar.gz") {
             let url = URL(fileURLWithPath: dest).appendingPathComponent(name)
@@ -113,6 +143,24 @@ enum LocalBackup {
 
     static func safetyPrefix(dataRoot: URL) -> String {
         "\(dataRoot.lastPathComponent).pre-restore-"
+    }
+
+    /// 本环境安全副本目录名前缀。两个环境的根名（`xhanHelper-dev` / `xhanHelper`）
+    /// 在该前缀方案下互不包含（`xhanHelper-dev.pre-restore-` 与 `xhanHelper.pre-restore-`），
+    /// 由 `LocalBackupIsolationTests` 钉住；改名导致重叠会测试失败。
+    static var currentSafetyPrefix: String { safetyPrefix(dataRoot: LocalPaths.dataRoot) }
+
+    /// 生成不撞名的安全副本目标 URL（同秒二次操作时追加序号，避免 moveItem 撞名）。
+    static func uniqueSafetyURL(dataRoot: URL, date: Date = Date()) -> URL {
+        let parent = dataRoot.deletingLastPathComponent()
+        let base = "\(dataRoot.lastPathComponent).pre-restore-\(stampFormatter.string(from: date))"
+        var candidate = parent.appendingPathComponent(base)
+        var n = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = parent.appendingPathComponent("\(base)-\(n)")
+            n += 1
+        }
+        return candidate
     }
 
     /// 扫数据根的父目录，发现本数据根的安全副本，按时间倒序。
@@ -139,10 +187,18 @@ enum LocalBackup {
     }
 
     static func delete(_ file: LocalBackupFile) throws {
+        // 硬保证：只允许删本环境归档。dev 永远不能删 prod 备份（任何调用方都拦得住）。
+        guard file.env == env else {
+            throw LocalBackupError.foreignEnvDelete(file.env)
+        }
         try FileManager.default.removeItem(at: file.url)
     }
 
     static func deleteSafety(_ safety: LocalBackupSafety) throws {
+        // 硬保证：只允许删本环境安全副本（与 delete 对称）。dev 永远碰不到 prod 的 .pre-restore-*。
+        guard safety.url.lastPathComponent.hasPrefix(currentSafetyPrefix) else {
+            throw LocalBackupError.foreignEnvSafety(safety.url.lastPathComponent)
+        }
         try FileManager.default.removeItem(at: safety.url)
     }
 
@@ -201,10 +257,7 @@ extension LocalBackup {
         let fm = FileManager.default
         guard archiveContainsDB(archive) else { throw LocalBackupRestoreError.archiveMissingDB }
 
-        let parent = dataRoot.deletingLastPathComponent()
-        let safety = parent.appendingPathComponent(
-            "\(dataRoot.lastPathComponent).pre-restore-\(stampFormatter.string(from: Date()))"
-        )
+        let safety = uniqueSafetyURL(dataRoot: dataRoot)
 
         let hadRoot = fm.fileExists(atPath: dataRoot.path)
         if hadRoot {
@@ -239,10 +292,7 @@ extension LocalBackup {
             throw LocalBackupRestoreError.archiveMissingDB
         }
 
-        let parent = dataRoot.deletingLastPathComponent()
-        let backup = parent.appendingPathComponent(
-            "\(dataRoot.lastPathComponent).pre-restore-\(stampFormatter.string(from: Date()))"
-        )
+        let backup = uniqueSafetyURL(dataRoot: dataRoot)
 
         let hadRoot = fm.fileExists(atPath: dataRoot.path)
         if hadRoot {
@@ -258,6 +308,22 @@ extension LocalBackup {
         }
         pruneSafety(dataRoot: dataRoot)
         return backup
+    }
+
+    /// 清空数据根：把当前数据根整体改名成安全副本，再建一个空目录（后端重启后重建空库/`me`）。
+    /// 调用前必须已停掉后端。返回安全副本路径。
+    @discardableResult
+    static func clear(dataRoot: URL) throws -> URL? {
+        let fm = FileManager.default
+        var safety: URL?
+        if fm.fileExists(atPath: dataRoot.path) {
+            let dest = uniqueSafetyURL(dataRoot: dataRoot)
+            try fm.moveItem(at: dataRoot, to: dest)
+            safety = dest
+        }
+        try fm.createDirectory(at: dataRoot, withIntermediateDirectories: true)
+        pruneSafety(dataRoot: dataRoot)
+        return safety
     }
 
     /// 归档里是否含顶层 `xhan_helper.db`（解包前校验，拒绝坏归档）。

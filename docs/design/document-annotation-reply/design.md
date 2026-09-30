@@ -7,11 +7,13 @@
 > 唯一入口：macOS 客户端。iOS / Web / 分享页 **不做**（延续 D1）。
 >
 > **当前落地进度**（下次 compact 后先看这里）：
-> - ✅ **客户端 UI 骨架已写完并 `swiftc -typecheck` 0 error**：常驻批注面板（讨论/全部两视图）、可折叠线程卡片、收放规则、卡片→划线连线、`#Preview`（桌面三栏）。见 §7。
+> - ✅ **服务端已实现并 `go build ./...` + `go test ./...` 全绿**：`DocumentAnnotationReply` 表 / repo / `GET :id/replies` / `POST :id/reply` / 生成器（`agent/annotation_reply.go`）/ `list_annotations` 带 replies / `reply_annotation` 工具 / 删批注与文档 purge 级联。见 §三/§四/§五/§六。
+> - ✅ **客户端 UI 已写完并 `swiftc -typecheck` 0 error**：常驻批注面板（讨论/全部两视图）、可折叠线程卡片、收放规则、卡片→划线连线、`#Preview`（桌面三栏）。见 §7。
 > - ✅ 客户端模型/接口已就位：`AnnotationReply`、`reply_count`/`last_reply`（可选）、`APIClient.listAnnotationReplies/replyToAnnotation`。
 > - ✅ 阅读器 JS 已加 `annotationRect(id)` + `scroll` 消息（供连线）。
-> - ⏳ **服务端一行未写**：`DocumentAnnotationReply` 表 / repo / `GET replies` / `POST reply` / 生成器 / `reply_annotation` 工具。客户端调用现在会 404（真机表现为 toast「讨论载入失败 / 生成回复失败」）。
-> - ⏳ 「问 AI」全套未拆（P3 随批量路径一起做）。
+> - ⏳ **只剩「问 AI」全套未拆**（纯客户端：工具条/菜单入口、`DocumentAIBridge.onAsk`、`ChatView` 胶囊/窄条、`ChatViewModel.docQuote`、`DocQuote.swift`）。
+> - ⏳ `DELETE /api/annotation-replies/:id` 未做（v1 用不到，接口可后置）。
+> - ⏳ 真机验收（§11）未跑；`check-reader-html.sh` 未加连线专属断言。
 
 ---
 
@@ -129,18 +131,20 @@ type DocumentAnnotationReply struct {
 ### 4.2 新增 `server/internal/agent/annotation_reply.go`
 
 职责：给定 `(userID, annotationID, userContent?)`，跑一次 run，产出并落库一条 `assistant` 回复。
+实现：`type AnnotationReplier struct{...}` + `NewAnnotationReplier(cfg)` + `Generate(ctx, userID, annotationID, userContent string) (*AnnotationReplyOutcome, error)`。
 
 ```
-GenerateAnnotationReply(ctx, userID, annotationID, userContent string) (ReplyResult, error):
-  1. 载入批注（含文档）→ 校验归属（user_id）
-  2. 若 userContent 非空：先 append 一条 role=user 的回复行（Source=followup）
-  3. 组装上下文（§4.3）
-  4. NewMiniReAct(cfg) 跑一次；cfg 只给只读工具白名单；**不注入 MsgSink**（默认）
-  5. 取最终 assistant 文本 → 校验长度 → append 一条 role=assistant 回复行（Source=button/followup）
-  6. 返回新回复（+ 若有用户追问则一起返回）
+Generate:
+  0. tryLock(annotationID) 非阻塞 → 拿不到 = ErrAnnotationReplyBusy
+  1. 载入批注 + 文档（校验归属；取不到 = ErrAnnotationReplyNotFound）
+  2. 回复数 ≥ maxReplies → ErrAnnotationReplyLimit
+  3. 载入线程（≤200）+ 组装上下文（§4.3）
+  4. NewMiniReAct(cfg) 跑一次（只读工具白名单，超时 120s，6 轮）；**不注入 MsgSink**
+  5. 取最终 assistant 文本 → 截断 ≤4000 → 与（可选）user 追问行**一次 CreateBatch 落库**（原子）
+  6. 返回 Added（含追问）+ ReplyCount
 ```
 
-失败：任一步出错向上抛 `fmt.Errorf("annotation reply: %w", err)`，handler 记一次日志并返回 5xx；**不吞**。
+失败：busy/limit/notfound 走哨兵错误（handler 映 409/400/404）；生成错误向上抛 → 502；落库错误包 `ErrAnnotationReplySave` → 500。`500/502` 在 handler 顶层 `log.Printf` 一次；**不吞**。
 
 ### 4.3 上下文降级链（`loadOriginContext`）
 
@@ -340,21 +344,22 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 
 ## 六、服务端触碰点
 
-| 文件 | 动作 |
-|---|---|
-| `server/internal/model/document_annotation_reply.go` | **新** 模型 |
-| `server/internal/service/document_annotation_reply_repo.go` | **新** `Create` / `ListByAnnotationIDs`（批量）/ `ListByAnnotationID` / `ListByDocument` / `DeleteByAnnotation` / `DeleteByDocument` / `CountByAnnotation` |
-| `server/internal/agent/annotation_reply.go` | **新** 上下文组装 + run + 落库 |
-| `server/internal/app/init_db.go` | AutoMigrate `&model.DocumentAnnotationReply{}`（紧挨 `DocumentAnnotation`，`:43`） |
-| `server/internal/app/init_repos.go` | 注册 `DocumentAnnotationReply` repo（`:29` / `:64` 附近） |
-| `server/internal/appinit/router.go` | 构造 `AnnotationHandler` 时注入 reply repo（`:147`） |
-| `server/internal/controller/router.go` | 加 `GET /annotations/:id/replies`、`POST /annotations/:id/reply`（+ 可选 `DELETE /annotation-replies/:id`）；紧挨现有 annotation 路由（`:164-168`） |
-| `server/internal/controller/annotation.go` | `ListAnnotations` 加 `reply_count`/`last_reply`（两次批量查）；新增 `ListReplies` / `ReplyAnnotation` handler；常量加 `maxAnnotationReplyLen`（4000）、`maxRepliesPerAnnotation`（100） |
-| `server/internal/controller/document.go` | 文档删除时级联删回复（`DeleteByDocument`；失败只记日志不阻断，与批注一致） |
-| `server/internal/tool/document.go` | `listAnnotations` 带 `replies`；新增 `reply_annotation`；同步 `ReadOnlyFuncs` / `Catalog` |
-| `server/internal/agent/`（orchestrator 装配处） | 让主聊天的 `document` 工具能拿到 reply repo（`NewDocumentTool` 增加依赖，`document.go:178`） |
+> ✅ 以下均已落地（`go build ./... && go test ./...` 全绿）。
 
-**不改**：`document_annotation_repo.go`（`RelocateAll` / `List` / `CountByDocument` 全不动）、`document_anchor.go`。
+| 文件 | 动作 | 状态 |
+|---|---|---|
+| `server/internal/model/document_annotation_reply.go` | **新** 模型 | ✅ |
+| `server/internal/service/document_annotation_reply_repo.go` | **新**：`CreateBatch` / `ListByAnnotationID` / `CountByAnnotation` / `CountsByAnnotationIDs` / `LatestByAnnotationIDs` / `ListRecentByAnnotationIDs`（窗口函数取每批注最近 N）/ `DeleteByAnnotation` / `DeleteByDocument` | ✅ |
+| `server/internal/agent/annotation_reply.go` | **新** `AnnotationReplier`：上下文组装（原点会话摘要+近期轮 → 文档 → 线程 → 工具）+ MiniReAct run + 原子落库；按 annotation 的 `tryKeyedMutex`（拿不到→`ErrAnnotationReplyBusy`） | ✅ |
+| `server/internal/app/init_db.go` | AutoMigrate `&model.DocumentAnnotationReply{}`（紧挨 `DocumentAnnotation`） | ✅ |
+| `server/internal/app/init_repos.go` | 注册 `DocumentAnnotationReply` repo | ✅ |
+| `server/internal/appinit/router.go` | 构造 `agent.NewAnnotationReplier(...)` 并注入 `AnnotationHandler` | ✅ |
+| `server/internal/controller/router.go` | 加 `GET /annotations/:id/replies`、`POST /annotations/:id/reply` | ✅ |
+| `server/internal/controller/annotation.go` | `ListAnnotations` 加 `reply_count`/`last_reply`（两次批量查）；新增 `ListReplies` / `ReplyAnnotation`；`DeleteAnnotation` 级联删回复；常量 `maxAnnotationReplyLen`(4000) / `maxRepliesPageSize`(200) | ✅ |
+| `server/internal/service/document_repo.go` | `purge` 事务内**一并删回复**（★实际级联点在 repo 的物理清理，不在 controller；软删时批注/回复都留到 purge） | ✅ |
+| `server/internal/tool/document.go` | `listAnnotations` 带 `replies`+`reply_count`+`replies_truncated`；新增 `reply_annotation`（写，`source=chat`）；`NewDocumentTool` 加 reply repo 依赖 | ✅ |
+
+**不改**：`document_annotation_repo.go`（`RelocateAll` / `List` / `CountByDocument` 全不动）、`document_anchor.go`。`ReadOnlyFuncs` **不含** `reply_annotation`（视为写），`Catalog` 不动。
 
 ---
 
@@ -469,13 +474,13 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| **P0 客户端 UI** | 常驻面板 + 讨论/全部两视图 + 线程卡片 + 收放规则 + 卡片→划线连线 + 预览（全部对着 §5 的接口形状写，服务端未就位时 404→toast） | ✅ **已完成**（`swiftc -typecheck` 0 error） |
-| **P1 数据 + 读（服务端）** | 表 + repo + 级联删 + `list_annotations` 带 replies + 列表 API 带 `reply_count`/`last_reply` + `GET replies` 线程接口 | ⏳ 未开始 |
-| **P2 按钮生成** | `annotation_reply.go`（上下文链 + MiniReAct）+ `POST /reply`；客户端已就绪（§7） | ⏳ 未开始 |
-| **P3 批量 + 清理** | `reply_annotation` 工具（指令式逐条）+ 拆「问 AI」全套（服务端 + 客户端） | ⏳ 未开始 |
+| **P0 客户端 UI** | 常驻面板 + 讨论/全部两视图 + 线程卡片 + 收放规则 + 卡片→划线连线 + 预览 | ✅ **已完成**（`swiftc -typecheck` 0 error） |
+| **P1 数据 + 读（服务端）** | 表 + repo + 级联删 + `list_annotations` 带 replies + 列表 API 带 `reply_count`/`last_reply` + `GET replies` 线程接口 | ✅ **已完成**（含单测） |
+| **P2 按钮生成（服务端）** | `agent/annotation_reply.go`（上下文链 + MiniReAct）+ `POST /reply`；客户端已就绪（§7） | ✅ **已完成** |
+| **P3 批量 + 清理** | `reply_annotation` 工具（指令式逐条）✅；拆「问 AI」全套（客户端）⏳ | 🟡 **服务端完成，客户端待拆** |
 
-依赖：P2 依赖 P1；P3 依赖 P1/P2。P1 与 P2 的上下文链无耦合，可并行。
-**P0 已先行落地**（客户端 UI + 模型/接口镜像）；P1 完成后客户端「只读线程」即接真，P2 完成后「让 AI 回复 / 追问」即可用。
+依赖：P2 依赖 P1；P3 依赖 P1/P2。
+服务端（P1+P2+P3 的 Go 部分）已全部落地，`go build ./... && go test ./...` 全绿；客户端只剩「问 AI」拆除。
 
 ---
 
@@ -496,7 +501,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
    - 对 agent 说「看下批注逐条回复」→ 逐条落回复（`Source=chat`）。
    - 「问 AI」入口与引用胶囊/窄条全部消失，无残留死代码。
    - 注册表启动校验不 panic（`reply_annotation` 同步 `ReadOnlyFuncs`/`Catalog`）。
-4. 改文档正文 → 批注重定位不受影响（回复独立表）；删文档 → 批注与回复一起清。
+4. 改文档正文 → 批注重定位不受影响（回复独立表）；删批注 → 其回复一并删；文档物理清理（`purge`，回收站 7 天后 / 清空回收站）→ 批注与回复一起清。
 5. 覆盖 `ctxflow` / prompt 的相关测试；`swiftc -typecheck` macOS / iOS 均 0 error。
 
 ---
@@ -513,7 +518,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 - ❌ 批注/回复进记忆 / 画像 / 摘要流水线（AR-11）
 - ❌ 回复富文本 / 图片 / @ 引用
 - ❌ trace 子会话（P1/P2 不做，留接口）
-- ❌ 删除单条回复的 UI（接口可留）
+- ❌ 删除单条回复的 UI（`DELETE /api/annotation-replies/:id` v1 未做，后置）
 - ❌ 连线的 Word 折线 / 多行环绕（v1 只画一条直线到首个行盒；见 AR-15）
 
 ### 待定
@@ -540,6 +545,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 - `Document.ConversationID *string` `server/internal/model/document.go:19`。
 - 会话摘要 `ConversationSummary` 有 `CoverFromMsgID/CoverToMsgID`、`Status=active`。
 - 归档 = 软删 `is_deleted=true`（`conversation_repo.go:176-180`），**消息不删**；仅**无痕**会物理销毁。
+- 文档级联删批注/回复的实际位置 = `service/document_repo.go` 的 `purge`（物理清理事务；软删 `Delete` 不动批注/回复，留到 purge 一起删）。文档 API 删除 handler 里**没有**级联。
 - `vector.message_retention_days: 14` 只影响语义检索（内存向量），**按 id 查库绕开**。
 - `ExecuteContext`（`tool/tool.go:69`）**没有** message id，只有 `UserID/ConvID/TurnID/ToolCallID/Mode`。
 - 问 AI 客户端残留点：`DocumentAIBridge.onAsk`、`ChatView.swift:161-170/383`、`ChatViewModel.swift:179-194`、`DocQuote.swift`。
@@ -576,3 +582,13 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 - 常量 `Shared/Views/LayoutConstants.swift`：`docAnnotPanelWidth=300` / `docPanelStripWidth=32` / `docTocExpandedWidth=220` / `docReaderMinWidth=260` / `docAnnotHardFloor=560` / `docTocHardFloor=780`。
 - 自查：`cd client/xHelper/xHelper/Shared && xcrun swiftc -typecheck -D DEBUG -sdk "$(xcrun --show-sdk-path --sdk macosx)" -target arm64-apple-macos26.3 -default-isolation MainActor -I <DerivedData>/Build/Products/Debug $(cat /tmp/shared.txt) ../../xHelperMac/*.swift`；iOS 换 `iphonesimulator` + `Index.noindex/Build/Products/Debug-iphonesimulator`。`bash client/xHelper/scripts/check-reader-html.sh` 现有 **179 条断言**（模板从 Swift 源现抠，故 JS 改动自动纳入；**未加连线专属断言**，可后续补）。
 - 注意：`AnnotationPanelMode` / `AnnotationConnectorLayer` / `AnnotationHighlightColor` **必须在 `#if os(macOS)` 之外**定义（`@AppStorage` 默认值与 `.overlay` 在共享的 `DocumentListView` 里用到，iOS 也要能编）。
+
+### F. 服务端实现地图（P1+P2+P3-Go 已落地）
+
+- 模型 `model/document_annotation_reply.go`：`ID/AnnotationID/DocumentID/UserID/Role/Content/Source/CreatedAt`；索引 `annotation_id`/`document_id`/`user_id`。
+- repo `service/document_annotation_reply_repo.go`：`CreateBatch`（单 INSERT 原子）/ `ListByAnnotationID`（`created_at ASC,id ASC`，limit<0→100，limit==0 只取总数）/ `CountByAnnotation` / `CountsByAnnotationIDs`（`GROUP BY`）/ `LatestByAnnotationIDs`（`ORDER BY annotation_id,created_at DESC,id DESC` 内存取首）/ `ListRecentByAnnotationIDs`（`ROW_NUMBER() OVER (PARTITION BY annotation_id ...)`，MySQL8/SQLite3.25+）/ `DeleteByAnnotation` / `DeleteByDocument`。
+- 生成器 `agent/annotation_reply.go`：`NewAnnotationReplier`（必需依赖 nil→panic）；`Generate(ctx,userID,annotationID,userContent)`；哨兵错误 `ErrAnnotationReplyBusy/Limit/NotFound/Save`；常量 `annotationReplyMaxContentLen=4000`、`annotationReplyMaxReplies=100`、`annotationReplyTimeout=120s`、`annotationReplyMaxIterations=6`、`annotationReplyOriginRounds=10`、`annotationReplyThreadInPrompt=20`；只读工具白名单 `annotationReplyToolNames=[document,unified_search,message_search,get_summary]`；`loadOriginContext` 降级打日志；`buildUserMessage` 动态上下文全进 user 消息；`tryKeyedMutex.tryLock` 非阻塞。
+- controller `controller/annotation.go`：`annotationItem`（嵌入 `model.DocumentAnnotation` + `reply_count`/`last_reply`）；`ListReplies`（limit≤200）；`ReplyAnnotation`（哨兵→409/404/400/500/502，`500/502` 顶层 `log.Printf` 一次）；`DeleteAnnotation` 级联删回复（失败仅记日志）。
+- 工具 `tool/document.go`：`reply_annotation`（`source=chat`，校验归属/长度/上限）；`listAnnotations` 带 `replies`（≤20/批注、`replies_truncated`）；常量 `maxAnnotationReplyLen=4000`/`maxRepliesPerAnnotation=100`/`annotationRepliesPreview=20`。
+- 装配：`appinit/tools.go` `NewDocumentTool(doc,anno,reply)`；`appinit/router.go` 建 `AnnotationReplier`（`Client: llmClients.Flash`）；`app/init_db.go` AllModels + `app/init_repos.go` Repos/InitRepos。
+- 单测：`service/document_annotation_reply_repo_test.go`（排序/计数/最近N/删除）；`tool/document_test.go` 的 `TestDocumentAnnotationReplyAndList`。回归：`activity/track_test.go`、`service/document_repo_test.go` 的 AutoMigrate 已补 `DocumentAnnotationReply`（否则 purge 用例 no such table）。

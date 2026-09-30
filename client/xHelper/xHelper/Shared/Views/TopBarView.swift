@@ -76,24 +76,25 @@ struct TopBarView: View {
             Button {
                 showConversationMenu.toggle()
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: 4) {
                     if currentIsEphemeral {
                         Image(systemName: "theatermasks.fill")
-                            .font(.system(size: 11))
+                            .font(.system(size: 12))
                             .foregroundStyle(Color("appAccent"))
                     }
                     Text(currentConversationTitle)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.primary.opacity(0.85))
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .frame(maxWidth: 240, alignment: .leading)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 12)
                 .frame(height: Layout.topBarCapsuleHeight)
-                .frame(maxWidth: 240, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -131,27 +132,33 @@ struct TopBarView: View {
             Text("会话")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 6)
+                .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 6)
 
-            ForEach(conversationListVM.conversations) { conv in
-                conversationMenuRow(conv)
-            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(conversationListVM.conversations) { conv in
+                        conversationMenuRow(conv)
+                    }
 
-            if conversationListVM.hasMore {
-                Button {
-                    Task { await conversationListVM.loadMore() }
-                } label: {
-                    Text(conversationListVM.isLoadingMore ? "加载中…" : "加载更多")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                    if conversationListVM.hasMore {
+                        Button {
+                            Task { await conversationListVM.loadMore() }
+                        } label: {
+                            Text(conversationListVM.isLoadingMore ? "加载中…" : "加载更多")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(conversationListVM.isLoadingMore)
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(conversationListVM.isLoadingMore)
+                .padding(.horizontal, 6)
             }
+            .frame(maxHeight: 420)
         }
-        .frame(width: 300)
+        .frame(width: 280)
         .padding(.bottom, 6)
     }
 
@@ -160,7 +167,7 @@ struct TopBarView: View {
         let isHovered = hoveredConversationID == conv.id
         let isPinned = conv.pinned == true
         let isEphemeral = conv.ephemeral == true
-        return HStack(spacing: 6) {
+        return HStack(spacing: 4) {
             Button {
                 showConversationMenu = false
                 Task {
@@ -172,34 +179,22 @@ struct TopBarView: View {
                 HStack(spacing: 6) {
                     if isEphemeral {
                         Image(systemName: "theatermasks")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                     Text(conv.title.isEmpty ? "新对话" : conv.title)
-                        .font(.system(size: 12, weight: isCurrent ? .semibold : .regular))
+                        .font(.system(size: 14, weight: isCurrent ? .semibold : .regular))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-                    Spacer()
+                    Spacer(minLength: 4)
                     if isCurrent {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(Color("appAccent"))
                     }
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-
-            if isHovered || isPinned {
-                Button {
-                    Task { await conversationListVM.setPinned(id: conv.id, pinned: !isPinned) }
-                } label: {
-                    Image(systemName: isPinned ? "pin.fill" : "pin")
-                        .font(.system(size: 11))
-                        .foregroundStyle(isPinned ? Color("appAccent") : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help(isPinned ? "取消置顶" : "置顶")
-            }
 
             if isHovered {
                 Button {
@@ -209,18 +204,33 @@ struct TopBarView: View {
                     }
                 } label: {
                     Image(systemName: isEphemeral ? "trash" : "archivebox")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
                 }
                 .buttonStyle(.plain)
                 .help(isEphemeral ? "销毁" : "归档")
             }
+
+            if isHovered || isPinned {
+                Button {
+                    Task { await conversationListVM.setPinned(id: conv.id, pinned: !isPinned) }
+                } label: {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 12))
+                        .foregroundStyle(isPinned ? Color("appAccent") : .secondary)
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .help(isPinned ? "取消置顶" : "置顶")
+            }
         }
-        .padding(.horizontal, 12).padding(.vertical, 7)
+        .padding(.horizontal, 10).padding(.vertical, 7)
         .background(
             isCurrent
                 ? Color("appAccent").opacity(0.10)
-                : (isHovered ? Color.primary.opacity(0.06) : .clear)
+                : (isHovered ? Color.primary.opacity(0.06) : .clear),
+            in: RoundedRectangle(cornerRadius: 6)
         )
         .contentShape(Rectangle())
         .onHover { hoveredConversationID = $0 ? conv.id : nil }

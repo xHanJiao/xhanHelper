@@ -157,3 +157,15 @@ class ConversationListViewModel: ObservableObject {
         }
     }
 }
+
+/// 会话时间戳 → 相对时间（中文）。归档/文档列表与顶栏会话下拉共用。
+func formatConversationDate(_ iso: String) -> String {
+    let fmt = ISO8601DateFormatter()
+    fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    guard let date = fmt.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else {
+        return iso
+    }
+    let relative = RelativeDateTimeFormatter()
+    relative.locale = Locale(identifier: "zh_CN")
+    return relative.localizedString(for: date, relativeTo: Date())
+}

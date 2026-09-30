@@ -76,23 +76,23 @@ struct TwoColumnLayoutPreview: View {
     }
 
     private var conversationTrigger: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             Image(systemName: "theatermasks.fill")
-                .font(.system(size: 11))
+                .font(.system(size: 12))
                 .foregroundStyle(variant == .ephemeral ? accent : ink(0.6))
             Text(currentTitle)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(ink(0.85))
                 .lineLimit(1)
             Image(systemName: "chevron.down")
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(ink(0.4))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(Capsule().fill(.regularMaterial))
         .overlay(Capsule().strokeBorder(ink(0.1), lineWidth: 0.5))
-        .frame(maxWidth: 240, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var newConversationButton: some View {
@@ -112,7 +112,7 @@ struct TwoColumnLayoutPreview: View {
             Text("会话")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(ink(0.45))
-                .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 6)
+                .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 6)
 
             menuRow(icon: "theatermasks", title: currentTitle, current: true, pinned: false)
             menuRow(icon: nil, title: "项目排期讨论", current: false, pinned: true)
@@ -124,26 +124,27 @@ struct TwoColumnLayoutPreview: View {
                 .frame(maxWidth: .infinity).padding(.vertical, 8)
         }
         .padding(.bottom, 6)
-        .frame(width: 340)
+        .frame(width: 280)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(ink(0.1), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
     }
 
     private func menuRow(icon: String?, title: String, current: Bool, pinned: Bool) -> some View {
-        HStack(spacing: 8) {
-            if let icon { Image(systemName: icon).font(.system(size: 11)).foregroundStyle(accent) }
+        HStack(spacing: 6) {
+            if let icon { Image(systemName: icon).font(.system(size: 12)).foregroundStyle(accent) }
             Text(title)
-                .font(.system(size: 12, weight: current ? .semibold : .regular))
+                .font(.system(size: 14, weight: current ? .semibold : .regular))
                 .foregroundStyle(ink(current ? 0.9 : 0.72))
                 .lineLimit(1)
-            Spacer()
-            if current { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(accent) }
-            Image(systemName: pinned ? "pin.fill" : "pin").font(.system(size: 11)).foregroundStyle(ink(pinned ? 0.5 : 0.25))
-            Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(ink(0.25))
+            Spacer(minLength: 4)
+            if current { Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(accent) }
+            Image(systemName: pinned ? "pin.fill" : "pin").font(.system(size: 12)).foregroundStyle(ink(pinned ? 0.5 : 0.25))
+            Image(systemName: "xmark").font(.system(size: 12)).foregroundStyle(ink(0.25))
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(current ? accent.opacity(0.08) : Color.clear)
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(current ? accent.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 6)
     }
 
     // MARK: 主体两栏

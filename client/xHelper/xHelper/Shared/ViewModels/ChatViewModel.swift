@@ -699,8 +699,9 @@ class ChatViewModel: ObservableObject {
     /// L3 确认出现时播放提示音（macOS：Glass 系统音，设置可关；iOS 静默）。
     private func playConfirmationAlert() {
         #if os(macOS)
-        if UserDefaults.standard.object(forKey: "xhan_l3_alert_sound") == nil
-            || UserDefaults.standard.bool(forKey: "xhan_l3_alert_sound") {
+        let key = LocalPaths.scoped("xhan_l3_alert_sound")
+        if UserDefaults.standard.object(forKey: key) == nil
+            || UserDefaults.standard.bool(forKey: key) {
             if let sound = NSSound(named: .init("Glass")) {
                 sound.play()
             } else {
@@ -708,6 +709,28 @@ class ChatViewModel: ObservableObject {
             }
         }
         #endif
+    }
+
+    /// 久等后的回复完成提示音（macOS：Bottle 系统音；默认开，设置可关；iOS 静默）。
+    private func playLongReplyAlert() {
+        #if os(macOS)
+        let key = LongReplyAlert.soundKey
+        if UserDefaults.standard.object(forKey: key) == nil
+            || UserDefaults.standard.bool(forKey: key) {
+            if let sound = NSSound(named: .init("Bottle")) {
+                sound.play()
+            } else {
+                NSSound.beep()
+            }
+        }
+        #endif
+    }
+
+    /// 「久等」阈值（秒）。设置里存秒值便于测试；无记录时 dev 默认 5s、prod 默认 180s。
+    private static func longReplyAlertThreshold() -> TimeInterval {
+        let seconds = UserDefaults.standard.object(forKey: LongReplyAlert.secondsKey) as? Int
+            ?? LongReplyAlert.defaultSeconds
+        return TimeInterval(seconds)
     }
 
     // 游标分页
@@ -724,6 +747,8 @@ class ChatViewModel: ObservableObject {
     private let sseClient = SSEClient()
     private var streamingContent = ""
     private var throttleTimer: Timer?
+    /// 本轮用户消息发出的时刻（用于「久等后回复完成」提示音；done/停止时清空）
+    private var streamStartedAt: Date?
     #if os(iOS)
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     #endif
@@ -914,6 +939,7 @@ class ChatViewModel: ObservableObject {
 
         isStreaming = true
         streamingContent = ""
+        streamStartedAt = Date()
         thoughtMessage = nil
         thoughtDone = false
         subagentSessions = []
@@ -1179,12 +1205,20 @@ class ChatViewModel: ObservableObject {
             handleSubagentEvent(event.data)
 
         case .done:
+            let doneError = parseDoneError(event.data)
+            // 久等后回复完成提示音：判定必须在 finishStreaming 清空 streamStartedAt 之前
+            let replyElapsed = streamStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+            let hasReplyContent = !streamingContent.isEmpty
             finishStreaming()
+            // 仅正常完成才响：done 带 error 说明这轮有异常，不报喜；无内容（空回复/被截断）也不响
+            if hasReplyContent, doneError == nil, replyElapsed >= Self.longReplyAlertThreshold() {
+                playLongReplyAlert()
+            }
             statusMessage = nil
             toolQueue = []
             pendingToolCalls = []
             verifyStatus = nil
-            if let err = parseDoneError(event.data) {
+            if let err = doneError {
                 ToastCenter.shared.show("服务提示：\(err)")
             }
             if let cid = parseConversationIdFromDone(event.data) {
@@ -1267,6 +1301,7 @@ class ChatViewModel: ObservableObject {
             thoughtMessage = nil
         }
         isStreaming = false
+        streamStartedAt = nil
         // 停止/出错路径无 done 事件，思考块转静态折叠态（done 路径同样安全）
         thoughtDone = true
         // 停止/出错时清校验状态，防 pill 残留
@@ -1297,6 +1332,7 @@ class ChatViewModel: ObservableObject {
             self?.endBackgroundTask()
             Task { @MainActor in
                 self?.isStreaming = false
+                self?.streamStartedAt = nil
             }
         }
     }

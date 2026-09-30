@@ -50,7 +50,7 @@ final class LocalBackendManager: ObservableObject {
 
     /// 本地后端是否接管寻址：显式设了 xhan_server_url 就让他自己连（逃生口）。
     static var isActive: Bool {
-        (UserDefaults.standard.string(forKey: "xhan_server_url") ?? "").isEmpty
+        (UserDefaults.standard.string(forKey: LocalPaths.scoped("xhan_server_url")) ?? "").isEmpty
     }
 
     private init() {

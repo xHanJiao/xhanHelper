@@ -37,12 +37,12 @@ class DeviceManager: ObservableObject {
         #if os(macOS)
         // 本地模式：连 app 自拉起的内嵌后端；显式设了 xhan_server_url 则改用它（逃生口）。
         // 注意：逃生口填错环境（dev 填 prod 端口）会被后端按 token 前缀 403 拒绝。
-        if let override = UserDefaults.standard.string(forKey: "xhan_server_url"), !override.isEmpty {
+        if let override = UserDefaults.standard.string(forKey: LocalPaths.scoped("xhan_server_url")), !override.isEmpty {
             return override
         }
         return LocalBackendManager.shared.baseURL
         #elseif DEBUG
-        let url = UserDefaults.standard.string(forKey: "xhan_server_url") ?? Self.defaultBaseURL
+        let url = UserDefaults.standard.string(forKey: LocalPaths.scoped("xhan_server_url")) ?? Self.defaultBaseURL
         return url
         #else
         return Self.defaultBaseURL
@@ -60,7 +60,7 @@ class DeviceManager: ObservableObject {
 
     static var webBaseURL: String {
         #if os(macOS)
-        if let override = UserDefaults.standard.string(forKey: "xhan_web_url"), !override.isEmpty {
+        if let override = UserDefaults.standard.string(forKey: LocalPaths.scoped("xhan_web_url")), !override.isEmpty {
             return override
         }
         // 逃生口（服务地址指向远端/自定义后端）时前端不在本地端口上——回退默认
@@ -72,7 +72,7 @@ class DeviceManager: ObservableObject {
         // 本地模式：前端由内嵌 Go 托管，与 API 同源。
         return LocalBackendManager.shared.baseURL
         #elseif DEBUG
-        let url = UserDefaults.standard.string(forKey: "xhan_web_url") ?? Self.defaultWebBaseURL
+        let url = UserDefaults.standard.string(forKey: LocalPaths.scoped("xhan_web_url")) ?? Self.defaultWebBaseURL
         return url
         #else
         return Self.defaultWebBaseURL

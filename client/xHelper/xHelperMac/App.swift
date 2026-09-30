@@ -838,8 +838,11 @@ struct MacSettingsView: View {
     @ObservedObject private var localBackend = LocalBackendManager.shared
     @EnvironmentObject var colorSchemeManager: ColorSchemeManager
     // 空 = 使用 app 自启动的内嵌本地后端；填了 = 逃生口（连远端/自定义后端，不启动本地后端）。
-    @AppStorage("xhan_server_url") private var serverURL = ""
-    @AppStorage("xhan_l3_alert_sound") private var l3AlertSound = true
+    @AppStorage(LocalPaths.scoped("xhan_server_url")) private var serverURL = ""
+    @AppStorage(LocalPaths.scoped("xhan_l3_alert_sound")) private var l3AlertSound = true
+    // key/默认值见 LongReplyAlert（唯一事实来源）；key 带环境后缀，dev/prod 不串味
+    @AppStorage(LongReplyAlert.soundKey) private var longReplyAlertSound = LongReplyAlert.defaultSoundEnabled
+    @AppStorage(LongReplyAlert.secondsKey) private var longReplyAlertSeconds = LongReplyAlert.defaultSeconds
     @State private var showClearCacheAlert = false
     @State private var showAddDirSheet = false
     @State private var showAddExemptSheet = false
@@ -873,6 +876,17 @@ struct MacSettingsView: View {
 
             Section("提醒") {
                 Toggle("提示音", isOn: $l3AlertSound)
+                Toggle("久等回复完成提示音", isOn: $longReplyAlertSound)
+                Picker("久等阈值", selection: $longReplyAlertSeconds) {
+                    if LocalPaths.isDev {
+                        Text("1 秒（测试用）").tag(1)
+                    }
+                    Text("5 秒").tag(5)
+                    Text("2 分钟").tag(120)
+                    Text("3 分钟").tag(180)
+                    Text("5 分钟").tag(300)
+                }
+                .disabled(!longReplyAlertSound)
             }
 
             Section("文件访问授权") {

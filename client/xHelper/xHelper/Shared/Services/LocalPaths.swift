@@ -70,4 +70,18 @@ enum LocalPaths {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         return caches.appendingPathComponent("com.xhan.xhanHelper/logs\(isDev ? "-dev" : "")")
     }
+
+    /// 给 app 级配置 key 加环境后缀：dev/prod 共用同一 bundle id 的 UserDefaults 域，
+    /// 不加后缀时 dev 里设的值会串到 prod（数据根都分开了，配置同理）。
+    static func scoped(_ key: String) -> String { "\(key)_\(env)" }
+}
+
+/// 「久等回复完成」提示音的 key 与默认值（唯一事实来源，避免设置页与读取端各写一份漂移）。
+///
+/// key 带环境后缀（见 `LocalPaths.scoped`）。默认阈值随构建区分：dev 便于测试取 5s，prod 取 180s。
+enum LongReplyAlert {
+    static var soundKey: String { LocalPaths.scoped("xhan_long_reply_alert_sound") }
+    static var secondsKey: String { LocalPaths.scoped("xhan_long_reply_alert_seconds") }
+    static let defaultSoundEnabled = true
+    static var defaultSeconds: Int { LocalPaths.isDev ? 5 : 180 }
 }

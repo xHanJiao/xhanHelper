@@ -3,8 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var deviceManager: DeviceManager
     @EnvironmentObject var colorSchemeManager: ColorSchemeManager
-    @AppStorage("xhan_server_url") private var serverURL = DeviceManager.defaultBaseURL
-    @AppStorage("xhan_web_url") private var webURL = DeviceManager.defaultWebBaseURL
+    @AppStorage(LocalPaths.scoped("xhan_server_url")) private var serverURL = DeviceManager.defaultBaseURL
+    @AppStorage(LocalPaths.scoped("xhan_web_url")) private var webURL = DeviceManager.defaultWebBaseURL
 
     private var apiClient: APIClient {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")

@@ -176,7 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // 其余情况一律放行给 TextEditor —— 普通粘字、PiP 小窗粘贴都走原路。
             if event.keyCode == 9,
                event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-               ChatInputFocus.isFocused,
+               ChatInputFocus.shared.isFocused,
                NSApp.modalWindow == nil,
                let datas = Self.pasteboardImages() {
                 AppShortcutBridge.shared.onPasteImages?(datas)

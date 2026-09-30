@@ -241,7 +241,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
             }
             .onChange(of: isFocused) { _, new in
                 // 供 ⌘V 粘贴判定（macOS 的 NSEvent monitor 拿不到 SwiftUI 的焦点态）
-                ChatInputFocus.isFocused = new
+                ChatInputFocus.shared.isFocused = new
                 onFocusChange?(new)
                 if !new {
                     idleTask?.cancel()
@@ -250,7 +250,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
             }
             .onDisappear {
                 // 输入框被移除（切页/收起）时焦点态不会自己变，留着会误判 ⌘V 该接管
-                ChatInputFocus.isFocused = false
+                ChatInputFocus.shared.isFocused = false
             }
             // Return：单独按换行（放行给 TextEditor）；Shift+Return 发送。
             .onKeyPress(.return, phases: .down) { keyPress in

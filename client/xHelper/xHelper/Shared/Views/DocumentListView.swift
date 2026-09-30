@@ -602,6 +602,8 @@ private struct DocumentFullView: View {
     @StateObject private var reader: DocumentReaderController
     /// 正文字号跟随全局字号设置。scaledSize 是计算属性，靠 @Published scale 触发重算。
     @ObservedObject private var fontManager = FontSizeManager.shared
+    /// 聊天输入框焦点（避免 ⌘←/⌘→ 被文档上/下篇快捷键劫持，见 shortcutCarrier）
+    @ObservedObject private var chatInputFocus = ChatInputFocus.shared
 
     /// 正文基准字号：与旧 MarkdownUI 正文一致（scaledSize × 1.18）
     private var readingFontSize: CGFloat { fontManager.scaledSize * 1.18 }
@@ -716,15 +718,16 @@ private struct DocumentFullView: View {
     }
 
     /// ⌘←/⌘→ 快捷键载体：目录栏只在有标题时渲染，快捷键不依赖它，故挂在最外层。
-    /// 尺寸归零 + 透明，只提供键位；查找栏打开时禁用，把 ⌘←/⌘→ 还给文本框移动光标。
+    /// 尺寸归零 + 透明，只提供键位；查找栏打开、或聊天输入框聚焦时禁用，
+    /// 把 ⌘←/⌘→ 还给文本框移动光标（否则输入时会被这两个键劫持）。
     private var shortcutCarrier: some View {
         Group {
             Button("") { onNavigate(-1) }
                 .keyboardShortcut(.leftArrow, modifiers: .command)
-                .disabled(!canGoPrevious || showFindBar)
+                .disabled(!canGoPrevious || showFindBar || chatInputFocus.isFocused)
             Button("") { onNavigate(1) }
                 .keyboardShortcut(.rightArrow, modifiers: .command)
-                .disabled(!canGoNext || showFindBar)
+                .disabled(!canGoNext || showFindBar || chatInputFocus.isFocused)
         }
         .frame(width: 0, height: 0)
         .opacity(0)

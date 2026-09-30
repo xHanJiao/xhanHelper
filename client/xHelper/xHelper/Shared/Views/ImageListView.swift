@@ -62,6 +62,13 @@ struct ImageListView: View {
                     Image(platformImage: thumb)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
+                } else if viewModel.failed.contains(item.id) {
+                    // 记录在、文件已被清理：破图占位，别一直转圈
+                    Color.clear.overlay {
+                        Image(systemName: "photo.badge.exclamationmark")
+                            .font(.system(size: 22))
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     Color.clear.overlay { ProgressView().controlSize(.small) }
                 }
@@ -154,6 +161,7 @@ struct ImageListView: View {
     private func helpText(_ item: ImageAssetSummary) -> String {
         var parts = [sourceLabel(item.source), byteText(item.bytes), String(item.createdAt.prefix(10))]
         if item.referenced { parts.append("已被消息引用") }
+        if viewModel.failed.contains(item.id) { parts.append("文件已丢失（等待自动清理）") }
         parts.append(item.hasFileId ? "已传 DeepSeek" : "未传 DeepSeek")
         parts.append(item.mime)
         return parts.joined(separator: " · ")
@@ -173,6 +181,10 @@ private struct ImagePreviewOverlay: View {
         Group {
             if let image = loader.cached(item.id) {
                 AttachmentPreviewView(image: image, onClose: onClose)
+            } else if loader.failed.contains(item.id) {
+                Text("图片已被清理")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 320, height: 240)
             } else {
                 ProgressView()
                     .controlSize(.large)

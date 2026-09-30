@@ -204,3 +204,67 @@ func TestImageStoreCleanupTwoTier(t *testing.T) {
 		t.Errorf("fresh image should survive: %v", err)
 	}
 }
+
+// 记录在、磁盘文件没了（迁移/外部删除遗留）→ Cleanup 应删掉记录，且不误伤文件还在的。
+func TestImageStoreCleanupPurgesMissingFile(t *testing.T) {
+	store, _, cleanup := setupImageStore(t, 1<<20)
+	defer cleanup()
+	ctx := context.Background()
+
+	broken, err := store.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, fakePNG)
+	if err != nil {
+		t.Fatalf("upload broken: %v", err)
+	}
+	healthy, err := store.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, append(fakePNG, "ok"...))
+	if err != nil {
+		t.Fatalf("upload healthy: %v", err)
+	}
+
+	// 模拟文件被外部清掉，只留记录
+	if err := os.Remove(store.FilePath(broken)); err != nil {
+		t.Fatalf("remove file: %v", err)
+	}
+
+	stats, err := store.Cleanup(ctx, 15, 3)
+	if err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if stats.Missing != 1 {
+		t.Errorf("expected 1 missing purged, got %+v", stats)
+	}
+	if _, err := store.Repo().GetByID(ctx, broken.ID); err == nil {
+		t.Error("broken record should be deleted")
+	}
+	if _, err := store.Repo().GetByID(ctx, healthy.ID); err != nil {
+		t.Errorf("healthy record should survive: %v", err)
+	}
+	if _, err := os.Stat(store.FilePath(healthy)); err != nil {
+		t.Errorf("healthy file should survive: %v", err)
+	}
+}
+
+// 图片目录整体不可用（未挂载/被改名）→ Cleanup 应放弃本次清理，绝不能把全部记录判为 missing 删光。
+func TestImageStoreCleanupSkipsWhenDirMissing(t *testing.T) {
+	store, _, cleanup := setupImageStore(t, 1<<20)
+	defer cleanup()
+	ctx := context.Background()
+
+	asset, err := store.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, fakePNG)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if err := os.RemoveAll(store.Dir()); err != nil {
+		t.Fatalf("remove dir: %v", err)
+	}
+
+	stats, err := store.Cleanup(ctx, 15, 3)
+	if err == nil {
+		t.Error("expected error when image dir unavailable")
+	}
+	if stats.Missing != 0 || stats.Referenced != 0 || stats.Orphans != 0 {
+		t.Errorf("nothing should be purged, got %+v", stats)
+	}
+	if _, err := store.Repo().GetByID(ctx, asset.ID); err != nil {
+		t.Errorf("record should survive missing dir: %v", err)
+	}
+}

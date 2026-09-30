@@ -51,9 +51,9 @@ type CronRunner struct {
 	convRepo          *service.ConversationRepo // 会话自动归档
 	archiveAfterDays  int                       // 无活动天数超过则自动归档；<=0 关闭
 	archiveInterval   time.Duration             // 归档扫描间隔
-	imageStore        *service.ImageStore       // 图床（按保留期清理过期图片）
-	imageTTLDays      int                       // 被引用过的图保留天数；<0 关闭
-	imageOrphanDays   int                       // 孤儿图保留天数；<0 关闭
+	imageStore        *service.ImageStore       // 图床（按保留期清理过期图片 + 文件缺失自愈）
+	imageTTLDays      int                       // 被引用过的图保留天数；<0 关闭该类过期清理
+	imageOrphanDays   int                       // 孤儿图保留天数；<0 关闭该类过期清理
 	imageCleanupEvery time.Duration             // 图片清理扫描间隔
 	embeddingRepo     *service.EmbeddingRepo    // 向量逐出（按保留窗移除内存中的旧向量）
 	vectorStore       *VectorStore
@@ -73,6 +73,7 @@ type CronRunner struct {
 	activityNext      time.Time
 	sessionEndRunning bool
 	activityRunning   bool
+	imageRunning      bool
 }
 
 // ActivityRecomputer 是 activity.Store 暴露给调度器的重算口子（避免直接依赖，便于测试替身）。
@@ -97,8 +98,8 @@ type CronRunnerConfig struct {
 	ArchiveAfterDays  int           // 无活动天数超过则自动归档；<=0 关闭
 	ArchiveInterval   time.Duration // 归档扫描间隔；<=0 默认 24h
 	ImageStore        *service.ImageStore
-	ImageTTLDays      int           // 被引用过的图保留天数；<0 关闭
-	ImageOrphanDays   int           // 孤儿图保留天数；<0 关闭
+	ImageTTLDays      int           // 被引用过的图保留天数；<0 关闭该类过期清理（自愈恒开）
+	ImageOrphanDays   int           // 孤儿图保留天数；<0 关闭该类过期清理（自愈恒开）
 	ImageCleanupEvery time.Duration // 图片清理扫描间隔；<=0 默认 12h
 	EmbeddingRepo     *service.EmbeddingRepo
 	VectorStore       *VectorStore
@@ -354,9 +355,9 @@ func (cr *CronRunner) Start(ctx context.Context) {
 		cr.setArchiveNext(time.Time{})
 	}
 
-	// 图片清理：只在图床可用且 TTL 未全部关闭时启用
+	// 图片清理：图床可用即启用（含脏数据自愈，TTL 全关也要扫）
 	var imageChan <-chan time.Time
-	if cr.imageStore != nil && (cr.imageTTLDays >= 0 || cr.imageOrphanDays >= 0) {
+	if cr.imageStore != nil {
 		imageTicker := time.NewTicker(cr.imageCleanupEvery)
 		defer imageTicker.Stop()
 		imageChan = imageTicker.C
@@ -445,8 +446,20 @@ func (cr *CronRunner) Start(ctx context.Context) {
 			cr.setArchiveNext(time.Now().Add(cr.archiveInterval))
 
 		case <-imageChan:
-			log.Printf("[cron] image cleanup trigger")
-			cr.cleanupImages(ctx)
+			// 图片清理含全表扫描 + 逐文件 stat，可能耗时；放后台跑，别堵住 sessionEndTicker(30s) 等其它钩子。
+			cr.mu.Lock()
+			if cr.imageRunning {
+				cr.mu.Unlock()
+				continue
+			}
+			cr.imageRunning = true
+			cr.mu.Unlock()
+			go func() {
+				cr.cleanupImages(ctx)
+				cr.mu.Lock()
+				cr.imageRunning = false
+				cr.mu.Unlock()
+			}()
 			cr.setImageCleanupNext(time.Now().Add(cr.imageCleanupEvery))
 
 		case <-evictChan:
@@ -495,8 +508,9 @@ func (cr *CronRunner) activeUsers(ctx context.Context) ([]model.User, error) {
 	return users, nil
 }
 
-// cleanupImages 按保留期清理过期图片（全局，不分用户）：被引用过的走长保留期，孤儿走短保留期。
-// 两类都关闭时该循环不会启动。失败仅记日志，不打断调度。
+// cleanupImages 按保留期清理过期图片（全局，不分用户）：被引用过的走长保留期，孤儿走短保留期；
+// 另外无条件自愈「记录在、文件没了」的脏记录。
+// 图床可用即启动（TTL<0 只关对应的过期清理）；失败仅记日志，不打断调度。
 func (cr *CronRunner) cleanupImages(ctx context.Context) {
 	if cr.imageStore == nil {
 		return
@@ -505,9 +519,9 @@ func (cr *CronRunner) cleanupImages(ctx context.Context) {
 	if err != nil {
 		log.Printf("[cron] cleanupImages error: %v", err)
 	}
-	if stats.Referenced > 0 || stats.Orphans > 0 {
-		log.Printf("[cron] cleanupImages: removed %d referenced (ttl=%dd) + %d orphan (ttl=%dd)",
-			stats.Referenced, cr.imageTTLDays, stats.Orphans, cr.imageOrphanDays)
+	if stats.Referenced > 0 || stats.Orphans > 0 || stats.Missing > 0 {
+		log.Printf("[cron] cleanupImages: removed %d referenced (ttl=%dd) + %d orphan (ttl=%dd) + %d broken (file missing)",
+			stats.Referenced, cr.imageTTLDays, stats.Orphans, cr.imageOrphanDays, stats.Missing)
 	}
 }
 

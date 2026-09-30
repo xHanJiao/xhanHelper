@@ -154,16 +154,28 @@ func (s *ImageStore) Delete(ctx context.Context, a *model.ImageAsset) error {
 type ImageCleanupStats struct {
 	Referenced int
 	Orphans    int
+	Missing    int // 记录还在但磁盘文件已丢失（迁移/外部删除遗留）
 }
 
 // Cleanup 按保留期清理过期图片：
 //   - 被消息引用过的：last_used_at 早于 ttlDays 天
 //   - 从未被引用的孤儿：created_at 早于 orphanDays 天
+//   - 记录在、磁盘文件已丢失的：无条件删记录（脏数据自愈）
 //
-// ttlDays/orphanDays < 0 表示该类关闭。分批处理，失败只记日志不中断。
+// ttlDays/orphanDays < 0 表示该类过期清理关闭（自愈恒开）。分批处理，失败只记日志不中断。
 func (s *ImageStore) Cleanup(ctx context.Context, ttlDays, orphanDays int) (ImageCleanupStats, error) {
 	var stats ImageCleanupStats
 	now := time.Now()
+
+	// 目录整体不可用（未挂载 / 被改名 / 换机只搬 DB）时直接放弃本次清理：
+	// 否则逐文件 os.Stat 一律 ENOENT，会把全部记录（含 referenced）误判为 missing 删光。
+	fi, err := os.Stat(s.dir)
+	if err != nil {
+		return stats, fmt.Errorf("image dir unavailable, skip cleanup: %w", err)
+	}
+	if !fi.IsDir() {
+		return stats, fmt.Errorf("image dir not a directory, skip cleanup: %s", s.dir)
+	}
 
 	if orphanDays >= 0 {
 		cutoff := now.AddDate(0, 0, -orphanDays)
@@ -181,7 +193,62 @@ func (s *ImageStore) Cleanup(ctx context.Context, ttlDays, orphanDays int) (Imag
 			return stats, err
 		}
 	}
+	// 脏数据自愈：记录在、文件没了（迁移/外部删除遗留）一律删记录，不分 referenced。
+	// 无条件执行：这类记录留着只会让前端反复 404。
+	n, err := s.purgeMissingFiles(ctx)
+	stats.Missing = n
+	if err != nil {
+		return stats, err
+	}
 	return stats, nil
+}
+
+// purgeMissingFiles 分页扫描全部记录，删掉磁盘文件已不存在的那些（返回删除的记录数）。
+// 键集分页（id 游标）避免边扫边删时跳行。
+func (s *ImageStore) purgeMissingFiles(ctx context.Context) (int, error) {
+	const batch = 500
+	const sampleMax = 5
+	total := 0
+	cursor := ""
+	var sample []string
+	defer func() {
+		if total > 0 {
+			log.Printf("[image_cleanup] purged %d broken records (file missing), sample=%v", total, sample)
+		}
+	}()
+	for {
+		if ctx.Err() != nil {
+			return total, ctx.Err()
+		}
+		rows, err := s.repo.ListBatchAfter(ctx, cursor, batch)
+		if err != nil {
+			return total, fmt.Errorf("list image batch: %w", err)
+		}
+		if len(rows) == 0 {
+			return total, nil
+		}
+		var missing []string
+		for i := range rows {
+			a := &rows[i]
+			cursor = a.ID
+			if _, statErr := os.Stat(s.FilePath(a)); os.IsNotExist(statErr) {
+				missing = append(missing, a.ID)
+				if len(sample) < sampleMax {
+					sample = append(sample, a.ID)
+				}
+			} else if statErr != nil {
+				// 权限/IO/网络盘未挂等：保守跳过，绝不误删有效记录
+				log.Printf("[image_cleanup] stat %s failed, skip: %v", a.ID[:8], statErr)
+			}
+		}
+		if len(missing) > 0 {
+			n, err := s.repo.DeleteBatch(ctx, missing)
+			if err != nil {
+				return total, fmt.Errorf("delete broken image records: %w", err)
+			}
+			total += int(n)
+		}
+	}
 }
 
 type staleLister func(ctx context.Context, cutoff time.Time, limit int) ([]model.ImageAsset, error)

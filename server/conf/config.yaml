@@ -112,8 +112,8 @@ activity:
 storage:
   image_dir: data/images # 图床根目录（文档配图 + 聊天图片输入共用）
   max_image_bytes: 33554432 # 单图大小上限 32 MiB（对齐 DeepSeek 单图上限）
-  image_ttl_days: 15 # 被消息引用过的图保留天数；<0 关闭清理
-  image_orphan_ttl_days: 3 # 从未被引用的图保留天数；<0 关闭清理
+  image_ttl_days: 15 # 被消息引用过的图保留天数；<0 关闭该类过期清理（文件缺失自愈恒开）
+  image_orphan_ttl_days: 3 # 从未被引用的图保留天数；<0 关闭该类过期清理（文件缺失自愈恒开）
   image_cleanup_interval_minutes: 720 # 清理扫描间隔（分钟），默认 12 小时
 
 # 本地数据备份（仅本地模式生效；dest/enabled 由 Swift 设置页经 env 注入，见 local-backup 设计）

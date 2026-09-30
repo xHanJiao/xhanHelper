@@ -108,6 +108,15 @@ func (r *ImageAssetRepo) DeleteBatch(ctx context.Context, ids []string) (int64, 
 	return res.RowsAffected, res.Error
 }
 
+// ListBatchAfter 全局键集分页（id > afterID，按 id 升序）：清理任务对账用。
+// 键集而非 OFFSET：对账边扫边删，OFFSET 会因删除而跳行。
+func (r *ImageAssetRepo) ListBatchAfter(ctx context.Context, afterID string, limit int) ([]model.ImageAsset, error) {
+	var list []model.ImageAsset
+	err := r.db.WithContext(ctx).Where("id > ?", afterID).
+		Order("id ASC").Limit(limit).Find(&list).Error
+	return list, err
+}
+
 // ListStaleReferenced 列出被引用过、且最后使用时间早于 cutoff 的图（分批）
 func (r *ImageAssetRepo) ListStaleReferenced(ctx context.Context, cutoff time.Time, limit int) ([]model.ImageAsset, error) {
 	var list []model.ImageAsset

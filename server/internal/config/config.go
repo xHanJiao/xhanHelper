@@ -104,8 +104,8 @@ type ArchiveConfig struct {
 type StorageConfig struct {
 	ImageDir                string `yaml:"image_dir"`                      // 图片根目录（相对 server 运行目录），默认 data/images
 	MaxImageBytes           int64  `yaml:"max_image_bytes"`                // 单图大小上限，默认 32 MiB（对齐 DeepSeek 单图上限）
-	ImageTTLDays            int    `yaml:"image_ttl_days"`                 // 被消息引用过的图保留天数；0=默认 15，<0=关闭清理
-	ImageOrphanTTLDays      int    `yaml:"image_orphan_ttl_days"`          // 从未被引用的图保留天数；0=默认 3，<0=关闭清理
+	ImageTTLDays            int    `yaml:"image_ttl_days"`                 // 被消息引用过的图保留天数；0=默认 15，<0=关闭该类过期清理（文件缺失自愈恒开）
+	ImageOrphanTTLDays      int    `yaml:"image_orphan_ttl_days"`          // 从未被引用的图保留天数；0=默认 3，<0=关闭该类过期清理（文件缺失自愈恒开）
 	ImageCleanupIntervalMin int    `yaml:"image_cleanup_interval_minutes"` // 清理扫描间隔（分钟），<=0 默认 720（12 小时）
 }
 

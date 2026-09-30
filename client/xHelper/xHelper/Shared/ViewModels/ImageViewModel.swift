@@ -19,6 +19,8 @@ final class ImageViewModel: ObservableObject {
     @Published private(set) var items: [ImageAssetSummary] = []
     /// 256px 缩略图（按 id），网格渲染前先查这个
     @Published private(set) var thumbs: [String: PlatformImage] = [:]
+    /// 终局失败（404 / 解码不出）：显示破图占位，不再重试。网络抖动不记
+    @Published private(set) var failed: Set<String> = []
     @Published var isLoading = false
     @Published var errorMessage: String?
 
@@ -40,6 +42,8 @@ final class ImageViewModel: ObservableObject {
         isLoading = true
         currentOffset = 0
         hasMore = true
+        // 重进页面时给上次失败的图再来一次（服务端可能已把脏记录清掉，列表里就不再有它们）
+        failed.removeAll()
         do {
             let resp = try await apiClient.listImages(limit: Self.pageSize)
             items = resp.items
@@ -67,18 +71,23 @@ final class ImageViewModel: ObservableObject {
         isLoading = false
     }
 
-    /// 拉一张缩略图（幂等，格子进入视野时调）。失败不报错：留占位，重进页面会再试
+    /// 拉一张缩略图（幂等，格子进入视野时调）。404 / 解码失败记为终局，显示破图占位；
+    /// 其余（网络抖动）只记日志、留占位，重进页面会再试
     func loadThumb(_ id: String) {
-        guard thumbs[id] == nil, !loadingThumbs.contains(id) else { return }
+        guard thumbs[id] == nil, !failed.contains(id), !loadingThumbs.contains(id) else { return }
         loadingThumbs.insert(id)
         Task {
             defer { loadingThumbs.remove(id) }
             do {
                 let data = try await apiClient.fetchImageData(id: id)
-                guard let cg = ImageCompressor.thumbnail(data, maxPixel: Self.thumbMaxPixel) else { return }
+                guard let cg = ImageCompressor.thumbnail(data, maxPixel: Self.thumbMaxPixel) else {
+                    failed.insert(id)
+                    return
+                }
                 store(thumb: cg, id: id)
             } catch {
                 LogBuffer.shared.error("ImageViewModel.loadThumb \(id.prefix(8)): \(error)")
+                if (error as NSError).code == 404 { failed.insert(id) }
             }
         }
     }

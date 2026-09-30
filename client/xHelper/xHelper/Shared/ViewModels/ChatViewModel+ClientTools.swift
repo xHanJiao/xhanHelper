@@ -87,10 +87,11 @@ extension ChatViewModel {
                     }
                 }
 
-                // shell：未命中白名单 / workdir 未授权 / 语法不支持 → 直接拒绝（不弹确认）
-                let isShell = toolName.hasPrefix("shell__")
+                // shell / shell_peek：未命中白名单 / workdir 未授权 / 语法不支持 → 直接拒绝（不弹确认）
+                let shellScope = ShellToolProvider.scope(forFlatName: toolName)
+                let isShell = shellScope != nil
                 if isShell {
-                    if let blocked = LocalToolRegistry.shared.shellBlockedReason(arguments: args) {
+                    if let blocked = LocalToolRegistry.shared.shellBlockedReason(flatName: toolName, arguments: args) {
                         LogBuffer.shared.warning("clientToolCall: \(toolName) blocked: \(blocked)")
                         execOutcome = "failed"; execErrorType = "blocked"
                         try await api.submitToolResult(callId: callID, resultJSON: nil, error: blocked)
@@ -132,10 +133,10 @@ extension ChatViewModel {
 
                 if level >= 3 {
                     // shell L4：命令级高危，红色确认条 + 信任档不跳过（完全信任可跳过）
-                    let shellHardened = isShell && level >= 4
+                    let shellHardened = shellScope == .full && level >= 4
                     // shell：生成人话解释（用户不读原始命令，只看这句判断意图）
                     var shellExplain: String?
-                    if isShell, let cmd = args["command"] as? String {
+                    if shellScope == .full, let cmd = args["command"] as? String {
                         let wd = ShellToolProvider.resolveWorkdir(args["workdir"] as? String)
                         let stages = ShellCommandParser.evaluate(command: cmd, workdir: wd).stages
                         if !stages.isEmpty { shellExplain = ShellCommandDescriber.describe(stages: stages) }

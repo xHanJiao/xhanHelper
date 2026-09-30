@@ -594,7 +594,8 @@ struct xhanHelperMacApp: App {
                 }
                 LocalToolRegistry.shared.register(ChartTool())
                 LocalToolRegistry.shared.register(FileSystemToolProvider())
-                LocalToolRegistry.shared.register(ShellToolProvider())
+                LocalToolRegistry.shared.register(ShellToolProvider(scope: .full))
+                LocalToolRegistry.shared.register(ShellToolProvider(scope: .peek))
                 AgentWorkspace.ensureExists()
                 ToolOutputStore.shared.startHousekeeping()
             }

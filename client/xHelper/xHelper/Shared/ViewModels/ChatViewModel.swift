@@ -503,7 +503,7 @@ class ChatViewModel: ObservableObject {
         }
         // 浏览器工具走人话摘要（ref→元素文本、密码脱敏、来源等），其余保留原始参数
         let argsSummary: String
-        if toolName.hasPrefix("shell__") {
+        if toolName.hasPrefix("shell") {
             // shell 危险命令必须完整展示，不复用 prefix(80) 截断
             argsSummary = (arguments["command"] as? String) ?? "(无命令)"
         } else {

@@ -328,4 +328,79 @@ final class ShellCommandParserTests: XCTestCase {
         XCTAssertEqual(e.stages[1].argv, ["grep", "x"])
         XCTAssertEqual(e.stages[2].argv, ["pwd"])
     }
+
+    // MARK: - peek 作用域（主对话只读探查）
+
+    private func riskPeek(_ command: String, workdir: String? = nil) -> String {
+        let e = ShellCommandParser.evaluate(command: command, workdir: workdir ?? self.workdir, scope: .peek)
+        switch e.risk {
+        case .allow: return "allow"
+        case .l4: return "l4"
+        case .deny: return "deny"
+        }
+    }
+
+    func testPeekAllowsReadOnlyProbes() {
+        XCTAssertEqual(riskPeek("ls -la"), "allow")
+        XCTAssertEqual(riskPeek("pwd"), "allow")
+        XCTAssertEqual(riskPeek("stat file.txt"), "allow")
+        XCTAssertEqual(riskPeek("du -sh ."), "allow")
+        XCTAssertEqual(riskPeek("du -s ."), "allow")
+        XCTAssertEqual(riskPeek("which git"), "allow")
+        XCTAssertEqual(riskPeek("git status"), "allow")
+        XCTAssertEqual(riskPeek("git rev-parse --show-toplevel"), "allow")
+        XCTAssertEqual(riskPeek("git branch --show-current"), "allow")
+        XCTAssertEqual(riskPeek("git log -n 5 --oneline"), "allow")
+        XCTAssertEqual(riskPeek("git log -n5"), "allow")
+        XCTAssertEqual(riskPeek("git log --max-count=20"), "allow")
+    }
+
+    func testPeekDeniesHeavyCommands() {
+        // 扫盘 / 读正文 / 大输入：不在主对话开放
+        for command in ["rg TODO .", "grep -r TODO .", "find . -name x", "tree .",
+                        "sort a", "uniq a", "cut -d, -f1 a", "head -50 a", "tail a",
+                        "cat a", "diff a b", "md5 a", "ls -R", "ls -laR", "ls --recursive"] {
+            XCTAssertEqual(riskPeek(command), "deny", "peek should deny: \(command)")
+        }
+    }
+
+    func testPeekDeniesWriteCommands() {
+        for command in ["rm -rf x", "mv a b", "cp a b", "mkdir d", "touch f", "git commit -m x"] {
+            XCTAssertEqual(riskPeek(command), "deny", "peek should deny: \(command)")
+        }
+    }
+
+    func testPeekGitLogNeedsBoundedCount() {
+        XCTAssertEqual(riskPeek("git log"), "deny", "无 -n 的完整历史不放行")
+        XCTAssertEqual(riskPeek("git log --oneline"), "deny")
+        XCTAssertEqual(riskPeek("git log -n 50"), "deny", "超过上限")
+        XCTAssertEqual(riskPeek("git log -n 20"), "allow")
+        XCTAssertEqual(riskPeek("git show"), "deny")
+        XCTAssertEqual(riskPeek("git diff"), "deny")
+    }
+
+    func testPeekGitLogNegativeCountDenied() {
+        // git 把 max_count<0 当无限制，会吐完整历史 → 必须拒
+        XCTAssertEqual(riskPeek("git log -n -1"), "deny")
+        XCTAssertEqual(riskPeek("git log --max-count=-1"), "deny")
+        XCTAssertEqual(riskPeek("git log -n0"), "deny")
+    }
+
+    func testPeekGitLogMultipleCountsTakeLast() {
+        // git 多个 max-count 时后者胜出；守卫必须看最后一个，否则被大值绕过
+        XCTAssertEqual(riskPeek("git log -n 20 --max-count=99999"), "deny")
+        XCTAssertEqual(riskPeek("git log --max-count=99999 -n 5"), "allow", "最后一个才是 5")
+    }
+
+    func testPeekDuNeedsSummarize() {
+        XCTAssertEqual(riskPeek("du"), "deny", "裸 du 逐目录列出，不放行")
+        XCTAssertEqual(riskPeek("du -h ."), "deny")
+        XCTAssertEqual(riskPeek("du -sh ."), "allow")
+    }
+
+    func testPeekKeepsSafetyNets() {
+        XCTAssertEqual(riskPeek("ls ~/.ssh"), "deny", "硬性拦截不因 peek 放开")
+        XCTAssertEqual(riskPeek("ls /etc"), "deny", "未授权目录")
+        XCTAssertEqual(riskPeek("ls | head -5"), "deny", "head 不在 peek 白名单，管道任一段拒则整条拒")
+    }
 }

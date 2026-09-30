@@ -49,7 +49,7 @@
 - **`navLeadingOffset` 是死代码**：`ContentView.swift:429` 硬编码传 `0`；`ContentView.swift:592/659` 的注释仍称它随左栏宽变（**已过期**）；`docs/bugs/014` 的宽度分析同样基于旧值。
 - ⚠️ **顶栏宽度会反噬窗口最小宽**：`ContentView.swift:426` 是 `VStack`，宽度 = 子项最大值（= bug 014 机制）。若 trigger 显示长会话标题，顶栏 intrinsic 宽变大 → 窗口最小宽变大。**trigger 必须固定 `maxWidth` + 截断**。
 - **过期文档**：`docs/design/mac-apps/topbar-slot-system.md` 称浏览器组在 `.left` 槽（实际已挪 `.center`，`:2187`）。
-- 顺手发现（非本次范围）：`TopBarView.swift:10` 观察 `BookmarkStore`，但无按钮读它；真正读的 `BookmarksBarState` 未观察 → 收藏栏按钮图标/help 不刷新。
+- 顺手修复：`TopBarView.swift:10` 原观察 `BookmarkStore`（无按钮读它），真正读的 `BookmarksBarState` 未观察 → 收藏栏按钮 help 文案不刷新。已改观察对象为 `BookmarksBarState`。
 
 ### 2.3 左栏功能与入口（`SidebarView.swift`）
 

@@ -7,7 +7,7 @@ import AppKit
 /// 替代原 NavigationToolbar；各功能区通过注册/注销按钮组向槽位贡献按钮。
 struct TopBarView: View {
     @ObservedObject private var registry = TopBarRegistry.shared
-    @ObservedObject private var bookmarkStore = BookmarkStore.shared
+    @ObservedObject private var bookmarksBarState = BookmarksBarState.shared
     @ObservedObject var rightSidebar: RightSidebarManager
     @ObservedObject var chatTabManager: ChatTabManager
     @ObservedObject var conversationListVM: ConversationListViewModel

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"xhan-helper/internal/activity"
 	"xhan-helper/internal/config"
@@ -60,6 +61,8 @@ type CronRunner struct {
 	msgRetentionDays  int                   // message 向量保留天数；<=0 关闭
 	sumRetentionDays  int                   // summary 向量保留天数；<=0 关闭
 	evictInterval     time.Duration         // 向量逐出扫描间隔
+	db                *gorm.DB              // VACUUM 用（SQLite 空闲页回收）
+	vacuumThreshold   int64                 // 空闲页超此字节才 VACUUM；<=0 关闭
 	docRepo           *service.DocumentRepo // 回收站过期文档物理清理
 	activity          ActivityRecomputer    // 活动埋点派生重算（events.db；nil = 未启用）
 
@@ -106,6 +109,8 @@ type CronRunnerConfig struct {
 	MsgRetentionDays  int                   // message 向量保留天数；<=0 关闭
 	SumRetentionDays  int                   // summary 向量保留天数；<=0 关闭
 	EvictInterval     time.Duration         // 向量逐出扫描间隔；<=0 默认 24h
+	DB                *gorm.DB              // VACUUM 用；nil = 不回收
+	VacuumThreshold   int64                 // 空闲页超此字节才 VACUUM；<=0 关闭
 	DocRepo           *service.DocumentRepo // 回收站过期文档物理清理
 	Activity          ActivityRecomputer    // 活动埋点派生重算；nil = 未启用
 }
@@ -149,6 +154,8 @@ func NewCronRunner(cfg *CronRunnerConfig) *CronRunner {
 		msgRetentionDays:  cfg.MsgRetentionDays,
 		sumRetentionDays:  cfg.SumRetentionDays,
 		evictInterval:     cfg.EvictInterval,
+		db:                cfg.DB,
+		vacuumThreshold:   cfg.VacuumThreshold,
 		docRepo:           cfg.DocRepo,
 		activity:          cfg.Activity,
 	}
@@ -366,7 +373,7 @@ func (cr *CronRunner) Start(ctx context.Context) {
 		cr.setImageCleanupNext(time.Time{})
 	}
 
-	// 向量逐出：按保留窗移除内存中的旧 message/summary 向量（DB 行保留）
+	// 向量滚动保留：按保留窗移除内存中的旧 message/summary 向量，并删除同窗 DB 行
 	var evictChan <-chan time.Time
 	if cr.vectorStore != nil && cr.embeddingRepo != nil && (cr.msgRetentionDays > 0 || cr.sumRetentionDays > 0) {
 		evictTicker := time.NewTicker(cr.evictInterval)
@@ -562,36 +569,64 @@ func (cr *CronRunner) cleanupDeletedDocuments(ctx context.Context) {
 	}
 }
 
-// evictStaleVectors 按保留窗从内存 VectorStore 移除旧的 message/summary 向量。
-// 只删内存，DB embedding 行保留（重启 warmup 也会按同一时间窗过滤，不会回灌）。
+// evictStaleVectors 按保留窗从内存 VectorStore 移除旧的 message/summary 向量，并删除同窗 DB 行。
+// warmup 也按同一时间窗过滤，两处 cutoff 一致，DB 不再无限积压。
+// 任一类型真正删了 DB 行后，若空闲页超阈值则执行一次 VACUUM 回收文件空间（每轮最多一次）。
 func (cr *CronRunner) evictStaleVectors(ctx context.Context) {
 	if cr.vectorStore == nil || cr.embeddingRepo == nil {
 		return
 	}
+	var deleted int64
 	if cr.msgRetentionDays > 0 {
-		cr.evictType(ctx, model.EntityTypeMessage, model.VectorPrefixMessage, cr.msgRetentionDays)
+		deleted += cr.evictType(ctx, model.EntityTypeMessage, model.VectorPrefixMessage, cr.msgRetentionDays)
 	}
 	if cr.sumRetentionDays > 0 {
-		cr.evictType(ctx, model.EntityTypeSummary, model.VectorPrefixSummary, cr.sumRetentionDays)
+		deleted += cr.evictType(ctx, model.EntityTypeSummary, model.VectorPrefixSummary, cr.sumRetentionDays)
+	}
+	if deleted > 0 {
+		cr.vacuumIfNeeded("evict")
 	}
 }
 
-func (cr *CronRunner) evictType(ctx context.Context, entityType, keyPrefix string, retentionDays int) {
+// evictType 逐出某类型的内存向量并删除同窗 DB 行，返回本类型删除的 DB 行数。
+func (cr *CronRunner) evictType(ctx context.Context, entityType, keyPrefix string, retentionDays int) int64 {
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 	ids, err := cr.embeddingRepo.ListEntityIDsByTypeBefore(ctx, entityType, cutoff)
 	if err != nil {
 		log.Printf("[cron] evict vectors list %s error: %v", entityType, err)
+		return 0
+	}
+	if len(ids) > 0 {
+		keys := make([]string, len(ids))
+		for i, id := range ids {
+			keys[i] = keyPrefix + id
+		}
+		cr.vectorStore.DeleteByIDs(keys)
+	}
+	// 内存与 DB 同窗滚动：DB 行删除失败只降级记日志，下次节拍按同一 cutoff 重试（幂等）。
+	deleted, err := cr.embeddingRepo.DeleteByTypeBefore(ctx, entityType, cutoff)
+	if err != nil {
+		log.Printf("[cron] evict vectors: %s delete db rows error: %v", entityType, err)
+		return 0
+	}
+	log.Printf("[cron] evict vectors: %s removed %d from memory, deleted %d db rows (retention_days=%d)", entityType, len(ids), deleted, retentionDays)
+	return deleted
+}
+
+// vacuumIfNeeded 空闲页超阈值时回收数据库文件空间；未配置或未超阈值静默跳过。
+// 失败只降级记日志——VACUUM 不影响业务契约，下轮节拍自然重试。
+func (cr *CronRunner) vacuumIfNeeded(reason string) {
+	if cr.vacuumThreshold <= 0 || cr.db == nil {
 		return
 	}
-	if len(ids) == 0 {
+	done, err := service.VacuumIfFreeBytesAbove(cr.db, cr.vacuumThreshold)
+	if err != nil {
+		log.Printf("[cron] vacuum (%s) error: %v", reason, err)
 		return
 	}
-	keys := make([]string, len(ids))
-	for i, id := range ids {
-		keys[i] = keyPrefix + id
+	if done {
+		log.Printf("[cron] vacuum (%s) done: reclaimed free pages above %d MB", reason, cr.vacuumThreshold/(1<<20))
 	}
-	cr.vectorStore.DeleteByIDs(keys)
-	log.Printf("[cron] evict vectors: %s removed %d from memory (retention_days=%d)", entityType, len(keys), retentionDays)
 }
 
 // processSessionEndTasks 扫延迟任务表中到期的 session_end 任务并执行。

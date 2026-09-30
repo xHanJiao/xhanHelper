@@ -70,13 +70,21 @@ func (r *EmbeddingRepo) ListByTypeSince(ctx context.Context, entityType string, 
 	return list, err
 }
 
-// ListEntityIDsByTypeBefore 列出某类型在 before 之前创建的 entity_id（逐出内存向量用；不删 DB 行）
+// ListEntityIDsByTypeBefore 列出某类型在 before 之前创建的 entity_id（逐出内存向量用）
 func (r *EmbeddingRepo) ListEntityIDsByTypeBefore(ctx context.Context, entityType string, before time.Time) ([]string, error) {
 	var ids []string
 	err := r.db.WithContext(ctx).Model(&model.Embedding{}).
 		Where("entity_type = ? AND created_at < ?", entityType, before).
 		Pluck("entity_id", &ids).Error
 	return ids, err
+}
+
+// DeleteByTypeBefore 删除某类型在 before 之前创建的向量行（滚动保留清理用，单语句避免 IN 变量上限）
+func (r *EmbeddingRepo) DeleteByTypeBefore(ctx context.Context, entityType string, before time.Time) (int64, error) {
+	result := r.db.WithContext(ctx).
+		Where("entity_type = ? AND created_at < ?", entityType, before).
+		Delete(&model.Embedding{})
+	return result.RowsAffected, result.Error
 }
 
 // ListByEntities 按类型 + 一组 entityID 批量获取向量（供 get_topic_stats 等避免 N+1）

@@ -52,6 +52,7 @@ llm:
     queue_max_bytes: 67108864 # 排队字节上限（64MB，防 2G 内存被打爆）
     cleanup_interval_hours: 6 # 保留清理周期
     cleanup_batch_rows: 500 # 清理每批行数
+    extra_trace_retention_days: 14 # message.extra 检索 trace（providers 等）保留天数；<=0 关闭。独立于 debug_persist_json
   verification:
     enabled: false
     model: flash # flash | pro，检验用模型
@@ -100,9 +101,10 @@ archive:
   interval_minutes: 1440 # 归档扫描间隔（分钟），默认每日一次
 
 vector:
-  message_retention_days: 14 # 内存只加载最近 N 天的 message 向量，超出逐出（DB 行保留）；<=0 关闭
-  summary_retention_days: 30 # 内存只加载最近 N 天的 summary 向量；<=0 关闭
+  message_retention_days: 14 # message 向量保留天数，超出则内存逐出 + DB 行删除；<=0 关闭
+  summary_retention_days: 30 # summary 向量保留天数，同上；<=0 关闭
   evict_interval_hours: 24 # 逐出扫描间隔（小时）
+  vacuum_free_threshold_mb: 64 # 删行后空闲页超此 MB 才执行 VACUUM 回收文件空间；<=0 关闭
   chunk_disabled_parents: [memory, note, summary] # 短文本只用 full 向量，不建 chunk（theme/文档仍建）
 
 activity:

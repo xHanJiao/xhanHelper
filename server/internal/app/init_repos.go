@@ -9,6 +9,7 @@ import (
 
 // Repos 聚合全部 DB 级别的 repo，按需传入下游
 type Repos struct {
+	DB                      *gorm.DB // 底层连接（VACUUM 等运维操作用）
 	User                    *service.UserRepo
 	Conversation            *service.ConversationRepo
 	Message                 *service.MessageRepo
@@ -45,6 +46,7 @@ func InitRepos(cfg *config.Config, db *gorm.DB) *Repos {
 	docRepo := service.NewDocumentRepo(db)
 	msgRepo := service.NewMessageRepo(db)
 	return &Repos{
+		DB:                      db,
 		User:                    service.NewUserRepo(db, cfg.Server.TokenTTLMinutes, cfg.Server.MaxTokensPerUser),
 		Conversation:            service.NewConversationRepo(db),
 		Message:                 msgRepo,

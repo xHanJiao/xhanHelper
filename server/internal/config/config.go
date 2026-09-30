@@ -66,10 +66,11 @@ func (a *ActivityConfig) WatermarkModeNormalized() string {
 
 // VectorConfig — 向量内存治理配置
 type VectorConfig struct {
-	MessageRetentionDays int      `yaml:"message_retention_days"` // message 向量保留天数，<=0 关闭
-	SummaryRetentionDays int      `yaml:"summary_retention_days"` // summary 向量保留天数，<=0 关闭
-	EvictIntervalHours   int      `yaml:"evict_interval_hours"`   // 逐出扫描间隔（小时），<=0 默认 24
-	ChunkDisabledParents []string `yaml:"chunk_disabled_parents"` // 不再建 chunk 的父类型（短文本由 full 向量覆盖）
+	MessageRetentionDays  int      `yaml:"message_retention_days"`   // message 向量保留天数，<=0 关闭
+	SummaryRetentionDays  int      `yaml:"summary_retention_days"`   // summary 向量保留天数，<=0 关闭
+	EvictIntervalHours    int      `yaml:"evict_interval_hours"`     // 逐出扫描间隔（小时），<=0 默认 24
+	VacuumFreeThresholdMB int      `yaml:"vacuum_free_threshold_mb"` // 删行后空闲页超此 MB 才 VACUUM；<=0 关闭（默认 64）
+	ChunkDisabledParents  []string `yaml:"chunk_disabled_parents"`   // 不再建 chunk 的父类型（短文本由 full 向量覆盖）
 }
 
 // ChatConfig — 对话配置
@@ -273,14 +274,15 @@ func (l *LLMConfig) ContextWindowFor(model string) int {
 
 // DebugJSONConfig — 调试 JSON 异步持久化配置
 type DebugJSONConfig struct {
-	RetentionDays        int   `yaml:"retention_days"`         // request_json 保留天数，默认 3
-	FlushIntervalMs      int   `yaml:"flush_interval_ms"`      // 异步刷盘间隔毫秒，默认 1000
-	MaxBytesPerFlush     int64 `yaml:"max_bytes_per_flush"`    // 每批字节预算（限频核心），默认 2MB
-	MaxPayloadBytes      int64 `yaml:"max_payload_bytes"`      // 单条 payload 上限，超限丢弃，默认 1MB
-	QueueMaxEntries      int   `yaml:"queue_max_entries"`      // 排队条数上限，默认 2048
-	QueueMaxBytes        int64 `yaml:"queue_max_bytes"`        // 排队字节上限，默认 64MB
-	CleanupIntervalHours int   `yaml:"cleanup_interval_hours"` // 保留清理周期（小时），默认 6
-	CleanupBatchRows     int   `yaml:"cleanup_batch_rows"`     // 清理每批行数，默认 500
+	RetentionDays           int   `yaml:"retention_days"`             // request_json 保留天数，默认 3
+	FlushIntervalMs         int   `yaml:"flush_interval_ms"`          // 异步刷盘间隔毫秒，默认 1000
+	MaxBytesPerFlush        int64 `yaml:"max_bytes_per_flush"`        // 每批字节预算（限频核心），默认 2MB
+	MaxPayloadBytes         int64 `yaml:"max_payload_bytes"`          // 单条 payload 上限，超限丢弃，默认 1MB
+	QueueMaxEntries         int   `yaml:"queue_max_entries"`          // 排队条数上限，默认 2048
+	QueueMaxBytes           int64 `yaml:"queue_max_bytes"`            // 排队字节上限，默认 64MB
+	CleanupIntervalHours    int   `yaml:"cleanup_interval_hours"`     // 保留清理周期（小时），默认 6
+	CleanupBatchRows        int   `yaml:"cleanup_batch_rows"`         // 清理每批行数，默认 500
+	ExtraTraceRetentionDays int   `yaml:"extra_trace_retention_days"` // message.extra 检索 trace 保留天数，默认 14，<=0 关闭
 }
 
 // EmbeddingConfig — 向量化配置
@@ -571,6 +573,9 @@ func merge(dst, src *Config) {
 	if src.Vector.EvictIntervalHours != 0 {
 		dst.Vector.EvictIntervalHours = src.Vector.EvictIntervalHours
 	}
+	if src.Vector.VacuumFreeThresholdMB != 0 {
+		dst.Vector.VacuumFreeThresholdMB = src.Vector.VacuumFreeThresholdMB
+	}
 	if src.Vector.ChunkDisabledParents != nil {
 		dst.Vector.ChunkDisabledParents = src.Vector.ChunkDisabledParents
 	}
@@ -727,6 +732,9 @@ func mergeDebugJSON(dst, src *DebugJSONConfig) {
 	if src.CleanupBatchRows != 0 {
 		dst.CleanupBatchRows = src.CleanupBatchRows
 	}
+	if src.ExtraTraceRetentionDays != 0 {
+		dst.ExtraTraceRetentionDays = src.ExtraTraceRetentionDays
+	}
 }
 
 // setSourceWeightsDefault 为源配置设置默认值（仅当当前值为零时）
@@ -843,6 +851,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Vector.EvictIntervalHours == 0 {
 		cfg.Vector.EvictIntervalHours = 24
+	}
+	if cfg.Vector.VacuumFreeThresholdMB == 0 {
+		cfg.Vector.VacuumFreeThresholdMB = 64
 	}
 	if cfg.Vector.ChunkDisabledParents == nil {
 		// 值必须与 model.EntityType* 一致（由 TestChunkDisabledParentsDefaultMatchesModel 钉住）。
@@ -1037,6 +1048,9 @@ func validate(cfg *Config) error {
 	}
 	if d.CleanupBatchRows == 0 {
 		d.CleanupBatchRows = 500
+	}
+	if d.ExtraTraceRetentionDays == 0 {
+		d.ExtraTraceRetentionDays = 14
 	}
 	return nil
 }

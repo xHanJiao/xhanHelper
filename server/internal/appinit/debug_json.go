@@ -86,3 +86,43 @@ func InitDebugJSON(cfg *config.Config, msgRepo *service.MessageRepo, bgCtx conte
 
 	return &debugJSONQueueSink{q: queue}
 }
+
+// InitExtraTraceCleanup 启动 message.extra 检索 trace（providers / user_message_prefix / prompt_trace 等）
+// 的滚动清理，保留 usage/window_size/session_start_msg_id/no_merge 等功能字段。
+// 独立于 debug_persist_json —— extra 里的 providers 是无条件写入的。
+// extra_trace_retention_days<=0 或后台任务关闭时不启动。
+func InitExtraTraceCleanup(cfg *config.Config, msgRepo *service.MessageRepo, bgCtx context.Context) {
+	days := cfg.LLM.DebugJSON.ExtraTraceRetentionDays
+	if days <= 0 {
+		log.Printf("[extra_retention] disabled (extra_trace_retention_days=%d)", days)
+		return
+	}
+	if cfg.Server.BackgroundTasksDisabled() {
+		log.Printf("[extra_retention] background tasks disabled, cleanup skipped")
+		return
+	}
+	batch := cfg.LLM.DebugJSON.CleanupBatchRows
+	cleanup := func(ctx context.Context) {
+		cutoff := time.Now().AddDate(0, 0, -days)
+		var cleared int64
+		for {
+			n, err := msgRepo.ClearExtraDebugBefore(ctx, cutoff, batch)
+			if err != nil {
+				log.Printf("[extra_retention] cleanup error: %v", err)
+				return
+			}
+			cleared += n
+			if n < int64(batch) || ctx.Err() != nil {
+				log.Printf("[extra_retention] cleanup done: cleared %d rows older than %d days", cleared, days)
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+	}
+	go async.NewIntervalRunner("extra_trace_retention",
+		time.Duration(cfg.LLM.DebugJSON.CleanupIntervalHours)*time.Hour, cleanup).Start(bgCtx)
+}

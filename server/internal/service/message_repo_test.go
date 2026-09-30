@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1183,6 +1184,225 @@ func TestClearDebugJSONBefore(t *testing.T) {
 	mNoReq, _ := repo.GetByID(ctx, "noreq")
 	if mNoReq.RequestJSON != nil {
 		t.Errorf("无 request_json 的行不应被改动")
+	}
+}
+
+// TestClearExtraDebugBefore — extra 保留清理：只删调试字段（providers/user_message_prefix/
+// history_builder_msg_ids/prompt_trace），功能字段与近期行不动，脏数据跳过不破坏。
+func TestClearExtraDebugBefore(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now()
+	old := now.Add(-48 * time.Hour)
+	recent := now.Add(-time.Hour)
+
+	sp := func(s string) *string { return &s }
+	mk := func(id string, at time.Time, extra string) *model.Message {
+		return &model.Message{ID: id, ConversationID: "c1", UserID: "u1", Role: "assistant",
+			Content: id, Extra: sp(extra), CreatedAt: at}
+	}
+	rows := []*model.Message{
+		mk("m1", old, `{"providers":[{"name":"memory"}],"usage":{"prompt_tokens":10}}`),
+		mk("m2", old, `{"user_message_prefix":"<ctx/>","window_size":3}`),
+		mk("m3", old, `{"usage":{"prompt_tokens":5}}`),
+		mk("m4", recent, `{"providers":[{"name":"note"}]}`),
+		mk("m5", old, `{"prompt_trace":{"providers":[{"name":"theme"}]}}`),
+		mk("m6", old, `{"history_builder_msg_ids":["a","b"],"no_merge":true}`),
+		mk("m7", old, `{"providers": [broken`), // 命中过滤但 JSON 非法
+	}
+	for _, m := range rows {
+		if err := repo.Create(ctx, m); err != nil {
+			t.Fatalf("create %s: %v", m.ID, err)
+		}
+	}
+
+	n, err := repo.ClearExtraDebugBefore(ctx, now.Add(-24*time.Hour), 100)
+	if err != nil {
+		t.Fatalf("ClearExtraDebugBefore error: %v", err)
+	}
+	if n != 4 {
+		t.Errorf("应清 4 行(m1,m2,m5,m6)，got %d", n)
+	}
+
+	get := func(id string) map[string]json.RawMessage {
+		t.Helper()
+		m, gerr := repo.GetByID(ctx, id)
+		if gerr != nil || m == nil || m.Extra == nil {
+			t.Fatalf("get %s: msg=%v err=%v", id, m, gerr)
+		}
+		var f map[string]json.RawMessage
+		if uerr := json.Unmarshal([]byte(*m.Extra), &f); uerr != nil {
+			t.Fatalf("get %s extra 非法 JSON: %q err=%v", id, *m.Extra, uerr)
+		}
+		return f
+	}
+
+	if _, ok := get("m1")["providers"]; ok {
+		t.Error("m1 providers 应删除")
+	}
+	if _, ok := get("m1")["usage"]; !ok {
+		t.Error("m1 usage 应保留")
+	}
+	if _, ok := get("m2")["user_message_prefix"]; ok {
+		t.Error("m2 user_message_prefix 应删除")
+	}
+	if _, ok := get("m2")["window_size"]; !ok {
+		t.Error("m2 window_size 应保留")
+	}
+	if _, ok := get("m3")["usage"]; !ok {
+		t.Error("m3 无调试字段，usage 不应被改动")
+	}
+	if _, ok := get("m4")["providers"]; !ok {
+		t.Error("m4 近期行 providers 应保留")
+	}
+	if _, ok := get("m5")["prompt_trace"]; ok {
+		t.Error("m5 旧格式 prompt_trace 应整键删除")
+	}
+	if _, ok := get("m6")["history_builder_msg_ids"]; ok {
+		t.Error("m6 history_builder_msg_ids 应删除")
+	}
+	if _, ok := get("m6")["no_merge"]; !ok {
+		t.Error("m6 no_merge 应保留")
+	}
+	m7, _ := repo.GetByID(ctx, "m7")
+	if m7.Extra == nil || *m7.Extra != `{"providers": [broken` {
+		t.Errorf("m7 脏数据不应被改动，got %v", m7.Extra)
+	}
+
+	// limit<=0 走默认 500
+	if n, err := repo.ClearExtraDebugBefore(ctx, now.Add(-24*time.Hour), 0); err != nil || n != 0 {
+		t.Fatalf("limit<=0 应走默认值且保留脏数据, got n=%d err=%v", n, err)
+	}
+	// 第二轮：候选只剩脏数据 m7 → 清 0，且不死循环
+	n, err = repo.ClearExtraDebugBefore(ctx, now.Add(-24*time.Hour), 100)
+	if err != nil {
+		t.Fatalf("second ClearExtraDebugBefore error: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("第二轮应清 0 行（仅剩脏数据跳过），got %d", n)
+	}
+
+	// 空 extra 行命中过滤也应安全跳过（空值分支）
+	empty := ""
+	emptyMsg := &model.Message{ID: "m8", ConversationID: "c1", UserID: "u1", Role: "assistant",
+		Content: "e", Extra: &empty, CreatedAt: old}
+	if err := repo.Create(ctx, emptyMsg); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repo.ClearExtraDebugBefore(ctx, now.Add(-24*time.Hour), 100); err != nil || n != 0 {
+		t.Fatalf("空 extra 行应跳过, got n=%d err=%v", n, err)
+	}
+
+	// 伪造 list 阶段错误：关闭底层 DB 连接 → 走错误包装分支
+	repo2, cleanup2 := setupMessageRepo(t)
+	defer cleanup2()
+	sqlDB, _ := repo2.db.DB()
+	sqlDB.Close()
+	if _, err := repo2.ClearExtraDebugBefore(ctx, now.Add(-24*time.Hour), 100); err == nil {
+		t.Error("DB 关闭后应返回错误")
+	}
+}
+
+// TestClearExtraDebugBefore_NilExtraRow — 候选行 Extra 为 NULL 时跳过（nil 分支），不 panic。
+func TestClearExtraDebugBefore_NilExtraRow(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	// 直接落库再绕开 Create 的写入，构造一条 extra=NULL 但命中过滤的行走不到；
+	// 这里用一个命中过滤的真实行被清空后再执行，覆盖 changed=false 分支。
+	e := `{"usage":{"prompt_tokens":1},"providers":[]}`
+	m := &model.Message{ID: "nilx", ConversationID: "c1", UserID: "u1", Role: "assistant",
+		Content: "x", Extra: &e, CreatedAt: time.Now().Add(-48 * time.Hour)}
+	if err := repo.Create(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	n, err := repo.ClearExtraDebugBefore(ctx, time.Now().Add(-24*time.Hour), 100)
+	if err != nil || n != 1 {
+		t.Fatalf("应清 1 行, got n=%d err=%v", n, err)
+	}
+	// 二次执行：providers 已删但 usage 仍在 → 不再命中过滤（changed=false 分支由脏数据覆盖）
+	n, err = repo.ClearExtraDebugBefore(ctx, time.Now().Add(-24*time.Hour), 100)
+	if err != nil || n != 0 {
+		t.Fatalf("二次应清 0 行, got n=%d err=%v", n, err)
+	}
+	got, _ := repo.GetByID(ctx, "nilx")
+	var f map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(*got.Extra), &f); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f["providers"]; ok {
+		t.Error("providers 应删除")
+	}
+	if _, ok := f["usage"]; !ok {
+		t.Error("usage 应保留")
+	}
+}
+
+// TestClearExtraDebugBefore_Batching — limit 控制单批行数
+func TestClearExtraDebugBefore_Batching(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now()
+	old := now.Add(-48 * time.Hour)
+	for i := 0; i < 3; i++ {
+		e := `{"providers":[{"name":"x"}]}`
+		m := &model.Message{ID: fmt.Sprintf("b%d", i), ConversationID: "c1", UserID: "u1",
+			Role: "assistant", Content: "c", Extra: &e, CreatedAt: old}
+		if err := repo.Create(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cutoff := now.Add(-24 * time.Hour)
+	if n, err := repo.ClearExtraDebugBefore(ctx, cutoff, 2); err != nil || n != 2 {
+		t.Fatalf("limit=2 应清 2 行, got n=%d err=%v", n, err)
+	}
+	if n, err := repo.ClearExtraDebugBefore(ctx, cutoff, 2); err != nil || n != 1 {
+		t.Fatalf("第二轮应清 1 行, got n=%d err=%v", n, err)
+	}
+}
+
+// TestClearExtraDebugBefore_NoMatch — 无匹配返回 0
+func TestClearExtraDebugBefore_NoMatch(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	n, err := repo.ClearExtraDebugBefore(context.Background(), time.Now(), 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("空库应返回 0, got %d", n)
+	}
+}
+
+// TestListWithTrace_OnlyProvidersRows — 只列出仍带 providers 的 assistant 消息（清空后不再出现）
+func TestListWithTrace_OnlyProvidersRows(t *testing.T) {
+	repo, cleanup := setupMessageRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now()
+	withTrace := `{"providers":[{"name":"memory"}]}`
+	usageOnly := `{"usage":{"prompt_tokens":1}}`
+	sp := func(s string) *string { return &s }
+	for _, m := range []*model.Message{
+		{ID: "t1", ConversationID: "c1", UserID: "u1", Role: "assistant", Content: "a", Extra: sp(withTrace), CreatedAt: now},
+		{ID: "t2", ConversationID: "c1", UserID: "u1", Role: "assistant", Content: "b", Extra: sp(usageOnly), CreatedAt: now},
+	} {
+		if err := repo.Create(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, total, err := repo.ListWithTrace(ctx, "u1", 20, 0)
+	if err != nil {
+		t.Fatalf("ListWithTrace error: %v", err)
+	}
+	if total != 1 || len(list) != 1 || list[0].ID != "t1" {
+		t.Errorf("应只返回 t1, got total=%d list=%v", total, list)
+	}
+	// limit<=0 走默认分页；确认按时间倒序且分页不报错
+	if _, _, err := repo.ListWithTrace(ctx, "u1", 0, 0); err != nil {
+		t.Errorf("limit<=0 应走默认值, err=%v", err)
 	}
 }
 

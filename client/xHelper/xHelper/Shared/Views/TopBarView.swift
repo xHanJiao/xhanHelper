@@ -108,14 +108,14 @@ struct TopBarView: View {
                 chatTabManager.newChat()
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(.primary.opacity(0.7))
-                    .frame(width: 32, height: Layout.topBarCapsuleHeight)
-                    .contentShape(Capsule())
+                    .frame(width: Layout.topBarCapsuleHeight, height: Layout.topBarCapsuleHeight)
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
+            .background(.ultraThinMaterial, in: Circle())
+            .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 0.5))
             .help("新会话")
         }
         .task {

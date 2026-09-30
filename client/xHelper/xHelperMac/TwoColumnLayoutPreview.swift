@@ -97,11 +97,11 @@ struct TwoColumnLayoutPreview: View {
 
     private var newConversationButton: some View {
         Image(systemName: "plus")
-            .font(.system(size: 12, weight: .semibold))
+            .font(.system(size: 16, weight: .medium))
             .foregroundStyle(ink(0.7))
-            .frame(width: 34, height: 28)
-            .background(Capsule().fill(.regularMaterial))
-            .overlay(Capsule().strokeBorder(ink(0.1), lineWidth: 0.5))
+            .frame(width: 34, height: 34)
+            .background(Circle().fill(.regularMaterial))
+            .overlay(Circle().strokeBorder(ink(0.1), lineWidth: 0.5))
             .help("新会话")
     }
 

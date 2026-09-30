@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/util"
@@ -721,6 +722,8 @@ func (t *DocumentTool) replyAnnotation(ec *ExecuteContext, args json.RawMessage)
 	if err != nil {
 		return &Result{Success: false, Error: "annotation not found"}
 	}
+	// ponytail: 该配额校验与按钮路径的 AnnotationReplier.tryKeyedMutex 是两套锁，不互串；
+	// 「聊天工具回复 + 按钮回复」并发时最多超出上限一个并发数。量小且两端共用同一上限，先接受。
 	n, err := t.replyRepo.CountByAnnotation(ec.Ctx, req.AnnotationID, ec.UserID)
 	if err != nil {
 		return &Result{Success: false, Error: "count replies: " + err.Error()}
@@ -730,7 +733,7 @@ func (t *DocumentTool) replyAnnotation(ec *ExecuteContext, args json.RawMessage)
 	}
 
 	rep := model.DocumentAnnotationReply{
-		ID:           uuid.New().String(),
+		ID:           idgen.Next(),
 		AnnotationID: req.AnnotationID,
 		DocumentID:   anno.DocumentID,
 		UserID:       ec.UserID,

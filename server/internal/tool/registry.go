@@ -424,6 +424,42 @@ func (r *Registry) GetLLMToolsFiltered(names []string) []llm.ToolDefinition {
 	return defs
 }
 
+// GetReadOnlyLLMToolsFiltered 是 GetLLMToolsFiltered 的只读版：在指定名单基础上，
+// 每个工具只保留 ReadOnlyFuncs() 声明的只读函数；没有只读函数的工具整体跳过。
+// 供「只读 run」（如文档批注回复）下发，写函数既不进请求体、也不会被 LLM 看到。
+func (r *Registry) GetReadOnlyLLMToolsFiltered(names []string) []llm.ToolDefinition {
+	defs := make([]llm.ToolDefinition, 0, len(names))
+	for _, name := range names {
+		t := r.tools[name]
+		if t == nil {
+			continue
+		}
+		ro := t.ReadOnlyFuncs()
+		if len(ro) == 0 {
+			continue
+		}
+		funcs := make([]llm.FuncDef, 0, len(ro))
+		for _, f := range t.Functions() {
+			if ro[f.Name] {
+				funcs = append(funcs, llm.FuncDef{
+					Name:        f.Name,
+					Description: f.Description,
+					Parameters:  f.Parameters,
+				})
+			}
+		}
+		if len(funcs) == 0 {
+			continue
+		}
+		defs = append(defs, llm.ToolDefinition{
+			Name:        t.Name(),
+			Description: t.Description(),
+			Functions:   funcs,
+		})
+	}
+	return defs
+}
+
 // GeneratePromptFor 只为指定工具生成 prompt 文本
 func (r *Registry) GeneratePromptFor(names []string) string {
 	var buf bytes.Buffer

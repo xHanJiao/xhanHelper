@@ -9,8 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-
+	"xhan-helper/internal/idgen"
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/model"
 	"xhan-helper/internal/service"
@@ -38,7 +37,8 @@ const (
 	annotationReplyThreadInPrompt = 20
 )
 
-// 生成路径只暴露只读工具（AR-10）：杜绝 run 顺手改会话/业务状态。
+// 生成路径只暴露只读工具（AR-10）：GetReadOnlyLLMToolsFiltered 按 ReadOnlyFuncs 做函数级过滤，
+// 杜绝 run 顺手改会话/业务状态（document 的写函数不会下发）。
 var annotationReplyToolNames = []string{"document", "unified_search", "message_search", "get_summary"}
 
 // 生成失败/冲突类错误（handler 据此映射 HTTP 状态码）。
@@ -135,7 +135,16 @@ func (r *AnnotationReplier) Generate(ctx context.Context, userID, annotationID, 
 
 	prompt := r.buildUserMessage(ctx, userID, doc, anno, thread, userContent)
 
-	tools := r.registry.GetLLMToolsFiltered(annotationReplyToolNames)
+	tools := r.registry.GetReadOnlyLLMToolsFiltered(annotationReplyToolNames)
+	// 按过滤结果派生 AllowedTools 跑期 guard：即便模型幻觉出写函数也被拦（防御性，AR-10）。
+	allowed := make(map[string][]string, len(tools))
+	for _, d := range tools {
+		names := make([]string, 0, len(d.Functions))
+		for _, f := range d.Functions {
+			names = append(names, f.Name)
+		}
+		allowed[d.Name] = names
+	}
 	runCtx, cancel := context.WithTimeout(ctx, annotationReplyTimeout)
 	defer cancel()
 	react := NewMiniReAct(&MiniReActConfig{
@@ -147,6 +156,7 @@ func (r *AnnotationReplier) Generate(ctx context.Context, userID, annotationID, 
 		MaxIterations: annotationReplyMaxIterations,
 		MaxToolResult: 3000,
 		Caller:        "annotation_reply",
+		SubAgent:      SubAgentExt{AllowedTools: allowed},
 	})
 	result, err := react.Run(runCtx, prompt)
 	if err != nil {
@@ -158,12 +168,15 @@ func (r *AnnotationReplier) Generate(ctx context.Context, userID, annotationID, 
 	}
 	content = truncateRunes(content, annotationReplyMaxContentLen)
 
+	// ID 用雪花（时间有序）：追问是 [user, assistant] 同批落库，created_at 被 GORM 取同一个 now
+	// 而相同，排序只能靠 id 破平；uuid 随机会让 user/assistant 顺序随机反转。雪花按调用序递增，
+	// 保证 id ASC = 插入序（repo 的 ListByAnnotationID / LatestByAnnotationIDs / 窗口函数都依赖它）。
 	source := "button"
 	added := make([]model.DocumentAnnotationReply, 0, 2)
 	if userContent != "" {
 		source = "followup"
 		added = append(added, model.DocumentAnnotationReply{
-			ID:           uuid.New().String(),
+			ID:           idgen.Next(),
 			AnnotationID: annotationID,
 			DocumentID:   anno.DocumentID,
 			UserID:       userID,
@@ -173,7 +186,7 @@ func (r *AnnotationReplier) Generate(ctx context.Context, userID, annotationID, 
 		})
 	}
 	added = append(added, model.DocumentAnnotationReply{
-		ID:           uuid.New().String(),
+		ID:           idgen.Next(),
 		AnnotationID: annotationID,
 		DocumentID:   anno.DocumentID,
 		UserID:       userID,

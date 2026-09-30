@@ -135,8 +135,8 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			VerifyEnabled *bool `json:"verify_enabled"`
 			// 隐藏轮：本轮消息落库为隐藏状态，不进对话记录/LLM 上下文/检索/后处理（接力等控制轮用）
 			HiddenRound bool `json:"hidden_round"`
-			// 精简回答：本轮往 system prompt 注入输出长度约束（≤500 字）。
-			// 文档划线问答用 —— 回答要能整段存进批注（上限 2000 字），不靠 max_tokens 硬截断
+			// 精简回答：本轮往 system prompt 注入输出长度约束（≤500 字），
+			// 用于「回答要短」的场景（不靠 max_tokens 硬截断）。会话级开关，用户可自行开。
 			BriefAnswer bool `json:"brief_answer"`
 		}
 		// 允许只发图不写字：文字与附件至少要有一个

@@ -4,6 +4,8 @@
 > 范围：server（Go：模型 + API + LLM 工具）+ macOS 客户端（SwiftUI + WKWebView）
 > 预览：`docs/design/document-highlight-annotation/mockup.html`
 > 唯一入口：macOS 客户端。iOS / Web / 分享页 **不做**。
+>
+> ⚠️ **P5「问 AI」已于 2026-09-30 整体下线**（客户端工具条/菜单入口、引用胶囊/窄条、`DocumentAIBridge`、`DocQuote`；服务端 `doc_quote` / `document_quote` 块 / `DocQuoteMeta` 全删）。本文档中 **D5 / D9 / D14、消息表 `annotationAskAI`、§12、P5 各段均为历史记录，勿照此重新实现**。新方案（批注下 LLM 回复线程）见 `docs/design/document-annotation-reply/design.md`（AR-12）。
 
 ---
 
@@ -49,18 +51,18 @@
 | D2 | 正文渲染 | ✅ **直接替换**为 WKWebView（marked.js + HTML 模板），**不保留** MarkdownUI 阅读器；不做两套并存 |
 | D3 | 划线实体 | ✅ 单一实体两种表现：`note` 为空 = 纯划线；非空 = 划线 + 批注。**不分表** |
 | D4 | 视觉区分 | ✅ 波浪线 + **行尾线色小圆点**区分有无批注（原方案是绿色圆底 + 气泡图标，真机太抢眼，已换）；颜色语义留给 v2 |
-| D5 | 选区工具条 | ✅ HTML 浮动工具条，4 个动作：划线 / 批注 / 复制 / 问 AI |
+| D5 | 选区工具条 | ✅ HTML 浮动工具条，4 个动作：划线 / 批注 / 复制 / ~~问 AI~~（**问 AI 已下线，现 3 个动作**） |
 | D6 | 批注输入 | ✅ HTML 浮层（quote 预览 + textarea + ⌘↵ 保存） |
 | D7 | 跨块选择 | ✅ 允许（跨段落 / 跨列表项）；**跨表格、跨代码围栏除外**（不支持，选中时工具条只给"复制"） |
 | D8 | 重叠 | ✅ 允许重叠；hover 时 popover 列出该位置**全部**批注，>1 条打「重叠划线」标签 |
-| D9 | 点击划线 | ✅ 菜单：编辑批注 / 复制原文 / **问 AI** / 删除划线（带批注的线也能直接再问，不用重新选中那段） |
+| D9 | 点击划线 | ✅ 菜单：编辑批注 / 复制原文 / ~~问 AI~~ / 删除划线（**问 AI 已下线**） |
 | D10 | 重定位 | ✅ 三级降级：① quote 精确匹配（唯一命中走快路径）→ ② Markdown 纯文本投影后匹配（带 prefix/suffix 消歧）→ ③ 前后文夹逼（覆盖"span 内部被插字/局部改写"，带相似度门槛）。全失败标 `orphaned`。多命中而消歧不达标时**判失活而不是猜第一处** —— 静默挪位比失活更糟。v1 提供划线列表抽屉，orphan 灰态可见，可「重新定位 / 删除」 |
 | D10b | 创建时的消歧 | ✅ 客户端额外回传 DOM 选区的前后文（`prefix`/`suffix`，纯文本 ≤60 字）。没有它，`结论` 这类短句在文中重复时只能锚到第一处，且返回的快照也是按第一处算的 → 客户端会在错的地方画线且无提示 |
 | D10c | 快照与 quote 刷新 | ✅ 每次成功定位都刷新 `Prefix`/`Suffix`，夹逼改写时同时刷新 `Quote` 并置 `QuoteRewritten`。让锚点始终描述当前正文，且"服务端改了用户划的原文"这件事可见 |
 | D11 | 重定位职责 | ✅ **服务端权威**（在 markdown 源文上算），客户端只在渲染后的 DOM 上做同样的文本查找用于绘制。两处逻辑一致但分别实现，见 §4.4 |
 | D12 | LLM 暴露 | ✅ 只给 `list_annotations(document_id)`（只读）。`update_document` 改完正文触发重定位，返回里报「影响 N 条批注」 |
 | D13 | 流水线隔离 | ✅ 批注**不进**记忆 / 画像 / 摘要流水线（它是读者笔记，不是用户事实） |
-| D14 | 「问 AI」 | ✅ v1 就做。落点：**复用现有聊天** —— 已经是 PiP 就在 PiP 里续，否则用普通聊天栏；走**真实会话**（不弹中间对话框，问题在输入栏里敲）。引用是**会话级状态**（每轮携带、可删）。完整 orchestrator 能力（能调工具）。详见 §十二 |
+| D14 | 「问 AI」 | ❌ **已下线**（2026-09-30）。原 v1 方案：复用现有聊天（PiP / 普通聊天栏）、会话级引用每轮携带、完整 orchestrator 能力。现改为批注下 LLM 回复线程，见 `document-annotation-reply/design.md` |
 | D15 | 批注内容 | ✅ 纯文本（不做富文本 / @ 引用 / 图片） |
 | D16 | PDF 导出 | ✅ 不带划线与批注（导出的是文档本身） |
 | D17 | 配额 | ✅ 单条 quote ≤ 500 字符、批注 ≤ 2000 字符、单文档 ≤ 500 条 |
@@ -354,7 +356,7 @@ JS → Swift（`WKScriptMessageHandler`，沿用 `XHWebViewBridge` 的命名与�
 | `annotationCreate` | `{quote, note}` | 新建划线/批注（锚点由服务端算，返回值带回） |
 | `annotationUpdate` | `{id, note}` | 编辑批注 |
 | `annotationDelete` | `{id}` | 删除 |
-| `annotationAskAI` | `{quote, prefix, suffix}` | 「问 AI」（P5 已接真聊天：工具条与「点击菜单」两个入口都发这条；落点见 §12） |
+| `annotationAskAI` | `{quote, prefix, suffix}` | ~~「问 AI」（P5）~~ **已删除**：Swift 侧不再有 `case "ask"`，JS 不再发此消息 |
 | `relocate` | `{id, quote, prefix, suffix}` | P4「重新定位」选完新位置（服务端重挂锚点并清 `orphaned`） |
 | `relocateCancel` | — | 重定位模式被 Esc / 取消按钮终止 |
 | `contentHeightChanged` | `{h}` | WebView 自适应高度（滚动交给外层 SwiftUI ScrollView？否 —— 见下） |
@@ -458,7 +460,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 | **P2 WebView 阅读器** ✅ | `DocumentReaderView` 替换 `readingContent`；目录跳转改走 JS；查找改走 JS；主题/字号联动 | 见下「P2 完成情况」；真机验收待用户 |
 | **P3 划线批注交互** ✅ | 选区工具条 / 绘制 / hover / 点击菜单 / 批注浮层 / 创建-编辑-删除回传 | 见下「P3 完成情况」；真机验收待用户 |
 | **P4 抽屉 + orphan** ✅ | SwiftUI 抽屉（第三列，三 tab）+ 滚动定位 + orphan 灰态 + 重新定位流程 | 见下「P4 完成情况」；真机验收待用户 |
-| **P5 问 AI** ✅ | 复用现有聊天（PiP 或普通聊天栏）承载文档问答：会话级引用（`doc_quote` 每轮注入）/ `brief_answer` 长度约束 / 引用胶囊 / 底部「存为批注」窄条 + 批注浮层预填 / 已有划线直接问 AI | 见 §十二 + 「P5 完成情况」；真机验收待用户 |
+| **P5 问 AI** ❌ | ~~复用现有聊天承载文档问答~~ **已于 2026-09-30 整体下线**（客户端 + 服务端 `doc_quote`）；见文首提示与 `document-annotation-reply/design.md` AR-12 | — |
 
 依赖：P2 与 P1 无依赖，可并行。P3/P4 依赖 P1+P2。**P5 依赖 P2（WebView 才拿得到选区）+ P3（浮层技法、批注编辑浮层）**，所以顺序是 P2 → P3 → P5，不提前。
 
@@ -627,7 +629,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 - `swiftc -typecheck` macOS / iOS 均 0 error。
 - mockup 侧记一条坑（已进 `AGENTS.md`）：**整个 `<script>` 是一个 IIFE，新增 `const`/`let` 与已有变量重名就是静默 SyntaxError** —— 所有交互全死、headless 也不报错，症状只是「控件不生效」。这次栽在 `q` 与 `wIdx` 上，靠 `--dump-dom` 看 `<html>`/`<body>` 的 class 才定位到。
 
-### P5 完成情况（已完成，真机验收待用户）
+### P5 完成情况（❌ 已于 2026-09-30 整体下线，以下为历史记录）
 
 改动清单见 §12.6（服务端 5 层 + 客户端 8 个文件），这里只记状态、自查与偏离。
 
@@ -685,7 +687,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 ---
 
-## 十二、P5「问 AI」复用聊天
+## 十二、P5「问 AI」复用聊天（❌ 已整体下线，以下为历史记录）
 
 > UI 稿：`docs/design/document-highlight-annotation/mockup-p5.html`（九种状态可切）—— ⚠️ **这份稿没有跟着实现同步**（文件顶部有醒目提示），P5 一律以下文与代码为准，差异清单见 §13
 >

@@ -83,9 +83,9 @@ func (p *replyFormProvider) Render(ctx context.Context) string {
 	return replyFormRule
 }
 
-// answerLengthNotice — brief_answer 轮的输出长度约束（文档划线问答等场景）。
-// 目的是让回答能整段存进文档批注（批注上限 2000 字），而不是靠 max_tokens 硬截断。
-const answerLengthNotice = `本轮是文档批注场景：正文控制在 500 字以内，要求能整段直接用。`
+// answerLengthNotice — brief_answer 轮的输出长度约束（用户开的「精炼回答」开关）。
+// 目的是把回答压短到能整段使用，而不是靠 max_tokens 硬截断。
+const answerLengthNotice = `本轮要求精简回答：正文控制在 500 字以内，直接给结论，不要展开。`
 
 // answerLengthProvider — 按请求参数条件注入的长度约束（其余长度规则见常驻的 reply_form 段）。
 // 注册顺序必须排在 userContextTriggerProvider 之后：后者的 "9. 用户信息深挖"

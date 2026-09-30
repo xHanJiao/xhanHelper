@@ -329,7 +329,7 @@ func TestBriefAnswerToggle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(base.Prompt, "回答长度") || strings.Contains(base.Prompt, "文档批注场景") {
+	if strings.Contains(base.Prompt, "回答长度") || strings.Contains(base.Prompt, "精简回答") {
 		t.Error("默认（非 brief_answer）不应注入长度约束")
 	}
 
@@ -337,7 +337,7 @@ func TestBriefAnswerToggle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(brief.Prompt, "## 回答长度") || !strings.Contains(brief.Prompt, "文档批注场景") {
+	if !strings.Contains(brief.Prompt, "## 回答长度") || !strings.Contains(brief.Prompt, "精简回答") {
 		t.Error("brief_answer 轮应注入长度约束章节")
 	}
 	// 追加，不是替换：行为准则与角色定义都还在

@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -64,6 +67,71 @@ func (r *MessageRepo) ClearDebugJSONBefore(ctx context.Context, before time.Time
 		Limit(limit).
 		Update("request_json", nil)
 	return res.RowsAffected, res.Error
+}
+
+// extraDebugKeys — message.extra 中的检索调试字段（保留清理时整键删除）。
+// 功能字段（usage / window_size / session_start_msg_id / no_merge）必须保留，不得列入。
+// prompt_trace 是旧格式的 trace 容器，内容仅 providers，整键删除安全。
+var extraDebugKeys = []string{"providers", "user_message_prefix", "history_builder_msg_ids", "prompt_trace"}
+
+// ClearExtraDebugBefore 清除 before 之前消息 extra 中的调试字段，保留功能字段，
+// 返回本批实际改写的行数。JSON 处理在 Go 侧完成（map 键删除），兼容 SQLite/MySQL。
+// 解析失败的脏数据行跳过并记日志，不删除、不报错；无匹配行返回 0。
+func (r *MessageRepo) ClearExtraDebugBefore(ctx context.Context, before time.Time, limit int) (int64, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	var rows []struct {
+		ID    string
+		Extra *string
+	}
+	if err := r.db.WithContext(ctx).Model(&model.Message{}).
+		Select("id, extra").
+		Where("created_at < ? AND extra IS NOT NULL AND extra != '' AND "+
+			"(extra LIKE ? OR extra LIKE ? OR extra LIKE ?)",
+			before, `%"providers"%`, `%user_message_prefix%`, `%history_builder_msg_ids%`).
+		Limit(limit).
+		Find(&rows).Error; err != nil {
+		return 0, fmt.Errorf("list messages with extra trace: %w", err)
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	var cleared int64
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, row := range rows {
+			if row.Extra == nil || *row.Extra == "" {
+				continue
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(*row.Extra), &fields); err != nil {
+				log.Printf("[extra_retention] msg %s extra unmarshal error: %v", row.ID, err)
+				continue
+			}
+			changed := false
+			for _, k := range extraDebugKeys {
+				if _, ok := fields[k]; ok {
+					delete(fields, k)
+					changed = true
+				}
+			}
+			if !changed {
+				continue
+			}
+			b, err := json.Marshal(fields)
+			if err != nil {
+				log.Printf("[extra_retention] msg %s extra marshal error: %v", row.ID, err)
+				continue
+			}
+			s := string(b)
+			if err := tx.Model(&model.Message{}).Where("id = ?", row.ID).Update("extra", s).Error; err != nil {
+				return fmt.Errorf("update msg %s extra: %w", row.ID, err)
+			}
+			cleared++
+		}
+		return nil
+	})
+	return cleared, err
 }
 
 // CountByRole 统计会话下指定角色的消息数
@@ -749,7 +817,7 @@ func (r *MessageRepo) ListWithTrace(ctx context.Context, userID string, limit, o
 	}
 	var total int64
 	q := r.db.WithContext(ctx).Model(&model.Message{}).
-		Where("user_id = ? AND role = 'assistant' AND extra IS NOT NULL AND extra != ''", userID)
+		Where("user_id = ? AND role = 'assistant' AND extra LIKE ?", userID, `%"providers"%`)
 	q.Count(&total)
 
 	var list []model.Message

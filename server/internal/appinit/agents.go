@@ -188,6 +188,8 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		MsgRetentionDays:  cfg.Vector.MessageRetentionDays,
 		SumRetentionDays:  cfg.Vector.SummaryRetentionDays,
 		EvictInterval:     time.Duration(cfg.Vector.EvictIntervalHours) * time.Hour,
+		DB:                repos.DB,
+		VacuumThreshold:   int64(cfg.Vector.VacuumFreeThresholdMB) << 20,
 		DocRepo:           repos.Document,
 		Activity:          activityRecomputer(activityStore),
 	})
@@ -216,6 +218,8 @@ func InitAgents(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 
 	// 调试 JSON 异步持久化（限频队列 + 保留清理）
 	debugJSONSink := InitDebugJSON(cfg, repos.Message, bgCtx)
+	// message.extra 检索 trace 滚动清理（独立于 debug_persist_json）
+	InitExtraTraceCleanup(cfg, repos.Message, bgCtx)
 
 	orch := agent.New(&agent.OrchestratorConfig{
 		FlashClient:         llmClients.Flash,

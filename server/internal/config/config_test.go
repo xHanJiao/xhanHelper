@@ -180,6 +180,35 @@ func TestActivityEnabledDefaultOn(t *testing.T) {
 	}
 }
 
+// message.extra 检索 trace 保留默认 14 天。
+func TestDebugJSONExtraTraceRetentionDefault(t *testing.T) {
+	cfg := &Config{DB: DBConfig{Driver: "sqlite", Database: "test.db"}, LLM: LLMConfig{APIKey: "k"}}
+	if err := validate(cfg); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if got := cfg.LLM.DebugJSON.ExtraTraceRetentionDays; got != 14 {
+		t.Errorf("默认应为 14, got %d", got)
+	}
+}
+
+// merge：env 缺省不覆盖 base；非零（含负数关闭）覆盖。
+func TestMergeDebugJSONExtraTraceRetention(t *testing.T) {
+	base := Config{}
+	base.LLM.DebugJSON.ExtraTraceRetentionDays = 14
+	merge(&base, &Config{})
+	if base.LLM.DebugJSON.ExtraTraceRetentionDays != 14 {
+		t.Error("env 缺省不应覆盖 base")
+	}
+	merge(&base, &Config{LLM: LLMConfig{DebugJSON: DebugJSONConfig{ExtraTraceRetentionDays: 3}}})
+	if base.LLM.DebugJSON.ExtraTraceRetentionDays != 3 {
+		t.Errorf("env 非零应覆盖, got %d", base.LLM.DebugJSON.ExtraTraceRetentionDays)
+	}
+	merge(&base, &Config{LLM: LLMConfig{DebugJSON: DebugJSONConfig{ExtraTraceRetentionDays: -1}}})
+	if base.LLM.DebugJSON.ExtraTraceRetentionDays != -1 {
+		t.Errorf("负数应覆盖(关闭), got %d", base.LLM.DebugJSON.ExtraTraceRetentionDays)
+	}
+}
+
 // activity.watermark_mode：空 = time；merge 只在非空时覆盖。
 func TestActivityWatermarkMode(t *testing.T) {
 	var c ActivityConfig

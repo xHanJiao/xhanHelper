@@ -62,7 +62,7 @@ struct MemoryListView: View {
                 CardConfig(
                     title: memory.topic ?? memory.source,
                     subtitle: memory.memoryValue,
-                    tags: [sourceBadge(memory.source)] + parseTags(memory.tags),
+                    tags: (viewModel.showSourceBadge ? [sourceBadge(memory.source)] : []) + parseTags(memory.tags),
                     style: .memory,
                     actions: feedbackActions(memory),
                     onTap: { selectedMemory = memory }

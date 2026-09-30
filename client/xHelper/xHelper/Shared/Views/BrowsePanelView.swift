@@ -431,6 +431,16 @@ struct BrowsePanelView: View {
                     }
                     .controlSize(.small)
                     .fixedSize()
+                } else {
+                    Button {
+                        memoryVM.showSourceBadge.toggle()
+                    } label: {
+                        Image(systemName: memoryVM.showSourceBadge ? "tag" : "tag.slash")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(memoryVM.showSourceBadge ? "隐藏来源标签" : "显示来源标签")
                 }
             }
 

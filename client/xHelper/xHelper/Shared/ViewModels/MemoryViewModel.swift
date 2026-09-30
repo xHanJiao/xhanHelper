@@ -12,6 +12,8 @@ class MemoryViewModel: ObservableObject {
 
     /// 记忆页「列表 / 词云」开关（纯 UI 状态，仅 macOS 使用）。
     @Published var showCloudMode = false
+    /// 列表卡片是否显示来源徽标（inline / post_chat 等）。纯 UI 状态，仅 macOS 使用，便于评分时隐藏来源。
+    @Published var showSourceBadge = true
     /// 词云用：所有 topic 及出现次数（按次数倒序）。
     @Published var cloudTopics: [MemoryTopic] = []
     /// 词云「≥ N 条」过滤阈值。

@@ -21,21 +21,14 @@ struct ContentView: View {
     @State private var showAckError = false
 
 #if os(macOS)
-    @StateObject private var router = NavigationRouter()
     @StateObject private var rightSidebar = RightSidebarManager()
-    @State private var sidebarWidth: CGFloat = Layout.sidebarDefaultWidth
     @State private var contentHovered = false
-    @State private var sidebarHovered = false
-    /// 左/右面板分隔线（seam）的 x 坐标（content 坐标系），由 SeamMarker 上报。
-    @State private var leftSeamX: CGFloat = 0
+    /// 右面板分隔线（seam）的 x 坐标（content 坐标系），由 SeamMarker 上报。
     @State private var rightSeamX: CGFloat = 0
-    @AppStorage("xhan_sidebar_width") private var storedSidebarWidth: Double = Layout.sidebarDefaultWidth
     @State private var windowWidth: CGFloat = 800
     /// 最近一次 geo.size.width（SwiftUI 内容布局宽）。窗口缩到内容底线后该值冻结在底线
     /// （如 813），didResize 检测到它大于窗口实际内容宽即确认溢出，写入内容实测底线。
     @State private var lastGeoWidth: CGFloat = 0
-    /// 侧栏是否为自动收起，窗口拉宽后自动恢复。
-    @State private var sidebarAutoCollapsed = false
     /// 进入 PiP 前右栏宽度，退出时恢复。
     @State private var prePipSidebarWidth: Double?
     /// 进入浏览器聚焦（middleMinimized）前右栏宽度，退出时恢复。
@@ -57,86 +50,32 @@ struct ContentView: View {
         APIClient(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
     }
 
-    private var sidebarTabBinding: Binding<SidebarTab> {
-        Binding(
-            get: { router.currentTab },
-            set: { router.navigateTo($0) }
-        )
-    }
-
-    private var allowExpand: Bool { windowWidth >= 600 }
-
-    /// 侧栏完全隐藏判定：仅收起动作（sidebarWidth 落到最小宽 38）触发；
-    /// 手动拖拽到 38~120 之间仍显示窄轨，不隐藏。
-    private var isSidebarHidden: Bool {
-        sidebarWidth <= Layout.sidebarMinWidth
-    }
-
-    /// 中间区跨度：PiP 时聊天区消失，只剩一个 seam（布局让位给右栏浏览器）。
+    /// 中间区跨度：PiP 时聊天区让位给右栏（无中栏）；否则中栏 + 右侧 seam。
     private var middleSpan: Double {
         rightSidebar.isPipChat
-            ? Double(Layout.seamWidth)
-            : Double(Layout.seamWidth + Layout.middleMinWidth + Layout.seamWidth)
+            ? 0
+            : Double(Layout.middleMinWidth + Layout.seamWidth)
     }
 
-    /// 中间区 + 右栏最小宽的横向跨度（pip 感知）。
-    private var middleAndRightMinSpanPipAware: Double {
-        middleSpan + Double(Layout.rightSidebarMinWidth + Layout.rightSidebarOuterPadding)
-    }
-
-    /// 右侧栏在当前窗口/侧栏布局下可用的最大宽度。
-    /// 减去左栏元素（内容+外扩）、中间跨度、右栏外扩。PiP 或浏览器聚焦时中间让位，
-    /// 右栏可铺满整窗（不设 1200 上限）。
+    /// 右侧栏在当前窗口布局下可用的最大宽度。
+    /// 减去中间跨度、右栏外扩。PiP 或浏览器聚焦时中间让位，右栏可铺满整窗（不设 1200 上限）。
     private var rightSidebarMaxAvailable: Double {
         let available = Double(windowWidth)
-            - Double(sidebarWidth + Layout.sidebarOuterPadding)
             - middleSpan
             - Double(Layout.rightSidebarOuterPadding)
         let cap = (rightSidebar.isPipChat || rightSidebar.middleMinimized) ? 4000.0 : 1200.0
         return max(Double(Layout.rightSidebarMinWidth), min(cap, available))
     }
 
-    /// 左侧栏可拖拽的最大宽度。始终按窗口可用空间钳制（右栏开启时再扣右栏区），
-    /// 防止拖拽提交超出 HStack 容纳能力的宽度——否则弹性槽位（.frame(minWidth:)）
-    /// 被压缩而内部刚性宽度溢出，出现「内容变宽但容器没变宽」。
-    private var leftSidebarMaxAvailable: Double {
-        var available = Double(windowWidth) - Double(
-            Layout.cardGap                                          // HSpace 左
-            + Layout.sidebarHPadding * 2                            // 侧栏卡片内边距
-            + Layout.seamHalfGap * 2 + Layout.seamWidth             // 左 seam 区
-            + Layout.middleMinWidth                                 // 中间栏最小宽（含自身 padding）
-            + Layout.cardGap                                        // HSpace 右
-        )
-        if rightSidebar.isOpen && !rightSidebar.isPipChat {
-            available -= Double(
-                Layout.seamHalfGap * 2 + Layout.seamWidth           // 右 seam 区
-                + Layout.rightSidebarMinWidth                       // 右栏最小宽
-                + Layout.rightSidebarOuterPadding
-            )
-        }
-        return min(Double(Layout.sidebarMaxWidth), max(Double(Layout.sidebarMinWidth), available))
-    }
-
     /// 右栏打开时所需的内容最小宽（由 Layout 派生）。
     private static let rightSidebarOpenMinWidth: CGFloat = Layout.rightSidebarOpenMinContentWidth
-    /// 右栏关闭时窗口最小内容宽：预留当前侧栏实际宽度（含卡片内边距），
-    /// 侧栏越宽窗口越不能缩窄——防止缩窗后 HStack 压缩侧栏槽位导致内容溢出。
-    /// 初始 200 默认宽 → 585，窄窗口打开的旧会话会自动走 sidebarAutoCollapsed 收窄。
+    /// 右栏关闭时窗口最小内容宽：左右窗口边距 + 中栏最小宽。
     private var baseMinWidth: CGFloat {
-        let sidebar = min(max(Double(sidebarWidth), Double(Layout.sidebarMinWidth)), leftSidebarMaxAvailable)
-        return Layout.cardGap * 2
-            + CGFloat(sidebar) + Layout.sidebarHPadding * 2
-            + Layout.seamHalfGap * 2 + Layout.seamWidth
-            + Layout.middleMinWidth
+        Layout.cardGap * 2 + Layout.middleMinWidth
     }
-    /// PiP 时所需的内容最小宽：随左栏当前实际宽度动态变化（左栏越宽窗口越不能缩窄）。
-    /// 结构同 baseMinWidth，把中间区最小宽换成右栏最小宽。
+    /// PiP 时所需的内容最小宽：左右窗口边距 + 右栏最小宽（中栏让位）。
     private var pipMinContentWidth: CGFloat {
-        let sidebar = min(max(Double(sidebarWidth), Double(Layout.sidebarMinWidth)), leftSidebarMaxAvailable)
-        return Layout.cardGap * 2
-            + CGFloat(sidebar) + Layout.sidebarHPadding * 2
-            + Layout.seamHalfGap * 2 + Layout.seamWidth
-            + Layout.rightSidebarMinWidth
+        Layout.cardGap * 2 + Layout.rightSidebarMinWidth
     }
 
     /// 窗口最小内容宽唯一派生入口：由 (isOpen, isPipChat) 实时推导，幂等设置，
@@ -170,17 +109,12 @@ struct ContentView: View {
         }
     }
 
-    /// 右栏打开时更新窗口：先收左栏腾空间 → 窗口太窄则自动放大 → 设最小内容宽（防再缩窄）。
+    /// 右栏打开时更新窗口：窗口太窄则自动放大 → 设最小内容宽（防再缩窄）。
     private func updateWindowForRightSidebarOpen() {
-        // 1. 先收左栏：左栏 + 中间 + 右栏（含各自外扩、seam）放不下时
-        if windowWidth < sidebarWidth + Layout.sidebarOuterPadding + Layout.middleAndRightMinSpan && sidebarWidth > Layout.sidebarSnapThreshold {
-            sidebarWidth = Layout.sidebarMinWidth
-        }
-
-        // 2. 通知窗口最小内容宽（windowWillResize 会据此拒绝更窄）
+        // 通知窗口最小内容宽（windowWillResize 会据此拒绝更窄）
         updateWindowMinWidth()
 
-        // 3. 自动放大窗口到所需内容宽（按内容缺口增量放大，保留窗口 chrome）
+        // 自动放大窗口到所需内容宽（按内容缺口增量放大，保留窗口 chrome）
         guard let window = NSApp.keyWindow else { return }
         let deficit = Self.rightSidebarOpenMinWidth - windowWidth
         if deficit > 0 {
@@ -201,13 +135,8 @@ struct ContentView: View {
     private func enterPipEffects() {
         guard rightSidebar.isPipChat else { return }
         rightSidebar.pipCollapsed = true
-        // 非聊天 tab 时进入 PiP 会隐藏该页面，先切到聊天，让悬浮面板承载对话
-        if router.currentTab != .chat {
-            router.navigateTo(.chat)
-        }
         prePipSidebarWidth = rightSidebar.width
         pipExitReason = "userExit"
-        sidebarWidth = Layout.sidebarMinWidth
         rightSidebar.width = rightSidebarMaxAvailable
         updateWindowMinWidth()
         guard let window = NSApp.keyWindow else { return }
@@ -300,16 +229,6 @@ struct ContentView: View {
     }
 
 #if os(macOS)
-    /// Cmd+B：切换左侧栏。收起时恢复到记忆的展开宽度，展开时收到最小宽（48）。
-    private func toggleLeftSidebar() {
-        let collapsed = sidebarWidth <= Layout.sidebarSnapThreshold
-        if collapsed {
-            sidebarWidth = min(max(CGFloat(storedSidebarWidth), Layout.sidebarDefaultWidth), leftSidebarMaxAvailable)
-        } else {
-            sidebarWidth = Layout.sidebarMinWidth
-        }
-    }
-
     /// Cmd+Shift+↑ / ↓：在会话列表中上/下切换会话（delta：-1 上移，+1 下移）。
     /// 当前会话不在已加载列表（新建空 tab / 分页未加载）时回退到列表第一项（最近会话）。
     private func switchConversation(delta: Int) async {
@@ -328,21 +247,14 @@ struct ContentView: View {
             target = conversations[0]
         }
 
-        router.navigateTo(.chat)
         await chatTabManager.openConversation(id: target.id, title: target.title, pushHistory: true, mode: target.mode)
     }
 
     /// 注册 App 级快捷键桥（macOS：Cmd+B / Tab·Esc L3 确认）。
     private func registerAppShortcutBridge() {
         // ContentView 是 struct，闭包捕获的是值拷贝，无循环引用，不需 weak
-        AppShortcutBridge.shared.onToggleLeftSidebar = {
-            self.toggleLeftSidebar()
-        }
         AppShortcutBridge.shared.onNewChat = {
             self.chatTabManager.newChat()
-        }
-        AppShortcutBridge.shared.onNewEphemeralChat = {
-            Task { await self.chatTabManager.newEphemeralChat() }
         }
         AppShortcutBridge.shared.onSwitchConversation = { delta in
             Task { await self.switchConversation(delta: delta) }
@@ -426,7 +338,8 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     TopBarView(
                         rightSidebar: rightSidebar,
-                        navLeadingOffset: 0
+                        chatTabManager: chatTabManager,
+                        conversationListVM: conversationListVM
                     )
                     .zIndex(1)
 
@@ -434,29 +347,10 @@ struct ContentView: View {
                         let rightMax: Double = max(Double(Layout.rightSidebarMinWidth),
                             min((rightSidebar.isPipChat || rightSidebar.middleMinimized) ? 4000 : 1200,
                                 Double(geo.size.width)
-                                - Double(sidebarWidth + Layout.sidebarOuterPadding)
                                 - middleSpan
                                 - Double(Layout.rightSidebarOuterPadding)))
                         HStack(alignment: .top, spacing: 0) {
                             HSpace(Layout.cardGap)
-
-                            if !isSidebarHidden {
-                                SidebarView(
-                                    selectedTab: sidebarTabBinding,
-                                    sidebarWidth: $sidebarWidth,
-                                    chatTabManager: chatTabManager,
-                                    conversationListVM: conversationListVM
-                                )
-                                .frame(minWidth: Layout.sidebarMinWidth)
-                                .padding(.horizontal, Layout.sidebarHPadding)
-                                .modifier(CardBackgroundModifier(isLifted: sidebarHovered))
-                                .layoutPriority(3)
-                                .onHover { sidebarHovered = $0 }
-
-                                HSpace(Layout.seamHalfGap)
-                                SeamMarker(x: $leftSeamX)
-                                HSpace(Layout.seamHalfGap)
-                            }
 
                             if !rightSidebar.isPipChat {
                                 macOSContentArea
@@ -488,31 +382,9 @@ struct ContentView: View {
                             HSpace(Layout.cardGap)
                         }
                         .coordinateSpace(name: ResizeDividerSpace.name)
-                        .overlay(alignment: .leading) {
-                            // 左栏完全隐藏时，左缘 hover 热区：悬停显示圆形展开按钮
-                            if isSidebarHidden {
-                                HoverRevealButton(systemName: "chevron.right",
-                                                  tooltip: "展开左侧栏 (⌘B)",
-                                                  action: { toggleLeftSidebar() })
-                            }
-                        }
                         .overlay(alignment: .topLeading) {
                             ZStack(alignment: .topLeading) {
-                                // 左手柄：浮在左分隔线（seam）上方，不占布局空间
-                                if allowExpand && !isSidebarHidden {
-                                    ResizableDivider(
-                                        id: "left",
-                                        width: Binding(
-                                            get: { Double(sidebarWidth) },
-                                            set: { sidebarWidth = CGFloat($0) }
-                                        ),
-                                        minWidth: Double(Layout.sidebarMinWidth),
-                                        maxWidth: leftSidebarMaxAvailable,
-                                        ghost: resizeGhost,
-                                        seamX: $leftSeamX
-                                    )
-                                }
-                                // 右手柄：浮在右分隔线（seam）上方（PiP 时中间区消失、两 seam 重合，隐藏）
+                                // 右手柄：浮在右分隔线（seam）上方（PiP 时中间区消失，右 seam 隐藏）
                                 if rightSidebar.isOpen && !rightSidebar.isPipChat {
                                     ResizableDivider(
                                         id: "right",
@@ -556,25 +428,8 @@ struct ContentView: View {
                             // ponytail: 排查「点内链卡死」的临时埋点（方案 A），定位后删
                             LogBuffer.shared.diag("[doclink] geo.width 变化 → \(new)")
                             // geo 变化 = 内容布局宽已变，旧实测底线（measuredContentMinWidth）失效，
-                            // 复位待 didResize 重新实测（底线随左栏/顶栏状态变化）。
+                            // 复位待 didResize 重新实测。
                             AppDelegate.measuredContentMinWidth = 0
-                            // 3 栏/右栏关闭：原阈值逻辑（PiP 由 didResize 检测冻结后触发收起，
-                            // 因为 PiP 底线 813 > 阈值 661，geo 冻结在 813 时这里已不再触发）。
-                            let overhead: CGFloat = rightSidebar.isPipChat
-                                ? max(Layout.contentOverheadNoRightSidebar, AppDelegate.measuredContentMinWidth - sidebarWidth)
-                                : rightSidebar.isOpen ? Layout.contentOverheadRightSidebarOpen : Layout.contentOverheadNoRightSidebar
-                            var restoreAt = CGFloat(storedSidebarWidth) + overhead
-                            if rightSidebar.isPipChat {
-                                // 恢复下限 = 展开态内容底线（收起瞬间实测），窗口没大到能容下展开内容前不恢复
-                                restoreAt = max(restoreAt, AppDelegate.pipExpandedFloor)
-                            }
-                            if new <= sidebarWidth + overhead && sidebarWidth > Layout.sidebarMinWidth {
-                                sidebarWidth = Layout.sidebarMinWidth
-                                sidebarAutoCollapsed = true
-                            } else if sidebarAutoCollapsed && new >= restoreAt {
-                                sidebarWidth = min(CGFloat(storedSidebarWidth), Layout.sidebarMaxWidth)
-                                sidebarAutoCollapsed = false
-                            }
                             clampRightSidebarWidth()
                             refillBrowserFocus() // 窗口放大后浏览器聚焦态补满（含进入时异步放大窗口的场景）
                             // ponytail: 临时埋点（方案 A），定位后删
@@ -589,13 +444,6 @@ struct ContentView: View {
                             if lastGeoWidth > contentW + 1 {
                                 AppDelegate.measuredContentMinWidth = lastGeoWidth
                             }
-                            // ② PiP 缩窗至内容底线：先收左栏 → 顶栏 navLeadingOffset 缩小 → 底线降下来
-                            // （如 813→575）→ 窗口可继续缩。与 3 栏「先收再缩」行为对齐。
-                            if rightSidebar.isPipChat, lastGeoWidth > contentW + 1, sidebarWidth > Layout.sidebarMinWidth {
-                                AppDelegate.pipExpandedFloor = lastGeoWidth
-                                sidebarWidth = Layout.sidebarMinWidth
-                                sidebarAutoCollapsed = true
-                            }
                         }
                         .onChange(of: rightSidebar.isOpen) { _, isOpen in
                             // ponytail: 排查「点内链卡死」的临时埋点（方案 A），定位后删
@@ -607,7 +455,6 @@ struct ContentView: View {
                             }
                             // 浏览器按钮组随侧栏开/关注册/注销，内容底线变化 → 旧实测值失效
                             AppDelegate.measuredContentMinWidth = 0
-                            AppDelegate.pipExpandedFloor = 0
                             if isOpen {
                                 updateWindowForRightSidebarOpen()
                                 clampRightSidebarWidth()
@@ -636,13 +483,7 @@ struct ContentView: View {
                             }
                             // 顶栏按钮组随 PiP 注册/注销，内容底线变化 → 旧实测值失效
                             AppDelegate.measuredContentMinWidth = 0
-                            AppDelegate.pipExpandedFloor = 0
                             clampRightSidebarWidth()
-                        }
-                        .onChange(of: router.currentTab) { _, newTab in
-                            if newTab != .chat {
-                                autoExitPip(reason: "tabChanged")
-                            }
                         }
                         .onChange(of: rightSidebar.activeTabId) { _, id in
                             if id == nil {
@@ -651,16 +492,6 @@ struct ContentView: View {
                                 rightSidebar.middleMinimized = false
                             }
                             BrowserToolProvider.shared.refreshBrowserGroup()
-                        }
-                        .onChange(of: sidebarWidth) { _, new in
-                            if new > Layout.sidebarMinWidth {
-                                sidebarAutoCollapsed = false
-                            }
-                            // 顶栏 navLeadingOffset 随左栏宽变化，内容底线随之变化 → 旧实测值失效
-                            AppDelegate.measuredContentMinWidth = 0
-                            clampRightSidebarWidth()
-                            refillBrowserFocus()
-                            updateWindowMinWidth() // 侧栏越宽，窗口最小内容宽跟着涨，防缩窗溢出
                         }
                     }
                     VSpace(Layout.cardBottomGap)
@@ -688,18 +519,12 @@ struct ContentView: View {
                     return .handled // 本 scheme 的未知路径：吞掉，不交给系统
                 })
                 .onAppear {
-                    sidebarWidth = min(storedSidebarWidth, Layout.sidebarMaxWidth)
                     BrowserToolProvider.shared.rightSidebar = rightSidebar
                     DocumentSelectionCoordinator.shared.rightSidebar = rightSidebar
                     DocumentSelectionCoordinator.shared.documentVM = documentVM
                     DocumentSelectionCoordinator.shared.configure(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
                     DocumentSelectionCoordinator.shared.ensureRegisteredGroup()
                     registerAppShortcutBridge()
-                }
-                .onChange(of: sidebarWidth) { _, new in
-                    if new > Layout.sidebarSnapThreshold {
-                        storedSidebarWidth = new
-                    }
                 }
 #endif
             }
@@ -791,38 +616,25 @@ struct ContentView: View {
     @ViewBuilder
     private var macOSContentArea: some View {
         Group {
-            switch router.currentTab {
-                case .chat:
-                    if let vm = chatTabManager.currentTab?.viewModel {
-                        ChatPage(
-                            chatViewModel: vm,
-                            loadError: conversationLoadError,
-                            baseURL: deviceManager.baseURL,
-                            token: deviceManager.token ?? ""
-                        )
-                    } else {
-                        ProgressView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                }
+            if let vm = chatTabManager.currentTab?.viewModel {
+                ChatPage(
+                    chatViewModel: vm,
+                    loadError: conversationLoadError,
+                    baseURL: deviceManager.baseURL,
+                    token: deviceManager.token ?? ""
+                )
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .padding(.horizontal, 12)
-            .modifier(CardBackgroundModifier(isLifted: contentHovered || (activeChatViewModel?.isEditing ?? false)))
-            .frame(minWidth: Layout.middleMinWidth, idealWidth: Layout.middleMinWidth,
-                   maxWidth: .infinity,
-                   alignment: .leading)
-            .layoutPriority(1)
-            .onHover { contentHovered = $0 }
-        .onChange(of: activeChatViewModel?.isStreaming) { _, streaming in
-            router.setRefreshDisabled(for: .chat,
-                message: streaming == true ? "对话进行中，无法刷新" : nil)
         }
-        .onChange(of: router.refreshCounts[.chat] ?? 0) { _, _ in
-            if let vm = activeChatViewModel, let cid = vm.conversationId, !cid.isEmpty {
-                Task { await vm.loadConversation(id: cid, title: vm.conversationTitle ?? "", mode: vm.mode, preserveTrustedMode: true) } // 刷新保持当前模式/信任模式
-            }
-            Task { await conversationListVM.reload() }
-        }
+        .padding(.horizontal, 12)
+        .modifier(CardBackgroundModifier(isLifted: contentHovered || (activeChatViewModel?.isEditing ?? false)))
+        .frame(minWidth: Layout.middleMinWidth, idealWidth: Layout.middleMinWidth,
+               maxWidth: .infinity,
+               alignment: .leading)
+        .layoutPriority(1)
+        .onHover { contentHovered = $0 }
     }
 #endif
 
@@ -869,9 +681,7 @@ struct ContentView: View {
 
                 guard let conv = deviceManager.defaultConversation else { return }
                 DispatchQueue.main.async {
-#if os(macOS)
-                    router.navigateTo(.chat)
-#else
+#if !os(macOS)
                     selectedTab = "chat"
 #endif
                 }

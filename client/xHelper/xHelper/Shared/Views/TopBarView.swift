@@ -9,7 +9,10 @@ struct TopBarView: View {
     @ObservedObject private var registry = TopBarRegistry.shared
     @ObservedObject private var bookmarkStore = BookmarkStore.shared
     @ObservedObject var rightSidebar: RightSidebarManager
-    let navLeadingOffset: CGFloat
+    @ObservedObject var chatTabManager: ChatTabManager
+    @ObservedObject var conversationListVM: ConversationListViewModel
+    @State private var showConversationMenu = false
+    @State private var hoveredConversationID: String?
 
     #if os(macOS)
     @Environment(\.openSettings) private var openSettings
@@ -19,14 +22,12 @@ struct TopBarView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Spacer()
-                .frame(width: navLeadingOffset)
+            // 红绿灯让位（顶栏铺到标题栏，左区内容需避开窗口按钮）
+            Spacer().frame(width: Layout.topBarTrafficClearance)
 
-            renderSlot(.left)
-
-            // 左中两侧都有可见组时才显示分隔线，避免孤立胶囊
-            if !visibleGroups(for: .left).isEmpty && !visibleGroups(for: .center).isEmpty {
-                UnresizableDivider()
+            // 左侧：当前会话下拉（不走 registry 的 leading View，PiP 时不显示）
+            if !rightSidebar.isPipChat {
+                conversationSwitcher
             }
 
             Spacer()
@@ -55,6 +56,174 @@ struct TopBarView: View {
         .padding(.vertical, Layout.toolbarVGap)
         .ignoresSafeArea(edges: .top)
         .onAppear { registerDefaultGroups() }
+    }
+
+    // MARK: - 会话切换（顶栏左侧 leading View）
+
+    private var currentConversationTitle: String {
+        let t = chatTabManager.currentTab?.title ?? ""
+        return t.isEmpty ? "新对话" : t
+    }
+
+    private var currentIsEphemeral: Bool {
+        guard let cid = chatTabManager.currentConversationId, !cid.isEmpty else { return false }
+        return conversationListVM.conversations.first { $0.id == cid }?.ephemeral == true
+    }
+
+    /// 当前会话下拉 trigger + 新建（普通新建；无痕走输入栏 pill）。
+    private var conversationSwitcher: some View {
+        HStack(spacing: 6) {
+            Button {
+                showConversationMenu.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    if currentIsEphemeral {
+                        Image(systemName: "theatermasks.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color("appAccent"))
+                    }
+                    Text(currentConversationTitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary.opacity(0.85))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: Layout.topBarCapsuleHeight)
+                .frame(maxWidth: 240, alignment: .leading)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
+            .help("切换会话")
+            .popover(isPresented: $showConversationMenu, arrowEdge: .bottom) {
+                conversationMenu
+            }
+
+            Button {
+                chatTabManager.newChat()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(0.7))
+                    .frame(width: 32, height: Layout.topBarCapsuleHeight)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
+            .help("新会话")
+        }
+        .task {
+            // 会话列表首次加载：原挂在侧栏 .task 上，删栏后由此触发
+            if !conversationListVM.hasLoadedOnce {
+                await conversationListVM.load()
+            }
+        }
+    }
+
+    private var conversationMenu: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("会话")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 6)
+
+            ForEach(conversationListVM.conversations) { conv in
+                conversationMenuRow(conv)
+            }
+
+            if conversationListVM.hasMore {
+                Button {
+                    Task { await conversationListVM.loadMore() }
+                } label: {
+                    Text(conversationListVM.isLoadingMore ? "加载中…" : "加载更多")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+                .disabled(conversationListVM.isLoadingMore)
+            }
+        }
+        .frame(width: 300)
+        .padding(.bottom, 6)
+    }
+
+    private func conversationMenuRow(_ conv: Conversation) -> some View {
+        let isCurrent = chatTabManager.currentConversationId == conv.id
+        let isHovered = hoveredConversationID == conv.id
+        let isPinned = conv.pinned == true
+        let isEphemeral = conv.ephemeral == true
+        return HStack(spacing: 6) {
+            Button {
+                showConversationMenu = false
+                Task {
+                    await chatTabManager.openConversation(
+                        id: conv.id, title: conv.title, pushHistory: true, mode: conv.mode
+                    )
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    if isEphemeral {
+                        Image(systemName: "theatermasks")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Text(conv.title.isEmpty ? "新对话" : conv.title)
+                        .font(.system(size: 12, weight: isCurrent ? .semibold : .regular))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Spacer()
+                    if isCurrent {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color("appAccent"))
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isHovered || isPinned {
+                Button {
+                    Task { await conversationListVM.setPinned(id: conv.id, pinned: !isPinned) }
+                } label: {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 11))
+                        .foregroundStyle(isPinned ? Color("appAccent") : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help(isPinned ? "取消置顶" : "置顶")
+            }
+
+            if isHovered {
+                Button {
+                    Task {
+                        await conversationListVM.delete(id: conv.id)
+                        chatTabManager.close(conversationId: conv.id)
+                    }
+                } label: {
+                    Image(systemName: isEphemeral ? "trash" : "archivebox")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(isEphemeral ? "销毁" : "归档")
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .background(
+            isCurrent
+                ? Color("appAccent").opacity(0.10)
+                : (isHovered ? Color.primary.opacity(0.06) : .clear)
+        )
+        .contentShape(Rectangle())
+        .onHover { hoveredConversationID = $0 ? conv.id : nil }
     }
 
     // MARK: - dev 徽标（UI-7）

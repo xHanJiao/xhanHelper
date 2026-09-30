@@ -248,9 +248,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 可能大于 requiredMinContentWidth（顶栏内在 min 比底栏 HStack 宽，如 813 > 661），
     /// 是窗口缩放的真实底线。窗口守卫取两者较大值，防止缩窗时内容溢出居中、左栏出窗口。
     static var measuredContentMinWidth: CGFloat = 0
-    /// PiP 左栏收起瞬间的内容底线（展开态），供收起后恢复左栏时做下限：
-    /// 防止窗口还没大到容下展开内容时就提前恢复左栏（恢复过早会再次溢出）。
-    static var pipExpandedFloor: CGFloat = 0
 
     /// 浏览器页面缩放（Cmd+±，钳制 0.5x–2.5x）
     private static func zoomWebView(by delta: CGFloat) {

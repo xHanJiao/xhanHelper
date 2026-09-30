@@ -68,10 +68,7 @@ type RunRequest struct {
 	Mode               string       // 会话模式：ConvModeWork（默认）| ConvModePlan（只读）| ConvModeStrict（无工具）
 	ModeNotice         string       // 模式提示（注入当前 user 消息 XMLContext 的 notice 块，仅 LLM 可见，用户不可见）
 	BriefAnswer        bool         // 本轮要求精简回答（注入 system prompt 的输出长度约束，≤500 字）
-	// DocQuote 文档划线引用（客户端「问 AI」）：会话级状态——引用还在客户端就每轮都带，
-	// 渲染成 document_quote 块注入本轮 XMLContext，仅 LLM 可见，不动用户消息正文。
-	DocQuote      *retrieval.DocQuoteMeta
-	VerifyEnabled *bool // 响应检验开关覆盖：nil=跟随全局配置，true/false=强制覆盖
+	VerifyEnabled      *bool        // 响应检验开关覆盖：nil=跟随全局配置，true/false=强制覆盖
 
 	// 资源区方案：上一条 user 消息的 XMLContext（增量资源区来源，零额外 DB 读）。
 	// 历史消息不再重放完整 XML；注入资源收敛到当前消息的公共资源区。
@@ -746,11 +743,6 @@ func (o *Orchestrator) buildUserMessage(
 	// 模式提示（计划模式约束 / 退出提示）：注入 notice 块，仅 LLM 可见
 	if req.ModeNotice != "" {
 		extraPackets = append(extraPackets, ctxflow.NoticePacket(req.ModeNotice))
-	}
-
-	// 文档划线引用（「问 AI」）：注入 document_quote 块，仅 LLM 可见
-	if req.DocQuote != nil {
-		extraPackets = append(extraPackets, ctxflow.DocumentQuotePacket(*req.DocQuote))
 	}
 
 	reminderPkts := o.buildReminderPackets(ctx, req.UserID)

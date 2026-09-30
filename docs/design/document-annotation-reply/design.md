@@ -11,7 +11,7 @@
 > - ✅ **客户端 UI 已写完并 `swiftc -typecheck` 0 error**：常驻批注面板（讨论/全部两视图）、可折叠线程卡片、收放规则、卡片→划线连线、`#Preview`（桌面三栏）。见 §7。
 > - ✅ 客户端模型/接口已就位：`AnnotationReply`、`reply_count`/`last_reply`（可选）、`APIClient.listAnnotationReplies/replyToAnnotation`。
 > - ✅ 阅读器 JS 已加 `annotationRect(id)` + `scroll` 消息（供连线）。
-> - ⏳ **只剩「问 AI」全套未拆**（纯客户端：工具条/菜单入口、`DocumentAIBridge.onAsk`、`ChatView` 胶囊/窄条、`ChatViewModel.docQuote`、`DocQuote.swift`）。
+> - ✅ **「问 AI」已整体下线**（客户端 + 服务端 `doc_quote` 死路径）：删除工具条/菜单入口、`DocumentAIBridge`、`ChatView` 引用胶囊/窄条、`ChatViewModel.docQuote`、`DocQuote.swift`；服务端删 `controller/chat.go` 的 `DocQuote`/`normalizeDocQuote`、`retrieval.DocQuoteMeta`、`ctxflow` 的 `document_quote` 块与 `DocumentQuotePacket`。见 AR-12。
 > - ⏳ `DELETE /api/annotation-replies/:id` 未做（v1 用不到，接口可后置）。
 > - ⏳ 真机验收（§11）未跑；`check-reader-html.sh` 未加连线专属断言。
 
@@ -47,7 +47,7 @@
 | AR-9 | 批注根与回复 | ✅ 根仍是 `DocumentAnnotation.note`；追问与 AI 回复是 `DocumentAnnotationReply` 行 |
 | AR-10 | 工具白名单 | ✅ run 内只给**只读**工具（`document` / `unified_search` / `message_search` / `get_summary`）。实现用 `registry.GetReadOnlyLLMToolsFiltered` 做**函数级**过滤（`ReadOnlyFuncs()` 交集），写函数既不下发也不可见；再由过滤结果派生 `SubAgentExt.AllowedTools` 做跑期 guard（防原生 FC 幻觉） |
 | AR-11 | 记忆/摘要隔离 | ✅ 批注与回复**不进**记忆 / 画像 / 摘要流水线（延续前序 D13）；run 不触发 `PostChatWorkerGroup` |
-| AR-12 | 「问 AI」 | ❌ 删除：工具条入口、点击菜单入口、`DocumentAIBridge.onAsk`、`ChatView` 引用胶囊/窄条、`ChatViewModel.docQuote` |
+| AR-12 | 「问 AI」 | ✅ 已删除：工具条入口、点击菜单入口、`DocumentAIBridge.onAsk`、`ChatView` 引用胶囊/窄条、`ChatViewModel.docQuote`、`DocQuote.swift`；服务端 `doc_quote` 链路（`DocQuoteMeta` / `document_quote` 块 / `DocumentQuotePacket` / `normalizeDocQuote`）一并移除 |
 | AR-13 | 失败处理 | ✅ 生成失败只影响本次回复；错误向上抛、顶层记一次日志、返回错误给客户端（不吞） |
 | AR-14 | 客户端 UI 形态 | ✅ **常驻批注面板**（Word 批注窗格式），两视图：**讨论**（卡片 + 可折叠线程）/ **全部**（扁平一级列表，原三 tab）。收放见 §7.3 |
 | AR-15 | 卡片 → 划线连线 | ✅ 悬停/操作卡片时从卡片左缘拉一条细直线到正文划线（Word 式）。色号 = 划线高亮的 `--hl`，**不是** `appAccent`。见 §7.4 |
@@ -416,11 +416,11 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 | `Shared/Views/AnnotationDrawer.swift` | `AnnotationPanel` / `AnnotationThreadCard` / `AnnotationListBody` / `AnnotationConnectorLayer` / `AnnotationHighlightColor` + 桌面预览 | ✅ |
 | `Shared/Views/DocumentListView.swift` | 常驻面板、`@AppStorage` 三键、`onGeometryChange` 收放、悬停状态 + 连线 overlay | ✅ |
 | `Shared/Views/LayoutConstants.swift` | 面板/窄条/目录宽、`docReaderMinWidth`、两个硬地板 | ✅ |
-| `Shared/Views/DocumentReaderView.swift`（JS 工具条/菜单） | **删「问 AI」**：`data-act="ask"`、`data-cact="ask"`、`ask` case、`revealQuote` / `beginNoteFromAI` 入口 | ⏳ P3 |
-| `Shared/Services/DocumentAIBridge.swift` | `onAsk` / `weak reader` 拆 | ⏳ P3 |
-| `Shared/Views/ChatView.swift` | 拆「引用胶囊」+「存为批注」窄条（`:161-170`、`:383` 附近）+ `storeQuoteAsNote` | ⏳ P3 |
-| `Shared/ViewModels/ChatViewModel.swift` | 拆 `docQuote` / `attachDocQuote` / `quoteAnswerText`（`:179-194`） | ⏳ P3 |
-| `Shared/Models/DocQuote.swift` | 拆完「问 AI」后若无人用可删 | ⏳ P3 |
+| `Shared/Views/DocumentReaderView.swift`（JS 工具条/菜单） | **删「问 AI」**：`data-act="ask"`、`data-cact="ask"`、`ask` case、`revealQuote` / `beginNoteFromAI` 入口 | ✅ |
+| `Shared/Services/DocumentAIBridge.swift` | `onAsk` / `weak reader` 拆（整文件删除） | ✅ |
+| `Shared/Views/ChatView.swift` | 拆「引用胶囊」+「存为批注」窄条 + `storeQuoteAsNote` / `revealInDocument` | ✅ |
+| `Shared/ViewModels/ChatViewModel.swift` | 拆 `docQuote` / `attachDocQuote` / `quoteAnswerText` | ✅ |
+| `Shared/Models/DocQuote.swift` | 整文件删除 | ✅ |
 
 ### 7.6 自查
 
@@ -478,17 +478,17 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 | **P0 客户端 UI** | 常驻面板 + 讨论/全部两视图 + 线程卡片 + 收放规则 + 卡片→划线连线 + 预览 | ✅ **已完成**（`swiftc -typecheck` 0 error） |
 | **P1 数据 + 读（服务端）** | 表 + repo + 级联删 + `list_annotations` 带 replies + 列表 API 带 `reply_count`/`last_reply` + `GET replies` 线程接口 | ✅ **已完成**（含单测） |
 | **P2 按钮生成（服务端）** | `agent/annotation_reply.go`（上下文链 + MiniReAct）+ `POST /reply`；客户端已就绪（§7） | ✅ **已完成** |
-| **P3 批量 + 清理** | `reply_annotation` 工具（指令式逐条）✅；拆「问 AI」全套（客户端）⏳ | 🟡 **服务端完成，客户端待拆** |
+| **P3 批量 + 清理** | `reply_annotation` 工具（指令式逐条）+ 拆「问 AI」全套（客户端 + 服务端 `doc_quote`） | ✅ **已完成** |
 
 依赖：P2 依赖 P1；P3 依赖 P1/P2。
-服务端（P1+P2+P3 的 Go 部分）已全部落地，`go build ./... && go test ./...` 全绿；客户端只剩「问 AI」拆除。
+服务端与客户端均已落地，`go build ./... && go test ./...` 全绿、`swiftc -typecheck`（macOS/iOS）0 error、`check-reader-html.sh` PASS。
 
 ---
 
 ## 十一、验收
 
 0. **P0（客户端 UI，已完成）**：
-   - `swiftc -typecheck -D DEBUG`（macOS / iOS）0 error；`check-reader-html.sh` 179 断言 PASS。
+   - `swiftc -typecheck -D DEBUG`（macOS / iOS）0 error；`check-reader-html.sh` 161 断言 PASS。
    - Xcode 画布：`AnnotationDrawer.swift` 的 6 个桌面预览 + `连线 · 悬停卡片` 观感正确。
    - 真机：常驻面板随文档 tab 宽收放（先收目录、再收批注，目录默认收起，全局记忆）；悬停卡片出连线、移开消失、滚动跟随、**线色与划线一致**。
 1. **P1**：`go build ./... && go test ./...` 全绿；`api-test-annotations.sh` 扩展覆盖回复 CRUD / 级联 / 越权 / 配额；客户端面板能展开已有回复（P0 的 UI 接真）。

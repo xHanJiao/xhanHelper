@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -139,18 +138,10 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			// 精简回答：本轮往 system prompt 注入输出长度约束（≤500 字）。
 			// 文档划线问答用 —— 回答要能整段存进批注（上限 2000 字），不靠 max_tokens 硬截断
 			BriefAnswer bool `json:"brief_answer"`
-
-			// 文档划线引用（「问 AI」）：会话级状态——引用还在客户端就每轮都带。
-			// 只注入 LLM 上下文（document_quote 块），不进用户消息正文/检索/记忆
-			DocQuote *retrieval.DocQuoteMeta `json:"doc_quote"`
 		}
 		// 允许只发图不写字：文字与附件至少要有一个
 		if err := c.ShouldBindJSON(&req); err != nil || (req.Message == "" && len(req.Attachments) == 0) {
 			view.JSONError(c, 400, "invalid request")
-			return
-		}
-		if msg := normalizeDocQuote(req.DocQuote); msg != "" {
-			view.JSONError(c, 400, msg)
 			return
 		}
 
@@ -347,7 +338,6 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			Mode:               convMode,
 			ModeNotice:         modeNotice,
 			BriefAnswer:        req.BriefAnswer,
-			DocQuote:           req.DocQuote,
 			VerifyEnabled:      req.VerifyEnabled,
 			HiddenRound:        req.HiddenRound,
 			UserImages:         userImages,
@@ -685,29 +675,4 @@ func computeWindowSize(ctx context.Context, msgRepo *service.MessageRepo, convID
 		SessionStartMsgID: agent.GetSessionStart(lastUserMsg),
 		PrevUserXML:       prevXML,
 	}
-}
-
-// maxDocQuoteTitleLen 文档引用里标题的上限（字）：标题只是给 LLM 一点语境，超长直接截断。
-const maxDocQuoteTitleLen = 200
-
-// normalizeDocQuote 就地归一化并校验文档划线引用，返回错误文案（空串=通过）。
-// quote 与批注走同一套归一化/限额（客户端发的都是 DOM 折叠文本）；prefix/suffix 只截断不报错
-// —— 它们只是消歧提示，截短不影响语义，报错反而会把整轮提问打断。
-func normalizeDocQuote(q *retrieval.DocQuoteMeta) string {
-	if q == nil {
-		return ""
-	}
-	q.Quote = normalizeQuote(q.Quote)
-	q.Prefix = capHintTail(q.Prefix)
-	q.Suffix = capHintHead(q.Suffix)
-	if q.Quote == "" {
-		return "引用原文为空"
-	}
-	if utf8.RuneCountInString(q.Quote) > maxAnnotationQuoteLen {
-		return "引用原文过长"
-	}
-	if r := []rune(q.Title); len(r) > maxDocQuoteTitleLen {
-		q.Title = string(r[:maxDocQuoteTitleLen])
-	}
-	return ""
 }

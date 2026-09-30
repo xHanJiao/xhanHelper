@@ -20,13 +20,11 @@ const (
 	TypeRecent          = "recent"
 	TypeCurrentDatetime = "current_datetime"
 	TypeNotice          = "notice"
-	TypeDocumentQuote   = "document_quote"
 )
 
 // typeOrder 定义所有块的渲染顺序，也是 typeRank 的单一数据源。
 // profile 是最稳定的用户事实画像，放在最前面，便于 LLM 优先关注。
-// document_quote 排最后（紧挨 user_query）：它是本轮问题直接针对的那段原文。
-var typeOrder = []string{TypeProfile, TypeSummary, TypeReminder, TypeHistory, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime, TypeNotice, TypeDocumentQuote}
+var typeOrder = []string{TypeProfile, TypeSummary, TypeReminder, TypeHistory, TypeMemory, TypeNote, TypeTheme, TypeCurrentDatetime, TypeNotice}
 
 // typeRank 从 typeOrder 派生，供排序时 O(1) 查找顺序。
 var typeRank = func() map[string]int {
@@ -161,26 +159,6 @@ type noticeBlock struct {
 
 func (*noticeBlock) TypeKey() string { return TypeNotice }
 
-// --- document_quote ---
-// documentQuoteBlock 文档划线引用（客户端「问 AI」）：用户选中哪段文字在问。
-// 仅进入 LLM 上下文（xml_context），用户在前端看到的是输入栏上方的引用胶囊。
-// usage 是固定提醒：quote 是渲染后的纯文本，和文档源文不完全一致。
-type documentQuoteBlock struct {
-	XMLName    struct{} `xml:"document_quote" json:"-"`
-	Title      string   `xml:"title,attr,omitempty" json:"title,omitempty"`
-	DocumentID string   `xml:"document_id,attr,omitempty" json:"document_id,omitempty"`
-	Quote      string   `xml:"quote" json:"quote"`
-	Prefix     string   `xml:"prefix,omitempty" json:"prefix,omitempty"`
-	Suffix     string   `xml:"suffix,omitempty" json:"suffix,omitempty"`
-	Usage      string   `xml:"usage,omitempty" json:"usage,omitempty"`
-}
-
-func (*documentQuoteBlock) TypeKey() string { return TypeDocumentQuote }
-
-// docQuoteUsage 固定说明。要写成 packet 里的提醒（见 design §12.4）：
-// quote 是 DOM 纯文本，LLM 拿它去 document 工具里搜可能搜不到，必须自行按窗口读全文。
-const docQuoteUsage = "用户从正在阅读的文档里选中这段文字提问。quote 是渲染后的纯文本（无 markdown 标记、空白已折叠），与文档源文不完全一致；要看全文或更多上下文请用 document 工具按窗口读（用上面的 document_id）。"
-
 // --- recent ---
 // recentBlock 新窗口注入的最近对话：上个窗口的用户消息与 AI 最终文本回复
 // （不含工具调用过程），按时间正序分 role 渲染。
@@ -239,7 +217,6 @@ var blockBuilders = map[string]blockBuilder{
 	TypeRecent:          buildRecentBlock,
 	TypeCurrentDatetime: buildCurrentDatetimeBlock,
 	TypeNotice:          buildNoticeBlock,
-	TypeDocumentQuote:   buildDocumentQuoteBlock,
 }
 
 // buildBlock 按 type 查找构建器并返回 Block，无匹配返回 nil。
@@ -387,26 +364,6 @@ func buildNoticeBlock(items []retrieval.ContextPacket) Block {
 	return &noticeBlock{Content: items[0].Text}
 }
 
-// buildDocumentQuoteBlock 构建文档引用块。quote 为空返回 nil（不注入空块）。
-func buildDocumentQuoteBlock(items []retrieval.ContextPacket) Block {
-	if len(items) == 0 {
-		return nil
-	}
-	pkt := items[0]
-	b := documentQuoteBlock{Quote: pkt.Text, Usage: docQuoteUsage}
-	if meta, ok := pkt.Meta.(retrieval.DocQuoteMeta); ok {
-		b.Title = meta.Title
-		b.DocumentID = meta.DocumentID
-		b.Quote = meta.Quote
-		b.Prefix = meta.Prefix
-		b.Suffix = meta.Suffix
-	}
-	if b.Quote == "" {
-		return nil
-	}
-	return &b
-}
-
 // buildRecentBlock 构建最近对话块。items 为空返回 nil（不注入空块）。
 func buildRecentBlock(items []retrieval.ContextPacket) Block {
 	if len(items) == 0 {
@@ -481,11 +438,6 @@ func DateTimePacket(t time.Time) retrieval.ContextPacket {
 // NoticePacket 生成 notice 类型的 ContextPacket（模式提示等系统通知，仅 LLM 可见）。
 func NoticePacket(text string) retrieval.ContextPacket {
 	return retrieval.ContextPacket{Type: TypeNotice, Text: text}
-}
-
-// DocumentQuotePacket 生成 document_quote 类型的 ContextPacket（文档划线引用，仅 LLM 可见）。
-func DocumentQuotePacket(q retrieval.DocQuoteMeta) retrieval.ContextPacket {
-	return retrieval.ContextPacket{Type: TypeDocumentQuote, ID: q.DocumentID, Text: q.Quote, Meta: q}
 }
 
 // RecentPacket 生成 recent 类型的 ContextPacket（新窗口注入的最近对话，role=user/assistant）。

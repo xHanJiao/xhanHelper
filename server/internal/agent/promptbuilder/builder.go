@@ -53,7 +53,7 @@ func NewPromptBuilder(
 // 前缀缓存说明：本函数输出是 system prompt，会话内字节稳定才命中 DeepSeek 前缀缓存。
 // 现有两处按请求变化的判断（plan / ClientToolCatalog）与新增的 BriefAnswer 都属于
 // 「刻意为之的逐请求变化」：带 brief_answer 的那一轮及其后一轮会丢失消息历史的缓存复用
-// （system prompt 在 |S| 处分叉）。低频动作（用户主动点「问 AI」）可接受，
+// （system prompt 在 |S| 处分叉）。低频动作（如用户主动开「精炼回答」）可接受，
 // 高频路径不要往这里加条件。
 func (b *PromptBuilder) Build(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
 	var sb strings.Builder

@@ -296,7 +296,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
             .scrollContentBackground(.hidden)
             .font(.system(size: scaledSize))
             .frame(height: editorHeight)
-            .background(InputBarScrollHider(reapplyToken: barWidth))
+            .background(InputBarScrollHider(reapplyToken: "\(barWidth)-\(scaledSize)"))
             .padding(.leading, 6)
             .padding(.trailing, 6)
             .padding(.vertical, 6)
@@ -359,24 +359,28 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
 }
 
 #if os(macOS)
-/// 隐藏 TextEditor 内部 NSScrollView 的垂直滚动条。
-/// 保留 maxHeight 高度上限（输入栏不无限长高），内容超出上限后仍可
-/// 内部滚动（触控板/滚轮），但看不到可见滚动条。
-/// 布局切换/宽度变化会重建 TextEditor 的 NSScrollView（恢复默认滚动条），
-/// 因此传入 reapplyToken：token 变化时 updateNSView 重新应用隐藏。
+/// 调整 TextEditor 内部的 AppKit 视图：
+/// 1. 隐藏 NSScrollView 的垂直滚动条（保留 maxHeight 上限，内容超出后仍可
+///    内部滚动，但看不到可见滚动条）。
+/// 2. 把 NSTextView 的 `lineFragmentPadding` / `textContainerInset` 归零，
+///    使真实文本可用宽 == `measuredHeight` 假设的宽（两者都用零内边距）。
+///    否则 AppKit 默认 lineFragmentPadding=5 会让真实折行比测量早 10pt，
+///    文字已折到第二行时测量仍算一行，输入框不加高（要多打 1~2 字才跳）。
+/// 布局切换/宽度/字号变化会重建 TextEditor 的内部视图（恢复默认值），
+/// 因此传入 reapplyToken：token 变化时 updateNSView 重新应用。
 struct InputBarScrollHider: NSViewRepresentable {
-    /// 变化即触发重新隐藏（传 barWidth 或"是否两行"）。
-    var reapplyToken: CGFloat
+    /// 变化即触发重新应用。
+    var reapplyToken: String
 
     func makeNSView(context: Context) -> NSView {
         NSView()
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        hideScroller(from: nsView)
+        apply(from: nsView)
     }
 
-    private func hideScroller(from nsView: NSView) {
+    private func apply(from nsView: NSView) {
         DispatchQueue.main.async {
             guard let root = nsView.superview else { return }
             var queue: [NSView] = [root]
@@ -385,6 +389,10 @@ struct InputBarScrollHider: NSViewRepresentable {
                 if let scrollView = view as? NSScrollView {
                     scrollView.hasVerticalScroller = false
                     scrollView.scrollerStyle = .overlay
+                }
+                if let textView = view as? NSTextView {
+                    textView.textContainerInset = .zero
+                    textView.textContainer?.lineFragmentPadding = 0
                 }
                 queue.append(contentsOf: view.subviews)
             }

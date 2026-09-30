@@ -51,6 +51,46 @@ private enum TrashBulkAction {
     case purgeAll
 }
 
+/// 通用多选工具条：取消（Esc）/ 分隔线 / 「已选 N <unit>」（空选显示 emptyText）/ 右侧自定义动作。
+private struct SelectionToolbar<Trailing: View>: View {
+    let count: Int
+    let unit: String
+    let emptyText: String
+    let cancelHelp: String
+    let onCancel: () -> Void
+    @ViewBuilder let trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: onCancel) {
+                HStack(spacing: 3) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("取消")
+                        .font(.system(size: 12))
+                }
+                .foregroundColor(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.escape, modifiers: [])
+            .help(cancelHelp)
+
+            Divider()
+                .frame(height: 14)
+
+            Text(count == 0 ? emptyText : "已选 \(count) \(unit)")
+                .font(.system(size: 13, weight: .semibold))
+
+            Spacer()
+
+            trailing()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+}
+
 /// 右侧栏浏览面板：网格入口（含打开浏览器）+ 浏览页面切换
 struct BrowsePanelView: View {
     @ObservedObject var manager: RightSidebarManager
@@ -79,6 +119,8 @@ struct BrowsePanelView: View {
     @State private var billSearchDraft = ""
     /// 多选删除二次确认。
     @State private var isConfirmingBatchDelete = false
+    /// 图片多选删除二次确认。
+    @State private var isConfirmingImageBatchDelete = false
     /// 回收站批量操作二次确认（全部恢复 / 全部删除）。
     @State private var trashBulkAction: TrashBulkAction?
 
@@ -167,6 +209,8 @@ struct BrowsePanelView: View {
                     #if os(macOS)
                     if isDocSelectionActive {
                         docSelectionHeader
+                    } else if isImageSelectionActive {
+                        imageSelectionHeader
                     } else {
                         panelHeader(panel)
                     }
@@ -188,6 +232,7 @@ struct BrowsePanelView: View {
             }
             // 离开文档面板即退出多选（选择工具条只在文档列表前台时有效）
             documentVM.exitDocumentSelection()
+            imageVM.exitSelection()
         }
         .onChange(of: documentVM.mode) { old, new in
             // 切模式即收起文档搜索框；离开词云顺手清掉本地高亮词与多选，避免切回来还留着
@@ -456,6 +501,19 @@ struct BrowsePanelView: View {
                 .help("多选下载")
             }
 
+            if panel == .images {
+                Button {
+                    imageVM.enterSelection()
+                } label: {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("多选管理")
+                .disabled(imageVM.items.isEmpty)
+            }
+
             if panel == .documents && documentVM.openDocument == nil && documentVM.mode == .trash {
                 Button {
                     trashBulkAction = .restoreAll
@@ -544,41 +602,80 @@ struct BrowsePanelView: View {
         #endif
     }
 
+    /// 图片批量删除确认文案：选中含「使用中」或非聊天来源时额外提示会裂图。
+    /// 放在 `#if os(macOS)` 之外：确认框挂在 panelContent 的 images 分支（跨平台），iOS 编译也需要它。
+    private var imageBatchDeleteMessage: String {
+        let n = imageVM.selectedIDs.count
+        let risky = imageVM.items.contains {
+            imageVM.selectedIDs.contains($0.id) && ($0.referenced || $0.source != "chat")
+        }
+        if risky {
+            return "确定删除所选 \(n) 张？其中含已被消息引用、或来自文档/网页/本地等非聊天来源的图，删除后对应位置会显示占位或裂图。"
+        }
+        return "确定删除所选 \(n) 张？"
+    }
+
     #if os(macOS)
     /// 文档列表多选态是否生效（选择工具条取代常规页头）。
     private var isDocSelectionActive: Bool {
         documentVM.isSelectingDocuments && documentVM.mode == .list && documentVM.openDocument == nil
     }
 
-    /// 多选工具条：取消（左）/ 已选篇数 / 删除 + 下载（右）。
-    private var docSelectionHeader: some View {
-        HStack(spacing: 8) {
+    /// 图片多选态是否生效（选择工具条取代常规页头）。
+    private var isImageSelectionActive: Bool {
+        imageVM.isSelecting && manager.browsePanelSelection == .images
+    }
+
+    /// 图片多选工具条：取消（左）/ 已选张数 / 全选 + 删除（右）。
+    private var imageSelectionHeader: some View {
+        SelectionToolbar(
+            count: imageVM.selectedIDs.count,
+            unit: "张",
+            emptyText: "选择图片",
+            cancelHelp: "退出多选（Esc）",
+            onCancel: { imageVM.exitSelection() }
+        ) {
             Button {
-                documentVM.exitDocumentSelection()
+                imageVM.selectAll()
             } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("取消")
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 12))
+                    Text("全选")
                         .font(.system(size: 12))
                 }
                 .foregroundColor(.secondary)
-                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .keyboardShortcut(.escape, modifiers: [])
-            .help("退出多选（Esc）")
+            .disabled(imageVM.items.isEmpty)
+            .help("全选已加载的图片")
 
-            Divider()
-                .frame(height: 14)
+            Button {
+                isConfirmingImageBatchDelete = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12))
+                    Text("删除")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundColor(.red)
+            }
+            .buttonStyle(.plain)
+            .disabled(imageVM.selectedIDs.isEmpty || imageVM.isDeleting)
+            .help("删除所选图片")
+        }
+    }
 
-            Text(documentVM.selectedDocumentIDs.isEmpty
-                 ? "选择文档"
-                 : "已选 \(documentVM.selectedDocumentIDs.count) 篇")
-                .font(.system(size: 13, weight: .semibold))
-
-            Spacer()
-
+    /// 多选工具条：取消（左）/ 已选篇数 / 删除 + 下载（右）。
+    private var docSelectionHeader: some View {
+        SelectionToolbar(
+            count: documentVM.selectedDocumentIDs.count,
+            unit: "篇",
+            emptyText: "选择文档",
+            cancelHelp: "退出多选（Esc）",
+            onCancel: { documentVM.exitDocumentSelection() }
+        ) {
             Button {
                 isConfirmingBatchDelete = true
             } label: {
@@ -610,8 +707,6 @@ struct BrowsePanelView: View {
             .disabled(documentVM.selectedDocumentIDs.isEmpty)
             .help("下载所选文档为 .md")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     /// 批量下载所选文档为 .md 到用户选择的文件夹。
@@ -733,6 +828,19 @@ struct BrowsePanelView: View {
             DocumentPage(viewModel: documentVM)
         case .images:
             ImagePage(viewModel: imageVM, baseURL: baseURL, token: token)
+                // 挂图片面板子树，别和 body 上的文档删除对话框叠在同一节点
+                .confirmationDialog(
+                    "删除图片",
+                    isPresented: $isConfirmingImageBatchDelete,
+                    titleVisibility: .visible
+                ) {
+                    Button("删除", role: .destructive) {
+                        Task { await imageVM.deleteSelected() }
+                    }
+                    Button("取消", role: .cancel) { }
+                } message: {
+                    Text(imageBatchDeleteMessage)
+                }
         case .themes:
             ThemePage(viewModel: themeVM)
         case .agents:

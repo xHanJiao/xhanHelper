@@ -336,30 +336,31 @@ class DocumentViewModel: ObservableObject {
     }
 
     /// 批量删除所选文档：循环单篇接口（个人规模够用，量大再上批量端点）。
+    /// 404 视为已删；非 404 失败的服务端没删掉，留在列表里（别假装成功）。
     /// 全成功弹一次「已移入回收站 N 篇」，否则「已移入回收站 x/N 篇，其余失败」。
     func deleteSelected() async {
         let ids = selectedDocumentIDs
         guard !ids.isEmpty else { return }
-        var deleted = 0
+        var deleted = Set<String>()
         for id in ids {
             do {
                 try await apiClient.deleteDocument(id: id)
-                deleted += 1
+                deleted.insert(id)
             } catch {
-                guard (error as NSError).code == 404 else {
+                if (error as NSError).code == 404 {
+                    deleted.insert(id) // 已不存在 = 删成功
+                } else {
                     LogBuffer.shared.error("DocumentViewModel.deleteSelected(\(id)): \(error)")
-                    continue
                 }
-                deleted += 1
             }
         }
-        documents.removeAll { ids.contains($0.id) }
-        if let openID = openDocument?.id, ids.contains(openID) { openDocument = nil }
+        documents.removeAll { deleted.contains($0.id) }
+        if let openID = openDocument?.id, deleted.contains(openID) { openDocument = nil }
         selectedDocumentIDs.removeAll()
         isSelectingDocuments = false
-        ToastCenter.shared.show(deleted == ids.count
-            ? "已移入回收站 \(deleted) 篇"
-            : "已移入回收站 \(deleted)/\(ids.count) 篇，其余失败")
+        ToastCenter.shared.show(deleted.count == ids.count
+            ? "已移入回收站 \(deleted.count) 篇"
+            : "已移入回收站 \(deleted.count)/\(ids.count) 篇，其余失败")
     }
 
     func loadMore() async {

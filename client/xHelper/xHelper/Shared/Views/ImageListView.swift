@@ -56,7 +56,9 @@ struct ImageListView: View {
     }
 
     private func tile(_ item: ImageAssetSummary) -> some View {
-        VStack(spacing: 0) {
+        let selecting = viewModel.isSelecting
+        let selected = viewModel.selectedIDs.contains(item.id)
+        return VStack(spacing: 0) {
             ZStack {
                 if let thumb = viewModel.thumbs[item.id] {
                     Image(platformImage: thumb)
@@ -77,7 +79,18 @@ struct ImageListView: View {
             .frame(maxWidth: .infinity)
             .background(.quaternary.opacity(0.3))
             .clipped()
-            .overlay(alignment: .topTrailing) { deleteButton(item) }
+            .overlay(alignment: .topTrailing) {
+                if selecting {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 18))
+                        .foregroundStyle(selected ? Color("appAccent") : .secondary.opacity(0.5))
+                        .background(Circle().fill(.white).padding(1))
+                        .padding(5)
+                        .allowsHitTesting(false)
+                } else {
+                    deleteButton(item)
+                }
+            }
 
             HStack(spacing: 4) {
                 Text(sourceLabel(item.source))
@@ -98,8 +111,21 @@ struct ImageListView: View {
             .padding(.vertical, 4)
         }
         .background(.quaternary.opacity(0.18), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            if selecting && selected {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color("appAccent"), lineWidth: 2)
+                    .allowsHitTesting(false)
+            }
+        }
         .contentShape(Rectangle())
-        .onTapGesture { presentPreview(item) }
+        .onTapGesture {
+            if selecting {
+                viewModel.toggleSelection(item.id)
+            } else {
+                presentPreview(item)
+            }
+        }
         .help(helpText(item))
     }
 

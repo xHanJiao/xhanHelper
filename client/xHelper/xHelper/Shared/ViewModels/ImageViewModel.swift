@@ -24,6 +24,12 @@ final class ImageViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
 
+    /// 多选管理态（对齐文档列表：页头换成选择工具条）
+    @Published var isSelecting = false
+    @Published var selectedIDs: Set<String> = []
+    /// 批量删除进行中（防重入 + 禁用工具条按钮）
+    @Published private(set) var isDeleting = false
+
     private static let pageSize = 50
     private static let thumbMaxPixel = 256
     /// ponytail: 超上限按插入序丢最旧的。真要精细内存回收再上 NSCache/LRU
@@ -107,9 +113,7 @@ final class ImageViewModel: ObservableObject {
     func delete(id: String) async {
         guard let removed = items.first(where: { $0.id == id }) else { return }
         withAnimation { items.removeAll { $0.id == id } }
-        // 已删的图不能再从缓存里显示在消息中
-        AttachmentImageLoader.shared.forget(id: id)
-        thumbs.removeValue(forKey: id)
+        forgetCaches([id])
         do {
             try await apiClient.deleteImage(id: id)
         } catch {
@@ -117,5 +121,70 @@ final class ImageViewModel: ObservableObject {
             withAnimation { items.append(removed) }
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// 已删的图不能再从缓存里显示在消息中（大图缓存 + 缩略图）。
+    private func forgetCaches(_ ids: some Sequence<String>) {
+        for id in ids {
+            AttachmentImageLoader.shared.forget(id: id)
+            thumbs.removeValue(forKey: id)
+        }
+    }
+
+    // MARK: - 多选
+
+    func enterSelection() {
+        selectedIDs.removeAll()
+        isSelecting = true
+    }
+
+    func exitSelection() {
+        isSelecting = false
+        selectedIDs.removeAll()
+    }
+
+    func toggleSelection(_ id: String) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
+
+    /// 全选当前已加载的图（不额外拉全库）。
+    func selectAll() {
+        selectedIDs = Set(items.map(\.id))
+    }
+
+    /// 批量删除所选：循环单张接口（个人规模够用，量大再上批量端点）。
+    /// 404 视为已删；非 404 失败的服务端没删掉，留在列表里（别假装成功）。
+    /// 全成功弹一次「已删除 N 张」，否则「已删除 x/N 张，其余失败」。
+    func deleteSelected() async {
+        guard !isDeleting else { return }
+        let ids = selectedIDs
+        guard !ids.isEmpty else { return }
+        isDeleting = true
+        defer { isDeleting = false }
+
+        var deleted = Set<String>()
+        for id in ids {
+            do {
+                try await apiClient.deleteImage(id: id)
+                deleted.insert(id)
+            } catch {
+                if (error as NSError).code == 404 {
+                    deleted.insert(id) // 已不存在 = 删成功
+                } else {
+                    LogBuffer.shared.error("ImageViewModel.deleteSelected(\(id)): \(error)")
+                }
+            }
+        }
+        withAnimation { items.removeAll { deleted.contains($0.id) } }
+        forgetCaches(deleted)
+        selectedIDs.removeAll()
+        isSelecting = false
+        ToastCenter.shared.show(deleted.count == ids.count
+            ? "已删除 \(deleted.count) 张"
+            : "已删除 \(deleted.count)/\(ids.count) 张，其余失败")
     }
 }

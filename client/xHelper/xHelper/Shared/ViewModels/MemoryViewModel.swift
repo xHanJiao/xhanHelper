@@ -6,6 +6,8 @@ import SwiftUI
 class MemoryViewModel: ObservableObject {
     @Published var memories: [UserMemory] = []
     @Published var isLoading = false
+    /// 翻页加载态：与 isLoading 分开，避免 PageContainer 把整个列表拆成 ProgressView 导致滚动位置归零。
+    @Published var isLoadingMore = false
     @Published var errorMessage: String?
     @Published var isEditMode = false
     @Published var selectedIDs: Set<String> = []
@@ -37,7 +39,7 @@ class MemoryViewModel: ObservableObject {
         do {
             let resp = try await apiClient.listMemories(topic: activeTopic ?? "")
             memories = resp.memories
-            hasMore = resp.total >= 50
+            hasMore = resp.memories.count >= 50
         } catch {
             LogBuffer.shared.error("MemoryViewModel.load: \(error)")
             errorMessage = error.localizedDescription
@@ -46,18 +48,18 @@ class MemoryViewModel: ObservableObject {
     }
 
     func loadMore() async {
-        guard hasMore, !isLoading else { return }
-        isLoading = true
+        guard hasMore, !isLoadingMore else { return }
+        isLoadingMore = true
         currentOffset += 50
         do {
             let resp = try await apiClient.listMemories(offset: currentOffset, topic: activeTopic ?? "")
             memories.append(contentsOf: resp.memories)
-            hasMore = resp.total >= 50
+            hasMore = resp.memories.count >= 50
         } catch {
             LogBuffer.shared.error("MemoryViewModel.loadMore: \(error)")
             errorMessage = error.localizedDescription
         }
-        isLoading = false
+        isLoadingMore = false
     }
 
     /// 拉词云 topic 列表（进入词云模式时调用）。

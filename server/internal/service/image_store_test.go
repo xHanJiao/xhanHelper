@@ -205,6 +205,42 @@ func TestImageStoreCleanupTwoTier(t *testing.T) {
 	}
 }
 
+// source=doc 的文档配图即使过期也不能被 TTL 清理（文档是"作品"，配图不能被删）。
+func TestImageStoreCleanupExemptsDocImages(t *testing.T) {
+	store, db, cleanup := setupImageStore(t, 1<<20)
+	defer cleanup()
+	ctx := context.Background()
+
+	docImg, err := store.Upload(ctx, "u1", model.ImageSourceDoc, model.ImageVisibilityPublic, fakePNG)
+	if err != nil {
+		t.Fatalf("upload doc image: %v", err)
+	}
+	// 同时制造一个同样过期的聊天图作对照，确认清理确实在跑
+	chatImg, err := store.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, append(fakePNG, "chat"...))
+	if err != nil {
+		t.Fatalf("upload chat image: %v", err)
+	}
+	old := time.Now().AddDate(0, 0, -30)
+	db.Model(&model.ImageAsset{}).Where("id = ?", docImg.ID).
+		Updates(map[string]interface{}{"referenced": true, "last_used_at": old})
+	db.Model(&model.ImageAsset{}).Where("id = ?", chatImg.ID).
+		Updates(map[string]interface{}{"referenced": true, "last_used_at": old})
+
+	stats, err := store.Cleanup(ctx, 15, 3)
+	if err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if stats.Referenced != 1 {
+		t.Errorf("expected only the chat image cleaned, stats=%+v", stats)
+	}
+	if _, err := os.Stat(store.FilePath(docImg)); err != nil {
+		t.Errorf("doc image should survive cleanup: %v", err)
+	}
+	if _, err := os.Stat(store.FilePath(chatImg)); !os.IsNotExist(err) {
+		t.Error("stale chat image should be deleted")
+	}
+}
+
 // 记录在、磁盘文件没了（迁移/外部删除遗留）→ Cleanup 应删掉记录，且不误伤文件还在的。
 func TestImageStoreCleanupPurgesMissingFile(t *testing.T) {
 	store, _, cleanup := setupImageStore(t, 1<<20)

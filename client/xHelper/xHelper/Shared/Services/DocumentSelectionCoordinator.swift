@@ -158,7 +158,7 @@ final class DocumentSelectionCoordinator: ObservableObject {
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in
                 do {
-                    try await DocumentPDFExporter.export(doc, to: url)
+                    try await DocumentPDFExporter.export(doc, to: url, baseURL: URL(string: self.baseURL))
                     ToastCenter.shared.show("已导出 \(url.lastPathComponent)")
                 } catch {
                     print("[PDFExport] coordinator catch: \(error)")

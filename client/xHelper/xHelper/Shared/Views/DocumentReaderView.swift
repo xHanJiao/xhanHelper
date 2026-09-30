@@ -54,6 +54,10 @@ final class DocumentReaderController: ObservableObject {
         self.api = api
     }
 
+    /// 文档配图的基准地址：正文里 `![](/images/xxx.png)` 是相对路径，交给 WKWebView 的
+    /// baseURL 解析成绝对地址（文档图已是 public，无需鉴权头）。
+    var imageBaseURL: URL? { URL(string: api.baseURL) }
+
     // MARK: - Swift → JS
 
     /// 目录点击 → 滚到第 `occurrence` 个「级别 + 文字」都相同的标题。
@@ -434,7 +438,7 @@ private struct ReaderWebView: NSViewRepresentable {
         controller.webView = webView
         context.coordinator.lastFontSize = fontSize
         context.coordinator.loadedSignature = signature
-        webView.loadHTMLString(buildHTML(), baseURL: nil)
+        webView.loadHTMLString(buildHTML(), baseURL: controller.imageBaseURL)
         return webView
     }
 
@@ -445,7 +449,7 @@ private struct ReaderWebView: NSViewRepresentable {
             // 先问出滚动位置再换 HTML，ready 回话时补回去
             webView.evaluateJavaScript("window.scrollY") { value, _ in
                 context.coordinator.controller.pendingScrollY = (value as? NSNumber)?.doubleValue
-                webView.loadHTMLString(html, baseURL: nil)
+                webView.loadHTMLString(html, baseURL: controller.imageBaseURL)
             }
         }
         if fontSize != context.coordinator.lastFontSize {

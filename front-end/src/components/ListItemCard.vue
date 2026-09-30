@@ -400,4 +400,10 @@ function handleDropdownSelect(key) {
   background: var(--color-bg);
   font-weight: 600;
 }
+
+.markdown-body :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
 </style>

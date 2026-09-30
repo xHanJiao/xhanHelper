@@ -70,6 +70,37 @@ func (r *ImageAssetRepo) SetDeepSeekFileID(ctx context.Context, id, fileID strin
 		Where("id = ?", id).Update("DeepSeekFileID", fileID).Error
 }
 
+// SetDescription 回写图片描述 + 尝试时间。
+func (r *ImageAssetRepo) SetDescription(ctx context.Context, id, desc string) error {
+	return r.db.WithContext(ctx).Model(&model.ImageAsset{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{"description": desc, "description_at": time.Now()}).Error
+}
+
+// MarkDescriptionAttempted 只记录一次描述生成尝试（失败时用），避免失败图被反复重试。
+func (r *ImageAssetRepo) MarkDescriptionAttempted(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Model(&model.ImageAsset{}).
+		Where("id = ? AND description_at IS NULL", id).
+		Update("description_at", time.Now()).Error
+}
+
+// PromoteToDoc 把被文档引用的图片升级为可公开分享的文档配图：
+// visibility=public + source=doc + referenced=true + 刷新 last_used_at。
+// 只影响属于该用户的记录（不存在的 id 静默忽略，由调用方决定是否提示）。
+func (r *ImageAssetRepo) PromoteToDoc(ctx context.Context, ids []string, userID string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&model.ImageAsset{}).
+		Where("id IN ? AND user_id = ?", ids, userID).
+		Updates(map[string]interface{}{
+			"visibility":   model.ImageVisibilityPublic,
+			"source":       model.ImageSourceDoc,
+			"referenced":   true,
+			"last_used_at": time.Now(),
+		}).Error
+}
+
 // MarkReferenced 批量标记为"已被消息引用"，刷新 last_used_at（清理任务的保留期基准）
 func (r *ImageAssetRepo) MarkReferenced(ctx context.Context, ids []string, userID string) error {
 	if len(ids) == 0 {
@@ -117,20 +148,22 @@ func (r *ImageAssetRepo) ListBatchAfter(ctx context.Context, afterID string, lim
 	return list, err
 }
 
-// ListStaleReferenced 列出被引用过、且最后使用时间早于 cutoff 的图（分批）
+// ListStaleReferenced 列出被引用过、且最后使用时间早于 cutoff 的图（分批）。
+// source=doc 的文档配图豁免（见 Cleanup 注释）。
 func (r *ImageAssetRepo) ListStaleReferenced(ctx context.Context, cutoff time.Time, limit int) ([]model.ImageAsset, error) {
 	var list []model.ImageAsset
 	err := r.db.WithContext(ctx).
-		Where("referenced = ? AND last_used_at < ?", true, cutoff).
+		Where("referenced = ? AND last_used_at < ? AND source <> ?", true, cutoff, model.ImageSourceDoc).
 		Limit(limit).Find(&list).Error
 	return list, err
 }
 
-// ListStaleOrphans 列出从未被引用、且上传时间早于 cutoff 的图（分批）
+// ListStaleOrphans 列出从未被引用、且上传时间早于 cutoff 的图（分批）。
+// source=doc 的文档配图豁免。
 func (r *ImageAssetRepo) ListStaleOrphans(ctx context.Context, cutoff time.Time, limit int) ([]model.ImageAsset, error) {
 	var list []model.ImageAsset
 	err := r.db.WithContext(ctx).
-		Where("referenced = ? AND created_at < ?", false, cutoff).
+		Where("referenced = ? AND created_at < ? AND source <> ?", false, cutoff, model.ImageSourceDoc).
 		Limit(limit).Find(&list).Error
 	return list, err
 }

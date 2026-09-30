@@ -972,7 +972,7 @@ private struct DocumentFullView: View {
     }
 
     private func markdownView(_ text: String) -> some View {
-        Markdown(text)
+        Markdown(text, imageBaseURL: URL(string: apiClient.baseURL))
             .markdownTheme(.chatBubble(fontSize: FontSizeManager.shared.scaledSize * 1.18))
             .markdownCodeSyntaxHighlighter(.plainText)
             .macosTextSelection()

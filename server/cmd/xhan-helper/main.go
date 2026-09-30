@@ -85,6 +85,11 @@ func main() {
 	// BatchDelete 走显式 emit（批量删除拿不到逐行 PK，是变更回调的唯一例外）。
 	repos.Mem.SetActivity(activityStore)
 
+	// 图片描述后处理：上传后异步用多模态模型生成一句描述（后台任务关闭时不接，避免隐藏的外呼）。
+	if !cfg.Server.BackgroundTasksDisabled() {
+		infra.ImageStore.SetDescriber(agent.NewImageDescriber(llmClients.BgFlash))
+	}
+
 	// --- 工具 & Agent 系统 ---
 	tools := appinit.InitTools(cfg, repos, infra, llmClients, activityStore)
 	agents := appinit.InitAgents(cfg, repos, infra, llmClients, tools, vs, activityStore)

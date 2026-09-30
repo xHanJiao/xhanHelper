@@ -22,7 +22,7 @@ func setupDocumentTool(t *testing.T) (*DocumentTool, func()) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Document{}, &model.ContentVersion{}, &model.DocumentAnnotation{}, &model.DocumentAnnotationReply{}); err != nil {
+	if err := db.AutoMigrate(&model.Document{}, &model.ContentVersion{}, &model.DocumentAnnotation{}, &model.DocumentAnnotationReply{}, &model.ImageAsset{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	// :memory: 每个连接一个独立库，限制单连接让并发测试共用同一内存库
@@ -32,7 +32,7 @@ func setupDocumentTool(t *testing.T) (*DocumentTool, func()) {
 	docRepo := service.NewDocumentRepo(db)
 	annoRepo := service.NewDocumentAnnotationRepo(db)
 	replyRepo := service.NewDocumentAnnotationReplyRepo(db)
-	return NewDocumentTool(docRepo, annoRepo, replyRepo), func() {}
+	return NewDocumentTool(docRepo, annoRepo, replyRepo, service.NewImageAssetRepo(db)), func() {}
 }
 
 func TestDocumentGetAndUpdate(t *testing.T) {
@@ -1364,7 +1364,7 @@ func setupDocumentToolWithRepos(t *testing.T) (*DocumentTool, *service.DocumentA
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Document{}, &model.DocumentAnnotation{}, &model.DocumentAnnotationReply{}); err != nil {
+	if err := db.AutoMigrate(&model.Document{}, &model.DocumentAnnotation{}, &model.DocumentAnnotationReply{}, &model.ImageAsset{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	if sqlDB, err := db.DB(); err == nil {
@@ -1373,7 +1373,7 @@ func setupDocumentToolWithRepos(t *testing.T) (*DocumentTool, *service.DocumentA
 	docRepo := service.NewDocumentRepo(db)
 	annoRepo := service.NewDocumentAnnotationRepo(db)
 	replyRepo := service.NewDocumentAnnotationReplyRepo(db)
-	return NewDocumentTool(docRepo, annoRepo, replyRepo), annoRepo, func() {}
+	return NewDocumentTool(docRepo, annoRepo, replyRepo, service.NewImageAssetRepo(db)), annoRepo, func() {}
 }
 
 func TestDocumentAnnotationReplyAndList(t *testing.T) {
@@ -1429,5 +1429,49 @@ func TestDocumentAnnotationReplyAndList(t *testing.T) {
 	r := out.Annotations[0].Replies
 	if len(r) != 1 || r[0].Role != "assistant" || r[0].Content != "because" {
 		t.Fatalf("replies=%+v", r)
+	}
+}
+
+func TestDocumentPromotesReferencedImages(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.Document{}, &model.ImageAsset{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	imageRepo := service.NewImageAssetRepo(db)
+	tool := NewDocumentTool(service.NewDocumentRepo(db), nil, nil, imageRepo)
+	ctx := context.Background()
+	ec := &ExecuteContext{Ctx: ctx, UserID: "u1"}
+
+	own := &model.ImageAsset{ID: "11111111-1111-1111-1111-111111111111", UserID: "u1", Ext: "png", Mime: "image/png", Visibility: model.ImageVisibilityPrivate, Source: model.ImageSourceChat}
+	foreign := &model.ImageAsset{ID: "22222222-2222-2222-2222-222222222222", UserID: "u2", Ext: "png", Mime: "image/png", Visibility: model.ImageVisibilityPrivate, Source: model.ImageSourceChat}
+	for _, a := range []*model.ImageAsset{own, foreign} {
+		if err := imageRepo.Create(ctx, a); err != nil {
+			t.Fatalf("seed image: %v", err)
+		}
+	}
+
+	content := "看图 ![图](/images/11111111-1111-1111-1111-111111111111.png) 和 ![外](/images/22222222-2222-2222-2222-222222222222.png)"
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "t", "content": content}))
+	if !res.Success {
+		t.Fatalf("create: %s", res.Error)
+	}
+
+	got, err := imageRepo.GetByID(ctx, own.ID)
+	if err != nil {
+		t.Fatalf("get own image: %v", err)
+	}
+	if got.Visibility != model.ImageVisibilityPublic || got.Source != model.ImageSourceDoc || !got.Referenced {
+		t.Fatalf("own image not promoted: %+v", got)
+	}
+
+	gotForeign, err := imageRepo.GetByID(ctx, foreign.ID)
+	if err != nil {
+		t.Fatalf("get foreign image: %v", err)
+	}
+	if gotForeign.Visibility != model.ImageVisibilityPrivate || gotForeign.Source != model.ImageSourceChat {
+		t.Fatalf("foreign image should be untouched: %+v", gotForeign)
 	}
 }

@@ -147,6 +147,7 @@ func (h *ImageHandler) List(c *gin.Context) {
 			"mime":         a.Mime,
 			"bytes":        a.Bytes,
 			"source":       a.Source,
+			"description":  a.Description,
 			"referenced":   a.Referenced,
 			"has_file_id":  a.DeepSeekFileID != "",
 			"last_used_at": a.LastUsedAt,

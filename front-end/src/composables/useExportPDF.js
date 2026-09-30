@@ -242,7 +242,7 @@ function openAndPrint(html) {
 export function useExportPDF() {
   function exportPDF(content, title = '', contentType = 'markdown') {
     const bodyHTML = contentType === 'markdown'
-      ? md.render(content || '')
+      ? md.render(rewriteImageURLs(content || ''))
       : plainTextToHTML(content || '')
     const titleStr = title || '未命名文档'
     const html = buildPrintHTML(titleStr, bodyHTML)
@@ -250,4 +250,10 @@ export function useExportPDF() {
   }
 
   return { exportPDF }
+}
+
+// 打印窗口是新文档，相对路径 /images/... 解析不到后端；导出前重写为绝对 URL。
+function rewriteImageURLs(mdText) {
+  if (typeof window === 'undefined') return mdText
+  return mdText.replace(/\]\(\/images\//g, `](${window.location.origin}/images/`)
 }

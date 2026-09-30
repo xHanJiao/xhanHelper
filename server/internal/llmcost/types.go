@@ -30,6 +30,7 @@ const (
 	SubProfileExtract   = "profile_extract"
 	SubProfileColdStart = "profile_cold_start"
 	SubSummary          = "summary"
+	SubImageDescribe    = "image_describe" // 上传后异步生成图片描述
 
 	// reflection
 	SubThemeDiscoverConv  = "theme_discover_conv"

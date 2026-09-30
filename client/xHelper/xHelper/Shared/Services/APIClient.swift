@@ -987,6 +987,8 @@ struct ImageAssetSummary: Identifiable, Codable {
     let bytes: Int64
     /// chat | doc | local | web（聊天选图 / 文档配图 / agent 本地发现 / agent 网页发现）
     let source: String
+    /// 后处理异步生成的简短描述（空 = 尚未生成或生成失败）
+    let description: String?
     /// 是否曾被消息引用过：决定保留期（15 天 / 3 天），也决定删除会不会让对话裂图
     let referenced: Bool
     /// 是否已上传 DeepSeek Files（多模态输入用；本地副本始终保留）
@@ -995,7 +997,7 @@ struct ImageAssetSummary: Identifiable, Codable {
     let createdAt: String
 
     enum CodingKeys: String, CodingKey {
-        case id, url, mime, bytes, source, referenced
+        case id, url, mime, bytes, source, description, referenced
         case hasFileId = "has_file_id"
         case lastUsedAt = "last_used_at"
         case createdAt = "created_at"

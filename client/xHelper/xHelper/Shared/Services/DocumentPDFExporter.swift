@@ -17,12 +17,13 @@ enum DocumentPDFExporter {
     static let pageSize = CGSize(width: 595, height: 842)
 
     /// 导出 document 到目标 URL（由调用方 NSSavePanel 指定）。抛错由调用方记录。
-    static func export(_ document: Document, to url: URL) async throws {
+    /// baseURL：文档配图相对路径 `/images/...` 的解析根（服务端地址）。
+    static func export(_ document: Document, to url: URL, baseURL: URL? = nil) async throws {
         print("[PDFExport] export start: \(document.title)")
         do {
             let html = try Self.buildHTML(title: document.title, tags: document.tags ?? "", markdown: document.content)
             print("[PDFExport] html built, \(html.count) chars")
-            let data = try await Self.renderPDF(html: html)
+            let data = try await Self.renderPDF(html: html, baseURL: baseURL)
             print("[PDFExport] pdf generated, \(data.count) bytes")
             try data.write(to: url, options: .atomic)
             print("[PDFExport] written to \(url.path)")
@@ -98,7 +99,7 @@ enum DocumentPDFExporter {
 
     /// 离屏 WKWebView 渲染 + createPDF 整长页 + CoreGraphics 按 A4 切片。
     /// 注意：macOS 上 createPDF 要求 webView 在视图层级中（挂到隐藏 window）。
-    private static func renderPDF(html: String) async throws -> Data {
+    private static func renderPDF(html: String, baseURL: URL?) async throws -> Data {
         let loadWaiter = PDFLoadWaiter()
 
         let window = NSWindow(
@@ -117,7 +118,7 @@ enum DocumentPDFExporter {
         let webView = WKWebView(frame: CGRect(origin: .zero, size: pageSize))
         window.contentView = webView
         webView.navigationDelegate = loadWaiter
-        webView.loadHTMLString(html, baseURL: nil)
+        webView.loadHTMLString(html, baseURL: baseURL)
         print("[PDFExport] webview attached to hidden window, waiting for didFinish")
         await loadWaiter.waitForLoad()
         // 留给 marked 注入 innerHTML 后的排版/图片解码时间

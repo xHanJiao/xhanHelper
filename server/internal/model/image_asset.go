@@ -33,6 +33,11 @@ type ImageAsset struct {
 	// DeepSeek Files API 的 file_id（多模态输入用）。空 = 尚未上传，用时懒补。
 	// 官方无下载/删除接口，因此本地副本必须保留。
 	DeepSeekFileID string `gorm:"size:100" json:"deepseek_file_id,omitempty"`
+	// Description — 图片的简短文字描述（上传后异步生成）。空 = 尚未生成或生成失败。
+	// 供 LLM 在图片列表里按描述选图，避免逐张识图烧 token。
+	Description string `gorm:"size:500" json:"description,omitempty"`
+	// DescriptionAt — 描述生成尝试时间。非空即视为"已尝试过"，避免失败图被无限重试。
+	DescriptionAt *time.Time `json:"description_at,omitempty"`
 	// Referenced — 是否曾被任何消息引用过，决定走哪条保留期（见 StorageConfig）
 	Referenced bool `gorm:"not null;default:false;index:idx_image_cleanup,priority:1;index:idx_image_orphan,priority:1" json:"referenced"`
 	// LastUsedAt 被挂到消息时刷新。必须是指针：零值会被序列化成 '0000-00-00'，

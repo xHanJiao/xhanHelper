@@ -38,13 +38,20 @@ type FileUploader interface {
 	Upload(ctx context.Context, filename string, data []byte) (string, error)
 }
 
+// ImageDescriber — 把 LLM 侧的 file_id 转成一句简短文字描述。
+// 可选依赖（nil 时跳过描述生成）；由 agent 层实现，避免 service 依赖具体 LLM 厂商。
+type ImageDescriber interface {
+	Describe(ctx context.Context, fileID string) (string, error)
+}
+
 // ImageStore — 图床：磁盘文件 + ImageAsset 记录的唯一入口。
 // 文档配图与聊天图片输入共用；读取策略由 ImageAsset.Visibility 决定。
 type ImageStore struct {
-	dir      string
-	maxBytes int64
-	repo     *ImageAssetRepo
-	uploader FileUploader // 可为 nil：未配置时图片无法送模型，但不影响存取
+	dir       string
+	maxBytes  int64
+	repo      *ImageAssetRepo
+	uploader  FileUploader   // 可为 nil：未配置时图片无法送模型，但不影响存取
+	describer ImageDescriber // 可为 nil：未接线时不生成描述
 }
 
 // NewImageStore 创建图床。repo 为 nil 时 panic（接线 bug 炸在明处）。
@@ -63,6 +70,9 @@ func (s *ImageStore) Dir() string { return s.dir }
 
 // Repo 暴露底层 repo，供控制器做查询/鉴权校验
 func (s *ImageStore) Repo() *ImageAssetRepo { return s.repo }
+
+// SetDescriber 注入描述生成器（启动装配调用一次）。d 为 nil 时表示不生成描述。
+func (s *ImageStore) SetDescriber(d ImageDescriber) { s.describer = d }
 
 // FilePath 返回记录的磁盘绝对/相对路径。id 来自 DB，不含用户输入，天然免疫目录穿越。
 func (s *ImageStore) FilePath(a *model.ImageAsset) string {
@@ -83,6 +93,10 @@ func (s *ImageStore) Upload(ctx context.Context, userID, source, visibility stri
 	sum := sha256.Sum256(data)
 	digest := hex.EncodeToString(sum[:])
 	if existing, err := s.repo.FindBySHA(ctx, userID, digest); err == nil && existing != nil {
+		// 老图（本功能上线前入库）没有描述，补齐一次
+		if existing.DescriptionAt == nil {
+			s.describeAsync(*existing)
+		}
 		return existing, nil
 	}
 
@@ -109,7 +123,48 @@ func (s *ImageStore) Upload(ctx context.Context, userID, source, visibility stri
 		_ = os.Remove(filepath.Join(s.dir, id+"."+ext)) // 记录失败则回滚文件，避免孤儿
 		return nil, fmt.Errorf("create image record: %w", err)
 	}
+	s.describeAsync(*asset) // 传值拷贝：后台不要读/写调用方持有的同一指针
 	return asset, nil
+}
+
+// describeAsync 上传后异步生成描述。best-effort：失败只记日志，不阻塞上传。
+func (s *ImageStore) describeAsync(asset model.ImageAsset) {
+	if s.describer == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		if err := s.describe(ctx, &asset); err != nil {
+			log.Printf("[image] describe %s failed: %v", asset.ID[:8], err)
+		}
+	}()
+}
+
+// describe 生成并回写描述；失败时记录一次尝试时间，避免无限重试。
+func (s *ImageStore) describe(ctx context.Context, a *model.ImageAsset) error {
+	fileID, err := s.EnsureFileID(ctx, a)
+	if err != nil {
+		s.noteDescribed(a.ID)
+		return fmt.Errorf("ensure file id: %w", err)
+	}
+	desc, err := s.describer.Describe(ctx, fileID)
+	if err != nil {
+		s.noteDescribed(a.ID)
+		return fmt.Errorf("describe: %w", err)
+	}
+	if err := s.repo.SetDescription(ctx, a.ID, desc); err != nil {
+		return fmt.Errorf("save description: %w", err)
+	}
+	log.Printf("[image] described %s (user=%s)", a.ID[:8], a.UserID)
+	return nil
+}
+
+// noteDescribed 记录一次失败尝试（写入失败不影响已完成的失败判定）。
+func (s *ImageStore) noteDescribed(id string) {
+	if err := s.repo.MarkDescriptionAttempted(context.Background(), id); err != nil {
+		log.Printf("[image] mark description attempted %s failed: %v", id[:8], err)
+	}
 }
 
 // Open 打开图片文件（供私有/公开读取）
@@ -162,6 +217,7 @@ type ImageCleanupStats struct {
 //   - 从未被引用的孤儿：created_at 早于 orphanDays 天
 //   - 记录在、磁盘文件已丢失的：无条件删记录（脏数据自愈）
 //
+// source=doc 的文档配图一律豁免（文档是"作品"，配图不能被 TTL 删；文档删除后也不回收，见设计文档）。
 // ttlDays/orphanDays < 0 表示该类过期清理关闭（自愈恒开）。分批处理，失败只记日志不中断。
 func (s *ImageStore) Cleanup(ctx context.Context, ttlDays, orphanDays int) (ImageCleanupStats, error) {
 	var stats ImageCleanupStats

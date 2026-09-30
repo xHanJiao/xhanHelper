@@ -1,6 +1,7 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
-/// 图片库网格（右侧栏「图片」页）：缩略图 + 来源/体积 + 删除 + 点击预览大图。
+/// 图片库网格（右侧栏「图片」页）：缩略图 + 来源/体积 + 描述 + 上传 + 删除 + 点击预览大图。
 struct ImageListView: View {
     @ObservedObject var viewModel: ImageViewModel
     let baseURL: String
@@ -8,29 +9,68 @@ struct ImageListView: View {
 
     /// 待确认删除的图（只有"删了会裂图"的才走确认）
     @State private var pendingDelete: ImageAssetSummary?
+    /// 文件选择器
+    @State private var isImporting = false
 
     private static let thumbMinWidth: CGFloat = 150
 
     var body: some View {
-        PageContainer(
-            title: "图片",
-            icon: "photo.on.rectangle.angled",
-            // 只有首屏空列表才整页转圈：翻页别把已显示的图换成 spinner
-            isLoading: viewModel.isLoading && viewModel.items.isEmpty,
-            errorMessage: viewModel.errorMessage,
-            isEmpty: viewModel.items.isEmpty && !viewModel.isLoading,
-            emptyMessage: "还没有图片，聊天里发一张试试",
-            onRetry: { Task { await viewModel.load() } }
-        ) {
-            grid
+        VStack(spacing: 0) {
+            uploadBar
+
+            PageContainer(
+                title: "图片",
+                icon: "photo.on.rectangle.angled",
+                // 只有首屏空列表才整页转圈：翻页别把已显示的图换成 spinner
+                isLoading: viewModel.isLoading && viewModel.items.isEmpty,
+                errorMessage: viewModel.errorMessage,
+                isEmpty: viewModel.items.isEmpty && !viewModel.isLoading,
+                emptyMessage: "还没有图片，点右上角上传，或在聊天里发一张",
+                onRetry: { Task { await viewModel.load() } }
+            ) {
+                grid
+            }
         }
         .task { await viewModel.load() }
+        .fileImporter(
+            isPresented: $isImporting,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                Task { await viewModel.upload(urls: urls) }
+            case .failure(let error):
+                LogBuffer.shared.error("ImageListView.fileImporter: \(error)")
+            }
+        }
         .alert("删除这张图片？", isPresented: isConfirming, presenting: pendingDelete) { item in
             Button("删除", role: .destructive) { Task { await viewModel.delete(id: item.id) } }
             Button("取消", role: .cancel) {}
         } message: { item in
             Text(confirmMessage(item))
         }
+    }
+
+    private var uploadBar: some View {
+        HStack {
+            Spacer()
+            Button {
+                isImporting = true
+            } label: {
+                if viewModel.isUploading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("上传", systemImage: "square.and.arrow.down")
+                        .font(.system(size: 12))
+                }
+            }
+            .buttonStyle(.borderless)
+            .disabled(viewModel.isUploading)
+            .help("从本地选择图片上传到图床")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
     }
 
     private var isConfirming: Binding<Bool> {
@@ -109,6 +149,17 @@ struct ImageListView: View {
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
+
+            if let desc = item.description, !desc.isEmpty {
+                Text(desc)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 6)
+            }
         }
         .background(.quaternary.opacity(0.18), in: RoundedRectangle(cornerRadius: 8))
         .overlay {

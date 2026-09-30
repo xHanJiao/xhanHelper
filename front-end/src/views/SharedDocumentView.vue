@@ -217,6 +217,12 @@ onMounted(async () => {
   font-weight: 600;
 }
 
+.doc-content :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
 /* ----- Footer metadata ----- */
 
 .doc-footer {

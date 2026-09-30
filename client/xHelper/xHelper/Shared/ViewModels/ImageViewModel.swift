@@ -23,6 +23,8 @@ final class ImageViewModel: ObservableObject {
     @Published private(set) var failed: Set<String> = []
     @Published var isLoading = false
     @Published var errorMessage: String?
+    /// 从图片库直接上传中（禁用上传按钮 + 显示进度）
+    @Published private(set) var isUploading = false
 
     /// 多选管理态（对齐文档列表：页头换成选择工具条）
     @Published var isSelecting = false
@@ -106,6 +108,33 @@ final class ImageViewModel: ObservableObject {
         #endif
         if thumbs.count > Self.thumbCap, let oldest = thumbs.keys.first(where: { $0 != id }) {
             thumbs.removeValue(forKey: oldest)
+        }
+    }
+
+    /// 从图片库直接上传若干图片（压缩后走现有上传接口），完成后刷新列表。
+    /// 文件选择器给的 URL 需要 security-scoped 访问（沙盒）。
+    func upload(urls: [URL]) async {
+        guard !urls.isEmpty, !isUploading else { return }
+        isUploading = true
+        defer { isUploading = false }
+        var uploaded = 0
+        for url in urls {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let raw = try Data(contentsOf: url)
+                let data = await Task.detached { ImageCompressor.shrink(raw) }.value ?? raw
+                _ = try await apiClient.uploadImage(data, filename: url.lastPathComponent)
+                uploaded += 1
+            } catch {
+                LogBuffer.shared.error("ImageViewModel.upload \(url.lastPathComponent): \(error)")
+            }
+        }
+        if uploaded > 0 {
+            ToastCenter.shared.show("已上传 \(uploaded) 张")
+            await load()
+        } else {
+            ToastCenter.shared.show("图片上传失败")
         }
     }
 

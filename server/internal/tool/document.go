@@ -179,18 +179,19 @@ type DocumentTool struct {
 	docRepo   *service.DocumentRepo
 	annoRepo  *service.DocumentAnnotationRepo
 	replyRepo *service.DocumentAnnotationReplyRepo
+	imageRepo *service.ImageAssetRepo
 	// mu 按文档 ID 串行化「读快照→局部替换→整列写回」，避免并发 update 互相覆盖。
 	mu keyedMutex
 }
 
-func NewDocumentTool(docRepo *service.DocumentRepo, annoRepo *service.DocumentAnnotationRepo, replyRepo *service.DocumentAnnotationReplyRepo) *DocumentTool {
-	return &DocumentTool{docRepo: docRepo, annoRepo: annoRepo, replyRepo: replyRepo}
+func NewDocumentTool(docRepo *service.DocumentRepo, annoRepo *service.DocumentAnnotationRepo, replyRepo *service.DocumentAnnotationReplyRepo, imageRepo *service.ImageAssetRepo) *DocumentTool {
+	return &DocumentTool{docRepo: docRepo, annoRepo: annoRepo, replyRepo: replyRepo, imageRepo: imageRepo}
 }
 
 func (t *DocumentTool) Name() string { return "document" }
 
 func (t *DocumentTool) Description() string {
-	return "管理用户的结构化 Markdown 文档。逐日流水/台账（睡眠、体重、饮酒、运动、时间日志等按天记的读数）归这里：先查有没有对应台账，有就追加、没有就建一篇。用户明确要求生成/保存/修改/查询/删除文章、报告、总结等时也用这里。除流水台账外，不要主动创建或修改文档。" + docLinkHint
+	return "管理用户的结构化 Markdown 文档。逐日流水/台账（睡眠、体重、饮酒、运动、时间日志等按天记的读数）归这里：先查有没有对应台账，有就追加、没有就建一篇。用户明确要求生成/保存/修改/查询/删除文章、报告、总结等时也用这里。除流水台账外，不要主动创建或修改文档。需要配图时用 image.list_images 找用户上传的图，把返回的 markdown 原样嵌入正文（如图片描述为空，说明尚未生成，可稍后重试）。" + docLinkHint
 }
 
 func (t *DocumentTool) Catalog() (CatalogEntry, bool) {
@@ -394,6 +395,7 @@ func (t *DocumentTool) createDocument(ec *ExecuteContext, args json.RawMessage) 
 	if err := t.docRepo.Create(ec.Ctx, doc); err != nil {
 		return &Result{Success: false, Error: "create document: " + err.Error()}
 	}
+	t.promoteDocImages(ec.Ctx, ec.UserID, req.Content)
 
 	data, _ := json.Marshal(map[string]interface{}{
 		"id":      doc.ID,
@@ -599,6 +601,7 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 	}
 	// 正文变了就重算用户划线批注的锚点，把失活情况如实报回去
 	if newContent, ok := updates["content"].(string); ok {
+		t.promoteDocImages(ec.Ctx, ec.UserID, newContent)
 		affected, orphaned, err := t.annoRepo.RelocateAll(ec.Ctx, req.ID, ec.UserID, newContent)
 		if err != nil {
 			// 不影响正文已更新的结果，就地记日志

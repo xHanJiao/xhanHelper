@@ -304,3 +304,82 @@ func TestImageStoreCleanupSkipsWhenDirMissing(t *testing.T) {
 		t.Errorf("record should survive missing dir: %v", err)
 	}
 }
+
+// 描述生成的假实现：file_id 随便给一个，描述由测试指定。
+type fakeUploader struct {
+	fileID string
+	err    error
+}
+
+func (f fakeUploader) Upload(ctx context.Context, filename string, data []byte) (string, error) {
+	return f.fileID, f.err
+}
+
+type fakeDescriber struct {
+	desc string
+	err  error
+}
+
+func (f *fakeDescriber) Describe(ctx context.Context, fileID string) (string, error) {
+	return f.desc, f.err
+}
+
+// 描述链路（EnsureFileID → 视觉模型 → 回写）成功：描述与 description_at 都落库。
+func TestImageStoreDescribeSuccess(t *testing.T) {
+	store, _, cleanup := setupImageStore(t, 1<<20)
+	defer cleanup()
+	ctx := context.Background()
+
+	store.uploader = fakeUploader{fileID: "fid-1"}
+	asset, err := store.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, fakePNG)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	// 上传后再接 describer：避免 Upload 起的异步 goroutine 与本次同步调用竞争
+	store.SetDescriber(&fakeDescriber{desc: "一只坐着的橘猫"})
+
+	if err := store.describe(ctx, asset); err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	got, err := store.Repo().GetByID(ctx, asset.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got.Description != "一只坐着的橘猫" {
+		t.Errorf("description = %q, want 一只坐着的橘猫", got.Description)
+	}
+	if got.DescriptionAt == nil {
+		t.Error("description_at should be set on success")
+	}
+	if got.DeepSeekFileID != "fid-1" {
+		t.Errorf("file_id should be backfilled, got %q", got.DeepSeekFileID)
+	}
+}
+
+// 描述链路失败（上传/识图出错）：只标记 description_at（避免重试），描述留空。
+func TestImageStoreDescribeFailureMarksAttempt(t *testing.T) {
+	store, _, cleanup := setupImageStore(t, 1<<20)
+	defer cleanup()
+	ctx := context.Background()
+
+	store.uploader = fakeUploader{err: errors.New("llm upload boom")}
+	asset, err := store.Upload(ctx, "u1", model.ImageSourceChat, model.ImageVisibilityPrivate, fakePNG)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	store.SetDescriber(&fakeDescriber{desc: "不该被写进去"})
+
+	if err := store.describe(ctx, asset); err == nil {
+		t.Fatal("describe should fail when file_id upload fails")
+	}
+	got, err := store.Repo().GetByID(ctx, asset.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got.Description != "" {
+		t.Errorf("description should stay empty, got %q", got.Description)
+	}
+	if got.DescriptionAt == nil {
+		t.Error("description_at should be marked on failure to stop retries")
+	}
+}

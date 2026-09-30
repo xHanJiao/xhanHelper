@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -49,6 +50,10 @@ const uploadMaxMemory = 8 << 20
 // resolveAttachments / AttachReplayImages 懒补，结果同样回填落库。
 func (h *ImageHandler) Upload(c *gin.Context) {
 	userID := c.GetString("user_id")
+
+	// 请求体上限：单图上限 + 1MB 余量（multipart 边界/表单头开销）。在 ReadAll 之前截断，
+	// 避免超大 body 被整块读进内存。超限时 io.ReadAll 返回 *http.MaxBytesError，翻译成 ErrImageTooLarge。
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.store.MaxBytes()+(1<<20))
 
 	data, err := readUpload(c)
 	if err != nil {
@@ -180,7 +185,7 @@ func readUpload(c *gin.Context) ([]byte, error) {
 	ct := c.ContentType()
 	if strings.HasPrefix(ct, "multipart/form-data") {
 		if err := c.Request.ParseMultipartForm(uploadMaxMemory); err != nil {
-			return nil, errors.New("解析上传内容失败")
+			return nil, translateReadErr(err, "解析上传内容失败")
 		}
 		fh, err := c.FormFile("file")
 		if err != nil {
@@ -191,12 +196,30 @@ func readUpload(c *gin.Context) ([]byte, error) {
 			return nil, errors.New("读取上传文件失败")
 		}
 		defer f.Close()
-		return io.ReadAll(f)
+		return readAllLimited(f)
 	}
 	if ct == "" || ct == "application/octet-stream" || strings.HasPrefix(ct, "image/") {
-		return io.ReadAll(c.Request.Body)
+		return readAllLimited(c.Request.Body)
 	}
 	return nil, errors.New("不支持的提交方式（请用 multipart 的 file 字段）")
+}
+
+// readAllLimited 读取上传字节；请求体超过 MaxBytesReader 上限时统一转成 ErrImageTooLarge（→400）。
+func readAllLimited(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, translateReadErr(err, "读取上传内容失败")
+	}
+	return data, nil
+}
+
+// translateReadErr 把 http.MaxBytesReader 触发的读取错误翻译成 ErrImageTooLarge，其余加语境并保留错误链。
+func translateReadErr(err error, msg string) error {
+	var mbe *http.MaxBytesError
+	if errors.As(err, &mbe) {
+		return service.ErrImageTooLarge
+	}
+	return fmt.Errorf("%s: %w", msg, err)
 }
 
 // clampLimit 解析并夹取分页大小

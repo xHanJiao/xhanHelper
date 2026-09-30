@@ -23,7 +23,7 @@ func (t *ImageTool) Name() string { return "image" }
 func (t *ImageTool) Description() string {
 	return "查看用户上传过的图片列表。需要给文档配图（把用户传的图放进正文）时，先在这里找到合适的图。" +
 		"每条带一句内容描述，按描述挑图，不必让模型逐张识图。选中后把返回的 markdown 字段原样写进文档正文即可；" +
-		"图片一旦被文档引用，会自动变为可公开分享。描述为空表示尚未生成（稍后重试）。"
+		"图片一旦被文档引用，会自动变为可公开分享。描述可能暂时为空（尚未生成）。"
 }
 
 func (t *ImageTool) Catalog() (CatalogEntry, bool) {
@@ -103,7 +103,7 @@ func (t *ImageTool) listImages(ec *ExecuteContext, args json.RawMessage) *Result
 	data, _ := json.Marshal(map[string]interface{}{
 		"images": items,
 		"total":  total,
-		"hint":   "把 markdown 字段原样嵌入文档正文即可配图；描述为空表示尚未生成。",
+		"hint":   "把 markdown 字段原样嵌入文档正文即可配图；描述可能暂时为空（尚未生成）。",
 	})
 	return &Result{Success: true, Data: data}
 }

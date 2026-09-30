@@ -118,12 +118,16 @@ final class ImageViewModel: ObservableObject {
         isUploading = true
         defer { isUploading = false }
         var uploaded = 0
+        let total = urls.count
         for url in urls {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             do {
-                let raw = try Data(contentsOf: url)
-                let data = await Task.detached { ImageCompressor.shrink(raw) }.value ?? raw
+                // 读盘 + 压缩都丢到后台：Data(contentsOf:) 是同步 IO，大图放主线程会卡 UI
+                let data = try await Task.detached {
+                    let raw = try Data(contentsOf: url)
+                    return ImageCompressor.shrink(raw) ?? raw
+                }.value
                 _ = try await apiClient.uploadImage(data, filename: url.lastPathComponent)
                 uploaded += 1
             } catch {
@@ -131,7 +135,9 @@ final class ImageViewModel: ObservableObject {
             }
         }
         if uploaded > 0 {
-            ToastCenter.shared.show("已上传 \(uploaded) 张")
+            ToastCenter.shared.show(uploaded == total
+                ? "已上传 \(uploaded) 张"
+                : "已上传 \(uploaded)/\(total) 张，其余失败")
             await load()
         } else {
             ToastCenter.shared.show("图片上传失败")

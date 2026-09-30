@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,6 +45,9 @@ type ImageDescriber interface {
 	Describe(ctx context.Context, fileID string) (string, error)
 }
 
+// imageDescribeConcurrency 同时进行的识图外呼上限（单次最长 90s，批量上传时避免打爆）。
+const imageDescribeConcurrency = 3
+
 // ImageStore — 图床：磁盘文件 + ImageAsset 记录的唯一入口。
 // 文档配图与聊天图片输入共用；读取策略由 ImageAsset.Visibility 决定。
 type ImageStore struct {
@@ -52,6 +56,10 @@ type ImageStore struct {
 	repo      *ImageAssetRepo
 	uploader  FileUploader   // 可为 nil：未配置时图片无法送模型，但不影响存取
 	describer ImageDescriber // 可为 nil：未接线时不生成描述
+
+	descMu     sync.Mutex
+	describing map[string]bool // 在途去重：同一张图不并发识图
+	descSem    chan struct{}   // 识图并发信号量
 }
 
 // NewImageStore 创建图床。repo 为 nil 时 panic（接线 bug 炸在明处）。
@@ -62,11 +70,21 @@ func NewImageStore(dir string, maxBytes int64, repo *ImageAssetRepo, uploader Fi
 	if dir == "" {
 		panic("image_store: empty image_dir")
 	}
-	return &ImageStore{dir: dir, maxBytes: maxBytes, repo: repo, uploader: uploader}
+	return &ImageStore{
+		dir:        dir,
+		maxBytes:   maxBytes,
+		repo:       repo,
+		uploader:   uploader,
+		describing: make(map[string]bool),
+		descSem:    make(chan struct{}, imageDescribeConcurrency),
+	}
 }
 
 // Dir 返回图片根目录（启动时创建 + 打日志用）
 func (s *ImageStore) Dir() string { return s.dir }
+
+// MaxBytes 返回单图大小上限（上传接口据此限制请求体大小）
+func (s *ImageStore) MaxBytes() int64 { return s.maxBytes }
 
 // Repo 暴露底层 repo，供控制器做查询/鉴权校验
 func (s *ImageStore) Repo() *ImageAssetRepo { return s.repo }
@@ -128,11 +146,28 @@ func (s *ImageStore) Upload(ctx context.Context, userID, source, visibility stri
 }
 
 // describeAsync 上传后异步生成描述。best-effort：失败只记日志，不阻塞上传。
+// 同一张图在途时跳过（去重路径可能对同一 id 重复调用）；外呼并发受信号量限制。
 func (s *ImageStore) describeAsync(asset model.ImageAsset) {
 	if s.describer == nil {
 		return
 	}
+	s.descMu.Lock()
+	if s.describing[asset.ID] {
+		s.descMu.Unlock()
+		return
+	}
+	s.describing[asset.ID] = true
+	s.descMu.Unlock()
+
 	go func() {
+		defer func() {
+			s.descMu.Lock()
+			delete(s.describing, asset.ID)
+			s.descMu.Unlock()
+		}()
+		s.descSem <- struct{}{}
+		defer func() { <-s.descSem }()
+
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		if err := s.describe(ctx, &asset); err != nil {
@@ -154,6 +189,7 @@ func (s *ImageStore) describe(ctx context.Context, a *model.ImageAsset) error {
 		return fmt.Errorf("describe: %w", err)
 	}
 	if err := s.repo.SetDescription(ctx, a.ID, desc); err != nil {
+		s.noteDescribed(a.ID) // 写库失败也标记一次，避免持久故障下反复识图
 		return fmt.Errorf("save description: %w", err)
 	}
 	log.Printf("[image] described %s (user=%s)", a.ID[:8], a.UserID)

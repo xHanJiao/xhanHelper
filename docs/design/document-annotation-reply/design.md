@@ -1,10 +1,17 @@
 # 文档批注 · AI 回复（多轮）
 
-> 状态：**方案已定，待实现**（2026-09-30）
+> 状态：**客户端 UI 已实现（P1 只读侧 + Word 式连线）；服务端待实现**（2026-09-30）
 > 分支：`feat/document-annotation-reply`
 > 范围：server（Go：模型 + repo + API + LLM 工具 + 生成器）+ macOS 客户端（SwiftUI / WKWebView）
 > 前序：`docs/design/document-highlight-annotation/design.md`（划线与批注本体，v1 已上线）
 > 唯一入口：macOS 客户端。iOS / Web / 分享页 **不做**（延续 D1）。
+>
+> **当前落地进度**（下次 compact 后先看这里）：
+> - ✅ **客户端 UI 骨架已写完并 `swiftc -typecheck` 0 error**：常驻批注面板（讨论/全部两视图）、可折叠线程卡片、收放规则、卡片→划线连线、`#Preview`（桌面三栏）。见 §7。
+> - ✅ 客户端模型/接口已就位：`AnnotationReply`、`reply_count`/`last_reply`（可选）、`APIClient.listAnnotationReplies/replyToAnnotation`。
+> - ✅ 阅读器 JS 已加 `annotationRect(id)` + `scroll` 消息（供连线）。
+> - ⏳ **服务端一行未写**：`DocumentAnnotationReply` 表 / repo / `GET replies` / `POST reply` / 生成器 / `reply_annotation` 工具。客户端调用现在会 404（真机表现为 toast「讨论载入失败 / 生成回复失败」）。
+> - ⏳ 「问 AI」全套未拆（P3 随批量路径一起做）。
 
 ---
 
@@ -40,6 +47,8 @@
 | AR-11 | 记忆/摘要隔离 | ✅ 批注与回复**不进**记忆 / 画像 / 摘要流水线（延续前序 D13）；run 不触发 `PostChatWorkerGroup` |
 | AR-12 | 「问 AI」 | ❌ 删除：工具条入口、点击菜单入口、`DocumentAIBridge.onAsk`、`ChatView` 引用胶囊/窄条、`ChatViewModel.docQuote` |
 | AR-13 | 失败处理 | ✅ 生成失败只影响本次回复；错误向上抛、顶层记一次日志、返回错误给客户端（不吞） |
+| AR-14 | 客户端 UI 形态 | ✅ **常驻批注面板**（Word 批注窗格式），两视图：**讨论**（卡片 + 可折叠线程）/ **全部**（扁平一级列表，原三 tab）。收放见 §7.3 |
+| AR-15 | 卡片 → 划线连线 | ✅ 悬停/操作卡片时从卡片左缘拉一条细直线到正文划线（Word 式）。色号 = 划线高亮的 `--hl`，**不是** `appAccent`。见 §7.4 |
 
 ---
 
@@ -349,20 +358,69 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 
 ---
 
-## 七、客户端触碰点（macOS）
+## 七、客户端 UI（macOS）—— 已实现
 
-| 文件 | 动作 |
-|---|---|
-| `Shared/Models/DocumentAnnotation.swift` | 加 `replyCount: Int` / `lastReply: AnnotationReply?`（新模型 `AnnotationReply`，约 10 行 Codable，`role` / `content` / `source` / `createdAt`） |
-| `Shared/Services/APIClient.swift` | 加 `listReplies(annotationId:limit:offset:)`（`GET /api/annotations/:id/replies`）与 `replyToAnnotation(id:content:)`（`POST /api/annotations/:id/reply`） |
-| `Shared/Views/AnnotationDrawer.swift` | 每行可展开**线程**（`note` 为根 + `replies` 逐条）；线程底部追问输入框；「让 AI 回复」按钮；按 annotationID 的 spinner |
-| `Shared/Views/DocumentReaderView.swift` | 点击菜单 / 工具条：**删「问 AI」**；已有批注的线加「让 AI 回复」；`ask` case 与 `revealQuote` / `beginNoteFromAI` 相关入口下线或改指向 |
-| `Shared/Services/DocumentAIBridge.swift` | `onAsk` / `weak reader` 那套**拆除**（或改造为新的按钮回调，视接线方便） |
-| `Shared/Views/ChatView.swift` | 拆「引用胶囊」与「存为批注」窄条（`:161-170`、`:383` 附近）+ `storeQuoteAsNote` |
-| `Shared/ViewModels/ChatViewModel.swift` | 拆 `docQuote` / `attachDocQuote` / `quoteAnswerText`（`:179-194`） |
-| `Shared/Models/DocQuote.swift` | 若仅服务于「问 AI」则可删 |
+> 详细决策见「二、决策记录」AR-14 / AR-15。本节是**已落地的实现说明**（自包含，compact 后照此可继续）。
 
-`check-reader-html.sh` / `snapshot-reader.sh`：涉及 JS 模板的改动（删问 AI 的 `ask` 分支、可能新增定位入口）需同步断言与快照。
+### 7.1 面板两视图（AR-14）
+
+`AnnotationPanel`（`Shared/Views/AnnotationDrawer.swift`）：
+
+- **讨论视图**（`AnnotationPanelMode.thread`，默认，常驻）：`AnnotationThreadCard` 列表——每条批注 = 划线圈引 + 批注 + 可折叠线程。
+- **全部视图**（`.list`）：`AnnotationListBody`——原扁平抽屉（三 tab：全部 / 仅批注 / 已失活），纯导航、无线程。
+- 头部：`划线与批注 N` + 讨论/全部两个图标按钮 + 收起 chevron。面板宽 `Layout.docAnnotPanelWidth = 300`。
+
+### 7.2 线程卡片交互（`AnnotationThreadCard`）
+
+- **折叠态**：`回复 N · <最后一句>` + chevron；`N == 0` 时显示「让 AI 回复」按钮（`sparkles`）。
+- **展开态**：逐条 user / assistant 行（左竖条着色）+ 底部输入框：
+  - 空提交 → 「让 AI 回复」（`POST` 无 `content`，`source=button`）；
+  - 有文本 → 追问（`POST` 带 `content`，先落 `role=user` 再生成，`source=followup`）。
+- **数据来源**：折叠摘要用列表接口带的 `reply_count` / `last_reply`；展开时按需 `GET /api/annotations/:id/replies`（控制器缓存 `repliesByAnnotation`）。
+- **状态**：`expandedAnnotationIDs` / `loadingReplyIDs` / `busyReplyIDs`（控制器），卡片据 `busy` 显示 spinner 并禁用输入。
+- 失活批注：灰态 + `已失活` 徽标；划线圈引点击 → `scrollToAnnotation`。
+
+### 7.3 收放规则（AR-14 / c2：手动优先 + 兜底）
+
+- **全局记忆**（`@AppStorage`，跨文档跨启动）：`xhan_doc_annot_open`（默认 **true**）、`xhan_doc_annot_mode`（默认 `thread`）、`xhan_doc_toc_collapsed`（默认 **true**，**目录默认收起**）。
+- **有效态 = 手动偏好 ∧ 窗口宽 ≥ 硬地板**（手动优先，只在窗口窄到触发硬地板时强制收起）。
+- **先收目录、再收批注**：`Layout.docTocHardFloor = 780` > `Layout.docAnnotHardFloor = 560`
+  （= `docReaderMinWidth 260 + docAnnotPanelWidth 300 [+ docTocExpandedWidth 220]`，都在 `Shared/Views/LayoutConstants.swift`）。
+- 宽度用 `onGeometryChange { $0.size.width }` 量文档 tab 内容宽（`DocumentFullView`）。
+- 收起态 = **窄条**（`Layout.docPanelStripWidth = 32`，`chevron.left` + 批注数角标）；面板头部 chevron / 顶栏按钮控制开合。
+
+### 7.4 卡片 → 划线连线（AR-15）
+
+- **JS**（`DocumentReaderView.swift` 模板）：
+  - `reader.annotationRect(id)` → 该划线**首个 `mark` 的首个行盒**的视口矩形 `{x,y,w,h}`（左上原点），找不到返回 `null`；
+  - `scroll` 监听补发 `{type:'scroll'}`（`popover` 内滚不算）。
+- **控制器**：`connectorID` / `connectorRect`（阅读器内坐标）+ `beginConnectorTracking` / `endConnectorTracking` / `measureConnector`；收到 `scroll`、或 `pushAnnotations()` 重画后自动重测。
+- **换算**（关键，别想复杂）：`getBoundingClientRect` 与 SwiftUI `.global` 都是「左上原点、y 向下」，**直接相加**——终点 = `readerFrame.origin + connectorRect`（`readerFrame` 由 `DocumentReaderView.onGeometryChange { $0.frame(in: .global) }` 量得）。**不碰 AppKit 的翻转坐标系**。
+- **起点** = 卡片左缘中点（`AnnotationThreadCard.onHover` 上报 `(id, inside, global frame)`）。
+- **画**：`AnnotationConnectorLayer`（跨平台定义，iOS 端点恒 nil）——在文档 tab `HStack` 上 `.overlay`，1pt 直线、圆头、`allowsHitTesting(false)`；划线滚出视口则不画。
+- **色号**：`AnnotationHighlightColor.value(colorScheme)` = 阅读器 `mark.hl` 的 `--hl`（浅 `rgba(217,151,27,1)` / 深 `rgba(146,200,180,.9)`）。**不要改成 `appAccent`**；连线颜色必须与划线一致。
+
+### 7.5 客户端触碰点（现状）
+
+| 文件 | 动作 | 状态 |
+|---|---|---|
+| `Shared/Models/DocumentAnnotation.swift` | `AnnotationReply` 模型；`DocumentAnnotation.replyCount: Int?` / `lastReply: AnnotationReply?`（**可选**，老服务端不带也不炸）；`AnnotationReplyListResponse` / `AnnotationReplyCreateResponse` | ✅ |
+| `Shared/Services/APIClient.swift` | `listAnnotationReplies(annotationId:limit:offset:)`、`replyToAnnotation(id:content:)` | ✅ |
+| `Shared/Views/DocumentReaderView.swift` | 控制器线程缓存 + 展开/载入/生成态 + `toggleThread/loadReplies/reply/forgetThread`；连线追踪；JS `annotationRect` + `scroll` 消息 | ✅ |
+| `Shared/Views/AnnotationDrawer.swift` | `AnnotationPanel` / `AnnotationThreadCard` / `AnnotationListBody` / `AnnotationConnectorLayer` / `AnnotationHighlightColor` + 桌面预览 | ✅ |
+| `Shared/Views/DocumentListView.swift` | 常驻面板、`@AppStorage` 三键、`onGeometryChange` 收放、悬停状态 + 连线 overlay | ✅ |
+| `Shared/Views/LayoutConstants.swift` | 面板/窄条/目录宽、`docReaderMinWidth`、两个硬地板 | ✅ |
+| `Shared/Views/DocumentReaderView.swift`（JS 工具条/菜单） | **删「问 AI」**：`data-act="ask"`、`data-cact="ask"`、`ask` case、`revealQuote` / `beginNoteFromAI` 入口 | ⏳ P3 |
+| `Shared/Services/DocumentAIBridge.swift` | `onAsk` / `weak reader` 拆 | ⏳ P3 |
+| `Shared/Views/ChatView.swift` | 拆「引用胶囊」+「存为批注」窄条（`:161-170`、`:383` 附近）+ `storeQuoteAsNote` | ⏳ P3 |
+| `Shared/ViewModels/ChatViewModel.swift` | 拆 `docQuote` / `attachDocQuote` / `quoteAnswerText`（`:179-194`） | ⏳ P3 |
+| `Shared/Models/DocQuote.swift` | 拆完「问 AI」后若无人用可删 | ⏳ P3 |
+
+### 7.6 自查
+
+- `#Preview`（桌面三栏 shell，1200×720）：`AnnotationDrawer.swift` 末尾 6 个 + `连线 · 悬停卡片`（用**底部波浪线** mock 划线，非底色高亮）。
+- 自检命令：`swiftc -typecheck -D DEBUG`（macOS / iOS 两端 0 error，见 §11）；`client/xHelper/scripts/check-reader-html.sh`（**179 条断言 PASS**）。
+- 真机待验：悬停出线 / 移开消失 / 滚动跟随 / 线色与划线贴合；收放窄条切换。
 
 ---
 
@@ -409,19 +467,25 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 
 ## 十、分期
 
-| 阶段 | 内容 | 验收 |
+| 阶段 | 内容 | 状态 |
 |---|---|---|
-| **P1 数据 + 读** | 表 + repo + 级联删 + `list_annotations` 带 replies + 列表 API 带 `reply_count`/`last_reply` + `GET replies` 线程接口 + 客户端只读线程展示 | 见 §11.1 |
-| **P2 按钮生成** | `annotation_reply.go`（上下文链 + MiniReAct）+ `POST /reply` + 抽屉按钮 + spinner + 追问 | 见 §11.2 |
-| **P3 批量 + 清理** | `reply_annotation` 工具（指令式逐条）+ 拆「问 AI」全套（服务端 + 客户端） | 见 §11.3 |
+| **P0 客户端 UI** | 常驻面板 + 讨论/全部两视图 + 线程卡片 + 收放规则 + 卡片→划线连线 + 预览（全部对着 §5 的接口形状写，服务端未就位时 404→toast） | ✅ **已完成**（`swiftc -typecheck` 0 error） |
+| **P1 数据 + 读（服务端）** | 表 + repo + 级联删 + `list_annotations` 带 replies + 列表 API 带 `reply_count`/`last_reply` + `GET replies` 线程接口 | ⏳ 未开始 |
+| **P2 按钮生成** | `annotation_reply.go`（上下文链 + MiniReAct）+ `POST /reply`；客户端已就绪（§7） | ⏳ 未开始 |
+| **P3 批量 + 清理** | `reply_annotation` 工具（指令式逐条）+ 拆「问 AI」全套（服务端 + 客户端） | ⏳ 未开始 |
 
 依赖：P2 依赖 P1；P3 依赖 P1/P2。P1 与 P2 的上下文链无耦合，可并行。
+**P0 已先行落地**（客户端 UI + 模型/接口镜像）；P1 完成后客户端「只读线程」即接真，P2 完成后「让 AI 回复 / 追问」即可用。
 
 ---
 
 ## 十一、验收
 
-1. **P1**：`go build ./... && go test ./...` 全绿；`api-test-annotations.sh` 扩展覆盖回复 CRUD / 级联 / 越权 / 配额；客户端抽屉能展开已有回复。
+0. **P0（客户端 UI，已完成）**：
+   - `swiftc -typecheck -D DEBUG`（macOS / iOS）0 error；`check-reader-html.sh` 179 断言 PASS。
+   - Xcode 画布：`AnnotationDrawer.swift` 的 6 个桌面预览 + `连线 · 悬停卡片` 观感正确。
+   - 真机：常驻面板随文档 tab 宽收放（先收目录、再收批注，目录默认收起，全局记忆）；悬停卡片出连线、移开消失、滚动跟随、**线色与划线一致**。
+1. **P1**：`go build ./... && go test ./...` 全绿；`api-test-annotations.sh` 扩展覆盖回复 CRUD / 级联 / 越权 / 配额；客户端面板能展开已有回复（P0 的 UI 接真）。
 2. **P2**：
    - 同一会话产出文档 → 批注 → 点「让 AI 回复」→ 回复正确利用会话上下文。
    - 换会话 / 很久后 → 回复靠文档 + 会话摘要 + 检索 + 工具，仍合理。
@@ -450,6 +514,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 - ❌ 回复富文本 / 图片 / @ 引用
 - ❌ trace 子会话（P1/P2 不做，留接口）
 - ❌ 删除单条回复的 UI（接口可留）
+- ❌ 连线的 Word 折线 / 多行环绕（v1 只画一条直线到首个行盒；见 AR-15）
 
 ### 待定
 
@@ -457,6 +522,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 - ⏳ 原点会话近期轮 N 的取值
 - ⏳ 按钮路径的**超时**与是否改异步 + 轮询（若 LLM 偶发很慢）
 - ⏳ 单条回复上限 4000 是否够（AI 长回答）
+- ⏳ 连线是否要在「展开线程（非悬停）」时保持（现仅悬停/指针在卡内时画）
 
 ---
 
@@ -498,3 +564,15 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 - 中文注释与提交信息沿用项目风格。
 - 错误：`fmt.Errorf("annotation reply: %w", err)` 逐层加语境，顶层记一次日志。
 - 列表分页、批量 IN 防 N+1、活动埋点（`DocumentAnnotation` / 回复**不是** tracked 实体，无需埋点）。
+
+### E. 客户端实现地图（P0 已落地，坐标供复工）
+
+- 模型 `Shared/Models/DocumentAnnotation.swift`：`AnnotationReply`、`DocumentAnnotation.replyCount/lastReply`（可选）、`DocumentAnnotationListResponse`/`AnnotationReplyListResponse`/`AnnotationReplyCreateResponse`、`AnnotationNoteUpdate`。
+- 接口 `Shared/Services/APIClient.swift`：`listAnnotationReplies` / `replyToAnnotation`（在 `relocateAnnotation` 之后）。
+- 控制器 `Shared/Views/DocumentReaderView.swift`：`repliesByAnnotation` / `expandedAnnotationIDs` / `loadingReplyIDs` / `busyReplyIDs` / `connectorID` / `connectorRect`；`toggleThread` / `loadReplies` / `reply` / `forgetThread` / `beginConnectorTracking` / `endConnectorTracking` / `measureConnector`；`apply` 里 `case "scroll"`；`pushAnnotations` 末尾重测连线。
+- JS（同文件的 `template` 字符串）：`annotationRect(id)`（`scrollToAnnotation` 之后）、`scroll` 监听补 `post({type:'scroll'})`、`return {…, annotationRect}` 导出。
+- 视图 `Shared/Views/AnnotationDrawer.swift`：顶部 `AnnotationPanelMode` + `AnnotationHighlightColor` + `AnnotationConnectorLayer`（**跨平台**）；`#if os(macOS)` 内 `AnnotationPanel` / `AnnotationThreadCard` / `AnnotationListBody` / `AnnotationTime`；末尾 `#if DEBUG` 的 `DocPreviewShell` + `previewPanel(...)` + `WavyUnderline` + `ConnectorPreviewDemo` + 7 个 `#Preview`。
+- 装配 `Shared/Views/DocumentListView.swift`（`DocumentFullView`）：`@AppStorage` 三键（`xhan_doc_annot_open`/`xhan_doc_annot_mode`/`xhan_doc_toc_collapsed`）、`docWidth`/`readerFrame`/`connectorID`/`connectorCardFrame`、`layoutWidth`/`tocExpanded`/`annotExpanded`/`connectorStart`/`connectorEnd`、`annotationPanel`/`annotationStrip`、HStack 上的 `onGeometryChange` + `.overlay { AnnotationConnectorLayer }`、`toggleAnnotationPanel()`。
+- 常量 `Shared/Views/LayoutConstants.swift`：`docAnnotPanelWidth=300` / `docPanelStripWidth=32` / `docTocExpandedWidth=220` / `docReaderMinWidth=260` / `docAnnotHardFloor=560` / `docTocHardFloor=780`。
+- 自查：`cd client/xHelper/xHelper/Shared && xcrun swiftc -typecheck -D DEBUG -sdk "$(xcrun --show-sdk-path --sdk macosx)" -target arm64-apple-macos26.3 -default-isolation MainActor -I <DerivedData>/Build/Products/Debug $(cat /tmp/shared.txt) ../../xHelperMac/*.swift`；iOS 换 `iphonesimulator` + `Index.noindex/Build/Products/Debug-iphonesimulator`。`bash client/xHelper/scripts/check-reader-html.sh` 现有 **179 条断言**（模板从 Swift 源现抠，故 JS 改动自动纳入；**未加连线专属断言**，可后续补）。
+- 注意：`AnnotationPanelMode` / `AnnotationConnectorLayer` / `AnnotationHighlightColor` **必须在 `#if os(macOS)` 之外**定义（`@AppStorage` 默认值与 `.overlay` 在共享的 `DocumentListView` 里用到，iOS 也要能编）。

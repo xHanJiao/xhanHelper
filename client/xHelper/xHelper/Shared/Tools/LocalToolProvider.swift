@@ -59,4 +59,11 @@ protocol LocalToolProvider: AnyObject {
     func execute(tool: String, arguments: [String: Any], context: ExecuteContext) async throws -> LocalToolResult
 }
 
+extension LocalToolProvider {
+    /// 组级描述（可选）：随 client_tools 上报为 `server_description`，服务端在工具目录/定义里透传。
+    /// 同一 namespace 的所有函数共用；缺省由服务端回退「Mac 客户端本地工具（组名）」。
+    /// 必须字节稳定——不要拼动态内容（动态块放函数 description）。
+    var groupDescription: String? { nil }
+}
+
 

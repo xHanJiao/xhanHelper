@@ -12,6 +12,13 @@ nonisolated enum ShellRisk: Sendable {
     case deny(String)
 }
 
+/// 执行作用域：`full` = 完整 shell（仅子任务）；`peek` = 只读探查（主对话可用，见 shell_peek）。
+/// 两者共用切分/执行/预算，只有命令白名单与形式守卫不同。
+nonisolated enum ShellScope: Sendable {
+    case full
+    case peek
+}
+
 nonisolated enum ShellConnector: Sendable {
     case first
     case pipe
@@ -48,7 +55,7 @@ nonisolated enum ShellCommandParser {
 
     // MARK: - 白名单
 
-    /// allow：只读 / 无副作用，自动执行。工作区 L2 / 区外 L3。
+    /// allow：只读 / 无副作用，自动执行（免确认）。
     static let allowCommands: Set<String> = [
         "ls", "pwd", "head", "tail", "wc", "file", "stat", "which", "type",
         "du", "df", "tree", "basename", "dirname", "realpath", "md5", "shasum",
@@ -89,10 +96,26 @@ nonisolated enum ShellCommandParser {
         "clean", "merge", "rebase", "cherry-pick", "revert",
     ]
 
+    // MARK: - peek 白名单（主对话可见的只读探查，输出天然有界、不读文件正文）
+
+    /// peek 允许的命令：看环境 / 文件·目录元信息 / git 状态，均不返回文件内容、不扫盘。
+    /// 刻意不含：rg/grep/find/tree/du(裸)/sort/uniq/cut/tr/nl/column/jq/diff/md5/shasum/head/tail。
+    /// **这是独立于 `allowCommands` 的更窄子集**：给 full 白名单加只读命令时不必同步到此（peek 刻意更保守）。
+    /// 只列固定 PATH 里有真实二进制的命令（`type` 是 shell 内建、无二进制，故不收，用 `which`）。
+    static let peekCommands: Set<String> = [
+        "pwd", "whoami", "hostname", "date", "uname", "sw_vers", "arch",
+        "which", "basename", "dirname", "realpath",
+        "ls", "stat", "file", "wc", "du",
+    ]
+
+    /// peek 里 `git log` 的条数上限（超过即拒，避免完整历史灌进主上下文）。
+    static let peekGitLogMaxCount = 20
+
     // MARK: - 入口
 
     /// 解析 + 分级一条命令。`workdir` 用于解析相对路径参数（敏感文件拦截）与相对 argv[0]。
-    static func evaluate(command: String, workdir: String) -> ShellEvaluation {
+    /// `scope` 决定白名单：`.full` 完整 shell，`.peek` 只读探查（主对话）。
+    static func evaluate(command: String, workdir: String, scope: ShellScope = .full) -> ShellEvaluation {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return ShellEvaluation(stages: [], risk: .deny("空命令"))
@@ -108,7 +131,7 @@ nonisolated enum ShellCommandParser {
 
         var risk: ShellRisk = .allow
         for stage in stages {
-            switch classify(stage.argv, workdir: workdir) {
+            switch classify(stage.argv, workdir: workdir, scope: scope) {
             case .deny(let reason):
                 return ShellEvaluation(stages: stages, risk: .deny(reason))
             case .l4:
@@ -121,7 +144,7 @@ nonisolated enum ShellCommandParser {
     }
 
     /// 命令是否**完全落在 Agent 工作区内**（workdir + 所有实际存在的显式路径参数都在 workspace 内）。
-    /// 供 `LocalToolRegistry` 定级：true → L3（默认确认、信任模式可跳），false → L4（强制确认）。
+    /// **预留**：只读命令现恒 L2、写命令恒 L4，暂无调用方；留作未来"写命令工作区内降档"用。
     /// 与 `pathBlockedReason` 同一套路径提取（`pathCandidate`），只统计"存在"的路径，
     /// 避免把 `grep '/api/v1' .` 这类正则误判为越界。
     static func isScopedToAgentWorkspace(command: String, workdir: String) -> Bool {
@@ -270,14 +293,20 @@ nonisolated enum ShellCommandParser {
 
     // MARK: - 分级
 
-    static func classify(_ argv: [String], workdir: String) -> ShellRisk {
+    static func classify(_ argv: [String], workdir: String, scope: ShellScope = .full) -> ShellRisk {
         guard let raw = argv.first, !raw.isEmpty else {
             return .deny("空命令")
         }
         guard let resolved = resolveExecutable(raw, workdir: workdir) else {
-            return .deny("命令未在白名单内或不可执行：\(raw)")
+            return scope == .peek
+                ? .deny(peekUnavailableReason(raw))
+                : .deny("命令未在白名单内或不可执行：\(raw)")
         }
         let base = (resolved as NSString).lastPathComponent
+
+        if scope == .peek {
+            return classifyPeek(base: base, argv: argv, workdir: workdir)
+        }
 
         // 版本查询：命令本身在白名单内，且参数仅 --version / -V → allow（不做 `* --version` 通配）
         if argv.count == 2, argv[1] == "--version" || argv[1] == "-V", isWhitelistedName(base) {
@@ -307,6 +336,104 @@ nonisolated enum ShellCommandParser {
             return .l4
         }
         return .deny("命令未在白名单内：\(base)")
+    }
+
+    // MARK: - peek 分级（只读探查，主对话可见）
+
+    /// peek 只读探查分级：命中 peek 白名单（含小心的形式守卫）→ allow（免确认）；其余 → 拒绝，
+    /// 并在错误信息里引导模型派 file_explore 子任务执行重命令。
+    static func classifyPeek(base: String, argv: [String], workdir: String) -> ShellRisk {
+        if base == "git" {
+            return classifyGitPeek(Array(argv.dropFirst()))
+        }
+        guard peekCommands.contains(base) else {
+            return .deny(peekUnavailableReason(base))
+        }
+        if argv.count == 2, argv[1] == "--version" || argv[1] == "-V" {
+            return .allow
+        }
+        if let reason = peekFormBlockedReason(base: base, argv: argv) {
+            return .deny(reason)
+        }
+        if let reason = pathBlockedReason(argv: argv, workdir: workdir) {
+            return .deny(reason)
+        }
+        return .allow
+    }
+
+    /// peek 形式守卫：`ls` 禁递归；`du` 仅 `-s`/`--summarize` 汇总（逐目录列出输出不可控）。
+    private static func peekFormBlockedReason(base: String, argv: [String]) -> String? {
+        let args = Array(argv.dropFirst())
+        if base == "ls" {
+            if args.contains("--recursive") {
+                return "ls 递归列目录（-R）输出不可控，不在主对话开放；如需请派 file_explore 子任务"
+            }
+            for a in args where a.hasPrefix("-") && !a.hasPrefix("--") {
+                if a.dropFirst().contains("R") {
+                    return "ls 递归列目录（-R）输出不可控，不在主对话开放；如需请派 file_explore 子任务"
+                }
+            }
+        }
+        if base == "du" {
+            let summarize = args.contains("-s") || args.contains("--summarize")
+                || args.contains { $0.hasPrefix("-") && !$0.hasPrefix("--") && $0.dropFirst().contains("s") }
+            if !summarize {
+                return "du 仅支持 -s/--summarize 汇总形式（逐目录列出输出不可控，请派 file_explore 子任务）"
+            }
+        }
+        return nil
+    }
+
+    /// peek 下的 git：仅放 `status` / `rev-parse` / `branch --show-current` / `log -n N(N≤20)`。
+    private static func classifyGitPeek(_ args: [String]) -> ShellRisk {
+        guard let sub = args.first, !sub.isEmpty else {
+            return .deny(peekUnavailableReason("git"))
+        }
+        let rest = Array(args.dropFirst())
+        switch sub {
+        case "status", "rev-parse":
+            return .allow
+        case "branch":
+            if rest == ["--show-current"] { return .allow }
+            return .deny("git branch 在主对话仅支持 --show-current；其余请派 file_explore 子任务")
+        case "log":
+            if let n = gitLogCount(rest), (1...peekGitLogMaxCount).contains(n) { return .allow }
+            return .deny("git log 在主对话必须带 -n/--max-count 且 1...\(peekGitLogMaxCount)；完整历史请派 file_explore 子任务")
+        default:
+            return .deny(peekUnavailableReason("git \(sub)"))
+        }
+    }
+
+    /// 解析 `git log` 的条数：`-n N` / `-nN` / `--max-count=N`；缺失或非法返回 nil。
+    /// **取最后一个 count**（git 多个 max-count 时后者胜出，只看首个会被 `-n 20 --max-count=99999` 绕过）；
+    /// 负值/非数字一律返回 nil（`-n -1` 被 git 当无限制，必须拒）。
+    private static func gitLogCount(_ args: [String]) -> Int? {
+        var last: Int?
+        var i = 0
+        while i < args.count {
+            let a = args[i]
+            if a == "-n" || a == "--max-count" {
+                guard i + 1 < args.count, let n = Int(args[i + 1]) else { return nil }
+                last = n
+                i += 2
+                continue
+            }
+            if a.hasPrefix("--max-count=") {
+                guard let n = Int(a.dropFirst("--max-count=".count)) else { return nil }
+                last = n
+            } else if a.hasPrefix("-n"), a.count > 2 {
+                guard let n = Int(a.dropFirst(2)) else { return nil }
+                last = n
+            }
+            i += 1
+        }
+        return last
+    }
+
+    /// peek 未命中白名单时的拒绝信息（顺带引导模型派子任务）。
+    private static func peekUnavailableReason(_ command: String) -> String {
+        "「\(command)」不在主对话开放（可能扫盘/读取大量内容）。如需执行请派 file_explore 子任务；"
+            + "主对话只支持探查类只读命令（ls/stat/file/wc/du -sh/git status 等）。"
     }
 
     static func isWhitelistedName(_ name: String) -> Bool {

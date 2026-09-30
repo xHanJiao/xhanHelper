@@ -25,6 +25,9 @@ type ClientTool struct {
 	Description string                 `json:"description"`
 	Parameters  map[string]interface{} `json:"parameters"`   // JSON Schema，透传
 	IsReadOnly  bool                   `json:"is_read_only"` // 只读标记。
+	// 组级描述（可选）：同一 server_name 取首个非空作为 ToolDefinition.Description；
+	// 缺省回退「Mac 客户端本地工具（组名）」。客户端须保证同一组内该字段字节稳定。
+	ServerDescription string `json:"server_description"`
 	// 注（2026-08-14）：plan 模式已收紧为全量禁用客户端工具，此字段不再参与 plan 拦截，
 	// 仅保留供未来"只读浏览模式"复用。客户端工具在客户端本地执行，服务端无法拦截执行本身，
 	// 但分派前（executeConcurrently）会按会话模式拦断。agent_browser 因操作难以精确界定读写，
@@ -52,6 +55,10 @@ const clientToolInjectBudgetBytes = 20000
 // 仅作为防御性上限，正常客户端错误信息不应超此长度。
 const maxClientToolErrorChars = 2000
 
+// maxClientToolGroupDescRunes — 客户端上报的组级描述（server_description）的截断上限（字符）。
+// 防御性：正常客户端只发一行短描述；超长/换行会污染系统 prompt 里的客户端工具目录。
+const maxClientToolGroupDescRunes = 200
+
 // clientToolHeartbeatInterval — 等待客户端执行期间的 SSE 心跳间隔，防止长时间静默被代理掐断
 const clientToolHeartbeatInterval = 15 * time.Second
 
@@ -72,6 +79,7 @@ func buildClientToolDefs(clientTools []ClientTool, registry *tool.Registry) []ll
 	}
 
 	grouped := make(map[string][]llm.FuncDef)
+	groupDesc := make(map[string]string) // server_name → 组级描述（首个非空）
 	seen := make(map[string]bool)
 	var order []string
 	for _, ct := range clientTools {
@@ -96,6 +104,9 @@ func buildClientToolDefs(clientTools []ClientTool, registry *tool.Registry) []ll
 		if _, ok := grouped[ct.ServerName]; !ok {
 			order = append(order, ct.ServerName)
 		}
+		if groupDesc[ct.ServerName] == "" && ct.ServerDescription != "" {
+			groupDesc[ct.ServerName] = sanitizeGroupDescription(ct.ServerDescription)
+		}
 		grouped[ct.ServerName] = append(grouped[ct.ServerName], llm.FuncDef{
 			Name:        ct.Name,
 			Description: ct.Description,
@@ -110,13 +121,28 @@ func buildClientToolDefs(clientTools []ClientTool, registry *tool.Registry) []ll
 	for _, name := range order {
 		funcs := grouped[name]
 		sort.Slice(funcs, func(i, j int) bool { return funcs[i].Name < funcs[j].Name })
+		desc := groupDesc[name]
+		if desc == "" {
+			desc = "Mac 客户端本地工具（" + name + "）"
+		}
 		defs = append(defs, llm.ToolDefinition{
 			Name:        name,
-			Description: "Mac 客户端本地工具（" + name + "）",
+			Description: desc,
 			Functions:   funcs,
 		})
 	}
 	return defs
+}
+
+// sanitizeGroupDescription — 客户端组级描述的防御性清洗：换行/回车归一为空格（防污染系统 prompt
+// 的目录行结构），超长按字符截断并打日志。
+func sanitizeGroupDescription(s string) string {
+	s = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(s)
+	if r := []rune(s); len(r) > maxClientToolGroupDescRunes {
+		log.Printf("[orch] client tool group description truncated: %d > %d runes", len(r), maxClientToolGroupDescRunes)
+		s = string(r[:maxClientToolGroupDescRunes])
+	}
+	return s
 }
 
 // clientToolIndex 构建 server_name → true 的分发索引（复用 buildClientToolDefs 的校验口径）。

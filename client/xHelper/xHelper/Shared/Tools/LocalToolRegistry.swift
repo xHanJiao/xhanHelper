@@ -7,7 +7,7 @@ final class LocalToolRegistry {
     /// 工具风险等级表（flatName: namespace__tool）。
     /// 未登记的工具默认 L2（低风险写）。L3（高风险写，执行前需用户确认）仅留给
     /// 基础语义有破坏性的工具（如未来终端的 rm/mv）；agent_browser 全部 ≤L2。
-    /// shell 例外：工作区内 L2（免确认），区外 L3（常规确认、信任模式可跳），见下方 `shell__` 分支。
+    /// shell / shell_peek 动态定级（只读 L2 免确认、写 L4），见下方分支。
     /// 等级仅供客户端执行控制，不随 schema 下发给 LLM。
     private let riskLevels: [String: Int] = [
         // L1 只读
@@ -38,10 +38,10 @@ final class LocalToolRegistry {
 
     #if os(macOS)
     func riskLevel(for flatName: String, arguments: [String: Any]) -> Int {
-        if flatName.hasPrefix("shell__") {
-            // 只读命令：工作区内 L2（免确认）/ 区外 L3（常规确认、信任模式可跳）。
-            // 写/执行命令：恒 L4（红色确认、工作区内也 L4）。未命中白名单已由 shellBlockedReason 前置拒绝。
-            return ShellToolProvider.shellLevel(arguments: arguments)
+        if let scope = ShellToolProvider.scope(forFlatName: flatName) {
+            // 只读（full 的 allow / peek 全部）→ L2（免确认）。写/执行 → L4。
+            // 未命中白名单已由 shellBlockedReason 前置拒绝。
+            return ShellToolProvider.shellLevel(arguments: arguments, scope: scope)
         }
         if flatName.hasPrefix("fs__") {
             let paths = FileSystemToolProvider.extractPaths(flatName: flatName, arguments: arguments)
@@ -65,10 +65,11 @@ final class LocalToolRegistry {
         return nil
     }
 
-    /// shell__run 硬阻断（命令缺失 / workdir 未授权 / 语法不支持 / 未命中白名单）。
+    /// shell / shell_peek 的硬阻断（命令缺失 / workdir 未授权 / 语法不支持 / 未命中白名单）。
     /// 返回 nil 表示可继续（allow 自动执行，l4 走人工确认）。
-    func shellBlockedReason(arguments: [String: Any]) -> String? {
-        ShellToolProvider.blockedReason(arguments: arguments)
+    func shellBlockedReason(flatName: String, arguments: [String: Any]) -> String? {
+        guard let scope = ShellToolProvider.scope(forFlatName: flatName) else { return nil }
+        return ShellToolProvider.blockedReason(arguments: arguments, scope: scope)
     }
     #endif
 
@@ -114,6 +115,7 @@ final class LocalToolRegistry {
         "fs__edit": "编辑文件",
         // shell
         "shell__run": "执行命令",
+        "shell_peek__run": "查看命令",
     ]
 
     /// 用户可读的工具展示名：优先用简短名，其次 schema 的中文 description（截断），未命中兜底 flatName
@@ -145,6 +147,9 @@ final class LocalToolRegistry {
                     "description": s.description,
                     "is_read_only": s.isReadOnly, // 函数级必备字段；plan 模式已全量禁用（2026-08-14），保留待未来只读模式复用
                 ]
+                if let groupDesc = provider.groupDescription {
+                    item["server_description"] = groupDesc // 组级描述，服务端在目录/定义里透传
+                }
                 if let params = s.inputSchema {
                     item["parameters"] = params
                 }

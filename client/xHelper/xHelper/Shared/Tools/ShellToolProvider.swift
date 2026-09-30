@@ -8,7 +8,24 @@ import Darwin
 /// **执行已获准的命令**：no-shell 管道执行器 + posix_spawn 进程组 + 超时看门狗 + 输出预算。
 /// 设计见 docs/design/shell-tool/。
 final class ShellToolProvider: @unchecked Sendable {
-    let namespace = "shell"
+    /// 执行作用域：`.full` 完整 shell（namespace `shell`，仅子任务）；`.peek` 只读探查
+    /// （namespace `shell_peek`，主对话可见）。两者共用执行内核，只换命令白名单。
+    let scope: ShellScope
+
+    init(scope: ShellScope) {
+        self.scope = scope
+    }
+
+    var namespace: String {
+        scope == .peek ? "shell_peek" : "shell"
+    }
+
+    /// flatName（`shell__run` / `shell_peek__run`）→ 作用域；非 shell 返回 nil。
+    static func scope(forFlatName name: String) -> ShellScope? {
+        if name.hasPrefix("shell_peek__") { return .peek }
+        if name.hasPrefix("shell__") { return .full }
+        return nil
+    }
 
     /// capture 上限：达到即杀进程组并停止读取（内存有界）；即落盘上限。
     nonisolated static let captureMaxBytes = 2 * 1024 * 1024
@@ -18,29 +35,31 @@ final class ShellToolProvider: @unchecked Sendable {
 
     // MARK: - 分级 / 拦截（供 LocalToolRegistry 调用）
 
-    /// 命令是否完全落在 Agent 工作区内（供风险分级：工作区内 → L3，其余 → L4）。
+    /// 命令是否完全落在 Agent 工作区内（供风险分级）。
+    /// 预留：当前只读一律 L2、写恒 L4，已无调用方；留作未来"写命令工作区内降档"用。
     static func isWorkspaceScoped(arguments: [String: Any]) -> Bool {
         guard let command = arguments["command"] as? String else { return false }
         let workdir = resolveWorkdir(arguments["workdir"] as? String)
         return ShellCommandParser.isScopedToAgentWorkspace(command: command, workdir: workdir)
     }
 
-    /// 风险等级（供 `LocalToolRegistry`）：`.l4`（写/执行）→ 4（恒 L4，工作区内也 L4）；
-    /// `.allow`（只读）→ 工作区 2（免确认）/ 区外 3（常规确认、信任模式可跳）。
-    static func shellLevel(arguments: [String: Any]) -> Int {
+    /// 风险等级（供 `LocalToolRegistry`）：
+    /// - `.full`：`.l4`（写/执行）→ 4；`.allow`（只读）→ 2（免确认，不再分工作区内外）。
+    /// - `.peek`：只会是 `.allow` → 2；`.deny` 已在 `blockedReason` 前置拒绝。
+    static func shellLevel(arguments: [String: Any], scope: ShellScope) -> Int {
         guard let command = (arguments["command"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
               !command.isEmpty else { return 4 }
         let workdir = resolveWorkdir(arguments["workdir"] as? String)
-        switch ShellCommandParser.evaluate(command: command, workdir: workdir).risk {
+        switch ShellCommandParser.evaluate(command: command, workdir: workdir, scope: scope).risk {
         case .l4: return 4
-        case .allow: return isWorkspaceScoped(arguments: arguments) ? 2 : 3
-        case .deny: return 4 // 正常已被 shellBlockedReason 前置拒绝，兜底
+        case .allow: return 2
+        case .deny: return 4 // 正常已被 blockedReason 前置拒绝，兜底
         }
     }
 
     /// 硬阻断原因：命令缺失 / workdir 不存在或未授权 / 语法不支持 / 未命中白名单。
     /// 返回 nil 表示可以继续（allow 或 l4）。
-    static func blockedReason(arguments: [String: Any]) -> String? {
+    static func blockedReason(arguments: [String: Any], scope: ShellScope) -> String? {
         guard let command = (arguments["command"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
               !command.isEmpty else {
             return "缺少 command 参数"
@@ -57,7 +76,7 @@ final class ShellToolProvider: @unchecked Sendable {
                 : "当前已授权目录：\(dirs.joined(separator: "、"))。请用其中之一作为 workdir。"
             return "工作目录未授权：\(workdir)。\(hint)"
         }
-        return ShellCommandParser.evaluate(command: command, workdir: workdir).denyReason
+        return ShellCommandParser.evaluate(command: command, workdir: workdir, scope: scope).denyReason
     }
 
     static func resolveWorkdir(_ raw: String?) -> String {
@@ -77,11 +96,11 @@ final class ShellToolProvider: @unchecked Sendable {
               !command.isEmpty else {
             return Self.failure("缺少 command 参数")
         }
-        if let reason = Self.blockedReason(arguments: arguments) {
+        if let reason = Self.blockedReason(arguments: arguments, scope: scope) {
             return Self.failure(reason)
         }
         let workdir = Self.resolveWorkdir(arguments["workdir"] as? String)
-        let evaluation = ShellCommandParser.evaluate(command: command, workdir: workdir)
+        let evaluation = ShellCommandParser.evaluate(command: command, workdir: workdir, scope: scope)
         guard !evaluation.stages.isEmpty else {
             return Self.failure(evaluation.denyReason ?? "命令解析失败")
         }
@@ -489,7 +508,22 @@ final class ShellToolProvider: @unchecked Sendable {
 
 extension ShellToolProvider: LocalToolProvider {
 
+    /// peek 组的目录级描述（静态，字节稳定）：主循环在启用前就能从工具目录看到该组的定位与边界。
+    var groupDescription: String? {
+        scope == .peek
+            ? "本地只读探查（Mac 客户端）。仅支持 ls/stat/file/wc/du -sh/git status 等低耗命令；"
+                + "扫描、读取内容、完整 git 历史等命令仅子任务可用，需要时派 file_explore。已授权目录见函数描述。"
+            : nil
+    }
+
     func toolSchemas() -> [LocalToolSchema] {
+        switch scope {
+        case .full: return fullSchemas()
+        case .peek: return peekSchemas()
+        }
+    }
+
+    private func fullSchemas() -> [LocalToolSchema] {
         [
             LocalToolSchema(
                 name: "run",
@@ -498,8 +532,7 @@ extension ShellToolProvider: LocalToolProvider {
                 以及做只读文本处理（sort/uniq/cut/jq）、文件增删改（rm/mv/cp/mkdir/touch）、git 写操作（add/commit/checkout）。
 
                 用法：
-                - **按风险分级执行**：只读命令在工作区内免确认、工作区外常规确认；写/删/移动、git 写操作等为红色强制确认
-                  （工作区内也需确认）。用户拒绝则不执行。
+                - **按风险分级执行**：只读命令免确认；写/删/移动、git 写操作等为红色强制确认（工作区内也需确认）。用户拒绝则不执行。
                 - 只读命令：ls/rg/grep/head/sort/uniq/cut/tr/nl/column/jq 等，以及 git 只读（status/log/show/diff/branch -l/…）。
                 - 受限命令：find（禁 -exec/-delete 等）、sed（禁 -i/-f 与 e/w/r）、awk（禁 -f 与 system/getline/输出重定向）。
                 - git 只做只读与明确写（add/commit/checkout/switch/restore/reset/clean/merge/rebase/cherry-pick/revert/stash/tag/branch/remote）。
@@ -538,6 +571,50 @@ extension ShellToolProvider: LocalToolProvider {
                     "required": ["command"],
                 ],
                 isReadOnly: false
+            ),
+        ]
+    }
+
+    private func peekSchemas() -> [LocalToolSchema] {
+        [
+            LocalToolSchema(
+                name: "run",
+                description: """
+                在用户 Mac 上做**只读探查**：看环境、看文件/目录元信息、看 git 状态。**不读文件正文、不扫盘、不改任何东西**。
+
+                允许的命令：
+                - 环境：pwd / whoami / hostname / date / uname / sw_vers / arch / which / basename / dirname / realpath
+                - 文件·目录元信息：ls（禁 -R）/ stat / file / wc / du（仅 -sh 汇总）
+                - git 状态：git status / git rev-parse / git branch --show-current / git log -n N（N≤\(ShellCommandParser.peekGitLogMaxCount)）
+
+                说明：
+                - 支持管道与串联（| && || ;）；不支持变量展开、通配符、重定向、cd、后台。
+                - 工作目录默认 Agent 工作区；命令里的文件路径必须在可访问目录内，敏感文件（密钥/凭据）会被硬拦。
+                - **扫描/读取内容/完整历史等命令不在主对话开放**（如 rg/grep/find/tree/sort/head/tail/cat、
+                  git log 不带 -n、git show、git diff）。需要这些时，请调用 task 工具派 file_explore 子任务执行。
+
+                \(DirectoryAuthorizationManager.accessDescriptionBlock())
+                - 返回 JSON：output、exit_code、timed_out；输出过大时截断并可能落盘（output_path 由 fs__ 工具读取）。
+                """,
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "command": [
+                            "type": "string",
+                            "description": "要执行的只读探查命令，如 ls -la、git status、du -sh",
+                        ],
+                        "workdir": [
+                            "type": "string",
+                            "description": "工作目录绝对路径（可选，默认 Agent 工作区，隐式授权）",
+                        ],
+                        "timeout_secs": [
+                            "type": "integer",
+                            "description": "超时秒数（可选，默认 60，上限 100）",
+                        ],
+                    ],
+                    "required": ["command"],
+                ],
+                isReadOnly: true
             ),
         ]
     }

@@ -177,6 +177,20 @@ class ChatViewModel: ObservableObject {
     /// 用于让回答短到能整段存进文档批注。不走 max_tokens（那是静默硬截断）。
     @Published var briefAnswer = false
 
+    // MARK: 无痕（ephemeral）
+
+    /// 空白 tab 的「待生效」无痕意图：点击只改本地，首条消息经 /chat {ephemeral:true} 落库。
+    @Published private(set) var ephemeralIntent = false
+    /// 已有会话的服务端无痕标记（loadConversation/seedEphemeral 带入，PATCH 成功后更新）。
+    @Published private(set) var conversationEphemeral = false
+    /// 无痕状态变化回调：由 ChatTabManager 接线，镜像到 ChatTab.isEphemeral 供顶栏读取。
+    var onEphemeralChanged: ((Bool) -> Void)?
+    /// 正在切换已有会话的无痕标记（PATCH 在途）：防双击竞态 + 禁点。
+    @Published private(set) var isTogglingEphemeral = false
+
+    /// 是否处于无痕（待生效或已生效）。
+    var isEphemeral: Bool { ephemeralIntent || conversationEphemeral }
+
     /// 当前流的工具调用展示队列（tool_call 入队，tool_result 更新状态）
     @Published var toolQueue: [ToolCallDisplay] = []
     /// 点文档卡片时回调：(documentId)。由 ChatTabManager 接线到 DocumentSelectionCoordinator。
@@ -472,6 +486,52 @@ class ChatViewModel: ObservableObject {
         briefAnswer.toggle()
         UserDefaults.standard.set(briefAnswer, forKey: briefAnswerDefaultsKey)
         ToastCenter.shared.show(briefAnswer ? "已开启：精炼回答（≤500 字）" : "已关闭：精炼回答")
+    }
+
+    // MARK: - 无痕（ephemeral）
+
+    /// 打开会话时由上层灌入服务端无痕标记（不走 apiClient——标记随列表数据一起来）。
+    func seedEphemeral(_ value: Bool) {
+        ephemeralIntent = false
+        conversationEphemeral = value
+        onEphemeralChanged?(isEphemeral)
+    }
+
+    /// 切换无痕：空白 tab 只改本地意图（不建会话）；已有会话经 PATCH 落库。
+    func toggleEphemeral() {
+        guard let cid = conversationId, !cid.isEmpty else {
+            ephemeralIntent.toggle()
+            onEphemeralChanged?(isEphemeral)
+            ToastCenter.shared.show(ephemeralIntent ? "已开启无痕：发送后约 30 分钟自动销毁" : "已关闭无痕")
+            return
+        }
+        guard !isTogglingEphemeral else { return } // 防双击：PATCH 在途时忽略
+        isTogglingEphemeral = true
+        Task {
+            await setEphemeralOnServer(!conversationEphemeral, convID: cid)
+            isTogglingEphemeral = false
+        }
+    }
+
+    private func setEphemeralOnServer(_ value: Bool, convID: String) async {
+        do {
+            try await apiClient.setConversationEphemeral(id: convID, ephemeral: value)
+            conversationEphemeral = value
+            onEphemeralChanged?(isEphemeral)
+            ToastCenter.shared.show(value ? "已开启无痕：最后一轮约 30 分钟后自动销毁，可撤销" : "已关闭无痕")
+        } catch {
+            // 默认会话禁止无痕：服务端 400 兜底
+            LogBuffer.shared.warning("ChatViewModel.setEphemeralOnServer failed: \(error)")
+            ToastCenter.shared.show(ToastCenter.friendlyErrorText(error, action: "设置无痕"))
+        }
+    }
+
+    /// 首条消息建成无痕会话后：把「待生效」意图转成服务端标记。
+    private func promoteEphemeralIntent() {
+        guard ephemeralIntent else { return }
+        ephemeralIntent = false
+        conversationEphemeral = true
+        onEphemeralChanged?(true)
     }
 
     /// 挂起等待用户确认工具执行；60s 超时视为拒绝。
@@ -799,6 +859,9 @@ class ChatViewModel: ObservableObject {
             newestCursor = result.newestCursor
             hasMoreBefore = result.hasMoreBefore
             hasMoreAfter = result.hasMoreAfter
+            // 无痕标记随消息响应一起来：所有加载路径（openConversation / iOS 直连 / 历史回退）
+            // 统一在此灌入，避免只在 openConversation 注入导致 pill 与服务端不一致。
+            seedEphemeral(result.ephemeral ?? false)
         } catch {
             LogBuffer.shared.error("ChatViewModel.loadConversation: \(error)")
             // 会话不存在（如无痕会话已销毁）→ 通知上层关闭 tab，不再显示"加载失败"
@@ -882,6 +945,9 @@ class ChatViewModel: ObservableObject {
         errorMessage = nil
         conversationId = ""
         conversationTitle = nil
+        ephemeralIntent = false
+        conversationEphemeral = false
+        onEphemeralChanged?(false)
         isEditing = false
         contextTokens = 0
         contextWindow = 0
@@ -1039,7 +1105,7 @@ class ChatViewModel: ObservableObject {
         }
         // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan/strict）
         let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
-        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, hiddenRound: hiddenRound, attachments: attachmentIds)
+        sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, hiddenRound: hiddenRound, attachments: attachmentIds, ephemeral: ephemeralIntent)
     }
 
     func stopStreaming() {
@@ -1202,6 +1268,8 @@ class ChatViewModel: ObservableObject {
             if let cid = parseConversationIdFromDone(event.data) {
                 conversationId = cid
                 onConversationCreated?(cid, parseTitleFromDone(event.data))
+                // 空白 tab 若开了无痕意图：会话已按 ephemeral=true 建成 → 转成服务端标记
+                promoteEphemeralIntent()
                 // 空白 tab 首条消息建会话后：把当前 deep/flash 选择预存到新会话键（后续重载继承）
                 UserDefaults.standard.set(deepMode, forKey: "xhan_conv_deep_mode_\(cid)")
                 // 同上：响应检验开关预存

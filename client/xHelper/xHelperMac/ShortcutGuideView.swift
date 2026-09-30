@@ -19,8 +19,6 @@ struct ShortcutGuideView: View {
             ShortcutItem(keys: ["⌘", "Q"], desc: "退出应用（长按约 0.5 秒）"),
             ShortcutItem(keys: ["⌘", ","], desc: "打开设置"),
             ShortcutItem(keys: ["⌘", "N"], desc: "新建对话"),
-            ShortcutItem(keys: ["⌘", "⇧", "N"], desc: "新建无痕会话"),
-            ShortcutItem(keys: ["⌘", "B"], desc: "切换左侧栏"),
             ShortcutItem(keys: ["⌘", "⇧", "B"], desc: "切换右侧栏"),
             ShortcutItem(keys: ["⌘", "⇧", "↑"], desc: "上一个会话"),
             ShortcutItem(keys: ["⌘", "⇧", "↓"], desc: "下一个会话"),

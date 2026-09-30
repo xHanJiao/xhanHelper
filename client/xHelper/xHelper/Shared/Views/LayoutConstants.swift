@@ -6,14 +6,13 @@ enum Layout {
     /// 单条消息最多带几张图（客户端护栏：防手滑全选整个文件夹）。
     /// 服务端/DeepSeek 的上限远高于此（单请求 600 张），这里只挡误操作。
     static let maxDraftImages: Int = 20
-    static let sidebarMinWidth: CGFloat = 38
-    static let sidebarMaxWidth: CGFloat = 276
-    static let sidebarSnapThreshold: CGFloat = 120
-    static let sidebarDefaultWidth: CGFloat = 200
 
     static let toolbarHorizontalPadding: CGFloat = 16
 
     // MARK: - 顶栏胶囊（icon 边长 + 组内边距，高度为派生值，改动自动跟随）
+
+    /// 顶栏左缘红绿灯让位（与 toolbarHorizontalPadding 相加 = 左区内容起始位置）。
+    static let topBarTrafficClearance: CGFloat = 56
 
     /// 胶囊内 icon 边长（CapsuleIcon frame）。
     static let topBarIconSize: CGFloat = 26
@@ -24,7 +23,7 @@ enum Layout {
     /// 胶囊组总高（icon + 上下内边距），顶栏分割线等按此对齐。
     static let topBarCapsuleHeight: CGFloat = topBarIconSize + topBarCapsuleVPadding * 2
 
-    // MARK: - 三栏布局（单点改基础值，派生值自动跟随）
+    // MARK: - 双栏布局（单点改基础值，派生值自动跟随）
 
     /// 卡片与窗口边缘的横向间隙（缝线两侧各取一半确保视觉等宽）。
     static let cardGap: CGFloat = 6
@@ -36,37 +35,21 @@ enum Layout {
     static let cardBottomGap: CGFloat = 6
 
     /// 中间聊天区最小宽。
-    static let middleMinWidth: CGFloat = 340
+    static let middleMinWidth: CGFloat = 380
     /// 右栏最小宽。
-    static let rightSidebarMinWidth: CGFloat = 340
+    static let rightSidebarMinWidth: CGFloat = 380
+    /// 窗口最小内容宽下限（底栏公式之外的兜底；实测 <750 观感变差）。
+    static let minWindowContentWidth: CGFloat = 750
     /// 分隔线（SeamMarker）宽度。
     static let seamWidth: CGFloat = 1
 
-    /// 左栏导航项文字字号。
-    static let sidebarNavFontSize: CGFloat = 16
-
-    /// 左栏卡片内容水平内边距（卡片背景内部呼吸区）。
-    static let sidebarHPadding: CGFloat = 6
-
-    /// 左栏卡片整体水平外扩（hpad×2 + 两侧 cardGap）。
-    static let sidebarOuterPadding: CGFloat =
-        sidebarHPadding * 2 + cardGap * 2
     /// 右栏卡片整体水平外扩（两侧 cardGap）。
     static let rightSidebarOuterPadding: CGFloat =
         cardGap * 2
-    /// 中间 + 右栏（含右栏外扩 + 两个 seam）的最小横向跨度。
-    static let middleAndRightMinSpan: CGFloat =
-        seamWidth + middleMinWidth + seamWidth + rightSidebarMinWidth + rightSidebarOuterPadding
-    /// 右栏打开时所需的内容最小宽（左栏收起 + 其余全部最小）。
+    /// 右栏打开时所需的内容最小宽（中栏 + 左 cardGap + seam 区 + 右栏 + 右 cardGap）。
+    /// seam 区 = seamHalfGap*2 + seamWidth；两侧 cardGap 由 rightSidebarOuterPadding 承担。
     static let rightSidebarOpenMinContentWidth: CGFloat =
-        sidebarMinWidth + sidebarOuterPadding + middleAndRightMinSpan
-
-    /// 无右栏时，侧栏宽度之外的内容最小宽（左侧栏恢复展开的窗口阈值开销）。
-    static let contentOverheadNoRightSidebar: CGFloat =
-        cardGap * 2 + sidebarHPadding * 2 + seamHalfGap * 2 + seamWidth + middleMinWidth
-    /// 右栏打开时，侧栏宽度之外的内容最小宽（同上，右栏开启场景）。
-    static let contentOverheadRightSidebarOpen: CGFloat =
-        rightSidebarOpenMinContentWidth - sidebarMinWidth
+        middleMinWidth + seamHalfGap * 2 + seamWidth + rightSidebarMinWidth + rightSidebarOuterPadding
 
     // MARK: - 文档阅读器内三栏（目录 / 正文 / 批注）
 

@@ -18,7 +18,7 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
 
-    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, memoryThreshold: Double = 0.5, memoryLimit: Int = 8, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil, briefAnswer: Bool = false, hiddenRound: Bool = false, attachments: [String] = []) {
+    func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, memoryThreshold: Double = 0.5, memoryLimit: Int = 8, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil, briefAnswer: Bool = false, hiddenRound: Bool = false, attachments: [String] = [], ephemeral: Bool = false) {
         let url = URL(string: "\(baseURL)/api/chat")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -45,6 +45,8 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         if hiddenRound { body["hidden_round"] = true }
         // 附件图片：先经 POST /api/images/upload 上传拿到 image_id，这里只传 id 列表
         if !attachments.isEmpty { body["attachments"] = attachments }
+        // 无痕：仅新建会话时生效（客户端空白 tab 开了无痕意图时随首条消息发）
+        if ephemeral { body["ephemeral"] = true }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         if req.httpBody == nil {
             Self.log.error("failed to serialize request body")

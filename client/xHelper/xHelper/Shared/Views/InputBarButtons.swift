@@ -134,6 +134,37 @@ struct BriefPill: View {
     }
 }
 
+/// 无痕（ephemeral）图标按钮：会话结束后自动销毁（不可恢复）。
+/// 空白 tab 开启＝「待生效」（只改本地意图，不建会话）；已有会话开启＝PATCH 落库。
+/// 状态由 ChatViewModel 持有（`isEphemeral`），本视图只负责外观与 tooltip。
+struct EphemeralPill: View {
+    let context: InputBarContext
+    let isOn: Bool
+    let isBlank: Bool
+    var isEnabled: Bool = true
+    let action: () -> Void
+
+    var body: some View {
+        IconButton(
+            visibility: .always,
+            context: context,
+            symbol: isOn ? "theatermasks.fill" : "theatermasks",
+            tint: isOn ? Color("appAccent") : .secondary,
+            isEnabled: isEnabled,
+            tooltip: tooltip,
+            action: action
+        )
+    }
+
+    private var tooltip: String {
+        guard isOn else { return "开启无痕：会话结束后自动销毁（不可恢复）" }
+        if isBlank {
+            return "无痕已开（待发送）：首条消息后生效，约 30 分钟后自动销毁，点击取消"
+        }
+        return "无痕生效中：最后一轮对话约 30 分钟后自动销毁，可撤销（进入销毁后不可逆）"
+    }
+}
+
 /// 会话接力图标按钮：把当前会话整理成接力文档并新开会话续接。仅图标，hover 看 tooltip。
 /// 计划模式不能写文档，故置灰并用 tooltip 说明原因（而非「暂时不可点」）。
 struct HandoffPill: View {

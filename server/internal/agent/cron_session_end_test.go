@@ -94,6 +94,29 @@ func TestSessionEndTask_DebounceResetsProcessAt(t *testing.T) {
 	}
 }
 
+// 转无痕补挂任务不带新消息：debounce 必须保留原 LastMsgID（用户随后取消无痕时，
+// 后处理仍需锚点消息），不能把已有锚点清成空串。
+func TestSessionEndTask_EmptyMsgIDPreservesAnchorOnDebounce(t *testing.T) {
+	repo, cleanup := setupTestDelayedTaskRepo(t)
+	defer cleanup()
+
+	cr := newTestCronRunner(repo)
+	cr.NotifySessionEnd("user-0001", "conv-0001", "msg-0004")
+	cr.NotifySessionEnd("user-0001", "conv-0001", "")
+
+	tasks, _ := repo.FindPendingByUserAndType(context.Background(), "user-0001", "session_end")
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 pending task, got %d", len(tasks))
+	}
+	meta, err := tasks[0].ParseMeta()
+	if err != nil {
+		t.Fatalf("ParseMeta: %v", err)
+	}
+	if meta.LastMsgID != "msg-0004" {
+		t.Errorf("expected LastMsgID preserved as msg-0004, got %q", meta.LastMsgID)
+	}
+}
+
 func TestSessionEndTask_ListDueAndMarkDone(t *testing.T) {
 	repo, cleanup := setupTestDelayedTaskRepo(t)
 	defer cleanup()

@@ -5,7 +5,6 @@ import Foundation
 /// @State/@StateObject，通过本单例把命令分发给注册者（ContentView onAppear 注册）。
 ///
 /// 承载的快捷键（macOS）：
-/// - Cmd+B               切换左侧栏（焦点无关）
 /// - Cmd+Shift+B         切换右侧栏（焦点无关，直接走 BrowserToolProvider.shared.rightSidebar）
 /// - Cmd+N               新建对话（焦点无关）
 /// - Cmd+Shift+↑ / ↓     会话列表上/下切换（焦点无关，delta -1/+1）
@@ -14,14 +13,8 @@ import Foundation
 final class AppShortcutBridge {
     static let shared = AppShortcutBridge()
 
-    /// 切换左侧栏（由 ContentView 注册，操作其 @State sidebarWidth）
-    var onToggleLeftSidebar: (() -> Void)?
-
     /// 新建对话（由 ContentView 注册，走 chatTabManager.newChat）
     var onNewChat: (() -> Void)?
-
-    /// 新建无痕会话（由 ContentView 注册，走 chatTabManager.newEphemeralChat）
-    var onNewEphemeralChat: (() -> Void)?
 
     /// 会话列表上/下切换（由 ContentView 注册，delta：-1 上移，+1 下移）
     var onSwitchConversation: ((Int) -> Void)?

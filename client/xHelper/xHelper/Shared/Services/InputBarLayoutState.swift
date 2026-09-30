@@ -24,6 +24,7 @@ final class InputBarLayoutState: ObservableObject {
         // 展开过，所以"缺失即补入"安全；补进去后用户再展开会被存下来，不会重复补。
         // 以后再加按钮，这里跟着补一行。
         if !stored.contains(InputBarButtonID.brief.rawValue) { restored.insert(.brief) }
+        if !stored.contains(InputBarButtonID.ephemeral.rawValue) { restored.insert(.ephemeral) }
         collapsed = restored
     }
 

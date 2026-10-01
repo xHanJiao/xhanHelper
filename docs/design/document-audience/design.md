@@ -105,8 +105,19 @@ AutoMigrate 补列时，存量行会被填成列默认值 `internal`；而列表
 **正序**：`backfill-audience --write` → **再**启动/滚动新二进制。
 `backfill-audience` 自己走 `app.InitDB`，**会先跑 AutoMigrate**（建列 + 回标一步到位），所以新服务起来时值已就位、窗口为零。
 
-- 注意：**dry-run 也会建列**（InitDB 副作用）——prod 上先备份。
+本机执行（本地 SQLite；prod 库 = `~/Library/Application Support/xhanHelper/`）：
+
+```bash
+cd server
+# 0) 先在线备份 prod 库：sqlite3 "<db>" ".backup '<db>.bak-...'"
+make backfill-audience-local                                          # 1) dry-run：打印两张清单（也会 AutoMigrate 建列）
+make backfill-audience-local APP_ENV=local CONFIRM_PROD=yes ARGS="--write"   # 2) 落库
+# 3) 重启本地 app / 刷新列表（app 在跑时 WAL 支持并发，回标期间旧列表照常）
+```
+
+- 注意：**dry-run 也会建列**（InitDB 副作用）——prod 库上先备份。若 app 已用新代码跑过、列已建好且默认全 `internal`，列表会短暂为空，直到回标完成。
 - `--write` 命中 prod 库需 `CONFIRM_PROD=yes`（`GuardProdWrite`）。
+- 落库用 `UpdateColumn`，**不动 `updated_at`**（见存量回标节）。
 - 应急兜底：列表接口支持 `audience=all`，必要时可临时以"全部"为默认灰度（本项目不走这条，仅备查）。
 
 ## 验证

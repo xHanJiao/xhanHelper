@@ -523,7 +523,7 @@ private struct DocumentFullView: View {
                 // 正文被改写后划线的失活状态要重算：服务端为准，客户端不自己猜
                 .onChange(of: document.content) { _, _ in reader.refreshAnnotations() }
 
-                // 批注面板常驻：展开 300，空间不够/手动收起 → 窄条
+                // 批注面板常驻：展开 320，空间不够/手动收起 → 窄条
                 if annotExpanded {
                     Divider().opacity(0.3)
                     annotationPanel

@@ -95,6 +95,9 @@ struct AnnotationPanel: View {
     /// 卡片悬停变化：(批注 id, 是否在卡内, 卡片 global frame)。用于画「卡片→划线」连线。
     let onHoverCard: (String, Bool, CGRect) -> Void
 
+    /// 字号跟随全局设置（面板内所有文本按 scaledSize 比例放大）
+    @ObservedObject private var fontManager = FontSizeManager.shared
+
     /// 与服务端 `List` 同序（start_offset ASC, id ASC），卡片顺序才稳定
     private var ordered: [DocumentAnnotation] {
         annotations.sorted { a, b in
@@ -116,10 +119,10 @@ struct AnnotationPanel: View {
     private var header: some View {
         HStack(spacing: 6) {
             Text("划线与批注")
-                .font(.caption.weight(.semibold))
+                .font(.system(size: fontManager.scaledSize * 0.76, weight: .semibold))
                 .foregroundColor(.secondary)
             Text("\(annotations.count)")
-                .font(.caption2)
+                .font(.system(size: fontManager.scaledSize * 0.68))
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 1)
@@ -130,7 +133,7 @@ struct AnnotationPanel: View {
             modeButton(.list)
             Button(action: onCollapse) {
                 Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: fontManager.scaledSize * 0.68, weight: .semibold))
                     .foregroundColor(.secondary)
                     .frame(width: 24, height: 24)
                     .contentShape(Rectangle())
@@ -146,7 +149,7 @@ struct AnnotationPanel: View {
         let active = mode == item
         return Button { mode = item } label: {
             Image(systemName: item.icon)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: fontManager.scaledSize * 0.64, weight: .medium))
                 .foregroundColor(active ? Color("appAccent") : .secondary)
                 .frame(width: 24, height: 24)
                 .background(active ? Color("appAccent").opacity(0.12) : .clear)
@@ -199,7 +202,7 @@ struct AnnotationPanel: View {
         VStack {
             Spacer()
             Text("还没有划线与批注")
-                .font(.caption)
+                .font(.system(size: fontManager.scaledSize * 0.76))
                 .foregroundColor(.secondary)
             Spacer()
         }
@@ -224,6 +227,9 @@ struct AnnotationThreadCard: View {
 
     @State private var draft = ""
     @State private var frame: CGRect = .zero
+
+    /// 字号跟随全局设置
+    @ObservedObject private var fontManager = FontSizeManager.shared
 
     /// 线程条数：服务端计数优先，本地已加载条数兜底
     private var replyCount: Int { max(annotation.replyCount ?? 0, replies.count) }
@@ -250,7 +256,7 @@ struct AnnotationThreadCard: View {
 
     private var quoteBlock: some View {
         Text(annotation.quote)
-            .font(.caption)
+            .font(.system(size: fontManager.scaledSize * 0.88))
             .foregroundColor(annotation.orphaned ? .secondary : .primary)
             .strikethrough(annotation.orphaned, color: .secondary)
             .lineLimit(3)
@@ -263,7 +269,7 @@ struct AnnotationThreadCard: View {
 
     private var noteBlock: some View {
         Text(annotation.note)
-            .font(.caption2)
+            .font(.system(size: fontManager.scaledSize * 0.88))
             .foregroundColor(.secondary)
             .lineLimit(4)
             .fixedSize(horizontal: false, vertical: true)
@@ -285,7 +291,7 @@ struct AnnotationThreadCard: View {
             }
             Spacer()
             Text(AnnotationTime.label(annotation.createdAt))
-                .font(.system(size: 9))
+                .font(.system(size: fontManager.scaledSize * 0.68))
                 .foregroundColor(.secondary.opacity(0.7))
         }
 
@@ -297,7 +303,7 @@ struct AnnotationThreadCard: View {
                         Image(systemName: "sparkles")
                         Text("让 AI 回复")
                     }
-                    .font(.caption2)
+                    .font(.system(size: fontManager.scaledSize * 0.76))
                     .foregroundColor(Color("appAccent"))
                     .contentShape(Rectangle())
                 }
@@ -316,14 +322,14 @@ struct AnnotationThreadCard: View {
         Button { onToggle() } label: {
             HStack(spacing: 5) {
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: fontManager.scaledSize * 0.60, weight: .semibold))
                     .foregroundColor(.secondary)
                 Text("回复 \(replyCount)")
-                    .font(.caption2)
+                    .font(.system(size: fontManager.scaledSize * 0.76))
                     .foregroundColor(.secondary)
                 if !expanded, let last = lastReply {
                     Text(last.content)
-                        .font(.caption2)
+                        .font(.system(size: fontManager.scaledSize * 0.76))
                         .foregroundColor(.secondary.opacity(0.7))
                         .lineLimit(1)
                 }
@@ -341,7 +347,7 @@ struct AnnotationThreadCard: View {
         if loading {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
-                Text("载入讨论…").font(.caption2).foregroundColor(.secondary)
+                Text("载入讨论…").font(.system(size: fontManager.scaledSize * 0.76)).foregroundColor(.secondary)
             }
         } else {
             VStack(alignment: .leading, spacing: 8) {
@@ -362,15 +368,15 @@ struct AnnotationThreadCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(reply.isAssistant ? "AI" : "你")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: fontManager.scaledSize * 0.68, weight: .medium))
                         .foregroundColor(reply.isAssistant ? Color("appAccent") : .secondary)
                     Spacer()
                     Text(AnnotationTime.label(reply.createdAt))
-                        .font(.system(size: 9))
+                        .font(.system(size: fontManager.scaledSize * 0.68))
                         .foregroundColor(.secondary.opacity(0.6))
                 }
                 Text(reply.content)
-                    .font(.caption2)
+                    .font(.system(size: fontManager.scaledSize * 0.94))
                     .foregroundColor(.primary)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
@@ -382,7 +388,7 @@ struct AnnotationThreadCard: View {
         HStack(alignment: .bottom, spacing: 6) {
             TextField("追问…", text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.caption2)
+                .font(.system(size: fontManager.scaledSize * 0.88))
                 .lineLimit(1...4)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
@@ -396,7 +402,7 @@ struct AnnotationThreadCard: View {
                 } else {
                     Image(systemName: draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                           ? "sparkles" : "paperplane.fill")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: fontManager.scaledSize * 0.72, weight: .medium))
                         .foregroundColor(Color("appAccent"))
                         .frame(width: 24, height: 24)
                         .contentShape(Rectangle())
@@ -417,7 +423,7 @@ struct AnnotationThreadCard: View {
 
     private var orphanBadge: some View {
         Text("已失活")
-            .font(.system(size: 9))
+            .font(.system(size: fontManager.scaledSize * 0.68))
             .foregroundColor(.red.opacity(0.85))
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
@@ -435,6 +441,9 @@ struct AnnotationListBody: View {
     let onDelete: (String) -> Void
     let onRelocate: (String) -> Void
     let onCancelRelocate: () -> Void
+
+    /// 字号跟随全局设置
+    @ObservedObject private var fontManager = FontSizeManager.shared
 
     private enum Tab: String, CaseIterable {
         case all = "全部"
@@ -488,7 +497,7 @@ struct AnnotationListBody: View {
             ForEach(Tab.allCases, id: \.self) { item in
                 Button { tab = item } label: {
                     Text("\(item.rawValue) \(count(of: item))")
-                        .font(.caption2)
+                        .font(.system(size: fontManager.scaledSize * 0.76))
                         .foregroundColor(tab == item ? .primary : .secondary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
@@ -507,7 +516,7 @@ struct AnnotationListBody: View {
         VStack {
             Spacer()
             Text(emptyText)
-                .font(.caption)
+                .font(.system(size: fontManager.scaledSize * 0.76))
                 .foregroundColor(.secondary)
             Spacer()
         }
@@ -539,12 +548,12 @@ struct AnnotationListBody: View {
             if relocatingID == a.id {
                 HStack(spacing: 6) {
                     Text("请在正文中重新选中一段文字")
-                        .font(.caption2)
+                        .font(.system(size: fontManager.scaledSize * 0.76))
                         .foregroundColor(Color("appAccent"))
                     Spacer()
                     Button("取消") { onCancelRelocate() }
                         .buttonStyle(.plain)
-                        .font(.caption2)
+                        .font(.system(size: fontManager.scaledSize * 0.76))
                         .foregroundColor(.secondary)
                 }
                 .padding(.top, 6)
@@ -553,11 +562,11 @@ struct AnnotationListBody: View {
                     Spacer()
                     Button("重新定位") { onRelocate(a.id) }
                         .buttonStyle(.plain)
-                        .font(.caption2)
+                        .font(.system(size: fontManager.scaledSize * 0.76))
                         .foregroundColor(Color("appAccent"))
                     Button("删除") { onDelete(a.id) }
                         .buttonStyle(.plain)
-                        .font(.caption2)
+                        .font(.system(size: fontManager.scaledSize * 0.76))
                         .foregroundColor(.red.opacity(0.85))
                 }
                 .padding(.top, 6)
@@ -580,7 +589,7 @@ struct AnnotationListBody: View {
     private func rowContent(_ a: DocumentAnnotation, orphaned: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(a.quote)
-                .font(.caption)
+                .font(.system(size: fontManager.scaledSize * 0.88))
                 .foregroundColor(orphaned ? .secondary : .primary)
                 .strikethrough(orphaned, color: .secondary)
                 .lineLimit(2)
@@ -589,7 +598,7 @@ struct AnnotationListBody: View {
 
             if !a.note.isEmpty {
                 Text(a.note)
-                    .font(.caption2)
+                    .font(.system(size: fontManager.scaledSize * 0.82))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .padding(.leading, 7)
@@ -603,7 +612,7 @@ struct AnnotationListBody: View {
             HStack(spacing: 6) {
                 if orphaned {
                     Text("已失活")
-                        .font(.system(size: 9))
+                        .font(.system(size: fontManager.scaledSize * 0.68))
                         .foregroundColor(.red.opacity(0.85))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
@@ -612,7 +621,7 @@ struct AnnotationListBody: View {
                 }
                 Spacer()
                 Text(AnnotationTime.label(a.createdAt))
-                    .font(.system(size: 9))
+                    .font(.system(size: fontManager.scaledSize * 0.68))
                     .foregroundColor(.secondary.opacity(0.7))
             }
         }

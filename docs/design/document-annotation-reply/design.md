@@ -45,7 +45,7 @@
 | AR-7 | run 落点 | ✅ 默认**纯内存**（不注入 `MsgSink`）→ 不写任何会话。可选挂一个 **hidden 子会话**做 trace（见 §8） |
 | AR-8 | 线程存储 | ✅ **α：回复表为准** + 可选 trace 子会话（β「一条批注=一个子会话」被否，理由见 §3.4） |
 | AR-9 | 批注根与回复 | ✅ 根仍是 `DocumentAnnotation.note`；追问与 AI 回复是 `DocumentAnnotationReply` 行 |
-| AR-10 | 工具白名单 | ✅ run 内只给**只读**工具（`document` / `unified_search` / `message_search` / `get_summary`）。实现用 `registry.GetReadOnlyLLMToolsFiltered` 做**函数级**过滤（`ReadOnlyFuncs()` 交集），写函数既不下发也不可见；再由过滤结果派生 `SubAgentExt.AllowedTools` 做跑期 guard（防原生 FC 幻觉） |
+| AR-10 | 工具白名单 | ✅ run 内只给**只读**工具：`registry.ReadOnlyToolDefinitions()`（全部可见工具的只读函数，与 plan 模式同一套）。写函数既不下发也不可见；再由结果派生 `SubAgentExt.AllowedTools` 做跑期 guard（防原生 FC 幻觉） |
 | AR-11 | 记忆/摘要隔离 | ✅ 批注与回复**不进**记忆 / 画像 / 摘要流水线（延续前序 D13）；run 不触发 `PostChatWorkerGroup` |
 | AR-12 | 「问 AI」 | ✅ 已删除：工具条入口、点击菜单入口、`DocumentAIBridge.onAsk`、`ChatView` 引用胶囊/窄条、`ChatViewModel.docQuote`、`DocQuote.swift`；服务端 `doc_quote` 链路（`DocQuoteMeta` / `document_quote` 块 / `DocumentQuotePacket` / `normalizeDocQuote`）一并移除 |
 | AR-13 | 失败处理 | ✅ 生成失败只影响本次回复；错误向上抛、顶层记一次日志、返回错误给客户端（不吞） |
@@ -140,7 +140,7 @@ Generate:
   1. 载入批注 + 文档（校验归属；取不到 = ErrAnnotationReplyNotFound）
   2. 回复数 ≥ maxReplies → ErrAnnotationReplyLimit
   3. 载入线程（≤200）+ 组装上下文（§4.3）
-  4. NewMiniReAct(cfg) 跑一次（只读工具白名单，超时 120s，6 轮）；**不注入 MsgSink**
+  4. NewMiniReAct(cfg) 跑一次（只读工具 = `registry.ReadOnlyToolDefinitions()` 套 `chat.tool_excludes`，超时 120s，10 轮）；**不注入 MsgSink**
   5. 取最终 assistant 文本 → 截断 ≤4000 → 与（可选）user 追问行**一次 CreateBatch 落库**（原子）
   6. 返回 Added（含追问）+ ReplyCount
 ```
@@ -443,7 +443,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 
 - 不注入 `MsgSink` → run 的 ReAct 消息不进任何会话；原会话历史/摘要/记忆流水线**全不动**。
 - 唯一写入是 `DocumentAnnotationReply` 行（设计意图）。
-- 保险：`ConvID` 传空 + 只读工具白名单，杜绝任何工具顺手改会话侧状态。
+- 保险：`ConvID` 传空 + 只读工具集（写函数不下发），杜绝任何工具顺手改会话侧状态。
 - 即便将来注入 sink，按 `RunSubAgent` 的模式也只会写进 **hidden 子会话**（`IsSubAgent=true`），不会写进原会话。
 
 ### 8.2 可选：trace 子会话
@@ -595,9 +595,9 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 
 - 模型 `model/document_annotation_reply.go`：`ID/AnnotationID/DocumentID/UserID/Role/Content/Source/CreatedAt`；索引 `annotation_id`/`document_id`/`user_id`。
 - repo `service/document_annotation_reply_repo.go`：`CreateBatch`（单 INSERT 原子）/ `ListByAnnotationID`（`created_at ASC,id ASC`，limit<0→100，limit==0 只取总数）/ `CountByAnnotation` / `CountsByAnnotationIDs`（`GROUP BY`）/ `LatestByAnnotationIDs`（`ORDER BY annotation_id,created_at DESC,id DESC` 内存取首）/ `ListRecentByAnnotationIDs`（`ROW_NUMBER() OVER (PARTITION BY annotation_id ...)`，MySQL8/SQLite3.25+）/ `DeleteByAnnotation` / `DeleteByDocument`。
-- 生成器 `agent/annotation_reply.go`：`NewAnnotationReplier`（必需依赖 nil→panic）；`Generate(ctx,userID,annotationID,userContent)`；哨兵错误 `ErrAnnotationReplyBusy/Limit/NotFound/Save`；常量 `annotationReplyMaxContentLen=4000`、`annotationReplyMaxReplies=100`、`annotationReplyTimeout=120s`、`annotationReplyMaxIterations=6`、`annotationReplyOriginRounds=10`、`annotationReplyThreadInPrompt=20`；只读工具白名单 `annotationReplyToolNames=[document,unified_search,message_search,get_summary]`（经 `GetReadOnlyLLMToolsFiltered` 函数级过滤 + 派生 `SubAgentExt.AllowedTools` guard）；回复 ID 用 `idgen.Next()`（雪花）；`loadOriginContext` 降级打日志；`buildUserMessage` 动态上下文全进 user 消息；`tryKeyedMutex.tryLock` 非阻塞。
-- registry `tool/registry.go`：新增 `GetReadOnlyLLMToolsFiltered(names)`（`GetLLMToolsFiltered` 的只读版，按 `ReadOnlyFuncs()` 交集函数）。
+- 生成器 `agent/annotation_reply.go`：`NewAnnotationReplier`（必需依赖 nil→panic）；`Generate(ctx,userID,annotationID,userContent)`；哨兵错误 `ErrAnnotationReplyBusy/Limit/NotFound/Save`；常量 `annotationReplyMaxContentLen=4000`、`annotationReplyMaxReplies=100`、`annotationReplyTimeout=120s`、`annotationReplyMaxIterations=10`、`annotationReplyOriginRounds=10`、`annotationReplyThreadInPrompt=20`；只读工具 = `registry.ReadOnlyToolDefinitions()` 套 `chat.tool_excludes`（与 plan 模式同一套；派生 `SubAgentExt.AllowedTools` guard）；回复 ID 用 `idgen.Next()`（雪花）；`loadOriginContext` 降级打日志；`buildUserMessage` 动态上下文全进 user 消息；`tryKeyedMutex.tryLock` 非阻塞。
+- registry `tool/registry.go`：`ReadOnlyToolDefinitions()`（导出全部可见工具的只读函数，plan 模式与批注路径共用）；原按名单过滤的 `GetReadOnlyLLMToolsFiltered` 已删除（无生产调用方）。
 - controller `controller/annotation.go`：`annotationItem`（嵌入 `model.DocumentAnnotation` + `reply_count`/`last_reply`）；`ListReplies`（limit≤200）；`ReplyAnnotation`（哨兵→409/404/400/500/502，`500/502` 顶层 `log.Printf` 一次）；`DeleteAnnotation` 级联删回复（失败仅记日志）。
 - 工具 `tool/document.go`：`reply_annotation`（`source=chat`，校验归属/长度/上限）；`listAnnotations` 带 `replies`（≤20/批注、`replies_truncated`）；常量 `maxAnnotationReplyLen=4000`/`maxRepliesPerAnnotation=100`/`annotationRepliesPreview=20`。
 - 装配：`appinit/tools.go` `NewDocumentTool(doc,anno,reply)`；`appinit/router.go` 建 `AnnotationReplier`（`Client: llmClients.Flash`）；`app/init_db.go` AllModels + `app/init_repos.go` Repos/InitRepos。
-- 单测：`service/document_annotation_reply_repo_test.go`（排序/计数/最近N/删除）；`tool/document_test.go` 的 `TestDocumentAnnotationReplyAndList`；`agent/annotation_reply_test.go` 的 `TestAnnotationReplier_FollowupOrderStable`（同批 [user,assistant] 顺序 + `last_reply`）；`tool/registry_readonly_test.go` 的 `TestGetReadOnlyLLMToolsFiltered_StripsWriteFuncs`（写函数不下发）。回归：`activity/track_test.go`、`service/document_repo_test.go` 的 AutoMigrate 已补 `DocumentAnnotationReply`（否则 purge 用例 no such table）。
+- 单测：`service/document_annotation_reply_repo_test.go`（排序/计数/最近N/删除）；`tool/document_test.go` 的 `TestDocumentAnnotationReplyAndList`；`agent/annotation_reply_test.go` 的 `TestAnnotationReplier_FollowupOrderStable`（同批 [user,assistant] 顺序 + `last_reply`）。回归：`activity/track_test.go`、`service/document_repo_test.go` 的 AutoMigrate 已补 `DocumentAnnotationReply`（否则 purge 用例 no such table）。

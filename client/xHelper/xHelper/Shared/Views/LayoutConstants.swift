@@ -54,7 +54,7 @@ enum Layout {
     // MARK: - 文档阅读器内三栏（目录 / 正文 / 批注）
 
     /// 批注面板展开宽 / 收起窄条宽。
-    static let docAnnotPanelWidth: CGFloat = 300
+    static let docAnnotPanelWidth: CGFloat = 320
     static let docPanelStripWidth: CGFloat = 32
     /// 目录栏展开宽。
     static let docTocExpandedWidth: CGFloat = 220

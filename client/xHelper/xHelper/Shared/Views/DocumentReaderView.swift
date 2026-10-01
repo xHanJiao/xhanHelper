@@ -789,11 +789,11 @@ span.ann-bubble:hover { transform: scale(1.6); }
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   min-width: 50px; padding: 6px 8px 5px;
   border: 0; border-radius: 8px; background: none; cursor: pointer;
-  color: var(--text); font-family: inherit; font-size: 10.5px;
+  color: var(--text); font-family: inherit; font-size: calc(var(--fs) * 0.72);
   transition: background .13s;
 }
 .floating button:hover { background: var(--accent-soft); color: var(--accent); }
-.floating button svg { width: 16px; height: 16px; }
+.floating button svg { width: calc(var(--fs) * 0.8); height: calc(var(--fs) * 0.8); }
 .floating .sep { width: 1px; background: var(--border-soft); margin: 5px 3px; }
 
 .note-editor {
@@ -804,7 +804,7 @@ span.ann-bubble:hover { transform: scale(1.6); }
 }
 .note-editor.open { display: block; }
 .note-editor .quote {
-  font-size: 11.5px; line-height: 1.55; color: var(--muted);
+  font-size: calc(var(--fs) * 0.82); line-height: 1.55; color: var(--muted);
   border-left: 2.5px solid var(--hl-hover);
   padding: 1px 0 1px 9px; margin-bottom: 9px;
   max-height: 62px; overflow: hidden;
@@ -813,16 +813,16 @@ span.ann-bubble:hover { transform: scale(1.6); }
   width: 100%; height: 84px; resize: none;
   border: 1px solid var(--border); border-radius: 8px;
   background: var(--surface-2); color: var(--text);
-  padding: 8px 10px; font-size: 12.5px; line-height: 1.6;
+  padding: 8px 10px; font-size: calc(var(--fs) * 0.90); line-height: 1.6;
   font-family: inherit; outline: none;
 }
 .note-editor textarea:focus { border-color: var(--accent); background: var(--surface); }
 .note-editor .foot { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
 .note-editor .foot .spacer { flex: 1; }
-.note-editor .hint { font-size: 10.5px; color: var(--faint); }
+.note-editor .hint { font-size: calc(var(--fs) * 0.62); color: var(--faint); }
 .btn {
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
-  font-family: inherit; font-size: 12px; padding: 5px 12px; border-radius: 7px; cursor: pointer;
+  font-family: inherit; font-size: calc(var(--fs) * 0.82); padding: 5px 12px; border-radius: 7px; cursor: pointer;
   transition: background .13s;
 }
 .btn:hover { background: var(--border-soft); }
@@ -844,14 +844,14 @@ span.ann-bubble:hover { transform: scale(1.6); }
 .popover::-webkit-scrollbar { width: 0; height: 0; }
 .popover.open { display: block; }
 .popover .p-quote {
-  font-size: 11.5px; line-height: 1.55; color: var(--muted);
+  font-size: calc(var(--fs) * 0.82); line-height: 1.55; color: var(--muted);
   border-left: 2.5px solid var(--hl-hover); padding-left: 9px; margin-bottom: 8px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.popover .p-note { font-size: 13px; line-height: 1.68; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
-.popover .p-foot { margin-top: 9px; font-size: 10.5px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+.popover .p-note { font-size: calc(var(--fs) * 0.95); line-height: 1.68; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.popover .p-foot { margin-top: 9px; font-size: calc(var(--fs) * 0.62); color: var(--faint); display: flex; align-items: center; gap: 8px; }
 .popover .p-item + .p-item { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
-.popover .p-tag { font-size: 10px; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 20px; }
+.popover .p-tag { font-size: calc(var(--fs) * 0.62); color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 20px; }
 
 .ctxmenu {
   position: fixed; z-index: 72; display: none; min-width: 158px;
@@ -864,11 +864,11 @@ span.ann-bubble:hover { transform: scale(1.6); }
 .ctxmenu.open { display: block; }
 .ctxmenu button {
   display: flex; align-items: center; gap: 9px; width: 100%;
-  border: 0; background: none; font-family: inherit; font-size: 12.5px;
+  border: 0; background: none; font-family: inherit; font-size: calc(var(--fs) * 0.88);
   color: var(--text); padding: 6px 9px; border-radius: 6px; cursor: pointer; text-align: left;
 }
 .ctxmenu button:hover { background: var(--accent-soft); color: var(--accent); }
-.ctxmenu button svg { width: 14px; height: 14px; opacity: .8; }
+.ctxmenu button svg { width: calc(var(--fs) * 0.7); height: calc(var(--fs) * 0.7); opacity: .8; }
 .ctxmenu button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .ctxmenu hr { border: 0; border-top: 1px solid var(--border-soft); margin: 4px 6px; }
 </style>

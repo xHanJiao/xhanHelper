@@ -30,16 +30,12 @@ const (
 	// annotationReplyTimeout 单次生成超时
 	annotationReplyTimeout = 120 * time.Second
 	// annotationReplyMaxIterations 生成 run 的最大轮数（含强制收敛轮）
-	annotationReplyMaxIterations = 6
+	annotationReplyMaxIterations = 10
 	// annotationReplyOriginRounds 原点会话近期轮数
 	annotationReplyOriginRounds = 10
 	// annotationReplyThreadInPrompt 注入 prompt 的线程最近条数
 	annotationReplyThreadInPrompt = 20
 )
-
-// 生成路径只暴露只读工具（AR-10）：GetReadOnlyLLMToolsFiltered 按 ReadOnlyFuncs 做函数级过滤，
-// 杜绝 run 顺手改会话/业务状态（document 的写函数不会下发）。
-var annotationReplyToolNames = []string{"document", "unified_search", "message_search", "get_summary"}
 
 // 生成失败/冲突类错误（handler 据此映射 HTTP 状态码）。
 var (
@@ -51,27 +47,29 @@ var (
 
 // AnnotationReplierConfig — AnnotationReplier 依赖。
 type AnnotationReplierConfig struct {
-	AnnoRepo    *service.DocumentAnnotationRepo
-	DocRepo     *service.DocumentRepo
-	ReplyRepo   *service.DocumentAnnotationReplyRepo
-	MsgRepo     *service.MessageRepo
-	SummaryRepo *service.ConversationSummaryRepo
-	Client      llm.LLMClient
-	Registry    *tool.Registry
-	MaxReplies  int // 默认 annotationReplyMaxReplies
+	AnnoRepo     *service.DocumentAnnotationRepo
+	DocRepo      *service.DocumentRepo
+	ReplyRepo    *service.DocumentAnnotationReplyRepo
+	MsgRepo      *service.MessageRepo
+	SummaryRepo  *service.ConversationSummaryRepo
+	Client       llm.LLMClient
+	Registry     *tool.Registry
+	MaxReplies   int      // 默认 annotationReplyMaxReplies
+	ToolExcludes []string // 隐藏工具名，与主循环/plan 模式同源（chat.tool_excludes）
 }
 
 // AnnotationReplier — 同步生成一条批注回复（button / followup 路径）。
 type AnnotationReplier struct {
-	annoRepo    *service.DocumentAnnotationRepo
-	docRepo     *service.DocumentRepo
-	replyRepo   *service.DocumentAnnotationReplyRepo
-	msgRepo     *service.MessageRepo
-	summaryRepo *service.ConversationSummaryRepo
-	client      llm.LLMClient
-	registry    *tool.Registry
-	maxReplies  int
-	mu          tryKeyedMutex // 按 annotation_id 串行化，防双击 / 双端同时点
+	annoRepo     *service.DocumentAnnotationRepo
+	docRepo      *service.DocumentRepo
+	replyRepo    *service.DocumentAnnotationReplyRepo
+	msgRepo      *service.MessageRepo
+	summaryRepo  *service.ConversationSummaryRepo
+	client       llm.LLMClient
+	registry     *tool.Registry
+	maxReplies   int
+	toolExcludes []string
+	mu           tryKeyedMutex // 按 annotation_id 串行化，防双击 / 双端同时点
 }
 
 // NewAnnotationReplier 创建生成器。必需依赖为 nil 时 panic（接线 bug 暴露在明处）。
@@ -84,14 +82,15 @@ func NewAnnotationReplier(cfg *AnnotationReplierConfig) *AnnotationReplier {
 		maxReplies = annotationReplyMaxReplies
 	}
 	return &AnnotationReplier{
-		annoRepo:    cfg.AnnoRepo,
-		docRepo:     cfg.DocRepo,
-		replyRepo:   cfg.ReplyRepo,
-		msgRepo:     cfg.MsgRepo,
-		summaryRepo: cfg.SummaryRepo,
-		client:      cfg.Client,
-		registry:    cfg.Registry,
-		maxReplies:  maxReplies,
+		annoRepo:     cfg.AnnoRepo,
+		docRepo:      cfg.DocRepo,
+		replyRepo:    cfg.ReplyRepo,
+		msgRepo:      cfg.MsgRepo,
+		summaryRepo:  cfg.SummaryRepo,
+		client:       cfg.Client,
+		registry:     cfg.Registry,
+		maxReplies:   maxReplies,
+		toolExcludes: cfg.ToolExcludes,
 	}
 }
 
@@ -135,7 +134,9 @@ func (r *AnnotationReplier) Generate(ctx context.Context, userID, annotationID, 
 
 	prompt := r.buildUserMessage(ctx, userID, doc, anno, thread, userContent)
 
-	tools := r.registry.GetReadOnlyLLMToolsFiltered(annotationReplyToolNames)
+	// 只读工具（AR-10）：取「全部可见工具的只读函数」，与 plan 模式同一套（同套 tool_excludes），写函数不下发。
+	// ponytail: 只读全量会让每轮请求体的 tools 变大（工具越多越大）；实测伤性能再给 MiniReAct 加渐进暴露。
+	tools := filterToolDefs(r.registry.ReadOnlyToolDefinitions(), r.toolExcludes)
 	// 按过滤结果派生 AllowedTools 跑期 guard：即便模型幻觉出写函数也被拦（防御性，AR-10）。
 	allowed := make(map[string][]string, len(tools))
 	for _, d := range tools {
@@ -166,6 +167,8 @@ func (r *AnnotationReplier) Generate(ctx context.Context, userID, annotationID, 
 	if content == "" {
 		return nil, fmt.Errorf("annotation reply: generate empty content (iterations=%d)", result.Iterations)
 	}
+	// 成本/轮数观测：只读工具全量 + 轮数上限下，iterations 触顶（=用掉强制收敛轮）即「工具太多/轮数不够」的信号。
+	log.Printf("annotation_reply: run done annotation=%s iterations=%d/%d tools=%d", annotationID, result.Iterations, annotationReplyMaxIterations, len(tools))
 	content = truncateRunes(content, annotationReplyMaxContentLen)
 
 	// ID 用雪花（时间有序）：追问是 [user, assistant] 同批落库，created_at 被 GORM 取同一个 now
@@ -293,7 +296,7 @@ const annotationReplySystemPrompt = `你是 xhanHelper 的文档批注助手。�
 
 规则：
 - 直接回应批注本身，简洁、具体；不要复述原文，也不要客套。
-- 需要更多上下文时可调用工具：document（读文档正文）、unified_search（检索记忆/笔记/摘要）、message_search（查历史消息）、get_summary（查对话摘要）。
+- 需要更多上下文时可调用工具（均为只读）：文档、检索（记忆/笔记/摘要/主题/历史消息）、账单/笔记/提醒、日期时间与计算等，按需调用；简单问题直接作答。
 - 划线文本是网页里的纯文本（不含 Markdown 标记，空白已折叠），不要在文档里逐字搜索它。
 - 用中文、Markdown 输出，通常 1~3 段；除非用户追问要求展开。
 - 不要提及内部工具调用过程。`

@@ -7,6 +7,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -42,6 +43,8 @@ const (
 	maxRepliesPerAnnotation = 100
 	// annotationRepliesPreview list_annotations 每条批注回带回复的条数上限。
 	annotationRepliesPreview = 20
+	// annotationScanLimit 「待回复」清单的全量扫描上限，对齐 controller 单文档批注配额（maxAnnotationsPerDoc=500）。
+	annotationScanLimit = 500
 )
 
 // resolvePaging 解析列表类函数的 limit/offset：不传用默认值，负数或超上限报错（传 0 表示只取总数、返回空列表）。
@@ -235,11 +238,12 @@ func (t *DocumentTool) Functions() []FuncSchema {
 		{
 			Name:        "list_annotations",
 			Display:     "查看划线批注",
-			Description: "查看用户在文档正文上划的线和写的批注。修改文档前先看一眼，能避开用户标出来的段落，改完也不容易把划线弄失活。note 为空表示用户只划了线没写批注。",
+			Description: "查看用户在文档正文上划的线和写的批注。修改文档前先看一眼，能避开用户标出来的段落，改完也不容易把划线弄失活。note 为空表示用户只划了线没写批注。传 pending=true 只返回「等待 AI 回复」的批注（用户写了批注，且还没被回复、或用户又追问了），按最近活跃倒序——用于批量回复 / 继续回应用户的追问。注意：只有用户在批注抽屉里的追问会写进批注线程；在主聊天里说的追问不会写入线程，因而不会出现在 pending 清单里。",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"document_id": map[string]interface{}{"type": "string", "description": "文档 ID"},
+					"pending":     map[string]interface{}{"type": "boolean", "description": "只返回等待 AI 回复的批注（note 非空，且无回复或最新一条回复是用户），按最近活跃倒序；用于批量回复 / 继续回应用户追问。默认 false 返回全部"},
 					"limit":       map[string]interface{}{"type": "integer", "description": fmt.Sprintf("每页条数，默认 %d，上限 %d；传 0 只取总数返回空列表", defaultDocPageSize, maxDocPageSize)},
 					"offset":      map[string]interface{}{"type": "integer", "description": "偏移量，默认 0，不能为负"},
 				},
@@ -622,6 +626,7 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 func (t *DocumentTool) listAnnotations(ec *ExecuteContext, args json.RawMessage) *Result {
 	var req struct {
 		DocumentID string `json:"document_id"`
+		Pending    bool   `json:"pending"`
 		Limit      *int   `json:"limit"`
 		Offset     *int   `json:"offset"`
 	}
@@ -640,7 +645,16 @@ func (t *DocumentTool) listAnnotations(ec *ExecuteContext, args json.RawMessage)
 		return &Result{Success: false, Error: "document not found"}
 	}
 
-	list, total, err := t.annoRepo.List(ec.Ctx, req.DocumentID, ec.UserID, limit, offset)
+	var (
+		list  []model.DocumentAnnotation
+		total int64
+		err   error
+	)
+	if req.Pending {
+		list, total, err = t.pendingAnnotations(ec, req.DocumentID, limit, offset)
+	} else {
+		list, total, err = t.annoRepo.List(ec.Ctx, req.DocumentID, ec.UserID, limit, offset)
+	}
 	if err != nil {
 		return &Result{Success: false, Error: "list annotations: " + err.Error()}
 	}
@@ -665,11 +679,14 @@ func (t *DocumentTool) listAnnotations(ec *ExecuteContext, args json.RawMessage)
 		Created string `json:"created_at"`
 	}
 	type item struct {
+		ID               string      `json:"id"`
 		Quote            string      `json:"quote"`
 		Note             string      `json:"note"`
 		Orphaned         bool        `json:"orphaned"`
 		Created          string      `json:"created_at"`
 		ReplyCount       int64       `json:"reply_count"`
+		LastReplyRole    string      `json:"last_reply_role"`
+		LastReplyAt      string      `json:"last_reply_at"`
 		Replies          []replyItem `json:"replies"`
 		RepliesTruncated bool        `json:"replies_truncated"`
 	}
@@ -684,23 +701,91 @@ func (t *DocumentTool) listAnnotations(ec *ExecuteContext, args json.RawMessage)
 				Created: rep.CreatedAt.Format("2006-01-02 15:04"),
 			})
 		}
+		// recent 按时间正序，末条即最新回复；无回复时留空
+		lastRole, lastAt := "", ""
+		if n := len(reps); n > 0 {
+			lastRole = reps[n-1].Role
+			lastAt = reps[n-1].CreatedAt.Format("2006-01-02 15:04:05")
+		}
 		items = append(items, item{
+			ID:               a.ID,
 			Quote:            a.Quote,
 			Note:             a.Note,
 			Orphaned:         a.Orphaned,
 			Created:          a.CreatedAt.Format("2006-01-02 15:04"),
 			ReplyCount:       counts[a.ID],
+			LastReplyRole:    lastRole,
+			LastReplyAt:      lastAt,
 			Replies:          replyItems,
 			RepliesTruncated: counts[a.ID] > int64(len(replyItems)),
 		})
 	}
 
+	hint := "note 为空表示用户只划了线没写批注；orphaned 为 true 表示原文已被改写、这条划线已失活；replies 是该批注下已有的讨论；last_reply_role 是该批注最新一条回复的角色"
+	if req.Pending {
+		hint += "。pending=true 只返回「等待 AI 回复」的批注（note 非空，且没回复或最新一条回复是用户），按最近活跃倒序，用于批量回复 / 继续回应用户追问。注意：只有用户在批注抽屉里的追问会进入批注线程；在主聊天里的追问不会写入线程，因此不在此清单体现"
+	}
+
 	data, _ := json.Marshal(map[string]interface{}{
 		"annotations": items,
 		"total":       total,
-		"hint":        "note 为空表示用户只划了线没写批注；orphaned 为 true 表示原文已被改写、这条划线已失活；replies 是该批注下已有的讨论",
+		"hint":        hint,
 	})
 	return &Result{Success: true, Data: data}
+}
+
+// pendingAnnotations 返回「等待 AI 回复」的批注：note 非空，且没有回复、或最新一条回复是用户。
+// 覆盖「新批注待首答」与「用户追问后待续答」两种场景；按最近活跃（最新回复时间，无回复则批注创建时间）倒序，再分页。
+// ponytail: 全量扫描（受单文档批注配额 annotationScanLimit 约束）后在内存过滤，避免 MySQL/SQLite 方言相关 SQL。
+func (t *DocumentTool) pendingAnnotations(ec *ExecuteContext, docID string, limit, offset int) ([]model.DocumentAnnotation, int64, error) {
+	all, totalAll, err := t.annoRepo.List(ec.Ctx, docID, ec.UserID, annotationScanLimit, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	// 扫描达到上限说明批注数已越过配额（历史/导入数据，或配额被上调），待回复清单会漏项。
+	// 这里是有意降级，但必须留痕，不能静默截断。
+	if totalAll > int64(len(all)) {
+		log.Printf("pendingAnnotations: 扫描达上限 doc=%s user=%s scanned=%d total=%d，待回复清单可能漏项", docID, ec.UserID, len(all), totalAll)
+	}
+	ids := make([]string, 0, len(all))
+	for _, a := range all {
+		ids = append(ids, a.ID)
+	}
+	latest, err := t.replyRepo.LatestByAnnotationIDs(ec.Ctx, ids, ec.UserID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	activity := func(a model.DocumentAnnotation) time.Time {
+		at := a.CreatedAt
+		if rep, ok := latest[a.ID]; ok {
+			at = rep.CreatedAt
+		}
+		return at
+	}
+	pending := make([]model.DocumentAnnotation, 0, len(all))
+	for _, a := range all {
+		if strings.TrimSpace(a.Note) == "" {
+			continue // 纯划线不回复
+		}
+		if rep, ok := latest[a.ID]; ok && rep.Role != "user" {
+			continue // 最新一条已是 AI 回复 → 等用户，不待回复
+		}
+		pending = append(pending, a)
+	}
+	sort.SliceStable(pending, func(i, j int) bool {
+		return activity(pending[i]).After(activity(pending[j]))
+	})
+
+	total := int64(len(pending))
+	if limit == 0 || offset >= len(pending) {
+		return []model.DocumentAnnotation{}, total, nil
+	}
+	end := offset + limit
+	if end > len(pending) {
+		end = len(pending)
+	}
+	return pending[offset:end], total, nil
 }
 
 // replyAnnotation — 向某条批注写入一条 AI 回复（指令/批量路径，Source=chat）。

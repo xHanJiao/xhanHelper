@@ -72,7 +72,12 @@ func resolvePaging(limit, offset *int) (int, int, string) {
 var docListFields = map[string]bool{
 	"id": true, "title": true, "tags": true, "preview": true,
 	"created_at": true, "updated_at": true, "conversation_id": true,
+	"audience": true,
 }
+
+// docAudienceParamDesc create/update 共用的 audience 参数说明：把「读者是谁」这条唯一判据写死，
+// 避免模型按可见性/length 猜。
+const docAudienceParamDesc = "文档读者层级，必填判断：给用户阅读的成品填 finished；给助手后续工作用的材料（调研底稿、交接、采集清单、证据池）填 internal。internal 默认不出现在用户列表，但工具检索/读取、拿到链接仍可见。"
 
 // docDefaultFields list/query 共用的默认返回字段（不含 preview，避免默认就堆大输出）。
 var docDefaultFields = []string{"id", "title", "tags", "created_at", "updated_at", "conversation_id"}
@@ -194,12 +199,12 @@ func NewDocumentTool(docRepo *service.DocumentRepo, annoRepo *service.DocumentAn
 func (t *DocumentTool) Name() string { return "document" }
 
 func (t *DocumentTool) Description() string {
-	return "管理用户的结构化 Markdown 文档。逐日流水/台账（睡眠、体重、饮酒、运动、时间日志等按天记的读数）归这里：先查有没有对应台账，有就追加、没有就建一篇。用户明确要求生成/保存/修改/查询/删除文章、报告、总结等时也用这里。除流水台账外，不要主动创建或修改文档。需要配图时用 image.list_images 找用户上传的图，把返回的 markdown 原样嵌入正文（如图片描述为空，说明尚未生成，可稍后重试）。" + docLinkHint
+	return "管理用户的结构化 Markdown 文档。逐日流水/台账（睡眠、体重、饮酒、运动、时间日志等按天记的读数）归这里：先查有没有对应台账，有就追加、没有就建一篇。用户明确要求生成/保存/修改/查询/删除文章、报告、总结等时也用这里。除流水台账外，不要主动创建或修改文档。创建时必须声明 audience：给用户读的成品填 finished，供助手后续工作用的材料（调研底稿、交接、采集清单、证据池）填 internal；internal 默认不出现在用户列表，但工具检索/读取仍可见。需要配图时用 image.list_images 找用户上传的图，把返回的 markdown 原样嵌入正文（如图片描述为空，说明尚未生成，可稍后重试）。" + docLinkHint
 }
 
 func (t *DocumentTool) Catalog() (CatalogEntry, bool) {
 	return CatalogEntry{
-		ShortDesc: "文档。写/查/改/删 Markdown 文档，看用户划的线和批注。逐日流水/台账归这里（有就追加、没有就建）；其余用户明确要求才用。",
+		ShortDesc: "文档。写/查/改/删 Markdown 文档，看用户划的线和批注。逐日流水/台账归这里（有就追加、没有就建）；其余用户明确要求才用。创建时须声明 audience（finished=给用户读 / internal=给助手后续用）。",
 		Funcs:     []string{"get_document", "update_document", "list_annotations", "create_document"},
 		Others:    "删除、文档列表、标签 等",
 	}, true
@@ -214,11 +219,12 @@ func (t *DocumentTool) Functions() []FuncSchema {
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"title":   map[string]interface{}{"type": "string", "description": fmt.Sprintf("文档标题，≤%d 字，超长会被拒绝", maxDocumentTitleLen)},
-					"content": map[string]interface{}{"type": "string", "description": fmt.Sprintf("Markdown 格式的文档正文，≤%d 字，超长会被拒绝（请拆分成多篇）", maxDocumentContentLen)},
-					"tags":    map[string]interface{}{"type": "string", "description": "逗号分隔的标签（半角逗号），用于分类检索，如 技术,Go,后端；自动去重"},
+					"title":    map[string]interface{}{"type": "string", "description": fmt.Sprintf("文档标题，≤%d 字，超长会被拒绝", maxDocumentTitleLen)},
+					"content":  map[string]interface{}{"type": "string", "description": fmt.Sprintf("Markdown 格式的文档正文，≤%d 字，超长会被拒绝（请拆分成多篇）", maxDocumentContentLen)},
+					"tags":     map[string]interface{}{"type": "string", "description": "逗号分隔的标签（半角逗号），用于分类检索，如 技术,Go,后端；自动去重"},
+					"audience": map[string]interface{}{"type": "string", "enum": []string{model.DocumentAudienceFinished, model.DocumentAudienceInternal}, "description": docAudienceParamDesc},
 				},
-				"required": []string{"title", "content"},
+				"required": []string{"title", "content", "audience"},
 			},
 		},
 		{
@@ -274,6 +280,7 @@ func (t *DocumentTool) Functions() []FuncSchema {
 					"title":    map[string]interface{}{"type": "string", "description": fmt.Sprintf("新的文档标题（可选），≤%d 字，超长会被拒绝", maxDocumentTitleLen)},
 					"content":  map[string]interface{}{"type": "string", "deprecated": true, "description": fmt.Sprintf("（已废弃）新的 Markdown 正文，全量覆盖，≤%d 字。优先用 old_text/new_text 局部替换，仅整篇重写时才传此参数", maxDocumentContentLen)},
 					"tags":     map[string]interface{}{"type": "string", "description": "新的标签（可选，半角逗号分隔、自动去重）。传空字符串表示清空标签"},
+					"audience": map[string]interface{}{"type": "string", "enum": []string{model.DocumentAudienceFinished, model.DocumentAudienceInternal}, "description": "调整文档读者层级（可选，不传保持不变）。" + docAudienceParamDesc},
 					"old_text": map[string]interface{}{"type": "string", "description": "要被替换的原文片段，需精确匹配且在文档中唯一（与 content 互斥）"},
 					"new_text": map[string]interface{}{"type": "string", "description": "替换后的新文本（可为空字符串表示删除片段），须与 old_text 搭配传入"},
 					"count":    map[string]interface{}{"type": "integer", "description": "要替换的匹配数量（可选）。不传时要求 old_text 唯一匹配并只替换 1 处；传入时替换前 count 处，不能超过实际匹配数"},
@@ -367,15 +374,19 @@ func (t *DocumentTool) Execute(ec *ExecuteContext, funcName string, args json.Ra
 
 func (t *DocumentTool) createDocument(ec *ExecuteContext, args json.RawMessage) *Result {
 	var req struct {
-		Title   string `json:"title"`
-		Content string `json:"content"`
-		Tags    string `json:"tags"`
+		Title    string `json:"title"`
+		Content  string `json:"content"`
+		Tags     string `json:"tags"`
+		Audience string `json:"audience"`
 	}
 	if err := decodeArgs(args, &req); err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
 	if req.Title == "" || req.Content == "" {
 		return &Result{Success: false, Error: "title and content required"}
+	}
+	if !model.ValidDocumentAudience(req.Audience) {
+		return &Result{Success: false, Error: "audience 必填，且必须为 finished（给用户读）或 internal（给助手后续工作用）"}
 	}
 	if utf8.RuneCountInString(req.Content) > maxDocumentContentLen {
 		return &Result{Success: false, Error: fmt.Sprintf("文档正文超长（≤%d 字），请拆分成多篇文档", maxDocumentContentLen)}
@@ -385,11 +396,12 @@ func (t *DocumentTool) createDocument(ec *ExecuteContext, args json.RawMessage) 
 	}
 
 	doc := &model.Document{
-		ID:      uuid.New().String(),
-		UserID:  ec.UserID,
-		Title:   req.Title,
-		Content: req.Content,
-		Tags:    service.NormalizeTags(req.Tags),
+		ID:       uuid.New().String(),
+		UserID:   ec.UserID,
+		Title:    req.Title,
+		Content:  req.Content,
+		Tags:     service.NormalizeTags(req.Tags),
+		Audience: req.Audience,
 	}
 	if ec.ConvID != "" {
 		convID := ec.ConvID
@@ -402,9 +414,10 @@ func (t *DocumentTool) createDocument(ec *ExecuteContext, args json.RawMessage) 
 	t.promoteDocImages(ec.Ctx, ec.UserID, req.Content)
 
 	data, _ := json.Marshal(map[string]interface{}{
-		"id":      doc.ID,
-		"title":   doc.Title,
-		"message": "文档已保存",
+		"id":       doc.ID,
+		"title":    doc.Title,
+		"audience": doc.Audience,
+		"message":  "文档已保存",
 	})
 	return &Result{Success: true, Data: data}
 }
@@ -509,13 +522,14 @@ func markdownHeading(line string) (string, bool) {
 
 func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) *Result {
 	var req struct {
-		ID      string  `json:"id"`
-		Title   string  `json:"title"`
-		Content string  `json:"content"`
-		Tags    *string `json:"tags"`
-		OldText string  `json:"old_text"`
-		NewText *string `json:"new_text"`
-		Count   *int    `json:"count"`
+		ID       string  `json:"id"`
+		Title    string  `json:"title"`
+		Content  string  `json:"content"`
+		Tags     *string `json:"tags"`
+		Audience *string `json:"audience"`
+		OldText  string  `json:"old_text"`
+		NewText  *string `json:"new_text"`
+		Count    *int    `json:"count"`
 	}
 	if err := decodeArgs(args, &req); err != nil {
 		return &Result{Success: false, Error: err.Error()}
@@ -575,6 +589,12 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 	if req.Tags != nil {
 		updates["tags"] = service.NormalizeTags(*req.Tags)
 	}
+	if req.Audience != nil {
+		if !model.ValidDocumentAudience(*req.Audience) {
+			return &Result{Success: false, Error: "audience 必须为 finished 或 internal"}
+		}
+		updates["audience"] = *req.Audience
+	}
 	if len(updates) == 0 {
 		return &Result{Success: true, Data: []byte(`{"message":"nothing to update"}`)}
 	}
@@ -596,12 +616,17 @@ func (t *DocumentTool) updateDocument(ec *ExecuteContext, args json.RawMessage) 
 	if v, ok := updates["content"].(string); ok {
 		newContent = v
 	}
+	newAudience := current.Audience
+	if v, ok := updates["audience"].(string); ok {
+		newAudience = v
+	}
 	out := map[string]interface{}{
-		"id":      req.ID,
-		"message": "文档已更新",
-		"title":   newTitle,
-		"tags":    newTags,
-		"preview": util.TruncateContent(newContent, docPreviewLen),
+		"id":       req.ID,
+		"message":  "文档已更新",
+		"title":    newTitle,
+		"tags":     newTags,
+		"audience": newAudience,
+		"preview":  util.TruncateContent(newContent, docPreviewLen),
 	}
 	// 正文变了就重算用户划线批注的锚点，把失活情况如实报回去
 	if newContent, ok := updates["content"].(string); ok {
@@ -864,7 +889,7 @@ func (t *DocumentTool) queryDocuments(ec *ExecuteContext, args json.RawMessage) 
 		sel = fieldSet(docDefaultFields...)
 	}
 
-	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, req.Tag, req.Keyword, nil, limit, offset)
+	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, req.Tag, req.Keyword, nil, "", limit, offset)
 	if err != nil {
 		return &Result{Success: false, Error: "query documents: " + err.Error()}
 	}
@@ -875,6 +900,7 @@ func (t *DocumentTool) queryDocuments(ec *ExecuteContext, args json.RawMessage) 
 			"id":         d.ID,
 			"title":      d.Title,
 			"tags":       d.Tags,
+			"audience":   d.Audience,
 			"created_at": d.CreatedAt,
 			"updated_at": d.UpdatedAt,
 			"preview":    util.TruncateContent(d.Content, docPreviewLen),
@@ -943,7 +969,7 @@ func (t *DocumentTool) listDocuments(ec *ExecuteContext, args json.RawMessage) *
 		sel = fieldSet(docDefaultFields...)
 	}
 
-	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, "", "", nil, limit, offset)
+	list, total, err := t.docRepo.List(ec.Ctx, ec.UserID, "", "", nil, "", limit, offset)
 	if err != nil {
 		return &Result{Success: false, Error: "list documents: " + err.Error()}
 	}
@@ -954,6 +980,7 @@ func (t *DocumentTool) listDocuments(ec *ExecuteContext, args json.RawMessage) *
 			"id":         d.ID,
 			"title":      d.Title,
 			"tags":       d.Tags,
+			"audience":   d.Audience,
 			"created_at": d.CreatedAt,
 			"updated_at": d.UpdatedAt,
 			"preview":    util.TruncateContent(d.Content, docPreviewLen),
@@ -979,7 +1006,7 @@ func (t *DocumentTool) listTags(ec *ExecuteContext, args json.RawMessage) *Resul
 	if err := decodeArgs(args, &struct{}{}); err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}
-	tags, err := t.docRepo.ListTags(ec.Ctx, ec.UserID)
+	tags, err := t.docRepo.ListTags(ec.Ctx, ec.UserID, "")
 	if err != nil {
 		return &Result{Success: false, Error: "list tags: " + err.Error()}
 	}

@@ -248,6 +248,10 @@ struct BrowsePanelView: View {
                 Task { await documentVM.load() }
             }
         }
+        .onChange(of: documentVM.audienceView) { _, _ in
+            // 切读者层级即重载列表（load 会回第一页）；开关不持久化，下次进面板回默认。
+            Task { await documentVM.load() }
+        }
         .onChange(of: memoryVM.showCloudMode) { _, show in
             // 进词云拉 topic（聚合轻量）；面板首次打开时列表分支由 listPage 的 .task 负责
             if show {
@@ -445,6 +449,21 @@ struct BrowsePanelView: View {
                 .labelsHidden()
                 .controlSize(.small)
                 .frame(width: 180)
+
+                if documentVM.mode == .list {
+                    // 读者层级开关：默认「仅成品」，切「全部」带数量。状态不持久化。
+                    Picker("", selection: $documentVM.audienceView) {
+                        Text(documentVM.listTotal.map { "仅成品 · \($0)" } ?? "仅成品")
+                            .tag(DocumentAudienceView.finished)
+                        Text(documentVM.listTotalAll.map { "全部 · \($0)" } ?? "全部")
+                            .tag(DocumentAudienceView.all)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .fixedSize()
+                    .help("默认只列成品；「全部」含给助手后续工作用的材料")
+                }
 
                 if documentVM.mode == .cloud {
                     Stepper(value: $documentVM.minTagCount, in: 1...maxTagCount) {

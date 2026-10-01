@@ -246,27 +246,31 @@ func keywordClause(keyword string, fields []string) (string, []any) {
 }
 
 // List 单标签筛选（保留旧签名，供工具与测试使用），等价于 ListByAllTags 传一个标签。
-func (r *DocumentRepo) List(ctx context.Context, userID, tag, keyword string, fields []string, limit, offset int) ([]model.Document, int64, error) {
+func (r *DocumentRepo) List(ctx context.Context, userID, tag, keyword string, fields []string, audience string, limit, offset int) ([]model.Document, int64, error) {
 	var tags []string
 	if tag != "" {
 		tags = []string{tag}
 	}
-	return r.ListByAllTags(ctx, userID, tags, keyword, fields, limit, offset)
+	return r.ListByAllTags(ctx, userID, tags, keyword, fields, audience, limit, offset)
 }
 
 // ListByAllTags 按多标签**交集**分页查询（文档必须同时命中全部所选标签，越选越少）。
 // limit < 0 视为默认 50；limit == 0 表示只取总数、返回空列表。
 // keyword 非空时按 fields 组合 OR 检索：title / tag（精确边界）/ content；
 // fields 为空视为 [title, content]，保持旧行为。
+// audience 非空时按读者层级过滤（finished / internal）；空串=不过滤，检索/读取全部可见。
 // 排序必须带唯一 tie-break（id），否则同 updated_at 的文档在不同 limit 下顺序可能不同，翻页会重复/漏项。
 //
 // ponytail: tags 是逗号串列、无索引，筛选走 user_id 定位 + 逐行 REPLACE/LIKE 全扫（前导通配用不上 B-tree）。
 // 实测 ~9µs/行：千篇 ~9ms、万篇 ~90ms。到万篇量级再规范化 document_tags + (user_id, tag) 复合索引，不要提前建。
-func (r *DocumentRepo) ListByAllTags(ctx context.Context, userID string, tags []string, keyword string, fields []string, limit, offset int) ([]model.Document, int64, error) {
+func (r *DocumentRepo) ListByAllTags(ctx context.Context, userID string, tags []string, keyword string, fields []string, audience string, limit, offset int) ([]model.Document, int64, error) {
 	if limit < 0 {
 		limit = 50
 	}
 	q := r.db.WithContext(ctx).Where("user_id = ? AND status = ?", userID, model.DocumentStatusActive)
+	if audience != "" {
+		q = q.Where("audience = ?", audience)
+	}
 	if len(tags) > 0 {
 		conds := make([]string, 0, len(tags))
 		args := make([]any, 0, len(tags)*4)
@@ -308,25 +312,29 @@ type TagEdge struct {
 	Count int    `json:"count"`
 }
 
-// ListTagCounts 统计用户所有文档的标签出现次数，按次数降序、名称升序
-func (r *DocumentRepo) ListTagCounts(ctx context.Context, userID string) ([]TagCount, error) {
-	counts, _, err := r.tagGraph(ctx, userID)
+// ListTagCounts 统计用户文档的标签出现次数，按次数降序、名称升序。
+// audience 非空时按读者层级过滤（与列表同口径）；空串=不过滤。
+func (r *DocumentRepo) ListTagCounts(ctx context.Context, userID, audience string) ([]TagCount, error) {
+	counts, _, err := r.tagGraph(ctx, userID, audience)
 	return counts, err
 }
 
 // TagGraph 返回标签频次 + 共现边（一次全扫同时算出，不额外查库）。
-func (r *DocumentRepo) TagGraph(ctx context.Context, userID string) ([]TagCount, []TagEdge, error) {
-	return r.tagGraph(ctx, userID)
+func (r *DocumentRepo) TagGraph(ctx context.Context, userID, audience string) ([]TagCount, []TagEdge, error) {
+	return r.tagGraph(ctx, userID, audience)
 }
 
 // tagGraph 一次 Pluck 出该用户所有 tags 串，在内存里同时统计频次与两两共现。
 // 每篇文档先按逗号切分并去重，再对去重后的标签做两两计数（k 通常 2~8，k² 可忽略）。
-func (r *DocumentRepo) tagGraph(ctx context.Context, userID string) ([]TagCount, []TagEdge, error) {
-	var raw []string
-	err := r.db.WithContext(ctx).
+func (r *DocumentRepo) tagGraph(ctx context.Context, userID, audience string) ([]TagCount, []TagEdge, error) {
+	q := r.db.WithContext(ctx).
 		Model(&model.Document{}).
-		Where("user_id = ? AND status = ? AND tags != ''", userID, model.DocumentStatusActive).
-		Pluck("tags", &raw).Error
+		Where("user_id = ? AND status = ? AND tags != ''", userID, model.DocumentStatusActive)
+	if audience != "" {
+		q = q.Where("audience = ?", audience)
+	}
+	var raw []string
+	err := q.Pluck("tags", &raw).Error
 	if err != nil {
 		return nil, nil, err
 	}
@@ -381,9 +389,9 @@ func (r *DocumentRepo) tagGraph(ctx context.Context, userID string) ([]TagCount,
 	return result, edgeList, nil
 }
 
-// ListTags 获取用户所有文档的去重标签列表（按出现次数降序）
-func (r *DocumentRepo) ListTags(ctx context.Context, userID string) ([]string, error) {
-	counts, err := r.ListTagCounts(ctx, userID)
+// ListTags 获取用户文档的去重标签列表（按出现次数降序）。audience 空串=不过滤（工具读取全可见）。
+func (r *DocumentRepo) ListTags(ctx context.Context, userID, audience string) ([]string, error) {
+	counts, err := r.ListTagCounts(ctx, userID, audience)
 	if err != nil {
 		return nil, err
 	}

@@ -22,8 +22,10 @@ func NewDocumentHandler(docRepo *service.DocumentRepo) *DocumentHandler {
 	return &DocumentHandler{docRepo: docRepo}
 }
 
-// ListDocuments GET /api/documents?tag=&tags=&keyword=&fields=title,tag,content&limit=&offset=
+// ListDocuments GET /api/documents?tag=&tags=&keyword=&fields=title,tag,content&audience=&limit=&offset=
 // tags 为逗号分隔的多标签**交集**（文档须同时含全部标签；标签名内不含逗号）；tag 为旧的单标签筛选，二者叠加。
+// audience 控制读者层级：缺省 finished（列表默认只给成品）；all=不过滤；internal=只看材料。
+// 响应 total 为当前筛选命中的总数；total_finished / total_all 为「仅成品 / 全部」两个档的数量（列表开关用）。
 func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 	userID := c.GetString("user_id")
 	keyword := c.Query("keyword")
@@ -31,14 +33,20 @@ func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
+	audience, ok := model.ParseDocumentAudienceFilter(c.Query("audience"))
+	if !ok {
+		view.JSONError(c, http.StatusBadRequest, "audience 必须为 finished / internal / all")
+		return
+	}
+
 	tags := parseDocTags(c.Query("tags"))
 	if tag := strings.TrimSpace(c.Query("tag")); tag != "" {
 		tags = append([]string{tag}, tags...)
 	}
 
-	list, total, err := h.docRepo.ListByAllTags(c.Request.Context(), userID, tags, keyword, fields, limit, offset)
+	list, total, err := h.docRepo.ListByAllTags(c.Request.Context(), userID, tags, keyword, fields, audience, limit, offset)
 	if err != nil {
-		log.Printf("ListDocuments: list user=%s tags=%v keyword=%q fields=%v: %v", userID, tags, keyword, fields, err)
+		log.Printf("ListDocuments: list user=%s tags=%v keyword=%q fields=%v audience=%q: %v", userID, tags, keyword, fields, audience, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -46,9 +54,29 @@ func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 		list = []model.Document{}
 	}
 
+	// 列表开关的数量文案需要「成品数 / 全部数」两个值，与当前视图无关，所以两个都算。
+	// limit=0 只出 total；失败不影响已拿到的列表 → 就地记日志、降级回当前 total。
+	totalFinished, totalAll := total, total
+	if audience != model.DocumentAudienceFinished {
+		if _, n, e := h.docRepo.ListByAllTags(c.Request.Context(), userID, tags, keyword, fields, model.DocumentAudienceFinished, 0, 0); e != nil {
+			log.Printf("ListDocuments: count finished user=%s tags=%v keyword=%q: %v", userID, tags, keyword, e)
+		} else {
+			totalFinished = n
+		}
+	}
+	if audience != "" {
+		if _, n, e := h.docRepo.ListByAllTags(c.Request.Context(), userID, tags, keyword, fields, "", 0, 0); e != nil {
+			log.Printf("ListDocuments: count all user=%s tags=%v keyword=%q: %v", userID, tags, keyword, e)
+		} else {
+			totalAll = n
+		}
+	}
+
 	view.JSONOK(c, gin.H{
-		"documents": list,
-		"total":     total,
+		"documents":      list,
+		"total":          total,
+		"total_finished": totalFinished,
+		"total_all":      totalAll,
 	})
 }
 
@@ -77,11 +105,17 @@ func parseDocFields(raw string) []string {
 	return out
 }
 
-// ListDocumentTags GET /api/documents/tags — 词云用的标签及出现次数 + 共现边
+// ListDocumentTags GET /api/documents/tags?audience= — 词云用的标签及出现次数 + 共现边
+// audience 与列表同口径：缺省 finished（只统计成品），all=不过滤，internal=只看材料。
 func (h *DocumentHandler) ListDocumentTags(c *gin.Context) {
 	userID := c.GetString("user_id")
+	audience, ok := model.ParseDocumentAudienceFilter(c.Query("audience"))
+	if !ok {
+		view.JSONError(c, http.StatusBadRequest, "audience 必须为 finished / internal / all")
+		return
+	}
 
-	tags, edges, err := h.docRepo.TagGraph(c.Request.Context(), userID)
+	tags, edges, err := h.docRepo.TagGraph(c.Request.Context(), userID, audience)
 	if err != nil {
 		log.Printf("ListDocumentTags: user=%s: %v", userID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

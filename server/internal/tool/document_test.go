@@ -44,7 +44,7 @@ func TestDocumentGetAndUpdate(t *testing.T) {
 
 	// create
 	createArgs := mustMarshal(t, map[string]interface{}{
-		"title": "Title", "content": "Hello World", "tags": "go",
+		"title": "Title", "content": "Hello World", "tags": "go", "audience": model.DocumentAudienceFinished,
 	})
 	ec := &ExecuteContext{Ctx: ctx, UserID: userID}
 	res := tool.Execute(ec, "create_document", createArgs)
@@ -92,7 +92,7 @@ func TestDocumentUpdateReplace(t *testing.T) {
 	ec := &ExecuteContext{Ctx: ctx, UserID: "user-1"}
 
 	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{
-		"title": "T", "content": "first line\nsecond line\nthird line", "tags": "",
+		"title": "T", "content": "first line\nsecond line\nthird line", "tags": "", "audience": model.DocumentAudienceFinished,
 	}))
 	var created map[string]interface{}
 	json.Unmarshal(res.Data, &created)
@@ -141,7 +141,7 @@ func TestDocumentUpdateReplace(t *testing.T) {
 
 	t.Run("old_text ambiguous", func(t *testing.T) {
 		res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{
-			"title": "Dup", "content": "dup text here and dup there",
+			"title": "Dup", "content": "dup text here and dup there", "audience": model.DocumentAudienceFinished,
 		}))
 		var created map[string]interface{}
 		json.Unmarshal(res.Data, &created)
@@ -155,7 +155,7 @@ func TestDocumentUpdateReplace(t *testing.T) {
 
 	t.Run("replace multiple with count", func(t *testing.T) {
 		res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{
-			"title": "Cnt", "content": "a-b-a-b-a",
+			"title": "Cnt", "content": "a-b-a-b-a", "audience": model.DocumentAudienceFinished,
 		}))
 		var created map[string]interface{}
 		json.Unmarshal(res.Data, &created)
@@ -268,7 +268,7 @@ func TestDocumentCreateValidation(t *testing.T) {
 func createDocForTest(t *testing.T, tool *DocumentTool, ec *ExecuteContext, title, content string) string {
 	t.Helper()
 	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{
-		"title": title, "content": content,
+		"title": title, "content": content, "audience": model.DocumentAudienceFinished,
 	}))
 	if !res.Success {
 		t.Fatalf("create document failed: %s", res.Error)
@@ -495,7 +495,7 @@ func TestDocumentTitleTooLong(t *testing.T) {
 	longTitle := strings.Repeat("题", maxDocumentTitleLen+1)
 
 	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
-		"title": longTitle, "content": "c",
+		"title": longTitle, "content": "c", "audience": model.DocumentAudienceFinished,
 	}))
 	if res.Success || !strings.Contains(res.Error, "标题超长") {
 		t.Fatalf("expected create to reject long title, got success=%v err=%q", res.Success, res.Error)
@@ -504,7 +504,7 @@ func TestDocumentTitleTooLong(t *testing.T) {
 	// 边界：恰好 50 字通过
 	okTitle := strings.Repeat("题", maxDocumentTitleLen)
 	res = tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
-		"title": okTitle, "content": "c",
+		"title": okTitle, "content": "c", "audience": model.DocumentAudienceFinished,
 	}))
 	if !res.Success {
 		t.Fatalf("at-limit title should pass, got: %s", res.Error)
@@ -581,7 +581,7 @@ func TestDocumentListAndQuery(t *testing.T) {
 		{"周报 2026-05", "本周完成了默认会话和历史检索两个大功能", "周报"},
 	} {
 		res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{
-			"title": item.title, "content": item.content, "tags": item.tags,
+			"title": item.title, "content": item.content, "tags": item.tags, "audience": model.DocumentAudienceFinished,
 		}))
 		if !res.Success {
 			t.Fatalf("create doc %d failed: %s", i, res.Error)
@@ -784,10 +784,10 @@ func TestDocumentListTags(t *testing.T) {
 
 	// 创建带标签的文档
 	tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
-		"title": "doc1", "content": "c1", "tags": "Go, 后端, 技术",
+		"title": "doc1", "content": "c1", "tags": "Go, 后端, 技术", "audience": model.DocumentAudienceFinished,
 	}))
 	tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
-		"title": "doc2", "content": "c2", "tags": "项目管理, 技术",
+		"title": "doc2", "content": "c2", "tags": "项目管理, 技术", "audience": model.DocumentAudienceFinished,
 	}))
 
 	res = tool.Execute(ec, "list_tags", mustMarshal(t, map[string]interface{}{}))
@@ -811,7 +811,7 @@ func TestDocumentDelete(t *testing.T) {
 
 	// create
 	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
-		"title": "to-delete", "content": "content",
+		"title": "to-delete", "content": "content", "audience": model.DocumentAudienceFinished,
 	}))
 	var created map[string]interface{}
 	json.Unmarshal(res.Data, &created)
@@ -1152,7 +1152,7 @@ func TestDocumentContentTooLong(t *testing.T) {
 
 	// create 超长应被友好拒绝
 	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
-		"title": "过长", "content": tooLong,
+		"title": "过长", "content": tooLong, "audience": model.DocumentAudienceFinished,
 	}))
 	if res.Success {
 		t.Fatal("expected create to fail for over-limit content")
@@ -1163,7 +1163,7 @@ func TestDocumentContentTooLong(t *testing.T) {
 
 	// 建一篇正常文档，供 update 场景使用
 	res = tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
-		"title": "正常", "content": "短内容",
+		"title": "正常", "content": "短内容", "audience": model.DocumentAudienceFinished,
 	}))
 	if !res.Success {
 		t.Fatalf("create failed: %s", res.Error)
@@ -1215,7 +1215,7 @@ func TestDocumentAnnotationsSurviveUpdate(t *testing.T) {
 	ec := &ExecuteContext{Ctx: ctx, UserID: "user-1"}
 
 	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{
-		"title": "T", "content": "第一段。\n\n重点句在这里。\n\n第三段。",
+		"title": "T", "content": "第一段。\n\n重点句在这里。\n\n第三段。", "audience": model.DocumentAudienceFinished,
 	}))
 	if !res.Success {
 		t.Fatalf("create: %s", res.Error)
@@ -1324,7 +1324,7 @@ func TestDocumentConcurrentUpdateNoLostUpdate(t *testing.T) {
 	}
 
 	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]string{
-		"title": "并发", "content": sb.String(),
+		"title": "并发", "content": sb.String(), "audience": model.DocumentAudienceFinished,
 	}))
 	if !res.Success {
 		t.Fatalf("create failed: %s", res.Error)
@@ -1383,7 +1383,7 @@ func TestDocumentAnnotationReplyAndList(t *testing.T) {
 	ctx := context.Background()
 	ec := &ExecuteContext{Ctx: ctx, UserID: "u1"}
 
-	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "t", "content": "hello world"}))
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "t", "content": "hello world", "audience": model.DocumentAudienceFinished}))
 	if !res.Success {
 		t.Fatalf("create doc: %s", res.Error)
 	}
@@ -1446,7 +1446,7 @@ func TestDocumentListAnnotationsPending(t *testing.T) {
 	ctx := context.Background()
 	ec := &ExecuteContext{Ctx: ctx, UserID: "u1"}
 
-	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "t", "content": "hello world"}))
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "t", "content": "hello world", "audience": model.DocumentAudienceFinished}))
 	if !res.Success {
 		t.Fatalf("create doc: %s", res.Error)
 	}
@@ -1543,7 +1543,7 @@ func TestDocumentPromotesReferencedImages(t *testing.T) {
 	}
 
 	content := "看图 ![图](/images/11111111-1111-1111-1111-111111111111.png) 和 ![外](/images/22222222-2222-2222-2222-222222222222.png)"
-	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "t", "content": content}))
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "t", "content": content, "audience": model.DocumentAudienceFinished}))
 	if !res.Success {
 		t.Fatalf("create: %s", res.Error)
 	}
@@ -1562,5 +1562,87 @@ func TestDocumentPromotesReferencedImages(t *testing.T) {
 	}
 	if gotForeign.Visibility != model.ImageVisibilityPrivate || gotForeign.Source != model.ImageSourceChat {
 		t.Fatalf("foreign image should be untouched: %+v", gotForeign)
+	}
+}
+
+func TestDocumentCreateAudience(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	// 缺 audience → 拒绝
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "t", "content": "c"}))
+	if res.Success {
+		t.Error("missing audience should fail")
+	}
+	// 非法值 → 拒绝
+	res = tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "t", "content": "c", "audience": "hidden"}))
+	if res.Success {
+		t.Error("invalid audience should fail")
+	}
+	// 合法 internal → 成功且回带 audience
+	res = tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "t", "content": "c", "audience": model.DocumentAudienceInternal}))
+	if !res.Success {
+		t.Fatalf("internal create: %s", res.Error)
+	}
+	var created map[string]interface{}
+	if err := json.Unmarshal(res.Data, &created); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if created["audience"] != model.DocumentAudienceInternal {
+		t.Errorf("created audience = %v, want internal", created["audience"])
+	}
+}
+
+func TestDocumentToolListSeesInternal(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "memo", "content": "c", "audience": model.DocumentAudienceInternal}))
+	if !res.Success {
+		t.Fatalf("create: %s", res.Error)
+	}
+	// 工具检索/读取不受用户侧 audience 过滤影响：list_documents 应看到 internal 文档
+	res = tool.Execute(ec, "list_documents", mustMarshal(t, map[string]interface{}{"fields": "id,title,audience"}))
+	if !res.Success {
+		t.Fatalf("list: %s", res.Error)
+	}
+	var out struct {
+		Documents []map[string]interface{} `json:"documents"`
+		Total     int                      `json:"total"`
+	}
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Total != 1 || len(out.Documents) != 1 || out.Documents[0]["audience"] != model.DocumentAudienceInternal {
+		t.Errorf("tool 应能看到 internal 文档，got total=%d docs=%v", out.Total, out.Documents)
+	}
+}
+
+func TestDocumentUpdateAudience(t *testing.T) {
+	tool, cleanup := setupDocumentTool(t)
+	defer cleanup()
+	ec := &ExecuteContext{Ctx: context.Background(), UserID: "user-1"}
+
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "t", "content": "c", "audience": model.DocumentAudienceFinished}))
+	var created map[string]interface{}
+	json.Unmarshal(res.Data, &created)
+	id := created["id"].(string)
+
+	// 非法值拒绝
+	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{"id": id, "audience": "visible"}))
+	if res.Success {
+		t.Error("invalid audience update should fail")
+	}
+	// 合法改层级
+	res = tool.Execute(ec, "update_document", mustMarshal(t, map[string]interface{}{"id": id, "audience": model.DocumentAudienceInternal}))
+	if !res.Success {
+		t.Fatalf("update audience: %s", res.Error)
+	}
+	var out map[string]interface{}
+	json.Unmarshal(res.Data, &out)
+	if out["audience"] != model.DocumentAudienceInternal {
+		t.Errorf("updated audience = %v, want internal", out["audience"])
 	}
 }

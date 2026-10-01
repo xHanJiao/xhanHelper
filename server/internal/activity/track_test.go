@@ -269,3 +269,26 @@ func TestCallbackZeroRowsNoEvent(t *testing.T) {
 		t.Errorf("memory.entity.changed = %+v, want 仅 create", changed)
 	}
 }
+
+// 仅改 audience 也应发 doc.updated（size_delta 0）。
+func TestCallbackDocumentAudienceUpdate(t *testing.T) {
+	db, store := setup(t)
+	repo := service.NewDocumentRepo(db)
+	ctx := activity.WithTurn(context.Background(), activity.TurnCtx{TurnID: "t1", StartEventID: "s1", ConvID: "c1"})
+
+	if err := repo.Create(ctx, &model.Document{ID: "d1", UserID: "u1", Content: "x", Audience: model.DocumentAudienceFinished}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := repo.Update(ctx, "d1", "u1", map[string]any{"audience": model.DocumentAudienceInternal}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	store.Flush()
+
+	updated := rows(t, store, activity.TypeDocUpdated)
+	if len(updated) != 1 {
+		t.Fatalf("audience-only update should emit 1 doc.updated, got %d", len(updated))
+	}
+	if attrs(t, updated[0])["doc_id"] != "d1" || attrs(t, updated[0])["size_delta"].(float64) != 0 {
+		t.Errorf("attrs = %v", attrs(t, updated[0]))
+	}
+}

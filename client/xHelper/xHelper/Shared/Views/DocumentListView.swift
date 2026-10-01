@@ -142,6 +142,7 @@ struct DocumentListView: View {
         return CardView(config: CardConfig(
             title: doc.title,
             subtitle: doc.content,
+            headerBadge: doc.isInternal ? TagBadge(text: "内部", color: .secondary) : nil,
             tags: parseTags(doc.tags),
             footerText: formatConversationDate(doc.updatedAt),
             style: .document,

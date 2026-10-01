@@ -52,7 +52,7 @@ var trackedModels = map[reflect.Type]modelSpec{
 			if _, ok := vals["content"]; ok {
 				return TypeDocUpdated, map[string]any{"doc_id": pk, "size_delta": docSizeDelta(stmt, vals)}
 			}
-			if hasAny(vals, "title", "tags") {
+			if hasAny(vals, "title", "tags", "audience") {
 				return TypeDocUpdated, map[string]any{"doc_id": pk, "size_delta": 0}
 			}
 			return "", nil // 恢复(→active)/其余：不发

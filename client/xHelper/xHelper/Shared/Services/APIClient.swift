@@ -168,7 +168,8 @@ class APIClient {
 	// MARK: Documents
 
 	/// tags 为多标签**交集**筛选（文档须同时含全部标签，空数组=不过滤）；keyword 非空时 fields 决定检索字段。
-	func listDocuments(tags: [String] = [], keyword: String? = nil, fields: Set<DocumentSearchField> = [], limit: Int = 24, offset: Int = 0) async throws -> DocumentListResponse {
+	/// audience 控制读者层级：nil=服务端默认 finished；"all"=不过滤；"internal"=只看材料。
+	func listDocuments(tags: [String] = [], keyword: String? = nil, fields: Set<DocumentSearchField> = [], audience: String? = nil, limit: Int = 24, offset: Int = 0) async throws -> DocumentListResponse {
 		var path = "/api/documents?limit=\(limit)&offset=\(offset)"
 		if !tags.isEmpty {
 			let joined = tags.joined(separator: ",")
@@ -180,12 +181,15 @@ class APIClient {
 				path += "&fields=\(fields.map(\.rawValue).sorted().joined(separator: ","))"
 			}
 		}
+		if let audience, !audience.isEmpty {
+			path += "&audience=\(audience.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? audience)"
+		}
 		return try await get(path)
 	}
 
-	/// 交集篇数：limit=0 让服务端只出 total，不拉列表。
-	func documentCount(tags: [String]) async throws -> Int {
-		let resp = try await listDocuments(tags: tags, limit: 0)
+	/// 交集篇数：limit=0 让服务端只出 total，不拉列表。audience 与列表开关同口径。
+	func documentCount(tags: [String], audience: String? = nil) async throws -> Int {
+		let resp = try await listDocuments(tags: tags, audience: audience, limit: 0)
 		return resp.total
 	}
 
@@ -193,8 +197,13 @@ class APIClient {
 		return try await get("/api/documents/\(id)")
 	}
 
-	func listDocumentTags() async throws -> DocumentTagListResponse {
-		return try await get("/api/documents/tags")
+	/// 词云标签统计。audience 与列表同口径：缺省 finished，all=不过滤。
+	func listDocumentTags(audience: String? = nil) async throws -> DocumentTagListResponse {
+		var path = "/api/documents/tags"
+		if let audience, !audience.isEmpty {
+			path += "?audience=\(audience.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? audience)"
+		}
+		return try await get(path)
 	}
 
     func deleteDocument(id: String) async throws {
@@ -803,6 +812,9 @@ struct Document: Identifiable, Codable, Equatable {
     let title: String
     let content: String
     let tags: String?
+    /// 读者层级：finished=给用户读；internal=给助手后续工作用（默认不呈现）。
+    /// 用可选：客户端先于服务端更新时不至于整列表解码失败。
+    let audience: String?
     let conversationId: String?
     let createdAt: String
     let updatedAt: String
@@ -813,15 +825,31 @@ struct Document: Identifiable, Codable, Equatable {
         case title
         case content
         case tags
+        case audience
         case conversationId = "conversation_id"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
 }
 
+extension Document {
+    /// 材料（给助手后续工作用），列表里带「内部」标记。
+    var isInternal: Bool { audience == "internal" }
+}
+
 struct DocumentListResponse: Codable {
     let documents: [Document]
     let total: Int
+    /// 「仅成品」档的数量 / 「全部」档的数量（列表开关显示数量用）。
+    let totalFinished: Int?
+    let totalAll: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case documents
+        case total
+        case totalFinished = "total_finished"
+        case totalAll = "total_all"
+    }
 }
 
 struct CloudTag: Identifiable, Codable, Equatable {

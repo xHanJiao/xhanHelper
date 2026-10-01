@@ -9,6 +9,20 @@ enum DocumentBrowseMode: Hashable {
     case trash
 }
 
+/// 文档列表的读者层级开关：仅成品（默认）/ 全部。
+/// 开关状态**不持久化**——下次进面板回默认，否则默认值形同虚设。
+enum DocumentAudienceView: String, CaseIterable, Hashable {
+    case finished
+    case all
+
+    var label: String {
+        switch self {
+        case .finished: return "仅成品"
+        case .all: return "全部"
+        }
+    }
+}
+
 /// 文档检索目标字段（输入框内多选；至少保留一个）。
 /// tag 走精确边界匹配，title/content 走子串匹配（与后端 fields 参数一一对应）。
 enum DocumentSearchField: String, CaseIterable, Hashable {
@@ -35,6 +49,11 @@ class DocumentViewModel: ObservableObject {
     @Published var searchFields: Set<DocumentSearchField> = [.title, .content]
     /// 列表模式的后端交集筛选标签（空=不过滤）。
     @Published var activeTags: [String] = []
+    /// 读者层级视图：默认只看成品。不持久化（下次进面板回默认）。
+    @Published var audienceView: DocumentAudienceView = .finished
+    /// 当前筛选命中的总数 / 不叠加 audience 过滤的总数（列表开关显示数量用）。
+    @Published var listTotal: Int?
+    @Published var listTotalAll: Int?
     @Published var mode: DocumentBrowseMode = .list
     @Published var minTagCount = 1
     /// 词云本地高亮的搜索词（纯 UI 状态，不参与后端检索）。
@@ -154,7 +173,7 @@ class DocumentViewModel: ObservableObject {
         countTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let n = try await self.apiClient.documentCount(tags: tags)
+                let n = try await self.apiClient.documentCount(tags: tags, audience: self.audienceView.rawValue)
                 if !Task.isCancelled { self.resultCount = n }
             } catch {
                 LogBuffer.shared.error("DocumentViewModel.resultCount: \(error)")
@@ -260,11 +279,14 @@ class DocumentViewModel: ObservableObject {
             let resp = try await apiClient.listDocuments(
                 tags: activeTags,
                 keyword: keyword.isEmpty ? nil : keyword,
-                fields: searchFields
+                fields: searchFields,
+                audience: audienceView.rawValue
             )
             documents = resp.documents
+            listTotal = resp.totalFinished ?? resp.total
+            listTotalAll = resp.totalAll ?? resp.total
             hasMore = resp.documents.count >= 24
-            let tagResp = try await apiClient.listDocumentTags()
+            let tagResp = try await apiClient.listDocumentTags(audience: audienceView.rawValue)
             tags = tagResp.tags
             buildGraph(tagResp.edges)
             minTagCount = min(minTagCount, max(1, tags.first?.count ?? 1))
@@ -372,6 +394,7 @@ class DocumentViewModel: ObservableObject {
                 tags: activeTags,
                 keyword: keyword.isEmpty ? nil : keyword,
                 fields: searchFields,
+                audience: audienceView.rawValue,
                 offset: offset
             )
             documents.append(contentsOf: resp.documents)

@@ -95,11 +95,22 @@ tags 现成可机械识别，**兜底可见**：
 
 方向说明：存量 229 篇里绝大多数是人真正要读的，兜底往"藏"倒会把成品一起沉底，代价比多露几篇底稿大。新写入的兜底仍走 DB 默认 `internal`（见"关键口径"第 3 条）——两处方向不同、不矛盾：**历史数据要"捞回来"，未来漏传要"别污染"。**
 
-`cmd/backfill-audience` 幂等：重复跑结果一致；只改 audience，不碰正文。
+`cmd/backfill-audience` 幂等：重复跑结果一致；只改 audience，不碰正文。dry-run 打印**两张清单**——「将置 internal」与「将置 finished」；后者是重跑误伤的可见面（把后来按 internal 写入、tags 不含底稿词的材料放开）。`--write` 前再打一条一次性迁移警告。
+
+## 发布时序（关键，避免列表短暂变空）
+
+AutoMigrate 补列时，存量行会被填成列默认值 `internal`；而列表默认 `audience=finished`。若先上新二进制、再回标，中间那段窗口用户列表会命中 0 篇，像文档全丢了。
+
+**正序**：`backfill-audience --write` → **再**启动/滚动新二进制。
+`backfill-audience` 自己走 `app.InitDB`，**会先跑 AutoMigrate**（建列 + 回标一步到位），所以新服务起来时值已就位、窗口为零。
+
+- 注意：**dry-run 也会建列**（InitDB 副作用）——prod 上先备份。
+- `--write` 命中 prod 库需 `CONFIRM_PROD=yes`（`GuardProdWrite`）。
+- 应急兜底：`parseDocAudience` 支持 `audience=all`，必要时可临时以"全部"为默认灰度（本项目不走这条，仅备查）。
 
 ## 验证
 
-- 单测：repo audience 过滤；`create_document` 缺/非法 audience 拒绝；工具 list/query 不受过滤影响（仍见 internal）；仅改 audience 发 `doc.updated`。
+- 单测：repo audience 过滤；词云 `TagGraph` audience 过滤；`create_document` 缺/非法 audience 拒绝；工具 list/query 不受过滤影响（仍见 internal）；仅改 audience 发 `doc.updated`。
 - `go build ./... && go test ./...` 全绿。
 - Swift 源集 `swiftc -typecheck` 自检（`@main` 盲区已知，最终由用户在 Xcode 编译）。
 - 真机 1 次（用户在 Xcode）：建一篇 internal → 默认列表不出现 → 切「全部」可见且带「内部」标记 → 重进面板回默认 → 工具能检索到。
@@ -107,5 +118,5 @@ tags 现成可机械识别，**兜底可见**：
 ## 缝
 
 1. dev MySQL AutoMigrate 补列后旧行确为 `internal`（需真库跑一次确认）。
-2. 存量回标在 dev 库跑一遍，核对被判 `internal` 的清单（应只含底稿类，其余都留在成品列表）。
+2. 存量回标在 dev 库跑一遍，核对两张清单（internal 应只含底稿类；finished 即"要放开谁"），确认后连同 `--write` 与发布顺序走一遍。
 3. Swift 列表开关手感 + 「内部」标记观感（真机验收）。

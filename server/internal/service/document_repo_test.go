@@ -50,7 +50,7 @@ func TestDocumentRepo_ListTagCounts(t *testing.T) {
 	seedDoc(t, repo, "d4", "u1", "")
 	seedDoc(t, repo, "d5", "u2", "Go")
 
-	counts, err := repo.ListTagCounts(context.Background(), "u1")
+	counts, err := repo.ListTagCounts(context.Background(), "u1", "")
 	if err != nil {
 		t.Fatalf("counts: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestDocumentRepo_List_TagBoundary(t *testing.T) {
 	seedDoc(t, repo, "d3", "u1", "Django")
 	seedDoc(t, repo, "d4", "u1", "a, 后端, b")
 
-	list, total, err := repo.List(context.Background(), "u1", "Go", "", nil, 10, 0)
+	list, total, err := repo.List(context.Background(), "u1", "Go", "", nil, "", 10, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -89,13 +89,13 @@ func TestDocumentRepo_List_TagBoundary(t *testing.T) {
 		t.Errorf("Go should match only d1, got total=%d ids=%v", total, ids(list))
 	}
 
-	list, total, _ = repo.List(context.Background(), "u1", "后端", "", nil, 10, 0)
+	list, total, _ = repo.List(context.Background(), "u1", "后端", "", nil, "", 10, 0)
 	if total != 1 || len(list) != 1 || list[0].ID != "d4" {
 		t.Errorf("spaced tag should match d4, got total=%d ids=%v", total, ids(list))
 	}
 
 	for _, tag := range []string{"Golang", "Django"} {
-		_, total, _ := repo.List(context.Background(), "u1", tag, "", nil, 10, 0)
+		_, total, _ := repo.List(context.Background(), "u1", tag, "", nil, "", 10, 0)
 		if total != 1 {
 			t.Errorf("%s: got total=%d, want 1", tag, total)
 		}
@@ -124,7 +124,7 @@ func TestDocumentRepo_ListByAllTagsIntersection(t *testing.T) {
 		{[]string{"A", "B", "C"}, 1, "d1"},
 		{[]string{"A", "C", "D"}, 0, ""},
 	} {
-		list, total, err := repo.ListByAllTags(ctx, "u1", tc.tags, "", nil, 10, 0)
+		list, total, err := repo.ListByAllTags(ctx, "u1", tc.tags, "", nil, "", 10, 0)
 		if err != nil {
 			t.Fatalf("list %v: %v", tc.tags, err)
 		}
@@ -139,7 +139,7 @@ func TestDocumentRepo_ListByAllTagsIntersection(t *testing.T) {
 	}
 
 	// 空 tags 等价于不过滤
-	if _, total, _ := repo.ListByAllTags(ctx, "u1", nil, "", nil, 10, 0); total != 5 {
+	if _, total, _ := repo.ListByAllTags(ctx, "u1", nil, "", nil, "", 10, 0); total != 5 {
 		t.Errorf("no tags total: got %d, want 5", total)
 	}
 }
@@ -154,7 +154,7 @@ func TestDocumentRepo_TagGraphEdges(t *testing.T) {
 	seedDoc(t, repo, "d3", "u1", "A,B")
 	seedDoc(t, repo, "d4", "u1", "A,D")
 
-	_, edges, err := repo.TagGraph(context.Background(), "u1")
+	_, edges, err := repo.TagGraph(context.Background(), "u1", "")
 	if err != nil {
 		t.Fatalf("graph: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestDocumentRepo_ListKeywordFields(t *testing.T) {
 		{"empty fields default title+content", "alpha", nil, []string{"t1", "c1"}},
 	}
 	for _, tc := range cases {
-		list, total, err := repo.List(ctx, "u1", "", tc.keyword, tc.fields, 10, 0)
+		list, total, err := repo.List(ctx, "u1", "", tc.keyword, tc.fields, "", 10, 0)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
@@ -260,11 +260,11 @@ func TestDocumentRepo_SoftDeleteRestoreAndTrash(t *testing.T) {
 	if _, err := repo.GetByID(ctx, "d1", "u1"); err == nil {
 		t.Error("GetByID should not see deleted doc")
 	}
-	list, total, _ := repo.List(ctx, "u1", "", "", nil, 10, 0)
+	list, total, _ := repo.List(ctx, "u1", "", "", nil, "", 10, 0)
 	if total != 1 || len(list) != 1 || list[0].ID != "d2" {
 		t.Errorf("active list should exclude deleted: total=%d ids=%v", total, ids(list))
 	}
-	counts, _ := repo.ListTagCounts(ctx, "u1")
+	counts, _ := repo.ListTagCounts(ctx, "u1", "")
 	if len(counts) != 1 || counts[0].Count != 1 {
 		t.Errorf("tag counts should exclude deleted, got %v", counts)
 	}
@@ -426,7 +426,7 @@ func TestDocumentRepo_ListLimitZero(t *testing.T) {
 	seedDoc(t, repo, "d1", "u1", "")
 	seedDoc(t, repo, "d2", "u1", "")
 
-	list, total, err := repo.List(context.Background(), "u1", "", "", nil, 0, 0)
+	list, total, err := repo.List(context.Background(), "u1", "", "", nil, "", 0, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestDocumentRepo_ListStableOrderOnTie(t *testing.T) {
 		t.Fatalf("force tie: %v", err)
 	}
 
-	full, total, err := repo.List(context.Background(), "u1", "", "", nil, 10, 0)
+	full, total, err := repo.List(context.Background(), "u1", "", "", nil, "", 10, 0)
 	if err != nil || total != 3 {
 		t.Fatalf("full list: total=%d err=%v", total, err)
 	}
@@ -460,9 +460,9 @@ func TestDocumentRepo_ListStableOrderOnTie(t *testing.T) {
 	}
 
 	// 分页拼接必须与整表顺序一致（不同 limit 不能改变并列项顺序）
-	page1, _, _ := repo.List(context.Background(), "u1", "", "", nil, 2, 0)
-	page2, _, _ := repo.List(context.Background(), "u1", "", "", nil, 2, 2)
-	one, _, _ := repo.List(context.Background(), "u1", "", "", nil, 1, 0)
+	page1, _, _ := repo.List(context.Background(), "u1", "", "", nil, "", 2, 0)
+	page2, _, _ := repo.List(context.Background(), "u1", "", "", nil, "", 2, 2)
+	one, _, _ := repo.List(context.Background(), "u1", "", "", nil, "", 1, 0)
 	if got := append(ids(page1), ids(page2)...); len(got) != 3 || got[0] != "0003" || got[1] != "0002" || got[2] != "0001" {
 		t.Errorf("paged ids should match full order, got %v (page1=%v page2=%v)", got, ids(page1), ids(page2))
 	}
@@ -477,7 +477,7 @@ func TestDocumentRepo_ListTagCountsFullwidthComma(t *testing.T) {
 
 	// 存量可能带全角逗号，读取侧也要能拆开
 	seedDoc(t, repo, "d1", "u1", "回归R，回归R")
-	counts, err := repo.ListTagCounts(context.Background(), "u1")
+	counts, err := repo.ListTagCounts(context.Background(), "u1", "")
 	if err != nil {
 		t.Fatalf("counts: %v", err)
 	}
@@ -541,5 +541,95 @@ func TestNormalizeTags(t *testing.T) {
 		if got := NormalizeTags(tc.in); got != tc.want {
 			t.Errorf("NormalizeTags(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestDocumentRepo_ListAudienceFilter(t *testing.T) {
+	repo, _, cleanup := setupDocumentRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	seed := func(id, audience string) {
+		t.Helper()
+		if err := repo.Create(ctx, &model.Document{ID: id, UserID: "u1", Title: id, Content: "c", Audience: audience}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	seed("f1", model.DocumentAudienceFinished)
+	seed("f2", model.DocumentAudienceFinished)
+	seed("i1", model.DocumentAudienceInternal)
+
+	// 空 audience = 不过滤：全部可见（工具检索/读取走这条）
+	if _, total, _ := repo.List(ctx, "u1", "", "", nil, "", 10, 0); total != 3 {
+		t.Errorf("no filter: total=%d, want 3", total)
+	}
+	// finished：只见成品
+	list, total, err := repo.List(ctx, "u1", "", "", nil, model.DocumentAudienceFinished, 10, 0)
+	if err != nil || total != 2 || len(list) != 2 {
+		t.Errorf("finished: total=%d ids=%v err=%v, want 2", total, ids(list), err)
+	}
+	// internal：只见材料
+	if _, total, _ := repo.List(ctx, "u1", "", "", nil, model.DocumentAudienceInternal, 10, 0); total != 1 {
+		t.Errorf("internal: total=%d, want 1", total)
+	}
+}
+
+func TestDocumentRepo_DefaultAudienceIsInternal(t *testing.T) {
+	repo, _, cleanup := setupDocumentRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// 不显式声明 audience 时走 DB 兜底 internal（防漏传污染用户列表）
+	if err := repo.Create(ctx, &model.Document{ID: "d1", UserID: "u1", Title: "t", Content: "c"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	doc, err := repo.GetByID(ctx, "d1", "u1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if doc.Audience != model.DocumentAudienceInternal {
+		t.Errorf("default audience = %q, want internal", doc.Audience)
+	}
+}
+
+func TestDocumentRepo_TagGraphAudienceFilter(t *testing.T) {
+	repo, _, cleanup := setupDocumentRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	seed := func(id, audience, tags string) {
+		t.Helper()
+		if err := repo.Create(ctx, &model.Document{ID: id, UserID: "u1", Title: id, Content: "c", Tags: tags, Audience: audience}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	seed("f1", model.DocumentAudienceFinished, "Go,Web")
+	seed("i1", model.DocumentAudienceInternal, "Go,底稿")
+
+	toMap := func(cs []TagCount) map[string]int {
+		m := map[string]int{}
+		for _, c := range cs {
+			m[c.Name] = c.Count
+		}
+		return m
+	}
+
+	// 空 audience = 不过滤：两篇都算
+	counts, _, err := repo.TagGraph(ctx, "u1", "")
+	if err != nil {
+		t.Fatalf("graph: %v", err)
+	}
+	if m := toMap(counts); m["Go"] != 2 || m["底稿"] != 1 {
+		t.Errorf("all: %v", m)
+	}
+	// finished：只见成品标签，底稿不出现
+	counts, _, _ = repo.TagGraph(ctx, "u1", model.DocumentAudienceFinished)
+	if m := toMap(counts); m["Go"] != 1 || m["底稿"] != 0 {
+		t.Errorf("finished: %v", m)
+	}
+	// internal：只见材料标签
+	counts, _, _ = repo.TagGraph(ctx, "u1", model.DocumentAudienceInternal)
+	if m := toMap(counts); m["Go"] != 1 || m["Web"] != 0 || m["底稿"] != 1 {
+		t.Errorf("internal: %v", m)
 	}
 }

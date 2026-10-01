@@ -22,7 +22,6 @@ struct ContentView: View {
 
 #if os(macOS)
     @StateObject private var rightSidebar = RightSidebarManager()
-    @State private var contentHovered = false
     /// 右面板分隔线（seam）的 x 坐标（content 坐标系），由 SeamMarker 上报。
     @State private var rightSeamX: CGFloat = 0
     @State private var windowWidth: CGFloat = 800
@@ -634,12 +633,13 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 12)
-        .modifier(CardBackgroundModifier(isLifted: contentHovered || (activeChatViewModel?.isEditing ?? false)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color("assistantText").opacity(0.12), lineWidth: 0.5))
         .frame(minWidth: Layout.middleMinWidth, idealWidth: Layout.middleMinWidth,
                maxWidth: .infinity,
                alignment: .leading)
         .layoutPriority(1)
-        .onHover { contentHovered = $0 }
     }
 #endif
 

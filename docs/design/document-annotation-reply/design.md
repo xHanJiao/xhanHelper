@@ -309,15 +309,16 @@ Response：`{"status":"ok","data":{"deleted":true}}`；404：不存在 / 非本�
 
 ### 5.5 工具 `list_annotations`（改：带回复）
 
-返回项追加 `reply_count` + `replies`（**截断**，控 token）：
+返回项追加 `reply_count` + `replies`（**截断**，控 token），以及 `last_reply_role` / `last_reply_at`（秒级，无回复时留空）：
 
 ```jsonc
 {
   "annotations": [
     {
-      "quote": "...", "note": "...", "orphaned": false, "created_at": "2026-09-30 12:00",
+      "id": "...", "quote": "...", "note": "...", "orphaned": false, "created_at": "2026-09-30 12:00",
       "reply_count": 3,
-      "replies": [                                  // 最近 ≤20 条，升序
+      "last_reply_role": "user", "last_reply_at": "2026-09-30 12:05:03",
+      "replies": [                                  // 最近 ≤20 条，升序（只有 role/content，不含回复 id）
         { "role": "user", "content": "...", "created_at": "2026-09-30 12:04" },
         { "role": "assistant", "content": "...", "created_at": "2026-09-30 12:05" }
       ],
@@ -325,9 +326,14 @@ Response：`{"status":"ok","data":{"deleted":true}}`；404：不存在 / 非本�
     }
   ],
   "total": 42,
-  "hint": "note 为空=只划线；orphaned=true=原文已改写、划线失活；replies 是该批注下已有讨论"
+  "hint": "note 为空=只划线；orphaned=true=原文已改写、划线失活；replies 是该批注下已有讨论；last_reply_role 是最新一条回复的角色"
 }
 ```
+
+可选参数 `pending=true`：只返回**等待 AI 回复**的批注（`note` 非空，且无回复或最新一条回复是用户），按最近活跃倒序、再分页，`total` 为待回复总数。用于「批量回复我的批注 / 继续回应用户追问」——批注按此清单一轮轮收敛。
+
+- **前提**：只有用户在**批注抽屉**追问框里的追问会以 `role=user` 进线程；在**主聊天**里说的追问不会写入线程，因此不在 pending 清单体现（见 §4.5 两条触发路径）。
+- **实现**：pending 过滤/排序在内存里做，扫描上限对齐单文档批注配额；命中上限（历史/导入数据或配额上调）时 `log.Printf` 告警，不静默漏项。
 
 ### 5.6 工具 `reply_annotation`（新：写，仅批量路径）
 

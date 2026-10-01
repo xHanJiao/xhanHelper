@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"gorm.io/driver/sqlite"
@@ -1413,7 +1414,8 @@ func TestDocumentAnnotationReplyAndList(t *testing.T) {
 	}
 	var out struct {
 		Annotations []struct {
-			ReplyCount int `json:"reply_count"`
+			ID         string `json:"id"`
+			ReplyCount int    `json:"reply_count"`
 			Replies    []struct {
 				Role    string `json:"role"`
 				Content string `json:"content"`
@@ -1426,9 +1428,96 @@ func TestDocumentAnnotationReplyAndList(t *testing.T) {
 	if len(out.Annotations) != 1 || out.Annotations[0].ReplyCount != 1 {
 		t.Fatalf("list_annotations=%+v", out.Annotations)
 	}
+	// 批注 id 必须随列表下发，否则主聊天的 reply_annotation 拿不到 annotation_id
+	if out.Annotations[0].ID != "a1" {
+		t.Fatalf("批注 id 应为 a1，得到 %q", out.Annotations[0].ID)
+	}
 	r := out.Annotations[0].Replies
 	if len(r) != 1 || r[0].Role != "assistant" || r[0].Content != "because" {
 		t.Fatalf("replies=%+v", r)
+	}
+}
+
+// pending=true 只回「等待 AI 回复」的批注：note 非空且（无回复 或 最新一条是用户）；
+// 纯划线、以及最新一条已是 AI 回复的都排除；结果按最近活跃倒序。
+func TestDocumentListAnnotationsPending(t *testing.T) {
+	tool, annoRepo, cleanup := setupDocumentToolWithRepos(t)
+	defer cleanup()
+	ctx := context.Background()
+	ec := &ExecuteContext{Ctx: ctx, UserID: "u1"}
+
+	res := tool.Execute(ec, "create_document", mustMarshal(t, map[string]interface{}{"title": "t", "content": "hello world"}))
+	if !res.Success {
+		t.Fatalf("create doc: %s", res.Error)
+	}
+	var created map[string]interface{}
+	if err := json.Unmarshal(res.Data, &created); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	docID := created["id"].(string)
+
+	now := time.Now()
+	old := now.Add(-time.Hour)
+	seed := []*model.DocumentAnnotation{
+		{ID: "a1", UserID: "u1", DocumentID: docID, Quote: "q1", Note: "待首答", CreatedAt: old}, // 无回复 → pending
+		{ID: "a2", UserID: "u1", DocumentID: docID, Quote: "q2", Note: "已答", CreatedAt: old},  // 最新 assistant → 排除
+		{ID: "a3", UserID: "u1", DocumentID: docID, Quote: "q3", Note: "追问中", CreatedAt: old}, // 最新 user → pending
+		{ID: "a4", UserID: "u1", DocumentID: docID, Quote: "q4", Note: "", CreatedAt: old},    // 纯划线 → 排除
+	}
+	for _, a := range seed {
+		if err := annoRepo.Create(ctx, a); err != nil {
+			t.Fatalf("seed anno %s: %v", a.ID, err)
+		}
+	}
+	// 回复时间显式错开：a3 的最新用户追问（-30m）比 a1 的批注创建时间（-1h）新，排序断言由真实时间差支撑。
+	if err := tool.replyRepo.CreateBatch(ctx, []model.DocumentAnnotationReply{
+		{ID: "a2-r1", AnnotationID: "a2", DocumentID: docID, UserID: "u1", Role: "assistant", Content: "答", Source: "chat", CreatedAt: now.Add(-50 * time.Minute)},
+		{ID: "a3-r1", AnnotationID: "a3", DocumentID: docID, UserID: "u1", Role: "assistant", Content: "答", Source: "chat", CreatedAt: now.Add(-40 * time.Minute)},
+		{ID: "a3-r2", AnnotationID: "a3", DocumentID: docID, UserID: "u1", Role: "user", Content: "那呢", Source: "followup", CreatedAt: now.Add(-30 * time.Minute)},
+	}); err != nil {
+		t.Fatalf("seed replies: %v", err)
+	}
+
+	type annoOut struct {
+		Annotations []struct {
+			ID            string `json:"id"`
+			LastReplyRole string `json:"last_reply_role"`
+		} `json:"annotations"`
+		Total int `json:"total"`
+	}
+	var out annoOut
+	res = tool.Execute(ec, "list_annotations", mustMarshal(t, map[string]interface{}{"document_id": docID, "pending": true}))
+	if !res.Success {
+		t.Fatalf("list pending: %s", res.Error)
+	}
+	if err := json.Unmarshal(res.Data, &out); err != nil {
+		t.Fatalf("unmarshal pending: %v", err)
+	}
+	if out.Total != 2 || len(out.Annotations) != 2 {
+		t.Fatalf("pending total/len 应为 2，得到 total=%d %+v", out.Total, out.Annotations)
+	}
+	// a3 有最新的用户追问 → 活跃度更高，排在 a1 前
+	if out.Annotations[0].ID != "a3" || out.Annotations[1].ID != "a1" {
+		t.Fatalf("pending 顺序应为 [a3 a1]，得到 %+v", out.Annotations)
+	}
+	if out.Annotations[0].LastReplyRole != "user" {
+		t.Fatalf("a3 last_reply_role 应为 user，得到 %q", out.Annotations[0].LastReplyRole)
+	}
+	if out.Annotations[1].LastReplyRole != "" {
+		t.Fatalf("a1 last_reply_role 应为空，得到 %q", out.Annotations[1].LastReplyRole)
+	}
+
+	// 不带 pending 时返回全部 4 条
+	res = tool.Execute(ec, "list_annotations", mustMarshal(t, map[string]interface{}{"document_id": docID}))
+	if !res.Success {
+		t.Fatalf("list all: %s", res.Error)
+	}
+	var all annoOut
+	if err := json.Unmarshal(res.Data, &all); err != nil {
+		t.Fatalf("unmarshal all: %v", err)
+	}
+	if all.Total != 4 || len(all.Annotations) != 4 {
+		t.Fatalf("全量应为 4，得到 total=%d len=%d", all.Total, len(all.Annotations))
 	}
 }
 

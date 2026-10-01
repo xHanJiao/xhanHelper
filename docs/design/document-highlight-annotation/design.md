@@ -248,12 +248,14 @@ rung 3  投影空间前后文夹逼 —— 覆盖"LLM 在划线 span 内部插�
 挂在 `DocumentTool` 上（`server/internal/tool/document.go`），与 `get_document` 同族：
 
 ```
-list_annotations(document_id, limit?, offset?)
-→ { annotations: [{quote, note, orphaned, created_at}], total, hint }
+list_annotations(document_id, pending?, limit?, offset?)
+→ { annotations: [{id, quote, note, orphaned, created_at, reply_count, last_reply_role, last_reply_at, replies, replies_truncated}], total, hint }
 ```
 
-- 返回里带 `quote` 和 `note`，**不带** offset（对 LLM 无意义）。
+- 返回里带 `id` + `quote` + `note`，**不带** offset（对 LLM 无意义）。`id` 是主聊天 `reply_annotation(annotation_id, ...)` 的唯一来源，不可省。
 - `note` 为空的（纯划线）也返回，标 `"note": ""` —— LLM 能看出"用户圈了这句但没写"。
+- `last_reply_role` / `last_reply_at`（秒级）为该批注最新一条回复的角色与时间；无回复时留空。供主聊天判断「谁在等谁」。
+- `pending=true` 只返回**等待 AI 回复**的批注（`note` 非空，且无回复或最新一条回复是用户），按最近活跃倒序——用于批量回复 / 继续回应用户追问（见 `docs/design/document-annotation-reply/design.md` §5.5）。**前提**：只有用户在批注抽屉里的追问会进线程；主聊天里的追问不写入线程，故不体现在 pending 清单。
 - 分页沿用 `resolvePaging`（`document.go:34`）。
 - 只读：进了 `ReadOnlyFuncs()`（plan 模式可用），也进了 `Catalog().Funcs` 高频组（注册表启动校验会强制这两处与 `Functions()` 一致）。
 

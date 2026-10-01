@@ -17,7 +17,6 @@ struct RightSidebarView: View {
     let baseURL: String
     let token: String
 
-    @State private var isHovered = false
     @ObservedObject private var downloadStore = DownloadHistoryStore.shared
 
     #if os(macOS)
@@ -38,8 +37,9 @@ struct RightSidebarView: View {
             #endif
         }
         .frame(minWidth: Layout.rightSidebarMinWidth, idealWidth: manager.width, maxWidth: .infinity)
-        .modifier(CardBackgroundModifier(isLifted: isHovered))
-        .onHover { isHovered = $0 }
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color("assistantText").opacity(0.12), lineWidth: 0.5))
     }
 
     // MARK: - 浏览器 tab 栏（仅浏览器态显示）

@@ -42,7 +42,7 @@
 
 | 场景 | 规则 |
 | --- | --- |
-| 用户列表下发 | 默认只 `finished`，可用列表开关切到"全部" |
+| 用户列表下发 | 默认只 `finished`，可用列表开关切到 `底稿` / `全部` |
 | 成品正文引用 `internal` | 照常渲染、可点开读，不做过滤 |
 | `internal` 正文引用 `finished` | 保留（底稿标"正式阅读稿见…"是有用的） |
 | 工具检索 / 读取 | 全部可见，不受用户侧开关影响 |
@@ -62,12 +62,13 @@
 
 ### 服务端
 
-1. `model/document.go`：加字段 `Audience string`（`size:20;not null;default:'internal';index`）+ 常量 `DocumentAudienceFinished / Internal` + 校验函数（仿 `conversation.go` 的 const 风格）。AutoMigrate 自动补列，旧行填 `internal`。
+1. `model/document.go`：加字段 `Audience string`（`size:20;not null;default:'internal'`）+ 常量 `DocumentAudienceFinished / Internal`、过滤哨兵 `DocumentAudienceFilterAll` + `ValidDocumentAudience` / `ParseDocumentAudienceFilter`（仿 `conversation.go` 的 const 风格）。AutoMigrate 自动补列，旧行填 `internal`。（不建单列索引：选择性低，真慢了再上 `(user_id, status, audience)`。）
 2. `service/document_repo.go`：`ListByAllTags` / `List` 增参 `audience string`——`""` = 全部、`finished|internal` = 过滤。
    - 工具调 `List` 传 `""`（检索/读取全部可见）。
    - controller 传过滤值。
-3. `controller/document.go`：列表新增 query `audience`。缺省 = `finished`；`all` = 不过滤；`finished|internal` = 过滤；其余非法值 400。响应加 `total_all`（同 tag/keyword 条件下、不叠加 audience 过滤的总数），供开关显示数量。
+3. `controller/document.go`：列表新增 query `audience`。缺省 = `finished`；`internal` = 只看材料；`all` = 不过滤；其余非法值 400。响应 `total` 即当前档命中数（客户端三态按钮只显示当前档，不再多算 `total_finished/total_all`）。
    - 副作用（好的）：Web 不发参数 → 自动只拿成品，无需动 Web。
+   - `/api/documents/tags` 同样接受 `audience`（词云与列表同口径，缺省 finished）。
 4. `tool/document.go`：
    - `create_document` 加 `audience`（required），参数描述写死判据「给用户看=finished / 给助手后续用=internal」；handler 校验空值/非法值报错。
    - `update_document` 加可选 `audience`，非法值报错。
@@ -79,23 +80,23 @@
 
 7. `APIClient.swift`：
    - `Document` 加 `let audience: String?`（用可选，避免客户端先于服务端更新时整列表解码失败）。
-   - `DocumentListResponse` 加 `totalAll: Int?`（映射 `total_all`）。
-   - `listDocuments(...)` 加 `audience: String?` 参数，非空则拼 `&audience=`；`documentCount` 同步透传。
-8. `DocumentViewModel.swift`：加 `@Published var audienceView`（枚举 `仅成品` / `全部`，**不持久化**——下次进面板回默认，否则默认形同虚设）；`load()/loadMore()/documentCount()` 传参；切档时 `offset=0` 重载。
-9. `BrowsePanelView.swift`：在既有「列表 / 词云 / 回收站」Picker 旁加「仅成品 · N / 全部 · M」分段控件（列表模式；数量取 `total` / `totalAll`）。入口做收敛，别用红点或角标——天天提示"这里藏着东西"等于把噪音搬回来。
+   - `listDocuments(...)` / `documentCount(...)` / `listDocumentTags(...)` 加 `audience: String?` 参数，非空则拼 `&audience=`（做百分号编码）。
+8. `DocumentViewModel.swift`：加 `@Published var audienceView`（枚举 `成品 / 底稿 / 全部`，三态，**不持久化**——下次进面板回默认，否则默认值形同虚设）；`next` 循环序成品→底稿→全部；`load()/loadMore()/documentCount()` 传参。只存当前档 `listTotal`（= 响应 `total`）。
+9. `BrowsePanelView.swift`：页头用一个**单按钮三态循环**（标题「成品 · 187」→「底稿 · 37」→「全部 · 224」，点击 `audienceView = audienceView.next`）。**列表与词云都显示**（`mode != .trash`），回收站隐藏。入口做收敛，别用红点或角标——天天提示"这里藏着东西"等于把噪音搬回来。
 10. `DocumentListView.swift`：卡片 tags 里当 `audience == "internal"` 追加灰色「内部」标记，否则两堆东西分不出来。
 
 ## 存量回标
 
 tags 现成可机械识别，**兜底可见**：
 
-- 判 `internal`：`陪伴AI调研底稿`、`记忆层调研底稿`、`底稿`。
+- 判 `internal`：tags 含 `陪伴AI调研底稿` / `记忆层调研底稿` / `底稿`，**或标题含「底稿」**（接住"底稿写标题、没打标签"的漏网，如 `Today AI 调研 · 底稿 · …`）。
 - 其余一律 `finished`（含 `可读版`、`人话版`，也含没打标签的方案稿/阶段汇总/交接/SOP）。
 - 命令打印被判为 `internal` 的清单（标题 + tags）供你复核——这是**核对项，不是拦截项**。
+- 实测（线上数据导入 dev 沙盒）：224 篇 → 37 `internal` / 187 `finished`。
 
 方向说明：存量 229 篇里绝大多数是人真正要读的，兜底往"藏"倒会把成品一起沉底，代价比多露几篇底稿大。新写入的兜底仍走 DB 默认 `internal`（见"关键口径"第 3 条）——两处方向不同、不矛盾：**历史数据要"捞回来"，未来漏传要"别污染"。**
 
-`cmd/backfill-audience` 幂等：重复跑结果一致；只改 audience，不碰正文。dry-run 打印**两张清单**——「将置 internal」与「将置 finished」；后者是重跑误伤的可见面（把后来按 internal 写入、tags 不含底稿词的材料放开）。`--write` 前再打一条一次性迁移警告。
+`cmd/backfill-audience` 幂等：重复跑结果一致；**只改 audience，不碰正文，也不碰 `updated_at`**（写库用 GORM `UpdateColumn`——`Update` 会顺带刷新 `autoUpdateTime`，把一次回标变成"所有文档同一时间更新"、毁掉列表最近排序；已加回归测试 `TestApplyAudienceKeepsUpdatedAt`）。dry-run 打印**两张清单**——「将置 internal」与「将置 finished」；后者是重跑误伤的可见面（把后来按 internal 写入、tags 不含底稿词的材料放开）。`--write` 前再打一条一次性迁移警告。
 
 ## 发布时序（关键，避免列表短暂变空）
 
@@ -106,14 +107,14 @@ AutoMigrate 补列时，存量行会被填成列默认值 `internal`；而列表
 
 - 注意：**dry-run 也会建列**（InitDB 副作用）——prod 上先备份。
 - `--write` 命中 prod 库需 `CONFIRM_PROD=yes`（`GuardProdWrite`）。
-- 应急兜底：`parseDocAudience` 支持 `audience=all`，必要时可临时以"全部"为默认灰度（本项目不走这条，仅备查）。
+- 应急兜底：列表接口支持 `audience=all`，必要时可临时以"全部"为默认灰度（本项目不走这条，仅备查）。
 
 ## 验证
 
 - 单测：repo audience 过滤；词云 `TagGraph` audience 过滤；`create_document` 缺/非法 audience 拒绝；工具 list/query 不受过滤影响（仍见 internal）；仅改 audience 发 `doc.updated`。
 - `go build ./... && go test ./...` 全绿。
 - Swift 源集 `swiftc -typecheck` 自检（`@main` 盲区已知，最终由用户在 Xcode 编译）。
-- 真机 1 次（用户在 Xcode）：建一篇 internal → 默认列表不出现 → 切「全部」可见且带「内部」标记 → 重进面板回默认 → 工具能检索到。
+- 真机 1 次（用户在 Xcode）：建一篇 internal → 默认列表不出现 → 三态按钮切到「底稿」「全部」各看一次、词云计数随档位变化 → 重进面板回默认 → 工具能检索到。
 
 ## 缝
 

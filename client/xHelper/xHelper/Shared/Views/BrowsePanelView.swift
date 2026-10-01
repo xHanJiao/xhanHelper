@@ -450,19 +450,18 @@ struct BrowsePanelView: View {
                 .controlSize(.small)
                 .frame(width: 180)
 
-                if documentVM.mode == .list {
-                    // 读者层级开关：默认「仅成品」，切「全部」带数量。状态不持久化。
-                    Picker("", selection: $documentVM.audienceView) {
-                        Text(documentVM.listTotal.map { "仅成品 · \($0)" } ?? "仅成品")
-                            .tag(DocumentAudienceView.finished)
-                        Text(documentVM.listTotalAll.map { "全部 · \($0)" } ?? "全部")
-                            .tag(DocumentAudienceView.all)
+                if documentVM.mode != .trash {
+                    // 读者层级：单按钮三态循环（成品 → 底稿 → 全部），列表与词云通用。状态不持久化。
+                    Button {
+                        documentVM.audienceView = documentVM.audienceView.next
+                    } label: {
+                        Text(documentVM.audienceLabel)
+                            .font(.system(size: 12, weight: .medium))
+                            .frame(minWidth: 64)
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .fixedSize()
-                    .help("默认只列成品；「全部」含给助手后续工作用的材料")
+                    .help("点击切换读者层级：成品 / 底稿 / 全部")
                 }
 
                 if documentVM.mode == .cloud {

@@ -840,16 +840,6 @@ extension Document {
 struct DocumentListResponse: Codable {
     let documents: [Document]
     let total: Int
-    /// 「仅成品」档的数量 / 「全部」档的数量（列表开关显示数量用）。
-    let totalFinished: Int?
-    let totalAll: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case documents
-        case total
-        case totalFinished = "total_finished"
-        case totalAll = "total_all"
-    }
 }
 
 struct CloudTag: Identifiable, Codable, Equatable {

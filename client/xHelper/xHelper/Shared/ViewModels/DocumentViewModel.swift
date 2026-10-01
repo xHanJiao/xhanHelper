@@ -9,16 +9,28 @@ enum DocumentBrowseMode: Hashable {
     case trash
 }
 
-/// 文档列表的读者层级开关：仅成品（默认）/ 全部。
+/// 文档列表/词云的读者层级开关：仅成品（默认）/ 仅底稿 / 全部。单按钮点击循环。
 /// 开关状态**不持久化**——下次进面板回默认，否则默认值形同虚设。
 enum DocumentAudienceView: String, CaseIterable, Hashable {
     case finished
+    /// `internal` 是 Swift 关键字，case 名用 drafts，rawValue 仍是后端的 "internal"。
+    case drafts = "internal"
     case all
 
     var label: String {
         switch self {
-        case .finished: return "仅成品"
+        case .finished: return "成品"
+        case .drafts: return "底稿"
         case .all: return "全部"
+        }
+    }
+
+    /// 循环序：成品 → 底稿 → 全部 → 成品。
+    var next: DocumentAudienceView {
+        switch self {
+        case .finished: return .drafts
+        case .drafts: return .all
+        case .all: return .finished
         }
     }
 }
@@ -51,9 +63,14 @@ class DocumentViewModel: ObservableObject {
     @Published var activeTags: [String] = []
     /// 读者层级视图：默认只看成品。不持久化（下次进面板回默认）。
     @Published var audienceView: DocumentAudienceView = .finished
-    /// 当前筛选命中的总数 / 不叠加 audience 过滤的总数（列表开关显示数量用）。
+    /// 当前档命中的总数（三态按钮显示当前档数量用）。
     @Published var listTotal: Int?
-    @Published var listTotalAll: Int?
+
+    /// 三态按钮标题：当前档 + 数量（数量未知时只显示档名）。
+    var audienceLabel: String {
+        guard let n = listTotal else { return audienceView.label }
+        return "\(audienceView.label) · \(n)"
+    }
     @Published var mode: DocumentBrowseMode = .list
     @Published var minTagCount = 1
     /// 词云本地高亮的搜索词（纯 UI 状态，不参与后端检索）。
@@ -283,8 +300,7 @@ class DocumentViewModel: ObservableObject {
                 audience: audienceView.rawValue
             )
             documents = resp.documents
-            listTotal = resp.totalFinished ?? resp.total
-            listTotalAll = resp.totalAll ?? resp.total
+            listTotal = resp.total
             hasMore = resp.documents.count >= 24
             let tagResp = try await apiClient.listDocumentTags(audience: audienceView.rawValue)
             tags = tagResp.tags

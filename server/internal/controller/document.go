@@ -24,8 +24,8 @@ func NewDocumentHandler(docRepo *service.DocumentRepo) *DocumentHandler {
 
 // ListDocuments GET /api/documents?tag=&tags=&keyword=&fields=title,tag,content&audience=&limit=&offset=
 // tags 为逗号分隔的多标签**交集**（文档须同时含全部标签；标签名内不含逗号）；tag 为旧的单标签筛选，二者叠加。
-// audience 控制读者层级：缺省 finished（列表默认只给成品）；all=不过滤；internal=只看材料。
-// 响应 total 为当前筛选命中的总数；total_finished / total_all 为「仅成品 / 全部」两个档的数量（列表开关用）。
+// audience 控制读者层级：缺省 finished（列表默认只给成品）；internal=只看材料；all=不过滤。
+// 响应 total 为当前筛选命中的总数（客户端三态按钮只显示当前档，无需额外计数）。
 func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 	userID := c.GetString("user_id")
 	keyword := c.Query("keyword")
@@ -54,29 +54,10 @@ func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 		list = []model.Document{}
 	}
 
-	// 列表开关的数量文案需要「成品数 / 全部数」两个值，与当前视图无关，所以两个都算。
-	// limit=0 只出 total；失败不影响已拿到的列表 → 就地记日志、降级回当前 total。
-	totalFinished, totalAll := total, total
-	if audience != model.DocumentAudienceFinished {
-		if _, n, e := h.docRepo.ListByAllTags(c.Request.Context(), userID, tags, keyword, fields, model.DocumentAudienceFinished, 0, 0); e != nil {
-			log.Printf("ListDocuments: count finished user=%s tags=%v keyword=%q: %v", userID, tags, keyword, e)
-		} else {
-			totalFinished = n
-		}
-	}
-	if audience != "" {
-		if _, n, e := h.docRepo.ListByAllTags(c.Request.Context(), userID, tags, keyword, fields, "", 0, 0); e != nil {
-			log.Printf("ListDocuments: count all user=%s tags=%v keyword=%q: %v", userID, tags, keyword, e)
-		} else {
-			totalAll = n
-		}
-	}
-
+	// total 即当前 audience 档的命中数，客户端三态按钮只显示当前档，无需额外 count。
 	view.JSONOK(c, gin.H{
-		"documents":      list,
-		"total":          total,
-		"total_finished": totalFinished,
-		"total_all":      totalAll,
+		"documents": list,
+		"total":     total,
 	})
 }
 

@@ -36,6 +36,11 @@ cat > "$MD" <<'MD'
 |---|---|---|
 | 写入时机 | 请求期 | 对话后 |
 
+| 字段 | 说明 |
+| --- | --- |
+| 内容类型 | 允许的类型标签 |
+| 内容类型 | 库 新闻 |
+
 ```python
 # 记忆系统 第三处（在代码块里，也必须能搜到）
 x = 1
@@ -329,6 +334,17 @@ function annotationChecks() {
   ok('多命中按前后文挑对位置', !!dm && dm.closest('p').textContent.indexOf('第二处') >= 0);
   draw([mk('d2', '记忆系统', '', 'zzz', 'zzz')], 0);
   ok('前后文对不上就不猜（不画）', c.querySelectorAll('mark.hl').length === 0);
+
+  // 9b) 重复文字 + 边界是空白（表格相邻单元格）：prefix/suffix 过 fold() 被 trim 掉紧贴 quote 的分隔空白，
+  //     旧实现拿 trim 过的上下文去比未 trim 的 haystack，边界一个「空格 vs 中文」就让得分恒 0，
+  //     重复 quote 消歧全 0 < need → 静默不画。真机：一篇文档里两个「内容类型」字段（任务元数据表 / 投递记录表）。
+  draw([mk('dup', '内容类型', '', '字段 说明', '允许的类型标签')], 1, 'dup', '内容类型');
+  var dupCells = [].slice.call(c.querySelectorAll('td')).filter(function (td) { return td.textContent.trim() === '内容类型'; });
+  var dupMark = c.querySelector('mark.hl[data-id="dup"]');
+  ok('重复文字靠上下文挑对第一处（不是第二行）',
+     dupCells.length === 2 && !!dupMark && dupCells[0].contains(dupMark),
+     dupCells.length !== 2 ? 'found ' + dupCells.length + ' dup cells'
+                           : (dupMark ? (dupCells[0].contains(dupMark) ? 'first' : 'other row') : 'no mark'));
 
   // 10) 失活的不画
   draw([mk('o1', '记忆系统', '', '', '', true)], 0);

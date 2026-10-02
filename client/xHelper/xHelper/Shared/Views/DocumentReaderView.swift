@@ -1092,7 +1092,12 @@ var reader = (function () {
       var bestScore = -1;
       for (var i = 0; i < hits.length; i++) {
         var h = hits[i];
-        var score = 2 * commonTail(pre, hay.slice(0, h)) + 2 * commonHead(suf, hay.slice(h + needle.length));
+        /* 边界要对齐：prefix/suffix 过 fold() 时被 trim 掉了紧贴 quote 的分隔空白，
+           haystack 没 trim —— 不补这一步，边界一个「空格 vs 中文」就让 commonTail/Head 恒为 0，
+           quote 重复（如表格里两个同名字段）时消歧全 0 分 < need → 静默不画。
+           这里用 /\s/，与 fold() 的空白口径（WS_CHAR 同一份 \s）对齐；改空白集时两处一起改。 */
+        var score = 2 * commonTail(pre, hay.slice(0, h).replace(/\s+$/, ''))
+                  + 2 * commonHead(suf, hay.slice(h + needle.length).replace(/^\s+/, ''));
         if (score > bestScore) { bestScore = score; best = h; }
       }
       if (bestScore < need) return null;

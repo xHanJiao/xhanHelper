@@ -5,7 +5,7 @@ struct GlassWindowModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .ignoresSafeArea(edges: .top)
-            .background(.ultraThinMaterial)
+            .background(.regularMaterial)
     }
 }
 

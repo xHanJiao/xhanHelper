@@ -35,8 +35,9 @@ dev 沙盒库（731 MB，50,983 messages）→ 真 MySQL：**37 表全部对账 
 | B | `Error 1292 Incorrect datetime value: '0000-00-00'` | `user_memories.last_confirmed_at` 等含 Go 零值 `time.Time`（`0001-01-01`）；GORM 结构体插入路径写零值 | 改用 `[]map[string]any` 插入（GORM `ConvertSliceOfMapToValuesForCreate`），零值时间显式写 `NULL` |
 | C | `Error 1406 Data too long for column 'history_state_text'` | `theme_states.history_state_text` 声明 `type:text`（64 KB），append-only 历史已达 113 KB | 模型改 `type:longtext`（`state_text` 一并改；云端潜在同类 bug） |
 | D | `Error 1390 Prepared statement contains too many placeholders` | 纯字节分批下 `llm_cost_details` 一批 5158 行 ×13+ 列超 MySQL 65535 占位符上限 | 加行数上限 `maxPlaceholders(30000)/列数`，与字节上限共同约束 |
+| E | 字节分批形同虚设（推演+复核） | `estimateRowBytes` 只看 `Kind()==String`，而模型大字段几乎全是 `*string`（`Embedding.Embedding`、`Message.RequestJSON` 等），漏算 → 整表可能挤进一条 INSERT，有超 `max_allowed_packet` 风险；同一洞也让 `normalizeRow` 的 UTF-8 清洗漏掉 `*string` | 二者都解引用指针再计/清洗；补单测（含 `*string` 大字段）；运行时打印 `SHOW VARIABLES LIKE 'max_allowed_packet'` |
 
-> A/B 属数据修正，工具会打日志说明；C 是模型层修复（需连同代码一起提交）；D 是分批策略修复。
+> A/B 属数据修正，工具会打日志说明；C 是模型层修复（需连同代码一起提交）；D/E 是分批与估算修复，E 同时是 UTF-8 清洗的完整性问题。修复后重跑 e2e：36/36 ✅、92,129 行、20s。
 
 **实际改动文件清单**：`server/internal/activity/{db.go,session.go}`、`server/internal/activity/track_test.go`、`server/internal/config/config.go`、`server/cmd/xhan-helper/main.go`、`server/internal/controller/router.go`、`server/internal/model/theme_state.go`、`server/conf/config.prod.yaml`、`server/cmd/sqlite2mysql/{main.go,main_test.go}`、`server/scripts/{export-local-data.sh,dump-db.sh}`、`server/Makefile`、`client/xHelper/xHelper/Shared/Services/{ActivityClient.swift,DeviceManager.swift}`、`server/go.{mod,sum}`。
 

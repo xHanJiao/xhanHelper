@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -92,5 +93,46 @@ func TestEstimateRowBytes(t *testing.T) {
 	got := estimateRowBytes(row{A: "12345", B: "67", C: 999})
 	if got < 7 {
 		t.Fatalf("estimateRowBytes=%d, 至少应含两个字符串长度 7", got)
+	}
+}
+
+// 大字段是指针（*string/*[]byte）时必须计入，否则字节预算失效、整表挤一条 INSERT。
+func TestEstimateRowBytesCountsPointers(t *testing.T) {
+	big := strings.Repeat("x", 500000)
+	blob := make([]byte, 1000)
+	var nilStr *string
+	type row struct {
+		Direct *string
+		Bytes  *[]byte
+		Small  *string // nil
+		Plain  string
+	}
+	got := estimateRowBytes(row{Direct: &big, Bytes: &blob, Small: nilStr, Plain: "abc"})
+	if got < 500000+1000+3 {
+		t.Fatalf("estimateRowBytes=%d，未计入 *string/*[]byte 大字段", got)
+	}
+
+	// 真实模型：Embedding.Embedding 是指针，估算应覆盖其长度
+	e := strings.Repeat("1,", 20000) // ~40KB
+	emb := model.Embedding{Embedding: &e}
+	if got := estimateRowBytes(emb); got < len(e) {
+		t.Fatalf("estimateRowBytes(Embedding)=%d < %d，漏算 *string", got, len(e))
+	}
+}
+
+func TestNormalizeRowFixesInvalidUTF8Pointer(t *testing.T) {
+	bad := "ok\xe5" // 尾部被截断
+	type row struct{ Name *string }
+	r := row{Name: &bad}
+	stats := &utf8Stats{}
+	normalizeRow(reflect.ValueOf(&r).Elem(), stats)
+	if !utf8.ValidString(*r.Name) {
+		t.Fatalf("清洗后仍非法: %q", *r.Name)
+	}
+	if *r.Name != "ok\uFFFD" {
+		t.Fatalf("got %q, want %q", *r.Name, "ok\uFFFD")
+	}
+	if stats.invalidUTF8 != 1 {
+		t.Fatalf("count=%d, want 1", stats.invalidUTF8)
 	}
 }

@@ -122,6 +122,7 @@ func main() {
 
 	dst := service.NewDB(dstCfg.DB)
 	pinSingleConn(dst)
+	logMaxAllowedPacket(dst)
 	prepareTarget(dst, *recreate)
 
 	written, dropped, err := copyAll(src, dst)
@@ -224,6 +225,19 @@ func parseSQLiteTime(s string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, lastErr
+}
+
+// logMaxAllowedPacket 打印目标库的 max_allowed_packet（分批的硬上界信号）。
+func logMaxAllowedPacket(db *gorm.DB) {
+	var row struct {
+		Name  string
+		Value string
+	}
+	if err := db.Raw("SHOW VARIABLES LIKE 'max_allowed_packet'").Scan(&row).Error; err != nil {
+		log.Printf("[target] 读取 max_allowed_packet 失败（不阻断）: %v", err)
+		return
+	}
+	log.Printf("[target] MySQL max_allowed_packet=%s；本工具单批字节上限 maxBatchBytes=%d", row.Value, maxBatchBytes)
 }
 
 // pinSingleConn 把连接池压到 1，保证 SET FOREIGN_KEY_CHECKS=0 这类会话级设置贯穿全程。
@@ -464,12 +478,21 @@ func structToMap(stmt *gorm.Statement, item reflect.Value) map[string]any {
 func normalizeRow(item reflect.Value, stats *utf8Stats) {
 	for i := 0; i < item.NumField(); i++ {
 		f := item.Field(i)
-		if f.Kind() != reflect.String || !f.CanSet() {
+		if !f.CanSet() {
 			continue
 		}
-		if s := f.String(); !utf8.ValidString(s) {
-			f.SetString(strings.ToValidUTF8(s, "\uFFFD"))
-			stats.invalidUTF8++
+		switch {
+		case f.Kind() == reflect.String:
+			if s := f.String(); !utf8.ValidString(s) {
+				f.SetString(strings.ToValidUTF8(s, "\uFFFD"))
+				stats.invalidUTF8++
+			}
+		case f.Kind() == reflect.Ptr && !f.IsNil() && f.Type().Elem().Kind() == reflect.String:
+			// *string 大字段（request_json 等）同样可能含非法 UTF-8，别漏。
+			if s := f.Elem().String(); !utf8.ValidString(s) {
+				f.Elem().SetString(strings.ToValidUTF8(s, "\uFFFD"))
+				stats.invalidUTF8++
+			}
 		}
 	}
 	switch v := item.Addr().Interface().(type) {
@@ -556,6 +579,9 @@ func dedupConceptEmbeddings(rows []model.ConceptEmbedding) ([]model.ConceptEmbed
 	return out, len(rows) - len(keep)
 }
 
+// estimateRowBytes 估算一行写入的字节数，用于按字节分批。
+// 必须覆盖 *string / *[]byte（模型里的大字段几乎全是指针，如 Message.RequestJSON、
+// Embedding.Embedding）：漏算会让字节预算形同虚设，整表挤进一条 INSERT。
 func estimateRowBytes(v any) int {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() == reflect.Ptr {
@@ -566,17 +592,28 @@ func estimateRowBytes(v any) int {
 	}
 	total := 64 // 行/分隔开销估个底
 	for i := 0; i < rv.NumField(); i++ {
-		f := rv.Field(i)
-		switch f.Kind() {
-		case reflect.String:
-			total += f.Len()
-		case reflect.Slice:
-			if f.Type().Elem().Kind() == reflect.Uint8 {
-				total += f.Len()
-			}
-		}
+		total += estimateFieldBytes(rv.Field(i))
 	}
 	return total
+}
+
+// estimateFieldBytes 计单个字段的长度；指针（*string / *[]byte）解引用后计，nil 计 0。
+func estimateFieldBytes(f reflect.Value) int {
+	if f.Kind() == reflect.Ptr {
+		if f.IsNil() {
+			return 0
+		}
+		f = f.Elem()
+	}
+	switch f.Kind() {
+	case reflect.String:
+		return f.Len()
+	case reflect.Slice:
+		if f.Type().Elem().Kind() == reflect.Uint8 {
+			return f.Len()
+		}
+	}
+	return 0
 }
 
 // verifyCounts 逐表核对「计划写入 vs 目标实际行数」。

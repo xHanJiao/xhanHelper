@@ -78,7 +78,7 @@ var (
 	source   = flag.String("source", "", "SQLite 快照路径（必填）")
 	toEnv    = flag.String("to", "prod", "目标配置的 APP_ENV（MySQL）")
 	dbName   = flag.String("db", "", "目标库名；留空用配置里的 db.database（建议显式给新库名）")
-	recreate = flag.Bool("recreate", false, "目标库已有模型表时允许 drop 重建（默认拒绝，防误指向旧库）")
+	recreate = flag.Bool("recreate", false, "目标库已有模型表时允许 drop 重建；**必须**同时给显式 -db <新库名>（防误清旧库）")
 	confirm  = flag.String("confirm", "", "确认导入，必须为 yes")
 	dryRun   = flag.Bool("dry-run", false, "只读源、报统计，不触碰目标库")
 )
@@ -100,8 +100,18 @@ func main() {
 	if dstCfg.DB.Driver != "mysql" {
 		log.Fatalf("[config] 目标 APP_ENV=%s 的 db.driver=%s，本工具只往 MySQL 搬", *toEnv, dstCfg.DB.Driver)
 	}
+	defaultDB := dstCfg.DB.Database // 配置里的默认库 = 线上旧库（回退点）
 	if *dbName != "" {
 		dstCfg.DB.Database = *dbName
+	}
+	// -recreate 会 drop 目标库的模型表：必须只作用于**显式命名的新库**，绝不能碰回退点。
+	if *recreate {
+		if *dbName == "" {
+			log.Fatalf("[safety] -recreate 必须与显式 -db <新库名> 一起用（否则默认目标是线上旧库 %q，回退点被就地清空）", defaultDB)
+		}
+		if *dbName == defaultDB {
+			log.Fatalf("[safety] -recreate 的目标 %q 就是配置里的默认库（线上旧库），拒绝就地重建", defaultDB)
+		}
 	}
 	if !*dryRun && *confirm != "yes" {
 		log.Fatalf("[safety] 将把整库数据导入 MySQL 库 %q（非空时默认拒绝）。确认请加 -confirm=yes（当前 %q）", dstCfg.DB.Database, *confirm)
@@ -127,7 +137,7 @@ func main() {
 
 	written, dropped, err := copyAll(src, dst)
 	if err != nil {
-		log.Fatalf("[copy] %v\n提示：目标新库 %q 写到一半失败——删库重建后重跑即可；旧库未受影响", err, dstCfg.DB.Database)
+		log.Fatalf("[copy] %v\n提示：目标库 %q 写到一半失败——加 -recreate 重跑（仅清本工具模型的表）即可；旧库未受影响", err, dstCfg.DB.Database)
 	}
 	ok := verifyCounts(dst, written)
 	summarize(dst, dropped, time.Since(t0))

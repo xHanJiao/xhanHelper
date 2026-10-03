@@ -53,11 +53,14 @@ make -C server build-sqlite2mysql
 # 4. 服务器：预演 → 导入新库（旧库不动，非空库会被拒绝）
 APP_ENV=prod ./sqlite2mysql -source ./upload/xhan_helper.snapshot -dry-run
 APP_ENV=prod ./sqlite2mysql -source ./upload/xhan_helper.snapshot -to prod -db xhan_helper_cloud -confirm=yes
-# 5. 图片与 events.db 落位（Phase 5）——**必须仍在停服窗口内**（切配置要重启，先做这步）：
+# 3b. 只有重灌新库时才加 -recreate；它必须与 -db 同用，目标名==默认库会被拒绝
+#     APP_ENV=prod ./sqlite2mysql -source ... -to prod -db xhan_helper_cloud -recreate -confirm=yes
+# 4. 图片与 events.db 落位（Phase 5）——**必须仍在停服窗口内**：
 #    服务一旦以 activity=enabled 启动就会持有 events.db 句柄，运行中覆盖会 inode 分叉。
 tar -xzf upload/images.tar.gz -C data/ ; cp upload/events.db data/events.db
-# 6. 切配置：config.prod.yaml 的 db.database 改为 xhan_helper_cloud → 部署重启
-# 7. 验：/api/health.activity_enabled=true、数据齐全。回退＝把 db.database 改回 xhan_helper 重启。
+# 5. 先改 config.prod.yaml 的 db.database=xhan_helper_cloud，再 make deploy（顺序要紧：
+#    新二进制连旧库时会触发计划外 AutoMigrate DDL）
+# 6. 验：/api/health.activity_enabled=true、数据齐全 → 再切客户端地址。回退＝改回旧库名重启。
 ```
 
 ---
@@ -213,7 +216,7 @@ tar -xzf upload/images.tar.gz -C data/ ; cp upload/events.db data/events.db
 
 1. 管理员建新库并授权（工具不建库）。
 2. `cmd/sqlite2mysql`（蓝本 `cmd/mysql2sqlite` 反向）导入新库，**旧库不动**：
-   - **目标非空即拒绝**（防手滑指向旧库）；确要重灌加 `-recreate`（仅 drop 本工具模型的表）。
+   - **目标非空即拒绝**；重灌用 `-recreate`，但**必须同时给显式 `-db <新库名>`**（目标名 == 配置默认库即 `fatal`），回退点不可被误清。
    - 源读取**用纯 Go 驱动、`file:` URI `mode=ro` 只读**（跨编译 CGO off）。
    - `SkipHooks`，`[]map[string]any` 插入（零值时间写 `NULL`）。
    - **date 归一**：`llm_cost_details.date` / `llm_model_prices.effective_date` 含 `T`/`Z` 时截 10 位并记数。
@@ -224,7 +227,9 @@ tar -xzf upload/images.tar.gz -C data/ ; cp upload/events.db data/events.db
    - 逐表对账（计划写入 vs 目标实际）。
    - **探针（Gate-2）**：抽 `messages.created_at` 比对「驱动解析」与「原文自解析」的绝对时刻，不一致则中止、改 Mac 上跑。
 3. 压缩上传快照到服务器本地跑。
-4. 切 `config.prod.yaml` 的 `db.database` → 部署重启。**回退 = 改回旧库名重启。**
+4. **先改 `config.prod.yaml` 的 `db.database` 指向新库，再部署/重启**（顺序要紧：新二进制仍连旧库时，启动 AutoMigrate 会对旧库做计划外 DDL——如本次的 `theme_states` `text→longtext`。非破坏、可逆，但没必要）。**回退 = 改回旧库名重启。**
+   - 注意：仓库里的 `config.prod.yaml` 默认仍是旧库名，部署前必须改好并随部署上传（`make deploy` 会上传该文件）。
+   - 本步（切库）必须早于 Phase 5 的「客户端服务地址切到云端」，否则 Mac 短时连的是旧库。
 
 ### Phase 5 · 其它资产 + 切 app
 
@@ -244,7 +249,7 @@ tar -xzf upload/images.tar.gz -C data/ ; cp upload/events.db data/events.db
 
 ## 五、`sqlite2mysql` 工具设计要点
 
-- **护栏**：默认要求目标库无本工具模型表（非空即 `fatal`），防手滑指向有数据的旧库；`-recreate` 才 drop 本工具模型的表。`-db <新库名>` 指定目标；`-confirm=yes` 二次确认。旧库不参与，天然是回退点，故**无需 mysqldump**。
+- **护栏**：默认要求目标库无本工具模型表（非空即 `fatal`），防手滑指向有数据的旧库。`-db <新库名>` 指定目标；`-confirm=yes` 二次确认。**`-recreate` 必须与显式 `-db <新库名>` 同时出现**，且目标名不得等于配置里的默认库（旧库）——否则 `fatal`；这样 `-recreate` 只能作用于明确命名的新库，回退点不可被误清。旧库不参与，天然是回退点，故**无需 mysqldump**。
 - **建表**：AutoMigrate 到空库；错误必须 fatal。旧的孤儿表只在 `-recreate` 时清。
 - **两张 `uint` 自增表**（`llm_cost_details`、`llm_model_prices`）：map 里显式写源 ID 到自增列，MySQL 自动推进 AUTO_INCREMENT。
 - **外键**：`-recreate` 时 `SET FOREIGN_KEY_CHECKS=0` 并 `pinSingleConn`（会话级设置须单连接）；首次导入按 `AllModels` 顺序即可。

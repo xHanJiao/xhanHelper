@@ -35,15 +35,18 @@ class DeviceManager: ObservableObject {
 
     var baseURL: String {
         #if os(macOS)
-        // 本地模式：连 app 自拉起的内嵌后端；显式设了 xhan_server_url 则改用它（逃生口）。
+        // 本地模式：连 app 自拉起的内嵌后端。
+        if LocalBackendManager.isActive {
+            return LocalBackendManager.shared.baseURL
+        }
+        // 云端模式：显式设了 xhan_server_url 就改用它（逃生口），否则连默认云端地址。
         // 注意：逃生口填错环境（dev 填 prod 端口）会被后端按 token 前缀 403 拒绝。
-        if let override = UserDefaults.standard.string(forKey: LocalPaths.scoped("xhan_server_url")), !override.isEmpty {
+        if let override = LocalPaths.serverURLOverride {
             return override
         }
-        return LocalBackendManager.shared.baseURL
+        return Self.defaultBaseURL
         #elseif DEBUG
-        let url = UserDefaults.standard.string(forKey: LocalPaths.scoped("xhan_server_url")) ?? Self.defaultBaseURL
-        return url
+        return LocalPaths.serverURLOverride ?? Self.defaultBaseURL
         #else
         return Self.defaultBaseURL
         #endif
@@ -60,7 +63,7 @@ class DeviceManager: ObservableObject {
 
     static var webBaseURL: String {
         #if os(macOS)
-        if let override = UserDefaults.standard.string(forKey: LocalPaths.scoped("xhan_web_url")), !override.isEmpty {
+        if let override = LocalPaths.webURLOverride {
             return override
         }
         // 逃生口（服务地址指向远端/自定义后端）时前端不在本地端口上——回退默认
@@ -72,8 +75,7 @@ class DeviceManager: ObservableObject {
         // 本地模式：前端由内嵌 Go 托管，与 API 同源。
         return LocalBackendManager.shared.baseURL
         #elseif DEBUG
-        let url = UserDefaults.standard.string(forKey: LocalPaths.scoped("xhan_web_url")) ?? Self.defaultWebBaseURL
-        return url
+        return LocalPaths.webURLOverride ?? Self.defaultWebBaseURL
         #else
         return Self.defaultWebBaseURL
         #endif
@@ -93,6 +95,10 @@ class DeviceManager: ObservableObject {
             return
         }
         #endif
+        #if os(macOS)
+        // 非本地模式的启动日志：便于确认当前连的是哪个后端（Debug=localhost:8080 / Release=云端）。
+        LogBuffer.shared.info("app launched in server mode (server=\(baseURL))")
+        #endif
         self.token = UserDefaults.standard.string(forKey: tokenKey)
         self.userId = UserDefaults.standard.string(forKey: userIdKey)
         self.username = UserDefaults.standard.string(forKey: usernameKey)
@@ -111,7 +117,7 @@ class DeviceManager: ObservableObject {
 
     // MARK: Activity（活动埋点）
 
-    /// 仅本地模式采集（设计篇 5.4：events.db 只存在于本机实例；iOS/云端不启用）。
+    /// 本地模式必采；云端按服务端 `/api/health` 能力探测结果（iOS 不采集，monitors 为 macOS-only）。
     private var activityCollectionActive: Bool {
         #if os(macOS)
         return ActivityClient.isEnabled
@@ -119,6 +125,18 @@ class DeviceManager: ObservableObject {
         return false
         #endif
     }
+
+    #if os(macOS)
+    /// 探测云端是否开启活动埋点，并据此启停搬运。本地模式直接返回（isEnabled 恒真）。
+    /// 令牌就绪后由 `verifyToken` / `login` / `register` 调用；探测结果存进 `ActivityCapability`。
+    private func refreshActivityCapability() async {
+        guard !LocalBackendManager.isActive else { return }
+        let enabled = await ActivityCapability.probe(baseURL: baseURL)
+        ActivityCapability.remoteEnabled = enabled
+        // enabled=false 时传 nil → 停掉可能已在跑的搬运；本地模式已被上面的 guard 挡住。
+        updateActivityRecorder(token: enabled ? token : nil)
+    }
+    #endif
 
     /// token 就绪 → 注入传输并启动周期搬运；token 清空 → 停止。
     /// 后端未就绪时空转（P9 尚无事件生产者；P10 起由在场/电源事件填充）。
@@ -128,7 +146,7 @@ class DeviceManager: ObservableObject {
     /// 必须在这里重新 configure**，否则旧 token 会一直 401。
     /// configure/start 与 stop 各走独立的非结构化 `Task`，理论可乱序；本地无登出/轮换路径，暂不可达。
     private func updateActivityRecorder(token: String?) {
-        guard activityCollectionActive else { return }
+        // 先处理「清空 token = 停止」：与采集开关无关，登出/能力关闭都要停。
         guard let token, !token.isEmpty else {
             Task {
                 await ActivityRecorder.shared.stop()
@@ -139,6 +157,7 @@ class DeviceManager: ObservableObject {
             }
             return
         }
+        guard activityCollectionActive else { return }
         let baseURL = self.baseURL
         let transport: ActivityTransport = { segmentID, events in
             let api = APIClient(baseURL: baseURL, token: token)
@@ -164,6 +183,10 @@ class DeviceManager: ObservableObject {
 
     private func verifyToken() async {
         await performTokenRefresh()
+        #if os(macOS)
+        // 令牌有效后探测云端埋点能力，决定是否启动搬运（探测失败=不采）。
+        await refreshActivityCapability()
+        #endif
         do {
             try await getDefaultConversationInfo()
             LogBuffer.shared.info("verifyToken: ok")
@@ -291,7 +314,12 @@ class DeviceManager: ObservableObject {
         self.userId = result.userId
         self.username = username
         self.isLoggedIn = true
+        #if os(macOS)
+        // 先探测云端埋点能力再启停搬运（refreshActivityCapability 内部按 token 启停）。
+        Task { await refreshActivityCapability() }
+        #else
         updateActivityRecorder(token: result.token)
+        #endif
         UserDefaults.standard.set(result.token, forKey: tokenKey)
         UserDefaults.standard.set(result.userId, forKey: userIdKey)
         UserDefaults.standard.set(username, forKey: usernameKey)

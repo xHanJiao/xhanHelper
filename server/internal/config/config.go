@@ -47,13 +47,31 @@ type Config struct {
 }
 
 // ActivityConfig — 活动埋点配置。
-// events.db 只在本机 sqlite 形态启用；云端 App_ENV=prod 需在配置里显式 enabled: false。
+// events.db 是自包含 SQLite，可跨形态启用：本地默认与主库同目录，云端（MySQL 主库）用 db_path 显式指定。
 type ActivityConfig struct {
 	Enabled *bool `yaml:"enabled"` // nil = 未显式配置 → 默认开
+	// DBPath — events.db 路径。空时：主库为 sqlite 则与主库同目录（DBPath 推导）；主库非 sqlite 且为空则启动 fatal，
+	// 禁止静默把库写到当前目录。
+	DBPath string `yaml:"db_path"`
+	// DayTimezone — 派生/读取层「一天」边界所用时区（IANA 名，如 Asia/Shanghai）。空 = 沿用主机 Local；
+	// 云端主机多为 UTC，须显式设置为 Asia/Shanghai，否则 day_stats/sessions 的日期边界会错 8 小时。
+	DayTimezone string `yaml:"day_timezone"`
 	// WatermarkMode — 上传接口 POST /api/events/batch 的水位口径（仅服务端决定，客户端按响应 watermark_kind 自适应）：
 	//   time（默认）：watermark = 本批最大 occurred_at，客户端删「≤ 水位的本地段」；依赖两端同钟。
 	//   segment：watermark = 回显 segment_id，客户端逐段删除；不依赖客户端时钟，供服务端/客户端分离时切换。
 	WatermarkMode string `yaml:"watermark_mode"`
+}
+
+// DayLocation 解析 DayTimezone；空返回 nil（调用方沿用主机 Local）。
+func (a *ActivityConfig) DayLocation() (*time.Location, error) {
+	if a == nil || a.DayTimezone == "" {
+		return nil, nil
+	}
+	loc, err := time.LoadLocation(a.DayTimezone)
+	if err != nil {
+		return nil, fmt.Errorf("activity.day_timezone %q 无效: %w", a.DayTimezone, err)
+	}
+	return loc, nil
 }
 
 // WatermarkModeNormalized 返回归一后的水位模式（空/未配置 = time）；仅接受 time / segment。
@@ -582,6 +600,12 @@ func merge(dst, src *Config) {
 	if src.Activity.Enabled != nil {
 		dst.Activity.Enabled = src.Activity.Enabled
 	}
+	if src.Activity.DBPath != "" {
+		dst.Activity.DBPath = src.Activity.DBPath
+	}
+	if src.Activity.DayTimezone != "" {
+		dst.Activity.DayTimezone = src.Activity.DayTimezone
+	}
 	if src.Activity.WatermarkMode != "" {
 		dst.Activity.WatermarkMode = src.Activity.WatermarkMode
 	}
@@ -827,6 +851,10 @@ func validate(cfg *Config) error {
 	// 字面量与 activity.WatermarkTime / WatermarkSegment 同步（config 是最底层，不反向依赖 activity/model）。
 	if m := cfg.Activity.WatermarkModeNormalized(); m != "time" && m != "segment" {
 		return fmt.Errorf("activity.watermark_mode 必须是 time 或 segment（当前 %q）", cfg.Activity.WatermarkMode)
+	}
+	// Activity 日期边界时区：空 = 沿用主机 Local；非空必须是可加载的 IANA 名。
+	if _, err := cfg.Activity.DayLocation(); err != nil {
+		return err
 	}
 	// Snowflake 默认值
 	if cfg.Snowflake.NodeID == 0 {

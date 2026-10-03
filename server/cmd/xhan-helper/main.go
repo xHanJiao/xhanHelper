@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -124,26 +125,49 @@ func main() {
 	appinit.Serve(cfg, router, agents.BGCancel, tools.MCPManager, agents.BGCtx)
 }
 
-// setupActivity 打开 events.db；禁用或非 sqlite 时返回 nil（不建库）。
+// setupActivity 打开 events.db；禁用时返回 nil（不建库）。
+// 路径：activity.db_path 显式指定；否则主库为 sqlite 时与主库同目录。主库非 sqlite 且未指定 → fatal（禁止静默写当前目录）。
 // 打开失败按可降级处理：埋点坏了不该拖垮主服务，就地记录后继续。
 func setupActivity(cfg *config.Config) *activity.Store {
 	if !cfg.Activity.IsEnabled() {
 		log.Printf("[activity] 未启用（activity.enabled=false）")
 		return nil
 	}
-	if cfg.DB.Driver != "sqlite" {
-		log.Printf("[activity] 跳过：events.db 仅支持 sqlite 形态（当前 driver=%s）", cfg.DB.Driver)
-		return nil
+	path := cfg.Activity.DBPath
+	if path == "" {
+		if cfg.DB.Driver != "sqlite" {
+			log.Fatalf("[activity] 已启用但未配置 activity.db_path，且主库非 sqlite（driver=%s）：请显式指定 events.db 路径", cfg.DB.Driver)
+		}
+		path = activity.DBPath(cfg.DB.Database)
 	}
-	path := activity.DBPath(cfg.DB.Database)
-	st, err := activity.Open(path, true)
+	// 相对路径解析成绝对路径并打印，避免跑在不同 CWD（如改 systemd）时 events.db 静默落到别处。
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		log.Fatalf("[activity] 解析 events.db 路径 %q: %v", path, err)
+	}
+	st, err := activity.Open(absPath, true)
 	if err != nil {
 		log.Printf("[activity] 打开 events.db 失败，埋点停用：%v", err)
 		return nil
 	}
 	st.SetWatermarkMode(cfg.Activity.WatermarkModeNormalized())
-	log.Printf("[activity] events.db=%s enabled=true watermark_mode=%s", path, st.WatermarkMode())
+	// validate 已保证 day_timezone 可加载；这里再兜一层，绝不静默。
+	if loc, err := cfg.Activity.DayLocation(); err != nil {
+		log.Printf("[activity] day_timezone 解析失败，沿用主机 Local：%v", err)
+	} else {
+		activity.SetDayLocation(loc)
+	}
+	log.Printf("[activity] events.db=%s enabled=true watermark_mode=%s day_timezone=%s",
+		absPath, st.WatermarkMode(), dayTimezoneLabel(cfg.Activity.DayTimezone))
 	return st
+}
+
+// dayTimezoneLabel 返回日志用的时区标签（空 = 主机 Local）。
+func dayTimezoneLabel(tz string) string {
+	if tz == "" {
+		return "Local"
+	}
+	return tz
 }
 
 // setupLocalBackup 本地模式下创建备份服务并按需挂调度器；非本地模式返回 nil（不注册路由）。

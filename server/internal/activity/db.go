@@ -3,12 +3,13 @@ package activity
 import (
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
 
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -36,8 +37,16 @@ func DBPath(mainDBPath string) string {
 // Open 打开（或创建）events.db：建表、设 pragma、预置 meta。
 // 只在采集开关打开时调用；enabled 记进 meta，让"这台采没采"可查。
 func Open(path string, enabled bool) (*Store, error) {
-	// pragma 写进 DSN，保证连接池里每条连接都是 WAL + NORMAL
-	dsn := path + "?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000"
+	// 目录不存在时 SQLite 建不了库：先建（云端 data/ 不一定存在，events.db 不走主库路径逻辑）。
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("events.db create dir %s: %w", dir, err)
+		}
+	}
+	// pragma 写进 DSN，保证连接池里每条连接都是 WAL + NORMAL。
+	// 用纯 Go 驱动（glebarez/modernc）的 _pragma 语法：云端 Linux 交叉编译 CGO 默认关闭，
+	// mattn/go-sqlite3 在 !cgo 下打不开库，故 activity 全程走纯 Go 驱动。
+	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return nil, fmt.Errorf("open events.db %s: %w", path, err)

@@ -91,7 +91,7 @@ func NewRouter(rc *RouterConfig) *gin.Engine {
 		if rc.Ready != nil && !rc.Ready.Load() {
 			status = "starting"
 		}
-		c.JSON(http.StatusOK, gin.H{"status": status})
+		c.JSON(http.StatusOK, gin.H{"status": status, "activity_enabled": rc.Activity != nil})
 	})
 	// 需要认证
 	auth := r.Group("/api")

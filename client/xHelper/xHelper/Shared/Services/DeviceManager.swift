@@ -35,15 +35,18 @@ class DeviceManager: ObservableObject {
 
     var baseURL: String {
         #if os(macOS)
-        // 本地模式：连 app 自拉起的内嵌后端；显式设了 xhan_server_url 则改用它（逃生口）。
+        // 本地模式：连 app 自拉起的内嵌后端。
+        if LocalBackendManager.isActive {
+            return LocalBackendManager.shared.baseURL
+        }
+        // 云端模式：显式设了 xhan_server_url 就改用它（逃生口），否则连默认云端地址。
         // 注意：逃生口填错环境（dev 填 prod 端口）会被后端按 token 前缀 403 拒绝。
-        if let override = UserDefaults.standard.string(forKey: LocalPaths.scoped("xhan_server_url")), !override.isEmpty {
+        if let override = LocalPaths.serverURLOverride {
             return override
         }
-        return LocalBackendManager.shared.baseURL
+        return Self.defaultBaseURL
         #elseif DEBUG
-        let url = UserDefaults.standard.string(forKey: LocalPaths.scoped("xhan_server_url")) ?? Self.defaultBaseURL
-        return url
+        return LocalPaths.serverURLOverride ?? Self.defaultBaseURL
         #else
         return Self.defaultBaseURL
         #endif
@@ -60,7 +63,7 @@ class DeviceManager: ObservableObject {
 
     static var webBaseURL: String {
         #if os(macOS)
-        if let override = UserDefaults.standard.string(forKey: LocalPaths.scoped("xhan_web_url")), !override.isEmpty {
+        if let override = LocalPaths.webURLOverride {
             return override
         }
         // 逃生口（服务地址指向远端/自定义后端）时前端不在本地端口上——回退默认
@@ -72,8 +75,7 @@ class DeviceManager: ObservableObject {
         // 本地模式：前端由内嵌 Go 托管，与 API 同源。
         return LocalBackendManager.shared.baseURL
         #elseif DEBUG
-        let url = UserDefaults.standard.string(forKey: LocalPaths.scoped("xhan_web_url")) ?? Self.defaultWebBaseURL
-        return url
+        return LocalPaths.webURLOverride ?? Self.defaultWebBaseURL
         #else
         return Self.defaultWebBaseURL
         #endif
@@ -92,6 +94,10 @@ class DeviceManager: ObservableObject {
             updateActivityRecorder(token: self.token)
             return
         }
+        #endif
+        #if os(macOS)
+        // 云端模式启动日志：升级后本地用户若发现没连本地，能据此确认是切到了云端（数据仍在数据根）。
+        LogBuffer.shared.info("app launched in cloud mode (server=\(baseURL))")
         #endif
         self.token = UserDefaults.standard.string(forKey: tokenKey)
         self.userId = UserDefaults.standard.string(forKey: userIdKey)

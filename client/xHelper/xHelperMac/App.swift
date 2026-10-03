@@ -814,8 +814,10 @@ struct MacSettingsView: View {
     @ObservedObject var deviceManager: DeviceManager
     @ObservedObject private var localBackend = LocalBackendManager.shared
     @EnvironmentObject var colorSchemeManager: ColorSchemeManager
-    // 空 = 使用 app 自启动的内嵌本地后端；填了 = 逃生口（连远端/自定义后端，不启动本地后端）。
+    // 空 = 默认后端（Release 云端 / Debug 本地，看下面开关）；填了 = 逃生口（改连该地址，不启动本地后端）。
     @AppStorage(LocalPaths.scoped("xhan_server_url")) private var serverURL = ""
+    // 「使用本地后端」开关：Release 默认关（连云端）；Debug 默认开。仅在 serverURL 为空时生效。
+    @AppStorage(LocalBackendPreference.useLocalKey) private var useLocalBackend = LocalBackendPreference.useLocalDefault
     @AppStorage(LocalPaths.scoped("xhan_l3_alert_sound")) private var l3AlertSound = true
     // key/默认值见 LongReplyAlert（唯一事实来源）；key 带环境后缀，dev/prod 不串味
     @AppStorage(LongReplyAlert.soundKey) private var longReplyAlertSound = LongReplyAlert.defaultSoundEnabled
@@ -1018,12 +1020,13 @@ struct MacSettingsView: View {
             }
 
             Section {
-                TextField("服务地址（留空 = 使用内嵌本地后端）", text: $serverURL)
+                Toggle("使用本地后端（离线 / 私有，重启生效）", isOn: $useLocalBackend)
+                TextField("服务地址（留空 = 用上面开关的默认后端）", text: $serverURL)
                     .textFieldStyle(.roundedBorder)
             } header: {
                 Text("服务器")
             } footer: {
-                Text("留空时由 app 自启动内嵌后端（127.0.0.1:\(LocalPaths.backendPort)）；填写后改连该地址，且不再启动本地后端（需重启 app 生效）。")
+                Text("服务地址留空时：打开「使用本地后端」= app 自启动内嵌后端（127.0.0.1:\(LocalPaths.backendPort)）；关闭 = 连云端。填写服务地址则一律改连该地址。三者改动均需重启 app 生效。")
                     + (LocalPaths.isDev ? Text("\nDebug 构建连的是 dev 沙盒（连 prod 后端会被 403 拒绝）。") : Text(""))
             }
 

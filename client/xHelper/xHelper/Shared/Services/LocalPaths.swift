@@ -74,6 +74,26 @@ enum LocalPaths {
     /// 给 app 级配置 key 加环境后缀：dev/prod 共用同一 bundle id 的 UserDefaults 域，
     /// 不加后缀时 dev 里设的值会串到 prod（数据根都分开了，配置同理）。
     static func scoped(_ key: String) -> String { "\(key)_\(env)" }
+
+    /// 用户填的「服务地址」`xhan_server_url`（已 trim；空白/未填 = nil）。判空口径的唯一来源。
+    static var serverURLOverride: String? { trimmedOverride("xhan_server_url") }
+    /// 用户填的「网页地址」`xhan_web_url`（已 trim；空白/未填 = nil）。
+    static var webURLOverride: String? { trimmedOverride("xhan_web_url") }
+
+    private static func trimmedOverride(_ key: String) -> String? {
+        guard let raw = UserDefaults.standard.string(forKey: scoped(key)) else { return nil }
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
+}
+
+/// 「使用本地后端」开关的 key 与默认值（唯一事实来源）。
+///
+/// Release 默认关 = 连云端；Debug 默认开 = 本地后端。仅在未填 `xhan_server_url` 时生效
+/// （填了地址一律当远端，见 `LocalBackendManager.isActive`）。key 带环境后缀（见 `scoped`）。
+enum LocalBackendPreference {
+    static var useLocalKey: String { LocalPaths.scoped("xhan_use_local_backend") }
+    static var useLocalDefault: Bool { LocalPaths.isDev }
 }
 
 /// 「久等回复完成」提示音的 key 与默认值（唯一事实来源，避免设置页与读取端各写一份漂移）。

@@ -9,7 +9,7 @@ server:
 
 db:
   host: 127.0.0.1
-  database: xhan_helper
+  database: xhan_helper_cloud
   charset: utf8mb4
 
 llm:

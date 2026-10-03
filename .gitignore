@@ -18,6 +18,10 @@ Thumbs.db
 # Go
 /server/vendor/
 /server/dist/
+/server/sqlite2mysql
+
+# 本地迁移导出
+local-export-*/
 
 # Swift/Xcode
 /client/build/

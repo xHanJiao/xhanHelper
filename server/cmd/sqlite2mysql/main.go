@@ -36,6 +36,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -170,12 +171,18 @@ func loadConfig(env string) *config.Config {
 }
 
 func openSource(path string) *gorm.DB {
-	if _, err := os.Stat(path); err != nil {
+	// 必须绝对路径：modernc.org/sqlite v1.23.1 在 Linux 上把相对 file: URI
+	// （file:./upload/x）误报 "out of memory"，绝对路径正常（Mac 上相对也能开，易漏测）。
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		log.Fatalf("[source] 解析绝对路径 %s: %v", path, err)
+	}
+	if _, err := os.Stat(abs); err != nil {
 		log.Fatalf("[source] %v", err)
 	}
 	// 只读打开（P1）：modernc 对非 file: 前缀一律 READWRITE|CREATE，会建 -wal/-shm；
 	// 用 file: URI + mode=ro 让只读成为驱动层硬约束。源应是 .backup 出的单文件快照（无 WAL）。
-	db, err := gorm.Open(sqlite.Open(readOnlyDSN(path)), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(readOnlyDSN(abs)), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("[source] 打开 %s: %v", path, err)
 	}

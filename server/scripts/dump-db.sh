@@ -20,7 +20,7 @@ KEEP_COUNT="${2:-3}"
 DB_HOST="${DB_HOST:-127.0.0.1}"
 DB_PORT="${DB_PORT:-3306}"
 DB_USER="${DB_USER:-xhan_helper_user}"
-DB_NAME="${DB_NAME:-xhan_helper}"
+DB_NAME="${DB_NAME:-xhan_helper_cloud}"
 DB_PASSWORD="${XHAN_HELPER_DB_PASSWORD:-}"
 
 if [ -z "$DB_PASSWORD" ]; then
@@ -31,7 +31,7 @@ fi
 mkdir -p "$OUTPUT_DIR"
 
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-OUTPUT_FILE="$OUTPUT_DIR/xhan_helper-$TIMESTAMP.sql.gz"
+OUTPUT_FILE="$OUTPUT_DIR/$DB_NAME-$TIMESTAMP.sql.gz"
 
 echo "=== 导出数据库 ==="
 echo "  Host: $DB_HOST:$DB_PORT"
@@ -75,7 +75,7 @@ fi
 
 # 自动清理：只保留最近 KEEP_COUNT 份备份，防止 mysqldumps 无限堆积
 KEPT=0
-for OLD in $(ls -t "$OUTPUT_DIR"/xhan_helper-*.sql.gz 2>/dev/null); do
+for OLD in $(ls -t "$OUTPUT_DIR"/*-*.sql.gz 2>/dev/null); do
     KEPT=$((KEPT + 1))
     if [ "$KEPT" -gt "$KEEP_COUNT" ]; then
         rm -f "$OLD"

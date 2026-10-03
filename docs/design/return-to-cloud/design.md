@@ -47,20 +47,30 @@ dev 沙盒库（731 MB，50,983 messages）→ 真 MySQL：**37 表全部对账 
 bash server/scripts/export-local-data.sh
 # 2. 编译上传迁移工具（Mac）
 make -C server build-sqlite2mysql
+
+# ── A. 本地预演（推荐先走一遍）──────────────────────────────
+# 导进 dev MySQL（xhan_helper_test），再 make dev 起来验证
+make -C server            # 确保本地 MySQL 已启动
+go run ./server/cmd/sqlite2mysql -source <导出目录>/xhan_helper.snapshot \
+    -to dev -db xhan_helper_test -recreate -confirm=yes
+make -C server dev        # dev → MySQL xhan_helper_test；浏览器/Touch ID 验证数据与 /api/health
+# （dev 的 activity 已配 data/events.db；本地 events.db 想续到云端是另一回事，见 Phase 5）
+
+# ── B. 线上 ────────────────────────────────────────────────
 # 3. 管理员在新库上授权（工具不建库）
 #    CREATE DATABASE xhan_helper_cloud CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 #    GRANT ALL PRIVILEGES ON xhan_helper_cloud.* TO 'xhan_helper_user'@'localhost';
 # 4. 服务器：预演 → 导入新库（旧库不动，非空库会被拒绝）
 APP_ENV=prod ./sqlite2mysql -source ./upload/xhan_helper.snapshot -dry-run
 APP_ENV=prod ./sqlite2mysql -source ./upload/xhan_helper.snapshot -to prod -db xhan_helper_cloud -confirm=yes
-# 3b. 只有重灌新库时才加 -recreate；它必须与 -db 同用，目标名==默认库会被拒绝
+# 重灌新库时才加 -recreate（须与 -db 同用）
 #     APP_ENV=prod ./sqlite2mysql -source ... -to prod -db xhan_helper_cloud -recreate -confirm=yes
-# 4. 图片与 events.db 落位（Phase 5）——**必须仍在停服窗口内**：
+# 5. 图片与 events.db 落位（Phase 5）——**必须仍在停服窗口内**：
 #    服务一旦以 activity=enabled 启动就会持有 events.db 句柄，运行中覆盖会 inode 分叉。
 tar -xzf upload/images.tar.gz -C data/ ; cp upload/events.db data/events.db
-# 5. 先改 config.prod.yaml 的 db.database=xhan_helper_cloud，再 make deploy（顺序要紧：
+# 6. 先改 config.prod.yaml 的 db.database=xhan_helper_cloud，再 make deploy（顺序要紧：
 #    新二进制连旧库时会触发计划外 AutoMigrate DDL）
-# 6. 验：/api/health.activity_enabled=true、数据齐全 → 再切客户端地址。回退＝改回旧库名重启。
+# 7. 验：/api/health.activity_enabled=true、数据齐全 → 再切客户端地址。回退＝改回旧库名重启。
 ```
 
 ---

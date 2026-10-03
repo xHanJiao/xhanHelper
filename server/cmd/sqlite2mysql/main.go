@@ -1,19 +1,23 @@
 // sqlite2mysql 把本地 prod 的 SQLite 快照导入一个**全新的线上 MySQL 库**（回归云端用）。
 //
-// 用法（在服务器上执行；旧库不受影响，导入失败只需删掉新库重跑）：
+// 用法（-db 必填；目标库已由管理员建好，工具不建库）：
 //
+//	# 本地 dev 先验证：把快照导进 dev 库，再 `make dev` 起来看
+//	go run ./cmd/sqlite2mysql -source /path/xhan_helper.snapshot -to dev -db xhan_helper_test -recreate -confirm=yes
+//	# 线上：导进新库（旧库不动）
 //	go run ./cmd/sqlite2mysql -source /path/xhan_helper.snapshot -to prod -db xhan_helper_cloud -confirm=yes
 //	go run ./cmd/sqlite2mysql -source ... -dry-run        # 只读源、报统计，不碰目标
 //
 // 为什么导新库：旧的线上库（xhan_helper）原样保留作回退点。导入完成后把 config.prod.yaml 的
 // db.database 指向新库、部署重启即可；切库/删旧库由操作者决定，工具既不碰旧库也不建/删库。
 //
-// 前提：新库已由管理员建好并授权（工具不会 CREATE DATABASE）：
+// 前提：目标库已由管理员建好并授权（工具不会 CREATE DATABASE）：
 //
 //	CREATE DATABASE xhan_helper_cloud CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 //	GRANT ALL PRIVILEGES ON xhan_helper_cloud.* TO 'xhan_helper_user'@'localhost';
 //
-// 安全闸：目标库若已存在模型表 → 默认拒绝（防手滑指向有数据的旧库）；确要重灌才加 -recreate。
+// 安全闸：-db 必填（绝不默认落到配置里的旧库）；目标库若已有模型表 → 默认拒绝，重灌加 -recreate；
+// 目标名与配置默认库同名时告警（prod 下多半是误指旧库，dev 本地验证可忽略）。
 // 源用**纯 Go 驱动**只读打开（服务器无 CGO 也能跑），全程不动快照。
 //
 // 已知需要特殊处理：
@@ -77,8 +81,8 @@ var orphanTables = []string{
 var (
 	source   = flag.String("source", "", "SQLite 快照路径（必填）")
 	toEnv    = flag.String("to", "prod", "目标配置的 APP_ENV（MySQL）")
-	dbName   = flag.String("db", "", "目标库名；留空用配置里的 db.database（建议显式给新库名）")
-	recreate = flag.Bool("recreate", false, "目标库已有模型表时允许 drop 重建；**必须**同时给显式 -db <新库名>（防误清旧库）")
+	dbName   = flag.String("db", "", "目标库名（非 dry-run 必填）：prod 用新库名，dev 本地验证用 xhan_helper_test")
+	recreate = flag.Bool("recreate", false, "目标库已有模型表时允许 drop 重建（重灌/本地验证用；务必确认 -db 指向的不是线上旧库）")
 	confirm  = flag.String("confirm", "", "确认导入，必须为 yes")
 	dryRun   = flag.Bool("dry-run", false, "只读源、报统计，不触碰目标库")
 )
@@ -100,18 +104,16 @@ func main() {
 	if dstCfg.DB.Driver != "mysql" {
 		log.Fatalf("[config] 目标 APP_ENV=%s 的 db.driver=%s，本工具只往 MySQL 搬", *toEnv, dstCfg.DB.Driver)
 	}
-	defaultDB := dstCfg.DB.Database // 配置里的默认库 = 线上旧库（回退点）
+	defaultDB := dstCfg.DB.Database // 配置里的默认库（prod 下 = 线上旧库/回退点）
 	if *dbName != "" {
 		dstCfg.DB.Database = *dbName
+	} else if !*dryRun {
+		// 目标必须显式命名：绝不默认落到配置里的旧库（prod 下即回退点）。
+		log.Fatal("[usage] 必须用 -db <目标库名> 显式指定目标（避免默认落到配置里的旧库/回退点）")
 	}
-	// -recreate 会 drop 目标库的模型表：必须只作用于**显式命名的新库**，绝不能碰回退点。
-	if *recreate {
-		if *dbName == "" {
-			log.Fatalf("[safety] -recreate 必须与显式 -db <新库名> 一起用（否则默认目标是线上旧库 %q，回退点被就地清空）", defaultDB)
-		}
-		if *dbName == defaultDB {
-			log.Fatalf("[safety] -recreate 的目标 %q 就是配置里的默认库（线上旧库），拒绝就地重建", defaultDB)
-		}
+	// 目标名与配置默认同名：prod 下很可能是旧库/回退点，告警但不拦（dev 本地验证时默认库就是要导入的目标）。
+	if !*dryRun && *dbName == defaultDB {
+		log.Printf("[safety] ⚠️  目标库 %q 与配置默认库同名；若它是线上旧库/回退点，请改用新库名（dev 本地验证可忽略）", defaultDB)
 	}
 	if !*dryRun && *confirm != "yes" {
 		log.Fatalf("[safety] 将把整库数据导入 MySQL 库 %q（非空时默认拒绝）。确认请加 -confirm=yes（当前 %q）", dstCfg.DB.Database, *confirm)

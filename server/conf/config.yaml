@@ -108,7 +108,7 @@ vector:
   chunk_disabled_parents: [memory, note, summary] # 短文本只用 full 向量，不建 chunk（theme/文档仍建）
 
 activity:
-  enabled: true # 活动埋点总开关（仅本机 sqlite 形态生效）；云端 APP_ENV=prod 必须在 config.prod.yaml 显式 false
+  enabled: true # 活动埋点总开关。主库为 sqlite 时 events.db 与主库同目录；主库为 MySQL（dev/prod）须配 db_path，否则启动 fatal
   watermark_mode: time # 上传接口水位口径：time=本批最大 occurred_at（默认，需两端同钟）；segment=回显 segment_id（逐段确认，端分离时切换）
 
 storage:

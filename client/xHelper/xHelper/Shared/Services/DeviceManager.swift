@@ -96,8 +96,8 @@ class DeviceManager: ObservableObject {
         }
         #endif
         #if os(macOS)
-        // 云端模式启动日志：升级后本地用户若发现没连本地，能据此确认是切到了云端（数据仍在数据根）。
-        LogBuffer.shared.info("app launched in cloud mode (server=\(baseURL))")
+        // 非本地模式的启动日志：便于确认当前连的是哪个后端（Debug=localhost:8080 / Release=云端）。
+        LogBuffer.shared.info("app launched in server mode (server=\(baseURL))")
         #endif
         self.token = UserDefaults.standard.string(forKey: tokenKey)
         self.userId = UserDefaults.standard.string(forKey: userIdKey)

@@ -89,11 +89,12 @@ enum LocalPaths {
 
 /// 「使用本地后端」开关的 key 与默认值（唯一事实来源）。
 ///
-/// Release 默认关 = 连云端；Debug 默认开 = 本地后端。仅在未填 `xhan_server_url` 时生效
-/// （填了地址一律当远端，见 `LocalBackendManager.isActive`）。key 带环境后缀（见 `scoped`）。
+/// 默认一律关（dev/prod 一致）：默认连 `DeviceManager.defaultBaseURL`
+/// （Debug=localhost:8080 / Release=云端），只有显式打开才用 app 自启动的内嵌后端。
+/// 仅在未填 `xhan_server_url` 时生效（填了地址一律当远端，见 `LocalBackendManager.isActive`）。
 enum LocalBackendPreference {
     static var useLocalKey: String { LocalPaths.scoped("xhan_use_local_backend") }
-    static var useLocalDefault: Bool { LocalPaths.isDev }
+    static let useLocalDefault = false
 }
 
 /// 「久等回复完成」提示音的 key 与默认值（唯一事实来源，避免设置页与读取端各写一份漂移）。

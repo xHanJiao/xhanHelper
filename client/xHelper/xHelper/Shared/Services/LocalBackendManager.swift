@@ -50,7 +50,8 @@ final class LocalBackendManager: ObservableObject {
 
     /// 本地后端是否接管寻址。
     /// - 显式填了 `xhan_server_url`：一律当远端（逃生口），本地不接管。
-    /// - 未填：Debug 默认接管；Release 默认不接管（连云端），仅当「使用本地后端」开关打开才接管。
+    /// - 未填：默认不接管（dev/prod 一致，连 `DeviceManager.defaultBaseURL`），
+    ///   仅当「使用本地后端」开关打开才接管。
     static var isActive: Bool {
         // 判空口径统一在 `LocalPaths.serverURLOverride`（带 trim），别在别处再判一次。
         guard LocalPaths.serverURLOverride == nil else { return false }
@@ -79,7 +80,7 @@ final class LocalBackendManager: ObservableObject {
         guard state == .idle else { return }
         isConfigured = LocalSecretsStore.isConfigured
         guard Self.isActive else {
-            LogBuffer.shared.info("local backend 未启用（云端模式，或已设 xhan_server_url 逃生口）")
+            LogBuffer.shared.info("local backend 未启用（默认后端模式，或已设 xhan_server_url 逃生口）")
             return
         }
         guard isConfigured else {

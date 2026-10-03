@@ -4,8 +4,9 @@
 // 跑派生（Recompute），打印每段 session 的起止与依据，供人工对照设计篇 1.1 表里「服务端可验」的几段。
 //
 // 硬约束：主库**只读**；派生结果写独立临时 events.db（--out），绝不碰 prod 的 events.db。
-// 派生层（session/daystat）固定用进程本地时区切日（activity 包内无 setter），
-// 故本工具也一律按进程本地时区过滤与展示——换时区请设 TZ 环境变量，不要另传 --tz（会造成派生与报告错位）。
+// 派生层（session/daystat）的切日时区可用 activity.SetDayLocation 覆盖（现已提供）；
+// 本工具沿用进程本地时区，故一律按进程本地时区过滤与展示——换时区请设 TZ 环境变量，
+// 不要另传 --tz（会造成派生与报告错位）。
 // 客户端侧（浏览/在场/电源）09-25 没有数据、不回填，本工具不造这些事件。
 package main
 
@@ -14,13 +15,14 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
@@ -157,7 +159,8 @@ func mustDate(s string, loc *time.Location) time.Time {
 
 // openReadOnly 以只读方式打开主库，禁止任何写（防手滑污染真库）。
 func openReadOnly(path string) (*gorm.DB, error) {
-	dsn := path + "?mode=ro&_busy_timeout=5000"
+	// 只读必须走 file: URI（纯 Go 驱动对非 file: 前缀一律 READWRITE|CREATE）。
+	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro&_pragma=busy_timeout(5000)"}).String()
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)})
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)

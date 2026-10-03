@@ -220,8 +220,8 @@ DELETE FROM day_health     WHERE day < :cutoff_day;
 
 ## 7. 部署形态与位置
 
-- **只采本地实例，不采云端（2026-09-26 已定）**：`events.db` 只存在于本机，事件由本机服务端产生与落库。
-- 采集开关 `activity.enabled` 默认开，但**云端 `APP_ENV=prod`（`main` 分支 / 阿里云）实例要在自己的配置里显式关掉**——默认值只对单机本机成立，别让云端也跟着采。
-- 位置：`~/Library/Application Support/xhanHelper/events.db`（本机真实库 `APP_ENV=local` → `xhanHelper`；dev 沙盒 `APP_ENV=local.dev` → `xhanHelper-dev`）。
+- **本地与云端都采（2026-10-03 修订，覆盖原「只采本地」）**：Mac 客户端回归连阿里云后仍是单一采集器、单用户。`events.db` 自包含 SQLite、与主库无关；云端用纯 Go 驱动（glebarez/modernc）避免 CGO 依赖。
+- 采集开关 `activity.enabled` 默认开；云端 `APP_ENV=prod` 现也**显式 `enabled: true`**，并须配 `db_path`（`data/events.db`）与 `day_timezone: Asia/Shanghai`（主机为 UTC，否则日期边界错 8 小时）。
+- 位置：本地默认与主库同目录（`~/Library/Application Support/xhanHelper/events.db`；dev 沙盒 `xhanHelper-dev`）；云端由 `activity.db_path` 指定为 `<server>/data/events.db`。
 - **纳入每日 dump（2026-09-26 已定）**：跟主库一起每天备份。注意它开的是 WAL——备份要走 SQLite 的 backup API 或先 checkpoint，裸拷文件可能拿到不一致快照。
 - 与主库**不共用连接**；跨库不做 join，串联在应用层算。

@@ -8,11 +8,11 @@ type ThemeState struct {
 	UserID           string     `gorm:"size:36;not null;index" json:"user_id"`
 	Name             string     `gorm:"size:100;not null" json:"name"`
 	Description      string     `gorm:"size:500" json:"description"`
-	Status           string     `gorm:"size:20;default:draft" json:"status"`           // draft | active | closed
-	Duration         string     `gorm:"size:20;default:''" json:"duration"`            // long | medium | short | ephemeral（LLM 标注的关注周期）
-	StateText        string     `gorm:"type:text" json:"state_text"`                   // LLM 维护的自由文本状态摘要
-	HistoryStateText *string    `gorm:"type:text" json:"history_state_text,omitempty"` // 历史状态页（每次更新时 append 旧内容）
-	Metadata         *string    `gorm:"type:json" json:"metadata,omitempty"`           // LLM 原始输出（candidate_info 等）
+	Status           string     `gorm:"size:20;default:draft" json:"status"`               // draft | active | closed
+	Duration         string     `gorm:"size:20;default:''" json:"duration"`                // long | medium | short | ephemeral（LLM 标注的关注周期）
+	StateText        string     `gorm:"type:longtext" json:"state_text"`                   // LLM 维护的自由文本状态摘要
+	HistoryStateText *string    `gorm:"type:longtext" json:"history_state_text,omitempty"` // 历史状态页（每次更新时 append 旧内容；会超 64KB，故用 longtext）
+	Metadata         *string    `gorm:"type:json" json:"metadata,omitempty"`               // LLM 原始输出（candidate_info 等）
 	EmbeddingID      *string    `gorm:"size:36" json:"embedding_id,omitempty"`
 	CreatedAt        time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt        time.Time  `gorm:"autoUpdateTime" json:"updated_at"`

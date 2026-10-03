@@ -28,6 +28,16 @@ const (
 // 用 Local（服务器/本机所在时区）而非 UTC，避免把人自己的凌晨算错一天。测试改为 UTC。
 var sessionDayLoc = time.Local
 
+// SetDayLocation 覆盖「一天」边界时区（如云端主机为 UTC，需设成 Asia/Shanghai）。
+// 应在启动装配阶段、后台 worker 启动前调用一次；nil 时不改。运行期一律不再改：
+// 派生层与读取层共享该变量且无锁，中途变更会让同日数据分属不同边界。
+func SetDayLocation(loc *time.Location) {
+	if loc == nil {
+		return
+	}
+	sessionDayLoc = loc
+}
+
 // 在场与组件事件 type（附表 A）。
 const (
 	TypeSystemSleep        = "system.sleep"

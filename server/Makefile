@@ -323,6 +323,16 @@ build-rebuild:
 	ssh $$U@$$H "cd $$P && mv memory-rebuild.tmp memory-rebuild && chmod +x memory-rebuild"; \
 	echo "✅ 上传完成，SSH 上去运行: APP_ENV=prod LLM_API_KEY=xxx EMBEDDING_API_KEY=xxx ./memory-rebuild"
 
+# 编译 SQLite→MySQL 迁移工具 (Linux amd64，纯 Go 驱动无需 CGO) 并上传
+build-sqlite2mysql:
+	@if [ -f .env ]; then . ./.env; fi; \
+	U=$$DEPLOY_USER; H=$$DEPLOY_HOST; P=$(SERVER_PATH); \
+	mkdir -p $(OUTPUT_DIR); \
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o $(OUTPUT_DIR)/sqlite2mysql ./cmd/sqlite2mysql/; \
+	scp $(OUTPUT_DIR)/sqlite2mysql $$U@$$H:$$P/sqlite2mysql.tmp; \
+	ssh $$U@$$H "cd $$P && mv sqlite2mysql.tmp sqlite2mysql && chmod +x sqlite2mysql"; \
+	echo "✅ 上传完成，SSH 上去运行: APP_ENV=prod ./sqlite2mysql -source /path/xhan_helper.snapshot -to prod -db xhan_helper_cloud -confirm=yes"
+
 # 交叉编译 Linux amd64
 build-linux:
 	@echo "=== 交叉编译 Linux amd64 ==="

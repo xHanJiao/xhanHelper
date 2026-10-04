@@ -43,7 +43,9 @@ actor LocalToolResultStore {
 
     func entries(for convID: String, from: String, to: String) throws -> [Entry] {
         let all = try loadAll(for: convID)
-        return all.filter { $0.createdAt >= from && $0.createdAt <= to }
+        // 按解析后的时间比，不按字符串：本地卡片是 UTC `Z`，服务端可能是 `+08:00`，
+        // 字符串比较会差 8 小时把卡片误剔（详见 LocalArtifactTime）。
+        return all.filter { LocalArtifactTime.isWithin($0.createdAt, from: from, to: to) }
     }
 
     func upsert(type: LocalToolResultType, payload: Data, id: String, createdAt: String, conversationId: String) throws {
@@ -62,6 +64,15 @@ actor LocalToolResultStore {
         cache.removeAll()
         try FileManager.default.removeItem(at: baseURL)
         try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+    }
+
+    /// 删除某会话的本地产物（内存 + 磁盘）。用于清理历史遗留的空会话键文件等。
+    func removeConversation(_ convID: String) throws {
+        cache[convID] = nil
+        let url = fileURL(for: convID)
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
     }
 
     private func loadAll(for convID: String) throws -> [Entry] {

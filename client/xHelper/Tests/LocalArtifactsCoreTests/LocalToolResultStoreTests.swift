@@ -84,4 +84,35 @@ final class LocalToolResultStoreTests: XCTestCase {
         let reloaded = try await reader.entries(for: "c1", from: from, to: to)
         XCTAssertEqual(reloaded.count, 0, "磁盘也应清空")
     }
+
+    /// 回归：本地卡片是 UTC `Z`，服务端窗口是东八区 `+08:00`（本地 SQLite 后端）。
+    /// 旧实现按字符串比较，`04:…Z` < `12:…+08:00`，卡片被误剔（刷新即消失）。
+    func testRangeFilterHandlesTimezoneOffsetMismatch() async throws {
+        let store = LocalToolResultStore(baseURL: dir)
+        // 12:04:32+08 == 04:04:32Z，落在 [12:00,13:00)+08:00 内
+        try await store.upsert(type: .docRefs, payload: data("in"), id: "in",
+                               createdAt: "2026-09-26T04:04:32Z", conversationId: "c1")
+        // 08:00Z == 16:00+08，超出窗口
+        try await store.upsert(type: .docRefs, payload: data("out"), id: "out",
+                               createdAt: "2026-09-26T08:00:00Z", conversationId: "c1")
+
+        let entries = try await store.entries(
+            for: "c1",
+            from: "2026-09-26T12:00:00+08:00",
+            to: "2026-09-26T13:00:00+08:00"
+        )
+        XCTAssertEqual(entries.map(\.id), ["in"], "同一时刻的不同偏移必须按时间比，不能按字符串")
+    }
+
+    func testRemoveConversationWipesDiskAndCache() async throws {
+        let store = LocalToolResultStore(baseURL: dir)
+        try await store.upsert(type: .chart, payload: data("A"), id: "m1", createdAt: "2026-09-19T10:00:00Z", conversationId: "")
+        try await store.removeConversation("")
+
+        let after = try await store.entries(for: "", from: from, to: to)
+        XCTAssertEqual(after.count, 0)
+        let reader = LocalToolResultStore(baseURL: dir)
+        let reloaded = try await reader.entries(for: "", from: from, to: to)
+        XCTAssertEqual(reloaded.count, 0, "磁盘也应清空")
+    }
 }

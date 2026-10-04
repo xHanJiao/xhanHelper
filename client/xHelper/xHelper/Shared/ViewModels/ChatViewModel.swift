@@ -1266,7 +1266,10 @@ class ChatViewModel: ObservableObject {
                 ToastCenter.shared.show("服务提示：\(err)")
             }
             if let cid = parseConversationIdFromDone(event.data) {
+                let wasBlank = (conversationId ?? "").isEmpty
                 conversationId = cid
+                // 空白 tab 首轮期间本地产物只留内存（那时还没有会话 id），这里补落盘到真实 id。
+                if wasBlank { persistLocalArtifactsUnderConversation(cid) }
                 onConversationCreated?(cid, parseTitleFromDone(event.data))
                 // 空白 tab 若开了无痕意图：会话已按 ephemeral=true 建成 → 转成服务端标记
                 promoteEphemeralIntent()
@@ -1605,6 +1608,10 @@ class ChatViewModel: ObservableObject {
         let createdAt = msg.createdAt
         let convID = msg.conversationId
         let type = artifact.type
+        // 空白 tab 首轮：会话 id 还没生成（要等 done），此时按空 id 落盘会写进 `.json`，
+        // 重载按真实 id 读不到 → 卡片丢。先只留内存，done 拿到真实 id 后补落盘
+        // （见 persistLocalArtifactsUnderConversation）。
+        guard !convID.isEmpty else { return id }
         Task {
             do {
                 try await LocalToolResultStore.shared.upsert(
@@ -1637,6 +1644,8 @@ class ChatViewModel: ObservableObject {
             messages[idx].localToolResult = LocalToolResultData(type: .docRefs, payload: payload)
             let createdAt = messages[idx].createdAt
             let convID = messages[idx].conversationId
+            // 空会话 id（首轮）先只留内存，done 后由 persistLocalArtifactsUnderConversation 补写。
+            guard !convID.isEmpty else { return }
             Task {
                 do {
                     try await LocalToolResultStore.shared.upsert(
@@ -1679,11 +1688,42 @@ class ChatViewModel: ObservableObject {
             messages.append(msg)
         }
 
-        messages.sort { $0.createdAt < $1.createdAt }
+        // 按解析后的时间排序（本地卡片 UTC `Z` vs 服务端 `+08:00`，字符串排序会错位）。
+        messages.sort { LocalArtifactTime.isOrdered($0.createdAt, before: $1.createdAt) }
         messages = LocalArtifactMerge.reposition(
             messages,
             isLocal: { $0.role == "local_tool_result" },
+            isUser: { $0.role == "user" },
             isAssistant: { $0.role == "assistant" }
         )
+    }
+
+    /// 空白 tab 首轮的本地产物落盘（那时会话 id 尚未生成，insertLocalArtifact 只留了内存）。
+    /// 拿到真实 id 后按该 id 补写，并清掉历史遗留的空会话键文件（`local_results/.json`）。
+    private func persistLocalArtifactsUnderConversation(_ cid: String) {
+        guard !cid.isEmpty else { return }
+        for msg in messages where msg.role == "local_tool_result" {
+            guard let ltr = msg.localToolResult else { continue }
+            let id = msg.id
+            let createdAt = msg.createdAt
+            let type = ltr.type
+            let payload = ltr.payload
+            Task {
+                do {
+                    try await LocalToolResultStore.shared.upsert(
+                        type: type, payload: payload, id: id, createdAt: createdAt, conversationId: cid)
+                } catch {
+                    LogBuffer.shared.error("persistLocalArtifactsUnderConversation: persist \(type.rawValue) failed: \(error)")
+                }
+            }
+        }
+        // 历史版本在空 id 下落过盘（文件名 `.json`）：一次性清掉，避免越攒越多。
+        Task {
+            do {
+                try await LocalToolResultStore.shared.removeConversation("")
+            } catch {
+                LogBuffer.shared.error("persistLocalArtifactsUnderConversation: clean empty-key failed: \(error)")
+            }
+        }
     }
 }

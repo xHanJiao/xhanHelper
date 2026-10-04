@@ -11,6 +11,7 @@ final class LocalArtifactMergeTests: XCTestCase {
         LocalArtifactMerge.reposition(
             items,
             isLocal: { $0.role == "local" },
+            isUser: { $0.role == "user" },
             isAssistant: { $0.role == "assistant" }
         )
     }
@@ -77,5 +78,28 @@ final class LocalArtifactMergeTests: XCTestCase {
         XCTAssertEqual(reposition([]), [])
         XCTAssertEqual(reposition([Item(id: "l", role: "local")]).map(\.id), ["l"])
         XCTAssertEqual(reposition([Item(id: "a", role: "assistant")]).map(\.id), ["a"])
+    }
+
+    func testLocalStaysInItsRoundWhenItsAssistantMissing() {
+        // 该轮 assistant 被服务端过滤（无可见正文）时，卡片仍应留在本轮 user 之后，
+        // 不能被「最近 assistant」吸到上一轮（用户报的「卡片去上一个消息」）。
+        let items = [
+            Item(id: "u1", role: "user"),
+            Item(id: "a1", role: "assistant"),
+            Item(id: "u2", role: "user"),
+            Item(id: "l2", role: "local"),
+        ]
+        XCTAssertEqual(reposition(items).map(\.id), ["u1", "a1", "u2", "l2"])
+    }
+
+    func testLocalInCurrentRoundBetweenUserAndAssistant() {
+        let items = [
+            Item(id: "u1", role: "user"),
+            Item(id: "a1", role: "assistant"),
+            Item(id: "u2", role: "user"),
+            Item(id: "l2", role: "local"),
+            Item(id: "a2", role: "assistant"),
+        ]
+        XCTAssertEqual(reposition(items).map(\.id), ["u1", "a1", "u2", "l2", "a2"])
     }
 }

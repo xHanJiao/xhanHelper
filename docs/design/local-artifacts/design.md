@@ -226,7 +226,7 @@ loadConversation   → messages 全量替换
 
 ## 九、风险 / 已知取舍
 
-- **时间串格式**：本地 `ISO8601DateFormatter`（无小数秒）与服务端 RFC3339（`time.Time` JSON）可能不完全一致，同秒 tie 时排序不稳定；重定位改用**位置距离**判定（不比较时间串），范围过滤靠 `[first, last]` 够宽兜底。
+- **时间串格式**：本地 `ISO8601DateFormatter`（UTC `Z`，无小数秒）与服务端 RFC3339 可能**时区偏移都不同**——本地 SQLite 后端下发东八区 `…+08:00`，云端 MySQL 下发 `Z`。**绝不能按字符串比较**（会差 8 小时）。统一走 `LocalArtifactTime.parse/isOrdered/isWithin` 解析成 `Date` 再比（解析失败才回退字符串）。重定位本身按**位置**判定（不比较时间串）。
 - **设备本地**：缓存不跨设备，新设备/重装后历史轮次的本地产物不出现。要跨设备需回头解析历史 `tool_calls_json`，是另一个量级，先不做。
 - **本地结果不可分享**：`isUnshareable` 覆盖所有 `localToolResult`，chart 同款，符合预期。
 - **update 结果多带一个 preview**：服务端每次 `update_document` 多返回 ~100 字正文摘要进模型上下文（为让 update-only 卡片有摘要）。量小、接受；若日后在意 token，把 `preview` 从结果里去掉、卡片改无摘要态即可。
@@ -235,3 +235,11 @@ loadConversation   → messages 全量替换
 
 - 出现第 4+ 种本地产物、且希望「不改 chat loop 就能加类型」时，再引入 producer 注册表（`[ToolResultArtifactProducer.Type]`）。当前 1 种服务端 producer（document）直接用函数调用，不上注册表。
 - 若本地产物需要跨设备，改走历史 `tool_calls_json` 解析（注意 native FC 与 prompt-eng 两种 JSON 形态）。
+
+## 后续变更
+
+- 2026-10-04 · 修「刷新即消失 / 卡片飞到上一条消息」（见 `docs/bugs/028-document-card-not-persisted.md`）：
+  - 时间比较一律解析成 `Date`（新增 `LocalArtifacts/LocalArtifactTime.swift`）：`LocalToolResultStore.entries` 范围过滤 + `ChatViewModel.mergeLocalToolResults` 排序都改用它。§九「时间串格式」更正为**时区偏移不一致**（本地 SQLite 后端 `+08:00` vs 云端 `Z`），字符串比较会差 8 小时。
+  - 新会话首轮：`insertLocalArtifact` 在会话 id 为空时不落盘（只留内存）；`done` 拿到真实 id 后 `persistLocalArtifactsUnderConversation` 补写并清理空键文件 `local_results/.json`。此前会写进空文件名、重载读不到。
+  - `LocalArtifactMerge.reposition` 增加 `isUser` 谓词：产物改锚定「前一条 user 消息」之后，无 user（隐藏轮）才回退「最近 assistant」——防该轮 assistant 无正文被过滤时卡片被吸到上一轮。
+  - 影响文件：`LocalArtifactTime.swift`(新) / `LocalArtifactMerge.swift` / `LocalToolResultStore.swift` / `ChatViewModel.swift` + 对应测试。

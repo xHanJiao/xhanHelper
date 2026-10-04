@@ -195,6 +195,7 @@ make db-pull / db-import / logs / clean
 
 - 影响主链路（聊天 / 工具调用 / SSE / DB 写入）：`go build ./... && go test ./...` 全绿 + 新增针对性单测 + 真机跑一次聊天
 - 只影响后台低危任务（记忆 / 摘要 / 主题 / 反思等）：`go build ./... && go test ./...` + 改前端则 `vite build` + 真机跑一次聊天并检查日志无 `[post_chat_group]` 等报错
+- 所有改动：若触及 `docs/design/<feature>/` 描述的行为，同步该文档（含在文档尾部追加「后续变更」）
 
 ## API（按模块，实现见对应文件）
 
@@ -220,7 +221,9 @@ make db-pull / db-import / logs / clean
 ## 开发约定
 
 - 与用户交流只用中文（代码/注释/日志沿用项目既有风格）
-- **文档往哪写**：新需求/功能的设计方案写 `docs/design/<feature>/design.md`（先写文档、确认后开发）；bug 修复记录写 `docs/bugs/NNN-<slug>.md`（按编号递增，见「文档地图」）
+- **文档往哪写**：新需求/功能的设计方案写 `docs/design/<feature>/design.md`（先写文档、确认后开发）；bug 修复记录写 `docs/bugs/NNN-<slug>.md`（按编号递增，写新条前先 `ls docs/bugs/` 取号）
+- **bug 文档何时写（非平凡才写）**：根因跨系统 / 有坑易复发 / 用户拍过方案 → 写清「问题表现·根因·最终方案」；一行小改不写
+- **文档要跟着改（维护最新）**：改动触及某设计文档所描述的**行为/取值/决策**时，同一次改动里更新该文档；有用户拍板的变更在文档尾部追加一条「后续变更」（日期 + 决定 + 影响文件），别让文档停在旧值。改前先 `rg docs/design/` 找相关文档 —— 同一行为可能被多份文档描述（如「连线」同时写在 `document-highlight-annotation` 与 `document-annotation-reply` 两处）；`docs/bugs/` 同理——修复方案后续若变更，回头更新对应 bug 文档
 - model/ 只放结构体，DB 操作放 service/；工具实现放 tool/，不要耦合到 controller 或 agent
 - 从数据库列表拉取数据时，必须做分页
 - **禁止在循环内逐个访问数据库**（N+1）：插入用 `tx.Create(&slice)` 批量，更新/删除用带 `IN` 条件的 `Updates`/`Delete`，循环里只做内存操作
@@ -336,7 +339,7 @@ make db-pull / db-import / logs / clean
 
 - `docs/design/` — 设计文档主战场，`phase-1` ~ `phase-18` 按阶段归档；`mac-apps/` 是 macOS 客户端专项；每个设计目录下可放 `mockup.html` 交互预览（规范见「UI 预览与设计 token」）
 - 常读：`progressive-tool-disclosure.md`、`post-chat-worker-group.md`、`plan-mode-readonly.md`、`phase-18-subagent-explore.md`、`retrieval` 相关、`mac-apps/settings-sheet-style.md`、`mac-apps/swift6-concurrency-fix.md`
-- `docs/bugs/` — 按编号记录（到 014）；`docs/front-end/plan.md` — 前端架构与 nginx 部署
+- `docs/bugs/` — 按编号递增记录（写新条前先 `ls docs/bugs/` 取号）；`docs/front-end/plan.md` — 前端架构与 nginx 部署
 - `docs/learning/` `docs/research/` `docs/security/` `docs/todo/` — 学习笔记 / 调研 / 红队测试 / 待办
 
 ## 已知过时/废弃（不要照着做）

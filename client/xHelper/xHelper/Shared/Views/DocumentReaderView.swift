@@ -1203,15 +1203,17 @@ var reader = (function () {
     return true;
   }
 
-  /* 连线用：某条划线第一段的视口矩形（viewport 坐标，左上原点）。
-     取第一个 mark 的**首个行盒** —— 跨行划线连到最上面一行即可。
-     找不到（失活/未画出）返回 null，Swift 侧就不画连线。 */
+  /* 连线用：划线首行所在的「正文列那一行」视口矩形（viewport 坐标，左上原点）。
+     x/w 取 #content 的左右缘（文字列边距），y/h 取第一个 mark 的**首个行盒**。
+     —— 终点只落在右侧留白里（正文列右缘再往右一点），不横穿该行后半段文字；
+     跨行划线连到最上面一行即可。找不到（失活/未画出）返回 null，Swift 侧就不画连线。 */
   function annotationRect(id) {
     var marks = content.querySelectorAll('mark.hl[data-id="' + id + '"]');
     if (!marks.length) return null;
     var rects = marks[0].getClientRects();
     var r = rects.length ? rects[0] : marks[0].getBoundingClientRect();
-    return { x: r.left, y: r.top, w: r.width, h: r.height };
+    var col = content.getBoundingClientRect();
+    return { x: col.left, y: r.top, w: col.width, h: r.height };
   }
 
   /* ---------- 选区 → 工具条 ---------- */

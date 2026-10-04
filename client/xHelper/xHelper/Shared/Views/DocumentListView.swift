@@ -646,8 +646,10 @@ private struct DocumentFullView: View {
         #endif
     }
 
-    /// 连线终点 = 划线矩形离卡片**最近**的那条竖缘中点（DOM 视口坐标 + 阅读器原点 → global）；
-    /// 滚出视口则不画。卡片在划线右侧取右缘、否则取左缘（当前面板恒在右 → 仍是右缘，行为不变）。
+    /// 连线终点 = 划线首行所在「正文列那一行」的竖缘中点 + 6px 外扩（DOM 视口坐标 +
+    /// 阅读器原点 → global）；滚出视口则不画。`annotationRect` 的 x/w 是 #content 左右缘，
+    /// 所以终点落在右侧留白里，不横穿该行后半段文字（+6px 进 padding，满行时尾端也不贴字）。
+    /// 卡片在划线右侧取右缘、否则取左缘（当前面板恒在右 → 仍右缘）。
     private var connectorEnd: CGPoint? {
         #if os(macOS)
         guard connectorID != nil, readerFrame != .zero, let r = reader.connectorRect else { return nil }
@@ -655,7 +657,8 @@ private struct DocumentFullView: View {
                        width: r.width, height: r.height)
         guard g.maxY > readerFrame.minY, g.minY < readerFrame.maxY else { return nil }
         let cardX = connectorCardFrame?.minX ?? g.maxX
-        return CGPoint(x: cardX >= g.midX ? g.maxX : g.minX, y: g.midY)
+        let right = cardX >= g.midX
+        return CGPoint(x: (right ? g.maxX + 6 : g.minX - 6), y: g.midY)
         #else
         return nil
         #endif

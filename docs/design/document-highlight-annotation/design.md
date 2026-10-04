@@ -609,6 +609,14 @@ JS 里维护 `id → [{mark}]`。定位流程：
 - 连带自动变：`span.ann-bubble` 句尾小圆点、`.p-quote` / `.note-editor .quote` 左边条（都引 `--hl-hover`）。查找高亮（`::highlight(find)` 橙黄）、`::selection`（本来就是绿）不受影响。
 - `mockup.html` 的线色候选默认值同步为主题绿（历史候选保留在切换项里）。
 
+**后续变更：连线终点移到正文列右侧（用户拍板）**
+
+用户反馈「批注卡片→划线」的连线连在划线中间、会挡住后半行文字，要求连在右侧。根因：终点原取划线**首个文字片段自身的右缘**（`annotationRect` 返回 `rects[0]`），短划线结束在行中间时终点就落在正文列中间。
+
+- `annotationRect`（`DocumentReaderView.swift`）改为返回「**正文列那一行**」：x/w 取 `#content` 的左右缘、y/h 仍取划线首行片段。于是终点 x = 正文列右缘，连线只在右侧留白里走。
+- `connectorEnd`（`DocumentListView.swift`）终点再 **+6px** 进 padding（满行时尾端不贴最后个字）；"就近端点"逻辑不变（面板恒在右 → 取右缘）。预览 `ConnectorPreviewDemo` 同步 +6。
+- `check-reader-html.sh` 补 3 条：`annotationRect` 的 x/w == `#content` 左右缘、y/h == 划线首行片段、未命中返回 null（166 → 169 条）。
+
 **自查**
 
 - `check-reader-html.sh`：**121 条断言**（脚本现在会把条数一起打出来）。新增划线一整套：单处命中 / 跨块多 mark / 标记只在有 note 时挂 / quote 带 markdown 标记也能命中 / 多命中按前后文挑对位置 / 前后文对不上就不画 / 失活不画 / 重叠嵌套 / 交叠处 hover 列出全部 + 「重叠划线」标签 / `scrollToAnnotation` 闪烁与未命中 / 点击菜单 / 工具条 4 动作 / 浮层保存发 `create` 且文案随内容变 / 编辑带出原 note 并发 `update`）。收尾时补的 5 条钉在划线样式上：`underline` + `wavy` / **底色透明**（防 UA 黄底或回退成高亮）/ 线色确实取 `--hl`（不是 `currentColor`）/ hover 线色比常态实 / popover 里没有「点击编辑」/ **标记是 5px 小圆点而不是 svg 图标**（盯住这次换掉的绿圆图标别回来）。

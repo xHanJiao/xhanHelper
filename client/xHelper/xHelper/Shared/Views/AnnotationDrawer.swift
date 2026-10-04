@@ -833,7 +833,7 @@ private struct ConnectorPreviewDemo: View {
         .overlay {
             AnnotationConnectorLayer(
                 start: cardFrame.map { CGPoint(x: $0.minX, y: $0.midY) },
-                end: highlightFrame == .zero ? nil : CGPoint(x: highlightFrame.maxX, y: highlightFrame.midY)
+                end: highlightFrame == .zero ? nil : CGPoint(x: highlightFrame.maxX + 6, y: highlightFrame.midY)
             )
         }
         .frame(width: 1200, height: 720)

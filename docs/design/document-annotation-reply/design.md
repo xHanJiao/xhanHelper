@@ -13,7 +13,7 @@
 > - ✅ 阅读器 JS 已加 `annotationRect(id)` + `scroll` 消息（供连线）。
 > - ✅ **「问 AI」已整体下线**（客户端 + 服务端 `doc_quote` 死路径）：删除工具条/菜单入口、`DocumentAIBridge`、`ChatView` 引用胶囊/窄条、`ChatViewModel.docQuote`、`DocQuote.swift`；服务端删 `controller/chat.go` 的 `DocQuote`/`normalizeDocQuote`、`retrieval.DocQuoteMeta`、`ctxflow` 的 `document_quote` 块与 `DocumentQuotePacket`。见 AR-12。
 > - ⏳ `DELETE /api/annotation-replies/:id` 未做（v1 用不到，接口可后置）。
-> - ⏳ 真机验收（§11）未跑；`check-reader-html.sh` 未加连线专属断言。
+> - ⏳ 真机验收（§11）未跑；`check-reader-html.sh` 已补 3 条连线专属断言（`annotationRect` 的 x/w == `#content` 左右缘、y/h == 划线首行片段、未命中返回 null）。
 
 ---
 
@@ -50,7 +50,7 @@
 | AR-12 | 「问 AI」 | ✅ 已删除：工具条入口、点击菜单入口、`DocumentAIBridge.onAsk`、`ChatView` 引用胶囊/窄条、`ChatViewModel.docQuote`、`DocQuote.swift`；服务端 `doc_quote` 链路（`DocQuoteMeta` / `document_quote` 块 / `DocumentQuotePacket` / `normalizeDocQuote`）一并移除 |
 | AR-13 | 失败处理 | ✅ 生成失败只影响本次回复；错误向上抛、顶层记一次日志、返回错误给客户端（不吞） |
 | AR-14 | 客户端 UI 形态 | ✅ **常驻批注面板**（Word 批注窗格式），两视图：**讨论**（卡片 + 可折叠线程）/ **全部**（扁平一级列表，原三 tab）。收放见 §7.3 |
-| AR-15 | 卡片 → 划线连线 | ✅ 悬停/操作卡片时从卡片左缘拉一条**水平出入的贝塞尔曲线**到正文划线最近的竖缘（Word 式）。色号 = 划线高亮的 `--hl`，**不是** `appAccent`。见 §7.4 |
+| AR-15 | 卡片 → 划线连线 | ✅ 悬停/操作卡片时从卡片左缘拉一条**水平出入的贝塞尔曲线**到正文列右侧留白（Word 式）。色号 = 划线高亮的 `--hl`（现为主题绿）。见 §7.4 |
 
 ---
 
@@ -404,14 +404,14 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 ### 7.4 卡片 → 划线连线（AR-15）
 
 - **JS**（`DocumentReaderView.swift` 模板）：
-  - `reader.annotationRect(id)` → 该划线**首个 `mark` 的首个行盒**的视口矩形 `{x,y,w,h}`（左上原点），找不到返回 `null`；
+  - `reader.annotationRect(id)` → 划线首行所在的「**正文列那一行**」视口矩形 `{x,y,w,h}`（左上原点），找不到返回 `null`；x/w 取 `#content` 左右缘、y/h 取该划线首个 `mark` 的首个行盒；
   - `scroll` 监听补发 `{type:'scroll'}`（`popover` 内滚不算）。
 - **控制器**：`connectorID` / `connectorRect`（阅读器内坐标）+ `beginConnectorTracking` / `endConnectorTracking` / `measureConnector`；收到 `scroll`、或 `pushAnnotations()` 重画后自动重测。
 - **换算**（关键，别想复杂）：`getBoundingClientRect` 与 SwiftUI `.global` 都是「左上原点、y 向下」，**直接相加**——终点 = `readerFrame.origin + connectorRect`（`readerFrame` 由 `DocumentReaderView.onGeometryChange { $0.frame(in: .global) }` 量得）。**不碰 AppKit 的翻转坐标系**。
 - **起点** = 卡片左缘中点（`AnnotationThreadCard.onHover` 上报 `(id, inside, global frame)`）。
-- **终点** = 划线矩形**离卡片最近的那条竖缘中点**：卡片左缘 x ≥ 划线中点 → 取右缘，否则取左缘（当前面板恒在右侧，实际恒取右缘；为将来左侧布局留对）。
+- **终点** = 划线首行所在**正文列那一行离卡片最近的那条竖缘中点 + 6px 外扩**（进右侧留白，短划线的连线也不横穿该行后半段文字；+6px 让满行时尾端不贴最后个字）。卡片左缘 x ≥ 划线中点 → 取正文列右缘，否则取左缘（当前面板恒在右侧，实际恒取右缘；为将来左侧布局留对）。
 - **画**：`AnnotationConnectorLayer`（跨平台定义，iOS 端点恒 nil）——在文档 tab `HStack` 上 `.overlay`，1pt **水平出入的三次贝塞尔曲线**（`addCurve`；控制点水平偏移 `bend = max(28, |Δx|·0.45)`，方向随终点左右镜像）、圆头、`allowsHitTesting(false)`；划线滚出视口则不画。
-- **色号**：`AnnotationHighlightColor.value(colorScheme)` = 阅读器 `mark.hl` 的 `--hl`（浅 `rgba(217,151,27,1)` / 深 `rgba(146,200,180,.9)`）。**不要改成 `appAccent`**；连线颜色必须与划线一致。
+- **色号**：`AnnotationHighlightColor.value(colorScheme)` = 阅读器 `mark.hl` 的 `--hl` = **主题绿**（浅 `#2F7D63` / hover `#245F4B`，深色薄荷 `#92C8B4`）。连线颜色必须与划线一致（2026-10 用户拍板：浅色由赭金改为 appAccent 绿）。
 
 ### 7.5 客户端触碰点（现状）
 
@@ -527,7 +527,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 - ❌ 回复富文本 / 图片 / @ 引用
 - ❌ trace 子会话（P1/P2 不做，留接口）
 - ❌ 删除单条回复的 UI（`DELETE /api/annotation-replies/:id` v1 未做，后置）
-- ❌ 连线的多行环绕（现为水平出入贝塞尔曲线，终点连到划线首个行盒最近竖缘；多行整体环绕不做）
+- ❌ 连线的多行环绕（现为水平出入贝塞尔曲线，终点连到正文列右侧留白；多行整体环绕不做）
 
 ### 待定
 
@@ -588,7 +588,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 - 视图 `Shared/Views/AnnotationDrawer.swift`：顶部 `AnnotationPanelMode` + `AnnotationHighlightColor` + `AnnotationConnectorLayer`（**跨平台**）；`#if os(macOS)` 内 `AnnotationPanel` / `AnnotationThreadCard` / `AnnotationListBody` / `AnnotationTime`；末尾 `#if DEBUG` 的 `DocPreviewShell` + `previewPanel(...)` + `WavyUnderline` + `ConnectorPreviewDemo` + 7 个 `#Preview`。
 - 装配 `Shared/Views/DocumentListView.swift`（`DocumentFullView`）：`@AppStorage` 三键（`xhan_doc_annot_open`/`xhan_doc_annot_mode`/`xhan_doc_toc_collapsed`）、`docWidth`/`readerFrame`/`connectorID`/`connectorCardFrame`、`layoutWidth`/`tocExpanded`/`annotExpanded`/`connectorStart`/`connectorEnd`、`annotationPanel`/`annotationStrip`、HStack 上的 `onGeometryChange` + `.overlay { AnnotationConnectorLayer }`、`toggleAnnotationPanel()`。
 - 常量 `Shared/Views/LayoutConstants.swift`：`docAnnotPanelWidth=300` / `docPanelStripWidth=32` / `docTocExpandedWidth=220` / `docReaderMinWidth=260` / `docAnnotHardFloor=560` / `docTocHardFloor=780`。
-- 自查：`cd client/xHelper/xHelper/Shared && xcrun swiftc -typecheck -D DEBUG -sdk "$(xcrun --show-sdk-path --sdk macosx)" -target arm64-apple-macos26.3 -default-isolation MainActor -I <DerivedData>/Build/Products/Debug $(cat /tmp/shared.txt) ../../xHelperMac/*.swift`；iOS 换 `iphonesimulator` + `Index.noindex/Build/Products/Debug-iphonesimulator`。`bash client/xHelper/scripts/check-reader-html.sh` 现有 **179 条断言**（模板从 Swift 源现抠，故 JS 改动自动纳入；**未加连线专属断言**，可后续补）。
+- 自查：`cd client/xHelper/xHelper/Shared && xcrun swiftc -typecheck -D DEBUG -sdk "$(xcrun --show-sdk-path --sdk macosx)" -target arm64-apple-macos26.3 -default-isolation MainActor -I <DerivedData>/Build/Products/Debug $(cat /tmp/shared.txt) ../../xHelperMac/*.swift`；iOS 换 `iphonesimulator` + `Index.noindex/Build/Products/Debug-iphonesimulator`。`bash client/xHelper/scripts/check-reader-html.sh` 现有 **169 条断言**（模板从 Swift 源现抠，故 JS 改动自动纳入；连线专属断言已补 3 条：`annotationRect` 的 x/w == `#content` 左右缘、y/h == 划线首行片段、未命中返回 null）。
 - 注意：`AnnotationPanelMode` / `AnnotationConnectorLayer` / `AnnotationHighlightColor` **必须在 `#if os(macOS)` 之外**定义（`@AppStorage` 默认值与 `.overlay` 在共享的 `DocumentListView` 里用到，iOS 也要能编）。
 
 ### F. 服务端实现地图（P1+P2+P3-Go 已落地）

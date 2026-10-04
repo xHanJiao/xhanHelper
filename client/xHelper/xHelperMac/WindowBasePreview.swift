@@ -2,11 +2,14 @@ import SwiftUI
 
 #if os(macOS) && DEBUG
 
-/// 窗口底板（全窗唯一那层玻璃）调参预览：Xcode 画布（⌘⌥P）里扫材质档 + 暖 tint 透明度，
-/// 挑出「壁纸能透、正文看得清」的组合；选定后把值写进 GlassWindowModifier。
+/// 窗口底座调参预览：Xcode 画布（⌘⌥P）里扫「底图 + 顶层」的组合。
+/// 支持真实照片底图（走生产同款 `ImageCompressor.thumbnail(maxPixel:192)`），
+/// 用来判两件事：① 全窗 `regularMaterial` 会不会把照片色块冲淡（D10）；
+/// ② 遮罩用多深值（写成 `color-mix(in srgb, … N%)` 的 N）。
 /// 仅 DEBUG 展示用，不参与真实布局、不接真 VM。
 struct WindowBasePreview: View {
     enum Wallpaper: String, CaseIterable, Identifiable {
+        case photo = "真实照片"
         case busy = "花哨彩图"
         case dark = "深色"
         case light = "浅色"
@@ -39,14 +42,22 @@ struct WindowBasePreview: View {
 
     @State private var wallpaper: Wallpaper
     @State private var baseMaterial: BaseMaterial
-    @State private var tint: Double
+    /// 全窗顶层是否画 `regularMaterial`（关掉 = 只留纯遮罩那版，D10 对比）
+    @State private var showMaterial: Bool
+    /// 遮罩不透明度（照片之上的暖色 veil；用来定 color-mix 的 N）
+    @State private var veil: Double
+    /// 照片档的额外模糊（192 缩略图放大后本身已很糊，默认只加一点）
+    @State private var blur: Double
     @State private var appearance: Appearance
 
-    init(wallpaper: Wallpaper = .busy, material: BaseMaterial = .regular,
-         tint: Double = 0, appearance: Appearance = .light) {
+    init(wallpaper: Wallpaper = .photo, material: BaseMaterial = .regular,
+         showMaterial: Bool = true, veil: Double = 0.35, blur: Double = 60,
+         appearance: Appearance = .light) {
         _wallpaper = State(initialValue: wallpaper)
         _baseMaterial = State(initialValue: material)
-        _tint = State(initialValue: tint)
+        _showMaterial = State(initialValue: showMaterial)
+        _veil = State(initialValue: veil)
+        _blur = State(initialValue: blur)
         _appearance = State(initialValue: appearance)
     }
 
@@ -58,8 +69,10 @@ struct WindowBasePreview: View {
     var body: some View {
         ZStack {
             wallpaperView
-            Rectangle().fill(baseMaterial.material)
-            warmTint.opacity(tint)
+            if showMaterial {
+                Rectangle().fill(baseMaterial.material)
+            }
+            warmTint.opacity(veil)
             contentSample
         }
         .frame(width: 1340, height: 900)
@@ -72,6 +85,8 @@ struct WindowBasePreview: View {
     @ViewBuilder
     private var wallpaperView: some View {
         switch wallpaper {
+        case .photo:
+            photoWallpaper
         case .busy:
             ZStack {
                 LinearGradient(colors: [.orange, .pink, .indigo, .teal, .yellow],
@@ -92,6 +107,18 @@ struct WindowBasePreview: View {
         }
     }
 
+    /// 真实照片底图：与生产 `AppBackdrop` 同一路径——包内 192px 默认图放大铺满。
+    /// 读包内资源（`bgDefault`），不读 `~/Downloads`（TCC 保护目录，预览/沙箱进程读不到）。
+    private var photoWallpaper: some View {
+        Image("bgDefault")
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fill)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .blur(radius: blur, opaque: true)   // opaque: 重模糊时四边不渐隐（否则透出底层）
+            .clipped()
+    }
+
     // MARK: - 代表性内容（判正文/次级文字在底板上的对比度）
 
     private var contentSample: some View {
@@ -107,6 +134,9 @@ struct WindowBasePreview: View {
                         .foregroundStyle(ink.opacity(0.7))
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .background(.ultraThinMaterial, in: Capsule())
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("这是一段直接压在底板上的正文，用来判断对比度是否足够。AI 回复、侧栏列表、顶栏标题都属于这一类。")
@@ -143,48 +173,70 @@ struct WindowBasePreview: View {
     // MARK: - 控制条
 
     private var controlStrip: some View {
-        HStack(spacing: 18) {
-            Picker("壁纸", selection: $wallpaper) {
-                ForEach(Wallpaper.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 320)
+        VStack(spacing: 8) {
+            HStack(spacing: 18) {
+                Picker("壁纸", selection: $wallpaper) {
+                    ForEach(Wallpaper.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 420)
 
-            Picker("材质", selection: $baseMaterial) {
-                ForEach(BaseMaterial.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 360)
+                Picker("材质", selection: $baseMaterial) {
+                    ForEach(BaseMaterial.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 300)
+                .disabled(!showMaterial)
 
-            Picker("外观", selection: $appearance) {
-                ForEach(Appearance.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 150)
+                Toggle("全窗材质", isOn: $showMaterial)
+                    .toggleStyle(.switch)
 
-            HStack(spacing: 6) {
-                Text("tint \(String(format: "%.2f", tint))")
-                    .font(.system(size: 12, design: .monospaced))
-                Slider(value: $tint, in: 0...0.8, step: 0.05)
-                    .frame(width: 150)
+                Picker("外观", selection: $appearance) {
+                    ForEach(Appearance.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 130)
+            }
+
+            HStack(spacing: 18) {
+                sliderRow(title: "遮罩 \(String(format: "%.2f", veil))", value: $veil, range: 0...0.8)
+                sliderRow(title: "模糊 \(Int(blur))", value: $blur, range: 0...160)
             }
         }
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         .padding(.bottom, 16)
     }
+
+    private func sliderRow(title: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.system(size: 12, design: .monospaced))
+                .frame(width: 110, alignment: .leading)
+            Slider(value: value, in: range)
+                .frame(width: 200)
+        }
+    }
 }
 
-#Preview("花哨 · regular（生产）") {
+#Preview("照片 · 全窗材质 · 浅色") {
     WindowBasePreview()
 }
 
-#Preview("花哨 · thick") {
-    WindowBasePreview(material: .thick)
+#Preview("照片 · 全窗材质 · 深色") {
+    WindowBasePreview(wallpaper: .photo, showMaterial: true, appearance: .dark)
 }
 
-#Preview("深色 · thin + tint0.35") {
-    WindowBasePreview(wallpaper: .dark, material: .thin, tint: 0.35, appearance: .dark)
+#Preview("照片 · 纯遮罩 · 浅色") {
+    WindowBasePreview(wallpaper: .photo, showMaterial: false, veil: 0.35)
+}
+
+#Preview("照片 · 纯遮罩 · 深色") {
+    WindowBasePreview(wallpaper: .photo, showMaterial: false, veil: 0.35, appearance: .dark)
+}
+
+#Preview("对比 · 花哨 + regular") {
+    WindowBasePreview(wallpaper: .busy)
 }
 
 #endif

@@ -291,8 +291,8 @@ make db-pull / db-import / logs / clean
 | userText | `#2A7F58` | `#90D4A8` | | bubbleTool | `#E8E4EF` | `#2E2B36` |
 
 - **不要自造色相**：淡色/描边一律 `color-mix(in srgb, assistantText N%, transparent)`，能落 token 就别写新 hex
-- **表面语言**：窗口底 `.ultraThinMaterial`（`xHelperMac/App.swift:486`）；内容区/侧栏是 `.regularMaterial` 卡片（`CardBackground.swift`，r12，卡片间距 `cardGap=6`）；深色卡片靠**白阴影 + 白 0.5pt 描边**浮起，不是黑阴影
-- 暖色渐变 + 光晕（`GlassBackground.swift`）**只有 ChatView / SettingsView 用**。文档页活在右侧栏卡片里（`RightSidebarView.swift:41` 的 `CardBackgroundModifier`），底色是**中性 material**，**不要拿暖米色 `chatBackground` 当页面底**（否则整页发黄）
+- **表面语言**：窗口底是**固定照片底图 + `.regularMaterial`**——照片（内置默认图 `bgDefault` 或用户导入池）重度模糊成色块，玻璃压其上，与桌面/其他 app 无关（`GlassWindowModifier.swift` + `AppBackdrop.swift` + `BackgroundPhotoStore.swift`，见 `docs/design/mac-apps/window-background-photos.md`）。**底图只能挂在 WindowGroup 根这一处**，绝不许任何列/列表再自铺底层色（曾把色块挂中间列 → 标题栏只盖一半）。内容区/侧栏是描边卡片（`CardBackground.swift` 的 material 卡片现仅用于部分面板），深色卡片靠**白阴影 + 白 0.5pt 描边**浮起，不是黑阴影
+- 暖色渐变 + 光晕（`GlassBackground.swift`）**只有 iOS 用**；macOS 的 `GlassBackground` 已改为复用 `AppBackdrop`（照片底图）。文档正文页（`DocumentFullView`）在 macOS 上铺一层 `.regularMaterial` 当"纸"底（正文 WKWebView 全透明，不铺会直接压在照片上、影响可读性）；底图只透到页面四周
 - 正文基线：`FontSizeManager.baseSize=17`，正文 `scaledSize × 1.18`；字体栈 `-apple-system, "PingFang SC"`；列宽 728px
 - **正文换 WKWebView 时必须全透明**（`isOpaque=false` + `backgroundColor=.clear` + HTML body 不铺不透明底色），否则糊掉卡片材质
 - CSS 坑：带 `var()` 的派生变量在**声明它的元素**上求值 → 主题 class 必须挂 `html`（`:root`）；挂 `body` 会让 `:root { --bg: var(--chat-bg) }` 永远停在浅色

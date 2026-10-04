@@ -84,6 +84,17 @@ enum ImageCompressor {
         return downsample(source, maxPixel: maxPixel)
     }
 
+    /// 一步到底：降采样到 `maxPixel` 再编码成 JPEG。窗口底图用（只留色块，192 足矣）。
+    /// 与 `thumbnail` 同一套 ImageIO 参数（含 EXIF 转正）。
+    ///
+    /// **故意不保 alpha**：底图永远不透明，带 alpha 的 PNG 编码成 JPEG 会有黑边，但在
+    /// 192px + 重度模糊下不可见。下一个复用它的人别把这当 bug 修。
+    nonisolated static func downscaledJPEG(_ data: Data, maxPixel: Int) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cg = downsample(source, maxPixel: maxPixel) else { return nil }
+        return encode(cg, as: .jpeg)
+    }
+
     nonisolated private static func encode(_ image: CGImage, as type: UTType) -> Data? {
         let out = NSMutableData()
         guard let dest = CGImageDestinationCreateWithData(

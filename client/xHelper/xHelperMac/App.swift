@@ -7,6 +7,9 @@ extension Notification.Name {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    /// 主窗口（`WindowGroup` 那一个）。只有它要套透明机身底；⌘, 设置窗保持系统原生（见 configureWindow）。
+    static weak var primaryWindow: NSWindow?
+
     private(set) var isHoldingQuit = false
     private(set) var holdProgress: Double = 0
     private var quitTimer: Timer?
@@ -375,6 +378,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Self.configureWindow(window)
         }
         LocalLockController.shared.lockOnActivate()
+        // 「切屏随机」：切走再切回本 app 时换一张底图（非该模式时内部 no-op）。
+        BackgroundPhotoStore.shared.rotateOnActivate()
     }
 
     func applicationDidResignActive(_ notification: Notification) {
@@ -498,7 +503,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.applicationIconImage = badged
     }
 
-    private static func configureWindow(_ window: NSWindow) {
+    static func configureWindow(_ window: NSWindow) {
+        // 只处理主窗口：设置窗（⌘,）要保持系统原生标题栏（D9），别被一起弄透明。
+        guard window === primaryWindow else { return }
         guard window.isOpaque else { return }
         window.isOpaque = false
         window.backgroundColor = .clear
@@ -546,6 +553,9 @@ struct xhanHelperMacApp: App {
             .glassWindow()
             .background(LocalWindowReader { window in
                 windowHandle.window = window
+                AppDelegate.primaryWindow = window
+                // 拿到主窗口即配置（别只等 will/didBecomeActive，否则首启可能停在系统标题栏）。
+                AppDelegate.configureWindow(window)
                 applyWindowSizeForOnboarding()
             })
             .onAppear { applyWindowSizeForOnboarding() }
@@ -613,6 +623,7 @@ struct xhanHelperMacApp: App {
                 .environmentObject(colorSchemeManager)
                 .environmentObject(FontSizeManager.shared)
                 .preferredColorScheme(colorSchemeManager.selectedScheme.colorScheme)
+                .background(AppBackdrop())
                 .overlay {
                     // 设置窗口是独立 Scene：不盖的话锁定期间照样能看明文密钥 / 点「浏览」。
                     if LocalBackendManager.isActive && lockController.isLocked {
@@ -823,6 +834,7 @@ struct MacSettingsView: View {
     @AppStorage(LongReplyAlert.soundKey) private var longReplyAlertSound = LongReplyAlert.defaultSoundEnabled
     @AppStorage(LongReplyAlert.secondsKey) private var longReplyAlertSeconds = LongReplyAlert.defaultSeconds
     @State private var showClearCacheAlert = false
+    @State private var showBackgroundSheet = false
     @State private var showAddDirSheet = false
     @State private var showAddExemptSheet = false
     @State private var authorizedDirs: [String] = DirectoryAuthorizationManager.shared.permanentDirs
@@ -851,6 +863,13 @@ struct MacSettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+
+                Button {
+                    showBackgroundSheet = true
+                } label: {
+                    Label("背景图片…", systemImage: "photo.on.rectangle.angled")
+                }
+                .buttonStyle(.borderless)
             }
 
             Section("提醒") {
@@ -1080,9 +1099,14 @@ struct MacSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        // 让窗口底图（AppBackdrop）透出内容区；设置窗标题栏仍为系统原生（D9）。
+        .scrollContentBackground(.hidden)
         .tint(Color("appAccent"))
         .fixedSize(horizontal: true, vertical: false)
         .frame(minWidth: 380)
+        .sheet(isPresented: $showBackgroundSheet) {
+            BackgroundPhotoSettingsView()
+        }
     }
 }
 

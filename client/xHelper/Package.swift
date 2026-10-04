@@ -77,5 +77,16 @@ let package = Package(
             dependencies: ["ActivityCore"],
             path: "Tests/ActivityCoreTests"
         ),
+        // ImageCompressorCore — 图片压缩的纯逻辑（降采样 + JPEG 编码），窗口底图导入用。
+        .target(
+            name: "ImageCompressorCore",
+            path: "xHelper/Shared",
+            sources: ["Services/ImageCompressor.swift"]
+        ),
+        .testTarget(
+            name: "ImageCompressorCoreTests",
+            dependencies: ["ImageCompressorCore"],
+            path: "Tests/ImageCompressorCoreTests"
+        ),
     ]
 )

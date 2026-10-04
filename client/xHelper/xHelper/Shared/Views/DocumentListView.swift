@@ -599,6 +599,9 @@ private struct DocumentFullView: View {
         }
         #if os(macOS)
         .background { shortcutCarrier }
+        // D11：文档页铺一层"纸"底（material）。正文 WKWebView 是全透明的，没有这层就会
+        // 直接压在窗口底图（照片）上、影响可读性；底图只透到页面四周。
+        .background(.regularMaterial)
         #endif
     }
 

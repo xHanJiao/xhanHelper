@@ -650,19 +650,34 @@ final class LocalWindowHandle: ObservableObject {
     weak var window: NSWindow?
 }
 
-/// 背景层：拿到宿主 `NSWindow` 后回调（`makeNSView` 返回时还没进窗口，必须异步取）。
+/// 背景层：拿到宿主 `NSWindow` 后回调。
+///
+/// 用 `viewDidMoveToWindow()` 而不是 `makeNSView` + `DispatchQueue.main.async` ——
+/// 后者不保证那时 `view.window` 已非 nil，会让依赖它的逻辑（窗口尺寸 / 透明机身 / 底图）首启偶发不生效。
+/// `viewDidMoveToWindow` 在挂进窗口时同步触发，是 AppKit 保证的时机。
 struct LocalWindowReader: NSViewRepresentable {
     let onWindow: (NSWindow) -> Void
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            if let window = view.window { onWindow(window) }
+    final class ProxyView: NSView {
+        var onWindow: ((NSWindow) -> Void)?
+        private var fired = false
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard !fired, let window else { return }
+            fired = true
+            onWindow?(window)
         }
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = ProxyView()
+        view.onWindow = onWindow
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? ProxyView)?.onWindow = onWindow
+    }
 }
 
 // MARK: - 预览（Xcode 画布复核；观感以真机为准）

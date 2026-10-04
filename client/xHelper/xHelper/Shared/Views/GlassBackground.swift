@@ -1,8 +1,17 @@
 import SwiftUI
 
-/// 共享的玻璃拟态背景：暖调渐变 + 柔和蓝青光晕，供毛玻璃内容模糊显形。
+/// 共享的玻璃拟态背景。macOS 用固定照片底图（`AppBackdrop`，与桌面无关）；
+/// iOS 仍用暖调渐变 + 柔和蓝青光晕。
 struct GlassBackground: View {
     var body: some View {
+        #if os(macOS)
+        AppBackdrop()
+        #else
+        warmGradient
+        #endif
+    }
+
+    private var warmGradient: some View {
         ZStack {
             LinearGradient(
                 colors: [Color("chatBackground"), Color("chatBackgroundDeep")],

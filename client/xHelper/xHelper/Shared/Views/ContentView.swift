@@ -31,8 +31,6 @@ struct ContentView: View {
     @State private var topBarMinWidth: CGFloat = 0
     /// 进入 PiP 前右栏宽度，退出时恢复。
     @State private var prePipSidebarWidth: Double?
-    /// 进入浏览器聚焦（middleMinimized）前右栏宽度，退出时恢复。
-    @State private var preFocusSidebarWidth: Double?
     /// PiP 自动退出原因（onChange 里消费，避免状态翻转与副作用耦合）。
     @State private var pipExitReason = "userExit"
 
@@ -58,12 +56,12 @@ struct ContentView: View {
     }
 
     /// 右侧栏在当前窗口布局下可用的最大宽度。
-    /// 减去中间跨度、右栏外扩。PiP 或浏览器聚焦时中间让位，右栏可铺满整窗（不设 1200 上限）。
+    /// 减去中间跨度、右栏外扩。PiP 时中间让位，右栏可铺满整窗（不设 1200 上限）。
     private var rightSidebarMaxAvailable: Double {
         let available = Double(windowWidth)
             - middleSpan
             - Double(Layout.rightSidebarOuterPadding)
-        let cap = (rightSidebar.isPipChat || rightSidebar.middleMinimized) ? 4000.0 : 1200.0
+        let cap = rightSidebar.isPipChat ? 4000.0 : 1200.0
         return max(Double(Layout.rightSidebarMinWidth), min(cap, available))
     }
 
@@ -179,42 +177,6 @@ struct ContentView: View {
         guard rightSidebar.isPipChat else { return }
         pipExitReason = reason
         rightSidebar.isPipChat = false
-    }
-
-    // MARK: - 浏览器聚焦（中间栏缩到最小宽）
-
-    /// 进入浏览器聚焦副作用（onChange(of: middleMinimized) 驱动，幂等）。
-    private func enterBrowserFocusEffects() {
-        guard rightSidebar.middleMinimized else { return }
-        if rightSidebar.isPipChat { return } // PiP 已让中间栏让位，无需重复处理
-        preFocusSidebarWidth = rightSidebar.width
-        withAnimation(.easeInOut(duration: 0.2)) {
-            rightSidebar.width = rightSidebarMaxAvailable
-        }
-        updateWindowMinWidth()
-    }
-
-    /// 窗口变宽后浏览器聚焦态补满（onChange(of: geo.size.width) 触发，幂等）。
-    private func refillBrowserFocus() {
-        guard rightSidebar.middleMinimized, !rightSidebar.isPipChat, rightSidebar.isOpen else { return }
-        let fill = rightSidebarMaxAvailable
-        if fill != rightSidebar.width {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                rightSidebar.width = fill
-            }
-            pipLog("browser focus: refill \(Int(rightSidebar.width)) -> \(Int(fill))")
-        }
-    }
-
-    /// 退出浏览器聚焦副作用（onChange 统一入口，reason 用于诊断）。
-    private func exitBrowserFocusEffects(reason: String) {
-        let restored = min(preFocusSidebarWidth ?? rightSidebar.width, rightSidebarMaxAvailable)
-        preFocusSidebarWidth = nil
-        withAnimation(.easeInOut(duration: 0.2)) {
-            rightSidebar.width = restored
-        }
-        updateWindowMinWidth()
-        pipLog("browser focus: exit reason=\(reason) restoredWidth=\(Int(restored))")
     }
 #endif
 
@@ -363,7 +325,7 @@ struct ContentView: View {
 
                     GeometryReader { geo in
                         let rightMax: Double = max(Double(Layout.rightSidebarMinWidth),
-                            min((rightSidebar.isPipChat || rightSidebar.middleMinimized) ? 4000 : 1200,
+                            min(rightSidebar.isPipChat ? 4000 : 1200,
                                 Double(geo.size.width)
                                 - middleSpan
                                 - Double(Layout.rightSidebarOuterPadding)))
@@ -411,16 +373,7 @@ struct ContentView: View {
                                         maxWidth: rightMax,
                                         reversed: true,
                                         ghost: resizeGhost,
-                                        seamX: $rightSeamX,
-                                        onDragStart: {
-                                            // 手动拖动中↔右缝隙 = 退出浏览器聚焦：
-                                            // 清空 preFocus 避免恢复跳变（拖拽本身提供新宽度），
-                                            // 中栏随之可自由伸缩接管余量。
-                                            if rightSidebar.middleMinimized {
-                                                preFocusSidebarWidth = nil
-                                                rightSidebar.middleMinimized = false
-                                            }
-                                        }
+                                        seamX: $rightSeamX
                                     )
                                 }
                             }
@@ -445,7 +398,6 @@ struct ContentView: View {
                             // ponytail: 排查「点内链卡死」的临时埋点（方案 A），定位后删
                             LogBuffer.shared.diag("[doclink] geo.width 变化 → \(new)")
                             clampRightSidebarWidth()
-                            refillBrowserFocus() // 窗口放大后浏览器聚焦态补满（含进入时异步放大窗口的场景）
                             // ponytail: 临时埋点（方案 A），定位后删
                             LogBuffer.shared.diag("[doclink] geo.width 处理完成")
                         }
@@ -454,8 +406,6 @@ struct ContentView: View {
                             LogBuffer.shared.diag("[doclink] rightSidebar.isOpen 变化 → \(isOpen)")
                             if !isOpen {
                                 autoExitPip(reason: "sidebarClosed")
-                                // 关闭右侧栏时退出浏览器聚焦，恢复中间栏宽度
-                                rightSidebar.middleMinimized = false
                             }
                             // 浏览器按钮组随侧栏开/关注册/注销，内容底线变化
                             if isOpen {
@@ -469,15 +419,6 @@ struct ContentView: View {
                             // ponytail: 临时埋点（方案 A），定位后删
                             LogBuffer.shared.diag("[doclink] rightSidebar.isOpen 处理完成 → \(isOpen)")
                         }
-                        .onChange(of: rightSidebar.middleMinimized) { _, minimized in
-                            if minimized {
-                                enterBrowserFocusEffects()
-                            } else {
-                                exitBrowserFocusEffects(reason: "userExit")
-                            }
-                            clampRightSidebarWidth()
-                            refillBrowserFocus()
-                        }
                         .onChange(of: rightSidebar.isPipChat) { _, isPip in
                             if isPip {
                                 enterPipEffects()
@@ -487,12 +428,7 @@ struct ContentView: View {
                             // 顶栏按钮组随 PiP 注册/注销，内容底线变化
                             clampRightSidebarWidth()
                         }
-                        .onChange(of: rightSidebar.activeTabId) { _, id in
-                            if id == nil {
-                                // 切到浏览面板（文档/账单/监控等）只退出浏览器聚焦，不退出 PiP：
-                                // PiP 是「右栏最大化」的层级状态，与右栏装什么内容解耦。
-                                rightSidebar.middleMinimized = false
-                            }
+                        .onChange(of: rightSidebar.activeTabId) { _, _ in
                             BrowserToolProvider.shared.refreshBrowserGroup()
                         }
                     }

@@ -56,7 +56,7 @@ type MiniReAct struct {
 type SubAgentExt struct {
 	ClientTools       []ClientTool      // 客户端工具定义（browser/fs 等）
 	ClientBridge      *ClientToolBridge // 客户端工具结果回传桥
-	ClientToolTimeout time.Duration     // 客户端工具执行超时，0 = 60s
+	ClientToolTimeout time.Duration     // 客户端工具执行超时，0 = 240s
 	// TurnConvID / TurnID — 继承父 turn 的归组键，写进下发 payload（设计篇 4.8）。
 	// subagent 不新开 turn，客户端子事件挂到父会话与父轮次；后台任务为空。
 	TurnConvID string
@@ -136,7 +136,7 @@ func NewMiniReAct(cfg *MiniReActConfig) *MiniReAct {
 	}
 	clientToolTimeout := cfg.SubAgent.ClientToolTimeout
 	if clientToolTimeout <= 0 {
-		clientToolTimeout = 60 * time.Second
+		clientToolTimeout = 240 * time.Second
 	}
 	subAgent := cfg.SubAgent
 	subAgent.ClientToolTimeout = clientToolTimeout
@@ -494,7 +494,7 @@ func truncateStringKeepHeadTail(s string, maxLen int) string {
 }
 
 // clientToolBudgetFor 计算客户端工具的执行预算（clientToolCaller 的等待超时）。
-// ui server（ask_user 用户介入）特判：用户思考时间不计入 120s 默认预算，
+// ui server（ask_user 用户介入）特判：用户思考时间不计入 240s 默认预算，
 // 用 ctx 剩余时间（subAgent 600s 总预算自然封顶）；无 deadline 时回退默认值。
 func (m *MiniReAct) clientToolBudgetFor(ctx context.Context, toolName string) time.Duration {
 	if toolName == "ui" {

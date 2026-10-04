@@ -94,3 +94,9 @@
 | 30s 对极慢磁盘偏短 | 阈值可配（常量），≥30s 可调 |
 
 **回滚**：改动集中在 `FileSystemToolProvider*.swift` + `ToolOutputStore.swift` + `OutputSanitizer.swift` + 1 处提示词，`git revert` 即可。
+
+---
+
+## 后续变更
+
+- **2026-10-04**：本文多处论据基于「服务端预算 120s」。该预算已随工具确认队列改动调为 **240s**（`server/conf/config.yaml` 的 `llm.client_tool_timeout_secs`，见 `docs/bugs/027-...md`）。文内 `min(context.deadlineSecs ?? 30, 30)` 的 **30s 上限结论仍成立**；但 `ExecuteContext.deadlineSecs` 的口径也已变更——客户端不再用固定的「预算 ×0.9」，而是**审批结束后按剩余时间重算**（`ChatViewModel+ClientTools.swift`，`execDeadline = 服务端预算 ×0.9 − 已耗审批/排队时间`）。故文中「≈108s」等固定值已不代表现状，仅作历史记录。

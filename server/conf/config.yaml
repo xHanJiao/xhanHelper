@@ -41,7 +41,7 @@ llm:
   max_tool_result_chars: 20000 # 历史回放时工具结果的截断阈值（字符）；仅作用于历史重放，当前轮不截。20000 与客户端注入预算 clientToolInjectBudgetBytes 对齐，只兜住病态超大结果
   tool_max_concurrency: 2 # 工具并发执行上限，0=不限制
   extract_msg_limit: 50 # 记忆提取每次最多取的消息数
-  client_tool_timeout_secs: 120 # 客户端工具执行超时秒数（默认 120：覆盖 L3 审批 60s + 执行余量），
+  client_tool_timeout_secs: 240 # 客户端工具执行超时秒数（默认 240：覆盖 L3 审批队首 180s + 执行余量），
   debug_persist_json: false # 是否持久化完整 LLM 请求 JSON 到 DB（异步限频写入，prod 可开启，配 debug_json 控制频率与保留）
   debug_json:
     retention_days: 3 # request_json 保留天数，超出后定时清理

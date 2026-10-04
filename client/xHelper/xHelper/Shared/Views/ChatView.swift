@@ -141,7 +141,14 @@ struct ChatView: View {
             }
 
             // L3 工具确认行：输入框上方，固定可见（浏览历史消息时也不会错过许可请求）
-            if let conf = viewModel.pendingToolConfirmation {
+            // 队列只显示队首；后面还有排队时给出计数提示。
+            if let conf = viewModel.pendingToolConfirmations.first {
+                if viewModel.pendingToolConfirmations.count > 1 {
+                    Text("另有 \(viewModel.pendingToolConfirmations.count - 1) 条待确认")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, Layout.chatHorizontalPadding)
+                }
                 toolConfirmationBar(conf)
             }
 
@@ -774,15 +781,15 @@ struct ChatView: View {
                     Image(systemName: "shield.lefthalf.filled")
                         .font(.caption)
                         .foregroundColor(.orange)
-                    Text("60s 未处理自动拒绝")
+                    Text("\(Int(ToolConfirmation.timeoutSeconds))s 未处理自动拒绝")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     Spacer()
-                    Button("允许") { viewModel.resolveToolConfirmation(allow: true) }
+                    Button("允许") { viewModel.resolveToolConfirmation(id: conf.id, allow: true) }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(Color("appAccent"))
-                    Button("拒绝") { viewModel.resolveToolConfirmation(allow: false) }
+                    Button("拒绝") { viewModel.resolveToolConfirmation(id: conf.id, allow: false) }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(.secondary)
@@ -822,12 +829,12 @@ struct ChatView: View {
                             .textSelection(.enabled)
                     }
                 }
-                Button("允许") { viewModel.resolveToolConfirmation(allow: true) }
+                Button("允许") { viewModel.resolveToolConfirmation(id: conf.id, allow: true) }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .tint(accent)
                     .padding(.leading, 12)
-                Button("拒绝") { viewModel.resolveToolConfirmation(allow: false) }
+                Button("拒绝") { viewModel.resolveToolConfirmation(id: conf.id, allow: false) }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .tint(accent)

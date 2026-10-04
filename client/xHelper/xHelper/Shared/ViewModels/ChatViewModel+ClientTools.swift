@@ -30,7 +30,10 @@ extension ChatViewModel {
         let args = (obj["arguments"] as? [String: Any]) ?? [:]
         let budgetBytes = (obj["result_budget_bytes"] as? NSNumber)?.intValue
         let timeoutSecs = (obj["timeout_secs"] as? NSNumber)?.doubleValue
-        let deadline = (timeoutSecs != nil) ? (timeoutSecs! * 0.9) : nil
+        // 服务端预算从下发时刻起算；排队 + 审批耗时必须在执行时扣掉，
+        // 否则工具会跑过服务端预算（服务端已放弃、客户端还在跑 → 有副作用的命令重复执行）。
+        // 实际执行 deadline 在审批结束后按「剩余」重算，见下方 ExecuteContext 构造处。
+        let receivedAt = Date()
         let owner = obj["owner"] as? String
         // 服务端下发 payload 补的会话上下文（附表 A：客户端执行视角靠它们归组/挂父）。
         let conversationID = obj["conversation_id"] as? String
@@ -99,7 +102,7 @@ extension ChatViewModel {
                     }
                 }
 
-                // 工具分级：L3（高风险写）执行前需用户确认（60s 超时视为拒绝）
+                // 工具分级：L3（高风险写）执行前需用户确认（队首起 180s 超时视为拒绝）
                 // S2/G6：交互工具在高敏域或 http 明文页上动态升 L3（防注入诱导自动操作账户）。
                 // forcedL3 标记"敏感上下文升的级"，任何信任档都不跳过（防注入最后一道）。
                 var level = LocalToolRegistry.shared.riskLevel(for: toolName, arguments: args)
@@ -204,8 +207,25 @@ extension ChatViewModel {
                     }
                 }
 
+                // 执行预算按「剩余」算：服务端预算 × 0.9 减去已消耗的排队/审批时间。
+                // 服务端未下发 timeout 时保持 nil（各工具回退自身默认：MCP 54s / fs 30s）。
+                let execDeadline: TimeInterval?
+                if let serverBudget = timeoutSecs {
+                    let elapsed = Date().timeIntervalSince(receivedAt)
+                    // 已超服务端预算：服务端已放弃并 Unregister，此时执行只会产生副作用 + 回传 404。
+                    // 对 shell / fs 写这类有副作用的工具尤其危险（LLM 收到超时可能重试 → 重复执行）。
+                    // 直接跳过执行，不落盘、不回传。
+                    if elapsed >= serverBudget {
+                        execOutcome = "failed"; execErrorType = "expired"
+                        LogBuffer.shared.warning("clientToolCall: \(toolName) skipped: elapsed \(Int(elapsed))s >= server budget \(Int(serverBudget))s（服务端已超时）")
+                        return
+                    }
+                    execDeadline = max(5, serverBudget * 0.9 - elapsed)
+                } else {
+                    execDeadline = nil
+                }
                 let context = ExecuteContext(
-                    budgetBytes: budgetBytes, deadlineSecs: deadline, owner: owner,
+                    budgetBytes: budgetBytes, deadlineSecs: execDeadline, owner: owner,
                     conversationId: conversationID, turnId: turnID, bridgeEventId: bridgeEventID)
                 let result = try await LocalToolRegistry.shared.execute(
                     flatName: toolName,

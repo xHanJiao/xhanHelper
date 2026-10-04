@@ -230,7 +230,7 @@ type OrchestratorConfig struct {
 	DebugPersistJSON          bool              // 是否持久化完整 LLM 请求 JSON（异步限频写入，配 debug_json 控制频率与保留）
 	DebugJSONSink             DebugJSONSink     // request_json 异步落库 sink，DebugPersistJSON 开启时必填
 	ClientBridge              *ClientToolBridge // 客户端工具桥（客户端工具调用的 pending 路由）
-	ClientToolTimeoutSecs     int               // 客户端工具执行超时秒数，默认 60
+	ClientToolTimeoutSecs     int               // 客户端工具执行超时秒数，默认 240
 	SubAgentMaxIterations     int               // 子 agent 最大轮次（含强制收敛轮），默认 20（防死循环兜底）
 	SubAgentTimeoutSecs       int               // 子 agent 执行超时秒数，默认 600（真实预算）
 	SummaryRepo               *service.ConversationSummaryRepo
@@ -264,8 +264,8 @@ func New(cfg *OrchestratorConfig) *Orchestrator {
 		cfg.VerifyModel = "flash"
 	}
 	if cfg.ClientToolTimeoutSecs <= 0 {
-		// 默认 120s：覆盖客户端 L3 工具审批（60s 超时视为拒绝）+ 执行余量（0.9×下发值）
-		cfg.ClientToolTimeoutSecs = 120
+		// 默认 240s：覆盖客户端 L3 工具审批（队首 180s 超时视为拒绝）+ 执行余量（0.9×下发值）
+		cfg.ClientToolTimeoutSecs = 240
 	}
 	if cfg.SubAgentMaxIterations <= 0 {
 		// 兜底防死循环（timeout 才是真实预算上限）；不设太大——轮次太多任务转不完

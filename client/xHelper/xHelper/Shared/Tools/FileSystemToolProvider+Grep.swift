@@ -60,7 +60,7 @@ extension FileSystemToolProvider {
             maxBytes: outputBudget)
         let sanitized = OutputSanitizer.sanitize(formatted.text)
 
-        // 超时：返回已收集部分（落盘供续读）或可执行错误，绝不白等满服务端 120s
+        // 超时：返回已收集部分（落盘供续读）或可执行错误，绝不白等满服务端 240s
         if outcome.timedOut {
             let note = "grep 超时（\(Int(timeout))s），已扫描到 \(collector.matches.count) 条匹配后中止。请缩小 path（指定子文件/子目录）、加 include、或简化 pattern。"
             fsToolLog("fs__grep TIMEOUT path=\(resolvedPath) include=\(include ?? "-") pattern=\(pattern) elapsed=\(elapsedMs)ms matches=\(collector.matches.count) stderr=\(outcome.stderrTail)")

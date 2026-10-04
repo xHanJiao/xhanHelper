@@ -58,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
 
             // L3 工具确认：Tab=允许，Esc=拒绝（无需 Command，优先级最高）。
-            // resolveToolConfirmation 有 confirmationResolved 防重入守卫，连按安全。
+            // 作用于队列队首（多条并发到时逐条处理），移除后自动轮到下一条，连按安全。
             if AppShortcutBridge.shared.confirmationPending?() == true {
                 if event.keyCode == 48 { // Tab
                     AppShortcutBridge.shared.resolveConfirmation?(true)

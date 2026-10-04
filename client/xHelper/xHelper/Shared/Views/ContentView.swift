@@ -239,10 +239,10 @@ struct ContentView: View {
             self.activeChatViewModel?.enqueuePastedImages(datas)
         }
         AppShortcutBridge.shared.confirmationPending = {
-            self.activeChatViewModel?.pendingToolConfirmation != nil
+            !(self.activeChatViewModel?.pendingToolConfirmations.isEmpty ?? true)
         }
         AppShortcutBridge.shared.resolveConfirmation = { allow in
-            self.activeChatViewModel?.resolveToolConfirmation(allow: allow)
+            self.activeChatViewModel?.resolveTopToolConfirmation(allow: allow)
         }
     }
 #endif

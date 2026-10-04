@@ -15,7 +15,11 @@ final class SSEClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
     override init() {
         super.init()
-        session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        // SSE 是长连接：URLSession 默认 timeoutIntervalForRequest=60s（语义为「两次数据间隔」），
+        // 审批/长工具执行期间若服务端心跳被丢，会先于服务端预算被掐断。显式放到 300s。
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 300
+        session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }
 
     func connect(baseURL: String, token: String, message: String, conversationId: String?, deepMode: Bool, agentId: String? = nil, thinking: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil, memoryThreshold: Double = 0.5, memoryLimit: Int = 8, clientTools: [[String: Any]]? = nil, initMode: String? = nil, verifyEnabled: Bool? = nil, briefAnswer: Bool = false, hiddenRound: Bool = false, attachments: [String] = [], ephemeral: Bool = false) {

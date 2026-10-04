@@ -134,7 +134,7 @@
 | # | 操作（聊天对话） | 预期 |
 |---|------------------|------|
 | 1 | 让 agent 新建 `fs-test/new-note.txt`，内容 "hello" | 确认条出现：`📝 写入文件`（displayName=写入文件）+ 路径 + 全 + 行 diff + `+1 -0`；点允许 → 落盘；结果返回 Wrote N bytes |
-| 2 | 让 agent 写 `fs-test/resume.html` 的"技能"一节（改内容） | **覆盖已有文件**：确认条显示 diff（绿/红/上下文着色）+ `+N -M`；拒绝 → 文件不变 + LLM 收到"用户拒绝"；超时 60s → 同上 |
+| 2 | 让 agent 写 `fs-test/resume.html` 的"技能"一节（改内容） | **覆盖已有文件**：确认条显示 diff（绿/红/上下文着色）+ `+N -M`；拒绝 → 文件不变 + LLM 收到"用户拒绝"；队首超时 180s → 同上 |
 | 3 | 直接让 agent 覆盖 `fs-test/utf8.txt`（本轮未读过） | 不弹确认，直接报错"请先用 read 读取该文件后再覆盖写入" |
 | 4 | 先读 `fs-test/bom_utf8.txt`，再让其覆盖写一行 | 允许后文件仍带 UTF-8 BOM（`file` 命令验证 "with BOM"） |
 | 5 | 先读 `fs-test/utf8.txt`，让 agent append 一行 | 确认条显示追加 diff；允许后原内容保留、新增一行，且原行尾若缺 \n 自动补 |

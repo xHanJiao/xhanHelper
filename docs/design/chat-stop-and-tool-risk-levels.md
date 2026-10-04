@@ -116,7 +116,7 @@ if level >= 3 {
 }
 // 原执行逻辑不变
 ```
-- 超时（60s）→ 自动拒绝，提交"等待用户确认超时"
+- 超时（队首 180s）→ 自动拒绝，提交"等待用户确认超时"
 
 ### 4.3 确认 UI（一行字，消息气泡下方）
 
@@ -148,6 +148,12 @@ if level >= 3 {
 1. macOS 流式中点停止 → 服务端日志确认 ReAct 中断、无半成品 assistant 入库
 2. 网络波动 SSE 断 → ReAct 继续跑完（不误终止）
 3. `POST /api/chat/stop` 未登录 401 / 非 owner 403 / 无运行 chat → stopped:false
-4. cgclick/cgdrag 调用 → 一行字确认出现 + 自动滚动；允许执行 / 拒绝提交 / 60s 超时提交
+4. cgclick/cgdrag 调用 → 一行字确认出现 + 自动滚动；允许执行 / 拒绝提交 / 队首 180s 超时提交
 5. L1/L2 工具自动执行无确认；close/open 等默认 L2
 6. 停止按钮仅流式时显示，点击后消失
+
+---
+
+## 后续变更
+
+- **2026-10-04**：确认从单槽改队列，只显示队首；排队的并发审批不再互相覆盖。超时由 60s 调为 180s（只给队首计时），服务端 `llm.client_tool_timeout_secs` 120→240 配套。详见 `docs/bugs/027-macos-tool-confirmation-single-slot-overwrite.md`。影响 `ChatViewModel.swift`（`pendingToolConfirmations` 队列 + `resolveToolConfirmation(id:allow:)`）、`ChatView.swift`、`DiffPreviewView.swift`、`ContentView.swift`、`xHelperMac/App.swift`、`server/conf/config.yaml`。

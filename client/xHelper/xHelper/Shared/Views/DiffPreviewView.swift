@@ -120,9 +120,9 @@ struct ExpandedDiffPreviewView: View {
         .frame(minWidth: 700, minHeight: 500)
         #endif
         .padding(24)
-        // 确认在别处被解决（超时自动拒绝 / 内联按钮）：浮层别留着失效内容
-        .onChange(of: viewModel.pendingToolConfirmation?.id) { _, newID in
-            if newID != conf.id { onClose() }
+        // 确认在别处被解决（超时自动拒绝 / 内联按钮 / 队首易主）：浮层别留着失效内容
+        .onChange(of: viewModel.pendingToolConfirmations.map(\.id)) { _, ids in
+            if !ids.contains(conf.id) { onClose() }
         }
     }
 
@@ -131,7 +131,7 @@ struct ExpandedDiffPreviewView: View {
             Image(systemName: "shield.lefthalf.filled")
                 .font(.caption)
                 .foregroundColor(.orange)
-            Text("60s 未处理自动拒绝 · \(closeHint)")
+            Text("\(Int(ToolConfirmation.timeoutSeconds))s 未处理自动拒绝 · \(closeHint)")
                 .font(.caption2)
                 .foregroundColor(.secondary)
             Spacer(minLength: 8)
@@ -147,7 +147,7 @@ struct ExpandedDiffPreviewView: View {
     }
 
     private func resolve(allow: Bool) {
-        viewModel.resolveToolConfirmation(allow: allow)
+        viewModel.resolveToolConfirmation(id: conf.id, allow: allow)
         onClose()
     }
 }

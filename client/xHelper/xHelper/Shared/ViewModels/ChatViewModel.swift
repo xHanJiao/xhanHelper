@@ -22,6 +22,8 @@ struct PlanNode: Identifiable {
 // MARK: - Tool Confirmation（L3 工具执行前用户确认）
 
 struct ToolConfirmation: Identifiable {
+    /// 单条确认条等待用户操作的超时秒数（队首起算）。UI 文案与计时共用一个源。
+    static let timeoutSeconds: TimeInterval = 180
     let id: UUID
     let toolName: String
     let displayName: String
@@ -383,9 +385,11 @@ class ChatViewModel: ObservableObject {
     //     UserDefaults.standard.set(dict, forKey: "plan_completed_seen")
     // }
 
-    /// L3 工具执行确认（同一时刻最多一个，client tool 顺序执行）
-    @Published var pendingToolConfirmation: ToolConfirmation?
-    private var confirmationResolved = false
+    /// L3 工具执行确认队列：并发子任务的 client_tool_call 会同时到达，
+    /// 单槽会被后到者覆盖（被顶掉的 continuation 永不 resume）。改数组排队，只显示队首。
+    @Published var pendingToolConfirmations: [ToolConfirmation] = []
+    /// 队首确认的超时任务（只给队首计时：排队条目在被看到前不计时，杜绝静默失效）。
+    private var confirmationTimeoutTask: Task<Void, Never>?
 
     /// 子任务用户介入请求（ask_user）：数组支持多 task 并发排队。
     /// 独立于 toolQueue——不被文本流清理（ToolActivityToast 在文本流开始时退场）。
@@ -534,7 +538,7 @@ class ChatViewModel: ObservableObject {
         onEphemeralChanged?(true)
     }
 
-    /// 挂起等待用户确认工具执行；60s 超时视为拒绝。
+    /// 挂起等待用户确认工具执行；队首起 180s 超时视为拒绝。
     /// elevated=true：敏感上下文升级的 L3（高敏域/明文页/用户标签授权），任何信任档都不跳过（防注入）。
     /// hardened=true：L4（shell 等高危命令），信任档不跳过，完全信任可跳过。
     /// browserArgsSummary=true 时（浏览器工具）用 BrowserActivityCenter.confirmationBody 生成人话摘要。
@@ -581,12 +585,11 @@ class ChatViewModel: ObservableObject {
                 : String(arguments.map { "\($0.key)=\($0.value)" }.joined(separator: ", ").prefix(80))
             #endif
         }
-        confirmationResolved = false
-        let myID = UUID() // per-confirmation 标识：超时任务只处理"当前 pending 还是自己"的确认，杜绝双重 resume
         let displayName = LocalToolRegistry.shared.displayName(for: toolName)
         return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
-            pendingToolConfirmation = ToolConfirmation(
-                id: myID,
+            let isNewHead = pendingToolConfirmations.isEmpty
+            pendingToolConfirmations.append(ToolConfirmation(
+                id: UUID(),
                 toolName: toolName,
                 displayName: displayName,
                 argsSummary: argsSummary,
@@ -597,29 +600,38 @@ class ChatViewModel: ObservableObject {
                 filePath: filePath,
                 hardened: hardened,
                 continuation: cont
-            )
-            playConfirmationAlert()
-            // 60s 超时自动拒绝。confirmationResolved 是共享标志（新确认会重置），
-            // 必须叠加 id 检查：旧确认的超时任务醒来时 pending 已是新确认（或 nil），跳过，
-            // 否则会对已解决/已替换的 continuation 二次 resume 导致崩溃。
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(60))
-                guard let self,
-                      self.pendingToolConfirmation?.id == myID,
-                      !self.confirmationResolved else { return }
-                self.confirmationResolved = true
-                self.pendingToolConfirmation = nil
-                cont.resume(returning: false)
-            }
+            ))
+            // 只有新条目成为队首时才起计时；排在后面的不重臂，避免重置队首已跑的计时。
+            if isNewHead { armHeadConfirmationTimer() }
         }
     }
 
-    /// 用户点击允许/拒绝，结束确认等待
-    func resolveToolConfirmation(allow: Bool) {
-        guard let conf = pendingToolConfirmation, !confirmationResolved else { return }
-        confirmationResolved = true
-        pendingToolConfirmation = nil
+    /// 只给队首确认起超时计时：排在你没看到它之前不会倒计时。
+    /// 队首变化（新条目上位 / 队首被解决）时调用；旧任务先取消。
+    private func armHeadConfirmationTimer() {
+        confirmationTimeoutTask?.cancel()
+        guard let head = pendingToolConfirmations.first else { confirmationTimeoutTask = nil; return }
+        playConfirmationAlert()
+        confirmationTimeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(ToolConfirmation.timeoutSeconds))
+            guard !Task.isCancelled, let self else { return }
+            self.resolveToolConfirmation(id: head.id, allow: false)
+        }
+    }
+
+    /// 用户点击允许/拒绝（或超时），结束对应确认；随后自动轮到下一条。
+    func resolveToolConfirmation(id: UUID, allow: Bool) {
+        guard let idx = pendingToolConfirmations.firstIndex(where: { $0.id == id }) else { return }
+        let conf = pendingToolConfirmations.remove(at: idx)
         conf.continuation.resume(returning: allow)
+        // 只有移除队首才轮到下一条、才需重臂计时；移除队中其它项不动队首计时与提示音。
+        if idx == 0 { armHeadConfirmationTimer() }
+    }
+
+    /// 键盘 Tab / Esc：作用于当前队首确认。
+    func resolveTopToolConfirmation(allow: Bool) {
+        guard let head = pendingToolConfirmations.first else { return }
+        resolveToolConfirmation(id: head.id, allow: allow)
     }
 
     /// 子任务请求用户介入（ask_user）：弹 AskUserBar + 系统通知（仅队列首个发，避免轰炸）。

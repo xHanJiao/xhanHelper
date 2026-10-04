@@ -417,7 +417,7 @@ extension APIClient {
 > 3. **`client_tool_call` 事件必须阻塞发送**：现有 `sendEvent` 是非阻塞丢弃式，该事件丢失 = 工具永不执行。用带 5s 超时的阻塞发送兜底（chat 的 orch.Run 用 context.Background()，断连不会取消 ctx）。
 > 4. **不给 `tool.ToolCall` 加 Source 字段**：source 是请求级状态，orchestrator 用本次请求的 `clientIdx map[string]bool`（key=server_name）判断分发。
 > 5. **tool-result 请求去掉 `conversation_id`**：路由只需 call_id，归属由 pending 中记录的 userID 校验。
-> 6. 超时默认 60s（浏览器操作 30s 偏紧），配置项 `llm.client_tool_timeout_secs`。
+> 6. 超时默认 240s（覆盖客户端 L3 审批队首 180s + 执行余量），配置项 `llm.client_tool_timeout_secs`。
 
 ### 2.0 命名与分发
 
@@ -539,14 +539,14 @@ func chatToolResult(bridge *agent.ClientToolBridge) gin.HandlerFunc {
 
 ### 2.8 配置
 
-`llm.client_tool_timeout_secs`，默认 60。
+`llm.client_tool_timeout_secs`，默认 240。
 
 ### 2.9 边界情况
 
 | 场景 | 行为 |
 |------|------|
 | 客户端断连后 LLM 才发起 client 调用 | client_tool_call 阻塞发送 5s 超时 → 错误结果，LLM 下轮应对 |
-| 回传超时（>60s） | select 超时 → 错误结果 + Unregister；迟到回传 404 |
+| 回传超时（>240s） | select 超时 → 错误结果 + Unregister；迟到回传 404 |
 | 重复回传 | ch 缓冲 1，首个生效；之后已 Unregister → 404 |
 | 跨用户伪造 call_id | OnResult 校验 userID → 404 |
 | iOS（不发 client_tools） | clientIdx 为 nil → 与现状完全一致 |

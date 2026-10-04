@@ -12,8 +12,8 @@ import (
 )
 
 // 客户端审批（长耗时调用）对 subAgent 的影响：
-// 场景模拟——客户端收到 client_tool_call 后先走审批，~60ms 后才回传结果，
-// 在 200ms 的服务端等待预算内（比例等价于真实 120s 预算 vs 60s 审批）：
+// 场景模拟——客户端收到 client_tool_call 后先走审批，~80ms 后才回传结果，
+// 在 200ms 的服务端等待预算内：
 //   1. 审批通过 → 工具成功，结果以 role=tool 回传 LLM，子 agent 正常完成
 //   2. 审批拒绝 → 工具失败（错误回传），子 agent 继续执行不中断
 // 均验证不会因等待被服务端提前杀死（预算内）。
@@ -56,7 +56,7 @@ func newClientToolMiniReAct(responses []llm.Message) (*MiniReAct, *ClientToolBri
 		SubAgent: SubAgentExt{
 			ClientTools:       []ClientTool{{ServerName: "browser", Name: "navigate", IsReadOnly: true}},
 			ClientBridge:      bridge,
-			ClientToolTimeout: 200 * time.Millisecond, // 等价缩放：真实 120s 预算中的 60s 审批 → 200ms 中的 80ms 审批
+			ClientToolTimeout: 200 * time.Millisecond, // 服务端预算 200ms（客户端模拟审批 80ms）
 		},
 		OnEvent: sink.onEvent,
 	})

@@ -51,7 +51,7 @@ final class FileSystemToolProvider: @unchecked Sendable {
     let maxLineChars = 2000
     let defaultReadLimit = 2000
 
-    /// grep/glob 子进程的客户端硬超时（必须小于服务端 client_tool_timeout_secs=120）。
+    /// grep/glob 子进程的客户端硬超时（必须小于服务端 client_tool_timeout_secs=240）。
     static let processTimeout: TimeInterval = 30
 
     /// 收集循环的纯安全网预算（grep/glob 的 walk 停止由"第 maxResults+1 条"决定，

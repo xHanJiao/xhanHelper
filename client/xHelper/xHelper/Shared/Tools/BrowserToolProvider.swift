@@ -6,7 +6,7 @@ import SwiftUI
 /// P1-4a：并发子 agent/主 agent 共享同一浏览器实例，并行操作会互踩
 /// （tab 切换/导航/快照竞态）甚至压垮 WebView 进程——所有浏览器工具调用串行执行，
 /// 长操作（open/waitForLoad 等）期间其他调用排队（持锁），用户等待不在此锁内。
-/// 排队带超时（acquireTimeout）：避免前序操作卡死时排队者无限等待（服务端预算 120s
+/// 排队带超时（acquireTimeout）：避免前序操作卡死时排队者无限等待（服务端预算 240s
 /// 白白耗尽）。排队超时返回 false，调用方直接报错给服务端。
 private final class BrowserExecutionQueue {
     private final class Waiter {

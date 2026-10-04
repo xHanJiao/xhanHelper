@@ -119,7 +119,7 @@ macOS 客户端 handleClientToolCall:
   │    └─ 预演：读文件 → 内存替换 → DiffRenderer → unified + stats
   │         → awaitToolConfirmation(diffText, stats)
   │         ├─ 允许 → 真正落盘（temp + replaceItemAt）→ 提交成功
-  │         └─ 拒绝/60s 超时 → 提交"用户拒绝，不得重试"
+  │         └─ 拒绝/队首 180s 超时 → 提交"用户拒绝，不得重试"
   └─ POST /api/chat/tool-result → LLM 继续
 ```
 
@@ -145,7 +145,7 @@ macOS 客户端 handleClientToolCall:
 │  │  │ 103 │ + 熟悉 Go/Swift，3 年后端经验              │  │  │  ← 绿底
 │  │  │     │           ▲ 可滚动（max 240pt 不截断）     │  │  │
 │  │  └────────────────────────────────────────────────┘  │  │
-│  │   ( 60s 未处理自动拒绝 )                              │  │
+│  │   ( 180s 未处理自动拒绝 )                              │  │
 │  │            [ ✓ 允许 ]          [ ✗ 拒绝 ]             │  │
 │  ╰──────────────────────────────────────────────────────╯  │
 │                                                            │

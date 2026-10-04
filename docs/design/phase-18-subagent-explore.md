@@ -789,7 +789,7 @@ return &tool.SubAgentRunResult{
 |------|------|------|------|
 | `ClientTools` | `[]ClientTool` | 客户端工具定义（browser 等） | nil = 无客户端工具 |
 | `ClientBridge` | `*ClientToolBridge` | 客户端工具结果回传桥 | nil = 不分发客户端工具 |
-| `ClientToolTimeout` | `time.Duration` | 客户端工具执行超时 | 0 = 60s（与 orchestrator 同款默认） |
+| `ClientToolTimeout` | `time.Duration` | 客户端工具执行超时 | 0 = 240s（与 orchestrator 同款默认） |
 | `ConvID` | `string` | 注入 `ExecuteContext`（工具按会话上下文工作） | "" |
 | `AllowedTools` | `map[string]bool` | 运行时白名单 guard | nil = 不限 |
 | `MsgSink` | `MsgSink` | 可选持久化回调 | nil = 纯内存（profile_worker 不变） |
@@ -964,7 +964,7 @@ SubAgentTimeoutSecs:   cfg.SubAgent.ExploreTimeoutSeconds,
 |------|------|
 | `agent/client_tools.go` | `buildAskUserDef()`：构造 `ui` server + `ask_user` 函数 def。参数：`message` 必填（展示给用户的话术）、`context` 可选 |
 | `agent/subagent.go` | 注入 ui 工具；explorePrompt 加规则（见下） |
-| `agent/mini_react.go` | `execClientTool` 对 `ui` server 特判：预算 = subCtx 剩余时间（600s 总预算封顶）而非 120s 客户端默认 |
+| `agent/mini_react.go` | `execClientTool` 对 `ui` server 特判：预算 = subCtx 剩余时间（600s 总预算封顶）而非 240s 客户端默认 |
 
 **explorePrompt 新增规则**：
 - 仅在必须用户介入时调用 ask_user（验证码、登录墙等），一次只请求一个用户动作
@@ -995,7 +995,7 @@ SubAgentTimeoutSecs:   cfg.SubAgent.ExploreTimeoutSeconds,
 | 测试 | 覆盖点 |
 |------|--------|
 | `TestAskUserDef_InjectedOnlyWithClientTools` | 客户端工具非空才注入 ui 工具；空则无 |
-| `TestMiniReAct_AskUserBudget` | ui 工具预算 = subCtx 剩余时间（<120s 时取剩余值，无 deadline 时用默认） |
+| `TestMiniReAct_AskUserBudget` | ui 工具预算 = subCtx 剩余时间（<240s 时取剩余值，无 deadline 时用默认） |
 | `TestAskUser_DefStructure` | buildAskUserDef 参数结构（message 必填/context 可选） |
 | 真机（Xcode 验证） | 验证码页面 → 弹条 + 通知出现 → [已处理] 子循环继续 / [跳过] 子循环换来源 / UI 超时视为跳过 |
 

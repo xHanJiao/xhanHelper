@@ -21,7 +21,7 @@ opencode 有两份实现：`packages/core/src/tool/bash.ts`（V2 精简内核）
 
 | 项 | opencode 做法 | xhanHelper 对齐 / 偏离 |
 |----|---------------|------------------------|
-| 入参 | `command` / `workdir?` / `timeout`（默认 2min，上限 10min） | 同款，超时上限收窄到 100s（< 服务端 120s 预算） |
+| 入参 | `command` / `workdir?` / `timeout`（默认 2min，上限 10min） | 同款，超时上限收窄到 100s（< 服务端 240s 预算） |
 | shell 选择 | 配置 → 校验；`fish`/`nu` 禁用；darwin 回退 `/bin/zsh`，登录 shell 并 source rc | **偏离**：不走 shell；固定 PATH + 子进程 env 白名单（不 source rc，见六） |
 | 进程模型 | 独立进程组，`killTree` 负 PID SIGTERM→SIGKILL；Windows `taskkill /t` | 同款：`posix_spawn` + `POSIX_SPAWN_SETPGROUP`，按组杀 |
 | 超时/中断 | `raceAll(exitCode, abort信号, timeout)`，整组 kill；**中断时保全已产出输出** | 超时看门狗同款 + 保全输出；中断由 `ShellProcessRegistry` + `stopStreaming` 补（见六、十一） |
@@ -29,7 +29,7 @@ opencode 有两份实现：`packages/core/src/tool/bash.ts`（V2 精简内核）
 | 命令解析 | tree-sitter-bash/PowerShell 解析 AST，枚举所有命令节点（含 `$( )`、管道、子 shell） | **偏离**：no-shell 执行器自行切分（见四） |
 | 权限 | 每条命令 `ctx.ask(permission:"bash", patterns, always)`；BashArity 生成 `"<前缀> *"` 白名单 | 借 arity 思路做代码内置三档白名单 |
 | 目录 | 文件类命令解析路径参数，项目根外 → `external_directory` 许可 | 复用 `DirectoryAuthorizationManager` 授权目录 |
-| 审批 | 交互式权限弹窗（每次询问/永远允许），无限等待 | 复用现有确认条；工作区内 L2 免确认、区外 L3（信任模式可跳）；**偏离**：确认 60s 自动拒绝 |
+| 审批 | 交互式权限弹窗（每次询问/永远允许），无限等待 | 复用现有确认条；工作区内 L2 免确认、区外 L3（信任模式可跳）；**偏离**：确认队首 180s 自动拒绝 |
 
 ## 三、目标 / 非目标
 
@@ -258,7 +258,7 @@ L4 改四处：
 3. `ChatViewModel.swift`：`awaitToolConfirmation(hardened:)` 增加参数；`ToolConfirmation` 增 `hardened: Bool`。
 4. `ChatView.swift`：`toolConfirmationBar` 对 `hardened` 显示红色 + "此操作不可跳过（信任模式无效）"，并展示**完整命令**（不复用现有 `argsSummary` 的 `prefix(80)` 截断）。
 
-超时（60s）视为拒绝（fail-safe，用户已定）。
+超时（队首 180s）视为拒绝（fail-safe，用户已定）。
 
 ## 九、改动文件清单
 

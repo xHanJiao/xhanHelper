@@ -600,6 +600,15 @@ JS 里维护 `id → [{mark}]`。定位流程：
 - **批注标记也从「绿色圆底 + 气泡图标」换成句尾 5px 线色小圆点**（用户：「有点丑，而且很突兀」）。候选做进 mockup 底部控制条的「批注标记」共 5 个：A 小圆点（**选中**）/ B 上标序号 `¹²³` / C 完全不标 / D 一个标记都不加、纯划线赭金而带批注的线转薄荷绿 / E 现状绿圆图标对照。`span.ann-bubble` 变成 `display:inline-block; width/height:5px; border-radius:50%; background: var(--hl-hover)`，`BUBBLE_SVG` 变量整个删掉（不再需要图标）。hover 放大到 1.6 倍、`title="查看批注"` 不变；hover 浮层与点击菜单的命中逻辑用的是 `data-for`/`data-id`，跟标记长什么样无关。
   - 踩坑：**headless 截图会冻在 `text-decoration-color` 那个 130ms 过渡的起始帧**（`transition` 只在有帧推进时才跑，虚拟时间下不保证），第一次截 D 方案是琥珀色、看着像「CSS 没生效」；`getComputedStyle` 紧接点击后读也是旧值。加 `transition:none` 重截才是真实观感。
 
+**后续变更：浅色线色改主题绿（用户拍板）**
+
+用户真机看下来，浅色赭金与整个 app 的主题色（appAccent 绿）不搭，要求划线（波浪线）与「批注卡片→划线」的连线都改成绿色。
+
+- 浅色 `--hl` 由赭金 `rgba(217,151,27,1)` 改为主题绿 **`#2F7D63`（`rgba(47,125,99,1)`）**，`--hl-hover` 压深一档 **`#245F4B`（`rgba(36,95,75,1)`）**；深色本来就是薄荷绿，不动。
+- Swift 侧 `AnnotationHighlightColor.value(_:)`（`AnnotationDrawer.swift`）浅色分支同步为 `Color(red:47/255,green:125/255,blue:99/255)` —— 批注连线与预览波浪线跟着变。
+- 连带自动变：`span.ann-bubble` 句尾小圆点、`.p-quote` / `.note-editor .quote` 左边条（都引 `--hl-hover`）。查找高亮（`::highlight(find)` 橙黄）、`::selection`（本来就是绿）不受影响。
+- `mockup.html` 的线色候选默认值同步为主题绿（历史候选保留在切换项里）。
+
 **自查**
 
 - `check-reader-html.sh`：**121 条断言**（脚本现在会把条数一起打出来）。新增划线一整套：单处命中 / 跨块多 mark / 标记只在有 note 时挂 / quote 带 markdown 标记也能命中 / 多命中按前后文挑对位置 / 前后文对不上就不画 / 失活不画 / 重叠嵌套 / 交叠处 hover 列出全部 + 「重叠划线」标签 / `scrollToAnnotation` 闪烁与未命中 / 点击菜单 / 工具条 4 动作 / 浮层保存发 `create` 且文案随内容变 / 编辑带出原 note 并发 `update`）。收尾时补的 5 条钉在划线样式上：`underline` + `wavy` / **底色透明**（防 UA 黄底或回退成高亮）/ 线色确实取 `--hl`（不是 `currentColor`）/ hover 线色比常态实 / popover 里没有「点击编辑」/ **标记是 5px 小圆点而不是 svg 图标**（盯住这次换掉的绿圆图标别回来）。

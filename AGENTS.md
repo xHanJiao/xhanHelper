@@ -191,6 +191,12 @@ make deploy[-backend|-frontend|-only]   # 部署（需要 .env 里的 DEPLOY_USE
 make db-pull / db-import / logs / clean
 ```
 
+仓库级开发节奏统计（根目录跑，跨 server/client/docs），产物落 `docs/stats/`：
+```bash
+python3 scripts/dev-stats.py --out docs/stats/dev-stats.md   # 全历史；--months 3 / --since 2026-07-01 收窗口
+python3 scripts/dev-stats.py --selftest                      # 解析器自检
+```
+
 **`make test` 已停用**（`Makefile` 里整段注释，help 文本是旧的）。改动验收按影响面选：
 
 - 影响主链路（聊天 / 工具调用 / SSE / DB 写入）：`go build ./... && go test ./...` 全绿 + 新增针对性单测 + 真机跑一次聊天
@@ -315,9 +321,9 @@ make db-pull / db-import / logs / clean
 - `Message` / `Conversation` 等模型：可变字段用 `var`（`let` 带默认值不会被合成的 `Codable` 解码）；**不要用 memberwise init 重建已有消息**（静默丢新字段）
 - **macOS 设置页子页面风格统一**：卡片分组用 `SettingsCard` + `KeycapView`（`client/xHelper/xHelperMac/SettingsStyle.swift`），规范见 `docs/design/mac-apps/settings-sheet-style.md`
 - 纯逻辑文件在 `client/xHelper/Package.swift` 里镜像成 SwiftPM target，可用 `swift test` 跑（不碰 Xcode）
-- **阅读器（文档正文 WKWebView）有两个自查脚本**，模板都从 Swift 源码现抠（`scripts/reader-template.py`，不会漂移），改了模板必须两个都跑：
-  - `scripts/check-reader-html.sh` —— headless Chrome 里跑模板/JS（渲染、查找、目录跳转、`::selection` 规则），快。**测不了选区的绘制**：Blink 与 WebKit 差别很大（WebKit 会把跨段整块选中画成横跨视图的大矩形，Chrome 不画），拿它判选区长短会得出错误结论。
-  - `scripts/snapshot-reader.sh [输出目录] [light|dark]` —— 真引擎 WKWebView 离屏加载 + 合成选区/折叠/画划线（`marks` job）+ 截图 + 探针（选区长、`hasSel`、每个被覆盖文本节点有几个矩形）。**选区绘制、真实渲染、划线配色这类问题只看这个**。外观必须显式传（默认 light，跟随系统会截出说不清的图）
+- **阅读器（文档正文 WKWebView）有两个自查脚本**，模板都从 Swift 源码现抠（`client/xHelper/scripts/reader-template.py`，不会漂移），改了模板必须两个都跑：
+  - `client/xHelper/scripts/check-reader-html.sh` —— headless Chrome 里跑模板/JS（渲染、查找、目录跳转、`::selection` 规则），快。**测不了选区的绘制**：Blink 与 WebKit 差别很大（WebKit 会把跨段整块选中画成横跨视图的大矩形，Chrome 不画），拿它判选区长短会得出错误结论。
+  - `client/xHelper/scripts/snapshot-reader.sh [输出目录] [light|dark]` —— 真引擎 WKWebView 离屏加载 + 合成选区/折叠/画划线（`marks` job）+ 截图 + 探针（选区长、`hasSel`、每个被覆盖文本节点有几个矩形）。**选区绘制、真实渲染、划线配色这类问题只看这个**。外观必须显式传（默认 light，跟随系统会截出说不清的图）
 - **画划线只能逐文本节点包**（`splitText` + 各自 `insertBefore(<mark>)`），**不许 `range.extractContents()` + `insertNode()` 搬 DOM**：跨块时前者会给被部分包含的块级元素造克隆插到 range 起点（起点在 `<h2>` 里＝标题里套列表；表格行更直接被塞进 `<mark>`），非法嵌套下 WebKit 会少画字或重组整段行（真机丢过字），且那坨克隆不是 mark、`unwrapAll()` 擦不掉。自查脚本里「画线不改正文文本 / 不搬块结构 / mark 文本 == 命中区间」这几条就是钉它的
 - **划线是「文字底部波浪线」不是底色高亮**：`mark.hl` 用原生 `text-decoration: underline wavy` + 线色/线粗/`text-underline-offset`（引擎逐行片段画，跨段/列表/表格天然正确），并且**必须写 `background: transparent`** —— `mark` 的 UA 默认底色是黄的，去掉原来那行底色后会从波浪线下面透出来。线色是**主题绿**（浅 `#2F7D63` / hover `#245F4B`，深色薄荷 `#92C8B4`），线要实不要半透明（半透明的线在暖米底上看不见）。重叠两条线不错开（只靠 hover 的「重叠划线」标签提示）；`flash` 动画要动 `text-decoration-color`（不再是 `background`）
 - **选区不要自绘**（踩过两次，见 `docs/design/document-highlight-annotation/design.md` 的 P2 段）：用 `::selection { color: <写死的 token 值>; background-color: transparent }` 交给引擎画。自绘（`::highlight(sel)` + `selectionchange`）修不掉两件事 —— ①「自己带文本 + 后跟子列表」的容器 `li`，它的直接文本节点永远不着色（range 覆盖了、`getClientRects()` 有矩形，WebKit 就是不画）；② JS 查不到「选区此刻是否可见」，引擎标成不可见但 `getSelection()` 仍返回非折叠 range 时，色带会赖着不走。`var()` 在 `::selection` 里解析不出来，颜色只能写死
@@ -341,10 +347,11 @@ make db-pull / db-import / logs / clean
 - 常读：`progressive-tool-disclosure.md`、`post-chat-worker-group.md`、`plan-mode-readonly.md`、`phase-18-subagent-explore.md`、`retrieval` 相关、`mac-apps/settings-sheet-style.md`、`mac-apps/swift6-concurrency-fix.md`
 - `docs/bugs/` — 按编号递增记录（写新条前先 `ls docs/bugs/` 取号）；`docs/front-end/plan.md` — 前端架构与 nginx 部署
 - `docs/learning/` `docs/research/` `docs/security/` `docs/todo/` — 学习笔记 / 调研 / 红队测试 / 待办
+- `docs/stats/` — 由 `scripts/dev-stats.py` 生成的开发节奏快照（一次性产物，非设计文档）
 
 ## 已知过时/废弃（不要照着做）
 
 - `server/Makefile` 的 `build-topic-fix` / `build-backfill` / `build-rebuild` 指向的 `cmd/` 子目录已不存在
 - `tool.DynamicToolLoader` 接口是死代码（无实现无调用）；"每 30s 从 DB 加载动态工具 + sidecar 转发"不成立。MCP proxy 工具已下掉，`mcp.Manager` 仅剩监控统计用途
 - `docs/agents/*.md`、`docs/backend-reference.md` 是历史脚手架（引用的 `CONTEXT-MAP.md`、`docs/adr/`、`/api/devices/register` 都不存在）
-- 根 `scripts/*.sh` 是 device-token 时代脚本，已不适用；服务端脚本在 `server/scripts/`
+- 根 `scripts/*.sh` 是 device-token 时代脚本，已不适用；服务端脚本在 `server/scripts/`。**例外**：根 `scripts/dev-stats.py` 是仓库级统计工具（见「常用命令」），不是遗留脚本

@@ -31,8 +31,8 @@
   --shadow-sm:   0 4px 14px rgba(0,0,0,.12);
 
   /* 划线 = 文字底部波浪线（原生 text-decoration，逐行片段自动画） */
-  --hl-light:       rgba(240,186,60,.85);
-  --hl-light-hover: rgba(240,186,60,1);
+  --hl-light:       rgba(47,125,99,1);    /* 主题绿 appAccent #2F7D63 */
+  --hl-light-hover: rgba(36,95,75,1);     /* hover 压深 #245F4B */
   --hl-dark:        rgba(146,200,180,.90);
   --hl-dark-hover:  rgba(146,200,180,1);
   --hl:       var(--hl-light);
@@ -749,7 +749,7 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
   <button id="dev-hl-style">波浪线</button>
   <div class="sep"></div>
   <span class="lab">线色</span>
-  <button id="dev-hl">琥珀/薄荷</button>
+  <button id="dev-hl">主题绿/薄荷</button>
   <div class="sep"></div>
   <span class="lab">线粗</span>
   <button id="dev-hl-w">1.5px</button>
@@ -1210,8 +1210,10 @@ persona = PERSONA_HEADER + render(facts) + reflect(pending, confirmed)</code></p
   let fs = 17;
   document.getElementById('dev-fs-plus').onclick = () => { fs = Math.min(23, fs + 1); content.style.setProperty('--fs', fs + 'px'); };
   document.getElementById('dev-fs-minus').onclick = () => { fs = Math.max(13, fs - 1); content.style.setProperty('--fs', fs + 'px'); };
-  /* 划线线色候选：浅色 / 深色成对，默认「琥珀/薄荷」 */
+  /* 划线线色候选：浅色 / 深色成对，默认「主题绿/薄荷」 */
   const HL_VARIANTS = [
+    { name: '主题绿/薄荷', light: 'rgba(47,125,99,1)', lightHover: 'rgba(36,95,75,1)',
+      dark:  'rgba(146,200,180,.90)', darkHover: 'rgba(146,200,180,1)' },
     { name: '琥珀深/薄荷', light: 'rgba(217,151,27,1)', lightHover: 'rgba(186,125,10,1)',
       dark:  'rgba(146,200,180,.90)', darkHover: 'rgba(146,200,180,1)' },
     { name: '赭金/薄荷', light: 'rgba(184,128,26,1)', lightHover: 'rgba(150,101,12,1)',

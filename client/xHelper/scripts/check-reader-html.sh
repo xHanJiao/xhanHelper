@@ -434,6 +434,19 @@ function annotationChecks() {
   ok('hover 线色比常态更实', hlBase && hlHov && hlBase !== hlHov, hlBase + ' → ' + hlHov);
   ok('popover 里没有「点击编辑」文案', document.getElementById('popover').textContent.indexOf('点击编辑') < 0);
 
+  // 19b) 连线终点取「正文列那一行」而不是划线片段本身：x/w = #content 左右缘、y/h = 划线首行片段。
+  //      这样短划线（结束在行中间）的连线也落在右侧留白里，不横穿该行后半段文字。
+  var ar = reader.annotationRect('s1');
+  var colBox = c.getBoundingClientRect();
+  var fr = sm.getClientRects()[0];
+  ok('annotationRect 的 x/w 是正文列（不是划线片段）',
+     ar && Math.abs(ar.x - colBox.left) < 0.5 && Math.abs(ar.w - colBox.width) < 0.5,
+     JSON.stringify(ar) + ' vs col.left=' + colBox.left + ' col.width=' + colBox.width);
+  ok('annotationRect 的 y/h 仍是划线首行片段',
+     ar && Math.abs(ar.y - fr.top) < 0.5 && Math.abs(ar.h - fr.height) < 0.5,
+     ar ? ('y ' + ar.y + ' vs ' + fr.top) : 'null');
+  ok('annotationRect 未命中返回 null', reader.annotationRect('不存在') === null);
+
   // 20) 长批注（P5 把 AI 长回答存进来之后的常态）：浮层自己封顶内滚。
   //     以前没有 max-height：fixed 浮层超出视口那截永远拿不到，滚轮还会冒泡去滚正文
   var longNote = '';

@@ -23,13 +23,13 @@ enum AnnotationPanelMode: String, CaseIterable, Identifiable {
     }
 }
 
-/// 划线高亮色（与阅读器里 `mark.hl` 的 `--hl` 同一个色号）：浅色赭金 / 深色青。
+/// 划线高亮色（与阅读器里 `mark.hl` 的 `--hl` 同一个色号）：浅色主题绿 appAccent / 深色薄荷。
 /// 连线、预览波浪线都用它 —— 别改色，要和真机划线一致。
 enum AnnotationHighlightColor {
     static func value(_ scheme: ColorScheme) -> Color {
         scheme == .dark
             ? Color(red: 146 / 255, green: 200 / 255, blue: 180 / 255)   // --hl dark（≈ rgba(146,200,180,.9)）
-            : Color(red: 217 / 255, green: 151 / 255, blue: 27 / 255)    // --hl light rgba(217,151,27,1)
+            : Color(red: 47 / 255, green: 125 / 255, blue: 99 / 255)     // --hl light #2F7D63
     }
 }
 
@@ -766,7 +766,7 @@ private func previewPanel(
     )
 }
 
-/// 预览用：正文划线的真实样子是「文字底部波浪线」（黄/浅赭金），不是底色高亮。
+/// 预览用：正文划线的真实样子是「文字底部波浪线」（浅色主题绿 / 深色薄荷），不是底色高亮。
 /// SwiftUI 的 `Text` 不支持 wavy，这里用 `Path` 画一段正弦波凑近真机观感（仅预览）。
 private struct WavyUnderline: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -833,7 +833,7 @@ private struct ConnectorPreviewDemo: View {
         .overlay {
             AnnotationConnectorLayer(
                 start: cardFrame.map { CGPoint(x: $0.minX, y: $0.midY) },
-                end: highlightFrame == .zero ? nil : CGPoint(x: highlightFrame.maxX, y: highlightFrame.midY)
+                end: highlightFrame == .zero ? nil : CGPoint(x: highlightFrame.maxX + 6, y: highlightFrame.midY)
             )
         }
         .frame(width: 1200, height: 720)

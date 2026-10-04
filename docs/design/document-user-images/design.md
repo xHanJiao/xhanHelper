@@ -161,3 +161,9 @@ document 工具保存时扫描引用：
 - **真机往返**：2-3（macOS reader、ImageListView、iOS 编译）
 - **待拍决定**：0
 - **区间**：约 5–8 小时（不含你真机验证）
+
+---
+
+## 后续变更
+
+- **2026-10-04**：macOS 阅读器补「点图放大」。`DocumentReaderView` 的 JS 对 `#content` 里 `<img>` 点击回传 `{type:'image', src}`，原生 present `DocumentImageLightbox`（data URI / http URL 都接，复用 `AttachmentPreviewView`）。mermaid 图同样可点（按当前主题那张）。属旧 MarkdownUI 路径点击放大能力的回归补齐，详见 `docs/bugs/026-macos-doc-image-no-zoom.md`。影响文件：`client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift`、`client/xHelper/scripts/check-reader-html.sh`。

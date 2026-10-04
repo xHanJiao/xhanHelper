@@ -71,6 +71,8 @@ x = 1
 这是下一行
 
 ZZMDIMG0X
+
+![配图](/images/abc.png)
 MD
 
 PNG="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/gHrKAAAAABJRU5ErkJggg=="
@@ -108,6 +110,19 @@ ok('渲染出代码块', !!c.querySelector('pre code'));
 ok('行内代码', !!c.querySelector('p code'));
 ok('mermaid 占位被替换', c.querySelectorAll('.mermaid img').length === 0 ? false : c.querySelectorAll('.mermaid img.m-light').length === 1);
 ok('mermaid 用的是 data URI', (c.querySelector('.mermaid img.m-light') || {}).src ? c.querySelector('.mermaid img.m-light').src.indexOf('data:image/png') === 0 : false);
+
+// 点图 → 回传 image（交给原生大图浮层）。mermaid 是 data URI，文档配图是绝对 URL。
+c.querySelector('.mermaid img.m-light').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+var mimg = last('image');
+ok('点 mermaid 图回传 image（data URI）',
+   !!mimg && typeof mimg.src === 'string' && mimg.src.indexOf('data:image/png') === 0,
+   mimg ? String(mimg.src).slice(0, 24) : 'no msg');
+var pimg = c.querySelector('#content p img');
+ok('渲染出正文配图', !!pimg);
+pimg.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+var pmsg = last('image');
+ok('点正文配图回传 image（绝对 URL）', !!pmsg && /\/images\/abc\.png$/.test(pmsg.src),
+   pmsg ? pmsg.src : 'no msg');
 ok('标题/标签在外面', document.querySelector('.doc-title').textContent.indexOf('N.E.K.O') === 0 && document.querySelectorAll('.doc-tags span').length === 2);
 ok('底色透明', getComputedStyle(document.body).backgroundColor === 'rgba(0, 0, 0, 0)');
 ok('字号变量生效', getComputedStyle(document.documentElement).getPropertyValue('--fs').trim() === '20.06px');

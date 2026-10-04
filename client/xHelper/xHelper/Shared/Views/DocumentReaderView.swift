@@ -378,6 +378,14 @@ final class DocumentReaderController: ObservableObject {
             pb.setString(text, forType: .string)
             ToastCenter.shared.show("已复制")
 
+        case "image":
+            // 正文里的图（mermaid 预渲染 PNG / 文档配图）点击 → 原生大图浮层。
+            // src 已被浏览器解析成绝对地址：配图是 http URL，mermaid 是 data URI。
+            guard let src = message["src"] as? String, !src.isEmpty else { return }
+            LightboxCenter.shared.present {
+                DocumentImageLightbox(src: src)
+            }
+
         case "toast":
             // JS 侧的轻提示（如：选区没有可锚定的文字）
             let text = message["text"] as? String ?? ""
@@ -591,6 +599,58 @@ private enum ReaderHTML {
     }
 }
 
+// MARK: - 大图浮层
+
+/// 文档正文里点图放大：mermaid 是 data URI（直接解），配图是绝对 http URL（拉一次）。
+/// 加载好复用 `AttachmentPreviewView`，与聊天图放大同款。
+private struct DocumentImageLightbox: View {
+    let src: String
+    @State private var image: NSImage?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                AttachmentPreviewView(image: image) { LightboxCenter.shared.dismiss() }
+            } else {
+                VStack(spacing: 12) {
+                    if failed {
+                        Text("图片加载失败").foregroundStyle(.secondary)
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .frame(minWidth: 480, minHeight: 360)
+            }
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        if let data = Self.dataURIData(src), let img = NSImage(data: data) {
+            image = img
+            return
+        }
+        guard let url = URL(string: src) else { failed = true; return }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            guard let img = NSImage(data: data) else { failed = true; return }
+            image = img
+        } catch {
+            LogBuffer.shared.error("文档配图加载失败: \(error)")
+            failed = true
+        }
+    }
+
+    /// `data:image/...;base64,xxxx` → 原始字节；非 data URI 返回 nil。
+    private static func dataURIData(_ s: String) -> Data? {
+        guard s.hasPrefix("data:"),
+              let comma = s.firstIndex(of: ","),
+              s[..<comma].contains("base64") else { return nil }
+        return Data(base64Encoded: String(s[s.index(after: comma)...]))
+    }
+}
+
 // MARK: - 模板
 
 private let template = #"""
@@ -670,7 +730,7 @@ html, body {
 #content th { background: var(--surface-2); font-weight: 600; }
 #content tr:nth-child(even) td { background: var(--border-soft); }
 #content hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
-#content img { max-width: 100%; height: auto; }
+#content img { max-width: 100%; height: auto; cursor: zoom-in; }
 
 /* mermaid：浅/深各一张，媒体查询切显隐（所以切主题不用重载） */
 .mermaid { margin: 18px 0; text-align: center; }
@@ -1507,8 +1567,16 @@ var reader = (function () {
     popover.style.top = top + 'px';
   }
 
-  /* ---------- 点击划线 → 菜单 ---------- */
+  /* ---------- 点击：图 → 放大；划线 → 菜单 ---------- */
   content.addEventListener('click', function (e) {
+    if (e.target && e.target.tagName === 'IMG') {
+      /* mermaid 的浅/深两张靠 CSS 只显示当前主题那张，隐藏那张收不到点击，
+         所以命中的一定是该显示的那张。src 已被浏览器解析：配图是绝对 URL、
+         mermaid 是 data URI —— 原样交给原生浮层，不在 JS 里管加载。 */
+      e.preventDefault();
+      post({ type: 'image', src: e.target.currentSrc || e.target.src });
+      return;
+    }
     var sel = window.getSelection();
     if (sel && !sel.isCollapsed && sel.toString().trim()) return;   /* 正在选词 */
     var t = e.target.closest ? e.target.closest('mark.hl, .ann-bubble') : null;

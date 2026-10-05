@@ -226,3 +226,13 @@
 
 **读数陷阱（存档）**：`confirm_count` 不可当命中率（本文主题）；`created_at` 时区混存导致按天
 聚合边界最多 ±8h；after 窗口仅 6 天且含上线首日疑似补跑，趋势不代表稳态。
+
+---
+
+## 后续变更
+
+- **2026-10-05**：`LastConfirmedAt` 由 `time.Time` 改为 `*time.Time`（`model/user_memory.go`）。
+  §2.2 ④ / §2.3 当时基于「只在本地 SQLite 清、避免指针化」决定保留值类型；本地→云端迁移
+  （`docs/design/return-to-cloud/`）后，零值 `time.Time` 被序列化成 `'0000-00-00'`，云端 MySQL
+  严格模式（`NO_ZERO_DATE`）拒绝 INSERT → `save_memory` 报 Error 1292。改为指针后 `nil` 写 NULL。
+  详见 `docs/bugs/029-memory-last-confirmed-at-zero-date.md`。影响文件：`model/user_memory.go`。

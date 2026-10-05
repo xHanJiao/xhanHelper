@@ -15,21 +15,23 @@ type UserMemory struct {
 	UserID string `gorm:"uniqueIndex:idx_user_content;size:36;not null" json:"user_id"`
 	// DEPRECATED: MemoryKey 已废弃，后续版本会移除，建议使用 ContentHash 进行去重。
 	// 注意：历史写入时它等于 topic，但 topic 改名（如 topicclean 清洗）不会同步它——无消费者，勿依赖。
-	MemoryKey       string    `gorm:"size:200;not null" json:"memory_key"`
-	ContentHash     string    `gorm:"uniqueIndex:idx_user_content;size:64;not null" json:"content_hash"` // MD5(MemoryValue)
-	MemoryValue     string    `gorm:"type:text;not null" json:"memory_value"`
-	Topic           string    `gorm:"index:idx_user_memory_user_topic;size:100" json:"topic"` // 联合索引 (user_id, topic)
-	Tags            string    `gorm:"size:500" json:"tags"`                                   // 逗号分隔标签（与 notes 对齐）
-	Facts           *string   `gorm:"type:text" json:"facts,omitempty"`                       // 支持细节列表（JSON 数组字符串）
-	ExtractPrompt   *string   `gorm:"type:text" json:"extract_prompt,omitempty"`              // 提取该记忆时发给 LLM 的 prompt
-	PromptHash      string    `gorm:"size:64;index" json:"prompt_hash"`                       // prompt 的 MD5 哈希，用于输入去重
-	Source          string    `gorm:"size:20;default:conversation" json:"source"`             // conversation / csv_import
-	RawJSON         *string   `gorm:"type:json;column:raw_json" json:"raw_json,omitempty"`    // LLM 原始输出 JSON
-	ConfirmCount    int       `gorm:"default:0" json:"confirm_count"`                         // 被当轮新召回且注入最终上下文的次数（口径 B，见 docs/design/memory-audit）
-	Rating          int       `gorm:"not null;default:0" json:"rating"`                       // 用户反馈：0 未评 / 1 有用 / -1 没用（docs/design/memory-rating）
-	LastConfirmedAt time.Time `json:"last_confirmed_at"`
-	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt       time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	MemoryKey     string  `gorm:"size:200;not null" json:"memory_key"`
+	ContentHash   string  `gorm:"uniqueIndex:idx_user_content;size:64;not null" json:"content_hash"` // MD5(MemoryValue)
+	MemoryValue   string  `gorm:"type:text;not null" json:"memory_value"`
+	Topic         string  `gorm:"index:idx_user_memory_user_topic;size:100" json:"topic"` // 联合索引 (user_id, topic)
+	Tags          string  `gorm:"size:500" json:"tags"`                                   // 逗号分隔标签（与 notes 对齐）
+	Facts         *string `gorm:"type:text" json:"facts,omitempty"`                       // 支持细节列表（JSON 数组字符串）
+	ExtractPrompt *string `gorm:"type:text" json:"extract_prompt,omitempty"`              // 提取该记忆时发给 LLM 的 prompt
+	PromptHash    string  `gorm:"size:64;index" json:"prompt_hash"`                       // prompt 的 MD5 哈希，用于输入去重
+	Source        string  `gorm:"size:20;default:conversation" json:"source"`             // conversation / csv_import
+	RawJSON       *string `gorm:"type:json;column:raw_json" json:"raw_json,omitempty"`    // LLM 原始输出 JSON
+	ConfirmCount  int     `gorm:"default:0" json:"confirm_count"`                         // 被当轮新召回且注入最终上下文的次数（口径 B，见 docs/design/memory-audit）
+	Rating        int     `gorm:"not null;default:0" json:"rating"`                       // 用户反馈：0 未评 / 1 有用 / -1 没用（docs/design/memory-rating）
+	// LastConfirmedAt 必须是指针：值类型零值会被序列化成 '0000-00-00'，MySQL 严格模式
+	// （NO_ZERO_DATE）直接拒绝 INSERT（Error 1292）。nil = 从未被召回确认过。
+	LastConfirmedAt *time.Time `json:"last_confirmed_at"`
+	CreatedAt       time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt       time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 func (m UserMemory) GetID() string           { return m.ID }

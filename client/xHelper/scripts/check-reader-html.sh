@@ -381,11 +381,22 @@ function annotationChecks() {
      pv.classList.contains('open') && pv.textContent.indexOf('外批注') >= 0
        && pv.textContent.indexOf('内批注') >= 0 && pv.textContent.indexOf('重叠划线') >= 0);
 
-  // 13) 点击划线 → 菜单：编辑 / 复制 / 删除
+  // 13) 左键点划线 → 定位请求（发 focus），不再弹菜单
   c.querySelector('mark.hl[data-id="p1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-  ok('点划线出菜单', document.getElementById('ctxmenu').classList.contains('open'));
+  ok('左键点划线发 focus（带 id）', !!last('focus') && last('focus').id === 'p1', JSON.stringify(last('focus')));
+  ok('左键不再开菜单', !document.getElementById('ctxmenu').classList.contains('open'));
+
+  // 右键（contextmenu）打开菜单：编辑 / 复制 / 删除
+  function openCtx(id) {
+    var el = c.querySelector('mark.hl[data-id="' + id + '"]');
+    var r = el.getBoundingClientRect();
+    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true,
+      clientX: r.left + 1, clientY: r.top + 4 }));
+  }
 
   // 13b) 菜单开着时 hover 同一条划线，不得再弹 hover 浮层（两个浮层会叠在一起）
+  openCtx('p1');
+  ok('右键划线出菜单', document.getElementById('ctxmenu').classList.contains('open'));
   var p1r = c.querySelector('mark.hl[data-id="p1"]').getBoundingClientRect();
   pv.classList.remove('open');
   c.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
@@ -412,17 +423,17 @@ function annotationChecks() {
        && window.__scrolled.length >= 1);
   ok('scrollToAnnotation 未命中返回 false', reader.scrollToAnnotation('不存在') === false);
 
-  // 16) 菜单动作回传
-  c.querySelector('mark.hl[data-id="h1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  // 16) 菜单动作回传（右键打开菜单）
+  openCtx('h1');
   document.querySelector('#ctxmenu button[data-cact="copy"]').click();
   ok('菜单「复制原文」回传 copy', !!last('copy') && last('copy').text.indexOf('记忆系统的第一处') >= 0);
-  c.querySelector('mark.hl[data-id="h1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  openCtx('h1');
   document.querySelector('#ctxmenu button[data-cact="del"]').click();
   ok('菜单「删除」回传 delete', !!last('delete') && last('delete').id === 'h1');
 
   // 17) 编辑批注：带上原 note、保存发 update
   put([mk('e1', '记忆系统的第一处', '旧批注')]);
-  c.querySelector('mark.hl[data-id="e1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  openCtx('e1');
   document.querySelector('#ctxmenu button[data-cact="edit"]').click();
   ok('点「编辑批注」带出原 note',
      document.getElementById('note-editor').classList.contains('open')
@@ -512,39 +523,6 @@ function annotationChecks() {
   put([]);
 }
 
-/* ---------- 重新定位模式（P4 抽屉的「重新定位」） ---------- */
-function countType(t) { return window.__msgs.filter(function (m) { return m.type === t; }).length; }
-var __createsBeforeRelocate = 0;
-
-function relocateBegin() {
-  put([mk('o1', '记忆系统的第一处', '失活批注', '', '', true), mk('n1', '清单第二项', '正常批注')]);
-  ok('失活的不画', c.querySelectorAll('mark.hl').length === 1);
-  __createsBeforeRelocate = countType('create');
-  reader.beginRelocate('o1');
-  armSelectionAndMouseUp();      // 模式内选中一段 —— 不该弹工具条，该发 relocate
-}
-
-function relocateChecks() {
-  var rl = last('relocate');
-  ok('重定位模式下选中发 relocate（带 id）', !!rl && rl.id === 'o1', JSON.stringify(rl));
-  ok('relocate 带上了选区四元组',
-     !!rl && rl.quote === '记忆系统的第一处提及' && rl.prefix.length > 0 && rl.suffix.length > 0,
-     rl ? JSON.stringify(rl) : '');
-  ok('重定位模式下不弹工具条', !document.getElementById('toolbar').classList.contains('open'));
-  ok('重定位模式下没有误发 create', countType('create') === __createsBeforeRelocate);
-
-  // 再来一轮，验 Esc 退出模式
-  reader.beginRelocate('o1');
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  armSelectionAndMouseUp();
-}
-
-function relocateCancelChecks() {
-  ok('Esc 回传 relocateCancel', !!last('relocateCancel'));
-  ok('Esc 后模式已退出（选中回到工具条）',
-     document.getElementById('toolbar').classList.contains('open'));
-  ok('Esc 后不再发 relocate', countType('relocate') === 1);
-}
 setTimeout(function () {
   try {
     selectionChecks();
@@ -553,14 +531,7 @@ setTimeout(function () {
       try { toolbarChecks(); } catch (e) { fails.push('工具条断言异常: ' + (e && e.message ? e.message : e)); }
       setTimeout(function () {
         try { annotationChecks(); } catch (e) { fails.push('划线断言异常: ' + (e && e.message ? e.message : e)); }
-        try { relocateBegin(); } catch (e) { fails.push('重定位断言异常: ' + (e && e.message ? e.message : e)); }
-        setTimeout(function () {
-          try { relocateChecks(); } catch (e) { fails.push('重定位断言异常: ' + (e && e.message ? e.message : e)); }
-          setTimeout(function () {
-            try { relocateCancelChecks(); } catch (e) { fails.push('重定位取消断言异常: ' + (e && e.message ? e.message : e)); }
-            writeResult();
-          }, 0);
-        }, 0);
+        writeResult();
       }, 0);
     }, 0);
   } catch (e) {

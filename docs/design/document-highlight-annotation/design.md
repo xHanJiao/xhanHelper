@@ -55,8 +55,8 @@
 | D6 | 批注输入 | ✅ HTML 浮层（quote 预览 + textarea + ⌘↵ 保存） |
 | D7 | 跨块选择 | ✅ 允许（跨段落 / 跨列表项）；**跨表格、跨代码围栏除外**（不支持，选中时工具条只给"复制"） |
 | D8 | 重叠 | ✅ 允许重叠；hover 时 popover 列出该位置**全部**批注，>1 条打「重叠划线」标签 |
-| D9 | 点击划线 | ✅ 菜单：编辑批注 / 复制原文 / ~~问 AI~~ / 删除划线（**问 AI 已下线**） |
-| D10 | 重定位 | ✅ 三级降级：① quote 精确匹配（唯一命中走快路径）→ ② Markdown 纯文本投影后匹配（带 prefix/suffix 消歧）→ ③ 前后文夹逼（覆盖"span 内部被插字/局部改写"，带相似度门槛）。全失败标 `orphaned`。多命中而消歧不达标时**判失活而不是猜第一处** —— 静默挪位比失活更糟。v1 提供划线列表抽屉，orphan 灰态可见，可「重新定位 / 删除」 |
+| D9 | 点击划线 | ✅ **左键 = 快捷定位到右侧批注面板**（滚动 + 闪烁）；**右键 = 菜单**：编辑批注 / 复制原文 / 删除划线（~~问 AI~~ 已下线）。见 `docs/design/document-annotation-focus/design.md` |
+| D10 | 重定位 | ✅ 三级降级：① quote 精确匹配（唯一命中走快路径）→ ② Markdown 纯文本投影后匹配（带 prefix/suffix 消歧）→ ③ 前后文夹逼（覆盖"span 内部被插字/局部改写"，带相似度门槛）。全失败标 `orphaned`。多命中而消歧不达标时**判失活而不是猜第一处** —— 静默挪位比失活更糟。v1 在批注面板的卡片里 orphan 灰态可见，可「删除」（手动「重新定位」已于 2026-10-06 取消，仅保留自动重挂） |
 | D10b | 创建时的消歧 | ✅ 客户端额外回传 DOM 选区的前后文（`prefix`/`suffix`，纯文本 ≤60 字）。没有它，`结论` 这类短句在文中重复时只能锚到第一处，且返回的快照也是按第一处算的 → 客户端会在错的地方画线且无提示 |
 | D10c | 快照与 quote 刷新 | ✅ 每次成功定位都刷新 `Prefix`/`Suffix`，夹逼改写时同时刷新 `Quote` 并置 `QuoteRewritten`。让锚点始终描述当前正文，且"服务端改了用户划的原文"这件事可见 |
 | D11 | 重定位职责 | ✅ **服务端权威**（在 markdown 源文上算），客户端只在渲染后的 DOM 上做同样的文本查找用于绘制。两处逻辑一致但分别实现，见 §4.4 |
@@ -227,7 +227,7 @@ rung 3  投影空间前后文夹逼 —— 覆盖"LLM 在划线 span 内部插�
 | `POST` | `/api/documents/:id/annotations` | 创建 `{quote, note?, prefix?, suffix?}`。`prefix`/`suffix` 是 DOM 选区前后文（消歧提示，≤60 字）；锚点与落库快照由服务端算 |
 | `PATCH` | `/api/annotations/:id` | 更新 `note`（`""` → 变纯划线，不清除实体）。**不**允许改锚点 |
 | `DELETE` | `/api/annotations/:id` | 删除 |
-| `POST` | `/api/annotations/:id/relocate` | 手动重挂 `{quote, prefix?, suffix?}`（抽屉「重新定位」，客户端重选一段后调），成功则 `orphaned` / `quote_rewritten` 都清零 |
+| `POST` | `/api/annotations/:id/relocate` | 手动重挂 `{quote, prefix?, suffix?}`，成功则 `orphaned` / `quote_rewritten` 都清零。**接口保留，但 2026-10-06 起客户端不再调用**（手动「重新定位」已取消） |
 
 路由在 `router.go` 的认证组，紧挨 documents 一组。约束：
 
@@ -346,9 +346,9 @@ Swift → JS（`evaluateJavaScript`）：
 | `reader.scrollToAnnotation(id)` | 抽屉点击 → 滚到对应划线并闪烁 |
 | `reader.scrollToHeading(index)` | 目录点击（替代原来的 `scrollToAnchor`） |
 | `reader.find(query)` / `findNext()` / `findPrev()` / `clearFind()` | 查找栏 |
-| `reader.beginRelocate(id)` / `cancelRelocate()` | P4 抽屉「重新定位」：进入/退出重选模式（模式里选区当新锚点，不弹工具条） |
+| ~~`reader.beginRelocate(id)` / `cancelRelocate()`~~ | **2026-10-06 删除**：手动「重新定位」取消（失活条目只留删除） |
 
-> 实现里 JS→Swift 的消息名比下表短（`ready` / `create` / `update` / `delete` / `copy` / `ask` / `findResult` / `relocate` / `relocateCancel`），以 P3 / P4 完成情况为准。
+> 实现里 JS→Swift 的消息名比下表短（`ready` / `create` / `update` / `delete` / `copy` / `ask` / `findResult` / `focus`），以 P3 / P4 完成情况为准。
 
 JS → Swift（`WKScriptMessageHandler`，沿用 `XHWebViewBridge` 的命名与错误处理模式）：
 
@@ -359,8 +359,9 @@ JS → Swift（`WKScriptMessageHandler`，沿用 `XHWebViewBridge` 的命名与�
 | `annotationUpdate` | `{id, note}` | 编辑批注 |
 | `annotationDelete` | `{id}` | 删除 |
 | `annotationAskAI` | `{quote, prefix, suffix}` | ~~「问 AI」（P5）~~ **已删除**：Swift 侧不再有 `case "ask"`，JS 不再发此消息 |
-| `relocate` | `{id, quote, prefix, suffix}` | P4「重新定位」选完新位置（服务端重挂锚点并清 `orphaned`） |
-| `relocateCancel` | — | 重定位模式被 Esc / 取消按钮终止 |
+| ~~`relocate`~~ | `{id, quote, prefix, suffix}` | **2026-10-06 删除**（手动重定位取消） |
+| ~~`relocateCancel`~~ | — | **2026-10-06 删除**（手动重定位取消） |
+| `focus` | `{id}` | 左键点划线/气泡：请求右侧批注面板定位到该批注（滚动 + 闪烁），见 `docs/design/document-annotation-focus/design.md` |
 | `contentHeightChanged` | `{h}` | WebView 自适应高度（滚动交给外层 SwiftUI ScrollView？否 —— 见下） |
 
 **滚动归属**：正文滚 **WebView 自己**（`reader` 的 `overflow-y: auto`），不外包给 SwiftUI `ScrollView`。理由：跨块选区的 `getClientRects` 在自身滚动容器里才准；外包后 mousemove 期间要不停回传高度，抖动且贵。
@@ -375,7 +376,7 @@ JS → Swift（`WKScriptMessageHandler`，沿用 `XHWebViewBridge` 的命名与�
 | 点击菜单 | **HTML** | 同上 |
 | 目录栏 | SwiftUI（已有） | 页面级，无坐标依赖 |
 | 查找栏 | SwiftUI 外壳 + JS 搜索 | 输入框是原生，高亮是 `::highlight()` |
-| **划线列表抽屉** | **SwiftUI** | 页面级面板，和目录栏同级；要跟目录栏一起收放 |
+| **批注面板** | **SwiftUI** | 页面级面板，和目录栏同级；要跟目录栏一起收放 |
 
 ---
 
@@ -410,8 +411,9 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 - hover 划线段 → popover：`elementsFromPoint` 聚合该位置所有 `mark` 的 `data-id`，逐条渲染 `quote + note`；>1 条打「重叠划线」标签
 - hover 浮层（只有带 note 的划线出）封顶 `min(62vh, 520px)` 内滚，见 §12「长批注的 hover 浮层」
-- 点击划线段或气泡 → 菜单：**编辑批注** / **复制原文** / **问 AI**（P5 补；载荷取这条线自己存的四元组，点完闪一下那段） / **删除划线**
-- 点击菜单与 hover 浮层**互斥**：菜单打开期间 `mousemove` 直接早退，不再弹 hover 浮层（两者都是同一条批注的呈现，叠在一起很难看）；菜单一关即恢复
+- **左键**点划线段或气泡 → **快捷定位到右侧批注面板**（面板滚动到该条并闪烁；面板收起则先展开）。JS 发 `post({type:'focus', id})`，见 `docs/design/document-annotation-focus/design.md`
+- **右键**点划线段或气泡 → 菜单：**编辑批注** / **复制原文** / **删除划线**（拦截 `contextmenu` + `preventDefault`；正文空白处保留系统菜单）
+- 菜单与 hover 浮层**互斥**：菜单打开期间 `mousemove` 直接早退，不再弹 hover 浮层（两者都是同一条批注的呈现，叠在一起很难看）；菜单一关即恢复
 - 「编辑批注」打开 §8.4 的浮层，`⌘↵` 保存
 - 批注留空保存 = 该实体退化成纯划线（不发 `annotationDelete`）
 
@@ -426,17 +428,17 @@ JS 里维护 `id → [{mark}]`。定位流程：
 - SwiftUI 查找栏输入 → `reader.find(query)`；返回命中数给 `findbar` 的计数 label
 - 跨小节查找时先 `scrollIntoView` 到当前命中项
 
-### 8.6 划线列表抽屉
+### 8.6 批注面板（右侧第三列 · 单视图）
 
 > 形态选型：`mockup.html` 控制条的「抽屉形态」两个候选（A 第三列 / B 覆盖右侧）× 「画布宽」（1180 / 840）四种组合都截了图对比，**用户选 A 第三列**。
 
-- 位置：正文右侧的第三列（宽 300），和目录栏同级；**开抽屉时自动收起目录栏**（用户还能手动展开）。选 A 的理由：和目录栏交互一致、不遮挡正文；代价是 840 的侧栏里正文只剩 ~150px，实际使用时要把侧栏拉宽（或收起目录栏）。
-- 三个 tab：**全部 N** / **仅批注 N**（note 非空，含失活的）/ **已失活 N**（`orphaned`）
-- 每行：`quote`（2 行截断）+ `note`（1 行截断，左侧 `appAccent` 竖条）+ 相对时间（今天 `HH:mm`、更早 `yyyy/MM/dd HH:mm`）
-- 点击行 → `scrollToAnnotation(id)` + 闪烁 2 次，**抽屉不关**（偏离原设计：连续看几条 / 重挂时不必反复开关；JS 定位不到就 toast 一声）
-- orphan 行：整行灰 + quote 加删除线 + 「已失活」徽标 + 右侧「重新定位」「删除」两个按钮（**常显**，不做 hover 才出现 —— 真机鼠标不在行上时那两个动作等于不存在）
-- 「重新定位」→ 进入重选模式（**提示文案在抽屉那一行**：「请在正文中重新选中一段文字」+「取消」，不在正文里加横幅 → 少一份 HTML/CSS）→ 选中后 `POST /api/annotations/:id/relocate`。Esc 或选中一次即退出模式。
-- 数据全部来自 `DocumentReaderController.annotations`，抽屉自己不拉取、不缓存；**正文被改写后**（`document.content` 变）重拉一次，失活状态由服务端重算
+> **变更（2026-10-06）**：原「讨论 / 全部」两个视图合并为**单视图** —— 只保留讨论卡片（quote + note + 可折叠线程 + 追问），删掉扁平「全部」列表与三个 tab；失活的「删除」并入讨论卡片的失活条目（手动「重新定位」同日取消）。详见 `docs/design/document-annotation-single-view/design.md`。
+
+- 位置：正文右侧的第三列（宽 300），和目录栏同级；**开面板时自动收起目录栏**（用户还能手动展开）。选 A 的理由：和目录栏交互一致、不遮挡正文；代价是 840 的侧栏里正文只剩 ~150px，实际使用时要把侧栏拉宽（或收起目录栏）。
+- 每条批注 = 一张卡片：引文（点引文 → `scrollToAnnotation(id)` + 闪烁，面板不关）+ `note`（左侧 `appAccent` 竖条）+ 可折叠线程（AI 回复按 markdown 渲染 / 追问）+ 相对时间（今天 `HH:mm`、更早 `yyyy/MM/dd HH:mm`）。
+- 失活卡片（`orphaned`）：引文灰 + 删除线 + 「已失活」徽标；同处一行的元信息行（徽标 + 时间）右侧接「删除」（**常显** —— 真机鼠标不在卡上时等于不存在）；不给「让 AI 回复」入口。
+- （**2026-10-06 变更**：手动「重新定位」已取消 —— 失活条目只留「删除」，正文里不画失活划线。原重选模式链路见文末「后续变更」。）
+- 数据全部来自 `DocumentReaderController.annotations`，面板自己不拉取、不缓存；**正文被改写后**（`document.content` 变）重拉一次，失活状态由服务端重算
 
 ---
 
@@ -626,9 +628,13 @@ JS 里维护 `id → [{mark}]`。定位流程：
 - `swiftc -typecheck` macOS / iOS 均 0 error。
 
 ### P4 完成情况（已完成，真机验收待用户）
+
+> ⚠️ **本节为历史记录。** 2026-10-06：两视图合并为单视图；同日**取消手动「重新定位」**（失活条目只留「删除」）。下面提到 relocate/三 tab 的条目均已过时，以 §8.6 与文末「后续变更」为准。
+
 新增：
 
 - `Shared/Views/AnnotationDrawer.swift`（`#if os(macOS)`）—— 头（标题 + 总数 + 收起）/ 三 tab（全部 / 仅批注 / 已失活，都带计数）/ 行（quote 2 行 + note 1 行 + 时间）/ orphan 灰态 + 「重新定位」「删除」/ 空态三文案。**没有任何自己的数据源**：读 `DocumentReaderController.annotations`，动作也全走 controller。
+  - **2026-10-06 变更**：三个 tab 与扁平列表已删除，面板改为**单视图**（只留讨论卡片）；失活动作迁入讨论卡片的失活条目。见 `docs/design/document-annotation-single-view/design.md`。
 
 改动：
 
@@ -987,3 +993,32 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 - mockup P5 画的是「直接进 PiP」，实现按当前是否已是 PiP 二选一（**不做轻量进 PiP**），原因见 §12.5
 - mockup P5 里助手回答上方那条引用条、以及窄条上的「撤销」，实现都不做（见上「不做」）
 - **`mockup-p5.html` 没有再按实现同步**（文件顶部挂了一条醒目提示）：它画的是"发送前胶囊 + 直接进 PiP + 有引用条/撤销"那一版，实现是"会话级常驻胶囊 + 按现状二选一 + 都没有 + 长批注浮层内滚"。**对 P5 一律以本文与代码为准**；这份预览只用来回看当时讨论过的形态。
+
+---
+
+## 后续变更
+
+### 2026-10-06 · 点划线定位到右侧批注面板（左键定位 / 右键菜单）
+
+- **背景**：原先左键点划线只弹「编辑/复制/删除」菜单，正文划线 → 右侧批注条目这个方向不可达（反方向「卡片→正文」早有）。
+- **决定**：**左键点划线/气泡 = 快捷定位到右侧面板对应条目**（滚动 + 闪烁，面板收起则先展开，不切当前视图）；**右键 = 原「编辑批注 / 复制原文 / 删除划线」菜单**（拦截 `contextmenu`）。左键拖动选词不触发定位。
+- **数据流**：新增 JS→Swift 消息 `focus {id}`；`DocumentReaderController.focusRequest`（含单调递增 `tick`，连点同一条也能重触发）→ `AnnotationPanel` 观察后 `ScrollViewReader.scrollTo` + 本地 `flashID` 闪烁 ~1.2s。（当时列表分支 `AnnotationListBody` 也接了同一套；该视图已于同日「合并为单视图」删除。）
+- **影响文件**：`DocumentReaderView.swift`（JS 模板 + controller）、`DocumentListView.swift`（收起则展开 + 透传）、`AnnotationDrawer.swift`（`ScrollViewReader`、行 `.id`、聚焦描边；新增 `AnnotationFocus`）、`check-reader-html.sh`。
+- **不改**：服务端 / 数据模型 / API。
+- **边界**：焦点条目被当前视图过滤掉 → 静默不滚；窗宽硬地板下自动展开可能仍只成窄条；orphan 划线正文里没画，仍走面板右键菜单。
+- **详见**：`docs/design/document-annotation-focus/design.md`。
+
+### 2026-10-06 · 批注面板合并为单视图（去掉「全部」列表）
+
+- **背景**：右侧面板原有「讨论（卡片 + 线程）/ 全部（扁平列表 + 三 tab）」两个视图，本质都是同一份 `annotations` 的列表。用户要只留一个。
+- **决定**：保留**讨论**（承载 AI 回复/追问，核心），删「全部」视图与两个切换按钮及三 tab 筛选；「全部」唯一不可替代的能力 —— 失活条目的**操作** —— **并入讨论卡片的失活条目**（正文里不画失活划线，这是唯一入口）。删 `@AppStorage("xhan_doc_annot_mode")`。
+- **不变**：点划线定位（`focusRequest` / 闪烁）仍由讨论卡片承接；数据源、服务端 **零改动**。
+- **影响文件**：`AnnotationDrawer.swift`（删 `AnnotationPanelMode` / `AnnotationListBody`；`AnnotationThreadCard` 加失活动作行）、`DocumentListView.swift`（删 mode 绑定与 AppStorage）、`DocumentReaderView.swift`（仅注释措辞）。
+- **详见**：`docs/design/document-annotation-single-view/design.md`。
+
+### 2026-10-06 · 取消手动「重新定位」（失活条目只留「删除」）
+
+- **决定**：手动重挂没啥用，删掉「重新定位」按钮与整条客户端链路；失活条目此后**只能删除**。
+- **删除**：`AnnotationDrawer.swift`（卡片/面板 `relocatingID`·`onRelocate`·`onCancelRelocate` 与重选提示）、`DocumentReaderView.swift`（`relocatingID` / `beginRelocate` / `cancelRelocate` / `relocate` / `case "relocate"`·`"relocateCancel"` / JS relocate 模式与导出）、`APIClient.relocateAnnotation`、`DocumentListView` 装配、`check-reader-html.sh` 8 条重定位断言（176→168）。
+- **保留**：D10 的**自动**三级重定位（正文改写后服务端重挂，与本手动流程无关）；服务端 `POST /api/annotations/:id/relocate` 接口保留（不再被客户端调用）。
+- **详见**：`docs/design/document-annotation-single-view/design.md` 的后续变更。

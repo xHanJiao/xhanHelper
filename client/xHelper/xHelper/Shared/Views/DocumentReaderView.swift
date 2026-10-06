@@ -17,10 +17,8 @@ final class DocumentReaderController: ObservableObject {
     @Published private(set) var matchCount = 0
     /// 当前命中下标（0-based；-1 = 无命中）
     @Published private(set) var matchIndex = -1
-    /// 本文件的划线与批注（P4 抽屉也用这份；正文里画什么由 `reader.setAnnotations` 决定）
+    /// 本文件的划线与批注（批注面板也用这份；正文里画什么由 `reader.setAnnotations` 决定）
     @Published private(set) var annotations: [DocumentAnnotation] = []
-    /// 正在「重新定位」的那条（P4 抽屉里那一行显示「请在正文中重新选中」；nil = 不在该模式）
-    @Published private(set) var relocatingID: String?
 
     // MARK: 讨论线程（批注下挂的 AI 回复 / 追问）
     /// 已加载的线程缓存（key = 批注 id）。未加载过的键不存在 = 需要拉取。
@@ -31,6 +29,10 @@ final class DocumentReaderController: ObservableObject {
     @Published private(set) var loadingReplyIDs: Set<String> = []
     /// 正在生成回复（spinner）
     @Published private(set) var busyReplyIDs: Set<String> = []
+
+    // MARK: 定位（正文划线 → 右侧批注面板）
+    /// 左键点划线/气泡时投递的定位请求；面板观察后滚动 + 闪烁。`tick` 保证连点同一条也重新触发。
+    @Published private(set) var focusRequest: AnnotationFocus?
 
     // MARK: 连线（批注卡片 → 正文划线）
     /// 正在追踪的批注 id（鼠标悬停/操作卡片时设置）
@@ -161,7 +163,6 @@ final class DocumentReaderController: ObservableObject {
             try await api.deleteAnnotation(id: id)
             annotations.removeAll { $0.id == id }
             forgetThread(id: id)
-            if relocatingID == id { cancelRelocate() }
             pushAnnotations()
         } catch {
             LogBuffer.shared.error("DocumentReader 删除划线批注失败: \(error)")
@@ -202,9 +203,27 @@ final class DocumentReaderController: ObservableObject {
         busyReplyIDs.insert(annotationId)
         defer { busyReplyIDs.remove(annotationId) }
         expandedAnnotationIDs.insert(annotationId)
+
+        // 乐观回显：服务端是「生成成功才把 [追问, 回复] 一起落库」的同步长任务（最长 120s），
+        // 不先本地插入的话，用户会看到自己发的内容和 AI 回复同一刻才冒出来。响应回来后用落库版替换。
+        var pendingID: String?
+        if let content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let pending = AnnotationReply(
+                id: "pending-\(UUID().uuidString)",
+                annotationId: annotationId,
+                role: "user",
+                content: content,
+                source: "followup",
+                createdAt: ISO8601DateFormatter().string(from: Date())
+            )
+            pendingID = pending.id
+            repliesByAnnotation[annotationId, default: []].append(pending)
+        }
+
         do {
             let resp = try await api.replyToAnnotation(id: annotationId, content: content)
             var thread = repliesByAnnotation[annotationId] ?? []
+            if let pendingID { thread.removeAll { $0.id == pendingID } }
             thread.append(contentsOf: resp.added)
             repliesByAnnotation[annotationId] = thread
             if let i = annotations.firstIndex(where: { $0.id == annotationId }) {
@@ -212,6 +231,7 @@ final class DocumentReaderController: ObservableObject {
                 annotations[i].lastReply = resp.added.last ?? annotations[i].lastReply
             }
         } catch {
+            if let pendingID { repliesByAnnotation[annotationId]?.removeAll { $0.id == pendingID } }
             LogBuffer.shared.error("DocumentReader 生成批注回复失败: \(error)")
             ToastCenter.shared.show("生成回复失败：\(error.localizedDescription)")
         }
@@ -271,34 +291,9 @@ final class DocumentReaderController: ObservableObject {
         Task { await loadAnnotations() }
     }
 
-    /// 抽屉里失活行的「删除」
+    /// 批注面板失活条目的「删除」
     func deleteAnnotation(id: String) {
         Task { await remove(id: id) }
-    }
-
-    /// 抽屉「重新定位」：进入重选模式，用户在正文里选中新的一段后由 JS 回传。
-    func beginRelocate(id: String) {
-        relocatingID = id
-        evaluate("reader.beginRelocate(\(MarkdownWebUtils.jsString(id)))")
-    }
-
-    func cancelRelocate() {
-        relocatingID = nil
-        evaluate("reader.cancelRelocate()")
-    }
-
-    private func relocate(id: String, quote: String, prefix: String, suffix: String) async {
-        do {
-            let a = try await api.relocateAnnotation(id: id, quote: quote, prefix: prefix, suffix: suffix)
-            if let i = annotations.firstIndex(where: { $0.id == a.id }) { annotations[i] = a }
-            annotations.sort(by: Self.order)
-            pushAnnotations()
-            ToastCenter.shared.show("已重新定位")
-            scrollToAnnotation(id: a.id)
-        } catch {
-            LogBuffer.shared.error("DocumentReader 重新定位失败: \(error)")
-            ToastCenter.shared.show("重新定位失败：\(error.localizedDescription)")
-        }
     }
 
     /// 与服务端 `List` 的排序一致（start_offset ASC, id ASC），画线顺序才稳定
@@ -348,25 +343,14 @@ final class DocumentReaderController: ObservableObject {
             guard let id = message["id"] as? String else { return }
             Task { await remove(id: id) }
 
-        case "relocate":
-            // 重定位模式下用户选完了一段：模式已在 JS 侧退出，这里只管落库
-            guard let id = message["id"] as? String else { return }
-            relocatingID = nil
-            Task {
-                await relocate(
-                    id: id,
-                    quote: message["quote"] as? String ?? "",
-                    prefix: message["prefix"] as? String ?? "",
-                    suffix: message["suffix"] as? String ?? ""
-                )
-            }
-
-        case "relocateCancel":
-            relocatingID = nil
-
         case "scroll":
             // 正文滚动后划线位置变了，正在连线就重取一次
             if let id = connectorID { measureConnector(id: id) }
+
+        case "focus":
+            // 左键点划线/气泡：请求右侧面板定位到该条批注（面板滚动 + 闪烁）
+            guard let id = message["id"] as? String, !id.isEmpty else { return }
+            focusRequest = AnnotationFocus(id: id, tick: (focusRequest?.tick ?? 0) + 1)
 
         case "copy":
             // 剪贴板交给原生：`navigator.clipboard` 在 loadHTMLString 出来的页面里不是安全上下文，
@@ -1238,7 +1222,7 @@ var reader = (function () {
     unwrapAll();
     for (var i = 0; i < annotations.length; i++) {
       var a = annotations[i];
-      if (a.orphaned) continue;      /* 失活的不画（P4 抽屉里可见、可重挂） */
+      if (a.orphaned) continue;      /* 失活的不画（批注面板里可见、可重挂） */
       var hit = locate(a.quote, a.prefix, a.suffix);
       if (!hit) continue;            /* 客户端找不到就不画：不报错，也不动服务端状态 */
       wrapSpan(hit.flat, hit.start, hit.end, a);
@@ -1287,8 +1271,6 @@ var reader = (function () {
   var pendingRange = null;
   var editingId = null;
   var ctxTargetId = null;
-  /* 非空 = 正在重新定位这一条（下一次选区当作新锚点） */
-  var relocateId = null;
   var hideTimer = null;
   var hoverKey = '';
 
@@ -1335,41 +1317,9 @@ var reader = (function () {
       var range = sel.getRangeAt(0);
       if (!content.contains(range.commonAncestorContainer)) { hideToolbar(); return; }
       if (!sel.toString().trim()) { hideToolbar(); return; }
-      /* 重定位模式：选中的这段就是要重挂的新位置，不弹工具条 */
-      if (relocateId) { relocateFromSelection(range); return; }
       pendingRange = range.cloneRange();
       showToolbar(range);
     }, 0);
-  });
-
-  /* ---------- 重新定位模式（抽屉里的「重新定位」） ----------
-     只负责「这次选中是重挂，不是新建」这一件事：提示文案在 SwiftUI 抽屉那边，
-     这里不弹横幅、不改样式。Esc 或选中一次即退出。 */
-  function beginRelocate(id) {
-    relocateId = id;
-    hideAll();
-    hidePopover();
-    pendingRange = null;
-    clearSel();
-  }
-
-  function cancelRelocate() { relocateId = null; }
-
-  function relocateFromSelection(range) {
-    if (!relocateId) return;
-    var id = relocateId;
-    relocateId = null;
-    var info = selectionInfo(range);
-    clearSel(); hideAll();
-    if (!info.quote) { post({ type: 'relocateCancel' }); return; }
-    post({ type: 'relocate', id: id, quote: info.quote, prefix: info.prefix, suffix: info.suffix });
-  }
-
-  document.addEventListener('keydown', function (e) {
-    if (e.key !== 'Escape' || !relocateId) return;
-    cancelRelocate();
-    clearSel();
-    post({ type: 'relocateCancel' });
   });
 
   document.addEventListener('mousedown', function (e) {
@@ -1570,7 +1520,23 @@ var reader = (function () {
     popover.style.top = top + 'px';
   }
 
-  /* ---------- 点击：图 → 放大；划线 → 菜单 ---------- */
+  /* 弹出「编辑批注 / 复制原文 / 删除划线」菜单，锚点在 (x, y)。左键不再用它，改右键。 */
+  function showCtx(id, x, y) {
+    var a = annotationById(id);
+    if (!a) { hideCtx(); return; }   /* 临时闪烁层没有对应批注，别弹菜单 */
+    ctxTargetId = id;
+    document.getElementById('cact-edit-label').textContent = a.note ? '编辑批注' : '添加批注';
+    ctxmenu.classList.add('open');
+    var w = ctxmenu.offsetWidth, h = ctxmenu.offsetHeight;
+    var left = Math.max(10, Math.min(x, window.innerWidth - w - 10));
+    var top = y + 6;
+    if (top + h > window.innerHeight - 16) top = Math.max(10, y - h - 6);
+    ctxmenu.style.left = left + 'px';
+    ctxmenu.style.top = top + 'px';
+    hidePopover();
+  }
+
+  /* ---------- 点击：图 → 放大；划线/气泡 → 定位右侧批注 ---------- */
   content.addEventListener('click', function (e) {
     if (e.target && e.target.tagName === 'IMG') {
       /* mermaid 的浅/深两张靠 CSS 只显示当前主题那张，隐藏那张收不到点击，
@@ -1584,18 +1550,21 @@ var reader = (function () {
     if (sel && !sel.isCollapsed && sel.toString().trim()) return;   /* 正在选词 */
     var t = e.target.closest ? e.target.closest('mark.hl, .ann-bubble') : null;
     if (!t) { hideCtx(); return; }
-    ctxTargetId = t.dataset.id || t.dataset.for;
-    var a = annotationById(ctxTargetId);
-    if (!a) { hideCtx(); return; }   /* 临时闪烁层没有对应批注，别弹菜单 */
-    document.getElementById('cact-edit-label').textContent = (a && a.note) ? '编辑批注' : '添加批注';
-    ctxmenu.classList.add('open');
-    var w = ctxmenu.offsetWidth, h = ctxmenu.offsetHeight;
-    var left = Math.max(10, Math.min(e.clientX, window.innerWidth - w - 10));
-    var top = e.clientY + 6;
-    if (top + h > window.innerHeight - 16) top = Math.max(10, e.clientY - h - 6);
-    ctxmenu.style.left = left + 'px';
-    ctxmenu.style.top = top + 'px';
+    var id = t.dataset.id || t.dataset.for;
+    if (!id || !annotationById(id)) { hideCtx(); return; }
+    /* 左键 = 快捷定位到右侧对应批注（宿主面板滚动 + 闪烁）。
+       编辑批注 / 复制原文 / 删除划线改到右键，见下面的 contextmenu。 */
+    hideCtx();
     hidePopover();
+    post({ type: 'focus', id: id });
+  });
+
+  /* ---------- 右键：划线/气泡 → 编辑 / 复制 / 删除菜单 ---------- */
+  content.addEventListener('contextmenu', function (e) {
+    var t = e.target.closest ? e.target.closest('mark.hl, .ann-bubble') : null;
+    if (!t) { hideCtx(); return; }   /* 正文空白处保留系统默认菜单 */
+    e.preventDefault();
+    showCtx(t.dataset.id || t.dataset.for, e.clientX, e.clientY);
   });
 
   ctxmenu.addEventListener('click', function (e) {
@@ -1721,9 +1690,7 @@ var reader = (function () {
     restoreScrollY: restoreScrollY,
     setAnnotations: setAnnotations,
     scrollToAnnotation: scrollToAnnotation,
-    annotationRect: annotationRect,
-    beginRelocate: beginRelocate,
-    cancelRelocate: cancelRelocate
+    annotationRect: annotationRect
   };
 })();
 </script>

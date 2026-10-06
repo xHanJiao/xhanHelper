@@ -598,6 +598,11 @@ private struct DocumentFullView: View {
             .onChange(of: annotExpanded) { _, expanded in if !expanded { clearConnector() } }
         }
         #if os(macOS)
+        // 正文点划线请求定位：面板若被收起，先自动展开（受窗宽硬地板限制时可能仍只成窄条）
+        .onChange(of: reader.focusRequest) { _, req in
+            guard req != nil, !annotOpen else { return }
+            withAnimation { annotOpen = true }
+        }
         .background { shortcutCarrier }
         // D11：文档页铺一层"纸"底（material）。正文 WKWebView 是全透明的，没有这层就会
         // 直接压在窗口底图（照片）上、影响可读性；底图只透到页面四周。
@@ -620,10 +625,9 @@ private struct DocumentFullView: View {
     @State private var scrollToAnchor: String = ""
     #endif
 
-    /// 批注面板常驻/收起、视图模式、目录收放——全局记忆（跨文档、跨启动）。
+    /// 批注面板常驻/收起、目录收放——全局记忆（跨文档、跨启动）。
     /// 收放是简单兜底（c2）：手动优先，只在窗口窄到触发硬地板时强制收起。
     @AppStorage("xhan_doc_annot_open") private var annotOpen = true
-    @AppStorage("xhan_doc_annot_mode") private var annotModeRaw = AnnotationPanelMode.thread.rawValue
     @AppStorage("xhan_doc_toc_collapsed") private var tocCollapsed = true
     @State private var showFindBar = false
     @State private var findQuery = ""
@@ -692,17 +696,11 @@ private struct DocumentFullView: View {
             expandedIDs: reader.expandedAnnotationIDs,
             loadingIDs: reader.loadingReplyIDs,
             busyIDs: reader.busyReplyIDs,
-            mode: Binding(
-                get: { AnnotationPanelMode(rawValue: annotModeRaw) ?? .thread },
-                set: { annotModeRaw = $0.rawValue }
-            ),
-            relocatingID: reader.relocatingID,
+            focusRequest: reader.focusRequest,
             onToggle: { reader.toggleThread(id: $0) },
             onJump: { reader.scrollToAnnotation(id: $0) },
             onReply: { id, content in Task { await reader.reply(annotationId: id, content: content) } },
             onDelete: { reader.deleteAnnotation(id: $0) },
-            onRelocate: { reader.beginRelocate(id: $0) },
-            onCancelRelocate: { reader.cancelRelocate() },
             onCollapse: { clearConnector(); withAnimation { annotOpen = false } },
             onHoverCard: { id, inside, frame in
                 if inside {

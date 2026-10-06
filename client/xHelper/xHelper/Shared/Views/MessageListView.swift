@@ -50,10 +50,25 @@ struct MessageListView: View {
     // MARK: 调试面板
     @State private var debugTarget: MessageDebugTarget? = nil
 
+    /// 消息区底部渐隐高度：内容从底部浮层（输入栏）下方穿过时，窗口最底缘收边用。
+    /// 只作用于滚动正文，不波及本视图的 overlay（分享条/分享弹窗）。
+    private let bottomFadeHeight: CGFloat = 24
+
     var body: some View {
         Group {
             if !messages.isEmpty {
                 messageScrollView
+                    // 底部渐隐：内容从底部浮层下方穿过，窗口最底缘会硬裁内容；最后
+                    // bottomFadeHeight 淡出到透明（露出底图/材质），滚动时内容「溶入」。
+                    // 挂在滚动正文上、位于各 .overlay 之前 → 分享条/分享弹窗不受影响。
+                    .mask {
+                        VStack(spacing: 0) {
+                            Rectangle().fill(.black)
+                            LinearGradient(colors: [.black, .clear],
+                                           startPoint: .top, endPoint: .bottom)
+                                .frame(height: bottomFadeHeight)
+                        }
+                    }
             } else {
                 MinimumLoadingView(
                     isLoading: isInitialLoading,

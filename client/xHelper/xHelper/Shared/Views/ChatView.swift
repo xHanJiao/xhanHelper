@@ -39,6 +39,10 @@ struct ChatView: View {
     /// 每个按钮常驻/收起的配置（右键菜单切换，持久化，主/PiP 实例共享）。
     @ObservedObject private var inputBarLayout = InputBarLayoutState.shared
 
+    /// 底部浮层栈（AskUserBar/子任务条/L3 确认条/输入栏）的实测高度。
+    /// 用于把「回到最新」按钮与子任务浮层上推到浮层之上（基座消息区现在铺满整高）。
+    @State private var composerHeight: CGFloat = 0
+
     let baseURL: String
     let token: String
 
@@ -55,118 +59,64 @@ struct ChatView: View {
     }
 
     private var content: some View {
-        VStack(spacing: 0) {
-            // 消息列表
-            ZStack(alignment: .bottom) {
-                MessageListView(
-                    messages: viewModel.messages,
-                    isStreaming: viewModel.isStreaming,
-                    isInitialLoading: viewModel.isInitialLoading,
-                    errorMessage: viewModel.errorMessage,
-                    conversationId: viewModel.conversationId,
-                    statusMessage: viewModel.statusMessage,
-                    thoughtMessage: viewModel.thoughtMessage,
-                    thoughtDone: viewModel.thoughtDone,
-                    toolQueue: viewModel.toolQueue,
-                    verifyStatus: viewModel.verifyStatus,
-                    onOpenDocument: { viewModel.onOpenDocument?($0) },
-                    hasMoreBefore: viewModel.hasMoreBefore,
-                    isLoadingMore: viewModel.isLoadingMore,
-                    loadMoreError: viewModel.loadMoreError,
-                    onLoadMore: { direction in Task { await viewModel.loadMore(direction: direction) } },
-                    onRetry: {
-                        guard let cid = viewModel.conversationId else { return }
-                        Task { await viewModel.loadConversation(id: cid, title: viewModel.conversationTitle ?? "", mode: viewModel.mode, preserveTrustedMode: true) } // 重试保持当前模式/信任模式
-                    },
-                    baseURL: baseURL,
-                    token: token,
-                    scrollPosition: $scrollPosition,
-                    showScrollToBottom: $showScrollToBottom
-                )
-                if showScrollToBottom && !viewModel.messages.isEmpty {
-                    Button {
-                        withAnimation(.easeOut(duration: 0.3)) {
-                            scrollPosition.scrollTo(edge: .top)
-                        }
-                    } label: {
-                        Image(systemName: "chevron.down")
-                            .font(.title3)
-                            .foregroundColor(.primary)
-                            .frame(width: 36, height: 36)
-                            .background(.ultraThinMaterial, in: Circle())
+        // 消息列表铺满中栏整高；底部浮层栈经 safeAreaInset 悬浮其上（见 bottomComposer）。
+        ZStack(alignment: .bottom) {
+            MessageListView(
+                messages: viewModel.messages,
+                isStreaming: viewModel.isStreaming,
+                isInitialLoading: viewModel.isInitialLoading,
+                errorMessage: viewModel.errorMessage,
+                conversationId: viewModel.conversationId,
+                statusMessage: viewModel.statusMessage,
+                thoughtMessage: viewModel.thoughtMessage,
+                thoughtDone: viewModel.thoughtDone,
+                toolQueue: viewModel.toolQueue,
+                verifyStatus: viewModel.verifyStatus,
+                onOpenDocument: { viewModel.onOpenDocument?($0) },
+                hasMoreBefore: viewModel.hasMoreBefore,
+                isLoadingMore: viewModel.isLoadingMore,
+                loadMoreError: viewModel.loadMoreError,
+                onLoadMore: { direction in Task { await viewModel.loadMore(direction: direction) } },
+                onRetry: {
+                    guard let cid = viewModel.conversationId else { return }
+                    Task { await viewModel.loadConversation(id: cid, title: viewModel.conversationTitle ?? "", mode: viewModel.mode, preserveTrustedMode: true) } // 重试保持当前模式/信任模式
+                },
+                baseURL: baseURL,
+                token: token,
+                scrollPosition: $scrollPosition,
+                showScrollToBottom: $showScrollToBottom
+            )
+            if showScrollToBottom && !viewModel.messages.isEmpty {
+                Button {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        scrollPosition.scrollTo(edge: .top)
+                    }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.title3)
+                        .foregroundColor(.primary)
+                        .frame(width: 36, height: 36)
+                        .background(.ultraThinMaterial, in: Circle())
 #if os(iOS)
-                            .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+                        .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
 #endif
-                    }
-                    .buttonStyle(.plain)
-                    .animation(.easeInOut(duration: 0.2), value: showScrollToBottom)
-                    .transition(.scale.combined(with: .opacity))
-                    .padding(.bottom, 12)
                 }
-
-                // 子任务详情浮层：覆盖在消息列表上（不改变消息区高度），点遮罩/收起收回。
-                subagentOverlay
+                .buttonStyle(.plain)
+                .animation(.easeInOut(duration: 0.2), value: showScrollToBottom)
+                .transition(.scale.combined(with: .opacity))
+                .padding(.bottom, composerHeight + 12)
             }
 
-            // 错误提示改为全局 Toast（ToastCenter），此处不再内嵌红字
-
-            // 子任务用户介入条（ask_user）：输入栏上方，独立于 toolQueue 不被文本流清理。
-            // 多个请求堆叠折叠，逐条回答/已处理/跳过；早于 L3 确认条展示（它是待执行工具的确认，ask_user 是待办介入）。
-            // 宽度约束与 InputBar 完全一致（maxWidth 720 + trailing + chatHorizontalPadding），保证同宽。
-            if !viewModel.pendingUserRequests.isEmpty {
-                AskUserBar(requests: viewModel.pendingUserRequests) { callID, reply in
-                    viewModel.resolveUserRequest(callID: callID, reply: reply)
-                }
-                .frame(maxWidth: 720, alignment: .trailing)
-                .padding(.horizontal, Layout.chatHorizontalPadding)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.bottom, 8)
-            }
-
-            // 子任务活动面板（折叠态）：输入栏上方一行状态条，点击展开为覆盖消息区的浮层。
-            // 展开态由浮层承载，状态条隐藏；收起后重新出现。
-            // 宽度约束与 InputBar 完全一致（maxWidth 720 + trailing + chatHorizontalPadding），保证同宽。
-            if !viewModel.subagentSessions.isEmpty && !viewModel.subagentPanelExpanded {
-                SubagentStatusBar(
-                    sessions: viewModel.subagentSessions,
-                    expanded: viewModel.subagentPanelExpanded,
-                    onToggle: {
-                        withAnimation(.easeOut(duration: 0.25)) { viewModel.toggleSubagentPanel() }
-                    }
-                )
-                .frame(maxWidth: 720, alignment: .trailing)
-                .padding(.horizontal, Layout.chatHorizontalPadding)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.bottom, 6)
-            }
-
-            // L3 工具确认行：输入框上方，固定可见（浏览历史消息时也不会错过许可请求）
-            // 队列只显示队首；后面还有排队时给出计数提示。
-            if let conf = viewModel.pendingToolConfirmations.first {
-                if viewModel.pendingToolConfirmations.count > 1 {
-                    Text("另有 \(viewModel.pendingToolConfirmations.count - 1) 条待确认")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, Layout.chatHorizontalPadding)
-                }
-                toolConfirmationBar(conf)
-            }
-
-            // 执行计划便签：由 InputBar 的 topTrailingNote 注入，右停靠在驾驶舱上缘
-            // （便签在 InputBar 内部 overlay 渲染，不占此处布局）
-            // —— 完成/取消态横幅（已砍掉，保留注释供未来恢复）——
-            // if let banner = viewModel.planFlashBanner {
-            //     Text(banner)
-            //         .font(.caption)
-            //         .foregroundColor(.green)
-            //         .padding(.horizontal, 12)
-            //         .padding(.vertical, 6)
-            //         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-            //         .padding(.horizontal, 4)
-            // }
-
-            // 输入栏（驾驶舱）：按钮通过 builder 注入，收起/展开双态
-            inputBar
+            // 子任务详情浮层：覆盖在消息列表上（不改变消息区高度），点遮罩/收起收回。
+            // 基座消息区铺满整高，浮层要按底部栈高度上推，才停在输入栏上方。
+            subagentOverlay
+                .padding(.bottom, composerHeight)
+        }
+        // 底部浮层栈（AskUserBar / 子任务状态条 / L3 确认条 / 输入栏）改为 safeAreaInset：
+        // 浮在消息内容之上、不占消息区布局，滚动时内容从浮层下方穿过；safeAreaInset 同时给
+        // 滚动内容留出与栈等高的安全区，滚到底时最后一条完整停在输入栏上方。
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            bottomComposer
         }
         .onChange(of: viewModel.scrollToBottomRequested) { _, requested in
             guard requested else { return }
@@ -224,6 +174,63 @@ struct ChatView: View {
         } message: {
             Text("将跳过包括高危 shell 命令在内的全部确认；仅敏感页面（银行/登录等）的防注入确认仍会弹出。")
         }
+    }
+
+    /// 底部浮层栈：AskUserBar / 子任务状态条 / L3 确认条 / 输入栏。
+    /// 作为消息区的 bottom safeAreaInset —— 浮在消息内容之上、不占消息区布局，
+    /// 同时给滚动内容留出与栈等高的安全区（滚到底时最后一条完整停在输入栏上方）。
+    /// 高度经 onGeometryChange 回传 composerHeight，供「回到最新」按钮 / 子任务浮层上推。
+    private var bottomComposer: some View {
+        VStack(spacing: 0) {
+            // 子任务用户介入条（ask_user）：输入栏上方，独立于 toolQueue 不被文本流清理。
+            // 多个请求堆叠折叠，逐条回答/已处理/跳过；早于 L3 确认条展示（它是待执行工具的确认，ask_user 是待办介入）。
+            // 宽度约束与 InputBar 完全一致（maxWidth 720 + trailing + chatHorizontalPadding），保证同宽。
+            if !viewModel.pendingUserRequests.isEmpty {
+                AskUserBar(requests: viewModel.pendingUserRequests) { callID, reply in
+                    viewModel.resolveUserRequest(callID: callID, reply: reply)
+                }
+                .frame(maxWidth: 720, alignment: .trailing)
+                .padding(.horizontal, Layout.chatHorizontalPadding)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.bottom, 8)
+            }
+
+            // 子任务活动面板（折叠态）：输入栏上方一行状态条，点击展开为覆盖消息区的浮层。
+            // 展开态由浮层承载，状态条隐藏；收起后重新出现。
+            // 宽度约束与 InputBar 完全一致（maxWidth 720 + trailing + chatHorizontalPadding），保证同宽。
+            if !viewModel.subagentSessions.isEmpty && !viewModel.subagentPanelExpanded {
+                SubagentStatusBar(
+                    sessions: viewModel.subagentSessions,
+                    expanded: viewModel.subagentPanelExpanded,
+                    onToggle: {
+                        withAnimation(.easeOut(duration: 0.25)) { viewModel.toggleSubagentPanel() }
+                    }
+                )
+                .frame(maxWidth: 720, alignment: .trailing)
+                .padding(.horizontal, Layout.chatHorizontalPadding)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.bottom, 6)
+            }
+
+            // L3 工具确认行：输入框上方，固定可见（浏览历史消息时也不会错过许可请求）
+            // 队列只显示队首；后面还有排队时给出计数提示。
+            if let conf = viewModel.pendingToolConfirmations.first {
+                if viewModel.pendingToolConfirmations.count > 1 {
+                    Text("另有 \(viewModel.pendingToolConfirmations.count - 1) 条待确认")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, Layout.chatHorizontalPadding)
+                }
+                toolConfirmationBar(conf)
+            }
+
+            // 执行计划便签：由 InputBar 的 topTrailingNote 注入，右停靠在驾驶舱上缘
+            // （便签在 InputBar 内部 overlay 渲染，不占此处布局）
+
+            // 输入栏（驾驶舱）：按钮通过 builder 注入，收起/展开双态
+            inputBar
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { composerHeight = $0 }
     }
 
     /// 子任务详情浮层：仅展开且存在会话时渲染，覆盖消息列表（不改变消息区高度）。

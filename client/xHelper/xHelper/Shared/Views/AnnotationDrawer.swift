@@ -1,4 +1,5 @@
 import SwiftUI
+import MarkdownUI
 
 /// 面板两种视图：讨论（常驻线程）/ 全部（扁平导航列表）。
 /// 跨平台定义：iOS 也要读 `@AppStorage` 的默认值（面板本身仅 macOS 渲染）。
@@ -381,11 +382,20 @@ struct AnnotationThreadCard: View {
                         .font(.system(size: fontManager.scaledSize * 0.68))
                         .foregroundColor(.secondary.opacity(0.6))
                 }
-                Text(reply.content)
-                    .font(.system(size: fontManager.scaledSize * 0.94))
-                    .foregroundColor(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
+                if reply.isAssistant {
+                    // AI 回复可能是 markdown（代码块/列表/表格），用与聊天气泡同一套主题渲染。
+                    // 用户追问保持纯文本：用户在输入框敲的原文，不该被当 markdown 解释。
+                    Markdown(reply.content)
+                        .markdownTheme(.chatBubble(fontSize: fontManager.scaledSize * 0.94))
+                        .markdownCodeSyntaxHighlighter(.plainText)
+                        .macosTextSelection()
+                } else {
+                    Text(reply.content)
+                        .font(.system(size: fontManager.scaledSize * 0.94))
+                        .foregroundColor(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
             }
         }
     }

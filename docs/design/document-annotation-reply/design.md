@@ -524,7 +524,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 - ❌ 回复流式（v1 同步 + spinner）
 - ❌ 按钮路径进当前会话（v1 为 document-scoped）
 - ❌ 批注/回复进记忆 / 画像 / 摘要流水线（AR-11）
-- ❌ 回复富文本 / 图片 / @ 引用
+- ❌ 回复富文本 / 图片 / @ 引用（**2026-10-06 修订**：AI 回复现按 markdown 渲染，见文末「后续变更」；存储仍是纯文本，非富文本编辑器）
 - ❌ trace 子会话（P1/P2 不做，留接口）
 - ❌ 删除单条回复的 UI（`DELETE /api/annotation-replies/:id` v1 未做，后置）
 - ❌ 连线的多行环绕（现为水平出入贝塞尔曲线，终点连到正文列右侧留白；多行整体环绕不做）
@@ -601,3 +601,19 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 - 工具 `tool/document.go`：`reply_annotation`（`source=chat`，校验归属/长度/上限）；`listAnnotations` 带 `replies`（≤20/批注、`replies_truncated`）；常量 `maxAnnotationReplyLen=4000`/`maxRepliesPerAnnotation=100`/`annotationRepliesPreview=20`。
 - 装配：`appinit/tools.go` `NewDocumentTool(doc,anno,reply)`；`appinit/router.go` 建 `AnnotationReplier`（`Client: llmClients.Flash`）；`app/init_db.go` AllModels + `app/init_repos.go` Repos/InitRepos。
 - 单测：`service/document_annotation_reply_repo_test.go`（排序/计数/最近N/删除）；`tool/document_test.go` 的 `TestDocumentAnnotationReplyAndList`；`agent/annotation_reply_test.go` 的 `TestAnnotationReplier_FollowupOrderStable`（同批 [user,assistant] 顺序 + `last_reply`）。回归：`activity/track_test.go`、`service/document_repo_test.go` 的 AutoMigrate 已补 `DocumentAnnotationReply`（否则 purge 用例 no such table）。
+
+---
+
+## 十三、后续变更
+
+### 2026-10-06 · AI 回复按 markdown 渲染
+
+- **决定**：批注线程里 **AI（assistant）回复**在客户端按 markdown 渲染；用户追问、批注正文 `note`、折叠行的「最后一句」预览**保持纯文本**。
+- **原因**：LLM 回复常带 markdown（列表 / 代码块 / 加粗 / 表格），原先 `Text(reply.content)` 原样显示标记，观感差。存储层不变（`content` 仍是原始 markdown 文本），纯客户端渲染。
+- **影响文件**：`client/xHelper/xHelper/Shared/Views/AnnotationDrawer.swift`
+  - 顶部补 `import MarkdownUI`；
+  - `AnnotationThreadCard.replyRow`（原 `Text(reply.content)`）改为：`reply.isAssistant` 时走 `Markdown(reply.content).markdownTheme(.chatBubble(fontSize: scaledSize * 0.94)).markdownCodeSyntaxHighlighter(.plainText).macosTextSelection()`；否则维持 `Text`。
+  - 复用聊天气泡同一套主题 `Theme.chatBubble`（`Shared/Views/ChatBubble.swift`），无新依赖。
+- **不改**：服务端 / 数据模型 / 生成 prompt / 折叠行预览 / WebView popover / 连线逻辑。
+- **验证**：`swiftc -typecheck -D DEBUG`（macOS 26.3 / iOS 26.0）0 error。
+- **修订**：§12「❌ 回复富文本」收窄为「不做富文本编辑器 / 图片 / @ 引用」，markdown 只读渲染除外。

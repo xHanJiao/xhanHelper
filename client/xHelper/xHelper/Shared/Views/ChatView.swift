@@ -269,9 +269,11 @@ struct ChatView: View {
         }
     }
 
-    /// 发送草稿：校验非空 → 清输入 → 发消息 → 滚到底部。
-    /// 带图时刻意让托盘留到上传成功后再清——托盘转圈就是上传期间的占位。
+    /// 发送草稿：校验非空 → 文字与待发图一起清空 → 带图先上传 → 发消息 → 滚到底部。
+    /// 文字和图片同一帧一起清掉（图片只在上传期间不可能留下、避免「文字先走、图片后走」的时差）；
+    /// 上传失败时两者一起还原。
     private func sendDraft() {
+        guard !isUploadingAttachments else { return }
         let text = viewModel.draftText
         let attachments = draftAttachments
         let hasText = !text.trimmingCharacters(in: .whitespaces).isEmpty
@@ -279,12 +281,12 @@ struct ChatView: View {
 
         dismissKeyboardToken = UUID()
         viewModel.draftText = ""
+        draftAttachments = []
         withAnimation(.easeOut(duration: 0.3)) {
             scrollPosition.scrollTo(edge: .top)
         }
 
         guard !attachments.isEmpty else {
-            draftAttachments = []
             viewModel.sendMessage(text, baseURL: baseURL, token: token, agentId: selectedAgentID ?? agentId)
             return
         }
@@ -307,11 +309,11 @@ struct ChatView: View {
                 }
             }
             guard !ids.isEmpty else {
-                // 全失败：文字还给用户、托盘留着，别让打好的字白丢
+                // 全失败：文字和待发图一起还给用户，别让打好的字白丢
                 viewModel.draftText = text
+                draftAttachments = attachments
                 return
             }
-            draftAttachments = []
             viewModel.sendMessage(
                 text,
                 baseURL: baseURL,
@@ -558,7 +560,6 @@ struct ChatView: View {
         if !draftAttachments.isEmpty {
             AttachmentTray(
                 attachments: draftAttachments,
-                isUploading: isUploadingAttachments,
                 onRemove: { item in
                     draftAttachments.removeAll { $0.id == item.id }
                 },

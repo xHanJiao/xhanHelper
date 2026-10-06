@@ -163,8 +163,6 @@ struct CollapsibleThumbRow<Thumb: View, Trailing: View>: View {
 /// 图多时收成「+N」，点开换行展开。
 struct AttachmentTray: View {
     let attachments: [DraftAttachment]
-    /// 上传中：托盘上显示进度态，发送按钮禁用
-    var isUploading: Bool = false
     let onRemove: (DraftAttachment) -> Void
     let onAdd: () -> Void
     /// 一次清空所有待发图
@@ -224,23 +222,18 @@ struct AttachmentTray: View {
         }
     }
 
-    /// 「+」与进度圈共用一格：上传中换成一圈转，格子尺寸不变，网格里也不会错位
+    /// 「+」格子：再加一张图
     private var addCell: some View {
         Button(action: onAdd) {
             squareCell {
-                if isUploading {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "plus")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
         }
         .buttonStyle(.plain)
-        // 上传中加进来的图不会被本次上传带上，只会残留在托盘里
-        .disabled(isUploading || !canAddMore)
-        .help(isUploading ? "上传中" : (canAddMore ? "再加一张图" : "最多 \(Layout.maxDraftImages) 张"))
+        .disabled(!canAddMore)
+        .help(canAddMore ? "再加一张图" : "最多 \(Layout.maxDraftImages) 张")
     }
 
     private var clearAllCell: some View {
@@ -252,7 +245,6 @@ struct AttachmentTray: View {
             }
         }
         .buttonStyle(.plain)
-        .disabled(isUploading)
         .help("清空全部 \(attachments.count) 张")
     }
 

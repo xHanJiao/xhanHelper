@@ -446,7 +446,7 @@ DB 记录、DeepSeek Files API 上传、消息引用关系、两级自动清理�
 | # | 风险 | 验证方式 | 兜底 |
 |---|------|---------|------|
 | 1 | 切到 `deepseek-flash` 后真实链路是否正常（推理、工具调用、成本记录） | P0 后发一轮真实对话 | 回退模型名；成本报表按第十节补价格行 |
-| 2 | Files API 上传增加发送延迟（截图约 1–2 秒） | 真机体感 | 上传异步化，先行发送、file_id 就绪后补 |
+| 2 | Files API 上传增加发送延迟（截图约 1–2 秒） | 真机体感 | **已落地**：文字与待发图一起瞬时清空，上传后台化后再发（见文末「后续变更」）。不为上传延迟做乐观气泡（YAGNI） |
 | 3 | 私有图的鉴权加载在列表里滚动时的性能 | 真机滚动多图会话 | 缩略图缓存 + 并发上限 |
 | 4 | 长会话图片 token 累积 | 观察成本报表 | 调小 `image_replay_rounds`；审批门收紧 |
 | 5 | 15 天清理会吃掉历史图 | 观察清理日志 | 调大 `image_ttl_days` |
@@ -471,3 +471,14 @@ llm:
 chat:
   image_replay_rounds: 10          # 历史重放图片的最近轮数
 ```
+
+---
+
+## 后续变更
+
+- **2026-10-06 · 带图发送：文字与图片一起瞬时清空**
+  - 旧行为：点发送先清文字，待发图托盘留到上传成功后再清（托盘转圈当上传占位）→ 真机上「文字先消失、图片后消失」时差明显。
+  - 新决定：文字与待发图同一帧一起清空，上传期间输入栏整体变空（等同已发出），上传成功后用户气泡带本地图出现；上传全失败则文字与图一起还原并 toast。失败不再只还原文字。发送期间用 `isUploadingAttachments` 拦住重复触发。
+  - 顺带清理：`AttachmentTray` 的 `isUploading` 参数在真实路径里不再为 true，已删除（`AttachmentViews.swift`）。
+  - 影响文件：`client/xHelper/xHelper/Shared/Views/ChatView.swift`（`sendDraft`、`inputBarAttachmentTray`）、`client/xHelper/xHelper/Shared/Views/AttachmentViews.swift`（`AttachmentTray`）。
+

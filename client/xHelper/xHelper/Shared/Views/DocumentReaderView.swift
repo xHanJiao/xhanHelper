@@ -1310,6 +1310,10 @@ var reader = (function () {
   }
 
   document.addEventListener('mouseup', function (e) {
+    /* 工具条只服务左键选区。右键在 WebKit 里会先把光标下的词选中（给查询/服务用），
+       若不加这个判断，右键划线会同时弹出「选区工具条」和「右键菜单」两个浮层。
+       顺手清掉那个自动选区，免得选中文字一直染着主题色。 */
+    if (e.button !== 0) { clearSel(); return; }
     if (e.target.closest && e.target.closest('.ui')) return;
     setTimeout(function () {
       var sel = window.getSelection();
@@ -1561,6 +1565,7 @@ var reader = (function () {
 
   /* ---------- 右键：划线/气泡 → 编辑 / 复制 / 删除菜单 ---------- */
   content.addEventListener('contextmenu', function (e) {
+    hideToolbar();   /* 右键一律先收起左键选区工具条，别和菜单叠在一起 */
     var t = e.target.closest ? e.target.closest('mark.hl, .ann-bubble') : null;
     if (!t) { hideCtx(); return; }   /* 正文空白处保留系统默认菜单 */
     e.preventDefault();

@@ -255,6 +255,20 @@ function toolbarChecks() {
   ok('保存后浮层收起、选区清空',
      !editor.classList.contains('open') && window.getSelection().isCollapsed);
   ok('create 没有原地包 mark（等 Swift 回推）', c.querySelectorAll('mark.hl').length === 0);
+
+  // 21) 右键不该弹选区工具条：WebKit 右键会先把光标下的词自动选中（给查询/服务用），
+  //     mouseup 若不判键，右键划线会同时冒出「工具条 + 右键菜单」两个浮层。
+  put([mk('rb1', '记忆系统的第一处提及', '右键用')]);
+  var rbm = c.querySelector('mark.hl[data-id="rb1"]');
+  var rbr = document.createRange();
+  rbr.selectNodeContents(rbm);                    // 模拟 WebKit 右键自动选中的词
+  var rbsel = window.getSelection();
+  rbsel.removeAllRanges();
+  rbsel.addRange(rbr);
+  rbm.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 2 }));
+  ok('右键 mouseup 不弹工具条', !document.getElementById('toolbar').classList.contains('open'));
+  ok('右键顺手清掉自动选区', window.getSelection().isCollapsed);
+  put([]);
 }
 
 function annotationChecks() {
@@ -395,8 +409,10 @@ function annotationChecks() {
   }
 
   // 13b) 菜单开着时 hover 同一条划线，不得再弹 hover 浮层（两个浮层会叠在一起）
+  document.getElementById('toolbar').classList.add('open');   // 假装左键选区工具条还开着
   openCtx('p1');
   ok('右键划线出菜单', document.getElementById('ctxmenu').classList.contains('open'));
+  ok('右键时收起选区工具条', !document.getElementById('toolbar').classList.contains('open'));
   var p1r = c.querySelector('mark.hl[data-id="p1"]').getBoundingClientRect();
   pv.classList.remove('open');
   c.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,

@@ -60,6 +60,7 @@
 
 - 命中 `mark.hl` / `.ann-bubble` → `e.preventDefault()` + 在原光标处展开 `#ctxmenu`（沿用旧定位代码）。
 - 未命中 → 不拦截，正文空白处的系统菜单照常。
+- **任何右键先 `hideToolbar()`**，且 `mouseup` 只认左键（`e.button === 0`）：WebKit 右键会先自动选中光标下的词（给查询/服务用），不判键的话右键划线会同时冒出「选区工具条 + 右键菜单」两个浮层。右键顺手 `clearSel()` 清掉那个自动选区。
 
 菜单/ hover 浮层互斥逻辑不变：菜单打开期间 `mousemove` 早退，不再弹 hover 浮层。
 
@@ -161,3 +162,10 @@ case "focus":
 
 - 面板原「讨论 / 全部」两视图合并为**单视图**（只留讨论卡片），`AnnotationListBody` 与三 tab 已删。**focus（点划线定位）行为不变**，现只由讨论卡片承接；`AnnotationPanel.appliedTick` 去重仍生效（不再有「切视图」场景）。
 - 本文 §1「现状」、§5 实现面、§6 边界的旧描述已就地加注；详见 `docs/design/document-annotation-single-view/design.md`。
+
+### 2026-10-06 · 右键不再叠出「选区工具条」
+
+- **现象**：右键划线同时弹出两个浮层——顶部「划线/批注/复制」（选区工具条）与下方「编辑批注/复制原文/删除划线」（右键菜单）。
+- **根因**：`mouseup` 只判「有没有非折叠选区」、不判鼠标键；WebKit 右键会先把光标下的词自动选中 → 同一个右键既触发 `contextmenu`（弹菜单）又让 `mouseup` 拿到那个自动选区（弹工具条）。
+- **修复**（`DocumentReaderView.swift` JS 模板）：`mouseup` 开头 `if (e.button !== 0) { clearSel(); return; }`（工具条只服务左键选区，并清掉右键留下的自动选区）；`contextmenu` 一律先 `hideToolbar()`。
+- **验证**：`check-reader-html.sh` PASS（168→171，新增「右键 mouseup 不弹工具条」「右键顺手清掉自动选区」「右键时收起选区工具条」）；`snapshot-reader.sh`；`swiftc -typecheck`（macOS + iOS）0 error。

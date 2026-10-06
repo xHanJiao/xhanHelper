@@ -386,7 +386,7 @@ JS → Swift（`WKScriptMessageHandler`，沿用 `XHWebViewBridge` 的命名与�
 
 ### 8.1 选区 → 工具条
 
-- `mouseup` 出工具条，光标离开选区且不 hover 工具条则收起（需要 `hideToolbar` / `hideAll` 两层，别用一个 —— 一轮里踩过 mouseup/click 竞态）
+- `mouseup` 出工具条，光标离开选区且不 hover 工具条则收起（需要 `hideToolbar` / `hideAll` 两层，别用一个 —— 一轮里踩过 mouseup/click 竞态）。**只认左键**（`e.button === 0`）：WebKit 右键会先自动选中光标下的词，不判键会让右键划线叠出「工具条 + 右键菜单」（见 `document-annotation-focus`）
 - 工具条 4 个动作：**划线** / **批注** / **复制** / **问 AI**
 - 跨块选区：对 `range.extractContents()` 后的每个块分别包 `mark`，**共享同一个 `data-id`**（一个批注 = 多个 `<mark>`）。注意 P3 实现里包的是**重新定位得到**的 range，不是用户那个活选区（见「P3 完成情况」第 1 条）
 - 跨表格 / 跨代码围栏：不支持，工具条降级为只有「复制」
@@ -1022,3 +1022,8 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 - **删除**：`AnnotationDrawer.swift`（卡片/面板 `relocatingID`·`onRelocate`·`onCancelRelocate` 与重选提示）、`DocumentReaderView.swift`（`relocatingID` / `beginRelocate` / `cancelRelocate` / `relocate` / `case "relocate"`·`"relocateCancel"` / JS relocate 模式与导出）、`APIClient.relocateAnnotation`、`DocumentListView` 装配、`check-reader-html.sh` 8 条重定位断言（176→168）。
 - **保留**：D10 的**自动**三级重定位（正文改写后服务端重挂，与本手动流程无关）；服务端 `POST /api/annotations/:id/relocate` 接口保留（不再被客户端调用）。
 - **详见**：`docs/design/document-annotation-single-view/design.md` 的后续变更。
+
+### 2026-10-06 · 右键不再叠出「选区工具条」
+
+- 右键划线曾同时弹出选区工具条与右键菜单：`mouseup` 未判鼠标键，而 WebKit 右键会先自动选中光标下的词。修复：`mouseup` 只认左键并清掉右键的自动选区，`contextmenu` 先 `hideToolbar()`。
+- 详见 `docs/design/document-annotation-focus/design.md` 的「2026-10-06 · 右键不再叠出选区工具条」；`check-reader-html.sh` 168→171。

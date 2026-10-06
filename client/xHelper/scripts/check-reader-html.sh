@@ -381,11 +381,22 @@ function annotationChecks() {
      pv.classList.contains('open') && pv.textContent.indexOf('外批注') >= 0
        && pv.textContent.indexOf('内批注') >= 0 && pv.textContent.indexOf('重叠划线') >= 0);
 
-  // 13) 点击划线 → 菜单：编辑 / 复制 / 删除
+  // 13) 左键点划线 → 定位请求（发 focus），不再弹菜单
   c.querySelector('mark.hl[data-id="p1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-  ok('点划线出菜单', document.getElementById('ctxmenu').classList.contains('open'));
+  ok('左键点划线发 focus（带 id）', !!last('focus') && last('focus').id === 'p1', JSON.stringify(last('focus')));
+  ok('左键不再开菜单', !document.getElementById('ctxmenu').classList.contains('open'));
+
+  // 右键（contextmenu）打开菜单：编辑 / 复制 / 删除
+  function openCtx(id) {
+    var el = c.querySelector('mark.hl[data-id="' + id + '"]');
+    var r = el.getBoundingClientRect();
+    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true,
+      clientX: r.left + 1, clientY: r.top + 4 }));
+  }
 
   // 13b) 菜单开着时 hover 同一条划线，不得再弹 hover 浮层（两个浮层会叠在一起）
+  openCtx('p1');
+  ok('右键划线出菜单', document.getElementById('ctxmenu').classList.contains('open'));
   var p1r = c.querySelector('mark.hl[data-id="p1"]').getBoundingClientRect();
   pv.classList.remove('open');
   c.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
@@ -412,17 +423,17 @@ function annotationChecks() {
        && window.__scrolled.length >= 1);
   ok('scrollToAnnotation 未命中返回 false', reader.scrollToAnnotation('不存在') === false);
 
-  // 16) 菜单动作回传
-  c.querySelector('mark.hl[data-id="h1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  // 16) 菜单动作回传（右键打开菜单）
+  openCtx('h1');
   document.querySelector('#ctxmenu button[data-cact="copy"]').click();
   ok('菜单「复制原文」回传 copy', !!last('copy') && last('copy').text.indexOf('记忆系统的第一处') >= 0);
-  c.querySelector('mark.hl[data-id="h1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  openCtx('h1');
   document.querySelector('#ctxmenu button[data-cact="del"]').click();
   ok('菜单「删除」回传 delete', !!last('delete') && last('delete').id === 'h1');
 
   // 17) 编辑批注：带上原 note、保存发 update
   put([mk('e1', '记忆系统的第一处', '旧批注')]);
-  c.querySelector('mark.hl[data-id="e1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  openCtx('e1');
   document.querySelector('#ctxmenu button[data-cact="edit"]').click();
   ok('点「编辑批注」带出原 note',
      document.getElementById('note-editor').classList.contains('open')

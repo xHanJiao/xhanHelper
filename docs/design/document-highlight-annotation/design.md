@@ -55,7 +55,7 @@
 | D6 | 批注输入 | ✅ HTML 浮层（quote 预览 + textarea + ⌘↵ 保存） |
 | D7 | 跨块选择 | ✅ 允许（跨段落 / 跨列表项）；**跨表格、跨代码围栏除外**（不支持，选中时工具条只给"复制"） |
 | D8 | 重叠 | ✅ 允许重叠；hover 时 popover 列出该位置**全部**批注，>1 条打「重叠划线」标签 |
-| D9 | 点击划线 | ✅ 菜单：编辑批注 / 复制原文 / ~~问 AI~~ / 删除划线（**问 AI 已下线**） |
+| D9 | 点击划线 | ✅ **左键 = 快捷定位到右侧批注面板**（滚动 + 闪烁）；**右键 = 菜单**：编辑批注 / 复制原文 / 删除划线（~~问 AI~~ 已下线）。见 `docs/design/document-annotation-focus/design.md` |
 | D10 | 重定位 | ✅ 三级降级：① quote 精确匹配（唯一命中走快路径）→ ② Markdown 纯文本投影后匹配（带 prefix/suffix 消歧）→ ③ 前后文夹逼（覆盖"span 内部被插字/局部改写"，带相似度门槛）。全失败标 `orphaned`。多命中而消歧不达标时**判失活而不是猜第一处** —— 静默挪位比失活更糟。v1 提供划线列表抽屉，orphan 灰态可见，可「重新定位 / 删除」 |
 | D10b | 创建时的消歧 | ✅ 客户端额外回传 DOM 选区的前后文（`prefix`/`suffix`，纯文本 ≤60 字）。没有它，`结论` 这类短句在文中重复时只能锚到第一处，且返回的快照也是按第一处算的 → 客户端会在错的地方画线且无提示 |
 | D10c | 快照与 quote 刷新 | ✅ 每次成功定位都刷新 `Prefix`/`Suffix`，夹逼改写时同时刷新 `Quote` 并置 `QuoteRewritten`。让锚点始终描述当前正文，且"服务端改了用户划的原文"这件事可见 |
@@ -361,6 +361,7 @@ JS → Swift（`WKScriptMessageHandler`，沿用 `XHWebViewBridge` 的命名与�
 | `annotationAskAI` | `{quote, prefix, suffix}` | ~~「问 AI」（P5）~~ **已删除**：Swift 侧不再有 `case "ask"`，JS 不再发此消息 |
 | `relocate` | `{id, quote, prefix, suffix}` | P4「重新定位」选完新位置（服务端重挂锚点并清 `orphaned`） |
 | `relocateCancel` | — | 重定位模式被 Esc / 取消按钮终止 |
+| `focus` | `{id}` | 左键点划线/气泡：请求右侧批注面板定位到该批注（滚动 + 闪烁），见 `docs/design/document-annotation-focus/design.md` |
 | `contentHeightChanged` | `{h}` | WebView 自适应高度（滚动交给外层 SwiftUI ScrollView？否 —— 见下） |
 
 **滚动归属**：正文滚 **WebView 自己**（`reader` 的 `overflow-y: auto`），不外包给 SwiftUI `ScrollView`。理由：跨块选区的 `getClientRects` 在自身滚动容器里才准；外包后 mousemove 期间要不停回传高度，抖动且贵。
@@ -410,8 +411,9 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 - hover 划线段 → popover：`elementsFromPoint` 聚合该位置所有 `mark` 的 `data-id`，逐条渲染 `quote + note`；>1 条打「重叠划线」标签
 - hover 浮层（只有带 note 的划线出）封顶 `min(62vh, 520px)` 内滚，见 §12「长批注的 hover 浮层」
-- 点击划线段或气泡 → 菜单：**编辑批注** / **复制原文** / **问 AI**（P5 补；载荷取这条线自己存的四元组，点完闪一下那段） / **删除划线**
-- 点击菜单与 hover 浮层**互斥**：菜单打开期间 `mousemove` 直接早退，不再弹 hover 浮层（两者都是同一条批注的呈现，叠在一起很难看）；菜单一关即恢复
+- **左键**点划线段或气泡 → **快捷定位到右侧批注面板**（面板滚动到该条并闪烁；面板收起则先展开）。JS 发 `post({type:'focus', id})`，见 `docs/design/document-annotation-focus/design.md`
+- **右键**点划线段或气泡 → 菜单：**编辑批注** / **复制原文** / **删除划线**（拦截 `contextmenu` + `preventDefault`；正文空白处保留系统菜单）
+- 菜单与 hover 浮层**互斥**：菜单打开期间 `mousemove` 直接早退，不再弹 hover 浮层（两者都是同一条批注的呈现，叠在一起很难看）；菜单一关即恢复
 - 「编辑批注」打开 §8.4 的浮层，`⌘↵` 保存
 - 批注留空保存 = 该实体退化成纯划线（不发 `annotationDelete`）
 
@@ -987,3 +989,17 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 - mockup P5 画的是「直接进 PiP」，实现按当前是否已是 PiP 二选一（**不做轻量进 PiP**），原因见 §12.5
 - mockup P5 里助手回答上方那条引用条、以及窄条上的「撤销」，实现都不做（见上「不做」）
 - **`mockup-p5.html` 没有再按实现同步**（文件顶部挂了一条醒目提示）：它画的是"发送前胶囊 + 直接进 PiP + 有引用条/撤销"那一版，实现是"会话级常驻胶囊 + 按现状二选一 + 都没有 + 长批注浮层内滚"。**对 P5 一律以本文与代码为准**；这份预览只用来回看当时讨论过的形态。
+
+---
+
+## 后续变更
+
+### 2026-10-06 · 点划线定位到右侧批注面板（左键定位 / 右键菜单）
+
+- **背景**：原先左键点划线只弹「编辑/复制/删除」菜单，正文划线 → 右侧批注条目这个方向不可达（反方向「卡片→正文」早有）。
+- **决定**：**左键点划线/气泡 = 快捷定位到右侧面板对应条目**（滚动 + 闪烁，面板收起则先展开，不切当前视图）；**右键 = 原「编辑批注 / 复制原文 / 删除划线」菜单**（拦截 `contextmenu`）。左键拖动选词不触发定位。
+- **数据流**：新增 JS→Swift 消息 `focus {id}`；`DocumentReaderController.focusRequest`（含单调递增 `tick`，连点同一条也能重触发）→ `AnnotationPanel` / `AnnotationListBody` 观察后 `ScrollViewReader.scrollTo` + 本地 `flashID` 闪烁 ~1.2s。
+- **影响文件**：`DocumentReaderView.swift`（JS 模板 + controller）、`DocumentListView.swift`（收起则展开 + 透传）、`AnnotationDrawer.swift`（`ScrollViewReader`、行 `.id`、聚焦描边；新增 `AnnotationFocus`）、`check-reader-html.sh`。
+- **不改**：服务端 / 数据模型 / API。
+- **边界**：列表模式下焦点条目被当前 tab 过滤掉 → 静默不滚；窗宽硬地板下自动展开可能仍只成窄条；orphan 划线正文里没画，仍走列表右键菜单。
+- **详见**：`docs/design/document-annotation-focus/design.md`。

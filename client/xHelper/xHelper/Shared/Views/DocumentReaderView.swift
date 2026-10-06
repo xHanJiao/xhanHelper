@@ -32,6 +32,10 @@ final class DocumentReaderController: ObservableObject {
     /// 正在生成回复（spinner）
     @Published private(set) var busyReplyIDs: Set<String> = []
 
+    // MARK: 定位（正文划线 → 右侧批注面板）
+    /// 左键点划线/气泡时投递的定位请求；面板观察后滚动 + 闪烁。`tick` 保证连点同一条也重新触发。
+    @Published private(set) var focusRequest: AnnotationFocus?
+
     // MARK: 连线（批注卡片 → 正文划线）
     /// 正在追踪的批注 id（鼠标悬停/操作卡片时设置）
     @Published private(set) var connectorID: String?
@@ -386,6 +390,11 @@ final class DocumentReaderController: ObservableObject {
         case "scroll":
             // 正文滚动后划线位置变了，正在连线就重取一次
             if let id = connectorID { measureConnector(id: id) }
+
+        case "focus":
+            // 左键点划线/气泡：请求右侧面板定位到该条批注（面板滚动 + 闪烁）
+            guard let id = message["id"] as? String, !id.isEmpty else { return }
+            focusRequest = AnnotationFocus(id: id, tick: (focusRequest?.tick ?? 0) + 1)
 
         case "copy":
             // 剪贴板交给原生：`navigator.clipboard` 在 loadHTMLString 出来的页面里不是安全上下文，
@@ -1589,7 +1598,23 @@ var reader = (function () {
     popover.style.top = top + 'px';
   }
 
-  /* ---------- 点击：图 → 放大；划线 → 菜单 ---------- */
+  /* 弹出「编辑批注 / 复制原文 / 删除划线」菜单，锚点在 (x, y)。左键不再用它，改右键。 */
+  function showCtx(id, x, y) {
+    var a = annotationById(id);
+    if (!a) { hideCtx(); return; }   /* 临时闪烁层没有对应批注，别弹菜单 */
+    ctxTargetId = id;
+    document.getElementById('cact-edit-label').textContent = a.note ? '编辑批注' : '添加批注';
+    ctxmenu.classList.add('open');
+    var w = ctxmenu.offsetWidth, h = ctxmenu.offsetHeight;
+    var left = Math.max(10, Math.min(x, window.innerWidth - w - 10));
+    var top = y + 6;
+    if (top + h > window.innerHeight - 16) top = Math.max(10, y - h - 6);
+    ctxmenu.style.left = left + 'px';
+    ctxmenu.style.top = top + 'px';
+    hidePopover();
+  }
+
+  /* ---------- 点击：图 → 放大；划线/气泡 → 定位右侧批注 ---------- */
   content.addEventListener('click', function (e) {
     if (e.target && e.target.tagName === 'IMG') {
       /* mermaid 的浅/深两张靠 CSS 只显示当前主题那张，隐藏那张收不到点击，
@@ -1603,18 +1628,21 @@ var reader = (function () {
     if (sel && !sel.isCollapsed && sel.toString().trim()) return;   /* 正在选词 */
     var t = e.target.closest ? e.target.closest('mark.hl, .ann-bubble') : null;
     if (!t) { hideCtx(); return; }
-    ctxTargetId = t.dataset.id || t.dataset.for;
-    var a = annotationById(ctxTargetId);
-    if (!a) { hideCtx(); return; }   /* 临时闪烁层没有对应批注，别弹菜单 */
-    document.getElementById('cact-edit-label').textContent = (a && a.note) ? '编辑批注' : '添加批注';
-    ctxmenu.classList.add('open');
-    var w = ctxmenu.offsetWidth, h = ctxmenu.offsetHeight;
-    var left = Math.max(10, Math.min(e.clientX, window.innerWidth - w - 10));
-    var top = e.clientY + 6;
-    if (top + h > window.innerHeight - 16) top = Math.max(10, e.clientY - h - 6);
-    ctxmenu.style.left = left + 'px';
-    ctxmenu.style.top = top + 'px';
+    var id = t.dataset.id || t.dataset.for;
+    if (!id || !annotationById(id)) { hideCtx(); return; }
+    /* 左键 = 快捷定位到右侧对应批注（宿主面板滚动 + 闪烁）。
+       编辑批注 / 复制原文 / 删除划线改到右键，见下面的 contextmenu。 */
+    hideCtx();
     hidePopover();
+    post({ type: 'focus', id: id });
+  });
+
+  /* ---------- 右键：划线/气泡 → 编辑 / 复制 / 删除菜单 ---------- */
+  content.addEventListener('contextmenu', function (e) {
+    var t = e.target.closest ? e.target.closest('mark.hl, .ann-bubble') : null;
+    if (!t) { hideCtx(); return; }   /* 正文空白处保留系统默认菜单 */
+    e.preventDefault();
+    showCtx(t.dataset.id || t.dataset.for, e.clientX, e.clientY);
   });
 
   ctxmenu.addEventListener('click', function (e) {

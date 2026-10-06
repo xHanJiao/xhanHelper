@@ -598,6 +598,11 @@ private struct DocumentFullView: View {
             .onChange(of: annotExpanded) { _, expanded in if !expanded { clearConnector() } }
         }
         #if os(macOS)
+        // 正文点划线请求定位：面板若被收起，先自动展开（受窗宽硬地板限制时可能仍只成窄条）
+        .onChange(of: reader.focusRequest) { _, req in
+            guard req != nil, !annotOpen else { return }
+            withAnimation { annotOpen = true }
+        }
         .background { shortcutCarrier }
         // D11：文档页铺一层"纸"底（material）。正文 WKWebView 是全透明的，没有这层就会
         // 直接压在窗口底图（照片）上、影响可读性；底图只透到页面四周。
@@ -697,6 +702,7 @@ private struct DocumentFullView: View {
                 set: { annotModeRaw = $0.rawValue }
             ),
             relocatingID: reader.relocatingID,
+            focusRequest: reader.focusRequest,
             onToggle: { reader.toggleThread(id: $0) },
             onJump: { reader.scrollToAnnotation(id: $0) },
             onReply: { id, content in Task { await reader.reply(annotationId: id, content: content) } },

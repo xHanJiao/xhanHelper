@@ -24,6 +24,38 @@ enum AnnotationPanelMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// 正文划线 → 右侧面板的定位请求（`DocumentReaderController` 投递，`AnnotationPanel` 观察）。
+/// `tick` 单调递增：连点同一条批注时 `id` 不变，靠 `tick` 变化重新触发滚动/闪烁。
+/// 跨平台定义（两 target 可见），但请求只由 macOS 的阅读器产生。
+struct AnnotationFocus: Equatable {
+    let id: String
+    let tick: Int
+}
+
+/// 应用一次定位请求：滚动到目标 + 闪烁 ~1.2s。讨论/列表两个视图共用（别各写一份）。
+///
+/// `appliedTick` 由 `AnnotationPanel` 持有：它在「切视图」时存活、在「面板收起→重开」时复位。
+/// 于是 `onAppear`（面板刚插入时补一次）只在面板真重建时生效，切视图重建子视图不会拿陈旧请求重滚重闪。
+/// 滚动延后一帧：视图刚插入 / `LazyVStack` 未布局时立即 `scrollTo` 不可靠（同 `DocumentListView` 的先例）。
+@MainActor
+private func applyAnnotationFocus(
+    _ req: AnnotationFocus?,
+    proxy: ScrollViewProxy,
+    appliedTick: Binding<Int?>,
+    flashID: Binding<String?>
+) {
+    guard let req, req.tick != appliedTick.wrappedValue else { return }
+    appliedTick.wrappedValue = req.tick
+    Task { @MainActor in
+        withAnimation { proxy.scrollTo(req.id, anchor: .center) }
+        flashID.wrappedValue = req.id
+        // 取消（视图消失 / 新请求到来打断）属预期，是有意降级：不清 flash 也由下一个请求或重建兜底。
+        try? await Task.sleep(for: .milliseconds(1200))
+        guard appliedTick.wrappedValue == req.tick else { return }
+        withAnimation { flashID.wrappedValue = nil }
+    }
+}
+
 /// 划线高亮色（与阅读器里 `mark.hl` 的 `--hl` 同一个色号）：浅色主题绿 appAccent / 深色薄荷。
 /// 连线、预览波浪线都用它 —— 别改色，要和真机划线一致。
 enum AnnotationHighlightColor {
@@ -86,6 +118,8 @@ struct AnnotationPanel: View {
     let busyIDs: Set<String>
     @Binding var mode: AnnotationPanelMode
     let relocatingID: String?
+    /// 正文点划线投递的定位请求；观察后滚动到对应条目并闪烁
+    var focusRequest: AnnotationFocus? = nil
     let onToggle: (String) -> Void
     let onJump: (String) -> Void
     let onReply: (String, String?) -> Void
@@ -98,6 +132,11 @@ struct AnnotationPanel: View {
 
     /// 字号跟随全局设置（面板内所有文本按 scaledSize 比例放大）
     @ObservedObject private var fontManager = FontSizeManager.shared
+
+    /// 正在闪烁的条目 id（点划线定位后短暂高亮，~1.2s 后自动清）
+    @State private var flashID: String?
+    /// 已应用过的请求序号：跨「切视图」存活、面板重建时复位 —— 防止 `onAppear` 拿陈旧请求重滚重闪
+    @State private var appliedTick: Int?
 
     /// 与服务端 `List` 同序（start_offset ASC, id ASC），卡片顺序才稳定
     private var ordered: [DocumentAnnotation] {
@@ -168,35 +207,51 @@ struct AnnotationPanel: View {
         if annotations.isEmpty {
             emptyState
         } else if mode == .thread {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(ordered) { a in
-                        AnnotationThreadCard(
-                            annotation: a,
-                            replies: replies[a.id] ?? [],
-                            expanded: expandedIDs.contains(a.id),
-                            loading: loadingIDs.contains(a.id),
-                            busy: busyIDs.contains(a.id),
-                            onToggle: { onToggle(a.id) },
-                            onJump: { onJump(a.id) },
-                            onReply: { onReply(a.id, $0) },
-                            onDelete: { onDelete(a.id) },
-                            onHoverChange: { inside, frame in onHoverCard(a.id, inside, frame) }
-                        )
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(ordered) { a in
+                            threadCard(a).id(a.id)
+                        }
                     }
+                    .padding(8)
                 }
-                .padding(8)
+                .onChange(of: focusRequest) { _, req in
+                    applyAnnotationFocus(req, proxy: proxy, appliedTick: $appliedTick, flashID: $flashID)
+                }
+                .onAppear {
+                    applyAnnotationFocus(focusRequest, proxy: proxy, appliedTick: $appliedTick, flashID: $flashID)
+                }
             }
         } else {
             AnnotationListBody(
                 annotations: ordered,
                 relocatingID: relocatingID,
+                focusRequest: focusRequest,
+                appliedTick: $appliedTick,
                 onJump: onJump,
                 onDelete: onDelete,
                 onRelocate: onRelocate,
                 onCancelRelocate: onCancelRelocate
             )
         }
+    }
+
+    /// 讨论视图的单张卡片（抽出来是为了让类型检查器喘口气，别塞在 LazyVStack 里）
+    private func threadCard(_ a: DocumentAnnotation) -> some View {
+        AnnotationThreadCard(
+            annotation: a,
+            replies: replies[a.id] ?? [],
+            expanded: expandedIDs.contains(a.id),
+            loading: loadingIDs.contains(a.id),
+            busy: busyIDs.contains(a.id),
+            focused: flashID == a.id,
+            onToggle: { onToggle(a.id) },
+            onJump: { onJump(a.id) },
+            onReply: { onReply(a.id, $0) },
+            onDelete: { onDelete(a.id) },
+            onHoverChange: { inside, frame in onHoverCard(a.id, inside, frame) }
+        )
     }
 
     private var emptyState: some View {
@@ -219,6 +274,8 @@ struct AnnotationThreadCard: View {
     let expanded: Bool
     let loading: Bool
     let busy: Bool
+    /// 点划线定位到本卡时的短暂高亮
+    var focused: Bool = false
     let onToggle: () -> Void
     let onJump: () -> Void
     let onReply: (String?) -> Void
@@ -244,8 +301,13 @@ struct AnnotationThreadCard: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.06))
+        .background(focused ? Color("appAccent").opacity(0.16) : Color.secondary.opacity(0.06))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color("appAccent").opacity(focused ? 0.9 : 0), lineWidth: 1.5)
+        }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .animation(.easeInOut(duration: 0.25), value: focused)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
         .onHover { onHoverChange($0, frame) }
         .contextMenu {
@@ -453,6 +515,10 @@ struct AnnotationListBody: View {
 
     let annotations: [DocumentAnnotation]
     let relocatingID: String?
+    /// 正文点划线投递的定位请求；观察后滚动到对应行并闪烁
+    var focusRequest: AnnotationFocus? = nil
+    /// 已应用过的请求序号（由父级 `AnnotationPanel` 持有，跨切视图存活）
+    @Binding var appliedTick: Int?
     let onJump: (String) -> Void
     let onDelete: (String) -> Void
     let onRelocate: (String) -> Void
@@ -460,6 +526,9 @@ struct AnnotationListBody: View {
 
     /// 字号跟随全局设置
     @ObservedObject private var fontManager = FontSizeManager.shared
+
+    /// 正在闪烁的行 id（点划线定位后短暂高亮，~1.2s 后自动清）
+    @State private var flashID: String?
 
     private enum Tab: String, CaseIterable {
         case all = "全部"
@@ -492,17 +561,25 @@ struct AnnotationListBody: View {
             if visible.isEmpty {
                 emptyState
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(visible) { annotation in
-                            if annotation.orphaned {
-                                orphanRow(annotation)
-                            } else {
-                                normalRow(annotation)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            ForEach(visible) { annotation in
+                                if annotation.orphaned {
+                                    orphanRow(annotation).id(annotation.id)
+                                } else {
+                                    normalRow(annotation).id(annotation.id)
+                                }
                             }
                         }
+                        .padding(8)
                     }
-                    .padding(8)
+                    .onChange(of: focusRequest) { _, req in
+                        applyAnnotationFocus(req, proxy: proxy, appliedTick: $appliedTick, flashID: $flashID)
+                    }
+                    .onAppear {
+                        applyAnnotationFocus(focusRequest, proxy: proxy, appliedTick: $appliedTick, flashID: $flashID)
+                    }
                 }
             }
         }
@@ -552,9 +629,16 @@ struct AnnotationListBody: View {
         rowContent(a)
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
+            .background(focusedBackground(a.id))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .contentShape(Rectangle())
             .onTapGesture { onJump(a.id) }
             .contextMenu { rowMenu(a) }
+    }
+
+    /// 点划线定位到本行时的短暂高亮底色
+    private func focusedBackground(_ id: String) -> Color {
+        flashID == id ? Color("appAccent").opacity(0.16) : .clear
     }
 
     /// 失活行：整行灰 + quote 删除线，右侧两个动作（点击不跳转，正文里本来就没有它）
@@ -590,6 +674,8 @@ struct AnnotationListBody: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+        .background(focusedBackground(a.id))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .contextMenu { rowMenu(a) }
     }
 
@@ -765,6 +851,7 @@ private func previewPanel(
     loadingIDs: Set<String> = [],
     busyIDs: Set<String> = [],
     relocatingID: String? = nil,
+    focusRequest: AnnotationFocus? = nil,
     mode: AnnotationPanelMode = .thread,
     onHoverCard: @escaping (String, Bool, CGRect) -> Void = { _, _, _ in }
 ) -> AnnotationPanel {
@@ -776,6 +863,7 @@ private func previewPanel(
         busyIDs: busyIDs,
         mode: .constant(mode),
         relocatingID: relocatingID,
+        focusRequest: focusRequest,
         onToggle: { _ in }, onJump: { _ in }, onReply: { _, _ in },
         onDelete: { _ in }, onRelocate: { _ in }, onCancelRelocate: {}, onCollapse: {},
         onHoverCard: onHoverCard
@@ -886,6 +974,10 @@ private struct ConnectorPreviewDemo: View {
 
 #Preview("桌面 · 全部（列表）") {
     DocPreviewShell { previewPanel(mode: .list) }
+}
+
+#Preview("桌面 · 讨论（定位闪烁）") {
+    DocPreviewShell { previewPanel(focusRequest: AnnotationFocus(id: "a1", tick: 1)) }
 }
 
 #Preview("桌面 · 目录展开对比") {

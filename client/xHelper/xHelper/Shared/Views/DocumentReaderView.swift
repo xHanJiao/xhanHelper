@@ -1498,6 +1498,9 @@ var reader = (function () {
 
   /* ---------- hover：划线 / 气泡 → popover（重叠时列出全部） ---------- */
   content.addEventListener('mousemove', function (e) {
+    /* 点击菜单开着时 hover 浮层让位：两者都是同一条批注的呈现，叠在一起很难看。
+       菜单一关（点外部 / 点按钮 / 滚动）下次 mousemove 即恢复。 */
+    if (ctxmenu.classList.contains('open')) return;
     var els = document.elementsFromPoint(e.clientX, e.clientY);
     var ids = [];
     for (var i = 0; i < els.length; i++) {

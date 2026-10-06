@@ -385,6 +385,16 @@ function annotationChecks() {
   c.querySelector('mark.hl[data-id="p1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
   ok('点划线出菜单', document.getElementById('ctxmenu').classList.contains('open'));
 
+  // 13b) 菜单开着时 hover 同一条划线，不得再弹 hover 浮层（两个浮层会叠在一起）
+  var p1r = c.querySelector('mark.hl[data-id="p1"]').getBoundingClientRect();
+  pv.classList.remove('open');
+  c.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
+    clientX: p1r.left + 1, clientY: p1r.top + p1r.height / 2 }));
+  ok('菜单开着时 hover 不再出浮层', !pv.classList.contains('open'));
+  // 关掉菜单，别影响后续用例
+  document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  ok('点外部关掉菜单', !document.getElementById('ctxmenu').classList.contains('open'));
+
   // 14) hover 有 note 的划线 → popover 列出批注内容
   put([mk('h1', '记忆系统的第一处', '悬停看看')]);
   var hr = c.querySelector('mark.hl[data-id="h1"]').getBoundingClientRect();

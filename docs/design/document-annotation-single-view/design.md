@@ -59,7 +59,7 @@
 
 ### 3.3 非失活卡片
 
-与现状**完全一致**（引文点击跳正文、线程、追问、右键删除、悬停连线）。
+与现状**完全一致**（线程、追问、右键删除、悬停连线、点击跳正文——跳转热区为**整张卡片**，见「后续变更」）。
 
 ---
 
@@ -112,3 +112,9 @@
 - **删除的代码**：`AnnotationDrawer.swift`（卡片 `relocating` / `onRelocate` / `onCancelRelocate`、面板同名 props、preview 参数与「失活·重选中」预览）、`DocumentReaderView.swift`（`relocatingID` / `beginRelocate` / `cancelRelocate` / `relocate` / `case "relocate"`·`"relocateCancel"` / JS `relocateId`·`beginRelocate`·`cancelRelocate`·`relocateFromSelection`·Esc 监听·导出）、`APIClient.swift`（`relocateAnnotation`）、`DocumentListView.swift`（装配三行）、`check-reader-html.sh`（8 条重定位断言，176→168）。
 - **不改**：D10 的**自动**三级重定位（正文改写后服务端重挂，与本手动流程无关）；失活灰态 + 删除。
 - **验证**：`swiftc -typecheck`（macOS + iOS）0 error；`check-reader-html.sh` PASS（168）。
+
+### 2026-10-06 · 跳转热区改为整张卡片（用户拍板）
+
+- **决定**：原热区只有「引文」那一行（短引文时是窄条），太小；改为**整张卡片可点跳转**。
+- **实现**：`AnnotationDrawer.swift` — 把 `.contentShape(Rectangle())` + `.onTapGesture { onJump() }` 从 `quoteBlock` 挪到 `AnnotationThreadCard` 根 `VStack`（`.clipShape` 之后）。卡片内 Button/TextField（折叠行、「让 AI 回复」、「删除」、追问输入框）优先消费自己的点击，故除它们外整卡任意处都可跳；`contextMenu`（右键）与悬停连线不受影响。
+- **不改**：引文/批注文本内容与排版；`onJump` 目标逻辑不变。

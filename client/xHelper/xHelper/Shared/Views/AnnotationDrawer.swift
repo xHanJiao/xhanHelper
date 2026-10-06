@@ -251,6 +251,9 @@ struct AnnotationThreadCard: View {
                 .strokeBorder(Color("appAccent").opacity(focused ? 0.9 : 0), lineWidth: 1.5)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        // 整卡可点：点卡片任意处（除卡片内按钮/输入框，它们优先消费点击）跳回正文对应划线
+        .contentShape(Rectangle())
+        .onTapGesture { onJump() }
         .animation(.easeInOut(duration: 0.25), value: focused)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
         .onHover { onHoverChange($0, frame) }
@@ -270,8 +273,6 @@ struct AnnotationThreadCard: View {
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .onTapGesture { onJump() }
     }
 
     private var noteBlock: some View {

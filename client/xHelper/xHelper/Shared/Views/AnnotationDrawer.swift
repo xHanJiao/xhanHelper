@@ -1,29 +1,6 @@
 import SwiftUI
 import MarkdownUI
 
-/// 面板两种视图：讨论（常驻线程）/ 全部（扁平导航列表）。
-/// 跨平台定义：iOS 也要读 `@AppStorage` 的默认值（面板本身仅 macOS 渲染）。
-enum AnnotationPanelMode: String, CaseIterable, Identifiable {
-    case thread
-    case list
-
-    var id: String { rawValue }
-
-    var icon: String {
-        switch self {
-        case .thread: return "bubble.left.and.text.bubble.right"
-        case .list:   return "list.bullet"
-        }
-    }
-
-    var help: String {
-        switch self {
-        case .thread: return "讨论视图（批注下的 AI 回复）"
-        case .list:   return "全部标注（只列划线/批注，不含讨论）"
-        }
-    }
-}
-
 /// 正文划线 → 右侧面板的定位请求（`DocumentReaderController` 投递，`AnnotationPanel` 观察）。
 /// `tick` 单调递增：连点同一条批注时 `id` 不变，靠 `tick` 变化重新触发滚动/闪烁。
 /// 跨平台定义（两 target 可见），但请求只由 macOS 的阅读器产生。
@@ -32,10 +9,10 @@ struct AnnotationFocus: Equatable {
     let tick: Int
 }
 
-/// 应用一次定位请求：滚动到目标 + 闪烁 ~1.2s。讨论/列表两个视图共用（别各写一份）。
+/// 应用一次定位请求：滚动到目标 + 闪烁 ~1.2s。面板内的定位请求统一走这里（别各写一份）。
 ///
-/// `appliedTick` 由 `AnnotationPanel` 持有：它在「切视图」时存活、在「面板收起→重开」时复位。
-/// 于是 `onAppear`（面板刚插入时补一次）只在面板真重建时生效，切视图重建子视图不会拿陈旧请求重滚重闪。
+/// `appliedTick` 由 `AnnotationPanel` 持有：**面板重建（收起→重开）时复位**，同一面板内不变。
+/// 于是 `onAppear`（面板刚插入时补一次）只在面板真重建时生效，不会拿陈旧请求重滚重闪。
 /// 滚动延后一帧：视图刚插入 / `LazyVStack` 未布局时立即 `scrollTo` 不可靠（同 `DocumentListView` 的先例）。
 @MainActor
 private func applyAnnotationFocus(
@@ -103,9 +80,8 @@ struct AnnotationConnectorLayer: View {
 
 #if os(macOS)
 
-/// 划线与批注面板：两种视图——
-/// - **讨论**（常驻，Word 批注窗格式）：每条批注 = 卡片 + 可折叠线程，用来读/追问；
-/// - **全部**（扁平一级列表 + 三 tab，纯导航）。
+/// 划线与批注面板：单一视图 —— 每条批注 = 卡片 + 可折叠线程（Word 批注窗格式），用来读/追问。
+/// 失活条目（`orphaned`）在卡片元信息行右侧带「删除」（正文里不画失活划线，这是唯一入口）。
 ///
 /// 面板本身是纯展示：数据（annotations / replies / 展开态 …）与动作全部由外部注入，
 /// 好让 `#Preview` 直接喂 mock、不碰 WebView 控制器。吸附/收放交给宿主 `DocumentFullView`。
@@ -116,16 +92,12 @@ struct AnnotationPanel: View {
     let expandedIDs: Set<String>
     let loadingIDs: Set<String>
     let busyIDs: Set<String>
-    @Binding var mode: AnnotationPanelMode
-    let relocatingID: String?
     /// 正文点划线投递的定位请求；观察后滚动到对应条目并闪烁
     var focusRequest: AnnotationFocus? = nil
     let onToggle: (String) -> Void
     let onJump: (String) -> Void
     let onReply: (String, String?) -> Void
     let onDelete: (String) -> Void
-    let onRelocate: (String) -> Void
-    let onCancelRelocate: () -> Void
     let onCollapse: () -> Void
     /// 卡片悬停变化：(批注 id, 是否在卡内, 卡片 global frame)。用于画「卡片→划线」连线。
     let onHoverCard: (String, Bool, CGRect) -> Void
@@ -135,7 +107,7 @@ struct AnnotationPanel: View {
 
     /// 正在闪烁的条目 id（点划线定位后短暂高亮，~1.2s 后自动清）
     @State private var flashID: String?
-    /// 已应用过的请求序号：跨「切视图」存活、面板重建时复位 —— 防止 `onAppear` 拿陈旧请求重滚重闪
+    /// 已应用过的请求序号：面板重建（收起→重开）时复位 —— 防止 `onAppear` 拿陈旧请求重滚重闪
     @State private var appliedTick: Int?
 
     /// 与服务端 `List` 同序（start_offset ASC, id ASC），卡片顺序才稳定
@@ -169,8 +141,6 @@ struct AnnotationPanel: View {
                 .background(Color.secondary.opacity(0.12))
                 .clipShape(Capsule())
             Spacer()
-            modeButton(.thread)
-            modeButton(.list)
             Button(action: onCollapse) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: fontManager.scaledSize * 0.68, weight: .semibold))
@@ -185,28 +155,13 @@ struct AnnotationPanel: View {
         .padding(.vertical, 8)
     }
 
-    private func modeButton(_ item: AnnotationPanelMode) -> some View {
-        let active = mode == item
-        return Button { mode = item } label: {
-            Image(systemName: item.icon)
-                .font(.system(size: fontManager.scaledSize * 0.64, weight: .medium))
-                .foregroundColor(active ? Color("appAccent") : .secondary)
-                .frame(width: 24, height: 24)
-                .background(active ? Color("appAccent").opacity(0.12) : .clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(item.help)
-    }
-
     // MARK: - 内容
 
     @ViewBuilder
     private var content: some View {
         if annotations.isEmpty {
             emptyState
-        } else if mode == .thread {
+        } else {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 4) {
@@ -223,17 +178,6 @@ struct AnnotationPanel: View {
                     applyAnnotationFocus(focusRequest, proxy: proxy, appliedTick: $appliedTick, flashID: $flashID)
                 }
             }
-        } else {
-            AnnotationListBody(
-                annotations: ordered,
-                relocatingID: relocatingID,
-                focusRequest: focusRequest,
-                appliedTick: $appliedTick,
-                onJump: onJump,
-                onDelete: onDelete,
-                onRelocate: onRelocate,
-                onCancelRelocate: onCancelRelocate
-            )
         }
     }
 
@@ -266,7 +210,7 @@ struct AnnotationPanel: View {
     }
 }
 
-/// 讨论视图的单条卡片：划线圈引 + 批注 + 可折叠线程 + 追问输入。
+/// 批注面板的单条卡片：划线圈引 + 批注 + 可折叠线程 + 追问输入。
 struct AnnotationThreadCard: View {
 
     let annotation: DocumentAnnotation
@@ -348,6 +292,7 @@ struct AnnotationThreadCard: View {
 
     @ViewBuilder
     private var threadSection: some View {
+        // 元信息行：失活徽标 + 时间；失活条目的「删除」（正文里不画失活划线，这里是唯一入口）同处一行
         HStack(spacing: 6) {
             if annotation.orphaned {
                 orphanBadge
@@ -356,9 +301,20 @@ struct AnnotationThreadCard: View {
             Text(AnnotationTime.label(annotation.createdAt))
                 .font(.system(size: fontManager.scaledSize * 0.68))
                 .foregroundColor(.secondary.opacity(0.7))
+            if annotation.orphaned {
+                Button("删除") { onDelete() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: fontManager.scaledSize * 0.76))
+                    .foregroundColor(.red.opacity(0.85))
+            }
         }
 
-        if replyCount == 0 && !expanded && !busy {
+        if annotation.orphaned {
+            // 失活条目：不给「让 AI 回复」；有线程/展开/生成中才显示折叠行
+            if replyCount > 0 || expanded || busy {
+                collapseRow
+            }
+        } else if replyCount == 0 && !expanded && !busy {
             HStack {
                 Spacer()
                 Button { onReply(nil) } label: {
@@ -510,227 +466,6 @@ struct AnnotationThreadCard: View {
     }
 }
 
-/// 「全部」视图：原扁平抽屉——三 tab + 行列表，纯导航，不含讨论。
-struct AnnotationListBody: View {
-
-    let annotations: [DocumentAnnotation]
-    let relocatingID: String?
-    /// 正文点划线投递的定位请求；观察后滚动到对应行并闪烁
-    var focusRequest: AnnotationFocus? = nil
-    /// 已应用过的请求序号（由父级 `AnnotationPanel` 持有，跨切视图存活）
-    @Binding var appliedTick: Int?
-    let onJump: (String) -> Void
-    let onDelete: (String) -> Void
-    let onRelocate: (String) -> Void
-    let onCancelRelocate: () -> Void
-
-    /// 字号跟随全局设置
-    @ObservedObject private var fontManager = FontSizeManager.shared
-
-    /// 正在闪烁的行 id（点划线定位后短暂高亮，~1.2s 后自动清）
-    @State private var flashID: String?
-
-    private enum Tab: String, CaseIterable {
-        case all = "全部"
-        case note = "仅批注"
-        case orphan = "已失活"
-    }
-
-    @State private var tab: Tab = .all
-
-    private var visible: [DocumentAnnotation] {
-        switch tab {
-        case .all:    return annotations
-        case .note:   return annotations.filter { !$0.note.isEmpty }
-        case .orphan: return annotations.filter(\.orphaned)
-        }
-    }
-
-    private func count(of tab: Tab) -> Int {
-        switch tab {
-        case .all:    return annotations.count
-        case .note:   return annotations.filter { !$0.note.isEmpty }.count
-        case .orphan: return annotations.filter(\.orphaned).count
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            tabs
-            Divider().opacity(0.3)
-            if visible.isEmpty {
-                emptyState
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 2) {
-                            ForEach(visible) { annotation in
-                                if annotation.orphaned {
-                                    orphanRow(annotation).id(annotation.id)
-                                } else {
-                                    normalRow(annotation).id(annotation.id)
-                                }
-                            }
-                        }
-                        .padding(8)
-                    }
-                    .onChange(of: focusRequest) { _, req in
-                        applyAnnotationFocus(req, proxy: proxy, appliedTick: $appliedTick, flashID: $flashID)
-                    }
-                    .onAppear {
-                        applyAnnotationFocus(focusRequest, proxy: proxy, appliedTick: $appliedTick, flashID: $flashID)
-                    }
-                }
-            }
-        }
-    }
-
-    private var tabs: some View {
-        HStack(spacing: 4) {
-            ForEach(Tab.allCases, id: \.self) { item in
-                Button { tab = item } label: {
-                    Text("\(item.rawValue) \(count(of: item))")
-                        .font(.system(size: fontManager.scaledSize * 0.76))
-                        .foregroundColor(tab == item ? .primary : .secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(tab == item ? Color.secondary.opacity(0.16) : .clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-    }
-
-    private var emptyState: some View {
-        VStack {
-            Spacer()
-            Text(emptyText)
-                .font(.system(size: fontManager.scaledSize * 0.76))
-                .foregroundColor(.secondary)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var emptyText: String {
-        switch tab {
-        case .all:    return "还没有划线与批注"
-        case .note:   return "还没有写批注的划线"
-        case .orphan: return "没有已失活的划线"
-        }
-    }
-
-    /// 正常行：点击滚到对应划线并闪烁（面板不关，方便连着看几条）
-    private func normalRow(_ a: DocumentAnnotation) -> some View {
-        rowContent(a)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(focusedBackground(a.id))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .contentShape(Rectangle())
-            .onTapGesture { onJump(a.id) }
-            .contextMenu { rowMenu(a) }
-    }
-
-    /// 点划线定位到本行时的短暂高亮底色
-    private func focusedBackground(_ id: String) -> Color {
-        flashID == id ? Color("appAccent").opacity(0.16) : .clear
-    }
-
-    /// 失活行：整行灰 + quote 删除线，右侧两个动作（点击不跳转，正文里本来就没有它）
-    private func orphanRow(_ a: DocumentAnnotation) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            rowContent(a, orphaned: true)
-            if relocatingID == a.id {
-                HStack(spacing: 6) {
-                    Text("请在正文中重新选中一段文字")
-                        .font(.system(size: fontManager.scaledSize * 0.76))
-                        .foregroundColor(Color("appAccent"))
-                    Spacer()
-                    Button("取消") { onCancelRelocate() }
-                        .buttonStyle(.plain)
-                        .font(.system(size: fontManager.scaledSize * 0.76))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.top, 6)
-            } else {
-                HStack(spacing: 6) {
-                    Spacer()
-                    Button("重新定位") { onRelocate(a.id) }
-                        .buttonStyle(.plain)
-                        .font(.system(size: fontManager.scaledSize * 0.76))
-                        .foregroundColor(Color("appAccent"))
-                    Button("删除") { onDelete(a.id) }
-                        .buttonStyle(.plain)
-                        .font(.system(size: fontManager.scaledSize * 0.76))
-                        .foregroundColor(.red.opacity(0.85))
-                }
-                .padding(.top, 6)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(focusedBackground(a.id))
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .contextMenu { rowMenu(a) }
-    }
-
-    /// 右键菜单：正文里定位不到 / 失活的批注在正文中点不到，这里是唯一入口。
-    @ViewBuilder
-    private func rowMenu(_ a: DocumentAnnotation) -> some View {
-        if a.orphaned {
-            Button("重新定位") { onRelocate(a.id) }
-        }
-        Button(a.note.isEmpty ? "删除划线" : "删除批注", role: .destructive) { onDelete(a.id) }
-    }
-
-    private func rowContent(_ a: DocumentAnnotation, orphaned: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(a.quote)
-                .font(.system(size: fontManager.scaledSize * 0.88))
-                .foregroundColor(orphaned ? .secondary : .primary)
-                .strikethrough(orphaned, color: .secondary)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if !a.note.isEmpty {
-                Text(a.note)
-                    .font(.system(size: fontManager.scaledSize * 0.82))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .padding(.leading, 7)
-                    .overlay(alignment: .leading) {
-                        Rectangle()
-                            .fill(orphaned ? Color.secondary.opacity(0.3) : Color("appAccent"))
-                            .frame(width: 2)
-                    }
-            }
-
-            HStack(spacing: 6) {
-                if orphaned {
-                    Text("已失活")
-                        .font(.system(size: fontManager.scaledSize * 0.68))
-                        .foregroundColor(.red.opacity(0.85))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Color.red.opacity(0.1))
-                        .clipShape(Capsule())
-                }
-                Spacer()
-                Text(AnnotationTime.label(a.createdAt))
-                    .font(.system(size: fontManager.scaledSize * 0.68))
-                    .foregroundColor(.secondary.opacity(0.7))
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
 /// 与服务端 `created_at`（ISO8601，可能带小数秒）对齐；今天只显示时分，更早带日期。
 enum AnnotationTime {
     static func label(_ iso: String) -> String {
@@ -850,9 +585,7 @@ private func previewPanel(
     expandedIDs: Set<String> = [],
     loadingIDs: Set<String> = [],
     busyIDs: Set<String> = [],
-    relocatingID: String? = nil,
     focusRequest: AnnotationFocus? = nil,
-    mode: AnnotationPanelMode = .thread,
     onHoverCard: @escaping (String, Bool, CGRect) -> Void = { _, _, _ in }
 ) -> AnnotationPanel {
     AnnotationPanel(
@@ -861,11 +594,9 @@ private func previewPanel(
         expandedIDs: expandedIDs,
         loadingIDs: loadingIDs,
         busyIDs: busyIDs,
-        mode: .constant(mode),
-        relocatingID: relocatingID,
         focusRequest: focusRequest,
         onToggle: { _ in }, onJump: { _ in }, onReply: { _, _ in },
-        onDelete: { _ in }, onRelocate: { _ in }, onCancelRelocate: {}, onCollapse: {},
+        onDelete: { _ in }, onCollapse: {},
         onHoverCard: onHoverCard
     )
 }
@@ -972,8 +703,8 @@ private struct ConnectorPreviewDemo: View {
     }
 }
 
-#Preview("桌面 · 全部（列表）") {
-    DocPreviewShell { previewPanel(mode: .list) }
+#Preview("桌面 · 讨论（失活）") {
+    DocPreviewShell { previewPanel(annotations: [AnnotationPreviewData.orphan]) }
 }
 
 #Preview("桌面 · 讨论（定位闪烁）") {

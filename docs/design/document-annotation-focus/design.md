@@ -19,7 +19,7 @@
 | 右侧卡片 **点引文** | 正文滚到该划线并闪烁（`onJump` → `scrollToAnnotation`） |
 | **正文划线 → 右侧卡片** | ❌ **不存在** |
 
-面板是第三列常驻面板（`AnnotationPanel`，宽 300），两种视图：**讨论**（卡片 + 可折叠线程）/ **全部**（扁平列表，三 tab）。它现在是纯展示的 `ScrollView { LazyVStack { ForEach } }`，**没有 `ScrollViewReader`、每行也没挂 `.id`** —— 无法程序化滚动到指定条目。
+面板是第三列常驻面板（`AnnotationPanel`，宽 300）。（当时）两种视图：**讨论**（卡片 + 可折叠线程）/ **全部**（扁平列表，三 tab）——**2026-10-06 已合并为单视图**，见 `docs/design/document-annotation-single-view/design.md`。它现在是纯展示的 `ScrollView { LazyVStack { ForEach } }`，**没有 `ScrollViewReader`、每行也没挂 `.id`** —— 无法程序化滚动到指定条目。
 
 目标：**正文里点一条带批注/划线的文字 → 右侧面板里对应的那条卡片/行滚动到视野中央并闪烁一下**，让「正文标记 ⇄ 右侧条目」双向可达（反方向已有：卡片→正文）。
 
@@ -31,7 +31,7 @@
 |---|---|---|
 | AF-1 | 左键职责 | ✅ **左键点击划线/气泡 = 定位到右侧对应条目**（滚动 + 闪烁）。不再开菜单 |
 | AF-2 | 右键职责 | ✅ **右键划线/气泡 = 弹出编辑批注 / 复制原文 / 删除划线菜单**（拦截 `contextmenu` 并 `preventDefault`）。原左键菜单整体搬到右键 |
-| AF-3 | 面板形态 | ✅ 保持常驻第三列；**不切视图** —— 当前是讨论就滚/闪卡片，当前是全部就滚/闪该行。用户拍板「不切模式」 |
+| AF-3 | 面板形态 | ✅ 保持常驻第三列；**不切视图** —— 就滚/闪当前视图里的卡片。用户拍板「不切模式」。（2026-10-06 两视图合并后只剩讨论卡片。） |
 | AF-4 | 折叠态 | ✅ 面板若被收起（`annotOpen=false`），点击划线**自动展开**；受窗宽硬地板限制时仍可能只展开成窄条（已知上限） |
 | AF-5 | 重叠划线 | ✅ 取点击命中的最内层 `mark` 的 `data-id`（与旧菜单一致）。不做「菜单里选哪条」 |
 | AF-6 | orphan 划线 | ✅ 正文里 orphan 本就不画，无法从左键触发；只能从列表右键菜单操作（既有行为不变） |
@@ -107,7 +107,7 @@ case "focus":
 |---|---|
 | `client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift` | JS 模板：左键 → `focus`；新增 `contextmenu` 监听收菜单；`apply` 加 `case "focus"` + `focusRequest` |
 | `client/xHelper/xHelper/Shared/Views/DocumentListView.swift` | `onChange(reader.focusRequest)` → 收起则展开；把 `focusRequest` 透传给 `AnnotationPanel` |
-| `client/xHelper/xHelper/Shared/Views/AnnotationDrawer.swift` | 顶层 `AnnotationFocus`；`AnnotationPanel` 讨论分支 + `AnnotationListBody` 各加 `ScrollViewReader` / 行 `.id(a.id)` / `flashID` 闪烁；`AnnotationThreadCard` 与列表行加聚焦描边；补聚焦态 `#Preview` |
+| `client/xHelper/xHelper/Shared/Views/AnnotationDrawer.swift` | 顶层 `AnnotationFocus`；`AnnotationPanel` 讨论卡片加 `ScrollViewReader` / 行 `.id(a.id)` / `flashID` 闪烁；`AnnotationThreadCard` 加聚焦描边；补聚焦态 `#Preview`（§9 变更后只剩讨论卡片承接，`AnnotationListBody` 已删） |
 | `client/xHelper/scripts/check-reader-html.sh` | 改「点划线出菜单」为「点划线发 focus / 右键出菜单」；菜单动作改用 `contextmenu` 触发 |
 
 服务端、数据模型、API、生成逻辑 **全部不动**。
@@ -116,7 +116,7 @@ case "focus":
 
 ## 六、边界与已知上限
 
-- 列表模式下若焦点条目不在当前 tab 的 `visible`（如焦点是普通划线但停在「已失活」tab）→ `scrollTo` 找不到，静默 no-op（不报错）。后续可加 toast，v1 不做。
+- （原「列表模式下焦点条目不在当前 tab 的 `visible`」这个边界已于 2026-10-06 随两视图合并消失 —— 现在只剩讨论卡片，无条件可达。见 §9。）
 - 窗宽低于硬地板导致面板只能收成窄条时，`annotOpen=true` 也未必真正展开到位。
 - orphan 划线正文里没画，左键点不到；仍从列表右键菜单处理。
 - WKWebView `loadHTMLString` 场景下 `contextmenu` 的 `preventDefault()` 能否压掉系统菜单需**真机确认**；若压不掉，再考虑原生 `WKUIDelegate` 兜底。
@@ -151,8 +151,13 @@ case "focus":
 - **落地**：左键定位 / 右键菜单已实现并通过 `swiftc -typecheck`（macOS + iOS）+ `check-reader-html.sh`（176 断言）+ `snapshot-reader.sh`。
 - **前序文档已同步**：`docs/design/document-highlight-annotation/design.md` 的 D9、§8.3、JS→Swift 消息表已更新，并在其尾部加了「后续变更 · 2026-10-06」。
 - **评审修复（同日）**：
-  - 陈旧请求重复滚动/闪烁：新增 `AnnotationPanel.appliedTick`（跨切视图存活、面板重建复位），`applyFocus` 按 tick 去重；`AnnotationListBody` 经 `@Binding appliedTick` 共用同一份状态。
+  - 陈旧请求重复滚动/闪烁：新增 `AnnotationPanel.appliedTick`（面板重建复位），`applyFocus` 按 tick 去重。（当时列表分支 `AnnotationListBody` 经 `@Binding appliedTick` 共用同一份状态；该视图已于 2026-10-06 删除。）
   - 滚动可靠性：滚动 + 闪烁统一**延后一帧**（`Task { @MainActor }`），对齐 `DocumentListView.swift` 既有先例；`onChange` / `onAppear` 两条路径都延后。
   - 去重：两处 `applyFocus` 抽成文件级共享函数 `applyAnnotationFocus(_:proxy:appliedTick:flashID:)`；`Task.sleep` 的取消加了「有意降级」注释。
   - 可读性：合并 `DocumentListView` 相邻的两个 `#if os(macOS)` 块。
 - **未处理（低优先）**：闪烁 `Task` 未显式随视图 `cancel()`（挂起 1.2s 后写已失效 `flashID`，SwiftUI 下无害）。
+
+### 2026-10-06 · 批注面板合并为单视图（focus 不受影响）
+
+- 面板原「讨论 / 全部」两视图合并为**单视图**（只留讨论卡片），`AnnotationListBody` 与三 tab 已删。**focus（点划线定位）行为不变**，现只由讨论卡片承接；`AnnotationPanel.appliedTick` 去重仍生效（不再有「切视图」场景）。
+- 本文 §1「现状」、§5 实现面、§6 边界的旧描述已就地加注；详见 `docs/design/document-annotation-single-view/design.md`。

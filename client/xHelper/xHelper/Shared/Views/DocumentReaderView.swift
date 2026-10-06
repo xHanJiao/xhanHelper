@@ -17,10 +17,8 @@ final class DocumentReaderController: ObservableObject {
     @Published private(set) var matchCount = 0
     /// 当前命中下标（0-based；-1 = 无命中）
     @Published private(set) var matchIndex = -1
-    /// 本文件的划线与批注（P4 抽屉也用这份；正文里画什么由 `reader.setAnnotations` 决定）
+    /// 本文件的划线与批注（批注面板也用这份；正文里画什么由 `reader.setAnnotations` 决定）
     @Published private(set) var annotations: [DocumentAnnotation] = []
-    /// 正在「重新定位」的那条（P4 抽屉里那一行显示「请在正文中重新选中」；nil = 不在该模式）
-    @Published private(set) var relocatingID: String?
 
     // MARK: 讨论线程（批注下挂的 AI 回复 / 追问）
     /// 已加载的线程缓存（key = 批注 id）。未加载过的键不存在 = 需要拉取。
@@ -165,7 +163,6 @@ final class DocumentReaderController: ObservableObject {
             try await api.deleteAnnotation(id: id)
             annotations.removeAll { $0.id == id }
             forgetThread(id: id)
-            if relocatingID == id { cancelRelocate() }
             pushAnnotations()
         } catch {
             LogBuffer.shared.error("DocumentReader 删除划线批注失败: \(error)")
@@ -294,34 +291,9 @@ final class DocumentReaderController: ObservableObject {
         Task { await loadAnnotations() }
     }
 
-    /// 抽屉里失活行的「删除」
+    /// 批注面板失活条目的「删除」
     func deleteAnnotation(id: String) {
         Task { await remove(id: id) }
-    }
-
-    /// 抽屉「重新定位」：进入重选模式，用户在正文里选中新的一段后由 JS 回传。
-    func beginRelocate(id: String) {
-        relocatingID = id
-        evaluate("reader.beginRelocate(\(MarkdownWebUtils.jsString(id)))")
-    }
-
-    func cancelRelocate() {
-        relocatingID = nil
-        evaluate("reader.cancelRelocate()")
-    }
-
-    private func relocate(id: String, quote: String, prefix: String, suffix: String) async {
-        do {
-            let a = try await api.relocateAnnotation(id: id, quote: quote, prefix: prefix, suffix: suffix)
-            if let i = annotations.firstIndex(where: { $0.id == a.id }) { annotations[i] = a }
-            annotations.sort(by: Self.order)
-            pushAnnotations()
-            ToastCenter.shared.show("已重新定位")
-            scrollToAnnotation(id: a.id)
-        } catch {
-            LogBuffer.shared.error("DocumentReader 重新定位失败: \(error)")
-            ToastCenter.shared.show("重新定位失败：\(error.localizedDescription)")
-        }
     }
 
     /// 与服务端 `List` 的排序一致（start_offset ASC, id ASC），画线顺序才稳定
@@ -370,22 +342,6 @@ final class DocumentReaderController: ObservableObject {
         case "delete":
             guard let id = message["id"] as? String else { return }
             Task { await remove(id: id) }
-
-        case "relocate":
-            // 重定位模式下用户选完了一段：模式已在 JS 侧退出，这里只管落库
-            guard let id = message["id"] as? String else { return }
-            relocatingID = nil
-            Task {
-                await relocate(
-                    id: id,
-                    quote: message["quote"] as? String ?? "",
-                    prefix: message["prefix"] as? String ?? "",
-                    suffix: message["suffix"] as? String ?? ""
-                )
-            }
-
-        case "relocateCancel":
-            relocatingID = nil
 
         case "scroll":
             // 正文滚动后划线位置变了，正在连线就重取一次
@@ -1266,7 +1222,7 @@ var reader = (function () {
     unwrapAll();
     for (var i = 0; i < annotations.length; i++) {
       var a = annotations[i];
-      if (a.orphaned) continue;      /* 失活的不画（P4 抽屉里可见、可重挂） */
+      if (a.orphaned) continue;      /* 失活的不画（批注面板里可见、可重挂） */
       var hit = locate(a.quote, a.prefix, a.suffix);
       if (!hit) continue;            /* 客户端找不到就不画：不报错，也不动服务端状态 */
       wrapSpan(hit.flat, hit.start, hit.end, a);
@@ -1315,8 +1271,6 @@ var reader = (function () {
   var pendingRange = null;
   var editingId = null;
   var ctxTargetId = null;
-  /* 非空 = 正在重新定位这一条（下一次选区当作新锚点） */
-  var relocateId = null;
   var hideTimer = null;
   var hoverKey = '';
 
@@ -1363,41 +1317,9 @@ var reader = (function () {
       var range = sel.getRangeAt(0);
       if (!content.contains(range.commonAncestorContainer)) { hideToolbar(); return; }
       if (!sel.toString().trim()) { hideToolbar(); return; }
-      /* 重定位模式：选中的这段就是要重挂的新位置，不弹工具条 */
-      if (relocateId) { relocateFromSelection(range); return; }
       pendingRange = range.cloneRange();
       showToolbar(range);
     }, 0);
-  });
-
-  /* ---------- 重新定位模式（抽屉里的「重新定位」） ----------
-     只负责「这次选中是重挂，不是新建」这一件事：提示文案在 SwiftUI 抽屉那边，
-     这里不弹横幅、不改样式。Esc 或选中一次即退出。 */
-  function beginRelocate(id) {
-    relocateId = id;
-    hideAll();
-    hidePopover();
-    pendingRange = null;
-    clearSel();
-  }
-
-  function cancelRelocate() { relocateId = null; }
-
-  function relocateFromSelection(range) {
-    if (!relocateId) return;
-    var id = relocateId;
-    relocateId = null;
-    var info = selectionInfo(range);
-    clearSel(); hideAll();
-    if (!info.quote) { post({ type: 'relocateCancel' }); return; }
-    post({ type: 'relocate', id: id, quote: info.quote, prefix: info.prefix, suffix: info.suffix });
-  }
-
-  document.addEventListener('keydown', function (e) {
-    if (e.key !== 'Escape' || !relocateId) return;
-    cancelRelocate();
-    clearSel();
-    post({ type: 'relocateCancel' });
   });
 
   document.addEventListener('mousedown', function (e) {
@@ -1768,9 +1690,7 @@ var reader = (function () {
     restoreScrollY: restoreScrollY,
     setAnnotations: setAnnotations,
     scrollToAnnotation: scrollToAnnotation,
-    annotationRect: annotationRect,
-    beginRelocate: beginRelocate,
-    cancelRelocate: cancelRelocate
+    annotationRect: annotationRect
   };
 })();
 </script>

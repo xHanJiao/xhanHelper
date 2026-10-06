@@ -625,10 +625,9 @@ private struct DocumentFullView: View {
     @State private var scrollToAnchor: String = ""
     #endif
 
-    /// 批注面板常驻/收起、视图模式、目录收放——全局记忆（跨文档、跨启动）。
+    /// 批注面板常驻/收起、目录收放——全局记忆（跨文档、跨启动）。
     /// 收放是简单兜底（c2）：手动优先，只在窗口窄到触发硬地板时强制收起。
     @AppStorage("xhan_doc_annot_open") private var annotOpen = true
-    @AppStorage("xhan_doc_annot_mode") private var annotModeRaw = AnnotationPanelMode.thread.rawValue
     @AppStorage("xhan_doc_toc_collapsed") private var tocCollapsed = true
     @State private var showFindBar = false
     @State private var findQuery = ""
@@ -697,18 +696,11 @@ private struct DocumentFullView: View {
             expandedIDs: reader.expandedAnnotationIDs,
             loadingIDs: reader.loadingReplyIDs,
             busyIDs: reader.busyReplyIDs,
-            mode: Binding(
-                get: { AnnotationPanelMode(rawValue: annotModeRaw) ?? .thread },
-                set: { annotModeRaw = $0.rawValue }
-            ),
-            relocatingID: reader.relocatingID,
             focusRequest: reader.focusRequest,
             onToggle: { reader.toggleThread(id: $0) },
             onJump: { reader.scrollToAnnotation(id: $0) },
             onReply: { id, content in Task { await reader.reply(annotationId: id, content: content) } },
             onDelete: { reader.deleteAnnotation(id: $0) },
-            onRelocate: { reader.beginRelocate(id: $0) },
-            onCancelRelocate: { reader.cancelRelocate() },
             onCollapse: { clearConnector(); withAnimation { annotOpen = false } },
             onHoverCard: { id, inside, frame in
                 if inside {

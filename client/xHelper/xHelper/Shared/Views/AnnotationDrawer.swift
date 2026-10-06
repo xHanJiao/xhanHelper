@@ -324,17 +324,23 @@ struct AnnotationThreadCard: View {
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: fontManager.scaledSize * 0.60, weight: .semibold))
                     .foregroundColor(.secondary)
-                Text("回复 \(replyCount)")
-                    .font(.system(size: fontManager.scaledSize * 0.76))
-                    .foregroundColor(.secondary)
-                if !expanded, let last = lastReply {
-                    Text(last.content)
+                if busy && replyCount == 0 {
+                    // 首条回复生成中：显示「回复 0」很怪，换成生成态文案
+                    Text("正在生成…")
                         .font(.system(size: fontManager.scaledSize * 0.76))
-                        .foregroundColor(.secondary.opacity(0.7))
-                        .lineLimit(1)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("回复 \(replyCount)")
+                        .font(.system(size: fontManager.scaledSize * 0.76))
+                        .foregroundColor(.secondary)
+                    if !expanded, let last = lastReply {
+                        Text(last.content)
+                            .font(.system(size: fontManager.scaledSize * 0.76))
+                            .foregroundColor(.secondary.opacity(0.7))
+                            .lineLimit(1)
+                    }
                 }
                 Spacer()
-                if busy { ProgressView().controlSize(.mini) }
             }
             .contentShape(Rectangle())
         }

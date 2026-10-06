@@ -389,7 +389,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
   - 空提交 → 「让 AI 回复」（`POST` 无 `content`，`source=button`）；
   - 有文本 → 追问（`POST` 带 `content`，先落 `role=user` 再生成，`source=followup`）。
 - **数据来源**：折叠摘要用列表接口带的 `reply_count` / `last_reply`；展开时按需 `GET /api/annotations/:id/replies`（控制器缓存 `repliesByAnnotation`）。
-- **状态**：`expandedAnnotationIDs` / `loadingReplyIDs` / `busyReplyIDs`（控制器），卡片据 `busy` 显示 spinner 并禁用输入。
+- **状态**：`expandedAnnotationIDs` / `loadingReplyIDs` / `busyReplyIDs`（控制器），卡片据 `busy` 显示 spinner 并禁用输入。spinner 只出现在追问输入行（展开态）；生成中 `busy` 恒蕴含 `expanded`（`reply()` 在 await 前就 insert 了展开态），故折叠行不再放 spinner，避免两个菊花。首条回复生成中（`busy && replyCount == 0`）「回复 N」行文案显示「正在生成…」而非「回复 0」。
 - 失活批注：灰态 + `已失活` 徽标；划线圈引点击 → `scrollToAnnotation`。
 
 ### 7.3 收放规则（AR-14 / c2：手动优先 + 兜底）

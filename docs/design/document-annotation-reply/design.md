@@ -617,3 +617,11 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 - **不改**：服务端 / 数据模型 / 生成 prompt / 折叠行预览 / WebView popover / 连线逻辑。
 - **验证**：`swiftc -typecheck -D DEBUG`（macOS 26.3 / iOS 26.0）0 error。
 - **修订**：§12「❌ 回复富文本」收窄为「不做富文本编辑器 / 图片 / @ 引用」，markdown 只读渲染除外。
+
+### 2026-10-06 · 追问乐观回显
+
+- **现象**：用户追问后，自己发的消息不立即出现，而是和 AI 回复同一刻（最长 120s 后）一起冒出。根因：服务端**同步生成**，且**生成成功才把 `[user, assistant]` 一起 `CreateBatch` 落库**（原子性设计，见本文件 §4 / `agent/annotation_reply.go`），响应自然只在这一刻返回，客户端此前无从渲染追问。
+- **决定**：**纯客户端乐观回显**，不动服务端原子性。`DocumentReaderView.reply()` 在发送前，若 `content` 非空，本地构造一条 `role:"user"` / `source:"followup"` / id 前缀 `pending-` 的 `AnnotationReply` 立即 append 进线程（普通消息样式，无额外标记）；响应回来后按 `pendingID` 移除临时条、再 append 服务端落库版（避免重复）；失败则移除临时条并 toast（草稿不回填，与既有行为一致）。
+- **影响文件**：`client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift`。
+- **不改**：服务端 / 数据模型 / 生成逻辑 / `AnnotationDrawer` 视图。
+- **验证**：`swiftc -typecheck -D DEBUG`（macOS / iOS）0 error；真机发一条追问，确认消息立即出现、生成完不重复。

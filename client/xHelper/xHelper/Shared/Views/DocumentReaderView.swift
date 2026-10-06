@@ -202,9 +202,27 @@ final class DocumentReaderController: ObservableObject {
         busyReplyIDs.insert(annotationId)
         defer { busyReplyIDs.remove(annotationId) }
         expandedAnnotationIDs.insert(annotationId)
+
+        // 乐观回显：服务端是「生成成功才把 [追问, 回复] 一起落库」的同步长任务（最长 120s），
+        // 不先本地插入的话，用户会看到自己发的内容和 AI 回复同一刻才冒出来。响应回来后用落库版替换。
+        var pendingID: String?
+        if let content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let pending = AnnotationReply(
+                id: "pending-\(UUID().uuidString)",
+                annotationId: annotationId,
+                role: "user",
+                content: content,
+                source: "followup",
+                createdAt: ISO8601DateFormatter().string(from: Date())
+            )
+            pendingID = pending.id
+            repliesByAnnotation[annotationId, default: []].append(pending)
+        }
+
         do {
             let resp = try await api.replyToAnnotation(id: annotationId, content: content)
             var thread = repliesByAnnotation[annotationId] ?? []
+            if let pendingID { thread.removeAll { $0.id == pendingID } }
             thread.append(contentsOf: resp.added)
             repliesByAnnotation[annotationId] = thread
             if let i = annotations.firstIndex(where: { $0.id == annotationId }) {
@@ -212,6 +230,7 @@ final class DocumentReaderController: ObservableObject {
                 annotations[i].lastReply = resp.added.last ?? annotations[i].lastReply
             }
         } catch {
+            if let pendingID { repliesByAnnotation[annotationId]?.removeAll { $0.id == pendingID } }
             LogBuffer.shared.error("DocumentReader 生成批注回复失败: \(error)")
             ToastCenter.shared.show("生成回复失败：\(error.localizedDescription)")
         }

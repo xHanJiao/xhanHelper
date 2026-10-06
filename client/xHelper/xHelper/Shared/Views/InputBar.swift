@@ -294,6 +294,9 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
                 return .handled
             }
             .scrollContentBackground(.hidden)
+            // 多行溢出、框内滚动时隐藏滚动条；用 .never 而非 .hidden——.hidden 在
+            // macOS 接上带滚轮鼠标后仍会把滚动条带回来，.never 才不看指点设备一律隐藏。
+            .scrollIndicators(.never, axes: .vertical)
             .font(.system(size: scaledSize))
             .frame(height: editorHeight)
             .background(InputBarScrollHider(reapplyToken: "\(barWidth)-\(scaledSize)"))
@@ -359,15 +362,13 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
 }
 
 #if os(macOS)
-/// 调整 TextEditor 内部的 AppKit 视图：
-/// 1. 隐藏 NSScrollView 的垂直滚动条（保留 maxHeight 上限，内容超出后仍可
-///    内部滚动，但看不到可见滚动条）。
-/// 2. 把 NSTextView 的 `lineFragmentPadding` / `textContainerInset` 归零，
-///    使真实文本可用宽 == `measuredHeight` 假设的宽（两者都用零内边距）。
-///    否则 AppKit 默认 lineFragmentPadding=5 会让真实折行比测量早 10pt，
-///    文字已折到第二行时测量仍算一行，输入框不加高（要多打 1~2 字才跳）。
+/// 调整 TextEditor 内部的 AppKit 视图：把 NSTextView 的 `lineFragmentPadding` /
+/// `textContainerInset` 归零，使真实文本可用宽 == `measuredHeight` 假设的宽（两者都用零内边距）。
+/// 否则 AppKit 默认 lineFragmentPadding=5 会让真实折行比测量早 10pt，
+/// 文字已折到第二行时测量仍算一行，输入框不加高（要多打 1~2 字才跳）。
 /// 布局切换/宽度/字号变化会重建 TextEditor 的内部视图（恢复默认值），
 /// 因此传入 reapplyToken：token 变化时 updateNSView 重新应用。
+/// （滚动条隐藏不在此处，改由 TextEditor 上的 `.scrollIndicators(.never, axes: .vertical)` 负责。）
 struct InputBarScrollHider: NSViewRepresentable {
     /// 变化即触发重新应用。
     var reapplyToken: String
@@ -386,10 +387,6 @@ struct InputBarScrollHider: NSViewRepresentable {
             var queue: [NSView] = [root]
             while !queue.isEmpty {
                 let view = queue.removeFirst()
-                if let scrollView = view as? NSScrollView {
-                    scrollView.hasVerticalScroller = false
-                    scrollView.scrollerStyle = .overlay
-                }
                 if let textView = view as? NSTextView {
                     textView.textContainerInset = .zero
                     textView.textContainer?.lineFragmentPadding = 0

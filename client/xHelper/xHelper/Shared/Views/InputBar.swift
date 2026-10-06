@@ -224,7 +224,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
         let lineHeight = font.ascender + abs(font.descender) + font.leading
         let textWidth = max(barWidth - 12, 1)
         let contentHeight = measuredHeight(text, width: textWidth, font: font)
-        let editorHeight = min(max(contentHeight, lineHeight), lineHeight * 8)
+        let editorHeight = min(max(contentHeight, lineHeight), lineHeight * 4)
         return TextEditor(text: $text)
             .offset(x: shakeOffset)
             .focused($isFocused)

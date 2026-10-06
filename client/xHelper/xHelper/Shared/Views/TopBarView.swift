@@ -264,6 +264,13 @@ struct TopBarView: View {
                 .buttonStyle(.plain)
                 .help(isPinned ? "取消置顶" : "置顶")
             }
+
+            // 时间固定在最右侧：hover 出的操作按钮排在其左侧
+            Text(formatConversationDate(conv.updatedAt))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
         .background(

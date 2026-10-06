@@ -176,7 +176,7 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
 - **trigger**：`[🎭?] 当前会话名 ⌄`（无痕前缀 🎭），胶囊样式同 `CapsuleGroup`；**`.frame(maxWidth: 240)` + `lineLimit(1)` + `truncationMode(.tail)`**（D5，防顶栏顶高窗口最小宽，见 §2.2）。
 - **`＋`**：trigger 右侧常驻图标按钮 → `newChat()`（**普通新建**；无痕走输入栏 pill）。
 - 数据源：`chatTabManager.currentTab?.title`（trigger）；`conversationListVM`（菜单）。
-- **展开**：自定义 popover（**不用原生 `Menu`**，因行内要放 hover 出的置顶/删除）。内容：小标题「会话」+ `ForEach(conversationListVM.conversations)`（行点击 → `openConversation`；行尾 hover `📌` setPinned / `✕` delete；当前行 `✓`；无痕行 🎭；`hasMore` → 「加载更多」`loadMore()`）。
+- **展开**：自定义 popover（**不用原生 `Menu`**，因行内要放 hover 出的置顶/删除）。内容：小标题「会话」+ `ForEach(conversationListVM.conversations)`（行点击 → `openConversation`；相对更新时间 `formatConversationDate(updatedAt)` 固定在行最右；hover 出的 `📌` setPinned / `✕` delete 排在其左侧；当前行 `✓`；无痕行 🎭；`hasMore` → 「加载更多」`loadMore()`）。
 - **接口依赖（新增两条硬依赖）**：
   1. **构造签名扩参**：`TopBarView` 现只收 `rightSidebar`（`:11`），要加 `chatTabManager` + `conversationListVM`；`ContentView.swift:427` 调用处同步传参。
   2. **首次加载**：会话列表的初始 `load()` 原本挂在 `SidebarView.task`（`SidebarView.swift:144-149`）；删栏后必须由下拉 `onAppear`（或 ContentView `onAppear`）触发 `conversationListVM.load()`，否则列表永不加载（60s 轮询首轮也要等 60s）。

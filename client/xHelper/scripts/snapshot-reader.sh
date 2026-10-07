@@ -73,8 +73,6 @@ window.__step = function (name) {
   if (name === 'marks') { return window.__marks('容器 li 里的一段'); }
   if (name === 'marks-table') { return window.__marks('写入时机'); }
   if (name === 'marks-overlap') { return window.__marks('各管一段'); }
-  if (name === 'marks-longnote') { return window.__marksLong(); }
-  if (name === 'marks-longnote-scroll') { return window.__marksLongScroll(); }
   var r = window.__applySel(name);
   /* 选区在视口外就滚过去（只对选中、不折叠：折叠那张要在同一视口比残留像素） */
   var s = window.getSelection();
@@ -105,7 +103,7 @@ window.__marks = function (anchorText) {
     { id: 'k4', quote: '三、它们之间怎么说话 它同时用了四种', note: '', prefix: '', suffix: '', orphaned: false },
     { id: 'k5', quote: '写入时机 请求期', note: '', prefix: '', suffix: '', orphaned: false },
     { id: 'k6', quote: '五、容器 li 里的一段 会话性质为测试', note: '', prefix: '', suffix: '', orphaned: false },
-    /* k7 与 k2 重叠：两条拟合成同一处的波浪线（真机上应该只看见一条，hover 才提示重叠） */
+    /* k7 与 k2 重叠：两条拟合成同一处的波浪线（真机上只看见一条） */
     { id: 'k7', quote: '管一段', note: '', prefix: '', suffix: '', orphaned: false }
   ]));
   var byId = [];
@@ -117,71 +115,6 @@ window.__marks = function (anchorText) {
        + ' bubbles=' + document.querySelectorAll('span.ann-bubble').length
        + ' textLen=' + before.length + (before === after ? '=不变' : '→' + after.length + '!!丢字')
        + ' ' + byId.join(' ');
-};
-/* 长批注（P5 把 AI 的长回答存成批注之后的常态）：hover 浮层必须自己封顶内滚 ——
-   它是 position: fixed，没有 max-height 时高出视口的那截永远拿不到，滚轮还会跑去滚正文。
-   故意把划线放在视口下方 70% 处，逼出「上/下翻转 + 封顶」的最坏摆放 */
-window.__marksLong = function () {
-  window.getSelection().removeAllRanges();
-  var target = null;
-  [].slice.call(document.querySelectorAll('#content p')).forEach(function (el) {
-    if (!target && el.textContent.indexOf('各管一段') >= 0) target = el;
-  });
-  if (!target) return 'no-target';
-  window.scrollTo(0, window.scrollY + target.getBoundingClientRect().top - window.innerHeight * 0.7);
-  var note = '';
-  for (var i = 0; i < 60; i++) {
-    note += '第 ' + i + ' 行：这是把 AI 的长回答存成批注之后的样子，用来把 hover 浮层撑高。'
-          + 'https://example.com/a/' + i + '\\n';
-  }
-  reader.setAnnotations(JSON.stringify([
-    { id: 'L1', quote: '各管一段', note: note, prefix: '', suffix: '', orphaned: false }
-  ]));
-  var m = document.querySelector('mark.hl[data-id="L1"]');
-  if (!m) return 'no-mark';
-  var content = document.getElementById('content');
-  function hover() {
-    var r = m.getBoundingClientRect();
-    content.dispatchEvent(new MouseEvent('mousemove', {
-      bubbles: true, clientX: r.left + 2, clientY: r.top + r.height / 2
-    }));
-  }
-  hover();
-  /* 定时补 hover：窗口一出现，真实光标（在屏幕上某处、不在划线上）会产生 mousemove，
-     把浮层按时收掉 —— 只 hover 一次的话，700ms 后截图时它已经关了，图里空无一物。
-     定时器 id 留着：下一个 job（浮层内滚）要先停掉它，否则它会把「被滚掉关了的浮层」重新开起来，
-     内滚那一步就测不出来了 */
-  window.__hoverTimer = window.setInterval(hover, 120);
-  var pv = document.getElementById('popover');
-  if (!pv || !pv.classList.contains('open')) return 'popover-not-open';
-  var cs = getComputedStyle(pv);
-  return 'popover 高 ' + pv.offsetHeight + ' / 可滚 ' + pv.scrollHeight + ' / client ' + pv.clientHeight
-       + ' / 视口 ' + window.innerHeight + ' overflowY=' + cs.overflowY
-       + ' overscroll=' + cs.overscrollBehavior
-       + (pv.offsetHeight <= window.innerHeight ? ' 封顶OK' : ' 超出视口!!');
-};
-/* 浮层内滚：长批注的核心动作，也是真机踩过的坑 —— capture 阶段的 window scroll 监听
-   连后代元素的滚动都收得到，以前它会把浮层一起关掉（用户看到的是「一滚浮层就没了，滚轮落到正文」）。
-   这里接着上一个 job 的浮层，停掉补 hover 的定时器（否则它会把关掉的浮层重新开起来，什么都测不到），
-   滚 200px，延迟 600ms（浏览器派发 scroll 是异步的）采一次真实状态，采完再补一次 hover 供截图 */
-window.__marksLongScroll = function () {
-  var pv = document.getElementById('popover');
-  if (!pv || !pv.classList.contains('open')) return 'popover-not-open';
-  if (window.__hoverTimer) { window.clearInterval(window.__hoverTimer); window.__hoverTimer = null; }
-  var m = document.querySelector('mark.hl[data-id="L1"]');
-  var content = document.getElementById('content');
-  pv.scrollTop = 200;
-  window.setTimeout(function () {
-    window.__innerScrollState = (pv.classList.contains('open') ? 'open' : 'closed')
-      + ' scrollTop=' + pv.scrollTop + ' scrollHeight=' + pv.scrollHeight
-      + ' clientHeight=' + pv.clientHeight;
-    if (!m) return;
-    var r = m.getBoundingClientRect();
-    content.dispatchEvent(new MouseEvent('mousemove', {
-      bubbles: true, clientX: r.left + 2, clientY: r.top + r.height / 2
-    }));
-  }, 600);
-  return 'set scrollTop → ' + pv.scrollTop + '（600ms 后采真实状态）';
 };
 window.__applySel = function (kind) {
   var ps = document.querySelectorAll('#content p'), hs = document.querySelectorAll('#content h2');
@@ -207,19 +140,7 @@ window.__probe = function () {
   var o = { collapsed: s.isCollapsed, ranges: s.rangeCount, selLen: String(s).length,
             hasSel: !!(window.CSS && CSS.highlights.has('sel')),
             size: (window.CSS && CSS.highlights.has('sel')) ? CSS.highlights.get('sel').size : 0,
-            cover: [],
-            popover: (function () {
-              var pv = document.getElementById('popover');
-              if (!pv) return '-';
-              var r = pv.getBoundingClientRect();
-              return (pv.classList.contains('open') ? 'open' : 'closed')
-                   + ' rect=' + Math.round(r.left) + ',' + Math.round(r.top) + ' '
-                   + Math.round(r.width) + 'x' + Math.round(r.height)
-                   + ' scrollTop=' + Math.round(pv.scrollTop)
-                   + ' 卡内滚动条口=' + (pv.offsetWidth - pv.clientWidth)
-                   + ' scrollbarWidth=' + getComputedStyle(pv).scrollbarWidth
-                   + ' innerScroll=' + (window.__innerScrollState || '-');
-            })() };
+            cover: [] };
   if (!s.rangeCount) return JSON.stringify(o);
   var sel = s.getRangeAt(0);
   var walker = document.createTreeWalker(document.getElementById('content'), NodeFilter.SHOW_TEXT, null);

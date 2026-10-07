@@ -26,8 +26,6 @@ final class Driver: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         ("marks", "annotations.png"),
         ("marks-table", "annotations-table.png"),
         ("marks-overlap", "annotations-overlap.png"),
-        ("marks-longnote", "annotations-longnote.png"),
-        ("marks-longnote-scroll", "annotations-longnote-scroll.png"),
     ]
     private var i = 0
     private var failed = false

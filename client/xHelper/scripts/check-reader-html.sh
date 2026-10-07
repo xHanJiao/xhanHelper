@@ -385,15 +385,11 @@ function annotationChecks() {
        && c.querySelectorAll('mark.hl[data-id="p1"] mark.hl[data-id="p2"], mark.hl[data-id="p2"] mark.hl[data-id="p1"]').length >= 1);
   ok('重叠也不改正文文本', c.textContent === text0);
 
-  // 12) 悬停交叠处 → popover 同时列出两条，并打「重叠划线」标签
+  // 12) 交叠处：两条批注都画出来（不再有 hover popover 列全部 —— 已随浮层一起删）
   put([mk('p1', '记忆系统的第一处', '外批注'), mk('p2', '第一处提及', '内批注')]);
-  var nr = c.querySelector('mark.hl[data-id="p2"]').getBoundingClientRect();
-  c.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
-    clientX: nr.left + 1, clientY: nr.top + nr.height / 2 }));
-  var pv = document.getElementById('popover');
-  ok('交叠处 hover 列出全部两条 + 重叠标签',
-     pv.classList.contains('open') && pv.textContent.indexOf('外批注') >= 0
-       && pv.textContent.indexOf('内批注') >= 0 && pv.textContent.indexOf('重叠划线') >= 0);
+  ok('交叠处两条都画',
+     !!c.querySelector('mark.hl[data-id="p1"]') && !!c.querySelector('mark.hl[data-id="p2"]'),
+     'p1=' + c.querySelectorAll('mark.hl[data-id="p1"]').length + ' p2=' + c.querySelectorAll('mark.hl[data-id="p2"]').length);
 
   // 13) 左键点划线 → 定位请求（发 focus），不再弹菜单
   c.querySelector('mark.hl[data-id="p1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -413,23 +409,13 @@ function annotationChecks() {
   openCtx('p1');
   ok('右键划线出菜单', document.getElementById('ctxmenu').classList.contains('open'));
   ok('右键时收起选区工具条', !document.getElementById('toolbar').classList.contains('open'));
-  var p1r = c.querySelector('mark.hl[data-id="p1"]').getBoundingClientRect();
-  pv.classList.remove('open');
-  c.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
-    clientX: p1r.left + 1, clientY: p1r.top + p1r.height / 2 }));
-  ok('菜单开着时 hover 不再出浮层', !pv.classList.contains('open'));
   // 关掉菜单，别影响后续用例
   document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
   ok('点外部关掉菜单', !document.getElementById('ctxmenu').classList.contains('open'));
 
-  // 14) hover 有 note 的划线 → popover 列出批注内容
+  // 14) hover 带 note 的划线：不再弹任何浮层（hover popover 已删）
   put([mk('h1', '记忆系统的第一处', '悬停看看')]);
-  var hr = c.querySelector('mark.hl[data-id="h1"]').getBoundingClientRect();
-  c.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
-    clientX: hr.left + 2, clientY: hr.top + hr.height / 2 }));
-  ok('hover 出 popover（带 note）',
-     document.getElementById('popover').classList.contains('open')
-       && document.getElementById('popover').textContent.indexOf('悬停看看') >= 0);
+  ok('hover popover 元素已不存在', document.getElementById('popover') === null);
 
   // 15) 抽屉要用：滚到划线 + 闪烁；找不到不抛异常
   window.__scrolled = [];
@@ -484,7 +470,6 @@ function annotationChecks() {
   var rootCs = getComputedStyle(document.documentElement);
   var hlBase = rootCs.getPropertyValue('--hl').trim(), hlHov = rootCs.getPropertyValue('--hl-hover').trim();
   ok('hover 线色比常态更实', hlBase && hlHov && hlBase !== hlHov, hlBase + ' → ' + hlHov);
-  ok('popover 里没有「点击编辑」文案', document.getElementById('popover').textContent.indexOf('点击编辑') < 0);
 
   // 19b) 连线终点取「正文列那一行」而不是划线片段本身：x/w = #content 左右缘、y/h = 划线首行片段。
   //      这样短划线（结束在行中间）的连线也落在右侧留白里，不横穿该行后半段文字。
@@ -499,43 +484,6 @@ function annotationChecks() {
      ar ? ('y ' + ar.y + ' vs ' + fr.top) : 'null');
   ok('annotationRect 未命中返回 null', reader.annotationRect('不存在') === null);
 
-  // 20) 长批注（P5 把 AI 长回答存进来之后的常态）：浮层自己封顶内滚。
-  //     以前没有 max-height：fixed 浮层超出视口那截永远拿不到，滚轮还会冒泡去滚正文
-  var longNote = '';
-  for (var li = 0; li < 40; li++) {
-    longNote += '第' + li + '行：一段很长的批注内容，用来把浮层撑高。https://example.com/a/' + li + '\\n';
-  }
-  put([mk('l1', '记忆系统的第一处', longNote)]);
-  var lr = c.querySelector('mark.hl[data-id="l1"]').getBoundingClientRect();
-  c.dispatchEvent(new MouseEvent('mousemove', { bubbles: true,
-    clientX: lr.left + 2, clientY: lr.top + lr.height / 2 }));
-  var lp = document.getElementById('popover');
-  var lcs = getComputedStyle(lp);
-  ok('长批注浮层封顶在视口内', lp.classList.contains('open') && lp.offsetHeight <= window.innerHeight,
-     lp.offsetHeight + ' vs ' + window.innerHeight);
-  ok('浮层长内容自己内滚', lp.scrollHeight > lp.clientHeight, lp.scrollHeight + ' vs ' + lp.clientHeight);
-  ok('浮层 overflow-y: auto', lcs.overflowY === 'auto', lcs.overflowY);
-  ok('浮层不把滚动串给正文', lcs.overscrollBehavior.indexOf('contain') >= 0, lcs.overscrollBehavior);
-  ok('长 URL 不横向溢出', lp.scrollWidth <= lp.clientWidth + 1, lp.scrollWidth + ' vs ' + lp.clientWidth);
-  // 卡片里不要滚动条：滚动条会把内容挤压 15px 左右（headless Chrome 是非覆盖式的，正好量得出来）
-  ok('卡片里没有滚动条', lp.offsetWidth - lp.clientWidth <= 2 + 1,
-     'offset ' + lp.offsetWidth + ' client ' + lp.clientWidth);
-  ok('卡片隐藏滚动条（scrollbar-width: none）', lcs.scrollbarWidth === 'none', lcs.scrollbarWidth);
-  // 内滚时浏览器会派发 scroll（capture 阶段的 window 监听连后代滚动也收得到）：
-  // 不能把它当成「页面滚动」把浮层关掉 —— 真机症状是「一滚浮层就消失，滚轮落到正文上」
-  lp.scrollTop = 200;
-  lp.dispatchEvent(new Event('scroll'));
-  ok('浮层内滚不关卡片', lp.classList.contains('open') && lp.scrollTop === 200,
-     'open=' + lp.classList.contains('open') + ' scrollTop=' + lp.scrollTop);
-  // 页面滚动仍然要关（P3 的既有语义不变）
-  document.dispatchEvent(new Event('scroll'));
-  ok('页面滚动仍然关掉浮层', !lp.classList.contains('open'));
-  // hidePopover 复位了 hoverKey：光标还在正文里，再 hover 同一处也必须能再开
-  c.querySelector('mark.hl[data-id="l1"]').dispatchEvent(new MouseEvent('mousemove', {
-    bubbles: true, clientX: lr.left + 2, clientY: lr.top + lr.height / 2 }));
-  ok('关掉后再 hover 同一处还能开', lp.classList.contains('open'));
-
-  c.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
   put([]);
 }
 

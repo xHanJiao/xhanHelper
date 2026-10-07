@@ -872,30 +872,6 @@ span.ann-bubble:hover { transform: scale(1.6); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 500; }
 .btn.primary:hover { filter: brightness(1.08); }
 
-.popover {
-  position: fixed; z-index: 65; display: none;
-  /* 长批注（P5 把 AI 回答存进来之后常态）：卡片自己封顶内滚。
-     不封顶的话它是 fixed 的，超出视口那截永远拿不到；滚轮也会冒泡去滚正文。
-     contain 防「滚到底连滚正文」；宽度放宽是为了少滚（340 会让长回答拉成一根带） */
-  max-width: min(420px, 88vw); max-height: min(62vh, 520px);
-  overflow-y: auto; overscroll-behavior: contain;
-  /* 卡片里不要滚动条（内容照样滚，与 macOS 覆盖式滚动条一致的观感） */
-  scrollbar-width: none;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 11px; box-shadow: var(--shadow); padding: 11px 13px;
-}
-.popover::-webkit-scrollbar { width: 0; height: 0; }
-.popover.open { display: block; }
-.popover .p-quote {
-  font-size: calc(var(--fs) * 0.82); line-height: 1.55; color: var(--muted);
-  border-left: 2.5px solid var(--hl-hover); padding-left: 9px; margin-bottom: 8px;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
-.popover .p-note { font-size: calc(var(--fs) * 0.95); line-height: 1.68; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
-.popover .p-foot { margin-top: 9px; font-size: calc(var(--fs) * 0.62); color: var(--faint); display: flex; align-items: center; gap: 8px; }
-.popover .p-item + .p-item { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
-.popover .p-tag { font-size: calc(var(--fs) * 0.62); color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 20px; }
-
 .ctxmenu {
   position: fixed; z-index: 72; display: none; min-width: 158px;
   background: var(--win-chrome);
@@ -924,7 +900,7 @@ span.ann-bubble:hover { transform: scale(1.6); }
   <div id="content"></div>
 </div>
 
-<!-- 选区工具条 / 批注浮层 / hover popover / 点击菜单：都在 HTML 里，
+<!-- 选区工具条 / 批注输入浮层 / 点击菜单：都在 HTML 里，
      跟着选区坐标走（`.ui` 类用来把「点浮层」和「点正文」区分开） -->
 <div class="floating ui" id="toolbar">
   <button data-act="hl">
@@ -952,8 +928,6 @@ span.ann-bubble:hover { transform: scale(1.6); }
     <button class="btn primary" id="ne-save">保存为纯划线</button>
   </div>
 </div>
-
-<div class="popover ui" id="popover"></div>
 
 <div class="ctxmenu ui" id="ctxmenu">
   <button data-cact="edit">
@@ -1212,7 +1186,6 @@ var reader = (function () {
       var b = document.createElement('span');
       b.className = 'ann-bubble ui';
       b.dataset.for = ann.id;
-      b.title = '查看批注';
       marks[marks.length - 1].after(b);
     }
     return marks;
@@ -1266,13 +1239,10 @@ var reader = (function () {
   var neQuote = document.getElementById('ne-quote');
   var neText = document.getElementById('ne-text');
   var neSave = document.getElementById('ne-save');
-  var popover = document.getElementById('popover');
   var ctxmenu = document.getElementById('ctxmenu');
   var pendingRange = null;
   var editingId = null;
   var ctxTargetId = null;
-  var hideTimer = null;
-  var hoverKey = '';
 
   /* DOM 位置 → 拍平文本下标。选区的 start/endContainer 通常是文本节点；
      整块被选中时才是元素容器 —— 那时取「容器内 child 之前的最后一个文本节点」。 */
@@ -1328,16 +1298,13 @@ var reader = (function () {
 
   document.addEventListener('mousedown', function (e) {
     if (e.target.closest && e.target.closest('.ui')) return;
-    hidePopover();
     if (!(e.target.closest && e.target.closest('mark.hl, .ann-bubble'))) hideCtx();
   });
 
   /* capture 阶段的 scroll 监听连**后代元素**的滚动也收得到（scroll 不冒泡，但 capture 会命中）。
-     长批注的 hover 浮层自己是滚动容器，它内滚时 e.target 就是浮层 —— 那种不算「页面滚动」，
-     不然用户一滚浮层就被关掉，紧接着滚轮落到正文上，看着像「浮层滚不动、只有文档在滚」 */
-  window.addEventListener('scroll', function (e) {
-    if (popover.contains(e.target)) return;
-    hideAll(); hidePopover();
+     一滚就把工具条/菜单收起来（菜单挂靠在选区坐标上，正文一移就错位），并发 scroll 让 Swift 重取连线位置 */
+  window.addEventListener('scroll', function () {
+    hideAll();
     post({ type: 'scroll' });
   }, true);
 
@@ -1450,80 +1417,6 @@ var reader = (function () {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); neSave.click(); }
   });
 
-  /* ---------- hover：划线 / 气泡 → popover（重叠时列出全部） ---------- */
-  content.addEventListener('mousemove', function (e) {
-    /* 点击菜单开着时 hover 浮层让位：两者都是同一条批注的呈现，叠在一起很难看。
-       菜单一关（点外部 / 点按钮 / 滚动）下次 mousemove 即恢复。 */
-    if (ctxmenu.classList.contains('open')) return;
-    var els = document.elementsFromPoint(e.clientX, e.clientY);
-    var ids = [];
-    for (var i = 0; i < els.length; i++) {
-      var el = els[i];
-      if (!el.matches || !(el.matches('mark.hl') || el.matches('.ann-bubble'))) continue;
-      var id = el.dataset.id || el.dataset.for;
-      if (id && ids.indexOf(id) === -1) ids.push(id);
-    }
-    var items = [];
-    for (var j = 0; j < ids.length; j++) {
-      var a = annotationById(ids[j]);
-      if (a && a.note) items.push(a);
-    }
-    var key = items.map(function (a) { return a.id; }).join(',');
-    if (key === hoverKey) return;
-    hoverKey = key;
-    if (!items.length) { scheduleHidePopover(); return; }
-    showPopover(items, e.clientX, e.clientY);
-  });
-
-  content.addEventListener('mouseleave', function () { hoverKey = ''; scheduleHidePopover(); });
-  popover.addEventListener('mouseenter', function () { clearTimeout(hideTimer); });
-  popover.addEventListener('mouseleave', function () { scheduleHidePopover(); });
-
-  function scheduleHidePopover() {
-    clearTimeout(hideTimer);
-    hideTimer = setTimeout(function () { hidePopover(); }, 140);
-  }
-
-  /* 任何隐藏路径都要复位 hoverKey：漏了的话，光标还在正文里时再 hover 同一处会走
-     `key === hoverKey` 的提前返回，浮层再也开不出来（曾因页面 scroll 把浮层关掉而卡住） */
-  function hidePopover() { hoverKey = ''; popover.classList.remove('open'); }
-
-  function esc(s) {
-    return String(s || '').replace(/[&<>"]/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-    });
-  }
-
-  function timeStr(iso) {
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return '';
-    var p = function (n) { return (n < 10 ? '0' : '') + n; };
-    return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
-  }
-
-  function showPopover(items, x, y) {
-    clearTimeout(hideTimer);
-    var multi = items.length > 1;
-    var html = '';
-    for (var i = 0; i < items.length; i++) {
-      var a = items[i];
-      html += '<div class="p-item">'
-        + '<div class="p-quote">' + esc(a.quote) + '</div>'
-        + '<div class="p-note">' + esc(a.note) + '</div>'
-        + '<div class="p-foot">' + (multi ? '<span class="p-tag">重叠划线</span>' : '')
-        + '<span>' + timeStr(a.created_at) + '</span></div>'
-        + '</div>';
-    }
-    popover.innerHTML = html;
-    popover.classList.add('open');
-    var w = popover.offsetWidth, h = popover.offsetHeight;
-    var left = Math.max(10, Math.min(x + 14, window.innerWidth - w - 10));
-    var top = y + 18;
-    if (top + h > window.innerHeight - 16) top = Math.max(10, y - h - 14);
-    popover.style.left = left + 'px';
-    popover.style.top = top + 'px';
-  }
-
   /* 弹出「编辑批注 / 复制原文 / 删除划线」菜单，锚点在 (x, y)。左键不再用它，改右键。 */
   function showCtx(id, x, y) {
     var a = annotationById(id);
@@ -1537,7 +1430,6 @@ var reader = (function () {
     if (top + h > window.innerHeight - 16) top = Math.max(10, y - h - 6);
     ctxmenu.style.left = left + 'px';
     ctxmenu.style.top = top + 'px';
-    hidePopover();
   }
 
   /* ---------- 点击：图 → 放大；划线/气泡 → 定位右侧批注 ---------- */
@@ -1559,7 +1451,6 @@ var reader = (function () {
     /* 左键 = 快捷定位到右侧对应批注（宿主面板滚动 + 闪烁）。
        编辑批注 / 复制原文 / 删除划线改到右键，见下面的 contextmenu。 */
     hideCtx();
-    hidePopover();
     post({ type: 'focus', id: id });
   });
 

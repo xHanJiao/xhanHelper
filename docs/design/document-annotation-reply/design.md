@@ -405,7 +405,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 
 - **JS**（`DocumentReaderView.swift` 模板）：
   - `reader.annotationRect(id)` → 划线首行所在的「**正文列那一行**」视口矩形 `{x,y,w,h}`（左上原点），找不到返回 `null`；x/w 取 `#content` 左右缘、y/h 取该划线首个 `mark` 的首个行盒；
-  - `scroll` 监听补发 `{type:'scroll'}`（`popover` 内滚不算）。
+  - `scroll` 监听补发 `{type:'scroll'}`（原「`popover` 内滚不算」的守卫已随 hover popover 于 2026-10-06 删除）。
 - **控制器**：`connectorID` / `connectorRect`（阅读器内坐标）+ `beginConnectorTracking` / `endConnectorTracking` / `measureConnector`；收到 `scroll`、或 `pushAnnotations()` 重画后自动重测。
 - **换算**（关键，别想复杂）：`getBoundingClientRect` 与 SwiftUI `.global` 都是「左上原点、y 向下」，**直接相加**——终点 = `readerFrame.origin + connectorRect`（`readerFrame` 由 `DocumentReaderView.onGeometryChange { $0.frame(in: .global) }` 量得）。**不碰 AppKit 的翻转坐标系**。
 - **起点** = 卡片左缘中点（`AnnotationThreadCard.onHover` 上报 `(id, inside, global frame)`）。

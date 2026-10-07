@@ -13,7 +13,7 @@
 
 | 方向 | 现状 |
 |---|---|
-| 正文划线 **hover** | 出 popover 显示 note（`DocumentReaderView.swift` JS `mousemove`） |
+| 正文划线 **hover** | ~~出 popover 显示 note~~ **2026-10-06 已删除 hover popover**：hover 不再弹浮层（note 只在右侧面板看） |
 | 正文划线 **左键点击** | 出 `#ctxmenu` 下拉：编辑批注 / 复制原文 / 删除划线（D9） |
 | 右侧卡片 **hover** | 画「卡片 → 划线」连线 |
 | 右侧卡片 **点引文** | 正文滚到该划线并闪烁（`onJump` → `scrollToAnnotation`） |
@@ -47,7 +47,7 @@
 
 点正文里带批注/划线的文字（或右侧小圆点气泡）：
 
-1. `hideCtx()` + `hidePopover()` 收掉可能开着的浮层。
+1. `hideCtx()` 收掉可能开着的菜单。
 2. JS 发 `post({ type: 'focus', id })`。
 3. Swift 侧：若面板收起 → `annotOpen = true`；把 `focusRequest` 递给面板。
 4. 面板按当前视图滚动到该 `id` 并闪烁。
@@ -62,11 +62,11 @@
 - 未命中 → 不拦截，正文空白处的系统菜单照常。
 - **任何右键先 `hideToolbar()`**，且 `mouseup` 只认左键（`e.button === 0`）：WebKit 右键会先自动选中光标下的词（给查询/服务用），不判键的话右键划线会同时冒出「选区工具条 + 右键菜单」两个浮层。右键顺手 `clearSel()` 清掉那个自动选区。
 
-菜单/ hover 浮层互斥逻辑不变：菜单打开期间 `mousemove` 早退，不再弹 hover 浮层。
+（原「菜单 / hover 浮层互斥」逻辑随 hover popover 于 2026-10-06 一并删除。）
 
 ### 3.3 与 hover 的关系
 
-hover 浮层（看 note 文字）与左键定位（找到右侧条目）互补，不冲突：hover 出浮层，点击跳右侧。
+~~hover 浮层（看 note 文字）与左键定位互补~~ **2026-10-06 起删除 hover popover**：正文里 hover 划线不再弹任何浮层（含 `.ann-bubble` 的 `title="查看批注"` 原生 tooltip 也去掉），note 只在右侧面板看。左键定位不受影响。
 
 ---
 
@@ -128,7 +128,7 @@ case "focus":
 
 - `client/xHelper/scripts/check-reader-html.sh`：
   - 左键点划线 → 断言 `post focus` 且 `id` 正确、`ctxmenu` 未打开。
-  - 右键（`contextmenu` 事件）→ 断言菜单打开、菜单开着时 hover 不出浮层。
+  - 右键（`contextmenu` 事件）→ 断言菜单打开、右键时收起左键选区工具条。
   - 菜单动作（复制/删除/编辑）改用 `contextmenu` 打开后再点。
 - `swiftc -typecheck -D DEBUG`（macOS 26.3 + iOS 26.0）0 error。
 - 真机：左键划线 → 讨论/全部两种模式下右侧对应条目滚动 + 闪烁；右键划线 → 菜单三项仍可用；连点同一条能重复闪。
@@ -169,3 +169,10 @@ case "focus":
 - **根因**：`mouseup` 只判「有没有非折叠选区」、不判鼠标键；WebKit 右键会先把光标下的词自动选中 → 同一个右键既触发 `contextmenu`（弹菜单）又让 `mouseup` 拿到那个自动选区（弹工具条）。
 - **修复**（`DocumentReaderView.swift` JS 模板）：`mouseup` 开头 `if (e.button !== 0) { clearSel(); return; }`（工具条只服务左键选区，并清掉右键留下的自动选区）；`contextmenu` 一律先 `hideToolbar()`。
 - **验证**：`check-reader-html.sh` PASS（168→171，新增「右键 mouseup 不弹工具条」「右键顺手清掉自动选区」「右键时收起选区工具条」）；`snapshot-reader.sh`；`swiftc -typecheck`（macOS + iOS）0 error。
+
+### 2026-10-06 · 删除 hover popover（用户拍板）
+
+- **决定**：正文里 hover 划线不再弹浮层（原「hover 显示 note + 交叠时列全部 + 打重叠划线标签」整块删）；`.ann-bubble` 的 `title="查看批注"` 原生 tooltip 也去掉。note 只在右侧批注面板看。**重叠划线失去可见提示**（正文里就是一条波浪线，右侧面板仍能看到两条）——用户已确认可接受。
+- **删除**（`DocumentReaderView.swift` JS/CSS/HTML）：`#popover` 元素、`.popover`/`.p-*` 样式、`mousemove`/`mouseleave` 监听、`showPopover`/`hidePopover`/`scheduleHidePopover` 及仅供它用的 `esc`/`timeStr`、各 `hidePopover()` 调用、scroll 监听里 `popover.contains` 守卫；`b.title`。
+- **保留**：`mark.hl:hover` 线色变实（不是「不响应」，只是不弹窗）。
+- **测试**：`check-reader-html.sh` 171→159（删 14 条浮层断言，新增「交叠处两条都画」「hover popover 元素已不存在」）；`snapshot-reader.sh/.swift` 删 `marks-longnote`·`marks-longnote-scroll` 两 job 与探针 `popover` 字段。

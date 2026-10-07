@@ -54,7 +54,7 @@
 | D5 | 选区工具条 | ✅ HTML 浮动工具条，4 个动作：划线 / 批注 / 复制 / ~~问 AI~~（**问 AI 已下线，现 3 个动作**） |
 | D6 | 批注输入 | ✅ HTML 浮层（quote 预览 + textarea + ⌘↵ 保存） |
 | D7 | 跨块选择 | ✅ 允许（跨段落 / 跨列表项）；**跨表格、跨代码围栏除外**（不支持，选中时工具条只给"复制"） |
-| D8 | 重叠 | ✅ 允许重叠；hover 时 popover 列出该位置**全部**批注，>1 条打「重叠划线」标签 |
+| D8 | 重叠 | ✅ 允许重叠；~~hover 时 popover 列出该位置全部批注~~ **hover popover 已于 2026-10-06 删除**，重叠在正文里无提示（右侧面板仍能看到两条） |
 | D9 | 点击划线 | ✅ **左键 = 快捷定位到右侧批注面板**（滚动 + 闪烁）；**右键 = 菜单**：编辑批注 / 复制原文 / 删除划线（~~问 AI~~ 已下线）。见 `docs/design/document-annotation-focus/design.md` |
 | D10 | 重定位 | ✅ 三级降级：① quote 精确匹配（唯一命中走快路径）→ ② Markdown 纯文本投影后匹配（带 prefix/suffix 消歧）→ ③ 前后文夹逼（覆盖"span 内部被插字/局部改写"，带相似度门槛）。全失败标 `orphaned`。多命中而消歧不达标时**判失活而不是猜第一处** —— 静默挪位比失活更糟。v1 在批注面板的卡片里 orphan 灰态可见，可「删除」（手动「重新定位」已于 2026-10-06 取消，仅保留自动重挂） |
 | D10b | 创建时的消歧 | ✅ 客户端额外回传 DOM 选区的前后文（`prefix`/`suffix`，纯文本 ≤60 字）。没有它，`结论` 这类短句在文中重复时只能锚到第一处，且返回的快照也是按第一处算的 → 客户端会在错的地方画线且无提示 |
@@ -372,7 +372,7 @@ JS → Swift（`WKScriptMessageHandler`，沿用 `XHWebViewBridge` 的命名与�
 |---|---|---|
 | 选区工具条 | **HTML** | 紧贴选区、跨块时要在多行间定位 |
 | 批注输入浮层 | **HTML** | 同上，要引到选区下方 |
-| hover popover（重叠列表） | **HTML** | 坐标在 JS 手里 |
+| ~~hover popover（重叠列表）~~ | **已删（2026-10-06）** | ~~坐标在 JS 手里~~ |
 | 点击菜单 | **HTML** | 同上 |
 | 目录栏 | SwiftUI（已有） | 页面级，无坐标依赖 |
 | 查找栏 | SwiftUI 外壳 + JS 搜索 | 输入框是原生，高亮是 `::highlight()` |
@@ -409,11 +409,11 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 ### 8.3 hover / 点击
 
-- hover 划线段 → popover：`elementsFromPoint` 聚合该位置所有 `mark` 的 `data-id`，逐条渲染 `quote + note`；>1 条打「重叠划线」标签
-- hover 浮层（只有带 note 的划线出）封顶 `min(62vh, 520px)` 内滚，见 §12「长批注的 hover 浮层」
+- ~~hover 划线段 → popover：`elementsFromPoint` 聚合该位置所有 `mark` 的 `data-id`，逐条渲染 `quote + note`；>1 条打「重叠划线」标签~~
+- ~~hover 浮层（只有带 note 的划线出）封顶 `min(62vh, 520px)` 内滚，见 §12「长批注的 hover 浮层」~~
+- **（2026-10-06 起）hover 划线/圆点不再弹任何浮层**，`mousemove` 监听、`#popover` 元素与 `.p-*` 样式、圆点的 `title="查看批注"` 原生 tooltip 一并删除；note 只在右侧批注面板看。`mark.hl:hover` 线色变实保留。
 - **左键**点划线段或气泡 → **快捷定位到右侧批注面板**（面板滚动到该条并闪烁；面板收起则先展开）。JS 发 `post({type:'focus', id})`，见 `docs/design/document-annotation-focus/design.md`
 - **右键**点划线段或气泡 → 菜单：**编辑批注** / **复制原文** / **删除划线**（拦截 `contextmenu` + `preventDefault`；正文空白处保留系统菜单）
-- 菜单与 hover 浮层**互斥**：菜单打开期间 `mousemove` 直接早退，不再弹 hover 浮层（两者都是同一条批注的呈现，叠在一起很难看）；菜单一关即恢复
 - 「编辑批注」打开 §8.4 的浮层，`⌘↵` 保存
 - 批注留空保存 = 该实体退化成纯划线（不发 `annotationDelete`）
 
@@ -902,6 +902,8 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 2. **引用类型放在 `retrieval`（`DocQuoteMeta`），不是 `agent.DocQuote`**：`ContextPacket.Meta` 只收 `retrieval` 包内定义的类型（`PacketMeta` 是包内标记接口），所以类型定义在那儿最省一层转换 —— 请求体直接绑它、RunRequest 直接放它、块构建器直接读它。
 3. 细节：前后文超长是**截断**不是 400（它只是消歧提示，报错会把整轮提问打断）；点回文档靠**点胶囊里的引用文字**（不是"引用条"）；闪一下用临时 `mark`（1.1s 后 `unwrapAll + redrawAnnotations` 拆掉），临时层没有对应批注，右键菜单会跳过它。
 
+> **⚠️ 以下两段描述的 hover popover 已于 2026-10-06 整体删除，仅作历史记录。**
+
 **长批注的 hover 浮层（P5 之后才暴露）**：AI 的长回答存成批注后，hover 浮层动辄上千字。浮层是 `position: fixed` 且原本没有 `max-height` —— 超出视口那截永远拿不到，滚轮还会冒泡去滚正文。现在封顶 `min(62vh, 520px)` + 内滚 + `overscroll-behavior: contain`（防连滚），宽度放宽到 `min(420px, 88vw)`（少滚），`.p-note` 加 `overflow-wrap: anywhere`（长 URL 不横向溢出）。`showPopover()` 的上下翻转逻辑没动（高度被 cap 之后本来就够用）。
 
 **还有个坑（真机复现）**：`window` 上那个 capture 阶段的 scroll 监听（`hideAll(); hidePopover()`）**连后代元素的滚动都收得到**（`scroll` 不冒泡，但 capture 会命中，`e.target` 就是被滚的元素）。浮层自己是滚动容器 → 一滚浮层就被它关掉，紧接着滚轮落到正文上，用户看到的是「浮层滚不动、只有文档在滚、长批注还是读不完」。现在监听里加一句 `if (popover.contains(e.target)) return;`（浮层内滚不算页面滚动；页面滚动照旧关浮层，P3 语义不变），并把 `hoverKey` 的复位收进 `hidePopover()` —— 否则任何一条隐藏路径都可能留下卡住的 `hoverKey`，让同一处再也 hover 不出浮层。`overscroll-behavior: contain` 在这里才真正派上用场：滚到浮层底部不把滚动串给正文，也就不会触发页面 scroll 把浮层关掉。 另外按用户要求**卡片里不显示滚动条**（`scrollbar-width: none` + `.popover::-webkit-scrollbar { width: 0 }`；内容照样能滚，与 macOS 覆盖式滚动条的观感一致）。
@@ -1027,3 +1029,11 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 
 - 右键划线曾同时弹出选区工具条与右键菜单：`mouseup` 未判鼠标键，而 WebKit 右键会先自动选中光标下的词。修复：`mouseup` 只认左键并清掉右键的自动选区，`contextmenu` 先 `hideToolbar()`。
 - 详见 `docs/design/document-annotation-focus/design.md` 的「2026-10-06 · 右键不再叠出选区工具条」；`check-reader-html.sh` 168→171。
+
+### 2026-10-06 · 删除 hover popover（用户拍板）
+
+- **决定**：正文 hover 划线不再弹浮层（原「显示 note + 交叠列全部 + 重叠划线标签 + 长批注封顶内滚」整块删）；`.ann-bubble` 圆点的 `title="查看批注"` 原生 tooltip 也去掉。note 只在右侧批注面板看。**重叠划线失去可见提示**（用户已确认可接受）。D8、§7.4、§8.3 已就地更新；§12.6「长批注的 hover 浮层」两段标注作废。
+- **删除**（`DocumentReaderView.swift`）：`#popover` 元素、`.popover`/`.p-quote`/`.p-note`/`.p-foot`/`.p-item`/`.p-tag` 样式、`content.mousemove`/`mouseleave` 监听、`showPopover`/`hidePopover`/`scheduleHidePopover` 及仅供它用的 `esc`/`timeStr`、各处 `hidePopover()` 调用、scroll 监听的 `popover.contains` 守卫、`b.title`。
+- **保留**：`mark.hl:hover` 线色变实。
+- **测试**：`check-reader-html.sh` 171→159；`snapshot-reader.sh`/`.swift` 删 `marks-longnote`、`marks-longnote-scroll` 两 job 与探针 `popover` 字段。
+- **详见**：`docs/design/document-annotation-focus/design.md` 的「2026-10-06 · 删除 hover popover」。

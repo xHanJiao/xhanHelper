@@ -184,6 +184,13 @@ final class DocumentReaderController: ObservableObject {
         }
     }
 
+    /// 收起所有已展开的线程（头部「收起全部」按钮）。
+    /// 生成中的线程不收 —— 与卡片折叠行的 `.disabled(busy)` 守卫保持一致，
+    /// 否则守着 spinner 的线程被折叠、`defer` 清掉 busy 后回复就没人看了。
+    func collapseAllThreads() {
+        expandedAnnotationIDs.subtract(busyReplyIDs)
+    }
+
     private func loadReplies(annotationId: String) async {
         loadingReplyIDs.insert(annotationId)
         defer { loadingReplyIDs.remove(annotationId) }

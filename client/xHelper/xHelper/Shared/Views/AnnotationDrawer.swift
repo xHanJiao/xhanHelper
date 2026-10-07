@@ -99,6 +99,8 @@ struct AnnotationPanel: View {
     let onReply: (String, String?) -> Void
     let onDelete: (String) -> Void
     let onCollapse: () -> Void
+    /// 收起所有已展开的回复线程（头部按钮，仅在有展开项时段显示）
+    let onCollapseAll: () -> Void
     /// 卡片悬停变化：(批注 id, 是否在卡内, 卡片 global frame)。用于画「卡片→划线」连线。
     let onHoverCard: (String, Bool, CGRect) -> Void
 
@@ -141,6 +143,17 @@ struct AnnotationPanel: View {
                 .background(Color.secondary.opacity(0.12))
                 .clipShape(Capsule())
             Spacer()
+            if !expandedIDs.isEmpty {
+                Button(action: onCollapseAll) {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                        .font(.system(size: fontManager.scaledSize * 0.6, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("收起全部回复")
+            }
             Button(action: onCollapse) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: fontManager.scaledSize * 0.68, weight: .semibold))
@@ -598,6 +611,7 @@ private func previewPanel(
         focusRequest: focusRequest,
         onToggle: { _ in }, onJump: { _ in }, onReply: { _, _ in },
         onDelete: { _ in }, onCollapse: {},
+        onCollapseAll: {},
         onHoverCard: onHoverCard
     )
 }

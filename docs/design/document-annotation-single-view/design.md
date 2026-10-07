@@ -47,6 +47,8 @@
 
 去掉两个 mode 按钮，其余（标题、计数胶囊、收起 chevron）不变。
 
+**2026-10-06 追加**：计数胶囊右侧、收起 chevron 左侧新增「**收起全部**」图标按钮（`arrow.down.right.and.arrow.up.left`，`help="收起全部回复"`）。仅当有已展开的线程（`expandedIDs` 非空）时才显示；点击收起全部，但**生成中的线程保留展开**。
+
 ### 3.2 失活卡片（`annotation.orphaned == true`）
 
 保留原有的失活外观：引文灰 + 删除线、note 竖线灰、「已失活」红徽标。
@@ -118,3 +120,10 @@
 - **决定**：原热区只有「引文」那一行（短引文时是窄条），太小；改为**整张卡片可点跳转**。
 - **实现**：`AnnotationDrawer.swift` — 把 `.contentShape(Rectangle())` + `.onTapGesture { onJump() }` 从 `quoteBlock` 挪到 `AnnotationThreadCard` 根 `VStack`（`.clipShape` 之后）。卡片内 Button/TextField（折叠行、「让 AI 回复」、「删除」、追问输入框）优先消费自己的点击，故除它们外整卡任意处都可跳；`contextMenu`（右键）与悬停连线不受影响。
 - **不改**：引文/批注文本内容与排版；`onJump` 目标逻辑不变。
+
+### 2026-10-06 · 头部「收起全部」按钮（用户拍板）
+
+- **需求**：面板里同时展开多条回复线程后，想一键全收；位置在计数胶囊右侧、收起 chevron 左侧。
+- **实现**：`AnnotationDrawer.swift` — `AnnotationPanel` 加 `onCollapseAll` 注入回调；头部加图标按钮 `arrow.down.right.and.arrow.up.left`（`help="收起全部回复"`），**仅当 `expandedIDs` 非空时显示**，点击调用回调。`DocumentReaderView.swift` 加 `collapseAllThreads()`（`expandedAnnotationIDs.subtract(busyReplyIDs)` —— **生成中的线程不收**，与卡片折叠行的 `.disabled(busy)` 守卫一致）；`DocumentListView.swift` 装配 `onCollapseAll`。
+- **不改**：单条 `onToggle` 折叠、追问输入框本地态；服务端 / JS / 数据模型不动。
+- **验证**：`swiftc -typecheck`（macOS + iOS）0 error；真机点一下全部回复收起、按钮随之为空而隐去。

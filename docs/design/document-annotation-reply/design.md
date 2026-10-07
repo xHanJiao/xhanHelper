@@ -380,7 +380,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 
 - **单视图**：`AnnotationThreadCard` 列表——每条批注 = 划线圈引 + 批注 + 可折叠线程；失活条目的「删除」在卡片内。
   - 原「讨论 / 全部」两视图与扁平列表（三 tab）已于 **2026-10-06** 合并删除，见 `docs/design/document-annotation-single-view/design.md`。
-- 头部：`划线与批注 N` + 收起 chevron。面板宽 `Layout.docAnnotPanelWidth = 300`。
+- 头部：`划线与批注 N` + 收起 chevron。面板宽 `Layout.docAnnotPanelWidth = 300`。**2026-10-06 追加**：计数胶囊右侧、收起 chevron 左侧有「收起全部」图标按钮（`arrow.down.right.and.arrow.up.left`），仅当有展开线程时显示；**生成中的线程不收**（与卡片折叠行的 `.disabled(busy)` 守卫一致）。
 
 ### 7.2 线程卡片交互（`AnnotationThreadCard`）
 
@@ -583,7 +583,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 
 - 模型 `Shared/Models/DocumentAnnotation.swift`：`AnnotationReply`、`DocumentAnnotation.replyCount/lastReply`（可选）、`DocumentAnnotationListResponse`/`AnnotationReplyListResponse`/`AnnotationReplyCreateResponse`、`AnnotationNoteUpdate`。
 - 接口 `Shared/Services/APIClient.swift`：`listAnnotationReplies` / `replyToAnnotation`（在 `deleteAnnotation` 之后）。
-- 控制器 `Shared/Views/DocumentReaderView.swift`：`repliesByAnnotation` / `expandedAnnotationIDs` / `loadingReplyIDs` / `busyReplyIDs` / `connectorID` / `connectorRect`；`toggleThread` / `loadReplies` / `reply` / `forgetThread` / `beginConnectorTracking` / `endConnectorTracking` / `measureConnector`；`apply` 里 `case "scroll"`；`pushAnnotations` 末尾重测连线。
+- 控制器 `Shared/Views/DocumentReaderView.swift`：`repliesByAnnotation` / `expandedAnnotationIDs` / `loadingReplyIDs` / `busyReplyIDs` / `connectorID` / `connectorRect`；`toggleThread` / `collapseAllThreads` / `loadReplies` / `reply` / `forgetThread` / `beginConnectorTracking` / `endConnectorTracking` / `measureConnector`；`apply` 里 `case "scroll"`；`pushAnnotations` 末尾重测连线。
 - JS（同文件的 `template` 字符串）：`annotationRect(id)`（`scrollToAnnotation` 之后）、`scroll` 监听补 `post({type:'scroll'})`、`return {…, annotationRect}` 导出。
 - 视图 `Shared/Views/AnnotationDrawer.swift`：顶部 `AnnotationFocus` + `AnnotationHighlightColor` + `AnnotationConnectorLayer`（**跨平台**）；`#if os(macOS)` 内 `AnnotationPanel` / `AnnotationThreadCard` / `AnnotationTime`；末尾 `#if DEBUG` 的 `DocPreviewShell` + `previewPanel(...)` + `WavyUnderline` + `ConnectorPreviewDemo` + 多个 `#Preview`。
 - 装配 `Shared/Views/DocumentListView.swift`（`DocumentFullView`）：`@AppStorage` 两键（`xhan_doc_annot_open`/`xhan_doc_toc_collapsed`）、`docWidth`/`readerFrame`/`connectorID`/`connectorCardFrame`、`layoutWidth`/`tocExpanded`/`annotExpanded`/`connectorStart`/`connectorEnd`、`annotationPanel`/`annotationStrip`、HStack 上的 `onGeometryChange` + `.overlay { AnnotationConnectorLayer }`、`toggleAnnotationPanel()`。

@@ -702,6 +702,7 @@ private struct DocumentFullView: View {
             onReply: { id, content in Task { await reader.reply(annotationId: id, content: content) } },
             onDelete: { reader.deleteAnnotation(id: $0) },
             onCollapse: { clearConnector(); withAnimation { annotOpen = false } },
+            onCollapseAll: { reader.collapseAllThreads() },
             onHoverCard: { id, inside, frame in
                 if inside {
                     connectorID = id

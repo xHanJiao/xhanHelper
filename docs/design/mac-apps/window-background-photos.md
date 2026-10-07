@@ -17,7 +17,7 @@
 自己的照片，与桌面/其他 app 无关：
 
 - **始终有一张底图**（不再提供"透桌面纯毛玻璃"）：用户没导入 → 内置默认图；导入过 → 用用户池。
-- 底图是**重度模糊、只留色块**的一层；全窗 `regularMaterial` 压在其上。
+- 底图是**重度模糊、只留色块**的一层；原先其上压全窗 `regularMaterial`，**2026-10-07 因灰闪移除**（见 §八/D10），现直接以底图当作玻璃。
 - 支持"选一个目录 → 导入图片（一键压到 192px）到内部目录 → 随机轮换"，导入后与源目录无关。
 
 ### 决策（已拍）
@@ -33,13 +33,13 @@
 | D7 | 轮换触发 | 单选：启动随机 / 切屏随机（切走再切回本 app）/ 定时 3·5·20min |
 | D8 | 呈现强度 | 重度模糊、只留色块；模糊半径 **60**、`.blur(opaque: true)` |
 | D9 | ⌘, 设置窗 | 只铺内容区，32pt 标题栏保持系统原生 |
-| D10 | 全窗顶层 | **保留 `regularMaterial`**（不换纯遮罩）；玻璃语义仍归卡片层 |
+| D10 | 全窗顶层 | ~~保留 `regularMaterial`~~ → **已移除**（2026-10-07：灰闪，见 §八）；玻璃语义归卡片层 |
 | D11 | 文档阅读器底 | 正文给一层"纸"底（material/浅色），保可读；底图只透到四周 |
 
 ## 二、现状（代码事实）
 
 - **窗口根**：`App.swift:536` 的 `WindowGroup`，content 套 `.glassWindow()`（`:546`）。
-  `GlassWindowModifier.swift:7-8` = `content.ignoresSafeArea(edges:.top).background(.regularMaterial)`。
+  `GlassWindowModifier.swift` = `content.ignoresSafeArea(edges:.top).background(AppBackdrop())`（整窗只挂底图，不压 material）。
 - **窗口透明**：`App.swift:501-508` `configureWindow`：`isOpaque=false`、`backgroundColor=.clear`、
   `toolbar=nil`；由 `applicationWill/DidBecomeActive`（`:367-376`）对所有窗口调用。窗口样式
   `.windowStyle(.hiddenTitleBar)`（`App.swift:609`）。
@@ -50,7 +50,7 @@
   本身**无底色**；顶栏也**无底色**。
 - **暖色渐变的归属**：`GlassBackground.swift`（LinearGradient + 光晕）**当前无 macOS 分支**，仅被 iOS
   `ChatView`、`SettingsView` 及 **macOS `LocalSettingsViews.swift:131`（解锁页）/`:176`（首次配置页）** 使用。
-  macOS 主聊天窗走的是 `.regularMaterial`。
+  macOS 主聊天窗走 `AppBackdrop`（固定照片底图；原先整窗 `.regularMaterial` 已于 2026-10-07 移除，见 §八）。
 - **图片压缩现成件**：`ImageCompressor`（`Shared/Services/ImageCompressor.swift`）——`shrink`（长边 2048 / >2MB）、
   `thumbnail(_:maxPixel:)`（`:82`，ImageIO 降采样、含 EXIF 转正）、`encode`（private）。
 - **数据根**：`LocalPaths.dataRoot`（`LocalPaths.swift:56`），dev/prod 隔离；`LocalPaths.allDataRoots`（`:61`）护栏用。
@@ -72,18 +72,14 @@
 
 ### 4.1 窗口层（唯一不变量）
 
-`GlassWindowModifier` 改为整窗显式双层（照片在最底、玻璃压上；D10 = 保留玻璃）：
+`GlassWindowModifier` 整窗只挂 `AppBackdrop`（照片在最底，不透明）。**不压整窗 `regularMaterial`**（原 D10 方案，2026-10-07 因灰闪移除，见 §八）：
 
 ```swift
 content
   .ignoresSafeArea(edges: .top)
   .background {
-      ZStack {
-          AppBackdrop()                        // 照片（默认 or 用户池），不透明
-          Rectangle().fill(.regularMaterial)   // 玻璃，压在照片上
-      }
-      .ignoresSafeArea()                       // 含 32pt 系统标题栏，无横缝
-  }
+      AppBackdrop()                        // 照片（默认 or 用户池），重模糊 + 遮罩，不透明
+  }                                        // AppBackdrop 内部已 ignoresSafeArea（含 32pt 标题栏，无横缝）
 ```
 
 - `AppBackdrop` 永不为空（§4.2），照片层不透明 → 桌面/其他 app 被彻底遮住。
@@ -150,8 +146,11 @@ content
 - 池子只存**文件清单**，不预解码整池（每张只有 192px，解码本就极便宜）。
 - `AppBackdrop`：`Image(...)` → `scaledToFill` → `.blur(radius: 60, opaque: true)`（**`opaque: true` 必修**：
   否则重模糊四边渐隐、透出底层桌面）。按 `colorScheme` 叠暖色遮罩：浅色 `chatBackground`、深色 `chatBackgroundDeep`。
-- 遮罩已实现：`veil = 0.35`，浅色 `Color("chatBackground")`、深色 `Color("chatBackgroundDeep")`（预览靶调出的值）。
-  等价 `color-mix(in srgb, <chatBackground|chatBackgroundDeep> 35%, transparent)`；真机若偏了只改 `AppBackdrop.veil`。
+- 遮罩已实现：`veil = 0.40`，浅色 `Color("chatBackground")`、深色 `Color("chatBackgroundDeep")`（真机调出的值）。
+  等价 `color-mix(in srgb, <chatBackground|chatBackgroundDeep> 40%, transparent)`；真机若偏了只改 `AppBackdrop.veil`。
+- **中性白霜 `frost`**（2026-10-07 补）：整窗 `.regularMaterial` 移除后（§八），原材质的"提亮"随之丢失、整体变暗。
+  在遮罩之上再叠一层 `Color.white.opacity(frost)` 补偿：浅色 `0.40`、深色 `0.08`（深色更小，因深色材质只提到浅灰）。
+  真机若偏亮/偏暗只改这两个数（`AppBackdrop.frostLight/frostDark`）。
 - **D11 文档"纸"底**：右栏文档阅读器 `DocumentReaderView` 是全透明 WKWebView（`:409/:438`），底图会透到正文后。
   给其宿主一层 material（或浅色"纸"底），保证正文可读；底图只透到四周。
   （注：`AnnotationDrawer.swift:738/:840` 的实色 `chatBackground` 在 preview 壳里，不是生产路径。）
@@ -164,7 +163,7 @@ content
 | `Shared/Services/BackgroundPhotoStore.swift` | 新增（`#if os(macOS)`：池枚举 / 导入 / 删除 / 清空 / 轮换 / 当前图） |
 | `Shared/Views/AppBackdrop.swift` | 新增（`#if os(macOS)`：默认图或当前图 → 色块层） |
 | `Shared/Services/ImageCompressor.swift` | 改（暴露 `downscaledJPEG(data, maxPixel:)`） |
-| `Shared/Views/GlassWindowModifier.swift` | 改（整窗双层） |
+| `Shared/Views/GlassWindowModifier.swift` | 改（整窗只挂 `AppBackdrop`；双层中的 material 已于 2026-10-07 移除，见 §八） |
 | `Shared/Views/GlassBackground.swift` | 改（mac 走 AppBackdrop；iOS 留渐变） |
 | `Shared/Views/DocumentListView.swift` | 改（`DocumentFullView` mac 加 `.regularMaterial` 纸底，D11） |
 | `Shared/Views/GlassWindowBackground.swift` | **删**（零引用的旧"透桌面"实现，正是要替换掉的反例） |
@@ -182,19 +181,19 @@ content
 ## 六、真机验收清单
 
 1. **标题栏满覆盖**：主窗 0–48pt 那条带（含系统标题栏 32pt）照片一条线到底，左/中/右**无竖缝**、上下**无横缝**。
-2. **材质采样源**：确认 `.regularMaterial` 模糊的是**窗口内照片**而非桌面。
+2. **背景观感**：底图重模糊 + 遮罩后即玻璃观感；不透明，桌面/其他 app 不透。
 3. 空池 → 默认图；导入 → 用户池；清空 → 回默认图。
 4. 三种轮换模式各自生效（启动 / **切走再切回**（含"关设置窗回主窗"）/ 定时）。
 5. ⌘, 设置窗：内容区有底图、**标题栏系统原生**、缩略图与单张删除可用。
 6. 解锁页 / 首次配置页底图正常。
 7. resize 时底图填满圆角、不露边。
 8. 恢复备份后底图还在。
-9. 全窗"照片 + `regularMaterial`"版对比纯遮罩版（D10 已选保留材质，留档）。
+9. ~~全窗"照片 + `regularMaterial`"版对比纯遮罩版（D10 已选保留材质，留档）~~（D10 已改为移除材质）。
 
 ## 七、风险与 fallback
 
-- **R1（最大）**：若 `.regularMaterial` 仍去采样桌面而非窗内照片 → 主窗该处改用显式
-  `NSVisualEffectView(blendingMode: .withinWindow)`，或去掉该处材质、直接靠照片自身的重模糊当玻璃。
+- **R1（最大）**：~~若 `.regularMaterial` 仍去采样桌面而非窗内照片~~ → **2026-10-07 触发并落地**：
+  整窗 `.regularMaterial` 已移除（非不透明窗 + WKWebView 共存下逐键重合成偶发灰闪），直接靠照片自身的重模糊当玻璃（见 §八）。
 - **R2**：若根层 `ignoresSafeArea` 实测够不到窗口最顶 → 在 `configureWindow` 补
   `window.titlebarAppearsTransparent = true` + `styleMask.insert(.fullSizeContentView)`。
 - **R4**：轮换重模糊掉帧 → 缩略图尺寸再调小或对底图做缓存。
@@ -214,3 +213,13 @@ content
   - 删零引用 `GlassWindowBackground.swift`；设置子页改用 `SettingsCard` 分组；池内 <2 张禁用「换一张」。
   - 补 `ImageCompressorCore` 测试（长边 ≤192 / JPEG / 确定性）。
   - **未决**：`grouped Form + scrollContentBackground(.hidden)` 是否真让照片透出（设置窗）需真机验（§六-5）。
+- 2026-10-07：**移除整窗 `regularMaterial`（D10 反转）**。现象：右侧开浏览器时，在中栏输入文字，
+  中栏透明背景偶发一块矩形灰闪（非必现）。根因：窗口非不透明（`configureWindow`）且右侧挂了
+  `WKWebView`（独立合成层），逐键重合成时整窗 `NSVisualEffectView` 偶发画成不透明灰色兜底，
+  只在无内容遮挡的中栏透明区显形。方案：`GlassWindowModifier` 只留 `AppBackdrop`。
+  （输入栏胶囊的 `.regularMaterial` 一度一并替换，评审发现它不在因果链上、且破坏「降低透明度」
+  适配 + 材质模糊（透字鬼影），已回滚。）详见 `docs/bugs/030`。
+  影响文件：`Shared/Views/GlassWindowModifier.swift`、`AGENTS.md`。
+- 2026-10-07（续）：material 移除后整体观感偏暗（原材质兼有"提亮"作用），`AppBackdrop` 补一层
+  中性白霜 `Color.white.opacity(frost)` 补偿（浅 0.40 / 深 0.08，见 §4.7）。影响文件：
+  `Shared/Views/AppBackdrop.swift`、`xHelperMac/WindowBasePreview.swift`（加白霜滑杆）、`AGENTS.md`。

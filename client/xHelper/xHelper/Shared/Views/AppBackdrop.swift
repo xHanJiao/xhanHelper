@@ -16,8 +16,16 @@ struct AppBackdrop: View {
 
     /// 重度模糊半径（只留色块；`opaque: true` 防四边渐隐透出底层）。预览靶调出的值。
     private let blurRadius: CGFloat = 60
-    /// 明暗遮罩不透明度（预览靶调出的值）。
-    private let veil: Double = 0.35
+    /// 明暗遮罩不透明度。真机调出的值。
+    private let veil: Double = 0.40
+    /// 中性白霜不透明度：补偿移除整窗 `.regularMaterial` 后丢失的提亮（bug 030）。
+    /// 浅色偏白霜、深色偏浅灰（深色材质只提到浅灰），故深色取值更小。真机调出的值。
+    private let frostLight: Double = 0.40
+    private let frostDark: Double = 0.08
+    /// 当前色系的白霜不透明度。
+    private var frost: Double {
+        colorScheme == .dark ? frostDark : frostLight
+    }
 
     /// 遮罩色：浅色用暖米压白，深色用近黑压暗（与 WindowsBasePreview 的 tint 一致）。
     private var veilColor: Color {
@@ -32,6 +40,7 @@ struct AppBackdrop: View {
             ZStack {
                 photoLayer
                 veilColor.opacity(veil)
+                Color.white.opacity(frost)
             }
             .ignoresSafeArea()
             .clipped()

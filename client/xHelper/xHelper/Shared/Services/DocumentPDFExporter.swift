@@ -115,7 +115,10 @@ enum DocumentPDFExporter {
         window.orderFront(nil)
         defer { window.close() }
 
-        let webView = WKWebView(frame: CGRect(origin: .zero, size: pageSize))
+        // 与文档阅读器一致：非持久 store，避免文档图 URL 被持久 HTTP 缓存污染。
+        let pdfConfig = WKWebViewConfiguration()
+        pdfConfig.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(origin: .zero, size: pageSize), configuration: pdfConfig)
         window.contentView = webView
         webView.navigationDelegate = loadWaiter
         webView.loadHTMLString(html, baseURL: baseURL)

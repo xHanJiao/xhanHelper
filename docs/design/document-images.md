@@ -178,18 +178,24 @@ dev/prod/test 环境 yaml 同步补 `storage` 段。
 
 ## 九、部署
 
-`server/nginx-helper.conf` 增加：
+生产前端由 nginx 独立托管，**必须**为图床公开读加反代；否则 `/images/<uuid>.<ext>` 会落到
+SPA fallback 回吐首页 HTML（详见 `docs/bugs/031`）。配置在 `server/nginx-helper.conf`
+（线上 `/etc/nginx/sites-enabled/helper.xhanx.cn` 的版本化副本）：
 
 ```nginx
 location /images/ {
     proxy_pass http://127.0.0.1:8088;
     proxy_set_header Host $host;
-    expires 365d;
-    add_header Cache-Control "public, immutable";
 }
+# 单图上限 32 MiB（storage.max_image_bytes），留余量；默认 1M 会让大图上传 413
+client_max_body_size 40M;
 ```
 
-（Go 作为唯一事实来源：dev 的 localhost:8088 直接可用，prod 经 nginx 转发。）
+- 缓存头由 Go 的 `serve()` 下发（`public, max-age=31536000, immutable`），nginx 不重复写，
+  否则会出现两条 `Cache-Control`。
+- `make deploy*` 会把 `nginx-helper.conf` 留档到服务器 `$P/`，但**不会自动安装**（安装需 root）；
+  改动后需手动覆盖到 `/etc/nginx` 并 `sudo nginx -t && sudo systemctl reload nginx`。
+- Go 是唯一事实来源：dev 直连 `localhost:8088` 即可用，prod 经 nginx 转发。
 
 ---
 

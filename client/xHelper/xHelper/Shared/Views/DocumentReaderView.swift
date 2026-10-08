@@ -423,6 +423,9 @@ private struct ReaderWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        // 文档 HTML/图片每次现渲染、图片 immutable，不需要持久缓存；用非持久 store
+        // 避免文档图 URL 被持久 HTTP 缓存里的错误响应（如 SPA HTML）污染成裂图。
+        config.websiteDataStore = .nonPersistent()
         config.userContentController.add(context.coordinator, name: "reader")
 
         let webView = WKWebView(frame: .zero, configuration: config)

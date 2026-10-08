@@ -6,22 +6,41 @@ enum TooltipDirection {
     case down
 }
 
+/// 悬浮提示水平对齐：贴近屏幕边缘的按钮用 leading/trailing，让浮层朝内侧伸展，避免出屏。
+enum TooltipAlign {
+    case leading
+    case center
+    case trailing
+}
+
 /// 通用 hover tooltip：hover 延迟 delay 秒后在按钮外侧浮出玻璃圆角小条，
 /// 移开立即消失。输入框与顶栏胶囊按钮共用，保证全 app 提示风格统一。
 struct HoverTooltipModifier: ViewModifier {
     let text: String
     var direction: TooltipDirection = .up
+    var align: TooltipAlign = .center
     var delay: TimeInterval = 0.45
 
     @State private var tooltipVisible = false
     @State private var tooltipTask: Task<Void, Never>?
+
+    private var alignment: Alignment {
+        switch (direction, align) {
+        case (.up, .leading): return .topLeading
+        case (.up, .trailing): return .topTrailing
+        case (.up, .center): return .top
+        case (.down, .leading): return .bottomLeading
+        case (.down, .trailing): return .bottomTrailing
+        case (.down, .center): return .bottom
+        }
+    }
 
     func body(content: Content) -> some View {
         content
             .onHover { isHovering in
                 schedule(isHovering)
             }
-            .overlay(alignment: direction == .up ? .top : .bottom) {
+            .overlay(alignment: alignment) {
                 if tooltipVisible && !text.isEmpty {
                     tooltipLabel
                         .transition(.opacity.combined(with: .move(edge: direction == .up ? .bottom : .top)))
@@ -63,7 +82,8 @@ struct HoverTooltipModifier: ViewModifier {
 
 extension View {
     /// 添加通用 hover tooltip。
-    func hoverTooltip(_ text: String, direction: TooltipDirection = .up, delay: TimeInterval = 0.45) -> some View {
-        modifier(HoverTooltipModifier(text: text, direction: direction, delay: delay))
+    func hoverTooltip(_ text: String, direction: TooltipDirection = .up,
+                      align: TooltipAlign = .center, delay: TimeInterval = 0.45) -> some View {
+        modifier(HoverTooltipModifier(text: text, direction: direction, align: align, delay: delay))
     }
 }

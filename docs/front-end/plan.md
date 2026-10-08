@@ -127,9 +127,10 @@ Phase 3 (实体管理页面)    Phase 4 (高级定制)
 ## 部署架构
 
 ```
-浏览器 → :80 (nginx)
-            /        → /srv/xhan-helper/web/dist/  (静态文件, SPA fallback)
-            /api/*   → localhost:8088                     (Go 后端, proxy_pass)
+浏览器 → :443 (nginx)
+            /        → /srv/xhan-helper/front-end/dist/  (静态文件, SPA fallback)
+            /api/*   → localhost:8088                           (Go 后端, proxy_pass)
+            /images/*→ localhost:8088                           (图床公开读, proxy_pass)
 ```
 
 - nginx 负责前端静态文件，不替换
@@ -140,10 +141,10 @@ nginx 配置示例：
 
 ```nginx
 server {
-    listen 80;
-    server_name _;
+    listen 443 ssl;
+    server_name helper.xhanx.cn;
 
-    root /srv/xhan-helper/web/dist;
+    root /srv/xhan-helper/front-end/dist;
     index index.html;
 
     location /api/ {
@@ -155,11 +156,22 @@ server {
         proxy_buffering off;
     }
 
+    # 图床公开读：必须反代到 Go，否则落 SPA fallback 回吐首页（见 docs/bugs/031）
+    location /images/ {
+        proxy_pass http://127.0.0.1:8088;
+        proxy_set_header Host $host;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;  # SPA fallback
     }
+
+    # 单图上限 32 MiB，留余量；默认 1M 会让大图上传 413
+    client_max_body_size 40M;
 }
 ```
+
+> 真实（含 HTTPS/证书/安全头/超时）以 `server/nginx-helper.conf` 为准，改后需手动装到线上并 reload。
 
 ## 目录结构
 

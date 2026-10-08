@@ -38,7 +38,7 @@ struct HistoryPanelView: View {
             }
             .buttonStyle(.plain)
             .foregroundColor(.secondary)
-            .help("清除网页缓存（重新打开页面生效）")
+            .hoverTooltip("清除网页缓存（重新打开页面生效）", direction: .down, align: .trailing)
             Button { store.clear() } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 11))
@@ -47,10 +47,11 @@ struct HistoryPanelView: View {
             }
             .buttonStyle(.plain)
             .foregroundColor(.secondary)
-            .help("清空全部历史")
+            .hoverTooltip("清空全部历史", direction: .down, align: .trailing)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .zIndex(1)   // 抬到 List 之上，否则 .down 的 tooltip 被下方列表盖住
     }
 
     /// 清除 WKWebView HTTP 缓存（磁盘 + 内存 + 离线缓存）。历史≠缓存，清历史不动缓存。

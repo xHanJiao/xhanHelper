@@ -223,3 +223,11 @@ content
 - 2026-10-07（续）：material 移除后整体观感偏暗（原材质兼有"提亮"作用），`AppBackdrop` 补一层
   中性白霜 `Color.white.opacity(frost)` 补偿（浅 0.40 / 深 0.08，见 §4.7）。影响文件：
   `Shared/Views/AppBackdrop.swift`、`xHelperMac/WindowBasePreview.swift`（加白霜滑杆）、`AGENTS.md`。
+- 2026-10-09：**修 resize/常态下窗口最顶一条（系统标题栏 32pt）露桌面**。根因：上一条把
+  `GlassWindowModifier` 里兜住标题栏的外层 `.ignoresSafeArea()`（连同 material）一起删了，
+  只留 `AppBackdrop`，而它 body 里是 `ZStack{…}.ignoresSafeArea().clipped()` —— `.ignoresSafeArea()`
+  扩进安全区的部分被其后的 `.clipped()` 裁回，标题栏那条没被覆盖；窗口非不透明 → 直接透桌面。
+  方案（本次只做 A）：把 `.clipped()` 从 ZStack 外层收到 `photoLayer` 内部、给照片层显式
+  `.frame(maxWidth:.infinity,maxHeight:.infinity)`，`.ignoresSafeArea()` 留在 body 最外层不再跟裁剪；
+  ZStack 最底补一层不透明 `Color("chatBackground")` 兜底（照片掉帧/裁边也只露底色，不露桌面）。
+  未做 B（`configureWindow` 窗口级不透明兜底）。影响文件：`Shared/Views/AppBackdrop.swift`。

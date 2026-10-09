@@ -38,12 +38,15 @@ struct AppBackdrop: View {
             Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
         } else {
             ZStack {
+                // 最底不透明纯色兜底：照片层若被裁/掉帧也只露这个色，绝不"透桌面"。
+                Color("chatBackground")
                 photoLayer
                 veilColor.opacity(veil)
                 Color.white.opacity(frost)
             }
+            // `.ignoresSafeArea()` 必须是最外层修饰符——后面再挂 `.clipped()` 会把扩到
+            // 安全区（32pt 标题栏）的部分裁回去，顶上一条就露桌面。裁剪收到 photoLayer 内部。
             .ignoresSafeArea()
-            .clipped()
         }
     }
 
@@ -54,7 +57,9 @@ struct AppBackdrop: View {
                 .resizable()
                 .interpolation(.high)
                 .scaledToFill()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .blur(radius: blurRadius, opaque: true)
+                .clipped()
         } else {
             // 兜底：默认图取不到时用不透明纯色，绝不落到"空图 → 透桌面"。
             Color("chatBackground")

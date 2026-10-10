@@ -195,9 +195,9 @@ struct ChatView: View {
                 .padding(.bottom, 8)
             }
 
-            // 执行计划便签：独立一行，右停靠在子任务状态条上方（计划在上、子任务在下）。
-            // 由 InputBar 内部 overlay 改为这里显式成行，便于控制与子任务条的上下顺序。
-            planNoteRow
+            // 子任务条上方一行：L3 待确认条（居中偏左）+ 执行计划便签（靠右）并排；
+            // 窄窗由 ComposerTopRow 内的 ViewThatFits 自动回退成竖排（计划在上、待确认在下）。
+            composerTopRow
 
             // 子任务活动面板：内联在底部栈里（计划便签与输入栏之间）。
             // 折叠态=一行状态条；展开态=详情面板（按内容自适应，太高则封顶内部滚动）。
@@ -231,19 +231,7 @@ struct ChatView: View {
                 }
             }
 
-            // L3 工具确认行：输入框上方，固定可见（浏览历史消息时也不会错过许可请求）
-            // 队列只显示队首；后面还有排队时给出计数提示。
-            if let conf = viewModel.pendingToolConfirmations.first {
-                if viewModel.pendingToolConfirmations.count > 1 {
-                    Text("另有 \(viewModel.pendingToolConfirmations.count - 1) 条待确认")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, Layout.chatHorizontalPadding)
-                }
-                toolConfirmationBar(conf)
-            }
-
-            // 执行计划便签：见上方 planNoteRow（已作为独立一行渲染）。
+            // L3 待确认条与执行计划便签：见上方 composerTopRow（已合并为子任务条上方的一行）。
 
             // 输入栏（驾驶舱）：按钮通过 builder 注入，收起/展开双态
             inputBar
@@ -526,10 +514,34 @@ struct ChatView: View {
         }
     }
 
-    /// 执行计划便签行：独立成行，右停靠在子任务状态条上方（计划在上、子任务在下）。
-    /// 独立成属性：同上，InputBar 调用表达式已在类型检查预算边缘。
+    /// 子任务条上方一行：把 L3 待确认条（前）与执行计划便签（后）并排；放不下自动竖排。
+    /// 独立成属性：InputBar 调用表达式已在类型检查预算边缘。
     @ViewBuilder
-    private var planNoteRow: some View {
+    private var composerTopRow: some View {
+        let hasPlan = viewModel.planState == .active && !viewModel.planDismissed
+        if let conf = viewModel.pendingToolConfirmations.first {
+            ComposerTopRow(leading: { pendingConfirmationBlock(conf) }, trailing: { planNote })
+        } else if hasPlan {
+            ComposerTopRow(leading: { EmptyView() }, trailing: { planNote })
+        }
+    }
+
+    /// L3 待确认块：队列计数提示 + 待确认条本体。
+    @ViewBuilder
+    private func pendingConfirmationBlock(_ conf: ToolConfirmation) -> some View {
+        VStack(spacing: 4) {
+            if viewModel.pendingToolConfirmations.count > 1 {
+                Text("另有 \(viewModel.pendingToolConfirmations.count - 1) 条待确认")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            toolConfirmationBar(conf)
+        }
+    }
+
+    /// 执行计划便签本体（右对齐、宽度封顶）。外层摆放交给 ComposerTopRow。
+    @ViewBuilder
+    private var planNote: some View {
         if viewModel.planState == .active && !viewModel.planDismissed {
             PlanNoteView(
                 goal: viewModel.planGoal,
@@ -538,14 +550,10 @@ struct ChatView: View {
                 onToggle: { viewModel.togglePlanExpand() },
                 onDismiss: { viewModel.dismissPlanTodo() }
             )
-            .frame(maxWidth: 360, alignment: .trailing)
+            .frame(maxWidth: 300, alignment: .trailing)
             .transition(Self.planDismissTransition)
             .animation(.easeOut(duration: 0.25), value: viewModel.planState)
             .animation(.easeOut(duration: 0.25), value: viewModel.planDismissed)
-            .frame(maxWidth: 720, alignment: .trailing)
-            .padding(.horizontal, Layout.chatHorizontalPadding)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.bottom, 6)
         }
     }
 
@@ -848,7 +856,6 @@ struct ChatView: View {
                     .controlSize(.small)
                     .tint(accent)
             }
-            .padding(.horizontal, Layout.chatHorizontalPadding)
             .padding(.vertical, 4)
         }
     }
@@ -884,3 +891,105 @@ struct ChatView: View {
     }
 #endif
 }
+
+// MARK: - ComposerTopRow
+/// 子任务条上方的一行：把「待确认条」（前）与「执行计划便签」（后）并排——
+/// 待确认条居中偏左、计划便签靠右；窗口窄到放不下时 `ViewThatFits` 自动回退成竖排
+/// （计划便签在上、待确认条在下），避免两者互相挤压。
+struct ComposerTopRow<Leading: View, Trailing: View>: View {
+    let leading: Leading
+    let trailing: Trailing
+
+    init(@ViewBuilder leading: () -> Leading, @ViewBuilder trailing: () -> Trailing) {
+        self.leading = leading()
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            // 宽：待确认条居中偏左 + 计划便签靠右，同一行。
+            HStack(alignment: .bottom, spacing: 12) {
+                Spacer(minLength: 0)
+                leading
+                Spacer(minLength: 12)
+                trailing
+            }
+            // 窄：竖排回退——计划便签(右) 在上、待确认条 在下，各自完整可读。
+            VStack(spacing: 6) {
+                trailing.frame(maxWidth: .infinity, alignment: .trailing)
+                leading
+            }
+        }
+        .frame(maxWidth: 720)
+        .padding(.horizontal, Layout.chatHorizontalPadding)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.bottom, 6)
+    }
+}
+
+#if DEBUG
+#Preview("子任务条上方一行 · 宽") {
+    ComposerTopRowPreview(containerWidth: 900)
+}
+
+#Preview("子任务条上方一行 · 窄") {
+    ComposerTopRowPreview(containerWidth: 400)
+}
+
+/// 预览容器：ComposerTopRow + 真实 PlanNoteView + 仿真待确认条。
+private struct ComposerTopRowPreview: View {
+    let containerWidth: CGFloat
+
+    private let steps: [PlanStep] = [
+        PlanStep(content: "确认测试目标与范围", status: "completed"),
+        PlanStep(content: "执行测试步骤并记录结果", status: "in_progress"),
+        PlanStep(content: "汇总结果并输出结论", status: "pending"),
+    ]
+
+    var body: some View {
+        ZStack {
+            Color("chatBackground").ignoresSafeArea()
+            VStack {
+                Spacer()
+                ComposerTopRow {
+                    mockConfirmation
+                } trailing: {
+                    PlanNoteView(goal: "回归测试计划", steps: steps, expanded: true,
+                                 onToggle: {}, onDismiss: {})
+                }
+                // 子任务状态条占位（示意它在下方一行）
+                HStack(spacing: 6) {
+                    Image(systemName: "gearshape").font(.caption).foregroundColor(.accentColor)
+                    Text("2 个子任务运行中").font(.caption).bold()
+                    Text("fs.read").font(.caption2).foregroundColor(.secondary)
+                    Spacer(minLength: 4)
+                    Text("展开").font(.caption2).foregroundColor(.secondary)
+                    Image(systemName: "chevron.right").font(.caption2).foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .frame(maxWidth: 720)
+                .padding(.horizontal, Layout.chatHorizontalPadding)
+                .padding(.bottom, 24)
+            }
+        }
+        .frame(width: containerWidth, height: 300)
+        .environmentObject(FontSizeManager.shared)
+    }
+
+    private var mockConfirmation: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "shield.lefthalf.filled")
+                .font(.caption).foregroundColor(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("请求执行工具：「读取文件」").font(.caption).foregroundColor(.secondary)
+                Text("filePath=/Users/you").font(.system(.caption, design: .monospaced))
+            }
+            Button("允许") {}.buttonStyle(.bordered).controlSize(.small)
+                .tint(Color("appAccent")).padding(.leading, 12)
+            Button("拒绝") {}.buttonStyle(.bordered).controlSize(.small).tint(.secondary)
+        }
+        .padding(.vertical, 4)
+    }
+}
+#endif

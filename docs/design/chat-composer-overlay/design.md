@@ -121,3 +121,14 @@ ChatView.content
       `SubagentPanel.swift`（`SubagentDetailPanel` 去掉 `maxListHeight`/`PreferenceKey` 实测）。
   - 副作用：内联后无遮罩层，只能靠面板头部「收起」收回（不再支持点空白收起）。
   - 详见 `docs/bugs/032-macos-plan-subagent-overlay-layout.md`。
+
+- **2026-10-10 · L3 待确认条与计划便签合并为「子任务条上方一行」**
+  （用户拍板：待确认条放中间、计划便签靠右，同一行；窄窗竖排回退）
+  - 新增可复用 `ComposerTopRow<Leading, Trailing>`（`ChatView.swift`）：`ViewThatFits(in: .horizontal)`
+    ——宽则 `HStack { Spacer; leading; Spacer(min:12); trailing }`（leading 居中偏左、trailing 靠右），
+    窄则 `VStack { trailing(右); leading }`（计划在上、待确认在下）。整体 `maxWidth 720` + 居中 + 底部 6。
+  - `bottomComposer` 顺序变为 `AskUserBar → [待确认 + 计划 同行] → 子任务 → 输入栏`：原独立的
+    `planNoteRow` 与 L3 待确认块合并进 `composerTopRow`（`planNote` 本体宽度 360 → 300 让位）。
+  - diff 预览型待确认条（大卡片）天然走 `ViewThatFits` 竖排回退，不做特殊分支。
+  - 顺带去掉 `toolConfirmationBar` 简单分支的横向 padding（改由 `ComposerTopRow` 统一提供，避免双内边距）。
+  - 预览：`ChatView.swift` 的 `#Preview("子任务条上方一行 · 宽/窄")`。

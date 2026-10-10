@@ -16,6 +16,11 @@ const doc = ref(null)
 const md = new MarkdownIt()
 const { exportPDF } = useExportPDF()
 
+const tableOpen = md.renderer.rules.table_open || ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+const tableClose = md.renderer.rules.table_close || ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+md.renderer.rules.table_open = (...a) => '<div class="table-wrap">' + tableOpen(...a)
+md.renderer.rules.table_close = (...a) => tableClose(...a) + '</div>'
+
 function parseTags(tags) {
   if (!tags) return []
   return tags.split(',').map(t => t.trim()).filter(Boolean)
@@ -84,7 +89,8 @@ onMounted(async () => {
 }
 
 .shared-container {
-  max-width: 820px;
+  max-width: 1100px;
+  width: 100%;
   margin: 0 auto;
   padding: var(--space-xl) var(--space-lg);
 }
@@ -199,9 +205,14 @@ onMounted(async () => {
   color: var(--color-text-muted);
 }
 
+.doc-content :deep(.table-wrap) {
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
 .doc-content :deep(table) {
   border-collapse: collapse;
-  margin: 0.5em 0;
+  margin: 0;
   width: 100%;
 }
 
@@ -210,6 +221,7 @@ onMounted(async () => {
   border: 1px solid var(--color-border);
   padding: 6px 10px;
   text-align: left;
+  overflow-wrap: anywhere;
 }
 
 .doc-content :deep(th) {

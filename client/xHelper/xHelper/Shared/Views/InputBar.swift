@@ -8,9 +8,8 @@ import AppKit
 /// InputBar 只负责：区域摆放（状态行/展开行/编辑器/尾部动作）、收起↔展开动画、
 /// 玻璃容器样式、聚焦/Return/打字空闲等编辑逻辑。具体按钮通过多个
 /// @ViewBuilder 闭包从外部（ChatView）注入，各自带 ButtonVisibility 决定
-/// 在收起态/展开态是否出现；上缘便签面板通过第三个闭包注入（锚定胶囊右上缘，
-/// 不注入时为空视图）。增删按钮不改本文件。
-struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, TopNote: View, BottomLeading: View, AttachmentTraySlot: View>: View {
+/// 在收起态/展开态是否出现。增删按钮不改本文件。
+struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, BottomLeading: View, AttachmentTraySlot: View>: View {
     @Binding var text: String
     @Binding var isEditing: Bool
     let isStreaming: Bool
@@ -34,8 +33,6 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
     let statusRowExtras: (InputBarContext) -> StatusRowExtras
     /// 尾部动作按钮（🎤/发送/停止等，位置随态变化）。
     let trailingActions: (InputBarContext) -> TrailingActions
-    /// 上缘便签面板（可选注入，锚定 720 胶囊右上缘；不注入时为空视图）。
-    let topTrailingNote: (InputBarContext) -> TopNote
     /// 底部左侧槽（上下文圆环等；不注入时为空视图）。
     let bottomLeading: (InputBarContext) -> BottomLeading
     /// 编辑器下方的附件缩略图托盘（不注入时为空视图）。
@@ -50,7 +47,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
     @State private var streamingGlow: CGFloat = 0
 #endif
 
-    /// 便捷 init（无便签面板，TopNote 为 EmptyView）。
+    /// 便捷 init（无展开行 / 底部左侧槽 / 附件托盘）。
     init(
         text: Binding<String>,
         isEditing: Binding<Bool>,
@@ -62,7 +59,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
         onToggleMode: @escaping () -> Void = {},
         @ViewBuilder         statusRow: @escaping (InputBarContext) -> StatusRow,
         @ViewBuilder trailingActions: @escaping (InputBarContext) -> TrailingActions
-    ) where TopNote == EmptyView, BottomLeading == EmptyView, AttachmentTraySlot == EmptyView, StatusRowExtras == EmptyView {
+    ) where BottomLeading == EmptyView, AttachmentTraySlot == EmptyView, StatusRowExtras == EmptyView {
         self.init(
             text: text,
             isEditing: isEditing,
@@ -75,13 +72,12 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
             statusRow: statusRow,
             statusRowExtras: { _ in EmptyView() },
             trailingActions: trailingActions,
-            topTrailingNote: { _ in EmptyView() },
             bottomLeading: { _ in EmptyView() },
             attachmentTray: { _ in EmptyView() }
         )
     }
 
-    /// 完整 init（可注入展开行、上缘便签面板、底部左侧槽、附件托盘）。
+    /// 完整 init（可注入展开行、底部左侧槽、附件托盘）。
     init(
         text: Binding<String>,
         isEditing: Binding<Bool>,
@@ -97,7 +93,6 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
         @ViewBuilder statusRow: @escaping (InputBarContext) -> StatusRow,
         @ViewBuilder statusRowExtras: @escaping (InputBarContext) -> StatusRowExtras,
         @ViewBuilder trailingActions: @escaping (InputBarContext) -> TrailingActions,
-        @ViewBuilder topTrailingNote: @escaping (InputBarContext) -> TopNote,
         @ViewBuilder bottomLeading: @escaping (InputBarContext) -> BottomLeading,
         @ViewBuilder attachmentTray: @escaping (InputBarContext) -> AttachmentTraySlot
     ) {
@@ -115,7 +110,6 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
         self.statusRow = statusRow
         self.statusRowExtras = statusRowExtras
         self.trailingActions = trailingActions
-        self.topTrailingNote = topTrailingNote
         self.bottomLeading = bottomLeading
         self.attachmentTray = attachmentTray
     }
@@ -152,11 +146,6 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
 
     private var macOSBody: some View {
         VStack(alignment: .trailing, spacing: 0) {
-            // 上缘便签：内容自适应，最宽不超过输入框一半；右缘距胶囊右缘 10pt。
-            // 无便签时为空视图，不占空间。
-            topTrailingNote(context)
-                .frame(maxWidth: barWidth / 2, alignment: .trailing)
-                .padding(.trailing, 10)
             twoRowLayout
             .background(
                 GeometryReader { proxy in
@@ -328,9 +317,6 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, T
 #if os(iOS)
     private var iOSBody: some View {
         VStack(alignment: .trailing, spacing: 0) {
-            topTrailingNote(context)
-                .frame(maxWidth: 320, alignment: .trailing)
-                .padding(.trailing, 10)
             HStack(alignment: .center, spacing: 8) {
                 CustomTextView(
                     text: $text,

@@ -100,3 +100,35 @@ ChatView.content
   - 「回到最新」按钮、子任务浮层仍在输入栏**上方**，不被盖住；按钮出现时机无明显滞后。
   - 分享选择态（`shareBottomBar`）与分享结果弹窗的整屏压暗**不被渐隐波及**。
   - 编辑器长高 / 展开「更多操作」/ 出现 AskUserBar 时，安全区自动跟随。
+
+---
+
+## 七、后续变更
+
+- **2026-10-10 · 计划便签改由 bottomComposer 独立成行 + 子任务展开面板改内联**
+  （用户拍板：计划在上、子任务在下；展开面板内联进底部栈，底部贴输入栏、顶部贴计划便签下缘）
+  - 计划便签从 `InputBar` 的 `topTrailingNote` 槽移出，改在 `bottomComposer` 里作为 `planNoteRow`
+    独立一行渲染、插在子任务槽之前 → 顺序变为 计划 → 子任务 → L3 → 胶囊（原顺序
+    「子任务条 → 计划便签 → 胶囊」反转）。
+    - `InputBar.swift`：删除 `TopNote` 泛型参数与 `topTrailingNote`（属性 / 两 init 入参 / 两 body 槽位）。
+    - `ChatView.swift`：`planNoteRow`（右对齐、宽度封顶 360）；`bottomComposer` 引用之。
+  - 展开态从"覆盖式浮层"改"内联"：删掉 `subagentOverlay` 与 `content` 里
+    `.padding(.bottom, composerHeight)`；`bottomComposer` 子任务槽二选一——展开渲染
+    `SubagentDetailPanel`（内联），否则 `SubagentStatusBar`。面板天然夹在计划便签与输入栏之间。
+    内联在包内容的 `VStack` 里，`ScrollView` ideal 阶段返回内容高 → 自动贴内容；
+    外部 `.frame(maxHeight: contentHeight * 0.6)` 封顶，超出内部滚动。
+    - `ChatView.swift`（新增 `@State contentHeight` + `subagentPanelMaxHeight`）、
+      `SubagentPanel.swift`（`SubagentDetailPanel` 去掉 `maxListHeight`/`PreferenceKey` 实测）。
+  - 副作用：内联后无遮罩层，只能靠面板头部「收起」收回（不再支持点空白收起）。
+  - 详见 `docs/bugs/032-macos-plan-subagent-overlay-layout.md`。
+
+- **2026-10-10 · L3 待确认条与计划便签合并为「子任务条上方一行」**
+  （用户拍板：待确认条放中间、计划便签靠右，同一行；窄窗竖排回退）
+  - 新增可复用 `ComposerTopRow<Leading, Trailing>`（`ChatView.swift`）：`ViewThatFits(in: .horizontal)`
+    ——宽则 `HStack { Spacer; leading; Spacer(min:12); trailing }`（leading 居中偏左、trailing 靠右），
+    窄则 `VStack { trailing(右); leading }`（计划在上、待确认在下）。整体 `maxWidth 720` + 居中 + 底部 6。
+  - `bottomComposer` 顺序变为 `AskUserBar → [待确认 + 计划 同行] → 子任务 → 输入栏`：原独立的
+    `planNoteRow` 与 L3 待确认块合并进 `composerTopRow`（`planNote` 本体宽度 360 → 300 让位）。
+  - diff 预览型待确认条（大卡片）天然走 `ViewThatFits` 竖排回退，不做特殊分支。
+  - 顺带去掉 `toolConfirmationBar` 简单分支的横向 padding（改由 `ComposerTopRow` 统一提供，避免双内边距）。
+  - 预览：`ChatView.swift` 的 `#Preview("子任务条上方一行 · 宽/窄")`。

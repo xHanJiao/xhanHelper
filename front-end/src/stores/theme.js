@@ -24,6 +24,12 @@ export const useThemeStore = defineStore('theme', () => {
   const naiveTheme = ref(null)
 
   function load() {
+    // 分享页是公开独立页，始终以浅色为默认，且不读用户偏好
+    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/s/')) {
+      isDark.value = false
+      apply(false, naiveTheme)
+      return
+    }
     try {
       if (isMacEmbedded()) {
         // 内嵌 WebView：app 外观经窗口 effectiveAppearance 传导到媒体查询，
@@ -45,6 +51,12 @@ export const useThemeStore = defineStore('theme', () => {
     try { localStorage.setItem(KEY, isDark.value ? 'dark' : 'light') } catch {}
   }
 
+  // 仅当前会话生效，不写 localStorage（分享页开关用）
+  function set(v) {
+    isDark.value = !!v
+    apply(isDark.value, naiveTheme)
+  }
+
   // 内嵌模式：app 切主题 → 媒体查询变化 → 页面即时跟随
   if (typeof window !== 'undefined') {
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
@@ -58,5 +70,5 @@ export const useThemeStore = defineStore('theme', () => {
 
   load()
 
-  return { isDark, naiveTheme, toggle }
+  return { isDark, naiveTheme, toggle, set }
 })

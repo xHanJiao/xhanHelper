@@ -4,17 +4,17 @@ import { useRoute } from 'vue-router'
 import MarkdownIt from 'markdown-it'
 import { NSpin, NCard, NDivider, NButton } from 'naive-ui'
 import { api } from '@/api/client'
-import { useExportPDF } from '@/composables/useExportPDF'
+import { useThemeStore } from '@/stores/theme'
 
 const route = useRoute()
 const token = route.params.token
+const theme = useThemeStore()
 
 const loading = ref(true)
 const error = ref(null)
 const doc = ref(null)
 
 const md = new MarkdownIt()
-const { exportPDF } = useExportPDF()
 
 const tableOpen = md.renderer.rules.table_open || ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
 const tableClose = md.renderer.rules.table_close || ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
@@ -54,11 +54,10 @@ onMounted(async () => {
             <div class="doc-header-top">
               <h1>{{ doc.title }}</h1>
               <NButton
-                type="primary"
                 size="small"
-                @click="exportPDF(doc.content, doc.title, 'markdown')"
+                @click="theme.set(!theme.isDark)"
               >
-                导出 PDF
+                {{ theme.isDark ? '浅色' : '深色' }}
               </NButton>
             </div>
             <div v-if="parseTags(doc.tags).length > 0" class="doc-tags">

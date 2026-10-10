@@ -105,15 +105,19 @@ ChatView.content
 
 ## 七、后续变更
 
-- **2026-10-10 · 计划便签改由 bottomComposer 独立成行 + 子任务展开面板自适应高度**
-  （用户拍板：计划在上、子任务在下；面板底部贴输入栏、按内容自适应、可滚动）
+- **2026-10-10 · 计划便签改由 bottomComposer 独立成行 + 子任务展开面板改内联**
+  （用户拍板：计划在上、子任务在下；展开面板内联进底部栈，底部贴输入栏、顶部贴计划便签下缘）
   - 计划便签从 `InputBar` 的 `topTrailingNote` 槽移出，改在 `bottomComposer` 里作为 `planNoteRow`
-    独立一行渲染、插在 `SubagentStatusBar` 之前 → 顺序变为 计划 → 子任务 → L3 → 胶囊（原顺序
+    独立一行渲染、插在子任务槽之前 → 顺序变为 计划 → 子任务 → L3 → 胶囊（原顺序
     「子任务条 → 计划便签 → 胶囊」反转）。
     - `InputBar.swift`：删除 `TopNote` 泛型参数与 `topTrailingNote`（属性 / 两 init 入参 / 两 body 槽位）。
     - `ChatView.swift`：`planNoteRow`（右对齐、宽度封顶 360）；`bottomComposer` 引用之。
-  - `subagentOverlay` 由 `VStack` 改 `ZStack(alignment:.bottom)`（点空白收起层 + 底部对齐面板），
-    去掉与面板争空间的贪婪同级；`SubagentDetailPanel` 加 `maxListHeight`，实测列表高后
-    `ScrollView.frame(height: min(内容高, maxListHeight))`：少则整卡自适应，多则内部滚动。
-    - `ChatView.swift`（`subagentOverlay`）、`SubagentPanel.swift`（`SubagentDetailPanel`）。
+  - 展开态从"覆盖式浮层"改"内联"：删掉 `subagentOverlay` 与 `content` 里
+    `.padding(.bottom, composerHeight)`；`bottomComposer` 子任务槽二选一——展开渲染
+    `SubagentDetailPanel`（内联），否则 `SubagentStatusBar`。面板天然夹在计划便签与输入栏之间。
+    内联在包内容的 `VStack` 里，`ScrollView` ideal 阶段返回内容高 → 自动贴内容；
+    外部 `.frame(maxHeight: contentHeight * 0.6)` 封顶，超出内部滚动。
+    - `ChatView.swift`（新增 `@State contentHeight` + `subagentPanelMaxHeight`）、
+      `SubagentPanel.swift`（`SubagentDetailPanel` 去掉 `maxListHeight`/`PreferenceKey` 实测）。
+  - 副作用：内联后无遮罩层，只能靠面板头部「收起」收回（不再支持点空白收起）。
   - 详见 `docs/bugs/032-macos-plan-subagent-overlay-layout.md`。

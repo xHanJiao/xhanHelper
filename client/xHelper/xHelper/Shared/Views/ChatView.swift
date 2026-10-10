@@ -39,9 +39,12 @@ struct ChatView: View {
     /// 每个按钮常驻/收起的配置（右键菜单切换，持久化，主/PiP 实例共享）。
     @ObservedObject private var inputBarLayout = InputBarLayoutState.shared
 
-    /// 底部浮层栈（AskUserBar/子任务条/L3 确认条/输入栏）的实测高度。
-    /// 用于把「回到最新」按钮与子任务浮层上推到浮层之上（基座消息区现在铺满整高）。
+    /// 底部浮层栈（AskUserBar/计划便签/子任务面板/L3 确认条/输入栏）的实测高度。
+    /// 用于把「回到最新」按钮上推到浮层之上（基座消息区现在铺满整高）。
     @State private var composerHeight: CGFloat = 0
+
+    /// 中栏整高（含被底部浮层覆盖的部分），供子任务面板封顶。
+    @State private var contentHeight: CGFloat = 0
 
     let baseURL: String
     let token: String
@@ -106,18 +109,15 @@ struct ChatView: View {
                 .transition(.scale.combined(with: .opacity))
                 .padding(.bottom, composerHeight + 12)
             }
-
-            // 子任务详情浮层：覆盖在消息列表上（不改变消息区高度），点遮罩/收起收回。
-            // 基座消息区铺满整高，浮层要按底部栈高度上推，才停在输入栏上方。
-            subagentOverlay
-                .padding(.bottom, composerHeight)
         }
-        // 底部浮层栈（AskUserBar / 子任务状态条 / L3 确认条 / 输入栏）改为 safeAreaInset：
+        // 底部浮层栈（AskUserBar / 计划便签 / 子任务面板 / L3 确认条 / 输入栏）改为 safeAreaInset：
         // 浮在消息内容之上、不占消息区布局，滚动时内容从浮层下方穿过；safeAreaInset 同时给
         // 滚动内容留出与栈等高的安全区，滚到底时最后一条完整停在输入栏上方。
         .safeAreaInset(edge: .bottom, spacing: 0) {
             bottomComposer
         }
+        // 量中栏整高，供子任务面板封顶（展开态内联在底部栈里，太高会把消息区挤没）。
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         .onChange(of: viewModel.scrollToBottomRequested) { _, requested in
             guard requested else { return }
             withAnimation(.easeOut(duration: 0.3)) {
@@ -199,21 +199,36 @@ struct ChatView: View {
             // 由 InputBar 内部 overlay 改为这里显式成行，便于控制与子任务条的上下顺序。
             planNoteRow
 
-            // 子任务活动面板（折叠态）：输入栏上方一行状态条，点击展开为覆盖消息区的浮层。
-            // 展开态由浮层承载，状态条隐藏；收起后重新出现。
-            // 宽度约束与 InputBar 完全一致（maxWidth 720 + trailing + chatHorizontalPadding），保证同宽。
-            if !viewModel.subagentSessions.isEmpty && !viewModel.subagentPanelExpanded {
-                SubagentStatusBar(
-                    sessions: viewModel.subagentSessions,
-                    expanded: viewModel.subagentPanelExpanded,
-                    onToggle: {
-                        withAnimation(.easeOut(duration: 0.25)) { viewModel.toggleSubagentPanel() }
-                    }
-                )
-                .frame(maxWidth: 720, alignment: .trailing)
-                .padding(.horizontal, Layout.chatHorizontalPadding)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.bottom, 6)
+            // 子任务活动面板：内联在底部栈里（计划便签与输入栏之间）。
+            // 折叠态=一行状态条；展开态=详情面板（按内容自适应，太高则封顶内部滚动）。
+            // 宽度约束与 InputBar 完全一致（maxWidth 720 + chatHorizontalPadding），保证同宽。
+            if !viewModel.subagentSessions.isEmpty {
+                if viewModel.subagentPanelExpanded {
+                    SubagentDetailPanel(
+                        sessions: viewModel.subagentSessions,
+                        onToggleSession: { viewModel.toggleSubagentExpand($0) },
+                        onCollapse: { collapseSubagentPanel() }
+                    )
+                    .frame(maxWidth: 720, alignment: .center)
+                    .frame(maxHeight: subagentPanelMaxHeight)
+                    .padding(.horizontal, Layout.chatHorizontalPadding)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.bottom, 6)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    SubagentStatusBar(
+                        sessions: viewModel.subagentSessions,
+                        expanded: viewModel.subagentPanelExpanded,
+                        onToggle: {
+                            withAnimation(.easeOut(duration: 0.25)) { viewModel.toggleSubagentPanel() }
+                        }
+                    )
+                    .frame(maxWidth: 720, alignment: .trailing)
+                    .padding(.horizontal, Layout.chatHorizontalPadding)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.bottom, 6)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
 
             // L3 工具确认行：输入框上方，固定可见（浏览历史消息时也不会错过许可请求）
@@ -236,30 +251,9 @@ struct ChatView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { composerHeight = $0 }
     }
 
-    /// 子任务详情浮层：仅展开且存在会话时渲染，覆盖消息列表（不改变消息区高度）。
-    /// 底部贴输入栏上方；面板按内容自适应高度（少则整卡完整展示，多则内部滚动）。
-    @ViewBuilder
-    private var subagentOverlay: some View {
-        if viewModel.subagentPanelExpanded && !viewModel.subagentSessions.isEmpty {
-            GeometryReader { geo in
-                ZStack(alignment: .bottom) {
-                    // 透明点击层：点空白处收起（不渲染深色遮罩，避免列表上方出现深色盖板）
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .onTapGesture { collapseSubagentPanel() }
-                    SubagentDetailPanel(
-                        sessions: viewModel.subagentSessions,
-                        maxListHeight: max(geo.size.height * 0.78 - 56, 120),
-                        onToggleSession: { viewModel.toggleSubagentExpand($0) },
-                        onCollapse: { collapseSubagentPanel() }
-                    )
-                    .padding(.horizontal, Layout.chatHorizontalPadding)
-                    .padding(.bottom, 6)
-                }
-            }
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-            .zIndex(1)
-        }
+    /// 子任务面板展开态的高度上限：中栏 60%，留出消息区；窗口小时也保底 240。
+    private var subagentPanelMaxHeight: CGFloat {
+        max(contentHeight * 0.6, 240)
     }
 
     private func collapseSubagentPanel() {

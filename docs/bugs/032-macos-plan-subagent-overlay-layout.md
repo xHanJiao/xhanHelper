@@ -23,26 +23,34 @@ macOS 聊天，当「执行计划便签」与「子任务活动」同时出现�
 
 ## 最终方案
 
-（2026-10-10，用户拍板：计划在上、子任务在下；展开面板底部贴输入栏、按内容自适应、可滚动）
+（2026-10-10，用户拍板：计划在上、子任务在下；展开面板**内联进底部栈**，夹在计划便签与输入栏之间）
 
 1. **顺序**：把计划便签从 `InputBar` 的 `topTrailingNote` 槽**移出**，改在
-   `ChatView.bottomComposer` 作为独立一行 `planNoteRow` 渲染，插在 `SubagentStatusBar` **之前**。
+   `ChatView.bottomComposer` 作为独立一行 `planNoteRow` 渲染，插在子任务槽 **之前**。
    - `InputBar.swift`：删除 `TopNote` 泛型参数、`topTrailingNote` 属性/两个 init 入参/两个 body 槽位。
-   - `ChatView.swift`：新增 `planNoteRow`（右对齐、宽度封顶 360），`bottomComposer` 内先于子任务条。
-2. **展示不全**：`subagentOverlay` 由 `VStack` 改 `ZStack(alignment:.bottom)`（点空白收起层在下、
-   面板底部对齐），去掉与面板争空间的贪婪同级；`SubagentDetailPanel` 新增 `maxListHeight`，
-   用 `GeometryReader`+`PreferenceKey` 实测列表内容高，`ScrollView` 用
-   `.frame(height: listHeight>0 ? min(listHeight,maxListHeight) : maxListHeight)` ——
-   少则整卡自适应完整展示，多则封顶内部滚动。
+   - `ChatView.swift`：新增 `planNoteRow`（右对齐、宽度封顶 360），`bottomComposer` 内先于子任务槽。
+2. **展开态改内联**（不再是覆盖式浮层）：删掉 `subagentOverlay` 与 `content` 里的
+   `.padding(.bottom, composerHeight)`；`bottomComposer` 的子任务槽二选一——`subagentPanelExpanded`
+   时内联渲染 `SubagentDetailPanel`，否则渲染 `SubagentStatusBar`。面板天然夹在计划便签（上）与
+   输入栏（下）之间，底部贴输入栏上缘、顶部贴计划便签下缘。
+   - 自适应高度：内联在包内容的 `VStack` 里，`ScrollView` 在 ideal 阶段返回内容高 → 面板自动贴内容；
+     外部 `.frame(maxHeight: contentHeight * 0.6)` 封顶，超出则内部滚动。
+   - `SubagentPanel.swift`：`SubagentDetailPanel` 去掉 `maxListHeight` + `PreferenceKey` 实测那套，
+     改回普通 `ScrollView`。
+   - `ChatView.swift`：新增 `@State contentHeight`（`onGeometryChange` 量中栏整高）与
+     `subagentPanelMaxHeight`。
 
 ## 验证
 
 - `swiftc -typecheck`（macOS 26.3 + iOS 26.0，带 `-default-isolation MainActor`）0 error。
-- 真机（用户 Xcode 确认）：计划便签在子任务条上方；展开子任务面板贴在输入栏上方、
+- `SubagentPanel.swift` 的 `#Preview("子任务面板 · 内联")`：Xcode 画布复核展开态位置与自适应高度。
+- 真机（用户 Xcode 确认）：计划便签在子任务面板上方；展开面板贴在输入栏上方、
   子任务少时整卡完整显示、多时内部滚动。
 
 ## 踩坑提示
 
-`ScrollView` 是贪婪视图：放进整高容器（`GeometryReader`）且与另一贪婪视图（`Color.clear`）同级时，
-不会贴内容，会被撑满。要「贴内容自适应 + 超限滚动」，必须实测内容高再 `.frame(height:)` 钉住
-（对照 `DiffPreviewView` 之所以贴内容，是因为它外面是包内容的容器，而非整高容器）。
+- **`ScrollView` 是贪婪视图**：放进整高容器（`GeometryReader`）且与另一贪婪视图同级时不会贴内容，
+  会被撑满；只有放进**包内容的容器**（如 `safeAreaInset` 里的 `VStack`）时，ideal 阶段才会返回
+  内容高、自动自适应。这就是"覆盖式浮层"出问题的根源，也是改回"内联"的原因。
+- 覆盖式浮层是**整栏高**容器，所以面板一旦放进去就失去自适应；要"底部贴输入栏"必须内联。
+- 内联后没有遮罩层，只能靠面板头部「收起」收回（不再支持点空白收起）。

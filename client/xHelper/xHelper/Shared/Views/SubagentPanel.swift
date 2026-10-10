@@ -73,21 +73,18 @@ struct SubagentStatusBar: View {
     }
 }
 
-// MARK: - SubagentDetailPanel — 展开态浮层（覆盖消息区）
+// MARK: - SubagentDetailPanel — 展开态（内联在底部栈里）
 // 标题栏 + 单个外层滚动区；每个子任务行内不再单独滚动，展开详情由外层滚动承载。
-// 列表区高度按内容自适应：内容少则整卡完整展示，超出 maxListHeight 才内部滚动。
+// 内联进 bottomComposer（包内容的 VStack）→ ScrollView 在 ideal 阶段返回内容高，
+// 面板自动按内容自适应；高度上限由外部 .frame(maxHeight:) 封顶，超出则内部滚动。
 struct SubagentDetailPanel: View {
     let sessions: [SubagentSession]
-    /// 列表区最大高度：内容少则整卡自适应，超出则内部滚动。
-    let maxListHeight: CGFloat
     let onToggleSession: (String) -> Void
     let onCollapse: () -> Void
 
-    @State private var listHeight: CGFloat = 0
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // 整条标题栏可点：点击任意位置收起浮层
+            // 整条标题栏可点：点击任意位置收起
             Button {
                 onCollapse()
             } label: {
@@ -114,15 +111,7 @@ struct SubagentDetailPanel: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    GeometryReader { g in
-                        Color.clear.preference(key: SubagentListHeightKey.self, value: g.size.height)
-                    }
-                )
             }
-            .onPreferenceChange(SubagentListHeightKey.self) { listHeight = $0 }
-            // 少则贴内容（整卡自适应），多则封顶滚动；首帧未测到高度时用上限兜底，避免贪婪撑高。
-            .frame(height: listHeight > 0 ? min(listHeight, maxListHeight) : maxListHeight)
         }
         .padding(10)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -130,14 +119,6 @@ struct SubagentDetailPanel: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
-    }
-}
-
-/// 子任务列表内容高度回传（供详情面板自适应高度）。
-private struct SubagentListHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }
 
@@ -289,3 +270,69 @@ private extension Theme {
             }
     }
 }
+
+#if DEBUG
+// MARK: - Preview（内联底部栈：计划便签 → 子任务面板 → 输入栏占位）
+
+/// 展开态的面板内联在底部栈里，复核它与计划便签/输入栏的上下位置与自适应高度。
+private struct SubagentInlineStackPreview: View {
+    private let sessions: [SubagentSession] = [
+        SubagentSession(convID: "s1", description: "核实 MCP 生态来源现状", state: "started",
+                        round: 1, latestAction: "browser.agent_browser_open", summary: nil),
+        SubagentSession(convID: "s2", description: "查第三方 MCP 目录与接入", state: "completed",
+                        round: 2, latestAction: nil, summary: "已列出 3 个候选",
+                        expanded: true, messages: [
+                            Message(id: "m1", conversationId: "c", role: "user",
+                                    content: "查一下第三方 MCP 目录", toolCallsJSON: nil,
+                                    createdAt: "2026-10-10T12:00:00Z"),
+                            Message(id: "m2", conversationId: "c", role: "assistant",
+                                    content: "已找到 3 个候选：mcp.so、Glama、PulseMCP。",
+                                    toolCallsJSON: nil, createdAt: "2026-10-10T12:01:00Z"),
+                        ]),
+    ]
+
+    private let steps: [PlanStep] = [
+        PlanStep(content: "确认测试目标与范围", status: "completed"),
+        PlanStep(content: "执行测试步骤并记录结果", status: "in_progress"),
+        PlanStep(content: "汇总结果并输出结论", status: "pending"),
+    ]
+
+    var body: some View {
+        ZStack {
+            Color("chatBackground").ignoresSafeArea()
+            VStack(spacing: 0) {
+                Spacer()
+                PlanNoteView(goal: "回归测试计划", steps: steps, expanded: true,
+                             onToggle: {}, onDismiss: {})
+                    .frame(maxWidth: 360, alignment: .trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.bottom, 6)
+                SubagentDetailPanel(sessions: sessions, onToggleSession: { _ in }, onCollapse: {})
+                    .frame(maxWidth: 720, alignment: .center)
+                    .frame(maxHeight: 380)
+                    .padding(.bottom, 6)
+                inputPlaceholder
+            }
+            .frame(maxWidth: 720)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 24)
+        }
+    }
+
+    private var inputPlaceholder: some View {
+        HStack {
+            Text("输入消息…").font(.system(size: 15)).foregroundColor(.secondary)
+            Spacer()
+            Image(systemName: "paperplane.fill").foregroundColor(Color("appAccent"))
+        }
+        .padding(.horizontal, 14).padding(.vertical, 16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
+#Preview("子任务面板 · 内联") {
+    SubagentInlineStackPreview()
+        .environmentObject(FontSizeManager.shared)
+        .frame(width: 820, height: 760)
+}
+#endif

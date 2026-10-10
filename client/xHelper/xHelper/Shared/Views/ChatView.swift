@@ -195,6 +195,10 @@ struct ChatView: View {
                 .padding(.bottom, 8)
             }
 
+            // 执行计划便签：独立一行，右停靠在子任务状态条上方（计划在上、子任务在下）。
+            // 由 InputBar 内部 overlay 改为这里显式成行，便于控制与子任务条的上下顺序。
+            planNoteRow
+
             // 子任务活动面板（折叠态）：输入栏上方一行状态条，点击展开为覆盖消息区的浮层。
             // 展开态由浮层承载，状态条隐藏；收起后重新出现。
             // 宽度约束与 InputBar 完全一致（maxWidth 720 + trailing + chatHorizontalPadding），保证同宽。
@@ -224,8 +228,7 @@ struct ChatView: View {
                 toolConfirmationBar(conf)
             }
 
-            // 执行计划便签：由 InputBar 的 topTrailingNote 注入，右停靠在驾驶舱上缘
-            // （便签在 InputBar 内部 overlay 渲染，不占此处布局）
+            // 执行计划便签：见上方 planNoteRow（已作为独立一行渲染）。
 
             // 输入栏（驾驶舱）：按钮通过 builder 注入，收起/展开双态
             inputBar
@@ -234,21 +237,22 @@ struct ChatView: View {
     }
 
     /// 子任务详情浮层：仅展开且存在会话时渲染，覆盖消息列表（不改变消息区高度）。
+    /// 底部贴输入栏上方；面板按内容自适应高度（少则整卡完整展示，多则内部滚动）。
     @ViewBuilder
     private var subagentOverlay: some View {
         if viewModel.subagentPanelExpanded && !viewModel.subagentSessions.isEmpty {
             GeometryReader { geo in
-                VStack(spacing: 0) {
+                ZStack(alignment: .bottom) {
                     // 透明点击层：点空白处收起（不渲染深色遮罩，避免列表上方出现深色盖板）
                     Color.clear
                         .contentShape(Rectangle())
                         .onTapGesture { collapseSubagentPanel() }
                     SubagentDetailPanel(
                         sessions: viewModel.subagentSessions,
+                        maxListHeight: max(geo.size.height * 0.78 - 56, 120),
                         onToggleSession: { viewModel.toggleSubagentExpand($0) },
                         onCollapse: { collapseSubagentPanel() }
                     )
-                    .frame(maxHeight: geo.size.height * 0.78)
                     .padding(.horizontal, Layout.chatHorizontalPadding)
                     .padding(.bottom, 6)
                 }
@@ -363,7 +367,6 @@ struct ChatView: View {
             statusRow: inputBarStatusRow,
             statusRowExtras: inputBarExtrasRow,
             trailingActions: inputBarTrailingActions,
-            topTrailingNote: inputBarTopNote,
             bottomLeading: inputBarBottomLeading,
             attachmentTray: inputBarAttachmentTray
         )
@@ -529,11 +532,10 @@ struct ChatView: View {
         }
     }
 
-    /// InputBar 上缘便签（执行计划）。独立成方法：同上，InputBar 调用表达式已在类型检查预算边缘。
+    /// 执行计划便签行：独立成行，右停靠在子任务状态条上方（计划在上、子任务在下）。
+    /// 独立成属性：同上，InputBar 调用表达式已在类型检查预算边缘。
     @ViewBuilder
-    private func inputBarTopNote(_ ctx: InputBarContext) -> some View {
-        // 执行计划便签：经 InputBar 注入，窄幅右停在驾驶舱上缘。
-        // 完成/取消后 state 变为非 active → 扩散消失。
+    private var planNoteRow: some View {
         if viewModel.planState == .active && !viewModel.planDismissed {
             PlanNoteView(
                 goal: viewModel.planGoal,
@@ -542,9 +544,14 @@ struct ChatView: View {
                 onToggle: { viewModel.togglePlanExpand() },
                 onDismiss: { viewModel.dismissPlanTodo() }
             )
+            .frame(maxWidth: 360, alignment: .trailing)
             .transition(Self.planDismissTransition)
             .animation(.easeOut(duration: 0.25), value: viewModel.planState)
             .animation(.easeOut(duration: 0.25), value: viewModel.planDismissed)
+            .frame(maxWidth: 720, alignment: .trailing)
+            .padding(.horizontal, Layout.chatHorizontalPadding)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.bottom, 6)
         }
     }
 

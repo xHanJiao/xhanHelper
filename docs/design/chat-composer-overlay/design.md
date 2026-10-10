@@ -100,3 +100,20 @@ ChatView.content
   - 「回到最新」按钮、子任务浮层仍在输入栏**上方**，不被盖住；按钮出现时机无明显滞后。
   - 分享选择态（`shareBottomBar`）与分享结果弹窗的整屏压暗**不被渐隐波及**。
   - 编辑器长高 / 展开「更多操作」/ 出现 AskUserBar 时，安全区自动跟随。
+
+---
+
+## 七、后续变更
+
+- **2026-10-10 · 计划便签改由 bottomComposer 独立成行 + 子任务展开面板自适应高度**
+  （用户拍板：计划在上、子任务在下；面板底部贴输入栏、按内容自适应、可滚动）
+  - 计划便签从 `InputBar` 的 `topTrailingNote` 槽移出，改在 `bottomComposer` 里作为 `planNoteRow`
+    独立一行渲染、插在 `SubagentStatusBar` 之前 → 顺序变为 计划 → 子任务 → L3 → 胶囊（原顺序
+    「子任务条 → 计划便签 → 胶囊」反转）。
+    - `InputBar.swift`：删除 `TopNote` 泛型参数与 `topTrailingNote`（属性 / 两 init 入参 / 两 body 槽位）。
+    - `ChatView.swift`：`planNoteRow`（右对齐、宽度封顶 360）；`bottomComposer` 引用之。
+  - `subagentOverlay` 由 `VStack` 改 `ZStack(alignment:.bottom)`（点空白收起层 + 底部对齐面板），
+    去掉与面板争空间的贪婪同级；`SubagentDetailPanel` 加 `maxListHeight`，实测列表高后
+    `ScrollView.frame(height: min(内容高, maxListHeight))`：少则整卡自适应，多则内部滚动。
+    - `ChatView.swift`（`subagentOverlay`）、`SubagentPanel.swift`（`SubagentDetailPanel`）。
+  - 详见 `docs/bugs/032-macos-plan-subagent-overlay-layout.md`。

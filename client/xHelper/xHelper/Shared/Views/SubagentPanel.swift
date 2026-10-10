@@ -75,10 +75,15 @@ struct SubagentStatusBar: View {
 
 // MARK: - SubagentDetailPanel — 展开态浮层（覆盖消息区）
 // 标题栏 + 单个外层滚动区；每个子任务行内不再单独滚动，展开详情由外层滚动承载。
+// 列表区高度按内容自适应：内容少则整卡完整展示，超出 maxListHeight 才内部滚动。
 struct SubagentDetailPanel: View {
     let sessions: [SubagentSession]
+    /// 列表区最大高度：内容少则整卡自适应，超出则内部滚动。
+    let maxListHeight: CGFloat
     let onToggleSession: (String) -> Void
     let onCollapse: () -> Void
+
+    @State private var listHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -109,7 +114,15 @@ struct SubagentDetailPanel: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    GeometryReader { g in
+                        Color.clear.preference(key: SubagentListHeightKey.self, value: g.size.height)
+                    }
+                )
             }
+            .onPreferenceChange(SubagentListHeightKey.self) { listHeight = $0 }
+            // 少则贴内容（整卡自适应），多则封顶滚动；首帧未测到高度时用上限兜底，避免贪婪撑高。
+            .frame(height: listHeight > 0 ? min(listHeight, maxListHeight) : maxListHeight)
         }
         .padding(10)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -117,6 +130,14 @@ struct SubagentDetailPanel: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
+    }
+}
+
+/// 子任务列表内容高度回传（供详情面板自适应高度）。
+private struct SubagentListHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 

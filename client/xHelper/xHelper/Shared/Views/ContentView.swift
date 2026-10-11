@@ -628,6 +628,8 @@ struct ContentView: View {
                 // 与描边同理：溢出到顶栏那一截不参与命中（今天顶栏 zIndex 更高本就轮不到它，防将来被提层级/按包围盒命中）
                 .allowsHitTesting(false)
         }
+        // 卡片投影：只在卡片外投（挖掉卡片内部），浅色黑 / 深色白 —— 见 `CardElevationShadow`
+        .modifier(CardElevationShadow(topExtension: Layout.cardTopRise))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(Color("assistantText").opacity(0.12), lineWidth: 0.5)

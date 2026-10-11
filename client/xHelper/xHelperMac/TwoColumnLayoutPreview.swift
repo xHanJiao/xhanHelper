@@ -206,13 +206,14 @@ struct TwoColumnLayoutPreview: View {
     @ViewBuilder
     private var chatCard: some View {
         if isWrap {
-            // 生产同款：上边停在窗口内 `cardGap` 处（向上溢出 `cardTopRise`）、淡底 + 描边
+            // 生产同款：上边停在窗口内 `cardGap` 处（向上溢出 `cardTopRise`）、白霜提亮底 + 描边 + 只在卡片外的投影
             chatBody
                 .background(alignment: .top) {
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(ink(Layout.cardFillOpacity))
+                        .fill(Color.white.opacity(Layout.cardFillOpacity))
                         .padding(.top, -Layout.cardTopRise)
                 }
+                .modifier(CardElevationShadow(topExtension: Layout.cardTopRise))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .strokeBorder(ink(0.12), lineWidth: 0.5)

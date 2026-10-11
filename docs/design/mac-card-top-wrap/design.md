@@ -27,6 +27,7 @@
 | 顶栏内容距窗顶 | **12**（`topBarTopGap`） | 下边距仍 `toolbarVGap`(6) → 胶囊在卡片顶部条里上下各留 6pt |
 | 顶栏高 | **54** = 12 + 胶囊 36 + 6（`topBarHeight`） | 48 → 54；写死"48"的文档均已同步（见 §五） |
 | 卡片底色 | **白霜提亮 6%**（`cardFillOpacity`，`Color.white`） | 与 `AppBackdrop.frost` 同族；**不能用 `assistantText` 压暗**（真机偏暗沉，见 §五） |
+| 卡片投影 | **只在卡片外**的软阴影：浅色黑 10% / 深色白 10%，`blur 8` + `y 3`（`CardElevationShadow`） | 半透明卡片直接 `.shadow` 会渗进内部把里面压暗 → 先画不透明阴影形再**挖掉卡片内部** |
 | 红绿灯 | 距窗顶 **23**（`Layout.trafficLightTopFromWindow`；`trafficLightNudge.y = 9 − 该值` = −14） | = 12 + 36/2 − 7（按钮半径）= 顶栏内容中心 30 − 7；改顶栏上边距/胶囊高自动跟随 |
 
 ## 三、方案（文件级）
@@ -42,12 +43,15 @@
            .fill(Color.white.opacity(Layout.cardFillOpacity))
            .padding(.top, -Layout.cardTopRise)
    }
+   .modifier(CardElevationShadow(topExtension: Layout.cardTopRise))   // 投影：只在卡片外
    .overlay(
        RoundedRectangle(cornerRadius: 12)
            .strokeBorder(Color("assistantText").opacity(0.12), lineWidth: 0.5)
            .padding(.top, -Layout.cardTopRise)
            .allowsHitTesting(false))     // 溢出到顶栏那一截不许截走顶栏手势/空白双击缩放
    ```
+4. **`CardBackground.swift`**：新增 `CardElevationShadow`（不透明阴影形 + 卡片同形挖内 + `compositingGroup` 隔离，
+   浅色黑 / 深色白），投影形与卡片**同形**（同样上溢 `cardTopRise`）。
 4. **`RightSidebarView.swift`**：删掉 body 上那圈 0.5pt 描边。
 5. **`App.swift`**：`trafficLightNudge.y = −14`（推导写在注释里：距窗顶 23 → 容器 origin.y −5 → 基准 9 之差）。
 6. **`TwoColumnLayoutPreview.swift`**：新增/更新「卡片吸顶（右栏开）」「卡片吸顶·仅中栏」两个形态，顶栏 padding 与生产同步。
@@ -81,6 +85,11 @@
 - 深底图下右栏与底图的分界只剩内容自身的层次；真机看是否"糊在一起"，必要时再补一条极淡分界（本版不做）。
 - 卡片底色的 `.padding(.top, -cardTopRise)` 是"画到视图边界之外"的写法：中栏到窗口顶之间**没有任何裁剪层**
   （已 grep 确认 `ContentView` 无 `clipped()`），若将来有人给这层加 `.clipped()`，上溢部分会被切掉。
+- **投影性能**：卡片几乎铺满整窗，`blur(radius: 8)` 作用在大形状上 —— 拖拽缩放/滚动是否掉帧只能真机看；
+  退路是"只右缘渐变"（`blur` 范围小得多，见 `/tmp/shadow_options.png` 第 4 格的做法）。
+- **深色主题的白阴影强度**：深色档用白 10%（同全 app 卡片惯例），深色调下够不够/过不过只能真机看 —— 一个数（`CardElevationShadow` 里）。
+- **挖内不能省**：去掉 `destinationOut` 那层，投影会透过 6% 白霜渗进卡片内部（等于又把里面压暗，正是要避免的）；
+  去掉 `compositingGroup()` 则 `destinationOut` 会**在窗口底图上打洞**。
 
 ## 六、验收（真机）
 
@@ -101,3 +110,5 @@
 4. **红绿灯留在距窗顶 13**：与顶栏内容中心差 10pt，不像 Xcode 那种"同一行居中"。**否**（改 23）。
 5. **底色用 `assistantText`"派生淡色"6%（第一版）**：真机在照片底图上**整体偏暗沉** —— 暗色 tint 压在亮底图上必然如此。**否**，
    改成 `Color.white` 6%（白霜提亮，与 `AppBackdrop.frost` 同族、浅深主题都成立）。
+6. **不给卡片投影 / 直接对半透明卡片用 `.shadow`**：前者平（Xcode 那种"高一层"出不来）；后者投影会**渗进卡片内部**
+   （等于把里面又压暗）。**否** —— 用 `CardElevationShadow`：不透明阴影形 + 卡片同形挖内（浅色黑 10%/`blur 8`/`y 3`，深色白）。

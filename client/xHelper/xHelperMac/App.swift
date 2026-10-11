@@ -224,14 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             return event
         }
-
-        for window in NSApp.windows {
-            window.delegate = self
-        }
     }
-
-    /// 当前要求的最小内容宽（右栏打开时 ≈778，否则 750；再取顶栏内在宽的较大者）。由 ContentView 更新。
-    static var requiredMinContentWidth: CGFloat = 400
 
     /// 浏览器页面缩放（Cmd+±，钳制 0.5x–2.5x）
     private static func zoomWebView(by delta: CGFloat) {
@@ -292,13 +285,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// 拦截窗口缩放：宽度不得低于要求的最小内容宽（+ 窗口 chrome）。
-    /// 用 delegate 而不是 minSize——SwiftUI 会在布局时用内容 min 覆盖 minSize。
-    /// `requiredMinContentWidth` 已由 ContentView 取「底栏推导值 / 顶栏内在宽」的较大者：
+    /// 这是**第二道**栅栏：SwiftUI 会把根视图声明的 min 落到 AppKit `contentMinSize`（主约束），
+    /// 但 delegate 只覆盖「用户拖拽」这条路径（程序化 setFrame / zoom / 系统平铺都走不到），
+    /// 所以两者都留着 —— 值只有一个来源：`WindowMinWidthStore`（见 docs/bugs/033）。
     /// 顶栏是 VStack 最宽子项，漏算会让窗口缩到比顶栏还窄 → 顶栏溢出居中、红绿灯压住下拉框。
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
         let contentWidth = sender.contentView?.frame.width ?? sender.frame.width
         let chrome = sender.frame.width - contentWidth
-        let minFrameWidth = Self.requiredMinContentWidth + chrome
+        let minFrameWidth = WindowMinWidthStore.shared.width + chrome
         return NSSize(width: max(frameSize.width, minFrameWidth), height: frameSize.height)
     }
 
@@ -528,6 +522,8 @@ struct xhanHelperMacApp: App {
     @StateObject private var colorSchemeManager = ColorSchemeManager()
     @StateObject private var resizeGhost = ResizeGhostState()
     @StateObject private var windowHandle = LocalWindowHandle()
+    /// 窗口最小内容宽的唯一来源（ContentView 写、根视图读）。见 docs/bugs/033。
+    @StateObject private var windowMinWidth = WindowMinWidthStore.shared
     @State private var isHoldingQuit = false
     @State private var holdProgress: Double = 0
     /// 用户首次配置窗口点了「稍后配置」→ 主窗口显示未配置空态（UI-4）。
@@ -554,6 +550,10 @@ struct xhanHelperMacApp: App {
             .background(LocalWindowReader { window in
                 windowHandle.window = window
                 AppDelegate.primaryWindow = window
+                // 挂 delegate 必须是「每拿到一个窗口就执行一次」：SwiftUI 在关窗驻留后从 Dock 重开时
+                // 会新建 NSWindow，而 applicationDidFinishLaunching 早已跑完 —— 漏挂会让
+                // windowWillResize / windowShouldClose 对这个窗口整体失效（见 docs/bugs/033）。
+                window.delegate = appDelegate
                 // 拿到主窗口即配置（别只等 will/didBecomeActive，否则首启可能停在系统标题栏）。
                 AppDelegate.configureWindow(window)
                 applyWindowSizeForOnboarding()
@@ -691,7 +691,9 @@ struct xhanHelperMacApp: App {
             case .ready:
                 if deviceManager.isLoggedIn {
                     ContentView(deviceManager: deviceManager, resizeGhost: resizeGhost)
-                        .frame(minWidth: 400, minHeight: 400)
+                        // 最小宽由 ContentView 实测后写进 store：这里声明给 SwiftUI，
+                        // 它会被落到 NSWindow.contentMinSize（唯一被所有缩放路径尊重的执行器）。
+                        .frame(minWidth: windowMinWidth.width, minHeight: 400)
                 } else if let err = deviceManager.localBootstrapError {
                     // 后端起来了但载入会话失败：给错误态 + 重试，别让 UI 永久停在 spinner。
                     localBackendFailed(err) { Task { await deviceManager.onLocalBackendReady() } }
@@ -774,7 +776,7 @@ struct xhanHelperMacApp: App {
     private var accountRoot: some View {
         if deviceManager.isLoggedIn {
             ContentView(deviceManager: deviceManager, resizeGhost: resizeGhost)
-                .frame(minWidth: 400, minHeight: 400)
+                .frame(minWidth: windowMinWidth.width, minHeight: 400)
         } else {
             LoginMacView(deviceManager: deviceManager)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

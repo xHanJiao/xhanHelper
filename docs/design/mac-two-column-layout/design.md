@@ -83,6 +83,9 @@
 
 ### 2.6 窗口最小宽 / 自动宽度链（**左栏收窄不是纯视觉，是"降窗口最小宽好继续缩"**）
 
+> ⚠️ 本节链路**已于 2026-10-11 变更**（`docs/bugs/033`）：主约束改为「`WindowMinWidthStore` → 根视图
+> `.frame(minWidth:)` → AppKit `contentMinSize`」。下面是当时的实现，保留作历史记录，**以 §10 为准**。
+
 ```
 sidebarWidth ─┬─→ baseMinWidth / pipMinContentWidth   (ContentView.swift:125-140)
               │        └─→ updateWindowMinWidth() :144-152
@@ -94,7 +97,7 @@ sidebarWidth ─┬─→ baseMinWidth / pipMinContentWidth   (ContentView.swift
               └─→ 持久化 @AppStorage("xhan_sidebar_width") :32 / 读 :691 / 写 :699-703
 ```
 
-- `AppDelegate.windowWillResize` = `requiredMinContentWidth + chrome` 钳制宽度（`requiredMinContentWidth` 已由 ContentView 取「底栏 / 顶栏内在宽 / 750」的较大者，见 §4.1.3）。
+- `AppDelegate.windowWillResize` = `requiredMinContentWidth + chrome` 钳制宽度（`requiredMinContentWidth` 已由 ContentView 取「底栏 / 顶栏内在宽 / 750」的较大者，见 §4.1.3）。（**已由 §10 取代**）
 - 前身 bug：`docs/bugs/014-pip-shrink-sidebar-overflow.md` —— PiP 缩窗溢出就是靠"先收左栏"缓解的。
 
 ### 2.7 导航层（近死，见 §4.1.4 证据）
@@ -268,7 +271,7 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
 
 | 风险 | 说明 | 缓解 |
 |------|------|------|
-| **PiP 缩窗溢出回潮** | 原靠"先收左栏降底线"，现删除该机制 | §4.1.3 收敛后真机重跑 bug 014 场景（**已验收通过**）；`windowWillResize` + 顶栏内在宽探针兜底 |
+| **PiP 缩窗溢出回潮** | 原靠"先收左栏降底线"，现删除该机制 | §4.1.3 收敛后真机重跑 bug 014 场景（**已验收通过**）；`windowWillResize` + 顶栏内在宽探针兜底（**已由 §10 取代**） |
 | 顶栏内在宽反噬窗口最小宽 | `VStack` 宽度取子项最大（bug 014 机制） | trigger `maxWidth:240` + 截断（D5）；隐藏探针量测顶栏内在宽，窗口最小宽取其较大者，变宽时主动放大窗口 |
 | 删除范围超预期 | 左 seam/派生常量/导航层牵连广 | 按 §4.1.1–4.1.4 分步，每步 `swiftc -typecheck` |
 | 老会话转无痕启动销毁倒计时 | 停聊约 30 分钟后 Stage A 不可逆 | pill 可再点取消；hover 明示；默认会话禁用；不弹确认（D4 知情） |
@@ -307,3 +310,18 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
 - 后端：`controller/chat.go`、`conversations.go`、`router.go`、`appinit/router.go`、`agent/cron_runner.go`（nil-safe 日志）。
 - 文档同步：`docs/design/ephemeral-conversation.md`（破「不可变」约定）、`docs/design/archive/macos-left-sidebar-toggle.md`（已废弃归档）、`mac-apps/topbar-slot-system.md`（槽位现状修正）。
 - UI 预览：`xHelperMac/TwoColumnLayoutPreview.swift`（真 token + 生产卡片材质 + `#Preview` 四形态，Xcode 画布 ⌘⌥P 看）。
+
+## 10. 后续变更
+
+- **2026-10-11 · 窗口最小宽改由「根视图 `.frame(minWidth:)` → AppKit `contentMinSize`」承担**（`docs/bugs/033`）。
+  - 决定：底线口径保持 A（= `max(底栏推导, 顶栏内在宽, 750)`，顶栏不降级）；实现路径改掉。
+  - 原因：原链（`ContentView.updateWindowMinWidth` → `AppDelegate.requiredMinContentWidth` 静态量 →
+    `windowWillResize`）实测会整体失效 —— delegate 只在 `applicationDidFinishLaunching` 对当时的窗口挂一次，
+    而 SwiftUI 关窗驻留后从 Dock 重开会**新建 NSWindow**，新窗口整条守卫（含 `windowShouldClose` 驻留提示）静默失效；
+    且 `windowWillResize` 苹果只在用户拖拽时调用。探针另证：直接写 `window.contentMinSize` 会被 SwiftUI 布局覆盖。
+  - 改动：新增 `WindowMinWidthStore`（唯一来源，ContentView 写 / App 层根视图读）；
+    主窗口 delegate 改由 `LocalWindowReader` 按"每个窗口"挂；`LocalWindowReader` 从"只上报一次"改为"窗口实例变了就上报"；
+    侧栏可用宽改用窗口真实内容宽（`geo.size.width` 在内容溢出时会失真）；ContentView 离开主界面时复位最小宽。
+  - 影响文件：`xHelperMac/App.swift`、`xHelperMac/LocalSettingsViews.swift`、`Shared/Views/ContentView.swift`。
+  - §2.6 / §4.1.3 描述的最小宽链以本条为准；D7 的"固化隐藏态"结论不变。
+  - 未做（另起会话）：顶栏降级（把底线从 ~900 还给两栏 778）+ 顶栏会话下拉常驻（含 PiP）。

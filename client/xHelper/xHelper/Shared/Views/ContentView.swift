@@ -24,6 +24,8 @@ struct ContentView: View {
     @StateObject private var rightSidebar = RightSidebarManager()
     /// 右面板分隔线（seam）的 x 坐标（content 坐标系），由 SeamMarker 上报。
     @State private var rightSeamX: CGFloat = 0
+    /// 布局宽（geo 上报）。内容比窗口宽时它是「溢出后的内容宽」而非窗口宽，只作回退用；
+    /// 判断"窗口还能放多宽"一律走 `realWindowContentWidth()`（见 docs/bugs/033）。
     @State private var windowWidth: CGFloat = 800
     /// 顶栏内在最小宽（由 TopBarView 隐藏探针经 `TopBarMinWidthKey` 上报）。
     /// 顶栏是 VStack 最宽子项，窗口最小宽必须 ≥ 它，否则窗口缩到比顶栏还窄 → 顶栏溢出居中
@@ -55,10 +57,25 @@ struct ContentView: View {
             : Double(Layout.middleMinWidth + Layout.seamWidth)
     }
 
-    /// 右侧栏在当前窗口布局下可用的最大宽度。
+    /// 窗口真实内容宽。布局用的 `windowWidth`（geo）在内容比窗口宽时会报「溢出后的内容宽」，
+    /// 不能当"窗口还能放多宽"用（见 docs/bugs/033）；取不到窗口时返回 nil，调用方回退到 geo。
+    ///
+    /// 单窗口假设：`NSApp.mainWindow/keyWindow` 即承载本视图的窗口（`WindowGroup` 的"新建窗口"
+    /// 路径会产生第二个窗口，彼时读到的是当前活动窗口）——多窗口彻底收窄需要 per-window 状态，
+    /// 列为 docs/bugs/033 §5 的残余项。
+    private func realWindowContentWidth() -> Double? {
+        guard let window = NSApp.mainWindow ?? NSApp.keyWindow else { return nil }
+        return Self.contentWidth(of: window)
+    }
+
+    private static func contentWidth(of window: NSWindow) -> Double {
+        Double(window.contentView?.frame.width ?? window.frame.width)
+    }
+
+    /// 右侧栏在当前窗口布局下可用的最大宽度（以窗口真实内容宽为准）。
     /// 减去中间跨度、右栏外扩。PiP 时中间让位，右栏可铺满整窗（不设 1200 上限）。
     private var rightSidebarMaxAvailable: Double {
-        let available = Double(windowWidth)
+        let available = (realWindowContentWidth() ?? Double(windowWidth))
             - middleSpan
             - Double(Layout.rightSidebarOuterPadding)
         let cap = rightSidebar.isPipChat ? 4000.0 : 1200.0
@@ -87,19 +104,31 @@ struct ContentView: View {
         }
         // 取「底栏推导值 / 顶栏内在宽 / 全局下限」的较大者：顶栏装不下的窗口宽会让内容溢出居中、被裁。
         let minContent = max(bottomRowMin, topBarMinWidth, Layout.minWindowContentWidth)
-        AppDelegate.requiredMinContentWidth = minContent
+        // 最小宽只有一个来源：`WindowMinWidthStore`。它 → 根视图 `.frame(minWidth:)` →
+        // SwiftUI 落到 AppKit `contentMinSize`（主约束，所有缩放路径都认）；
+        // `windowWillResize` 也读同一个值（第二道栅栏，只覆盖交互拖拽）。
+        if abs(WindowMinWidthStore.shared.width - minContent) > 0.5 {
+            WindowMinWidthStore.shared.width = minContent
+        }
 
         // 内容真实最小宽变大时（如从「新对话」切到长标题会话，顶栏变宽），已缩窄的窗口必须
-        // 主动放大——windowWillResize 只在用户拖拽时生效，管不到这种情况，否则内容溢出、被裁。
+        // 主动放大——contentMinSize 只防再缩窄，不会自己把窗口撑大；windowWillResize 只在
+        // 用户拖拽时生效，也管不到这种情况。
         // 用 mainWindow：切换会话走 popover，此刻 keyWindow 可能是 popover 而非主窗口。
         guard let window = NSApp.mainWindow ?? NSApp.keyWindow else { return }
-        let contentW = window.contentView?.frame.width ?? window.frame.width
+        let contentW = Self.contentWidth(of: window)
         let deficit = minContent - contentW
         if deficit > 0.5 {
             var frame = window.frame
             frame.size.width += deficit
             window.setFrame(frame, display: true, animate: false)
         }
+    }
+
+    /// 离开主界面（登出 / 未配置页 / 解锁门）时把最小宽复位：否则那些页面的窗口会被
+    /// 上一个界面的底线卡住（delegate 现在挂在每个窗口上，见 docs/bugs/033）。
+    private func resetWindowMinWidth() {
+        WindowMinWidthStore.shared.width = WindowMinWidthStore.defaultWidth
     }
 
     /// 把右侧栏宽度钳制到可用范围，保证窄窗口下不溢出、内容可见。
@@ -123,12 +152,12 @@ struct ContentView: View {
 
     /// 右栏打开时更新窗口：窗口太窄则自动放大 → 设最小内容宽（防再缩窄）。
     private func updateWindowForRightSidebarOpen() {
-        // 通知窗口最小内容宽（windowWillResize 会据此拒绝更窄）
+        // 通知窗口最小内容宽（windowWillResize 与根视图 minWidth 会据此拒绝更窄）
         updateWindowMinWidth()
 
         // 自动放大窗口到所需内容宽（按内容缺口增量放大，保留窗口 chrome）
         guard let window = NSApp.keyWindow else { return }
-        let deficit = Self.rightSidebarOpenMinWidth - windowWidth
+        let deficit = Self.rightSidebarOpenMinWidth - Self.contentWidth(of: window)
         if deficit > 0 {
             var frame = window.frame
             frame.size.width += deficit
@@ -152,7 +181,7 @@ struct ContentView: View {
         rightSidebar.width = rightSidebarMaxAvailable
         updateWindowMinWidth()
         guard let window = NSApp.keyWindow else { return }
-        let deficit = pipMinContentWidth - windowWidth
+        let deficit = pipMinContentWidth - Self.contentWidth(of: window)
         if deficit > 0 {
             var frame = window.frame
             frame.size.width += deficit
@@ -324,11 +353,8 @@ struct ContentView: View {
                     }
 
                     GeometryReader { geo in
-                        let rightMax: Double = max(Double(Layout.rightSidebarMinWidth),
-                            min(rightSidebar.isPipChat ? 4000 : 1200,
-                                Double(geo.size.width)
-                                - middleSpan
-                                - Double(Layout.rightSidebarOuterPadding)))
+                        // 分隔条上限 = 侧栏可用宽（与 clamp 同源，见 rightSidebarMaxAvailable）。
+                        let rightMax: Double = rightSidebarMaxAvailable
                         HStack(alignment: .top, spacing: 0) {
                             HSpace(Layout.cardGap)
 
@@ -465,6 +491,19 @@ struct ContentView: View {
                     DocumentSelectionCoordinator.shared.configure(baseURL: deviceManager.baseURL, token: deviceManager.token ?? "")
                     DocumentSelectionCoordinator.shared.ensureRegisteredGroup()
                     registerAppShortcutBridge()
+                }
+                .onDisappear {
+                    // 离开主界面（登出 / 未配置页 / 解锁门）时复位最小宽，别让上个界面
+                    // 算出的底线卡住那些页面的窗口。
+                    resetWindowMinWidth()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { note in
+                    // 窗口帧层始终触发：geo 在内容比窗口宽时会冻结在「溢出后的内容宽」不再变化，
+                    // 侧栏 clamp 不能只挂在 geo 上（docs/bugs/014 的布点教训）。这里保证窗口真变宽/窄时
+                    // 尺子一定重算 —— 也覆盖"系统平铺绕过 contentMinSize"这类残余路径（减损，见 docs/bugs/033 §5）。
+                    guard let window = note.object as? NSWindow,
+                          window === (NSApp.mainWindow ?? NSApp.keyWindow) else { return }
+                    clampRightSidebarWidth()
                 }
 #endif
             }

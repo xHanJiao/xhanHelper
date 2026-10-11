@@ -127,3 +127,11 @@ HStack(spacing: Layout.toolbarCapsuleGap) {
 4. 浏览器组「注册一次 + `visible` 闭包判状态」，不做 register/unregister 切换显隐。
 5. 清数据逻辑从 RightSidebarView 移入 `BrowserToolProvider.clearBrowsingData()`（static，present sheet）。
 6. 实现顺序：TopBarRegistry → TopBarView → 默认组注册（验证渲染）→ 浏览器组注册（验证切换）→ 清理旧文件。
+
+## 八、后续变更
+
+### 2026-10-11 · 主窗口红绿灯右下微移
+
+- **决定**：主窗口三个窗口按钮整体右移 6 / 下移 4（`AppDelegate.trafficLightNudge`）。系统没有公开的偏移 API，只能改按钮 frame；AppKit 每次重排标题栏（缩放、改标题、进出全屏）都会复位，故在 `windowDidResize` / `windowDidExitFullScreen` 之后按记下的系统基准重写（当前值 ≠ 上次写入值 → 当作新基准）。
+- **影响**：`Layout.topBarTrafficClearance` 改为由 `Layout.trafficLightNudgeX` 派生（56 → 62），顶栏内在宽随之 +6 —— 顶栏是绑定约束时窗口最小宽也 +6（属宽度账的正常传导）。
+- **已知陷阱**：改窗口标题同样会复位、且**不触发** `didResize`。主窗口标题首启后不再设置，故当前无碍；若日后出现弹回，按 `client/xHelper/xHelperMac/App.swift` 里的 `shortcut:` 注释加 `NSWindow.didUpdateNotification` 兜底。

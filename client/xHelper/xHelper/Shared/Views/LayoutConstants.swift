@@ -11,8 +11,12 @@ enum Layout {
 
     // MARK: - 顶栏胶囊（icon 边长 + 组内边距，高度为派生值，改动自动跟随）
 
+    /// 红绿灯横向微移量（唯一来源，`AppDelegate.trafficLightNudge` 的 x 取它）。
+    static let trafficLightNudgeX: CGFloat = 6
+
     /// 顶栏左缘红绿灯让位（与 toolbarHorizontalPadding 相加 = 左区内容起始位置）。
-    static let topBarTrafficClearance: CGFloat = 56
+    /// 红绿灯右端默认到 x≈69，再右移 `trafficLightNudgeX` → 起点要到 78 才不压上（56 = 69 + 3 余量 - 16）。
+    static let topBarTrafficClearance: CGFloat = 56 + trafficLightNudgeX
 
     /// 胶囊内 icon 边长（CapsuleIcon frame）。
     static let topBarIconSize: CGFloat = 26

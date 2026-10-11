@@ -506,6 +506,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.contentView?.wantsLayer = true
         window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
         window.toolbar = nil
+        applyTrafficLightNudge(window)
+    }
+
+    // MARK: 红绿灯微调
+
+    /// 三个窗口按钮整体微移（向右 6 / 向下 4）。系统没有公开的偏移 API，只能改它们的 frame；
+    /// 而 AppKit 每次重排标题栏（缩放、改标题、进出全屏）都会复位，所以在重排之后按记下的**系统基准**
+    /// 再写一次；写的是「基准 + 偏移」、重复调用幂等，且当前值不等于上次写入值时把它当成系统新基准。
+    /// 改横向偏移要同步的是 `Layout.trafficLightNudgeX`（让位常量由它派生），纵向只影响这里。
+    /// 真机验收：拖拽缩放 / 进出全屏 / 深浅色切换 / 关窗后点 Dock 重开。
+    /// shortcut: 只 hook 了「缩放」与「退出全屏」两条复位路径（实测够用），
+    ///           若发现别的路径会弹回，再加订阅 `NSWindow.didUpdateNotification`（当前值 ≠ 目标值才写）。
+    private static let trafficLightNudge = CGPoint(x: Layout.trafficLightNudgeX, y: -4)  // y 为负 = 视觉上向下（标题栏容器非翻转）
+    private static weak var nudgeWindow: NSWindow?
+    private static var nudgeBase: [CGPoint] = []
+
+    /// 非主窗口（⌘, 设置窗）/ 全屏态不动。
+    static func applyTrafficLightNudge(_ window: NSWindow) {
+        guard window === primaryWindow,
+              window.styleMask.contains(.titled),
+              !window.styleMask.contains(.fullScreen) else { return }
+        let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        if nudgeWindow !== window || nudgeBase.count != types.count {
+            // SwiftUI 关窗驻留后从 Dock 重开会新建 NSWindow → 基准要重记（首次按钮还没建好时下次再记）。
+            nudgeWindow = window
+            nudgeBase = types.compactMap { window.standardWindowButton($0)?.frame.origin }
+            guard nudgeBase.count == types.count else { nudgeBase = []; return }
+        }
+        for (i, type) in types.enumerated() {
+            guard let button = window.standardWindowButton(type) else { return }
+            let current = button.frame.origin
+            let written = NSPoint(x: nudgeBase[i].x + trafficLightNudge.x,
+                                  y: nudgeBase[i].y + trafficLightNudge.y)
+            guard current != written else { continue }  // 还是我们写进去的值
+            nudgeBase[i] = current                      // 否则：系统刚重排，当前值就是新基准
+            button.setFrameOrigin(NSPoint(x: current.x + trafficLightNudge.x,
+                                          y: current.y + trafficLightNudge.y))
+        }
+    }
+
+    /// 系统重排标题栏后会复位，重排完补一次。
+    func windowDidResize(_ notification: Notification) {
+        reapplyTrafficLightNudge(notification)
+    }
+
+    /// 退出全屏时要补一次：实测 `willExit` 时 `styleMask` 还带 `.fullScreen`（会被跳过），
+    /// 到 `didExit` 已清掉，此刻写立刻生效。
+    func windowDidExitFullScreen(_ notification: Notification) {
+        reapplyTrafficLightNudge(notification)
+    }
+
+    private func reapplyTrafficLightNudge(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        Self.applyTrafficLightNudge(window)
     }
 }
 

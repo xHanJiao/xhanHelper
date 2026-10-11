@@ -96,8 +96,10 @@
 影响文件：`xHelperMac/WindowMinWidthStore.swift`（新增）、`xHelperMac/App.swift`、
 `xHelperMac/LocalSettingsViews.swift`、`Shared/Views/ContentView.swift`。
 
-**未做（另起会话做）**：顶栏降级（把底线从 ~900 还给两栏 778）+ 顶栏会话下拉常驻（含 PiP）——
-属需求变更，不在本次 bug fix 范围内。
+**未做（另起会话做，现已完成）**：顶栏降级（把底线从 ~900 还给两栏 778）+ 顶栏会话下拉常驻（含 PiP）——
+属需求变更，不在本次 bug fix 范围内。**已另立** `docs/design/mac-topbar-degrade/design.md`
+（顶栏不再决定窗口最小宽，改按可用宽降级；本 bug 的 `WindowMinWidthStore` → `.frame(minWidth:)` → `contentMinSize`
+链不动，顶栏探针降级为安全网）。
 
 **已知残余（写清，避免下次误判）**
 

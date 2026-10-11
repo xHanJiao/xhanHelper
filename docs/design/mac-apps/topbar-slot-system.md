@@ -97,6 +97,14 @@ HStack(spacing: Layout.toolbarCapsuleGap) {
 
 `renderSlot` → `registry.visibleGroups(for:)` → 每个 Group 一个 `CapsuleGroup`（复用胶囊样式），内部 `ForEach(buttons)` 渲染 `CapsuleButton` / `CapsuleRefreshButton`，按钮间用 `Divider` 分隔。
 
+### 五之二、降级档 + `⋯` 溢出（2026-10-11）
+
+顶栏**不再决定窗口最小宽**，改为按可用宽（`TopBarView.availableWidth` = 窗口内容宽）自适应降级：
+档位 = DEV 徽标 → 中心槽组 → 下拉标签收窄，被收的按钮进右槽最左的 `⋯`（原生 `Menu`，贴在 ⌘1–5 导航组左侧）。
+判定是**纯函数**（`Shared/Views/TopBarLayout.swift`，按钮统一 26pt icon 故可算不必量），
+真实栏与隐藏探针必然同档；探针（`TopBarMinWidthKey`）降级为安全网。
+完整宽度账、档位阈值、验收项见 `../mac-topbar-degrade/design.md`。
+
 **按钮 enabled/icon/help 实时更新**：TopBarView `@ObservedObject registry, rightSidebar, chatTabManager, router`，任一 publish → re-render → `ButtonDef` 的 closure 重新求值。
 
 ## 六、改动文件

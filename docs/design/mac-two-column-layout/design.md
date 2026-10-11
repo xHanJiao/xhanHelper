@@ -11,7 +11,7 @@
 | G1 | 删掉 macOS 左侧栏（含它和中栏之间的 seam），窗口只剩「中间对话栏 + 右侧可展开功能区」两栏 |
 | G2 | 会话切换与新建收进顶栏**左侧区域**：一个下拉 trigger 显示当前会话名，其右侧一个常驻 `＋` 新建会话（普通新建） |
 | G3 | 无痕能力从侧栏右键菜单 → 输入栏一个 pill；**点击即把当前会话标记为无痕**，可再点取消 |
-| G4 | 顶栏下拉**仅在中间对话区可见时出现**；右侧栏最大化（PiP）时隐藏 |
+| G4 | 顶栏下拉**仅在中间对话区可见时出现**；右侧栏最大化（PiP）时隐藏 —— **已于 2026-10-11 作废**：改为常驻（含 PiP），见 `../mac-topbar-degrade/design.md` |
 
 ---
 
@@ -175,8 +175,8 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
 
 **集成方式（D9 = ⓑ）**：在 `TopBarView` 里单开一个**不走 registry 的 leading View**（trigger + `＋`），直接放在 `body` 最前；**不扩 `TopBarButton` 模型、不碰 `TopBarRegistry`**（`.left` 槽本无任何注册者，无优先级/共存诉求；改模型是纯 YAGNI，还引入 `AnyView` 类型擦除）。
 
-- **可见性**：`if !rightSidebar.isPipChat { conversationSwitcher }`（D4/G4：中栏被 PiP 接管则藏）。
-- **trigger**：`[🎭?] 当前会话名 ⌄`（无痕前缀 🎭），胶囊样式同 `CapsuleGroup`；**`.frame(maxWidth: 240)` + `lineLimit(1)` + `truncationMode(.tail)`**（D5，防顶栏顶高窗口最小宽，见 §2.2）。
+- **可见性**：**常驻**（2026-10-11 起，含 PiP；原为 `if !rightSidebar.isPipChat { … }`，D4/G4 作废）——见 `../mac-topbar-degrade/design.md`。
+- **trigger**：`[🎭?] 当前会话名 ⌄`（无痕前缀 🎭），胶囊样式同 `CapsuleGroup`；**标签上限 240**（+ `lineLimit(1)` + `truncationMode(.tail)`，D5）；降级末档收到 160（`TopBarLayout.switcherLabelCap`）。
 - **`＋`**：trigger 右侧常驻图标按钮 → `newChat()`（**普通新建**；无痕走输入栏 pill）。
 - 数据源：`chatTabManager.currentTab?.title`（trigger）；`conversationListVM`（菜单）。
 - **展开**：自定义 popover（**不用原生 `Menu`**，因行内要放 hover 出的置顶/删除）。内容：小标题「会话」+ `ForEach(conversationListVM.conversations)`（行点击 → `openConversation`；相对更新时间 `formatConversationDate(updatedAt)` 固定在行最右；hover 出的 `📌` setPinned / `✕` delete 排在其左侧；当前行 `✓`；无痕行 🎭；`hasMore` → 「加载更多」`loadMore()`）。
@@ -324,4 +324,12 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
     侧栏可用宽改用窗口真实内容宽（`geo.size.width` 在内容溢出时会失真）；ContentView 离开主界面时复位最小宽。
   - 影响文件：`xHelperMac/App.swift`、`xHelperMac/LocalSettingsViews.swift`、`Shared/Views/ContentView.swift`。
   - §2.6 / §4.1.3 描述的最小宽链以本条为准；D7 的"固化隐藏态"结论不变。
-  - 未做（另起会话）：顶栏降级（把底线从 ~900 还给两栏 778）+ 顶栏会话下拉常驻（含 PiP）。
+  - 当时未做（另起会话）：顶栏降级（把底线从 ~900 还给两栏 778）+ 顶栏会话下拉常驻（含 PiP）→ **已由下一条完成**。
+- **2026-10-11 · 顶栏会话下拉常驻（含 PiP）+ 顶栏自适应降级**（`docs/design/mac-topbar-degrade/design.md`）。
+  - 决定：下拉**常驻**，G4/D4 作废；顶栏**不再决定窗口最小宽**，改按可用宽降级（DEV 徽标 → 中心槽组 → 标签收窄），
+    窗口底线回到两栏公式 **778 / PiP 750**；顶栏探针降级为安全网（见 `docs/bugs/033` 的 min-width 链不变）。
+  - 原因：~900 的底线来自顶栏内在宽（浏览器组 7 键 + 下拉标签封顶 240）；常驻下拉会让 PiP 底线进一步涨到 ~957，
+    必须同批做降级。
+  - 影响文件：新增 `Shared/Views/TopBarLayout.swift`（纯逻辑 + SwiftPM 单测）、`TopBarView.swift`、`LayoutConstants.swift`、
+    `ContentView.swift`（传 `availableWidth`）。
+  - D5（trigger 上限 240）不变，降级末档临时收到 160；**不收导航组**（其 ⌘1–5 挂在被渲染的按钮上，收了会丢快捷键）。

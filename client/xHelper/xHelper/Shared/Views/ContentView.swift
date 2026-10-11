@@ -27,9 +27,9 @@ struct ContentView: View {
     /// 布局宽（geo 上报）。内容比窗口宽时它是「溢出后的内容宽」而非窗口宽，只作回退用；
     /// 判断"窗口还能放多宽"一律走 `realWindowContentWidth()`（见 docs/bugs/033）。
     @State private var windowWidth: CGFloat = 800
-    /// 顶栏内在最小宽（由 TopBarView 隐藏探针经 `TopBarMinWidthKey` 上报）。
-    /// 顶栏是 VStack 最宽子项，窗口最小宽必须 ≥ 它，否则窗口缩到比顶栏还窄 → 顶栏溢出居中
-    /// → 红绿灯压住下拉框、中/右栏被裁。
+    /// 顶栏内在最小宽（由 TopBarView 隐藏探针经 `TopBarMinWidthKey` 上报，量的是**当前降级档**）。
+    /// 顶栏现在会按窗口宽自己降级（见 `docs/design/mac-topbar-degrade/design.md`），所以这个值
+    /// 正常小于窗口底线、不再撑宽窗口；留作安全网——万一档位算乐观了，顶开窗口而不是让顶栏溢出。
     @State private var topBarMinWidth: CGFloat = 0
     /// 进入 PiP 前右栏宽度，退出时恢复。
     @State private var prePipSidebarWidth: Double?
@@ -72,6 +72,13 @@ struct ContentView: View {
         Double(window.contentView?.frame.width ?? window.frame.width)
     }
 
+    /// 喂给顶栏降级的「可用宽」。用真实窗口内容宽而不是布局 `windowWidth`（geo）——
+    /// 内容一旦比窗口宽，geo 报的是「溢出后的内容宽」（bug 033 的纪律），乐观输入会选出偏不降级的档。
+    /// 取不到窗口时回退 geo。
+    private var topBarAvailableWidth: CGFloat {
+        CGFloat(realWindowContentWidth() ?? Double(windowWidth))
+    }
+
     /// 右侧栏在当前窗口布局下可用的最大宽度（以窗口真实内容宽为准）。
     /// 减去中间跨度、右栏外扩。PiP 时中间让位，右栏可铺满整窗（不设 1200 上限）。
     private var rightSidebarMaxAvailable: Double {
@@ -102,7 +109,8 @@ struct ContentView: View {
         } else {
             bottomRowMin = baseMinWidth
         }
-        // 取「底栏推导值 / 顶栏内在宽 / 全局下限」的较大者：顶栏装不下的窗口宽会让内容溢出居中、被裁。
+        // 取「底栏推导值 / 顶栏内在宽 / 全局下限」的较大者。顶栏项如今只是安全网：
+        // 顶栏会按窗口宽自己降级（docs/design/mac-topbar-degrade），正常不会撑宽窗口。
         let minContent = max(bottomRowMin, topBarMinWidth, Layout.minWindowContentWidth)
         // 最小宽只有一个来源：`WindowMinWidthStore`。它 → 根视图 `.frame(minWidth:)` →
         // SwiftUI 落到 AppKit `contentMinSize`（主约束，所有缩放路径都认）；
@@ -341,6 +349,7 @@ struct ContentView: View {
 #else
                 VStack(spacing: 0) {
                     TopBarView(
+                        availableWidth: topBarAvailableWidth,
                         rightSidebar: rightSidebar,
                         chatTabManager: chatTabManager,
                         conversationListVM: conversationListVM

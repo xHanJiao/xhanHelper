@@ -59,11 +59,19 @@ struct TopBarPlan: Equatable {
 /// 之所以能「算」而不必「量」：顶栏所有按钮都是统一 `Layout.topBarIconSize` 的 icon，
 /// 组内边距/组间距/外边距全是常数（与 `TopBarView` 渲染一一对应）。
 enum TopBarLayout {
-    /// 选档：**装得下的最不降级**档。`available` = 窗口内容宽。
+    /// 选档：**装得下的最不降级**档。`available` = 窗口内容宽；`trailingLimit` = 右簇能用的宽
+    /// （右栏打开时 = 中栏卡片右侧那段，见 `ContentView.topBarTrailingLimit`；`nil` = 不限制）。
     /// 都装不下时给最深档，剩下的交给隐藏探针兜底（顶宽窗口而不是让顶栏溢出）。
-    static func plan(available: CGFloat, model: TopBarWidthModel) -> TopBarPlan {
+    static func plan(available: CGFloat, trailingLimit: CGFloat? = nil, model: TopBarWidthModel) -> TopBarPlan {
         for level in TopBarLevel.allCases
         where width(level: level, model: model) <= available - Layout.topBarDegradeMargin {
+            // 中心槽组（浏览器 / 文档详情）只有「整簇都落得进卡片右侧那段」时才允许显形：
+            // 右簇是右对齐的，它一显形就把整簇往左推、压在中栏卡片上（`mac-card-top-wrap`）。
+            // 中心槽已收掉的档（≥ foldCenter）不再过这道闸 —— 再往下降也缩不了右簇。
+            if level < .foldCenter, let limit = trailingLimit,
+               trailingWidth(level: level, model: model) > limit - Layout.topBarDegradeMargin {
+                continue
+            }
             return TopBarPlan(level: level, model: model)
         }
         return TopBarPlan(level: TopBarLevel.allCases[TopBarLevel.allCases.count - 1], model: model)
@@ -76,6 +84,17 @@ enum TopBarLayout {
             switcherWidth(level: level, model: model),
             0, // 探针副本里的 0 宽占位 Spacer（真实栏是弹性 Spacer，不贡献内在宽）
         ]
+        children.append(contentsOf: trailingChildren(level: level, model: model))
+
+        return Layout.toolbarHorizontalPadding * 2
+            + children.reduce(0, +)
+            + Layout.topBarGroupSpacing * CGFloat(children.count - 1)
+    }
+
+    /// 右簇（DEV 徽标 / 中心槽 / 槽间线 / 右槽）各子项的宽 —— 与 `TopBarView.topBarHStack`
+    /// 那几行一一对应。它右对齐，所以要单独核算（见 `plan` 的第二道闸）。
+    static func trailingChildren(level: TopBarLevel, model: TopBarWidthModel) -> [CGFloat] {
+        var children: [CGFloat] = []
         if model.isDev && level < .hideDevChip { children.append(Layout.topBarDevChipWidth) }
 
         let centerWidth = level < .foldCenter ? slotWidth(model.centerGroups) : 0
@@ -85,10 +104,14 @@ enum TopBarLayout {
         // 中/右两槽都有内容时中间有一根 UnresizableDivider（与 TopBarView 同条件）
         if centerWidth > 0 && rightWidth > 0 { children.append(Layout.topBarSlotDividerWidth) }
         if rightWidth > 0 { children.append(rightWidth) }
+        return children
+    }
 
-        return Layout.toolbarHorizontalPadding * 2
-            + children.reduce(0, +)
-            + Layout.topBarGroupSpacing * CGFloat(children.count - 1)
+    /// 右簇占宽（含簇内组间距）。
+    static func trailingWidth(level: TopBarLevel, model: TopBarWidthModel) -> CGFloat {
+        let children = trailingChildren(level: level, model: model)
+        guard !children.isEmpty else { return 0 }
+        return children.reduce(0, +) + Layout.topBarGroupSpacing * CGFloat(children.count - 1)
     }
 
     /// 下拉 trigger 宽。标签按**当前档的上限吃满**算 —— 于是档位不随会话标题抖动

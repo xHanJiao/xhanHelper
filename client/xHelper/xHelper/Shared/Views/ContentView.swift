@@ -79,6 +79,18 @@ struct ContentView: View {
         CGFloat(realWindowContentWidth() ?? Double(windowWidth))
     }
 
+    /// 喂给顶栏降级的「右簇可用宽」：右栏打开时顶栏按钮簇右对齐，只能待在**中栏卡片右侧那段**
+    /// （卡片右缘 → 窗口内容右缘）再减顶栏自身右内边距 —— 否则中心槽组一显形就压在中栏卡片上
+    /// （见 `docs/bugs/034`、`docs/design/mac-card-top-wrap`）。
+    /// 右栏关着（卡片铺满整宽）/ PiP（整窗就是右栏）时中栏不占位 → `nil`，不限制。
+    private var topBarTrailingLimit: CGFloat? {
+        guard rightSidebar.isOpen, !rightSidebar.isPipChat else { return nil }
+        return Layout.cardGap
+            + Layout.seamHalfGap * 2 + Layout.seamWidth
+            + CGFloat(rightSidebar.width)
+            - Layout.toolbarHorizontalPadding
+    }
+
     /// 右侧栏在当前窗口布局下可用的最大宽度（以窗口真实内容宽为准）。
     /// 减去中间跨度、右栏外扩。PiP 时中间让位，右栏可铺满整窗（不设 1200 上限）。
     private var rightSidebarMaxAvailable: Double {
@@ -350,6 +362,7 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     TopBarView(
                         availableWidth: topBarAvailableWidth,
+                        trailingLimit: topBarTrailingLimit,
                         rightSidebar: rightSidebar,
                         chatTabManager: chatTabManager,
                         conversationListVM: conversationListVM

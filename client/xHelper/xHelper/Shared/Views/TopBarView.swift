@@ -8,6 +8,9 @@ import AppKit
 struct TopBarView: View {
     /// 可用宽（窗口内容宽）。顶栏据此自适应降级；见 docs/design/mac-topbar-degrade/design.md。
     let availableWidth: CGFloat
+    /// 右簇（DEV / 中心槽 / 右槽）能用的宽：右栏打开时 = 中栏卡片右侧那段（按钮簇右对齐，
+    /// 压到卡片上就难看了）；右栏关着 / PiP 时中栏不占位 → `nil` = 不限制。
+    let trailingLimit: CGFloat?
     @ObservedObject private var registry = TopBarRegistry.shared
     @ObservedObject private var bookmarksBarState = BookmarksBarState.shared
     @ObservedObject var rightSidebar: RightSidebarManager
@@ -42,7 +45,7 @@ struct TopBarView: View {
     /// 降级计划：由「可用宽 + 当前位置」经纯函数算出（`TopBarLayout`）。
     /// 注意它是**算出来**而不是量出来的，所以真实栏与隐藏探针必然同档（不会自激）。
     private var plan: TopBarPlan {
-        TopBarLayout.plan(available: availableWidth, model: widthModel)
+        TopBarLayout.plan(available: availableWidth, trailingLimit: trailingLimit, model: widthModel)
     }
 
     /// 右槽两个内建组的 id：宽度模型要数它们的可见按钮数（`⋯` 的落位不再依赖 id）。

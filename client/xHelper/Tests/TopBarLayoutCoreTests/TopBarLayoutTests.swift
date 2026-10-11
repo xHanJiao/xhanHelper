@@ -135,4 +135,71 @@ final class TopBarLayoutTests: XCTestCase {
         XCTAssertEqual(TopBarLayout.groupWidth(5), 178, accuracy: 0.001)
         XCTAssertEqual(TopBarLayout.groupWidth(7), 248, accuracy: 0.001)
     }
+
+    // MARK: - 右簇必须落进「中栏卡片右侧那段」（docs/bugs/034）
+
+    /// 右栏开着（默认宽 380）时右簇可用的宽 = cardGap 6 + seam 6 + 右栏 380 − 顶栏右内边距 16
+    /// （与 `ContentView.topBarTrailingLimit` 同式；那里取真实右栏宽）。
+    private let cardTrailingLimit: CGFloat =
+        Layout.cardGap + Layout.seamHalfGap * 2 + Layout.seamWidth + 380 - Layout.toolbarHorizontalPadding
+
+    /// 右栏开着：中心槽组在任何窗口宽度下都不许显形 —— 它显形就把整簇往左推、压在中栏卡片上。
+    /// （窗口越宽中栏卡片越宽，所以「窗口够宽就显形」这条老判据永远会踩中。）
+    func testCenterGroupStaysFoldedWhenSidebarOpen() {
+        for model in [browserModel, documentModel] {
+            for available in stride(from: CGFloat(700), through: 1600, by: 1) {
+                let plan = TopBarLayout.plan(available: available, trailingLimit: cardTrailingLimit, model: model)
+                XCTAssertFalse(plan.showsCenter, "available=\(available) 中心槽组显形了")
+            }
+        }
+    }
+
+    /// 这道闸只该收中心槽，不该牵连标签：宽窗 + 右栏开时档位停在 foldCenter（标签 240），
+    /// 不是一路落到末档（落到末档 = 闸门放错位置了）。
+    func testSidebarGateDoesNotCompactSwitcher() {
+        let plan = TopBarLayout.plan(available: 1200, trailingLimit: cardTrailingLimit, model: browserModel)
+        XCTAssertEqual(plan.level, .foldCenter)
+        XCTAssertEqual(plan.switcherLabelCap, Layout.topBarSwitcherLabelCap)
+        XCTAssertTrue(plan.showsOverflow)
+    }
+
+    /// 右栏拖宽到够放下整簇 → 中心槽组自然回栏，且整簇真落在限制内。
+    func testCenterGroupReturnsWhenSidebarIsWideEnough() {
+        let limit: CGFloat = 700
+        let plan = TopBarLayout.plan(available: 1200, trailingLimit: limit, model: browserModel)
+        XCTAssertEqual(plan.level, .full)
+        XCTAssertTrue(plan.showsCenter)
+        XCTAssertLessThanOrEqual(
+            TopBarLayout.trailingWidth(level: plan.level, model: browserModel),
+            limit - Layout.topBarDegradeMargin
+        )
+    }
+
+    /// 不变量：只要中心槽组显形，整簇就一定落得进限制内。
+    func testShowsCenterImpliesTrailingFitsLimit() {
+        for model in [browserModel, documentModel, plainPanelModel] {
+            for limit in stride(from: CGFloat(300), through: 900, by: 7) {
+                for available in stride(from: CGFloat(700), through: 1400, by: 97) {
+                    let plan = TopBarLayout.plan(available: available, trailingLimit: limit, model: model)
+                    guard plan.showsCenter else { continue }
+                    XCTAssertLessThanOrEqual(
+                        TopBarLayout.trailingWidth(level: plan.level, model: model),
+                        limit - Layout.topBarDegradeMargin,
+                        "available=\(available) limit=\(limit) level=\(plan.level)"
+                    )
+                }
+            }
+        }
+    }
+
+    /// 右栏关着 / PiP（limit = nil）：与加这道闸之前完全一致 —— 宽窗照样全量、中心槽组显形。
+    func testNilTrailingLimitKeepsFullAtWideWindow() {
+        XCTAssertEqual(TopBarLayout.plan(available: 1200, model: browserModel).level, .full)
+        XCTAssertTrue(TopBarLayout.plan(available: 1200, trailingLimit: nil, model: browserModel).showsCenter)
+        XCTAssertFalse(
+            TopBarLayout.plan(available: 1200, trailingLimit: cardTrailingLimit, model: browserModel).showsCenter
+        )
+        // 折叠态的右簇口径：导航组 178 + 线 9 + ⋯ 38 + 线 9 + 工具组 143
+        XCTAssertEqual(TopBarLayout.trailingWidth(level: .foldCenter, model: browserModel), 377, accuracy: 0.001)
+    }
 }

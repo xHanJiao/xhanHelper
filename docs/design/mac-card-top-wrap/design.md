@@ -23,6 +23,7 @@
 | 项 | 值 | 说明 |
 |---|----|------|
 | 卡片上边 | **6** = `cardGap` | 与左/右/下对称 → 上边看得见（早期方案停在 y=0，压在窗顶被窗口圆角切，已否，见 §七） |
+| 卡片右缘 = 右栏开着时**按钮的边界** | 内容宽 − (`cardGap` 6 + seam 6 + 右栏宽) | 顶栏按钮簇**右对齐**，只能待在卡片右缘右侧那段；越过就是「按钮压在卡片上」（不变量，见 §八 2026-10-12 那条） |
 | 卡片上溢量 | **40** = `topBarHeight − cardGap`（`cardTopRise`） | 描边/填充各 `.padding(.top, -cardTopRise)` |
 | 顶栏内容距窗顶 | **12**（`topBarTopGap`） | 下边距仍 `toolbarVGap`(6) → 胶囊上方 12、下方 6 |
 | 顶栏高 | **46** = 12 + 胶囊 28 + 6（`topBarHeight`） | 48 → 54（2026-10-11）→ **46**（2026-10-12 缩胶囊）；写死旧值的文档均已同步（见 §五） |
@@ -129,3 +130,10 @@
     `../mac-two-column-layout/design.md`（§2.2 + §10）、`../mac-apps/topbar-slot-system.md`（§八）。
   - 未做（记一笔）：`Layout.topBarSwitcherChromeWidth` 里"＋按钮 26"是既有写死值，而视图里 ＋ 取 `topBarCapsuleHeight`
     （36 → 28）→ 宽度模型对该按钮一直少算（旧 10、现 2 = 28 − 26）。本次不动它（缩胶囊只会让误差变小），要修需连带重算 `mac-topbar-degrade` 的宽度账。
+- **2026-10-12 · 明确「右栏开着时按钮不落在卡片上」这条不变量**
+  - 背景：`../mac-topbar-degrade/design.md` 原来只按窗口内容宽选档，中心槽组一显形就整簇压到卡片右上半区
+    （`docs/bugs/034`）。已在降级侧加闸（`trailingWidth ≤ 卡片右侧可用宽 − margin`），本文件把不变量写死，
+    免得下次又按「窗口够宽就显形」改回去。
+  - 边界：右栏关着（卡片铺满整宽）/ PiP（整窗就是右栏）时中栏不占位 → 不受此闸约束（那段「所有按钮都落在卡片里」仍成立）。
+  - 影响文件：`../mac-topbar-degrade/design.md`（§2.1 表、§3.3 两张表 + 设计要点 4、§四 D6、§六、§七）、
+    `Shared/Views/{TopBarLayout,TopBarView,ContentView}.swift`（细节见 `docs/bugs/034`）。

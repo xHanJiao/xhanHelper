@@ -44,7 +44,7 @@
   `toolbar=nil`；由 `applicationWill/DidBecomeActive`（`:367-376`）对所有窗口调用。窗口样式
   `.windowStyle(.hiddenTitleBar)`（`App.swift:609`）。
 - **标题栏/顶栏几何**：系统标题栏高 **32pt**（本机 macOS 26.3 实测 `NSWindow.frameRect`）；app 的 `TopBarView`
-  高 **54pt** = `Layout.topBarHeight`（内容距窗顶 12 + 胶囊 36 + 下边距 6），`.ignoresSafeArea(edges:.top)` 从窗口顶 y=0 起算。
+  高 **46pt** = `Layout.topBarHeight`（内容距窗顶 12 + 胶囊 28 + 下边距 6），`.ignoresSafeArea(edges:.top)` 从窗口顶 y=0 起算。
   详见 `../mac-card-top-wrap/design.md`（该值同时决定中栏卡片的**上溢量** `cardTopRise`）与 `mac-two-column-layout/design.md`。
 - **内容列**：`ContentView.swift` → `macOSContentArea` 是一张**完整卡片**：`RoundedRectangle(12)` 描边（`assistantText` 12%）
   + 同形**白霜提亮底**（`Color.white` `cardFillOpacity`=6%，与 `AppBackdrop.frost` 同族；**不要用 `assistantText` 压暗**，真机偏暗沉）
@@ -183,7 +183,7 @@ content
 
 ## 六、真机验收清单
 
-1. **标题栏满覆盖**：主窗 0–54pt 那条带（含系统标题栏 32pt）照片一条线到底，左/中/右**无竖缝**、上下**无横缝**。
+1. **标题栏满覆盖**：主窗 0–46pt 那条带（含系统标题栏 32pt）照片一条线到底，左/中/右**无竖缝**、上下**无横缝**。
 2. **背景观感**：底图重模糊 + 遮罩后即玻璃观感；不透明，桌面/其他 app 不透。
 3. 空池 → 默认图；导入 → 用户池；清空 → 回默认图。
 4. 三种轮换模式各自生效（启动 / **切走再切回**（含"关设置窗回主窗"）/ 定时）。

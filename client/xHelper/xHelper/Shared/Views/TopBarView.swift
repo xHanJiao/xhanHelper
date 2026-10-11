@@ -146,6 +146,9 @@ struct TopBarView: View {
                 .buttonStyle(.plain)
                 .background(.ultraThinMaterial, in: Capsule())
                 .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
+                // 常驻阴影：顶栏胶囊靠投影才读得出"是个按钮"（材质在卡片/照片底上对比不足），
+                // 参数与 CapsuleGroup 逐字一致 —— 三处胶囊必须同款，改一处记得改另两处。
+                .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
                 .help("切换会话")
                 .popover(isPresented: $showConversationMenu, arrowEdge: .bottom) {
                     conversationMenu
@@ -159,6 +162,8 @@ struct TopBarView: View {
                 .buttonStyle(.plain)
                 .background(.ultraThinMaterial, in: Circle())
                 .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 0.5))
+                // 与「切换会话」胶囊/ CapsuleGroup 同款常驻阴影，见上一条注释
+                .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
                 .help("新会话")
             } else {
                 conversationSwitcherLabel(cap: labelCap)

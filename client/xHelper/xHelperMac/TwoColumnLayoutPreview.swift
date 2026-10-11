@@ -55,14 +55,15 @@ struct TwoColumnLayoutPreview: View {
     }
 
     /// 预览专用：系统红绿灯（AppKit 画的窗口按钮，不是我们的 UI）——取系统色、对齐生产几何
-    /// （宽 14 / 距窗顶 23 / x=15·38·61，含 +6/−14 微移：与顶栏内容中心同一行居中）。
+    /// （宽 14 / 距窗顶 `Layout.trafficLightTopFromWindow` / x=15·38·61，含 `trafficLightNudgeX` 微移：与顶栏内容中心同一行居中）。
     private var fakeTrafficLights: some View {
         HStack(spacing: 9) {
             trafficLight(r: 1.00, g: 0.37, b: 0.34)   // 红
             trafficLight(r: 1.00, g: 0.74, b: 0.18)   // 黄
             trafficLight(r: 0.16, g: 0.79, b: 0.25)   // 绿
         }
-        .offset(x: 15, y: 23)
+        // 9 = 系统基准 x（标题栏容器内），偏移量取 Layout 同一个来源 —— 改胶囊/微移预览自动跟随
+        .offset(x: 9 + Layout.trafficLightNudgeX, y: Layout.trafficLightTopFromWindow)
     }
 
     /// 参数是 RGB 分量（不是"哪个灯"）。
@@ -90,23 +91,29 @@ struct TwoColumnLayoutPreview: View {
             capsuleGroup(["globe", "doc.text", "creditcard", "chart.bar", "brain"])
             capsuleGroup(["arrow.up.left.and.arrow.down.right", "sidebar.trailing", "paintpalette", "gearshape"])
         }
-        // 顶栏实高 = 生产 `Layout.topBarHeight`（上 12 / 下 6 + 胶囊 36 = 54；卡片上溢量由它派生）
+        // 顶栏实高 = 生产 `Layout.topBarHeight`（上 12 / 下 6 + 胶囊 28 = 46；卡片上溢量由它派生）
         .frame(height: Layout.topBarCapsuleHeight)
         .padding(.horizontal, Layout.toolbarHorizontalPadding)
         .padding(.top, Layout.topBarTopGap)
         .padding(.bottom, Layout.toolbarVGap)
     }
 
+    /// 生产 `CapsuleGroup` 几何：内外边距 / 图标盒 / 组内间距全取 token（别再手搓数字，
+    /// 手搓的那版胶囊高 ≈22，改 `topBarCapsuleVPadding` 时画布根本看不出变化）。
     private func capsuleGroup(_ icons: [String]) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Layout.topBarInGroupSpacing) {
             ForEach(icons, id: \.self) {
-                Image(systemName: $0).font(.system(size: 12)).foregroundStyle(ink(0.7))
+                Image(systemName: $0)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(ink(0.7))
+                    .frame(width: Layout.topBarIconSize, height: Layout.topBarIconSize)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
+        .padding(.horizontal, Layout.topBarCapsuleHPadding)
+        .padding(.vertical, Layout.topBarCapsuleVPadding)
         .background(Capsule().fill(.regularMaterial))
         .overlay(Capsule().strokeBorder(ink(0.08), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.12), radius: 4, y: 2)   // 生产 CapsuleGroup 同款常驻阴影
     }
 
     private var conversationTrigger: some View {
@@ -123,9 +130,10 @@ struct TwoColumnLayoutPreview: View {
                 .foregroundStyle(ink(0.4))
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .frame(height: Layout.topBarCapsuleHeight)   // 生产「会话下拉」高度（不是 padding 近似）
         .background(Capsule().fill(.regularMaterial))
         .overlay(Capsule().strokeBorder(ink(0.1), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.12), radius: 4, y: 2)   // 与生产「会话下拉」同款
         .fixedSize(horizontal: true, vertical: false)
     }
 
@@ -133,9 +141,10 @@ struct TwoColumnLayoutPreview: View {
         Image(systemName: "plus")
             .font(.system(size: 16, weight: .medium))
             .foregroundStyle(ink(0.7))
-            .frame(width: 34, height: 34)
+            .frame(width: Layout.topBarCapsuleHeight, height: Layout.topBarCapsuleHeight)   // 生产「＋」同尺寸
             .background(Circle().fill(.regularMaterial))
             .overlay(Circle().strokeBorder(ink(0.1), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.12), radius: 4, y: 2)   // 与生产「＋」同款
             .help("新会话")
     }
 

@@ -27,17 +27,18 @@ enum Layout {
     static let topBarIconSize: CGFloat = 26
     /// 胶囊组水平内边距（CapsuleGroup）。
     static let topBarCapsuleHPadding: CGFloat = 6
-    /// 胶囊组垂直内边距（CapsuleGroup）。
-    static let topBarCapsuleVPadding: CGFloat = 5
+    /// 胶囊组垂直内边距（CapsuleGroup）。**收到 1** = 胶囊贴着 26pt 按钮盒（高 28）——
+    /// Xcode 顶栏按钮约 20pt，原 5（高 36）明显发胖、红绿灯被顶得偏下（见 `mac-card-top-wrap` §二）。
+    static let topBarCapsuleVPadding: CGFloat = 1
     /// 胶囊组总高（icon + 上下内边距），顶栏分割线等按此对齐。
     static let topBarCapsuleHeight: CGFloat = topBarIconSize + topBarCapsuleVPadding * 2
     /// 顶栏**内容**距窗口顶（上边距；下边距仍用 `toolbarVGap`）。
     static let topBarTopGap: CGFloat = 12
-    /// 顶栏实高 = 上边距 + 胶囊高 + 下边距（12 + 36 + 6 = **54**）。
+    /// 顶栏实高 = 上边距 + 胶囊高 + 下边距（12 + 28 + 6 = **46**）。
     /// ⚠️ 两条依赖，改任一条都要回来对这里：
     /// ① `TopBarView` 的两处 padding 是唯一来源（12/6）；
-    /// ② 它隐含「顶栏 HStack 最高子视图 == `topBarCapsuleHeight`(36)」——会话下拉标签行与胶囊组各自显式
-    ///    `.frame(height:)`、DEV 徽标更矮，所以今天成立；**若将来放进比 36 更高的子件，顶栏会变高，
+    /// ② 它隐含「顶栏 HStack 最高子视图 == `topBarCapsuleHeight`(28)」——会话下拉标签行与胶囊组各自显式
+    ///    `.frame(height:)`、DEV 徽标也取同一个高度（等高，不是更矮），所以今天成立；**若将来放进比 28 更高的子件，顶栏会变高，
     ///    而 `cardTopRise` 仍按此值算 → 中栏卡片上边不再落在 `cardGap`（静默漂移）**。
     static let topBarHeight: CGFloat = topBarTopGap + topBarCapsuleHeight + toolbarVGap
 

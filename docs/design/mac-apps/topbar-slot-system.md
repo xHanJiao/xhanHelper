@@ -130,9 +130,19 @@ HStack(spacing: Layout.toolbarCapsuleGap) {
 
 ## 八、后续变更
 
-### 2026-10-11 · 主窗口红绿灯右下微移
+### 2026-10-11 · 主窗口红绿灯右下微移（纵向值 2026-10-12 更新为 19）
 
-- **决定**：主窗口三个窗口按钮整体右移 6 / **下移到距窗顶 23**（`AppDelegate.trafficLightNudge`；y 由 `Layout.trafficLightTopFromWindow` 派生 = `9 − 23` = **−14**，改顶栏上边距/胶囊高会自动跟随）。系统没有公开的偏移 API，只能改按钮 frame；AppKit 每次重排标题栏（缩放、改标题、进出全屏）都会复位，故在 `windowDidResize` / `windowDidExitFullScreen` 之后按记下的系统基准重写（当前值 ≠ 上次写入值 → 当作新基准）。
-  - ⚠️ **纵向值同日调整过一次**：先是"下移 4"（距窗顶 13），后为「与顶栏内容**同一行居中**」改成距窗顶 **23**（`y = −14`）。推导与依赖（按钮会**探出标题栏容器 5pt**，已验不裁/可点）写在 `App.swift` 注释里，几何账见 `../mac-card-top-wrap/design.md` §二。
+- **决定**：主窗口三个窗口按钮整体右移 6 / **下移到距窗顶 19**（`AppDelegate.trafficLightNudge`；y 由 `Layout.trafficLightTopFromWindow` 派生 = `9 − 19` = **−10**，改顶栏上边距/胶囊高会自动跟随）。系统没有公开的偏移 API，只能改按钮 frame；AppKit 每次重排标题栏（缩放、改标题、进出全屏）都会复位，故在 `windowDidResize` / `windowDidExitFullScreen` 之后按记下的系统基准重写（当前值 ≠ 上次写入值 → 当作新基准）。
+  - ⚠️ **纵向值调整过两次**：先是"下移 4"（距窗顶 13），后为「与顶栏内容**同一行居中**」改成距窗顶 **23**（`y = −14`）；**2026-10-12** 顶栏胶囊 36 → 28，派生值随之变 **19**（`y = −10`，探出标题栏容器的量由 5pt 降到 1pt）。推导与依赖写在 `App.swift` 注释里，几何账见 `../mac-card-top-wrap/design.md` §二。
 - **影响**：`Layout.topBarTrafficClearance` 改为由 `Layout.trafficLightNudgeX` 派生（56 → 62），顶栏内在宽随之 +6 —— 顶栏是绑定约束时窗口最小宽也 +6（属宽度账的正常传导）。纵向偏移不影响让位常量。
 - **已知陷阱**：改窗口标题同样会复位、且**不触发** `didResize`。主窗口标题首启后不再设置，故当前无碍；若日后出现弹回，按 `client/xHelper/xHelperMac/App.swift` 里的 `shortcut:` 注释加 `NSWindow.didUpdateNotification` 兜底。
+
+### 2026-10-12 · 顶栏胶囊常驻阴影统一
+
+- **问题**：顶栏三种胶囊里只有 `CapsuleGroup`（导航组 / 工具组 / `⋯`）有常驻阴影，左侧「会话下拉」「＋」没有 → 同一个顶栏里"有影/无影"并存。
+- **决定**：**给左侧两处补上同参常驻阴影**（`黑 12% / radius 4 / y 2`，与 `CapsuleGroup` 逐字一致），DEV 徽标不加（它是 tinted 底徽标、不是按钮）。
+  - **不要**反向"都去掉阴影"：试过（`/tmp/pill_shadow.png` 第 2/3 格）—— 材质（`.ultraThinMaterial` + 0.5pt 白描边）在卡片底 / 照片底上对比不足，**去掉投影后胶囊看不出是按钮**。层级上是「卡片抬起来（`CardElevationShadow`）、按钮靠自身投影立住」。
+  - 自然后果：投影挂在半透明材质上，胶囊内缘会带一点暗（右侧本来就这样），三处因此观感一致。
+- **影响文件**：`Shared/Views/TopBarView.swift`（`conversationSwitcher` 的两处 `.shadow`）、
+  `xHelperMac/TwoColumnLayoutPreview.swift`（预览那三个胶囊也补上同款，画布才跟生产一致）。
+- **未做（记一笔）**：左侧「下拉」「＋」至今 **hover 无任何反馈**（右侧组内按钮有图标圆底 + 整组抬起）；要不要补留给后续决定。

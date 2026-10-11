@@ -34,7 +34,7 @@
 
 ### 2.2 顶栏槽位系统（`TopBarView.swift` + `Services/TopBarRegistry.swift`）
 
-- 渲染：`HStack { Spacer().frame(width: navLeadingOffset); renderSlot(.left); Spacer(); devChip; renderSlot(.center); renderSlot(.right) }`，`.padding(.horizontal,16)` + `.padding(.top,12)` / `.padding(.bottom,6)`，`.ignoresSafeArea(.top)`。顶栏高 = `Layout.topBarHeight` = **54pt**（上边距 12 + 胶囊 36 + 下边距 6；**2026-10-11 由 48 变更**，见 §10 与 `../mac-card-top-wrap/design.md`）。
+- 渲染：`HStack { Spacer().frame(width: navLeadingOffset); renderSlot(.left); Spacer(); devChip; renderSlot(.center); renderSlot(.right) }`，`.padding(.horizontal,16)` + `.padding(.top,12)` / `.padding(.bottom,6)`，`.ignoresSafeArea(.top)`。顶栏高 = `Layout.topBarHeight` = **46pt**（上边距 12 + 胶囊 28 + 下边距 6；**2026-10-11 由 48 → 54、2026-10-12 缩胶囊到 28 → 46**，见 §10 与 `../mac-card-top-wrap/design.md`）。
 - 取显规则（`TopBarRegistry.swift:103-108`）：每槽取**最高优先级的可见组**，同优先级共存；组 `visible()` 每次重渲染求值；`TopBarView.visibleGroups:187-190` 再滤掉「按钮全不可见」的空组。
 - 已注册组（**`.left` 槽当前无任何注册者 → 永远为空**）：
 
@@ -336,15 +336,23 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
 - **2026-10-11 · 中栏卡片吸顶（包住顶栏按钮）+ 右栏去描边**（`../mac-card-top-wrap/design.md`）。
   - 决定：中栏（唯一左列）做成**有底色的完整卡片**（**白霜提亮 6%**，第一版 `assistantText` 6% 真机偏暗沉已撤）
     + **只在卡片外的投影**（`CardElevationShadow`，浅色黑 / 深色白 —— 半透明卡片直接 `.shadow` 会渗内），上边停在窗口内 6pt（与左/右/下对称），向上溢出 `cardTopRise`
-    把红绿灯 + 会话下拉包进卡片；**顶栏整条内容下移到距窗顶 12**（下边距仍 6，顶栏高 **48 → 54**）；
-    红绿灯纵向挪到距窗顶 **23**（与顶栏内容同一行居中，`trafficLightNudge.y = −14`，会探出标题栏容器 5pt）；
+    把红绿灯 + 会话下拉包进卡片；**顶栏整条内容下移到距窗顶 12**（下边距仍 6，顶栏高 **48 → 54 → 46**）；
+    红绿灯纵向挪到距窗顶 **19**（与顶栏内容同一行居中，`trafficLightNudge.y = −10`，探出标题栏容器 1pt）；
     右栏**去掉描边**、内容直接坐底图；右栏关着时中栏铺满整宽 → 顶栏所有按钮都在卡片里；PiP 不动。
     `topBarTrafficClearance` 不变（红绿灯横向仍是 +6）。
   - 影响文件：`LayoutConstants.swift`（`topBarTopGap`/`topBarHeight`/`cardTopRise`/`cardFillOpacity`）、`TopBarView.swift`（padding 上12下6）、
     `ContentView.swift`（`macOSContentArea` 的填充 + 描边，`.padding(.top, -cardTopRise)`）、`RightSidebarView.swift`（删描边）、
-    `xHelperMac/App.swift`（`trafficLightNudge.y = −14`）、`xHelperMac/TwoColumnLayoutPreview.swift`（2 个吸顶形态预览）。
+    `xHelperMac/App.swift`（`trafficLightNudge.y = −10`）、`xHelperMac/TwoColumnLayoutPreview.swift`（2 个吸顶形态预览）。
   - 曾试过自绘 `CardOutline`（上边压在窗顶、无底色），两版都被否 → 该 Shape 已删，回到 `RoundedRectangle`（见该文档 §七）。
 - **2026-10-11 · 右侧栏默认打开**（`Shared/Views/RightSidebarManager.swift` 一行）：`isOpen` 初值 `false → true`，
   **不持久化**（手动关掉后下次启动仍会开）。默认窗口内容宽 1180 > 双栏底线 778，不需要额外调窗口尺寸；
   启动时 `onChange(of: isOpen)` 不触发，但 `.onAppear → updateWindowMinWidth()` 与 geo 首帧的 `clampRightSidebarWidth()` 已覆盖最小宽/夹宽。
   副作用：存着的右栏宽（默认 840）会被夹到 ~782 并**写回**持久化。
+- **2026-10-12 · 顶栏胶囊 36 → 28**（`Shared/Views/LayoutConstants.swift` 一行：`topBarCapsuleVPadding` 5 → 1）。
+  - 决定：胶囊（按钮组外壳）比 Xcode 胖（36 vs 约 20），红绿灯被顶得偏下。只收**内边距**、不动 `topBarIconSize`(26)
+    → 顶栏降级的宽度账 / 3 个宽度测试 / `mac-topbar-degrade` 的宽度表全部不用重算（候选对照见 `/tmp/topbar_heights.png`）。
+  - 派生：胶囊 **28**、顶栏高 **46**、`cardTopRise` **40**、红绿灯距窗顶 **19**（`trafficLightNudge.y = −10`，探出标题栏容器 5pt → **1pt**）；
+    ＋按钮 / 会话下拉 / DEV 徽标 / 顶栏竖线都取 `topBarCapsuleHeight`，自动跟随。
+  - 影响文件：`LayoutConstants.swift`、`xHelperMac/App.swift`（注释）、`xHelperMac/TwoColumnLayoutPreview.swift`（注释）、
+    `../mac-card-top-wrap/design.md`（§一/§二/§三/§五/§七 + §八 后续变更）、`../mac-apps/window-background-photos.md`（§二/§六）、
+    `../mac-apps/topbar-slot-system.md`（§八）。

@@ -47,7 +47,7 @@
   高 **54pt** = `Layout.topBarHeight`（内容距窗顶 12 + 胶囊 36 + 下边距 6），`.ignoresSafeArea(edges:.top)` 从窗口顶 y=0 起算。
   详见 `../mac-card-top-wrap/design.md`（该值同时决定中栏卡片的**上溢量** `cardTopRise`）与 `mac-two-column-layout/design.md`。
 - **内容列**：`ContentView.swift` → `macOSContentArea` 是一张**完整卡片**：`RoundedRectangle(12)` 描边（`assistantText` 12%）
-  + 同形**淡底**（`assistantText` `cardFillOpacity`=6%，不自造色相），两条都 `.padding(.top, -cardTopRise)` 向上溢出，
+  + 同形**白霜提亮底**（`Color.white` `cardFillOpacity`=6%，与 `AppBackdrop.frost` 同族；**不要用 `assistantText` 压暗**，真机偏暗沉），两条都 `.padding(.top, -cardTopRise)` 向上溢出，
   把红绿灯 + 会话下拉包进卡片；上边停在窗口内 6pt、四条边都看得见。右栏**不画边缘**（内容直接坐底图）。
   顶栏**无底色**。详见 `../mac-card-top-wrap/design.md`。
 - **暖色渐变的归属**：`GlassBackground.swift`（LinearGradient + 光晕）**当前无 macOS 分支**，仅被 iOS

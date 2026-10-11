@@ -78,7 +78,8 @@ enum Layout {
     /// 中栏卡片描边/填充的**上溢量**：让卡片上边停在窗口内 `cardGap` 处（与左/右/下对称），
     /// 向上溢出到顶栏里把红绿灯 + 会话下拉包进卡片 —— 四条边都看得见（完整卡片，不是压在窗顶）。
     static let cardTopRise: CGFloat = topBarHeight - cardGap
-    /// 中栏卡片底色不透明度（`assistantText` 派生淡色，不自造色相）。真机观感可调。
+    /// 中栏卡片**提亮**底的不透明度：**白霜**（与 `AppBackdrop.frost` 同族），不是压暗的 `assistantText`
+    /// —— 用 ink tint 在照片底图上会整体偏暗沉（真机验过，见 design §五）。
     static let cardFillOpacity: Double = 0.06
     /// 缝线单侧间隙 = (cardGap - seamWidth) / 2。
     static let seamHalfGap: CGFloat = (cardGap - seamWidth) / 2

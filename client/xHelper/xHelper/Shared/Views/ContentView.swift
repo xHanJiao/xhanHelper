@@ -623,7 +623,7 @@ struct ContentView: View {
         // 见 docs/design/mac-card-top-wrap/design.md。
         .background(alignment: .top) {
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color("assistantText").opacity(Layout.cardFillOpacity))
+                .fill(Color.white.opacity(Layout.cardFillOpacity))
                 .padding(.top, -Layout.cardTopRise)
                 // 与描边同理：溢出到顶栏那一截不参与命中（今天顶栏 zIndex 更高本就轮不到它，防将来被提层级/按包围盒命中）
                 .allowsHitTesting(false)

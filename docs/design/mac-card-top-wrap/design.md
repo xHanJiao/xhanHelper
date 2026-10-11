@@ -26,7 +26,7 @@
 | 卡片上溢量 | **48** = `topBarHeight − cardGap`（`cardTopRise`） | 描边/填充各 `.padding(.top, -cardTopRise)` |
 | 顶栏内容距窗顶 | **12**（`topBarTopGap`） | 下边距仍 `toolbarVGap`(6) → 胶囊在卡片顶部条里上下各留 6pt |
 | 顶栏高 | **54** = 12 + 胶囊 36 + 6（`topBarHeight`） | 48 → 54；写死"48"的文档均已同步（见 §五） |
-| 卡片底色 | `assistantText` 派生 **6%**（`cardFillOpacity`） | 不自造色相；真机观感可调 |
+| 卡片底色 | **白霜提亮 6%**（`cardFillOpacity`，`Color.white`） | 与 `AppBackdrop.frost` 同族；**不能用 `assistantText` 压暗**（真机偏暗沉，见 §五） |
 | 红绿灯 | 距窗顶 **23**（`Layout.trafficLightTopFromWindow`；`trafficLightNudge.y = 9 − 该值` = −14） | = 12 + 36/2 − 7（按钮半径）= 顶栏内容中心 30 − 7；改顶栏上边距/胶囊高自动跟随 |
 
 ## 三、方案（文件级）
@@ -39,7 +39,7 @@
    ```swift
    .background(alignment: .top) {
        RoundedRectangle(cornerRadius: 12)
-           .fill(Color("assistantText").opacity(Layout.cardFillOpacity))
+           .fill(Color.white.opacity(Layout.cardFillOpacity))
            .padding(.top, -Layout.cardTopRise)
    }
    .overlay(
@@ -58,7 +58,7 @@
 | # | 决定 |
 |---|------|
 | D1 | 「左侧的卡片」= **中栏（唯一左列）**；不恢复左侧栏（`mac-two-column-layout` D1 不变） |
-| D2 | 卡片**要底色**（`assistantText` 派生 6%）—— Xcode 参考本身就是"有底的完整卡片"；早期"只把描边拐上去"已否 |
+| D2 | 卡片**要底色**：**白霜提亮 6%**（`Color.white`）—— Xcode 参考本身就是"有底的完整卡片"；早期"只把描边拐上去"已否，第一版用 `assistantText` 6% 真机偏暗沉也已否（见 §五） |
 | D3 | 上边**停在窗口内** 6pt（不是压在窗顶）：四条边都看得见 |
 | D4 | 顶栏其余部分位置不动，但整条顶栏内容下移到距窗顶 **12**（下边距仍 6） |
 | D5 | 右栏**只去掉 0.5pt 描边**，内部分隔线/选中底不动 |
@@ -75,7 +75,9 @@
 - **顶栏里放进比 36pt 更高的元素**：`topBarHeight` 靠「顶栏 HStack 最高子视图 == `topBarCapsuleHeight`(36)」撑出来（会话下拉标签行与
   胶囊组各自显式 `.frame(height:)`；DEV 徽标更矮）。若将来有更高的子件，顶栏会变高，而 `cardTopRise` 仍按 54 算 →
   **卡片上边不再落在 6pt（静默漂移，不报错）**。改顶栏内容时要一眼扫到这条。
-- **底色 6%** 是渲染图里定的初值，真机（照片底图 + 白霜）观感可能要微调 —— 只改 `Layout.cardFillOpacity` 一个数。
+- **底色改过一次（真机）**：第一版用 `assistantText` 6%（"派生淡色"）——真机在照片底图上**整体偏暗沉**；
+  改成 **`Color.white` 6%（白霜提亮）**，与 `AppBackdrop.frost` 同族、浅深主题都成立。
+  浓度仍是渲染图 + 真机定的初值，偏亮/偏暗只改 `Layout.cardFillOpacity` 一个数。
 - 深底图下右栏与底图的分界只剩内容自身的层次；真机看是否"糊在一起"，必要时再补一条极淡分界（本版不做）。
 - 卡片底色的 `.padding(.top, -cardTopRise)` 是"画到视图边界之外"的写法：中栏到窗口顶之间**没有任何裁剪层**
   （已 grep 确认 `ContentView` 无 `clipped()`），若将来有人给这层加 `.clipped()`，上溢部分会被切掉。
@@ -97,3 +99,5 @@
    现在回到 `RoundedRectangle(12).strokeBorder`，与全 app 其它卡片同源（也顺手消掉"`stroke` 居中 vs `strokeBorder`
    内侧"那 0.25pt 差异）。
 4. **红绿灯留在距窗顶 13**：与顶栏内容中心差 10pt，不像 Xcode 那种"同一行居中"。**否**（改 23）。
+5. **底色用 `assistantText`"派生淡色"6%（第一版）**：真机在照片底图上**整体偏暗沉** —— 暗色 tint 压在亮底图上必然如此。**否**，
+   改成 `Color.white` 6%（白霜提亮，与 `AppBackdrop.frost` 同族、浅深主题都成立）。

@@ -660,11 +660,13 @@ struct LocalWindowReader: NSViewRepresentable {
 
     final class ProxyView: NSView {
         var onWindow: ((NSWindow) -> Void)?
-        private var fired = false
+        /// 记录最近上报过的窗口：**窗口实例变了要重新上报**（不能只报一次）。
+        /// SwiftUI 关窗驻留后重开会新建 NSWindow，漏报 = 那个窗口不挂 delegate、不套机身底（docs/bugs/033）。
+        private weak var lastWindow: NSWindow?
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            guard !fired, let window else { return }
-            fired = true
+            guard let window, window !== lastWindow else { return }
+            lastWindow = window
             onWindow?(window)
         }
     }

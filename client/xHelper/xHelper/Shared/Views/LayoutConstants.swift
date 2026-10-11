@@ -23,6 +23,36 @@ enum Layout {
     /// 胶囊组总高（icon + 上下内边距），顶栏分割线等按此对齐。
     static let topBarCapsuleHeight: CGFloat = topBarIconSize + topBarCapsuleVPadding * 2
 
+    // MARK: - 顶栏自适应降级（宽度账见 docs/design/mac-topbar-degrade/design.md）
+
+    /// 下拉标签宽上限（D5）。窄窗降级到末档时收到 `topBarSwitcherCompactLabelCap`。
+    static let topBarSwitcherLabelCap: CGFloat = 240
+    static let topBarSwitcherCompactLabelCap: CGFloat = 160
+    /// 下拉 trigger 除标签外的固定宽：标签左右内边距 12×2 + 标签↔箭头间距 4 + 箭头 ~11
+    /// + 标签↔＋间距 6 + ＋按钮 26。
+    /// ⚠️ 这里面的 `4` / `6` / `11` 对应 `TopBarView` 里那几个裸 spacing 与箭头估宽，
+    /// 改视图那几处 spacing 时必须同步改这条（不加新常量是为了不让 5 个碎片散在 Layout 里）。
+    static let topBarSwitcherChromeWidth: CGFloat = 24 + 4 + 11 + 6 + 26
+    /// 无痕 🎭 前缀占宽（12pt 图标 + 4 间距）。
+    static let topBarEphemeralBadgeWidth: CGFloat = 16
+    /// DEV 徽标宽（10pt 文本 + 左右各 8 padding；仅 dev 构建）。
+    static let topBarDevChipWidth: CGFloat = 44
+    /// 顶栏外层 HStack 间距。
+    static let topBarGroupSpacing: CGFloat = 8
+    /// 胶囊组内按钮间距（`CapsuleGroup` 的 HStack spacing；组内 Divider 两侧也吃它）。
+    static let topBarInGroupSpacing: CGFloat = 4
+    /// 顶栏里 Divider 的线宽（都是 `Divider().frame(height: 14)` 的细线）。
+    static let topBarDividerLineWidth: CGFloat = 1
+    /// 一根 Divider 的占宽 = 两侧间距 + 线宽 = 4 + 1 + 4。
+    /// **组内按钮之间与同槽两组之间同构**（前者靠 HStack spacing，后者靠显式 padding）。
+    static let topBarDividerWidth: CGFloat = topBarInGroupSpacing * 2 + topBarDividerLineWidth
+    /// 中/右槽之间的 UnresizableDivider 占宽。
+    static let topBarSlotDividerWidth: CGFloat = 5
+    /// 选档安全余量：结构性宽度都是 Layout 精确常数，估算项只有「下拉箭头 11 / DEV 徽标 44 /
+    /// 🎭 前缀 16 / `⋯` 的 Menu 内边距 / Divider 线宽 1」（见设计文档 §3.3）。
+    /// 宁可少显示一档，也别让顶栏在窗口底线上溢出。
+    static let topBarDegradeMargin: CGFloat = 8
+
     // MARK: - 双栏布局（单点改基础值，派生值自动跟随）
 
     /// 卡片与窗口边缘的横向间隙（缝线两侧各取一半确保视觉等宽）。

@@ -69,7 +69,9 @@ private var middleSpan: Double {
 
 - `enterPipChat()`：存 `prePipSidebarWidth` → `isPipChat = true` → `rightSidebar.width = rightSidebarMaxAvailable` → `updateWindowMinWidth()`。
 - `exitPipChat(reason:)`：`isPipChat = false` → `rightSidebar.width = min(prePipSidebarWidth, rightSidebarMaxAvailable)` → `updateWindowMinWidth()`。
-- `updateWindowMinWidth()`：**单一派生函数**，由 `(isOpen, isPipChat)` 实时推导 `AppDelegate.requiredMinContentWidth`，幂等设置。消除"进入保存/退出恢复"的竞态。
+- `updateWindowMinWidth()`：**单一派生函数**，由 `(isOpen, isPipChat)` 实时推导窗口最小内容宽，幂等设置。消除"进入保存/退出恢复"的竞态。
+  （2026-10-11 起写的是 `WindowMinWidthStore`，由根视图 `.frame(minWidth:)` 落到 AppKit `contentMinSize`；
+  详见 `docs/bugs/033`。`rightSidebarMaxAvailable` 同时改为按**窗口真实内容宽**算，不再用会溢出失真的 `geo.size.width`。）
 
 PiP 内容最小宽 ≈ `sidebarMinWidth + sidebarOuterPadding + seam + rightSidebarMinWidth + rightSidebarOuterPadding` ≈ 453。
 

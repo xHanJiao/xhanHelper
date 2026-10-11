@@ -6,6 +6,8 @@ import AppKit
 /// 通用顶栏：按槽位渲染 TopBarRegistry 中最优先的按钮组（同优先多组共存）。
 /// 替代原 NavigationToolbar；各功能区通过注册/注销按钮组向槽位贡献按钮。
 struct TopBarView: View {
+    /// 可用宽（窗口内容宽）。顶栏据此自适应降级；见 docs/design/mac-topbar-degrade/design.md。
+    let availableWidth: CGFloat
     @ObservedObject private var registry = TopBarRegistry.shared
     @ObservedObject private var bookmarksBarState = BookmarksBarState.shared
     @ObservedObject var rightSidebar: RightSidebarManager
@@ -21,7 +23,7 @@ struct TopBarView: View {
     #endif
 
     var body: some View {
-        topBarHStack(flexible: true, interactive: true)
+        topBarHStack(flexible: true, interactive: true, plan: plan)
             // 双击顶栏空白区缩放窗口：contentShape 让空白区可命中，按钮区域由按钮自身
             // 手势优先消费（SwiftUI 子视图手势优先），双击按钮不会触发缩放。
             .contentShape(Rectangle())
@@ -35,43 +37,79 @@ struct TopBarView: View {
             .onAppear { registerDefaultGroups() }
     }
 
+    /// 降级计划：由「可用宽 + 当前位置」经纯函数算出（`TopBarLayout`）。
+    /// 注意它是**算出来**而不是量出来的，所以真实栏与隐藏探针必然同档（不会自激）。
+    private var plan: TopBarPlan {
+        TopBarLayout.plan(available: availableWidth, model: widthModel)
+    }
+
+    /// 右槽两个内建组的 id：宽度模型要数它们的可见按钮数（`⋯` 的落位不再依赖 id）。
+    private static let navGroupID = "default-right"
+    private static let utilityGroupID = "default-utility"
+
+    /// 顶栏宽度模型：各组当前有几个可见按钮。
+    private var widthModel: TopBarWidthModel {
+        let right = visibleGroups(for: .right)
+        return TopBarWidthModel(
+            centerGroups: visibleGroups(for: .center).map { group in
+                group.buttons.filter { $0.visible() }.count
+            },
+            navGroupButtons: right.first { $0.id == Self.navGroupID }?
+                .buttons.filter { $0.visible() }.count ?? 0,
+            utilityButtons: right.first { $0.id == Self.utilityGroupID }?
+                .buttons.filter { $0.visible() }.count ?? 0,
+            isDev: isDevBuild,
+            hasEphemeralBadge: currentIsEphemeral
+        )
+    }
+
+    private var isDevBuild: Bool {
+        #if os(macOS)
+        return LocalPaths.isDev
+        #else
+        return false
+        #endif
+    }
+
     /// 顶栏内容。`flexible`：真实栏含弹性 `Spacer()` 撑满可用宽；探针副本把它换成 0 宽
     /// （否则内在宽 = ∞）。`interactive`：探针副本渲染静态图标，不挂 Button/快捷键/popover，
     /// 几何与真实按钮一致但不产生重复快捷键、不共享 `@State`。
     @ViewBuilder
-    private func topBarHStack(flexible: Bool, interactive: Bool) -> some View {
-        HStack(spacing: 8) {
+    private func topBarHStack(flexible: Bool, interactive: Bool, plan: TopBarPlan) -> some View {
+        HStack(spacing: Layout.topBarGroupSpacing) {
             // 红绿灯让位（顶栏铺到标题栏，左区内容需避开窗口按钮）
             Spacer().frame(width: Layout.topBarTrafficClearance)
 
-            // 左侧：当前会话下拉（不走 registry 的 leading View，PiP 时不显示）
-            if !rightSidebar.isPipChat {
-                conversationSwitcher(interactive: interactive)
-            }
+            // 左侧：当前会话下拉。**常驻**（PiP 也显示，不再有 isPipChat 守卫）。
+            conversationSwitcher(interactive: interactive, labelCap: plan.switcherLabelCap)
 
             if flexible { Spacer(minLength: 0) } else { Spacer().frame(width: 0) }
 
             #if os(macOS)
             // dev 视觉标识（UI-7）：Debug 构建在胶囊簇左侧挂一枚 DEV 徽标，
-            // 一眼认出沙盒窗口（Dock 图标另有 dev 角标）。
-            if LocalPaths.isDev { devChip }
+            // 一眼认出沙盒窗口（Dock 图标另有 dev 角标）。窄窗降级时第一个被收掉。
+            if plan.showsDevChip { devChip }
             #endif
 
-            renderSlot(.center, interactive: interactive)
+            if plan.showsCenter {
+                renderSlot(.center, interactive: interactive)
+            }
 
             // 中右两侧都有可见组时才显示分隔线
-            if !visibleGroups(for: .center).isEmpty && !visibleGroups(for: .right).isEmpty {
+            if plan.showsCenter
+                && !visibleGroups(for: .center).isEmpty
+                && !visibleGroups(for: .right).isEmpty {
                 UnresizableDivider()
             }
-            renderSlot(.right, interactive: interactive)
+            renderRightSlot(plan: plan, interactive: interactive)
         }
     }
 
-    /// 隐藏探针：按内在宽（fixedSize）量测顶栏，经 `TopBarMinWidthKey` 回传。
-    /// 用于把窗口最小宽抬到「顶栏装得下」，否则窗口能缩到比顶栏还窄 → 顶栏溢出居中
-    /// → 红绿灯压住下拉框、中/右栏被裁。
+    /// 隐藏探针：按内在宽（fixedSize）量测**当前档**的顶栏，经 `TopBarMinWidthKey` 回传。
+    /// 顶栏降级后它通常小于窗口底线、不再撑宽窗口；留作安全网 —— 万一档位算乐观了，
+    /// 它会把窗口顶开而不是让顶栏溢出（见 docs/design/mac-topbar-degrade/design.md §3）。
     private var intrinsicWidthProbe: some View {
-        topBarHStack(flexible: false, interactive: false)
+        topBarHStack(flexible: false, interactive: false, plan: plan)
             .padding(.horizontal, Layout.toolbarHorizontalPadding)
             .fixedSize()
             .hidden()
@@ -93,14 +131,15 @@ struct TopBarView: View {
 
     /// 当前会话下拉 trigger + 新建（普通新建；无痕走输入栏 pill）。
     /// `interactive == false`：探针副本，只渲染同尺寸的静态标签，不挂 Button/popover。
+    /// `labelCap`：标签上限（降级末档收窄，见 `TopBarLayout.switcherLabelCap`）。
     @ViewBuilder
-    private func conversationSwitcher(interactive: Bool) -> some View {
+    private func conversationSwitcher(interactive: Bool, labelCap: CGFloat) -> some View {
         let switcher = HStack(spacing: 6) {
             if interactive {
                 Button {
                     showConversationMenu.toggle()
                 } label: {
-                    conversationSwitcherLabel
+                    conversationSwitcherLabel(cap: labelCap)
                 }
                 .buttonStyle(.plain)
                 .background(.ultraThinMaterial, in: Capsule())
@@ -120,7 +159,7 @@ struct TopBarView: View {
                 .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 0.5))
                 .help("新会话")
             } else {
-                conversationSwitcherLabel
+                conversationSwitcherLabel(cap: labelCap)
                 plusButtonLabel
             }
         }
@@ -136,7 +175,7 @@ struct TopBarView: View {
         }
     }
 
-    private var conversationSwitcherLabel: some View {
+    private func conversationSwitcherLabel(cap: CGFloat) -> some View {
         HStack(spacing: 4) {
             if currentIsEphemeral {
                 Image(systemName: "theatermasks.fill")
@@ -148,7 +187,7 @@ struct TopBarView: View {
                 .foregroundStyle(.primary.opacity(0.85))
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: 240, alignment: .leading)
+                .frame(maxWidth: cap, alignment: .leading)
             Image(systemName: "chevron.down")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.secondary)
@@ -422,7 +461,7 @@ struct TopBarView: View {
             HStack(spacing: 0) {
                 ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
                     if index > 0 {
-                        Divider().frame(height: 14).padding(.horizontal, 4)
+                        Self.groupDivider
                     }
                     CapsuleGroup {
                         buttonRow(group, interactive: interactive)
@@ -430,6 +469,87 @@ struct TopBarView: View {
                 }
             }
         }
+    }
+
+    // MARK: - 右槽（含降级收进的 ⋯）
+
+    /// 右槽渲染单元：`⋯` 在最左（替原本在左边的中心槽组），其后按注册顺序排可见组。
+    private enum RightSlotUnit {
+        case group(TopBarGroup)
+        case overflow
+
+        /// 稳定身份：组用组 id，`⋯` 用固定串 —— 否则档位切换时 offset 整体位移会让视图身份漂移
+        /// （hover / 动画状态被重置）。
+        var id: String {
+            switch self {
+            case .group(let group): return group.id
+            case .overflow: return "__topbar_overflow"
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func renderRightSlot(plan: TopBarPlan, interactive: Bool) -> some View {
+        let groups = visibleGroups(for: .right)
+        // 判空用 units 而不是 groups：右槽无可见组时 ⋯ 仍要渲染（否则被收的按钮不可达）
+        let units = rightSlotUnits(groups, plan: plan)
+        if !units.isEmpty {
+            HStack(spacing: 0) {
+                ForEach(Array(units.enumerated()), id: \.element.id) { index, unit in
+                    if index > 0 { Self.groupDivider }
+                    switch unit {
+                    case .group(let group):
+                        CapsuleGroup {
+                            buttonRow(group, interactive: interactive)
+                        }
+                    case .overflow:
+                        // 与其它组同款胶囊（宽度模型按「单图标组 = groupWidth(1)」算，必须一致）
+                        CapsuleGroup {
+                            overflowCapsule(interactive: interactive)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 单元顺序：`⋯` 在最左（= ⌘1–5 导航组的左侧 —— 它替的就是原本在左边的中心槽组），
+    /// 其后按注册顺序排可见组。
+    private func rightSlotUnits(_ groups: [TopBarGroup], plan: TopBarPlan) -> [RightSlotUnit] {
+        var units: [RightSlotUnit] = plan.showsOverflow ? [.overflow] : []
+        units += groups.map { .group($0) }
+        return units
+    }
+
+    /// `⋯`：装降级时从栏上收下来的按钮（当前只有中心槽组）。
+    /// 用原生 `Menu`：行 = `help()` 文案 + `icon()` 图标，直接复用按钮自己的闭包。
+    @ViewBuilder
+    private func overflowCapsule(interactive: Bool) -> some View {
+        if interactive {
+            CapsuleOverflowMenu(tooltip: "更多按钮") {
+                ForEach(overflowButtons) { button in
+                    Button {
+                        button.action()
+                    } label: {
+                        Label(button.help(), systemImage: button.icon())
+                    }
+                    .disabled(!button.enabled())
+                }
+            }
+        } else {
+            // 探针副本：与真实 ⋯ 同尺寸（单图标组）
+            CapsuleIcon(systemName: "ellipsis", showBackground: false)
+        }
+    }
+
+    /// 被收进 `⋯` 的按钮（按栏上原顺序）。
+    private var overflowButtons: [TopBarButton] {
+        guard plan.showsOverflow else { return [] }
+        return visibleGroups(for: .center).flatMap { $0.buttons.filter { $0.visible() } }
+    }
+
+    private static var groupDivider: some View {
+        Divider().frame(height: 14).padding(.horizontal, 4)
     }
 
     @ViewBuilder
@@ -531,6 +651,27 @@ private struct CapsuleButton: View {
     }
 }
 
+private struct CapsuleOverflowMenu<MenuContent: View>: View {
+    let tooltip: String
+    @ViewBuilder let menuContent: () -> MenuContent
+    @State private var isHovered = false
+
+    var body: some View {
+        Menu {
+            menuContent()
+        } label: {
+            // 与 CapsuleButton 同尺寸同悬浮反馈（单图标组）
+            CapsuleIcon(systemName: "ellipsis", showBackground: isHovered)
+                .contentShape(Circle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { isHovered = $0 }
+        .hoverTooltip(tooltip, direction: .down, delay: 0.25)
+    }
+}
+
 private struct CapsuleRefreshButton: View {
     let disabled: Bool
     let disabledMessage: String?
@@ -570,7 +711,7 @@ private struct CapsuleGroup<Content: View>: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: Layout.topBarInGroupSpacing) {
             content()
         }
         .padding(.horizontal, Layout.topBarCapsuleHPadding)

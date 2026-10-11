@@ -11,7 +11,7 @@
 | G1 | 删掉 macOS 左侧栏（含它和中栏之间的 seam），窗口只剩「中间对话栏 + 右侧可展开功能区」两栏 |
 | G2 | 会话切换与新建收进顶栏**左侧区域**：一个下拉 trigger 显示当前会话名，其右侧一个常驻 `＋` 新建会话（普通新建） |
 | G3 | 无痕能力从侧栏右键菜单 → 输入栏一个 pill；**点击即把当前会话标记为无痕**，可再点取消 |
-| G4 | 顶栏下拉**仅在中间对话区可见时出现**；右侧栏最大化（PiP）时隐藏 |
+| G4 | 顶栏下拉**仅在中间对话区可见时出现**；右侧栏最大化（PiP）时隐藏 —— **已于 2026-10-11 作废**：改为常驻（含 PiP），见 `../mac-topbar-degrade/design.md` |
 
 ---
 
@@ -83,6 +83,9 @@
 
 ### 2.6 窗口最小宽 / 自动宽度链（**左栏收窄不是纯视觉，是"降窗口最小宽好继续缩"**）
 
+> ⚠️ 本节链路**已于 2026-10-11 变更**（`docs/bugs/033`）：主约束改为「`WindowMinWidthStore` → 根视图
+> `.frame(minWidth:)` → AppKit `contentMinSize`」。下面是当时的实现，保留作历史记录，**以 §10 为准**。
+
 ```
 sidebarWidth ─┬─→ baseMinWidth / pipMinContentWidth   (ContentView.swift:125-140)
               │        └─→ updateWindowMinWidth() :144-152
@@ -94,7 +97,7 @@ sidebarWidth ─┬─→ baseMinWidth / pipMinContentWidth   (ContentView.swift
               └─→ 持久化 @AppStorage("xhan_sidebar_width") :32 / 读 :691 / 写 :699-703
 ```
 
-- `AppDelegate.windowWillResize` = `requiredMinContentWidth + chrome` 钳制宽度（`requiredMinContentWidth` 已由 ContentView 取「底栏 / 顶栏内在宽 / 750」的较大者，见 §4.1.3）。
+- `AppDelegate.windowWillResize` = `requiredMinContentWidth + chrome` 钳制宽度（`requiredMinContentWidth` 已由 ContentView 取「底栏 / 顶栏内在宽 / 750」的较大者，见 §4.1.3）。（**已由 §10 取代**）
 - 前身 bug：`docs/bugs/014-pip-shrink-sidebar-overflow.md` —— PiP 缩窗溢出就是靠"先收左栏"缓解的。
 
 ### 2.7 导航层（近死，见 §4.1.4 证据）
@@ -172,8 +175,8 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
 
 **集成方式（D9 = ⓑ）**：在 `TopBarView` 里单开一个**不走 registry 的 leading View**（trigger + `＋`），直接放在 `body` 最前；**不扩 `TopBarButton` 模型、不碰 `TopBarRegistry`**（`.left` 槽本无任何注册者，无优先级/共存诉求；改模型是纯 YAGNI，还引入 `AnyView` 类型擦除）。
 
-- **可见性**：`if !rightSidebar.isPipChat { conversationSwitcher }`（D4/G4：中栏被 PiP 接管则藏）。
-- **trigger**：`[🎭?] 当前会话名 ⌄`（无痕前缀 🎭），胶囊样式同 `CapsuleGroup`；**`.frame(maxWidth: 240)` + `lineLimit(1)` + `truncationMode(.tail)`**（D5，防顶栏顶高窗口最小宽，见 §2.2）。
+- **可见性**：**常驻**（2026-10-11 起，含 PiP；原为 `if !rightSidebar.isPipChat { … }`，D4/G4 作废）——见 `../mac-topbar-degrade/design.md`。
+- **trigger**：`[🎭?] 当前会话名 ⌄`（无痕前缀 🎭），胶囊样式同 `CapsuleGroup`；**标签上限 240**（+ `lineLimit(1)` + `truncationMode(.tail)`，D5）；降级末档收到 160（`TopBarLayout.switcherLabelCap`）。
 - **`＋`**：trigger 右侧常驻图标按钮 → `newChat()`（**普通新建**；无痕走输入栏 pill）。
 - 数据源：`chatTabManager.currentTab?.title`（trigger）；`conversationListVM`（菜单）。
 - **展开**：自定义 popover（**不用原生 `Menu`**，因行内要放 hover 出的置顶/删除）。内容：小标题「会话」+ `ForEach(conversationListVM.conversations)`（行点击 → `openConversation`；相对更新时间 `formatConversationDate(updatedAt)` 固定在行最右；hover 出的 `📌` setPinned / `✕` delete 排在其左侧；当前行 `✓`；无痕行 🎭；`hasMore` → 「加载更多」`loadMore()`）。
@@ -268,7 +271,7 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
 
 | 风险 | 说明 | 缓解 |
 |------|------|------|
-| **PiP 缩窗溢出回潮** | 原靠"先收左栏降底线"，现删除该机制 | §4.1.3 收敛后真机重跑 bug 014 场景（**已验收通过**）；`windowWillResize` + 顶栏内在宽探针兜底 |
+| **PiP 缩窗溢出回潮** | 原靠"先收左栏降底线"，现删除该机制 | §4.1.3 收敛后真机重跑 bug 014 场景（**已验收通过**）；`windowWillResize` + 顶栏内在宽探针兜底（**已由 §10 取代**） |
 | 顶栏内在宽反噬窗口最小宽 | `VStack` 宽度取子项最大（bug 014 机制） | trigger `maxWidth:240` + 截断（D5）；隐藏探针量测顶栏内在宽，窗口最小宽取其较大者，变宽时主动放大窗口 |
 | 删除范围超预期 | 左 seam/派生常量/导航层牵连广 | 按 §4.1.1–4.1.4 分步，每步 `swiftc -typecheck` |
 | 老会话转无痕启动销毁倒计时 | 停聊约 30 分钟后 Stage A 不可逆 | pill 可再点取消；hover 明示；默认会话禁用；不弹确认（D4 知情） |
@@ -307,3 +310,26 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
 - 后端：`controller/chat.go`、`conversations.go`、`router.go`、`appinit/router.go`、`agent/cron_runner.go`（nil-safe 日志）。
 - 文档同步：`docs/design/ephemeral-conversation.md`（破「不可变」约定）、`docs/design/archive/macos-left-sidebar-toggle.md`（已废弃归档）、`mac-apps/topbar-slot-system.md`（槽位现状修正）。
 - UI 预览：`xHelperMac/TwoColumnLayoutPreview.swift`（真 token + 生产卡片材质 + `#Preview` 四形态，Xcode 画布 ⌘⌥P 看）。
+
+## 10. 后续变更
+
+- **2026-10-11 · 窗口最小宽改由「根视图 `.frame(minWidth:)` → AppKit `contentMinSize`」承担**（`docs/bugs/033`）。
+  - 决定：底线口径保持 A（= `max(底栏推导, 顶栏内在宽, 750)`，顶栏不降级）；实现路径改掉。
+  - 原因：原链（`ContentView.updateWindowMinWidth` → `AppDelegate.requiredMinContentWidth` 静态量 →
+    `windowWillResize`）实测会整体失效 —— delegate 只在 `applicationDidFinishLaunching` 对当时的窗口挂一次，
+    而 SwiftUI 关窗驻留后从 Dock 重开会**新建 NSWindow**，新窗口整条守卫（含 `windowShouldClose` 驻留提示）静默失效；
+    且 `windowWillResize` 苹果只在用户拖拽时调用。探针另证：直接写 `window.contentMinSize` 会被 SwiftUI 布局覆盖。
+  - 改动：新增 `WindowMinWidthStore`（唯一来源，ContentView 写 / App 层根视图读）；
+    主窗口 delegate 改由 `LocalWindowReader` 按"每个窗口"挂；`LocalWindowReader` 从"只上报一次"改为"窗口实例变了就上报"；
+    侧栏可用宽改用窗口真实内容宽（`geo.size.width` 在内容溢出时会失真）；ContentView 离开主界面时复位最小宽。
+  - 影响文件：`xHelperMac/App.swift`、`xHelperMac/LocalSettingsViews.swift`、`Shared/Views/ContentView.swift`。
+  - §2.6 / §4.1.3 描述的最小宽链以本条为准；D7 的"固化隐藏态"结论不变。
+  - 当时未做（另起会话）：顶栏降级（把底线从 ~900 还给两栏 778）+ 顶栏会话下拉常驻（含 PiP）→ **已由下一条完成**。
+- **2026-10-11 · 顶栏会话下拉常驻（含 PiP）+ 顶栏自适应降级**（`docs/design/mac-topbar-degrade/design.md`）。
+  - 决定：下拉**常驻**，G4/D4 作废；顶栏**不再决定窗口最小宽**，改按可用宽降级（DEV 徽标 → 中心槽组 → 标签收窄），
+    窗口底线回到两栏公式 **778 / PiP 750**；顶栏探针降级为安全网（见 `docs/bugs/033` 的 min-width 链不变）。
+  - 原因：~900 的底线来自顶栏内在宽（浏览器组 7 键 + 下拉标签封顶 240）；常驻下拉会让 PiP 底线进一步涨到 ~957，
+    必须同批做降级。
+  - 影响文件：新增 `Shared/Views/TopBarLayout.swift`（纯逻辑 + SwiftPM 单测）、`TopBarView.swift`、`LayoutConstants.swift`、
+    `ContentView.swift`（传 `availableWidth`）。
+  - D5（trigger 上限 240）不变，降级末档临时收到 160；**不收导航组**（其 ⌘1–5 挂在被渲染的按钮上，收了会丢快捷键）。

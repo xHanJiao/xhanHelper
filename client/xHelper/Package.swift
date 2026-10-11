@@ -28,6 +28,18 @@ let package = Package(
             dependencies: ["ThumbRowLayout"],
             path: "Tests/ThumbRowLayoutTests"
         ),
+        // TopBarLayoutCore — 顶栏自适应降级的纯逻辑（按可用宽选档 + 各档内在宽）。
+        // 与 app 共享同一份源文件（含 Layout 宽度常量）；视图只负责照档位渲染。
+        .target(
+            name: "TopBarLayoutCore",
+            path: "xHelper/Shared",
+            sources: ["Views/TopBarLayout.swift", "Views/LayoutConstants.swift"]
+        ),
+        .testTarget(
+            name: "TopBarLayoutCoreTests",
+            dependencies: ["TopBarLayoutCore"],
+            path: "Tests/TopBarLayoutCoreTests"
+        ),
         // LocalArtifactsCore — 本地产物管线（chart / 文档卡片…）的纯逻辑：
         // artifact 编解码 + producer + 重定位 + 按会话持久化。app 与测试共享同一份源文件。
         .target(

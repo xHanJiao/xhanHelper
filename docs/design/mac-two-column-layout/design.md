@@ -34,7 +34,7 @@
 
 ### 2.2 顶栏槽位系统（`TopBarView.swift` + `Services/TopBarRegistry.swift`）
 
-- 渲染：`HStack { Spacer().frame(width: navLeadingOffset); renderSlot(.left); Spacer(); devChip; renderSlot(.center); renderSlot(.right) }`，`.padding(.horizontal,16)`+`.padding(.vertical,6)`，`.ignoresSafeArea(.top)`。顶栏高 = `toolbarVGap*2 + topBarCapsuleHeight` = **48pt**（`LayoutConstants.swift:25,34`）。
+- 渲染：`HStack { Spacer().frame(width: navLeadingOffset); renderSlot(.left); Spacer(); devChip; renderSlot(.center); renderSlot(.right) }`，`.padding(.horizontal,16)` + `.padding(.top,12)` / `.padding(.bottom,6)`，`.ignoresSafeArea(.top)`。顶栏高 = `Layout.topBarHeight` = **54pt**（上边距 12 + 胶囊 36 + 下边距 6；**2026-10-11 由 48 变更**，见 §10 与 `../mac-card-top-wrap/design.md`）。
 - 取显规则（`TopBarRegistry.swift:103-108`）：每槽取**最高优先级的可见组**，同优先级共存；组 `visible()` 每次重渲染求值；`TopBarView.visibleGroups:187-190` 再滤掉「按钮全不可见」的空组。
 - 已注册组（**`.left` 槽当前无任何注册者 → 永远为空**）：
 
@@ -333,3 +333,17 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
   - 影响文件：新增 `Shared/Views/TopBarLayout.swift`（纯逻辑 + SwiftPM 单测）、`TopBarView.swift`、`LayoutConstants.swift`、
     `ContentView.swift`（传 `availableWidth`）。
   - D5（trigger 上限 240）不变，降级末档临时收到 160；**不收导航组**（其 ⌘1–5 挂在被渲染的按钮上，收了会丢快捷键）。
+- **2026-10-11 · 中栏卡片吸顶（包住顶栏按钮）+ 右栏去描边**（`../mac-card-top-wrap/design.md`）。
+  - 决定：中栏（唯一左列）做成**有底色的完整卡片**——上边停在窗口内 6pt（与左/右/下对称），向上溢出 `cardTopRise`
+    把红绿灯 + 会话下拉包进卡片；**顶栏整条内容下移到距窗顶 12**（下边距仍 6，顶栏高 **48 → 54**）；
+    红绿灯纵向挪到距窗顶 **23**（与顶栏内容同一行居中，`trafficLightNudge.y = −14`，会探出标题栏容器 5pt）；
+    右栏**去掉描边**、内容直接坐底图；右栏关着时中栏铺满整宽 → 顶栏所有按钮都在卡片里；PiP 不动。
+    `topBarTrafficClearance` 不变（红绿灯横向仍是 +6）。
+  - 影响文件：`LayoutConstants.swift`（`topBarTopGap`/`topBarHeight`/`cardTopRise`/`cardFillOpacity`）、`TopBarView.swift`（padding 上12下6）、
+    `ContentView.swift`（`macOSContentArea` 的填充 + 描边，`.padding(.top, -cardTopRise)`）、`RightSidebarView.swift`（删描边）、
+    `xHelperMac/App.swift`（`trafficLightNudge.y = −14`）、`xHelperMac/TwoColumnLayoutPreview.swift`（2 个吸顶形态预览）。
+  - 曾试过自绘 `CardOutline`（上边压在窗顶、无底色），两版都被否 → 该 Shape 已删，回到 `RoundedRectangle`（见该文档 §七）。
+- **2026-10-11 · 右侧栏默认打开**（`Shared/Views/RightSidebarManager.swift` 一行）：`isOpen` 初值 `false → true`，
+  **不持久化**（手动关掉后下次启动仍会开）。默认窗口内容宽 1180 > 双栏底线 778，不需要额外调窗口尺寸；
+  启动时 `onChange(of: isOpen)` 不触发，但 `.onAppear → updateWindowMinWidth()` 与 geo 首帧的 `clampRightSidebarWidth()` 已覆盖最小宽/夹宽。
+  副作用：存着的右栏宽（默认 840）会被夹到 ~782 并**写回**持久化。

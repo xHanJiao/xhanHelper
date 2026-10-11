@@ -36,10 +36,8 @@ struct RightSidebarView: View {
             singleContentArea
             #endif
         }
+        // 不画边缘：右栏直接坐在底图上（与中栏「描边爬窗顶」对称，见 docs/design/mac-card-top-wrap/design.md）。
         .frame(minWidth: Layout.rightSidebarMinWidth, idealWidth: manager.width, maxWidth: .infinity)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color("assistantText").opacity(0.12), lineWidth: 0.5))
     }
 
     // MARK: - 浏览器 tab 栏（仅浏览器态显示）

@@ -14,6 +14,11 @@ enum Layout {
     /// 红绿灯横向微移量（唯一来源，`AppDelegate.trafficLightNudge` 的 x 取它）。
     static let trafficLightNudgeX: CGFloat = 6
 
+    /// 红绿灯距窗口顶的**目标**位置（纵向）：与顶栏内容**同一行居中**
+    /// = `topBarTopGap + topBarCapsuleHeight/2 − 按钮半径 7`。`AppDelegate.trafficLightNudge.y` 由它派生
+    /// （改顶栏上边距/胶囊高会自动跟随）。
+    static let trafficLightTopFromWindow: CGFloat = topBarTopGap + topBarCapsuleHeight / 2 - 7
+
     /// 顶栏左缘红绿灯让位（与 toolbarHorizontalPadding 相加 = 左区内容起始位置）。
     /// 红绿灯右端默认到 x≈69，再右移 `trafficLightNudgeX` → 起点要到 78 才不压上（56 = 69 + 3 余量 - 16）。
     static let topBarTrafficClearance: CGFloat = 56 + trafficLightNudgeX
@@ -26,6 +31,15 @@ enum Layout {
     static let topBarCapsuleVPadding: CGFloat = 5
     /// 胶囊组总高（icon + 上下内边距），顶栏分割线等按此对齐。
     static let topBarCapsuleHeight: CGFloat = topBarIconSize + topBarCapsuleVPadding * 2
+    /// 顶栏**内容**距窗口顶（上边距；下边距仍用 `toolbarVGap`）。
+    static let topBarTopGap: CGFloat = 12
+    /// 顶栏实高 = 上边距 + 胶囊高 + 下边距（12 + 36 + 6 = **54**）。
+    /// ⚠️ 两条依赖，改任一条都要回来对这里：
+    /// ① `TopBarView` 的两处 padding 是唯一来源（12/6）；
+    /// ② 它隐含「顶栏 HStack 最高子视图 == `topBarCapsuleHeight`(36)」——会话下拉标签行与胶囊组各自显式
+    ///    `.frame(height:)`、DEV 徽标更矮，所以今天成立；**若将来放进比 36 更高的子件，顶栏会变高，
+    ///    而 `cardTopRise` 仍按此值算 → 中栏卡片上边不再落在 `cardGap`（静默漂移）**。
+    static let topBarHeight: CGFloat = topBarTopGap + topBarCapsuleHeight + toolbarVGap
 
     // MARK: - 顶栏自适应降级（宽度账见 docs/design/mac-topbar-degrade/design.md）
 
@@ -61,9 +75,14 @@ enum Layout {
 
     /// 卡片与窗口边缘的横向间隙（缝线两侧各取一半确保视觉等宽）。
     static let cardGap: CGFloat = 6
+    /// 中栏卡片描边/填充的**上溢量**：让卡片上边停在窗口内 `cardGap` 处（与左/右/下对称），
+    /// 向上溢出到顶栏里把红绿灯 + 会话下拉包进卡片 —— 四条边都看得见（完整卡片，不是压在窗顶）。
+    static let cardTopRise: CGFloat = topBarHeight - cardGap
+    /// 中栏卡片底色不透明度（`assistantText` 派生淡色，不自造色相）。真机观感可调。
+    static let cardFillOpacity: Double = 0.06
     /// 缝线单侧间隙 = (cardGap - seamWidth) / 2。
     static let seamHalfGap: CGFloat = (cardGap - seamWidth) / 2
-    /// 顶栏上/下纵向间隙（窗口上缘↔按钮、按钮↔卡片）。
+    /// 顶栏**下**纵向间隙（按钮↔卡片）。上间隙见 `topBarTopGap`（= 12）。
     static let toolbarVGap: CGFloat = 6
     /// 卡片底部与窗口边缘的纵向间隙。
     static let cardBottomGap: CGFloat = 6

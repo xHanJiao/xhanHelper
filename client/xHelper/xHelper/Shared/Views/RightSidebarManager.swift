@@ -33,7 +33,7 @@ final class RightSidebarManager: ObservableObject {
     @Published var splitPaneWidth: Double = 0
     /// 浏览面板当前打开的浏览页（跨面板切换保留）
     @Published var browsePanelSelection: BrowsePanel?
-    @Published var isOpen = false
+    @Published var isOpen = true
     /// 后台保活 tab（有媒体正在播放，切走后仍需留在视图层级继续播放）。
     /// 由 BrowserToolProvider 在切 tab 时注入 JS 检测后增删。
     @Published var keptAliveTabIds: Set<String> = []

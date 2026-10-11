@@ -617,9 +617,23 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 12)
+        // 中栏卡片：上边停在窗口内 `cardGap` 处（与左/右/下对称），向上溢出 `cardTopRise`
+        // 把红绿灯 + 会话下拉包进卡片 —— 四条边都看得见（完整卡片，不是压在窗顶）。
+        // 右栏关着时中栏铺满整宽，于是顶栏**所有**按钮都落在卡片里。
+        // 见 docs/design/mac-card-top-wrap/design.md。
+        .background(alignment: .top) {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color("assistantText").opacity(Layout.cardFillOpacity))
+                .padding(.top, -Layout.cardTopRise)
+                // 与描边同理：溢出到顶栏那一截不参与命中（今天顶栏 zIndex 更高本就轮不到它，防将来被提层级/按包围盒命中）
+                .allowsHitTesting(false)
+        }
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color("assistantText").opacity(0.12), lineWidth: 0.5))
+                .strokeBorder(Color("assistantText").opacity(0.12), lineWidth: 0.5)
+                .padding(.top, -Layout.cardTopRise)
+                // 非可命中：溢出到顶栏那一截不许截走顶栏的手势/空白双击缩放
+                .allowsHitTesting(false))
         .frame(minWidth: Layout.middleMinWidth, idealWidth: Layout.middleMinWidth,
                maxWidth: .infinity,
                alignment: .leading)

@@ -31,7 +31,9 @@ struct TopBarView: View {
             .onTapGesture(count: 2) { zoomWindow() }
             #endif
             .padding(.horizontal, Layout.toolbarHorizontalPadding)
-            .padding(.vertical, Layout.toolbarVGap)
+            // 上 12 / 下 6 —— `Layout.topBarHeight` 由这两处 + 胶囊高派生，也决定中栏卡片的上溢量
+            .padding(.top, Layout.topBarTopGap)
+            .padding(.bottom, Layout.toolbarVGap)
             .ignoresSafeArea(edges: .top)
             .background(intrinsicWidthProbe)
             .onAppear { registerDefaultGroups() }

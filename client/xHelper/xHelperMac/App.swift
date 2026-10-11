@@ -511,14 +511,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: 红绿灯微调
 
-    /// 三个窗口按钮整体微移（向右 6 / 向下 4）。系统没有公开的偏移 API，只能改它们的 frame；
+    /// 三个窗口按钮整体微移（**右 6 / 距窗顶 23**）。系统没有公开的偏移 API，只能改它们的 frame；
     /// 而 AppKit 每次重排标题栏（缩放、改标题、进出全屏）都会复位，所以在重排之后按记下的**系统基准**
     /// 再写一次；写的是「基准 + 偏移」、重复调用幂等，且当前值不等于上次写入值时把它当成系统新基准。
-    /// 改横向偏移要同步的是 `Layout.trafficLightNudgeX`（让位常量由它派生），纵向只影响这里。
+    ///
+    /// 纵向**不是手写字面量**：`y = 9 − Layout.trafficLightTopFromWindow`。9 = (标题栏 32 − 按钮高 14)/2
+    /// （系统把窗口按钮垂直居中于标题栏）⇒ 距窗顶 = 9 − 偏移；目标 23 由 `topBarTopGap`/胶囊高派生 ⇒ 今天 y = −14。
+    /// 于是改顶栏上边距或胶囊高，红绿灯位置自动跟随，不用再手工对账。
+    /// 代价：目标位置下按钮会**探出 32pt 标题栏容器 5pt**（origin.y = −5）——已实测（离屏渲染 + `hitTest`）不裁、照常可点，
+    /// 属**有意依赖 AppKit 现状**；macOS 大版本改标题栏行为时要回来复验。
+    /// 横向偏移的唯一来源是 `Layout.trafficLightNudgeX`（顶栏让位常量由它派生）。
     /// 真机验收：拖拽缩放 / 进出全屏 / 深浅色切换 / 关窗后点 Dock 重开。
     /// shortcut: 只 hook 了「缩放」与「退出全屏」两条复位路径（实测够用），
     ///           若发现别的路径会弹回，再加订阅 `NSWindow.didUpdateNotification`（当前值 ≠ 目标值才写）。
-    private static let trafficLightNudge = CGPoint(x: Layout.trafficLightNudgeX, y: -4)  // y 为负 = 视觉上向下（标题栏容器非翻转）
+    private static let trafficLightNudge = CGPoint(x: Layout.trafficLightNudgeX,
+                                                   y: 9 - Layout.trafficLightTopFromWindow)
     private static weak var nudgeWindow: NSWindow?
     private static var nudgeBase: [CGPoint] = []
 

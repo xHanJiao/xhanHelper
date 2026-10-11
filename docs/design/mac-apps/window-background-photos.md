@@ -44,10 +44,12 @@
   `toolbar=nil`；由 `applicationWill/DidBecomeActive`（`:367-376`）对所有窗口调用。窗口样式
   `.windowStyle(.hiddenTitleBar)`（`App.swift:609`）。
 - **标题栏/顶栏几何**：系统标题栏高 **32pt**（本机 macOS 26.3 实测 `NSWindow.frameRect`）；app 的 `TopBarView`
-  高 **48pt** = `toolbarVGap×2 + 胶囊 36`（`LayoutConstants.swift:24,33`、`TopBarView.swift:31-33`），
-  `.ignoresSafeArea(edges:.top)` 从窗口顶 y=0 起算。详见 `mac-two-column-layout/design.md:37`。
-- **内容列**：`ContentView.swift:336` → `macOSContentArea`（`:557-579`），横向 padding 12 + 0.5pt 描边，
-  本身**无底色**；顶栏也**无底色**。
+  高 **54pt** = `Layout.topBarHeight`（内容距窗顶 12 + 胶囊 36 + 下边距 6），`.ignoresSafeArea(edges:.top)` 从窗口顶 y=0 起算。
+  详见 `../mac-card-top-wrap/design.md`（该值同时决定中栏卡片的**上溢量** `cardTopRise`）与 `mac-two-column-layout/design.md`。
+- **内容列**：`ContentView.swift` → `macOSContentArea` 是一张**完整卡片**：`RoundedRectangle(12)` 描边（`assistantText` 12%）
+  + 同形**淡底**（`assistantText` `cardFillOpacity`=6%，不自造色相），两条都 `.padding(.top, -cardTopRise)` 向上溢出，
+  把红绿灯 + 会话下拉包进卡片；上边停在窗口内 6pt、四条边都看得见。右栏**不画边缘**（内容直接坐底图）。
+  顶栏**无底色**。详见 `../mac-card-top-wrap/design.md`。
 - **暖色渐变的归属**：`GlassBackground.swift`（LinearGradient + 光晕）**当前无 macOS 分支**，仅被 iOS
   `ChatView`、`SettingsView` 及 **macOS `LocalSettingsViews.swift:131`（解锁页）/`:176`（首次配置页）** 使用。
   macOS 主聊天窗走 `AppBackdrop`（固定照片底图；原先整窗 `.regularMaterial` 已于 2026-10-07 移除，见 §八）。
@@ -180,7 +182,7 @@ content
 
 ## 六、真机验收清单
 
-1. **标题栏满覆盖**：主窗 0–48pt 那条带（含系统标题栏 32pt）照片一条线到底，左/中/右**无竖缝**、上下**无横缝**。
+1. **标题栏满覆盖**：主窗 0–54pt 那条带（含系统标题栏 32pt）照片一条线到底，左/中/右**无竖缝**、上下**无横缝**。
 2. **背景观感**：底图重模糊 + 遮罩后即玻璃观感；不透明，桌面/其他 app 不透。
 3. 空池 → 默认图；导入 → 用户池；清空 → 回默认图。
 4. 三种轮换模式各自生效（启动 / **切走再切回**（含"关设置窗回主窗"）/ 定时）。

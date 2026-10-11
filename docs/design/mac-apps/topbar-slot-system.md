@@ -132,6 +132,7 @@ HStack(spacing: Layout.toolbarCapsuleGap) {
 
 ### 2026-10-11 · 主窗口红绿灯右下微移
 
-- **决定**：主窗口三个窗口按钮整体右移 6 / 下移 4（`AppDelegate.trafficLightNudge`）。系统没有公开的偏移 API，只能改按钮 frame；AppKit 每次重排标题栏（缩放、改标题、进出全屏）都会复位，故在 `windowDidResize` / `windowDidExitFullScreen` 之后按记下的系统基准重写（当前值 ≠ 上次写入值 → 当作新基准）。
-- **影响**：`Layout.topBarTrafficClearance` 改为由 `Layout.trafficLightNudgeX` 派生（56 → 62），顶栏内在宽随之 +6 —— 顶栏是绑定约束时窗口最小宽也 +6（属宽度账的正常传导）。
+- **决定**：主窗口三个窗口按钮整体右移 6 / **下移到距窗顶 23**（`AppDelegate.trafficLightNudge`；y 由 `Layout.trafficLightTopFromWindow` 派生 = `9 − 23` = **−14**，改顶栏上边距/胶囊高会自动跟随）。系统没有公开的偏移 API，只能改按钮 frame；AppKit 每次重排标题栏（缩放、改标题、进出全屏）都会复位，故在 `windowDidResize` / `windowDidExitFullScreen` 之后按记下的系统基准重写（当前值 ≠ 上次写入值 → 当作新基准）。
+  - ⚠️ **纵向值同日调整过一次**：先是"下移 4"（距窗顶 13），后为「与顶栏内容**同一行居中**」改成距窗顶 **23**（`y = −14`）。推导与依赖（按钮会**探出标题栏容器 5pt**，已验不裁/可点）写在 `App.swift` 注释里，几何账见 `../mac-card-top-wrap/design.md` §二。
+- **影响**：`Layout.topBarTrafficClearance` 改为由 `Layout.trafficLightNudgeX` 派生（56 → 62），顶栏内在宽随之 +6 —— 顶栏是绑定约束时窗口最小宽也 +6（属宽度账的正常传导）。纵向偏移不影响让位常量。
 - **已知陷阱**：改窗口标题同样会复位、且**不触发** `didResize`。主窗口标题首启后不再设置，故当前无碍；若日后出现弹回，按 `client/xHelper/xHelperMac/App.swift` 里的 `shortcut:` 注释加 `NSWindow.didUpdateNotification` 兜底。

@@ -4,7 +4,8 @@ import SwiftUI
 
 /// 双栏布局改造的 SwiftUI 设计预览（放 Xcode 画布看，⌘⌥P）。
 /// 只用真 token + 生产卡片材质（GlassBackground / CardBackgroundModifier），
-/// 覆盖 4 个形态：主形态 / 下拉展开 / 无痕生效 / 右侧最大化。
+/// 覆盖 6 个形态：主形态 / 下拉展开 / 无痕生效 / 右侧最大化（PiP）/ 卡片吸顶（+ 仅中栏）。
+/// 后两个是 `docs/design/mac-card-top-wrap` 的形态：中栏卡片上边停在窗口内、向上溢出包住顶栏，右栏裸态。
 /// 仅展示用，不参与真实布局；真动手时会被实际视图取代。
 struct TwoColumnLayoutPreview: View {
     enum Variant: String, CaseIterable, Identifiable {
@@ -12,10 +13,20 @@ struct TwoColumnLayoutPreview: View {
         case dropdown = "下拉展开"
         case ephemeral = "无痕生效"
         case pip = "右侧最大化"
+        case wrap = "卡片吸顶"
+        case wrapChatOnly = "卡片吸顶·仅中栏"
         var id: String { rawValue }
     }
 
     var variant: Variant = .main
+
+    /// 卡片吸顶形态：中栏卡片上边停在窗口内 `cardGap` 处、向上溢出包住红绿灯 +（关右栏时）全部顶栏按钮
+    /// （生产同款写法 + 生产几何，见 docs/design/mac-card-top-wrap/design.md）。
+    private var isWrap: Bool {
+        variant == .wrap || variant == .wrapChatOnly
+    }
+    /// 仅中栏（右栏收起）——这时卡片铺满整宽，顶栏按钮全被包住。
+    private var isChatOnly: Bool { variant == .wrapChatOnly }
 
     private let cardGap: CGFloat = 6
     private let currentTitle = "关于特斯拉的笔记"
@@ -38,14 +49,35 @@ struct TwoColumnLayoutPreview: View {
             if variant == .dropdown {
                 conversationMenu.offset(x: 16, y: 52)
             }
+            if isWrap { fakeTrafficLights }
         }
         .frame(width: 1340, height: 900)
+    }
+
+    /// 预览专用：系统红绿灯（AppKit 画的窗口按钮，不是我们的 UI）——取系统色、对齐生产几何
+    /// （宽 14 / 距窗顶 23 / x=15·38·61，含 +6/−14 微移：与顶栏内容中心同一行居中）。
+    private var fakeTrafficLights: some View {
+        HStack(spacing: 9) {
+            trafficLight(r: 1.00, g: 0.37, b: 0.34)   // 红
+            trafficLight(r: 1.00, g: 0.74, b: 0.18)   // 黄
+            trafficLight(r: 0.16, g: 0.79, b: 0.25)   // 绿
+        }
+        .offset(x: 15, y: 23)
+    }
+
+    /// 参数是 RGB 分量（不是"哪个灯"）。
+    private func trafficLight(r: Double, g: Double, b: Double) -> some View {
+        Circle()
+            .fill(Color(red: r, green: g, blue: b))
+            .frame(width: 14, height: 14)
     }
 
     // MARK: 顶栏
 
     private var topBar: some View {
         HStack(spacing: 10) {
+            // 红绿灯让位（生产 `topBarTrafficClearance`；只有上爬形态才看得见红绿灯）
+            if isWrap { Spacer().frame(width: Layout.topBarTrafficClearance) }
             if variant != .pip {
                 HStack(spacing: 6) {
                     conversationTrigger
@@ -58,9 +90,11 @@ struct TwoColumnLayoutPreview: View {
             capsuleGroup(["globe", "doc.text", "creditcard", "chart.bar", "brain"])
             capsuleGroup(["arrow.up.left.and.arrow.down.right", "sidebar.trailing", "paintpalette", "gearshape"])
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
+        // 顶栏实高 = 生产 `Layout.topBarHeight`（上 12 / 下 6 + 胶囊 36 = 54；卡片上溢量由它派生）
+        .frame(height: Layout.topBarCapsuleHeight)
+        .padding(.horizontal, Layout.toolbarHorizontalPadding)
+        .padding(.top, Layout.topBarTopGap)
+        .padding(.bottom, Layout.toolbarVGap)
     }
 
     private func capsuleGroup(_ icons: [String]) -> some View {
@@ -159,7 +193,7 @@ struct TwoColumnLayoutPreview: View {
             } else {
                 HStack(spacing: cardGap) {
                     chatCard
-                    rightCard.frame(width: 330)
+                    if !isChatOnly { rightCard.frame(width: 330) }
                 }
             }
         }
@@ -169,14 +203,32 @@ struct TwoColumnLayoutPreview: View {
 
     // MARK: 中栏
 
+    @ViewBuilder
     private var chatCard: some View {
+        if isWrap {
+            // 生产同款：上边停在窗口内 `cardGap` 处（向上溢出 `cardTopRise`）、淡底 + 描边
+            chatBody
+                .background(alignment: .top) {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(ink(Layout.cardFillOpacity))
+                        .padding(.top, -Layout.cardTopRise)
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(ink(0.12), lineWidth: 0.5)
+                        .padding(.top, -Layout.cardTopRise))
+        } else {
+            chatBody.cardBackgroundForPreview()
+        }
+    }
+
+    private var chatBody: some View {
         VStack(spacing: 0) {
             messages
             Spacer(minLength: 0)
             inputBar.padding(.horizontal, 16).padding(.bottom, 14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .cardBackgroundForPreview()
     }
 
     private var messages: some View {
@@ -253,7 +305,17 @@ struct TwoColumnLayoutPreview: View {
 
     // MARK: 右栏
 
+    @ViewBuilder
     private var rightCard: some View {
+        if isWrap {
+            // 生产同款：右栏不画边缘、直接坐底图
+            rightBody
+        } else {
+            rightBody.cardBackgroundForPreview()
+        }
+    }
+
+    private var rightBody: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("功能区").font(.system(size: 13, weight: .semibold)).foregroundStyle(ink(0.8))
@@ -284,7 +346,6 @@ struct TwoColumnLayoutPreview: View {
         }
         .padding(16)
         .frame(maxHeight: .infinity, alignment: .top)
-        .cardBackgroundForPreview()
     }
 
     private struct Tile: View {
@@ -313,5 +374,7 @@ private extension View {
 #Preview("下拉展开") { TwoColumnLayoutPreview(variant: .dropdown) }
 #Preview("无痕生效") { TwoColumnLayoutPreview(variant: .ephemeral) }
 #Preview("右侧最大化 PiP") { TwoColumnLayoutPreview(variant: .pip) }
+#Preview("卡片吸顶（右栏开）") { TwoColumnLayoutPreview(variant: .wrap) }
+#Preview("卡片吸顶·仅中栏") { TwoColumnLayoutPreview(variant: .wrapChatOnly) }
 
 #endif

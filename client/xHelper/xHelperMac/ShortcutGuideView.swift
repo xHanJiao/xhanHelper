@@ -34,10 +34,6 @@ struct ShortcutGuideView: View {
             ShortcutItem(keys: ["⌘", "4"], desc: "浏览器"),
             ShortcutItem(keys: ["⌘", "5"], desc: "记忆"),
         ]),
-        ShortcutSection(icon: "doc.text", title: "文档阅读", hint: "文档详情页打开时", items: [
-            ShortcutItem(keys: ["⌘", "←"], desc: "上一篇文档"),
-            ShortcutItem(keys: ["⌘", "→"], desc: "下一篇文档"),
-        ]),
         ShortcutSection(icon: "globe", title: "浏览器", hint: "浏览器聚焦时", items: [
             ShortcutItem(keys: ["⌘", "T"], desc: "新建标签页"),
             ShortcutItem(keys: ["⌘", "⇧", "T"], desc: "恢复最近关闭的标签页"),

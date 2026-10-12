@@ -332,29 +332,6 @@ class DocumentViewModel: ObservableObject {
         }
     }
 
-    /// 相邻文档是否可切：前一方向仅看已加载列表，后一方向还有未拉取的分页也算可切。
-    var canGoPrevious: Bool { neighbor(-1) != nil }
-    var canGoNext: Bool { neighbor(1) != nil || hasMore }
-
-    /// offset：-1 上一篇 / +1 下一篇，按当前列表序（服务端 updated_at DESC, id DESC）。
-    func openNeighbor(_ offset: Int) async {
-        guard let id = openDocument?.id,
-              let i = documents.firstIndex(where: { $0.id == id }) else { return }
-        let j = i + offset
-        if !documents.indices.contains(j) {
-            guard offset > 0, hasMore else { return }
-            await loadMore()
-        }
-        if documents.indices.contains(j) { openDocument = documents[j] }
-    }
-
-    private func neighbor(_ offset: Int) -> Document? {
-        guard let id = openDocument?.id,
-              let i = documents.firstIndex(where: { $0.id == id }) else { return nil }
-        let j = i + offset
-        return documents.indices.contains(j) ? documents[j] : nil
-    }
-
     /// 删除文档：软删（后端移入回收站，7 天内可恢复）。列表就地移除、不重置分页与滚动。
     /// ponytail: 标签词云计数不就地扣减，下次 load() 时刷新。
     func delete(_ doc: Document) async {

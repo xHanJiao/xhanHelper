@@ -15,10 +15,6 @@ struct DocumentListView: View {
                 DocumentFullView(
                     document: doc,
                     apiClient: viewModel.apiClient,
-                    canGoPrevious: viewModel.canGoPrevious,
-                    canGoNext: viewModel.canGoNext,
-                    isLoadingNeighbor: viewModel.isLoadingMore,
-                    onNavigate: { offset in Task { await viewModel.openNeighbor(offset) } },
                     onBack: { viewModel.openDocument = nil }
                 )
                 // 换篇重建：滚动位置 / 查找栏 / 目录展开态归零
@@ -421,26 +417,13 @@ private func extractHeadings(_ markdown: String) -> [TOCItem] {
 private struct DocumentFullView: View {
     let document: Document
     let apiClient: APIClient
-    let canGoPrevious: Bool
-    let canGoNext: Bool
-    let isLoadingNeighbor: Bool
-    /// offset：-1 上一篇 / +1 下一篇
-    let onNavigate: (Int) -> Void
     let onBack: () -> Void
 
     init(document: Document,
          apiClient: APIClient,
-         canGoPrevious: Bool,
-         canGoNext: Bool,
-         isLoadingNeighbor: Bool,
-         onNavigate: @escaping (Int) -> Void,
          onBack: @escaping () -> Void) {
         self.document = document
         self.apiClient = apiClient
-        self.canGoPrevious = canGoPrevious
-        self.canGoNext = canGoNext
-        self.isLoadingNeighbor = isLoadingNeighbor
-        self.onNavigate = onNavigate
         self.onBack = onBack
         #if os(macOS)
         // 阅读器把手跟着文档走（外层 `.id(doc.id)` 保证换篇就重建）
@@ -603,7 +586,6 @@ private struct DocumentFullView: View {
             guard req != nil, !annotOpen else { return }
             withAnimation { annotOpen = true }
         }
-        .background { shortcutCarrier }
         // D11：文档页铺一层"纸"底（material）。正文 WKWebView 是全透明的，没有这层就会
         // 直接压在窗口底图（照片）上、影响可读性；底图只透到页面四周。
         .background(.regularMaterial)
@@ -615,8 +597,6 @@ private struct DocumentFullView: View {
     @StateObject private var reader: DocumentReaderController
     /// 正文字号跟随全局字号设置。scaledSize 是计算属性，靠 @Published scale 触发重算。
     @ObservedObject private var fontManager = FontSizeManager.shared
-    /// 聊天输入框焦点（避免 ⌘←/⌘→ 被文档上/下篇快捷键劫持，见 shortcutCarrier）
-    @ObservedObject private var chatInputFocus = ChatInputFocus.shared
 
     /// 正文基准字号：与旧 MarkdownUI 正文一致（scaledSize × 1.18）
     private var readingFontSize: CGFloat { fontManager.scaledSize * 1.18 }
@@ -793,22 +773,6 @@ private struct DocumentFullView: View {
                 }
                 .padding(.vertical, 8)
             }
-
-            #if os(macOS)
-            Divider().opacity(0.3)
-            HStack(spacing: 14) {
-                TOCNavRow(
-                    title: "上一篇", icon: "chevron.left", leadsIcon: true,
-                    enabled: canGoPrevious && !isLoadingNeighbor, isLoading: false
-                ) { onNavigate(-1) }
-                TOCNavRow(
-                    title: "下一篇", icon: "chevron.right", leadsIcon: false,
-                    enabled: canGoNext && !isLoadingNeighbor, isLoading: isLoadingNeighbor
-                ) { onNavigate(1) }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            #endif
         }
         .frame(width: 220)
     }
@@ -832,22 +796,6 @@ private struct DocumentFullView: View {
             Spacer()
         }
         .frame(width: 32)
-    }
-
-    /// ⌘←/⌘→ 快捷键载体：目录栏只在有标题时渲染，快捷键不依赖它，故挂在最外层。
-    /// 尺寸归零 + 透明，只提供键位；查找栏打开、或聊天输入框聚焦时禁用，
-    /// 把 ⌘←/⌘→ 还给文本框移动光标（否则输入时会被这两个键劫持）。
-    private var shortcutCarrier: some View {
-        Group {
-            Button("") { onNavigate(-1) }
-                .keyboardShortcut(.leftArrow, modifiers: .command)
-                .disabled(!canGoPrevious || showFindBar || chatInputFocus.isFocused)
-            Button("") { onNavigate(1) }
-                .keyboardShortcut(.rightArrow, modifiers: .command)
-                .disabled(!canGoNext || showFindBar || chatInputFocus.isFocused)
-        }
-        .frame(width: 0, height: 0)
-        .opacity(0)
     }
     #endif
 
@@ -1053,45 +1001,3 @@ private struct DocumentFullView: View {
         matchCounts = []
     }
 }
-
-#if os(macOS)
-/// 目录栏页脚的方向行：平时纯文字（与目录条目同族），hover 只把文字由 secondary 提到 primary，
-/// 不加底块/阴影/位移。两条居中排列，间距由调用方给定。
-private struct TOCNavRow: View {
-    let title: String
-    let icon: String
-    /// 图标在文字外侧（上一篇在左、下一篇在右）。
-    let leadsIcon: Bool
-    let enabled: Bool
-    let isLoading: Bool
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                if leadsIcon { iconView }
-                Text(title).font(.caption)
-                if !leadsIcon { iconView }
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundColor(isHovered && enabled ? .primary : .secondary)
-        .opacity(enabled ? 1 : 0.35)
-        .onHover { isHovered = $0 }
-        .disabled(!enabled)
-        .help("\(title)（⌘\(leadsIcon ? "←" : "→")）")
-    }
-
-    @ViewBuilder
-    private var iconView: some View {
-        if isLoading {
-            ProgressView().controlSize(.mini)
-        } else {
-            Image(systemName: icon).font(.caption2.weight(.semibold))
-        }
-    }
-}
-#endif

@@ -32,6 +32,10 @@ enum Layout {
     static let topBarCapsuleVPadding: CGFloat = 1
     /// 胶囊组总高（icon + 上下内边距），顶栏分割线等按此对齐。
     static let topBarCapsuleHeight: CGFloat = topBarIconSize + topBarCapsuleVPadding * 2
+    /// 按钮 hover 圆底直径。原按图标盒整格（26）画 → 胶囊内高也是 26，上下各只剩 1pt，看着贴到胶囊边
+    /// （2026-10-12 用户实拍反馈）。22 内缩 3pt（≈ 组内水平间隙 4pt 的观感）。
+    /// **只影响 hover 视觉**：不改命中区（仍是 26pt 图标盒）、不进宽度账（背景不占位）、不动胶囊高度(28)。
+    static let topBarHoverCircleSize: CGFloat = 22
     /// 顶栏**内容**距窗口顶（上边距；下边距仍用 `toolbarVGap`）。
     static let topBarTopGap: CGFloat = 12
     /// 顶栏实高 = 上边距 + 胶囊高 + 下边距（12 + 28 + 6 = **46**）。

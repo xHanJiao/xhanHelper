@@ -11,13 +11,18 @@ final class TopBarLayoutTests: XCTestCase {
     /// 无右栏 / PiP 的窗口底线。
     private let singleColumnFloor = Layout.minWindowContentWidth
 
+    /// 中心组构造助手：默认可"部分收"（= `TopBarGroup.autoOverflow` 打开）。
+    private func center(_ buttons: Int, autoOverflow: Bool = true) -> TopBarCenterGroup {
+        TopBarCenterGroup(buttons: buttons, autoOverflow: autoOverflow)
+    }
+
     /// 右栏开着浏览器（中心槽 7 键）+ 导航组 5 键 + 工具组 4 键（侧栏已开，最大化按钮可见）。
     private var browserModel: TopBarWidthModel {
-        TopBarWidthModel(centerGroups: [7], navGroupButtons: 5, utilityButtons: 4)
+        TopBarWidthModel(centerGroups: [center(7)], navGroupButtons: 5, utilityButtons: 4)
     }
     /// 右栏开着文档详情（中心槽 3 键）。
     private var documentModel: TopBarWidthModel {
-        TopBarWidthModel(centerGroups: [3], navGroupButtons: 5, utilityButtons: 4)
+        TopBarWidthModel(centerGroups: [center(3)], navGroupButtons: 5, utilityButtons: 4)
     }
     /// 右栏开着非浏览器/文档面板（中心槽空）。
     private var plainPanelModel: TopBarWidthModel {
@@ -175,17 +180,19 @@ final class TopBarLayoutTests: XCTestCase {
         )
     }
 
-    /// 不变量：只要中心槽组显形，整簇就一定落得进限制内。
-    func testShowsCenterImpliesTrailingFitsLimit() {
+    /// 不变量：中心槽露出来的部分（含它带来的槽间线）一定落得进限制内。
+    func testShownCenterFitsTrailingLimit() {
         for model in [browserModel, documentModel, plainPanelModel] {
             for limit in stride(from: CGFloat(300), through: 900, by: 7) {
                 for available in stride(from: CGFloat(700), through: 1400, by: 97) {
                     let plan = TopBarLayout.plan(available: available, trailingLimit: limit, model: model)
                     guard plan.showsCenter else { continue }
                     XCTAssertLessThanOrEqual(
-                        TopBarLayout.trailingWidth(level: plan.level, model: model),
+                        TopBarLayout.trailingWidth(
+                            level: plan.level, model: model, centerVisible: plan.centerVisible
+                        ),
                         limit - Layout.topBarDegradeMargin,
-                        "available=\(available) limit=\(limit) level=\(plan.level)"
+                        "available=\(available) limit=\(limit) level=\(plan.level) k=\(plan.centerVisible)"
                     )
                 }
             }
@@ -201,5 +208,123 @@ final class TopBarLayoutTests: XCTestCase {
         )
         // 折叠态的右簇口径：导航组 178 + 线 9 + ⋯ 38 + 线 9 + 工具组 143
         XCTAssertEqual(TopBarLayout.trailingWidth(level: .foldCenter, model: browserModel), 377, accuracy: 0.001)
+    }
+
+    // MARK: - 中心槽「部分收」（docs/design/overflow-collapse）
+
+    /// 用户实拍那一屏：窗口 ≈995、右栏拖到 ≈600（卡片右侧那段 = 600 + cardGap 6 + seam 6 − 顶栏右内边距 16 = 596）。
+    /// 7 键整组放不进（1028 > 987），但白给的空间够放 4 个 —— 不该整组进 ⋯。
+    func testPartialCenterKeepsWhatFits() {
+        let plan = TopBarLayout.plan(available: 995, trailingLimit: 596, model: browserModel)
+        XCTAssertEqual(plan.centerVisible, [4])
+        XCTAssertTrue(plan.showsCenter)
+        XCTAssertTrue(plan.showsOverflow)
+        XCTAssertEqual(plan.hiddenCenterButtons, 3)
+        XCTAssertLessThanOrEqual(
+            TopBarLayout.width(level: plan.level, model: browserModel, centerVisible: plan.centerVisible),
+            995 - Layout.topBarDegradeMargin
+        )
+        XCTAssertLessThanOrEqual(
+            TopBarLayout.trailingWidth(level: plan.level, model: browserModel, centerVisible: plan.centerVisible),
+            596 - Layout.topBarDegradeMargin
+        )
+    }
+
+    /// 部分收取的是**能露的最大值**：再多露一个就装不下。
+    func testPartialCenterIsMaximal() {
+        let plan = TopBarLayout.plan(available: 995, trailingLimit: 596, model: browserModel)
+        let k = plan.centerVisible[0]
+        XCTAssertGreaterThan(k, 0)
+        XCTAssertFalse(
+            TopBarLayout.fits(
+                level: plan.level, available: 995, trailingLimit: 596,
+                model: browserModel, centerVisible: [k + 1]
+            ),
+            "k+1 = \(k + 1) 也装得下 → k 取小了"
+        )
+    }
+
+    /// 空间不够就一路收到 0（= 整组进 ⋯，与加这层之前一致）：双栏底线 778 + 右栏最小 380。
+    func testPartialCenterFallsBackToZeroAtFloor() {
+        let plan = TopBarLayout.plan(available: twoColumnFloor, trailingLimit: cardTrailingLimit, model: browserModel)
+        XCTAssertEqual(plan.centerVisible, [0])
+        XCTAssertFalse(plan.showsCenter)
+        XCTAssertTrue(plan.showsOverflow)
+        XCTAssertEqual(plan.hiddenCenterButtons, 7)
+    }
+
+    /// 多中心组同时可见时按注册顺序先到先得（今天实际不会出现，钉住口径免得将来走偏）：
+    /// 每个宽度下第 0 组留的不少于第 1 组，且确实存在"第 0 组多留、第 1 组少留"的宽度。
+    func testPartialCenterIsGreedyByGroupOrder() {
+        let model = TopBarWidthModel(centerGroups: [center(2), center(2)], navGroupButtons: 5, utilityButtons: 4)
+        var sawSplit = false
+        for available in stride(from: CGFloat(800), through: 1400, by: 2) {
+            let plan = TopBarLayout.plan(available: available, model: model)
+            XCTAssertGreaterThanOrEqual(plan.centerVisible[0], plan.centerVisible[1], "available=\(available)")
+            if plan.centerVisible[0] > plan.centerVisible[1] { sawSplit = true }
+        }
+        XCTAssertTrue(sawSplit, "没有任何宽度能让第 0 组比第 1 组多留 → 先到先得没生效")
+    }
+
+    // MARK: - `⋯` 长在组内 / 独立胶囊 / 组自己声明的开关（docs/design/overflow-collapse）
+
+    /// `⋯` 长在组内：那一组多算一项（图标 26 + 组内线 9），不是旁边单开一颗胶囊。
+    func testOverflowRidesInsideTheGroup() {
+        let plan = TopBarLayout.plan(available: 995, trailingLimit: 596, model: browserModel)
+        XCTAssertEqual(plan.centerVisible, [4])
+        XCTAssertTrue(plan.overflowInline)
+        XCTAssertFalse(plan.overflowStandalone)
+        // 中心槽 = 4 个真按钮 + 末尾 ⋯ = groupWidth(5)
+        XCTAssertEqual(
+            TopBarLayout.centerSlotWidth(level: plan.level, model: browserModel, centerVisible: [4]),
+            TopBarLayout.groupWidth(5),
+            accuracy: 0.001
+        )
+        // 右槽不再挂 ⋯（导航组 178 + 线 9 + 工具组 143）：nav / util 组一颗都没少
+        XCTAssertEqual(
+            TopBarLayout.rightSlotWidth(level: plan.level, model: browserModel, centerVisible: [4]),
+            330,
+            accuracy: 0.001
+        )
+    }
+
+    /// 一个都留不下时才退回右槽那颗独立 `⋯`（= 加"部分收"之前的样子）。
+    func testOverflowFallsBackToStandaloneCapsule() {
+        let plan = TopBarLayout.plan(available: twoColumnFloor, trailingLimit: cardTrailingLimit, model: browserModel)
+        XCTAssertEqual(plan.centerVisible, [0])
+        XCTAssertFalse(plan.overflowInline)
+        XCTAssertTrue(plan.overflowStandalone)
+        // 右槽多一颗 ⋯ 组：178 + 线 9 + ⋯ 38 + 线 9 + 143
+        XCTAssertEqual(
+            TopBarLayout.rightSlotWidth(level: plan.level, model: browserModel, centerVisible: [0]),
+            377,
+            accuracy: 0.001
+        )
+    }
+
+    /// 单中心组时两种 `⋯` 互斥：要么长在组内、要么独立，不会同时出现。
+    func testOverflowPlacementIsMutuallyExclusiveForSingleGroup() {
+        for available in stride(from: CGFloat(700), through: 1600, by: 13) {
+            for limit in [cardTrailingLimit, 596, nil as CGFloat?] {
+                let plan = TopBarLayout.plan(available: available, trailingLimit: limit, model: browserModel)
+                XCTAssertFalse(plan.overflowInline && plan.overflowStandalone, "available=\(available)")
+                XCTAssertEqual(plan.showsOverflow, plan.overflowInline || plan.overflowStandalone)
+            }
+        }
+    }
+
+    /// 组没开 `autoOverflow`（默认）→ 永不部分收：这一档整组不进栏（按钮进独立 ⋯）。
+    func testOptOutGroupNeverPartiallyFolds() {
+        let pinned = TopBarWidthModel(
+            centerGroups: [center(7, autoOverflow: false)], navGroupButtons: 5, utilityButtons: 4
+        )
+        let plan = TopBarLayout.plan(available: 995, trailingLimit: 596, model: pinned)
+        XCTAssertEqual(plan.centerVisible, [0])
+        XCTAssertFalse(plan.showsCenter)
+        XCTAssertTrue(plan.overflowStandalone)
+        // 但整组装得下时照旧整组显形（开关只影响"部分收"）
+        let wide = TopBarLayout.plan(available: 1400, model: pinned)
+        XCTAssertEqual(wide.level, .full)
+        XCTAssertEqual(wide.centerVisible, [7])
     }
 }

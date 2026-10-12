@@ -84,18 +84,28 @@ struct ButtonDef {
 ## 五、TopBarView 渲染
 
 ```
-HStack(spacing: Layout.toolbarCapsuleGap) {
-    conversationSwitcher()                    // 左区 leading View（不走槽位系统）
-    Spacer(minLength: 0)
-    renderSlot(.center)
-    Spacer(minLength: 0)
-    renderSlot(.right)
+HStack(spacing: Layout.topBarGroupSpacing) {
+    Spacer().frame(width: Layout.topBarTrafficClearance)   // 红绿灯让位（顶栏铺到标题栏）
+    conversationSwitcher(interactive:labelCap:)            // 当前会话下拉 + ＋（常驻，不走槽位系统）
+    if flexible { Spacer(minLength: 0) } else { Spacer().frame(width: 0) }   // 弹性撑满 / 探针 0 宽
+    if plan.showsDevChip { devChip }                       // 仅 macOS dev 构建
+    if plan.showsCenter { renderCenterSlot(plan:interactive:) }
+    if plan.showsCenter && 中/右槽都有可见组 { UnresizableDivider() }
+    renderRightSlot(plan:interactive:)
 }
 .padding(.horizontal, Layout.toolbarHorizontalPadding)
 ```
+
+`plan` = `TopBarLayout.plan(available: availableWidth, trailingLimit: trailingLimit, model: widthModel)`（`TopBarView` 里的计算属性）。
+真实栏（`flexible: true, interactive: true`）与隐藏探针（`false, false`）**共用这一套骨架** → 几何必然同档同宽；
+探针只是把弹性 `Spacer` 换成 0 宽、把 `Button` 换成静态图标。
 （`Layout.topBarTrafficClearance` 让出红绿灯；实际常量以 `LayoutConstants.swift` 为准。）
 
-`renderSlot` → `registry.visibleGroups(for:)` → 每个 Group 一个 `CapsuleGroup`（复用胶囊样式），内部 `ForEach(buttons)` 渲染 `CapsuleButton` / `CapsuleRefreshButton`，按钮间用 `Divider` 分隔。
+`renderCenterSlot`（中心槽；右槽走 `renderRightSlot`）→ `registry.visibleGroups(for:)` → 每个 Group 一个 `CapsuleGroup` / `OverflowCapsuleGroup`（复用胶囊样式），内部 `ForEach(buttons)` 渲染 `CapsuleButton` / `CapsuleRefreshButton`，按钮间用 `Divider` 分隔。
+
+**按钮 hover 圆底**（2026-10-12）：直径 `Layout.topBarHoverCircleSize` = **22**，由 `CapsuleButtonBackground` 给 `Circle()` 自己定尺寸。
+原按图标盒整格（26）画 → 胶囊内高也是 26，上下只剩 1pt、看着贴到胶囊边。缩圈**不改命中区**（仍 26pt 图标盒）、
+**不动胶囊高度**（仍 28）、不进宽度账（背景不占位）；`CapsuleButton` / `CapsuleRefreshButton` / 两处 `⋯` 全走这条路，一处生效。
 
 ### 五之二、降级档 + `⋯` 溢出（2026-10-11）
 
@@ -104,6 +114,12 @@ HStack(spacing: Layout.toolbarCapsuleGap) {
 判定是**纯函数**（`Shared/Views/TopBarLayout.swift`，按钮统一 26pt icon 故可算不必量），
 真实栏与隐藏探针必然同档；探针（`TopBarMinWidthKey`）降级为安全网。
 完整宽度账、档位阈值、验收项见 `../mac-topbar-degrade/design.md`。
+
+**`⋯` 落位（2026-10-12 起）**：中心组**留了一部分**时它长在那一组的**末尾**（同一颗胶囊、组内分隔线），
+只有**一个都没留下**时才退回右槽最左那颗独立胶囊。
+它是**可选行为**：组自己声明 `TopBarGroup.autoOverflow`（默认关），今天只有两个中心组开着；
+右槽导航 / 工具组不开 → 永不变形（`⌘1–5` 与设置始终在栏上）。
+细节：`../mac-topbar-degrade/design.md` §3.3 要点 5、`../overflow-collapse/design.md`（人话版）。
 
 **按钮 enabled/icon/help 实时更新**：TopBarView `@ObservedObject registry, rightSidebar, chatTabManager, router`，任一 publish → re-render → `ButtonDef` 的 closure 重新求值。
 

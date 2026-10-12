@@ -114,7 +114,9 @@ final class DocumentSelectionCoordinator: ObservableObject {
                              },
                              help: { "分享文档" }),
             ],
-            visible: { [weak self] in self?.isDocumentDetailVisible ?? false }
+            visible: { [weak self] in self?.isDocumentDetailVisible ?? false },
+            // 放不下时允许"留一部分 + 末尾 ⋯"（自动省略），见 docs/design/overflow-collapse
+            autoOverflow: true
         ))
     }
 

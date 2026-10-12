@@ -356,3 +356,8 @@ PiP：     max(cardGap*2 + rightSidebarMinWidth, minWindowContentWidth)    ≈ 7
   - 影响文件：`LayoutConstants.swift`、`xHelperMac/App.swift`（注释）、`xHelperMac/TwoColumnLayoutPreview.swift`（注释）、
     `../mac-card-top-wrap/design.md`（§一/§二/§三/§五/§七 + §八 后续变更）、`../mac-apps/window-background-photos.md`（§二/§六）、
     `../mac-apps/topbar-slot-system.md`（§八）。
+  - **同日再改（用户实拍：hover 圈顶到胶囊边）**：新增 `Layout.topBarHoverCircleSize` = **22**
+    （原按图标盒整格 26 画 → 胶囊内高也是 26，上下只剩 1pt）。缩圈**不改命中区**（仍 26pt 图标盒）、
+    **不动胶囊高度**（仍 28）、不进宽度账 → 上面的派生数值与三处宽度表全部不变。
+    影响文件：`LayoutConstants.swift`、`Views/TopBarView.swift`（`CapsuleButtonBackground`）、
+    `../mac-apps/topbar-slot-system.md`（§五）。

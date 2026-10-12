@@ -45,14 +45,20 @@ struct TopBarGroup: Identifiable {
     let priority: Int
     let buttons: [TopBarButton]
     let visible: () -> Bool
+    /// 允许降级时**部分收**：放不下就把这一组的末尾换成 `⋯`（能留几个留几个，点 `⋯` 出菜单）。
+    /// 默认 `false` = 只能"整组在 / 整组不在"（右槽导航组与工具组就靠它保证永不变形）。
+    /// ⚠️ 今天只有**中心槽**的组会走这条路径（右槽两组的宽在 `TopBarLayout` 里是整体计入的）。
+    /// 见 `docs/design/overflow-collapse/design.md`。
+    let autoOverflow: Bool
 
     init(id: String, slot: TopBarSlot, priority: Int, buttons: [TopBarButton],
-         visible: @escaping () -> Bool = { true }) {
+         visible: @escaping () -> Bool = { true }, autoOverflow: Bool = false) {
         self.id = id
         self.slot = slot
         self.priority = priority
         self.buttons = buttons
         self.visible = visible
+        self.autoOverflow = autoOverflow
     }
 }
 

@@ -135,5 +135,7 @@
     （`docs/bugs/034`）。已在降级侧加闸（`trailingWidth ≤ 卡片右侧可用宽 − margin`），本文件把不变量写死，
     免得下次又按「窗口够宽就显形」改回去。
   - 边界：右栏关着（卡片铺满整宽）/ PiP（整窗就是右栏）时中栏不占位 → 不受此闸约束（那段「所有按钮都落在卡片里」仍成立）。
+  - 2026-10-12 同日再扩：中心槽改成**部分收**后，露出来的那部分同样受这条约束（`trailingWidth` 按实际露出的个数算）
+    —— 见 `../overflow-collapse/design.md`。
   - 影响文件：`../mac-topbar-degrade/design.md`（§2.1 表、§3.3 两张表 + 设计要点 4、§四 D6、§六、§七）、
     `Shared/Views/{TopBarLayout,TopBarView,ContentView}.swift`（细节见 `docs/bugs/034`）。

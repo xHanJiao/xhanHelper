@@ -57,7 +57,10 @@ struct TopBarView: View {
         let right = visibleGroups(for: .right)
         return TopBarWidthModel(
             centerGroups: visibleGroups(for: .center).map { group in
-                group.buttons.filter { $0.visible() }.count
+                TopBarCenterGroup(
+                    buttons: group.buttons.filter { $0.visible() }.count,
+                    autoOverflow: group.autoOverflow
+                )
             },
             navGroupButtons: right.first { $0.id == Self.navGroupID }?
                 .buttons.filter { $0.visible() }.count ?? 0,
@@ -97,7 +100,7 @@ struct TopBarView: View {
             #endif
 
             if plan.showsCenter {
-                renderSlot(.center, interactive: interactive)
+                renderCenterSlot(plan: plan, interactive: interactive)
             }
 
             // 中右两侧都有可见组时才显示分隔线
@@ -464,20 +467,56 @@ struct TopBarView: View {
             .filter { group in group.buttons.contains { $0.visible() } }
     }
 
+    /// 中心槽：按 `plan.centerVisible` 每组只渲染前 k 个；`k == 0` 的组整组跳过
+    /// （连它前后那根 Divider 一起跳过，否则会留一根孤立的线）。
+    /// 有组"留了一部分"时，`⋯` 长在**最后一组**的末尾（`OverflowCapsuleGroup`），不再单开胶囊。
+    /// 多中心组今天不会同时出现（浏览器 7 键 / 文档详情 3 键互斥），空间按注册顺序先到先得。
     @ViewBuilder
-    private func renderSlot(_ slot: TopBarSlot, interactive: Bool) -> some View {
-        let groups = visibleGroups(for: slot)
-        if !groups.isEmpty {
+    private func renderCenterSlot(plan: TopBarPlan, interactive: Bool) -> some View {
+        // ViewBuilder 里不能裸写 `assert`（Void 表达式），用 `let _ =` 过一遍
+        let _ = checkCenterCounts(plan)
+        let shown = Array(zip(visibleGroups(for: .center), plan.centerVisible)).filter { $0.1 > 0 }
+        if !shown.isEmpty {
             HStack(spacing: 0) {
-                ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
+                ForEach(Array(shown.enumerated()), id: \.element.0.id) { index, entry in
                     if index > 0 {
                         Self.groupDivider
                     }
-                    CapsuleGroup {
-                        buttonRow(group, interactive: interactive)
+                    OverflowCapsuleGroup(
+                        interactive: interactive,
+                        hostsOverflow: plan.overflowInline && index == shown.count - 1,
+                        tooltip: "更多按钮"
+                    ) {
+                        buttonRow(entry.0, interactive: interactive, upTo: entry.1)
+                    } menuContent: {
+                        overflowMenuRows(inlineOverflowButtons)
                     }
                 }
             }
+        }
+    }
+
+    /// 视图与宽度账靠「最后一组末尾挂 `⋯`」这条约定**手工对齐**：`TopBarLayout.centerSlotWidth` 的
+    /// `counts[last] += 1` ↔ 这里的 `index == shown.count - 1`。长度不一致时 `zip` 会静默截断、两边各按
+    /// 自己那份渲染（宽度账少算一项 → 可能压卡片，正是 `docs/bugs/034` 那条红线）。
+    /// 每次渲染（含探针）都过一遍，仅 debug 生效。
+    private func checkCenterCounts(_ plan: TopBarPlan) {
+        assert(
+            plan.centerVisible.count == visibleGroups(for: .center).count,
+            "centerVisible 与可见中心组数不一致：宽度账与视图会对不上（TopBarLayout.centerSlotWidth）"
+        )
+    }
+
+    /// `⋯` 菜单里的行（`Label` + 按钮自己的闭包）。
+    @ViewBuilder
+    private func overflowMenuRows(_ buttons: [TopBarButton]) -> some View {
+        ForEach(buttons) { button in
+            Button {
+                button.action()
+            } label: {
+                Label(button.help(), systemImage: button.icon())
+            }
+            .disabled(!button.enabled())
         }
     }
 
@@ -526,25 +565,19 @@ struct TopBarView: View {
     /// 单元顺序：`⋯` 在最左（= ⌘1–5 导航组的左侧 —— 它替的就是原本在左边的中心槽组），
     /// 其后按注册顺序排可见组。
     private func rightSlotUnits(_ groups: [TopBarGroup], plan: TopBarPlan) -> [RightSlotUnit] {
-        var units: [RightSlotUnit] = plan.showsOverflow ? [.overflow] : []
+        // 只有"中心组整组进了 ⋯"时才在右槽单开一颗；留了一部分的话 ⋯ 长在组内（见 renderCenterSlot）
+        var units: [RightSlotUnit] = plan.overflowStandalone ? [.overflow] : []
         units += groups.map { .group($0) }
         return units
     }
 
-    /// `⋯`：装降级时从栏上收下来的按钮（当前只有中心槽组）。
+    /// `⋯`：装降级时从栏上收下来的按钮（中心组整组进 `⋯` 的那些）。
     /// 用原生 `Menu`：行 = `help()` 文案 + `icon()` 图标，直接复用按钮自己的闭包。
     @ViewBuilder
     private func overflowCapsule(interactive: Bool) -> some View {
         if interactive {
             CapsuleOverflowMenu(tooltip: "更多按钮") {
-                ForEach(overflowButtons) { button in
-                    Button {
-                        button.action()
-                    } label: {
-                        Label(button.help(), systemImage: button.icon())
-                    }
-                    .disabled(!button.enabled())
-                }
+                overflowMenuRows(standaloneOverflowButtons)
             }
         } else {
             // 探针副本：与真实 ⋯ 同尺寸（单图标组）
@@ -552,21 +585,31 @@ struct TopBarView: View {
         }
     }
 
-    /// 被收进 `⋯` 的按钮（按栏上原顺序）。
-    private var overflowButtons: [TopBarButton] {
-        guard plan.showsOverflow else { return [] }
-        return visibleGroups(for: .center).flatMap { $0.buttons.filter { $0.visible() } }
+    /// 长在中心组末尾那颗 `⋯` 里装的按钮：各中心组「留在栏上那些之后」的部分（按注册顺序）。
+    private var inlineOverflowButtons: [TopBarButton] {
+        guard plan.overflowInline else { return [] }
+        return zip(visibleGroups(for: .center), plan.centerVisible).flatMap { group, keep in
+            keep > 0 ? Array(group.buttons.filter { $0.visible() }.dropFirst(keep)) : []
+        }
+    }
+
+    /// 右槽那颗独立 `⋯` 里装的按钮：整组进了 `⋯` 的中心组（`keep == 0`），按注册顺序。
+    private var standaloneOverflowButtons: [TopBarButton] {
+        guard plan.overflowStandalone else { return [] }
+        return zip(visibleGroups(for: .center), plan.centerVisible).flatMap { group, keep in
+            keep == 0 ? group.buttons.filter { $0.visible() } : []
+        }
     }
 
     private static var groupDivider: some View {
         Divider().frame(height: 14).padding(.horizontal, 4)
     }
 
-    @ViewBuilder
-    private func buttonRow(_ group: TopBarGroup, interactive: Bool) -> some View {
+    /// 一组按钮。`upTo` = 最多渲染前几个（中心组部分收时用；`nil` = 全渲染）。
+    private func buttonRow(_ group: TopBarGroup, interactive: Bool, upTo limit: Int? = nil) -> some View {
         // 先按 visible() 过滤，再基于可见按钮计算分隔线（避免隐藏按钮导致多/少 Divider）
-        let visibleButtons = group.buttons.filter { $0.visible() }
-        ForEach(Array(visibleButtons.enumerated()), id: \.element.id) { index, button in
+        let visibleButtons = Array(group.buttons.filter { $0.visible() }.prefix(limit ?? Int.max))
+        return ForEach(Array(visibleButtons.enumerated()), id: \.element.id) { index, button in
             if index > 0 {
                 Divider().frame(height: 14)
             }
@@ -635,7 +678,12 @@ private struct CapsuleButtonBackground: ViewModifier {
 
     func body(content: Content) -> some View {
         if show {
-            content.background(.quaternary.opacity(0.5), in: Circle())
+            // 圈自己定尺寸（不再吃满 26pt 图标盒），否则贴到 28pt 胶囊的边
+            content.background(
+                Circle()
+                    .fill(.quaternary.opacity(0.5))
+                    .frame(width: Layout.topBarHoverCircleSize, height: Layout.topBarHoverCircleSize)
+            )
         } else {
             content
         }
@@ -713,6 +761,35 @@ private struct CapsuleRefreshButton: View {
         .opacity(isDisabled ? 0.25 : 1)
         .hoverTooltip(disabledMessage ?? "", direction: .down, delay: 0.25)
         .onHover { isHovered = $0 }
+    }
+}
+
+/// 带「自动省略」的胶囊组：露出来的按钮 + 末尾 `⋯`（点开是菜单）。
+///
+/// 露几个由容器算（`TopBarLayout` 的宽度账）—— 本组件**不量宽**，只按 `hostsOverflow` 决定末尾挂不挂 `⋯`，
+/// 所以换个地方用只需接上"这次分到多宽"（侧栏按钮行 / 输入栏 pill 行）。
+/// 但它是 `private`（同文件抽屉）：**真要去别处用，得先把类型和配套的宽度口径一起提出来**（现在不做）。
+/// 见 `docs/design/overflow-collapse/design.md`。
+private struct OverflowCapsuleGroup<Content: View, MenuContent: View>: View {
+    let interactive: Bool
+    let hostsOverflow: Bool
+    let tooltip: String
+    @ViewBuilder let content: () -> Content
+    @ViewBuilder let menuContent: () -> MenuContent
+
+    var body: some View {
+        CapsuleGroup {
+            content()
+            if hostsOverflow {
+                Divider().frame(height: 14)
+                if interactive {
+                    CapsuleOverflowMenu(tooltip: tooltip, menuContent: menuContent)
+                } else {
+                    // 探针副本：与真实 ⋯ 同尺寸（图标 26 + 组内线 9，宽度账按"多一项"算）
+                    CapsuleIcon(systemName: "ellipsis", showBackground: false)
+                }
+            }
+        }
     }
 }
 

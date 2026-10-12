@@ -332,6 +332,7 @@ VStack
   ```
   且 HTML `body` 不铺任何不透明底色。
 - 主题（浅/深）+ 字号变化时**不重载 HTML**，走 `evaluateJavaScript` 改 `<html>` 上的 class / CSS 变量（重载会丢滚动位置）。注意 CSS 派生变量的坑：带 `var()` 的变量必须在**声明它的那个元素**上求值，主题 class 挂 `html` 不是 `body`。
+  - ⚠️ **2026-10-12**：不重载只解决「重载归零」，**重排本身**照样丢位置（列宽是 `68vw`，任何宽度变化都重排）。现在靠阅读器的「阅读锚点」补位，见文末「后续变更 · 阅读锚点」。
 - `loadHTMLString(html, baseURL: nil)`。`XHWebView.swift` 目前只支持 `URL`（`XHWebViewRepresentable` 里 `load(URLRequest)`），**不复用**它，直接写一个薄的 `NSViewRepresentable`。理由是文档正文不需要导航白名单 / 加载态 / 外链拦截那一套。
 
 ### 7.3 桥接协议
@@ -1064,3 +1065,13 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 - **不变**：服务端 / API / 模型 / 阅读器 JS / `DocumentReaderView` 状态机 **零改动**（客户端没有第二个「让 AI 回复」入口）。
 - **自查**：`swiftc -typecheck -D DEBUG`（macOS 26.3 / iOS 26.0）0 error；`#Preview`「桌面 · 讨论（折叠）」里 `threaded`（note 空、0 回复）那张卡片不再出按钮。
 - **同步**：`docs/design/document-annotation-reply/design.md`（§7.2 + 后续变更）、`docs/design/document-annotation-single-view/design.md`（§3.3 + 后续变更）已就地更新。
+
+### 2026-10-12 · 阅读锚点：正文重排不再丢阅读位置（用户报障）
+
+- **现象**：文档详情页点开「划线与批注」面板（0.2s 动画，正文收窄 320pt），中间正文整篇重新折行，刚才在看的那句被推走；滚动位置按像素保留着，所以看着像"位置自己飘了"。
+- **根因**：正文列宽是 `clamp(728px, 68vw, 1100px)` —— `68vw` 跟着 WebView 视口走，**任何**宽度变化都整篇重排；而 `scrollY` 是像素。所以展开本文目录、拖分隔线、缩放窗口、最大化侧栏、改字号，全是同一个根因（不是「展开面板」专属）。
+- **决定**：阅读器 JS 加「阅读锚点」——滚动时记「视口顶部那一行的文本节点 + 字符偏移 + 它离视口顶的高度」，`window.resize`（WKWebView 尺寸一变就派发，0.2s 动画期间实测连发 19 次）时把**同一个字**放回同一高度。锚在 DOM 节点上，重排只换位置不换节点，所以重排多少次都稳。`anchorHoldUntil` = 400ms 内不许重取样（补位自己 `scrollBy` 也会触发 scroll 事件，那是取样点，不挡就会越补越偏）。`setFontSize` 前后夹一次 capture/restore。
+- **不变**：Swift 侧 / CSS / 桥接协议 **零改动**；`.page` 的 `68vw` 阅读版式不动（固定 728 只能盖住宽窗那半截，窄到一起还是重排）。
+- **影响文件**：`client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift`（模板 JS 的 `charRect` / `captureAnchor` / `restoreAnchor` + resize 监听 + scroll 监听一行 + `setFontSize` 两行）。
+- **另记**：`docs/bugs/036-macos-reader-scroll-lost-on-width-change.md`（含离屏真引擎的验证数据）。
+- **已知边界**：视口顶部正好是一张 mermaid 大图时，锚会落到最近的一行文字上，图片随列宽变化的那点高度差补不回来。

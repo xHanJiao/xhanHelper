@@ -1326,9 +1326,61 @@ var reader = (function () {
     if (!(e.target.closest && e.target.closest('mark.hl, .ann-bubble'))) hideCtx();
   });
 
+  /* ============ 阅读锚点 ============
+     正文列宽是 68vw（见 CSS 的 .page），所以**任何**让 WebView 变窄/变宽的点击 —— 展开批注面板、
+     展开本文目录、拖分隔线、缩放窗口 —— 都会整篇重新折行。而滚动位置是按像素保留的：像素没变、
+     内容却换了，读者眼前那句就被推走，得手动滑回来。
+     修法：滚动时记下视口顶部那一行的「文本节点 + 字符偏移 + 它离视口顶的高度」，尺寸一变就把
+     同一个字放回同一高度。锚在 DOM 节点上（重排只换位置、不换节点），所以重排多少次都稳。
+     ponytail: 锚是文字。视口顶部正好是一张 mermaid 大图时，锚会落到最近的一行文字上，
+     图片随列宽变化的那点高度差补不回来。 */
+  var anchorNode = null, anchorOff = 0, anchorDy = 0;
+
+  /* 单个字符所在**行盒**的矩形。折叠 Range 在 WebKit 里量不出矩形，所以取一个字。 */
+  function charRect(node, off) {
+    var len = node.nodeType === 3 ? node.nodeValue.length : node.childNodes.length;
+    if (!len) return null;
+    var i = Math.min(Math.max(off, 0), len - 1);
+    var r = document.createRange();
+    r.setStart(node, i);
+    r.setEnd(node, i + 1);
+    var rects = r.getClientRects();
+    return rects.length ? rects[0] : r.getBoundingClientRect();
+  }
+
+  function captureAnchor() {
+    var col = content.getBoundingClientRect();
+    var caret = document.caretRangeFromPoint(col.left + 2, 1);
+    var rect = (caret && content.contains(caret.startContainer))
+      ? charRect(caret.startContainer, caret.startOffset) : null;
+    anchorNode = rect ? caret.startContainer : null;
+    anchorOff = caret ? caret.startOffset : 0;
+    anchorDy = rect ? rect.top : 0;
+  }
+
+  /* 重排后把锚点那一行放回原来的高度。锚点节点已不在文档里（正文重渲染过）就什么都不做 ——
+     那种情况由下面 reload 的 `pendingScrollY` 兜。 */
+  function restoreAnchor() {
+    if (!anchorNode || !content.contains(anchorNode)) return;
+    var rect = charRect(anchorNode, anchorOff);
+    if (rect) window.scrollBy(0, rect.top - anchorDy);
+  }
+
+  /* WKWebView 尺寸一变（SwiftUI 那边展开/收起面板、拖分隔线、缩放窗口）就会派发 resize；
+     展开面板有 0.2s 动画，会连发十几次 —— 每次都补，视线才是钉住的。
+     `anchorHoldUntil`：补位自己会 `scrollBy`，那也会触发 scroll 事件（下面那个取样点）；
+     重排这一小段时间内不许重取样，否则锚点跟着抖、越补越偏。 */
+  var anchorHoldUntil = 0;
+  window.addEventListener('resize', function () {
+    anchorHoldUntil = Date.now() + 400;
+    restoreAnchor();
+  });
+
   /* capture 阶段的 scroll 监听连**后代元素**的滚动也收得到（scroll 不冒泡，但 capture 会命中）。
-     一滚就把工具条/菜单收起来（菜单挂靠在选区坐标上，正文一移就错位），并发 scroll 让 Swift 重取连线位置 */
+     一滚就把工具条/菜单收起来（菜单挂靠在选区坐标上，正文一移就错位），并发 scroll 让 Swift 重取连线位置。
+     顺手记一次阅读锚点：这是「读者现在看哪」的唯一取样点（重排不由我们触发）。 */
   window.addEventListener('scroll', function () {
+    if (Date.now() > anchorHoldUntil) captureAnchor();
     hideAll();
     post({ type: 'scroll' });
   }, true);
@@ -1573,7 +1625,10 @@ var reader = (function () {
   }
 
   function setFontSize(px) {
+    /* 字号一变整篇重排，与栏宽变化是同一个坑：像素级滚动位置保不住「在看哪句」。 */
+    captureAnchor();
     document.documentElement.style.setProperty('--fs', px + 'px');
+    restoreAnchor();
   }
 
   function restoreScrollY(y) {

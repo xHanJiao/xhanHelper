@@ -111,3 +111,9 @@ nginx 修好后，Mac app 里旧文档配图仍裂。根因是 **WKWebView 的�
 - 方案：改用项目自绘的 `hoverTooltip`（`Views/HoverTooltip.swift`，与顶栏/输入框统一），
   涉及 `client/xHelper/xHelper/Shared/Views/HistoryPanelView.swift` 头部两按钮 + 行内「从历史移除」。
 - **约定：自绘窗口内一律用 `hoverTooltip`，不要用 `.help`**（其它面板若有 `.help` 存在同样隐患）。
+
+### 2026-10-12 · 上文示例里的 `proxy_pass http://127.0.0.1:8088` 已改指上游
+
+后来发现「每请求直连后端」会持续产 loopback TIME_WAIT（云监控 NON_ESTABLISHED 告警），
+改成了 `upstream xhan_helper_backend { keepalive 32; }` + `proxy_set_header Connection "";`。
+本文件上文的 `/images/` 片段只作历史记录，**以 `server/nginx-helper.conf` 为准**，详见 `docs/bugs/035`。

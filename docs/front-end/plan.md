@@ -140,6 +140,14 @@ Phase 3 (实体管理页面)    Phase 4 (高级定制)
 nginx 配置示例：
 
 ```nginx
+# 上游连接池：REST 请求复用 loopback 连接，否则每请求新建/关闭会在 127.0.0.1:8088 上堆 TIME_WAIT
+# （云监控 NON_ESTABLISHED 告警的根因，详见 docs/bugs/035）。keepalive = 每 worker 的空闲连接缓存上限。
+upstream xhan_helper_backend {
+    server 127.0.0.1:8088;
+    keepalive 32;
+    keepalive_timeout 60s;
+}
+
 server {
     listen 443 ssl;
     server_name helper.xhanx.cn;
@@ -148,17 +156,17 @@ server {
     index index.html;
 
     location /api/ {
-        proxy_pass http://127.0.0.1:8088;
+        proxy_pass http://xhan_helper_backend;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection "";   # 必须为空，否则上游连接不会复用（keepalive 的前提）
+        proxy_set_header Host $host;
         proxy_read_timeout 300s;  # SSE 长连接
         proxy_buffering off;
     }
 
     # 图床公开读：必须反代到 Go，否则落 SPA fallback 回吐首页（见 docs/bugs/031）
     location /images/ {
-        proxy_pass http://127.0.0.1:8088;
+        proxy_pass http://xhan_helper_backend;
         proxy_set_header Host $host;
     }
 

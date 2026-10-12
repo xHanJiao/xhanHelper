@@ -184,7 +184,7 @@ SPA fallback 回吐首页 HTML（详见 `docs/bugs/031`）。配置在 `server/n
 
 ```nginx
 location /images/ {
-    proxy_pass http://127.0.0.1:8088;
+    proxy_pass http://xhan_helper_backend;  # upstream 块定义在 nginx-helper.conf 顶层（见 docs/bugs/035）
     proxy_set_header Host $host;
 }
 # 单图上限 32 MiB（storage.max_image_bytes），留余量；默认 1M 会让大图上传 413

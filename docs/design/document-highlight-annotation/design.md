@@ -438,6 +438,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 - 位置：正文右侧的第三列（宽 300），和目录栏同级；**开面板时自动收起目录栏**（用户还能手动展开）。选 A 的理由：和目录栏交互一致、不遮挡正文；代价是 840 的侧栏里正文只剩 ~150px，实际使用时要把侧栏拉宽（或收起目录栏）。
 - 每条批注 = 一张卡片：引文（点引文 → `scrollToAnnotation(id)` + 闪烁，面板不关）+ `note`（左侧 `appAccent` 竖条）+ 可折叠线程（AI 回复按 markdown 渲染 / 追问）+ 相对时间（今天 `HH:mm`、更早 `yyyy/MM/dd HH:mm`）。
 - 失活卡片（`orphaned`）：引文灰 + 删除线 + 「已失活」徽标；同处一行的元信息行（徽标 + 时间）右侧接「删除」（**常显** —— 真机鼠标不在卡上时等于不存在）；不给「让 AI 回复」入口。
+- **纯划线卡片（`note` 空、无线程）：也不给「让 AI 回复」入口**，线程区整段不画（只剩引文 + 时间）。要讨论一条纯划线，先右键「添加批注」写字。已有线程的纯划线仍显示 `回复 N` 折叠行可回看/追问。见文末「2026-10-12 · 纯划线不给『让 AI 回复』入口」。
 - （**2026-10-06 变更**：手动「重新定位」已取消 —— 失活条目只留「删除」，正文里不画失活划线。原重选模式链路见文末「后续变更」。）
 - 数据全部来自 `DocumentReaderController.annotations`，面板自己不拉取、不缓存；**正文被改写后**（`document.content` 变）重拉一次，失活状态由服务端重算
 
@@ -1053,3 +1054,13 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 - **影响文件**：`DocumentListView.swift`（`DocSidebarMode`、`tocSidebar` 拆分、`tocOutline`/`documentNavList`）、`DocumentFullView` 加 `@ObservedObject viewModel`。
 - **后续**：同日分两轮改版（分段控件 → 单行菜单；纯标题行 → 两行带时间·标签），以 `docs/design/document-sidebar-modes/design.md` 的 SM-3/SM-7 与文末后续变更为准。
 - **详见**：`docs/design/document-sidebar-modes/design.md`（本文档 §298/§313 的 `tocSidebar (220)` 仍在，只是内部多了模式）。
+
+### 2026-10-12 · 纯划线不给「让 AI 回复」入口（用户拍板）
+
+- **现象**：只划线（没写批注 `note`）的卡片右下角也显示「让 AI 回复」，看着像「问 AI」（该功能已于 AR-12 整体下线）。根因：`AnnotationThreadCard` 的空线程判断只看「非失活 + 回复数 0 + 未展开 + 不在生成」，**不看 `note`**，故所有纯划线卡片都会显示该入口。
+- **决定**：**「让 AI 回复」只给写了批注（`note` 非空）的卡片**。纯划线且无线程 → 线程区整段不画（卡片只剩引文 + 时间）。**已有线程的纯划线仍显示 `回复 N` 折叠行**（可回看/继续追问），不制造能力回退。
+- **代价**（用户已确认接受）：想讨论一条纯划线，得先在正文右键「添加批注」写个字。
+- **影响文件**：`client/xHelper/xHelper/Shared/Views/AnnotationDrawer.swift`（`AnnotationThreadCard.threadSection` 两条分支判断加 `!annotation.note.isEmpty`）。
+- **不变**：服务端 / API / 模型 / 阅读器 JS / `DocumentReaderView` 状态机 **零改动**（客户端没有第二个「让 AI 回复」入口）。
+- **自查**：`swiftc -typecheck -D DEBUG`（macOS 26.3 / iOS 26.0）0 error；`#Preview`「桌面 · 讨论（折叠）」里 `threaded`（note 空、0 回复）那张卡片不再出按钮。
+- **同步**：`docs/design/document-annotation-reply/design.md`（§7.2 + 后续变更）、`docs/design/document-annotation-single-view/design.md`（§3.3 + 后续变更）已就地更新。

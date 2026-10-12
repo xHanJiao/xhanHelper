@@ -328,7 +328,8 @@ struct AnnotationThreadCard: View {
             if replyCount > 0 || expanded || busy {
                 collapseRow
             }
-        } else if replyCount == 0 && !expanded && !busy {
+        } else if !annotation.note.isEmpty && replyCount == 0 && !expanded && !busy {
+            // 「让 AI 回复」只给写了批注的卡片；纯划线（note 空）不提供入口
             HStack {
                 Spacer()
                 Button { onReply(nil) } label: {
@@ -342,7 +343,8 @@ struct AnnotationThreadCard: View {
                 }
                 .buttonStyle(.plain)
             }
-        } else {
+        } else if !annotation.note.isEmpty || replyCount > 0 || expanded || busy {
+            // 纯划线且无线程 → 整段线程区不画（只留引文 + 时间）；已有线程仍给折叠行回看
             collapseRow
         }
 

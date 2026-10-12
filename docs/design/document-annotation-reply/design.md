@@ -384,13 +384,13 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 
 ### 7.2 线程卡片交互（`AnnotationThreadCard`）
 
-- **折叠态**：`回复 N · <最后一句>` + chevron；`N == 0` 时显示「让 AI 回复」按钮（`sparkles`）。
+- **折叠态**：`回复 N · <最后一句>` + chevron；`N == 0` **且 `note` 非空**时显示「让 AI 回复」按钮（`sparkles`）。**纯划线（`note` 空、无线程）不显示这个入口，线程区整段不画**（见文末「2026-10-12 · 纯划线不给『让 AI 回复』入口」）。
 - **展开态**：逐条 user / assistant 行（左竖条着色）+ 底部输入框：
   - 空提交 → 「让 AI 回复」（`POST` 无 `content`，`source=button`）；
   - 有文本 → 追问（`POST` 带 `content`，先落 `role=user` 再生成，`source=followup`）。
 - **数据来源**：折叠摘要用列表接口带的 `reply_count` / `last_reply`；展开时按需 `GET /api/annotations/:id/replies`（控制器缓存 `repliesByAnnotation`）。
 - **状态**：`expandedAnnotationIDs` / `loadingReplyIDs` / `busyReplyIDs`（控制器），卡片据 `busy` 显示 spinner 并禁用输入。spinner 只出现在追问输入行（展开态）；生成中 `busy` 恒蕴含 `expanded`（`reply()` 在 await 前就 insert 了展开态），故折叠行不再放 spinner，避免两个菊花。首条回复生成中（`busy && replyCount == 0`）「回复 N」行文案显示「正在生成…」而非「回复 0」。
-- 失活批注：灰态 + `已失活` 徽标；元信息行（徽标 + 时间）右侧接「删除」（无「让 AI 回复」入口）；划线圈引点击 → `scrollToAnnotation`。
+- 失活批注：灰态 + `已失活` 徽标；元信息行（徽标 + 时间）右侧接「删除」（无「让 AI 回复」入口）；划线圈引点击 → `scrollToAnnotation`。纯划线同理不给「让 AI 回复」入口（`note` 空即无此入口）。
 
 ### 7.3 收放规则（AR-14 / c2：手动优先 + 兜底）
 
@@ -634,3 +634,11 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 - **不改**：本文件前述回复/追问逻辑、服务端。
 - **同步**：本节 §7.1 / §7.2 / §7.3 与 AR-14、附录 E 已按单视图更新。
 - **详见**：`docs/design/document-annotation-single-view/design.md`。（同日稍后手动「重新定位」也被取消，失活条目只留「删除」，见 highlight 文档文末后续变更。）
+
+### 2026-10-12 · 纯划线不给「让 AI 回复」入口（用户拍板）
+
+- **现象**：只划线（没写 `note`）的卡片也显示「让 AI 回复」（看着像已下线的「问 AI」）。根因：`AnnotationThreadCard.threadSection` 的空线程判断只看「非失活 + 回复数 0 + 未展开 + 不在生成」，**不看 `note`**。
+- **决定**：**「让 AI 回复」只给 `note` 非空的卡片**；纯划线（`note` 空、无线程）线程区整段不画（只剩引文 + 时间）。**已有线程的纯划线仍显示 `回复 N` 折叠行**（可回看/追问，无能力回退）。代价（用户已接受）：要讨论纯划线得先右键「添加批注」。
+- **影响文件**：`client/xHelper/xHelper/Shared/Views/AnnotationDrawer.swift`。服务端 / API / 模型 / 阅读器 JS 零改动。
+- **自查**：`swiftc -typecheck -D DEBUG`（macOS / iOS）0 error；`#Preview`「桌面 · 讨论（折叠）」的 `threaded`（note 空、0 回复）卡片不再出按钮。
+- **同步**：`document-highlight-annotation`（§8.6 + 后续变更）、`document-annotation-single-view`（§3.3 + 后续变更）已就地更新。

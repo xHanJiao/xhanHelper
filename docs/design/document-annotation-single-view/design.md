@@ -63,6 +63,8 @@
 
 与现状**完全一致**（线程、追问、右键删除、悬停连线、点击跳正文——跳转热区为**整张卡片**，见「后续变更」）。
 
+**2026-10-12 追加**：非失活卡片里，**「让 AI 回复」入口只给 `note` 非空的卡片**；纯划线（`note` 空、无线程）线程区整段不画（只剩引文 + 时间）。已有线程的纯划线仍显示 `回复 N` 折叠行。见文末「2026-10-12 · 纯划线不给『让 AI 回复』入口」。
+
 ---
 
 ## 四、实现面
@@ -127,3 +129,9 @@
 - **实现**：`AnnotationDrawer.swift` — `AnnotationPanel` 加 `onCollapseAll` 注入回调；头部加图标按钮 `arrow.down.right.and.arrow.up.left`（`help="收起全部回复"`），**仅当 `expandedIDs` 非空时显示**，点击调用回调。`DocumentReaderView.swift` 加 `collapseAllThreads()`（`expandedAnnotationIDs.subtract(busyReplyIDs)` —— **生成中的线程不收**，与卡片折叠行的 `.disabled(busy)` 守卫一致）；`DocumentListView.swift` 装配 `onCollapseAll`。
 - **不改**：单条 `onToggle` 折叠、追问输入框本地态；服务端 / JS / 数据模型不动。
 - **验证**：`swiftc -typecheck`（macOS + iOS）0 error；真机点一下全部回复收起、按钮随之为空而隐去。
+
+### 2026-10-12 · 纯划线不给「让 AI 回复」入口（用户拍板）
+
+- **决定**：`AnnotationThreadCard` 的「让 AI 回复」入口加 `note` 非空守卫 —— 纯划线（`note` 空、无线程）线程区整段不画；已有线程的纯划线仍显示 `回复 N` 折叠行。详见 `docs/design/document-highlight-annotation/design.md` 文末同名条目。
+- **影响文件**：`client/xHelper/xHelper/Shared/Views/AnnotationDrawer.swift`。服务端 / JS 零改动。
+- **验证**：`swiftc -typecheck -D DEBUG`（macOS 26.3 / iOS 26.0）0 error。

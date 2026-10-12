@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct CardView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let subtitle: String?
     let headerBadge: TagBadge?
@@ -43,6 +44,28 @@ struct CardView: View {
         self.titleColorOverride = config.titleColorOverride
         self.actions = config.actions
         self.onTap = config.onTap
+    }
+
+    /// 浅色下卡片表面：**顶亮底沉的白霜微渐变**（单色平铺会盖死底图变化、显呆板），只 macOS 生效；
+    /// 深色 / iOS 维持原样式。绿/薄荷色相留给卡片内容（标签、动作）。
+    private var cardFill: AnyShapeStyle {
+        #if os(macOS)
+        if colorScheme == .dark { return AnyShapeStyle(style.backgroundColor) }
+        return AnyShapeStyle(LinearGradient(
+            colors: [Color.white.opacity(0.50), Color.white.opacity(0.26)],
+            startPoint: .top, endPoint: .bottom))
+        #else
+        return AnyShapeStyle(style.backgroundColor)
+        #endif
+    }
+
+    private var cardStroke: Color {
+        #if os(macOS)
+        if colorScheme == .dark { return style.accentColor.opacity(0.15) }
+        return Color("assistantText").opacity(0.08)
+        #else
+        return style.accentColor.opacity(0.15)
+        #endif
     }
 
     var body: some View {
@@ -125,10 +148,10 @@ struct CardView: View {
         // 撑满网格行高：LazyVGrid 只给 minHeight 的卡片不会接受更高的行高建议 → 同行卡片参差；
         // maxHeight:.infinity 接受行高 + top 对齐让内容仍顶对齐（非网格场景无多余高度，退化为按内容）。
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(style.backgroundColor, in: RoundedRectangle(cornerRadius: style.cornerRadius))
+        .background(cardFill, in: RoundedRectangle(cornerRadius: style.cornerRadius))
         .overlay(
             RoundedRectangle(cornerRadius: style.cornerRadius)
-                .stroke(style.accentColor.opacity(0.15), lineWidth: 1)
+                .stroke(cardStroke, lineWidth: 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: style.cornerRadius))
         .onTapGesture { onTap?() }

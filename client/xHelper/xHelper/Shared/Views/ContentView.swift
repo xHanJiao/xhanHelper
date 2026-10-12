@@ -443,15 +443,9 @@ struct ContentView: View {
                         .animation(.easeInOut(duration: 0.2), value: rightSidebar.isOpen)
                         .onChange(of: geo.size.width, initial: true) { _, new in
                             windowWidth = new
-                            // ponytail: 排查「点内链卡死」的临时埋点（方案 A），定位后删
-                            LogBuffer.shared.diag("[doclink] geo.width 变化 → \(new)")
                             clampRightSidebarWidth()
-                            // ponytail: 临时埋点（方案 A），定位后删
-                            LogBuffer.shared.diag("[doclink] geo.width 处理完成")
                         }
                         .onChange(of: rightSidebar.isOpen) { _, isOpen in
-                            // ponytail: 排查「点内链卡死」的临时埋点（方案 A），定位后删
-                            LogBuffer.shared.diag("[doclink] rightSidebar.isOpen 变化 → \(isOpen)")
                             if !isOpen {
                                 autoExitPip(reason: "sidebarClosed")
                             }
@@ -464,8 +458,6 @@ struct ContentView: View {
                             }
                             // 浏览器按钮组随侧栏可见性注册/注销（修复：侧栏收起时左槽组残留）
                             BrowserToolProvider.shared.refreshBrowserGroup()
-                            // ponytail: 临时埋点（方案 A），定位后删
-                            LogBuffer.shared.diag("[doclink] rightSidebar.isOpen 处理完成 → \(isOpen)")
                         }
                         .onChange(of: rightSidebar.isPipChat) { _, isPip in
                             if isPip {
@@ -495,13 +487,9 @@ struct ContentView: View {
                 // 非本 scheme 的 URL 原样交还系统（外部链接行为不变）。
                 .environment(\.openURL, OpenURLAction { url in
                     guard url.scheme == "xhanhelper" else { return .systemAction(url) }
-                    // ponytail: 排查「点内链卡死」的临时埋点（方案 A），定位后删
-                    LogBuffer.shared.diag("[doclink] openURL 收到 url=\(url.absoluteString)")
                     if let id = DocumentSelectionCoordinator.documentID(from: url) {
-                        LogBuffer.shared.diag("[doclink] 解析出 id=\(id)，转 openDocument")
                         DocumentSelectionCoordinator.shared.openDocument(id: id)
                     }
-                    LogBuffer.shared.diag("[doclink] openURL 返回 handled")
                     return .handled // 本 scheme 的未知路径：吞掉，不交给系统
                 })
                 .onAppear {

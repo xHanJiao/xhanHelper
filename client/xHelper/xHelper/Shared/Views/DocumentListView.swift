@@ -399,8 +399,14 @@ private func matchRanges(in text: AttributedString, query: String) -> [Range<Att
     return ranges
 }
 
+/// 标题正则提到文件级：`extractHeadings` 由计算属性 `tocItems` 在每次渲染时调用
+/// （`tocOutline` 一次渲染调两次），别每次重编译。
+private let headingPattern = try! NSRegularExpression(
+    pattern: #"^(#{1,6})\s+(.+)$"#, options: .anchorsMatchLines
+)
+
 private func extractHeadings(_ markdown: String) -> [TOCItem] {
-    let pattern = try! NSRegularExpression(pattern: #"^(#{1,6})\s+(.+)$"#, options: .anchorsMatchLines)
+    let pattern = headingPattern
     let range = NSRange(markdown.startIndex..., in: markdown)
     return pattern.matches(in: markdown, range: range).compactMap { match in
         guard let levelRange = Range(match.range(at: 1), in: markdown),

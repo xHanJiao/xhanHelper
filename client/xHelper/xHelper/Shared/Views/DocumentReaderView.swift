@@ -510,6 +510,16 @@ private struct ReaderWebView: NSViewRepresentable {
 /// 并且不铺任何底色（外层是卡片 material）。
 private enum ReaderHTML {
 
+    /// mermaid 渲染结果缓存：key = 主题 + 源码。
+    /// 换篇会重建 WebView 并重跑 `build`（外层 `.id(doc.id)`），没缓存就每次从零烤
+    /// （解析 + 布局 + 位图 + PNG 编码 + base64，全在主线程同步）—— 图多时直接卡出彩球。
+    /// NSCache 自带线程安全与淘汰（countLimit），不必自己管。
+    private static let mermaidCache: NSCache<NSString, NSString> = {
+        let cache = NSCache<NSString, NSString>()
+        cache.countLimit = 64
+        return cache
+    }()
+
     static func build(document: Document, fontSize: CGFloat) -> String {
         guard let markedJS = MarkdownWebUtils.markedJS() else {
             return errorHTML("缺少内置渲染脚本 marked.min.js")
@@ -566,6 +576,9 @@ private enum ReaderHTML {
     /// 原生渲染 mermaid → PNG data URI。翻转修复同 `DocumentPDFExporter`（Mermaid 的
     /// 输出是 y 向下的，不翻会上传后倒过来）。
     private static func mermaidDataURI(_ code: String, dark: Bool) -> String? {
+        let cacheKey = "\(dark ? "dark" : "light")\u{1}\(code)" as NSString
+        if let cached = mermaidCache.object(forKey: cacheKey) { return cached as String }
+
         let renderer = MermaidImageRenderer()
         renderer.theme = mermaidTheme(for: dark ? .dark : .light)
         renderer.scale = 2
@@ -585,7 +598,9 @@ private enum ReaderHTML {
         guard let tiff = flipped.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff),
               let out = rep.representation(using: .png, properties: [:]) else { return nil }
-        return "data:image/png;base64," + out.base64EncodedString()
+        let uri = "data:image/png;base64," + out.base64EncodedString()
+        mermaidCache.setObject(uri as NSString, forKey: cacheKey)
+        return uri
     }
 
     private static func errorHTML(_ message: String) -> String {

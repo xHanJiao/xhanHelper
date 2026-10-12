@@ -158,14 +158,26 @@ class ConversationListViewModel: ObservableObject {
     }
 }
 
+/// 三个 formatter 提到文件级复用。侧栏「文档列表」每行每次渲染都要算一次时间，
+/// 原来每次调用现建 `ISO8601DateFormatter` + `RelativeDateTimeFormatter`（后者构造很贵），
+/// 行数一多就是可感的主线程开销。
+private let isoFractionalFormatter: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+}()
+private let isoPlainFormatter = ISO8601DateFormatter()
+private let zhRelativeFormatter: RelativeDateTimeFormatter = {
+    let f = RelativeDateTimeFormatter()
+    f.locale = Locale(identifier: "zh_CN")
+    return f
+}()
+
 /// 会话时间戳 → 相对时间（中文）。归档/文档列表与顶栏会话下拉共用。
 func formatConversationDate(_ iso: String) -> String {
-    let fmt = ISO8601DateFormatter()
-    fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    guard let date = fmt.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else {
+    guard let date = isoFractionalFormatter.date(from: iso)
+            ?? isoPlainFormatter.date(from: iso) else {
         return iso
     }
-    let relative = RelativeDateTimeFormatter()
-    relative.locale = Locale(identifier: "zh_CN")
-    return relative.localizedString(for: date, relativeTo: Date())
+    return zhRelativeFormatter.localizedString(for: date, relativeTo: Date())
 }

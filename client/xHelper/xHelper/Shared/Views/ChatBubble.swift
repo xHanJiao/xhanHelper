@@ -184,24 +184,39 @@ struct ChatBubble: View {
                 if !isUser { Spacer() }
             }
 
-            if let time = createdAt, showTime {
-                Text(formatCreatedAt(time))
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 14)
-                    .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
-            }
+            // macOS：始终占位、只切透明度，保住行高 → 消息间距不随显示/隐藏变化。
+            // iOS：保持原样（按需出现，出现时撑开行高）。
+            #if os(macOS)
+            if let time = createdAt { timeRow(time) }
+            #else
+            if let time = createdAt, showTime { timeRow(time) }
+            #endif
         }
         .padding(.horizontal, Layout.chatHorizontalPadding)
-        // 点气泡显示时间只在 iOS 用；macOS 传的是 showTime: true、无回调，手势是空体。
-        // 但它仍会抢在 MarkdownUI 链接之前吃掉点击 —— macOS 上挂不得，否则正文内链点了没反应。
+        // iOS：点气泡显示时间（顺带收键盘）。macOS：用 simultaneousGesture，普通 onTapGesture
+        // 会抢在 MarkdownUI 内链之前吃掉点击；simultaneous 让内链照常打开、同时切时间。
         #if os(iOS)
         .onTapGesture {
             guard createdAt != nil else { return }
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             onTapToShowTime?()
         }
+        #else
+        .simultaneousGesture(TapGesture().onEnded {
+            guard createdAt != nil else { return }
+            onTapToShowTime?()
+        })
         #endif
+    }
+
+    @ViewBuilder
+    private func timeRow(_ time: String) -> some View {
+        Text(formatCreatedAt(time))
+            .font(.caption2)
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+            .opacity(showTime ? 1 : 0)
     }
 
     private func formatCreatedAt(_ iso: String) -> String {

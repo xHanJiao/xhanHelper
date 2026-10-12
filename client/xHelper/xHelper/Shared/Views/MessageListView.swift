@@ -382,31 +382,17 @@ struct MessageListView: View {
                     .padding(.horizontal, Layout.chatHorizontalPadding + 14)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 }
-                #if os(macOS)
-                if hasVisibleContent(msg) {
-                    ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
-                               showTime: true)
-                        .allowsHitTesting(!isShareSelectMode)
-                }
-                #else
                 if hasVisibleContent(msg) {
                     ChatBubble(text: msg.content, isUser: true, messageId: msg.id, createdAt: msg.createdAt,
                                showTime: activeTimeBubbleId == msg.id,
                                onTapToShowTime: { toggleTimeBubble(msg.id) })
                         .allowsHitTesting(!isShareSelectMode)
                 }
-                #endif
             } else {
-                #if os(macOS)
-                ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt,
-                           showTime: true)
-                    .allowsHitTesting(!isShareSelectMode)
-                #else
                 ChatBubble(text: msg.content, isUser: false, messageId: msg.id, createdAt: msg.createdAt,
                            showTime: activeTimeBubbleId == msg.id,
                            onTapToShowTime: { toggleTimeBubble(msg.id) })
                     .allowsHitTesting(!isShareSelectMode)
-                #endif
             }
         }
     }

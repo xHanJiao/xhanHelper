@@ -117,3 +117,18 @@ nginx 修好后，Mac app 里旧文档配图仍裂。根因是 **WKWebView 的�
 后来发现「每请求直连后端」会持续产 loopback TIME_WAIT（云监控 NON_ESTABLISHED 告警），
 改成了 `upstream xhan_helper_backend { keepalive 32; }` + `proxy_set_header Connection "";`。
 本文件上文的 `/images/` 片段只作历史记录，**以 `server/nginx-helper.conf` 为准**，详见 `docs/bugs/035`。
+
+### 2026-10-12 · 恢复 macOS 文档图持久缓存 + 灯箱补缓存
+
+上面的「改用非持久 store」是给 nginx 漏配打的补丁，代价是文档配图每次进文档都重下。
+根因（本文件已修：`server/nginx-helper.conf` 的 `location /images/`）消失后恢复缓存：
+
+- `client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift` 的 `ReaderWebView`：
+  删掉 `config.websiteDataStore = .nonPersistent()`，回到默认持久 store —— WebKit 磁盘缓存
+  命中 `immutable` + 一年 max-age 的文档图，换篇/重进/重启都不再重下。污染窗口当时也只有
+  ~11h 启发式（SPA 响应无 `Cache-Control`），不是一年，风险可接受。
+- 同文件的 `DocumentImageLightbox`（此前**没有**任何缓存）：加 `NSCache<NSString, NSImage>`
+  按 src 缓存解码结果（重开瞬时），并用自有 `URLSession` + `URLCache(64MB 内存/512MB 磁盘,
+  diskPath: "doc-images")` 取字节 —— WebKit 缓存与 URLSession 不共享，默认
+  `URLCache.shared`（512KB/20MB）也放不下大图。
+- `DocumentPDFExporter` 仍保持非持久 store（导出是一次性动作，无缓存收益）。

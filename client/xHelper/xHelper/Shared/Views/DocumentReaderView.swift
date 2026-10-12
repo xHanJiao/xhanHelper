@@ -423,9 +423,9 @@ private struct ReaderWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        // 文档 HTML/图片每次现渲染、图片 immutable，不需要持久缓存；用非持久 store
-        // 避免文档图 URL 被持久 HTTP 缓存里的错误响应（如 SPA HTML）污染成裂图。
-        config.websiteDataStore = .nonPersistent()
+        // 用默认持久 store 吃 WebKit 磁盘缓存：文档图是 `immutable` + 一年 max-age 的公开
+        // 资源，换篇/重进/重启 app 都该直接命中。曾因 nginx 漏配 `/images/` 返 SPA HTML 被
+        // 缓存成裂图而改成非持久 store（docs/bugs/031），根因已修，故恢复。
         config.userContentController.add(context.coordinator, name: "reader")
 
         let webView = WKWebView(frame: .zero, configuration: config)
@@ -617,6 +617,17 @@ private struct DocumentImageLightbox: View {
     @State private var image: NSImage?
     @State private var failed = false
 
+    /// 解码后的图按 src 缓存：关掉再开、切篇再回都直接命中，不再走网络与解码。
+    private static let cache = NSCache<NSString, NSImage>()
+    /// 取字节专用 session：WebKit 的磁盘缓存跟 URLSession 不共享，灯箱得自带一套；
+    /// 默认 `URLCache.shared` 只有 512KB/20MB，大图基本存不下。图 immutable，落盘安全。
+    private static let session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.urlCache = URLCache(memoryCapacity: 64 << 20, diskCapacity: 512 << 20,
+                                   diskPath: "doc-images")
+        return URLSession(configuration: config)
+    }()
+
     var body: some View {
         Group {
             if let image {
@@ -636,19 +647,26 @@ private struct DocumentImageLightbox: View {
     }
 
     private func load() async {
-        if let data = Self.dataURIData(src), let img = NSImage(data: data) {
-            image = img
+        if let cached = Self.cache.object(forKey: src as NSString) {
+            image = cached
             return
         }
-        guard let url = URL(string: src) else { failed = true; return }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            guard let img = NSImage(data: data) else { failed = true; return }
-            image = img
-        } catch {
-            LogBuffer.shared.error("文档配图加载失败: \(error)")
-            failed = true
+        let data: Data?
+        if let inline = Self.dataURIData(src) {
+            data = inline
+        } else {
+            guard let url = URL(string: src) else { failed = true; return }
+            do {
+                data = try await Self.session.data(from: url).0
+            } catch {
+                LogBuffer.shared.error("文档配图加载失败: \(error)")
+                failed = true
+                return
+            }
         }
+        guard let data, let img = NSImage(data: data) else { failed = true; return }
+        Self.cache.setObject(img, forKey: src as NSString)
+        image = img
     }
 
     /// `data:image/...;base64,xxxx` → 原始字节；非 data URI 返回 nil。

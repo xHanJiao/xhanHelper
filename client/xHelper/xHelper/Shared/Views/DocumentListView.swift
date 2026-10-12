@@ -890,7 +890,15 @@ private struct DocumentFullView: View {
                 .padding(.vertical, 6)
             }
             .onAppear {
-                if documentInOpenList { proxy.scrollTo(document.id, anchor: .center) }
+                // 换篇必然回顶：外层 `.id(doc.id)` 会把整个详情子树（含侧栏）拆掉重建。
+                // 所以把当前项对齐到列表顶部 —— 上一条留在眼皮上方，滚一下就回来。
+                // （不用 .center：点哪条哪条就往中间跑，手感像列表自己乱动。）
+                // 带动画：首帧本来就画在顶部，不包 withAnimation 的话定位是"闪"过去的。
+                if documentInOpenList {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(document.id, anchor: .top)
+                    }
+                }
             }
         }
     }

@@ -63,7 +63,7 @@
 
 | 状态 | 表现 |
 |---|---|
-| 当前文档在 `documents` 里 | 该行 accent 底色 + 加粗 + 勾；进入时 `scrollTo(anchor: .center)` 把当前文档滚进视野（⚠️ **待真机确认**：`LazyVStack` 对未物化行 `scrollTo` 可能静默不生效，见 §五与后续变更） |
+| 当前文档在 `documents` 里 | 该行 accent 底色 + 加粗 + 勾；进入时 `withAnimation(.easeInOut(0.2)) { scrollTo(anchor: .top) }` 把当前文档**带动画地**对齐到列表顶部（⚠️ **待真机确认**：`LazyVStack` 对未物化行 `scrollTo` 可能静默不生效，见 §五与后续变更） |
 | 当前文档**不在** `documents` 里 | 顶部钉一行当前文档（同样式）+ Divider，下面才是列表 |
 | `documents` 为空 | 钉行 + 空态「当前筛选下没有文档」 |
 
@@ -87,7 +87,8 @@
 
 - **切到无标题文档不再消失侧栏**，代价是这类文档的正文宽少 220（可手动收起，`xhan_doc_toc_collapsed` 已记忆）。
 - **钉行只钉一条**：当前文档不在列表里时不会把它插回列表的正确位置（列表按服务端 `updated_at DESC` 排，位置还得靠拉页）。导航够用。
-- ⚠️ **滚动定位未真机验证**：`documentNavList` 的 `onAppear` 里 `proxy.scrollTo(document.id, anchor: .center)` 依赖该行已被 `LazyVStack` 物化。**可达的失败路径**：侧栏滚到底触发 `loadMore` 到若干页（`documents` 有上百条）→ 点靠底部的某篇 → 外层 `.id(doc.id)` 重建 → 列表从顶部重新渲染、当前行未物化 → `scrollTo` 静默不滚（用户以为"没定位到我"）。注意这与 SM-5 是两回事：SM-5 那种「不在 `documents` 里」走钉行、天然可见。**退化方案（确认不生效后择一）**：① 取消 `scrollTo`，当前文档一律顶部钉行（复用 SM-5 组件，净删代码，代价是当前行在列表里出现两次）；② 先滚到已加载末行再 `loadMore`（**不推荐**：循环 + 时序都脆）。
+- **换篇必然把侧栏滚回顶部**：外层 `.id(doc.id)`（`DocumentListView.body`）重建整个详情子树，含侧栏 ScrollView —— 这是 `.id` 的既有语义（那句注释原话就是「滚动位置 / 查找栏 / 目录展开态归零」），不是本次引入。所以列表用 `scrollTo(anchor: .top)` 把当前项对齐到顶部（**不用 `.center`**：点哪条哪条往中间跑，手感像列表自己乱动）。真正的「点了不跳、列表也不回顶」需要**把左侧栏移出 `.id(doc.id)` 子树**（让侧栏滚动位置跨篇保留），代价是重新切分 `DocumentFullView` 里那堆 per-doc `@State`（reader / 查找栏 / 匹配计数 / 连线…）—— **独立重构，本次明确不做**，只记账。
+- ⚠️ **滚动定位未真机验证**：`documentNavList` 的 `onAppear` 里 `proxy.scrollTo(document.id, anchor: .top)` 依赖该行已被 `LazyVStack` 物化。**可达的失败路径**：侧栏滚到底触发 `loadMore` 到若干页（`documents` 有上百条）→ 点靠底部的某篇 → 外层 `.id(doc.id)` 重建 → 列表从顶部重新渲染、当前行未物化 → `scrollTo` 静默不滚（用户以为"没定位到我"）。注意这与 SM-5 是两回事：SM-5 那种「不在 `documents` 里」走钉行、天然可见。**退化方案（确认不生效后择一）**：① 取消 `scrollTo`，当前文档一律顶部钉行（复用 SM-5 组件，净删代码，代价是当前行在列表里出现两次）；② 先滚到已加载末行再 `loadMore`（**不推荐**：循环 + 时序都脆）。`anchor` 改 `.top` 不改变这条判断。
 - **列行次信息与 `parseTags` 同源**：`documentNavSubtitle` 复用 `DocumentFullView.parseTags(_:)` 取标签文本，不再手写第三份切分。注意两者口径有细微差别：`parseTags` 不丢「纯空白字段」（会产出 `text == ""` 的 TagBadge），手写版会丢 —— 服务端不存这种数据，实际无差。
 - **列表页与侧栏列表是同一份数组**，所以详情页里对文档的增删（目前详情页没有删除入口）不影响一致性。
 - 单行菜单在 220 宽（左右各 12 padding、右侧 24 收起按钮）下排得下（`.fixedSize()` 保证不被拉满，当前 ≈165pt；`listTotal` 到**万篇**级才会开始压）；窗口触发 `Layout.docTocHardFloor` 时会直接收成窄条，不会挤变形。
@@ -131,3 +132,18 @@
 - **P3-5**：`hoveredDocID` 移入 `#if os(macOS)`（`sidebarMode` 与同文件的 `annotOpen` / `tocCollapsed` 一样留在外面 —— 那 3 个 AppStorage 统一挪属独立小重构，不在本次）。
 - **P3-6**：`.fixedSize()` 处补已知边界注释（万篇级才会压）。
 - **非本次**：`DocumentSelectionCoordinator.openDocument(id:)` 里 8 处自标「定位后删」的 `[doclink]` 临时埋点已摘除。
+
+### 2026-10-12 · 换篇后列表滚动：`.center` → `.top`（用户拍板）
+
+- **背景**：用户在真机发现「点一篇，那一条就被拎到列表中部」，怀疑是 bug。
+- **定位**：不是 bug，是两层叠加 —— ① 外层 `.id(doc.id)` 换篇必然把侧栏滚回顶部（`.id` 的既有语义）；② `scrollTo(anchor: .center)` 是我为「回顶后当前项可能不在视野」加的补偿。
+- **决定**：`anchor` 改 **`.top`** —— 当前项贴列表顶部，上一条就留在眼皮上方，滚一下即回。理由：居中会让「点哪条哪条往中间跑」，像列表自己在乱动。
+- **不变**：§五 的「`.id` 回顶是既有语义」「未物化行 `scrollTo` 待真机确认」两条判断都不受影响；「把左侧栏移出 `.id` 子树」仍只记账不做。
+- **影响文件**：`DocumentListView.swift`（`documentNavList` 的 `onAppear`，一行 + 注释）。
+
+### 2026-10-12 · 侧栏定位加动画（用户拍板）
+
+- **背景**：改成 `.top` 之后，定位仍是「闪」过去的 —— 首帧画在顶部，等 `onAppear` 触发才瞬移到位，用户原话「闹鬼一样」。
+- **决定**：包 `withAnimation(.easeInOut(duration: 0.2))`（与房子其它侧栏/面板动效同值）。
+- **不变**：`anchor: .top`、`documentInOpenList` 守卫、未物化行那条待确认项，均不受影响。
+- **影响文件**：`DocumentListView.swift`（同一处 `onAppear`）。

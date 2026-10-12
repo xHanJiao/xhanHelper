@@ -1037,3 +1037,18 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 - **保留**：`mark.hl:hover` 线色变实。
 - **测试**：`check-reader-html.sh` 171→159；`snapshot-reader.sh`/`.swift` 删 `marks-longnote`、`marks-longnote-scroll` 两 job 与探针 `popover` 字段。
 - **详见**：`docs/design/document-annotation-focus/design.md` 的「2026-10-06 · 删除 hover popover」。
+
+### 2026-10-12 · 去掉文档换篇快捷键与目录栏上/下篇按钮（用户拍板）
+
+- **背景**：§298/§313 的 `tocSidebar` 页脚原有「上一篇 / 下一篇」方向行，另有 ⌘←/⌘→ 快捷键载体（`shortcutCarrier`）。
+- **决定**：两条换篇路径**全删**（快捷键、页脚方向行）；「文档阅读」整节从设置页快捷键说明里去掉。切文档只剩「返回文档列表 → 再点开」。
+- **影响文件**：`DocumentListView.swift`（删 `shortcutCarrier` / `TOCNavRow` / 页脚行，连带删 `DocumentFullView` 的 `canGoPrevious`/`canGoNext`/`isLoadingNeighbor`/`onNavigate` 与 `DocumentViewModel` 的 `canGoPrevious`/`canGoNext`/`openNeighbor`/`neighbor`）、`ShortcutGuideView.swift`、`ChatInputFocus.swift`（仅注释）。
+- **不变**：服务端 / API / 模型 **零改动**。
+- **后续**：同日的「侧栏双模式」把换篇能力搬进了侧栏，见下一条。
+
+### 2026-10-12 · 侧栏改双模式：目录 / 列表（用户拍板）
+
+- **决定**：`tocSidebar` 头部加节名菜单「本文目录 / 文档列表 · N 篇」；列表 = 同一份筛选条件下的 `DocumentViewModel.documents`（筛选状态本就存在 VM，无需重新查询）；`@AppStorage("xhan_doc_sidebar_mode")` 持久化。macOS 侧栏改为**常驻**（去掉 `!tocItems.isEmpty`），目录空时给「本文档没有标题」空态。iOS 不动。
+- **影响文件**：`DocumentListView.swift`（`DocSidebarMode`、`tocSidebar` 拆分、`tocOutline`/`documentNavList`）、`DocumentFullView` 加 `@ObservedObject viewModel`。
+- **后续**：同日分两轮改版（分段控件 → 单行菜单；纯标题行 → 两行带时间·标签），以 `docs/design/document-sidebar-modes/design.md` 的 SM-3/SM-7 与文末后续变更为准。
+- **详见**：`docs/design/document-sidebar-modes/design.md`（本文档 §298/§313 的 `tocSidebar (220)` 仍在，只是内部多了模式）。

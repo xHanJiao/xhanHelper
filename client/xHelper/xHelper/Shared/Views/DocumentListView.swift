@@ -15,6 +15,7 @@ struct DocumentListView: View {
                 DocumentFullView(
                     document: doc,
                     apiClient: viewModel.apiClient,
+                    viewModel: viewModel,
                     onBack: { viewModel.openDocument = nil }
                 )
                 // 换篇重建：滚动位置 / 查找栏 / 目录展开态归零
@@ -414,16 +415,27 @@ private func extractHeadings(_ markdown: String) -> [TOCItem] {
     }
 }
 
+/// 侧栏模式：目录（文档内导航）/ 列表（同筛选条件下的文档导航）。
+/// 见 `docs/design/document-sidebar-modes/design.md`。
+private enum DocSidebarMode: String {
+    case toc
+    case list
+}
+
 private struct DocumentFullView: View {
     let document: Document
     let apiClient: APIClient
+    /// 侧栏「列表」模式的数据源：同一份筛选条件下的文档列表（见 docs/design/document-sidebar-modes）。
+    @ObservedObject var viewModel: DocumentViewModel
     let onBack: () -> Void
 
     init(document: Document,
          apiClient: APIClient,
+         viewModel: DocumentViewModel,
          onBack: @escaping () -> Void) {
         self.document = document
         self.apiClient = apiClient
+        self.viewModel = viewModel
         self.onBack = onBack
         #if os(macOS)
         // 阅读器把手跟着文档走（外层 `.id(doc.id)` 保证换篇就重建）
@@ -480,18 +492,20 @@ private struct DocumentFullView: View {
             Divider()
 
             HStack(alignment: .top, spacing: 0) {
-                if !tocItems.isEmpty {
-                    #if os(macOS)
-                    if tocExpanded {
-                        tocSidebar
-                    } else {
-                        tocCollapsedStrip
-                    }
-                    #else
+                // macOS：侧栏常驻（没标题也有「列表」可切，入口不能消失）；iOS 仍只在有标题时显示
+                #if os(macOS)
+                if tocExpanded {
                     tocSidebar
-                    #endif
+                } else {
+                    tocCollapsedStrip
+                }
+                Divider()
+                #else
+                if !tocItems.isEmpty {
+                    tocSidebar
                     Divider()
                 }
+                #endif
 
                 #if os(macOS)
                 // 正文整块交给 WebView（标题 + 标签 + 正文都在 HTML 里）。
@@ -609,7 +623,13 @@ private struct DocumentFullView: View {
     /// 收放是简单兜底（c2）：手动优先，只在窗口窄到触发硬地板时强制收起。
     @AppStorage("xhan_doc_annot_open") private var annotOpen = true
     @AppStorage("xhan_doc_toc_collapsed") private var tocCollapsed = true
+    /// 侧栏模式（目录 / 列表）。持久化：换篇会走外层 `.id(doc.id)` 重建，@State 留不住。
+    @AppStorage("xhan_doc_sidebar_mode") private var sidebarMode: DocSidebarMode = .toc
     @State private var showFindBar = false
+    /// 侧栏「文档列表」行鼠标悬停项（仅 macOS 用；hover 底色与顶栏会话下拉同源）
+    #if os(macOS)
+    @State private var hoveredDocID: String?
+    #endif
     @State private var findQuery = ""
     @State private var currentMatch = 0
     /// 与 docBlocks 等长，逐块命中数（mermaid 块恒为 0）
@@ -718,14 +738,52 @@ private struct DocumentFullView: View {
     }
     #endif
 
-    /// 展开态目录栏：标题行（右侧收起按钮）+ 标题大纲 + 页脚方向行。
+    /// 节名：本文目录 / 文档列表（列表带总数，取 listTotal 以免翻页时数字抖动）。
+    private func modeTitle(_ mode: DocSidebarMode) -> String {
+        guard mode == .list else { return "本文目录" }
+        guard let n = viewModel.listTotal else { return "文档列表" }
+        return "文档列表 · \(n) 篇"
+    }
+
+    private var sidebarModeLabel: String { modeTitle(sidebarMode) }
+
+    /// 展开态侧栏：头部（节名菜单 + 收起按钮）+ 体（本文目录 / 文档列表）。
     private var tocSidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 4) {
-                Text("目录")
+                #if os(macOS)
+                // 单行菜单：不占宽度、没有按钮底框，当前节名直接写在脸上。
+                // 用 Toggle 而不是 Picker —— 空 label 的 Picker 在 Menu 里会自己长出一个
+                // 空菜单项（灰色空框），见 docs/design/document-sidebar-modes 的后续变更。
+                Menu {
+                    Toggle("本文目录", isOn: Binding(
+                        get: { sidebarMode == .toc },
+                        set: { if $0 { sidebarMode = .toc } }
+                    ))
+                    Toggle(modeTitle(.list), isOn: Binding(
+                        get: { sidebarMode == .list },
+                        set: { if $0 { sidebarMode = .list } }
+                    ))
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(sidebarModeLabel)
+                            .font(.caption.weight(.semibold))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .foregroundColor(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                // label 不压缩、外层固定 220：label + 4pt 间隔 + 24pt 收起按钮 + 24pt 内边距
+                // 必须塞进 220。当前量级 ≈165pt；`listTotal` 到万篇（5 位数）才会开始压。
+                .fixedSize()
+                #else
+                Text("本文目录")
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.secondary)
-                Spacer()
+                #endif
+                Spacer(minLength: 4)
                 #if os(macOS)
                 Button {
                     withAnimation { tocCollapsed = true }
@@ -737,15 +795,38 @@ private struct DocumentFullView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("收起目录")
+                .help("收起侧栏")
                 #endif
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 12)
             .padding(.vertical, 8)
 
             Divider().opacity(0.3)
 
-            ScrollView {
+            #if os(macOS)
+            if sidebarMode == .list {
+                documentNavList
+            } else {
+                tocOutline
+            }
+            #else
+            tocOutline
+            #endif
+        }
+        .frame(width: 220)
+    }
+
+    /// 目录体：本文档标题大纲；无标题时给空态提示（macOS 侧栏常驻，得有说法）。
+    private var tocOutline: some View {
+        ScrollView {
+            if tocItems.isEmpty {
+                Text("本文档没有标题")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+            } else {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(tocItems.enumerated()), id: \.element.id) { pair in
                         Button {
@@ -774,8 +855,97 @@ private struct DocumentFullView: View {
                 .padding(.vertical, 8)
             }
         }
-        .frame(width: 220)
     }
+
+    #if os(macOS)
+    /// 列表体：同一份筛选条件下的文档列表（`viewModel.documents`），点行换文档。
+    /// 当前文档不在已加载页内时（聊天内链跳进来 / 翻在第 2 页往后）顶部钉一行标出——
+    /// `shortcut:` 只钉不插回原位（列表按 updated_at 排，位置还得靠拉页），导航够用。
+    private var documentNavList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    if !documentInOpenList {
+                        documentNavRow(document, isCurrent: true)
+                        Divider().opacity(0.3).padding(.vertical, 2)
+                    }
+                    ForEach(viewModel.documents, id: \.id) { doc in
+                        documentNavRow(doc, isCurrent: doc.id == document.id)
+                            .id(doc.id)
+                            .onAppear {
+                                if doc.id == viewModel.documents.last?.id {
+                                    Task { await viewModel.loadMore() }
+                                }
+                            }
+                    }
+                    if viewModel.documents.isEmpty {
+                        Text("当前筛选下没有文档")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 6)
+            }
+            .onAppear {
+                if documentInOpenList { proxy.scrollTo(document.id, anchor: .center) }
+            }
+        }
+    }
+
+    /// 当前文档是否在已加载的列表里（决定要不要顶部钉行）。
+    private var documentInOpenList: Bool {
+        viewModel.documents.contains { $0.id == document.id }
+    }
+
+    /// 列表行：标题一行 + 「相对时间 · 标签」次信息行，hover / 当前项给圆角底色。
+    /// 取法与顶栏会话下拉同源（`TopBarView.conversationMenuRow`）。
+    private func documentNavRow(_ doc: Document, isCurrent: Bool) -> some View {
+        let isHovered = hoveredDocID == doc.id
+        return Button { viewModel.openDocument = doc } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(doc.title.isEmpty ? "（无标题）" : doc.title)
+                        .font(.system(size: 12, weight: isCurrent ? .semibold : .regular))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    if isCurrent {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(Color("appAccent"))
+                    }
+                    Spacer(minLength: 0)
+                }
+                Text(documentNavSubtitle(doc))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            isCurrent
+                ? Color("appAccent").opacity(0.10)
+                : (isHovered ? Color.primary.opacity(0.06) : .clear),
+            in: RoundedRectangle(cornerRadius: 6)
+        )
+        .onHover { hoveredDocID = $0 ? doc.id : nil }
+    }
+
+    /// 行次信息：相对时间 + 前 3 个标签（都没有则省略该行内容）。
+    private func documentNavSubtitle(_ doc: Document) -> String {
+        var parts = [formatConversationDate(doc.updatedAt)]
+        let tags = parseTags(doc.tags).prefix(3).map(\.text)
+        if !tags.isEmpty { parts.append(tags.joined(separator: " ")) }
+        return parts.joined(separator: " · ")
+    }
+    #endif
 
     /// 收起态窄条：保留展开入口，垂直居中一个 chevron.right。
     #if os(macOS)
@@ -792,7 +962,7 @@ private struct DocumentFullView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("展开目录")
+            .help("展开侧栏")
             Spacer()
         }
         .frame(width: 32)

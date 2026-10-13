@@ -16,7 +16,7 @@ import (
 type ConceptEmbedService struct {
 	conceptRepo   *service.ConceptEmbeddingRepo
 	embeddingRepo *service.EmbeddingRepo
-	embedder      *llm.Embedder
+	embedder      app.Embedder
 }
 
 func NewConceptEmbedService(infra *app.Infra, conceptRepo *service.ConceptEmbeddingRepo, embeddingRepo *service.EmbeddingRepo) *ConceptEmbedService {
@@ -37,7 +37,11 @@ func (s *ConceptEmbedService) EnsureTopicEmbedded(ctx context.Context, userID, t
 func (s *ConceptEmbedService) EnsureTagsEmbedded(ctx context.Context, userID, tags, parentType, parentID string) {
 }
 
-// GetOrEmbed 获取 concept 的嵌入向量，优先读缓存，缓存未命中则嵌入并写缓存。
+// GetOrEmbed 获取 concept 的嵌入向量：优先读缓存，缓存未命中**或向量行缺失/损坏**时重新嵌入并写回。
+//
+// 「概念行在、向量行不在」曾经是个不自愈死局——那时返回 (nil, nil)，调用方只能跳过，
+// 于是那条 concept 永远参与不了相似度计算（topic 复用 / topic 命名 / 主题发现全受影响）。
+// 孤儿概念行见 docs/bugs/017。现在缺失与损坏一律补嵌，Upsert 幂等覆盖。
 func (s *ConceptEmbedService) GetOrEmbed(ctx context.Context, conceptType, value, userID string) ([]float64, error) {
 	if value == "" {
 		return nil, nil
@@ -52,17 +56,22 @@ func (s *ConceptEmbedService) GetOrEmbed(ctx context.Context, conceptType, value
 			return nil, fmt.Errorf("get embedding: %w", err)
 		}
 		if emb != nil && emb.Embedding != nil {
-			return llm.StringToEmbedding(*emb.Embedding)
+			vec, err := llm.StringToEmbedding(*emb.Embedding)
+			switch {
+			case err != nil:
+				log.Printf("[concept] %s/%s 存量向量解析失败，重新嵌入: %v", conceptType, value, err)
+			case len(vec) > 0:
+				return vec, nil
+			default:
+				log.Printf("[concept] %s/%s 存量向量为空，重新嵌入", conceptType, value)
+			}
+		} else {
+			log.Printf("[concept] %s/%s 有概念行但无向量行，补嵌入", conceptType, value)
 		}
-		return nil, nil
+		return s.embedAndSave(ctx, concept, userID)
 	}
 
-	// 未缓存，嵌入 + 写缓存
-	vec, err := s.embedder.Embed(ctx, value)
-	if err != nil {
-		return nil, fmt.Errorf("embed: %w", err)
-	}
-
+	// 未缓存：建 concept 行 + 嵌入
 	concept = &model.ConceptEmbedding{
 		ID:     idgen.Next(),
 		Type:   conceptType,
@@ -72,7 +81,17 @@ func (s *ConceptEmbedService) GetOrEmbed(ctx context.Context, conceptType, value
 	if err := s.conceptRepo.Create(ctx, concept); err != nil {
 		return nil, fmt.Errorf("create concept: %w", err)
 	}
+	log.Printf("[concept] get-or-embed %s/%s", conceptType, value)
+	return s.embedAndSave(ctx, concept, userID)
+}
 
+// embedAndSave 嵌入 concept.Value 并把向量写回该 concept 行（Upsert 幂等，缺失/损坏都能被覆盖修好）。
+// 向量写不回去**不阻断调用方**：本次调用已经拿到向量，下次丢了再补——记日志说明这是有意降级。
+func (s *ConceptEmbedService) embedAndSave(ctx context.Context, concept *model.ConceptEmbedding, userID string) ([]float64, error) {
+	vec, err := s.embedder.Embed(ctx, concept.Value)
+	if err != nil {
+		return nil, fmt.Errorf("embed: %w", err)
+	}
 	embStr := llm.EmbeddingToString(vec)
 	if err := s.embeddingRepo.Upsert(ctx, &model.Embedding{
 		ID:         concept.ID,
@@ -82,10 +101,8 @@ func (s *ConceptEmbedService) GetOrEmbed(ctx context.Context, conceptType, value
 		Model:      s.embedder.ModelName(),
 		Embedding:  &embStr,
 	}); err != nil {
-		log.Printf("[concept] save embedding error: %v", err)
+		log.Printf("[concept] save embedding %s/%s error: %v", concept.Type, concept.Value, err)
 	}
-
-	log.Printf("[concept] get-or-embed %s/%s", conceptType, value)
 	return vec, nil
 }
 

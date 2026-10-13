@@ -154,6 +154,9 @@ func (e *MemoryExtractor) ExtractCandidates(ctx context.Context, userID string, 
 		return nil, err
 	}
 	if !result.Extracted {
+		// 必须记一条：否则「模型判定无可记」与「抽取压根没跑」在日志里长得一样，
+		// 想区分只能去翻 llm_call_ios 的审计（本次排查就吃了这个亏）。
+		log.Printf("[memory] extracted: 模型判定无可记内容（extracted=false）")
 		return nil, nil
 	}
 

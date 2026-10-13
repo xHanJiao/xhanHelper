@@ -107,16 +107,24 @@ func (s *recordLoopState) reuseTopic(ctx context.Context, topic string) string {
 		return topic
 	}
 	vec, err := s.deps.ConceptEmbed.GetOrEmbed(ctx, "topic", topic, s.userID)
-	if err != nil || len(vec) == 0 {
+	if err != nil {
 		log.Printf("[record_loop] embed topic %q error: %v (using new topic)", topic, err)
+		return topic
+	}
+	if len(vec) == 0 {
+		log.Printf("[record_loop] embed topic %q 返回空向量 (using new topic)", topic)
 		return topic
 	}
 
 	best, bestScore := "", 0.0
 	for _, c := range candidates {
 		cv, err := s.deps.ConceptEmbed.GetOrEmbed(ctx, "topic", c, s.userID)
-		if err != nil || len(cv) == 0 {
+		if err != nil {
 			log.Printf("[record_loop] embed existing topic %q error: %v (skip)", c, err)
+			continue
+		}
+		if len(cv) == 0 {
+			log.Printf("[record_loop] embed existing topic %q 返回空向量 (skip)", c)
 			continue
 		}
 		if score := util.CosineSimilarity(vec, cv); score > bestScore {

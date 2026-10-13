@@ -28,9 +28,18 @@ type neighborsXML struct {
 	Records []neighborXML `xml:"record"`
 }
 
-// renderCandidateInput — 拼 `<candidate>` + `<neighbors>` 输入块（照 record-loop-prompt.md §4）。
+// topicRecordsXML — 该候选 topic 下已有记录的输入块。
+// count 是**该主题的总条数**（不是本块条数）：模型要能看见「这个主题已经有 32 条了」，
+// 这是治「同一主题碎片化」的信号（见设计文档 §3.5）。块恒发出（空则 records 为空）。
+type topicRecordsXML struct {
+	XMLName xml.Name      `xml:"topic_records"`
+	Count   int           `xml:"count,attr"`
+	Records []neighborXML `xml:"record"`
+}
+
+// renderCandidateInput — 拼 `<candidate>` + `<neighbors>` + `<topic_records>` 输入块。
 // 渲染失败（含非法 XML 字符）向上抛：prompt 是否良构影响本次决策契约，不能降级。
-func renderCandidateInput(cand recordCandidate, neighbors []recordNeighbor) (string, error) {
+func renderCandidateInput(cand recordCandidate, neighbors []recordNeighbor, topicRecords []recordNeighbor, topicTotal int) (string, error) {
 	cx := candidateXML{Topic: cand.Topic, Summary: cand.Summary}
 	if len(cand.Facts) > 0 {
 		b, err := json.Marshal(cand.Facts)
@@ -44,15 +53,24 @@ func renderCandidateInput(cand recordCandidate, neighbors []recordNeighbor) (str
 		return "", fmt.Errorf("marshal candidate xml: %w", err)
 	}
 
-	nx := neighborsXML{Records: make([]neighborXML, 0, len(neighbors))}
-	for _, n := range neighbors {
-		nx.Records = append(nx.Records, neighborXML{
-			ID: n.ID, Type: n.Type, Topic: n.Topic, Content: n.Content,
-		})
-	}
+	nx := neighborsXML{Records: toNeighborXML(neighbors)}
 	nbOut, err := xml.MarshalIndent(nx, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal neighbors xml: %w", err)
 	}
-	return string(candOut) + "\n" + string(nbOut), nil
+
+	tx := topicRecordsXML{Count: topicTotal, Records: toNeighborXML(topicRecords)}
+	tpOut, err := xml.MarshalIndent(tx, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal topic records xml: %w", err)
+	}
+	return string(candOut) + "\n" + string(nbOut) + "\n" + string(tpOut), nil
+}
+
+func toNeighborXML(ns []recordNeighbor) []neighborXML {
+	out := make([]neighborXML, 0, len(ns))
+	for _, n := range ns {
+		out = append(out, neighborXML{ID: n.ID, Type: n.Type, Topic: n.Topic, Content: n.Content})
+	}
+	return out
 }

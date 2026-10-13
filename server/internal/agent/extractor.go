@@ -22,6 +22,9 @@ import (
 type memoryCandidate struct {
 	Summary string   `json:"summary"`
 	Facts   []string `json:"facts,omitempty"`
+	// Reason — 为什么它一个月后还有用（抽取段自问自答）。说不出理由的候选直接在
+	// ExtractCandidates 里丢掉：过程性噪声的共性就是「说不出留着干嘛」（见设计文档 §3.4）。
+	Reason string `json:"reason,omitempty"`
 }
 
 // memoryExtractResult — 抽取段 LLM 的输出结构（一个键 memories，数组）。
@@ -47,16 +50,18 @@ type memoryInstructionXML struct {
 // 抽取段只负责「从对话里按这个定义捞候选」，不再另写一份定义。
 func buildMemoryInstructionXML(now string, maxCandidates int) string {
 	doc := memoryInstructionXML{
-		Task: fmt.Sprintf("从以下对话中提取值得长期留存的记忆，最多 %d 条（合并同类信息，不要逐条复述）。\n\n记忆的定义：\n%s\n\n不编造、不推测；信息不足时一条都不提。", maxCandidates, promptbuilder.MemoryDefinition),
+		Task: fmt.Sprintf("从以下对话中找出将来聊天还会用到的长期信息，最多 %d 条。这是**查漏**，不是整理纪要：宁缺勿滥，宁可少提也不要凑数。\n\n记忆的定义：\n%s\n\n对话里可能有一部分内容此前已经记过——重复的不要提。不编造、不推测；没有值得留的就一条都不提。", maxCandidates, promptbuilder.MemoryDefinition),
 		Rules: []string{
 			"只依据用户的消息。助手说的不构成记忆来源，除非用户确认",
+			"只提定义之内的长期信息：本轮任务怎么推进（产出形式/顺序/临时口径）、已写进文档的内容、单笔账目的录入与归类细节，都不提",
+			"每条必须给出 reason：为什么它一个月后还有用（一句话）。说不出用途的会被丢弃",
 			"合并同类信息，不要逐条复述。不编造、不推测",
-			"信息不足时返回 {\"extracted\":false}",
+			"没有值得提取的内容时返回 {\"extracted\":false}",
 			"将\"今天\"、\"昨天\"等相对时间转为绝对日期（如 2026-05-15）",
 		},
-		OutputFormat: `{"extracted":true,"memories":[{"summary":"一句话概括核心信息","facts":["支持细节1"]}]}
+		OutputFormat: `{"extracted":true,"memories":[{"summary":"一句话概括核心信息","facts":["支持细节1"],"reason":"为什么一个月后还有用"}]}
 一条记忆 = 一条独立的、自足的事件或结论，各占 memories 数组的一项。没有值得提取的内容时返回 {"extracted":false}
-不要输出 topic——主题词由后续步骤单独归类，你只负责把候选内容提出来。`,
+reason 为空或说不出用途的候选会被丢弃。不要输出 topic——主题词由后续步骤单独归类，你只负责把候选内容提出来。`,
 		CurrentTime: now,
 	}
 
@@ -153,8 +158,14 @@ func (e *MemoryExtractor) ExtractCandidates(ctx context.Context, userID string, 
 	}
 
 	cands := make([]memoryCandidate, 0, len(result.Memories))
+	droppedNoReason := 0
 	for _, c := range result.Memories {
 		if strings.TrimSpace(c.Summary) == "" {
+			continue
+		}
+		// 说不出「为什么一个月后还有用」的候选直接丢——过程性噪声的共性就是它。
+		if strings.TrimSpace(c.Reason) == "" {
+			droppedNoReason++
 			continue
 		}
 		cands = append(cands, c)
@@ -162,7 +173,7 @@ func (e *MemoryExtractor) ExtractCandidates(ctx context.Context, userID string, 
 			break
 		}
 	}
-	log.Printf("[memory] extracted candidates: %d", len(cands))
+	log.Printf("[memory] extracted candidates: %d (dropped %d without reason)", len(cands), droppedNoReason)
 	return cands, nil
 }
 

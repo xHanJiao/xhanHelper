@@ -13,7 +13,7 @@ import (
 // 空 content / tool-call 轮跳过。
 func TestExtractCandidates_SendsFullDialogWithRoles(t *testing.T) {
 	mock := &syncMockLLM{responses: []llm.Message{{Content: `{"extracted":true,"memories":[
-		{"summary":"决定用方案B","topic":"项目规划","facts":["截止2026-10-01"]}
+		{"summary":"决定用方案B","facts":["截止2026-10-01"],"reason":"用户的技术选型决定"}
 	]}`}}}
 	e := NewMemoryExtractor(&MemoryExtractorConfig{LLMClient: mock})
 

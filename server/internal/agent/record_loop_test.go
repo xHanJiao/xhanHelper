@@ -16,26 +16,27 @@ import (
 	"xhan-helper/internal/tool"
 )
 
-// 抽取段：解析 {memories:[...]}、跳过空 summary、按 MaxCandidates 截断。
+// 抽取段：解析 {memories:[...]}、跳过空 summary、丢掉说不出 reason 的候选、按 MaxCandidates 截断。
 func TestExtractCandidates_MultiAndTruncate(t *testing.T) {
 	raw := `{"extracted":true,"memories":[
-		{"summary":"a","topic":"t1","facts":["f1"]},
-		{"summary":"","topic":"空"},
-		{"summary":"b","topic":"t2"},
-		{"summary":"c","topic":"t3"},
-		{"summary":"d","topic":"t4"},
-		{"summary":"e","topic":"t5"},
-		{"summary":"f","topic":"t6"}
+		{"summary":"a","facts":["f1"],"reason":"r-a"},
+		{"summary":"","reason":"空 summary 跳过"},
+		{"summary":"无理由","reason":""},
+		{"summary":"b","reason":"r-b"},
+		{"summary":"c","reason":"r-c"},
+		{"summary":"d","reason":"r-d"},
+		{"summary":"e","reason":"r-e"},
+		{"summary":"f","reason":"r-f"}
 	]}`
 	result, err := parseExtractResult(raw)
 	if err != nil || result == nil || !result.Extracted {
 		t.Fatalf("should parse extracted=true: %v", err)
 	}
-	if len(result.Memories) != 7 {
-		t.Fatalf("raw parse should keep 7, got %d", len(result.Memories))
+	if len(result.Memories) != 8 {
+		t.Fatalf("raw parse should keep 8, got %d", len(result.Memories))
 	}
 
-	// 走真实抽取路径：MaxCandidates=3，空 summary 跳过，截断到 3 条。
+	// 走真实抽取路径：MaxCandidates=3，空 summary 跳过、无 reason 丢弃，截断到 3 条。
 	mock := &syncMockLLM{responses: []llm.Message{{Content: raw}}}
 	e := NewMemoryExtractor(&MemoryExtractorConfig{LLMClient: mock, MaxCandidates: 3})
 	cands, err := e.ExtractCandidates(context.Background(), "u1", nil)
@@ -45,12 +46,20 @@ func TestExtractCandidates_MultiAndTruncate(t *testing.T) {
 	if len(cands) != 3 {
 		t.Fatalf("truncate to 3, got %d", len(cands))
 	}
-	if cands[0].Summary != "a" || cands[0].Facts[0] != "f1" {
+	if cands[0].Summary != "a" || cands[0].Facts[0] != "f1" || cands[0].Reason != "r-a" {
 		t.Errorf("first candidate fields wrong: %+v", cands[0])
 	}
-	// prompt 里的上限也应反映配置值
+	for _, c := range cands {
+		if c.Summary == "无理由" {
+			t.Errorf("candidate without reason must be dropped: %+v", cands)
+		}
+	}
+	// prompt 里的上限也应反映配置值，且必须要求 reason
 	if !strings.Contains(mock.reqs[0].Messages[0].Content, "最多 3 条") {
 		t.Errorf("prompt should state the configured cap, got: %.300s", mock.reqs[0].Messages[0].Content)
+	}
+	if !strings.Contains(mock.reqs[0].Messages[0].Content, "reason") {
+		t.Errorf("prompt should require reason, got: %.300s", mock.reqs[0].Messages[0].Content)
 	}
 }
 
@@ -436,5 +445,53 @@ func TestNameTopic_RetryAndTruncate(t *testing.T) {
 	d4.deps.FlashLLM = mock3
 	if got := d4.nameTopic(context.Background(), "u1", "/", "- -", []float64{1, 0}); got != topicFallbackName {
 		t.Errorf("all-invalid fallback must be %q, got %q", topicFallbackName, got)
+	}
+}
+
+// sameTopicRecords：按 topic 精确取该主题已有记忆（总条数用于 count 属性），
+// 已在语义近邻里的去重，topic 为空则不查。
+func TestSameTopicRecords(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.UserMemory{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := service.NewUserMemoryRepo(db)
+	mk := func(id, topic string) {
+		m := &model.UserMemory{ID: id, UserID: "u1", MemoryKey: topic, ContentHash: id,
+			MemoryValue: "内容-" + id, Topic: topic, Source: model.MemorySourcePostChat}
+		if err := repo.Create(context.Background(), m); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	mk("m1", "旅行计划")
+	mk("m2", "旅行计划")
+	mk("m3", "旅行计划")
+	mk("other", "记账")
+
+	d := NewRecordDecisionLoop(&RecordDeps{MemRepo: repo}, RecordLoopConfig{}, "post_chat")
+
+	// m1 已在语义近邻里 → 不重复返回；总数仍是该主题的 3 条。
+	got, total := d.sameTopicRecords(context.Background(), "u1", "旅行计划",
+		[]recordNeighbor{{ID: "m1", Type: model.EntityTypeMemory}})
+	if total != 3 {
+		t.Errorf("total should be the whole topic size, got %d", total)
+	}
+	ids := map[string]bool{}
+	for _, n := range got {
+		if n.Type != model.EntityTypeMemory {
+			t.Errorf("type must be memory, got %q", n.Type)
+		}
+		ids[n.ID] = true
+	}
+	if len(got) != 2 || ids["m1"] || !ids["m2"] || !ids["m3"] {
+		t.Errorf("same-topic records wrong: %+v", got)
+	}
+
+	// topic 为空不查（返回零值，不报错）。
+	if got, total := d.sameTopicRecords(context.Background(), "u1", "", nil); got != nil || total != 0 {
+		t.Errorf("empty topic must skip the query, got %+v / %d", got, total)
 	}
 }

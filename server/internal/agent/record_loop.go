@@ -42,11 +42,21 @@ func (d *RecordDecisionLoop) Decide(ctx context.Context, userID string, cand rec
 	// topic 单独一次 LLM 调用定稿（在决策循环之前）。summaryVec 复用上面那次 embed。
 	cand.Topic = d.nameTopic(ctx, userID, cand.Topic, cand.Summary, summaryVec)
 
+	// 同 topic 已有记录：预检索只给语义近邻，看不见「这个主题下已经挂了多少条」——
+	// 碎片化（一个主题几十条只差一点的记录）就是从那个视野盲区来的。
+	topicRecords, topicTotal := d.sameTopicRecords(ctx, userID, cand.Topic, neighbors)
+
 	state := &recordLoopState{deps: d.deps, cfg: d.cfg, userID: userID, source: d.source,
 		candTopic: cand.Topic, neighbors: neighbors, idSet: map[string]bool{}, idType: map[string]string{}}
 	for _, n := range neighbors {
 		state.idSet[n.ID] = true
 		state.idType[n.ID] = n.Type
+	}
+	// 同 topic 记录也必须进 idSet/idType：它们是合法的 target_id 取值域，
+	// 否则模型看到它们却 update/delete 不到（校验会判「target_id 不存在」）。
+	for _, n := range topicRecords {
+		state.idSet[n.ID] = true
+		state.idType[n.ID] = model.EntityTypeMemory
 	}
 
 	registry := tool.NewRegistry()
@@ -69,7 +79,7 @@ func (d *RecordDecisionLoop) Decide(ctx context.Context, userID string, cand rec
 	})
 
 	res, err := func() (*MiniReActResult, error) {
-		input, err := renderCandidateInput(cand, neighbors)
+		input, err := renderCandidateInput(cand, neighbors, topicRecords, topicTotal)
 		if err != nil {
 			return nil, err
 		}
@@ -137,6 +147,39 @@ func (d *RecordDecisionLoop) preRetrieve(ctx context.Context, userID, summary st
 		}
 	}
 	return out, vec, nil
+}
+
+// sameTopicRecords 取该候选 topic 下已有的记忆（按 created_at 倒序），供模型判断
+// 「是新增还是覆盖已有某条的版本变化」。返回的记录数与总条数分开返回：
+// 总条数（count 属性）才是治碎片化的信号——模型要能看见「这个主题已经有 32 条了」。
+//
+// 取数失败**不阻断决策**：退化成只有语义近邻（这是有意降级，故记日志而非吞掉）。
+func (d *RecordDecisionLoop) sameTopicRecords(ctx context.Context, userID, topic string, have []recordNeighbor) ([]recordNeighbor, int) {
+	if topic == "" || d.cfg.TopicNeighborLimit <= 0 {
+		return nil, 0
+	}
+	seen := make(map[string]bool, len(have))
+	for _, n := range have {
+		seen[n.ID] = true
+	}
+	list, total, err := d.deps.MemRepo.ListByUser(ctx, userID, "", "", topic, d.cfg.TopicNeighborLimit, 0)
+	if err != nil {
+		log.Printf("[record_loop] same-topic fetch failed (topic=%s): %v", topic, err)
+		return nil, 0
+	}
+	out := make([]recordNeighbor, 0, len(list))
+	for _, m := range list {
+		if seen[m.ID] {
+			continue
+		}
+		out = append(out, recordNeighbor{
+			ID:      m.ID,
+			Type:    model.EntityTypeMemory,
+			Topic:   m.Topic,
+			Content: m.MemoryValue,
+		})
+	}
+	return out, int(total)
 }
 
 // confirmTopNeighbor NONE 时取最高分记忆近邻，相似度须 ≥ ConfirmThresh。

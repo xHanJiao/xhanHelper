@@ -51,7 +51,7 @@ flowchart TD
   subgraph SAVE["写入工具内部（确定性，不交给 LLM）"]
     direction TB
     TOPIC["topic 复用 FindSimilarTopics<br/>候选集 = 该用户在用的 topic<br/>（notes ∪ memories 的 distinct）<br/>≥ memory_topic_reuse_threshold 0.80<br/>→ 用最相似的那个；否则用新的"]
-    NAMECHK["命名硬校验：禁 / 、逗号、多主题；topic ≤ 20 字"]
+    NAMECHK["命名硬校验：禁 / 、逗号、多主题；topic ≤ 5 字"]
     DB["落库 user_memories<br/>+ summary 向量 + 内存 vectorStore<br/>（facts 落库但不嵌入）<br/>source = inline | post_chat"]
     TOPIC --> NAMECHK --> DB
   end

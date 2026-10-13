@@ -70,7 +70,7 @@ type=note 的是旧笔记（过渡期遗留，见下）。
 
 一条记忆 = topic + summary + facts：
 
-- topic：一个主题词，决定这条记忆归到哪一类（如「睡眠管理」「职业规划」）。同一件事必须用同一个 topic，不要造近义词。≤ 20 字，禁止斜杠、逗号、多个主题。
+- topic：一个主题词，决定这条记忆归到哪一类（如「睡眠管理」「职业规划」）。同一件事必须用同一个 topic，不要造近义词。≤ 5 字，禁止斜杠、逗号、多个主题。
 - summary：一句话概括核心信息，自足成句（主体写进句子里）。≤ 150 字。
   只有 summary 会被检索到，所以它必须自足——不能靠 facts 才读得懂。
 - facts：支持这条 summary 的具体细节，0~10 条、每条 ≤ 100 字，如日期、数字、金额、要点。它跟随 summary 一起返回，不单独检索。
@@ -113,7 +113,7 @@ type=note 的是旧笔记（过渡期遗留，见下）。
 
 ## 硬限制
 
-- topic ≤ 20 字；summary ≤ 150 字；单条 fact ≤ 100 字。单次传入 facts ≤ 10 条（update 合并后不设上限）。超限会被工具拒绝。
+- topic ≤ 5 字；summary ≤ 150 字；单条 fact ≤ 100 字。单次传入 facts ≤ 10 条（update 合并后不设上限）。超限会被工具拒绝。
 - 一条候选最多新增 1 条记忆。上限由上游的抽取段控制，你不要试图拆分候选绕过它。
 
 ## 输出
@@ -170,7 +170,7 @@ delete_note(target_id string)                                                   
 
 - **新增上限不在本循环**：一条候选最多 `save_memory` 一次（候选本身已经是抽取段拆好的原子单位）。上限 5 由**抽取段**控制（prompt 明示 + 解析后截断到 `memory_max_per_session`，见 `design.md` §4.2）。
 - 循环侧只做一件事：同一条候选里，`save_memory` 若被调第二次，返回错误提示「一条候选只能写一条记忆」。
-- 字段级硬限制（topic ≤ 20 字 / summary ≤ 150 字 / 单条 fact ≤ 100 字；单次传入 facts ≤ 10 条）是**工具侧校验**，超限返回错误让模型改写；**不设成配置**（是不变量，不是可调阈值）。
+- 字段级硬限制（topic ≤ 5 字 / summary ≤ 150 字 / 单条 fact ≤ 100 字；单次传入 facts ≤ 10 条）是**工具侧校验**，超限返回错误让模型改写；**不设成配置**（是不变量，不是可调阈值）。
 - `target_id` / `delete_note` 的校验见 §5。
 
 ## 4. 入口
@@ -224,3 +224,15 @@ delete_note(target_id string)                                                   
 | `factDecideSystemPrompt` / `factDecideInstruction`（`fact_worker.go:355/359`） | **蓝本**：本次的指令结构（输入 / 动作 / 判据 / 输出）照它，但对象从「事实」换成「记忆」，并新增检索工具、旧笔记清理两节。两段的编排（抽取 → 逐候选决策）也照 `FactWorker`（`fact_worker.go:92/123`）。 |
 | `memoryInstructionXML`（`extractor.go:36`） | **拆分 + 共用定义**：本批**保留抽取段**（改为输出 `{memories:[...]}`，上限 5），task 里的「什么算记忆」改为引用 `promptbuilder.MemoryDefinition`；本指令只管「这条候选怎么入库」，system prompt 同样引用它。 |
 | 准则 4（`promptbuilder/static.go:14`） | **本批改措辞 + 共用定义**：主循环的行为准则（主 LLM 何时调 `record_memory`），「调用 note 记录 / 更新对应笔记」→ 改 `record_memory` / 对应记忆；「什么算高价值信息」改为 `fmt.Sprintf` 嵌入 `promptbuilder.MemoryDefinition`（见 §0.1）。 |
+
+---
+
+## 后续变更
+
+- **2026-10-13**：本文件 §2 的指令消息此前**只在文档里、从未进代码**——决策循环实际只发了 3 句 system prompt
+  （核对过程见 `docs/design/memory-quality/design.md` §2）。§2 全文已落到 `agent/record_loop_types.go` 的
+  `recordLoopInstruction` 并并入 `recordLoopSystemPrompt`；同时又加了两处：**「什么都不调」是合法终局的显式说明**、
+  **`<topic_records>`（同 topic 已有记录 + 总条数）输入块**。§1/§3.2 的 topic 上限由 20 字改为 **5 字**（与实现
+  `memoryTopicMaxLen = 5`、`topic-5char.md` 一致）。影响文件：`agent/record_loop_types.go`、`agent/record_loop.go`、
+  `agent/record_loop_render.go`、`agent/promptbuilder/memory_definition.go`、`agent/promptbuilder/static.go`、
+  `agent/extractor.go`、`tool/record_memory.go`。

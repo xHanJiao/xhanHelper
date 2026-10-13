@@ -344,7 +344,7 @@ python3 scripts/dev-stats.py --selftest                      # 解析器自检
 ## 文档地图
 
 - `docs/design/` — 设计文档主战场，`phase-1` ~ `phase-18` 按阶段归档；`mac-apps/` 是 macOS 客户端专项；每个设计目录下可放 `mockup.html` 交互预览（规范见「UI 预览与设计 token」）
-- 常读：`progressive-tool-disclosure.md`、`post-chat-worker-group.md`、`plan-mode-readonly.md`、`phase-18-subagent-explore.md`、`retrieval` 相关、`mac-apps/settings-sheet-style.md`、`mac-apps/swift6-concurrency-fix.md`
+- 常读：`progressive-tool-disclosure.md`、`post-chat-worker-group.md`、`plan-mode-readonly.md`、`phase-18-subagent-explore.md`、`retrieval` 相关、`memory-quality/`（记忆写入质量与噪声回收）、`mac-apps/settings-sheet-style.md`、`mac-apps/swift6-concurrency-fix.md`
 - `docs/bugs/` — 按编号递增记录（写新条前先 `ls docs/bugs/` 取号）；`docs/front-end/plan.md` — 前端架构与 nginx 部署
 - `docs/learning/` `docs/research/` `docs/security/` `docs/todo/` — 学习笔记 / 调研 / 红队测试 / 待办
 - `docs/stats/` — 由 `scripts/dev-stats.py` 生成的开发节奏快照（一次性产物，非设计文档）

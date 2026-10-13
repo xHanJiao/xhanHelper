@@ -158,9 +158,10 @@ func (e *MemoryExtractor) ExtractCandidates(ctx context.Context, userID string, 
 	}
 
 	cands := make([]memoryCandidate, 0, len(result.Memories))
-	droppedNoReason := 0
+	droppedNoReason, droppedEmpty := 0, 0
 	for _, c := range result.Memories {
 		if strings.TrimSpace(c.Summary) == "" {
+			droppedEmpty++
 			continue
 		}
 		// 说不出「为什么一个月后还有用」的候选直接丢——过程性噪声的共性就是它。
@@ -173,7 +174,14 @@ func (e *MemoryExtractor) ExtractCandidates(ctx context.Context, userID string, 
 			break
 		}
 	}
-	log.Printf("[memory] extracted candidates: %d (dropped %d without reason)", len(cands), droppedNoReason)
+	log.Printf("[memory] extracted candidates: %d (dropped: %d no-reason, %d empty-summary)",
+		len(cands), droppedNoReason, droppedEmpty)
+	// 全丢是个危险指纹：模型输出了候选、却一个都没留——通常是 prompt/schema 漂移
+	// （字段改名、退回旧格式）。这条链路是"失败即降级、不报错"的，所以要故意炸出声音。
+	if len(result.Memories) > 0 && len(cands) == 0 {
+		log.Printf("[memory] WARN 全部 %d 条候选被丢弃（无 reason 或 summary 为空）——prompt/schema 漂移？",
+			len(result.Memories))
+	}
 	return cands, nil
 }
 

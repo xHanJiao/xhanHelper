@@ -81,12 +81,17 @@ post_chat 更碎（👎 平均 68 字 < 👍 78 字），产量还比 inline 多
 
 召回率两条一样（31% / 29%），且 👎 里 71% 从未被召回——**记了也没人看**，白花抽取与决策的算力。
 
-### 1.6 结论五：碎片化来自视野盲区，不是循环不聪明
+### 1.6 结论五：碎片化来自视野盲区 + 判据边界没划
 
 `旅行计划` 一个 topic **32 条**，全是同一趟日本行程的逐次微调；`活动埋点系统` 每个 6.x 节一条。
 这些记录向量各不相同（所以去重抓不到），但**本质是一件事的连续版本**。
-循环只看到**语义 top_k 近邻**，看不到"这个 topic 已经挂了多少条"；而判据里还明确写着
-「观点/看法变了 → 新增一条，不要覆盖」。视野窄 + 判据鼓励新增 = 碎片化。
+
+两个成因（注意：行程微调**不是「观点」**，所以不能归因到「观点/看法变了 → 新增」那条判据——那一句
+是同一个循环里另一条规则，本轮的 §3.1 顺手给两者补了分界）：
+
+1. **视野盲区**：循环只看语义 top_k 近邻，看不到「这个 topic 已经挂了多少条」；
+2. **判据边界没划**：指令里「多了一件无关的新事 → `save_memory`」与「同一件事变了 → `update_memory`」
+   之间的界，全交给模型自己划——它把每次行程微调都当成「新事」。
 
 ---
 
@@ -164,10 +169,11 @@ post_chat 更碎（👎 平均 68 字 < 👍 78 字），产量还比 inline 多
 
 - `agent/record_loop.go`：在 `cand.Topic = d.nameTopic(...)` **之后**（topic 定稿在预检索之后，顺序不能挪）
   取 `MemRepo.ListByUser(ctx, userID, "", "", cand.Topic, N, 0)`——**该方法已存在，不新增 repo 方法**；
-  过滤掉已在语义近邻里的 id，并入 `state.neighbors` / `idSet` / `idType`（否则模型的 update/delete 打不到它们）。
-- `agent/record_loop_render.go`：新增并列块 `<topic_records count="N">`，前 N 条（`RecordLoopConfig.TopicNeighborLimit`，默认 8）。
+  过滤掉已在语义近邻里的 id，并入 `state.idSet` / `state.idType`（否则模型的 update/delete 打不到它们。
+  注意：同 topic 记录**不混进 `<neighbors>`**，只进独立的 `<topic_records>` 块，模型能分清两批来源）。
+- `agent/record_loop_render.go`：新增并列块 `<topic_records count="N">`，前 N 条（`RecordLoopConfig.TopicNeighborLimit`，默认 8、不进 yaml）。
 - **`count` 是关键**：让模型看见"这个主题我已经有 32 条了"——治碎片化最便宜的一刀。
-- 取数失败**不阻断决策**：退化成只有语义近邻，记日志（可降级，不静默）。
+- 取数失败**不阻断决策**：退化成只有语义近邻，记日志（可降级，不静默；单测 `TestSameTopicRecords_DegradesOnRepoError`）。
 
 ---
 
@@ -186,7 +192,10 @@ post_chat 更碎（👎 平均 68 字 < 👍 78 字），产量还比 inline 多
 1. `cd server && go build ./... && go test ./...` 全绿；新增/更新单测：
    - `renderCandidateInput` 的 `<topic_records>`（良构、count、空块）；
    - 抽取段 `reason` 门禁（空 reason 丢弃、非空保留、截断仍生效）；
-   - `recordLoopSystemPrompt` 含关键节（动作 / 判据 / delete 是最后手段）。
+   - `recordLoopSystemPrompt` 含关键节（动作 / 判据 / delete 是最后手段）；
+   - `sameTopicRecords`（正常路径 / 空 topic 不查 / **repo 报错降级不阻断**）；
+   - `TestRecordLoopInstructionMirrorsDoc`：指令的**文档镜像必须逐字等于代码**——
+     这个 bug 的成因就是文档与代码分家，所以用单测把这条一致性钉死。
 2. **真机一轮**：跑一次聊天，日志确认 `[record_loop]` 正常、`<topic_records>` 有内容；
    然后**跑两天观察**，回来看（只读，不改码）：
    - 三族产量（基线：记账 28 / 工作过程 57 / 项目决策 103）；
@@ -204,6 +213,10 @@ post_chat 更碎（👎 平均 68 字 < 👍 78 字），产量还比 inline 多
 - **post_chat 决策异步化**：inline 每次记记忆同步多花 2~4 秒循环时间；若体感变差再转 `DelayedTask`。
 - **下掉 post_chat**：数据不支持（10 月 110 vs inline 60，砍掉即腰斩捕获量）；本票走"换门"（§3.4）。
 - **把评分喂回检索排序/淘汰**：`rating` 仍只存不用。
+- **修 `post_chat/memory_extract` 的成本打标串口径**（**真 bug，建议单开票**）：这个 sub_category 实际混了
+  抽取 / topic 命名 / 决策循环三段（原因见附录），导致成本看板上"记忆管线花了多少"永远算不准、
+  且与 inline 侧不可比（inline 的决策循环标在 `tool/record_memory`）。本票只记录，不动口径——
+  改它会牵动历史数据的可比性，要单独决定。
 
 ---
 
@@ -213,7 +226,11 @@ post_chat 更碎（👎 平均 68 字 < 👍 78 字），产量还比 inline 多
 - **风险 1（缝，只能真跑）**：改完 prompt 的真实效果无法离线预判——只能靠两天后的评分验证。
 - **风险 2**：`<topic_records>` 让模型看见同主题历史后，可能**变得爱删/爱 update**（update 会覆盖 summary）。
   缓解：指令里 `delete` 仍是最后手段；观察统一到两天后的回收里看。
-- **风险 3**：`reason` 硬门禁可能误杀（模型偶尔漏填字段）。缓解：丢弃数进日志，两天后可对比产量判断是否过严。
+- **风险 3**：`reason` 硬门禁可能误杀（模型偶尔漏填字段）→ post_chat 这条链路**悄悄停产**。
+  实测评估：7 天 IO 审计里抽取段的 schema **形状漂移 0 次**（146 个候选键只有 `summary`+`facts`、
+  可选字段都 146/146 填满），所以概率低；但门禁是全链路唯一"失败即降级、不报错"的地方，故加了
+  **全丢告警**（`len(result.Memories) > 0 && len(cands) == 0` → 打 WARN，正是漂移的指纹）。
+  另：抽取段历史上出现过一次"整轮落空"（HTML 实体转义，见附录），说明这条链路确实有先例。
 - **已知敞口（本票不解决）**：改完仍是"没人读过代码"的状态，靠上面的单测 + 两天数据兜底。
 
 ---
@@ -224,6 +241,14 @@ post_chat 更碎（👎 平均 68 字 < 👍 78 字），产量还比 inline 多
 - **`confirm_count` 有历史脏值**：口径 B 上线时只清了本地 prod、**未清云端**，云端该列可能混着旧语义
   （检索侧 +1；有一条 inline 记到 25）。「召回率」只能当量级看，不能当准数。
 - **`created_at` 时区混存**：旧 MySQL 行 `+00:00`、本地 SQLite 行 `+08:00`，按天聚合边界最多差 8 小时。
-- **`llm_cost_details` 推量级**：10/01 起抽取调用 1248 次 → 落库 110 条（≈11:1）；决策循环 LLM 调用
-  1201 次 / 落库 292 条 ≈ 4 次/条。两者都是从调用量推的**量级**，不是实测口径。
+- **`llm_cost_details` / `llm_call_ios` 推量级（口径已修正）**：
+  - **`post_chat/memory_extract` 这个 sub_category 混了三段调用**——抽取段 + topic 命名 + 决策循环。
+    因为 `agent/memory_worker.go` 设了这个场景，而 `topic_namer.go` / `mini_react.go` **不设场景、直接继承**；
+    inline 侧相反，是分开的（`record_loop.go` 的 `RecordInline` 显式标 `tool/record_memory`）。
+    **所以「memory_extract 2210 次」不是抽取次数，分母用错了**（见 §6 挂账）。
+  - 实测（7 天 IO 审计样本，`llm_call_ios` 按输入分型）：抽取 58 / topic 命名 151 / 决策循环 522。
+    抽取里 `extracted:true` 47、`false` 10；共 146 个候选；**决策循环 ≈ 3.6 轮/候选**、**topic 命名 ≈ 1.0/候选**。
+  - **抽取段 schema 遵从度**（146 个候选）：出现过的键只有 `summary` + `facts`，146/146 两键齐全，
+    **形状漂移 0 次**；57/58 条响应可解析。唯一的失败是 1 条响应**整体被 HTML 实体转义**（`"` → `&#34;`，
+    2026-10-07）——那是既有的、挂在解析阶段的故障，与 §3.4 的 `reason` 门禁无关。
 - 本轮的族划分是**按 topic 关键词手工归类**，粒度粗；「该不该记」的判定来自用户的 73 条评分，不是标注集。

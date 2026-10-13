@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"os"
 	"strings"
 	"testing"
 
@@ -493,5 +494,44 @@ func TestSameTopicRecords(t *testing.T) {
 	// topic 为空不查（返回零值，不报错）。
 	if got, total := d.sameTopicRecords(context.Background(), "u1", "", nil); got != nil || total != 0 {
 		t.Errorf("empty topic must skip the query, got %+v / %d", got, total)
+	}
+}
+
+// sameTopicRecords 的降级路径：repo 报错时**不阻断决策**，退化成只有语义近邻（返回 nil, 0）。
+func TestSameTopicRecords_DegradesOnRepoError(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.UserMemory{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("underlying db: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil { // 关掉连接 → 后续查询必错
+		t.Fatalf("close: %v", err)
+	}
+
+	d := NewRecordDecisionLoop(&RecordDeps{MemRepo: service.NewUserMemoryRepo(db)}, RecordLoopConfig{}, "post_chat")
+	got, total := d.sameTopicRecords(context.Background(), "u1", "旅行计划", nil)
+	if got != nil || total != 0 {
+		t.Errorf("repo error must degrade to empty (not block the decision), got %+v / %d", got, total)
+	}
+}
+
+// record-loop-prompt.md §2 的指令镜像是逐字复制，必须与代码一致。
+// 这段指令曾经只在文档里、从未进代码——分家就是这个 bug 的成因，所以钉住它。
+// 改代码时同步那份 md（或按 mirror 方式重新生成）。
+func TestRecordLoopInstructionMirrorsDoc(t *testing.T) {
+	const docPath = "../../../docs/design/memory-note-rework/record-loop-prompt.md"
+	b, err := os.ReadFile(docPath)
+	if err != nil {
+		t.Skipf("设计文档不在此（非仓库内运行？）: %v", err)
+	}
+	want := "const recordLoopInstruction = `" + recordLoopInstruction + "`"
+	if !strings.Contains(string(b), want) {
+		t.Errorf("record-loop-prompt.md 的指令镜像与 recordLoopInstruction 不一致——改代码请同步该 md")
 	}
 }

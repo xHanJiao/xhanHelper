@@ -33,8 +33,8 @@ const recordLoopInstruction = `你要为这条候选选一个动作：新开一�
 ## 输入
 
 <candidate>：待写入的候选，字段 topic / summary / facts。
-<neighbors>：按 summary 向量相似度从记忆库取回的记忆与旧笔记近邻（可能一条都不相关）。
-<topic_records>：该候选 topic 下已有的记录（按时间倒序），属性 count 是**这个主题下的总条数**。
+<neighbors>：按 summary 向量相似度从记忆库取回的记忆与旧笔记近邻；相似度低于 memory_neighbor_threshold（默认 0.5）的不入此块，可能一条都不相关。
+<topic_records>：该候选 topic 下已有的记录（按时间倒序，最多 TopicNeighborLimit 条），属性 count 是**这个主题下的总条数**。
 每个记录写成 <record id="…" type="memory|note" topic="…">正文</record>，id 是它的唯一标识。
 type=note 的是旧笔记（过渡期遗留，见下）。
 
@@ -62,7 +62,7 @@ type=note 的是旧笔记（过渡期遗留，见下）。
 
 同一件事 = 同一主体 ＋ 同一件事本身。
 事实性内容变了（改期、变更计划、数据修正）→ update_memory；只是补充细节 → update_memory；多了一件无关的新事 → save_memory。
-观点/看法变了 → 新增一条，不要覆盖：旧观点是当时的真实记录，也有价值。
+观点/看法变了 → 新增一条，不要覆盖：旧观点是当时的真实记录，也有价值。这里的「观点」指**立场、偏好、判断**这类因人而变的东西；同一个客观事实的版本变化（行程改了、数字更正了、计划更新了）不是观点，一律走 update_memory，不要当成"新的一件观点"存下来。
 候选与某个近邻只是"同一个大主题"（都属某次旅行、某个项目），但讲的是不同的点，就不是同一件事。
 <topic_records> 的用途是让你看见这个主题下已经有多少条：若候选讲的是已有某条的版本变化，用 update_memory 覆盖那条，**不要新增**——同一个主题下挂一堆只差一点的记录，用户看到的就是重复。
 
@@ -101,8 +101,9 @@ var recordLoopSystemPrompt = "你是记忆库的写入决策助手。\n\n" + pro
 // recordLoopFinalRoundPrompt — 强制收敛轮指令。默认那条要「最终结果」，这里没有最终结果要给谁看。
 const recordLoopFinalRoundPrompt = `[系统] 本轮已达最大步数。请不要再调用任何工具。`
 
-// recordNeighbor — 预检索/追加检索得到的一条近邻（id 已剥前缀）。
-// 仅这两条来源会进近邻集合，也就是 target_id 的合法取值域。
+// recordNeighbor — 进入近邻集合的一条记录（id 已剥前缀）。
+// 三条来源：预检索、循环内追加检索、同 topic 已有记录（sameTopicRecords）。
+// 它们共同构成 target_id 的合法取值域。
 type recordNeighbor struct {
 	ID      string
 	Type    string // memory | note

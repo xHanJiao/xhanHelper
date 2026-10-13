@@ -149,9 +149,13 @@ func (d *RecordDecisionLoop) preRetrieve(ctx context.Context, userID, summary st
 	return out, vec, nil
 }
 
-// sameTopicRecords 取该候选 topic 下已有的记忆（按 created_at 倒序），供模型判断
+// sameTopicRecords 取该候选 topic 下已有的**记忆**（按 created_at 倒序），供模型判断
 // 「是新增还是覆盖已有某条的版本变化」。返回的记录数与总条数分开返回：
 // 总条数（count 属性）才是治碎片化的信号——模型要能看见「这个主题已经有 32 条了」。
+//
+// 只数记忆、不含旧笔记：旧笔记只可能出现在语义近邻里（这里只查 MemRepo）。
+// 与 topic 复用候选集（distinctTopics，notes ∪ memories）口径不同，是**有意**的——
+// <topic_records> 喂给模型的就是记忆记录，count 说成"总条数"会误导（见 docs/design/memory-quality）。
 //
 // 取数失败**不阻断决策**：退化成只有语义近邻（这是有意降级，故记日志而非吞掉）。
 func (d *RecordDecisionLoop) sameTopicRecords(ctx context.Context, userID, topic string, have []recordNeighbor) ([]recordNeighbor, int) {

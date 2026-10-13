@@ -43,17 +43,33 @@
 **`GetOrEmbed` 改成自愈**：向量行缺失、为空、或解析失败，一律复用已有概念行**补嵌 + Upsert 写回**
 （`embedAndSave`），不再返回空向量。抽出的 `embedAndSave` 同时消掉了原来两段重复的嵌入代码。
 
+**空向量例外**：`Embedder.Embed` 在 API 返 200 但没带 `embedding` 字段时返回 `([]，nil)`、**不报错**
+（`llm/embedding.go` 末尾直接 `return result.Data.Embedding, nil`）。所以 `embedAndSave` 与
+`ensureEmbedded` 都要显式拦 `len(vec) == 0`、**只记日志/报错、绝不写回**：写回 `"[]"` 会让下次
+读出来还是空、判「向量为空，重新嵌入」——把一次性的孤儿修复退化成**每次调用打一次网络请求**。
+
 **日志拆开**（`record_loop_persist.go`）：`err != nil` 与 `len(vec) == 0` 分别打，
 不再出现 `error: <nil>`。
 
-**没有动** `ensureEmbedded`：它的职责是建行，读侧的 `GetOrEmbed` 现在会把孤儿修好；
-写侧若失败仍会留孤儿，但那已经无害（下次读就被补上）。
+**没有动** `ensureEmbedded` 的早期返回：它的职责是建行，读侧的 `GetOrEmbed` 现在会把孤儿修好；
+写侧失败仍会留孤儿，但那已经无害（下次读就被补上）。
+
+## 量级与观测
+
+自愈把孤儿 topic 的「廉价 skip」换成了「首次补嵌一次」——**一次性成本**，之后命中缓存。
+退化场景（embedder 持续返空）会让**每次写入决策都重打一次 embed**，可观测指纹：
+
+- 日志刷 `[embed] dim=0 model=...`（`llm/embedding.go` 每次嵌入都打 dim）
+- 日志刷 `[record_loop] embed existing topic "X" error: embedder 返回空向量（dim=0）...(skip)`
+
+见到这两个就是 embedder 侧出问题，不是这里的锅。
 
 ## 验证
 
 - 新增 `TestGetOrEmbed_SelfHealsMissingVector`（`agent/concept_embedder_test.go`）：
   造一条「有概念行、无向量行」的孤儿 → `GetOrEmbed` 必须补嵌并写回 → 第二次调用命中缓存
   （把 embedder 换成必失败的实现，仍应拿到向量）。
+- 新增 `TestGetOrEmbed_RejectsEmptyVector`：embedder 返回空向量 → 必须报错，且**库里不出现 `"[]"`**。
 - `go build ./... && go test ./...` 全绿。
 - 真机：`make dev` 跑一次记忆写入，日志里不再出现 `error: <nil>`；
   若再出现同 topic，应能看到 `有概念行但无向量行，补嵌入`（一次性），此后不再出现。

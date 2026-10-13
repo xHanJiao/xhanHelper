@@ -64,3 +64,40 @@ func (failingEmbedder) Embed(context.Context, string) ([]float64, error) {
 	return nil, gorm.ErrInvalidDB
 }
 func (failingEmbedder) ModelName() string { return "failing" }
+
+// embedder 返回空向量（API 返 200 但没带向量）时必须**报错且不写回**：
+// 写回 "[]" 会让下次读出来还是空、判「重新嵌入」——变成每次调用都打一次网络请求（见 docs/bugs/037）。
+func TestGetOrEmbed_RejectsEmptyVector(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.ConceptEmbedding{}, &model.Embedding{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	conceptRepo := service.NewConceptEmbeddingRepo(db)
+	embeddingRepo := service.NewEmbeddingRepo(db)
+	svc := &ConceptEmbedService{conceptRepo: conceptRepo, embeddingRepo: embeddingRepo, embedder: emptyEmbedder{}}
+
+	if _, err := svc.GetOrEmbed(context.Background(), "topic", "新主题", "u1"); err == nil {
+		t.Fatal("空向量必须报错，不能当成功返回")
+	}
+	// 不能把 "[]" 写进库。
+	c, err := conceptRepo.GetByValue(context.Background(), "topic", "新主题", "u1")
+	if err != nil {
+		t.Fatalf("get concept: %v", err)
+	}
+	if c != nil {
+		if emb, err := embeddingRepo.GetByEntity(context.Background(), model.EntityTypeConcept, c.ID); err != nil {
+			t.Fatalf("get embedding: %v", err)
+		} else if emb != nil && emb.Embedding != nil {
+			t.Errorf("空向量不该写回，却写了: %q", *emb.Embedding)
+		}
+	}
+}
+
+// emptyEmbedder 成功返回一个空向量（模拟 Embed 的 `return result.Data.Embedding, nil` 在字段缺失时）。
+type emptyEmbedder struct{}
+
+func (emptyEmbedder) Embed(context.Context, string) ([]float64, error) { return []float64{}, nil }
+func (emptyEmbedder) ModelName() string                                { return "empty" }

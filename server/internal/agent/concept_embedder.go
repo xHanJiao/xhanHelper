@@ -41,7 +41,8 @@ func (s *ConceptEmbedService) EnsureTagsEmbedded(ctx context.Context, userID, ta
 //
 // 「概念行在、向量行不在」曾经是个不自愈死局——那时返回 (nil, nil)，调用方只能跳过，
 // 于是那条 concept 永远参与不了相似度计算（topic 复用 / topic 命名 / 主题发现全受影响）。
-// 孤儿概念行见 docs/bugs/017。现在缺失与损坏一律补嵌，Upsert 幂等覆盖。
+// 孤儿概念行的成因与批量清理见 docs/bugs/017；本 bug（不自愈 + 日志撒谎）见 docs/bugs/037。
+// 现在缺失与损坏一律补嵌，Upsert 幂等覆盖。
 func (s *ConceptEmbedService) GetOrEmbed(ctx context.Context, conceptType, value, userID string) ([]float64, error) {
 	if value == "" {
 		return nil, nil
@@ -86,11 +87,19 @@ func (s *ConceptEmbedService) GetOrEmbed(ctx context.Context, conceptType, value
 }
 
 // embedAndSave 嵌入 concept.Value 并把向量写回该 concept 行（Upsert 幂等，缺失/损坏都能被覆盖修好）。
+//
+// 空向量必须拦下：Embedder 在 API 返 200 但没带向量时返回 ([]，nil)、**不报错**
+// （llm/embedding.go 的 Embed 末尾直接 return result.Data.Embedding, nil）。若照写，
+// 库里是 "[]"，下次读出来还是空 → 判「向量为空，重新嵌入」→ **每次调用都重打一次网络请求**。
+//
 // 向量写不回去**不阻断调用方**：本次调用已经拿到向量，下次丢了再补——记日志说明这是有意降级。
 func (s *ConceptEmbedService) embedAndSave(ctx context.Context, concept *model.ConceptEmbedding, userID string) ([]float64, error) {
 	vec, err := s.embedder.Embed(ctx, concept.Value)
 	if err != nil {
 		return nil, fmt.Errorf("embed: %w", err)
+	}
+	if len(vec) == 0 {
+		return nil, fmt.Errorf("embedder 返回空向量（dim=0）: %s/%s", concept.Type, concept.Value)
 	}
 	embStr := llm.EmbeddingToString(vec)
 	if err := s.embeddingRepo.Upsert(ctx, &model.Embedding{
@@ -135,6 +144,12 @@ func (s *ConceptEmbedService) ensureEmbedded(ctx context.Context, conceptType, v
 	vec, err := s.embedder.Embed(ctx, value)
 	if err != nil {
 		log.Printf("[concept] embed %s/%s error: %v", conceptType, value, err)
+		return
+	}
+	if len(vec) == 0 {
+		// 空向量不写回（别往库里灌 "[]"）。这里会留下一条无向量的概念行，
+		// 但读侧 GetOrEmbed 会补嵌修好——见 docs/bugs/037。
+		log.Printf("[concept] embed %s/%s 返回空向量，跳过写回", conceptType, value)
 		return
 	}
 

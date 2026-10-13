@@ -24,8 +24,8 @@ const (
 )
 
 // recordLoopInstruction — 决策循环的指令正文。
-// 设计定稿见 docs/design/memory-note-rework/record-loop-prompt.md §2；本段是它的实现。
-// 与那份文档的差异只有一处：topic 上限按实现取 5 字（见 topic-5char.md，文档仍写 20）。
+// 设计定稿见 docs/design/memory-note-rework/record-loop-prompt.md §2，该文件里的这段是**逐字镜像**，
+// 由 TestRecordLoopInstructionMirrorsDoc 强制一致（改这里必须同步那份 md）。
 // 放 system prompt 而非 user 消息：它是稳定常量，构成可命中的缓存前缀；变化部分
 // （<candidate> / <neighbors> / <topic_records>）才进 user 消息。
 const recordLoopInstruction = `你要为这条候选选一个动作：新开一条、改一条、删一条，或者什么都不做。
@@ -34,7 +34,7 @@ const recordLoopInstruction = `你要为这条候选选一个动作：新开一�
 
 <candidate>：待写入的候选，字段 topic / summary / facts。
 <neighbors>：按 summary 向量相似度从记忆库取回的记忆与旧笔记近邻；相似度低于 memory_neighbor_threshold（默认 0.5）的不入此块，可能一条都不相关。
-<topic_records>：该候选 topic 下已有的记录（按时间倒序，最多 TopicNeighborLimit 条），属性 count 是**这个主题下的总条数**。
+<topic_records>：该候选 topic 下已有的**记忆**（按时间倒序，最多 TopicNeighborLimit 条），属性 count 是该主题下的记忆条数（旧笔记不计入——它们只可能出现在 <neighbors> 里）。
 每个记录写成 <record id="…" type="memory|note" topic="…">正文</record>，id 是它的唯一标识。
 type=note 的是旧笔记（过渡期遗留，见下）。
 

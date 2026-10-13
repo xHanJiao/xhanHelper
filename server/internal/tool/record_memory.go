@@ -35,12 +35,12 @@ func (t *RecordMemoryTool) SetRunner(r RecordMemoryRunner) { t.runner = r }
 
 func (t *RecordMemoryTool) Name() string { return "record_memory" }
 func (t *RecordMemoryTool) Description() string {
-	return "记录长期记忆：当用户分享重要的决定/结论/洞察/经验/观点/事实/状态/人物关系时调用。topic 填一个主题词（一条一个主题）。逐日流水/台账（睡眠、体重、饮酒、运动、时间日志等按天读数）不要记，走 document。可能与已有记忆重复，会自动新增/更新/删除。"
+	return "记录长期记忆：当用户分享关于自身的长期信息（决定/结论/洞察/经验/观点/偏好/状态/人物关系）时调用。topic 填一个主题词（一条一个主题）。不记：日常闲聊、本轮任务怎么推进（产出形式/推进顺序/本轮口径）、已写进文档的内容、逐日流水/台账（走 document）。可能与已有记忆重复，会自动新增/更新/删除。"
 }
 
 func (t *RecordMemoryTool) Catalog() (CatalogEntry, bool) {
 	return CatalogEntry{
-		ShortDesc: "记录长期记忆（决定/结论/洞察/事实/关系），一条一个 topic。逐日流水走 document。",
+		ShortDesc: "记录长期记忆（决定/结论/洞察/偏好/状态/关系），一条一个 topic。日常闲聊、本轮任务过程、逐日流水走 document。",
 		Funcs:     []string{"record_memory"},
 	}, true
 }
@@ -49,7 +49,7 @@ func (t *RecordMemoryTool) Functions() []FuncSchema {
 	return []FuncSchema{{
 		Name:        "record_memory",
 		Display:     "记录记忆",
-		Description: "保存一条值得长期留存的记忆。当用户分享重要的决定、结论、经验、观点、事实、状态、人物关系时调用。topic 填一个主题词（一条一个主题）。日常闲聊、逐日流水/台账不记，走 document。可能触达已有记忆的自动更新或删除。",
+		Description: "保存一条值得长期留存的记忆。当用户分享关于自身的长期信息（决定/结论/经验/观点/偏好/状态/人物关系）时调用。topic 填一个主题词（一条一个主题）。日常闲聊、本轮任务怎么推进、已写进文档的内容、逐日流水/台账不记，走 document。可能触达已有记忆的自动更新或删除。",
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

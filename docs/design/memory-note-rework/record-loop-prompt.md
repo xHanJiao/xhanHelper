@@ -41,61 +41,62 @@ const MemoryDefinition = `记忆是从对话里沉淀下来的、将来聊天还
 
 ## 1. system prompt（全文）
 
-稳定常量，进 system 字段。**不复用 `postChatSharedSystemPrompt`**——那条写死了「输入均为用户角色的发言，按时间顺序排列」（`agent/profile_worker.go:26`），而这里输入是「一条候选 + 它的近邻」，两者对不上（`FactDecider` 当初也是这个理由另起一条，`fact_worker.go:353`）。
+稳定常量，进 system 字段，**三段拼接**：门面句 + `promptbuilder.MemoryDefinition`（全链路「记忆是什么」的唯一定义）+ `recordLoopInstruction`（指令正文，见 §2）。
+
+**不复用 `postChatSharedSystemPrompt`**——那条写死了「输入均为用户角色的发言，按时间顺序排列」（`agent/profile_worker.go:26`），而这里输入是「一条候选 + 它的近邻」，两者对不上（`FactDecider` 当初也是这个理由另起一条，`fact_worker.go:353`）。
 
 ```go
-// recordLoopSystemPrompt — 决策循环专用 system prompt。
-// 拼接 promptbuilder.MemoryDefinition（全链路唯一定义），而不是另写一份。
 var recordLoopSystemPrompt = "你是记忆库的写入决策助手。\n\n" + promptbuilder.MemoryDefinition +
-	"\n\n你的输入是一条候选记忆，和它在记忆库里检索到的近邻记录。"
+	"\n\n" + recordLoopInstruction
 ```
 
 ## 2. 指令消息（全文）
 
-常量，拼在 user 消息最前，输入块（`<candidate>` + `<neighbors>`）紧随其后 —— 固定部分构成可命中的缓存前缀，变化部分只在尾部。结构照 `factDecideInstruction`（`fact_worker.go:359`：输入 / 动作 / 判据 / 输出）。
+常量，**进 system prompt**（不是拼在 user 消息最前）——它是稳定常量，构成可命中的缓存前缀；变化部分（`<candidate>` / `<neighbors>` / `<topic_records>`）才进 user 消息。结构照 `factDecideInstruction`（`fact_worker.go:359`：输入 / 动作 / 判据 / 输出）。
+
+**下面这段是 `agent/record_loop_types.go` 里 `recordLoopInstruction` 的逐字镜像，代码是唯一事实来源**
+（单测 `TestRecordLoopInstructionMirrorsDoc` 钉住了这条一致性）。之所以写这句：这段指令 2026-09-23 定稿后
+**从未进代码**，决策循环实际只发了 3 句门面话（核对过程见 `docs/design/memory-quality/design.md` §2）——
+文档与代码分家就是这个 bug 的成因。
 
 ```go
-// recordLoopInstruction — 决策循环的指令消息。
-const recordLoopInstruction = `你是记忆库的写入决策者。上游给你一条候选记忆，以及它在记忆库里检索到的近邻记录。
-你要为这条候选选一个动作：新开一条、改一条、删一条，或者什么都不做。
+const recordLoopInstruction = `你要为这条候选选一个动作：新开一条、改一条、删一条，或者什么都不做。
 
 ## 输入
 
 <candidate>：待写入的候选，字段 topic / summary / facts。
-<neighbors>：按 summary 向量相似度从记忆库取回的近邻（不设阈值，可能一条都不相关）。
-每个近邻写成 <record id="…" type="memory|note" topic="…">正文</record>，id 是它的唯一标识。
+<neighbors>：按 summary 向量相似度从记忆库取回的记忆与旧笔记近邻；相似度低于 memory_neighbor_threshold（默认 0.5）的不入此块，可能一条都不相关。
+<topic_records>：该候选 topic 下已有的**记忆**（按时间倒序，最多 TopicNeighborLimit 条），属性 count 是该主题下的记忆条数（旧笔记不计入——它们只可能出现在 <neighbors> 里）。
+每个记录写成 <record id="…" type="memory|note" topic="…">正文</record>，id 是它的唯一标识。
 type=note 的是旧笔记（过渡期遗留，见下）。
 
 ## 记忆的构成
 
 一条记忆 = topic + summary + facts：
-
-- topic：一个主题词，决定这条记忆归到哪一类（如「睡眠管理」「职业规划」）。同一件事必须用同一个 topic，不要造近义词。≤ 20 字，禁止斜杠、逗号、多个主题。
-- summary：一句话概括核心信息，自足成句（主体写进句子里）。≤ 150 字。
+- topic：一个主题词（≤5 字）。同一件事必须用同一个 topic，不要造近义词。
+- summary：一句话概括核心信息，自足成句（主体写进句子里），≤150 字。
   只有 summary 会被检索到，所以它必须自足——不能靠 facts 才读得懂。
-- facts：支持这条 summary 的具体细节，0~10 条、每条 ≤ 100 字，如日期、数字、金额、要点。它跟随 summary 一起返回，不单独检索。
+- facts：支持这条 summary 的具体细节，0~10 条、每条 ≤100 字。它跟随 summary 一起返回，不单独检索。
 
 ## 动作
 
 - save_memory：新开一条。库里没有这件事。
-- update_memory：近邻里有一条讲的是同一件事，而它变了、更全了、或需要修正 → 覆盖它。target_id 取自近邻的 id。
-  - summary 写改写后的**完整内容**；facts 只写**新增的细节**——会与已有 facts 自动去重合并（只增不减，不逐出，事实不会被覆盖丢掉）。
+- update_memory：近邻里有一条讲的是同一件事，而它变了、更全了、或需要修正 → 覆盖它。target_id 取自输入的 id。
+  summary 写改写后的完整内容；facts 只写新增的细节——会与已有 facts 自动去重合并（只增不减、不逐出）。
 - delete_memory：近邻里有一条被明确否定或已经作废。
-- 什么都不调：近邻里已有一条同义记录，内容没变。
+- 什么都不调：近邻里已有一条同义记录、内容没变。**这是合法且常见的终局**——不要为了"有输出"而硬写一条。
 
 ## 检索工具（只读）
 
-<neighbors> 给的是按语义相似度取回的结果，可能漏掉你要找的那条。
-关键词检索擅长字面量（人名、专有名词、日期、金额），相似度搜索恰恰不擅长这些。
-需要时补一轮；够了就别反复搜。
+<neighbors> 与 <topic_records> 可能漏掉你要找的那条。关键词检索擅长字面量（人名、专有名词、日期、金额），相似度搜索恰恰不擅长这些。需要时补一轮；够了就别反复搜。
 
 ## 判据
 
 同一件事 = 同一主体 ＋ 同一件事本身。
-库里有「只做技术」，候选是「兼做产品」——同主体、同一件事（他在项目里担任什么），答案变了 → update_memory。
 事实性内容变了（改期、变更计划、数据修正）→ update_memory；只是补充细节 → update_memory；多了一件无关的新事 → save_memory。
-观点/看法变了 → 新增一条，不要覆盖：旧观点是当时的真实记录，也有价值。
-近邻可能一条都不相关，也可能内容相近但不是同一件事。以判据为准，不要因为拿到了 id 就硬找一条来改。
+观点/看法变了 → 新增一条，不要覆盖：旧观点是当时的真实记录，也有价值。这里的「观点」指**立场、偏好、判断**这类因人而变的东西；同一个客观事实的版本变化（行程改了、数字更正了、计划更新了）不是观点，一律走 update_memory，不要当成"新的一件观点"存下来。
+候选与某个近邻只是"同一个大主题"（都属某次旅行、某个项目），但讲的是不同的点，就不是同一件事。
+<topic_records> 的用途是让你看见这个主题下已经有多少条：若候选讲的是已有某条的版本变化，用 update_memory 覆盖那条，**不要新增**——同一个主题下挂一堆只差一点的记录，用户看到的就是重复。
 
 ## delete 是最后手段
 
@@ -113,19 +114,20 @@ type=note 的是旧笔记（过渡期遗留，见下）。
 
 ## 硬限制
 
-- topic ≤ 20 字；summary ≤ 150 字；单条 fact ≤ 100 字。单次传入 facts ≤ 10 条（update 合并后不设上限）。超限会被工具拒绝。
+- topic ≤ 5 字；summary ≤ 150 字；单条 fact ≤ 100 字。单次传入 facts ≤ 10 条（update 合并后不设上限）。超限会被工具拒绝。
 - 一条候选最多新增 1 条记忆。上限由上游的抽取段控制，你不要试图拆分候选绕过它。
 
 ## 输出
 
 - 用 tool call 表达，不要输出 JSON 文本。
-- target_id 只能取自输入里的 id，不许自造。
+- target_id 只能取自输入里的 id（<neighbors> 或 <topic_records>），不许自造。
 - update_memory 的 summary 必须写改写后的完整内容（自足成句、主体写进句子），不是只写变化的那半句。
-- update_memory 的 facts 是**增量**：只写这次新增的细节即可，已有 facts 会自动合并保留（只增不减、不逐出）。
 - 相对时间（今天、昨天）在候选里若还是相对说法，落库前转成绝对日期（如 2026-09-15）。`
 ```
 
 > 与 v2 的差异：system prompt 从「写入执行者」改成「写入决策助手」；输入从「对话原文 / 一条候选」统一成「一条候选」；删掉「写什么」（那是抽取段的职责，见 §0）与「一次最多 5 条」（上限落在抽取段，本循环只需说「不要拆分候选绕过」）。
+>
+> **2026-10-13 补齐与修正**：① 指令正文落进代码（此前只在本文件里）；② 新增 `<topic_records>` 输入块（同 topic 已有记录 + 总条数 `count`），治「同一主题碎片化」；③ 「什么都不调」明确写成**合法且常见的终局**；④ 「观点/看法变了 → 新增」补了与「同一事实的版本变化」的分界（后者走 `update_memory`）；⑤ topic 上限按实现取 **5 字**（原写 20 字，见 `topic-5char.md`）；⑥ `<neighbors>` 的阈值口径改正——实现按 `memory_neighbor_threshold`（默认 0.5）过滤，原文「不设阈值」有误。
 
 ## 3. 工具集 schema
 
@@ -170,7 +172,7 @@ delete_note(target_id string)                                                   
 
 - **新增上限不在本循环**：一条候选最多 `save_memory` 一次（候选本身已经是抽取段拆好的原子单位）。上限 5 由**抽取段**控制（prompt 明示 + 解析后截断到 `memory_max_per_session`，见 `design.md` §4.2）。
 - 循环侧只做一件事：同一条候选里，`save_memory` 若被调第二次，返回错误提示「一条候选只能写一条记忆」。
-- 字段级硬限制（topic ≤ 20 字 / summary ≤ 150 字 / 单条 fact ≤ 100 字；单次传入 facts ≤ 10 条）是**工具侧校验**，超限返回错误让模型改写；**不设成配置**（是不变量，不是可调阈值）。
+- 字段级硬限制（topic ≤ 5 字 / summary ≤ 150 字 / 单条 fact ≤ 100 字；单次传入 facts ≤ 10 条）是**工具侧校验**，超限返回错误让模型改写；**不设成配置**（是不变量，不是可调阈值）。
 - `target_id` / `delete_note` 的校验见 §5。
 
 ## 4. 入口
@@ -224,3 +226,15 @@ delete_note(target_id string)                                                   
 | `factDecideSystemPrompt` / `factDecideInstruction`（`fact_worker.go:355/359`） | **蓝本**：本次的指令结构（输入 / 动作 / 判据 / 输出）照它，但对象从「事实」换成「记忆」，并新增检索工具、旧笔记清理两节。两段的编排（抽取 → 逐候选决策）也照 `FactWorker`（`fact_worker.go:92/123`）。 |
 | `memoryInstructionXML`（`extractor.go:36`） | **拆分 + 共用定义**：本批**保留抽取段**（改为输出 `{memories:[...]}`，上限 5），task 里的「什么算记忆」改为引用 `promptbuilder.MemoryDefinition`；本指令只管「这条候选怎么入库」，system prompt 同样引用它。 |
 | 准则 4（`promptbuilder/static.go:14`） | **本批改措辞 + 共用定义**：主循环的行为准则（主 LLM 何时调 `record_memory`），「调用 note 记录 / 更新对应笔记」→ 改 `record_memory` / 对应记忆；「什么算高价值信息」改为 `fmt.Sprintf` 嵌入 `promptbuilder.MemoryDefinition`（见 §0.1）。 |
+
+---
+
+## 后续变更
+
+- **2026-10-13**：本文件 §2 的指令消息此前**只在文档里、从未进代码**——决策循环实际只发了 3 句 system prompt
+  （核对过程见 `docs/design/memory-quality/design.md` §2）。§2 全文已落到 `agent/record_loop_types.go` 的
+  `recordLoopInstruction` 并并入 `recordLoopSystemPrompt`；同时又加了两处：**「什么都不调」是合法终局的显式说明**、
+  **`<topic_records>`（同 topic 已有记录 + 总条数）输入块**。§1/§3.2 的 topic 上限由 20 字改为 **5 字**（与实现
+  `memoryTopicMaxLen = 5`、`topic-5char.md` 一致）。影响文件：`agent/record_loop_types.go`、`agent/record_loop.go`、
+  `agent/record_loop_render.go`、`agent/promptbuilder/memory_definition.go`、`agent/promptbuilder/static.go`、
+  `agent/extractor.go`、`tool/record_memory.go`。

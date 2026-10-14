@@ -423,6 +423,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 
 - quote 预览（截断到 2 行）+ `<textarea>` + `⌘↵` 保存。**不用 Esc 取消**（误触丢正在写的批注，用户要求去掉）—— 不保存退出只走「取消」按钮
 - 空 note 保存按钮文案是「保存为纯划线」，有文字是「保存批注」
+- **新建态**多一个「让 AI 回答」按钮（`ne-ask`）：与保存同一套落库路径，只是消息里多带 `ask:true`，Swift 侧建完批注接着走右侧面板那套 `reply(annotationId:content:nil)`（= 先建批注、再让 AI 回一条，回复落在批注线程里）。**没写内容时禁用**（纯划线不给 AI 入口，与 §8.6 同一条规则；`⌘↵` 仍是保存，不抢）；**编辑态不显示**（批注已存在，AI 入口在右侧卡片上）；**空 `note` + `ask:true` 在 Swift 侧也被拦**（同一个 message 里再挡一刀）。浮层宽度 306 → **410**（塞下第三个按钮；`.foot` 加 `flex-wrap: wrap`）。见文末「2026-10-14 · 批注浮层加『让 AI 回答』」。
 
 ### 8.5 查找
 
@@ -1075,3 +1076,27 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 - **影响文件**：`client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift`（模板 JS 的 `charRect` / `captureAnchor` / `restoreAnchor` + resize 监听 + scroll 监听一行 + `setFontSize` 两行）。
 - **另记**：`docs/bugs/036-macos-reader-scroll-lost-on-width-change.md`（含离屏真引擎的验证数据）。
 - **已知边界**：视口顶部正好是一张 mermaid 大图时，锚会落到最近的一行文字上，图片随列宽变化的那点高度差补不回来。
+
+### 2026-10-14 · 批注浮层加「让 AI 回答」（用户要求）
+
+- **要什么**：选中文字 → 写批注 → 想直接让 AI 就着这条批注回一条，不必先去右侧面板找卡片点「让 AI 回复」。
+- **实现**：浮层新建态加 `ne-ask` 按钮，JS 仍只发一条 `create` 消息（多带 `ask:true`）；Swift 侧 `create(...)` 改为返回落库批注，`apply` 的 `create` 分支在 `ask` 时接着调**同一个** `reply(annotationId:content:nil)` —— 不新增接口、不新增状态机。
+- **取值**（用户拍板）：① 没写内容时按钮**禁用**（纯划线不给 AI 入口，延续 2026-10-12 的规则）；② 只在**新建态**显示，编辑态隐藏；③ 点完顺手投 `focusRequest` → 面板若被收起会自动展开并定位到新卡片（生成中显示「正在生成…」）；④ 浮层 306 → **410px** + `.foot { flex-wrap: wrap }` + 三个按钮包一层 `.actions`（窄视口另加 `max-width: calc(100vw - 24px)`）—— 306 下任何新增按钮都会让文字在按钮内逐字折行、且窄正文里右半边被裁，见文末「脚部布局」「窄视口」。
+- **边界**：批注若被判失活（`orphaned`）只创建、不追问（右侧面板同规则）；空 `note` 即使带上 `ask:true` 也只在 Swift 侧被拦（客户端两层挡，服务端不拦）；生成是服务端同步长任务（最长 120s），客户端沿用既有 busy 态。
+- **影响文件**：`client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift`（模板 CSS/HTML + JS 的 `createFromSelection`/`updateSaveLabel`/`openEditor` + `create` 返回值 + `apply` 的 `create` 分支）；`client/xHelper/scripts/check-reader-html.sh`（新增 5 条断言）。
+- **不变**：服务端 / API / 模型 / `AnnotationDrawer` **零改动**。
+- **脚部布局**（评审发现，已修）：`⌘↵ 保存` 提示 + 三个按钮的合围本来只有 2px 余量，加第三个按钮后默认字号下被 `flex-shrink` 压到各自 2 行（脚高 35 → 58，连「取消」都从 59px 缩到 47px）、字号拉满时「让 AI 回答」4 行（脚高 148）。修法：浮层 306 → **410px**；`.foot` 加 `flex-wrap: wrap`；三个按钮包一层 `.actions`（`flex-wrap: wrap` + `justify-content: flex-end` + `.btn { flex: 0 0 auto }`），能**整组**落到第二行、行内右对齐，且挤窄时靠组内换行而不是在按钮里逐字折。
+- **窄视口**（评审发现，已修）：浮层是 `position: fixed`，`openEditor` 只把左缘钳在 `[12, innerWidth - w - 12]` —— 视口比浮层窄时右半边直接越出 WebView 被裁（fixed 不参与滚动，滚也看不到）。加宽到 410 后危险带从「≤318」拉到「≤434」，而 434 以内的正文是可达的：`docAnnotHardFloor = docReaderMinWidth(260) + docAnnotPanelWidth(320) = 580`，即文档 tab 宽 580 时面板展开、正文正好 260。修法：`.note-editor { max-width: calc(100vw - 24px) }`（给 `flex-wrap` 补上「真的会变窄」这个前提）。
+- **实测**（headless Chrome 灌真模板现抠，iframe 定宽当 WebView 视口；行盒数用 `Range.getClientRects()`）：
+
+  | 视口 | 浮层宽 | 越出右缘 | 脚高（默认字号 / 拉满 30） |
+  |---|---|---|---|
+  | 260 | 236 | 0 | 103 / 188（折 3–4 行） |
+  | 314 | 290 | 0 | 103 / 134 |
+  | 347 | 323 | 0 | 103 / 134 |
+  | 380 | 356 | 0 | 60 / 134 |
+  | 434+ / 900 | 410 | 0 | **35（单行，同改动前）** / 134 |
+
+  所有档位下按钮内都不折字（`textLines = 1`）。字号最小（`--fs 14`，scale 0.7）时仍单行（脚高 28）—— 只有拉满才换行。代价：拉满字号下脚部是 3 行（134）而不是逐按钮拆散时的 2 行（100），换来整组右对齐。
+- **自查**：`xcrun swiftc -typecheck`（macOS 26.3，项目真实设置）0 error；`scripts/check-reader-html.sh` PASS（164 条断言，含新增的 ask 分支）；**视觉**：上面那张表就是视觉验证数据（默认 / 拉满 / 最小三档字号 × 260–900 视口）。
+- **同步**：`docs/design/document-annotation-reply/design.md`（后续变更）已就地更新。

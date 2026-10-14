@@ -385,6 +385,7 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 ### 7.2 线程卡片交互（`AnnotationThreadCard`）
 
 - **折叠态**：`回复 N · <最后一句>` + chevron；`N == 0` **且 `note` 非空**时显示「让 AI 回复」按钮（`sparkles`）。**纯划线（`note` 空、无线程）不显示这个入口，线程区整段不画**（见文末「2026-10-12 · 纯划线不给『让 AI 回复』入口」）。
+- **另一个入口（2026-10-14）**：正文的批注输入浮层新建态有「让 AI 回答」—— 建完批注接着走本节这条同一路径（`content` 空）。见文末「2026-10-14 · 批注浮层加『让 AI 回答』」。
 - **展开态**：逐条 user / assistant 行（左竖条着色）+ 底部输入框：
   - 空提交 → 「让 AI 回复」（`POST` 无 `content`，`source=button`）；
   - 有文本 → 追问（`POST` 带 `content`，先落 `role=user` 再生成，`source=followup`）。
@@ -642,3 +643,13 @@ reply_annotation(annotation_id: string, content: string)   // content ≤ 4000
 - **影响文件**：`client/xHelper/xHelper/Shared/Views/AnnotationDrawer.swift`。服务端 / API / 模型 / 阅读器 JS 零改动。
 - **自查**：`swiftc -typecheck -D DEBUG`（macOS / iOS）0 error；`#Preview`「桌面 · 讨论（折叠）」的 `threaded`（note 空、0 回复）卡片不再出按钮。
 - **同步**：`document-highlight-annotation`（§8.6 + 后续变更）、`document-annotation-single-view`（§3.3 + 后续变更）已就地更新。
+
+### 2026-10-14 · 批注浮层加「让 AI 回答」（用户要求）
+
+- **要什么**：写批注时就能直接让 AI 就着这条批注回一条，不必先存下、再去右侧面板找卡片点「让 AI 回复」。
+- **实现**：**没有新接口、没有新路径** —— 浮层「让 AI 回答」仍是 `create`，只是多带 `ask:true`；`DocumentReaderController.create(...)` 改为返回落库批注，`apply` 的 `create` 分支在 `ask` 时接着调**同一个** `reply(annotationId:content:nil)`（本文件 §5.3 那个接口，`source:"button"`）。
+- **取值**（用户拍板）：没写内容时按钮禁用（延续 2026-10-12「纯划线不给 AI 入口」）；只在新建态显示；点完投 `focusRequest`，右侧面板若被收起会自动展开并定位到新卡片（生成中显示「正在生成…」）。失活批注只创建、不追问（面板同规则）；空 `note` 即使带上 `ask:true` 也在这里被拦（客户端两层挡，服务端不拦）。
+- **影响文件**：`client/xHelper/xHelper/Shared/Views/DocumentReaderView.swift`（模板 HTML/CSS/JS + `create` 返回值 + `apply` 的 `create` 分支）；`client/xHelper/scripts/check-reader-html.sh`（新增 5 条断言）。服务端 / `AnnotationDrawer` 零改动。
+- **附带**：浮层 306 → 410px + `.foot { flex-wrap: wrap }` + 三个按钮包一层 `.actions`（整组换行、行内右对齐）+ `.note-editor { max-width: calc(100vw - 24px) }`（窄正文下别越出 WebView 被裁，正文可窄至 `docReaderMinWidth` 260）。评审发现，详见 highlight 文档后续变更的「脚部布局 / 窄视口」两段。
+- **自查**：`xcrun swiftc -typecheck`（macOS 26.3）0 error；`scripts/check-reader-html.sh` PASS（164 条断言）；视觉：headless Chrome 灌真模板、iframe 定宽当视口，测 260–900 五档 × 默认/拉满/最小字号（数据在 highlight 文档后续变更）。
+- **同步**：`document-highlight-annotation`（§8.4 + 后续变更）已就地更新。

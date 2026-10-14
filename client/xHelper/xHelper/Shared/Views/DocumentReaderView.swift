@@ -128,7 +128,8 @@ final class DocumentReaderController: ObservableObject {
         }
     }
 
-    private func create(quote: String, prefix: String, suffix: String, note: String) async {
+    /// 建一条划线批注。返回落库后的批注（失败 nil）——「让 AI 回答」要拿 id 接着追问。
+    private func create(quote: String, prefix: String, suffix: String, note: String) async -> DocumentAnnotation? {
         do {
             let a = try await api.createAnnotation(
                 documentId: documentID, quote: quote, note: note, prefix: prefix, suffix: suffix
@@ -139,9 +140,11 @@ final class DocumentReaderController: ObservableObject {
             if a.orphaned {
                 ToastCenter.shared.show("这段文字已不在正文里，记为「已失活」")
             }
+            return a
         } catch {
             LogBuffer.shared.error("DocumentReader 创建划线批注失败: \(error)")
             ToastCenter.shared.show("添加失败：\(error.localizedDescription)")
+            return nil
         }
     }
 
@@ -333,13 +336,24 @@ final class DocumentReaderController: ObservableObject {
         case "create":
             let quote = message["quote"] as? String ?? ""
             guard !quote.isEmpty else { return }
+            let note = message["note"] as? String ?? ""
+            let ask = message["ask"] as? Bool ?? false
             Task {
-                await create(
+                guard let a = await create(
                     quote: quote,
                     prefix: message["prefix"] as? String ?? "",
                     suffix: message["suffix"] as? String ?? "",
-                    note: message["note"] as? String ?? ""
-                )
+                    note: note
+                ) else { return }
+                // 浮层里点了「让 AI 回答」：接着让 AI 回一条（与右侧卡片「让 AI 回复」同一个 reply 路径）。
+                // 空 note（纯划线）不给 AI 入口、失活批注不给追问 —— 两条都是右侧面板的规则，
+                // JS 那侧挡过了，这里按同一份 message 再挡一刀（服务端不拦，别指望它）。
+                guard ask,
+                      !a.orphaned,
+                      !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                // 先投定位请求：面板若被收起，DocumentListView 的 onChange 会展开，卡片随即显示「正在生成…」
+                focusRequest = AnnotationFocus(id: a.id, tick: (focusRequest?.tick ?? 0) + 1)
+                await reply(annotationId: a.id, content: nil)
             }
 
         case "update":
@@ -883,7 +897,9 @@ span.ann-bubble:hover { transform: scale(1.6); }
 .floating .sep { width: 1px; background: var(--border-soft); margin: 5px 3px; }
 
 .note-editor {
-  position: fixed; z-index: 70; display: none; width: 306px;
+  position: fixed; z-index: 70; display: none; width: 410px;
+  /* 窄正文（docReaderMinWidth 可到 260）下别越出 WebView 被裁 —— 定位钳位只保左缘 */
+  max-width: calc(100vw - 24px);
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; box-shadow: var(--shadow);
   padding: 12px;
@@ -903,8 +919,12 @@ span.ann-bubble:hover { transform: scale(1.6); }
   font-family: inherit; outline: none;
 }
 .note-editor textarea:focus { border-color: var(--accent); background: var(--surface); }
-.note-editor .foot { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+.note-editor .foot { display: flex; align-items: center; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
 .note-editor .foot .spacer { flex: 1; }
+/* 三个按钮包一组：能整组落到第二行（而不是只把最后一个挤下去），行内右对齐；
+   btn 不收缩 —— 挤窄时靠组内换行，不让文字在按钮里逐字折。 */
+.note-editor .foot .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.note-editor .foot .actions .btn { flex: 0 0 auto; }
 .note-editor .hint { font-size: calc(var(--fs) * 0.62); color: var(--faint); }
 .btn {
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
@@ -914,6 +934,9 @@ span.ann-bubble:hover { transform: scale(1.6); }
 .btn:hover { background: var(--border-soft); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 500; }
 .btn.primary:hover { filter: brightness(1.08); }
+/* 没写批注内容时「让 AI 回答」禁用；.btn:hover 对 disabled 也命中，必须一起挡掉 */
+.btn:disabled { opacity: .45; cursor: default; }
+.btn:disabled:hover { background: var(--surface-2); filter: none; }
 
 .ctxmenu {
   position: fixed; z-index: 72; display: none; min-width: 158px;
@@ -967,11 +990,13 @@ span.ann-bubble:hover { transform: scale(1.6); }
   <div class="foot">
     <span class="hint">⌘↵ 保存</span>
     <div class="spacer"></div>
-    <button class="btn" id="ne-cancel">取消</button>
-    <button class="btn primary" id="ne-save">保存为纯划线</button>
+    <div class="actions">
+      <button class="btn" id="ne-cancel">取消</button>
+      <button class="btn" id="ne-ask" disabled>让 AI 回答</button>
+      <button class="btn primary" id="ne-save">保存为纯划线</button>
+    </div>
   </div>
 </div>
-
 <div class="ctxmenu ui" id="ctxmenu">
   <button data-cact="edit">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
@@ -1282,6 +1307,7 @@ var reader = (function () {
   var neQuote = document.getElementById('ne-quote');
   var neText = document.getElementById('ne-text');
   var neSave = document.getElementById('ne-save');
+  var neAsk = document.getElementById('ne-ask');
   var ctxmenu = document.getElementById('ctxmenu');
   var pendingRange = null;
   var editingId = null;
@@ -1433,7 +1459,7 @@ var reader = (function () {
 
   /* 服务端锚定成功后会回推整份列表，划线由 redrawAnnotations 定位画出 —— 
      这里只负责把选区告诉 Swift（不在原地包 mark，免得客户端与服务端各画一份）。 */
-  function createFromSelection(note) {
+  function createFromSelection(note, ask) {
     if (!pendingRange) return;
     var info = selectionInfo(pendingRange);
     if (!info.quote) {
@@ -1442,13 +1468,17 @@ var reader = (function () {
       clearSel(); hideAll();
       return;
     }
-    post({ type: 'create', quote: info.quote, prefix: info.prefix, suffix: info.suffix, note: note });
+    post({ type: 'create', quote: info.quote, prefix: info.prefix, suffix: info.suffix, note: note, ask: !!ask });
     clearSel(); hideAll();
   }
 
   /* ---------- 批注输入浮层 ---------- */
   function updateSaveLabel() {
-    neSave.textContent = neText.value.trim() ? '保存批注' : '保存为纯划线';
+    var hasText = !!neText.value.trim();
+    neSave.textContent = hasText ? '保存批注' : '保存为纯划线';
+    /* 「让 AI 回答」= 建完批注顺手让 AI 回一条。纯划线不给这个入口（与右侧面板同一条规则），
+       所以没写内容就禁用，而不是拿空批注去问。 */
+    neAsk.disabled = !hasText;
   }
 
   function anchorRect(id) {
@@ -1474,6 +1504,8 @@ var reader = (function () {
       neText.value = '';
     }
     updateSaveLabel();
+    /* 编辑态不给「让 AI 回答」：批注已存在，AI 入口在右侧卡片上（note 非空、0 回复时显示「让 AI 回复」） */
+    neAsk.style.display = id ? 'none' : '';
 
     editor.classList.add('open');
     var anchor = anchorRect(id);
@@ -1496,6 +1528,17 @@ var reader = (function () {
     } else {
       createFromSelection(v);
     }
+    clearSel(); hideAll();
+  });
+
+  /* 「让 AI 回答」：与保存同一套落库路径，只是多带 ask:true，Swift 侧建完批注接着让 AI 回一条。
+     按钮在没写内容时是 disabled 的，这里再挡一刀（防御性）。 */
+  neAsk.addEventListener('click', function () {
+    if (neAsk.disabled) return;
+    var v = neText.value.trim();
+    if (!v) return;
+    editor.classList.remove('open');
+    createFromSelection(v, true);
     clearSel(); hideAll();
   });
 

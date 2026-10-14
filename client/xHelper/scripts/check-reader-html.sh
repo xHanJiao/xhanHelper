@@ -256,6 +256,23 @@ function toolbarChecks() {
      !editor.classList.contains('open') && window.getSelection().isCollapsed);
   ok('create 没有原地包 mark（等 Swift 回推）', c.querySelectorAll('mark.hl').length === 0);
 
+  // 20) 「让 AI 回答」：空内容禁用；有内容可点；点击发 create + ask:true（Swift 侧建完批注接着让 AI 回一条）
+  armSelectionAndMouseUp();
+  document.querySelector('#toolbar button[data-act="note"]').click();
+  var neAsk = document.getElementById('ne-ask');
+  ok('新建态显示「让 AI 回答」且空内容时禁用',
+     editor.classList.contains('open') && neAsk.style.display === '' && neAsk.disabled);
+  neText.value = '讲讲这段';
+  neText.dispatchEvent(new Event('input'));
+  ok('有文字后「让 AI 回答」可用', !neAsk.disabled);
+  neAsk.click();
+  var askMsg = last('create');
+  ok('「让 AI 回答」发 create + ask:true',
+     !!askMsg && askMsg.ask === true && askMsg.note === '讲讲这段'
+       && askMsg.quote === '记忆系统的第一处提及', JSON.stringify(askMsg));
+  ok('「让 AI 回答」后浮层收起、选区清空',
+     !editor.classList.contains('open') && window.getSelection().isCollapsed);
+
   // 21) 右键不该弹选区工具条：WebKit 右键会先把光标下的词自动选中（给查询/服务用），
   //     mouseup 若不判键，右键划线会同时冒出「工具条 + 右键菜单」两个浮层。
   put([mk('rb1', '记忆系统的第一处提及', '右键用')]);
@@ -440,6 +457,7 @@ function annotationChecks() {
   ok('点「编辑批注」带出原 note',
      document.getElementById('note-editor').classList.contains('open')
        && document.getElementById('ne-text').value === '旧批注');
+  ok('编辑态不显示「让 AI 回答」', document.getElementById('ne-ask').style.display === 'none');
   document.getElementById('ne-text').value = '新批注';
   document.getElementById('ne-save').click();
   var up = last('update');

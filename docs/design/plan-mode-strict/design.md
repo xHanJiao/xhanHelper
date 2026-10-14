@@ -1,5 +1,7 @@
 # 计划模式三态化（关闭 / 普通 / 严格）
 
+> 已被 `docs/design/plan-mode-two-state/design.md` 取代（2026-10-14 撤掉严格档，恢复二态）。本文保留为历史决策记录。
+
 ## 背景
 
 计划模式原为二态：`work`（工具全开）与 `plan`（2026-09-15 只读化后：仅只读工具）。现要求拆为三档：
@@ -42,3 +44,8 @@
 - `go build ./... && go test ./...` 全绿。
 - Swift：`Shared/` + 两入口 `swiftc -typecheck`（macOS / iOS）零 error。
 - 真机（Xcode）：三档各发一条，确认严格档 LLM 无工具可用、普通档只读可用、关闭档全量；检查退出提示注入。
+
+## 后续变更
+
+- **2026-10-14 · 撤档，恢复二态**：严格档（`strict`）整体删除，客户端输入框回到二态按钮（关 / 计划），Tab 循环序变为 关↔计划。库里历史的 `mode='strict'` 行**不做数据迁移**，由读侧 `model.NormalizeConvMode` 归一到 `plan`（列表/详情响应、每次聊天的模式判定与提示注入均走它）——若不归一，旧严格会话会被 `ModeRestrictsTools` 判成不受限、静默放开全部工具。`PATCH /mode` 只接受 `work`/`plan`（旧客户端传 `strict` 得 400）。完整记录见 `docs/design/plan-mode-two-state/design.md`。
+  影响文件：`model/conversation.go`、`controller/chat.go`、`controller/conversations.go`、`tool/{registry,tool}.go`、`agent/orchestrator.go`、`agent/promptbuilder/{builder,static,types}.go`、4 个 Go 测试 + 新增 `model/conversation_test.go`；客户端 `ChatViewModel.swift`、`InputBarButtons.swift`、`ChatView.swift`、`InputBar.swift`、`xHelperMac/ShortcutGuideView.swift`、`APIClient.swift`、`Conversation.swift`。

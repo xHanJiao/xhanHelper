@@ -38,7 +38,7 @@ type ContextProvider interface {
 type BuildOptions struct {
 	UserID            string // 用于 PromptResolver
 	AgentPrompt       string // 可选 agent 覆盖
-	Mode              string // 会话模式：plan（只读工具）/ strict（无工具）会替换工具定义段，空=work
+	Mode              string // 会话模式：plan（只读工具）会替换工具定义段，空=work
 	StableContextXML  string // 稳定上下文（画像+摘要）渲染后的 XML，会话内字节稳定，缓存友好
 	ClientToolCatalog string // 客户端工具目录文本（组名+函数名，无 schema），由 orchestrator 渲染后传入，并入「工具使用」段
 	// BriefAnswer 本轮要求精简回答（≤500 字）。逐轮可变 —— 见 builder.go 里关于前缀缓存的说明。

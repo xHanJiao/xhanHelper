@@ -160,7 +160,7 @@
 
 难点在工具：`MiniReAct` 要求 `ToolRegistry` 非 nil（`mini_react.go:111` panic），工具执行统一走 `toolRegistry.ExecuteByName`（`:359`）。而决策循环的 8 个函数（3 个 `ToolDefinition`）是**闭包**（持有 userID、repo、计数器、近邻 `idSet`），不是注册表里的全局工具。
 
-做法：**为每次循环临时建一个 `tool.NewRegistry()`**，用薄适配器 `recordTool`（实现 `tool.Tool` 的五个方法，闭包挂在 `Execute` 上）把函数注册进去。`Register` 只是 map 插入（`registry.go:130`），`Validate*` 那套校验是启动时单独调用的，所以临时注册表不会触发 panic。`ec.Mode` 被 `MiniReAct` 硬编码成 `ConvModeWork`（`:358`），plan/strict 拦截不会误伤。
+做法：**为每次循环临时建一个 `tool.NewRegistry()`**，用薄适配器 `recordTool`（实现 `tool.Tool` 的五个方法，闭包挂在 `Execute` 上）把函数注册进去。`Register` 只是 map 插入（`registry.go:130`），`Validate*` 那套校验是启动时单独调用的，所以临时注册表不会触发 panic。`ec.Mode` 被 `MiniReAct` 硬编码成 `ConvModeWork`（`:358`），plan 拦截不会误伤。
 
 四个配置点：
 

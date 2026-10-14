@@ -722,7 +722,7 @@ func restoreConversation(convRepo *service.ConversationRepo) gin.HandlerFunc {
 	}
 }
 
-// updateConversationMode — 切换会话模式（work/plan/strict）。
+// updateConversationMode — 切换会话模式（work/plan）。
 // 模式只能由用户/客户端显式切换（客户端循环胶囊 / Tab 快捷键），LLM 无任何控制权。
 func updateConversationMode(convRepo *service.ConversationRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -737,8 +737,8 @@ func updateConversationMode(convRepo *service.ConversationRepo) gin.HandlerFunc 
 			view.JSONError(c, 400, "invalid request")
 			return
 		}
-		if req.Mode != model.ConvModeWork && req.Mode != model.ConvModePlan && req.Mode != model.ConvModeStrict {
-			view.JSONError(c, 400, "mode must be work or plan or strict")
+		if req.Mode != model.ConvModeWork && req.Mode != model.ConvModePlan {
+			view.JSONError(c, 400, "mode must be work or plan")
 			return
 		}
 		if err := convRepo.SetMode(c.Request.Context(), convID, req.Mode); err != nil {
@@ -814,12 +814,9 @@ func getConversationPlan(convRepo *service.ConversationRepo, planRepo *service.C
 	}
 }
 
-// convModeOrDefault 会话模式归一化：空值按 work 返回。
+// convModeOrDefault 会话模式归一化：空值按 work、历史 strict 档按 plan 返回。
 // 列表/默认会话接口必须带上 mode —— 客户端 Conversation.mode 依赖它做权威值，
 // 缺失会让 UI 恒显示 work，而服务端仍按库里的 plan 强制只读（静默失配）。
 func convModeOrDefault(mode string) string {
-	if mode == "" {
-		return model.ConvModeWork
-	}
-	return mode
+	return model.NormalizeConvMode(mode)
 }

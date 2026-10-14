@@ -65,7 +65,7 @@ type RunRequest struct {
 	Thinking           *bool    // 思考模式：nil=不传，true=开启，false=关闭
 	Window             WindowResult
 	ClientTools        []ClientTool // 客户端（Mac App）上报的本地 MCP 工具，可为空
-	Mode               string       // 会话模式：ConvModeWork（默认）| ConvModePlan（只读）| ConvModeStrict（无工具）
+	Mode               string       // 会话模式：ConvModeWork（默认）| ConvModePlan（只读）
 	ModeNotice         string       // 模式提示（注入当前 user 消息 XMLContext 的 notice 块，仅 LLM 可见，用户不可见）
 	BriefAnswer        bool         // 本轮要求精简回答（注入 system prompt 的输出长度约束，≤500 字）
 	VerifyEnabled      *bool        // 响应检验开关覆盖：nil=跟随全局配置，true/false=强制覆盖
@@ -1181,10 +1181,8 @@ func (o *Orchestrator) mkLlmChatReq(req *RunRequest, systemPrompt string, state 
 		thinking = &t
 	}
 	var tools []llm.ToolDefinition
-	// strict：不下发任何工具；plan：仅注入只读工具定义（写操作执行级仍被拦截）；work：渐进式暴露。
-	if req.Mode == model.ConvModeStrict {
-		// 保持 tools 为 nil —— 连 expose_tools 都不给，LLM 无任何函数可调
-	} else if !state.finalRound && req.Mode == model.ConvModePlan {
+	// plan：仅注入只读工具定义（写操作执行级仍被拦截）；work：渐进式暴露。
+	if !state.finalRound && req.Mode == model.ConvModePlan {
 		tools = filterToolDefs(o.registry.ReadOnlyToolDefinitions(), o.toolExcludes)
 	} else if !state.finalRound {
 		// 渐进式暴露：常驻 expose_tools + 已暴露函数（函数粒度）的完整定义 + 客户端工具。
@@ -1846,7 +1844,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 				Error: "客户端本地工具不可用（本轮对话中已发生断连或超时），已跳过 " + tc.Tool + "." + tc.Function + "。请不要再调用客户端本地工具，直接告知用户即可。"}}
 			continue
 		}
-		// —— 计划模式拦截：plan（只读）/ strict（无工具）下客户端工具全部禁用
+		// —— 计划模式拦截：plan（只读）下客户端工具全部禁用
 		// （不再依据 IsReadOnly 放行——只读机制保留仅为未来"只读浏览模式"备用）。
 		// 执行在客户端，服务端在此拦断——
 		if model.ModeRestrictsTools(mode) {

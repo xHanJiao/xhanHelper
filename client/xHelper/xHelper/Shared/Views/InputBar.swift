@@ -25,7 +25,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
     var onClearAll: (() -> Void)? = nil
     let onSend: () -> Void
     let onStop: () -> Void
-    /// Tab（仅输入框聚焦时）：循环计划模式（关/普通/严格）。
+    /// Tab（仅输入框聚焦时）：循环计划模式（关/计划）。
     let onToggleMode: () -> Void
     /// 状态行胶囊（收起态与展开态都渲染，显示与否由各按钮自声明）。
     let statusRow: (InputBarContext) -> StatusRow
@@ -269,7 +269,7 @@ struct InputBar<StatusRow: View, StatusRowExtras: View, TrailingActions: View, B
                 }
                 return .handled
             }
-            // Tab（仅输入框聚焦时）：循环计划模式（关/普通/严格）。焦点不在聊天输入框时（PiP 收起/浏览器/地址栏）不会触发。
+            // Tab（仅输入框聚焦时）：循环计划模式（关/计划）。焦点不在聊天输入框时（PiP 收起/浏览器/地址栏）不会触发。
             // 流式进行中不响应，避免回合中途误切模式（胶囊点击不受影响）。
             .onKeyPress(.tab, phases: .down) { _ in
                 guard !isStreaming else { return .handled }
@@ -450,7 +450,7 @@ struct InputBarScrollHider: NSViewRepresentable {
             onStop: {}
         ) { ctx in
             HStack(spacing: 4) {
-                ModePill(context: ctx, mode: .strict) {}
+                ModePill(context: ctx, mode: .off) {}
                 TrustedPill(context: ctx, level: .off) {}
                 AgentPickerButton(
                     context: ctx,

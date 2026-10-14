@@ -310,6 +310,8 @@ struct AnnotationThreadCard: View {
         HStack(spacing: 6) {
             if annotation.orphaned {
                 orphanBadge
+            } else if annotation.quoteRewritten {
+                rewrittenBadge
             }
             Spacer()
             Text(AnnotationTime.label(annotation.createdAt))
@@ -480,6 +482,19 @@ struct AnnotationThreadCard: View {
             .background(Color.red.opacity(0.1))
             .clipShape(Capsule())
     }
+
+    /// 正文被改写后服务端按前后文重新锚定，把这条划线的原文换成了新文本（D10c）——
+    /// 引文跟你当初划的不是同一句时，得有个说法，不能静默。
+    private var rewrittenBadge: some View {
+        Text("原文已改写")
+            .font(.system(size: fontManager.scaledSize * 0.68))
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(Color.secondary.opacity(0.12))
+            .clipShape(Capsule())
+            .help("正文改写后按前后文重新锚定，这条划线的原文已更新为当前正文的文本")
+    }
 }
 
 /// 与服务端 `created_at`（ISO8601，可能带小数秒）对齐；今天只显示时分，更早带日期。
@@ -526,6 +541,15 @@ private enum AnnotationPreviewData {
         prefix: "", suffix: "", note: "这条线对不上了。",
         startOffset: 0, endOffset: 0, orphaned: true, quoteRewritten: true,
         createdAt: "2026-09-28T08:00:00+08:00", updatedAt: "2026-09-28T08:00:00+08:00",
+        replyCount: 0, lastReply: nil
+    )
+    /// 非失活但服务端夹逼改写过原文 —— 「原文已改写」徽标的唯一可见形态
+    /// （失活那条被 orphanBadge 抢先，徽标优先级：已失活 > 已改写）。
+    static let rewritten = DocumentAnnotation(
+        id: "a4", documentId: "d1", quote: "社保按什么基数缴：按全额缴和按低基数缴，Hx 到手会差一些。",
+        prefix: "", suffix: "", note: "",
+        startOffset: 240, endOffset: 280, orphaned: false, quoteRewritten: true,
+        createdAt: "2026-10-14T09:12:00+08:00", updatedAt: "2026-10-14T09:12:00+08:00",
         replyCount: 0, lastReply: nil
     )
 
@@ -722,6 +746,12 @@ private struct ConnectorPreviewDemo: View {
 
 #Preview("桌面 · 讨论（失活）") {
     DocPreviewShell { previewPanel(annotations: [AnnotationPreviewData.orphan]) }
+}
+
+#Preview("桌面 · 讨论（原文已改写）") {
+    DocPreviewShell {
+        previewPanel(annotations: [AnnotationPreviewData.rewritten, AnnotationPreviewData.plain])
+    }
 }
 
 #Preview("桌面 · 讨论（定位闪烁）") {

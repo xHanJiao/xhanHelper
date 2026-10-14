@@ -502,6 +502,19 @@ function annotationChecks() {
      ar ? ('y ' + ar.y + ' vs ' + fr.top) : 'null');
   ok('annotationRect 未命中返回 null', reader.annotationRect('不存在') === null);
 
+  // 20) 画不出来必须回话（宿主据此判断"屏幕上的正文是不是旧的"，见 DocumentReaderView 的
+  //     contentLooksStale）：① 正文里压根没这句 → stale=1（该拉新正文）
+  //     ② 有这句但多命中分不出 → stale=0（跟正文新旧无关，刷新也救不了）
+  put([mk('miss1', '这句正文里压根没有', '')]);
+  var miss1 = last('annotationsMissed');
+  ok('正文里没有的划线 → annotationsMissed{count:1,stale:1}',
+     !!miss1 && miss1.count === 1 && miss1.stale === 1, JSON.stringify(miss1));
+  ok('找不到的划线不画', c.querySelectorAll('mark.hl[data-id="miss1"]').length === 0);
+  put([mk('amb1', '记忆系统', '', 'zzz', 'zzz')]);
+  var amb = last('annotationsMissed');
+  ok('多命中分不出 → annotationsMissed{count:1,stale:0}',
+     !!amb && amb.count === 1 && amb.stale === 0, JSON.stringify(amb));
+
   put([]);
 }
 

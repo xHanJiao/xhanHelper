@@ -314,8 +314,11 @@ class DocumentViewModel: ObservableObject {
     }
 
     /// 刷新当前打开的详情文档（仅当详情页在前台时调用，见 BrowsePanelView）。
+    /// 三个触发点可能同刻打过来（回到前台 + 一轮对话结束 + 划线发现正文旧了），
+    /// 用 isDetailLoading 兼作在飞闸门：合并成一次 GET，也免得加载指示抖两下。
     func reloadOpenDocument() async {
         guard let id = openDocument?.id else { return }
+        guard !isDetailLoading else { return }
         isDetailLoading = true
         defer { isDetailLoading = false }
         do {

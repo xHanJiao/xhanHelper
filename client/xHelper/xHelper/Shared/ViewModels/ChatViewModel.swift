@@ -1369,6 +1369,8 @@ class ChatViewModel: ObservableObject {
         #if os(iOS)
         endBackgroundTask()
         #endif
+        // 一轮结束（含停止/出错）：agent 可能刚改过文档，让打开着的详情页校一次正文
+        NotificationCenter.default.post(name: .chatTurnEnded, object: nil)
     }
 
     /// 终止/出错后给残留的流式消息挂唯一本地 ID。

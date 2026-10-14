@@ -51,6 +51,12 @@ final class DocumentReaderController: ObservableObject {
     private var hasLoadedAnnotations = false
     private var isLoadingAnnotations = false
 
+    /// 正文疑似过旧时自增，宿主观察到就拉一次新正文。用 tick 不用闭包：
+    /// controller 在 `DocumentFullView.init` 里就建好了，那会儿还拿不到 viewModel。
+    @Published private(set) var staleContentTick = 0
+    /// 自动拉新正文的闸门（同一份屏幕正文只拉一次 / 正文换了重新开口 / 提示只给一次）
+    private var staleGate = DocumentStaleGate()
+
     init(documentID: String, api: APIClient) {
         self.documentID = documentID
         self.api = api
@@ -109,6 +115,20 @@ final class DocumentReaderController: ObservableObject {
         if let id = connectorID { measureConnector(id: id) }
     }
 
+    /// 正文可能已旧（服务端手里的正文跟你屏幕上不是一份）：先自动拉一次新正文，
+    /// 拉完还画不出来就提示一次。触发点：① 创建时服务端靠夹逼改写 quote（`quoteRewritten`）
+    /// ② 重画时"正文里压根找不到这句"（`stale`）。文档是 agent 改的，这两种不一致会经常发生，
+    /// 不处理就是"服务端一切正常、正文里就是没线"。
+    private func contentLooksStale(undrawn: Int) {
+        if staleGate.noteStale() {
+            LogBuffer.shared.info("DocumentReader: 正文疑似过旧（\(undrawn) 条划线画不出），拉一次新正文")
+            staleContentTick += 1
+            return
+        }
+        guard undrawn > 0, staleGate.noteStillUndrawn() else { return }
+        ToastCenter.shared.show("正文可能已更新，\(undrawn) 条划线暂时画不出来")
+    }
+
     private func loadAnnotations() async {
         guard !isLoadingAnnotations else { return }
         isLoadingAnnotations = true
@@ -139,6 +159,10 @@ final class DocumentReaderController: ObservableObject {
             pushAnnotations()
             if a.orphaned {
                 ToastCenter.shared.show("这段文字已不在正文里，记为「已失活」")
+            } else if a.quoteRewritten {
+                // 服务端靠前后文夹逼才锚上 → 它手里的正文跟你屏幕上不是一份（文档被改过）。
+                // 这条的 quote 已经是新正文的文本，拉一次新正文它才画得出来。
+                contentLooksStale(undrawn: 0)
             }
             return a
         } catch {
@@ -298,6 +322,9 @@ final class DocumentReaderController: ObservableObject {
 
     /// 正文被改写后重拉：失活与否由服务端重算，客户端不自己猜。
     func refreshAnnotations() {
+        // 屏幕上的正文换了（服务端改写 / 手动刷新 / 上面那次自动校新）→ 重新给"自动拉新"开口：
+        // 上一轮画不出的划线，这一轮可能就画得出了（也可能又发现新的不一致）。
+        staleGate.screenChanged()
         Task { await loadAnnotations() }
     }
 
@@ -331,6 +358,16 @@ final class DocumentReaderController: ObservableObject {
                 pushAnnotations()
             } else {
                 Task { await loadAnnotations() }
+            }
+
+        case "annotationsMissed":
+            // 服务端说没失活却画不出来。stale>0 = 正文里压根没这句 → 屏幕上的正文是旧的；
+            // stale=0 = 多命中分不出，跟正文新旧无关（刷新救不了），留痕即可。
+            let undrawn = message["count"] as? Int ?? 0
+            if (message["stale"] as? Int ?? 0) > 0 {
+                contentLooksStale(undrawn: undrawn)
+            } else {
+                LogBuffer.shared.info("DocumentReader: \(undrawn) 条划线多命中分不出，未画出")
             }
 
         case "create":
@@ -1152,10 +1189,15 @@ var reader = (function () {
     return n;
   }
 
+  /* 上一次 locate 落空的原因：true = 正文里压根没这句（屏幕上的正文是旧的，该拉一次新正文）；
+     false = 有这句但多命中分不出（跟正文新旧无关，刷新也救不了）。 */
+  var lastMissMissing = false;
+
   /* 客户端定位：只复刻服务端 rung 1 + rung 2（design §4.4）。
      rung 3 的夹逼不做 —— 服务端夹逼成功时已经把 quote 刷成新文本，整段查找即可命中。
      分不出时返回 null：不画、也不改任何状态（orphan 由服务端唯一裁定）。 */
   function locate(quote, prefix, suffix) {
+    lastMissMissing = false;
     var needle = fold(quote);
     if (!needle) return null;
     var norm = normalized();
@@ -1167,7 +1209,7 @@ var reader = (function () {
       if (hits.length > 64) return null;   /* 复读机文档：服务端也放弃消歧，这里不猜 */
       at = hay.indexOf(needle, at + needle.length);
     }
-    if (!hits.length) return null;
+    if (!hits.length) { lastMissMissing = true; return null; }
 
     var pre = fold(prefix);
     var suf = fold(suffix);
@@ -1259,21 +1301,32 @@ var reader = (function () {
     return marks;
   }
 
+  /* 返回 {undrawn, stale}：undrawn = 服务端说没失活、这里却画不出来的条数；
+     stale = 其中「正文里压根找不到这句」的条数 —— 只有它说明屏幕上的正文是旧的。 */
   function redrawAnnotations() {
     unwrapAll();
+    var undrawn = 0, stale = 0;
     for (var i = 0; i < annotations.length; i++) {
       var a = annotations[i];
       if (a.orphaned) continue;      /* 失活的不画（批注面板里可见、可重挂） */
       var hit = locate(a.quote, a.prefix, a.suffix);
-      if (!hit) continue;            /* 客户端找不到就不画：不报错，也不动服务端状态 */
+      if (!hit) {                    /* 客户端找不到就不画：不报错，也不动服务端状态 */
+        undrawn++;
+        if (lastMissMissing) stale++;
+        continue;
+      }
       wrapSpan(hit.flat, hit.start, hit.end, a);
     }
+    return { undrawn: undrawn, stale: stale };
   }
 
   /* Swift 每次增删改成功后调用（全量替换） */
   function setAnnotations(json) {
     try { annotations = JSON.parse(json) || []; } catch (e) { annotations = []; }
-    redrawAnnotations();
+    var r = redrawAnnotations();
+    /* 画不出来必须让宿主知道：正文可能是旧的（文档是 agent 改的，客户端没刷新）。
+       静默跳过就是这条 bug 最初的样子 —— 服务端一切正常，正文里就是没线。 */
+    if (r.undrawn > 0) post({ type: 'annotationsMissed', count: r.undrawn, stale: r.stale });
   }
 
   function scrollToAnnotation(id) {

@@ -67,7 +67,7 @@
 | D16 | PDF 导出 | ✅ 不带划线与批注（导出的是文档本身） |
 | D17 | 配额 | ✅ 单条 quote ≤ 500 字符、批注 ≤ 2000 字符、单文档 ≤ 500 条 |
 | D18 | 全局快捷键 | ❌ 无 |
-| D19 | LLM 改写时正在阅读 | ❌ 不自动刷新（避免读到一半正文跳走）。退出重进或手动刷新才更新 |
+| D19 | LLM 改写时正在阅读 | ⚠️ **2026-10-14 修订**：**正文显示**仍不自动刷新（不跳走），但补了三个"该校正文"的时机 —— ① 客户端发现不一致（划线画不出来 / 服务端夹逼改写了 quote）② 回到前台 ③ 一轮对话结束（agent 刚改过）。见文末「后续变更 · 正文旧了要自己发现」 |
 | D20 | 顶栏入口 | ✅ 分享 / 导出 PDF / 下载 `.md` **保持**在窗口顶栏 `document-actions` 组（`DocumentSelectionCoordinator.swift:50-69`），文档详情页顶栏只放「返回文档列表」+ 查找。mockup 顶栏把两组画在了一起，属预览简化，实现以本条为准 |
 
 ---
@@ -216,6 +216,7 @@ rung 3  投影空间前后文夹逼 —— 覆盖"LLM 在划线 span 内部插�
 - 全字段比对后再决定是否落库；同一正文重复调用是幂等的，不产生无谓写
 
 关于「会不会在界面上闪一下」：刷新是**服务端字段**行为，用户看不到。视觉上唯一的风险是「正文正在显示时被 LLM 改写」，而 D19 已经定了**不自动刷新**，所以正常路径零闪。真出现闪烁再按现象调整。
+（2026-10-14 起正文会在「回到前台 / 一轮对话结束 / 客户端发现不一致」时校一次，滚动位置由 `window.scrollY` 存回 —— 见文末「后续变更 · 正文旧了要自己发现」。）
 
 ## 五、服务端 API
 
@@ -1100,3 +1101,18 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
   所有档位下按钮内都不折字（`textLines = 1`）。字号最小（`--fs 14`，scale 0.7）时仍单行（脚高 28）—— 只有拉满才换行。代价：拉满字号下脚部是 3 行（134）而不是逐按钮拆散时的 2 行（100），换来整组右对齐。
 - **自查**：`xcrun swiftc -typecheck`（macOS 26.3，项目真实设置）0 error；`scripts/check-reader-html.sh` PASS（164 条断言，含新增的 ask 分支）；**视觉**：上面那张表就是视觉验证数据（默认 / 拉满 / 最小三档字号 × 260–900 视口）。
 - **同步**：`docs/design/document-annotation-reply/design.md`（后续变更）已就地更新。
+
+### 2026-10-14 · 正文旧了要自己发现（划线画不出来 / 文档是 agent 改的）
+
+- **要什么**：文档由 agent 改写，客户端手里那份经常是旧的。旧正文撞上服务端夹逼改写 quote（D10c），症状是"划线保存成功、正文里就是没线"，且**全程静默**（服务端一切正常、抽屉也正常）。
+- **根因**（用真正文跑 `service.NewAnchorer` 复现过）：客户端 DOM 是旧版（`…我到手会差一些…`），服务端已是新版（`…Hx 到手会差一些…`）→ rung 1/2 双输 → rung 3 夹逼命中、把 quote 改写成新版文本（`quote_rewritten=true`、`orphaned=false`）→ 客户端拿新 quote 在旧 DOM 里 `indexOf` 落空 → `locate()` 返回 null → `redrawAnnotations` 里 `continue`，不画、不报错、不动服务端状态。
+- **修法**：让客户端自己发现"屏幕旧了"，然后拉一次新正文。
+  - JS：`locate` 记 `lastMissMissing`（true = 正文里压根没这句，屏幕旧；false = 多命中分不出，跟新旧无关）；`redrawAnnotations` 返回 `{undrawn, stale}`；`setAnnotations` 在 `undrawn>0` 时回话 `{type:'annotationsMissed', count, stale}`。
+  - Swift：`DocumentStaleGate`（纯状态，`Views/DocumentStaleGate.swift`）管闸门 —— 同一份**屏幕正文**上最多自动拉一次新正文、正文换了（`refreshAnnotations` 即 `document.content` 变化）重新开口、提示整篇只给一次；`contentLooksStale(undrawn:)` 按它决定"拉 / 提示 / 只记日志"。触发点：① 创建时 `quoteRewritten` ② 重画时 `stale>0`。
+  - 在飞保护：`reloadOpenDocument()` 用 `isDetailLoading` 兼作闸门（三个触发点可能同刻打过来，合并成一次 GET）。
+- **D19 修订**：原"不自动刷新"仍是**正文显示**策略（不在读到一半时跳），但补了三个"该校正文"的时机：① 客户端发现不一致 ② 回到前台（`didBecomeActive`）③ **一轮对话结束**（`.chatTurnEnded`，agent 刚改过就得校）。三处都走 `reloadOpenDocument()`，滚动位置由既有 `window.scrollY` 存回，不甩回顶部；正文没变则 signature 相同、不重载。
+- **抽屉**：`quoteRewritten` 补一枚「原文已改写」灰徽标。D10c 早就定了"让服务端改了用户原文这件事可见"，一直没落地。
+- **影响文件**：`DocumentReaderView.swift`（模板 JS 的 `locate`/`redrawAnnotations`/`setAnnotations` + controller 的 `staleContentTick`/`contentLooksStale`/`apply` 新 case/`create` 分支/`refreshAnnotations` 重开口）；`Views/DocumentStaleGate.swift`（新增，闸门）；`DocumentViewModel.swift`（`reloadOpenDocument` 在飞闸门）；`DocumentListView.swift`（详情页三条 onChange/onReceive）；`ChatTabManager.swift` + `ChatViewModel.swift`（`.chatTurnEnded`）；`AnnotationDrawer.swift`（徽标 + 预览 fixture）；`scripts/check-reader-html.sh`（+3 条断言）；`Package.swift` + `Tests/DocumentStaleGateTests`（闸门单测）。
+- **自查**：`scripts/check-reader-html.sh` PASS（167 条断言，含新增的 `annotationsMissed` 两条）；`scripts/snapshot-reader.sh`（真引擎）marks 11 段 / `textLen=407=不变` / 逐节点矩形数与改动前一致，无回归；`swift test --filter DocumentStaleGateTests` 4 条通过；`swiftc -typecheck` macOS / iOS 双 target 0 error。真机由用户在 Xcode 验证。
+- **已知代价**：`didBecomeActive` 那条不做判断，每次回到前台都是一次 GET（多设备 / 后台改写的保险），浏览面板的 ⟳ 会闪一下加载态 —— 功能无害，属观感噪声。
+- **不变**：服务端 / API / 模型 / 锚定算法 **零改动**。

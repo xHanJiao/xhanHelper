@@ -28,6 +28,18 @@ let package = Package(
             dependencies: ["ThumbRowLayout"],
             path: "Tests/ThumbRowLayoutTests"
         ),
+        // DocumentStaleGate — 「正文疑似过旧 → 自动拉一次新正文」的闸门（纯状态，无视图）。
+        // 它是防死循环的那道闸，抽出来让 swift test 能覆盖（见 Tests/DocumentStaleGateTests）。
+        .target(
+            name: "DocumentStaleGate",
+            path: "xHelper/Shared/Views",
+            sources: ["DocumentStaleGate.swift"]
+        ),
+        .testTarget(
+            name: "DocumentStaleGateTests",
+            dependencies: ["DocumentStaleGate"],
+            path: "Tests/DocumentStaleGateTests"
+        ),
         // TopBarLayoutCore — 顶栏自适应降级的纯逻辑（按可用宽选档 + 各档内在宽）。
         // 与 app 共享同一份源文件（含 Layout 宽度常量）；视图只负责照档位渲染。
         .target(

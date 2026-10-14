@@ -526,6 +526,19 @@ private struct DocumentFullView: View {
                 .onChange(of: findQuery) { _, query in reader.find(query) }
                 // 正文被改写后划线的失活状态要重算：服务端为准，客户端不自己猜
                 .onChange(of: document.content) { _, _ in reader.refreshAnnotations() }
+                // 正文疑似过旧（划线画不出来 / 服务端夹逼改写了 quote）→ 拉一次新正文；
+                // 重画由上面那条 content 变化接住。文档是 agent 改的，这一步是常态而非异常。
+                .onChange(of: reader.staleContentTick) { _, _ in
+                    Task { await viewModel.reloadOpenDocument() }
+                }
+                // 回到前台校一次：别让读者一直看 agent 改之前的旧正文
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    Task { await viewModel.reloadOpenDocument() }
+                }
+                // 一轮对话结束（agent 可能刚改过这篇）→ 校一次
+                .onReceive(NotificationCenter.default.publisher(for: .chatTurnEnded)) { _ in
+                    Task { await viewModel.reloadOpenDocument() }
+                }
 
                 // 批注面板常驻：展开 320，空间不够/手动收起 → 窄条
                 if annotExpanded {

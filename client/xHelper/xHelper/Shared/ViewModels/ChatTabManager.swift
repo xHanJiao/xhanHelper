@@ -10,6 +10,9 @@ extension Notification.Name {
     /// 刷新发现一批会话已在服务端消失（无痕销毁），应关闭对应 tab。
     /// userInfo["ids"] = [conversationId]
     static let conversationsGone = Notification.Name("conversationsGone")
+    /// 一轮对话结束（含停止/出错）。打开着的文档详情页据此校一次正文 ——
+    /// 文档常由 agent 改写，不校就会一直显示旧正文（划线的 quote 也跟着对不上）。
+    static let chatTurnEnded = Notification.Name("chatTurnEnded")
 }
 
 // MARK: - ChatTab

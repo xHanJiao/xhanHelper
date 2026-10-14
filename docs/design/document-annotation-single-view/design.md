@@ -135,3 +135,11 @@
 - **决定**：`AnnotationThreadCard` 的「让 AI 回复」入口加 `note` 非空守卫 —— 纯划线（`note` 空、无线程）线程区整段不画；已有线程的纯划线仍显示 `回复 N` 折叠行。详见 `docs/design/document-highlight-annotation/design.md` 文末同名条目。
 - **影响文件**：`client/xHelper/xHelper/Shared/Views/AnnotationDrawer.swift`。服务端 / JS 零改动。
 - **验证**：`swiftc -typecheck -D DEBUG`（macOS 26.3 / iOS 26.0）0 error。
+
+### 2026-10-14 · 非失活卡片补「原文已改写」徽标（D10c 落地）
+
+- **要什么**：正文被改写后服务端按前后文重新锚定，会把这条划线的 `quote` 换成当前正文的文本（`quote_rewritten=true`，见 `document-highlight-annotation` D10c）。这件事一直没在界面上表现过 —— 引文跟你当初划的不是同一句，却没有任何说法。
+- **实现**：`AnnotationDrawer.swift` 元信息行加 `rewrittenBadge`（灰胶囊「原文已改写」，`help` 说明"正文改写后按前后文重新锚定，原文已更新为当前正文的文本"），只在 `!orphaned && quoteRewritten` 时显示（失活条目的引文本来就灰掉 + 删除线，不再叠徽标）。
+- **不改**：服务端 / API / 模型 / 其余卡片形态不动。
+- **验证**：`swiftc -typecheck`（macOS + iOS）0 error。
+- **同步**：`docs/design/document-highlight-annotation/design.md` 文末「后续变更 · 正文旧了要自己发现」已就地更新。

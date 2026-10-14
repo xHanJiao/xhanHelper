@@ -96,25 +96,22 @@ enum PlanState: Equatable {
     case cancelled   // 已取消（全部 cancelled）
 }
 
-/// 会话模式三档（与服务端 mode 字符串一一对应）：
+/// 会话模式二档（与服务端 mode 字符串一一对应）：
 ///   - off    关闭：工具全量可用
-///   - normal 普通：仅只读工具（检索/查询）
-///   - strict 严格：无任何工具
+///   - normal 计划：仅只读工具（检索/查询）
 enum ChatMode: String {
     case off = "work"
     case normal = "plan"
-    case strict = "strict"
 
-    /// 循环下一档：关 → 普通 → 严格 → 关
+    /// 循环下一档：关 → 计划 → 关
     var next: ChatMode {
         switch self {
         case .off: return .normal
-        case .normal: return .strict
-        case .strict: return .off
+        case .normal: return .off
         }
     }
 
-    /// 是否处于计划模式（普通或严格）——两者都禁写、都禁客户端本地工具。
+    /// 是否处于计划模式（禁写、禁客户端本地工具）。
     var isPlanLike: Bool { self != .off }
 }
 
@@ -213,7 +210,7 @@ class ChatViewModel: ObservableObject {
     /// 响应检验事件状态（verify:checking|done|retry）
     @Published var verifyStatus: VerifyStatus?
 
-    /// 会话模式："work"（默认）| "plan"（只读）| "strict"（无工具）。只能由用户切换（Tab 快捷键/胶囊条）。
+    /// 会话模式："work"（默认）| "plan"（只读）。只能由用户切换（Tab 快捷键/胶囊条）。
     /// 服务端权威：由 loadConversation 带入；未知值归一到 off。
     @Published var mode: String = "work"
     /// 当前模式（由服务端 mode 字符串派生）
@@ -405,15 +402,14 @@ class ChatViewModel: ObservableObject {
     /// 只影响客户端确认弹窗，服务端零感知。换会话（loadConversation）自动回到安全档。
     @Published var trustLevel: TrustLevel = .off
 
-    /// 循环切换会话模式（关 → 普通 → 严格 → 关）。仅用户可触发（胶囊条点击 / 输入框聚焦时 Tab）。
+    /// 循环切换会话模式（关 → 计划 → 关）。仅用户可触发（胶囊条点击 / 输入框聚焦时 Tab）。
     /// 已有会话：PATCH 落库，失败回滚；空 tab（无会话）：只改本地，第一条消息经 init_mode 落库。
     func cycleMode() async {
         let next = chatMode.next
         let toast: String
         switch next {
         case .off: toast = "已退出计划模式"
-        case .normal: toast = "已进入计划模式 · 普通（仅只读工具）"
-        case .strict: toast = "已进入计划模式 · 严格（无工具）"
+        case .normal: toast = "已进入计划模式（仅只读工具）"
         }
         guard let cid = conversationId, !cid.isEmpty else {
             mode = next.rawValue // 空 tab：会话尚未创建，模式暂存本地，待首条消息 init_mode 落库
@@ -1115,7 +1111,7 @@ class ChatViewModel: ObservableObject {
                 self?.detachStreamingMessage()
             }
         }
-        // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan/strict）
+        // 空 tab（无会话）时带 init_mode：会话创建时应用客户端已切换的模式（work/plan）
         let initMode: String? = (conversationId == nil || conversationId?.isEmpty == true) ? mode : nil
         sseClient.connect(baseURL: baseURL, token: token, message: text, conversationId: conversationId, deepMode: deepMode, agentId: agentId, thinking: thinkingMode, temperature: temperature, maxTokens: maxTokens, memoryThreshold: memoryThreshold, memoryLimit: memoryLimit, clientTools: clientTools, initMode: initMode, verifyEnabled: verifyEnabled, briefAnswer: briefAnswer, hiddenRound: hiddenRound, attachments: attachmentIds, ephemeral: ephemeralIntent)
     }

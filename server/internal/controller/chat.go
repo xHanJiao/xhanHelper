@@ -87,16 +87,6 @@ const planModeNotice = `[计划模式] 当前处于计划模式（只读讨论�
 - 方案将在退出计划模式后整理为文档，本阶段只讨论
 - 如用户要求直接执行写操作，请告知用户先退出计划模式`
 
-// strictModeNotice — strict（严格计划模式）每轮注入的提示（notice 块，仅 LLM 可见）。
-// 本档不向 LLM 下发任何工具定义，服务端执行级全拦；此处仅引导纯方案讨论。
-// 首句保留 "当前处于严格计划模式（无工具状态）" 前缀（strictNoticeMarker 依赖它做退出提示检测）。
-const strictModeNotice = `[计划模式] 当前处于严格计划模式（无工具状态）：
-- 本模式不提供任何工具，禁止调用工具或声称已执行任何操作
-- 请仅基于对话历史与已注入的记忆/笔记/主题上下文进行纯方案讨论与设计
-- 讲清楚：用用户容易理解的方式说明现状、可选做法、推荐与理由、待你拍板的点；不要罗列文件清单或整段贴代码
-- 方案将在退出计划模式后整理为文档，本阶段只讨论
-- 如用户要求直接执行操作，请告知用户先退出计划模式`
-
 // planExitNotice — 退出 plan 模式后首条消息注入一次（notice 块，仅 LLM 可见）。
 // 降级说明同 planModeNotice：去掉 plan.save 步骤引导，落文档即终点。
 const planExitNotice = `[系统] 用户已退出计划模式（只读讨论结束）。若对话中已讨论出方案且用户未放弃：
@@ -105,11 +95,9 @@ const planExitNotice = `[系统] 用户已退出计划模式（只读讨论结�
 2. 询问用户下一步（是否基于方案执行具体操作，或就此结束）
 若未讨论出方案或用户已放弃：正常响应用户当前消息`
 
-// planNoticeMarker / strictNoticeMarker / planExitNoticeMarker — 注入检测标记（子串匹配）。
-// plan 与 strict 两种计划提示都算"在计划模式内"，退出检测需同时匹配。
+// planNoticeMarker / planExitNoticeMarker — 注入检测标记（子串匹配）。
 const (
 	planNoticeMarker     = "当前处于计划模式（只读讨论状态）"
-	strictNoticeMarker   = "当前处于严格计划模式（无工具状态）"
 	planExitNoticeMarker = "用户已退出计划模式（只读讨论结束）"
 )
 
@@ -122,7 +110,7 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			DeepMode       bool                   `json:"deep_mode"`
 			AgentID        *string                `json:"agent_id"`
 			Memory         retrieval.SourceConfig `json:"memory"`
-			InitMode       string                 `json:"init_mode"` // 可选：仅新建会话时应用的初始模式（work/plan/strict）；已有会话忽略
+			InitMode       string                 `json:"init_mode"` // 可选：仅新建会话时应用的初始模式（work/plan）；已有会话忽略
 			// 无痕：仅新建会话时生效（空 tab 开了无痕意图 → 首条消息建会话即标记）。默认会话忽略。
 			Ephemeral bool `json:"ephemeral"`
 
@@ -177,9 +165,9 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 				conv.AgentID = req.AgentID
 			}
 			// 空 tab 场景：会话尚未存在，客户端已切的模式经 init_mode 传入，创建时落库
-			// （仅 plan/strict 有意义，非法值忽略，兼容旧客户端）
-			if model.ModeRestrictsTools(req.InitMode) {
-				conv.Mode = req.InitMode
+			// （仅 plan 有意义，非法值忽略，兼容旧客户端）
+			if m := model.NormalizeConvMode(req.InitMode); model.ModeRestrictsTools(m) {
+				conv.Mode = m
 			}
 			// 无痕：仅新建非默认会话时落库（默认会话禁止无痕，静默忽略）。
 			if req.Ephemeral && !conv.IsDefault {
@@ -212,18 +200,15 @@ func chat(orch *agent.Orchestrator, cfg *config.Config, convRepo *service.Conver
 			agentSystemPrompt = cfg.GlobalDefaultRole.SystemPrompt
 		}
 
-		// 会话模式：plan（只读）/ strict（无工具）下追加讨论约束（执行级强制拦截，prompt 只是引导）
-		convMode := conv.Mode
-		if convMode == "" {
-			convMode = model.ConvModeWork
-		}
+		// 会话模式：plan（只读）下追加讨论约束（执行级强制拦截，prompt 只是引导）
+		// NormalizeConvMode 同时兜住空值与历史 strict 档（库里的旧行）——必须在下方
+		// ModeRestrictsTools 判定与 RunRequest 之前归一，否则旧严格会话会被当成不受限模式。
+		convMode := model.NormalizeConvMode(conv.Mode)
 		// 模式提示（注入当前 user 消息 XMLContext，仅 LLM 可见）：
-		//   plan/strict 模式 → 每轮注入对应提示；work 模式且上一条 user 消息是计划提示 → 注入退出提示（一次）
+		//   plan 模式 → 每轮注入提示；work 模式且上一条 user 消息是计划提示 → 注入退出提示（一次）
 		modeNotice := ""
 		if convMode == model.ConvModePlan {
 			modeNotice = planModeNotice
-		} else if convMode == model.ConvModeStrict {
-			modeNotice = strictModeNotice
 		} else if containsPlanNotice(c.Request.Context(), msgRepo, conv.ID) {
 			modeNotice = planExitNotice
 		}
@@ -632,7 +617,7 @@ func buildLLMConfigResponse(agent *model.Agent, defaultTemp *float64, defaultMax
 //  4. lastWindow ≥ MaxWindowRounds → 折半
 //  5. 没有上一条消息 → 新 session
 //
-// containsPlanNotice 判断会话最近一条 user 消息的 XMLContext 是否含计划模式提示标记（plan 或 strict）。
+// containsPlanNotice 判断会话最近一条 user 消息的 XMLContext 是否含计划模式提示标记。
 // 用于"退出计划模式后首条消息"注入退出提示（仅一次）：上一条是计划提示 → 注入退出；
 // 上一条已是退出提示（或更早）→ 不再注入。
 func containsPlanNotice(ctx context.Context, msgRepo *service.MessageRepo, convID string) bool {
@@ -644,7 +629,7 @@ func containsPlanNotice(ctx context.Context, msgRepo *service.MessageRepo, convI
 		return false
 	}
 	x := *msgs[0].XMLContext
-	return strings.Contains(x, planNoticeMarker) || strings.Contains(x, strictNoticeMarker)
+	return strings.Contains(x, planNoticeMarker)
 }
 
 func computeWindowSize(ctx context.Context, msgRepo *service.MessageRepo, convID string, cfg *config.Config) agent.WindowResult {

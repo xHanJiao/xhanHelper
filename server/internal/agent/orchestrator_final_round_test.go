@@ -308,11 +308,6 @@ func TestMkLlmChatReq_PlanMode_OnlyReadOnlyTools(t *testing.T) {
 	if len(mixed.Functions) != 1 || mixed.Functions[0].Name != "read_fn" {
 		t.Errorf("plan 模式 mixed 应只含 read_fn, got %+v", mixed.Functions)
 	}
-	// strict 模式：不下发任何工具（连 expose_tools / 只读函数 / 客户端工具都没有）
-	strict := o.mkLlmChatReq(&RunRequest{UserID: "u1", Mode: model.ConvModeStrict, ClientTools: clientTools}, "sys", &reactState{msgs: msgs})
-	if len(strict.Tools) != 0 {
-		t.Errorf("strict 模式不应下发任何工具, got %+v", strict.Tools)
-	}
 }
 
 // —— shouldVerify 收尾轮跳过 ——

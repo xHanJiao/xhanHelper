@@ -1,37 +1,27 @@
 import SwiftUI
 
-/// 会话模式图标按钮：关闭（青绿·工具全开）/ 普通（橙·只读）/ 严格（红·无工具），点击循环切换。
+/// 会话模式图标按钮：关闭（青绿·工具全开）/ 计划（橙·只读），点击循环切换。
 /// 仅图标，hover 看 tooltip。
 struct ModePill: View {
     let context: InputBarContext
     let mode: ChatMode
     let action: () -> Void
 
-    private var symbol: String {
-        mode == .strict ? "lock.fill" : "checklist"
-    }
-
     private var tint: Color {
-        switch mode {
-        case .off: return Color("appAccent")
-        case .normal: return .orange
-        case .strict: return .red
-        }
+        mode == .normal ? .orange : Color("appAccent")
     }
 
     private var tooltip: String {
-        switch mode {
-        case .off: return "聊天模式（工具全开），点击进入计划·普通（只读）"
-        case .normal: return "计划模式 · 普通（仅只读工具），点击切换到严格（无工具）"
-        case .strict: return "计划模式 · 严格（无工具），点击退出计划模式"
-        }
+        mode == .normal
+            ? "计划模式（仅只读工具），点击退出"
+            : "聊天模式（工具全开），点击进入计划模式"
     }
 
     var body: some View {
         IconButton(
             visibility: .always,
             context: context,
-            symbol: symbol,
+            symbol: "checklist",
             tint: tint,
             tooltip: tooltip,
             action: action

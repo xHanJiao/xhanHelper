@@ -559,7 +559,6 @@ func TestMkLlmChatReq_PassThroughFields(t *testing.T) {
 		UserID:      "user-42",
 		Temperature: ptr(0.9),
 		MaxTokens:   ptr(4096),
-		Mode:        model.ConvModeStrict, // strict 档不下发任何工具，便于验证字段透传
 	}
 
 	cr := o.mkLlmChatReq(req, result, &reactState{msgs: msgs})
@@ -575,9 +574,6 @@ func TestMkLlmChatReq_PassThroughFields(t *testing.T) {
 	}
 	if cr.UserID != "user-42" {
 		t.Errorf("UserID: want 'user-42', got '%s'", cr.UserID)
-	}
-	if cr.Tools != nil {
-		t.Errorf("Tools: want nil, got %v", cr.Tools)
 	}
 }
 

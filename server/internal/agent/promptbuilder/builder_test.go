@@ -221,26 +221,6 @@ func TestBuild_PlanModeOnlyReadOnlyTools(t *testing.T) {
 	}
 }
 
-func TestBuild_StrictModeNoTools(t *testing.T) {
-	reg := tool.NewRegistry()
-	reg.Register(&planBuildFakeTool{name: "fake_tool"})
-
-	b := NewPromptBuilder("base", reg, nil, false)
-	strict, err := b.Build(context.Background(), BuildOptions{Mode: model.ConvModeStrict})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(strict.Prompt, "read_fn") || strings.Contains(strict.Prompt, "write_fn") {
-		t.Error("strict 模式不应包含任何函数定义")
-	}
-	if !strings.Contains(strict.Prompt, "严格计划模式") {
-		t.Error("strict 模式应含无工具提示")
-	}
-	if strings.Contains(strict.Prompt, "函数调用接口") {
-		t.Error("strict 模式不应提示调用工具")
-	}
-}
-
 func TestBuild_StableContextInjected(t *testing.T) {
 	reg := tool.NewRegistry()
 	b := NewPromptBuilder("base", reg, nil, false)

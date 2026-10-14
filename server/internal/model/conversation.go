@@ -2,22 +2,35 @@ package model
 
 import "time"
 
-// 会话模式常量（三档）：
+// 会话模式常量（二档）：
 //   - work   关闭：工具全量可用
-//   - plan   普通计划模式：仅只读工具可用，写操作服务端执行级拦截（2026-09-15 只读化）
-//   - strict 严格计划模式：无任何工具（不下发定义 + 执行级全拦），纯讨论
+//   - plan   计划模式：仅只读工具可用，写操作服务端执行级拦截（2026-09-15 只读化）
 //
 // 模式只能由用户/客户端切换（PATCH /api/conversations/:id/mode），LLM 无控制权。
 const (
-	ConvModeWork   = "work"   // 正常工作模式（默认）：工具全量可用
-	ConvModePlan   = "plan"   // 计划模式·普通：仅只读工具
-	ConvModeStrict = "strict" // 计划模式·严格：无任何工具
+	ConvModeWork = "work" // 正常工作模式（默认）：工具全量可用
+	ConvModePlan = "plan" // 计划模式：仅只读工具
+	// 历史值：严格计划模式（无任何工具），2026-10-14 撤档。库里旧行可能仍是它，
+	// 读侧一律经 NormalizeConvMode 归到 plan——否则会被当成不受限模式、静默放开全部工具。
+	legacyConvModeStrict = "strict"
 )
 
-// ModeRestrictsTools 报告该模式下工具能力是否受限（plan 只读 / strict 全禁）。
+// ModeRestrictsTools 报告该模式下工具能力是否受限（plan 只读）。
 // 用于编排器统一短路渐进式暴露、客户端工具目录/执行等能力。
 func ModeRestrictsTools(mode string) bool {
-	return mode == ConvModePlan || mode == ConvModeStrict
+	return mode == ConvModePlan
+}
+
+// NormalizeConvMode 归一会话模式：空值与历史 strict 档 → 默认/plan，其余原样返回。
+func NormalizeConvMode(mode string) string {
+	switch mode {
+	case "":
+		return ConvModeWork
+	case legacyConvModeStrict:
+		return ConvModePlan
+	default:
+		return mode
+	}
 }
 
 // Conversation — 对话会话
@@ -34,7 +47,7 @@ type Conversation struct {
 	LastExtractedAt *time.Time `json:"last_extracted_at,omitempty"`
 	AgentID         *string    `gorm:"size:36;index" json:"agent_id,omitempty"`
 	ParentID        *string    `gorm:"size:36" json:"parent_id,omitempty"` // 子会话（subAgent）的父会话 ID，nil=普通会话
-	Mode            string     `gorm:"size:10;default:work" json:"mode"`   // 会话模式：work（默认）| plan（只读）| strict（无工具）
+	Mode            string     `gorm:"size:10;default:work" json:"mode"`   // 会话模式：work（默认）| plan（只读）
 	Extra           string     `gorm:"type:text;not null" json:"extra"`    // JSON: {"used_tool_ids": ["..."]}
 	PinnedAt        *time.Time `json:"pinned_at,omitempty"`                // 置顶时间，非空=已 pin；列表排序用（pin 时间倒排）
 	CreatedAt       time.Time  `gorm:"autoCreateTime" json:"created_at"`

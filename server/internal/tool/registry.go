@@ -567,15 +567,7 @@ func (r *Registry) ExecuteByName(ec *ExecuteContext, toolName, funcName string, 
 			"未找到工具 '%s'。请核对工具名后重试。", toolName)}
 	}
 
-	// —— 严格计划模式：全部工具拦截 ——
-	// strict 档不向 LLM 下发任何工具定义，此处执行级再兜底，防止历史 tool_calls 或客户端绕过。
-	if ec.Mode == model.ConvModeStrict {
-		return &Result{Success: false, Error: fmt.Sprintf(
-			"当前处于严格计划模式（无工具状态），本模式不提供任何工具，禁止执行 %s.%s。请仅进行方案讨论；如需执行操作，请让用户退出计划模式。",
-			toolName, funcName)}
-	}
-
-	// —— 普通计划模式：只读放行，写操作拦截 ——
+	// —— 计划模式：只读放行，写操作拦截 ——
 	// plan 模式仅允许 ReadOnlyFuncs() 声明的只读函数执行（检索/查询），其余一律拦截。
 	// ReadOnlyFuncs() 返回 nil/空 map 的工具（含 task、expose_tools、theme、mailbox）全拦。
 	if ec.Mode == model.ConvModePlan && !t.ReadOnlyFuncs()[funcName] {

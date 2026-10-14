@@ -39,6 +39,14 @@ func TestListConversations_ReturnsMode(t *testing.T) {
 	if err := convRepo.Create(ctx, &model.Conversation{ID: "c-work", UserID: "u1", Title: "w"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	// 撤档前写入的严格档行（2026-10-14 删档）：读侧必须归一到 plan。
+	// 不归一的话 ModeRestrictsTools 判成不受限，旧严格会话会被静默放开全部工具。
+	if err := convRepo.Create(ctx, &model.Conversation{ID: "c-legacy", UserID: "u1", Title: "legacy"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := convRepo.SetMode(ctx, "c-legacy", "strict"); err != nil {
+		t.Fatalf("set legacy mode: %v", err)
+	}
 
 	got := map[string]string{}
 	for _, tc := range []struct {
@@ -65,8 +73,8 @@ func TestListConversations_ReturnsMode(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 				t.Fatalf("unmarshal: %v\n%s", err, w.Body.String())
 			}
-			if len(resp.Data.Conversations) != 2 {
-				t.Fatalf("want 2 conversations, got %d: %s", len(resp.Data.Conversations), w.Body.String())
+			if len(resp.Data.Conversations) != 3 {
+				t.Fatalf("want 3 conversations, got %d: %s", len(resp.Data.Conversations), w.Body.String())
 			}
 			for _, m := range resp.Data.Conversations {
 				id, _ := m["id"].(string)
@@ -84,5 +92,9 @@ func TestListConversations_ReturnsMode(t *testing.T) {
 	}
 	if got["c-work"] != model.ConvModeWork {
 		t.Errorf("普通会话应返回 work，got %q", got["c-work"])
+	}
+	// 撤档前写入的 strict 行：读侧归一为 plan（否则客户端显示关闭、服务端却按不受限放行工具）
+	if got["c-legacy"] != model.ConvModePlan {
+		t.Errorf("历史 strict 行应归一为 plan，got %q", got["c-legacy"])
 	}
 }

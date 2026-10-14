@@ -248,11 +248,10 @@ struct ChatView: View {
         withAnimation(.easeOut(duration: 0.25)) { viewModel.subagentPanelExpanded = false }
     }
 
-    /// 输入栏容器描边/光晕色：计划·普通橙、计划·严格红、信任金、完全信任红、其余默认强调色。
+    /// 输入栏容器描边/光晕色：计划模式橙、信任金、完全信任红、其余默认强调色。
     private var inputBarTint: Color {
         switch viewModel.chatMode {
         case .normal: return .orange
-        case .strict: return .red
         case .off:
             switch viewModel.trustLevel {
             case .off: return Color("appAccent")
@@ -409,7 +408,7 @@ struct ChatView: View {
     private func inputBarButtonContent(_ id: InputBarButtonID, ctx: InputBarContext) -> some View {
         switch id {
         case .mode:
-            // 计划模式：高频使用。三档循环（关 → 普通 → 严格）。
+            // 计划模式：高频使用。两档循环（关 → 计划）。
             ModePill(context: ctx, mode: viewModel.chatMode) {
                 Task { await viewModel.cycleMode() }
             }
@@ -469,7 +468,7 @@ struct ChatView: View {
             }
         case .handoff:
             // 会话接力：整理成文档并开新会话续接。计划模式不能写文档，
-            // 故 plan/严格档下置灰（tooltip 说明原因），非流式、非空会话才可用。
+            // 故计划档下置灰（tooltip 说明原因），非流式、非空会话才可用。
             HandoffPill(
                 context: ctx,
                 isEnabled: !viewModel.isStreaming

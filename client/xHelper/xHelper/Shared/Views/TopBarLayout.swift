@@ -8,16 +8,14 @@ import Foundation
 enum TopBarLevel: Int, CaseIterable, Comparable {
     /// 全量。
     case full = 0
-    /// 收 DEV 徽标（仅 dev 构建存在；纯装饰，第一牺牲）。
-    case hideDevChip = 1
     /// 中心槽组（浏览器 7 键 / 文档详情 3 键）收进 `⋯`。
-    case foldCenter = 2
+    case foldCenter = 1
     /// 下拉标签收窄（240 → 160）。
     ///
     /// 为什么最后才动标签而不是收导航组：导航组（文档/账单/监控/记忆/进浏览器）的 ⌘1–5
     /// 挂在**被渲染的按钮**上（`TopBarButton.keyEquivalent` → `keyboardShortcut`），
     /// 整组收进 `⋯` 会把快捷键一起丢掉；收标题只是截断文字。
-    case compactSwitcher = 3
+    case compactSwitcher = 2
 
     static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 }
@@ -54,8 +52,8 @@ struct TopBarPlan: Equatable {
     /// 恒等于 `model.centerGroups`（整组显形）；否则 = 白给的空间能塞下的个数（`0` = 整组进 `⋯`）。
     let centerVisible: [Int]
 
-    /// DEV 徽标是否显示（dev 且未降到收徽标档）。
-    var showsDevChip: Bool { model.isDev && level < .hideDevChip }
+    /// DEV 徽标是否显示（dev 构建常驻，降级不收）。
+    var showsDevChip: Bool { model.isDev }
     /// 中心槽是否还有按钮留在栏上（整组被收时为 false）。
     var showsCenter: Bool { centerVisible.contains { $0 > 0 } }
     /// 是否渲染 `⋯`（只在真收了东西时）。
@@ -192,7 +190,7 @@ enum TopBarLayout {
 
     static func trailingChildren(level: TopBarLevel, model: TopBarWidthModel, centerVisible: [Int]) -> [CGFloat] {
         var children: [CGFloat] = []
-        if model.isDev && level < .hideDevChip { children.append(Layout.topBarDevChipWidth) }
+        if model.isDev { children.append(Layout.topBarDevChipWidth) }
 
         let centerWidth = centerSlotWidth(level: level, model: model, centerVisible: centerVisible)
         if centerWidth > 0 { children.append(centerWidth) }

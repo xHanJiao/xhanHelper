@@ -4,7 +4,7 @@ import XCTest
 /// 顶栏自适应降级：按可用宽选档 + 各档内在宽。
 ///
 /// 断言的目标是**行为而非数字**：装得下的最不降级档、窗口底线（双栏 778 / PiP 750）下中心槽组必须
-/// 让位、档位随可用宽单调不增、dev 徽标先被收掉。数字只在第一条里钉住量级，防止常量漂移后静默走偏。
+/// 让位、档位随可用宽单调不增、dev 徽标永不收起。数字只在第一条里钉住量级，防止常量漂移后静默走偏。
 final class TopBarLayoutTests: XCTestCase {
     /// 右栏开时的窗口底线（= `Layout.rightSidebarOpenMinContentWidth`）。
     private let twoColumnFloor = Layout.rightSidebarOpenMinContentWidth
@@ -87,18 +87,27 @@ final class TopBarLayoutTests: XCTestCase {
         )
     }
 
-    /// dev 构建的 DEV 徽标只会让栏更宽；双栏底线下降级后必须已经不显示徽标（含浏览器态）。
-    func testDevChipIsShedFirst() {
+    /// dev 构建的 DEV 徽标**降级不收**：任何可用宽（含双栏底线 778 / PiP 750）下都在栏上，
+    /// 于是 dev 各档内在宽恒比 release 多一个徽标宽。
+    func testDevChipIsAlwaysShown() {
         var model = browserModel
         model.isDev = true
-        // dev 全量比 release 全量更宽（多了徽标）
-        XCTAssertGreaterThan(
-            TopBarLayout.width(level: .full, model: model),
-            TopBarLayout.width(level: .full, model: browserModel)
-        )
-        let plan = TopBarLayout.plan(available: twoColumnFloor, model: model)
-        XCTAssertFalse(plan.showsDevChip)
-        XCTAssertFalse(plan.showsCenter)
+        // dev 每档都比 release 更宽：徽标本身 44 + 多一个簇内子项带来的一次簇内间距 8
+        for level in TopBarLevel.allCases {
+            XCTAssertEqual(
+                TopBarLayout.width(level: level, model: model)
+                    - TopBarLayout.width(level: level, model: browserModel),
+                Layout.topBarDevChipWidth + Layout.topBarGroupSpacing,
+                accuracy: 0.001,
+                "level=\(level)"
+            )
+        }
+        for available in [twoColumnFloor, singleColumnFloor] {
+            XCTAssertTrue(TopBarLayout.plan(available: available, model: model).showsDevChip,
+                          "available=\(available) 徽标被收掉了")
+        }
+        XCTAssertTrue(TopBarLayout.plan(available: twoColumnFloor, model: model).showsDevChip)
+        XCTAssertFalse(TopBarLayout.plan(available: twoColumnFloor, model: model).showsCenter)
     }
 
     /// 档位随可用宽单调不增（窗口越宽只应越少降级，不许「越宽越降级」）。

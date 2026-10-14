@@ -94,8 +94,8 @@ struct TopBarView: View {
             if flexible { Spacer(minLength: 0) } else { Spacer().frame(width: 0) }
 
             #if os(macOS)
-            // dev 视觉标识（UI-7）：Debug 构建在胶囊簇左侧挂一枚 DEV 徽标，
-            // 一眼认出沙盒窗口（Dock 图标另有 dev 角标）。窄窗降级时第一个被收掉。
+            // dev 视觉标识（UI-7）：Debug 构建在胶囊簇左侧挂一枚红底 DEV 徽标，
+            // 一眼认出沙盒窗口（Dock 图标另有 dev 角标）。**降级不收**（见 TopBarLayout）。
             if plan.showsDevChip { devChip }
             #endif
 
@@ -342,10 +342,10 @@ struct TopBarView: View {
         Text("DEV")
             .font(.system(size: 10, weight: .semibold, design: .rounded))
             .tracking(0.5)
-            .foregroundStyle(Color("appAccent"))
+            .foregroundStyle(.white)
             .padding(.horizontal, 8)
             .frame(height: Layout.topBarCapsuleHeight)
-            .background(Color("appAccent").opacity(0.16), in: Capsule())
+            .background(Color.red, in: Capsule())
             .help("本地开发环境（Debug 构建）")
             .allowsHitTesting(false)
     }

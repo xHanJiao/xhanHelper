@@ -58,7 +58,7 @@ enum Layout {
     static let topBarSwitcherChromeWidth: CGFloat = 24 + 4 + 11 + 6 + 26
     /// 无痕 🎭 前缀占宽（12pt 图标 + 4 间距）。
     static let topBarEphemeralBadgeWidth: CGFloat = 16
-    /// DEV 徽标宽（10pt 文本 + 左右各 8 padding；仅 dev 构建）。
+    /// DEV 徽标宽（10pt 文本 + 左右各 8 padding；仅 dev 构建，降级不收）。
     static let topBarDevChipWidth: CGFloat = 44
     /// 顶栏外层 HStack 间距。
     static let topBarGroupSpacing: CGFloat = 8

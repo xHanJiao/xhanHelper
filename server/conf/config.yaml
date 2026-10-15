@@ -90,7 +90,7 @@ chat:
   summary_relevance_threshold: 0.5 # 摘要相关性余弦相似度阈值
   summary_relevance_history_n: 5 # 相关性检查的历史消息窗口大小
   summary_dedup_threshold: 0.85 # 摘要附着去重阈值（相邻摘要更相似则丢弃较旧者）
-  subagent_only_client_tools: [browser, fs, shell] # 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏）。注意 shell_peek（只读探查）不在此列 → 主循环可直接调用，见 docs/design/shell-tool/readonly-free-and-peek.md
+  subagent_only_client_tools: [fs, shell] # 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏）。注意 shell_peek（只读探查）不在此列 → 主循环可直接调用，见 docs/design/shell-tool/readonly-free-and-peek.md；browser 已放回主循环（主会话可直接接管用户打开的页），见 docs/design/mac-apps/browser-main-session.md
   image_replay_rounds: 10 # 历史消息重放图片的最近轮数（图片 token 不复用文本缓存，全量重放每轮都烧钱）
 
 archive:

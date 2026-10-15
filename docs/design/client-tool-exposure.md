@@ -135,3 +135,7 @@ make test   # 已知测试库残留失败除外，需确认与新改动无关
 5. **prompt 字节稳定性**：目录由 buildClientToolDefs 排序生成，字节稳定；客户端工具集合随连接/版本变化，system prompt 每会话本就可变，会话内重复轮次 tools 数组同集合仍稳定，不影响前缀缓存收益。
 6. **持久化暴露过期条目**：客户端版本删函数后 Extra 残留 `browser.old_fn`，filter 匹配不到定义不注入，仅一点无害垃圾数据。
 7. **执行路由与暴露解耦**：clientIdx 分发不依赖暴露，实现时执行层零改动即可规避"未暴露当不可执行"的误伤。
+
+## 后续变更
+
+- **2026-10-15**：`browser` 从 `chat.subagent_only_client_tools` 移出 → 主循环也走本套渐进暴露（客户端在线时目录含 browser，LLM `enable` 后可用）。动机与实现见 `docs/design/mac-apps/browser-main-session.md`。影响文件：`server/conf/config.yaml`、`server/internal/config/config.go`、`server/internal/agent/orchestrator.go`（仅注释）。`fs` / `shell` 仍仅子任务。

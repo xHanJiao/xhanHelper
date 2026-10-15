@@ -99,3 +99,9 @@
 5. Cloudflare/403 站：仍硬失败换源，不弹手递手。
 6. agent 标签空闲自动关闭（TTL 600s）；服务端子任务结束清场。
 7. `go build ./...` + `go test ./...` 全绿。
+
+---
+
+## 后续变更
+
+- **2026-10-15（browser 放回主循环）**：`browser` 组不再属于 `subagent_only_client_tools`，主会话可直接接管用户打开的页（不再必须先派 `web_explore` 子任务）。本文第 3 节用例 11「帮我操作我打开的 XX 页」现由主会话直接走通（`list_tabs` 取 user 标签 tabId → 写操作首次弹授权确认）。主循环标签归属同步改为按会话隔离 `main:<convID>`（原先恒定的 `"main"` 会让用户标签写入授权跨会话残留）；`list_tabs`/`open` 的工具描述同步调整以引导该路径。已知限制：主循环无 `ui__ask_user`，验证码/登录墙只靠客户端自动升栏 + 系统通知提示用户（无 [前往处理] 按钮）。见 `docs/design/mac-apps/browser-main-session.md`。

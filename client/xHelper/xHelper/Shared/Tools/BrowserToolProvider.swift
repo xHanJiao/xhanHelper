@@ -77,7 +77,9 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
     private var tabCounter = 0
     /// 每个 agent owner 最近触摸的标签（无 tabId 读工具的隐式目标；与 UI 激活页解耦，用户视图不受影响）
     private var lastAgentTabByOwner: [String: String] = [:]
-    /// 用户授权 agent 操作其用户标签的 owner 集合（"subagent:<convID>"，任务级天然隔离，无需清理）
+    /// 用户授权 agent 操作其用户标签的 owner 集合。owner 带会话维度（"main:<convID>" /
+    /// "subagent:<convID>"）→ 天然按会话/任务隔离，集合不清理也只随会话数缓慢增长。
+    /// 注意：owner 若退化成恒定值（如早年主循环的 "main"），授权会升级为 App 运行期有效。
     private var userTabGrants: Set<String> = []
     /// owner -> 最近一次 agent 工具调用的会话上下文：浏览事件据此挂会话/轮次/父 bridge 事件。
     private var agentActivityContexts: [String: AgentActivityContext] = [:]
@@ -192,10 +194,10 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
     func toolSchemas() async -> [LocalToolSchema] {
         var schemas: [LocalToolSchema] = [
-            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。默认 background:true 静默打开：标签进入「Agent 工作区」（底部折叠条），不切走当前页、不打扰用户浏览；配合 snapshot/read/get_text 等工具的 tabId 全程静默（流程：open(url) 拿 tabId → read/snapshot(tabId:...) 静默抓取 → close_tab(tabId:...) 清理）。background:false 仅用于用户明确要求查看该页：标签升入主栏并激活给用户看。配额：agent 打开的标签上限 \(Self.agentTabQuotaLimit) 个，返回值含 remainingAgentTabQuota；配额满时会自动回收空闲标签腾位，仍不足才报错（含 agent 标签 tabId 列表），此时先 close_tab 关闭不需要的页面再打开。验证码/登录墙：若页面需要人工处理（登录/验证码/2FA），open 返回 needsUserIntervention:true（页面已升入主栏并标注），此时必须立即调用 ui__ask_user 请用户处理，用户处理后继续，跳过则换源。写/交互工具（click/fill 等）必须显式 tabId", inputSchema: objProps(["url": strProp("要打开的网址"), "background": boolProp("是否后台打开（不切走当前标签页），默认 true")]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_open",             description: "打开指定 URL。默认 background:true 静默打开：标签进入「Agent 工作区」（底部折叠条），不切走当前页、不打扰用户浏览；配合 snapshot/read/get_text 等工具的 tabId 全程静默（流程：open(url) 拿 tabId → read/snapshot(tabId:...) 静默抓取 → close_tab(tabId:...) 清理）。background:false 仅用于用户明确要求查看该页：标签升入主栏并激活给用户看。优先接管用户已打开的页：用户已自己开好/已登录/已过验证码时，先 list_tabs 取 owner=user 的 tabId 直接操作该页，不要另开新页（另开新页可能重新触发站点风控/验证）。配额：agent 打开的标签上限 \(Self.agentTabQuotaLimit) 个，返回值含 remainingAgentTabQuota；配额满时会自动回收空闲标签腾位，仍不足才报错（含 agent 标签 tabId 列表），此时先 close_tab 关闭不需要的页面再打开。验证码/登录墙：若页面需要人工处理（登录/验证码/2FA），open 返回 needsUserIntervention:true（页面已升入主栏并标注），此时必须立即调用 ui__ask_user 请用户处理（主会话无 ui__ask_user 时改为文字告知用户，页面已升栏并已发系统通知），用户处理后继续，跳过则换源。写/交互工具（click/fill 等）必须显式 tabId", inputSchema: objProps(["url": strProp("要打开的网址"), "background": boolProp("是否后台打开（不切走当前标签页），默认 true")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_close",            description: "关闭本任务打开的全部标签页（只关 agent 标签，用户自己的标签不受影响）", inputSchema: objProps([:]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_close_tab",        description: "关闭指定的单个标签页，释放内存。tabId 从 list_tabs 获取；不用的页面请及时关闭。只能关闭本任务（owner 相同）的标签；用户自己的标签需用户授权", inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
-            LocalToolSchema(name: "agent_browser_list_tabs",        description: "列出当前所有打开的标签页（id/url/title/owner）。每项带 owner 标注：subagent:xxx=自己任务的标签，user=用户自己的标签（读取免费，写入需用户授权确认）。只操作标注为自己的标签", inputSchema: objProps([:]), isReadOnly: true),
+            LocalToolSchema(name: "agent_browser_list_tabs",        description: "列出当前所有打开的标签页（id/url/title/owner）。每项带 owner 标注：user=用户自己的标签，main:<convID> / subagent:<convID>=agent 自己任务的标签。返回的 activeTabId 就是用户当前正在看的那页。用户要求操作他自己打开的页面时（如「帮我操作我打开的这个页」），用 owner=user 对应的 tabId：读取免费，写/交互首次会弹一次授权确认，允许后同一任务/会话内免再确认", inputSchema: objProps([:]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_switch_tab",       description: "切换到指定标签页",                        inputSchema: objProps(["tabId": strProp("tab的id，从list_tabs获取")]), isReadOnly: true),
             LocalToolSchema(name: "agent_browser_read",             description: "读取页面文本。分层用法：article=正文抽取（推荐，文章页用：Readability 只取正文剔除导航/评论/侧栏，含标题，抽取失败自动回退整页并标注 fallback）；below=按标题或元素读下方内容（列表页/信息流/评论区：给标题文本用 query，或用 ref 精确指向元素，读该元素下方/容器内的摘要或已展开全文，返回 matched_title 供核对，无需打开链接）；outline=标题树（长文导航，省 token）；filter=按关键词返回匹配章节；full=整页文本（含全部噪声，最后手段）。article/full/below 支持 offset 分页通读长文：返回含 total/truncated/offset，未完时按返回的 offset 继续调用 read(mode, offset=...) 逐段读完。建议先 snapshot 定位 → 列表页读条目用 read(below, query=标题) 或 read(below, ref=@eN) → 文章页通读用 read(article)。tabId 可指定后台 tab 静默读取（不切走当前页），不传则读当前激活页", inputSchema: objProps([
                 "mode": strProp("article（推荐，正文抽取）| full（默认，整页文本）| below（按标题/元素读下方内容）| outline（h1-h6 标题树）| filter（按关键词返回匹配章节）"),
@@ -315,7 +317,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                session.owner == nil,
                Self.userTabWriteTools.contains(tool),
                !userTabGrants.contains(owner) {
-                return .init(serverResult: nil, serverError: "该标签是用户自己的标签，agent 操作用户标签需用户授权（确认条允许后本任务内可继续）", clientAction: nil)
+                return .init(serverResult: nil, serverError: "该标签是用户自己的标签，agent 操作用户标签需用户授权（确认条允许后同一任务/会话内可继续）", clientAction: nil)
             }
             // 真实系统事件工具（CGEvent）需页面在屏幕可见：工作区/后台 agent 标签不可见时拒绝
             if let owner = context.owner,
@@ -1754,7 +1756,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
                 NotificationManager.notifyUserIntervention(message: "网页需要人工处理（\(reason)）：\(title)")
                 return .init(serverResult: Self.jsonDict(["url": urlStr, "title": title, "tabId": tabId,
                     "needsUserIntervention": true, "reason": reason,
-                    "message": "该页需要人工处理（\(reason)），已切到前台并标注。请立即调用 ask_user 请求用户处理，message 指明站点与原因"]), serverError: nil, clientAction: nil)
+                    "message": "该页需要人工处理（\(reason)），已切到前台并标注、并发出了系统通知。请立即请求用户处理：子任务调用 ui__ask_user，主会话直接在回复里告诉用户去处理该页。用户处理后继续，跳过则换源"]), serverError: nil, clientAction: nil)
             }
             if !background {
                 promoteAgentTab(tabId, activate: true)
@@ -1924,7 +1926,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
         }
         // 用户标签关闭需授权（agent 默认不能动用户自己的标签）
         if let owner, session.owner == nil, !userTabGrants.contains(owner) {
-            return .init(serverResult: nil, serverError: "该标签（\(tabId)）是用户自己的标签，agent 关闭用户标签需用户授权（确认条允许后本任务内可继续）", clientAction: nil)
+            return .init(serverResult: nil, serverError: "该标签（\(tabId)）是用户自己的标签，agent 关闭用户标签需用户授权（确认条允许后同一任务/会话内可继续）", clientAction: nil)
         }
         if session.hasActiveDownloads {
             #if os(macOS)
@@ -2858,7 +2860,7 @@ final class BrowserToolProvider: NSObject, LocalToolProvider {
 
         /// agent 打开的标签（用于空闲超时自动关闭，用户自开的标签不受影响）
         var isAgentTab = false
-        /// 标签归属（client_tool_call owner 下发）："main" / "subagent:<convID>"，nil=用户标签。
+        /// 标签归属（client_tool_call owner 下发）："main:<convID>" / "subagent:<convID>"，nil=用户标签。
         /// 并发子任务共享浏览器实例，close_tab 保护只允许关闭同归属标签（防互相踩踏）。
         var owner: String?
         /// 活动埋点的浏览状态机（每个标签一个；macOS 本地模式才接线）。

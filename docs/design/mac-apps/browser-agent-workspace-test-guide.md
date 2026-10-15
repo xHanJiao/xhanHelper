@@ -111,3 +111,9 @@
 - **wall 检测只在初始 open 时跑**：页面内二次跳转后才出现的验证码靠 LLM 自行识别 + `ask_user` 兜底（此时无 [前往处理] 按钮，AskUserBar 仅文案）。
 - **多 agent 并发**：`list_tabs` 返回全部标签（含其它 agent 的），靠 `owner` 标注区分；写操作仅 `owner==自己` 的标签免授权。
 - **`open` 是 L3**：默认每次 open 都弹确认条（既有行为）；信任模式下被跳过。
+
+---
+
+## 后续变更
+
+- **2026-10-15（browser 放回主循环）**：`browser` 组不再属于 `subagent_only_client_tools`，本文 §3 用例 11「帮我操作我打开的 XX 页」现在由**主会话直接走通**（无需先派 `web_explore`）：主会话 `list_tabs` → 取 `owner=user` 标签的 tabId → 读直接放行、写首次弹授权确认。`list_tabs` / `open` 的工具描述已同步调整以引导该路径。已知限制：主循环无 `ui__ask_user`，§4 验证码/登录墙只靠客户端自动升栏 + 系统通知提示用户（无 [前往处理] 按钮）。见 `docs/design/mac-apps/browser-main-session.md`。

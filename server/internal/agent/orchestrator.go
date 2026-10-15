@@ -226,7 +226,7 @@ type OrchestratorConfig struct {
 	VerifyMaxRetries          int
 	VerifyModel               string            // "flash" | "pro"，默认 flash
 	ToolExcludes              []string          // 对 LLM 隐藏的工具名列表（控 token 成本）
-	SubAgentOnlyClientTools   []string          // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏），默认 ["browser","fs","shell"]
+	SubAgentOnlyClientTools   []string          // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏），默认 ["fs","shell"]（browser 已放回主循环）
 	DebugPersistJSON          bool              // 是否持久化完整 LLM 请求 JSON（异步限频写入，配 debug_json 控制频率与保留）
 	DebugJSONSink             DebugJSONSink     // request_json 异步落库 sink，DebugPersistJSON 开启时必填
 	ClientBridge              *ClientToolBridge // 客户端工具桥（客户端工具调用的 pending 路由）
@@ -1852,7 +1852,7 @@ func (o *Orchestrator) executeConcurrently(ctx context.Context, events chan<- *l
 				Error: fmt.Sprintf("当前处于计划模式，本模式下已禁用全部客户端工具，禁止执行 %s.%s。请仅进行方案讨论；如需执行操作，请让用户退出计划模式。", tc.Tool, tc.Function)}}
 			continue
 		}
-		r, unavailable := o.executeClientTool(ctx, events, userID, convID, turnID, tc, mode, "main")
+		r, unavailable := o.executeClientTool(ctx, events, userID, convID, turnID, tc, mode, mainOwner(convID))
 		if unavailable {
 			state.clientToolsUnavailable = true
 		}
@@ -1887,7 +1887,7 @@ func (o *Orchestrator) executeClientTool(ctx context.Context, events chan<- *llm
 			}
 		},
 		func(evt *llm.StreamEvent) { o.sendEvent(events, evt) },
-		userID, call, mode, owner, convID, turnID) // 标签归属：主循环 "main"，子任务 "subagent:<convID>"
+		userID, call, mode, owner, convID, turnID) // 标签归属：主循环 mainOwner(convID)，子任务 "subagent:<convID>"
 }
 
 // —— DB 保存 ——

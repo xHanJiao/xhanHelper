@@ -148,7 +148,7 @@ opencode 触发条件换算（保留 40k token = 160k chars，需超出 >20k tok
 
 ### 3.5 谁贡献的
 
-主对话（2026-09-15 起，`task` 上线后）——**已无 fs / browser**：
+主对话（2026-09-15 起，`task` 上线后）——**无 fs**（browser 于 2026-10-15 放回主循环，见 docs/design/mac-apps/browser-main-session.md，下表为放回前的数据）：
 
 | 工具 | chars |
 |---|---|

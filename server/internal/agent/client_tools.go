@@ -191,6 +191,14 @@ func filterSubAgentOnlyClientToolInfos(cs []tool.ClientToolInfo, groups []string
 	return out
 }
 
+// mainOwner 主循环的标签归属（客户端据此做标签隔离与用户标签写入授权的任务级缓存）。
+// 必须按会话隔离：恒定的 "main" 会让客户端 userTabGrants（按 owner 缓存、App 运行期不清理）
+// 从"每任务一次确认"退化成"每 App 运行期一次确认"——首个会话点过允许后，后续所有会话
+// 对用户标签的写操作不再弹确认。与子任务 "subagent:<convID>" 同构。
+func mainOwner(convID string) string {
+	return "main:" + convID
+}
+
 // clientToolGroupMap 构建 server_name → 函数名集合 索引（makeExposeFn 校验用）。
 // 用原始上报数据即可：buildClientToolDefs 会拒绝的非法条目（__ 分隔符/与 registry 冲突），
 // 即使被暴露，filterExposedFuncDefs 也匹配不到定义，自然不注入——无害发散，不额外校验。
@@ -363,7 +371,7 @@ func (cc *clientToolCaller) Call(
 	userID string,
 	call tool.ToolCall,
 	mode string,
-	owner string, // 标签归属："main"（主循环）或 "subagent:<convID>"。客户端据此做标签隔离（list_tabs 标注 / close_tab 保护）
+	owner string, // 标签归属：mainOwner(convID)（主循环，形如 "main:<convID>"）或 "subagent:<convID>"。客户端据此做标签隔离（list_tabs 标注 / close_tab 保护）与用户标签写入授权的任务级缓存
 	convID string, // 会话 id（客户端子事件归组用，见设计篇 4.8）
 	turnID string, // 本轮 turn id；后台任务为空
 ) (*tool.Result, bool) {

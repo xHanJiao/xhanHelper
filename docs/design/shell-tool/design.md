@@ -347,7 +347,7 @@ shell 的结果要进上下文，进程又跑在用户 Mac 上，边界处理是
 
 ## 十三、归属变更（2026-09-16）：shell 收进 file_explore 子任务
 
-主循环对 LLM 隐藏的客户端工具组由 `chat.subagent_only_client_tools` 控制（默认 `[browser, fs]`）。原先 shell 暴露在主循环，带来两个问题：
+主循环对 LLM 隐藏的客户端工具组由 `chat.subagent_only_client_tools` 控制（当时默认 `[browser, fs]`；2026-10-15 起 browser 已放回主循环，见 docs/design/mac-apps/browser-main-session.md）。原先 shell 暴露在主循环，带来两个问题：
 
 1. **output_path 读不回来**：shell 大输出落盘后 note 让模型用 `fs__read` 续读，但主循环**没有** `fs__*`（只在 `file_explore` 子任务里），模型只能再派一个子任务去读——多一跳且别扭。
 2. **打爆主上下文**：shell 输出直接进主循环上下文。
@@ -360,7 +360,7 @@ shell 的结果要进上下文，进程又跑在用户 Mac 上，边界处理是
 
 不改类型名、不改 XML 根标签（`<file_explore_result>`）、不动 DB 里的 `subagent_type`——零兼容风险；只是把 `fileExplorePrompt` 与 `task.go` / `static.go` 的描述从「文件检索」扩到「文件 + 只读命令」。
 
-配置默认值：`server/conf/config.yaml:chat.subagent_only_client_tools` 与 `server/internal/config/config.go` 兜底均为 `[browser, fs, shell]`。
+配置默认值：`server/conf/config.yaml:chat.subagent_only_client_tools` 与 `server/internal/config/config.go` 兜底均为 `[fs, shell]`（当时为 `[browser, fs, shell]`；browser 已于 2026-10-15 放回主循环）。
 
 ### 工作区内降 L3（同一批）
 

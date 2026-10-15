@@ -11,7 +11,7 @@ struct RightSidebarTab: Identifiable {
     var host: String?
     /// agent 打开的标签（淡蓝底色区分；用户点击翻牌后置 false）
     var isAgentTab: Bool = false
-    /// agent 来源 owner（"main" / "subagent:<convID>"）。翻牌/交还均保留，仅用于归属展示
+    /// agent 来源 owner（"main:<convID>" / "subagent:<convID>"）。翻牌/交还均保留，仅用于归属展示
     var agentOwner: String? = nil
     /// 手递手标签：agent 检测到验证码/登录墙升入主栏，需用户处理（⚠ 角标）
     var needsUserAttention: Bool = false

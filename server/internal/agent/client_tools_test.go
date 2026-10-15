@@ -312,6 +312,38 @@ func TestExecuteClientTool_ForwardsOwner(t *testing.T) {
 	}
 }
 
+// 主循环 owner 必须按会话隔离（main:<convID>）：客户端 userTabGrants 按 owner 缓存且 App 运行期
+// 不清理，恒定的 "main" 会让用户标签写入授权从"每任务一次确认"退化成"每 App 运行期一次确认"。
+func TestExecuteConcurrently_MainOwnerIsPerConversation(t *testing.T) {
+	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 2 * time.Second}
+	events := make(chan *llm.StreamEvent, 16)
+
+	go func() {
+		for evt := range events {
+			if evt.Type != "client_tool_call" {
+				continue
+			}
+			var p struct {
+				CallID string `json:"call_id"`
+				Owner  string `json:"owner"`
+			}
+			if err := json.Unmarshal([]byte(evt.Content), &p); err != nil {
+				t.Errorf("bad payload: %v", err)
+				return
+			}
+			if p.Owner != "main:c1" {
+				t.Errorf("主循环 owner 应为 main:c1, got %q", p.Owner)
+			}
+			_ = o.clientBridge.OnResult(p.CallID, "u1", ClientToolResult{Result: json.RawMessage(`{}`)})
+			return
+		}
+	}()
+
+	o.executeConcurrently(context.Background(), events, "u1", "c1", "t1",
+		tool.NewRegistry(), []tool.ToolCall{{Tool: "browser", Function: "agent_browser_list_tabs"}},
+		map[string]bool{"browser": true}, &reactState{}, "", nil, nil)
+}
+
 // 执行超时不置位 unavailable（可重试）：两个调用都真实执行并各自超时
 func TestExecuteConcurrently_TimeoutDoesNotSetUnavailable(t *testing.T) {
 	o := &Orchestrator{clientBridge: NewClientToolBridge(), clientToolTimeout: 30 * time.Millisecond}

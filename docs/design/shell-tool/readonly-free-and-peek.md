@@ -41,7 +41,7 @@
 
 ### 思路
 
-服务端 `chat.subagent_only_client_tools: [browser, fs, shell]` 把三组客户端工具对主循环隐藏，只给子任务。`git status`、`ls` 这种输出很少的探查也被迫走"派子任务 → 跑 → 摘要"三跳，为省 token 反而费事。
+服务端 `chat.subagent_only_client_tools: [browser, fs, shell]`（当时值；browser 已于 2026-10-15 放回主循环，见 docs/design/mac-apps/browser-main-session.md）把三组客户端工具对主循环隐藏，只给子任务。`git status`、`ls` 这种输出很少的探查也被迫走"派子任务 → 跑 → 摘要"三跳，为省 token 反而费事。
 
 不是把整个 `shell` 下放，而是**新开一个只读探查工具组 `shell_peek`**，只放"看一眼、输出天然有界、不读文件正文"的命令。会扫盘/读内容/输出不可控的仍留在完整 `shell`（仅子任务）。
 
@@ -115,7 +115,7 @@
 | 文件 | 改动 |
 |------|------|
 | `internal/agent/client_tools.go` | `ClientTool` 加 `ServerDescription string \`json:"server_description"\``；`buildClientToolDefs` 按 server_name 记录首个非空组描述，缺省回退 `"Mac 客户端本地工具（组名）"` |
-| `conf/config.yaml` | `subagent_only_client_tools` 保持 `[browser, fs, shell]`（`shell_peek` 不列 → 主循环可见），注释说明 |
+| `conf/config.yaml` | `subagent_only_client_tools` 保持 `[fs, shell]`（`shell_peek` 不列 → 主循环可见），注释说明 |
 
 ---
 

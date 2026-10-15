@@ -203,10 +203,10 @@ struct RightSidebarView: View {
         }
     }
 
-    /// agent 来源 tab 的悬停提示：展示 owner（main / subagent:<convID>）；用户 tab 返回 nil
+    /// agent 来源 tab 的悬停提示：展示 owner（main:<convID> / subagent:<convID>）；用户 tab 返回 nil
     private func agentOwnerHelp(_ tab: RightSidebarTab) -> String? {
         guard let owner = tab.agentOwner else { return nil }
-        if owner == "main" { return "由主 Agent 打开" }
+        if owner.hasPrefix("main") { return "由主 Agent 打开" }
         if owner.hasPrefix("subagent:") {
             return "由子 Agent 打开（\(owner.dropFirst("subagent:".count))）"
         }

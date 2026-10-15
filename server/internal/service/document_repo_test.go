@@ -388,7 +388,7 @@ func TestDocumentRepo_PurgeExpired(t *testing.T) {
 	if err := db.Create(&model.DocumentAnnotation{ID: "a1", DocumentID: "old", UserID: "u1", Quote: "q"}).Error; err != nil {
 		t.Fatalf("seed annotation: %v", err)
 	}
-	if err := db.Create(&model.DocumentShare{ID: "s1", DocumentID: "old", Token: "t1", ExpiresAt: time.Now().Add(time.Hour)}).Error; err != nil {
+	if err := db.Create(&model.DocumentShare{ID: "s1", DocumentID: "old", Token: "t1"}).Error; err != nil {
 		t.Fatalf("seed share: %v", err)
 	}
 

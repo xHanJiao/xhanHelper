@@ -77,7 +77,6 @@ func (r *MessageShareRepo) Create(ctx context.Context, convID, userID string, us
 		ConversationID: convID,
 		MessageIDs:     string(msgIDsJSON),
 		CreatedBy:      userID,
-		ExpiresAt:      time.Now().Add(7 * 24 * time.Hour),
 	}
 
 	if err := r.db.WithContext(ctx).Create(share).Error; err != nil {
@@ -87,14 +86,11 @@ func (r *MessageShareRepo) Create(ctx context.Context, convID, userID string, us
 	return share, nil
 }
 
-// GetByToken 根据 token 获取分享信息，同时验证过期
+// GetByToken 根据 token 获取分享信息
 func (r *MessageShareRepo) GetByToken(ctx context.Context, token string) (*model.MessageShare, error) {
 	var share model.MessageShare
 	if err := r.db.WithContext(ctx).Where("token = ?", token).First(&share).Error; err != nil {
 		return nil, err
-	}
-	if time.Now().After(share.ExpiresAt) {
-		return &share, errors.New("分享已过期")
 	}
 	return &share, nil
 }

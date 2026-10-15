@@ -962,26 +962,12 @@ struct UserPrompt: Identifiable, Codable {
 
 struct CreateShareToken: Codable {
     let token: String
-    let expiresAt: String
-
-    enum CodingKeys: String, CodingKey {
-        case token
-        case expiresAt = "expires_at"
-    }
 }
 
 struct DocumentShareResult: Codable {
     let id: String
     let token: String
     let url: String
-    let expiresAt: String
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case token
-        case url
-        case expiresAt = "expires_at"
-    }
 }
 
 // MARK: - 图床

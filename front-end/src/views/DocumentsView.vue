@@ -38,7 +38,6 @@ const { isBarVisible, showBar } = useScrollTopBar(contentContainerRef)
 
 const showShareModal = ref(false)
 const shareUrl = ref('')
-const shareExpires = ref('')
 
 async function handleShare(doc) {
   try {
@@ -54,7 +53,6 @@ async function handleShare(doc) {
     }
 
     shareUrl.value = window.location.origin + shareRes.url
-    shareExpires.value = new Date(shareRes.expires_at).toLocaleString()
     showShareModal.value = true
   } catch (e) {
     message.error('创建分享链接失败')
@@ -227,7 +225,7 @@ onMounted(fetchDocuments)
         </div>
       </div>
       <div style="color: var(--color-text-tertiary); font-size: 0.8rem;">
-        有效期至：{{ shareExpires }}
+        链接长期有效
       </div>
     </NModal>
   </div>

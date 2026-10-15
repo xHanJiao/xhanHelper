@@ -11,19 +11,13 @@ const token = route.params.token
 const loading = ref(true)
 const error = ref(null)
 const messages = ref([])
-const expiresAt = ref('')
 
 onMounted(async () => {
   try {
     const data = await api.publicGet('/api/share/messages/' + token)
     messages.value = data.messages || []
-    expiresAt.value = data.expires_at || ''
   } catch (e) {
-    if (e.status === 410) {
-      error.value = '分享链接已过期（有效期7天）'
-    } else {
-      error.value = '该分享不存在或已被删除'
-    }
+    error.value = e.status === 404 ? '该分享不存在或已被删除' : '加载失败，请稍后重试'
   } finally {
     loading.value = false
   }
@@ -44,9 +38,6 @@ onMounted(async () => {
 
         <!-- Messages -->
         <div v-if="messages.length > 0" class="shared-messages">
-          <div class="share-meta" v-if="expiresAt">
-            分享链接 · {{ new Date(expiresAt).toLocaleDateString() }} 前有效
-          </div>
           <MessageBubble
             v-for="msg in messages"
             :key="msg.id"
@@ -92,14 +83,5 @@ onMounted(async () => {
 .shared-messages {
   display: flex;
   flex-direction: column;
-}
-
-.share-meta {
-  text-align: center;
-  font-size: 12px;
-  color: var(--color-text-muted);
-  margin-bottom: var(--space-lg);
-  padding-bottom: var(--space-md);
-  border-bottom: 1px solid var(--color-border);
 }
 </style>

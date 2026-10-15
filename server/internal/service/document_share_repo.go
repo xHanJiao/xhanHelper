@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log"
-	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -24,18 +23,12 @@ func NewDocumentShareRepo(db *gorm.DB, docRepo *DocumentRepo) *DocumentShareRepo
 }
 
 // Create 创建或重置分享链接
-func (r *DocumentShareRepo) Create(ctx context.Context, docID, userID string, validDays int) (*model.DocumentShare, error) {
-	doc, err := r.documentRepo.GetByID(ctx, docID, userID)
-	if err != nil {
+func (r *DocumentShareRepo) Create(ctx context.Context, docID, userID string) (*model.DocumentShare, error) {
+	if _, err := r.documentRepo.GetByID(ctx, docID, userID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errors.New("文档不存在")
 		}
 		return nil, err
-	}
-	_ = doc
-
-	if validDays <= 0 {
-		validDays = 7
 	}
 
 	if err := r.db.WithContext(ctx).Where("document_id = ?", docID).Delete(&model.DocumentShare{}).Error; err != nil {
@@ -46,7 +39,6 @@ func (r *DocumentShareRepo) Create(ctx context.Context, docID, userID string, va
 		ID:         uuid.New().String(),
 		DocumentID: docID,
 		Token:      uuid.New().String(),
-		ExpiresAt:  time.Now().Add(time.Duration(validDays) * 24 * time.Hour),
 	}
 
 	if err := r.db.WithContext(ctx).Create(share).Error; err != nil {
@@ -61,10 +53,6 @@ func (r *DocumentShareRepo) GetByToken(ctx context.Context, token string) (*mode
 	var share model.DocumentShare
 	if err := r.db.WithContext(ctx).Where("token = ?", token).First(&share).Error; err != nil {
 		return nil, nil, err
-	}
-
-	if time.Now().After(share.ExpiresAt) {
-		return &share, nil, errors.New("分享已过期")
 	}
 
 	doc, err := r.documentRepo.GetByIDPublic(ctx, share.DocumentID)

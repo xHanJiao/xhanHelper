@@ -93,9 +93,6 @@ chat:
   subagent_only_client_tools: [browser, fs, shell] # 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏）。注意 shell_peek（只读探查）不在此列 → 主循环可直接调用，见 docs/design/shell-tool/readonly-free-and-peek.md
   image_replay_rounds: 10 # 历史消息重放图片的最近轮数（图片 token 不复用文本缓存，全量重放每轮都烧钱）
 
-share:
-  default_valid_days: 7
-
 archive:
   after_days: 14 # 会话无活动超过 N 天自动归档（is_deleted=true，可从设置页找回）；<=0 关闭
   interval_minutes: 1440 # 归档扫描间隔（分钟），默认每日一次

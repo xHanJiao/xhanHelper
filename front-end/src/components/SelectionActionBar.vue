@@ -35,7 +35,7 @@ async function handleShare() {
 
     try {
       await navigator.clipboard.writeText(url)
-      nMessage.success('已复制分享链接，7天后过期')
+      nMessage.success('已复制分享链接')
     } catch {
       // 剪贴板写入失败，弹 Modal
       showManualModal.value = true
@@ -81,7 +81,7 @@ function copyFromModal() {
   <!-- 手动复制 Modal -->
   <NModal v-model:show="showManualModal" title="分享链接">
     <div class="manual-copy-modal">
-      <p class="modal-hint">请手动复制以下链接（7天后过期）：</p>
+      <p class="modal-hint">请手动复制以下链接：</p>
       <div class="url-box">{{ shareUrl }}</div>
       <NSpace justify="end" style="margin-top: 16px;">
         <NButton @click="showManualModal = false">关闭</NButton>

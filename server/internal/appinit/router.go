@@ -155,8 +155,8 @@ func InitRouter(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClien
 		ToolExcludes: cfg.Chat.ToolExcludes, // 与主循环/plan 模式同源
 	})
 	annotationHandler := controller.NewAnnotationHandler(repos.DocumentAnnotation, repos.Document, repos.DocumentAnnotationReply, annotationReplier)
-	documentShareHandler := controller.NewDocumentShareHandler(repos.DocumentShare, cfg)
-	messageShareHandler := controller.NewMessageShareHandler(repos.MessageShare, cfg, repos.Conversation)
+	documentShareHandler := controller.NewDocumentShareHandler(repos.DocumentShare)
+	messageShareHandler := controller.NewMessageShareHandler(repos.MessageShare, repos.Conversation)
 	summaryHandler := controller.NewSummaryHandler(repos.ConversationSummary, repos.Message)
 	reminderHandler := controller.NewReminderHandler(repos.Reminder, repos.Conversation, repos.Message)
 	themeHandler := controller.NewThemeHandler(repos.ThemeState)

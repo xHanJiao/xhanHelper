@@ -2,14 +2,11 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 
-	"xhan-helper/internal/config"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/view"
 )
@@ -17,16 +14,15 @@ import (
 // MessageShareHandler 消息分享 handler
 type MessageShareHandler struct {
 	repo     *service.MessageShareRepo
-	cfg      *config.Config
 	convRepo *service.ConversationRepo
 }
 
 // NewMessageShareHandler 创建消息分享 handler
-func NewMessageShareHandler(repo *service.MessageShareRepo, cfg *config.Config, convRepo *service.ConversationRepo) *MessageShareHandler {
+func NewMessageShareHandler(repo *service.MessageShareRepo, convRepo *service.ConversationRepo) *MessageShareHandler {
 	if convRepo == nil {
 		panic("message_share: convRepo is nil (wiring bug)")
 	}
-	return &MessageShareHandler{repo: repo, cfg: cfg, convRepo: convRepo}
+	return &MessageShareHandler{repo: repo, convRepo: convRepo}
 }
 
 // createShareReq 创建分享请求体
@@ -81,8 +77,7 @@ func (h *MessageShareHandler) CreateMessageShare(c *gin.Context) {
 	}
 
 	view.JSONOK(c, gin.H{
-		"token":      share.Token,
-		"expires_at": share.ExpiresAt,
+		"token": share.Token,
 	})
 }
 
@@ -93,28 +88,12 @@ func (h *MessageShareHandler) ViewSharedMessages(c *gin.Context) {
 	messages, err := h.repo.GetMessagesByToken(c.Request.Context(), token)
 	if err != nil {
 		log.Printf("[share] view shared messages failed: token=%s err=%v", token, err)
-		if err.Error() == "分享已过期" {
-			view.JSONError(c, http.StatusGone, "分享链接已过期（有效期7天）")
-			return
-		}
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			view.JSONError(c, http.StatusNotFound, "该分享不存在或已被删除")
-			return
-		}
 		view.JSONError(c, http.StatusNotFound, "该分享不存在或已被删除")
 		return
 	}
 
-	// 获取分享信息用于返回 expires_at
-	share, _ := h.repo.GetByToken(c.Request.Context(), token)
-	expiresAt := ""
-	if share != nil {
-		expiresAt = share.ExpiresAt.Format("2006-01-02T15:04:05Z07:00")
-	}
-
 	view.JSONOK(c, gin.H{
-		"messages":   messages,
-		"expires_at": expiresAt,
+		"messages": messages,
 	})
 
 	go h.repo.IncrementVisitCount(context.Background(), token)

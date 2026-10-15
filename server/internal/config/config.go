@@ -35,7 +35,6 @@ type Config struct {
 	WebFetch          WebFetchConfig          `yaml:"webfetch"`
 	SubAgent          SubAgentConfig          `yaml:"subagent"`
 	Chat              ChatConfig              `yaml:"chat"`
-	Share             ShareConfig             `yaml:"share"`
 	Archive           ArchiveConfig           `yaml:"archive"`
 	Storage           StorageConfig           `yaml:"storage"`
 	Backup            BackupConfig            `yaml:"backup"`
@@ -106,11 +105,6 @@ type ChatConfig struct {
 	ToolExcludes              []string `yaml:"tool_excludes"`               // 对 LLM 隐藏的工具名列表（控 token 成本），默认空
 	SubAgentOnlyClientTools   []string `yaml:"subagent_only_client_tools"`  // 仅 subAgent 可用的客户端工具组（主循环对 LLM 隐藏），默认 ["browser","fs","shell"]
 	ImageReplayRounds         int      `yaml:"image_replay_rounds"`         // 历史消息重放图片的最近轮数，默认 10（图片 token 烧钱，不随文本缓存复用）
-}
-
-// ShareConfig — 分享配置
-type ShareConfig struct {
-	DefaultValidDays int `yaml:"default_valid_days"` // 分享链接默认有效天数，默认 7
 }
 
 // ArchiveConfig — 会话自动归档配置
@@ -1015,9 +1009,6 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Chat.ImageReplayRounds == 0 {
 		cfg.Chat.ImageReplayRounds = 10
-	}
-	if cfg.Share.DefaultValidDays == 0 {
-		cfg.Share.DefaultValidDays = 7
 	}
 	// 图片存储默认值
 	if cfg.Storage.ImageDir == "" {

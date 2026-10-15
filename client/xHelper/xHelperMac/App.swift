@@ -7,7 +7,7 @@ extension Notification.Name {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    /// 主窗口（`WindowGroup` 那一个）。只有它要套透明机身底；⌘, 设置窗保持系统原生（见 configureWindow）。
+    /// 主窗口（`Window` 那一个，唯一）。只有它要套透明机身底；⌘, 设置窗保持系统原生（见 configureWindow）。
     static weak var primaryWindow: NSWindow?
 
     private(set) var isHoldingQuit = false
@@ -305,9 +305,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
-    // 关窗后点 Dock 图标回来：交给 SwiftUI 自己处理（`WindowGroup` 的默认行为）。
+    // 关窗后点 Dock 图标回来：交给 SwiftUI 自己处理（单窗口场景 `Window` 的默认行为，实测可唤回）。
     // 别在这里手动 `makeKeyAndOrderFront`——那是多余的第二只手，会和 SwiftUI 各拉一个窗口
-    // （旧窗口有时已被释放、有时还活着，所以表现为「偶尔出现两个主窗口」）。
+    // （旧窗口有时已被释放、有时还活着 → 「偶尔出现两个主窗口」，快捷键落到看不见那个窗口上，见 docs/bugs/038）。
     // 以前 front 所有窗口还有个副作用：连 Settings 窗口一起弹出来。
 
     /// 驻留：关掉最后一个窗口也不退出（后台任务继续跑）。
@@ -597,7 +597,11 @@ struct xhanHelperMacApp: App {
     @AppStorage("xhan_main_window_default_applied") private var windowDefaultSizeApplied = false
 
     var body: some Scene {
-        WindowGroup {
+        // 单窗口场景（`Window`，不是 `WindowGroup`）：本 app 是「关窗驻留 + 点 Dock 唤回」的用法，
+        // 而 `WindowGroup` 允许多窗口 —— 关窗后重新激活时 SwiftUI 会**再建一个**，旧窗口有时还活着
+        // （例如被放到已断开的外接屏/iPad 那块屏的空间里），于是同时存在两份顶栏，`⌘1–5` 会落到
+        // 看不见的那个窗口上（见 docs/bugs/038）。`Window` 只有一份，从根上消掉这类双窗口问题。
+        Window("xhanHelper", id: "main") {
             Group {
                 localBackendRoot
             }

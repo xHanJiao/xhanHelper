@@ -60,9 +60,9 @@ struct ContentView: View {
     /// 窗口真实内容宽。布局用的 `windowWidth`（geo）在内容比窗口宽时会报「溢出后的内容宽」，
     /// 不能当"窗口还能放多宽"用（见 docs/bugs/033）；取不到窗口时返回 nil，调用方回退到 geo。
     ///
-    /// 单窗口假设：`NSApp.mainWindow/keyWindow` 即承载本视图的窗口（`WindowGroup` 的"新建窗口"
-    /// 路径会产生第二个窗口，彼时读到的是当前活动窗口）——多窗口彻底收窄需要 per-window 状态，
-    /// 列为 docs/bugs/033 §5 的残余项。
+    /// 单窗口假设：`NSApp.mainWindow/keyWindow` 即承载本视图的窗口 —— 由主场景是单窗口的 `Window`
+    /// 保证（2026-10-15 起；此前 `WindowGroup` 的"新建窗口"/关窗重开会产生第二个窗口，见 docs/bugs/038）。
+    /// 多窗口彻底收窄需要 per-window 状态，列为 docs/bugs/033 §5 的残余项。
     private func realWindowContentWidth() -> Double? {
         guard let window = NSApp.mainWindow ?? NSApp.keyWindow else { return nil }
         return Self.contentWidth(of: window)

@@ -7,7 +7,7 @@ import SwiftUI
 /// **永远不返回空**——没有用户照片时用内置默认图 `bgDefault`；连默认图都取不到（资源缺失等）
 /// 则回落到不透明纯色。故底层始终不透明，玻璃模糊的是我们自己的照片，与桌面/其他 app 无关。
 ///
-/// 只应出现在 WindowGroup 根（`GlassWindowModifier`）——**任何列/列表都不许再自铺底层色**
+/// 只应出现在窗口根（`GlassWindowModifier`）——**任何列/列表都不许再自铺底层色**
 /// （曾因把色块挂在中间列导致"标题栏只盖一半"）。
 struct AppBackdrop: View {
     @ObservedObject private var store = BackgroundPhotoStore.shared

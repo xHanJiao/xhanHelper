@@ -217,3 +217,13 @@
   双栏底线 778 下 dev「无中心槽」态也落到末档（标签 160）。避免它得再给 dev 加一档降级，不值。
 - **影响文件**：`Shared/Views/{TopBarView,TopBarLayout,LayoutConstants}.swift`、
   `Tests/TopBarLayoutCoreTests/TopBarLayoutTests.swift`（`testDevChipIsShedFirst` → `testDevChipIsAlwaysShown`）、本文件。
+
+### 2026-10-15 · `⌘1–5` 的隐含前提：**单窗口**（主场景 `WindowGroup` → `Window`）
+
+- **现象**：`⌘1–5` 整体失灵、鼠标点顶栏正常。根因不在顶栏 —— app 同时活着两个主窗口（另一个在已断开的
+  iPad 那块屏的空间里），两窗口各注册一份 `⌘1–5`，SwiftUI 把键解析到了看不见的那一份。见 `docs/bugs/038`。
+- **决定**：§3.3 要点 1 / D3 里「`⌘1–5` 挂在**被渲染的按钮**上」这句话只保证了"按钮在栏上就有快捷键"，
+  没保证"只有一份"。补上前提：主场景改单窗口 `Window("xhanHelper", id: "main")`
+  （`xHelperMac/App.swift`），从此不会有第二份注册。
+- **影响文件**：`xHelperMac/App.swift`、`Shared/Views/{ContentView,AppBackdrop}.swift`（注释）、`docs/bugs/038`、本文件。
+- **不变**：降级顺序、宽度账、`⋯` 落位一律不动（本条只动"有几份顶栏"）。

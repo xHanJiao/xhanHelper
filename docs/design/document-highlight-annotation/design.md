@@ -322,7 +322,7 @@ VStack
 
 ### 7.2 `DocumentReaderView`（新，`Shared/Views/DocumentReaderView.swift`）
 
-- 复用 `DocumentPDFExporter.swift:301-373` 的 HTML 骨架与 `marked.min.js`（`xHelperMac/Resources/marked.min.js`），CSS 换成**屏幕阅读版**：不加 `.page { width: 595px }` / `12pt` 那套打印尺寸，改正文列宽 728px、字号 `FontSizeManager.shared.scaledSize * 1.18`。
+- 复用 `DocumentPDFExporter.swift:288-369` 的 HTML 骨架与 `marked.min.js`（`xHelperMac/Resources/marked.min.js`），CSS 换成**屏幕阅读版**：不加 `.page { width: 595pt }` / `12pt` 那套打印尺寸，改正文列宽 728px、字号 `FontSizeManager.shared.scaledSize * 1.18`。
 - **Mermaid 沿用现有链路**：`MermaidUtility` 原生渲染 PNG → 注入 `<img>`（与 `DocumentPDFExporter` 同路）。**不要**在 WebView 里引 Mermaid JS。
   - ⚠️ **2026-10-12**：这条渲染**全在主线程同步**且无缓存，含 mermaid 的文档每次打开都重烤一遍（图多时卡出彩球）。已立止血 + 异步化方案：`docs/design/mermaid-async-render/design.md`。本条的「不引 Mermaid JS」约束不变。
 - 透明硬约束（否则糊掉卡片材质）：

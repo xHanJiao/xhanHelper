@@ -11,7 +11,7 @@
 原 shell 工具是「只读白名单 + 每条命令人工确认」：
 
 - 只放 29 个只读命令，写/删/执行一律拒绝；
-- 执行层默认 L4（红色强制确认、信任模式不可跳），仅工作区内降 L3。
+- 执行层默认 L4（红色强制确认、必经确认），仅工作区内降 L3。
 
 两个问题在实际使用中暴露：
 
@@ -20,7 +20,7 @@
 
 因此本次同时做两件事：
 
-- **降档**：工作区内 L2（免确认）、区外 L3（常规确认、信任模式可跳），把确认为数众多的只读探查降噪；
+- **降档**：工作区内 L2（免确认）、区外 L3（常规确认），把确认为数众多的只读探查降噪；
 - **扩容 + 收紧**：放开一批新命令，但因为「人审不了」，安全的真正兜底必须是**解析器**，且必须 **fail-closed（认不出就拒）**。
 
 ## 二、安全模型（本方案的核心）
@@ -55,15 +55,22 @@ ShellToolProvider.shellLevel(arguments:) -> Int
 LocalToolRegistry.riskLevel(shell__) 改调 shellLevel
 ```
 
-执行侧无需改动：`ChatViewModel+ClientTools` 的 `shellHardened = isShell && level >= 4` 天然让 L4 走红色确认条，L3 走常规确认，L2 直接放行。
+执行侧判定在 `ChatViewModel+ClientTools`（2026-10-16 起信任模式三档移除，见 `../mac-apps/trust-mode-three-state/design.md` 的「后续变更」）；等级 → 是否确认的映射抽在 `ToolConfirmPolicy`（纯逻辑 + 单测），**L3 不等于「要确认」**：
 
-三档语义（`ChatViewModel.awaitToolConfirmation` 已实现）：
+```swift
+// ToolConfirmPolicy.requirement(level:isFileSystemTool:)
+if level >= 4 { return .hardened }                  // 红色必弹
+if level == 3, isFileSystemTool { return .confirm } // fs 的 3 = 写文件 / 读未授权路径
+return .none                                        // 其余直接执行
+```
 
-| 等级 | 确认 | 安全档 | 信任档 | 完全信任 |
-|------|------|--------|--------|----------|
-| L2 | 无 | 执行 | 执行 | 执行 |
-| L3 | 常规 | 弹 | 跳过 | 跳过 |
-| L4 | 红色 hardened | 弹 | 弹 | 跳过 |
+| 情况 | 判据 | 行为 |
+|------|------|------|
+| L2（只读白名单、shell_peek、browser 读、chart/MCP） | — | 直接执行 |
+| browser `open`（L3 一般风险） | `.none` | 直接执行 |
+| fs 写 / fs 读未授权路径 | `.confirm` | 必弹确认（批准后该路径临时授权 1h） |
+| 强制确认（`forcedL3`：高敏域 / http 明文页 / 用户标签授权） | 调用方只升不降 | 必弹确认 |
+| L4：shell 写 / 执行，browser `download` / `cgclick` / `drag` | `.hardened` | 必弹确认，红色 |
 
 ## 四、命令分档（v2）
 

@@ -65,7 +65,7 @@ nonisolated enum ShellCommandParser {
         "sort", "uniq", "cut", "tr", "nl", "column", "jq",
     ]
 
-    /// l4 命令集：写 / 执行类，恒 L4（红色确认、仅完全信任可跳，**工作区内也 L4**）。
+    /// l4 命令集：写 / 执行类，恒 L4（红色确认、必经确认，**工作区内也 L4**）。
     /// 危险藏在参数里的命令（find/sed/awk）另有形式守卫（`l4FormBlockedReason`）。
     static let l4Commands: Set<String> = [
         "find", "sed", "awk",

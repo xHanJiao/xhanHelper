@@ -29,49 +29,6 @@ struct ModePill: View {
     }
 }
 
-/// 信任模式图标按钮：安全（青绿 shield）/ 信任（橙 shield.checkered）/ 完全信任（红 shield.slash.fill），
-/// 点击循环切换。仅图标，hover 看 tooltip。
-struct TrustedPill: View {
-    let context: InputBarContext
-    let level: TrustLevel
-    let action: () -> Void
-
-    private var symbol: String {
-        switch level {
-        case .off: return "shield"
-        case .trusted: return "shield.checkered"
-        case .full: return "shield.slash.fill"
-        }
-    }
-
-    private var tint: Color {
-        switch level {
-        case .off: return Color("appAccent")
-        case .trusted: return .orange
-        case .full: return .red
-        }
-    }
-
-    private var tooltip: String {
-        switch level {
-        case .off: return "安全模式（工具执行前确认），点击进入信任模式"
-        case .trusted: return "信任模式（跳过常规确认，高危仍确认），点击进入完全信任"
-        case .full: return "完全信任（含高危命令全部免确认），点击回到安全模式"
-        }
-    }
-
-    var body: some View {
-        IconButton(
-            visibility: .always,
-            context: context,
-            symbol: symbol,
-            tint: tint,
-            tooltip: tooltip,
-            action: action
-        )
-    }
-}
-
 /// 模型切换图标按钮：快速（bolt 绿）/ 深度（pro+thinking，蓝紫），点击切换。仅图标，hover 看 tooltip。
 struct ModelPill: View {
     let context: InputBarContext

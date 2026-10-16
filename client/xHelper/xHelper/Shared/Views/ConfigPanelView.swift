@@ -26,7 +26,7 @@ struct ConfigPanelView: View {
                         list: .hosts,
                         input: $newHost,
                         placeholder: "如 steam、taobao、amazon",
-                        help: "作用：agent 在此类页面上执行交互（点击/填写/输入/按键）时，自动弹出 L3 确认，信任模式也无法跳过。保护银行/支付/邮箱/登录等敏感页面不被 agent 自动操作。\n格式：域名关键词，子串匹配、不区分大小写。如 bank 会匹配 bank.com、mybank.cn、alipaybank.com。\n注意：子串匹配可能误伤，比如 mail 会匹配 dailymail.com，建议尽量具体。"
+                        help: "作用：agent 在此类页面上执行交互（点击/填写/输入/按键）时，自动弹出 L3 确认，任何情况下都无法跳过。保护银行/支付/邮箱/登录等敏感页面不被 agent 自动操作。\n格式：域名关键词，子串匹配、不区分大小写。如 bank 会匹配 bank.com、mybank.cn、alipaybank.com。\n注意：子串匹配可能误伤，比如 mail 会匹配 dailymail.com，建议尽量具体。"
                     )
                     section(
                         title: "高敏路径",

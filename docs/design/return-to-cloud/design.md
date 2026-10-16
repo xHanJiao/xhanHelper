@@ -332,7 +332,6 @@ tar -xzf upload/images.tar.gz -C data/ ; cp upload/events.db data/events.db
 | Mac 发出的聊天图在 Web 不渲染 | ✅ | ❌ | ✅ |
 | 记忆 👍/👎、来源标签 | ✅ | ❌ | ✅ |
 | 计划模式二态（关/计划） | ✅(强制) | ❌ 无开关，可能「卡住」 | ✅ |
-| 信任模式三态 | 客户端态 | ❌ | ✅ |
 | 本地产物管线/内链/文档卡片 | 🟡 | ❌ | ✅ |
 | shell/文件系统/浏览器/MCP 客户端工具 | 协议在 | ❌ | ✅ |
 | 子 agent 实时面板 | ✅ | ❌ `subagent` SSE 被丢弃 | ✅ |

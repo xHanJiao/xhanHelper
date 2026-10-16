@@ -4,39 +4,14 @@ import Foundation
 final class LocalToolRegistry {
     static let shared = LocalToolRegistry()
 
-    /// 工具风险等级表（flatName: namespace__tool）。
-    /// 未登记的工具默认 L2（低风险写）。L3（高风险写，执行前需用户确认）仅留给
-    /// 基础语义有破坏性的工具（如未来终端的 rm/mv）；agent_browser 全部 ≤L2。
-    /// shell / shell_peek 动态定级（只读 L2 免确认、写 L4），见下方分支。
-    /// 等级仅供客户端执行控制，不随 schema 下发给 LLM。
-    private let riskLevels: [String: Int] = [
-        // L1 只读
-        "browser__agent_browser_snapshot": 1,
-        "browser__agent_browser_read": 1,
-        "browser__agent_browser_get_text": 1,
-        "browser__agent_browser_get_value": 1,
-        "browser__agent_browser_get_url": 1,
-        "browser__agent_browser_get_title": 1,
-        "browser__agent_browser_list_tabs": 1,
-        "browser__agent_browser_wait_for_load": 1,
-        "browser__agent_browser_wait_for_selector": 1,
-        // L3 需用户确认：打开任意 URL（可能导航到任意站点）
-        "browser__agent_browser_open": 3,
-        // L3 需用户确认：下载文件到本地（写入磁盘，需用户同意）
-        "browser__agent_browser_download": 3,
-        // L3 需用户确认：真实系统级点击/拖拽（注入系统事件，可能打断用户操作/点错目标）
-        "browser__agent_browser_cgclick": 3,
-        "browser__agent_browser_drag": 3,
-        // L3 需用户确认：本地文件写入（覆盖/追加/编辑，破坏性操作）
-        "fs__write": 3,
-        "fs__edit": 3,
-    ]
+    // MARK: - 风险等级
 
-    func riskLevel(for flatName: String) -> Int {
-        riskLevels[flatName] ?? 2
-    }
+    /// 工具风险等级（flatName: namespace__tool）——**表与规则在 `ToolRiskLevels` / `ToolConfirmPolicy`**
+    /// （纯数据 + 纯映射，镜像进 SwiftPM 单测；改等级前先让 `ToolConfirmPolicyTests` 给出新预期）。
+    /// 本类只负责把「运行时才知道的信息」（shell 命令内容、fs 目标路径是否已授权）折算成等级。
 
     #if os(macOS)
+    /// shell / shell_peek 动态定级（只读 L2 免确认、写 L4）；fs 的写/读未授权路径归 3。
     func riskLevel(for flatName: String, arguments: [String: Any]) -> Int {
         if let scope = ShellToolProvider.scope(forFlatName: flatName) {
             // 只读（full 的 allow / peek 全部）→ L2（免确认）。写/执行 → L4。
@@ -50,10 +25,10 @@ final class LocalToolRegistry {
                     return 3
                 }
             }
-            // 已授权目录内也按风险表定级（fs__write 恒 L3）
-            return riskLevels[flatName] ?? 2
+            // 已授权目录内也按风险表定级（fs__write/edit 恒 3 → 必确认）
+            return ToolRiskLevels.level(for: flatName)
         }
-        return riskLevels[flatName] ?? 2
+        return ToolRiskLevels.level(for: flatName)
     }
 
     func fsBlockedPaths(arguments: [String: Any]) -> String? {

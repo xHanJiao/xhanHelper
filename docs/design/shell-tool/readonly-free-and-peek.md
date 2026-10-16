@@ -72,7 +72,7 @@
 
 下面这些在 `ShellCommandParser.evaluate()` 里就跑完，**发生在弹不弹确认之前**：
 
-### 1. 硬性拦截层（不可豁免，任何授权/信任模式都无效）
+### 1. 硬性拦截层（不可豁免，任何授权都无效）
 
 - 目录：`~/.ssh`、`~/.gnupg`、`~/.aws`、`~/.kube`、`~/.docker`、`~/Library/Keychains`、`/etc/sudoers.d`
 - 文件：`~/.zshrc`、`~/.zshenv`、`~/.zprofile`、`~/.bashrc`、`~/.netrc`、`~/.npmrc`、`~/.git-credentials`、`~/.wgetrc`、`~/.curlrc`、`/etc/passwd`、`/etc/shadow`、`/etc/sudoers` 等

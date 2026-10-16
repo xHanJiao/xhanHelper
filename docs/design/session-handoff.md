@@ -20,6 +20,8 @@
                        新建会话 B，首条消息 = 【接力会话】…《{title}》(id={id})… → B 调 get_document 读取后继续
 ```
 
+> ⚠️ **2026-10-16**：输入栏的「接力」按钮已下架，下面这条流程暂时没有触发入口（链路代码一行未删），见文末「后续变更」。
+
 ## 2. 关键设计
 
 ### 2.1 文档产出：复用 document 工具，不改工具协议
@@ -151,3 +153,11 @@ MsgStatusHidden  = 3 // 隐藏：接力等控制轮
 - 加 `handoff_max_rounds`（建议 300）兜底，超出靠摘要。
 
 当前未做，保持窗口语义。
+
+## 后续变更
+
+### 2026-10-16 · 接力入口下架（用户拍板）
+
+- `HandoffPill` 的 `visibility` 改为 `.hidden`（`Shared/Views/InputBarButtons.swift`），输入栏不再有接力按钮。
+- 本文描述的全链路（`beginHandoff` → 隐藏轮 → `onHandoffReady` → `ChatTabManager.startHandoffConversation`）**代码全部保留、零改动**，只是没有触发入口了；恢复只需把 `visibility` 改回 `.always`。
+- 服务端零改动（`hidden_round` / `MsgStatusHidden` / 文档 tag「接力」都还在，词云筛选照样有效）。

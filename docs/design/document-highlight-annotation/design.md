@@ -732,7 +732,7 @@ JS 里维护 `id → [{mark}]`。定位流程：
 | P5-2 | 会话归属 | ✅ **真实会话**（当前 tab 的会话）。点「问 AI」不弹中间对话框：引用先暂存，问题在输入栏里敲 |
 | P5-3 | 智能程度 | ✅ **完整 orchestrator** —— 能调工具（检索记忆/笔记/其他文档）。回答里会有工具气泡 |
 | P5-4 | 回答→批注 | ✅ 可以。走文档侧的批注编辑浮层，**预填 AI 回答、可改完再存** |
-| P5-5 | 长度控制 | ✅ **不用 `max_tokens`**（那是硬截断，且全链路无 `finish_reason` 感知，截断了系统不知道）。改为往 system prompt 注入一段**输出长度约束**（≤500 字），靠 prompt 管而不是靠截断管。接口是 `brief_answer` 布尔参数，见 §12.7。**不自动开**：沿用用户自己那个会话级开关 |
+| P5-5 | 长度控制 | ✅ **不用 `max_tokens`**（那是硬截断，且全链路无 `finish_reason` 感知，截断了系统不知道）。改为往 system prompt 注入一段**输出长度约束**（≤500 字），靠 prompt 管而不是靠截断管。接口是 `brief_answer` 布尔参数，见 §12.7。**不自动开**：沿用用户自己那个会话级开关（⚠️ 2026-10-16：该开关按钮已从输入栏下架，见文末「后续变更」） |
 | P5-6 | 没划线就问 | ✅ 不自动建划线。点「存为批注」时才建（复用 `POST /api/documents/:id/annotations`） |
 | P5-7 | 引用生命周期 | ✅ **会话级**（挂在 `ChatViewModel` 上），不是逐轮参数：只要引用还在，**每一轮都带** `doc_quote`。否则追问轮 LLM 手里就没有原文了（历史重放不带 XMLContext，§12.4 有完整论证）。点胶囊 × / 窄条「忽略」/ 切会话即消失 |
 
@@ -1116,3 +1116,8 @@ DocumentAIBridge.shared.reader                  // 文档页 onAppear 注册、o
 - **自查**：`scripts/check-reader-html.sh` PASS（167 条断言，含新增的 `annotationsMissed` 两条）；`scripts/snapshot-reader.sh`（真引擎）marks 11 段 / `textLen=407=不变` / 逐节点矩形数与改动前一致，无回归；`swift test --filter DocumentStaleGateTests` 4 条通过；`swiftc -typecheck` macOS / iOS 双 target 0 error。真机由用户在 Xcode 验证。
 - **已知代价**：`didBecomeActive` 那条不做判断，每次回到前台都是一次 GET（多设备 / 后台改写的保险），浏览面板的 ⟳ 会闪一下加载态 —— 功能无害，属观感噪声。
 - **不变**：服务端 / API / 模型 / 锚定算法 **零改动**。
+
+### 2026-10-16 · 输入栏「精炼回答」按钮下架（用户拍板）
+
+- 「回答长度」那节那颗 `text.alignleft` 的 icon pill 改为 `visibility: .hidden`（`Shared/Views/InputBarButtons.swift`），UI 上不再出现；`briefAnswer` 也不再从会话键恢复（恒为 false，避免旧会话卡在 ≤500 字却关不掉）。
+- **服务端零改动**：`brief_answer` 字段、system prompt 注入、「会话级稳定所以前缀缓存不抖」这套论证全部照旧有效，只是客户端不再有开的那条路。

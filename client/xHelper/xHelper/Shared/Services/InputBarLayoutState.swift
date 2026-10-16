@@ -19,11 +19,13 @@ final class InputBarLayoutState: ObservableObject {
             return
         }
         var restored = Set(stored.compactMap(InputBarButtonID.init(rawValue:)))
+            // 只留仍在 allCases 里的 id：下架按钮（hidden 的 model/brief/handoff）不进内存，
+            // 否则老用户存过「常驻」的会留下空占位、存过「收起」的会让 chevron 展开出一条空行。
+            .intersection(InputBarButtonID.allCases)
         // 新增按钮要补进 collapsed：老用户存下来的集合里没这个 id，Set(stored) 会让它落在
         // "未收起"→ 显示在常驻行，与 defaultCollapsed 的意图相反。新 id 不可能被用户主动
         // 展开过，所以"缺失即补入"安全；补进去后用户再展开会被存下来，不会重复补。
         // 以后再加按钮，这里跟着补一行。
-        if !stored.contains(InputBarButtonID.brief.rawValue) { restored.insert(.brief) }
         if !stored.contains(InputBarButtonID.ephemeral.rawValue) { restored.insert(.ephemeral) }
         collapsed = restored
     }

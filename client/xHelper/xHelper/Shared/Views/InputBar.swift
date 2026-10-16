@@ -502,7 +502,7 @@ struct InputBarScrollHider: NSViewRepresentable {
                     hasMore: true,
                     initiallyPresented: true
                 )
-                ModelPill(context: ctx, isDeep: false) {}
+                EphemeralPill(context: ctx, isOn: false, isBlank: true) {}
             }
         } trailingActions: { ctx in
             SendStopButton(context: ctx, isStreaming: false, canSend: ctx.canSend, onSend: {}, onStop: {})

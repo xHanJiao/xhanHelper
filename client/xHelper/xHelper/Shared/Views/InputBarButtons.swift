@@ -47,7 +47,7 @@ struct ModelPill: View {
 
     var body: some View {
         IconButton(
-            visibility: .always,
+            visibility: .hidden, // 2026-10：已从输入栏下架（入口隐藏，功能未删）
             context: context,
             symbol: isDeep ? "brain.head.profile.fill" : "bolt",
             tint: isDeep ? deepColor : Color("appAccent"),
@@ -69,7 +69,7 @@ struct BriefPill: View {
 
     var body: some View {
         IconButton(
-            visibility: .always,
+            visibility: .hidden, // 2026-10：已从输入栏下架（入口隐藏，功能未删）
             context: context,
             symbol: isBrief ? "text.badge.minus" : "text.alignleft",
             tint: isBrief ? .orange : Color("appAccent"),
@@ -122,7 +122,7 @@ struct HandoffPill: View {
 
     var body: some View {
         IconButton(
-            visibility: .always,
+            visibility: .hidden, // 2026-10：已从输入栏下架（入口隐藏，功能未删）
             context: context,
             symbol: "arrow.uturn.right.circle",
             tint: Color("appAccent"),
@@ -135,7 +135,7 @@ struct HandoffPill: View {
     }
 }
 
-/// 更多操作展开/收起按钮：折叠的图标（信任/模型/接力/附件）收在它后面，
+/// 更多操作展开/收起按钮：收起（折叠）的图标收在它后面，
 /// 展开时在按钮行上方多出一行，始终落在胶囊宽度内（不再 overlay 左偏出框）。
 struct ExpandPill: View {
     let context: InputBarContext

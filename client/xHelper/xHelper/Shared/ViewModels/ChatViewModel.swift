@@ -771,15 +771,13 @@ class ChatViewModel: ObservableObject {
         conversationId = id
         conversationTitle = title
         self.mode = mode ?? "work" // 会话列表数据带 mode（服务端权威）；旧数据缺失时默认 work
-        // deep/flash 会话级本地状态：从该会话键恢复，无记录默认 flash
-        deepMode = UserDefaults.standard.bool(forKey: "xhan_conv_deep_mode_\(id)")
-        if deepMode {
-            thinkingMode = true // deep 联动 thinking
-        }
+        // 2026-10：模型切换按钮已从输入栏下架 → 恒为快速模型，不再从会话键恢复
+        // （残留键值不再读，避免旧会话永久卡在深度且无入口可关）
+        deepMode = false
         // 响应检验开关会话级恢复：无记录默认关
         verifyEnabled = UserDefaults.standard.bool(forKey: "xhan_conv_verify_enabled_\(id)")
-        // 精炼回答开关会话级恢复：无记录默认关
-        briefAnswer = UserDefaults.standard.bool(forKey: "xhan_conv_brief_answer_\(id)")
+        // 2026-10：精炼回答按钮已从输入栏下架 → 恒为常规长度，不再从会话键恢复
+        briefAnswer = false
         toolQueue = []
         pendingToolCalls = []
         roundDocRefs = [:]
@@ -1235,12 +1233,8 @@ class ChatViewModel: ObservableObject {
                 onConversationCreated?(cid, parseTitleFromDone(event.data))
                 // 空白 tab 若开了无痕意图：会话已按 ephemeral=true 建成 → 转成服务端标记
                 promoteEphemeralIntent()
-                // 空白 tab 首条消息建会话后：把当前 deep/flash 选择预存到新会话键（后续重载继承）
-                UserDefaults.standard.set(deepMode, forKey: "xhan_conv_deep_mode_\(cid)")
-                // 同上：响应检验开关预存
+                // 空白 tab 首条消息建会话后：把当前开关预存到新会话键（后续重载继承）
                 UserDefaults.standard.set(verifyEnabled, forKey: "xhan_conv_verify_enabled_\(cid)")
-                // 同上：精炼回答开关预存
-                UserDefaults.standard.set(briefAnswer, forKey: "xhan_conv_brief_answer_\(cid)")
             }
             if let t = parseTitleFromDone(event.data) {
                 conversationTitle = t

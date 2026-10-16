@@ -385,6 +385,8 @@ struct ChatView: View {
     }
 
     /// 按钮本体（不含右键菜单）。
+    /// 2026-10 下架：`.model` / `.brief` / `.handoff` 三个分支已不可达（对应 pill 改 `visibility: .hidden`，
+    /// id 也从 `InputBarButtonID.allCases` 移除）——分支保留，恢复只需把 id 加回 allCases + visibility 改回 `.always`。
     @ViewBuilder
     private func inputBarButtonContent(_ id: InputBarButtonID, ctx: InputBarContext) -> some View {
         switch id {

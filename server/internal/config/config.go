@@ -202,17 +202,21 @@ type ServerConfig struct {
 	ProfileStartupMigration bool     `yaml:"profile_startup_migration"` // 启动时异步迁移旧画像（facts 空才迁，单用户场景用）
 	MemoryDupeThreshold     float64  `yaml:"memory_dupe_threshold"`     // 记忆去重相似度阈值，默认 0.85（旧单条提取路径遗留）
 	// —— 记录循环（记忆两段式：抽取 + 逐候选决策循环）——
-	RecordLoopMaxIterations   int      `yaml:"record_loop_max_iterations"`   // 决策循环轮数上限，默认 6
-	MemoryMaxPerSession       int      `yaml:"memory_max_per_session"`       // 单次会话最多新增几条记忆（抽取段上限），默认 5
-	MemoryNeighborTopK        int      `yaml:"memory_neighbor_top_k"`        // 预检索近邻条数（每域），默认 5
-	MemoryNeighborThreshold   float64  `yaml:"memory_neighbor_threshold"`    // 预检索近邻相似度下限，默认 0.5
-	MemoryConfirmThreshold    float64  `yaml:"memory_confirm_threshold"`     // NONE 时「再次确认」的近邻相似度下限，默认 0.80
-	MemoryTopicReuseThreshold float64  `yaml:"memory_topic_reuse_threshold"` // topic 复用阈值，默认 0.80（与 topic-merge 一致）
-	DisableBackgroundTasks    *bool    `yaml:"disable_background_tasks"`     // 禁用所有后台任务（记忆提取/摘要/主题分析/反思等）；nil=未显式配置，沿用 base
-	SidecarURL                string   `yaml:"sidecar_url"`                  // Python sidecar MCP HTTP 地址
-	TokenTTLMinutes           int      `yaml:"token_ttl_minutes"`            // token 过期时间（分钟），默认 5
-	MaxTokensPerUser          int      `yaml:"max_tokens_per_user"`          // 同一用户最大 token 数，默认 4
-	AdminUsers                []string `yaml:"admin_users"`                  // 管理员用户 ID 列表
+	RecordLoopMaxIterations   int     `yaml:"record_loop_max_iterations"`   // 决策循环轮数上限，默认 6
+	MemoryMaxPerSession       int     `yaml:"memory_max_per_session"`       // 单次会话最多新增几条记忆（抽取段上限），默认 5
+	MemoryNeighborTopK        int     `yaml:"memory_neighbor_top_k"`        // 预检索近邻条数（每域），默认 5
+	MemoryNeighborThreshold   float64 `yaml:"memory_neighbor_threshold"`    // 预检索近邻相似度下限，默认 0.5
+	MemoryConfirmThreshold    float64 `yaml:"memory_confirm_threshold"`     // NONE 时「再次确认」的近邻相似度下限，默认 0.80
+	MemoryTopicReuseThreshold float64 `yaml:"memory_topic_reuse_threshold"` // topic 复用阈值，默认 0.80（与 topic-merge 一致）
+	// MemoryExtractTemperature — 抽取段的采样温度。抽取要的是「逐字抄录用户原话」，
+	// 温度越低越少改写；nil = 不干预，走厂商默认（见 docs/design/memory-facts-verbatim）。
+	// 指针类型：0 是合法取值（贪心），不能用零值表示「未配置」。
+	MemoryExtractTemperature *float64 `yaml:"memory_extract_temperature"`
+	DisableBackgroundTasks   *bool    `yaml:"disable_background_tasks"` // 禁用所有后台任务（记忆提取/摘要/主题分析/反思等）；nil=未显式配置，沿用 base
+	SidecarURL               string   `yaml:"sidecar_url"`              // Python sidecar MCP HTTP 地址
+	TokenTTLMinutes          int      `yaml:"token_ttl_minutes"`        // token 过期时间（分钟），默认 5
+	MaxTokensPerUser         int      `yaml:"max_tokens_per_user"`      // 同一用户最大 token 数，默认 4
+	AdminUsers               []string `yaml:"admin_users"`              // 管理员用户 ID 列表
 	// —— 本地单用户模式（Mac 本地部署）——
 	LocalSingleUser bool   `yaml:"local_single_user"` // 免账号密码：凭 local_token 直接进
 	LocalUsername   string `yaml:"local_username"`    // 本地单用户的用户名（按它解析/创建，自动 admin）
@@ -452,6 +456,10 @@ func merge(dst, src *Config) {
 	}
 	if src.Server.MemoryTopicReuseThreshold > 0 {
 		dst.Server.MemoryTopicReuseThreshold = src.Server.MemoryTopicReuseThreshold
+	}
+	// 温度用 != nil 判据：0 是合法取值（贪心），不能用 > 0。
+	if src.Server.MemoryExtractTemperature != nil {
+		dst.Server.MemoryExtractTemperature = src.Server.MemoryExtractTemperature
 	}
 	if src.Server.DisableBackgroundTasks != nil {
 		dst.Server.DisableBackgroundTasks = src.Server.DisableBackgroundTasks

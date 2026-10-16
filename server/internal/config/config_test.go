@@ -232,3 +232,22 @@ func TestActivityWatermarkMode(t *testing.T) {
 		t.Errorf("env 非空应覆盖, got %q", base.Activity.WatermarkMode)
 	}
 }
+
+// 抽取段温度用 != nil 判据覆盖：0（贪心）是合法取值，不能被当成「没写」。
+func TestMerge_MemoryExtractTemperature(t *testing.T) {
+	zero, hot := 0.0, 0.7
+
+	base := Config{}
+	base.Server.MemoryExtractTemperature = &hot
+	merge(&base, &Config{}) // env 没写 → 保留 base
+	if base.Server.MemoryExtractTemperature == nil || *base.Server.MemoryExtractTemperature != hot {
+		t.Errorf("absent key must keep base, got %v", base.Server.MemoryExtractTemperature)
+	}
+
+	env := Config{}
+	env.Server.MemoryExtractTemperature = &zero
+	merge(&base, &env)
+	if base.Server.MemoryExtractTemperature == nil || *base.Server.MemoryExtractTemperature != 0 {
+		t.Errorf("explicit 0 must override base, got %v", base.Server.MemoryExtractTemperature)
+	}
+}

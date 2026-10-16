@@ -8,6 +8,7 @@ import (
 	"xhan-helper/internal/agent"
 	"xhan-helper/internal/app"
 	"xhan-helper/internal/config"
+	"xhan-helper/internal/llm"
 	"xhan-helper/internal/mcp"
 	"xhan-helper/internal/service"
 	"xhan-helper/internal/tool"
@@ -98,8 +99,14 @@ func InitTools(cfg *config.Config, repos *app.Repos, infra *app.Infra, llmClient
 	reflectionReg.Register(tool.NewLoggingWrapper(themeMgmtTool, log.Default()))
 
 	// --- 内存提取器 ---
+	// 抽取段的采样温度单独设：抽取的产物是「用户原话」，越贪心越少改写（见
+	// docs/design/memory-facts-verbatim）。只套在这一处，BgFlash 的其他消费者不受影响。
+	extractLLM := llmClients.BgFlash
+	if t := cfg.Server.MemoryExtractTemperature; t != nil {
+		extractLLM = llm.WrapTemperature(extractLLM, *t)
+	}
 	memExtractor := agent.NewMemoryExtractor(&agent.MemoryExtractorConfig{
-		LLMClient:     llmClients.BgFlash,
+		LLMClient:     extractLLM,
 		MemRepo:       repos.Mem,
 		VectorStore:   infra.VectorStore,
 		Embedder:      infra.Embedder,

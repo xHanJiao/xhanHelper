@@ -130,3 +130,41 @@ func TestSetMemoryRating(t *testing.T) {
 		t.Fatal("empty id should error")
 	}
 }
+
+// Update 传 nil facts 必须是「显式覆盖成 NULL」，不是「跳过不更新」。
+// facts 的语义已改为整体覆盖（见 docs/design/memory-facts-verbatim），这条是那个语义在 DB 层的落地证明：
+// 一次日期更正就应把这条记忆的旧出处清掉，而不是留在库里和新的并列。
+func TestUserMemoryRepo_UpdateOverwritesFacts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open in-memory db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.UserMemory{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := NewUserMemoryRepo(db)
+	ctx := context.Background()
+
+	facts := `["我本来的节奏是11.25离开北京"]`
+	m := &model.UserMemory{
+		ID: uuid.New().String(), UserID: "u1", MemoryKey: "职业规划",
+		ContentHash: uuid.New().String(), MemoryValue: "计划 11.25 离京", Topic: "职业规划", Facts: &facts,
+	}
+	if err := repo.Create(ctx, m); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := repo.Update(ctx, m.ID, "职业规划", "计划 11.11 离京", nil); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	got, err := repo.FindByID(ctx, "u1", m.ID)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if got.MemoryValue != "计划 11.11 离京" {
+		t.Errorf("summary should be overwritten, got %q", got.MemoryValue)
+	}
+	if got.Facts != nil {
+		t.Errorf("nil facts must be written as NULL (覆盖), got %q", *got.Facts)
+	}
+}

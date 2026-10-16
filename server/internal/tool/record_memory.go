@@ -11,7 +11,8 @@ import (
 type RecordMemoryRunner interface {
 	// RecordInline 对一条候选跑决策循环（entry=inline），返回 `{action,id,summary}` JSON。
 	// ctx 透传主聊天的场景（审计标注用），不能丢。
-	RecordInline(ctx context.Context, userID, topic, summary string, facts []string) ([]byte, error)
+	// convID 用于校验 facts 是不是用户原话（回查本会话的 user 消息），不能空。
+	RecordInline(ctx context.Context, userID, convID, topic, summary string, facts []string) ([]byte, error)
 }
 
 // RecordMemoryInstaller — 延迟接线：工具在 InitTools 建、决策循环在 InitAgents 建，
@@ -57,7 +58,7 @@ func (t *RecordMemoryTool) Functions() []FuncSchema {
 				"summary": map[string]interface{}{"type": "string", "description": "一句话概括核心信息，自足成句（主体写进句子）"},
 				"facts": map[string]interface{}{
 					"type": "array", "items": map[string]interface{}{"type": "string"},
-					"description": "支持细节（日期/数字/金额/要点），可选",
+					"description": "用户原话的逐字摘录（直接照抄用户消息里的连续片段，可整句截断；不得改写、不得拼接两句）。不是原话的片段会被丢弃。可选",
 				},
 			},
 			"required": []string{"topic", "summary"},
@@ -83,7 +84,7 @@ func (t *RecordMemoryTool) Execute(ec *ExecuteContext, funcName string, args jso
 	if a.Summary == "" {
 		return &Result{Success: false, Error: "summary 不能为空"}
 	}
-	data, err := t.runner.RecordInline(ec.Ctx, ec.UserID, a.Topic, a.Summary, a.Facts)
+	data, err := t.runner.RecordInline(ec.Ctx, ec.UserID, ec.ConvID, a.Topic, a.Summary, a.Facts)
 	if err != nil {
 		return &Result{Success: false, Error: err.Error()}
 	}

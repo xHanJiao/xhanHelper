@@ -17,7 +17,9 @@ const (
 	memoryTopicMaxLen   = 5
 	memorySummaryMaxLen = 150
 	memoryFactsMaxCount = 10
-	memoryFactMaxLen    = 100
+	// memoryFactMaxLen 200：facts 是用户原话片段，用户一句话经常超过 100 字；
+	// 卡太紧会让模型反复「超长被拒」白烧决策循环的轮数预算。
+	memoryFactMaxLen = 200
 )
 
 // decodeRecordArgs 严格解析入参：拒绝未知字段；解析失败一律返回错误，禁止吞掉后继续用零值。
@@ -78,8 +80,7 @@ func keepOrReplaceTopic(incoming, old string) string {
 }
 
 // validateMemoryFields 工具侧字段校验，超限返回错误让模型改写。
-// 不含 facts 条数上限：上限只约束「模型单次传入多少」（见 validateFactCount），
-// 库里最终能存多少由 update 的合并结果决定，不逐出。
+// 只校验本次入参：update 的 facts 是**整体覆盖**（不是与旧值合并），所以没有「合并结果」要额外校验。
 func validateMemoryFields(topic, summary string, facts []string) error {
 	topic = strings.TrimSpace(topic) // 与 validTopic 对齐：先 trim 再校验长度/字符
 	if strings.TrimSpace(summary) == "" {
@@ -106,7 +107,7 @@ func validateMemoryFields(topic, summary string, facts []string) error {
 }
 
 // validateFactCount 约束模型单次传入的 facts 条数（防止一次灌太多）。
-// 只用于校验入参，不用于校验合并后的结果——合并结果不设上限。
+// update 是整体覆盖，所以这个上限同时也是库里单条记忆 facts 的上限。
 func validateFactCount(facts []string) error {
 	if len(facts) > memoryFactsMaxCount {
 		return fmt.Errorf("facts 最多 %d 条", memoryFactsMaxCount)
@@ -126,41 +127,4 @@ func factsPtr(facts []string) *string {
 	}
 	s := string(b)
 	return &s
-}
-
-// parseFactsPtr 把库里的 facts JSON 字符串解析回 []string（factsPtr 的反向）。
-// 空/坏 JSON 记日志后返回 nil：update 时旧 facts 读不出来不应阻断写入，但必须留痕。
-func parseFactsPtr(p *string) []string {
-	if p == nil || strings.TrimSpace(*p) == "" {
-		return nil
-	}
-	var out []string
-	if err := json.Unmarshal([]byte(*p), &out); err != nil {
-		log.Printf("[record_loop] parse stored facts error: %v (raw %.80s, treat as empty)", err, *p)
-		return nil
-	}
-	return out
-}
-
-// mergeFacts 把新增 facts 合并进已有（update 专用）：trim 后完全相等去重、保序。
-// 不逐出：合并结果不设条数上限，只增不减。不做模糊/子串匹配（会误吞）。
-// 纯确定性逻辑，不交给 LLM。
-func mergeFacts(oldFacts, addFacts []string) []string {
-	merged := make([]string, 0, len(oldFacts)+len(addFacts))
-	seen := make(map[string]bool, len(oldFacts)+len(addFacts))
-	appendFact := func(f string) {
-		f = strings.TrimSpace(f)
-		if f == "" || seen[f] {
-			return
-		}
-		seen[f] = true
-		merged = append(merged, f)
-	}
-	for _, f := range oldFacts {
-		appendFact(f)
-	}
-	for _, f := range addFacts {
-		appendFact(f)
-	}
-	return merged
 }

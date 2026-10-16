@@ -28,6 +28,10 @@ const (
 // 由 TestRecordLoopInstructionMirrorsDoc 强制一致（改这里必须同步那份 md）。
 // 放 system prompt 而非 user 消息：它是稳定常量，构成可命中的缓存前缀；变化部分
 // （<candidate> / <neighbors> / <topic_records>）才进 user 消息。
+//
+// 注意「硬限制」段里的 5 / 150 / 200 / 10 是**手写散文**（常量插不进 const），与
+// record_loop_params.go 的 memoryTopicMaxLen / memorySummaryMaxLen / memoryFactMaxLen /
+// memoryFactsMaxCount 联动——改常量时同步这里（工具描述那侧是插值的，不用管）。
 const recordLoopInstruction = `你要为这条候选选一个动作：新开一条、改一条、删一条，或者什么都不做。
 
 ## 输入
@@ -44,13 +48,13 @@ type=note 的是旧笔记（过渡期遗留，见下）。
 - topic：一个主题词（≤5 字）。同一件事必须用同一个 topic，不要造近义词。
 - summary：一句话概括核心信息，自足成句（主体写进句子里），≤150 字。
   只有 summary 会被检索到，所以它必须自足——不能靠 facts 才读得懂。
-- facts：支持这条 summary 的具体细节，0~10 条、每条 ≤100 字。它跟随 summary 一起返回，不单独检索。
+- facts：**用户原话的逐字摘录**，0~10 条。只能从 <candidate> 给出的原话里**原样摘取**（可整句截断），不得改写、不得拼接两句、不得补字，也不得凭 summary 自己编一句。它跟随 summary 一起返回，不单独检索。
 
 ## 动作
 
 - save_memory：新开一条。库里没有这件事。
 - update_memory：近邻里有一条讲的是同一件事，而它变了、更全了、或需要修正 → 覆盖它。target_id 取自输入的 id。
-  summary 写改写后的完整内容；facts 只写新增的细节——会与已有 facts 自动去重合并（只增不减、不逐出）。
+  summary 写改写后的完整内容；facts 写**本轮候选带来的原话**——它会**整体覆盖**旧 facts（旧出处随之作废），不是增量；看不到旧的（输入里没有旧 facts）就只写本轮的，不要编。
 - delete_memory：近邻里有一条被明确否定或已经作废。
 - 什么都不调：近邻里已有一条同义记录、内容没变。**这是合法且常见的终局**——不要为了"有输出"而硬写一条。
 
@@ -82,7 +86,7 @@ type=note 的是旧笔记（过渡期遗留，见下）。
 
 ## 硬限制
 
-- topic ≤ 5 字；summary ≤ 150 字；单条 fact ≤ 100 字。单次传入 facts ≤ 10 条（update 合并后不设上限）。超限会被工具拒绝。
+- topic ≤ 5 字；summary ≤ 150 字；单条 fact ≤ 200 字。单次传入 facts ≤ 10 条。超限会被工具拒绝。
 - 一条候选最多新增 1 条记忆。上限由上游的抽取段控制，你不要试图拆分候选绕过它。
 
 ## 输出
@@ -90,7 +94,7 @@ type=note 的是旧笔记（过渡期遗留，见下）。
 - 用 tool call 表达，不要输出 JSON 文本。
 - target_id 只能取自输入里的 id（<neighbors> 或 <topic_records>），不许自造。
 - update_memory 的 summary 必须写改写后的完整内容（自足成句、主体写进句子），不是只写变化的那半句。
-- 相对时间（今天、昨天）在候选里若还是相对说法，落库前转成绝对日期（如 2026-09-15）。`
+- 相对时间（今天、昨天）在候选里若还是相对说法，**只在该 summary 里**转成绝对日期（如 2026-09-15）；facts 是原话，一个字都不许改。`
 
 // recordLoopSystemPrompt — 决策循环 system prompt。拼接 promptbuilder.MemoryDefinition，
 // 避免「记忆是什么」在链路上出现第二份定义（见 promptbuilder/memory_definition.go）；
@@ -118,6 +122,7 @@ type RecordDeps struct {
 	LLMBG         llm.LLMClient // 后台入口用；nil 回退 FlashLLM
 	MemRepo       *service.UserMemoryRepo
 	NoteRepo      *service.NoteRepo
+	MsgRepo       *service.MessageRepo // inline facts 的逐字校验要回查本会话 user 消息
 	VectorStore   *VectorStore
 	Embedder      app.Embedder
 	EmbeddingRepo *service.EmbeddingRepo

@@ -2,11 +2,17 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 
 	"xhan-helper/internal/llm"
 	"xhan-helper/internal/tool"
 )
+
+// factsParamDesc 写入侧 facts 参数的说明。与 recordLoopInstruction 同口径，数字与硬限制常量联动
+// （不要再手写 10 / 200 —— 工具描述是模型对参数语义的第一手说明，写错就是主动误导）。
+var factsParamDesc = fmt.Sprintf("用户原话的逐字摘录（从候选原话里原样摘取，可整句截断；不得改写、不得拼接）。≤%d 条，每条 ≤%d 字",
+	memoryFactsMaxCount, memoryFactMaxLen)
 
 // recordToolDefinitions — 决策循环的三个 ToolDefinition（函数名由 provider 拼成 `memory__save_memory`）。
 func recordToolDefinitions() []llm.ToolDefinition {
@@ -38,11 +44,11 @@ func recordToolDefinitions() []llm.ToolDefinition {
 			Functions: []llm.FuncDef{
 				{Name: "save_memory", Description: "新开一条记忆", Parameters: obj(map[string]interface{}{
 					"topic": str("一个主题词，非空、≤5 字、只含中英文数字，禁斜杠/逗号/多主题"), "summary": str("自足成句的一句话，≤150 字"),
-					"facts": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "0~10 条细节，每条 ≤100 字"},
+					"facts": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": factsParamDesc},
 				}, "topic", "summary")},
-				{Name: "update_memory", Description: "覆盖近邻中某条讲同一件事的记忆（facts 会自动与已有去重合并，只增不减）", Parameters: obj(map[string]interface{}{
+				{Name: "update_memory", Description: "覆盖近邻中某条讲同一件事的记忆（facts 整体覆盖旧值，不是增量）", Parameters: obj(map[string]interface{}{
 					"target_id": str("被覆盖的近邻 id，只能取自输入的 id"), "summary": str("改写后的完整句子"),
-					"topic": str("可选，主题变了才传；非空、≤5 字、只含中英文数字"), "facts": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "新增的细节（会自动与已有去重合并，只增不减）"},
+					"topic": str("可选，主题变了才传；非空、≤5 字、只含中英文数字"), "facts": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": factsParamDesc},
 				}, "target_id", "summary")},
 				{Name: "delete_memory", Description: "删除近邻中某条被明确否定的记忆", Parameters: obj(map[string]interface{}{
 					"target_id": str("被删除的近邻 id，只能取自输入的 id"),

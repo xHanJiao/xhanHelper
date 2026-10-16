@@ -21,6 +21,8 @@
 | `tags` | varchar(500) | 逗号分隔标签 |
 | `facts` | text | 支持细节列表（JSON 数组） |
 
+> 后续变更（2026-10-16）：`facts` 的语义已从「支持细节」改为**用户原话逐字摘录**（硬校验），见 `docs/design/memory-facts-verbatim/design.md`。本表的类型与列名不变。
+
 提取 prompt 同步更新：去掉 `category` 字段，新增 `tags` 字段。`formatMemoryValue` 改为 `[topic] summary`。
 
 存量数据通过 `cmd/memory-rebuild` 全量重跑。

@@ -160,6 +160,8 @@ case .docRefs(let refs): DocumentRefCard（仅 macOS，iOS 无右栏文档面板
 
 `DocumentRefCard`（按 `card-mockup.html` 定稿）：**整卡可点**（`Button` 包住内容，`buttonStyle(.plain)`），只展示**标题 13.5 semibold + 摘要 11.5 muted（最多 3 行）**，`spacing 6`；`surfaceInput` 底、r11、无外框、maxWidth 240、内边距 12×10。图标/标签/「打开」按钮已按观感迭代裁掉（点整卡即可打开文档面板定位）。
 
+**多张卡片类产物进横向卡片条**（2026-10-16 起，见文末「后续变更」）：相邻的卡片类产物由 `LocalArtifactGrouping.rows` 并成一行，交给 `ArtifactCardStrip` 排布——收起态按宽度自适应露完整卡（**至少露一张**）+ 尾部窄「＋N」格，点它展开成横向可滑的一排（**没有「收起」控件**，展开后一段时间自动收起）；**单张仍走上面这条原路**。`LocalArtifact.isCardArtifact` 区分卡片类（`.docRefs`）与非卡片类（`.chart` 全宽图表，不进条子、且天然打断分组）。
+
 > 标签展示曾用 `ViewThatFits(in: .horizontal)` 宽度自适应收起（`+N`），现标签整体不展示，相关代码已移除；若日后要恢复，参照 `card-mockup.html` 历史或 git 记录。
 
 ## 四、一次会话的时序
@@ -243,3 +245,17 @@ loadConversation   → messages 全量替换
   - 新会话首轮：`insertLocalArtifact` 在会话 id 为空时不落盘（只留内存）；`done` 拿到真实 id 后 `persistLocalArtifactsUnderConversation` 补写并清理空键文件 `local_results/.json`。此前会写进空文件名、重载读不到。
   - `LocalArtifactMerge.reposition` 增加 `isUser` 谓词：产物改锚定「前一条 user 消息」之后，无 user（隐藏轮）才回退「最近 assistant」——防该轮 assistant 无正文被过滤时卡片被吸到上一轮。
   - 影响文件：`LocalArtifactTime.swift`(新) / `LocalArtifactMerge.swift` / `LocalToolResultStore.swift` / `ChatViewModel.swift` + 对应测试。
+- 2026-10-16 · 聊天里的卡片类产物改成**横向卡片条**（多张不再竖向叠）：
+  - **决定**：相邻的卡片类产物并成一行；收起态＝按可用宽度自适应，塞得下几张完整卡露几张、剩下的收成尾部一个**窄「＋N」格**（只写数字、不带单位——窄格里容不下「张」；淡底 + 虚描边）；展开态＝横向可滑的一排完整卡，**「收起」格跟在滚动内容尾部**（位置与消息图片条的收起格一致）。窗口变宽不再溢出时自动回收起态。**单张、或只有一条分组时完全走原路**（不经条子），与改造前一致。
+  - **「收起」控件的三次变化，最后删掉**：① 钉在行首（横向 `ScrollView` 之外，滑多远都点得到）→ 观感被否；② 挪到行尾（箭头改 `chevron.left`——横向展开就往左收回）→ 发现**永远够不着**（见下条推导）；③ **删掉**，改为展开后自动收起。
+  - **推导：行尾的「收起」格必定在可视区外**。能展开 ⟺ 卡片放不下，即 `count*(cell+spacing) > available + spacing`；展开内容宽 = `count*(cell+spacing) + tileWidth` > `available + spacing + tileWidth`。所以它至少比右边缘多出 `spacing + tileWidth`（82pt），**只能滑到底才看得到**——这也是「自动收起」的由来。
+  - **展开后自动收起**：`ArtifactCardMetrics.autoCollapseDelay`（8s），`showExpanded` 变真时起算、变假/再展开都重新起算（`onChange` 里先取消旧任务）。收起态不计时。常量放 `ArtifactCardMetrics` 是因为**泛型类型里不能有 static 存储属性**（第一版这里编译不过）。
+  - **必须至少露一张卡**（真机反馈踩到）：卡片 240pt 比缩略图大得多，`ThumbRowLayout.collapsed` 原来允许「塞不下就 0 张」→ 窄窗口（可用宽 < 240+10+72 = 322）会退化成**只有一个「＋N」格、一张卡都没有**。改法：放不下时先保一张卡，**尾格吃剩下的宽度、可以被压窄**（连尾格都放不下就是 0 宽、不渲染它）。恒不溢出的下界因此是 `available ≥ cell + spacing`（比一张卡还窄就无从谈排布）。
+  - **分组的唯一事实来源**：`LocalArtifactGrouping.rows`（纯函数，泛型 + 谓词）。按「相邻」而不是按轮次——`LocalArtifactMerge.reposition` 已把同一轮产物排到一起且与其它消息隔开，非卡片类产物（chart）会打断分组，所以相邻 ≡ 同一轮。
+  - **分享选择模式不分组**（逐条渲染），否则每张卡要各配一个选择指示器，风险不值当。
+  - **走过弯路（记下来免得回头重做）**：试过「＋N 格里叠 3 层空白卡背」和「＋N 格里叠**真卡**（阶梯，每张往右错 peek 露出左侧一截标题）」两版。结论：错位只有 8pt 时**露出来的那道边放真卡还是空白卡都一样看不见内容**（「没意义」的根因）；要让后卡读得出标题，peek 得大到 60–90pt，等于把横向宽度吃掉，反而更差。用户拍板回到**窄格 ＋N**。
+  - **两个渲染坑（已在代码里注释钉住）**：① 条子的排布算式复用 `ThumbRowLayout.collapsed` 的**尾格可不同宽**重载（卡片 240、尾格 72），尾格在极窄时会跟着缩，否则一定溢出；② 卡片宽度常量集中在 `ArtifactCardMetrics`，条子的默认值与 `MessageListView.artifactCard` 共用，避免两处各写一个 240 而漂移。
+  - **展开态按组记**：`MessageListView.expandedCardStrips: Set<messageID>`（键＝该组第一条消息 id），切会话时清空。
+  - 影响文件：`Views/ArtifactCardStrip.swift`(新) · `Views/DocumentRefCard.swift`(新，从 `MessageListView` 抽出并加 `width`/`height`) · `Views/MessageListView.swift`（`DisplayRow` 分组 + `messageRowRow`/`cardStripRow`/`artifactCard` + `expandedCardStrips`） · `Views/ThumbRowLayout.swift`（+ 尾格可不同宽的 `collapsed` 重载） · `LocalArtifacts/LocalArtifact.swift`（+`isCardArtifact`） · `LocalArtifacts/LocalArtifactGrouping.swift`(新) · `scripts/snapshot-cardstrip.swift` + `snapshot-cardstrip.sh`(新，离屏渲染自检靶)。
+  - 测试：`LocalArtifactsCoreTests/LocalArtifactGroupingTests.swift`(新) · `ThumbRowLayoutTests/CardStripLayoutTests.swift`(新) · `LocalArtifactTests`(+`isCardArtifact`)。
+  - **渲染自检靶**（`scripts/snapshot-cardstrip.sh`）：把真视图渲成 PNG。两个坑：`ImageRenderer` **不渲染 `ScrollView`**（展开态会渲成空白）→ 改用 `NSHostingView` + `cacheDisplay`；裸可执行文件的 `Bundle.main` 找不到 `Assets.car`，token 色会解析成**透明** → 要包一个最小 `.app` 壳。
